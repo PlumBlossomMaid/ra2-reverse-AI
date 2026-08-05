@@ -149,28 +149,63 @@ COM 对象，自带 IPersistStream::Save/Load**，指针字段经 SwizzleManager
 编号序列化、加载时 `Process` 统一重映射（Phobos hook
 `LoadGame_PostSwizzle_Phobos @ 0x67E685` 证实）。
 
-## 对象序列化格式（第三层基础）
+## 对象序列化格式（第三层完成）
 
-`AbstractClass::Load @ 0x4103CB`（FUN_00410380）还原：
+`AbstractClass::Save @ 0x410320`（FUN_00410320）完全还原：
 
 ```
 每个对象:
-  IStream::Read [4 字节标识]       ← 对象标识 (swizzle/类信息)
-  SwizzleManager::Register          ← 注册对象指针
-  创建对象 (vtable+0x30)
-  IStream::Read 对象数据            ← 内存镜像
+  IStream::Write(&this, 4)          ← 写对象自身地址（4 字节，swizzle 依据）
+  IStream::Write(this, Size())      ← 写整个对象原始内存镜像（Size() 字节）！
 ```
 
-**对象数组批次 = 游戏全局 DynamicVectorClass**：
-`TechnoClass` 构造函数把自己注册进单位数组 `DAT_00A8EC88`（+容量 0x80/+计数 0x88），
-保存时遍历这些向量逐个 `OleSaveToStream`。威胁系统逆向里已知
-`DAT_00A8EC88` 就是 GreatestThreat 层2 扫描的单位数组——同一份数据。
+**对象镜像 = [保存时对象地址] + [原始内存 dump]**。镜像内所有指针字段
+（Type、Owner、Target 等）= 保存时的原始内存地址，加载时由 SwizzleManager
+统一重映射。
 
-**对 V3 核弹定位的含义**：
-单位对象位于 CONTENTS 中"单位数组批次"内，每对象 = [4 字节标识] + 内存镜像
-（含 Type 指针的 swizzle ID、武器字段）。改目标单位镜像里的 Type/武器
-swizzle ID 即实现逆天存档。精确字段偏移需 `UnitClass::Save`（IPersistStream
-实现）逐字段标注——待挖。
+### UnitClass::Save 调用链（字段标注）
+
+```
+UnitClass::Save    @ 0x744600  (vtable+0x18, UnitClass vtable 0x7F5C70)
+  └─ FootClass::Save     FUN_004DB690: +0x588/+0x5AC 两个 DynamicVectorClass 写元素
+                                          +0x674 Locomotor (YRComPtr) 嵌入 OleSaveToStream
+  └─ TechnoClass::Save   FUN_0070C250 → FUN_0065AC40: +0xE4 数组写元素
+  └─ AbstractClass::Save FUN_00410320: 写 [this 地址] + [整个内存镜像]
+```
+
+关键字段偏移（镜像内，相对对象起点）：
+
+| 偏移 | 字段 | 序列化方式 |
+|---|---|---|
+| +0x0 | vtable 指针 | 内存镜像（原样） |
+| +0x588 | DynamicVectorClass（FootClass） | 写元素 |
+| +0x5AC | DynamicVectorClass（FootClass） | 写元素 |
+| +0x670 | **Type（TechnoTypeClass\*）** | 内存镜像（**保存时地址**） |
+| +0x674 | Locomotor（YRComPtr） | 嵌入 OleSaveToStream |
+
+### SwizzleManager 机制（0x6CF230/0x6CF2C0）
+
+```
+Register (FUN_006CF2C0): 映射表追加 8 字节 {保存时地址, 加载时新对象}
+Process   (FUN_006CF230): 遍历重映射所有对象指针 (FUN_006CF350)
+```
+
+加载时每个序列化对象 Read 后 Register；Process 按映射表把镜像里的地址
+重映射为新对象指针。**只有"进存档的对象"才有映射条目**。
+
+### V3 核弹篡改点定位（原版实锤）
+
+用户实测（原版 YR）：开局苏联基地 + 早期 V3，V3 火箭爆炸效果为核弹。
+
+机制推论：**单位对象镜像中 +0x670（Type 字段）的保存时地址被替换**——
+加载时 SwizzleManager 把该地址重映射到另一类型的对象（如核弹弹道
+V3Rocket 的 Type → NukeCarrier），V3 发射的火箭即携带核弹弹头。
+
+- 篡改方式：CONTENTS 里定位目标单位对象镜像 → 把 +0x670 的 4 字节
+  （保存时 TypeClass 地址）改为另一类型的保存时地址
+- 约束：替换地址必须在 SwizzleManager 映射表内有条目
+  （TypeClass 不进存档——验证 SwizzleManager::Process 对无条目地址的处理）
+- 待验证：FUN_006CF350 重映射细节 + 实际篡改实验（需要开游戏）
 
 ## 跨 mod 鬼畜 / 逆天存档原理（推论）
 
