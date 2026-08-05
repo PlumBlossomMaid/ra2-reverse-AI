@@ -54,8 +54,11 @@ E:\code\ra2-reverse-AI\
 
 ## 当前状态与下一步
 
-- **已完成**：三层符号标注；生产系统全量逆向（FactoryClass + TimeToBuild + 测试 45 项全过）
+- **已完成**：三层符号标注；生产系统全量逆向（FactoryClass + TimeToBuild + 测试 45 项全过）；
+  威胁评估系统全量逆向（ThreatCoefficients 五维公式 + CalculateThreat"珍宝函数" + 威胁地图 + 索敌，
+  测试 14 项全过，文档 docs/threat-system/）
 - **候选机制**：弹道伤害 `MapClass::DamageArea`（0x489000 区 22 hook）、
-  采矿 `UnitClass`（0x73D000 区 13 hook）、TechnoClass 核心（0x6F7000 区 16 hook）
+  采矿 `UnitClass`（0x73D000 区 13 hook）、寻路 `MapClass::Update_Pathfinding_1/2`（0x56C510/0x586990）
 - **待确认**：`DemandProduction` 第三参数语义；`Unsuspend` 资金不足时挂起标志的行为；
-  多工厂海军/陆军计数差异
+  多工厂海军/陆军计数差异；威胁系统原版 rules.ini 各系数数值；
+  `target->Target==me` 时反击贡献取负的语义；`Type+0x1FB` 标志名称

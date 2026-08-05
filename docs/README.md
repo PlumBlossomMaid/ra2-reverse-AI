@@ -7,6 +7,7 @@
 | 目录 | 内容 | 状态 |
 |---|---|---|
 | [production-system/](production-system/) | 生产/建造系统（FactoryClass + TimeToBuild） | ✅ 已完成 |
+| [threat-system/](threat-system/) | 威胁评估系统（公式 + 威胁地图 + 索敌） | ✅ 已完成 |
 | [methodology/](methodology/) | 逆向方法论（Ghidra 工作流、AI 协作） | 🟡 进行中 |
 | [symbols/](symbols/) | 三层符号标注成果说明 | ✅ 已完成 |
 

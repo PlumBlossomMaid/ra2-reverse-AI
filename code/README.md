@@ -6,7 +6,7 @@
 
 ```
 code/
-├── rewrite/            # C++ 算法重写（生产系统，可独立编译测试）
+├── rewrite/            # C++ 算法重写（生产系统 + 威胁系统，可独立编译测试）
 ├── ghidra_scripts/     # Ghidra headless 脚本（标注/反编译/探测）
 ├── read_constants.py   # PE 常量读取（.rdata 原始字节取证）
 ├── parse_yrpp.py       # YRpp 头文件 → 符号表
@@ -17,15 +17,19 @@ code/
 
 ## rewrite/（算法重写）
 
-当前模块：生产系统（FactoryClass + TimeToBuild）。
+当前模块：
+- **生产系统**（FactoryClass + TimeToBuild）：`production_system.h/cpp` + `demo.cpp`（45 项测试）
+- **威胁评估系统**（ThreatCoefficients + CalculateThreat + 索敌）：`threat_system.h/cpp` + `demo_threat.cpp`（14 项测试）
 
 编译与测试：
 
 ```
 # Windows (MSVC)
 cl /std:c++17 /utf-8 /W4 production_system.cpp demo.cpp /Fe:demo.exe
-# 或 g++ -std=c++17 -Wall production_system.cpp demo.cpp -o demo
+cl /std:c++17 /utf-8 /W4 threat_system.cpp demo_threat.cpp /Fe:demo_threat.exe
+# 或 g++ -std=c++17 -Wall ...
 demo.exe
+demo_threat.exe
 ```
 
 设计约束：

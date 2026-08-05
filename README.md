@@ -18,11 +18,12 @@ ra2-reverse-AI/
 ├── README.md            ← 本文件：入口与导航
 ├── QWEN.md              ← Qwen Code 工作手册（索引、工作流、规范）
 ├── docs/                ← 文档区：逆向分析文章
-│   ├── production-system/   # 生产系统（已完成首轮全量逆向）
+│   ├── production-system/   # 生产系统（已完成全量逆向）
+│   ├── threat-system/       # 威胁评估系统（已完成全量逆向，含"珍宝函数"）
 │   ├── methodology/         # 逆向方法论（Ghidra 工作流、AI 协作模式）
 │   └── symbols/             # 符号标注成果说明
 ├── code/                ← 代码区：可编译的算法重写 + Ghidra 脚本
-│   ├── rewrite/             # C++ 算法重写（当前：生产系统）
+│   ├── rewrite/             # C++ 算法重写（生产系统 + 威胁系统）
 │   ├── ghidra_scripts/      # Ghidra headless 脚本（标注/反编译/探测）
 │   └── *.py                 # 符号解析、PE 常量读取等工具
 ├── ci/                  ← CI 设计与文档（workflow 位于 .github/workflows/）
@@ -44,6 +45,13 @@ ra2-reverse-AI/
 - C++ 重写 + **45 项数值测试全部通过**：`code/rewrite/`
 - 文档：`docs/production-system/`
 
+### 威胁评估系统逆向（YRpp 盖章的"珍宝"）
+- **ThreatCoefficients** 五维威胁公式汇编级还原（`0x70CD10`）
+- **CalculateThreat**（"another gem of a function, to be revealed..."——2026-08-05 揭晓）
+- 完整链路：威胁地图（ThreatPosedEstimates 130×130 + 3×3 模糊扩散）→ 索敌（分层扫描）
+- C++ 重写 + **14 项数值测试全部通过**：`code/rewrite/`
+- 文档：`docs/threat-system/`
+
 ## 工作流速览
 
 1. **符号对号入座**：YRpp 符号表 → `code/ghidra_scripts/apply_symbols.py`
@@ -60,7 +68,8 @@ ra2-reverse-AI/
 - [x] Ghidra 全量分析（8637 函数）
 - [x] 三层符号标注
 - [x] 生产系统机制逆向 + C++ 重写 + 测试
-- [ ] 更多机制挖掘（弹道伤害、采矿、AI 等）
+- [x] 威胁评估系统机制逆向 + C++ 重写 + 测试
+- [ ] 更多机制挖掘（弹道伤害、采矿、寻路等）
 - [ ] 发布文章整理
 
 ## 版权
