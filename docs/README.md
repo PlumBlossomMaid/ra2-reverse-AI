@@ -13,6 +13,7 @@
 | [bug-triage/](bug-triage/) | 崩溃排查（超时空移除可驻军建筑） | 🟡 待运行时地址确认 |
 | [save-game/](save-game/) | YR 存档格式（OLE CFB + CONTENTS 序列化） | 🟡 三层完成，余 8 项盲区已入档 |
 | [csf-format/](csf-format/) | RA2/YR 字符串资源（FSC + LBL + UTF-16LE 取反） | ✅ 已完成 |
+| [mix-format/](mix-format/) | MIX 打包格式（指向外部工具 ccmix，GPL v2+） | 🟡 工具索引 |
 
 ## 写作规范
 
