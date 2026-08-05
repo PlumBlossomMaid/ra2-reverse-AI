@@ -43,14 +43,15 @@ RA2 的**索敌与威胁感知系统**——决定"单位打谁、AI 怎么判�
 
 ## 核心结论速览
 
-- **单位威胁值** = `Type->ThreatPosed`（rules.ini 属性）；**建筑威胁值** = `载员数 × ThreatPerOccupant`
-- **目标威胁公式** = `MyEffectiveness×我打目标伤害 + TargetEffectiveness×目标打我伤害 + TargetSpecialThreat×SpecialThreatValue + 异阵营EnemyHouseThreatBonus + TargetStrength×血量比例 + max(距离−射程,0)×TargetDistance`
+- **单位威胁值** = `Type->ThreatPosed`（rules.ini 属性）；**建筑威胁值** = `载员数 × ThreatPerOccupant`（原版 10）
+- **目标威胁公式** = `MyEffectiveness×我打目标伤害 + TargetEffectiveness×目标打我伤害 + TargetSpecialThreat×SpecialThreatValue + 异阵营EnemyHouseThreatBonus(400) + TargetStrength×血量比例 + max(距离−射程,0)×TargetDistance`
 - **系数选择**：`Type+0x1FB` 标志决定用类型覆盖系数还是 Rules Dumb 默认
-- **游戏内建默认值 = 0**（RulesClass 构造函数清零），实际值全部来自 rules.ini
+- **原版数值已确认**（rulesmd.ini）：非 Dumb = 200/−200/200/−200/−10；Dumb = 200/200/200/200/−1；EnemyHouseThreatBonus=400
+- **威胁值 = 攻击优先级评分**：负数项揭示 AI 优先打"打不动自己、血薄、就近"的目标
+- 游戏内建默认值 = 0（RulesClass 构造函数清零），实际值全部来自 rules.ini
 - Phobos `Hooks.cpp:2004` 交叉验证 CalculateThreat 的建筑分支
 
 ## 待确认
 
-- 原版 rules.ini 各系数的具体数值（本机无原版 rules.ini，游戏内建 0）
-- `target->Target == me` 时目标反击贡献取负的语义
+- `target->Target == me` 时目标反击贡献取负的精确语义（现象已确认：威胁降为负值）
 - `Type+0x1FB` 标志的确切名称/设置时机

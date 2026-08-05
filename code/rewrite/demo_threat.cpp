@@ -1,11 +1,19 @@
 // ============================================================================
 // RA2 威胁评估系统算法测试
-// 注意: 原版 rules.ini 的具体系数值未确认 (游戏内建默认 0, 运行时加载),
-// 本测试采用相对断言验证公式结构——不依赖绝对值。
+// 数值来源: 原版 rulesmd.ini [General] (Official Rules of Engagement, YR)
+//   ThreatPerOccupant=10
+//   MyEffectivenessCoefficientDefault=200   TargetEffectivenessCoefficientDefault=-200
+//   TargetSpecialThreatCoefficientDefault=200  TargetStrengthCoefficientDefault=-200
+//   TargetDistanceCoefficientDefault=-10
+//   DumbMyEffectivenessCoefficient=200  DumbTargetEffectivenessCoefficient=200
+//   DumbTargetSpecialThreatCoefficient=200  DumbTargetStrengthCoefficient=200
+//   DumbTargetDistanceCoefficient=-1
+//   EnemyHouseThreatBonus=400
 // 编译: cl /std:c++17 /utf-8 /W4 threat_system.cpp demo_threat.cpp /Fe:demo_threat.exe
 // ============================================================================
 #include "threat_system.h"
 
+#include <cmath>
 #include <cstdio>
 
 using namespace ra2;
@@ -18,6 +26,13 @@ static int s_failures = 0;
         else { printf("FAIL  %s\n", msg); s_failures++; }                      \
     } while (0)
 
+#define CHECK_EQ(a, b, msg)                                                    \
+    do {                                                                       \
+        int va = (int)std::nearbyint(a), vb = (int)std::nearbyint(b);          \
+        if (va == vb) { printf("PASS  %s (%d)\n", msg, va); }                  \
+        else { printf("FAIL  %s got=%d want=%d\n", msg, va, vb); s_failures++; } \
+    } while (0)
+
 #define CHECK_GT(a, b, msg)                                                    \
     do {                                                                       \
         double va = (a), vb = (b);                                             \
@@ -25,16 +40,26 @@ static int s_failures = 0;
         else { printf("FAIL  %s (%.3f <= %.3f)\n", msg, va, vb); s_failures++; } \
     } while (0)
 
-// 测试用规则 (硬编码: 结构验证值, 非原版数值)
+// 原版 rulesmd.ini [General] 威胁系数 (硬编码)
 static ThreatRules make_rules() {
     ThreatRules r;
-    r.dumbDefault.myEffectiveness = 1.0;
-    r.dumbDefault.targetEffectiveness = 1.0;
-    r.dumbDefault.targetSpecialThreat = 1.0;
-    r.dumbDefault.targetStrength = 1.0;
-    r.dumbDefault.targetDistance = -0.1; // 距离惩罚系数为负 → 越远威胁越低
-    r.enemyHouseThreatBonus = 10.0;
-    r.threatPerOccupant = 50;
+    r.dumbDefault.myEffectiveness = 200.0;
+    r.dumbDefault.targetEffectiveness = 200.0;
+    r.dumbDefault.targetSpecialThreat = 200.0;
+    r.dumbDefault.targetStrength = 200.0;
+    r.dumbDefault.targetDistance = -1.0;
+    r.enemyHouseThreatBonus = 400.0;
+    r.threatPerOccupant = 10;
+    return r;
+}
+
+static ThreatRules make_rules_with_own() {
+    ThreatRules r = make_rules();
+    r.defaultCoeff.myEffectiveness = 200.0;
+    r.defaultCoeff.targetEffectiveness = -200.0;
+    r.defaultCoeff.targetSpecialThreat = 200.0;
+    r.defaultCoeff.targetStrength = -200.0;
+    r.defaultCoeff.targetDistance = -10.0;
     return r;
 }
 
@@ -49,81 +74,82 @@ static TechnoTypeClass make_type(int threatPosed, int armor, int strength,
     return t;
 }
 
-static void test_threat_coefficients() {
-    printf("== ThreatCoefficients ==\n");
-    auto rules = make_rules();
+// 组装: 我方(有武器, 类型覆盖系数) vs 目标(有武器, 异阵营)
+static void make_combatants(TechnoClass& me, TechnoClass& target, TechnoTypeClass& myType,
+                            TechnoTypeClass& targetType, WarheadType& myWH,
+                            WarheadType& tgtWH, WeaponType& myWeapon, WeaponType& tgtWeapon) {
+    myType = make_type(0, 0, 100, 1);
+    targetType = make_type(0, 0, 100, 2);
 
-    // 敌我双方类型 (不同阵营)
-    TechnoTypeClass myType = make_type(0, 0, 100, 1);
-    TechnoTypeClass targetType = make_type(0, 0, 100, 2);
+    myWH.verses[0] = 100.0;   // 我对 armor 0 的伤害倍率
+    myWeapon.warhead = &myWH;
+    myWeapon.range = 256;
 
-    // 双方武器 (Verses: 对 armor 0 的伤害倍率)
-    WarheadType myWarhead;
-    myWarhead.verses[0] = 100.0;
-    WeaponType myWeapon;
-    myWeapon.warhead = &myWarhead;
-    myWeapon.range = 256; // 256/256 = 1 格
-
-    WarheadType tgtWarhead;
-    tgtWarhead.verses[0] = 50.0;
-    WeaponType tgtWeapon;
-    tgtWeapon.warhead = &tgtWarhead;
+    tgtWH.verses[0] = 50.0;   // 目标对我 armor 0 的伤害倍率
+    tgtWeapon.warhead = &tgtWH;
     tgtWeapon.range = 256;
 
-    TechnoClass me;
     me.type = &myType;
     me.primaryWeapon = &myWeapon;
     me.strength = 100;
 
-    TechnoClass target;
     target.type = &targetType;
     target.primaryWeapon = &tgtWeapon;
     target.strength = 100;
     target.whatAmI = kWhatAmIUnit;
+}
 
-    // 场景A: 同格 (距离0), 无特殊威胁, 异阵营
+static void test_threat_coefficients() {
+    printf("== ThreatCoefficients (原版数值) ==\n");
+
+    // 场景A: 类型覆盖系数 (myEff=200, tgtEff=-200, special=200, strength=-200, dist=-10)
+    //   200×100(我打它) -200×50(它打我) +200×0(特殊) +400(异阵营) -200×1.0(强度) + 0(距离)
+    //   = 20000 - 10000 + 0 + 400 - 200 = 10200
+    auto rules = make_rules_with_own();
+    TechnoClass me, target;
+    TechnoTypeClass myType, targetType;
+    WarheadType myWH, tgtWH;
+    WeaponType myWeapon, tgtWeapon;
+    make_combatants(me, target, myType, targetType, myWH, tgtWH, myWeapon, tgtWeapon);
+    me.type->useOwnCoefficients = true;
+    me.type->coeff = rules.defaultCoeff;
+
     CoordStruct loc{};
-    double threat = ThreatCoefficients(&me, &target, rules, &loc);
-    // 预期: 100(我打它) + 50(它打我) + 0(特殊) + 10(异阵营) + 1(强度) + 0(距离)
-    CHECK_GT(threat, 150.0, "异阵营+双方武器: 威胁 > 150");
+    CHECK_EQ(ThreatCoefficients(&me, &target, rules, &loc), 10200, "异阵营双方武器: 10200");
 
-    // 场景B: 距离惩罚 (距离 512, 射程 1格=256 → 超出 1 格)
+    // 场景B: 距离 512 (射程 256/256=1 格, 超出 511 → 511×(-10)=-5110)
     loc.x = 512;
-    double threatFar = ThreatCoefficients(&me, &target, rules, &loc);
-    CHECK_GT(threat, threatFar, "距离越远威胁越低 (距离惩罚)");
+    CHECK_EQ(ThreatCoefficients(&me, &target, rules, &loc), 5090, "距离惩罚: 5090");
+    loc = {};
 
-    // 场景C: 同阵营 → 无加成
-    TechnoClass ally;
-    ally.type = &targetType;
-    ally.type->houseId = 1; // 与我同阵营
-    ally.primaryWeapon = &tgtWeapon;
-    ally.strength = 100;
-    ally.whatAmI = kWhatAmIUnit;
-    CoordStruct loc0{};
-    double threatAlly = ThreatCoefficients(&me, &ally, rules, &loc0);
-    CHECK_GT(threat, threatAlly, "异阵营有加成, 同阵营无");
+    // 场景C: 同阵营 → 无加成 (20000-10000-200=9800)
+    target.type->houseId = 1;
+    CHECK_EQ(ThreatCoefficients(&me, &target, rules, &loc), 9800, "同阵营无加成: 9800");
+    target.type->houseId = 2;
 
-    // 场景D: 特殊威胁值加成
-    TechnoTypeClass specialType = make_type(0, 0, 100, 2, 500.0);
-    TechnoClass special;
-    special.type = &specialType;
-    special.primaryWeapon = &tgtWeapon;
-    special.strength = 100;
-    special.whatAmI = kWhatAmIUnit;
-    double threatSpecial = ThreatCoefficients(&me, &special, rules, &loc0);
-    CHECK_GT(threatSpecial, threat, "特殊威胁值加成 (SpecialThreatValue)");
+    // 场景D: 特殊威胁 500 → +200×500=100000 (110200)
+    targetType.specialThreatValue = 500.0;
+    CHECK_EQ(ThreatCoefficients(&me, &target, rules, &loc), 110200, "特殊威胁加成: 110200");
+    targetType.specialThreatValue = 0.0;
 
-    // 场景E: 类型覆盖系数 (useOwnCoefficients)
-    myType.useOwnCoefficients = true;
-    myType.coeff = rules.dumbDefault;
-    myType.coeff.myEffectiveness = 2.0; // 我打目标权重翻倍
-    double threatOwn = ThreatCoefficients(&me, &target, rules, &loc0);
-    CHECK_GT(threatOwn, threat, "类型覆盖系数: MyEffectiveness 权重生效");
-    myType.useOwnCoefficients = false;
+    // 场景E: 类型覆盖 MyEffectiveness=400 → 400×100-10000+400-200=30200
+    me.type->coeff.myEffectiveness = 400.0;
+    CHECK_EQ(ThreatCoefficients(&me, &target, rules, &loc), 30200, "类型覆盖系数生效: 30200");
+    me.type->coeff = rules.defaultCoeff;
+
+    // 场景F: Dumb 系数 (无武器, Dumb: eff=200×50 + bonus 400 + strength 200×1.0 = 10600)
+    me.primaryWeapon = nullptr;
+    me.type->useOwnCoefficients = false;
+    CHECK_EQ(ThreatCoefficients(&me, &target, rules, &loc), 10600, "Dumb 系数生效: 10600");
+
+    // 场景G: 目标瞄准我 → 目标反击贡献取负 (me 无武器沿用场景F)
+    //   -200×50(取负) + 400 + 200 = -9400
+    target.target = &me;
+    CHECK_EQ(ThreatCoefficients(&me, &target, rules, &loc), -9400, "目标瞄准我取负: -9400");
 }
 
 static void test_calculate_threat() {
-    printf("== CalculateThreat (珍宝函数) ==\n");
+    printf("== CalculateThreat (珍宝函数, ThreatPerOccupant=10) ==\n");
     auto rules = make_rules();
 
     // 单位: 威胁 = Type->ThreatPosed
@@ -131,38 +157,39 @@ static void test_calculate_threat() {
     TechnoClass unit;
     unit.type = &unitType;
     unit.whatAmI = kWhatAmIUnit;
-    CHECK(CalculateThreat(&unit, rules) == 25, "单位威胁 = Type.ThreatPosed");
+    CHECK(CalculateThreat(&unit, rules) == 25, "单位威胁 = Type.ThreatPosed (25)");
 
-    // 建筑: 威胁 = 载员数 × ThreatPerOccupant
+    // 建筑: 载员数 × ThreatPerOccupant(10)
     TechnoTypeClass bldType = make_type(10, 0, 100, 1);
     TechnoClass building;
     building.type = &bldType;
     building.whatAmI = kWhatAmIBuilding;
     building.occupants = 4;
-    CHECK(CalculateThreat(&building, rules) == 200, "建筑威胁 = 载员×ThreatPerOccupant (4×50)");
+    CHECK(CalculateThreat(&building, rules) == 40, "建筑威胁 = 载员×10 (4×10)");
 
-    // 建筑无载员: 驻防单位类型威胁
+    // 驻防建筑: 驻防单位类型威胁
     building.occupants = 0;
     TechnoClass garrison;
     garrison.type = &unitType; // ThreatPosed=25
     building.garrison = &garrison;
-    CHECK(CalculateThreat(&building, rules) == 25, "驻防建筑威胁 = 驻防单位类型威胁");
+    CHECK(CalculateThreat(&building, rules) == 25, "驻防建筑威胁 = 驻防单位类型威胁 (25)");
 
-    // 建筑空置: 自身类型威胁
+    // 空建筑: 自身类型威胁
     building.garrison = nullptr;
-    CHECK(CalculateThreat(&building, rules) == 10, "空建筑威胁 = 自身类型威胁");
+    CHECK(CalculateThreat(&building, rules) == 10, "空建筑威胁 = 自身类型威胁 (10)");
 }
 
 static void test_can_auto_target() {
-    printf("== CanAutoTargetObject ==\n");
+    printf("== CanAutoTargetObject (原版数值) ==\n");
     auto rules = make_rules();
 
+    // 无武器同阵营 (Dumb: 强度 200×1.0 = 200 → 威胁 200)
     TechnoTypeClass myType = make_type(0, 0, 100, 1);
     TechnoClass me;
     me.type = &myType;
     me.strength = 100;
 
-    TechnoTypeClass targetType = make_type(0, 0, 100, 1); // 同阵营 → 无加成
+    TechnoTypeClass targetType = make_type(0, 0, 100, 1); // 同阵营
     TechnoClass target;
     target.type = &targetType;
     target.whatAmI = kWhatAmIUnit;
@@ -171,9 +198,9 @@ static void test_can_auto_target() {
     int threat = 0;
     CHECK(CanAutoTargetObject(&me, &target, rules, &threat), "目标可攻击");
     CHECK(threat >= 1, "威胁值下限 = 1");
-    CHECK(threat == 1, "无武器同阵营时威胁 = 1 (仅强度项)");
+    CHECK_EQ(threat, 200, "Dumb 强度项: 威胁 = 200");
 
-    // 建筑载员修正: 威胁 += 载员×1000
+    // 建筑载员修正: +载员×1000
     TechnoClass building;
     building.type = &targetType;
     building.whatAmI = kWhatAmIBuilding;
@@ -181,7 +208,7 @@ static void test_can_auto_target() {
     building.occupants = 3;
     int bthreat = 0;
     CHECK(CanAutoTargetObject(&me, &building, rules, &bthreat), "建筑目标可攻击");
-    CHECK(bthreat >= 3000, "建筑威胁包含载员×1000 修正 (3×1000)");
+    CHECK_EQ(bthreat, 3200, "建筑威胁 = 200 + 3×1000");
 }
 
 int main() {

@@ -42,6 +42,49 @@ me->Type+0x1FB == 0  →  使用 Rules Dumb 默认 (0x1068 起)
 me->Type+0x1FB != 0  →  使用类型覆盖系数 (Type+0x2C8 起)
 ```
 
+## 原版默认值（rulesmd.ini [General]，2026-08-05 确认）
+
+来源：`E:\code\emotion\红警2逆向\rulesmd.ini`（Red Alert 2 Yuri's Revenge -- Official Rules of Engagement）
+
+| 字段 | 值 | 语义 |
+|---|---|---|
+| MyEffectivenessCoefficientDefault | **200** | 我能打它 → 加分 |
+| TargetEffectivenessCoefficientDefault | **−200** | 它打我疼 → 减分（优先打不反击的目标） |
+| TargetSpecialThreatCoefficientDefault | **200** | 特殊威胁（蜘蛛雷/自爆）→ 加分 |
+| TargetStrengthCoefficientDefault | **−200** | 血厚 → 减分（优先打脆的） |
+| TargetDistanceCoefficientDefault | **−10** | 远 → 减分（就近） |
+| DumbMyEffectivenessCoefficient | **200** | Dumb 版 |
+| DumbTargetEffectivenessCoefficient | **200** | Dumb 版（符号翻转！） |
+| DumbTargetSpecialThreatCoefficient | **200** | Dumb 版 |
+| DumbTargetStrengthCoefficient | **200** | Dumb 版（符号翻转！） |
+| DumbTargetDistanceCoefficient | **−1** | Dumb 版 |
+| EnemyHouseThreatBonus | **400** | 是敌人 → 大加分 |
+| ThreatPerOccupant | **10** | 每载员威胁值 |
+
+### 语义解读：威胁值 = 攻击优先级评分
+
+GreatestThreat 取**威胁值最高**的目标。原版符号设计揭示 AI 的"价值观"：
+
+- **有武器单位（非 Dumb）**：优先攻击"打不动自己（−200）"、血薄（−200）、近（−10）的目标——
+  这就是为什么攻击单位会优先打矿车/建筑而非天启坦克
+- **无武器单位（Dumb）**：TargetEffectiveness/Strength 符号翻转（+200）——
+  不再评估"我打它"的价值（没有武器），纯粹按"它对我多危险"排序
+- **EnemyHouseThreatBonus=400**：敌我判断是最大权重，同类目标先打敌人
+
+> 游戏内建默认值 = 0（RulesClass 构造函数清零），实际值全部来自 rules.ini。
+
+## 验证（demo_threat.cpp，硬编码原版数值）
+
+| 场景 | 期望 | 实测 |
+|---|---|---|
+| 异阵营双方武器（200×100 − 200×50 + 400 − 200） | 10200 | 10200 ✅ |
+| 距离惩罚（超出 511 × −10） | 5090 | 5090 ✅ |
+| 同阵营无加成 | 9800 | 9800 ✅ |
+| 特殊威胁 500（+100000） | 110200 | 110200 ✅ |
+| 类型覆盖 MyEffectiveness=400 | 30200 | 30200 ✅ |
+| Dumb 系数生效（无武器） | 10600 | 10600 ✅ |
+| 目标瞄准我取负 | −9400 | −9400 ✅ |
+
 RulesClass 偏移（Read_General 反编译确认）：
 
 | 偏移 | 字段 |
