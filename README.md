@@ -23,6 +23,8 @@ ra2-reverse-AI/
 ├── docs/                ← 文档区：逆向分析文章
 │   ├── production-system/   # 生产系统（已完成全量逆向）
 │   ├── threat-system/       # 威胁评估系统（已完成全量逆向，含"珍宝函数"）
+│   ├── game-loop/           # 游戏运行流总览（已完成：入口→选关→单局→胜负→退出）
+│   ├── cd-key/              # YR 正版校验机制（woldata.key + CD 门禁 + -CD 开关，已完成）
 │   ├── methodology/         # 逆向方法论（Ghidra 工作流、AI 协作模式）
 │   ├── symbols/             # 符号标注成果说明
 │   ├── bug-triage/          # 崩溃排查（Temporal warp 建筑崩溃）
@@ -64,6 +66,26 @@ ra2-reverse-AI/
 - 待运行时崩溃地址精确命中（复现后事件查看器抓偏移量，基址固定 `0x400000`）
 - 文档：`docs/bug-triage/temporal-building-warp-crash.md`
 
+### 游戏运行流全量逆向（给后续机制绘制地图）
+- **三层结构**：初始化（WinMain 0x6BB9A0）→ 会话选择（FUN_0052D9A0）→ 单局循环（MainLoop 0x55D360）
+- **单局循环**：MainLoop（LogicClass::Update 逻辑心脏 + 消息列表 + 录制/回放）→ AuxLoop（结束事件分派）
+- **胜负判定**：HouseClass 内部标志（+0x1F7 胜利 / +0x1F8 被消灭）→ 4 个全局结束标志 → DoWin/DoLose/DoRestart/DoExit
+- **开局链**：ScenarioClass::Start（0x683AB0）→ 加载层（0x684620）→ ReadScenario_MissionINI（0x686B20）
+- RA1 源码（本地 CnCRemastered）逐函数对照，结构与 `CONQUER.CPP` 同源演化
+- 文档：`docs/game-loop/game-lifecycle.md`（5 轮 Ghidra 取证，21+ 地址证据链）
+
+### YR 正版校验机制逆向（woldata.key + CD 门禁 + -CD 开关）
+- **woldata.key 解密公式实锤**（FUN_005DC170 @ 0x5DC170）：注册表 `Serial` 与 key 文件
+  逐字节按位减法 `(serial - key) mod 10`——**不是签名验证，解密结果不验证真伪**，
+  这就是"改一个字符还能玩"的真相（游戏没有"正确序列号"可对比）
+- **启动门禁**：FUN_004A8270（0x4A8270）用 `CDDriveManagerClass::GetCDNumber()`
+  检查光驱里有没有游戏盘（不是序列号验签）
+- **-CD 官方免检开关**：命令行参数表（0x826590 区）内置 `-CD`，检测到即写免检标志
+  `0x89E3A0=1` → 全局安全检查（FUN_004790E0，11 处调用）全部短路
+- **免 CD 无需 patch exe**：启动器传 `-CD` 参数即可；用户环境实证（YRLauncher.exe
+  第三方启动器 + Woldata.key 112B Base64 + Ares 平台），exe 为 2001-10-31 原版字节
+- 文档：`docs/cd-key/cd-key-mechanism.md`（6 轮取证，8+ 地址证据链）
+
 ### YR 存档格式逆向（第一层完成）
 - **文件格式实锤**：`.sav` = OLE CFB 复合文档（魔数 `D0 CF 11 E0...`），与 .doc/.xls 同族
 - **内部结构**：`CONTENTS` 主数据流（1.1-2.6MB，全部游戏状态）+ 13 个元数据流
@@ -89,8 +111,10 @@ ra2-reverse-AI/
 - [x] 三层符号标注
 - [x] 生产系统机制逆向 + C++ 重写 + 测试
 - [x] 威胁评估系统机制逆向 + C++ 重写 + 测试
+- [x] 游戏运行流逆向（启动/选关/单局/胜负/退出全景）
+- [x] YR 正版校验机制逆向（woldata.key 解密 + CD 门禁 + -CD 开关）
 - [x] 崩溃排查初版（超时空移除可驻军建筑，待运行时地址确认）
-- [ ] 更多机制挖掘（弹道伤害、采矿、寻路等）
+- [ ] 更多机制挖掘（弹道伤害、采矿、寻路、LogicClass::Update 解剖）
 - [ ] 发布文章整理
 
 ## 版权

@@ -8,6 +8,8 @@
 |---|---|---|
 | [production-system/](production-system/) | 生产/建造系统（FactoryClass + TimeToBuild） | ✅ 已完成 |
 | [threat-system/](threat-system/) | 威胁评估系统（公式 + 威胁地图 + 索敌） | ✅ 已完成 |
+| [game-loop/](game-loop/) | 游戏运行流总览（WinMain → 选关 → 单局 → 胜负 → 退出） | ✅ 已完成 |
+| [cd-key/](cd-key/) | YR 正版校验机制（woldata.key 解密 + CD 门禁 + -CD 开关） | ✅ 已完成 |
 | [methodology/](methodology/) | 逆向方法论（Ghidra 工作流、AI 协作） | 🟡 进行中 |
 | [symbols/](symbols/) | 三层符号标注成果说明 | ✅ 已完成 |
 | [bug-triage/](bug-triage/) | 崩溃排查（超时空移除可驻军建筑） | 🟡 待运行时地址确认 |
