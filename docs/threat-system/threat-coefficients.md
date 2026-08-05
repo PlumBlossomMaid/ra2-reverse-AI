@@ -44,7 +44,8 @@ me->Type+0x1FB != 0  →  使用类型覆盖系数 (Type+0x2C8 起)
 
 ## 原版默认值（rulesmd.ini [General]，2026-08-05 确认）
 
-来源：`E:\code\emotion\红警2逆向\rulesmd.ini`（Red Alert 2 Yuri's Revenge -- Official Rules of Engagement）
+来源：`memory/data/rules/rulesmd.ini`（Red Alert 2 Yuri's Revenge -- Official Rules of Engagement，随仓库保存）
+行号：威胁系数字段 500-513，ThreatPerOccupant=300（[General] 段）
 
 | 字段 | 值 | 语义 |
 |---|---|---|

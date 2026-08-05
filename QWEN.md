@@ -60,5 +60,6 @@ E:\code\ra2-reverse-AI\
 - **候选机制**：弹道伤害 `MapClass::DamageArea`（0x489000 区 22 hook）、
   采矿 `UnitClass`（0x73D000 区 13 hook）、寻路 `MapClass::Update_Pathfinding_1/2`（0x56C510/0x586990）
 - **待确认**：`DemandProduction` 第三参数语义；`Unsuspend` 资金不足时挂起标志的行为；
-  多工厂海军/陆军计数差异；威胁系统原版 rules.ini 各系数数值；
-  `target->Target==me` 时反击贡献取负的语义；`Type+0x1FB` 标志名称
+  多工厂海军/陆军计数差异；`target->Target==me` 时反击贡献取负的语义；`Type+0x1FB` 标志名称
+- **取证数据**：反编译/汇编 16 文件在 `memory/data/decomp/`；原版 rulesmd.ini 在
+  `memory/data/rules/`（威胁系数行号 500-513）
