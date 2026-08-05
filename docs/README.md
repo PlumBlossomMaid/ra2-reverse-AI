@@ -11,7 +11,8 @@
 | [methodology/](methodology/) | 逆向方法论（Ghidra 工作流、AI 协作） | 🟡 进行中 |
 | [symbols/](symbols/) | 三层符号标注成果说明 | ✅ 已完成 |
 | [bug-triage/](bug-triage/) | 崩溃排查（超时空移除可驻军建筑） | 🟡 待运行时地址确认 |
-| [save-game/](save-game/) | YR 存档格式（OLE CFB + CONTENTS 序列化） | 🟡 第一层完成 |
+| [save-game/](save-game/) | YR 存档格式（OLE CFB + CONTENTS 序列化） | 🟡 三层完成，余 8 项盲区已入档 |
+| [csf-format/](csf-format/) | RA2/YR 字符串资源（FSC + LBL + UTF-16LE 取反） | ✅ 已完成 |
 
 ## 写作规范
 

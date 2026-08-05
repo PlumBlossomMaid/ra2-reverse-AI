@@ -9,6 +9,7 @@ code/
 ├── rewrite/            # C++ 算法重写（生产系统 + 威胁系统，可独立编译测试）
 ├── ghidra_scripts/     # Ghidra headless 脚本（标注/反编译/探测）
 ├── read_constants.py   # PE 常量读取（.rdata 原始字节取证）
+├── csf_reader.py       # RA2/YR .csf 字符串资源解析器（FSC/LBL/RTS-WRTS，含无损回写）
 ├── parse_yrpp.py       # YRpp 头文件 → 符号表
 ├── parse_phobos_hooks.py  # Phobos 源码 → hook 地址表
 ├── compare_hooks.py    # hook 与符号对比分析
