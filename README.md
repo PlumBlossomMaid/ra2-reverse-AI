@@ -17,20 +17,23 @@
 ra2-reverse-AI/
 ├── README.md            ← 本文件：入口与导航
 ├── QWEN.md              ← Qwen Code 工作手册（索引、工作流、规范）
+├── CMakeLists.txt       ← 顶层构建（MSVC /utf-8, RA2_BUILD_TESTS 开关）
+├── third_party/         ← 第三方依赖（git submodule, 架构参考 PaddlePaddle）
+│   └── gtest/               # Google Test v1.14
 ├── docs/                ← 文档区：逆向分析文章
 │   ├── production-system/   # 生产系统（已完成全量逆向）
 │   ├── threat-system/       # 威胁评估系统（已完成全量逆向，含"珍宝函数"）
 │   ├── methodology/         # 逆向方法论（Ghidra 工作流、AI 协作模式）
 │   └── symbols/             # 符号标注成果说明
 ├── code/                ← 代码区：可编译的算法重写 + Ghidra 脚本
-│   ├── rewrite/             # C++ 算法重写（生产系统 + 威胁系统）
+│   ├── rewrite/             # C++ 算法重写（CMake 库 + Google Test 用例）
 │   ├── ghidra_scripts/      # Ghidra headless 脚本（标注/反编译/探测）
 │   └── *.py                 # 符号解析、PE 常量读取等工具
 ├── ci/                  ← CI 设计与文档（workflow 位于 .github/workflows/）
 ├── memory/              ← 记忆区：踩坑记录、地址笔记、原始取证数据
 │   ├── notes/               # 知识笔记（Ghidra Jython 踩坑等）
 │   └── data/                # 原始数据（符号表、反编译输出、B站参考资料）
-└── .github/workflows/   ← GitHub Actions（编译 rewrite + 跑测试）
+└── .github/workflows/   ← GitHub Actions（CMake + Google Test + ctest）
 ```
 
 ## 核心成果（截至 2026-08-05）

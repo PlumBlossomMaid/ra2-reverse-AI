@@ -55,7 +55,7 @@ Ghidra headless + Jython 脚本，导出指定函数的 C 伪代码。
 ### 7. 数值测试
 
 每个算法用可验证的数值场景断言。测试程序硬编码原版默认值，
-CI 自动运行。见 `code/rewrite/demo.cpp`。
+CI 自动运行。见 `code/rewrite/test/`。
 
 ## 取证优先级
 

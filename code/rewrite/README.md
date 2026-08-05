@@ -16,10 +16,13 @@
 
 ```
 rewrite/
-├── production_system.h   # 数据结构 + 算法声明 + 最小数据模型
-├── production_system.cpp # 算法实现（每个函数标注原版地址与汇编依据）
-├── demo.cpp              # 数值验证测试（原版 rules 默认值硬编码）
-└── README.md
+├── CMakeLists.txt            # 算法库 + 测试目标
+├── production_system.h/cpp   # 生产系统（数据结构 + 算法 + 最小数据模型）
+├── threat_system.h/cpp       # 威胁评估系统
+└── test/
+    ├── test_production.cpp   # 生产系统 Google Test 用例（6 组）
+    ├── test_threat.cpp       # 威胁系统 Google Test 用例（3 组）
+    └── CMakeLists.txt        # （并入上级）
 ```
 
 ## 覆盖的算法
@@ -119,9 +122,16 @@ available < drain 且 drain≠0:
 ## 编译与测试
 
 ```
-cl /std:c++17 /utf-8 /W4 production_system.cpp demo.cpp /Fe:demo.exe
-# 或 g++ -std=c++17 -Wall production_system.cpp demo.cpp -o demo
-demo.exe   # 45 项断言全部通过
+# 首次: 拉取 third_party 子模块 (gtest)
+git submodule update --init --recursive
+
+# CMake 构建 + 测试 (测试框架: Google Test)
+cmake -S . -B build
+cmake --build build
+ctest --test-dir build --output-on-failure
+
+# 关闭测试仅编译算法库
+cmake -S . -B build -DRA2_BUILD_TESTS=OFF
 ```
 
 ## 版权与许可

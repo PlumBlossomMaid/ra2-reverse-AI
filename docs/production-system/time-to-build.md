@@ -79,7 +79,7 @@ Phobos 在此挂钩扩展（`ExcludeFromMultipleFactoryBonus`）。
 | `0x7E1718` | 1.0 (double) | GetPowerPercentage 满电返回 |
 | `0x7E2800` | 0.0 (double) | GetPowerPercentage 断电返回 |
 
-## 验证（demo.cpp 用例，base=360）
+## 验证（Google Test，base=360）
 
 | 场景 | 期望 | 实测 |
 |---|---|---|

@@ -18,18 +18,18 @@ code/
 ## rewrite/（算法重写）
 
 当前模块：
-- **生产系统**（FactoryClass + TimeToBuild）：`production_system.h/cpp` + `demo.cpp`（45 项测试）
-- **威胁评估系统**（ThreatCoefficients + CalculateThreat + 索敌）：`threat_system.h/cpp` + `demo_threat.cpp`（14 项测试）
+- **生产系统**（FactoryClass + TimeToBuild）：`production_system.h/cpp`（6 组 Google Test 用例）
+- **威胁评估系统**（ThreatCoefficients + CalculateThreat + 索敌）：`threat_system.h/cpp`（3 组 Google Test 用例）
 
-编译与测试：
+编译与测试（CMake + Google Test，架构参考 PaddlePaddle/Paddle）：
 
 ```
-# Windows (MSVC)
-cl /std:c++17 /utf-8 /W4 production_system.cpp demo.cpp /Fe:demo.exe
-cl /std:c++17 /utf-8 /W4 threat_system.cpp demo_threat.cpp /Fe:demo_threat.exe
-# 或 g++ -std=c++17 -Wall ...
-demo.exe
-demo_threat.exe
+# 首次: 拉取 third_party 子模块 (gtest)
+git submodule update --init --recursive
+
+cmake -S . -B build
+cmake --build build
+ctest --test-dir build --output-on-failure
 ```
 
 设计约束：

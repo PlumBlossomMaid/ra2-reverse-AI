@@ -14,7 +14,7 @@ RA2 的生产/建造系统——游戏核心经济逻辑。本目录记录对原
 ## 代码与验证
 
 - 算法实现：`../../code/rewrite/`（production_system.h/cpp）
-- 数值测试：`../../code/rewrite/demo.cpp`（45 项断言全部通过）
+- 数值测试：`../../code/rewrite/test/test_production.cpp`（Google Test，6 组用例）
 - 原始取证：`../../memory/data/decomp/`（反编译 txt + 汇编 txt）
 
 ## 核心结论速览

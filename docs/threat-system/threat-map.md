@@ -97,7 +97,7 @@ void AcquiredThreatNode() { House+0x1FB = 1; }
 | TechnoTypeClass | `+0x670` | ThreatPosed（类型基础威胁值） |
 | RulesClass | `+0xDF4` | ThreatPerOccupant（每载员威胁） |
 
-## 验证（demo_threat.cpp）
+## 验证（Google Test）
 
 | 场景 | 结果 |
 |---|---|

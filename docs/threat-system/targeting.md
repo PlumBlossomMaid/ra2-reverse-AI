@@ -93,7 +93,7 @@ uint AllowedThreats(WeaponType* w):
 | 0x800 / 0x8000 | 建筑内部单位威胁修正 |
 | 0x10000 | 建筑固定 +1000 |
 
-## 验证（demo_threat.cpp）
+## 验证（Google Test）
 
 | 场景 | 结果 |
 |---|---|

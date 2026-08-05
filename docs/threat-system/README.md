@@ -38,7 +38,7 @@ RA2 的**索敌与威胁感知系统**——决定"单位打谁、AI 怎么判�
 ## 代码与验证
 
 - 算法实现：`../../code/rewrite/threat_system.h/cpp`
-- 数值测试：`../../code/rewrite/demo_threat.cpp`（14 项断言全部通过）
+- 数值测试：`../../code/rewrite/test/test_threat.cpp`（Google Test，3 组用例）
 - 原始取证：`../../memory/data/decomp/`（threat_decomp / autotarget_decomp / threatcoeff_asm 等）
 
 ## 核心结论速览
