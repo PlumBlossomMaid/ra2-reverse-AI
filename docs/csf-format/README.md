@@ -10,4 +10,4 @@ RA2/YR 文本资源（.csf）格式逆向——FSC 头 + LBL Label + UTF-16LE �
 
 ## 资产
 
-- `code/csf_reader.py`：完整可运行实现（解析 + 无损回写 + 繁简翻译替换），来源用户本机 `E:\code\RA2CSF读取\`
+- `code/csf_reader.py`：完整可运行实现（解析 + 无损回写 + 繁简翻译替换）

@@ -241,26 +241,30 @@ def replace_translation(labels, translations):
  
  
 def main():
-    filename = r'G:\hongj2yuri\RA2YR\ra2md.csf'
+    import sys
+    if len(sys.argv) < 3:
+        print("Usage: python csf_reader.py <source.csf> <translations.txt> [output.csf]")
+        return False
+    filename = sys.argv[1]
     header, labels = parse_csf(filename)
     print(str(header))
     # 提取繁体字信息
     # df = os.path.splitext(filename)[0] + '.txt'
     # dump_texts(df, labels)
-    
+
     # Word繁体到简体转换，然后新建一个txt文档，保存转换后的结果
- 
+
     # 读取转换后的简体字信息
-    translations = read_translate(r'G:\hongj2yuri\RA2YR\ra2md_sc.txt')
+    translations = read_translate(sys.argv[2])
     # 转换所有Label中的繁体信息
     labels = replace_translation(labels, translations)
     # 保存新文件
-    nf = os.path.splitext(filename)[0] + '_sc.csf'
+    nf = sys.argv[3] if len(sys.argv) > 3 else os.path.splitext(filename)[0] + '_sc.csf'
     with open(nf, 'wb') as f:
         header.save(f)
         for l in labels:
             l.save(f)
- 
+
     return True
  
  

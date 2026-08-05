@@ -14,6 +14,7 @@
 | [save-game/](save-game/) | YR 存档格式（OLE CFB + CONTENTS 序列化） | 🟡 三层完成，余 8 项盲区已入档 |
 | [csf-format/](csf-format/) | RA2/YR 字符串资源（FSC + LBL + UTF-16LE 取反） | ✅ 已完成 |
 | [mix-format/](mix-format/) | MIX 打包格式（指向外部工具 ccmix，GPL v2+） | 🟡 工具索引 |
+| [references/](references/) | 外部参照（EA 开源 C&C 源码 = YR 逆向对照实现） | 🟡 已建 3 机制对照 |
 
 ## 写作规范
 

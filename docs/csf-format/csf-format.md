@@ -4,8 +4,8 @@
 （界面文本、单位名称、提示语等）。本仓库收录了**完整可运行的解析/回写算法**
 （`code/csf_reader.py`），算法本身即文档。
 
-> 来源：用户本机 `E:\code\RA2CSF读取\`（完整 Python 实现，含解析、保存、
-> 批量替换三个方向）。与存档（.sav）逆向同属资源/数据文件格式线。
+> 来源：完整 Python 实现（含解析、保存、批量替换三个方向），见
+> `code/csf_reader.py`（本仓库资产）。与存档（.sav）逆向同属资源/数据文件格式线。
 
 ## 一句话结论
 
@@ -90,6 +90,10 @@
 
 完整繁体→简体流水线（main 演示）：
 `parse_csf → dump_texts → 外部转简体 → read_translate → replace_translation → 回写 _sc.csf`
+
+```
+python csf_reader.py <source.csf> <translations.txt> [output.csf]
+```
 
 ## 与社区工具的关系
 
