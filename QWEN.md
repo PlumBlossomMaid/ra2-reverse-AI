@@ -1,0 +1,61 @@
+# Qwen Code 工作手册
+
+本文件是 Qwen Code 在本仓库中的工作规范。每次在新会话中操作本仓库，先读本文件。
+
+## 仓库架构
+
+```
+E:\code\ra2-reverse-AI\
+├── QWEN.md              ← 本文件
+├── README.md            ← 仓库入口：项目概述 + 导航
+├── docs\                ← 文档区：逆向分析文章（机制解析、方法论、符号说明）
+├── code\                ← 代码区：C++ 算法重写 + Ghidra 脚本 + 工具脚本
+├── ci\                  ← CI 设计说明（workflow 实体在 .github\workflows\）
+├── memory\              ← 记忆区：踩坑笔记 + 原始取证数据
+└── .github\workflows\   ← GitHub Actions
+```
+
+## 查询流程
+
+当需要回答逆向/机制问题时：
+1. 读 `docs\` 索引，定位相关机制文档
+2. 需要细节时读 `memory\data\` 下的原始反编译/汇编取证数据
+3. 需要确认地址语义时查 `memory\data\symbols\` 符号表
+4. 结合 `code\rewrite\` 中的算法实现给出结论
+
+## 逆向工作流（标准流程）
+
+1. **符号对号入座**：`code\ghidra_scripts\apply_symbols.py` 应用 YRpp 符号
+   - 运行：`analyzeHeadless.bat <proj> <name> -process gamemd.exe -noanalysis -postScript apply_symbols.py -scriptPath E:\code\ra2-reverse-AI\code\ghidra_scripts`
+2. **反编译导出**：`decompile_*.py` 系列导出指定函数 C 伪代码
+3. **汇编核对**：模糊的浮点/条件逻辑 dump 汇编逐条还原
+4. **常量取证**：`code\read_constants.py` 从 PE 读 `.rdata` 原始字节（注意 float/double 区分）
+5. **规则映射**：反编译 `RulesClass::Read_General` 把偏移映射回 rules.ini 字段名
+6. **算法重写**：`code\rewrite\` 新增模块，遵守数据驱动原则（rules 数值不硬编码）
+7. **数值验证**：`code\rewrite\demo.cpp` 加测试用例，CI 自动跑
+
+## 硬性规范
+
+1. **数据驱动**：依赖 rules.ini 的数值一律通过 BuildRules 注入，不硬编码在算法里；
+   测试程序中可以硬编码原版默认值
+2. **注释克制**：不写"此地无银三百两"式注释（如"纯计算、无依赖"）；只写地址依据
+   和行为依据
+3. **取证优先**：断言任何地址/常量的语义前，必须用反编译/汇编/PE 字节三重验证之一；
+   无法验证的标注"未确认"
+4. **半偶舍入**：原版 x87 FRNDINT（ties-to-even），重写用 std::nearbyint
+5. **Ghidra 脚本踩坑**：见 `memory\notes\ghidra-jython-pitfalls.md`，写新脚本必读
+
+## 环境速查
+
+- Ghidra：`D:\ghidra_11.1_PUBLIC_20240607\ghidra_11.1_PUBLIC\support\analyzeHeadless.bat`
+- Ghidra 工程：`E:\code\ra2-reverse\ghidra_proj\RA2`（gamemd.exe 全量分析，含三层符号）
+- MSVC 编译：`vcvars64.bat` + `cl /std:c++17 /utf-8 /W4`
+- 原版二进制：`E:\YRLauncher\gamemd.exe`
+
+## 当前状态与下一步
+
+- **已完成**：三层符号标注；生产系统全量逆向（FactoryClass + TimeToBuild + 测试 45 项全过）
+- **候选机制**：弹道伤害 `MapClass::DamageArea`（0x489000 区 22 hook）、
+  采矿 `UnitClass`（0x73D000 区 13 hook）、TechnoClass 核心（0x6F7000 区 16 hook）
+- **待确认**：`DemandProduction` 第三参数语义；`Unsuspend` 资金不足时挂起标志的行为；
+  多工厂海军/陆军计数差异
