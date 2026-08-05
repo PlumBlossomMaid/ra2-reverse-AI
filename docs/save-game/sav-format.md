@@ -236,8 +236,33 @@ CONTENTS 是**按对象数组批次序列化的内存镜像**（见保存主流�
 | `code/ghidra_scripts/decompile_savegame_main.py` | 保存主流程反编译 |
 | `memory/data/decomp/savegame_decomp.txt` | SavegameInformation + MainLoop 反编译 |
 
-## 未确认
+## 未完成 / 待验证清单
 
-- CONTENTS 内部完整布局（对象流顺序、Swizzle 表格式）——需要专项逆向
-- Scenario Description 的编码细节（GBK 宽字符在 UTF-16LE 里的转换）
-- GameMode 枚举完整值表（0=战役 已知，5=联机 为实测值）
+文档图书馆原则：**进度可以慢，记录不能断**。以下均为已知盲区，
+按"是否需开游戏"分类，供后续接力逆向时直接取用，避免重复探索。
+
+### 静态可挖（无需开游戏，随时可接力）
+
+1. **CONTENTS 头部逐字节解析**：地图名（如 `GDI2A.map`）之后到第一个
+   对象批次之间的"结构化头部"——字段、长度、含义均未确认
+2. **26+ 批次完整映射**：保存主流程表中 `DAT_008B4160` / `DAT_008B4118` /
+   `DAT_00B0E790` / `DAT_00B0F1B0` 等全局数组标注为"推测内容"，
+   未逐个确认对应对象类型（仅 HouseClass `DAT_00A80238` 与
+   TechnoClass `DAT_00A8EC88` 数组已确认）
+3. **其他类的 Save 调用链**：已解剖 UnitClass（0x744600 → Foot 0x4DB690 →
+   Techno 0x70C250 → Abstract 0x410320）；BuildingClass / InfantryClass /
+   AircraftClass / HouseClass 的调用链均未追（方法论已在 UnitClass 上跑通，
+   属重复劳动，非探索性工作）
+4. **SwizzleManager::Process 边界行为**（FUN_006CF350）：对**无映射条目**
+   的地址如何处理——直接保留原值 / 报错 / 置空？未确认。这直接影响
+   V3 核弹篡改"替换地址必须在映射表内有条目"这一约束的成立性
+5. **Scenario Description 编码细节**：GBK 宽字符在 UTF-16LE 里的转换
+6. **GameMode 枚举完整值表**：0=战役、5=联机为已知/实测，其余未确认
+
+### 需开游戏验证（用户偏好集中处理，2026-08-05 起挂起）
+
+7. **实际篡改实验**：diff 两局仅目标不同的对局 CONTENTS，定位修改点，
+   验证 V3 核弹篡改理论（改单位镜像 +0x670 Type 地址 → 重映射到核弹类型）
+8. **崩溃复现抓地址**：动员兵进入中 + 冷冻兵消除建筑 → 事件查看器抓崩溃
+   地址，对照 0x51BB7A / 0x71ADE0 / 0x71B151（详见
+   `docs/bug-triage/temporal-building-warp-crash.md`）
