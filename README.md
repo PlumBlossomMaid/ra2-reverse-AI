@@ -25,7 +25,8 @@ ra2-reverse-AI/
 │   ├── threat-system/       # 威胁评估系统（已完成全量逆向，含"珍宝函数"）
 │   ├── methodology/         # 逆向方法论（Ghidra 工作流、AI 协作模式）
 │   ├── symbols/             # 符号标注成果说明
-│   └── bug-triage/          # 崩溃排查（Temporal warp 建筑崩溃）
+│   ├── bug-triage/          # 崩溃排查（Temporal warp 建筑崩溃）
+│   └── save-game/           # YR 存档格式（OLE CFB + CONTENTS 序列化）
 ├── code/                ← 代码区：可编译的算法重写 + Ghidra 脚本
 │   ├── rewrite/             # C++ 算法重写（CMake 库 + Google Test 用例）
 │   ├── ghidra_scripts/      # Ghidra headless 脚本（标注/反编译/探测）
@@ -62,6 +63,14 @@ ra2-reverse-AI/
 - Phobos 交叉验证出 3 个原版崩溃点：`0x51BB7A` / `0x71ADE0` / `0x71B151`
 - 待运行时崩溃地址精确命中（复现后事件查看器抓偏移量，基址固定 `0x400000`）
 - 文档：`docs/bug-triage/temporal-building-warp-crash.md`
+
+### YR 存档格式逆向（第一层完成）
+- **文件格式实锤**：`.sav` = OLE CFB 复合文档（魔数 `D0 CF 11 E0...`），与 .doc/.xls 同族
+- **内部结构**：`CONTENTS` 主数据流（1.1-2.6MB，全部游戏状态）+ 13 个元数据流
+- **SavegameInformation**（0x6812E0）：IPropertySetStorage 写 13 个 PIDSI_* 属性，魔数 `0x2B898`
+- **保存主流程**（0x67CEF0）：StgCreateDocfile → 属性集 → CreateStream("CONTENTS") → COM IPersistStream 按对象数组批次序列化（OleSaveToStream）
+- **实证**：2002 原版 vs 2022 mod 存档外壳完全兼容 → 跨 mod 鬼畜/V3 核弹根源在 CONTENTS 对象镜像
+- 文档：`docs/save-game/sav-format.md`
 
 ## 工作流速览
 

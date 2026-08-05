@@ -11,6 +11,7 @@
 | [methodology/](methodology/) | 逆向方法论（Ghidra 工作流、AI 协作） | 🟡 进行中 |
 | [symbols/](symbols/) | 三层符号标注成果说明 | ✅ 已完成 |
 | [bug-triage/](bug-triage/) | 崩溃排查（超时空移除可驻军建筑） | 🟡 待运行时地址确认 |
+| [save-game/](save-game/) | YR 存档格式（OLE CFB + CONTENTS 序列化） | 🟡 第一层完成 |
 
 ## 写作规范
 

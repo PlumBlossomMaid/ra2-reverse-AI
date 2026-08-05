@@ -59,7 +59,9 @@ E:\code\ra2-reverse-AI\
   威胁评估系统全量逆向（ThreatCoefficients 五维公式 + CalculateThreat"珍宝函数" + 威胁地图 + 索敌，
   测试 14 项全过，文档 docs/threat-system/）；
   崩溃排查初版（超时空移除可驻军建筑，TemporalClass::Update 0x71A760 汇编还原 + Phobos 交叉验证
-  3 崩溃点，文档 docs/bug-triage/）
+  3 崩溃点，文档 docs/bug-triage/）；
+  YR 存档格式第一层（.sav = OLE CFB 复合文档 + SavegameInformation 属性 + CONTENTS 序列化主流程
+  0x67CEF0，文档 docs/save-game/）
 - **候选机制**：弹道伤害 `MapClass::DamageArea`（0x489000 区 22 hook）、
   采矿 `UnitClass`（0x73D000 区 13 hook）、寻路 `MapClass::Update_Pathfinding_1/2`（0x56C510/0x586990）
 - **待确认**：`DemandProduction` 第三参数语义；`Unsuspend` 资金不足时挂起标志的行为；
@@ -68,5 +70,7 @@ E:\code\ra2-reverse-AI\
   （`Get-WinEvent -FilterHashtable @{LogName='Application'; Id=1000}`），
   对照 docs/bug-triage/ 三个候选点（0x51BB7A / 0x71ADE0 / 0x71B151）精确锁定；
   复现配置：盟军 + 步兵进驻中立房子（未完成时）+ 超时空军团兵
-- **取证数据**：反编译/汇编 19 文件在 `memory/data/decomp/`；原版 rulesmd.ini 在
-  `memory/data/rules/`（威胁系数行号 500-513）
+- **存档系统待挖**：CONTENTS 内部完整布局（对象批次顺序/Swizzle 表）；加载流程
+  （ScenarioClass::LoadGame @ 0x67E440 区）反编译；逆天存档实验（diff 两局 CONTENTS 定位修改点）
+- **取证数据**：反编译/汇编 21 文件在 `memory/data/decomp/`；原版 rulesmd.ini 在
+  `memory/data/rules/`（威胁系数行号 500-513）；`.sav` 解析脚本 `code/analyze_sav.py`
