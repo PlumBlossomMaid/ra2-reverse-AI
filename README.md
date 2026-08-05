@@ -24,7 +24,8 @@ ra2-reverse-AI/
 │   ├── production-system/   # 生产系统（已完成全量逆向）
 │   ├── threat-system/       # 威胁评估系统（已完成全量逆向，含"珍宝函数"）
 │   ├── methodology/         # 逆向方法论（Ghidra 工作流、AI 协作模式）
-│   └── symbols/             # 符号标注成果说明
+│   ├── symbols/             # 符号标注成果说明
+│   └── bug-triage/          # 崩溃排查（Temporal warp 建筑崩溃）
 ├── code/                ← 代码区：可编译的算法重写 + Ghidra 脚本
 │   ├── rewrite/             # C++ 算法重写（CMake 库 + Google Test 用例）
 │   ├── ghidra_scripts/      # Ghidra headless 脚本（标注/反编译/探测）
@@ -55,6 +56,13 @@ ra2-reverse-AI/
 - C++ 重写 + **14 项数值测试全部通过**：`code/rewrite/`
 - 文档：`docs/threat-system/`
 
+### 崩溃排查：超时空移除可驻军建筑（进行中）
+- 场景：步兵 Enter 中 → 超时空 warp out 建筑 → 崩溃（战斗碉堡同样触发）
+- **TemporalClass::Update（0x71A760）汇编级还原**：冻结完成 → KillOccupants → 移除建筑的完整链
+- Phobos 交叉验证出 3 个原版崩溃点：`0x51BB7A` / `0x71ADE0` / `0x71B151`
+- 待运行时崩溃地址精确命中（复现后事件查看器抓偏移量，基址固定 `0x400000`）
+- 文档：`docs/bug-triage/temporal-building-warp-crash.md`
+
 ## 工作流速览
 
 1. **符号对号入座**：YRpp 符号表 → `code/ghidra_scripts/apply_symbols.py`
@@ -72,6 +80,7 @@ ra2-reverse-AI/
 - [x] 三层符号标注
 - [x] 生产系统机制逆向 + C++ 重写 + 测试
 - [x] 威胁评估系统机制逆向 + C++ 重写 + 测试
+- [x] 崩溃排查初版（超时空移除可驻军建筑，待运行时地址确认）
 - [ ] 更多机制挖掘（弹道伤害、采矿、寻路等）
 - [ ] 发布文章整理
 

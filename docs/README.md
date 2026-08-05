@@ -10,6 +10,7 @@
 | [threat-system/](threat-system/) | 威胁评估系统（公式 + 威胁地图 + 索敌） | ✅ 已完成 |
 | [methodology/](methodology/) | 逆向方法论（Ghidra 工作流、AI 协作） | 🟡 进行中 |
 | [symbols/](symbols/) | 三层符号标注成果说明 | ✅ 已完成 |
+| [bug-triage/](bug-triage/) | 崩溃排查（超时空移除可驻军建筑） | 🟡 待运行时地址确认 |
 
 ## 写作规范
 
