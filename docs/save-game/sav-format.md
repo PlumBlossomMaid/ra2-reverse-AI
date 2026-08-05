@@ -118,10 +118,59 @@
 | DAT_00A83CA8 / DAT_00A83C9C | 场景对象 |
 | DAT_00A80238 / DAT_00A8022C | **HouseClass 数组** |
 | DAT_008B4118 / DAT_008B410C 等一串 | TechnoClass/其他对象数组 |
+| DAT_00B0E790 / DAT_00B0E730 / DAT_00B0F1B0 | 更多对象数组 |
+| FUN_0067FDF0 ~ FUN_00680DF0（30 个） | 特殊类型序列化辅助 |
+| Kamikaze::Save / FUN_004391C0 | 特殊对象 |
+| SessionClass==5 时 FUN_0069B560 | 遭遇战/联机会话选项 |
+
+## 加载主流程（ScenarioClass::LoadGame @ 0x67E440）
+
+与保存完全对称：
+
+```
+1. StgOpenStorage(name, READ)        打开 CFB
+2. SavegameInformation::Read          读属性集 (SessionClass::Instance = GameType)
+3. SwizzleManagerClass::Instance 初始化  (FUN_006CF230)
+4. StgOpenStorage(name, 0x20)         第二次打开
+5. IStorage::OpenStream("CONTENTS")   打开主数据流
+6. CoCreateInstance(CLSID 0x7E9540) + OleRun
+   → QueryInterface 序列化器 (同一个 COM 对象!)
+7. [序列化器+0xC](stream)            读回对象
+8. 后处理链:
+   SwizzleManagerClass::Process       重映射所有指针 (关键!)
+   FUN_00685120 / FUN_006D03A0 / FUN_006D04F0
+   MapClass::sub_657CE0               场景激活
+   MovieInfo::ScenarioStarted = 1
+```
 
 **机制核心**：存档序列化 = **COM IPersistStream 逐对象序列化**。
-对象内指针经 SwizzleManager 编号（加载时 `Process` 重映射，
-Phobos hook `LoadGame_PostSwizzle_Phobos @ 0x67E685` 证实）。
+YRpp 证实 `AbstractClass : public IPersistStream`——**每个游戏对象本身就是
+COM 对象，自带 IPersistStream::Save/Load**，指针字段经 SwizzleManager
+编号序列化、加载时 `Process` 统一重映射（Phobos hook
+`LoadGame_PostSwizzle_Phobos @ 0x67E685` 证实）。
+
+## 对象序列化格式（第三层基础）
+
+`AbstractClass::Load @ 0x4103CB`（FUN_00410380）还原：
+
+```
+每个对象:
+  IStream::Read [4 字节标识]       ← 对象标识 (swizzle/类信息)
+  SwizzleManager::Register          ← 注册对象指针
+  创建对象 (vtable+0x30)
+  IStream::Read 对象数据            ← 内存镜像
+```
+
+**对象数组批次 = 游戏全局 DynamicVectorClass**：
+`TechnoClass` 构造函数把自己注册进单位数组 `DAT_00A8EC88`（+容量 0x80/+计数 0x88），
+保存时遍历这些向量逐个 `OleSaveToStream`。威胁系统逆向里已知
+`DAT_00A8EC88` 就是 GreatestThreat 层2 扫描的单位数组——同一份数据。
+
+**对 V3 核弹定位的含义**：
+单位对象位于 CONTENTS 中"单位数组批次"内，每对象 = [4 字节标识] + 内存镜像
+（含 Type 指针的 swizzle ID、武器字段）。改目标单位镜像里的 Type/武器
+swizzle ID 即实现逆天存档。精确字段偏移需 `UnitClass::Save`（IPersistStream
+实现）逐字段标注——待挖。
 
 ## 跨 mod 鬼畜 / 逆天存档原理（推论）
 

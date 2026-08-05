@@ -70,7 +70,10 @@ E:\code\ra2-reverse-AI\
   （`Get-WinEvent -FilterHashtable @{LogName='Application'; Id=1000}`），
   对照 docs/bug-triage/ 三个候选点（0x51BB7A / 0x71ADE0 / 0x71B151）精确锁定；
   复现配置：盟军 + 步兵进驻中立房子（未完成时）+ 超时空军团兵
-- **存档系统待挖**：CONTENTS 内部完整布局（对象批次顺序/Swizzle 表）；加载流程
-  （ScenarioClass::LoadGame @ 0x67E440 区）反编译；逆天存档实验（diff 两局 CONTENTS 定位修改点）
+- **存档系统**：第一层完成（外壳/SavegameInformation/保存主流程）；第二层完成
+  （加载主流程 0x67E440 对称还原、批次列表、SwizzleManager 重映射、对象数组=全局向量）；
+  第三层基础完成（对象格式 = 4 字节标识 + 内存镜像）
+  **待挖**：`UnitClass::Save` 逐字段标注（V3 弹头索引精确偏移）；逆天存档实验
+  （diff 两局 CONTENTS 定位修改点）；CONTENTS 头部逐字节解析
 - **取证数据**：反编译/汇编 21 文件在 `memory/data/decomp/`；原版 rulesmd.ini 在
   `memory/data/rules/`（威胁系数行号 500-513）；`.sav` 解析脚本 `code/analyze_sav.py`
