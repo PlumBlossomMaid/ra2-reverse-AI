@@ -72,22 +72,42 @@ E:\code\ra2-reverse-AI\
 - **候选机制**：弹道伤害 `MapClass::DamageArea`（0x489000 区 22 hook）、
   采矿 `UnitClass`（0x73D000 区 13 hook）、寻路 `MapClass::Update_Pathfinding_1/2`（0x56C510/0x586990）；
   **逻辑心脏 `LogicClass::Update`**（MainLoop 内驱动，胜负判定/全游戏更新的挂载点）
-- **地图生成器（遭遇战随机地图，用户目标：完美复刻原版逻辑对齐——三层愿景：字节级复刻 → 为完美重写红警2铺路 → 开源回馈社区；见 README 愿景节）**：
-  **生成器本体已定位（2026-08-06 上午）**——MapGeneratorClass 方法区 @ 0x597000-0x598000：
-  读参数 ReadParameters @ 0x597A30（16×ReadInteger+1×ReadString，节名 "RandomMap"@0x82bb24）、
-  写参数 WriteParameters @ 0x597757、加载 @ 0x597D60（strcmp RandMap.Sed/lastmap.sed）、
-  跳板 FUN_00597A10 = vtable[1] 调用；17 参数↔对象偏移映射已还原（Width+0x64/Height+0x68/
-  NumPlayers+0x50/Seed+0x74/MapType+0x3c/Theater+0x38/.../Description+0x78 字符串）；
-  源码文件名实锤：调试宏 `D:\ra2mdpost\MapGen.cpp`@0x82ba48。
-  **Randomizer（R250：250 uint 状态双索引 XOR 回绕）@ 0x65C780 完整还原** + RandomRanged
-  拒绝采样 @ 0x65C7E0；读图入口 ReadMap = FUN_00689E90 @ 0x689E90（[Header]/[Basic]/[Waypoint]）。
-  **.map cell 二进制格式（EA 官方编辑器源码实锤）**：`E:\code\CNC_TS_and_RA2_Mission_Editor`
-  （GPL-3.0）——MAPFIELDDATA 11B/cell（u16X+u16Y+u16Ground+bData[3]+bHeight+bData2[1]），
-  [IsoMapPack5] = Base64(块:2B src+2B dst+数据)→XCC decode5s 解压；[OverlayPack]=encode80。
-  取证 `randmap_gen_asm.txt`/`randmap_xref.txt`；脚本 `xref_randmap_strings.py`/
-  `dump_randmap_asm.py`/`_dump_randmap_strs.py`/`_pe_off2va.py`。
-  注意：RA1 源码（CnCRemastered）**无**随机地图生成器（TS/RA2 新特性），仅底层随机数/地形可参照；
-  EA 任务编辑器也**无**生成器（只是 .map 读写权威参照）
+- **地图生成器（遭遇战随机地图，用户目标：完美复刻——三层愿景：字节级复刻 → 为完美重写红警2铺路 → 开源回馈社区；见 README 愿景节）**：
+  **RNG 里程碑已达成（2026-08-06 下午）**——
+  ① **编译单元测绘**：调试宏字节对 `68 <行号> 68 <文件VA>` + `CALL 0x734E60` 直接扫 PE
+  反推源文件↔代码区，不用开 Ghidra（`code/randmap/scan_source_macros.py`，全 exe 33 个 TU）；
+  `D:a2mdpost\MapGen.cpp` = **0x5956E7-0x59A63A**（源码行 3934-6746，21KB）。
+  ② **生成器类实锤 `MapSeedClass`**（YRpp 交叉验证）：`: LoadOptionsClass`，单例 `Instance @ 0xABDFD8`，
+  大小 0x318，构造 @ 0x595680；本仓库独立还原的 17 参数偏移表与 YRpp 头文件**完全吻合**。
+  **修正先前误标**：0x597760 = `SaveMission`（非 WriteParameters）、0x597A30 = `LoadMission`（非 ReadParameters）；
+  **修正先前假设**：`RandMap.img` 是**预览图**（PreviewClass/RawFileClass），非地形模板。
+  ③ **流水线全景**（主流程 FUN_00598960，原版自带阶段日志）：Init random map(0x599650) →
+  Seeding water(0x59A6C0/0x59C580/0x59C630) → Init regions → Making regions →
+  Recalculating cell attributes(0x59B740+CellClass::RecalcAttributes 0x47D2B0) →
+  Creating starting points(0x594B50/0x5A1FB0) → Adding tech buildings(0x5A95B0) →
+  Creating tiberium(0x5A23A0) → Creating hills(0x5A35F0) → Creating LATs/rocks(0x5A38C0/0x5A3AE0/0x5A4280) →
+  Cleanup → Compute Radar Image → Done。**阶段顺序即种子兼容性**：每阶段消耗的随机数个数
+  必须与原版一致，少取一次后续全部错位。
+  ④ **R250 随机数发生器逐位复刻完成** ✅：播种 0x65C6D0（4 轮 Feistel，常量表 0x839644/0x839690）、
+  取数 0x65C780（滞后 103/250）、区间随机 0x65C7E0（掩码+拒绝采样）；
+  **汇编级坑点**：`SAR EDX,0x10` 是**算术**右移后 SHL/OR 拼半字，**不是 ROR16**，符号位污染高半字
+  ——照伪代码写约一半种子会分岔（必须核对 `randomizer_asm.txt`）。
+  重写 `code/rewrite/rmg/randomizer.{h,cpp}` + Google Test 7 项全过。
+  ⑤ **验证方法论（可复用于后续每阶段）**：`code/randmap/emu_oracle.py` 用 Unicorn 把 gamemd.exe
+  按原 ImageBase 0x400000 映射后**指令级模拟跑原版机器码**取标准答案，与独立重写逐位对拍
+  （5 种子 × 播种状态/16 次 Random/3 组 16 次 RandomRanged **完全一致**）。
+  不用进程内调用的原因：64 位 Windows 宿主进程堆在加载器阶段已铺满 0x400000-0x6C0000，
+  `VirtualAlloc(0x400000)` 必返 ERROR_INVALID_ADDRESS(487)，`/BASE` `/FIXED` `/ENTRY` 抢跑也来不及；
+  且模拟是**纯只读文件分析**，法律边界更干净。
+  ⑥ 输入 `.sed` = `[RandomMap]` INI 17 键（`Description` 是逗号分隔 UTF-16 码元十六进制）；
+  输出落 `rmcache\RandMap.Map`；`.map` cell 格式（EA 官方编辑器 GPL-3.0 实锤）=
+  MAPFIELDDATA 11B/cell（u16X+u16Y+u16Ground+bData[3]+bHeight+bData2[1]），
+  [IsoMapPack5]=Base64(块:2B src+2B dst+数据)→XCC decode5s；[OverlayPack]=encode80。
+  文档 `docs/random-map/`（README/randomizer/mapgen-tu/parameters）；
+  取证 `memory/data/decomp/{mapgen_tu_map,rmg_pipeline_decomp,randomizer_asm}.txt` +
+  基准 `memory/data/rmg/rng_golden.txt`；环境坑 `memory/notes/toolchain-pitfalls.md`（7 条）。
+  **下一步**：从 `RMG: Init random map`(FUN_00599650) 起逐阶段还原 + 对拍 + 记录随机数消耗。
+  注意：RA1 源码（CnCRemastered）**无**随机地图生成器（TS/RA2 新特性）；EA 任务编辑器也**无**生成器
 - **待确认**：`DemandProduction` 第三参数语义；`Unsuspend` 资金不足时挂起标志的行为；
   多工厂海军/陆军计数差异；`target->Target==me` 时反击贡献取负的语义；`Type+0x1FB` 标志名称；
   胜负判定 0x4F8440 的调用者；house+0x1F7（胜利条件）写入点；WinMain COM 类清单

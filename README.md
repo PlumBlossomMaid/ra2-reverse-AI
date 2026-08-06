@@ -105,16 +105,19 @@ ra2-reverse-AI/
 - 文档：`docs/save-game/sav-format.md`
 
 ### 随机地图生成器逆向（进行中，2026-08-06）
-- **生成器本体已定位**：MapGeneratorClass 方法区 @ 0x597000-0x598000
-  - ReadParameters @ 0x597A30（16×ReadInteger + 1×ReadString，节名"RandomMap"）
-  - WriteParameters @ 0x597757 / 加载 @ 0x597D60 / 虚函数跳板 FUN_00597A10（vtable[1]）
-  - **17 参数 ↔ 对象偏移映射已还原**（Width/Height/NumPlayers/Seed/MapType/Theater/…/Description）
-  - 调试宏实锤源码文件名：`D:\ra2mdpost\MapGen.cpp`
-- **Randomizer（R250）@ 0x65C780 完整还原** + RandomRanged 拒绝采样 @ 0x65C7E0
-- **读图入口**：ReadMap @ 0x689E90（[Header]/[Basic]/[Waypoint]）
-- **.map cell 二进制格式（EA 官方编辑器源码实锤，GPL-3.0）**：MAPFIELDDATA 11B/cell
-  + [IsoMapPack5]（Base64 → XCC decode5s 压缩）；EA 官方编辑器已 clone 作权威参照
-- 取证：`memory/data/decomp/randmap_gen_asm.txt` / `randmap_xref.txt`
+- **编译单元测绘**：调试宏反推 `D:a2mdpost\MapGen.cpp` 代码区 **0x5956E7-0x59A63A**（21KB，源码 6746 行）
+  ——工具 `code/randmap/scan_source_macros.py` 顺带产出全 exe 33 个源文件↔代码区映射
+- **生成器类实锤**：`MapSeedClass`（YRpp 符号交叉验证），单例 `Instance @ 0xABDFD8`；
+  17 参数偏移表本仓库独立还原后与 YRpp `MapSeedClass.h` **完全吻合**
+- **生成流水线全景**：主流程 `FUN_00598960` 的调试日志自带阶段名——
+  Init random map → Seeding water → Init regions → Making regions → Creating starting points
+  → Adding tech buildings → Creating tiberium → Creating hills → Creating LATs/rocks → Cleanup → Done
+- **随机数发生器 R250 逐位复刻完成** ✅：播种 `0x65C6D0`（4 轮 Feistel）/ 取数 `0x65C780` /
+  区间随机 `0x65C7E0`（掩码+拒绝采样）；C++ 重写 + **Google Test 7 项全过**
+- **验证方法论**：`code/randmap/emu_oracle.py` 用 Unicorn 指令级模拟跑原版机器码取标准答案，
+  与独立重写逐位对拍（8 种子 × 播种状态/取数/区间随机全部一致）
+- 文档：`docs/random-map/`　取证：`memory/data/decomp/mapgen_tu_map.txt` / `rmg_pipeline_decomp.txt` /
+  `randomizer_asm.txt`　基准：`memory/data/rmg/rng_golden.txt`
 
 ## 工作流速览
 
@@ -136,7 +139,7 @@ ra2-reverse-AI/
 - [x] 游戏运行流逆向（启动/选关/单局/胜负/退出全景）
 - [x] YR 正版校验机制逆向（woldata.key 解密 + CD 门禁 + -CD 开关）
 - [x] 崩溃排查初版（超时空移除可驻军建筑，待运行时地址确认）
-- [ ] 随机地图生成器逆向（本体定位完成：ReadParameters/WriteParameters + 17 参数映射；生成流程还原中）
+- [ ] 随机地图生成器逆向（编译单元测绘 + 流水线全景完成；RNG 已逐位复刻；各阶段算法还原中）
 - [ ] 更多机制挖掘（弹道伤害、采矿、寻路、LogicClass::Update 解剖）
 - [ ] 发布文章整理
 

@@ -51,99 +51,103 @@
 输出一个与**原版逻辑对齐**的 YR `.map` 文件（可直接被游戏加载，生成的局势与原版
 随机地图一致）。这是一个独立实现的算法程序，是上述研究文档化的自然延伸。
 
-### 已有侦察成果（2026-08-06，可直接接力）
+### 当前进度（2026-08-06 下午，RNG 里程碑已达成）
 
-- **入口链**：开局加载层 `FUN_00684620 @ 0x684620` 的随机场景分支 →
-  `FUN_00597A10 @ 0x597A10`（仅 0x1D 字节的跳板函数）→ **真身是某个对象的
-  vtable+4 虚函数**（下轮第一步：从调用上下文定位该对象类型）
-- **随机数发生器已完整还原**（"逻辑对齐"的基石）：
-  - `Randomizer::Random @ 0x65C780`：R250 算法——250 个 uint 状态 + 双索引
-    XOR 回绕（结构：+0xC 起 250×4B 状态，+4/+8 两个索引，0xF9 回绕）
-  - `Randomizer::RandomRanged @ 0x65C7E0`：区间随机 + 拒绝采样（去模偏差）
-  - Phobos hook `Random2Class_Random_SyncLog` 证实：联机各端随机序列同步
-    → **同一种子 = 同一条随机序列 = 同一张地图**（这就是"逻辑对齐"的验证手段）
-- **读图入口已确认**（命令行程序的输出端对齐目标）：
-  - `ReadMap = FUN_00689E90 @ 0x689E90`：读 `[Header]`（StartX/StartY/Width/
-    Height/NumberStartingPoints/NumCoopHumanStartSpots）、`[Waypoint]`
-    （Read2Integers）、`[Basic]`（NextScenario/Intro/Brief 等）
-  - `.map` 是 INI 风格文本格式，最终生成的 .map 必须能被 ReadMap 完整读取
-- **文件系统契约已实锤**（2026-08-06 晨，exe 字符串 + 游戏目录实物）：
-  - `RandMap.Sed`（游戏目录实物，264B）：`[RandomMap]` INI，**生成器输入参数全集**——
-    Width / Height / NumPlayers / Seed / MapType / Theater / Time / RegionSize /
-    Ruggedness / Accessibility / WaterAmount / Tiberium / TiberiumLayout /
-    Vegetation / UrbanPresence / Resources / Description（实测值：Width=3 Height=3
-    NumPlayers=8 Seed=11584 MapType=3 Theater=0 RegionSize=11 Ruggedness=59 ...）
-  - exe 引用：`RandMap.img` @ 0x429abc、`rmcache\RandMap.Map` + `rmcache` @ 0x42bb44、
-    `RandMap.Sed` + `lastmap.sed` + `GUI:LoadMapMenu/GUI:SaveMap` @ 0x42bc30、
-    `*.mmp`（随机地图参数文件过滤）+ `rmcache\` @ 0x42bb24、`".SED"` +
-    `"Scen->IsRandom = true"` 日志 @ 0x43da5e
-  - `RandMap.img`（游戏目录实物，51,859B 二进制）：头 `0a 05 01 08` + (0xC5,0x63)
-    (0xC6,0x64) 坐标对，0x88 起密集地形值流（0xC0-0xF0 为主，疑似高度/地形编码）——**结构未解**
-  - **推断**：生成流程 = 读 `.sed`/`.mmp` 参数 → R250 生成 → 写 `rmcache\RandMap.Map`
-    → **找到读 `.sed`/`.mmp` 的函数 ≈ 生成器入口**（比从 vtable 跳板绕更直接）
-- **取证文件**：`memory/data/decomp/randmap_probe.txt`
-- **分析脚本**：`code/ghidra_scripts/decompile_randmap.py`
+**结论先行**：随机数发生器（R250）已 **逐位复刻并通过对拍**；`MapGen.cpp` 整个编译单元
+已测绘完毕；生成流水线的 11 个阶段及其入口函数全部锁定。下一步是逐阶段还原算法。
 
-### 生成器参数读写已定位（2026-08-06 上午，Ghidra xref + 汇编逐条还原）
+#### 1. 编译单元测绘（方法论升级）
+MSVC 6.0 调试宏 `PUSH <行号 imm32>; PUSH <文件名VA>; CALL 0x734E60` 在 PE 里留下
+`68 <行号> 68 <文件VA>` 字节对——直接扫 PE 就能把源文件反推成代码地址区间，
+**不用开 Ghidra**。工具：`code/randmap/scan_source_macros.py`。
 
-**关键背景**：随机地图相关字符串在 .data 里连续存储（0x829abc-0x82bcff 区块：
-`RandMap.img` / `RandomMap` / `*.mmp` / `RandMap.Sed` / `lastmap.sed` 等），
-xref 查到的引用函数全部集中在 **0x597xxx 区 = MapGeneratorClass 方法区**
-（源码文件名从调试宏实锤：`D:\ra2mdpost\MapGen.cpp` @ 0x82ba48）。
+| 源文件 | 代码区 | 源码行范围 |
+|--------|--------|-----------|
+| `D:a2mdpost\MapGen.cpp`（字符串 @0x82BA48） | **0x5956E7 – 0x59A63A** | 3934 – 6746 |
 
-**函数清单**（全在 0x597000-0x598000，`memory/data/decomp/randmap_gen_asm.txt` 1171 条指令）：
-| 地址 | 判定 | 证据 |
-|------|------|------|
-| 0x597757（RET 0x8） | WriteParameters 保存参数 | 16×CCINIClass::WriteInteger(0x5275c0)+1×WriteString(0x528e00) |
-| 0x597a30（RET 0x4） | ReadParameters 读参数 | 16×CCINIClass::ReadInteger(0x5276d0)+1×ReadString(0x528f00)，节名"RandomMap"@0x82bb24 |
-| 0x597d60（RET 0x8） | 加载函数 | strcmp"RandMap.Sed"/"lastmap.sed"→0x7c8d20，文件名拷贝 [this+0x100] 32B，[p2+0x14/0x18]→[this+0x1ac/0x1b0] |
-| FUN_00597a10 | 虚函数跳板 | `obj->vtable[1](arg)`，null 时调 0x5587f0 |
-| 0x597f80-0x597ff6 | 4 个日志包装 | 调试宏（GUI:LoadMapMenu/SaveMapMenu/DeleteMapMenu/MapSaved） |
+顺带产出全 exe **33 个源文件 ↔ 代码区**映射，后续任何模块都能直接查表定位。
 
-**17 参数 ↔ 对象偏移映射（[RandomMap] 节，键名已还原）**：
-Description(+0x78, 字符串) / Width(+0x64) / Height(+0x68) / NumPlayers(+0x50) /
-Seed(+0x74) / MapType(+0x3c) / Theater(+0x38) / Time(+0x48) / RegionSize(+0x70) /
-Ruggedness(+0x44) / Accessibility(+0x6c) / WaterAmount(+0x4c) / Tiberium(+0x54) /
-TiberiumLayout(+0x58) / Vegetation(+0x5c) / UrbanPresence(+0x60) / Resources(+0x40)
+#### 2. 生成器类实锤：`MapSeedClass`
+- YRpp 符号交叉验证：`MapSeedClass : LoadOptionsClass`，单例 `Instance @ 0xABDFD8`，
+  对象大小 `0x318`，构造函数 `MapSeedClass::MapSeedClass @ 0x595680`
+- 本仓库先前独立还原的 **17 参数偏移表与 YRpp `MapSeedClass.h` 完全吻合**（双向验证通过）
+- **修正先前误标**：`0x597760` 是 `MapSeedClass::SaveMission`（不是 WriteParameters），
+  `0x597A30` 是 `MapSeedClass::LoadMission`（不是 ReadParameters）——它们内部确实做
+  参数读写，但语义是存/读任务档。详见 `docs/random-map/parameters.md`
+- **修正先前假设**：`RandMap.img` 是 **预览图**（`PreviewClass` / `RawFileClass` 读写），
+  不是地形模板——"未解的地形值流"假设作废
 
-**调试宏格式**：`PUSH 0x82ba48("D:\ra2mdpost\MapGen.cpp") + PUSH 行号 + CALL 0x734e60`
-→ 反编译里能反推源码行号。取证：`randmap_gen_asm.txt` / `randmap_xref.txt` /
-`_dump_randmap_strs.py`（键名还原）。
+#### 3. 生成流水线全景（主流程 `FUN_00598960`，3018B）
+原版自带的调试日志字符串等于交出了算法目录：
 
-### .map 二进制格式（输出端，EA 官方编辑器源码实锤）
+| 阶段日志 | 入口函数 |
+|----------|----------|
+| `RMG: Init random map` | `FUN_00599650`（4124B） |
+| `RMG: Seeding water` | `FUN_0059A6C0` / `FUN_0059C580` / `FUN_0059C630` |
+| `RMG: Init regions` | `FUN_005AC290` / `FUN_0058CF90` … |
+| `RMG: Making regions` | `FUN_0058EBC0` / `FUN_0058EF10` / `FUN_005A19E0` / `FUN_005A17F0` |
+| `RMG: Recalculating cell attributes` | `FUN_0059B740` + `CellClass::RecalcAttributes(0x47D2B0)`（共出现 4 次） |
+| `RMG: Creating starting points` | `FUN_00594B50` / `FUN_005A1FB0` |
+| `RMG: Adding tech buildings` | `FUN_005A95B0` |
+| `RMG: Creating tiberium` | `FUN_005A23A0` |
+| `RMG: Creating hills` | `FUN_005A35F0` |
+| `RMG: Creating LATs, rocks etc` | `FUN_005A38C0` / `FUN_005A3AE0` / `FUN_005A4280` |
+| `RMG: Cleanup` → `RMG: Compute Radar Image` → `RMG: Done` | `FUN_00722D00` / `RadarClass::SetVisibleRect(0x654490)` |
 
-**EA 官方开源 `CNC_TS_and_RA2_Mission_Editor`**（FinalSun/FinalAlert2，GPL-3.0，
-已 clone 到 `E:\code\CNC_TS_and_RA2_Mission_Editor`，1.39 MiB）——没有随机地图
-生成器，但是 .map 读写的**权威实现**：
+**阶段顺序即种子兼容性**：每阶段消耗的随机数个数必须与原版一致，少取一次后面全部错位。
 
-- `MAPFIELDDATA`（11 字节/cell，MapData.h）：u16 wX + u16 wY + u16 wGround(tile)
-  + bData[3] + bHeight + bData2[1]
-- `[IsoMapPack5]` 节（MapData.cpp） = Base64 → 块序列（2B wSrcSize + 2B wDestSize
-  + 压缩数据）→ decode5s(XCC 压缩) → MAPFIELDDATA[]，总长 / 11 = cell 数
-- `[OverlayPack]`/`[OverlayDataPack]` = Base64(encode80 压缩)，`[Digest]` = 10×u16 随机盐
-- XCC 压缩算法源码：`3rdParty/xcc/misc/shp_decode.cpp`（encode80/decode5/decode5s/encode5）
-- **注意**：游戏端 ReadMap 0x689E90 只读 [Header]/[Waypoint]/[Basic]；
-  **IsoMapPack5 解压在游戏里的位置待定位**（下午对照 decode5s 验证）
+#### 4. 随机数发生器 R250 —— 已逐位复刻 ✅
+| 原版地址 | 语义 | 复刻位置 |
+|----------|------|----------|
+| `0x65C6D0`（RET 4） | 播种：4 轮 Feistel 混合，常量表 `0x839644` / `0x839690` 各 4 个 uint | `Randomizer::Seed` |
+| `0x65C780` | 取数：R250（滞后 103/250，XOR 移位寄存器） | `Randomizer::Random` |
+| `0x65C7E0`（RET 8） | 区间随机：掩码 + 拒绝采样（去模偏差） | `Randomizer::RandomRanged` |
+
+- **汇编级坑点**（伪代码会骗人，必须核对汇编 `memory/data/decomp/randomizer_asm.txt`）：
+  `SAR EDX,0x10` 是**算术**右移，随后 `SHL/OR` 拼半字 —— **不是 ROR16**，符号位会污染高半字。
+  照伪代码写会在约一半种子上分岔
+- 产出：`code/rewrite/rmg/randomizer.{h,cpp}` + `test/test_randomizer.cpp`（Google Test 7 项全过）
+- 基准：`memory/data/rmg/rng_golden.txt`（8 个种子）
+
+#### 5. 验证方法论：Unicorn 指令级 oracle（可复用于后续每个阶段）
+`code/randmap/emu_oracle.py` 把 gamemd.exe 的节按原 ImageBase 0x400000 映射进
+Unicorn，用哨兵返回地址 + ECX 传 this 直接跑原版机器码取标准答案，再与独立重写对拍。
+
+- 为什么不用进程内调用：64 位 Windows 上宿主进程堆在加载器阶段就铺满 0x400000-0x6C0000，
+  `VirtualAlloc(0x400000)` 必返 ERROR_INVALID_ADDRESS(487)，`/BASE` `/FIXED` `/ENTRY` 抢跑都来不及
+- 附带好处：**纯只读文件分析**，不加载/不修改/不分发原版二进制，法律边界更干净
+- 对拍结果：5 个种子 × (播种状态首尾 + 16 次 Random + 3 组 16 次 RandomRanged) **逐位完全一致**
+
+#### 6. 文件系统契约（早前成果，仍有效）
+- `RandMap.Sed`（264B）：`[RandomMap]` INI，生成器输入参数全集（Width/Height/NumPlayers/
+  Seed/MapType/Theater/Time/RegionSize/Ruggedness/Accessibility/WaterAmount/Tiberium/
+  TiberiumLayout/Vegetation/UrbanPresence/Resources/Description）
+  ——`Description` 是逗号分隔的 UTF-16 码元十六进制
+- 输出落地 `rmcache\RandMap.Map`；`*.mmp` 是参数档过滤器
+- `.map` 权威格式（EA 官方编辑器源码）：`MAPFIELDDATA` 11B/cell；
+  `[IsoMapPack5]` = Base64 → 块(2B srcSize + 2B destSize + 数据) → XCC `decode5s`
 
 ### 下一步计划（按顺序）
 
-1. **追生成主流程**（参数读写已定位，下一步找 Generate）：
-   - 反编译 FUN_00596e50（0x596E50 起长函数，覆盖 0x5970xx）+ 0x597260-0x597757
-     的 5 个小函数，找 RandMap.img 读取与地形生成
-   - 从 WriteParameters 调用者（写 .sed/.mmp 的上层）反推调用链
-2. **RandMap.img 结构**：从读取它的函数反编译字段布局（对照字节探针
-   `_probe_randmap_img2.py`：头部 magic `0a 05 01 08` + 坐标对 (197,99)(198,100)
-   + 0x40 处 768/198/1/198/100；数据流 0x88 起 51723B 无整齐整除宽度）
-3. **游戏端 IsoMapPack5 解压定位**：对照 EA 源码 decode5s 验证
-4. 还原生成流程：地形高度生成 → 矿点放置 → 玩家起始点 → 物件/装饰放置
-   （留意 Randomizer 0x65C780 调用顺序——顺序即种子兼容性）
-5. 在 `code/rewrite/` 用 C++ 独立重写生成算法 + 数值测试
-6. 验证：同一种子输入 → 游戏内加载的地图与原版随机生成结果一致
+1. **逐阶段还原算法**，从 `RMG: Init random map`（`FUN_00599650`）开始，
+   每个阶段都用 Unicorn oracle 对拍，**同时记录该阶段消耗的随机数个数**
+2. `.sed` 参数解析（含 UTF-16-hex `Description`）+ rules.ini 驱动的 RMG 配置（数据驱动）
+3. `.map` 输出：`[IsoMapPack5]` Base64 + XCC encode5，组装成 C++ 命令行程序
+4. 端到端验证：同种子 + 同参数 → 我们的 `.map` 与原版输出**逐字节比对**
 
 **注意**：RA1 源码（`D:\CnCRemastered\SOURCECODE`）**没有**随机地图生成器
 （这是 TS/RA2 引入的特性），不能照搬 RA1 实现；但其底层工具（随机数、地形、
 `RadarClass`、`CellClass` 等）可作理解辅助。最终结论一律以 YR 反编译 +
 汇编核对为准。
+
+### 相关文档与取证
+
+- 文档：`docs/random-map/README.md`（总览与方法论）/ `randomizer.md`（RNG）/
+  `mapgen-tu.md`（编译单元与流水线）/ `parameters.md`（参数与 .sed 格式）
+- 取证：`memory/data/decomp/mapgen_tu_map.txt` / `rmg_pipeline_decomp.txt` /
+  `randomizer_asm.txt`；基准 `memory/data/rmg/rng_golden.txt`
+- 环境坑记录：`memory/notes/toolchain-pitfalls.md`（7 条，含 shell 转义/GBK 终端/
+  Ghidra scriptPath/Python tempdir 等，踩过一次别再踩）
 
 ## 标准工作流（与 QWEN.md 对齐）
 

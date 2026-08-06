@@ -1,4 +1,4 @@
-# 算法重写模块: 生产系统 + 威胁评估系统
+# 算法重写模块: 生产系统 + 威胁评估系统 + 随机地图生成器
 add_library(ra2_algorithms
   production_system.cpp
   threat_system.cpp)
@@ -15,3 +15,6 @@ if(RA2_BUILD_TESTS)
   target_link_libraries(test_threat PRIVATE ra2_algorithms gtest_main)
   add_test(NAME threat COMMAND test_threat)
 endif()
+
+# 随机地图生成器(独立子模块)
+add_subdirectory(rmg)
