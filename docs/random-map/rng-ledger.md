@@ -215,7 +215,7 @@
 | 6 | 8 Creating tiberium | 5 | 🚧 [stage-tiberium.md](stage-tiberium.md)，矿田生长待补 |
 | 7 | 9 Creating hills | 1 | ✅ [stage-hills.md](stage-hills.md)，随机部分已实锤 |
 | 8 | 10 Creating LATs, rocks | 18 | ✅ 18 处全部归位并实锤 → [stage-lats.md](stage-lats.md) |
-| 9 | 11 Cleanup / 12 Radar | 0 | ⬜ 不取随机数，但 Cleanup **会改地形**（重算格子属性），不能跳过 |
+| 9 | 11 Cleanup / 12 Radar | 0 | ✅ [stage-cleanup.md](stage-cleanup.md)：**纯拆解，不碰地形**（早先写的“会改地形”是误记）；真正改地形的是它前面那次 Recalc #4 |
 
 支线（`MapType ∈ {3,4}` 才需要）：
 

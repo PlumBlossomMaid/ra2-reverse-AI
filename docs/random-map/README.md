@@ -21,6 +21,7 @@
 | [stage-starting-points.md](stage-starting-points.md) | 阶段：Creating starting points（出生点，**整段可重试**） | ✅ 结构与 3 个取数点已实锤 |
 | [stage-hills.md](stage-hills.md) | 阶段：Creating hills（造山，唯一随机源是高度场） | ✅ 随机部分已实锤，抬升子系统待补 |
 | [stage-lats.md](stage-lats.md) | 阶段：Creating LATs, rocks etc（地表装饰，取数点最密） | ✅ 18 个取数点全部实锤 |
+| [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | 🚧 算法骨架 + 随机数账本已还原，缺 tile 序号表 |
 
 ## 进度
@@ -57,6 +58,9 @@
   - [x] Creating LATs：温带 `0x5A38C0`+`0x5A3AE0` / 非温带 `0x5A4280` 两条互斥分支的主体已实锤；18 个取数点归属到函数；新查实 `0x486790 = IsClearToSandLat`、`0x42B1F0 = (H+4)*W*2`
   - [x] Creating LATs：补丁生长 `0x5A45E0`（最小堆扩散 + `PickRange(1,25)` 选 `TREE01`..`TREE25`，**`TREE00` 永不出现**）与 LAT 写入器 `0x5A4B60` 已还原，**18 个取数点全部落地**
   - [x] 顺手关掉阶段 8 的未确认：`0x71BB90` = `TerrainClass::TerrainClass(type, cell)`（Ghidra 误标为 `WhatAmI`）
+  - [x] Cleanup / Radar：**纯拆解，不碰地形**；另查实两件事——
+        布矿之后有一段无日志的“区域清算”（work.+0x38/+0x3C 写回 -1 并销毁全部 RegionClass）；
+        `RecalcAttributes` 全程跑 **4 遍**，其中 #2/#3 之间什么都没干
   - [ ] Creating hills：把高度场落到地形的角点抬升子系统（`0x6B2A70` / `0x6B4100` / `0x6B4240` / `0x6B3E60` / `0x6B3850`）——无随机，但影响地形字节
 - [ ] 📌 **TODO（延后）**：把那 22 个死代码函数（27+ 取数点集中在 `0x5A5020` 一棵子树）单独逆一遍——疑似 TS 时代或 YR 开发期废弃的整套地形生成方案，对"重写红警2"那一层目标有算法参考价值。**前置条件**：104 个活取数点全部还原、端到端逐字节闭环跑通之后再动，详见 [rng-ledger.md](rng-ledger.md) §二
 - [ ] `.map` 输出（IsoMapPack5 编码）
