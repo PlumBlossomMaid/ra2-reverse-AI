@@ -2,9 +2,25 @@
 add_library(ra2_rmg
   randomizer.cpp
   scaled_random.cpp
-  fast_math.cpp)
+  fast_math.cpp
+  fp_guard.cpp)
 
 target_include_directories(ra2_rmg PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+
+# 逐位复刻要求浮点行为完全由代码决定，不许编译器代劳。见 fp_guard.h 的坑位清单。
+if(MSVC)
+  # /fp:strict 保证 fesetround 生效且禁止跨语句重排；MSVC 默认不做 FMA 收缩
+  target_compile_options(ra2_rmg PUBLIC /fp:strict)
+else()
+  target_compile_options(ra2_rmg PUBLIC
+    -ffp-contract=off      # 禁止把 a*b+c 融成 fma（ARM/LoongArch 上默认是开的）
+    -frounding-math        # 承认舍入模式可能不是就近，禁止据此优化
+    -fno-fast-math)
+  # 32 位 x86 上必须用 SSE2 而非 x87，否则中间结果是 80 位
+  if(CMAKE_SIZEOF_VOID_P EQUAL 4 AND CMAKE_SYSTEM_PROCESSOR MATCHES "i.86|x86")
+    target_compile_options(ra2_rmg PUBLIC -msse2 -mfpmath=sse)
+  endif()
+endif()
 
 if(RA2_BUILD_TESTS)
   add_executable(test_randomizer test/test_randomizer.cpp)

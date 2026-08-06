@@ -5,6 +5,13 @@
   0x4CAC40  近似 sqrt —— 16384 项查表，只有 14 位精度，与 std::sqrt 系统性不等
   0x5980C0  正态分布 —— Marsaglia 极坐标法，内部用 x87 fyl2x 求 ln，并缓存第二个值
   0x598000  均匀源   —— (double)(uint32)Random() * (1/4294967295.0)
+
+注意：0x5980C0 内部的 `fyl2x` 在 Unicorn 上是**不可信**的（见 emu_oracle.py 顶部说明）。
+本脚本导出的正态分布基准之所以仍然有效，是因为那 1 ulp 的 ln 差异被下游 FastSqrt
+的 14 位查表完全吸收——这一点已由真 CPU 侧面印证：Unicorn(≈near53) / 真 CPU(fyl2x) /
+复刻(chop53) 三种不同的 ln，经过 FastSqrt 之后产出同一批位形。
+换句话说，这份基准是"碰巧仍然正确"，不是"取法可靠"。
+若将来某个阶段直接消费 ln 的原值，必须换成真 CPU 探针取基准。
 """
 import io
 import struct

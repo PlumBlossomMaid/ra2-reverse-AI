@@ -22,13 +22,27 @@ namespace ra2::rmg {
 
 // 0x4CAC40：查表近似开方。
 // 取被开方数的浮点位形：尾数高 14 位查表得结果尾数，指数减半得结果指数。
-// 表项可由纯整数运算重算：table[i] = isqrt(N_i) - 2^23，无需搬运二进制资产。
+// 表写死在 sqrt_table.h —— 它是数学常量表（table[i] = isqrt(N_i) - 2^23），
+// 回归测试用纯整数运算重算全表自检，保证"结果与架构无关"在编译期即成立。
 // 原版返回 float（再由调用方加宽成 double），这里保持同一语义。
 double FastSqrt(double x);
 
-// x87 `fyl2x` 求自然对数。在 PC=53/RC=chop 下等价于「精确 ln 向零截断到 double」
-// （已用高精度有理数重演对拍 80/80，见 docs/random-map/fast-math.md）。
+// 原版用 x87 `fyl2x` 求自然对数（`fldln2; fld s; fyl2x`），全局 FPU 为 PC=53/RC=chop。
+//
+// 语义定为「**精确 ln 向零截断到 double**」，由 dd_log.h 的双双精度实现给出，
+// **所有架构（含 x86）走同一条路**。理由见 docs/random-map/fast-math.md §四：
+// 真 CPU 实测 20000 例中 `fyl2x` 有 7 例（0.035%）比该定义低 1 ulp——
+// 是 `fyl2x` 自身内部近似不足以正确舍入，而非本定义有误。
+// 既然 `fyl2x` 本就不是正确舍入的，钉死"本机 fyl2x 给什么就是什么"会让 x86 的
+// 输出依赖具体 CPU 型号；改用唯一确定的数学定义，才能让各架构互相逐位一致。
+// 这 1 ulp 不会传到下游：唯一消费者是 FastSqrt，它只取 float 尾数高 14 位
+// （量化步长 2^-14），2^-52 的扰动翻转它的概率约 2^-38，实测 20000 例 0 次。
 double ChopLog(double s);
+
+#if defined(_M_IX86) || defined(__i386__)
+// 仅供测试取证：直接内联那条 `fyl2x`。产品代码不调用它。
+double ChopLogX87(double s);
+#endif
 
 // 0x598000：均匀分布 [0, 1]，与 scaled_random 用的是同一个比例常数
 double UniformUnit(Randomizer& rng);

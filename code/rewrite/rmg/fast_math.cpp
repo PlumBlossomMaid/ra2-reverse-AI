@@ -3,52 +3,13 @@
 #include <cmath>
 #include <cstring>
 
+#include "dd_log.h"
+#include "sqrt_table.h"
+
 namespace ra2::rmg {
 namespace {
 
 constexpr double kInvUint32Max = 1.0 / 4294967295.0;  // exe 0x7ED898，位形 3DF0000000100000
-
-// 64 位整数开方（逐位法），用于重算查表项——全程整数，不受浮点舍入模式影响
-std::uint64_t IntSqrt(std::uint64_t n) {
-  std::uint64_t root = 0;
-  std::uint64_t bit = std::uint64_t(1) << 62;
-  while (bit > n) bit >>= 2;
-  while (bit != 0) {
-    if (n >= root + bit) {
-      n -= root + bit;
-      root = (root >> 1) + bit;
-    } else {
-      root >>= 1;
-    }
-    bit >>= 2;
-  }
-  return root;
-}
-
-// 原版 0x8650BC 处的 16384 项表。
-// 索引 i 代表尾数区间 [i*1024, (i+1)*1024) 的下界 m：
-//   m <  2^23 -> 被开方数 v = 1 + m/2^23      （偶指数）
-//   m >= 2^23 -> 被开方数 v = 2m/2^23         （奇指数，原版靠 or 0x800000 标记）
-// 表项 = floor(sqrt(v) * 2^23) - 2^23，而 sqrt(v)*2^23 = sqrt(v * 2^46) 恰为整数开方。
-struct SqrtTable {
-  static constexpr int kSize = 16384;
-  std::uint32_t entry[kSize];
-
-  SqrtTable() {
-    for (int i = 0; i < kSize; ++i) {
-      const std::uint64_t m = std::uint64_t(i) * 1024;
-      const std::uint64_t n = (m >= (std::uint64_t(1) << 23))
-                                  ? (2 * m) << 23
-                                  : ((std::uint64_t(1) << 23) + m) << 23;
-      entry[i] = static_cast<std::uint32_t>(IntSqrt(n) - (std::uint64_t(1) << 23));
-    }
-  }
-};
-
-const SqrtTable& Table() {
-  static const SqrtTable table;
-  return table;
-}
 
 }  // namespace
 
@@ -70,16 +31,20 @@ double FastSqrt(double x) {
 
   const std::int32_t half = static_cast<std::int16_t>(exponent >> 1);
   const std::uint32_t out =
-      Table().entry[mantissa >> 10] + (static_cast<std::uint32_t>(half + 0x7F) << 23);
+      kSqrtTable[mantissa >> 10] + (static_cast<std::uint32_t>(half + 0x7F) << 23);
 
   float result;
   std::memcpy(&result, &out, sizeof result);
   return result;
 }
 
-double ChopLog(double s) {
+// 所有架构统一走双双精度实现——它给出的是「精确 ln 向零截断」这个唯一确定的数学值。
+// 不用本机 fyl2x 的理由见头文件与 docs/random-map/fast-math.md §四。
+double ChopLog(double s) { return dd::ChopLogPortable(s); }
+
 #if defined(_M_IX86) && !defined(_M_ARM)
-  // 原版 0x598126: fldln2 / fxch / fyl2x —— 直接用同一条 x87 指令，逐位等价
+// 原版 0x598126: fldln2 / fxch / fyl2x。仅作测试取证用，产品路径不走这里。
+double ChopLogX87(double s) {
   double result;
   __asm {
     fldln2
@@ -88,12 +53,8 @@ double ChopLog(double s) {
     fstp qword ptr [result]
   }
   return result;
-#else
-  // 非 x86 目标没有 fyl2x。std::log 是就近舍入，与原版的向零截断在约半数取值上
-  // 差 1 ulp——此路径**未验证逐位一致**，仅供非复刻用途。
-  return std::log(s);
-#endif
 }
+#endif
 
 double UniformUnit(Randomizer& rng) {
   // 0x598019 fild qword：uint32 先补成 64 位有符号再转 double（x87 无无符号转换）

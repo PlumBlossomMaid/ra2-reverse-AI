@@ -8,6 +8,14 @@
   连 /ENTRY 抢跑也来不及）。指令级模拟绕开这一切，且完全是对文件的只读分析。
 
 用途：为 code/rewrite/rmg/ 的独立重写提供逐数值对拍基准。
+
+!! 已知失效面：x87 超越指令 !!
+  Unicorn 的 `fyl2x` **完全不理会 FPU 控制字**——PC=53/64 × RC=chop/near 四种组合
+  返回完全相同的值，实际算的是宿主的 long double。同类的 fsin / fpatan / f2xm1
+  是否也如此，未确认。
+  凡结论依赖这类指令，必须去真 CPU 上取真值（见 build/scratch/fyl2x_probe.cpp，
+  以及 docs/random-map/fast-math.md §四的完整经过）。
+  IEEE 精确运算（+ - * / fild fstp _ftol）不受影响，本 oracle 可信。
 """
 import struct
 
