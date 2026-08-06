@@ -32,6 +32,51 @@ RA2/YR 引擎是 RA1 引擎的**演化而非重写**——核心类层次和大�
 → YR `TechnoClass::TimeToBuild`（0x70CD10 区已逆向）与其是**同源演化**，
 RA1 版本可辅助理解 YR 反编译里的分支逻辑。
 
+### 随机数系统前身（区间随机 = 掩码 + 拒绝采样）
+
+| RA1 源码位置 | 内容 |
+|---|---|
+| `REDALERT/RANDOM.H:52` `class RandomClass` | 32 位 LCG，`MULT_CONSTANT=0x41C64E6D`、`ADD_CONSTANT=0x3039` |
+| `REDALERT/RANDOM.H:61,79` | `SIGNIFICANT_BITS=15`、`THROW_AWAY_BITS=10` —— 取数只返回 15 位 |
+| `REDALERT/RANDOM.CPP:91` `operator()()` | `Seed = Seed*K + C; return (Seed >> 10) & 0x7FFF;` |
+| `REDALERT/RANDOM.CPP:125` `operator()(int,int)` | **区间随机**，注释原文：*"Keep picking random numbers until it fits within the magnitude desired."* |
+
+RA1 的区间随机骨架：
+
+```c
+if (minval == maxval) return minval;
+if (minval > maxval)  swap(minval, maxval);
+int magnitude = maxval - minval;
+int highbit = SIGNIFICANT_BITS - 1;                    // 从第 14 位往下扫
+while ((magnitude & (1 << highbit)) == 0 && highbit > 0) highbit--;
+int mask = ~((~0L) << (highbit + 1));
+int pick = magnitude + 1;
+while (pick > magnitude) pick = operator()() & mask;   // 拒绝采样
+return pick + minval;
+```
+
+**这与 YR `Randomizer::RandomRanged`（`0x65C7E0`，见
+[randomizer.md](../random-map/randomizer.md) §区间随机）是同一套骨架**：
+求覆盖 `range` 的最小位掩码 → 反复取数直到落进区间 → 加回下界。
+底层发生器从 LCG 换成了 R250、位宽从 15 位涨到 32 位，
+**「掩码 + 拒绝采样 + 加下界」这三步一字未改**。
+
+已确认的差异（都在 YR 侧，且都是位宽变大带来的）：
+
+| | RA1 `RandomClass` | YR `Randomizer` |
+|---|---|---|
+| 发生器 | LCG，`Seed = Seed*0x41C64E6D + 0x3039` | R250（滞后 103/250），4 轮 Feistel 播种 |
+| 有效位 | 15（`>>10 & 0x7FFF`） | 32 |
+| 位扫描 | 从第 14 位往下，`highbit > 0` 兜底 | 第 31 位单独 `TEST EDI,0x80000000` 短路，循环从 31 先减后测 |
+| `bits == 32` | 不可能发生 | 掩码退化成 0（x86 `SHL` 只取 `CL` 低 5 位），YR 原样保留 |
+| `range+1` 溢出 | 不可能发生 | `LEA EAX,[EDI+1]; CMP EAX,EDI; JLE` 短路，直接返回 `(range+1)+lo` |
+
+> ⚠️ 但**随机地图生成器一次都没用 `RandomRanged`**（150 处取数点全是 `Random()`）。
+> `MapGen.cpp` 自带一套 `PickRange`（`0x598030`）/ `PickBelow`，
+> 用的是「浮点比例 + 拒绝采样」而不是掩码：
+> `v = _ftol(r * (hi-lo+1) * (1/(2^32-1)) + lo)`，再 `while ((unsigned)v > (unsigned)hi)` 重抽。
+> 拒绝采样这个**习惯**一脉相承，具体**手法**是地图生成器自己另起的炉灶。
+
 ### 威胁系统前身（Threat）
 
 | RA1 源码位置 | 内容 |

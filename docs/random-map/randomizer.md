@@ -101,6 +101,24 @@ return v + lo
 3. **`range+1` 溢出短路**：`LEA EAX,[EDI+1]; CMP EAX,EDI; JLE` —— 溢出时不采样，
    直接返回 `(range+1) + lo`
 
+### 血缘：这套写法直接继承自 RA1
+
+EA 开源的红警 1 源码 `REDALERT/RANDOM.CPP:125`
+（https://github.com/electronicarts/CnC_Remastered_Collection ）里，
+`RandomClass::operator()(int minval, int maxval)` 的注释原文就是：
+
+> *"Keep picking random numbers until it fits within the magnitude desired."*
+
+它的三步——**求覆盖 `range` 的最小位掩码 → 反复取数直到落进区间 → 加回下界**——
+与上面 `0x65C7E0` 的骨架逐句对应。RA2 换掉的只是底层发生器（LCG → R250）
+和位宽（15 → 32），三个"怪癖"全部是位宽变大之后才可能出现的边界情况。
+详见 [cncremastered-source.md](../references/cncremastered-source.md) §随机数系统前身。
+
+**但地图生成器一次都没调它**：150 处取数点全是 `Random()`，
+`MapGen.cpp` 自带的 `PickRange`（`0x598030`）用的是浮点比例而非掩码——
+见 [fpu-and-random-idioms.md](fpu-and-random-idioms.md)。
+拒绝采样这个**习惯**是同源的，**手法**是另起的炉灶。
+
 ## 验证结果
 
 用 `code/randmap/emu_oracle.py` 在 Unicorn 里跑原版机器码取真值，
