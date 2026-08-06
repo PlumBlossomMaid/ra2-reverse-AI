@@ -15,6 +15,7 @@
 | [rng-ledger.md](rng-ledger.md) | **随机数消耗总账**：104 个取数点 + 阶段归属 + 46 处死代码 | ✅ 清单已实锤 |
 | [stage-init.md](stage-init.md) | 阶段：Init random map（搭空 scenario，只抽 1 个随机数） | ✅ 取数点已实锤 |
 | [stage-init-regions.md](stage-init-regions.md) | 阶段：Init regions（把地图切成连通区域，只抽 1 个随机数） | ✅ 流程与取数点已实锤 |
+| [stage-tech-buildings.md](stage-tech-buildings.md) | 阶段：Adding tech buildings（中立科技建筑，两条互斥分支） | ✅ 已实锤，含 `PickRange` 语义 |
 | [stage-recalc.md](stage-recalc.md) | 阶段：绿地蔓延 + Recalculating cell attributes | ✅ 已实锤，附 TileSet 全局↔ini 键名映射 |
 | [stage-starting-points.md](stage-starting-points.md) | 阶段：Creating starting points（出生点，**整段可重试**） | ✅ 结构与 3 个取数点已实锤 |
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | 🚧 算法骨架 + 随机数账本已还原，缺 tile 序号表 |
@@ -46,7 +47,9 @@
   - [x] Init regions：四步流程 + 唯一取数点 `0x58CAF9`（内联 `PickRange(0,n-1)`）+ 三个谓词已实锤
   - [x] Recalc cell attributes：真正的 `RecalcAttributes` 遍历**不取随机数**；那 1 个随机数来自没有阶段日志的 `0x59B740`（绿地随机蔓延）
   - [x] **TileSet 全局 ↔ theater ini 键名映射**（45 个），`IsWaterOrShore` 的六个区间反查出正好是 WaterSet+ShorePieces+四瀑布，互为佐证
+  - [x] Adding tech buildings：`MapType==2` / 其它 两条互斥分支 + 6 个取数点已实锤；业主是 Neutral，建筑表 = `rules.ini [General] NeutralTechBuildings=`
   - [x] Creating starting points：**外层重试循环**（失败一轮的随机数不退回）+ 面积比例配额 + 3 个取数点已实锤
+- [ ] 📌 **TODO（延后）**：把那 22 个死代码函数（27+ 取数点集中在 `0x5A5020` 一棵子树）单独逆一遍——疑似 TS 时代或 YR 开发期废弃的整套地形生成方案，对"重写红警2"那一层目标有算法参考价值。**前置条件**：104 个活取数点全部还原、端到端逐字节闭环跑通之后再动，详见 [rng-ledger.md](rng-ledger.md) §二
 - [ ] `.map` 输出（IsoMapPack5 编码）
 - [ ] 端到端验证：同种子生成结果与原版逐字节比对
 

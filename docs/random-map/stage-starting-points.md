@@ -196,8 +196,9 @@ for (int attempt = 0; attempt < 100; ++attempt) {
 ⚠️ **建筑种类只抽一次，位置最多抽 100 次**——抽不到位置就把建筑对象丢掉，
 但那 100 个随机数已经消耗了。
 
-`0x8871E0` 疑似 `RulesClass::Instance`，`+0xAE0`/`+0xAEC` 是某个
-`DynamicVectorClass<BuildingTypeClass*>` 的数据指针与个数，**具体是哪张表未确认**。
+`0x8871E0` = `RulesClass::Instance`，`+0xADC` 是 `DynamicVectorClass<BuildingTypeClass*>`
+（数据 `+0xAE0`、个数 `+0xAEC`），键名已实锤为 **`rules.ini [General] NeutralTechBuildings=`**
+——取证见 [stage-tech-buildings.md](stage-tech-buildings.md) §五。
 
 ## 五、顺带补上的 RegionClass 字段
 
@@ -228,5 +229,4 @@ for (int attempt = 0; attempt < 100; ++attempt) {
 4. `0x5AC230` / `0x594420` / `0x5A7250` / `0x578640` / `0x594F40` 的语义
 5. `0x5A1FB0` 判定「这组出生点合格」的具体标准——它做的是最小堆扩散，
    但接受/拒绝的门槛还没读
-6. `[0x8871E0] + 0xAE0/0xAEC` 是 rules.ini 的哪张表
 7. 工作记录 `+0x45`（建筑放置时要求为 0）的含义
