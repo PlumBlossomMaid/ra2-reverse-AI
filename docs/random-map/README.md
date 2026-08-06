@@ -12,7 +12,7 @@
 | [parameters.md](parameters.md) | MapSeedClass 参数集与 `.sed` 文件格式 | ✅ 已实锤 |
 | [fpu-and-random-idioms.md](fpu-and-random-idioms.md) | 原版全局浮点环境 + 生成器取随机数的惯用法 | ✅ 已实锤并对拍 |
 | [fast-math.md](fast-math.md) | 查表近似 sqrt + Marsaglia 正态分布（形状的数学来源） | ✅ 已实锤并对拍 |
-| [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | 🚧 涂块核心已还原，投放策略待补 |
+| [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | 🚧 涂块核心 + 三种投放策略已还原，岸线平滑待补 |
 
 ## 进度
 
@@ -27,7 +27,8 @@
   - [x] Seeding water：阶段结构 + 水面 tile 细化 `FUN_0059C630` 已还原并对拍
   - [x] Seeding water：涂块核心 `FUN_0059BBC0`（最小堆扩散 + 中心布朗运动）算法已还原
   - [x] 数学基元 `FastSqrt` / 正态分布 / `ChopLog` 复刻并逐位对拍（含架构无关黄金值）
-  - [ ] Seeding water：投放策略（`FUN_0059A8F0`）与岸线平滑（`FUN_0057A0C0`）
+  - [x] Seeding water：三种 MapType 的投放策略 + 区域网格 `FUN_0059A8F0` 已还原
+  - [ ] Seeding water：岸线平滑 `FUN_0057A0C0`（四遍平滑，决定整块陆地存废）
 - [ ] `.map` 输出（IsoMapPack5 编码）
 - [ ] 端到端验证：同种子生成结果与原版逐字节比对
 

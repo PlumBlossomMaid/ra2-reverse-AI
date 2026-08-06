@@ -1,6 +1,7 @@
 # 阶段：Seeding water（水域播种）
 
-> 状态：**涂块核心已完整还原**，投放策略与岸线平滑仍有缺口。
+> 状态：**涂块核心 + 三种 MapType 的投放策略均已完整还原**；
+> 缺口只剩岸线平滑 `FUN_0057A0C0`（它决定一块陆地是被接受还是被抹回海里）。
 > 本文只记录已取证的部分，推测一律标注「未确认」。
 > 涉及的数学基元见 [fast-math.md](fast-math.md)（已逐位对拍）。
 
@@ -20,52 +21,177 @@ MapCoords 4 + FoggedObjects 4 + BridgeOwnerCell 4 + unknown 4 + LightConvert 4 =
 所以"Seeding water"名不副实：**地图初态就是一片汪洋，后续是在水里画陆地**。
 这也解释了为什么原版随机地图容易出岛——陆地是"画"出来的，画不到就是海。
 
-## 二、三种 MapType 三套布局
+## 二、三种 MapType 三套投放策略
 
 ```c
 switch (MapSeedClass->MapType /* +0x3C */) {
-  case 0: FUN_0059AD10(); break;   // 按点列表撒块
-  case 1: FUN_0059AFA0(); break;   // 按目标覆盖率生长
-  case 2: FUN_0059B200(); break;
+  case 0: FUN_0059AD10(); break;   // 网格分区，每区一块
+  case 1: FUN_0059AFA0(); break;   // 从地图中心贪心生长到目标覆盖率
+  case 2: FUN_0059B200(); break;   // 一刀切两半，每半各自生长
 }
 // MapType 3/4 走另一条路：FUN_0059C580 里判断 (MapType==3||4) && WaterAmount>0x14
 ```
 
-`MapType` = `.sed` 的 `MapType=`（实测样例值 3）。三个分支都共用涂块核心
-`FUN_0059BBC0`，只是**投放策略**不同。
+三个分支共用涂块核心 `FUN_0059BBC0`（§四），差别只在**投放哪里、投多少、投几次**。
+三者开头都做同两件事：`MapSeedClass[0x308] = 1`（块编号从 1 开始），
+以及遍历全图把工作记录 `+0x3C` 清零（清掉上一阶段的入堆标记）。
 
-### MapType 1（`FUN_0059AFA0`）：目标覆盖率驱动
+一个贯穿三者的常数事实：**陆地目标占比都在 45%~50% 附近**（见下），
+与"地图初态是一片汪洋"合起来看，原版的设计意图就是**海陆各半**。
+
+### 全图边界的两组全局
+
+| 地址 | 含义 |
+|------|------|
+| `0x87F8DC` / `0x87F8E0` | 地图宽 `W` / 高 `H` |
+| `0x87F8E4` `0x87F8E8` `0x87F8EC` `0x87F8F0` | 可用区域 `{x, y, w, h}`（真实坐标） |
+
+### MapType 0（`FUN_0059AD10`）：网格分区，每区一块
 
 ```c
-target = (0.5 - 0.45) * (1.0 - WaterAmount * 0.01) + 0.45;   // 常数 0x7ED728 / 0x7ED720 / 0x7E3808
-// WaterAmount=0   -> 0.50
-// WaterAmount=100 -> 0.45
-double total = FUN_0042B1F0();          // 分母（可用格子总数，未确认）
-int painted = 0;
-for (int iter = 0; iter < 100; ++iter) {
-    painted += FUN_0059BBC0(..., 0.75 /* 0x3FE80000 */, 1);
-    if (painted / total >= target) break;
-    // 再找一个离当前中心「曼哈顿距离最近、且工作记录 +0x3C == 0」的格子作为下一个中心
+int n = max(NumPlayers /* +0x50 */ / 2, 2);
+int r = PickAtMost(n);                        // 浮点比例+拒绝采样，r ∈ [0, n]
+MakeGrid(&list, NumPlayers + r, &FullBounds); // 0x59A8F0，见 §三
+for (cell : Map) work[cell].queued = 0;
+
+while (!list.empty()) {
+    Rect rc = list.front();
+    // 预算 = 区域格数的 45%~50%
+    double u  = (double)(uint32)Random() * (1.0/4294967295.0);
+    int budget = (int)((u * 0.05 + 0.45) * (rc.w * rc.h * 2));   // 0x7E8AE8 / 0x7ED990
+    // 区域中心 -> 等距坐标
+    int X = (rc.x + rc.w/2) + (rc.y + rc.h/2) + 1;
+    int Y = (rc.y + rc.h/2) - (rc.x + rc.w/2) + W;
+    for (int k = 0; k < 10; ++k) {                     // 最多试 10 次
+        ok = Paint(budget, &rc, {X,Y}, 1/*椭圆*/, &{X,Y}, 0.25, 0/*距离+抖动*/);
+        if (!ok) MapSeedClass[0x308]++;                // 失败也占掉一个块编号
+        if (ok) break;
+    }
+    list.erase(list.begin());                          // 整体前移一格
 }
 ```
 
-注意目标覆盖率区间只有 **0.45-0.50**，而且 `WaterAmount` 越大目标越**小**
-——与"陆地是画出来的"这一层反转正好自洽（画得越少水越多）。
+`rc.w * rc.h * 2` 里的 `×2` 是等距坐标下的格数换算：真实坐标 `w×h` 的矩形
+在等距网格里占 `2wh` 格。所以预算就是**区域格数的 45%~50%**。
 
-### MapType 0（`FUN_0059AD10`）：按点列表撒块
+注意 `Paint` 失败时 `[0x308]` 照样自增——**块编号会跳号**。复刻时不可"优化"掉。
+
+### MapType 1（`FUN_0059AFA0`）：从地图中心贪心生长
 
 ```c
-n = max(NumPlayers /* +0x50 */ / 2, 2);
-do { r = PickBelow(n); } while (...);            // 浮点比例+拒绝采样惯用法
-FUN_0059A8F0(&list, NumPlayers + r, &bounds);    // 生成 (x,y,w,h) 四元组列表
-for (each record in list)
-    重复最多 10 次 FUN_0059BBC0(..., 0.25 /* 0x3FD00000 */, 0) 直到成功
+double total  = (double)CountUsableCells();                        // 0x42B1F0
+double target = (0.5 - 0.45) * (1.0 - WaterAmount /* +0x4C */ * 0.01) + 0.45;
+int    cap    = (int)(total * 0.03 * target);                      // 单次预算上限
+Cell   center = { W/2 + H/2 + 1, W/2 + H/2 };                      // 地图正中的等距坐标
+Rect   region = { bx+1, by+1, bw-2, bh-2 };                        // 全图内缩 1
+
+int painted = 0;
+for (int iter = 0; target > 0.0 && iter < 100; ++iter) {
+    int budget = min((int)((target - painted/total) * total), cap);  // 还差多少要多少
+    painted += Paint(budget, &region, &center, 1/*椭圆*/, &center, 0.75, 1/*方向性*/);
+    // 下一个中心 = 全图中「+0x3C == 0 且到当前中心曼哈顿距离最小」的格子
+    center = argmin_{cell: work[cell].queued == 0} (|cell.Y - center.Y| + |cell.X - center.X|);
+    if (painted / total >= target) break;
+}
 ```
 
-每成功一块，`MapSeedClass+0x308` 自增——**该字段是"已投放块编号"计数器**，
-涂块时会写进工作记录 `+0x3C`，等于给每块地一个 ID（区域划分的雏形）。
+`WaterAmount` 越大目标越**小**——与"陆地是画出来的"一层反转自洽（画得越少水越多）：
 
-## 三、涂块核心 `FUN_0059BBC0`——陆地形状的全部来源
+| `WaterAmount` | 目标覆盖率 |
+|---|---|
+| 0 | 0.500 |
+| 50 | 0.475 |
+| 100 | 0.450 |
+
+### MapType 2（`FUN_0059B200`）：一刀切两半，每半各自生长
+
+```c
+double target = (0.2 - 0.15) * (1.0 - WaterAmount * 0.01) + 0.15;   // 0x7ED748 / 0x7ED740
+// 抛硬币决定横切还是竖切
+if ((double)(uint32)Random() * (1/4294967295.0) >= 0.5) {
+    half[0] = { bx, by,          bw, bh/2 - 1 };     // 上半
+    half[1] = { bx, by + bh/2+1, bw, bh/2 - 1 };     // 下半  ← 记法见下
+} else {
+    half[0] = { bx,          by, bw/2 - 1, bh };     // 左半
+    half[1] = { bx + bw/2+1, by, bw/2 - 1, bh };     // 右半
+}
+for (Rect& rc : half) {          // 两半各跑一遍，共用 iter 计数（上限 100）
+    ...与 MapType 1 相同的生长循环，但区域是这一半、目标是 target...
+    // 下一中心的代价换成**各向异性加权**的曼哈顿距离：
+    //   cost = |cell.Y - cy| * aspectY + |cell.X - cx| * aspectX
+    // 且候选必须先过 InRegion（内切椭圆，0x59BAB0）
+}
+```
+
+两点差异值得注意：
+
+1. **目标覆盖率降到 0.15~0.20**——因为是"每半各占这么多"，且两半的
+   `painted/total` 分母仍是**全图**可用格数，合起来仍是 0.3~0.4 量级；
+2. 选下一中心时扫的是**工作数组**（`side²` 项）而不是地图格子迭代器，
+   先用等距坐标做包围盒粗筛，再过椭圆判定，最后取加权曼哈顿最小者。
+
+各向异性系数与涂块核心里的一致（`0x7E5190 = 1.2`）：
+长边取 `1.0`，短边取 `(长/短) × 1.2`。
+
+## 三、区域网格 `FUN_0059A8F0`——把地图切成 n 个投放区
+
+MapType 0 用它把可用区域切成 `n` 个矩形，每个矩形里画一块陆地。
+
+```c
+void MakeGrid(vector<Rect>* out, int n, const Rect* bounds) {
+    int  r    = (int)FastSqrt((double)n);            // 查表 sqrt 后 _ftol（RC=chop 截断）
+    int  cols = (r * r == n) ? r : r + 1;
+    int  rows = (n <= cols * r) ? r : cols;          // rows * cols >= n
+
+    // 抛硬币决定网格的行列朝向（等价于把网格转置）
+    int cellW, cellH, innerStepX, innerStepY, outerStepX, outerStepY;
+    if ((double)(uint32)Random() * (1/4294967295.0) >= 0.5) {
+        cellW = bounds->w / cols;  cellH = bounds->h / rows;
+        innerStepX = cellW; innerStepY = 0;          // 内层沿 X 走
+        outerStepX = 0;     outerStepY = cellH;
+    } else {
+        cellW = bounds->w / rows;  cellH = bounds->h / cols;
+        innerStepX = 0;     innerStepY = cellH;      // 内层沿 Y 走
+        outerStepX = cellW; outerStepY = 0;
+    }
+
+    // rows*cols 通常比 n 多出 rem 个，随机挑 rem 个外层行「少放一个」
+    vector<int> counts(rows, cols), pool(rows);  iota(pool);
+    for (int rem = rows * cols - n; rem > 0; --rem) {
+        int j = PickAtMost(pool.size() - 1);         // 拒绝采样，不放回
+        counts[pool[j]] = r;                         // 该行由 cols 降为 r
+        pool.erase(pool.begin() + j);
+    }
+
+    int x = bounds->x, y = bounds->y;
+    for (int i = 0; i < rows; ++i) {
+        if (counts[i] < cols) {                      // 少放一个 -> 居中偏半格
+            if (innerStepX > 0) x += cellW / 2; else y += cellH / 2;
+        }
+        for (int k = 0; k < counts[i]; ++k) {
+            out->push_back({ x + 2, y + 2, cellW - 4, cellH - 4 });   // 四周内缩 2
+            x += innerStepX;  y += innerStepY;
+        }
+        x += outerStepX;  y += outerStepY;
+        if (innerStepX > 0) x = bounds->x; else y = bounds->y;        // 重置内层轴
+    }
+}
+```
+
+产出的记录数**恰好是 `n`**：只有 `r² != n` 时才有 `rem > 0`，
+而那时必有 `cols == r + 1`，于是 `rows*cols - rem*(cols - r) == n` 成立。
+
+### ⚠️ `(int)FastSqrt(n)` 在 n ≥ 16641 时会少 1
+
+查表 sqrt 只有 14 位精度且**系统性偏小**，`trunc` 会把误差放大成整数差。
+实测 `n ∈ [0, 100000]` 中有 408 个 `n` 使 `(int)FastSqrt(n) != isqrt(n)`，
+最小的是 `16641 = 129²`。
+
+这里 `n = NumPlayers + r ≤ 8 + 4 = 12`，**远在安全区内**，
+但同一个「`FastSqrt` 后立刻 `_ftol`」的写法若出现在别处，必须重新核算量级。
+复刻时照抄查表实现即可自动继承这个行为，**不要**换成 `std::sqrt`。
+
+## 四、涂块核心 `FUN_0059BBC0`——陆地形状的全部来源
 
 **已完整还原**。本质是一次 **Dijkstra 式的最小堆扩散**：从一个种子格出发，
 每次取出"优先级最小"的候选格把它变成陆地，再把它的四个邻格塞回堆里。
@@ -217,13 +343,13 @@ return cheb * (aspectX * (ax_/len) + (ay_/len) * aspectY);
 
 这些基址都是运行期由 theater 决定的 TileSet 起始号，**具体对应哪些 TileSet 未确认**。
 
-## 四、已确认的谓词与全局
+## 五、已确认的谓词与全局
 
 | 地址 | 判定 | 依据 |
 |------|------|------|
 | `0x486380` | `tile == 0 \|\| tile == 0xFFFF`（地块未指定） | 反编译，只读 `+0x38` |
 | `0x4865B0` | `tile ∈ [ [0xABAD28], +0x2A )`（某 42 格 tile 组内） | 反编译；**组的语义未确认** |
-| `0x4865D0` | 可涂性谓词（tile 属于水/浅滩族） | 已还原，见 §三 |
+| `0x4865D0` | 可涂性谓词（tile 属于水/浅滩族） | 已还原，见 §四 |
 | `0x87F8DC` / `0x87F8E0` | 地图宽 / 高 | 多处用作随机上限；`FUN_00599650` 用 `W/2+H/2` 算中心 waypoint |
 | `0x89C2DC` | 工作数组边长（方阵） | `0x578E60` 按 `side²` 分配 |
 | `0xABED10` | 每格 0x50 字节工作记录数组 | `0x578E60` 分配 `side²×0x50` |
@@ -238,7 +364,7 @@ return cheb * (aspectX * (ax_/len) + (ay_/len) * aspectY);
 | `+0x3C` | 布局前清 0；候选入堆时写入块编号（防重复入堆） |
 | `+0x4A` | 数组分配后置 1 |
 
-## 五、水面 tile 细化 `FUN_0059C630`（已完整还原）
+## 六、水面 tile 细化 `FUN_0059C630`（已完整还原）
 
 对每个"是水且 `+0x11A == 0`"的格子：
 
@@ -260,10 +386,34 @@ cell->IsoTileTypeIndex = [0xAA0738] + 8 + c / 40;      // 8..13 号小水面
 `0xCCCCCCCD`→/40）都已逐条汇编核对，
 基准值见 `memory/data/rmg/scaled_golden.txt`，重写已对拍通过。
 
-## 六、下一轮
+## 七、随机数消耗账本（复刻对齐的核心）
 
-1. 确认 `FUN_0059A8F0` 生成的 `(x,y,w,h)` 四元组含义（疑似按玩家数分区）
-2. 啃 `FUN_0057A0C0` 的四遍平滑（决定一块陆地是被接受还是被抹回海里）
-3. 统计本阶段在各 MapType 下消耗的随机数个数
-4. 确认工作记录 0x50 字节的完整字段布局
+种子兼容性的全部内容就是"阶段顺序 + 每阶段取数个数"。本阶段已能逐条列出：
+
+| 位置 | 每次消耗 `Random()` | 备注 |
+|------|--------------------|------|
+| MapType 0：`r = PickAtMost(n)` | ≥1（拒绝采样） | 每次拒绝再吃 1 个 |
+| `MakeGrid` 抛硬币 | 1 | |
+| `MakeGrid` 分摊多余格 | ≥1 × `rem` | `rem = rows*cols - n` |
+| MapType 0 每块的预算 | 1 | |
+| MapType 2 抛硬币切半 | 1 | |
+| 涂块：随机起点（仅起点为 `{0,0}` 时） | ≥2 × 尝试次数 | 上限 200 次 |
+| 涂块：每个候选格的抖动（优先级模式 0） | 1 | |
+| 涂块：每步中心布朗运动 | 2 个正态偏差 | 见下 |
+| 水面细化 `FUN_0059C630` | 每格 1~2 | 已还原并对拍 |
+
+**正态偏差的消耗最不直观**：`NormalDeviate` 一次算两个、缓存第二个，
+所以「两次调用」才消耗一轮；而一轮里 Marsaglia 拒绝（落在单位圆外）
+会**额外**吃 2 个 `Random()`。每步中心游走正好调两次 → 每步稳定消耗一轮。
+详见 [fast-math.md](fast-math.md) §三。
+
+**尚未清点**：`FUN_0057A0C0` 四遍平滑内部是否取随机数（**未确认**，见下）。
+
+## 八、下一轮
+
+1. 啃 `FUN_0057A0C0` 的四遍平滑（决定一块陆地是被接受还是被抹回海里，
+   且可能消耗随机数——不查清就无法对齐整条随机数流）
+2. 确认 `FUN_0042B1F0`「可用格子总数」的口径（MapType 1/2 的覆盖率分母）
+3. 确认工作记录 0x50 字节的完整字段布局（目前只锁定 `+0x38 / +0x3C / +0x4A / +0x4B`）
+4. 确认 `0xAA0738` 等 tile 组基址由 theater 决定的具体来源
 5. 把上述伪码落成 C++ 并端到端对拍（需要先有地图/格子容器）
