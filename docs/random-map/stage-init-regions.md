@@ -143,8 +143,8 @@ if (visited > 0x4A) goto 建区域;               // 74 格以上才算数
 
 | 地址 | 语义 | 判据 |
 |------|------|------|
-| `0x4865D0` | 格子是水或岸砖 | `+0x38` 落在 `[0xABAD28, +0x2A)`（42 项岸线组）或 `[0xAA0738, +0x0E)` / `[0xAA073C, +4)` / `[0xABB110, +4)` / `[0xAA1050, +4)` / `[0xAA10A0, +4)` |
-| `0x4867B0` | 格子属于另一组砖 | `+0x38 == [0xAA0E18]` 或落在 `[0xAA0748, +0x10)`；**这组砖是什么未确认** |
+| `0x4865D0` | 格子是水或岸砖 | `+0x38` 落在 `ShorePieces[0xABAD28, +0x2A)`（42 项）或 `WaterSet[0xAA0738, +0x0E)` / 四个瀑布 `WaterfallEast[0xAA073C, +4)`、`West[0xABB110, +4)`、`South[0xAA1050, +4)`、`North[0xAA10A0, +4)` |
+| `0x4867B0` | **格子是绿地** | `+0x38 == GreenTile[0xAA0E18]` 或落在 `ClearToGreenLat[0xAA0748, +0x10)`（键名由 [stage-recalc.md](stage-recalc.md) §三 反查得到） |
 | `0x486380` | 格子是"空地" | `+0x38 == 0xFFFF` 或 `== 0` |
 | `0x5657A0` | `MapClass::TryGetCellAt` | `idx = Y*0x200 + X`，越界或空指针返回 `MapClass::InvalidCell`；格子指针数组在 `MapClass+0x13C` |
 | `0x42D510` | 坐标加向量 | 就是 `xy + AdjacentCell[d]`，无边界检查 |
@@ -174,7 +174,6 @@ if (visited > 0x4A) goto 建区域;               // 74 格以上才算数
 
 1. 格子 `+0x11B` 是不是 `Level`（高度层）——证据只有 `stage-init.md` 记的初值 4
    与 `MapSeedClass::Level` 默认值 4 吻合，以及这里"同层才算连通"的用法
-2. `0x4867B0` 认的那组砖（`[0xAA0E18]` / `[0xAA0748, +0x10)`）是什么
 3. `[0xABE2E4]`——`Level` 为 −1 时的兜底值，来源未确认
 4. `0x5A0700` 的容量预留 `[MapSeed+0x180] * [MapSeed+0x184]` 对应哪两个规则项
 5. RegionClass `+0x00/+0x04/+0x1A/+0x1B` 的语义

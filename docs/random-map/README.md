@@ -15,6 +15,7 @@
 | [rng-ledger.md](rng-ledger.md) | **随机数消耗总账**：104 个取数点 + 阶段归属 + 46 处死代码 | ✅ 清单已实锤 |
 | [stage-init.md](stage-init.md) | 阶段：Init random map（搭空 scenario，只抽 1 个随机数） | ✅ 取数点已实锤 |
 | [stage-init-regions.md](stage-init-regions.md) | 阶段：Init regions（把地图切成连通区域，只抽 1 个随机数） | ✅ 流程与取数点已实锤 |
+| [stage-recalc.md](stage-recalc.md) | 阶段：绿地蔓延 + Recalculating cell attributes | ✅ 已实锤，附 TileSet 全局↔ini 键名映射 |
 | [stage-starting-points.md](stage-starting-points.md) | 阶段：Creating starting points（出生点，**整段可重试**） | ✅ 结构与 3 个取数点已实锤 |
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | 🚧 算法骨架 + 随机数账本已还原，缺 tile 序号表 |
 
@@ -43,6 +44,8 @@
   - [x] Seeding water：`FUN_0057B210` 八邻域「水」掩码的位定义与三种 mode 门槛已实锤
   - [ ] Seeding water：四遍平滑各分支的 tile 序号表（需 theater 的 TileSet 起始号）
   - [x] Init regions：四步流程 + 唯一取数点 `0x58CAF9`（内联 `PickRange(0,n-1)`）+ 三个谓词已实锤
+  - [x] Recalc cell attributes：真正的 `RecalcAttributes` 遍历**不取随机数**；那 1 个随机数来自没有阶段日志的 `0x59B740`（绿地随机蔓延）
+  - [x] **TileSet 全局 ↔ theater ini 键名映射**（45 个），`IsWaterOrShore` 的六个区间反查出正好是 WaterSet+ShorePieces+四瀑布，互为佐证
   - [x] Creating starting points：**外层重试循环**（失败一轮的随机数不退回）+ 面积比例配额 + 3 个取数点已实锤
 - [ ] `.map` 输出（IsoMapPack5 编码）
 - [ ] 端到端验证：同种子生成结果与原版逐字节比对
@@ -111,6 +114,7 @@ long double。同类的 `fsin` / `fpatan` / `f2xm1` 是否也如此，**未确�
 | `code/ghidra_scripts/find_writers.py` | 定位 .bss 全局的运行期初始化点（表内容不在文件里） |
 | `code/randmap/scan_rmg_rng.py` | 只列**生成器自己那个** Randomizer(0xABE890) 的取数点（按 this 判定） |
 | `code/ghidra_scripts/rng_closure.py` | 调用树传递闭包，找出某根函数下**所有**随机数取数点（真函数边界） |
+| `code/randmap/dump_tileset_globals.py` | 把 theater 的 45 个 TileSet `.bss` 全局对回 ini 键名（栈槽两段拼接） |
 | `code/randmap/call_closure.py` | **指令级**递归下降可达性：把取数点归到阶段、并判出死代码（解 switch 跳转表） |
 
 ## 复刻代码的可移植性立场
