@@ -25,6 +25,7 @@
 - [x] 生成器全局 `Randomizer @ 0xABE890`：**整张地图只播种一次**，种子取自 `.sed`
 - [x] 浮点比例 + 拒绝采样取数惯用法复刻 + 对拍（`scaled_random`）
 - [x] **`0xABE890` 的使用边界实锤**：153 处引用全在 `0x58B772-0x5AC192`，引擎侧一处没有
+- [x] 生成器取数点全清单：**150 处 `Random`、0 处 `RandomRanged`**（按 this 配对）
 - [ ] 各阶段算法还原（地形/水域/区域/起始点/矿/山丘/装饰）
   - [x] Init random map：**全阶段只消耗 1 个随机数**（`0x59A4C7`，25% 抛硬币）+ 格子/工作数组初值
   - [x] Seeding water：阶段结构 + 水面 tile 细化 `FUN_0059C630` 已还原并对拍
@@ -88,6 +89,7 @@ long double。同类的 `fsin` / `fpatan` / `f2xm1` 是否也如此，**未确�
 | `code/randmap/dump_scaled_golden.py` | 导出浮点取数惯用法的对拍基准 |
 | `code/randmap/dump_fastmath_golden.py` | 导出查表 sqrt / 均匀源 / 正态分布的对拍基准 |
 | `code/ghidra_scripts/find_writers.py` | 定位 .bss 全局的运行期初始化点（表内容不在文件里） |
+| `code/randmap/scan_rmg_rng.py` | 只列**生成器自己那个** Randomizer(0xABE890) 的取数点（按 this 判定） |
 | `code/ghidra_scripts/rng_closure.py` | 调用树传递闭包，找出某根函数下**所有**随机数取数点（真函数边界） |
 
 ## 复刻代码的可移植性立场

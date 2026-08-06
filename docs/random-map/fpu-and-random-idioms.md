@@ -124,6 +124,25 @@ ra2::rmg::FpuChopScope chop;   // _controlfp(_RC_CHOP, _MCW_RC)，析构时还�
 反过来说：只要复刻代码把 `0x58B772–0x5AC192` 这段里的取数点全部对齐，
 引擎其余部分做什么都不影响地图。
 
+把这 153 处逐一配对到后续的 `call`（工具 `code/randmap/scan_rmg_rng.py`，
+存档 `memory/data/rmg/rng_callsites_mapgen.txt`）：
+
+| 类别 | 处数 | 说明 |
+|------|------|------|
+| `Randomizer::Random` | **150** | 生成器全部的随机来源 |
+| `Randomizer::RandomRanged` | **0** | ⚠️ 一处都没有 |
+| `Randomizer::Randomizer`（播种） | 1 | `0x58B772`，**CRT 静态初始化**，seed=0，与生成无关 |
+| 非取数 | 2 | `0x598996` 播种时的 `rep movsd`；`0x5AC192` 恰好以此地址收尾的无关数组析构 |
+
+两条要点：
+
+1. **生成器一次 `RandomRanged` 都不用。** 先前"14 处 `RandomRanged`"的计数
+   是按函数地址数出来的，那些调用的 `this` 是别的对象。要区间随机时，
+   生成器一律走自己的 `PickRange`（`0x598030`，浮点比例 + 拒绝采样）。
+2. `0x58B770` 是个只有三条指令的全局对象构造函数（`push 0 / mov ecx / call`），
+   在 CRT 初始化表里（指针 `@0x813B68`），进程启动时以 seed=0 跑一次。
+   真正的播种仍然是 `0x598985` 那一处，**每张地图只此一次**。
+
 ## 三、浮点比例 + 拒绝采样惯用法
 
 以 `Seeding water` 阶段 `FUN_0059C630` 的三处为样本（最干净）：
