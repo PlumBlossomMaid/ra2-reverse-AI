@@ -135,6 +135,30 @@ a2mdpost\MapGen.cpp`（字符串 @0x82BA48） | **0x5956E7 – 0x59A63A** | 3934
   索引 `(Y*side + X)*0x50`；记录字段语义**未确认**
 - 文档：`docs/random-map/fpu-and-random-idioms.md`；取证 `memory/data/rmg/rng_callsites.txt`
 
+#### 4.6 原版数学基元与涂块核心（2026-08-06 夜，**形状的全部来源**）
+- **`FastSqrt @0x4CAC40` 不是真开方**：拆 float 位形，用尾数高 14 位查 `0x8650BC` 处
+  16384 项表，误差实测 5.7e-5 = 2⁻¹⁴。与 `std::sqrt` 系统性不等，**不可替换**。
+  表可由**纯整数**重算：`table[i] = isqrt(m>=2²³ ? 2m·2²³ : (2²³+m)·2²³) - 2²³`
+  ——16384/16384 与 exe 逐位相同，因此仓库里不留任何提取的二进制资产
+- **`NormalDeviate @0x5980C0`**：Marsaglia 极坐标法正态分布，对象在 `0xABDFB8`，
+  由 `FUN_00598960` 与全局 Randomizer 一并初始化（`+0x10` = 均匀源 `0x598000`）。
+  一次算两个、**缓存第二个** —— 调用次数的奇偶性直接改变随机数流节奏，不可省略；
+  拒绝（落在单位圆外）会额外消耗 2 个 `Random()`
+- **`fyl2x` 语义已定**：用高精度有理数重演整个发生器，与模拟器基准 **80/80 逐位一致**，
+  证明 PC=53/RC=chop 下 `fyl2x` ≡ **精确 ln 向零截断**。`std::log` 是就近舍入，约半数
+  取值差 1 ulp。**因此复刻模块整体切到 32 位 x86**（`build32/`），内联同一条 x87 指令；
+  下游的 `fsin`/`fpatan`/`f2xm1` 也能照此办理。`+ - × ÷` 不受影响（SSE2 与 x87-PC53 在同 RC 下等价）
+- **涂块核心 `FUN_0059BBC0` 已完整还原**：Dijkstra 式最小堆扩散。每次弹出优先级最小的
+  候选格变成陆地，把 4 个基本方向邻格入堆；优先级 = `FastSqrt(到引力中心距离)` +
+  均匀 `[0,5)` 抖动，而**引力中心每步做布朗运动**（`Normal() × 步长`，MapType 0 用 0.25、
+  MapType 1 用 0.75）——不规则海岸线全部源于此。区域约束是矩形的内切椭圆（`0x59BAB0`）。
+  收尾跑 `0x57A0C0` 铺岸线，**失败则整块抹回海里**（这就是"大片是海"的机制）
+- 邻接表 `0x89F688`（.bss，初始化于 `0x49F2F0`）：8 项 `{int16 dx,dy}` =
+  `(0,-1)(1,-1)(1,0)(1,1)(0,1)(-1,1)(-1,0)(-1,-1)`，涂块只取偶数下标
+- 产出：`code/rewrite/rmg/fast_math.{h,cpp}` + `test_fast_math.cpp`（5 项全过，
+  74 组 sqrt + 5 种子 × 16 正态，**逐位比较**）；基准 `memory/data/rmg/fastmath_golden.txt`
+- 文档：`docs/random-map/fast-math.md`、`docs/random-map/stage-seeding-water.md` §三
+
 #### 5. 验证方法论：Unicorn 指令级 oracle（可复用于后续每个阶段）
 `code/randmap/emu_oracle.py` 把 gamemd.exe 的节按原 ImageBase 0x400000 映射进
 Unicorn，用哨兵返回地址 + ECX 传 this 直接跑原版机器码取标准答案，再与独立重写对拍。
@@ -160,7 +184,10 @@ Unicorn，用哨兵返回地址 + ECX 传 this 直接跑原版机器码取标准
    只取 1 次随机数——命令行工具基本不需要复刻它。真正的地形算法在
    `Seeding water`（`0x59A6C0` / `0x59C580` / `0x59C630`）及之后，
    且集中在 **0x59A66C-0x5A9800 这段无调试宏的源文件**里（约 130 处取数点）。
-   下一步：把 `Seeding water` 三个入口完整还原 + 记录取数个数 + 片段对拍
+   `Seeding water` 的涂块核心与数学基元已完成（见 4.6），**剩余缺口**：
+   投放策略 `FUN_0059A8F0`（疑似按玩家数分区的 `(x,y,w,h)` 四元组）、
+   岸线平滑 `FUN_0057A0C0`（决定一块陆地被接受还是抹回海里）、
+   各 MapType 的取数个数统计、工作记录 0x50 字节的完整字段布局
 2. `.sed` 参数解析（含 UTF-16-hex `Description`）+ rules.ini 驱动的 RMG 配置（数据驱动）
 3. `.map` 输出：`[IsoMapPack5]` Base64 + XCC encode5，组装成 C++ 命令行程序
 4. 端到端验证：同种子 + 同参数 → 我们的 `.map` 与原版输出**逐字节比对**

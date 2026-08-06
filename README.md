@@ -122,11 +122,19 @@ a2mdpost\MapGen.cpp` 代码区 **0x5956E7-0x59A63A**（21KB，源码 6746 行）
   （`MapSeedClass+0x74`）→ "阶段顺序 + 每阶段取数个数"就是种子兼容性的全部内容
 - **取数惯用法复刻** ✅：算法主体不用 `RandomRanged`，而是浮点比例 + 拒绝采样
   `(int)((double)(uint32)Random() * (n/4294967295.0))`；重写 + gtest 3 项全过
+- **原版数学基元复刻** ✅：`FastSqrt@0x4CAC40` **不是真开方**——拆 float 位形查 16384 项表，
+  只有 14 位精度（误差 5.7e-5 = 2⁻¹⁴），且表可由**纯整数** `isqrt` 重算（16384/16384 逐位相同，
+  仓库不留提取的二进制）；`NormalDeviate@0x5980C0` 是 Marsaglia 极坐标法正态分布（缓存第二个值）。
+  高精度有理数重演证明 `fyl2x` ≡ **精确 ln 向零截断**（基准 80/80 逐位一致），
+  因此复刻模块整体切到 **32 位 x86** 并内联同一条 x87 指令；gtest 5 项全过
+- **陆地形状的算法已还原**：涂块核心 `FUN_0059BBC0` 是 Dijkstra 式最小堆扩散——
+  优先级 = `FastSqrt(到引力中心距离)` + 均匀 `[0,5)` 抖动，
+  而**引力中心每步做布朗运动**；收尾铺岸线失败则**整块抹回海里**
 - **验证方法论**：`code/randmap/emu_oracle.py` 用 Unicorn 指令级模拟跑原版机器码取标准答案，
   与独立重写逐位对拍（8 种子 × 播种状态/取数/区间随机全部一致）；
   并支持**任意代码片段执行**（给起止地址 + 寄存器 + FPU 控制字），含 x87 的惯用法即由此取真值
 - 文档：`docs/random-map/`　取证：`memory/data/decomp/mapgen_tu_map.txt` / `rmg_pipeline_decomp.txt` /
-  `randomizer_asm.txt`　基准：`memory/data/rmg/rng_golden.txt`
+  `randomizer_asm.txt` / `rmg_blob_growth.txt`　基准：`memory/data/rmg/rng_golden.txt` / `fastmath_golden.txt`
 
 ## 工作流速览
 
