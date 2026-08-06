@@ -208,12 +208,12 @@
 | 顺位 | 阶段 | 取数点 | 现状 |
 |------|------|--------|------|
 | 1 | 2 Seeding water | 31 | 🚧 算法骨架已还原，缺 tile 序号表 |
-| 2 | 3 Init regions | 1 | ⬜ 未开始 |
-| 3 | 5 Recalc cell attributes | 1 | ⬜ 未开始 |
-| 4 | 6 Creating starting points | 5 | ⬜ 未开始 |
-| 5 | 7 Adding tech buildings | 6 | ⬜ 未开始（`MapType≠0` 才跑） |
-| 6 | 8 Creating tiberium | 5 | ⬜ 未开始 |
-| 7 | 9 Creating hills | 1 | ⬜ 未开始 |
+| 2 | 3 Init regions | 1 | ✅ [stage-init-regions.md](stage-init-regions.md) |
+| 3 | 5 Recalc cell attributes | 1 | ✅ [stage-recalc.md](stage-recalc.md) |
+| 4 | 6 Creating starting points | 5 | ✅ [stage-starting-points.md](stage-starting-points.md) |
+| 5 | 7 Adding tech buildings | 6 | ✅ [stage-tech-buildings.md](stage-tech-buildings.md)（`MapType≠0` 才跑） |
+| 6 | 8 Creating tiberium | 5 | 🚧 [stage-tiberium.md](stage-tiberium.md)，矿田生长待补 |
+| 7 | 9 Creating hills | 1 | ✅ [stage-hills.md](stage-hills.md)，随机部分已实锤 |
 | 8 | 10 Creating LATs, rocks | 18 | ⬜ 未开始，`0x5A3AE0` 独占 10 处 |
 | 9 | 11 Cleanup / 12 Radar | 0 | ⬜ 不取随机数，但 Cleanup **会改地形**（重算格子属性），不能跳过 |
 
