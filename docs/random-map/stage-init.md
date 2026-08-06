@@ -14,7 +14,9 @@
 
 1. **它消耗且仅消耗 1 个随机数**（下面第二节）——随机流的第一笔账
 2. **全图格子与工作数组的初值**——后面所有阶段都建立在这套初值上
-3. 地图尺寸相关的派生量
+3. **地图真实尺寸 `W`/`H` 就是在这儿算出来的**（§三之二）——
+   `.sed` 里的 `Width`/`Height` 是 0..3 的档位而非格数，
+   后续每个阶段公式里的 `W`/`H` 全部来自这一步
 
 ## 二、唯一的取数点：`0x59A4C7`，一次 25% 抛硬币
 
@@ -70,7 +72,8 @@ bool flag310 = UniformUnit() < 0.25;      // UniformUnit 见 fast-math.md
 | 段 | 键 | 值 |
 |----|----|----|
 | `Map` | `Theater` | `"TEMPERATE" + Theater*0x70`（字符串表按 0x70 步长） |
-| `Map` | `Size` / `LocalSize` | 由 `local_7c` / `local_8c={2,5,…}` 拼出的矩形 |
+| `Map` | `Size` | `{0, 0, W+4, H+12}`（`local_7c`，见 §三之二） |
+| `Map` | `LocalSize` | `{2, 5, W, H}`（`local_8c`，X/Y 是写死的 2 和 5） |
 | `Map` | `Level` | `MapSeedClass +0x30C`，此处被写死为 **4** |
 | `Basic` | `Player` | 取自 `[0xA83C9C]->+0x24` |
 | `Lighting` | `Ambient` / `IonAmbient` | `预设表[Time] × [0x7E3808]`（`Time` = 参数 `+0x48`） |
@@ -81,6 +84,110 @@ bool flag310 = UniformUnit() < 0.25;      // UniformUnit 见 fast-math.md
 
 `Theater == 0` 与否会切换取哪一组预设表指针（`+0x1A8` vs `+0x1C4`，共 4 组 8 个指针），
 即**两套 theater 各一份光照预设**，再按 `Time` 下标取值。这些表本身在 `.bss`，内容未确认。
+
+## 三之二、地图到底有多大：`Width`/`Height` 参数**不是**格数
+
+这是复刻绕不开的一步——之前所有阶段的公式里都写着 `W = [0x87F8DC]`、`H = [0x87F8E0]`，
+但没人查过这俩全局是怎么来的。答案在阶段 1 最开头的 12 条指令里（`0x599665`-`0x599727`）：
+
+```asm
+00599665  fild dword ptr [edi + 0x64]        ; MapSeedClass.Width  ← 对话框滑条
+00599668  mov  esi, dword ptr [edi + 0x50]   ; NumPlayers
+0059966b  sub  esi, 2                        ; ← 下标 = NumPlayers - 2
+0059966e  fmul dword ptr [0x7ed968]          ; × 0.3333333432674408f (1/3)
+00599674  fstp dword ptr [esp + 0x14]        ; wt = Width / 3        （单精度！）
+00599678  fild dword ptr [edi + 0x68]        ; MapSeedClass.Height
+0059967b  fmul dword ptr [0x7ed968]
+00599681  fstp dword ptr [esp + 0x10]        ; ht = Height / 3
+```
+
+随后按 `MapType` 分两路把 `wt`/`ht` 夹到 `[0x7E5190] = 1.2`（double）：
+
+```asm
+0059968a  mov  eax, [edi + 0x3c]             ; MapType
+0059968d  cmp  eax, 3 / je  0x5996d7         ; MapType 3/4 跳过夹取
+00599697  fld  dword ptr [esp + 0x14]
+0059969b  fcomp qword ptr [0x7e5190]         ; wt vs 1.2
+          ...  wt = min(wt, 1.2)  ht = min(ht, 1.2)
+```
+
+最后是两条**同构的线性插值**，各自 `_ftol`（`0x7C5F00`，RC=chop 截断）落成整数：
+
+```asm
+005996db  fild dword ptr [esi*4 + 0x7ed634]  ; wLo[NumPlayers-2]
+005996e2  fld  dword ptr [0x7e2ac8]          ; 1.0f
+005996e8  fsub dword ptr [esp + 0x14]        ; 1 - wt
+005996ec  fmulp st(1)                        ; wLo * (1 - wt)
+005996ee  fild dword ptr [esi*4 + 0x7ed650]  ; wHi[NumPlayers-2]
+005996f5  fmul dword ptr [esp + 0x14]        ; wHi * wt
+005996f9  faddp st(1)
+005996fb  call 0x7c5f00                      ; _ftol
+00599700  mov  [edi + 0x180], eax            ; MapSeedClass +0x180 = 真实地图宽 W
+          ... 同样的四张表另一半算出 +0x184 = 真实地图高 H
+```
+
+即：
+
+```c
+int idx = NumPlayers - 2;                       // 2..8 玩家 -> 0..6
+float wt = Width  / 3.0f,  ht = Height / 3.0f;  // 单精度中间量
+if (MapType != 3 && MapType != 4) { wt = min(wt, 1.2); ht = min(ht, 1.2); }
+else                              { /* wt 不夹，且下面宽度也用 ht 而非 wt——见怪癖 */ }
+
+W = (int)(wLo[idx] * (1 - wt) + wHi[idx] * wt);   // 截断
+H = (int)(hLo[idx] * (1 - ht) + hHi[idx] * ht);
+MapSeedClass->+0x180 = W;   MapSeedClass->+0x184 = H;
+```
+
+### 四张插值表（`.rdata`，各 7 项，下标 = `NumPlayers - 2`）
+
+| 地址 | 表 | 2P | 3P | 4P | 5P | 6P | 7P | 8P |
+|---|---|---|---|---|---|---|---|---|
+| `0x7ED634` | `wLo` 宽·滑条最小 | 70 | 70 | 70 | 80 | 90 | 100 | 100 |
+| `0x7ED650` | `wHi` 宽·滑条最大 | 80 | 80 | 80 | 90 | 100 | 110 | 120 |
+| `0x7ED66C` | `hLo` 高·滑条最小 | 70 | 70 | 70 | 80 | 90 | 100 | 100 |
+| `0x7ED688` | `hHi` 高·滑条最大 | 80 | 80 | 80 | 90 | 100 | 110 | 120 |
+
+宽高两组表**逐项相同**——地图始终是正方形边长，长宽差异只来自 `Width`/`Height`
+两个滑条给出的不同 `wt`/`ht`。
+
+于是 `.sed` 里那个 `Width=0 / Height=0` 就解释通了：**它不是格数，是 0..3 的档位**
+（`/3` 之后正好铺满 `[0, 1]`，超过 3 被 1.2 的夹取兜住）。2 人图 `Width=0` → `W = 70`。
+
+### ⚠️ 怪癖：`MapType 3/4` 时宽度插值用的是 `ht`，不是 `wt`
+
+`0x5996D7` 那条跳转的落点是 `fld dword ptr [esp + 0x10]`——**加载的是 `ht`**，
+而正常路径 `0x5996A8`/`0x5996AE` 加载的是 `esp+0x14`（`wt`）。
+两路汇合到 `0x5996DB` 之后，第一段插值（算宽度）就用了栈顶这个值。
+也就是说 `MapType ∈ {3,4}` 时 **`Width` 滑条被完全忽略，宽度跟着 `Height` 滑条走**。
+
+这是一处典型的复制粘贴漏改。**按字节复刻必须照抄**（CLAUDE.md 硬性规范 #6）。
+
+### `side = W + H + 1`：工作数组边长的来源
+
+`0x42AC00`（`0x685198`/`0x6851A7` 处传入 `0x87F8D4` 那个矩形）：
+
+```asm
+0042ac56  mov  ecx, dword ptr [eax + 0xc]    ; rect.Height
+0042ac59  mov  edx, dword ptr [eax + 8]      ; rect.Width
+0042ac5c  lea  eax, [ecx + edx + 1]
+0042ac60  mov  dword ptr [0x89c2dc], eax     ; side = W + H + 1
+0042ac65  imul eax, eax                      ; side²
+0042ac68  lea  edi, [eax*4]                  ; 四个 side² 的 int 数组
+```
+
+`side = W + H + 1` 正是等距菱形的外接正方形边长（等距坐标 `X = rx+ry+1` 的上界），
+**实锤了工作数组为什么是方阵**、以及 `stage-init.md` §五 `side²×0x50` 的分母。
+同一函数顺带填了 8 个邻接步长全局（`0x89A304`-`0x89A320`）：
+`{-side, 1-side, 1, 1+side, side, side-1, -1, -1-side}`——按 `side` 展平后的八邻域。
+
+> 注意 `0x87F8D4` 那个矩形是被 `0x68554F`-`0x685560` **一次性清零**的
+> （`xor eax/ecx/edx/esi` 后四条 `mov`），真正的赋值在别处；
+> 而 `0x87F8DC`/`0x87F8E0` 全镜像**只有这一处写**，说明它们由更上层
+> （`0x685198` 那条地图重建路径）在读 `+0x180`/`+0x184` 之后填进去。
+> 「谁把 `MapSeedClass +0x180/+0x184` 搬进 `[0x87F8DC]/[0x87F8E0]`」**未确认**，
+> 但两者数值相等这一点被下游全部公式的自洽性反复佐证。
+
 
 ## 四、全图格子重置
 
@@ -143,6 +250,7 @@ int UsableCellCount() { return (H + 4) * W * 2; }   // W=[0x87F8DC], H=[0x87F8E0
 ## 七、未确认
 
 1. `MapSeedClass +0x310`（那个 25% 开关）具体开的是什么
-2. `Size` / `LocalSize` 两个矩形的具体来源（`local_7c` / `local_8c` 的填法）
+2. 谁把 `MapSeedClass +0x180/+0x184` 搬进 `[0x87F8DC]/[0x87F8E0]`——
+   尺寸的**算法**已实锤（§三之二），只剩这一段搬运没跟到
 3. `+0x30C` 恒为 4 是否在别处被改写
 4. 工作记录 `+0x04`

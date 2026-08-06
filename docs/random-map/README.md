@@ -13,7 +13,7 @@
 | [fpu-and-random-idioms.md](fpu-and-random-idioms.md) | 原版全局浮点环境 + 生成器取随机数的惯用法 | ✅ 已实锤并对拍 |
 | [fast-math.md](fast-math.md) | 查表近似 sqrt + Marsaglia 正态分布（形状的数学来源） | ✅ 已实锤并对拍 |
 | [rng-ledger.md](rng-ledger.md) | **随机数消耗总账**：104 个取数点 + 阶段归属 + 46 处死代码 | ✅ 清单已实锤 |
-| [stage-init.md](stage-init.md) | 阶段：Init random map（搭空 scenario，只抽 1 个随机数） | ✅ 取数点已实锤 |
+| [stage-init.md](stage-init.md) | 阶段：Init random map（搭空 scenario，只抽 1 个随机数）+ **地图尺寸的来源** | ✅ 取数点与尺寸算法已实锤 |
 | [stage-init-regions.md](stage-init-regions.md) | 阶段：Init regions（把地图切成连通区域，只抽 1 个随机数） | ✅ 流程与取数点已实锤 |
 | [stage-tiberium.md](stage-tiberium.md) | 阶段：Creating tiberium（布矿） | ✅ 外层 + 矿田生长全链已实锤 |
 | [stage-tech-buildings.md](stage-tech-buildings.md) | 阶段：Adding tech buildings（中立科技建筑，两条互斥分支） | ✅ 已实锤，含 `PickRange` 语义 |
@@ -41,6 +41,9 @@
       正态分布的缓存标志**跨阶段串**，只在每张地图开始时清零
 - [ ] 各阶段算法还原（地形/水域/区域/起始点/矿/山丘/装饰）
   - [x] Init random map：**全阶段只消耗 1 个随机数**（`0x59A4C7`，25% 抛硬币）+ 格子/工作数组初值
+  - [x] Init random map：**地图真实尺寸的算法实锤**——`.sed` 的 `Width`/`Height` 是 0..3 档位不是格数，
+        `W/H = lerp(表Lo[NumPlayers-2], 表Hi[NumPlayers-2], min(档位/3, 1.2))` 后 `_ftol` 截断；
+        四张 7 项表已 dump；`side = W + H + 1` 实锤（`0x42AC5C`）；另登记 1 条 `MapType 3/4` 的复制粘贴漏改
   - [x] Seeding water：阶段结构 + 水面 tile 细化 `FUN_0059C630` 已还原并对拍
   - [x] Seeding water：涂块核心 `FUN_0059BBC0`（最小堆扩散 + 中心布朗运动）算法已还原
   - [x] 数学基元 `FastSqrt` / 正态分布 / `ChopLog` 复刻并逐位对拍（含架构无关黄金值）
