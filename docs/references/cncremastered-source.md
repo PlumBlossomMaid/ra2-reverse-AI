@@ -111,6 +111,21 @@ return pick + minval;
 - RA1 类接口大量为旧命名（`Time_To_Build` vs YR `TimeToBuild`），
   对照时需注意命名漂移
 
+### RA1 参考答案的边界（随机地图生成器：完全无参考）
+
+2026-08 逆向阶段 10 时做过一次全树排查，结论要记牢：
+
+| 主题 | RA1 有无 | 说明 |
+|---|---|---|
+| 随机数发生器 | ✅ 有 | `RANDOM.H/CPP`，YR 的 `Randomizer` 就是同一套骨架 |
+| `.ini` 读取 | ✅ 有 | `CCINI.CPP`，`ReadInteger` 语义可直接对照 |
+| **随机地图生成器** | ❌ 无 | 全树 grep `MapSeed` / `Ruggedness` / `random map` **零命中**；RMG 是 Tiberian Sun 才有的，TS 源码未公开 |
+| **LAT 自动过渡** | ❌ 无 | RA1 是 2D 正方格 + 手工枚举的 `TEMPLATE_*` 表（`CDATA.CPP`），与 `CellClass::SetupLAT` 的邻接推导不是一回事 |
+| **等距地图 / 高度场** | ❌ 无 | RA1 无 Z 轴、无 `IsoMapPack5` |
+
+所以：**「随机数 / ini / 单位逻辑 / 存档」优先查 RA1；
+「等距地图 / LAT / 高度场 / RMG」只能靠反汇编硬啃**。
+
 ## 使用方式
 
 1. 逆向 YR 机制遇阻时，先 grep RA1 同名类/函数（在线浏览：
