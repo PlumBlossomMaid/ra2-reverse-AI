@@ -43,7 +43,9 @@
   - [x] Init random map：**全阶段只消耗 1 个随机数**（`0x59A4C7`，25% 抛硬币）+ 格子/工作数组初值
   - [x] Init random map：**地图真实尺寸的算法实锤**——`.sed` 的 `Width`/`Height` 是 0..3 档位不是格数，
         `W/H = lerp(表Lo[NumPlayers-2], 表Hi[NumPlayers-2], min(档位/3, 1.2))` 后 `_ftol` 截断；
-        四张 7 项表已 dump；`side = W + H + 1` 实锤（`0x42AC5C`）；另登记 1 条 `MapType 3/4` 的复制粘贴漏改
+        四张 7 项表已 dump；`side = W + H + 1` 实锤（`0x42AC5C`）；
+        **已复刻并全网格对拍**（1260 例，`code/rewrite/rmg/map_size.cpp`）——
+        实锤了「插值必须逐步 chop 舍入」：精确算术会把 `70×(1-1.2)+80×1.2` 算成 82，原版是 81
   - [x] Seeding water：阶段结构 + 水面 tile 细化 `FUN_0059C630` 已还原并对拍
   - [x] Seeding water：涂块核心 `FUN_0059BBC0`（最小堆扩散 + 中心布朗运动）算法已还原
   - [x] 数学基元 `FastSqrt` / 正态分布 / `ChopLog` 复刻并逐位对拍（含架构无关黄金值）

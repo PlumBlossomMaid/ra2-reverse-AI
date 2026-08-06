@@ -95,3 +95,30 @@ xor eax,ecx,edx,esi 之后的一次性清零，真正的赋值路径没跟到。
   fstp dword          落 float，chop 到 24 位
   min(x, 1.2)         1.2 是 double 0x3FF3333333333333
   _ftol               向零截断
+
+== 舍入敏感性（1260 例全网格上重跑，2026-08-06）==
+网格：NumPlayers 2..8 × MapType 0..4 × WidthStep 0..5 × HeightStep 0..5
+基准存档：memory/data/rmg/map_size_golden.txt（Unicorn 逐指令跑 0x599665-0x59974E）
+
+变体                                          不一致例数
+--------------------------------------------  ----------
+基准（RC=chop；wt 落 float，ht 留 double）           0
+若 ht 也回落 float                                   0   ← 观察不到，但仍按汇编照抄
+若 wt 也留 double                                    0   ← 同上
+若全程 round-to-nearest                            420   ← RC=chop 是硬约束
+若用精确有理算术（不逐步舍入）                     252   ← 70*(1-1.2)+80*1.2 会算成 82
+
+最后一行是最容易踩的坑：精确算术下 70*(1-t)+80*t 恒等于 70+10t，
+t 取有理数 6/5 得整整 82；而 double 的 1.2 = 1.1999999999999999556，
+逐步 chop 之后是 81.99999999999999，_ftol 截断成 81。原版给的是 81。
+
+x87 栈上的 ht 已直接读寄存器验证：Height=4 / MapType=1 时
+ST 的 64 位尾数 = 0x9999999999999800，即双精度 1.2（不是单精度那份
+1.1999999284744263 → 0x9999980000000000）。
+
+== 复刻状态 ==
+code/rewrite/rmg/map_size.{h,cpp}
+code/rewrite/rmg/test/test_map_size.cpp —— 1260 例黄金对拍全绿
+必须在 FpuChopScope 作用域内调用。
+夹取用的 1.2f 在源码里写死为 1.1999999284744263f：
+编译期常量折叠按就近舍入会得到 1.2000000476837158f，fesetround 管不到编译期。
