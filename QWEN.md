@@ -51,7 +51,8 @@ E:\code\ra2-reverse-AI\
 - Ghidra 工程：`E:\code\ra2-reverse\ghidra_proj\RA2`（gamemd.exe 全量分析，含三层符号）
 - MSVC 编译：`vcvars64.bat` + `cl /std:c++17 /utf-8 /W4`
 - 原版二进制：`E:\YRLauncher\gamemd.exe`
-- 交叉验证源码：YRpp `E:\code\YRpp`（GPL，Ares-Developers 克隆）、Phobos `E:\code\Phobos`（GitHub 克隆）
+- 交叉验证源码：YRpp `E:\code\YRpp`（GPL，Ares-Developers 克隆）、Phobos `E:\code\Phobos`（GitHub 克隆）、
+  EA 官方任务编辑器 `E:\code\CNC_TS_and_RA2_Mission_Editor`（GPL-3.0，.map 读写权威实现）
 
 ## 当前状态与下一步
 
@@ -72,13 +73,21 @@ E:\code\ra2-reverse-AI\
   采矿 `UnitClass`（0x73D000 区 13 hook）、寻路 `MapClass::Update_Pathfinding_1/2`（0x56C510/0x586990）；
   **逻辑心脏 `LogicClass::Update`**（MainLoop 内驱动，胜负判定/全游戏更新的挂载点）
 - **地图生成器（遭遇战随机地图，用户目标：命令行程序输出原版逻辑对齐的 .map）**：
-  侦察完成（2026-08-06）——随机地图入口在加载层 0x684620 随机分支，但 FUN_00597A10
-  只是 0x1D 字节跳板，**真身在 vtable+4 虚函数**（下轮从调用上下文定位对象类型）；
+  **生成器本体已定位（2026-08-06 上午）**——MapGeneratorClass 方法区 @ 0x597000-0x598000：
+  读参数 ReadParameters @ 0x597A30（16×ReadInteger+1×ReadString，节名 "RandomMap"@0x82bb24）、
+  写参数 WriteParameters @ 0x597757、加载 @ 0x597D60（strcmp RandMap.Sed/lastmap.sed）、
+  跳板 FUN_00597A10 = vtable[1] 调用；17 参数↔对象偏移映射已还原（Width+0x64/Height+0x68/
+  NumPlayers+0x50/Seed+0x74/MapType+0x3c/Theater+0x38/.../Description+0x78 字符串）；
+  源码文件名实锤：调试宏 `D:\ra2mdpost\MapGen.cpp`@0x82ba48。
   **Randomizer（R250：250 uint 状态双索引 XOR 回绕）@ 0x65C780 完整还原** + RandomRanged
-  拒绝采样 @ 0x65C7E0；**读图入口 ReadMap = FUN_00689E90 @ 0x689E90**（[Header] StartX/Width/
-  Height/NumberStartingPoints、[Basic]、[Waypoint] Read2Integers）——输出端对齐目标。
-  取证 `memory/data/decomp/randmap_probe.txt`；脚本 `code/ghidra_scripts/decompile_randmap.py`。
-  注意：RA1 源码（CnCRemastered）**无**随机地图生成器（TS/RA2 新特性），仅底层随机数/地形可参照
+  拒绝采样 @ 0x65C7E0；读图入口 ReadMap = FUN_00689E90 @ 0x689E90（[Header]/[Basic]/[Waypoint]）。
+  **.map cell 二进制格式（EA 官方编辑器源码实锤）**：`E:\code\CNC_TS_and_RA2_Mission_Editor`
+  （GPL-3.0）——MAPFIELDDATA 11B/cell（u16X+u16Y+u16Ground+bData[3]+bHeight+bData2[1]），
+  [IsoMapPack5] = Base64(块:2B src+2B dst+数据)→XCC decode5s 解压；[OverlayPack]=encode80。
+  取证 `randmap_gen_asm.txt`/`randmap_xref.txt`；脚本 `xref_randmap_strings.py`/
+  `dump_randmap_asm.py`/`_dump_randmap_strs.py`/`_pe_off2va.py`。
+  注意：RA1 源码（CnCRemastered）**无**随机地图生成器（TS/RA2 新特性），仅底层随机数/地形可参照；
+  EA 任务编辑器也**无**生成器（只是 .map 读写权威参照）
 - **待确认**：`DemandProduction` 第三参数语义；`Unsuspend` 资金不足时挂起标志的行为；
   多工厂海军/陆军计数差异；`target->Target==me` 时反击贡献取负的语义；`Type+0x1FB` 标志名称；
   胜负判定 0x4F8440 的调用者；house+0x1F7（胜利条件）写入点；WinMain COM 类清单

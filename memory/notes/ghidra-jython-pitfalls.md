@@ -54,6 +54,23 @@ Ghidra headless 用 Jython 2.7，与 CPython 差异巨大。以下每条都是�
     且必须区分 float/double：`0x7E1718` 是 double 1.0，
     按 float 读只有 0.0（`read_constants.py` 可验证）。
 
+11. **`os`/`_REPO` 不是内置的**
+    部分历史脚本直接 `os.path.join(_REPO, ...)`，依赖旧会话注入的环境变量，
+    新会话 headless 环境没有——报 `NameError: name 'os' is not defined`。
+    新脚本一律显式：
+    ```python
+    import os
+    _REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+    ```
+    （脚本位于 `<repo>/code/ghidra_scripts/`，上两级即仓库根）
+
+12. **字符串 xref 可能混入相邻字符串的引用**
+    .data 里字符串连续存储时，`getReferencesTo(0x829abc)` 会把引用同一 data
+    块内相邻地址（如 0x82bb24"RandomMap"）的指令也算进"RandMap.img"的 xref。
+    判真伪要看引用指令 PUSH/MOV 的立即数是否精确等于目标地址。
+    顺带：这也让"找字符串引用者"变成"找整个字符串块引用者"，按引用地址
+    聚类（如全部落在 0x597xxx 区）反而能直接定位相关类的方法区。
+
 ## 常用运行命令
 
 ```
