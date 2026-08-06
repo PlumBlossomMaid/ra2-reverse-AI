@@ -47,7 +47,7 @@ Resources=3
 
 | 偏移 | 字段 | 说明 |
 |---|---|---|
-| `+0x38` | `Theater` | 地形主题 |
+| `+0x38` | `Theater` | 地形主题。**RMG 只开放 0 = 温和、1 = 雪地**，见下文 |
 | `+0x3C` | `MapType` | 群岛/大陆等，默认 1 |
 | `+0x40` | `Resources` | 资源丰富度，默认 1 |
 | `+0x44` | `Ruggedness` | 崎岖度 |
@@ -75,6 +75,31 @@ Resources=3
 这些字段由 `FUN_00595740` 在构造后填充（先调 `MapSeedClass::MapSeedClass @0x595680`，
 再连续 10 次调 `0x477DB0` / 2 次 `0x477BE0` 读列表型规则项）——
 **说明生成结果同时受 rules.ini 影响，复刻时必须数据驱动，不能硬编码。**
+
+## Theater：RMG 只支持 2 种气候
+
+游戏内的随机地图对话框只有**温和 / 雪地**两项（实机确认）。二进制侧三条独立佐证：
+
+1. **rules.ini 的 RMG 配置键只有两套**，读取点 `0x59843E`-`0x598871`：
+   `TemperateAmbientLight` / `SnowAmbientLight`、
+   `Temperate/SnowAmbientRed|Green|Blue`、`TemperateOrePatchLamps` / `SnowOrePatchLamps`。
+   **没有** Urban / Desert / NewUrban / Lunar 的对应项。
+2. **阶段 10 只有两条分支**：`Theater == 0` 走温带专用的 `0x5A38C0` + `0x5A3AE0`，
+   否则走 `0x5A4280`（见 [stage-lats.md](stage-lats.md)）——若真要支持 6 个 theater，
+   不会是这种写法。
+3. `0x5997C0` 处按 `"TEMPERATE" + Theater * 0x70` 索引 `TheaterTypeClass` 表
+   （表基址 `0x7E1B78`，步长 `0x70`）。表本身**确实**有 6 项：
+
+| idx | 名字 | ini 前缀 | ISO 前缀 | 后缀 |
+|---|---|---|---|---|
+| 0 | `TEMPERATE` | `TEMPERAT` | `ISOTEMP` / `ISOTEM` | `TEM` / `MMT` / `T` |
+| 1 | `SNOW` | `SNOW` | `ISOSNOW` / `ISOSNO` | `SNO` / `MMS` / `A` |
+| 2 | `URBAN` | … | … | … |
+
+但 RMG 只会往里传 0 或 1。
+
+> 复刻程序据此可以**只实现两条 theater 路径**，并对 `Theater ∉ {0,1}` 直接报错——
+> 这不是简化，是与原版可达行为一致。
 
 ## 相关文件
 
