@@ -164,7 +164,8 @@ if (visited > 0x4A) goto 建区域;               // 74 格以上才算数
 | `+0x16` | seed 的 packed XY | 种子格 |
 | `+0x1A` | 0（`Finalize` 会改写成它的参数） | 未确认 |
 | `+0x1B` | 1 | 未确认 |
-| `+0x28` | `DynamicVectorClass` 头，容量 100000 | 成员格列表？未确认 |
+| `+0x20` | 0 | **分到的出生点个数**（阶段 6 写，见 [stage-starting-points.md](stage-starting-points.md)） |
+| `+0x28` | `DynamicVectorClass<CellStruct>` 头，容量 100000 | **本区域的格子表**（数据 `+0x2C`、个数 `+0x38`） |
 
 对象存进全局向量：数据 `[0xABDF94]`、个数 `[0xABDFA0]`、容量 `[0xABDF98]`、
 向量对象 `[0xABDF90]`。
@@ -176,5 +177,5 @@ if (visited > 0x4A) goto 建区域;               // 74 格以上才算数
 2. `0x4867B0` 认的那组砖（`[0xAA0E18]` / `[0xAA0748, +0x10)`）是什么
 3. `[0xABE2E4]`——`Level` 为 −1 时的兜底值，来源未确认
 4. `0x5A0700` 的容量预留 `[MapSeed+0x180] * [MapSeed+0x184]` 对应哪两个规则项
-5. RegionClass `+0x00/+0x04/+0x1A/+0x1B/+0x28` 的语义
+5. RegionClass `+0x00/+0x04/+0x1A/+0x1B` 的语义
 6. 工作记录 `+0x4B`（`SeedRegion` 并区时清 0，`FloodRest` 要求它非 0）的含义
