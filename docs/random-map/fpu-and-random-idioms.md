@@ -131,7 +131,11 @@ ra2::rmg::FpuChopScope chop;   // _controlfp(_RC_CHOP, _MCW_RC)，析构时还�
 | `Randomizer::Randomizer`（播种） | 1 | `0x58B772`，**CRT 静态初始化**，seed=0，与生成无关 |
 | 非取数 | 2 | `0x598996` 播种时的 `rep movsd`；`0x5AC192` 恰好以此地址收尾的无关数组析构 |
 
-两条要点：
+再往下筛一层：这 150 处里有 **46 处在死代码里**（22 个函数，入口在整个镜像里
+零引用），真正会被执行的是 **104 处**。逐点的阶段归属见
+[rng-ledger.md](rng-ledger.md)。
+
+三条要点：
 
 1. **生成器一次 `RandomRanged` 都不用。** 先前"14 处 `RandomRanged`"的计数
    是按函数地址数出来的，那些调用的 `this` 是别的对象。要区间随机时，
@@ -139,6 +143,9 @@ ra2::rmg::FpuChopScope chop;   // _controlfp(_RC_CHOP, _MCW_RC)，析构时还�
 2. `0x58B770` 是个只有三条指令的全局对象构造函数（`push 0 / mov ecx / call`），
    在 CRT 初始化表里（指针 `@0x813B68`），进程启动时以 seed=0 跑一次。
    真正的播种仍然是 `0x598985` 那一处，**每张地图只此一次**。
+3. 有一处取数点（`0x598003`，即 `UniformUnit@0x598000`）**没有任何直接调用者**——
+   它的地址被写进全局对象 `0xABDFB8` 的 `+0x10` 字段，由 `NormalDeviate@0x5980C0`
+   以 `call dword ptr [esi+0x10]` 调用。纯静态扫描会漏掉，见 [rng-ledger.md](rng-ledger.md) §四。
 
 ## 三、浮点比例 + 拒绝采样惯用法
 

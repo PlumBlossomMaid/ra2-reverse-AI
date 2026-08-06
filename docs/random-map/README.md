@@ -12,6 +12,7 @@
 | [parameters.md](parameters.md) | MapSeedClass 参数集与 `.sed` 文件格式 | ✅ 已实锤 |
 | [fpu-and-random-idioms.md](fpu-and-random-idioms.md) | 原版全局浮点环境 + 生成器取随机数的惯用法 | ✅ 已实锤并对拍 |
 | [fast-math.md](fast-math.md) | 查表近似 sqrt + Marsaglia 正态分布（形状的数学来源） | ✅ 已实锤并对拍 |
+| [rng-ledger.md](rng-ledger.md) | **随机数消耗总账**：104 个取数点 + 阶段归属 + 46 处死代码 | ✅ 清单已实锤 |
 | [stage-init.md](stage-init.md) | 阶段：Init random map（搭空 scenario，只抽 1 个随机数） | ✅ 取数点已实锤 |
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | 🚧 算法骨架 + 随机数账本已还原，缺 tile 序号表 |
 
@@ -26,6 +27,10 @@
 - [x] 浮点比例 + 拒绝采样取数惯用法复刻 + 对拍（`scaled_random`）
 - [x] **`0xABE890` 的使用边界实锤**：153 处引用全在 `0x58B772-0x5AC192`，引擎侧一处没有
 - [x] 生成器取数点全清单：**150 处 `Random`、0 处 `RandomRanged`**（按 this 配对）
+- [x] **总账落地**：150 处里 46 处是链接器留下的死代码（22 个函数零引用），
+      真正会执行的是 **104 处**，且已逐点归到 12 个阶段名下 → [rng-ledger.md](rng-ledger.md)
+- [x] `UniformUnit@0x598000` 只经函数指针 `[0xABDFB8+0x10]` 被 `NormalDeviate` 调用；
+      正态分布的缓存标志**跨阶段串**，只在每张地图开始时清零
 - [ ] 各阶段算法还原（地形/水域/区域/起始点/矿/山丘/装饰）
   - [x] Init random map：**全阶段只消耗 1 个随机数**（`0x59A4C7`，25% 抛硬币）+ 格子/工作数组初值
   - [x] Seeding water：阶段结构 + 水面 tile 细化 `FUN_0059C630` 已还原并对拍
@@ -77,6 +82,17 @@ long double。同类的 `fsin` / `fpatan` / `f2xm1` 是否也如此，**未确�
 同一次扫描，猜边界得到"可达 2525 个函数"（跑飞了），真边界只有 93 个。
 结果存档 `memory/data/decomp/rng_closure.txt`。
 
+后来把这套做法又推翻了一次：**Ghidra 的调用图在 MapGen 这段并不完整**
+（相当多的函数它根本没定义，图走到那儿就断），而且 `jmp` 跳转表与函数指针
+两种边它都不给。最终形态是 `code/randmap/call_closure.py`——
+从阶段入口做**指令级递归下降**，记录访问过的每一条指令地址，
+解 switch 跳转表，人工补已实锤的函数指针边。三条经验：
+
+1. 判"这段代码取不取随机数"要看 `this`，不是看调了哪个函数
+2. 判"这个函数会不会被执行"要往上追引用，**零引用就是死代码**——
+   150 个取数点里有 46 个根本不会跑
+3. 判"哪个阶段用得到"要用指令级可达性，函数边界靠不住
+
 ## 工具箱（本模块新增，均为纯只读 PE 分析，不依赖 Ghidra）
 
 | 脚本 | 作用 |
@@ -91,6 +107,7 @@ long double。同类的 `fsin` / `fpatan` / `f2xm1` 是否也如此，**未确�
 | `code/ghidra_scripts/find_writers.py` | 定位 .bss 全局的运行期初始化点（表内容不在文件里） |
 | `code/randmap/scan_rmg_rng.py` | 只列**生成器自己那个** Randomizer(0xABE890) 的取数点（按 this 判定） |
 | `code/ghidra_scripts/rng_closure.py` | 调用树传递闭包，找出某根函数下**所有**随机数取数点（真函数边界） |
+| `code/randmap/call_closure.py` | **指令级**递归下降可达性：把取数点归到阶段、并判出死代码（解 switch 跳转表） |
 
 ## 复刻代码的可移植性立场
 

@@ -123,6 +123,12 @@ a2mdpost\MapGen.cpp`（字符串 @0x82BA48） | **0x5956E7 – 0x59A63A** | 3934
   **150 处 `Random`、0 处 `RandomRanged`**（`code/randmap/scan_rmg_rng.py`）。
   按函数地址数出的"14 处 Ranged"用的都是引擎自己那个 Randomizer 对象——
   **判断"谁在取随机数"必须看 `this`，不能只看调用了哪个函数**。
+  再往上追引用：**46 处落在零引用的死代码里**（22 个函数，`0x5A5020` 那棵子树
+  一整棵都是），真正会执行的是 **104 处**，已逐点归到 12 个生成阶段名下
+  （`code/randmap/call_closure.py` → `docs/random-map/rng-ledger.md`）。
+  归属要用**指令级递归下降**而非调用图：Ghidra 在 MapGen 这段有大量未定义函数，
+  图会断；switch 跳转表要解；函数指针边要人工补
+  （`UniformUnit@0x598000` 只经 `NormalDeviate` 的 `call [esi+0x10]` 被调用）。
   算法主体用的是浮点比例 + 拒绝采样：
   `do { v = (int)((double)(uint32)Random() * (n/4294967295.0)); } while (v > n-1);`
   比例常数已核对（`0x7ED9E8`=10 / `0x7ED9E0`=242 / `0x7ED9D8`=201 各除以 2^32-1，
