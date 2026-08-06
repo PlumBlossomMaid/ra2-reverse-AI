@@ -57,3 +57,32 @@
 7. **`vcvars32.bat` 报 `vswhere.exe` 找不到但仍能用**
 
    报错可忽略，环境实际初始化成功（会打印 `Environment initialized for: 'x86'`）。
+
+## `.bss` 里的表怎么取到内容
+
+8. **"`.bss` 全局 = 运行期由 theater/ini 决定"这个假设会骗人**
+
+   `.bss` 在文件里没有内容，看不到值。但**不代表它是运行期数据**——
+   MSVC 的 C++ 静态初始化器（namespace 作用域对象的构造）也会填 `.bss`，
+   而且是在 `WinMain` 之前由 CRT `_initterm` 跑掉的。
+
+   典型症状：这类初始化器**没有任何 `call` 指向它**（`E8 rel32` 全扫零命中），
+   只有一个函数指针躺在 `.data` 的初始化器指针表里。
+
+   取内容的三步：
+
+   1. 先 `xref_abs.py` 找到唯一的**读**点，确认表基址与步长
+   2. 在整个文件里搜 `struct.pack("<I", 函数VA)`——命中在 `.data` 的一片
+      连续函数指针表里，就说明它是 CRT 静态初始化器
+   3. `emu_oracle.py` 的 `run_range(初始化器起, 结尾 ret)` 直接跑，
+      跑完 `uc.mem_read(表基址, 长度)` dump 出来
+
+   实例：岸线贴砖的落点偏移表 `[0xABDB64]`（43 项 `{int16 dx, int16 dy}`），
+   初始化器 `0x57A9C0`，指针在 `0x813AB4`。见
+   `docs/random-map/stage-seeding-water.md` §七末与 `memory/data/rmg/shore_tables.txt`。
+
+9. **判"这张表随不随 theater 变"要看它在哪个节**
+
+   `0x82A7F4` / `0x82A89C` 这两张 42 项表一度被记成"`.bss`，由 theater 决定"，
+   实际在 `.data`——写死在 exe 里的 `int[42]`，直接读文件就有。
+   写文档前先用 `read_const.py` 试读一下：读得出来就是静态数据，读不出来才是 `.bss`。
