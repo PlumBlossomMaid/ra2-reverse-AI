@@ -48,4 +48,8 @@ if(RA2_BUILD_TESTS)
   add_executable(test_map_geometry test/test_map_geometry.cpp)
   target_link_libraries(test_map_geometry PRIVATE ra2_rmg gtest_main)
   add_test(NAME map_geometry COMMAND test_map_geometry)
+
+  add_executable(test_blob_heap test/test_blob_heap.cpp)
+  target_link_libraries(test_blob_heap PRIVATE ra2_rmg gtest_main)
+  add_test(NAME blob_heap COMMAND test_blob_heap)
 endif()
