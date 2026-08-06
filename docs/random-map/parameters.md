@@ -65,6 +65,45 @@ Resources=3
 | `+0x74` | `Seed` | 随机种子，默认 -1 |
 | `+0x78` | `DescriptionBuffer` | `FixedWString<0x80>`，占 0x100 字节，止于 `+0x178` |
 
+### 构造函数写下的默认值（`0x595680`）
+
+`LoadMission` 把**字段当前值**当作 `ReadInteger` 的 default 传进去，
+所以「.sed 里缺哪个键」等价于「保留构造函数给的值」：
+
+| 字段 | 默认 | 字段 | 默认 |
+|---|---|---|---|
+| `Theater` | 0 | `Tiberium` | 0 |
+| `MapType` | **1** | `TiberiumLayout` | 0 |
+| `Resources` | **1** | `Vegetation` | 0 |
+| `Ruggedness` | 0 | `UrbanPresence` | 0 |
+| `Time` | **1** | `Width` / `Height` | 0 |
+| `WaterAmount` | 0 | `Accessibility` | 0 |
+| `NumPlayers` | **2** | `RegionSize` | 0 |
+| | | `Seed` | **-1** |
+
+`Description` 缓冲区（`+0x78`）被 `mov word ptr [edi], ax` 置成空串。
+
+### `ReadInteger` 的取值语义（`0x5276D0` 尾段）
+
+不是简单的 `atoi`，是西木家 `INIClass::Get_Int` 那套，三条路径：
+
+```asm
+00527851  cmp  byte ptr [edx], 0x24        ; '$'
+0052785b  push 0x825bb8                    ; "$%x"   -> sscanf
+00527883  movsx edx, byte ptr [ecx+edx-1]  ; 末字符
+00527889  call 0x7caff4                    ; tolower
+00527891  cmp  eax, 0x68                   ; 'h'
+0052789e  push 0x825bb4                    ; "%xh"   -> sscanf
+005278be  call 0x7c9bfd                    ; 其余 -> atoi
+```
+
+与 RA1 `INI.CPP` 的 `Get_Int` 完全一致（[C&C 开源仓库](https://github.com/electronicarts/CnC_Remastered_Collection)），
+又一次印证"RA1 是 RA2 的参考答案"。`.sed` 实际只写十进制，
+但复刻要照抄——否则手写 `Seed=$1F` 这类输入会与原版分叉。
+
+**复刻状态**：`code/rewrite/rmg/map_seed_params.{h,cpp}`，
+回归 `test/test_map_seed_params.cpp`。
+
 `+0x178` 之后是 rules.ini 驱动的 RMG 配置（YRpp 标注）：
 `RMGLevelLightSettings @+0x188`、`TemperateAmbientLight @+0x1A4`、…、
 `RMGVegetationMinimums @+0x284` / `RMGVegetationMaximums @+0x2A0`、

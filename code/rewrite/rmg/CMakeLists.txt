@@ -4,6 +4,7 @@ add_library(ra2_rmg
   scaled_random.cpp
   fast_math.cpp
   map_size.cpp
+  map_seed_params.cpp
   fp_guard.cpp)
 
 target_include_directories(ra2_rmg PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -39,4 +40,8 @@ if(RA2_BUILD_TESTS)
   add_executable(test_map_size test/test_map_size.cpp)
   target_link_libraries(test_map_size PRIVATE ra2_rmg gtest_main)
   add_test(NAME map_size COMMAND test_map_size)
+
+  add_executable(test_map_seed_params test/test_map_seed_params.cpp)
+  target_link_libraries(test_map_seed_params PRIVATE ra2_rmg gtest_main)
+  add_test(NAME map_seed_params COMMAND test_map_seed_params)
 endif()
