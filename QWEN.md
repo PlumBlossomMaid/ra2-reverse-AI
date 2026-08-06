@@ -72,7 +72,7 @@ E:\code\ra2-reverse-AI\
 - **候选机制**：弹道伤害 `MapClass::DamageArea`（0x489000 区 22 hook）、
   采矿 `UnitClass`（0x73D000 区 13 hook）、寻路 `MapClass::Update_Pathfinding_1/2`（0x56C510/0x586990）；
   **逻辑心脏 `LogicClass::Update`**（MainLoop 内驱动，胜负判定/全游戏更新的挂载点）
-- **地图生成器（遭遇战随机地图，用户目标：命令行程序输出原版逻辑对齐的 .map）**：
+- **地图生成器（遭遇战随机地图，用户目标：完美复刻原版逻辑对齐——三层愿景：字节级复刻 → 为完美重写红警2铺路 → 开源回馈社区；见 README 愿景节）**：
   **生成器本体已定位（2026-08-06 上午）**——MapGeneratorClass 方法区 @ 0x597000-0x598000：
   读参数 ReadParameters @ 0x597A30（16×ReadInteger+1×ReadString，节名 "RandomMap"@0x82bb24）、
   写参数 WriteParameters @ 0x597757、加载 @ 0x597D60（strcmp RandMap.Sed/lastmap.sed）、

@@ -8,8 +8,18 @@
 ## 为什么做这个
 
 - 社区已有 20 年逆向成果（YRpp 符号体系、Ares/Phobos 扩展），但**原版二进制 + 符号 + 反编译 + 算法重写**的完整链路鲜有公开
-- 目标不是复刻游戏，而是**挖出机制、用高级语言重写、回馈社区**——像一个可以持续扩展的"游戏机制百科"
+- 目标不是分发复刻游戏，而是**独立重写机制（行为对齐）、回馈社区**——像一个可以持续扩展的"游戏机制百科"
 - 本仓库同时记录 **AI 辅助逆向的工作流**：符号标注 → 反编译 → 汇编核对 → 算法重写 → 数值验证
+
+## 愿景（2026-08-06）
+
+**三层目标**——当前进行中的模块：遭遇战随机地图生成器逆向：
+
+1. **完美复刻（本质）**：不是"新写一套能用就行"的随机地图生成程序，而是**字节级复现原版逻辑**——同一种子 → 同一张 .map（哈希对比验证）。生成地图只是副产品
+2. **为重写铺路（进阶）**：为"完美重写红警2"（引擎级 reimplementation，OpenRA 式黑盒行为对齐 + 独立实现）积累子系统拼图——生产系统、威胁评估、游戏循环、存档格式、随机地图生成器……本模块是第一个交付条件成熟的基石
+3. **回馈社区（愿景）**：社区有 XCC（.map 读写）、Ares/Phobos（mod 扩展），但**字节级复现原版随机地图生成逻辑的独立工具是空白**——开源即填补
+
+> **对齐标准提醒**：原版生成器允许"不平衡/偶尔离谱"的地图（孤岛开局、半张废图）是**原版口味**——复刻出孤岛是**对齐成功的证据**，不是 bug；反之原版出孤岛而我们出不了，说明约束规则抄漏了。
 
 ## 目录结构
 
@@ -94,6 +104,18 @@ ra2-reverse-AI/
 - **实证**：2002 原版 vs 2022 mod 存档外壳完全兼容 → 跨 mod 鬼畜/V3 核弹根源在 CONTENTS 对象镜像
 - 文档：`docs/save-game/sav-format.md`
 
+### 随机地图生成器逆向（进行中，2026-08-06）
+- **生成器本体已定位**：MapGeneratorClass 方法区 @ 0x597000-0x598000
+  - ReadParameters @ 0x597A30（16×ReadInteger + 1×ReadString，节名"RandomMap"）
+  - WriteParameters @ 0x597757 / 加载 @ 0x597D60 / 虚函数跳板 FUN_00597A10（vtable[1]）
+  - **17 参数 ↔ 对象偏移映射已还原**（Width/Height/NumPlayers/Seed/MapType/Theater/…/Description）
+  - 调试宏实锤源码文件名：`D:\ra2mdpost\MapGen.cpp`
+- **Randomizer（R250）@ 0x65C780 完整还原** + RandomRanged 拒绝采样 @ 0x65C7E0
+- **读图入口**：ReadMap @ 0x689E90（[Header]/[Basic]/[Waypoint]）
+- **.map cell 二进制格式（EA 官方编辑器源码实锤，GPL-3.0）**：MAPFIELDDATA 11B/cell
+  + [IsoMapPack5]（Base64 → XCC decode5s 压缩）；EA 官方编辑器已 clone 作权威参照
+- 取证：`memory/data/decomp/randmap_gen_asm.txt` / `randmap_xref.txt`
+
 ## 工作流速览
 
 1. **符号对号入座**：YRpp 符号表 → `code/ghidra_scripts/apply_symbols.py`
@@ -114,6 +136,7 @@ ra2-reverse-AI/
 - [x] 游戏运行流逆向（启动/选关/单局/胜负/退出全景）
 - [x] YR 正版校验机制逆向（woldata.key 解密 + CD 门禁 + -CD 开关）
 - [x] 崩溃排查初版（超时空移除可驻军建筑，待运行时地址确认）
+- [ ] 随机地图生成器逆向（本体定位完成：ReadParameters/WriteParameters + 17 参数映射；生成流程还原中）
 - [ ] 更多机制挖掘（弹道伤害、采矿、寻路、LogicClass::Update 解剖）
 - [ ] 发布文章整理
 
