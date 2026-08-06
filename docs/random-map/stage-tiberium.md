@@ -205,7 +205,12 @@ Ghidra 判成 `__cdecl` 4 参，**`ecx` 是否被用未确认**。
    `[ebp+0x10]` / `[ebp+0x14]` 是什么对象的字段
 4. `field->+0x44` 的 12 档到底是不是矿的生长阶段（`OverlayData`）
 5. `0x5A28C0` 调用时 `ecx = MapSeedClass*` 是否真被使用
-6. `0x71BB90` 的语义（在 `0x5A2C05` 被调，疑似「放下矿覆盖物」）
+6. ✅ 已关：`0x71BB90` = **`TerrainClass::TerrainClass(TerrainTypeClass*, CellStruct*)`**，
+   就是「在这格新建一个地貌物体」的构造函数。取证在阶段 10：
+   `0x5A4887-0x5A48AA` 处 `new(0xE0)` 之后紧接着调它，类型取自
+   `TerrainTypes[FindIndex("TREE%d%d")]`（`[0xA8E31C]` 是 `TerrainTypeClass` 数组）。
+   Ghidra 把它标成 `TerrainClass::WhatAmI` 是误标，不要信。
+   → 详见 [stage-lats.md](stage-lats.md) §四
 
 ## 六、`+0x2BC` / `+0x2C0` 实锤：rules.ini `[General]`
 

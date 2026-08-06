@@ -295,16 +295,125 @@ TileSet 全局 `[0xAA0E24]`（映射见 `memory/data/rmg/tileset_globals.txt`）
 非温带**没有** `work->+0x18`（碎石概率）的播种，也没有沙地/草地 LAT，
 更没有石头 overlay——所以非温带地图的地表装饰明显比温带单调，这是原版行为。
 
-## 四、待补：`0x5A45E0` 与 `0x5A4B60`
+## 四、`0x5A45E0` 树林补丁生长（3 取数点）
 
-| 函数 | 作用 | 取数点 | 状态 |
+签名：`int FUN_005A45E0(CellClass* seed, int size, double prob)`，**返回真正栽下的树数**
+（正是 §2.5 里从 `budget` 里扣掉的量）。
+
+结构与陆地涂块 `0x59BBC0`、矿田生长 `0x5A28C0` **同一个模子**——
+一次 Dijkstra 式最小堆扩散，优先级 = 到种子格的近似距离 + `[0,5)` 抖动：
+
+```c
+maxNodes = size * 25;
+pool = new Node[maxNodes];              // new(size*200)，Node = { int32 xy; float key; }
+heap = new MinHeap(maxNodes);           // new(0x14) + new(size*100+4)，1 基指针数组
+pool[0] = { seed->xy, 0.0f };  used = 1;
+Work[seed].+0x47 = 1;                   // 访问标记
+heap.push(&pool[0]);
+node = heap.pop();
+planted = 0;
+while (planted < size) {
+    if (node == NULL || used >= maxNodes) break;
+    cell = TryGetCellAt(&node->xy);
+    if (IsPlain(cell) && cell->+0xE4 == 0 && cell->+0x44 == -1 && cell->+0xEC != 3) {
+        // 取数点 0x5A47F2：r*(1/(2^32-1)) < prob 才栽
+        if ((double)(uint32)Random() * (1/(2^32-1)) < prob) {
+            // 取数点 0x5A481C：PickRange(1, 25)
+            do { idx = _ftol((double)(uint32)Random() * (25/(2^32-1)) + 1.0); }
+            while ((uint32)idx > 25);
+            sprintf(buf, "TREE%d%d", idx/10, idx%10);      // 0x82C09C = "TREE%d%d"
+            t = new TerrainClass(0xE0);
+            if (t) TerrainClass::TerrainClass(t, TerrainTypes[FindIndex(buf)], &cell->xy);
+            planted++;
+        }
+    }
+    for (d = 0; d < 8; d++) {                              // 邻接表 [0x89F688]
+        n = node->xy + Adj[d];
+        if (!InUsableDiamond(n)) continue;
+        if (Work[n].+0x47 != 0) continue;                   // 已访问
+        if (Work[n].+0x45 != 0) continue;                   // 已锁定
+        if (used >= maxNodes) continue;
+        pool[used].xy  = n;
+        // 取数点 0x5A49B8
+        pool[used].key = (float)( FastSqrt((double)((sx-nx)² + (sy-ny)²))
+                                  + (double)(uint32)Random() * 5.0 * (1/(2^32-1)) );
+        Work[n].+0x47 = 1;
+        heap.push(&pool[used]);  used++;
+    }
+    node = heap.pop();
+}
+return planted;
+```
+
+三个取数点的精度要点：
+
+| 取数点 | 表达式 | 常量 | 备注 |
 |---|---|---|---|
-| `0x5A45E0` | 树林补丁生长（疑似最小堆扩散，返回实际用掉的预算） | `0x5A47F2` `0x5A481C` `0x5A49B8` | ⬜ 未还原 |
-| `0x5A4B60` | LAT 块写入器（给定中心 + 尺寸 + TileSet 基址铺一片） | `0x5A4E6E` | ⬜ 未还原 |
-| `0x598000` | `UniformUnit`（被 `NormalDeviate` 经函数指针调用） | `0x598003` | ✅ 已实锤 |
-| `0x598030` | `PickRange` | `0x59805E` | ✅ 已实锤 |
+| `0x5A47F2` | `r * (1/(2^32-1))` 与 `prob` 比 | `[0x7ED898]` | `fcomp` + `test ah,1`：**`r < prob` 才栽**，失败也烧随机数 |
+| `0x5A481C` | `_ftol(r * 25/(2^32-1) + 1.0)`，拒绝 `> 25` | `[0x7EDAD8]=25/(2^32-1)`、`[0x7E1718]=1.0` | **下界是 1，不是 0** → 只会生成 `TREE01`..`TREE25`，**`TREE00` 永远不出现** |
+| `0x5A49B8` | `fild r; fmul 5.0; fmul 1/(2^32-1); fadd sqrt; fstp dword` | `[0x7ED800]=5.0`、`[0x7ED898]` | 全程 x87 双精度，**最后一步 `fstp dword` 才截成 `float`**；堆比较也用 `float` |
 
-## 五、取数账本
+四条容易踩的细节：
+
+1. **距离用的是"到补丁种子格"的距离**，不是到当前弹出格的距离
+   （`0x5A4E42` 附近同款代码：`d² = (sx-nx)² + (sy-ny)²`，`sx/sy` 取自 `param_1->+0x24`）。
+2. `Work[].+0x47` 访问标记在函数返回后**没有被清**——所以第 2 个补丁踩不进第 1 个补丁走过的格子，
+   100 轮补丁是**互相排斥**的。它是否在阶段边界被清零，**未确认**。
+3. 循环条件 `planted < size` 与 `used >= maxNodes`（`size*25`）两个都可能提前跳出，
+   实际栽的树往往远少于 `size`。
+4. `new` 失败时原版把指针置 0 就继续跑，随后照样解引用——**内存不足会直接崩**，
+   照抄时不必模拟（复刻程序不会 OOM）。
+
+## 五、`0x5A4B60` LAT 块写入器（1 取数点）
+
+签名：`void FUN_005A4B60(CellClass* seed, int tileIndex, int count, int fieldId, char allowNonPlain)`，
+§二/§三里三种 LAT 都靠它落地。**同一个最小堆扩散模板**，但这次是"铺满 `count` 格"：
+
+```c
+pool = new Node[count*?];               // new(count*0x50)
+heap = new MinHeap(count*10);           // new(count*0x28+4)
+pool[0] = { seed->xy, 0.0f };  used = 1;
+Work[seed].+0x3C = fieldId;             // 注意：用 +0x3C（田块 id），不是 +0x47
+heap.push(&pool[0]);
+node = heap.pop();
+for (i = 0; i < count && node; i++) {
+    cell = TryGetCellAt(&node->xy);
+    cell->+0x38 = tileIndex;            // ← 真正的地形写入
+    for (d = 0; d < 8; d++) {
+        n = CellStruct_Add(node->xy, Adj[d]);          // 0x42D510
+        if (!InUsableDiamond(n)) continue;
+        nc = TryGetCellAt(&n);
+        bool ok = IsPlain(nc)
+               || (allowNonPlain && (FUN_00486670(nc) || FUN_00486650(nc)));
+        if (!ok) continue;
+        if (Work[n].+0x3C == fieldId) continue;         // 本田块已收
+        if (nc->+0x11C != 0 || nc->+0x44 != -1 || nc->+0xE4 != 0) continue;
+        pool[used].xy  = n;
+        // 取数点 0x5A4E6E
+        pool[used].key = (float)( FastSqrt((double)((sx-nx)² + (sy-ny)²))
+                                  + (double)(uint32)Random() * 5.0 * (1/(2^32-1)) );
+        Work[n].+0x3C = fieldId;
+        heap.push(&pool[used]);  used++;
+    }
+    node = heap.pop();                                  // 0x5AC960
+}
+```
+
+- 阶段 10 的三个调用点 **`allowNonPlain` 全传 0**，所以 `0x486670` / `0x486650`
+  两个谓词在本阶段是死分支（在别处是否被用到，**未确认**）。
+- 用 `+0x3C` 当"已收"标记，正好对上 §2.1 那次全图清零——
+  **每次调用换一个 `fieldId`（= `cell.Y*512 + cell.X`），所以不需要清**。
+- 抖动常量是 `[0x7ED808] = 5.0`（与 `0x5A45E0` 的 `[0x7ED800]` 是**两份独立的 5.0**，
+  数值相同，MSVC 没有合并；这不影响结果，但说明这两段代码是分别写的）。
+
+| 函数 | 取数点 | 状态 |
+|---|---|---|
+| `0x5A45E0` | `0x5A47F2` `0x5A481C` `0x5A49B8` | ✅ 已实锤 |
+| `0x5A4B60` | `0x5A4E6E` | ✅ 已实锤 |
+| `0x598000` `UniformUnit` | `0x598003` | ✅ 已实锤 |
+| `0x598030` `PickRange` | `0x59805E` | ✅ 已实锤 |
+
+## 六、取数账本
 
 `memory/data/rmg/rng_ledger.txt` 记的 18 处：
 
@@ -326,16 +435,20 @@ TileSet 全局 `[0xAA0E24]`（映射见 `memory/data/rmg/tileset_globals.txt`）
 | `5A447D` | `0x5A4280` | 树林补丁内联选格 |
 | `59805E` | `0x598030` | 树林补丁选格（温带走外联） |
 | `598003` | `0x598000` | 所有 `TruncNormal` 的底层均匀源 |
-| `5A47F2` `5A481C` `5A49B8` | `0x5A45E0` | 补丁生长内部，未还原 |
-| `5A4E6E` | `0x5A4B60` | LAT 写入器内部，未还原 |
+| `5A47F2` | `0x5A45E0` | 栗树抛硬币（vs `prob`） |
+| `5A481C` | `0x5A45E0` | `PickRange(1,25)` 选树种 `TREE01`..`TREE25` |
+| `5A49B8` | `0x5A45E0` | 最小堆优先级抖动 `[0,5)` |
+| `5A4E6E` | `0x5A4B60` | 最小堆优先级抖动 `[0,5)` |
 
 **注意 `NormalDeviate` 的缓存跨阶段串**：本阶段第一次 `TruncNormal` 可能一个随机数都不抽
 （直接取阶段 9 剩下的那半个），详见 [fast-math.md](fast-math.md)。
 
-## 六、未确认清单
+## 七、未确认清单
 
-1. `0x5A4B60` 的 LAT 写入语义（"尺寸"到底是半径、面积还是格数）——**未确认**。
-2. `0x5A45E0` 的返回值口径（返回栽了多少棵树？还是消耗了多少预算？）——**未确认**。
+1. ✅ 已关：`0x5A4B60` 的第三个参数是**格数**（`for (i=0; i<count; i++)` 每轮写一格）；
+   但 pool 容量 `new(count*0x50)` 与堆容量 `count*10` 为何比 `count` 大这么多——**未确认**
+   （猜是"预留待展开的邻居"，但 `0x50` 这个数字与 Node 尺寸 8 字节对不上）。
+2. ✅ 已关：`0x5A45E0` 返回**真正栽下的树数**（`local_54`）。
 3. overlay 序号 `0xA8..0xAC` / `0xAD..0xB1` 对应的具体美术资源名——**未确认**，
    只实锤了"两组各 5 个变体，按格子是否沙地 LAT 二选一"。
 4. `0x42B1F0` 里 `[0x87F8DC]` / `[0x87F8E0]` 的确切字段名（推测是 `MapRect.Width/Height`，
@@ -344,10 +457,14 @@ TileSet 全局 `[0xAA0E24]`（映射见 `memory/data/rmg/tileset_globals.txt`）
 6. 非温带分派里内联铺的 `+0x28 = 0.005` / `+0x20 = 0.001`，为什么不铺 `+0x18`——
    `work->+0x18` 在非温带路径上是**上一阶段的残值**还是恒 0，**未确认**，
    但它在 `0x5A4280` 里根本没被读，所以不影响本阶段输出。
-7. `TruncNormal` 的接受区间是闭区间（`v < lo || v > hi` 才重抽），
+7. `Work[].+0x47`（访问标记）在何处被清零——**未确认**。
+   `0x5A45E0` 自己不清，所以 100 轮树林补丁互相排斥；
+   这是有意设计还是泄漏，得把阶段 1 的初始化跟完才能定。
+8. `0x486670` / `0x486650` 两个谓词的语义——**未确认**（阶段 10 里是死分支）。
+9. `TruncNormal` 的接受区间是闭区间（`v < lo || v > hi` 才重抽），
    与阶段 9 一致，已在本阶段两处独立复核。
 
-## 七、RA1 源码这次帮不上忙（边界说明）
+## 八、RA1 源码这次帮不上忙（边界说明）
 
 `CnCRemastered` 的 RA1 源码是 RA2 的**参考答案**——随机数发生器、
 `.ini` 读取、寻路这些"引擎底座"都能直接对照（见
