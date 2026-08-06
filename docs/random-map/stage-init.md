@@ -101,29 +101,52 @@ bool flag310 = UniformUnit() < 0.25;      // UniformUnit 见 fast-math.md
 00599681  fstp dword ptr [esp + 0x10]        ; ht = Height / 3
 ```
 
-随后按 `MapType` 分两路把 `wt`/`ht` 夹到 `[0x7E5190] = 1.2`（double）：
+随后按 `MapType` 分两路把 `wt`/`ht` 夹到 `[0x7E5190] = 1.2`（double）。
+**注意 `ht` 的夹取结果不回写内存**——它一直留在 x87 栈上，供后面的高度插值用：
 
 ```asm
 0059968a  mov  eax, [edi + 0x3c]             ; MapType
-0059968d  cmp  eax, 3 / je  0x5996d7         ; MapType 3/4 跳过夹取
-00599697  fld  dword ptr [esp + 0x14]
-0059969b  fcomp qword ptr [0x7e5190]         ; wt vs 1.2
-          ...  wt = min(wt, 1.2)  ht = min(ht, 1.2)
+0059968d  cmp  eax, 3 / je  0x5996d7         ; MapType 3/4 跳过整段夹取
+00599697  fld  dword ptr [esp + 0x14]        ; wt
+0059969b  fcomp qword ptr [0x7e5190]         ; 与 1.2 比
+005996a8  fld  dword ptr [esp + 0x14]        ;   wt <= 1.2 -> 取 wt
+005996ae  fld  qword ptr [0x7e5190]          ;   否则      -> 取 1.2
+005996b4  fstp dword ptr [esp + 0x14]        ; 夹取后的 wt 回落 float 并写回栈槽
+005996b8  fld  dword ptr [esp + 0x10]        ; ht
+005996bc  fcomp qword ptr [0x7e5190]
+005996c9  fld  dword ptr [esp + 0x10]        ;   ht <= 1.2 -> 取 ht
+005996cf  fld  qword ptr [0x7e5190]          ;   否则      -> 取 1.2   ← 留在 st(0)
+005996d7  fld  dword ptr [esp + 0x10]        ; MapType 3/4 的落点：未夹取的 ht
 ```
 
-最后是两条**同构的线性插值**，各自 `_ftol`（`0x7C5F00`，RC=chop 截断）落成整数：
+三条路径（`0x5996CD` / `0x5996D5` / `0x5996D7`）都汇合到 `0x5996DB`，
+且**都是把 `ht` 留在 x87 栈顶**——`0x5996D7` 加载 `esp+0x10` 不是笔误，
+它就是 `ht` 本身，只是少了那次夹取。
+
+最后是两条线性插值，各自 `_ftol`（`0x7C5F00`，RC=chop 截断）落成整数。
+宽度那条从**内存栈槽**读 `wt`，高度那条用 **x87 栈上**那份 `ht`（`st(2)`）：
 
 ```asm
 005996db  fild dword ptr [esi*4 + 0x7ed634]  ; wLo[NumPlayers-2]
 005996e2  fld  dword ptr [0x7e2ac8]          ; 1.0f
-005996e8  fsub dword ptr [esp + 0x14]        ; 1 - wt
+005996e8  fsub dword ptr [esp + 0x14]        ; 1 - wt      ← 读内存里的 wt
 005996ec  fmulp st(1)                        ; wLo * (1 - wt)
 005996ee  fild dword ptr [esi*4 + 0x7ed650]  ; wHi[NumPlayers-2]
 005996f5  fmul dword ptr [esp + 0x14]        ; wHi * wt
 005996f9  faddp st(1)
 005996fb  call 0x7c5f00                      ; _ftol
-00599700  mov  [edi + 0x180], eax            ; MapSeedClass +0x180 = 真实地图宽 W
-          ... 同样的四张表另一半算出 +0x184 = 真实地图高 H
+00599700  mov  [edi + 0x180], eax            ; +0x180 = 真实地图宽 W
+
+00599706  fild dword ptr [esi*4 + 0x7ed66c]  ; hLo[NumPlayers-2]
+0059970d  fld  dword ptr [0x7e2ac8]          ; 1.0f
+00599713  fsub st(2)                         ; 1 - ht      ← 用 x87 栈上的 ht
+00599715  fmulp st(1)
+00599717  fild dword ptr [esi*4 + 0x7ed688]  ; hHi[NumPlayers-2]
+0059971e  fmul st(2)                         ; hHi * ht
+00599720  faddp st(1)
+00599722  call 0x7c5f00
+00599748  mov  [edi + 0x184], eax            ; +0x184 = 真实地图高 H
+00599746  fstp st(0)                         ; 丢掉 ht，平衡 x87 栈
 ```
 
 即：
@@ -131,13 +154,20 @@ bool flag310 = UniformUnit() < 0.25;      // UniformUnit 见 fast-math.md
 ```c
 int idx = NumPlayers - 2;                       // 2..8 玩家 -> 0..6
 float wt = Width  / 3.0f,  ht = Height / 3.0f;  // 单精度中间量
-if (MapType != 3 && MapType != 4) { wt = min(wt, 1.2); ht = min(ht, 1.2); }
-else                              { /* wt 不夹，且下面宽度也用 ht 而非 wt——见怪癖 */ }
-
-W = (int)(wLo[idx] * (1 - wt) + wHi[idx] * wt);   // 截断
+if (MapType != 3 && MapType != 4) {             // 3/4 完全跳过夹取
+    wt = (float)min(wt, 1.2);                   // 夹完回落 float
+    ht =        min(ht, 1.2);                   // 夹完留 double，见下
+}
+W = (int)(wLo[idx] * (1 - wt) + wHi[idx] * wt);   // _ftol 截断
 H = (int)(hLo[idx] * (1 - ht) + hHi[idx] * ht);
 MapSeedClass->+0x180 = W;   MapSeedClass->+0x184 = H;
 ```
+
+> `wt` 与 `ht` 的**精度路径不对称**：`wt` 夹取后经 `fstp dword` 回落单精度再重新读入，
+> `ht` 则始终留在 x87 栈上保持 double。已构造两个模型（`ht` 回落 / 不回落）
+> 各跑 8960 例与原版对拍，**两者都 0 例不一致**——因为 1.2 与 `n/3` 在 float 下
+> 都可精确表示或截断结果相同，这条差异在当前取值域内观察不到。
+> 复刻时按汇编照抄（`ht` 不回落），不要依赖"反正一样"。
 
 ### 四张插值表（`.rdata`，各 7 项，下标 = `NumPlayers - 2`）
 
@@ -148,20 +178,36 @@ MapSeedClass->+0x180 = W;   MapSeedClass->+0x184 = H;
 | `0x7ED66C` | `hLo` 高·滑条最小 | 70 | 70 | 70 | 80 | 90 | 100 | 100 |
 | `0x7ED688` | `hHi` 高·滑条最大 | 80 | 80 | 80 | 90 | 100 | 110 | 120 |
 
-宽高两组表**逐项相同**——地图始终是正方形边长，长宽差异只来自 `Width`/`Height`
-两个滑条给出的不同 `wt`/`ht`。
+宽高两组表**逐项相同**——长宽差异只来自 `Width`/`Height` 两个滑条给出的不同 `wt`/`ht`。
 
 于是 `.sed` 里那个 `Width=0 / Height=0` 就解释通了：**它不是格数，是 0..3 的档位**
-（`/3` 之后正好铺满 `[0, 1]`，超过 3 被 1.2 的夹取兜住）。2 人图 `Width=0` → `W = 70`。
+（`/3` 之后正好铺满 `[0, 1]`）。2 人图 `Width=0` → `W = 70`，`Width=3` → `W = 80`。
 
-### ⚠️ 怪癖：`MapType 3/4` 时宽度插值用的是 `ht`，不是 `wt`
+### `MapType 3/4` 的真实差异：滑条能开到 1.2 档以上
 
-`0x5996D7` 那条跳转的落点是 `fld dword ptr [esp + 0x10]`——**加载的是 `ht`**，
-而正常路径 `0x5996A8`/`0x5996AE` 加载的是 `esp+0x14`（`wt`）。
-两路汇合到 `0x5996DB` 之后，第一段插值（算宽度）就用了栈顶这个值。
-也就是说 `MapType ∈ {3,4}` 时 **`Width` 滑条被完全忽略，宽度跟着 `Height` 滑条走**。
+夹取被跳过，于是 `wt`/`ht` 可以超过 1.2，插值变成**外推**，地图能比表里的
+`Hi` 还大。模拟执行取真值（2 人图）：
 
-这是一处典型的复制粘贴漏改。**按字节复刻必须照抄**（CLAUDE.md 硬性规范 #6）。
+| 档位 | `MapType=1`（夹取） | `MapType=3/4`（不夹） |
+|---|---|---|
+| 3 | 80 | 80 |
+| 4 | 81 | 83 |
+| 5 | 81 | 86 |
+| 6 | 81 | 90 |
+
+`MapType=1` 在档位 ≥ 4 后被 1.2 钉死在 81，而 3/4 一路线性外推。
+不过 RMG 对话框的滑条上限**未确认**是否允许 > 3，若不允许则这条分支实际观察不到。
+
+### ⚠️ 一条被推翻的推测（留档）
+
+最初读汇编时我把 `0x5996D7` 的 `fld dword ptr [esp + 0x10]` 认成
+"`MapType 3/4` 时宽度插值误用了 `ht`"，并当成复制粘贴 bug 写进了怪癖清单。
+**模拟执行直接证伪**：固定 `Width=0` 只动 `Height`，`MapType=3` 下 `W` 始终是 70，
+没有跟着 `Height` 走。错因是只看单条指令没跟 x87 栈——`esp+0x10` 在那里本来就该是 `ht`，
+它是给**高度**插值准备的，宽度插值读的是内存里的 `esp+0x14`。
+
+留下这段是因为它印证了一条方法论：**凡涉及 x87 栈的结论，必须模拟执行验证**，
+"读一眼汇编觉得像 bug"在这个子系统里的误判率相当高。
 
 ### `side = W + H + 1`：工作数组边长的来源
 

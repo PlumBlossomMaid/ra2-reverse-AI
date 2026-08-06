@@ -34,15 +34,36 @@ idx = NumPlayers - 2
 wt  = (float)Width  * (1/3f)
 ht  = (float)Height * (1/3f)
 if (MapType != 3 && MapType != 4) { wt = min(wt, 1.2); ht = min(ht, 1.2); }
-W = _ftol( wLo[idx]*(1-X) + wHi[idx]*X )    // X 见怪癖
+W = _ftol( wLo[idx]*(1-wt) + wHi[idx]*wt )
 H = _ftol( hLo[idx]*(1-ht) + hHi[idx]*ht )
 _ftol = 0x7C5F00，RC=chop，向零截断
 
-== 怪癖：MapType 3/4 时 X = ht 而不是 wt ==
-0x5996A8 / 0x5996AE  正常路径 -> fld dword ptr [esp+0x14]   (wt)
-0x5996D7             3/4 路径 -> fld dword ptr [esp+0x10]   (ht)  <== 漏改
-两路汇合于 0x5996DB，第一段（宽度）插值就吃了栈顶这个值。
-=> MapType 3/4 时 Width 滑条完全无效。已登记进 CLAUDE.md 怪癖清单。
+== MapType 3/4：跳过 1.2 夹取（不是「宽度用了 ht」）==
+0x59968D  cmp eax,3 / je 0x5996D7   ; 3/4 直接跳过整段夹取
+三条路径 0x5996CD / 0x5996D5 / 0x5996D7 都汇合到 0x5996DB，
+且都把 ht 留在 x87 栈顶；0x5996D7 的 fld [esp+0x10] 就是 ht 本身，
+它是给「高度」插值用的（0x599713 fsub st(2) / 0x59971E fmul st(2)），
+「宽度」插值读的是内存栈槽 [esp+0x14] = wt。
+
+后果：夹取被跳过 -> wt/ht 可超过 1.2，插值变外推，地图可比表里的 Hi 更大。
+模拟执行真值（2 玩家）：
+  档位   MapType=1   MapType=3/4
+   3        80          80
+   4        81          83
+   5        81          86
+   6        81          90
+
+精度不对称（照抄，不要"统一"）：
+  wt 夹取后 fstp dword 回落 float 再重新读入；
+  ht 夹取后始终留在 x87 栈上保持 double。
+  已构造两个模型（ht 回落/不回落）各 8960 例与原版对拍，均 0 例不一致——
+  该差异在当前取值域内观察不到，但汇编就是不对称的。
+
+== 已推翻的推测（留档，防止再犯）==
+曾把 0x5996D7 的 fld [esp+0x10] 读成「MapType 3/4 时宽度误用 ht」，
+并当成复制粘贴 bug 登记进 CLAUDE.md 怪癖清单。
+模拟执行证伪：固定 Width=0 只动 Height，MapType=3 下 W 恒为 70。
+错因：只看单条指令没跟 x87 栈。凡涉及 x87 栈的结论必须模拟执行验证。
 
 == side = W + H + 1 ==
 0x42AC00（由 0x685198 push 0x87F8D4 / 0x6851A7 call 进来）：
@@ -64,3 +85,13 @@ _ftol = 0x7C5F00，RC=chop，向零截断
 0x87F8DC/0x87F8E0 全镜像只有 0x68555A/0x685560 一处写，而那里是
 xor eax,ecx,edx,esi 之后的一次性清零，真正的赋值路径没跟到。
 两者数值相等由下游全部公式的自洽性佐证。
+
+== 对拍状态 ==
+纯有理数模型（Fraction + 显式 chop 到 24/53 位）对模拟执行 8960 例
+（NumPlayers 2..8 × MapType 0..4 × Width 0..15 × Height 0..15）：0 例不一致。
+模型要点：
+  fild dword          精确
+  fmul dword 1/3f     double 精度 chop（PC=53/RC=chop）
+  fstp dword          落 float，chop 到 24 位
+  min(x, 1.2)         1.2 是 double 0x3FF3333333333333
+  _ftol               向零截断
