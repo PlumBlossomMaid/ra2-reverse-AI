@@ -95,16 +95,13 @@ ra2::rmg::FpuChopScope chop;   // _controlfp(_RC_CHOP, _MCW_RC)，析构时还�
   （所有取数点前面都是 `mov ecx, 0xABE890`）
 - 因此"阶段顺序 + 每阶段取数个数"就是种子兼容性的全部内容
 
-取数点分布见 `memory/data/rmg/rng_callsites.txt`
-（工具 `code/randmap/scan_rng_callsites.py`，扫 0x594000-0x5B0000 得 142 处）：
+按**函数地址**数出来的分布见 `memory/data/rmg/rng_callsites.txt`
+（工具 `code/randmap/scan_rng_callsites.py`，扫 0x594000-0x5B0000 得 142 处：
+播种 1、`Random` 127、`RandomRanged` 14）。
 
-| 调用 | 处数 |
-|------|------|
-| `Randomizer::Randomizer`（播种） | **1**（就是上面那处） |
-| `Randomizer::Random` | 127 |
-| `Randomizer::RandomRanged` | 14（全在 `FUN_00597260` 等参数/预设相关处） |
-
-**注意**：生成算法主体几乎不用 `RandomRanged`，而是用下面的浮点惯用法。
+> ⚠️ **这份计数不能直接当作"生成器的取数点"**：它只看调了哪个函数，
+> 不看 `this` 是哪个对象。按 `this` 重新配对后，`RandomRanged` 那 14 处
+> **一处都不属于 `0xABE890`**。正确的清单见下一节。
 
 ### 边界实锤：这个 `Randomizer` 只被 MapGen 自己用
 

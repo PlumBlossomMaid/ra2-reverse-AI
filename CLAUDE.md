@@ -119,7 +119,10 @@ a2mdpost\MapGen.cpp`（字符串 @0x82BA48） | **0x5956E7 – 0x59A63A** | 3934
 - **生成器全局 Randomizer @ 0xABE890**：`FUN_00598960` 开头用 `MapSeedClass+0x74`
   （即 `.sed` 的 `Seed=`）在栈上构造后 `rep movsd 0xFD` 拷进全局
   → **整张地图只播种一次**，所有阶段共用一条随机序列
-- **取数惯用法不是 RandomRanged**：全 142 处消耗点里 Random 127 / Ranged 14 / Seed 1；
+- **取数惯用法不是 RandomRanged**：按 `this == 0xABE890` 配对后，生成器共
+  **150 处 `Random`、0 处 `RandomRanged`**（`code/randmap/scan_rmg_rng.py`）。
+  按函数地址数出的"14 处 Ranged"用的都是引擎自己那个 Randomizer 对象——
+  **判断"谁在取随机数"必须看 `this`，不能只看调用了哪个函数**。
   算法主体用的是浮点比例 + 拒绝采样：
   `do { v = (int)((double)(uint32)Random() * (n/4294967295.0)); } while (v > n-1);`
   比例常数已核对（`0x7ED9E8`=10 / `0x7ED9E0`=242 / `0x7ED9D8`=201 各除以 2^32-1，
