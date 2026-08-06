@@ -11,6 +11,7 @@
 | [randomizer.md](randomizer.md) | 随机数发生器 R250（播种 + 取数 + 区间随机） | ✅ 逐位对齐 |
 | [parameters.md](parameters.md) | MapSeedClass 参数集与 `.sed` 文件格式 | ✅ 已实锤 |
 | [fpu-and-random-idioms.md](fpu-and-random-idioms.md) | 原版全局浮点环境 + 生成器取随机数的惯用法 | ✅ 已实锤并对拍 |
+| [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | 🚧 结构已清，涂块核心待啃 |
 
 ## 进度
 
@@ -22,6 +23,8 @@
 - [x] 生成器全局 `Randomizer @ 0xABE890`：**整张地图只播种一次**，种子取自 `.sed`
 - [x] 浮点比例 + 拒绝采样取数惯用法复刻 + 对拍（`scaled_random`）
 - [ ] 各阶段算法还原（地形/水域/区域/起始点/矿/山丘/装饰）
+  - [x] Seeding water：阶段结构 + 水面 tile 细化 `FUN_0059C630` 已还原并对拍
+  - [ ] Seeding water：涂块核心 `FUN_0059BBC0`（堆扩散）
 - [ ] `.map` 输出（IsoMapPack5 编码）
 - [ ] 端到端验证：同种子生成结果与原版逐字节比对
 
