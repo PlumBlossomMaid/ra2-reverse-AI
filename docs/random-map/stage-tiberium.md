@@ -85,7 +85,8 @@ for (int i = 0; i < r->candidates->Count; ++i) {
 ```
 
 ```c
-int lo = seed->+0x2BC, hi = seed->+0x2C0;       // 未确认
+int lo = seed->RMGMinimumTiberium;   // +0x2BC，rules.ini [General]，默认 2500
+int hi = seed->RMGMaximumTiberium;   // +0x2C0，rules.ini [General]，默认 5500
 int v  = (int)((double)seed->Tiberium * 0.01 * (double)(hi - lo) + lo);
 
 double mult = max((double)r->startCount, 0.5);  // fcomp 0.5 + test ah,0x41
@@ -197,8 +198,7 @@ Ghidra 判成 `__cdecl` 4 参，**`ecx` 是否被用未确认**。
 
 ## 五、未确认
 
-1. `MapSeedClass +0x2BC` / `+0x2C0`——矿量插值的上下界，来源未确认
-   （不在 `.sed` 的 17 个参数里，疑似运行期从 rules 或 MapType 推出）
+1. ~~`MapSeedClass +0x2BC` / `+0x2C0` 来源未确认~~ → **已实锤**，见 §六
 2. §2.5 里 `mn`（各出生点到候选点的平均距离的最小值）到底怎么进入
    `_ftol(...) + 500` 那个表达式——Ghidra 丢了栈跟踪，需要单独反汇编
 3. `0x5A28C0` 的最小堆扩散细节：接受/拒绝谓词、`size` 如何充当预算、
@@ -206,3 +206,30 @@ Ghidra 判成 `__cdecl` 4 参，**`ecx` 是否被用未确认**。
 4. `field->+0x44` 的 12 档到底是不是矿的生长阶段（`OverlayData`）
 5. `0x5A28C0` 调用时 `ecx = MapSeedClass*` 是否真被使用
 6. `0x71BB90` 的语义（在 `0x5A2C05` 被调，疑似「放下矿覆盖物」）
+
+## 六、`+0x2BC` / `+0x2C0` 实锤：rules.ini `[General]`
+
+```
+005982bb  mov  eax, dword ptr [esi + 0x2bc]     ; 默认值（构造函数里填的 2500）
+005982c1  mov  ecx, dword ptr [0x82b134]        ; -> 0x826278 "General"
+005982c7  push eax
+005982c8  push 0x82bdb8                         ; "RMGMinimumTiberium"
+005982cd  push ecx
+005982d0  call 0x5276d0                         ; CCINIClass::ReadInteger
+005982db  mov  dword ptr [esi + 0x2bc], eax
+005982d5  mov  edx, dword ptr [esi + 0x2c0]     ; 默认值 5500
+005982e7  push 0x82bda4                         ; "RMGMaximumTiberium"
+005982ef  call 0x5276d0
+005982f7  mov  dword ptr [esi + 0x2c0], eax
+```
+
+即：
+
+| 偏移 | rules.ini `[General]` 键 | 默认值 |
+|------|-------------------------|--------|
+| `+0x2BC` | `RMGMinimumTiberium` | 2500 |
+| `+0x2C0` | `RMGMaximumTiberium` | 5500 |
+
+所以 §2.3 的总矿量就是
+`v = (int)(Tiberium% x 0.01 x (RMGMaximumTiberium - RMGMinimumTiberium) + RMGMinimumTiberium)`——
+按 CLAUDE.md 的「数据驱动」要求，这两个值必须**从 rules.ini 注入**，不许写死。
