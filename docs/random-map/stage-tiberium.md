@@ -149,42 +149,149 @@ for (int w = 0; w < r->startCount; ++w) {
         s += FastSqrt(dist2(wp, r->candidates->data[i]));
     avgDist.push_back(s / r->candidates->Count);
 }
-double mn = <立即数 0x416312CF_E0000000>;
+double mn = 9999999.0;                                 // 0x416312CF_E0000000
 for (auto d : avgDist) if (d < mn) mn = d;
 
-bool flag = (seed->Resources == 3 &&
-             (seed->MapType == 1 || seed->MapType == 3 || seed->MapType == 4));
+bool isGems = (seed->Resources == 3 &&
+               (seed->MapType == 1 || seed->MapType == 3 || seed->MapType == 4));
 
-for (int w = 0; w < r->startCount; ++w)
-    CreateOreField(GetWaypointCoords(wpBase + w), _ftol(...) + 500,
-                   wpBase + w + 1, flag);
+for (int w = 0; w < r->startCount; ++w) {
+    int size = _ftol((avgDist[w] - mn) * 15.0) + 500;   // 0x5A27F4-0x5A280A
+    CellStruct wp;
+    ScenarioClass::GetWaypointCoords(&wp, wpBase + w);  // 0x68BCC0
+    CreateOreField(&wp, size, wpBase + w + 1, isGems);  // 0x5A28C0
+}
 wpBase += r->startCount;
 ```
 
-`mn` 算出来了却**没看到被用在后面的 `_ftol(...)` 里**——那一段的浮点表达式
-Ghidra 丢了（`WARNING (jumptable): Unable to track spacebase`）。
-**未确认**，需要单独反汇编 `0x5A2790`–`0x5A2860`。
+**`mn` 的用法已实锤**（`0x5A27F4-0x5A280A`）：
 
-## 三、`CreateOreField`（`0x5A28C0`）：三个取数点
+```
+005a27f4  fld  qword ptr [edx + esi*8]     ; avgDist[w]
+005a27f7  fsub qword ptr [esp + 0x58]      ; - mn
+005a27fb  fmul qword ptr [0x7ed7b0]        ; x 15.0
+005a2801  call 0x7c5f00                    ; _ftol
+005a280a  add  eax, 0x1f4                  ; + 500
+```
 
-调用约定有点怪：4 个参数走栈（`cellptr, size, waypointNum, isSpecial`），
-但调用前还 `mov ecx, [esp+0x28]`（= `MapSeedClass*`）——
-Ghidra 判成 `__cdecl` 4 参，**`ecx` 是否被用未确认**。
+即 **`size = (int)((avgDist[w] - mn) * 15.0) + 500`**。
 
-函数体是一个**最小堆扩散**，形状与陆地涂块 `FUN_0059BBC0` 一模一样：
-`new` 一个 `size * 0x50` 的记录数组 + 一个容量 `size*10` 的堆。
+语义很直白：`mn` 是"离候选点群最近的那个出生点"的平均距离，
+所以**离矿区最近的那个出生点拿到的矿田恰好是 500 格**，
+其他出生点每远 1 格就多 15 格矿——**越偏远补偿越多**。
+这也解释了为什么原版地图边角玩家家门口的矿常常大得离谱。
+
+`_ftol` 是向零截断，且 `avgDist[w] - mn >= 0` 恒成立，所以等价于 `floor`；
+但**复刻仍要写成截断**，负零/边界上两者才不会分家。
+
+## 三、`CreateOreField`（`0x5A28C0`）：三个取数点——**已完整还原**
+
+签名（栈传参 4 个）：
+
+```c
+void FUN_005A28C0(CellStruct* seed, int count, int fieldId, char isGems);
+```
+
+调用前还 `mov ecx, [esp+0x28]`（= `MapSeedClass*`），但函数体一次都没读 `ecx`
+（`0x5A28C0` 开头直接 `sub esp` 建帧、参数全从 `[ebp+8..0x14]` 取）——
+**是编译器留下的无用赋值**，复刻时忽略。
+
+`isGems` 只用来选 overlay 基址（`0x5A2953-0x5A2967`）：
+
+```
+005a2953  neg  cl
+005a295c  sbb  ecx, ecx                  ; isGems ? -1 : 0
+005a2962  and  ecx, 0xffffffb5
+005a2967  add  ecx, 0x66                 ; isGems ? 0x1B(27) : 0x66(102)
+```
+
+即**矿基址 102、宝石基址 27**——正好对上 RA2 的 `Riparius`(102..113) /
+`Cruentus`(27..38) 两组各 12 帧 overlay。这也**关掉了「12 档是什么」的旧疑问**：
+`+0x44` 不是"生长阶段"，是**overlay 序号本身**，12 是那组 overlay 的帧数。
+
+### 3.1 骨架
+
+与 `0x5A45E0`（树林）/ `0x5A4B60`（LAT）/ `0x59BBC0`（陆地涂块）同一个最小堆模板，
+但多了一层「**播不下去就换地方重来**」的外壳：
+
+```c
+pool = new Node[count*10];        // new(count*0x50)，Node = { int32 xy; float key; }
+heap = new MinHeap(count*10);     // new(0x14) + new(count*0x28+4)
+placed = 0; restarts = 0; used = 0; cur = NULL; anchored = false;
+origin = *seed;
+while (placed < count) {
+    if (restarts >= 10) break;                       // 最多重来 10 次
+    if (cur == NULL) {                               // 冷启动 / 扩散断了
+        heap.clear();
+        for (all cells) Work[cell].+0x3C = 0;        // 全图清田块 id
+        used = 1;  pool[0] = { *seed, 0.0f };
+        Work[*seed].+0x3C = fieldId;
+        heap.push(&pool[0]);  cur = heap.pop();
+        restarts++;  origin = *seed;  anchored = false;
+    }
+    cell = TryGetCellAt(cur);
+    if (Work[*cur].+0x45 == 0) {                     // 未锁定
+        if (!anchored) {                             // 本次爆发的第一格
+            origin = *cur;  anchored = true;
+            heap.clear();  used = 0;                 // ← 池子从头覆写
+            if (!isGems) {
+                do { i = _ftol(r * 3/(2^32-1) + 1.0); } while ((uint)i > 3);   // 0x5A2B8E
+                sprintf(buf, "TIBTRE0%d", i % 10);   // 0x82C090 = "TIBTRE0%d"
+                t = new(0xE0);
+                if (t) TerrainClass::TerrainClass(t, TerrainTypes[FindIndex(buf)], &origin);
+            }
+        }
+        if (cell->+0x44 == -1) {
+            do { v = _ftol(r * 12/(2^32-1)); } while ((uint)v > 11);            // 0x5A2C18
+            cell->+0x44 = v + base;                  // 102 矿 / 27 宝石
+        } else if (cell->+0x11E <= 10) {
+            cell->+0x11E++;                          // 已有矿 -> 加厚一层
+        } else {
+            goto neighbours;                         // 满了：不计入 placed
+        }
+        placed++;
+    }
+neighbours:
+    for (d = 0; d < 8; d++) {
+        n = *cur + Adj[d];                           // 邻接表 [0x89F688]
+        if (!MapClass::IsWithinUsableArea(&n, 1)) continue;
+        nc = TryGetCellAt(&n);
+        if (!IsPlain(nc)) continue;
+        bool ok = (nc->+0x44 == -1 && Work[n].+0x3C != fieldId)
+               || (nc->+0x11E < 11 && nc->GetContainedTiberiumIndex() != -1);
+        if (!ok) continue;
+        pool[used].xy  = n;
+        pool[used].key = (float)( FastSqrt((double)((ox-nx)² + (oy-ny)²))
+                                  + (double)(uint32)Random() * 5.0 * (1/(2^32-1)) );  // 0x5A2D79
+        Work[n].+0x3C = fieldId;
+        heap.push(&pool[used]);  used++;
+    }
+    cur = heap.pop();
+}
+```
+
+### 3.2 三个取数点
 
 | 取数点 | 惯用法 | 常量 | 语义 |
 |--------|--------|------|------|
-| `0x5A2B8E` | `_ftol(r * 3/(2^32-1) + 1.0)`，拒绝 `> 3` | `0x7ED8C0 = 3/(2^32-1)`、`0x7E1718 = 1.0` | 取值 **{1,2,3}**；门禁 `[ebp+0x14] == 0` |
-| `0x5A2C18` | `_ftol(r * 12/(2^32-1))`，拒绝 `> 11` | `0x7EDA90 = 12/(2^32-1)` | `field->+0x44` 从 `-1` 变成 `base + [0,11]`；**12 档，疑似矿的生长阶段，未确认** |
-| `0x5A2D79` | `FastSqrt(d2) + r * 5.0 * (1/(2^32-1))` | `0x7ED7C0 = 5.0`、`0x7ED898 = 1/(2^32-1)` | **无拒绝采样**；最小堆的优先级 = 距离 + `[0,5]` 抖动，存成 `float` |
+| `0x5A2B8E` | `_ftol(r * 3/(2^32-1) + 1.0)`，拒绝 `> 3` | `[0x7ED8C0] = 3/(2^32-1)`、`[0x7E1718] = 1.0` | `PickRange(1,3)` → `TIBTRE01`..`TIBTRE03`；**`TIBTRE00` 永远不出现**。只在 `isGems == 0` 时抽 |
+| `0x5A2C18` | `_ftol(r * 12/(2^32-1))`，拒绝 `> 11` | `[0x7EDA90] = 12/(2^32-1)` | `PickBelow(12)`，`+0x44 = base + [0,11]`，即 overlay 序号 |
+| `0x5A2D79` | `fild r; fmul 5.0; fmul 1/(2^32-1); fadd sqrt; fstp dword` | `[0x7ED7C0] = 5.0`、`[0x7ED898]` | 最小堆优先级 = 到**本次爆发原点**的近似距离 + `[0,5)` 抖动，存成 `float` |
 
-第三个就是陆地涂块用的那个「距离 + 均匀抖动」优先级——
-说明矿田和陆地块共用同一套「有机形状」生成手法。
+### 3.3 三个容易踩的点
 
-扩散过程中往工作记录写 `work[Y*side+X].+0x3C = [ebp+0x10]`
-（`0x5A2DD1`），即给格子打上矿田编号。
+1. **距离的原点是 `origin`，不是 `seed`**。`origin` 在"本次爆发第一格未锁定"时
+   被改成那一格；扩散断掉重来时又被拨回 `seed`。
+2. **`anchored` 翻转时把池子和堆全清了**（`used = 0`），
+   已经入队的邻居**连带作废**——这是"以第一个可用格为真正中心重新长"的写法。
+3. **`+0x44` 已被占且 `+0x11E > 10` 的格子既不加厚也不计入 `placed`**，
+   但仍然照常展开 8 邻居。所以一片吃满的老矿田会把预算白白拖着转。
+
+### ⚠️ 原版怪癖：全图清 `+0x3C` 在循环里
+
+每次"冷启动"都要**把全图 `Work[].+0x3C` 清 0 再跑一遍迭代器**（`0x5A29E0` 一带）。
+最坏情况一片矿田要清 10 次全图。功能上没错（`fieldId` 从 1 起算），但是 O(10·N)。
+原样复刻即可，不要改成增量清理——**清的时机会影响 `Work[].+0x3C != fieldId` 那个判定**。
 
 ## 四、本阶段随机数账
 
@@ -192,20 +299,24 @@ Ghidra 判成 `__cdecl` 4 参，**`ecx` 是否被用未确认**。
 |--------|------|---------|
 | `0x5A2494` | `0x5A23A0` | 仅当区域**没有**出生点（`startCount < 1`）且 `doPick` |
 | `0x598003` | `NormalDeviate` -> `UniformUnit` | 每个候选点抽一次抖动，**缓存命中时不花** |
-| `0x5A2B8E` | `0x5A28C0` | 每片矿田，门禁 `[ebp+0x14] == 0` |
+| `0x5A2B8E` | `0x5A28C0` | 每次“爆发锚定”一次，且 `isGems == 0` |
 | `0x5A2C18` | `0x5A28C0` | 每格首次赋值时 |
 | `0x5A2D79` | `0x5A28C0` | 最小堆每次入队 |
 
 ## 五、未确认
 
 1. ~~`MapSeedClass +0x2BC` / `+0x2C0` 来源未确认~~ → **已实锤**，见 §六
-2. §2.5 里 `mn`（各出生点到候选点的平均距离的最小值）到底怎么进入
-   `_ftol(...) + 500` 那个表达式——Ghidra 丢了栈跟踪，需要单独反汇编
-3. `0x5A28C0` 的最小堆扩散细节：接受/拒绝谓词、`size` 如何充当预算、
-   `[ebp+0x10]` / `[ebp+0x14]` 是什么对象的字段
-4. `field->+0x44` 的 12 档到底是不是矿的生长阶段（`OverlayData`）
-5. `0x5A28C0` 调用时 `ecx = MapSeedClass*` 是否真被使用
-6. ✅ 已关：`0x71BB90` = **`TerrainClass::TerrainClass(TerrainTypeClass*, CellStruct*)`**，
+2. ✅ 已关：`size = _ftol((avgDist[w] - mn) * 15.0) + 500`（§2.5）。
+   `ScenarioClass::GetWaypointCoords` = `0x68BCC0`（`*out = this->Waypoints[idx]`，字段 `+0x632`）
+3. ✅ 已关：`0x5A28C0` 的扩散细节已完整还原（见 §三）。
+   `[ebp+0x10]` = `fieldId`、`[ebp+0x14]` = `isGems`、`size` = **要铺满的格数**。
+4. ✅ 已关：`+0x44` 的 12 档不是生长阶段，是 **overlay 序号**——
+   `base + PickBelow(12)`，矿 `base=102`（Riparius 102..113）、
+   宝石 `base=27`（Cruentus 27..38）。真正的“厚度”是 `+0x11E`（0..11）。
+5. ✅ 已关：`0x5A28C0` 体内**一次都没读 `ecx`**，那句 `mov ecx` 是无用赋值。
+6. `MapClass::IsWithinUsableArea(&xy, 1)` 第二个参数的1 的含义——**未确认**。
+7. `CellClass::GetContainedTiberiumIndex` 的返回值口径——**未确认**（只用了 `!= -1`）。
+8. ✅ 已关：`0x71BB90` = **`TerrainClass::TerrainClass(TerrainTypeClass*, CellStruct*)`**，
    就是「在这格新建一个地貌物体」的构造函数。取证在阶段 10：
    `0x5A4887-0x5A48AA` 处 `new(0xE0)` 之后紧接着调它，类型取自
    `TerrainTypes[FindIndex("TREE%d%d")]`（`[0xA8E31C]` 是 `TerrainTypeClass` 数组）。

@@ -15,7 +15,7 @@
 | [rng-ledger.md](rng-ledger.md) | **随机数消耗总账**：104 个取数点 + 阶段归属 + 46 处死代码 | ✅ 清单已实锤 |
 | [stage-init.md](stage-init.md) | 阶段：Init random map（搭空 scenario，只抽 1 个随机数） | ✅ 取数点已实锤 |
 | [stage-init-regions.md](stage-init-regions.md) | 阶段：Init regions（把地图切成连通区域，只抽 1 个随机数） | ✅ 流程与取数点已实锤 |
-| [stage-tiberium.md](stage-tiberium.md) | 阶段：Creating tiberium（布矿） | 🚧 外层已实锤，矿田生长待补 |
+| [stage-tiberium.md](stage-tiberium.md) | 阶段：Creating tiberium（布矿） | ✅ 外层 + 矿田生长全链已实锤 |
 | [stage-tech-buildings.md](stage-tech-buildings.md) | 阶段：Adding tech buildings（中立科技建筑，两条互斥分支） | ✅ 已实锤，含 `PickRange` 语义 |
 | [stage-recalc.md](stage-recalc.md) | 阶段：绿地蔓延 + Recalculating cell attributes | ✅ 已实锤，附 TileSet 全局↔ini 键名映射 |
 | [stage-starting-points.md](stage-starting-points.md) | 阶段：Creating starting points（出生点，**整段可重试**） | ✅ 结构与 3 个取数点已实锤 |
@@ -51,7 +51,9 @@
   - [x] Init regions：四步流程 + 唯一取数点 `0x58CAF9`（内联 `PickRange(0,n-1)`）+ 三个谓词已实锤
   - [x] Recalc cell attributes：真正的 `RecalcAttributes` 遍历**不取随机数**；那 1 个随机数来自没有阶段日志的 `0x59B740`（绿地随机蔓延）
   - [x] **TileSet 全局 ↔ theater ini 键名映射**（45 个），`IsWaterOrShore` 的六个区间反查出正好是 WaterSet+ShorePieces+四瀑布，互为佐证
-  - [ ] Creating tiberium：外层 0x5A23A0 已实锤（真值表开关 / 出生点重心 / Tiberium x 0.01 插值 / 正负 2 sigma 正态抖动窗口）；内层矿田生长 0x5A28C0 只到骨架
+  - [x] Creating tiberium：**全链已实锤**——外层 `0x5A23A0`（真值表开关 / 出生点重心 / 正负 2 sigma 窗口）
+        + 矿田预算 `size = (int)((avgDist[w] - mn) * 15) + 500`（**离矿区最近的出生点恰好拿 500**）
+        + 内层 `0x5A28C0` 最小堆扩散（overlay = 102 矿 / 27 宝石 `+ PickBelow(12)`，厚度在 `+0x11E`）
   - [x] Adding tech buildings：`MapType==2` / 其它 两条互斥分支 + 6 个取数点已实锤；业主是 Neutral，建筑表 = `rules.ini [General] NeutralTechBuildings=`
   - [x] Creating starting points：**外层重试循环**（失败一轮的随机数不退回）+ 面积比例配额 + 3 个取数点已实锤
   - [x] Creating hills：入口 `0x5A35F0` 六步已拆开；**全部随机性只在 `0x5A2F50`**（顺序推进的分形高度场，每格 2 次截断正态，`Ruggedness < 10` 时一次都不抽）；高度取整是 round-half-away-from-zero，**不是 ties-to-even**

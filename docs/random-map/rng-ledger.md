@@ -212,7 +212,7 @@
 | 3 | 5 Recalc cell attributes | 1 | ✅ [stage-recalc.md](stage-recalc.md) |
 | 4 | 6 Creating starting points | 5 | ✅ [stage-starting-points.md](stage-starting-points.md) |
 | 5 | 7 Adding tech buildings | 6 | ✅ [stage-tech-buildings.md](stage-tech-buildings.md)（`MapType≠0` 才跑） |
-| 6 | 8 Creating tiberium | 5 | 🚧 [stage-tiberium.md](stage-tiberium.md)，矿田生长待补 |
+| 6 | 8 Creating tiberium | 5 | ✅ [stage-tiberium.md](stage-tiberium.md)，外层 + `0x5A28C0` 全链已实锤 |
 | 7 | 9 Creating hills | 1 | ✅ [stage-hills.md](stage-hills.md)，随机部分已实锤 |
 | 8 | 10 Creating LATs, rocks | 18 | ✅ 18 处全部归位并实锤 → [stage-lats.md](stage-lats.md) |
 | 9 | 11 Cleanup / 12 Radar | 0 | ✅ [stage-cleanup.md](stage-cleanup.md)：**纯拆解，不碰地形**（早先写的“会改地形”是误记）；真正改地形的是它前面那次 Recalc #4 |
