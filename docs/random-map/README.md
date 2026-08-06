@@ -13,6 +13,7 @@
 | [fpu-and-random-idioms.md](fpu-and-random-idioms.md) | 原版全局浮点环境 + 生成器取随机数的惯用法 | ✅ 已实锤并对拍 |
 | [fast-math.md](fast-math.md) | 查表近似 sqrt + Marsaglia 正态分布（形状的数学来源） | ✅ 已实锤并对拍 |
 | [rng-ledger.md](rng-ledger.md) | **随机数消耗总账**：104 个取数点 + 阶段归属 + 46 处死代码 | ✅ 清单已实锤 |
+| [map-geometry.md](map-geometry.md) | **等距地图几何**：格子集合（菱形四不等式）+ 扫全图顺序 + 总格数 | ✅ 已实锤并对拍 |
 | [stage-init.md](stage-init.md) | 阶段：Init random map（搭空 scenario，只抽 1 个随机数）+ **地图尺寸的来源** | ✅ 取数点与尺寸算法已实锤 |
 | [stage-init-regions.md](stage-init-regions.md) | 阶段：Init regions（把地图切成连通区域，只抽 1 个随机数） | ✅ 流程与取数点已实锤 |
 | [stage-tiberium.md](stage-tiberium.md) | 阶段：Creating tiberium（布矿） | ✅ 外层 + 矿田生长全链已实锤 |
@@ -75,6 +76,10 @@
         无随机，但影响地形字节；顺手查实 `RampTable`(0x83FF18) 19 项全表与 `RampBase = [0xABC1D8]`，
         并登记 7 条原版怪癖
 - [ ] 📌 **TODO（延后）**：把那 22 个死代码函数（27+ 取数点集中在 `0x5A5020` 一棵子树）单独逆一遍——疑似 TS 时代或 YR 开发期废弃的整套地形生成方案，对"重写红警2"那一层目标有算法参考价值。**前置条件**：104 个活取数点全部还原、端到端逐字节闭环跑通之后再动，详见 [rng-ledger.md](rng-ledger.md) §二
+- [x] **地图几何实锤**：格子集合 = 菱形四不等式（`X+Y>W`、`|X−Y|<W`、`X+Y<=W+2H`），
+      扫全图顺序 = `Reset 0x578350`/`Next 0x578290` 的斜线走位，总格数 `N = H(2W−1)`；
+      两条独立证据链（迭代器算术 / 边界比较指令）算出的集合**完全相等** → [map-geometry.md](map-geometry.md)
+- [x] `.sed` 参数读取复刻（含西木 `Get_Int` 的 `$hex` / `Xh` 三条路径）
 - [ ] `.map` 输出（IsoMapPack5 编码）
 - [ ] 端到端验证：同种子生成结果与原版逐字节比对
 

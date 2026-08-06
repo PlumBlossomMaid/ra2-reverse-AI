@@ -44,4 +44,8 @@ if(RA2_BUILD_TESTS)
   add_executable(test_map_seed_params test/test_map_seed_params.cpp)
   target_link_libraries(test_map_seed_params PRIVATE ra2_rmg gtest_main)
   add_test(NAME map_seed_params COMMAND test_map_seed_params)
+
+  add_executable(test_map_geometry test/test_map_geometry.cpp)
+  target_link_libraries(test_map_geometry PRIVATE ra2_rmg gtest_main)
+  add_test(NAME map_geometry COMMAND test_map_geometry)
 endif()
