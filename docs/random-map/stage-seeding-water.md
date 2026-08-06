@@ -1,7 +1,7 @@
 # 阶段：Seeding water（水域播种）
 
 > 状态：**涂块核心 + 三种 MapType 的投放策略 + 岸线平滑（含八邻域掩码定义）均已还原**；
-> 剩余缺口是贴砖用的 tile 序号表（需与 theater 的 TileSet 起始号一起定）。
+> 剩余缺口只剩"把伪码落成 C++ 并端到端对拍"（贴砖用的三张表已于 2026-08-06 实锤，见 §七末）。
 > 本文只记录已取证的部分，推测一律标注「未确认」。
 > 涉及的数学基元见 [fast-math.md](fast-math.md)（已逐位对拍）。
 >
@@ -636,24 +636,87 @@ while (!IsWater(a) && IsWater(b)) { // a 还是陆、a 的东侧还是水 → �
 `neg / sbb / and / add` 拼出来的无分支算式（如 `(-(mask&1 != 0) & 0xFFFFFFF7) + 0x1E`），
 数值上等价于表里的三目式。
 
-### 下标怎么变成真正的砖（仍未确认）
+### 下标怎么变成真正的砖（✅ 已实锤）
 
 上面各分支算出的下标 `i ∈ [1, 0x29]` 只是**组内下标**。`0x57B12D` 起：
 
+```
+0057b12d  mov edx, dword ptr [0xabad28]        ; ShorePieces
+0057b133  mov ecx, dword ptr [0xa8ed2c]        ; TileTypes 数组
+0057b13d  add edx, eax                         ; eax = i
+0057b13f  mov edx, dword ptr [ecx + edx*4 - 4] ; 注意这个 -4
+0057b143  mov dword ptr [0x880990], edx
+0057b14c  mov dx, word ptr [eax*4 + 0xabdb64]  ; dx 偏移
+0057b154  mov ax, word ptr [eax*4 + 0xabdb66]  ; dy 偏移
+```
+
 ```c
-[0x880990] = *(void**)([0xA8ED2C] - 4 + ([0xABAD28] + i) * 4);   // 取砖对象
-placeAt = { cell.X + (int16)[0xABDB64 + i*4],                    // 每个下标自带落点偏移
+tileObj = TileTypes[ShorePieces + i - 1];       // 那个 -4 让下标整体左移一格
+placeAt = { cell.X + (int16)[0xABDB64 + i*4],
             cell.Y + (int16)[0xABDB66 + i*4] };
 ```
 
-也就是说下标不只选砖，还**自带一个 (dx, dy) 落点偏移**——多格砖要挪到左上角去贴。
+即：**`i` 与真正的砖号差 1**（`i = 1` 对应 `ShorePieces` 本身），
+而且每个下标**自带一个 `(dx, dy)` 落点偏移**——多格砖要挪到左上角去贴。
 `0xABDB64`/`0xABDB66` 是同一张 4 字节步长表的两个半字。
 
-`0x57B440` 落地时还会查两张 42 项的属性表 `0x82A7F4` / `0x82A89C`
-（前者判相邻砖是否"同类"、后者取一个数值做差且要求差在 `[3, 6)`），
-索引都是 `tileIndex - [0xABAD28]`。
+#### `[0xABDB64]` 偏移表：CRT 静态初始化，不随 theater 变
 
-这几张表全在 `.bss`，由 theater 决定，留到端到端对拍时一起钉。
+它在 `.bss` 里，但**填表的是一个 C++ 静态初始化器 `0x57A9C0`**——
+函数指针躺在 `.data` 的 `0x813AB4`，由 CRT 的 `_initterm` 在 `WinMain` 之前跑一次。
+全 exe 没有任何 `call 0x57A9C0`，所以从前只看调用图会以为这张表是空的。
+
+用 `code/randmap/emu_oracle.py` 的 `run_range(0x57A9C0, 0x57ACE8)` 模拟执行后 dump，
+43 项（下标 `0..0x2A`）全表见 `memory/data/rmg/shore_tables.txt`。
+取值只有 `{0, -1, -2}`，摘要：
+
+| `i` | `(dx, dy)` |
+|---|---|
+| `0x01`–`0x04` | `(0, -1)` |
+| `0x05` | `(0, -2)` |
+| `0x06` | `(-1, -2)` |
+| `0x07`–`0x08` | `(-1, -1)` |
+| `0x09`–`0x0C` | `(-1, 0)` |
+| `0x0D` | `(-2, -1)` |
+| `0x0E` | `(-2, 0)` |
+| `0x0F`–`0x10` | `(-1, 0)` |
+| `0x16` | `(-1, 0)` |
+| `0x1D` `0x1F` `0x20` | `(0, -1)` |
+| `0x21`–`0x22` | `(-1, -1)` |
+| `0x23`–`0x24` | `(-1, 0)` |
+| `0x27`–`0x28` | `(0, -1)` |
+| 其余 | `(0, 0)` |
+
+#### 两张 42 项属性表：也是静态数据，与 theater 无关
+
+`0x82A7F4` / `0x82A89C` 都在 `.data`，是写死在 exe 里的 `int[42]`，
+索引 `k = tileIndex - ShorePieces ∈ [0, 0x29]`（= `i - 1`），越界即判失败：
+
+```
+0057b5af  cmp eax, 0x29 / jg  失败          ; 两个索引都要在 [0, 0x29]
+0057b5b9  mov eax, dword ptr [eax*4 + 0x82a89c]
+0057b5c0  mov edx, dword ptr [ecx*4 + 0x82a89c]
+0057b5c7  sub eax, edx / cdq / xor / sub    ; |A - B|
+0057b5ce  cmp eax, 3 / jl  失败
+0057b5d3  cmp eax, 5 / jle 通过             ; 即 |A - B| ∈ [3, 5]
+```
+
+```
+0057b6f3  mov eax, dword ptr [edi*4 + 0x82a7f4]
+0057b6fa  mov ecx, dword ptr [ebp*4 + 0x82a7f4]
+0057b701  cmp eax, ecx / jne 失败           ; 必须完全相等
+```
+
+| 表 | 值域 | 判据 | 语义（**推测**） |
+|---|---|---|---|
+| `0x82A7F4` | `0..25` | 两块砖的值必须**相等** | 砖的"形状族"编号 |
+| `0x82A89C` | `0..7` | 两块砖的值之差绝对值必须 ∈ `[3, 5]` | 8 方向朝向；差 3–5 ≈ 135°–225°，也就是"朝向大致相反" |
+
+全表见 `memory/data/rmg/shore_tables.txt`。数值是实锤的，**语义命名是推测**。
+
+`eax` / `ecx` 的来源（`0x57B58C-0x57B5A1`）：
+前者是**已在图上那块砖**的 `cell->+0x38`，后者是**候选砖**的 `TileTypeClass->+0x294`，
+都减掉 `ShorePieces`。
 
 ## 八、随机数消耗账本（复刻对齐的核心）
 
@@ -701,8 +764,10 @@ placeAt = { cell.X + (int16)[0xABDB64 + i*4],                    // 每个下标
 
 1. ~~`FUN_0057B210` 的八邻域掩码定义~~ ✅ 已实锤，见 §七
 2. ~~第 3 遍「走线奇偶」在数什么~~ ✅ 已实锤，见 §七
-3. 四遍平滑各分支产出的 tile 序号表：组内下标 `[1, 0x29]` → 真 tile 号的映射，
-   以及 42 项属性表 `0x82A7F4` / `0x82A89C` 的含义（需与 theater 的 TileSet 起始号一起定）
+3. ~~四遍平滑各分支产出的 tile 序号表~~ ✅ 已实锤，见 §七末：
+   `tile = TileTypes[ShorePieces + i - 1]`、落点偏移表 `[0xABDB64]`（CRT 静态初始化器
+   `0x57A9C0` 填的，已模拟执行 dump）、两张 `.data` 静态属性表 `0x82A7F4` / `0x82A89C`
+   的判据也已实锤（语义命名仍是推测）。全表存档 `memory/data/rmg/shore_tables.txt`
 4. ~~`FUN_0042B1F0`「可用格子总数」的口径~~ ✅ `= (H + 4) * W * 2`，见
    [stage-init.md](stage-init.md) §六
 5. 确认工作记录 0x50 字节的完整字段布局

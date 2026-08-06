@@ -207,7 +207,7 @@
 
 | 顺位 | 阶段 | 取数点 | 现状 |
 |------|------|--------|------|
-| 1 | 2 Seeding water | 31 | 🚧 算法骨架已还原，缺 tile 序号表 |
+| 1 | 2 Seeding water | 31 | ✅ [stage-seeding-water.md](stage-seeding-water.md)，算法 + 贴砖三张表全部实锤 |
 | 2 | 3 Init regions | 1 | ✅ [stage-init-regions.md](stage-init-regions.md) |
 | 3 | 5 Recalc cell attributes | 1 | ✅ [stage-recalc.md](stage-recalc.md) |
 | 4 | 6 Creating starting points | 5 | ✅ [stage-starting-points.md](stage-starting-points.md) |

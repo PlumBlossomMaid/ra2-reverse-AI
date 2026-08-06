@@ -22,7 +22,7 @@
 | [stage-hills.md](stage-hills.md) | 阶段：Creating hills（造山，唯一随机源是高度场） | ✅ 随机部分 + 角点抬升子系统全链已实锤 |
 | [stage-lats.md](stage-lats.md) | 阶段：Creating LATs, rocks etc（地表装饰，取数点最密） | ✅ 18 个取数点全部实锤 |
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
-| [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | 🚧 算法骨架 + 随机数账本已还原，缺 tile 序号表 |
+| [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法 + 随机数账本 + 贴砖表全部还原 |
 
 ## 进度
 
@@ -47,7 +47,9 @@
   - [x] Seeding water：三种 MapType 的投放策略 + 区域网格 `FUN_0059A8F0` 已还原
   - [x] Seeding water：岸线平滑 `FUN_0057A0C0` 四遍结构 + **它会消耗随机数**（传递闭包取证）
   - [x] Seeding water：`FUN_0057B210` 八邻域「水」掩码的位定义与三种 mode 门槛已实锤
-  - [ ] Seeding water：四遍平滑各分支的 tile 序号表（需 theater 的 TileSet 起始号）
+  - [x] Seeding water：四遍平滑的贴砖三张表已实锤——`tile = TileTypes[ShorePieces + i - 1]`、
+        落点偏移表 `[0xABDB64]`（CRT 静态初始化器 `0x57A9C0` 填，已模拟执行 dump）、
+        两张 `.data` 静态属性表 `0x82A7F4`(族相等) / `0x82A89C`(朝向差 ∈ [3,5])
   - [x] Init regions：四步流程 + 唯一取数点 `0x58CAF9`（内联 `PickRange(0,n-1)`）+ 三个谓词已实锤
   - [x] Recalc cell attributes：真正的 `RecalcAttributes` 遍历**不取随机数**；那 1 个随机数来自没有阶段日志的 `0x59B740`（绿地随机蔓延）
   - [x] **TileSet 全局 ↔ theater ini 键名映射**（45 个），`IsWaterOrShore` 的六个区间反查出正好是 WaterSet+ShorePieces+四瀑布，互为佐证
@@ -137,6 +139,7 @@ long double。同类的 `fsin` / `fpatan` / `f2xm1` 是否也如此，**未确�
 | `code/ghidra_scripts/rng_closure.py` | 调用树传递闭包，找出某根函数下**所有**随机数取数点（真函数边界） |
 | `code/randmap/dump_tileset_globals.py` | 把 theater 的 45 个 TileSet `.bss` 全局对回 ini 键名（栈槽两段拼接） |
 | `code/randmap/read_const.py` | 按 VA 直读 PE 里的 double/float/dword/字节串常量 |
+| `code/randmap/emu_oracle.py` `run_range` | 也用来**跑 CRT 静态初始化器**，把 `.bss` 里「文件中不存在」的表 dump 出来 |
 | `code/randmap/call_closure.py` | **指令级**递归下降可达性：把取数点归到阶段、并判出死代码（解 switch 跳转表） |
 
 ## 复刻代码的可移植性立场
