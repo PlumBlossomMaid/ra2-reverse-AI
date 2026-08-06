@@ -12,6 +12,7 @@
 | [parameters.md](parameters.md) | MapSeedClass 参数集与 `.sed` 文件格式 | ✅ 已实锤 |
 | [fpu-and-random-idioms.md](fpu-and-random-idioms.md) | 原版全局浮点环境 + 生成器取随机数的惯用法 | ✅ 已实锤并对拍 |
 | [fast-math.md](fast-math.md) | 查表近似 sqrt + Marsaglia 正态分布（形状的数学来源） | ✅ 已实锤并对拍 |
+| [stage-init.md](stage-init.md) | 阶段：Init random map（搭空 scenario，只抽 1 个随机数） | ✅ 取数点已实锤 |
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | 🚧 算法骨架 + 随机数账本已还原，缺 tile 序号表 |
 
 ## 进度
@@ -23,7 +24,9 @@
 - [x] 原版全局 FPU 状态实锤（`_control87(_RC_CHOP,_MCW_RC)`，控制字 0x0E7F）
 - [x] 生成器全局 `Randomizer @ 0xABE890`：**整张地图只播种一次**，种子取自 `.sed`
 - [x] 浮点比例 + 拒绝采样取数惯用法复刻 + 对拍（`scaled_random`）
+- [x] **`0xABE890` 的使用边界实锤**：153 处引用全在 `0x58B772-0x5AC192`，引擎侧一处没有
 - [ ] 各阶段算法还原（地形/水域/区域/起始点/矿/山丘/装饰）
+  - [x] Init random map：**全阶段只消耗 1 个随机数**（`0x59A4C7`，25% 抛硬币）+ 格子/工作数组初值
   - [x] Seeding water：阶段结构 + 水面 tile 细化 `FUN_0059C630` 已还原并对拍
   - [x] Seeding water：涂块核心 `FUN_0059BBC0`（最小堆扩散 + 中心布朗运动）算法已还原
   - [x] 数学基元 `FastSqrt` / 正态分布 / `ChopLog` 复刻并逐位对拍（含架构无关黄金值）

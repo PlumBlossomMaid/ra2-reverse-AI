@@ -82,7 +82,7 @@ while (!list.empty()) {
 ### MapType 1（`FUN_0059AFA0`）：从地图中心贪心生长
 
 ```c
-double total  = (double)CountUsableCells();                        // 0x42B1F0
+double total  = (double)CountUsableCells();  // 0x42B1F0 = (H + 4) * W * 2
 double target = (0.5 - 0.45) * (1.0 - WaterAmount /* +0x4C */ * 0.01) + 0.45;
 int    cap    = (int)(total * 0.03 * target);                      // 单次预算上限
 Cell   center = { W/2 + H/2 + 1, W/2 + H/2 };                      // 地图正中的等距坐标
@@ -703,7 +703,8 @@ placeAt = { cell.X + (int16)[0xABDB64 + i*4],                    // 每个下标
 2. ~~第 3 遍「走线奇偶」在数什么~~ ✅ 已实锤，见 §七
 3. 四遍平滑各分支产出的 tile 序号表：组内下标 `[1, 0x29]` → 真 tile 号的映射，
    以及 42 项属性表 `0x82A7F4` / `0x82A89C` 的含义（需与 theater 的 TileSet 起始号一起定）
-4. 确认 `FUN_0042B1F0`「可用格子总数」的口径（MapType 1/2 的覆盖率分母）
+4. ~~`FUN_0042B1F0`「可用格子总数」的口径~~ ✅ `= (H + 4) * W * 2`，见
+   [stage-init.md](stage-init.md) §六
 5. 确认工作记录 0x50 字节的完整字段布局
    （已锁定：数组按 `side × side` 的格坐标索引；`+0x38` 陆块编号 / `+0x3C` 入堆标记 /
    `+0x40` 掩码缓存（`-1` = 失效）/ `+0x4A` 有效位 / `+0x4B`）
