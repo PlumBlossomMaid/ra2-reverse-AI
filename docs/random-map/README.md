@@ -14,6 +14,7 @@
 | [fast-math.md](fast-math.md) | 查表近似 sqrt + Marsaglia 正态分布（形状的数学来源） | ✅ 已实锤并对拍 |
 | [rng-ledger.md](rng-ledger.md) | **随机数消耗总账**：104 个取数点 + 阶段归属 + 46 处死代码 | ✅ 清单已实锤 |
 | [stage-init.md](stage-init.md) | 阶段：Init random map（搭空 scenario，只抽 1 个随机数） | ✅ 取数点已实锤 |
+| [stage-init-regions.md](stage-init-regions.md) | 阶段：Init regions（把地图切成连通区域，只抽 1 个随机数） | ✅ 流程与取数点已实锤 |
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | 🚧 算法骨架 + 随机数账本已还原，缺 tile 序号表 |
 
 ## 进度
@@ -40,6 +41,7 @@
   - [x] Seeding water：岸线平滑 `FUN_0057A0C0` 四遍结构 + **它会消耗随机数**（传递闭包取证）
   - [x] Seeding water：`FUN_0057B210` 八邻域「水」掩码的位定义与三种 mode 门槛已实锤
   - [ ] Seeding water：四遍平滑各分支的 tile 序号表（需 theater 的 TileSet 起始号）
+  - [x] Init regions：四步流程 + 唯一取数点 `0x58CAF9`（内联 `PickRange(0,n-1)`）+ 三个谓词已实锤
 - [ ] `.map` 输出（IsoMapPack5 编码）
 - [ ] 端到端验证：同种子生成结果与原版逐字节比对
 
