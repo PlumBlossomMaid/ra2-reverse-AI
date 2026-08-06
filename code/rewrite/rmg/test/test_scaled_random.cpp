@@ -1,0 +1,64 @@
+// 对拍基准来自 memory/data/rmg/scaled_golden.txt
+// —— code/randmap/dump_scaled_golden.py 用 Unicorn 指令级模拟原版
+// FUN_0059C630（Seeding water 阶段）里的三处取数片段，FPCW=0x0E7F 采得。
+#include <cstdint>
+
+#include "gtest/gtest.h"
+#include "scaled_random.h"
+
+TEST(ScaledRandomTest, From1_10) {
+  ra2::rmg::FpuChopScope chop;
+  struct Case { std::uint32_t seed; int expect[24]; };
+  static const Case kCases[] = {
+      {0u, {3, 5, 6, 7, 1, 4, 10, 3, 8, 7, 8, 7, 7, 9, 8, 7, 1, 6, 3, 9, 8, 9, 10, 1}},
+      {1u, {5, 2, 9, 7, 10, 2, 2, 5, 5, 1, 2, 2, 4, 5, 1, 4, 5, 2, 4, 5, 4, 6, 6, 1}},
+      {11584u, {10, 4, 7, 9, 4, 4, 6, 9, 4, 6, 4, 1, 6, 9, 4, 8, 5, 3, 4, 10, 5, 5, 10, 4}},
+      {60556u, {7, 3, 5, 5, 1, 8, 7, 6, 4, 10, 6, 10, 10, 9, 7, 4, 2, 1, 6, 1, 6, 2, 8, 1}},
+      {3735928559u, {8, 9, 3, 8, 7, 5, 1, 6, 5, 8, 6, 10, 9, 7, 1, 3, 9, 9, 2, 7, 4, 3, 1, 9}},
+  };
+  for (const auto& c : kCases) {
+    ra2::rmg::Randomizer rng(c.seed);
+    for (int i = 0; i < 24; ++i) {
+      EXPECT_EQ(ra2::rmg::PickFrom1(rng, 10), c.expect[i])
+          << "seed=" << c.seed << " i=" << i;
+    }
+  }
+}
+
+TEST(ScaledRandomTest, Below_242) {
+  ra2::rmg::FpuChopScope chop;
+  struct Case { std::uint32_t seed; int expect[24]; };
+  static const Case kCases[] = {
+      {0u, {69, 100, 136, 148, 6, 90, 231, 58, 191, 166, 171, 151, 149, 208, 178, 150, 24, 121, 71, 201, 177, 195, 218, 3}},
+      {1u, {114, 37, 206, 163, 218, 34, 33, 103, 107, 21, 38, 46, 82, 112, 12, 86, 115, 32, 95, 107, 91, 131, 134, 16}},
+      {11584u, {241, 83, 148, 197, 93, 79, 131, 202, 88, 136, 94, 13, 138, 211, 86, 182, 99, 61, 90, 230, 102, 117, 219, 77}},
+      {60556u, {152, 59, 100, 111, 11, 192, 154, 138, 93, 230, 122, 224, 231, 211, 156, 85, 34, 5, 127, 17, 122, 39, 176, 5}},
+      {3735928559u, {180, 213, 70, 188, 168, 118, 14, 121, 118, 172, 121, 226, 206, 159, 12, 72, 205, 194, 28, 169, 90, 60, 18, 197}},
+  };
+  for (const auto& c : kCases) {
+    ra2::rmg::Randomizer rng(c.seed);
+    for (int i = 0; i < 24; ++i) {
+      EXPECT_EQ(ra2::rmg::PickBelow(rng, 242), c.expect[i])
+          << "seed=" << c.seed << " i=" << i;
+    }
+  }
+}
+
+TEST(ScaledRandomTest, Below_201) {
+  ra2::rmg::FpuChopScope chop;
+  struct Case { std::uint32_t seed; int expect[24]; };
+  static const Case kCases[] = {
+      {0u, {57, 83, 113, 123, 5, 74, 192, 48, 158, 138, 142, 125, 123, 173, 148, 125, 20, 100, 59, 167, 147, 162, 181, 3}},
+      {1u, {94, 30, 171, 135, 181, 28, 27, 85, 88, 17, 31, 38, 68, 93, 10, 71, 96, 26, 79, 89, 76, 109, 111, 13}},
+      {11584u, {200, 69, 123, 164, 77, 65, 109, 168, 73, 113, 78, 10, 114, 175, 71, 151, 82, 51, 75, 191, 85, 97, 182, 64}},
+      {60556u, {126, 49, 83, 92, 9, 160, 128, 115, 77, 191, 101, 186, 192, 175, 129, 71, 29, 4, 106, 14, 101, 32, 146, 4}},
+      {3735928559u, {149, 177, 58, 156, 140, 98, 12, 100, 98, 143, 100, 188, 171, 132, 10, 60, 170, 161, 23, 140, 74, 50, 15, 164}},
+  };
+  for (const auto& c : kCases) {
+    ra2::rmg::Randomizer rng(c.seed);
+    for (int i = 0; i < 24; ++i) {
+      EXPECT_EQ(ra2::rmg::PickBelow(rng, 201), c.expect[i])
+          << "seed=" << c.seed << " i=" << i;
+    }
+  }
+}

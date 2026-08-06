@@ -63,7 +63,8 @@ MSVC 6.0 调试宏 `PUSH <行号 imm32>; PUSH <文件名VA>; CALL 0x734E60` 在 
 
 | 源文件 | 代码区 | 源码行范围 |
 |--------|--------|-----------|
-| `D:a2mdpost\MapGen.cpp`（字符串 @0x82BA48） | **0x5956E7 – 0x59A63A** | 3934 – 6746 |
+| `D:
+a2mdpost\MapGen.cpp`（字符串 @0x82BA48） | **0x5956E7 – 0x59A63A** | 3934 – 6746 |
 
 顺带产出全 exe **33 个源文件 ↔ 代码区**映射，后续任何模块都能直接查表定位。
 
@@ -109,6 +110,31 @@ MSVC 6.0 调试宏 `PUSH <行号 imm32>; PUSH <文件名VA>; CALL 0x734E60` 在 
 - 产出：`code/rewrite/rmg/randomizer.{h,cpp}` + `test/test_randomizer.cpp`（Google Test 7 项全过）
 - 基准：`memory/data/rmg/rng_golden.txt`（8 个种子）
 
+#### 4.5 浮点环境与取数惯用法（2026-08-06 傍晚新增，**复刻前提**）
+- **全局 FPU 状态实锤**：WinMain `0x6BBFB7 push 0x300 / push 0x300 / call 0x7CBF49`
+  = `_control87(_RC_CHOP, _MCW_RC)` → **舍入模式 = 向零截断**；
+  紧接 `0x6BBFC9 call 0x7C5EE4` 把控制字缓存进 `[0x822D80]`，实测 **0x0E7F**
+  （PC=53 位双精度 + RC=chop + 全异常屏蔽）；`_ftol @0x7C5F00` 的快路径正是
+  比对这个缓存值——三条证据互证
+- **生成器全局 Randomizer @ 0xABE890**：`FUN_00598960` 开头用 `MapSeedClass+0x74`
+  （即 `.sed` 的 `Seed=`）在栈上构造后 `rep movsd 0xFD` 拷进全局
+  → **整张地图只播种一次**，所有阶段共用一条随机序列
+- **取数惯用法不是 RandomRanged**：全 142 处消耗点里 Random 127 / Ranged 14 / Seed 1；
+  算法主体用的是浮点比例 + 拒绝采样：
+  `do { v = (int)((double)(uint32)Random() * (n/4294967295.0)); } while (v > n-1);`
+  比例常数已核对（`0x7ED9E8`=10 / `0x7ED9E0`=242 / `0x7ED9D8`=201 各除以 2^32-1，
+  与 `n/4294967295.0` 的 double 字节逐位一致）；`fild qword` 是故意的
+  ——x87 没有 uint32 转换指令，写成 int32 会让一半取值变负
+- 重写 `code/rewrite/rmg/scaled_random.{h,cpp}`（含 `FpuChopScope` RAII）+
+  Google Test 3 项全过；基准 `memory/data/rmg/scaled_golden.txt`
+- **诚实记录**：6 个 n × 200 种子 × 2000 抽（各 40 万次）对比 chop 与 round-to-nearest
+  **分歧 0 次**（乘积落在整数边界半 ulp 内的概率约 n·2^-53）。舍入模式对"取随机数"
+  无风险，但它是**全局**设置，做真正浮点累加的地形阶段仍必须在同一模式下跑
+- 顺带实锤：`0x87F7E8 MapClass::Instance`、`0x89C2DC` 工作数组边长（方阵）、
+  `0xABED10` 每格 0x50 字节工作记录数组（`0x578E60` 分配 `side²×0x50`），
+  索引 `(Y*side + X)*0x50`；记录字段语义**未确认**
+- 文档：`docs/random-map/fpu-and-random-idioms.md`；取证 `memory/data/rmg/rng_callsites.txt`
+
 #### 5. 验证方法论：Unicorn 指令级 oracle（可复用于后续每个阶段）
 `code/randmap/emu_oracle.py` 把 gamemd.exe 的节按原 ImageBase 0x400000 映射进
 Unicorn，用哨兵返回地址 + ECX 传 this 直接跑原版机器码取标准答案，再与独立重写对拍。
@@ -129,8 +155,12 @@ Unicorn，用哨兵返回地址 + ECX 传 this 直接跑原版机器码取标准
 
 ### 下一步计划（按顺序）
 
-1. **逐阶段还原算法**，从 `RMG: Init random map`（`FUN_00599650`）开始，
-   每个阶段都用 Unicorn oracle 对拍，**同时记录该阶段消耗的随机数个数**
+1. **逐阶段还原算法**。已确认 `Init random map`（`FUN_00599650`）主体是**引擎侧初始化**
+   （写 `[Lighting]`/`[Basic]` INI、建 Preview、清 CellClass、重算寻路、设 waypoint 700/699），
+   只取 1 次随机数——命令行工具基本不需要复刻它。真正的地形算法在
+   `Seeding water`（`0x59A6C0` / `0x59C580` / `0x59C630`）及之后，
+   且集中在 **0x59A66C-0x5A9800 这段无调试宏的源文件**里（约 130 处取数点）。
+   下一步：把 `Seeding water` 三个入口完整还原 + 记录取数个数 + 片段对拍
 2. `.sed` 参数解析（含 UTF-16-hex `Description`）+ rules.ini 驱动的 RMG 配置（数据驱动）
 3. `.map` 输出：`[IsoMapPack5]` Base64 + XCC encode5，组装成 C++ 命令行程序
 4. 端到端验证：同种子 + 同参数 → 我们的 `.map` 与原版输出**逐字节比对**

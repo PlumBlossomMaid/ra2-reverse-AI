@@ -76,7 +76,8 @@ E:\code\ra2-reverse-AI\
   **RNG 里程碑已达成（2026-08-06 下午）**——
   ① **编译单元测绘**：调试宏字节对 `68 <行号> 68 <文件VA>` + `CALL 0x734E60` 直接扫 PE
   反推源文件↔代码区，不用开 Ghidra（`code/randmap/scan_source_macros.py`，全 exe 33 个 TU）；
-  `D:a2mdpost\MapGen.cpp` = **0x5956E7-0x59A63A**（源码行 3934-6746，21KB）。
+  `D:
+a2mdpost\MapGen.cpp` = **0x5956E7-0x59A63A**（源码行 3934-6746，21KB）。
   ② **生成器类实锤 `MapSeedClass`**（YRpp 交叉验证）：`: LoadOptionsClass`，单例 `Instance @ 0xABDFD8`，
   大小 0x318，构造 @ 0x595680；本仓库独立还原的 17 参数偏移表与 YRpp 头文件**完全吻合**。
   **修正先前误标**：0x597760 = `SaveMission`（非 WriteParameters）、0x597A30 = `LoadMission`（非 ReadParameters）；
@@ -93,6 +94,25 @@ E:\code\ra2-reverse-AI\
   **汇编级坑点**：`SAR EDX,0x10` 是**算术**右移后 SHL/OR 拼半字，**不是 ROR16**，符号位污染高半字
   ——照伪代码写约一半种子会分岔（必须核对 `randomizer_asm.txt`）。
   重写 `code/rewrite/rmg/randomizer.{h,cpp}` + Google Test 7 项全过。
+  ④' **复刻前提：原版全局浮点环境**（2026-08-06 傍晚，三条证据互证）——
+  WinMain `0x6BBFB7 push 0x300/push 0x300/call 0x7CBF49` = `_control87(_RC_CHOP,_MCW_RC)`
+  → 舍入模式 = **向零截断**；`0x6BBFC9 call 0x7C5EE4` 把控制字缓存进 `[0x822D80]` 实测 **0x0E7F**
+  （PC=53 位双精度 + RC=chop）；`_ftol @0x7C5F00` 快路径就是比对这个缓存值。
+  **生成器全局 `Randomizer @ 0xABE890`**：`FUN_00598960` 用 `MapSeedClass+0x74`(=`.sed` 的 Seed)
+  在栈上构造后 `rep movsd 0xFD` 拷进全局 → **整张地图只播种一次**，所有阶段共用一条序列。
+  **取数惯用法不是 RandomRanged**：142 处消耗点 = Random 127 / Ranged 14 / Seed 1；
+  算法主体用浮点比例+拒绝采样 `do{v=(int)((double)(uint32)Random()*(n/4294967295.0));}while(v>n-1);`
+  （常数 `0x7ED9E8`=10、`0x7ED9E0`=242、`0x7ED9D8`=201 除 2^32-1，字节与 `n/4294967295.0` 逐位一致；
+  `fild qword` 是故意的，x87 无 uint32 转换指令，写成 int32 一半取值会变负）。
+  重写 `scaled_random.{h,cpp}`（含 `FpuChopScope`）+ gtest 3 项全过，基准 `scaled_golden.txt`。
+  **诚实记录**：6 个 n × 40 万次对比 chop 与 round-to-nearest **分歧 0 次**（概率约 n·2^-53），
+  取数这步无风险，但它是全局设置，做浮点累加的地形阶段仍须同模式。
+  顺带实锤 `0x87F7E8 MapClass::Instance`、`0x89C2DC` 工作数组边长（方阵）、
+  `0xABED10` 每格 0x50 字节工作记录数组（`0x578E60` 分配 side²×0x50，索引 `(Y*side+X)*0x50`，
+  字段语义未确认）。文档 `docs/random-map/fpu-and-random-idioms.md`，取证 `memory/data/rmg/rng_callsites.txt`。
+  新增纯只读 PE 分析工具（不依赖 Ghidra）：`scan_rng_callsites.py`（取数点归属）、
+  `disasm.py`（capstone 按 VA 反汇编）、`xref_abs.py`（绝对地址引用搜索）、
+  `dump_scaled_golden.py`；`emu_oracle.py` 增加 `run_range` 支持任意片段执行 + 设 FPCW。
   ⑤ **验证方法论（可复用于后续每阶段）**：`code/randmap/emu_oracle.py` 用 Unicorn 把 gamemd.exe
   按原 ImageBase 0x400000 映射后**指令级模拟跑原版机器码**取标准答案，与独立重写逐位对拍
   （5 种子 × 播种状态/16 次 Random/3 组 16 次 RandomRanged **完全一致**）。
@@ -106,7 +126,10 @@ E:\code\ra2-reverse-AI\
   文档 `docs/random-map/`（README/randomizer/mapgen-tu/parameters）；
   取证 `memory/data/decomp/{mapgen_tu_map,rmg_pipeline_decomp,randomizer_asm}.txt` +
   基准 `memory/data/rmg/rng_golden.txt`；环境坑 `memory/notes/toolchain-pitfalls.md`（7 条）。
-  **下一步**：从 `RMG: Init random map`(FUN_00599650) 起逐阶段还原 + 对拍 + 记录随机数消耗。
+  **下一步**：`Init random map`(FUN_00599650) 已确认主体是引擎侧初始化（写 [Lighting]/[Basic] INI、
+  建 Preview、清 CellClass、重算寻路、设 waypoint 700/699），只取 1 次随机数，命令行工具基本不必复刻；
+  真正地形算法在 `Seeding water`(0x59A6C0/0x59C580/0x59C630) 及之后，集中在
+  **0x59A66C-0x5A9800 这段无调试宏的源文件**（约 130 处取数点）——从它开始逐阶段还原 + 记录取数个数。
   注意：RA1 源码（CnCRemastered）**无**随机地图生成器（TS/RA2 新特性）；EA 任务编辑器也**无**生成器
 - **待确认**：`DemandProduction` 第三参数语义；`Unsuspend` 资金不足时挂起标志的行为；
   多工厂海军/陆军计数差异；`target->Target==me` 时反击贡献取负的语义；`Type+0x1FB` 标志名称；

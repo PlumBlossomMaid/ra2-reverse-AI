@@ -93,6 +93,37 @@ class Oracle(object):
         v = self._call(ADDR_RANGED, self.obj, (a, b))
         return struct.unpack("<i", struct.pack("<I", v & 0xFFFFFFFF))[0]
 
+    # --- 任意代码片段执行（用于验证含 x87 的取数惯用法） ---
+    def run_range(self, start, stop, regs=None, fpcw=0x0E7F):
+        """从 start 执行到 stop（不含），返回 EAX。
+
+        fpcw 默认 0x0E7F —— 原版在 WinMain 里 `_control87(0x300,0x300)`（RC_CHOP）
+        之后缓存到 [0x822D80] 的值：PC=53 位双精度 + RC=向零截断。
+        任何含 x87 的复刻都必须在同一舍入模式下才可能逐位一致。
+        """
+        from unicorn.x86_const import (UC_X86_REG_ESP, UC_X86_REG_EAX,
+                                       UC_X86_REG_EBX, UC_X86_REG_ECX,
+                                       UC_X86_REG_EDX, UC_X86_REG_FPCW)
+        sp = STACK_BASE + STACK_SIZE - 0x2000
+        self.uc.reg_write(UC_X86_REG_ESP, sp)
+        self.uc.reg_write(UC_X86_REG_FPCW, fpcw)
+        for name, v in (regs or {}).items():
+            self.uc.reg_write({"eax": UC_X86_REG_EAX, "ebx": UC_X86_REG_EBX,
+                               "ecx": UC_X86_REG_ECX, "edx": UC_X86_REG_EDX}[name],
+                              v & 0xFFFFFFFF)
+        self.uc.emu_start(start, stop)
+        return self.uc.reg_read(UC_X86_REG_EAX)
+
+    # --- 全局 RMG 随机数发生器（0xABE890） ---
+    GLOBAL_RNG = 0xABE890
+
+    def seed_global(self, s):
+        """原版做法：栈上构造 Randomizer 后 rep movsd 253 dword 拷进全局 0xABE890"""
+        self.obj = HEAP_BASE
+        self.seed(s)
+        raw = bytes(self.uc.mem_read(HEAP_BASE, OBJ_SIZE))
+        self.uc.mem_write(self.GLOBAL_RNG, raw)
+
     # --- 对象状态 ---
     def dump_obj(self):
         raw = self.uc.mem_read(self.obj, OBJ_SIZE)

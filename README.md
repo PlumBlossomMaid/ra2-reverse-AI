@@ -105,7 +105,8 @@ ra2-reverse-AI/
 - 文档：`docs/save-game/sav-format.md`
 
 ### 随机地图生成器逆向（进行中，2026-08-06）
-- **编译单元测绘**：调试宏反推 `D:a2mdpost\MapGen.cpp` 代码区 **0x5956E7-0x59A63A**（21KB，源码 6746 行）
+- **编译单元测绘**：调试宏反推 `D:
+a2mdpost\MapGen.cpp` 代码区 **0x5956E7-0x59A63A**（21KB，源码 6746 行）
   ——工具 `code/randmap/scan_source_macros.py` 顺带产出全 exe 33 个源文件↔代码区映射
 - **生成器类实锤**：`MapSeedClass`（YRpp 符号交叉验证），单例 `Instance @ 0xABDFD8`；
   17 参数偏移表本仓库独立还原后与 YRpp `MapSeedClass.h` **完全吻合**
@@ -114,8 +115,16 @@ ra2-reverse-AI/
   → Adding tech buildings → Creating tiberium → Creating hills → Creating LATs/rocks → Cleanup → Done
 - **随机数发生器 R250 逐位复刻完成** ✅：播种 `0x65C6D0`（4 轮 Feistel）/ 取数 `0x65C780` /
   区间随机 `0x65C7E0`（掩码+拒绝采样）；C++ 重写 + **Google Test 7 项全过**
+- **复刻前提：原版全局浮点环境实锤**：WinMain `_control87(_RC_CHOP,_MCW_RC)` @0x6BBFB7
+  → 舍入模式**向零截断**，缓存控制字 `[0x822D80]`=**0x0E7F**（PC=53 位 + RC=chop），
+  `_ftol@0x7C5F00` 快路径比对同一值——三条证据互证
+- **生成器全局 `Randomizer @ 0xABE890`**：整张地图**只播种一次**，种子取自 `.sed` 的 `Seed=`
+  （`MapSeedClass+0x74`）→ "阶段顺序 + 每阶段取数个数"就是种子兼容性的全部内容
+- **取数惯用法复刻** ✅：算法主体不用 `RandomRanged`，而是浮点比例 + 拒绝采样
+  `(int)((double)(uint32)Random() * (n/4294967295.0))`；重写 + gtest 3 项全过
 - **验证方法论**：`code/randmap/emu_oracle.py` 用 Unicorn 指令级模拟跑原版机器码取标准答案，
-  与独立重写逐位对拍（8 种子 × 播种状态/取数/区间随机全部一致）
+  与独立重写逐位对拍（8 种子 × 播种状态/取数/区间随机全部一致）；
+  并支持**任意代码片段执行**（给起止地址 + 寄存器 + FPU 控制字），含 x87 的惯用法即由此取真值
 - 文档：`docs/random-map/`　取证：`memory/data/decomp/mapgen_tu_map.txt` / `rmg_pipeline_decomp.txt` /
   `randomizer_asm.txt`　基准：`memory/data/rmg/rng_golden.txt`
 
