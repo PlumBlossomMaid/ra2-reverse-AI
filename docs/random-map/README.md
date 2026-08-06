@@ -12,7 +12,7 @@
 | [parameters.md](parameters.md) | MapSeedClass 参数集与 `.sed` 文件格式 | ✅ 已实锤 |
 | [fpu-and-random-idioms.md](fpu-and-random-idioms.md) | 原版全局浮点环境 + 生成器取随机数的惯用法 | ✅ 已实锤并对拍 |
 | [fast-math.md](fast-math.md) | 查表近似 sqrt + Marsaglia 正态分布（形状的数学来源） | ✅ 已实锤并对拍 |
-| [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | 🚧 涂块核心 + 三种投放策略已还原，岸线平滑待补 |
+| [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | 🚧 算法骨架 + 随机数账本已还原，缺 tile 序号表 |
 
 ## 进度
 
@@ -28,7 +28,9 @@
   - [x] Seeding water：涂块核心 `FUN_0059BBC0`（最小堆扩散 + 中心布朗运动）算法已还原
   - [x] 数学基元 `FastSqrt` / 正态分布 / `ChopLog` 复刻并逐位对拍（含架构无关黄金值）
   - [x] Seeding water：三种 MapType 的投放策略 + 区域网格 `FUN_0059A8F0` 已还原
-  - [ ] Seeding water：岸线平滑 `FUN_0057A0C0`（四遍平滑，决定整块陆地存废）
+  - [x] Seeding water：岸线平滑 `FUN_0057A0C0` 四遍结构 + **它会消耗随机数**（传递闭包取证）
+  - [x] Seeding water：`FUN_0057B210` 八邻域「水」掩码的位定义与三种 mode 门槛已实锤
+  - [ ] Seeding water：四遍平滑各分支的 tile 序号表（需 theater 的 TileSet 起始号）
 - [ ] `.map` 输出（IsoMapPack5 编码）
 - [ ] 端到端验证：同种子生成结果与原版逐字节比对
 
@@ -60,6 +62,17 @@ long double。同类的 `fsin` / `fpatan` / `f2xm1` 是否也如此，**未确�
 更一般的做法：**验证 oracle 的最省事办法是改一个本该改变结果的输入**——
 若结果纹丝不动，说明它压根没在模拟那个语义。详见 [fast-math.md](fast-math.md) §四。
 
+### ⚠️ 「这段代码动不动随机数」必须做传递闭包
+
+只搜 `call Randomizer::Random` 会漏掉包装层。岸线平滑的四个函数体内
+一处直接调用都没有，差点被写成"平滑不消耗随机数"——实际隔了一层
+`0x57ACF0 → 0x598030(PickRange) → Random`，而且它是本阶段消耗的**大头**。
+
+补救办法是 `code/ghidra_scripts/rng_closure.py`：从根函数出发做调用树传递闭包，
+并且**用 Ghidra 的真实函数边界（`Function.getBody()`）而不是线性反汇编猜边界**——
+同一次扫描，猜边界得到"可达 2525 个函数"（跑飞了），真边界只有 93 个。
+结果存档 `memory/data/decomp/rng_closure.txt`。
+
 ## 工具箱（本模块新增，均为纯只读 PE 分析，不依赖 Ghidra）
 
 | 脚本 | 作用 |
@@ -72,6 +85,7 @@ long double。同类的 `fsin` / `fpatan` / `f2xm1` 是否也如此，**未确�
 | `code/randmap/dump_scaled_golden.py` | 导出浮点取数惯用法的对拍基准 |
 | `code/randmap/dump_fastmath_golden.py` | 导出查表 sqrt / 均匀源 / 正态分布的对拍基准 |
 | `code/ghidra_scripts/find_writers.py` | 定位 .bss 全局的运行期初始化点（表内容不在文件里） |
+| `code/ghidra_scripts/rng_closure.py` | 调用树传递闭包，找出某根函数下**所有**随机数取数点（真函数边界） |
 
 ## 复刻代码的可移植性立场
 
