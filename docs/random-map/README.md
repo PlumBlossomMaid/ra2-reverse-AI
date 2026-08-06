@@ -140,7 +140,8 @@ long double。同类的 `fsin` / `fpatan` / `f2xm1` 是否也如此，**未确�
 | `code/randmap/scan_source_macros.py` | 调试宏反推「源文件 ↔ 代码区间」，全 exe 33 个编译单元 |
 | `code/randmap/scan_rng_callsites.py` | 扫出所有随机数消耗点并归属到函数/源文件 |
 | `code/randmap/disasm.py` | capstone 直读 PE 按 VA 反汇编（含已知符号注释） |
-| `code/randmap/xref_abs.py` | 按小端 4 字节搜绝对地址引用（MSVC6 全局变量一律绝对寻址） |
+| `code/randmap/xref_abs.py` | 按小端 4 字节搜绝对地址引用（全局变量/虚表项/跳转表项） |
+| `code/randmap/xref_rel32.py` | 按字节搜 `E8/E9 rel32` 找**直接 call/jmp**——绝对值搜法对此完全失明 |
 | `code/randmap/emu_oracle.py` | Unicorn 模拟执行取基准（整函数 / 任意片段）**——x87 超越指令不可信** |
 | `code/randmap/dump_scaled_golden.py` | 导出浮点取数惯用法的对拍基准 |
 | `code/randmap/dump_fastmath_golden.py` | 导出查表 sqrt / 均匀源 / 正态分布的对拍基准 |
