@@ -338,6 +338,7 @@ uint Update_Pathfinding_1(MapClass* m)
         landOf.push(p[0]);
         ++zone;
         p += runLen * 4;                 // ⚠️ 跳过刚才那一「行段」，不是 +4
+                                         //    runLen 可以是 0 甚至 -1，见 §七
     }
     m->+0x4C = zone;                     // 区个数（含 0 号占位槽）
 
@@ -415,25 +416,71 @@ uint Update_Pathfinding_1(MapClass* m)
 一次处理「同一行里连续的一段」，然后对上下两行递归。参数
 `(entry*, zoneId, int* runLen)`，返回本次涂到的格数。
 
+下面改用**下标形式**写（`st = side`，`T[i]` 是第 i 格），因为复刻时要照抄的
+恰恰是那些"指针越界一格"的细节：
+
 ```c
-land = p[0];  isRock = (land == 6);      // ⚠️ 类别 6 在跨区连接判定里有豁免
-h    = p[1];
-// ── 向左（低地址）扩 ──
-q = p;
-do { if (abs(q[1] - h) > 1) break;       // 0x56CBCA  cmp eax,2 / jge
-     *(u16*)(q+2) = zone;  h = q[1];  q -= 4; } while (q[0] == land);
-// ── 向右（高地址）扩 ──
-r = p;
-while (r[0] == land && abs(r[1] - h) < 4) {   // 0x56CCE2  cmp eax,4 / jge
-     *(u16*)(r+2) = zone;  h = r[1];  r += 4; }
-*runLen = (r - p)/4 - 1;
+land = T[p].land;  isRock = (land == 6);   // ⚠️ 类别 6 在跨区连接判定里有豁免
+h = T[p].level;
+// ── 向左（低下标）扩 ──
+L = p;
+do { if (abs(T[L].level - h) > 1) break;   // 0x56CBCA  cmp eax,2 / jge
+     T[L].zone = zone;  h = T[L].level;  --L; } while (T[L].land == land);
+登记(T[L].zone,  abs(T[L].level - h) < 2 || isRock);
+// ── 向右（高下标）扩 ⚠️ 沿用左扫留下的 h（= 最左那格的层高）──
+R = p;
+while (T[R].land == land && abs(T[R].level - h) < 4) {   // 0x56CCE2 cmp eax,4/jge
+     T[R].zone = zone;  h = T[R].level;  ++R; }
+登记(T[R].zone,  abs(T[R].level - h) < 2 || isRock);
+painted  = (R - L) - 1;
+*runLen  = (R - p) - 1;                    // ⚠️ 可能是 0，也可能是 -1
+// ── 上下两行：各扫闭区间 [L, R]，比涂到的段左右各多一格 ──
+upper = L - st;   upper_end = R - st - 1;
+lower = L + st;   lower_end = R + st;
+for (;;) {
+  if (upper > upper_end + 1) {             // 0x56CE4D  pcVar13 + 4 < pcVar18
+      while (lower <= lower_end) { ...下行同构... }
+      return painted;
+  }
+  ref = (upper <  upper_end) ? upper + st + 1
+      : (upper == upper_end) ? upper + st
+                             : upper + st - 1;
+  if (T[upper].zone != 0)                        { 登记(...); ++upper; }
+  else if (T[upper].land != land ||
+           abs(T[upper].level - T[ref].level) > 1) { ++upper; }
+  else { painted += Flood(upper, zone, &sub); upper += sub; }
+}
+// 下行的 ref 是镜像的：(lower <  lower_end-1) ? lower-st+1
+//                    : (lower == lower_end-1) ? lower-st : lower-st-1
 ```
+
+`ref` 那三分支就是「拿正下方 / 斜下方那一格的层高来比」——因为上行游标扫的是
+比本段更宽一格的闭区间，两个端点得往回错一格才对得上本段的格子。
+
+### ⚠️ `*runLen` 可以是 0，甚至是 -1
+
+外层 `0x56C510` 的扫描游标是 `p += runLen` 而**不是** `p = R`。
+`runLen = (R - p) - 1`，于是：
+
+* 右扫只涂了 `p` 一格时 `runLen == 0`，游标原地不动——下一轮 `p` 已被涂过，
+  走「已有区编号」那条分支才 `++p`，所以不会死循环；
+* 右扫一格都没成时（`abs(level(p) - 最左那格的 level) >= 4`）`runLen == -1`，
+  **游标往回退一格**。
+
+两种都真的会发生：拿 `memory/data/rmg/zones_golden.txt` 那 14 个用例跑一遍，
+`runLen == 0` 出现 505 次、`runLen == -1` 出现 5 次。照抄，不要"修"成 `p = R`。
 
 ### ⚠️ 向左的层高门限是 `<= 1`，向右却是 `<= 3`
 
 `0x56CBCA` 是 `cmp eax, 2 / jge`，`0x56CCE2` 是 `cmp eax, 4 / jge`——同一个判据
 写了两个常量。左右不对称，这是 25 年前的代码本来的样子，**照抄**。
 （后面处理上下两行时用的又是 `< 2`，和向左那份一致。）
+
+还有第二处不对称容易看漏：**两个方向的 `h` 是同一个变量**。左扫结束时
+`h` 停在「最左那格」的层高，右扫拿着它当起点再逐格更新。所以右扫的第一步
+比的是 `abs(level(p) - level(最左那格))`——一段长坡上这个差可以轻松超过 4，
+这正是上面 `runLen == -1` 的来历。把这里当成"和左扫对称"来写，
+结果会在有坡的图上分岔。
 
 段的两端还会各做一次「隔壁是别的区就登记一条跨区连接」的动作，判据是
 `邻区编号 != 0 && != 本区 && != [0xABDE8C] && (层高差 < 2 || isRock)`；
@@ -514,22 +561,43 @@ u16 GetMovementZoneType(CellStruct* c, int mz, bool followBridge)
 于是 `+0x45` 与 `+0x3C` 的语义也顺带定下来了：`+0x3C` 在这里被复用成
 「离哪个出生点最近」，`+0x45` 是「被出生点辐射到过」。
 
-## 十一、复刻它还差什么
+## 十一、复刻状态：✅ 已落地并对拍
 
-原来缺的两个前置**都已补齐**：
+`code/rewrite/rmg/zones.{h,cpp}`，回归 `test/test_zones.cpp`（ctest 名 `zones`）。
+落地的东西：
 
-1. ~~`.tmp` 子块头的 TerrainType 字节~~ ✅
-   `code/randmap/dump_tile_geometry.py` 已按气候导出四组砖的
-   `present / height / ramp / terrain`，落在 `memory/data/rmg/tile_geometry.txt`；
-   `TileSubCell`（`code/rewrite/rmg/place_tile.h`）已有 `terrain_type` 字段。
-2. ~~`MapClass` 可用区矩形 `+0xFC..+0x108` 的具体值~~ ✅ 见 §四之二，
-   就是 `(2, 5, W, H)`。
+| 重写侧 | 对应原版 |
+|---|---|
+| `kTerrainToGround[16]` | `0x8288E4` |
+| `kMoveTable[13][8]` | `0x82A594`（行距 0x20，终点 `0x82A734`） |
+| `RecalcLandType` | `0x483C80` 的随机地图子集（无 overlay、无 object） |
+| `ClampLocalRect` | `0x421B60` 求交 + `0x567230` 逐字段夹取 |
+| `IsWithinUsableArea` | `0x578460` |
+| `ZoneTable::Flood` | `0x56CB90` |
+| `ZoneTable::Rebuild` | `0x56C510` 的第 ①③④⑥⑦ 步 |
+| `ZoneTable::GetMovementZoneType` | `0x56D230` 的短路径 |
 
-于是本文这一整套（地面类别 → 洪泛 → 区类型表）可以直接落 C++，
-落在 `code/rewrite/rmg/zones.{h,cpp}`，之后就是阶段 6。
+黄金基准由 `code/randmap/dump_zones_golden.py` 用 Unicorn 跑**原版机器码**取得
+（存档 `memory/data/rmg/zones_golden.txt`，14 个用例、最大 41×41 表、
+最多 220 个区）。它绕开整条地形流水线：直接往 `MapClass+0x68` 里灌合成的
+`(地面类别, 层高)`，把 256 个跨区连接桶按 `0x565840-0x5658DD` 的原样摆好，
+再 `__fastcall` 调 `0x56C510`，最后逐格比区编号、比 13 张区类型表、比返回值。
+整条路径无 x87 无随机数，纯整数，Unicorn 在这里完全可信。
+
+对拍的"有牙齿"验证做了两次：把右扫门限从 4 改回 2，第 119 格当场对不上；
+`runLen <= 0` 的两种情形也确认真的被基准覆盖到（505 次 0、5 次 -1）。
+
+一处**观测不到**的细节照实记下：第 ⑦ 步 DFS 扫邻居是**倒着**扫的
+（`0x56CA..` 的 `puVar22 = puVar22 + -1`），但同一连通分量里所有点拿到的编号
+都一样，遍历顺序不影响任何输出。重写按原样倒着写，属于形似而非必需。
 
 还需要由调用方注入的外部数据只有一项：**`Ground[].Foot`**（12 个小节，
-`rulesmd.ini`），`0x483C80` 只读这一列，且只用来判 `<= 0.01`。
+`rulesmd.ini`），`0x483C80` 只读这一列（步长 36 字节），且只用来判 `<= 0.01`
+（比的是 **double** 常量 `0x7E3808`，不是 float）。
+
+第 ② 步（释放旧的 13 张表）与第 ⑤ 步（桥/隧道两端连通登记）没有实现：
+前者在 C++ 里由 `ZoneResult` 自己持有，后者在随机地图里 `MapClass+0x60 == 0`
+整段空转。两条都在代码注释里标了出处。
 
 ## 十二、未确认
 

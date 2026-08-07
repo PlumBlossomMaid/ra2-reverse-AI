@@ -20,7 +20,7 @@
 | [stage-tech-buildings.md](stage-tech-buildings.md) | 阶段：Adding tech buildings（中立科技建筑，两条互斥分支） | ✅ 已实锤，含 `PickRange` 语义 |
 | [stage-recalc.md](stage-recalc.md) | 阶段：绿地蔓延 + Recalculating cell attributes | ✅ 全部实锤；绿地蔓延已落 C++，18 个用例整段对拍通过 |
 | [stage-starting-points.md](stage-starting-points.md) | 阶段：Creating starting points（出生点） | ✅ 全部子函数已实锤；**卡在 `.tmp` 装载器上，尚未落 C++** |
-| [movement-zones.md](movement-zones.md) | **引擎的移动区子系统**：地面类别 → 连通区洪泛 → 区类型表 | ✅ 整条链已实锤；尚未落 C++ |
+| [movement-zones.md](movement-zones.md) | **引擎的移动区子系统**：地面类别 → 连通区洪泛 → 区类型表 | ✅ 整条链已实锤并落 C++（`rmg/zones.{h,cpp}`，含黄金对拍） |
 | [stage-hills.md](stage-hills.md) | 阶段：Creating hills（造山，唯一随机源是高度场） | ✅ 随机部分 + 角点抬升子系统全链已实锤 |
 | [stage-lats.md](stage-lats.md) | 阶段：Creating LATs, rocks etc（地表装饰，取数点最密） | ✅ 18 个取数点全部实锤 |
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
@@ -224,10 +224,17 @@
       于是阶段 4 建的桥在阶段 6 眼里不连区；
       **(c) `0x5A1FB0` 所有出口都 `return 1`**——它不是校验，
       阶段 6 那圈外层重试永远只跑一遍
-- [ ] **下一块大工程：`.tmp` 装载器**。移动区要的 TerrainType 字节、
-      `RecalcAttributes` 要的坡道字节、贴砖器要的高度字节全在 `.tmp` 里，
-      现在测试用的还是 `tile_profiles.py` 造的合成砖。
-      读通它之后，移动区 + 阶段 6 才能落地
+- [x] **`.tmp` 读通了**。移动区要的 TerrainType 字节、`RecalcAttributes` 要的
+      坡道字节、贴砖器要的高度字节都已按气候导出到
+      `memory/data/rmg/tile_geometry.txt`（脚本 `dump_tile_geometry.py`）。
+      仍欠一个**给 CLI 用的 C++ 侧装载器**（要么带 Blowfish 的 MIX 读取器，
+      要么直接喂这份导出档）
+- [x] **移动区子系统落 C++**（`code/rewrite/rmg/zones.{h,cpp}`，ctest 名 `zones`）。
+      黄金基准 `memory/data/rmg/zones_golden.txt` 由 `dump_zones_golden.py`
+      用 Unicorn 跑 `0x56C510` 真身取得：直接往 `MapClass+0x68` 灌合成的
+      (地面类别, 层高)，绕开整条地形流水线，逐格比区编号 + 13 张区类型表。
+      对拍逼出两个必须照抄的怪癖：右扫门限是 4 不是 2（用的还是左扫留下的
+      层高基准），以及外层游标 `p += runLen` 里 `runLen` 会是 0 甚至 -1
 - [x] **`MapSeedClass` 就是静态对象 `0xABDFD8`**——`0x59664C mov ecx,0xABDFD8;
       call 0x598960` 与 `0x58CAD1` 两处实锤。于是之前按绝对地址分散记下的
       一批全局当场对号：`0xABE014 = +0x3C` MapType、`0xABE024 = +0x4C`
