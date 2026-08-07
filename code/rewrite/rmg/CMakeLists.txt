@@ -16,6 +16,7 @@ add_library(ra2_rmg
   place_blobs.cpp
   place_tile.cpp
   regions.cpp
+  recalc.cpp
   theater.cpp
   fp_guard.cpp)
 
@@ -113,4 +114,10 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_regions PRIVATE
     RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
   add_test(NAME regions COMMAND test_regions)
+
+  add_executable(test_green_spread test/test_green_spread.cpp)
+  target_link_libraries(test_green_spread PRIVATE ra2_rmg gtest_main)
+  target_compile_definitions(test_green_spread PRIVATE
+    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+  add_test(NAME green_spread COMMAND test_green_spread)
 endif()

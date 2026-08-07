@@ -18,7 +18,7 @@
 | [stage-init-regions.md](stage-init-regions.md) | 阶段：Init regions（把地图切成连通区域，只 1 个取数点） | ✅ 全部实锤；已落 C++，23 个用例整段对拍通过 |
 | [stage-tiberium.md](stage-tiberium.md) | 阶段：Creating tiberium（布矿） | ✅ 外层 + 矿田生长全链已实锤 |
 | [stage-tech-buildings.md](stage-tech-buildings.md) | 阶段：Adding tech buildings（中立科技建筑，两条互斥分支） | ✅ 已实锤，含 `PickRange` 语义 |
-| [stage-recalc.md](stage-recalc.md) | 阶段：绿地蔓延 + Recalculating cell attributes | ✅ 已实锤，附 TileSet 全局↔ini 键名映射 |
+| [stage-recalc.md](stage-recalc.md) | 阶段：绿地蔓延 + Recalculating cell attributes | ✅ 全部实锤；绿地蔓延已落 C++，18 个用例整段对拍通过 |
 | [stage-starting-points.md](stage-starting-points.md) | 阶段：Creating starting points（出生点，**整段可重试**） | ✅ 结构与 3 个取数点已实锤 |
 | [stage-hills.md](stage-hills.md) | 阶段：Creating hills（造山，唯一随机源是高度场） | ✅ 随机部分 + 角点抬升子系统全链已实锤 |
 | [stage-lats.md](stage-lats.md) | 阶段：Creating LATs, rocks etc（地表装饰，取数点最密） | ✅ 18 个取数点全部实锤 |
@@ -175,6 +175,28 @@
       **“先取格再判界”的哑元副作用**，变异测试确认它能改变产物（炸 52 格）；
       ④ 全局区域向量是**内联在 .bss 里**的，静态初始化器 `0x58BC30` 把增长步长
       置成 10——留 0 的话 `push` 静默失败，区域一个都登记不上
+- [x] **阶段 5 绿地蔓延 `0x59B740` 整段落成 C++ 并对拍**（`recalc.{h,cpp}`）——
+      扫全图收「绿地格的四个正邻里还没定砖的」进前沿，抽 `count/3`（上限 1000）次，
+      每次删一个、涂成 `GreenTile`、再把它的四个正邻接着入队。18 个用例逐格对拍通过，
+      变异测试覆盖八处细节（保序前移 vs 末尾顶上、先取再删、`rounds` 一次算定、
+      `/3`、1000 上限、四正方向 vs 八邻域、不去重、哑元那一笔写）。
+      顺手查实四条：① 这段**没有自己的阶段日志**，被挂在下一条日志名下，
+      全镜像只有 `0x598E1A` 一处调用；② **共享哑元 `0xABDC50` 会被真的收进前沿、
+      还会被涂绿**——它开局 `+0x38 == 0` 判「未定砖」，涂绿之后所有出图邻格
+      都被跳过，是可观测的产物状态；③ 前沿**永远抽不空**（`rounds <= count/3`、
+      每轮只删 1），这才是 `0x59B830` 那个 `hi = count-1` 在 −1 时会越界读却
+      没崩的原因；④ `DynamicVectorClass` 的容量/扩容机器**整个不可观测**
+      （`Resize` 不丢元素、不截断、首次 `capacity == 0` 过关之后
+      `IsAllocated` 永远为 1），等价于 `push_back`
+- [x] **纠正旧结论：`CellClass::RecalcAttributes(-1)` 不是空转**——把
+      `0x47D2B0`–`0x47DD61` 全部反汇编、逐条筛写格子的指令，碰地形三件套的
+      只有四条：砖号越界（有符号）→ `0xFFFF`、子块是 `.tmp` 空洞 →
+      `0xFFFF` + 子块清 0、以及**栈参 != −1 才写**的层高。
+      由此关闭一条老未确认：那个 `-1` 不是「不指定 theater」而是
+      **「不覆盖层高」**（`0x47D949 cmp [esp+0x4C],-1`；序言
+      `sub esp,0x38` + 4 个 `push` ⇒ 栈参在 `esp+0x4C`）。
+      前提条件也是实锤不是假定：阶段 1 的清格子循环把每格 `+0x44` 写成 −1，
+      而第一个改写 `+0x44` 的是阶段 8 的矿，排在阶段 5 之后
 - [x] **`MapSeedClass` 就是静态对象 `0xABDFD8`**——`0x59664C mov ecx,0xABDFD8;
       call 0x598960` 与 `0x58CAD1` 两处实锤。于是之前按绝对地址分散记下的
       一批全局当场对号：`0xABE014 = +0x3C` MapType、`0xABE024 = +0x4C`
@@ -402,6 +424,7 @@ long double。同类的 `fsin` / `fpatan` / `f2xm1` 是否也如此，**未确�
 | `code/randmap/gen_atan_table.py` | 把 `0x8610B4` 的 4097 项反正切表导出成 `atan_table.h`，并当场用还原出的生成式重算全表 |
 | `code/randmap/dump_tile_geometry.py` | 从 theater 的 `.tmp` 取砖的**几何元数据**（宽高/空洞/高度/坡度）当对拍夹具 |
 | `code/randmap/dump_regions_golden.py` | 导出阶段 3 Init regions 四步流程的对拍基准（带回收的 bump 分配器） |
+| `code/randmap/dump_green_spread_golden.py` | 导出阶段 5 绿地蔓延 `0x59B740` 的对拍基准（含共享哑元的进场值/终值） |
 | `code/ghidra_scripts/find_writers.py` | 定位 .bss 全局的运行期初始化点（表内容不在文件里） |
 | `code/randmap/scan_rmg_rng.py` | 只列**生成器自己那个** Randomizer(0xABE890) 的取数点（按 this 判定） |
 | `code/ghidra_scripts/rng_closure.py` | 调用树传递闭包，找出某根函数下**所有**随机数取数点（真函数边界） |
