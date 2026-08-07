@@ -140,6 +140,74 @@ return true;
 
 `0x483C80` 传的 `flag` 是 **1**，所以每个出图格子都会往 `[0xABDC74]` 写一次坐标。
 
+### 那个矩形到底是多少：`(2, 5, W, H)`——已实锤
+
+`+0xFC..+0x108` 只有三处写入点，全在 `MapClass::Set_LocalSize`（`0x567230`）里：
+先与 `+0xEC` 那个整图矩形求交（`0x421B60`），再逐字段夹取
+
+```
++0xFC  = max(x, 2)                      ; 0056726E-00567292
++0x100 = max(y, 2)
++0x104 = min(w, (+0xF4 - x) - 2)        ; 0056728C-005672AF
++0x108 = min(h, (+0xF8 - y) - 6)        ; 005672B5-005672CD
+```
+
+而 `0x567230` 唯一的调用者是 `0x654490`（`Set_LocalSize` 的外壳），
+它在随机地图流水线里被调到的第一处就在**阶段 1 自己**：
+
+```asm
+00599739  push 1 / push ebx(=0)
+0059993c  lea  eax, [esp+0x44]        ; ← 加上刚才 8 字节 push，指向栈上的 Size 矩形
+00599d48  call 0x653f50               ; -> 0x565C10 MapClass::Set_Dimensions
+00599d4d  lea  ecx, [esp+0x2c]        ; ← LocalSize 矩形
+00599d57  call 0x654490               ; -> 0x567230 MapClass::Set_LocalSize
+```
+
+两个矩形在阶段 1 开头就摆好了，和写进内存 INI 的 `[Map] Size` / `[Map] LocalSize`
+是**同一份栈变量**（`stage-init.md` §三）：
+
+```asm
+0059974e  mov [esp+0x3c], ebx(=0)     ; Size.X = 0
+00599752  mov [esp+0x40], ebx(=0)     ; Size.Y = 0
+0059973f  mov [esp+0x44], edx         ; Size.W = W + 4
+00599756  mov [esp+0x48], edx         ; Size.H = H + 12
+0059975a  mov [esp+0x2c], 2           ; LocalSize.X = 2
+00599762  mov [esp+0x30], 5           ; LocalSize.Y = 5
+0059972f  mov [esp+0x34], ecx         ; LocalSize.W = W    (MapSeed +0x180)
+0059976a  mov [esp+0x38], eax         ; LocalSize.H = H    (MapSeed +0x184)
+```
+
+`Set_Dimensions`（`0x5662B0` 那段）把 X/Y 强行清零，于是
+
+```
+MapClass +0xEC..+0xF8  = (0, 0, W+4, H+12)      ← 整图矩形，Wm/Hm
+MapClass +0xFC..+0x108 = (2, 5, W,   H)         ← 可用区矩形（求交与夹取都不改动它）
+```
+
+夹取那一步逐条验算：`max(2,2)=2`；`max(5,2)=5`；
+`min(W, (W+4)-2-2) = W`；`min(H, (H+12)-5-6) = min(H, H+1) = H`。**四条全部原样通过**，
+所以可用区矩形就是 `(2, 5, W, H)`，用整图尺寸表示是 `(2, 5, Wm-4, Hm-12)`。
+
+代进 `0x578460` 的四条不等式（`level` = 该格 `+0x11B`，坡道格再 +1）：
+
+```
+X + Y >  Wm + 10 + level
+X + Y <= Wm + 2*Hm - 12 + level
+X - Y <  Wm - 4
+Y - X <  Wm - 4
+```
+
+与 `MapGrid::InMap` 的菱形（`X+Y > Wm`、`X+Y <= Wm+2Hm`、`|X-Y| < Wm`）一比就是
+**从菱形四边各往里缩一圈**：上边缩 5 行、下边缩 6 行、左右各缩 2 列。
+菱形最外那一圈格子的地面类别因此恒为 **7**（出图），洪泛完全不碰它们。
+
+> 这条同时关掉了 [stage-init.md](stage-init.md) §七 与
+> [map-geometry.md](map-geometry.md) §六 里那条「谁把 `MapSeedClass +0x180/+0x184`
+> 装进传给 `0x5662B0` 的参数矩形」——**就是阶段 1 自己**，
+> `0x599D48` 传的正是它刚拼好的 `{0, 0, W+4, H+12}`。
+> `MapClass::Read_INI`（`0x687470` 读 `Size`、`0x687503` 读 `LocalSize`）
+> 是同一对 setter 的另一个调用者，走的是存盘地图的路径，两条路结果一致。
+
 ## 五、`CellClass +0xEC` = GroundType，来自 `.tmp` 子块头的 TerrainType
 
 阶段 6 之前，`+0xEC` 的唯一来源是 `0x47D89A-0x47D8AA`：
@@ -183,6 +251,45 @@ return TerrainToGround[(int8)blk[0x29]];   // 表在 0x8288E4
 于是上面那张映射表读起来完全对得上 `.tmp` 的官方语义：
 `1..4 → Ice`、`5 → Tunnel`、`6 → Railroad`、`7/8/15 → Rock`、`9 → Water`、
 `10 → Beach`、`11/12 → Road`、`0/13 → Clear`、`14 → Rough`。
+
+### 真数据长什么样（`memory/data/rmg/tile_geometry.txt`）
+
+`code/randmap/dump_tile_geometry.py` 现在把 `+0x29` 一起导出来了，覆盖阶段 6 之前
+地图上**可能出现的全部四组砖**：`ClearTile` / `GreenTile` / `WaterSet` / `ShorePieces`。
+把 TerrainType 过一遍 `TerrainToGround` 再过 §四那张表，结果是：
+
+| 组 | 出现的 TerrainType | → GroundType | → 地面类别 |
+|---|---|---|---|
+| `clear`（1 块） | 13 | Clear | 0 |
+| `green`（1 块） | 14 | Rough | 0 |
+| `shore`（42 块） | 10 / 14 / 9 | Beach / Rough / Water | **3** / 0 / **4** |
+| `water`（14 块） | 9 / **15** | Water / **Rock** | **4** / **6** |
+
+两条会咬人的事实：
+
+**其一：水砖里有石头。** `water07` / `water08`（都是 2×2）与 `water14`（1×1）
+整块都是 TerrainType 15 → Rock → `Foot=0%` → 地面类别 **6（走不通）**。
+按 [stage-water-refine.md] 那套 `shape = n/40` 的挑砖规则，
+`water07/08` 落在大水面的 8 个候选里、`water14` 落在小浪花的 6 个候选里，
+所以**任何一张随机地图的水域里都会散着一堆不可通行的礁石格**。
+洪泛看到它们会把水面切开，这是原版行为，复刻时不许"清理"掉。
+
+**其二：温和与雪地的 TerrainType 不一样。** 56 块砖的**几何**
+（`w`/`h`/`present`/`height`/`ramp`）逐块逐子块完全相同，但 `shore41`（6×4）与
+`shore42`（9×5）这两块大岸砖的 TerrainType 两个气候不同——雪地把温和的一大片
+沙滩/水换成了 Rough：
+
+```
+shore41.tem                    shore41.sno
+ -- 14 14 14 -- --              -- 14 14 14 -- --
+ 14 10 10 10 10 10              14 14 14 10 10 10
+ 10 10 10 10  9  9              14 14 10 10 10  9
+ 10  9  9  9  9  9              14 10  9  9  9  9
+```
+
+于是"取一份温和的剖面两个气候通用"这条捷径**对读 terrain 的地方不成立**，
+必须按气候取（`tile_profiles.real_spec(group, k, theater)`）。
+贴砖器/岸线那几份只用 `w`/`h`/`present`/`height`/`ramp` 的基准仍然通用。
 
 `Ground[]` 数组在 `0x89EA48`，**36 字节一项**，字段顺序由装载函数
 `0x674030` 附近的读键顺序钉死：
@@ -331,8 +438,40 @@ while (r[0] == land && abs(r[1] - h) < 4) {   // 0x56CCE2  cmp eax,4 / jge
 段的两端还会各做一次「隔壁是别的区就登记一条跨区连接」的动作，判据是
 `邻区编号 != 0 && != 本区 && != [0xABDE8C] && (层高差 < 2 || isRock)`；
 连接对打包成 `(邻区 << 16) | 本区`，进桶 `((邻区 & 0xF) << 4) | (本区 & 0xF)`，
-桶内线性去重。随机地图里这段照跑不误，但第 ⑤ 步只从桥表建连接，
-所以它建出来的桶在第 ⑥ 步会被再次读到——**这里还没做对拍，标为未确认**。
+桶内线性去重。全函数一共 **4 处登记点**（左端、右端、上下两行递归各一处）。
+
+### ⚠️ 这些桶**确实**喂给了第 ⑥/⑦ 步（原「未确认 #3」已关闭）
+
+第 ⑤ 步（桥/隧道表 → 桶）在随机地图里是空转没错，但第 ⑥ 步读的**不是**第 ⑤ 步
+的产物，而是整个桶数组：
+
+```c
+for (off = 0; off < 0x1800; off += 0x18) {        // 256 桶 × 0x18 字节
+    bucket = **(this+0x14) + off;
+    for (k = 0; k < bucket.Count; ++k) { ++deg[pair & 0xFFFF]; ++deg[pair >> 16]; }
+}
+```
+
+`0x1800 / 0x18 = 256`，正是第 ① 步清空的那 256 个桶，也正是 `0x56CB90`
+往里塞东西的那 256 个桶（两边都是 `**(this+0x14) + idx*0x18`）。
+**所以洪泛登记的跨区连接是第 ⑦ 步 DFS 唯一的边来源。**
+
+这条的后果不小：洪泛只把「地面类别相同」的格子归进同一个区，于是陆、沙滩、水
+天生就是三批不同的区；但第 ⑦ 步在移动区 5（两栖，类别 0/3/4 都判 1）下
+会沿着这些边把**相邻的陆区 + 沙滩区 + 水区合并成同一个区类型**。
+阶段 6 用 `MapType ∈ {0,1,2}` → 移动区 5 去取「最大区的区类型」，
+拿到的是这个合并后的超级区，而不是单独一块陆地。移动区 0 则相反：
+沙滩/水在表里是 2，`t[z]` 直接被置 1，DFS 的 `key == 1` 过不去，不会合并。
+
+顺带两条记账细节，复刻时容易漏：
+
+* 第 ⑤ 步打包前做了 `min/max` 排序（`uVar13 = min, uVar10 = max`），
+  `0x56CB90` **没有**——它固定按 `(邻区 << 16) | 本区` 打包。于是同一对区
+  从两个方向各发现一次时会落进两个不同的桶、存成两个不同的 dword，
+  去重去不掉。度数因此多算，CSR 数组也更长。不影响 DFS 的结果，但影响
+  内存布局，照抄即可。
+* `[0xABDE8C]`（上一个邻区缓存）只在登记条件**全部通过**时才更新成本次的邻区；
+  条件没过就保持原值。它由 `0x56C510` 在每次调 `0x56CB90` 前清 0。
 
 上下两行的推进用 `stride = m->+0xF8 + m->+0xF4 + 1`，`p ± stride*4`，
 边界靠「本段左右端点各外扩一格」的指针比较，没有显式的 X 范围检查——
@@ -377,26 +516,30 @@ u16 GetMovementZoneType(CellStruct* c, int mz, bool followBridge)
 
 ## 十一、复刻它还差什么
 
-唯一缺的输入是 **`.tmp` 子块头的 TerrainType 字节**——也就是说，
-必须先把 theater 的 `.tmp` 真数据读进来（`present` / `height` / `ramp` /
-**`terrain_type`**）。现有的 `TileSubCell`（`code/rewrite/rmg/place_tile.h`）
-已经有前三样，缺第四样；而真正的 `.tmp` 装载器还没写，测试用的是
-`code/randmap/tile_profiles.py` 造的合成砖。
+原来缺的两个前置**都已补齐**：
 
-所以落地顺序是：
+1. ~~`.tmp` 子块头的 TerrainType 字节~~ ✅
+   `code/randmap/dump_tile_geometry.py` 已按气候导出四组砖的
+   `present / height / ramp / terrain`，落在 `memory/data/rmg/tile_geometry.txt`；
+   `TileSubCell`（`code/rewrite/rmg/place_tile.h`）已有 `terrain_type` 字段。
+2. ~~`MapClass` 可用区矩形 `+0xFC..+0x108` 的具体值~~ ✅ 见 §四之二，
+   就是 `(2, 5, W, H)`。
 
-1. `.tmp` 装载器（从 theater mix 读 `*.tem` / `*.sno`），给 `TileSubCell`
-   补 `terrain_type`；
-2. 本文这一整套（地面类别 → 洪泛 → 区类型表）；
-3. 阶段 6。
+于是本文这一整套（地面类别 → 洪泛 → 区类型表）可以直接落 C++，
+落在 `code/rewrite/rmg/zones.{h,cpp}`，之后就是阶段 6。
+
+还需要由调用方注入的外部数据只有一项：**`Ground[].Foot`**（12 个小节，
+`rulesmd.ini`），`0x483C80` 只读这一列，且只用来判 `<= 0.01`。
 
 ## 十二、未确认
 
 1. 13 行 `MoveTable` 与 `MovementZone` 枚举名的逐行对应（只坐实了
    「行 10 = 只走水」「行 5 = 陆/沙滩/水」两条，随机地图也只用得到 0 和 5）
 2. `Ground[] + 0x1C` 是不是 `Amphibious`（读键顺序里没看到它，可能在别处补写）
-3. `0x56CB90` 建出来的跨区连接桶，在随机地图里到底有没有改变过第 ⑦ 步的结果
-   （第 ⑤ 步的桥表是空的，但第 ⑥ 步读的是桶，桶里可能有第 ⑦ 步用得上的东西）
+3. ~~`0x56CB90` 建出来的跨区连接桶，在随机地图里到底有没有改变过第 ⑦ 步的结果~~
+   ✅ **已关闭**：会。第 ⑥ 步读的就是那 256 个桶（`0x1800 / 0x18`），
+   洪泛登记的边是第 ⑦ 步 DFS 唯一的边来源；移动区 5 下陆/沙滩/水会被合并成
+   一个区类型。详见 §七。
 4. `OverlayTypeClass` 的 `+0x22D` / `+0x298` / `+0x2A8` / `+0x2B4` / `+0x2B5`
    各是什么键（随机地图跑到阶段 6 时一定没有 overlay，所以不影响复刻）
 5. `0x47CA80`（`RecalcAttributes` 收尾前调的另一个）到底改了什么

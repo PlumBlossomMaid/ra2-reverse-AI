@@ -32,6 +32,13 @@ struct TileSubCell {
   // .tmp 子块头 +0x2A（RampType）。贴砖器 0x57B440 **不读它**，
   // 只有另一个压砖器 0x5A6C10 会把它写进 CellClass +0x11C。
   int ramp = 0;
+  // .tmp 子块头 +0x29（TerrainType）。贴砖器不读；`0x544BE0` 拿它当下标查
+  // `TerrainToGround`（`0x8288E4`）得到 `CellClass +0xEC`，再由
+  // `CellClass::RecalcLandType`（`0x483C80`）变成寻路地面类别。
+  // ⚠️ 原版取的是**有符号**字节（`0x544C05 movsx ecx, byte [ecx+0x29]`），
+  // 真实数据里只出现 9/10/13/14/15 五个值。
+  // 详见 docs/random-map/movement-zones.md §五。
+  int terrain_type = 0;
 };
 
 struct TileType {

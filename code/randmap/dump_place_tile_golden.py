@@ -55,10 +55,13 @@ class PlaceOracle(PaintOracle):
 
     # ---- 伪造 TileTypeClass ----
     def make_tile(self, tile_number, tw, th, blocks):
-        """blocks: [(present, height[, ramp]), ...]，长 tw*th，按 y*tw+x 排。
+        """blocks: [(present, height[, ramp[, terrain]]), ...]，长 tw*th，
+        按 y*tw+x 排。
 
         第三项 ramp 是 .tmp 子块头 +0x2A，只有另一个压砖器 0x5A6C10 会读它
         （写进 CellClass +0x11C）；0x57B440 不看，缺省给 0。
+        第四项 terrain 是 +0x29，只有 0x544BE0 会读它（查 TerrainToGround
+        得到 CellClass +0xEC）；缺省给 14（-> Rough -> 地面类别 0）。
         """
         obj = self._bump(0x310)
         vt = self._bump(0x100)
@@ -75,15 +78,21 @@ class PlaceOracle(PaintOracle):
         self.wr32(obj + 0x294, tile_number)
         self.wr32(obj + 0x2E4, tw)
         self.wr32(obj + 0x2E8, th)
+        # .tmp 文件头的前两个 dword：0x544BE0 与 0x544C20 都用
+        # `subtile % (hdr[0]*hdr[1])` 定位子块，不写就是除以 0。
+        self.wr32(offs + 0, tw)
+        self.wr32(offs + 4, th)
         # 子块：0x57B557 读 [base + k*4 + 0x10]，非零才贴；+0x28 是高度增量
         for k, blk_spec in enumerate(blocks):
             present, height = blk_spec[0], blk_spec[1]
             ramp = blk_spec[2] if len(blk_spec) > 2 else 0
+            terrain = blk_spec[3] if len(blk_spec) > 3 else 14
             if not present:
                 self.wr32(offs + 0x10 + k * 4, 0)
                 continue
             blk = self._bump(0x40)
             self.uc.mem_write(blk + 0x28, bytes([height & 0xFF]))
+            self.uc.mem_write(blk + 0x29, bytes([terrain & 0xFF]))
             self.uc.mem_write(blk + 0x2A, bytes([ramp & 0xFF]))
             self.wr32(offs + 0x10 + k * 4, blk)
         self.wr32(0x880990, obj)

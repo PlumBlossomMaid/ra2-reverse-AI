@@ -14,12 +14,17 @@ u"""从 theater 的 .tmp 砖文件里取出**几何元数据**，给对拍夹具
     dword[4..] 子块偏移表，共 BlocksX*BlocksY 项；**0 = 空洞**
                0x546B66 那个循环把非零且小于映像基址的值原地加上基址，
                换算成绝对指针——所以后面 `[esi+0x28]` 读的是子块头。
-子块头里本项目要的两个字节：
-    +0x28 Height    贴砖器 0x57B440 的逐格高度增量
-    +0x2A RampType  压砖器 0x5A6C10 写进 CellClass +0x11C（0x57B440 不写）
+子块头里本项目要的三个字节：
+    +0x28 Height       贴砖器 0x57B440 的逐格高度增量
+    +0x29 TerrainType  0x544BE0 拿它查 TerrainToGround（0x8288E4）得到
+                       CellClass +0xEC，再由 0x483C80 变成寻路地面类别——
+                       整个移动区子系统的源头，见 docs/random-map/movement-zones.md
+    +0x2A RampType     压砖器 0x5A6C10 写进 CellClass +0x11C（0x57B440 不写）
 
-⚠️ 只导出 RMG 已复刻部分真正会读的两组砖（WaterSet 14 块 + ShorePieces 42 块，
-两种气候共 112 条），且只导出几何数值——不含任何像素、调色板或音频。
+⚠️ 只导出 RMG 主路径（MapType 0/1/2）跑到阶段 6 时**地图上可能出现的那几组砖**：
+ClearTile（阶段 1 的初始砖号 0）、WaterSet（14）、ShorePieces（42）、GreenTile。
+其余上千块砖一概不导——它们要到阶段 8/9/10 才可能落地，等做到那儿再说。
+且只导出几何/属性数值——不含任何像素、调色板或音频。
 输出是我们自己算出来的派生结果，不是搬运原版素材。
 """
 import os
@@ -39,7 +44,8 @@ THEATERS = [
 ]
 
 # 要导出的组：ini [General] 里的键名 -> 便于阅读的短名
-GROUPS = [("ShorePieces", "shore"), ("WaterSet", "water")]
+GROUPS = [("ShorePieces", "shore"), ("WaterSet", "water"),
+          ("ClearTile", "clear"), ("GreenTile", "green")]
 
 
 def parse_ini(blob):
@@ -58,16 +64,23 @@ def parse_ini(blob):
 
 
 def tile_geometry(blob):
-    u"""返回 (w, h, [(present, height, ramp), ...])，子块按 y * w + x 排。"""
+    u"""返回 (w, h, [(present, height, ramp, terrain), ...])，子块按 y * w + x 排。
+
+    terrain 是子块头 +0x29 的**有符号**字节（0x544BE0 那里是
+    `movsx ... byte [blk+0x29]` 再 `* 4` 当下标），真实数据里都在 0..15。
+    """
     bx, by = struct.unpack_from("<ii", blob, 0)
     w, h = bx & 0xFF, by & 0xFF          # 0x546B46/0x546B50 只取低字节
     offs = struct.unpack_from("<%di" % (bx * by), blob, 0x10)
     cells = []
     for o in offs:
         if o == 0:
-            cells.append((0, 0, 0))
+            cells.append((0, 0, 0, 0))
         else:
-            cells.append((1, blob[o + 0x28], blob[o + 0x2A]))
+            terrain = blob[o + 0x29]
+            if terrain >= 0x80:
+                terrain -= 0x100
+            cells.append((1, blob[o + 0x28], blob[o + 0x2A], terrain))
     return w, h, cells
 
 
@@ -111,16 +124,18 @@ def main():
                 w, h, cells = tile_geometry(blob)
                 out.append("TILE %s %s %d %s %d %d"
                            % (theater, short, base + k, name.lower(), w, h))
-                for j, (p, hg, rp) in enumerate(cells):
-                    out.append("  SUB %d %d %d %d" % (j, p, hg, rp))
+                for j, (p, hg, rp, tt) in enumerate(cells):
+                    out.append("  SUB %d %d %d %d %d" % (j, p, hg, rp, tt))
 
     path = (sys.argv[1] if len(sys.argv) > 1
             else "../../memory/data/rmg/tile_geometry.txt")
     head = (u"# .tmp \u7816\u6587\u4ef6\u7684\u51e0\u4f55\u5143\u6570\u636e"
             u"\uff08\u751f\u6210\u811a\u672c code/randmap/dump_tile_geometry.py\uff09\n"
             u"# TILE <theater> <group> <tileNumber> <file> <w> <h>\n"
-            u"#   SUB <k> <present> <height> <ramp>\n"
-            u"# \u53ea\u542b WaterSet \u4e0e ShorePieces \u4e24\u7ec4\uff1b"
+            u"#   SUB <k> <present> <height> <ramp> <terrain>\n"
+            u"# \u53ea\u542b ClearTile / WaterSet / ShorePieces / GreenTile "
+            u"\u56db\u7ec4\uff08\u9636\u6bb5 6 \u4e4b\u524d\u5730\u56fe\u4e0a"
+            u"\u53ef\u80fd\u51fa\u73b0\u7684\u5168\u90e8\uff09\uff1b"
             u"\u65e0\u50cf\u7d20/\u8c03\u8272\u677f\uff0c\u5747\u4e3a\u6d3e\u751f\u6570\u503c\n")
     with open(path, "w", encoding="utf-8") as f:
         f.write(head)

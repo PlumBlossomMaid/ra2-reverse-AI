@@ -292,8 +292,13 @@ bool Resize(int newsize, T const* array) {
 1. `MapClass +0x144`（`IsValid`）与 `+0x145`（`IsAllocated`）的命名取自 RA1
    `VectorClass` 的字段顺序，**语义已由 `Resize`/释放路径的用法实锤**，
    但 YR 里是否改过名字未确认——不影响复刻。
-2. `MapClass::Set_Dimensions`（含 `0x5662B0` 那段）的**调用者**只跟到
-   `0x685198` 那条地图重建路径，`MapSeedClass +0x180/+0x184` 到参数矩形之间
-   还差一跳没跟完。数值相等由全部下游公式的自洽性佐证。
+2. ~~`MapClass::Set_Dimensions`（含 `0x5662B0` 那段）的**调用者**~~
+   ✅ **已关闭**：函数入口是 `0x565C10`，外壳 `0x653F50`，两个调用者是
+   `0x599D48`（阶段 1 自己，传 `{0,0,W+4,H+12}`）与 `0x6874E2`
+   （`MapClass::Read_INI` 读 `[Map] Size`）。
+   配套的 `MapClass::Set_LocalSize` 是 `0x654490` → `0x567230`，
+   阶段 1 在 `0x599D57` 传 `{2, 5, W, H}`。
+   于是 `MapRect = (0, 0, W+4, H+12)`、可用区矩形 `= (2, 5, W, H)`。
+   详见 [movement-zones.md](movement-zones.md) §四之二。
 3. `[0x880C74] = 2`（`W > 63 || H > 63` 时置位）是什么开关，未确认——
    随机地图恒为 `70..120`，这条**永远成立**，故不影响复刻。
