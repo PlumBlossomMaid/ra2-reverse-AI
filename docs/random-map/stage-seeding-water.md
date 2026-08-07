@@ -59,8 +59,8 @@ switch (MapSeedClass->MapType /* +0x3C */) {
 
 ```c
 int n = max(NumPlayers /* +0x50 */ / 2, 2);
-int r = PickAtMost(n);                        // 浮点比例+拒绝采样，r ∈ [0, n]
-MakeGrid(&list, NumPlayers + r, &FullBounds); // 0x59A8F0，见 §三
+int r = PickRange(1, n);                      // ⚠️ 下界是 1，不是 0
+MakeGrid(&list, NumPlayers + r, &Usable);     // 0x59A8F0，见 §三
 for (cell : Map) work[cell].queued = 0;
 
 while (!list.empty()) {
@@ -85,6 +85,12 @@ while (!list.empty()) {
 
 注意 `Paint` 失败时 `[0x308]` 照样自增——**块编号会跳号**。复刻时不可"优化"掉。
 
+> 🔧 **自我纠错（2026-08-06）**：此处原先写的是 `PickAtMost(n)`、`r ∈ [0, n]`。
+> 逐条核对 `0x59AD6E-0x59AD9B` 后确认取数是
+> `_ftol(r * n * 2.3283e-10 + 1.0)`（`0x59AD8E` 那句 `fadd [0x7E1718]`
+> 加的就是 1.0），拒绝条件 `ja n` 是无符号——所以 **`r ∈ [1, n]`**，
+> 取不到 0。投放区个数因此至少是 `NumPlayers + 1`。
+
 ### MapType 1（`FUN_0059AFA0`）：从地图中心贪心生长
 
 ```c
@@ -97,12 +103,32 @@ Rect   region = { bx+1, by+1, bw-2, bh-2 };                        // 全图内�
 int painted = 0;
 for (int iter = 0; target > 0.0 && iter < 100; ++iter) {
     int budget = min((int)((target - painted/total) * total), cap);  // 还差多少要多少
-    painted += Paint(budget, &region, &center, 1/*椭圆*/, &center, 0.75, 1/*方向性*/);
-    // 下一个中心 = 全图中「+0x3C == 0 且到当前中心曼哈顿距离最小」的格子
-    center = argmin_{cell: work[cell].queued == 0} (|cell.Y - center.Y| + |cell.X - center.X|);
+    painted += Paint(budget, &region, &start, 1/*椭圆*/, &MapCentre, 0.75, 1/*方向性*/);
+    // 下一个起点 = 全图中「+0x3C == 0 且到**地图正中**曼哈顿距离最小」的格子
+    start = argmin_{cell: work[cell].queued == 0}
+                  (|cell.Y - MapCentre.Y| + |cell.X - MapCentre.X|);
     if (painted / total >= target) break;
 }
 ```
+
+#### ⚠️ 只有起点在动，参照点和目标点都焊死在地图正中
+
+`MapCentre` 在 `0x59B030` 算出来之后就留在 `ebx`/`ebp` 里，**整个循环再没被改过**：
+
+- `0x59B119` / `0x59B11E` 拼给 `Paint` 的目标点用的是 `bp`/`bx`，即原始地图正中；
+- `0x59B19D` / `0x59B1A8` 求最近格时减的也是 `ebx`/`ebp`。
+
+被更新的只有 `[esp+0x28]/[esp+0x2C]`——那是**起点**。`0x59BBC0` 会保存
+`ebx`/`ebp`（`0x59BBCF`/`0x59BBD0` 只压了 ebx/esi/edi，ebp 由帧指针序列保住），
+所以跨调用也不会被冲掉。
+
+看上去像是漏写了一次回写：本意多半是"围着上一块的落点继续长"，
+实际效果是"每次都从离地图正中最近的空格重新起跳"。**照抄**。
+
+#### 一个都挑不出来时起点是 (0, 0)
+
+`0x59B149` 先把候选清成 0，扫完没人满足条件就保持 0。
+`(0, 0)` 正好是 `0x59BBC0` 判定"起点为空"的哨兵，于是那一轮改用随机起点。
 
 `WaterAmount` 越大目标越**小**——与"陆地是画出来的"一层反转自洽（画得越少水越多）：
 
@@ -125,12 +151,54 @@ if ((double)(uint32)Random() * (1/4294967295.0) >= 0.5) {
     half[1] = { bx + bw/2+1, by, bw/2 - 1, bh };     // 右半
 }
 for (Rect& rc : half) {          // 两半各跑一遍，共用 iter 计数（上限 100）
-    ...与 MapType 1 相同的生长循环，但区域是这一半、目标是 target...
-    // 下一中心的代价换成**各向异性加权**的曼哈顿距离：
-    //   cost = |cell.Y - cy| * aspectY + |cell.X - cx| * aspectX
-    // 且候选必须先过 InRegion（内切椭圆，0x59BAB0）
+    Cell   centre = IsoCentreOf(rc);          // 与 MapType 0 同一条换算式
+    Cell   start  = centre;
+    int    painted = 0;  double ratio = 0.0;  // 这两个每半重置
+    double aspectX, aspectY;                  // 见下
+    double ea = 1.0 / (rc.w*0.5 * rc.w*0.5);  // 内切椭圆的两个系数
+    double eb = 1.0 / (rc.h*0.5 * rc.h*0.5);
+    while (target > 0.0 && iter < 100) {
+        int budget = min((int)((target - ratio) * total), cap);
+        painted += Paint(budget, &rc, &start, 1, &centre, 0.75, 1);
+        ++iter;  ratio = painted / total;
+        // 下一起点：线性扫**整个工作数组**（side² 条），
+        // 先用等距包围盒粗筛，再过 InRegion（内切椭圆），最后取加权曼哈顿最小者
+        start = argmin(...);
+        if (ratio >= target) break;
+    }
 }
 ```
+
+#### 目标点同样焊死
+
+和 MapType 1 一模一样：`&centre` 是这一半的中心，整轮不变；变的只有 `&start`。
+
+#### ⚠️ `iter` 是两半**共用**的
+
+`0x59B22E` 在外层两半循环**之前**把它清零，循环体里只重置 `painted` 与 `ratio`。
+所以上限 100 是两半合起来的：第一半若耗满，第二半一次都跑不了。
+
+#### 等距包围盒的四条边（`0x59B54A`-`0x59B585`）
+
+```c
+loSum = W + 2*rc.y + 1;      hiSum = loSum + 2*rc.h + 2;   // 判 X+Y
+loDif = 2*rc.x - W + 1;      hiDif = loDif + 2*rc.w + 2;   // 判 X-Y
+```
+
+坐标取自工作记录自己的 `+0x00`/`+0x02`（阶段 1 写进去的打包坐标）。
+菱形外的记录从没被写过，读出来是 `(0,0)`，`X+Y = 0 < loSum` 直接被刷掉——
+**不需要额外的有效性判断**，这也是原版敢直接线性扫 `side²` 条的原因。
+
+#### 各向异性系数（`0x59B411`-`0x59B46D`）
+
+```c
+if (rc.h > rc.w) { aspectX = (double)rc.h / rc.w * 1.2;  aspectY = 1.0; }
+else             { aspectX = 1.0;  aspectY = (double)rc.w / rc.h * 1.2; }
+cost = _ftol(|Y - centre.Y| * aspectY + |X - centre.X| * aspectX);
+```
+
+沿长轴的位移权重是 1.0，垂直长轴的位移被放大 `1.2 × 长/短`——
+效果是让下一块沿着这一半的长边接着铺。
 
 两点差异值得注意：
 
@@ -139,8 +207,17 @@ for (Rect& rc : half) {          // 两半各跑一遍，共用 iter 计数（�
 2. 选下一中心时扫的是**工作数组**（`side²` 项）而不是地图格子迭代器，
    先用等距坐标做包围盒粗筛，再过椭圆判定，最后取加权曼哈顿最小者。
 
-各向异性系数与涂块核心里的一致（`0x7E5190 = 1.2`）：
-长边取 `1.0`，短边取 `(长/短) × 1.2`。
+各向异性系数与涂块核心里的一致（`0x7E5190 = 1.2`）。
+
+### 复刻状态：三种策略都已落成并对拍（✅ 2026-08-06）
+
+`code/rewrite/rmg/place_blobs.{h,cpp}`，黄金基准
+`memory/data/rmg/place_blobs_golden.txt`（`dump_place_blobs_golden.py`，
+12 组用例 = 三种 MapType × 四种尺寸/人数/水量组合）。
+比对三样：**跨所有涂块调用的整张地图陆地生长顺序**、随机数消耗量、收尾块编号。
+桩的口径与涂块基准一致（`IsPaintable` 恒真、岸线平滑恒真），
+全图边界 `[0xABE2F0]` 给 `(-1,-1,-1,-1)`，好让 `InRegion` 与 `DirectionalCost`
+都走真实分支而不是"区域等于全图"的快捷路径。
 
 ## 三、区域网格 `FUN_0059A8F0`——把地图切成 n 个投放区
 
@@ -1134,6 +1211,9 @@ return true;
     第 3/4 遍每格各抽一个 `PickRange(0,5)`，是本阶段随机数消耗的大头（见 §八），
     不做完，账本对不上，涂块之后的一切都会错位
 12. ~~`MakeGrid 0x59A8F0`~~ ✅ 已落成并对拍，见 §三末尾
-13. 下一件：三种 MapType 投放策略（`0x59AD10` / `0x59AFA0` / `0x59B200`）
-    落成 C++，把 `MakeGrid` + `PaintBlob` 串成完整阶段——这三个函数不依赖
-    theater 数据，是眼下唯一还能纯算法推进的一段
+13. ~~三种 MapType 投放策略（`0x59AD10` / `0x59AFA0` / `0x59B200`）~~
+    ✅ 已落成并对拍，见 §二末尾。至此**阶段 2 里不依赖 theater 数据的部分全部收口**：
+    投放策略 → 区域网格 → 涂块核心 → 八邻域掩码，一条链跑通
+14. 下一件只剩 theater 数据这一关：解析 temperat/snow 的 TileSet 枚举，
+    拿到 `WaterSet [0xAA0738]` / `ShorePieces [0xABAD28]` 等 45 个全局的起始砖号，
+    再补 `TileTypeClass +0x294/+0x2E4/+0x2E8`，才能推进铺砖器 `0x57B440`

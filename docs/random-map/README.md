@@ -106,6 +106,11 @@
       顺手把两处共用的取数惯用法收进 `scaled_random.h`：
       `PickBelowMul`（上限不折叠的两次乘法）与 `PickRange`（`0x598030`，
       实测 `0x598089` 是 `ja` **无符号**比较，且 `lo`/`span` 都按 `uint32` 读）
+- [x] **三种 MapType 投放策略落成 C++ 并对拍**（`place_blobs.{h,cpp}`）——
+      12 组用例比对整张地图的陆地生长顺序 + 取数次数 + 块编号；
+      顺手纠了文档两处实质性错误：MapType 0 的区域数下界是 `NumPlayers + 1` 不是
+      `NumPlayers`；MapType 1/2 的**目标点与最近格参照点是焊死的**，
+      循环里只有起点在动（原版把它们留在 `ebx`/`ebp` 里从没回写）
 - [x] `.sed` 参数读取复刻（含西木 `Get_Int` 的 `$hex` / `Xh` 三条路径）
 - [ ] `.map` 输出（IsoMapPack5 编码）
 - [ ] 端到端验证：同种子生成结果与原版逐字节比对
