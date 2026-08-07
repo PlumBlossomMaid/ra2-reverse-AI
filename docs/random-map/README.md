@@ -23,7 +23,7 @@
 | [stage-hills.md](stage-hills.md) | 阶段：Creating hills（造山，唯一随机源是高度场） | ✅ 随机部分 + 角点抬升子系统全链已实锤 |
 | [stage-lats.md](stage-lats.md) | 阶段：Creating LATs, rocks etc（地表装饰，取数点最密） | ✅ 18 个取数点全部实锤 |
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
-| [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法全还原；**涂块核心已落成 C++ 并对拍** |
+| [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法全还原；**`MapType 0/1/2` 主路径整条落成 C++ 并对拍** |
 
 ## 进度
 
@@ -138,6 +138,21 @@
       `Shoreline` 自己的 `flag`，不是先前写的常数 0。全镜像 5 个 `Shoreline`
       调用点里 `flag` 有 1、0、变量三种（涂块收尾传 1，阶段 2 调度收尾传 0），
       两种取值基准里都覆盖到了
+- [x] **阶段 2 调度器 `0x59A6C0` 落成 C++ 并对拍**（`stage_water.{h,cpp}`）——
+      目前最"整"的一条对拍链：一次调用把**铺水 → 投放策略 → 涂块核心 →
+      岸线四遍 → 掩码 → 贴砖器**的原版真身全跑一遍（模拟执行侧只留
+      `IsPaintable` 一个桩），12 组用例比对随机数次数、块编号、共享哑元的
+      `+0x38`、工作数组的 `+0x38/+0x3C` 与每格终态。
+      至此 `MapType ∈ {0,1,2}` 的阶段 2 主路径**整条闭合**。
+      新记三条：孤水格回填判水用的是**等值比较**而非判水区间；
+      工作数组清账写的是 **-1** 不是 0；收尾刷绿写的是**邻格**，
+      出图的邻格就是共享哑元——它一旦被写成 GreenTile 就不再"未定砖"，
+      后续所有出图邻格都被跳过（对拍中确认这条副作用会改变产物）。
+      另确认一条原版真实行为：MapType 0 在小图上每块陆地都铺不出岸线、
+      整块回滚，**终态全是水**（基准 `mt0-allwater` 专门盯住它）
+- [x] **`TheaterData` 接进涂块/岸线两侧**——删掉 `WaterTile()` /
+      `ShorePiecesBase()` 两个虚函数，去掉重复真值来源；
+      顺带把格指针/哑元辅助抽成 `cell_ref.{h,cpp}` 供阶段调度器复用
 - [x] `.sed` 参数读取复刻（含西木 `Get_Int` 的 `$hex` / `Xh` 三条路径）
 - [ ] `.map` 输出（IsoMapPack5 编码）
 - [ ] 端到端验证：同种子生成结果与原版逐字节比对

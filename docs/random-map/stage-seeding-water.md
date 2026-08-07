@@ -7,7 +7,8 @@
 > **区域网格 `0x59A8F0`**（§三，16 组用例）也已落成并对拍。
 > 三种 MapType 的**投放策略**（§二末，12 组用例）、theater 数据链（见
 > [theater-data.md](theater-data.md)）与**贴砖器 `0x57B440`**（§七，21 组用例）
-> 也都已落成并对拍。四遍平滑的编排逻辑已还原但尚未落成 C++。
+> 也都已落成并对拍；四遍平滑的编排（§七）与**阶段调度器 `0x59A6C0` 本身**
+> （§一末尾）同样已落成并对拍——`MapType ∈ {0,1,2}` 的主路径整条闭合。
 > 地图容器见 [map-geometry.md](map-geometry.md)。
 > 本文只记录已取证的部分，推测一律标注「未确认」。
 > 涉及的数学基元见 [fast-math.md](fast-math.md)（已逐位对拍）。
@@ -30,6 +31,73 @@ MapCoords 4 + FoggedObjects 4 + BridgeOwnerCell 4 + unknown 4 + LightConvert 4 =
 
 所以"Seeding water"名不副实：**地图初态就是一片汪洋，后续是在水里画陆地**。
 这也解释了为什么原版随机地图容易出岛——陆地是"画"出来的，画不到就是海。
+
+### 调度器 `FUN_0059A6C0` 的八步全貌（✅ 已实锤）
+
+```c
+void MapSeedClass::SeedWater()                      // 0x59A6C0, ret 0
+{
+  for (cell : Map) cell->IsoTile = [0xAA0738];      // (a) 0x59A6DF 全图铺水
+
+  switch (this->MapType /* +0x3C */) {              // (b) 0x59A6F6
+    case 0: FUN_0059AD10(this); break;
+    case 1: FUN_0059AFA0(this); break;
+    case 2: FUN_0059B200(this); break;
+    // 其余取值什么都不做（0x59A702 的 jne 直接落到 (c)）
+  }
+
+  for (cell : Map) {                                // (c) 0x59A737 孤水格回填
+    if (cell->IsoTile != [0xAA0738]) continue;      //     ⚠️ 等值比较，不是判水区间
+    bool all = true;
+    for (int d = 0; d < 8; d += 2)                  //     只看四个正方向
+      if (!IsUndecided(cell->Adjacent(d))) all = false;   // ⚠️ 无短路
+    if (all) cell->IsoTile = 0;
+  }
+
+  Map->Shoreline(0, 0);                             // (d) 0x59A77F ⚠️ flag = 0
+                                                    //     返回值被丢弃
+  for (i = 0; i < side*side; ++i)                   // (e) 0x59A7A5
+    work[i].+0x38 = work[i].+0x3C = -1;             //     ⚠️ 写 -1 不是 0
+
+  destroy all RegionClass in [0xABDF94];            // (f) 0x59A7C2 不碰地形
+  [0xABED14] = 0;                                   // (g) 0x59A87A 区域编号归零
+
+  for (cell : Map) {                                // (h) 0x59A899 沿岸刷绿
+    if (!IsShorePiece(cell)) continue;
+    for (int d = 0; d < 8; d += 2) {
+      CellClass* n = cell->Adjacent(d);
+      if (IsUndecided(n)) n->IsoTile = [0xAA0E18];  //     ⚠️ 写的是**邻格**
+    }
+  }
+}
+```
+
+三处必须照抄的细节：
+
+1. **(c) 的判水是等值比较**。`0x59A73F` 拿 `cell->+0x38` 直接和 `[0xAA0738]`
+   比相等，不是别处那个 `[base, base+0x0E)` 区间。也就是说只有"刚铺完水、
+   还没被岸线改过"的格子才进得来。
+2. **(c) 与 (h) 的邻格可能是共享哑元**。`0x481810` 走 `0x5657A0` 查指针表，
+   出图就退到静态哑元 `0xABDC50`。(c) 只读它，(h) 会**写**它——哑元一旦被写成
+   `GreenTile` 就不再"未定砖"，此后所有出图邻格都会被跳过。这是可观测状态。
+3. **(d) 传的 flag 是 0**，与涂块收尾（`0x59C433`）传的 1 不是一回事，见 §七。
+
+### 复刻状态：整条链已落成并对拍（✅ 2026-08-06）
+
+`code/rewrite/rmg/stage_water.{h,cpp}` + `test/test_stage_water.cpp`，
+基准 `memory/data/rmg/stage_water_golden.txt`（生成脚本
+`code/randmap/dump_stage_water_golden.py`）。
+
+这是目前最"整"的一次对拍：**一次调用把铺水 → 投放策略 → 涂块核心 →
+岸线四遍 → 掩码 → 贴砖器整条链的真身全跑一遍**，模拟执行侧只留
+`IsPaintable`（`0x4865D0`）一个桩。12 组用例（三种 MapType × 两套砖尺寸剖面 ×
+不同玩家数/WaterAmount/可用区，外加 MapType 3 的"没人涂陆地"退化例）比对：
+随机数调用次数、收尾块编号、共享哑元的 `+0x38`、工作数组的 `+0x38/+0x3C`、
+以及菱形内每一格的 `(砖号, 子格号, 层高, 块归属)`。
+
+对拍顺手确认了一条**看着像 bug 其实是原版行为**的事实：MapType 0 在小图上
+（本文用 10×10）每一块陆地都会因为铺不出岸线而整块回滚，**终态全是水**。
+基准里 `mt0-allwater` 一例专门盯住它。地图放大到 20×20 就正常出陆地了。
 
 ## 二、三种 MapType 三套投放策略
 
@@ -1398,12 +1466,20 @@ snow 两个气候下这几组都有定义，所以现网跑不出来。照原样
 15. ~~贴砖器 `0x57B440`~~ ✅ 已落成并对拍，见 §七「贴砖器的六条出口」。
     `TileTypeClass +0x2E4/+0x2E8` 实锤为 `.tmp` 文件头的两个字节（`0x546B4A`）
 16. ~~把四遍平滑的**编排**串起来~~ ✅ 已完成，见第 11 条
-17. 下一件：把 `TheaterData` 接进 `PaintWorld` / `ShoreWorld`，让
-    `WaterTile()` / `ShorePiecesBase()` 从真实气候数据来，而不是测试桩；
-    再把合成砖尺寸换成真实 `.tmp` 尺寸，重取一次岸线基准
-18. 阶段 2 收口之后：阶段 4「Making regions」（45 次取数，只在
+17. ~~把 `TheaterData` 接进 `PaintWorld` / `ShoreWorld`~~ ✅ 已完成：
+    删掉了 `WaterTile()` / `ShorePiecesBase()` 两个虚函数，改从 `TheaterData`
+    取——这既去掉了重复真值来源，也让阶段 2 那个"既是涂块世界又是平滑世界"
+    的多继承类不再因 `WaterTile` 二义而无法编译
+18. ~~阶段 2 调度器 `FUN_0059A6C0`~~ ✅ 已落成并对拍，见 §一末尾。
+    **至此阶段 2 的 `MapType ∈ {0,1,2}` 主路径整条闭合**：
+    铺水 → 投放策略 → 涂块 → 孤水格回填 → 岸线四遍 → 工作数组清账 → 沿岸刷绿
+19. 下一件：把合成砖尺寸换成真实 `.tmp` 尺寸（需要 C++ 侧的 mix/.tmp 读取器，
+    目前只有 `code/mix/mix_read.py`），重取岸线与阶段 2 两份基准
+20. `MapType ∈ {3,4}` 那条支路：`0x59C580`（`WaterAmount != 0` 才走）与
+    水面 tile 细化 `0x59C630`（§六，还缺 `0x5A6C10`，49 处调用点未逆）
+21. 阶段 4「Making regions」（45 次取数，只在
     `MapType ∈ {3,4}` 下走），含 `0x5A1350` 的 21 路 switch
-19. **死代码 TODO**：`0x57B0E8` 的 `cmp eax,-1`（§七「四个坑」第 3 条）、
+22. **死代码 TODO**：`0x57B0E8` 的 `cmp eax,-1`（§七「四个坑」第 3 条）、
     `0x545FE5` 的 `LastTilesInSet` 死分支，以及那 22 个从未被调用的函数
     （46 个取数点，27 个在 `0x5A5020` 子树里）。按约定推迟到 104 个活取数点
     做完、逐字节对比闭环之后再逆

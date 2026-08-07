@@ -122,6 +122,7 @@ class SmoothStub : public SmoothWorld {
     dummy_.subtile = st;
     dummy_.level = lv;
   }
+  void SetDummyIsoTile(int t) override { dummy_.tile = t; }
 
   int WorkBlob(const CellCoord& c) const override { return blob_[WorkIdx(c)]; }
   void SetWorkBlob(const CellCoord& c, int v) override { blob_[WorkIdx(c)] = v; }

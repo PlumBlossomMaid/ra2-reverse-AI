@@ -70,6 +70,7 @@ class StubWorld : public TileWorld {
     dummy_.subtile = st;
     dummy_.level = lv;
   }
+  void SetDummyIsoTile(int t) override { dummy_.tile = t; }
 
   int WorkBlob(const CellCoord& c) const override { return At(c).blob; }
   void SetWorkBlob(const CellCoord& c, int v) override {

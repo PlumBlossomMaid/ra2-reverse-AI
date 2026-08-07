@@ -63,6 +63,9 @@ class TileWorld {
   virtual int DummyIsoTile() const = 0;
   virtual int DummySubTile() const = 0;
   virtual void SetDummyTile(int tile, int subtile, int level) = 0;
+  // 阶段 2 收尾的刷绿（0x59A8C0）只写哑元的 +0x38，不碰 +0x11A/+0x11B。
+  // 与上面那个三写版本语义不同，不能互相代替。
+  virtual void SetDummyIsoTile(int tile) = 0;
 
   // 工作数组 +0x38（0x5A00C0 读 / 0x5A0090 写）——这一格属于哪个块
   virtual int WorkBlob(const CellCoord& c) const = 0;

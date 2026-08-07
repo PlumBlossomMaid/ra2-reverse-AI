@@ -10,6 +10,7 @@ add_library(ra2_rmg
   cell_ref.cpp
   shore_mask.cpp
   shore_smooth.cpp
+  stage_water.cpp
   make_grid.cpp
   place_blobs.cpp
   place_tile.cpp
@@ -96,4 +97,10 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_shore_smooth PRIVATE
     RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
   add_test(NAME shore_smooth COMMAND test_shore_smooth)
+
+  add_executable(test_stage_water test/test_stage_water.cpp)
+  target_link_libraries(test_stage_water PRIVATE ra2_rmg gtest_main)
+  target_compile_definitions(test_stage_water PRIVATE
+    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+  add_test(NAME stage_water COMMAND test_stage_water)
 endif()
