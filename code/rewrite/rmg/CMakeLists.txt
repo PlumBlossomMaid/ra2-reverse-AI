@@ -15,6 +15,7 @@ add_library(ra2_rmg
   make_grid.cpp
   place_blobs.cpp
   place_tile.cpp
+  regions.cpp
   theater.cpp
   fp_guard.cpp)
 
@@ -106,4 +107,10 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_stage_water PRIVATE
     RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
   add_test(NAME stage_water COMMAND test_stage_water)
+
+  add_executable(test_regions test/test_regions.cpp)
+  target_link_libraries(test_regions PRIVATE ra2_rmg gtest_main)
+  target_compile_definitions(test_regions PRIVATE
+    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+  add_test(NAME regions COMMAND test_regions)
 endif()

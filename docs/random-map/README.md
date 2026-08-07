@@ -15,7 +15,7 @@
 | [rng-ledger.md](rng-ledger.md) | **随机数消耗总账**：104 个取数点 + 阶段归属 + 46 处死代码 | ✅ 清单已实锤 |
 | [map-geometry.md](map-geometry.md) | **等距地图几何**：格子集合（菱形四不等式）+ 扫全图顺序 + 总格数 | ✅ 已实锤并对拍 |
 | [stage-init.md](stage-init.md) | 阶段：Init random map（搭空 scenario，只抽 1 个随机数）+ **地图尺寸的来源** | ✅ 取数点与尺寸算法已实锤 |
-| [stage-init-regions.md](stage-init-regions.md) | 阶段：Init regions（把地图切成连通区域，只抽 1 个随机数） | ✅ 流程与取数点已实锤 |
+| [stage-init-regions.md](stage-init-regions.md) | 阶段：Init regions（把地图切成连通区域，只 1 个取数点） | ✅ 全部实锤；已落 C++，23 个用例整段对拍通过 |
 | [stage-tiberium.md](stage-tiberium.md) | 阶段：Creating tiberium（布矿） | ✅ 外层 + 矿田生长全链已实锤 |
 | [stage-tech-buildings.md](stage-tech-buildings.md) | 阶段：Adding tech buildings（中立科技建筑，两条互斥分支） | ✅ 已实锤，含 `PickRange` 语义 |
 | [stage-recalc.md](stage-recalc.md) | 阶段：绿地蔓延 + Recalculating cell attributes | ✅ 已实锤，附 TileSet 全局↔ini 键名映射 |
@@ -25,7 +25,7 @@
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法全还原；**`MapType 0/1/2` 主路径 + 水面细化整条落成 C++ 并对拍** |
 | [stage-water-maptype34.md](stage-water-maptype34.md) | 阶段 2 支路：`MapType ∈ {3,4}` 的**河流、湖泊与瀑布**（含查表 sin/cos） | ✅ 八个函数全部实锤；sin/cos 已落 C++ 并对拍；整支路待落 C++ |
-| [stage-making-regions.md](stage-making-regions.md) | 阶段 4：Making regions（区域重建 + **区域之间开坡道/架桥**，`MapType ∈ {3,4}` 专属，45 个取数点） | ✅ **45 个取数点全部关闭**；区域切分 / 架桥 / 四个直坡 / 三个转角全部实锤，余 `0x579010`+`0x579620` 两遍重刷砖 |
+| [stage-making-regions.md](stage-making-regions.md) | 阶段 4：Making regions（区域重建 + **区域之间开坡道/架桥**，`MapType ∈ {3,4}` 专属，45 个取数点） | ✅ **45 个取数点全部关闭**；区域切分 / 架桥 / 四个直坡 / 三个转角 / 两遍重刷砖全部实锤 |
 
 ## 进度
 
@@ -161,6 +161,27 @@
       恰好拼满 WaterSet 的 `TilesInSet = 0x0E`——砖号分配自洽，反过来作证 `/40`；
       新记两条：`0x5A6C10` 会写 `CellClass +0x11C`（坡度，来自 `.tmp` 子块头 `+0x2A`）
       而贴砖器 `0x57B440` 从不碰它，且它的层高公式多一个 `-4`
+- [x] **阶段 3 Init regions 整段落成 C++ 并对拍**（`regions.{h,cpp}`）——
+      四步流程（`CreateRegions 0x58CF90` → 每个 wet 区域 `Grow 0x58E740` +
+      `FloodRest 0x58E9B0` → `Finalize 0x58D010`）连同两个边界格函数
+      `0x5A0700` / `0x58D410` 一起落地，23 个用例逐格逐区域对拍通过。
+      顺手查实四条结构事实：① `RegionClass +0x14` 被调用方 `0x58CE24`
+      覆盖成 `IsWaterOrShore || IsGreen`，与起种判据同一条，
+      于是那道“长圈”过滤器一个也拦不住，反过来实锤
+      唯一取数点 `0x58CAF9` **只能从 `Finalize` 进去且要求 `id == 0`**；
+      ② 那条分支只刷 `+0x38` 不刷 `+0x3C`，把自己锁死成“逐格重置”——
+      基准里 631 个取数点里 611 个的候选表长度都是 1（最重的一例
+      一次跑出 190 个取数点，逐个对上）；③ `0x58D410` 比 `0x5A0700` 多一条
+      **“先取格再判界”的哑元副作用**，变异测试确认它能改变产物（炸 52 格）；
+      ④ 全局区域向量是**内联在 .bss 里**的，静态初始化器 `0x58BC30` 把增长步长
+      置成 10——留 0 的话 `push` 静默失败，区域一个都登记不上
+- [x] **`MapSeedClass` 就是静态对象 `0xABDFD8`**——`0x59664C mov ecx,0xABDFD8;
+      call 0x598960` 与 `0x58CAD1` 两处实锤。于是之前按绝对地址分散记下的
+      一批全局当场对号：`0xABE014 = +0x3C` MapType、`0xABE024 = +0x4C`
+      WaterAmount、`0xABE158/15C = +0x180/+0x184` 地图宽高、`0xABE2E0 = +0x308`
+      块编号、`0xABE2F0..FC = +0x318..324` 全图边界、`0xABE890 = +0x8B8` Randomizer。
+      顺手关掉 stage-init-regions 的未确认 3：**`[0xABE2E4]` 就是 `+0x30C`**，
+      也就是涂块回滚时写回 `+0x11B` 的那个 `MapSeedClass::Level`（默认 4）
 - [x] **真实 `.tmp` 几何进基准**（`memory/data/rmg/tile_geometry.txt`，
       生成脚本 `code/randmap/dump_tile_geometry.py`）——
       岸砖 42 + 水砖 14、温和与雪地共 112 条，只取几何数值（占地宽高 / 空洞 /
@@ -380,6 +401,7 @@ long double。同类的 `fsin` / `fpatan` / `f2xm1` 是否也如此，**未确�
 | `code/randmap/dump_atan_golden.py` | 导出查表 atan 的对拍基准（附**指令级** oracle 自检，见 fast-math.md §四之三） |
 | `code/randmap/gen_atan_table.py` | 把 `0x8610B4` 的 4097 项反正切表导出成 `atan_table.h`，并当场用还原出的生成式重算全表 |
 | `code/randmap/dump_tile_geometry.py` | 从 theater 的 `.tmp` 取砖的**几何元数据**（宽高/空洞/高度/坡度）当对拍夹具 |
+| `code/randmap/dump_regions_golden.py` | 导出阶段 3 Init regions 四步流程的对拍基准（带回收的 bump 分配器） |
 | `code/ghidra_scripts/find_writers.py` | 定位 .bss 全局的运行期初始化点（表内容不在文件里） |
 | `code/randmap/scan_rmg_rng.py` | 只列**生成器自己那个** Randomizer(0xABE890) 的取数点（按 this 判定） |
 | `code/ghidra_scripts/rng_closure.py` | 调用树传递闭包，找出某根函数下**所有**随机数取数点（真函数边界） |

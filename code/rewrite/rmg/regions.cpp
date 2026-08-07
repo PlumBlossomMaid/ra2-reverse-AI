@@ -1,0 +1,447 @@
+#include "regions.h"
+
+#include <algorithm>
+#include <cstdint>
+#include <utility>
+
+#include "place_tile.h"      // IsUndecidedTile（0x486380）
+#include "scaled_random.h"   // PickBelowMul（0x58CAF9 的内联展开）
+
+namespace ra2 {
+namespace rmg {
+
+namespace {
+
+// 0x89F688，运行期由 0x49F2F0 填出：0=N 1=NE 2=E 3=SE 4=S 5=SW 6=W 7=NW。
+// 这里单独放一份，免得为了一张 8 项的表把 cell_ref.h 整条依赖链拖进来。
+const int kDeltaX[8] = {0, 1, 1, 1, 0, -1, -1, -1};
+const int kDeltaY[8] = {-1, -1, 0, 1, 1, 1, 0, -1};
+
+// 0x42D510 `CellStruct::operator+`：两个分量都是 **int16** 相加后再符号扩展。
+// 地图不超过 512 格时溢出不会发生，但宽度照抄，不替原版"修正"。
+inline CellCoord Step(const CellCoord& c, int dir) {
+  return CellCoord{static_cast<std::int16_t>(c.x + kDeltaX[dir]),
+                   static_cast<std::int16_t>(c.y + kDeltaY[dir])};
+}
+
+// 0x5657A0 `MapClass::GetCellAt` 的**副作用**部分：拿不到真实格子时把请求坐标
+// 写进共享哑元的 +0x24（[0xABDC74]）。取到之后的字段读写由各访问器自行落到
+// 哑元上（见 RegionWorld 的注释），所以这里只需要"碰一下"。
+inline void Touch(RegionWorld& w, const CellCoord& c) {
+  if (!w.CellExists(c)) w.SetDummyCoord(c);
+}
+
+inline std::size_t WorkIdx(const RegionContext& ctx, const CellCoord& c) {
+  const long long i =
+      static_cast<long long>(c.y) * ctx.grid.side() + c.x;
+  // 原版是裸算下标、不查界。所有调用点都先过了菱形判定或是线性扫描，
+  // 所以这里只做一层防御性夹取，正常路径永远不会触发。
+  if (i < 0) return 0;
+  const long long n = static_cast<long long>(ctx.work->size());
+  return static_cast<std::size_t>(i >= n ? n - 1 : i);
+}
+
+inline PaintWorkCell& Rec(RegionContext& ctx, const CellCoord& c) {
+  return (*ctx.work)[WorkIdx(ctx, c)];
+}
+
+// 0x5A00C0 `GetWorkOwner`（__stdcall）：工作数组为空指针时返回 -1。
+inline int Owner(const RegionContext& ctx, const CellCoord& c) {
+  if (ctx.work == nullptr) return -1;
+  return (*ctx.work)[WorkIdx(ctx, c)].blob_id;
+}
+
+// 0x5A0090 `SetWorkOwner`（__stdcall）：工作数组为空指针时静默无操作。
+inline void SetOwner(RegionContext& ctx, const CellCoord& c, int v) {
+  if (ctx.work == nullptr) return;
+  (*ctx.work)[WorkIdx(ctx, c)].blob_id = v;
+}
+
+inline bool IsOrigin(const CellCoord& c) { return c.x == 0 && c.y == 0; }
+
+// 「这一格是水岸或绿地」——CreateRegions 起种的谓词，也是 RegionClass +0x14
+// 的生效值。两个子判据的顺序照 0x58C86B 起的短路顺序。
+inline bool Wetness(RegionWorld& w, const TheaterData& t, const CellCoord& c) {
+  const int tile = w.IsoTile(c);
+  return IsWaterOrShoreTile(tile, t) || IsGreenTile(tile, t);
+}
+
+}  // namespace
+
+// ────────────────────────────── 砖号谓词 ──────────────────────────────
+
+bool IsWaterOrShoreTile(int tile, const TheaterData& t) {
+  // 0x4865D0。岸砖那一支是提前 return，其余五个区间是一个大合取的反面；
+  // 对纯 OR 而言顺序无所谓，但一条 -1 保护都没有这件事有所谓。
+  if (tile >= t.shore_pieces && tile < t.shore_pieces + 0x2A) return true;
+  if (tile >= t.water_set && tile < t.water_set + 0x0E) return true;
+  if (tile >= t.waterfall_east && tile < t.waterfall_east + 4) return true;
+  if (tile >= t.waterfall_west && tile < t.waterfall_west + 4) return true;
+  if (tile >= t.waterfall_south && tile < t.waterfall_south + 4) return true;
+  if (tile >= t.waterfall_north && tile < t.waterfall_north + 4) return true;
+  return false;
+}
+
+bool IsGreenTile(int tile, const TheaterData& t) {
+  // 0x4867B0
+  if (tile == t.green_tile) return true;
+  return tile >= t.clear_to_green_lat && tile < t.clear_to_green_lat + 0x10;
+}
+
+// ────────────────────────────── RegionSet ──────────────────────────────
+
+RegionClass* RegionSet::Create(const CellCoord& seed, int level, bool wet) {
+  // 0x58BF70。ctor 自己会按种子格算 +0x10/+0x14，但调用方 0x58CE21/0x58CE24
+  // 立刻覆盖，所以这里直接收生效值。
+  pool_.push_back(std::unique_ptr<RegionClass>(new RegionClass()));
+  RegionClass* r = pool_.back().get();
+  r->id = next_id_;          // +0x08 = [0xABED14]
+  r->cell_count = 0;         // +0x0C
+  r->level = level;          // +0x10
+  r->wet = wet;              // +0x14
+  r->seed = seed;            // +0x16
+  r->finalized = false;      // +0x1A = 0
+  r->connected = true;       // +0x1B = 1
+  r->split_count = 0;        // +0x1C
+  r->start_points = 0;       // +0x20
+  r->discarded = false;      // +0x24
+  ++next_id_;                // 0x58BFE9 `inc [0xABED14]`
+  list_.push_back(r);        // 登记进 [0xABDF94] / [0xABDFA0]
+  return r;
+}
+
+void RegionSet::Destroy(RegionClass* r) {
+  // 0x5AC290(deallocate=1)：析构 +0x00 候选向量（**不碰 +0x04**）、
+  // 把自己从全局表里摘掉（后面元素前移、个数 -1）、释放 +0x2C、free(this)。
+  r->candidates.clear();
+  const auto it = std::find(list_.begin(), list_.end(), r);
+  if (it != list_.end()) list_.erase(it);
+  r->cells.clear();
+  for (auto p = pool_.begin(); p != pool_.end(); ++p) {
+    if (p->get() == r) {
+      pool_.erase(p);
+      return;
+    }
+  }
+}
+
+void RegionSet::Reset() {
+  // 0x598986-0x5989A0：i 从 count-1 递减到 0，非空就销毁；随后 [0xABED14] = 0。
+  for (int i = Count() - 1; i >= 0; --i) Destroy(At(i));
+  next_id_ = 0;
+}
+
+RegionClass* RegionSet::ById(int id) {
+  for (RegionClass* r : list_) {
+    if (r->id == id) return r;
+  }
+  return nullptr;   // ⚠️ 原版调用方直接解引用，不查空（未确认）
+}
+
+// ──────────────────────────── 两个边界格函数 ────────────────────────────
+
+std::vector<CellCoord> CollectBorderCells(const RegionContext& ctx, int owner) {
+  std::vector<CellCoord> out;
+  // 0x5A0714：候选向量的增长步长 = [MapSeed+0x184] * [MapSeed+0x180] = H * W。
+  // DynamicVectorClass 在步长 <= 0 时 push 静默失败，而初始容量是 0——
+  // 于是 W 或 H 为 0 时本函数恒返回空表。
+  const long long cap_step =
+      static_cast<long long>(ctx.map_h) * static_cast<long long>(ctx.map_w);
+  const long long n =
+      static_cast<long long>(ctx.grid.side()) * ctx.grid.side();
+  if (n < 1) return out;      // 0x5A0729 `if (local_4 < 1) return`
+  for (long long i = 0; i < n; ++i) {
+    // ⚠️ 坐标取的是记录**自己存的 +0x00**，再用它反算工作数组下标；
+    // 不是拿循环下标去反推坐标。
+    const CellCoord c = (*ctx.work)[static_cast<std::size_t>(i)].coord;
+    if (IsOrigin(c)) continue;
+    if (Owner(ctx, c) != owner) continue;
+    for (int d = 0; d < 8; ++d) {
+      const CellCoord m = Step(c, d);
+      if (!ctx.grid.InMap(m)) continue;   // 界外**不算**"归属不同"
+      if (Owner(ctx, m) == owner) continue;
+      if (cap_step > 0) out.push_back(c);
+      break;                              // 一格只入表一次
+    }
+  }
+  return out;
+}
+
+std::vector<CellCoord> GetBorderCells(RegionContext& ctx,
+                                      const RegionClass& region) {
+  RegionWorld& w = *ctx.world;
+  std::vector<CellCoord> out;
+  ctx.grid.ForEachCell([&](const CellCoord& c) {
+    if (Owner(ctx, c) != region.id) return;
+    bool any = false;
+    for (int d = 0; d < 8; ++d) {
+      const CellCoord m = Step(c, d);
+      Touch(w, m);              // 0x481810 先查表再判界，界外会写哑元坐标
+      if (!ctx.grid.InMap(m)) continue;
+      if (Owner(ctx, m) != region.id) any = true;   // 不 break，走满 8 次
+    }
+    if (any) out.push_back(c);
+  });
+  return out;
+}
+
+// ─────────────────────────────── SeedRegion ───────────────────────────────
+
+namespace {
+
+// LAB_0058CDF6：真的建一个区域，并数出成员格数。
+RegionClass* BuildRegion(RegionContext& ctx, const CellCoord& seed, int level,
+                         bool wet) {
+  RegionWorld& w = *ctx.world;
+  // ctor 自己会取两次种子格（算它那份马上被覆盖的 +0x10/+0x14），
+  // 两次取格的哑元副作用照留。
+  Touch(w, seed);
+  Touch(w, seed);
+  RegionClass* r = ctx.regions->Create(seed, level, wet);
+  // 0x58CE2E-0x58CE71：线性扫工作数组，归属等于本区域且打包坐标非 (0,0) 就 +1。
+  // 「非 (0,0)」这一条是 0x5AC370(this = &rec.coord, arg = {0,0}) 的返回值。
+  const long long n =
+      static_cast<long long>(ctx.grid.side()) * ctx.grid.side();
+  for (long long i = 0; i < n; ++i) {
+    const PaintWorkCell& rec = (*ctx.work)[static_cast<std::size_t>(i)];
+    if (rec.blob_id != r->id) continue;
+    if (IsOrigin(rec.coord)) continue;
+    ++r->cell_count;
+  }
+  return r;
+}
+
+// 把整张图上归属为 `from` 的格子改判成 `to`，并把砖与层高重置。
+// 两条并区分支共用这一段（0x58CC10 起与 0x58CD3E 起，逐条同构）。
+void Reassign(RegionContext& ctx, int from, int to, int level_src) {
+  RegionWorld& w = *ctx.world;
+  const int lvl = (level_src != -1) ? level_src : ctx.fallback_level;
+  ctx.grid.ForEachCell([&](const CellCoord& p) {
+    PaintWorkCell& rec = Rec(ctx, p);
+    if (rec.blob_id != from) return;
+    rec.blob_id = to;
+    rec.flag4b = false;        // +0x4B = 0
+    w.SetIsoTile(p, 0);        // +0x38 = 0
+    w.SetSubTile(p, 0);        // +0x11A = 0
+    w.SetLevel(p, lvl);        // +0x11B
+  });
+}
+
+}  // namespace
+
+RegionClass* SeedRegion(RegionContext& ctx, const CellCoord& seed) {
+  RegionWorld& w = *ctx.world;
+  const TheaterData& t = *ctx.theater;
+
+  // 0x58C80D：本次要用的编号先取下来。走并区分支时它**不会**被消耗，
+  // 下一次起种还是同一个号。
+  const int id = ctx.regions->next_id();
+
+  std::vector<CellCoord> stack;     // 栈上 DynamicVector，增长步长 50000
+  stack.push_back(seed);
+
+  const bool wet = Wetness(w, t, seed);
+  const int level = w.Level(seed);
+  int visited = 0;
+
+  // ── DFS（后进先出）涂一块同层同"湿度"的连通区 ──
+  while (!stack.empty()) {
+    const CellCoord cur = stack.back();
+    stack.pop_back();
+    // +0x3C 是内联直写（**没有**空指针保护），+0x38 走 0x5A0090（有保护）。
+    Rec(ctx, cur).queued = id;
+    SetOwner(ctx, cur, id);
+    for (int d = 0; d < 8; ++d) {
+      const CellCoord n = Step(cur, d);
+      if (!ctx.grid.InMap(n)) continue;
+      PaintWorkCell& rec = Rec(ctx, n);
+      if (rec.blob_id != -1) continue;    // 已归属
+      if (rec.queued == id) continue;     // 已进过队列
+      rec.queued = id;
+      Touch(w, n);
+      if (w.Level(n) != level) continue;  // 只走同层
+      Touch(w, n);
+      if (Wetness(w, t, n) != wet) continue;
+      stack.push_back(n);
+    }
+    ++visited;
+  }
+
+  if (visited > 0x4A) return BuildRegion(ctx, seed, level, wet);   // 75 格及以上
+
+  // ── 不足 75 格：按三条互斥规则处理 ──
+  if (wet) return BuildRegion(ctx, seed, level, wet);   // 水/绿的小块照样建
+
+  if (id == 0) {
+    // 没有"前一个区域"可并 —— 全生成器唯一在这儿抽随机数（0x58CAF9）。
+    std::vector<CellCoord> borders = CollectBorderCells(ctx, 0);
+    const int n = static_cast<int>(borders.size());
+    // PickRange(0, n-1) 的内联展开，与 0x598030 的乘法顺序完全一致。
+    const int pick = PickBelowMul(*ctx.rng, n);
+    // ⚠️ n == 0 时 hi = -1，无符号比较恒真，第一次抽就被接受，随后原版按
+    // pick 下标去读一个**空数组**（越界读）。这里退化成 (0,0)；随机数照抽。
+    // 未确认：这条路在真机上读到什么。
+    const CellCoord chosen =
+        (pick >= 0 && pick < n) ? borders[static_cast<std::size_t>(pick)]
+                                : CellCoord{0, 0};
+    for (int d = 0; d < 8; ++d) {
+      const CellCoord m = Step(chosen, d);
+      if (!ctx.grid.InMap(m)) continue;
+      Touch(w, m);
+      Touch(w, chosen);
+      if (w.Level(m) == w.Level(chosen)) continue;   // 要找层高**不同**的邻格
+      Touch(w, m);
+      if (IsWaterOrShoreTile(w.IsoTile(m), t)) continue;   // 且不能是水岸
+      Touch(w, m);
+      // 把整块 0 号退回"未归属"，让它之后被重新起种。
+      //
+      // ⚠️ 这里只把 +0x38 刷回 -1，**不动 +0x3C**，而 +0x3C 此时正好是
+      // 0 == id。于是下一次起种（编号没被消耗，还是 id == 0）踩到这些格子时
+      // 会被 "queued == id" 那条当成"已入过队列"直接跳过——DFS 再也长不出去。
+      // 实测（regions_golden.txt 的 syn-dry-* 共 631 个取数点）：除了头几个，
+      // 其余 611 个的边界格表长度都是 **1**——整条循环退化成"逐格重置"。
+      // 这是 25 年前的真实行为，照拄，不修。
+      Reassign(ctx, /*from=*/0, /*to=*/-1, w.Level(m));
+      return nullptr;
+    }
+    // 8 个方向全试过都没成 → 落回"建区域"
+    return BuildRegion(ctx, seed, level, wet);
+  }
+
+  // id != 0：往西找一格，不在界内就往北。
+  CellCoord m{static_cast<std::int16_t>(seed.x - 1), seed.y};
+  if (!ctx.grid.InMap(m)) {
+    m = CellCoord{seed.x, static_cast<std::int16_t>(seed.y - 1)};
+  }
+  if (!ctx.grid.InMap(m)) return BuildRegion(ctx, seed, level, wet);
+
+  const int new_owner = Owner(ctx, m);
+  Touch(w, m);
+  Reassign(ctx, /*from=*/id, /*to=*/new_owner, w.Level(m));
+  return nullptr;
+}
+
+// ───────────────────────── CreateRegions / Grow / 收尾 ─────────────────────────
+
+void CreateRegions(RegionContext& ctx) {
+  RegionWorld& w = *ctx.world;
+  const TheaterData& t = *ctx.theater;
+  const long long n =
+      static_cast<long long>(ctx.grid.side()) * ctx.grid.side();
+  for (long long i = 0; i < n; ++i) {
+    const CellCoord c = (*ctx.work)[static_cast<std::size_t>(i)].coord;
+    // ⚠️ 取格在三条判定**之前**、且无条件执行（0x58CFAE）。菱形外的槽位
+    // 坐标是 (0,0)，那一格不存在，于是每扫到一条就往哑元写一次 (0,0)。
+    // 这是能被后续读到的状态，不能挪到 if 里面去。
+    Touch(w, c);
+    if ((*ctx.work)[static_cast<std::size_t>(i)].blob_id != -1) continue;
+    if (IsOrigin(c)) continue;
+    if (!Wetness(w, t, c)) continue;
+    SeedRegion(ctx, c);
+  }
+}
+
+bool Grow(RegionContext& ctx, RegionClass& region, int rings) {
+  RegionWorld& w = *ctx.world;
+  const TheaterData& t = *ctx.theater;
+  std::vector<CellCoord> cur = GetBorderCells(ctx, region);
+  for (int it = 0; it < rings; ++it) {
+    std::vector<CellCoord> next;
+    // 0x58E77B：下一圈向量的增长步长 = 当前圈格数 * 3（步长 <= 0 时 push 失败）。
+    const long long cap_step = static_cast<long long>(cur.size()) * 3;
+    for (std::size_t i = 0; i < cur.size(); ++i) {
+      for (int d = 0; d < 8; ++d) {
+        const CellCoord n = Step(cur[i], d);
+        if (!ctx.grid.InMap(n)) continue;
+        Touch(w, n);
+        if (w.Level(n) != region.level) continue;   // 只吃同层
+        PaintWorkCell& rec = Rec(ctx, n);
+        if (rec.blob_id == -1) {
+          Touch(w, n);
+          bool ok = IsUndecidedTile(w.IsoTile(n));
+          if (!ok) {
+            Touch(w, n);
+            ok = IsGreenTile(w.IsoTile(n), t);
+          }
+          if (ok) {
+            if (cap_step > 0) next.push_back(n);
+            rec.blob_id = region.id;
+            Touch(w, n);
+            w.SetLevel(n, region.level);
+            continue;
+          }
+          // ⚠️ 谓词不过 → 落到下面那条 `!= region.id` 判定，而此时
+          // rec.blob_id 仍是 -1，于是必然成立 → 整个 Grow 立刻放弃。
+        }
+        if (rec.blob_id != region.id) return false;
+      }
+    }
+    cur = std::move(next);
+  }
+  return true;
+}
+
+void FloodRest(RegionContext& ctx, RegionClass& region) {
+  std::vector<CellCoord> stack = GetBorderCells(ctx, region);
+  while (!stack.empty()) {
+    const CellCoord cur = stack.back();
+    stack.pop_back();
+    for (int d = 0; d < 8; ++d) {
+      const CellCoord n = Step(cur, d);
+      if (!ctx.grid.InMap(n)) continue;
+      PaintWorkCell& rec = Rec(ctx, n);
+      if (rec.blob_id != -1) continue;
+      if (!rec.flag4b) continue;      // +0x4B 必须非 0
+      rec.blob_id = region.id;        // ⚠️ 归属先写，再尝试入栈
+      stack.push_back(n);
+    }
+  }
+  // 不改砖、不改层高——与 Grow 的区别就在这儿。
+}
+
+void Finalize(RegionContext& ctx, bool flag) {
+  RegionWorld& w = *ctx.world;
+  const long long n =
+      static_cast<long long>(ctx.grid.side()) * ctx.grid.side();
+  for (long long i = 0; i < n; ++i) {
+    const CellCoord c = (*ctx.work)[static_cast<std::size_t>(i)].coord;
+    // 这里的取格在 if **里面**（0x58D03A），与 CreateRegions 相反。
+    if ((*ctx.work)[static_cast<std::size_t>(i)].blob_id != -1) continue;
+    if (IsOrigin(c)) continue;
+    Touch(w, c);
+    RegionClass* r = SeedRegion(ctx, c);     // 不经任何谓词过滤
+    if (r != nullptr) r->finalized = flag;
+  }
+}
+
+void InitRegions(RegionContext& ctx, int map_type) {
+  // 1) 工作记录的两个区域字段清 -1（**整个方阵**，不止菱形内），再拆掉旧区域。
+  if (ctx.work != nullptr) {
+    for (PaintWorkCell& rec : *ctx.work) {
+      rec.blob_id = -1;
+      rec.queued = -1;
+    }
+  }
+  ctx.regions->Reset();
+
+  // 2) 按连通块建区域
+  CreateRegions(ctx);
+
+  // 3) 每个 wet 区域先长几圈再漫灌。
+  // ⚠️ 循环上界是**每轮重读**的区域个数（0x598CF0 `mov eax,[0xABDFA0]`）。
+  // 这一段里没人建/删区域，所以实际等价于固定上界，但照抄写法。
+  for (int i = 0; i < ctx.regions->Count(); ++i) {
+    RegionClass* r = ctx.regions->At(i);
+    if (!r->wet) continue;
+    const bool big_map = (map_type == 3 || map_type == 4);
+    const int rings = (r->cell_count > 8000 ? 1 : 0) + (big_map ? 0 : 1) + 4;
+    Grow(ctx, *r, rings);      // 返回值被调度方**忽略**（0x598CE4 之后没有 test）
+    FloodRest(ctx, *r);
+  }
+
+  // 4) 剩下没归属的格子再兜一遍；0x598CFA `xor cl,cl` → flag = 0
+  Finalize(ctx, false);
+}
+
+}  // namespace rmg
+}  // namespace ra2

@@ -93,7 +93,10 @@ class PaintOracle(object):
 
         uc.hook_add(UC_HOOK_CODE, self._h_malloc, begin=A_MALLOC, end=A_MALLOC)
         uc.hook_add(UC_HOOK_CODE, self._h_free, begin=A_FREE, end=A_FREE)
-        uc.hook_add(UC_HOOK_CODE, self._h_true0, begin=A_PAINTABLE, end=A_PAINTABLE)
+        # 句柄留着：区域阶段的 oracle 要把这个桩摘掉——0x4865D0 同时也是
+        # 「这一格是水或岸」，区域切分靠它起种，不能恒真
+        self.h_paintable = uc.hook_add(UC_HOOK_CODE, self._h_true0,
+                                       begin=A_PAINTABLE, end=A_PAINTABLE)
         # 句柄留着：岸线自己的 oracle 要把这个桩摘掉，好让真身跑起来
         self.h_smooth = uc.hook_add(UC_HOOK_CODE, self._h_true8,
                                     begin=A_SMOOTH, end=A_SMOOTH)
