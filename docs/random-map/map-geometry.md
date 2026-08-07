@@ -1,7 +1,7 @@
 # 等距地图的几何：哪些格子存在、按什么顺序扫
 
-> 状态：**格子集合、遍历顺序、总格数三件事已实锤并对拍**。
-> 遗留 1 条未确认：格子指针数组 `MapClass +0x13C` 由谁分配。
+> 状态：**格子集合、遍历顺序、总格数三件事已实锤并对拍**；
+> 承载它们的 `MapClass` 全局对象与格子指针数组的分配点也已查实（§五）。
 
 之前每个阶段文档都在写"扫全图"、"对每个格子"，但从没定义过**全图到底是哪些格子**、
 **扫的顺序是什么**。这两件事直接决定复刻成败：同一个随机数落到不同格子上，
@@ -154,7 +154,8 @@ while (cell(X, Y) != NULL) {
 
 ### 停机条件与交叉验证
 
-原版靠"格子指针为 `NULL`"停机——出了菱形的位置没有分配格子。
+原版靠"格子指针为 `NULL`"停机——出了菱形的位置没有分配格子
+（数组建出来时整表就是 `NULL`，见 §五佐证三）。
 把上面的走位和 §二的四条不等式各自算出集合来比：
 
 > **遍历到的集合 ≡ 菱形判定的集合，且不重不漏**（`W ∈ [3,40] × H ∈ [1,40]` 全验）。
@@ -176,14 +177,123 @@ while (cell(X, Y) != NULL) {
 `side = W + H + 1` 与工作数组下标 `Y*side + X` 见
 [stage-init.md](stage-init.md) §三之二。
 
-## 五、未确认
+## 五、这一切住在哪：`MapClass::Instance = 0x87F7E8`
 
-1. **格子指针数组 `MapClass +0x13C` 由谁分配、菱形外是否真是 `NULL`**——
-   `+0x13C` 与 `+0xF4` 全镜像都没有绝对寻址的访问（只经 `this`），没跟到写入点。
-   但集合等价性（§三）已经让这一条不影响复刻。
-2. `0x87F8D4` 那个矩形（`{x, y, W, H}`）**谁写的**：全镜像只有 `0x68554F` 一处
-   绝对写，而那是一次性清零；真正赋值应当经指针，未跟到。
-   数值等于 `MapSeedClass +0x180/+0x184` 由全部下游公式的自洽性佐证。
-3. `mov ecx, 0x87F978` 是迭代器最常见的 `this`（62 处），
-   但 `0x87F8DC` 这组又是绝对寻址访问的——**两个对象的关系未确认**，
-   不影响复刻（我们只需要 `W`/`H` 与走位规则）。
+> ⚠️ 本节曾写错过一次：早前记的迭代器 `this` 是 `0x87F978`（"62 处"），**是错的**。
+> 那次统计漏扫了 `E8 rel32` 形式的调用点（教训见
+> [toolchain-pitfalls.md](../../memory/notes/toolchain-pitfalls.md) 第 13 条）。
+> 下面是重扫后的结论，并附三条互相独立的佐证。
+
+把 `mov ecx, imm32`（`B9`）与随后的 `call` 配对统计：
+
+| 被调函数 | `this` 立即数 | 处数 |
+|---|---|---|
+| 迭代器 `Reset 0x578350` | `0x87F7E8` | **86**（全部） |
+| `GetCellAt 0x5657A0` | `0x87F7E8` | **1380**（全部） |
+| 任意 | `0x87F7E8` | **3693** |
+
+3693 处 `mov ecx, 0x87F7E8` 只可能是一个全局对象的 `this`。于是：
+
+```
+MapClass::Instance = 0x87F7E8
+  +0xEC  MapRect.X   (恒 0)      +0xF0  MapRect.Y (恒 0)
+  +0xF4  MapRect.W = [0x87F8DC]  +0xF8  MapRect.H = [0x87F8E0]
+  +0x10C 迭代器 X   +0x110 迭代器 Y   +0x114 本行剩余   +0x118 当前格指针
+  +0x138 Cells：内嵌的 VectorClass<CellClass*>
+```
+
+**这一条同时解释掉了以前两条未确认**——"谁写 `0x87F8DC`"、"谁分配 `+0x13C`"
+之所以搜不到绝对写入，是因为它们本来就是**经 `this` 访问的成员**。
+
+### 佐证一：`+0xEC` 那个矩形的赋值点 `0x5662B0`
+
+```asm
+005662b0  lea  eax, [ebx + 0xec]          ; ebx = this
+005662bc  mov edi,[edx] / mov [esi],edi   ; 从参数矩形拷 4 个 dword
+...       ; -> +0xEC=X  +0xF0=Y  +0xF4=W  +0xF8=H
+005662d8  mov  [eax], ebp                 ; ebp = 0 -> MapRect.X = 0
+005662e1  mov  [ebx + 0xf0], ebp          ;            MapRect.Y = 0
+005662d2  mov  edx, [ebx + 0xf4]          ; W
+005662e9  cmp  [ebx + 0xf8], eax          ; H : 任一 > 0x3F 就 [0x880C74] = 2
+005662fb  mov  eax, dword ptr [0x87f8dc]  ; ← 同一函数里换成绝对寻址读同一个字段
+00566300  mov  edx, dword ptr [0x87f8e0]
+```
+
+同一个函数里 `[ebx+0xF4]` 与 `[0x87F8DC]` 交替出现、指的是同一个字段——
+`ebx` 就是 `&Map`，这是 MSVC6 对 `MapClass* p = &Map;` 与 `Map.Field` 混用的
+常见产物。**矩形的 X/Y 被强制清零，只有 W/H 有效**，与 `stage-init.md`
+写进 INI 的 `Size={0,0,W+4,H+12}` 那个 `0,0` 前缀对上。
+
+### 佐证二：`+0x138` 是 Westwood 的 `VectorClass`
+
+构造函数 `0x5650F9` 一次把 6 个字段摆出来：
+
+```asm
+005650f9  mov dword ptr [edi], 0x7e3890       ; edi = this+0xD4，另一个 vector
+005650fd  ...
+0056511d  mov dword ptr [esi + 0x138], 0x7ed480   ; vptr
+00565105  mov dword ptr [esi + 0x13c], ebx        ; Vector      = NULL
+0056510b  mov dword ptr [esi + 0x140], ebx        ; VectorMax   = 0
+00565111  mov byte  ptr [esi + 0x144], dl         ; IsValid     = 1
+00565117  mov byte  ptr [esi + 0x145], bl         ; IsAllocated = 0
+```
+
+虚表 `0x7ED480` 的第 3 项 `0x589CE0` 反出来正是 `VectorClass<T>::Resize`：
+
+```c
+bool Resize(int newsize, T const* array) {
+    if (!newsize) { Clear(); return true; }          // 0x589D7E 走虚表 +0xC
+    IsValid = false;                                  // [esi+0xC] = 0
+    T* np = array ? array : (T*)operator new[](newsize * 4);
+    IsValid = true;
+    if (!np) return false;
+    if (Vector) {
+        int n = min(newsize, VectorMax);
+        for (i = 0; i < n; ++i) np[i] = Vector[i];    // 0x589D3B 逐项拷
+        if (IsAllocated) { free(Vector); Vector = NULL; }
+    }
+    Vector = np;  VectorMax = newsize;  IsAllocated = (array == NULL);
+    return true;
+}
+```
+
+释放路径 `0x5653AD`（`if (Vector && IsAllocated) free(Vector); Vector = 0; ...`）
+是同一套惯用法的另一半。RA1 的 `VECTOR.H` 里就是这个类，逐字段一致
+（RA1 那份见公开仓库 `SOURCECODE/REDALERT/VECTOR.H`，本仓库不收录其代码）。
+
+### 佐证三：数组恰好 `0x40000` 项，且**全部初始化为 `NULL`**
+
+`0x565B70` 处：
+
+```asm
+00565b73  cmp  eax, 0x40000
+00565b78  jge  0x565bb0                   ; 已经够大就不重分配
+00565b7a  mov  edx, [esi + 0x138]         ; vptr
+00565b80  lea  ecx, [esi + 0x138]
+00565b86  push ebx                        ; array = NULL -> 自己 new
+00565b87  push 0x40000                    ; newsize
+00565b8c  call dword ptr [edx + 8]        ; VectorClass::Resize
+00565b9b  mov  ecx, [esi + 0x13c]         ; 随后整表清 NULL
+00565ba2  mov  dword ptr [ecx + eax*4 - 4], ebx
+```
+
+`0x40000 = 512 × 512`，与 `GetCellAt` 的越界门槛、以及 `shl eax, 9` 的行跨度
+三处互相印证。**菱形外的槽位就是 `NULL`**——这条正是 §三停机条件的依据，
+现在有了直接证据，不必再靠集合等价性间接论证。
+
+> 顺带纠正一个容易踩的坑：`GetCellAt 0x5657A0` **永远不返回 `NULL`**。
+> 下标越界或槽位为空时它走 `0x5657C8`，把请求的 X 记到 `[0xABDC74]` 并返回
+> 共享的哑元格子 `0xABDC50`。**迭代器不走这条路**——它直接对指针数组做算术
+> 并拿 `NULL` 当停机信号，所以两者不冲突。复刻时若要模拟 `GetCellAt`，
+> 必须照抄这个哑元返回，否则越界访问的行为完全不同。
+
+## 六、未确认
+
+1. `MapClass +0x144`（`IsValid`）与 `+0x145`（`IsAllocated`）的命名取自 RA1
+   `VectorClass` 的字段顺序，**语义已由 `Resize`/释放路径的用法实锤**，
+   但 YR 里是否改过名字未确认——不影响复刻。
+2. `MapClass::Set_Dimensions`（含 `0x5662B0` 那段）的**调用者**只跟到
+   `0x685198` 那条地图重建路径，`MapSeedClass +0x180/+0x184` 到参数矩形之间
+   还差一跳没跟完。数值相等由全部下游公式的自洽性佐证。
+3. `[0x880C74] = 2`（`W > 63 || H > 63` 时置位）是什么开关，未确认——
+   随机地图恒为 `70..120`，这条**永远成立**，故不影响复刻。
