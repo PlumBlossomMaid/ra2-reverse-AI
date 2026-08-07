@@ -1620,7 +1620,13 @@ snow 两个气候下这几组都有定义，所以现网跑不出来。照原样
     `0x66666667` 配 `sar edx,4`），于是 `shape ∈ [0,7]` 正好与小浪花的 `[8,13]`
     拼满 WaterSet 的 `TilesInSet = 0x0E`；新记 `0x5A6C10` 会写 `CellClass +0x11C`
     （坡度）而 `0x57B440` 不写，且它的层高公式多一个 `-4`
-21. `MapType ∈ {3,4}` 那条支路：`0x59C580`（`WaterAmount != 0` 才走）
+21. ~~`MapType ∈ {3,4}` 那条支路：`0x59C580`~~ ✅ **算法已全还原**，
+    独立成篇 → [stage-water-maptype34.md](stage-water-maptype34.md)。
+    门槛纠正：是 `WaterAmount > 20` 而不是「非零」。含湖 `0x59C920`、
+    河 `0x59D510`、三个区域算子 `0x5A0700`/`0x5A0410`/`0x5A0160`，
+    以及新查实的查表 sin/cos `0x4CACB0`/`0x4CAD00`（**已落 C++ 并对拍**）。
+    顺手关掉 `MapSeedClass +0x310` 的用途：它决定这张图的河上有没有桥。
+    仍欠：桥 `0x59E740` 与角度扩张 `0x5A08D0` 的细节，以及整支路的 C++ 落地
 22. 阶段 4「Making regions」（45 次取数，只在
     `MapType ∈ {3,4}` 下走），含 `0x5A1350` 的 21 路 switch
 23. **死代码 TODO**：`0x57B0E8` 的 `cmp eax,-1`（§七「四个坑」第 3 条）、

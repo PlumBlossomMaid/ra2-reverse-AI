@@ -24,6 +24,7 @@
 | [stage-lats.md](stage-lats.md) | 阶段：Creating LATs, rocks etc（地表装饰，取数点最密） | ✅ 18 个取数点全部实锤 |
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法全还原；**`MapType 0/1/2` 主路径 + 水面细化整条落成 C++ 并对拍** |
+| [stage-water-maptype34.md](stage-water-maptype34.md) | 阶段 2 支路：`MapType ∈ {3,4}` 的**河流与湖泊**（含查表 sin/cos） | ✅ 河/湖/三个区域算子已实锤；sin/cos 已落 C++ 并对拍；桥与角度扩张仅提纲 |
 
 ## 进度
 
@@ -173,6 +174,23 @@
 - [x] **`TheaterData` 接进涂块/岸线两侧**——删掉 `WaterTile()` /
       `ShorePiecesBase()` 两个虚函数，去掉重复真值来源；
       顺带把格指针/哑元辅助抽成 `cell_ref.{h,cpp}` 供阶段调度器复用
+- [x] **`MapType ∈ {3,4}` 支路（河流与湖泊）算法全还原** → [stage-water-maptype34.md](stage-water-maptype34.md)：
+      调度 `0x59C580`（`WaterAmount > 20` 才挖河，河/湖各最多重试 10 次）、
+      湖 `0x59C920`（陆地里涂水，优先级 `10*u + 0.5*dist − 0.02*ring`，
+      靠 `Erode(0,2,−2)` 在每块已归属区域外围留出 2 格禁涂带）、
+      河 `0x59D510`（递归生支流、逐步 `x+=cos / y−=sin` 画横截面、
+      期望 200 步、河口再挖一个湖、没架桥的河 70% 概率被下切成峡谷）、
+      以及三个公共区域算子 `CollectBorderCells 0x5A0700` / `Erode 0x5A0410` /
+      `Dilate 0x5A0160`（后者兼作「有没有和第三方区域贴上」的隔离检测）。
+      **顺手关掉一条老未确认**：`MapSeedClass +0x310`（Init random map 那个 25%
+      抛硬币）唯一的用途是**决定这张图的河上有没有桥**
+- [x] **查表 sin/cos `0x4CACB0` / `0x4CAD00` 落成 C++ 并对拍**（`fast_math` + `sin_table.h`）——
+      原版不调 `sin`/`cos`，查 `float[0x2800] @ 0x84F084`，角度量化到 1/8192 圈；
+      表的来历已考证：`table[i] = chop_to_float(sin(i·2π/8192))`，10240 项里 **10238 项逐位相符**，
+      唯二例外 `i=4096`/`i=8192` 存的是 ~1e-16 的 x87 `fsin` π 归约残渣——
+      **这张表当年是用 x87 `fsin` 离线生成的**，指纹留在里面。
+      `_ftol` 与折半都向零截断，于是 `f(−x) ≠ −f(x)`（专门写了用例钉死），
+      河流每步都吃这份不对称
 - [x] `.sed` 参数读取复刻（含西木 `Get_Int` 的 `$hex` / `Xh` 三条路径）
 - [ ] `.map` 输出（IsoMapPack5 编码）
 - [ ] 端到端验证：同种子生成结果与原版逐字节比对
@@ -239,6 +257,8 @@ long double。同类的 `fsin` / `fpatan` / `f2xm1` 是否也如此，**未确�
 | `code/randmap/emu_oracle.py` | Unicorn 模拟执行取基准（整函数 / 任意片段）**——x87 超越指令不可信** |
 | `code/randmap/dump_scaled_golden.py` | 导出浮点取数惯用法的对拍基准 |
 | `code/randmap/dump_fastmath_golden.py` | 导出查表 sqrt / 均匀源 / 正态分布的对拍基准 |
+| `code/randmap/dump_sincos_golden.py` | 导出查表 sin/cos 的对拍基准（纯 fmul+整数，Unicorn 在此可信） |
+| `code/randmap/gen_sin_table.py` | 把 `0x84F084` 的 10240 项正弦表导出成 `sin_table.h`，并当场与 `sin(i·2π/8192)` 自检 |
 | `code/randmap/dump_tile_geometry.py` | 从 theater 的 `.tmp` 取砖的**几何元数据**（宽高/空洞/高度/坡度）当对拍夹具 |
 | `code/ghidra_scripts/find_writers.py` | 定位 .bss 全局的运行期初始化点（表内容不在文件里） |
 | `code/randmap/scan_rmg_rng.py` | 只列**生成器自己那个** Randomizer(0xABE890) 的取数点（按 this 判定） |
@@ -258,8 +278,10 @@ CI 跑在哪种机器上都得给出同一张地图。为此定了三条规矩�
    等于把输出绑死在具体 CPU 实现上。改为定义唯一确定的数学语义
    （「精确 ln 向零截断」，双双精度实现），再**证明**残余差异被下游吸收。
    全过程见 [fast-math.md](fast-math.md) §四。
-2. **常量表写死。** 16384 项 sqrt 表硬编码，让"结果与架构无关"在编译期就成立；
-   同时用纯整数运算重算全表自检，证明它是数学常量而非搬运的二进制资产。
+2. **常量表写死。** 16384 项 sqrt 表与 10240 项 sin 表硬编码，让"结果与架构无关"
+   在编译期就成立；同时各配一条自检证明它是数学常量而非搬运的二进制资产——
+   sqrt 表用纯整数运算重算全表；sin 表因为绕不开 `std::sin`（它的最后 1 bit 逐平台不同），
+   改成「数值层 1 float ulp + 结构层反对称/对称/周期性逐位精确」两层校验。
 3. **浮点语义显式加固。** `fp_guard.h` 用 `static_assert` 挡住 x87 超精度、
    有符号右移歧义，用编译选项挡住 FMA 收缩与 `-ffast-math`，
    再用一条运行期自检确认 `fesetround` 真的生效。

@@ -46,6 +46,8 @@ if(RA2_BUILD_TESTS)
 
   add_executable(test_fast_math test/test_fast_math.cpp)
   target_link_libraries(test_fast_math PRIVATE ra2_rmg gtest_main)
+  # sincos_golden.inc 是生成的对拍数据，直接 #include，不进版本库以外的构建目录
+  target_include_directories(test_fast_math PRIVATE "${CMAKE_SOURCE_DIR}/memory/data/rmg")
   add_test(NAME fast_math COMMAND test_fast_math)
 
   add_executable(test_map_size test/test_map_size.cpp)

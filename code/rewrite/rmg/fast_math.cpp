@@ -4,12 +4,52 @@
 #include <cstring>
 
 #include "dd_log.h"
+#include "sin_table.h"
 #include "sqrt_table.h"
 
 namespace ra2::rmg {
 namespace {
 
 constexpr double kInvUint32Max = 1.0 / 4294967295.0;  // exe 0x7ED898，位形 3DF0000000100000
+
+// exe 0x8223B0（正弦用）与 0x8223B4（余弦用）——两个槽位，同一个 float 值。
+// 它是 8192/π 截断到 float 的结果：真值 2607.5945876176133，存的是 2607.594482421875。
+constexpr float kTrigScale = 2607.594482421875f;
+
+float TableAt(int index) {
+  float v;
+  const std::uint32_t bits = kSinTableBits[index];
+  std::memcpy(&v, &bits, sizeof v);
+  return v;
+}
+
+// 0x4CACBA / 0x4CAD0A 的 `call _ftol` 之后，代码只用 eax——所以取低 32 位。
+std::int32_t TrigIndex(double x) {
+  const double scaled = x * static_cast<double>(kTrigScale);
+  const std::int64_t t = static_cast<std::int64_t>(scaled);   // _ftol 向零截断
+  return static_cast<std::int32_t>(static_cast<std::uint32_t>(
+      static_cast<std::uint64_t>(t) & 0xFFFFFFFFull));
+}
+
+// 0x4CACC1-0x4CACC7：`cdq / sub eax,edx / sar eax,1`
+// = 先给负数补 1 再算术右移 = **向零截断**的除以 2（直接 >>1 会向下取整，差一格）。
+std::int32_t HalfTowardZero(std::int32_t v) {
+  const std::int64_t w = static_cast<std::int64_t>(v) + (v < 0 ? 1 : 0);
+  return static_cast<std::int32_t>(w >> 1);
+}
+
+// 0x4CACC9-0x4CACDD / 0x4CAD19-0x4CAD2D：`and 0x80001FFF` 之后那段
+// `dec / or 0xFFFFE000 / inc` + 两次 `jns` 的 13 位符号扩展再折回。
+// 逐条走一遍会发现它**恒等于 v & 0x1FFF**（m==0 走 0 分支，m>0 先减 0x2000 再加回
+// 0x2000），也就是说这十几字节是白写的。照抄是为了让"等价"这件事有代码为证，
+// 而不是靠一句注释——把它删掉才需要举证。
+std::uint32_t FoldIndex(std::int32_t half) {
+  std::uint32_t a = static_cast<std::uint32_t>(half) & 0x80001FFFu;
+  if (a & 0x80000000u) {              // jns 不跳
+    a = ((a - 1u) | 0xFFFFE000u) + 1u;
+  }
+  return a;
+}
 
 }  // namespace
 
@@ -36,6 +76,26 @@ double FastSqrt(double x) {
   float result;
   std::memcpy(&result, &out, sizeof result);
   return result;
+}
+
+double Sin(double x) {
+  const std::int32_t idx = TrigIndex(x);
+  const bool odd = (idx & 1) != 0;            // 0x4CACBF/0x4CACC4：先存 al 再 and 1
+  std::uint32_t a = FoldIndex(HalfTowardZero(idx));
+  if (a & 0x80000000u) a += 0x2000u;          // 0x4CACD7 jns / 0x4CACD9
+  std::int32_t k = static_cast<std::int32_t>(a);
+  if (odd && k < 0x1FFF) ++k;                 // 0x4CACE2：到顶就不再补半步
+  return TableAt(k);                          // fld dword → 加宽成 double，精确
+}
+
+double Cos(double x) {
+  const std::int32_t idx = TrigIndex(x);
+  const bool odd = (idx & 1) != 0;
+  std::uint32_t a = FoldIndex(HalfTowardZero(idx));
+  a += (a & 0x80000000u) ? 0x2800u : 0x800u;  // 0x4CAD27 jns / 0x4CAD29 / 0x4CAD30
+  std::int32_t k = static_cast<std::int32_t>(a);
+  if (odd && k < 0x27FF) ++k;                 // 0x4CAD39
+  return TableAt(k);
 }
 
 // 所有架构统一走双双精度实现——它给出的是「精确 ln 向零截断」这个唯一确定的数学值。

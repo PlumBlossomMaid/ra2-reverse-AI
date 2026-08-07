@@ -6,12 +6,14 @@
 #include <gtest/gtest.h>
 
 #include <cfenv>
+#include <cmath>
 #include <cstring>
 #include <vector>
 
 #include "dd_log.h"
 #include "fp_guard.h"
 #include "fast_math.h"
+#include "sin_table.h"
 #include "sqrt_table.h"
 #include "scaled_random.h"
 
@@ -147,6 +149,85 @@ TEST(FastSqrt, TableIsPureMath) {
     const std::uint64_t n = (m >= (std::uint64_t(1) << 23)) ? ((2 * m) << 23)
                                                             : (((std::uint64_t(1) << 23) + m) << 23);
     ASSERT_EQ(ra2::rmg::kSqrtTable[i], isqrt(n) - (std::uint64_t(1) << 23)) << "i=" << i;
+  }
+}
+
+// ── 查表正弦/余弦 0x4CACB0 / 0x4CAD00 ──────────────────────────────────
+//
+// 期望值由 code/randmap/dump_sincos_golden.py 用 Unicorn 跑原版机器码取得
+//（这两个函数只有一次 fmul 加整数运算，不碰 fyl2x/fsin，Unicorn 在此可信）。
+#include "sincos_golden.inc"
+
+TEST(Trig, MatchesOriginalLookupTable) {
+  FpuChopScope fpu;
+  for (const auto& c : kTrigGolden) {
+    double x, s, co;
+    std::memcpy(&x, &c[0], 8);
+    std::memcpy(&s, &c[1], 8);
+    std::memcpy(&co, &c[2], 8);
+    EXPECT_TRUE(BitEq(ra2::rmg::Sin(x), s)) << "sin x=" << x;
+    EXPECT_TRUE(BitEq(ra2::rmg::Cos(x), co)) << "cos x=" << x;
+  }
+}
+
+// 原版的 _ftol 与折半都是**向零截断**，于是 f(-x) 与 -f(x) 系统性地不等。
+// 这不是精度噪声而是结构性的：正负两侧落到相邻的两个表项上。
+// 河流生成器每步 x += Cos(θ) / y -= Sin(θ)，这份不对称会实打实改变河道。
+TEST(Trig, NegativeArgumentIsNotMirrored) {
+  FpuChopScope fpu;
+  const double x = 0.39269908169872414;   // π/8
+  EXPECT_NE(ra2::rmg::Sin(-x), -ra2::rmg::Sin(x));
+  EXPECT_NE(ra2::rmg::Cos(-x), ra2::rmg::Cos(x));
+}
+
+// 写死的 10240 项表必须能被"它就是 sin(i·2π/8192)"这一条数学定义解释——
+// 证明它是数学常量表而非搬运的游戏数据。
+//
+// 与 sqrt 表不同，这里没法用纯整数重算，只能靠 std::sin；而 std::sin 的
+// 最后 1 bit 是**逐平台**的（x86 / ARM / 龙芯的 libm 各有实现）。所以分两层：
+//   · 数值层：允许 1 个 float ulp 的相对误差（std::sin 的 double 误差 < 2^-52，
+//     远小于 float 的 2^-23，任何合规 libm 都过得去）；
+//   · 结构层：反对称 / 四分之一周期对称 / 周期性 —— 这些是**逐位精确**的，
+//     因为向零截断对取负是对称的。
+// 两处例外单独钉死：i=4096 与 i=8192（sinπ / sin2π）存的不是 0 而是 x87 `fsin`
+// π 归约不足留下的 ~1e-16 噪声，原版怎样就怎样。
+TEST(Trig, TableIsPureMath) {
+  using ra2::rmg::kSinTableBits;
+  using ra2::rmg::kSinTableSize;
+  auto at = [](int i) {
+    float v;
+    std::memcpy(&v, &kSinTableBits[i], 4);
+    return static_cast<double>(v);
+  };
+  const double kTwoPi = 6.283185307179586476925286766559;
+
+  // 两处 x87 fsin 残渣：数学上应为 0，表里不是
+  EXPECT_EQ(kSinTableBits[4096], 0x250D3000u);   //  1.2246063538223773e-16
+  EXPECT_EQ(kSinTableBits[8192], 0xA58D3000u);   // -2.4492127076447545e-16
+  EXPECT_LT(std::abs(at(4096)), 1e-15);
+  EXPECT_LT(std::abs(at(8192)), 1e-15);
+
+  for (int i = 0; i < kSinTableSize; ++i) {
+    if (i == 4096 || i == 8192) continue;
+    const double want = std::sin(i * kTwoPi / 8192.0);
+    const double got = at(i);
+    // 1 个 float ulp；表项为 0 时要求逐位为 0
+    if (want == 0.0) {
+      ASSERT_EQ(got, 0.0) << "i=" << i;
+    } else {
+      ASSERT_LE(std::abs(got - want), std::abs(want) * 1.2e-7) << "i=" << i;
+    }
+  }
+
+  // 结构层：以下三条逐位成立
+  for (int i = 1; i < 4096; ++i) {         // sin(θ+π) = -sin(θ)
+    ASSERT_EQ(kSinTableBits[i + 4096], kSinTableBits[i] ^ 0x80000000u) << "i=" << i;
+  }
+  for (int i = 0; i < 2048; ++i) {        // 关于 π/2 对称（i=2048 落在 4096 那个例外上）
+    ASSERT_EQ(kSinTableBits[2048 + i], kSinTableBits[2048 - i]) << "i=" << i;
+  }
+  for (int i = 1; i < kSinTableSize - 8192; ++i) {   // 周期 8192
+    ASSERT_EQ(kSinTableBits[i + 8192], kSinTableBits[i]) << "i=" << i;
   }
 }
 

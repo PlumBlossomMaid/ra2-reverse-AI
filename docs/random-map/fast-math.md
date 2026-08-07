@@ -1,8 +1,9 @@
-# 原版数学基元：查表 sqrt 与正态分布
+# 原版数学基元：查表 sqrt、查表 sin/cos 与正态分布
 
 > 状态：**已实锤并逐位对拍**。C++ 复刻在 `code/rewrite/rmg/fast_math.{h,cpp}`，
 > 回归 `code/rewrite/rmg/test/test_fast_math.cpp`
->（74 组 sqrt + 16384 项表自检 + 101 组 ChopLog 黄金值 + 5 种子 × 16 正态）。
+>（74 组 sqrt + 16384 项表自检 + 82 组 sin/cos + 10240 项表自检
+> + 101 组 ChopLog 黄金值 + 5 种子 × 16 正态）。
 >
 > §四记录了本模块唯一一次**结论被推翻**的经历：`fyl2x` 的语义先在 80 个样本上
 > 得出错误结论，后被 20000 样本 + 真 CPU 探针纠正。方法论教训见 §4.6。
@@ -192,6 +193,73 @@ double Normal() {
    "复刻它"是个伪目标；正确的做法是定义一个确定的数学语义，
    再**证明**残余差异在下游被吸收。
 
+## 四之二、`Sin` @ `0x4CACB0` / `Cos` @ `0x4CAD00`——10240 项查表
+
+原版全程没调过 `sin`/`cos`。这两个函数各只有二十来条指令，主体是查
+`float[0x2800] @ 0x84F084`：
+
+```c
+double Sin(double x) {
+    int32 idx  = (int32)_ftol(x * 2607.594482421875f);   // 常数 = chop_f(8192/π)
+    bool  odd  = idx & 1;
+    int32 half = trunc(idx / 2) & 0x1FFF;                // cdq/sub/sar：向零截断的 /2
+    if (odd && half < 0x1FFF) ++half;                    // 奇数位补半步 ≈ 四舍五入
+    return (float)table[half];
+}
+// Cos 完全一样，只是下标再 +0x800（四分之一周期），上限改成 0x27FF
+```
+
+`and eax, 0x80001FFF` 之后那段 `dec / or 0xFFFFE000 / inc` 加两次 `jns` 的
+13 位符号扩展，逐条走一遍会发现**恒等于 `& 0x1FFF`**（`m == 0` 走 0 分支，
+`m > 0` 先减 `0x2000` 再加回 `0x2000`）。复刻里照抄了这十几条——
+删掉它才需要举证，留着不需要。
+
+### 表的来历
+
+逐项比对：**`table[i] == chop_to_float(sin(i · 2π / 8192))`，10240 项里 10238 项
+逐位相符**。唯二例外是 `i = 4096`（`1.2246063538223773e-16`）与
+`i = 8192`（`−2.4492127076447545e-16`），数学上都该是 0。
+
+这两个数是 x87 `fsin` 的**指纹**：`fsin` 内部只用 66 位的 π 做参数归约，
+`fsin(M_PI)` 返回 `1.2246063538223773e-16`，而正确舍入的
+`sin(nearest_double(π))` 是 `1.2246467991473532e-16`。
+所以这张表当年是**用 x87 `fsin` 离线生成的**，两处 ~1e-16 的噪声原样留在了里面。
+
+排除过的其他参数构造式（`i*(2π/8192)`、`(i*2π)/8192`、`2π*(i/8192)`、
+`(i/8192)*2π`、15 位 π 字面量）都给出同样这 2 项偏差，
+说明差异出在**正弦求值**而不是参数构造——这是把锅扣到 `fsin` 头上的直接证据。
+
+表有 `0x2800 = 10240` 项而一个周期只需 8192 项：余弦靠 `+0x800` 的相位偏移
+查同一张表，把下标顶到 `0x27FF`，多出来的 2048 项就是给它留的。
+
+### 三条必须照搬的性质
+
+1. **角度被量化到 1/8192 圈**（≈ 0.0439°），返回值只有 float 精度；
+2. **`f(−x) ≠ −f(x)`**：`_ftol` 与折半都是向零截断，正负两侧落在**相邻的两个表项**上。
+   这不是精度噪声而是结构性的——河流生成器每步 `x += Cos(θ)`、`y −= Sin(θ)`，
+   这份不对称会实打实改变河道走向。专门写了 `Trig.NegativeArgumentIsNotMirrored` 钉住它；
+3. `sin π` / `sin 2π` 那两项不是 0。
+
+### 表的自检为什么不能像 sqrt 那样做到逐位
+
+sqrt 表能用纯整数 `isqrt` 重算，所以自检是**精确等于**。
+sin 表绕不开 `std::sin`，而 `std::sin` 的最后 1 bit 是**逐平台**的
+（x86 / ARM / 龙芯的 libm 各有实现），拿它做逐位比对反而会让测试在某些平台上假失败。
+于是 `Trig.TableIsPureMath` 分成两层：
+
+* **数值层**：允许 1 个 float ulp 的相对误差（`std::sin` 的 double 误差 < 2⁻⁵²，
+  远小于 float 的 2⁻²³，任何合规 libm 都过得去）；
+* **结构层**：`table[i+4096] == table[i] ^ 0x80000000`（反对称）、
+  `table[2048+i] == table[2048−i]`（关于 π/2 对称）、
+  `table[i+8192] == table[i]`（周期 8192）——这三条**逐位精确**，
+  因为向零截断对取负是对称的。两处 `fsin` 残渣单独钉死位形。
+
+这一层结构校验的说服力其实不比 sqrt 那条弱：它把 10240 个数压成了
+"一个四分之一周期 + 三条对称性"，能通过的表只可能是正弦表。
+
+> 顺带：`0x4CAD50` 起还有一个用 `[0x7E8970] = 651.8986469044033`（≈ 2048/π）的
+> 同族函数，查同一张表但步长是 1/2048 圈。RMG 不走它。
+
 ## 五、其余算术为什么可以用 C++ 原生 double
 
 原版控制字 `0x0E7F` = `PC=53`（x87 中间结果就按双精度舍入）+ `RC=chop`。
@@ -219,6 +287,8 @@ x64 的 SSE2 与 x86 的 x87-PC53 在 `+ - × ÷` 和 double→float 转换上�
 | 脚本 | 作用 |
 |------|------|
 | `code/randmap/dump_fastmath_golden.py` | Unicorn 执行原版 `0x4CAC40 / 0x598000 / 0x5980C0` 取基准（**注意：该模拟器的 `fyl2x` 不可信，见 §4.1**） |
+| `code/randmap/dump_sincos_golden.py` | Unicorn 执行原版 `0x4CACB0 / 0x4CAD00` 取基准（只有 `fmul` + 整数运算，此处模拟器可信） |
+| `code/randmap/gen_sin_table.py` | 从 exe 导出 `0x84F084` 的 10240 项正弦表成 `sin_table.h`，导出时当场与 `sin(i·2π/8192)` 比对 |
 | `build/scratch/fyl2x_probe.cpp` | 真 CPU 只读探针：FPCW=0x0E7F 下取 20000 组 `fyl2x` 真值 |
 | `build/scratch/dd_probe.cpp` | 把 `dd::ChopLogPortable` 的输出导出，交给任意精度判定 |
 | `code/ghidra_scripts/decompile_blob_growth.py` | 反编译涂块核心的全部下挂零件 |
@@ -230,3 +300,4 @@ x64 的 SSE2 与 x86 的 x87-PC53 在 `+ - × ÷` 和 double→float 转换上�
 | `memory/data/rmg/fyl2x_native.txt` | 真 CPU `fyl2x` 20000 组 |
 | `memory/data/rmg/fyl2x_mismatch.txt` | `fyl2x` 与精确截断分歧的全部 7 例 |
 | `memory/data/rmg/choplog_golden.txt` | `ChopLog` 架构无关黄金值 101 组（纯任意精度算出） |
+| `memory/data/rmg/sincos_golden.inc` | 查表 sin/cos 82 组（直接 `#include` 进测试） |

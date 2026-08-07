@@ -50,8 +50,12 @@ bool flag310 = UniformUnit() < 0.25;      // UniformUnit 见 fast-math.md
 （见 [fpu-and-random-idioms.md](fpu-and-random-idioms.md)）。
 
 `MapSeedClass +0x310` 由构造函数 `0x5958C8` 置 0，全 exe 只有 `0x59DCFC`
-一处读它——落在"山丘/地形装饰"那一段（`0x59D51D`–`0x59E740` 区间内），
-**这个 25% 开关到底开的是什么，未确认**。
+一处读它。**它开的是桥**：`0x59DCFC` 在河流生成器 `0x59D510` 内部，
+是架桥那道复合条件里的一项——`+0x310 == 0` 的图，河上一座桥也不会有
+（详见 [stage-water-maptype34.md](stage-water-maptype34.md) §四「架桥」）。
+于是这个 25% 抛硬币的含义就清楚了：**四张随机图里只有一张的河带桥**；
+而且它还有个连带后果——没架桥的河有 70% 的概率被下切成峡谷，
+所以这一个随机位同时决定了「桥」与「峡谷」两种地貌的有无。
 
 > 记账要点：**阶段 1 恰好消耗 1 个 `Random()`**，而且是在阶段的**最后**才抽
 > （紧接着就是雷达图刷新与灯光参数写入）。复刻时必须在同一位置抽，
@@ -322,7 +326,7 @@ int UsableCellCount() { return (H + 4) * W * 2; }   // W=[0x87F8DC], H=[0x87F8E0
 
 ## 七、未确认
 
-1. `MapSeedClass +0x310`（那个 25% 开关）具体开的是什么
+1. ~~`MapSeedClass +0x310`（那个 25% 开关）具体开的是什么~~ ✅ 已实锤：它决定河上有没有桥，见上文
 2. 谁把 `MapSeedClass +0x180/+0x184` 装进传给 `0x5662B0` 的那个参数矩形——
    尺寸的**算法**已实锤（§三之二），落点 `MapClass+0xEC` 也已查实
    （[map-geometry.md](map-geometry.md) §五），只剩中间这一跳没跟到

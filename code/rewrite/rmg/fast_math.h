@@ -1,8 +1,9 @@
 // RA2/YR 随机地图生成器 —— 原版数学基元
 //
-// 这三个基元是地图"形状"的直接来源，且都不能用标准库替代：
+// 这几个基元是地图"形状"的直接来源，且都不能用标准库替代：
 //
 //   FastSqrt      @ 0x4CAC40  16384 项查表近似开方，只有约 14 位精度
+//   Sin / Cos     @ 0x4CACB0 / 0x4CAD00  10240 项查表，1/8192 圈的量化角
 //   UniformUnit   @ 0x598000  (double)(uint32)Random() * (1/4294967295.0)
 //   NormalDeviate @ 0x5980C0  Marsaglia 极坐标法正态分布，内部用 x87 fyl2x 求 ln
 //
@@ -26,6 +27,26 @@ namespace ra2::rmg {
 // 回归测试用纯整数运算重算全表自检，保证"结果与架构无关"在编译期即成立。
 // 原版返回 float（再由调用方加宽成 double），这里保持同一语义。
 double FastSqrt(double x);
+
+// 0x4CACB0 / 0x4CAD00：查表正弦、余弦。**不是** std::sin/std::cos。
+//
+// 两者共用 sin_table.h 那张 10240 项 float 表（原版 0x84F084），走法完全一样：
+//   idx  = _ftol(x * 2607.594482421875f)        // 常数 = chop_f(8192/π)，向零截断
+//   half = trunc(idx / 2) & 0x1FFF              // 折半 → 以 2π/8192 为步长的角
+//   if (idx 是奇数 && half < 上限) ++half       // 奇数位再补半步（等价于四舍五入）
+//   return table[half + (余弦再 +0x800)]
+// 上限：正弦 0x1FFF，余弦 0x27FF——余弦的相位偏移把下标顶到 0x27FF，这正是表
+// 要留 0x2800 项而不是一个周期 0x2000... 的原因（见 sin_table.h）。
+//
+// 三个必须照搬的"毛刺"：
+//   1. 角度被量化到 1/8192 圈（≈0.0439°），返回值只有 float 精度；
+//   2. `_ftol` 向零截断 + 折半也向零截断，使 f(-x) 与 -f(x) **不相等**
+//      （河流生成器 0x59D510 每步都做 x += Cos(θ) / y -= Sin(θ)，
+//       这份不对称会真真切切改变河道走向）；
+//   3. sin(π)/sin(2π) 那两项存的是 ~1e-16 的 x87 `fsin` 归约残渣而非 0。
+// 消费者：河流生成器 0x59D510（MapType 3/4 支路）。
+double Sin(double x);
+double Cos(double x);
 
 // 原版用 x87 `fyl2x` 求自然对数（`fldln2; fld s; fyl2x`），全局 FPU 为 PC=53/RC=chop。
 //
