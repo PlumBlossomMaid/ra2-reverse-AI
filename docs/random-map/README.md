@@ -25,7 +25,7 @@
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法全还原；**`MapType 0/1/2` 主路径 + 水面细化整条落成 C++ 并对拍** |
 | [stage-water-maptype34.md](stage-water-maptype34.md) | 阶段 2 支路：`MapType ∈ {3,4}` 的**河流、湖泊与瀑布**（含查表 sin/cos） | ✅ 八个函数全部实锤；sin/cos 已落 C++ 并对拍；整支路待落 C++ |
-| [stage-making-regions.md](stage-making-regions.md) | 阶段 4：Making regions（区域重建 + **区域之间开坡道/架桥**，`MapType ∈ {3,4}` 专属，45 个取数点） | ✅ **45 个取数点全部关闭**（区域切分 + 架桥 + 四个直坡均已实锤）；余三个转角建造函数的砖号几何（不取随机数） |
+| [stage-making-regions.md](stage-making-regions.md) | 阶段 4：Making regions（区域重建 + **区域之间开坡道/架桥**，`MapType ∈ {3,4}` 专属，45 个取数点） | ✅ **45 个取数点全部关闭**；区域切分 / 架桥 / 四个直坡 / 三个转角全部实锤，余 `0x579010`+`0x579620` 两遍重刷砖 |
 
 ## 进度
 
@@ -270,6 +270,15 @@
       层高只有 0/4/8 三档，`< 101` 格的碎块直接并进最大的邻区。
       顺带定死 `0x58BF70 = RegionClass::RegionClass(seed)`、`0x58D0A0 = GetWorkOwner`、
       `0x58E5D0 = GetBorderCells`（切分专用的那个副本）
+- [x] **三个转角坡道建造函数实锤**（`0x593AF0` N+E / `0x593550` E+S / `0x593030` S+W）：
+      转角坡道 = 一个转角格 + 两条腿，全部 4 层，`Level = level − j − 1`；
+      转角砖 `SlopeIndex 8/5/6` ⇒ `RampBase+7/+4/+5`，两条腿复用直坡的
+      `SlopeIndex 1..4` ⇒ `RampBase+0..3`；腿的内层边界 `i < 腿长 − 3 + j`
+      造出"越往下越宽"的台阶。
+      **顺带查出一条死分支**：四个转角朝向只写了三个建造函数，
+      `0x590970` 的第 4 条分支（W+N）拿 S+W 的 `0x593030` 顶数，
+      喂进去的 `a.X − b.X = −6` 一定过不了 `> 2` 的跨度门——
+      **这条分支永远建不成坡道**，转角砖 `SlopeIndex 7`(`RampBase+6`) 也因此永不出现
 - [x] 🏁 **里程碑：104 个活取数点的语义全部落地。** 12 个阶段 + `MapType ∈ {3,4}` 支线，
       再没有"知道这里取了个随机数、但不知道它拿去干什么"的位置。
       余下的欠账都是**不取随机数**的部分（三个转角坡道的砖号几何、`0x579010`/`0x579620`
