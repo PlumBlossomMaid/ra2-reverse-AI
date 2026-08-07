@@ -25,7 +25,7 @@
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法全还原；**`MapType 0/1/2` 主路径 + 水面细化整条落成 C++ 并对拍** |
 | [stage-water-maptype34.md](stage-water-maptype34.md) | 阶段 2 支路：`MapType ∈ {3,4}` 的**河流、湖泊与瀑布**（含查表 sin/cos） | ✅ 八个函数全部实锤；sin/cos 已落 C++ 并对拍；整支路待落 C++ |
-| [stage-making-regions.md](stage-making-regions.md) | 阶段 4：Making regions（区域重建 + **区域之间开坡道/架桥**，`MapType ∈ {3,4}` 专属，45 个取数点） | ⚠️ 45 个取数点关掉 37（架桥 `0x58F2C0` 已实锤）；余 `0x58D620` 与七个坡道建造函数的几何 |
+| [stage-making-regions.md](stage-making-regions.md) | 阶段 4：Making regions（区域重建 + **区域之间开坡道/架桥**，`MapType ∈ {3,4}` 专属，45 个取数点） | ⚠️ 45 个取数点关掉 41（架桥 + 四个直坡已实锤）；余 `0x58D620` 后半段与三个转角建造函数的几何 |
 
 ## 进度
 
@@ -242,6 +242,13 @@
       掩码到手后八条分支顺序尝试（四个转角函数一个随机数都不取，
       四个直坡函数各带两次 `PickBelow(2)` 端点抖动），
       **分支不互斥**，一次调用消耗 0~10 个随机数，不是常数
+- [x] **四个直坡建造函数实锤，最后 4 个坡道取数点落地**（`0x5910F0`/`0x591740`/
+      `0x591D80`/`0x592440`）：坡道由"斜台阶段 + 笔直坡段"两截拼成，
+      那 1 个 `PickBelow(2)` 决定**斜段贴在跑道的哪一头**，走向完全水平时根本不取。
+      台阶表的选行下标是走向符号（不是随机数，上一版猜错过）；层高序列
+      `{3,2,1,0,0}` ⇒ 一级台阶恰好 4 个层高单位；肩膀砖 `SlopeSetPieces`
+      的 10 块砖按 `+0/+1`、`+2/+3`、`+4..+6`、`+7..+9` 被四个方向铺满、不重不漏。
+      顺带看清 `0x5A6C10` 的完整签名：`StampTile(tileIdx, &coord, regionId, level)`
 - [x] **架桥 `0x58F2C0` = BuildBridge 实锤，5 个取数点全部落地**：
       "跨水连接"从假说升级成结论，三条独立证据——桥面 overlay 号翻出来是
       `LOBRDG01..25`（低桥）、桥头四端正好用掉 `PavedRoadEnds` 仅有的 4 块砖、
