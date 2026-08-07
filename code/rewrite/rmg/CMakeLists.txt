@@ -5,6 +5,7 @@ add_library(ra2_rmg
   fast_math.cpp
   map_size.cpp
   map_seed_params.cpp
+  blob_region.cpp
   fp_guard.cpp)
 
 target_include_directories(ra2_rmg PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -52,4 +53,8 @@ if(RA2_BUILD_TESTS)
   add_executable(test_blob_heap test/test_blob_heap.cpp)
   target_link_libraries(test_blob_heap PRIVATE ra2_rmg gtest_main)
   add_test(NAME blob_heap COMMAND test_blob_heap)
+
+  add_executable(test_blob_region test/test_blob_region.cpp)
+  target_link_libraries(test_blob_region PRIVATE ra2_rmg gtest_main)
+  add_test(NAME blob_region COMMAND test_blob_region)
 endif()
