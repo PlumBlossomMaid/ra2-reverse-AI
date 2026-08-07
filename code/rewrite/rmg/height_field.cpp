@@ -1,5 +1,8 @@
 #include "height_field.h"
 
+#include <cstdint>
+
+#include "cell_ref.h"      // kAdjacentDelta（0x89F688）
 #include "scaled_random.h"
 
 namespace ra2 {
@@ -23,6 +26,33 @@ double RoundHalfAwayFromZero(double h) {
   if (h < 0.0) return static_cast<double>(Ftol(h - 0.5));   // 0x5A33A9
   if (h > 0.0) return static_cast<double>(Ftol(h + 0.5));   // 0x5A33CB
   return h;                                                  // 恰好 0 原样
+}
+
+void MarkHeightAnchors(TileWorld& world, const MapGrid& grid,
+                       const TheaterData& theater,
+                       std::vector<PaintWorkCell>& work) {
+  const int side = grid.side();
+  grid.ForEachCell([&](const CellCoord& c) {
+    const int tile = world.IsoTile(c);
+    const int sub = world.SubTile(c);
+    // 0x5A3411：先问是不是岸砖，不是才问受保护地形——两支互斥
+    const bool shore = IsShoreTile(tile, theater.shore_pieces);
+    if (!shore && !IsProtectedTerrainCell(theater, tile, sub)) return;
+
+    for (int d = 0; d < 8; ++d) {
+      // 邻格坐标是**按 int16 相加**的（0x5A3428 起两次 short 运算）
+      const CellCoord n{
+          static_cast<std::int16_t>(c.x + kAdjacentDelta[d & 7].x),
+          static_cast<std::int16_t>(c.y + kAdjacentDelta[d & 7].y)};
+      if (!grid.InMap(n)) continue;
+      // 0x5657A0 取格子：菱形内必有实体格，哑元那条路走不到，故不模拟副作用
+      if (!IsUndecidedTile(world.IsoTile(n))) continue;   // 0x486380
+      PaintWorkCell& wc = work[static_cast<std::size_t>(n.y * side + n.x)];
+      if (shore) wc.height = 0.5;      // +0x08 = 0x3FE0000000000000
+      wc.flag45 = true;                // +0x45
+      break;
+    }
+  });
 }
 
 void GenerateHeightField(const MapGrid& grid, std::vector<PaintWorkCell>& work,

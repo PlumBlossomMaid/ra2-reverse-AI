@@ -124,6 +124,12 @@ if(RA2_BUILD_TESTS)
     RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
   add_test(NAME height_field COMMAND test_height_field)
 
+  add_executable(test_height_anchors test/test_height_anchors.cpp)
+  target_link_libraries(test_height_anchors PRIVATE ra2_rmg gtest_main)
+  target_compile_definitions(test_height_anchors PRIVATE
+    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+  add_test(NAME height_anchors COMMAND test_height_anchors)
+
   add_executable(test_start_points test/test_start_points.cpp)
   target_link_libraries(test_start_points PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_start_points PRIVATE

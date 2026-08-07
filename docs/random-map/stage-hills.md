@@ -681,9 +681,10 @@ free([0xB0B6EC]);  [0xB0B6EC] = NULL;        // 格网用完即销毁
 5. 表项 0 的 `.bss` 位置 `0xB0B6DC` 是否会被同编译单元的编辑器路径写脏——
    RMG 单进程一次生成里恒为 `{0,0,0,0}`
 
-## 十三、复刻状态：⚠️ 高度场已落 C++ 并逐位对拍，其余仍是文档
+## 十三、复刻状态：⚠️ 锚点与高度场已落 C++ 并逐位对拍，其余仍是文档
 
-`code/rewrite/rmg/height_field.{h,cpp}`（ctest 名 `height_field`）落了 §二 的全部内容：
+`code/rewrite/rmg/height_field.{h,cpp}`（ctest 名 `height_field` / `height_anchors`）
+落了 §一 与 §二 的全部内容：
 
 | 本文的东西 | 原版地址 | C++ |
 |---|---|---|
@@ -691,6 +692,7 @@ free([0xB0B6EC]);  [0xB0B6EC] = NULL;        // 格网用完即销毁
 | 主循环（左/上邻平均 + 梯度取符号 + 锚点重置） | `0x5A2FC2`-`0x5A3383` | 同上 |
 | `TruncNormal` | `0x5A3215` / `0x5A32ED` | `TruncNormal` |
 | 取整（远离零） | `0x5A3392`-`0x5A33E2` | `RoundHalfAwayFromZero` |
+| §一 锚点遍（两支谓词 + 全 8 向 + 首个命中 break） | `0x5A33F0` | `MarkHeightAnchors` |
 
 工作记录的 `+0x08` / `+0x10` / `+0x45` 三项加进了 `PaintWorkCell`
 ——它们与涂块用的 `+0x38` / `+0x3C` 本来就住在同一条 0x50 字节记录里。
@@ -707,5 +709,30 @@ free([0xB0B6EC]);  [0xB0B6EC] = NULL;        // 格网用完即销毁
 「精确 ln 向零截断」而不是本机 `fyl2x`，理由见 [fast-math.md](fast-math.md) §四）
 在这 9 个用例、上万次抽样里与原版 `fyl2x` **一次都没分岔**。
 
-§一（锚点）、§三~§九（角点抬升子系统）**还没落 C++**——它们要吃砖表与
-`CellClass`，得等 `.tmp` 装载器齐了才做得起来。
+### §一 锚点遍的对拍
+
+**黄金对拍，逐位一致。** 基准由
+`code/randmap/dump_height_anchors_golden.py` 用 Unicorn 跑 `0x5A33F0` 真身取得
+（环境沿用贴砖器那套 `PlaceOracle`，所以 `0x4863D0` 要的一整排
+theater 砖号全局都就位），存档
+`memory/data/rmg/height_anchors_golden.txt`。8 个用例：
+
+| 用例 | 要压的东西 |
+|---|---|
+| `shore-only` | 岸砖泡在水里——邻格都不是未定砖，一个锚点也打不出 |
+| `shore-in-undecided` | 岸砖泡在未定砖里——正北（0 号方向）必命中 |
+| `mixed` × 2 种尺寸 | LCG 噪声铺 9 种砖（水/未定/0xFFFF/岸/崖/坡/桥/水崖/可毁崖） |
+| `waterfall-sub` | `0x4863D0` 里四条要看子格号的分支（砖号 == base 或 base+3） |
+| `cliff-ring` | 崖壁围未定砖——只打 lock、不给 0.5 |
+| `allundecided` / `allwater` | 两个空转边界 |
+
+比的是工作数组 **每一个槽位** 的 `height` 完整 64 位位型与 `+0x45`：
+基准没列的槽位必须原样不动。两条分支的指纹也跟着钉死了——
+岸砖那支写 `3FE0000000000000`（就是 0.5 的立即数），
+崖壁那支位型全零、只有 lock 置 1。
+
+> 一个可以省下来的副作用：`0x5657A0` 拿不到格子时会往哑元里写坐标，
+> 但这一遍只在**菱形内**取邻格（四条不等式先筛了一道），
+> 菱形内必有实体格，所以哑元那条路走不到，不用模拟。
+
+§三~§九（角点抬升子系统）**还没落 C++**。

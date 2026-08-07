@@ -21,7 +21,7 @@
 | [stage-recalc.md](stage-recalc.md) | 阶段：绿地蔓延 + Recalculating cell attributes | ✅ 全部实锤；绿地蔓延已落 C++，18 个用例整段对拍通过 |
 | [stage-starting-points.md](stage-starting-points.md) | 阶段：Creating starting points（出生点） | ✅ 全部子函数已实锤；主干已落 C++（`rmg/start_points.{h,cpp}`），`ChooseWaypoints` 270 例黄金对拍 |
 | [movement-zones.md](movement-zones.md) | **引擎的移动区子系统**：地面类别 → 连通区洪泛 → 区类型表 | ✅ 整条链已实锤并落 C++（`rmg/zones.{h,cpp}`，含黄金对拍） |
-| [stage-hills.md](stage-hills.md) | 阶段：Creating hills（造山，唯一随机源是高度场） | ✅ 全链已实锤；**高度场已落 C++ 并逐位对拍**（`rmg/height_field.{h,cpp}`） |
+| [stage-hills.md](stage-hills.md) | 阶段：Creating hills（造山，唯一随机源是高度场） | ✅ 全链已实锤；**锚点与高度场已落 C++ 并逐位对拍**（`rmg/height_field.{h,cpp}`） |
 | [stage-lats.md](stage-lats.md) | 阶段：Creating LATs, rocks etc（地表装饰，取数点最密） | ✅ 18 个取数点全部实锤 |
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法全还原；**`MapType 0/1/2` 主路径 + 水面细化整条落成 C++ 并对拍** |
@@ -257,6 +257,13 @@
       顺带咬出一条舍入怪癖：**`Ruggedness == 10` 的图一座山也没有**——
       `10 x 0.0025` 在 RC=chop 下截成 0.024999999999999998，`< 0.025` 成立。
       文档原先写的「`Ruggedness < 10` 不造山」少了一档，已更正
+- [x] **阶段 9 的锚点遍（`0x5A33F0`）落 C++**（`MarkHeightAnchors`，
+      ctest 名 `height_anchors`）。`dump_height_anchors_golden.py` 拿贴砖器那套
+      `PlaceOracle` 环境跑 `0x5A33F0` 真身，8 个用例比工作数组
+      **每一个槽位** 的 `height` 完整 64 位位型与 `+0x45`，全绿。
+      两支分支的指纹也钉死了：岸砖（`0x4865B0`）给邻格写
+      `3FE0000000000000` = 0.5 并上锁，崖壁/桥/瀑布（`0x4863D0`）**只上锁**；
+      `waterfall-sub` 用例专门压了 `0x4863D0` 里四条要看子格号的分支
 - [x] **`MapSeedClass` 就是静态对象 `0xABDFD8`**——`0x59664C mov ecx,0xABDFD8;
       call 0x598960` 与 `0x58CAD1` 两处实锤。于是之前按绝对地址分散记下的
       一批全局当场对号：`0xABE014 = +0x3C` MapType、`0xABE024 = +0x4C`

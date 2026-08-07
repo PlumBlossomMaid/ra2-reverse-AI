@@ -17,6 +17,8 @@
 #include "blob_paint.h"
 #include "fast_math.h"
 #include "map_grid.h"
+#include "place_tile.h"   // TileWorld / IsShoreTile / IsUndecidedTile / 地形保护
+#include "theater.h"
 
 namespace ra2 {
 namespace rmg {
@@ -35,6 +37,26 @@ double TruncNormal(NormalDeviate& nd, double mu, double sigma, double lo,
 // 0x5A33A4 起那三条分支：四舍五入**远离零**，而且 0.0 原样不动。
 // 不是 ties-to-even，也不是 std::round（那个对 -0.0 的处理不同）。
 double RoundHalfAwayFromZero(double h);
+
+// 0x5A33F0 MarkHeightAnchors()。造山的第 ① 步，**一个随机数都不取**。
+//
+// 按原版顺序扫全图，对每个格子分两类：
+//   · 岸砖（0x4865B0）        -> 找第一个「还没定砖」的邻格，给它 height = 0.5
+//                               并打锚点标记 flag45
+//   · 受保护地形（0x4863D0）  -> 同样找第一个未定砖邻格，但**只打标记**，
+//                               不给初始高度
+// 两支都是全 8 向、命中第一个就 `break`；邻格必须在菱形内（四条不等式与
+// MapGrid::InMap 逐条相同）。锚点在 0x5A2F50 里会被钳到 height >= 0，
+// 且 slope 强制回 0.0025 —— 于是岸边与悬崖/桥附近永远是平地。
+//
+// ⚠️ 谓词读的是**当前格**的砖号 / 子格号，写的是**邻格**的工作记录；
+// 而这一遍从不改砖号，所以结果与扫描顺序无关（多个格子写同一个邻格时
+// 写的值也相同）。顺序仍然照抄，别改。
+//
+// 取证：docs/random-map/stage-hills.md §一。
+void MarkHeightAnchors(TileWorld& world, const MapGrid& grid,
+                       const TheaterData& theater,
+                       std::vector<PaintWorkCell>& work);
 
 // 0x5A2F50 GenerateHeightField(Ruggedness)。
 // `work` 是 side² 条工作记录，`grid` 用整图矩形 (W+4, H+12) 构造
