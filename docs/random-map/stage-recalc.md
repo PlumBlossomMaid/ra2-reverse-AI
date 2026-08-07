@@ -147,8 +147,11 @@ for (; rounds > 0; --rounds) {
 ## 四、未确认
 
 1. 四个全局 `0xAA0E1C` / `0xAA1024` / `0xAA1090` / `0xAA10A4` 没能匹配到键名
-   （解析器在几组里丢了配对），四组键名有二义（`HeightBase / WaterBridge`、
-   `CliffSet / ToSnowTheater / ToTemperateTheater`、`MiscPaveTile / TrackTunnels`、
-   `MMRampBase / MonorailSlopes`）——本阶段用不到，暂不追
+   （解析器在几组里丢了配对），另有几组键名有二义（`HeightBase / WaterBridge`、
+   `MiscPaveTile / TrackTunnels`、`MMRampBase / MonorailSlopes`）——本阶段用不到，暂不追。
+   其中 `0xAA1020` 的三义**已在阶段 4 定死为 `CliffSet`**：
+   `ToSnowTheater` / `ToTemperateTheater` 在温和与雪地两套 theater ini 里都没定义，
+   且 `CliffSet` 的 `TilesInSet = 40` 与 `0x5A17F0` / `0x4863D0` 硬编码的
+   `0x28` 精确吻合（见 [stage-making-regions.md](stage-making-regions.md) §八）
 2. `CellClass::RecalcAttributes(-1)` 的参数 `-1` 语义（推测是"不指定 theater"）
 3. `0x59B740` 为什么没有自己的阶段日志——多半是后加的一段，作者懒得加

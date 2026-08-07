@@ -24,14 +24,21 @@ def _sections(buf):
         o = tbl + i * 40
         name = buf[o:o + 8].rstrip(b"\0").decode("ascii", "replace")
         vsz, va, rsz, ro = struct.unpack_from("<IIII", buf, o + 8)
-        out.append((name, base + va, max(vsz, rsz), ro))
+        # vsz 决定这一节在内存里占多长（VA 归属看它）；rsz 决定文件里实际有多少字节。
+        # 早前这里写的是 max(vsz, rsz)，会把落在「虚拟尾巴」（.bss 那种文件里没有的部分）
+        # 的 VA 也算进来，然后按 ro + (va - sva) 读出**别的节的内容**——静默给假数据。
+        out.append((name, base + va, vsz if vsz else rsz, rsz, ro))
     return out
 
 
 def va2off(secs, va):
-    for name, sva, sz, ro in secs:
-        if sva <= va < sva + sz:
-            return ro + (va - sva)
+    """VA → 文件偏移。落在「文件里不存在」的虚拟尾巴上返回 None（而不是读到隔壁节）。"""
+    for name, sva, vsz, rsz, ro in secs:
+        if sva <= va < sva + vsz:
+            delta = va - sva
+            if delta >= rsz:
+                return None          # 未初始化数据，文件里没有
+            return ro + delta
     return None
 
 
@@ -42,9 +49,14 @@ def main(argv):
     secs = _sections(buf)
     if kind == "bytes":
         va = int(argv[1], 16)
-        n = int(argv[2], 0)
+        n = int(argv[2], 0) if len(argv) > 2 else 16
         off = va2off(secs, va)
-        print("0x%08X = %s" % (va, buf[off:off + n].hex()))
+        if off is None:
+            print("0x%08X = <不在文件里（.bss 之类的虚拟尾巴）>" % va)
+            return
+        raw = buf[off:off + n]
+        print("0x%08X = %s" % (va, raw.hex()))
+        print("        = %s" % " ".join("%d" % b for b in bytearray(raw)))
         return
     for s in argv[1:]:
         va = int(s, 16)

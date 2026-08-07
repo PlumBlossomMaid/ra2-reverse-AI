@@ -25,6 +25,7 @@
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法全还原；**`MapType 0/1/2` 主路径 + 水面细化整条落成 C++ 并对拍** |
 | [stage-water-maptype34.md](stage-water-maptype34.md) | 阶段 2 支路：`MapType ∈ {3,4}` 的**河流、湖泊与瀑布**（含查表 sin/cos） | ✅ 八个函数全部实锤；sin/cos 已落 C++ 并对拍；整支路待落 C++ |
+| [stage-making-regions.md](stage-making-regions.md) | 阶段 4：Making regions（区域重建 + **区域之间开坡道/架桥**，`MapType ∈ {3,4}` 专属，45 个取数点） | ⚠️ 45 个取数点关掉 24；`0x590970`/`0x58F2C0`/`0x58D620` 三棵子树待逆 |
 
 ## 进度
 
@@ -218,6 +219,22 @@
       `Atan(1.0) = 0.7735263` 比真值 π/4 差 **0.68°**；`|x|` 跨过约 100.02
       时结果跳 0.01 弧度（不连续）；它**是**严格奇对称的——与 Sin/Cos 正相反，
       因为 `abs` 排在 `_ftol` 之后。105 组 Unicorn 黄金值 + 4097 项表自检全绿
+- [x] **阶段 4「Making regions」骨架实锤** → [stage-making-regions.md](stage-making-regions.md)：
+      名字骗人——阶段 3 才是切区域，这一阶段做的是**把区域连起来**。
+      五步：`0x58EBC0` 重算成员/包围盒并切开过大的区域
+      （阈值 `_ftol(2·(RegionSize·0.005+0.05)·H·W)`，扫描是**倒序**且切成功后**从头重扫**）
+      → `0x58EF10` 推倒重建 → 邻区表 `0x58F0C0` → 开通路 `0x5905D0`
+      → 悬崖直角削垫 `0x5A19E0` → 全图重刷砖 `0x578E60` → 悬崖砖变体重掷 `0x5A17F0`。
+      **`Accessibility` 的确切生效点找到了**：每对高度不同的相邻区域先无条件抽
+      `PickBelow(101)`，命中 `< Accessibility` 才再抽 `PickBelow(3)` 多开 1~2 条坡道，
+      最多试 100 次。顺手关掉 stage-init-regions 的未确认 4——
+      `MapSeed +0x180/+0x184` 不是规则项，就是地图宽高 W/H
+- [x] **`0xAA1020` 这个三义 TileSet 全局定死为 `CliffSet`**：温和/雪地两套 theater ini 里
+      `ToSnowTheater`/`ToTemperateTheater` 根本没定义，而 `CliffSet` 的
+      `TilesInSet = 40 = 0x28` 与 `0x5A17F0`/`0x4863D0` 硬编码的区间宽度精确吻合。
+      配套还原了 `0x5A1350`——CliffSet 里 6 个"同形三连组"+ 一对 `28↔29`，
+      **它永远不会返回原来那块砖**；Ghidra 把 `fadd 1.0` 折进返回值，
+      伪代码看上去像"三选一含自己"，反汇编才看得出是"另外两个里选一个"
 - [x] `.sed` 参数读取复刻（含西木 `Get_Int` 的 `$hex` / `Xh` 三条路径）
 - [ ] `.map` 输出（IsoMapPack5 编码）
 - [ ] 端到端验证：同种子生成结果与原版逐字节比对

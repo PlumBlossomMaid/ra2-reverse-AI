@@ -136,8 +136,13 @@ if (visited > 0x4A) goto 建区域;               // 74 格以上才算数
 | `0x5A0700` | `MapSeedClass::Instance` | 扫工作数组 `side²` | `SeedRegion` 的抽签 |
 | `0x58D410` | region 对象 | `MapClass` 的格子迭代器 | `Grow` / `FloodRest` |
 
-`0x5A0700` 的容量预留是 `[this+0x184] * [this+0x180]`——落在 `MapSeedClass`
-的 rules.ini 配置区（`+0x178` 之后），**具体是哪两个规则项未确认**。
+`0x5A0700` 的容量预留是 `[this+0x184] * [this+0x180]`。
+这两个字段**不是规则项**，是 [stage-init.md](stage-init.md) 算出来的
+**地图真实宽 W（`+0x180`）与高 H（`+0x184`）**——写入点 `0x599700` / `0x599748`。
+所以这里预留的就是"整张图的格子数"。
+（旁证：`0x58EBC0` 用同一对字段算区域切分阈值
+`_ftol(2·(RegionSize·0.005+0.05)·H·W)`，语义上只能是面积，
+见 [stage-making-regions.md](stage-making-regions.md) §二。）
 
 ## 四、几个已实锤的谓词与工具函数
 
@@ -157,14 +162,14 @@ if (visited > 0x4A) goto 建区域;               // 74 格以上才算数
 | 偏移 | 构造时的值 | 推断 |
 |------|-----------|------|
 | `+0x00` | 0 | **候选点向量指针** `DynamicVectorClass<CellStruct>*`（数据 `+0x04`、个数 `+0x10`），阶段 6 填、阶段 8 用 |
-| `+0x04` | 0 | 未确认 |
+| `+0x04` | 0 | **邻区编号表** `DynamicVectorClass<int>*`，只在阶段 4 存活（`0x58F0C0` 建、`0x5905D0` 用、当场销毁） |
 | `+0x08` | `[0xABED14]`，随后计数器 +1 | **区域编号** |
 | `+0x0C` | 0，建完后填成员格数 | 格子数 |
 | `+0x10` | `seed->Level`（`+0x11B`） | 本区域的高度层 |
 | `+0x14` | `IsWaterOrShore(seed)` | 水/陆标志 |
 | `+0x16` | seed 的 packed XY | 种子格 |
-| `+0x1A` | 0（`Finalize` 会改写成它的参数） | 未确认 |
-| `+0x1B` | 1 | 未确认 |
+| `+0x1A` | 0（`Finalize` 会改写成它的参数） | **「已定型，不再切分」**——`0x58EBC0` 判定区域够小就置 1，`0x58D620` 见 1 直接返回 0 |
+| `+0x1B` | 1 | 疑似「与外界连通」：`0x5905D0` 一条坡道都没开成时清 0，**读它的地方尚未找到** |
 | `+0x20` | 0 | **分到的出生点个数**（阶段 6 写，见 [stage-starting-points.md](stage-starting-points.md)） |
 | `+0x28` | `DynamicVectorClass<CellStruct>` 头，容量 100000 | **本区域的格子表**（数据 `+0x2C`、个数 `+0x38`） |
 
@@ -176,6 +181,8 @@ if (visited > 0x4A) goto 建区域;               // 74 格以上才算数
 1. 格子 `+0x11B` 是不是 `Level`（高度层）——证据只有 `stage-init.md` 记的初值 4
    与 `MapSeedClass::Level` 默认值 4 吻合，以及这里"同层才算连通"的用法
 3. `[0xABE2E4]`——`Level` 为 −1 时的兜底值，来源未确认
-4. `0x5A0700` 的容量预留 `[MapSeed+0x180] * [MapSeed+0x184]` 对应哪两个规则项
-5. RegionClass `+0x04/+0x1A/+0x1B` 的语义
+4. ~~`0x5A0700` 的容量预留 `[MapSeed+0x180] * [MapSeed+0x184]` 对应哪两个规则项~~
+   ——**已关闭**：它俩不是规则项，就是地图宽 W 与高 H（见 §三）
+5. RegionClass `+0x04`（已关闭：邻区表）/ `+0x1A`（已关闭：不再切分）/
+   `+0x1B`（仍未确认：只见写不见读）的语义
 6. 工作记录 `+0x4B`（`SeedRegion` 并区时清 0，`FloodRest` 要求它非 0）的含义
