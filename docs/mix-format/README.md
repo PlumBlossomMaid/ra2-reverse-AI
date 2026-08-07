@@ -45,7 +45,41 @@ ccmix --mode --mix /path/to/file.mix
   规则文件（本仓库 `memory/data/rules/rulesmd.ini` 即来自 mix）
 - 分析 mod 的 mix 结构（mod 通常以 mix 形式发布）
 
-## 自有解析器 `code/mix/mix_read.py`
+## 自有解析器：Python 一套 + C++ 一套
+
+两套**独立实现**，互为对拍基准：
+
+| 实现 | 位置 | 用途 |
+|---|---|---|
+| Python | `code/mix/mix_read.py` | 逆向期取数据、生成基准档 |
+| C++ | `code/rewrite/mix/` | 命令行程序运行期自己读 mix，不依赖 Python |
+
+C++ 那套由四个文件组成，全部自写、不引第三方库：
+
+| 文件 | 内容 |
+|---|---|
+| `blowfish.{h,cpp}` | Blowfish ECB。初始 P/S 表**按定义就是 pi 的十六进制小数位**，由 `code/mix/gen_blowfish_tables.py` 用 Machin 公式现算成 `blowfish_tables.h`，没有从任何第三方实现里搬常量；自检 `P[0] == 0x243F6A88` |
+| `bignum.{h,cpp}` | 够用就好的无符号大整数（32 位肢、移位-相减长除法）。只为那两次 RSA 公钥运算服务，一张 mix 算两块，性能无所谓 |
+| `mix_archive.{h,cpp}` | CRC-32 名字哈希 + 目录解析 + 嵌套 mix |
+| `tmp_file.{h,cpp}` | `.tmp` 的几何/属性字段（不碰像素、不碰调色板） |
+
+回归 `code/rewrite/mix/test/test_mix.cpp` 分两层：
+
+1. **纯算法层**（任何机器都跑）：五组公开的 Blowfish ECB 测试向量 + 56 字节
+   长密钥一组 + 名字哈希的已知值 `MixId("ra2md.csf") == 0xBD835079`。
+   能对上这些向量，说明 pi 算对了、轮函数也对。
+2. **真档层**（需要环境变量 `RA2_GAME_DIR` 指向原版目录，否则 `SKIP`）：
+   打开 `ra2.mix`（头加密 + 带校验和）→ 嵌套 `isotemp.mix`（不加密，1035 条）→
+   解 `water09.tem` / `shore04.tem` / `cliff01.tem` 三块砖的尺寸与空洞数。
+   仓库里不放游戏数据，所以 CI 上这一层是跳过的。
+
+另有一层装载器 `code/rewrite/assets/theater_assets.{h,cpp}`，把
+「mix → theater ini → 前缀和 → 逐砖 `.tmp`」整条链串起来，回归
+`test_theater_assets.cpp` 拿 Python 侧生成的 `memory/data/rmg/tile_geometry.txt`
+逐字段对拍——**两套独立实现互相印证**，mix 头解密 / 名字哈希 / `.tmp` 头 /
+前缀和四处任一出错都会被抓住。
+
+### Python 那套的实现说明
 
 只读，不写、不解包到仓库里。写它的直接原因是本机没有 ccmix，而
 [随机地图的 theater 数据](../random-map/theater-data.md)只能从

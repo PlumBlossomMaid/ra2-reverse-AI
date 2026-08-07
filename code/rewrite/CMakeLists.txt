@@ -16,5 +16,11 @@ if(RA2_BUILD_TESTS)
   add_test(NAME threat COMMAND test_threat)
 endif()
 
+# Westwood 资源容器的只读解析（.mix / .tmp）
+add_subdirectory(mix)
+
 # 随机地图生成器(独立子模块)
 add_subdirectory(rmg)
+
+# 游戏数据装载层（依赖上面两个）
+add_subdirectory(assets)

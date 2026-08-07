@@ -78,8 +78,13 @@ int TileSetIndex(const std::string& name) {
 }  // namespace
 
 int TheaterData::TilesInSetStartingAt(int start_tile) const {
+  // ⚠️ 起始砖号不是唯一键：TilesInSet == 0 的组不推进前缀和，所以它与紧随其后
+  // 的那个组共用同一个起始砖号（温和的 TileSet0011「Civilian Buildings」
+  // 就正好压在 ShorePieces 的 89 上）。按第一个命中返回会得到 0，
+  // 因此跳过空组。原版从不做这个查询——它把 14 / 42 硬编码在代码里，
+  // 这个函数只是本项目为了自查方便加的。
   for (const TileSetInfo& s : sets) {
-    if (s.start == start_tile) return s.tiles_in_set;
+    if (s.start == start_tile && s.tiles_in_set != 0) return s.tiles_in_set;
   }
   return 0;
 }

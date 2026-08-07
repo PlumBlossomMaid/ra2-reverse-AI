@@ -119,6 +119,13 @@
       查实全局里存的是 TileSet 的**起始砖号**（一条前缀和，`0x545C6B` 的 `ebx` 累加），
       不是组序号；`IsWater` 硬编码的 `0x0E` 与岸砖清扫的 `0x2A`
       正好等于 WaterSet / ShorePieces 的 `TilesInSet`，两条独立交叉验证
+- [x] **`.mix` / `.tmp` 装载器落 C++**——命令行程序不再需要 Python 就能自己读游戏数据。
+      `code/rewrite/mix/`：Blowfish（P/S 表由 pi 现算，自检 `P[0]==0x243F6A88`）+ 自写大数
+      做 RSA + CRC-32 名字哈希 + 目录解析 + `.tmp` 头；`code/rewrite/assets/`：把
+      「mix → theater ini → 前缀和 → 逐砖 `.tmp`」串成一层装载器。
+      与 Python 侧独立实现**逐字段对拍**（`tile_geometry.txt`）。
+      顺带钉死两条原版行为：缺 `.tmp` 时 `BlocksX/BlocksY` 写 0（`0x546B93`，温和缺 343 块），
+      `GetGroundType` 的子格下标**按 `BlocksX*BlocksY` 取模**（`0x544BE0`）
 - [x] **贴砖器 `0x57B440` 落成 C++ 并对拍**（`place_tile.{h,cpp}`）——
       21 组用例比对返回值、出参 `ok` 与每个被写格子的 `(砖号, 子格号, 层高, 归属)`。
       `TileTypeClass +0x2E4/+0x2E8` 实锤为 `.tmp` 文件头的两个**字节**（`0x546B4A`），
