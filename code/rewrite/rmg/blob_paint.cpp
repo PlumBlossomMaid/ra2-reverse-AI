@@ -10,8 +10,6 @@ namespace ra2 {
 namespace rmg {
 namespace {
 
-// 0x7ED898：1/(2^32-1)。整个生成器只有这一个"把 uint32 摊到 [0,1]"的常数。
-constexpr double kInvUintMax = 2.3283064370807974e-10;
 constexpr double kJitterScale = 5.0;   // 0x7ED808
 constexpr double kAspectBias = 1.2;    // 0x7E5190
 constexpr double kHalf = 0.5;          // 0x7E1738
@@ -19,25 +17,6 @@ constexpr double kHalf = 0.5;          // 0x7E1738
 // 0x89F688 八邻域增量表，涂块按步长 2 只取 0/2/4/6。
 constexpr int kAdjX[8] = {0, 1, 1, 1, 0, -1, -1, -1};
 constexpr int kAdjY[8] = {-1, -1, 0, 1, 1, 1, 0, -1};
-
-// _ftol：向零截断。RC=chop 下与 C 的 (int) 转换语义一致。
-inline int Ftol(double v) { return static_cast<int>(v); }
-
-// 0x59BCAC / 0x59BD01 的内联拒绝采样。
-// ⚠️ 乘法**分两次**：先乘上限再乘 1/(2^32-1)，不是乘一个预先算好的比例常数。
-// scaled_random.h 里那个 PickBelow 走的是另一条路（常数已折叠），两者会在
-// 末位分岔，不能互相替代。
-int PickBelowMul(Randomizer& rng, int limit) {
-  const double scale = static_cast<double>(static_cast<std::int64_t>(limit));
-  const int hi = limit - 1;
-  for (;;) {
-    const std::uint32_t r = rng.Random();
-    const double u = static_cast<double>(static_cast<std::int64_t>(r)) * scale * kInvUintMax;
-    const int v = Ftol(u);
-    // 0x59BCDA cmp/ja 是**无符号**比较
-    if (static_cast<unsigned>(v) <= static_cast<unsigned>(hi)) return v;
-  }
-}
 
 // 0x59BD31-0x59BD75：等距变换全程用 int16 打包分量做加法，这里照抄宽度。
 inline CellCoord IsoFromReal(int rx, int ry, int w) {

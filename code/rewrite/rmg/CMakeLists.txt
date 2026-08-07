@@ -8,6 +8,7 @@ add_library(ra2_rmg
   blob_region.cpp
   blob_paint.cpp
   shore_mask.cpp
+  make_grid.cpp
   fp_guard.cpp)
 
 target_include_directories(ra2_rmg PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
@@ -67,4 +68,8 @@ if(RA2_BUILD_TESTS)
   add_executable(test_shore_mask test/test_shore_mask.cpp)
   target_link_libraries(test_shore_mask PRIVATE ra2_rmg gtest_main)
   add_test(NAME shore_mask COMMAND test_shore_mask)
+
+  add_executable(test_make_grid test/test_make_grid.cpp)
+  target_link_libraries(test_make_grid PRIVATE ra2_rmg gtest_main)
+  add_test(NAME make_grid COMMAND test_make_grid)
 endif()

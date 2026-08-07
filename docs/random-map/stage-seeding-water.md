@@ -3,8 +3,9 @@
 > 状态：**涂块核心 `0x59BBC0` 已于 2026-08-06 整函数落成 C++ 并对拍通过**
 > （`code/rewrite/rmg/blob_paint.{h,cpp}` / `test_blob_paint.cpp`，14 组用例、
 > 约一万格**逐格生长顺序**与原版完全一致，随机数取数次数也逐组吻合，见 §四末尾）；
-> 岸线平滑的**八邻域掩码 `0x57B210` 也已落成并对拍**（§七，1299 次查询）。
-> 三种 MapType 的投放策略、区域网格、四遍平滑的判定逻辑已还原但**尚未落成 C++**；
+> 岸线平滑的**八邻域掩码 `0x57B210`**（§七，1299 次查询）与
+> **区域网格 `0x59A8F0`**（§三，16 组用例）也已落成并对拍。
+> 三种 MapType 的投放策略、四遍平滑的判定逻辑已还原但**尚未落成 C++**；
 > 贴砖器 `0x57B440` 卡在 theater 的 `TileTypeClass` 数据上（§七末）。
 > 地图容器见 [map-geometry.md](map-geometry.md)。
 > 本文只记录已取证的部分，推测一律标注「未确认」。
@@ -198,6 +199,24 @@ void MakeGrid(vector<Rect>* out, int n, const Rect* bounds) {
 这里 `n = NumPlayers + r ≤ 8 + 4 = 12`，**远在安全区内**，
 但同一个「`FastSqrt` 后立刻 `_ftol`」的写法若出现在别处，必须重新核算量级。
 复刻时照抄查表实现即可自动继承这个行为，**不要**换成 `std::sqrt`。
+
+### 两处容易照错的宽度与舍入
+
+1. **两个尺寸先都按 `cols` 除**（`0x59A956`），抛硬币之后才有一个改成按 `rows` 除。
+   直接写成 `cellW = w/cols, cellH = h/rows` 在 `rows == cols` 时看不出区别，
+   `rows != cols` 时就错。
+2. **「少放一个」的半格偏移是向零取整的除以 2**（`0x59AB98` `cdq/sub/sar`），
+   不是算术右移。`cellW` 为负时两者差 1。
+
+抽行用的是**上限不折叠**的那一路拒绝采样（`0x59AB13`，两次乘法），
+与涂块随机起点同款，跟 `PickBelow` 那个折叠版不是一个东西——见
+`scaled_random.h` 里 `PickBelowMul` 的注释。
+
+**复刻状态**：`code/rewrite/rmg/make_grid.{h,cpp}`，
+黄金基准 `memory/data/rmg/make_grid_golden.txt`
+（`code/randmap/dump_make_grid_golden.py`，16 组用例覆盖 `n ∈ [1,25]`、
+四种边界矩形、两种硬币朝向），比对**整条矩形序列 + 随机数取数次数**；
+另有一条性质测试钉住"产出恒等于 n"（`n = 1..64` 全过）。
 
 ## 四、涂块核心 `FUN_0059BBC0`——陆地形状的全部来源
 
@@ -689,15 +708,20 @@ bool Shoreline(int blobId, int flag) {                     // 涂块调用时 fl
 
 ```c
 int PickRange(int lo, int hi) {          // __fastcall: ecx = lo, edx = hi
-    double span = (double)(hi - lo + 1);
-    double base = (double)lo;
+    double span = (double)(uint32)(hi - lo + 1);   // ← 注意 uint32
+    double base = (double)(uint32)lo;              // ← 注意 uint32
     int r;
     do {
         r = (int)((double)(uint32)Random() * span * (1.0/4294967295.0) + base);
-    } while (r > hi);                    // 0x598087 cmp eax,esi / ja
+    } while ((unsigned)r > (unsigned)hi);          // 0x598089 是 ja，无符号
     return r;
 }
 ```
+
+两处宽度必须照抄：`0x59803E`/`0x59804A` 把 `span` 和 `lo` 写进栈上 qword 的
+**低半、高半置 0** 再 `fild qword`，所以两者都是按 `uint32` 读的——
+`lo` 为负会变成天文数字。已知调用点都是 `lo >= 0`，但不要替它"修正"。
+拒绝判定 `0x598089` 是 `ja`（无符号），不是 `jg`。
 
 乘法顺序（先 `× span` 再 `× 倒数` 最后 `+ base`）已按汇编照抄，换序会在 1 ulp 上分岔。
 以 `(0,5)` 调用时被拒绝的概率约 `2⁻³²`，但**拒绝分支必须保留**——
@@ -1109,5 +1133,7 @@ return true;
     要等第 6 条（tile 组基址来源）解决后才能落地。
     第 3/4 遍每格各抽一个 `PickRange(0,5)`，是本阶段随机数消耗的大头（见 §八），
     不做完，账本对不上，涂块之后的一切都会错位
-12. 再下一件：`MakeGrid 0x59A8F0` 与三种 MapType 投放策略
-    （`0x59AD10` / `0x59AFA0` / `0x59B200`），把涂块串成完整阶段
+12. ~~`MakeGrid 0x59A8F0`~~ ✅ 已落成并对拍，见 §三末尾
+13. 下一件：三种 MapType 投放策略（`0x59AD10` / `0x59AFA0` / `0x59B200`）
+    落成 C++，把 `MakeGrid` + `PaintBlob` 串成完整阶段——这三个函数不依赖
+    theater 数据，是眼下唯一还能纯算法推进的一段

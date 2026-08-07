@@ -1,6 +1,7 @@
 #include "scaled_random.h"
 
 #include <cfloat>
+#include <cstdint>
 
 #if defined(_MSC_VER)
 #include <float.h>
@@ -34,6 +35,36 @@ int PickBelow(Randomizer& rng, int n) {
     v = static_cast<int>(static_cast<double>(rng.Random()) * scale);
   } while (v > n - 1);
   return v;
+}
+
+int PickBelowMul(Randomizer& rng, int limit) {
+  const double scale = static_cast<double>(static_cast<std::int64_t>(limit));
+  const int hi = limit - 1;
+  for (;;) {
+    const std::uint32_t r = rng.Random();
+    const double u =
+        static_cast<double>(static_cast<std::int64_t>(r)) * scale * kInvUintMax;
+    const int v = Ftol(u);
+    // 0x59BCDA / 0x59AB26 的 cmp/ja 是**无符号**比较
+    if (static_cast<unsigned>(v) <= static_cast<unsigned>(hi)) return v;
+  }
+}
+
+int PickRange(Randomizer& rng, int lo, int hi) {
+  // 0x59803E/0x59804A：span 与 base 都写进栈上 qword 的低半，**高半写 0**，
+  // 再 fild qword。也就是说两者都按 **uint32** 读——lo 为负会变成天文数字。
+  // 已知调用点都是 lo >= 0，但复刻照抄宽度，不替它"修正"。
+  const double span =
+      static_cast<double>(static_cast<std::uint32_t>(hi - lo + 1));
+  const double base = static_cast<double>(static_cast<std::uint32_t>(lo));
+  for (;;) {
+    const std::uint32_t r = rng.Random();
+    const double u =
+        static_cast<double>(static_cast<std::int64_t>(r)) * span * kInvUintMax + base;
+    const int v = Ftol(u);
+    // 0x598089 是 ja —— **无符号**比较
+    if (static_cast<unsigned>(v) <= static_cast<unsigned>(hi)) return v;
+  }
 }
 
 int PickFrom1(Randomizer& rng, int n) {
