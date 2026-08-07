@@ -166,7 +166,7 @@ int PaintBlob(PaintContext& ctx, const PaintParams& params) {
 
   // 0x59C441：**无条件**扫全图，把刚铺出来的岸线砖全部撕掉。
   // 这一遍不看上面那个成功标志——本次平滑只是可行性检验，产物不留。
-  const int shore = world.ShorePiecesBase();
+  const int shore = ctx.theater->shore_pieces;
   grid.ForEachCell([&](const CellCoord& c) {
     const int t = world.IsoTile(c);
     if (t >= shore && t < shore + 0x2A) {
@@ -177,7 +177,7 @@ int PaintBlob(PaintContext& ctx, const PaintParams& params) {
 
   if (!ok) {
     // 0x59C48C：整块还原成水
-    const int water = world.WaterTile();
+    const int water = ctx.theater->water_set;
     grid.ForEachCell([&](const CellCoord& c) {
       PaintWorkCell& wc = work[grid.WorkIndex(c)];
       if (wc.blob_id != stamp) return;

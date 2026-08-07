@@ -19,6 +19,17 @@ namespace ra2 {
 namespace rmg {
 namespace {
 
+// 测试用气候数据：只用到判水基址与岸砖基址
+const TheaterData& Theater() {
+  static const TheaterData t = [] {
+    TheaterData d;
+    d.water_set = 1;
+    d.shore_pieces = 900;   // 与 0 号陆地砖不重叠即可
+    return d;
+  }();
+  return t;
+}
+
 struct PaintCase {
   int w, h;
   unsigned seed;
@@ -747,8 +758,6 @@ class StubWorld : public PaintWorld {
   void SetCellSubTile(const CellCoord&, int) override {}
   void SetCellLevel(const CellCoord&, int) override {}
   bool SmoothShoreline(int) override { return true; }
-  int ShorePiecesBase() const override { return 900; }   // 与 0 号陆地砖不重叠即可
-  int WaterTile() const override { return kWater; }
 
   std::vector<CellCoord> order;
 
@@ -791,6 +800,7 @@ int RunCase(const PaintCase& c, std::vector<CellCoord>* order, int* rng_calls) {
   ctx.full_bounds = c.has_full_bounds ? c.full_bounds : Rect{-1, -1, -1, -1};
   ctx.work = &work;
   ctx.world = &world;
+  ctx.theater = &Theater();
   ctx.rng = &rng;
   ctx.normal = &normal;
   ctx.blob_stamp = &stamp;

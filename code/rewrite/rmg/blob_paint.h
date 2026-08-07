@@ -16,6 +16,7 @@
 #include "fast_math.h"
 #include "map_grid.h"
 #include "randomizer.h"
+#include "theater.h"
 
 namespace ra2 {
 namespace rmg {
@@ -48,9 +49,6 @@ class PaintWorld {
   // 0x57A0C0(blob_id, 1)：给这一块铺水陆过渡砖；铺不出来则整块作废
   virtual bool SmoothShoreline(int blob_id) = 0;
 
-  // [0xABAD28] ShorePieces 组基下标；[0xAA0738] 水面组基下标
-  virtual int ShorePiecesBase() const = 0;
-  virtual int WaterTile() const = 0;
 };
 
 // 八个入口参数，逐个对应 0x59BBC0 的栈帧（ret 0x20 = 8 个 dword）。
@@ -70,6 +68,7 @@ struct PaintContext {
   Rect full_bounds;              // [0xABE2F0..FC]
   std::vector<PaintWorkCell>* work = nullptr;   // [0xABED10]，side² 条
   PaintWorld* world = nullptr;
+  const TheaterData* theater = nullptr;   // [0xAA0738] / [0xABAD28] 的来源
   Randomizer* rng = nullptr;
   NormalDeviate* normal = nullptr;
   int* blob_stamp = nullptr;     // MapSeedClass +0x308：块编号计数器

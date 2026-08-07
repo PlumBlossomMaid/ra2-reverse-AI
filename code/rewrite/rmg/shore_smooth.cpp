@@ -4,6 +4,7 @@
 #include <cstdlib>
 #include <vector>
 
+#include "cell_ref.h"
 #include "scaled_random.h"
 
 namespace ra2 {
@@ -23,72 +24,22 @@ const short kShoreOffsetY[43] = {
 
 namespace {
 
-// 0x89F688：八方向坐标增量。文件里是零（落在 .data 的 BSS 部分），
-// 由 0x49F2F0 在运行期逐条填出——下表就是那段机器码的结果。
-struct DirDelta { int dx, dy; };
-constexpr DirDelta kAdjacent[8] = {
-    {0, -1},   // 0 N
-    {1, -1},   // 1 NE
-    {1, 0},    // 2 E
-    {1, 1},    // 3 SE
-    {0, 1},    // 4 S
-    {-1, 1},   // 5 SW
-    {-1, 0},   // 6 W
-    {-1, -1},  // 7 NW
-};
-
-// 一个「格子指针」。原版拿不到真实格子时会退到静态哑元 0xABDC50，
-// 并把坐标写进它的 +0x24。哑元只有一份：两条走线同时退化成哑元时，
-// 后一次查表会改掉前一次的坐标，于是两条线合并——照样复现。
-struct CellRef {
-  bool dummy = false;
-  CellCoord coord;
-};
-
-CellCoord CoordOf(const SmoothWorld& w, const CellRef& r) {
-  return r.dummy ? w.DummyCoord() : r.coord;
+bool IsWaterRef(const SmoothWorld& w, const TheaterData& theater,
+                const CellRef& r) {
+  return IsWaterTile(TileOf(w, r), theater.water_set);   // 0x485060
 }
-
-int TileOf(const SmoothWorld& w, const CellRef& r) {
-  return r.dummy ? w.DummyIsoTile() : w.Tile(r.coord);
-}
-
-bool IsWaterRef(const SmoothWorld& w, const CellRef& r) {
-  return IsWaterTile(TileOf(w, r), w.WaterTile());   // 0x485060
-}
-
-// 0x5657A0：下标 = (int16 Y << 9) + int16 X；负、>= 0x40000、或表里是空指针
-// 都退到哑元，并把坐标写进 0xABDC74。
-CellRef Lookup(SmoothWorld& w, int x, int y) {
-  const CellCoord c{static_cast<std::int16_t>(x), static_cast<std::int16_t>(y)};
-  const int index = (c.y << 9) + c.x;
-  if (index < 0 || index >= 0x40000 || !w.CellExists(c)) {
-    w.SetDummyCoord(c);
-    return CellRef{true, c};
-  }
-  return CellRef{false, c};
-}
-
-// 0x481810 AdjacentCell(dir)：dir >= 8 原样返回自己；否则 16 位坐标加法后查表。
-CellRef Adjacent(SmoothWorld& w, const CellRef& r, int dir) {
-  if (static_cast<unsigned>(dir) >= 8u) return r;
-  const CellCoord base = CoordOf(w, r);
-  const DirDelta& d = kAdjacent[dir & 7];
-  return Lookup(w, base.x + d.dx, base.y + d.dy);
-}
-
-CellRef RefOf(const CellCoord& c) { return CellRef{false, c}; }
 
 // ── 第 1 遍：侵蚀（0x57A430，ret 0xC）────────────────────────────────
 // 返回 false = 撞上了别的陆块，整块作废。
-bool Pass1Erode(SmoothWorld& w, const MapGrid& grid, const CellCoord& cell,
+bool Pass1Erode(SmoothWorld& w, const MapGrid& grid,
+                const TheaterData& theater, const CellCoord& cell,
                 int blob_id, bool flag) {
   // 0x57A451-0x57A46F：先用 mode 2 算一遍写进缓存，再用 mode 0 查一遍。
   // 第二次必然命中刚写的缓存（缓存不区分 mode），所以 mask == m2。
   // 这不是冗余——它让 mode 0 那道「中心格必须未定砖」的门槛被绕了过去。
-  const int m2 = ShoreMask(w, grid, cell, 2);
+  const int m2 = ShoreMask(w, grid, theater, cell, 2);
   w.SetMaskCache(cell, m2);
-  const int mask = ShoreMask(w, grid, cell, 0);
+  const int mask = ShoreMask(w, grid, theater, cell, 0);
 
   if (mask <= 0) return true;                       // 0x57A477 有符号 jle
 
@@ -116,9 +67,9 @@ bool Pass1Erode(SmoothWorld& w, const MapGrid& grid, const CellCoord& cell,
   for (const Probe& p : kProbes) {
     if (!(mask & p.trigger)) continue;
     const CellRef a = Lookup(w, cell.x + p.dx, cell.y + p.dy);
-    const int ma = ShoreMask(w, grid, CoordOf(w, a), 0);
+    const int ma = ShoreMask(w, grid, theater, CoordOf(w, a), 0);
     const CellRef b = Lookup(w, cell.x + 2 * p.dx, cell.y + 2 * p.dy);
-    const int mb = ShoreMask(w, grid, CoordOf(w, b), 0);
+    const int mb = ShoreMask(w, grid, theater, CoordOf(w, b), 0);
     if ((ma & p.want) || (mb & p.want)) erode = true;
   }
 
@@ -132,7 +83,7 @@ bool Pass1Erode(SmoothWorld& w, const MapGrid& grid, const CellCoord& cell,
 
   // 0x57A82A：退回水
   w.SetSubTile(cell, 0);                       // +0x11A
-  w.SetIsoTile(cell, w.WaterTile());           // +0x38 = [0xAA0738]
+  w.SetIsoTile(cell, theater.water_set);       // +0x38 = [0xAA0738]
   w.SetWorkBlob(cell, flag ? 0 : blob_id);     // 0x5A0090
 
   // 0x57A86A：八邻格——在界内就让缓存失效，然后递归。
@@ -143,20 +94,21 @@ bool Pass1Erode(SmoothWorld& w, const MapGrid& grid, const CellCoord& cell,
     w.SetMaskCache(nc, -1);
     // 递归的返回值被丢弃（0x57A8D5 之后 0x57A8DA 立刻 mov eax,[esp+0x2c]）。
     // 于是「撞上别的块」只有最外层那次调用能上报，内层一律咽下。
-    Pass1Erode(w, grid, nc, blob_id, flag);
+    Pass1Erode(w, grid, theater, nc, blob_id, flag);
   }
   return true;                                 // 0x57A8E8 恒为真
 }
 
 // ── 第 2 遍：清理（0x57A320，ret 0xC，返回值被编排丢弃）──────────────
-void Pass2Cleanup(SmoothWorld& w, const MapGrid& grid, const CellCoord& cell,
+void Pass2Cleanup(SmoothWorld& w, const MapGrid& grid,
+                  const TheaterData& theater, const CellCoord& cell,
                   int blob_id, bool flag) {
   // 0x57A330：判水区间宽度是 0x0C，不是别处那个 0x0E。照抄。
   const int tile = w.Tile(cell);
-  const int water = w.WaterTile();
+  const int water = theater.water_set;
   if (tile < water || tile >= water + 0x0C) return;
 
-  const int mask = ShoreMask(w, grid, cell, 2);
+  const int mask = ShoreMask(w, grid, theater, cell, 2);
   switch (mask) {                              // 0x57A34E 起八个字面量
     case 0xC7: case 0x7C: case 0xF1: case 0x1F:
     case 0xC6: case 0x6C: case 0xB1: case 0x1B:
@@ -175,7 +127,7 @@ void Pass2Cleanup(SmoothWorld& w, const MapGrid& grid, const CellCoord& cell,
     const CellCoord nc = CoordOf(w, n);
     if (!grid.InMap(nc)) continue;
     w.SetMaskCache(nc, -1);
-    w.SetMaskCache(nc, ShoreMask(w, grid, nc, 2));
+    w.SetMaskCache(nc, ShoreMask(w, grid, theater, nc, 2));
   }
 }
 
@@ -187,7 +139,7 @@ bool Pass34Shore(SmoothWorld& w, const MapGrid& grid, const TheaterData& theater
   // 0x57ACF9：无条件先抽一个，哪怕这一格什么都不干。整阶段的随机流全靠它。
   const int r = PickRange(rng, 0, 5);
 
-  const int mask = ShoreMask(w, grid, cell, which == 2 ? 1 : 0);
+  const int mask = ShoreMask(w, grid, theater, cell, which == 2 ? 1 : 0);
   if (mask == 0) return true;                  // 0x57AD2F
 
   int i = 0;   // 组内下标
@@ -209,7 +161,7 @@ bool Pass34Shore(SmoothWorld& w, const MapGrid& grid, const TheaterData& theater
     int run = 1;
     CellRef a = Adjacent(w, RefOf(cell), 4);
     CellRef b = Adjacent(w, a, 2);
-    while (!IsWaterRef(w, a) && IsWaterRef(w, b)) {
+    while (!IsWaterRef(w, theater, a) && IsWaterRef(w, theater, b)) {
       ++run;
       a = Adjacent(w, a, 4);
       b = Adjacent(w, b, 4);
@@ -224,7 +176,7 @@ bool Pass34Shore(SmoothWorld& w, const MapGrid& grid, const TheaterData& theater
     int run = 1;
     CellRef a = Adjacent(w, RefOf(cell), 4);
     CellRef b = Adjacent(w, a, 6);
-    while (!IsWaterRef(w, a) && IsWaterRef(w, b)) {
+    while (!IsWaterRef(w, theater, a) && IsWaterRef(w, theater, b)) {
       ++run;
       a = Adjacent(w, a, 4);
       b = Adjacent(w, b, 4);
@@ -237,7 +189,7 @@ bool Pass34Shore(SmoothWorld& w, const MapGrid& grid, const TheaterData& theater
     int run = 1;
     CellRef a = Adjacent(w, RefOf(cell), 2);
     CellRef b = Adjacent(w, a, 4);
-    while (!IsWaterRef(w, a) && IsWaterRef(w, b)) {
+    while (!IsWaterRef(w, theater, a) && IsWaterRef(w, theater, b)) {
       ++run;
       a = Adjacent(w, a, 2);
       b = Adjacent(w, b, 2);
@@ -249,7 +201,7 @@ bool Pass34Shore(SmoothWorld& w, const MapGrid& grid, const TheaterData& theater
     int run = 1;
     CellRef a = Adjacent(w, RefOf(cell), 2);
     CellRef b = Adjacent(w, a, 0);
-    while (!IsWaterRef(w, a) && IsWaterRef(w, b)) {
+    while (!IsWaterRef(w, theater, a) && IsWaterRef(w, theater, b)) {
       ++run;
       a = Adjacent(w, a, 2);
       b = Adjacent(w, b, 2);
@@ -293,8 +245,8 @@ bool Pass34Shore(SmoothWorld& w, const MapGrid& grid, const TheaterData& theater
   params.base_level = static_cast<std::int8_t>(w.Level(cell));
   params.blob_id = blob_id;
   params.ok = &ok;
-  // 第 6 个参数收的是 flag 本身。涂块调进来时 flag == 1，于是贴砖器里
-  // blob_id 被清零、工作数组既不读也不写、判定恒走「同块」分支。
+  // 第 6 个参数收的是 flag 本身。flag 为真时贴砖器里 blob_id 被清零、
+  // 工作数组既不读也不写、判定恒走「同块」分支。
   params.no_blob_tracking = flag;
 
   // 返回值被丢弃（0x57B1E8 只看 *ok）。两者语义不同，见 place_tile.cpp。
@@ -326,11 +278,11 @@ bool ShorelineSmooth(SmoothWorld& w, const MapGrid& grid,
 
   for (const CellCoord& c : cells) {           // 第 1 遍
     if (!ok) break;                            // 0x57A193 每格调用前先看
-    ok = Pass1Erode(w, grid, c, blob_id, flag);
+    ok = Pass1Erode(w, grid, theater, c, blob_id, flag);
   }
   for (const CellCoord& c : cells) {           // 第 2 遍
     if (!ok) break;                            // 0x57A1EE
-    Pass2Cleanup(w, grid, c, blob_id, flag);   // 返回值被彻底丢弃
+    Pass2Cleanup(w, grid, theater, c, blob_id, flag);   // 返回值被彻底丢弃
   }
   for (const CellCoord& c : cells) {           // 第 3 遍：直边
     if (!ok) break;                            // 0x57A247

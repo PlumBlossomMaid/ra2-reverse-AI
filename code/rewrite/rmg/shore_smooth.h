@@ -68,8 +68,9 @@ class SmoothWorld : public ShoreWorld, public TileWorld {
 
 // `MapClass::Shoreline(blob_id, flag)`（0x57A0C0，`ret 8`，`this = 0x87F7E8`）。
 //   blob_id  当前陆块编号（涂块的 MapSeedClass +0x308）
-//   flag     涂块调用时恒为 1：撞到别的块不判失败、块归属改写成 0、
-//            并且一路传进贴砖器的 no_blob_tracking
+//   flag     为真时：撞到别的块不判失败、块归属改写成 0、并且一路传进
+//            贴砖器的 no_blob_tracking。涂块收尾（0x59C433）传 1，
+//            阶段 2 调度收尾（0x59A788）传 0，别假定它恒为某值。
 // 返回 false = 这块地铺不出岸线，调用方要整块回滚。
 //
 // ⚠️ 必须在 FpuChopScope 作用域内调用（第 3/4 遍的 PickRange 走 x87）。

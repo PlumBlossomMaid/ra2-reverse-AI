@@ -9,6 +9,7 @@
 #define RA2_RMG_SHORE_MASK_H_
 
 #include "map_grid.h"
+#include "theater.h"
 
 namespace ra2 {
 namespace rmg {
@@ -36,9 +37,6 @@ class ShoreWorld {
   static constexpr int kNoCell = -0x7FFFFFFF;
   virtual int IsoTile(const CellCoord& c) const = 0;
 
-  // [0xAA0738] 水面组基下标；判水区间是 [base, base + 0x0E)
-  virtual int WaterTile() const = 0;
-
   // 工作记录 +0x4A「这条记录有效」
   virtual bool WorkValid(const CellCoord& c) const = 0;
 
@@ -58,8 +56,8 @@ inline bool IsUndecided(int tile) { return tile == 0 || tile == 0xFFFF; }
 //   0 = 中心格必须「尚未定砖」，否则返回 0
 //   1 = 中心格自己是水砖则返回 0
 //   2 = 无门槛
-int ShoreMask(const ShoreWorld& world, const MapGrid& grid, const CellCoord& c,
-              int mode);
+int ShoreMask(const ShoreWorld& world, const MapGrid& grid,
+              const TheaterData& theater, const CellCoord& c, int mode);
 
 }  // namespace rmg
 }  // namespace ra2

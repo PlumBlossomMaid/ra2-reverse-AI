@@ -7,6 +7,7 @@ add_library(ra2_rmg
   map_seed_params.cpp
   blob_region.cpp
   blob_paint.cpp
+  cell_ref.cpp
   shore_mask.cpp
   shore_smooth.cpp
   make_grid.cpp

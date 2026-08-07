@@ -80,8 +80,9 @@ struct PlaceTileParams {
   // [esp+0x44] 非零 = 把 blob_id 强行清零（0x57B45B/0x57B463），于是工作数组
   // 既不读也不写，判定恒走"同块"分支。
   // ⚠️ 岸线第 3/4 遍传进来的是 Shoreline 自己的 flag（0x57B1A4 与 0x57B1BE 各
-  // 把栈上的 flag 作为第一个 push），而涂块调 Shoreline 时 flag 恒为 1 ——
-  // 也就是说随机地图生成期间这一位一直是**开**的。
+  // 把栈上的 flag 作为第一个 push）。全镜像 5 个 Shoreline 调用点里 flag 有
+  // 1、0 和变量三种，别假定它恒为某个值：涂块收尾（0x59C433）是 1，
+  // 阶段 2 调度收尾（0x59A788）是 0。
   bool no_blob_tracking = false;
 };
 

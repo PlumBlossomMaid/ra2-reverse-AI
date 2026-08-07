@@ -101,7 +101,6 @@ class SmoothStub : public SmoothWorld {
   }
 
   // ── ShoreWorld ──
-  int WaterTile() const override { return water_; }
   bool WorkValid(const CellCoord&) const override { return true; }
   int MaskCache(const CellCoord& c) const override { return cache_[WorkIdx(c)]; }
 

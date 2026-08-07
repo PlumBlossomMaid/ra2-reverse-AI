@@ -25,9 +25,9 @@ constexpr MaskStep kSteps[8] = {
 
 }  // namespace
 
-int ShoreMask(const ShoreWorld& world, const MapGrid& grid, const CellCoord& c,
-              int mode) {
-  const int water = world.WaterTile();
+int ShoreMask(const ShoreWorld& world, const MapGrid& grid,
+              const TheaterData& theater, const CellCoord& c, int mode) {
+  const int water = theater.water_set;
   const int self_tile = world.IsoTile(c);
 
   // 0x57B23D：中心格自己是不是水，**在 mode 门槛之前就算好了**。
