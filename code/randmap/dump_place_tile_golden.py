@@ -55,7 +55,11 @@ class PlaceOracle(PaintOracle):
 
     # ---- 伪造 TileTypeClass ----
     def make_tile(self, tile_number, tw, th, blocks):
-        """blocks: [(present, height), ...]，长度 tw*th，按 y*tw+x 排列。"""
+        """blocks: [(present, height[, ramp]), ...]，长 tw*th，按 y*tw+x 排。
+
+        第三项 ramp 是 .tmp 子块头 +0x2A，只有另一个压砖器 0x5A6C10 会读它
+        （写进 CellClass +0x11C）；0x57B440 不看，缺省给 0。
+        """
         obj = self._bump(0x310)
         vt = self._bump(0x100)
         # 两段桩：`mov eax, imm32; ret` —— 虚表调用是 thiscall 无参，直接 ret。
@@ -72,12 +76,15 @@ class PlaceOracle(PaintOracle):
         self.wr32(obj + 0x2E4, tw)
         self.wr32(obj + 0x2E8, th)
         # 子块：0x57B557 读 [base + k*4 + 0x10]，非零才贴；+0x28 是高度增量
-        for k, (present, height) in enumerate(blocks):
+        for k, blk_spec in enumerate(blocks):
+            present, height = blk_spec[0], blk_spec[1]
+            ramp = blk_spec[2] if len(blk_spec) > 2 else 0
             if not present:
                 self.wr32(offs + 0x10 + k * 4, 0)
                 continue
             blk = self._bump(0x40)
             self.uc.mem_write(blk + 0x28, bytes([height & 0xFF]))
+            self.uc.mem_write(blk + 0x2A, bytes([ramp & 0xFF]))
             self.wr32(offs + 0x10 + k * 4, blk)
         self.wr32(0x880990, obj)
         self.tt = obj

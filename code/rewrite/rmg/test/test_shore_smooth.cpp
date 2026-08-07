@@ -63,6 +63,7 @@ struct Cell {
   int tile = 0;
   int subtile = 0;
   int level = 0;
+  int ramp = 0;      // CellClass +0x11C
   int blob = 0;
 };
 
@@ -113,6 +114,7 @@ class SmoothStub : public SmoothWorld {
   void SetIsoTile(const CellCoord& c, int v) override { Mut(c).tile = v; }
   void SetSubTile(const CellCoord& c, int v) override { Mut(c).subtile = v; }
   void SetLevel(const CellCoord& c, int v) override { Mut(c).level = v; }
+  void SetRamp(const CellCoord& c, int v) override { Mut(c).ramp = v; }
 
   void SetDummyCoord(const CellCoord& c) override { dummy_coord_ = c; }
   int DummyIsoTile() const override { return dummy_.tile; }

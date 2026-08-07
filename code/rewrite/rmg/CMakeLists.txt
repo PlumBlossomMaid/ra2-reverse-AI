@@ -11,6 +11,7 @@ add_library(ra2_rmg
   shore_mask.cpp
   shore_smooth.cpp
   stage_water.cpp
+  water_refine.cpp
   make_grid.cpp
   place_blobs.cpp
   place_tile.cpp

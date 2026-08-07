@@ -751,27 +751,124 @@ return cheb * (aspectX * (ax_/len) + (ay_/len) * aspectY);
 | `+0x3C` | 布局前清 0；候选入堆时写入块编号（防重复入堆） |
 | `+0x4A` | 数组分配后置 1 |
 
-## 六、水面 tile 细化 `FUN_0059C630`（已完整还原）
+## 六、水面 tile 细化 `FUN_0059C630`（✅ 已落成 C++ 并对拍）
 
-对每个"是水且 `+0x11A == 0`"的格子：
+它由 `0x598B14` **无条件**调用——旁边那个 `0x59C580` 才是 `MapType ∈ {3,4}`
+且 `WaterAmount != 0` 的专属支路，两者别混（`0x598AED-0x598B14`）：
 
-```c
-if (右/下/右下三邻格也都是水且 +0x11A == 0) {
-    a = PickFrom1(10);                       // 1..10，常数 0x7ED9E8
-    if (a != 1) {
-        b = PickBelow(242);                  // 0..241，常数 0x7ED9E0
-        shape = (b >= 240) ? (247 - b) : (b / 10);     // 0..23 或 6..7
-        FUN_005A6C10(work[cell].field_38, -1);          // 用 shape 贴大块水面
-        continue;
-    }
-}
-c = PickBelow(201);                          // 0..200，常数 0x7ED9D8
-cell->IsoTileTypeIndex = [0xAA0738] + 8 + c / 40;      // 8..13 号小水面
+```asm
+00598aed  mov  eax, [ebp + 0x3c]      ; MapType
+00598af3  cmp  eax, 3 / je            ; 3、4 走 0x59C580（还要 +0x4C != 0）
+00598afd  call 0x59a6c0               ; 其余走阶段 2 调度器
+00598b14  call 0x59c630               ; ← 两条路都要过这里
 ```
 
-三处取数的比例常数、拒绝阈值、整数除法魔数（`0x66666667`→/10、
-`0xCCCCCCCD`→/40）都已逐条汇编核对，
-基准值见 `memory/data/rmg/scaled_golden.txt`，重写已对拍通过。
+作用是把阶段 2 留下的一整片单调水面换成花砖：能凑出 2×2 的地方压一块
+「大水面」，凑不出（或抽中 10% 的那一签）就只给自己换一块「小浪花」。
+它是阶段 2 之后**第一个还在消耗随机数**的地方。
+
+```c
+// 0x59C630，ret 0；迭代顺序 == Reset 0x578350 / Next 0x578290
+void MapSeedClass::RefineWaterTiles() {
+  for (CellClass* cell : AllCells()) {
+    if (cell->IsoTile != [0xAA0738]) continue;        // 0x59C657 等值比较
+    if (cell->SubTile != 0)          continue;        // 0x59C668 字节比较
+
+    // 0x59C674-0x59C68E：三次 AdjacentCell，顺序 2(E) → 4(S) → 3(SE)，
+    // **先全取完再判**（取的过程会改写共享哑元的坐标）
+    CellClass* e  = cell->Adjacent(2);
+    CellClass* s  = cell->Adjacent(4);
+    CellClass* se = cell->Adjacent(3);
+
+    bool big = e->IsoTile == [0xAA0738] && e->SubTile == 0        // 0x59C699
+            && s->IsoTile == [0xAA0738] && s->SubTile == 0        // 0x59C6B0
+            && se->IsoTile== [0xAA0738] && se->SubTile== 0;       // 0x59C6C5
+
+    if (big && PickFrom1(10) != 1) {                  // 0x59C6DA，10% 落空
+      int n = PickBelow(242);                         // 0x59C70F
+      int shape = (n >= 240) ? (247 - n)              // 0x59C742
+                             : (n / 40);              // 0x59C74B 魔数 0x66666667
+      int blob = ([0xABED10] == 0) ? -1               // 0x59C767
+                 : work[Y * side + X].field_38;       // 0x59C770
+      StampTile([0xAA0738] + shape, &cell->MapCoords, blob, -1);  // 0x59C795
+      continue;
+    }
+    int n = PickBelow(201);                           // 0x59C79C
+    cell->IsoTile = [0xAA0738] + 8 + n / 40;          // 0x59C7C7 魔数 0xCCCCCCCD
+  }
+}
+```
+
+**两处除法都是 `/ 40`**（早前记的 `/10` 是错的）。魔数拆开算：
+`0x66666667 / 2^(32+4) = 1/40`（`imul` + `sar edx,4`，有符号），
+`0xCCCCCCCD / 2^(32+5) = 1/40`（`mul` + `shr edx,5`，无符号）。于是——
+
+| 支路 | 抽样 | 砖号 | 说明 |
+|---|---|---|---|
+| 大水面 | `PickBelow(242)` | `WaterSet + 0..7` | `n ∈ [0,239] → n/40 ∈ [0,5]`；`n = 240 → 7`、`n = 241 → 6`，两者各 1/242 |
+| 小浪花 | `PickBelow(201)` | `WaterSet + 8..13` | `n/40 ∈ [0,5]`，六块等概率（末段 200 单独一档，是原版的偏斜） |
+
+`0 + 8 = 8` 到 `13` 正好把 WaterSet 的 `TilesInSet = 0x0E` 用满，
+而前 8 块留给 2×2 大水面——**砖号分配与组宽自洽**，是对 `/40` 的独立佐证
+（若真是 `/10`，`shape` 会长到 23，越出整组）。
+
+### 压砖器 `FUN_005A6C10`（✅ 已实锤并对拍）
+
+`__fastcall`，`ecx` = 砖在 `[0xA8ED2C]` 里的下标、`edx` = 落点坐标指针，
+两个栈参（`ret 8`）：`arg0` = 归属块编号、`arg1` = 基准层高（`-1` = 不写层高）。
+全镜像 **49 处**调用点，RMG 主路径上只有 `0x59C795` 一处，其余落在
+`0x58F/0x593` 与 `0x5A5` 两棵死代码子树里（§九 TODO）。
+
+```c
+// 0x5A6C10-0x5A6D73
+void StampTile(int tileIndex, CellCoord* at, int blob, int level) {
+  TileTypeClass* tt = TileTypes[tileIndex];
+  int* offs = tt->vtbl->GetBlockOffsets();      // 0x5A6C26，虚表 +0x9C
+  if (!offs) return;
+  for (int y = 0; y < tt->Height; ++y)          // +0x2E8
+    for (int x = 0; x < tt->Width; ++x) {       // +0x2E4
+      int16 X = at->X + x, Y = at->Y + y;       // 0x5A6C68，两分量各按 int16 加
+      if (!InMap(X, Y)) continue;               // 0x5A6C90-0x5A6CB4，四不等式
+      CellClass* c = GetCellAt(X, Y);           // 0x5657A0
+      int k = tt->Width * y + x;
+      TmpBlock* b = offs[k + 4];                // [edx + ecx*4 + 0x10]
+      if (!b) continue;                         // 空洞
+      c->SubTile = (byte)k;                     // +0x11A
+      c->IsoTile = tt->TileNumber;              // +0x38 = tt->+0x294
+      if (level != -1)                          // 0x5A6CF7
+        c->Level = (byte)(b->Height + level - 4);   // +0x11B，注意 **-4**
+      c->Ramp = b->RampType;                    // +0x11C，**无条件**
+      if ([0xABED10]) work[Y * side + X].field_38 = blob;   // 0x5A6D3A
+    }
+}
+```
+
+它与贴砖器 `0x57B440`（§七）是**两套东西**，四条差别必须记牢：
+
+1. **一格校验都不做**——不看归属、不看 allow 区间、不看地形保护，压上就是压上；
+2. **多写一个字段** `CellClass +0x11C = 子块的 RampType`（`.tmp` 子块头 `+0x2A`）。
+   `0x57B440` 从头到尾不碰 `+0x11C`——这是两者唯一可以从产物上区分的写入；
+3. **层高公式带一个 `-4`**：`+0x11B = 子块高度 + level - 4`，
+   而 `0x57B440` 是 `子块高度 + base_level`，没有 `-4`；
+4. **归属无条件写**，没有"抢占/同族"那套判定。
+
+`level == -1` 时层高整条跳过，但 `+0x11C` 照写不误——水面细化走的正是这一路。
+
+### 复刻状态（✅ 2026-08-06）
+
+`code/rewrite/rmg/water_refine.{h,cpp}` + `place_tile.cpp` 的 `StampTile`。
+基准 `memory/data/rmg/water_refine_golden.txt` 由
+`code/randmap/dump_water_refine_golden.py` 取得：**先把 `0x59A6C0` 整个跑一遍**
+再调 `0x59C630`，两段的随机数次数分别记账（`rngstage` 一栏与 stage_water 基准的
+`rng` 一栏逐例相同，互为交叉验证）。12 组用例比对每格
+`(砖号, 子格号, 层高, **坡度**, 归属)` 与共享哑元的 `+0x38`。
+
+夹具里 WaterSet 的 0x0E 块砖按原版实情合成（前 8 块 2×2、后 6 块 1×1），
+子块 `+0x2A` 给了 17 个互不相同的非零值——基准里 1..17 **全部出现**，
+证明 `+0x11C` 那条写入确实被压到了。三次扰动（`/40` 改成 `/10`、
+第三个邻格方向 3 改成 1、去掉 `+0x11C` 的写入）均如期报错，基准非空转。
+
+⚠️ 砖尺寸仍是合成值，换成真实 `.tmp` 尺寸要重取基准（§九 第 19 条）。
 
 ## 七、岸线平滑 `FUN_0057A0C0`——并且**它会消耗随机数**（✅ 整体已复刻并对拍）
 
@@ -1475,11 +1572,15 @@ snow 两个气候下这几组都有定义，所以现网跑不出来。照原样
     铺水 → 投放策略 → 涂块 → 孤水格回填 → 岸线四遍 → 工作数组清账 → 沿岸刷绿
 19. 下一件：把合成砖尺寸换成真实 `.tmp` 尺寸（需要 C++ 侧的 mix/.tmp 读取器，
     目前只有 `code/mix/mix_read.py`），重取岸线与阶段 2 两份基准
-20. `MapType ∈ {3,4}` 那条支路：`0x59C580`（`WaterAmount != 0` 才走）与
-    水面 tile 细化 `0x59C630`（§六，还缺 `0x5A6C10`，49 处调用点未逆）
-21. 阶段 4「Making regions」（45 次取数，只在
+20. ~~水面 tile 细化 `0x59C630` + 压砖器 `0x5A6C10`~~ ✅ 已落成并对拍，见 §六。
+    顺手纠了旧文一处实质错误：大水面的形状号是 `n / 40` 不是 `n / 10`（魔数
+    `0x66666667` 配 `sar edx,4`），于是 `shape ∈ [0,7]` 正好与小浪花的 `[8,13]`
+    拼满 WaterSet 的 `TilesInSet = 0x0E`；新记 `0x5A6C10` 会写 `CellClass +0x11C`
+    （坡度）而 `0x57B440` 不写，且它的层高公式多一个 `-4`
+21. `MapType ∈ {3,4}` 那条支路：`0x59C580`（`WaterAmount != 0` 才走）
+22. 阶段 4「Making regions」（45 次取数，只在
     `MapType ∈ {3,4}` 下走），含 `0x5A1350` 的 21 路 switch
-22. **死代码 TODO**：`0x57B0E8` 的 `cmp eax,-1`（§七「四个坑」第 3 条）、
+23. **死代码 TODO**：`0x57B0E8` 的 `cmp eax,-1`（§七「四个坑」第 3 条）、
     `0x545FE5` 的 `LastTilesInSet` 死分支，以及那 22 个从未被调用的函数
     （46 个取数点，27 个在 `0x5A5020` 子树里）。按约定推迟到 104 个活取数点
     做完、逐字节对比闭环之后再逆

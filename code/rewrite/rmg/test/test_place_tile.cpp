@@ -42,6 +42,7 @@ struct CellState {
   int tile = 0;
   int subtile = 0;
   int level = 0;
+  int ramp = 0;      // CellClass +0x11C
   int blob = 0;
 };
 
@@ -61,6 +62,7 @@ class StubWorld : public TileWorld {
     cells_[Key(c)].subtile = v;
   }
   void SetLevel(const CellCoord& c, int v) override { cells_[Key(c)].level = v; }
+  void SetRamp(const CellCoord& c, int v) override { cells_[Key(c)].ramp = v; }
 
   void SetDummyCoord(const CellCoord&) override {}
   int DummyIsoTile() const override { return dummy_.tile; }

@@ -29,6 +29,9 @@ namespace rmg {
 struct TileSubCell {
   bool present = false;   // .tmp 偏移表该项为 0 时是空洞，原版跳过不贴
   int height = 0;         // .tmp 子块头 +0x28
+  // .tmp 子块头 +0x2A（RampType）。贴砖器 0x57B440 **不读它**，
+  // 只有另一个压砖器 0x5A6C10 会把它写进 CellClass +0x11C。
+  int ramp = 0;
 };
 
 struct TileType {
@@ -57,6 +60,8 @@ class TileWorld {
   virtual void SetIsoTile(const CellCoord& c, int v) = 0;
   virtual void SetSubTile(const CellCoord& c, int v) = 0;
   virtual void SetLevel(const CellCoord& c, int v) = 0;     // +0x11B
+  // +0x11C，只有 StampTile（0x5A6C10）写；PlaceTile（0x57B440）从不碰
+  virtual void SetRamp(const CellCoord& c, int v) = 0;
 
   // 共享哑元格子 0xABDC50
   virtual void SetDummyCoord(const CellCoord& c) = 0;       // 写 0xABDC74
@@ -94,6 +99,22 @@ struct PlaceTileParams {
 bool PlaceTile(TileWorld& world, const MapGrid& grid, const TheaterData& theater,
                const TileType& tile, const CellCoord& at,
                const PlaceTileParams& params);
+
+// ── 另一个压砖器 `FUN_005A6C10`（`__fastcall`，`ecx` = 砖下标、`edx` = 落点，
+//    两个栈参 `ret 8`）。全镜像 49 处调用点，RMG 主路径上只有水面细化
+//    0x59C795 一处（其余在 0x58F/0x593 与 0x5A5 两棵死代码子树里）。
+//
+// 与上面的 `PlaceTile` 是**两套东西**，别混：
+//   · 它一格校验都不做——不看归属、不看 allow 区间、不看地形保护，压上就是压上
+//   · 它多写一个字段 `CellClass +0x11C = 子块的 RampType`（0x5A6CFC-0x5A6D12）
+//   · 层高的公式带一个 **-4**：`+0x11B = 子块高度 + level - 4`（0x5A6CFF/0x5A6D01），
+//     而 `PlaceTile` 是 `子块高度 + base_level`，没有 -4
+//   · `level == -1` 时整条层高写入被跳过（0x5A6CF7 的 `cmp ecx,-1`），
+//     但 `+0x11C` **照写不误**
+//   · 工作数组的归属是**无条件**写 `blob_id`（0x5A6D3A），没有"抢占"判定
+// 逐子格的菱形边界判定与 `MapGrid::InMap` 四条不等式逐条相同（0x5A6C90-0x5A6CB4）。
+void StampTile(TileWorld& world, const MapGrid& grid, const TileType& tile,
+               const CellCoord& at, int blob_id, int level);
 
 // 0x82A7F4 / 0x82A89C：两张写死在 exe 里的 int[42]，索引 = 砖号 - ShorePieces。
 // 越界即判失败（0x57B5A3-0x57B5B7 的四条比较）。

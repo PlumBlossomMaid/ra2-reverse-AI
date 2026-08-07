@@ -15,12 +15,14 @@
 // ⚠️ MapType 0 在小图上每块都铺不出岸线、整块回滚，终态全是水——那是原版
 // 真实行为（基准里 mt0-allwater 一例专门盯住它），不是桩失效。
 #include "stage_water.h"
+#include "water_refine.h"
 
 #include <array>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -65,6 +67,7 @@ struct Cell {
   int tile = 0;
   int subtile = 0;
   int level = 0;
+  int ramp = 0;      // CellClass +0x11C
 };
 
 constexpr int kCellSlots = 0x40000;   // 格子指针数组按 (Y << 9) + X 索引
@@ -90,8 +93,20 @@ class StageStub : public WaterStageWorld {
       t.width = unit_tiles ? 1 : 1 + (k % 2);
       t.height = unit_tiles ? 1 : 1 + ((k / 2) % 2);
       t.cells.assign(static_cast<std::size_t>(t.width) * t.height,
-                     TileSubCell{true, 0});
-      tiles_.push_back(t);
+                     TileSubCell{true, 0, 0});
+      tiles_[t.tile_number] = t;
+    }
+    // WaterSet 的 0x0E 块：0x59C795 会以 TileTypes[WaterSet + shape] 取砖，
+    // 尺寸/坡度的合成规则与 dump_water_refine_golden.py 逐字一致。
+    for (int k = 0; k < 0x0E; ++k) {
+      TileType t;
+      t.tile_number = theater.water_set + k;
+      t.width = k < 8 ? 2 : 1;
+      t.height = k < 8 ? 2 : 1;
+      for (int j = 0; j < t.width * t.height; ++j) {
+        t.cells.push_back(TileSubCell{true, 0, 1 + (k * 5 + j * 3) % 17});
+      }
+      tiles_[t.tile_number] = t;
     }
   }
 
@@ -123,6 +138,7 @@ class StageStub : public WaterStageWorld {
   int SubTile(const CellCoord& c) const override { return At(c).subtile; }
   void SetSubTile(const CellCoord& c, int v) override { Mut(c).subtile = v; }
   void SetLevel(const CellCoord& c, int v) override { Mut(c).level = v; }
+  void SetRamp(const CellCoord& c, int v) override { Mut(c).ramp = v; }
 
   void SetDummyCoord(const CellCoord& c) override { dummy_coord_ = c; }
   int DummyIsoTile() const override { return dummy_.tile; }
@@ -147,9 +163,8 @@ class StageStub : public WaterStageWorld {
   int Level(const CellCoord& c) const override { return At(c).level; }
   CellCoord DummyCoord() const override { return dummy_coord_; }
   const TileType* TileByIndex(int index) const override {
-    const int k = index - theater_.shore_pieces;
-    if (k < 0 || k >= static_cast<int>(tiles_.size())) return nullptr;
-    return &tiles_[k];
+    const auto it = tiles_.find(index);
+    return it == tiles_.end() ? nullptr : &it->second;
   }
 
   // ── WaterStageWorld ──
@@ -186,7 +201,7 @@ class StageStub : public WaterStageWorld {
   std::vector<Cell> cells_;
   std::vector<char> exists_;
   std::vector<int> cache_;
-  std::vector<TileType> tiles_;
+  std::map<int, TileType> tiles_;
   Cell dummy_;
   CellCoord dummy_coord_;
 };
@@ -311,6 +326,124 @@ TEST(StageWater, MatchesOriginal) {
                       << " lvl=" << got.level << " blob=" << blob
                       << " want tile=" << e[2] << " sub=" << e[3]
                       << " lvl=" << e[4] << " blob=" << e[5];
+      }
+    }
+    EXPECT_EQ(bad, 0) << "case " << c.name << ": " << bad << " cells differ";
+  }
+}
+
+
+// ── 水面细化 0x59C630（接在阶段 2 之后）─────────────────────────────────
+//
+// 基准 memory/data/rmg/water_refine_golden.txt 是同一批用例、同一批种子，
+// 先跑 0x59A6C0 再跑 0x59C630 的连贯产物（rngstage 一栏与 stage_water 基准
+// 的 rng 一栏逐例相同，互为交叉验证）。每格多比一个 CellClass +0x11C。
+struct RefineCase {
+  std::string name;
+  int w = 0, h = 0;
+  unsigned seed = 0;
+  int players = 0, water = 0, map_type = 0;
+  Rect usable;
+  bool unit_tiles = false;
+  long long rng_stage = 0, rng_total = 0;
+  int dummy = 0;
+  std::vector<std::array<int, 7>> cells;   // x y tile subtile level ramp blob
+};
+
+std::vector<RefineCase> LoadRefineGolden() {
+  const std::string path =
+      std::string(RA2_GOLDEN_DIR) + "/water_refine_golden.txt";
+  std::ifstream in(path);
+  EXPECT_TRUE(in.good()) << "cannot open " << path;
+  std::vector<RefineCase> out;
+  std::string line;
+  while (std::getline(in, line)) {
+    if (!line.empty() && line.back() == '') line.pop_back();
+    std::istringstream ss(line);
+    std::string tag;
+    ss >> tag;
+    if (tag == "CASE") {
+      RefineCase c;
+      std::string seedtok, ptok, wtok, mttok, utok, tilestok, arrow,
+          stagetok, totaltok, dummytok;
+      ss >> c.name >> c.w >> c.h >> seedtok >> ptok >> wtok >> mttok >> utok
+         >> tilestok >> arrow >> stagetok >> totaltok >> dummytok;
+      c.seed = static_cast<unsigned>(
+          std::strtoul(seedtok.c_str() + std::strlen("seed=0x"), nullptr, 16));
+      c.players = NamedInt(ptok, "players=");
+      c.water = NamedInt(wtok, "water=");
+      c.map_type = NamedInt(mttok, "mt=");
+      c.usable = NamedRect(utok);
+      c.unit_tiles = tilestok == "tiles=unit";
+      c.rng_stage = NamedInt(stagetok, "rngstage=");
+      c.rng_total = NamedInt(totaltok, "rngtotal=");
+      c.dummy = NamedInt(dummytok, "dummy=");
+      out.push_back(c);
+    } else if (tag == "CELL") {
+      std::array<int, 7> v{};
+      for (int& f : v) ss >> f;
+      out.back().cells.push_back(v);
+    }
+  }
+  return out;
+}
+
+TEST(WaterRefine, MatchesOriginal) {
+  const std::vector<RefineCase> cases = LoadRefineGolden();
+  ASSERT_FALSE(cases.empty());
+  const TheaterData theater = Temperate();
+
+  for (const RefineCase& c : cases) {
+    const MapGrid grid(c.w, c.h);
+    const std::size_t n = static_cast<std::size_t>(grid.side()) * grid.side();
+    std::vector<PaintWorkCell> work(n);
+    Randomizer rng(c.seed);
+    StageStub world(grid, theater, rng, work, c.unit_tiles);
+    NormalDeviate normal(rng);
+    int stamp = 0;
+
+    PaintContext ctx;
+    ctx.grid = grid;
+    ctx.full_bounds = Rect{-1, -1, -1, -1};
+    ctx.work = &work;
+    ctx.theater = &theater;
+    ctx.rng = &rng;
+    ctx.normal = &normal;
+    ctx.blob_stamp = &stamp;
+    ctx.cell_level = 4;
+
+    PlaceParams p;
+    p.num_players = c.players;
+    p.water_amount = c.water;
+    p.usable = c.usable;
+
+    rng.reset_call_count();
+    {
+      FpuChopScope chop;
+      SeedWater(ctx, world, p, c.map_type);
+      EXPECT_EQ(rng.call_count(), c.rng_stage) << "case " << c.name;
+      RefineWaterTiles(world, grid, theater, rng);
+    }
+
+    EXPECT_EQ(rng.call_count(), c.rng_total) << "case " << c.name;
+    EXPECT_EQ(world.DummyTile(), c.dummy) << "case " << c.name;
+
+    int bad = 0;
+    for (const std::array<int, 7>& e : c.cells) {
+      const CellCoord q{e[0], e[1]};
+      const Cell got = world.Get(q);
+      const int blob = world.WorkBlob(q);
+      if (got.tile == e[2] && got.subtile == e[3] && got.level == e[4] &&
+          got.ramp == e[5] && blob == e[6]) {
+        continue;
+      }
+      if (++bad <= 10) {
+        ADD_FAILURE() << "case " << c.name << " cell (" << q.x << "," << q.y
+                      << ") got tile=" << got.tile << " sub=" << got.subtile
+                      << " lvl=" << got.level << " ramp=" << got.ramp
+                      << " blob=" << blob << " want tile=" << e[2]
+                      << " sub=" << e[3] << " lvl=" << e[4] << " ramp=" << e[5]
+                      << " blob=" << e[6];
       }
     }
     EXPECT_EQ(bad, 0) << "case " << c.name << ": " << bad << " cells differ";

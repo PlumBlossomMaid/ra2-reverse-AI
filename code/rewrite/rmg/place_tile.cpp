@@ -239,5 +239,49 @@ bool PlaceTile(TileWorld& world, const MapGrid& grid, const TheaterData& theater
   return true;                                          // 0x57B6AD
 }
 
+
+// ── 0x5A6C10 StampTile ────────────────────────────────────────────────
+// 逐子格「无脑压」。取证：主体 0x5A6C10-0x5A6D73（`ret 8`）。
+//   0x5A6C26  虚表 +0x9C 取子块偏移表；表为空直接返回
+//   0x5A6C38  外层 y ∈ [0, +0x2E8)，内层 x ∈ [0, +0x2E4)
+//   0x5A6C68  落点 = (arg->x + x, arg->y + y)，两分量各自按 int16 加
+//   0x5A6C8D  菱形四不等式（与 MapGrid::InMap 同）
+//   0x5A6CDC  子块 = offs[k + 4]（k = 砖宽 * y + x），为 0 = 空洞跳过
+//   0x5A6CEA  +0x11A = (byte)k
+//   0x5A6CF4  +0x38  = 砖的 +0x294
+//   0x5A6CFC  level != -1 → +0x11B = (byte)(子块 +0x28 + level - 4)
+//   0x5A6D0A  +0x11C = 子块 +0x2A（无条件）
+//   0x5A6D13  [0xABED10] 非空 → work[Y * side + X].+0x38 = blob_id
+void StampTile(TileWorld& world, const MapGrid& grid, const TileType& tile,
+               const CellCoord& at, int blob_id, int level) {
+  if (tile.cells.empty()) return;                       // 0x5A6C2C
+
+  for (int ty = 0; ty < tile.height; ++ty) {            // 0x5A6C54
+    for (int tx = 0; tx < tile.width; ++tx) {           // 0x5A6C64
+      const CellCoord wc{
+          static_cast<std::int16_t>(at.x + tx),
+          static_cast<std::int16_t>(at.y + ty)};
+      if (!grid.InMap(wc)) continue;                    // 0x5A6C90-0x5A6CB4
+
+      // ⚠️ 原版这里是 GetCellAt（0x5657A0），拿不到格子会退到共享哑元并照写。
+      // 但上面那四条不等式已经保证落在菱形里，而阶段 1 给整个菱形都建了格子
+      // （菱形外才是 NULL），所以这条退化路在 RMG 里走不到，未建模。
+      if (!world.CellExists(wc)) continue;
+
+      const int k = tile.width * ty + tx;               // 0x5A6CC9-0x5A6CDA
+      const TileSubCell& sub = tile.At(tx, ty);
+      if (!sub.present) continue;                       // 0x5A6CE2
+
+      world.SetSubTile(wc, static_cast<std::int8_t>(k));         // 0x5A6CEA
+      world.SetIsoTile(wc, tile.tile_number);                    // 0x5A6CF4
+      if (level != -1) {                                         // 0x5A6CF7
+        world.SetLevel(wc, static_cast<std::int8_t>(sub.height + level - 4));
+      }
+      world.SetRamp(wc, static_cast<std::int8_t>(sub.ramp));      // 0x5A6D0D
+      world.SetWorkBlob(wc, blob_id);                            // 0x5A6D3A
+    }
+  }
+}
+
 }  // namespace rmg
 }  // namespace ra2

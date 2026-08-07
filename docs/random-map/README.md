@@ -23,7 +23,7 @@
 | [stage-hills.md](stage-hills.md) | 阶段：Creating hills（造山，唯一随机源是高度场） | ✅ 随机部分 + 角点抬升子系统全链已实锤 |
 | [stage-lats.md](stage-lats.md) | 阶段：Creating LATs, rocks etc（地表装饰，取数点最密） | ✅ 18 个取数点全部实锤 |
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
-| [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法全还原；**`MapType 0/1/2` 主路径整条落成 C++ 并对拍** |
+| [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法全还原；**`MapType 0/1/2` 主路径 + 水面细化整条落成 C++ 并对拍** |
 
 ## 进度
 
@@ -47,7 +47,7 @@
         四张 7 项表已 dump；`side = W + H + 1` 实锤（`0x42AC5C`）；
         **已复刻并全网格对拍**（1260 例，`code/rewrite/rmg/map_size.cpp`）——
         实锤了「插值必须逐步 chop 舍入」：精确算术会把 `70×(1-1.2)+80×1.2` 算成 82，原版是 81
-  - [x] Seeding water：阶段结构 + 水面 tile 细化 `FUN_0059C630` 已还原并对拍
+  - [x] Seeding water：阶段结构已还原
   - [x] Seeding water：涂块核心 `FUN_0059BBC0`（最小堆扩散 + 中心布朗运动）算法已还原
   - [x] Seeding water：**最小堆的并列语义已实锤并对拍**——下沉/上浮一律「严格大于」，
         相等不交换（堆序就是陆地生长顺序，这里错一位整张图就散）；
@@ -150,6 +150,15 @@
       后续所有出图邻格都被跳过（对拍中确认这条副作用会改变产物）。
       另确认一条原版真实行为：MapType 0 在小图上每块陆地都铺不出岸线、
       整块回滚，**终态全是水**（基准 `mt0-allwater` 专门盯住它）
+- [x] **水面细化 `0x59C630` + 压砖器 `0x5A6C10` 落成 C++ 并对拍**
+      （`water_refine.{h,cpp}` + `place_tile.cpp` 的 `StampTile`）——
+      基准是**先跑完阶段 2 调度器再跑细化**的连贯产物，
+      两段取数次数分开记账（阶段那一栏与 stage_water 基准逐例相同，互为交叉验证）；
+      纠了旧文一处实质错误：大水面形状号是 `n / 40` 不是 `n / 10`
+      （魔数 `0x66666667` 配 `sar edx,4`），于是 `shape ∈ [0,7]` 与小浪花的 `[8,13]`
+      恰好拼满 WaterSet 的 `TilesInSet = 0x0E`——砖号分配自洽，反过来作证 `/40`；
+      新记两条：`0x5A6C10` 会写 `CellClass +0x11C`（坡度，来自 `.tmp` 子块头 `+0x2A`）
+      而贴砖器 `0x57B440` 从不碰它，且它的层高公式多一个 `-4`
 - [x] **`TheaterData` 接进涂块/岸线两侧**——删掉 `WaterTile()` /
       `ShorePiecesBase()` 两个虚函数，去掉重复真值来源；
       顺带把格指针/哑元辅助抽成 `cell_ref.{h,cpp}` 供阶段调度器复用
