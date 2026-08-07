@@ -1,11 +1,12 @@
 # 阶段 4：Making regions——区域重建 + 区域之间开通路
 
-> 状态：**45 个取数点已关掉 32 个**。阶段骨架、末段三个函数、区域切分阈值、
-> 以及开坡道外壳（`0x590970` + `0x590FD0` + `0x5A1E50`）已实锤；
-> 仍欠区域切分 `0x58D620` 的后半段、跨水连接 `0x58F2C0`、
+> 状态：**45 个取数点已关掉 37 个**。阶段骨架、末段三个函数、区域切分阈值、
+> 开坡道外壳（`0x590970` + `0x590FD0` + `0x5A1E50`）、
+> 以及架桥 `0x58F2C0` 已实锤；
+> 仍欠区域切分 `0x58D620` 的后半段、
 > 以及七个坡道建造函数的砖号几何（见 §十一）。
 > 取证：`memory/data/decomp/rmg_regions_stage4{,b,c}.txt` /
-> `rmg_ramp_stage4{d,e,f}.txt`。
+> `rmg_ramp_stage4{d,e,f}.txt` / `rmg_bridge_stage4{g,h,i}.txt`。
 >
 > 这是全流水线**取数最密的一段（45 处）**，而且**只在 `MapType ∈ {3,4}` 下执行**——
 > 与 [stage-water-maptype34.md](stage-water-maptype34.md) 是同一条支路。
@@ -269,13 +270,13 @@ for (int i = 1; i < r->neighbours.count; ++i) {          // 出口判据在循�
 `b->level == a->level && a->level == r->level` 间接约束的。三处 `count`
 都在循环里重新从 `r->neighbours` 读，说明作者预期 `0x58F2C0` 可能改动区域表。
 
-`0x58F2C0` 的用途**未逐条实锤**，但语境非常明确：由水区域出面、把两个同层的
-陆地邻区配对、两边都得"够大或够连通"（`邻区数 > 1 或 格子数 > 50`）。
-再加上 `IsCliffOrBridgeTile`（§九）里 `BridgeSet` / `WoodBridgeSet` 的存在，
-**架桥**是首选假说。
+`0x58F2C0` **就是架桥**——由水区域出面、把两个同层的陆地邻区配对、
+两边都得"够大或够连通"（`邻区数 > 1 或 格子数 > 50`），然后在水面上铺一座低桥。
+逐条取证见 §五之三。
 
-> 这里刻意不把它写成"架桥"。上一次拿调用点语境替取证的代价，
-> 记在 [stage-water-maptype34.md](stage-water-maptype34.md) §八末尾。
+> 上一版这里写的是"**架桥**是首选假说，刻意不写成架桥"。现在假说升级成了结论：
+> 桥面砖号解出来是 `LOBRDG01..25`、桥头用的正好是 `PavedRoadEnds` 的 4 个成员、
+> 桥上还会盖一间 `CABHUT`（桥梁维修小屋）。三条独立证据，全部落在 exe 字节上。
 
 > 反编译里外层下标是 `+= 4`（字节偏移，强度削减的产物）而内层是 `* 4`（元素下标）。
 > 两种写法**语义相同**——一度以为外层恒取 `neighbours[0]`，
@@ -469,6 +470,284 @@ StampTile(...);                                      // 0x5A6C10，铺坡道砖
 也就是说这个 `PickBelow(2)` 挑的是坡道边上那道悬崖的**外观变体**。
 **选行的下标其实是坡道走向的符号（`run > 0`），不是随机数**；
 随机数控制的是另一处（走向翻转 / 起点偏移），**尚未逐条读完**。
+
+## 五之三、`0x58F2C0` = BuildBridge：在水上铺一座低桥——5 个取数点全部落地
+
+签名：`char BuildBridge(RegionClass* water /*ecx*/, Region* a, Region* b)`，
+两个区域参数都在栈上（`[esp+0x20C]` / `[esp+0x210]`），进门就取
+`idA = a->+0x08`、`idB = b->+0x08`。取证：`memory/data/decomp/rmg_bridge_stage4{g,h,i}.txt`。
+
+三条独立证据把"架桥"从假说钉成结论：
+
+1. 桥面写的 overlay 号 `0x4A..0x4D` / `0x53..0x56` / `0x5C` / `0x5E` / `0x60` / `0x62`，
+   按 `[OverlayTypes]` 的位置下标翻出来正好是 `LOBRDG01..25`（低桥）；
+2. 桥头两端各贴一块 `PavedRoadEnds` 的成员，而这个 TileSet **恰好只有 4 块砖**，
+   代码用的正好是 `+0/+1/+2/+3` 对应东/北/西/南；
+3. 桥上会 `new` 一间建筑，类型字符串是 `"CABHUT"`（桥梁维修小屋），
+   业主字符串是 `"Neutral"`。
+
+### 外壳：最多试 200 次
+
+```c
+char BuildBridge(RegionClass* water, Region* a, Region* b) {
+    int  idA = a->id, idB = b->id;
+    int  tries = 0;
+    char done  = 0;
+    for (;;) {
+        if (done) return done;                  // 成功后从循环头出去
+        ... 见下 ...
+        if (199 < ++tries) return done;         // 判据在循环尾
+    }
+}
+```
+
+`done` 只在**铺完一整座桥**之后置 1，所以一次调用最多架一座桥；
+失败的尝试之间**不回滚**（探条只读不写，桥面只在全部判据通过后才落笔）。
+
+### 第一步：抽一格水面当锚点——三重拒绝采样
+
+```c
+// 取数点 0x58F342
+do {
+  do {
+    do { idx = _ftol((double)(uint32)Random() * (1/(2^32-1)) * (double)(side*side)); }
+    while (idx > side*side - 1);                      // 标准 PickBelow(side²)
+  } while (work[idx].regionId != water->id);          // ① 必须是本水域自己的格
+  CellStruct zero = CellStruct(0, 0);                 // 0x42D470
+} while (work[idx].coord == zero);                    // ② 坐标不能是 (0,0)，0x50E470
+int x = work[idx].coord.X, y = work[idx].coord.Y;
+```
+
+`side = [0x89C2DC]`，工作数组基址 `[0xABED10]`、步长 `0x50`、`regionId` 在 `+0x38`——
+与前面各阶段同一套。这是外层循环里**唯一**的一个随机数点，
+但两层拒绝都会重抽，所以"水域格子少"的地图会在这里多吃随机数。
+
+> ① 里的 `water->id` 是**每轮重新从 `ecx` 里读**的（伪代码的 `iVar9 = local_1f4`），
+> 说明作者不信任区域表在架桥过程中保持不变。
+
+### 第二步：四条探条从锚点往外走，找对岸
+
+四个方向各有一份**独立的栈上矩形**（编译器没合并，四份都在）：
+
+| 方向 | 初始矩形 | 每步 | 侧翼两格 |
+|---|---|---|---|
+| 北 | `{x-1, y, 3, 1}` | `Y -= 1` | `(X, Y)` 与 `(X+2, Y)`，即 `x-1` / `x+1` |
+| 南 | `{x-1, y, 3, 1}` | `Y += 1` | 同上 |
+| 西 | `{x, y-1, 1, 3}` | `X -= 1` | `(X, Y)` 与 `(X, Y+2)`，即 `y-1` / `y+1` |
+| 东 | `{x, y-1, 1, 3}` | `X += 1` | 同上 |
+
+每个方向的走法完全一样（以北为例）：
+
+```c
+while (!IsCrossableGround(&strip, 0, 0)) {   // 0x5A7250，两个开关都传 0
+    strip.Y -= 1;                            // 先走一步，再检查新行/新列的侧翼
+    CellStruct l = { strip.X,     strip.Y };
+    CellStruct r = { strip.X + 2, strip.Y };
+    Cell* cl = TryGetCellAt(&l);             // 0x5657A0，ecx = 0x87F7E8
+    Cell* cr = TryGetCellAt(&r);
+    if (!IsWithinUsableArea(&l, 1) || !IsWithinUsableArea(&r, 1)   // 0x578460
+        || IsCliffOrBridgeTile(cl) || IsCliffOrBridgeTile(cr))     // 0x4863D0
+        goto fail;                           // 该方向对失败
+}
+Rect back = { strip.X, strip.Y - 3, 3, 3 };  // 落桥点再往外的 3x3 也得是好地
+if (!IsCrossableGround(&back, 0, 0)) goto fail;
+```
+
+四个 `back` 矩形分别是：北 `{X, Y-3, 3, 3}`、南 `{X, Y+1, 3, 3}`、
+西 `{X-3, Y, 3, 3}`、东 `{X+1, Y, 3, 3}`（`X`/`Y` 是走完之后的探条原点）。
+
+两个要点：
+
+- **循环判据在走之前**。如果锚点那条 `3×1` 一开始就已经是"可通行地面"，
+  循环体一次都不执行，探条原点保持不动，跨距会算成 0；
+- **成对短路**：北失败就**根本不走南**（共用 `fail` 标签 `0x58F649`），
+  西失败也**根本不走东**（`0x58F84F`）。所以"竖桥可用"要求北南**都**成功。
+
+### 第三步：配对判定——两端必须正好是 A 和 B
+
+```c
+int spanV = okV ? abs(Ysouth - Ynorth) : 999;      // abs 是 >>31 异或减
+int spanH = okH ? abs(Xeast  - Xwest ) : 999;
+// 落桥点的区域号：竖桥读探条自己的列 x-1，横桥读探条自己的行 y-1
+int nId = work[Ynorth * side + (x-1)].regionId, sId = work[Ysouth * side + (x-1)].regionId;
+int wId = work[(y-1) * side + Xwest ].regionId, eId = work[(y-1) * side + Xeast ].regionId;
+
+if (okV && !((nId == idA && sId == idB) || (nId == idB && sId == idA))) okV = false;
+if (okH) {
+    if ((eId == idA && wId == idB) || (eId == idB && wId == idA)) {
+        if (okV) { if (spanV < spanH) okH = false; else okV = false; }   // 平手偏横
+    } else okH = false;
+}
+```
+
+两端**必须**分别落在 A、B 上（顺序任意）；一端落到第三个区域就作废。
+两个方向都可用时选**短的那个**，`spanV == spanH` 时走 `else` 分支砍掉竖桥——
+**平手偏横**。
+
+> 竖桥读列 `x-1`、横桥读行 `y-1`，用的是探条矩形的**左上角**而不是锚点本身。
+> 探条宽 3、锚点在中间，所以这等于"看侧翼里靠西/靠北那一格"，不是中心格。
+> 是有意还是顺手写了 `rect.X`，**未确认**；照抄。
+
+### 第四步：跨距上限随重试次数放宽
+
+```c
+int maxSpan = tries / 25 + 8;    // 有符号除 25：imul 0x51EB851F + sar edx,3 + 符号修正
+```
+
+试到第 0..24 次上限 8，第 25..49 次上限 9……第 175..199 次上限 15。
+**先横后竖**地挑：
+
+```c
+if (okH && spanH < maxSpan)      rect = { Xwest, y-1, spanH + 1, 3 };
+else if (okV && spanV < maxSpan) rect = { x-1, Ynorth, 3, spanV + 1 };
+if (rect.W > 0 && rect.H > 0) {
+    if (!BridgeFootprintClear(&rect)) goto next_try;      // 0x5902C0
+    ... 铺桥 ...
+    done = 1;
+}
+```
+
+`rect` 那四个变量在**每轮开头清 0**，所以两个 `if` 都不成立时
+`W == H == 0`，直接落到重试。
+
+### 第五步：铺桥面（不取随机数）
+
+横桥：
+
+```c
+for (int yy = Y; yy < Y + H; ++yy)               // H 恒为 3
+  for (int xx = X; xx < X + W; ++xx) {
+      Cell* c = TryGetCellAt(&{xx, yy});
+      if      (xx == X)         c->Overlay = 0x5E;             // LOBRDG21
+      else if (xx == X + W - 1) c->Overlay = 0x5C;             // LOBRDG19
+      else                      c->Overlay = 0x4A + (xx % 4);  // LOBRDG01..04
+      TryGetCellAt(&{xx, yy})->OverlayData = (char)(yy - Y);   // 0..2，第二次查格
+  }
+```
+
+竖桥把内外循环换个身份、砖号换一组：
+
+```c
+for (int yy = Y; yy < Y + H; ++yy)
+  for (int xx = X; xx < X + W; ++xx) {          // W 恒为 3
+      if      (yy == Y)         c->Overlay = 0x60;             // LOBRDG23
+      else if (yy == Y + H - 1) c->Overlay = 0x62;             // LOBRDG25
+      else                      c->Overlay = 0x53 + (yy % 4);  // LOBRDG10..13
+      c->OverlayData = (char)(xx - X);                         // 0..2
+  }
+```
+
+overlay 号 → 名字（`nn = overlay - 0x49`）：
+
+| overlay | 名字 | 用处 |
+|---|---|---|
+| `0x4A`..`0x4D` | `LOBRDG01`..`04` | 横桥桥身，按 `x % 4` 循环 |
+| `0x53`..`0x56` | `LOBRDG10`..`13` | 竖桥桥身，按 `y % 4` 循环 |
+| `0x5C` | `LOBRDG19` | 横桥东端 |
+| `0x5E` | `LOBRDG21` | 横桥西端 |
+| `0x60` | `LOBRDG23` | 竖桥北端 |
+| `0x62` | `LOBRDG25` | 竖桥南端 |
+
+号→名的换算走 `[OverlayTypes]` 的**位置下标**（键 1..39 → 下标 `key-1`，
+键 42..121 → 下标 `key-3`），用已经钉死在 exe 上的两个锚点
+（`GEM01 = 27`、`TIB01 = 102`，见 [stage-tiberium.md](stage-tiberium.md)）双向校验过。
+
+`Overlay` 是 `CellClass +0x44`（4 字节写），`OverlayData` 是 `+0x11E`（1 字节）。
+这一条顺手把 [stage-lats.md](stage-lats.md) 里 "`+0x11E` 疑似 `OverlayData`"
+的猜测坐实了：桥身用它存**桥面第几行/第几列**（0..2），正是 overlay 子帧号的语义。
+
+> `xx % 4` 是 **C 的有符号取余**（`and 0x80000003` + 负数修正），不是 `& 3`。
+> 坐标为负时余数会是负的、算出比 `0x4A` 更小的 overlay 号。
+> 实战中 `X >= 1`（锚点来自可用区），所以走不到；**照抄不修**。
+>
+> 每格查了**两次** `TryGetCellAt`（一次写 overlay、一次写 OverlayData）。
+> 纯粹是源码写了两条语句、编译器没做 CSE。
+
+### 第六步：桥头路砖——4 个 `PickBelow(2)`
+
+四端各有一个"先看地形平不平、平的话再抛硬币"的结构。
+抛硬币用 `[0x7ED8B0] = 2/(2^32-1)`、拒绝 `> 1`，即 `PickBelow(2)`：
+
+| 端 | 试探矩形（`0x5A7440`） | 取数点 | 抛到 1 | 抛到 0 或矩形不平 |
+|---|---|---|---|---|
+| 东 | `{X+W, Y-2, 6, 6}` | `0x58FBDD` | `PavedRoads+10` @ `(X+W, Y)` | `PavedRoadEnds+0` @ `(X+W, Y)` |
+| 西 | `{X-6, Y-2, 6, 6}` | `0x58FCC6` | `PavedRoads+9` @ `(X-4, Y)` | `PavedRoadEnds+2` @ `(X-1, Y)` |
+| 北 | `{X-2, Y-6, 7, 6}` | `0x59000E` | `PavedRoads+13` @ `(X, Y-4)` | `PavedRoadEnds+1` @ `(X, Y-1)` |
+| 南 | `{X-2, Y+H, 7, 6}` | `0x5900F7` | `PavedRoads+12` @ `(X, Y+H)` | `PavedRoadEnds+3` @ `(X, Y+H)` |
+
+- 横桥只走东/西两行，竖桥只走北/南两行——**一次成功的架桥只消耗 2 个随机数**，不是 4 个；
+- 矩形不平时**照样贴砖**，只是贴 `PavedRoadEnds`（一小截断头路）而不是整段公路；
+  这两条分支里 `PickBelow(2)` 是**不抽**的（`goto` 跳过了取数点）；
+- 贴砖用压砖器 `StampTile(ecx = tileIdx, edx = &coord, -1, -1)` = `0x5A6C10`，
+  与 §八 坡道那边同一个入口，`level = -1` ⇒ 不改层高；
+- `PavedRoadEnds` 只有 4 块砖、这里正好 `+0/+1/+2/+3` 四方向各用一块——
+  这是 `0xABBEC4 = PavedRoadEnds` 这个命名的**第二条独立佐证**
+  （第一条是 `0x545150` 的键名回填，见 [stage-recalc.md](stage-recalc.md)）。
+
+### 第七步：桥梁维修小屋——整条流水线里唯一一次 `new` 游戏对象
+
+`0x5904B0(Rect*)` 在一个 **(W+1)×(H+1) 闭区间**里找第一格
+「没有 overlay、是平地、`+0xE4 == 0`」的格子，找到就在那儿盖屋：
+
+```c
+char PlaceRepairHut(Rect* r) {
+    for (int yy = r->Y; yy <= r->Y + r->H; ++yy)
+      for (int xx = r->X; xx <= r->X + r->W; ++xx) {
+        Cell* c = TryGetCellAt(&{xx, yy});
+        if (c->Overlay != -1 || !IsPlain(c) || c->+0xE4 != 0) continue;   // 0x486380
+        int ht = HouseTypeIndexByName("Neutral");        // 0x5117D0，"<random>" 会返回 -2
+        HouseClass* h = FindHouseByTypeIndex(ht);        // 0x502D30，比 house->+0x34 的 +0xB8
+        int bt = FindBuildingTypeIndexById("CABHUT");    // 0x45E7B0，strcmpi 0x7C8D20 比 +0x24
+        BuildingClass* b = new(0x720) BuildingClass(BuildingTypes[bt], h);  // ctor 0x43B740
+        b->Unlimbo({ xx * 256 + 128, yy * 256 + 128, 0 }, 0);              // vfunc +0xD8
+        return 1;
+      }
+    return 0;
+}
+```
+
+两端各试**两个**矩形（小的不行就试大的）：
+
+| 桥向 | 第一端 | 第一端退化 | 第二端 | 第二端退化 |
+|---|---|---|---|---|
+| 横 | `{X, Y-1, 2, 5}` | `{X-1, Y-2, 3, 7}` | `{X+W-2, Y-1, 2, 5}` | `{X+W-2, Y-2, 3, 7}` |
+| 竖 | `{X-1, Y, 5, 2}` | `{X-2, Y-1, 7, 3}` | `{X-1, Y+H-2, 5, 2}` | `{X-2, Y+H-2, 7, 3}` |
+
+对复刻的影响很实在：**这是目前逆出来的整条 RMG 里唯一一处构造游戏对象的地方**，
+落到 `.map` 上不是砖数据，而是 `[Structures]` 里的一条 `CABHUT` 记录
+（业主 `Neutral`、坐标就是那格）。
+
+> `new` 返回 0 时代码**不检查**就往下走（`0x59057B xor eax,eax` → `0x5905A3 mov edx,[eax]`
+> 取虚表）。25 年前 `operator new` 失败就直接崩，这是那个年代的常规写法；
+> 记录在案，C++ 侧不会真的分配失败，行为上无差别。
+
+### 这次新落地的公共零件
+
+| 地址 | 语义 |
+|---|---|
+| `0x5A7250(Rect*, allowRoad /*dl*/, allowRoadEnd /*栈*/)` | 「这块矩形是可跨的地面」：先内联查四角在菱形内（`[0xABED04]` / `[0xABED08]` 四不等式），再逐格：是 `PavedRoads` 砖要 `allowRoad`、是 `PavedRoadEnds` 砖要 `allowRoadEnd`、否则必须 `IsPlain(0x486380) 或 MiscPaveTile(0x486650) 或 PaveTile(0x486670)`。**`0x58F2C0` 的全部调用点两个开关都传 0** |
+| `0x5A7440(Rect*, allowRoad)` | 同上，**再加**「每格的 `+0x11B`（Level）都等于左上角那格」——桥头路砖要求地面同高 |
+| `0x5902C0(Rect*)` | 桥的落脚区检查：**(W+1)×(H+1) 闭区间**，每格要 `Overlay(+0x44) == -1`、`Level` 等于锚格、且 `IsPlain 或 IsWaterOrShore(0x4865D0)` |
+| `0x4866D0` | `TileIndex ∈ [PavedRoads(0xABBEC8), +0x0F)` |
+| `0x4866F0` | `TileIndex ∈ [PavedRoadEnds(0xABBEC4), +4)` |
+| `0x486650` / `0x486670` | `∈ [MiscPaveTile(0xAA10A4), +0x0E)` / `∈ [PaveTile(0xABC2B0), +0x10)` |
+
+`0x486650` / `0x486670` 这两个谓词在 [stage-lats.md](stage-lats.md) 里
+是「阶段 10 的死分支、语义未确认」；现在**语义确认**了（铺装地面的两个砖号区间），
+只是在阶段 4 这边仍然走不到 `true`——它们挂在 `||` 链的右侧，会被求值但没有铺装砖。
+
+> `0x4866D0` 的硬编码宽度 `0x0F`（15）与温和气候 `PavedRoads` 实际
+> `TilesInSet = 21` 不一致——这是 `0x4863D0` 里 `CliffRamps` 那个
+> `0x14` vs `10` 之外的**第二例**"硬编码宽度与 ini 不符"。
+> 三例已汇总在 `memory/data/rmg/tileset_globals.txt` 的交叉校验尾注里。照抄不修。
+
+### 未确认（本节）
+
+1. 落桥点区域号读的是探条矩形左上角（竖桥列 `x-1`、横桥行 `y-1`）而不是中心格——
+   是刻意还是笔误，**未确认**；
+2. `CellClass +0xE4`（小屋选址的第三个条件）字段名**未确认**（多阶段共用的未确认项）；
+3. 横桥分支里那句多余的 `H < 1` 复查（伪代码 `local_1f8 < 1`）只在竖桥路径上有意义，
+   是编译器合并两条路径公共尾部的产物，**不影响行为**。
 
 ## 六、`0x578E60(0, -1)`：全图重刷砖
 
@@ -724,7 +1003,7 @@ float Priority(CellStruct* origin, CellStruct* c, double baseAngle) {
 | `0x58C6F0` 三项优先级 | 1 | `58C7AE` | ✅ 已实锤（§九） |
 | `0x58C800` `SeedRegion` | 1 | `58CAF9` | ✅（阶段 3 已实锤，此处共用） |
 | `0x58D620` 区域切分 | 4 | `58D782` `58D7CD` `58D8BD` `58E37D` | ⚠️ 仅结构 |
-| `0x58F2C0` 跨水连接 | 5 | `58F342` `58FBDD` `58FCC6` `59000E` `5900F7` | ⚠️ 仅定位 |
+| `0x58F2C0` 架桥 | 5 | `58F342` `58FBDD` `58FCC6` `59000E` `5900F7` | ✅ 已实锤（§五之三；一次成功架桥至少消耗 3 个，锚点拒绝采样会更多） |
 | `0x5905D0` 开通路 | 3 | `590792` `5907C0` `590889` | ✅ 三处语义已实锤（§五） |
 | `0x590970` 开一条坡道 | 8 | `590BAE` `590BDD` `590C7B` `590CAB` `590D4A` `590D79` `590E17` `590E47` | ✅ 已实锤（§五之二，四对坡道端点抖动） |
 | `0x5910F0` 南向直坡 | 1 | `5914A4` | ⚠️ 已知是 `PickBelow(2)`，选什么未定 |
@@ -738,7 +1017,7 @@ float Priority(CellStruct* origin, CellStruct* c, double baseAngle) {
 
 合计 45，与 [rng-ledger.md](rng-ledger.md) 的阶段归属逐条对上。
 
-**已关掉 32 处，剩 13 处**：`0x58F2C0`（5）、`0x58D620`（4），
+**已关掉 37 处，剩 8 处**：`0x58D620`（4），
 外加四个直坡建造函数各 1 处（已知都是 `PickBelow(2)`，只差"选的是什么"）。
 
 ⚠️ 「取数点数」是**静态**的指令条数，不是运行时的消耗次数。
@@ -762,15 +1041,16 @@ float Priority(CellStruct* origin, CellStruct* c, double baseAngle) {
 2a. **疑似复制粘贴 bug**：`0x590970` 后路第 3 次尝试（`0x591D80`，主路对应"北侧全空"）
    的门写的是 `m & 0x08`（S），与第 1 次（`0x5910F0`，"南侧全空"）撞车，
    按规律应为 `m & 0x80`（N）。未找到反证，照抄；
-3. `0x58F2C0(regionA, regionB)` —— 5 个取数点，"跨水把两个同层陆地区域连起来"。
-   **架桥只是假说，未取证**；
+3. ~~`0x58F2C0` 架桥只是假说~~ —— **已实锤**，见 §五之三（`LOBRDG` 低桥 +
+   `PavedRoadEnds` 桥头 + `CABHUT` 维修小屋）。本节遗留的三条小疑点搬到 §五之三末尾；
 4. `0x5910F0` / `0x591740` / `0x591D80` / `0x592440` —— 各 1 个取数点，
    挂在 `0x5905D0` 子树下，连调用关系都还没画清；
 5. `0x579010` / `0x579620`（`0x578E60` 里的两遍重刷砖）—— 不取随机数，
    但会**改砖号**，落 C++ 时必须还原；
 6. `RegionClass +0x1B` 的读取方**未找到**——只看到 `0x5905D0` 在开通路失败时清 0；
 7. `0x5A19E0` 缺 `0x0E`（E+SE+S）那个直角分支，是漏写还是刻意，未确认；
-8. `0x4863D0` 里 `CliffRamps` 的硬编码宽度 `0x14` 比实际 `TilesInSet = 10` 大一倍；
+8. `0x4863D0` 里 `CliffRamps` 的硬编码宽度 `0x14` 比实际 `TilesInSet = 10` 大一倍
+   （同类第二例：`0x4866D0` 的 `PavedRoads` 宽 `0x0F` vs 实际 21，见 §五之三）；
 9. `0x58D410 GetBorderCells` 会不会返回空表——决定 §五那处 `count − 1` 下溢
    是不是真能被触发。
 

@@ -123,9 +123,20 @@ for (; rounds > 0; --rounds) {
 2. 再遍历全部 TileSet，`cmp edi, [esp+OFF]` 命中就把当前 TileSet 的
    **起始砖序号**写进对应全局
 
-两段的 `esp` 差 `0xC`（第一段记录返回值那一刻正压着三个参数），据此把
-「键名 → 栈槽」和「栈槽 → 全局」拼起来，得到 45 个全局的键名——
+第一段的存槽指令 `mov [esp+OFF], eax` 存的是**上一次调用**的返回值，而它出现时
+`esp` 已经被下一组的若干 `push` 压低了，所以真实槽位 =
+`OFF − 4 × (call 与 store 之间的 push 个数)`——**不是**固定的 `0xC`。
+据此把「键名 → 栈槽」和「栈槽 → 全局」拼起来，得到 46 个全局的键名，
+54 个键名全部落位、无二义——
 工具 `code/randmap/dump_tileset_globals.py`，结果 `memory/data/rmg/tileset_globals.txt`。
+
+> 早前版本按"两段 `esp` 恒差 `0xC`"配对。因为大多数组恰好只压三个参数，
+> 那张表**多数行是对的**，只在 push 数不同的那几组错位——
+> 表现就是 4 个全局配不上键、3 组键名二义、还漏掉 1 个全局。
+> 教训记在这里：**局部正确的配对规则最难发现**，
+> 它给出的表看着自洽（`IsWaterOrShore` 那六个区间照样对得上），错的只有边角。
+> 现在的版本在文件尾部自动生成一段
+> 「硬编码宽度 vs `TilesInSet`」的交叉校验，五组吻合、三组不吻合（照抄不修）。
 
 关键几个：
 
@@ -141,17 +152,24 @@ for (; rounds > 0; --rounds) {
 | `0xABB10C` | Rocks | 石头 |
 
 **这张表本身就是一次交叉验证**：`IsWaterOrShore`（`0x4865D0`）认的六个区间，
-反查出来正好是 `WaterSet + ShorePieces + 四个方向的瀑布`——语义严丝合缝，
-说明 `esp` 差 `0xC` 的推算是对的。
+反查出来正好是 `WaterSet + ShorePieces + 四个方向的瀑布`——语义严丝合缝。
+（注意：这一条在旧的错位版本里**也成立**，见上面那段教训；
+真正把配对钉死的是文件尾部那五组"硬编码宽度 == TilesInSet"。）
 
 ## 四、未确认
 
-1. 四个全局 `0xAA0E1C` / `0xAA1024` / `0xAA1090` / `0xAA10A4` 没能匹配到键名
-   （解析器在几组里丢了配对），另有几组键名有二义（`HeightBase / WaterBridge`、
-   `MiscPaveTile / TrackTunnels`、`MMRampBase / MonorailSlopes`）——本阶段用不到，暂不追。
-   其中 `0xAA1020` 的三义**已在阶段 4 定死为 `CliffSet`**：
-   `ToSnowTheater` / `ToTemperateTheater` 在温和与雪地两套 theater ini 里都没定义，
-   且 `CliffSet` 的 `TilesInSet = 40` 与 `0x5A17F0` / `0x4863D0` 硬编码的
-   `0x28` 精确吻合（见 [stage-making-regions.md](stage-making-regions.md) §八）
+1. ~~四个全局没匹配到键名、另有三组二义~~ —— **全部关闭**（修了配对算法，见上）：
+   `0xAA0E1C = RoughGround`、`0xAA1024 = MonorailSlopes`、`0xAA1090 = WaterBridge`、
+   `0xAA10A4 = MiscPaveTile`；二义定为 `0xAA0744 = HeightBase`、
+   `0xABB108 = TrackTunnels`、`0xAA109C = MMRampBase`；
+   另补回一个此前整个漏掉的 `0xABC1D8 = RampBase`（那处比较写成
+   `mov eax,[esp+OFF] / cmp edi,eax`，与其余的 `cmp edi,[esp+OFF]` 不同形）。
+   `0xAA1020 = CliffSet` 这次拿到了**第三条独立佐证**：
+   `ToSnowTheater` / `ToTemperateTheater` 这两个键根本不回填任何全局
+   （前两条：两套 theater ini 里都没定义这两个键；`CliffSet` 的 `TilesInSet = 40`
+   与 `0x5A17F0` / `0x4863D0` 硬编码的 `0x28` 吻合，
+   见 [stage-making-regions.md](stage-making-regions.md) §八）。
+   `0xAA10A4 = MiscPaveTile` 与 `0xABC2B0 = PaveTile` 随后又被阶段 4 的
+   `0x486650` / `0x486670` 独立印证（§五之三）
 2. `CellClass::RecalcAttributes(-1)` 的参数 `-1` 语义（推测是"不指定 theater"）
 3. `0x59B740` 为什么没有自己的阶段日志——多半是后加的一段，作者懒得加

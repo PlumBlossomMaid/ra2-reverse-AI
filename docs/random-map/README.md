@@ -25,7 +25,7 @@
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法全还原；**`MapType 0/1/2` 主路径 + 水面细化整条落成 C++ 并对拍** |
 | [stage-water-maptype34.md](stage-water-maptype34.md) | 阶段 2 支路：`MapType ∈ {3,4}` 的**河流、湖泊与瀑布**（含查表 sin/cos） | ✅ 八个函数全部实锤；sin/cos 已落 C++ 并对拍；整支路待落 C++ |
-| [stage-making-regions.md](stage-making-regions.md) | 阶段 4：Making regions（区域重建 + **区域之间开坡道/架桥**，`MapType ∈ {3,4}` 专属，45 个取数点） | ⚠️ 45 个取数点关掉 32；余 `0x58F2C0`/`0x58D620` 与七个坡道建造函数的几何 |
+| [stage-making-regions.md](stage-making-regions.md) | 阶段 4：Making regions（区域重建 + **区域之间开坡道/架桥**，`MapType ∈ {3,4}` 专属，45 个取数点） | ⚠️ 45 个取数点关掉 37（架桥 `0x58F2C0` 已实锤）；余 `0x58D620` 与七个坡道建造函数的几何 |
 
 ## 进度
 
@@ -242,6 +242,20 @@
       掩码到手后八条分支顺序尝试（四个转角函数一个随机数都不取，
       四个直坡函数各带两次 `PickBelow(2)` 端点抖动），
       **分支不互斥**，一次调用消耗 0~10 个随机数，不是常数
+- [x] **架桥 `0x58F2C0` = BuildBridge 实锤，5 个取数点全部落地**：
+      "跨水连接"从假说升级成结论，三条独立证据——桥面 overlay 号翻出来是
+      `LOBRDG01..25`（低桥）、桥头四端正好用掉 `PavedRoadEnds` 仅有的 4 块砖、
+      桥上 `new` 的建筑类型串是 `"CABHUT"`（业主 `"Neutral"`）。
+      外壳最多试 200 次：抽一格水面当锚点（三重拒绝采样）→ 四条 3 格宽探条
+      向北/南/西/东逐格走到对岸 → 两端必须正好落在 A、B 两个区域上 →
+      两向都通时取短的、**平手偏横** → 跨距上限 `tries/25 + 8`（8 放宽到 15）。
+      桥头路砖是 4 个 `PickBelow(2)`，但一次架桥只走其中两个。
+      **这是目前逆出来的整条 RMG 里唯一构造游戏对象的地方**——
+      落到 `.map` 上是 `[Structures]` 里的一条 `CABHUT`，不是砖数据
+- [x] **TileSet 全局 ↔ theater ini 键名的配对算法修正**：旧脚本假设"两段 `esp` 恒差 `0xC`"，
+      对压参个数不同的那几组会错位——表现是 4 个全局配不上键、3 组二义、漏掉 1 个全局。
+      改成**逐条数 call 与 store 之间的 push**之后 46 个全局、54 个键全部落位；
+      新工具还自动生成"硬编码区间宽度 vs `TilesInSet`"的交叉校验（5 组吻合、3 组不吻合，照抄不修）
 - [x] **`0xAA1020` 这个三义 TileSet 全局定死为 `CliffSet`**：温和/雪地两套 theater ini 里
       `ToSnowTheater`/`ToTemperateTheater` 根本没定义，而 `CliffSet` 的
       `TilesInSet = 40 = 0x28` 与 `0x5A17F0`/`0x4863D0` 硬编码的区间宽度精确吻合。
