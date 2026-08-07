@@ -76,6 +76,26 @@ count × { dword id; dword offset; dword size }    offset 相对数据区起点
 `ra2md.mix` 解出 25 条内嵌 mix，末条的 `offset + size` 与文件实际大小
 只差 29 字节（尾部对齐），`multimd.mix` 差 1 字节——头解对了。
 
+## 顺带：`.tmp` 砖块文件头
+
+随机地图的贴砖器要读砖的**占地格数**，那不在 ini 里，在 `.tmp` 文件头。
+砖块在 `ra2.mix` → `isotemp.mix`（温和）/ `isosnow.mix`（雪地）里，
+名字就是 ini 里 `FileName` 加两位序号加 theater 后缀，例如 `shore04.tem`。
+
+| 偏移 | 含义 |
+|---|---|
+| `+0x00` | 占地宽（格）。原版 `0x546B46` 用 `mov al` **按字节**读 |
+| `+0x04` | 占地高（格），同上 |
+| `+0x08` / `+0x0C` | 单块像素宽 / 高（实测恒为 60 / 30） |
+| `+0x10` 起 | `宽 × 高` 个 dword 偏移；**为 0 表示该子格是空洞** |
+
+子块头里贴砖器只用 `+0x28` 一个字节（该子格的高度增量）。
+装载时 `0x546B66`-`0x546B80` 会把偏移表里的相对偏移就地改成绝对指针。
+
+实测：`water09.tem` 是 `1×1`、`shore04.tem` 是 `1×2`、`shore42.tem` 是 `9×5`；
+`cliff01.tem` 的 `2×3` 里有两个空洞。用法见
+[../random-map/stage-seeding-water.md](../random-map/stage-seeding-water.md) §七。
+
 ## 未完成
 
 - 写入/打包（本项目用不到）

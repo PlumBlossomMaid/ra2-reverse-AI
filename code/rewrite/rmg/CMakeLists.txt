@@ -10,6 +10,7 @@ add_library(ra2_rmg
   shore_mask.cpp
   make_grid.cpp
   place_blobs.cpp
+  place_tile.cpp
   theater.cpp
   fp_guard.cpp)
 
@@ -82,4 +83,8 @@ if(RA2_BUILD_TESTS)
   add_executable(test_theater test/test_theater.cpp)
   target_link_libraries(test_theater PRIVATE ra2_rmg gtest_main)
   add_test(NAME theater COMMAND test_theater)
+
+  add_executable(test_place_tile test/test_place_tile.cpp)
+  target_link_libraries(test_place_tile PRIVATE ra2_rmg gtest_main)
+  add_test(NAME place_tile COMMAND test_place_tile)
 endif()

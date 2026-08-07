@@ -53,6 +53,12 @@ struct TheaterData {
   int ramp_base = -1;         // 0xABC1D8
   int bridge_set = -1;        // 0xAA0E28
   int black_tile = -1;        // 0xABC2CC
+  int cliff_set = -1;         // 0xAA1020  贴砖器的三个"地形不可覆盖"谓词要读
+  int cliff_ramps = -1;       // 0xABBEBC
+  int ramp_smooth = -1;       // 0xAA1058
+  int water_caves = -1;       // 0xABAD24
+  int wood_bridge_set = -1;   // 0xABAD1C
+  int destroyable_cliffs = -1;  // 0xABC2C8
 
   // 组内砖数；用于 IsWater 那种「起始砖号 + 宽度」的区间判定。
   int TilesInSetStartingAt(int start_tile) const;

@@ -98,11 +98,20 @@ start(k) = Σ TilesInSet[0 .. k-1]
 
 ## 六、未确认
 
-1. `TileTypeClass +0x294` / `+0x2E4` / `+0x2E8`（铺砖器 `0x57B440` 要读的
-   footprint 尺寸与图像指针）还没还原——那要解析 `.tmp` 砖块文件本身，
-   不是 ini 能给的
+1. ~~`TileTypeClass +0x294` / `+0x2E4` / `+0x2E8`~~ ✅ 已还原（2026-08-06）：
+   `+0x294` 是砖号（构造函数 `0x5447D9` 从参数直接存），
+   `+0x2E4` / `+0x2E8` 是 `.tmp` 文件头 `+0x00` / `+0x04` 两个**字节**
+   （`0x546B46`-`0x546B53`，`mov al` / `mov cl`）。布局与实测见
+   [stage-seeding-water.md](stage-seeding-water.md) §七「砖块尺寸从哪来」。
+   `.tmp` 从 `ra2.mix` → `isotemp.mix` 里取，用 `code/mix/mix_read.py` 读
 2. `LastTilesInSet` 键在两个 ini 里都**不存在**（`grep` 为空），
    但 `0x545FE5` 确实会读它并在与 `TilesInSet` 不等时走另一条分支。
    这条分支在原版数据下是死的，暂不追
 3. `tileset_globals.txt` 里四个没匹配上键名的全局
    （`0xAA0E1C` / `0xAA1024` / `0xAA1090` / `0xAA10A4`）——本阶段用不到
+4. 贴砖器又牵出六个之前没登记的组，现已补进 `TheaterData`：
+   `CliffSet 0xAA1020` / `CliffRamps 0xABBEBC` / `RampSmooth 0xAA1058` /
+   `WaterCaves 0xABAD24` / `WoodBridgeSet 0xABAD1C` / `DestroyableCliffs 0xABC2C8`。
+   其中 `WaterCaves` 与 `WoodBridgeSet` 在 temperate 里没定义（值为 -1），
+   而两份地形保护判据里只有一份会查 -1——差异见
+   [stage-seeding-water.md](stage-seeding-water.md) §七「两份判据不一致」
