@@ -103,11 +103,24 @@ double drift     = Ruggedness * 0.0001 + 0.1;   // 高度漂移步长
 double baseSlope = Ruggedness * 0.0025;         // 边界外的默认坡度
 double maxSlope  = Ruggedness * 0.005;          // 坡度上限
 const double sigma0 = 0.025;
-if (baseSlope < 0.025) return;                  // 即 Ruggedness < 10 时完全不造山
+if (baseSlope < 0.025) return;                  // 见下：实际门槛是 Ruggedness <= 10
 ```
 
-**`Ruggedness < 10` 时本阶段一个随机数都不取。**（`MapSeedClass +0x44 = Ruggedness`，
+**`Ruggedness <= 10` 时本阶段一个随机数都不取。**（`MapSeedClass +0x44 = Ruggedness`，
 见 `docs/random-map/parameters.md`）
+
+> ⚠️ **门槛是 `<= 10` 而不是 `< 10`，这是舍入模式咬出来的。**
+> `0x7EDAA0` 存的 `0.0025` 是 `3F647AE147AE147B`，精确值略大于 1/400；
+> `10 x 它` 的精确积落在 `0x3F99999999999999`（0.024999999999999998）与
+> `0x3F9999999999999A`（0.025）**之间**。原版全程 RC=chop，于是向零截断成前者，
+> `< 0.025` 成立，`Ruggedness == 10` 的图**一座山也没有**。
+> 换成 round-to-nearest 就会得到正好 0.025，判定翻面。
+> 模拟执行实测（`dump_height_field_golden.py`，FPCW=0x0E7F）：
+> `Ruggedness` 9/10 → 全表 0 个非零格；11/12 → 55 个。
+>
+> 这条也是踩过坑才发现的：给模拟器忘了写 `FPCW = 0x0E7F` 时，
+> `Ruggedness == 10` 的基准跑出了满地起伏，与重写对不上——**先怀疑模拟器**
+> 这条经验又一次生效。
 
 ### 2.2 工作记录里的两个 double
 
@@ -667,3 +680,32 @@ free([0xB0B6EC]);  [0xB0B6EC] = NULL;        // 格网用完即销毁
    已实锤前者是 `{X, Y, Width, Height}` 且格网按它分配，名字未确认
 5. 表项 0 的 `.bss` 位置 `0xB0B6DC` 是否会被同编译单元的编辑器路径写脏——
    RMG 单进程一次生成里恒为 `{0,0,0,0}`
+
+## 十三、复刻状态：⚠️ 高度场已落 C++ 并逐位对拍，其余仍是文档
+
+`code/rewrite/rmg/height_field.{h,cpp}`（ctest 名 `height_field`）落了 §二 的全部内容：
+
+| 本文的东西 | 原版地址 | C++ |
+|---|---|---|
+| 三个尺度 + `<= 10` 出口 | `0x5A2F59`-`0x5A2FA8` | `GenerateHeightField` 开头 |
+| 主循环（左/上邻平均 + 梯度取符号 + 锚点重置） | `0x5A2FC2`-`0x5A3383` | 同上 |
+| `TruncNormal` | `0x5A3215` / `0x5A32ED` | `TruncNormal` |
+| 取整（远离零） | `0x5A3392`-`0x5A33E2` | `RoundHalfAwayFromZero` |
+
+工作记录的 `+0x08` / `+0x10` / `+0x45` 三项加进了 `PaintWorkCell`
+——它们与涂块用的 `+0x38` / `+0x3C` 本来就住在同一条 0x50 字节记录里。
+`+0x45` 按偏移命名（`flag45`），因为阶段 6 的 `0x5A1FB0` 和本阶段的
+`0x5A33F0` 拿它当两件不同的事用，语义未定名。
+
+**对拍强度：黄金对拍，逐位一致。** 基准由
+`code/randmap/dump_height_field_golden.py` 用 Unicorn 跑 `0x5A2F50` 真身取得
+（FPCW=0x0E7F），存档 `memory/data/rmg/height_field_golden.txt`；
+9 个用例覆盖 `Ruggedness` 0 / 9 / 10 / 60 / 200 / 400 / 1000 / 5000 / 负数，
+带/不带锚点，逐格比 `height` 与 `slope` 的**完整 64 位**（不是近似比较）。
+
+顺带验证了一条一直悬着的事：`NormalDeviate` 里的 `ChopLog`（我们改用
+「精确 ln 向零截断」而不是本机 `fyl2x`，理由见 [fast-math.md](fast-math.md) §四）
+在这 9 个用例、上万次抽样里与原版 `fyl2x` **一次都没分岔**。
+
+§一（锚点）、§三~§九（角点抬升子系统）**还没落 C++**——它们要吃砖表与
+`CellClass`，得等 `.tmp` 装载器齐了才做得起来。

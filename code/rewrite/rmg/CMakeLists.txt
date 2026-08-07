@@ -19,6 +19,7 @@ add_library(ra2_rmg
   recalc.cpp
   zones.cpp
   start_points.cpp
+  height_field.cpp
   theater.cpp
   fp_guard.cpp)
 
@@ -116,6 +117,12 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_regions PRIVATE
     RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
   add_test(NAME regions COMMAND test_regions)
+
+  add_executable(test_height_field test/test_height_field.cpp)
+  target_link_libraries(test_height_field PRIVATE ra2_rmg gtest_main)
+  target_compile_definitions(test_height_field PRIVATE
+    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+  add_test(NAME height_field COMMAND test_height_field)
 
   add_executable(test_start_points test/test_start_points.cpp)
   target_link_libraries(test_start_points PRIVATE ra2_rmg gtest_main)

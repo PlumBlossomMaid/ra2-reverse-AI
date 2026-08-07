@@ -1,0 +1,49 @@
+// 阶段 9「Creating hills」的第 ② 步：连续高度场 0x5A2F50。
+//
+// 整个造山阶段**只有这里取随机数**（RNG 总账里的 0x598003，即 NormalDeviate
+// 内部那次 UniformUnit）。它是一个顺序推进的分形高度场：按线性下标
+// Y*side + X 从小到大走，每格拿左邻与上邻的平均值当基线，再抽两次截断正态
+// ——一次更新 slope（下一次抽样的 sigma），一次更新 height。
+//
+// ⚠️ Ruggedness < 10 时 `baseSlope < 0.025`，函数在 0x5A2FA8 直接返回，
+// **一个随机数都不抽**，整张图一座山也没有。
+//
+// 取证：docs/random-map/stage-hills.md §二。
+#ifndef RA2_RMG_HEIGHT_FIELD_H_
+#define RA2_RMG_HEIGHT_FIELD_H_
+
+#include <vector>
+
+#include "blob_paint.h"
+#include "fast_math.h"
+#include "map_grid.h"
+
+namespace ra2 {
+namespace rmg {
+
+// 0x5A3215 / 0x5A32ED 两处共用的骨架。
+//
+//   if (mu - sigma > hi || mu + sigma < lo) { sigma = (hi - lo) * 0.5; mu = sigma + lo; }
+//   do { v = NormalDeviate() * sigma + mu; } while (v < lo || v > hi);
+//
+// 两端都是**闭区间**接受（`v < lo` 与 `v > hi` 才重抽）。
+// NormalDeviate 一次 Box-Muller 出两个值并缓存第二个，所以一次调用消耗的
+// Random() 个数不是定值——缓存状态必须由调用方跨阶段延续。
+double TruncNormal(NormalDeviate& nd, double mu, double sigma, double lo,
+                   double hi);
+
+// 0x5A33A4 起那三条分支：四舍五入**远离零**，而且 0.0 原样不动。
+// 不是 ties-to-even，也不是 std::round（那个对 -0.0 的处理不同）。
+double RoundHalfAwayFromZero(double h);
+
+// 0x5A2F50 GenerateHeightField(Ruggedness)。
+// `work` 是 side² 条工作记录，`grid` 用整图矩形 (W+4, H+12) 构造
+// ——菱形判定读的是 [0xABED04] / [0xABED08]，正是这一对。
+// 进来之前 0x5A33F0 应已把锚点（`flag45` 与 `height = 0.5`）打好。
+void GenerateHeightField(const MapGrid& grid, std::vector<PaintWorkCell>& work,
+                         int ruggedness, NormalDeviate& nd);
+
+}  // namespace rmg
+}  // namespace ra2
+
+#endif  // RA2_RMG_HEIGHT_FIELD_H_
