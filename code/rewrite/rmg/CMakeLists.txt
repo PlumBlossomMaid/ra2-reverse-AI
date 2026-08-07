@@ -18,6 +18,7 @@ add_library(ra2_rmg
   regions.cpp
   recalc.cpp
   zones.cpp
+  start_points.cpp
   theater.cpp
   fp_guard.cpp)
 
@@ -115,6 +116,12 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_regions PRIVATE
     RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
   add_test(NAME regions COMMAND test_regions)
+
+  add_executable(test_start_points test/test_start_points.cpp)
+  target_link_libraries(test_start_points PRIVATE ra2_rmg gtest_main)
+  target_compile_definitions(test_start_points PRIVATE
+    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+  add_test(NAME start_points COMMAND test_start_points)
 
   add_executable(test_zones test/test_zones.cpp)
   target_link_libraries(test_zones PRIVATE ra2_rmg gtest_main)

@@ -19,7 +19,7 @@
 | [stage-tiberium.md](stage-tiberium.md) | 阶段：Creating tiberium（布矿） | ✅ 外层 + 矿田生长全链已实锤 |
 | [stage-tech-buildings.md](stage-tech-buildings.md) | 阶段：Adding tech buildings（中立科技建筑，两条互斥分支） | ✅ 已实锤，含 `PickRange` 语义 |
 | [stage-recalc.md](stage-recalc.md) | 阶段：绿地蔓延 + Recalculating cell attributes | ✅ 全部实锤；绿地蔓延已落 C++，18 个用例整段对拍通过 |
-| [stage-starting-points.md](stage-starting-points.md) | 阶段：Creating starting points（出生点） | ✅ 全部子函数已实锤；**卡在 `.tmp` 装载器上，尚未落 C++** |
+| [stage-starting-points.md](stage-starting-points.md) | 阶段：Creating starting points（出生点） | ✅ 全部子函数已实锤；主干已落 C++（`rmg/start_points.{h,cpp}`），`ChooseWaypoints` 270 例黄金对拍 |
 | [movement-zones.md](movement-zones.md) | **引擎的移动区子系统**：地面类别 → 连通区洪泛 → 区类型表 | ✅ 整条链已实锤并落 C++（`rmg/zones.{h,cpp}`，含黄金对拍） |
 | [stage-hills.md](stage-hills.md) | 阶段：Creating hills（造山，唯一随机源是高度场） | ✅ 随机部分 + 角点抬升子系统全链已实锤 |
 | [stage-lats.md](stage-lats.md) | 阶段：Creating LATs, rocks etc（地表装饰，取数点最密） | ✅ 18 个取数点全部实锤 |
@@ -235,6 +235,15 @@
       (地面类别, 层高)，绕开整条地形流水线，逐格比区编号 + 13 张区类型表。
       对拍逼出两个必须照抄的怪癖：右扫门限是 4 不是 2（用的还是左扫留下的
       层高基准），以及外层游标 `p += runLen` 里 `runLen` 会是 0 甚至 -1
+- [x] **阶段 6 出生点主干落 C++**（`code/rewrite/rmg/start_points.{h,cpp}`，
+      ctest 名 `start_points`）。`ChooseWaypoints`（`0x594F40`，最远点采样）由
+      `dump_start_points_golden.py` 跑原版机器码取基准，**270 例逐点一致**；
+      名额分配与排序键是性质测试，`GrowRegion` / `PickPointsInRegion` /
+      调度只有汇编逐条对照——分档如实记在
+      [stage-starting-points.md](stage-starting-points.md) §九。
+      顺带查实两处：排序键里的 `regionCount` 是**销毁小区域之前**的个数；
+      `ScenarioClass+0x11C0` 那张出生点表被每个区域从下标 0 重写一遍，
+      跑完只剩最后一个区域的（waypoint 表本身是对的）
 - [x] **`MapSeedClass` 就是静态对象 `0xABDFD8`**——`0x59664C mov ecx,0xABDFD8;
       call 0x598960` 与 `0x58CAD1` 两处实锤。于是之前按绝对地址分散记下的
       一批全局当场对号：`0xABE014 = +0x3C` MapType、`0xABE024 = +0x4C`

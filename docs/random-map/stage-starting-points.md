@@ -166,6 +166,12 @@ void GrowRegion(Cell* seed, int zone, int want) {
 key = (500000 - region->cellCount) * regionCount + region->regionId;
 ```
 
+⚠️ `regionCount` 取的是**销毁小区域之前**的区域个数（`iVar11` 在
+`0x594CE0` 那圈起种循环的末尾定住，销毁循环并不刷新它），不是排序时的存活个数。
+
+比较器 `0x5AD9C0` 只看每个 8 字节元素的**第一个 dword**，返回
+`a < b ? -1 : a > b ? 1 : 0`——按键**升序**。
+
 `500000 - cellCount` 让**大区域排在前面**；乘 `regionCount` 再加 `regionId`
 是把「编号」当低位，保证同样大小的区域按编号稳定排序。
 
@@ -195,6 +201,10 @@ for (int i = 0; i < n; ++i) {
 00594E3B  call  0x7C5F00                  ; _ftol
 00594E40  mov   [edi+0x20], eax
 ```
+
+分母 `allCells`（`[esp+0x10]`）是在排序**之后**、分配**之前**由
+`0x594DD9`-`0x594DEA` 那个小循环把存活区域的 `+0x0C` 逐个加起来的，
+不是第 2 步留下的什么现成值。
 
 `fadd 0.5` 之后走 `_ftol` 截断，等价于对**累计比例**做四舍五入再作差——
 是标准的「累计取整」分配法，不会因为逐个四舍五入而丢名额。
@@ -262,7 +272,40 @@ ChooseWaypoints(cand);                                 // 0x594F40，不取随�
 3. `usableArea` 是地图可用矩形往里缩：`(x+4, y+4, w-8, h-8)`，
    四个分量取自 `[0x87F8E4]`/`[0x87F8E8]`/`[0x87F8EC]`/`[0x87F8F0]`
 
-选出的坐标写进 waypoint 表，并给格子打上 `+0x140 |= 4`。
+### 尾巴：写 waypoint 表（`0x5950B0`-`0x595195`）
+
+```c
+Vector<CellStruct>* out = ChooseWaypoints(region, cand);
+if (out == NULL) return;                         // startCount == 0 且候选不够
+
+for (int k = 0x11C0; k < 0x11E0; k += 4)         // 0x5950C2
+    *(int*)(ScenarioClass + k) = [0xABE300];     // 8 个槽全清
+
+for (int i = 0; i < region->startCount; ++i) {
+    ScenarioClass::Set_Waypoint(base + i, (*out)[i]);
+    Cell* c = GetCellAt(GetWaypointCoords(base + i));
+    c->+0x140 |= 4;
+    *(int*)(ScenarioClass + 0x11C0 + i*4) = (*out)[i];   // ⚠️ 下标是 i，不是 base+i
+}
+for (int i = 0; i < region->startCount; ++i)     // 把用掉的那几个从表头挪走
+    if (out->Count > 0) { 整体前移一格; --out->Count; }
+
+delete region->+0x00;                            // 旧的候选向量
+region->+0x00 = out;                             // 剩下的留给阶段 8
+```
+
+三处要点：
+
+1. ⚠️ **`ScenarioClass + 0x11C0` 那张 8 项表每个区域都从下标 0 重写一遍**——
+   清空在循环外、写入却总是从 `0` 起（`base` 只用在 `Set_Waypoint` 上）。
+   于是跑完阶段 6，这张表里只剩**最后一个区域**的出生点。
+   waypoint 表那份是对的，所以看起来不影响地形；照抄即可，不要"修"成 `base + i`
+2. `(*out)[i]` 在 `out->Count < startCount` 时会读到向量容量内的**未初始化内存**
+   ——候选不够（`want` 被压成候选数）时真的可能发生。这属于真·未定义，
+   复刻不出来，标为已知分歧点（见 §八 第 8 条）
+3. 被搬走 `startCount` 个之后剩下的 waypoint 挂回 `RegionClass +0x00`，
+   阶段 8 布矿时接着用
+
 
 ## 四、`ChooseWaypoints`（`0x594F40`）——最远点采样，一个随机数都不取
 
@@ -460,9 +503,56 @@ bool IsWithinUsableArea(const Rect& r, const CellStruct& c, bool considerRamp) {
    最多扩 400 格的优先队列洪泛」，把工作记录的 `+0x3C` 写成出生点序号、
    `+0x45` 置 1。**所以 §一那圈外层重试永远只跑一遍**，
    复刻时不必担心「失败重跑会额外消耗随机数」
-7. 工作记录 `+0x45`（建筑放置时要求为 0）的含义——**查到两个写点，语义仍未定名**：
+8. **`(*out)[i]` 的越界读**（见 §三尾巴第 2 点）：`out->Count < startCount` 时
+   原版读的是向量容量内的未初始化堆内存。这是真·未定义，复刻端选择「读完就停」，
+   **属于已知分歧点**，不是对齐失败。触发条件是「某个区域的候选数少于它分到的
+   出生点名额」——`budget = extra + startCount*15`、300 次尝试，正常图跑不到
+9. `0x58B820`（`PlaceStartPoints` 最后一句）语义未确认：它读 `[0xA8B230]`
+   （ScenarioClass）与 `[0x887324]`，逐个走 `0x68BD80` / `0x68BCC0`，
+   看着像「把 waypoint 表同步进另一份结构」。**不写任何格子**，故不影响地形
+10. 工作记录 `+0x45`（建筑放置时要求为 0）的含义——**查到两个写点，语义仍未定名**：
    `0x5A1FB0` 把「被某个出生点的 400 步洪泛辐射到过」的格子置 1
    （见 [movement-zones.md](movement-zones.md) §十），阶段 9 山丘那边也写 0/1。
    读它的地方判据相反：矿要求 `== 0`，科技建筑要求 `!= 0`。
    ⚠️ 注意时序——`0x5A1FB0` 跑在阶段 6 的**末尾**，而阶段 6 第 6 步补建筑
    在它之前，那时读到的还是上一轮/初始值
+
+## 九、复刻状态：⚠️ 主干已落 C++，`ChooseWaypoints` 已逐点对拍
+
+落在 `code/rewrite/rmg/start_points.{h,cpp}`：
+
+| 本文的东西 | 原版地址 | C++ |
+|---|---|---|
+| `zoneSel[MapType]` + `want` | `0x594B60` / `0x594BE0` | `kStartZoneSel` / `ComputeStartZoneSelection` |
+| `GrowRegion` | `0x594420` | `GrowStartRegion` |
+| 排序键与比较器 | `0x594D0x` / `0x5AD9C0` | `StartRegionSortKey` |
+| 名额分配 | `0x594DD9`-`0x594E43` | `AllocateStartQuota` |
+| `PickPointsInRegion` | `0x594870` | `PickPointsInRegion` |
+| `ChooseWaypoints` | `0x594F40` | `ChooseWaypoints` |
+| 调度 | `0x594B50` | `PlaceStartPoints` |
+
+### 对拍强度，如实分档
+
+* **`ChooseWaypoints`：黄金对拍，逐点一致。** 基准由
+  `code/randmap/dump_start_points_golden.py` 用 Unicorn 跑原版机器码取得
+  （`0x594F40` 整函数，只需伪造工作数组、`[0x89C2DC]`、`[0xABE030]`、`[0xABE028]`
+  与一个候选向量；函数体内既无随机数也无超越函数，模拟器在这条路径上可信），
+  存档 `memory/data/rmg/start_points_golden.txt`。
+  **270 例**＝候选点型 5 种 × 候选数 `{0,1,2,3,7,20}` × `startCount {0,1,3}`
+  × `(scale, players)` 三组，把 `want` 的两次兜底改写、`startCount == 0` 的
+  `return NULL`、只有一个候选时的提前返回、以及**重复选中同一格**全踩到了。
+  牙口验证：去掉「跨区 +20」那一笔 → 挂；把 `>` 改成 `>=` → 36 处不符。
+* **`AllocateStartQuota` / `StartRegionSortKey`：性质测试。** 前者验「名额一定分光」
+  与一个具体的累计取整反例（三个 400 格的区域配 2 个玩家给的是 `{1, 0, 1}`，
+  逐个四舍五入会错成 `{1, 1, 0}`），后者验排序次序。**没有黄金基准**——
+  这两段是从 `0x594B50` 里手抄的汇编，取证强度低一档。
+* **`GrowStartRegion` / `PickPointsInRegion` / `PlaceStartPoints`：只有汇编逐条对照，
+  尚无对拍。** 它们要吃寻路分区、砖表、坡道三个子系统，端到端基准得等
+  `.tmp` 装载器与格子模型齐了才做得出来。
+
+### 一处**不可观测**的实现细节
+
+`9999999.0` 那个哨兵（§四）在任何输入下都不影响输出：进补点循环时 `out` 必然
+非空，`mn` 一定会被真实距离覆盖；`out` 为空的唯一情形是候选数为 0，而那时
+`want` 已经被压成 0、循环一次都不进。实测把它换成 `1e7`，270 例**全部照过**。
+仍按原值实现（照抄优先），但**不声称它被测到了**。
