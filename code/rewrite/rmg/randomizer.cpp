@@ -63,6 +63,7 @@ void Randomizer::Seed(std::uint32_t seed) {
 
 // 0x65C780
 std::uint32_t Randomizer::Random() {
+  ++call_count_;   // 观测点：与"进入 0x65C780 的次数"对齐，含 Disabled 短路那一路
   if (disabled_) {
     return 0;
   }

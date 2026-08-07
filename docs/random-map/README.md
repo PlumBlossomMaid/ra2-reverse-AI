@@ -23,7 +23,7 @@
 | [stage-hills.md](stage-hills.md) | 阶段：Creating hills（造山，唯一随机源是高度场） | ✅ 随机部分 + 角点抬升子系统全链已实锤 |
 | [stage-lats.md](stage-lats.md) | 阶段：Creating LATs, rocks etc（地表装饰，取数点最密） | ✅ 18 个取数点全部实锤 |
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
-| [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法 + 随机数账本 + 贴砖表全部还原 |
+| [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法全还原；**涂块核心已落成 C++ 并对拍** |
 
 ## 进度
 
@@ -87,6 +87,13 @@
       格子指针数组是 `+0x138` 那个内嵌 `VectorClass<CellClass*>`，
       由 `0x565B87` 的 `Resize(0x40000, NULL)` 分配并整表置 `NULL`（菱形外确为 `NULL`）；
       另纠错：早前记的迭代器 `this = 0x87F978` 是漏扫 `E8 rel32` 造成的**错误结论**
+- [x] **涂块核心 `0x59BBC0` 整函数落成 C++ 并对拍**（`code/rewrite/rmg/blob_paint.{h,cpp}`）——
+      对拍的不是标量而是**整条生长顺序**：Unicorn 整函数模拟 + 涂格钩子导出黄金序列，
+      14 组用例约一万格**逐格坐标完全一致**，随机数取数次数也逐组吻合；
+      顺手关掉 `MapSeedClass +0x308`（= 块编号/生成戳计数器），
+      并新记四条此前漏掉的行为：起点是 `int[2]` 而目标点是打包 `int16`、
+      平滑成功后有一次**无条件**的全图岸砖清扫、循环末尾弹出的最后一格被白白丢掉、
+      排空循环的 `painted++` 无条件执行且就是返回值
 - [x] `.sed` 参数读取复刻（含西木 `Get_Int` 的 `$hex` / `Xh` 三条路径）
 - [ ] `.map` 输出（IsoMapPack5 编码）
 - [ ] 端到端验证：同种子生成结果与原版逐字节比对

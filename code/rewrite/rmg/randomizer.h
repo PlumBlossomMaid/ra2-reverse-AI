@@ -42,11 +42,19 @@ class Randomizer {
   int index2() const { return index2_; }
   std::uint32_t state(int i) const { return state_[i]; }
 
+  // 取数次数。原版没有这个字段——它是复刻侧的观测点：
+  // 每个阶段消耗多少随机数是可以独立于结果对拍的一条证据链
+  // （见 docs/random-map/rng-ledger.md），顺序对而次数不对，
+  // 说明有一路分支白抽了随机数。
+  long long call_count() const { return call_count_; }
+  void reset_call_count() { call_count_ = 0; }
+
  private:
   bool disabled_ = false;
   std::int32_t index1_ = 0;
   std::int32_t index2_ = kLag;
   std::uint32_t state_[kStateSize] = {};
+  long long call_count_ = 0;
 };
 
 }  // namespace ra2::rmg

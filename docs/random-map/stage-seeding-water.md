@@ -1,8 +1,10 @@
 # 阶段：Seeding water（水域播种）
 
-> 状态：**涂块核心 + 三种 MapType 的投放策略 + 岸线平滑（含八邻域掩码定义）均已还原**；
-> 剩余缺口是"把涂块主循环落成 C++ 并端到端对拍"——
-> 地图容器（[map-geometry.md](map-geometry.md)）与最小堆（§四）已于 2026-08-06 落地。
+> 状态：**涂块核心 `0x59BBC0` 已于 2026-08-06 整函数落成 C++ 并对拍通过**
+> （`code/rewrite/rmg/blob_paint.{h,cpp}` / `test_blob_paint.cpp`，14 组用例、
+> 约一万格**逐格生长顺序**与原版完全一致，随机数取数次数也逐组吻合，见 §四末尾）。
+> 三种 MapType 的投放策略、区域网格、岸线平滑（含八邻域掩码定义）已还原但**尚未落成 C++**。
+> 地图容器见 [map-geometry.md](map-geometry.md)。
 > 本文只记录已取证的部分，推测一律标注「未确认」。
 > 涉及的数学基元见 [fast-math.md](fast-math.md)（已逐位对拍）。
 >
@@ -204,16 +206,24 @@ void MakeGrid(vector<Rect>* out, int n, const Rect* bounds) {
 
 ### 参数
 
-| 位置 | 含义 | 已观察到的取值 |
-|------|------|----------------|
-| `ecx` | `MapSeedClass` | `0xABDFD8` |
-| `[ebp+0x08]` | 预算（要涂多少格） | 小于 401 一律提到 400 |
-| `[ebp+0x0C]` | 区域 `int[4] {bx, by, bw, bh}`（真实坐标） | 由投放策略给出 |
-| `[ebp+0x10]` | 起点格；两分量都为 0 时随机取 | |
-| `[ebp+0x14]` | 区域形状：0=矩形，非 0=内切椭圆 | |
-| `[ebp+0x18]` | 方向性代价的目标点 | 仅优先级模式 ≠0 时用 |
-| `[ebp+0x1C]` | double 中心游走步长 | MapType 0 用 `0.25`，MapType 1 用 `0.75` |
-| `[ebp+0x24]` | 优先级模式：0=距离+抖动，非 0=方向性代价 | |
+栈上一共 8 个 dword（`ret 0x20`）。**注意起点和目标点的宽度不一样**：
+
+| 位置 | 含义 | 宽度 | 已观察到的取值 |
+|------|------|------|----------------|
+| `ecx` | `MapSeedClass` | | `0xABDFD8` |
+| `[ebp+0x08]` | 预算（要涂多少格） | int32 | 小于 401 一律提到 400 |
+| `[ebp+0x0C]` | 区域 `int[4] {bx, by, bw, bh}`（真实坐标） | 指针 | 由投放策略给出 |
+| `[ebp+0x10]` | 起点格；两分量都为 0 时随机取 | **两个 int32** | |
+| `[ebp+0x14]` | 区域形状：0=矩形，非 0=内切椭圆 | int32 | |
+| `[ebp+0x18]` | 方向性代价的目标点 | **打包 int16** | 仅优先级模式 ≠0 时用 |
+| `[ebp+0x1C]` | double 中心游走步长 | double（占 2 dword） | MapType 0 用 `0.25`，MapType 1 用 `0.75` |
+| `[ebp+0x24]` | 优先级模式：0=距离+抖动，非 0=方向性代价 | int32 | |
+
+> ⚠️ **起点是 `int[2]`，目标点是一个打包成 dword 的 `int16[2]`。**
+> 起点在 `0x59BC72` / `0x59BC7C` 用 `mov eax,[ebp+0x10]` / `mov ecx,[ebp+0x14-4]`
+> 分两个整字读；目标点在 `0x59B989` 用 `movsx …, word ptr [eax+2]` 取高半字。
+> 复刻侧若把起点也按 int16 打包，`y` 会读成 0、起点落到菱形外，整块只涂 1 格。
+> 这是本项目实际踩过的坑（对拍 harness 首版即栽在此处）。
 
 返回涂成功的格数；整块被否决时返回 0。
 
@@ -225,16 +235,19 @@ poolCap = max(budget * 8 + 2, 100);
 nodes = new Node[poolCap];        // Node { int16 x, y; float priority; }  共 8 字节
 heap  = new MinHeap(poolCap);     // 1 基二叉最小堆，比较 *(float*)(node+4)
 
-// 长宽比各向异性系数（常数 0x7E5190 = 1.2）
-(ax, ay) = (bw > bh) ? (1.0, (bw/bh)*1.2) : ((bh/bw)*1.2, 1.0);
-ellipseA = 1/(bw*0.5)^2 ;  ellipseB = 1/(bh*0.5)^2;      // 0x7E1738 = 0.5
+// 长宽比各向异性系数（常数 0x7E5190 = 1.2），存成 float
+if (region 就是全图边界)      costA = costB = 0.0f;             // ← 快捷路径
+else if (bw > bh)             costA = (bw/bh)*1.2f, costB = 1.0f;
+else                          costA = 1.0f,         costB = (bh/bw)*1.2f;
+ellipseA = 1/(bw*0.5)^2 ;  ellipseB = 1/(bh*0.5)^2;      // 0x7E1738 = 0.5，算于 0x59BF9B
 
 double cx = start.x, cy = start.y;        // 引力中心（浮点，会漂移）
+work[start].queued = 块编号;
 push(start, 0.0f);
 painted = 0;
 
-while (painted < budget && heap 非空) {
-    n = pop();                                    // 优先级最小者
+n = pop();                                        // ← 循环外先弹一个
+while (painted < budget && n 有效) {
     work[n].owner = MapSeedClass[0x308];          // 块编号
     MapAt(n)->IsoTileTypeIndex = 0;               // ← 这一格由水变陆
 
@@ -252,17 +265,65 @@ while (painted < budget && heap 非空) {
             int d2 = (p.x-icx)*(p.x-icx) + (p.y-icy)*(p.y-icy);
             pr = FastSqrt(d2) + (double)(uint32)Random() * 5.0 * (1.0/4294967295.0);
         } else {
-            pr = DirectionalCost(p, n, region, 目标点, ax, ay);          // 0x59B940
+            pr = DirectionalCost(p, n, region, 目标点, costB, costA);    // 0x59B940
         }
+        work[p].queued = 块编号;                  // ← 先写 stamp
         push(p, (float)pr);                       // 注意：存成 float，不是 double
-        work[p].queued = 块编号;
     }
 
-    cx += Normal() * 步长;                        // ← 引力中心做布朗运动
-    cy += Normal() * 步长;
+    cx = Normal() * 步长 + cx;                    // ← 引力中心做布朗运动
+    cy = Normal() * 步长 + cy;
     painted++;
+    n = pop();                                    // ← 弹在循环体末尾
 }
 ```
+
+#### 起点为 `(0,0)` 时怎么随机取
+
+`0x59BC72` 起：若起点两个 int32 都是 0，就循环抽点，**最多 200 次**：
+
+```c
+attempts = 0;
+do {
+    rx = PickBelow(bw);            // 见下
+    ry = PickBelow(bh);
+    X = rx + ry + 1;               // 真实坐标 → 等距坐标，int16 打包加法
+    Y = ry - rx + bw;
+    if (++attempts >= 0xC8) return 0;      // ← 先自增再判断
+} while (X/Y 不在菱形内 或 !IsPaintable);
+```
+
+其中 `PickBelow(limit)` 是**两次乘法**，不是折叠成一个常数的那种：
+
+```c
+u = (double)(uint32)Random() * (double)limit * 2.3283064370807974e-10;   // 0x7ED898
+v = _ftol(u);                                    // RC=chop
+if ((unsigned)v > (unsigned)(limit-1)) 重抽;      // 无符号比较的拒绝采样
+```
+
+> ⚠️ 这**不同于** `scaled_random.h` 里那个 `PickBelow`（后者把 `limit` 和倒数
+> 折进了一次乘法）。两次乘法与一次乘法在 1 ulp 上会分岔，必须分开实现。
+>
+> ⚠️ `++attempts >= 0xC8` 是**自增在前**，所以第 200 次抽签仍然会消耗随机数，
+> 只是结果被丢弃、函数直接返回 0。账本上这一路是 400 次取数。
+
+#### ⚠️ 方向性代价的两个系数是**反着传**的
+
+`costA` / `costB` 按上面的规则算出来，调用点却传成
+`DirectionalCost(p, n, region, target, costB, costA)`——
+即先算出来的那个反而落在后一个形参上。照抄即可，不要"顺手理顺"。
+
+#### ⚠️ 最后弹出的那一格被白白丢掉
+因为 `pop()` 在循环体**末尾**、条件判断在**开头**，当 `painted` 恰好撞到 `budget`
+时，刚弹出的 `n` 既没有被涂、也已经离开了堆——收尾的排空循环也看不见它。
+每次调用都会有恰好一格遭此待遇（除非堆先空了）。这不是等价变形能省掉的：
+它让后续的排空循环少处理一个节点，进而改变返回值。
+
+#### ⚠️ `queued` 标记写在入堆之前
+
+`work[p].queued = 块编号` 在 `0x59C233`，push 在其后。于是当节点池已满、
+push 实际失败时，这一格**仍然留下了 stamp**，此后再也不会被任何邻格重新考虑。
+（不过池满这一路在正常预算下不会走到：`poolCap = budget*8+2`。）
 
 抖动项 `Random() * 5.0 * (1/4294967295.0)` 即均匀 `[0, 5)`——
 相当于给"到中心的距离"加上最多 5 格的噪声，边界因此变毛糙而不是圆滑。
@@ -271,13 +332,15 @@ while (painted < budget && heap 非空) {
 ### 收尾与整块回滚
 
 ```c
-while (heap 非空) {                  // 预算用尽，把队列里剩下的边缘格也铺成陆地
-    n = pop();
+while ((n = pop()) 有效) {           // 预算用尽，把队列里剩下的边缘格也铺成陆地
     if (work[n].owner == 0 && IsPaintable(MapAt(n))) {
         MapAt(n)->IsoTileTypeIndex = 0;
         work[n].owner = 块编号;
     }
+    painted++;                       // ← 无条件自增，即使上面那格没涂成
 }
+free(nodes); free(heap 数组); free(heap);
+
 if (!FUN_0057A0C0(块编号, 1)) {       // 铺岸线过渡砖；铺不出来就否决整块
     for (每个 owner == 块编号 的格子) {
         work[..].owner = 0;  work[..].+0x4B = 0;
@@ -286,13 +349,36 @@ if (!FUN_0057A0C0(块编号, 1)) {       // 铺岸线过渡砖；铺不出来就
     }
     return 0;                        // ← 调用方据此重试（MapType 0 最多试 10 次）
 }
-MapSeedClass[0x308]++;
+MapSeedClass[0x308]++;               // ← 块编号推进到下一块
 return painted;
 ```
+
+#### ⚠️ 排空循环里的 `painted++` 是无条件的
+
+它数的是"弹出了几个节点"，不是"涂成了几格"。而 `painted` 就是**返回值**。
+于是返回值 ≥ 实际涂成的格数：堆里那些"已经是陆地/不可涂"的残留节点
+也会被计进去。投放策略拿这个返回值去累计"还差多少格陆地"，
+所以这个偏差会一路传导到整张地图的陆地总量上——必须照抄。
+
+（对拍数据里 `ret` 与 `cells` 恰好相等，是因为测试桩的 `IsPaintable` 恒真、
+残留节点全都还没被涂过。真实 theater 下两者会分开。）
+
+#### ⚠️ 平滑成功后还有一次**无条件**的岸砖清扫
+
+在 `FUN_0057A0C0` 返回真之后、`[0x308]++` 之前，函数还会再遍历一次全图，
+把所有 `IsoTileTypeIndex ∈ [ShorePieces, ShorePieces+0x2A)` 的格子
+**统统改回 tile 0** 并把 `+0x11A` 清零。它不看块编号、不看这一块涂到了哪里——
+整张地图上一切岸线砖都被抹平，留待下一块（或后续阶段）重铺。
+这解释了为什么多次调用涂块之后岸线仍然是一致的：每一块都会把前人的岸砖推倒重来。
 
 `FUN_0057A0C0` 不只是校验：它遍历全图跑四遍平滑（`0x57A430` / `0x57A320` /
 `0x57ACF0(...,1)` / `0x57ACF0(...,2)`），顺带在工作数组缺席时把它建出来。
 **任一遍返回失败，整块陆地就被抹回海里**——这是"地图有时大片是海"的直接机制。
+
+> `MapSeedClass +0x308` 至此可以定名了：它就是**块编号（生成戳）计数器**。
+> 同一次涂块内它当作 `work[].owner` 和 `work[].queued` 的标记值，
+> 涂块成功才自增、失败则原地不动（于是下一次重试复用同一个编号）。
+> 早前文档里把它标为「未确认」，现已关闭。
 
 ### 最小堆本身：堆序就是生长顺序（✅ 已实锤并对拍）
 
@@ -436,6 +522,46 @@ return cheb * (aspectX * (ax_/len) + (ay_/len) * aspectY);
 | `[ [0xAA073C], +4 )` / `[ [0xABB110], +4 )` / `[ [0xAA1050], +4 )` / `[ [0xAA10A0], +4 )` | 各 4 |
 
 这些基址都是运行期由 theater 决定的 TileSet 起始号，**具体对应哪些 TileSet 未确认**。
+
+### 复刻状态：整函数已落成并对拍（✅ 2026-08-06）
+
+`code/rewrite/rmg/blob_paint.{h,cpp}` —— `PaintBlob(PaintContext&, const PaintParams&)`。
+地图访问被抽成 `PaintWorld` 抽象接口（`IsPaintable` / `IsoTile` / `SetIsoTile` /
+`SmoothShoreline` / `ShorePiecesBase` / `WaterTile`），
+这样 theater 相关的 TileSet 基址还没定下来也不妨碍主循环先对拍。
+
+对拍手段比之前几个基元都强一档：**不比标量，比整条生长顺序**。
+`code/randmap/dump_blob_paint_golden.py` 用 Unicorn 整函数模拟 `0x59BBC0`，
+在 `0x59C02B`（主循环涂格）和 `0x59C3AB`（排空涂格）挂钩子记下每一格的坐标，
+同时在 `0x65C780` 挂计数器统计随机数取数次数。
+黄金数据 `memory/data/rmg/blob_paint_golden.txt`，14 组用例：
+
+| 覆盖到的 | 用例 |
+|----------|------|
+| 随机起点 / 指定起点 | 全部 / #2 #5 #11 #13 |
+| 矩形区域 / 内切椭圆 | #2 #4 #6 / #3 #11 #12 |
+| 全图边界快捷路径 | #1 #2 #6 #7 #8 #13 #14 |
+| 优先级模式 0 / 方向性代价 | 多数 / #5 #11 |
+| 游走步长 0.25 / 0.75 | 两者都有 |
+| 预算下限（60 → 400） | #6 |
+| 大预算（3000，涂 3249 格） | #14 |
+| 起点落在菱形外 → 直接退化 | #13 |
+| 区域太窄，200 次抽签全失败 | #12（`ret=1`, 仅 4 次取数） |
+| 地图尺寸 60/70/80/120 | 各有 |
+
+三条测试（`test_blob_paint.cpp`）全绿：
+
+- `GrowthOrderMatchesOriginal` —— 约一万格，**逐格坐标序列完全一致**；
+- `RandomDrawCountMatchesOriginal` —— 14 组取数次数逐组吻合
+  （这是独立于结果的第二条证据链：顺序对而次数不对，说明有分支白抽了随机数）；
+- `BudgetIsFlooredAt400`。
+
+> ⚠️ **一条诚实的保留**：模拟器里 `NormalDeviate` 走的是 Unicorn 的 `fyl2x`，
+> 而 Unicorn 的 x87 实现**不理会 FPU 控制字**，所以黄金数据在这一步用的是
+> 宿主的 `long double` 精度，不是原版的 PC=53。
+> 14 组、约一万格里没有出现过分歧（布朗运动只影响引力中心，
+> 而优先级里还叠了一个幅度达 5 格的随机抖动，对中心的亚 ulp 抖动不敏感），
+> 但这个口子必须记在案：真要较真，得换成在真机上跑或自己实现 `f2xm1`/`fyl2x`。
 
 ## 五、已确认的谓词与全局
 
@@ -869,5 +995,10 @@ placeAt = { cell.X + (int16)[0xABDB64 + i*4],
    （菱形四不等式 + 扫全图顺序 + `N = H(2W−1)`，`code/rewrite/rmg/map_grid.h`）
 8. ~~涂块最小堆的并列语义~~ ✅ 已实锤并对拍，见 §四「最小堆本身」
 9. ~~`InRegion` / `DirectionalCost` 落成 C++~~ ✅ 已实锤并对拍，见 §四
-10. 把**涂块主循环**落成 C++——容器、堆、区域判定、方向代价都已就位，只差把它们串起来；
-    还缺的是随机起点那段（`0x59BC85` 起）与收尾/回滚，以及岸线平滑 `0x57A0C0`
+10. ~~把**涂块主循环**落成 C++~~ ✅ 整函数已落成并对拍，见 §四「复刻状态」
+    （`blob_paint.{h,cpp}` + 14 组用例约一万格逐格一致；随机起点段与收尾/回滚都在内）
+11. 下一件：**岸线平滑 `FUN_0057A0C0`** 落成 C++——四遍里第 3/4 遍每格各抽一个
+    `PickRange(0,5)`，是本阶段随机数消耗的大头（见 §七、§八），
+    不做完，账本对不上，涂块之后的一切都会错位
+12. 再下一件：`MakeGrid 0x59A8F0` 与三种 MapType 投放策略
+    （`0x59AD10` / `0x59AFA0` / `0x59B200`），把涂块串成完整阶段
