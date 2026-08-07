@@ -19,7 +19,7 @@
 | [stage-tiberium.md](stage-tiberium.md) | 阶段：Creating tiberium（布矿） | ✅ 外层 + 矿田生长全链已实锤 |
 | [stage-tech-buildings.md](stage-tech-buildings.md) | 阶段：Adding tech buildings（中立科技建筑，两条互斥分支） | ✅ 已实锤，含 `PickRange` 语义 |
 | [stage-recalc.md](stage-recalc.md) | 阶段：绿地蔓延 + Recalculating cell attributes | ✅ 全部实锤；绿地蔓延已落 C++，18 个用例整段对拍通过 |
-| [stage-starting-points.md](stage-starting-points.md) | 阶段：Creating starting points（出生点，**整段可重试**） | ✅ 结构与 3 个取数点已实锤 |
+| [stage-starting-points.md](stage-starting-points.md) | 阶段：Creating starting points（出生点，**整段可重试**） | ✅ 全部子函数已实锤；**卡在移动区子系统上，尚未落 C++** |
 | [stage-hills.md](stage-hills.md) | 阶段：Creating hills（造山，唯一随机源是高度场） | ✅ 随机部分 + 角点抬升子系统全链已实锤 |
 | [stage-lats.md](stage-lats.md) | 阶段：Creating LATs, rocks etc（地表装饰，取数点最密） | ✅ 18 个取数点全部实锤 |
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
@@ -197,6 +197,20 @@
       `sub esp,0x38` + 4 个 `push` ⇒ 栈参在 `esp+0x4C`）。
       前提条件也是实锤不是假定：阶段 1 的清格子循环把每格 `+0x44` 写成 −1，
       而第一个改写 `+0x44` 的是阶段 8 的矿，排在阶段 5 之后
+- [x] **阶段 6 出生点的两个核心子函数逆完**（`0x594420 GrowRegion` /
+      `0x594F40 ChooseWaypoints`），三个辅助谓词也实锤
+      （`0x5AC230 InDiamond`、`0x5A7250`、`0x578640 IsWithinUsableArea` 的带矩形版）。
+      关键新发现：**阶段 6 开头 `0x58CE90` 会把阶段 3/4 建的区域整批销毁**
+      （工作记录 `+0x38`/`+0x3C` 全写回 −1、逐个 `delete`、`[0xABED14] = 0`），
+      改按**引擎的移动区（zone）**重新划区域；`ChooseWaypoints` 是纯确定性的
+      **最远点采样**，一个随机数都不取，而且**选中的候选不出表**——
+      同一个格子可以被选进 waypoint 两次（照抄不修）。
+      顺带关掉三条老未确认：`0xABE014 = MapType`、`0xABE028 = NumPlayers`、
+      `0xABE158/15C = 地图宽高`；`zoneSel` 其实是 5 项 `{5,5,5,0,0}`
+- [ ] **下一块大工程：引擎的移动区子系统**（`0x56C510 RecalculateZones` /
+      `0x56CB90` 洪泛 / `0x56D230 GetMovementZoneType`）。它按可通行性把全图洪泛成
+      若干连通区，再把「区编号 → 区类型」查表给出。阶段 6 的区域划分与
+      `want` 阈值全靠它，**不做出来阶段 6 就落不了地**
 - [x] **`MapSeedClass` 就是静态对象 `0xABDFD8`**——`0x59664C mov ecx,0xABDFD8;
       call 0x598960` 与 `0x58CAD1` 两处实锤。于是之前按绝对地址分散记下的
       一批全局当场对号：`0xABE014 = +0x3C` MapType、`0xABE024 = +0x4C`
