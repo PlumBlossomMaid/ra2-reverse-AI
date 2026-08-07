@@ -111,6 +111,11 @@
       顺手纠了文档两处实质性错误：MapType 0 的区域数下界是 `NumPlayers + 1` 不是
       `NumPlayers`；MapType 1/2 的**目标点与最近格参照点是焊死的**，
       循环里只有起点在动（原版把它们留在 `ebx`/`ebp` 里从没回写）
+- [x] **theater 数据链打通**（[theater-data.md](theater-data.md)、`theater.{h,cpp}`）——
+      写了只读 mix 解析器取出 `TEMPERATMD.INI` / `SNOWMD.INI`，
+      查实全局里存的是 TileSet 的**起始砖号**（一条前缀和，`0x545C6B` 的 `ebx` 累加），
+      不是组序号；`IsWater` 硬编码的 `0x0E` 与岸砖清扫的 `0x2A`
+      正好等于 WaterSet / ShorePieces 的 `TilesInSet`，两条独立交叉验证
 - [x] `.sed` 参数读取复刻（含西木 `Get_Int` 的 `$hex` / `Xh` 三条路径）
 - [ ] `.map` 输出（IsoMapPack5 编码）
 - [ ] 端到端验证：同种子生成结果与原版逐字节比对
