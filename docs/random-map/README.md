@@ -24,7 +24,7 @@
 | [stage-lats.md](stage-lats.md) | 阶段：Creating LATs, rocks etc（地表装饰，取数点最密） | ✅ 18 个取数点全部实锤 |
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法全还原；**`MapType 0/1/2` 主路径 + 水面细化整条落成 C++ 并对拍** |
-| [stage-water-maptype34.md](stage-water-maptype34.md) | 阶段 2 支路：`MapType ∈ {3,4}` 的**河流与湖泊**（含查表 sin/cos） | ✅ 河/湖/三个区域算子已实锤；sin/cos 已落 C++ 并对拍；桥与角度扩张仅提纲 |
+| [stage-water-maptype34.md](stage-water-maptype34.md) | 阶段 2 支路：`MapType ∈ {3,4}` 的**河流、湖泊与瀑布**（含查表 sin/cos） | ✅ 八个函数全部实锤；sin/cos 已落 C++ 并对拍；整支路待落 C++ |
 
 ## 进度
 
@@ -179,11 +179,28 @@
       湖 `0x59C920`（陆地里涂水，优先级 `10*u + 0.5*dist − 0.02*ring`，
       靠 `Erode(0,2,−2)` 在每块已归属区域外围留出 2 格禁涂带）、
       河 `0x59D510`（递归生支流、逐步 `x+=cos / y−=sin` 画横截面、
-      期望 200 步、河口再挖一个湖、没架桥的河 70% 概率被下切成峡谷）、
+      期望 200 步、河口再挖一个湖、没出瀑布的河 70% 概率被下切成峡谷）、
       以及三个公共区域算子 `CollectBorderCells 0x5A0700` / `Erode 0x5A0410` /
       `Dilate 0x5A0160`（后者兼作「有没有和第三方区域贴上」的隔离检测）。
       **顺手关掉一条老未确认**：`MapSeedClass +0x310`（Init random map 那个 25%
-      抛硬币）唯一的用途是**决定这张图的河上有没有桥**
+      抛硬币）唯一的用途是**决定这张图的河上有没有瀑布**
+- [x] **瀑布 `0x59E740` 与角度扩张 `0x5A08D0` 全还原**（同上文档 §六 / §七）——
+      瀑布十二步：净空扫描（不取数，所以「跳过」不扰动 RNG 流）→ 涂上游水面
+      （**每格 2 次取数**：`PickBelow(6)` 选砖 + `PickBelow(4)` 选子格）→
+      `AngularGrow(weight=0.003f)` 平出台地 → 岸线 → `Dilate` 2 圈 →
+      整块 `Level += 4` → 涂下游水面（又是每格 2 次）→ 按 `[+0]/[+3]/[+2]/[+1]`
+      的顺序贴四块瀑布砖 → **河道游标直接瞬移 12 格**（`dx={0,12,0,-12}`、
+      `dy={-12,0,12,0}`）。角度扩张破掉了 `weight` 的作用：
+      `n = _ftol(0.5·max(ln(边界格数), 1.0) / weight)`，再 `+ PickBelow(n/2+1)` 轮；
+      那串 `1/(weight/L)` 的双重倒数在浮点上不抵消，必须照顺序算。
+      **同时更正一条此前的误判**：`0x59E740` 曾被我记成「架桥」，
+      实为瀑布——它取砖的唯一来源是四个 `Waterfall{North,East,South,West}`
+      TileSet 全局，一处 `BridgeSet` 都没有；成因是拿调用点语境替了取证，
+      教训记在该文 §八末尾
+- [x] **一个真 bug 入账**：河流决定放瀑布的那道判据（`0x59DCCB`–`0x59DCF6`）写的是
+      `|θ − θ₀| < π/4`，但作者用了**整数** `abs` 惯用法，差值先被 `_ftol`
+      向零截断成整数才去比 `0.785…`——实际语义是 `< 1.0 弧度`，门槛放宽了 27%。
+      按「bug 也要复刻」原样保留
 - [x] **查表 sin/cos `0x4CACB0` / `0x4CAD00` 落成 C++ 并对拍**（`fast_math` + `sin_table.h`）——
       原版不调 `sin`/`cos`，查 `float[0x2800] @ 0x84F084`，角度量化到 1/8192 圈；
       表的来历已考证：`table[i] = chop_to_float(sin(i·2π/8192))`，10240 项里 **10238 项逐位相符**，

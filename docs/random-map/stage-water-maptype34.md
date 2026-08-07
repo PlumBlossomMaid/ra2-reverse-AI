@@ -40,7 +40,7 @@ void MapSeedClass::AddRiversAndLakes()      // 0x59C580
   这条支路等于被关掉一半，地图上只剩湖没有河。
 * 河与湖各自**最多重试 10 次**，且 `blobId`（`+0x308`）只在成功时 +1。
   失败不消耗编号，但**消耗随机数**——每次重试都会把起点、角度、河宽、
-  桥阈值重新抽一遍，这是 RNG 总账里必须逐次记的。
+  跌水阈值重新抽一遍，这是 RNG 总账里必须逐次记的。
   起点 `{0,0}` 是「你自己随便选一个」的哨兵；非零则是调用方指定
   （河口挖湖走的就是这条）。
 
@@ -251,7 +251,7 @@ do { angle = Normal() * sigma + mean; } while (angle < LO || angle > HI);
 `start != (0,0)` 时直接用传入的起点与角度（支流走这条）。
 接着 `if (!InDiamond(start)) return false`。
 
-### 河宽与桥阈值
+### 河宽与跌水阈值
 
 ```c
 wmax  = _ftol( max(1.0, WaterAmount * 0.07) );      // [0x7EDA20]=0.07, [0x7E1718]=1.0
@@ -259,9 +259,11 @@ width = PickRange(1, wmax);                          // 内联：_ftol(u*wmax + 
 half  = width / 2;                                   // 截断
 widthLo = width - half;   widthHi = width + half;
 
-bridgeThreshold = PickRange(35, 125);                // _ftol(u * 91*2^-32 * ... + 35.0)
+fallThreshold = PickRange(35, 125);                  // _ftol(u * 91*2^-32 * ... + 35.0)
                                                      // [0x7EDA18]=91*2^-32, [0x7EDA10]=35.0，>125 重抽
 ```
+
+`fallThreshold` 是「河至少流这么多步才允许出现瀑布」的门槛，见下。
 
 ### 逐步推进
 
@@ -289,28 +291,55 @@ y -= s;              // 屏幕 Y 向下，所以是减
 `x += cos` 配 `y -= sin` 这一对，是我判定 `0x4CAD00` 是余弦、`0x4CACB0`
 是正弦的第二条证据（第一条见 §五）。
 
-### 架桥
+### 跌水（瀑布）
 
 ```c
-if (!isBranch && (flagA || flagB) && bridgeCount < 1
-    && |...| < π/4                       // [0x7E3D88] = 0.7853981633974483
-    && this->+0x310 != 0                 // 就是它，见下
-    && steps > bridgeThreshold)
+if (!isBranch && (flagA || flagB) && fallCount < 1
+    && |_ftol(θ − θ₀)| < 0.7853981633974483   // [0x7E3D88] = π/4  ←— 见下的 bug
+    && this->+0x310 != 0                      // 就是它，见下
+    && steps > fallThreshold)
 {
     dir = flagA ? (c <= 0 ? 6 : 2) : (s <= 0 ? 4 : 0);
-    PlaceBridge(blobId, &coordA, &coordB, dir, &okOut, &x, &y);    // 0x59E740
-    if (okOut) { bridgeCount++; this->+0x308 += 1; }
+    PlaceWaterfall(blobId, &coordA, &coordB, dir, &okOut, &x, &y);   // 0x59E740
+    if (okOut) { fallCount++; this->+0x308 += 1; }
 }
 ```
 
 **`MapSeedClass +0x310` 的用途至此实锤**：它是 Init random map（`0x59A4C7`）
-里那个 25% 的抛硬币结果，唯一的读取点在这里——**它决定这张图的河上有没有桥**。
+里那个 25% 的抛硬币结果，唯一的读取点在这里——
+**它决定这张图的河上允不允许出现瀑布**。
 （此前文档里只记到「唯一读者 `0x59DCFC`」，那正是 `0x59D510` 的内部地址。）
+
+#### 一个真 bug：π/4 被 `_ftol` 压成了 1 弧度
+
+`0x59DCCB`–`0x59DCF6` 那段的原文是：
+
+```
+0059dccb  fld  qword [esp+0x88]      ; θ 当前角
+0059dcd2  fsub qword [esp+0xb8]      ; − θ₀ 初始角
+0059dcd9  call 0x7c5f00              ; _ftol   ←— 先截成整数！
+0059dcde  cdq / xor eax,edx / sub eax,edx      ; abs
+0059dce4  mov  [esp+0x38],eax
+0059dce8  fild dword [esp+0x38]      ; 再转回 double
+0059dcec  fcomp qword [0x7e3d88]     ; 与 π/4 = 0.7853981633974483 比
+```
+
+差值被 `_ftol` **先向零截断成整数**，再拿去和 `π/4` 比。整数只可能是
+0, ±1, ±2, …，而 `0 < 0.785 < 1`，于是这个判断的实际语义是
+
+```
+|θ − θ₀| < 1.0 弧度      // 而不是源码作者想写的 π/4 ≈ 0.785 弧度
+```
+
+门槛被**放宽了 27%**。这是标准的「本该 `fabs` 却写成整数 `abs`」型笔误：
+作者要的是绝对值，顺手用了整数 `abs` 的惯用法，于是白白经过一次截断。
+按「bug 也要复刻」的原则原样保留——判据写成
+`std::abs(TruncToInt(θ - θ0)) < 0.7853981633974483` 而不是 `std::fabs(θ - θ0) < π/4`。
 
 ### 支流
 
 ```c
-if (u < 0.01 && ok && !isBranch && bridgeCount == 0) {       // [0x7E3808] = 0.01
+if (u < 0.01 && ok && !isBranch && fallCount == 0) {         // [0x7E3808] = 0.01
     // 截尾正态：mean = angle + π/2, sigma = π/6, 区间 [angle + π/6, angle + 5π/6]
     //           [0x7EDA08] = 2.6179938779914944 = 5π/6
     isBranch = 1;
@@ -318,7 +347,7 @@ if (u < 0.01 && ok && !isBranch && bridgeCount == 0) {       // [0x7E3808] = 0.0
 }
 ```
 
-支流**不会**再生支流（`isBranch` 已置 1），也不会架桥。
+支流**不会**再生支流（`isBranch` 已置 1），也不会有瀑布。
 
 ### 角度与宽度游走
 
@@ -364,7 +393,7 @@ if (!isBranch && ok) {
     // work.owner == blobId 且砖号仍是 0/0xFFFF 的，刷成 [0xAA0E18] 绿地
 }
 
-if (bridgeCount == 0 && ok && this->level == 4) {           // +0x30C
+if (fallCount == 0 && ok && this->level == 4) {             // +0x30C
     if (!isBranch) u = 抽一次;
     if (u < 0.7) {                                          // [0x7ED778] = 0.7
         if (AngularGrow(blobId, 0.01f, {0,0,0x200,0x200}, &start, 1)) {   // 0x5A08D0
@@ -381,12 +410,14 @@ this->paintedTotal += steps;        // +0x304
 return true;
 ```
 
-**没架桥的河会被下切成峡谷**：`+0x30C == 4`（当前地形层高为 4）时，
-有 70% 的概率把河两岸整体抬高 4 层，河自己留在低处。
-架了桥的河就不下切——桥要横跨的是平地上的河，不是峡谷。
+**没出现瀑布的河会被下切成峡谷**：`+0x30C == 4`（当前地形层高为 4）时，
+有 70% 的概率把河**两岸**整体抬高 4 层，河自己留在低处。
+已经有瀑布的河则不再整体下切——它的落差已经由 `0x59E740` 就地做掉了
+（那里是把河**自己**那一段抬高 4，见 §六），两套抬升叠在一起会得到 8 层的怪东西。
 
-失败则回滚所有 `work.owner == blobId` 的格子；若已经架过桥，
-连 `blobId - 1` 的格子一起回滚（桥自己占了一个编号）。
+失败则回滚所有 `work.owner == blobId` 的格子；若已经落过瀑布，
+连 `blobId - 1` 的格子一起回滚——瀑布在成功时做了 `+0x308 += 1`，
+上游那半条河留在旧编号里。
 
 ## 五、查表 sin/cos：`0x4CACB0` / `0x4CAD00`
 
@@ -463,38 +494,393 @@ return true;
 > 顺带记一笔：`0x4CAD50` 起还有一个用 `[0x7E8970] = 651.8986469044033`
 > （≈ 2048/π）的同族函数，查的是同一张表但步长是 1/2048 圈。RMG 不走它。
 
-## 六、`0x59E740`：架桥（提纲）
+## 六、`0x59E740`：瀑布 / 河道落差
 
-`__thiscall(this; blobId, CellStruct* a, CellStruct* b, int orientation,
-char* okOut, double* x, double* y)`。
+```c
+char __thiscall PlaceWaterfall(this; int blobId, CellStruct* a, CellStruct* b,
+                               int dir, char* okOut, double* x, double* y);
+```
 
-`orientation ∈ {0, 2, 4, 6}` 四个朝向，函数体是一个大 switch，
-按朝向拼出矩形与偏移表，再去 `BridgeSet` 里取砖。
-调用方靠 `okOut` 判断桥有没有真的落地。
+> ⚠️ **更正**：这个函数早前（含 commit `5eef1b9` 的提交信息与文档初稿）被我
+> 记成了「架桥」。**它不是桥，是瀑布**。判据是它取砖的**唯一**来源就是四个
+> 瀑布 TileSet 全局，没有任何 `BridgeSet` 相关引用：
+>
+> | `dir` | TileSet 全局 | ini 键名（见 [stage-recalc.md](stage-recalc.md)） |
+> | --- | --- | --- |
+> | 0 | `[0xAA10A0]` | `WaterfallNorth` |
+> | 2 | `[0xAA073C]` | `WaterfallEast` |
+> | 4 | `[0xAA1050]` | `WaterfallSouth` |
+> | 6 | `[0xABB110]` | `WaterfallWest` |
+>
+> 四个全局与键名的对应是 `dump_tileset_globals.py` 独立跑出来的，
+> 与本函数的 switch 分支一一吻合。误判的成因记在 §八末尾。
 
-**TODO**：整函数尚未逐条拆开（那些偏移表还没导出）。
-它内部没有取数点，不影响随机数流，所以可以晚于河流主体复刻。
+`dir ∈ {0, 2, 4, 6}` 就是河当前的行进方向（东/南/西/北），
+由调用方按 `cos`/`sin` 的符号选出。整个函数分十二步：
 
-## 七、`0x5A08D0`：角度优先的块扩张（提纲）
+### 1. 先把出参清零
 
-`char __thiscall(this; blobId, float weight, Rect* r, CellStruct* origin, char flush)`。
+```c
+*okOut = 0;
+```
 
-* 分配 `nodes[max(2 * W * H, 100)]` 与一个最小堆；
-* 基准角由起点贴着矩形的哪条边决定（`0`、`π/2`、`π`、`3π/2`）；
-* 种子来自 `CollectBorderCells(blobId)`，按矩形过滤；
-* 优先级 `(float)(2.0 * u + 1.5 * angleDev)`，两个系数是 `.rdata` 里的
-  **double**：`[0x7ED790] = 2.0`、`[0x7ED798] = 1.5`
-  （一开始按 float 读成了 `0.0`——消费指令是 `fmul qword ptr`，读宽度必须跟着走）；
-* `angleDev` 用 `FUN_004CADE0`（atan）折进 `[0, π]`：反复 `-2π`，若仍 `> π` 则取 `2π - v`；
-* 迭代次数 `n = _ftol(...)`，再抽 `n2 = PickBelow(n/2 + 1)`，共循环 `n + n2` 次；
-* 每次弹堆、认领（`work.owner = blobId`、`+0x4B = 1`），把 8 邻域中
-  未归属、未定砖、在矩形内、且 `work.+0x3C != blobId` 的推进堆；
-* 每轮用 `Normal() * π/4` 微调基准角；撞上第三方 owner 则 `ok = false`；
-* `flush != 0` 时最后把堆里剩下的仍未归属的格子全部认领。
+后面每一条 `return 1` 的早退路径都**不再动它**，所以调用方看到的是
+`ok = 0`（「此处不适合放瀑布，跳过，但别把整条河判失败」），
+而函数返回值 `1` 只是内部约定。这个「返回值与出参不一致」的写法与贴砖器
+`0x57B440` 是同一种风格（那里也有一条返回 `false` 却不动 `*ok` 的出口）。
 
-**TODO**：`weight` 参数（河流传的是 `0x3C23D70A` = `0.01f`）在优先级公式里
-的确切位置、`FUN_004CADE0` 是不是 atan 的最终确认、
-两个堆辅助 `FUN_005AD870` / `FUN_005AC340` 的细节。
+### 2. 按朝向拼出四个矩形
+
+一个大 switch 填出：
+
+* **净空矩形**（`local_110 / local_118` 行范围 + `local_a0 / local_fc` 列范围）
+  —— 要求这一片是空地；
+* **水面矩形 #1** `local_c8[4] = {x, y, w, h}`；
+* **台地矩形** `local_b8[4] = {x, y, w, h}` —— 交给角度扩张用；
+* **原点** `local_ec`（打包 `int16` 坐标）；
+* **水面矩形 #2**（`local_d8 / local_d0` 列 + `local_d4 / local_cc` 行）。
+
+四个 case 的常数（以 `dir = 0`、`a`/`b` 为河的横截面两端为例）：
+
+```
+净空：行 [b.Y - 12, b.Y);  列 [a.X - 2, a.X - 2 + (b.X - a.X) + 5)
+水 #1：{a.X, b.Y - 4, (b.X - a.X) + 1, 4}
+台地：{0, b.Y - 4, 0x200, 0x200 - (b.Y - 4)}
+原点：(a.X, b.Y - 4)
+水 #2：列 [a.X - 2, ...+8)、行 [b.Y - 12, ...)
+```
+
+`0x200 = 512` 是坐标空间上限，与阶段 2 其它地方传的 `{0,0,0x200,0x200}` 同源。
+
+### 3. 净空扫描 —— 唯一的「此处不能放」判据
+
+```c
+for (每个净空矩形内、且落在菱形内的格 c) {
+    if (work[c].owner != 0) return 1;          // *okOut 仍是 0
+    if (!IsUndecidedTile(cell(c))) return 1;   // 0x486380
+}
+```
+
+注意它**没有**任何随机数消耗，所以「跳过」不会扰动 RNG 流——
+这一点对总账很重要。
+
+### 4. 涂第一片水（**每格 2 次取数**）
+
+```c
+for (每个水面矩形 #1 内、且在菱形内的格 c) {
+    r = PickBelow(6);                    // Random(); _ftol; while (r > 5) 重抽
+    cell(c)->IsoTile = [0xAA0738] + r;   // WaterSet 起始砖号 + r
+    s = PickBelow(4);                    // 同上，> 3 重抽
+    cell(c)->SubTile = s;                // +0x11A
+    work[c].owner   = blobId;            // +0x38
+}
+```
+
+**这是整条河里 RNG 密度最高的地方**：两次拒绝采样、每格两个随机数。
+`PickBelow(6)` 只用到 WaterSet 的前 6 块砖（`TilesInSet = 0x0E` 共 14 块），
+而 `PickBelow(4)` 的子格号意味着这些是 2×2 砖——与
+[README](README.md#) 里记的「水砖恰是前 8 块 2×2 + 后 6 块 1×1」对得上：
+前 6 块必然是 2×2，取 `SubTile ∈ [0,4)` 合法。
+
+> 注意这里**没有走贴砖器 `0x57B440`**，是直接写 `CellClass +0x38 / +0x11A`。
+> 所以砖的占地、空洞、高度增量统统不生效，纯粹是「这一格显示这个子格」。
+
+### 5–7. 把落差区扩出来
+
+```c
+ok = AngularGrow(this->blobId, 0.003f /*0x3B449BA6*/, plateauRect, &origin, 0);  // 0x5A08D0
+if (ok) ok = Shoreline(this->blobId, 0);                                        // 0x57A0C0
+if (ok) ok = Dilate(this->blobId, 2, plateauRect, 0, 0);                        // 0x5A0160
+```
+
+三步串成短路链，任一步失败后面就都不做（但已经涂下去的水**不回滚**）。
+`weight = 0.003f` 比河流收尾用的 `0.01f` 小三倍多，按 §七的公式
+`n = _ftol(0.5·max(ln k, 1)/weight)` 意味着**迭代次数多三倍多**——
+瀑布上游要平出一大片台地。
+
+注意这三个调用传的都是 `this->+0x308`（当场读），不是入参 `blobId`；
+调用点上二者相同，但复刻时要照着读，否则将来若有别的调用方就会分叉。
+
+### 8. 台地整体抬高 4 层
+
+```c
+for (每个格 c 走一遍全图迭代器) {
+    if (work[c].owner == this->blobId) cell(c)->Level += 4;   // +0x11B
+}
+```
+
+第 4 步涂的那片水**也在** `blobId` 里，所以它跟着被抬到高处——
+它是瀑布**上游**的河面。
+
+### 9. 涂第二片水（**又是每格 2 次取数**）
+
+与第 4 步逐字相同（同样的 `PickBelow(6)` + `PickBelow(4)` + `owner = blobId`），
+只是矩形换成水面矩形 #2。这一片在抬升**之后**涂，所以留在低处——它是**下游**河面。
+
+上下游两片水中间那道 4 层的陡坎，就是瀑布要贴砖的地方。
+
+### 10. 贴四块瀑布砖
+
+每块砖走的都是同一套三段式：
+
+```c
+DAT_00880990 = TileTypes[ WaterfallXxx + k ];     // [0xA8ED2C] 是 TileTypeClass 数组基址
+Map->SetTargetCell(&outPrev, &coord);             // 0x4A91B0 → 写 MapClass +0x1174
+PlaceTile(0, 0x10000, level, this->blobId, &ok, 0);   // 0x57B440
+```
+
+`[0x880990]`（砖对象）与 `MapClass +0x1174`（落点）这对交接方式，
+与岸线平滑 `0x57B189` 处**逐条相同**（`mov ecx, 0x87F7E8` + 两个栈参、
+回吐的旧值当场丢弃），详见
+[stage-seeding-water.md](stage-seeding-water.md#选中的砖是怎么交出去的两个全局)。
+`level` 是从坎顶某一格读来的 `cell->Level`（`+0x11B`），四块砖共用。
+
+四块砖的**使用顺序是 `[+0]`、`[+3]`、`[+2]`、`[+1]`**（字节偏移 0 / 0xC / 8 / 4）：
+
+1. `[+0]` 贴在坎顶；
+2. `[+3]` 贴在坎底；
+3. 中间那段用一个循环交替贴 `[+2]`（跨 2 格）与 `[+1]`（跨 1 格），
+   直到把宽度走完：
+
+```c
+int i = 0, rem = span;
+while (i < span) {
+    if ((rem & 1) == 0) { coord = ...(i + 2); i += 2; rem -= 2; tile = set[+2]; }
+    else                { coord = ...(i + 1); i += 1; rem -= 1; tile = set[+1]; }
+    PlaceTile(...);
+}
+```
+
+那个 `rem & 0x80000001` + 负数折回的奇偶判定，与 §五 sin/cos 里
+`& 0x80001FFF` 是同一个编译器惯用法（13 位换成 1 位），
+`rem` 恒非负所以照样是白写的。
+
+夹在中间还有几处零碎的直接写：坎沿两格被写成 `IsoTile = 0xFFFF`（未定砖哨兵）、
+`Level += 4`、`SubTile = 0`、`work.owner = blobId`；
+另有一小段循环把坎底一排格子 `Level -= 4` 抵消掉第 8 步的整体抬升。
+
+### 11. 河流「瞬移」12 格
+
+```c
+static const int dx[4] = {  0, 12,  0, -12 };
+static const int dy[4] = { -12,  0, 12,   0 };
+if (ok) { *x += dx[dir / 2];  *y += dy[dir / 2]; }
+```
+
+**这是复刻时最容易漏的一条**：瀑布成功之后，调用方 `0x59D510` 的游标
+`(x, y)` 被**直接推进 12 格**，河道在瀑布处断开、从坎底重新开始画。
+12 正好是净空矩形的纵深。
+
+### 12. 出参
+
+```c
+*okOut = ok;
+return ok;
+```
+
+只有走到底才写 `*okOut`；前面所有早退都让它保持第 1 步的 `0`。
+
+### RNG 总账影响
+
+| 位置 | 每格取数 | 说明 |
+| --- | --- | --- |
+| 第 4 步水面 #1 | 2 次（各含拒绝采样） | `PickBelow(6)` + `PickBelow(4)` |
+| 第 9 步水面 #2 | 2 次 | 同上 |
+| `AngularGrow`（§七） | 见 §七 | 种子/邻居各 1 次 + 每轮一个正态偏差 |
+| `Shoreline` | 见岸线平滑 | 本身就是阶段 2 的取数大头 |
+
+其余步骤（净空扫描、抬升、贴砖、瞬移）**一次都不取**。
+
+## 七、`0x5A08D0`：角度优先的块扩张（AngularGrow）
+
+```c
+char __thiscall AngularGrow(this; int blobId, float weight,
+                            int rect[4], CellStruct* origin, char flush);
+```
+
+两个调用点：河流收尾的「下切成峡谷」（`weight = 0.01f`）与瀑布的台地
+（`weight = 0.003f`）。它是本支路里唯一按**方位角**而不是按距离扩张的算子。
+
+### 分配
+
+```c
+int cap = max(2 * this->+0x180 * this->+0x184, 100);   // 地图面积 ×2，下限 100
+nodes = new Node[cap];        // 每个 Node 8 字节：{packedCoord, float prio}
+heap  = new Heap;             // 5 个 int：{count, cap, storage, maxPtr, minPtr}
+heap->cap = cap;  heap->storage = new void*[cap + 1];   // 逐项清零，含第 cap 项
+heap->maxPtr = 0;  heap->minPtr = -1;
+```
+
+`new` 失败只是把指针写成 0 然后继续跑（西木惯例，没有异常处理）。
+
+### 基准角
+
+```c
+double base = 0.0;
+if (rect.x == 0) { if (rect.w != 0x200) base = π;        }   // [0x7E44D0]
+else             {                      base = 0.0;      }
+if (rect.y == 0) { if (rect.h != 0x200) base = π/2;      }   // [0x7E2820]
+else             {                      base = 3π/2;     }   // 4.71238898038469
+```
+
+两组 `if` 是**顺序执行**的，第二组无条件覆盖第一组的结论——
+只要 `rect.y != 0`，基准角一定是 `3π/2`，第一组白算。
+瀑布传的四个矩形里 `dir = 0/2` 的 `rect.y != 0`，走的正是这条覆盖路径。
+照抄。
+
+「扩张方向」的语义：矩形贴着坐标空间的哪条边，就朝反方向长。
+`0x200` 是坐标上限，`rect.x == 0 && rect.w == 0x200` 表示「这一维没被裁」，
+于是不给角度。
+
+### 清账 + 种子
+
+```c
+for (每格) work[c].+0x3C = 0;                 // 入堆标记，全图清零
+vec = CollectBorderCells(blobId);             // 0x5A0700
+k   = vec->count;                             // ★ 迭代次数公式里的 k
+for (每个 c ∈ vec) {
+    if (!(rect.x <= c.X < rect.x + rect.w && rect.y <= c.Y < rect.y + rect.h)) continue;
+    a = AngleDev(c);                          // 见下
+    u = (uint32)Random() * 2^-32;             // [0x7ED898]
+    prio = (float)(2.0 * u + 1.5 * a);        // [0x7ED790]=2.0 [0x7ED798]=1.5，皆 double
+    HeapPush(node);
+}
+vec->~DynamicVector();                        // 虚析构
+```
+
+两个系数在 `.rdata` 里是 **double**，消费指令是 `fmul qword ptr`——
+按 float 读会读成 `0.0`（这个坑踩过一次）。乘法在 x87 扩展精度里做，
+最后 `fstp dword` 落成 float 存进节点。
+
+`AngleDev` 是「这一格相对原点的方位角，离基准角偏了多少」：
+
+```c
+int dx = c.X - origin.X;
+double a;
+if (dx == 0) a = π/2;                                   // [0x7E2820]
+else {
+    a = atan( -(double)(c.Y - origin.Y) / (double)dx );  // FUN_004CADE0
+    if (dx < 0) a += π;                                 // [0x7E44D0]
+}
+a = fabs(a - base);
+while (a >= 2π) a -= 2π;                                // [0x7E3CC0]
+if (a > π) a = 2π - a;                                  // 折进 [0, π]
+```
+
+分子取负是等距屏幕坐标 Y 朝下的老规矩，与河流的 `y -= Sin(θ)` 同源。
+注意先 `fabs` 后模 `2π`：`fabs` 的结果非负，所以 `while` 一定会终止；
+但若 `a - base` 落在 `(-2π, 0)`，`fabs` 已经把它镜像过去了——
+这不等于「取角度差的主值」，是**另一个函数**。照抄。
+
+### 迭代次数 —— `weight` 的确切位置
+
+`0x5A0C40`–`0x5A0C74`：
+
+```
+005a0c40  fldln2
+005a0c42  fild dword [esp+0x10]      ; k = CollectBorderCells 返回的格子数
+005a0c46  fyl2x                      ; ln(k)
+005a0c48  fld  qword [0x7e1718]      ; 1.0
+005a0c4e  fcomp st(1)                ; 1.0 <= ln(k) ? 保留 ln : 换成 1.0
+005a0c5f  fdivr qword [0x7e1718]     ; L = max(ln k, 1.0)  →  1.0 / L
+005a0c65  fmul dword [ebp+0xc]       ; * weight            →  weight / L
+005a0c68  fdivr dword [0x7e2ac8]     ; 1.0f / (weight/L)   →  L / weight
+005a0c6e  fmul dword [0x7e5168]      ; * 0.5f
+005a0c74  call 0x7c5f00              ; _ftol
+```
+
+即
+
+```c
+double L = max(ln(k), 1.0);
+int    n = _ftol(0.5 * L / weight);
+int   n2 = PickBelow(n / 2 + 1);      // Random(); _ftol; while (r > n/2) 重抽
+// 主循环跑 n + n2 轮
+```
+
+`1.0 / L` 再 `* weight` 再 `1.0f / (...)` 这一串**绕了一圈回到 `L / weight`**——
+是源码写成 `1.0f / (weight / L) * 0.5f` 的直译，两次倒数在数学上抵消，
+但在浮点上**不抵消**（两次除法各引入一次舍入），所以必须照这个顺序算。
+另外 `[0x7E2AC8] = 1.0f` 与 `[0x7E5168] = 0.5f` 是 **float**，
+而 `[0x7E1718] = 1.0` 是 **double** —— 三个常数的读宽度都得跟着指令走。
+
+代入两个调用点（设边界格数 `k ≈ 600`，`ln 600 ≈ 6.397`）：
+
+| 调用点 | `weight` | `n` |
+| --- | --- | --- |
+| 河流下切 `0x59D510` | `0.01f` | ≈ 319 |
+| 瀑布台地 `0x59E740` | `0.003f` | ≈ 1066 |
+
+**`weight` 越小扩张越大**，它是「每一轮扩张的代价」而不是「扩张量」。
+`k = 0` 时 `fyl2x` 给 `-inf`，`max(-inf, 1.0) = 1.0`，`n = _ftol(0.5/weight)`；
+但 `k = 0` 同时意味着堆是空的，主循环第一轮就 `local_50 == NULL` 而 break。
+
+### 主循环
+
+进循环之前**先弹一次**堆（`cur = HeapPop()`），然后：
+
+```c
+for (int i = 0; i < n + n2; ++i) {
+    if (!ok || cur == NULL) break;
+    // 认领
+    if (work[cur].owner == 0 && IsUndecidedTile(cell(cur))) {
+        work[cur].+0x4B  = 1;
+        work[cur].owner  = blobId;
+    }
+    // 八邻域
+    for (int d = 0; d < 8; ++d) {
+        c = Neighbor(cur, d);                       // 0x42D510 + 表 [0x89F688]
+        if (!InDiamond(c)) continue;
+        if (work[c].owner == 0 && work[c].+0x3C != blobId
+            && rect 包住 c && IsUndecidedTile(cell(c))) {
+            a    = AngleDev(c);
+            u    = (uint32)Random() * 2^-32;
+            prio = (float)(2.0 * u + 1.5 * a);
+            work[c].+0x3C = blobId;                 // 打入堆标记
+            HeapPush(node);
+            continue;                               // ★ 入堆成功就不做下面的判据
+        }
+        if (work[c].owner == 0) continue;           // 未归属但被别的条件挡下：忽略
+        if (work[c].owner != blobId) ok = false;    // 撞上第三方地盘
+    }
+    base += NormalDeviate() * 0.7853981633974483;   // [0x7E3D88] = π/4
+    cur = HeapPop();
+}
+```
+
+**基准角每轮都在随机游走**（截断正态 × π/4，无区间限制），
+于是「朝哪边长」这件事本身是布朗运动的——这与涂块核心 `0x59BBC0`
+让引力中心随机游走是同一个设计思路。
+
+节点数组按 `local_48`（已入堆总数）线性推进，**从不回收**；
+`cap` 是地图面积的两倍，越界了也不检查（堆的 `count + 1 < cap` 那道门槛
+顺带兜住了，见涂块核心里记的同一条怪癖）。
+
+### 收尾
+
+```c
+if (flush != 0) {
+    while ((cur = HeapPop()) != NULL && ok) {
+        if (work[cur].owner == 0) work[cur].owner = blobId;   // 无条件认领，不查砖
+        else if (work[cur].owner != blobId) ok = false;
+    }
+}
+delete[] nodes;   // 0x7C8B3D
+delete heap;      // 0x5AC340
+return ok;
+```
+
+河流收尾传 `flush = 1`（把堆里剩的全收编），瀑布传 `0`（不收）。
+注意 flush 分支里**不查 `IsUndecidedTile`**，与主循环的认领条件不一致。
+
+### 仍未确认
+
+* `FUN_004CADE0` 是 `atan` 还是 `atan` 的某个变体——从调用形态
+  （单参数 double、结果加 π 修正象限）看只能是反正切，但**没有逐位对拍过**。
+  它若也是查表实现（`0x4CAC40`/`0x4CACB0` 都是），就还得再挖一张表出来。
+  这是本支路落 C++ 前必须关掉的最后一个洞。
+* `FUN_005AD870`（堆下沉）与 `FUN_005AC340`（堆析构）的并列语义有没有和
+  涂块核心那个最小堆一致（那边实锤是「严格大于才交换」）——形态相同，未逐条比对。
 
 ## 八、复刻状态与未确认清单
 
@@ -505,12 +891,28 @@ char* okOut, double* x, double* y)`。
 | `0x5A0700` / `0x5A0410` / `0x5A0160` | ✅ 已实锤，未落 C++ |
 | `0x59D510` 河 | ✅ 结构与全部常数已实锤，未落 C++ |
 | `0x4CACB0` / `0x4CAD00` sin/cos | ✅ **已落 C++ 并对拍** |
-| `0x59E740` 桥 | ⬜ 仅提纲，见 §六 TODO |
-| `0x5A08D0` 角度扩张 | ⬜ 仅提纲，见 §七 TODO |
+| `0x59E740` 瀑布 | ✅ 十二步结构与四个 TileSet 已实锤，未落 C++ |
+| `0x5A08D0` 角度扩张 | ✅ 结构 + 迭代次数公式已实锤；`FUN_004CADE0` 待定，未落 C++ |
 
 未确认：
 
 * `0x59D510` 候选起点 `P[1]` / `P[2]` 的 iso 恒等式（`P[0]` / `P[3]` 已对上）；
-* `0x5A0160` 里 `work.owner == owner - 1` 这条「上一个编号」分支的语义
-  （猜测与桥占用的那个编号有关，未验证）；
-* `0x5A08D0` 的 `weight` 参数在公式中的位置。
+* `0x5A0160` 里 `work.owner == owner - 1` 这条「上一个编号」分支的语义。
+  §六第 11 步给了一条线索：瀑布成功时 `+0x308 += 1`，于是**上游河段的编号
+  恰好是当前编号减一**，`Dilate` 的这条分支很可能就是为「让下游把上游认作自己人」
+  准备的。仍未直接验证；
+* `FUN_004CADE0`（疑似 `atan`）的实现方式与逐位行为 —— 见 §七末尾，
+  **这是本支路落 C++ 前的最后一个必须关掉的洞**；
+* `0x5A08D0` 的两个堆辅助 `FUN_005AD870` / `FUN_005AC340` 是否与涂块核心
+  那个最小堆的并列语义一致。
+
+### 一条自我更正的记录
+
+`0x59E740` 在本文初稿（及 commit `5eef1b9` 的提交信息）里被写成了「架桥」。
+成因是**从调用点的语境反推函数用途**：它出现在河流生成器里、由一个
+25% 抛硬币的全局开关控制、成功之后河的下切被取消——
+「有桥的河不挖成峡谷」听上去太顺了，于是没有去核对它到底取的是哪套砖。
+
+实际去看取砖点，四个分支引用的是四个瀑布 TileSet 全局，一处
+`BridgeSet` 都没有。**语境合理不能替代取证**——这正是 CLAUDE.md
+「证据优先」那一条要防的情况，记在这里备忘。
