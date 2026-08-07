@@ -10,8 +10,9 @@
 //   4) 工作数组头一条记录的 +0x38 / +0x3C（0x59A7A5 那遍整片写 -1）
 //   5) 菱形内每一格的终态 (tile, subtile, level, workBlob)
 //
-// ⚠️ 42 块岸砖用的是**合成尺寸**，两套剖面，规则与 dump_shore_smooth_golden.py
-// 的 shore_tile_size 逐字一致；换成真实 .tmp 尺寸要重取基准。
+// ⚠️ 42 块岸砖 + 14 块水砖有三套尺寸剖面（CASE 行的 tiles= 列）：
+// mix / unit 是合成的，real 是真实 .tmp 文件头。定义见 tile_geometry_fixture.h，
+// 与 oracle 侧的 code/randmap/tile_profiles.py 同源。
 // ⚠️ MapType 0 在小图上每块都铺不出岸线、整块回滚，终态全是水——那是原版
 // 真实行为（基准里 mt0-allwater 一例专门盯住它），不是桩失效。
 #include "stage_water.h"
@@ -28,6 +29,7 @@
 #include <vector>
 
 #include "gtest/gtest.h"
+#include "tile_geometry_fixture.h"
 #include "scaled_random.h"
 
 namespace ra2 {
@@ -82,30 +84,20 @@ int SlotOf(const CellCoord& c) {
 class StageStub : public WaterStageWorld {
  public:
   StageStub(const MapGrid& g, const TheaterData& theater, Randomizer& rng,
-            std::vector<PaintWorkCell>& work, bool unit_tiles)
+            std::vector<PaintWorkCell>& work, const std::string& profile)
       : grid_(g), theater_(theater), rng_(rng), work_(work),
         cells_(kCellSlots), exists_(kCellSlots, 0),
         cache_(work.size(), -1) {
     g.ForEachCell([&](const CellCoord& c) { exists_[SlotOf(c)] = 1; });
     for (int k = 0; k < 0x2A; ++k) {
-      TileType t;
-      t.tile_number = theater.shore_pieces + k;
-      t.width = unit_tiles ? 1 : 1 + (k % 2);
-      t.height = unit_tiles ? 1 : 1 + ((k / 2) % 2);
-      t.cells.assign(static_cast<std::size_t>(t.width) * t.height,
-                     TileSubCell{true, 0, 0});
+      const TileType t = fixture::MakeTile(theater.shore_pieces + k,
+                                           fixture::ShoreGeom(k, profile));
       tiles_[t.tile_number] = t;
     }
-    // WaterSet 的 0x0E 块：0x59C795 会以 TileTypes[WaterSet + shape] 取砖，
-    // 尺寸/坡度的合成规则与 dump_water_refine_golden.py 逐字一致。
+    // WaterSet 的 0x0E 块：0x59C795 会以 TileTypes[WaterSet + shape] 取砖。
     for (int k = 0; k < 0x0E; ++k) {
-      TileType t;
-      t.tile_number = theater.water_set + k;
-      t.width = k < 8 ? 2 : 1;
-      t.height = k < 8 ? 2 : 1;
-      for (int j = 0; j < t.width * t.height; ++j) {
-        t.cells.push_back(TileSubCell{true, 0, 1 + (k * 5 + j * 3) % 17});
-      }
+      const TileType t = fixture::MakeTile(theater.water_set + k,
+                                           fixture::WaterGeom(k, profile));
       tiles_[t.tile_number] = t;
     }
   }
@@ -212,7 +204,7 @@ struct GoldenCase {
   unsigned seed = 0;
   int players = 0, water = 0, map_type = 0;
   Rect usable;
-  bool unit_tiles = false;
+  std::string profile;
   long long rng = 0;
   int stamp = 0, dummy = 0, work38 = 0, work3c = 0;
   std::vector<std::array<int, 6>> cells;   // x y tile subtile level workBlob
@@ -254,7 +246,7 @@ std::vector<GoldenCase> LoadGolden() {
       c.water = NamedInt(wtok, "water=");
       c.map_type = NamedInt(mttok, "mt=");
       c.usable = NamedRect(utok);
-      c.unit_tiles = tilestok == "tiles=unit";
+      c.profile = tilestok.substr(std::strlen("tiles="));
       c.rng = NamedInt(rngtok, "rng=");
       c.stamp = NamedInt(stamptok, "stamp=");
       c.dummy = NamedInt(dummytok, "dummy=");
@@ -280,7 +272,7 @@ TEST(StageWater, MatchesOriginal) {
     const std::size_t n = static_cast<std::size_t>(grid.side()) * grid.side();
     std::vector<PaintWorkCell> work(n);
     Randomizer rng(c.seed);
-    StageStub world(grid, theater, rng, work, c.unit_tiles);
+    StageStub world(grid, theater, rng, work, c.profile);
     NormalDeviate normal(rng);
     int stamp = 0;
 
@@ -344,7 +336,7 @@ struct RefineCase {
   unsigned seed = 0;
   int players = 0, water = 0, map_type = 0;
   Rect usable;
-  bool unit_tiles = false;
+  std::string profile;
   long long rng_stage = 0, rng_total = 0;
   int dummy = 0;
   std::vector<std::array<int, 7>> cells;   // x y tile subtile level ramp blob
@@ -374,7 +366,7 @@ std::vector<RefineCase> LoadRefineGolden() {
       c.water = NamedInt(wtok, "water=");
       c.map_type = NamedInt(mttok, "mt=");
       c.usable = NamedRect(utok);
-      c.unit_tiles = tilestok == "tiles=unit";
+      c.profile = tilestok.substr(std::strlen("tiles="));
       c.rng_stage = NamedInt(stagetok, "rngstage=");
       c.rng_total = NamedInt(totaltok, "rngtotal=");
       c.dummy = NamedInt(dummytok, "dummy=");
@@ -398,7 +390,7 @@ TEST(WaterRefine, MatchesOriginal) {
     const std::size_t n = static_cast<std::size_t>(grid.side()) * grid.side();
     std::vector<PaintWorkCell> work(n);
     Randomizer rng(c.seed);
-    StageStub world(grid, theater, rng, work, c.unit_tiles);
+    StageStub world(grid, theater, rng, work, c.profile);
     NormalDeviate normal(rng);
     int stamp = 0;
 

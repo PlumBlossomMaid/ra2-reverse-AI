@@ -159,6 +159,17 @@
       恰好拼满 WaterSet 的 `TilesInSet = 0x0E`——砖号分配自洽，反过来作证 `/40`；
       新记两条：`0x5A6C10` 会写 `CellClass +0x11C`（坡度，来自 `.tmp` 子块头 `+0x2A`）
       而贴砖器 `0x57B440` 从不碰它，且它的层高公式多一个 `-4`
+- [x] **真实 `.tmp` 几何进基准**（`memory/data/rmg/tile_geometry.txt`，
+      生成脚本 `code/randmap/dump_tile_geometry.py`）——
+      岸砖 42 + 水砖 14、温和与雪地共 112 条，只取几何数值（占地宽高 / 空洞 /
+      高度增量 / RampType），无任何像素资产。三份基准各加一档 `tiles=real` 用例，
+      C++ 侧 `test/tile_geometry_fixture.h` 读同一份表，两边唯一真值来源。
+      三条新结论：**水砖恰是前 8 块 2×2 + 后 6 块 1×1**，与 `0x59C630` 的
+      `shape = n/40 ∈ [0,7]` / 小浪花 `[8,13]` 严丝合缝——给「除数是 40 不是 10」
+      补了第二条独立证据；`shore41/42`（6×4 与 9×5，唯二带空洞的）
+      **岸线平滑永远选不到**（组内下标最大 `0x28` → `shore40`）；
+      温和与雪地这 56 块砖**几何完全相同**。合成剖面不删——真实数据的
+      高度增量与 RampType 全是 0，压不出「层高累加」「空洞跳过」两条分支
 - [x] **`TheaterData` 接进涂块/岸线两侧**——删掉 `WaterTile()` /
       `ShorePiecesBase()` 两个虚函数，去掉重复真值来源；
       顺带把格指针/哑元辅助抽成 `cell_ref.{h,cpp}` 供阶段调度器复用
@@ -228,6 +239,7 @@ long double。同类的 `fsin` / `fpatan` / `f2xm1` 是否也如此，**未确�
 | `code/randmap/emu_oracle.py` | Unicorn 模拟执行取基准（整函数 / 任意片段）**——x87 超越指令不可信** |
 | `code/randmap/dump_scaled_golden.py` | 导出浮点取数惯用法的对拍基准 |
 | `code/randmap/dump_fastmath_golden.py` | 导出查表 sqrt / 均匀源 / 正态分布的对拍基准 |
+| `code/randmap/dump_tile_geometry.py` | 从 theater 的 `.tmp` 取砖的**几何元数据**（宽高/空洞/高度/坡度）当对拍夹具 |
 | `code/ghidra_scripts/find_writers.py` | 定位 .bss 全局的运行期初始化点（表内容不在文件里） |
 | `code/randmap/scan_rmg_rng.py` | 只列**生成器自己那个** Randomizer(0xABE890) 的取数点（按 this 判定） |
 | `code/ghidra_scripts/rng_closure.py` | 调用树传递闭包，找出某根函数下**所有**随机数取数点（真函数边界） |

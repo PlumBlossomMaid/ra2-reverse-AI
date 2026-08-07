@@ -14,6 +14,7 @@ u"""水面细化 0x59C630 的整函数模拟执行。
 """
 import sys
 
+import tile_profiles
 from dump_stage_water_golden import StageOracle, GREEN
 from dump_shore_smooth_golden import WATER, SHORE
 from dump_blob_paint_golden import WORK_SIZE
@@ -23,18 +24,14 @@ A_REFINE = 0x59C630
 WATER_TILES = 0x0E      # WaterSet 的 TilesInSet（theater ini 实测）
 
 
-def water_tile_size(k):
-    u"""第 k 块水砖的合成尺寸：前 8 块 2x2，后 6 块 1x1。
+def water_tile_size(k, profile="mix"):
+    u"""第 k 块水砖的尺寸：前 8 块 2x2（大水面）、后 6 块 1x1（小浪花）。
 
-    这条规则同时也是 0x59C630 两条分支的分工——大水面压 shape ∈ [0,7]，
-    小浪花只换自己一格的砖号（WaterSet + 8 .. +13）。
+    合成与真实两套剖面在这一点上**完全一致**：
+    真 `.tmp` 读出来的就是 8 块 2x2 + 6 块 1x1，
+    恰好对应 0x59C630 的两条分支（shape ∈ [0,7] 与 [8,13]）。
     """
-    return (2, 2) if k < 8 else (1, 1)
-
-
-def water_tile_ramp(k, j):
-    u"""子块 +0x2A 的合成值。取不同的非零值，好让 +0x11C 的写入可观测。"""
-    return 1 + (k * 5 + j * 3) % 17
+    return tile_profiles.water_spec(k, profile)[:2]
 
 
 class RefineOracle(StageOracle):
@@ -48,8 +45,7 @@ class RefineOracle(StageOracle):
         for k in range(0x2A):
             self.wr32(table + (SHORE + k) * 4, self.rd32(old + (SHORE + k) * 4))
         for k in range(WATER_TILES):
-            tw, th = water_tile_size(k)
-            blocks = [(True, 0, water_tile_ramp(k, j)) for j in range(tw * th)]
+            tw, th, blocks = tile_profiles.water_spec(k, profile)
             obj = self.make_tile(WATER + k, tw, th, blocks)
             self.wr32(table + (WATER + k) * 4, obj)
         self.wr32(0xA8ED2C, table)
@@ -92,6 +88,10 @@ CASES = [
     ("mt2-unit", 10, 10, 0xABCDEF01, 2, 30, 2, (0, 0, 10, 10), "unit"),
     ("mt3-nostrategy", 10, 10, 0x1234, 2, 0, 3, (0, 0, 10, 10), "mix"),
     ("mt0-big", 30, 30, 0xDEADBEEF, 6, 40, 0, (0, 0, 30, 30), "mix"),
+    # 真实 .tmp 尺寸（岸砖 7 种、水砖 8 块 2x2 + 6 块 1x1）
+    ("mt0-real", 20, 20, 0x12345678, 2, 0, 0, (0, 0, 20, 20), "real"),
+    ("mt1-real", 12, 10, 0x5A5A5A5A, 4, 100, 1, (0, 0, 12, 10), "real"),
+    ("mt2-real", 12, 10, 0x0F0F0F0F, 4, 20, 2, (0, 0, 12, 10), "real"),
 ]
 
 

@@ -24,6 +24,7 @@ u"""\u5cb8\u7ebf\u5e73\u6ed1 0x57A0C0 \u7684\u6574\u51fd\u6570\u6a21\u62df\u6267
 import struct
 import sys
 
+import tile_profiles
 from dump_place_tile_golden import PlaceOracle
 from dump_blob_paint_golden import WORK_SIZE, CELL_SIZE
 
@@ -35,14 +36,12 @@ UNDECIDED = 0      # land init state: undecided tile
 
 
 def shore_tile_size(k, profile="mix"):
-    u"""\u7b2c k \u5757\u5cb8\u7816\uff08k = tile_number - ShorePieces\uff09\u7684\u5408\u6210\u5c3a\u5bf8\u3002
+    u"""第 k 块岸砖（k = tile_number - ShorePieces）的尺寸。
 
-    \u53ea\u8981\u5bf9\u62cd\u4e24\u8fb9\u7528\u540c\u4e00\u6761\u89c4\u5219\u5c31\u884c\uff1b\u6545\u610f\u8ba9 1x1 / 2x1 / 1x2 / 2x2
-    \u56db\u79cd\u90fd\u51fa\u73b0\uff0c\u597d\u628a\u8d34\u7816\u5668\u7684\u6574\u5757\u5426\u5b9a\u8def\u5f84\u538b\u51fa\u6765\u3002
+    三套剖面（mix / unit / real）的定义在 tile_profiles.py，
+    C++ 对拍侧的 test/tile_geometry_fixture.h 读同一份真值表。
     """
-    if profile == "unit":
-        return 1, 1
-    return 1 + (k % 2), 1 + ((k // 2) % 2)
+    return tile_profiles.shore_spec(k, profile)[:2]
 
 
 class SmoothOracle(PlaceOracle):
@@ -65,8 +64,8 @@ class SmoothOracle(PlaceOracle):
         table = self._bump(4 * n)
         self.wr32(0xA8ED2C, table)
         for k in range(0x2A):
-            tw, th = shore_tile_size(k, profile)
-            obj = self.make_tile(SHORE + k, tw, th, [(True, 0)] * (tw * th))
+            tw, th, blocks = tile_profiles.shore_spec(k, profile)
+            obj = self.make_tile(SHORE + k, tw, th, blocks)
             self.wr32(table + (SHORE + k) * 4, obj)
         self.wr32(0x880990, 0)
 
@@ -170,6 +169,13 @@ CASES = [
     ("noise55-unit", 20, 20, 0xC0FFEE, "lcg:0xC0FFEE:18022", 5, 1, "unit"),
     ("noise70-unit", 22, 18, 0x1111, "lcg:0x1111:22937", 6, 1, "unit"),
     ("disc-unit", 20, 20, 0x1234, "disc:7", 5, 1, "unit"),
+    # 真实 .tmp 尺寸：岸砖有 2x3 / 3x2 / 6x4 / 9x5 这些合成剖面给不出的大块，
+    # 一块砖能盖住 45 格，贴砖器的"整块否定"与遮挡关系跟合成剖面完全不同
+    ("disc-real", 20, 20, 0x1234, "disc:7", 5, 1, "real"),
+    ("noise55-real", 20, 20, 0xC0FFEE, "lcg:0xC0FFEE:18022", 5, 1, "real"),
+    ("isthmus-real", 16, 14, 0x777, "isthmus", 3, 1, "real"),
+    ("dots5-real", 20, 20, 0x44, "dots:5", 4, 1, "real"),
+    ("noise70-real", 22, 18, 0x1111, "lcg:0x1111:22937", 6, 0, "real"),
 ]
 
 

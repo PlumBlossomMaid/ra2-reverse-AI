@@ -7,12 +7,9 @@
 //      次数错一次后面所有阶段的随机流就全错位）
 //   3) 菱形内每一格的终态 (tile, subtile, level, workBlob)
 //
-// ⚠️ 基准里的 42 块岸砖用的是**合成尺寸**，两套剖面（CASE 行的 tiles= 列）：
-//   mix  —— 1 + k%2 宽、1 + (k/2)%2 高，砖会盖住右/下邻格；
-//   unit —— 一律 1x1，谁也遮不住谁，专门放出 0x57B0ED 那几条纯对角分支。
-// 两套都全子格实心、高度增量 0，与 oracle 脚本的 shore_tile_size 逐字一致。
-// 真实 .tmp 尺寸只影响一块砖盖住几格，不影响四遍扫描的结构与取数顺序；
-// 等 .tmp 解析接上之后可以换成真尺寸再重取一次基准。
+// 42 块岸砖的尺寸有三套剖面（CASE 行的 tiles= 列），定义见 tile_geometry_fixture.h：
+//   mix / unit 是合成的（压分支用），real 是真实 .tmp 文件头（2x3 / 3x2 / 6x4 / 9x5
+//   这些尺寸合成规则给不出，一块砖能盖住 45 格）。三套都要留，理由见那个头文件。
 #include "shore_smooth.h"
 
 #include <array>
@@ -27,6 +24,7 @@
 
 #include "gtest/gtest.h"
 #include "scaled_random.h"
+#include "tile_geometry_fixture.h"
 
 namespace ra2 {
 namespace rmg {
@@ -77,21 +75,17 @@ int SlotOf(const CellCoord& c) {
 
 class SmoothStub : public SmoothWorld {
  public:
-  SmoothStub(const MapGrid& g, int water, int shore, bool unit_tiles)
+  SmoothStub(const MapGrid& g, int water, int shore,
+             const std::string& profile)
       : grid_(g), water_(water), shore_(shore),
         cells_(kCellSlots), exists_(kCellSlots, 0),
         cache_(static_cast<std::size_t>(g.side()) * g.side(), -1),
         blob_(static_cast<std::size_t>(g.side()) * g.side(), 0) {
     g.ForEachCell([&](const CellCoord& c) { exists_[SlotOf(c)] = 1; });
-    // 42 块岸砖，尺寸规则与 oracle 的 shore_tile_size 逐字一致
+    // 42 块岸砖，尺寸剖面与 oracle 的 tile_profiles.shore_spec 同源
     for (int k = 0; k < 0x2A; ++k) {
-      TileType t;
-      t.tile_number = shore_ + k;
-      t.width = unit_tiles ? 1 : 1 + (k % 2);
-      t.height = unit_tiles ? 1 : 1 + ((k / 2) % 2);
-      t.cells.assign(static_cast<std::size_t>(t.width) * t.height,
-                     TileSubCell{true, 0});
-      tiles_.push_back(t);
+      tiles_.push_back(
+          fixture::MakeTile(shore_ + k, fixture::ShoreGeom(k, profile)));
     }
   }
 
@@ -182,7 +176,7 @@ struct GoldenCase {
   unsigned seed = 0;
   int blob = 0;
   bool flag = false;
-  bool unit_tiles = false;   // CASE 行的 tiles= 列，见文件头注释
+  std::string profile;       // CASE 行的 tiles= 列：mix / unit / real
   int ret = 0;
   long long rng = 0;
   std::vector<CellCoord> land;
@@ -216,7 +210,7 @@ std::vector<GoldenCase> LoadGolden() {
           std::strtoul(seedtok.c_str() + std::strlen("seed=0x"), nullptr, 16));
       c.blob = NamedInt(blobtok, "blob=");
       c.flag = NamedInt(flagtok, "flag=") != 0;
-      c.unit_tiles = tilestok == "tiles=unit";
+      c.profile = tilestok.substr(std::strlen("tiles="));
       c.ret = NamedInt(rettok, "ret=");
       c.rng = NamedInt(rngtok, "rng=");
       out.push_back(c);
@@ -244,7 +238,7 @@ TEST(ShoreSmooth, MatchesOriginal) {
 
   for (const GoldenCase& c : cases) {
     const MapGrid grid(c.w, c.h);
-    SmoothStub world(grid, kWaterSet, kShorePieces, c.unit_tiles);
+    SmoothStub world(grid, kWaterSet, kShorePieces, c.profile);
     // 初态：陆地 = 未定砖 0，其余菱形内格子 = 水面组基
     grid.ForEachCell([&](const CellCoord& p) { world.Seed(p, kWaterSet); });
     for (const CellCoord& p : c.land) world.Seed(p, 0);
