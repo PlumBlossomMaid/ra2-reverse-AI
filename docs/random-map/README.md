@@ -25,7 +25,7 @@
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法全还原；**`MapType 0/1/2` 主路径 + 水面细化整条落成 C++ 并对拍** |
 | [stage-water-maptype34.md](stage-water-maptype34.md) | 阶段 2 支路：`MapType ∈ {3,4}` 的**河流、湖泊与瀑布**（含查表 sin/cos） | ✅ 八个函数全部实锤；sin/cos 已落 C++ 并对拍；整支路待落 C++ |
-| [stage-making-regions.md](stage-making-regions.md) | 阶段 4：Making regions（区域重建 + **区域之间开坡道/架桥**，`MapType ∈ {3,4}` 专属，45 个取数点） | ⚠️ 45 个取数点关掉 24；`0x590970`/`0x58F2C0`/`0x58D620` 三棵子树待逆 |
+| [stage-making-regions.md](stage-making-regions.md) | 阶段 4：Making regions（区域重建 + **区域之间开坡道/架桥**，`MapType ∈ {3,4}` 专属，45 个取数点） | ⚠️ 45 个取数点关掉 32；余 `0x58F2C0`/`0x58D620` 与七个坡道建造函数的几何 |
 
 ## 进度
 
@@ -229,6 +229,19 @@
       `PickBelow(101)`，命中 `< Accessibility` 才再抽 `PickBelow(3)` 多开 1~2 条坡道，
       最多试 100 次。顺手关掉 stage-init-regions 的未确认 4——
       `MapSeed +0x180/+0x184` 不是规则项，就是地图宽高 W/H
+- [x] **开坡道外壳 `0x590970` + `0x590FD0` + `0x5A1E50` 实锤，8 个取数点全部落地**：
+      `0x590FD0` 把以本格为中心的 **15×15** 切成 3×3 个 5×5 盒子，
+      每个盒子里"属于目标区域的格数 ≥ need"就点亮一个方向位——于是掩码位↔方向
+      的映射拿到了**数据级佐证**（9 个 dword 的表 `0x82AF18`，
+      与水掩码 `0x57B210`、高差掩码 `0x579B70` 同一套编码）。
+      `0x5905D0` 传下来的 `tries × 0.01f` **有两处独立作用**：
+      ① `need = _ftol(lerp(5, 15, 1 − tol))`，门槛从 15/25 线性放宽到 5/25；
+      ② `tol > 0.5f` 时开一条"不看掩码硬开长坡"的后路。
+      因为 `0.01f` 位形偏小 + RC=chop，`tries = 50` 截出 `0.49999997f` 不过关，
+      后路实际从 `tries = 51` 才开——**舍入模式直接改变地图的一个实例**。
+      掩码到手后八条分支顺序尝试（四个转角函数一个随机数都不取，
+      四个直坡函数各带两次 `PickBelow(2)` 端点抖动），
+      **分支不互斥**，一次调用消耗 0~10 个随机数，不是常数
 - [x] **`0xAA1020` 这个三义 TileSet 全局定死为 `CliffSet`**：温和/雪地两套 theater ini 里
       `ToSnowTheater`/`ToTemperateTheater` 根本没定义，而 `CliffSet` 的
       `TilesInSet = 40 = 0x28` 与 `0x5A17F0`/`0x4863D0` 硬编码的区间宽度精确吻合。
