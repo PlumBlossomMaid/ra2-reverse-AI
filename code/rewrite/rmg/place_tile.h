@@ -70,14 +70,18 @@ class TileWorld {
 };
 
 // 六个栈参，逐个对应 0x57B440 的栈帧（ret 0x18）。
+// 偏移按序言之后算：`sub esp,0x1c` + 4 个 push = 0x2C，故第一个参数在 [esp+0x30]。
 struct PlaceTileParams {
-  int allow_lo = 0;       // [esp+0x2C] 允许覆盖的砖号区间下界
-  int allow_hi = 0;       // [esp+0x30] 上界（闭区间，见 0x57B63E/0x57B646）
+  int allow_lo = 0;       // [esp+0x30] 允许覆盖的砖号区间下界
+  int allow_hi = 0;       // [esp+0x34] 上界（闭区间，见 0x57B63E/0x57B646）
   int base_level = 0;     // [esp+0x38] 落点基准高度，逐子格再加砖的高度增量
   int blob_id = 0;        // [esp+0x3C] 归属块编号；0 与 -1 是两个特例值
   bool* ok = nullptr;     // [esp+0x40] 出参：贴不上时被写 false
-  // [esp+0x44] 非零 = 把 blob_id 强行清零（0x57B463），于是工作数组既不读也不写，
-  // 判定恒走"同块"分支。岸线第 3/4 遍都传 0；传 1 的调用点在 0x59Exxx 一带。
+  // [esp+0x44] 非零 = 把 blob_id 强行清零（0x57B45B/0x57B463），于是工作数组
+  // 既不读也不写，判定恒走"同块"分支。
+  // ⚠️ 岸线第 3/4 遍传进来的是 Shoreline 自己的 flag（0x57B1A4 与 0x57B1BE 各
+  // 把栈上的 flag 作为第一个 push），而涂块调 Shoreline 时 flag 恒为 1 ——
+  // 也就是说随机地图生成期间这一位一直是**开**的。
   bool no_blob_tracking = false;
 };
 

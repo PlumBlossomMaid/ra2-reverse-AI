@@ -8,6 +8,7 @@ add_library(ra2_rmg
   blob_region.cpp
   blob_paint.cpp
   shore_mask.cpp
+  shore_smooth.cpp
   make_grid.cpp
   place_blobs.cpp
   place_tile.cpp
@@ -87,4 +88,11 @@ if(RA2_BUILD_TESTS)
   add_executable(test_place_tile test/test_place_tile.cpp)
   target_link_libraries(test_place_tile PRIVATE ra2_rmg gtest_main)
   add_test(NAME place_tile COMMAND test_place_tile)
+
+  # 岸线平滑的基准有 17 万字节，编成 .inc 太笨重，直接在运行期读原档
+  add_executable(test_shore_smooth test/test_shore_smooth.cpp)
+  target_link_libraries(test_shore_smooth PRIVATE ra2_rmg gtest_main)
+  target_compile_definitions(test_shore_smooth PRIVATE
+    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+  add_test(NAME shore_smooth COMMAND test_shore_smooth)
 endif()

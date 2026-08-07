@@ -94,7 +94,9 @@ class PaintOracle(object):
         uc.hook_add(UC_HOOK_CODE, self._h_malloc, begin=A_MALLOC, end=A_MALLOC)
         uc.hook_add(UC_HOOK_CODE, self._h_free, begin=A_FREE, end=A_FREE)
         uc.hook_add(UC_HOOK_CODE, self._h_true0, begin=A_PAINTABLE, end=A_PAINTABLE)
-        uc.hook_add(UC_HOOK_CODE, self._h_true8, begin=A_SMOOTH, end=A_SMOOTH)
+        # 句柄留着：岸线自己的 oracle 要把这个桩摘掉，好让真身跑起来
+        self.h_smooth = uc.hook_add(UC_HOOK_CODE, self._h_true8,
+                                    begin=A_SMOOTH, end=A_SMOOTH)
         uc.hook_add(UC_HOOK_CODE, self._h_rng, begin=A_RANDOM, end=A_RANDOM)
         uc.hook_add(UC_HOOK_CODE, self._h_pmain, begin=A_MAIN_PAINT, end=A_MAIN_PAINT)
         uc.hook_add(UC_HOOK_CODE, self._h_pdrain, begin=A_DRAIN_PAINT, end=A_DRAIN_PAINT)
