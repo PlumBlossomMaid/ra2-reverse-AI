@@ -2,8 +2,10 @@
 
 > 状态：**涂块核心 `0x59BBC0` 已于 2026-08-06 整函数落成 C++ 并对拍通过**
 > （`code/rewrite/rmg/blob_paint.{h,cpp}` / `test_blob_paint.cpp`，14 组用例、
-> 约一万格**逐格生长顺序**与原版完全一致，随机数取数次数也逐组吻合，见 §四末尾）。
-> 三种 MapType 的投放策略、区域网格、岸线平滑（含八邻域掩码定义）已还原但**尚未落成 C++**。
+> 约一万格**逐格生长顺序**与原版完全一致，随机数取数次数也逐组吻合，见 §四末尾）；
+> 岸线平滑的**八邻域掩码 `0x57B210` 也已落成并对拍**（§七，1299 次查询）。
+> 三种 MapType 的投放策略、区域网格、四遍平滑的判定逻辑已还原但**尚未落成 C++**；
+> 贴砖器 `0x57B440` 卡在 theater 的 `TileTypeClass` 数据上（§七末）。
 > 地图容器见 [map-geometry.md](map-geometry.md)。
 > 本文只记录已取证的部分，推测一律标注「未确认」。
 > 涉及的数学基元见 [fast-math.md](fast-math.md)（已逐位对拍）。
@@ -609,25 +611,62 @@ cell->IsoTileTypeIndex = [0xAA0738] + 8 + c / 40;      // 8..13 号小水面
 ## 七、岸线平滑 `FUN_0057A0C0`——并且**它会消耗随机数**
 
 涂块收尾时调用它铺水陆过渡砖，返回失败则整块陆地被抹回海里（§四）。
-结构是**四遍全图扫描**，任一遍返回 0 就中断并让整块作废：
+它是 `MapClass` 的方法，`ecx = 0x87F7E8`（`0x57B2F1` 读 `[this+0x13C]` 取格子指针数组）。
+结构是**四遍全图扫描**：
 
 ```c
-bool Shoreline(a, b) {
+bool Shoreline(int blobId, int flag) {                     // 涂块调用时 flag = 1
     if (work == null) { work = new Rec[side*side]; owned = true; }   // 缺席时就地建出来
     for (i : side*side) work[i].field_40 = -1;
     bool ok = true;
-    for (pass : { Pass1 /*0x57A430*/, Pass2 /*0x57A320*/,
-                  Pass34(1) /*0x57ACF0*/, Pass34(2) }) {
-        ResetIterator();                                  // 每遍前重置迭代器与 4 个边界全局
-        while ((cell = NextCell()) != 0 && ok)
-            ok = pass(cell, a, b);
-    }
+    ResetIterator(); while ((cell = Next()) && ok) ok = Pass1(cell, blobId, flag);  // 0x57A430
+    ResetIterator(); while ((cell = Next()) && ok)      Pass2(cell, blobId, flag);  // 0x57A320 ← 注意
+    ResetIterator(); while ((cell = Next()) && ok) ok = Pass34(cell, 1, blobId, flag);
+    ResetIterator(); while ((cell = Next()) && ok) ok = Pass34(cell, 2, blobId, flag);
     if (owned) { free(work); work = null; }
     return ok;
 }
 ```
 
-每遍之前都重设四个全局（`0x87F8F4/F8/FC/900`），即**每遍都从头扫全图**。
+每遍之前都重设四个全局（`0x87F8F4/F8/FC/900` = `MapClass +0x10C/110/114/118`），
+即**每遍都从头扫全图**。
+
+### ⚠️ 第 2 遍的返回值被彻底丢弃
+
+第 1 遍（`0x57A1A6`）和第 3/4 遍（`0x57A25C`/`0x57A2B9`）调用后都有 `mov bl, al`
+把结果收进循环条件；**唯独第 2 遍（`0x57A1F7`）后面没有这一句**。
+
+```asm
+0057a1f7  call 0x57a320
+0057a1fc  mov  ecx, 0x87f7e8      ; ← 直接就去取下一格了，al 没人要
+0057a201  call 0x578290           ; Next
+```
+
+对照 `0x57A320` 自己：它在 `0x57A423` 的出口**根本没设过 `eax`**——
+返回的是上一条指令碰巧留下的值（早退路径是 `cell->+0x38`，
+掩码不匹配路径是掩码值，走完全程则是最后一次掩码调用的结果）。
+函数写的是 `void`，调用方也当 `void` 用，两边自洽。
+
+> 所以「任一遍失败就整块作废」这句话**对第 2 遍不成立**。
+> 第 2 遍循环里那个 `test bl,bl` 是循环不变量，仅仅表示"第 1 遍成功了没有"。
+> 本文档早前把四遍一概写成 `ok = pass(...)`，是错的，已更正。
+
+### ⚠️ 第 2 遍的判水区间是 `0x0C`，不是 `0x0E`
+
+`0x57A330` 起：
+
+```asm
+0057a330  mov eax, [ebp+0x38]
+0057a333  cmp eax, edx            ; edx = [0xAA0738]
+0057a335  jl  跳过
+0057a33b  add edx, 0xc            ; ← 0x0C
+0057a33e  cmp eax, edx
+0057a340  jge 跳过
+```
+
+而公共谓词 `IsWater`（`0x485060`）用的是 `+0x0E`。也就是说**水面组最后两个下标
+被第 2 遍排除在外**。是有意（那两块可能是特殊水砖）还是笔误无从判断，照抄。
+
 
 ### ⚠️ 第 3/4 遍每格无条件抽一个随机数
 
@@ -731,6 +770,27 @@ bool IsWater(cell) { return base <= cell->IsoTileTypeIndex
 > 是有意为之还是原作者的疏漏无从判断，但复刻必须照抄这个行为，
 > 否则第 1 遍的判定会整体走样。各遍开头把全部 `+0x40` 置 `-1` 就是在清这个缓存。
 
+求值顺序也已逐条对上（这决定了各种短路的先后）：
+
+1. `water = [0xAA0738]`；`selfIsWater = IsWater(cell)`
+   ——**在 mode 门槛之前就算好**，出图的邻格靠它顶位；
+2. 菱形四不等式（`0xABED04`/`0xABED08`），出界返回 0；
+3. mode 门槛（上表）；
+4. 工作记录 `+0x4A` 为 0 返回 0；
+5. 缓存 `+0x40 >= 0` 直接返回；
+6. 才轮到八邻域扫描。
+
+每个邻格的判据是 `bit = n ? IsWater(n) : selfIsWater`
+（原版写成 `add esi,4` 之后再 `cmp [esi],0`，两者等价——
+指针已经前移到刚读过的那一槽）。
+
+**复刻状态**：`code/rewrite/rmg/shore_mask.{h,cpp}`，
+黄金基准 `memory/data/rmg/shore_mask_golden.txt`
+（`code/randmap/dump_shore_mask_golden.py`，两张随机地图 × 全部格子 × 三种 mode
+= **1299 次查询、122 个不同掩码值**），外加位定义、边界继承、缓存越权、
+mode 门槛、无效记录五组单独的行为测试。本函数不碰浮点也不取随机数，
+所以没有 `fyl2x` 那类保留。
+
 ### 四遍各自在做什么
 
 | 遍 | 地址 | 行为 |
@@ -785,6 +845,9 @@ for (d = 0; d < 8; ++d) { 邻格在界内 → 清其掩码缓存为 -1，递归 
 **第 2 遍的 8 个坏掩码值**（`mask(cell, 2)`）：
 `0xC7 / 0x7C / 0xF1 / 0x1F / 0xC6 / 0x6C / 0xB1 / 0x1B`。
 命中就把该格 `IsoTileTypeIndex` 置 `0xFFFF`、`+0x11A` 清零，再刷新八邻的 `+0x40` 缓存。
+另外：`flag != 0` 时（涂块传的就是 1）还会把这一格**记到本块名下**
+（`0x57A39C`：`work[cell.coord].blobId = blobId`）。刷新八邻用的是
+「先写 `-1` 再现算再写回」，正好绕开上面那个缓存怪癖。
 
 ### 第 3 遍：沿岸「走线」定奇偶，再挑直边砖
 
@@ -876,6 +939,50 @@ placeAt = { cell.X + (int16)[0xABDB64 + i*4],
 即：**`i` 与真正的砖号差 1**（`i = 1` 对应 `ShorePieces` 本身），
 而且每个下标**自带一个 `(dx, dy)` 落点偏移**——多格砖要挪到左上角去贴。
 `0xABDB64`/`0xABDB66` 是同一张 4 字节步长表的两个半字。
+
+#### 选中的砖是怎么交出去的：两个全局
+
+`0x57ACF0` 并不直接贴砖，它把选中的砖和落点**写进两个全局**，再调贴砖器：
+
+| 全局 | 写入点 | 含义 |
+|---|---|---|
+| `[0x880990]` | `0x57B143` | `TileTypeClass*`，选中的那块砖 |
+| `[0x88095C]` / `[0x88095E]` | `0x4A91B0` 内 | 落点 `(X, Y)`，两个 int16 |
+
+`[0x88095C]` 就是 **`MapClass +0x1174`**（`0x87F7E8 + 0x1174 = 0x88095C`）。
+`0x57B189` 调的 `0x4A91B0(&outPrev, &coord)` 在 RMG 期间只做一件事
+（`0x4A92B5`，条件是 `Map->+0x117C == 0`，即当前没有建筑放置光标）：
+
+```c
+*outPrev = Map->+0x1174;      // 回吐旧值（调用方丢弃）
+Map->+0x1174 = coord;         // ← 贴砖器等会儿从这里读落点
+```
+
+**它不碰地形**，只是个"当前待放置格"的 setter。
+
+然后：
+
+```c
+[0x880990] = TileTypes[ShorePieces + i - 1];
+Map->+0x1174 = placeAt;
+ok = true;
+if (pass == 1) TryPlace(0,          0,               cell->+0x11B, blobId, &ok, flag);
+else           TryPlace(ShorePieces, ShorePieces+0x29, cell->+0x11B, blobId, &ok, flag);
+if (!ok) return false;        // ← 贴不上 → 整遍中断 → 整块陆地回滚
+return true;
+```
+
+`TryPlace = 0x57B440`（6 个栈参 + `ecx = MapClass`）。头两个参数是**允许覆盖的
+砖号区间**：第 3 遍传 `(0, 0)`（不限制），第 4 遍传 `(ShorePieces, ShorePieces+0x29)`
+（只许盖在岸砖上）。它先用 vtable `+0x2C` 校验 `[0x880990]` 的 RTTI 等于 `0x12`，
+再经 vtable `+0x9C` 拿到图元，按 `+0x2E4 × +0x2E8`（砖的宽×高，多格砖）
+逐格做菱形边界和上面那两张 42 项属性表的检查。
+
+> **未确认 / 未复刻**：`0x57B440` 依赖真实的 `TileTypeClass` 对象
+> （`+0x294` 砖号、`+0x2E4/+0x2E8` 尺寸、vtable `+0x2C`/`+0x9C`），
+> 这些是 theater 的 `.ini` + `.tmp` 数据，本项目还没接。
+> 因此**岸线平滑目前只复刻到掩码这一层**，四遍的贴砖与失败判定要等
+> theater 数据接进来之后才能落地。这是当前离"端到端逐字节"最近的一块硬骨头。
 
 #### `[0xABDB64]` 偏移表：CRT 静态初始化，不随 theater 变
 
@@ -997,8 +1104,10 @@ placeAt = { cell.X + (int16)[0xABDB64 + i*4],
 9. ~~`InRegion` / `DirectionalCost` 落成 C++~~ ✅ 已实锤并对拍，见 §四
 10. ~~把**涂块主循环**落成 C++~~ ✅ 整函数已落成并对拍，见 §四「复刻状态」
     （`blob_paint.{h,cpp}` + 14 组用例约一万格逐格一致；随机起点段与收尾/回滚都在内）
-11. 下一件：**岸线平滑 `FUN_0057A0C0`** 落成 C++——四遍里第 3/4 遍每格各抽一个
-    `PickRange(0,5)`，是本阶段随机数消耗的大头（见 §七、§八），
+11. 岸线平滑 `FUN_0057A0C0`：**掩码 `0x57B210` 已落成 C++ 并对拍**（见 §七）；
+    四遍的判定逻辑也已实锤，但**贴砖器 `0x57B440` 依赖 theater 的 `TileTypeClass` 数据**，
+    要等第 6 条（tile 组基址来源）解决后才能落地。
+    第 3/4 遍每格各抽一个 `PickRange(0,5)`，是本阶段随机数消耗的大头（见 §八），
     不做完，账本对不上，涂块之后的一切都会错位
 12. 再下一件：`MakeGrid 0x59A8F0` 与三种 MapType 投放策略
     （`0x59AD10` / `0x59AFA0` / `0x59B200`），把涂块串成完整阶段
