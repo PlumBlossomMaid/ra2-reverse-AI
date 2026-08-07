@@ -1,11 +1,13 @@
 # 阶段 4：Making regions——区域重建 + 区域之间开通路
 
-> 状态：**45 个取数点已关掉 41 个**。阶段骨架、末段三个函数、区域切分阈值、
+> 状态：**45 个取数点全部关掉（45/45）**。阶段骨架、末段三个函数、
+> 区域切分 `0x58D620`（含阈值与全部 4 个取数点）、
 > 开坡道外壳（`0x590970` + `0x590FD0` + `0x5A1E50`）、四个直坡建造函数、
-> 以及架桥 `0x58F2C0` 已实锤；
-> 仍欠区域切分 `0x58D620` 的后半段、以及三个转角建造函数的砖号几何（见 §十一）。
+> 以及架桥 `0x58F2C0` 均已实锤；
+> 剩下的欠账是**不取随机数**的那几处砖号几何（三个转角建造函数、`0x579010` / `0x579620`），见 §十一。
 > 取证：`memory/data/decomp/rmg_regions_stage4{,b,c}.txt` /
-> `rmg_ramp_stage4{d,e,f}.txt` / `rmg_bridge_stage4{g,h,i}.txt`。
+> `rmg_ramp_stage4{d,e,f,j,k}.txt` / `rmg_bridge_stage4{g,h,i}.txt` /
+> `rmg_split_stage4{l,m}.txt`。
 >
 > 这是全流水线**取数最密的一段（45 处）**，而且**只在 `MapType ∈ {3,4}` 下执行**——
 > 与 [stage-water-maptype34.md](stage-water-maptype34.md) 是同一条支路。
@@ -120,6 +122,356 @@ for (int i = 0; i < regionCount; ++i) {
 
 `DestroyRegion` 那段是 `0x58C070` 的**内联展开**——从全局向量里 `RemoveItem`
 （找下标 → 手写 memmove 前移 → `count--`）、还掉成员表的缓冲区、再 `delete`。
+
+## 二之二、`0x58D620`：把一个区域劈成几块——最后 4 个取数点
+
+取证：`memory/data/decomp/rmg_split_stage4{l,m}.txt`。
+
+```c
+char SplitRegion(RegionClass* this /*ecx*/);
+```
+
+开头一句短路：`if (this->doneSplitting /*+0x1A*/ != 0) return 0;`
+——已经判过"不用再切"的区域直接拒绝，调用方那条 `goto restart` 也就不会打转。
+
+整个函数分五步：**标记 → 优先级扩散剥一块 → 连通块重建 → 给新区域定层高 → 清理**。
+
+### 2.1 两块临时内存
+
+```c
+int n = this->cellCount;              // +0x0C
+Node*  pool = new Node[n*2 + 10];     // 每个 Node = { CellStruct coord; float key; }，8 字节
+Heap*  heap = new Heap;               // 5 个 int：{ count, cap, array, maxPtr, minPtr }
+heap->cap   = n*2 + 10;
+heap->array = new int[heap->cap + 1]; // 注意是 cap*4 + 4 字节
+memset(heap->array, 0, ...);          // 两遍清零：一遍按 cap，一遍按 count(=0)
+heap->count = 0;  heap->maxPtr = 0;  heap->minPtr = -1;
+```
+
+`pool` 是**手写的线性分配器**：一个游标 `next`（初值 1，0 号给种子）单调递增，
+堆里存的是指向 `pool` 元素的裸指针，所以堆比较的是 `pool[i].key`（float），
+`maxPtr`/`minPtr` 只是顺手记的指针上下界，跟排序无关。
+
+容量够不够：扩散最多弹 `take ≤ n/3` 次，每次最多压 4 个 ⇒ 节点数 ≤ `1 + 4n/3 < 2n + 10`。
+压堆前还有一层 `if (count + 1 < cap)` 的门，**满了就静默丢弃**（照抄）。
+
+### 2.2 标记协议：`-1` / `-2` / `-3`
+
+用了 `CellClass` 上两个字段当草稿纸：
+
+| 字段 | 用途 |
+|---|---|
+| `work[c].regionId` = `+0x38` | 归属：正常是区域 id，切分期间临时写 `-2`（本区待定）/ `-3`（要被剥走） |
+| `work[c].+0x3C` | 访问标记：`-1` = 没碰过，`-3` = 已经进过堆 |
+
+```c
+for (int i = 0; i < side*side; ++i) work[i].+0x3C = -1;     // 全图清一遍
+for (Cell c : this->cells)          work[c].regionId = -2;  // 本区全部标成"待定"
+```
+
+第一个循环走的是**整张 work 表**（`side²`，`side = [0x89C2DC]`），不是本区的格子。
+
+### 2.3 取数点 1（`0x58D782`）：剥走多少格
+
+内联的 `PickRange(n/8, n/3)`——**不是**调 `0x598030`，是把同一套拒绝采样直接摊开：
+
+```asm
+0058D73D  mov   eax, 0x55555556
+0058D742  mov   ecx, [ebp+0x0C]            ; n = this->cellCount
+0058D745  imul  ecx                        ; edx:eax = n * 0x55555556
+0058D747  mov   eax, edx
+0058D749  shr   eax, 0x1F
+0058D74C  add   edx, eax                   ; edi = n / 3        = hi
+0058D74E  mov   eax, ecx
+0058D752  cdq
+0058D753  and   edx, 7
+0058D758  add   eax, edx
+0058D75A  sar   eax, 3                     ; eax = n / 8        = lo
+0058D75D  sub   ecx, eax
+0058D75F  inc   ecx                        ; ecx = hi - lo + 1  = span
+...
+0058D782  mov   ecx, 0xABE890              ; ← 取数点
+0058D787  call  Randomizer::Random
+0058D794  fild  [esp+0x30]                 ; (double)(uint32)r
+0058D798  fmul  qword ptr [esp+0x68]       ; × span
+0058D79C  fmul  qword ptr [0x7ED898]       ; × 1/(2³²−1)
+0058D7A2  fadd  qword ptr [esp+0x58]       ; + lo
+0058D7A6  call  _ftol
+0058D7AD  cmp   eax, edi
+0058D7B4  ja    0058D782                   ; v > hi ⇒ 重掷（无符号比较）
+```
+
+> `take = PickRange(n/8, n/3)` —— **这一轮要剥走的格子数**，占本区的 1/8 ~ 1/3。
+> `n/8` 用的是"加符号位再算术右移"的编译器除法，`n/3` 用的是 magic imul；
+> 两者对负数的行为不同，但 `n` 恒正，无所谓。
+
+### 2.4 取数点 2（`0x58D7CD`）：种子格
+
+```c
+seed = this->cells[PickBelow(this->cells.count)];   // 拒绝采样：v > count-1 ⇒ 重掷
+work[seed].+0x3C = -3;
+pool[0] = { seed, 0.0f };  heap.push(&pool[0]);  next = 1;
+```
+
+注意抽的是 `+0x38`（DynamicVector 的 `count`），而 2.3 用的是 `+0x0C`（`cellCount`）。
+**这两个数不一定相等**——`cellCount` 是每次 `AddCell` 都 `++`，
+而向量的 `count` 在扩容失败时不会涨（见 `0x58BF70` 里那段 `if (count < cap) …` 的门）。
+正常路径下两者同步，照抄即可。
+
+### 2.5 取数点 3（`0x58D8BD`）：基准角
+
+```c
+double angle = (double)(uint32)Random() * [0x7ED8A8];
+```
+
+`[0x7ED8A8] = 1.4629180796077717e-09`，恰是 `2π / (2³²−1)`（`raw = 3E1921FB545D4F13`）
+——**均匀取一个 0 ~ 2π 的方向**，扩散会朝这个方向偏。
+
+### 2.6 优先级扩散：只走四个正方向，而且基准角在随机游走
+
+```c
+Node* cur = heap.pop();
+int taken = 0;
+while (cur && taken < take) {
+    work[cur->coord].regionId = -3;                 // 确定剥走
+
+    for (int d = 0; d < 8; d += 2) {                // ← 只有 0/2/4/6：四个正方向
+        CellStruct nb = cur->coord + AdjacentCell[d];    // 0x42D510，逐分量相加
+        if (!InDiamond(nb)) continue;
+        if (work[nb].regionId != -2) continue;      // 不是本区待定格
+        if (work[nb].+0x3C  == -3) continue;        // 已经进过堆
+        if (!IsPlain(TryGetCellAt(nb))) continue;   // 0x486380
+
+        pool[next].coord = nb;
+        pool[next].key   = (float)Priority(&seed, &nb, angle);   // 0x58C6F0
+        work[nb].+0x3C   = -3;                      // 用索引增量表 0x89A304 直接算下标
+        heap.push(&pool[next]);  ++next;
+    }
+
+    ++taken;
+    angle += NormalDeviate() * [0x7ED8A0];          // 0x5980C0；[0x7ED8A0] = π/8
+    cur = heap.pop();
+}
+```
+
+三个要点：
+
+1. **只有四个正方向。** 邻接表 `AdjacentCell`（`0x89F688`）按 8 方向排，
+   循环里 `d += 2` 只取偶数项；配对的**线性下标增量表** `0x89A304`
+   也是每次 `+8` 字节（跨过一项）走的，两张表同步跳。
+   所以剥出来的块是**四连通**的——不会走对角线。
+   > 两张表都在 `.bss`，运行期才填。落 C++ 时按方向约定重建，别去读 exe 里的 0。
+
+2. **基准角是一条随机游走。** 每弹出一格，`angle` 就加一次
+   `NormalDeviate() × π/8`（`[0x7ED8A0] = 0.39269908169872414 = π/8`，
+   `raw = 3FD921FB54442D18`）。
+   `0x5980C0` 是 Marsaglia 极坐标法（见 [fast-math.md](fast-math.md) §三），
+   **它自己内部还要吃 2 个 `UniformUnit`**，所以这里的随机数消耗是
+   「每弹出一格 ≥ 2 个」+「每个候选格 1 个（`0x58C6F0` 里那一发噪声）」。
+
+3. **`0x58C6F0` 的优先级里噪声权重最大**（`0.15·d + 1.5·a + 2.5·noise`，见 §九），
+   所以"朝 `angle` 方向剥一块"只是个倾向，边界会很毛。
+
+### 2.7 尾巴：堆里剩下的候选格也一起剥走
+
+扩散结束（弹够 `take` 格，或堆空）之后：
+
+```c
+for (int i = 0; i < side*side; ++i) work[i].+0x3C = -1;   // 访问标记还原
+while ((cur = heap.pop()) != nullptr)
+    work[cur->coord].regionId = -3;                      // ← 整个边界层一起剥
+delete[] pool; delete heap->array; delete heap;
+```
+
+这一段容易看漏：**堆里没被弹出来的那一圈候选格，全都被标成 `-3`**。
+也就是说实际剥走的格子数是 `take + 剩余堆大小`，比 `take` 多一整圈。
+不是 bug，是设计（保证剥出来的块外面有一层缓冲），但复刻时必须照做。
+
+### 2.8 连通块重建
+
+倒着遍历本区成员表，凡是 `work[c].regionId < -1` 的格子（`-2` 留下来的、
+`-3` 剥走的，两类都算）就起一个新的 `RegionClass`，
+然后**八方向**栈式洪泛，把所有 `work.regionId` 等于同一个标记值的连通格子收进去：
+
+```c
+DynamicVector<Region*> fresh;
+for (int i = this->cells.count - 1; i >= 0; --i) {
+    CellStruct c = this->cells[i];
+    int mark = work[c].regionId;
+    if (mark >= -1) continue;                       // 已经被前面的洪泛认领了
+
+    Region* r = new RegionClass(c);                 // 0x58BF70
+    r->AddCell(c);  work[c].regionId = r->id;
+    fresh.Add(r);
+
+    DynamicVector<CellStruct> stack;                // 增长步长 100000
+    stack.Add(c);
+    while (stack.count) {
+        CellStruct p = stack[--stack.count];        // 注意：先减再取，不是 pop_back 语义
+        for (int d = 0; d < 8; ++d) {               // ← 这里是八方向
+            CellStruct nb = p + AdjacentCell[d];
+            if (!InDiamond(nb)) continue;
+            if (work[nb].regionId != mark) continue;
+            r->AddCell(nb);  work[nb].regionId = r->id;
+            stack.Add(nb);
+        }
+    }
+}
+```
+
+⚠️ **扩散用四方向，重建用八方向**——两处不一致。
+后果：剥出来那块如果是"对角线相连"的两坨，重建时会被当成一坨。照抄。
+
+⚠️ 出栈写成了 `if (top - 1 < top) --top;` 再用 `stack[top]`——
+那个 `if` 恒真，是编译器展开 `DynamicVectorClass::Count--` 留下的痕迹。
+语义就是普通的 LIFO（先减后取 == 取末位再删）。
+
+### 2.9 给每个新区域定层高
+
+对 `fresh` 里的每个新区域（倒序，跳过 `+0x24 != 0` 的），先取边界格再统计邻区：
+
+```c
+DynamicVector<CellStruct>* border = GetBorderCells(r);   // 0x58E5D0
+char* seen = new char[RegionCount];  memset(seen, 0, RegionCount);
+for (CellStruct c : *border)
+    for (int d = 0; d < 8; ++d) {
+        CellStruct nb = c + AdjacentCell[d];
+        if (!InDiamond(nb)) continue;
+        int id = work[nb].regionId;
+        if (id >= 0 && id != r->id) seen[id] = 1;
+    }
+delete border;
+```
+
+> `0x58E5D0 = GetBorderCells(RegionClass*)`：新建一个
+> `DynamicVectorClass<CellStruct>`（增长步长 `max(cellCount/2, 10)`），
+> 倒着走成员表，**只要 8 邻域里有一格的 `work.regionId` 跟自己不同就收进来，
+> 然后 `break`**（`0x58E64C` 的那个 `break` 在 `if` 里面，所以是"收一次就换下一格"）。
+> 注意越界格（`InDiamond` 不过）**直接跳过、不算异邻**——所以贴着地图边的格子
+> 可能不被认成边界格。
+
+然后从 `seen` 里挑两样东西：
+
+```c
+Region* best = nullptr;  int bestCells = -1;  int bestLevel = -1;
+int minL = -1, maxL = -1;
+for (int id = 0; id < RegionCount; ++id) {
+    if (!seen[id]) continue;
+    Region* q = FindRegionById(id);             // 线性扫全局向量；找不到返回 0
+    if (q->dead /*+0x24*/) continue;
+    if (q->cellCount > bestCells && !q->isWater /*+0x14*/) {
+        best = q; bestCells = q->cellCount; bestLevel = q->level;
+    }
+    if (minL == -1) { minL = maxL = q->level; }
+    else { maxL = max(maxL, q->level); minL = min(minL, q->level); }
+}
+```
+
+⚠️ `FindRegionById` 找不到时返回 **0**，紧接着就 `*(char*)(0 + 0x24)` 解引用。
+和架桥里 `new` 失败那处一样，是**没检查的空指针**。
+正常路径下 `seen[id]` 只会由活着的区域置位，走不到。
+
+候选层高表（`DynamicVectorClass<int>`，增长步长 10）：
+
+| 条件 | 压进去的候选 |
+|---|---|
+| `maxL == minL` | `minL - 4`（仅当 `minL > 3`）、`maxL + 4`（仅当 `maxL < 8`） |
+| `maxL - minL == 4` | `maxL`，然后 `minL` |
+| `maxL - minL == 8` | `(maxL + minL) / 2` |
+| 其它（含"一个邻区都没有" ⇒ `minL == maxL == -1`） | 空 |
+
+**层高只有 0 / 4 / 8 三档**——这三条规则合起来就是这个意思：
+差 0 就往上或往下挪一档，差 4 就在两档里二选一，差 8 就取中间那档。
+（`minL == maxL == -1` 时 `-1 > 3` 不成立、`-1 < 8` 成立 ⇒ 会压进一个 `3`；
+这是"没有邻区"时的兜底，未确认是否有意。）
+
+再过一道 `MapType` 滤网：
+
+```c
+if (MapType == 3 || MapType == 4)                 // [0xABE014]
+    for (int i = count - 1; i >= 0; --i)
+        if (cands[i] == 0) cands.RemoveAt(i);     // 手写前移，不是 RemoveItem
+```
+
+即**水图不允许把区域压到 0 层**（0 层就是海平面）。
+这一阶段本来就只在 `MapType ∈ {3,4}` 下跑，所以这个 `if` 恒真——
+说明这段代码是从别处（阶段 3？）复制过来的。
+
+### 2.10 小块合并 / 取数点 4（`0x58E37D`）：新层高
+
+```c
+if (r->cellCount < 0x65) {                       // < 101 格 ⇒ 并进最大的邻区
+    if (best) {
+        int old = r->level;  r->level = bestLevel;
+        for (Cell* c : AllCells)                 // CellIterator 0x578350 / 0x578290
+            if (GetWorkOwner(c) == r->id)        // 0x58D0A0
+                c->Level /*+0x11B*/ += (char)bestLevel - (char)old;
+        for (int i = r->cells.count - 1; i >= 0; --i) {
+            best->AddCell(r->cells[i]);
+            work[r->cells[i]].regionId = best->id;
+        }
+        r->dead /*+0x24*/ = 1;
+    }
+    // best == nullptr ⇒ 什么都不做，这个小区域原样留着
+} else {
+    int old = r->level;
+    do { v = _ftol((double)(uint32)Random() * count * (1/(2³²−1))); }
+    while ((uint)(count - 1) < v);               // ← 取数点 0x58E37D
+    r->level = cands[v];
+    for (Cell* c : AllCells)
+        if (GetWorkOwner(c) == r->id)
+            c->Level += (char)r->level - (char)old;
+}
+```
+
+> 取数点 4 = `PickBelow(candidateCount)` ⇒ **在候选层高里等概率挑一个**。
+
+⚠️ **`count == 0` 时的越界读**：拒绝条件是 `(uint)(count-1) < v`，
+`count == 0` ⇒ `0xFFFFFFFF < v` 恒假 ⇒ 立刻接受 `v = 0`，
+然后读 `cands[0]`——**向量是空的，缓冲区甚至可能是 `nullptr`**。
+不会死循环，但会读到脏数据（或崩）。
+`PickBelow(0)` 这个坑在别处也有（见 [rng-ledger.md](rng-ledger.md)），
+这里是第一次看到"候选表真的可能为空"。
+空表的唯一入口是 `maxL - minL ∉ {0, 4, 8}`——
+只要全场层高都落在 {0,4,8} 三档上就走不到；
+"没有邻区"那种情况反而会压进一个 `3`，不算空表。
+**是否可达未确认**，但代码里没有防护，照抄时要原样保留（别自作主张加 `if (count)`）。
+
+### 2.11 收尾
+
+```c
+for (int i = RegionCount - 1; i >= 0; --i) {     // 倒着扫全局区域向量
+    Region* q = Regions[i];
+    if (q != this && q->dead /*+0x24*/ && q != nullptr) {
+        DestroyRegion(q);                        // 0x58C070：从全局向量摘掉 + 还缓冲区
+        free(q);
+    }
+}
+this->splitCount /*+0x1C*/ += 1;
+return 1;
+```
+
+注意 `q != this` 的例外——**被切的那个区域自己不在这里删**，
+由调用方 `0x58EBC0` 在 `Split()` 返回 1 之后删（见 §二"第三遍"的伪代码）。
+`this` 的成员表这时已经全被新区域瓜分完，但 `cellCount` / 向量都没清，
+反正马上就要被 `delete`。
+
+`return 1` 是**无条件**的——只要没被开头那句 `+0x1A` 挡住，就一定返回"切成功了"，
+哪怕一格都没剥走。所以调用方的 `goto restart` 只靠 `+0x1A` 收敛：
+再进来时如果这个区域还是过大，会被继续切下去；
+真正让循环停下来的是"切完之后每块都 ≤ maxCells ⇒ 置 `+0x1A = 1`"。
+
+### 2.12 顺手关掉的两条
+
+- `0x58BF70 = RegionClass::RegionClass(CellStruct seed)`：
+  `id = [0xABED14]++`、`cellCount = 0`、`level = TryGetCellAt(seed)->+0x11B`、
+  `isWater = IsWaterOrShore()`、`+0x16 = seed`、`+0x1A = 0`、**`+0x1B = 1`**、
+  内嵌向量增长步长 `100000`，最后把自己 append 进全局向量
+  `[0xABDF94]`（缓冲）/ `[0xABDFA0]`（count）。
+  这坐实了 §十一 第 6 条的一半：**`+0x1B` 的写入方有两处**
+  （构造时置 1、`0x5905D0` 开通路失败时清 0），**读取方仍然没找到**。
+- `0x58D0A0 = GetWorkOwner(CellStruct*)`：
+  `[0xABED10] == 0 ? -1 : work[y*side + x].regionId`。就是带空表保护的 `work` 取归属。
 
 ## 三、`0x58EF10`：推倒重建，然后开通路
 
@@ -1071,7 +1423,7 @@ float Priority(CellStruct* origin, CellStruct* c, double baseAngle) {
 |---|---|---|---|
 | `0x58C6F0` 三项优先级 | 1 | `58C7AE` | ✅ 已实锤（§九） |
 | `0x58C800` `SeedRegion` | 1 | `58CAF9` | ✅（阶段 3 已实锤，此处共用） |
-| `0x58D620` 区域切分 | 4 | `58D782` `58D7CD` `58D8BD` `58E37D` | ⚠️ 仅结构 |
+| `0x58D620` 区域切分 | 4 | `58D782` `58D7CD` `58D8BD` `58E37D` | ✅ 已实锤（§二之二：剥几格 / 种子格 / 基准角 / 新层高） |
 | `0x58F2C0` 架桥 | 5 | `58F342` `58FBDD` `58FCC6` `59000E` `5900F7` | ✅ 已实锤（§五之三；一次成功架桥至少消耗 3 个，锚点拒绝采样会更多） |
 | `0x5905D0` 开通路 | 3 | `590792` `5907C0` `590889` | ✅ 三处语义已实锤（§五） |
 | `0x590970` 开一条坡道 | 8 | `590BAE` `590BDD` `590C7B` `590CAB` `590D4A` `590D79` `590E17` `590E47` | ✅ 已实锤（§五之二，四对坡道端点抖动） |
@@ -1086,19 +1438,24 @@ float Priority(CellStruct* origin, CellStruct* c, double baseAngle) {
 
 合计 45，与 [rng-ledger.md](rng-ledger.md) 的阶段归属逐条对上。
 
-**已关掉 41 处，剩 4 处**——全部集中在区域切分 `0x58D620` 的后半段。
+**45 处全部关掉。** 阶段 4 的随机数账本自此清零，
+整条 `MapType ∈ {3,4}` 流水线的 4 个阶段（seeding water / init regions /
+making regions / tiberium）的取数点也随之全部落地。
 
 ⚠️ 「取数点数」是**静态**的指令条数，不是运行时的消耗次数。
 `0x5A1350` 的 15 个点里一次调用只走 1 个（switch 分派），
-而 `0x58C6F0` 的那 1 个点会被**每个候选格**各走一遍。
+而 `0x58C6F0` 的那 1 个点会被**每个候选格**各走一遍，
+`0x58D620` 里那条 `angle += NormalDeviate() × π/8` 更是**每弹出一格吃 2 个**。
 换算成实际消耗要等算法全部还原（[rng-ledger.md](rng-ledger.md) §六未确认 1）。
 
 ## 十一、未确认与 TODO
 
-1. `0x58D620`（区域切分）只还原到前半段：分配 `(cellCount·2+10)` 个节点 + 五整数堆、
-   把成员格的 `regionId` 标成 `-2`、`PickRange(n/8, n/3)` 定切走多少格、
-   `PickBelow(cells.count)` 抽种子、`Random() × [0x7ED8A8] (= 2π/(2³²−1))` 定基准角，
-   然后进 `0x58C6F0` 优先级驱动的堆扩散。**后半段与两个尾部取数点未逐条读**；
+1. ~~`0x58D620`（区域切分）只还原到前半段~~ —— **已实锤**，全文见 §二之二。
+   遗留小疑点四条：
+   (a) 扩散用四方向、重建洪泛用八方向，**两处不一致**，未找到理由；
+   (b) `GetBorderCells` 把越界邻格当"不算异邻"，贴图边的格子可能不被认成边界格；
+   (c) 候选层高为空时 `PickBelow(0)` 会读 `cands[0]` 越界（§2.10），**是否可达未确认**；
+   (d) `FindRegionById` 找不到返回 0 后立即解引用 `+0x24`，同样没防护；
 2. `0x590970` 的外壳与**四个直坡建造函数**都已实锤（§五之二）；
    仍欠**三个转角建造函数**（`0x593030` / `0x593550` / `0x593AF0`）的
    砖号计算与落点几何（它们一个随机数都不取，只影响砖）。
@@ -1114,10 +1471,16 @@ float Priority(CellStruct* origin, CellStruct* c, double baseAngle) {
    遗留小疑点：北向/西向各多一块肩膀砖（3 块 vs 南向/东向的 2 块），原因**未确认**；
 5. `0x579010` / `0x579620`（`0x578E60` 里的两遍重刷砖）—— 不取随机数，
    但会**改砖号**，落 C++ 时必须还原；
-6. `RegionClass +0x1B` 的读取方**未找到**——只看到 `0x5905D0` 在开通路失败时清 0；
+6. `RegionClass +0x1B` 的**读取方仍未找到**。写入方现在有两处：
+   构造函数 `0x58BF70` 置 1（§2.12）、`0x5905D0` 开通路失败时清 0（§五）。
+   一个只写不读的字段——要么是留给没写完的功能，要么读它的代码是死代码；
 7. `0x5A19E0` 缺 `0x0E`（E+SE+S）那个直角分支，是漏写还是刻意，未确认；
 8. `0x4863D0` 里 `CliffRamps` 的硬编码宽度 `0x14` 比实际 `TilesInSet = 10` 大一倍
    （同类第二例：`0x4866D0` 的 `PavedRoads` 宽 `0x0F` vs 实际 21，见 §五之三）；
 9. `0x58D410 GetBorderCells` 会不会返回空表——决定 §五那处 `count − 1` 下溢
    是不是真能被触发。
+   （注意别和 `0x58E5D0` 搞混：`0x58D620` 用的是后者，
+   增长步长 `max(cellCount/2, 10)`、判据"8 邻域里有异区就收、收完 `break`"，见 §2.9。
+   两者开头都是 `new(0x18)` + `DynamicVectorClass` 构造，长得很像，
+   **是不是同一份代码的两个副本未逐条比对**。）
 

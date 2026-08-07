@@ -25,7 +25,7 @@
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法全还原；**`MapType 0/1/2` 主路径 + 水面细化整条落成 C++ 并对拍** |
 | [stage-water-maptype34.md](stage-water-maptype34.md) | 阶段 2 支路：`MapType ∈ {3,4}` 的**河流、湖泊与瀑布**（含查表 sin/cos） | ✅ 八个函数全部实锤；sin/cos 已落 C++ 并对拍；整支路待落 C++ |
-| [stage-making-regions.md](stage-making-regions.md) | 阶段 4：Making regions（区域重建 + **区域之间开坡道/架桥**，`MapType ∈ {3,4}` 专属，45 个取数点） | ⚠️ 45 个取数点关掉 41（架桥 + 四个直坡已实锤）；余 `0x58D620` 后半段与三个转角建造函数的几何 |
+| [stage-making-regions.md](stage-making-regions.md) | 阶段 4：Making regions（区域重建 + **区域之间开坡道/架桥**，`MapType ∈ {3,4}` 专属，45 个取数点） | ✅ **45 个取数点全部关闭**（区域切分 + 架桥 + 四个直坡均已实锤）；余三个转角建造函数的砖号几何（不取随机数） |
 
 ## 进度
 
@@ -259,6 +259,21 @@
       桥头路砖是 4 个 `PickBelow(2)`，但一次架桥只走其中两个。
       **这是目前逆出来的整条 RMG 里唯一构造游戏对象的地方**——
       落到 `.map` 上是 `[Structures]` 里的一条 `CABHUT`，不是砖数据
+- [x] **区域切分 `0x58D620` 实锤，阶段 4 的 45 个取数点全部关闭**：
+      切分 = "按优先级从区域里剥掉一块 + 把剩下的连通块各自立户 + 给每户重定层高"。
+      4 个取数点分别是 `PickRange(n/8, n/3)`（剥走多少格）、
+      `PickBelow(cells.count)`（种子格）、`Random() × 2π/(2³²−1)`（扩散基准角）、
+      `PickBelow(候选层高数)`（新层高）。
+      三条容易看漏的地方：**扩散只走四个正方向、重建洪泛却走八方向**；
+      基准角每弹出一格就 `+= NormalDeviate() × π/8`（**随机游走**，且自身再吃 2 个随机数）；
+      扩散结束时**堆里没弹出来的那一圈候选格也一起被剥走**。
+      层高只有 0/4/8 三档，`< 101` 格的碎块直接并进最大的邻区。
+      顺带定死 `0x58BF70 = RegionClass::RegionClass(seed)`、`0x58D0A0 = GetWorkOwner`、
+      `0x58E5D0 = GetBorderCells`（切分专用的那个副本）
+- [x] 🏁 **里程碑：104 个活取数点的语义全部落地。** 12 个阶段 + `MapType ∈ {3,4}` 支线，
+      再没有"知道这里取了个随机数、但不知道它拿去干什么"的位置。
+      余下的欠账都是**不取随机数**的部分（三个转角坡道的砖号几何、`0x579010`/`0x579620`
+      两遍重刷砖）与各文档"未确认"里的细节；死代码那 46 处按约定继续推迟
 - [x] **TileSet 全局 ↔ theater ini 键名的配对算法修正**：旧脚本假设"两段 `esp` 恒差 `0xC`"，
       对压参个数不同的那几组会错位——表现是 4 个全局配不上键、3 组二义、漏掉 1 个全局。
       改成**逐条数 call 与 store 之间的 push**之后 46 个全局、54 个键全部落位；

@@ -170,7 +170,9 @@ if (visited > 0x4A) goto 建区域;               // 74 格以上才算数
 | `+0x16` | seed 的 packed XY | 种子格 |
 | `+0x1A` | 0（`Finalize` 会改写成它的参数） | **「已定型，不再切分」**——`0x58EBC0` 判定区域够小就置 1，`0x58D620` 见 1 直接返回 0 |
 | `+0x1B` | 1 | 疑似「与外界连通」：`0x5905D0` 一条坡道都没开成时清 0，**读它的地方尚未找到** |
+| `+0x1C` | 0 | **被切过几次**——`0x58D620` 每成功切一轮就 `+1`，没找到读它的地方 |
 | `+0x20` | 0 | **分到的出生点个数**（阶段 6 写，见 [stage-starting-points.md](stage-starting-points.md)） |
+| `+0x24` | 0 | **「已作废」**——`0x58D620` 把不足 101 格的碎块并进邻区后置 1，收尾时统一 `delete`（见 [stage-making-regions.md](stage-making-regions.md) §2.10/§2.11） |
 | `+0x28` | `DynamicVectorClass<CellStruct>` 头，容量 100000 | **本区域的格子表**（数据 `+0x2C`、个数 `+0x38`） |
 
 对象存进全局向量：数据 `[0xABDF94]`、个数 `[0xABDFA0]`、容量 `[0xABDF98]`、
