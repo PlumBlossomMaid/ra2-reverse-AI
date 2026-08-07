@@ -8,14 +8,6 @@
 namespace ra2 {
 namespace rmg {
 
-namespace {
-
-// 0x59A747 / 0x59A8A6：两处都是 `for (esi = 0; esi < 8; esi += 2)`，
-// 也就是只看四个**正**方向（N / E / S / W），对角一概不看。
-const int kOrtho[4] = {0, 2, 4, 6};
-
-}  // namespace
-
 void SeedWater(PaintContext& ctx, WaterStageWorld& world, const PlaceParams& p,
                int map_type) {
   ctx.world = &world;
@@ -47,7 +39,9 @@ void SeedWater(PaintContext& ctx, WaterStageWorld& world, const PlaceParams& p,
   for (const CellCoord& c : cells) {
     if (world.Tile(c) != theater.water_set) continue;
     bool all_undecided = true;                  // 0x59A743 mov bl,1
-    for (const int dir : kOrtho) {
+    // 0x59A747 `for (esi = 0; esi < 8; esi += 2)`：步长 2，只看八邻域表
+    // 0x89F688 的偶数项——四个**正**方向 N / E / S / W，对角一概不看
+    for (int dir = 0; dir < 8; dir += 2) {
       const CellRef n = Adjacent(world, RefOf(c), dir);
       if (!IsUndecided(TileOf(world, n))) all_undecided = false;
     }
@@ -75,7 +69,9 @@ void SeedWater(PaintContext& ctx, WaterStageWorld& world, const PlaceParams& p,
   // 就不再「未定」，后面所有出图邻格都会被跳过。这个副作用是可观测的。
   for (const CellCoord& c : cells) {
     if (!IsShoreTile(world.Tile(c), theater.shore_pieces)) continue;
-    for (const int dir : kOrtho) {
+    // 0x59A8A6 `for (esi = 0; esi < 8; esi += 2)`：步长 2，只看八邻域表
+    // 0x89F688 的偶数项——四个**正**方向 N / E / S / W，对角一概不看
+    for (int dir = 0; dir < 8; dir += 2) {
       const CellRef n = Adjacent(world, RefOf(c), dir);
       if (!IsUndecided(TileOf(world, n))) continue;
       if (n.dummy) {

@@ -472,23 +472,54 @@ for (int y = cy; y < cy + 2; ++y)
       int nh = e->h + dir * 15;
       e->h = nh;
       if (nh < 0 || nh > 180) {          // 0xB4 = 12 级 x 15 像素
-          e->h = nh - dir * 15;          // 越界：原样退回，不入撤销栈、不置 dirty
+          e->h = nh - dir * 15;          // 越界：高度原样退回，且**不入撤销栈**
       } else {
           UndoStack.Add({ x, y, nh - dir*15 });
-          e->dirty = 1;
-          if (!CheckSlopes(x, y) && !force) { rollback(); return false; }
       }
+      // ↓ 两条路都到这里
+      e->dirty = 1;
+      if (!CheckSlopes(x, y) && !force) { rollback(); return false; }
   }
 return true;
 ```
 
 注意 `bit <<= 1` 在**内层循环末尾无条件执行**，掩码位没被选中的角也照样消耗一个位。
 
-### ⚠️ 越界回退的分支不置 dirty
+### ⚠️ 越界回退只跳过撤销栈，dirty 与 CheckSlopes 照走
 
-高度撞到 `[0, 180]` 边界时，代码只是把 `e->h` 减回去，
-**既不入撤销栈也不置 `dirty`，也不调 `CheckSlopes`，更不返回失败**——
-循环继续处理下一个角。所以"抬到顶"的格子会静默地只抬起一部分角。
+这里曾经写成「撞边界时既不入撤销栈也不置 `dirty`，也不调 `CheckSlopes`」——
+**是错的**，2026-08-07 重新逐条读机器码时改正。越界那条路的落点在
+`0x6B3FC3`，而 `dirty` 与 `CheckSlopes` 在 `0x6B3FCF` 之后，**在落点下游**：
+
+```asm
+006b3f38  lea  eax, [ebx + ebx*2]  ; dir * 3
+006b3f3b  lea  ecx, [eax + eax*4]  ; ecx = dir * 15
+006b3f3e  mov  eax, [esi]
+006b3f40  add  eax, ecx
+006b3f42  mov  [esi], eax          ; e->h = nh   ← 先写进去
+006b3f44  js   0x6b3fe6            ; nh < 0     -> 回退
+006b3f4a  cmp  eax, 0xb4
+006b3f4f  jg   0x6b3fe6            ; nh > 0xb4  -> 回退
+006b3f55  sub  eax, ecx            ; 正常路：算出 oldHeight = nh - dir*15
+006b3f57  ...                      ; UndoStack.Add({x, y, oldHeight})
+006b3fc3  mov  ebx, [esp + 0x20]   ; ← 回退那条路跳进来的落点
+006b3fc7  mov  dl,  [esp + 0x13]   ; force
+006b3fcf  mov  byte ptr [esi+5], 1 ; e->dirty = 1      ← 两条路都到
+006b3fd3  call 0x6b3a80            ; CheckSlopes       ← 两条路都到
+006b3fd8  test al, al
+006b3fda  jne  0x6b3ffa            ; 合法 -> 下一个角
+006b3fdc  mov  al,  [esp + 0x13]
+006b3fe2  je   0x6b4039            ; force == 0 -> 整批回滚并返回 0
+006b3fe6  sub  eax, ecx            ; 回退：nh - dir*15
+006b3fe8  mov  [esi], eax
+006b3fea  jmp  0x6b3fc3            ; 只跳过 Add，不跳过下面那两件事
+```
+
+所以「抬到顶」的角点仍然会被标脏（§八 会去重刷它所在的格子），
+而且它引起的 `CheckSlopes` 失败**照样能触发整批回滚并返回 false**。
+基准 `memory/data/rmg/hills_golden.txt` 的 `noise-neg` 用例专门逼这条路：
+高度场全是 −2..0，全图角点都在 0 处触底，`lat` 里却留下 254 个 dirty 角点。
+把这一条实现成旧说法，对拍会当场炸在「dirty 角点的个数不对」。
 
 ### 6.3 撤销栈就是一个 `DynamicVectorClass`
 
@@ -662,7 +693,7 @@ free([0xB0B6EC]);  [0xB0B6EC] = NULL;        // 格网用完即销毁
 | # | 位置 | 表现 |
 |---|------|------|
 | 1 | `0x6B2A70` §3.2 | 角点高度只取 `RampTable[ramp][0]`（北角），与该角点在候选格里的真实方位无关；候选格还是"往左上凑"的 4 选 1 |
-| 2 | `0x6B3E60` §6.2 | 高度撞 `[0, 180]` 边界时静默退回：不入撤销栈、不置 `dirty`、不验坡、不报错 |
+| 2 | `0x6B3E60` §6.2 | 高度撞 `[0, 180]` 边界时静默退回：**只**跳过撤销栈，`dirty` 照置、`CheckSlopes` 照跑——于是这个角点既回不去也不算改过，却能连带把整批抬升判失败 |
 | 3 | `0x6B3A80` §七 | 读了角点项的 `+0x06`，而 `0x6B2A70` 的初始化**从没写过这个字节**——`operator new` 的垃圾值。所幸只在 `force != 0` 时才读，而 RMG 全程 `force == 0`，走不到 |
 | 4 | `0x6B3E60` 回滚 | 只还原 `+0x00` 高度，`dirty` 留在 1 → §八 会去刷一批高度根本没变的格子 |
 | 5 | `0x5A35F0` 主循环 | 忽略 `0x6B3E60` 的返回值，抬升失败后照样把剩下的级数抬完，每级都白干一遍 |
@@ -681,7 +712,7 @@ free([0xB0B6EC]);  [0xB0B6EC] = NULL;        // 格网用完即销毁
 5. 表项 0 的 `.bss` 位置 `0xB0B6DC` 是否会被同编译单元的编辑器路径写脏——
    RMG 单进程一次生成里恒为 `{0,0,0,0}`
 
-## 十三、复刻状态：⚠️ 锚点与高度场已落 C++ 并逐位对拍，其余仍是文档
+## 十三、复刻状态：✅ §一~§九 全部落 C++，整条链逐位对拍
 
 `code/rewrite/rmg/height_field.{h,cpp}`（ctest 名 `height_field` / `height_anchors`）
 落了 §一 与 §二 的全部内容：
@@ -735,4 +766,61 @@ theater 砖号全局都就位），存档
 > 但这一遍只在**菱形内**取邻格（四条不等式先筛了一道），
 > 菱形内必有实体格，所以哑元那条路走不到，不用模拟。
 
-§三~§九（角点抬升子系统）**还没落 C++**。
+### §三~§九 角点抬升子系统的对拍
+
+`code/rewrite/rmg/corner_lattice.{h,cpp}`（ctest 名 `corner_lattice`）落了
+§三 到 §九 的全部内容：
+
+| 本文的东西 | 原版地址 | C++ |
+|---|---|---|
+| `IsRaisable` 五条与门 | `0x6B2520` | `IsRaisable` |
+| 建角点格网（4 选 1 候选 + 四共用格锁定） | `0x6B2A70` | `BuildCornerLattice` |
+| 取当前级 | `0x6B4100` | `GetCurrentLevel` |
+| 选要动的角 | `0x6B4240` | `PickCorners` |
+| 抬/降一级（掩码重排 + 撤销栈 + 越界回退 + 回滚） | `0x6B3E60` | `RaiseCorners` |
+| 坡面合法性（`dy` 外 `dx` 内的递归连带调整） | `0x6B3A80` | `CheckSlopes` |
+| 格网落回砖号 / 坡面 | `0x6B3850` | `ApplyLatticeToCells` |
+| §四 驱动循环（线性下标 + `ftol` 步数 + 每级重算掩码） | `0x5A361A` | `RaiseAllCells` |
+| §九 压平 2x2 坡块 | `0x5A36C6` | `FlattenRampBlocks` |
+| §零 整条编排 | `0x5A35F0` | `CreateHills` |
+
+格网的几何不需要新全局：`0x6B2A70` 把 `MapClass +0x124..+0x130` 拷进自己的
+模块级全局（`0x8759A0` 起），而那个矩形是 `Set_Dimensions`（`0x56631C`）
+按 `{1, 1, W+H-1, W+H-1}` 写的，各 `+1` 之后正好
+`stride = rows = W + H`、`origin = (1, 1)`——`MapGrid` 自己就能推出来。
+
+**对拍强度：黄金对拍，逐位一致。** 基准由
+`code/randmap/dump_hills_golden.py` 用 Unicorn 跑 `0x5A35F0` **整函数**取得
+（它自足，只往下调本文列的那几个），存档
+`memory/data/rmg/hills_golden.txt`。10 个用例：
+
+| 用例 | 要压的东西 |
+|---|---|
+| `flat` | 全平 + 零高度场：一格都不该动，`dirty` 一个都不该有 |
+| `one-bump` | 单点 +2：最小的一座山，把 §四 的步数与 §七 的连带扩散钉住 |
+| `noise` | LCG 噪声 −2..+2 铺满：262 个 dirty 角点、205 格改砖 |
+| `noise-neg` | 噪声全 −2..0：全图角点在 0 处触底，专压 §6.2 那条越界回退 |
+| `anchored` | 岸砖/崖壁/水面散落 → §一 打锚点 → 角点被锁死 |
+| `nonmorph` | 8 种「不可变形」砖（`+0x2E0 = 0`）散落 |
+| `blocked` | `+0xE4`（有 object）与 `+0x44`（有 overlay）两条否决 |
+| `prelevel` | 预置层高的斜向条带：格网起始高度不再是平的 |
+| `preramp` | 预置坡面 1/5/9 + 层高 1/2：`RampTable[ramp][0]` 那条北角取法 |
+| `rampblock` | 手摆两种 2x2 坡块逼 §九 动手，另加一块贴在菱形东端逼它探到共享哑元 |
+
+全部 `Ruggedness = 0`：`0x5A2F50` 在 `0x5A2FA8` 直接返回，
+**一个随机数都不抽**，连尾巴那趟整表取整也一起跳过（取整循环在那个 `if`
+里面），于是整条基准不含任何 x87 超越函数，
+不受 [fast-math.md](fast-math.md) §4.1 那条「Unicorn 的 `fyl2x` 不可信」影响；
+高度场改由脚本直接摆进工作记录 `+0x08`——`0x5A2F50` 本身已经有自己的基准。
+
+比三样：
+1. **`0x6B3850` 入口处整张格网里所有 `dirty` 的角点**（下标、高度、锁标记，
+   按行优先顺序逐个比）。这一项把 §三 建格网、§四 驱动、§七 的递归连带调整、
+   §6.2 的越界回退、锁角回滚全都锁死了——把 §6.2 实现成本文原先那个错说法，
+   `noise-neg` 会当场炸在「dirty 角点的个数不对」。
+2. 每一格最终的 `(+0x38, +0x11A, +0x11B, +0x11C)`；基准没列的格子必须原样不动。
+3. 共享哑元 `0xABDC50` 的同四项**与它的坐标 `+0x24`**——§九 探到菱形外时会
+   改写它，这条副作用也要一致（`rampblock` 用例里它被改成 `(22, 11)`）。
+
+> `NormalDeviate` 的缓存状态跨阶段延续，所以 §二 在 `Ruggedness >= 10` 时
+> 消耗几个随机数仍然由 `height_field` 那个基准负责，本基准不重复覆盖。

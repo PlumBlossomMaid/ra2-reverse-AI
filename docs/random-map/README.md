@@ -21,7 +21,7 @@
 | [stage-recalc.md](stage-recalc.md) | 阶段：绿地蔓延 + Recalculating cell attributes | ✅ 全部实锤；绿地蔓延已落 C++，18 个用例整段对拍通过 |
 | [stage-starting-points.md](stage-starting-points.md) | 阶段：Creating starting points（出生点） | ✅ 全部子函数已实锤；主干已落 C++（`rmg/start_points.{h,cpp}`），`ChooseWaypoints` 270 例黄金对拍 |
 | [movement-zones.md](movement-zones.md) | **引擎的移动区子系统**：地面类别 → 连通区洪泛 → 区类型表 | ✅ 整条链已实锤并落 C++（`rmg/zones.{h,cpp}`，含黄金对拍） |
-| [stage-hills.md](stage-hills.md) | 阶段：Creating hills（造山，唯一随机源是高度场） | ✅ 全链已实锤；**锚点与高度场已落 C++ 并逐位对拍**（`rmg/height_field.{h,cpp}`） |
+| [stage-hills.md](stage-hills.md) | 阶段：Creating hills（造山，唯一随机源是高度场） | ✅ 全链已实锤；**§一~§九 全部落 C++ 并逐位对拍**（`rmg/height_field.{h,cpp}` + `rmg/corner_lattice.{h,cpp}`） |
 | [stage-lats.md](stage-lats.md) | 阶段：Creating LATs, rocks etc（地表装饰，取数点最密） | ✅ 18 个取数点全部实锤 |
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法全还原；**`MapType 0/1/2` 主路径 + 水面细化整条落成 C++ 并对拍** |
@@ -264,6 +264,18 @@
       两支分支的指纹也钉死了：岸砖（`0x4865B0`）给邻格写
       `3FE0000000000000` = 0.5 并上锁，崖壁/桥/瀑布（`0x4863D0`）**只上锁**；
       `waterfall-sub` 用例专门压了 `0x4863D0` 里四条要看子格号的分支
+- [x] **阶段 9 的角点抬升子系统（§三~§九）落 C++**
+      （`code/rewrite/rmg/corner_lattice.{h,cpp}`，ctest 名 `corner_lattice`）。
+      `dump_hills_golden.py` 跑 `0x5A35F0` **整函数**，10 个用例比三样：
+      `0x6B3850` 入口处整张格网里所有 dirty 角点（下标/高度/锁标记）、
+      每格最终的 `(+0x38, +0x11A, +0x11B, +0x11C)`、共享哑元的同四项与坐标，全绿。
+      顺带**改正文档一处错误结论**：`0x6B3E60` 里高度撞 `[0, 180]` 边界那条路
+      只跳过撤销栈，`dirty` 照置、`CheckSlopes` 照跑（落点 `0x6B3FC3` 在
+      `0x6B3FCF mov byte [esi+5],1` 之**前**）——旧说法会让 `noise-neg`
+      用例的 dirty 角点从 254 个变成 0 个。
+      另查实格网几何不需要新全局：`stride = rows = W+H`、`origin = (1,1)`
+      可由 `MapGrid` 直接推出（`0x6B2A70` 拷的是 `Set_Dimensions` 写的
+      `{1, 1, W+H-1, W+H-1}`）
 - [x] **`MapSeedClass` 就是静态对象 `0xABDFD8`**——`0x59664C mov ecx,0xABDFD8;
       call 0x598960` 与 `0x58CAD1` 两处实锤。于是之前按绝对地址分散记下的
       一批全局当场对号：`0xABE014 = +0x3C` MapType、`0xABE024 = +0x4C`

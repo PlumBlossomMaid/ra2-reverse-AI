@@ -13,10 +13,6 @@ namespace rmg {
 
 namespace {
 
-// 0x59B78F / 0x59B8A3：两处都是 `for (edi = 0; edi < 8; edi += 2)`，
-// 也就是只看四个**正**方向（N / E / S / W），对角一概不看。
-const int kOrtho[4] = {0, 2, 4, 6};
-
 void WriteTile(SmoothWorld& w, const CellRef& r, int tile) {
   if (r.dummy) {
     // 0x59B8A0 `mov [ebp+0x38], eax` —— ebp 有可能就是共享哑元 0xABDC50。
@@ -80,7 +76,9 @@ void SpreadGreen(SmoothWorld& world, const MapGrid& grid,
   // 也就是「还没定砖」，于是它会被真的收进前沿，还可能被抽中涂绿。
   grid.ForEachCell([&](const CellCoord& c) {
     if (!IsGreenTile(world.Tile(c), theater)) return;
-    for (const int dir : kOrtho) {
+    // 0x59B78F `for (edi = 0; edi < 8; edi += 2)`：步长 2，只看八邻域表
+    // 0x89F688 的偶数项——四个**正**方向 N / E / S / W，对角一概不看
+    for (int dir = 0; dir < 8; dir += 2) {
       const CellRef n = Adjacent(world, RefOf(c), dir);
       if (IsUndecided(TileOf(world, n))) front.push_back(n);
     }
@@ -109,7 +107,9 @@ void SpreadGreen(SmoothWorld& world, const MapGrid& grid,
     WriteTile(world, chosen, theater.green_tile);
 
     // 0x59B8A3-0x59B901：新绿地的四个正邻继续入队。
-    for (const int dir : kOrtho) {
+    // 0x59B8A3 `for (edi = 0; edi < 8; edi += 2)`：步长 2，只看八邻域表
+    // 0x89F688 的偶数项——四个**正**方向 N / E / S / W，对角一概不看
+    for (int dir = 0; dir < 8; dir += 2) {
       const CellRef nb = Adjacent(world, chosen, dir);
       if (IsUndecided(TileOf(world, nb))) front.push_back(nb);
     }

@@ -20,6 +20,7 @@ add_library(ra2_rmg
   zones.cpp
   start_points.cpp
   height_field.cpp
+  corner_lattice.cpp
   theater.cpp
   fp_guard.cpp)
 
@@ -129,6 +130,13 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_height_anchors PRIVATE
     RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
   add_test(NAME height_anchors COMMAND test_height_anchors)
+
+  # 基准 5000 多行，运行期直接读原档
+  add_executable(test_corner_lattice test/test_corner_lattice.cpp)
+  target_link_libraries(test_corner_lattice PRIVATE ra2_rmg gtest_main)
+  target_compile_definitions(test_corner_lattice PRIVATE
+    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+  add_test(NAME corner_lattice COMMAND test_corner_lattice)
 
   add_executable(test_start_points test/test_start_points.cpp)
   target_link_libraries(test_start_points PRIVATE ra2_rmg gtest_main)
