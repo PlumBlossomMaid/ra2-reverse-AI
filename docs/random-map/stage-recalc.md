@@ -222,6 +222,31 @@ for (; rounds > 0; --rounds) {
 也就是说这一遍是一次**校验/清理**：非法砖号、指向空洞的子块，
 统统整格作废成 `0xFFFF`。它还无条件重算坡道类型 `+0x11C`（`0x5471B0`）。
 
+### ⚠️ 再纠正一次：这一遍还有个**跨阶段**的产物
+
+上面那张表只统计了「写 `CellClass` 地形三件套」的指令，于是漏掉了
+`RecalcAttributes` 每格收尾干的另外三件事——它们不写格子，写的是
+**引擎寻路用的那张每格 4 字节地形表**（`MapClass+0x68`）：
+
+```
+0047d54a  call 0x47ca80
+0047d551  call 0x483c80          ; CellClass::RecalcLandType → 算 CellClass +0x4C
+0047d560  mov  [ebx+1], dl       ; zoneTable[idx].byte1 = +0x11B（层高）
+0047d569  mov  [ecx+8], al       ; MapClass+0x70 那张 10 字节/格的表也写一份层高
+0047d571  mov  [ebx],   dl       ; zoneTable[idx].byte0 = +0x4C（地面类别）
+```
+
+`ebx = [0x87F850] + CellToIndex(coord)*4`，而 `[0x87F850]` 就是
+`MapClass::Instance + 0x68`，全镜像只有 `0x47D2D5` 一处引用。
+函数三个出口（`0x47D571` / `0x47D7F2` / `0x47DD4B`）**全都写**。
+
+阶段 6 一开场就洪泛这张表来划连通区，所以**阶段 5 这一遍是阶段 6 的输入**，
+不是可有可无的清扫。整条链见
+[movement-zones.md](movement-zones.md)。
+
+顺带：`0x47D2B8 cmp esi, 0xABDC50 / je 0x47DD5A` —— 共享哑元进来直接跳到
+函数结尾，一个字节都不写。
+
 ### 那个 `-1` 的语义已经钉死了
 
 `0x47D2B0` 的序言是 `sub esp,0x38` 加 4 个 `push`，所以返回地址在 `esp+0x48`、

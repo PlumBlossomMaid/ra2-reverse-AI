@@ -19,7 +19,8 @@
 | [stage-tiberium.md](stage-tiberium.md) | 阶段：Creating tiberium（布矿） | ✅ 外层 + 矿田生长全链已实锤 |
 | [stage-tech-buildings.md](stage-tech-buildings.md) | 阶段：Adding tech buildings（中立科技建筑，两条互斥分支） | ✅ 已实锤，含 `PickRange` 语义 |
 | [stage-recalc.md](stage-recalc.md) | 阶段：绿地蔓延 + Recalculating cell attributes | ✅ 全部实锤；绿地蔓延已落 C++，18 个用例整段对拍通过 |
-| [stage-starting-points.md](stage-starting-points.md) | 阶段：Creating starting points（出生点，**整段可重试**） | ✅ 全部子函数已实锤；**卡在移动区子系统上，尚未落 C++** |
+| [stage-starting-points.md](stage-starting-points.md) | 阶段：Creating starting points（出生点） | ✅ 全部子函数已实锤；**卡在 `.tmp` 装载器上，尚未落 C++** |
+| [movement-zones.md](movement-zones.md) | **引擎的移动区子系统**：地面类别 → 连通区洪泛 → 区类型表 | ✅ 整条链已实锤；尚未落 C++ |
 | [stage-hills.md](stage-hills.md) | 阶段：Creating hills（造山，唯一随机源是高度场） | ✅ 随机部分 + 角点抬升子系统全链已实锤 |
 | [stage-lats.md](stage-lats.md) | 阶段：Creating LATs, rocks etc（地表装饰，取数点最密） | ✅ 18 个取数点全部实锤 |
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
@@ -207,10 +208,26 @@
       同一个格子可以被选进 waypoint 两次（照抄不修）。
       顺带关掉三条老未确认：`0xABE014 = MapType`、`0xABE028 = NumPlayers`、
       `0xABE158/15C = 地图宽高`；`zoneSel` 其实是 5 项 `{5,5,5,0,0}`
-- [ ] **下一块大工程：引擎的移动区子系统**（`0x56C510 RecalculateZones` /
-      `0x56CB90` 洪泛 / `0x56D230 GetMovementZoneType`）。它按可通行性把全图洪泛成
-      若干连通区，再把「区编号 → 区类型」查表给出。阶段 6 的区域划分与
-      `want` 阈值全靠它，**不做出来阶段 6 就落不了地**
+- [x] **引擎的移动区子系统整条链逆完** → [movement-zones.md](movement-zones.md)。
+      `0x56C510` 重建连通区并返回最大区编号、`0x56CB90` 是行段洪泛、
+      `0x56D230` 两级查表。串起来的证据链是：
+      `.tmp` 子块头 `+0x29` TerrainType → `TerrainToGround[16]`（`0x8288E4`）
+      → `CellClass +0xEC` GroundType（12 种，名字表 `0x81DA28` = rules.ini 的
+      12 个小节）→ `CellClass::RecalcLandType`（`0x483C80`）→ `CellClass +0x4C`
+      八个地面类别 → `MapClass+0x68` 每格 4 字节表 → 洪泛 → `MoveTable`
+      （`0x82A594`，13×8）→ 区类型。
+      三条要紧的新结论：
+      **(a) 阶段 5 的 `RecalcAttributes` 那一遍就是为了填这张表**——它每格收尾
+      无条件写 `zoneTable[idx]` 的地面类别与层高，所以阶段 5 是阶段 6 的输入，
+      不是可有可无的清扫（[stage-recalc.md](stage-recalc.md) §四已补正）；
+      **(b) 阶段 6 不调 `0x56D6E0`**，而它只在阶段 1 全水时跑过一次，
+      于是阶段 4 建的桥在阶段 6 眼里不连区；
+      **(c) `0x5A1FB0` 所有出口都 `return 1`**——它不是校验，
+      阶段 6 那圈外层重试永远只跑一遍
+- [ ] **下一块大工程：`.tmp` 装载器**。移动区要的 TerrainType 字节、
+      `RecalcAttributes` 要的坡道字节、贴砖器要的高度字节全在 `.tmp` 里，
+      现在测试用的还是 `tile_profiles.py` 造的合成砖。
+      读通它之后，移动区 + 阶段 6 才能落地
 - [x] **`MapSeedClass` 就是静态对象 `0xABDFD8`**——`0x59664C mov ecx,0xABDFD8;
       call 0x598960` 与 `0x58CAD1` 两处实锤。于是之前按绝对地址分散记下的
       一批全局当场对号：`0xABE014 = +0x3C` MapType、`0xABE024 = +0x4C`
