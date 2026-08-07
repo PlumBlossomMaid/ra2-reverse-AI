@@ -119,6 +119,24 @@ bool TheaterAssets::Load(const std::string& game_dir, Theater t,
   return true;
 }
 
+void TheaterAssets::BuildRmgTileTable(std::vector<rmg::TileType>* out) const {
+  out->assign(tiles_.size(), rmg::TileType());
+  for (std::size_t i = 0; i < tiles_.size(); ++i) {
+    const TileType& src = tiles_[i];
+    rmg::TileType& dst = (*out)[i];
+    dst.tile_number = static_cast<int>(i);      // +0x294
+    dst.width = src.blocks_x;                   // +0x2E4
+    dst.height = src.blocks_y;                  // +0x2E8
+    dst.cells.assign(src.sub.size(), rmg::TileSubCell());
+    for (std::size_t k = 0; k < src.sub.size(); ++k) {
+      dst.cells[k].present = src.sub[k].present;
+      dst.cells[k].height = src.sub[k].height;
+      dst.cells[k].ramp = static_cast<int>(src.sub[k].ramp);
+      dst.cells[k].terrain_type = static_cast<int>(src.sub[k].terrain);
+    }
+  }
+}
+
 int TheaterAssets::GroundTypeOf(int tile, int sub_index) const {
   if (tile < 0 || tile >= TileCount()) return 0;
   const TileType& tt = tiles_[static_cast<std::size_t>(tile)];

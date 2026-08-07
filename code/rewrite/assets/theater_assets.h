@@ -28,6 +28,7 @@
 #include <vector>
 
 #include "mix_archive.h"
+#include "place_tile.h"   // rmg::TileType（贴砖器吃的形状）
 #include "theater.h"
 #include "tmp_file.h"
 
@@ -55,6 +56,11 @@ class TheaterAssets {
   const TileType& Tile(int n) const {
     return tiles_[static_cast<std::size_t>(n)];
   }
+
+  // 把装载结果转成算法层要的形状。rmg::TileType 就是贴砖器 0x57B440 直接吃的
+  // 那三样（+0x294 砖号、+0x2E4/+0x2E8 宽高、逐子格的 +0x28/+0x29/+0x2A）。
+  // 下标 = 砖号，长度 = total_tiles；缺文件的砖是 width == height == 0 的空壳。
+  void BuildRmgTileTable(std::vector<rmg::TileType>* out) const;
 
   // 0x544BE0 TileTypeClass::GetGroundType(subIndex)。
   // 子格下标按 BlocksX*BlocksY 取模（param_2 % (piVar1[1] * *piVar1)），

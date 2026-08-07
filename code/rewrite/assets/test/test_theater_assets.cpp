@@ -155,6 +155,46 @@ TEST(TheaterAssets, GroundTypeWrapsSubIndex) {
   EXPECT_EQ(rmg::kGroundClear, tem.GroundTypeOf(tem.data().clear_tile, 0));
 }
 
+// 转成 rmg::TileType 之后，贴砖器要的三样必须一一对上；缺文件的砖是空壳。
+TEST(TheaterAssets, RmgTileTable) {
+  const char* dir = GameDir();
+  if (dir == nullptr) GTEST_SKIP() << "未设置 RA2_GAME_DIR，跳过装载层对拍";
+  TheaterAssets tem;
+  std::string err;
+  ASSERT_TRUE(tem.Load(dir, TheaterAssets::kTemperate, &err)) << err;
+  std::vector<rmg::TileType> table;
+  tem.BuildRmgTileTable(&table);
+  ASSERT_EQ(static_cast<std::size_t>(tem.TileCount()), table.size());
+  for (int i = 0; i < tem.TileCount(); ++i) {
+    const TileType& src = tem.Tile(i);
+    const rmg::TileType& dst = table[static_cast<std::size_t>(i)];
+    ASSERT_EQ(i, dst.tile_number);
+    ASSERT_EQ(src.blocks_x, dst.width);
+    ASSERT_EQ(src.blocks_y, dst.height);
+    ASSERT_EQ(src.sub.size(), dst.cells.size());
+    if (!src.loaded) {
+      EXPECT_EQ(0, dst.width);
+      EXPECT_EQ(0, dst.height);
+      EXPECT_TRUE(dst.cells.empty());
+      continue;
+    }
+    ASSERT_EQ(static_cast<std::size_t>(dst.width * dst.height), dst.cells.size());
+    for (std::size_t k = 0; k < dst.cells.size(); ++k) {
+      EXPECT_EQ(src.sub[k].present, dst.cells[k].present);
+      EXPECT_EQ(static_cast<int>(src.sub[k].height), dst.cells[k].height);
+      EXPECT_EQ(static_cast<int>(src.sub[k].ramp), dst.cells[k].ramp);
+      EXPECT_EQ(static_cast<int>(src.sub[k].terrain), dst.cells[k].terrain_type);
+    }
+  }
+  // 岸砖那 42 块是贴砖器真正会用到的，尺寸必须都是有效的
+  const int shore = tem.data().shore_pieces;
+  for (int k = 0; k < 42; ++k) {
+    const rmg::TileType& t = table[static_cast<std::size_t>(shore + k)];
+    EXPECT_GT(t.width, 0) << "shore+" << k;
+    EXPECT_GT(t.height, 0) << "shore+" << k;
+  }
+}
+
 }  // namespace
 }  // namespace assets
 }  // namespace ra2
