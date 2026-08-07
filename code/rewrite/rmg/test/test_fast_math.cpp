@@ -10,6 +10,7 @@
 #include <cstring>
 #include <vector>
 
+#include "atan_table.h"
 #include "dd_log.h"
 #include "fp_guard.h"
 #include "fast_math.h"
@@ -229,6 +230,94 @@ TEST(Trig, TableIsPureMath) {
   for (int i = 1; i < kSinTableSize - 8192; ++i) {   // 周期 8192
     ASSERT_EQ(kSinTableBits[i + 8192], kSinTableBits[i]) << "i=" << i;
   }
+}
+
+// ── 查表反正切 0x4CADE0 ───────────────────────────────────────────────
+//
+// 期望值由 code/randmap/dump_atan_golden.py 用 Unicorn 跑原版机器码取得
+//（一次 fdiv + 一次窄化存 + 整数运算，不碰 fpatan，Unicorn 在此可信）。
+#include "atan_golden.inc"
+
+TEST(Atan, MatchesOriginalLookupTable) {
+  FpuChopScope fpu;
+  for (const auto& c : kAtanGolden) {
+    double x, want;
+    std::memcpy(&x, &c[0], 8);
+    std::memcpy(&want, &c[1], 8);
+    EXPECT_TRUE(BitEq(ra2::rmg::Atan(x), want)) << "atan x=" << x;
+  }
+}
+
+// 与 Sin/Cos 相反：整数 abs 排在 _ftol **之后**，所以这个函数是严格奇对称的。
+// 唯一例外是窄化成 ±0.0 的极小值——符号被吃掉，返回 +0。
+TEST(Atan, IsExactlyOddSymmetric) {
+  FpuChopScope fpu;
+  for (double x : {1e-3, 0.5, 1.0, 1.5, 3.0, 24.4, 99.0, 1e4}) {
+    EXPECT_TRUE(BitEq(ra2::rmg::Atan(-x), -ra2::rmg::Atan(x))) << "x=" << x;
+  }
+  // 下溢到 -0.0f：符号丢失
+  EXPECT_TRUE(BitEq(ra2::rmg::Atan(-1e-45), 0.0));
+}
+
+// 两条必须照搬的"毛刺"：截断取下标带来的 ~0.7° 系统误差，
+// 以及 |x| 跨过约 100 时 0.01 弧度的跳变。这两条断言防止有人"修好"它。
+TEST(Atan, DeliberatelyCoarseAndDiscontinuous) {
+  FpuChopScope fpu;
+  // atan(1) 的真值是 π/4 = 0.7853981…，原版给 0.7735263…（下标 40.96 被截成 40）
+  EXPECT_NEAR(ra2::rmg::Atan(1.0), 0.7735263109207153, 1e-12);
+  EXPECT_GT(std::abs(ra2::rmg::Atan(1.0) - std::atan(1.0)), 0.011);
+  // |x| ≈ 100.0215 处的跳变：table[0x1000] → float π/2，差 0.01 弧度
+  const double lo = ra2::rmg::Atan(100.0);
+  const double hi = ra2::rmg::Atan(101.0);
+  EXPECT_GT(hi - lo, 0.009);
+  EXPECT_LT(hi - lo, 0.011);
+  // 越界那一支给的是 float π/2，不是 double π/2
+  EXPECT_TRUE(BitEq(hi, static_cast<double>(1.5707963705062866f)));
+}
+
+// 写死的 4097 项表必须能被它的生成式重算出来——证明它是数学常量表而非搬运的游戏数据。
+//
+// 与 sin 表不同，这里连"数值层容差"都不需要：生成式里的两处**向零截断**
+// （存表 + 累加自变量）把 std::atan 最后 1 bit 的平台差异挡在了外面……
+// 几乎。仍有极小概率某平台的 std::atan 差 1 ulp 且恰好跨过截断边界，
+// 所以逐位失败时降级为"差 1 ulp 以内"，并把失败项数钉死为 0 以外的上界。
+TEST(Atan, TableIsPureMath) {
+  using ra2::rmg::kAtanStepBits;
+  using ra2::rmg::kAtanTableBits;
+  using ra2::rmg::kAtanTableSize;
+  auto f32 = [](double d) { return static_cast<double>(static_cast<float>(d)); };
+  auto chop_f = [&](double d) {
+    std::uint32_t b;
+    float y = static_cast<float>(d);
+    if (std::abs(static_cast<double>(y)) > std::abs(d)) {
+      std::memcpy(&b, &y, 4);
+      --b;
+      std::memcpy(&y, &b, 4);
+    }
+    std::memcpy(&b, &y, 4);
+    return b;
+  };
+  float step;
+  std::memcpy(&step, &kAtanStepBits, 4);
+
+  float x = 0.0f;
+  int off_by_one = 0;
+  for (int i = 0; i < kAtanTableSize; ++i) {
+    const std::uint32_t want = chop_f(std::atan(static_cast<double>(x)));
+    if (kAtanTableBits[i] != want) {
+      ++off_by_one;
+      ASSERT_LE(std::abs(static_cast<long long>(kAtanTableBits[i]) -
+                         static_cast<long long>(want)),
+                1LL)
+          << "i=" << i;
+    }
+    // x = x + h，向零截断（原版全局 FPU 是 RC=chop）
+    std::uint32_t xb = chop_f(static_cast<double>(x) + static_cast<double>(step));
+    std::memcpy(&x, &xb, 4);
+  }
+  // 本机 x86/MSVC 上实测 0 项不符；给非 x86 平台的 libm 留 0.5% 的余量
+  EXPECT_LE(off_by_one, kAtanTableSize / 200) << "std::atan 与原版表的分歧过多";
+  (void)f32;
 }
 
 // ChopLog 的定义是「精确 ln 向零截断到 double」——这是个**与硬件无关的数学值**。

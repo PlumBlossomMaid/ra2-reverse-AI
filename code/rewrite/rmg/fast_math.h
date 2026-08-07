@@ -4,6 +4,7 @@
 //
 //   FastSqrt      @ 0x4CAC40  16384 项查表近似开方，只有约 14 位精度
 //   Sin / Cos     @ 0x4CACB0 / 0x4CAD00  10240 项查表，1/8192 圈的量化角
+//   Atan          @ 0x4CADE0  4097 项查表，步长 0.0244133547，|x|>100 直接给 π/2
 //   UniformUnit   @ 0x598000  (double)(uint32)Random() * (1/4294967295.0)
 //   NormalDeviate @ 0x5980C0  Marsaglia 极坐标法正态分布，内部用 x87 fyl2x 求 ln
 //
@@ -47,6 +48,24 @@ double FastSqrt(double x);
 // 消费者：河流生成器 0x59D510（MapType 3/4 支路）。
 double Sin(double x);
 double Cos(double x);
+
+// 0x4CADE0：查表反正切。**不是** std::atan。全 exe 511 处调用点，
+// RMG 这边的消费者是角度扩张 0x5A08D0（配 `if (dx < 0) a += π` 手写成 atan2）。
+//
+//   float xf = (float)x;                     // fst dword，向零截断，只用于取符号
+//   int   k  = abs(_ftol(x / 0.024413354694843292f));   // 用**未窄化**的 x 求下标
+//   r = (k >= 0x1001) ? 1.5707963705062866f : atan_table[k];
+//   return (xf < 0.0f) ? -r : r;
+//
+// 三个必须照搬的"毛刺"：
+//   1. 自变量被量化到 0.0244133547 的整数倍（约 1.4°，而且是**线性**分档——
+//      x 小的时候精度奇高，x 大的时候一档能跨好几度）；
+//   2. `k >= 0x1001` 那条出口给的是 float π/2 = 1.5707964，而 table[0x1000]
+//      只有 1.5607948——**|x| 跨过约 100 时结果会跳 0.01 弧度**，不是连续的；
+//   3. `abs` 排在 `_ftol` 之后，所以这个函数**是**严格奇对称的
+//      （与 Sin/Cos 正相反，那两个因为 abs 缺席而不对称）。
+//      唯一例外：|x| < 2^-149 时窄化成 ±0.0，符号丢失，恒返回 +0。
+double Atan(double x);
 
 // 原版用 x87 `fyl2x` 求自然对数（`fldln2; fld s; fyl2x`），全局 FPU 为 PC=53/RC=chop。
 //

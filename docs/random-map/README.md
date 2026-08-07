@@ -208,6 +208,16 @@
       **这张表当年是用 x87 `fsin` 离线生成的**，指纹留在里面。
       `_ftol` 与折半都向零截断，于是 `f(−x) ≠ −f(x)`（专门写了用例钉死），
       河流每步都吃这份不对称
+- [x] **查表 atan `0x4CADE0` 落成 C++ 并逐位对拍**（`fast_math` + `atan_table.h`）——
+      MapType 3/4 支路最后一个卡口关掉。全 exe 511 处调用点，
+      主体是 `k = abs(_ftol(x / 0.024413354694843292f))` 查 `float[0x1001] @0x8610B4`。
+      **表的生成式也还原了**：`x = 0.0f; for (i) { table[i] = chop_f(atan(x)); x = chop_f(x + h); }`
+      —— 4097/4097 逐位相符，且两处向零截断缺一不可（改成就近只对上 36 项），
+      这是「离线生成器就是游戏自己」（跑在 `_control87(_RC_CHOP)` 下）的又一枚指纹。
+      三个必须照搬的毛刺：量化的是**正切值**而非角度，于是
+      `Atan(1.0) = 0.7735263` 比真值 π/4 差 **0.68°**；`|x|` 跨过约 100.02
+      时结果跳 0.01 弧度（不连续）；它**是**严格奇对称的——与 Sin/Cos 正相反，
+      因为 `abs` 排在 `_ftol` 之后。105 组 Unicorn 黄金值 + 4097 项表自检全绿
 - [x] `.sed` 参数读取复刻（含西木 `Get_Int` 的 `$hex` / `Xh` 三条路径）
 - [ ] `.map` 输出（IsoMapPack5 编码）
 - [ ] 端到端验证：同种子生成结果与原版逐字节比对
@@ -276,6 +286,8 @@ long double。同类的 `fsin` / `fpatan` / `f2xm1` 是否也如此，**未确�
 | `code/randmap/dump_fastmath_golden.py` | 导出查表 sqrt / 均匀源 / 正态分布的对拍基准 |
 | `code/randmap/dump_sincos_golden.py` | 导出查表 sin/cos 的对拍基准（纯 fmul+整数，Unicorn 在此可信） |
 | `code/randmap/gen_sin_table.py` | 把 `0x84F084` 的 10240 项正弦表导出成 `sin_table.h`，并当场与 `sin(i·2π/8192)` 自检 |
+| `code/randmap/dump_atan_golden.py` | 导出查表 atan 的对拍基准（附**指令级** oracle 自检，见 fast-math.md §四之三） |
+| `code/randmap/gen_atan_table.py` | 把 `0x8610B4` 的 4097 项反正切表导出成 `atan_table.h`，并当场用还原出的生成式重算全表 |
 | `code/randmap/dump_tile_geometry.py` | 从 theater 的 `.tmp` 取砖的**几何元数据**（宽高/空洞/高度/坡度）当对拍夹具 |
 | `code/ghidra_scripts/find_writers.py` | 定位 .bss 全局的运行期初始化点（表内容不在文件里） |
 | `code/randmap/scan_rmg_rng.py` | 只列**生成器自己那个** Randomizer(0xABE890) 的取数点（按 this 判定） |
@@ -295,9 +307,11 @@ CI 跑在哪种机器上都得给出同一张地图。为此定了三条规矩�
    等于把输出绑死在具体 CPU 实现上。改为定义唯一确定的数学语义
    （「精确 ln 向零截断」，双双精度实现），再**证明**残余差异被下游吸收。
    全过程见 [fast-math.md](fast-math.md) §四。
-2. **常量表写死。** 16384 项 sqrt 表与 10240 项 sin 表硬编码，让"结果与架构无关"
-   在编译期就成立；同时各配一条自检证明它是数学常量而非搬运的二进制资产——
-   sqrt 表用纯整数运算重算全表；sin 表因为绕不开 `std::sin`（它的最后 1 bit 逐平台不同），
+2. **常量表写死。** 16384 项 sqrt 表、10240 项 sin 表、4097 项 atan 表全部硬编码，
+   让"结果与架构无关"在编译期就成立；同时各配一条自检证明它是数学常量而非搬运的
+   二进制资产——sqrt 表用纯整数运算重算全表；atan 表能**逐位**重算
+   （生成式里两处向零截断正好把 `std::atan` 最后 1 bit 的平台差异挡在外面）；
+   只有 sin 表绕不开 `std::sin`（它的最后 1 bit 逐平台不同），
    改成「数值层 1 float ulp + 结构层反对称/对称/周期性逐位精确」两层校验。
 3. **浮点语义显式加固。** `fp_guard.h` 用 `static_assert` 挡住 x87 超精度、
    有符号右移歧义，用编译选项挡住 FMA 收缩与 `-ffast-math`，

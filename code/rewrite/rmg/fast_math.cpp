@@ -3,6 +3,7 @@
 #include <cmath>
 #include <cstring>
 
+#include "atan_table.h"
 #include "dd_log.h"
 #include "sin_table.h"
 #include "sqrt_table.h"
@@ -23,12 +24,20 @@ float TableAt(int index) {
   return v;
 }
 
-// 0x4CACBA / 0x4CAD0A 的 `call _ftol` 之后，代码只用 eax——所以取低 32 位。
-std::int32_t TrigIndex(double x) {
-  const double scaled = x * static_cast<double>(kTrigScale);
-  const std::int64_t t = static_cast<std::int64_t>(scaled);   // _ftol 向零截断
+// `_ftol` @0x7C5F00 的真身是 `fistp qword`，返回 edx:eax；
+// 这几个查表函数的调用点都只用 eax，所以取低 32 位。
+// 溢出（|v| >= 2^63 或 NaN）时 x87 存的是 64 位「整数不定值」0x8000000000000000，
+// **低 32 位恰好是 0**——所以越界的自变量会静默落到 table[0]，而不是越界读。
+std::int32_t FtolLow32(double v) {
+  if (!(v > -9.2233720368547758e18 && v < 9.2233720368547758e18)) return 0;
+  const std::int64_t t = static_cast<std::int64_t>(v);        // 向零截断
   return static_cast<std::int32_t>(static_cast<std::uint32_t>(
       static_cast<std::uint64_t>(t) & 0xFFFFFFFFull));
+}
+
+// 0x4CACBA / 0x4CAD0A
+std::int32_t TrigIndex(double x) {
+  return FtolLow32(x * static_cast<double>(kTrigScale));
 }
 
 // 0x4CACC1-0x4CACC7：`cdq / sub eax,edx / sar eax,1`
@@ -43,6 +52,12 @@ std::int32_t HalfTowardZero(std::int32_t v) {
 // 逐条走一遍会发现它**恒等于 v & 0x1FFF**（m==0 走 0 分支，m>0 先减 0x2000 再加回
 // 0x2000），也就是说这十几字节是白写的。照抄是为了让"等价"这件事有代码为证，
 // 而不是靠一句注释——把它删掉才需要举证。
+float BitsToFloat(std::uint32_t bits) {
+  float v;
+  std::memcpy(&v, &bits, sizeof v);
+  return v;
+}
+
 std::uint32_t FoldIndex(std::int32_t half) {
   std::uint32_t a = static_cast<std::uint32_t>(half) & 0x80001FFFu;
   if (a & 0x80000000u) {              // jns 不跳
@@ -96,6 +111,28 @@ double Cos(double x) {
   std::int32_t k = static_cast<std::int32_t>(a);
   if (odd && k < 0x27FF) ++k;                 // 0x4CAD39
   return TableAt(k);
+}
+
+double Atan(double x) {
+  // 0x4CADE4 `fst dword [esp+4]`：把 st0 窄化成 float **存回栈上但不出栈**，
+  // 后面只用它取符号；求下标用的仍是没被窄化的那个 double。
+  const float narrowed = static_cast<float>(x);
+
+  // 0x4CADE8 `fdiv dword [0x8650B8]` + 0x4CADEE `_ftol`（向零截断）
+  const std::int32_t raw = FtolLow32(x / static_cast<double>(BitsToFloat(kAtanStepBits)));
+  // 0x4CADF3 `cdq / xor eax,edx / sub eax,edx`：整数绝对值（按补码，无饱和）
+  const std::uint32_t k =
+      (raw < 0) ? (0u - static_cast<std::uint32_t>(raw)) : static_cast<std::uint32_t>(raw);
+
+  // 0x4CADF8 `cmp eax,0x1001 / jge` —— **有符号**比较。
+  // `abs` 唯一可能产出的负数是 INT32_MIN，而 `_ftol` 的低 32 位溢出时给的是 0，
+  // 所以 k 永远落在 [0, 2^31)，这条判断等价于无符号比较。
+  const float r = (static_cast<std::int32_t>(k) >= kAtanTableSize)
+                      ? BitsToFloat(kAtanHalfPiBits)
+                      : BitsToFloat(kAtanTableBits[k]);
+
+  // 0x4CAE0E-0x4CAE1F：拿窄化后的 float 与 0.0f 比，C0 置位（即 x < 0）才 fchs
+  return (narrowed < 0.0f) ? -static_cast<double>(r) : static_cast<double>(r);
 }
 
 // 所有架构统一走双双精度实现——它给出的是「精确 ln 向零截断」这个唯一确定的数学值。

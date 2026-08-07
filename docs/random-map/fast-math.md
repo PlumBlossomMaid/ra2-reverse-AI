@@ -1,9 +1,9 @@
-# 原版数学基元：查表 sqrt、查表 sin/cos 与正态分布
+# 原版数学基元：查表 sqrt / sin / cos / atan 与正态分布
 
 > 状态：**已实锤并逐位对拍**。C++ 复刻在 `code/rewrite/rmg/fast_math.{h,cpp}`，
 > 回归 `code/rewrite/rmg/test/test_fast_math.cpp`
 >（74 组 sqrt + 16384 项表自检 + 82 组 sin/cos + 10240 项表自检
-> + 101 组 ChopLog 黄金值 + 5 种子 × 16 正态）。
+> + 105 组 atan + 4097 项表自检 + 101 组 ChopLog 黄金值 + 5 种子 × 16 正态）。
 >
 > §四记录了本模块唯一一次**结论被推翻**的经历：`fyl2x` 的语义先在 80 个样本上
 > 得出错误结论，后被 20000 样本 + 真 CPU 探针纠正。方法论教训见 §4.6。
@@ -260,6 +260,98 @@ sin 表绕不开 `std::sin`，而 `std::sin` 的最后 1 bit 是**逐平台**的
 > 顺带：`0x4CAD50` 起还有一个用 `[0x7E8970] = 651.8986469044033`（≈ 2048/π）的
 > 同族函数，查同一张表但步长是 1/2048 圈。RMG 不走它。
 
+## 四之三、`Atan` @ `0x4CADE0`——4097 项查表，粗到肉眼可见
+
+同一套「西木快速数学库」的第四件。全 exe **511 处**调用点，
+RMG 这边的消费者是角度扩张 `0x5A08D0`（配一句 `if (dx < 0) a += π`
+手写成了 atan2）。
+
+```
+0x4CADE0  atan:
+  fld  qword [esp+4]           ; x（double）
+  fst  dword [esp+4]           ; 窄化成 float 存回去，**不出栈**——只为后面取符号
+  fdiv dword [0x8650B8]        ; / 0.024413354694843292f
+  call 0x7C5F00                ; _ftol，向零截断
+  cdq / xor eax,edx / sub eax,edx      ; 整数 abs
+  cmp  eax, 0x1001
+  jge  越界                     ; → fld dword [0x7E897C] = 1.5707963705062866f
+  fld  dword [eax*4 + 0x8610B4]        ; float atanTable[0x1001]
+  越界汇合:
+  fld  dword [esp+4]           ; 取回窄化的 float x
+  fcomp dword [0x7E1748]       ; 与 0.0f 比
+  fnstsw ax / test ah,1 / jz   ; C0（即 x < 0）
+  fchs                         ; 是负数才取反
+  ret
+```
+
+表尾正好落在 `0x8650B4`，紧跟着就是步长常量 `0x8650B8`——
+两者相邻这一点顺带确认了表长就是 `0x1001 = 4097` 项。
+
+### 表的来历：这次连生成式都还原了
+
+```c
+float x = 0.0f;
+for (i = 0; i <= 0x1000; ++i) {
+    table[i] = (float)atan(x);   // 向零截断存 float
+    x = x + h;                   // float 累加，也向零截断
+}
+```
+
+**4097/4097 逐位相符。** 两处「向零截断」缺一不可：换成就近舍入只对得上 36 项，
+「累加改成 `i * h`」也对不上（正因为逐步截断，表尾的自变量比 `4096·h` 低了约
+0.0155，于是 `table[4096]` 比 `atan(4096·h)` 低 13 个 float ulp）。
+
+这条结果本身就是一份取证：**这张表当年是被同一套
+`_control87(_RC_CHOP)` 环境下的代码生成出来的**——
+与 sin 表那两处 `fsin` 残渣一样，是「离线生成器就是游戏自己」的指纹。
+
+步长 `h = 0.024413354694843292`（`0x3CC7FE84`）本身的来历**未确认**：
+它不是 `100/4096 = 0.0244140625`（那个值恰好是二进制精确的），
+也不是 `1/cot(0.01)/4096`。不影响复刻——照原样用就是了。
+
+### 三条必须照搬的性质
+
+1. **自变量的量化是线性的、而且很粗**：一档 `0.0244133547`。
+   注意这不是角度均分而是**正切值**均分，所以 x 小时精度奇高、x 大时一档能跨好几度。
+   最刺眼的例子：`atan(1)` 的真值是 `π/4 = 0.7853982`，
+   原版给 **`0.7735263`**——差 **0.68°**。因为 `1/h = 40.96118` 被 `_ftol`
+   截成 `40`，查的是 `atan(40h) = atan(0.9765)`。
+   `Atan.DeliberatelyCoarseAndDiscontinuous` 专门钉住这一条，防止有人"修好"它；
+2. **|x| 跨过约 100.0215 时结果会跳 0.01 弧度**：下标 `≥ 0x1001` 那条出口给的是
+   float `π/2 = 1.5707964`，而 `table[0x1000]` 只有 `1.5607948`。函数不连续；
+3. **它是严格奇对称的**——`abs` 排在 `_ftol` **之后**，
+   而 `_ftol` 向零截断满足 `trunc(−y) = −trunc(y)`。
+   这与 Sin/Cos **正相反**（那两个因为没有 `abs` 而不对称），
+   是同一个作者在同一个文件里的两种写法，复刻时不能想当然地统一。
+   唯一例外：`|x| < 2⁻¹⁴⁹` 时窄化成 `±0.0`，符号被吃掉，恒返回 `+0`。
+
+`_ftol` 溢出（`|x/h| ≥ 2⁶³`）时 x87 存的是 64 位「整数不定值」
+`0x8000000000000000`，**低 32 位恰好是 0**，而调用点只用 `eax`——
+所以极端自变量会静默落到 `table[0] = 0.0`，不是越界读。
+C++ 侧用 `FtolLow32` 显式建模这一条（顺带把 Sin/Cos 里同样的 UB 一起消掉了）。
+
+### 自检可以做到逐位
+
+与 sin 表不同，这里**不需要**两层校验：生成式里的两处向零截断把
+`std::atan` 最后 1 bit 的平台差异挡在了外面。`Atan.TableIsPureMath`
+直接逐位重算全表；只在极小概率（某平台 `std::atan` 差 1 ulp 且恰好跨过截断边界）
+下降级为「差 1 ulp 以内」，并把允许的分歧项数上界钉在 0.5%。
+本机 x86/MSVC 实测 **0 项分歧**。
+
+### 模拟器可信性
+
+`0x4CADE0` 的 oracle 自检做了两层（见 `dump_atan_golden.py` 的开头注释）：
+
+* 直接把控制字从 `0x0E7F` 换成 `0x027F`，**399 个样本无一变化**——
+  乍看像模拟器失灵，实际是这个函数本身几乎与舍入模式无关：
+  取下标的 `_ftol` 自己会 `fnstcw` 比对 `[0x822D80]`，不一致就走强制截断的慢路径；
+* 于是改用指令级探针单独验它用到的两条指令：`fdiv` 在 1521 组 `a/b` 里有
+  **546 组**随控制字改变结果，`fst dword`（`1/3` 窄化）给出
+  `0x3EAAAAAA`(chop) / `0x3EAAAAAB`(near)。两条都吃舍入模式，**模拟器在此可信**。
+
+这也是对 §4.6 那条方法论的一次补充：**"改输入没反应"不等于"oracle 坏了"，
+也可能是"这段代码本来就不敏感"。要分清楚，就得把敏感的那条指令单独拎出来测。**
+
 ## 五、其余算术为什么可以用 C++ 原生 double
 
 原版控制字 `0x0E7F` = `PC=53`（x87 中间结果就按双精度舍入）+ `RC=chop`。
@@ -289,6 +381,8 @@ x64 的 SSE2 与 x86 的 x87-PC53 在 `+ - × ÷` 和 double→float 转换上�
 | `code/randmap/dump_fastmath_golden.py` | Unicorn 执行原版 `0x4CAC40 / 0x598000 / 0x5980C0` 取基准（**注意：该模拟器的 `fyl2x` 不可信，见 §4.1**） |
 | `code/randmap/dump_sincos_golden.py` | Unicorn 执行原版 `0x4CACB0 / 0x4CAD00` 取基准（只有 `fmul` + 整数运算，此处模拟器可信） |
 | `code/randmap/gen_sin_table.py` | 从 exe 导出 `0x84F084` 的 10240 项正弦表成 `sin_table.h`，导出时当场与 `sin(i·2π/8192)` 比对 |
+| `code/randmap/dump_atan_golden.py` | Unicorn 执行原版 `0x4CADE0` 取基准（含两层 oracle 自检，见 §四之三） |
+| `code/randmap/gen_atan_table.py` | 从 exe 导出 `0x8610B4` 的 4097 项反正切表成 `atan_table.h`，导出时当场用还原出的生成式重算全表 |
 | `build/scratch/fyl2x_probe.cpp` | 真 CPU 只读探针：FPCW=0x0E7F 下取 20000 组 `fyl2x` 真值 |
 | `build/scratch/dd_probe.cpp` | 把 `dd::ChopLogPortable` 的输出导出，交给任意精度判定 |
 | `code/ghidra_scripts/decompile_blob_growth.py` | 反编译涂块核心的全部下挂零件 |
@@ -301,3 +395,4 @@ x64 的 SSE2 与 x86 的 x87-PC53 在 `+ - × ÷` 和 double→float 转换上�
 | `memory/data/rmg/fyl2x_mismatch.txt` | `fyl2x` 与精确截断分歧的全部 7 例 |
 | `memory/data/rmg/choplog_golden.txt` | `ChopLog` 架构无关黄金值 101 组（纯任意精度算出） |
 | `memory/data/rmg/sincos_golden.inc` | 查表 sin/cos 82 组（直接 `#include` 进测试） |
+| `memory/data/rmg/atan_golden.inc` | 查表 atan 105 组（直接 `#include` 进测试） |
