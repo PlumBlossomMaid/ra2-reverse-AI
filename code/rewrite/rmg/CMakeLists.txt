@@ -123,6 +123,13 @@ if(RA2_BUILD_TESTS)
     RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
   add_test(NAME regions COMMAND test_regions)
 
+  # 两个通用区域算子（阶段 2 河湖支路与阶段 4 共用的积木）
+  add_executable(test_region_ops test/test_region_ops.cpp)
+  target_link_libraries(test_region_ops PRIVATE ra2_rmg gtest_main)
+  target_compile_definitions(test_region_ops PRIVATE
+    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+  add_test(NAME region_ops COMMAND test_region_ops)
+
   add_executable(test_height_field test/test_height_field.cpp)
   target_link_libraries(test_height_field PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_height_field PRIVATE

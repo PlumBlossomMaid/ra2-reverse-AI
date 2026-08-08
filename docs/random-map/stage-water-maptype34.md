@@ -171,6 +171,17 @@ cell->IsoTile = 0;  cell->SubTile = 0;  cell->Level = this->level;   // +0x30C
 
 三者都建立在 `0x5A0700` 之上，是本支路（以及阶段 4「Making regions」）的公共积木。
 
+**复刻状态：✅ 三个都已端到端对拍。**
+`0x5A0700` 见 `rmg/regions.{h,cpp}` 的 `CollectBorderCells`（阶段 3 的
+`regions` 用例已覆盖）；`0x5A0410` / `0x5A0160` 见同两个文件里的
+`Erode` / `Dilate`，基准 `code/randmap/dump_region_ops_golden.py` →
+`memory/data/rmg/region_ops_golden.txt`（16 + 17 = 33 例），ctest 名
+`region_ops`。基准是整函数模拟执行，`0x5A0700`、`0x5657A0` 的哑元退化、
+`0x486380` 未定砖谓词、`0x4865D0` 水岸谓词全是原身，一个桩都不留。
+
+两个算子**都不取随机数**（通篇没有一条 `call 0x4CA1D0`），生成脚本里用
+`assert self.rng_calls == 0` 守着这一条。
+
 ### `0x5A0700 CollectBorderCells(this; owner)`
 
 返回一个 `DynamicVector<packedCoord>*`（vtable `0x7E3890`），装的是
@@ -185,14 +196,27 @@ cell->IsoTile = 0;  cell->SubTile = 0;  cell->Level = this->level;   // +0x30C
 把编号为 `owner` 的连通块**向内剥 `rings` 圈**。每剥掉一格：
 
 ```c
-work.owner    = newOwner;
-cell->IsoTile = 0;
-cell->SubTile = 0;
-cell->Level   = this->level;      // +0x30C
+work.owner    = newOwner;         // 0x5A04CA，工作数组为空指针时跳过
+cell->IsoTile = 0;                // 0x5A04DD
+cell->SubTile = 0;                // 0x5A04E0
+cell->Level   = this->level;      // 0x5A04EE，+0x30C
 ```
 
-`work.+0x3C` 被借用作「本圈已访问」的戳，值是 `ring + 1`；`rings > 1` 时
-在开头和结尾各清一次。**恒返回 true**。
+每圈是**倒着**遍历当前边界向量的（`0x5A0498 dec esi` 起，`jns` 收尾）。
+下一圈 = 当前圈八邻域里 `work.owner` 仍等于 `owner`、且本圈没被戳过的格子；
+向量增长步长 = 当前圈的格数（`0x5A0539`）。最后一圈不再往里找
+（`0x5A04FF cmp ring, rings-1 / jge`）。**恒返回 true**（`0x5A06E8 mov al,1`）。
+
+`work.+0x3C` 被借用作「本圈已访问」的戳，值是 `ring + 1`；⚠️ 只有
+`rings > 1` 时才在开头（`0x5A0436`）和结尾（`0x5A0693`）各按地图迭代顺序
+清一遍——`rings <= 1` 时 +0x3C 里上一轮的残留会**原样留到函数返回之后**，
+这是能被后续代码读到的可观测差异（对拍用例 `e-dirty-r1` / `e-dirty-r3`
+就是盯着这一条造的）。
+
+至于那个戳本身：它只影响下一圈向量里**有没有重复项**。重复项被重复剥一次
+写的是同一批常数，所以**产物上看不出来**——已用突变测试确认（把去重条件
+改成恒假，33 个 ctest 目标一个都不红）。这里照抄它，是为了让向量长度与原版
+一致，也免得留下一处「看起来能省」的诱惑。
 
 ### `0x5A0160 Dilate(this; owner, rings, rectX, rectY, rectW, rectH, flag, cellVal)` — `ret 0x20`
 
@@ -206,9 +230,21 @@ cell->Level   = this->level;      // +0x30C
 接受则 `work.owner = owner`；若 `flag != 0` 且该格未定砖，还写
 `cell->Level = cellVal`。
 
-**关键出口**：只要遇到一个 owner 非 0、又不满足接受条件、且 `owner != 本块`
-的邻居，函数**立刻返回 false**。所以调用方用它做「我这块有没有和别人贴上」的
-隔离测试。下一圈的容量步长是 `newVec->+0x14 = cur->count * 3`。
+接受则 `work.owner = owner`（`0x5A0348`）；若 `flag != 0` 且该格**仍是**
+未定砖，还写 `cell->Level = (int8)cellVal`（`0x5A036B`，为此又取了一次格子）。
+
+**关键出口**（`0x5A02EF cmp edi,[esp+0x30] / jne 0x5A03DE`）：任何一个
+**没被接受**、且 `work.owner != owner` 的邻居都会让函数**立刻返回 false**。
+
+> ⚠️ 早先这里写的是「owner 非 0 …… 的邻居」，**不对**。`work.owner == 0`
+> 但砖不是未定砖（比如已经铺好的水砖、或普通地砖）同样落到这条出口上——
+> 0 也不等于 `owner`。对拍用例 `d-solid-false`（全图普通砖）与
+> `d-wall-false`（一圈砌死的普通砖）就踩的这一条。
+
+被矩形夹掉、或被菱形判定挡掉的邻格是 `continue`，**不是**失败
+（用例 `d-rect-empty`：矩形宽高为 0，一格都进不去，照样返回 true）。
+所以调用方用它做「我这块有没有和别人贴上」的隔离测试。
+下一圈的容量步长是 `newVec->+0x14 = cur->count * 3`。
 
 ## 四、`0x59D510`：河流生成器
 

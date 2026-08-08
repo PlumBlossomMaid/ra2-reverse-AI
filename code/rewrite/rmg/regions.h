@@ -218,6 +218,46 @@ void Finalize(RegionContext& ctx, bool flag);
 // 阶段 3 全流程（0x598960 那一段）。map_type 只用来算 Grow 的圈数。
 void InitRegions(RegionContext& ctx, int map_type);
 
+// ── 两个通用区域算子 ──
+//
+// 两者都建在 CollectBorderCells 之上，是「MapType 3/4 的河湖支路」与
+// 阶段 4「Making regions」的公共积木。放在这里是因为它们跟阶段 3 共用
+// RegionContext 与那一套工作数组访问器，跟 RegionClass 本身没有关系
+// ——它们的「区域」就是工作数组 +0x38 上的一个编号，不是 RegionClass。
+
+// 0x5A0410 `MapSeedClass::Erode(owner, rings, newOwner)`（__thiscall，ret 0xC）。
+// 把编号 owner 的连通块**向内剥 rings 圈**：每剥掉一格就
+// `work.+0x38 = newOwner`、`cell->+0x38 = 0`、`cell->+0x11A = 0`、
+// `cell->+0x11B = level_30c`（level_30c 即原版的 `this->+0x30C`）。
+//
+// ⚠️ 三处必须照抄：
+//   1) 每圈都是**倒序**遍历当前边界向量（0x5A0498 `dec esi` 起，`jns` 收尾）
+//   2) `work.+0x3C` 被借去当「本圈已访问」的戳，戳值是 **ring + 1**；
+//      `rings > 1` 时在开头（0x5A0436）和结尾（0x5A0693）各按地图迭代顺序
+//      全清一遍。`rings <= 1` 时两次清理都**不做**——+0x3C 里残留的是上一次
+//      涂块留下的块编号，但因为只有一圈、根本走不到戳比较，所以无影响。
+//   3) **恒返回 true**（0x5A06E8 `mov al,1`），没有任何失败出口。
+bool Erode(RegionContext& ctx, int level_30c, int owner, int rings,
+           int new_owner);
+
+// 0x5A0160 `MapSeedClass::Dilate(owner, rings, rectX, rectY, rectW, rectH,
+//                                flag, cellVal)`（__thiscall，ret 0x20）。
+// 把编号 owner 向外长 rings 圈，且只在给定**真实坐标矩形**内长。
+//
+// 接受一个邻格的条件（0x5A02CB-0x5A02ED 的三段跳原样展开）：
+//     bl = (flag != 0 && neighbourOwner == owner - 1)
+//     (neighbourOwner == 0 || bl) && ( IsUndecidedTile(cell)
+//                                      || (bl && IsWaterOrShoreTile(cell)) )
+// 接受则 `work.+0x38 = owner`；再若 `flag != 0` 且该格仍是未定砖，
+// 额外写 `cell->+0x11B = (int8)cell_val`。
+//
+// ⚠️ **关键出口**：任何一个没被接受、且 `neighbourOwner != owner` 的邻格都会
+// 让函数**立刻返回 false**（0x5A02EF `cmp edi,[esp+0x30]` / `jne 0x5A03DE`）。
+// 注意 neighbourOwner == 0 也算——「空地但砖不是未定砖」同样会失败。所以
+// 调用方拿它当「我这块有没有和别人贴上」的隔离测试。
+bool Dilate(RegionContext& ctx, int owner, int rings, int rect_x, int rect_y,
+            int rect_w, int rect_h, bool flag, int cell_val);
+
 }  // namespace rmg
 }  // namespace ra2
 

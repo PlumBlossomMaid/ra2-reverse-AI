@@ -25,7 +25,7 @@
 | [stage-lats.md](stage-lats.md) | 阶段：Creating LATs, rocks etc（地表装饰，取数点最密） | ✅ 18 个取数点全部实锤；**已落 C++ 并逐位对拍**（`rmg/lats.{h,cpp}` + `rmg/lat_spread.cpp`，25 个用例） |
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法全还原；**`MapType 0/1/2` 主路径 + 水面细化整条落成 C++ 并对拍** |
-| [stage-water-maptype34.md](stage-water-maptype34.md) | 阶段 2 支路：`MapType ∈ {3,4}` 的**河流、湖泊与瀑布**（含查表 sin/cos） | ✅ 八个函数全部实锤；sin/cos 已落 C++ 并对拍；整支路待落 C++ |
+| [stage-water-maptype34.md](stage-water-maptype34.md) | 阶段 2 支路：`MapType ∈ {3,4}` 的**河流、湖泊与瀑布**（含查表 sin/cos） | ✅ 八个函数全部实锤；sin/cos 与两个通用区域算子（`0x5A0410` Erode / `0x5A0160` Dilate）已落 C++ 并对拍；河/湖/瀑布三个主体待落 C++ |
 | [stage-making-regions.md](stage-making-regions.md) | 阶段 4：Making regions（区域重建 + **区域之间开坡道/架桥**，`MapType ∈ {3,4}` 专属，45 个取数点） | ✅ **45 个取数点全部关闭**；区域切分 / 架桥 / 四个直坡 / 三个转角 / 两遍重刷砖全部实锤 |
 
 ## 进度
@@ -425,6 +425,19 @@
       `0x579320` 全镜像零引用（从没被调用），表因此一直是 `.bss` 的零；
       就算它跑了，40 项里唯一非零的第 32 项也挂在一个决策树永远选不出来的下标上
       ⇒ **落点恒为本格**
+- [x] **两个通用区域算子落 C++ 并对拍**（ctest 名 `region_ops`）。
+      `0x5A0410 Erode`（向内剥 N 圈）与 `0x5A0160 Dilate`（在矩形内向外长 N 圈，
+      兼作「有没有和别人贴上」的隔离测试）是 `MapType ∈ {3,4}` 河湖支路与
+      阶段 4「Making regions」的公共积木，已写进 `rmg/regions.{h,cpp}`。
+      `dump_region_ops_golden.py` 整函数模拟执行取基准，33 例逐格比
+      `(tile, subtile, level, +0x38, +0x3C)` 与返回值，全绿；三处突变
+      （少剥一圈 / 失败出口改成 continue / 清戳条件放宽）都能被抓住。
+      **顺带更正一条旧结论**：Dilate 的失败出口先前写成「owner 非 0 的邻居」，
+      实际是「**任何**没被接受、且 `work.owner != owner` 的邻居」——
+      无主（owner == 0）但砖不是未定砖同样判失败。
+      另外查实 Erode 的 `+0x3C` 去重戳**只影响向量长度、不影响产物**
+      （突变验证），而 `rings <= 1` 时不清戳留下的残留**是**可观测的。
+
 - [x] **阶段 8 布矿整段端到端对拍**（ctest 名 `place_tiberium`）。
       `dump_tiberium2_golden.py` 把外层 `0x5A23A0` 与内层 `0x5A28C0` 连起来跑真身，
       `NormalDeviate`/`UniformUnit`/`FastSqrt`/`GetWaypointCoords`/`_ftol`/
@@ -571,6 +584,7 @@ long double。同类的 `fsin` / `fpatan` / `f2xm1` 是否也如此，**未确�
 | `code/randmap/dump_green_spread_golden.py` | 导出阶段 5 绿地蔓延 `0x59B740` 的对拍基准（含共享哑元的进场值/终值） |
 | `code/randmap/dump_start_points2_golden.py` | 导出阶段 6 出生点**整段** `0x594B50` 的对拍基准（只打四个外部依赖的桩） |
 | `code/randmap/dump_tiberium2_golden.py` | 导出阶段 8 布矿**外层** `0x5A23A0` 的对拍基准（手搭 RegionClass 与 waypoint 表） |
+| `code/randmap/dump_region_ops_golden.py` | 导出 `0x5A0410 Erode` / `0x5A0160 Dilate` 的对拍基准（整函数模拟执行，不留桩） |
 | `code/ghidra_scripts/find_writers.py` | 定位 .bss 全局的运行期初始化点（表内容不在文件里） |
 | `code/randmap/scan_rmg_rng.py` | 只列**生成器自己那个** Randomizer(0xABE890) 的取数点（按 this 判定） |
 | `code/ghidra_scripts/rng_closure.py` | 调用树传递闭包，找出某根函数下**所有**随机数取数点（真函数边界） |

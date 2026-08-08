@@ -443,5 +443,117 @@ void InitRegions(RegionContext& ctx, int map_type) {
   Finalize(ctx, false);
 }
 
+
+// ── 0x5A0410 Erode ──────────────────────────────────────────────────────
+//
+// 栈帧（call 0x5A0700 返回后 esp 记作 E）：
+//   [E+0x34] owner   [E+0x38] rings   [E+0x3C] newOwner   [E+0x2C] this
+//   [E+0x10] 当前圈的边界向量   [E+0x14] ring   [E+0x18]/[E+0x1C] 打包坐标
+bool Erode(RegionContext& ctx, int level_30c, int owner, int rings,
+           int new_owner) {
+  // 0x5A0422：第一圈就是 owner 的全部边界格
+  std::vector<CellCoord> cur = CollectBorderCells(ctx, owner);
+
+  // 0x5A042D `cmp esi,1 / jle`：只剥一圈时**不清**戳，戳里残留的是别处写的值
+  if (rings > 1) {
+    ctx.grid.ForEachCell([&](const CellCoord& c) { Rec(ctx, c).queued = 0; });
+  }
+
+  for (int ring = 0; ring < rings; ++ring) {   // 0x5A0489 起
+    // 0x5A0495-0x5A04F4：倒着走当前边界向量，逐格剥掉
+    for (int j = static_cast<int>(cur.size()) - 1; j >= 0; --j) {
+      const CellCoord c = cur[static_cast<std::size_t>(j)];
+      SetOwner(ctx, c, new_owner);          // 0x5A04CA（工作数组为空则跳过）
+      Touch(*ctx.world, c);                 // 0x5A04D8 GetCellAt
+      ctx.world->SetIsoTile(c, 0);          // 0x5A04DD +0x38 = 0
+      ctx.world->SetSubTile(c, 0);          // 0x5A04E0 +0x11A = 0
+      ctx.world->SetLevel(c, level_30c);    // 0x5A04EE +0x11B = this->+0x30C
+    }
+
+    // 0x5A04FF `cmp ring, rings-1 / jge`：最后一圈不再往里找下一圈
+    if (ring >= rings - 1) break;
+
+    // 0x5A0507 起：下一圈 = 当前圈里**仍属于 owner** 且本圈没被戳过的邻格。
+    // 向量增长步长 = cur.size()（0x5A0539），因 cur 为空时压根不进循环，
+    // 「步长 0 导致 push 静默失败」这条路不可达，故这里不必建模。
+    std::vector<CellCoord> next;
+    for (int k = static_cast<int>(cur.size()) - 1; k >= 0; --k) {
+      const CellCoord c = cur[static_cast<std::size_t>(k)];
+      for (int dir = 0; dir < 8; ++dir) {   // 0x5A0560 `and eax,7`
+        const CellCoord n = Step(c, dir & 7);
+        if (!ctx.grid.InMap(n)) continue;   // 0x5A0593 起的四条菱形比较
+        PaintWorkCell& w = Rec(ctx, n);
+        if (w.blob_id != owner) continue;   // 0x5A05D6：刚剥掉的格已改成 newOwner
+        if (w.queued == ring + 1) continue; // 0x5A05E5：本圈已收
+        next.push_back(n);                  // 0x5A0621
+        w.queued = ring + 1;                // 0x5A0628
+      }
+    }
+    cur.swap(next);                         // 0x5A0665-0x5A0669
+  }
+
+  // 0x5A0693 `cmp esi,1 / jle`：同样只在 rings > 1 时才收拾戳
+  if (rings > 1) {
+    ctx.grid.ForEachCell([&](const CellCoord& c) { Rec(ctx, c).queued = 0; });
+  }
+  return true;                              // 0x5A06E8 `mov al,1`
+}
+
+// ── 0x5A0160 Dilate ─────────────────────────────────────────────────────
+//
+// 栈帧（call 0x5A0700 返回后 esp 记作 E）：
+//   [E+0x30] owner  [E+0x34] rings  [E+0x38] rectX  [E+0x3C] rectY
+//   [E+0x40] rectW  [E+0x44] rectH  [E+0x48] flag   [E+0x4C] cellVal
+bool Dilate(RegionContext& ctx, int owner, int rings, int rect_x, int rect_y,
+            int rect_w, int rect_h, bool flag, int cell_val) {
+  std::vector<CellCoord> cur = CollectBorderCells(ctx, owner);   // 0x5A016C
+
+  for (int ring = 0; ring < rings; ++ring) {   // 0x5A0181 / 0x5A03B7
+    std::vector<CellCoord> next;               // 步长 = cur.size()*3（0x5A01C5）
+    for (std::size_t i = 0; i < cur.size(); ++i) {      // 0x5A01CF 起
+      for (int dir = 0; dir < 8; ++dir) {               // 0x5A01DA 起
+        const CellCoord n = Step(cur[i], dir & 7);
+        if (!ctx.grid.InMap(n)) continue;               // 0x5A022B 起四条
+        // 0x5A0257-0x5A0285：再夹一层**真实坐标矩形**，四条都是半开区间
+        if (n.x < rect_x || n.x >= rect_x + rect_w) continue;
+        if (n.y < rect_y || n.y >= rect_y + rect_h) continue;
+
+        PaintWorkCell& w = Rec(ctx, n);
+        const int owner_n = w.blob_id;                  // 0x5A02A8
+        // 0x5A02A6-0x5A02BA：bl = flag 且这一格属于「上一号」区域
+        const bool bl = flag && owner_n == owner - 1;
+        Touch(*ctx.world, n);                           // 0x5A02C6 GetCellAt
+        const int tile = ctx.world->IsoTile(n);
+
+        // 0x5A02CB-0x5A02ED 三段跳原样展开
+        bool accept = false;
+        if (owner_n == 0 || bl) {
+          if (IsUndecidedTile(tile)) {                  // 0x5A02D7
+            accept = true;
+          } else if (bl && IsWaterOrShoreTile(tile, *ctx.theater)) {  // 0x5A02E6
+            accept = true;
+          }
+        }
+        if (!accept) {
+          // 0x5A02EF：没被接受的邻格只要不是自己人，整个函数当场失败。
+          // ⚠️ owner_n == 0 也走这条——「无主但砖不是未定砖」照样判失败。
+          if (owner_n != owner) return false;
+          continue;
+        }
+
+        next.push_back(n);                              // 0x5A0337
+        w.blob_id = owner;                              // 0x5A0348
+        // 0x5A034B-0x5A036B：只有 flag 且原本是未定砖，才顺手压高度层
+        if (flag && IsUndecidedTile(tile)) {
+          Touch(*ctx.world, n);                         // 0x5A0362 又取了一次
+          ctx.world->SetLevel(n, static_cast<std::int8_t>(cell_val));
+        }
+      }
+    }
+    cur.swap(next);                                     // 0x5A03A7-0x5A03AF
+  }
+  return true;                                          // 0x5A03D5 `mov al,1`
+}
+
 }  // namespace rmg
 }  // namespace ra2
