@@ -39,8 +39,19 @@ int PickFrom1(Randomizer& rng, int n);
 // 0x7ED898 = 1/(2^32-1)。整个生成器只有这一个"把 uint32 摊到 [0,1]"的常数。
 inline constexpr double kInvUintMax = 2.3283064370807974e-10;
 
-// _ftol（0x7C5F00）：向零截断。RC=chop 下与 C 的 (int) 转换语义一致。
-inline int Ftol(double v) { return static_cast<int>(v); }
+// _ftol（0x7C5F00）：MSVC 的那个转换助手，`fistp **qword**` 之后
+// eax 只取低 32 位（edx 拿高半，调用方大多不理）。所以：
+//   1) 向零截断（全局 RC=chop，函数自己还会临时改一次控制字保证这点）；
+//   2) 结果 **不饱和**——2^31 <= v < 2^63 时回来的是 int64 的低 32 位，
+//      而不是 C 的 (int) 那种未定义行为（x86 给 0x80000000、ARM 给饱和值）。
+//      AngularGrow 里 weight 为负时上限会零扩展成 40 多亿，抽出来的数
+//      正好落在这一段，两种平台会给出不同的地图——必须钉死。
+//   3) 超出 int64 或 NaN：x87 存"整数不定值" 0x8000000000000000，低半是 0。
+inline int Ftol(double v) {
+  if (!(v >= -9223372036854775808.0 && v < 9223372036854775808.0)) return 0;
+  return static_cast<int>(
+      static_cast<std::uint32_t>(static_cast<std::int64_t>(v)));
+}
 
 // **上限不折叠**的那一路拒绝采样（0x59BCAC 涂块随机起点 / 0x59AB13 MakeGrid 抽行）：
 //   do { v = _ftol((double)(uint32)Random() * (double)limit * kInvUintMax); }

@@ -75,8 +75,10 @@ double Atan(double x);
 // 是 `fyl2x` 自身内部近似不足以正确舍入，而非本定义有误。
 // 既然 `fyl2x` 本就不是正确舍入的，钉死"本机 fyl2x 给什么就是什么"会让 x86 的
 // 输出依赖具体 CPU 型号；改用唯一确定的数学定义，才能让各架构互相逐位一致。
-// 这 1 ulp 不会传到下游：唯一消费者是 FastSqrt，它只取 float 尾数高 14 位
+// 这 1 ulp 不会传到下游：主消费者是 FastSqrt，它只取 float 尾数高 14 位
 // （量化步长 2^-14），2^-52 的扰动翻转它的概率约 2^-38，实测 20000 例 0 次。
+// 另一个消费者是 AngularGrow（0x5A0C40 `fldln2/fild k/fyl2x`），那里 ln(k) 里
+// k 是小整数，最后还要过一次 _ftol；只有当中间值恰好压在整数边界上才会分岔。
 double ChopLog(double s);
 
 #if defined(_M_IX86) || defined(__i386__)

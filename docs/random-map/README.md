@@ -25,7 +25,7 @@
 | [stage-lats.md](stage-lats.md) | 阶段：Creating LATs, rocks etc（地表装饰，取数点最密） | ✅ 18 个取数点全部实锤；**已落 C++ 并逐位对拍**（`rmg/lats.{h,cpp}` + `rmg/lat_spread.cpp`，25 个用例） |
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法全还原；**`MapType 0/1/2` 主路径 + 水面细化整条落成 C++ 并对拍** |
-| [stage-water-maptype34.md](stage-water-maptype34.md) | 阶段 2 支路：`MapType ∈ {3,4}` 的**河流、湖泊与瀑布**（含查表 sin/cos） | ✅ 八个函数全部实锤；sin/cos 与两个通用区域算子（`0x5A0410` Erode / `0x5A0160` Dilate）已落 C++ 并对拍；河/湖/瀑布三个主体待落 C++ |
+| [stage-water-maptype34.md](stage-water-maptype34.md) | 阶段 2 支路：`MapType ∈ {3,4}` 的**河流、湖泊与瀑布**（含查表 sin/cos） | ✅ 八个函数全部实锤；sin/cos、两个通用区域算子（`0x5A0410` Erode / `0x5A0160` Dilate）与角度扩张 `0x5A08D0` 已落 C++ 并对拍；河/湖/瀑布三个主体待落 C++ |
 | [stage-making-regions.md](stage-making-regions.md) | 阶段 4：Making regions（区域重建 + **区域之间开坡道/架桥**，`MapType ∈ {3,4}` 专属，45 个取数点） | ✅ **45 个取数点全部关闭**；区域切分 / 架桥 / 四个直坡 / 三个转角 / 两遍重刷砖全部实锤 |
 
 ## 进度
@@ -437,6 +437,23 @@
       无主（owner == 0）但砖不是未定砖同样判失败。
       另外查实 Erode 的 `+0x3C` 去重戳**只影响向量长度、不影响产物**
       （突变验证），而 `rings <= 1` 时不清戳留下的残留**是**可观测的。
+- [x] **角度优先的堆扩散 `0x5A08D0 AngularGrow` 落 C++ 并对拍**（ctest 名 `angular_grow`）。
+      河道下切成峡谷、瀑布台地这两处都靠它：以边界格为种子，
+      优先级 `= 1.5·|方位角 − 基准角| + 2.0·U(0,1)`，每推进一格基准角
+      再随机游走 `NormalDeviate() × π/4`。27 个用例逐格比
+      `(tile, subtile, level, +0x38, +0x3C, +0x4B)`、返回值与**随机数调用次数**，
+      八处突变全部被抓住。
+      **顺带更正两条旧结论**：主循环的邻格扫描是 `for (d = 0; d < 8; d += 2)`
+      ——只看四个**正**方向（`0x5A102E` 是 `add eax,2`），先前写成八邻域是错的，
+      而这直接决定扩张体是菱形还是方块；`[0x7ED898]` 是 `1/(2^32-1)` 而不是 `2^-32`。
+      另外查实种子那一轮**不写**入堆标记 `+0x3C`（同一格可以入堆两次），
+      以及 `0x5A0913` 那句"池容量减一"是死代码。
+- [x] **`Ftol` 补上 `_ftol` 的真实语义**（`0x7C5F00` 是 `fistp **qword**` 之后
+      只取低 32 位）。先前写的是 C 的 `(int)` 转换，只在 `|v| < 2^31` 时等价；
+      `AngularGrow` 的负 `weight` 路径会把上限**零扩展**成四十多亿，
+      抽出来的数正落在这一段——x86 给 `0x80000000`、ARM 给饱和值，
+      两个平台会生成不同的地图。同处修正 `PickBelowMul` 的上限也是零扩展
+      （`0x5A0C89` 写高半的 `ebx` 恒为 0），上限为正时两者无差别。
 
 - [x] **阶段 8 布矿整段端到端对拍**（ctest 名 `place_tiberium`）。
       `dump_tiberium2_golden.py` 把外层 `0x5A23A0` 与内层 `0x5A28C0` 连起来跑真身，
@@ -585,6 +602,7 @@ long double。同类的 `fsin` / `fpatan` / `f2xm1` 是否也如此，**未确�
 | `code/randmap/dump_start_points2_golden.py` | 导出阶段 6 出生点**整段** `0x594B50` 的对拍基准（只打四个外部依赖的桩） |
 | `code/randmap/dump_tiberium2_golden.py` | 导出阶段 8 布矿**外层** `0x5A23A0` 的对拍基准（手搭 RegionClass 与 waypoint 表） |
 | `code/randmap/dump_region_ops_golden.py` | 导出 `0x5A0410 Erode` / `0x5A0160 Dilate` 的对拍基准（整函数模拟执行，不留桩） |
+| `code/randmap/dump_angular_grow_golden.py` | 导出 `0x5A08D0 AngularGrow` 的对拍基准（含随机数调用次数） |
 | `code/ghidra_scripts/find_writers.py` | 定位 .bss 全局的运行期初始化点（表内容不在文件里） |
 | `code/randmap/scan_rmg_rng.py` | 只列**生成器自己那个** Randomizer(0xABE890) 的取数点（按 this 判定） |
 | `code/ghidra_scripts/rng_closure.py` | 调用树传递闭包，找出某根函数下**所有**随机数取数点（真函数边界） |

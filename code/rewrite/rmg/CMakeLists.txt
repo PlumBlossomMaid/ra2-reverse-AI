@@ -130,6 +130,13 @@ if(RA2_BUILD_TESTS)
     RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
   add_test(NAME region_ops COMMAND test_region_ops)
 
+  # 按方位角优先的堆扩散（河道/湖泊走向的来源）
+  add_executable(test_angular_grow test/test_angular_grow.cpp)
+  target_link_libraries(test_angular_grow PRIVATE ra2_rmg gtest_main)
+  target_compile_definitions(test_angular_grow PRIVATE
+    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+  add_test(NAME angular_grow COMMAND test_angular_grow)
+
   add_executable(test_height_field test/test_height_field.cpp)
   target_link_libraries(test_height_field PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_height_field PRIVATE

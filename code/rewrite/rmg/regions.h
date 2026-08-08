@@ -37,6 +37,8 @@
 #include <vector>
 
 #include "blob_paint.h"   // PaintWorkCell：+0x38 / +0x3C / +0x4B 是同一片内存
+#include "blob_region.h"  // Rect
+#include "fast_math.h"    // NormalDeviate（AngularGrow 用）
 #include "map_grid.h"
 #include "randomizer.h"
 #include "theater.h"
@@ -157,6 +159,10 @@ struct RegionContext {
 
   // [0xABE2E4]：并区时邻格 Level 为 -1 的兜底值（来源未确认）
   int fallback_level = 0;
+
+  // 0xABDFB8 那个正态源。只有 AngularGrow（0x5A08D0）用得到——
+  // 阶段 3 自己一次都不调，所以它可以是空指针。
+  NormalDeviate* normal = nullptr;
 };
 
 // ── 三个可以单独对拍的零件 ──
@@ -257,6 +263,28 @@ bool Erode(RegionContext& ctx, int level_30c, int owner, int rings,
 // 调用方拿它当「我这块有没有和别人贴上」的隔离测试。
 bool Dilate(RegionContext& ctx, int owner, int rings, int rect_x, int rect_y,
             int rect_w, int rect_h, bool flag, int cell_val);
+
+// 0x5A08D0 `MapSeedClass::AngularGrow(blobId, weight, rect, origin, flush)`
+// （__thiscall，ret 0x14）。本支路里唯一按**方位角**而不是按距离扩张的算子：
+// 优先级 = `(float)(2.0*u + 1.5*angleDev)`，`angleDev` 是这一格相对 origin 的
+// 方位角离「基准角」的偏差，而基准角本身**每轮都在做布朗运动**
+// （`base += NormalDeviate() * π/4`，0x5A104C）。
+//
+// 两个调用点：河流收尾的「下切成峡谷」（`weight = 0.01f`，`flush = 1`）与
+// 瀑布台地（`weight = 0.003f`，`flush = 0`）。
+//
+// ⚠️ 四处必须照抄：
+//   1) 主循环的邻域是 `for (d = 0; d < 8; d += 2)`（0x5A102E `add eax,2`），
+//      也就是只看四个**正**方向；不是八邻域
+//   2) 种子那一轮**不写** `work.+0x3C`（0x5A0A78-0x5A0C19 通篇没有这条），
+//      于是种子格后来还能被主循环再入一次堆
+//   3) 迭代次数那串 `1.0/L * weight` 再 `1.0f/(...)` 绕了一圈回到 `L/weight`，
+//      两次除法各引入一次舍入，**不能约掉**
+//   4) `flush` 那一段收编堆里剩下的格子时**不查砖**，与主循环的认领条件不一致
+//
+// 返回 false = 扩张过程中撞上了第三方的地盘。
+bool AngularGrow(RegionContext& ctx, int blob_id, float weight,
+                 const Rect& rect, const CellCoord& origin, bool flush);
 
 }  // namespace rmg
 }  // namespace ra2

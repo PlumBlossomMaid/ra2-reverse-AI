@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <utility>
 
+#include "blob_heap.h"        // 与涂块核心共用的一基最小堆（下沉 0x5AD870）
 #include "place_tile.h"      // IsUndecidedTile（0x486380）
 #include "scaled_random.h"   // PickBelowMul（0x58CAF9 的内联展开）
 
@@ -553,6 +554,174 @@ bool Dilate(RegionContext& ctx, int owner, int rings, int rect_x, int rect_y,
     cur.swap(next);                                     // 0x5A03A7-0x5A03AF
   }
   return true;                                          // 0x5A03D5 `mov al,1`
+}
+
+
+// ── 0x5A08D0 AngularGrow ────────────────────────────────────────────────
+namespace {
+
+// [0x7E44D0] π / [0x7E3CC0] 2π / [0x7E2820] π/2 / 3π/2 立即数 0x4012D97C7F3321D2
+constexpr double kPi = 3.141592653589793;
+constexpr double kTwoPi = 6.283185307179586;
+constexpr double kHalfPi = 1.5707963267948966;
+constexpr double kThreeHalfPi = 4.71238898038469;
+// [0x7ED790] 2.0 / [0x7ED798] 1.5，两个都是 **double**（消费指令 fmul qword）
+constexpr double kJitterWeight = 2.0;
+constexpr double kAngleWeight = 1.5;
+// [0x7E3D88] π/4，基准角每轮游走的 sigma
+constexpr double kBaseWalkSigma = 0.7853981633974483;
+
+// 0x5A0AC4-0x5A0B53（种子那一轮）与 0x5A0E7A-0x5A0F0F（主循环）里两段
+// 一模一样的代码：这一格相对 origin 的方位角，离 base 偏了多少。
+//
+// ⚠️ 先 fabs 再模 2π，**不是**"取角度差的主值"；差落在 (-2π, 0) 时
+// fabs 已经把它镜像过去了。照抄。
+double AngleDeviation(const CellCoord& c, const CellCoord& origin,
+                      double base) {
+  const int dx = c.x - origin.x;                  // 0x5A0AD0
+  const int dy = c.y - origin.y;                  // 0x5A0AD8
+  double a;
+  if (dx == 0) {
+    a = kHalfPi;                                  // 0x5A0BE9，double π/2
+  } else {
+    // 0x5A0AEA `fild dy / fidiv dx / fchs`：先整数转 double 再相除再取负
+    a = Atan(-(static_cast<double>(dy) / static_cast<double>(dx)));
+    if (dx < 0) a += kPi;                         // 0x5A0B06
+  }
+  a = a - base;                                   // 0x5A0B0C
+  if (a < 0.0) a = -a;                            // 0x5A0B10 fabs
+  while (!(a < kTwoPi)) a -= kTwoPi;              // 0x5A0B12-0x5A0B34
+  if (a > kPi) a = kTwoPi - a;                    // 0x5A0B3A-0x5A0B4F
+  return a;
+}
+
+}  // namespace
+
+bool AngularGrow(RegionContext& ctx, int blob_id, float weight,
+                 const Rect& rect, const CellCoord& origin, bool flush) {
+  // 0x5A08DE / 0x5A0932：池与堆各算一次同样的 max(2*W*H, 100)
+  const int cap = std::max(2 * ctx.map_w * ctx.map_h, 100);
+  // ⚠️ 堆的容量判据（count+1 >= cap，0x5A0F97）必须照抄，它有观测效应；
+  // 但节点池那一侧原版**没有任何越界检查**（0x5A0B76 / 0x5A0F7E 只有一句
+  // `add edi,8`），池满之后就是越界写——UB，没法"复刻"。这里把池开大到
+  // 走不满，于是入池永不失败，行为等同于原版没有溢出的那条路径。
+  // 上界：种子一格最多入一次，邻格入池时会写 +0x3C 去重，故至多 k + 格数。
+  NodePool pool(cap + 2 * (ctx.map_w + 1) * (ctx.map_h + 1) + 16);
+  MinHeap heap(&pool, cap);
+
+  // 0x5A099D-0x5A0A03：两组 if **顺序执行**，第二组无条件覆盖第一组的结论。
+  // 只要 rect.y != 0，基准角一定是 3π/2，第一组白算。照抄。
+  double base = 0.0;
+  if (rect.x == 0) {
+    if (rect.w != 0x200) base = kPi;
+  } else {
+    base = 0.0;
+  }
+  if (rect.y != 0) {
+    base = kThreeHalfPi;
+  } else {
+    if (rect.h != 0x200) base = kHalfPi;
+  }
+
+  // 0x5A0A03-0x5A0A4E：入堆标记全图清零
+  ctx.grid.ForEachCell([&](const CellCoord& c) { Rec(ctx, c).queued = 0; });
+
+  // 0x5A0A58：种子 = blobId 的全部边界格；k 还要拿去算迭代次数
+  const std::vector<CellCoord> seeds = CollectBorderCells(ctx, blob_id);
+  const int k = static_cast<int>(seeds.size());
+
+  auto push_node = [&](const CellCoord& c) {
+    const double a = AngleDeviation(c, origin, base);
+    const double u =
+        static_cast<double>(ctx.rng->Random()) * kInvUintMax;   // [0x7ED898]
+    // 0x5A0B7F-0x5A0B9F：1.5*a 与 2.0*u 都是 double 乘，加完才落成 float
+    const float prio =
+        static_cast<float>(kAngleWeight * a + kJitterWeight * u);
+    const int node = pool.Alloc(c.x, c.y, prio);
+    if (node >= 0) heap.Push(node);
+  };
+
+  // 0x5A0A78-0x5A0C28：种子入堆。⚠️ 这一轮**不写** work.+0x3C
+  for (int i = 0; i < k; ++i) {
+    const CellCoord c = seeds[static_cast<std::size_t>(i)];
+    if (c.x < rect.x || c.x >= rect.x + rect.w) continue;
+    if (c.y < rect.y || c.y >= rect.y + rect.h) continue;
+    push_node(c);
+  }
+
+  // 0x5A0C40-0x5A0C74：迭代次数。那串倒数**不能约掉**——
+  // `1.0/L`、`*weight`、`1.0f/(...)` 三步各引入一次舍入。
+  const double ln_k = ChopLog(static_cast<double>(k));
+  const double L = (1.0 <= ln_k) ? ln_k : 1.0;      // 0x5A0C4E fcomp + test ah,0x41
+  const double t1 = 1.0 / L;                        // 0x5A0C5F fdivr qword 1.0
+  const double t2 = t1 * static_cast<double>(weight);           // 0x5A0C65
+  const double t3 = static_cast<double>(1.0f) / t2;             // 0x5A0C68
+  int total = Ftol(t3 * static_cast<double>(0.5f));             // 0x5A0C6E/0x5A0C74
+  // 0x5A0C7D `cdq / sub eax,edx / sar eax,1`：向零取整的 n/2
+  const int half = (total - (total >> 31)) >> 1;
+  total += PickBelowMul(*ctx.rng, half + 1);        // 0x5A0C99-0x5A0CC0
+
+  bool ok = true;                                   // [esp+0x0F]
+  int cur = heap.empty() ? -1 : heap.Pop();         // 0x5A0CCC：进循环前先弹一个
+
+  for (int i = 0; i < total; ++i) {                 // 0x5A0D0A / 0x5A1095
+    if (!ok) break;                                 // 0x5A0D18
+    if (cur < 0) break;                             // 0x5A0D24
+    const CellCoord at{pool[cur].x, pool[cur].y};
+
+    // 0x5A0D4A-0x5A0D6E：认领当前格
+    PaintWorkCell& w = Rec(ctx, at);
+    if (w.blob_id == 0) {
+      Touch(*ctx.world, at);                        // 0x5A0D57 GetCellAt
+      if (IsUndecidedTile(ctx.world->IsoTile(at))) {
+        w.flag4b = true;                            // 0x5A0D6A +0x4B = 1
+        w.blob_id = blob_id;                        // 0x5A0D6E
+      }
+    }
+
+    // ⚠️ 0x5A102E `add eax,2`：步长 2，只看四个正方向
+    for (int d = 0; d < 8; d += 2) {
+      const CellCoord n = Step(at, d & 7);          // 0x5A0DA0 = 0x42D510
+      if (!ctx.grid.InMap(n)) continue;             // 0x5A0DC0 起四条
+      PaintWorkCell& wn = Rec(ctx, n);
+      bool accepted = false;
+      if (wn.blob_id == 0 && wn.queued != blob_id &&
+          n.x >= rect.x && n.x < rect.x + rect.w &&
+          n.y >= rect.y && n.y < rect.y + rect.h) {
+        Touch(*ctx.world, n);                       // 0x5A0E62
+        if (IsUndecidedTile(ctx.world->IsoTile(n))) {
+          wn.queued = blob_id;                      // 0x5A0F6A
+          push_node(n);
+          accepted = true;
+        }
+      }
+      if (accepted) continue;                       // 入堆成功就不做下面的判据
+      // 0x5A0FF6-0x5A1025：没入堆的邻格再查一次归属
+      if (wn.blob_id == 0) continue;
+      if (wn.blob_id != blob_id) ok = false;        // 撞上第三方地盘
+    }
+
+    // 0x5A104C：基准角每轮随机游走
+    base += (*ctx.normal)() * kBaseWalkSigma;
+    cur = heap.empty() ? -1 : heap.Pop();           // 0x5A1057-0x5A1091
+  }
+
+  // 0x5A10A5-0x5A115D：收尾。⚠️ 这一段认领时**不查砖**
+  if (flush) {
+    while (!heap.empty()) {
+      cur = heap.Pop();
+      if (cur < 0) break;
+      if (!ok) break;
+      const CellCoord at{pool[cur].x, pool[cur].y};
+      PaintWorkCell& w = Rec(ctx, at);
+      if (w.blob_id == 0) {
+        w.blob_id = blob_id;                        // 0x5A111D，无条件
+      } else if (w.blob_id != blob_id) {
+        ok = false;                                 // 0x5A1128
+      }
+    }
+  }
+  return ok;                                        // 0x5A1179
 }
 
 }  // namespace rmg

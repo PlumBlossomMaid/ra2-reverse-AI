@@ -38,7 +38,11 @@ int PickBelow(Randomizer& rng, int n) {
 }
 
 int PickBelowMul(Randomizer& rng, int limit) {
-  const double scale = static_cast<double>(static_cast<std::int64_t>(limit));
+  // ⚠️ 上限是**零扩展**成 64 位再 fild 的：0x5A0C89 `mov [esp+0x44],ebx` 里
+  // ebx 恒为 0，只有低半写的是上限本身。上限为正时与符号扩展没差别，
+  // 但 AngularGrow（weight 为负 → 上限为负）会真的走到这条：-14 在这里
+  // 变成 4294967282，抽出来的数于是几乎必然一次过关且大得离谱。
+  const double scale = static_cast<double>(static_cast<std::uint32_t>(limit));
   const int hi = limit - 1;
   for (;;) {
     const std::uint32_t r = rng.Random();
