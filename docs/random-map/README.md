@@ -17,7 +17,7 @@
 | [stage-init.md](stage-init.md) | 阶段：Init random map（搭空 scenario，只抽 1 个随机数）+ **地图尺寸的来源** | ✅ 取数点与尺寸算法已实锤 |
 | [stage-init-regions.md](stage-init-regions.md) | 阶段：Init regions（把地图切成连通区域，只 1 个取数点） | ✅ 全部实锤；已落 C++，23 个用例整段对拍通过 |
 | [stage-tiberium.md](stage-tiberium.md) | 阶段：Creating tiberium（布矿） | ✅ 外层 + 矿田生长全链已实锤；**矿田生长 `0x5A28C0` 已落 C++ 并逐位对拍**（`rmg/ore_field.{h,cpp}`） |
-| [stage-tech-buildings.md](stage-tech-buildings.md) | 阶段：Adding tech buildings（中立科技建筑，两条互斥分支） | ✅ 已实锤，含 `PickRange` 语义 |
+| [stage-tech-buildings.md](stage-tech-buildings.md) | 阶段：Adding tech buildings（中立科技建筑，两条互斥分支） | ✅ 已实锤，含 `PickRange` 语义；**已落 C++ 并逐位对拍**（`rmg/tech_buildings.{h,cpp}`，两条分支各一套用例） |
 | [stage-recalc.md](stage-recalc.md) | 阶段：绿地蔓延 + Recalculating cell attributes | ✅ 全部实锤；绿地蔓延已落 C++，18 个用例整段对拍通过 |
 | [stage-starting-points.md](stage-starting-points.md) | 阶段：Creating starting points（出生点） | ✅ 全部子函数已实锤；主干已落 C++（`rmg/start_points.{h,cpp}`），`ChooseWaypoints` 270 例黄金对拍 |
 | [movement-zones.md](movement-zones.md) | **引擎的移动区子系统**：地面类别 → 连通区洪泛 → 区类型表 | ✅ 整条链已实锤并落 C++（`rmg/zones.{h,cpp}`，含黄金对拍） |
@@ -68,7 +68,7 @@
   - [x] Creating tiberium：**全链已实锤**——外层 `0x5A23A0`（真值表开关 / 出生点重心 / 正负 2 sigma 窗口）
         + 矿田预算 `size = (int)((avgDist[w] - mn) * 15) + 500`（**离矿区最近的出生点恰好拿 500**）
         + 内层 `0x5A28C0` 最小堆扩散（overlay = 102 矿 / 27 宝石 `+ PickBelow(12)`，厚度在 `+0x11E`）
-  - [x] Adding tech buildings：`MapType==2` / 其它 两条互斥分支 + 6 个取数点已实锤；业主是 Neutral，建筑表 = `rules.ini [General] NeutralTechBuildings=`
+  - [x] Adding tech buildings：`MapType==2` / 其它 两条互斥分支 + 6 个取数点已实锤；业主是 Neutral，建筑表 = `rules.ini [General] NeutralTechBuildings=`（已落 C++，12 个用例整段对拍通过）
   - [x] Creating starting points：**外层重试循环**（失败一轮的随机数不退回）+ 面积比例配额 + 3 个取数点已实锤
   - [x] Creating hills：入口 `0x5A35F0` 六步已拆开；**全部随机性只在 `0x5A2F50`**（顺序推进的分形高度场，每格 2 次截断正态，`Ruggedness < 10` 时一次都不抽）；高度取整是 round-half-away-from-zero，**不是 ties-to-even**
   - [x] Creating LATs：温带 `0x5A38C0`+`0x5A3AE0` / 非温带 `0x5A4280` 两条互斥分支的主体已实锤；18 个取数点归属到函数；新查实 `0x486790 = IsClearToSandLat`、`0x42B1F0 = (H+4)*W*2`
@@ -445,6 +445,19 @@
       「堆满静默丢弃」这条路必然在池子越界之后才走得到，属真·未定义行为，
       基准里不收这种样本（脚本钩住 `0x5A2D40` 盯着 `used`，越界即报错）。
       顺带关掉本阶段未确认 6：`IsWithinUsableArea` 的第二个参数是 `use_height`
+- [x] **阶段 7 的 `0x5A95B0 AddTechBuildings` 落 C++ 并逐位对拍**
+      （`code/rewrite/rmg/tech_buildings.{h,cpp}`，ctest 名 `tech_buildings`）。
+      `dump_tech_buildings_golden.py` 跑整函数真身，`PickRange`/`CellStruct::operator==`/
+      `GetCellAt`/`IsPlain`/`IsWithinUsableArea` 全是原版机器码，只给引擎对象那一侧
+      （`operator new`、`BuildingClass` 与三个虚函数、找 Neutral 那两步、分支 A 的
+      `0x595400`）打桩。分支 B 7 例 + 分支 A 5 例，比随机数个数、建筑种类下标、
+      落点、被占住的格子表、销毁次数，全绿。
+      **三条新查实**：① `operator new(0x720)` 返回 0 是**原版的真崩溃点**
+      （`0x5A9689` 直接 `mov ecx,[eax+0x520]`），所以那条失败路径实际走不通；
+      ② 占地**可以挂在菱形外**——出界格退到共享哑元（全零），六条检查全过，
+      建筑照样落地（用例 `bigfoot`），复刻侧若写成"出界即否决"会少放建筑；
+      ③ `nowhere` 用例的 145230 个随机数手算吻合，反过来证实
+      「拒绝坐标为 `(0,0)` 的工作槽时花随机数但不加 `tries`」是**热路径**而非边角
 - [x] `.sed` 参数读取复刻（含西木 `Get_Int` 的 `$hex` / `Xh` 三条路径）
 - [ ] `.map` 输出（IsoMapPack5 编码）
 - [ ] 端到端验证：同种子生成结果与原版逐字节比对

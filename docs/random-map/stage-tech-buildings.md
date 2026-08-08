@@ -1,6 +1,6 @@
 # 阶段 7：Adding tech buildings——撒中立科技建筑
 
-> 状态：**两条分支、6 个取数点、rules.ini 键名全部实锤**。
+> 状态：**两条分支、6 个取数点、rules.ini 键名全部实锤，且已落 C++ 并逐位对拍**（见 §八）。
 > 取证：`memory/data/decomp/rmg_tech_buildings.txt`、`rmg_tech_helpers.txt`。
 
 ## 一、门禁
@@ -185,3 +185,66 @@ for (; m > 0; --m) {
 3. 工作记录 `+0x45` 的含义（阶段 6 同样要求它为 0）
 4. `BuildingClass` 虚函数 `+0x20`（销毁）、`+0xD8`（放置）、
    `BuildingTypeClass` 虚函数 `+0x90`（占地表）的正式名字
+
+## 八、复刻状态
+
+已落到 `code/rewrite/rmg/tech_buildings.{h,cpp}`，两条分支各有一套黄金对拍：
+基准 `memory/data/rmg/tech_buildings_golden.txt` 由
+`code/randmap/dump_tech_buildings_golden.py` 用 Unicorn 直接跑 `0x5A95B0`
+的原版机器码生成，测试 `code/rewrite/rmg/test/test_tech_buildings.cpp`（ctest `tech_buildings`）。
+
+对拍时**留在原版一侧**（不打桩，跑真身机器码）的有：`PickBelow`/`PickBelowMul`/
+`PickRange`(`0x598030`)、`CellStruct::operator==`(`0x50E470`)、`GetCellAt`(`0x5657A0`)、
+`IsPlain`(`0x486380`)、`IsWithinUsableArea`(`0x578540`)。打桩的只有引擎对象那一侧：
+`operator new`、`BuildingClass` 构造与三个虚函数、`FindIndexByName`/`FindHouseByType`、
+以及分支 A 的 `0x595400`（它自己有独立的阶段 6 文档与对拍）。
+
+### 分支 B 的 7 个用例
+
+| 用例 | 布置 | 随机数 | 落地 | 销毁 |
+|------|------|--------|------|------|
+| `simple` | 1×1 占地，一次就成 | 4 | 1 | 0 |
+| `bigfoot` | 2×2 占地，其中一格落在菱形外 | 3 | 1 | 0 |
+| `blocked` | 已定砖 + 占用者交错 | 27 | 4 | 0 |
+| `levels` | 层高 `(x+y)%3`，2×2 必跨层 | 780 | 0 | 3 |
+| `veto` | `+0xEC == 3` 与工作记录 `+0x45` 两条否决 | 17 | 4 | 0 |
+| `unplaceable` | `Unlimbo` 恒失败 | 1008 | 0 | 4 |
+| `nowhere` | 全图已定砖 | 145230 | 0 | 3 |
+
+`nowhere` 的 145230 个随机数是可以手算的：441 个工作槽里只有 184 个坐标非 `(0,0)`，
+所以平均约 2.4 次抽取才凑够一次 `tries`，×200 次 `tries` ×100 次 `attempt` ×3 栋。
+这条也就顺带证实了「拒绝 `(0,0)` 花随机数但不加 `tries`」确实是**热路径**而非边角。
+
+### 分支 A 的 5 个用例
+
+`ACASE` 行记的是每个区域的 `+0x20` 与原版实际调用 `0x595400` 时传进去的区域下标序列：
+
+| 用例 | `+0x20` 表 | 随机数 | `0x595400` 调用序列 |
+|------|-----------|--------|---------------------|
+| `regA-1` | `1,0,2,0,3` | 1 | `0,2,4` |
+| `regA-2` | `1,0,2,0,3` | 1 | `0,2,4,0,2,4`（抽到 2 轮） |
+| `regA-0` | `1,2` | 1 | 空（抽到 0 轮） |
+| `regA-none` | `0,0,0` | 1 | 空（没有区域有出生点） |
+| `regA-empty` | 空表 | 1 | 空 |
+
+`regA-0`/`regA-none`/`regA-empty` 三条都验证了「随机数照花、事情不做」。
+
+### 三条新查实的行为
+
+1. **`operator new(0x720)` 返回 0 是原版的真崩溃点。**
+   `0x5A967D` 在拿到 `mem` 之前不检查，`0x5A9689` 直接 `mov ecx,[eax+0x520]`——
+   `eax` 为 0 时就是空指针解引用。也就是说这条失败路径在原版里根本走不通，
+   复刻侧的 `AllocBuildingMemory()` 返回 false 只是把「那次 `PickBelowMul` 一个
+   随机数都不花」这一点保留下来，实际生成中不会触发。
+2. **占地可以挂在菱形外。** 用例 `bigfoot` 里 2×2 的一角落到菱形之外，
+   `GetCellAt` 退到共享哑元（全零），六条检查**全部通过**，建筑照样落地。
+   所以复刻侧的哑元必须是「一份共享的、可被读到残留值的对象」，不能是
+   「出界即否决」——那会少放建筑。
+3. **`Unlimbo` 成功后只有菱形内的格子被标占用。** 原版桩与复刻侧都按这个来：
+   哑元的 `+0xE4` 被写了也没人读得回去。
+
+### 未测到的路径
+
+- 分支 A 里 `0x595400` 内部的行为见 [stage-starting-points.md](stage-starting-points.md)，
+  这里只对拍「调用序列」，不重复对拍它自己的两个随机数
+- `operator new` 失败（见上，原版必崩）
