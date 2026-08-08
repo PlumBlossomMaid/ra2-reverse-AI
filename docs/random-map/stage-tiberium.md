@@ -34,6 +34,16 @@ for (int ri = 0; ri < regionCount; ++ri) {        // [0xABDFA0] / [0xABDF94]
 （数据 `+0x04`、个数 `+0x10`，元素 4 字节 = packed XY），
 装的是这个区域的**候选点**，由阶段 6 的 `0x594F40` 填。
 
+> ⚠️ **「空指针」与「有指针但零元素」是两条不同的路**，别合并：
+> `0x5A23F1` 的 `cmp [edi], ebx / je 0x5A287F` 判的是**指针**，
+> 而元素个数要到 `0x5A25A7` 的 `mov ecx,[ecx+0x10] / test ecx,ecx` 才判。
+> 中间夹着 §2.1 的参考点——区域没有出生点时那里会**花掉随机数**。
+> 实测（`tiberium2_golden.txt` 的 `nullcand0` / `emptycand0` 两例，
+> 其余条件完全相同）：空指针 1435 个随机数，空向量 1625 个。
+> 阶段 6 的 `0x594870` 在 `0x594B27` 处**无条件**把新向量写进 `+0x00`，
+> 候选点恰好被出生点吃光时留下的就是一个**零元素向量**，
+> 所以这条差异是真的走得到的。
+
 ### 2.1 参考点：出生点重心，或者随机摸一格
 
 ```c
@@ -57,6 +67,11 @@ if (r->startCount >= 1) {                      // +0x20
 
 注意累加用的是 **16 位** `bx`/`bp`（`0x5A245E` 的 `add bx, ax`），
 除法前才 `movsx` 扩成 32 位——**出生点多、坐标大时会溢出回绕**。照抄。
+
+> 顺带算一笔账：`startCount <= NumPlayers <= 8`，坐标上界是 `W + 2H`，
+> 而 `W`/`H` 最大也就两百出头，于是 `|sum| <= 8 x 600 = 4800 < 32767`——
+> **这个 16 位累加器在任何合法地图上都回绕不了**。复刻里照样写成 16 位
+> （行为一致、且不掩盖原版的意图），但不必为它单独设计用例。
 
 ### 2.2 离参考点最近的那个候选点 = `special`
 
@@ -389,15 +404,63 @@ neighbours:
 `v = (int)(Tiberium% x 0.01 x (RMGMaximumTiberium - RMGMinimumTiberium) + RMGMinimumTiberium)`——
 按 CLAUDE.md 的「数据驱动」要求，这两个值必须**从 rules.ini 注入**，不许写死。
 
-## 七、复刻状态：✅ §三 已落 C++ 并逐位对拍；§二 已落但暂无对拍
+## 七、复刻状态：✅ 整段已端到端对拍
 
 `code/rewrite/rmg/ore_field.{h,cpp}`：
 
 | 本文的东西 | 原版地址 | C++ | 对拍 |
 |---|---|---|---|
-| §三 `CreateOreField` 全体 | `0x5A28C0` | `CreateOreField` | ✅ ctest `ore_field` |
+| §三 `CreateOreField` 全体 | `0x5A28C0` | `CreateOreField` | ✅ ctest `ore_field`（7 例） |
 | §三 的池子 + 一基最小堆 | `0x5A2AD0` / `0x5AD870` | `OreNode` / `OreHeap` | ✅ 同上 |
-| §一 真值表、§二 全部 | `0x5A23A0` | `PlaceTiberium` | ⚠️ 尚无基准 |
+| §一 真值表、§二 全部 | `0x5A23A0` | `PlaceTiberium` | ✅ ctest `place_tiberium`（16 例） |
+
+### 7.1 外层基准怎么取的
+
+`code/randmap/dump_tiberium2_golden.py` 把 `0x5A23A0` 整段丢进 Unicorn 跑真身，
+基准落在 `memory/data/rmg/tiberium2_golden.txt`（2496 行）。
+**跑原版机器码**的有：`0x5A23A0` 自己、`0x5A28C0 CreateOreField`、
+`0x5980C0 NormalDeviate`（连它内部的 `0x598000 UniformUnit`）、`0x4CAC40 FastSqrt`、
+`0x68BCC0 GetWaypointCoords`、`0x5ADAB0` + 那套向量虚函数、`0x7C5F00 _ftol`、
+`0x578460 IsWithinUsableArea`、`0x5657A0 GetCellAt`、`0x486380`、`0x5AD870` 堆下沉。
+**打桩的只有引擎那一侧**，与 §三 的基准同一套四个：
+`0x485010 GetContainedTiberiumIndex` / `0x7C8EF4 sprintf` /
+`0x71DD80 FindIndex` / `0x71BB90 TerrainClass::TerrainClass`。
+
+`RegionClass` 与 `ScenarioClass` 的 waypoint 表都是**手搭**进模拟器内存的——
+本函数只读 `RegionClass` 的 `+0x00`（候选向量指针）、`+0x20`（出生点数）、
+`+0x2C`/`+0x38`（格子表），别的一概不碰，所以不必把阶段 6 也拖进来。
+
+16 个用例逐例比四样：随机数个数、每个变了的格子的
+`(overlay, +0x11E, 工作数组 +0x3C)`、`TIBTRE` 地貌物的**建造序列**（名字与落点）、
+以及「基准没列的格子必须原样」。覆盖面：
+
+| 用例 | 踩的东西 |
+|---|---|
+| `mt1-res1` `mt0-res1` `mt0-res3` `mt2-res0` `mt3-res3` `mt1-res3` `mt9-res1` | `0x5A28A0` 五路跳转表的每条出口 + `isGems` 的组合 + `MapType > 4` 的兜底 |
+| `nullcand` `nullcand0` | `+0x00` 空指针：整段跳过，**`wpBase` 不推进** |
+| `emptycand` `emptycand0` | 指针非空但零元素：先跑完 §2.1 再跳（`sp == 0` 时会花随机数） |
+| `sp0` | 0 个出生点：参考点走 `0x5A2494` 的 `PickBelowMul`，矿量乘子按 `0.5` 算 |
+| `three` | 三个区域、中间那个空指针：`wpBase` 的累加顺序 |
+| `zerotib` | `total == 0`：连出生点门口那几片都不布 |
+| `tinytib` | `avg == 0`：正态抖动一半是负数，`size < 0` 的候选点被跳过（**随机数照花**） |
+| `bigtib` | 矿量拉满 |
+
+牙口自检：把 `PlaceTiberium` 里的 `if (!r->candidates_created)` 换成
+`if (r->candidates.empty())`——也就是把「空指针」与「空向量」混为一谈——
+`emptycand0` 当场炸（随机数个数不对）。所以 `RegionClass` 里那个
+看着多余的 `candidates_created` 标志是**必须**的，不是洁癖。
+
+### 7.2 顺带查清的两处「寄存器宽度」怪相——都无害
+
+1. `0x5A2614`：`mov edx, [esp+0x2c]`（= `special`，没挑出来时是 `0xFFFFFFFF`）
+   之后直接 `sete dl`，于是 `edx` 变成 `0xFFFFFF00` 就被 `push` 了；
+2. `0x5A2809`：`mov ebx, dword [esp+0x30]` 读的是一个**只写过最低字节**的槽位，
+   高 3 字节是上一次调用留下的垃圾。
+
+两处 push 的都是 `CreateOreField` 的第 4 个参数 `isGems`。查真身：
+`0x5A294D` 是 `mov cl, byte ptr [ebp+0x14]`、`0x5A2B75` 是 `mov al, byte ptr [ebp+0x14]`
+——**两个使用点都只读一个字节**，高位垃圾一次也没被看见。
+所以这两处按 `bool` 传就是逐位等价的，不用刻意复刻那些垃圾字节。
 
 **§三 的对拍强度：黄金对拍，逐位一致。** 基准由
 `code/randmap/dump_tiberium_golden.py` 用 Unicorn 跑 `0x5A28C0` 真身取得，

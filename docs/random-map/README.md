@@ -16,7 +16,7 @@
 | [map-geometry.md](map-geometry.md) | **等距地图几何**：格子集合（菱形四不等式）+ 扫全图顺序 + 总格数 | ✅ 已实锤并对拍 |
 | [stage-init.md](stage-init.md) | 阶段：Init random map（搭空 scenario，只抽 1 个随机数）+ **地图尺寸的来源** | ✅ 取数点与尺寸算法已实锤 |
 | [stage-init-regions.md](stage-init-regions.md) | 阶段：Init regions（把地图切成连通区域，只 1 个取数点） | ✅ 全部实锤；已落 C++，23 个用例整段对拍通过 |
-| [stage-tiberium.md](stage-tiberium.md) | 阶段：Creating tiberium（布矿） | ✅ 外层 + 矿田生长全链已实锤；**矿田生长 `0x5A28C0` 已落 C++ 并逐位对拍**（`rmg/ore_field.{h,cpp}`） |
+| [stage-tiberium.md](stage-tiberium.md) | 阶段：Creating tiberium（布矿） | ✅ 外层 + 矿田生长全链已实锤；C++（`rmg/ore_field.{h,cpp}`）**整段端到端对拍**：矿田生长 `0x5A28C0` 7 例 + 外层 `0x5A23A0` 16 例 |
 | [stage-tech-buildings.md](stage-tech-buildings.md) | 阶段：Adding tech buildings（中立科技建筑，两条互斥分支） | ✅ 已实锤，含 `PickRange` 语义；**已落 C++ 并逐位对拍**（`rmg/tech_buildings.{h,cpp}`，两条分支各一套用例） |
 | [stage-recalc.md](stage-recalc.md) | 阶段：绿地蔓延 + Recalculating cell attributes | ✅ 全部实锤；绿地蔓延已落 C++，18 个用例整段对拍通过 |
 | [stage-starting-points.md](stage-starting-points.md) | 阶段：Creating starting points（出生点） | ✅ 全部子函数已实锤；C++（`rmg/start_points.{h,cpp}`）**整段端到端对拍**：`ChooseWaypoints` 270 例 + 调度 `0x594B50` 17 例 |
@@ -425,6 +425,21 @@
       `0x579320` 全镜像零引用（从没被调用），表因此一直是 `.bss` 的零；
       就算它跑了，40 项里唯一非零的第 32 项也挂在一个决策树永远选不出来的下标上
       ⇒ **落点恒为本格**
+- [x] **阶段 8 布矿整段端到端对拍**（ctest 名 `place_tiberium`）。
+      `dump_tiberium2_golden.py` 把外层 `0x5A23A0` 与内层 `0x5A28C0` 连起来跑真身，
+      `NormalDeviate`/`UniformUnit`/`FastSqrt`/`GetWaypointCoords`/`_ftol`/
+      `IsWithinUsableArea` 全是原版机器码，桩仍只有引擎那一侧的四个。
+      16 例逐例比随机数个数 / 每个变了的格子的 `(+0x44, +0x11E, +0x3C)` /
+      TIBTRE 的建造序列 / 「基准没列的格子必须原样」，全绿。
+      **一条新查实**：`0x5A23F1` 判的是候选向量的**指针**，而元素个数要到
+      `0x5A25A7` 才判——中间夹着「参考点」，区域没有出生点时那里会花随机数。
+      于是「空指针」与「有指针但零元素」是两条随机数账不同的路
+      （实测 1435 vs 1625），阶段 6 又确实能留下零元素向量，所以
+      `RegionClass` 里必须单开一个 `candidates_created` 标志才复得出来。
+      顺带查清两处「寄存器宽度」怪相（`0x5A2614` 的 `sete dl` 把
+      `0xFFFFFFFF` 变成 `0xFFFFFF00` 就 push、`0x5A2809` 读只写过一个字节的槽位）
+      ——`CreateOreField` 的第 4 个参数在 `0x5A294D`/`0x5A2B75` 两处
+      **都只按字节读**，高位垃圾一次也没被看见，故两处都无害
 - [x] **阶段 6 出生点整段端到端对拍**（ctest 名 `place_start_points`）。
       `dump_start_points2_golden.py` 把调度 `0x594B50` + 起区域 `0x594420`
       + 逐区域摆点 `0x594870` 连成一整条跑真身，
@@ -555,6 +570,7 @@ long double。同类的 `fsin` / `fpatan` / `f2xm1` 是否也如此，**未确�
 | `code/randmap/dump_regions_golden.py` | 导出阶段 3 Init regions 四步流程的对拍基准（带回收的 bump 分配器） |
 | `code/randmap/dump_green_spread_golden.py` | 导出阶段 5 绿地蔓延 `0x59B740` 的对拍基准（含共享哑元的进场值/终值） |
 | `code/randmap/dump_start_points2_golden.py` | 导出阶段 6 出生点**整段** `0x594B50` 的对拍基准（只打四个外部依赖的桩） |
+| `code/randmap/dump_tiberium2_golden.py` | 导出阶段 8 布矿**外层** `0x5A23A0` 的对拍基准（手搭 RegionClass 与 waypoint 表） |
 | `code/ghidra_scripts/find_writers.py` | 定位 .bss 全局的运行期初始化点（表内容不在文件里） |
 | `code/randmap/scan_rmg_rng.py` | 只列**生成器自己那个** Randomizer(0xABE890) 的取数点（按 this 判定） |
 | `code/ghidra_scripts/rng_closure.py` | 调用树传递闭包，找出某根函数下**所有**随机数取数点（真函数边界） |

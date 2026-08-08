@@ -173,6 +173,13 @@ if(RA2_BUILD_TESTS)
     RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
   add_test(NAME ore_field COMMAND test_ore_field)
 
+  # 阶段 8 外层整段（逐区域布矿 + 出生点补偿）的端到端对拍
+  add_executable(test_place_tiberium test/test_place_tiberium.cpp)
+  target_link_libraries(test_place_tiberium PRIVATE ra2_rmg gtest_main)
+  target_compile_definitions(test_place_tiberium PRIVATE
+    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+  add_test(NAME place_tiberium COMMAND test_place_tiberium)
+
   add_executable(test_tech_buildings test/test_tech_buildings.cpp)
   target_link_libraries(test_tech_buildings PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_tech_buildings PRIVATE

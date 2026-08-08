@@ -268,9 +268,9 @@ void PlaceTiberium(OreContext& ctx, RegionSet& regions,
   int wp_base = 0;                                   // local_80
   for (int ri = 0; ri < regions.Count(); ++ri) {
     RegionClass* r = regions.At(ri);
-    // 0x5A23F1 if (*piVar1 != 0) 判的是**候选点向量的指针**。阶段 6 只在真的
-    // 挑出候选点时才建那个向量，所以这里拿「空向量」代表空指针。
-    if (r->candidates.empty()) continue;
+    // 0x5A23F1 `cmp [edi], ebx / je` 判的是**候选点向量的指针**，不是元素个数
+    // ——两者在 0x5A25A7 才分开判。指针为空这一路连 wpBase 都不推进。
+    if (!r->candidates_created) continue;
     const int cand_count = static_cast<int>(r->candidates.size());
 
     int special = -1;                                // local_6c

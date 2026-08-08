@@ -293,6 +293,9 @@ void PickPointsInRegion(StartPointContext& ctx, RegionClass* r, int base) {
     out.erase(out.begin());
   }
   r->candidates = out;                                   // 覆盖 RegionClass +0x00
+  // 0x594B27 `mov [ebx], edi`：到这里才有非空指针写进 +0x00
+  //（前一句 0x594B1D 还会拿旧向量的虚析构 `push 1 / call [eax]` 先拆掉旧的）
+  r->candidates_created = true;
 }
 
 bool PlaceStartPoints(StartPointContext& ctx) {
