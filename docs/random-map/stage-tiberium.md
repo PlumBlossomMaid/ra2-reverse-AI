@@ -287,6 +287,40 @@ neighbours:
 3. **`+0x44` 已被占且 `+0x11E > 10` 的格子既不加厚也不计入 `placed`**，
    但仍然照常展开 8 邻居。所以一片吃满的老矿田会把预算白白拖着转。
 
+### ⚠️ 原版怪癖：`used = 0` 之后 `cur` 指着的那一条会被当场覆写
+
+第 2 条那个「池子从头覆写」不是清空——**内存一个字节都没动**，动的只有写指针。
+写点在 `0x5A2C73`：
+
+```
+005a2c6d  mov  edi, dword ptr [ebp-0x6c]        ; edi = pool（每轮循环重取）
+005a2c70  mov  eax, dword ptr [ebp-0x64]        ; eax = used
+005a2c73  lea  edi, [edi + eax*8]               ; 写指针 = pool + used
+```
+
+而 `cur`（`[ebp-0x74]`）还指着老槽位。冷启动之后 `cur` 恒是 **0 号槽**，
+`anchored` 一翻转 `used` 就归零，于是**同一轮的第一个被接受的邻居就写进 0 号槽**，
+把 `cur` 指着的坐标改掉了。邻域循环每个方向都重新 `movsx` 读一遍 `*cur`
+（`0x5A2C7F` 起），所以后面几个方向算的已经是**新坐标**的邻居——
+这一条必然触发（不是边角情况），复刻时池子必须建模成「按下标寻址、
+回绕之后旧数据还在」的内存，不能用「清空 vector」代替。
+
+同理，最小堆里存的是**槽位下标**而不是 key 的副本，比较时得当场回池子取值。
+
+### ⚠️ 池子没有上界，且堆满之前一定先越界
+
+`0x5A2916` 算出来的 `count*10 - 1` 存进 `[ebp-0x40]` 之后**一次都没被读**，
+入池那段（`0x5A2D40`）也没有任何 `cmp`。堆的上浮倒是有门槛
+（`count + 1 >= cap` 就静默丢弃），可两边的容量都是 `count*10`，
+而 `used` 是**每接受一个邻居就 +1**、与 push 成不成功无关——
+所以「堆满」这条路必然在「池子越界」之后才走得到。池子越界是真·未定义行为
+（紧邻的多半就是堆数组自己），**没法逐字节复刻**。
+对拍脚本因此钩住 `0x5A2D40` 盯着 `used`，任何用例只要摸到 `count*10` 就直接报错，
+基准里不收这种样本。
+
+第二条接受条件 `(nc->+0x11E < 11 && GetContainedTiberiumIndex() != -1)`
+**没有 `fieldId` 保护**，同一格可以被反复入队——池子就是这么被撑爆的。
+
 ### ⚠️ 原版怪癖：全图清 `+0x3C` 在循环里
 
 每次"冷启动"都要**把全图 `Work[].+0x3C` 清 0 再跑一遍迭代器**（`0x5A29E0` 一带）。
@@ -314,7 +348,12 @@ neighbours:
    `base + PickBelow(12)`，矿 `base=102`（Riparius 102..113）、
    宝石 `base=27`（Cruentus 27..38）。真正的“厚度”是 `+0x11E`（0..11）。
 5. ✅ 已关：`0x5A28C0` 体内**一次都没读 `ecx`**，那句 `mov ecx` 是无用赋值。
-6. `MapClass::IsWithinUsableArea(&xy, 1)` 第二个参数的1 的含义——**未确认**。
+6. ✅ 已关：`MapClass::IsWithinUsableArea(&xy, 1)` 的第二个参数是 **`use_height`**。
+   `0x578460` 开头 `test al, al` 为真时才走 `0x57848E` 那段内联的 `GetCellAt`，
+   读 `+0x11B`（`movsx`，有符号层高）与 `+0x11C`（坡面）把上下边界各抬 `level` 格；
+   `+0x11C != 0` 时下边界再多让一格（`0x5784B4`）。为假时 `adj` 恒为 0。
+   ⚠️ 那段内联取格子拿不到实体格就退到共享哑元 `0xABDC50` 并把坐标写进它的 `+0x24`
+   ——菱形外的邻格读到的层高/坡面是**上一次的残留**。
 7. `CellClass::GetContainedTiberiumIndex` 的返回值口径——**未确认**（只用了 `!= -1`）。
 8. ✅ 已关：`0x71BB90` = **`TerrainClass::TerrainClass(TerrainTypeClass*, CellStruct*)`**，
    就是「在这格新建一个地貌物体」的构造函数。取证在阶段 10：
@@ -349,3 +388,41 @@ neighbours:
 所以 §2.3 的总矿量就是
 `v = (int)(Tiberium% x 0.01 x (RMGMaximumTiberium - RMGMinimumTiberium) + RMGMinimumTiberium)`——
 按 CLAUDE.md 的「数据驱动」要求，这两个值必须**从 rules.ini 注入**，不许写死。
+
+## 七、复刻状态：✅ §三 已落 C++ 并逐位对拍；§二 已落但暂无对拍
+
+`code/rewrite/rmg/ore_field.{h,cpp}`：
+
+| 本文的东西 | 原版地址 | C++ | 对拍 |
+|---|---|---|---|
+| §三 `CreateOreField` 全体 | `0x5A28C0` | `CreateOreField` | ✅ ctest `ore_field` |
+| §三 的池子 + 一基最小堆 | `0x5A2AD0` / `0x5AD870` | `OreNode` / `OreHeap` | ✅ 同上 |
+| §一 真值表、§二 全部 | `0x5A23A0` | `PlaceTiberium` | ⚠️ 尚无基准 |
+
+**§三 的对拍强度：黄金对拍，逐位一致。** 基准由
+`code/randmap/dump_tiberium_golden.py` 用 Unicorn 跑 `0x5A28C0` 真身取得，
+存档 `memory/data/rmg/tiberium_golden.txt`。它自足到只需要换掉四个外部依赖：
+
+| 桩 | 为什么可以换 |
+|---|---|
+| `0x485010 GetContainedTiberiumIndex` | 真身走 rules.ini 的 `TiberiumType` 表（`0x5FDD20` 遍历 `[0xB0F4EC]`），与本函数逻辑无关。桩按「格子上是矿 102..113 或宝石 27..38 就返回 0」给，C++ 侧的 `OreWorld::ContainedTiberiumIndex` 用同一条规则 |
+| `0x7C8EF4 sprintf` | 自己格式化 `"TIBTRE0%d"` 并记下名字 |
+| `0x71DD80 FindIndex` | 恒返回 0，只记名字 |
+| `0x71BB90 TerrainClass::TerrainClass` | 空操作，只记 (名字, 落点) |
+
+7 个用例，比的是**随机数个数**、每个变了的格子的 `(+0x44, +0x11E, +0x3C)`、
+建出来的 TIBTRE 棵数/名字/落点，以及池子用掉的槽位数：
+
+| 用例 | 要压的东西 |
+|---|---|
+| `plain` | 全未定砖的常规一片（含上面那条「`used = 0` 之后 0 号槽被覆写」） |
+| `gems` | `isGems`：基址 27，且**不抽** `0x5A2B8E`、不建 TIBTRE |
+| `anchor` | 一条 `+0x45` 斜带——不落矿、不触发爆发锚定，但照样展开 8 邻居 |
+| `preore` | 预置矿格：走「加厚 `+0x11E`」，以及那条没有 `fieldId` 保护的接受条件 |
+| `island` | 只留两格能扩散：撞满 `restarts >= 10`（10 次全图清 `+0x3C`、10 棵 TIBTRE，而 `count = 40` 一格也铺不满） |
+| `edge` | 种子在菱形东端，大量邻格被 `0x578460` 挡掉 |
+| `blocked` | 五分之一是已定砖 |
+
+§二 那部分（`PlaceTiberium`）目前只有静态取证，**还没有基准**：它要
+`RegionSet`、出生点表、`ScenarioClass` 的路标表一起就位，等阶段 6 的
+端到端基准搭好之后再补。

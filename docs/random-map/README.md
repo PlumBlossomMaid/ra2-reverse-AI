@@ -16,7 +16,7 @@
 | [map-geometry.md](map-geometry.md) | **等距地图几何**：格子集合（菱形四不等式）+ 扫全图顺序 + 总格数 | ✅ 已实锤并对拍 |
 | [stage-init.md](stage-init.md) | 阶段：Init random map（搭空 scenario，只抽 1 个随机数）+ **地图尺寸的来源** | ✅ 取数点与尺寸算法已实锤 |
 | [stage-init-regions.md](stage-init-regions.md) | 阶段：Init regions（把地图切成连通区域，只 1 个取数点） | ✅ 全部实锤；已落 C++，23 个用例整段对拍通过 |
-| [stage-tiberium.md](stage-tiberium.md) | 阶段：Creating tiberium（布矿） | ✅ 外层 + 矿田生长全链已实锤 |
+| [stage-tiberium.md](stage-tiberium.md) | 阶段：Creating tiberium（布矿） | ✅ 外层 + 矿田生长全链已实锤；**矿田生长 `0x5A28C0` 已落 C++ 并逐位对拍**（`rmg/ore_field.{h,cpp}`） |
 | [stage-tech-buildings.md](stage-tech-buildings.md) | 阶段：Adding tech buildings（中立科技建筑，两条互斥分支） | ✅ 已实锤，含 `PickRange` 语义 |
 | [stage-recalc.md](stage-recalc.md) | 阶段：绿地蔓延 + Recalculating cell attributes | ✅ 全部实锤；绿地蔓延已落 C++，18 个用例整段对拍通过 |
 | [stage-starting-points.md](stage-starting-points.md) | 阶段：Creating starting points（出生点） | ✅ 全部子函数已实锤；主干已落 C++（`rmg/start_points.{h,cpp}`），`ChooseWaypoints` 270 例黄金对拍 |
@@ -431,6 +431,20 @@
       配套还原了 `0x5A1350`——CliffSet 里 6 个"同形三连组"+ 一对 `28↔29`，
       **它永远不会返回原来那块砖**；Ghidra 把 `fadd 1.0` 折进返回值，
       伪代码看上去像"三选一含自己"，反汇编才看得出是"另外两个里选一个"
+- [x] **阶段 8 的矿田生长 `0x5A28C0` 落 C++ 并逐位对拍**
+      （`code/rewrite/rmg/ore_field.{h,cpp}`，ctest 名 `ore_field`）。
+      `dump_tiberium_golden.py` 跑整函数真身，只换掉四个与本函数逻辑无关的外部
+      依赖（`GetContainedTiberiumIndex` / `sprintf` / `FindIndex` /
+      `TerrainClass::TerrainClass`），7 个用例比随机数个数、每个变了的格子的
+      `(+0x44, +0x11E, +0x3C)`、TIBTRE 的棵数/名字/落点，全绿。
+      **两条新怪癖入账**：① `anchored` 翻转时的 `used = 0` **不清内存**，
+      而冷启动后 `cur` 恒指着 0 号槽 —— 于是同一轮邻域循环里第一个被接受的邻居
+      当场把 `cur` 的坐标改掉，后几个方向算的已经是新坐标的邻居（必然触发，
+      不是边角情况）；② 池子**根本没有上界检查**（算出来的 `count*10-1` 存下来
+      一次都没读），而堆的容量与池子相同、`used` 又与 push 成不成功无关 ⇒
+      「堆满静默丢弃」这条路必然在池子越界之后才走得到，属真·未定义行为，
+      基准里不收这种样本（脚本钩住 `0x5A2D40` 盯着 `used`，越界即报错）。
+      顺带关掉本阶段未确认 6：`IsWithinUsableArea` 的第二个参数是 `use_height`
 - [x] `.sed` 参数读取复刻（含西木 `Get_Int` 的 `$hex` / `Xh` 三条路径）
 - [ ] `.map` 输出（IsoMapPack5 编码）
 - [ ] 端到端验证：同种子生成结果与原版逐字节比对

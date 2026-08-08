@@ -21,6 +21,7 @@ add_library(ra2_rmg
   start_points.cpp
   height_field.cpp
   corner_lattice.cpp
+  ore_field.cpp
   theater.cpp
   fp_guard.cpp)
 
@@ -155,4 +156,10 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_green_spread PRIVATE
     RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
   add_test(NAME green_spread COMMAND test_green_spread)
+
+  add_executable(test_ore_field test/test_ore_field.cpp)
+  target_link_libraries(test_ore_field PRIVATE ra2_rmg gtest_main)
+  target_compile_definitions(test_ore_field PRIVATE
+    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+  add_test(NAME ore_field COMMAND test_ore_field)
 endif()
