@@ -156,6 +156,8 @@ bool ParseTheaterIni(const std::string& text, TheaterData* out) {
   out->destroyable_cliffs = start_of("destroyablecliffs");
   out->pave_tile = start_of("pavetile");
   out->misc_pave_tile = start_of("miscpavetile");
+  out->paved_roads = start_of("pavedroads");
+  out->paved_road_ends = start_of("pavedroadends");
   return true;
 }
 

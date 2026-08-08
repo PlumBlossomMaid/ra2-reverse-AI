@@ -1,8 +1,10 @@
 #include "start_points.h"
 
 #include <algorithm>
+#include <cstdint>
 
 #include "fast_math.h"
+#include "place_tile.h"   // 四个「铺装」谓词 + IsUndecidedTile
 #include "scaled_random.h"
 
 namespace ra2 {
@@ -37,6 +39,45 @@ inline double PairScore(int dx, int dy, bool cross_region) {
 }
 
 }  // namespace
+
+bool AreaIsPassable(const StartPointContext& ctx, const MapRect& rect,
+                    bool allow_paved_road, bool allow_paved_road_end) {
+  // 0x5A7268 起：四个角依次过菱形，坐标各自 movsx 成 int16 再算。
+  // 四组比较与 MapGrid::InMap 的四条逐条相同（同样读 [0xABED04] / [0xABED08]）。
+  const int x0 = static_cast<std::int16_t>(rect.x);
+  const int y0 = static_cast<std::int16_t>(rect.y);
+  const int x1 = static_cast<std::int16_t>(rect.x + rect.w - 1);
+  const int y1 = static_cast<std::int16_t>(rect.y + rect.h - 1);
+  if (!ctx.grid.InMap(x0, y0)) return false;   // 0x5A7273
+  if (!ctx.grid.InMap(x1, y0)) return false;   // 0x5A72AA
+  if (!ctx.grid.InMap(x0, y1)) return false;   // 0x5A72EE
+  if (!ctx.grid.InMap(x1, y1)) return false;   // 0x5A733A
+
+  const TheaterData& t = *ctx.theater;
+  for (int y = rect.y; y < rect.y + rect.h; ++y) {
+    for (int x = rect.x; x < rect.x + rect.w; ++x) {
+      // 0x5A73A2：坐标按 int16 打包再取格
+      const CellCoord c = {static_cast<std::int16_t>(x),
+                           static_cast<std::int16_t>(y)};
+      const int tile = ctx.world->IsoTile(c);
+      // 0x5A73B6 起五条，顺序照抄：铺路 / 桥头 / 未定砖 / 杂铺装 / 铺装。
+      // 前两条是「撞上了就看开关，开关关着直接判死」，后三条是「符合就放行」。
+      if (IsPavedRoadTile(tile, t.paved_roads)) {
+        if (!allow_paved_road) return false;
+        continue;
+      }
+      if (IsPavedRoadEndTile(tile, t.paved_road_ends)) {
+        if (!allow_paved_road_end) return false;
+        continue;
+      }
+      if (IsUndecidedTile(tile)) continue;              // 0x486380
+      if (IsMiscPaveTile(tile, t.misc_pave_tile)) continue;   // 0x486650
+      if (IsPaveTile(tile, t.pave_tile)) continue;            // 0x486670
+      return false;                                     // 0x5A7401 的兜底
+    }
+  }
+  return true;
+}
 
 int StartRegionSortKey(int cell_count, int region_id, int region_count) {
   // 0x594D0x 附近：(500000 - cellCount) * regionCount + regionId。
@@ -222,8 +263,14 @@ void PickPointsInRegion(StartPointContext& ctx, RegionClass* r, int base) {
     const int n = static_cast<int>(r->cells.size());
     const int k = PickBelowMul(*ctx.rng, n);
     const CellCoord xy = r->cells[static_cast<std::size_t>(k)];
-    if (!ctx.world->AreaIsPassable(xy)) continue;        // 0x5A7250，{X-3,Y-3,6,6}
-    if (!ctx.world->WithinUsableArea(rect, xy)) continue; // 0x578640(rect, xy, 1)
+    // 0x594951：{X-3, Y-3, 6, 6}，两个开关都传 0
+    const MapRect probe = {xy.x - 3, xy.y - 3, 6, 6};
+    if (!AreaIsPassable(ctx, probe, false, false)) continue;
+    // 0x59498B：0x578640(&rect, &xy, 1)，第三个参数为 1 -> 层高/坡道那一路生效
+    if (!IsWithinUsableArea(ctx.map_rect_w, rect, xy.x, xy.y,
+                            ctx.world->Level(xy), ctx.world->Ramp(xy), true)) {
+      continue;
+    }
     cand.push_back(xy);
   }
 
@@ -249,7 +296,14 @@ void PickPointsInRegion(StartPointContext& ctx, RegionClass* r, int base) {
 }
 
 bool PlaceStartPoints(StartPointContext& ctx) {
-  // 第 0 步的后半段：拆掉上一轮的全部区域（0x58CE90）
+  // 第 0 步的后半段：0x58CE90。它做两件事，缺一不可——
+  //   1) 把**整张** side² 工作数组的 +0x38 / +0x3C 全刷回 -1（0x58CEA8 的双写循环，
+  //      连菱形外的格子也刷）；漏掉这一步，第 2 步一个区域都起不出来
+  //   2) 拆掉上一轮留下的全部 RegionClass，并把编号计数器 [0xABED14] 归零
+  for (std::size_t i = 0; i < ctx.work->size(); ++i) {
+    (*ctx.work)[i].blob_id = -1;
+    (*ctx.work)[i].queued = -1;
+  }
   ctx.regions->Reset();
 
   // 第 1 步：minCells = (int)max(H * W * 0.03, 400.0)

@@ -27,6 +27,7 @@
 #include "map_grid.h"
 #include "randomizer.h"
 #include "regions.h"
+#include "theater.h"
 #include "zones.h"
 
 namespace ra2 {
@@ -54,11 +55,12 @@ class StartPointWorld {
   // MapClass::GetMovementZoneType(&coord, mz, 0)（0x56D230）
   virtual int MovementZoneType(const CellCoord& c, int movement_zone) const = 0;
 
-  // 0x5A7250({X-3, Y-3, 6, 6}, 0, 0)：这块 6x6 的地面能不能落脚
-  virtual bool AreaIsPassable(const CellCoord& center) const = 0;
-
-  // 0x578640(&rect, &coord, 1)：带矩形的可用区判定，坡道那条生效
-  virtual bool WithinUsableArea(const MapRect& rect, const CellCoord& c) const = 0;
+  // CellClass +0x38 砖号。0x5A7250 的五条谓词全靠它。
+  virtual int IsoTile(const CellCoord& c) const = 0;
+  // CellClass +0x11B 层高（**有符号字节**，0x57868C 的 movsx）与 +0x11C 坡道号。
+  // 0x578640 只在这两样上做文章。
+  virtual int Level(const CellCoord& c) const = 0;
+  virtual int Ramp(const CellCoord& c) const = 0;
 
   // 0x5657A0 拿不到真实格子时把请求坐标写进共享哑元 [0xABDC74]；
   // GrowRegion 是**先取格再判界**，所以这个副作用必须能复现。
@@ -93,6 +95,12 @@ struct StartPointContext {
   int waypoint_scale = 0;   // [0xABE030] = MapSeedClass +0x58（来源未确认）
   int map_w = 0;            // [0xABE158] = MapSeedClass +0x180
   int map_h = 0;            // [0xABE15C] = MapSeedClass +0x184
+  // 0x578640 读的是 **MapClass +0xF4**（[0x87F8DC]），与上面那个 MapSeedClass
+  // 的 W 是两个来源；实测同值，但字段分开留着，别混用。
+  int map_rect_w = 0;
+
+  // 0x5A7250 的四个「铺装」谓词要的砖号基址
+  const TheaterData* theater = nullptr;
 
   // 第 0 步的产物，由 ComputeStartZoneSelection() 填
   int movement_zone = 0;    // kStartZoneSel[MapType]
@@ -115,6 +123,14 @@ RegionClass* GrowStartRegion(StartPointContext& ctx, const CellCoord& seed,
 std::vector<CellCoord> ChooseWaypoints(const StartPointContext& ctx,
                                        const std::vector<CellCoord>& cand,
                                        int start_count, bool* ok);
+
+// 0x5A7250 AreaIsPassable(rect, allowPavedRoad, allowPavedRoadEnd)（__fastcall
+// ecx = rect、dl = 第二个开关、一个栈参 ret 4）。
+// 先拿矩形的**四个角**过菱形（坐标各自 movsx 截成 int16），再逐格过五条砖谓词。
+// ⚠️ 矩形是它四个角的凸包、菱形是四个半平面的交，所以角过了则格格都在图内——
+// 内层那个 0x5657A0 永远取不到共享哑元。
+bool AreaIsPassable(const StartPointContext& ctx, const MapRect& rect,
+                    bool allow_paved_road, bool allow_paved_road_end);
 
 // 0x594870 PickPointsInRegion(region, base)。两个取数点。
 void PickPointsInRegion(StartPointContext& ctx, RegionClass* r, int base);

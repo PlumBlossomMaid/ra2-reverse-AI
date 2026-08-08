@@ -63,6 +63,11 @@ struct TheaterData {
   // 温和气候里两者都是 -1（ini 没这两个键），雪地同理。
   int pave_tile = -1;         // 0xABC2B0，宽 0x10
   int misc_pave_tile = -1;    // 0xAA10A4，宽 0x0E
+  // 阶段 6 的 0x5A7250 还要读这两个（0x4866D0 / 0x4866F0）。
+  // ⚠️ 0x4866D0 写死的宽度是 0x0F，而 PavedRoads 的 TilesInSet 是 21——
+  // 原版就是短的，照抄。
+  int paved_roads = -1;       // 0xABBEC8，代码写死宽 0x0F
+  int paved_road_ends = -1;   // 0xABBEC4，宽 4
 
   // 组内砖数；用于 IsWater 那种「起始砖号 + 宽度」的区间判定。
   int TilesInSetStartingAt(int start_tile) const;

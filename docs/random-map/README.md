@@ -19,7 +19,7 @@
 | [stage-tiberium.md](stage-tiberium.md) | 阶段：Creating tiberium（布矿） | ✅ 外层 + 矿田生长全链已实锤；**矿田生长 `0x5A28C0` 已落 C++ 并逐位对拍**（`rmg/ore_field.{h,cpp}`） |
 | [stage-tech-buildings.md](stage-tech-buildings.md) | 阶段：Adding tech buildings（中立科技建筑，两条互斥分支） | ✅ 已实锤，含 `PickRange` 语义；**已落 C++ 并逐位对拍**（`rmg/tech_buildings.{h,cpp}`，两条分支各一套用例） |
 | [stage-recalc.md](stage-recalc.md) | 阶段：绿地蔓延 + Recalculating cell attributes | ✅ 全部实锤；绿地蔓延已落 C++，18 个用例整段对拍通过 |
-| [stage-starting-points.md](stage-starting-points.md) | 阶段：Creating starting points（出生点） | ✅ 全部子函数已实锤；主干已落 C++（`rmg/start_points.{h,cpp}`），`ChooseWaypoints` 270 例黄金对拍 |
+| [stage-starting-points.md](stage-starting-points.md) | 阶段：Creating starting points（出生点） | ✅ 全部子函数已实锤；C++（`rmg/start_points.{h,cpp}`）**整段端到端对拍**：`ChooseWaypoints` 270 例 + 调度 `0x594B50` 17 例 |
 | [movement-zones.md](movement-zones.md) | **引擎的移动区子系统**：地面类别 → 连通区洪泛 → 区类型表 | ✅ 整条链已实锤并落 C++（`rmg/zones.{h,cpp}`，含黄金对拍） |
 | [stage-hills.md](stage-hills.md) | 阶段：Creating hills（造山，唯一随机源是高度场） | ✅ 全链已实锤；**§一~§九 全部落 C++ 并逐位对拍**（`rmg/height_field.{h,cpp}` + `rmg/corner_lattice.{h,cpp}`） |
 | [stage-lats.md](stage-lats.md) | 阶段：Creating LATs, rocks etc（地表装饰，取数点最密） | ✅ 18 个取数点全部实锤；**已落 C++ 并逐位对拍**（`rmg/lats.{h,cpp}` + `rmg/lat_spread.cpp`，25 个用例） |
@@ -425,6 +425,20 @@
       `0x579320` 全镜像零引用（从没被调用），表因此一直是 `.bss` 的零；
       就算它跑了，40 项里唯一非零的第 32 项也挂在一个决策树永远选不出来的下标上
       ⇒ **落点恒为本格**
+- [x] **阶段 6 出生点整段端到端对拍**（ctest 名 `place_start_points`）。
+      `dump_start_points2_golden.py` 把调度 `0x594B50` + 起区域 `0x594420`
+      + 逐区域摆点 `0x594870` 连成一整条跑真身，
+      只对四个**不属于本阶段**的依赖打桩
+      （`0x56C510` / `0x56D230` / `0x595400` / `0x58B820`）；
+      `0x5A7250`、`0x578640`、`qsort` + 比较器、`SetWaypoint`/`GetWaypoint`
+      全是原版机器码。**17 例**逐例比随机数次数 / 区域表（含成员格表逐格）/
+      工作数组每格的 `+0x38`&`+0x3C` / waypoint 表 / 出生点表 /
+      `+0x140` 的 bit2 / 建筑调用序列，全绿。
+      **当场抓出一条复刻侧的漏编**：`0x58CE90` 除了拆区域，还要把
+      **整张 side² 工作数组**的 `+0x38`/`+0x3C` 刷回 −1，之前的 `PlaceStartPoints`
+      只做了前半句（基准故意把数组预置成 `0x5A5A5A5A` 就是为了钓它）。
+      顺带把 `0x5A7250` 从单测假体里挑回库里实现（四角 `movsx` 截 int16 后过菱形，
+      再逐格跑五条砖谓词），并给 `TheaterData` 补上 `PavedRoads` / `PavedRoadEnds`
 - [x] 🏁 **里程碑：104 个活取数点的语义全部落地。** 12 个阶段 + `MapType ∈ {3,4}` 支线，
       再没有"知道这里取了个随机数、但不知道它拿去干什么"的位置。
       余下的欠账是三个转角坡道的**逐格砖号几何**与各文档"未确认"里的细节；
@@ -540,6 +554,7 @@ long double。同类的 `fsin` / `fpatan` / `f2xm1` 是否也如此，**未确�
 | `code/randmap/dump_tile_geometry.py` | 从 theater 的 `.tmp` 取砖的**几何元数据**（宽高/空洞/高度/坡度）当对拍夹具 |
 | `code/randmap/dump_regions_golden.py` | 导出阶段 3 Init regions 四步流程的对拍基准（带回收的 bump 分配器） |
 | `code/randmap/dump_green_spread_golden.py` | 导出阶段 5 绿地蔓延 `0x59B740` 的对拍基准（含共享哑元的进场值/终值） |
+| `code/randmap/dump_start_points2_golden.py` | 导出阶段 6 出生点**整段** `0x594B50` 的对拍基准（只打四个外部依赖的桩） |
 | `code/ghidra_scripts/find_writers.py` | 定位 .bss 全局的运行期初始化点（表内容不在文件里） |
 | `code/randmap/scan_rmg_rng.py` | 只列**生成器自己那个** Randomizer(0xABE890) 的取数点（按 this 判定） |
 | `code/ghidra_scripts/rng_closure.py` | 调用树传递闭包，找出某根函数下**所有**随机数取数点（真函数边界） |

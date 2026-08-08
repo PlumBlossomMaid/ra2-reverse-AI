@@ -136,6 +136,23 @@ inline bool IsShoreTile(int tile, int shore_base) {
 // 0x486380：这一格还没定砖
 inline bool IsUndecidedTile(int tile) { return tile == 0 || tile == 0xFFFF; }
 
+// 「铺装地面」四兄弟。四个都是**裸区间比较**，一个都不查 base == -1 ——
+// 该 theater 没定义这一组时 base 是 -1，于是砖号 0..13 之类会被判成真。
+// 原版就是这样，照抄（0x5A7250 与 0x5A4B60 都吃这个亏）。
+inline bool IsPaveTile(int tile, int base) {          // 0x486670，宽 0x10
+  return tile >= base && tile < base + 0x10;
+}
+inline bool IsMiscPaveTile(int tile, int base) {      // 0x486650，宽 0x0E
+  return tile >= base && tile < base + 0x0E;
+}
+// ⚠️ 0x4866D0 写死宽 0x0F，而 PavedRoads 那一组实际有 21 块砖，后 6 块判不出来。
+inline bool IsPavedRoadTile(int tile, int base) {     // 0x4866D0，宽 0x0F
+  return tile >= base && tile < base + 0x0F;
+}
+inline bool IsPavedRoadEndTile(int tile, int base) {  // 0x4866F0，宽 4
+  return tile >= base && tile < base + 4;
+}
+
 // 0x4863D0（ecx = cell）与 0x578D80（ecx = tile, edx = subtile）：
 // 「这块地形不许被覆盖」。两者判据几乎一样，差别是前者读格子、后者读砖号+子格号，
 // 且前者对每个全局都先查 -1（该 theater 没定义就跳过），后者不查。照原样各写一份。
