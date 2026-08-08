@@ -497,3 +497,78 @@ for (i = 0; i < count && node; i++) {
 所以阶段 10 只能靠反汇编硬啃。**记下这条边界本身也是结论**：
 凡涉及"等距地图 / LAT / 高度场 / RMG"的部分，RA1 源码无参考价值；
 凡涉及"随机数 / ini / 单位逻辑 / 存档"的部分，优先去查 RA1。
+
+## 九、复刻状态：已落 C++ 并逐位对拍
+
+代码 `code/rewrite/rmg/lats.{h,cpp}` + `lat_spread.cpp`，
+基准 `memory/data/rmg/lats_golden.txt`（生成脚本 `code/randmap/dump_lats_golden.py`），
+用例 `code/rewrite/rmg/test/test_lats.cpp`，ctest 目标 `lats`。
+
+### 落地清单
+
+| 原版 | C++ | 对拍 |
+|---|---|---|
+| `0x59921F` 调度 | `CreateLats` | ✅ `temp*` / `snow*` 五例（整段跑机器码） |
+| `0x5A38C0` 播概率图 | `SeedVegetationProbabilities` | ✅ `v-*` 四例 |
+| `0x5A3AE0` 温带主体 | `CreateLatsTemperate` | ✅ 随 `temp*` |
+| `0x5A4280` 雪地主体 | `CreateLatsSnow` | ✅ 随 `snow*` |
+| `0x5A45E0` 树林补丁 | `GrowTreePatch` | ✅ `t-*` 七例 |
+| `0x5A4B60` LAT 块写入器 | `WriteLatBlock` | ✅ `w-*` 七例 |
+| `0x47CA80` `SetupLAT` | `LatWorld::SetupLAT` | 只对**调用次数**（要读 .tmp 美术资源） |
+| `0x47D2B0` `RecalcAttributes` | `LatWorld::RecalcAttributes` | 只对 (格子, 参数) 序列 |
+| `0x71BB90` `TerrainClass` | `LatWorld::CreateTerrain` | 只对 (名字, 落点) 序列 |
+
+不打桩、真身跑起来的：`PickRange 0x598030`、`NormalDeviate 0x5980C0`、
+`FastSqrt 0x4CAC40`、`GetCellAt 0x5657A0`、四个砖号谓词
+（`0x486380` / `0x4865B0` / `0x486790` / `0x4867B0`）、
+`0x42B1F0` 地图规模、最小堆的上浮/下沉/弹出、以及**全图遍历器
+`0x578350` / `0x578290` 本身**。
+
+### 25 个用例
+
+| 用例 | 打的点 | 取数 |
+|---|---|---|
+| `w-plain` / `w-count1` / `w-big` | 常规扩散、`count=1`、大图 `count=40` | 41 / 8 / 98 |
+| `w-blocked` | 一半格子非未定砖，扩散被切碎 | 29 |
+| `w-obstacles` | `+0x11C` 坡道 / `+0x44` overlay / `+0xE4` 三条硬拦 | 18 |
+| `w-queued` | `+0x3C == fieldId` 的格子不再入堆 | 21 |
+| `w-pave` | **`allowNonPlain=1` 死分支**（合成的 `PaveTile`/`MiscPaveTile` 砖号） | 49 |
+| `t-plain` / `t-low` / `t-tiny` / `t-big` | 栽树概率 0.5 / 0.03 / 0.9 / 0.35 | 134 / 368 / 15 / 269 |
+| `t-flag45` / `t-flag47` | 两条不同的邻居拦截 | 80 / 78 |
+| `t-blocked` | 栽树自身四条门槛（非未定砖 / `+0xE4` / overlay / `+0xEC==3`） | 219 |
+| `v-plain` / `v-veg0` | 非岸格播种，`Vegetation=0` 边界 | 0 / 0 |
+| `v-shore` | **5×5 那个原版 bug**（判定用邻居、写入用中心） | 0 |
+| `v-taken` | `+0x28 != 0` 的格子不再播种 | 0 |
+| `temp-a` / `temp-b` / `temp-veg0` | 温带整段，含预算为 0 的退化 | 1709 / 1671 / 600 |
+| `temp-big` | 24×16，撒石头那段名额才挑得起来 | 4479 |
+| `snow-a` / `snow-b` / `snow-big` | 雪地整段 | 1243 / 1236 / 2887 |
+
+每例比七样：取数个数、返回值、`SetupLAT` 次数、`TREExx` 名字与落点、
+`RecalcAttributes` 的 (格子, 参数)、以及**每一格**跑完之后的
+`(砖号, overlay, +0x11E, +0x3C, +0x47, 三个概率槽)`——概率槽按**位**比，不留容差。
+
+### 这一轮新实锤的三件事
+
+1. **雪地内联铺常量那圈遍历的覆盖面 = 菱形本身。**
+   `0x578350`/`0x578290` 是「起点 (1, W)、每步 (X+1, Y−1)、走完一条对角线后
+   按 `(Y−W+X−1)` 的奇偶换行」的对角线遍历器，靠**格子指针为 NULL** 停机。
+   实测它吐出的格子集合与 RMG 菱形判据
+   （`X+Y > W && |X−Y| < W && X+Y <= W+2H`）逐格一致，
+   所以 `MapGrid::ForEachCell` 那套复刻是对的——而且**顺序也必须一致**，
+   温带主体是逐格取随机数的。
+2. **`0x5A4B60` 的池子确实越不了界。**
+   `used <= 8*count + 1`，池子 `count*10` 条，`count >= 4`（调用点 `TruncNormal`
+   的下界），所以那条缺失的上界检查是**良性**的——不像阶段 8 `CreateOreField`
+   同样的缺口是真 UB。25 个用例（含 `count=1` 的退化）没有一次触到边界。
+3. **`0x486670` / `0x486650` 是两个独立谓词，短路顺序为前者在先。**
+   `w-pave` 用两段合成砖号（`PaveTile=600..615`、`MiscPaveTile=700..713`）
+   把这条死分支走通了，两个谓词各自命中的格子数都不为 0。
+   复刻侧因此保留成 `LatWorld::IsPaveTile` / `IsMiscPaveTile` 两个虚函数，
+   不合并成一个——合并会丢掉「前者为真时后者根本不被调用」这个事实。
+
+### 没覆盖到的路
+
+- `0x5A3AE0` 里 `tries > 200` 之后**强行用格 (0,0)** 那条：需要一张几乎全是
+  已定砖的图才逼得出来，25 个用例都没触发（代码照抄了，但没有基准背书）。
+- 两处 `TruncNormal` 的回退分支（`mu ∈ [20,40]`、`sigma = 20` 使其不可达），
+  以及 `operator new` 返回 0 的那几条——原版同样不可达。

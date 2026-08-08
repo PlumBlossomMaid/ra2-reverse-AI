@@ -22,7 +22,7 @@
 | [stage-starting-points.md](stage-starting-points.md) | 阶段：Creating starting points（出生点） | ✅ 全部子函数已实锤；主干已落 C++（`rmg/start_points.{h,cpp}`），`ChooseWaypoints` 270 例黄金对拍 |
 | [movement-zones.md](movement-zones.md) | **引擎的移动区子系统**：地面类别 → 连通区洪泛 → 区类型表 | ✅ 整条链已实锤并落 C++（`rmg/zones.{h,cpp}`，含黄金对拍） |
 | [stage-hills.md](stage-hills.md) | 阶段：Creating hills（造山，唯一随机源是高度场） | ✅ 全链已实锤；**§一~§九 全部落 C++ 并逐位对拍**（`rmg/height_field.{h,cpp}` + `rmg/corner_lattice.{h,cpp}`） |
-| [stage-lats.md](stage-lats.md) | 阶段：Creating LATs, rocks etc（地表装饰，取数点最密） | ✅ 18 个取数点全部实锤 |
+| [stage-lats.md](stage-lats.md) | 阶段：Creating LATs, rocks etc（地表装饰，取数点最密） | ✅ 18 个取数点全部实锤；**已落 C++ 并逐位对拍**（`rmg/lats.{h,cpp}` + `rmg/lat_spread.cpp`，25 个用例） |
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法全还原；**`MapType 0/1/2` 主路径 + 水面细化整条落成 C++ 并对拍** |
 | [stage-water-maptype34.md](stage-water-maptype34.md) | 阶段 2 支路：`MapType ∈ {3,4}` 的**河流、湖泊与瀑布**（含查表 sin/cos） | ✅ 八个函数全部实锤；sin/cos 已落 C++ 并对拍；整支路待落 C++ |
@@ -73,6 +73,15 @@
   - [x] Creating hills：入口 `0x5A35F0` 六步已拆开；**全部随机性只在 `0x5A2F50`**（顺序推进的分形高度场，每格 2 次截断正态，`Ruggedness < 10` 时一次都不抽）；高度取整是 round-half-away-from-zero，**不是 ties-to-even**
   - [x] Creating LATs：温带 `0x5A38C0`+`0x5A3AE0` / 非温带 `0x5A4280` 两条互斥分支的主体已实锤；18 个取数点归属到函数；新查实 `0x486790 = IsClearToSandLat`、`0x42B1F0 = (H+4)*W*2`
   - [x] Creating LATs：补丁生长 `0x5A45E0`（最小堆扩散 + `PickRange(1,25)` 选 `TREE01`..`TREE25`，**`TREE00` 永不出现**）与 LAT 写入器 `0x5A4B60` 已还原，**18 个取数点全部落地**
+  - [x] Creating LATs：整段落 C++ 并逐位对拍（25 个用例，`lats_golden.txt`）。基准把调度、
+        两条主体、树林补丁、LAT 写入器全跑原版机器码，连**全图遍历器 `0x578350`/`0x578290`
+        本身**都不打桩；逐格比 `(砖号, overlay, +0x11E, +0x3C, +0x47, 三个概率槽)`，
+        概率槽按位比。新实锤三件事：① 雪地那圈内联铺常量的覆盖面 = 菱形本身，
+        且顺序必须一致（温带是逐格取数的）；② `0x5A4B60` 缺失的池子上界检查是**良性**的
+        （`used <= 8*count+1 < 10*count`），不像阶段 8 同样的缺口是真 UB；
+        ③ `0x486670`/`0x486650` 是两个独立谓词、短路顺序前者在先——合成砖号把
+        `allowNonPlain` 这条死分支走通了，去掉任一个结果都变（49 → 33 / 41 次取数），
+        所以复刻侧保留成两个虚函数，不合并
   - [x] 顺手关掉阶段 8 的未确认：`0x71BB90` = `TerrainClass::TerrainClass(type, cell)`（Ghidra 误标为 `WhatAmI`）
   - [x] Cleanup / Radar：**纯拆解，不碰地形**；另查实两件事——
         布矿之后有一段无日志的“区域清算”（work.+0x38/+0x3C 写回 -1 并销毁全部 RegionClass）；

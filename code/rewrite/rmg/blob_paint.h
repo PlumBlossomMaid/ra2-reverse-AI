@@ -40,6 +40,16 @@ struct PaintWorkCell {
   // 辐射过」，阶段 9 的 0x5A33F0 拿它当「锚点，不许抬升」。语义未定名，
   // 所以这里按偏移命名。
   bool flag45 = false;
+
+  // 阶段 10「Creating LATs」用的三个概率槽，也住在同一条 0x50 字节记录里。
+  // 播种点 0x5A38C0（温带按 Vegetation 算）与 0x5992xx（雪地写死两个常量）。
+  double prob_rough = 0.0;   // +0x18 碎石 LAT（RoughTile）
+  double prob_green = 0.0;   // +0x20 草地 LAT（GreenTile）
+  double prob_sand = 0.0;    // +0x28 沙地 LAT（SandTile）
+
+  // +0x47 树林补丁的「走过了」标记。⚠️ 0x5A45E0 返回后**不清**，
+  // 所以 100 轮补丁互相排斥（stage-lats.md §七 未确认 7）。
+  bool flag47 = false;
 };
 
 // 涂块需要的全部外部依赖。抽出来是为了让算法本身可以脱离引擎单测——

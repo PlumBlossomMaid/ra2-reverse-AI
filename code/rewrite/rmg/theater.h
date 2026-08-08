@@ -59,6 +59,10 @@ struct TheaterData {
   int water_caves = -1;       // 0xABAD24
   int wood_bridge_set = -1;   // 0xABAD1C
   int destroyable_cliffs = -1;  // 0xABC2C8
+  // 只有 0x5A4B60 的 allowNonPlain 死分支读这两个（0x486670 / 0x486650）。
+  // 温和气候里两者都是 -1（ini 没这两个键），雪地同理。
+  int pave_tile = -1;         // 0xABC2B0，宽 0x10
+  int misc_pave_tile = -1;    // 0xAA10A4，宽 0x0E
 
   // 组内砖数；用于 IsWater 那种「起始砖号 + 宽度」的区间判定。
   int TilesInSetStartingAt(int start_tile) const;

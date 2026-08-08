@@ -23,6 +23,8 @@ add_library(ra2_rmg
   corner_lattice.cpp
   ore_field.cpp
   tech_buildings.cpp
+  lat_spread.cpp
+  lats.cpp
   theater.cpp
   fp_guard.cpp)
 
@@ -169,4 +171,10 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_tech_buildings PRIVATE
     RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
   add_test(NAME tech_buildings COMMAND test_tech_buildings)
+
+  add_executable(test_lats test/test_lats.cpp)
+  target_link_libraries(test_lats PRIVATE ra2_rmg gtest_main)
+  target_compile_definitions(test_lats PRIVATE
+    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+  add_test(NAME lats COMMAND test_lats)
 endif()
