@@ -13,6 +13,7 @@ add_library(ra2_rmg
   stage_water.cpp
   water_refine.cpp
   water_blob.cpp
+  waterfall.cpp
   make_grid.cpp
   place_blobs.cpp
   place_tile.cpp
@@ -144,6 +145,13 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_water_blob PRIVATE
     RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
   add_test(NAME water_blob COMMAND test_water_blob)
+
+  # 瀑布（河道落差）——基准 3 万多行，运行期读原档；砖几何读 tile_geometry.txt
+  add_executable(test_waterfall test/test_waterfall.cpp)
+  target_link_libraries(test_waterfall PRIVATE ra2_rmg gtest_main)
+  target_compile_definitions(test_waterfall PRIVATE
+    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+  add_test(NAME waterfall COMMAND test_waterfall)
 
   add_executable(test_height_field test/test_height_field.cpp)
   target_link_libraries(test_height_field PRIVATE ra2_rmg gtest_main)

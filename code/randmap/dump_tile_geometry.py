@@ -21,8 +21,9 @@ u"""从 theater 的 .tmp 砖文件里取出**几何元数据**，给对拍夹具
                        整个移动区子系统的源头，见 docs/random-map/movement-zones.md
     +0x2A RampType     压砖器 0x5A6C10 写进 CellClass +0x11C（0x57B440 不写）
 
-⚠️ 只导出 RMG 主路径（MapType 0/1/2）跑到阶段 6 时**地图上可能出现的那几组砖**：
-ClearTile（阶段 1 的初始砖号 0）、WaterSet（14）、ShorePieces（42）、GreenTile。
+⚠️ 只导出**已经做到的那几段会用到的砖组**：
+ClearTile（阶段 1 的初始砖号 0）、WaterSet（14）、ShorePieces（42）、GreenTile，
+外加四组瀑布砖各 4 块（MapType 3/4 的河湖支路，0x59E740 PlaceWaterfall 用）。
 其余上千块砖一概不导——它们要到阶段 8/9/10 才可能落地，等做到那儿再说。
 且只导出几何/属性数值——不含任何像素、调色板或音频。
 输出是我们自己算出来的派生结果，不是搬运原版素材。
@@ -45,7 +46,12 @@ THEATERS = [
 
 # 要导出的组：ini [General] 里的键名 -> 便于阅读的短名
 GROUPS = [("ShorePieces", "shore"), ("WaterSet", "water"),
-          ("ClearTile", "clear"), ("GreenTile", "green")]
+          ("ClearTile", "clear"), ("GreenTile", "green"),
+          # 四组瀑布砖。0x59E740 PlaceWaterfall 按 dir 取其中一组的
+          # 第 0/1/2/3 块（0x59FB97 那类 `[edx + eax*4 + {0,4,8,0xC}]`），
+          # 所以做河湖支路的对拍要用到它们的真实尺寸。
+          ("WaterfallEast", "wfeast"), ("WaterfallWest", "wfwest"),
+          ("WaterfallNorth", "wfnorth"), ("WaterfallSouth", "wfsouth")]
 
 
 def parse_ini(blob):
@@ -134,8 +140,8 @@ def main():
             u"# TILE <theater> <group> <tileNumber> <file> <w> <h>\n"
             u"#   SUB <k> <present> <height> <ramp> <terrain>\n"
             u"# \u53ea\u542b ClearTile / WaterSet / ShorePieces / GreenTile "
-            u"\u56db\u7ec4\uff08\u9636\u6bb5 6 \u4e4b\u524d\u5730\u56fe\u4e0a"
-            u"\u53ef\u80fd\u51fa\u73b0\u7684\u5168\u90e8\uff09\uff1b"
+            u"\u56db\u7ec4\uff0c\u52a0\u56db\u7ec4\u7011\u5e03\u7816"
+            u"\uff08Waterfall N/E/S/W \u5404 4 \u5757\uff09\uff1b"
             u"\u65e0\u50cf\u7d20/\u8c03\u8272\u677f\uff0c\u5747\u4e3a\u6d3e\u751f\u6570\u503c\n")
     with open(path, "w", encoding="utf-8") as f:
         f.write(head)
