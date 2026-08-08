@@ -25,7 +25,7 @@
 | [stage-lats.md](stage-lats.md) | 阶段：Creating LATs, rocks etc（地表装饰，取数点最密） | ✅ 18 个取数点全部实锤；**已落 C++ 并逐位对拍**（`rmg/lats.{h,cpp}` + `rmg/lat_spread.cpp`，25 个用例） |
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法全还原；**`MapType 0/1/2` 主路径 + 水面细化整条落成 C++ 并对拍** |
-| [stage-water-maptype34.md](stage-water-maptype34.md) | 阶段 2 支路：`MapType ∈ {3,4}` 的**河流、湖泊与瀑布**（含查表 sin/cos） | ✅ 八个函数全部实锤；sin/cos、两个通用区域算子（`0x5A0410` Erode / `0x5A0160` Dilate）与角度扩张 `0x5A08D0` 已落 C++ 并对拍；河/湖/瀑布三个主体待落 C++ |
+| [stage-water-maptype34.md](stage-water-maptype34.md) | 阶段 2 支路：`MapType ∈ {3,4}` 的**河流、湖泊与瀑布**（含查表 sin/cos） | ✅ 八个函数全部实锤；sin/cos、两个通用区域算子（`0x5A0410` Erode / `0x5A0160` Dilate）、角度扩张 `0x5A08D0` 与**湖泊涂块 `0x59C920`** 已落 C++ 并对拍；河 `0x59D510` / 瀑布 `0x59E740` / 调度 `0x59C580` 待落 C++ |
 | [stage-making-regions.md](stage-making-regions.md) | 阶段 4：Making regions（区域重建 + **区域之间开坡道/架桥**，`MapType ∈ {3,4}` 专属，45 个取数点） | ✅ **45 个取数点全部关闭**；区域切分 / 架桥 / 四个直坡 / 三个转角 / 两遍重刷砖全部实锤 |
 
 ## 进度
@@ -448,6 +448,20 @@
       而这直接决定扩张体是菱形还是方块；`[0x7ED898]` 是 `1/(2^32-1)` 而不是 `2^-32`。
       另外查实种子那一轮**不写**入堆标记 `+0x3C`（同一格可以入堆两次），
       以及 `0x5A0913` 那句"池容量减一"是死代码。
+- [x] **湖泊涂块 `0x59C920 WaterBlob` 落 C++ 并对拍**（ctest 名 `water_blob`）。
+      `MapType ∈ {3,4}` 支路里「往陆地上抠一个湖」的那块积木，河口挖湖也复用它。
+      预算 `= _ftol(H×W×WaterAmount×0.008 + 100) − 已用`，
+      块尺寸从截断正态里拒绝采样，优先级
+      `= 10·U(0,1) + 0.5·√d² − 0.02·已涂格数`（全程 x87 双精度，只在最后落成 float）。
+      25 个用例逐格比 `(tile, subtile, level, +0x38, +0x3C, +0x44, +0x4B)`、
+      返回值、**随机数调用次数**与 `+0x304` 累加器；**11 个定向变异全部被抓住**。
+      **顺带更正四条旧结论**：清 `+0x3C` 是**无条件**的（不是只在 `start == (0,0)` 时）；
+      邻格失败判据是 `owner != 0 **&&** owner != blobId`（少了后半句湖涂到第二格就自我判负）；
+      `[0x7ED898]` 是 `1/(2^32-1)` 而非 `2^-32`；主循环之后还有整整一遍
+      「**收编堆里剩下的**」（`0x59D14D`）此前完全漏记，它决定了 `ring` 的终值。
+      另查实主循环的认领**一条判据都不查**（起点落在别人地盘上照涂），
+      与收编那遍「三条全查」构成一对原版就有的对称破缺；
+      以及 `0x59CC6C` 的第二次 200 次判定是恒真的死分支。
 - [x] **`Ftol` 补上 `_ftol` 的真实语义**（`0x7C5F00` 是 `fistp **qword**` 之后
       只取低 32 位）。先前写的是 C 的 `(int)` 转换，只在 `|v| < 2^31` 时等价；
       `AngularGrow` 的负 `weight` 路径会把上限**零扩展**成四十多亿，
@@ -603,6 +617,7 @@ long double。同类的 `fsin` / `fpatan` / `f2xm1` 是否也如此，**未确�
 | `code/randmap/dump_tiberium2_golden.py` | 导出阶段 8 布矿**外层** `0x5A23A0` 的对拍基准（手搭 RegionClass 与 waypoint 表） |
 | `code/randmap/dump_region_ops_golden.py` | 导出 `0x5A0410 Erode` / `0x5A0160 Dilate` 的对拍基准（整函数模拟执行，不留桩） |
 | `code/randmap/dump_angular_grow_golden.py` | 导出 `0x5A08D0 AngularGrow` 的对拍基准（含随机数调用次数） |
+| `code/randmap/dump_water_blob_golden.py` | 导出 `0x59C920 WaterBlob` 的对拍基准（只钉 `0x57A0C0` 岸线平滑的返回值，其余全跑真身） |
 | `code/ghidra_scripts/find_writers.py` | 定位 .bss 全局的运行期初始化点（表内容不在文件里） |
 | `code/randmap/scan_rmg_rng.py` | 只列**生成器自己那个** Randomizer(0xABE890) 的取数点（按 this 判定） |
 | `code/ghidra_scripts/rng_closure.py` | 调用树传递闭包，找出某根函数下**所有**随机数取数点（真函数边界） |

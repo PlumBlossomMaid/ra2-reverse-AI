@@ -12,6 +12,7 @@ add_library(ra2_rmg
   shore_smooth.cpp
   stage_water.cpp
   water_refine.cpp
+  water_blob.cpp
   make_grid.cpp
   place_blobs.cpp
   place_tile.cpp
@@ -136,6 +137,13 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_angular_grow PRIVATE
     RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
   add_test(NAME angular_grow COMMAND test_angular_grow)
+
+  # 湖泊涂块（MapType 3/4 支路的第一块积木）
+  add_executable(test_water_blob test/test_water_blob.cpp)
+  target_link_libraries(test_water_blob PRIVATE ra2_rmg gtest_main)
+  target_compile_definitions(test_water_blob PRIVATE
+    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+  add_test(NAME water_blob COMMAND test_water_blob)
 
   add_executable(test_height_field test/test_height_field.cpp)
   target_link_libraries(test_height_field PRIVATE ra2_rmg gtest_main)
