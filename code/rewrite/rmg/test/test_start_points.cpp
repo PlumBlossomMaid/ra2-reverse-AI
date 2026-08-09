@@ -1,4 +1,4 @@
-// 阶段 6 的对拍。
+﻿// 阶段 6 的对拍。
 //
 // 主体是 ChooseWaypoints（0x594F40）的黄金对拍：基准由
 // code/randmap/dump_start_points_golden.py 用 Unicorn 跑原版机器码取得，

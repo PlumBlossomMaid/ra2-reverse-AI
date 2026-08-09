@@ -1,4 +1,4 @@
-// 原版数学基元对拍：查表近似 sqrt + Marsaglia 极坐标正态分布
+﻿// 原版数学基元对拍：查表近似 sqrt + Marsaglia 极坐标正态分布
 //
 // FastSqrt / Uniform / NormalDeviate 的期望值由 code/randmap/dump_fastmath_golden.py
 //（FPCW=0x0E7F），存档 memory/data/rmg/fastmath_golden.txt。

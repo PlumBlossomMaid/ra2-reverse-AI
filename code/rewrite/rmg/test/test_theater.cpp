@@ -1,4 +1,4 @@
-// theater ini 解析（TileSet 枚举 -> 起始砖号）的单测
+﻿// theater ini 解析（TileSet 枚举 -> 起始砖号）的单测
 //
 // 期望值来自 code/randmap/dump_tileset_starts.py 对真实
 // TEMPERATMD.INI / SNOWMD.INI 的计算结果（memory/data/rmg/tileset_starts.txt）。

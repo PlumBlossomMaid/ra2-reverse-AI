@@ -1,4 +1,4 @@
-// 阶段 8 外层 0x5A23A0 PlaceTiberium 的黄金对拍
+﻿// 阶段 8 外层 0x5A23A0 PlaceTiberium 的黄金对拍
 //
 // 基准由 code/randmap/dump_tiberium2_golden.py 用 Unicorn 跑原版机器码取得，
 // 存档 memory/data/rmg/tiberium2_golden.txt。内层 0x5A28C0 已经由

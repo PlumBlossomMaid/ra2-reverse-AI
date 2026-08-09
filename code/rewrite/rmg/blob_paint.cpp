@@ -1,4 +1,4 @@
-#include "blob_paint.h"
+﻿#include "blob_paint.h"
 
 #include <cmath>
 #include <cstdint>

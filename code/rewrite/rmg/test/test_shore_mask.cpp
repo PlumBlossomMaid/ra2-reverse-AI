@@ -1,4 +1,4 @@
-// 八邻域「水」掩码 ShoreMask（原版 0x57B210）的黄金对拍
+﻿// 八邻域「水」掩码 ShoreMask（原版 0x57B210）的黄金对拍
 //
 // 基准由 code/randmap/dump_shore_mask_golden.py 用 Unicorn 跑原版机器码取得，
 // 存档 memory/data/rmg/shore_mask_golden.txt。

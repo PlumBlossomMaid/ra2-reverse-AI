@@ -1,4 +1,4 @@
-// 两个通用区域算子 0x5A0410 Erode / 0x5A0160 Dilate 的黄金对拍
+﻿// 两个通用区域算子 0x5A0410 Erode / 0x5A0160 Dilate 的黄金对拍
 //
 // 基准由 code/randmap/dump_region_ops_golden.py 用 Unicorn 跑原版机器码取得，
 // 存档 memory/data/rmg/region_ops_golden.txt。每个用例给一张输入

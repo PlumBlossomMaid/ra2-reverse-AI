@@ -1,4 +1,4 @@
-#include "corner_lattice.h"
+﻿#include "corner_lattice.h"
 
 #include <cstdint>
 

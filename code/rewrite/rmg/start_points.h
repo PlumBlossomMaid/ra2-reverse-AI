@@ -1,4 +1,4 @@
-// 阶段 6「Creating starting points」——把出生点摆到地图上。
+﻿// 阶段 6「Creating starting points」——把出生点摆到地图上。
 //
 // 调度 0x594B50 PlaceStartPoints，全阶段的取数点只有三处：
 //   0x5948CD  PickBelow(3)              每个区域一次，无条件抽

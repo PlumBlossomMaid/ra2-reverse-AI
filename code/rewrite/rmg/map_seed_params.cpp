@@ -1,4 +1,4 @@
-#include "map_seed_params.h"
+﻿#include "map_seed_params.h"
 
 #include <cctype>
 #include <cstdio>
@@ -6,7 +6,12 @@
 #include <fstream>
 #include <sstream>
 
-namespace ra2::rmg {
+#ifdef out
+#undef out
+#endif
+
+namespace ra2 {
+namespace rmg {
 namespace {
 
 std::string Trim(const std::string& s) {
@@ -125,4 +130,5 @@ bool LoadSedFile(const std::string& path, MapSeedParams* out) {
   return ParseSed(ss.str(), out);
 }
 
-}  // namespace ra2::rmg
+}  // namespace rmg
+}  // namespace ra2

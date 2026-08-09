@@ -1,4 +1,4 @@
-// 阶段 10「Creating LATs, rocks etc」的黄金对拍
+﻿// 阶段 10「Creating LATs, rocks etc」的黄金对拍
 //
 // 基准由 code/randmap/dump_lats_golden.py 用 Unicorn 跑原版机器码取得，
 // 存档 memory/data/rmg/lats_golden.txt。四类入口：

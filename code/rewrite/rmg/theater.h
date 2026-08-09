@@ -1,4 +1,4 @@
-// theater（气候）数据：TileSet 枚举 -> 各"语义组"的起始砖号
+﻿// theater（气候）数据：TileSet 枚举 -> 各"语义组"的起始砖号
 //
 // 随机地图生成器判水、铺岸、涂草全靠比对 `CellClass +0x38`（IsoTileTypeIndex）
 // 与一堆 .bss 全局。那些全局的值不在 exe 里，是装载 theater 时从

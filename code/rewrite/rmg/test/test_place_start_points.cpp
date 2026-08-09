@@ -1,4 +1,4 @@
-// 阶段 6「Creating starting points」整段（0x594B50）的黄金对拍。
+﻿// 阶段 6「Creating starting points」整段（0x594B50）的黄金对拍。
 //
 // 与 test_start_points.cpp 分工：那边只对最远点采样 0x594F40 这一个零件，
 // 这边把**调度 + 起区域 + 逐区域摆点**连成一整条跟原版机器码对拍。

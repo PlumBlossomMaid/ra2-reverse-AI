@@ -1,4 +1,4 @@
-// 三种 MapType 投放策略（原版 0x59AD10 / 0x59AFA0 / 0x59B200）的黄金对拍
+﻿// 三种 MapType 投放策略（原版 0x59AD10 / 0x59AFA0 / 0x59B200）的黄金对拍
 //
 // 基准由 code/randmap/dump_place_blobs_golden.py 用 Unicorn 跑原版机器码取得，
 // 存档 memory/data/rmg/place_blobs_golden.txt。比的是**整张地图的陆地生长

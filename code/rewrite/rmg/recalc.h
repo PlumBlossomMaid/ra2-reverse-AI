@@ -1,4 +1,4 @@
-// 阶段 5：绿地扩张 `FUN_0059B740` + 「Recalculating cell attributes」那一遍
+﻿// 阶段 5：绿地扩张 `FUN_0059B740` + 「Recalculating cell attributes」那一遍
 //
 // 主流程 `0x598960` 一贯是「先打日志、再干活」，这一段是唯一的例外：
 //   0x598E18  mov ecx, esi          ← 白设的，0x59B740 不读 ecx

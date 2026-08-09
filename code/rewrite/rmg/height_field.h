@@ -1,4 +1,4 @@
-// 阶段 9「Creating hills」的第 ② 步：连续高度场 0x5A2F50。
+﻿// 阶段 9「Creating hills」的第 ② 步：连续高度场 0x5A2F50。
 //
 // 整个造山阶段**只有这里取随机数**（RNG 总账里的 0x598003，即 NormalDeviate
 // 内部那次 UniformUnit）。它是一个顺序推进的分形高度场：按线性下标

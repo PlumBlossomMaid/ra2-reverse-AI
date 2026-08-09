@@ -1,4 +1,4 @@
-// 阶段 10「Creating LATs, rocks etc」——地表装饰。
+﻿// 阶段 10「Creating LATs, rocks etc」——地表装饰。
 //
 // 整条流水线里取数点最密的一段（18 个）。按 theater 分两条互斥的路：
 //   温带（Theater == 0）：0x5A38C0 按 Vegetation 播三张概率图 → 0x5A3AE0 主体

@@ -1,4 +1,4 @@
-#include "theater.h"
+﻿#include "theater.h"
 
 #include <algorithm>
 #include <cctype>

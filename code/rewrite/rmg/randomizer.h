@@ -1,4 +1,4 @@
-// RA2/YR 随机地图生成器 —— 随机数发生器（R250）
+﻿// RA2/YR 随机地图生成器 —— 随机数发生器（R250）
 //
 // 原版地址（gamemd.exe，ImageBase 0x400000）：
 //   Randomizer::Randomizer   @ 0x65C6D0   播种：4 轮 Feistel 混淆填充 250 状态字

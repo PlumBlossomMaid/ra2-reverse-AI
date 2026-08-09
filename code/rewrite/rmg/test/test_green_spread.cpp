@@ -1,4 +1,4 @@
-// 绿地扩张（原版 0x59B740，阶段 5 的前半段）的黄金对拍
+﻿// 绿地扩张（原版 0x59B740，阶段 5 的前半段）的黄金对拍
 //
 // 基准由 code/randmap/dump_green_spread_golden.py 用 Unicorn 跑原版机器码取得，
 // 存档 memory/data/rmg/green_spread_golden.txt。每个用例给一张输入地形

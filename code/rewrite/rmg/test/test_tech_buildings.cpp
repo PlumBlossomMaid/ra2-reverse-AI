@@ -1,4 +1,4 @@
-// 阶段 7「Adding tech buildings」分支 B（0x5A95B0 的 MapType != 2 那半边）的黄金对拍
+﻿// 阶段 7「Adding tech buildings」分支 B（0x5A95B0 的 MapType != 2 那半边）的黄金对拍
 //
 // 基准由 code/randmap/dump_tech_buildings_golden.py 用 Unicorn 跑原版机器码取得，
 // 存档 memory/data/rmg/tech_buildings_golden.txt。摸格子的 PickRange、

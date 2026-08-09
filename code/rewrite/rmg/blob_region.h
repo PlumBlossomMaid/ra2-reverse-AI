@@ -1,4 +1,4 @@
-// 涂块的两个几何谓词/代价函数：
+﻿// 涂块的两个几何谓词/代价函数：
 //   InRegion       @ 0x59BAB0  候选格是否落在投放区域内（矩形 / 内切椭圆）
 //   DirectionalCost@ 0x59B940  优先级模式 ≠ 0 时的方向性代价
 // 两个都决定陆地形状，详见 docs/random-map/stage-seeding-water.md §四。

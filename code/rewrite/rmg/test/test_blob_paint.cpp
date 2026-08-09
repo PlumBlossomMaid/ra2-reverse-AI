@@ -1,4 +1,4 @@
-// 涂块核心 PaintBlob（原版 0x59BBC0）的黄金对拍
+﻿// 涂块核心 PaintBlob（原版 0x59BBC0）的黄金对拍
 //
 // 基准由 code/randmap/dump_blob_paint_golden.py 用 Unicorn 跑原版机器码取得，
 // 存档 memory/data/rmg/blob_paint_golden.txt。对比的不是某个返回值，而是

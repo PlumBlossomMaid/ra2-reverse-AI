@@ -1,4 +1,4 @@
-#include "shore_mask.h"
+﻿#include "shore_mask.h"
 
 namespace ra2 {
 namespace rmg {

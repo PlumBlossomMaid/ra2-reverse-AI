@@ -1,4 +1,4 @@
-// 贴砖器（原版 0x57B440）的黄金对拍
+﻿// 贴砖器（原版 0x57B440）的黄金对拍
 //
 // 基准由 code/randmap/dump_place_tile_golden.py 用 Unicorn 跑原版机器码取得，
 // 存档 memory/data/rmg/place_tile_golden.txt。比三样：返回值、出参 ok、

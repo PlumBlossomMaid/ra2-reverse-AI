@@ -1,4 +1,4 @@
-// InRegion / DirectionalCost 的回归。黄金值由 Unicorn 直接执行原版取得
+﻿// InRegion / DirectionalCost 的回归。黄金值由 Unicorn 直接执行原版取得
 // （0x59BAB0 / 0x59B940，FPCW=0x0E7F），存档 memory/data/rmg/blob_region_golden.txt。
 //
 // DirectionalCost 是**逐位**比较：它的结果直接进最小堆当优先级，

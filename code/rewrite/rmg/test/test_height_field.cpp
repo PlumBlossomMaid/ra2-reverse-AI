@@ -1,4 +1,4 @@
-// 阶段 9 高度场（0x5A2F50）的黄金对拍。
+﻿// 阶段 9 高度场（0x5A2F50）的黄金对拍。
 //
 // 基准由 code/randmap/dump_height_field_golden.py 用 Unicorn 跑原版机器码取得，
 // 存档 memory/data/rmg/height_field_golden.txt。每个用例给一张空工作数组

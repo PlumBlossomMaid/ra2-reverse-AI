@@ -1,4 +1,4 @@
-// 原版正弦查表——gamemd.exe `0x84F084`，10240 项 float。
+﻿// 原版正弦查表——gamemd.exe `0x84F084`，10240 项 float。
 //
 // 这是一张**数学常量表**：第 i 项 = sin(i * 2π / 8192)
 // 先在 double 上算再**向零截断**存成 float（原版全局 FPU 是 RC=chop）。

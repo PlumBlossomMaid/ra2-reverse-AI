@@ -1,4 +1,4 @@
-// 湖泊涂块器 0x59C920 的黄金对拍
+﻿// 湖泊涂块器 0x59C920 的黄金对拍
 //
 // 基准由 code/randmap/dump_water_blob_golden.py 用 Unicorn 跑原版机器码取得，
 // 存档 memory/data/rmg/water_blob_golden.txt。每个用例给一张输入

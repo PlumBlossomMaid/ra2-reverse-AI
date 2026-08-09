@@ -1,4 +1,4 @@
-// 地图尺寸换算的黄金对拍
+﻿// 地图尺寸换算的黄金对拍
 //
 // 期望值来自 Unicorn 指令级模拟原版 gamemd.exe 0x599665-0x59974E（FPCW=0x0E7F），
 // 存档 memory/data/rmg/map_size_golden.txt。全网格 7 玩家数 x 5 MapType x 6x6 档位。

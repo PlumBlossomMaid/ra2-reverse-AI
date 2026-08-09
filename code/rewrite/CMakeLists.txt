@@ -1,12 +1,30 @@
-# 算法重写模块: 生产系统 + 威胁评估系统 + 随机地图生成器
+cmake_minimum_required(VERSION 3.14)
+project(ra2_rewrite CXX)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# GoogleTest - 强制使用动态运行时库以匹配MSVC默认设置
+set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
+include(FetchContent)
+FetchContent_Declare(
+  googletest
+  GIT_REPOSITORY https://github.com/google/googletest.git
+  GIT_TAG release-1.12.1
+)
+FetchContent_MakeAvailable(googletest)
+
+enable_testing()
+
+option(RA2_BUILD_TESTS "Build tests" ON)
+
+# 算法重写模块
 add_library(ra2_algorithms
   production_system.cpp
   threat_system.cpp)
-
 target_include_directories(ra2_algorithms PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 
 if(RA2_BUILD_TESTS)
-  # Google Test 用例
   add_executable(test_production test/test_production.cpp)
   target_link_libraries(test_production PRIVATE ra2_algorithms gtest_main)
   add_test(NAME production COMMAND test_production)
@@ -16,11 +34,6 @@ if(RA2_BUILD_TESTS)
   add_test(NAME threat COMMAND test_threat)
 endif()
 
-# Westwood 资源容器的只读解析（.mix / .tmp）
 add_subdirectory(mix)
-
-# 随机地图生成器(独立子模块)
 add_subdirectory(rmg)
-
-# 游戏数据装载层（依赖上面两个）
 add_subdirectory(assets)

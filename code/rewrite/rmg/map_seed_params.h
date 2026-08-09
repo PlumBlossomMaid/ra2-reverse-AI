@@ -1,4 +1,4 @@
-// MapSeedClass 的参数集：RandMap.Sed 的读取与默认值
+﻿// MapSeedClass 的参数集：RandMap.Sed 的读取与默认值
 //
 // 字段偏移、键名、默认值全部取自 gamemd.exe：
 //   构造 MapSeedClass::MapSeedClass  0x595680（默认值）
@@ -10,7 +10,8 @@
 #include <string>
 #include <vector>
 
-namespace ra2::rmg {
+namespace ra2 {
+namespace rmg {
 
 // 对应 MapSeedClass +0x38 .. +0x178。注释里的偏移是原版对象内的偏移，
 // 复刻时不复制内存布局，只保证语义一致。
@@ -51,4 +52,5 @@ std::string EncodeDescription(const std::u16string& s);
 bool ParseSed(const std::string& content, MapSeedParams* out);
 bool LoadSedFile(const std::string& path, MapSeedParams* out);
 
-}  // namespace ra2::rmg
+}  // namespace rmg
+}  // namespace ra2

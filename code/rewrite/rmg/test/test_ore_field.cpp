@@ -1,4 +1,4 @@
-// 阶段 8 内层 0x5A28C0 CreateOreField 的黄金对拍
+﻿// 阶段 8 内层 0x5A28C0 CreateOreField 的黄金对拍
 //
 // 基准由 code/randmap/dump_tiberium_golden.py 用 Unicorn 跑原版机器码取得，
 // 存档 memory/data/rmg/tiberium_golden.txt。每个用例给一张合成的小图，

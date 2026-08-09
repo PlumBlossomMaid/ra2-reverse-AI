@@ -1,4 +1,4 @@
-// 岸线平滑（原版 0x57A0C0，四遍扫全图）的黄金对拍
+﻿// 岸线平滑（原版 0x57A0C0，四遍扫全图）的黄金对拍
 //
 // 基准由 code/randmap/dump_shore_smooth_golden.py 用 Unicorn 跑原版机器码取得，
 // 存档 memory/data/rmg/shore_smooth_golden.txt。比三样：

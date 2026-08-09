@@ -1,4 +1,4 @@
-#include "recalc.h"
+﻿#include "recalc.h"
 
 #include <cstddef>
 #include <vector>

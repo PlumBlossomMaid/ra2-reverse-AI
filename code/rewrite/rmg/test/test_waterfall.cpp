@@ -1,4 +1,4 @@
-// 瀑布 0x59E740 PlaceWaterfall 的黄金对拍
+﻿// 瀑布 0x59E740 PlaceWaterfall 的黄金对拍
 //
 // 基准由 code/randmap/dump_waterfall_golden.py 用 Unicorn 跑原版机器码取得，
 // 存档 memory/data/rmg/waterfall_golden.txt。函数内部真的会跑 AngularGrow /

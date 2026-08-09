@@ -14,6 +14,7 @@ add_library(ra2_rmg
   water_refine.cpp
   water_blob.cpp
   waterfall.cpp
+  rivers.cpp
   make_grid.cpp
   place_blobs.cpp
   place_tile.cpp
@@ -31,6 +32,7 @@ add_library(ra2_rmg
   fp_guard.cpp)
 
 target_include_directories(ra2_rmg PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+target_compile_features(ra2_rmg PUBLIC cxx_std_17)
 
 # 逐位复刻要求浮点行为完全由代码决定，不许编译器代劳。见 fp_guard.h 的坑位清单。
 if(MSVC)
@@ -152,6 +154,12 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_waterfall PRIVATE
     RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
   add_test(NAME waterfall COMMAND test_waterfall)
+
+  add_executable(test_rivers test/test_rivers.cpp)
+  target_link_libraries(test_rivers PRIVATE ra2_rmg gtest_main)
+  target_compile_definitions(test_rivers PRIVATE
+    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/../../memory/data/rmg")
+  add_test(NAME rivers COMMAND test_rivers)
 
   add_executable(test_height_field test/test_height_field.cpp)
   target_link_libraries(test_height_field PRIVATE ra2_rmg gtest_main)

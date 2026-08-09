@@ -1,4 +1,4 @@
-// 0x5A08D0 AngularGrow 的黄金对拍
+﻿// 0x5A08D0 AngularGrow 的黄金对拍
 //
 // 基准由 code/randmap/dump_angular_grow_golden.py 用 Unicorn 跑原版机器码取得，
 // 存档 memory/data/rmg/angular_grow_golden.txt。每个用例给一张输入

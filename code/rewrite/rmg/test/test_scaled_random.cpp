@@ -1,4 +1,4 @@
-// 对拍基准来自 memory/data/rmg/scaled_golden.txt
+﻿// 对拍基准来自 memory/data/rmg/scaled_golden.txt
 // —— code/randmap/dump_scaled_golden.py 用 Unicorn 指令级模拟原版
 // FUN_0059C630（Seeding water 阶段）里的三处取数片段，FPCW=0x0E7F 采得。
 #include <cstdint>

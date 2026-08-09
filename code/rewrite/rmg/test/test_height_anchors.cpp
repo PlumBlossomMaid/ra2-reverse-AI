@@ -1,4 +1,4 @@
-// 阶段 9 第 ① 步「打锚点」（原版 0x5A33F0）的黄金对拍
+﻿// 阶段 9 第 ① 步「打锚点」（原版 0x5A33F0）的黄金对拍
 //
 // 基准由 code/randmap/dump_height_anchors_golden.py 用 Unicorn 跑原版机器码
 // 取得，存档 memory/data/rmg/height_anchors_golden.txt。

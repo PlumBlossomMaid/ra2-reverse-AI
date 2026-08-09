@@ -1,4 +1,4 @@
-// .sed 参数读取的回归
+﻿// .sed 参数读取的回归
 //
 // 样本取自实机生成的 RandMap.Sed（见 docs/random-map/parameters.md）。
 #include <gtest/gtest.h>

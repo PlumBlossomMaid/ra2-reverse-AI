@@ -1,4 +1,4 @@
-// Randomizer(R250) 数值对拍测试
+﻿// Randomizer(R250) 数值对拍测试
 //
 // 期望值全部来自原版 gamemd.exe 的机器码实跑（Unicorn 指令级模拟）：
 //   生成命令: python code/randmap/emu_oracle.py 0 1 11584 60556 0xDEADBEEF ...

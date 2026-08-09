@@ -1,4 +1,4 @@
-// 阶段 7「Adding tech buildings」——撒中立科技建筑（0x5A95B0）。
+﻿// 阶段 7「Adding tech buildings」——撒中立科技建筑（0x5A95B0）。
 //
 // `MapType == 0` 整段跳过；否则按 `MapType == 2` 分两条**互斥**的路：
 //   A（MapType == 2）：抽 n = PickBelow(3)，把「有出生点的区域」整表刷 n 遍，

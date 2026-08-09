@@ -1,4 +1,4 @@
-// 阶段 2 调度器（原版 0x59A6C0）的黄金对拍
+﻿// 阶段 2 调度器（原版 0x59A6C0）的黄金对拍
 //
 // 这是目前最"整"的一条对拍链：一次调用把铺水 → 投放策略 → 涂块核心 →
 // 岸线平滑四遍 → 掩码 → 贴砖器全跑一遍，比对整张地图的终态。
@@ -350,7 +350,8 @@ std::vector<RefineCase> LoadRefineGolden() {
   std::vector<RefineCase> out;
   std::string line;
   while (std::getline(in, line)) {
-    if (!line.empty() && line.back() == '') line.pop_back();
+    if (!line.empty() && line.back() == '
+') line.pop_back();
     std::istringstream ss(line);
     std::string tag;
     ss >> tag;

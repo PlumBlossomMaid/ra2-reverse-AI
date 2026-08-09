@@ -1,4 +1,4 @@
-#include "shore_smooth.h"
+﻿#include "shore_smooth.h"
 
 #include <cstdint>
 #include <cstdlib>
