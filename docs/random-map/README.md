@@ -25,7 +25,7 @@
 | [stage-lats.md](stage-lats.md) | 阶段：Creating LATs, rocks etc（地表装饰，取数点最密） | ✅ 18 个取数点全部实锤；**已落 C++ 并逐位对拍**（`rmg/lats.{h,cpp}` + `rmg/lat_spread.cpp`，25 个用例） |
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法全还原；**`MapType 0/1/2` 主路径 + 水面细化整条落成 C++ 并对拍** |
-| [stage-water-maptype34.md](stage-water-maptype34.md) | 阶段 2 支路：`MapType ∈ {3,4}` 的**河流、湖泊与瀑布**（含查表 sin/cos） | ✅ 八个函数全部实锤；sin/cos、两个通用区域算子（`0x5A0410` Erode / `0x5A0160` Dilate）、角度扩张 `0x5A08D0` 与**湖泊涂块 `0x59C920`** 已落 C++ 并对拍；河 `0x59D510` / 瀑布 `0x59E740` / 调度 `0x59C580` 待落 C++ |
+| [stage-water-maptype34.md](stage-water-maptype34.md) | 阶段 2 支路：`MapType ∈ {3,4}` 的**河流、湖泊与瀑布**（含查表 sin/cos） | ✅ 八个函数全部实锤；sin/cos、两个通用区域算子（`0x5A0410` Erode / `0x5A0160` Dilate）、角度扩张 `0x5A08D0`、**湖泊涂块 `0x59C920`**、瀑布 `0x59E740`、**河 `0x59D510` 与调度 `0x59C580`** 已全部落 C++ 并对拍（River 13 例 + AddRiversAndLakes 6 例） |
 | [stage-making-regions.md](stage-making-regions.md) | 阶段 4：Making regions（区域重建 + **区域之间开坡道/架桥**，`MapType ∈ {3,4}` 专属，45 个取数点） | ✅ **45 个取数点全部关闭**；区域切分 / 架桥 / 四个直坡 / 三个转角 / 两遍重刷砖全部实锤 |
 
 ## 进度
@@ -350,6 +350,15 @@
       `Atan(1.0) = 0.7735263` 比真值 π/4 差 **0.68°**；`|x|` 跨过约 100.02
       时结果跳 0.01 弧度（不连续）；它**是**严格奇对称的——与 Sin/Cos 正相反，
       因为 `abs` 排在 `_ftol` 之后。105 组 Unicorn 黄金值 + 4097 项表自检全绿
+- [x] **河 `0x59D510` 与调度 `0x59C580`（AddRiversAndLakes）落 C++ 并对拍**
+      （`rivers.{h,cpp}`，ctest 名 `rivers`）——River 13 例 + ARL 6 例全绿，
+      **`MapType ∈ {3,4}` 支路至此整条闭合**。两处实锤修正：
+      支流递归起点 = **画格横截面末端** `(Ftol(xL),Ftol(yL))`
+      （0x59DF6E-0x59DF80 反汇编，不是推进后游标——差 2 格使递归整体偏移，
+      arl-mt3-wa30 的 river6 RNG 消耗 109 vs 145 分岔）；ok = 支流递归返回值
+      （0x59DFA2 `mov [esp+0xf],al`，丢弃后主河多跑 10 轮）。
+      调度重试语义与探针时机经验（0x59C5D0 返回点 / 0x59DE52 读真实触发 RNG）
+      见 `WIP_RIVER_DEBUG.md`
 - [x] **阶段 4「Making regions」骨架实锤** → [stage-making-regions.md](stage-making-regions.md)：
       名字骗人——阶段 3 才是切区域，这一阶段做的是**把区域连起来**。
       五步：`0x58EBC0` 重算成员/包围盒并切开过大的区域

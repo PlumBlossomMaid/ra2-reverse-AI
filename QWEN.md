@@ -126,10 +126,21 @@ a2mdpost\MapGen.cpp` = **0x5956E7-0x59A63A**（源码行 3934-6746，21KB）。
   文档 `docs/random-map/`（README/randomizer/mapgen-tu/parameters）；
   取证 `memory/data/decomp/{mapgen_tu_map,rmg_pipeline_decomp,randomizer_asm}.txt` +
   基准 `memory/data/rmg/rng_golden.txt`；环境坑 `memory/notes/toolchain-pitfalls.md`（7 条）。
-  **下一步**：`Init random map`(FUN_00599650) 已确认主体是引擎侧初始化（写 [Lighting]/[Basic] INI、
-  建 Preview、清 CellClass、重算寻路、设 waypoint 700/699），只取 1 次随机数，命令行工具基本不必复刻；
-  真正地形算法在 `Seeding water`(0x59A6C0/0x59C580/0x59C630) 及之后，集中在
-  **0x59A66C-0x5A9800 这段无调试宏的源文件**（约 130 处取数点）——从它开始逐阶段还原 + 记录取数个数。
+  ⑦ **全流水线算法落 C++ 并对拍完成（2026-08-11）**：104 个活取数点语义全部落地，
+  12 个阶段 + MapType ∈ {3,4} 河湖支路全部端到端对拍（stage_water/water_refine/regions/
+  recalc/start_points/zones/height_field/corner_lattice/lats/ore_field/tech_buildings/
+  place_tiberium/place_start_points/region_ops/angular_grow/water_blob/rivers……，
+  ctest 37/37 全绿）；`.mix`/`.tmp` 装载器（`code/rewrite/mix/` + `assets/`）已落 C++。
+  本会话最后闭合 **River 0x59D510 + 调度 0x59C580（AddRiversAndLakes）**，两处实锤修正：
+  支流递归起点 = 画格横截面末端 `(Ftol(xL),Ftol(yL))`（0x59DF6E-0x59DF80，非推进后游标）、
+  ok = 支流递归返回值（0x59DFA2，丢弃则主河多跑 10 轮）。
+  `Init random map`(FUN_00599650) 已确认是引擎侧初始化（写 [Lighting]/[Basic] INI、建 Preview、
+  清 CellClass、重算寻路、设 waypoint 700/699），只取 1 次随机数，CLI 不必复刻。
+  调试记录 `WIP_RIVER_DEBUG.md`；文档 `docs/random-map/` 22 篇。
+  **下一步：端到端 CLI 收尾**——① `.map` 输出编码器（[IsoMapPack5]=Base64(块:2B src+2B dst+数据)
+  →XCC decode5s、[OverlayPack]=encode80、cell=MAPFIELDDATA 11B；参考 EA 官方编辑器 GPL-3.0 源码）；
+  ② CLI 主程序：读 `.sed`（[RandomMap] INI 17 键）→ 按流水线顺序跑全部阶段 → 写
+  `rmcache\RandMap.Map`；③ 端到端逐字节验证（同种子 vs 原版）。
   注意：RA1 源码（CnCRemastered）**无**随机地图生成器（TS/RA2 新特性）；EA 任务编辑器也**无**生成器
 - **待确认**：`DemandProduction` 第三参数语义；`Unsuspend` 资金不足时挂起标志的行为；
   多工厂海军/陆军计数差异；`target->Target==me` 时反击贡献取负的语义；`Type+0x1FB` 标志名称；
