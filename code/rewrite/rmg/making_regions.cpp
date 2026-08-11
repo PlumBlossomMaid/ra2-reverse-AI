@@ -204,7 +204,11 @@ bool Clearance(const RegionContext& ctx, MakingWorld& world, int owner,
                const Rect& r, int low_region_id) {
   // 0x594010（__thiscall，this = 高的一侧区域）。四角先过 IsWithinUsableArea
   // （use_height = 1，0x578460），再逐格查 owner 与未定砖。
-  const MapRect mr{r.x, r.y, r.w, r.h};
+  // ⚠️ 0x578460 读的是 **MapClass 实例（0x87F7E8）+0xF4/+0xFC..+0x108** 那组
+  // 地图边界字段（实测 = {map_w, x=0, y=0, w=W, h=H}），**不是**传入的 rect
+  // ——C++ 侧对应 ctx.usable + ctx.map_rect_w。传 r 当 local 是旧 bug
+  // （整链 golden 未触发所以没暴露，ramps 专项对拍一测就现形）。
+  const MapRect mr{ctx.usable.x, ctx.usable.y, ctx.usable.w, ctx.usable.h};
   const auto in_map = [&](int x, int y) {
     return IsWithinUsableArea(ctx.map_rect_w, mr, x, y, world.Level({x, y}),
                               world.Ramp({x, y}), true);

@@ -6,13 +6,21 @@
 > 以及架桥 `0x58F2C0` 均已实锤；
 > 三个转角建造函数也已实锤（§五之四，连带查出第 4 条转角分支是**死的**）。
 > **全流水线已落 C++ 并对拍完成**（`code/rewrite/rmg/{making_regions,ramps,cliff_work}.cpp`，
-> ctest 38/38 全绿，10 组基准含 4 组 stage2 + 6 组合成地形）——
+> ctest 39/39 全绿，10 组整链基准含 4 组 stage2 + 6 组合成地形 + 9 组坡道专项）——
 > 0x58EBC0 切分、0x58EF10 重建/开通路、0x5A19E0 悬崖修角、0x578E60 全图重刷、
 > 0x5A17F0 多格砖重掷的随机消耗与格子终态逐位对齐。
 > 对拍中两处实锤修正：① `0x89A304` 方向偏移表是 `.data` 零填充区（全 0），
 > 候选标记写的是"节点自己"（0x58DA5B）→ **原版扩散无防重、候选重复入堆**；
 > ② `HigherMask`（0x579B70）对每个邻格先取 cell 指针（界外写共享哑元坐标，
 > 0x579Cxx 区）——`[0xABDC74]` 的终值是可观测副作用，C++ 照抄。
+> **坡道六分支（四直坡 + 三转角）专项对拍完成**（`test/test_ramps.cpp`，
+> 9 组用例逐字节对齐，golden `memory/data/rmg/ramps_golden.txt`）——
+> 又带出两处实锤：③ **东/西直坡的净空矩形 w/h 与南/北相反**（沿 X 方向的坡
+> `{x, y, 跨X+9/8, 跨Y+11}`，沿 Y 方向的坡 `{x, y, 跨X+11, dy+9}`，Ghidra
+> local_10/c/8/4 的倒序布局害的）；④ `0x578460` 读的是 **MapClass 实例
+> （0x87F7E8）+0xF4/+0xFC..+0x108** 那组地图边界字段（实测 = {map_w, 0, 0, W, H}），
+> 不是传入的 rect——C++ `Clearance` 用 `ctx.usable` 当 local（旧实现传 r 是 bug，
+> 整链 golden 没触发所以未暴露）。
 > 取证：`memory/data/decomp/rmg_regions_stage4{,b,c}.txt` /
 > `rmg_ramp_stage4{d,e,f,j,k}.txt` / `rmg_bridge_stage4{g,h,i}.txt` /
 > `rmg_split_stage4{l,m}.txt` / `rmg_corner_stage4{n,o}.txt`。

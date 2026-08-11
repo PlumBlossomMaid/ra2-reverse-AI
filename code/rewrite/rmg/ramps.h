@@ -22,6 +22,29 @@ namespace rmg {
 bool BuildRamp(RegionContext& ctx, MakingWorld& world, RegionClass* hi,
                const CellCoord& c, int low_region_id, float tol);
 
+// ── 七个建造函数（0x5910F0/0x591740/0x591D80/0x592440、0x593AF0/0x593550/
+//    0x593030）── 供 test_ramps 逐字节对拍直接链接（golden：dump_ramps_golden.py）。
+// 签名统一：`(ctx, world, hi, a, b, low_region_id)`，hi 是层高大的区域。
+// 直坡各 0/1 个取数点（dx/dy 非零才取硬币），转角 0 个。
+bool BuildStraightSouth(RegionContext& ctx, MakingWorld& world,
+                        RegionClass* hi, const CellCoord& a,
+                        const CellCoord& b, int low_id);
+bool BuildStraightEast(RegionContext& ctx, MakingWorld& world,
+                       RegionClass* hi, const CellCoord& a,
+                       const CellCoord& b, int low_id);
+bool BuildStraightNorth(RegionContext& ctx, MakingWorld& world,
+                        RegionClass* hi, const CellCoord& a,
+                        const CellCoord& b, int low_id);
+bool BuildStraightWest(RegionContext& ctx, MakingWorld& world,
+                       RegionClass* hi, const CellCoord& a,
+                       const CellCoord& b, int low_id);
+bool BuildCornerNE(RegionContext& ctx, MakingWorld& world, RegionClass* hi,
+                   const CellCoord& a, const CellCoord& b, int low_id);
+bool BuildCornerES(RegionContext& ctx, MakingWorld& world, RegionClass* hi,
+                   const CellCoord& a, const CellCoord& b, int low_id);
+bool BuildCornerSW(RegionContext& ctx, MakingWorld& world, RegionClass* hi,
+                   const CellCoord& a, const CellCoord& b, int low_id);
+
 // 0x58F2C0 `BuildBridge(water, a, b)`（__thiscall，ecx = 水区域）。
 // 在外壳最多 200 次重试里：抽一格水面当锚点（三重拒绝采样，取数点 0x58F342）
 // → 四条探条找对岸（成对短路）→ 两端必须正好是 A、B → 跨距上限 `tries/25 + 8`

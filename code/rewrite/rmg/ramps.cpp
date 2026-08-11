@@ -99,19 +99,17 @@ inline void WriteRampCell(RegionContext& ctx, MakingWorld& w,
 }
 
 // ── 四个直坡共用的表 ──
-// 层高表 {3,2,1,0,0} 四份内容相同（0x82AF3C/78/B4/F0）。
+// 层高表 {3,2,1,0,0} 四份内容相同（0x82AF3C/78/B4/F0），MSVC 未合并常量表。
 const int kLevelTable[5] = {3, 2, 1, 0, 0};
-// 台阶表两行（d < 0 / d > 0），各方向不同，按方向查。
 const int kSlopeSouth[2][5] = {{11, 15, 15, 15, 7}, {12, 16, 16, 16, 8}};
 const int kSlopeEast[2][5]  = {{10, 14, 14, 14, 6}, {11, 15, 15, 15, 7}};
 const int kSlopeNorth[2][5] = {{10, 14, 14, 14, 6}, {9, 13, 13, 13, 5}};
 const int kSlopeWest[2][5]  = {{9, 13, 13, 13, 5}, {12, 16, 16, 16, 8}};
 
-// ⚠️ 本文件当前只有南向（0x5910F0）的刷带/台阶段坐标逐条核过反编译
-// （rmg_ramp_stage4j.txt）；东/北/西三向按"同一份代码转 90°"的对称推导，
-// 具体坐标待对拍校正（见 §五之二 未确认 2）。
+}  // namespace
 
 // ── 南向直坡 0x5910F0（坡道沿 X 方向，a.X → b.X）──
+// 在 ra2::rmg 命名空间（ramps.h 导出）：六个建造函数单独对拍需要直接链接。
 bool BuildStraightSouth(RegionContext& ctx, MakingWorld& world,
                         RegionClass* hi, const CellCoord& a,
                         const CellCoord& b, int low_id) {
@@ -178,35 +176,369 @@ bool BuildStraightSouth(RegionContext& ctx, MakingWorld& world,
   return true;
 }
 
-// ── 东/北/西向直坡：坐标公式待子代理从反编译提取后补全（见本文件头部注释）──
-bool BuildStraightEast(RegionContext&, MakingWorld&, RegionClass*, const CellCoord&,
-                       const CellCoord&, int) {
-  return false;   // TODO(subagent)：0x591740 坐标
-}
-bool BuildStraightNorth(RegionContext&, MakingWorld&, RegionClass*, const CellCoord&,
-                        const CellCoord&, int) {
-  return false;   // TODO(subagent)：0x591D80 坐标
-}
-bool BuildStraightWest(RegionContext&, MakingWorld&, RegionClass*, const CellCoord&,
-                       const CellCoord&, int) {
-  return false;   // TODO(subagent)：0x592440 坐标
+// ── 东向直坡 0x591740（坡道沿 Y 方向，a 南 b 北，dy = a.Y - b.Y）──
+// 反编译取证：rmg_ramp_stage4j.txt（0x591740）+ 汇编核对肩膀砖第二块用 b 原坐标。
+bool BuildStraightEast(RegionContext& ctx, MakingWorld& world,
+                       RegionClass* hi, const CellCoord& a,
+                       const CellCoord& b, int low_id) {
+  const int dx = b.x - a.x;
+  const int dy = a.y - b.y;
+  const int min_x = std::min(a.x, b.x);
+  const int max_x = std::max(a.x, b.x);
+  const int hi_level = hi->level;
+
+  const Rect r{min_x - 3, b.y - 4, (max_x - min_x) + 11, dy + 9};
+  if (!Clearance(ctx, world, hi->id, r, low_id)) return false;
+  if (dy - 5 < std::abs(dx)) return false;          // 斜度限制
+  const int half = (dy + 1) / 2;                    // 东向 half 无 +3
+
+  // 四条刷带（半开区间，反编译钉死）
+  PaintBand(ctx, world, low_id, ctx.regions->ById(low_id)->level,
+            a.x + 1, a.x + 8, a.y - half, a.y + 5);           // 带1 low
+  PaintBand(ctx, world, low_id, ctx.regions->ById(low_id)->level,
+            b.x + 1, b.x + 8, b.y - 4, b.y + half);           // 带2 low
+  PaintBand(ctx, world, hi->id, hi_level,
+            min_x - 1, a.x + 1, a.y - half, a.y + 1);         // 带3 high
+  PaintBand(ctx, world, hi->id, hi_level,
+            min_x - 1, b.x + 1, b.y, b.y + half);             // 带4 high
+
+  // 两块肩膀砖（+2、+3）
+  const int ssp = ctx.theater->slope_set_pieces;
+  StampByIndex(world, ctx.grid, ssp + 2, CellCoord{a.x, a.y - 2},
+               low_id, hi_level);
+  StampByIndex(world, ctx.grid, ssp + 3, CellCoord{b.x, b.y},
+               low_id, hi_level);
+
+  // 硬币：台阶段贴跑道哪一头（dx == 0 时不取）
+  int jog_y = 0, flat_x = 0, flat_y = 0, slope_row = 0;
+  if (dx != 0) {
+    const int coin = Coin(*ctx.rng);
+    const int x_shift = (dx >= 0) ? 0 : -1;       // (-1 < dx) - 1
+    if (coin == 1) {
+      flat_x = dx;
+      flat_y = -std::abs(dx);
+    } else {
+      jog_y = std::abs(dx) - dy + 5;
+    }
+    slope_row = (dx > 0) ? 1 : 0;
+
+    // 台阶段：i ∈ [0, |dx|)、j ∈ [0, 5)
+    const int ramp_base = ctx.theater->ramp_base;
+    for (int i = 0; i < std::abs(dx); ++i) {
+      for (int j = 0; j < 5; ++j) {
+        const int xx = a.x + j + x_shift + (slope_row == 1 ? i : -i);
+        const int yy = a.y - 3 - i + jog_y;
+        const int s = kSlopeEast[slope_row][j];
+        WriteRampCell(ctx, world, CellCoord{xx, yy}, ramp_base + s - 1, s,
+                      hi_level + kLevelTable[j] - 4, false, low_id);
+      }
+    }
+  }
+
+  // 直坡段：i ∈ [0, len)、j ∈ [0, 4)，len = dy - |dx| - 5
+  const int ramp_base = ctx.theater->ramp_base;
+  const int len = dy - std::abs(dx) - 5;
+  for (int i = 0; i < len; ++i) {
+    for (int j = 0; j < 4; ++j) {
+      WriteRampCell(ctx, world, CellCoord{a.x + j + flat_x,
+                                          a.y - 3 - i + flat_y},
+                    ramp_base + 2, 3, hi_level - j - 1, true, low_id);
+    }
+  }
+  return true;
 }
 
-// ── 三个转角：坐标公式待子代理提取后补全 ──
-bool BuildCornerNE(RegionContext&, MakingWorld&, RegionClass*, const CellCoord&,
-                   const CellCoord&, int) {
-  return false;   // TODO(subagent)：0x593AF0
-}
-bool BuildCornerES(RegionContext&, MakingWorld&, RegionClass*, const CellCoord&,
-                   const CellCoord&, int) {
-  return false;   // TODO(subagent)：0x593550
-}
-bool BuildCornerSW(RegionContext&, MakingWorld&, RegionClass*, const CellCoord&,
-                   const CellCoord&, int) {
-  return false;   // TODO(subagent)：0x593030
+// ── 北向直坡 0x591D80（坡道沿 X 方向，a 东 b 西，dx = a.X - b.X）──
+// 反编译取证：rmg_ramp_stage4k.txt（0x591D80）。
+bool BuildStraightNorth(RegionContext& ctx, MakingWorld& world,
+                        RegionClass* hi, const CellCoord& a,
+                        const CellCoord& b, int low_id) {
+  const int dx = a.x - b.x;
+  const int dy = b.y - a.y;                      // dy' = b.Y - a.Y
+  const int min_y = std::min(a.y, b.y);
+  const int max_y = std::max(a.y, b.y);
+  const int hi_level = hi->level;
+
+  const Rect r{b.x - 4, min_y - 7, dx + 8, (max_y - min_y) + 11};
+  if (!Clearance(ctx, world, hi->id, r, low_id)) return false;
+  if (dx - 5 < std::abs(dy)) return false;       // 斜度限制
+  const int half = (dx + 1) / 2 + 3;             // 北向 half 带 +3
+
+  // 四条刷带
+  PaintBand(ctx, world, low_id, ctx.regions->ById(low_id)->level,
+            b.x - 4, b.x - 2 + half, min_y - 7, b.y);        // 带1 low
+  PaintBand(ctx, world, low_id, ctx.regions->ById(low_id)->level,
+            a.x - half + 2, a.x + 5, min_y - 7, a.y);        // 带2 low
+  PaintBand(ctx, world, hi->id, hi_level,
+            b.x, b.x - 2 + half, b.y, max_y + 2);            // 带3 high
+  PaintBand(ctx, world, hi->id, hi_level,
+            a.x - half + 2, a.x + 1, a.y, max_y + 2);        // 带4 high
+
+  // 三块肩膀砖（+4、+5、+6）
+  const int ssp = ctx.theater->slope_set_pieces;
+  StampByIndex(world, ctx.grid, ssp + 4, CellCoord{b.x, b.y - 3},
+               low_id, hi_level);
+  StampByIndex(world, ctx.grid, ssp + 5, CellCoord{a.x - 2, a.y - 3},
+               low_id, hi_level);
+  StampByIndex(world, ctx.grid, ssp + 6, CellCoord{a.x - 1, a.y - 1},
+               low_id, hi_level);
+
+  // 硬币：台阶段贴跑道哪一头（dy == 0 时不取）
+  int jog_x = 0, flat_x = 0, flat_y = 0, slope_row = 0;
+  if (dy != 0) {
+    const int coin = Coin(*ctx.rng);
+    const int y_shift = (dy < 0) ? 1 : 0;        // (dy < 0) 布尔量
+    if (coin == 1) {
+      flat_x = std::abs(dy);
+      flat_y = -dy;
+    } else {
+      jog_x = dx - std::abs(dy) - 5;
+    }
+    slope_row = (dy > 0) ? 1 : 0;
+
+    // 台阶段：i ∈ [0, |dy|)、j ∈ [0, 5)
+    const int ramp_base = ctx.theater->ramp_base;
+    for (int i = 0; i < std::abs(dy); ++i) {
+      for (int j = 0; j < 5; ++j) {
+        const int xx = b.x + 3 + i + jog_x;
+        const int yy = b.y - j + y_shift + (slope_row == 0 ? i : -i);
+        const int s = kSlopeNorth[slope_row][j];
+        WriteRampCell(ctx, world, CellCoord{xx, yy}, ramp_base + s - 1, s,
+                      hi_level + kLevelTable[j] - 4, false, low_id);
+      }
+    }
+  }
+
+  // 直坡段：i ∈ [0, len)、j ∈ [0, 4)，len = dx - |dy| - 5
+  const int ramp_base = ctx.theater->ramp_base;
+  const int len = dx - std::abs(dy) - 5;
+  for (int i = 0; i < len; ++i) {
+    for (int j = 0; j < 4; ++j) {
+      WriteRampCell(ctx, world, CellCoord{b.x + 3 + i + flat_x,
+                                          b.y - j + flat_y},
+                    ramp_base + 1, 2, hi_level - j - 1, true, low_id);
+    }
+  }
+  return true;
 }
 
-}  // namespace
+// ── 西向直坡 0x592440（坡道沿 Y 方向，a 北 b 南，dy = b.Y - a.Y）──
+// 反编译取证：rmg_ramp_stage4k.txt（0x592440）。
+bool BuildStraightWest(RegionContext& ctx, MakingWorld& world,
+                       RegionClass* hi, const CellCoord& a,
+                       const CellCoord& b, int low_id) {
+  const int dx = b.x - a.x;
+  const int dy = b.y - a.y;
+  const int min_x = std::min(a.x, b.x);
+  const int max_x = std::max(a.x, b.x);
+  const int hi_level = hi->level;
+
+  const Rect r{min_x - 7, a.y - 4, (max_x - min_x) + 11, dy + 9};
+  if (!Clearance(ctx, world, hi->id, r, low_id)) return false;
+  if (dy - 5 < std::abs(dx)) return false;       // 斜度限制
+  const int half = (dy + 1) / 2;                 // 西向 half 无 +3
+
+  // 四条刷带
+  PaintBand(ctx, world, low_id, ctx.regions->ById(low_id)->level,
+            min_x - 7, a.x, a.y - 4, a.y + half);         // 带1 low
+  PaintBand(ctx, world, low_id, ctx.regions->ById(low_id)->level,
+            min_x - 7, b.x, b.y - half + 1, b.y + 5);     // 带2 low
+  PaintBand(ctx, world, hi->id, hi_level,
+            a.x, max_x + 3, a.y, a.y + half + 1);         // 带3 high
+  PaintBand(ctx, world, hi->id, hi_level,
+            b.x, max_x + 3, b.y - half + 1, b.y + 1);     // 带4 high
+
+  // 三块肩膀砖（+7、+8、+9）
+  const int ssp = ctx.theater->slope_set_pieces;
+  StampByIndex(world, ctx.grid, ssp + 7, CellCoord{a.x - 3, a.y},
+               low_id, hi_level);
+  StampByIndex(world, ctx.grid, ssp + 8, CellCoord{b.x - 3, b.y - 2},
+               low_id, hi_level);
+  StampByIndex(world, ctx.grid, ssp + 9, CellCoord{b.x - 1, b.y - 1},
+               low_id, hi_level);
+
+  // 硬币：台阶段贴跑道哪一头（dx == 0 时不取）
+  int jog_y = 0, flat_x = 0, flat_y = 0, slope_row = 0;
+  if (dx != 0) {
+    const int coin = Coin(*ctx.rng);
+    const int x_shift = (dx > 0) ? 1 : 0;        // (0 < dx) 布尔量
+    if (coin == 1) {
+      flat_x = dx;
+      flat_y = std::abs(dx);
+    } else {
+      jog_y = dy - std::abs(dx) - 5;
+    }
+    slope_row = (dx > 0) ? 1 : 0;
+
+    // 台阶段：i ∈ [0, |dx|)、j ∈ [0, 5)
+    const int ramp_base = ctx.theater->ramp_base;
+    for (int i = 0; i < std::abs(dx); ++i) {
+      for (int j = 0; j < 5; ++j) {
+        const int xx = a.x - j + x_shift + (slope_row == 1 ? i : -i);
+        const int yy = a.y + 3 + i + jog_y;
+        const int s = kSlopeWest[slope_row][j];
+        WriteRampCell(ctx, world, CellCoord{xx, yy}, ramp_base + s - 1, s,
+                      hi_level + kLevelTable[j] - 4, false, low_id);
+      }
+    }
+  }
+
+  // 直坡段：i ∈ [0, len)、j ∈ [0, 4)，len = dy - |dx| - 5
+  const int ramp_base = ctx.theater->ramp_base;
+  const int len = dy - std::abs(dx) - 5;
+  for (int i = 0; i < len; ++i) {
+    for (int j = 0; j < 4; ++j) {
+      WriteRampCell(ctx, world, CellCoord{a.x - j + flat_x,
+                                          a.y + 3 + i + flat_y},
+                    ramp_base + 0, 1, hi_level - j - 1, true, low_id);
+    }
+  }
+  return true;
+}
+
+// ── 转角坡道（0 取数）──
+// 骨架五步（文档 §五之四）：跨度门 → 净空 → 五条刷带（低 2 高 3）→ 肩膀砖 →
+// 三段贴砖（转角 4 格 + 两条腿各 4 层）。五条刷带逐格坐标取自反编译存档。
+
+// 0x593AF0（N+E）：a 西南、b 东北，dx = b.X-a.X、dy = b.Y-a.Y
+bool BuildCornerNE(RegionContext& ctx, MakingWorld& world,
+                   RegionClass* hi, const CellCoord& a,
+                   const CellCoord& b, int low_id) {
+  const int dx = b.x - a.x;
+  const int dy = b.y - a.y;
+  if (dx <= 2 || dy <= 2) return false;             // 跨度门
+  const int hi_level = hi->level;
+  const Rect r{a.x - 7, a.y - 4, dx + 10, dy + 10};
+  if (!Clearance(ctx, world, hi->id, r, low_id)) return false;
+
+  PaintBand(ctx, world, low_id, ctx.regions->ById(low_id)->level,
+            a.x - 7, a.x, a.y - 4, b.y + 6);                 // 带1 low
+  PaintBand(ctx, world, low_id, ctx.regions->ById(low_id)->level,
+            a.x - 7, b.x + 3, b.y + 1, b.y + 8);             // 带2 low
+  PaintBand(ctx, world, hi->id, hi_level,
+            a.x, a.x + 2, a.y, a.y + 1);                     // 带3 high
+  PaintBand(ctx, world, hi->id, hi_level,
+            b.x, b.x + 1, b.y - 1, b.y + 1);                 // 带4 high
+  PaintBand(ctx, world, hi->id, hi_level,
+            a.x + 1, b.x, a.y + 1, b.y);                     // 带5 high
+
+  // 两块肩膀砖（+7、+1）
+  const int ssp = ctx.theater->slope_set_pieces;
+  StampByIndex(world, ctx.grid, ssp + 7, CellCoord{a.x - 3, a.y},
+               low_id, hi_level);
+  StampByIndex(world, ctx.grid, ssp + 1, CellCoord{b.x - 2, b.y},
+               low_id, hi_level);
+
+  // 转角格 + 两条腿（j 层、i < 腿长 - 3 + j，上层比下层长一格）
+  const int ramp_base = ctx.theater->ramp_base;
+  for (int j = 0; j < 4; ++j) {
+    WriteRampCell(ctx, world, CellCoord{a.x - j, b.y + j},
+                  ramp_base + 7, 8, hi_level - j - 1, false, low_id);
+    for (int i = 0; i < dy - 3 + j; ++i) {
+      WriteRampCell(ctx, world, CellCoord{a.x - j, a.y + 3 + i},
+                    ramp_base + 0, 1, hi_level - j - 1, false, low_id);
+    }
+    for (int i = 0; i < dx - 3 + j; ++i) {
+      WriteRampCell(ctx, world, CellCoord{b.x - 3 - i, b.y + j},
+                    ramp_base + 3, 4, hi_level - j - 1, false, low_id);
+    }
+  }
+  return true;
+}
+
+// 0x593550（E+S）：a 西北、b 东南，dx = a.X-b.X、dy = b.Y-a.Y
+bool BuildCornerES(RegionContext& ctx, MakingWorld& world,
+                   RegionClass* hi, const CellCoord& a,
+                   const CellCoord& b, int low_id) {
+  const int dx = a.x - b.x;
+  const int dy = b.y - a.y;
+  if (dx <= 2 || dy <= 2) return false;
+  const int hi_level = hi->level;
+  const Rect r{b.x - 7, a.y - 7, dx + 10, dy + 10};
+  if (!Clearance(ctx, world, hi->id, r, low_id)) return false;
+
+  PaintBand(ctx, world, low_id, ctx.regions->ById(low_id)->level,
+            b.x - 7, a.x + 3, a.y - 7, a.y);                 // 带1 low
+  PaintBand(ctx, world, low_id, ctx.regions->ById(low_id)->level,
+            b.x - 7, b.x, a.y - 7, b.y + 3);                 // 带2 low
+  PaintBand(ctx, world, hi->id, hi_level,
+            a.x, a.x + 1, a.y, a.y + 2);                     // 带3 high
+  PaintBand(ctx, world, hi->id, hi_level,
+            b.x, b.x + 2, b.y, b.y + 1);                     // 带4 high
+  PaintBand(ctx, world, hi->id, hi_level,
+            b.x + 1, a.x, a.y + 1, b.y);                     // 带5 high
+
+  // 四块肩膀砖（+5、+6、+8、+9）
+  const int ssp = ctx.theater->slope_set_pieces;
+  StampByIndex(world, ctx.grid, ssp + 5, CellCoord{a.x - 2, a.y - 3},
+               low_id, hi_level);
+  StampByIndex(world, ctx.grid, ssp + 6, CellCoord{a.x - 1, a.y - 1},
+               low_id, hi_level);
+  StampByIndex(world, ctx.grid, ssp + 8, CellCoord{b.x - 3, b.y - 2},
+               low_id, hi_level);
+  StampByIndex(world, ctx.grid, ssp + 9, CellCoord{b.x - 1, b.y - 1},
+               low_id, hi_level);
+
+  const int ramp_base = ctx.theater->ramp_base;
+  for (int j = 0; j < 4; ++j) {
+    WriteRampCell(ctx, world, CellCoord{b.x - j, a.y - j},
+                  ramp_base + 4, 5, hi_level - j - 1, false, low_id);
+    for (int i = 0; i < dx - 3 + j; ++i) {
+      WriteRampCell(ctx, world, CellCoord{a.x - 3 - i, a.y - j},
+                    ramp_base + 1, 2, hi_level - j - 1, false, low_id);
+    }
+    for (int i = 0; i < dy - 3 + j; ++i) {
+      WriteRampCell(ctx, world, CellCoord{b.x - j, b.y - 3 - i},
+                    ramp_base + 0, 1, hi_level - j - 1, false, low_id);
+    }
+  }
+  return true;
+}
+
+// 0x593030（S+W）：a 东北、b 西南，dx = a.X-b.X、dy = a.Y-b.Y
+bool BuildCornerSW(RegionContext& ctx, MakingWorld& world,
+                   RegionClass* hi, const CellCoord& a,
+                   const CellCoord& b, int low_id) {
+  const int dx = a.x - b.x;
+  const int dy = a.y - b.y;
+  if (dx <= 2 || dy <= 2) return false;
+  const int hi_level = hi->level;
+  const Rect r{b.x - 2, b.y - 7, dx + 10, dy + 10};
+  if (!Clearance(ctx, world, hi->id, r, low_id)) return false;
+
+  PaintBand(ctx, world, low_id, ctx.regions->ById(low_id)->level,
+            b.x - 2, a.x + 8, b.y - 7, b.y);                 // 带1 low
+  PaintBand(ctx, world, low_id, ctx.regions->ById(low_id)->level,
+            a.x + 1, a.x + 8, b.y - 7, a.y + 3);             // 带2 low
+  PaintBand(ctx, world, hi->id, hi_level,
+            b.x, b.x + 1, b.y, b.y + 2);                     // 带3 high
+  PaintBand(ctx, world, hi->id, hi_level,
+            a.x - 1, a.x + 1, a.y, a.y + 1);                 // 带4 high
+  PaintBand(ctx, world, hi->id, hi_level,
+            b.x + 1, a.x, b.y + 1, a.y);                     // 带5 high
+
+  // 两块肩膀砖（+2、+4）
+  const int ssp = ctx.theater->slope_set_pieces;
+  StampByIndex(world, ctx.grid, ssp + 2, CellCoord{a.x, a.y - 2},
+               low_id, hi_level);
+  StampByIndex(world, ctx.grid, ssp + 4, CellCoord{b.x, b.y - 3},
+               low_id, hi_level);
+
+  const int ramp_base = ctx.theater->ramp_base;
+  for (int j = 0; j < 4; ++j) {
+    WriteRampCell(ctx, world, CellCoord{a.x + j, b.y - j},
+                  ramp_base + 5, 6, hi_level - j - 1, false, low_id);
+    for (int i = 0; i < dy - 3 + j; ++i) {
+      WriteRampCell(ctx, world, CellCoord{a.x + j, a.y - 3 - i},
+                    ramp_base + 2, 3, hi_level - j - 1, false, low_id);
+    }
+    for (int i = 0; i < dx - 3 + j; ++i) {
+      WriteRampCell(ctx, world, CellCoord{b.x + 3 + i, b.y - j},
+                    ramp_base + 1, 2, hi_level - j - 1, false, low_id);
+    }
+  }
+  return true;
+}
 
 // ───────────────────────── 0x590970 BuildRamp ─────────────────────────
 
