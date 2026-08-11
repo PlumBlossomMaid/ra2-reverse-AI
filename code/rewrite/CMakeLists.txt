@@ -4,6 +4,16 @@ project(ra2_rewrite CXX)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# 仓库根（golden 基准、rulesmd.ini 等原始数据的所在地）：
+# 顶层 CMakeLists 在 code/rewrite，仓库根是其上两级。
+set(RA2_ROOT_DIR "${CMAKE_CURRENT_LIST_DIR}/../..")
+
+# 源文件是 UTF-8（含中文注释）。MSVC 无 /utf-8 时按本机代码页读，
+# UTF-8 字节被误解成 GBK 会破坏注释/字符串边界（C4819 起，严重时 #endif 错位）。
+if(MSVC)
+  add_compile_options(/utf-8)
+endif()
+
 # GoogleTest - 强制使用动态运行时库以匹配MSVC默认设置
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 # third_party/gtest 由根 CMakeLists add_subdirectory 引入时跳过 FetchContent，
@@ -41,3 +51,5 @@ endif()
 add_subdirectory(mix)
 add_subdirectory(rmg)
 add_subdirectory(assets)
+add_subdirectory(map)
+add_subdirectory(cli)

@@ -235,6 +235,7 @@ const int kStartZoneSel[5] = {5, 5, 5, 0, 0};
 
 void ComputeStartZoneSelection(StartPointContext& ctx, ZoneTable& zones) {
   const ZoneResult r = zones.Rebuild();                 // 0x56C510
+  if (ctx.zone_result_out != nullptr) *ctx.zone_result_out = r;
   const int mz = kStartZoneSel[ctx.map_type & 7];
   ctx.movement_zone = mz;
   ctx.want_zone_type = static_cast<int>(

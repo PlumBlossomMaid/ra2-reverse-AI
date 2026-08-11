@@ -64,7 +64,7 @@ if(RA2_BUILD_TESTS)
   add_executable(test_fast_math test/test_fast_math.cpp)
   target_link_libraries(test_fast_math PRIVATE ra2_rmg gtest_main)
   # sincos_golden.inc 是生成的对拍数据，直接 #include，不进版本库以外的构建目录
-  target_include_directories(test_fast_math PRIVATE "${CMAKE_SOURCE_DIR}/memory/data/rmg")
+  target_include_directories(test_fast_math PRIVATE "${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME fast_math COMMAND test_fast_math)
 
   add_executable(test_map_size test/test_map_size.cpp)
@@ -115,133 +115,133 @@ if(RA2_BUILD_TESTS)
   add_executable(test_shore_smooth test/test_shore_smooth.cpp)
   target_link_libraries(test_shore_smooth PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_shore_smooth PRIVATE
-    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME shore_smooth COMMAND test_shore_smooth)
 
   add_executable(test_stage_water test/test_stage_water.cpp)
   target_link_libraries(test_stage_water PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_stage_water PRIVATE
-    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME stage_water COMMAND test_stage_water)
 
   add_executable(test_regions test/test_regions.cpp)
   target_link_libraries(test_regions PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_regions PRIVATE
-    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME regions COMMAND test_regions)
 
   # 两个通用区域算子（阶段 2 河湖支路与阶段 4 共用的积木）
   add_executable(test_region_ops test/test_region_ops.cpp)
   target_link_libraries(test_region_ops PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_region_ops PRIVATE
-    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME region_ops COMMAND test_region_ops)
 
   # 按方位角优先的堆扩散（河道/湖泊走向的来源）
   add_executable(test_angular_grow test/test_angular_grow.cpp)
   target_link_libraries(test_angular_grow PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_angular_grow PRIVATE
-    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME angular_grow COMMAND test_angular_grow)
 
   # 湖泊涂块（MapType 3/4 支路的第一块积木）
   add_executable(test_water_blob test/test_water_blob.cpp)
   target_link_libraries(test_water_blob PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_water_blob PRIVATE
-    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME water_blob COMMAND test_water_blob)
 
   # 瀑布（河道落差）——基准 3 万多行，运行期读原档；砖几何读 tile_geometry.txt
   add_executable(test_waterfall test/test_waterfall.cpp)
   target_link_libraries(test_waterfall PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_waterfall PRIVATE
-    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME waterfall COMMAND test_waterfall)
 
   add_executable(test_rivers test/test_rivers.cpp)
   target_link_libraries(test_rivers PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_rivers PRIVATE
-    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME rivers COMMAND test_rivers)
 
   add_executable(test_height_field test/test_height_field.cpp)
   target_link_libraries(test_height_field PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_height_field PRIVATE
-    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME height_field COMMAND test_height_field)
 
   add_executable(test_height_anchors test/test_height_anchors.cpp)
   target_link_libraries(test_height_anchors PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_height_anchors PRIVATE
-    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME height_anchors COMMAND test_height_anchors)
 
   # 基准 5000 多行，运行期直接读原档
   add_executable(test_corner_lattice test/test_corner_lattice.cpp)
   target_link_libraries(test_corner_lattice PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_corner_lattice PRIVATE
-    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME corner_lattice COMMAND test_corner_lattice)
 
   add_executable(test_start_points test/test_start_points.cpp)
   target_link_libraries(test_start_points PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_start_points PRIVATE
-    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME start_points COMMAND test_start_points)
 
   # 阶段 6 整段（起区域 + 摆点 + 调度）的端到端对拍，基准 4 万行，运行期读原档
   add_executable(test_place_start_points test/test_place_start_points.cpp)
   target_link_libraries(test_place_start_points PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_place_start_points PRIVATE
-    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME place_start_points COMMAND test_place_start_points)
 
   add_executable(test_zones test/test_zones.cpp)
   target_link_libraries(test_zones PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_zones PRIVATE
-    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME zones COMMAND test_zones)
 
   add_executable(test_green_spread test/test_green_spread.cpp)
   target_link_libraries(test_green_spread PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_green_spread PRIVATE
-    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME green_spread COMMAND test_green_spread)
 
   add_executable(test_ore_field test/test_ore_field.cpp)
   target_link_libraries(test_ore_field PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_ore_field PRIVATE
-    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME ore_field COMMAND test_ore_field)
 
   # 阶段 8 外层整段（逐区域布矿 + 出生点补偿）的端到端对拍
   add_executable(test_place_tiberium test/test_place_tiberium.cpp)
   target_link_libraries(test_place_tiberium PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_place_tiberium PRIVATE
-    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME place_tiberium COMMAND test_place_tiberium)
 
   add_executable(test_tech_buildings test/test_tech_buildings.cpp)
   target_link_libraries(test_tech_buildings PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_tech_buildings PRIVATE
-    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME tech_buildings COMMAND test_tech_buildings)
 
   add_executable(test_lats test/test_lats.cpp)
   target_link_libraries(test_lats PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_lats PRIVATE
-    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME lats COMMAND test_lats)
 
   add_executable(test_making_regions test/test_making_regions.cpp)
   target_link_libraries(test_making_regions PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_making_regions PRIVATE
-    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME making_regions COMMAND test_making_regions)
 
   add_executable(test_ramps test/test_ramps.cpp)
   target_link_libraries(test_ramps PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_ramps PRIVATE
-    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME ramps COMMAND test_ramps)
 endif()

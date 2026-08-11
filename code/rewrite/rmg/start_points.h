@@ -106,6 +106,11 @@ struct StartPointContext {
   int movement_zone = 0;    // kStartZoneSel[MapType]
   int want_zone_type = 0;   // zoneType[movement_zone][largestZone]
 
+  // ComputeStartZoneSelection() 把 Rebuild() 的完整结果拷到这里（可选）。
+  // 原版 0x56C510 的产物存在 MapClass +0x18..+0x48 的全局里，供后续
+  // MovementZoneType 查询；CLI 的 world 需要这份结果才能实现那个查询。
+  ZoneResult* zone_result_out = nullptr;
+
   // 已经缩过一圈的可用矩形：{[0x87F8E4]+4, [0x87F8E8]+4, [0x87F8EC]-8, [0x87F8F0]-8}
   MapRect usable;
 

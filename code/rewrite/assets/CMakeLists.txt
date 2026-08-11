@@ -13,6 +13,6 @@ if(RA2_BUILD_TESTS)
   add_executable(test_theater_assets test/test_theater_assets.cpp)
   target_link_libraries(test_theater_assets PRIVATE ra2_assets gtest_main)
   target_compile_definitions(test_theater_assets PRIVATE
-    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME theater_assets COMMAND test_theater_assets)
 endif()
