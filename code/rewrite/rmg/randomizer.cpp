@@ -1,7 +1,5 @@
 ﻿#include "randomizer.h"
 
-#include <cstdio>
-
 namespace ra2::rmg {
 namespace {
 
@@ -72,12 +70,6 @@ std::uint32_t Randomizer::Random() {
 
   state_[index1_] ^= state_[index2_];
   const std::uint32_t result = state_[index1_];
-
-  // TEMP: Trace first 30 calls
-  if (call_count_ <= 30) {
-    std::printf("RNG[%lld] = 0x%08X\n", call_count_ - 1, result);
-    std::fflush(stdout);
-  }
 
   ++index1_;
   ++index2_;

@@ -350,8 +350,7 @@ std::vector<RefineCase> LoadRefineGolden() {
   std::vector<RefineCase> out;
   std::string line;
   while (std::getline(in, line)) {
-    if (!line.empty() && line.back() == '
-') line.pop_back();
+    if (!line.empty() && line.back() == '\r') line.pop_back();
     std::istringstream ss(line);
     std::string tag;
     ss >> tag;

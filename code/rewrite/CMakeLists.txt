@@ -6,13 +6,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # GoogleTest - 强制使用动态运行时库以匹配MSVC默认设置
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
-include(FetchContent)
-FetchContent_Declare(
-  googletest
-  GIT_REPOSITORY https://github.com/google/googletest.git
-  GIT_TAG release-1.12.1
-)
-FetchContent_MakeAvailable(googletest)
+# third_party/gtest 由根 CMakeLists add_subdirectory 引入时跳过 FetchContent，
+# 否则 gtest/gmock target 双份定义冲突（14257ae 引入的构建破坏）
+if(NOT TARGET gtest)
+  include(FetchContent)
+  FetchContent_Declare(
+    googletest
+    GIT_REPOSITORY https://github.com/google/googletest.git
+    GIT_TAG release-1.12.1
+  )
+  FetchContent_MakeAvailable(googletest)
+endif()
 
 enable_testing()
 

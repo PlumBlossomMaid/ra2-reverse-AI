@@ -175,7 +175,8 @@ double NormalDeviate::operator()() {
   }
 
   const double l = ChopLog(s);
-  const double f = FastSqrt((-l - l) / s);   // sqrt(-2*ln(s)/s)
+  const double sqrt_in = (-l - l) / s;
+  const double f = FastSqrt(sqrt_in);   // sqrt(-2*ln(s)/s)
 
   has_cached_ = true;
   cached_ = f * v;                   // 第二个偏差留到下次调用

@@ -1,6 +1,37 @@
 # River() 调试进度报告
 
-## 当前状态（2026-08-09）
+## 当前状态（2026-08-11）：全部对拍通过 ✅
+
+**River.MatchesOriginal（13 case）+ AddRiversAndLakes.MatchesOriginal（6 case）全绿；完整测试套件 37/37 通过。**
+
+### 本次（AddRiversAndLakes river6 分岔）定位的两个根因
+
+#### BUG 1：支流递归起点用错（0x59DF6E-0x59DF80）
+- **原版**：起点 = **画格横截面末端** `(Ftol(xL), Ftol(yL))`（xL/yL 是画格循环累加后的值）
+- **我的旧实现**：用**推进后的游标** `(Ftol(x), Ftol(y))`
+- **影响**：arl-mt3-wa30 的 river6 step 6 触发支流时，游标在 (32,17)、横截面末端在 (34,17)，**差 2 格**；支流递归整体偏移 → 递归出界时机不同 → RNG 消耗分岔（109 vs 145）
+- **取证**：反汇编 `fld [esp+0x68] / fld [esp+0x30]`（两个 _ftol 的操作数），[esp+0x68] = xL0 + n·s（画格末端）、[esp+0x30] = yL0 + n·c；画格循环 0x59DC1F/0x59DC42 的累加 `xL+=s / yL+=c` 证实
+- **验证**：修复后递归入口 (34,17) 与 Oracle `cur (34.5,17.5)` 完全吻合
+
+#### BUG 2：支流递归返回值没接收（0x59DFA2）
+- **原版**：`local_129 = FUN_0059d510(...)` → **ok = 递归返回值**
+- **我的旧实现**：`River(ctx, world, p, bs, bang, true);` 丢弃返回值
+- **影响**：递归失败（返回 0）时主河 ok 应变 false → 下一轮循环开头 `!ok` 直接 break；丢弃后主河**多跑 10 轮**（rng 145 → 差 36 的根源之一）
+- **取证**：0x59DFA2 `mov byte ptr [esp+0xf], al`
+
+### 附带修复（构建系统）
+- `code/rewrite/CMakeLists.txt`：`FetchContent_MakeAvailable(googletest)` 与根 CMakeLists 的 `add_subdirectory(third_party/gtest)` 双份引入 → 加 `if(NOT TARGET gtest)` 守卫（14257ae 引入后从未成功配置过）
+- `code/rewrite/rmg/CMakeLists.txt`：test_rivers 的 `RA2_GOLDEN_DIR` 多了 `../..`（其他测试全对）
+- `test_stage_water.cpp`：349 行 `'\r'` 被写成 `'`+换行（14257ae 提交时文件损坏）
+
+### 探针经验（复用）
+- **0x59C5D0 是调度器调 River 的返回点**：执行到该地址时 sched+1，`sched==N` 的窗口 = riverN 执行期间（支流递归不经过 0x59C5D0）
+- **0x59DE49 在 `mov [esp+0x108],eax`（0x59DE4B）之前**：读 [esp+0x108] 拿到的是**上一轮遗留值**（延迟一拍的假象）；要读真实触发 RNG 需 hook 0x59DE52（mov 之后）
+- River 返回值（ok）在 0x59C5D0 处读 EAX
+
+---
+
+## 历史状态（2026-08-09，已解决）
 
 ### 问题描述
 River() 实现与 Oracle 的 RNG 消耗模式不匹配：

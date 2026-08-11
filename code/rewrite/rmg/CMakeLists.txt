@@ -158,7 +158,7 @@ if(RA2_BUILD_TESTS)
   add_executable(test_rivers test/test_rivers.cpp)
   target_link_libraries(test_rivers PRIVATE ra2_rmg gtest_main)
   target_compile_definitions(test_rivers PRIVATE
-    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/../../memory/data/rmg")
+    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
   add_test(NAME rivers COMMAND test_rivers)
 
   add_executable(test_height_field test/test_height_field.cpp)
