@@ -32,6 +32,9 @@ Ghidra headless + Jython 脚本，导出指定函数的 C 伪代码。
 - 案例：`TimeToBuild` 的电力钳制方向（`FCOMPP` 的比较方向容易搞反，
   用数值代入验证最终行为）
 - 脚本：`code/ghidra_scripts/dump_timetobuild_asm.py`
+- **怪汇编先分辨来源**：无 return / 位操作 / 怪默认值，可能是 C++ bug，
+  也可能是**手写汇编**（Westwood 传统，RA1 源码实锤）。识别清单见
+  [handwritten-asm-forensics.md](handwritten-asm-forensics.md)
 
 ### 4. 常量取证
 

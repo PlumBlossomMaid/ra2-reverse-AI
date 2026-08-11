@@ -52,7 +52,9 @@ E:\code\ra2-reverse-AI\
 - MSVC 编译：`vcvars64.bat` + `cl /std:c++17 /utf-8 /W4`
 - 原版二进制：`E:\YRLauncher\gamemd.exe`
 - 交叉验证源码：YRpp `E:\code\YRpp`（GPL，Ares-Developers 克隆）、Phobos `E:\code\Phobos`（GitHub 克隆）、
-  EA 官方任务编辑器 `E:\code\CNC_TS_and_RA2_Mission_Editor`（GPL-3.0，.map 读写权威实现）
+  EA 官方任务编辑器 `E:\code\CNC_TS_and_RA2_Mission_Editor`（GPL-3.0，.map 读写权威实现）、
+  CnCRemastered 源码 `D:\CnCRemastered\SOURCECODE`（EA 2020 开源，GPL v3，RA1/TD 对照实现，
+  含手写汇编取证样本，用途见 `docs/references/cncremastered-source.md`）
 
 ## 当前状态与下一步
 

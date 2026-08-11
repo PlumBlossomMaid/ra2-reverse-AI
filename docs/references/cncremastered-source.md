@@ -11,6 +11,17 @@ RA2/YR 引擎是 RA1 引擎的**演化而非重写**——核心类层次和大�
 在 RA1 中已有实现，可作为 YR 二进制逆向的"参考答案"：
 逆向 YR 某个机制时，先看 RA1 对应实现，能极大加速理解。
 
+### 手写汇编取证（2026-08-12 发现）
+
+RA1/TD 源码还有一个独特价值：**源码级证实 Westwood 手写汇编传统**。
+逆向 YR 时看到"怪汇编"（无 return / 位操作 / 怪默认值），可能是 C++ bug，
+也可能是手写汇编——判断依据见
+[handwritten-asm-forensics.md](../methodology/handwritten-asm-forensics.md)。
+
+证据摘要：`REDALERT\` 下 27 个独立 `.asm`（图形/压缩/网络/系统全覆盖，
+连 `strtrim` 都手写汇编）+ `MiscAsm.cpp` 41 处内联 `__asm`
+（`Distance_Coord` 无 return，靠 EAX 传返回值）。
+
 ## 已验证的对应关系（2026-08-05，grep 实证）
 
 ### 类层次同源
