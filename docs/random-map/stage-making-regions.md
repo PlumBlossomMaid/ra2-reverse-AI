@@ -5,7 +5,14 @@
 > 开坡道外壳（`0x590970` + `0x590FD0` + `0x5A1E50`）、四个直坡建造函数、
 > 以及架桥 `0x58F2C0` 均已实锤；
 > 三个转角建造函数也已实锤（§五之四，连带查出第 4 条转角分支是**死的**）。
-> 剩下的欠账只有 `0x579010` / `0x579620` 这两遍重刷砖，以及若干"逐格坐标未核对"，见 §十一。
+> **全流水线已落 C++ 并对拍完成**（`code/rewrite/rmg/{making_regions,ramps,cliff_work}.cpp`，
+> ctest 38/38 全绿，10 组基准含 4 组 stage2 + 6 组合成地形）——
+> 0x58EBC0 切分、0x58EF10 重建/开通路、0x5A19E0 悬崖修角、0x578E60 全图重刷、
+> 0x5A17F0 多格砖重掷的随机消耗与格子终态逐位对齐。
+> 对拍中两处实锤修正：① `0x89A304` 方向偏移表是 `.data` 零填充区（全 0），
+> 候选标记写的是"节点自己"（0x58DA5B）→ **原版扩散无防重、候选重复入堆**；
+> ② `HigherMask`（0x579B70）对每个邻格先取 cell 指针（界外写共享哑元坐标，
+> 0x579Cxx 区）——`[0xABDC74]` 的终值是可观测副作用，C++ 照抄。
 > 取证：`memory/data/decomp/rmg_regions_stage4{,b,c}.txt` /
 > `rmg_ramp_stage4{d,e,f,j,k}.txt` / `rmg_bridge_stage4{g,h,i}.txt` /
 > `rmg_split_stage4{l,m}.txt` / `rmg_corner_stage4{n,o}.txt`。

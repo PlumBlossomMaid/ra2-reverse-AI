@@ -85,6 +85,9 @@ struct RegionClass {
   int start_points = 0;       // +0x20 分到的出生点个数（阶段 6 写）
   bool discarded = false;     // +0x24 「已作废」（0x58D620 并掉碎块后置 1）
   std::vector<CellCoord> cells;  // +0x28 本区域的格子表（阶段 4 填）
+  // +0x40..+0x4C 包围盒。阶段 4 的 0x58EBC0 重建成员时写：
+  // X/Y 预置 9999、W/H 预置 0，GrowRect（0x58EC9D）用 `W == 0` 当"还没初始化"。
+  Rect bbox;
 };
 
 // 全局区域表：数据 [0xABDF94]、个数 [0xABDFA0]、编号计数器 [0xABED14]。
@@ -163,6 +166,25 @@ struct RegionContext {
   // 0xABDFB8 那个正态源。只有 AngularGrow（0x5A08D0）用得到——
   // 阶段 3 自己一次都不调，所以它可以是空指针。
   NormalDeviate* normal = nullptr;
+
+  // ── 阶段 4「Making regions」需要的 MapSeedClass 参数 ──
+  // [0xABE048] = MapSeedClass +0x70 RegionSize（rules.ini 的 RegionSize 档位）。
+  // 0x58EBC0 切分阈值 `_ftol(2·((RegionSize·0.005+0.05)·H)·W)` 的输入。
+  int region_size = 0;
+  // [0xABE044] = MapSeedClass +0x6C Accessibility。0x5905D0 里
+  // `PickBelow(101) < Accessibility` 决定这对邻区要不要多开 1~2 条坡道。
+  int accessibility = 0;
+  // [0xABE014] = MapSeedClass +0x3C MapType。SplitRegion 的候选层高滤网
+  // （3/4 时滤掉 0 层，0 层就是海平面）读它。
+  int map_type = 0;
+
+  // ── 0x578460 IsWithinUsableArea 的输入（阶段 4 的净空/落点检查用）──
+  // [0x87F8E4..F0] 可用矩形（已缩过一圈：{[0x87F8E4]+4, [0x87F8E8]+4,
+  // [0x87F8EC]-8, [0x87F8F0]-8}）。阶段 4 的 Clearance、0x5905D0 的边界格、
+  // 架桥的探条/落点全走它。
+  Rect usable;
+  // MapClass +0xF4 整图矩形宽（[0x87F8DC]），与 map_w 同值但来源不同，分开留。
+  int map_rect_w = 0;
 };
 
 // ── 三个可以单独对拍的零件 ──

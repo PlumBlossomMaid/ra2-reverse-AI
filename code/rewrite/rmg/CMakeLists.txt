@@ -19,6 +19,9 @@ add_library(ra2_rmg
   place_blobs.cpp
   place_tile.cpp
   regions.cpp
+  making_regions.cpp
+  ramps.cpp
+  cliff_work.cpp
   recalc.cpp
   zones.cpp
   start_points.cpp
@@ -229,4 +232,10 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_lats PRIVATE
     RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
   add_test(NAME lats COMMAND test_lats)
+
+  add_executable(test_making_regions test/test_making_regions.cpp)
+  target_link_libraries(test_making_regions PRIVATE ra2_rmg gtest_main)
+  target_compile_definitions(test_making_regions PRIVATE
+    RA2_GOLDEN_DIR="${CMAKE_SOURCE_DIR}/memory/data/rmg")
+  add_test(NAME making_regions COMMAND test_making_regions)
 endif()

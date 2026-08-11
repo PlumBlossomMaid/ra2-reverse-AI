@@ -65,7 +65,13 @@ class PlaceOracle(PaintOracle):
         """
         obj = self._bump(0x310)
         vt = self._bump(0x100)
-        # 两段桩：`mov eax, imm32; ret` —— 虚表调用是 thiscall 无参，直接 ret。
+        # 虚表：默认全槽填 `mov eax, 0; ret` 安全桩——阶段 4 的 0x590970
+        # 开坡道会调其他槽位（例如 0x5943E0 查层高），缺桩就跳到地址 0。
+        # 0x2C / 0x9C 两个槽再覆盖成真实桩。
+        f0 = self._bump(16)
+        self.uc.mem_write(f0, b"\xB8\x00\x00\x00\x00\xC3")
+        for off in range(0, 0x100, 4):
+            self.wr32(vt + off, f0)
         # ⚠️ 子块偏移表要先分配，否则拿不到它的地址往桩里填。
         offs = self._bump(4 * tw * th + 0x10)
         f2c = self._bump(16)

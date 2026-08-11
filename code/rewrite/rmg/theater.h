@@ -68,6 +68,9 @@ struct TheaterData {
   // 原版就是短的，照抄。
   int paved_roads = -1;       // 0xABBEC8，代码写死宽 0x0F
   int paved_road_ends = -1;   // 0xABBEC4，宽 4
+  // 0xABC1F8 坡道的「肩膀砖」组。阶段 4 的直坡/转角用 `+0..+9` 贴 10 块。
+  // 注意与 ramp_smooth（0xAA1058）不同：后者是斜坡连接砖，这个是坡道肩砖。
+  int slope_set_pieces = -1;  // 0xABC1F8
 
   // 组内砖数；用于 IsWater 那种「起始砖号 + 宽度」的区间判定。
   int TilesInSetStartingAt(int start_tile) const;
