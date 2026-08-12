@@ -2,13 +2,18 @@
 // 阶段日志照抄原版 0x598960 的 "RMG: ..."（原版在每次调度前打日志）。
 #include "pipeline.h"
 
+#include <cstdint>
 #include <cstdio>
+#include <set>
 
 #include "rmg/corner_lattice.h"
+#include "rmg/height_field.h"
 #include "rmg/lats.h"
 #include "rmg/map_size.h"
 #include "rmg/making_regions.h"
+#include "rmg/morphable_tiles.h"
 #include "rmg/ore_field.h"
+#include "rmg/randomizer.h"
 #include "rmg/recalc.h"
 #include "rmg/rivers.h"
 #include "rmg/scaled_random.h"
@@ -51,13 +56,31 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   std::vector<rmg::PaintWorkCell> work(n);
   rmg::Randomizer rng(seed);
   CliWorld world(grid, theater, tiles, rng, work, tile_count);
+  // 造山可变形集合（TileTypeClass +0x2E0，游戏内存取证）：
+  // morphable=true 的砖才允许 CreateHills 抬升，水/岸/特殊地形砖保护。
+  std::set<int> nonmorph;
+  {
+    const int n = tile_count < 838 ? tile_count : 838;
+    std::size_t mi = 0;
+    for (int i = 0; i < n; ++i) {
+      while (mi < rmg::kMorphableTemperate.size() &&
+             rmg::kMorphableTemperate[mi] < i) {
+        ++mi;
+      }
+      const bool morph =
+          mi < rmg::kMorphableTemperate.size() &&
+          rmg::kMorphableTemperate[mi] == i;
+      if (!morph) nonmorph.insert(i);
+    }
+  }
+  world.set_nonmorph_tiles(std::move(nonmorph));
   world.set_neutral_tech_buildings(rules.neutral_tech_buildings);
   world.set_tiberium_params(rules.min_tiberium, rules.max_tiberium);
   world.set_max_trees(rules.max_trees);
   world.set_ground_foot(rules.ground_foot);
   world.InitCells();
-  std::fprintf(stderr, "RMG: Init random map (W=%d H=%d side=%d seed=%u)\n",
-               ms.width, ms.height, grid.side(), seed);
+  std::fprintf(stderr, "RMG: Init random map (W=%d H=%d side=%d seed=%u tile_count=%d)\n",
+               ms.width, ms.height, grid.side(), seed, tile_count);
 
   // 阶段 1 唯一的取数（0x59A4C7）：25% 抛硬币，决定河上有没有瀑布。
   const bool allow_waterfall = rmg::UniformUnit(rng) < 0.25;
@@ -103,10 +126,9 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   rctx.usable = rmg::Rect{usable.x, usable.y, usable.w, usable.h};
   rctx.map_rect_w = ms.width + 4;
 
-  // ── 阶段 2：铺水（+ 阶段 2.5 河湖）──
-  std::fprintf(stderr, "RMG: Seeding water\n");
-  rmg::SeedWater(paint, world, p, params.map_type);
-
+  // ── 阶段 2：铺水（MapType 3/4 不铺水，直接河湖）──
+  // 主流程 0x5989xx：MapType ∈ {3,4} 时跳过 FUN_0059a6c0（SeedWater），
+  // 只跑 FUN_0059c580（AddRiversAndLakes，河需水量>20、湖总是跑）+ 0x59c630。
   rmg::RiverParams river_p;
   river_p.map_type = params.map_type;
   river_p.water_amount = params.water_amount;
@@ -114,10 +136,11 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   river_p.blob_id = stamp;       // +0x308，接阶段 2 的块编号
   river_p.cell_level = 4;
   river_p.allow_waterfall = allow_waterfall;
-  if ((params.map_type == 3 || params.map_type == 4) &&
-      params.water_amount > 20) {
-    std::fprintf(stderr, "RMG: AddRiversAndLakes\n");
+  std::fprintf(stderr, "RMG: Seeding water\n");
+  if (params.map_type == 3 || params.map_type == 4) {
     rmg::AddRiversAndLakes(rctx, world, river_p);
+  } else {
+    rmg::SeedWater(paint, world, p, params.map_type);
   }
 
   // ── 水面细化 ──
@@ -140,7 +163,13 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   // 原版 0x598E31-0x598E4D 走 CellClass::RecalcAttributes(-1)。CliWorld 的
   // 版本比算法库的 SmoothWorld 版多更新 +0xEC/+0x4C（阶段 6 的输入），
   // 所以这里不调 RecalcAttributesPass，改逐格走 world 的完整版。
-  grid.ForEachCell([&](const rmg::CellCoord& c) { world.RecalcAttributes(c, -1); });
+  // 主流程在「铺绿/布矿/造山前/LAT 后」共 Recalc 4 次（rmg_pipeline_decomp.txt
+  // 行 214/283/330/409），CLI 在对应位置各补一次。
+  const auto recalc_pass = [&]() {
+    grid.ForEachCell(
+        [&](const rmg::CellCoord& c) { world.RecalcAttributes(c, -1); });
+  };
+  recalc_pass();
   // 把每格的地面类别/层高喂进寻路地形表（原版 RecalcAttributes 收尾的
   // `mov [ebx], dl / mov [ebx+1], al`）。
   rmg::ZoneTable zt(grid.width(), grid.height());
@@ -206,6 +235,11 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   tp.max_tiberium = rules.max_tiberium;
   rmg::PlaceTiberium(oc, regions, tp);
 
+  // 原版布矿后 Recalc 第二次（rmg_pipeline_decomp.txt 行 283），造山前还有
+  // 第三次（行 330）。中间游戏会清工作数组/析构区域，CLI 无对应阶段。
+  recalc_pass();
+  recalc_pass();
+
   // ── 阶段 9：造山 ──
   std::fprintf(stderr, "RMG: Creating hills\n");
   rmg::HillContext hc;
@@ -215,7 +249,12 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   hc.theater = &theater;
   hc.ruggedness = params.ruggedness;
   hc.nd = &normal;
-  rmg::CreateHills(hc);
+  rmg::MarkHeightAnchors(*hc.world, hc.grid, *hc.theater, *hc.work);
+  rmg::GenerateHeightField(hc.grid, *hc.work, hc.ruggedness, *hc.nd);
+  rmg::BuildCornerLattice(hc);
+  rmg::RaiseAllCells(hc);
+  rmg::ApplyLatticeToCells(hc);
+  rmg::FlattenRampBlocks(hc);
 
   // ── 阶段 10：地表装饰 ──
   std::fprintf(stderr, "RMG: Creating LATs, rocks etc\n");
@@ -229,11 +268,18 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   lc.theater = &theater;
   lc.params.theater = params.theater;
   lc.params.vegetation = params.vegetation;
+  // 原版树林预算读 MapSeedClass+0x64 = .sed 的 Width **档位**（0..3），
+  // 不是 ComputeMapSize 算出的地图宽（stage-init.md 三之二实锤档位语义）。
   lc.params.width = params.width;
   lc.params.max_trees = rules.max_trees;
+  // 原版 0x42B1F0 读 [0x87F8DC]=MapRect.W = W+4 / [0x87F8E0]=H+12
+  // （阶段 1 在 0x599D48 Set_Dimensions({0,0,W+4,H+12}) 实锤）。
   lc.params.map_rect_w = ms.width + 4;
   lc.params.map_rect_h = ms.height + 12;
   rmg::CreateLats(lc);
+
+  // 原版 LAT 后 Recalc 第四次（rmg_pipeline_decomp.txt 行 409）。
+  recalc_pass();
 
   // ── 收集输出 ──
   out->map_w = ms.width;

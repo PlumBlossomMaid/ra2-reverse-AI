@@ -150,6 +150,24 @@ a2mdpost\MapGen.cpp` = **0x5956E7-0x59A63A**（源码行 3934-6746，21KB）。
   （FA2 官方图：sandwell.yrm Terrain 键 y=179>150、捡箱子.yrm Waypoint y=364>200），
   Structures 字段序 owner,type,health,**y,x**,dir。文档
   `docs/random-map/map-output-format.md`（23 篇）。
+  ⑨ **造山阶段（CreateHills，阶段 9）全量对拍完成（2026-08-12 深夜）**：
+  RaiseAllCells 后格网 24336/24336 全一致（height/locked/dirty）、Apply 后
+  (tile,level,ramp) 12054/12054 全一致、Flatten 后 level/ramp 12054/12054 全一致
+  （变化集合 96/148 对称差 0）、Flatten 写 tile=0xFFFF 148 个 cell 一致。
+  剩余 tile 差异 3971 个全部来自阶段 10 LAT 装饰（未对拍）。
+  **本轮实锤的两个 emu 灌入坑**（`code/randmap/_emu_hills.py`）：
+  ① `[0x87F8DC]` = **MapRect.W = W**（MapSeed+0x180 插值，stage-init.md 实锤），
+  **不是 side**！CellIterator(0x578350) 起点 = (1, W)，遍历 X+Y ≥ W+1 的对角线区域；
+  误灌 side=157 → 起点 X+Y=158（应为 75），地图 X+Y∈[75,238] 的 cell 漏掉一半，
+  Apply 只处理 3315 个 cell——之前"CLI Apply 分岔"纯属 emu 灌错假象，CLI 无错。
+  ② `[0xABC1D8]` = ramp_base（温带 29）：k≠0 分支写 tile = ramp_base+k-1；
+  不灌则 = 0，Apply 写 tile 全错（4/0/7 vs 正确 33/29/36）。
+  k==0 分支写 `[0xAA10B0]`=0（草地），emu 默认 0 无需灌。
+  **CellIterator 终止机制**：Next(0x578290) 返回槽指针 [ebp]，槽为 NULL 时 Apply
+  循环 `je 0x6b3a61` 退出——原版空槽=NULL，遍历到地图菱形外第一个空槽即停，
+  覆盖范围恰为 X+Y ∈ [W+1, 2W+2H-2]（= 全部地图 cell）。
+  哑元 0xABDC50 填空槽会绕过终止（遍历全 512²），但哑元 (1,1) dirty 检查必失败，
+  不影响真实 cell 结果（M/HIT=6715 含 k=0 平地 509 个，写入值与 CST 原值相同）。
   **下一步：e2e 逐字节对拍（暂缓，用户 2026-08-12 选择）**——开游戏生成随机地图
   （rmcache\RandMap.Map + RandMap.Sed 自动更新新 seed）→ 同 seed 跑 CLI → 逐字节 diff
   校准 7 项：Size/LocalSize、[Basic] 节、OverlayPack 段数、半整数坐标取舍、

@@ -233,7 +233,8 @@ namespace {
 // dirty 保持 1；随后整个数组被 free、ActiveCount 清零。
 void RollbackUndo(CornerLattice& lat) {
   for (int i = static_cast<int>(lat.undo.size()) - 1; i >= 0; --i) {
-    lat.At(lat.undo[i].x, lat.undo[i].y).height = lat.undo[i].old_height;
+    CornerEntry& e = lat.At(lat.undo[i].x, lat.undo[i].y);
+    e.height = lat.undo[i].old_height;
   }
   lat.undo.clear();
 }
@@ -306,8 +307,10 @@ void ApplyLatticeToCells(HillContext& ctx) {
       if (kRampTable[k][0] == h[0] && kRampTable[k][1] == h[1] &&
           kRampTable[k][2] == h[2] && kRampTable[k][3] == h[3]) {
         world.SetRamp(c, k);
-        world.SetIsoTile(c, k == 0 ? ctx.theater->clear_tile
-                                   : ctx.theater->ramp_base - 1 + k);
+        // 0x6B3A29-0x6B3A44：k == 0（平地）写 [0xAA10B0]（运行时值 0 =
+        // 草地，**不是** ini 的 ClearTile=29）；k != 0 写 ramp_base + k - 1。
+        // CLI 曾误用 clear_tile，造山会涂出一大片 29-32 的砖，游戏里没有。
+        world.SetIsoTile(c, k == 0 ? 0 : ctx.theater->ramp_base - 1 + k);
         break;
       }
       // 查不到就什么都不做：+0x11C 与 +0x38 保留原值，+0x11B 却已经改了

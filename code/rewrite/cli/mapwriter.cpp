@@ -75,7 +75,7 @@ std::string BuildMapFile(const PipelineResult& r, int theater, int level) {
     mapenc::IsoCell rec;
     rec.x = static_cast<std::uint16_t>(i & 0x1FF);
     rec.y = static_cast<std::uint16_t>(i >> 9);
-    rec.isoTile = static_cast<std::uint32_t>(c.isoTile);
+    rec.isoTile = static_cast<std::uint32_t>(c.isoTile) & 0xFFFF;  // 无效=-1 → 0xFFFF
     rec.height = static_cast<std::uint8_t>(c.subtile);   // +0x11A
     rec.level = static_cast<std::uint8_t>(c.level);      // +0x11B
     rec.unknown = 0;                                     // +0x119（未确认）
@@ -129,11 +129,18 @@ std::string BuildMapFile(const PipelineResult& r, int theater, int level) {
   }
 
   // ── [Terrain]（键 = "x"+"y 补零 3 位"，值 = 地形名）──
+  // 半整数取舍（ToReal 整数除法向零）会让相邻等距格映射到同一真实坐标，
+  // 产生重复键；FA2 判定为 corrupt（修复时按键去重）。同键只写第一条。
   if (!r.terrains.empty()) {
     out += "[Terrain]\n";
+    std::vector<bool> seen(0x40000, false);
     for (const TerrainRecord& t : r.terrains) {
       int rx, ry;
       ToReal(t.x, t.y, map_w, &rx, &ry);
+      if (rx < 0 || ry < 0) continue;
+      const std::size_t idx = static_cast<std::size_t>(ry) * 0x200 + rx;
+      if (seen[idx]) continue;
+      seen[idx] = true;
       out += KeyXY(rx, ry);
       out += '=';
       out += t.name;

@@ -52,6 +52,14 @@ rmg::TheaterData SyntheticTheater() {
   t.slope_set_pieces = 802;
   t.pave_tile = 803;
   t.misc_pave_tile = 804;
+  // SetupLAT（0x47CA80）会读的四个组。必须给合法值：这几个字段默认 -1，
+  // 而段 1/段 4 的判据是 `tile ∈ [start, start+0xF]` 不带 -1 保护——合成
+  // 数据里 tile 0（未定砖）会掉进 [-1, 14]，整片被误改成粗草过渡片，
+  // 阶段 6 判陆地全死、出生点一个都出不来。
+  t.clear_to_rough_lat = 506;
+  t.clear_to_pave_lat = 805;
+  t.medians = 806;
+  t.water_bridge = 807;
   return t;
 }
 

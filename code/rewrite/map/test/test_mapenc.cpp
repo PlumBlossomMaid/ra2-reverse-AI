@@ -8,6 +8,7 @@
 #include "lcw.h"
 #include "base64.h"
 #include "isomap.h"
+#include "encode80.h"
 
 #include <cstdint>
 #include <cstring>
@@ -383,6 +384,36 @@ TEST(MapencIsomap, GoldenMatch) {
   // 与手算 base64 对照（Python base64.b64encode 同款）
   EXPECT_EQ(lines[0],
             "HgAaACsoACgAAQABABoFdzwAMgACAAAAAAEAAAAAABEAAA==");
+}
+
+// —— encode80 / F80（OverlayPack 写链）——
+
+TEST(MapencEncode80, EndMarker) {
+  // 全 0xFF 8192 字节段 → FE 00 20 FF 80（fill 0x2000 + 0x80 结束码）。
+  // 与 FA2 空地图 测试.mpr 的 OverlayPack 空段逐字节一致：
+  //   测试.mpr 空段 = 05 00 00 20 | fe 00 20 ff 80（len=5）
+  // 回归：WriteC1(count==0) 不输出任何字节，0x80 必须直写。
+  std::vector<uint8_t> ff(8192, 0xFF);
+  std::vector<uint8_t> packed(8192);
+  const size_t n = Encode80(ff.data(), packed.data(), ff.size());
+  ASSERT_EQ(n, 5u);
+  const std::vector<uint8_t> want = {0xFE, 0x00, 0x20, 0xFF, 0x80};
+  EXPECT_EQ(Hex(std::vector<uint8_t>(packed.begin(), packed.begin() + n)),
+            Hex(want));
+}
+
+TEST(MapencEncode80, F80EverySectionHasEndMarker) {
+  // 0x40000 全 0xFF → 32 段；每段 [3B len][0x20][数据]，数据末字节必须是 0x80。
+  std::vector<uint8_t> ff(0x40000, 0xFF);
+  const auto f80 = EncodeF80(ff, 32);
+  EXPECT_EQ(f80.size(), 32 * 9u);   // 每段 4B 头 + 5B 数据
+  for (size_t i = 0; i < 32; ++i) {
+    const size_t p = i * 9;
+    const size_t len = f80[p] | (f80[p + 1] << 8) | (f80[p + 2] << 16);
+    ASSERT_EQ(len, 5u);
+    ASSERT_EQ(f80[p + 3], 0x20);
+    EXPECT_EQ(f80[p + 4 + len - 1], 0x80) << "段 " << i << " 缺 0x80 结束码";
+  }
 }
 
 TEST(MapencLzoPipe, MultiBlock) {

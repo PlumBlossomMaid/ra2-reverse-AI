@@ -23,8 +23,8 @@
 namespace ra2 {
 namespace rmg {
 
-// 0x5A3215 / 0x5A32ED 两处共用的骨架。
-//
+// 0x5A3215 / 0x5A32ED 两处共用的骨架。回退语义（汇编逐条核对，两处相同）：
+// 分布整体落在 [lo,hi] 之外才重铺——
 //   if (mu - sigma > hi || mu + sigma < lo) { sigma = (hi - lo) * 0.5; mu = sigma + lo; }
 //   do { v = NormalDeviate() * sigma + mu; } while (v < lo || v > hi);
 //

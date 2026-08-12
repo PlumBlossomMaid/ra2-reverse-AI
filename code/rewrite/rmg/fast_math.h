@@ -103,6 +103,7 @@ class NormalDeviate {
   void Reset() { has_cached_ = false; }
 
   bool has_cached() const { return has_cached_; }
+  double cached() const { return cached_; }
 
  private:
   Randomizer* rng_;

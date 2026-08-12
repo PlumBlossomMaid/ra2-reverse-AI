@@ -3,6 +3,7 @@
 #include "lats.h"
 
 #include <cstdint>
+#include <cstdio>
 
 #include "height_field.h"  // TruncNormal（与阶段 9 同一个骨架）
 #include "place_tile.h"    // IsUndecidedTile（0x486380）
@@ -108,21 +109,23 @@ void CreateLatsTemperate(LatContext& ctx) {
 
     int mu = 0;
     int tile_base = 0;
-    if (CoinBelow(*ctx.rng, w.prob_rough)) {         // 0x5A3C53
+    if (CoinBelow(*ctx.rng, w.prob_rough)) {        // 0x5A3C53
       mu = pick_rough;
       tile_base = th.rough_tile;                     // [0xABC2B8]
-    } else if (CoinBelow(*ctx.rng, w.prob_sand)) {   // 0x5A3D3F
+    } else if (CoinBelow(*ctx.rng, w.prob_sand)) {  // 0x5A3D3F
       mu = pick_sand;
       tile_base = th.sand_tile;                      // [0xABB104]
-    } else if (CoinBelow(*ctx.rng, w.prob_green)) {  // 0x5A3E1B
+    } else if (CoinBelow(*ctx.rng, w.prob_green)) { // 0x5A3E1B
       mu = pick_green;
       tile_base = th.green_tile;                     // [0xAA0E18]
     } else {
       return;
     }
-    // TruncNormal(mu = pick, sigma = 20, lo = 4, hi = 80)。回退分支的
-    // sigma/mu 被折叠成 38.0/42.0 = (80-4)*0.5 与 +4，与通用式一致；
-    // 而 mu ∈ [20,40]、sigma = 20 使它**永远不可达**，保留即可。
+    // TruncNormal(mu = pick, sigma = 20, lo = 4, hi = 80)。0x5A3C8E 起内联：
+    // 回退条件 = (mu-sigma > [0x7edac8] || mu+sigma < [0x7e3cc8])——分布整体
+    // 落在 [4,80] 外才重铺，回退代码保留（mu 是运行时变量，编译器证不了永假）
+    // 但 mu ∈ [20,40]、sigma = 20 时实际不可达；折叠出的回退值 38.0/42.0 =
+    // (80-4)*0.5 与 +4。
     const double v = TruncNormal(*ctx.normal, static_cast<double>(mu), 20.0, 4.0, 80.0);
     WriteLatBlock(ctx, c, tile_base, Ftol(v), field_id, false);
   });
@@ -155,10 +158,13 @@ void CreateLatsTemperate(LatContext& ctx) {
       }
       if (IsUndecidedTile(world.IsoTile(at))) break;
     }
-    // 两处 TruncNormal 的回退分支都被编译器整个删了（不可达），这里沿用通用式
+    // 两处 TruncNormal 的回退分支都被编译器整个删了（不可达），这里沿用通用式。
+    // 0x5A400B/0x5A4043：无回退代码（mu±sigma 完全落在 [lo,hi] 内，回退条件
+    // 被折叠成永假），只有拒绝采样循环。
     const double prob = TruncNormal(*ctx.normal, 0.2, 0.1, 0.05, 0.4);
     const double size = TruncNormal(*ctx.normal, 25.0, 10.0, 10.0, 35.0);
-    budget -= GrowTreePatch(ctx, at, Ftol(size), prob);
+    const int planted = GrowTreePatch(ctx, at, Ftol(size), prob);
+    budget -= planted;
   }
 
   // ⑥ 撒石头 / overlay
@@ -212,7 +218,9 @@ void CreateLatsSnow(LatContext& ctx) {
 
     const int field_id = c.y * 0x200 + c.x;
     if (!CoinBelow(*ctx.rng, w.prob_sand)) return;        // 0x5A434D
-    // mu 是**写死的 20.0**，不像温带那样先 PickRange(20,40) 抽一个
+    // mu 是**写死的 20.0**，不像温带那样先 PickRange(20,40) 抽一个。
+    // 0x5A4384 起内联：无回退分支（mu±sigma=[5,35]⊂[4,60]，回退条件被
+    // 编译器折叠成永假），只有拒绝采样循环。
     const double v = TruncNormal(*ctx.normal, 20.0, 15.0, 4.0, 60.0);
     WriteLatBlock(ctx, c, th.rough_tile, Ftol(v), field_id, false);
   });

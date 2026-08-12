@@ -128,7 +128,7 @@ std::size_t Encode80(const std::uint8_t* s, std::uint8_t* d, std::size_t cb_s) {
     }
   }
   FlushC1(w, r, copy_from);
-  WriteC1(w, 0, nullptr);   // 0x80 结束码
+  *w++ = 0x80;   // 0x80 结束码（WriteC1 在 count==0 时不输出，必须直写）
   return static_cast<std::size_t>(w - d);
 }
 

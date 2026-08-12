@@ -112,9 +112,14 @@ bool CliWorld::IsPaintable(const ra2::rmg::CellCoord& c) const {
 
 int CliWorld::IsoTile(const ra2::rmg::CellCoord& c) const {
   const int s = SlotOf(c);
+  // ⚠️ 原版 CellClass +0x38 是无符号 16 位（0x47D2B0 里 movzx 读）。
+  // 0xFFFF 必须读回 65535，不能符号扩展成 -1——RecalcAttributes 的
+  // `tile >= tile_count` / `tile == 0xFFFF` 两条判定都靠它。
   return (s < 0 || exists_[static_cast<std::size_t>(s)] == 0)
              ? ra2::rmg::ShoreWorld::kNoCell
-             : cells_[static_cast<std::size_t>(s)].isoTile;
+             : static_cast<std::int32_t>(
+                   static_cast<std::uint16_t>(
+                       cells_[static_cast<std::size_t>(s)].isoTile));
 }
 
 void CliWorld::SetIsoTile(const ra2::rmg::CellCoord& c, int v) {
@@ -130,7 +135,11 @@ void CliWorld::SetCellLevel(const ra2::rmg::CellCoord& c, int v) {
 }
 
 bool CliWorld::SmoothShoreline(int blob_id) {
-  return ra2::rmg::ShorelineSmooth(*this, grid_, theater_, rng_, blob_id, true);
+  // 0x57A0C0(blobId, 0)：湖收尾的岸线平滑 flag 是 0，不是涂块收尾（0x59C433）
+  // 传的 1。flag 为真时贴砖器会关掉工作数组读写、归属恒判「同块」，岸砖就
+  // 不会登记归属——湖的 Dilate 隔离检测会因此撞上「无主岸砖」而整块失败。
+  return ra2::rmg::ShorelineSmooth(*this, grid_, theater_, rng_, blob_id,
+                                   false);
 }
 
 // ── ShoreWorld ──────────────────────────────────────────────────────────
@@ -517,16 +526,150 @@ bool CliWorld::IsGreen(const ra2::rmg::CellCoord& c) {
 }
 
 void CliWorld::SetupLAT(const ra2::rmg::CellCoord& c) {
-  // 0x47CA80：把涂出来的 LAT 块按邻接关系换成正确的过渡片。需要读 .tmp
-  // 美术资源，语义尚未落 C++（stage-lats.md §2.4 只对拍调用次数）。
-  // TODO(e2e)：对拍校准后补全。
-  (void)c;
+  // 0x47CA80：把涂出来的 LAT 块按邻接关系换成正确的过渡片。无随机数。
+  // 汇编 0x47CB9B-0x47D1CF 是九组线性序列：四段过渡（Rough/Sand/Green/Pave）
+  // + 一段 Ramp。组宽、"同组"判据、入口 -1 检查全部照抄汇编；方向表
+  // 0x89F688 在 .bss（文件里没有），取值从运行中的游戏进程取证。
+  CliCell& cell = Mut(c);
+
+  const auto in = [](int v, int a, int b) { return v >= a && v <= b; };
+  static const std::int8_t kDir[8][2] = {
+      {0, -1}, {1, -1}, {1, 0}, {1, 1},
+      {0, 1}, {-1, 1}, {-1, 0}, {-1, -1}};
+  const auto step = [&](const ra2::rmg::CellCoord& p, int d) {
+    return ra2::rmg::CellCoord{p.x + kDir[d][0], p.y + kDir[d][1]};
+  };
+
+  // 段 1：ClearToRoughLat（0xAA1134，宽 0xF）。入口 = 砖==RoughTile 或组内，
+  // 无 -1 检查（汇编 0x47CB9B-0x47CC46 原样）。
+  {
+    const int start = theater_.clear_to_rough_lat;
+    const int rough = theater_.rough_tile;
+    const int tile = cell.isoTile;
+    if (tile == rough || in(tile, start, start + 0xF)) {
+      int m = 0;
+      for (int i = 0; i < 4; ++i) {
+        const int nt = IsoTile(step(c, i * 2));
+        if (nt == rough || in(nt, start, start + 0xF)) continue;
+        m |= 1 << i;
+      }
+      cell.isoTile = static_cast<std::int16_t>(m ? start + m : rough);
+    }
+  }
+
+  // 段 2：ClearToSandLat（0xAA0E24，宽 0xF）。入口要 -1 检查。
+  {
+    const int start = theater_.clear_to_sand_lat;
+    const int sand = theater_.sand_tile;
+    if (start != -1) {
+      const int tile = cell.isoTile;
+      if (tile == sand || in(tile, start, start + 0xF)) {
+        int m = 0;
+        for (int i = 0; i < 4; ++i) {
+          const int nt = IsoTile(step(c, i * 2));
+          if (nt == sand || in(nt, start, start + 0xF)) continue;
+          m |= 1 << i;
+        }
+        cell.isoTile = static_cast<std::int16_t>(m ? start + m : sand);
+      }
+    }
+  }
+
+  // 段 3：ClearToGreenLat（0xAA0748，宽 0xF）。邻居在 ShorePieces（宽 0x29）
+  // 或 WaterBridge（宽 1）组内也算同组。
+  {
+    const int start = theater_.clear_to_green_lat;
+    const int green = theater_.green_tile;
+    if (start != -1) {
+      const int tile = cell.isoTile;
+      if (tile == green || in(tile, start, start + 0xF)) {
+        const int shore0 = theater_.shore_pieces;
+        const int shore1 = shore0 + 0x29;
+        const int wb0 = theater_.water_bridge;
+        const int wb1 = wb0 + 1;
+        int m = 0;
+        for (int i = 0; i < 4; ++i) {
+          const int nt = IsoTile(step(c, i * 2));
+          if (nt == green || in(nt, start, start + 0xF)) continue;
+          if (in(nt, shore0, shore1) || in(nt, wb0, wb1)) continue;
+          m |= 1 << i;
+        }
+        cell.isoTile = static_cast<std::int16_t>(m ? start + m : green);
+      }
+    }
+  }
+
+  // 段 4：ClearToPaveLat（0xAA10A8，宽 0xF）。邻居在 MiscPaveTile（宽 0xD）、
+  // Medians（宽 0xD）、PavedRoads（宽 0x14）组内也算同组。
+  {
+    const int start = theater_.clear_to_pave_lat;
+    const int pave = theater_.pave_tile;
+    if (start != -1) {
+      const int tile = cell.isoTile;
+      if (tile == pave || in(tile, start, start + 0xF)) {
+        const int mp0 = theater_.misc_pave_tile;
+        const int mp1 = mp0 + 0xD;
+        const int md0 = theater_.medians;
+        const int md1 = md0 + 0xD;
+        const int pr0 = theater_.paved_roads;
+        const int pr1 = pr0 + 0x14;
+        int m = 0;
+        for (int i = 0; i < 4; ++i) {
+          const int nt = IsoTile(step(c, i * 2));
+          if (nt == pave || in(nt, start, start + 0xF)) continue;
+          if (in(nt, mp0, mp1) || in(nt, md0, md1) || in(nt, pr0, pr1)) {
+            continue;
+          }
+          m |= 1 << i;
+        }
+        cell.isoTile = static_cast<std::int16_t>(m ? start + m : pave);
+      }
+    }
+  }
+
+  // 段 5：Ramp。入口 = 砖∈[RampBase, +0x13] 或 [RampSmooth, +0xB]。
+  // 按 ramp(+0x11C) 分派两方向邻居（邻居 ramp==0 才设位），过渡公式：
+  //   ramp1: +edi-1  ramp2: +edi+2  ramp3: +edi+5  ramp4: +edi+8
+  // 兜底（无过渡位）= RampBase + ramp - 1。
+  {
+    const int rbase = theater_.ramp_base;
+    const int rsmooth = theater_.ramp_smooth;
+    const int tile = cell.isoTile;
+    if (in(tile, rbase, rbase + 0x13) || in(tile, rsmooth, rsmooth + 0xB)) {
+      const int ramp = cell.ramp;
+      int edi = 0;
+      int d1 = -1, d2 = -1, bias = 0;
+      switch (ramp) {
+        case 1: d1 = 6; d2 = 2; bias = -1; break;
+        case 2: d1 = 0; d2 = 4; bias = 2; break;
+        case 3: d1 = 2; d2 = 6; bias = 5; break;
+        case 4: d1 = 4; d2 = 0; bias = 8; break;
+        default: break;
+      }
+      if (d1 >= 0) {
+        if (At(step(c, d1)).ramp == 0) edi |= 1;
+        if (At(step(c, d2)).ramp == 0) edi |= 2;
+        if (edi != 0) {
+          cell.isoTile = static_cast<std::int16_t>(rsmooth + edi + bias);
+        }
+      }
+      if (edi == 0) {
+        cell.isoTile = static_cast<std::int16_t>(rbase + ramp - 1);
+      }
+    }
+  }
 }
 
 void CliWorld::RecalcAttributes(const ra2::rmg::CellCoord& c, int arg) {
   // 0x47D2B0 的随机地图子集：地形三件套（recalc.cpp 已实现）+ 无条件重算
   // +0xEC（地面类型）与 +0x4C（地面类别），并把两者喂给格子。
   ra2::rmg::RecalcAttributes(*this, c, tile_count_);
+
+  // 0x47D7FB-0x47D813：subtile 有效的格子重算完坡道后紧接 SetupLAT
+  // （0x47CA80，贴过渡片）。被清格的（0xFFFF）不走这条路。
+  if (Mut(c).isoTile != 0xFFFF) {
+    SetupLAT(c);
+  }
 
   CliCell& cell = Mut(c);
   // 0x47D54A 之前那段 +0xEC 的重算：从砖表子块头 +0x29 查 TerrainToGround。

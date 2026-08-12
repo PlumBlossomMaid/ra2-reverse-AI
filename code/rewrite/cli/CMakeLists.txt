@@ -23,4 +23,12 @@ if(RA2_BUILD_TESTS)
   add_executable(test_cli test/test_cli.cpp)
   target_link_libraries(test_cli PRIVATE ra2_cli gtest_main)
   add_test(NAME cli COMMAND test_cli)
+
+  # 临时诊断：打印 theater 解析结果
+  add_executable(probe_theater probe_theater_main.cpp)
+  target_link_libraries(probe_theater PRIVATE ra2_cli ra2_assets ra2_mix)
+
+  # 临时诊断：打印 TileType 表关键砖状态
+  add_executable(probe_tiles probe_tiles_main.cpp)
+  target_link_libraries(probe_tiles PRIVATE ra2_cli ra2_assets ra2_mix)
 endif()

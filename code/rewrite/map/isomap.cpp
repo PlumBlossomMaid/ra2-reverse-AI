@@ -74,7 +74,10 @@ std::vector<uint8_t> IsoMapPack5Encode(const std::vector<const IsoCell*>& slots,
     records.push_back(c->level);
     records.push_back(c->unknown);
   }
-  records.insert(records.end(), 4, 0);  // 默认坐标哨兵
+  // 哨兵 = DAT_00abd480（InvalidCell 坐标 = 0x00000000，dump_isomap_golden
+  // oracle 实测）。游戏写链 0x56B3F0 末尾 `local_2c = DAT_00abd480`；
+  // 读链遇坐标 == 0 即结束（0x56B3F0 对应解）。故 (0,0) 格永不写入。
+  records.insert(records.end(), 4, 0);
   return LzoPipeCompress(records);
 }
 

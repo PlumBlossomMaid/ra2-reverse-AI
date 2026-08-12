@@ -10,7 +10,15 @@ namespace rmg {
 
 double TruncNormal(NormalDeviate& nd, double mu, double sigma, double lo,
                    double hi) {
-  // 兜底：[mu-sigma, mu+sigma] 与 [lo, hi] 完全不相交时把分布重铺到区间上
+  // 回退重铺条件（0x5A3215 slope / 0x5A32ED height 两处相同）：
+  // 分布整体落在 [lo,hi] 之外才重铺——(mu - sigma > hi || mu + sigma < lo)。
+  // 汇编逐条核对（fcomp + test ah,0x41/1 的 C3/C0 位）：
+  // · slope  0x5A321D 比较 (-sigma0) vs hi、0x5A322E 比较 sigma0 vs lo
+  // · height 0x5A32F3 比较 (mu-slope) vs hi、0x5A3304 比较 (slope+mu) vs lo
+  //   ——两者形式一致，不存在"没盖住两端就重铺"的另一种语义；上一版误以为
+  //   height 用 (mu-sigma > lo || mu+sigma < hi)，导致每格触发回退、sigma
+  //   放大到 2.0，高坡道泛滥（33-40 数量翻倍）。
+  // 重铺动作（0x5A3239 / 0x5A3315）：sigma = (hi-lo)*0.5, mu = sigma+lo
   if (mu - sigma > hi || mu + sigma < lo) {
     sigma = (hi - lo) * 0.5;
     mu = sigma + lo;
@@ -114,7 +122,7 @@ void GenerateHeightField(const MapGrid& grid, std::vector<PaintWorkCell>& work,
     // 第一次抽样：更新 slope，钉在 [0, maxSlope]
     double lo = -w.slope;
     double hi = max_slope - w.slope;
-    w.slope += TruncNormal(nd, 0.0, sigma0, lo, hi);     // 0x5A3258
+    w.slope += TruncNormal(nd, 0.0, sigma0, lo, hi);       // 0x5A3258
 
     // 第二次抽样：更新 height，钉在 [-2, +2]；sigma 就是刚更新的 slope
     lo = -2.0 - w.height;
@@ -122,7 +130,7 @@ void GenerateHeightField(const MapGrid& grid, std::vector<PaintWorkCell>& work,
     double mu = grad;
     if (mu < lo) mu = lo;
     if (mu > hi) mu = hi;
-    w.height += TruncNormal(nd, mu, w.slope, lo, hi);    // 0x5A3334
+    w.height += TruncNormal(nd, mu, w.slope, lo, hi);     // 0x5A3334
   }
 
   // 0x5A3392 起：整表取整

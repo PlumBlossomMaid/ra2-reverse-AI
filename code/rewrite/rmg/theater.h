@@ -68,6 +68,11 @@ struct TheaterData {
   // 原版就是短的，照抄。
   int paved_roads = -1;       // 0xABBEC8，代码写死宽 0x0F
   int paved_road_ends = -1;   // 0xABBEC4，宽 4
+  // 0x47CA80 SetupLAT 才读的四个（tileset_globals.txt 里都有键名）。
+  int clear_to_rough_lat = -1;  // 0xAA1134，宽 0x0F（粗草过渡）
+  int clear_to_pave_lat = -1;   // 0xAA10A8，宽 0x0F（铺路过渡）
+  int medians = -1;             // 0xAA0E20，宽 0x0D
+  int water_bridge = -1;        // 0xAA1090，宽 1
   // 0xABC1F8 坡道的「肩膀砖」组。阶段 4 的直坡/转角用 `+0..+9` 贴 10 块。
   // 注意与 ramp_smooth（0xAA1058）不同：后者是斜坡连接砖，这个是坡道肩砖。
   int slope_set_pieces = -1;  // 0xABC1F8

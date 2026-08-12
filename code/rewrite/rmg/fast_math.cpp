@@ -1,6 +1,7 @@
 ﻿#include "fast_math.h"
 
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 
 #include "atan_table.h"

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
 #include <utility>
 
 #include "blob_heap.h"        // 与涂块核心共用的一基最小堆（下沉 0x5AD870）
@@ -538,7 +539,9 @@ bool Dilate(RegionContext& ctx, int owner, int rings, int rect_x, int rect_y,
         if (!accept) {
           // 0x5A02EF：没被接受的邻格只要不是自己人，整个函数当场失败。
           // ⚠️ owner_n == 0 也走这条——「无主但砖不是未定砖」照样判失败。
-          if (owner_n != owner) return false;
+          if (owner_n != owner) {
+            return false;
+          }
           continue;
         }
 
