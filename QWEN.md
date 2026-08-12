@@ -139,10 +139,21 @@ a2mdpost\MapGen.cpp` = **0x5956E7-0x59A63A**（源码行 3934-6746，21KB）。
   `Init random map`(FUN_00599650) 已确认是引擎侧初始化（写 [Lighting]/[Basic] INI、建 Preview、
   清 CellClass、重算寻路、设 waypoint 700/699），只取 1 次随机数，CLI 不必复刻。
   调试记录 `WIP_RIVER_DEBUG.md`；文档 `docs/random-map/` 22 篇。
-  **下一步：端到端 CLI 收尾**——① `.map` 输出编码器（[IsoMapPack5]=Base64(块:2B src+2B dst+数据)
-  →XCC decode5s、[OverlayPack]=encode80、cell=MAPFIELDDATA 11B；参考 EA 官方编辑器 GPL-3.0 源码）；
-  ② CLI 主程序：读 `.sed`（[RandomMap] INI 17 键）→ 按流水线顺序跑全部阶段 → 写
-  `rmcache\RandMap.Map`；③ 端到端逐字节验证（同种子 vs 原版）。
+  ⑧ **端到端 CLI 主程序跑通（2026-08-12）**：`code/rewrite/cli/`（CliWorld 八路菱形继承
+  + pipeline 12 阶段串联 + mapwriter + rules_loader + cli_main SEH 兜底）+
+  `code/rewrite/map/`（base64/LZO/LCW/encode80/IsoMapPack5 编码器，EA 编辑器 GPL-3.0
+  为权威参考）。smoke（Seed=60556 雪地）与游戏实际参数（RandMap.Sed Seed=10791 温和）
+  都跑通，ctest **41/41 全绿**。两个修复：`RegionContext.world` 漏设（CreateRegions
+  空指针，菱形继承需 `static_cast<MakingWorld*>`）；golden 路径统一 `RA2_ROOT_DIR`
+  （CMAKE_SOURCE_DIR 是 code/rewrite，golden 实际在仓库根——此前 ctest 一直是残缺的）。
+  **`.map` 坐标语义实锤**：Waypoints/Terrain/Structures 全用**真实坐标**
+  （FA2 官方图：sandwell.yrm Terrain 键 y=179>150、捡箱子.yrm Waypoint y=364>200），
+  Structures 字段序 owner,type,health,**y,x**,dir。文档
+  `docs/random-map/map-output-format.md`（23 篇）。
+  **下一步：e2e 逐字节对拍（暂缓，用户 2026-08-12 选择）**——开游戏生成随机地图
+  （rmcache\RandMap.Map + RandMap.Sed 自动更新新 seed）→ 同 seed 跑 CLI → 逐字节 diff
+  校准 7 项：Size/LocalSize、[Basic] 节、OverlayPack 段数、半整数坐标取舍、
+  Structures 字段 7..16、IsoCell +0x119、Morphable/占地表/SetupLAT。
   注意：RA1 源码（CnCRemastered）**无**随机地图生成器（TS/RA2 新特性）；EA 任务编辑器也**无**生成器
 - **待确认**：`DemandProduction` 第三参数语义；`Unsuspend` 资金不足时挂起标志的行为；
   多工厂海军/陆军计数差异；`target->Target==me` 时反击贡献取负的语义；`Type+0x1FB` 标志名称；
