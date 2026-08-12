@@ -11,8 +11,9 @@
 // 等距坐标 → 真实坐标（map-geometry.md §一）：
 //   X = rx + ry + 1、Y = ry - rx + W   →   2rx = X - Y + W - 1、2ry = X + Y - W - 1
 //   W 取 [0x87F8DC]（= grid 宽，含 4 格余量）。
-//   半数菱形格子落在半整数真实坐标上（2rx 为奇数）——原版对它们的编码
-//   （除法向零 / 取整方式）未取证，e2e 时校准（TODO）。
+//   真实坐标语义已由本机官方图实锤（sandwell.yrm / 捡箱子.yrm，见
+//   docs/random-map/map-output-format.md）：waypoint/Terrain/Structures 全用
+//   真实坐标。半数菱形格落在半整数上——整数除法（向零）的取舍 e2e 对拍校准。
 #pragma once
 
 #include <string>

@@ -27,6 +27,7 @@
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法全还原；**`MapType 0/1/2` 主路径 + 水面细化整条落成 C++ 并对拍** |
 | [stage-water-maptype34.md](stage-water-maptype34.md) | 阶段 2 支路：`MapType ∈ {3,4}` 的**河流、湖泊与瀑布**（含查表 sin/cos） | ✅ 八个函数全部实锤；sin/cos、两个通用区域算子（`0x5A0410` Erode / `0x5A0160` Dilate）、角度扩张 `0x5A08D0`、**湖泊涂块 `0x59C920`**、瀑布 `0x59E740`、**河 `0x59D510` 与调度 `0x59C580`** 已全部落 C++ 并对拍（River 13 例 + AddRiversAndLakes 6 例） |
 | [stage-making-regions.md](stage-making-regions.md) | 阶段 4：Making regions（区域重建 + **区域之间开坡道/架桥**，`MapType ∈ {3,4}` 专属，45 个取数点） | ✅ **45 个取数点全部关闭**；区域切分 / 架桥 / 四个直坡 / 三个转角 / 两遍重刷砖全部实锤 |
+| [map-output-format.md](map-output-format.md) | **.map 输出格式**（CLI 写链）：坐标语义 / 键值编码 / 各节编码 | 🟡 坐标语义与字段顺序已实锤（FA2 官方图）；Size/LocalSize、半整数、Structures 字段值待 e2e 对拍 |
 
 ## 进度
 
@@ -602,6 +603,14 @@ long double。同类的 `fsin` / `fpatan` / `f2xm1` 是否也如此，**未确�
 2. 判"这个函数会不会被执行"要往上追引用，**零引用就是死代码**——
    150 个取数点里有 46 个根本不会跑
 3. 判"哪个阶段用得到"要用指令级可达性，函数边界靠不住
+
+## 端到端 CLI（2026-08-12）
+
+`code/rewrite/cli/`：`CliWorld`（八路菱形继承的完整 world）→ `pipeline`
+（12 阶段串联）→ `mapwriter`（.map 组装）→ `cli_main`（读 .sed / rulesmd.ini，
+SEH 兜底）。smoke 与游戏实际参数（RandMap.Sed Seed=10791）都跑通，
+ctest 41/41 全绿。**e2e 逐字节对拍（开游戏同种子生成原版 RandMap.Map）暂缓**，
+已实锤部分见 [map-output-format.md](map-output-format.md)。
 
 ## 工具箱（本模块新增，均为纯只读 PE 分析，不依赖 Ghidra）
 
