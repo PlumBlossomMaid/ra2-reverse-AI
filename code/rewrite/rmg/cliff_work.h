@@ -23,7 +23,10 @@ namespace rmg {
 // 层高加减写在 byte 上会回绕；work 为空时层高照改、只不写归属。
 void TrimCliffCorners(RegionContext& ctx, MakingWorld& world);
 
-// 0x578E60 `RepaintAll(owner, level)`（两个栈参，这里 owner 传 -1）。
+// 0x578E60 `RepaintAll(owner, level)`（调用点 0x598D73：`push -1; push ebx`；
+// 这里 owner 传 -1、level 传 0。第二栈参才是 FillNotch/AutoCliff 的 owner，
+// 原版实际传 0xFFFFFFFF = -1——emu 的 run_call 顺序压栈会把参数弄反、
+// 得出 owner=0 的假象，golden 基准的 dump 脚本 reversed 压栈才是真实值）。
 // 工作数组为空就 new（阶段 1 已建好，这里只在独立调用时触发）；
 // 把每格工作记录 +0x4A 置 1；第一遍全图 FillNotch(-1)，第二遍只对
 // 非坡（+0x11C == 0）且未定砖的格子调 AutoCliff(-1)，两遍都以 false 提前终止；
@@ -33,8 +36,11 @@ void RepaintAll(RegionContext& ctx, MakingWorld& world);
 // 0x579010 `FillNotch(cell, owner)`。**不取随机数**。取高差掩码后按四组判据
 // （两个相对正方向都高 / 对角对带例外 / 隔一个空当的八对 / 一格宽的夹缝）
 // 判断本格是不是"一两格宽的坑"，是则 `Level += 4` 并写 owner，再向八邻递归。
-// 返回 false 的唯一出口是 `o > 0 && o != owner && owner != -1`（活路径上
-// owner 恒为 -1，走不到）。
+// 返回 false 的唯一出口是 `o > 0 && o != owner && owner != -1`。原版 0x5792A9
+// 的 packed 判定实际读的是调用者 param2（GetWorkOwner ret 4 后 esp 恢复、
+// [esp+0x28] 偏移错位）→ 两个调用者（Rebuild 0x58EF49 / RepaintAll 0x578E60
+// 的 param_2）都是 0xFFFFFFFF → 判据命中恒抬高；0x5792BA 的"blob==packed"
+// 分支是死代码。
 bool FillNotch(RegionContext& ctx, MakingWorld& world, const CellCoord& c,
                int owner);
 

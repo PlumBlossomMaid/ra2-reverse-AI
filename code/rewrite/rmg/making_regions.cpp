@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
 
 #include "blob_heap.h"      // NodePool / MinHeap（切分的扩散堆）
 #include "cliff_work.h"     // FillNotch（RebuildRegions 第一遍）
@@ -178,10 +179,15 @@ float Priority(Randomizer& rng, const CellCoord& origin,
   a = std::fabs(a - base_angle);
   while (a >= kTwoPi) a -= kTwoPi;                 // 先 fabs 再模，顺序照抄
   if (a > kPi) a = kTwoPi - a;
-  return static_cast<float>(
-      0.15 * d + 1.5 * a +
-      static_cast<double>(static_cast<std::uint32_t>(rng.Random())) *
-          kInvUintMax * 2.5);
+  // ⚠️ 求和顺序照抄 0x58C7D6-0x58C7EC：R 项先算，再依次加 0.15*d 和 1.5*a。
+  // x87 是 ((R + 0.15*d) + 1.5*a)，不是 C++ 左结合的 (0.15*d + 1.5*a) + R——
+  // 浮点加法不结合，1 ULP 差异会让最小堆的弹出顺序分岔，进而扩散路径不同。
+  const std::uint32_t rv = rng.Random();
+  const double r =
+      static_cast<double>(static_cast<std::uint32_t>(rv)) *
+      kInvUintMax * 2.5;
+  const float out = static_cast<float>((r + 0.15 * d) + 1.5 * a);
+  return out;
 }
 
 bool CountAtLeast(const RegionContext& ctx, const Rect& r, int id, int need) {
@@ -262,6 +268,7 @@ void RebuildAndSplitRegions(RegionContext& ctx) {
   t = t + t;                                                  // fadd st,st = ×2
   const int max_cells = Ftol(t);
 
+  int n_splits = 0, n_fail = 0;
 restart:
   for (int i = 0; i < regions.Count(); ++i) {
     RegionClass* r = regions.At(i);
@@ -270,8 +277,10 @@ restart:
     if (r->cell_count > max_cells) {
       if (SplitRegion(ctx, r)) {
         regions.Destroy(r);                      // DestroyRegion + delete
+        ++n_splits;
         goto restart;                            // 0x58EEFC：切成功从头重扫
       }
+      ++n_fail;
     } else {
       r->finalized = 1;                          // 够小了，以后不再考虑
     }
@@ -338,9 +347,10 @@ bool SplitRegion(RegionContext& ctx, RegionClass* region) {
       if (!ctx.grid.InMap(nb)) continue;
       PaintWorkCell& rec = Rec(ctx, nb);
       if (rec.blob_id != -2) continue;                 // 不是本区待定格
-      // ⚠️ 无防重：原版 0x89A304 方向偏移表是 .data 零填充区（全 0），
-      // 候选标记写的是"节点自己"（0x58DA5B），候选格从不被标 +0x3C=-3，
-      // 于是同一个候选能被多个邻格重复发现、重复入堆。C++ 照抄不防重。
+      // ⚠️ 原版防重是"半成品"：0x58DA5B 的标记位置 = 弹格索引 + 0x89A304[d]
+      // （该表 8 项全 = -1）→ 实际标记"弹格左边一格"，只对方向 6（左）的
+      // 候选生效；其余方向候选可重复发现、重复入堆（(97,97) 被 P6/P11 两次
+      // 发现）。照抄不防重才能复现（候选格 queued 从不被写，0x58D9EA 不命中）。
       if (!IsPlain(w, nb)) continue;                   // 0x486380
       const float key = Priority(*ctx.rng, seed, nb, angle);  // 每格 1 随机数
       const int slot = pool.Alloc(nb.x, nb.y, key);
@@ -519,16 +529,16 @@ void RebuildRegions(RegionContext& ctx, MakingWorld& world) {
     if (r) r->finalized /*+0x1A*/ = 0;
   }
 
-  if (ok) {
-    for (int i = 0; i < ctx.regions->Count(); ++i) {
-      BuildNeighbourList(ctx, ctx.regions->At(i));     // 0x58F0C0
-    }
-    for (int i = 0; i < ctx.regions->Count(); ++i) {
-      MakeConnections(ctx, world, ctx.regions->At(i)); // 0x5905D0
-    }
-    for (int i = 0; i < ctx.regions->Count(); ++i) {
-      ctx.regions->At(i)->neighbours.clear();          // delete + 置 0
-    }
+  // 0x58F042 call 0x58F0C0 / 0x58F061 call 0x5905D0：无条件执行，
+  // 不随 FillNotch 的 ok 门控（FillNotch 只影响前面那个循环的提前终止）。
+  for (int i = 0; i < ctx.regions->Count(); ++i) {
+    BuildNeighbourList(ctx, ctx.regions->At(i));     // 0x58F0C0
+  }
+  for (int i = 0; i < ctx.regions->Count(); ++i) {
+    MakeConnections(ctx, world, ctx.regions->At(i)); // 0x5905D0
+  }
+  for (int i = 0; i < ctx.regions->Count(); ++i) {
+    ctx.regions->At(i)->neighbours.clear();          // delete + 置 0
   }
 }
 
@@ -613,10 +623,10 @@ void MakeConnections(RegionContext& ctx, MakingWorld& world, RegionClass* r) {
       const int idx = PickBelow(*ctx.rng, static_cast<int>(border.size()));
       const CellCoord c = border[static_cast<std::size_t>(idx)];
       if (in_usable(c)) {
-        made += BuildRamp(ctx, world, hi, c, lo,
-                          static_cast<float>(tries) * 0.01f)
-                    ? 1
-                    : 0;
+        const bool okr =
+            BuildRamp(ctx, world, hi, c, lo,
+                      static_cast<float>(tries) * 0.01f);
+        made += okr ? 1 : 0;
       }
     }
     if (made == 0) r->connected /*+0x1B*/ = 0;

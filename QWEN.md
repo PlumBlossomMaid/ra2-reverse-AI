@@ -146,10 +146,15 @@ a2mdpost\MapGen.cpp` = **0x5956E7-0x59A63A**（源码行 3934-6746，21KB）。
   都跑通，ctest **41/41 全绿**。两个修复：`RegionContext.world` 漏设（CreateRegions
   空指针，菱形继承需 `static_cast<MakingWorld*>`）；golden 路径统一 `RA2_ROOT_DIR`
   （CMAKE_SOURCE_DIR 是 code/rewrite，golden 实际在仓库根——此前 ctest 一直是残缺的）。
-  **`.map` 坐标语义实锤**：Waypoints/Terrain/Structures 全用**真实坐标**
-  （FA2 官方图：sandwell.yrm Terrain 键 y=179>150、捡箱子.yrm Waypoint y=364>200），
-  Structures 字段序 owner,type,health,**y,x**,dir。文档
-  `docs/random-map/map-output-format.md`（23 篇）。
+  **`.map` 坐标语义（2026-08-13 修正）**：Waypoints/Terrain/Structures 的
+  x/y 是**等距坐标**（cell 列/行，范围 [0, W+H]），**不是真实坐标**——官方图
+  sandwell（100×150）Terrain (93,179)、捡箱子（200×200）Waypoint (202,364) 全
+  超地图尺寸即等距证据；CLI 等距直写、删掉 ToReal（8-12 版误判真实坐标导致
+  FA2 只显示 1 个玩家）。Structures 字段序 owner,type,health,**y,x**,dir。
+  **8-13 实测：游戏不写 rmcache\RandMap.Map**——存档 CONTENTS 只引用
+  RANDMAP.SED（种子），重载按当前种子重建（进遭遇战会覆盖种子→存档图变）；
+  GUI:SaveMapMenu 是 DebugLog 桩。e2e 逐字节对拍样本改以官方图+FA2 实测为准。
+  文档 `docs/random-map/map-output-format.md`（23 篇）。
   ⑨ **造山阶段（CreateHills，阶段 9）全量对拍完成（2026-08-12 深夜）**：
   RaiseAllCells 后格网 24336/24336 全一致（height/locked/dirty）、Apply 后
   (tile,level,ramp) 12054/12054 全一致、Flatten 后 level/ramp 12054/12054 全一致
@@ -168,7 +173,34 @@ a2mdpost\MapGen.cpp` = **0x5956E7-0x59A63A**（源码行 3934-6746，21KB）。
   覆盖范围恰为 X+Y ∈ [W+1, 2W+2H-2]（= 全部地图 cell）。
   哑元 0xABDC50 填空槽会绕过终止（遍历全 512²），但哑元 (1,1) dirty 检查必失败，
   不影响真实 cell 结果（M/HIT=6715 含 k=0 平地 509 个，写入值与 CST 原值相同）。
-  **下一步：e2e 逐字节对拍（暂缓，用户 2026-08-12 选择）**——开游戏生成随机地图
+  ⑩ **MakingRegions 调度测试全绿（2026-08-13）**：`test_making_regions`（#37，五入口
+  RASR/Rebuild/TrimCliff/Repaint/Reroll 对拍）修复完成，ctest **41/41 全绿**。
+  **RepaintAll 0x578E60 owner 参数实锤 = -1**：调用点 0x598D73 汇编 `push -1; push ebx;
+  mov ecx,0x87f7e8; call 0x578e60` → 0x578F2F `mov edi,[esp+0x20]` 读调用者栈第二参数
+  = 0xFFFFFFFF；FillNotch/AutoCliff 的 owner 恒为 -1（与 Rebuild 0x58EF49 同参），
+  FillNotch 的 false 出口（`o>0 && o!=owner && owner!=-1`）因此恒死代码。
+  之前 CLI 传 owner=0 导致 syn-checker-t 的 (6,9) AutoCliff 踩到已定砖子格
+  （GREEN 493）走"别块已定砖"分支 → ok=false → 第二遍 break → (8,9)(9,9) 未贴且
+  rng[3] 错位——**"Repaint(owner=0) 在 blob>0 时 break"是 emu 假象**：
+  `_emu_regions.py` 的 run_call **顺序压栈**把 (0,0xFFFFFFFF) 压成 param_1=0xFFFFFFFF、
+  param_2=0 → owner=0 假象；golden 的 dump 脚本（dump_blob_paint_golden.py:171）
+  **reversed 压栈**才是真实值（param_2=-1）。golden 可信、emu 的 Repaint 参数
+  数据不可信（Rebuild/TrimCliff/Reroll 无参、不受影响）。
+  **⑩' 下午 emu 逐阶段对拍**（Seed=10791 温和，side=157/70×70/MapType=3，
+  `_emu_regions.py` 指令级模拟；详 `stage-making-regions.md` §十二）：
+  ① **RASR 20067 次随机消耗逐位吻合（里程碑）**——ret 归属 `0x58C7BA`×10850 +
+  `0x59800D`×9176 + `0x58E387`×17 + `0x58D78C/58D7D7/58D8CB` 各 8 = 20067，与 CLI
+  逐位一致（RASR 调用次数决定后续所有阶段随机游标位置）；② TrimCliff 3→7 对齐；
+  ③ Priority（`_cmp_prio.py`）前 11 条一致，第 11 条分岔——**R_u32 相同
+  （2136689686）但 nb 坐标不同**（emu (97,97) vs CLI (96,96)）→ Randomizer 对齐、
+  邻居坐标传递分岔；④ hmask 顶层（`_cmp_hmask2.py`）**前 3642 格全一致**，CLI 在
+  (65,59) m=0xE1 停（break），emu 继续到 #3644 (66,59) m=0xE3 判据命中开始递归——
+  **CLI FillNotch 顶层循环提前终止 = 下游全部分岔的源头**（少遍历 2 格 → Priority
+  邻居坐标差 1 → BuildRamp seed 分岔 emu (65,60) vs CLI (100,27) → 级联），
+  根因待查（对比 0x58EF10 遍历边界/CellIterator 终止）。
+  **下一步（对拍主线）**：CLI FillNotch 顶层循环提前终止根因；修完后
+  `_cmp_prio.py`/`_cmp_hmask2.py` 复验全链分岔级联消失。
+  **e2e 逐字节对拍（暂缓，用户 2026-08-12 选择）**——开游戏生成随机地图
   （rmcache\RandMap.Map + RandMap.Sed 自动更新新 seed）→ 同 seed 跑 CLI → 逐字节 diff
   校准 7 项：Size/LocalSize、[Basic] 节、OverlayPack 段数、半整数坐标取舍、
   Structures 字段 7..16、IsoCell +0x119、Morphable/占地表/SetupLAT。

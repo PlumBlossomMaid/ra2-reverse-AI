@@ -9,6 +9,7 @@
 //   --out      输出 .map 路径（默认 rmcache\RandMap.Map 相对当前目录）
 //   --seed     覆盖 .sed 里的 Seed（-1 = 保持 .sed 值；.sed 也是 -1 时报错）
 //   --rules    rulesmd.ini 路径（默认 <dir>\rulesmd.ini，没有则从 ra2md.mix 读）
+//   --dump-cells  导出 cells 表（e2e 对拍用：0x40000 × 9B，见 cli_main.cpp 注释）
 #include <cstdio>
 #include <cstring>
 #include <fstream>
@@ -59,6 +60,7 @@ static int RunCli(int argc, char** argv) {
   const std::string out_path = ArgValue(argc, argv, "--out");
   const std::string seed_tok = ArgValue(argc, argv, "--seed");
   const std::string rules_path = ArgValue(argc, argv, "--rules");
+  const std::string dump_path = ArgValue(argc, argv, "--dump-cells");
 
   if (sed_path.empty() || game_dir.empty()) {
     std::fprintf(stderr,
@@ -149,6 +151,35 @@ static int RunCli(int argc, char** argv) {
     return 1;
   }
   f << map_text;
+
+  // ── 6.5 导出 cells 表（e2e 对拍）──
+  // 每格 9 字节：exists(1) isoTile(2) subtile(1) level(1) ramp(1)
+  //             overlayData(1) overlay(2)，索引 (Y<<9)+X，共 0x40000 格。
+  // 游戏侧同字段：CellClass +0x38/+0x44/+0x11A/+0x11B/+0x11C/+0x11E。
+  if (!dump_path.empty()) {
+    std::ofstream df(dump_path, std::ios::binary);
+    if (!df) {
+      std::fprintf(stderr, "cannot write %s\n", dump_path.c_str());
+      return 1;
+    }
+    for (int i = 0; i < 0x40000; ++i) {
+      const ra2::cli::CliCell& c = result.cells[static_cast<std::size_t>(i)];
+      const std::uint8_t exists = (result.exists[static_cast<std::size_t>(i)] != 0);
+      const std::uint8_t st = static_cast<std::uint8_t>(c.subtile);
+      const std::uint8_t lv = static_cast<std::uint8_t>(c.level);
+      const std::uint8_t rm = static_cast<std::uint8_t>(c.ramp);
+      const std::uint8_t od = static_cast<std::uint8_t>(c.overlayData);
+      const std::uint16_t ov = static_cast<std::uint16_t>(c.overlay);
+      const std::uint16_t iso = static_cast<std::uint16_t>(c.isoTile);
+      df.write(reinterpret_cast<const char*>(&exists), 1);
+      df.write(reinterpret_cast<const char*>(&iso), 2);
+      df.write(reinterpret_cast<const char*>(&st), 1);
+      df.write(reinterpret_cast<const char*>(&lv), 1);
+      df.write(reinterpret_cast<const char*>(&rm), 1);
+      df.write(reinterpret_cast<const char*>(&od), 1);
+      df.write(reinterpret_cast<const char*>(&ov), 2);
+    }
+  }
 
   std::fprintf(stderr,
                "ok: seed=%u players=%d map=%dx%d terrains=%zu buildings=%zu "

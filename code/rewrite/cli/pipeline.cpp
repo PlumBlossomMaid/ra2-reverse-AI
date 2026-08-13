@@ -82,12 +82,19 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   std::fprintf(stderr, "RMG: Init random map (W=%d H=%d side=%d seed=%u tile_count=%d)\n",
                ms.width, ms.height, grid.side(), seed, tile_count);
 
-  // 阶段 1 唯一的取数（0x59A4C7）：25% 抛硬币，决定河上有没有瀑布。
-  const bool allow_waterfall = rmg::UniformUnit(rng) < 0.25;
-
   // 跨阶段共享的流状态
   rmg::NormalDeviate normal(rng);
   int stamp = 0;                 // MapSeed +0x308 块编号
+  const auto dbg_snap = [&](const char* tag) {
+    std::fprintf(stderr, "RMG-DBG: %-22s calls=%-7lld ncache=%d cached=%.17g\n",
+                 tag, rng.call_count(), normal.has_cached() ? 1 : 0,
+                 normal.cached());
+  };
+
+  // 阶段 1 唯一的取数（0x59A4C7）：25% 抛硬币，决定河上有没有瀑布。
+  const bool allow_waterfall = rmg::UniformUnit(rng) < 0.25;
+  dbg_snap("after stage1");
+
   rmg::RegionSet regions;
 
   // ── 各阶段共享的上下文 ──
@@ -122,7 +129,14 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   rctx.region_size = params.region_size;
   rctx.accessibility = params.accessibility;
   rctx.map_type = params.map_type;
-  const rmg::MapRect usable = Shrink(local);
+  // ⚠️ 原版 0x578460 IsWithinUsableArea 读的是 MapClass（0x87F7E8）
+  // +0xF4(=map_w+4)/+0xFC..+0x108（= Set_LocalSize 输出，未缩放：70×70 →
+  // {2,5,70,70}）。阶段 4 的 Clearance / MakeConnections 边界格 / 架桥探条
+  // 全部走它（emu 对拍 0x58EBC0-0x594500 区 5 处 call 全是 0x578460）。
+  // 之前这里 Shrink(local)={6,9,62,62} 判定更严 → 边界格抽取 58 vs 原版 17，
+  // Rebuild 总 RNG 1986 vs 1937。Shrink 是 0x578640（带矩形版）的用法，
+  // 阶段 4 用不到。
+  const rmg::MapRect usable = local;
   rctx.usable = rmg::Rect{usable.x, usable.y, usable.w, usable.h};
   rctx.map_rect_w = ms.width + 4;
 
@@ -142,19 +156,124 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   } else {
     rmg::SeedWater(paint, world, p, params.map_type);
   }
+  {
+    int nw = 0;
+    grid.ForEachCell([&](const rmg::CellCoord& c) {
+      if (world.IsoTile(c) >= theater.water_set &&
+          world.IsoTile(c) < theater.water_set + 14)
+        ++nw;
+    });
+    std::fprintf(stderr, "RMG-DBG: after ARL water=%d painted=%d\n", nw,
+                 river_p.painted_total);
+    dbg_snap("after ARL");
+  }
 
   // ── 水面细化 ──
   std::fprintf(stderr, "RMG: RefineWaterTiles\n");
   rmg::RefineWaterTiles(world, grid, theater, rng);
+  {
+    int nw = 0;
+    grid.ForEachCell([&](const rmg::CellCoord& c) {
+      if (world.IsoTile(c) >= theater.water_set &&
+          world.IsoTile(c) < theater.water_set + 14)
+        ++nw;
+    });
+    std::fprintf(stderr, "RMG-DBG: after RefineWater water=%d\n", nw);
+    dbg_snap("after RefineWater");
+  }
+
+  // ── 临时：ARL 后状态 dump（emu 跑原版 InitRegions+MakeRegions 用）──
+  {
+    FILE* f = std::fopen("_arl_state.txt", "w");
+    if (f) {
+      std::fprintf(f, "RNG %lld %d %d", rng.call_count(), rng.index1(),
+                   rng.index2());
+      for (int i = 0; i < 250; ++i) std::fprintf(f, " %u", rng.state(i));
+      std::fprintf(f, "\nND %d %.17g\n", normal.has_cached() ? 1 : 0,
+                   normal.cached());
+      const int side = grid.side();
+      std::fprintf(f, "GLOB side=%d map_w=%d map_h=%d region_size=%d "
+                      "map_type=%d accessibility=%d water_set=%d shore=%d "
+                      "green=%d clear_lat=%d wf_e=%d wf_w=%d wf_n=%d wf_s=%d "
+                      "cliff_set=%d cliff_ramps=%d water_caves=%d "
+                      "bridge_set=%d wood_bridge_set=%d destroyable_cliffs=%d "
+                      "water_cliffs=%d\n",
+                   side, rctx.map_w, rctx.map_h, rctx.region_size,
+                   rctx.map_type, rctx.accessibility, theater.water_set,
+                   theater.shore_pieces, theater.green_tile,
+                   theater.clear_to_green_lat, theater.waterfall_east,
+                   theater.waterfall_west, theater.waterfall_north,
+                   theater.waterfall_south, theater.cliff_set,
+                   theater.cliff_ramps, theater.water_caves, theater.bridge_set,
+                   theater.wood_bridge_set, theater.destroyable_cliffs,
+                   theater.water_cliffs);
+      for (int y = 0; y < side; ++y) {
+        for (int x = 0; x < side; ++x) {
+          const std::size_t idx = static_cast<std::size_t>(y) * side + x;
+          const rmg::PaintWorkCell& w = work[idx];
+          std::fprintf(f, "W %d %d %d %d %d %d %d %d %d %d %d\n", x, y,
+                       w.coord.x, w.coord.y, w.blob_id, w.queued,
+                       w.flag4b ? 1 : 0, w.flag44 ? 1 : 0,
+                       w.flag45 ? 1 : 0, w.flag47 ? 1 : 0,
+                       w.flag4a ? 1 : 0);
+        }
+      }
+      grid.ForEachCell([&](const rmg::CellCoord& c) {
+        const CliCell& cell = world.CellAt(c);
+        std::fprintf(f, "C %d %d %d %d %d %d %d %d\n", c.x, c.y,
+                     cell.isoTile, cell.subtile, cell.level, cell.ramp,
+                     cell.overlay & 0xFFFF, cell.overlayData);
+      });
+      std::fclose(f);
+    }
+  }
 
   // ── 阶段 3：区域 ──
   std::fprintf(stderr, "RMG: Init regions\n");
   rmg::InitRegions(rctx, params.map_type);
+  {
+    int nreg = regions.Count();
+    long long sum = 0;
+    int maxc = 0, nbig = 0;
+    for (int i = 0; i < nreg; ++i) {
+      const rmg::RegionClass* r = regions.At(i);
+      sum += r->cell_count;
+      maxc = std::max(maxc, r->cell_count);
+      if (r->cell_count > 1518) ++nbig;
+    }
+    std::fprintf(stderr, "RMG-DBG: InitRegions 后区域数=%d 总格=%lld 最大=%d 超1518=%d\n",
+                 nreg, sum, maxc, nbig);
+    for (int i = 0; i < nreg; ++i) {
+      const rmg::RegionClass* r = regions.At(i);
+      std::fprintf(stderr, "  R%3d id=%3d cnt=%-6d lv=%d wet=%d\n", i,
+                   r->id, r->cell_count, r->level, r->wet ? 1 : 0);
+    }
+  }
+  dbg_snap("after InitRegions");
 
   // ── 阶段 4：造坡道/架桥/悬崖（MapType 3/4）──
   if (params.map_type == 3 || params.map_type == 4) {
     std::fprintf(stderr, "RMG: Making regions\n");
+    // 临时对拍：MakeRegions（stage4）前 dump blob/queued/level。
+    {
+      FILE* f = std::fopen("_cli_pre4.txt", "w");
+      if (f) {
+        const int side0 = grid.side();
+        for (int y = 0; y < side0; ++y) {
+          for (int x = 0; x < side0; ++x) {
+            const rmg::PaintWorkCell& w =
+                work[static_cast<std::size_t>(y) * side0 + x];
+            std::fprintf(f, "F %d %d %d %d %d\n", x, y, w.blob_id, w.queued,
+                         world.Level(rmg::CellCoord{
+                             static_cast<std::int16_t>(x),
+                             static_cast<std::int16_t>(y)}));
+          }
+        }
+        std::fclose(f);
+      }
+    }
     rmg::MakeRegions(rctx, world, params.map_type);
+    dbg_snap("after MakeRegions");
   }
 
   // ── 阶段 5：绿地扩张 + 逐格重算属性 ──
@@ -179,6 +298,7 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
     zc.land = cell.zoneId;
     zc.level = static_cast<std::uint8_t>(cell.level);
   });
+  dbg_snap("after SpreadGreen+recalc");
 
   // ── 阶段 6：出生点 ──
   std::fprintf(stderr, "RMG: Creating starting points\n");
@@ -202,6 +322,7 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   rmg::ComputeStartZoneSelection(sp, zt);
   world.SetZoneData(&zt, &zone_result);
   rmg::PlaceStartPoints(sp);
+  dbg_snap("after start points");
 
   // ── 阶段 7：中立科技建筑（MapType ≠ 0）──
   if (params.map_type != 0) {
@@ -214,6 +335,7 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
     tc.world = &world;
     tc.map_type = params.map_type;
     rmg::AddTechBuildings(tc);
+    dbg_snap("after tech buildings");
   }
 
   // ── 阶段 8：布矿 ──
@@ -234,6 +356,7 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   tp.min_tiberium = rules.min_tiberium;
   tp.max_tiberium = rules.max_tiberium;
   rmg::PlaceTiberium(oc, regions, tp);
+  dbg_snap("after tiberium");
 
   // 原版布矿后 Recalc 第二次（rmg_pipeline_decomp.txt 行 283），造山前还有
   // 第三次（行 330）。中间游戏会清工作数组/析构区域，CLI 无对应阶段。
@@ -255,6 +378,7 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   rmg::RaiseAllCells(hc);
   rmg::ApplyLatticeToCells(hc);
   rmg::FlattenRampBlocks(hc);
+  dbg_snap("after hills");
 
   // ── 阶段 10：地表装饰 ──
   std::fprintf(stderr, "RMG: Creating LATs, rocks etc\n");
@@ -277,6 +401,7 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   lc.params.map_rect_w = ms.width + 4;
   lc.params.map_rect_h = ms.height + 12;
   rmg::CreateLats(lc);
+  dbg_snap("after lats");
 
   // 原版 LAT 后 Recalc 第四次（rmg_pipeline_decomp.txt 行 409）。
   recalc_pass();
@@ -290,6 +415,13 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   out->terrains = world.terrains();
   out->buildings = world.buildings();
   out->start_locations = world.start_locations();
+
+  std::fprintf(stderr,
+               "RMG-DBG: rng calls=%lld idx1=%d idx2=%d state0=%u state1=%u\n",
+               rng.call_count(), rng.index1(), rng.index2(), rng.state(0),
+               rng.state(1));
+  std::fprintf(stderr, "RMG-DBG: normal has_cached=%d cached=%.17g\n",
+               normal.has_cached() ? 1 : 0, normal.cached());
 
   if (err != nullptr) err->clear();
   return true;

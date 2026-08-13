@@ -44,7 +44,9 @@ void RefineWaterTiles(SmoothWorld& w, const MapGrid& grid,
                IsPlainWater(w, se, water);
 
     if (big) {
-      // 0x59C6DA：PickFrom1(10)，抽到 1（10%）就退回小水砖那一支
+      // 0x59C6DA：`fmul 10/(2^32-1)` + `fadd 1.0` + `_ftol` + `> 10 重抽`
+      // = **PickFrom1(10)**，返回 1..10，抽到 1（1/10）退回小水砖那一支
+      //（fpu-and-random-idioms.md §三的汇编逐条取证，不是 PickBelow(11)）。
       if (PickFrom1(rng, 10) == 1) {
         big = false;
       } else {

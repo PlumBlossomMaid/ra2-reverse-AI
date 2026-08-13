@@ -98,15 +98,21 @@ bool FillNotch(RegionContext& ctx, MakingWorld& world, const CellCoord& c,
   // 最后汇总：N+S 槽 / E+W 槽 / 上面任一判据。
   if (!((m & 0x88) == 0x88 || (m & 0x22) == 0x22 || hit)) return true;
 
-  // 唯一的 false 出口（活路径 owner = -1 走不到，0x585D00 死调用才触发）。
+  // 0x5792A9 的 edi 读的是 [esp+0x28]——GetWorkOwner（ret 4）返回后 esp 已
+  // 恢复到 push ecx 之前，该槽指向调用者 param2，不是 0x5792A0 写入的 packed
+  // （Westwood 栈偏移错位，false 出口的 packed 判定实际变成 param2 判定）。
+  // 判定：blob<=0 → 抬高；blob==param2 → 抬高；param2==-1 → 抬高；否则 false。
+  // 因此调用者恒传 -1（Rebuild 0x58EF49 / RepaintAll 0x578E60 的 param_2
+  // 都是 0xFFFFFFFF）→ 判据命中恒抬高，false 出口是死代码。
   const int o = Owner(ctx, c);
   if (o > 0 && o != owner && owner != -1) return false;
 
   // byte 上的 +4，会回绕。work 为空时层高照改、只不写归属。
   world.SetLevel(c, static_cast<std::int8_t>(world.Level(c) + 4));
-  SetOwner(ctx, c, owner);
+  SetOwner(ctx, c, owner);   // 0x5A0090(&coord, param2)
   for (int d = 0; d < 8; ++d) {
-    FillNotch(ctx, world, Step(c, d), owner);   // 递归，返回值丢弃
+    // 递归参数 = param2（0x5792EE push edi），返回值丢弃（0x579301）。
+    FillNotch(ctx, world, Step(c, d), owner);
   }
   return true;
 }
@@ -441,14 +447,18 @@ void RepaintAll(RegionContext& ctx, MakingWorld& world) {
       (*ctx.work)[i].flag4a = true;   // +0x4A 置 1（0x58C2C0 按下标取记录）
     }
   }
-  // 第一遍：全图 FillNotch(-1)，false 提前终止。
+  // 第一遍：全图 FillNotch(-1)，false 提前终止。原版 0x578E60 的 param_2
+  // 由调用者（0x598D73 push -1）给 0xFFFFFFFF，FillNotch/AutoCliff 的
+  // owner 恒为 -1（0x578F2F mov edi,[esp+0x20] 读调用者栈第二参数）。
+  // ⚠️ emu run_call 顺序压栈会把参数弄反（[0,0xFFFFFFFF] → owner=0），
+  // golden 基准的 dump 脚本用 reversed 压栈 → owner=-1，与真实一致。
   bool keep = true;
   ctx.grid.ForEachCell([&](const CellCoord& c) {
     if (!keep) return;
     if (!FillNotch(ctx, world, c, -1)) keep = false;
   });
   // 第二遍：只对非坡（+0x11C == 0）且未定砖的格子调 AutoCliff(-1)。
-  keep = true;
+  // 原版 0x578F91 test bl,bl 沿用第一遍的 ok，两遍之间不复位。
   ctx.grid.ForEachCell([&](const CellCoord& c) {
     if (!keep) return;
     if (world.Ramp(c) != 0) return;

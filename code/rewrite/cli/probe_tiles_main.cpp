@@ -18,18 +18,26 @@ int main(int argc, char** argv) {
   std::vector<ra2::rmg::TileType> tiles;
   assets.BuildRmgTileTable(&tiles);
   std::printf("total=%d\n", (int)tiles.size());
-  const int probes[] = {0, 131, 132, 133, 134, 143, 145, 493, 494, 510, 511,
-                        512, 513, 514, 515, 516, 517, 518, 519, 520, 521,
-                        419, 420, 29, 30, 49};
-  for (int t : probes) {
-    const ra2::rmg::TileType& tt = tiles[(std::size_t)t];
-    std::printf("tile %d: w=%d h=%d sub=%d", t, tt.width, tt.height,
-                (int)tt.cells.size());
-    if (!tt.cells.empty()) {
-      std::printf(" sub0: present=%d ramp=%d terrain=%d", tt.cells[0].present,
-                  tt.cells[0].ramp, tt.cells[0].terrain_type);
+  const ra2::rmg::TheaterData& d = assets.data();
+  struct Range { int lo; int hi; };
+  const Range ranges[] = {
+      {d.cliff_set, d.cliff_set + 0x28},
+      {d.slope_set_pieces, d.slope_set_pieces + 10},
+      {d.paved_roads, d.paved_roads + 0x15},
+      {d.paved_road_ends, d.paved_road_ends + 4},
+  };
+  for (const Range& r : ranges) {
+    std::printf("== range %d..%d\n", r.lo, r.hi);
+    for (int t = r.lo; t < r.hi; ++t) {
+      const ra2::rmg::TileType& tt = tiles[(std::size_t)t];
+      std::printf("tile=%d w=%d h=%d sub=%d", t, tt.width, tt.height,
+                  (int)tt.cells.size());
+      for (std::size_t k = 0; k < tt.cells.size(); ++k) {
+        std::printf(" [%d]%c%d/%d", (int)k, tt.cells[k].present ? 'p' : '-',
+                    tt.cells[k].height, tt.cells[k].ramp);
+      }
+      std::printf("\n");
     }
-    std::printf("\n");
   }
   return 0;
 }

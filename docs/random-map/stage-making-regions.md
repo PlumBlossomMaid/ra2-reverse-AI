@@ -6,9 +6,15 @@
 > 以及架桥 `0x58F2C0` 均已实锤；
 > 三个转角建造函数也已实锤（§五之四，连带查出第 4 条转角分支是**死的**）。
 > **全流水线已落 C++ 并对拍完成**（`code/rewrite/rmg/{making_regions,ramps,cliff_work}.cpp`，
-> ctest 39/39 全绿，10 组整链基准含 4 组 stage2 + 6 组合成地形 + 9 组坡道专项）——
+> ctest 41/41 全绿，10 组整链基准含 4 组 stage2 + 6 组合成地形 + 9 组坡道专项）——
 > 0x58EBC0 切分、0x58EF10 重建/开通路、0x5A19E0 悬崖修角、0x578E60 全图重刷、
 > 0x5A17F0 多格砖重掷的随机消耗与格子终态逐位对齐。
+> **2026-08-13 下午 emu 逐阶段对拍**（`_emu_regions.py` Unicorn 指令级模拟原版，
+> 详情 §十二）：RASR 20067 次随机消耗**逐位吻合**（里程碑）；TrimCliff 3→7 对齐；
+> Repaint 的 emu 数据因 run_call 压栈 bug **不可信**（golden 为准）；
+> Priority 前 11 条一致后分岔（R 相同、邻居坐标传递分岔）；
+> **CLI FillNotch 顶层循环提前终止**（3642 格 vs 原版继续到判据命中）定位为
+> 下游全部分岔的源头，根因待查。
 > 对拍中两处实锤修正：① `0x89A304` 方向偏移表是 `.data` 零填充区（全 0），
 > 候选标记写的是"节点自己"（0x58DA5B）→ **原版扩散无防重、候选重复入堆**；
 > ② `HigherMask`（0x579B70）对每个邻格先取 cell 指针（界外写共享哑元坐标，
@@ -1914,4 +1920,90 @@ making regions / tiberium）的取数点也随之全部落地。
    增长步长 `max(cellCount/2, 10)`、判据"8 邻域里有异区就收、收完 `break`"，见 §2.9。
    两者开头都是 `new(0x18)` + `DynamicVectorClass` 构造，长得很像，
    **是不是同一份代码的两个副本未逐条比对**。）
+
+## 十二、emu 逐阶段对拍（2026-08-13 下午）
+
+对拍方法沿用 [README.md](README.md) 的总方法论：`code/randmap/_emu_regions.py`
+用 Unicorn 把 gamemd.exe 按原 ImageBase 映射后**指令级模拟原版机器码**，
+按 `Random()@0x65C780` 的 ret 地址统计每阶段随机消耗（ret 归属），与 CLI
+（`code/rewrite/cli/`）的 delta 逐项对比。本轮输入：Seed=60556 雪地之外
+新加的 Seed=10791 温和参数（`.sed`），side=157 / map 70×70 / MapType=3，
+work=24649 / cells=12054。
+
+### 12.1 RASR（0x58EBC0，重算成员+切分）—— 里程碑：20067 次随机消耗逐位吻合
+
+emu 统计 RASR 共 **20067** 次随机消耗，ret 归属：
+
+| ret 地址 | 次数 | 归属 |
+|---|---|---|
+| `0x58C7BA` | 10850 | 0x58C6F0 三项优先级（每候选格 1 次） |
+| `0x59800D` | 9176 | `UniformUnit`（0x58D620 切分里 `angle += NormalDeviate()·π/8` 等） |
+| `0x58E387` | 17 | 0x58D620 |
+| `0x58D78C` / `0x58D7D7` / `0x58D8CB` | 各 8 | 0x58D620 剥几格/种子格/基准角 |
+
+与 CLI 逐位吻合（`_cmp_rasr.py`），10850+9176+17+8+8+8 = 20067。
+**这是阶段 4 对拍的第一座里程碑**——RASR 的调用次数（含 SeedRegion 的
+`PickRange` 内联）决定后续所有阶段的随机游标位置。
+
+### 12.2 TrimCliff（0x5A19E0）—— 对齐：3 → 7
+
+emu（run20）消耗 3 次（`0x5A1B36`×2 + `0x5A1A85`×1），CLI fix11 的 delta=7。
+方向一致、数值有差——TrimCliff 的随机消耗取决于前面的分岔点，本阶段自身
+两处取数语义（§七：`0x5A1A7B`/`0x5A1B2C`）已实锤，数值差异是级联。
+
+### 12.3 Repaint（0x578E60）—— emu 数据不可信（压栈 bug），以 golden 为准
+
+emu 报 Repaint RNG 消耗 = 0，**这是假象**：`_emu_regions.py` 的 `run_call`
+**顺序压栈**把参数对 `(0, 0xFFFFFFFF)` 压成 param_1=0xFFFFFFFF / param_2=0，
+`0x578F2F mov edi,[esp+0x20]` 读到 0 → owner=0 假象 → FillNotch 走错分支、
+RNG 错位。golden 的 dump 脚本（`dump_blob_paint_golden.py:171`）是
+**reversed 压栈**，才是真实调用约定（param_2 = -1）。结论：**golden 可信、
+emu 的 Repaint 参数数据不可信**（Rebuild/TrimCliff/Reroll 无参、不受影响）。
+真实 owner 实锤 = -1（调用点 `0x598D73`：`push -1; push ebx; mov ecx,0x87f7e8;
+call 0x578e60`）——FillNotch 的 false 出口（`o>0 && o!=owner && owner!=-1`）
+恒死代码，C++ 已按 owner=-1 落地（`cliff_work.cpp` 修复）。
+
+### 12.4 Priority（0x58C6F0）—— 前 11 条一致，第 11 条分岔：R 相同、邻居坐标不同
+
+`_cmp_prio.py` 对比 emu（run17 全量 dump）vs CLI（fix11）的 Priority 序列：
+前 11 条完全一致，第 11 条分岔——**R_u32 相同（2136689686）但 nb 坐标不同**
+（emu nb=(97,97) vs CLI nb=(96,96)）。含义：**Randomizer 状态对齐**
+（同一次取数、同一个 R），但**邻居坐标传递分岔**——即上层（HigherMask/
+FillNotch 的抬格/判据）在某处给 CLI 和原版喂了不同的邻居候选。
+
+### 12.5 hmask 顶层序列（0x579010 FillNotch）—— 3642 格全一致，但 CLI 提前终止
+
+`_cmp_hmask2.py` 对比 emu（`_emu_hmask.txt`，0x57902C hook）vs CLI
+（`_cli_hmask_all.txt`）的 FillNotch 顶层遍历：
+
+- **前 3642 格全部一致**（坐标 + lv + m 掩码逐格相同，无 m/lv 分岔）；
+- CLI 在 **(65,59) m=0xE1** 停在第 3642 格（`break` 退出顶层循环）；
+- emu 继续到 #3644 **(66,59) m=0xE3**——`0xE3 & 0x22 == 0x22`（E+W 槽）
+  判据命中，开始递归抬格。
+
+**CLI FillNotch 顶层循环提前终止** = 下游全部分岔的源头：少遍历 2 格 →
+Priority 邻居坐标差 1（§12.4）→ BuildRamp seed 分岔（emu (65,60) vs
+CLI (100,27)）→ 后续所有阶段级联错位。owner=-1 时 false 出口是死代码，
+CLI 的循环终止条件与原版不一致（原版 CellIterator/循环边界继续走到
+判据命中为止），**根因待查**（下一步对比 `0x58EF10` 的遍历边界与
+CellIterator 终止机制，见 [stage-hills.md](stage-hills.md) ⑨ 的
+`[0x87F8DC]=MapRect.W` 经验）。
+
+### 12.6 本轮修正汇总
+
+| 修正 | 内容 | 依据 |
+|---|---|---|
+| RepaintAll owner | 0 → **-1** | 0x598D73 `push -1` 汇编实证 |
+| `_emu_regions.py` run_call | 顺序压栈 → 记录为 bug | golden reversed 压栈对比 |
+| making_regions.cpp | 删只写不读的 `n_skip` 残留 | printf 删除后残留，C4189 |
+| ctest | 39/39 → **41/41** | `test_making_regions`（#37）五入口对拍修复 |
+
+### 12.7 遗留
+
+1. **CLI FillNotch 顶层循环提前终止的根因**（对拍下一步）——CLI 在 3642 格
+   (65,59) 停，原版继续到 (66,59) 判据命中；对比遍历边界/CellIterator 终止。
+2. `_emu_regions.py` 临时 hook（hmask/crit2a/blob/hitval/blobtest/raise/
+   esp/top/ret 等 41 个）全部对拍完成后移除（临时探针，不入库）。
+3. BuildRamp 序列差异（emu 15 次 0 成功 vs CLI 27 次 2 成功）是 §12.5
+   上游分岔的下游表现，非本阶段自身错误。
 

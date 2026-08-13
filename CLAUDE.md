@@ -51,10 +51,11 @@
 输出一个与**原版逻辑对齐**的 YR `.map` 文件（可直接被游戏加载，生成的局势与原版
 随机地图一致）。这是一个独立实现的算法程序，是上述研究文档化的自然延伸。
 
-### 当前进度（2026-08-06 下午，RNG 里程碑已达成）
+### 当前进度（2026-08-13，MakingRegions 五入口对拍收尾中）
 
-**结论先行**：随机数发生器（R250）已 **逐位复刻并通过对拍**；`MapGen.cpp` 整个编译单元
-已测绘完毕；生成流水线的 11 个阶段及其入口函数全部锁定。下一步是逐阶段还原算法。
+> 下面 §1–§6 是 2026-08-06 达成 RNG 里程碑时的记录（历史），§7–§10 是后续里程碑
+> （按时间顺序，最新在最末）。两份工作手册（本文件与 QWEN.md）的"当前状态与下一步"
+> 保持同步；以 QWEN.md 为准做增量核对。
 
 #### 1. 编译单元测绘（方法论升级）
 MSVC 6.0 调试宏 `PUSH <行号 imm32>; PUSH <文件名VA>; CALL 0x734E60` 在 PE 里留下
@@ -207,20 +208,100 @@ Unicorn，用哨兵返回地址 + ECX 传 this 直接跑原版机器码取标准
 - `.map` 权威格式（EA 官方编辑器源码）：`MAPFIELDDATA` 11B/cell；
   `[IsoMapPack5]` = Base64 → 块(2B srcSize + 2B destSize + 数据) → XCC `decode5s`
 
+#### 7. 全流水线算法落 C++ 并对拍完成（2026-08-11）
+104 个活取数点语义全部落地，12 个阶段 + `MapType ∈ {3,4}` 河湖支路全部端到端对拍
+（stage_water/water_refine/regions/recalc/start_points/zones/height_field/
+corner_lattice/lats/ore_field/tech_buildings/place_tiberium/place_start_points/
+region_ops/angular_grow/water_blob/rivers……，ctest 37/37 全绿）；
+`.mix`/`.tmp` 装载器（`code/rewrite/mix/` + `assets/`）已落 C++。
+收尾闭合 **River `0x59D510` + 调度 `0x59C580`（AddRiversAndLakes）**，两处实锤修正：
+支流递归起点 = 画格横截面末端 `(Ftol(xL),Ftol(yL))`（0x59DF6E-0x59DF80，非推进后游标）、
+ok = 支流递归返回值（0x59DFA2，丢弃则主河多跑 10 轮）。
+`Init random map`（FUN_00599650）确认是引擎侧初始化（写 `[Lighting]`/`[Basic]` INI、
+建 Preview、清 CellClass、重算寻路、设 waypoint 700/699），只取 1 次随机数，
+CLI 不必复刻。调试记录 `WIP_RIVER_DEBUG.md`；文档 `docs/random-map/` 22 篇。
+
+#### 8. 端到端 CLI 主程序跑通（2026-08-12）
+`code/rewrite/cli/`（CliWorld 八路菱形继承 + pipeline 12 阶段串联 + mapwriter +
+rules_loader + cli_main SEH 兜底）+ `code/rewrite/map/`（base64/LZO/LCW/encode80/
+IsoMapPack5 编码器，EA 编辑器 GPL-3.0 为权威参考）。smoke（Seed=60556 雪地）与
+游戏实际参数（RandMap.Sed Seed=10791 温和）都跑通，ctest **41/41 全绿**。
+两个修复：`RegionContext.world` 漏设（CreateRegions 空指针，菱形继承需
+`static_cast<MakingWorld*>`）；golden 路径统一 `RA2_ROOT_DIR`（CMAKE_SOURCE_DIR
+是 code/rewrite，golden 实际在仓库根——此前 ctest 一直是残缺的）。
+**`.map` 坐标语义（2026-08-13 修正）**：Waypoints/Terrain/Structures 的 x/y 是
+**等距坐标**（cell 列/行，范围 [0, W+H]），**不是真实坐标**——官方图 sandwell
+（100×150）Terrain (93,179)、捡箱子（200×200）Waypoint (202,364) 全超地图尺寸
+即等距证据；CLI 等距直写、删掉 ToReal（8-12 版误判真实坐标导致 FA2 只显示 1 个
+玩家）。Structures 字段序 owner,type,health,**y,x**,dir。
+**8-13 实测：游戏不写 rmcache\RandMap.Map**——存档 CONTENTS 只引用 RANDMAP.SED
+（种子），重载按当前种子重建（进遭遇战会覆盖种子→存档图变）；GUI:SaveMapMenu
+是 DebugLog 桩。e2e 逐字节对拍样本改以官方图+FA2 实测为准。
+文档 `docs/random-map/map-output-format.md`（23 篇）。
+
+#### 9. 造山阶段（CreateHills，阶段 9）全量对拍完成（2026-08-12 深夜）
+RaiseAllCells 后格网 24336/24336 全一致（height/locked/dirty）、Apply 后
+(tile,level,ramp) 12054/12054 全一致、Flatten 后 level/ramp 12054/12054 全一致
+（变化集合 96/148 对称差 0）、Flatten 写 tile=0xFFFF 148 个 cell 一致。
+剩余 tile 差异 3971 个全部来自阶段 10 LAT 装饰（未对拍）。
+**本轮实锤的两个 emu 灌入坑**（`code/randmap/_emu_hills.py`）：
+① `[0x87F8DC]` = **MapRect.W = W**（MapSeed+0x180 插值，stage-init.md 实锤），
+**不是 side**！CellIterator(0x578350) 起点 = (1, W)，遍历 X+Y ≥ W+1 的对角线区域；
+误灌 side=157 → 起点 X+Y=158（应为 75），地图 X+Y∈[75,238] 的 cell 漏掉一半，
+Apply 只处理 3315 个 cell——之前"CLI Apply 分岔"纯属 emu 灌错假象，CLI 无错。
+② `[0xABC1D8]` = ramp_base（温带 29）：k≠0 分支写 tile = ramp_base+k-1；
+不灌则 = 0，Apply 写 tile 全错（4/0/7 vs 正确 33/29/36）。k==0 分支写
+`[0xAA10B0]`=0（草地），emu 默认 0 无需灌。
+**CellIterator 终止机制**：Next(0x578290) 返回槽指针 [ebp]，槽为 NULL 时 Apply
+循环 `je 0x6b3a61` 退出——原版空槽=NULL，遍历到地图菱形外第一个空槽即停，
+覆盖范围恰为 X+Y ∈ [W+1, 2W+2H-2]（= 全部地图 cell）。哑元 0xABDC50 填空槽
+会绕过终止（遍历全 512²），但哑元 (1,1) dirty 检查必失败，不影响真实 cell 结果。
+
+#### 10. MakingRegions（阶段 4）调度测试全绿 + emu 逐阶段对拍（2026-08-13）
+`test_making_regions`（#37，五入口 RASR/Rebuild/TrimCliff/Repaint/Reroll 对拍）
+修复完成，ctest **41/41 全绿**。
+**RepaintAll 0x578E60 owner 实锤 = -1**：调用点 0x598D73 汇编 `push -1; push ebx;
+mov ecx,0x87f7e8; call 0x578e60` → 0x578F2F `mov edi,[esp+0x20]` 读调用者栈
+第二参数 = 0xFFFFFFFF；FillNotch/AutoCliff 的 owner 恒为 -1（与 Rebuild 0x58EF49
+同参），FillNotch 的 false 出口（`o>0 && o!=owner && owner!=-1`）因此恒死代码。
+之前 CLI 传 owner=0 导致 syn-checker-t 的 (6,9) AutoCliff 踩到已定砖子格
+（GREEN 493）走"别块已定砖"分支 → ok=false → 第二遍 break → (8,9)(9,9) 未贴且
+rng[3] 错位——**"Repaint(owner=0) 在 blob>0 时 break"是 emu 假象**：
+`_emu_regions.py` 的 run_call **顺序压栈**把 (0,0xFFFFFFFF) 压成 param_1=0xFFFFFFFF、
+param_2=0 → owner=0 假象；golden 的 dump 脚本（dump_blob_paint_golden.py:171）
+**reversed 压栈**才是真实值（param_2=-1）。golden 可信、emu 的 Repaint 参数
+数据不可信（Rebuild/TrimCliff/Reroll 无参、不受影响）。
+
+**下午 emu 逐阶段对拍**（Seed=10791 温和，side=157 / 70×70 / MapType=3，
+`_emu_regions.py` Unicorn 指令级模拟；详细记录 `stage-making-regions.md` §十二）：
+- **RASR 20067 次随机消耗逐位吻合**（里程碑）：ret 归属 `0x58C7BA`×10850 +
+  `0x59800D`×9176 + `0x58E387`×17 + `0x58D78C/58D7D7/58D8CB` 各 8 = 20067，
+  与 CLI 逐位一致——RASR 调用次数决定后续所有阶段的随机游标位置
+- TrimCliff 3 → 7 对齐（emu run20 vs CLI fix11 delta=7）
+- Repaint=0 是 run_call 压栈 bug 假象（不可信，见上）
+- Priority（`_cmp_prio.py`）：前 11 条一致，第 11 条分岔——**R_u32 相同
+  （2136689686）但 nb 坐标不同**（emu (97,97) vs CLI (96,96)）→ Randomizer 对齐、
+  邻居坐标传递分岔
+- hmask 顶层（`_cmp_hmask2.py`）：**前 3642 格全一致**（坐标+lv+m 逐格相同），
+  CLI 在 (65,59) m=0xE1 停（break 退出顶层循环），emu 继续到 #3644 (66,59) m=0xE3
+  判据命中开始递归——**CLI FillNotch 顶层循环提前终止 = 下游全部分岔的源头**
+  （少遍历 2 格 → Priority 邻居坐标差 1 → BuildRamp seed 分岔 emu (65,60) vs
+  CLI (100,27) → 后续级联），根因待查（对比 0x58EF10 遍历边界/CellIterator 终止）
+
 ### 下一步计划（按顺序）
 
-1. **逐阶段还原算法**。已确认 `Init random map`（`FUN_00599650`）主体是**引擎侧初始化**
-   （写 `[Lighting]`/`[Basic]` INI、建 Preview、清 CellClass、重算寻路、设 waypoint 700/699），
-   只取 1 次随机数——命令行工具基本不需要复刻它。真正的地形算法在
-   `Seeding water`（`0x59A6C0` / `0x59C580` / `0x59C630`）及之后，
-   且集中在 **0x59A66C-0x5A9800 这段无调试宏的源文件**里（约 130 处取数点）。
-   `Seeding water` 的涂块核心与数学基元已完成（见 4.6），**剩余缺口**：
-   投放策略 `FUN_0059A8F0`（疑似按玩家数分区的 `(x,y,w,h)` 四元组）、
-   岸线平滑 `FUN_0057A0C0`（决定一块陆地被接受还是抹回海里）、
-   各 MapType 的取数个数统计、工作记录 0x50 字节的完整字段布局
-2. `.sed` 参数解析（含 UTF-16-hex `Description`）+ rules.ini 驱动的 RMG 配置（数据驱动）
-3. `.map` 输出：`[IsoMapPack5]` Base64 + XCC encode5，组装成 C++ 命令行程序
-4. 端到端验证：同种子 + 同参数 → 我们的 `.map` 与原版输出**逐字节比对**
+1. **（对拍主线）CLI FillNotch 顶层循环提前终止根因**：CLI 在 3642 格 (65,59)
+   m=0xE1 停，原版继续到 (66,59) m=0xE3 判据命中；对比 `0x58EF10` 遍历边界与
+   CellIterator 终止条件（owner=-1 时 false 出口是死代码，CLI 循环终止条件与
+   原版不一致，正是要查的点）。修完后用 `_cmp_prio.py` / `_cmp_hmask2.py` 复验
+   全链分岔应级联消失
+2. **e2e 逐字节对拍（暂缓，用户 2026-08-12 选择）**：开游戏生成随机地图
+   （rmcache\RandMap.Map + RandMap.Sed 自动更新新 seed）→ 同 seed 跑 CLI →
+   逐字节 diff 校准 7 项：Size/LocalSize、[Basic] 节、OverlayPack 段数、
+   半整数坐标取舍、Structures 字段 7..16、IsoCell +0x119、Morphable/占地表/
+   SetupLAT。样本以官方图 + FA2 实测为准
+3. `_emu_regions.py` 临时 hook（41 个：hmask/crit2a/blob/hitval/blobtest/raise/
+   esp/top/ret 等）全部对拍完成后移除（临时探针，不入库）
 
 **注意**：RA1 源码（`D:\CnCRemastered\SOURCECODE`）**没有**随机地图生成器
 （这是 TS/RA2 引入的特性），不能照搬 RA1 实现；但其底层工具（随机数、地形、
@@ -229,12 +310,21 @@ Unicorn，用哨兵返回地址 + ECX 传 this 直接跑原版机器码取标准
 
 ### 相关文档与取证
 
-- 文档：`docs/random-map/README.md`（总览与方法论）/ `randomizer.md`（RNG）/
-  `mapgen-tu.md`（编译单元与流水线）/ `parameters.md`（参数与 .sed 格式）
+- 文档（23 篇，总览见 `docs/random-map/README.md`）：`randomizer.md`（RNG）/
+  `mapgen-tu.md`（编译单元与流水线）/ `parameters.md`（参数与 .sed 格式）/
+  `fpu-and-random-idioms.md` / `fast-math.md` / `rng-ledger.md`（104 个活取数点总账）/
+  `map-geometry.md` / `stage-*.md`（各阶段）/ `movement-zones.md` /
+  `map-output-format.md`（.map 输出格式）/ `stage-making-regions.md`（阶段 4 主文档，
+  **§十二 = 2026-08-13 emu 逐阶段对拍**）
 - 取证：`memory/data/decomp/mapgen_tu_map.txt` / `rmg_pipeline_decomp.txt` /
-  `randomizer_asm.txt`；基准 `memory/data/rmg/rng_golden.txt`
+  `randomizer_asm.txt`；基准 `memory/data/rmg/rng_golden.txt` /
+  `scaled_golden.txt` / `ramps_golden.txt` / `lats_golden.txt`
 - 环境坑记录：`memory/notes/toolchain-pitfalls.md`（7 条，含 shell 转义/GBK 终端/
   Ghidra scriptPath/Python tempdir 等，踩过一次别再踩）
+- 构建注意：真构建目录是 `code/rewrite/build/`（Ninja，源 = code/rewrite）；
+  仓库根 `build/` 是顶层 CMakeLists 配置、include 缺 `code\rewrite` 前缀——
+  **别用错目录**（曾因用错目录编译失败 `C1083: 无法打开包括文件 rmg/blob_paint.h`）
+- 提交规范：仓库只提交正式产物；`_` 开头临时探针脚本（硬编码本机路径）不入库
 
 ## 标准工作流（与 QWEN.md 对齐）
 
@@ -305,6 +395,8 @@ Unicorn，用哨兵返回地址 + ECX 传 this 直接跑原版机器码取标准
 - 运行示例：
   `analyzeHeadless.bat E:\code\ra2-reverse\ghidra_proj RA2 -process gamemd.exe -noanalysis -postScript <脚本> -scriptPath E:\code\ra2-reverse-AI\code\ghidra_scripts`
 - 原版二进制：`E:\YRLauncher\gamemd.exe`（只读分析，永不修改）
+- MSVC 编译：`vcvars64.bat` + `cl /std:c++17 /utf-8 /W4`；构建用
+  `code\rewrite\build\`（Ninja，ctest 41/41）
 - 交叉验证源码：YRpp `E:\code\YRpp`、Phobos `E:\code\Phobos`、
   EA 官方任务编辑器 `E:\code\CNC_TS_and_RA2_Mission_Editor`（GPL-3.0，.map 读写权威实现）、
   RA1 `D:\CnCRemastered\SOURCECODE`

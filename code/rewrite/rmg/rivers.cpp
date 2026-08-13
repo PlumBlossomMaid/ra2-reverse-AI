@@ -51,8 +51,12 @@ bool River(RegionContext& ctx, RiverWorld& world, RiverParams& p,
   Randomizer& rng   = *ctx.rng;
   NormalDeviate& nd = *ctx.normal;
   const MapGrid& g  = ctx.grid;
-  const int W = ctx.map_w;
-  const int H = ctx.map_h;
+  // 0x59D5BA 起：起点采样与入口坐标全读 [0x87F8DC]/[0x87F8E0]（MapRect
+  // W/H = ms.width+4 / ms.height+12），**不是** MapSeed +0x180/+0x184
+  // （那是 WaterBlob 预算的分母，见 water_blob.cpp）。golden 小地图里
+  // 两者相同才没暴露，真实 70x70 地图上差 4/12 格。
+  const int W = g.width();
+  const int H = g.height();
 
   CellCoord cur = start;
   double ang = angle;
@@ -103,6 +107,9 @@ bool River(RegionContext& ctx, RiverWorld& world, RiverParams& p,
       default: cx = s16(ry + 1);          cy = s16(ry + W);      break;
     }
     cur = CellCoord{cx, cy};
+    std::fprintf(stderr,
+                 "RMG-DBG: River start dir=%d rx=%d ry=%d cur=(%d,%d) ang=%.6f W=%d H=%d\n",
+                 dir, rx, ry, cur.x, cur.y, ang, W, H);
   }
 
   if (!InMap(g, cur)) return false;
@@ -424,9 +431,15 @@ void AddRiversAndLakes(RegionContext& ctx, RiverWorld& world, RiverParams& p) {
     bool ok = false;
     for (int i = 0; i < 10 && !ok; ++i) {
       CellCoord start{0, 0};
+      const long long c0 = ctx.rng->call_count();
       ok = River(ctx, world, p, start, 0.0, false);
+      std::fprintf(stderr, "RMG-DBG:   river try %d ok=%d rng=%lld painted=%d\n",
+                   i, ok ? 1 : 0, ctx.rng->call_count() - c0,
+                   p.painted_total);
     }
     if (ok) p.blob_id += 1;
+    std::fprintf(stderr, "RMG-DBG: ARL river ok=%d painted=%d blob=%d\n",
+                 ok ? 1 : 0, p.painted_total, p.blob_id);
   }
 
   bool ok = false;
@@ -434,11 +447,17 @@ void AddRiversAndLakes(RegionContext& ctx, RiverWorld& world, RiverParams& p) {
     CellCoord start{0, 0};
     WaterBlobParams bp{p.water_amount, p.painted_total,
                        p.blob_id, p.cell_level};
+    const long long c0 = ctx.rng->call_count();
     ok = WaterBlob(ctx, world, bp, start);
     p.painted_total = bp.painted_total;
     p.blob_id       = bp.blob_id;
+    std::fprintf(stderr, "RMG-DBG:   lake try %d ok=%d rng=%lld painted=%d\n",
+                 i, ok ? 1 : 0, ctx.rng->call_count() - c0,
+                 p.painted_total);
   }
   if (ok) p.blob_id += 1;
+  std::fprintf(stderr, "RMG-DBG: ARL lake ok=%d painted=%d blob=%d\n",
+               ok ? 1 : 0, p.painted_total, p.blob_id);
 }
 
 }  // namespace rmg

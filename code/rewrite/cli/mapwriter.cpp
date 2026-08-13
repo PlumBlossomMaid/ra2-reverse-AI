@@ -13,15 +13,11 @@ namespace cli {
 
 namespace {
 
-// 等距 (ix, iy) → 真实 (rx, ry)。map_w = [0x87F8DC]（含 4 格余量）。
-// 半整数问题见 mapwriter.h 头部注释（TODO(e2e)）。
-void ToReal(int ix, int iy, int map_w, int* rx, int* ry) {
-  *rx = (ix - iy + map_w - 1) / 2;
-  *ry = (ix + iy - map_w - 1) / 2;
-}
-
 // EA 编辑器的键编码：value = "x" + "y补零3位"。y 的补零是把数字串
 // 前补 '0' 到至少 3 位（strcpy_safe(j+1, j) 逐位前移）。
+// 注意：x/y 是**等距坐标**（cell 列/行），不是真实坐标——EA 官方图
+// （sandwell 100×150 waypoint (229,148)、捡箱子 200×200 waypoint (374,203)）
+// 都远超地图尺寸，实锤等距语义（FA2 PosToXY 后按 x + y*IsoSize 做 cell 索引）。
 std::string KeyXY(int x, int y) {
   char buf[16];
   std::snprintf(buf, sizeof(buf), "%d", y);
@@ -64,6 +60,16 @@ std::string BuildMapFile(const PipelineResult& r, int theater, int level) {
   out += buf;
   out += "\n";
 
+  // ── [Basic]（FA2 IsMultiplayer 判定，MapData.cpp:6085）──
+  // Player 键 = 单人剧情图标志：有它 FA2 走单人渲染路径，无 [Houses]
+  // 时野指针崩溃（EA 官方多人图 sandwell.yrm 无 Player、MultiplayerOnly=1）。
+  // 多人遭遇战图必须 MultiplayerOnly=1。其余键值以 e2e 对拍原版
+  // RandMap.Map 为准。
+  out += "[Basic]\n";
+  out += "Name=Random Map\n";
+  out += "MultiplayerOnly=1\n";
+  out += "\n";
+
   // ── [IsoMapPack5]（0x56B3F0 写链）──
   // slots 按 (y<<9)+x 排布，i 从 1 起、菱形外 NULL。
   std::vector<mapenc::IsoCell> pool;
@@ -103,7 +109,22 @@ std::string BuildMapFile(const PipelineResult& r, int theater, int level) {
   AppendB64Lines(out, ovl_pack);
   out += "\n";
 
-  // ── [Waypoints]（键 = 数字，值 = "x"+"y 补零 3 位"）──
+  // ── [OverlayDataPack]（F80：512×512 矿石量表 → encode80 分 32 段）──
+  // 与 OverlayPack 同构，只是内容换成 +0x11E 的矿石量（无矿格 0）。
+  // 缺这个节游戏里矿车看不到矿（矿类型在、矿量为空）。
+  std::vector<std::uint8_t> ovldata(0x40000, 0);
+  for (int i = 0; i < 0x40000; ++i) {
+    if (r.exists[static_cast<std::size_t>(i)] == 0) continue;
+    ovldata[static_cast<std::size_t>(i)] =
+        static_cast<std::uint8_t>(r.cells[static_cast<std::size_t>(i)].overlayData);
+  }
+  const std::vector<std::uint8_t> ovld_pack =
+      mapenc::EncodeF80(ovldata, 32);
+  out += "[OverlayDataPack]\n";
+  AppendB64Lines(out, ovld_pack);
+  out += "\n";
+
+  // ── [Waypoints]（键 = 数字，值 = "x"+"y 补零 3 位"，等距坐标）──
   // 阶段 6 的 SetWaypoint(base+i) 从 base=0 起，waypoint 0 也有效；
   // 只写被填过的（坐标非 (0,0)）。
   bool has_wp = false;
@@ -118,30 +139,19 @@ std::string BuildMapFile(const PipelineResult& r, int theater, int level) {
     for (std::size_t i = 0; i < r.waypoints.size(); ++i) {
       const rmg::CellCoord& c = r.waypoints[i];
       if (c.x == 0 && c.y == 0) continue;
-      int rx, ry;
-      ToReal(c.x, c.y, map_w, &rx, &ry);
       std::snprintf(buf, sizeof(buf), "%zu=", i);
       out += buf;
-      out += KeyXY(rx, ry);
+      out += KeyXY(c.x, c.y);
       out += "\n";
     }
     out += "\n";
   }
 
-  // ── [Terrain]（键 = "x"+"y 补零 3 位"，值 = 地形名）──
-  // 半整数取舍（ToReal 整数除法向零）会让相邻等距格映射到同一真实坐标，
-  // 产生重复键；FA2 判定为 corrupt（修复时按键去重）。同键只写第一条。
+  // ── [Terrain]（键 = "x"+"y 补零 3 位"，值 = 地形名，等距坐标）──
   if (!r.terrains.empty()) {
     out += "[Terrain]\n";
-    std::vector<bool> seen(0x40000, false);
     for (const TerrainRecord& t : r.terrains) {
-      int rx, ry;
-      ToReal(t.x, t.y, map_w, &rx, &ry);
-      if (rx < 0 || ry < 0) continue;
-      const std::size_t idx = static_cast<std::size_t>(ry) * 0x200 + rx;
-      if (seen[idx]) continue;
-      seen[idx] = true;
-      out += KeyXY(rx, ry);
+      out += KeyXY(t.x, t.y);
       out += '=';
       out += t.name;
       out += '\n';
@@ -149,17 +159,15 @@ std::string BuildMapFile(const PipelineResult& r, int theater, int level) {
     out += "\n";
   }
 
-  // ── [Structures]（17 字段逗号表，EA 编辑器顺序）──
+  // ── [Structures]（17 字段逗号表，EA 编辑器顺序，y/x 等距坐标）──
   if (!r.buildings.empty()) {
     out += "[Structures]\n";
     for (std::size_t i = 0; i < r.buildings.size(); ++i) {
       const BuildingRecord& b = r.buildings[i];
-      int rx, ry;
-      ToReal(b.x, b.y, map_w, &rx, &ry);
       // owner,type,health,y,x,dir,tag,f1,f2,energy,upg,spot,u1,u2,u3,f3,f4
       std::snprintf(buf, sizeof(buf),
                     "%zu=%d,%s,%d,%d,%d,0,0,0,0,0,0,0,0,0,0,0,0\n", i + 1,
-                    b.owner, b.type.c_str(), b.health, ry, rx);
+                    b.owner, b.type.c_str(), b.health, b.y, b.x);
       out += buf;
     }
     out += "\n";

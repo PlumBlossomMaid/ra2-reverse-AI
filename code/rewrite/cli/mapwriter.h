@@ -8,12 +8,11 @@
 //   [Waypoints]/[Terrain]/[Structures]  EA 编辑器格式（键 = "x"+"yyy" 补零 3 位、
 //                  Structures 17 字段逗号表）
 //
-// 等距坐标 → 真实坐标（map-geometry.md §一）：
-//   X = rx + ry + 1、Y = ry - rx + W   →   2rx = X - Y + W - 1、2ry = X + Y - W - 1
-//   W 取 [0x87F8DC]（= grid 宽，含 4 格余量）。
-//   真实坐标语义已由本机官方图实锤（sandwell.yrm / 捡箱子.yrm，见
-//   docs/random-map/map-output-format.md）：waypoint/Terrain/Structures 全用
-//   真实坐标。半数菱形格落在半整数上——整数除法（向零）的取舍 e2e 对拍校准。
+// 坐标语义（map-output-format.md §坐标）：Waypoints/Terrain/Structures 的
+// x/y 一律是**等距坐标**（cell 列/行，范围 [0, W+H]），不是真实坐标——
+// 本机官方图实锤：sandwell（100×150）waypoint (229,148)、Terrain (127,217)，
+// 捡箱子（200×200）waypoint (374,203)/(202,364) 全部远超地图尺寸；
+// FA2 PosToXY 后按 x + y*IsoSize 当 cell 索引用（MapData.cpp:2979）。
 #pragma once
 
 #include <string>
