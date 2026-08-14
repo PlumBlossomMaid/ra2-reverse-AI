@@ -158,8 +158,11 @@ bool AutoCliff(RegionContext& ctx, MakingWorld& world, const CellCoord& c,
               ? ((!(m & 0x06) && !(nm(+1, +1) & 0x08) && (r & 1)) ? 0x15 : 0x1A)
               : r % 3 + 0x17;
   } else if (m & 0x80) {                             // N 高
+    // 嵌套 cell = E 邻格 (X+1,Y)：0x579A04 `lea ecx,[eax+1]`（eax=[ebp+0x24]
+    // 打包坐标，+1 即 X+1）铁证——不是 S 邻格（此前 nm(0,+1) 为错，导致
+    // (57,57) 处 idx=5 贴 tile=53 而原版 idx=8 贴 tile=56）。
     idx = (!(m & 0x01) || (m & 0x06) ||
-           (nm(0, +1) & 0x82) == 0x82)
+           (nm(+1, 0) & 0x82) == 0x82)
               ? 8
               : r % 3 + 5;
   } else if (m & 0x01) {                             // 只有 NE
@@ -455,7 +458,8 @@ void RepaintAll(RegionContext& ctx, MakingWorld& world) {
   bool keep = true;
   ctx.grid.ForEachCell([&](const CellCoord& c) {
     if (!keep) return;
-    if (!FillNotch(ctx, world, c, -1)) keep = false;
+    const bool ok = FillNotch(ctx, world, c, -1);
+    if (!ok) keep = false;
   });
   // 第二遍：只对非坡（+0x11C == 0）且未定砖的格子调 AutoCliff(-1)。
   // 原版 0x578F91 test bl,bl 沿用第一遍的 ok，两遍之间不复位。

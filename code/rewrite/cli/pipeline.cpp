@@ -254,24 +254,6 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   // ── 阶段 4：造坡道/架桥/悬崖（MapType 3/4）──
   if (params.map_type == 3 || params.map_type == 4) {
     std::fprintf(stderr, "RMG: Making regions\n");
-    // 临时对拍：MakeRegions（stage4）前 dump blob/queued/level。
-    {
-      FILE* f = std::fopen("_cli_pre4.txt", "w");
-      if (f) {
-        const int side0 = grid.side();
-        for (int y = 0; y < side0; ++y) {
-          for (int x = 0; x < side0; ++x) {
-            const rmg::PaintWorkCell& w =
-                work[static_cast<std::size_t>(y) * side0 + x];
-            std::fprintf(f, "F %d %d %d %d %d\n", x, y, w.blob_id, w.queued,
-                         world.Level(rmg::CellCoord{
-                             static_cast<std::int16_t>(x),
-                             static_cast<std::int16_t>(y)}));
-          }
-        }
-        std::fclose(f);
-      }
-    }
     rmg::MakeRegions(rctx, world, params.map_type);
     dbg_snap("after MakeRegions");
   }

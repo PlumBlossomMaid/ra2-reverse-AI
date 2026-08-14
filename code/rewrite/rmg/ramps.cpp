@@ -65,8 +65,8 @@ inline void StampByIndex(MakingWorld& world, const MapGrid& grid, int index,
 inline int Coin(Randomizer& rng) {
   int v;
   do {
-    v = Ftol(static_cast<double>(static_cast<std::uint32_t>(rng.Random())) *
-             2.0 * kInvUintMax);
+    const std::uint32_t rv = rng.Random();
+    v = Ftol(static_cast<double>(rv) * 2.0 * kInvUintMax);
   } while (v > 1);
   return v;
 }
@@ -550,8 +550,12 @@ bool BuildRamp(RegionContext& ctx, MakingWorld& world, RegionClass* hi,
   const double need_f =
       (15.0 - 5.0) * (1.0 - static_cast<double>(tol)) + 5.0;
   const int need = Ftol(need_f);
+  // ⚠️ 0x590FD0 内 CountAtLeast 的 id = **BuildRamp 的 this->id**（0x59101A
+  // `mov edx,[ebp+8]`，this = 0x5908E2 传入的 hi 区域），不是低层区域 id！
+  // 反汇编链：MakeConnections 0x59080B 算 hi->id → 0x59083B 按 id 找 hi →
+  // 0x5908E2 `mov ecx,ebp` 传 this → 0x59101A 读 [ebp+8] 作 CountAtLeast id。
   const Rect center{cell.x - 2, cell.y - 2, 5, 5};
-  if (!CountAtLeast(ctx, center, low_region_id, need)) return false;
+  if (!CountAtLeast(ctx, center, hi->id, need)) return false;
 
   // 0x82AF18 方向位表：j+3i 的下标，i 走 Y、j 走 X。
   static const int kDirBit[9] = {0x40, 0x80, 0x01, 0x20, 0, 0x02,
@@ -561,7 +565,7 @@ bool BuildRamp(RegionContext& ctx, MakingWorld& world, RegionClass* hi,
     for (int j = 0; j < 3; ++j) {
       if (i == 1 && j == 1) continue;
       const Rect r{cell.x - 7 + 5 * j, cell.y - 7 + 5 * i, 5, 5};
-      if (CountAtLeast(ctx, r, low_region_id, need)) {
+      if (CountAtLeast(ctx, r, hi->id, need)) {
         mask |= static_cast<unsigned>(kDirBit[j + 3 * i]);
       }
     }
@@ -569,41 +573,43 @@ bool BuildRamp(RegionContext& ctx, MakingWorld& world, RegionClass* hi,
   if (mask == 0xFF) return false;                       // 0x590970 的 0xff 短路
 
   bool made = false;
-  // 分支1：N+E 有、S/SW/W 无 → 0x593AF0（0 取数）
+  // 分支1：N+E 有、S/SW/W 无 → 0x593AF0（0 取数）。
+  // ⚠️ a/b 修正照抄 0x5909D7-0x590A0B：mask&0x40 → inc [esp+0x16](a.y)、
+  // mask&0x04 → dec [esp+0x24](b.x)，都是**相对**修正。
   if ((mask & 0x82) == 0x82 && (mask & 0x38) == 0) {
     CellCoord a{cell.x - 1, cell.y - 5};
     CellCoord b{cell.x + 5, cell.y + 1};
-    if (mask & 0x40) b.y = cell.y - 4;                 // NW 高
-    if (mask & 0x04) b.x = cell.x + 4;                 // SE 高
+    if (mask & 0x40) a.y += 1;                         // inc [esp+0x16]
+    if (mask & 0x04) b.x -= 1;                         // dec [esp+0x24]
     made = BuildCornerNE(ctx, world, hi, a, b, low_region_id);
     if (made) return true;
   }
-  // 分支2：E+S 有、NE/SW 无 → 0x593550
+  // 分支2：E+S 有、NE/SW 无 → 0x593550（0x590A3B-0x590A6F）
   if ((mask & 0x0A) == 0x0A && (mask & 0x11) == 0) {
     CellCoord a{cell.x + 5, cell.y - 1};
     CellCoord b{cell.x - 1, cell.y + 5};
-    if (mask & 0x10) b.y = cell.y + 4;                 // SW 高
-    if (mask & 0x01) a.x = cell.x + 4;                 // NE 高
+    if (mask & 0x10) b.y -= 1;                         // dec [esp+0x26]
+    if (mask & 0x01) a.x -= 1;                         // dec [esp+0x14]
     made = BuildCornerES(ctx, world, hi, a, b, low_region_id);
     if (made) return true;
   }
-  // 分支3：S+W 有、N/NE/E 无 → 0x593030
+  // 分支3：S+W 有、N/NE/E 无 → 0x593030（0x590A9F-0x590AD3）
   if ((mask & 0x28) == 0x28 && (mask & 0x83) == 0) {
     CellCoord a{cell.x + 1, cell.y + 5};
     CellCoord b{cell.x - 5, cell.y - 1};
-    if (mask & 0x40) b.x = cell.x - 6;                 // NW 高
-    if (mask & 0x04) a.y = cell.y + 4;                 // SE 高
+    if (mask & 0x40) b.x -= 1;                         // dec [esp+0x24]
+    if (mask & 0x04) a.y -= 1;                         // dec [esp+0x16]
     made = BuildCornerSW(ctx, world, hi, a, b, low_region_id);
     if (made) return true;
   }
-  // 分支4：W+N 有、E/SE/S 无 → 复用 0x593030（**永远失败**的死分支）
+  // 分支4：W+N 有、E/SE/S 无 → 复用 0x593030（0x590B06-0x590B3A）
   if ((mask & 0xA0) == 0xA0 && (mask & 0x0E) == 0) {
     CellCoord a{cell.x - 5, cell.y + 1};
     CellCoord b{cell.x + 1, cell.y - 5};
-    if (mask & 0x01) b.y = cell.y - 4;                 // NE 高
-    if (mask & 0x10) a.x = cell.x - 4;                 // SW 高
+    if (mask & 0x01) b.y += 1;                         // inc [esp+0x26]
+    if (mask & 0x10) a.x += 1;                         // inc [esp+0x14]
     made = BuildCornerSW(ctx, world, hi, a, b, low_region_id);
-    if (made) return true;                             // 实际永远到不了
+    if (made) return true;
   }
   // 分支5：西侧三格全无、N 或 S 有 → 0x592440 西直坡（2 取数）
   if ((mask & 0x70) == 0 && (mask & 0x88) != 0) {

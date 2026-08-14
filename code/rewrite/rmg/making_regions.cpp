@@ -219,16 +219,22 @@ bool Clearance(const RegionContext& ctx, MakingWorld& world, int owner,
     return IsWithinUsableArea(ctx.map_rect_w, mr, x, y, world.Level({x, y}),
                               world.Ramp({x, y}), true);
   };
-  if (!in_map(r.x, r.y)) return false;                       // 左上
-  if (!in_map(r.x + r.w - 1, r.y)) return false;             // 右上
-  if (!in_map(r.x, r.y + r.h - 1)) return false;             // 左下
-  if (!in_map(r.x + r.w - 1, r.y + r.h - 1)) return false;   // 右下
+  const int c1 = in_map(r.x, r.y), c2 = in_map(r.x + r.w - 1, r.y);
+  const int c3 = in_map(r.x, r.y + r.h - 1), c4 = in_map(r.x + r.w - 1, r.y + r.h - 1);
+  if (!c1) return false;                           // 左上
+  if (!c2) return false;                           // 右上
+  if (!c3) return false;                           // 左下
+  if (!c4) return false;                           // 右下
   for (int y = r.y; y < r.y + r.h; ++y) {
     for (int x = r.x; x < r.x + r.w; ++x) {
       const CellCoord c{x, y};
       const int id = Owner(ctx, c);
-      if (id != owner && id != low_region_id) return false;
-      if (!IsPlain(world, c)) return false;
+      if (id != owner && id != low_region_id) {
+        return false;
+      }
+      if (!IsPlain(world, c)) {
+        return false;
+      }
     }
   }
   return true;
@@ -508,6 +514,27 @@ void RebuildRegions(RegionContext& ctx, MakingWorld& world) {
     if (!ok) return;
     ok = FillNotch(ctx, world, c, -1);                 // FUN_00579010(c, -1)
   });
+  // TEMP-PROBE: Rebuild 分段 RNG 计数（定位 1902 次取数落点）
+  std::fprintf(stderr, "RMG-DBG: Rebuild seg  FillNotch calls=%lld\n",
+               static_cast<long long>(ctx.rng->call_count()));
+
+  // TEMP-PROBE: dump FillNotch 循环后 work blob/queued + level
+  // （对齐 emu 0x58EF67 hook 的 _emu_fillnotch.txt，F x y bid que lv tile ramp）。
+  {
+    static FILE* f = std::fopen("_cli_fillnotch2.txt", "w");
+    const int side2 = ctx.grid.side();
+    for (int yy = 0; yy < side2; ++yy) {
+      for (int xx = 0; xx < side2; ++xx) {
+        const PaintWorkCell& rec = (*ctx.work)[static_cast<std::size_t>(yy * side2 + xx)];
+        const CellCoord cc{static_cast<std::int16_t>(xx),
+                           static_cast<std::int16_t>(yy)};
+        std::fprintf(f, "F %d %d %d %d %d %d %d\n", xx, yy, rec.blob_id,
+                     rec.queued, world.Level(cc), world.IsoTile(cc),
+                     world.Ramp(cc));
+      }
+    }
+    std::fclose(f);
+  }
 
   const int side = ctx.grid.side();
   for (int i = 0; i < side * side; ++i) {
@@ -523,20 +550,54 @@ void RebuildRegions(RegionContext& ctx, MakingWorld& world) {
   // 按连通块重建区域（与阶段 3 的 CreateRegions 同构，(0,0) 哨兵照跳）。
   for (int i = 0; i < side * side; ++i) {
     PaintWorkCell& rec = (*ctx.work)[static_cast<std::size_t>(i)];
+    if (rec.coord.x == 112 && rec.coord.y == 79)  // TEMP-PROBE (112,79) 分岔
+      std::fprintf(stderr, "RMG-DBG: scan(112,79) idx=%d blob_id=%d queued=%d\n",
+                   i, rec.blob_id, rec.queued);
     if (rec.blob_id != -1) continue;
     if (IsOrigin(rec.coord)) continue;                 // 0x5AC370 不等比较
     RegionClass* r = SeedRegion(ctx, rec.coord);       // 0x58C800，含取数点
     if (r) r->finalized /*+0x1A*/ = 0;
+    // TEMP-PROBE
+    if (r) std::fprintf(stderr, "RMG-DBG: SeedRegion nid=%d seed=(%d,%d)\n",
+                        r->id, rec.coord.x, rec.coord.y);
   }
+
+  // TEMP-PROBE: dump SeedRegion 重建后（MakeConnections 前）的 blob_id + level。
+  // 对齐 emu 0x5905D0 入口 dump，定位 BR#1 (90,67) Clearance 分岔的 level 差异。
+  {
+    static FILE* f = std::fopen("_cli_blob_mc.txt", "w");
+    const int side2 = ctx.grid.side();
+    for (int yy = 0; yy < side2; ++yy) {
+      for (int xx = 0; xx < side2; ++xx) {
+        const PaintWorkCell& rec =
+            (*ctx.work)[static_cast<std::size_t>(yy * side2 + xx)];
+        const CellCoord cc{static_cast<std::int16_t>(xx),
+                           static_cast<std::int16_t>(yy)};
+        std::fprintf(f, "B %d %d %d %d\n", xx, yy, rec.blob_id,
+                     world.Level(cc));
+      }
+    }
+    std::fclose(f);
+  }
+
+  // TEMP-PROBE: Rebuild 分段 RNG 计数
+  std::fprintf(stderr, "RMG-DBG: Rebuild seg  SeedRegion calls=%lld\n",
+               static_cast<long long>(ctx.rng->call_count()));
 
   // 0x58F042 call 0x58F0C0 / 0x58F061 call 0x5905D0：无条件执行，
   // 不随 FillNotch 的 ok 门控（FillNotch 只影响前面那个循环的提前终止）。
   for (int i = 0; i < ctx.regions->Count(); ++i) {
     BuildNeighbourList(ctx, ctx.regions->At(i));     // 0x58F0C0
   }
+  // TEMP-PROBE: Rebuild 分段 RNG 计数
+  std::fprintf(stderr, "RMG-DBG: Rebuild seg  BuildNL   calls=%lld\n",
+               static_cast<long long>(ctx.rng->call_count()));
   for (int i = 0; i < ctx.regions->Count(); ++i) {
     MakeConnections(ctx, world, ctx.regions->At(i)); // 0x5905D0
   }
+  // TEMP-PROBE: Rebuild 分段 RNG 计数
+  std::fprintf(stderr, "RMG-DBG: Rebuild seg  MC        calls=%lld\n",
+               static_cast<long long>(ctx.rng->call_count()));
   for (int i = 0; i < ctx.regions->Count(); ++i) {
     ctx.regions->At(i)->neighbours.clear();          // delete + 置 0
   }
@@ -577,6 +638,9 @@ void BuildNeighbourList(RegionContext& ctx, RegionClass* r) {
 // ───────────────────────── 0x5905D0 ─────────────────────────
 
 void MakeConnections(RegionContext& ctx, MakingWorld& world, RegionClass* r) {
+  // TEMP-PROBE: RNG 调用点计数（对比 emu run14：roll×2/idx×6/BuildBridge 1902）
+  static long long dbg_roll = 0, dbg_extra = 0, dbg_idx = 0;
+  static long long dbg_ramp = 0, dbg_bridge = 0;
   const MapRect usable{ctx.usable.x, ctx.usable.y, ctx.usable.w, ctx.usable.h};
   const auto in_usable = [&](const CellCoord& c) {
     return IsWithinUsableArea(ctx.map_rect_w, usable, c.x, c.y,
@@ -594,6 +658,7 @@ void MakeConnections(RegionContext& ctx, MakingWorld& world, RegionClass* r) {
         if (!(b->neighbours.size() > 1 || b->cell_count > 0x32)) continue;
         if (b->wet) continue;
         if (b->level != a->level || a->level != r->level) continue;
+        ++dbg_bridge;                                  // 0x58F2C0 调用
         BuildBridge(ctx, world, r, a, b);              // 5 个取数点
       }
     }
@@ -608,9 +673,16 @@ void MakeConnections(RegionContext& ctx, MakingWorld& world, RegionClass* r) {
 
     // 取数点 0x590792：无条件抽 0..100。
     const int roll = PickBelow(*ctx.rng, 101);
-    // 取数点 0x5907C0：命中 Accessibility 才再抽一次 0..2。
-    const int extra = (roll < ctx.accessibility) ? PickBelow(*ctx.rng, 3) : 0;
-    const int want = extra + 1;                        // 要开 1~3 条
+    ++dbg_roll;                                        // 0x59079C
+    std::fprintf(stderr, "RMG-DBG: MC pair nb=%d r=%d roll=%d acc=%d\n",
+                 nb->id, r->id, roll, ctx.accessibility);  // TEMP-PROBE
+    // 取数点 0x5907C0：命中 Accessibility 才再抽一次。
+    // 原版 = ftol(Random()×2/(2^32-1) + 1.0)：[0x7ED8B0]=2/(2^32-1)（不是 3！）、
+    // [0x7E1718]=1.0 的 fadd，cmp 2 的重试是死代码 → extra ∈ {1,2} 等概率。
+    // 等价 PickBelow(2)+1：floor(t+1.0)=floor(t)+1，同一 u 逐位一致。
+    const int extra = (roll < ctx.accessibility) ? PickBelow(*ctx.rng, 2) + 1 : 0;
+    if (roll < ctx.accessibility) ++dbg_extra;         // 0x5907C5 后
+    const int want = extra + 1;                        // 要开 2~3 条（命中时）
 
     RegionClass* hi = (r->level < nb->level) ? nb : r; // 层高大的那个
     const int lo = (r->level < nb->level) ? r->id : nb->id;
@@ -621,16 +693,30 @@ void MakeConnections(RegionContext& ctx, MakingWorld& world, RegionClass* r) {
       if (tries > 99) break;                           // 100 次上限
       // 取数点 0x590889：抽边界格。border 为空时 count-1 下溢，直接越界读（原版）。
       const int idx = PickBelow(*ctx.rng, static_cast<int>(border.size()));
+      std::fprintf(stderr, "RMG-DBG: MC idx=%d nb=%d r=%d t=%d border=%zu\n",
+                   idx, nb->id, r->id, tries, border.size());  // TEMP-PROBE
+      ++dbg_idx;                                       // 0x590893
       const CellCoord c = border[static_cast<std::size_t>(idx)];
       if (in_usable(c)) {
+        ++dbg_ramp;                                    // BuildRamp 调用
+        const long long c0 = ctx.rng->call_count();    // TEMP-PROBE
         const bool okr =
             BuildRamp(ctx, world, hi, c, lo,
                       static_cast<float>(tries) * 0.01f);
+        std::fprintf(stderr,
+                     "RMG-DBG: BR nb=%d r=%d cell=(%d,%d) ok=%d t=%d rng=%lld\n",
+                     nb->id, r->id, c.x, c.y, okr ? 1 : 0, tries,
+                     ctx.rng->call_count() - c0);  // TEMP-PROBE
         made += okr ? 1 : 0;
       }
     }
     if (made == 0) r->connected /*+0x1B*/ = 0;
   }
+  if (ctx.regions->Count() > 0 && r->id == ctx.regions->Count() - 1)
+    std::fprintf(stderr,
+                 "RMG-DBG: MakeConnections roll=%lld extra=%lld idx=%lld "
+                 "ramp=%lld bridge=%lld\n",
+                 dbg_roll, dbg_extra, dbg_idx, dbg_ramp, dbg_bridge);
 }
 
 // ───────────────────────── 调度 ─────────────────────────
@@ -638,11 +724,56 @@ void MakeConnections(RegionContext& ctx, MakingWorld& world, RegionClass* r) {
 void MakeRegions(RegionContext& ctx, MakingWorld& world, int map_type) {
   if (map_type != 3 && map_type != 4) return;
   ctx.map_type = map_type;
-  RebuildAndSplitRegions(ctx);        // 0x58EBC0
-  RebuildRegions(ctx, world);         // 0x58EF10
-  TrimCliffCorners(ctx, world);       // 0x5A19E0
-  RepaintAll(ctx, world);             // 0x578E60
+  const auto snap = [&](const char* tag) {
+    if (ctx.rng != nullptr)
+      std::fprintf(stderr, "RMG-DBG: MakeRegions %-10s calls=%lld\n", tag,
+                   static_cast<long long>(ctx.rng->call_count()));
+  };
+  snap("RASR-before");              // TEMP-PROBE
+  RebuildAndSplitRegions(ctx);      // 0x58EBC0
+  snap("RASR");                     // TEMP-PROBE
+  // TEMP-PROBE: RASR 后区域表 dump（对比 emu _emu_regions_rasr.txt）。
+  {
+    std::FILE* rgf = std::fopen("_cli_regions_rasr.txt", "w");
+    for (int i = 0; i < ctx.regions->Count(); ++i) {
+      RegionClass* r = ctx.regions->At(i);
+      if (rgf)
+        std::fprintf(rgf, "REGION %d %d %d %d %d %d %d\n", r->id,
+                     r->cell_count, r->level, r->wet ? 1 : 0,
+                     r->finalized ? 1 : 0, r->seed.x, r->seed.y);
+    }
+    if (rgf) std::fclose(rgf);
+  }
+  RebuildRegions(ctx, world);       // 0x58EF10
+  snap("Rebuild");                  // TEMP-PROBE
+  // TEMP-PROBE: TrimCliff 入口 cell 状态 dump（对比 emu _emu_postrebuild.txt）。
+  {
+    std::FILE* prf = std::fopen("_cli_postrebuild.txt", "w");
+    ctx.grid.ForEachCell([&](const CellCoord& c) {
+      if (prf)
+        std::fprintf(prf, "CELL %d %d %d %d %d\n", c.x, c.y,
+                     world.IsoTile(c), world.Level(c), world.Ramp(c));
+    });
+    if (prf) std::fclose(prf);
+  }
+  TrimCliffCorners(ctx, world);     // 0x5A19E0
+  snap("TrimCliff");                // TEMP-PROBE
+  RepaintAll(ctx, world);           // 0x578E60
+  snap("Repaint");                  // TEMP-PROBE
   RerollMultitileCliffs(ctx, world);  // 0x5A17F0
+  snap("Reroll");                   // TEMP-PROBE
+  // TEMP-PROBE: MakeRegions 后区域表 dump（同 emu OUT 时机）。
+  {
+    std::FILE* rgf = std::fopen("_cli_regions_end.txt", "w");
+    for (int i = 0; i < ctx.regions->Count(); ++i) {
+      RegionClass* r = ctx.regions->At(i);
+      if (rgf)
+        std::fprintf(rgf, "REGION %d %d %d %d %d %d %d\n", r->id,
+                     r->cell_count, r->level, r->wet ? 1 : 0,
+                     r->finalized ? 1 : 0, r->seed.x, r->seed.y);
+    }
+    if (rgf) std::fclose(rgf);
+  }
 }
 
 }  // namespace rmg
