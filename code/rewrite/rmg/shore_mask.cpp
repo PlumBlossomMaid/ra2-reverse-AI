@@ -1,4 +1,4 @@
-﻿#include "shore_mask.h"
+#include "shore_mask.h"
 
 namespace ra2 {
 namespace rmg {
@@ -57,7 +57,13 @@ int ShoreMask(const ShoreWorld& world, const MapGrid& grid,
   int mask = 0;
   for (const MaskStep& s : kSteps) {
     const CellCoord n{c.x + s.dx, c.y + s.dy};
-    const int tile = world.IsoTile(n);
+    // 原版直接查格指针表（0x57B2F9 起，不经 GetCellAt）：指针为空的邻格
+    // **不读哑元**，用中心格自己的水性顶上（0x57B319-0x57B321 的
+    // `test bl,bl / je`——bl 就是 self_is_water）。菱形外 == 指针为空。
+    // ⚠️ 不能走 CliWorld::IsoTile 的哑元回退——那是给 SetupLAT 等路径的，
+    // 这里读了哑元会把哑元当前砖号误当成邻格的水性（62298 实测：8 格
+    // 掩码缓存错位全因此起）。
+    const int tile = grid.InMap(n) ? world.IsoTile(n) : ShoreWorld::kNoCell;
     const bool bit = (tile != ShoreWorld::kNoCell) ? IsWaterTile(tile, water)
                                                    : self_is_water;
     if (bit) mask |= s.bit;
