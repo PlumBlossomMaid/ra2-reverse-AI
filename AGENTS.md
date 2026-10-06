@@ -158,6 +158,30 @@ CLI vs AUTH 剩 19 od + 4 ov = game start 后矿生长（副随机流种子=time
    - CLI 已改为字面表查表（pipeline.cpp after_ore_frame_smooth），输出不变
    - 采集：snapshot_gamemd_62298/live_od_watch/（硬件监视点+断点二分）
 
+### ✅ 副随机流确定性化 + 对局生长逐字节复现（2026-10-06 晚，live_seed_hook/）
+
+**用户提议的 hook timeGetTime() 已验证可行，且用了更干净的等价做法**：
+
+- 播种链：timeGetTime() → [0xA8ED94](Game::Seed) → Randomizer::Seed ×2 →
+  rep movsd → [ScenarioClass]+0x218 与 0x886B88 两条流；**进程启动时播种
+  一次**（0x52FDxx 只跑一次，开局 bp 抓不到）
+- 等价方案：**rmg_done 断点处直写固定 R250 流状态**（[ScenarioClass]+0x218
+  的 +4 起 1008 字节：i1=0/i2=103/state[250]，+0 虚表指针不动）——
+  不依赖播种时序，效果相同。固定流 blob：
+  `live_seed_hook/fixed_stream.bin`（seed=0x5EED0001）
+- **验证（决定性）**：两局 62298（注入参数 + 固定流）无操作跑到 602 帧，
+  cells_9b 与主 RNG 状态**全部 0 差异**（SHA 633072fd…相同）——
+  对局全程（矿生长+AI+一切副随机流消费）完全确定
+- run1 vs rmg_done：iso/sub/lv/ramp 0 差异，od 17 + ov 10 = 602 帧的
+  矿生长（od+1 帧增长、新宝石 od=3、od=3 无 overlay 的累加格），
+  与 0x722440 机制完全吻合
+- **意义**：CLI 生长模拟有了确定性基准（fixed_stream + cells_run1/run2），
+  可把 0x722440/0x7221B0 移植进 CLI 后逐帧对拍到任意帧数
+- 工具：`.qwen/tmp/_headless_det_run.py`（弹窗叫人会话；教训：
+  x64dbg 断点库会跨会话恢复残留断点需 bc 清理（已删
+  `x32/db/gamemd.exe.dd32`）；强杀调试器会在游戏内存留 0xCC 导致
+  无调试器时执行到即崩，attach 后须先恢复原字节）
+
 ### ✅ 内部状态全量对拍（2026-10-06，kimi，脚本 .qwen/tmp/_stage_audit_full.py）
 
 CLI 逐阶段内部状态 vs 活体同会话（2026-10-14 系列采集）：
