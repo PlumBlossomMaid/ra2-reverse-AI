@@ -3,6 +3,40 @@
 `code/rewrite/cli/mapwriter.{h,cpp}` 组装 RandMap.Map。本文记录已实锤的格式
 与仍待 e2e 对拍裁决的部分。
 
+## 2026-10-06 结构对拍结果（CLI vs 真实游戏捕获 vs 官方图）
+
+基准：`snapshot_gamemd_62298/RandMap_62298_after_gate2.Map`（2026-08-15
+真实游戏写出的 RMG 图，70×70 温和，注意该局参数与当前 .sed 不同，
+waypoint (90,22)/(40,105)，只能比结构不能比内容）+ sandwell/捡箱子官方图。
+脚本 `.qwen/tmp/_map_struct_cmp.py`、`_map_overlay_oob_check.py`。
+
+**已对齐**（CLI == 游戏捕获，逐项实锤）：
+
+- 节集与节序：`Map Basic IsoMapPack5 OverlayPack OverlayDataPack Waypoints
+  Terrain [Structures]`，逐节顺序一致；游戏 RMG 图**没有** Header/Houses/
+  Digest/Preview（那些是编辑器产物），CLI 同样不写。
+- [Map]：`Size=0,0,74,82 / LocalSize=2,5,70,70 / Theater=TEMPERATE / Level=4`
+  四键逐字符相同（含键序）。
+- [Basic]：`Name=Random Map` + `MultiplayerOnly=1`，两键相同。
+- IsoMapPack5：同为 17 个 LZO 块、解压 132598B、12054 条 11B 记录、
+  首/尾边界记录逐字节相同、base64 70 列、键从 1 起编号。
+  压缩器字节级等价已由 test_mapenc（Unicorn golden）覆盖。
+- OverlayPack/OverlayDataPack：同为 32 段 format-80（段头 (c,u=8192)），
+  **菱形外 250090 字节两边完全一致**（OverlayPack=0xFF、OverlayDataPack=0）。
+  菱形内差异属不同局内容差异（矿位不同），非格式问题。
+- [Waypoints]/[Terrain]：键 `x*1000+y`、值格式一致。
+
+**仍待取证**：
+
+1. **[Structures] 行格式**：游戏捕获那局没有该节（可能 MapType=0 没放
+   科技建筑）。CLI 现写 `1=0,CAOUTP,256,95,40,0,0,...,0`（owner 写 "0"、
+   tag/upgrade 写 "0"、f1/energy 写 0、键从 1 起）；编辑器写链
+   （MapData.cpp:2492 AddStructure）的默认是 owner=**"Neutral"**、dir=**64**、
+   tag=**"None"**、f1=**1**、energy=**1**、upgrade1..3=**"None"**、键从 0 起。
+   游戏 RMG 写链实际写什么需一次 MapType=3 的活体捕获裁决
+   （暂停菜单的 Save Map，用户记得流程）。
+2. IsoMapPack5 同会话逐字节对拍（需当前 .sed 参数的新鲜游戏捕获）。
+
 ## 当前无游戏条件下已闭合的一项输出链问题（2026-08-15）
 
 `mapwriter.cpp` 原先为 `IsoMapPack5` 的临时记录池固定预留 `0x10000` 个元素，
@@ -63,19 +97,19 @@ FA2 只显示 1 个玩家；2026-08-13 依官方图重判并删除换算）。
 
 **已确认：遭遇战流程游戏不写 `rmcache\RandMap.Map`**（存档 CONTENTS 只引用
 `RANDMAP.SED` 种子文件，重载时按当前种子重新生成；`GUI:SaveMapMenu` 是
-DebugLog 桩）。原版 .map 样本拿不到，以下项以官方图 + FA2 实测为准。
+DebugLog 桩）。原版 .map 样本靠暂停菜单的 Save Map 拿到（2026-08-15 那三份
+`RandMap_62298_after_gate*.Map` 即此来源）。
 
-1. **[Map] Size/LocalSize**：CLI 写 `Size=0,0,W+4,H+12`、`LocalSize=2,5,W,H`
-   （stage-init.md §三）。官方手绘图的 `LocalSize=2,4,W−4,H−6` 与 Size 的关系
-   不同（捡箱子 2,4,196,194 vs 200,200）——随机地图的取值以游戏产物为准。
-2. **[Basic] 节**：FA2 依 `Player` 键判单人图（有键 → 单人渲染路径，无
-   [Houses] 会野指针崩溃，MapData.cpp:6085）。CLI 写 `Name` + `MultiplayerOnly=1`
-   （sandwell 同款）。其余键值（MinPlayer/MaxPlayer 等）未对齐。
-3. **[Houses] 节**：sandwell 有 13 国家列表（编辑器下拉用）。CLI 未写，
-   游戏实测"只有 2 玩家"与此关系待确认。
-4. **OverlayPack/OverlayDataPack 段数/段头标志**：CLI 已同时写两节，均按 EA 编辑器
-   32 段 F80；游戏实际段头标志是否一致仍待确认。
-5. **Structures 字段 7..16 的值**：游戏写什么（tag/f1/f2/energy/upg/spot 语义）。
+1. ~~**[Map] Size/LocalSize**~~：2026-10-06 已对拍闭合——游戏 RMG 捕获即
+   `Size=0,0,74,82 / LocalSize=2,5,70,70`，与 CLI 逐字符一致。
+2. ~~**[Basic] 节**~~：游戏 RMG 捕获只写 `Name=Random Map` +
+   `MultiplayerOnly=1`，CLI 一致。（FA2 的 Player 键判单人图逻辑只影响
+   编辑器渲染，游戏 RMG 图无此键。）
+3. **[Houses] 节**：游戏 RMG 图不写，CLI 不写，一致。
+4. ~~**OverlayPack/OverlayDataPack 段数/段头**~~：2026-10-06 闭合——双方都是
+   32 段 (c,8192) format-80，菱形外字节完全一致。
+5. **Structures 字段 7..16 的值**：游戏写什么（tag/f1/f2/energy/upg/spot
+   语义）——见上方「仍待取证」第 1 条，需 MapType=3 活体捕获。
 6. **`+0x119` unknown 字节**：IsoCell 里我们写 0。
 7. **TileTypeClass +0x2E0（Morphable）**、建筑真实占地表、SetupLAT 行为。
 
