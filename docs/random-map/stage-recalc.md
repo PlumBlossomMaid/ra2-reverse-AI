@@ -293,6 +293,12 @@ theater 全部装载完的前提下两次调用同值 ⇒ **重试不可观测**
 `green_spread`），基准 `memory/data/rmg/green_spread_golden.txt`
 （18 个用例，生成脚本 `code/randmap/dump_green_spread_golden.py`）。
 
+CLI 的 `CliWorld::RecalcAttributes` 额外复刻 `+0xEC/+0x4C` 与 `SetupLAT` 收尾。
+2026-08-14 修正一处 16 位符号扩展坑：`CellClass +0x38` 在原版判定里按
+无符号 16 位读回，`0xFFFF` 必须是 65535；C++ 若直接读 `int16_t isoTile` 会变成
+`-1`，导致已经被清成 `0xFFFF` 的格子误走 `SetupLAT` 与地面类型路径。
+现在统一通过 `IsoTile(c)` 做无符号读回，再判断 `== 0xFFFF` / `>= tile_count`。
+
 基准是把 `0x59B740` **整个函数**丢进 Unicorn 跑原版机器码取的，一个桩都不留：
 `IsGreen` / `IsPlain` / `GetNeighbourCell` / `TryGetCellAt` 的哑元退化 /
 `DynamicVectorClass` 构造与 `Resize` / `Randomizer::Random` 全是原身。

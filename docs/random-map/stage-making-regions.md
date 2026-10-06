@@ -6,15 +6,16 @@
 > 以及架桥 `0x58F2C0` 均已实锤；
 > 三个转角建造函数也已实锤（§五之四，连带查出第 4 条转角分支是**死的**）。
 > **全流水线已落 C++ 并对拍完成**（`code/rewrite/rmg/{making_regions,ramps,cliff_work}.cpp`，
-> ctest 41/41 全绿，10 组整链基准含 4 组 stage2 + 6 组合成地形 + 9 组坡道专项）——
+> 2026-08-14 完整 ctest 42/42 全绿，10 组整链基准含 4 组 stage2 + 6 组合成地形 + 9 组坡道专项）——
 > 0x58EBC0 切分、0x58EF10 重建/开通路、0x5A19E0 悬崖修角、0x578E60 全图重刷、
 > 0x5A17F0 多格砖重掷的随机消耗与格子终态逐位对齐。
 > **2026-08-13 下午 emu 逐阶段对拍**（`_emu_regions.py` Unicorn 指令级模拟原版，
 > 详情 §十二）：RASR 20067 次随机消耗**逐位吻合**（里程碑）；TrimCliff 3→7 对齐；
-> Repaint 的 emu 数据因 run_call 压栈 bug **不可信**（golden 为准）；
-> Priority 前 11 条一致后分岔（R 相同、邻居坐标传递分岔）；
-> **CLI FillNotch 顶层循环提前终止**（3642 格 vs 原版继续到判据命中）定位为
-> 下游全部分岔的源头，根因待查。
+> Repaint 的 emu 数据因 run_call 压栈 bug **不可信**（golden 为准）。
+> **2026-08-14 复验**：先前记录的「CLI FillNotch 顶层循环提前终止」是旧探针状态，
+> 当前 CLI 重新跑 seed=53393 后已与 emu run46 收敛：RASR、Rebuild/BuildRamp 序列、
+> SeedRegion 后 `blob_id+level`、TrimCliff 前 cell 状态、Repaint 后全图 cell 状态全部对齐
+> （`_cmp_blobmc.py` / `_cmp_postrebuild3.py` / `_cmp_postrepaint.py` 均 0 diff）。
 > 对拍中两处实锤修正：① `0x89A304` 方向偏移表是 `.data` 零填充区（全 0），
 > 候选标记写的是"节点自己"（0x58DA5B）→ **原版扩散无防重、候选重复入堆**；
 > ② `HigherMask`（0x579B70）对每个邻格先取 cell 指针（界外写共享哑元坐标，
@@ -1963,47 +1964,42 @@ emu 的 Repaint 参数数据不可信**（Rebuild/TrimCliff/Reroll 无参、不�
 call 0x578e60`）——FillNotch 的 false 出口（`o>0 && o!=owner && owner!=-1`）
 恒死代码，C++ 已按 owner=-1 落地（`cliff_work.cpp` 修复）。
 
-### 12.4 Priority（0x58C6F0）—— 前 11 条一致，第 11 条分岔：R 相同、邻居坐标不同
+### 12.4 Priority（0x58C6F0）—— 历史分岔：R 相同、邻居坐标不同
 
-`_cmp_prio.py` 对比 emu（run17 全量 dump）vs CLI（fix11）的 Priority 序列：
-前 11 条完全一致，第 11 条分岔——**R_u32 相同（2136689686）但 nb 坐标不同**
-（emu nb=(97,97) vs CLI nb=(96,96)）。含义：**Randomizer 状态对齐**
-（同一次取数、同一个 R），但**邻居坐标传递分岔**——即上层（HigherMask/
-FillNotch 的抬格/判据）在某处给 CLI 和原版喂了不同的邻居候选。
+`_cmp_prio.py` 对比 emu（run17 全量 dump）vs CLI（fix11）的 Priority 序列时，
+曾出现前 11 条完全一致、第 11 条分岔：**R_u32 相同（2136689686）但 nb 坐标不同**
+（emu nb=(97,97) vs CLI nb=(96,96)）。含义是 Randomizer 状态当时已经对齐，
+但上层（HigherMask/FillNotch 的抬格/判据）给 CLI 和原版喂了不同的邻居候选。
 
-### 12.5 hmask 顶层序列（0x579010 FillNotch）—— 3642 格全一致，但 CLI 提前终止
+### 12.5 hmask 顶层序列（0x579010 FillNotch）—— 历史分岔已复验为旧探针状态
 
 `_cmp_hmask2.py` 对比 emu（`_emu_hmask.txt`，0x57902C hook）vs CLI
-（`_cli_hmask_all.txt`）的 FillNotch 顶层遍历：
+（`_cli_hmask_all.txt`）的 FillNotch 顶层遍历时，曾记录：
 
-- **前 3642 格全部一致**（坐标 + lv + m 掩码逐格相同，无 m/lv 分岔）；
-- CLI 在 **(65,59) m=0xE1** 停在第 3642 格（`break` 退出顶层循环）；
-- emu 继续到 #3644 **(66,59) m=0xE3**——`0xE3 & 0x22 == 0x22`（E+W 槽）
-  判据命中，开始递归抬格。
+- 前 3642 格全部一致（坐标 + lv + m 掩码逐格相同，无 m/lv 分岔）；
+- CLI 在 (65,59) m=0xE1 停在第 3642 格；
+- emu 继续到 #3644 (66,59) m=0xE3，`0xE3 & 0x22 == 0x22`（E+W 槽）判据命中。
 
-**CLI FillNotch 顶层循环提前终止** = 下游全部分岔的源头：少遍历 2 格 →
-Priority 邻居坐标差 1（§12.4）→ BuildRamp seed 分岔（emu (65,60) vs
-CLI (100,27)）→ 后续所有阶段级联错位。owner=-1 时 false 出口是死代码，
-CLI 的循环终止条件与原版不一致（原版 CellIterator/循环边界继续走到
-判据命中为止），**根因待查**（下一步对比 `0x58EF10` 的遍历边界与
-CellIterator 终止机制，见 [stage-hills.md](stage-hills.md) ⑨ 的
-`[0x87F8DC]=MapRect.W` 经验）。
+2026-08-14 重新跑当前 CLI 与 emu run46 后，这条「FillNotch 顶层循环提前终止」
+不再是当前 blocker，而是旧探针状态：RASR、Rebuild/BuildRamp 序列、SeedRegion 后
+`blob_id+level`、TrimCliff 前 cell 状态、Repaint 后全图 cell 状态均已收敛。
 
-### 12.6 本轮修正汇总
+### 12.6 2026-08-14 复验汇总
 
-| 修正 | 内容 | 依据 |
+| 项目 | 结果 | 依据 |
 |---|---|---|
-| RepaintAll owner | 0 → **-1** | 0x598D73 `push -1` 汇编实证 |
-| `_emu_regions.py` run_call | 顺序压栈 → 记录为 bug | golden reversed 压栈对比 |
-| making_regions.cpp | 删只写不读的 `n_skip` 残留 | printf 删除后残留，C4189 |
-| ctest | 39/39 → **41/41** | `test_making_regions`（#37）五入口对拍修复 |
+| RASR 随机消耗 | 20067 次逐位吻合 | `_cmp_rasr.py` / emu run46 |
+| Rebuild / BuildRamp | 序列一致 | CLI seed=53393 当前 rerun vs emu run46 |
+| SeedRegion 后状态 | `blob_id + level` 0 diff | `_cmp_blobmc.py` |
+| TrimCliff 前状态 | cell `(tile, level, ramp)` 0 diff | `_cmp_postrebuild3.py` |
+| Repaint 后状态 | 全图 cell 0 diff | `_cmp_postrepaint.py` |
+| 产品代码 | 已移除 MakingRegions/ARL 临时 probe 输出 | `making_regions.cpp` / `cli/pipeline.cpp` |
 
 ### 12.7 遗留
 
-1. **CLI FillNotch 顶层循环提前终止的根因**（对拍下一步）——CLI 在 3642 格
-   (65,59) 停，原版继续到 (66,59) 判据命中；对比遍历边界/CellIterator 终止。
-2. `_emu_regions.py` 临时 hook（hmask/crit2a/blob/hitval/blobtest/raise/
-   esp/top/ret 等 41 个）全部对拍完成后移除（临时探针，不入库）。
-3. BuildRamp 序列差异（emu 15 次 0 成功 vs CLI 27 次 2 成功）是 §12.5
-   上游分岔的下游表现，非本阶段自身错误。
+1. `_emu_regions.py` 临时 hook（hmask/crit2a/blob/hitval/blobtest/raise/
+   esp/top/ret 等）全部对拍完成后移除（临时探针，不入库）。
+2. e2e 逐字节对拍仍按用户 2026-08-12 选择暂缓；后续校准 Size/LocalSize、
+   [Basic] 节、OverlayPack 段数、半整数坐标取舍、Structures 字段 7..16、
+   IsoCell +0x119、Morphable/占地表/SetupLAT。
 

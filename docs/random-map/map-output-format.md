@@ -3,6 +3,14 @@
 `code/rewrite/cli/mapwriter.{h,cpp}` 组装 RandMap.Map。本文记录已实锤的格式
 与仍待 e2e 对拍裁决的部分。
 
+## 当前无游戏条件下已闭合的一项输出链问题（2026-08-15）
+
+`mapwriter.cpp` 原先为 `IsoMapPack5` 的临时记录池固定预留 `0x10000` 个元素，
+只要大地图菱形内有效格超过该数量，后续 `push_back` 就会让 `slots` 中保存的
+记录指针全部失效，最终压缩出的地图数据属于未定义结果。现已改为先统计
+`exists` 数量，再按实际数量一次性 `reserve`；这不改变小地图输出字节，只消除
+大地图输入下的潜在首个输出面分岔。`test_mapenc`、`test_cli` 与全量 ctest 已复验。
+
 ## 已实锤：坐标语义（2026-08-13 修正）
 
 **Waypoints / Terrain / Structures 的 x/y 全部是"等距坐标"**（cell 列/行，
@@ -28,9 +36,10 @@ FA2 只显示 1 个玩家；2026-08-13 依官方图重判并删除换算）。
 
 ## 已实锤：键/值编码
 
-- **键（Waypoints 的键、Terrain 的键）** = `"x" + "y 补零 3 位"`。
-  EA 编辑器 `PosToXY`（functions.cpp:692）实锤：后 3 字符是 y、其余是 x，
-  各自 `atoi`。例：`121113` → (121, 113)。
+- **键（Waypoints 的键、Terrain 的键）** = `x * 1000 + y` 的十进制字符串。
+  Seed=62298 的真实游戏捕获 `RandMap_62298_after_gate2.Map` 与 CLI 逐字节对拍
+  实锤：waypoint `(90,22)` 写作 `0=90022`，第一棵矿树 `(46,56)` 写作
+  `46056=TIBTRE01`。此前按 EA 编辑器读链推断成 `y * 1000 + x` 是错误结论。
 - **Structures 值** = 17 字段逗号表，顺序（GetParam 0..16，MapData.cpp:1650）：
   `owner,type,health,y,x,dir,tag,f1,f2,energy,upg,spot,u1,u2,u3,f3,f4`。
   y/x 同为等距坐标、**y 在前 x 在后**。官方图字段 7/9/10 有非零值
@@ -64,8 +73,8 @@ DebugLog 桩）。原版 .map 样本拿不到，以下项以官方图 + FA2 实�
    （sandwell 同款）。其余键值（MinPlayer/MaxPlayer 等）未对齐。
 3. **[Houses] 节**：sandwell 有 13 国家列表（编辑器下拉用）。CLI 未写，
    游戏实测"只有 2 玩家"与此关系待确认。
-4. **OverlayPack/OverlayDataPack 段数/段头标志**：EA 编辑器 32 段，游戏实际
-   是否一致待确认；OverlayDataPack 缺失 → 游戏里没矿（矿车不挖矿）。
+4. **OverlayPack/OverlayDataPack 段数/段头标志**：CLI 已同时写两节，均按 EA 编辑器
+   32 段 F80；游戏实际段头标志是否一致仍待确认。
 5. **Structures 字段 7..16 的值**：游戏写什么（tag/f1/f2/energy/upg/spot 语义）。
 6. **`+0x119` unknown 字节**：IsoCell 里我们写 0。
 7. **TileTypeClass +0x2E0（Morphable）**、建筑真实占地表、SetupLAT 行为。
@@ -74,7 +83,9 @@ DebugLog 桩）。原版 .map 样本拿不到，以下项以官方图 + FA2 实�
 
 - `ra2_rmg_cli --sed=… --dir=… [--out=…] [--seed=…] [--rules=…]`
 - smoke（Seed=60556，雪地 70×70）与游戏实际参数（RandMap.Sed Seed=10791，
-  温和）都跑通；test_cli 3 例 + 全量 ctest 41/41 绿。
+  温和）都跑通；test_cli 3 例 + 全量 ctest 42/42 绿。
 - SEH 兜底：崩溃打印 code/地址/寄存器（`/DYNAMICBASE:NO` 下地址稳定可查 map）。
 - 2026-08-13：坐标改为等距直写后，waypoint 输出如 `0=115091`（(115,91)，
   [0, W+H] 合法）；FA2 可正常打开（此前 ToReal 后 waypoint 落到地图外）。
+- 2026-08-14：补入 `MarkStartInfluence`、修正 RecalcAttributes `0xFFFF` 无符号读回，
+  并补写 `[OverlayDataPack]`（矿石量表）；已重新生成 seed=53393 的 `.map` 与 cells dump。

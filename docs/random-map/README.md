@@ -26,7 +26,7 @@
 | [stage-cleanup.md](stage-cleanup.md) | 阶段：Cleanup / Radar + **阶段之间的隐藏动作** | ✅ 已实锤，纠正了“Cleanup 改地形”的误记 |
 | [stage-seeding-water.md](stage-seeding-water.md) | 阶段：Seeding water（从整张水里抠陆地） | ✅ 算法全还原；**`MapType 0/1/2` 主路径 + 水面细化整条落成 C++ 并对拍** |
 | [stage-water-maptype34.md](stage-water-maptype34.md) | 阶段 2 支路：`MapType ∈ {3,4}` 的**河流、湖泊与瀑布**（含查表 sin/cos） | ✅ 八个函数全部实锤；sin/cos、两个通用区域算子（`0x5A0410` Erode / `0x5A0160` Dilate）、角度扩张 `0x5A08D0`、**湖泊涂块 `0x59C920`**、瀑布 `0x59E740`、**河 `0x59D510` 与调度 `0x59C580`** 已全部落 C++ 并对拍（River 13 例 + AddRiversAndLakes 6 例） |
-| [stage-making-regions.md](stage-making-regions.md) | 阶段 4：Making regions（区域重建 + **区域之间开坡道/架桥**，`MapType ∈ {3,4}` 专属，45 个取数点） | ✅ **45 个取数点全部关闭**；区域切分 / 架桥 / 四个直坡 / 三个转角 / 两遍重刷砖全部实锤 |
+| [stage-making-regions.md](stage-making-regions.md) | 阶段 4：Making regions（区域重建 + **区域之间开坡道/架桥**，`MapType ∈ {3,4}` 专属，45 个取数点） | ✅ **45 个取数点全部关闭**；区域切分 / 架桥 / 四个直坡 / 三个转角 / 两遍重刷砖全部实锤；2026-08-14 复验 seed=53393 与 emu run46 已收敛 |
 | [map-output-format.md](map-output-format.md) | **.map 输出格式**（CLI 写链）：坐标语义 / 键值编码 / 各节编码 | 🟡 坐标语义与字段顺序已实锤（FA2 官方图）；Size/LocalSize、半整数、Structures 字段值待 e2e 对拍 |
 
 ## 进度
@@ -253,11 +253,13 @@
       对拍逼出两个必须照抄的怪癖：右扫门限是 4 不是 2（用的还是左扫留下的
       层高基准），以及外层游标 `p += runLen` 里 `runLen` 会是 0 甚至 -1
 - [x] **阶段 6 出生点主干落 C++**（`code/rewrite/rmg/start_points.{h,cpp}`，
-      ctest 名 `start_points`）。`ChooseWaypoints`（`0x594F40`，最远点采样）由
+      ctest 名 `start_points` / `place_start_points` / `start_influence`）。`ChooseWaypoints`（`0x594F40`，最远点采样）由
       `dump_start_points_golden.py` 跑原版机器码取基准，**270 例逐点一致**；
-      名额分配与排序键是性质测试，`GrowRegion` / `PickPointsInRegion` /
-      调度只有汇编逐条对照——分档如实记在
-      [stage-starting-points.md](stage-starting-points.md) §九。
+      `GrowRegion` / `PickPointsInRegion` / `PlaceStartPoints` 由 `dump_start_points2_golden.py`
+      跑 `0x594B50` 真身，**17 例整段黄金对拍**；`0x5A1FB0` 已落地为
+      `MarkStartInfluence` 并接入 CLI：它不是校验，而是在出生点后做 400 步洪泛，
+      写工作数组 `+0x45` 供科技建筑/布矿/造山/LAT 保护读取。seed=53393 新 demo
+      症状扫描已消掉树入水与出生点坡道，剩余 TIBTRE 压矿属于阶段 8 原版矿树。
       顺带查实两处：排序键里的 `regionCount` 是**销毁小区域之前**的个数；
       `ScenarioClass+0x11C0` 那张出生点表被每个区域从下标 0 重写一遍，
       跑完只剩最后一个区域的（waypoint 表本身是对的）
@@ -609,7 +611,11 @@ long double。同类的 `fsin` / `fpatan` / `f2xm1` 是否也如此，**未确�
 `code/rewrite/cli/`：`CliWorld`（八路菱形继承的完整 world）→ `pipeline`
 （12 阶段串联）→ `mapwriter`（.map 组装）→ `cli_main`（读 .sed / rulesmd.ini，
 SEH 兜底）。smoke 与游戏实际参数（RandMap.Sed Seed=10791）都跑通，
-ctest 41/41 全绿。**e2e 逐字节对拍（开游戏同种子生成原版 RandMap.Map）暂缓**，
+ctest 42/42 全绿。2026-08-14 复验确认阶段 4 seed=53393 与 emu run46 收敛，
+并清理了 CLI / MakingRegions 的临时 probe 输出；同日补入 `[OverlayDataPack]`、
+修正 `CliWorld::RecalcAttributes` 的 `0xFFFF` 无符号读回问题，重新生成 seed=53393
+地图与 cells dump 通过。
+**e2e 逐字节对拍（开游戏同种子生成原版 RandMap.Map）暂缓**，
 已实锤部分见 [map-output-format.md](map-output-format.md)。
 
 ## 工具箱（本模块新增，均为纯只读 PE 分析，不依赖 Ghidra）

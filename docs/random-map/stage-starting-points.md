@@ -3,8 +3,9 @@
 > 状态：**外层重试结构、区域筛选与配额分配、五个取数点的惯用法均已实锤**；
 > 两个核心子函数 `0x594420 GrowRegion` 与 `0x594F40 ChooseWaypoints`
 > 已逐条逆出（§三之一 / §四），三个辅助谓词也已实锤（§五）。
-> **尚未落 C++**：它卡在一个大依赖上——引擎的**移动区（zone）子系统**，
-> 见 §二之零。
+> `0x594B50` 调度已落 C++ 并整段对拍，`0x5A1FB0` 已落地为
+> `MarkStartInfluence` 并接入 CLI；它依赖的移动区（zone）子系统也已落 C++
+> 并由 `test_zones` 对拍。
 > 取证：`memory/data/decomp/rmg_starting_points.txt`、
 > `memory/data/decomp/rmg_start_helpers.txt`（`0x594420` / `0x594F40` /
 > `0x578640` / `0x5A1FB0`）。
@@ -577,6 +578,14 @@ bool IsWithinUsableArea(const Rect& r, const CellStruct& c, bool considerRamp) {
   ⚠️ 这一份也钉死了 §三尾巴那条**出生点表 bug**：`bands2-mt0` 的 8 个槽
   最后全是填充值 `0x7FFF7FFF`——因为最后处理的那个区域名额为 0，它把表重置了
   却一个点都没写回去。
+* **`0x5A1FB0`：已落地为 `MarkStartInfluence` 并接入 CLI 主流水线。**
+  它不取随机数、不改变外层重试，只在 `PlaceStartPoints` 后、科技建筑/布矿/造山/LAT
+  前复用工作数组：逐出生点清 `+0x3C`、以 waypoint 为源做最多 400 步最小堆洪泛，
+  命中格置 `+0x45`。回归 `test_start_influence` 钉住三条行为：只走未定砖、
+  每个出生点重清 `+0x3C`、`+0x45` 保护区会保留给下游阶段读取。
+  这次修复不是“补禁止规则”，而是补上原版主流程缺失切片；seed=53393 新 demo
+  的症状扫描已显示 `tree_on_water=0`、出生点 `ramp=0`，剩余
+  `tree_on_overlay` 样本均是阶段 8 原版矿田生成的 `TIBTRE0x`。
 
 ### 一处**不可观测**的实现细节
 

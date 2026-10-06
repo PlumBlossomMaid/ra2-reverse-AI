@@ -1,6 +1,7 @@
 # 引擎的移动区子系统——阶段 6 的前置工程
 
-> 状态：**整条链路已实锤，尚未落 C++**。
+> 状态：**整条链路已实锤并落 C++**（`code/rewrite/rmg/zones.{h,cpp}`，
+> ctest `zones` 黄金对拍通过）。
 > 取证：`memory/data/decomp/zones.txt`（`0x56C510` / `0x56CB90` / `0x56D230` /
 > `0x5A1FB0`）、`memory/data/decomp/zones2.txt`（`0x56D6E0` / `0x56D5A0` /
 > `0x56D460` / `0x581F50`），以及反汇编 `0x47D2B0-0x47DD61`、`0x483C80-0x483E28`、
