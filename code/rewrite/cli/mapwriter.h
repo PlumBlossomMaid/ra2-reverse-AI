@@ -7,12 +7,12 @@
 //                  游戏侧段数/段头标志 e2e 对拍校准
 //   [Header]    Starting-point bounds and real/screen WaypointN coordinates
 //   [Waypoints]/[Terrain]/[Structures]  游戏 INI 格式（Waypoints/Terrain 键值
-//                  为 x*1000+y，Structures 为 17 字段逗号表）
+//                  为 y*1000+x，Structures 为 17 字段逗号表，槽 3/4 = 游戏 x/y）
 //
 // 坐标语义（map-output-format.md §坐标）：Waypoints/Terrain/Structures 的
 // x/y 一律是**等距坐标**（cell 列/行，范围 [0, W+H]），不是真实坐标。
-// Waypoints/Terrain 的整数编码由 Seed=62298 RandMap.Map 逐字节对拍校准：
-// 写出 x*1000+y。
+// Waypoints/Terrain 的整数编码写出 y*1000+x：游戏读路径 0x68BE0C 实锤
+// （V%1000 → CellStruct 低 16 位=X、V/1000 → 高 16 位=Y）。
 #pragma once
 
 #include <string>

@@ -153,11 +153,12 @@ TEST(MapWriter, EncodesIsoCoordinatesAsGameWaypointInteger) {
   EXPECT_NE(std::string::npos, map.find("[Basic]\n"));
   EXPECT_NE(std::string::npos, map.find("MultiplayerOnly=1\n"));
   EXPECT_NE(std::string::npos, map.find("[Waypoints]\n"));
-  EXPECT_NE(std::string::npos, map.find("0=90022\n"));
-  EXPECT_NE(std::string::npos, map.find("1=40105\n"));
+  // 键 = y*1000+x（y 在千位）：游戏读路径 0x68BE0C 实锤（V%1000→X、V/1000→Y）
+  EXPECT_NE(std::string::npos, map.find("0=22090\n"));
+  EXPECT_NE(std::string::npos, map.find("1=105040\n"));
   EXPECT_NE(std::string::npos, map.find("[Terrain]\n"));
-  EXPECT_NE(std::string::npos, map.find("49110=TREE01\n"));
-  EXPECT_NE(std::string::npos, map.find("93179=TREE02\n"));
+  EXPECT_NE(std::string::npos, map.find("110049=TREE01\n"));
+  EXPECT_NE(std::string::npos, map.find("179093=TREE02\n"));
 }
 
 void ExpectMapSections(const std::string& map) {

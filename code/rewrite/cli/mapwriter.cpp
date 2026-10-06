@@ -13,11 +13,15 @@ namespace cli {
 
 namespace {
 
-// 新 INI 格式下，[Waypoints]/[Terrain] 的键都是 x*1000+y：
-// 逐字节对拍 RandMap.Map 实锤；游戏读回后仍按等距坐标使用。
+// [Waypoints]/[Terrain] 的键 = y*1000+x（**y 在千位**）。
+// 实锤（2026-10-06）：游戏读 [Waypoints] 的唯一 ÷1000 站点 0x68BE0C——
+// V%1000 进 CellStruct 低 16 位、V/1000 进高 16 位，而 GetCellAt(0x5657A0)
+// 以「低=X、高=Y」取格（index = Y*512+X），故 V = Y*1000+X。
+// FA2 同约定（PosToXY：前三位归 Y、前导归 X，且 FA2 的 X 轴=游戏 Y 轴）；
+// 2026-08-15 的「x*1000+y 实锤」是与自建脚本的循环论证，作废。
 std::string KeyXY(int x, int y) {
   char buf[16];
-  std::snprintf(buf, sizeof(buf), "%d", x * 1000 + y);
+  std::snprintf(buf, sizeof(buf), "%d", y * 1000 + x);
   return std::string(buf);
 }
 
@@ -148,7 +152,7 @@ std::string BuildMapFile(const PipelineResult& r, int theater, int level) {
   AppendB64Lines(out, ovld_pack);
   out += "\n";
 
-  // ── [Waypoints]（键 = 数字，值 = y*1000+x，等距坐标）──
+  // ── [Waypoints]（值 = y*1000+x，等距坐标，见 KeyXY 注释）──
   // 阶段 6 的 SetWaypoint(base+i) 从 base=0 起，waypoint 0 也有效；
   // 只写被填过的（坐标非 (0,0)）。
   bool has_wp = false;
@@ -183,7 +187,9 @@ std::string BuildMapFile(const PipelineResult& r, int theater, int level) {
     out += "\n";
   }
 
-  // ── [Structures]（17 字段逗号表，EA 编辑器顺序，y/x 等距坐标）──
+  // ── [Structures]（17 字段逗号表，EA 编辑器顺序）──
+  // 字段 3/4 槽位语义是编辑器的 y,x（MapData.cpp:2492 写 structure.y,structure.x），
+  // 而编辑器的 X 轴 = 游戏 Y 轴，所以槽 3 落游戏 x、槽 4 落游戏 y。
   if (!r.buildings.empty()) {
     out += "[Structures]\n";
     for (std::size_t i = 0; i < r.buildings.size(); ++i) {
@@ -191,7 +197,7 @@ std::string BuildMapFile(const PipelineResult& r, int theater, int level) {
       // owner,type,health,y,x,dir,tag,f1,f2,energy,upg,spot,u1,u2,u3,f3,f4
       std::snprintf(buf, sizeof(buf),
                     "%zu=%d,%s,%d,%d,%d,0,0,0,0,0,0,0,0,0,0,0,0\n", i + 1,
-                    b.owner, b.type.c_str(), b.health, b.y, b.x);
+                    b.owner, b.type.c_str(), b.health, b.x, b.y);
       out += buf;
     }
     out += "\n";
