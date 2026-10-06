@@ -401,6 +401,7 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   sp.map_w = ms.width;
   sp.map_h = ms.height;
   sp.map_rect_w = ms.width + 4;
+  sp.map_rect_h = ms.height + 12;   // MapClass +0xF8（stage-init.md：H+12）
   sp.theater = &theater;
   sp.usable = usable;
   sp.trace = &out->start_trace;

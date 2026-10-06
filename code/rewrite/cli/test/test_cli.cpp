@@ -260,11 +260,14 @@ TEST(CliPipeline, StartPointsUseInsetLocalRect) {
   //   2026-09-28 实机帧 08→11 四帧 0 diff、RNG 检查点逐位吻合。
   // 期望值 = 防重版 CLI 的**合成砖表**结果（与 LiveRun 的 61638/tries=44 不同，
   // 合成 profile 下区域划分不同）；改动 SplitRegion 后此期望值需同步刷新。
+  // 数值取自 0x594876 内缩修复（usable 传未缩矩形、AreaIsPassable 走
+  // +0xF4/+0xF8 版菱形判定）落地后的实际行为；该行为 CLI 全程与 live
+  // rmg_done 保持菱形内全字段 0 差异（2026-10-06 验证）。
   ASSERT_NE(result.rng_checkpoints.end(), it);
-  EXPECT_EQ(61901, it->calls);
+  EXPECT_EQ(61928, it->calls);
   ASSERT_GE(result.start_trace.size(), 2u);
   EXPECT_EQ("pick", result.start_trace[1].kind);
-  EXPECT_EQ(49, result.start_trace[1].tries);
+  EXPECT_EQ(76, result.start_trace[1].tries);
   const auto first_cand = std::find_if(
       result.start_trace.begin(), result.start_trace.end(),
       [](const rmg::StartTraceEntry& tr) { return tr.kind == "cand"; });

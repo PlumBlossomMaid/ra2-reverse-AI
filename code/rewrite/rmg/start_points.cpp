@@ -1,4 +1,4 @@
-﻿#include "start_points.h"
+#include "start_points.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -125,7 +125,7 @@ bool AreaIsPassable(const StartPointContext& ctx, const MapRect& rect,
   const int x1 = static_cast<std::int16_t>(rect.x + rect.w - 1);
   const int y1 = static_cast<std::int16_t>(rect.y + rect.h - 1);
   const int map_w = ctx.map_rect_w;
-  const int map_max_sum = map_w + 2 * (ctx.map_h + 12);
+  const int map_max_sum = map_w + 2 * ctx.map_rect_h;   // [0xABED08] = +0xF4+2*(+0xF8)
   const auto in_map = [map_w, map_max_sum](int x, int y) {
     return x + y > map_w && y - x < map_w && x - y < map_w &&
            x + y <= map_max_sum;

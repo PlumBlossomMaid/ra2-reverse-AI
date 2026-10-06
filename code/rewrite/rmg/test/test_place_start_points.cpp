@@ -1,4 +1,4 @@
-﻿// 阶段 6「Creating starting points」整段（0x594B50）的黄金对拍。
+// 阶段 6「Creating starting points」整段（0x594B50）的黄金对拍。
 //
 // 与 test_start_points.cpp 分工：那边只对最远点采样 0x594F40 这一个零件，
 // 这边把**调度 + 起区域 + 逐区域摆点**连成一整条跟原版机器码对拍。
@@ -329,14 +329,16 @@ TEST(PlaceStartPoints, MatchesOriginal) {
     ctx.waypoint_scale = c.scale;
     ctx.map_w = c.w;
     ctx.map_h = c.h;
-    ctx.map_rect_w = c.w;             // MapClass +0xF4
+    ctx.map_rect_w = c.w;             // MapClass +0xF4（基准里 0x87F8DC=w）
+    ctx.map_rect_h = c.h;             // MapClass +0xF8（基准里 0x87F8E0=h）
     ctx.movement_zone = kStartZoneSel[c.map_type & 7];
     ctx.want_zone_type = 3;           // 基准档头的 wantZoneType
-    // 0x594876：{[0x87F8E4]+4, [0x87F8E8]+4, [0x87F8EC]-8, [0x87F8F0]-8}
-    ctx.usable.x = 4;
-    ctx.usable.y = 4;
-    ctx.usable.w = c.w - 8;
-    ctx.usable.h = c.h - 8;
+    // 基准把 MapClass +0xFC..+0x108 设成未缩的 {0,0,w,h}；0x594876 的
+    // {X+4, Y+4, W-8, H-8} 收缩由 PickPointsInRegion 内部完成。
+    ctx.usable.x = 0;
+    ctx.usable.y = 0;
+    ctx.usable.w = c.w;
+    ctx.usable.h = c.h;
 
     rng.reset_call_count();
     bool ret = false;

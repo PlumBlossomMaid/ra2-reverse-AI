@@ -1,4 +1,4 @@
-﻿// 阶段 6「Creating starting points」——把出生点摆到地图上。
+// 阶段 6「Creating starting points」——把出生点摆到地图上。
 //
 // 调度 0x594B50 PlaceStartPoints，全阶段的取数点只有三处：
 //   0x5948CD  PickBelow(3)              每个区域一次，无条件抽
@@ -123,7 +123,11 @@ struct StartPointContext {
   int map_h = 0;            // [0xABE15C] = MapSeedClass +0x184
   // 0x578640 读的是 **MapClass +0xF4**（[0x87F8DC]），与上面那个 MapSeedClass
   // 的 W 是两个来源；实测同值，但字段分开留着，别混用。
-  int map_rect_w = 0;                 // MapClass +0xF4（ABED04）
+  int map_rect_w = 0;                 // MapClass +0xF4 = W+4（ABED04 的来源）
+  // 0x5A7250 的菱形判定读 [0xABED08] = +0xF4 + 2*(+0xF8)（写入点 0x5662FB 的
+  // `lea eax,[eax+edx*2]`）。+0xF8 = H+12（stage-init.md §），与 MapSeedClass
+  // 的 H 也是两个来源，同样分开留。
+  int map_rect_h = 0;                 // MapClass +0xF8 = H+12
 
   // 0x5A7250 的四个「铺装」谓词要的砖号基址
   const TheaterData* theater = nullptr;
@@ -137,7 +141,8 @@ struct StartPointContext {
   // MovementZoneType 查询；CLI 的 world 需要这份结果才能实现那个查询。
   ZoneResult* zone_result_out = nullptr;
 
-  // 已经缩过一圈的可用矩形：{[0x87F8E4]+4, [0x87F8E8]+4, [0x87F8EC]-8, [0x87F8F0]-8}
+  // 未缩的可用矩形（MapClass +0xFC..+0x108，Set_LocalSize 的原始输出）；
+  // 0x594876 的 {X+4, Y+4, W-8, H-8} 收缩在 PickPointsInRegion 内部做。
   MapRect usable;
   std::vector<StartTraceEntry>* trace = nullptr;
 
