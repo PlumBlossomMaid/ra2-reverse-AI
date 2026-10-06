@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <set>
+#include <string>
 
 #include "rmg/cell_ref.h"
 #include "rmg/cliff_work.h"
@@ -102,25 +103,43 @@ void CaptureLatDebugCells(void* user, const char* name,
 
 }  // namespace
 
-bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
-                 const rmg::TheaterData& theater,
-                 const std::vector<rmg::TileType>& tiles,
-                 const RmgRules& rules, int tile_count, PipelineResult* out,
-                 std::string* err) {
+namespace {
+
+// 在一套已建好的 grid/rng/work/world 上跑完整一局——RunPipeline（单局）
+// 与 RunPipelineChain（进程内连生）共用的单局体。连生模式下 world/work
+// 是上一局的延续（内存态自然残留 = 真实游戏同会话连续生成），rng 每局
+// 入口重播种（原版 0x598985 Randomizer::Seed(MapSeed.Seed)）。
+bool RunGameOnWorld(const rmg::MapSeedParams& params, unsigned seed,
+                    const rmg::TheaterData& theater, const RmgRules& rules,
+                    int tile_count, const rmg::MapGrid& grid,
+                    rmg::Randomizer* rng_arg,
+                    std::vector<rmg::PaintWorkCell>* work_arg,
+                    CliWorld* world_arg, PipelineResult* out,
+                    std::string* err) {
   if (out == nullptr) return false;
   // 整条流水线在向零截断的 x87 环境下跑（原版 WinMain 全局 RC=chop）。
   rmg::FpuChopScope fpu;
+  rmg::Randomizer& rng = *rng_arg;
+  std::vector<rmg::PaintWorkCell>& work = *work_arg;
+  CliWorld& world = *world_arg;
 
   // ── 阶段 1 前奏：地图尺寸 ──
   const rmg::MapSize ms =
       rmg::ComputeMapSize(params.width, params.height, params.num_players,
                           params.map_type);
-  const rmg::MapGrid grid(ms.width + 4, ms.height + 12);
-  const std::size_t n =
-      static_cast<std::size_t>(grid.side()) * static_cast<std::size_t>(grid.side());
-  std::vector<rmg::PaintWorkCell> work(n);
-  rmg::Randomizer rng(seed);
-  CliWorld world(grid, theater, tiles, rng, work, tile_count);
+  // grid/world 由调用方按链首局尺寸建；尺寸不一致的局不能复用 world
+  // （跨尺寸的格子残留语义未知）。--chain 在 cli_main 已拦，这里是兜底。
+  if (grid.width() != ms.width + 4 || grid.height() != ms.height + 12) {
+    if (err != nullptr) {
+      *err = "chain game map size mismatch: params give grid " +
+             std::to_string(ms.width + 4) + "x" +
+             std::to_string(ms.height + 12) + " but world grid is " +
+             std::to_string(grid.width()) + "x" + std::to_string(grid.height());
+    }
+    return false;
+  }
+  rng.Seed(seed);          // 0x598985：每局入口重播种（Seed 完整复位状态）
+  rng.reset_call_count();  // 复刻侧观测计数每局清零（原版无此字段）
   // 造山可变形集合（TileTypeClass +0x2E0，游戏内存取证）：
   // morphable=true 的砖才允许 CreateHills 抬升，水/岸/特殊地形砖保护。
   std::set<int> nonmorph;
@@ -146,6 +165,9 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   world.set_max_trees(rules.max_trees);
   world.set_ground_foot(rules.ground_foot);
   world.set_cliff_back_impassability(rules.cliff_back_impassability);
+  world.set_overlay_land(rules.overlay_land);
+  world.set_terrain_occ_bits(rules.terrain_occ);
+  world.set_theater_id(params.theater);
   // 回放模式：先灌上一局终态，再让 InitCells 按原版阶段 1 语义重置——
   // 它只清 6 个字段，object/ground/zoneId 的上一局残留由此进入本局。
   if (!out->init_cells_path.empty() &&
@@ -176,6 +198,10 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   if (out->capture_rng_call_cells >= 0 ||
       out->capture_before_rng_call_cells >= 0) {
     rng.set_hook(CaptureCellsAtRng, &rng_capture);
+  } else {
+    // 连生模式 rng 跨局复用：本局不开捕获时必须清掉上一局挂的钩子，
+    // 否则 user 指针指向已销毁的栈帧。
+    rng.set_hook(nullptr, nullptr);
   }
   const auto mark_rng = [&](const char* name) {
     RngCheckpoint cp;
@@ -597,6 +623,71 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   }
 
   if (err != nullptr) err->clear();
+  return true;
+}
+
+}  // namespace
+
+bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
+                 const rmg::TheaterData& theater,
+                 const std::vector<rmg::TileType>& tiles,
+                 const RmgRules& rules, int tile_count, PipelineResult* out,
+                 std::string* err) {
+  if (out == nullptr) return false;
+  const rmg::MapSize ms =
+      rmg::ComputeMapSize(params.width, params.height, params.num_players,
+                          params.map_type);
+  const rmg::MapGrid grid(ms.width + 4, ms.height + 12);
+  const std::size_t n =
+      static_cast<std::size_t>(grid.side()) * static_cast<std::size_t>(grid.side());
+  std::vector<rmg::PaintWorkCell> work(n);
+  rmg::Randomizer rng;   // RunGameOnWorld 入口 Seed(seed)，与先播种等价
+  CliWorld world(grid, theater, tiles, rng, work, tile_count);
+  return RunGameOnWorld(params, seed, theater, rules, tile_count, grid, &rng,
+                        &work, &world, out, err);
+}
+
+bool RunPipelineChain(const std::vector<ChainGame>& games,
+                      const rmg::TheaterData& theater,
+                      const std::vector<rmg::TileType>& tiles,
+                      const RmgRules& rules, int tile_count,
+                      std::vector<PipelineResult>* results, std::string* err) {
+  if (results == nullptr || games.empty() ||
+      results->size() != games.size()) {
+    if (err != nullptr) *err = "RunPipelineChain: bad arguments";
+    return false;
+  }
+  // 首局建 grid/rng/work/world；第 2 局起全部复用——CliWorld 内存态
+  // （cells + terrains_ 记录 + 哑元 + loaded_tiles_ …）自然延续，
+  // 与真实游戏同会话连续生成同构。
+  const rmg::MapSize ms0 =
+      rmg::ComputeMapSize(games[0].params.width, games[0].params.height,
+                          games[0].params.num_players, games[0].params.map_type);
+  const rmg::MapGrid grid(ms0.width + 4, ms0.height + 12);
+  const std::size_t n =
+      static_cast<std::size_t>(grid.side()) * static_cast<std::size_t>(grid.side());
+  std::vector<rmg::PaintWorkCell> work(n);
+  rmg::Randomizer rng;
+  CliWorld world(grid, theater, tiles, rng, work, tile_count);
+  for (std::size_t i = 0; i < games.size(); ++i) {
+    if (i > 0) {
+      const rmg::MapSize ms_i = rmg::ComputeMapSize(
+          games[i].params.width, games[i].params.height,
+          games[i].params.num_players, games[i].params.map_type);
+      if (ms_i.width != ms0.width || ms_i.height != ms0.height) {
+        if (err != nullptr) {
+          *err = "chain game #" + std::to_string(i + 1) +
+                 " map size differs from game #1 (chain requires equal sizes)";
+        }
+        return false;
+      }
+    }
+    if (!RunGameOnWorld(games[i].params, games[i].seed, theater, rules,
+                        tile_count, grid, &rng, &work, &world,
+                        &(*results)[i], err)) {
+      return false;
+    }
+  }
   return true;
 }
 

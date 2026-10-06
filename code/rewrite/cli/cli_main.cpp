@@ -25,6 +25,13 @@
 //   --init-cells=FILE    回放模式：装载上一局 12B/格 cells dump 作为初始状态
 //                        （脏局复现；在 InitCells 前灌入，算法不变只是输入状态不同）
 //   --dump-cells12=FILE  导出 12B/格 cells（链式回放的输入格式）
+//   --chain=FILE   进程内连生：FILE 每行一个 .sed 路径（空行/# 注释跳过），
+//                  全部局共享一个 CliWorld 顺序生成（内存态自然延续 =
+//                  真实游戏同会话连续生成）。--out 作输出目录（默认 rmcache），
+//                  逐局写 <NN>_<sed基名>.map；--dump-cells12 逐局导出
+//                  （路径含 %02d 替换序号，否则扩展名前加 _NN 后缀）；
+//                  --seed 覆盖所有局的种子；链内尺寸/theater 必须一致，
+//                  与 --init-cells 互斥。
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -263,87 +270,27 @@ bool ReadFile(const std::string& path, std::string* out) {
   return true;
 }
 
-}  // namespace
-
-// SEH 兜底：无头跑流水线崩了能打印崩溃地址（调试用；Release 也能用）。
-static int RunCli(int argc, char** argv) {
-  const std::string sed_path = ArgValue(argc, argv, "--sed");
-  const std::string game_dir = ArgValue(argc, argv, "--dir");
-  const std::string out_path = ArgValue(argc, argv, "--out");
-  const std::string seed_tok = ArgValue(argc, argv, "--seed");
-  const std::string rules_path = ArgValue(argc, argv, "--rules");
-  const std::string dump_path = ArgValue(argc, argv, "--dump-cells");
-  const std::string dump_rng_path = ArgValue(argc, argv, "--dump-rng");
-  const std::string dump_stage_rng_path = ArgValue(argc, argv, "--dump-stage-rng");
-  const std::string dump_ore_trace_path = ArgValue(argc, argv, "--dump-ore-trace");
-  const std::string dump_tech_trace_path = ArgValue(argc, argv, "--dump-tech-trace");
-  const std::string dump_start_trace_path = ArgValue(argc, argv, "--dump-start-trace");
-  const std::string dump_arl_state_path = ArgValue(argc, argv, "--dump-arl-state");
-  const std::string dump_stage_cells_prefix =
-      ArgValue(argc, argv, "--dump-stage-cells-prefix");
-  const std::string dump_stage_ground_prefix =
-      ArgValue(argc, argv, "--dump-stage-ground-prefix");
-  const std::string dump_ground_path = ArgValue(argc, argv, "--dump-ground");
-  const std::string dump_stage_work_prefix =
-      ArgValue(argc, argv, "--dump-stage-work-prefix");
-  const std::string dump_stage_work_names =
-      ArgValue(argc, argv, "--dump-stage-work-names");
-  const std::string dump_ore_pop_path = ArgValue(argc, argv, "--dump-ore-pop");
-  const std::string dump_ore_work_prefix =
-      ArgValue(argc, argv, "--dump-ore-work");
-  const std::string dump_ore_enq_path = ArgValue(argc, argv, "--dump-ore-enq");
-  const std::string dump_cells_at_rng = ArgValue(argc, argv, "--dump-cells-at-rng");
-  const std::string dump_cells_at_rng_out = ArgValue(argc, argv, "--dump-cells-at-rng-out");
-  const std::string dump_cells_before_rng =
-      ArgValue(argc, argv, "--dump-cells-before-rng");
-  const std::string dump_cells_before_rng_out =
-      ArgValue(argc, argv, "--dump-cells-before-rng-out");
-  const std::string dump_zone_table_path =
-      ArgValue(argc, argv, "--dump-zone-table");
-  const std::string init_cells_path = ArgValue(argc, argv, "--init-cells");
-  const std::string dump_cells12_path = ArgValue(argc, argv, "--dump-cells12");
-
-  if (sed_path.empty() || game_dir.empty()) {
-    std::fprintf(stderr,
-                 "usage: ra2_rmg_cli --sed=RandMap.Sed --dir=GAME_DIR "
-                 "[--out=out.map] [--seed=NNN] [--rules=rulesmd.ini]\n");
-    return 2;
-  }
-
-  // ── 1. 读 .sed ──
-  ra2::rmg::MapSeedParams params;
-  if (!ra2::rmg::LoadSedFile(sed_path, &params)) {
-    std::fprintf(stderr, "cannot load sed: %s\n", sed_path.c_str());
-    return 1;
-  }
-
-  // ── 2. 种子 ──
-  long long seed = params.seed;
-  if (!seed_tok.empty()) {
-    seed = std::strtoll(seed_tok.c_str(), nullptr, 0);
-  }
-  if (seed < 0 || seed > 0xFFFFFFFFLL) {
-    std::fprintf(stderr,
-                 "seed must be in [0, 2^32) (.sed Seed=%d, --seed=%s)\n",
-                 params.seed, seed_tok.c_str());
-    return 1;
-  }
-
-  // ── 3. 装载 theater ──
-  ra2::assets::TheaterAssets assets;
+// 按 .sed 的 theater 字段装载砖库（1=Snow，其余 Temperate）。
+bool LoadTheaterAssets(const std::string& game_dir, int theater,
+                       ra2::assets::TheaterAssets* assets,
+                       std::vector<ra2::rmg::TileType>* tiles) {
   ra2::assets::TheaterAssets::Theater th =
-      (params.theater == 1) ? ra2::assets::TheaterAssets::kSnow
-                            : ra2::assets::TheaterAssets::kTemperate;
+      (theater == 1) ? ra2::assets::TheaterAssets::kSnow
+                     : ra2::assets::TheaterAssets::kTemperate;
   std::string err;
-  if (!assets.Load(game_dir, th, &err)) {
+  if (!assets->Load(game_dir, th, &err)) {
     std::fprintf(stderr, "theater load failed: %s\n", err.c_str());
-    return 1;
+    return false;
   }
-  std::vector<ra2::rmg::TileType> tiles;
-  assets.BuildRmgTileTable(&tiles);
+  assets->BuildRmgTileTable(tiles);
+  return true;
+}
 
-  // ── 4. rulesmd.ini + rmgmd.ini ──
-  ra2::cli::RmgRules rules;
+// 装载 rulesmd.ini + rmgmd.ini（含 ra2md.mix 回退、默认 NeutralTechBuildings）。
+// 失败打印原因并返回 false。foundations 由调用方补（依赖 assets）。
+bool LoadRulesForGame(const std::string& game_dir,
+                      const std::string& rules_path,
+                      ra2::cli::RmgRules* rules) {
   std::string rules_text;
   if (!rules_path.empty() && ReadFile(rules_path, &rules_text)) {
     // 指定路径
@@ -383,7 +330,7 @@ static int RunCli(int argc, char** argv) {
   }
   if (rules_text.empty()) {
     std::fprintf(stderr, "cannot find rulesmd.ini (pass --rules)\n");
-    return 1;
+    return false;
   }
   if (!rmg_text.empty()) {
     rules_text.push_back('\n');
@@ -392,25 +339,244 @@ static int RunCli(int argc, char** argv) {
   } else {
     std::fprintf(stderr, "[DEBUG] WARNING: rmgmd.ini not found, using defaults\n");
   }
-  ra2::cli::LoadRmgRules(rules_text, &rules);
+  ra2::cli::LoadRmgRules(rules_text, rules);
   std::fprintf(stderr, "[DEBUG] Loaded rules: MaxTrees=%d MinTiberium=%d MaxTiberium=%d\n",
-               rules.max_trees, rules.min_tiberium, rules.max_tiberium);
+               rules->max_trees, rules->min_tiberium, rules->max_tiberium);
 
   // Add default neutral tech buildings if not specified in rules
-  if (rules.neutral_tech_buildings.empty()) {
-    rules.neutral_tech_buildings = {
+  if (rules->neutral_tech_buildings.empty()) {
+    rules->neutral_tech_buildings = {
       "CAARMR", "CAAIRP", "CAPOWR", "CARADR", "CAMACH", "CATECH", "CAWEAP",
       "NAPOWR", "NARADR", "NATECH", "NAWEAP",
       "CAOILD", "CAOUTP", "CATHOSP", "CAMORY",
       "GACNST", "NACNST", "YACNST"
     };
     std::fprintf(stderr, "[DEBUG] Using default NeutralTechBuildings (%zu types)\n",
-                 rules.neutral_tech_buildings.size());
+                 rules->neutral_tech_buildings.size());
   } else {
     std::fprintf(stderr, "[DEBUG] Loaded NeutralTechBuildings: %zu types\n",
-                 rules.neutral_tech_buildings.size());
+                 rules->neutral_tech_buildings.size());
+  }
+  return true;
+}
+
+// 去掉目录与扩展名的文件名（链式输出的地图名用 .sed 基名）。
+std::string BaseNameNoExt(const std::string& path) {
+  const std::size_t slash = path.find_last_of("/\\");
+  const std::size_t begin = (slash == std::string::npos) ? 0 : slash + 1;
+  const std::size_t dot = path.find_last_of('.');
+  const std::size_t end =
+      (dot == std::string::npos || dot < begin) ? path.size() : dot;
+  return path.substr(begin, end - begin);
+}
+
+// 链式逐局文件名：含 "%02d" 就替换为序号，否则在扩展名前插 "_NN"。
+std::string ChainIndexedPath(const std::string& pattern, int index) {
+  char idx[16];
+  std::snprintf(idx, sizeof(idx), "%02d", index);
+  const std::size_t tok = pattern.find("%02d");
+  if (tok != std::string::npos) {
+    return pattern.substr(0, tok) + idx + pattern.substr(tok + 4);
+  }
+  const std::size_t slash = pattern.find_last_of("/\\");
+  const std::size_t dot = pattern.find_last_of('.');
+  if (dot != std::string::npos && (slash == std::string::npos || dot > slash)) {
+    return pattern.substr(0, dot) + "_" + idx + pattern.substr(dot);
+  }
+  return pattern + "_" + idx;
+}
+
+// 进程内连生模式（--chain）：链文件每行一个 .sed（空行/# 注释跳过）。
+// 全部局共享一个 CliWorld（RunPipelineChain 内复用，内存态自然延续），
+// 逐局写 <out目录>/<NN>_<sed基名>.map + 可选的 12B cells。
+int RunChain(const std::string& chain_path, const std::string& seed_tok,
+             const std::string& game_dir, const std::string& rules_path,
+             const std::string& out_arg, const std::string& cells12_pattern) {
+  std::string text;
+  if (!ReadFile(chain_path, &text)) {
+    std::fprintf(stderr, "cannot read chain file: %s\n", chain_path.c_str());
+    return 1;
+  }
+  std::vector<std::string> sed_paths;
+  std::stringstream ls(text);
+  std::string line;
+  while (std::getline(ls, line)) {
+    const std::size_t b = line.find_first_not_of(" \t\r");
+    if (b == std::string::npos) continue;
+    const std::size_t e = line.find_last_not_of(" \t\r");
+    line = line.substr(b, e - b + 1);
+    if (line.empty() || line[0] == '#') continue;
+    sed_paths.push_back(line);
+  }
+  if (sed_paths.empty()) {
+    std::fprintf(stderr, "chain file has no .sed entries: %s\n",
+                 chain_path.c_str());
+    return 1;
   }
 
+  std::vector<ra2::cli::ChainGame> games(sed_paths.size());
+  for (std::size_t i = 0; i < sed_paths.size(); ++i) {
+    if (!ra2::rmg::LoadSedFile(sed_paths[i], &games[i].params)) {
+      std::fprintf(stderr, "cannot load sed: %s\n", sed_paths[i].c_str());
+      return 1;
+    }
+    long long seed = games[i].params.seed;
+    if (!seed_tok.empty()) {
+      seed = std::strtoll(seed_tok.c_str(), nullptr, 0);
+    }
+    if (seed < 0 || seed > 0xFFFFFFFFLL) {
+      std::fprintf(stderr, "chain game #%zu: seed must be in [0, 2^32)\n",
+                   i + 1);
+      return 1;
+    }
+    games[i].seed = static_cast<unsigned>(seed);
+  }
+  // CliWorld 构造时冻结 theater/tiles，跨 theater 不能复用 world。
+  for (std::size_t i = 1; i < games.size(); ++i) {
+    if (games[i].params.theater != games[0].params.theater) {
+      std::fprintf(stderr,
+                   "chain game #%zu theater=%d differs from game #1 (%d)\n",
+                   i + 1, games[i].params.theater, games[0].params.theater);
+      return 1;
+    }
+  }
+
+  ra2::assets::TheaterAssets assets;
+  std::vector<ra2::rmg::TileType> tiles;
+  if (!LoadTheaterAssets(game_dir, games[0].params.theater, &assets, &tiles)) {
+    return 1;
+  }
+  ra2::cli::RmgRules rules;
+  if (!LoadRulesForGame(game_dir, rules_path, &rules)) return 1;
+  rules.foundations = assets.foundations();
+
+  std::vector<ra2::cli::PipelineResult> results(games.size());
+  std::string err;
+  if (!ra2::cli::RunPipelineChain(games, assets.data(), tiles, rules,
+                                  assets.TileCount(), &results, &err)) {
+    std::fprintf(stderr, "chain failed: %s\n", err.c_str());
+    return 1;
+  }
+
+  const std::string out_dir = out_arg.empty() ? "rmcache" : out_arg;
+  CreateDirectoryA(out_dir.c_str(), nullptr);  // 已存在返回 FALSE，忽略
+  for (std::size_t i = 0; i < games.size(); ++i) {
+    const int index = static_cast<int>(i) + 1;
+    char idx[16];
+    std::snprintf(idx, sizeof(idx), "%02d", index);
+    const std::string map_path =
+        out_dir + "\\" + idx + "_" + BaseNameNoExt(sed_paths[i]) + ".map";
+    const std::string map_text =
+        ra2::cli::BuildMapFile(results[i], games[i].params.theater, 4);
+    std::ofstream f(map_path, std::ios::binary);
+    if (!f) {
+      std::fprintf(stderr, "cannot write %s\n", map_path.c_str());
+      return 1;
+    }
+    f << map_text;
+    f.close();
+    if (!cells12_pattern.empty()) {
+      WriteCells12Dump(ChainIndexedPath(cells12_pattern, index),
+                       results[i].cells, results[i].exists);
+    }
+    std::fprintf(stderr, "ok: chain #%02d seed=%u players=%d -> %s\n", index,
+                 games[i].seed, games[i].params.num_players,
+                 map_path.c_str());
+  }
+  return 0;
+}
+
+}  // namespace
+
+// SEH 兜底：无头跑流水线崩了能打印崩溃地址（调试用；Release 也能用）。
+static int RunCli(int argc, char** argv) {
+  const std::string sed_path = ArgValue(argc, argv, "--sed");
+  const std::string game_dir = ArgValue(argc, argv, "--dir");
+  const std::string out_path = ArgValue(argc, argv, "--out");
+  const std::string seed_tok = ArgValue(argc, argv, "--seed");
+  const std::string rules_path = ArgValue(argc, argv, "--rules");
+  const std::string dump_path = ArgValue(argc, argv, "--dump-cells");
+  const std::string dump_rng_path = ArgValue(argc, argv, "--dump-rng");
+  const std::string dump_stage_rng_path = ArgValue(argc, argv, "--dump-stage-rng");
+  const std::string dump_ore_trace_path = ArgValue(argc, argv, "--dump-ore-trace");
+  const std::string dump_tech_trace_path = ArgValue(argc, argv, "--dump-tech-trace");
+  const std::string dump_start_trace_path = ArgValue(argc, argv, "--dump-start-trace");
+  const std::string dump_arl_state_path = ArgValue(argc, argv, "--dump-arl-state");
+  const std::string dump_stage_cells_prefix =
+      ArgValue(argc, argv, "--dump-stage-cells-prefix");
+  const std::string dump_stage_ground_prefix =
+      ArgValue(argc, argv, "--dump-stage-ground-prefix");
+  const std::string dump_ground_path = ArgValue(argc, argv, "--dump-ground");
+  const std::string dump_stage_work_prefix =
+      ArgValue(argc, argv, "--dump-stage-work-prefix");
+  const std::string dump_stage_work_names =
+      ArgValue(argc, argv, "--dump-stage-work-names");
+  const std::string dump_ore_pop_path = ArgValue(argc, argv, "--dump-ore-pop");
+  const std::string dump_ore_work_prefix =
+      ArgValue(argc, argv, "--dump-ore-work");
+  const std::string dump_ore_enq_path = ArgValue(argc, argv, "--dump-ore-enq");
+  const std::string dump_cells_at_rng = ArgValue(argc, argv, "--dump-cells-at-rng");
+  const std::string dump_cells_at_rng_out = ArgValue(argc, argv, "--dump-cells-at-rng-out");
+  const std::string dump_cells_before_rng =
+      ArgValue(argc, argv, "--dump-cells-before-rng");
+  const std::string dump_cells_before_rng_out =
+      ArgValue(argc, argv, "--dump-cells-before-rng-out");
+  const std::string dump_zone_table_path =
+      ArgValue(argc, argv, "--dump-zone-table");
+  const std::string init_cells_path = ArgValue(argc, argv, "--init-cells");
+  const std::string dump_cells12_path = ArgValue(argc, argv, "--dump-cells12");
+  const std::string chain_path = ArgValue(argc, argv, "--chain");
+
+  if (game_dir.empty() || (sed_path.empty() && chain_path.empty())) {
+    std::fprintf(stderr,
+                 "usage: ra2_rmg_cli --sed=RandMap.Sed --dir=GAME_DIR "
+                 "[--out=out.map] [--seed=NNN] [--rules=rulesmd.ini]\n"
+                 "       ra2_rmg_cli --chain=chain.txt --dir=GAME_DIR "
+                 "[--out=outdir] [--dump-cells12=cells_%%02d.bin]\n");
+    return 2;
+  }
+
+  // ── 进程内连生模式：链文件驱动，与单局路径完全分开 ──
+  if (!chain_path.empty()) {
+    if (!init_cells_path.empty()) {
+      std::fprintf(stderr,
+                   "--init-cells 与 --chain 互斥（连生模式 world 内存态自然"
+                   "延续，无需磁盘回放）\n");
+      return 2;
+    }
+    return RunChain(chain_path, seed_tok, game_dir, rules_path, out_path,
+                    dump_cells12_path);
+  }
+
+  // ── 1. 读 .sed ──
+  ra2::rmg::MapSeedParams params;
+  if (!ra2::rmg::LoadSedFile(sed_path, &params)) {
+    std::fprintf(stderr, "cannot load sed: %s\n", sed_path.c_str());
+    return 1;
+  }
+
+  // ── 2. 种子 ──
+  long long seed = params.seed;
+  if (!seed_tok.empty()) {
+    seed = std::strtoll(seed_tok.c_str(), nullptr, 0);
+  }
+  if (seed < 0 || seed > 0xFFFFFFFFLL) {
+    std::fprintf(stderr,
+                 "seed must be in [0, 2^32) (.sed Seed=%d, --seed=%s)\n",
+                 params.seed, seed_tok.c_str());
+    return 1;
+  }
+
+  // ── 3. 装载 theater ──
+  ra2::assets::TheaterAssets assets;
+  std::vector<ra2::rmg::TileType> tiles;
+  if (!LoadTheaterAssets(game_dir, params.theater, &assets, &tiles)) {
+    return 1;
+  }
+
+  // ── 4. rulesmd.ini + rmgmd.ini ──
+  ra2::cli::RmgRules rules;
+  if (!LoadRulesForGame(game_dir, rules_path, &rules)) return 1;
   rules.foundations = assets.foundations();
 
   // ── 5. 流水线 ──
@@ -440,6 +606,7 @@ static int RunCli(int argc, char** argv) {
   if (!dump_zone_table_path.empty()) {
     result.capture_stage_cells = true;   // zone 表拷贝挂在这个开关下
   }
+  std::string err;
   if (!ra2::cli::RunPipeline(params, static_cast<unsigned>(seed),
                              assets.data(), tiles, rules, assets.TileCount(),
                              &result, &err)) {

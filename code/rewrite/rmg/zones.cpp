@@ -43,6 +43,38 @@ std::uint8_t RecalcLandType(bool within_usable_area, int ground_type,
   return kLandClear;                                      // 0x483DD4
 }
 
+// -- 0x483C80 全分支 ---------------------------------------------------------
+std::uint8_t RecalcLandTypeFull(const LandTypeInput& in,
+                                const float* ground_foot) {
+  if (!in.within_usable_area) return kLandOffMap;         // 0x483C99 → 7
+  if (in.has_overlay) {
+    if (in.overlay_f22d) return 1;                        // 0x483CBF
+    if (in.overlay_f2a8) return 2;                        // 0x483CD4
+    // 0x483CDF-0x483D06：`fld dword Ground[land].Foot; fcomp dword [0x7E1748]`
+    // （=0.0f），`test ah,0x40` —— **等于**（不是 <=）才落 6。
+    if (ground_foot != nullptr && ground_foot[in.overlay_land] == 0.0f) {
+      return 6;                                           // 0x483CFC
+    }
+    if (in.overlay_f2b5) return 6;                        // 0x483D11
+    if (in.overlay_f2b4) return kLandClear;               // 0x483D24 → 0
+    // +0x2B4 == 0 → 贯穿到 +0xEC 分支（0x483D2A）
+  }
+  if (in.ground_type == kGroundWater) return kLandWater;  // 0x483D35 → 4
+  if (in.ground_type == kGroundBeach) return kLandBeach;  // 0x483D49 → 3
+  if (ground_foot != nullptr &&
+      static_cast<double>(ground_foot[in.ground_type]) <= 0.01) {
+    return kLandImpassable;                               // 0x483D6B → 6
+  }
+  // 0x483D72-0x483E28：+0xE4 占据者循环。RTTI 0x24（TerrainClass 树）：
+  // Scenario+0x1258==1 查 SnowOccupationBits(+0x2AC)，否则查
+  // TemperateOccupationBits(+0x2A8)，==7 → 2（0x483CD4），否则 → 5
+  // （0x483E1E）；其他 RTTI 跳过到链尾 → 0（0x483DD4）。
+  if (in.first_tree_occupation_bits >= 0) {
+    return (in.first_tree_occupation_bits == 7) ? 2 : 5;
+  }
+  return kLandClear;                                      // 0x483DD4 → 0
+}
+
 // -- 0x421B60 求交 + 0x567230 逐字段夹取 ------------------------------------
 MapRect ClampLocalRect(const MapRect& want, int map_w, int map_h) {
   // 0x421B60：与整图矩形 {0, 0, map_w, map_h} 求交。四个宽高任一 <= 0 就整体

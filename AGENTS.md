@@ -86,11 +86,61 @@
   单独调不可行。手工清格子/字段也都崩。**结论：游戏就让它自然脏着，
   对齐走 CLI 脏链回放（用户拍板：原版 cells 本来就是脏的，脏链对齐
   才是真对齐）。**
-- **进行中：CLI 进程内连生 --chain 模式**（agent-1）：单进程多局，
-  CliWorld 内存态自然延续（不丢 terrains_ 等不可序列化状态），
-  每局新建 Randomizer(Seed)（对齐原版逐局重播种）。判定实验：
-  seed1→seed1 第 2 局应 == 游戏脏局变体 B（2be0542bd1e772f5）。
-  磁盘链（12B dump）实测不行：seed1 回放 obj 差 1018 格（树身份丢失）。
+- **CLI 进程内连生 --chain 已落地**（2026-10-07，agent-1）：`--chain=FILE`
+  （每行一 .sed，空行/# 跳过），RunPipelineChain 共享一个 CliWorld/work/rng
+  顺序跑局（RunPipeline 拆出文件内 RunGameOnWorld 单局体，单局行为不变，
+  ctest 43/43 绿）；每局入口 `rng.Seed(seed)`（Seed 完整复位==原版重播种）。
+  链内尺寸/theater 不一致 → 报错。--out=输出目录（默认 rmcache）逐局写
+  `NN_<sed基名>.map`；--dump-cells12 逐局命名（%02d 替换，否则加 _NN）。
+  与 --init-cells 互斥。验证：链 #01 == 单跑 seed1 逐字节（14f6ef9c…），
+  #02 ≠ #01（脏局效应）且重跑逐字节确定；连生 #02 vs 磁盘回放 #02 差
+  6824 格（object 字节 664 格 = 树占用残留保住）。
+
+### ✅ +0xEC(ground)/+0x4C(zoneId) 两列对齐（2026-10-07，agent-1）
+
+首局 12B vs 游戏 `replay_chain2/00_seed1_game.bin`：**全列 0 差异**
+（修复前差 gnd 30 + zone 297；9B SHA acc0f2df… 不变，ctest 43/43）。
+反汇编实锤的机制（旧 CLI 三处错）：
+
+1. **0x47D318：overlay != -1 → +0xEC = OverlayTypeClass+0x298 无条件写**
+   （旧版只对矿写）。+0x298∈{4,9}(Wall/Railroad) 或 +0x2AC≠0 → overlay
+   专属路径 0x47D333（不经 tile 查表/空洞清理；CliffBack 变体命中且
+   Rules+0x664==2 → 无条件 ground=3）。+0x2AC 的 INI 口径 =
+   `Tiberium=yes || NoUseTileLandType=true`（SROCK/TROCK/VEINHOLE 均有）。
+   **矿石区间 27-38/102-113 恒 {land=5, 占地}，优先于 INI 表**——mod
+   rulesmd 把 27=NAWALL、102-104=LOBRDG26-28 重排过，但活体这些格
+   ground=5/zone=0（与 ContainedTiberiumIndex 既有取证一致）。
+2. **overlay 路径直达 RecalcLandType（0x47D551）**——旧版 ground==5
+   早退跳过是错的（0x47CA80 全文无 +0xEC 写，已扫）。
+3. **0x483C80 全分支**（zones.cpp RecalcLandTypeFull，旧版是阶段 6 子集）：
+   出图→7；overlay +0x22D→1/+0x2A8→2/Ground[+0x298].Foot==0.0f→6/
+   +0x2B5→6/+0x2B4→0（+0x2B4==0 贯穿）；+0xEC==2→4/==6→3/
+   Foot≤0.01→6；+0xE4 占据者循环：**RTTI 0x24 树 →
+   TemperateOccupationBits==7（雪地查 Snow，Scenario+0x1258==1）→
+   zone 2，否则 5**；其他 RTTI 跳过→0。数据实锤：zone=2 的 30 格 =
+   TREE04/08（TemperateOccupationBits=7），238 格普通树 = 5，8 格
+   TIBTRE-on-ore = 2（TIBTRE 无 INI 键 → 缺省 7），建筑格 = 0。
+   overlay 四标志（+0x22D/+0x2A8/+0x2B5/+0x2B4）RMG 无实例，按 0 建模。
+- overlay 170 之名：`170=USELESS; ... VEINHOLE` 行尾词解析到 [VEINHOLE]
+  （Land=Rock + NoUseTileLandType=true，与活体 (42,47) 完全吻合）。
+- 数据链路：rules_loader 解析 Land=/Tiberium=/NoUseTileLandType= +
+  TemperateOccupationBits=/SnowOccupationBits= → RmgRules.overlay_land /
+  terrain_occ → CliWorld 注入；CreateTerrain 登记 terrain_by_cell_。
+- **判定实验（三关）**：关1 ctest 43/43 + 9B SHA 不变 ✓；关2 首局 12B
+  全列 0 差异 ✓；顺带 msg_g1 == chain#01 逐字节 ✓。
+  **关3 未过：chain#02 vs msg_g2 差 6655 格（iso 5996 / lv 2615 /
+  ramp 3224 / od 665 / ov 691，ex/sub 0）**。结构对比：游戏脏 delta
+  6835 vs CLI 脏 delta 6930、相交 6053、交集中值相同仅 1057 →
+  两链在同一起跑线发散但随机流早期错位。已排除：g1 12B 残留（全对）、
+  NormalDeviate 入口重置（0x5989A6 rep movsd 清零 ✓）、MapSeed
+  +0x304/+0x308（每局 cleanup 清零 ✓）、树名丢失（chain vs 磁盘回放
+  仍差 7265 格 = 内存链更忠实，非发散源）。**剩余嫌疑（需活体裁决）：
+  ① CellClass 未建模字段的跨局残留（真实格 ~0x170B，阶段 1 只清 6
+  字段，若有生成逻辑读 +0xF8/+0x118 等残留 CLI 无法复现）；
+  ② rmg_done → g2 入口间菜单循环对格子的运行时改写（TIBTRE
+  SpawnsTiberium 等）；③ work 数组/其他全局的原始清理范围与 CLI
+  InitCells 全清不一致。建议下一步：headless 抓 g2 入口/after_seeding_
+  water 的 12B dump 与 CLI chain g2 同点对拍，直接定位首个分叉阶段。**
 - 之后：大全量穷举（2 种子 × UI 六维参数），游戏侧脏链连续生成 +
   CLI 同链连生，逐局对拍；断链发散即真 bug，定位修。
 - rmgctl sweep 子命令；C# GUI 未启动

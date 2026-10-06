@@ -557,6 +557,7 @@ void CliWorld::CreateTerrain(const char* name,
   t.x = at.x;
   t.y = at.y;
   terrains_.push_back(t);
+  terrain_by_cell_[at.Packed()] = name;  // RecalcLandType 占据者循环用
   Mut(at).object = 1;   // 原版 0x71BB90 置 cell +0xE4，供 GrowTreePatch 种植检查
 }
 
@@ -749,6 +750,48 @@ void CliWorld::SetupLAT(const ra2::rmg::CellCoord& c) {
 }
 
 void CliWorld::RecalcAttributes(const ra2::rmg::CellCoord& c, int arg) {
+  // 0x47D2F6-0x47D32D：overlay != -1 时**无条件**写
+  // +0xEC = OverlayTypeClass+0x298（任何 overlay，不止矿石——活体石头格
+  // iso=423/493 仍 ground=3 实锤；CLI 旧版只对矿写、其余走 tile 查表是错的）。
+  // +0x298∈{4,9} 或 overlay 占地（原版 +0x2AC；INI 口径 Tiberium ||
+  // NoUseTileLandType）→ overlay 专属路径 0x47D333：不经
+  // SubTilePresent/SetupLAT/tile 查表/空洞清理，CliffBack 变体
+  // （0x47D386-0x47D546，6 方向与空洞路径第一段同款）命中且
+  // Rules+0x664==2 时**无条件** ground=3，随后 0x47CA80 +
+  // RecalcLandType（0x47D551）——矿格也照走（CLI 旧版 ground==5 早退
+  // 跳过 RecalcLandType 是错的：活体 TIBTRE-on-ore 格 zone=2 就是
+  // 0x483C80 的占据者循环算出来的）。
+  {
+    CliCell& ocell = Mut(c);
+    if (ocell.overlay != -1) {
+      const ra2::rmg::OverlayLandInfo ol = OverlayLandOf(ocell.overlay);
+      ocell.ground = static_cast<std::int16_t>(ol.land);
+      if (ol.owns_land) {
+        // 0x47D364：ramp != 0 && OverlayType+0x2A9 → overlay=-1/od=0。
+        // 活体 dump：RMG 全部 overlay 格 ramp=0/sub=0，分支不触发，不建模。
+        if (cliff_back_impassability_ != 0) {
+          const int cell_lv = ocell.level;
+          bool cliff_back = false;
+          const int kDir[6][2] = {{0, -1}, {-1, 0}, {2, 2},
+                                  {1, 1},  {-1, 1}, {1, -1}};
+          for (const auto& d : kDir) {
+            const ra2::rmg::CellCoord n{
+                static_cast<std::int16_t>(c.x + d[0]),
+                static_cast<std::int16_t>(c.y + d[1])};
+            if (!CellExists(n)) continue;
+            if (At(n).level >= cell_lv + 4) { cliff_back = true; break; }
+          }
+          if (cliff_back && cliff_back_impassability_ == 2) {
+            ocell.ground = 3;  // 0x47D53E：无条件写（不看 ground 值）
+          }
+        }
+        ocell.zoneId = static_cast<std::uint8_t>(ComputeLandType(c));
+        return;
+      }
+      // land∉{4,9} 且不占地 → 0x47D57B tile 路径（ground 已被写为 land，
+      // 随后 tile 查表/空洞清理覆盖；RMG 无此情形）。
+    }
+  }
   // 0x47D2B0 的随机地图子集：地形三件套（recalc.cpp 已实现）+ 无条件重算
   // +0xEC（地面类型）与 +0x4C（地面类别），并把两者喂给格子。
   // ⚠️ 只在这里做地形三件套（rmg 版不含 overlay/ground 语义）。
@@ -775,25 +818,14 @@ void CliWorld::RecalcAttributes(const ra2::rmg::CellCoord& c, int arg) {
   if (!empty_path) SetupLAT(c);
 
   CliCell& cell = Mut(c);
-  // 0x47D2F6-0x47D318 + 0x47D818-0x47D849：矿石 overlay（ContainedTiberiumIndex
-  // != -1）在函数**开头**无条件写 ground = OverlayTypeClass[ov]+0x298 = 5，
-  // 矿格（iso=0）走空路径时 tile 号被清为 0xFFFF 但 ground 保留 overlay 值
-  // ——原版 0x47D336 `cmp eax,0xFFFF` 命中 → 跳去 0x47D364 更新 ramp，
-  // 不走 0x47D57B 砖号路径（否则会把 ground 清零）。所以必须**在空路径
-  // 判定之前**写 ground=5，否则矿格进 empty_path 分支被 cell.ground=0 覆盖。
-  if (ContainedTiberiumIndex(c) != -1) {
-    cell.ground = 5;  // 矿石 overlay（Riparius 102-113 / Cruentus 27-38）
-  }
   // 0x47D54A 之前那段 +0xEC 的重算：从砖表子块头 +0x29 查 TerrainToGround。
   // 有效路径（SubTilePresent=true，即 .tmp 已加载）走 0x544BE0；空洞路径 ground=0。
+  // （矿格已在函数开头的 overlay 专属路径处理——Tiberium 属性恒占地，
+  // 不再到达这里，旧的 ContainedTiberiumIndex 特判随之移除。）
   if (empty_path) {
     // ⚠️ 空路径（原版 0x47D5E6-0x47D5F9）：SubTilePresent=false 时
     // 清 tile=0xFFFF / ground=0 / ramp=0，再走 CliffBack 第一段。
-    // 但矿格已在函数开头被 overlay 分支写 ground=5（0x47D30F），
-    // 且走 0x47D336 tile==0xFFFF 分支（不走 0x47D57B），保留 overlay 值。
-    if (ContainedTiberiumIndex(c) == -1) {
-      cell.ground = 0;
-    }
+    cell.ground = 0;
     // 0x47D5FF-0x47D7C1：CliffBackImpassability。**只在空洞路径里执行**
     //（原版 SubTilePresent=false 才进这一段；有效路径查完表直接去
     // 0x47D7CB RecalcLandType，不经过这里）。若 Rules 字段 != 0 且存在
@@ -834,13 +866,10 @@ void CliWorld::RecalcAttributes(const ra2::rmg::CellCoord& c, int arg) {
         if (At(n).level >= cell_lv + 4) { cliff_back = true; break; }
       }
       if (cliff_back && cliff_back_impassability_ == 2) {
-        // 原版两条 CliffBack 出口的写 3 条件不同：
-        //   矿格走 overlay 分支 → 0x47D52F `cmp 2 / jne / mov [0xEC],3`
-        //     **无条件**写 3（会覆盖开场写的 ground=5，权威 1/316 矿格被覆盖）
-        //   普通空路径 → 0x47D7A9 先 `test [0xEC]`，ground==0 才写
-        //     （空路径 ground 恒 0，检查形同虚设）
-        // CLI 用 ContainedTiberiumIndex 区分两条路径。
-        if (ContainedTiberiumIndex(c) != -1 || cell.ground == 0) {
+        // 空路径 0x47D7A9 先 `test [0xEC]`，ground==0 才写 3
+        // （空路径 ground 恒 0，检查形同虚设）。overlay 占地格的
+        // CliffBack 在函数开头的 overlay 专属路径处理（0x47D52F）。
+        if (cell.ground == 0) {
           cell.ground = 3;
         }
       }
@@ -855,15 +884,6 @@ void CliWorld::RecalcAttributes(const ra2::rmg::CellCoord& c, int arg) {
         ground = ra2::rmg::kTerrainToGround[terrain];
       }
     }
-    // 0x47D2F6-0x47D318 + 0x47D820-0x47D849：矿石 overlay（ContainedTiberiumIndex
-    // != -1）走特殊分支——0x47D30F 写 ground = OverlayTypeClass[ov]+0x298 = 5，
-    // 之后 0x47D82A `cmp byte [esi+0x11c], 4` 判坡道非 4 时保留，跳过
-    // 0x544BE0 的 terrain 查表覆盖。非矿石 ov（如石头 168-173，+0x2AC=0）
-    // 走 0x47D87A 的 0x544BE0 查表路径，ground 由 .tmp terrain 决定，
-    // 不保留 overlay 值，故此处不处理。
-    if (ContainedTiberiumIndex(c) != -1) {
-      ground = 5;  // 矿石 overlay（Riparius 102-113 / Cruentus 27-38）
-    }
     // 0x47DB59-0x47DD2A：**有效路径的第二段 CliffBack**（CLI 之前缺失）。
     // SubTilePresent=true 时 RecalcAttributes 在 SetupLAT 之后、RecalcLandType
     // （0x47DD34 call 0x483C80）之前还会做一遍 6 方向邻居检查：
@@ -875,12 +895,6 @@ void CliWorld::RecalcAttributes(const ra2::rmg::CellCoord& c, int arg) {
     //   0x47DD25 cmp eax, 8    ; je 0x47DD2A     （ground==8 → 写 3）
     //   0x47DD2A mov [esi+0xEC], 3
     // 即 ground ∈ {0,2,6,8} 且 6 方向任一邻居 level >= cell+4 → 强制 Rock(3)。
-    // ⚠️ overlay 分支（矿/石头 overlay 走 0x47D333 专用分支，CLI 因 tile 0
-    // 有 .tmp 而落入本 else）的 CliffBack 落点是 **0x47D52F**，写 3 **不看
-    // ground 值**——矿格开场 ground=5 也会被覆盖（权威 316 矿格里恰好 1 格
-    // slot 33841 ov=112 被覆盖成 3，即悬崖脚下）。普通有效路径 0x47DD2A 才
-    // 要求 ground ∈ {0,2,6,8}。→ 矿格（ContainedTiberiumIndex != -1）直接
-    // 加入写 3 条件，不查 ground。
     // 6 方向与空洞路径第一段同款（0x47DB6C-0x47DD00 的 N/W/SE/E/SW/NE）。
     // 2026-10-03 动态实测：(49,54)/(49,55) tile=392（terrain=13 → ground=0）
     // 且 SE (51,56)/(51,57) lvl=8 → 原版写成 3；CLI 缺这段所以留 0。
@@ -897,30 +911,66 @@ void CliWorld::RecalcAttributes(const ra2::rmg::CellCoord& c, int arg) {
         if (At(n).level >= cell_lv + 4) { cliff_back = true; break; }
       }
       if (cliff_back &&
-          (ContainedTiberiumIndex(c) != -1 || ground == 0 || ground == 2 ||
-           ground == 6 || ground == 8)) {
+          (ground == 0 || ground == 2 || ground == 6 || ground == 8)) {
         ground = 3;
       }
     }
     cell.ground = static_cast<std::int16_t>(ground);
   }
-  // 0x483C80：地面类别。出图判定用 IsWithinUsableArea(use_height=true)。
-  // ⚠️ 矿格走 0x47D52F 出口——**不做** RecalcLandType（0x483C80 前面那个
-  // call 0x47D54A 是 SetupLAT），+0x4C 保留进入本函数前的旧值。CLI 在
-  // 阶段 1 清格子时把每格 +0x4C 清成 0，之后阶段 6 只用它查 zone，不会
-  // 再写；原版这里读出来的旧值对阶段 6 无影响（阶段 6 只看 +0x4C 是否
-  // 属于某区）。所以矿格 zoneId 保持 0（等效于原版旧值 0），直接 return。
-  if (cell.ground == 5) {
-    return;
-  }
+  // 0x47DD34 call 0x483C80：+0x4C 全分支（overlay/占据者/地面三路）。
+  cell.zoneId = static_cast<std::uint8_t>(ComputeLandType(c));
+}
+
+// 0x483C80 全分支的输入装配：overlay 数据来自 rules 注入表（缺失时矿按
+// 取证回落），占据者循环查 terrain_by_cell_（第一个树决定 2/5，非树
+// 占据者跳过 → 0）。
+int CliWorld::ComputeLandType(const ra2::rmg::CellCoord& c) const {
+  const CliCell& cell = At(c);
   const bool within = ra2::rmg::IsWithinUsableArea(
       grid_.width(), local_, c.x, c.y, cell.level, cell.ramp, true);
   if (ground_foot_.empty()) {
-    cell.zoneId = within ? 0 : 7;
-  } else {
-    cell.zoneId = ra2::rmg::RecalcLandType(
-        within, cell.ground, ground_foot_.data());
+    // 无 rules 数据（测试合成 world）时保持旧回落语义：只有出图判定。
+    return within ? 0 : 7;
   }
+  ra2::rmg::LandTypeInput in;
+  in.within_usable_area = within;
+  in.ground_type = cell.ground;
+  if (cell.overlay != -1) {
+    const ra2::rmg::OverlayLandInfo ol = OverlayLandOf(cell.overlay);
+    in.has_overlay = true;
+    in.overlay_land = ol.land;
+    // OverlayType +0x22D/+0x2A8/+0x2B5/+0x2B4 四标志：RMG 出现的 overlay
+    // （矿/石头/VEINHOLE）活体 zone 值反证全为 0，按 0 建模。
+  }
+  if (cell.object != 0) {
+    const auto it = terrain_by_cell_.find(
+        static_cast<std::uint32_t>(c.Packed()));
+    if (it != terrain_by_cell_.end()) {
+      const auto tb = terrain_occ_bits_.find(it->second);
+      const int temp = (tb != terrain_occ_bits_.end()) ? tb->second.temperate : 7;
+      const int snow = (tb != terrain_occ_bits_.end()) ? tb->second.snow : 7;
+      // 原版 Scenario+0x1258==1 → SnowOccupationBits，否则 Temperate
+      in.first_tree_occupation_bits = (theater_id_ == 1) ? snow : temp;
+    }
+  }
+  return ra2::rmg::RecalcLandTypeFull(
+      in, ground_foot_.empty() ? nullptr : ground_foot_.data());
+}
+
+ra2::rmg::OverlayLandInfo CliWorld::OverlayLandOf(int overlay) const {
+  // 矿石区间（gems 27-38 / tib 102-113，同 ContainedTiberiumIndex）：
+  // gamemd 对这段 id **恒按矿石处理**（ground=5、占地）——mod INI 把
+  // 27=NAWALL、102-104=LOBRDG26-28 重排过，与 exe 硬编码区间错位，但活体
+  // 这些格 ground=5/zone=0 实锤（与既有 ContainedTiberiumIndex 取证一致：
+  // 102-104 在本版确为矿石）。优先于 INI 表。
+  if ((overlay >= 102 && overlay <= 113) || (overlay >= 27 && overlay <= 38)) {
+    return {5, true};
+  }
+  const auto it = overlay_land_.find(overlay);
+  if (it != overlay_land_.end()) return it->second;
+  // 表未注入（测试合成 world）：其余 overlay 回落 {0, 不占地}
+  // （= 旧行为，走 tile 查表路径）。
+  return {};
 }
 
 // ── 便捷访问 ────────────────────────────────────────────────────────────

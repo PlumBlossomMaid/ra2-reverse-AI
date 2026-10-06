@@ -143,6 +143,17 @@ class CliWorld : public ra2::rmg::WaterStageWorld,
   // rules.ini 12 个地面小节的 Foot= 值（RecalcLandType 用，数据驱动）。
   void set_ground_foot(std::vector<float> v) { ground_foot_ = std::move(v); }
   const std::vector<float>& get_ground_foot() const { return ground_foot_; }
+  // [OverlayTypes] 每 id 的占地数据（RecalcAttributes 0x47D2F6-0x47D32D 用）。
+  void set_overlay_land(std::map<int, ra2::rmg::OverlayLandInfo> v) {
+    overlay_land_ = std::move(v);
+  }
+  // [TerrainTypes] 每树名 OccupationBits（RecalcLandType 0x483DDF 用）。
+  void set_terrain_occ_bits(std::map<std::string, ra2::rmg::TerrainOccBits> v) {
+    terrain_occ_bits_ = std::move(v);
+  }
+  // 戏院 id（0=温带 1=雪地；RecalcLandType 查哪个 OccupationBits 的选择，
+  // 原版 ScenarioClass+0x1258==1 走雪地）。
+  void set_theater_id(int v) { theater_id_ = v; }
   void set_cliff_back_impassability(int v) { cliff_back_impassability_ = v; }
   std::size_t loaded_tile_count() const { return loaded_tiles_.size(); }
   bool has_loaded_tile(int t) const { return loaded_tiles_.count(t) > 0; }
@@ -283,6 +294,12 @@ class CliWorld : public ra2::rmg::WaterStageWorld,
   CliCell& Mut(const ra2::rmg::CellCoord& c);
   // 读砖表的辅助（越界/空洞处理），RecalcAttributes 用
   const ra2::rmg::TileSubCell* SubCellOf(int tile, int subtile) const;
+  // 0x483C80 全分支的 +0x4C 计算（overlay/占据者/地面三路输入来自 cell 与
+  // rules 注入表）。
+  int ComputeLandType(const ra2::rmg::CellCoord& c) const;
+  // overlay id → 占地数据；表未注入时矿按取证值（5/占地）、其余回落
+  // {0, 不占地}（测试合成 world 保持旧行为）。
+  ra2::rmg::OverlayLandInfo OverlayLandOf(int overlay) const;
 
   ra2::rmg::MapGrid grid_;
   const ra2::rmg::TheaterData& theater_;
@@ -318,6 +335,10 @@ class CliWorld : public ra2::rmg::WaterStageWorld,
   const ra2::rmg::ZoneResult* zone_result_ = nullptr;
   std::vector<float> ground_foot_;  // 12 个地面小节的 Foot=，空 = 全 0
   int cliff_back_impassability_ = 2;  // [General] CliffBackImpassability
+  std::map<int, ra2::rmg::OverlayLandInfo> overlay_land_;   // [OverlayTypes]
+  std::map<std::string, ra2::rmg::TerrainOccBits> terrain_occ_bits_;
+  std::map<std::uint32_t, std::string> terrain_by_cell_;    // 树格 → 树名
+  int theater_id_ = 0;               // 0=温带 1=雪地（OccupationBits 选择）
   std::set<int> loaded_tiles_;     // 模拟原版 .tmp lazy load：阶段 2/4 写入的 tile
   std::set<int> nonmorph_;          // TileTypeClass +0x2E0 == 0 的砖
 };

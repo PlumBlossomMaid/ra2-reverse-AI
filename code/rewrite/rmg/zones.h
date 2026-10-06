@@ -1,4 +1,4 @@
-﻿// 移动区子系统：地面类别 → 连通区洪泛 → 每种移动区的「区类型」表
+// 移动区子系统：地面类别 → 连通区洪泛 → 每种移动区的「区类型」表
 //
 // 阶段 6 的区域选择全靠它：`PlaceStartPoints` 开场调 `0x56C510` 重建整套区，
 // 再用「最大区在移动区 5 下的区类型」把地图切成「能放出生点的地方」。
@@ -64,6 +64,48 @@ extern const int kMoveTable[kMovementZoneCount][8];
 // `ground_foot` 是 rules.ini 里 12 个地面小节的 `Foot=`（0..1），由调用方注入。
 std::uint8_t RecalcLandType(bool within_usable_area, int ground_type,
                             const float* ground_foot);
+
+// ── 0x483C80 全分支版（rmg_done 态：格子上可能有 overlay/object）────────
+//
+// 反汇编全链（0x483C80-0x483E28）：
+//   出图 → 7；overlay != -1 时 +0x22D→1、+0x2A8→2、Ground[+0x298].Foot==0.0f→6、
+//   +0x2B5→6、+0x2B4→0，+0x2B4==0 贯穿；+0xEC==2→4、==6→3、
+//   (double)Ground[+0xEC].Foot<=0.01→6；+0xE4 占据者循环：RTTI 0x24（树）查
+//   TerrainType OccupationBits（Scenario+0x1258==1 查 SnowOccupationBits，
+//   否则 TemperateOccupationBits），==7→2、否则→5；其他 RTTI 跳过；落到 0。
+struct LandTypeInput {
+  bool within_usable_area = true;
+  int ground_type = 0;           // +0xEC（overlay 占地时已被写成 overlay 的 +0x298）
+  bool has_overlay = false;      // +0x44 != -1
+  bool overlay_f22d = false;     // OverlayType +0x22D → 1
+  bool overlay_f2a8 = false;     // OverlayType +0x2A8 → 2
+  int overlay_land = 0;          // OverlayType +0x298（Ground[].Foot==0.0f → 6）
+  bool overlay_f2b5 = false;     // OverlayType +0x2B5 → 6
+  bool overlay_f2b4 = false;     // OverlayType +0x2B4 → 0
+  // +0xE4 占据者链里第一个 TerrainClass（RTTI 0x24）的 OccupationBits
+  // （温带=TemperateOccupationBits / 雪地=SnowOccupationBits）；
+  // -1 = 没有树（其他 RTTI 的占据者被循环跳过，最后落到 0）。
+  int first_tree_occupation_bits = -1;
+};
+// ground_foot == nullptr 时两个 Foot 判定按「不命中」处理（测试合成 world
+// 无 rules 数据；生产路径恒有 12 项表）。
+std::uint8_t RecalcLandTypeFull(const LandTypeInput& in,
+                                const float* ground_foot);
+
+// RecalcAttributes（0x47D2F6-0x47D32D）需要的 overlay 占地数据：
+// overlay != -1 → +0xEC = OverlayType+0x298（无条件写）；+0x298∈{4,9} 或
+// 「overlay 占地」（原版 +0x2AC 字节；INI 口径 Tiberium=yes ||
+// NoUseTileLandType=true）→ overlay 专属路径（不经 tile 查表/空洞清理）。
+struct OverlayLandInfo {
+  int land = 0;          // OverlayTypeClass +0x298（GroundType 枚举）
+  bool owns_land = false;
+};
+// RecalcLandType 0x483DDF 需要的树 OccupationBits。INI 键缺省 = 7
+// （活体 TIBTRE 格 zone=2 实锤——TIBTRE 小节没有 OccupationBits 键）。
+struct TerrainOccBits {
+  int temperate = 7;
+  int snow = 7;
+};
 
 // ── 矩形与可用区判定 ──────────────────────────────────────────────────────
 struct MapRect {
