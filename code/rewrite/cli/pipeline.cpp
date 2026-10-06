@@ -140,21 +140,18 @@ bool RunGameOnWorld(const rmg::MapSeedParams& params, unsigned seed,
   }
   rng.Seed(seed);          // 0x598985：每局入口重播种（Seed 完整复位状态）
   rng.reset_call_count();  // 复刻侧观测计数每局清零（原版无此字段）
-  // 造山可变形集合（TileTypeClass +0x2E0，游戏内存取证）：
-  // morphable=true 的砖才允许 CreateHills 抬升，水/岸/特殊地形砖保护。
+  // 造山可变形集合（TileTypeClass +0x2E0）：来自 theater ini 各 TileSet
+  // 的 Morphable=true 展开（theater.h morphable_tiles），按气候取表——
+  // 雪地与温带集合不同（2026-10-07 theater1 根因实锤：温带表用在雪地
+  // 会让 Ramp edge fixup 组（可变形）被误判成 Pavement 不可变形）。
   std::set<int> nonmorph;
   {
-    const int n = tile_count < 838 ? tile_count : 838;
-    std::size_t mi = 0;
+    const auto& mt = theater.morphable_tiles;
+    const int n = tile_count < static_cast<int>(mt.size())
+                      ? tile_count
+                      : static_cast<int>(mt.size());
     for (int i = 0; i < n; ++i) {
-      while (mi < rmg::kMorphableTemperate.size() &&
-             rmg::kMorphableTemperate[mi] < i) {
-        ++mi;
-      }
-      const bool morph =
-          mi < rmg::kMorphableTemperate.size() &&
-          rmg::kMorphableTemperate[mi] == i;
-      if (!morph) nonmorph.insert(i);
+      if (!mt[static_cast<std::size_t>(i)]) nonmorph.insert(i);
     }
   }
   world.set_nonmorph_tiles(std::move(nonmorph));

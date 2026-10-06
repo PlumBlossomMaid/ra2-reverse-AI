@@ -1,4 +1,4 @@
-﻿#include "theater.h"
+#include "theater.h"
 
 #include <algorithm>
 #include <cctype>
@@ -113,10 +113,22 @@ bool ParseTheaterIni(const std::string& text, TheaterData* out) {
     info.start = acc;
     info.set_name = GetStr(s, "setname");
     info.file_name = GetStr(s, "filename");
+    // Morphable 键语义（原版 TileTypeClass 装载时 +0x2E0=1 的唯一来源）：
+    // 值 "true"（ini 里就长这样）；缺省/其它一律 false。
+    const std::string morph = Lower(GetStr(s, "morphable"));
+    info.morphable = (morph == "true");
     acc += info.tiles_in_set;
     out->sets.push_back(info);
   }
   out->total_tiles = acc;
+  // 展开成逐砖表
+  out->morphable_tiles.assign(static_cast<std::size_t>(acc), 0);
+  for (const TileSetInfo& s : out->sets) {
+    if (!s.morphable) continue;
+    for (int t = s.start; t < s.start + s.tiles_in_set; ++t) {
+      out->morphable_tiles[static_cast<std::size_t>(t)] = 1;
+    }
+  }
 
   // 组序号 -> 起始砖号。查不到键（该 theater 没定义）就留 -1，
   // 与原版「ReadInteger 默认值 -1、枚举时没有组能命中 -1」的结果一致。

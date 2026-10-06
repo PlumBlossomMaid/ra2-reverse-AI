@@ -1,4 +1,4 @@
-﻿// theater（气候）数据：TileSet 枚举 -> 各"语义组"的起始砖号
+// theater（气候）数据：TileSet 枚举 -> 各"语义组"的起始砖号
 //
 // 随机地图生成器判水、铺岸、涂草全靠比对 `CellClass +0x38`（IsoTileTypeIndex）
 // 与一堆 .bss 全局。那些全局的值不在 exe 里，是装载 theater 时从
@@ -27,6 +27,7 @@ struct TileSetInfo {
   int index = 0;          // TileSetNNNN 的 NNNN
   int tiles_in_set = 0;   // TilesInSet
   int start = 0;          // 起始砖号 = 前面所有组的 TilesInSet 之和
+  bool morphable = false; // Morphable=true：组内每块砖 TileTypeClass +0x2E0 = 1
   std::string set_name;
   std::string file_name;
 };
@@ -35,6 +36,11 @@ struct TileSetInfo {
 struct TheaterData {
   std::vector<TileSetInfo> sets;
   int total_tiles = 0;
+  // TileTypeClass +0x2E0（morphable）逐砖真值，长度 = total_tiles，
+  // 由各 [TileSetNNNN] 的 Morphable=true 展开。造山 IsRaisable 只认 true。
+  // 两套 theater 都恰好 115 块真，但**集合不同**（雪地 {0-48,131-147,
+  // 404-413,444-467,472-486}，温带是另一组号），照抄 ini 展开而不是写死。
+  std::vector<char> morphable_tiles;
 
   // 随机地图生成器真正会读的那几个（括号里是对应的 .bss 全局）
   int water_set = -1;         // 0xAA0738  判水用；组内 14 块
