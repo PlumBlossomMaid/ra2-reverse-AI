@@ -72,6 +72,20 @@ class MakingRegionsOracle(RegionOracle):
         # 阶段 4 专属两个标量（MapSeedClass 静态实例的字段）
         self.wr32(SEEDOBJ + 0x70, region_size)       # +0x70 = 0xABE048
         self.wr32(SEEDOBJ + 0x6C, accessibility)     # +0x6C = 0xABE044
+        # 0x89A304 防重表：8 方向在 **work 索引** 上的增量 = dy*side + dx。
+        # 实机由 MapClass::Set_Dimensions（0x5671A5 调 0x42AC00）按 side 写入
+        # {0x89A304..0x89A320}={-side,1-side,1,1+side,side,side-1,-1,-1-side}，
+        # 与 0x89F688 的 (dx,dy) 逐项对应（2026-09-28 实机进程取证 + 反汇编双重
+        # 实锤）。SplitRegion 扩散里 0x58DA5B `work[弹格索引+tab[8k+2]]·queued=-3`
+        # 标记**候选格本身**（d 走 0/2/4/6 ⇒ N/E/S/W 四向），0x58D9EA 检查候选格
+        # +0x3C==-3 命中即跳过 → **防重有效，命中不耗 RNG**。
+        # 本基准必须与 _emu_regions.py 同口径（它已灌全量 deltas）——golden 是
+        # CLI 期望值的唯一来源，CLI 走防重版（实机对拍 62298 四帧 0 diff）。
+        kdx = [0, 1, 1, 1, 0, -1, -1, -1]
+        kdy = [-1, -1, 0, 1, 1, 1, 0, -1]
+        deltas = [kdy[k] * self.side + kdx[k] for k in range(8)]
+        self.uc.mem_write(0x89A304, b"".join(
+            struct.pack("<i", v) for v in deltas))
         # 砖表实体化
         self._build_tiles()
         # 贴砖器暂存全局清一遍（0x578E60 收尾自己也会清）

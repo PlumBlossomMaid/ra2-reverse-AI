@@ -11,6 +11,7 @@
 import codecs
 import os
 
+from ghidra.app.cmd.function import CreateFunctionCmd
 from ghidra.app.decompiler import DecompInterface
 from ghidra.util.task import ConsoleTaskMonitor
 
@@ -28,7 +29,11 @@ fm = currentProgram.getFunctionManager()
 f = codecs.open(OUT, "w", "utf-8")
 for s in addrs:
     va = int(s, 16)
-    fn = fm.getFunctionAt(af.getAddress("0x%x" % va))
+    addr = af.getAddress("0x%x" % va)
+    fn = fm.getFunctionAt(addr)
+    if fn is None:
+        CreateFunctionCmd(addr).applyTo(currentProgram, monitor)
+        fn = fm.getFunctionAt(addr)
     if fn is None:
         f.write(u"\n## 0x%06X  (Ghidra 未定义该函数)\n" % va)
         continue
