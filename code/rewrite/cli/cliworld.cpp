@@ -176,11 +176,12 @@ void CliWorld::SetCellLevel(const ra2::rmg::CellCoord& c, int v) {
 }
 
 bool CliWorld::SmoothShoreline(int blob_id) {
-  // 0x57A0C0(blobId, 0)：湖收尾的岸线平滑 flag 是 0，不是涂块收尾（0x59C433）
-  // 传的 1。flag 为真时贴砖器会关掉工作数组读写、归属恒判「同块」，岸砖就
-  // 不会登记归属——湖的 Dilate 隔离检测会因此撞上「无主岸砖」而整块失败。
+  // 原版两个调用点共用一个虚函数槽：涂块收尾 0x59C433 传 1，
+  // 湖/瀑布收尾 0x59D282 传 0。flag 为真时贴砖器关工作数组读写、
+  // 归属恒判「同块」；为假时岸线第 1 遍侵蚀会撞已有陆地块 → 整块回滚
+  // （mt1 第 2 块起全灭的根因）。湖路径由 pipeline 提前 SetShorePaintFlag(false)。
   return ra2::rmg::ShorelineSmooth(*this, grid_, theater_, rng_, blob_id,
-                                   false);
+                                   shore_paint_flag_);
 }
 
 // ── ShoreWorld ──────────────────────────────────────────────────────────

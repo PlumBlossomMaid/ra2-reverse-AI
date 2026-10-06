@@ -169,7 +169,15 @@ class CliWorld : public ra2::rmg::WaterStageWorld,
   void SetIsoTile(const ra2::rmg::CellCoord& c, int v) override;
   void SetCellSubTile(const ra2::rmg::CellCoord& c, int v) override;
   void SetCellLevel(const ra2::rmg::CellCoord& c, int v) override;
-  bool SmoothShoreline(int blob_id) override;   // Shoreline(blob, 1)
+  bool SmoothShoreline(int blob_id) override;   // Shoreline(blob, flag)：涂块收尾
+                                                // 0x59C433 是 1，湖/瀑布收尾
+                                                // 0x59D282 是 0——由
+                                                // SetShorePaintFlag 切换
+
+  // 岸线平滑 flag 切换：true=涂块收尾（0x59C433 Shoreline(blob,1)），
+  // false=湖/瀑布收尾（0x59D282 Shoreline(blob,0)）。默认 true；
+  // pipeline 在 AddRiversAndLakes 期间置 false。
+  void SetShorePaintFlag(bool v) { shore_paint_flag_ = v; }
 
   // ShoreWorld
   bool WorkValid(const ra2::rmg::CellCoord& c) const override;
@@ -339,6 +347,7 @@ class CliWorld : public ra2::rmg::WaterStageWorld,
   std::map<std::string, ra2::rmg::TerrainOccBits> terrain_occ_bits_;
   std::map<std::uint32_t, std::string> terrain_by_cell_;    // 树格 → 树名
   int theater_id_ = 0;               // 0=温带 1=雪地（OccupationBits 选择）
+  bool shore_paint_flag_ = true;     // SmoothShoreline 的 flag（涂块=1/湖瀑=0）
   std::set<int> loaded_tiles_;     // 模拟原版 .tmp lazy load：阶段 2/4 写入的 tile
   std::set<int> nonmorph_;          // TileTypeClass +0x2E0 == 0 的砖
 };

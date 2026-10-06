@@ -321,7 +321,9 @@ bool RunGameOnWorld(const rmg::MapSeedParams& params, unsigned seed,
   std::fprintf(stderr, "RMG: Seeding water\n");
   if (params.map_type == 3 || params.map_type == 4) {
     if (params.water_amount > 20) {
+      world.SetShorePaintFlag(false);  // 湖/瀑布收尾 Shoreline(blob, 0)
       rmg::AddRiversAndLakes(rctx, world, river_p);
+      world.SetShorePaintFlag(true);   // 恢复涂块收尾 Shoreline(blob, 1)
     }
   } else {
     rmg::SeedWater(paint, world, p, params.map_type);
