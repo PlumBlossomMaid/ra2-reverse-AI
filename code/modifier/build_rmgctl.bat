@@ -1,0 +1,5 @@
+@echo off
+call "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars32.bat" >nul
+cd /d E:\code\ra2-reverse-AI\code\modifier
+cl /nologo /utf-8 /O2 /W3 /EHsc rmgctl\rmgctl.cpp /link user32.lib /OUT:build\rmgctl.exe || exit /b 1
+echo BUILD CTL OK

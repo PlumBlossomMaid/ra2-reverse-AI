@@ -1,8 +1,62 @@
 # RA2 随机地图复刻对齐工作手册（Seed=62298）
 
-> 最后更新：2026-10-06（ctest 43/43 全绿，交接 kimi 的测试债已清，commit 83f0f2d）
+> 最后更新：2026-10-07（rmg_hook 修改器全链路打通，hook 活体 == CLI 字节级一致）
 > 本文件是跨 Agent 的记忆索引（kimi / qwen code 不互通，一切以本文件为准）。
 > **每轮工作结束立刻更新本文件**。更久远的取证结论在 `memory/` 与 `docs/random-map/`。
+
+---
+
+## 2026-10-07 修改器（rmg_hook.dll + rmgctl）——当前主线
+
+### ✅ 全链路已打通（trainer 模式，与游戏死活隔离）
+
+- `code/modifier/rmg_hook/dllmain.cpp`：0x598960 入口 hook 注入 16 参数到
+  MapSeedClass(0xABDFD8)+0x38..+0x74；0x5994B0 rmg_done hook 进程内 dump
+  cells（9B/格）。**DLL 自持共享内存 `Local\RMGHookJob2`（固定 64KB，换名
+  防旧泄漏映射）和事件 `Local\RMGHookUnload`**——注入方退出后控制面仍存活；
+  eject 恢复原始字节、CloseHandle、FreeLibrary，游戏无感。
+- `code/modifier/rmgctl/rmgctl.cpp`：inject/arm --sed/disarm/setdump/gen/
+  click [--real]/waitdump/randlog/fixstream/pristine/status/eject。
+  `build.bat` 全量构建（需游戏未加载 dll），`build_rmgctl.bat` 只构建前端。
+- ⚠️ **DLL 必须检查 cmd==1 才注入**（曾经不检查：disarm 后仍写入全零参数，
+  生成死循环卡死游戏——已修）。
+
+### ✅ 关键发现：菜单是真实 Win32 对话框树，BM_CLICK 全后台可用
+
+- 游戏菜单页是叠放的多个真实 #32770 对话框，EnumChildWindows 可达全部控件。
+- **「预览地图」= 控制 ID 0x0620，BM_CLICK 即触发生成**（无模态弹窗，可连续点）。
+  「替我挑选」0x0621 只随机化对话框参数不生成。控件 hwnd 每局重建，ID 稳定，
+  必须每次现找（取可见+可用者）。游戏不用前台、用户随便动鼠标。
+- 纯后台链路：inject → arm → gen → waitdump，全程不碰真实鼠标。
+
+### ✅✅ 重大结论：RMG 变体之谜（矩阵验证「CLI 分岔」真相）
+
+**RMG 输出 = F(16 参数, 生成入口时的格子残留状态)**：
+
+1. 主 RNG 每局入口由 `Randomizer::Seed(MapSeed.Seed)`（0x598985）重播种，
+   栈对象 rep movsd 拷进 0xABE890——**主随机流完全确定**。
+2. 副随机流 [0xA8B230]+0x218 每局仅被 BuildingClass ctor（0x43B750 内
+   0x6F3259）抽 2-4 次写 +0x3C8，**不影响地形**（fixstream 实验曾误判
+   因果，实为残留不动点的巧合）。
+3. **真正的变体源：上一局地图的格子残留**。开机后格子表（0x87F924）
+   全 NULL；首局生成后格子常驻。后续生成的放置/重试逻辑读旧格内容
+   （占用 +0xE4、overlay、iso…）→ 重试次数变 → 主流位置偏移 →
+   科技建筑数量/位置变 → 全图变体。同参数同会话：首局=变体A，次局起=变体B。
+4. **CLI（零初始状态）== 开机首局**（seed1、seed12345 实测字节级）。
+   矩阵验证的 13 个「CLI 分岔」用例全是会话中段（脏状态）采集的假象；
+   9/22 稳定 MATCH 是对残留不敏感的用例。
+5. 阶段 7 科技建筑计数实测：`m = PickBelow(5)`（0x5A9645 用主流 0xABE890），
+   seed1 脏局 m=4（ctor@219/222/225/239），干净首局 ctor 只有 225/239。
+
+### 待办
+
+- 13 个 DIFF 用例逐案「开机首局」验证 == CLI（重启批量，半自动弹窗驱动）
+- （可选）找游戏自身的地图析构/重置函数，DLL 调用之实现会话内干净重置，
+  免去逐案重启；注意：手工清 +0xE4/overlay 会崩游戏（已试，闪退）
+- rmgctl sweep 子命令；C# GUI 未启动
+- 矿生长不进 CLI（用户拍板：画蛇添足，超出复刻生成算法的目标）
+- **纪律重申：CLI 只复刻原版机器码语义，不发明等价算法；
+  挂钩子/清零只是取证手段，绝不进 CLI**
 
 ---
 
