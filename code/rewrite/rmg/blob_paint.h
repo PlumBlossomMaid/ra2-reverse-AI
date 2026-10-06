@@ -57,9 +57,21 @@ struct PaintWorkCell {
   // 所以 100 轮补丁互相排斥（stage-lats.md §七 未确认 7）。
   bool flag47 = false;
 
-  // +0x4A 「这条记录有效」。阶段 4 的 0x578E60 全图置 1，
-  // 0x579B70 HigherMask 与岸线掩码 0x57B210 都先查它（0 则掩码直接为 0）。
-  bool flag4a = false;
+  // +0x4A 「这条记录有效」。work 构造器初始化为 1（记忆 stage_making_regions_dedup）。
+  // 阶段 4 的 0x578E60 全图置 1（RepaintAll），0x579B70 HigherMask 先查它（0 则掩码=0）。
+  // ⚠️ 初始值必须为 true——原版 work 构造器写 +0x4A=1，CLI 曾误初始化为 false
+  // 导致 HigherMask 在 TrimCliffCorners 时全返回 0 → TrimCliffCorners 不做任何修改
+  // → (66,65) level 未被削减 → 级联传播 673 cell diff → 766 RNG 差异。
+  bool flag4a = true;
+
+  // +0x40 岸线掩码缓存（ShoreMask 结果的复用槽）。-1 = 未计算。
+  // 原版**不在平滑出口清缓存**：ShorelineSmooth 0x57A30B 直接返回，
+  // 整表置 -1 的 0x57A12B 只出现在**入口**，所以每块湖/河各调一次
+  // SmoothShoreline 之后 +0x40 会带着上一轮的掩码残留，跨阶段也不清。
+  // 复刻侧**不要**在 SmoothShoreline 出口加 ResetMaskCaches()——
+  // 加了会让下一块平滑的 Pass1Erode 命中"新值"而错过原版命中的旧缓存，
+  // 侵蚀判定顺序随之分岔（实测 62298 帧 03/04/08 有 8 处 +0x40 值错位）。
+  int mask_cache = -1;
 };
 
 // 涂块需要的全部外部依赖。抽出来是为了让算法本身可以脱离引擎单测——

@@ -2,6 +2,7 @@
 // 以及 0x59921B 那段调度。两个最小堆扩散在 lat_spread.cpp。
 #include "lats.h"
 
+#include <cstdlib>
 #include <cstdint>
 #include <cstdio>
 
@@ -13,6 +14,10 @@ namespace ra2 {
 namespace rmg {
 namespace {
 
+void LatDebug(LatContext& ctx, const char* name) {
+  if (ctx.debug_hook != nullptr) ctx.debug_hook(ctx.debug_user, name, ctx);
+}
+
 // 三处 PickRange(20,40) 的**折叠**形态（0x5A3B58 / 0x5A3B88 / 0x5A3BB8）：
 //   do { v = _ftol((double)(uint32)Random() * (21/(2^32-1)) + 20.0); } while (v > 40);
 // ⚠️ 只有一次乘法——和外联 PickRange(0x598030) 的「两次乘法」形态不同，
@@ -21,7 +26,7 @@ int PickRange20To40(Randomizer& rng) {
   const double scale = 21.0 / 4294967295.0;   // [0x7EDAD0]
   for (;;) {
     const std::uint32_t r = rng.Random();
-    const int v = Ftol(static_cast<double>(static_cast<std::int64_t>(r)) * scale + 20.0);
+    const int v = Ftol(static_cast<double>(static_cast<std::uint64_t>(r)) * scale + 20.0);
     if (static_cast<unsigned>(v) <= 0x28u) return v;   // cmp eax,0x28 / ja
   }
 }
@@ -31,13 +36,66 @@ int PickRange20To40(Randomizer& rng) {
 // C0 置位 = st < mem，即 **r*k < prob 才铺**。失败也烧随机数。
 bool CoinBelow(Randomizer& rng, double prob) {
   const double u =
-      static_cast<double>(static_cast<std::int64_t>(rng.Random())) * kInvUintMax;
+      static_cast<double>(static_cast<std::uint64_t>(rng.Random())) * kInvUintMax;
   return u < prob;
 }
 
 // 0x42B1F0：n = (MapRect.Height + 4) * MapRect.Width * 2
 int MapScaleNumber(const LatParams& p) {
   return (p.map_rect_h + 4) * p.map_rect_w * 2;
+}
+
+struct MainTraceRange {
+  bool enabled = false;
+  long long begin = 0;
+  long long end = 0;
+};
+
+MainTraceRange MainLatTraceRange() {
+  MainTraceRange r;
+  const char* s = std::getenv("RA2_RMG_LAT_MAIN_TRACE");
+  if (s == nullptr || *s == '\0') return r;
+  char* tail = nullptr;
+  r.begin = std::strtoll(s, &tail, 10);
+  r.end = r.begin;
+  if (tail != nullptr && *tail == ':') {
+    r.end = std::strtoll(tail + 1, nullptr, 10);
+  }
+  if (r.end < r.begin) {
+    const long long t = r.begin;
+    r.begin = r.end;
+    r.end = t;
+  }
+  r.enabled = true;
+  return r;
+}
+
+bool TraceMainCall(const Randomizer& rng, const MainTraceRange& tr) {
+  if (!tr.enabled) return false;
+  const long long call = rng.call_count() + 1;
+  return call >= tr.begin && call <= tr.end;
+}
+
+void TraceMainCoin(const MainTraceRange& tr, Randomizer& rng,
+                   const CellCoord& c, const PaintWorkCell& w,
+                   LatWorld& world, const char* tag, double prob,
+                   bool* hit) {
+  const long long call = rng.call_count() + 1;
+  const bool trace = TraceMainCall(rng, tr);
+  const std::uint32_t draw = rng.Random();
+  const double u = static_cast<double>(static_cast<std::uint64_t>(draw)) *
+                   kInvUintMax;
+  *hit = u < prob;
+  if (trace) {
+    std::fprintf(stderr,
+                 "LATMAIN coin call=%lld cell=(%d,%d) tag=%s draw=%u "
+                 "u=%.17g prob=%.17g hit=%d iso=%d ramp=%d ov=%d "
+                 "e4=%d f45=%d pr=%.17g ps=%.17g pg=%.17g\n",
+                 call, c.x, c.y, tag, draw, u, prob, *hit ? 1 : 0,
+                 world.IsoTile(c), world.Ramp(c), world.Overlay(c),
+                 world.Field0xE4(c), w.flag45 ? 1 : 0, w.prob_rough,
+                 w.prob_sand, w.prob_green);
+  }
 }
 
 }  // namespace
@@ -77,6 +135,7 @@ void SeedVegetationProbabilities(LatContext& ctx) {
       }
     }
   });
+  LatDebug(ctx, "after_seed_probabilities");
 }
 
 void CreateLatsTemperate(LatContext& ctx) {
@@ -89,37 +148,77 @@ void CreateLatsTemperate(LatContext& ctx) {
   ctx.grid.ForEachCell([&](const CellCoord& c) {
     work[static_cast<std::size_t>(c.y * side + c.x)].queued = 0;
   });
+  LatDebug(ctx, "after_clear_lat_queued");
 
   // ② 三个中心尺寸，**在遍历格子之前一次性抽好**，整张地图共用
   const int pick_rough = PickRange20To40(*ctx.rng);   // 0x5A3B58
   const int pick_sand = PickRange20To40(*ctx.rng);    // 0x5A3B88
   const int pick_green = PickRange20To40(*ctx.rng);   // 0x5A3BB8
+  LatDebug(ctx, "after_lat_pick_sizes");
 
   // ③ 逐格铺 LAT。三次机会依次是碎石 / 沙地 / 草地，任意一次命中就跳出本格
+  const MainTraceRange main_trace = MainLatTraceRange();
+  // ⚠️ 2026-10-04 探针：统计 main_blocks 过五条件格数与 WriteLatBlock 调用
+  long long cli_main_pass = 0;
+  long long cli_main_wlb = 0;
+  long long cli_fail_iso = 0, cli_fail_ramp = 0, cli_fail_ov = 0;
+  long long cli_fail_e4 = 0, cli_fail_f45 = 0;
+  const char* cli_lat_stat = std::getenv("RA2_RMG_LAT_STAT");
+  const char* cli_obj_dump = std::getenv("RA2_RMG_OBJ_DUMP");
   ctx.grid.ForEachCell([&](const CellCoord& c) {
     PaintWorkCell& w = work[static_cast<std::size_t>(c.y * side + c.x)];
-    if (!IsUndecidedTile(world.IsoTile(c))) return;
-    if (world.Ramp(c) != 0) return;
-    if (world.Overlay(c) != -1) return;
-    if (world.Field0xE4(c) != 0) return;
-    if (w.flag45) return;
+    if (!IsUndecidedTile(world.IsoTile(c))) {
+      if (cli_lat_stat) ++cli_fail_iso;
+      return;
+    }
+    if (world.Ramp(c) != 0) {
+      if (cli_lat_stat) ++cli_fail_ramp;
+      return;
+    }
+    if (world.Overlay(c) != -1) {
+      if (cli_lat_stat) ++cli_fail_ov;
+      return;
+    }
+    if (world.Field0xE4(c) != 0) {
+      if (cli_lat_stat) ++cli_fail_e4;
+      if (cli_obj_dump)
+        std::fprintf(stderr, "OBJDUMP %d %d %d\n", c.x, c.y,
+                     world.Field0xE4(c));
+      return;
+    }
+    if (w.flag45) {
+      if (cli_lat_stat) ++cli_fail_f45;
+      return;
+    }
+    if (cli_lat_stat) ++cli_main_pass;
 
     // ⚠️ 这里是写死的 512，不是工作数组用的 side
     const int field_id = c.y * 0x200 + c.x;
 
     int mu = 0;
     int tile_base = 0;
-    if (CoinBelow(*ctx.rng, w.prob_rough)) {        // 0x5A3C53
+    bool hit = false;
+    TraceMainCoin(main_trace, *ctx.rng, c, w, world, "rough", w.prob_rough,
+                  &hit);
+    if (hit) {                                      // 0x5A3C53
       mu = pick_rough;
       tile_base = th.rough_tile;                     // [0xABC2B8]
-    } else if (CoinBelow(*ctx.rng, w.prob_sand)) {  // 0x5A3D3F
-      mu = pick_sand;
-      tile_base = th.sand_tile;                      // [0xABB104]
-    } else if (CoinBelow(*ctx.rng, w.prob_green)) { // 0x5A3E1B
-      mu = pick_green;
-      tile_base = th.green_tile;                     // [0xAA0E18]
     } else {
-      return;
+      TraceMainCoin(main_trace, *ctx.rng, c, w, world, "sand", w.prob_sand,
+                    &hit);
+      if (hit) {                                    // 0x5A3D3F
+        mu = pick_sand;
+        tile_base = th.sand_tile;                    // [0xABB104]
+      } else {
+        TraceMainCoin(main_trace, *ctx.rng, c, w, world, "green",
+                      w.prob_green, &hit);
+        if (hit) {                                  // 0x5A3E1B
+          mu = pick_green;
+          tile_base = th.green_tile;                 // [0xAA0E18]
+        } else {
+          return;
+        }
+      }
     }
     // TruncNormal(mu = pick, sigma = 20, lo = 4, hi = 80)。0x5A3C8E 起内联：
     // 回退条件 = (mu-sigma > [0x7edac8] || mu+sigma < [0x7e3cc8])——分布整体
@@ -127,11 +226,37 @@ void CreateLatsTemperate(LatContext& ctx) {
     // 但 mu ∈ [20,40]、sigma = 20 时实际不可达；折叠出的回退值 38.0/42.0 =
     // (80-4)*0.5 与 +4。
     const double v = TruncNormal(*ctx.normal, static_cast<double>(mu), 20.0, 4.0, 80.0);
+    if (cli_lat_stat) ++cli_main_wlb;
     WriteLatBlock(ctx, c, tile_base, Ftol(v), field_id, false);
   });
+  LatDebug(ctx, "after_lat_main_blocks");
+  if (cli_lat_stat) {
+    std::fprintf(stderr,
+                 "CLILATSTAT iso_fail=%lld ramp_fail=%lld ov_fail=%lld "
+                 "e4_fail=%lld f45_fail=%lld pass=%lld wlb=%lld\n",
+                 cli_fail_iso, cli_fail_ramp, cli_fail_ov, cli_fail_e4,
+                 cli_fail_f45, cli_main_pass, cli_main_wlb);
+  }
 
   // ④ 全图归一，把涂出来的块换成正确的过渡片。无随机。
   ctx.grid.ForEachCell([&](const CellCoord& c) { world.SetupLAT(c); });
+  LatDebug(ctx, "after_lat_setup");
+  if (std::getenv("RA2_RMG_ROCKS_TRACE")) {
+    std::fprintf(stderr, "TREES entry rng=%lld nd_cached=%d nd_val=%.17g\n",
+                 ctx.rng->call_count(),
+                 ctx.normal->has_cached() ? 1 : 0,
+                 ctx.normal->has_cached() ? ctx.normal->cached() : 0.0);
+    const char* occ_path = std::getenv("RA2_RMG_OCC_DUMP");
+    if (occ_path) {
+      FILE* f = std::fopen(occ_path, "w");
+      if (f) {
+        ctx.grid.ForEachCell([&](const CellCoord& c) {
+          if (world.Field0xE4(c) != 0) std::fprintf(f, "%d %d\n", c.x, c.y);
+        });
+        std::fclose(f);
+      }
+    }
+  }
 
   // ⑤ 树林补丁：预算 + 最多 100 轮
   // budget = _ftol((Width*0.1 + 0.7) * (Vegetation*0.01) * MaxTrees)
@@ -165,21 +290,47 @@ void CreateLatsTemperate(LatContext& ctx) {
     const double size = TruncNormal(*ctx.normal, 25.0, 10.0, 10.0, 35.0);
     const int planted = GrowTreePatch(ctx, at, Ftol(size), prob);
     budget -= planted;
+    // ⚠️ 2026-10-04 探针：逐轮 trace（RA2_RMG_TREES_TRACE 环境变量开启）
+    if (std::getenv("RA2_RMG_TREES_TRACE")) {
+      std::fprintf(stderr,
+                   "TREESTR round=%d rng=%lld seed=(%d,%d) tries=%d "
+                   "prob=%.17g size=%.17g planted=%d budget=%d\n",
+                   round, ctx.rng->call_count(), at.x, at.y, tries,
+                   prob, size, planted, budget);
+    }
   }
+  LatDebug(ctx, "after_lat_trees");
 
   // ⑥ 撒石头 / overlay
   const int n = MapScaleNumber(ctx.params);
+  const bool rocks_trace = std::getenv("RA2_RMG_ROCKS_TRACE") != nullptr;
+  if (rocks_trace) {
+    std::fprintf(stderr, "ROCKS entry rng=%lld i1=%d i2=%d n=%d\n",
+                 ctx.rng->call_count(), ctx.rng->index1(), ctx.rng->index2(), n);
+  }
   // 0x5A40F0：**两次乘法**那一路，跨度 n/200+1，拒绝 > n/200（有符号除法）
   const int count = PickBelowMul(*ctx.rng, n / 200 + 1);
+  if (rocks_trace) {
+    std::fprintf(stderr, "ROCKS count=%d (rng=%lld)\n", count,
+                 ctx.rng->call_count());
+  }
   int placed = 0;
   int attempt = 0;
-  if (count * 5 <= 0) return;
+  if (count * 5 <= 0) {
+    LatDebug(ctx, "after_lat_rocks");
+    return;
+  }
   do {
-    if (count <= placed) return;
+    if (count <= placed) {
+      LatDebug(ctx, "after_lat_rocks");
+      return;
+    }
     int idx;
+    int redraws = 0;
     do {
       // 0x5A4157：同样是两次乘法的内联形态，跨度 side²
       idx = PickBelowMul(*ctx.rng, ctx.side * ctx.side);
+      ++redraws;
     } while (work[static_cast<std::size_t>(idx)].coord == CellCoord{0, 0});
     const CellCoord c = work[static_cast<std::size_t>(idx)].coord;
     if (world.Overlay(c) == -1) {
@@ -193,9 +344,16 @@ void CreateLatsTemperate(LatContext& ctx) {
       world.SetOverlayData(c, 0);
       world.RecalcAttributes(c, -1);
       ++placed;
+      if (rocks_trace) {
+        std::fprintf(stderr, "ROCKS #%d attempt=%d idx=%d coord=(%d,%d) ov=%d "
+                             "redraws=%d rng=%lld\n",
+                     placed, attempt, idx, c.x, c.y, world.Overlay(c),
+                     redraws, ctx.rng->call_count());
+      }
     }
     ++attempt;
   } while (attempt < count * 5);
+  LatDebug(ctx, "after_lat_rocks");
 }
 
 void CreateLatsSnow(LatContext& ctx) {
@@ -234,7 +392,9 @@ void CreateLatsSnow(LatContext& ctx) {
                     static_cast<double>(ctx.params.max_trees));
   int round = 0;
   for (;;) {
-    if (budget < 1 || round > 99) return;
+    if (budget < 1 || round > 99) {
+      return;
+    }
     int tries = 0;
     CellCoord at;
     for (;;) {
@@ -252,7 +412,8 @@ void CreateLatsSnow(LatContext& ctx) {
     }
     const double prob = TruncNormal(*ctx.normal, 0.2, 0.1, 0.05, 0.4);
     const double size = TruncNormal(*ctx.normal, 25.0, 10.0, 10.0, 35.0);
-    budget -= GrowTreePatch(ctx, at, Ftol(size), prob);
+    const int planted = GrowTreePatch(ctx, at, Ftol(size), prob);
+    budget -= planted;
     ++round;
   }
 }

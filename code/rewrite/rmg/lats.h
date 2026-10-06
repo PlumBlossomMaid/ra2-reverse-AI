@@ -80,6 +80,10 @@ struct LatParams {
   int map_rect_h = 64;    // [0x87F8E0]
 };
 
+struct LatContext;
+using LatDebugHook = void (*)(void* user, const char* name,
+                             const LatContext& ctx);
+
 struct LatContext {
   MapGrid grid{0, 0};
   std::vector<PaintWorkCell>* work = nullptr;   // [0xABED10]，side² 条
@@ -89,6 +93,8 @@ struct LatContext {
   int side = 0;                                 // [0x89C2DC] = W + H + 1
   const TheaterData* theater = nullptr;         // 那几个 TileSet 全局的来源
   LatParams params;
+  LatDebugHook debug_hook = nullptr;
+  void* debug_user = nullptr;
 };
 
 // 0x5A4B60 FUN(seed, tileIndex, count, fieldId, allowNonPlain)。

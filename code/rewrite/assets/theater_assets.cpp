@@ -1,7 +1,10 @@
 #include "theater_assets.h"
 
+#include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <sstream>
 
 #include "zones.h"   // kTerrainToGround（0x8288E4）
 
@@ -37,12 +40,74 @@ bool ReadWholeFile(const std::string& path, std::vector<std::uint8_t>* out) {
   return got == out->size();
 }
 
+std::string Trim(const std::string& s) {
+  std::size_t a = 0, b = s.size();
+  while (a < b && (s[a] == ' ' || s[a] == '\t' || s[a] == '\r' || s[a] == '\n')) ++a;
+  while (b > a && (s[b - 1] == ' ' || s[b - 1] == '\t' || s[b - 1] == '\r' || s[b - 1] == '\n')) --b;
+  return s.substr(a, b - a);
+}
+
+bool IEquals(const std::string& a, const std::string& b) {
+  if (a.size() != b.size()) return false;
+  for (std::size_t i = 0; i < a.size(); ++i) {
+    if (std::tolower(static_cast<unsigned char>(a[i])) !=
+        std::tolower(static_cast<unsigned char>(b[i]))) return false;
+  }
+  return true;
+}
+
 std::string Lower(const std::string& s) {
   std::string r = s;
   for (std::size_t i = 0; i < r.size(); ++i) {
-    if (r[i] >= 65 && r[i] <= 90) r[i] = static_cast<char>(r[i] + 32);
+    r[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(r[i])));
   }
   return r;
+}
+
+std::vector<rmg::FoundationOffset> RectFoundation(int w, int h) {
+  std::vector<rmg::FoundationOffset> out;
+  for (int y = 0; y < h; ++y) {
+    for (int x = 0; x < w; ++x) out.push_back({x, y});
+  }
+  out.push_back({0x7FFF, 0x7FFF});
+  return out;
+}
+
+bool ParseFoundation(const std::string& s,
+                     std::vector<rmg::FoundationOffset>* out) {
+  const std::size_t x = s.find('x');
+  if (x == std::string::npos) return false;
+  const int w = std::atoi(s.substr(0, x).c_str());
+  const int h = std::atoi(s.substr(x + 1).c_str());
+  if (w <= 0 || h <= 0) return false;
+  *out = RectFoundation(w, h);
+  return true;
+}
+
+void ParseArtFoundations(const std::string& text,
+                         std::map<std::string, std::vector<rmg::FoundationOffset>>* out) {
+  out->clear();
+  std::istringstream in(text);
+  std::string line, section;
+  while (std::getline(in, line)) {
+    const std::size_t semi = line.find(';');
+    if (semi != std::string::npos) line = line.substr(0, semi);
+    line = Trim(line);
+    if (line.empty()) continue;
+    if (line.front() == '[') {
+      const std::size_t r = line.find(']');
+      section = (r == std::string::npos) ? line.substr(1) : line.substr(1, r - 1);
+      continue;
+    }
+    const std::size_t eq = line.find('=');
+    if (eq == std::string::npos || section.empty()) continue;
+    const std::string key = Trim(line.substr(0, eq));
+    if (!IEquals(key, "Foundation")) continue;
+    std::vector<rmg::FoundationOffset> fnd;
+    if (ParseFoundation(Trim(line.substr(eq + 1)), &fnd)) {
+      (*out)[section] = std::move(fnd);
+    }
+  }
 }
 
 }  // namespace
@@ -75,6 +140,14 @@ bool TheaterAssets::Load(const std::string& game_dir, Theater t,
   if (ini == nullptr) return fail("找不到 theater ini");
   ini_text_.assign(reinterpret_cast<const char*>(ini), sz);
   if (!rmg::ParseTheaterIni(ini_text_, &data_)) return fail("theater ini 解析失败");
+
+  std::vector<std::uint8_t> art_raw;
+  if (local.Read("artmd.ini", &art_raw)) {
+    const std::string art_text(art_raw.begin(), art_raw.end());
+    ParseArtFoundations(art_text, &foundations_);
+  } else {
+    foundations_.clear();
+  }
 
   // 砖库：扩展包一份 + 基础一份。
   // 两份的搜索优先级是**未确认**的（原版在 0x5349EA-0x534A3A 把五个 mix 名

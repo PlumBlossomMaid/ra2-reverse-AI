@@ -48,6 +48,7 @@ if(RA2_BUILD_TESTS)
   add_test(NAME threat COMMAND test_threat)
 endif()
 
+add_subdirectory(runtime)
 add_subdirectory(mix)
 add_subdirectory(rmg)
 add_subdirectory(assets)

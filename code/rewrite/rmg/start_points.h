@@ -21,6 +21,7 @@
 #ifndef RA2_RMG_START_POINTS_H_
 #define RA2_RMG_START_POINTS_H_
 
+#include <string>
 #include <vector>
 
 #include "blob_paint.h"   // PaintWorkCell：+0x38 owner / +0x3C queued
@@ -40,6 +41,27 @@ extern const int kStartZoneSel[5];
 // 0x89F688，运行期由 0x49F2F0 填。等距坐标下的八邻域。
 extern const int kAdjacentCellDX[8];
 extern const int kAdjacentCellDY[8];
+
+struct StartTraceEntry {
+  std::string kind;
+  int region = -1;
+  int base = 0;
+  int start_points = 0;
+  int cells = 0;
+  int candidates = 0;
+  int extra = 0;
+  int budget = 0;
+  int tries = 0;
+  int key = 0;
+  int x = 0;
+  int y = 0;
+  int movement_zone = 0;
+  int want_zone_type = 0;
+  int largest_zone = -1;
+  int zone_count = 0;
+  long long before = 0;
+  long long after = 0;
+};
 
 // 阶段 6 要问外界的几件事。做成虚接口是因为它们各自还挂着别的子系统
 // （砖表、坡道、寻路分区），单测里给合成实现即可。
@@ -66,6 +88,10 @@ class StartPointWorld {
   // GrowRegion 是**先取格再判界**，所以这个副作用必须能复现。
   // 返回值是「哑元回读到的坐标」——真实格子返回 c 自己。
   virtual CellCoord ReadBackCoord(const CellCoord& c) = 0;
+
+  // ScenarioClass::Get_Waypoint_Coords（0x68BCC0）。0x5A1FB0 从这里取
+  // 已经写好的出生点，再向外做 400 步洪泛。
+  virtual CellCoord Waypoint(int index) = 0;
 
   // 0x594870 尾巴：写 ScenarioClass 的第 index 号 waypoint，并给该格
   // CellClass +0x140 |= 4
@@ -97,7 +123,7 @@ struct StartPointContext {
   int map_h = 0;            // [0xABE15C] = MapSeedClass +0x184
   // 0x578640 读的是 **MapClass +0xF4**（[0x87F8DC]），与上面那个 MapSeedClass
   // 的 W 是两个来源；实测同值，但字段分开留着，别混用。
-  int map_rect_w = 0;
+  int map_rect_w = 0;                 // MapClass +0xF4（ABED04）
 
   // 0x5A7250 的四个「铺装」谓词要的砖号基址
   const TheaterData* theater = nullptr;
@@ -113,6 +139,7 @@ struct StartPointContext {
 
   // 已经缩过一圈的可用矩形：{[0x87F8E4]+4, [0x87F8E8]+4, [0x87F8EC]-8, [0x87F8F0]-8}
   MapRect usable;
+  std::vector<StartTraceEntry>* trace = nullptr;
 
   StartPointContext() : grid(0, 0) {}
 };
@@ -142,6 +169,10 @@ void PickPointsInRegion(StartPointContext& ctx, RegionClass* r, int base);
 
 // 第 0 步：重建寻路分区（0x56C510），把 movement_zone / want_zone_type 填进 ctx。
 void ComputeStartZoneSelection(StartPointContext& ctx, ZoneTable& zones);
+
+// 0x5A1FB0。名字像校验，实际所有出口都 return true；它从每个出生点
+// 做最多 400 步优先队列洪泛，复用 work.+0x3C 并置 work.+0x45。
+bool MarkStartInfluence(StartPointContext& ctx);
 
 // 0x594B50 PlaceStartPoints。永远返回 true（原版所有出口都 return 1）。
 bool PlaceStartPoints(StartPointContext& ctx);

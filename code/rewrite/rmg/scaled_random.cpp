@@ -47,7 +47,7 @@ int PickBelowMul(Randomizer& rng, int limit) {
   for (;;) {
     const std::uint32_t r = rng.Random();
     const double u =
-        static_cast<double>(static_cast<std::int64_t>(r)) * scale * kInvUintMax;
+        static_cast<double>(static_cast<std::uint64_t>(r)) * scale * kInvUintMax;
     const int v = Ftol(u);
     // 0x59BCDA / 0x59AB26 的 cmp/ja 是**无符号**比较
     if (static_cast<unsigned>(v) <= static_cast<unsigned>(hi)) return v;
@@ -63,8 +63,11 @@ int PickRange(Randomizer& rng, int lo, int hi) {
   const double base = static_cast<double>(static_cast<std::uint32_t>(lo));
   for (;;) {
     const std::uint32_t r = rng.Random();
+    // ⚠️ 原版 fild qword 高位写 0 → uint32 零扩展到 uint64 → double。
+    // static_cast<int64_t>(uint32_t) 在 r >= 2^31 时符号扩展成负数！
+    // 必须用 uint64_t 零扩展。
     const double u =
-        static_cast<double>(static_cast<std::int64_t>(r)) * span * kInvUintMax + base;
+        static_cast<double>(static_cast<std::uint64_t>(r)) * span * kInvUintMax + base;
     const int v = Ftol(u);
     // 0x598089 是 ja —— **无符号**比较
     if (static_cast<unsigned>(v) <= static_cast<unsigned>(hi)) return v;

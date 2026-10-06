@@ -86,6 +86,10 @@ class StartStub : public StartPointWorld {
     return c;
   }
 
+  CellCoord Waypoint(int index) override {
+    if (index < 0 || index >= static_cast<int>(waypoints_.size())) return CellCoord();
+    return waypoints_[static_cast<std::size_t>(index)];
+  }
   void SetWaypoint(int index, const CellCoord& c) override {
     if (index >= 0 && index < static_cast<int>(waypoints_.size())) {
       waypoints_[static_cast<std::size_t>(index)] = c;

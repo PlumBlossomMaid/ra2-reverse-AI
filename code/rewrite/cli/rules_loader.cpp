@@ -81,7 +81,15 @@ bool LoadRmgRules(const std::string& text, RmgRules* out) {
         out->max_tiberium = std::atoi(val.c_str());
       } else if (IEquals(key, "MaxTrees")) {
         out->max_trees = std::atoi(val.c_str());
+      } else if (IEquals(key, "CliffBackImpassability")) {
+        out->cliff_back_impassability = std::atoi(val.c_str());
       } else if (IEquals(key, "NeutralTechBuildings")) {
+        out->neutral_tech_buildings = SplitCsv(val);
+      }
+      continue;
+    }
+    if (IEquals(section, "AI")) {
+      if (IEquals(key, "NeutralTechBuildings")) {
         out->neutral_tech_buildings = SplitCsv(val);
       }
       continue;

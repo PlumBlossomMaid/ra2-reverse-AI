@@ -2,8 +2,8 @@
 //
 // 不依赖游戏数据（rulesmd.ini / .mix / .tmp 全不碰），砖表与 theater 都是
 // 合成值，只为验证 RunPipeline 全阶段不崩、输出结构完整（[Map] 尺寸 /
-// [IsoMapPack5] / [OverlayPack] / [Waypoints] / [Terrain] 各节齐全）。
-// 字节级对拍走 e2e（开游戏生成真 RandMap.Map 逐字节 diff）。
+// [IsoMapPack5] / [OverlayPack] / [OverlayDataPack] / [Waypoints] / [Terrain]
+// 各节齐全）。字节级对拍走 e2e（开游戏生成真 RandMap.Map 逐字节 diff）。
 #include "cliworld.h"
 #include "mapwriter.h"
 #include "pipeline.h"
@@ -11,6 +11,7 @@
 #include "rmg/theater.h"
 #include "rules_loader.h"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -106,12 +107,66 @@ RmgRules DefaultRules() {
   return r;
 }
 
+TEST(RulesLoader, ReadsNeutralTechBuildingsFromAiSection) {
+  RmgRules rules;
+  ASSERT_TRUE(LoadRmgRules(
+      "[General]\nMaxTrees=321\n[AI]\n"
+      "NeutralTechBuildings=CAAIRP, CATHOSP,CAOUTP\n",
+      &rules));
+
+  ASSERT_EQ(3u, rules.neutral_tech_buildings.size());
+  EXPECT_EQ("CAAIRP", rules.neutral_tech_buildings[0]);
+  EXPECT_EQ("CATHOSP", rules.neutral_tech_buildings[1]);
+  EXPECT_EQ("CAOUTP", rules.neutral_tech_buildings[2]);
+  EXPECT_EQ(321, rules.max_trees);
+}
+
+TEST(RulesLoader, ReadsRmgmdOverlayValues) {
+  RmgRules rules;
+  ASSERT_TRUE(LoadRmgRules(
+      "[General]\nRMGMinimumTiberium=900\n"
+      "RMGMaximumTiberium=1050\nMaxTrees=600\n"
+      "RMGVegetationMinimums=60,60,60,60,60\n"
+      "RMGVegetationMaximums=100,100,100,100,100\n",
+      &rules));
+
+  EXPECT_EQ(900, rules.min_tiberium);
+  EXPECT_EQ(1050, rules.max_tiberium);
+  EXPECT_EQ(600, rules.max_trees);
+}
+
+TEST(MapWriter, EncodesIsoCoordinatesAsGameWaypointInteger) {
+  PipelineResult r;
+  r.map_w = 70;
+  r.map_h = 70;
+  r.cells.resize(0x40000);
+  r.exists.resize(0x40000);
+  r.waypoints.resize(2);
+  r.waypoints[0] = rmg::CellCoord{90, 22};
+  r.waypoints[1] = rmg::CellCoord{40, 105};
+  r.start_locations.push_back(StartLocationRecord{0, 49, 110});
+  r.start_locations.push_back(StartLocationRecord{1, 78, 27});
+  r.terrains.push_back(TerrainRecord{"TREE01", 49, 110});
+  r.terrains.push_back(TerrainRecord{"TREE02", 93, 179});
+
+  const std::string map = BuildMapFile(r, 0, 4);
+  EXPECT_NE(std::string::npos, map.find("[Basic]\n"));
+  EXPECT_NE(std::string::npos, map.find("MultiplayerOnly=1\n"));
+  EXPECT_NE(std::string::npos, map.find("[Waypoints]\n"));
+  EXPECT_NE(std::string::npos, map.find("0=90022\n"));
+  EXPECT_NE(std::string::npos, map.find("1=40105\n"));
+  EXPECT_NE(std::string::npos, map.find("[Terrain]\n"));
+  EXPECT_NE(std::string::npos, map.find("49110=TREE01\n"));
+  EXPECT_NE(std::string::npos, map.find("93179=TREE02\n"));
+}
+
 void ExpectMapSections(const std::string& map) {
   // 各节存在（[Waypoints]/[Terrain] 取决于这局有没有点/地形，
   // [Structures] 可能没有——这局不一定生成建筑）。
   EXPECT_NE(std::string::npos, map.find("[Map]\n"));
   EXPECT_NE(std::string::npos, map.find("[IsoMapPack5]\n"));
   EXPECT_NE(std::string::npos, map.find("[OverlayPack]\n"));
+  EXPECT_NE(std::string::npos, map.find("[OverlayDataPack]\n"));
   // [Map] 的尺寸与层级
   EXPECT_NE(std::string::npos, map.find("Size=0,0,74,82\n"));
   EXPECT_NE(std::string::npos, map.find("LocalSize=2,5,70,70\n"));
@@ -166,7 +221,150 @@ TEST(CliPipeline, MapType3RiversAndRamps) {
   ExpectMapSections(map);
 }
 
-// 温和气候（Theater=0）：阶段 10 的 LAT 表按温和 theater 走一遍。
+TEST(CliPipeline, StartPointsUseInsetLocalRect) {
+  rmg::MapSeedParams params;
+  params.theater = 0;
+  params.map_type = 3;
+  params.resources = 3;
+  params.ruggedness = 31;
+  params.time = 0;
+  params.water_amount = 30;
+  params.num_players = 2;
+  params.tiberium = 60;
+  params.tiberium_layout = 52;
+  params.vegetation = 83;
+  params.urban_presence = 65;
+  params.width = 0;
+  params.height = 0;
+  params.accessibility = 39;
+  params.region_size = 68;
+  params.seed = 62298;
+
+  const rmg::TheaterData theater = SyntheticTheater();
+  const std::vector<rmg::TileType> tiles = SyntheticTiles();
+  const RmgRules rules = DefaultRules();
+
+  PipelineResult result;
+  std::string err;
+  ASSERT_TRUE(RunPipeline(params, 62298u, theater, tiles, rules,
+                          static_cast<int>(tiles.size()), &result, &err))
+      << err;
+
+  const auto it = std::find_if(result.rng_checkpoints.begin(),
+                               result.rng_checkpoints.end(),
+                               [](const RngCheckpoint& cp) {
+                                 return cp.name == "after_start_points";
+                               });
+  // SplitRegion 防重（0x58D9EA/0x58DA5B）已在实机取证闭环：
+  //   实机 = 防重有效（Set_Dimensions 0x5671A5 按 side 初始化 0x89A304 表）
+  //   2026-09-28 实机帧 08→11 四帧 0 diff、RNG 检查点逐位吻合。
+  // 期望值 = 防重版 CLI 的**合成砖表**结果（与 LiveRun 的 61638/tries=44 不同，
+  // 合成 profile 下区域划分不同）；改动 SplitRegion 后此期望值需同步刷新。
+  ASSERT_NE(result.rng_checkpoints.end(), it);
+  EXPECT_EQ(61901, it->calls);
+  ASSERT_GE(result.start_trace.size(), 2u);
+  EXPECT_EQ("pick", result.start_trace[1].kind);
+  EXPECT_EQ(49, result.start_trace[1].tries);
+  const auto first_cand = std::find_if(
+      result.start_trace.begin(), result.start_trace.end(),
+      [](const rmg::StartTraceEntry& tr) { return tr.kind == "cand"; });
+  ASSERT_NE(result.start_trace.end(), first_cand);
+  EXPECT_EQ(0, result.start_trace[1].region);
+  EXPECT_EQ(2, result.start_trace[1].start_points);
+}
+
+TEST(CliWorldTechBuildings, UnlimboFailsWithoutObjectRegistration) {
+  rmg::MapGrid grid(12, 12);
+  const rmg::TheaterData theater = SyntheticTheater();
+  const std::vector<rmg::TileType> tiles = SyntheticTiles();
+  rmg::Randomizer rng(1);
+  std::vector<rmg::PaintWorkCell> work(
+      static_cast<std::size_t>(grid.side()) * static_cast<std::size_t>(grid.side()));
+  CliWorld world(grid, theater, tiles, rng, work,
+                 static_cast<int>(tiles.size()));
+  world.InitCells();
+  world.set_neutral_tech_buildings({"CAMACH"});
+  world.set_foundations({{"CAMACH", {{0, 0}, {1, 0}, {0x7FFF, 0x7FFF}}}});
+
+  const int handle = world.CreateBuilding(0);
+  ASSERT_GE(handle, 0);
+  ASSERT_EQ(0u, world.buildings().size());
+  EXPECT_FALSE(world.Unlimbo(handle, rmg::CellCoord{8, 5}));
+  EXPECT_TRUE(world.buildings().empty());
+  EXPECT_EQ(0, world.Field0xE4(rmg::CellCoord{8, 5}));
+  EXPECT_EQ(0, world.Field0xE4(rmg::CellCoord{9, 5}));
+}
+
+TEST(CliWorldTechBuildings, UnlimboCanWriteWhenObjectRegistrationExists) {
+  rmg::MapGrid grid(12, 12);
+  const rmg::TheaterData theater = SyntheticTheater();
+  const std::vector<rmg::TileType> tiles = SyntheticTiles();
+  rmg::Randomizer rng(1);
+  std::vector<rmg::PaintWorkCell> work(
+      static_cast<std::size_t>(grid.side()) * static_cast<std::size_t>(grid.side()));
+  CliWorld world(grid, theater, tiles, rng, work,
+                 static_cast<int>(tiles.size()));
+  world.InitCells();
+  world.set_neutral_tech_buildings({"CAMACH"});
+  world.set_foundations({{"CAMACH", {{0, 0}, {1, 0}, {0x7FFF, 0x7FFF}}}});
+  world.set_tech_object_registration(true);
+
+  const int handle = world.CreateBuilding(0);
+  (void)world.Foundation(handle);
+  EXPECT_TRUE(world.Unlimbo(handle, rmg::CellCoord{8, 5}));
+  ASSERT_EQ(1u, world.buildings().size());
+  EXPECT_EQ("CAMACH", world.buildings()[0].type);
+  EXPECT_EQ(8, world.buildings()[0].x);
+  EXPECT_EQ(5, world.buildings()[0].y);
+  EXPECT_NE(0, world.Field0xE4(rmg::CellCoord{8, 5}));
+  EXPECT_NE(0, world.Field0xE4(rmg::CellCoord{9, 5}));
+}
+
+TEST(CliPipeline, WaterAmountTwentyRunsLakeOnlyDispatch) {
+  rmg::MapSeedParams params;
+  params.theater = 0;
+  params.map_type = 3;
+  params.resources = 3;
+  params.ruggedness = 31;
+  params.time = 0;
+  params.water_amount = 20;
+  params.num_players = 2;
+  params.tiberium = 0;
+  params.tiberium_layout = 52;
+  params.vegetation = 83;
+  params.urban_presence = 65;
+  params.width = 0;
+  params.height = 0;
+  params.accessibility = 39;
+  params.region_size = 68;
+
+  const rmg::TheaterData theater = SyntheticTheater();
+  const std::vector<rmg::TileType> tiles = SyntheticTiles();
+  const RmgRules rules = DefaultRules();
+
+  PipelineResult result;
+  std::string err;
+  ASSERT_TRUE(RunPipeline(params, 62298u, theater, tiles, rules,
+                          static_cast<int>(tiles.size()), &result, &err))
+      << err;
+
+  const auto find_checkpoint = [&](const char* name) {
+    return std::find_if(result.rng_checkpoints.begin(),
+                        result.rng_checkpoints.end(),
+                        [name](const RngCheckpoint& cp) {
+                          return cp.name == name;
+                        });
+  };
+  const auto init = find_checkpoint("after_init_random");
+  const auto water = find_checkpoint("after_seeding_water");
+  const auto refine = find_checkpoint("after_refine_water");
+  ASSERT_NE(result.rng_checkpoints.end(), init);
+  ASSERT_NE(result.rng_checkpoints.end(), water);
+  ASSERT_NE(result.rng_checkpoints.end(), refine);
+  EXPECT_EQ(init->calls, water->calls);
+  EXPECT_EQ(water->calls, refine->calls);
+}
+
 TEST(CliPipeline, TemperateTheater) {
   rmg::MapSeedParams params = SmokeParams();
   params.theater = 0;

@@ -26,7 +26,7 @@ void MakeGrid(std::vector<Rect>* out, int n, const Rect& bounds,
   // 0x59A97C-0x59A9A2：抛硬币决定网格朝向（等价于把网格转置）。
   // fcomp 0.5 之后 test ah,1 / je —— 取到的分支是「>= 0.5」那一路。
   const double coin =
-      static_cast<double>(static_cast<std::int64_t>(rng.Random())) * kInvUintMax;
+      static_cast<double>(static_cast<std::uint64_t>(rng.Random())) * kInvUintMax;
   if (coin >= 0.5) {
     cell_h = bounds.h / rows;      // cell_w 保持 = w/cols
     inner_dx = cell_w;             // 内层沿 X 走

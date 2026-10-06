@@ -33,11 +33,14 @@
 
 namespace ra2::rmg {
 
-// 1. 不允许超额精度：中间结果必须就是 double
+// 1. 浮点中间精度：原版 gamemd.exe 用 MSVC 6.0 编译，x87 全程 80 位扩展精度
+// （FLT_EVAL_METHOD == 2）。要逐位复刻原版，CLI 也必须用 x87。
+// x64 / SSE2（FLT_EVAL_METHOD == 0）在 NormalDeviate 拒绝采样上会与原版分岔。
+// x86 + /arch:IA32 是唯一能匹配原版精度的构建配置。
 #if defined(FLT_EVAL_METHOD)
-static_assert(FLT_EVAL_METHOD == 0 || FLT_EVAL_METHOD == -1,
-              "浮点中间结果存在超额精度（多半是 32 位 x86 用了 x87）："
-              "请加 -mfpmath=sse -msse2，否则无法逐位复刻");
+static_assert(FLT_EVAL_METHOD == 0 || FLT_EVAL_METHOD == 2 || FLT_EVAL_METHOD == -1,
+              "浮点中间精度既不是 double 也不是 x87 80 位："
+              "用 /arch:IA32 (x86) 或 -mfpmath=sse (GCC) 确保其中一种");
 #endif
 
 // 2. 必须是 IEEE-754 双精度

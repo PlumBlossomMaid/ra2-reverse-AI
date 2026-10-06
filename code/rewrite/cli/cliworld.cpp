@@ -29,7 +29,6 @@ CliWorld::CliWorld(const ra2::rmg::MapGrid& grid,
       work_(work),
       cells_(static_cast<std::size_t>(kCellSlots)),
       exists_(static_cast<std::size_t>(kCellSlots), 0),
-      mask_cache_(work.size(), -1),
       tile_count_(tile_count) {
   for (const ra2::rmg::TileType& t : tiles) tiles_[t.tile_number] = t;
   // 可用区矩形：MapClass::Set_LocalSize({2,5,W,H}) 与整图矩形求交后夹取。
@@ -57,20 +56,18 @@ void CliWorld::InitCells() {
     cell.zoneId = 0;       // +0x4C
     cell.object = 0;       // +0xE4
   });
-  // 工作数组（stage-init.md §五）：全零，但 +0x4A = 1（有效位）。
+  // 工作数组（stage-init.md §五）：全零，但 +0x4A = 1（有效位）、+0x40 = -1
+  // （掩码缓存未计算）。
   for (ra2::rmg::PaintWorkCell& w : work_) {
     w = ra2::rmg::PaintWorkCell{};
     w.flag4a = true;
+    w.mask_cache = -1;
   }
-  // +0x40 掩码缓存整表失效（-1）
-  mask_cache_.assign(mask_cache_.size(), -1);
   // 再扫一遍：打包坐标写进记录头 4 字节，+0x11B 改成 MapSeed +0x30C（= 4）。
   grid_.ForEachCell([&](const ra2::rmg::CellCoord& c) {
     work_[WorkIdx(c)].coord = c;
     Mut(c).level = 4;
   });
-  // 输出记录复位
-  terrains_.clear();
   buildings_.clear();
   start_locations_.clear();
   waypoints_.clear();
@@ -103,6 +100,11 @@ CliCell& CliWorld::Mut(const ra2::rmg::CellCoord& c) {
                                                               : cells_[s];
 }
 
+void CliWorld::SetExist(int x, int y, bool v) {
+  const int s = ((y & 0x1FF) << 9) | (x & 0x1FF);
+  exists_[static_cast<std::size_t>(s)] = v ? 1 : 0;
+}
+
 // ── PaintWorld ──────────────────────────────────────────────────────────
 
 bool CliWorld::IsPaintable(const ra2::rmg::CellCoord& c) const {
@@ -115,15 +117,20 @@ int CliWorld::IsoTile(const ra2::rmg::CellCoord& c) const {
   // ⚠️ 原版 CellClass +0x38 是无符号 16 位（0x47D2B0 里 movzx 读）。
   // 0xFFFF 必须读回 65535，不能符号扩展成 -1——RecalcAttributes 的
   // `tile >= tile_count` / `tile == 0xFFFF` 两条判定都靠它。
-  return (s < 0 || exists_[static_cast<std::size_t>(s)] == 0)
-             ? ra2::rmg::ShoreWorld::kNoCell
-             : static_cast<std::int32_t>(
-                   static_cast<std::uint16_t>(
-                       cells_[static_cast<std::size_t>(s)].isoTile));
+  // 无效格退到共享哑元，原版阶段 10 的 SetupLAT 需要读取其残留砖号。
+  if (s < 0 || exists_[static_cast<std::size_t>(s)] == 0) {
+    return static_cast<std::int32_t>(
+        static_cast<std::uint16_t>(dummy_.isoTile));
+  }
+  return static_cast<std::int32_t>(
+      static_cast<std::uint16_t>(cells_[static_cast<std::size_t>(s)].isoTile));
 }
 
 void CliWorld::SetIsoTile(const ra2::rmg::CellCoord& c, int v) {
   Mut(c).isoTile = static_cast<std::int16_t>(v);
+  if (v != 0) loaded_tiles_.insert(v);  // 模拟原版 .tmp lazy load：
+                                         // PlaceTile 贴非零砖时加载 .tmp（+0xA4）；
+                                         // tile 0 (ClearTile) 不经 PlaceTile，不加载
 }
 
 void CliWorld::SetCellSubTile(const ra2::rmg::CellCoord& c, int v) {
@@ -149,7 +156,7 @@ bool CliWorld::WorkValid(const ra2::rmg::CellCoord& c) const {
 }
 
 int CliWorld::MaskCache(const ra2::rmg::CellCoord& c) const {
-  return mask_cache_[WorkIdx(c)];
+  return work_[WorkIdx(c)].mask_cache;
 }
 
 // ── TileWorld ───────────────────────────────────────────────────────────
@@ -204,11 +211,11 @@ void CliWorld::SetWorkBlob(const ra2::rmg::CellCoord& c, int v) {
 // ── SmoothWorld ─────────────────────────────────────────────────────────
 
 void CliWorld::SetMaskCache(const ra2::rmg::CellCoord& c, int v) {
-  mask_cache_[WorkIdx(c)] = v;
+  work_[WorkIdx(c)].mask_cache = v;
 }
 
 void CliWorld::ResetMaskCaches() {
-  mask_cache_.assign(mask_cache_.size(), -1);
+  for (ra2::rmg::PaintWorkCell& w : work_) w.mask_cache = -1;
 }
 
 int CliWorld::Level(const ra2::rmg::CellCoord& c) const { return At(c).level; }
@@ -411,29 +418,54 @@ int CliWorld::CreateBuilding(int type_index) {
 
 const std::vector<ra2::rmg::FoundationOffset>& CliWorld::Foundation(
     int handle) {
-  // 单份占地表：默认 1×1（真实占地表从 rules 注入，e2e 时校准）。
   static const std::vector<ra2::rmg::FoundationOffset> kUnit = {
       {0, 0}, {0x7FFF, 0x7FFF}};
-  (void)handle;
-  return kUnit;
+  foundation_ = kUnit;
+  if (handle >= 0 && handle < static_cast<int>(active_buildings_.size())) {
+    const int type_index = active_buildings_[static_cast<std::size_t>(handle)];
+    if (type_index >= 0 &&
+        type_index < static_cast<int>(neutral_tech_buildings_.size())) {
+      const std::string& type =
+          neutral_tech_buildings_[static_cast<std::size_t>(type_index)];
+      const auto it = foundations_.find(type);
+      if (it != foundations_.end()) foundation_ = it->second;
+    }
+  }
+  return foundation_;
 }
 
 bool CliWorld::Unlimbo(int handle, const ra2::rmg::CellCoord& at) {
+  if (!tech_object_registration_) {
+    std::fprintf(stderr, "[DEBUG Unlimbo] tech_object_registration_ is false\n");
+    return false;
+  }
   if (handle < 0 || handle >= static_cast<int>(active_buildings_.size())) {
+    std::fprintf(stderr, "[DEBUG Unlimbo] Invalid handle: %d (size=%zu)\n",
+                 handle, active_buildings_.size());
     return false;
   }
   const int type_index = active_buildings_[static_cast<std::size_t>(handle)];
   if (type_index < 0 ||
       type_index >= static_cast<int>(neutral_tech_buildings_.size())) {
+    std::fprintf(stderr, "[DEBUG Unlimbo] Invalid type_index: %d (size=%zu)\n",
+                 type_index, neutral_tech_buildings_.size());
     return false;
   }
+  const std::string& type =
+      neutral_tech_buildings_[static_cast<std::size_t>(type_index)];
   BuildingRecord b;
-  b.type = neutral_tech_buildings_[static_cast<std::size_t>(type_index)];
+  b.type = type;
   b.owner = 0;
   b.x = at.x;
   b.y = at.y;
   b.health = 256;
   buildings_.push_back(b);
+  for (std::size_t i = 0; i + 1 < foundation_.size(); ++i) {
+    const ra2::rmg::CellCoord n{
+        static_cast<std::int16_t>(at.x + foundation_[i].dx),
+        static_cast<std::int16_t>(at.y + foundation_[i].dy)};
+    if (CellExists(n)) Mut(n).object = 1;
+  }
   return true;
 }
 
@@ -467,9 +499,21 @@ int CliWorld::OverlayData(const ra2::rmg::CellCoord& c) {
 }
 
 int CliWorld::ContainedTiberiumIndex(const ra2::rmg::CellCoord& c) {
-  // 只用到 != -1。矿的 overlay 序号见 CreateOreField（102/27 变体），
-  // 这里按「有 overlay 就报有矿」的保守口径，e2e 时校准。
-  return Overlay(c) == -1 ? -1 : 0;
+  // 0x5FDD20 语义：ecx(overlay)==-1 → 返回 -1；非 -1 时查 OverlayTypeClass 表
+  // （[0xA83D84] + ov*4），+0x2A9 tiberium 标志为真则继续，命中返回非 -1，
+  // 否则返回 -1。
+  // ⚠️ 区间来自 CreateOreField 的 base（0x5A2953 `(-(uint)(is_gems) &
+  // 0xffffffb5) + 0x66` → 27/102）+ v=PickBelow(12) ∈ [0,11]，即 gems 写
+  // ov 27..38、tib 写 ov 102..113。这与 rulesmd.ini（YR mod）的
+  // [OverlayTypes] 排序**不一致**（mod 里 27=NAWALL、102-104=LOBRDG26-28），
+  // 但原版 YR 1.00 的 rules.ini 里 27-38=GEM01-12、102-113=TIB01-12，
+  // 与 base 吻合。权威快照 ov=102-104 有 41 格 od∈{1,3,4,6,7,8,10,11}
+  // 非零（走条件 B 加厚）——铁证：102-104 在本版确为矿石（Tiberium=yes）。
+  // 若把区间改成 mod 排序（28-39/105-116），会把原版矿石格误判为非矿，
+  // 条件 B 永不触发 → 整张图无 od 加厚。
+  const int ov = Overlay(c);
+  if ((ov >= 102 && ov <= 113) || (ov >= 27 && ov <= 38)) return 0;
+  return -1;
 }
 
 void CliWorld::CreateTerrain(const char* name,
@@ -479,6 +523,7 @@ void CliWorld::CreateTerrain(const char* name,
   t.x = at.x;
   t.y = at.y;
   terrains_.push_back(t);
+  Mut(at).object = 1;   // 原版 0x71BB90 置 cell +0xE4，供 GrowTreePatch 种植检查
 }
 
 ra2::rmg::CellCoord CliWorld::Waypoint(int index) {
@@ -575,8 +620,13 @@ void CliWorld::SetupLAT(const ra2::rmg::CellCoord& c) {
     }
   }
 
-  // 段 3：ClearToGreenLat（0xAA0748，宽 0xF）。邻居在 ShorePieces（宽 0x29）
-  // 或 WaterBridge（宽 1）组内也算同组。
+  // 段 3：ClearToGreenLat（0xAA0748，宽 0xF）。邻居豁免（0x47CD9B-0x47CDC1）：
+  //   1. green_tile 或 [clear_to_green_lat, +0xF] → 同组
+  //   2. [shore_pieces, +0x29] → shore 豉免
+  //   3. [WaterBridge(0xAA1090), +1] → WaterBridge
+  // ⚠️ 2026-10-05：原版 0xAA1090 读的是 WaterBridge=804，不是 ClearTile=0。
+  //   theater.h 字段注释曾把 0xAA1090 标成 clear_tile，豁免区间错成 [0,1]。
+  //   修正：改用 theater_.water_bridge（0xAA1090 的真值 804）。
   {
     const int start = theater_.clear_to_green_lat;
     const int green = theater_.green_tile;
@@ -585,13 +635,14 @@ void CliWorld::SetupLAT(const ra2::rmg::CellCoord& c) {
       if (tile == green || in(tile, start, start + 0xF)) {
         const int shore0 = theater_.shore_pieces;
         const int shore1 = shore0 + 0x29;
-        const int wb0 = theater_.water_bridge;
+        const int wb0 = theater_.water_bridge;  // 0xAA1090，非 ClearTile
         const int wb1 = wb0 + 1;
         int m = 0;
         for (int i = 0; i < 4; ++i) {
           const int nt = IsoTile(step(c, i * 2));
           if (nt == green || in(nt, start, start + 0xF)) continue;
-          if (in(nt, shore0, shore1) || in(nt, wb0, wb1)) continue;
+          if (in(nt, shore0, shore1)) continue;
+          if (wb0 != -1 && in(nt, wb0, wb1)) continue;
           m |= 1 << i;
         }
         cell.isoTile = static_cast<std::int16_t>(m ? start + m : green);
@@ -658,38 +709,176 @@ void CliWorld::SetupLAT(const ra2::rmg::CellCoord& c) {
       }
     }
   }
+  // ⚠️ 2026-10-04：无全局 fallback。原版 0x47D1BC-0x47D1CC 的 fallback
+  // 只在 Ramp 段内部（tile ∈ ramp 组但无方向匹配），写 ramp_base + ramp - 1。
+  // 不匹配任何 LAT 组的格子保持原值不变。
 }
 
 void CliWorld::RecalcAttributes(const ra2::rmg::CellCoord& c, int arg) {
   // 0x47D2B0 的随机地图子集：地形三件套（recalc.cpp 已实现）+ 无条件重算
   // +0xEC（地面类型）与 +0x4C（地面类别），并把两者喂给格子。
+  // ⚠️ 只在这里做地形三件套（rmg 版不含 overlay/ground 语义）。
   ra2::rmg::RecalcAttributes(*this, c, tile_count_);
 
   // 0x47D7FB-0x47D813：subtile 有效的格子重算完坡道后紧接 SetupLAT
   // （0x47CA80，贴过渡片）。被清格的（0xFFFF）不走这条路。
-  if (Mut(c).isoTile != 0xFFFF) {
-    SetupLAT(c);
-  }
+  // ⚠️ 原版 SubTilePresent 检查 TileTypeClass+0xA4（.tmp 映像是否已加载）。
+  // .tmp 是 lazy load——首次通过 PlaceTile 使用时才加载。缺文件的砖
+  // （TileType.loaded==false）永远加载不上 → SubTilePresent 返回 false
+  // → 走空洞路径。
+  const int tile = IsoTile(c);
+  const ra2::rmg::TileType* tt = (tile >= 0 && tile < tile_count_)
+                                     ? TileByIndex(tile)
+                                     : nullptr;
+  // .tmp 映像在原版进程里启动时**全部预加载**（live 取证：838 块砖的
+  // TileTypeClass+0xA4 全非空，包括 tile 0）。CLI 早期用 loaded_tiles_ 模拟
+  // lazy load，但实测会漏判 LAT 过渡砖（SetupLAT 直接写 isoTile，不经
+  // SetIsoTile，导致 +0xA4 未登记 → 误走空洞路径 ground=0）。改为判断
+  // .tmp 是否解析出子块表——cells 非空即对应原版「映像指针非空」。
+  const bool tmp_present = tt != nullptr && !tt->cells.empty();
+  const bool empty_path =
+      (tile == 0xFFFF) || (tile >= tile_count_) || !tmp_present;
+  if (!empty_path) SetupLAT(c);
 
   CliCell& cell = Mut(c);
+  // 0x47D2F6-0x47D318 + 0x47D818-0x47D849：矿石 overlay（ContainedTiberiumIndex
+  // != -1）在函数**开头**无条件写 ground = OverlayTypeClass[ov]+0x298 = 5，
+  // 矿格（iso=0）走空路径时 tile 号被清为 0xFFFF 但 ground 保留 overlay 值
+  // ——原版 0x47D336 `cmp eax,0xFFFF` 命中 → 跳去 0x47D364 更新 ramp，
+  // 不走 0x47D57B 砖号路径（否则会把 ground 清零）。所以必须**在空路径
+  // 判定之前**写 ground=5，否则矿格进 empty_path 分支被 cell.ground=0 覆盖。
+  if (ContainedTiberiumIndex(c) != -1) {
+    cell.ground = 5;  // 矿石 overlay（Riparius 102-113 / Cruentus 27-38）
+  }
   // 0x47D54A 之前那段 +0xEC 的重算：从砖表子块头 +0x29 查 TerrainToGround。
-  const int tile = cell.isoTile;
-  if (tile == 0xFFFF || tile >= tile_count_) {
-    cell.ground = 0;
+  // 有效路径（SubTilePresent=true，即 .tmp 已加载）走 0x544BE0；空洞路径 ground=0。
+  if (empty_path) {
+    // ⚠️ 空路径（原版 0x47D5E6-0x47D5F9）：SubTilePresent=false 时
+    // 清 tile=0xFFFF / ground=0 / ramp=0，再走 CliffBack 第一段。
+    // 但矿格已在函数开头被 overlay 分支写 ground=5（0x47D30F），
+    // 且走 0x47D336 tile==0xFFFF 分支（不走 0x47D57B），保留 overlay 值。
+    if (ContainedTiberiumIndex(c) == -1) {
+      cell.ground = 0;
+    }
+    // 0x47D5FF-0x47D7C1：CliffBackImpassability。**只在空洞路径里执行**
+    //（原版 SubTilePresent=false 才进这一段；有效路径查完表直接去
+    // 0x47D7CB RecalcLandType，不经过这里）。若 Rules 字段 != 0 且存在
+    // 邻居 level >= cell_level + 4（cell 在悬崖脚下，邻居比它高 ≥4），
+    // 且字段 == 2 且 ground == 0（Clear），则强制 ground = 3（Rock）。
+    // 原版 8 邻居循环 0x47D613-0x47D7A9 的反汇编（0x47D63D-0x47D650）：
+    //   movsx edx, [eax+0x11B]   ; edx = 邻居 level
+    //   movsx ecx, [esi+0x11B]   ; ecx = cell level
+    //   add edx, 4
+    //   cmp edx, ecx
+    //   jle  0x47D7A9           ; 邻居+4 <= cell → **跳过** CliffBack
+    //   jg 分支 → cliff_back=true（邻居+4 > cell，即邻居 >= cell+4 或
+    //   邻居 == cell 时 +4 > cell，等价 cell+4 <= 邻居 → 悬崖脚下）
+    // 权威实测（cells_at_rebuild 复算）：iso==0 且 ground=3 的 301 格里
+    // 168 格满足 `cell+4 <= 邻居`、0 格满足 `邻居+4 <= cell`——方向实锤。
+    // ⚠️ 空洞路径里 ground 恒为 0，所以 `cell.ground == 0` 恒真。
+    // 动态实测（0x594BAE, pid=24532, 2026-10-03）：(50,46) 的邻居
+    // SE (52,48) lvl=8 满足 cell+4<=neighbor（CliffBack 会写 3）。
+    // 而 W (49,46) lvl=4 / SW (49,47) lvl=4 被洞穿后 ground=0 是
+    // **原版行为**（原版也是 ground=0），不是 CLI 缺陷——两条走向
+    // 都是正确的。
+    // ⚠️⚠️ 邻居方向是**6 个等距对角**，不是 8 邻域（0x47D613-0x47D7A9）：
+    //   N (x,y-1) / W (x-1,y) / SE (x+2,y+2) / E (x+1,y+1) /
+    //   SW (x-1,y+1) / NE (x+1,y-1)
+    // SE 是 (+2,+2) 而非 (+1,+1)——用 8 邻域 (dx,dy∈{-1,0,1}) 会**漏掉**
+    // SE 方向的高邻居（2026-10-03 实锤：125 格 n6_0 漏判全部因此，
+    // 28 格 n0_6 多判则因 8 邻域多查了 6 方向没有的 (0,+1)/(+1,0) 等）。
+    if (cliff_back_impassability_ != 0) {
+      const int cell_lv = cell.level;
+      bool cliff_back = false;
+      const int kDir[6][2] = {{0, -1}, {-1, 0}, {2, 2},
+                              {1, 1},  {-1, 1}, {1, -1}};
+      for (const auto& d : kDir) {
+        const ra2::rmg::CellCoord n{
+            static_cast<std::int16_t>(c.x + d[0]),
+            static_cast<std::int16_t>(c.y + d[1])};
+        if (!CellExists(n)) continue;
+        if (At(n).level >= cell_lv + 4) { cliff_back = true; break; }
+      }
+      if (cliff_back && cliff_back_impassability_ == 2) {
+        // 原版两条 CliffBack 出口的写 3 条件不同：
+        //   矿格走 overlay 分支 → 0x47D52F `cmp 2 / jne / mov [0xEC],3`
+        //     **无条件**写 3（会覆盖开场写的 ground=5，权威 1/316 矿格被覆盖）
+        //   普通空路径 → 0x47D7A9 先 `test [0xEC]`，ground==0 才写
+        //     （空路径 ground 恒 0，检查形同虚设）
+        // CLI 用 ContainedTiberiumIndex 区分两条路径。
+        if (ContainedTiberiumIndex(c) != -1 || cell.ground == 0) {
+          cell.ground = 3;
+        }
+      }
+    }
   } else {
-    const ra2::rmg::TileType* tt = TileByIndex(tile);
     const int subtile = cell.subtile;
     int ground = 0;
-    if (tt != nullptr && subtile >= 0 &&
+    if (subtile >= 0 &&
         static_cast<std::size_t>(subtile) < tt->cells.size()) {
       const int terrain = tt->cells[static_cast<std::size_t>(subtile)].terrain_type;
       if (terrain >= 0 && terrain < 16) {
         ground = ra2::rmg::kTerrainToGround[terrain];
       }
     }
+    // 0x47D2F6-0x47D318 + 0x47D820-0x47D849：矿石 overlay（ContainedTiberiumIndex
+    // != -1）走特殊分支——0x47D30F 写 ground = OverlayTypeClass[ov]+0x298 = 5，
+    // 之后 0x47D82A `cmp byte [esi+0x11c], 4` 判坡道非 4 时保留，跳过
+    // 0x544BE0 的 terrain 查表覆盖。非矿石 ov（如石头 168-173，+0x2AC=0）
+    // 走 0x47D87A 的 0x544BE0 查表路径，ground 由 .tmp terrain 决定，
+    // 不保留 overlay 值，故此处不处理。
+    if (ContainedTiberiumIndex(c) != -1) {
+      ground = 5;  // 矿石 overlay（Riparius 102-113 / Cruentus 27-38）
+    }
+    // 0x47DB59-0x47DD2A：**有效路径的第二段 CliffBack**（CLI 之前缺失）。
+    // SubTilePresent=true 时 RecalcAttributes 在 SetupLAT 之后、RecalcLandType
+    // （0x47DD34 call 0x483C80）之前还会做一遍 6 方向邻居检查：
+    //   0x47DD02 cmp byte [0x8871E0+0x664], 2    （CliffBackImpassability==2）
+    //   0x47DD11 mov eax, [esi+0xEC]
+    //   0x47DD17 test eax, eax ; je 0x47DD2A     （ground==0 → 写 3）
+    //   0x47DD1B cmp eax, 2    ; je 0x47DD2A     （ground==2 → 写 3）
+    //   0x47DD20 cmp eax, 6    ; je 0x47DD2A     （ground==6 → 写 3）
+    //   0x47DD25 cmp eax, 8    ; je 0x47DD2A     （ground==8 → 写 3）
+    //   0x47DD2A mov [esi+0xEC], 3
+    // 即 ground ∈ {0,2,6,8} 且 6 方向任一邻居 level >= cell+4 → 强制 Rock(3)。
+    // ⚠️ overlay 分支（矿/石头 overlay 走 0x47D333 专用分支，CLI 因 tile 0
+    // 有 .tmp 而落入本 else）的 CliffBack 落点是 **0x47D52F**，写 3 **不看
+    // ground 值**——矿格开场 ground=5 也会被覆盖（权威 316 矿格里恰好 1 格
+    // slot 33841 ov=112 被覆盖成 3，即悬崖脚下）。普通有效路径 0x47DD2A 才
+    // 要求 ground ∈ {0,2,6,8}。→ 矿格（ContainedTiberiumIndex != -1）直接
+    // 加入写 3 条件，不查 ground。
+    // 6 方向与空洞路径第一段同款（0x47DB6C-0x47DD00 的 N/W/SE/E/SW/NE）。
+    // 2026-10-03 动态实测：(49,54)/(49,55) tile=392（terrain=13 → ground=0）
+    // 且 SE (51,56)/(51,57) lvl=8 → 原版写成 3；CLI 缺这段所以留 0。
+    if (cliff_back_impassability_ == 2) {
+      const int cell_lv = cell.level;
+      bool cliff_back = false;
+      const int kDir[6][2] = {{0, -1}, {-1, 0}, {2, 2},
+                              {1, 1},  {-1, 1}, {1, -1}};
+      for (const auto& d : kDir) {
+        const ra2::rmg::CellCoord n{
+            static_cast<std::int16_t>(c.x + d[0]),
+            static_cast<std::int16_t>(c.y + d[1])};
+        if (!CellExists(n)) continue;
+        if (At(n).level >= cell_lv + 4) { cliff_back = true; break; }
+      }
+      if (cliff_back &&
+          (ContainedTiberiumIndex(c) != -1 || ground == 0 || ground == 2 ||
+           ground == 6 || ground == 8)) {
+        ground = 3;
+      }
+    }
     cell.ground = static_cast<std::int16_t>(ground);
   }
   // 0x483C80：地面类别。出图判定用 IsWithinUsableArea(use_height=true)。
+  // ⚠️ 矿格走 0x47D52F 出口——**不做** RecalcLandType（0x483C80 前面那个
+  // call 0x47D54A 是 SetupLAT），+0x4C 保留进入本函数前的旧值。CLI 在
+  // 阶段 1 清格子时把每格 +0x4C 清成 0，之后阶段 6 只用它查 zone，不会
+  // 再写；原版这里读出来的旧值对阶段 6 无影响（阶段 6 只看 +0x4C 是否
+  // 属于某区）。所以矿格 zoneId 保持 0（等效于原版旧值 0），直接 return。
+  if (cell.ground == 5) {
+    return;
+  }
   const bool within = ra2::rmg::IsWithinUsableArea(
       grid_.width(), local_, c.x, c.y, cell.level, cell.ramp, true);
   if (ground_foot_.empty()) {

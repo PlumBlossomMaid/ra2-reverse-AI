@@ -133,6 +133,10 @@ bool ParseTheaterIni(const std::string& text, TheaterData* out) {
   };
 
   out->water_set = start_of("waterset");
+  // 0xAA1054 是装载 theater 时从 ini 读的水砖区间起始号（RecalcAttributes
+  // 0x47D595-0x47D59B 判 [0xAA1054, +3]）。原版 ini 里是 WaterSet 组的
+  // TilesInSet 起始——与 water_set 同值；保守起见独立存一份。
+  out->water_tile_base = out->water_set;
   out->shore_pieces = start_of("shorepieces");
   out->green_tile = start_of("greentile");
   out->clear_to_green_lat = start_of("cleartogreenlat");

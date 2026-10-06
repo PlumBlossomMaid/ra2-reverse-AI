@@ -42,6 +42,13 @@ class Randomizer {
   int index2() const { return index2_; }
   std::uint32_t state(int i) const { return state_[i]; }
 
+  using Hook = void (*)(void* user, long long calls, const Randomizer& rng,
+                       bool before);
+  void set_hook(Hook hook, void* user) {
+    hook_ = hook;
+    hook_user_ = user;
+  }
+
   // 取数次数。原版没有这个字段——它是复刻侧的观测点：
   // 每个阶段消耗多少随机数是可以独立于结果对拍的一条证据链
   // （见 docs/random-map/rng-ledger.md），顺序对而次数不对，
@@ -55,6 +62,8 @@ class Randomizer {
   std::int32_t index2_ = kLag;
   std::uint32_t state_[kStateSize] = {};
   long long call_count_ = 0;
+  Hook hook_ = nullptr;
+  void* hook_user_ = nullptr;
 };
 
 }  // namespace ra2::rmg

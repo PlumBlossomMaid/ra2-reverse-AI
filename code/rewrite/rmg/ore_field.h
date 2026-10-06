@@ -1,4 +1,4 @@
-﻿// 阶段 8「Creating tiberium」——布矿 / 布宝石。
+// 阶段 8「Creating tiberium」——布矿 / 布宝石。
 //
 // 外层 0x5A23A0 按区域走：先给每个区域挑一个「特殊矿田」候选点，再把总矿量
 // 按面积摊到各候选点上，最后给每个出生点门口再补一片。真正干活的是
@@ -16,6 +16,7 @@
 #ifndef RA2_RMG_ORE_FIELD_H_
 #define RA2_RMG_ORE_FIELD_H_
 
+#include <string>
 #include <vector>
 
 #include "blob_paint.h"   // PaintWorkCell：+0x3C queued / +0x45 flag45
@@ -59,6 +60,43 @@ class OreWorld {
   virtual CellCoord Waypoint(int index) = 0;
 };
 
+struct OreTraceEntry {
+  std::string kind;
+  int region = -1;
+  int index = -1;
+  int wp_base = 0;
+  int start_points = 0;
+  int candidates = 0;
+  int total = 0;
+  int avg = 0;
+  int special = -1;
+  int field_id = 0;
+  int size = 0;
+  int seed_x = 0;
+  int seed_y = 0;
+  int gems = 0;
+  int cells = 0;
+  double normal = 0.0;
+  long long before = 0;
+  long long after = 0;
+
+  // 2026-10-05 pop trace 新增：矿田级统计（仅在 kind=="candidate"/"start" 的
+  // CreateOreField 返回后填充）
+  int pop_count = 0;         // 该片矿田从堆里 pop 出的节点总数
+  int restarts_used = 0;     // 冷启动次数（restarts 达到的上限）
+  int pool_overflow = 0;     // 池子写索引超过 count*10 的次数（原版越界点）
+};
+
+// 2026-10-05 pop trace：记录每次 pop 的坐标，用于与权威 per-cell 访问次数对拍。
+// 由 CLI 侧 --dump-ore-pop=FILE 触发，与 ore_trace 独立。
+struct OrePopEntry {
+  int field_id = 0;    // 所属矿田
+  int x = 0;
+  int y = 0;
+  int od_before = 0;   // pop 前的 od 值（-1 表示首次 SetOverlay）
+  int od_after = 0;    // pop 后的 od 值（-1 表示首次 SetOverlay）
+};
+
 struct OreContext {
   MapGrid grid{0, 0};
   std::vector<PaintWorkCell>* work = nullptr;   // [0xABED10]，side² 条
@@ -70,6 +108,14 @@ struct OreContext {
   // 0x578460 的两个入参来源：MapClass +0xF4（整图宽）与 +0x124.. 的可用矩形。
   int map_w = 0;
   MapRect local;
+  std::vector<OreTraceEntry>* trace = nullptr;
+  std::vector<OrePopEntry>* pop_trace = nullptr;   // 每次 pop 的坐标 + od 变化
+  // 非空时记录每次入队：{field_id, x, y, -9, (int)rng_rv}（与 emu 钩
+  // 0x5A2D79 的对拍用）
+  std::vector<OrePopEntry>* enq_trace = nullptr;
+  // 非空时，PlaceTiberium 每片矿田结束把 work.queued（side² 个 int32）写到
+  // 「前缀_序号.bin」。用于与 emu 逐片对拍排队状态。
+  std::string ore_work_dump_prefix;
 };
 
 // MapSeedClass 里这一阶段读到的全部字段。按 CLAUDE.md 的数据驱动要求，
@@ -88,7 +134,9 @@ struct TiberiumParams {
 // ⚠️ 调用点还会 `mov ecx, MapSeedClass*`，但函数体一次都没读 ecx——无用赋值，
 // 这里不带这个参数。
 void CreateOreField(OreContext& ctx, const CellCoord& seed, int count,
-                    int field_id, bool is_gems);
+                    int field_id, bool is_gems,
+                    int* out_pop_count = nullptr, int* out_restarts = nullptr,
+                    int* out_pool_overflow = nullptr);
 
 // 0x5A23A0 PlaceTiberium(MapSeedClass*)。逐区域布矿。
 void PlaceTiberium(OreContext& ctx, RegionSet& regions,

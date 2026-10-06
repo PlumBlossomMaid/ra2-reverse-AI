@@ -3,16 +3,56 @@
 // 边界检查、以及「用光池子会怎样」各不相同，所以各写一份，不抽公共模板。
 #include "lats.h"
 
+#include <cstdlib>
 #include <cstdint>
 #include <cstdio>
 
 #include "cell_ref.h"      // kAdjacentDelta（0x89F688）
 #include "place_tile.h"    // IsUndecidedTile（0x486380）
 #include "scaled_random.h"
+#include "x87_fyl2x.h"
 
 namespace ra2 {
 namespace rmg {
 namespace {
+
+struct TraceRange {
+  bool enabled = false;
+  long long begin = 0;
+  long long end = 0;
+};
+
+TraceRange LatTraceRange() {
+  TraceRange r;
+  const char* s = std::getenv("RA2_RMG_LAT_TRACE");
+  if (s == nullptr || *s == '\0') return r;
+  char* tail = nullptr;
+  r.begin = std::strtoll(s, &tail, 10);
+  r.end = r.begin;
+  if (tail != nullptr && *tail == ':') {
+    r.end = std::strtoll(tail + 1, nullptr, 10);
+  }
+  if (r.end < r.begin) {
+    const long long t = r.begin;
+    r.begin = r.end;
+    r.end = t;
+  }
+  r.enabled = true;
+  return r;
+}
+
+bool TraceNextRandom(const Randomizer& rng, const TraceRange& tr) {
+  if (!tr.enabled) return false;
+  const long long call = rng.call_count() + 1;
+  return call >= tr.begin && call <= tr.end;
+}
+
+bool TracePossibleBlock(const Randomizer& rng, const TraceRange& tr, int count) {
+  if (!tr.enabled) return false;
+  const long long before = rng.call_count();
+  const long long rough_max = before + static_cast<long long>(count) * 8 + 8;
+  return before <= tr.end && rough_max >= tr.begin;
+}
 
 // 池子里的一条，原版 8 字节：{ int16 x; int16 y; float key }。
 struct LatNode {
@@ -95,11 +135,12 @@ class LatHeap {
 };
 
 // 两处抖动完全同形（常量分别是 [0x7ED808] 与 [0x7ED800]，都是 5.0，
-// MSVC 没合并）：全程 x87 双精度算，**最后一步 fstp dword 才截成 float**。
+// 原版用 x87 80位扩展精度做中间乘加，最后 fstp dword（chop）到 float。
+// x64 的 double（53位）中间精度差 2^-53 量级 → 偶尔导致 float 差 1 ULP
+// → 翻转 heap Pop 顺序 → 扩散路径分岔 → trees 750 差异。
+// 修法：在 x64 上用 x87 机器码执行完整 SpreadKey 计算链（80位精度）。
 float SpreadKey(double dist, std::uint32_t r) {
-  const double jitter =
-      static_cast<double>(static_cast<std::int64_t>(r)) * 5.0 * kInvUintMax;
-  return static_cast<float>(jitter + dist);
+  return X87SpreadKey(dist, r);
 }
 
 }  // namespace
@@ -109,6 +150,15 @@ void WriteLatBlock(LatContext& ctx, const CellCoord& seed, int tile_index,
   LatWorld& world = *ctx.world;
   std::vector<PaintWorkCell>& work = *ctx.work;
   const int side = ctx.side;
+  const TraceRange trace = LatTraceRange();
+  const bool trace_block = TracePossibleBlock(*ctx.rng, trace, count);
+  if (trace_block) {
+    std::fprintf(stderr,
+                 "LATTRACE block before=%lld seed=(%d,%d) tile=%d count=%d "
+                 "field=%d allow=%d\n",
+                 ctx.rng->call_count(), seed.x, seed.y, tile_index, count,
+                 field_id, allow_non_plain ? 1 : 0);
+  }
 
   // operator new(count * 0x50) = count*10 条 8 字节的节点；堆容量也是 count*10。
   // ⚠️ 这里**没有**池子上界检查（不像 0x5A45E0 那条 used < cap），
@@ -134,7 +184,19 @@ void WriteLatBlock(LatContext& ctx, const CellCoord& seed, int tile_index,
     if (node < 0) break;                            // 扩散断了
     const CellCoord at{pool[static_cast<std::size_t>(node)].x,
                        pool[static_cast<std::size_t>(node)].y};
+    if (trace_block) {
+      std::fprintf(stderr,
+                   "LATTRACE place before=%lld placed=%d at=(%d,%d) "
+                   "node=%d key=%.9g\n",
+                   ctx.rng->call_count(), placed, at.x, at.y, node,
+                   static_cast<double>(pool[static_cast<std::size_t>(node)].key));
+    }
     world.SetIsoTile(at, tile_index);               // ← 真正的地形写入
+    // ⚠️ 2026-10-04 探针：逐格 tile 写入 trace
+    if (std::getenv("RA2_RMG_WLB_TRACE")) {
+      std::fprintf(stderr, "WLBPLACE rng=%lld at=(%d,%d) tile=%d\n",
+                   ctx.rng->call_count(), at.x, at.y, tile_index);
+    }
 
     for (int dir = 0; dir < 8; ++dir) {
       // 0x42D510 CellStruct 相加，坐标按 int16
@@ -158,9 +220,32 @@ void WriteLatBlock(LatContext& ctx, const CellCoord& seed, int tile_index,
       const int dx = seed.x - n.x;
       const int dy = seed.y - n.y;
       const double dist = FastSqrt(static_cast<double>(dx * dx + dy * dy));
+      const bool trace_random = TraceNextRandom(*ctx.rng, trace);
+      const long long call = ctx.rng->call_count() + 1;
+      const std::uint32_t draw = ctx.rng->Random();
+      const float key = SpreadKey(dist, draw);
+      // ⚠️ 2026-10-04 探针：SpreadKey 的 double 输入 vs float 输出（bit 级）
+      if (std::getenv("RA2_RMG_KEY_TRACE")) {
+        const double raw = static_cast<double>(
+            static_cast<std::uint64_t>(draw)) * 5.0 * kInvUintMax + dist;
+        std::fprintf(stderr,
+                     "KEYTRACE call=%lld n=(%d,%d) dist=%.17g draw=%u "
+                     "raw=%.17g key=0x%08X key_d=%.9g\n",
+                     call, n.x, n.y, dist, draw, raw,
+                     *reinterpret_cast<const std::uint32_t*>(&key),
+                     static_cast<double>(key));
+      }
+      if (trace_block || trace_random) {
+        std::fprintf(stderr,
+                     "LATTRACE push call=%lld used=%d from=(%d,%d) "
+                     "n=(%d,%d) dir=%d dist=%.17g draw=%u key=%.9g "
+                     "tile=%d count=%d field=%d\n",
+                     call, used, at.x, at.y, n.x, n.y, dir, dist, draw,
+                     static_cast<double>(key), tile_index, count, field_id);
+      }
       pool[static_cast<std::size_t>(used)].x = static_cast<std::int16_t>(n.x);
       pool[static_cast<std::size_t>(used)].y = static_cast<std::int16_t>(n.y);
-      pool[static_cast<std::size_t>(used)].key = SpreadKey(dist, ctx.rng->Random());
+      pool[static_cast<std::size_t>(used)].key = key;
       work[static_cast<std::size_t>(n.y * side + n.x)].queued = field_id;
       heap.Push(used);
       ++used;
@@ -169,12 +254,19 @@ void WriteLatBlock(LatContext& ctx, const CellCoord& seed, int tile_index,
     ++placed;
     node = heap.Pop();
   } while (placed < count);
+  if (trace_block) {
+    std::fprintf(stderr, "LATTRACE block_end after=%lld placed=%d used=%d\n",
+                 ctx.rng->call_count(), placed, used);
+  }
 }
 
 int GrowTreePatch(LatContext& ctx, const CellCoord& seed, int size, double prob) {
   LatWorld& world = *ctx.world;
   std::vector<PaintWorkCell>& work = *ctx.work;
   const int side = ctx.side;
+
+  const bool gtrace = std::getenv("RA2_RMG_TREES_TRACE") != nullptr;
+  const long long rng_in = gtrace ? ctx.rng->call_count() : 0;
 
   // operator new(size * 200) = size*25 条；堆容量 [1] 也是 size*25。
   const int cap = size * 25;
@@ -201,7 +293,7 @@ int GrowTreePatch(LatContext& ctx, const CellCoord& seed, int size, double prob)
         world.Overlay(at) == -1 && world.Field0xEC(at) != 3) {
       // 取数点 0x5A47F2：r * 1/(2^32-1) < prob 才栽；**失败也烧随机数**
       const double u =
-          static_cast<double>(static_cast<std::int64_t>(ctx.rng->Random())) *
+          static_cast<double>(static_cast<std::uint64_t>(ctx.rng->Random())) *
           kInvUintMax;
       if (u < prob) {
         // 取数点 0x5A481C：_ftol(r * 25/(2^32-1) + 1.0)，拒绝 > 25
@@ -211,6 +303,10 @@ int GrowTreePatch(LatContext& ctx, const CellCoord& seed, int size, double prob)
         std::snprintf(name, sizeof(name), "TREE%d%d", idx / 10, idx % 10);
         world.CreateTerrain(name, at);
         ++planted;
+        if (std::getenv("RA2_RMG_TREES_TRACE")) {
+          std::fprintf(stderr, "TREEPOS %d %s %d %d\n",
+                       planted, name, at.x, at.y);
+        }
       }
     }
 
@@ -232,13 +328,26 @@ int GrowTreePatch(LatContext& ctx, const CellCoord& seed, int size, double prob)
       // used 在算 key 之前就自增了（0x5A49B0 的 inc），写的还是原来那一槽
       const int slot = used;
       ++used;
-      pool[static_cast<std::size_t>(slot)].key = SpreadKey(dist, ctx.rng->Random());
+      const std::uint32_t tree_draw = ctx.rng->Random();
+      const float tree_key = SpreadKey(dist, tree_draw);
+      pool[static_cast<std::size_t>(slot)].key = tree_key;
+      if (std::getenv("RA2_RMG_TREES_TRACE")) {
+        std::fprintf(stderr, "TREEKEY %d %d %d %u %08X\n",
+                     slot, n.x, n.y, tree_draw,
+                     *reinterpret_cast<const std::uint32_t*>(&tree_key));
+      }
       w.flag47 = true;
       heap.Push(slot);
     }
 
     node = heap.Pop();
   } while (planted < size);
+  if (gtrace) {
+    std::fprintf(stderr, "GPATCH seed=(%d,%d) size=%d prob=%.17g planted=%d "
+                         "rng=%lld..%lld (%lld draws)\n",
+                 seed.x, seed.y, size, prob, planted, rng_in,
+                 ctx.rng->call_count(), ctx.rng->call_count() - rng_in);
+  }
   return planted;
 }
 

@@ -182,7 +182,6 @@ bool WaterBlob(RegionContext& ctx, WaterBlobWorld& world, WaterBlobParams& p,
   bool ok = true;                                         // 0x59C937 [esp+0x13] = 1
   int painted = 0;                                        // 0x59CCB0 [esp+0x1c] = 0
   int cur = heap.empty() ? -1 : heap.Pop();               // 0x59CE32
-  long long popn = 0, pushn = 0, rngn = 0;                // RMG-DBG 探针
 
   // ── 主循环 0x59CE5E-0x59D14B ──────────────────────────────────────────
   if (this_budget > 0) {                                  // 0x59CE6A jle
@@ -190,7 +189,6 @@ bool WaterBlob(RegionContext& ctx, WaterBlobWorld& world, WaterBlobParams& p,
       if (cur < 0) break;                                 // 0x59CE84
       if (!ok) break;                                     // 0x59CE90
       const CellCoord c{pool[cur].x, pool[cur].y};
-      ++popn;                                             // RMG-DBG
 
       // ⚠️ 认领是**无条件**的：既不看这一格现在归谁，也不看砖是什么。
       // 主循环相信弹出来的都是入堆时验过的——而起点那一格根本没验过归属之外的事。
@@ -214,20 +212,18 @@ bool WaterBlob(RegionContext& ctx, WaterBlobWorld& world, WaterBlobParams& p,
             const int dy = at.y - n.y;                      // 0x59CFE1
             const int d2 = dy * dy + dx * dx;               // 0x59CFED
             const float dist =
-                static_cast<float>(FastSqrt(static_cast<double>(d2)));
+                ChopFloat(FastSqrt(static_cast<double>(d2)));
             const double u =
                 static_cast<double>(rng.Random()) * kInvUintMax;   // [0x7ED898]
-            ++rngn;                                             // RMG-DBG
             // 0x59D02F-0x59D053：四次运算全在 x87 里按 PC=53 走，
             // 只有最后一次 fstp dword 才落成 float。不许自己合并。
             double prio = kJitter * u;
             prio = prio + kDistWeight * static_cast<double>(dist);
             prio = prio - kRingWeight * static_cast<double>(painted);
             const int node =
-                pool.Alloc(n.x, n.y, static_cast<float>(prio));
+                pool.Alloc(n.x, n.y, ChopFloat(prio));
             wn.queued = p.blob_id;                          // 0x59D05C
             if (node >= 0) heap.Push(node);                 // 0x59D05F 起内联上浮
-            ++pushn;                                        // RMG-DBG
             accepted = true;
           }
         }
@@ -301,17 +297,11 @@ bool WaterBlob(RegionContext& ctx, WaterBlobWorld& world, WaterBlobParams& p,
 
   if (ok) {
     p.painted_total += painted;                               // 0x59D2D5
-    std::fprintf(stderr,
-                 "RMG-DBG:   WB origin=%d attempts=%d budget=%d tbudget=%d painted=%d ok=1\n",
-                 IsOrigin(start) ? 1 : 0, attempts, budget, this_budget,
-                 painted);
     return true;
   }
 
   // ── 回滚 0x59D3B6-0x59D42A ───────────────────────────────────────────
-  long long rbn = 0;                                        // RMG-DBG
   ctx.grid.ForEachCell([&](const CellCoord& c) {
-    ++rbn;                                                  // RMG-DBG
     PaintWorkCell& w = Rec(ctx, c);
     if (w.blob_id != p.blob_id) return;                       // 0x59D3FF
     w.blob_id = 0;                                            // 0x59D401
@@ -320,14 +310,6 @@ bool WaterBlob(RegionContext& ctx, WaterBlobWorld& world, WaterBlobParams& p,
     world.SetSubTile(c, 0);                                   // 0x59D40B
     world.SetLevel(c, p.cell_level);                          // 0x59D418 +0x30C
   });
-  std::fprintf(stderr,
-               "RMG-DBG:   WB origin=%d attempts=%d budget=%d tbudget=%d painted=%d ok=%d "
-               "rngS=%lld rngT=%lld rngM=%lld rngCollect=%lld rngAfterM=%lld popn=%lld pushn=%lld rngn=%lld heapsize=%d rollbackn=%lld\n",
-               IsOrigin(start) ? 1 : 0, attempts, budget, this_budget, painted,
-               ok ? 1 : 0, c_start - c0, c_tbudget - c_start,
-               c_main - c_tbudget, c_collect - c_main,
-               rng.call_count() - c_collect, popn, pushn, rngn,
-               heap.size(), rbn);
   return false;
 }
 

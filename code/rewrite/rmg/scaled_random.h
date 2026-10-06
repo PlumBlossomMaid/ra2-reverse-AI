@@ -1,5 +1,6 @@
 ﻿#pragma once
 
+#include <cmath>
 #include <cstdint>
 
 #include "randomizer.h"
@@ -51,6 +52,20 @@ inline int Ftol(double v) {
   if (!(v >= -9223372036854775808.0 && v < 9223372036854775808.0)) return 0;
   return static_cast<int>(
       static_cast<std::uint32_t>(static_cast<std::int64_t>(v)));
+}
+
+// 原版 x87 `fstp dword`（全局 RC=chop）把 double 截断到 float **向零截断**。
+// x64 的 `static_cast<float>` 走 SSE2 `cvtsd2ss`（默认就近舍入），FpuChopScope
+// 只改 x87 控制字、不影响 MXCSR——所以两者在 float 边界值上会差 1 ULP。
+// 这 1 ULP 会翻转最小堆的 Pop 顺序（SpreadKey 的 key 比较），进而改变
+// WriteLatBlock / GrowTreePatch 的铺格路径，最终导致 coin 命中分岔。
+// 修法：检测 round-to-nearest 是否远离了零，若是则回退 1 ULP。
+inline float ChopFloat(double v) {
+  float f = static_cast<float>(v);
+  if (std::abs(static_cast<double>(f)) > std::abs(v)) {
+    f = std::nextafter(f, 0.0f);
+  }
+  return f;
 }
 
 // **上限不折叠**的那一路拒绝采样（0x59BCAC 涂块随机起点 / 0x59AB13 MakeGrid 抽行）：

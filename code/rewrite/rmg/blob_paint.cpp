@@ -71,10 +71,10 @@ int PaintBlob(PaintContext& ctx, const PaintParams& params) {
     const int rw = params.region.w, rh = params.region.h;
     if (rw > rh) {
       cost_b = 1.0f;
-      cost_a = static_cast<float>(static_cast<double>(rw) / static_cast<double>(rh) * kAspectBias);
+      cost_a = ChopFloat(static_cast<double>(rw) / static_cast<double>(rh) * kAspectBias);
     } else {
       cost_a = 1.0f;
-      cost_b = static_cast<float>(static_cast<double>(rh) / static_cast<double>(rw) * kAspectBias);
+      cost_b = ChopFloat(static_cast<double>(rh) / static_cast<double>(rw) * kAspectBias);
     }
   }
   // 0x59BF9B：椭圆判据的两个系数 1/(w/2)² 与 1/(h/2)²
@@ -130,12 +130,12 @@ int PaintBlob(PaintContext& ctx, const PaintParams& params) {
         const int d2 = dx * dx + dy * dy;
         const double dist = FastSqrt(static_cast<double>(d2));
         // ⚠️ 先 ×5 再 ×1/(2^32-1)，换序会在 1 ulp 上分岔
-        const double jitter = static_cast<double>(static_cast<std::int64_t>(rng.Random())) *
+        const double jitter = static_cast<double>(static_cast<std::uint64_t>(rng.Random())) *
                               kJitterScale * kInvUintMax;
         pr = jitter + dist;
       }
 
-      const int nn = pool.Alloc(n.x, n.y, static_cast<float>(pr));
+      const int nn = pool.Alloc(n.x, n.y, ChopFloat(pr));
       wn.queued = stamp;          // 0x59C233：**先盖戳再入堆**，越界丢弃也不撤销
       heap.Push(nn);
     }

@@ -119,9 +119,19 @@ inline double ChopLogPortable(double s) {
   const Dd l = LogDd(s);
   std::fesetround(saved);
 
-  // hi 与 lo 异号 => |hi| > |ln|，hi 落在远离零的一侧，退一个 ulp
-  if (l.lo != 0.0 && ((l.hi > 0.0) != (l.lo > 0.0))) {
-    return std::nextafter(l.hi, 0.0);
+  // 向零截断：如果精确值（hi+lo）的绝对值 > |hi|（即 lo 与 hi 同号），
+  // 则 hi 已经是向零截断的结果（|hi| < |精确值|）。
+  // 如果精确值的绝对值 < |hi|（即 lo 与 hi 异号），则 hi 在远离零的一侧，
+  // 需要退一个 ULP。
+  // 特殊情况 lo == 0：精确值 = hi，直接返回。
+  if (l.lo != 0.0) {
+    const bool hi_neg = l.hi < 0.0;
+    const bool lo_neg = l.lo < 0.0;
+    if (hi_neg != lo_neg) {
+      // 异号：|hi| > |精确值|，hi 在远离零一侧，退一个 ULP
+      return std::nextafter(l.hi, 0.0);
+    }
+    // 同号：|hi| < |精确值|，hi 已在靠近零一侧，直接返回
   }
   return l.hi;
 }

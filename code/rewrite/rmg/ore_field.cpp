@@ -1,4 +1,4 @@
-﻿#include "ore_field.h"
+#include "ore_field.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -104,40 +104,44 @@ class OreHeap {
 
 }  // namespace
 
+// 把 work.queued 整表（side² 个 int32，行主序）写到 path。
+static void DumpQueued(const char* path,
+                       const std::vector<PaintWorkCell>& work, int side) {
+  FILE* f = std::fopen(path, "wb");
+  if (f == nullptr) return;
+  for (int i = 0; i < side * side; ++i) {
+    const std::int32_t q = work[static_cast<std::size_t>(i)].queued;
+    std::fwrite(&q, sizeof(q), 1, f);
+  }
+  std::fclose(f);
+}
+
 void CreateOreField(OreContext& ctx, const CellCoord& seed, int count,
-                    int field_id, bool is_gems) {
+                    int field_id, bool is_gems,
+                    int* out_pop_count, int* out_restarts, int* out_pool_overflow) {
   OreWorld& world = *ctx.world;
   std::vector<PaintWorkCell>& work = *ctx.work;
   const int side = ctx.side;
 
-  // operator new(count * 0x50) = count*10 条 8 字节的节点。
-  // ⚠️ 紧接着算出来的 count*10 - 1（存进 local_40）**一次都没被读**——池子没有
-  // 上界检查。用光之后原版会一路写到分配区外面（紧邻的多半就是堆数组），
-  // 那是真·未定义行为，逐字节复刻不了；这里让池子自然增长，并在此备案。
   const int cap = count * 10;
   std::vector<OreNode> pool(static_cast<std::size_t>(cap > 0 ? cap : 0));
   OreHeap heap(&pool, cap);
 
-  int used = 0;                                     // local_64
-  CellCoord origin = seed;                          // local_68
-  bool anchored = false;                            // bVar1
-  // 0x5A2953 neg cl / sbb ecx,ecx / and ecx,0xFFFFFFB5 / add ecx,0x66
-  // ——矿基址 102（Riparius 102..113）、宝石基址 27（Cruentus 27..38）
+  int used = 0;
+  CellCoord origin = seed;
+  bool anchored = false;
   const int base = is_gems ? 27 : 102;
-  int placed = 0;                                   // local_60
-  int restarts = 0;                                 // local_5c
-  heap.Clear();                    // 0x5A2988：分配时清过一遍，这里又清一遍
-  int cur = -1;                                     // local_74 = NULL
+  int placed = 0;
+  int restarts = 0;
+  int pool_overflow = 0;
+  heap.Clear();
+  int cur = -1;
 
   if (count > 0) {
     do {
-      if (restarts > 9) break;                      // 0x5A29B0 if (9 < local_5c)
+      if (restarts > 9) break;
       if (cur < 0) {
-        // —— 冷启动 / 扩散断了：整片田从种子格重来 ——
         heap.Clear();
-        // 0x5A29E0：**整整一遍全图迭代器**，把每格的工作记录 +0x3C 清 0。
-        // 最坏一片矿田要清 10 次全图。别改成增量清理——清的时机会影响下面
-        // queued != field_id 那个判定。
         ctx.grid.ForEachCell([&](const CellCoord& c) {
           work[static_cast<std::size_t>(c.y * side + c.x)].queued = 0;
         });
@@ -153,81 +157,75 @@ void CreateOreField(OreContext& ctx, const CellCoord& seed, int count,
         anchored = false;
       }
 
-      // 0x5A2BE9 GetCellAt(cur)：当前格的指针被缓存下来给后面的 overlay 写入，
-      // 所以这里取一次坐标就够；邻域循环里则**每个方向都重取**（见下）。
       const CellCoord cc{pool[static_cast<std::size_t>(cur)].x,
                          pool[static_cast<std::size_t>(cur)].y};
 
       if (!work[static_cast<std::size_t>(cc.y * side + cc.x)].flag45) {
         if (!anchored) {
-          // 本次爆发的第一格：把距离原点搬到这里，池子与堆全部作废
           origin = cc;
           anchored = true;
           heap.Clear();
-          // ⚠️ used 归零但池子内存不清。cur 指着的那一条紧接着就会被下面第一个
-          // 邻居覆写（冷启动后 cur 恒是 0 号槽，必然踩中）——于是同一轮邻域
-          // 循环里，后几个方向算的已经是**新坐标**的邻居了。照抄。
           used = 0;
           if (!is_gems) {
-            // 0x5A2B8E：折叠常数 3/(2^32-1) 再 fadd 1.0，拒绝 > 3
             const int i = PickFrom1(*ctx.rng, 3);
             char name[24];
-            std::sprintf(name, "TIBTRE0%d", i % 10);   // 0x82C090
+            std::sprintf(name, "TIBTRE0%d", i % 10);
             world.CreateTerrain(name, origin);
           }
         }
         if (world.Overlay(cc) == -1) {
-          const int v = PickBelow(*ctx.rng, 12);       // 0x5A2C18
+          const int v = PickBelow(*ctx.rng, 12);
+          if (ctx.pop_trace != nullptr) {
+            ctx.pop_trace->push_back(OrePopEntry{field_id, cc.x, cc.y, -1, v});
+          }
           world.SetOverlay(cc, v + base);
           ++placed;
         } else if (world.OverlayData(cc) > 10) {
-          // 0x5A2C61 goto LAB_005A2C67：吃满的老矿格既不加厚也不计入 placed，
-          // 但下面 8 个邻居照样展开——一片满田会把预算白白拖着转
         } else {
-          world.SetOverlayData(cc, world.OverlayData(cc) + 1);
+          const int od0 = world.OverlayData(cc);
+          world.SetOverlayData(cc, od0 + 1);
+          if (ctx.pop_trace != nullptr) {
+            ctx.pop_trace->push_back(OrePopEntry{field_id, cc.x, cc.y,
+                                                 od0, od0 + 1});
+          }
           ++placed;
         }
       }
 
-      // 0x5A2C73 lea edi, [edi + eax*8]：写指针 = 池底 + used
       int d = 0;
       do {
-        // 0x5A2C7F 起：邻接表 [0x89F688]，下标 d & 7，坐标按 **int16** 相加
         const CellCoord n{
             static_cast<std::int16_t>(pool[static_cast<std::size_t>(cur)].x +
                                       kAdjacentDelta[d & 7].x),
             static_cast<std::int16_t>(pool[static_cast<std::size_t>(cur)].y +
                                       kAdjacentDelta[d & 7].y)};
-        // 0x5A2CB5 IsWithinUsableArea(&n, 1)：第二个参数是 use_height，于是它
-        // 会先取格子读 +0x11B/+0x11C（出图就读到哑元里上一次的残留值）
         if (IsWithinUsableArea(ctx.map_w, ctx.local, n.x, n.y, world.Level(n),
                                world.Ramp(n), true)) {
-          if (IsUndecidedTile(world.IsoTile(n))) {     // 0x5A2CD9 = 0x486380
-            // 0x5A2CE6 起的两条接受条件。⚠️ 第二条**没有** fieldId 保护，
-            // 于是同一格可以被反复入队——池子就是这么被撑爆的。
+          if (IsUndecidedTile(world.IsoTile(n))) {
             if ((world.Overlay(n) == -1 &&
                  work[static_cast<std::size_t>(n.y * side + n.x)].queued !=
                      field_id) ||
                 (world.OverlayData(n) < 11 &&
                  world.ContainedTiberiumIndex(n) != -1)) {
               if (used >= static_cast<int>(pool.size())) {
-                pool.resize(static_cast<std::size_t>(used) + 1);  // 见上文备案
+                pool.resize(static_cast<std::size_t>(used) + 1);
+                ++pool_overflow;
               }
               OreNode& slot = pool[static_cast<std::size_t>(used)];
-              slot.x = static_cast<std::int16_t>(n.x);            // 0x5A2D40
+              slot.x = static_cast<std::int16_t>(n.x);
               slot.y = static_cast<std::int16_t>(n.y);
-              // 0x5A2D45 起：距离的原点是 origin，不是 seed
               const int dx = origin.x - n.x;
               const int dy = origin.y - n.y;
               const double dist =
                   FastSqrt(static_cast<double>(dy * dy + dx * dx));
-              // 0x5A2D8F 起：fild r / fmul 5.0 / fmul 1/(2^32-1) / fadd dist，
-              // 全程 double，最后 fstp dword 落成 float
-              const double jitter =
-                  static_cast<double>(
-                      static_cast<std::int64_t>(ctx.rng->Random())) *
-                  5.0 * kInvUintMax;
-              slot.key = static_cast<float>(jitter + dist);
+              const std::uint64_t rv = ctx.rng->Random();
+              if (ctx.enq_trace != nullptr) {
+                ctx.enq_trace->push_back(OrePopEntry{field_id, n.x, n.y, -9,
+                                                     static_cast<int>(rv)});
+              }
+              const double jitter_d =
+                  static_cast<double>(rv) * 5.0 * kInvUintMax;
+              slot.key = ChopFloat(jitter_d + dist);
               work[static_cast<std::size_t>(n.y * side + n.x)].queued = field_id;
               heap.Push(used);
               ++used;
@@ -240,6 +238,10 @@ void CreateOreField(OreContext& ctx, const CellCoord& seed, int count,
       cur = heap.Pop();
     } while (placed < count);
   }
+
+  if (out_pop_count != nullptr) *out_pop_count = placed;
+  if (out_restarts != nullptr) *out_restarts = restarts;
+  if (out_pool_overflow != nullptr) *out_pool_overflow = pool_overflow;
 }
 
 void PlaceTiberium(OreContext& ctx, RegionSet& regions,
@@ -266,12 +268,57 @@ void PlaceTiberium(OreContext& ctx, RegionSet& regions,
   }
 
   int wp_base = 0;                                   // local_80
+  int dump_seq = 0;   // ore_work_dump 的全局矿田序号，与 trace 条目一一对应
   for (int ri = 0; ri < regions.Count(); ++ri) {
     RegionClass* r = regions.At(ri);
     // 0x5A23F1 `cmp [edi], ebx / je` 判的是**候选点向量的指针**，不是元素个数
     // ——两者在 0x5A25A7 才分开判。指针为空这一路连 wpBase 都不推进。
     if (!r->candidates_created) continue;
     const int cand_count = static_cast<int>(r->candidates.size());
+
+    if (ctx.trace != nullptr) {
+      OreTraceEntry trace;
+      trace.kind = "region";
+      trace.region = ri;
+      trace.wp_base = wp_base;
+      trace.start_points = r->start_points;
+      trace.candidates = cand_count;
+      trace.cells = static_cast<int>(r->cells.size());
+      trace.before = ctx.rng->call_count();
+      trace.after = trace.before;
+      ctx.trace->push_back(trace);
+      for (int i = 0; i < cand_count; ++i) {
+        OreTraceEntry candidate;
+        candidate.kind = "input_candidate";
+        candidate.region = ri;
+        candidate.index = i;
+        candidate.wp_base = wp_base;
+        candidate.start_points = r->start_points;
+        candidate.candidates = cand_count;
+        candidate.cells = static_cast<int>(r->cells.size());
+        candidate.seed_x = r->candidates[static_cast<std::size_t>(i)].x;
+        candidate.seed_y = r->candidates[static_cast<std::size_t>(i)].y;
+        candidate.before = trace.before;
+        candidate.after = trace.after;
+        ctx.trace->push_back(candidate);
+      }
+      for (int i = 0; i < r->start_points; ++i) {
+        const CellCoord wp = world.Waypoint(i + wp_base);
+        OreTraceEntry waypoint;
+        waypoint.kind = "input_waypoint";
+        waypoint.region = ri;
+        waypoint.index = i;
+        waypoint.wp_base = wp_base;
+        waypoint.start_points = r->start_points;
+        waypoint.candidates = cand_count;
+        waypoint.cells = static_cast<int>(r->cells.size());
+        waypoint.seed_x = wp.x;
+        waypoint.seed_y = wp.y;
+        waypoint.before = trace.before;
+        waypoint.after = trace.after;
+        ctx.trace->push_back(waypoint);
+      }
+    }
 
     int special = -1;                                // local_6c
     if (do_pick) {
@@ -330,10 +377,42 @@ void PlaceTiberium(OreContext& ctx, RegionSet& regions,
         g = (*ctx.normal)() * 50.0;
       } while (g < -100.0 || g > 100.0);
       const int size = Ftol(static_cast<double>(avg) + g);
+      OreTraceEntry trace;
+      if (ctx.trace != nullptr) {
+        trace.kind = "candidate";
+        trace.region = ri;
+        trace.index = i;
+        trace.wp_base = wp_base;
+        trace.start_points = r->start_points;
+        trace.candidates = cand_count;
+        trace.total = total;
+        trace.avg = avg;
+        trace.special = special;
+        trace.field_id = i + wp_base + 1;
+        trace.size = size;
+        trace.normal = g;
+        trace.seed_x = r->candidates[static_cast<std::size_t>(i)].x;
+        trace.seed_y = r->candidates[static_cast<std::size_t>(i)].y;
+        trace.gems = (i == special) ? 1 : 0;
+        trace.before = ctx.rng->call_count();
+      }
       // 0x5A2608 cmp eax, ebx / jl：size < 0 时跳过这个候选点，但随机数已经花了
+      int pc = 0, pr = 0, po = 0;
       if (size >= 0) {
         CreateOreField(ctx, r->candidates[static_cast<std::size_t>(i)], size,
-                       i + wp_base + 1, i == special);
+                       i + wp_base + 1, i == special, &pc, &pr, &po);
+      }
+      trace.pop_count = pc;
+      trace.restarts_used = pr;
+      trace.pool_overflow = po;
+      if (ctx.trace != nullptr) {
+        trace.after = ctx.rng->call_count();
+        ctx.trace->push_back(trace);
+      }
+      if (!ctx.ore_work_dump_prefix.empty()) {
+        DumpQueued((ctx.ore_work_dump_prefix + "_" +
+                    std::to_string(dump_seq++) + ".bin").c_str(),
+                   *ctx.work, ctx.side);
       }
     }
 
@@ -367,7 +446,38 @@ void PlaceTiberium(OreContext& ctx, RegionSet& regions,
       const int size =
           Ftol((avg_dist[static_cast<std::size_t>(w)] - mn) * 15.0) + 500;
       const CellCoord wp = world.Waypoint(wp_base + w);
-      CreateOreField(ctx, wp, size, wp_base + w + 1, is_gems);
+      OreTraceEntry trace;
+      if (ctx.trace != nullptr) {
+        trace.kind = "start";
+        trace.region = ri;
+        trace.index = w;
+        trace.wp_base = wp_base;
+        trace.start_points = r->start_points;
+        trace.candidates = cand_count;
+        trace.total = total;
+        trace.avg = avg;
+        trace.special = special;
+        trace.field_id = wp_base + w + 1;
+        trace.size = size;
+        trace.seed_x = wp.x;
+        trace.seed_y = wp.y;
+        trace.gems = is_gems ? 1 : 0;
+        trace.before = ctx.rng->call_count();
+      }
+      int pc = 0, pr = 0, po = 0;
+      CreateOreField(ctx, wp, size, wp_base + w + 1, is_gems, &pc, &pr, &po);
+      trace.pop_count = pc;
+      trace.restarts_used = pr;
+      trace.pool_overflow = po;
+      if (ctx.trace != nullptr) {
+        trace.after = ctx.rng->call_count();
+        ctx.trace->push_back(trace);
+      }
+      if (!ctx.ore_work_dump_prefix.empty()) {
+        DumpQueued((ctx.ore_work_dump_prefix + "_" +
+                    std::to_string(dump_seq++) + ".bin").c_str(),
+                   *ctx.work, ctx.side);
+      }
     }
     wp_base += r->start_points;
   }

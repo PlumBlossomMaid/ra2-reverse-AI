@@ -1,4 +1,4 @@
-﻿#include "zones.h"
+#include "zones.h"
 
 #include <cstdlib>
 
@@ -250,6 +250,7 @@ ZoneResult ZoneTable::Rebuild() {
     }
     last_neighbour_ = 0;                 // [0xABDE8C] = 0，每个新区重置
     const int painted = Flood(p, zone, &run_len);
+
     if (biggest < painted) {
       biggest = painted;
       r.largest_zone = zone;

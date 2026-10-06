@@ -6,8 +6,10 @@
 
 #include "atan_table.h"
 #include "dd_log.h"
+#include "scaled_random.h"   // kInvUintMax, ChopFloat
 #include "sin_table.h"
 #include "sqrt_table.h"
+#include "x87_fyl2x.h"
 
 namespace ra2::rmg {
 namespace {
@@ -76,7 +78,8 @@ double FastSqrt(double x) {
   if (x < 0.0) x = x * -1.0;
 
   // 0x4CAC6D fstp dword：double -> float，受当前舍入模式（原版为向零截断）
-  const float f = static_cast<float>(x);
+  // ⚠️ 2026-10-04：用 ChopFloat 替代 static_cast<float>（与 SpreadKey 同理）
+  const float f = ChopFloat(x);
   std::uint32_t bits;
   std::memcpy(&bits, &f, sizeof bits);
 
@@ -136,9 +139,18 @@ double Atan(double x) {
   return (narrowed < 0.0f) ? -static_cast<double>(r) : static_cast<double>(r);
 }
 
-// 所有架构统一走双双精度实现——它给出的是「精确 ln 向零截断」这个唯一确定的数学值。
-// 不用本机 fyl2x 的理由见头文件与 docs/random-map/fast-math.md §四。
-double ChopLog(double s) { return dd::ChopLogPortable(s); }
+// 原版 0x598126: fldln2 / fxch / fyl2x，全局 RC=chop。
+// ChopLogPortable 给出「精确 ln 向零截断到 double」，与 x87 chop 模式下的 fyl2x
+// 在 99.965% 案例逐位一致，但 fyl2x 硬件近似在 0.035% 案例差 1 ULP。
+// NormalDeviate 用 ChopLog(ln(s)) → 1 ULP 差传播到 TruncNormal → GrowTreePatch
+// → trees RNG 750 差异。修法：在 x64 上直接执行 x87 fyl2x 指令。
+double ChopLog(double s) {
+#if defined(_M_X64) || defined(__x86_64__)
+  return X87Fyl2x::Instance().Compute(s);
+#else
+  return dd::ChopLogPortable(s);
+#endif
+}
 
 #if defined(_M_IX86) && !defined(_M_ARM)
 // 原版 0x598126: fldln2 / fxch / fyl2x。仅作测试取证用，产品路径不走这里。
@@ -154,9 +166,53 @@ double ChopLogX87(double s) {
 }
 #endif
 
+// X87SpreadKey：用 x87 机器码执行 80位扩展精度的 SpreadKey 计算链。
+// 真实游戏在真实 x87 硬件上运行（80位尾数），CLI 的 53位 double 中间
+// 计算差 2^-53 量级 → 偶尔 float key 差 1 ULP → GrowTreePatch heap
+// Pop 顺序翻转 → trees BFS 路径分岔 → 766 RNG 差异。
+// ⚠️ Unicorn 的 x87 模拟与真实硬件不一致 → 无法用 emu 验证。
+// 但真实游戏用真实 x87 → CLI 用 X87SpreadKey 应更接近真实游戏。
+#if defined(_M_X64) || defined(__x86_64__)
+float X87SpreadKey(double dist, std::uint32_t draw) {
+  struct SpreadKeyInput { double draw_d; double dist; };
+  static const unsigned char kCode2[] = {
+    0x48,0x83,0xEC,0x20, 0xDD,0x3C,0x24, 0xDB,0xE3,
+    0x66,0xB8,0x7F,0x0E, 0x66,0x89,0x44,0x24,0x08,
+    0xDB,0x6C,0x24,0x08, 0xDB,0xE2,
+    0xC7,0x44,0x24,0x10,0x00,0x00,0x00,0x00,
+    0xC7,0x44,0x24,0x14,0x00,0x00,0x14,0x40,
+    0xC7,0x44,0x24,0x18,0x00,0x00,0x10,0x00,
+    0xC7,0x44,0x24,0x1C,0x00,0x00,0xF0,0x3D,
+    0xDD,0x01, 0xDC,0x4C,0x24,0x10, 0xDC,0x4C,0x24,0x18,
+    0xDC,0x41,0x08, 0xD9,0x5C,0x24,0x08, 0xDB,0x2C,0x24,
+    0x66,0x0F,0x6E,0x44,0x24,0x08, 0x48,0x83,0xC4,0x20, 0xC3,
+  };
+  static auto func = []() -> float(*)(const SpreadKeyInput*) {
+    SYSTEM_INFO si; GetSystemInfo(&si);
+    auto code = static_cast<unsigned char*>(
+        VirtualAlloc(nullptr, si.dwPageSize, MEM_COMMIT, PAGE_READWRITE));
+    if (!code) return nullptr;
+    std::memcpy(code, kCode2, sizeof(kCode2));
+    DWORD oldProtect;
+    VirtualProtect(code, si.dwPageSize, PAGE_EXECUTE_READ, &oldProtect);
+    return reinterpret_cast<float(*)(const SpreadKeyInput*)>(code);
+  }();
+  if (func) {
+    SpreadKeyInput input{static_cast<double>(static_cast<std::uint64_t>(draw)),
+                         dist};
+    return func(&input);
+  }
+  const double jitter =
+      static_cast<double>(static_cast<std::uint64_t>(draw)) * 5.0 * kInvUintMax;
+  return ChopFloat(jitter + dist);
+}
+#endif  // _M_X64
+
 double UniformUnit(Randomizer& rng) {
   // 0x598019 fild qword：uint32 先补成 64 位有符号再转 double（x87 无无符号转换）
-  return static_cast<double>(static_cast<std::int64_t>(rng.Random())) * kInvUint32Max;
+  // ⚠️ 原版 fild qword 高位写 0 → uint32 零扩展 → double。
+  // static_cast<int64_t>(uint32_t) 在 r >= 2^31 时符号扩展成负数！
+  return static_cast<double>(static_cast<std::uint64_t>(rng.Random())) * kInvUint32Max;
 }
 
 double NormalDeviate::operator()() {
@@ -177,7 +233,7 @@ double NormalDeviate::operator()() {
 
   const double l = ChopLog(s);
   const double sqrt_in = (-l - l) / s;
-  const double f = FastSqrt(sqrt_in);   // sqrt(-2*ln(s)/s)
+  const double f = FastSqrt(sqrt_in);   // sqrt(-2*ln(s)/s) — 标准 Box-Muller
 
   has_cached_ = true;
   cached_ = f * v;                   // 第二个偏差留到下次调用

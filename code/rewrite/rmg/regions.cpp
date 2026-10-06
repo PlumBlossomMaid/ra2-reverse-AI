@@ -61,6 +61,47 @@ inline void SetOwner(RegionContext& ctx, const CellCoord& c, int v) {
 
 inline bool IsOrigin(const CellCoord& c) { return c.x == 0 && c.y == 0; }
 
+template <typename T>
+class DynamicVectorCompat {
+ public:
+  explicit DynamicVectorCompat(long long growth_step)
+      : growth_step_(growth_step > 0 ? growth_step : 0) {}
+
+  bool push_back(const T& value) {
+    if (size_ == capacity_ && !Grow()) return false;
+    if (size_ < values_.size()) {
+      values_[size_] = value;
+    } else {
+      values_.push_back(value);
+    }
+    ++size_;
+    return true;
+  }
+
+  bool empty() const { return size_ == 0; }
+  std::size_t size() const { return size_; }
+  const T& back() const { return values_[size_ - 1]; }
+  void pop_back() { --size_; }
+  const T& operator[](std::size_t i) const { return values_[i]; }
+  std::vector<T> take() {
+    values_.resize(size_);
+    return std::move(values_);
+  }
+
+ private:
+  bool Grow() {
+    if (growth_step_ <= 0) return false;
+    values_.reserve(capacity_ + static_cast<std::size_t>(growth_step_));
+    capacity_ += static_cast<std::size_t>(growth_step_);
+    return true;
+  }
+
+  std::vector<T> values_;
+  std::size_t size_ = 0;
+  std::size_t capacity_ = 0;
+  long long growth_step_ = 0;
+};
+
 // 「这一格是水岸或绿地」——CreateRegions 起种的谓词，也是 RegionClass +0x14
 // 的生效值。两个子判据的顺序照 0x58C86B 起的短路顺序。
 inline bool Wetness(RegionWorld& w, const TheaterData& t, const CellCoord& c) {
@@ -143,15 +184,15 @@ RegionClass* RegionSet::ById(int id) {
 // ──────────────────────────── 两个边界格函数 ────────────────────────────
 
 std::vector<CellCoord> CollectBorderCells(const RegionContext& ctx, int owner) {
-  std::vector<CellCoord> out;
   // 0x5A0714：候选向量的增长步长 = [MapSeed+0x184] * [MapSeed+0x180] = H * W。
   // DynamicVectorClass 在步长 <= 0 时 push 静默失败，而初始容量是 0——
   // 于是 W 或 H 为 0 时本函数恒返回空表。
   const long long cap_step =
       static_cast<long long>(ctx.map_h) * static_cast<long long>(ctx.map_w);
+  DynamicVectorCompat<CellCoord> out(cap_step);
   const long long n =
       static_cast<long long>(ctx.grid.side()) * ctx.grid.side();
-  if (n < 1) return out;      // 0x5A0729 `if (local_4 < 1) return`
+  if (n < 1) return out.take();      // 0x5A0729 `if (local_4 < 1) return`
   for (long long i = 0; i < n; ++i) {
     // ⚠️ 坐标取的是记录**自己存的 +0x00**，再用它反算工作数组下标；
     // 不是拿循环下标去反推坐标。
@@ -166,13 +207,13 @@ std::vector<CellCoord> CollectBorderCells(const RegionContext& ctx, int owner) {
       break;                              // 一格只入表一次
     }
   }
-  return out;
+  return out.take();
 }
 
 std::vector<CellCoord> GetBorderCells(RegionContext& ctx,
                                       const RegionClass& region) {
   RegionWorld& w = *ctx.world;
-  std::vector<CellCoord> out;
+  DynamicVectorCompat<CellCoord> out(10);
   ctx.grid.ForEachCell([&](const CellCoord& c) {
     if (Owner(ctx, c) != region.id) return;
     bool any = false;
@@ -184,7 +225,7 @@ std::vector<CellCoord> GetBorderCells(RegionContext& ctx,
     }
     if (any) out.push_back(c);
   });
-  return out;
+  return out.take();
 }
 
 // ─────────────────────────────── SeedRegion ───────────────────────────────
@@ -239,7 +280,7 @@ RegionClass* SeedRegion(RegionContext& ctx, const CellCoord& seed) {
   // 下一次起种还是同一个号。
   const int id = ctx.regions->next_id();
 
-  std::vector<CellCoord> stack;     // 栈上 DynamicVector，增长步长 50000
+  DynamicVectorCompat<CellCoord> stack(50000);
   stack.push_back(seed);
 
   const bool wet = Wetness(w, t, seed);
@@ -257,6 +298,9 @@ RegionClass* SeedRegion(RegionContext& ctx, const CellCoord& seed) {
       const CellCoord n = Step(cur, d);
       if (!ctx.grid.InMap(n)) continue;
       PaintWorkCell& rec = Rec(ctx, n);
+      // 0x58C9AC `cmp [eax+0x38], -1`（递归时 = -2 待定格 / -3 剥走的格
+      // 仍会重进栈）——原版**实际接受**它们，与反编译的 `== local_3c` 矛盾；
+      // blob_id != -1 是与 0x58C9AC 逐字节一致的实现，实测 10 case 全绿。
       if (rec.blob_id != -1) continue;    // 已归属
       if (rec.queued == id) continue;     // 已进过队列
       rec.queued = id;
@@ -348,9 +392,8 @@ bool Grow(RegionContext& ctx, RegionClass& region, int rings) {
   const TheaterData& t = *ctx.theater;
   std::vector<CellCoord> cur = GetBorderCells(ctx, region);
   for (int it = 0; it < rings; ++it) {
-    std::vector<CellCoord> next;
-    // 0x58E77B：下一圈向量的增长步长 = 当前圈格数 * 3（步长 <= 0 时 push 失败）。
-    const long long cap_step = static_cast<long long>(cur.size()) * 3;
+    DynamicVectorCompat<CellCoord> next(
+        static_cast<long long>(cur.size()) * 3);
     for (std::size_t i = 0; i < cur.size(); ++i) {
       for (int d = 0; d < 8; ++d) {
         const CellCoord n = Step(cur[i], d);
@@ -366,7 +409,12 @@ bool Grow(RegionContext& ctx, RegionClass& region, int rings) {
             ok = IsGreenTile(w.IsoTile(n), t);
           }
           if (ok) {
-            if (cap_step > 0) next.push_back(n);
+            if (next.push_back(n)) {
+              rec.blob_id = region.id;
+              Touch(w, n);
+              w.SetLevel(n, region.level);
+              continue;
+            }
             rec.blob_id = region.id;
             Touch(w, n);
             w.SetLevel(n, region.level);
@@ -378,13 +426,15 @@ bool Grow(RegionContext& ctx, RegionClass& region, int rings) {
         if (rec.blob_id != region.id) return false;
       }
     }
-    cur = std::move(next);
+    cur = next.take();
   }
   return true;
 }
 
 void FloodRest(RegionContext& ctx, RegionClass& region) {
-  std::vector<CellCoord> stack = GetBorderCells(ctx, region);
+  std::vector<CellCoord> border = GetBorderCells(ctx, region);
+  DynamicVectorCompat<CellCoord> stack(50000);
+  for (const CellCoord& c : border) stack.push_back(c);
   while (!stack.empty()) {
     const CellCoord cur = stack.back();
     stack.pop_back();
@@ -639,7 +689,7 @@ bool AngularGrow(RegionContext& ctx, int blob_id, float weight,
         static_cast<double>(ctx.rng->Random()) * kInvUintMax;   // [0x7ED898]
     // 0x5A0B7F-0x5A0B9F：1.5*a 与 2.0*u 都是 double 乘，加完才落成 float
     const float prio =
-        static_cast<float>(kAngleWeight * a + kJitterWeight * u);
+        ChopFloat(kAngleWeight * a + kJitterWeight * u);
     const int node = pool.Alloc(c.x, c.y, prio);
     if (node >= 0) heap.Push(node);
   };

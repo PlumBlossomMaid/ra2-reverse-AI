@@ -13,18 +13,12 @@ namespace cli {
 
 namespace {
 
-// EA 编辑器的键编码：value = "x" + "y补零3位"。y 的补零是把数字串
-// 前补 '0' 到至少 3 位（strcpy_safe(j+1, j) 逐位前移）。
-// 注意：x/y 是**等距坐标**（cell 列/行），不是真实坐标——EA 官方图
-// （sandwell 100×150 waypoint (229,148)、捡箱子 200×200 waypoint (374,203)）
-// 都远超地图尺寸，实锤等距语义（FA2 PosToXY 后按 x + y*IsoSize 做 cell 索引）。
+// 新 INI 格式下，[Waypoints]/[Terrain] 的键都是 x*1000+y：
+// 逐字节对拍 RandMap.Map 实锤；游戏读回后仍按等距坐标使用。
 std::string KeyXY(int x, int y) {
   char buf[16];
-  std::snprintf(buf, sizeof(buf), "%d", y);
-  std::string y3 = buf;
-  while (y3.size() < 3) y3.insert(y3.begin(), '0');
-  std::snprintf(buf, sizeof(buf), "%d", x);
-  return std::string(buf) + y3;
+  std::snprintf(buf, sizeof(buf), "%d", x * 1000 + y);
+  return std::string(buf);
 }
 
 void AppendB64Lines(std::string& out, const std::vector<std::uint8_t>& data) {
@@ -39,16 +33,40 @@ void AppendB64Lines(std::string& out, const std::vector<std::uint8_t>& data) {
   }
 }
 
+struct ScreenCoord {
+  int x = 0;
+  int y = 0;
+};
+
+ScreenCoord ToScreenCoord(const rmg::CellCoord& c) {
+  return ScreenCoord{(c.x - c.y + 511) / 2, (c.x + c.y + 1) / 2};
+}
+
+bool InHeaderArea(const CliCell& cell, const rmg::CellCoord& c, int map_w,
+                  int local_x, int local_y, int local_w, int local_h) {
+  int adj = static_cast<int>(cell.level);
+  if (cell.ramp != 0 &&
+      c.x + c.y < map_w + local_y * 2 + 4 + adj) {
+    ++adj;
+  }
+  if (c.x + c.y <= map_w + local_y * 2 + adj) return false;
+  if (c.x + c.y > map_w + (local_y + local_h) * 2 + 2 + adj) {
+    return false;
+  }
+  if (c.x - c.y >= (local_x + local_w) * 2 - map_w) return false;
+  if (c.y - c.x >= map_w - local_x * 2) return false;
+  return true;
+}
+
 }  // namespace
 
 std::string BuildMapFile(const PipelineResult& r, int theater, int level) {
   std::string out;
-  const int map_w = r.map_w + 4;    // [0x87F8DC]
-  const int map_h = r.map_h + 12;   // [0x87F8E0]
-
-  // ── [Map]（stage-init.md §三）──
-  out += "[Map]\n";
   char buf[128];
+  const int map_w = r.map_w + 4;    // [0x87F8DC]
+  const int map_h = r.map_h + 12;
+
+  out += "[Map]\n";
   std::snprintf(buf, sizeof(buf), "Size=0,0,%d,%d\n", map_w, map_h);
   out += buf;
   std::snprintf(buf, sizeof(buf), "LocalSize=2,5,%d,%d\n", r.map_w, r.map_h);
@@ -72,8 +90,14 @@ std::string BuildMapFile(const PipelineResult& r, int theater, int level) {
 
   // ── [IsoMapPack5]（0x56B3F0 写链）──
   // slots 按 (y<<9)+x 排布，i 从 1 起、菱形外 NULL。
+  // slots 保存 pool 元素的地址，必须在 push_back 前一次性预留完整容量；
+  // 不能依赖 0x10000 这个只覆盖小地图的经验上限。
+  std::size_t cell_count = 0;
+  for (int i = 1; i < 0x40000; ++i) {
+    if (r.exists[static_cast<std::size_t>(i)] != 0) ++cell_count;
+  }
   std::vector<mapenc::IsoCell> pool;
-  pool.reserve(0x10000);
+  pool.reserve(cell_count);
   std::vector<const mapenc::IsoCell*> slots(0x40000, nullptr);
   for (int i = 1; i < 0x40000; ++i) {
     if (r.exists[static_cast<std::size_t>(i)] == 0) continue;
@@ -124,7 +148,7 @@ std::string BuildMapFile(const PipelineResult& r, int theater, int level) {
   AppendB64Lines(out, ovld_pack);
   out += "\n";
 
-  // ── [Waypoints]（键 = 数字，值 = "x"+"y 补零 3 位"，等距坐标）──
+  // ── [Waypoints]（键 = 数字，值 = y*1000+x，等距坐标）──
   // 阶段 6 的 SetWaypoint(base+i) 从 base=0 起，waypoint 0 也有效；
   // 只写被填过的（坐标非 (0,0)）。
   bool has_wp = false;
@@ -147,7 +171,7 @@ std::string BuildMapFile(const PipelineResult& r, int theater, int level) {
     out += "\n";
   }
 
-  // ── [Terrain]（键 = "x"+"y 补零 3 位"，值 = 地形名，等距坐标）──
+  // ── [Terrain]（键 = y*1000+x，值 = 地形名，等距坐标）──
   if (!r.terrains.empty()) {
     out += "[Terrain]\n";
     for (const TerrainRecord& t : r.terrains) {

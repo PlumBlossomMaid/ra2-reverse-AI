@@ -24,11 +24,13 @@
 #ifndef RA2_ASSETS_THEATER_ASSETS_H_
 #define RA2_ASSETS_THEATER_ASSETS_H_
 
+#include <map>
 #include <string>
 #include <vector>
 
 #include "mix_archive.h"
 #include "place_tile.h"   // rmg::TileType（贴砖器吃的形状）
+#include "tech_buildings.h"
 #include "theater.h"
 #include "tmp_file.h"
 
@@ -67,10 +69,17 @@ class TheaterAssets {
   // 越界不会崩、会绕回去；空洞与缺文件都返回 0。
   int GroundTypeOf(int tile, int sub_index) const;
 
+  // artmd.ini [BuildingArt] Foundation= 转成阶段 7 的占地表。
+  const std::map<std::string, std::vector<rmg::FoundationOffset>>& foundations()
+      const {
+    return foundations_;
+  }
+
  private:
   rmg::TheaterData data_;
   std::string ini_text_;
   std::vector<TileType> tiles_;
+  std::map<std::string, std::vector<rmg::FoundationOffset>> foundations_;
 };
 
 }  // namespace assets

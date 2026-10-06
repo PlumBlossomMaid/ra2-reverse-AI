@@ -55,7 +55,7 @@ void PlaceBlobsGrid(PaintContext& ctx, const PlaceParams& p) {
   for (const Rect& rc : regions) {
     // 预算 = 区域格数的 45%~50%。真实坐标 w×h 的矩形在等距网格里占 2wh 格。
     const double u =
-        static_cast<double>(static_cast<std::int64_t>(ctx.rng->Random())) *
+        static_cast<double>(static_cast<std::uint64_t>(ctx.rng->Random())) *
         kInvUintMax;
     const int budget =
         Ftol((u * 0.05 + 0.45) * static_cast<double>(2 * rc.h * rc.w));

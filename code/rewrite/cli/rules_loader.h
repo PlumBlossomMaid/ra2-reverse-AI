@@ -1,13 +1,16 @@
 // rulesmd.ini 里随机地图生成器依赖的键（数据驱动，不硬编码默认值以外的任何数）。
 //
 // 键名（全部来自原版 RulesClass 装载点取证）：
-//   [General] RMGMinimumTiberium / RMGMaximumTiberium / MaxTrees /
-//             NeutralTechBuildings（逗号分隔建筑名表）
+//   [General] RMGMinimumTiberium / RMGMaximumTiberium / MaxTrees
+//   [AI]      NeutralTechBuildings（逗号分隔建筑名表）
 //   12 个地面小节（GroundType 顺序，zones.h 的枚举）的 Foot=
 #pragma once
 
+#include <map>
 #include <string>
 #include <vector>
+
+#include "rmg/tech_buildings.h"
 
 namespace ra2 {
 namespace cli {
@@ -16,7 +19,9 @@ struct RmgRules {
   int min_tiberium = 2500;   // [General] RMGMinimumTiberium
   int max_tiberium = 5500;   // [General] RMGMaximumTiberium
   int max_trees = 500;       // [General] MaxTrees
-  std::vector<std::string> neutral_tech_buildings;  // [General] NeutralTechBuildings
+  int cliff_back_impassability = 2;  // [General] CliffBackImpassability (0/1/2)
+  std::vector<std::string> neutral_tech_buildings;  // [AI] NeutralTechBuildings
+  std::map<std::string, std::vector<ra2::rmg::FoundationOffset>> foundations;
   // 12 个地面小节 Foot=，顺序 = GroundType 枚举（kGroundClear..kGroundWeeds）。
   // 缺键的小节补 0。
   std::vector<float> ground_foot;

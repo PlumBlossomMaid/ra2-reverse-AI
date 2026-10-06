@@ -34,6 +34,15 @@ add_library(ra2_rmg
   theater.cpp
   fp_guard.cpp)
 
+# x87 汇编模块：NormalDeviate 的 u/v/s 计算需要 80 位中间精度
+# （原版 MSVC 6.0 用 x87；MSVC 2022 SSE2 即使 /arch:IA32 也不生成 x87）
+if(MSVC AND CMAKE_SIZEOF_VOID_P EQUAL 8)
+  enable_language(ASM_MASM)
+  target_sources(ra2_rmg PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/x87_reject.asm)
+  set_source_files_properties(${CMAKE_CURRENT_SOURCE_DIR}/x87_reject.asm
+    PROPERTIES LANGUAGE ASM_MASM)
+endif()
+
 target_include_directories(ra2_rmg PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_features(ra2_rmg PUBLIC cxx_std_17)
 
@@ -195,6 +204,11 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_place_start_points PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME place_start_points COMMAND test_place_start_points)
+
+  # 0x5A1FB0：从每个出生点做 400 步洪泛，写 work.+0x45 保护区
+  add_executable(test_start_influence test/test_start_influence.cpp)
+  target_link_libraries(test_start_influence PRIVATE ra2_rmg gtest_main)
+  add_test(NAME start_influence COMMAND test_start_influence)
 
   add_executable(test_zones test/test_zones.cpp)
   target_link_libraries(test_zones PRIVATE ra2_rmg gtest_main)

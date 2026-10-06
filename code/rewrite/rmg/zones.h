@@ -121,6 +121,16 @@ class ZoneTable {
   ZoneCell& at(int x, int y) { return at(CellToIndex(x, y)); }
   const ZoneCell& at(int x, int y) const { return at(CellToIndex(x, y)); }
 
+  // 整表迭代（不含 padding 哨兵），供导出/对拍用。
+  std::vector<ZoneCell>::iterator begin() { return cells_.begin() + kPad; }
+  std::vector<ZoneCell>::iterator end() { return cells_.begin() + kPad + count(); }
+  std::vector<ZoneCell>::const_iterator begin() const {
+    return cells_.begin() + kPad;
+  }
+  std::vector<ZoneCell>::const_iterator end() const {
+    return cells_.begin() + kPad + count();
+  }
+
   // `MapClass::Update_Pathfinding_1`（0x56C510）。
   ZoneResult Rebuild();
 

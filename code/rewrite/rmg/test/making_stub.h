@@ -66,8 +66,21 @@ struct Cell {
 class MakingStub : public MakingWorld {
  public:
   MakingStub(const MapGrid& g, std::vector<PaintWorkCell>* work)
-      : grid_(g), work_(work), cells_(kCellSlots), exists_(kCellSlots, 0) {
-    g.ForEachCell([&](const CellCoord& c) { exists_[SlotOf(c)] = 1; });
+      : grid_(g), work_(work), cells_(kCellSlots), exists_(kCellSlots, 0),
+        dummy_coord_{0, 0} {
+    // 原版格子指针表在 Set_Dimensions（0x42AC00）铺满整个 side² 槽域；
+    // 菱形内槽位有效、菱形外为空指针 → 落到共享哑元。
+    // ⚠️ 不能用 ForEachCell 铺 exists_：它的起点是 (1, W)，而 InMap 的第一条
+    // 判据是 X+Y > W（严格大于）——起点自身落在菱形外，ForEachCell 在 70×70
+    // 上一步都不走（count = W-1 恒为 0），exists_ 会恒全 0，所有格子读请求
+    // 都退到哑元。必须按 InMap 逐格枚举 side² 槽域。
+    for (int y = 0; y < g.side(); ++y) {
+      for (int x = 0; x < g.side(); ++x) {
+        if (!g.InMap(x, y)) continue;
+        const int s = SlotOf(CellCoord{x, y});
+        if (s >= 0) exists_[static_cast<std::size_t>(s)] = 1;
+      }
+    }
   }
 
   // ── RegionWorld ∩ TileWorld ──

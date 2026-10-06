@@ -26,7 +26,7 @@ double TruncNormal(NormalDeviate& nd, double mu, double sigma, double lo,
   double v;
   do {
     v = nd() * sigma + mu;
-  } while (v < lo || v > hi);   // 闭区间接受
+  } while (v < lo || v >= hi);   // 原版 test ah,0x41 → v >= hi 也重抽（闭区间不含 hi）
   return v;
 }
 
@@ -77,7 +77,6 @@ void GenerateHeightField(const MapGrid& grid, std::vector<PaintWorkCell>& work,
   const int n = side * side;
   for (int i = 0; i < n; ++i) {
     PaintWorkCell& w = work[static_cast<std::size_t>(i)];
-    // 打包坐标为 (0,0) 的槽位（菱形外）整条跳过
     if (w.coord.x == 0 && w.coord.y == 0) continue;
     const int x = w.coord.x, y = w.coord.y;
 

@@ -63,8 +63,10 @@ void Randomizer::Seed(std::uint32_t seed) {
 
 // 0x65C780
 std::uint32_t Randomizer::Random() {
+  if (hook_ != nullptr) hook_(hook_user_, call_count_ + 1, *this, true);
   ++call_count_;   // 观测点：与"进入 0x65C780 的次数"对齐，含 Disabled 短路那一路
   if (disabled_) {
+    if (hook_ != nullptr) hook_(hook_user_, call_count_, *this, false);
     return 0;
   }
 
@@ -79,6 +81,7 @@ std::uint32_t Randomizer::Random() {
   if (index2_ >= kStateSize) {
     index2_ = 0;
   }
+  if (hook_ != nullptr) hook_(hook_user_, call_count_, *this, false);
   return result;
 }
 

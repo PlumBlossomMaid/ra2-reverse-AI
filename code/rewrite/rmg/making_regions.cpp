@@ -13,6 +13,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
+#include <cstdlib>
 
 #include "blob_heap.h"      // NodePool / MinHeap（切分的扩散堆）
 #include "cliff_work.h"     // FillNotch（RebuildRegions 第一遍）
@@ -99,6 +100,10 @@ inline void GrowRect(Rect* b, int x, int y) {
   }
 }
 
+// 0x58E5D0 用的取邻格（0x58D620 扩散里 `work[弹格索引 + tab[k]]` 的检查项）：
+// 0x58D9DD 用弹格坐标算索引，0x58D9EA 检查候选格 —— 与写入位置（node+tab[k]）
+// 无关。完整去重版：标记候选格本身（emu BSS=0 时的行为，golden 口径）。
+
 // 取数点 4（0x58E37D）：`do { v = _ftol(Random() × count × 1/(2³²−1)); }
 // while ((uint)(count-1) < v);`——两步乘，不是 PickBelow 的折叠一次乘。
 // ⚠️ count == 0 时 `(uint)(count-1) < v` 恒假，立刻接受 v=0 然后读 cands[0]
@@ -125,10 +130,30 @@ unsigned HigherMask(const RegionContext& ctx, MakingWorld& world,
       !(*ctx.work)[WorkIdx(ctx, c)].flag4a) {
     return 0;                              // work[c].+0x4A == 0
   }
+  // 原版先按 NE,E,SE,S,SW,W,NW,N 顺序取得全部八个 CellClass 指针，
+  // 再逐项读取字段；无效格共享同一个 dummy，因此不能边取边读。
+  constexpr int kFetchOrder[8] = {1, 2, 3, 4, 5, 6, 7, 0};
+  CellCoord neighbours[8];
+  for (int i = 0; i < 8; ++i) {
+    const int d = kFetchOrder[i];
+    neighbours[d] = Step(c, d);
+    Touch(world, neighbours[d]);
+  }
+
   unsigned m = 0;
+  if (std::getenv("RA2_RMG_CLIFF_DEBUG") && c.x == 49 && c.y == 26) {
+    std::fprintf(stderr, "HMASK (1,74) lvl=%d flag4a=%d\n", lvl,
+                 (*ctx.work)[WorkIdx(ctx, c)].flag4a ? 1 : 0);
+    for (int d = 0; d < 8; ++d) {
+      const CellCoord n = neighbours[d];
+      bool in_map = ctx.grid.InMap(n);
+      int nl = in_map ? world.Level(n) : -999;
+      std::fprintf(stderr, "  d=%d n=(%d,%d) inmap=%d lvl=%d need=%d\n",
+                   d, n.x, n.y, in_map ? 1 : 0, nl, lvl + 4);
+    }
+  }
   for (int d = 0; d < 8; ++d) {
-    const CellCoord n = Step(c, d);
-    Touch(world, n);                       // 0x579Cxx 先取 cell 指针，界外写哑元
+    const CellCoord n = neighbours[d];
     if (!ctx.grid.InMap(n)) continue;      // CoordinatesLegal
     if (world.Level(n) != lvl + 4) continue;
     if (IsProtectedTerrainCell(*ctx.theater, world.IsoTile(n),
@@ -179,15 +204,16 @@ float Priority(Randomizer& rng, const CellCoord& origin,
   a = std::fabs(a - base_angle);
   while (a >= kTwoPi) a -= kTwoPi;                 // 先 fabs 再模，顺序照抄
   if (a > kPi) a = kTwoPi - a;
-  // ⚠️ 求和顺序照抄 0x58C7D6-0x58C7EC：R 项先算，再依次加 0.15*d 和 1.5*a。
-  // x87 是 ((R + 0.15*d) + 1.5*a)，不是 C++ 左结合的 (0.15*d + 1.5*a) + R——
-  // 浮点加法不结合，1 ULP 差异会让最小堆的弹出顺序分岔，进而扩散路径不同。
+  // ⚠️ 求和顺序照抄 0x58C7C6-0x58C7EC（汇编实测）：
+  // 原版是 (R + 1.5*a) + 0.15*d，不是 (R + 0.15*d) + 1.5*a——
+  // 浮点加法不结合，1 ULP 差异会让最小堆弹出顺序分岔。
+  // ⚠️ 原版 0x58DA3E 用 fstp dword（x87 chop 模式）截断到 float，
+  // 不是 static_cast<float>（SSE2 round-to-nearest）→ 用 ChopFloat。
   const std::uint32_t rv = rng.Random();
   const double r =
       static_cast<double>(static_cast<std::uint32_t>(rv)) *
       kInvUintMax * 2.5;
-  const float out = static_cast<float>((r + 0.15 * d) + 1.5 * a);
-  return out;
+  return ChopFloat((r + 1.5 * a) + 0.15 * d);
 }
 
 bool CountAtLeast(const RegionContext& ctx, const Rect& r, int id, int need) {
@@ -353,12 +379,11 @@ bool SplitRegion(RegionContext& ctx, RegionClass* region) {
       if (!ctx.grid.InMap(nb)) continue;
       PaintWorkCell& rec = Rec(ctx, nb);
       if (rec.blob_id != -2) continue;                 // 不是本区待定格
-      // ⚠️ 原版防重是"半成品"：0x58DA5B 的标记位置 = 弹格索引 + 0x89A304[d]
-      // （该表 8 项全 = -1）→ 实际标记"弹格左边一格"，只对方向 6（左）的
-      // 候选生效；其余方向候选可重复发现、重复入堆（(97,97) 被 P6/P11 两次
-      // 发现）。照抄不防重才能复现（候选格 queued 从不被写，0x58D9EA 不命中）。
+      // 0x58D9EA：candidate.queued == -3 → 已入堆过，跳过（不耗 RNG）。
+      if (rec.queued == -3) continue;
       if (!IsPlain(w, nb)) continue;                   // 0x486380
       const float key = Priority(*ctx.rng, seed, nb, angle);  // 每格 1 随机数
+      rec.queued = -3;                                 // 0x58DA5B：标记候选格
       const int slot = pool.Alloc(nb.x, nb.y, key);
       if (slot >= 0) heap.Push(slot);                  // 满则静默丢弃（照抄）
       ++next;
@@ -411,6 +436,16 @@ bool SplitRegion(RegionContext& ctx, RegionClass* region) {
   }
 
   // 2.9 给每个新区域定层高（倒序，跳过已作废的）。
+  if (std::getenv("RA2_RMG_CLIFF_DEBUG")) {
+    std::fprintf(stderr, "FRESH_LIST size=%d for split of region cells=%d\n",
+                 (int)fresh.size(), (int)region->cells.size());
+    for (std::size_t fi2 = 0; fi2 < fresh.size(); ++fi2) {
+      const CellCoord& sc = fresh[fi2]->cells[0];
+      std::fprintf(stderr, "  fresh[%d]=r%d cells=%d lvl=%d seed=(%d,%d)\n",
+                   (int)fi2, fresh[fi2]->id, fresh[fi2]->cell_count,
+                   fresh[fi2]->level, sc.x, sc.y);
+    }
+  }
   for (std::size_t fi = fresh.size(); fi-- > 0;) {
     RegionClass* r = fresh[fi];
     if (r->discarded /*+0x24*/ != 0) continue;
@@ -472,8 +507,18 @@ bool SplitRegion(RegionContext& ctx, RegionClass* region) {
         r->level = best_level;
         const int d =
             static_cast<std::int8_t>(best_level) - static_cast<std::int8_t>(old);
+        if (std::getenv("RA2_RMG_CLIFF_DEBUG")) {
+          std::fprintf(stderr, "MERGE_SMALL r=%d cells=%d old_lvl=%d new_lvl=%d d=%d best=%d\n",
+                       r->id, r->cell_count, old, best_level, d, best ? best->id : -1);
+        }
         ctx.grid.ForEachCell([&](const CellCoord& c) {
-          if (Owner(ctx, c) == r->id) w.SetLevel(c, w.Level(c) + d);
+          if (Owner(ctx, c) == r->id) {
+            if (std::getenv("RA2_RMG_CLIFF_DEBUG") && (c.x == 85 && c.y == 12)) {
+              std::fprintf(stderr, "  MERGE (85,12) old_lvl=%d +d=%d -> %d\n",
+                           w.Level(c), d, w.Level(c) + d);
+            }
+            w.SetLevel(c, w.Level(c) + d);
+          }
         });
         for (std::size_t i = r->cells.size(); i-- > 0;) {
           best->cells.push_back(r->cells[i]);
@@ -485,11 +530,28 @@ bool SplitRegion(RegionContext& ctx, RegionClass* region) {
       // best == nullptr：什么都不做，这个小区域原样留着
     } else {
       const int old = r->level;
+      if (std::getenv("RA2_RMG_CLIFF_DEBUG")) {
+        std::fprintf(stderr, "REROLL_LARGE r=%d cells=%d old_lvl=%d min_l=%d max_l=%d cands=%d best=%d best_lvl=%d\n",
+                     r->id, r->cell_count, old, min_l, max_l, (int)cands.size(),
+                     best ? best->id : -1, best_level);
+        for (int ci = 0; ci < (int)cands.size(); ++ci)
+          std::fprintf(stderr, "  cand[%d]=%d\n", ci, cands[ci]);
+      }
       const int v = PickCandsIndex(*ctx.rng, cands.size());
       r->level = cands[static_cast<std::size_t>(v)];   // ⚠️ cands 空时越界（原版）
       const int d = static_cast<std::int8_t>(r->level) - static_cast<std::int8_t>(old);
+      if (std::getenv("RA2_RMG_CLIFF_DEBUG")) {
+        std::fprintf(stderr, "REROLL_LARGE r=%d cells=%d old_lvl=%d new_lvl=%d d=%d cands=%d\n",
+                     r->id, r->cell_count, old, r->level, d, (int)cands.size());
+      }
       ctx.grid.ForEachCell([&](const CellCoord& c) {
-        if (Owner(ctx, c) == r->id) w.SetLevel(c, w.Level(c) + d);
+        if (Owner(ctx, c) == r->id) {
+          if (std::getenv("RA2_RMG_CLIFF_DEBUG") && c.x == 85 && c.y == 12) {
+            std::fprintf(stderr, "  REROLL (85,12) old_lvl=%d +d=%d -> %d\n",
+                         w.Level(c), d, w.Level(c) + d);
+          }
+          w.SetLevel(c, w.Level(c) + d);
+        }
       });
     }
   }
@@ -513,28 +575,10 @@ void RebuildRegions(RegionContext& ctx, MakingWorld& world) {
   ctx.grid.ForEachCell([&](const CellCoord& c) {
     if (!ok) return;
     ok = FillNotch(ctx, world, c, -1);                 // FUN_00579010(c, -1)
-  });
-  // TEMP-PROBE: Rebuild 分段 RNG 计数（定位 1902 次取数落点）
-  std::fprintf(stderr, "RMG-DBG: Rebuild seg  FillNotch calls=%lld\n",
-               static_cast<long long>(ctx.rng->call_count()));
-
-  // TEMP-PROBE: dump FillNotch 循环后 work blob/queued + level
-  // （对齐 emu 0x58EF67 hook 的 _emu_fillnotch.txt，F x y bid que lv tile ramp）。
-  {
-    static FILE* f = std::fopen("_cli_fillnotch2.txt", "w");
-    const int side2 = ctx.grid.side();
-    for (int yy = 0; yy < side2; ++yy) {
-      for (int xx = 0; xx < side2; ++xx) {
-        const PaintWorkCell& rec = (*ctx.work)[static_cast<std::size_t>(yy * side2 + xx)];
-        const CellCoord cc{static_cast<std::int16_t>(xx),
-                           static_cast<std::int16_t>(yy)};
-        std::fprintf(f, "F %d %d %d %d %d %d %d\n", xx, yy, rec.blob_id,
-                     rec.queued, world.Level(cc), world.IsoTile(cc),
-                     world.Ramp(cc));
-      }
+    if (std::getenv("RA2_RMG_CLIFF_DEBUG") && c.x == 85 && c.y == 12) {
+      std::fprintf(stderr, "FILLNOTCH (85,12) ok=%d lvl=%d\n", ok ? 1 : 0, world.Level(c));
     }
-    std::fclose(f);
-  }
+  });
 
   const int side = ctx.grid.side();
   for (int i = 0; i < side * side; ++i) {
@@ -550,54 +594,21 @@ void RebuildRegions(RegionContext& ctx, MakingWorld& world) {
   // 按连通块重建区域（与阶段 3 的 CreateRegions 同构，(0,0) 哨兵照跳）。
   for (int i = 0; i < side * side; ++i) {
     PaintWorkCell& rec = (*ctx.work)[static_cast<std::size_t>(i)];
-    if (rec.coord.x == 112 && rec.coord.y == 79)  // TEMP-PROBE (112,79) 分岔
-      std::fprintf(stderr, "RMG-DBG: scan(112,79) idx=%d blob_id=%d queued=%d\n",
-                   i, rec.blob_id, rec.queued);
     if (rec.blob_id != -1) continue;
     if (IsOrigin(rec.coord)) continue;                 // 0x5AC370 不等比较
     RegionClass* r = SeedRegion(ctx, rec.coord);       // 0x58C800，含取数点
     if (r) r->finalized /*+0x1A*/ = 0;
-    // TEMP-PROBE
-    if (r) std::fprintf(stderr, "RMG-DBG: SeedRegion nid=%d seed=(%d,%d)\n",
-                        r->id, rec.coord.x, rec.coord.y);
   }
 
-  // TEMP-PROBE: dump SeedRegion 重建后（MakeConnections 前）的 blob_id + level。
-  // 对齐 emu 0x5905D0 入口 dump，定位 BR#1 (90,67) Clearance 分岔的 level 差异。
-  {
-    static FILE* f = std::fopen("_cli_blob_mc.txt", "w");
-    const int side2 = ctx.grid.side();
-    for (int yy = 0; yy < side2; ++yy) {
-      for (int xx = 0; xx < side2; ++xx) {
-        const PaintWorkCell& rec =
-            (*ctx.work)[static_cast<std::size_t>(yy * side2 + xx)];
-        const CellCoord cc{static_cast<std::int16_t>(xx),
-                           static_cast<std::int16_t>(yy)};
-        std::fprintf(f, "B %d %d %d %d\n", xx, yy, rec.blob_id,
-                     world.Level(cc));
-      }
-    }
-    std::fclose(f);
-  }
-
-  // TEMP-PROBE: Rebuild 分段 RNG 计数
-  std::fprintf(stderr, "RMG-DBG: Rebuild seg  SeedRegion calls=%lld\n",
-               static_cast<long long>(ctx.rng->call_count()));
-
-  // 0x58F042 call 0x58F0C0 / 0x58F061 call 0x5905D0：无条件执行，
-  // 不随 FillNotch 的 ok 门控（FillNotch 只影响前面那个循环的提前终止）。
+  // 0x58F042 / 0x58F061 / 收尾清表不受 FillNotch 返回值门控。
+  // FillNotch 的返回值只控制前面的逐格循环是否提前结束；即使失败，
+  // 邻区表、开通路和收尾清表仍然照常执行。
   for (int i = 0; i < ctx.regions->Count(); ++i) {
     BuildNeighbourList(ctx, ctx.regions->At(i));     // 0x58F0C0
   }
-  // TEMP-PROBE: Rebuild 分段 RNG 计数
-  std::fprintf(stderr, "RMG-DBG: Rebuild seg  BuildNL   calls=%lld\n",
-               static_cast<long long>(ctx.rng->call_count()));
   for (int i = 0; i < ctx.regions->Count(); ++i) {
     MakeConnections(ctx, world, ctx.regions->At(i)); // 0x5905D0
   }
-  // TEMP-PROBE: Rebuild 分段 RNG 计数
-  std::fprintf(stderr, "RMG-DBG: Rebuild seg  MC        calls=%lld\n",
-               static_cast<long long>(ctx.rng->call_count()));
   for (int i = 0; i < ctx.regions->Count(); ++i) {
     ctx.regions->At(i)->neighbours.clear();          // delete + 置 0
   }
@@ -638,9 +649,6 @@ void BuildNeighbourList(RegionContext& ctx, RegionClass* r) {
 // ───────────────────────── 0x5905D0 ─────────────────────────
 
 void MakeConnections(RegionContext& ctx, MakingWorld& world, RegionClass* r) {
-  // TEMP-PROBE: RNG 调用点计数（对比 emu run14：roll×2/idx×6/BuildBridge 1902）
-  static long long dbg_roll = 0, dbg_extra = 0, dbg_idx = 0;
-  static long long dbg_ramp = 0, dbg_bridge = 0;
   const MapRect usable{ctx.usable.x, ctx.usable.y, ctx.usable.w, ctx.usable.h};
   const auto in_usable = [&](const CellCoord& c) {
     return IsWithinUsableArea(ctx.map_rect_w, usable, c.x, c.y,
@@ -658,7 +666,6 @@ void MakeConnections(RegionContext& ctx, MakingWorld& world, RegionClass* r) {
         if (!(b->neighbours.size() > 1 || b->cell_count > 0x32)) continue;
         if (b->wet) continue;
         if (b->level != a->level || a->level != r->level) continue;
-        ++dbg_bridge;                                  // 0x58F2C0 调用
         BuildBridge(ctx, world, r, a, b);              // 5 个取数点
       }
     }
@@ -673,15 +680,11 @@ void MakeConnections(RegionContext& ctx, MakingWorld& world, RegionClass* r) {
 
     // 取数点 0x590792：无条件抽 0..100。
     const int roll = PickBelow(*ctx.rng, 101);
-    ++dbg_roll;                                        // 0x59079C
-    std::fprintf(stderr, "RMG-DBG: MC pair nb=%d r=%d roll=%d acc=%d\n",
-                 nb->id, r->id, roll, ctx.accessibility);  // TEMP-PROBE
     // 取数点 0x5907C0：命中 Accessibility 才再抽一次。
     // 原版 = ftol(Random()×2/(2^32-1) + 1.0)：[0x7ED8B0]=2/(2^32-1)（不是 3！）、
     // [0x7E1718]=1.0 的 fadd，cmp 2 的重试是死代码 → extra ∈ {1,2} 等概率。
     // 等价 PickBelow(2)+1：floor(t+1.0)=floor(t)+1，同一 u 逐位一致。
     const int extra = (roll < ctx.accessibility) ? PickBelow(*ctx.rng, 2) + 1 : 0;
-    if (roll < ctx.accessibility) ++dbg_extra;         // 0x5907C5 后
     const int want = extra + 1;                        // 要开 2~3 条（命中时）
 
     RegionClass* hi = (r->level < nb->level) ? nb : r; // 层高大的那个
@@ -693,30 +696,16 @@ void MakeConnections(RegionContext& ctx, MakingWorld& world, RegionClass* r) {
       if (tries > 99) break;                           // 100 次上限
       // 取数点 0x590889：抽边界格。border 为空时 count-1 下溢，直接越界读（原版）。
       const int idx = PickBelow(*ctx.rng, static_cast<int>(border.size()));
-      std::fprintf(stderr, "RMG-DBG: MC idx=%d nb=%d r=%d t=%d border=%zu\n",
-                   idx, nb->id, r->id, tries, border.size());  // TEMP-PROBE
-      ++dbg_idx;                                       // 0x590893
       const CellCoord c = border[static_cast<std::size_t>(idx)];
       if (in_usable(c)) {
-        ++dbg_ramp;                                    // BuildRamp 调用
-        const long long c0 = ctx.rng->call_count();    // TEMP-PROBE
         const bool okr =
             BuildRamp(ctx, world, hi, c, lo,
                       static_cast<float>(tries) * 0.01f);
-        std::fprintf(stderr,
-                     "RMG-DBG: BR nb=%d r=%d cell=(%d,%d) ok=%d t=%d rng=%lld\n",
-                     nb->id, r->id, c.x, c.y, okr ? 1 : 0, tries,
-                     ctx.rng->call_count() - c0);  // TEMP-PROBE
         made += okr ? 1 : 0;
       }
     }
     if (made == 0) r->connected /*+0x1B*/ = 0;
   }
-  if (ctx.regions->Count() > 0 && r->id == ctx.regions->Count() - 1)
-    std::fprintf(stderr,
-                 "RMG-DBG: MakeConnections roll=%lld extra=%lld idx=%lld "
-                 "ramp=%lld bridge=%lld\n",
-                 dbg_roll, dbg_extra, dbg_idx, dbg_ramp, dbg_bridge);
 }
 
 // ───────────────────────── 调度 ─────────────────────────
@@ -724,56 +713,11 @@ void MakeConnections(RegionContext& ctx, MakingWorld& world, RegionClass* r) {
 void MakeRegions(RegionContext& ctx, MakingWorld& world, int map_type) {
   if (map_type != 3 && map_type != 4) return;
   ctx.map_type = map_type;
-  const auto snap = [&](const char* tag) {
-    if (ctx.rng != nullptr)
-      std::fprintf(stderr, "RMG-DBG: MakeRegions %-10s calls=%lld\n", tag,
-                   static_cast<long long>(ctx.rng->call_count()));
-  };
-  snap("RASR-before");              // TEMP-PROBE
   RebuildAndSplitRegions(ctx);      // 0x58EBC0
-  snap("RASR");                     // TEMP-PROBE
-  // TEMP-PROBE: RASR 后区域表 dump（对比 emu _emu_regions_rasr.txt）。
-  {
-    std::FILE* rgf = std::fopen("_cli_regions_rasr.txt", "w");
-    for (int i = 0; i < ctx.regions->Count(); ++i) {
-      RegionClass* r = ctx.regions->At(i);
-      if (rgf)
-        std::fprintf(rgf, "REGION %d %d %d %d %d %d %d\n", r->id,
-                     r->cell_count, r->level, r->wet ? 1 : 0,
-                     r->finalized ? 1 : 0, r->seed.x, r->seed.y);
-    }
-    if (rgf) std::fclose(rgf);
-  }
   RebuildRegions(ctx, world);       // 0x58EF10
-  snap("Rebuild");                  // TEMP-PROBE
-  // TEMP-PROBE: TrimCliff 入口 cell 状态 dump（对比 emu _emu_postrebuild.txt）。
-  {
-    std::FILE* prf = std::fopen("_cli_postrebuild.txt", "w");
-    ctx.grid.ForEachCell([&](const CellCoord& c) {
-      if (prf)
-        std::fprintf(prf, "CELL %d %d %d %d %d\n", c.x, c.y,
-                     world.IsoTile(c), world.Level(c), world.Ramp(c));
-    });
-    if (prf) std::fclose(prf);
-  }
   TrimCliffCorners(ctx, world);     // 0x5A19E0
-  snap("TrimCliff");                // TEMP-PROBE
   RepaintAll(ctx, world);           // 0x578E60
-  snap("Repaint");                  // TEMP-PROBE
   RerollMultitileCliffs(ctx, world);  // 0x5A17F0
-  snap("Reroll");                   // TEMP-PROBE
-  // TEMP-PROBE: MakeRegions 后区域表 dump（同 emu OUT 时机）。
-  {
-    std::FILE* rgf = std::fopen("_cli_regions_end.txt", "w");
-    for (int i = 0; i < ctx.regions->Count(); ++i) {
-      RegionClass* r = ctx.regions->At(i);
-      if (rgf)
-        std::fprintf(rgf, "REGION %d %d %d %d %d %d %d\n", r->id,
-                     r->cell_count, r->level, r->wet ? 1 : 0,
-                     r->finalized ? 1 : 0, r->seed.x, r->seed.y);
-    }
-    if (rgf) std::fclose(rgf);
-  }
 }
 
 }  // namespace rmg

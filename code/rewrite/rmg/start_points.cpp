@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <vector>
 
 #include "fast_math.h"
 #include "place_tile.h"   // 四个「铺装」谓词 + IsUndecidedTile
@@ -38,6 +39,81 @@ inline double PairScore(int dx, int dy, bool cross_region) {
   return cross_region ? d + 20.0 : d;
 }
 
+struct StartInfluenceNode {
+  std::int16_t x = 0;
+  std::int16_t y = 0;
+  float priority = 0.0f;
+};
+
+inline CellCoord Step(const CellCoord& c, int dir) {
+  return CellCoord{static_cast<std::int16_t>(c.x + kAdjacentCellDX[dir]),
+                   static_cast<std::int16_t>(c.y + kAdjacentCellDY[dir])};
+}
+
+class StartInfluenceHeap {
+ public:
+  explicit StartInfluenceHeap(const std::vector<StartInfluenceNode>* pool)
+      : pool_(pool), slot_(801, -1) {}
+
+  bool empty() const { return count_ == 0; }
+
+  bool Push(int node) {
+    int i = count_ + 1;
+    if (i >= 800) return false;
+    const float pr = Key(node);
+    int parent = static_cast<int>(static_cast<unsigned>(i) >> 1);
+    while (i > 1) {
+      const int up = slot_[static_cast<std::size_t>(parent)];
+      if (!(Key(up) > pr)) break;
+      slot_[static_cast<std::size_t>(i)] = up;
+      i = parent;
+      parent = static_cast<int>(static_cast<unsigned>(i) >> 1);
+    }
+    slot_[static_cast<std::size_t>(i)] = node;
+    ++count_;
+    return true;
+  }
+
+  int Pop() {
+    if (count_ == 0) return -1;
+    const int top = slot_[1];
+    slot_[1] = slot_[static_cast<std::size_t>(count_)];
+    slot_[static_cast<std::size_t>(count_)] = -1;
+    --count_;
+    SiftDown(1);
+    return top;
+  }
+
+ private:
+  float Key(int node) const {
+    return (*pool_)[static_cast<std::size_t>(node)].priority;
+  }
+
+  void SiftDown(int i) {
+    for (;;) {
+      const int l = 2 * i, r = 2 * i + 1;
+      int best = i;
+      if (l <= count_ && Key(slot_[static_cast<std::size_t>(i)]) >
+                             Key(slot_[static_cast<std::size_t>(l)])) {
+        best = l;
+      }
+      if (r <= count_ && Key(slot_[static_cast<std::size_t>(best)]) >
+                             Key(slot_[static_cast<std::size_t>(r)])) {
+        best = r;
+      }
+      if (best == i) return;
+      const int t = slot_[static_cast<std::size_t>(i)];
+      slot_[static_cast<std::size_t>(i)] = slot_[static_cast<std::size_t>(best)];
+      slot_[static_cast<std::size_t>(best)] = t;
+      i = best;
+    }
+  }
+
+  const std::vector<StartInfluenceNode>* pool_ = nullptr;
+  int count_ = 0;
+  std::vector<int> slot_;
+};
+
 }  // namespace
 
 bool AreaIsPassable(const StartPointContext& ctx, const MapRect& rect,
@@ -48,10 +124,16 @@ bool AreaIsPassable(const StartPointContext& ctx, const MapRect& rect,
   const int y0 = static_cast<std::int16_t>(rect.y);
   const int x1 = static_cast<std::int16_t>(rect.x + rect.w - 1);
   const int y1 = static_cast<std::int16_t>(rect.y + rect.h - 1);
-  if (!ctx.grid.InMap(x0, y0)) return false;   // 0x5A7273
-  if (!ctx.grid.InMap(x1, y0)) return false;   // 0x5A72AA
-  if (!ctx.grid.InMap(x0, y1)) return false;   // 0x5A72EE
-  if (!ctx.grid.InMap(x1, y1)) return false;   // 0x5A733A
+  const int map_w = ctx.map_rect_w;
+  const int map_max_sum = map_w + 2 * (ctx.map_h + 12);
+  const auto in_map = [map_w, map_max_sum](int x, int y) {
+    return x + y > map_w && y - x < map_w && x - y < map_w &&
+           x + y <= map_max_sum;
+  };
+  if (!in_map(x0, y0)) return false;   // 0x5A7273
+  if (!in_map(x1, y0)) return false;   // 0x5A72AA
+  if (!in_map(x0, y1)) return false;   // 0x5A72EE
+  if (!in_map(x1, y1)) return false;   // 0x5A733A
 
   const TheaterData& t = *ctx.theater;
   for (int y = rect.y; y < rect.y + rect.h; ++y) {
@@ -241,24 +323,36 @@ void ComputeStartZoneSelection(StartPointContext& ctx, ZoneTable& zones) {
   ctx.want_zone_type = static_cast<int>(
       r.zone_type[static_cast<std::size_t>(mz)]
                  [static_cast<std::size_t>(r.largest_zone)]);
+  if (ctx.trace != nullptr) {
+    StartTraceEntry tr;
+    tr.kind = "zone";
+    tr.movement_zone = ctx.movement_zone;
+    tr.want_zone_type = ctx.want_zone_type;
+    tr.largest_zone = r.largest_zone;
+    tr.zone_count = r.zone_count;
+    tr.before = ctx.rng != nullptr ? ctx.rng->call_count() : 0;
+    tr.after = tr.before;
+    ctx.trace->push_back(tr);
+  }
 }
 
 void PickPointsInRegion(StartPointContext& ctx, RegionClass* r, int base) {
-  // 0x594876：可用矩形再往里缩一圈
+  // 0x594876：候选检查使用可用矩形的收缩副本
   MapRect rect;
-  rect.x = ctx.usable.x;
-  rect.y = ctx.usable.y;
-  rect.w = ctx.usable.w;
-  rect.h = ctx.usable.h;
+  rect.x = ctx.usable.x + 4;
+  rect.y = ctx.usable.y + 4;
+  rect.w = ctx.usable.w - 8;
+  rect.h = ctx.usable.h - 8;
 
   std::vector<CellCoord> cand;
 
   // 取数点 1（0x5948CD）：PickBelow(3)。⚠️ startCount == 0 的区域也照抽不误。
+  const long long before = ctx.rng->call_count();
   const int extra = PickBelow(*ctx.rng, 3);
   const int budget = extra + r->start_points * 15;
+  int tries = 0;
 
-  for (int tries = 0;
-       static_cast<int>(cand.size()) < budget && tries < 300; ++tries) {
+  for (; static_cast<int>(cand.size()) < budget && tries < 300; ++tries) {
     // 取数点 2（0x594935）：**两次乘法**那一路（先 (double)n 再 x 1/(2^32-1)），
     // 与 PickBelow 的「预折叠成一次乘法」在末位会分岔，不能互换。
     const int n = static_cast<int>(r->cells.size());
@@ -277,6 +371,58 @@ void PickPointsInRegion(StartPointContext& ctx, RegionClass* r, int base) {
 
   bool ok = false;
   std::vector<CellCoord> out = ChooseWaypoints(ctx, cand, r->start_points, &ok);
+  const long long after = ctx.rng->call_count();
+  if (ctx.trace != nullptr) {
+    StartTraceEntry tr;
+    tr.kind = "pick";
+    tr.region = r->id;
+    tr.base = base;
+    tr.start_points = r->start_points;
+    tr.cells = static_cast<int>(r->cells.size());
+    tr.candidates = static_cast<int>(cand.size());
+    tr.extra = extra;
+    tr.budget = budget;
+    tr.tries = tries;
+    tr.before = before;
+    tr.after = after;
+    ctx.trace->push_back(tr);
+    for (std::size_t i = 0; i < r->cells.size(); ++i) {
+      StartTraceEntry m;
+      m.kind = "member";
+      m.region = r->id;
+      m.base = base;
+      m.key = static_cast<int>(i);
+      m.x = r->cells[i].x;
+      m.y = r->cells[i].y;
+      m.before = before;
+      m.after = after;
+      ctx.trace->push_back(m);
+    }
+    for (std::size_t i = 0; i < cand.size(); ++i) {
+      StartTraceEntry c;
+      c.kind = "cand";
+      c.region = r->id;
+      c.base = base;
+      c.key = static_cast<int>(i);
+      c.x = cand[i].x;
+      c.y = cand[i].y;
+      c.before = before;
+      c.after = after;
+      ctx.trace->push_back(c);
+    }
+    for (std::size_t i = 0; i < out.size(); ++i) {
+      StartTraceEntry w;
+      w.kind = "waypoint";
+      w.region = r->id;
+      w.base = base;
+      w.key = static_cast<int>(i);
+      w.x = out[i].x;
+      w.y = out[i].y;
+      w.before = before;
+      w.after = after;
+      ctx.trace->push_back(w);
+    }
+  }
   if (!ok) return;                                       // 原版 return NULL 那条
 
   ctx.world->ResetStartLocationTable();                  // 0x5950C2
@@ -297,6 +443,57 @@ void PickPointsInRegion(StartPointContext& ctx, RegionClass* r, int base) {
   // 0x594B27 `mov [ebx], edi`：到这里才有非空指针写进 +0x00
   //（前一句 0x594B1D 还会拿旧向量的虚析构 `push 1 / call [eax]` 先拆掉旧的）
   r->candidates_created = true;
+}
+
+bool MarkStartInfluence(StartPointContext& ctx) {
+  if (ctx.num_players <= 0) return true;
+
+  for (int player = 0; player < ctx.num_players; ++player) {
+    const CellCoord seed = ctx.world->Waypoint(player);
+    ctx.grid.ForEachCell([&](const CellCoord& c) { Work(ctx, c).queued = 0; });
+
+    std::vector<StartInfluenceNode> pool;
+    pool.reserve(800);
+    StartInfluenceHeap heap(&pool);
+
+    StartInfluenceNode root;
+    root.x = static_cast<std::int16_t>(seed.x);
+    root.y = static_cast<std::int16_t>(seed.y);
+    root.priority = 0.0f;
+    pool.push_back(root);
+    Work(ctx, seed).queued = player + 1;
+    heap.Push(0);
+
+    int popped = 0;
+    while (!heap.empty() && popped < 400) {
+      const int node = heap.Pop();
+      if (node < 0) break;
+      const StartInfluenceNode& cur_node = pool[static_cast<std::size_t>(node)];
+      const CellCoord cur{cur_node.x, cur_node.y};
+      Work(ctx, cur).flag45 = true;
+
+      for (int d = 0; d < 8; ++d) {
+        const CellCoord n = Step(cur, d);
+        if (!ctx.grid.InMap(n)) continue;
+        PaintWorkCell& w = Work(ctx, n);
+        if (w.queued != 0) continue;
+        if (!IsUndecidedTile(ctx.world->IsoTile(n))) continue;
+        StartInfluenceNode nn;
+        nn.x = static_cast<std::int16_t>(n.x);
+        nn.y = static_cast<std::int16_t>(n.y);
+        const int dx = static_cast<std::int16_t>(n.x - seed.x);
+        const int dy = static_cast<std::int16_t>(n.y - seed.y);
+        nn.priority = ChopFloat(
+            FastSqrt(static_cast<double>(dx * dx + dy * dy)));
+        const int idx = static_cast<int>(pool.size());
+        pool.push_back(nn);
+        w.queued = player + 1;
+        heap.Push(idx);
+      }
+      ++popped;
+    }
+  }
+  return true;
 }
 
 bool PlaceStartPoints(StartPointContext& ctx) {
@@ -376,6 +573,7 @@ bool PlaceStartPoints(StartPointContext& ctx) {
       }
     }
   }
+
   return true;                                           // 原版所有出口都 return 1
 }
 

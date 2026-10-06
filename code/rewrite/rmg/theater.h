@@ -38,6 +38,11 @@ struct TheaterData {
 
   // 随机地图生成器真正会读的那几个（括号里是对应的 .bss 全局）
   int water_set = -1;         // 0xAA0738  判水用；组内 14 块
+  // 0xAA1054：**水砖区间的起始砖号**（RecalcAttributes 空洞路径特例
+  // 0x47D595-0x47D59B 用 [0xAA1054, +3] 判「水砖保留旧 ground」）。
+  // 与 water_set 不同——water_set 判的是「这一格是不是水」，0xAA1054
+  // 是贴砖时实际写入的四种岸/水砖的起始号（= 水砖组第一块）。
+  int water_tile_base = -1;   // 0xAA1054
   int shore_pieces = -1;      // 0xABAD28  岸砖；组内 42 块
   int green_tile = -1;        // 0xAA0E18  IsGreen 主判据
   int clear_to_green_lat = -1;  // 0xAA0748  IsGreen 的过渡砖（16 块）

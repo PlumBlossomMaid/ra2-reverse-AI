@@ -19,6 +19,7 @@
 #define RA2_RMG_TECH_BUILDINGS_H_
 
 #include <vector>
+#include <string>
 
 #include "blob_paint.h"   // PaintWorkCell：+0x45
 #include "map_grid.h"
@@ -68,6 +69,16 @@ class TechWorld {
   virtual void PlaceRandomBuilding(RegionClass* r) = 0;
 };
 
+struct TechTraceEntry {
+  std::string type;
+  int type_index = -1;
+  int attempt = 0;
+  int x = 0;
+  int y = 0;
+  bool ok = false;
+  bool unlimbo = false;
+};
+
 struct TechContext {
   int side = 0;                                 // [0x89C2DC] = W + H + 1
   std::vector<PaintWorkCell>* work = nullptr;   // [0xABED10]，side² 条
@@ -75,6 +86,8 @@ struct TechContext {
   Randomizer* rng = nullptr;
   TechWorld* world = nullptr;
   int map_type = 1;                             // MapSeedClass +0x3C
+  const std::vector<std::string>* type_names = nullptr;
+  std::vector<TechTraceEntry>* trace = nullptr;
 };
 
 // 0x5A95B0。`MapType == 0` 时调用方根本不调它（门禁在 0x5A9410 一带）。

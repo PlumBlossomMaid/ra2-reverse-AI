@@ -95,7 +95,7 @@ double UniformUnit(Randomizer& rng);
 // 这意味着**调用次数的奇偶性会改变随机数流的消耗节奏**，复刻时不可省略缓存。
 class NormalDeviate {
  public:
-  explicit NormalDeviate(Randomizer& rng) : rng_(&rng) {}
+  explicit NormalDeviate(Randomizer& rng) : rng_(&rng), has_cached_(false), cached_(0.0) {}
 
   double operator()();
 
@@ -104,6 +104,9 @@ class NormalDeviate {
 
   bool has_cached() const { return has_cached_; }
   double cached() const { return cached_; }
+
+  // 仅对拍探针用（RMG_ND_FLIP）：把缓存标志与缓存值设成指定状态。
+  void Cache(double v) { has_cached_ = true; cached_ = v; }
 
  private:
   Randomizer* rng_;

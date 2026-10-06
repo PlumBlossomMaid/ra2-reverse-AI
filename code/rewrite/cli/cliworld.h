@@ -99,7 +99,7 @@ class CliWorld : public ra2::rmg::WaterStageWorld,
   const std::vector<StartLocationRecord>& start_locations() const {
     return start_locations_;
   }
-  // 阶段 6 的 waypoint 表（0 号不用，1..num_players 是出生点）
+  // 阶段 6 的 waypoint 表；出生点从 0 号开始。
   const std::vector<ra2::rmg::CellCoord>& waypoints() const {
     return waypoints_;
   }
@@ -109,6 +109,15 @@ class CliWorld : public ra2::rmg::WaterStageWorld,
   // 阶段 7 需要的 rules 数据（CLI 从 rulesmd.ini 注入）
   void set_neutral_tech_buildings(std::vector<std::string> v) {
     neutral_tech_buildings_ = std::move(v);
+  }
+  void set_foundations(
+      std::map<std::string, std::vector<ra2::rmg::FoundationOffset>> v) {
+    foundations_ = std::move(v);
+  }
+  // 只有具备对象注册链时，科技建筑才能通过 BuildingClass::Unlimbo。
+  // 当前 CLI 仅有地图格状态，没有对象层，因此默认关闭。
+  void set_tech_object_registration(bool enabled) {
+    tech_object_registration_ = enabled;
   }
   // 阶段 8/10 需要的 rules 键（数据驱动，不硬编码）
   void set_tiberium_params(int min_t, int max_t) {
@@ -126,6 +135,10 @@ class CliWorld : public ra2::rmg::WaterStageWorld,
   }
   // rules.ini 12 个地面小节的 Foot= 值（RecalcLandType 用，数据驱动）。
   void set_ground_foot(std::vector<float> v) { ground_foot_ = std::move(v); }
+  const std::vector<float>& get_ground_foot() const { return ground_foot_; }
+  void set_cliff_back_impassability(int v) { cliff_back_impassability_ = v; }
+  std::size_t loaded_tile_count() const { return loaded_tiles_.size(); }
+  bool has_loaded_tile(int t) const { return loaded_tiles_.count(t) > 0; }
   // TileTypeClass +0x2E0 == 0 的砖号集合（疑似 Morphable，键名未确认；
   // 默认空 = 全部可变形，e2e 对拍时从真实数据校准）。
   void set_nonmorph_tiles(std::set<int> v) { nonmorph_ = std::move(v); }
@@ -246,6 +259,9 @@ class CliWorld : public ra2::rmg::WaterStageWorld,
   // 整表导出（pipeline 收尾时拷给调用方；CliWorld 持有 rng/work 引用，
   // 生命周期跟着 pipeline 走，格子弹出去后原对象就销毁了）。
   const std::vector<CliCell>& cells() const { return cells_; }
+  // ── 对拍专用（_emu 注入）：pipeline 之外的验证脚本要能直接灌格子状态。
+  std::vector<CliCell>& cells_mutable() { return cells_; }
+  void SetExist(int x, int y, bool v);
   const std::vector<char>& exists() const { return exists_; }
   // 可用区矩形（LocalSize {2,5,W,H} 夹取后），各阶段 Context 共用。
   const ra2::rmg::MapRect& usable_rect() const { return local_; }
@@ -267,14 +283,14 @@ class CliWorld : public ra2::rmg::WaterStageWorld,
   std::vector<ra2::rmg::PaintWorkCell>& work_;
   std::vector<CliCell> cells_;
   std::vector<char> exists_;
-  std::vector<int> mask_cache_;
   std::map<int, ra2::rmg::TileType> tiles_;
   CliCell dummy_;
   ra2::rmg::CellCoord dummy_coord_;
 
   // rules 注入
   std::vector<std::string> neutral_tech_buildings_;
-  std::vector<ra2::rmg::FoundationOffset> foundation_;   // 单份占地表
+  std::map<std::string, std::vector<ra2::rmg::FoundationOffset>> foundations_;
+  std::vector<ra2::rmg::FoundationOffset> foundation_;   // 当前建筑占地表
   int tiberium_min_ = 2500;
   int tiberium_max_ = 5500;
   int max_trees_ = 500;
@@ -286,6 +302,7 @@ class CliWorld : public ra2::rmg::WaterStageWorld,
   std::vector<StartLocationRecord> start_locations_;
   std::vector<ra2::rmg::CellCoord> waypoints_;   // 索引 = waypoint 号
   std::vector<int> active_buildings_;            // handle 栈（记录顺序）
+  bool tech_object_registration_ = false;
 
   // 阶段 5/6/10 需要的引擎数据
   int tile_count_ = 0;             // [0xA8ED38]
@@ -293,6 +310,8 @@ class CliWorld : public ra2::rmg::WaterStageWorld,
   const ra2::rmg::ZoneTable* zones_ = nullptr;
   const ra2::rmg::ZoneResult* zone_result_ = nullptr;
   std::vector<float> ground_foot_;  // 12 个地面小节的 Foot=，空 = 全 0
+  int cliff_back_impassability_ = 2;  // [General] CliffBackImpassability
+  std::set<int> loaded_tiles_;     // 模拟原版 .tmp lazy load：阶段 2/4 写入的 tile
   std::set<int> nonmorph_;          // TileTypeClass +0x2E0 == 0 的砖
 };
 

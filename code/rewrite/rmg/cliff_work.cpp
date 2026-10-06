@@ -6,6 +6,8 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 
 #include "place_tile.h"   // IsUndecidedTile / IsProtectedTerrainCell / StampTile
 #include "scaled_random.h"   // PickRange
@@ -61,6 +63,14 @@ bool FillNotch(RegionContext& ctx, MakingWorld& world, const CellCoord& c,
                int owner) {
   // 取数点：无。0x579B70 高差掩码，位定义见 HigherMask。
   const unsigned m = HigherMask(ctx, world, c);
+  static int depth = 0;
+  static int total_calls = 0;
+  ++total_calls;
+  if (std::getenv("RA2_RMG_CLIFF_DEBUG") && depth < 3) {
+    std::fprintf(stderr, "FILLNOTCH d=%d calls=%d (%d,%d) m=0x%X lvl=%d\n",
+                 depth, total_calls, c.x, c.y, m, world.Level(c));
+  }
+  ++depth;
   bool hit = false;
 
   // 第一组：两个相对的正方向都比我高（0x88 = N+S、0x22 = E+W）。
@@ -96,7 +106,7 @@ bool FillNotch(RegionContext& ctx, MakingWorld& world, const CellCoord& c,
   }
 
   // 最后汇总：N+S 槽 / E+W 槽 / 上面任一判据。
-  if (!((m & 0x88) == 0x88 || (m & 0x22) == 0x22 || hit)) return true;
+  if (!((m & 0x88) == 0x88 || (m & 0x22) == 0x22 || hit)) { --depth; return true; }
 
   // 0x5792A9 的 edi 读的是 [esp+0x28]——GetWorkOwner（ret 4）返回后 esp 已
   // 恢复到 push ecx 之前，该槽指向调用者 param2，不是 0x5792A0 写入的 packed
@@ -105,7 +115,7 @@ bool FillNotch(RegionContext& ctx, MakingWorld& world, const CellCoord& c,
   // 因此调用者恒传 -1（Rebuild 0x58EF49 / RepaintAll 0x578E60 的 param_2
   // 都是 0xFFFFFFFF）→ 判据命中恒抬高，false 出口是死代码。
   const int o = Owner(ctx, c);
-  if (o > 0 && o != owner && owner != -1) return false;
+  if (o > 0 && o != owner && owner != -1) { --depth; return false; }
 
   // byte 上的 +4，会回绕。work 为空时层高照改、只不写归属。
   world.SetLevel(c, static_cast<std::int8_t>(world.Level(c) + 4));
@@ -114,6 +124,7 @@ bool FillNotch(RegionContext& ctx, MakingWorld& world, const CellCoord& c,
     // 递归参数 = param2（0x5792EE push edi），返回值丢弃（0x579301）。
     FillNotch(ctx, world, Step(c, d), owner);
   }
+  --depth;
   return true;
 }
 
@@ -179,7 +190,8 @@ bool AutoCliff(RegionContext& ctx, MakingWorld& world, const CellCoord& c,
 
   if (idx < 1) return true;                          // 兜底（实际取不到）
   const int cliff_set = ctx.theater->cliff_set;      // [0xAA1020]
-  const TileType* t = world.TileByIndex(cliff_set + idx - 1);
+  const int tile_no = cliff_set + idx - 1;
+  const TileType* t = world.TileByIndex(tile_no);
   if (t == nullptr) return true;
   // 落点偏移表 0xABDDA4 恒为 (0,0)（初始化函数 0x579320 没人调、唯一非零项
   // 挂在选不中的下标 32 上），贴砖永远贴在本格上，表直接省掉。
@@ -214,15 +226,18 @@ void TrimCliffCorners(RegionContext& ctx, MakingWorld& world) {
     const unsigned m = HigherMask(ctx, world, c);
 
     if (m == 0x83) {                   // N+NE+E 的直角，削 E 邻格
+      // ⚠️ 原版 0x5A1A4B-0x5A1A7B：先检查 SE 邻格 HigherMask==0x83，
+      // 再检查**本格** IsUndecidedTile（不是 E 邻格），最后抛硬币
       if (HigherMask(ctx, world, n3) == 0x83 &&
-          IsUndecidedTile(world.IsoTile(n2)) &&
+          IsUndecidedTile(world.IsoTile(c)) &&
           PickBelow(*ctx.rng, 2) == 0) {
         world.SetLevel(n2, static_cast<std::int8_t>(world.Level(n2) - 4));
         SetOwner(ctx, n2, Owner(ctx, c));
       }
     } else if (m == 0x38) {            // S+SW+W 的直角，削 W 邻格
+      // ⚠️ 原版 0x5A1AEB：同样检查**本格** IsUndecidedTile
       if (HigherMask(ctx, world, n3) == 0x38 &&
-          IsUndecidedTile(world.IsoTile(n6)) &&
+          IsUndecidedTile(world.IsoTile(c)) &&
           PickBelow(*ctx.rng, 2) == 0) {
         world.SetLevel(n6, static_cast<std::int8_t>(world.Level(n6) - 4));
         SetOwner(ctx, n6, Owner(ctx, c));
@@ -456,11 +471,25 @@ void RepaintAll(RegionContext& ctx, MakingWorld& world) {
   // ⚠️ emu run_call 顺序压栈会把参数弄反（[0,0xFFFFFFFF] → owner=0），
   // golden 基准的 dump 脚本用 reversed 压栈 → owner=-1，与真实一致。
   bool keep = true;
+  int fillnotch_count = 0;
+  int fillnotch_fail = 0;
   ctx.grid.ForEachCell([&](const CellCoord& c) {
     if (!keep) return;
     const bool ok = FillNotch(ctx, world, c, -1);
-    if (!ok) keep = false;
+    ++fillnotch_count;
+    if (!ok) {
+      keep = false;
+      ++fillnotch_fail;
+      if (std::getenv("RA2_RMG_CLIFF_DEBUG")) {
+        std::fprintf(stderr, "FILLNOTCH_FAIL at (%d,%d) count=%d\n",
+                     c.x, c.y, fillnotch_count);
+      }
+    }
   });
+  if (std::getenv("RA2_RMG_CLIFF_DEBUG")) {
+    std::fprintf(stderr, "RepaintAll pass1: FillNotch count=%d fail=%d keep=%d\n",
+                 fillnotch_count, fillnotch_fail, keep ? 1 : 0);
+  }
   // 第二遍：只对非坡（+0x11C == 0）且未定砖的格子调 AutoCliff(-1)。
   // 原版 0x578F91 test bl,bl 沿用第一遍的 ok，两遍之间不复位。
   ctx.grid.ForEachCell([&](const CellCoord& c) {

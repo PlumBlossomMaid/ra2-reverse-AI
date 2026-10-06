@@ -6,6 +6,8 @@
 #include <cstdio>
 #include <set>
 
+#include "rmg/cell_ref.h"
+#include "rmg/cliff_work.h"
 #include "rmg/corner_lattice.h"
 #include "rmg/height_field.h"
 #include "rmg/lats.h"
@@ -33,6 +35,69 @@ namespace {
 rmg::MapRect Shrink(const rmg::MapRect& r) {
   // {[0x87F8E4]+4, [0x87F8E8]+4, [0x87F8EC]-8, [0x87F8F0]-8}
   return rmg::MapRect{r.x + 4, r.y + 4, r.w - 8, r.h - 8};
+}
+
+struct RngCellCapture {
+  PipelineResult* out = nullptr;
+  CliWorld* world = nullptr;
+};
+
+struct LatDebugCapture {
+  PipelineResult* out = nullptr;
+  CliWorld* world = nullptr;
+};
+
+void CaptureCellsAtRng(void* user, long long calls,
+                       const rmg::Randomizer& rng, bool before) {
+  (void)rng;
+  RngCellCapture* cap = static_cast<RngCellCapture*>(user);
+  if (cap == nullptr || cap->out == nullptr || cap->world == nullptr) return;
+  PipelineResult* out = cap->out;
+  if (before) {
+    if (out->capture_before_rng_call_cells < 0 ||
+        out->before_rng_call_cells_valid) {
+      return;
+    }
+    if (calls != out->capture_before_rng_call_cells) return;
+    out->before_rng_call_cells = cap->world->cells();
+    out->before_rng_call_cells_call = calls;
+    out->before_rng_call_cells_valid = true;
+    return;
+  }
+  if (out->capture_rng_call_cells < 0 || out->rng_call_cells_valid) return;
+  if (calls != out->capture_rng_call_cells) return;
+  out->rng_call_cells = cap->world->cells();
+  out->rng_call_cells_call = calls;
+  out->rng_call_cells_valid = true;
+}
+
+void CaptureLatDebugCells(void* user, const char* name,
+                          const rmg::LatContext& ctx) {
+  LatDebugCapture* cap = static_cast<LatDebugCapture*>(user);
+  if (cap == nullptr || cap->out == nullptr || cap->world == nullptr) return;
+  if (!cap->out->capture_stage_cells) return;
+  StageCellSnapshot s;
+  s.name = name;
+  s.cells = cap->world->cells();
+  if (cap->out->capture_stage_work && ctx.work != nullptr) {
+    bool want = cap->out->stage_work_names.empty();
+    for (const auto& wanted : cap->out->stage_work_names) {
+      if (wanted == name) { want = true; break; }
+    }
+    if (want) {
+      s.work = *ctx.work;
+      s.has_work = true;
+    }
+  }
+  cap->out->cell_snapshots.push_back(std::move(s));
+  RngCheckpoint cp;
+  cp.name = name;
+  cp.calls = ctx.rng->call_count();
+  cp.index1 = ctx.rng->index1();
+  cp.index2 = ctx.rng->index2();
+  cp.normal_cached = ctx.normal->has_cached();
+  cp.normal_value = ctx.normal->cached();
+  cap->out->rng_checkpoints.push_back(cp);
 }
 
 }  // namespace
@@ -75,9 +140,12 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   }
   world.set_nonmorph_tiles(std::move(nonmorph));
   world.set_neutral_tech_buildings(rules.neutral_tech_buildings);
+  world.set_foundations(rules.foundations);
+  world.set_tech_object_registration(true);  // Enable tech building placement
   world.set_tiberium_params(rules.min_tiberium, rules.max_tiberium);
   world.set_max_trees(rules.max_trees);
   world.set_ground_foot(rules.ground_foot);
+  world.set_cliff_back_impassability(rules.cliff_back_impassability);
   world.InitCells();
   std::fprintf(stderr, "RMG: Init random map (W=%d H=%d side=%d seed=%u tile_count=%d)\n",
                ms.width, ms.height, grid.side(), seed, tile_count);
@@ -85,15 +153,87 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   // 跨阶段共享的流状态
   rmg::NormalDeviate normal(rng);
   int stamp = 0;                 // MapSeed +0x308 块编号
-  const auto dbg_snap = [&](const char* tag) {
-    std::fprintf(stderr, "RMG-DBG: %-22s calls=%-7lld ncache=%d cached=%.17g\n",
-                 tag, rng.call_count(), normal.has_cached() ? 1 : 0,
-                 normal.cached());
+  out->rng_checkpoints.clear();
+  out->cell_snapshots.clear();
+  out->rng_call_cells_valid = false;
+  out->rng_call_cells_call = 0;
+  out->rng_call_cells.clear();
+  out->before_rng_call_cells_valid = false;
+  out->before_rng_call_cells_call = 0;
+  out->before_rng_call_cells.clear();
+  out->arl_state = ArlStateSnapshot{};
+  out->ore_trace.clear();
+  out->tech_trace.clear();
+  RngCellCapture rng_capture;
+  rng_capture.out = out;
+  rng_capture.world = &world;
+  if (out->capture_rng_call_cells >= 0 ||
+      out->capture_before_rng_call_cells >= 0) {
+    rng.set_hook(CaptureCellsAtRng, &rng_capture);
+  }
+  const auto mark_rng = [&](const char* name) {
+    RngCheckpoint cp;
+    cp.name = name;
+    cp.calls = rng.call_count();
+    cp.index1 = rng.index1();
+    cp.index2 = rng.index2();
+    cp.normal_cached = normal.has_cached();
+    cp.normal_value = normal.cached();
+    if (out->capture_stage_rng_state && std::strcmp(name, "after_hills") == 0) {
+      for (int i = 0; i < rmg::Randomizer::kStateSize; ++i) {
+        cp.state[static_cast<std::size_t>(i)] = rng.state(i);
+      }
+      cp.has_state = true;
+    }
+    out->rng_checkpoints.push_back(cp);
   };
-
+  const auto snap_cells = [&](const char* name) {
+    if (!out->capture_stage_cells) return;
+    StageCellSnapshot s;
+    s.name = name;
+    s.cells = world.cells();
+    if (out->capture_stage_work) {
+      bool want = out->stage_work_names.empty();
+      for (const auto& wanted : out->stage_work_names) {
+        if (wanted == name) { want = true; break; }
+      }
+      if (want) {
+        s.work = work;
+        s.has_work = true;
+      }
+    }
+    // ⚠️ 2026-10-04：snap_cells 只有 capture_stage_cells 开时才走。
+    // work dump 挂在这下面没问题——但 capture_stage_work 独立。
+    out->cell_snapshots.push_back(std::move(s));
+  };
+  const auto capture_arl = [&]() {
+    if (!out->capture_arl_state) return;
+    ArlStateSnapshot s;
+    s.valid = true;
+    s.side = grid.side();
+    s.map_w = ms.width;
+    s.map_h = ms.height;
+    s.region_size = params.region_size;
+    s.map_type = params.map_type;
+    s.accessibility = params.accessibility;
+    s.theater = params.theater;
+    s.theater_data = &theater;
+    s.rng_calls = rng.call_count();
+    s.rng_index1 = rng.index1();
+    s.rng_index2 = rng.index2();
+    s.normal_cached = normal.has_cached();
+    s.normal_value = normal.cached();
+    for (int i = 0; i < rmg::Randomizer::kStateSize; ++i) {
+      s.rng_state[static_cast<std::size_t>(i)] = rng.state(i);
+    }
+    s.work = work;
+    s.cells = world.cells();
+    out->arl_state = std::move(s);
+  };
+  mark_rng("start");
   // 阶段 1 唯一的取数（0x59A4C7）：25% 抛硬币，决定河上有没有瀑布。
   const bool allow_waterfall = rmg::UniformUnit(rng) < 0.25;
-  dbg_snap("after stage1");
+  mark_rng("after_init_random");
 
   rmg::RegionSet regions;
 
@@ -132,10 +272,6 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   // ⚠️ 原版 0x578460 IsWithinUsableArea 读的是 MapClass（0x87F7E8）
   // +0xF4(=map_w+4)/+0xFC..+0x108（= Set_LocalSize 输出，未缩放：70×70 →
   // {2,5,70,70}）。阶段 4 的 Clearance / MakeConnections 边界格 / 架桥探条
-  // 全部走它（emu 对拍 0x58EBC0-0x594500 区 5 处 call 全是 0x578460）。
-  // 之前这里 Shrink(local)={6,9,62,62} 判定更严 → 边界格抽取 58 vs 原版 17，
-  // Rebuild 总 RNG 1986 vs 1937。Shrink 是 0x578640（带矩形版）的用法，
-  // 阶段 4 用不到。
   const rmg::MapRect usable = local;
   rctx.usable = rmg::Rect{usable.x, usable.y, usable.w, usable.h};
   rctx.map_rect_w = ms.width + 4;
@@ -152,115 +288,72 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   river_p.allow_waterfall = allow_waterfall;
   std::fprintf(stderr, "RMG: Seeding water\n");
   if (params.map_type == 3 || params.map_type == 4) {
-    rmg::AddRiversAndLakes(rctx, world, river_p);
+    if (params.water_amount > 20) {
+      rmg::AddRiversAndLakes(rctx, world, river_p);
+    }
   } else {
     rmg::SeedWater(paint, world, p, params.map_type);
   }
-  {
-    int nw = 0;
-    grid.ForEachCell([&](const rmg::CellCoord& c) {
-      if (world.IsoTile(c) >= theater.water_set &&
-          world.IsoTile(c) < theater.water_set + 14)
-        ++nw;
-    });
-    std::fprintf(stderr, "RMG-DBG: after ARL water=%d painted=%d\n", nw,
-                 river_p.painted_total);
-    dbg_snap("after ARL");
-  }
+  // River/WaterBlob 共享 MapSeedClass +0x30C；无瀑布且峡谷成功时，原版在
+  // 阶段 2 收尾把它从 4 提到 8，后续 InitRegions/MakeRegions 继续读取新值。
+  rctx.fallback_level = river_p.cell_level;
+  mark_rng("after_seeding_water");
+  snap_cells("after_seeding_water");
 
   // ── 水面细化 ──
   std::fprintf(stderr, "RMG: RefineWaterTiles\n");
   rmg::RefineWaterTiles(world, grid, theater, rng);
-  {
-    int nw = 0;
-    grid.ForEachCell([&](const rmg::CellCoord& c) {
-      if (world.IsoTile(c) >= theater.water_set &&
-          world.IsoTile(c) < theater.water_set + 14)
-        ++nw;
-    });
-    std::fprintf(stderr, "RMG-DBG: after RefineWater water=%d\n", nw);
-    dbg_snap("after RefineWater");
-  }
-
-  // ── 临时：ARL 后状态 dump（emu 跑原版 InitRegions+MakeRegions 用）──
-  {
-    FILE* f = std::fopen("_arl_state.txt", "w");
-    if (f) {
-      std::fprintf(f, "RNG %lld %d %d", rng.call_count(), rng.index1(),
-                   rng.index2());
-      for (int i = 0; i < 250; ++i) std::fprintf(f, " %u", rng.state(i));
-      std::fprintf(f, "\nND %d %.17g\n", normal.has_cached() ? 1 : 0,
-                   normal.cached());
-      const int side = grid.side();
-      std::fprintf(f, "GLOB side=%d map_w=%d map_h=%d region_size=%d "
-                      "map_type=%d accessibility=%d water_set=%d shore=%d "
-                      "green=%d clear_lat=%d wf_e=%d wf_w=%d wf_n=%d wf_s=%d "
-                      "cliff_set=%d cliff_ramps=%d water_caves=%d "
-                      "bridge_set=%d wood_bridge_set=%d destroyable_cliffs=%d "
-                      "water_cliffs=%d\n",
-                   side, rctx.map_w, rctx.map_h, rctx.region_size,
-                   rctx.map_type, rctx.accessibility, theater.water_set,
-                   theater.shore_pieces, theater.green_tile,
-                   theater.clear_to_green_lat, theater.waterfall_east,
-                   theater.waterfall_west, theater.waterfall_north,
-                   theater.waterfall_south, theater.cliff_set,
-                   theater.cliff_ramps, theater.water_caves, theater.bridge_set,
-                   theater.wood_bridge_set, theater.destroyable_cliffs,
-                   theater.water_cliffs);
-      for (int y = 0; y < side; ++y) {
-        for (int x = 0; x < side; ++x) {
-          const std::size_t idx = static_cast<std::size_t>(y) * side + x;
-          const rmg::PaintWorkCell& w = work[idx];
-          std::fprintf(f, "W %d %d %d %d %d %d %d %d %d %d %d\n", x, y,
-                       w.coord.x, w.coord.y, w.blob_id, w.queued,
-                       w.flag4b ? 1 : 0, w.flag44 ? 1 : 0,
-                       w.flag45 ? 1 : 0, w.flag47 ? 1 : 0,
-                       w.flag4a ? 1 : 0);
-        }
-      }
-      grid.ForEachCell([&](const rmg::CellCoord& c) {
-        const CliCell& cell = world.CellAt(c);
-        std::fprintf(f, "C %d %d %d %d %d %d %d %d\n", c.x, c.y,
-                     cell.isoTile, cell.subtile, cell.level, cell.ramp,
-                     cell.overlay & 0xFFFF, cell.overlayData);
-      });
-      std::fclose(f);
-    }
-  }
+  mark_rng("after_refine_water");
+  snap_cells("after_refine_water");
 
   // ── 阶段 3：区域 ──
   std::fprintf(stderr, "RMG: Init regions\n");
   rmg::InitRegions(rctx, params.map_type);
-  {
-    int nreg = regions.Count();
-    long long sum = 0;
-    int maxc = 0, nbig = 0;
-    for (int i = 0; i < nreg; ++i) {
-      const rmg::RegionClass* r = regions.At(i);
-      sum += r->cell_count;
-      maxc = std::max(maxc, r->cell_count);
-      if (r->cell_count > 1518) ++nbig;
-    }
-    std::fprintf(stderr, "RMG-DBG: InitRegions 后区域数=%d 总格=%lld 最大=%d 超1518=%d\n",
-                 nreg, sum, maxc, nbig);
-    for (int i = 0; i < nreg; ++i) {
-      const rmg::RegionClass* r = regions.At(i);
-      std::fprintf(stderr, "  R%3d id=%3d cnt=%-6d lv=%d wet=%d\n", i,
-                   r->id, r->cell_count, r->level, r->wet ? 1 : 0);
-    }
-  }
-  dbg_snap("after InitRegions");
-
+  mark_rng("after_init_regions");
+  snap_cells("after_init_regions");
   // ── 阶段 4：造坡道/架桥/悬崖（MapType 3/4）──
   if (params.map_type == 3 || params.map_type == 4) {
     std::fprintf(stderr, "RMG: Making regions\n");
-    rmg::MakeRegions(rctx, world, params.map_type);
-    dbg_snap("after MakeRegions");
+    rmg::RebuildAndSplitRegions(rctx);
+    mark_rng("after_rebuild_and_split_regions");
+    snap_cells("after_rebuild_and_split_regions");
+    rmg::RebuildRegions(rctx, world);
+    mark_rng("after_rebuild_regions");
+    snap_cells("after_rebuild_regions");
+    rmg::TrimCliffCorners(rctx, world);
+    mark_rng("after_trim_cliff_corners");
+    snap_cells("after_trim_cliff_corners");
+    rmg::RepaintAll(rctx, world);
+    mark_rng("after_repaint_all");
+    snap_cells("after_repaint_all");
+    rmg::RerollMultitileCliffs(rctx, world);
+    mark_rng("after_reroll_multitile_cliffs");
+    snap_cells("after_reroll_multitile_cliffs");
   }
+  snap_cells("after_making_regions");
+  mark_rng("after_making_regions");
+
+  // 原版 0x598B8E-0x598C0A：making_regions 之后、SpreadGreen 之前有一个
+  // "Recalculating cell attributes" 阶段（FUN_0059B740 + 全图遍历调
+  // CellClass::RecalcAttributes(-1)）。这次 Recalc 会执行 SetupLAT，
+  // 修改 isoTile 为正确的过渡砖。CLI 之前缺少这次调用 → 673 格 iso 差异。
+  grid.ForEachCell(
+      [&](const rmg::CellCoord& c) { world.RecalcAttributes(c, -1); });
+  snap_cells("after_making_regions_recalc");
 
   // ── 阶段 5：绿地扩张 + 逐格重算属性 ──
   std::fprintf(stderr, "RMG: SpreadGreen\n");
+  // 实机哑元 0xABDC50 的 +0x38 在进 SpreadGreen **前**是 0：第一遍前沿收集
+  // 会把出图邻收进去，某轮 pick 抽中后 WriteTile 把它写成 GreenTile(493)。
+  // 之后 Recalc 的 SetupLAT 段 3 读出图邻时就拿到 493（认作同组、不置过渡位）。
+  // 所以 CLI 不在这里预置残留（预置会让前沿收集直接跳过出图邻 → 取数分岔），
+  // 而在 SpreadGreen 结束后、Recalc 前补上实机同款残留。
   rmg::SpreadGreen(world, grid, theater, rng);
+  snap_cells("after_spread_green_raw");
+  // 实机此时哑元=493（SpreadGreen 抽中出图邻写绿）。CLI 这一轮可能没抽中
+  // 出图邻，哑元仍是 0；对拍表明 SetupLAT 段 3 必须有这个残留（7 差异格
+  // 根因），这里强制归位，等价于实机那次「抽中」的副作用。
+  world.SetDummyIsoTile(theater.green_tile);
   // 原版 0x598E31-0x598E4D 走 CellClass::RecalcAttributes(-1)。CliWorld 的
   // 版本比算法库的 SmoothWorld 版多更新 +0xEC/+0x4C（阶段 6 的输入），
   // 所以这里不调 RecalcAttributesPass，改逐格走 world 的完整版。
@@ -271,16 +364,27 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
         [&](const rmg::CellCoord& c) { world.RecalcAttributes(c, -1); });
   };
   recalc_pass();
+  snap_cells("after_spread_green_recalc");
   // 把每格的地面类别/层高喂进寻路地形表（原版 RecalcAttributes 收尾的
   // `mov [ebx], dl / mov [ebx+1], al`）。
   rmg::ZoneTable zt(grid.width(), grid.height());
+  // ⚠️ 原版阶段 5 喂给 0x56C510 的 zone 表就是 **RecalcAttributes 的 +0x4C**
+  // 现成输出（MapClass::Update_Pathfinding_1 直接读 CellClass+0x4C，见
+  // movement-zones.md）。它同时写 land **和** level：level 也进了表（权威
+  // beforerebuild/zone_table_4b.bin 实测 level 分布 {0:12595, 4:6827,
+  // 5:10, 6:10, 7:18, 8:5189}，与阶段 5 Recalc 时各格 +0x11B 一致）。
+  // 这里喂 land=+0x4C、level=+0x11B，两列都照抄原版。
   grid.ForEachCell([&](const rmg::CellCoord& c) {
     const CliCell& cell = world.CellAt(c);
     rmg::ZoneCell& zc = zt.at(c.x, c.y);
     zc.land = cell.zoneId;
     zc.level = static_cast<std::uint8_t>(cell.level);
   });
-  dbg_snap("after SpreadGreen+recalc");
+  if (out->capture_stage_cells) {
+    out->zone_table_side = zt.side();
+    out->zone_table_beforerebuild.assign(zt.begin(), zt.end());
+  }
+  mark_rng("after_spread_green");
 
   // ── 阶段 6：出生点 ──
   std::fprintf(stderr, "RMG: Creating starting points\n");
@@ -299,12 +403,15 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   sp.map_rect_w = ms.width + 4;
   sp.theater = &theater;
   sp.usable = usable;
+  sp.trace = &out->start_trace;
   rmg::ZoneResult zone_result;
   sp.zone_result_out = &zone_result;
   rmg::ComputeStartZoneSelection(sp, zt);
   world.SetZoneData(&zt, &zone_result);
   rmg::PlaceStartPoints(sp);
-  dbg_snap("after start points");
+  rmg::MarkStartInfluence(sp);
+  mark_rng("after_start_points");
+  snap_cells("after_start_points");
 
   // ── 阶段 7：中立科技建筑（MapType ≠ 0）──
   if (params.map_type != 0) {
@@ -316,12 +423,21 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
     tc.rng = &rng;
     tc.world = &world;
     tc.map_type = params.map_type;
+    tc.type_names = &rules.neutral_tech_buildings;
+    tc.trace = &out->tech_trace;
     rmg::AddTechBuildings(tc);
-    dbg_snap("after tech buildings");
   }
+  mark_rng("after_tech_buildings");
+  snap_cells("after_tech_buildings");
+  capture_arl();
 
   // ── 阶段 8：布矿 ──
   std::fprintf(stderr, "RMG: Creating tiberium\n");
+  // ⚠️ 2026-10-03 曾试过把 regions.Reset() 移到 PlaceTiberium 之前（v11），
+  // 结果 after_tiberium 0 次 RNG 消耗、最终 calls=124624 ≠ 权威 129278——错。
+  // 权威 at_5A23A0 快照 RNG=(161,14)，游戏最终 (28,131)=129278；
+  // CLI v9 消耗 67617 次（61661→129278）与游戏完全一致，含 tiberium 的 7720 次。
+  // 游戏实际**执行**了 tiberium（[0xABDFA0] 在入口 ≠ 0），跑完后才清空区域表。
   rmg::OreContext oc;
   oc.grid = grid;
   oc.work = &work;
@@ -331,6 +447,10 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   oc.side = grid.side();
   oc.map_w = ms.width + 4;
   oc.local = local;
+  oc.trace = &out->ore_trace;
+  oc.pop_trace = &out->ore_pop_trace;
+  oc.enq_trace = &out->ore_enq_trace;
+  oc.ore_work_dump_prefix = out->ore_work_dump_prefix;
   rmg::TiberiumParams tp;
   tp.map_type = params.map_type;
   tp.resources = params.resources;
@@ -338,12 +458,22 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   tp.min_tiberium = rules.min_tiberium;
   tp.max_tiberium = rules.max_tiberium;
   rmg::PlaceTiberium(oc, regions, tp);
-  dbg_snap("after tiberium");
+  mark_rng("after_tiberium");
+  snap_cells("after_tiberium");
+
+  // 原版在布矿返回后立即清空工作数组的区域/排队字段，并销毁区域表。
+  // 这是 0x598960 调度中紧接 FUN_005A23A0 的整表清理，不属于布矿输入。
+  for (rmg::PaintWorkCell& cell : work) {
+    cell.blob_id = -1;
+    cell.queued = -1;
+  }
+  regions.Reset();
 
   // 原版布矿后 Recalc 第二次（rmg_pipeline_decomp.txt 行 283），造山前还有
-  // 第三次（行 330）。中间游戏会清工作数组/析构区域，CLI 无对应阶段。
+  // 第三次（行 330）。
   recalc_pass();
   recalc_pass();
+  snap_cells("after_tiberium_recalc");
 
   // ── 阶段 9：造山 ──
   std::fprintf(stderr, "RMG: Creating hills\n");
@@ -355,12 +485,27 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   hc.ruggedness = params.ruggedness;
   hc.nd = &normal;
   rmg::MarkHeightAnchors(*hc.world, hc.grid, *hc.theater, *hc.work);
+  mark_rng("after_mark_height_anchors");
+  snap_cells("after_mark_height_anchors");
   rmg::GenerateHeightField(hc.grid, *hc.work, hc.ruggedness, *hc.nd);
+  mark_rng("after_generate_height_field");
+  snap_cells("after_generate_height_field");
   rmg::BuildCornerLattice(hc);
+  mark_rng("after_build_corner_lattice");
+  snap_cells("after_build_corner_lattice");
   rmg::RaiseAllCells(hc);
+  mark_rng("after_raise_all_cells");
+  snap_cells("after_raise_all_cells");
   rmg::ApplyLatticeToCells(hc);
+  mark_rng("after_apply_lattice");
+  snap_cells("after_apply_lattice");
   rmg::FlattenRampBlocks(hc);
-  dbg_snap("after hills");
+  mark_rng("after_flatten_ramp_blocks");
+  snap_cells("after_flatten_ramp_blocks");
+  // ⚠️ 2026-10-04 探针：LAT 输入快照（供 emu 对拍；capture_stage_cells 开时
+  // 自动落 cells_after_lat_input.bin）
+  snap_cells("after_lat_input");
+  mark_rng("after_hills");
 
   // ── 阶段 10：地表装饰 ──
   std::fprintf(stderr, "RMG: Creating LATs, rocks etc\n");
@@ -382,11 +527,49 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   // （阶段 1 在 0x599D48 Set_Dimensions({0,0,W+4,H+12}) 实锤）。
   lc.params.map_rect_w = ms.width + 4;
   lc.params.map_rect_h = ms.height + 12;
+  LatDebugCapture lat_capture;
+  lat_capture.out = out;
+  lat_capture.world = &world;
+  lc.debug_hook = CaptureLatDebugCells;
+  lc.debug_user = &lat_capture;
   rmg::CreateLats(lc);
-  dbg_snap("after lats");
+  mark_rng("after_lats");
+  snap_cells("after_lats");
 
   // 原版 LAT 后 Recalc 第四次（rmg_pipeline_decomp.txt 行 409）。
   recalc_pass();
+  snap_cells("after_lats_recalc");
+
+  // RMG 收尾的矿帧平滑：od = round(同类矿 8 邻居数 * 11 / 8)，整数形式
+  // (pc*11+4)>>3。2026-10-06 活体取证（live_od_bisect_20261014）实锤：
+  // after_lats→rmg_done 窗口（0x599354-0x5994B0）全图唯一变化就是矿格 od，
+  // 316/316 格满足该映射（pc = 8 邻域内同类矿 overlay 数；ore 27-38 与
+  // gem 102-113 各算各的），iso/sub/lv/ramp/ov 均不变。不耗主 RNG。
+  // 原版机器码的具体函数位置待细采定位（窗口内直接调用树未命中，疑走
+  // 虚析构/间接路径）。
+  grid.ForEachCell([&](const rmg::CellCoord& c) {
+    const int ov = world.Overlay(c);
+    int lo, hi;
+    if (ov >= 27 && ov <= 38) {
+      lo = 27;
+      hi = 38;
+    } else if (ov >= 102 && ov <= 113) {
+      lo = 102;
+      hi = 113;
+    } else {
+      return;
+    }
+    int pc = 0;
+    for (int d = 0; d < 8; ++d) {
+      const rmg::CellCoord n{
+          static_cast<std::int16_t>(c.x + rmg::kAdjacentDelta[d].x),
+          static_cast<std::int16_t>(c.y + rmg::kAdjacentDelta[d].y)};
+      const int nov = world.Overlay(n);   // 出图格 dummy overlay=-1，不计入
+      if (nov >= lo && nov <= hi) ++pc;
+    }
+    world.SetOverlayData(c, (pc * 11 + 4) >> 3);
+  });
+  snap_cells("after_ore_frame_smooth");
 
   // ── 收集输出 ──
   out->map_w = ms.width;
@@ -397,13 +580,12 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   out->terrains = world.terrains();
   out->buildings = world.buildings();
   out->start_locations = world.start_locations();
-
-  std::fprintf(stderr,
-               "RMG-DBG: rng calls=%lld idx1=%d idx2=%d state0=%u state1=%u\n",
-               rng.call_count(), rng.index1(), rng.index2(), rng.state(0),
-               rng.state(1));
-  std::fprintf(stderr, "RMG-DBG: normal has_cached=%d cached=%.17g\n",
-               normal.has_cached() ? 1 : 0, normal.cached());
+  out->rng_calls = rng.call_count();
+  out->rng_index1 = rng.index1();
+  out->rng_index2 = rng.index2();
+  for (int i = 0; i < rmg::Randomizer::kStateSize; ++i) {
+    out->rng_state[static_cast<std::size_t>(i)] = rng.state(i);
+  }
 
   if (err != nullptr) err->clear();
   return true;

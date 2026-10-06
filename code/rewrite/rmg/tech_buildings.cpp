@@ -9,6 +9,8 @@ void AddTechBuildings(TechContext& ctx) {
   TechWorld& world = *ctx.world;
   std::vector<PaintWorkCell>& work = *ctx.work;
 
+  std::fprintf(stderr, "[DEBUG TECH] AddTechBuildings called: map_type=%d\n", ctx.map_type);
+
   if (ctx.map_type == 2) {
     // —— 分支 A：给每个有出生点的区域各补几栋 ——
     // 0x5A95BF：折叠常数 [0x7ED8C0] = 3/(2^32-1)，拒绝 > 2
@@ -34,6 +36,7 @@ void AddTechBuildings(TechContext& ctx) {
 
   // 0x5A9645：折叠常数 [0x7EDAB0] = 5/(2^32-1)，拒绝 > 4
   int m = PickBelow(*ctx.rng, 5);
+  std::fprintf(stderr, "[DEBUG TECH] Branch B: m=%d (buildings to place)\n", m);
   if (m <= 0) return;              // m == 0 一栋都不放，随机数照花
   do {
     bool placed = false;           // [esp+0x13]
@@ -45,12 +48,25 @@ void AddTechBuildings(TechContext& ctx) {
       const int count = world.NeutralTechBuildingCount();
       const int k = PickBelowMul(*ctx.rng, count);
       handle = world.CreateBuilding(k);
+      if (ctx.trace != nullptr) {
+        TechTraceEntry tr;
+        tr.type_index = k;
+        tr.type = (ctx.type_names != nullptr &&
+                   k >= 0 && k < static_cast<int>(ctx.type_names->size()))
+                      ? (*ctx.type_names)[static_cast<std::size_t>(k)]
+                      : "";
+        ctx.trace->push_back(tr);
+      }
+      std::fprintf(stderr, "[DEBUG TECH] Selected building: k=%d handle=%d\n", k, handle);
     }
 
     for (;;) {
       if (attempt >= 100) {        // 0x5A9713 cmp / jge
         // 0x5A98EA：没放下去就调虚函数 +0x20(1) 把对象删掉
-        if (!placed && handle >= 0) world.Destroy(handle);
+        if (!placed && handle >= 0) {
+          std::fprintf(stderr, "[DEBUG TECH] Failed after 100 attempts, destroying handle=%d\n", handle);
+          world.Destroy(handle);
+        }
         break;
       }
 
@@ -85,9 +101,23 @@ void AddTechBuildings(TechContext& ctx) {
         const FoundationOffset& f = fnd[i];
         // 0x5A97D7：**两个分量都是 0x7FFF** 才算表尾
         if (f.dx == 0x7FFF && f.dy == 0x7FFF) {
+          TechTraceEntry* trace = nullptr;
+          if (ctx.trace != nullptr && !ctx.trace->empty()) {
+            trace = &ctx.trace->back();
+            trace->attempt = attempt;
+            trace->x = at.x;
+            trace->y = at.y;
+            trace->ok = ok;
+          }
           if (ok) {
-            // 0x5A9889：coord = (x*256+128, y*256+128, 0)，x/y 按 int16 取符号
-            if (world.Unlimbo(handle, at)) placed = true;
+            const bool unlimbo = world.Unlimbo(handle, at);
+            if (trace != nullptr) trace->unlimbo = unlimbo;
+            if (unlimbo) {
+              placed = true;
+              std::fprintf(stderr, "[DEBUG TECH] Building placed at (%d,%d)\n", at.x, at.y);
+            } else {
+              std::fprintf(stderr, "[DEBUG TECH] Unlimbo failed at (%d,%d)\n", at.x, at.y);
+            }
           }
           break;
         }

@@ -25,6 +25,9 @@ int main(int argc, char** argv) {
       {d.slope_set_pieces, d.slope_set_pieces + 10},
       {d.paved_roads, d.paved_roads + 0x15},
       {d.paved_road_ends, d.paved_road_ends + 4},
+      {414, 435},   // LAT rough 过渡砖
+      {494, 511},   // LAT sand 过渡砖
+      {89, 129},    // LAT green 过渡砖
   };
   for (const Range& r : ranges) {
     std::printf("== range %d..%d\n", r.lo, r.hi);
@@ -33,8 +36,9 @@ int main(int argc, char** argv) {
       std::printf("tile=%d w=%d h=%d sub=%d", t, tt.width, tt.height,
                   (int)tt.cells.size());
       for (std::size_t k = 0; k < tt.cells.size(); ++k) {
-        std::printf(" [%d]%c%d/%d", (int)k, tt.cells[k].present ? 'p' : '-',
-                    tt.cells[k].height, tt.cells[k].ramp);
+        std::printf(" [%d]%c%d/%d/t%d", (int)k, tt.cells[k].present ? 'p' : '-',
+                    tt.cells[k].height, tt.cells[k].ramp,
+                    tt.cells[k].terrain_type);
       }
       std::printf("\n");
     }
