@@ -1,6 +1,6 @@
 # RA2 随机地图复刻对齐工作手册（Seed=62298）
 
-> 最后更新：2026-10-06（RMG 生成流程完全对齐，交接 kimi）
+> 最后更新：2026-10-06（ctest 43/43 全绿，交接 kimi 的测试债已清，commit 83f0f2d）
 > 本文件是跨 Agent 的记忆索引（kimi / qwen code 不互通，一切以本文件为准）。
 > **每轮工作结束立刻更新本文件**。更久远的取证结论在 `memory/` 与 `docs/random-map/`。
 
@@ -144,9 +144,28 @@ CLI vs AUTH 剩 19 od + 4 ov = game start 后矿生长（副随机流种子=time
    注意：原版生长结果每次不同（种子非确定性），只能逼近不能精确对齐。
 3. **定位 od 平滑的原版机器码**（取证完整性）：od=(pc*11+4)>>3 的变换
    在 0x722D00 调用链未找到，疑在 Cleanup 或 Radar 段。可用
-   `_headless_od_bisect.py` 细采（用户回来后）。
-4. **处理 kimi 在途的 start_points 测试失败**：place_start_points / cli
-   两个测试失败是 kimi 的 +220 行改动引入，需 kimi 修复。
+   `_headless_od_bisect.py` 细采（用户已回来，可动态调试，MessageBox 叫人）。
+
+### ✅ kimi 在途测试失败已闭合（2026-10-06 kimi，commit 83f0f2d）
+
+**根因**：146421d 把 0x594876 的矩形收缩移进 PickPointsInRegion 内部
+（对齐原版机器码，golden harness 0x87F8E4..F0={0,0,w,h} 实锤），但
+test_place_start_points 仍传**预缩过的** usable → 双重收缩；同时
+AreaIsPassable 的菱形判定从 MapSeedClass 的 map_h 现算 +12，与 golden
+harness 的 [0xABED08]=w+2h 不一致。test_cli 的期望值（61901/49）则是
+内缩改动前的实测，提交时就没跑过。
+
+**修复**：
+- StartPointContext 补 `map_rect_h`（MapClass +0xF8=H+12）字段，
+  AreaIsPassable 菱形判定改算 map_rect_w + 2*map_rect_h
+  （=[0xABED08] 的真实来源 0x5662FB `lea eax,[eax+edx*2]`）；
+  pipeline 补 `sp.map_rect_h = ms.height + 12`（CLI 行为不变）
+- test_place_start_points：ctx.usable 改传未缩 {0,0,w,h} + map_rect_h=c.h
+- test_cli StartPointsUseInsetLocalRect：期望值刷新为内缩落地后的
+  实测 61928/76（region=0/start_points=2 不变）
+
+**验证**：ctest 43/43 全绿；CLI vs rmg_done 复验菱形内全字段 0 差异
+（AUTH 剩 19 od + 4 ov 不变）。
 
 **快速验证**：
 ```bash
