@@ -40,6 +40,8 @@ struct RmgJob {
     volatile uint32_t rand_state_enable;
     uint8_t rand_state[0x3F4];
     volatile uint32_t pristine;
+    volatile uint32_t dump_format;
+    volatile uint32_t reset_scenario;
 };
 #pragma pack(pop)
 
@@ -395,6 +397,32 @@ int main(int argc, char** argv) {
         if (argc < 3 || !OpenJob(false)) return 1;
         g_job->pristine = _stricmp(argv[2], "off") != 0 ? 1 : 0;
         std::printf("干净模式 %s\n", g_job->pristine ? "开" : "关");
+        return 0;
+    }
+    if (_stricmp(cmd, "dumpfmt") == 0) {
+        if (argc < 3 || !OpenJob(false)) return 1;
+        g_job->dump_format = atoi(argv[2]);
+        std::printf("dump 格式 = %uB/格\n", g_job->dump_format);
+        return 0;
+    }
+    if (_stricmp(cmd, "reset") == 0) {
+        // 官方场景重置：向游戏主窗口发 WM_RMG_RESET，游戏 WndProc 在
+        // 消息边界调 Scenario_ClearClasses。同步等待完成。
+        if (!OpenJob(false)) return 1;
+        HWND hwnd = FindGameWindow();
+        if (hwnd == nullptr) {
+            std::fprintf(stderr, "找不到游戏窗口\n");
+            return 1;
+        }
+        uint32_t base = g_job->reset_scenario;
+        DWORD_PTR result = 0;
+        LRESULT ok = SendMessageTimeoutA(hwnd, WM_APP + 0x42, 0, 0,
+                                         SMTO_BLOCK, 30000, &result);
+        if (ok == 0 || g_job->reset_scenario == base) {
+            std::fprintf(stderr, "重置超时/未回执（游戏忙或未注入）\n");
+            return 1;
+        }
+        std::printf("场景已重置（第 %u 次）\n", g_job->reset_scenario);
         return 0;
     }
     if (_stricmp(cmd, "status") == 0) {

@@ -20,12 +20,14 @@
 #define RAND_RANGED    0x65C7E0
 #define TECHNO_CTOR    0x6F2B40
 #define TECH_COUNT     0x5A966A
+#define CLEAR_CLASSES  0x6851F0
 #define SEC_OBJ        0xA8B230
 #define MAPSEED        0xABDFD8
 #define CELLTBL        0x87F924
 #define JOB_NAME       "Local\\RMGHookJob2"
 #define JOB_MAP_SIZE   0x10000
 #define UNLOAD_EVT     "Local\\RMGHookUnload"
+#define WM_RMG_RESET   (WM_APP + 0x42)
 
 #pragma pack(push, 1)
 struct RmgJob {
@@ -51,12 +53,56 @@ struct RmgJob {
     // overlay(+0x44) 清零——消除上一局残留对生成的影响，等价于
     // 进程启动后的首次生成
     volatile uint32_t pristine;
+    // dump 格式：9 = 9B/格（ex,iso,sub,lv,ramp,od,ov16）；
+    // 12 = 12B/格（追加 obj占用/+0xEC/+0x4C），供回放模式装载
+    volatile uint32_t dump_format;
+    // 官方场景重置计数：rmgctl 发 WM_RMG_RESET 消息，游戏 WndProc 在
+    // 消息边界调 Scenario_ClearClasses(0x6851F0) 后 +1（回执）。
+    // 调用后格子表全 NULL + 对象列表/House/Waypoint/Logic 全清 =
+    // 开机首局状态，游戏进程永不重启
+    volatile uint32_t reset_scenario;
 };
 #pragma pack(pop)
 
 static RmgJob* g_job = nullptr;
 static HANDLE g_map = nullptr;
 static HANDLE g_unload_evt = nullptr;
+static HWND g_game_wnd = nullptr;
+static WNDPROC g_old_wndproc = nullptr;
+
+// 主窗口 WndProc 子类：在消息边界（主线程、非回调嵌套）执行
+// Scenario_ClearClasses——官方场景重置。在 BN_CLICK 回调内直调会崩
+// （c000041d 回调内致命异常），消息边界是安全调用点。
+static LRESULT CALLBACK RmgWndProc(HWND w, UINT msg, WPARAM wp, LPARAM lp) {
+    if (msg == WM_RMG_RESET) {
+        reinterpret_cast<void (*)()>(CLEAR_CLASSES)();
+        if (g_job != nullptr) ++g_job->reset_scenario;  // 重置计数（回执）
+        return 0;
+    }
+    return CallWindowProcA(g_old_wndproc, w, msg, wp, lp);
+}
+
+static void SubclassGameWindow() {
+    DWORD pid = GetCurrentProcessId();
+    struct Ctx { DWORD pid; HWND hwnd; } ctx{pid, nullptr};
+    EnumWindows([](HWND w, LPARAM lp) -> BOOL {
+        Ctx* c = reinterpret_cast<Ctx*>(lp);
+        DWORD wp = 0;
+        GetWindowThreadProcessId(w, &wp);
+        if (wp == c->pid && IsWindowVisible(w) &&
+            GetWindowTextLengthA(w) > 0) {
+            c->hwnd = w;
+            return FALSE;
+        }
+        return TRUE;
+    }, reinterpret_cast<LPARAM>(&ctx));
+    if (ctx.hwnd != nullptr) {
+        g_game_wnd = ctx.hwnd;
+        g_old_wndproc = reinterpret_cast<WNDPROC>(SetWindowLongPtrA(
+            ctx.hwnd, GWLP_WNDPROC,
+            reinterpret_cast<LONG_PTR>(&RmgWndProc)));
+    }
+}
 static uint8_t g_orig_entry[6];
 static uint8_t g_orig_done[5];
 static uint8_t g_orig_rand_next[5];
@@ -72,8 +118,9 @@ static void DumpCells() {
     if (tbl == nullptr) return;
     FILE* f = nullptr;
     if (fopen_s(&f, g_job->dump_path, "wb") != 0 || f == nullptr) return;
+    bool ext = g_job->dump_format == 12;
     for (uint32_t i = 0; i < 0x40000; ++i) {
-        uint8_t rec[9] = {0};
+        uint8_t rec[12] = {0};
         const uint8_t* cell = reinterpret_cast<const uint8_t*>(tbl[i]);
         if (cell != nullptr) {
             rec[0] = 1;
@@ -85,8 +132,13 @@ static void DumpCells() {
             rec[6] = cell[0x11E];
             rec[7] = cell[0x44];
             rec[8] = cell[0x45];
+            if (ext) {
+                rec[9] = *reinterpret_cast<const uint32_t*>(cell + 0xE4) != 0;
+                rec[10] = cell[0xEC];
+                rec[11] = cell[0x4C];
+            }
         }
-        fwrite(rec, 1, 9, f);
+        fwrite(rec, 1, ext ? 12 : 9, f);
     }
     fclose(f);
 }
@@ -117,14 +169,12 @@ static void InjectParams() {
         }
     }
     if (g_job->pristine) {
+        // 把格子表整个置 NULL（内存泄漏可忽略）——模拟开机未分配状态，
+        // 让生成走「首次分配」路径。注意：清字段（+0xE4/overlay）会崩，
+        // 因为对象还挂在全局列表里；置 NULL 后旧格子整体被遗弃。
         uint32_t* tbl = *reinterpret_cast<uint32_t**>(CELLTBL);
         if (tbl != nullptr) {
-            for (uint32_t i = 0; i < 0x40000; ++i) {
-                uint8_t* cell = reinterpret_cast<uint8_t*>(tbl[i]);
-                if (cell == nullptr) continue;
-                *reinterpret_cast<uint32_t*>(cell + 0xE4) = 0;   // 占用者
-                *reinterpret_cast<uint16_t*>(cell + 0x44) = 0;   // overlay
-            }
+            memset(tbl, 0, 0x40000 * sizeof(uint32_t));
         }
     }
     ++g_job->inject_count;
@@ -343,9 +393,15 @@ static DWORD WINAPI Worker(LPVOID) {
                          reinterpret_cast<uintptr_t>(&HookTechCount),
                          g_orig_techcount, 5);
     g_job->status = g_hooked ? 1 : 0xFFFFFFFF;
+    SubclassGameWindow();
 
     if (g_unload_evt != nullptr) {
         WaitForSingleObject(g_unload_evt, INFINITE);
+    }
+    if (g_game_wnd != nullptr && g_old_wndproc != nullptr) {
+        SetWindowLongPtrA(g_game_wnd, GWLP_WNDPROC,
+                          reinterpret_cast<LONG_PTR>(g_old_wndproc));
+        g_game_wnd = nullptr;
     }
     if (g_hooked) {
         Restore(RMG_ENTRY, g_orig_entry, 6);

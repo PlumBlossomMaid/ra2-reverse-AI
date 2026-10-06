@@ -48,11 +48,51 @@
 5. 阶段 7 科技建筑计数实测：`m = PickBelow(5)`（0x5A9645 用主流 0xABE890），
    seed1 脏局 m=4（ctor@219/222/225/239），干净首局 ctor 只有 225/239。
 
+### ✅ CLI 回放模式：--init-cells / --dump-cells12（2026-10-07）
+
+脏局复现链路打通（算法零改动，只改初始状态）：
+
+- `CliWorld::InitCells()`（cliworld.cpp）对齐原版阶段 1：删掉多清的
+  object(+0xE4)/ground(+0xEC)/zoneId(+0x4C) 三行——原版只重置 6 字段。
+  全新进程这三个字段默认就是 0，首局行为不变（ctest 43/43 全绿实证）。
+- 新参数 `--init-cells=FILE`：pipeline 在 CliWorld 构造后、**InitCells 前**
+  调 `CliWorld::LoadInitCells12` 灌入上一局终态，InitCells 随后按原版语义
+  重置 6 字段、保留 object/ground/zoneId 残留 → 脏局。装载语义：
+  12B/格 × 0x40000 槽（[0]=ex [1..2]=isoTile i16LE [3]=sub [4]=lv [5]=ramp
+  [6]=od [7..8]=overlay i16LE(-1=无) [9]=object 占用布尔 [10]=ground 低字节
+  [11]=zoneId）；rec[0]==0 或本世界不存在的槽跳过。
+- 新参数 `--dump-cells12=FILE`：同格式导出终态（object 写占用布尔），
+  供链式回放。自链验证（seed1.sed）：run1→run2→run3 全跑完，逐局不同
+  （terrains 365/327/286 = 脏局效应），且无 --init-cells 的首局输出
+  逐字节不变（SHA 一致）。
+- 触点：cliworld.h/.cpp、pipeline.h/.cpp（PipelineResult.init_cells_path）、
+  cli_main.cpp（WriteCells12Dump + 参数解析）。
+
 ### 待办
 
-- 13 个 DIFF 用例逐案「开机首局」验证 == CLI（重启批量，半自动弹窗驱动）
-- （可选）找游戏自身的地图析构/重置函数，DLL 调用之实现会话内干净重置，
-  免去逐案重启；注意：手工清 +0xE4/overlay 会崩游戏（已试，闪退）
+- **真·CLI bug 已确认 3 例**（2026-10-07 重启真首局验证）：theater1 差 10 字节、
+  mt0 差 1847、mt1 差 28379——三种测量语境（脏扫/pristine/真首局）下差异
+  逐字节一致，与残留无关，是 MapType 0/1 分支、Theater 1 的算法级分歧，
+  待修。seed1/seed12345 真首局 MATCH（残留假象类已澄清）。
+  剩余 9 案（mt2/res1/res2/water60/time1/combo_a/combo_b/seedmax/theater2）
+  待按同样标准终审。
+- **会话内重置已判死**（2026-10-07）：官方析构 `Scenario_ClearClasses`
+  （0x6851F0，"Clearing old scenario"，void cdecl 无参）两条调用路径都崩——
+  ①RMG 入口 hook 内直调：c000041d 回调内致命异常（在 BN_CLICK 处理器嵌套
+  里拆对象）；②WndProc 子类化 + 自定义消息 WM_APP+0x42 在消息边界调：
+  重置本身成功返回，但**下一局生成崩**——ClearClasses 把 House 数组里
+  RTTI==0x12 的项摘掉（含 Neutral），阶段 7 FindHouseByType("Neutral")
+  拿不到 owner，RMG 缺了它需要的对象。官方流程靠 ReadScenario 重建，
+  单独调不可行。手工清格子/字段也都崩。**结论：游戏就让它自然脏着，
+  对齐走 CLI 脏链回放（用户拍板：原版 cells 本来就是脏的，脏链对齐
+  才是真对齐）。**
+- **进行中：CLI 进程内连生 --chain 模式**（agent-1）：单进程多局，
+  CliWorld 内存态自然延续（不丢 terrains_ 等不可序列化状态），
+  每局新建 Randomizer(Seed)（对齐原版逐局重播种）。判定实验：
+  seed1→seed1 第 2 局应 == 游戏脏局变体 B（2be0542bd1e772f5）。
+  磁盘链（12B dump）实测不行：seed1 回放 obj 差 1018 格（树身份丢失）。
+- 之后：大全量穷举（2 种子 × UI 六维参数），游戏侧脏链连续生成 +
+  CLI 同链连生，逐局对拍；断链发散即真 bug，定位修。
 - rmgctl sweep 子命令；C# GUI 未启动
 - 矿生长不进 CLI（用户拍板：画蛇添足，超出复刻生成算法的目标）
 - **纪律重申：CLI 只复刻原版机器码语义，不发明等价算法；
