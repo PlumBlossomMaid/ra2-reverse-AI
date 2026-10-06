@@ -37,6 +37,23 @@ waypoint (90,22)/(40,105)，只能比结构不能比内容）+ sandwell/捡箱�
    （暂停菜单的 Save Map，用户记得流程）。
 2. IsoMapPack5 同会话逐字节对拍（需当前 .sed 参数的新鲜游戏捕获）。
 
+## 2026-10-06 内容级对拍闭合（CLI .map vs live 同会话真值）
+
+CLI 图 `build_ninja62298/cli_mapcheck_62298.map`（当前 .sed，seed=62298，
+MapType=3）与 live 同会话真值逐项对比（脚本 `.qwen/tmp/_map_content_verify.py`
+等；ov 字段在 9B cells dump 的 +7，哨兵 0xFFFF→文件 0xFF）：
+
+- **[Terrain] 374/374 全中**：逐类型逐坐标 == `prestart_20260817/terrain_objects.txt`
+  （TIBTRE01×4/TIBTRE02×4/TREE01..25）。石头（18 块）是 overlay 不是 terrain。
+- **OverlayPack/OverlayDataPack 0 差异**：菱形内 12054 格 ov/od 与 live
+  rmg_done cells 逐字节一致（334 个 overlay 格 = 316 矿 + 18 石头）。
+- **IsoMapPack5 内容 0 差异**：12054 条记录的 tile/sub/level 全部
+  == rmg_done cells，其余 3 字节恒 (0,0,0)。
+- **Waypoints** (49,110)/(78,27) ✓；**Structures** CAOUTP(40,95)/
+  CATHOSP(130,87) 与 live building_objects 锚点一致（GACNST 是开局
+  MCV 展开物，本就不该写进图）。
+- 产物已复制到 `E:\YRLauncher\rmg62298_cli.yrm` 供 FA2 目检。
+
 ## 当前无游戏条件下已闭合的一项输出链问题（2026-08-15）
 
 `mapwriter.cpp` 原先为 `IsoMapPack5` 的临时记录池固定预留 `0x10000` 个元素，
