@@ -134,10 +134,12 @@ CLI vs AUTH 剩 19 od + 4 ov = game start 后矿生长（副随机流种子=time
 非确定性，不可精确复现）。
 
 **可选方向**（按优先级）：
-1. **检查 .map 输出**（mapwriter 层）：CLI 生成的 .map 文件结构是否正确
-   （IsoMapPack5/OverlayPack 编码、Waypoints/Terrain/Structures 字段序）。
-   验证方法：用官方图 sandwell（100×150）或捡箱子（200×200）对比
-   CLI 输出与原版 .map 的字节结构。
+1. ~~**检查 .map 输出**~~（2026-10-06 闭合）：结构（节序/编码/键值格式）与
+   游戏捕获逐项一致；内容与 live 同会话真值全对（Terrain 374/374、
+   Overlay 0 差异、IsoMapPack5 12054 格 0 差异、Waypoints/Structures 锚点一致）。
+   详见 docs/random-map/map-output-format.md。产物 `E:\YRLauncher\rmg62298_cli.yrm`。
+   唯一遗留：[Structures] 字段值（owner "0" vs "Neutral" 等）需 MapType=3
+   活体 Save Map 裁决——属游戏行为验证，非格式问题。
 2. **模拟副随机流矿生长**（逼近 save_runtime）：反汇编 0x5FBA37 所属函数
    （0x5FB9xx-0x5FBAxx，Tiberium 生长/扩散），用固定种子模拟
    [0xA8B230]+0x218 的 R250 流，尝试复现 19 od + 4 ov 的精确位置。
