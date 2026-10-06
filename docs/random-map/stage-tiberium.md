@@ -512,9 +512,13 @@ RMG 生成（rmg_done）之后、对局进行期间，矿还会自己长。这�
   （(60,98)/(60,102)——疑似「生长进度」先行写入、overlay 尚未落下的中间态，
   或扩散目标格的初始帧）。
 
-**不可精确复现**：副随机流由 `timeGetTime()` 播种（`Game::Seed`，
+**历史 AUTH 不可精确复现**：副随机流由 `timeGetTime()` 播种（`Game::Seed`，
 0x52FDF4），每局不同。AUTH 的 19+4 差异只能定性解释、不能逐格对齐——
 这不是复刻缺口，是原版的非确定性。
+**但确定性基准可以人造**（2026-10-06 实锤）：rmg_done 处把固定 R250 流
+状态直写进 `[ScenarioClass]+0x218`，两局无操作跑到 602 帧 cells 与
+主 RNG 全等（`snapshot_gamemd_62298/live_seed_hook/`）——生长模拟
+可在固定流下逐帧对拍。
 
 另：AGENTS.md 旧记录「od++ 写点 0x5FBA37」系误记，该地址实为
 `push 0x467 / call [0x7E14A4]` 的调用序列；全 exe 扫描 +0x11E 无 inc/add
