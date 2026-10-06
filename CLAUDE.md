@@ -272,35 +272,28 @@ param_2=0 → owner=0 假象；golden 的 dump 脚本（dump_blob_paint_golden.p
 **reversed 压栈**才是真实值（param_2=-1）。golden 可信、emu 的 Repaint 参数
 数据不可信（Rebuild/TrimCliff/Reroll 无参、不受影响）。
 
-**下午 emu 逐阶段对拍**（Seed=10791 温和，side=157 / 70×70 / MapType=3，
+**2026-08-14 emu 逐阶段对拍复验**（Seed=53393，side=157 / 70×70 / MapType=3，
 `_emu_regions.py` Unicorn 指令级模拟；详细记录 `stage-making-regions.md` §十二）：
-- **RASR 20067 次随机消耗逐位吻合**（里程碑）：ret 归属 `0x58C7BA`×10850 +
-  `0x59800D`×9176 + `0x58E387`×17 + `0x58D78C/58D7D7/58D8CB` 各 8 = 20067，
-  与 CLI 逐位一致——RASR 调用次数决定后续所有阶段的随机游标位置
-- TrimCliff 3 → 7 对齐（emu run20 vs CLI fix11 delta=7）
-- Repaint=0 是 run_call 压栈 bug 假象（不可信，见上）
-- Priority（`_cmp_prio.py`）：前 11 条一致，第 11 条分岔——**R_u32 相同
-  （2136689686）但 nb 坐标不同**（emu (97,97) vs CLI (96,96)）→ Randomizer 对齐、
-  邻居坐标传递分岔
-- hmask 顶层（`_cmp_hmask2.py`）：**前 3642 格全一致**（坐标+lv+m 逐格相同），
-  CLI 在 (65,59) m=0xE1 停（break 退出顶层循环），emu 继续到 #3644 (66,59) m=0xE3
-  判据命中开始递归——**CLI FillNotch 顶层循环提前终止 = 下游全部分岔的源头**
-  （少遍历 2 格 → Priority 邻居坐标差 1 → BuildRamp seed 分岔 emu (65,60) vs
-  CLI (100,27) → 后续级联），根因待查（对比 0x58EF10 遍历边界/CellIterator 终止）
+- RASR **20067 次随机消耗逐位吻合**，仍与 CLI 当前 rerun 对齐
+- Rebuild / BuildRamp 序列已与 emu run46 对齐
+- SeedRegion 后 `blob_id+level`：`_cmp_blobmc.py` 0 diff
+- TrimCliff 前 cell `(tile, level, ramp)`：`_cmp_postrebuild3.py` 0 diff
+- Repaint 后全图 cell：`_cmp_postrepaint.py` 0 diff
+- 先前记录的「CLI FillNotch 顶层循环提前终止」确认是旧探针状态，不再是当前 blocker
+- 产品代码已清理：`making_regions.cpp` 移除 `_cli_*` probe / `RMG-DBG` 临时输出，
+  `cli/pipeline.cpp` 移除正常运行时写 `_arl_state.txt` 的临时 dump
+- 2026-08-14 又修正 `CliWorld::RecalcAttributes` 的 `0xFFFF` 无符号读回问题：
+  `CellClass +0x38` 必须按无符号 16 位读回，不能把 65535 符号扩展成 -1 后再判断；
+  重新生成 seed=53393 地图与 cells dump，完整 `ctest` 42/42 通过
 
-### 下一步计划（按顺序）
+### 下一步计划（按顺序)
 
-1. **（对拍主线）CLI FillNotch 顶层循环提前终止根因**：CLI 在 3642 格 (65,59)
-   m=0xE1 停，原版继续到 (66,59) m=0xE3 判据命中；对比 `0x58EF10` 遍历边界与
-   CellIterator 终止条件（owner=-1 时 false 出口是死代码，CLI 循环终止条件与
-   原版不一致，正是要查的点）。修完后用 `_cmp_prio.py` / `_cmp_hmask2.py` 复验
-   全链分岔应级联消失
-2. **e2e 逐字节对拍（暂缓，用户 2026-08-12 选择）**：开游戏生成随机地图
+1. **e2e 逐字节对拍（暂缓，用户 2026-08-12 选择）**：开游戏生成随机地图
    （rmcache\RandMap.Map + RandMap.Sed 自动更新新 seed）→ 同 seed 跑 CLI →
    逐字节 diff 校准 7 项：Size/LocalSize、[Basic] 节、OverlayPack 段数、
    半整数坐标取舍、Structures 字段 7..16、IsoCell +0x119、Morphable/占地表/
    SetupLAT。样本以官方图 + FA2 实测为准
-3. `_emu_regions.py` 临时 hook（41 个：hmask/crit2a/blob/hitval/blobtest/raise/
+2. `_emu_regions.py` 临时 hook（hmask/crit2a/blob/hitval/blobtest/raise/
    esp/top/ret 等）全部对拍完成后移除（临时探针，不入库）
 
 **注意**：RA1 源码（`D:\CnCRemastered\SOURCECODE`）**没有**随机地图生成器
@@ -315,15 +308,14 @@ param_2=0 → owner=0 假象；golden 的 dump 脚本（dump_blob_paint_golden.p
   `fpu-and-random-idioms.md` / `fast-math.md` / `rng-ledger.md`（104 个活取数点总账）/
   `map-geometry.md` / `stage-*.md`（各阶段）/ `movement-zones.md` /
   `map-output-format.md`（.map 输出格式）/ `stage-making-regions.md`（阶段 4 主文档，
-  **§十二 = 2026-08-13 emu 逐阶段对拍**）
+  **§十二 = 2026-08-13/14 emu 逐阶段对拍与复验**）
 - 取证：`memory/data/decomp/mapgen_tu_map.txt` / `rmg_pipeline_decomp.txt` /
   `randomizer_asm.txt`；基准 `memory/data/rmg/rng_golden.txt` /
   `scaled_golden.txt` / `ramps_golden.txt` / `lats_golden.txt`
 - 环境坑记录：`memory/notes/toolchain-pitfalls.md`（7 条，含 shell 转义/GBK 终端/
   Ghidra scriptPath/Python tempdir 等，踩过一次别再踩）
-- 构建注意：真构建目录是 `code/rewrite/build/`（Ninja，源 = code/rewrite）；
-  仓库根 `build/` 是顶层 CMakeLists 配置、include 缺 `code\rewrite` 前缀——
-  **别用错目录**（曾因用错目录编译失败 `C1083: 无法打开包括文件 rmg/blob_paint.h`）
+- 构建注意：主验证目录是 `code/rewrite/build/`（Ninja，源 = code/rewrite）；
+  仓库根 `build/` 也已补齐 `code\rewrite` include 前缀与 CLI map 输出路径，可用于顶层 smoke
 - 提交规范：仓库只提交正式产物；`_` 开头临时探针脚本（硬编码本机路径）不入库
 
 ## 标准工作流（与 QWEN.md 对齐）

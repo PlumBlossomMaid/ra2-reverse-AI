@@ -186,24 +186,42 @@ a2mdpost\MapGen.cpp` = **0x5956E7-0x59A63A**（源码行 3934-6746，21KB）。
   param_2=0 → owner=0 假象；golden 的 dump 脚本（dump_blob_paint_golden.py:171）
   **reversed 压栈**才是真实值（param_2=-1）。golden 可信、emu 的 Repaint 参数
   数据不可信（Rebuild/TrimCliff/Reroll 无参、不受影响）。
-  **⑩' 下午 emu 逐阶段对拍**（Seed=10791 温和，side=157/70×70/MapType=3，
+  **⑩' emu 逐阶段对拍复验（2026-08-14）**（Seed=53393，side=157/70×70/MapType=3，
   `_emu_regions.py` 指令级模拟；详 `stage-making-regions.md` §十二）：
-  ① **RASR 20067 次随机消耗逐位吻合（里程碑）**——ret 归属 `0x58C7BA`×10850 +
-  `0x59800D`×9176 + `0x58E387`×17 + `0x58D78C/58D7D7/58D8CB` 各 8 = 20067，与 CLI
-  逐位一致（RASR 调用次数决定后续所有阶段随机游标位置）；② TrimCliff 3→7 对齐；
-  ③ Priority（`_cmp_prio.py`）前 11 条一致，第 11 条分岔——**R_u32 相同
-  （2136689686）但 nb 坐标不同**（emu (97,97) vs CLI (96,96)）→ Randomizer 对齐、
-  邻居坐标传递分岔；④ hmask 顶层（`_cmp_hmask2.py`）**前 3642 格全一致**，CLI 在
-  (65,59) m=0xE1 停（break），emu 继续到 #3644 (66,59) m=0xE3 判据命中开始递归——
-  **CLI FillNotch 顶层循环提前终止 = 下游全部分岔的源头**（少遍历 2 格 → Priority
-  邻居坐标差 1 → BuildRamp seed 分岔 emu (65,60) vs CLI (100,27) → 级联），
-  根因待查（对比 0x58EF10 遍历边界/CellIterator 终止）。
-  **下一步（对拍主线）**：CLI FillNotch 顶层循环提前终止根因；修完后
-  `_cmp_prio.py`/`_cmp_hmask2.py` 复验全链分岔级联消失。
-  **e2e 逐字节对拍（暂缓，用户 2026-08-12 选择）**——开游戏生成随机地图
-  （rmcache\RandMap.Map + RandMap.Sed 自动更新新 seed）→ 同 seed 跑 CLI → 逐字节 diff
-  校准 7 项：Size/LocalSize、[Basic] 节、OverlayPack 段数、半整数坐标取舍、
-  Structures 字段 7..16、IsoCell +0x119、Morphable/占地表/SetupLAT。
+  ① RASR **20067 次随机消耗逐位吻合**；② Rebuild/BuildRamp 序列已与 emu run46 对齐；
+  ③ SeedRegion 后 `blob_id+level`、TrimCliff 前 cell 状态、Repaint 后全图 cell 状态均 **0 diff**
+  （`_cmp_blobmc.py` / `_cmp_postrebuild3.py` / `_cmp_postrepaint.py`）。
+  先前记录的「CLI FillNotch 顶层循环提前终止」已确认是旧探针状态，不再是当前 blocker。
+  本轮清理完成：移除 `making_regions.cpp` 的 `_cli_*` probe/`RMG-DBG` 临时输出，移除
+  `cli/pipeline.cpp` 正常运行时写 `_arl_state.txt` 的临时 dump；阶段 4 产品代码恢复无探针状态。
+  **⑬ SplitRegion 防重语义实锤 + 62298 实机四帧 0 差异（2026-09-28）**：
+  `0x89A304` 由 `MapClass::Set_Dimensions`（0x5671A5 调 0x42AC00，仅打底地图时
+  调用一次）按 side 写入 8 邻域 work 索引步长 `{-side,1-side,1,1+side,...}`；
+  扩散里 `0x58DA5B` 标记候选格 + `0x58D9EA` 命中跳过 → **防重有效、命中不耗 RNG**。
+  golden 生成器此前只灌 0x89F688、不灌 0x89A304 → 落 BSS=0 的「不防重」假象；
+  已补灌并重生成 golden（syn-rs99 rng=[740,458,0,289,1]），CLI 切防重版后
+  **62298 实机帧 08→11 cells 四帧 0 差异、RNG 检查点逐位吻合**（after_reroll
+  =61463/i1=213/i2=66 等）。test_making_regions 加 `[MR-STAT]` 分段统计：
+  Split 入口 10/10 全对、真实地形 4 例 + checker 4 例全对；**syn-rs99 两个
+  深层分裂用例的 Rebuild 段 14 抽残差**（444 vs 458 / 458 vs 474）按
+  `known_residual` 显式登记不阻塞 CI，定位线索 = cell (14,9) 归属错位 →
+  SeedRegion DFS 前 blob_id 状态 3 格差（0x58C9AC 反编译 `== local_3c` 与
+  逐字节 `cmp [..],-1` 矛盾，试装后真实地形用例崩、已回退）。ctest **43/43 全绿**。
+  **⑪ 阶段 6 尾段 `0x5A1FB0` 已补入 CLI（2026-08-14）**：用户验图发现树入水、
+  出生点在坡/崖，确认不是补启发式约束，而是主流程漏了原版 `0x594B50` 之后的
+  `0x5A1FB0`。现已在 `start_points.{h,cpp}` 落地 `MarkStartInfluence` 并在
+  `pipeline.cpp` 的 `PlaceStartPoints` 后调用：逐出生点清 `work.+0x3C`、以 waypoint
+  为源做最多 400 步最小堆洪泛，只穿过未定砖，置 `work.+0x45` 保护区。
+  新增 `test_start_influence`，完整 `ctest` **42/42 全绿**；重新生成
+  `E:\YRLauncher\demo53393.yrm`，症状扫描 `tree_on_water=0`、出生点 `ramp=0`。
+  剩余 `tree_on_overlay` 样本为阶段 8 原版矿田生成的 `TIBTRE0x`，不是 LAT 树压矿。
+  **⑫ RecalcAttributes 0xFFFF 无符号读回修正（2026-08-14）**：
+  `CliWorld::RecalcAttributes` 不能直接读 `int16_t isoTile` 判断 `0xFFFF`，否则会把
+  65535 读成 -1，误让已清格走 `SetupLAT` / 地面类型路径；现改为统一走 `IsoTile(c)`
+  按无符号 16 位读回。已重新生成 seed=53393 地图与 cells dump，完整 `ctest` **42/42 全绿**。
+  **下一步（对拍主线）**：e2e 逐字节对拍已重新提上主线；后续优先校准
+  Size/LocalSize、[Basic] 节、OverlayPack 段数、半整数坐标取舍、Structures 字段 7..16、
+  IsoCell +0x119、Morphable/占地表/SetupLAT。
   注意：RA1 源码（CnCRemastered）**无**随机地图生成器（TS/RA2 新特性）；EA 任务编辑器也**无**生成器
 - **待确认**：`DemandProduction` 第三参数语义；`Unsuspend` 资金不足时挂起标志的行为；
   多工厂海军/陆军计数差异；`target->Target==me` 时反击贡献取负的语义；`Type+0x1FB` 标志名称；
