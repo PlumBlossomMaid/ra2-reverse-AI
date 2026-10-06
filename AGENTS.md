@@ -151,6 +151,28 @@ CLI vs AUTH 剩 19 od + 4 ov = game start 后矿生长（副随机流种子=time
    0x566797 单元拷贝、0x572890 od=8 桥修正），无一是平滑变换。
    见 `.qwen/tmp/_find_map_writer.py` 系列扫描。
 
+### ✅ 内部状态全量对拍（2026-10-06，kimi，脚本 .qwen/tmp/_stage_audit_full.py）
+
+CLI 逐阶段内部状态 vs 活体同会话（2026-10-14 系列采集）：
+
+| 层次 | 验证点 | 结果 |
+|------|--------|------|
+| cells 全字段 | 6 点：tiberium_entry / after_tiberium / before_hills / before_lats / after_lats / rmg_done | **0 差异** |
+| RNG 位置 | 每点 index1/index2 | 全吻合（161/14 · 131/234 · 131/234 · 195/48 · 28/131 · 28/131） |
+| RNG 全状态 | rmg_done 的 state[250]（0xC 起 1000B） | **逐字节 0 差异**（唯一差 +0 虚表指针 0x7E8500，非随机状态；布局实锤 {vptr, index1, index2, state[250]}=0x3F4） |
+| work 数组 | tiberium_entry / after_tiberium：24649×0x50B | 仅 **8 格 mask_cache(+0x40)** 差 1（live 63/58/50… vs CLI 62/…），其余 1971912 字节全等 |
+
+- 原版 Randomizer @0xABE890 布局更正：+0=**虚表指针**（不是 disabled 标志），
+  +4=index1、+8=index2、+0xC 起 state[250]。CLI `--dump-rng` 终态可与之
+  直接对拍。
+- 布矿返回后 work +0x38/+0x3C 的整表清理位置无矛盾：活体采集点 0x598EF9
+  正落在清理**之前**，CLI 清理在其后——两侧时序一致。
+- **唯一未闭合的内部残差**：8 格 mask_cache(+0x40) 岸线掩码缓存错位
+  （blob_paint.h 已记录「62298 帧 03/04/08 有 8 处 +0x40 值错位」）。
+  涉及格 (120,48) (121,48) (61,134) (62,134) (101,136) (100,137)
+  (101,137) (99,138)，均为水格（ov=0）——阶段 2 岸线平滑的缓存复用槽。
+  对本种子最终输出无影响（rmg_done 0 差异），对其他种子的影响待查。
+
 ### ✅ .map 键编码转置修复（2026-10-06，用户 FA2 目检驱动）
 
 **现象**：树长在水里、出生点/科技建筑错位；矿和石头（overlay）正确。
