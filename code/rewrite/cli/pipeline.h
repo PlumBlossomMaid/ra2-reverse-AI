@@ -127,5 +127,25 @@ bool RunPipeline(const ra2::rmg::MapSeedParams& params, unsigned seed,
                  const RmgRules& rules, int tile_count, PipelineResult* out,
                  std::string* err);
 
+// 进程内连生的一局：.sed 参数 + 种子（种子单列是为允许 --seed 覆盖 .sed）。
+struct ChainGame {
+  ra2::rmg::MapSeedParams params;
+  unsigned seed = 0;
+};
+
+// 进程内连生（--chain）：games 顺序执行，共享同一个 CliWorld/工作数组——
+// 内存态自然延续，与真实游戏同会话连续生成完全同构（比 12B 磁盘回放多保住
+// terrains_ 树对象列表等不可序列化状态）。每局入口 rng 重播种（原版
+// 0x598985 Randomizer::Seed(MapSeed.Seed)），world.InitCells() 按原版
+// 阶段 1 语义只清 6 字段，object/ground/zoneId 残留进入下一局。
+// 链内所有局的地图尺寸（宽+高）必须与首局一致，否则报错（跨尺寸的格子
+// 残留语义未知，先不支持）。results 与 games 等长；可在每项上预置
+// capture 开关（输入字段不会被覆盖）。
+bool RunPipelineChain(const std::vector<ChainGame>& games,
+                      const ra2::rmg::TheaterData& theater,
+                      const std::vector<ra2::rmg::TileType>& tiles,
+                      const RmgRules& rules, int tile_count,
+                      std::vector<PipelineResult>* results, std::string* err);
+
 }  // namespace cli
 }  // namespace ra2
