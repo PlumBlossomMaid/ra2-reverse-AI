@@ -90,8 +90,15 @@ class CliWorld : public ra2::rmg::WaterStageWorld,
            std::vector<ra2::rmg::PaintWorkCell>& work, int tile_count);
 
   // 阶段 1 的全图格子/工作数组初值（stage-init.md §四/§五）。
-  // 必须先于任何阶段调用；可重复调用（回到初始状态）。
+  // 必须先于任何阶段调用。照原版只重置 6 个字段，object/ground/zoneId
+  // 不清（见实现注释）——重复调用不再回到全零状态，与原版连续生成一致。
   void InitCells();
+
+  // 回放模式（--init-cells）：装载上一局终态 cells（12B/格 × 0x40000 槽，
+  // 布局见 cli_main.cpp WriteCells12Dump）作为本局初始状态。
+  // 必须在 InitCells 之前调用——InitCells 随后按原版语义重置 6 个字段，
+  // object/ground/zoneId 残留被保留下来（脏局）。rec[0]==0 的槽跳过。
+  bool LoadInitCells12(const std::string& path, std::string* err);
 
   // ── 输出记录（.map 组装用）──
   const std::vector<TerrainRecord>& terrains() const { return terrains_; }

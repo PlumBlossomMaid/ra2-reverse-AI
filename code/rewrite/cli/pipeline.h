@@ -108,6 +108,9 @@ struct PipelineResult {
   std::vector<ra2::rmg::OrePopEntry> ore_enq_trace;   // 入队 trace（--dump-ore-enq）
   // 非空时，阶段 8 每片矿田后把 work.queued 写到 「前缀_序号.bin」（emu 逐片对拍用）
   std::string ore_work_dump_prefix;
+  // 回放模式（--init-cells）：非空时在 CliWorld 构造后、InitCells 前装载
+  // 上一局 12B/格 cells dump（装载语义见 CliWorld::LoadInitCells12）。
+  std::string init_cells_path;
   long long rng_calls = 0;
   int rng_index1 = 0;
   int rng_index2 = 0;

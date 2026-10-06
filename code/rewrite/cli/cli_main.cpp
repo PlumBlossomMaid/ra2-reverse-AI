@@ -22,6 +22,9 @@
 //   --dump-zone-table=FILE                 导出阶段 5 Recalc 后的 zone 表输入
 //                                          （4B/格 land,level,zone，索引 CellToIndex，
 //                                          与权威 beforerebuild/zone_table_4b.bin 对拍）
+//   --init-cells=FILE    回放模式：装载上一局 12B/格 cells dump 作为初始状态
+//                        （脏局复现；在 InitCells 前灌入，算法不变只是输入状态不同）
+//   --dump-cells12=FILE  导出 12B/格 cells（链式回放的输入格式）
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
@@ -71,6 +74,46 @@ void WriteCellsDump(const std::string& path,
     df.write(reinterpret_cast<const char*>(&rm), 1);
     df.write(reinterpret_cast<const char*>(&od), 1);
     df.write(reinterpret_cast<const char*>(&ov), 2);
+  }
+}
+
+// 12B/格回放格式（--init-cells / --dump-cells12 共用）：
+//   [0]=exists [1..2]=isoTile int16 LE [3]=subtile [4]=level [5]=ramp
+//   [6]=overlayData [7..8]=overlay int16 LE(-1=无) [9]=object 占用布尔
+//   [10]=ground 低字节 [11]=zoneId
+// object 只写占用布尔（!=0 → 1），与游戏侧 DLL dump 口径一致。
+void WriteCells12Dump(const std::string& path,
+                      const std::vector<ra2::cli::CliCell>& cells,
+                      const std::vector<char>& exists) {
+  std::ofstream df(path, std::ios::binary);
+  if (!df) {
+    std::fprintf(stderr, "cannot write %s\n", path.c_str());
+    return;
+  }
+  for (int i = 0; i < 0x40000; ++i) {
+    const ra2::cli::CliCell& c = cells[static_cast<std::size_t>(i)];
+    const std::uint8_t ex = (exists[static_cast<std::size_t>(i)] != 0);
+    const std::uint16_t iso = static_cast<std::uint16_t>(c.isoTile);
+    const std::uint8_t st = static_cast<std::uint8_t>(c.subtile);
+    const std::uint8_t lv = static_cast<std::uint8_t>(c.level);
+    const std::uint8_t rm = static_cast<std::uint8_t>(c.ramp);
+    const std::uint8_t od = static_cast<std::uint8_t>(c.overlayData);
+    // 与 9B dump 同口径：菱形外格写 0
+    const std::uint16_t ov = ex ? static_cast<std::uint16_t>(c.overlay) : 0;
+    const std::uint8_t obj = (c.object != 0) ? 1 : 0;
+    const std::uint8_t gnd =
+        static_cast<std::uint8_t>(static_cast<std::uint16_t>(c.ground) & 0xFF);
+    const std::uint8_t zn = c.zoneId;
+    df.write(reinterpret_cast<const char*>(&ex), 1);
+    df.write(reinterpret_cast<const char*>(&iso), 2);
+    df.write(reinterpret_cast<const char*>(&st), 1);
+    df.write(reinterpret_cast<const char*>(&lv), 1);
+    df.write(reinterpret_cast<const char*>(&rm), 1);
+    df.write(reinterpret_cast<const char*>(&od), 1);
+    df.write(reinterpret_cast<const char*>(&ov), 2);
+    df.write(reinterpret_cast<const char*>(&obj), 1);
+    df.write(reinterpret_cast<const char*>(&gnd), 1);
+    df.write(reinterpret_cast<const char*>(&zn), 1);
   }
 }
 
@@ -257,6 +300,8 @@ static int RunCli(int argc, char** argv) {
       ArgValue(argc, argv, "--dump-cells-before-rng-out");
   const std::string dump_zone_table_path =
       ArgValue(argc, argv, "--dump-zone-table");
+  const std::string init_cells_path = ArgValue(argc, argv, "--init-cells");
+  const std::string dump_cells12_path = ArgValue(argc, argv, "--dump-cells12");
 
   if (sed_path.empty() || game_dir.empty()) {
     std::fprintf(stderr,
@@ -383,6 +428,7 @@ static int RunCli(int argc, char** argv) {
   }
   result.capture_arl_state = !dump_arl_state_path.empty();
   result.ore_work_dump_prefix = dump_ore_work_prefix;
+  result.init_cells_path = init_cells_path;
   result.capture_stage_rng_state = !ArgValue(argc, argv, "--dump-rng-at-after-hills").empty();
   if (!dump_cells_at_rng.empty()) {
     result.capture_rng_call_cells = std::strtoll(dump_cells_at_rng.c_str(), nullptr, 0);
@@ -418,6 +464,9 @@ static int RunCli(int argc, char** argv) {
   // 游戏侧同字段：CellClass +0x38/+0x44/+0x11A/+0x11B/+0x11C/+0x11E。
   if (!dump_path.empty()) {
     WriteCellsDump(dump_path, result.cells, result.exists);
+  }
+  if (!dump_cells12_path.empty()) {
+    WriteCells12Dump(dump_cells12_path, result.cells, result.exists);
   }
 
   if (!dump_cells_at_rng_out.empty()) {

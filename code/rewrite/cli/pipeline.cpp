@@ -146,6 +146,12 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   world.set_max_trees(rules.max_trees);
   world.set_ground_foot(rules.ground_foot);
   world.set_cliff_back_impassability(rules.cliff_back_impassability);
+  // 回放模式：先灌上一局终态，再让 InitCells 按原版阶段 1 语义重置——
+  // 它只清 6 个字段，object/ground/zoneId 的上一局残留由此进入本局。
+  if (!out->init_cells_path.empty() &&
+      !world.LoadInitCells12(out->init_cells_path, err)) {
+    return false;
+  }
   world.InitCells();
   std::fprintf(stderr, "RMG: Init random map (W=%d H=%d side=%d seed=%u tile_count=%d)\n",
                ms.width, ms.height, grid.side(), seed, tile_count);

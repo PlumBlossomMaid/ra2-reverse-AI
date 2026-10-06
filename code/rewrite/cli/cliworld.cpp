@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <fstream>
 
 #include "rmg/place_tile.h"
 #include "rmg/recalc.h"
@@ -52,9 +53,10 @@ void CliWorld::InitCells() {
     cell.subtile = 0;      // +0x11A
     cell.overlay = -1;     // +0x44 = 0xFFFFFFFF
     cell.overlayData = 0;  // +0x11E
-    cell.ground = 0;       // +0xEC
-    cell.zoneId = 0;       // +0x4C
-    cell.object = 0;       // +0xE4
+    // 原版阶段 1（stage-init.md §四）只重置上面 6 个字段，不碰
+    // +0xE4(object)/+0xEC(ground)/+0x4C(zoneId)——真实游戏连续生成时这三个
+    // 字段的上一局残留会带入下一局（脏局）。全新进程里它们默认就是 0，
+    // 首局行为不变；回放脏局（--init-cells）时残留必须保留。
   });
   // 工作数组（stage-init.md §五）：全零，但 +0x4A = 1（有效位）、+0x40 = -1
   // （掩码缓存未计算）。
@@ -72,6 +74,38 @@ void CliWorld::InitCells() {
   start_locations_.clear();
   waypoints_.clear();
   active_buildings_.clear();
+}
+
+bool CliWorld::LoadInitCells12(const std::string& path, std::string* err) {
+  std::ifstream f(path, std::ios::binary);
+  if (!f) {
+    if (err) *err = "cannot open init-cells: " + path;
+    return false;
+  }
+  char rec[12];
+  for (int i = 0; i < kCellSlots; ++i) {
+    if (!f.read(rec, 12)) {
+      if (err) *err = "init-cells truncated (need 12B x 0x40000): " + path;
+      return false;
+    }
+    if (rec[0] == 0) continue;  // 不存在的槽保持不存在
+    if (exists_[static_cast<std::size_t>(i)] == 0) continue;
+    CliCell& c = cells_[static_cast<std::size_t>(i)];
+    std::int16_t iso = 0;
+    std::int16_t ov = 0;
+    std::memcpy(&iso, rec + 1, 2);  // int16 LE，有符号装载
+    std::memcpy(&ov, rec + 7, 2);   // -1 = 无 overlay
+    c.isoTile = iso;
+    c.subtile = static_cast<std::int8_t>(rec[3]);
+    c.level = static_cast<std::int8_t>(rec[4]);
+    c.ramp = static_cast<std::int8_t>(rec[5]);
+    c.overlayData = static_cast<std::int8_t>(rec[6]);
+    c.overlay = ov;
+    c.object = (rec[9] != 0) ? 1 : 0;  // 占用布尔（DLL 端也只 dump 布尔）
+    c.ground = static_cast<std::uint8_t>(rec[10]);
+    c.zoneId = static_cast<std::uint8_t>(rec[11]);
+  }
+  return true;
 }
 
 // ── 槽位 / 工作数组下标 / 哑元退让 ──────────────────────────────────────
