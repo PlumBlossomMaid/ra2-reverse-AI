@@ -541,13 +541,15 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   recalc_pass();
   snap_cells("after_lats_recalc");
 
-  // RMG 收尾的矿帧平滑：od = round(同类矿 8 邻居数 * 11 / 8)，整数形式
-  // (pc*11+4)>>3。2026-10-06 活体取证（live_od_bisect_20261014）实锤：
-  // after_lats→rmg_done 窗口（0x599354-0x5994B0）全图唯一变化就是矿格 od，
-  // 316/316 格满足该映射（pc = 8 邻域内同类矿 overlay 数；ore 27-38 与
-  // gem 102-113 各算各的），iso/sub/lv/ramp/ov 均不变。不耗主 RNG。
-  // 原版机器码的具体函数位置待细采定位（窗口内直接调用树未命中，疑走
-  // 虚析构/间接路径）。
+  // RMG 收尾的矿帧平滑。2026-10-06 活体取证全链闭合：
+  //   调用点 = 0x59944C `call 0x568BB0(MapClass, 1)`（rmg_done 窗口内，
+  //   硬件监视点+断点二分实锤：0x59943F 处 od 未变、0x599451 处已变）；
+  //   0x568BB0 的逐格循环在 0x568DD8 对矿格调 **0x4818E0**；
+  //   0x4818E0 数 8 邻域同 TiberiumIndex 格数（0x5FDD20 比对），然后
+  //   `idiv [type+0xE4]` 取余，od = dword 表 [0x81CD28 + 余数*4] 的低字节。
+  //   表前 9 项 = {0,1,3,4,6,7,8,10,11}，与活体拟合的 (pc*11+4)>>3 完全一致
+  //   （316/316 格零例外），iso/sub/lv/ramp/ov 均不变，不耗主 RNG。
+  static const int kOdFrameTable[9] = {0, 1, 3, 4, 6, 7, 8, 10, 11};
   grid.ForEachCell([&](const rmg::CellCoord& c) {
     const int ov = world.Overlay(c);
     int lo, hi;
@@ -568,7 +570,7 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
       const int nov = world.Overlay(n);   // 出图格 dummy overlay=-1，不计入
       if (nov >= lo && nov <= hi) ++pc;
     }
-    world.SetOverlayData(c, (pc * 11 + 4) >> 3);
+    world.SetOverlayData(c, kOdFrameTable[pc]);
   });
   snap_cells("after_ore_frame_smooth");
 
