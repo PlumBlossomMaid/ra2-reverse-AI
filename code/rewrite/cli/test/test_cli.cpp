@@ -286,7 +286,7 @@ TEST(CliWorldTechBuildings, UnlimboFailsWithoutObjectRegistration) {
       static_cast<std::size_t>(grid.side()) * static_cast<std::size_t>(grid.side()));
   CliWorld world(grid, theater, tiles, rng, work,
                  static_cast<int>(tiles.size()));
-  world.InitCells();
+  world.InitCells(true);
   world.set_neutral_tech_buildings({"CAMACH"});
   world.set_foundations({{"CAMACH", {{0, 0}, {1, 0}, {0x7FFF, 0x7FFF}}}});
 
@@ -308,7 +308,7 @@ TEST(CliWorldTechBuildings, UnlimboCanWriteWhenObjectRegistrationExists) {
       static_cast<std::size_t>(grid.side()) * static_cast<std::size_t>(grid.side()));
   CliWorld world(grid, theater, tiles, rng, work,
                  static_cast<int>(tiles.size()));
-  world.InitCells();
+  world.InitCells(true);
   world.set_neutral_tech_buildings({"CAMACH"});
   world.set_foundations({{"CAMACH", {{0, 0}, {1, 0}, {0x7FFF, 0x7FFF}}}});
   world.set_tech_object_registration(true);

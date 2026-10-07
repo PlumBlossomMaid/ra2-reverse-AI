@@ -43,29 +43,32 @@ CliWorld::CliWorld(const ra2::rmg::MapGrid& grid,
   // 阶段 1 清格子用的是迭代器，从不碰它；这里用构造时的默认值）。
 }
 
-void CliWorld::InitCells() {
-  // 阶段 1 全图重置（stage-init.md §四）——只走菱形内的格。
-  grid_.ForEachCell([&](const ra2::rmg::CellCoord& c) {
-    CliCell& cell = Mut(c);
-    cell.ramp = 0;         // +0x11C
-    cell.level = 4;        // +0x11B = 常数 4
-    cell.isoTile = 0;      // +0x38
-    cell.subtile = 0;      // +0x11A
-    cell.overlay = -1;     // +0x44 = 0xFFFFFFFF
-    cell.overlayData = 0;  // +0x11E
-    // 原版阶段 1（stage-init.md §四）只重置上面 6 个字段，不碰
-    // +0xE4(object)/+0xEC(ground)/+0x4C(zoneId)——真实游戏连续生成时这三个
-    // 字段的上一局残留会带入下一局（脏局）。全新进程里它们默认就是 0，
-    // 首局行为不变；回放脏局（--init-cells）时残留必须保留。
-  });
-  // 工作数组（stage-init.md §五）：全零，但 +0x4A = 1（有效位）、+0x40 = -1
+void CliWorld::InitCells(bool first_run) {
+  // 首局 = 原版 0x599650 重置子路径（0x599E70-0x599EB7 的 CellIterator 清
+  // 6 字段）；第 2 局起该路径被跳过，cells 全字段原样残留。
+  if (first_run) {
+    grid_.ForEachCell([&](const ra2::rmg::CellCoord& c) {
+      CliCell& cell = Mut(c);
+      cell.ramp = 0;         // +0x11C
+      cell.level = 4;        // +0x11B = 常数 4
+      cell.isoTile = 0;      // +0x38
+      cell.subtile = 0;      // +0x11A
+      cell.overlay = -1;     // +0x44 = 0xFFFFFFFF
+      cell.overlayData = 0;  // +0x11E
+      // 原版阶段 1 只重置上面 6 个字段，不碰
+      // +0xE4(object)/+0xEC(ground)/+0x4C(zoneId)。
+    });
+  }
+  // 工作数组（stage-init.md §五 / 0x59A321-0x59A376 的初始化循环）：
+  // **每局** free+new 后全零，但 +0x42 = 1（有效位）、+0x38 = -1
   // （掩码缓存未计算）。
   for (ra2::rmg::PaintWorkCell& w : work_) {
     w = ra2::rmg::PaintWorkCell{};
     w.flag4a = true;
     w.mask_cache = -1;
   }
-  // 再扫一遍：打包坐标写进记录头 4 字节，+0x11B 改成 MapSeed +0x30C（= 4）。
+  // 尾循环（0x59A385-0x59A3DC，每局都跑）：打包坐标写进记录头 4 字节，
+  // cell +0x11B 改成 MapSeed +0x30C（= 4）。
   grid_.ForEachCell([&](const ra2::rmg::CellCoord& c) {
     work_[WorkIdx(c)].coord = c;
     Mut(c).level = 4;

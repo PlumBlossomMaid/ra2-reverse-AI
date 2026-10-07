@@ -391,7 +391,8 @@ std::string ChainIndexedPath(const std::string& pattern, int index) {
 // 逐局写 <out目录>/<NN>_<sed基名>.map + 可选的 12B cells。
 int RunChain(const std::string& chain_path, const std::string& seed_tok,
              const std::string& game_dir, const std::string& rules_path,
-             const std::string& out_arg, const std::string& cells12_pattern) {
+             const std::string& out_arg, const std::string& cells12_pattern,
+             const std::string& stage_cells_prefix) {
   std::string text;
   if (!ReadFile(chain_path, &text)) {
     std::fprintf(stderr, "cannot read chain file: %s\n", chain_path.c_str());
@@ -453,7 +454,8 @@ int RunChain(const std::string& chain_path, const std::string& seed_tok,
   std::vector<ra2::cli::PipelineResult> results(games.size());
   std::string err;
   if (!ra2::cli::RunPipelineChain(games, assets.data(), tiles, rules,
-                                  assets.TileCount(), &results, &err)) {
+                                  assets.TileCount(), &results, &err,
+                                  !stage_cells_prefix.empty())) {
     std::fprintf(stderr, "chain failed: %s\n", err.c_str());
     return 1;
   }
@@ -478,6 +480,13 @@ int RunChain(const std::string& chain_path, const std::string& seed_tok,
     if (!cells12_pattern.empty()) {
       WriteCells12Dump(ChainIndexedPath(cells12_pattern, index),
                        results[i].cells, results[i].exists);
+    }
+    if (!stage_cells_prefix.empty()) {
+      // 链模式逐局阶段快照：<prefix>_<NN>_<stage>.bin（9B/格，对拍用）
+      for (const auto& s : results[i].cell_snapshots) {
+        WriteCellsDump(stage_cells_prefix + "_" + idx + "_" + s.name + ".bin",
+                       s.cells, results[i].exists);
+      }
     }
     std::fprintf(stderr, "ok: chain #%02d seed=%u players=%d -> %s\n", index,
                  games[i].seed, games[i].params.num_players,
@@ -545,7 +554,7 @@ static int RunCli(int argc, char** argv) {
       return 2;
     }
     return RunChain(chain_path, seed_tok, game_dir, rules_path, out_path,
-                    dump_cells12_path);
+                    dump_cells12_path, dump_stage_cells_prefix);
   }
 
   // ── 1. 读 .sed ──

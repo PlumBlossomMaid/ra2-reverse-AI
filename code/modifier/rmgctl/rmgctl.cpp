@@ -42,6 +42,10 @@ struct RmgJob {
     volatile uint32_t pristine;
     volatile uint32_t dump_format;
     volatile uint32_t reset_scenario;
+    volatile uint32_t tibdump;
+    // 干净连生：非 0 时（需在 inject 前设置），hook 安装补丁强制每局走
+    // 0x599650 完整重置路径 = 每局都是进程首局语义
+    volatile uint32_t clean_regen;
 };
 #pragma pack(pop)
 
@@ -60,16 +64,37 @@ static uint32_t FindGame() {
     PROCESSENTRY32W pe;
     pe.dwSize = sizeof(pe);
     uint32_t pid = 0;
+    uint32_t fallback = 0;
     if (Process32FirstW(snap, &pe)) {
         do {
             if (_wcsicmp(pe.szExeFile, L"gamemd.exe") == 0) {
-                pid = pe.th32ProcessID;
-                break;
+                if (fallback == 0) fallback = pe.th32ProcessID;
+                // 可能有僵尸进程（Syringe 挂起的壳，OpenProcess 拒绝）——
+                // 优先返回能完整打开的实例
+                HANDLE h = OpenProcess(PROCESS_CREATE_THREAD |
+                                       PROCESS_VM_OPERATION |
+                                       PROCESS_VM_WRITE | PROCESS_VM_READ |
+                                       PROCESS_QUERY_INFORMATION,
+                                       FALSE, pe.th32ProcessID);
+                if (h != nullptr) {
+                    // 僵尸壳进程 OpenProcess 能开但 VirtualAllocEx 拒绝——
+                    // 试分配 4 字节才算数
+                    void* probe = VirtualAllocEx(h, nullptr, 4,
+                                                 MEM_COMMIT | MEM_RESERVE,
+                                                 PAGE_READWRITE);
+                    if (probe != nullptr) {
+                        VirtualFreeEx(h, probe, 0, MEM_RELEASE);
+                        pid = pe.th32ProcessID;
+                        CloseHandle(h);
+                        break;
+                    }
+                    CloseHandle(h);
+                }
             }
         } while (Process32NextW(snap, &pe));
     }
     CloseHandle(snap);
-    return pid;
+    return pid != 0 ? pid : fallback;
 }
 
 static bool OpenJob(bool create) {
@@ -298,6 +323,16 @@ int main(int argc, char** argv) {
         std::printf("已 disarm\n");
         return 0;
     }
+    if (_stricmp(cmd, "cleanregen") == 0) {
+        // 干净连生开关：必须在 inject 之前设置（补丁在安装时写入）。
+        // on 后每局 = 进程首局语义（原版自己的完整重置路径）。
+        // OpenJob(true)：未注入时预创建共享内存，inject 时 hook 读取标志。
+        if (argc < 3 || !OpenJob(true)) return 1;
+        g_job->clean_regen = _stricmp(argv[2], "off") != 0 ? 1 : 0;
+        std::printf("干净连生 %s（下次 inject 生效）\n",
+                    g_job->clean_regen ? "开" : "关");
+        return 0;
+    }
     if (_stricmp(cmd, "setdump") == 0) {
         if (argc < 3 || !OpenJob(false)) return 1;
         strncpy_s(g_job->dump_path, sizeof(g_job->dump_path), argv[2],
@@ -322,6 +357,19 @@ int main(int argc, char** argv) {
         // 默认：窗口消息点击（后台可用），(x,y) 窗口坐标
         if (!MsgClick(atoi(argv[2]), atoi(argv[3]))) return 1;
         return 0;
+    }
+    if (_stricmp(cmd, "waitmenu") == 0) {
+        // 等游戏停在 RMG 页（「预览地图」0x0620 出现），最长 secs 秒
+        int secs = argc > 2 ? atoi(argv[2]) : 3600;
+        for (int i = 0; i < secs * 2; ++i) {
+            if (FindControl(0x0620) != nullptr) {
+                std::printf("RMG 页面就绪\n");
+                return 0;
+            }
+            Sleep(500);
+        }
+        std::fprintf(stderr, "等 RMG 页面超时\n");
+        return 1;
     }
     if (_stricmp(cmd, "gen") == 0) {
         // 「预览地图」(0x0620)：触发生成（生成后画小地图预览，无模态弹窗）。
@@ -395,14 +443,28 @@ int main(int argc, char** argv) {
     }
     if (_stricmp(cmd, "pristine") == 0) {
         if (argc < 3 || !OpenJob(false)) return 1;
-        g_job->pristine = _stricmp(argv[2], "off") != 0 ? 1 : 0;
-        std::printf("干净模式 %s\n", g_job->pristine ? "开" : "关");
+        // off=0；on=1；数字直通（2 = 批量模式，额外 NOP 渲染链，
+        // 规避 ts-ddraw ra2md.dll+0x2BAA 分配崩溃）
+        if (_stricmp(argv[2], "off") == 0) {
+            g_job->pristine = 0;
+        } else if (_stricmp(argv[2], "on") == 0) {
+            g_job->pristine = 1;
+        } else {
+            g_job->pristine = static_cast<uint32_t>(atoi(argv[2]));
+        }
+        std::printf("干净模式 %u\n", g_job->pristine);
         return 0;
     }
     if (_stricmp(cmd, "dumpfmt") == 0) {
         if (argc < 3 || !OpenJob(false)) return 1;
         g_job->dump_format = atoi(argv[2]);
         std::printf("dump 格式 = %uB/格\n", g_job->dump_format);
+        return 0;
+    }
+    if (_stricmp(cmd, "tibdump") == 0) {
+        if (argc < 3 || !OpenJob(false)) return 1;
+        g_job->tibdump = _stricmp(argv[2], "off") != 0 ? 1 : 0;
+        std::printf("布矿前后 dump %s\n", g_job->tibdump ? "开" : "关");
         return 0;
     }
     if (_stricmp(cmd, "reset") == 0) {

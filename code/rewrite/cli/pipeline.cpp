@@ -115,7 +115,7 @@ bool RunGameOnWorld(const rmg::MapSeedParams& params, unsigned seed,
                     rmg::Randomizer* rng_arg,
                     std::vector<rmg::PaintWorkCell>* work_arg,
                     CliWorld* world_arg, PipelineResult* out,
-                    std::string* err) {
+                    std::string* err, bool first_game) {
   if (out == nullptr) return false;
   // 整条流水线在向零截断的 x87 环境下跑（原版 WinMain 全局 RC=chop）。
   rmg::FpuChopScope fpu;
@@ -165,13 +165,14 @@ bool RunGameOnWorld(const rmg::MapSeedParams& params, unsigned seed,
   world.set_overlay_land(rules.overlay_land);
   world.set_terrain_occ_bits(rules.terrain_occ);
   world.set_theater_id(params.theater);
-  // 回放模式：先灌上一局终态，再让 InitCells 按原版阶段 1 语义重置——
-  // 它只清 6 个字段，object/ground/zoneId 的上一局残留由此进入本局。
+  // 回放模式（--init-cells）：灌入上一局终态 cells 作为本局初始状态。
+  // 2026-10-07 门控实锤：原版连生不再清 cells（重置子路径仅进程首局
+  // 进入），所以回放脏局后**不再**清 6 字段（first_run=false）。
   if (!out->init_cells_path.empty() &&
       !world.LoadInitCells12(out->init_cells_path, err)) {
     return false;
   }
-  world.InitCells();
+  world.InitCells(first_game && out->init_cells_path.empty());
   std::fprintf(stderr, "RMG: Init random map (W=%d H=%d side=%d seed=%u tile_count=%d)\n",
                ms.width, ms.height, grid.side(), seed, tile_count);
 
@@ -364,13 +365,17 @@ bool RunGameOnWorld(const rmg::MapSeedParams& params, unsigned seed,
   snap_cells("after_making_regions");
   mark_rng("after_making_regions");
 
-  // 原版 0x598B8E-0x598C0A：making_regions 之后、SpreadGreen 之前有一个
-  // "Recalculating cell attributes" 阶段（FUN_0059B740 + 全图遍历调
-  // CellClass::RecalcAttributes(-1)）。这次 Recalc 会执行 SetupLAT，
-  // 修改 isoTile 为正确的过渡砖。CLI 之前缺少这次调用 → 673 格 iso 差异。
-  grid.ForEachCell(
-      [&](const rmg::CellCoord& c) { world.RecalcAttributes(c, -1); });
-  snap_cells("after_making_regions_recalc");
+  // ⚠️ 2026-10-07 复核：这里原本有一次「额外全图 Recalc」，注释声称对应
+  // 原版 0x598B8E-0x598C0A——但那段反汇编只有预览/版本门调用（0x641140/
+  // 0x5E7EB0），原版在 making_regions 与 SpreadGreen(0x59B740) 之间
+  // **没有** RecalcAttributes（主流程里 RecalcAttributes 直调点只有
+  // 0x598E48/0x598FE7/0x599153/0x59937D 四处循环）。这次额外 Recalc 是
+  // 当时为修 seed1 的 673 格 iso 差异加的补偿；agent-1 的 RecalcLandType
+  // 全分支重写（0x483C80）落地后，mt0(MapType=0) 实证它反而是分岔源
+  // （真实首次 Recalc 在 SpreadGreen 之后 0x598E31）。已移除。
+  //
+  // 若未来 seed1 回归出 673 格 iso 差异，说明上游阶段（making_regions
+  // 尾部 0x5A17F0 或更早）仍有未还原的写砖行为，去修上游，别加回来。
 
   // ── 阶段 5：绿地扩张 + 逐格重算属性 ──
   std::fprintf(stderr, "RMG: SpreadGreen\n");
@@ -643,14 +648,15 @@ bool RunPipeline(const rmg::MapSeedParams& params, unsigned seed,
   rmg::Randomizer rng;   // RunGameOnWorld 入口 Seed(seed)，与先播种等价
   CliWorld world(grid, theater, tiles, rng, work, tile_count);
   return RunGameOnWorld(params, seed, theater, rules, tile_count, grid, &rng,
-                        &work, &world, out, err);
+                        &work, &world, out, err, /*first_game=*/true);
 }
 
 bool RunPipelineChain(const std::vector<ChainGame>& games,
                       const rmg::TheaterData& theater,
                       const std::vector<rmg::TileType>& tiles,
                       const RmgRules& rules, int tile_count,
-                      std::vector<PipelineResult>* results, std::string* err) {
+                      std::vector<PipelineResult>* results, std::string* err,
+                      bool capture_stage_cells) {
   if (results == nullptr || games.empty() ||
       results->size() != games.size()) {
     if (err != nullptr) *err = "RunPipelineChain: bad arguments";
@@ -681,9 +687,10 @@ bool RunPipelineChain(const std::vector<ChainGame>& games,
         return false;
       }
     }
+    (*results)[i].capture_stage_cells = capture_stage_cells;
     if (!RunGameOnWorld(games[i].params, games[i].seed, theater, rules,
                         tile_count, grid, &rng, &work, &world,
-                        &(*results)[i], err)) {
+                        &(*results)[i], err, /*first_game=*/i == 0)) {
       return false;
     }
   }

@@ -92,12 +92,24 @@ class CliWorld : public ra2::rmg::WaterStageWorld,
   // 阶段 1 的全图格子/工作数组初值（stage-init.md §四/§五）。
   // 必须先于任何阶段调用。照原版只重置 6 个字段，object/ground/zoneId
   // 不清（见实现注释）——重复调用不再回到全零状态，与原版连续生成一致。
-  void InitCells();
+  //
+  // 2026-10-07 实锤（门控探针 _gate_probe.py/_gate_probe2.py，seed1 连生 3 局）：
+  // 原版 0x599650（每局入口调用）的重置子路径 0x599B1D-0x599EB7（对象析构
+  // 四数组 + CellIterator 清 6 字段）只在**进程首局**进入；同参再生成时
+  // 跳过 → cells 全字段（含 +0xE4 对象/+0xEC/+0x4C）与四个对象数组
+  // 原样带入下一局。证据：g2 入口 counts == g1 出口 counts（TerrainArr
+  // 365/AnimArr 4/BuildingArr 2 全等），g2 阶段-1 后 cells 与 g1 终态
+  // 逐字节相同；g2 出口 BuildingArr 4（建筑也累计）、g2==g3 为不动点。
+  // 但工作数组**每局重置**：0x59A2E8-0x59A378 每局 free+new 并把每条
+  // 0x50 记录全零化（+0x38=-1、+0x42=1），0x59A385-0x59A3DC 尾循环再写
+  // 打包坐标并置 cell+0x11B=MapSeed+0x30C —— 这两段每局都跑。
+  void InitCells(bool first_run);
 
   // 回放模式（--init-cells）：装载上一局终态 cells（12B/格 × 0x40000 槽，
   // 布局见 cli_main.cpp WriteCells12Dump）作为本局初始状态。
-  // 必须在 InitCells 之前调用——InitCells 随后按原版语义重置 6 个字段，
-  // object/ground/zoneId 残留被保留下来（脏局）。rec[0]==0 的槽跳过。
+  // 必须在 InitCells 之前调用；回放脏局时 InitCells 传 first_run=false
+  // （原版连生不清 cells），6 字段与 object/ground/zoneId 全部残留。
+  // rec[0]==0 的槽跳过。
   bool LoadInitCells12(const std::string& path, std::string* err);
 
   // ── 输出记录（.map 组装用）──

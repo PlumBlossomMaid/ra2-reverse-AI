@@ -145,7 +145,8 @@ bool RunPipelineChain(const std::vector<ChainGame>& games,
                       const ra2::rmg::TheaterData& theater,
                       const std::vector<ra2::rmg::TileType>& tiles,
                       const RmgRules& rules, int tile_count,
-                      std::vector<PipelineResult>* results, std::string* err);
+                      std::vector<PipelineResult>* results, std::string* err,
+                      bool capture_stage_cells = false);
 
 }  // namespace cli
 }  // namespace ra2
