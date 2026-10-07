@@ -19,9 +19,42 @@ PickBelowMul。重写含真实占地偏移表（art(md).ini `Foundation=` → 0x
 锚点层高、Unlimbo/Destroy 句柄语义。单案 845→**772** 格差异。
 验证：62298 repro sed vs live rmg_done 仍 0 差异；p4/p6/sz1/sz2 仍 0 差异。
 
-### 剩余 ~772 格 = 布矿发散（sz0 紧岛屿地理）
+### ✅ mt0 布矿发散根因已实锤并修复（2026-10-08，TIBTRE 清矿）
 
-矿 overlay 位置不同。已排除（全部实证，**别再查**）：
+**根因**：`TerrainClass::TerrainClass`（0x71BB90）内部调放置函数 0x71D000，
+后者在目标格有 overlay 且其 `OverlayTypeClass+0x2A9`（INI `Tiberium=yes`）为真时
+**清掉该格 overlay（ov=-1、od=0）**（0x71D123 `mov [eax+0x44],esi` /
+0x71D12B `mov byte [eax+0x11E],0`）。矿田锚定 TIBTRE 落在已铺矿格上时，
+原版清矿重铺；CLI 的 `CreateTerrain` 不清 → 扩散路径全错位。
+
+**取证链**（全部活体实证，案 = s12345_mt0_t0_th0_sz0_r0_p2）：
+1. `rmgctl tibdump on`（DLL 自带 0x598EF4/0x598EF9 取证钩）→ 布矿入口态
+   与 CLI `--dump-arl-state` **逐维全同**（RNG 250 词、ND、cells、work、
+   区域、候选点、waypoints 全部一致）——输入无差异。
+2. 同入口态灌 emu 跑原版 0x5A23A0 → emu 输出 == CLI（总取数 9944 精确一致），
+   但 ≠ 活体（多 44 次取数）→ CLI 实现与原版汇编等价，差异在 emu/CLI 环境缺东西。
+3. 逐田 RNG 指纹（bp 0x5A28C0）：田 0-3 一致，田 4（出生点田 count=500）分岔。
+4. field#4 取数调用点序列（bp 0x65C780 ×1851 次活体）：第 841 次分岔——
+   emu 走入队、活体走放置。
+5. key 值逐位对比（bp 0x5A2DB9）：**前 835 个 key 位级一致** → x87/常量无罪。
+6. pop 序列对比（bp 0x5A2C12）：pop 0-1475 全同，pop 1476 同格 (37,85)
+   但 emu ov=107 od=9 vs 活体 ov=-1 od=0 → 活体的矿被清了。
+7. 汇编实锤：0x71D000 的清除段 + 活体验证 TIB01/GEM01 +0x2A9=1、
+   SROCK01 +0x2A9=0（矿可清、石头不可清）。
+
+**修复**：`cliworld.cpp` `CliWorld::CreateTerrain` 增加 overlay 清除
+（`OverlayLandOf(ov).tiberium` 已随 mt1 修复装载）。修复后 mt0 采样
+**PASS**（此前 pass=0/30）。
+
+**注意**：headless 断点复用游戏进程会撞 ScyllaHide "already hooked" 弹窗
+（钩子在 detach 后残留在目标进程）——**每次 headless 采集必须全新游戏进程**；
+attach 后先 `bc` 清 x64dbg 断点库残留再下断点。读线程上下文要
+`Wow64GetThreadContext` + `CONTEXT_FULL`（CONTROL 段不含 Edi）。
+
+### 旧档：修复前的排除清单与采样复验（历史记录）
+
+<details>
+<summary>已排除项（全部实证，别再查）与 2026-10-07 采样复验</summary>
 
 - 布矿前全部阶段与布矿本身：链式 emu（水→细化→InitRegions→SpreadGreen，每点
   cells 0 差异+RNG 账本吻合）、Recalc#1 emu、出生点 emu、0x5A1FB0 洪泛 emu、
@@ -34,28 +67,10 @@ PickBelowMul。重写含真实占地偏移表（art(md).ini `Foundation=` → 0x
 - 区域格子顺序（DFS）：emu 原版 == CLI member 行逐格一致。
 - min/max 矿量（900/1050）：0x5981F0 从 RMGMD.INI 读，双端一致。
 - MapType 分支：mt0 不走 0x59C580（河湖）/making_regions，无遗漏调用。
+- 2026-10-07 采样复验（PlaceRandomBuilding 修复后）：pass=0/30，
+  发散指纹不变 → 静态路径穷尽，后由活体取证破案（见上）。
 
-**判定**：布矿入口状态在一切可 dump 维度都与 CLI 一致，但游戏输出不同；
-p4/sz1 同法完美复现证明 harness 可信。**破局需要游戏侧布矿入口真身状态活体采集。**
-
-### 所需活体采集（x64dbg headless，案 = s12345_mt0_t0_th0_sz0_r0_p2，cleanregen）
-
-- bp `0x598EF2`（call 0x5A23A0 前）：dump 0xABE890(0x3F4 RNG 全状态)、
-  0xABDFB8(0x18 ND)、0xABDFD8(0x360 MapSeed)、cells 12B、work([0xABED10]
-  side²×0x50, side=157)、区域向量 [0xABDFA0]/[0xABDF94]+各区域对象及候选/格子向量、
-  waypoints [0xA8B230]+0x632×8、哑元 0xABDC50(0x170)
-- bp `0x598EF9`（布矿返回）：cells 12B + work（隔离布矿与下游）
-- ⚠️ BP 地址必须先用 `python code/randmap/disasm.py 0x<addr> 0x20` 验证是指令边界
-- 工具链就绪：`.qwen/tmp/_mt0fix_delta2.py`（入口态对拍）、`_p3_selfcheck.py`（同法任意案）
-- **等游戏空闲再做**（游戏被 12345 批量采集占用时别抢）
-
-### mt0 采样复验（2026-10-07，build_verify exe 含全部最新修复）
-
-`.qwen/tmp/_mt0_sample_verify.py` 抽前 30 个 mt0 发散案重跑：**pass=0 diff=30**，
-sz0_p2 各案仍恒 772（th0）/641（th1）/876（r3）格差异，与基线完全一致——
-PlaceRandomBuilding 修复（77c7038）未改变 mt0 布矿发散，与"剩余 772 格 = 布矿发散、
-需活体采集"的判定吻合。**mt0 的下一步就是 bp 0x598EF2/0x598EF9 活体采集，
-无其他静态路径。**
+</details>
 
 ### 62298 正确回归基准
 

@@ -577,6 +577,15 @@ void CliWorld::CreateTerrain(const char* name,
   terrains_.push_back(t);
   terrain_by_cell_[at.Packed()] = name;  // RecalcLandType 占据者循环用
   Mut(at).object = 1;   // 原版 0x71BB90 置 cell +0xE4，供 GrowTreePatch 种植检查
+  // 0x71D000（TerrainClass 放置，ctor 内调）：cell 有 overlay 且其
+  // OverlayTypeClass +0x2A9（INI Tiberium=yes）为真 → overlay=-1、
+  // overlayData=0。矿田里锚定 TIBTRE 会清掉该格已铺的矿再重铺，
+  // 缺了这一步整片矿扩散路径全错位（mt0 布矿发散根因，2026-10-08 活体实锤）。
+  CliCell& c = Mut(at);
+  if (c.overlay != -1 && OverlayLandOf(c.overlay).tiberium) {
+    c.overlay = -1;
+    c.overlayData = 0;
+  }
 }
 
 ra2::rmg::CellCoord CliWorld::Waypoint(int index) {
