@@ -28,6 +28,10 @@
 | [stage-water-maptype34.md](stage-water-maptype34.md) | 阶段 2 支路：`MapType ∈ {3,4}` 的**河流、湖泊与瀑布**（含查表 sin/cos） | ✅ 八个函数全部实锤；sin/cos、两个通用区域算子（`0x5A0410` Erode / `0x5A0160` Dilate）、角度扩张 `0x5A08D0`、**湖泊涂块 `0x59C920`**、瀑布 `0x59E740`、**河 `0x59D510` 与调度 `0x59C580`** 已全部落 C++ 并对拍（River 13 例 + AddRiversAndLakes 6 例） |
 | [stage-making-regions.md](stage-making-regions.md) | 阶段 4：Making regions（区域重建 + **区域之间开坡道/架桥**，`MapType ∈ {3,4}` 专属，45 个取数点） | ✅ **45 个取数点全部关闭**；区域切分 / 架桥 / 四个直坡 / 三个转角 / 两遍重刷砖全部实锤；2026-08-14 复验 seed=53393 与 emu run46 已收敛 |
 | [map-output-format.md](map-output-format.md) | **.map 输出格式**（CLI 写链）：坐标语义 / 键值编码 / 各节编码 | 🟡 坐标语义与字段顺序已实锤（FA2 官方图）；Size/LocalSize、半整数、Structures 字段值待 e2e 对拍 |
+| [alignment-milestones.md](alignment-milestones.md) | **对齐里程碑结论汇总**（2026-10-06/07）：od 平滑全链 / 树林 rocks 修复 / ground·zone 机制 / 键编码 / 内部状态对拍 / emu 坑 | ✅ 已闭合结论 |
+| [live-capture-toolchain.md](live-capture-toolchain.md) | **游戏侧活体采集与修改器**：rmg_hook/rmgctl、cleanregen、连生语义、headless 监督器、关键地址与脚本 | ✅ 工具链定型 |
+| [mega-sweep.md](mega-sweep.md) | **8960 案大穷举**：口径 / 命名 / 数据位置 / 任务状态 / 续跑命令 / 坑 | 🔵 进行中（12345 游戏侧 ~62%，62298 CLI 60%） |
+| [mt0-mt1-open-issues.md](mt0-mt1-open-issues.md) | **穷举剩余发散**：mt0 布矿（sz0 紧岛屿）+ mt1 20 案单格，取证固化与已排除清单 | 🔴 未闭合 |
 
 ## 进度
 

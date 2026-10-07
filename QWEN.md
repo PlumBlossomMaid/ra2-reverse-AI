@@ -44,6 +44,10 @@ E:\code\ra2-reverse-AI\
    无法验证的标注"未确认"
 4. **半偶舍入**：原版 x87 FRNDINT（ties-to-even），重写用 std::nearbyint
 5. **Ghidra 脚本踩坑**：见 `memory\notes\ghidra-jython-pitfalls.md`，写新脚本必读
+6. **git commit 只精确 add 目标路径，绝不 `git add -A`**（仓库公开，曾误加数千探针/build 文件）；
+   不 push 除非用户明确要求
+7. **自动化采集绝不弹 MessageBox**（用户被打扰过）；需要唤回用户时也优先用静默手段
+8. **动态断点地址必须先用 `code/randmap/disasm.py` 验证是指令边界**（+1 错位会破坏操作数且不触发）
 
 ## 环境速查
 
@@ -223,6 +227,17 @@ a2mdpost\MapGen.cpp` = **0x5956E7-0x59A63A**（源码行 3934-6746，21KB）。
   Size/LocalSize、[Basic] 节、OverlayPack 段数、半整数坐标取舍、Structures 字段 7..16、
   IsoCell +0x119、Morphable/占地表/SetupLAT。
   注意：RA1 源码（CnCRemastered）**无**随机地图生成器（TS/RA2 新特性）；EA 任务编辑器也**无**生成器
+- **8960 案大穷举（2026-10-07 起，当前主线）**：对种子 12345/62298 各 4480 案
+  （mt5×t4×th2×sz4×r4×p7），游戏侧 cleanregen 采集 rmg_done 真值 + CLI 批量对拍。
+  口径/命名/数据位置/续跑命令见 `docs/random-map/mega-sweep.md`；
+  已闭合机制结论见 `docs/random-map/alignment-milestones.md`；
+  剩余发散（mt0 布矿 sz0、mt1 20 案单格）见 `docs/random-map/mt0-mt1-open-issues.md`；
+  采集工具链（rmg_hook/rmgctl/headless/cleanregen/连生语义）见
+  `docs/random-map/live-capture-toolchain.md`。
+  基线（修复前 CLI）：pass=1100 diff=1299 missing=2081；diff 几乎全在 mt0/th0/sz0，
+  雪地 th1 全过，Time 参数对 cells 无影响。
+  续跑：`python .qwen/tmp/_clean_sweep.py 12345`（游戏侧，断点续跑）、
+  `python .qwen/tmp/_cli_sweep.py 62298 0|1`（CLI 侧分块）。
 - **待确认**：`DemandProduction` 第三参数语义；`Unsuspend` 资金不足时挂起标志的行为；
   多工厂海军/陆军计数差异；`target->Target==me` 时反击贡献取负的语义；`Type+0x1FB` 标志名称；
   胜负判定 0x4F8440 的调用者；house+0x1F7（胜利条件）写入点；WinMain COM 类清单
