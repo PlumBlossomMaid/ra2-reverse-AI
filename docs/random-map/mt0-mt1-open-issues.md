@@ -49,6 +49,14 @@ p4/sz1 同法完美复现证明 harness 可信。**破局需要游戏侧布矿�
 - 工具链就绪：`.qwen/tmp/_mt0fix_delta2.py`（入口态对拍）、`_p3_selfcheck.py`（同法任意案）
 - **等游戏空闲再做**（游戏被 12345 批量采集占用时别抢）
 
+### mt0 采样复验（2026-10-07，build_verify exe 含全部最新修复）
+
+`.qwen/tmp/_mt0_sample_verify.py` 抽前 30 个 mt0 发散案重跑：**pass=0 diff=30**，
+sz0_p2 各案仍恒 772（th0）/641（th1）/876（r3）格差异，与基线完全一致——
+PlaceRandomBuilding 修复（77c7038）未改变 mt0 布矿发散，与"剩余 772 格 = 布矿发散、
+需活体采集"的判定吻合。**mt0 的下一步就是 bp 0x598EF2/0x598EF9 活体采集，
+无其他静态路径。**
+
 ### 62298 正确回归基准
 
 = `build_ninja62298/repro_62298.sed`（**别用** `E:\YRLauncher\RandMap.Sed`，
