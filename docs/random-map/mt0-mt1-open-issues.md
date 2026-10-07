@@ -44,7 +44,11 @@ PickBelowMul。重写含真实占地偏移表（art(md).ini `Foundation=` → 0x
 
 **修复**：`cliworld.cpp` `CliWorld::CreateTerrain` 增加 overlay 清除
 （`OverlayLandOf(ov).tiberium` 已随 mt1 修复装载）。修复后 mt0 采样
-**PASS**（此前 pass=0/30）。
+**pass=36/40**（此前 pass=0/30）。
+
+**残差（mt0）**：4 案 `th1_sz0_r3_p2`（雪地+r3+p2）仍 60 格差异
+（zone:60,obj:57）——比修复前 772-876 格小一个数量级，是独立的下一层问题
+（疑与 LATs 树/占位链有关，待定位）。
 
 **注意**：headless 断点复用游戏进程会撞 ScyllaHide "already hooked" 弹窗
 （钩子在 detach 后残留在目标进程）——**每次 headless 采集必须全新游戏进程**；
