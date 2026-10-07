@@ -6,54 +6,140 @@
 
 ---
 
-## ⚡ 2026-10-07 18:20 收工存档（换客户端必读）
+## ⚡ 2026-10-07 18:20 收工存档（换客户端必读，最全单点参考）
 
-### 目标（大穷举对齐）
-种子 12345 和 62298 各开一次游戏会话，连续生成全部参数组合的地图并 dump 真值；
-修复 CLI 已知对齐 bug，使 CLI 连生输出与游戏逐字节对齐全部 7168 案。
+### 一句话目标
+让 CLI 重写版 RMG 与原版 gamemd.exe **逐字节对齐**：对种子 12345 和 62298，
+各开一次游戏会话，连续生成**全部 8960 种参数组合**的地图并 dump 真值；
+修完所有发现的 CLI bug，使每案 CLI 连生输出与游戏 rmg_done dump 12 字段全一致。
 
-### 当前任务状态（全部在后台跑，收工时冻结的状态）
-| 任务 | 状态 | 断点 |
+### 穷举口径（⚠️ 与旧目标文本的 3584/7168 不同，以本节为准）
+案数 = **4480/种子 × 2 种子 = 8960**。参数维度（核实自 `seds/order_12345.txt`）：
+
+| 参数 | 取值 | 含义 |
 |------|------|------|
-| 游戏侧采集 12345（4480案） | 已采 2758 案（progress.log 记到 2750） | `python .qwen/tmp/_clean_sweep.py 12345`（自动断点续跑） |
-| CLI侧批量 12345（4480案） | ✅ 全完成 | `sweeps_cli/12345/` |
-| CLI侧批量 62298 温带（2240案） | 已完成 1344（6 块 ×224，chunk6崩于 exe被重建占用） | `python .qwen/tmp/_cli_sweep.py 62298 0`（.done 断点续跑） |
-| 种子 62298 游戏侧采集 | 未开始 | 12345 跑完后 `_clean_sweep.py 62298` |
-| mt0 修复（主战场 ~77%案发散） | 部分修复已提交，需活体采集破局 | 见下"mt0 进展"节 |
-| mt1 修复（20案单格） | 取证已固化，根因挖掘中断 | 见下"mt1"节 |
+| mt (MapType) | 0,1,2,3,4（5 个） | 地图类型/地形风格 |
+| t (Time) | 0,1,2,3（4 个） | 时间（**实测对 cells 零影响**，只改光照） |
+| th (Theater) | 0=温带, 1=雪地 | 气候/剧院 |
+| sz (RegionSize) | 0,1,2,3（4 个） | 尺寸 |
+| r (Resources) | 0,1,2,3（4 个） | 资源 |
+| p (Players) | 2,3,4,5,6,7,8（7 个） | 玩家数 |
 
-### 游戏状态
-游戏（gamemd PID 17620）由用户保持运行（干净regen已挂在修改器上）。若游戏已关，
-用 `.qwen/tmp/_game_session.py::ensure_game()` 起并导航到 RMG 页（幂等）。
+5×4×2×4×4×7 = 4480。旧目标文本里"3584 种 / 7168 案"是 mt 扩维之前的口径，已过时。
 
-### mt0（主战场）续跑指引
-PlaceRandomBuilding 建筑占地已重写修复（commit 77c7038，单案 845→772）。剩余
-~772 格是**布矿发散**（矿 overlay 位置不同）。agent-5 已排除海量可能（链式emu、
-Recalc#1 emu、RNG流移位、NDFPCW、work初值变体、DFS序、min/max矿量…全部 0 差异
-或无最优解），判定**需要游戏侧布矿入口真身状态活体采集**。所需断点与 dump 清单
-见 AGENTS.md「mt0 进展」节末尾的"所需活体采集"。案 = s12345_mt0_t0_th0_sz0_r0_p2，
-cleanregen + 清 [MapSeed+0x178]（与 sweep 同条件）。工具链 `.qwen/tmp/_mt0fix_delta2.py`
-（入口态对拍）已就绪，喂入 BP 状态即可定位分歧字段。**等游戏空闲再做**（别和批量采集抢）。
+### case 命名与数据位置
+- 案名 = `s<seed>_mt<M>_t<T>_th<TH>_sz<SZ>_r<R>_p<P>`，例：`s12345_mt0_t0_th0_sz0_r0_p2`
+- 每案一个 `.sed`（`seds/<case>.sed`，含 Seed/MapType/Theater/Time/NumPlayers/
+  RegionSize/Ruggedness/Accessibility/WaterAmount/Tiberium/TiberiumLayout/
+  Vegetation/UrbanPresence/Resources 等）
+- 顺序基准 = `seds/order_<seed>.txt`（每行一个 case，**对拍映射靠它**，别重排）
+- **游戏真值** = `sweeps/<seed>/<case>.bin`（12B/格，512×512 = 3145728 B）
+- **CLI 批量** = `sweeps_cli/<seed>/th<T>_c<CC>_<II>.bin`（CC=块号=ORDER位置/224，
+  II=块内序号+1，映射规则见 `_sweep_cmp.py:cli_path()`）
+- 12B/格布局（`cli_main.cpp:87-90`）：
+  `[0]exists [1..2]isoTile int16LE [3]subtile [4]level [5]ramp [6]od
+   [7..8]overlay int16LE(-1=无) [9]object占用布尔 [10]ground低字节 [11]zoneId`
 
-### mt1（20案单格）续跑指引
-证据、复现命令、候选根因全在 `.qwen/tmp/_mt1_analysis.md`，先读它。两种症状：
-p5多栽一棵树（GrowTreePatch单次决策差异）、p6矿格ground/zone（原版Rock vs CLI Tiberium，
-候选根因：放矿后是否重算 ground/zone，或 ov=168 的 INI owns_land 判定）。
+### 任务状态表（收工时冻结，续跑命令即右列）
+| 任务 | 冻结状态 | 续跑命令 |
+|------|----------|----------|
+| 游戏侧采集 12345 | **2758/4480 案**（progress.log 记到 2750） | `python .qwen/tmp/_clean_sweep.py 12345`（自动断点续跑+崩溃重启） |
+| CLI 侧批量 12345 | ✅ 4480 案全完成（th0+th1） | 已有结果，无需重跑 |
+| CLI 侧批量 62298 温带 | **1344/2240 案**（6 块 ×224；chunk6 崩因 CLI exe 被并发重建） | `python .qwen/tmp/_cli_sweep.py 62298 0`（.done 断点续跑） |
+| CLI 侧批量 62298 雪地 | 未开始 | `python .qwen/tmp/_cli_sweep.py 62298 1` |
+| 游戏侧采集 62298 | 未开始 | 12345 跑完后 `python .qwen/tmp/_clean_sweep.py 62298` |
+| mt0 修复（主战场） | 建筑占地已修（commit 77c7038），布矿发散待破 | 见"三、mt0" |
+| mt1 修复（20 案单格） | 取证已固化，根因待挖 | 见"四、mt1" |
 
-### 对拍/验证工具
-- `.qwen/tmp/_sweep_cmp.py <seed>` —— 用已有 CLI 批量对拍全量 → sweeps_cmp_<seed>.txt
-- `.qwen/tmp/_rerun_and_cmp.py <seed> [子串过滤]` —— **单案重跑当前 CLI 并与游戏真值
-  对拍**（修复验证首选，已验证可用）
-- `.qwen/tmp/_clean_sweep.py <seed>` —— 游戏侧批量采集（断点续跑、崩溃自动重启）
-- `.qwen/tmp/_cli_sweep.py <seed> <th>` —— CLI 侧分块批量（.done 断点续跑）
-- 构建：CLI = `cmd //c .qwen/tmp/_reconf_cli.bat`；修改器 = `cmd //c code/modifier/build_cmake.bat`
+对拍基线（`_sweep_cmp.py 12345`，用**修复前**的 CLI 批量）：
+`pass=1100 diff=1299 missing=2081`（missing=游戏侧还没采到）。
+diff 几乎全是 mt0/th0/sz0；**雪地 th1 全过**；时间参数 t 确认对 cells 无影响。
 
-### 纪律（本轮踩过的坑，务必遵守）
-1. **不 push**（commit 已获用户允许，但只 commit 不 push）
-2. **绝不弹 MessageBox**（用户已被弹窗折磨；发现弹窗一律当"闹鬼"处理）
-3. **git commit 只精确 add 源码路径**，绝不 `git add -A`（本轮误加数千探针/build 文件）
-4. 子代理超时不等于 loop 终止（子进程协程仍在跑）——用 wire.jsonl mtime 验证，
-   并清理其派生的孤儿 python 进程（`Get-CimInstance Win32_Process`查命令行）
+### 二、游戏与修改器状态
+- 游戏 gamemd **PID 17620** 由用户保持运行（修改器已挂载 cleanregen 补丁）。
+  另有一个无害僵尸 gamemd 36280（杀不死，`rmgctl` 的 FindGame 会跳过它）。
+- 干净变体采集模式（穷举的基础，务必理解）：
+  - 补丁两枚：`0x599A20` jne→jmp（强制走 0x599650 重置路径）、`0x599BD3` NOP（flag 恒 1）
+  - `gen_clean()` = 点击生成前**外部清 `[MapSeed+0x178]`**（上一局参数快照指针，
+    是干净/不动点变体的唯一开关）→ 每局 == 进程首局干净变体 == CLI 单局（已逐字节验证）
+  - ⚠️ 错误位置警告：在 RMG 入口（hook 内 InjectParams）清 +0x178 会产生**第三变体**
+    （格子表延迟分配只有 3539 格）——已 revert，`code/modifier/dllmain.cpp` 有注释
+- 游戏导航/注入/生成全部自动化（不弹窗）：
+  `.qwen/tmp/_game_session.py` → `ensure_game()`（起游戏→导航 RMG 页→cleanregen→注入，
+  幂等）、`gen_clean(path,pid,sed)`、`gen_to()`
+- **游戏一次只能被一个采集流程占用**，批量采集与活体断点采集会互撞（别同时跑）。
+
+### 三、mt0（主战场，~77% 的 mt0 案发散）续跑指引
+1. **已修**：PlaceRandomBuilding（0x595400）全面重写 —— commit `77c7038`。
+   三重根因：占地恒 1×1（kUnit 回退）/ 层高检查错用 r->level（恒 0）/
+   取数用了折叠 PickBelow（原版是两次乘法 PickBelowMul）。重写含真实占地偏移表
+   （art(md).ini `Foundation=` → 0x89C900 静态表）、锚点层高、Unlimbo/Destroy 句柄语义。
+   单案 845→**772** 格差异。验证：62298 repro sed vs live rmg_done 仍 0 差异。
+2. **剩余 ~772 格 = 布矿发散**（矿 overlay 位置不同，sz0 紧岛屿地理）。
+   agent-5 已排除海量可能（链式emu/Recalc#1 emu/RNG流移位 Δ±250/ND flag/FPCW/
+   work queued+flag45 初值/DFS 序/min-max 矿量/MapType 分支——全部 0 差异或无最优解，
+   **别再查这些**，详见 AGENTS.md「mt0 进展」节）。
+3. **判定**：布矿入口状态在一切可 dump 维度都与 CLI 一致，但游戏输出不同；
+   p4/sz1 同法完美复现（ore_diff=0）证明 harness 可信。**破局需要游戏侧布矿入口
+   真身状态活体采集**。
+4. **所需活体采集**（x64dbg headless，案 = `s12345_mt0_t0_th0_sz0_r0_p2`，
+   cleanregen + 生成前清 [MapSeed+0x178]，与 sweep 同条件）：
+   - bp `0x598EF2`（call 0x5A23A0 前）：dump 0xABE890(0x3F4 RNG 全状态)、0xABDFB8(0x18 ND)、
+     0xABDFD8(0x360 MapSeed)、cells 12B、work([0xABED10] side²×0x50, side=157)、
+     区域向量 [0xABDFA0]/[0xABDF94]+各区域对象及候选/格子向量、
+     waypoints [0xA8B230]+0x632×8、哑元 0xABDC50(0x170)
+   - bp `0x598EF9`（布矿返回）：cells 12B + work（隔离布矿与下游）
+   - ⚠️ BP 地址必须先用 `python code/randmap/disasm.py 0x<addr> 0x20` 验证是指令边界
+     （历史踩过 +1 错位：0xCC 落指令中间会破坏操作数且不触发）
+   - 工具链就绪：`.qwen/tmp/_mt0fix_delta2.py`（入口态对拍）、`_p3_selfcheck.py`（同法任意案）。
+     喂入 BP1 状态即可定位分歧字段。
+   - **等游戏空闲再做**（当前游戏被 12345 批量采集占用）
+5. 62298 正确回归基准 = `build_ninja62298/repro_62298.sed`（**别用** `E:\YRLauncher\
+   RandMap.Sed`，它 10-06 被改成 Seed=1/Water=99，与 live 基准不匹配；
+   旧 `_od_smooth_verify.py` 因此失效）。
+
+### 四、mt1（20 案单格）续跑指引
+完整取证在 `.qwen/tmp/_mt1_analysis.md`（**先读它，勿重新推导**）：
+- **症状A（r3_p5 ×4，t0-t3）**：差异格 (91,44) CLI 多栽一棵树（obj=1/zone=5），
+  其余 211 棵逐格一致 ⇒ 随机流没分叉，是单次决策差异。差异点
+  `code/rewrite/rmg/lat_spread.cpp:263` GrowTreePatch（4 条过滤
+  IsUndecidedTile/Field0xE4==0/Overlay==-1/Field0xEC!=3 在终态都满足，
+  故差异在决策时刻取数判定或堆 pop 序）。
+- **症状B（r0-r3_p6 ×16）**：差异格 (93,121) 矿 overlay(ov=168) 格，原版 ground=3(Rock)/
+  zone=6，CLI ground=5(Tiberium)/zone=0；iso=421/ov=168 两侧一致；CliffBack 不成立
+  （SE 邻居 lv=5 < cell+4=8）。两条候选根因：①放矿后原版**不再**重算 ground/zone
+  （ground 保留放矿前 tile 查表的 Rock=3）；②`OverlayLandOf()`（cliworld.cpp:978）
+  对 27-38/102-113 硬编码 owns_land，但 ov=168 不在该区间，需核对 rulesmd.ini
+  `[OverlayTypes]` 第 168 小节的 Land/Tiberium/NoUseTileLandType 实际键。
+
+### 五、工具链（全部在 .qwen/tmp/）
+| 脚本 | 用途 |
+|------|------|
+| `_clean_sweep.py <seed> [--start N]` | **游戏侧**批量采集（cleanregen，崩溃自动重启，断点续跑） |
+| `_cli_sweep.py <seed> <th>` | **CLI 侧**分块批量（每块 224 案，.done 断点续跑） |
+| `_sweep_cmp.py <seed>` | 用已有 CLI 批量对拍全量 → `sweeps_cmp_<seed>.txt` |
+| `_rerun_and_cmp.py <seed> [子串过滤]` | **单案重跑当前 CLI + 与游戏真值对拍（修复验证首选）** |
+| `_game_session.py` | `ensure_game()` / `gen_clean()` / `gen_to()` 自动化（不弹窗） |
+| `_mt0fix_delta2.py` / `_p3_selfcheck.py` | 布矿入口态 emu 对拍 |
+| `_mt1_p5_probe.py` / `_mt1_p6_probe.py` | mt1 两症状取证探针 |
+| `_reconf_cli.bat` | 构建 CLI（`cmd //c .qwen/tmp/_reconf_cli.bat`） |
+
+构建：CLI = `cmd //c .qwen/tmp/_reconf_cli.bat`；
+修改器 = `cmd //c code/modifier/build_cmake.bat`（dll 被锁时先 os.rename 旧 dll 再构建）。
+
+### 六、纪律与本轮踩过的坑（务必遵守）
+1. **不 push**（commit 已获用户允许，但只本地 commit）
+2. **绝不弹 MessageBox**（用户已被弹窗折磨；发现弹窗一律当"闹鬼"：沿 ParentProcessId
+   链查 node PID，查该 node 的 `agents/*/wire.jsonl` 是否还在增长）
+3. **git commit 只精确 add 源码路径，绝不 `git add -A`**（本轮误加数千探针/build 文件）
+4. 子代理超时不等于 loop 终止（同进程协程仍在跑，可能继续弹窗/吃 CPU）——
+   必须用 `agents/<id>/wire.jsonl` 的 mtime + `agent.turn.ended:aborted` 记录验证，
+   并清理其派生的孤儿 python（`Get-CimInstance Win32_Process` 查命令行后 Stop-Process）
+5. 动态 debug 用 x64dbg headless（ctypes 自写调试器会卡死游戏，已证伪）；
+   BP 计数靠解析 stdout `INT3 breakpoint at gamemd.XXXXXXXX!` **逐行计数**，
+   不要按 (tid,esp) 或 EIP 轮询去重
+6. 纪律核心：**以复现原版机器码为核心，不发明等价算法**；反汇编用
+   `python code/randmap/disasm.py <addr> <len>`；探针脚本留 `.qwen/tmp/` 不入库
 
 ---
 
