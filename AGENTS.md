@@ -1,8 +1,152 @@
 # RA2 随机地图复刻对齐工作手册（Seed=62298）
 
-> 最后更新：2026-10-07 晚（连生语义彻底实锤 + cleanregen 补丁 + 不动点机理）
+> 最后更新：2026-10-07 18:20（收工存档：8960 案穷举进行中，mt0/mt1 两个主战场待续）
 > 本文件是跨 Agent 的记忆索引（kimi / qwen code 不互通，一切以本文件为准）。
 > **每轮工作结束立刻更新本文件**。更久远的取证结论在 `memory/` 与 `docs/random-map/`。
+
+---
+
+## ⚡ 2026-10-07 18:20 收工存档（换客户端必读）
+
+### 目标（大穷举对齐）
+种子 12345 和 62298 各开一次游戏会话，连续生成全部参数组合的地图并 dump 真值；
+修复 CLI 已知对齐 bug，使 CLI 连生输出与游戏逐字节对齐全部 7168 案。
+
+### 当前任务状态（全部在后台跑，收工时冻结的状态）
+| 任务 | 状态 | 断点 |
+|------|------|------|
+| 游戏侧采集 12345（4480案） | 已采 2758 案（progress.log 记到 2750） | `python .qwen/tmp/_clean_sweep.py 12345`（自动断点续跑） |
+| CLI侧批量 12345（4480案） | ✅ 全完成 | `sweeps_cli/12345/` |
+| CLI侧批量 62298 温带（2240案） | 已完成 1344（6 块 ×224，chunk6崩于 exe被重建占用） | `python .qwen/tmp/_cli_sweep.py 62298 0`（.done 断点续跑） |
+| 种子 62298 游戏侧采集 | 未开始 | 12345 跑完后 `_clean_sweep.py 62298` |
+| mt0 修复（主战场 ~77%案发散） | 部分修复已提交，需活体采集破局 | 见下"mt0 进展"节 |
+| mt1 修复（20案单格） | 取证已固化，根因挖掘中断 | 见下"mt1"节 |
+
+### 游戏状态
+游戏（gamemd PID 17620）由用户保持运行（干净regen已挂在修改器上）。若游戏已关，
+用 `.qwen/tmp/_game_session.py::ensure_game()` 起并导航到 RMG 页（幂等）。
+
+### mt0（主战场）续跑指引
+PlaceRandomBuilding 建筑占地已重写修复（commit 77c7038，单案 845→772）。剩余
+~772 格是**布矿发散**（矿 overlay 位置不同）。agent-5 已排除海量可能（链式emu、
+Recalc#1 emu、RNG流移位、NDFPCW、work初值变体、DFS序、min/max矿量…全部 0 差异
+或无最优解），判定**需要游戏侧布矿入口真身状态活体采集**。所需断点与 dump 清单
+见 AGENTS.md「mt0 进展」节末尾的"所需活体采集"。案 = s12345_mt0_t0_th0_sz0_r0_p2，
+cleanregen + 清 [MapSeed+0x178]（与 sweep 同条件）。工具链 `.qwen/tmp/_mt0fix_delta2.py`
+（入口态对拍）已就绪，喂入 BP 状态即可定位分歧字段。**等游戏空闲再做**（别和批量采集抢）。
+
+### mt1（20案单格）续跑指引
+证据、复现命令、候选根因全在 `.qwen/tmp/_mt1_analysis.md`，先读它。两种症状：
+p5多栽一棵树（GrowTreePatch单次决策差异）、p6矿格ground/zone（原版Rock vs CLI Tiberium，
+候选根因：放矿后是否重算 ground/zone，或 ov=168 的 INI owns_land 判定）。
+
+### 对拍/验证工具
+- `.qwen/tmp/_sweep_cmp.py <seed>` —— 用已有 CLI 批量对拍全量 → sweeps_cmp_<seed>.txt
+- `.qwen/tmp/_rerun_and_cmp.py <seed> [子串过滤]` —— **单案重跑当前 CLI 并与游戏真值
+  对拍**（修复验证首选，已验证可用）
+- `.qwen/tmp/_clean_sweep.py <seed>` —— 游戏侧批量采集（断点续跑、崩溃自动重启）
+- `.qwen/tmp/_cli_sweep.py <seed> <th>` —— CLI 侧分块批量（.done 断点续跑）
+- 构建：CLI = `cmd //c .qwen/tmp/_reconf_cli.bat`；修改器 = `cmd //c code/modifier/build_cmake.bat`
+
+### 纪律（本轮踩过的坑，务必遵守）
+1. **不 push**（commit 已获用户允许，但只 commit 不 push）
+2. **绝不弹 MessageBox**（用户已被弹窗折磨；发现弹窗一律当"闹鬼"处理）
+3. **git commit 只精确 add 源码路径**，绝不 `git add -A`（本轮误加数千探针/build 文件）
+4. 子代理超时不等于 loop 终止（子进程协程仍在跑）——用 wire.jsonl mtime 验证，
+   并清理其派生的孤儿 python 进程（`Get-CimInstance Win32_Process`查命令行）
+
+---
+
+## 2026-10-07 深夜：mt1(th0 单格) 发散 —— 取证已固化（agent-6 在攻）
+
+mt1 共 20 案发散，**每案恰好 1 格**，两个互不相同的症状，证据与复现命令已固化在
+`.qwen/tmp/_mt1_analysis.md`（接手者先读它，勿重新推导）：
+
+- **症状A（r3_p5 ×4，t0-t3）**：差异格 (91,44) —— CLI 多栽一棵树（obj=1/zone=5），
+  其余 211 棵树逐格一致（随机流未分叉，是单次决策差异：该格 6 条过滤终态全满足，
+  差异在决策时刻的取数判定或堆 pop 序）。差异点 `lat_spread.cpp:263` GrowTreePatch。
+- **症状B（r0-r3_p6 ×16）**：差异格 (93,121) —— 有矿 overlay(ov=168) 的格，原版
+  ground=3(Rock)/zone=6，CLI ground=5(Tiberium)/zone=0。iso=421/ov=168 两侧一致，
+  CliffBack 不成立（SE 邻居 lv=5 < cell+4=8）。候选根因两条（见分析文档）：
+  ①放矿后不再重算 ground/zone（原版 ground 保留放矿前 tile 查表的 Rock=3）；
+  ②`OverlayLandOf()`（cliworld.cpp:978）对 27-38/102-113 硬编码 owns_land，但
+  ov=168 不在该区间，需核对 rulesmd.ini `[OverlayTypes]` 第 168 小节的实际键。
+
+对拍工具：`.qwen/tmp/_rerun_and_cmp.py <seed> [case名子串过滤]`（单案重跑 CLI 并与
+游戏真值对拍，已验证可用）。
+
+---
+
+## 2026-10-07 深夜：mt0(th0_sz0) 发散修复进展（agent-5）
+
+### ✅ 已修复 bug #1：PlaceRandomBuilding（0x595400）全面重写
+
+**根因（三重）**：① CLI 占地恒按 1×1（`kUnit` 回退，`rules.foundations` 从未
+填充）；② 层高检查错用 `r->level`（区域 level 恒 0，从未建模）导致陆地格
+（level 4）**100/100 全失败**；③ 种类/位置取数用了折叠常数 PickBelow，原版
+两个取数点（0x595461/0x5954DA）都是**两次乘法** PickBelowMul。
+
+**实锤链**：真值里 mt0 各案有 CLI 没有的建筑占地块（p2 有 3×3 空地
+(82-84,114-116)、p5 3×3 (134,85)、p7 2×2 (122,122)、p8 4×3 (128,79)）——
+obj=1 且 zone=0（树是 2/5）。原版 0x595400 逐格走**建筑类型虚表 +0x90(1)**
+的占地偏移表（int16 对、(0x7FFF,0x7FFF) 收尾、锚点=左上角、第一格失败即弃），
+层高比**锚点格 +0x11B**，可用区走 0x578540(cell,1)（菱形收缩判定，**不是**
+局部矩形）。占地数据：art(md).ini `Foundation=`（CAAIRP=3x3/CATHOSP=6x4/
+CAOILD=2x2/CAOUTP=4x3/CAMACH=3x3/CAPOWR=2x2）→ exe 字符串→枚举表
+（22 种，0x474da0/0x81B9D8）→ **0x89C900 静态占地表（stride 120B，静态初始化
+器 0x45B1C0 生成，全是 row-major 矩形，仅 3x3Refinery 缺 (2,1)，0x0 空表）**。
+R250 回放实锤 p2：种类 k=0=CAAIRP、attempt#1 锚点 (82,114) == 真值、消耗 3 抽
+（CLI 旧版 101 抽）。p8 回放 == CLI（CAOUTP attempt#0 锚点 (128,79)）。
+
+**改动**：
+- `code/rewrite/cli/cliworld.cpp::PlaceRandomBuilding` 按 0x595400 重写
+  （PickBelowMul + 真实占地 + 锚点层高 + 落地占全部占地格）。
+- `code/rewrite/cli/rules_loader.{h,cpp}` 新增 `LoadArtFoundations`（art 系 INI
+  的 Foundation= 展开成偏移表，含哨兵）。
+- `code/rewrite/cli/cli_main.cpp::LoadRulesForGame` 装载 art.ini
+  （ra2.mix→local.mix）→ artmd.ini（ra2md.mix→localmd.mix）→ expandmd01 artmd.ini，
+  后者盖前者。
+
+**验证**：p2 845→**772**（建筑 9 格与真值逐格一致）；p5/p7 建筑块全中；p8 12 格
+锚点一致；**62298 repro sed vs live rmg_done 仍 0 差异**（CAOUTP/CATHOSP 锚点不变）；
+ctest 42/43（fast_math 1-ulp 是既有问题）；p4/p6/sz1/sz2 仍 0 差异。
+注意：旧 `_od_smooth_verify.py` 失效——E:\YRLauncher\RandMap.Sed 已于 10-06 23:51
+被改成 Seed=1/Water=99，与 live 基准（旧 sed）不匹配，别拿它当回归判据；
+正确的 62298 基准 = `build_ninja62298/repro_62298.sed`。
+
+### ⚠️ 剩余 bug #2：布矿生长发散（sz0 紧岛屿地理），已排查至活体采集点
+
+**现象**：th0_sz0 的 p2/p3/p5/p7/p8（含 r0-r3 全部）每案仍差 ~250-770 格矿
+（ov 位置+编号）。p4/p6（无 sp=0 区域→无硬币）与 sz1/sz2、th1 全过。
+
+**已排除（全部实证，别再查）**：
+- 布矿前全部阶段与布矿本身：链式 emu（水→细化→InitRegions→SpreadGreen，
+  每点 cells 0 差异+RNG 账本吻合）、Recalc#1 emu（zone 表/ground/cells9 全 0）、
+  出生点 emu（waypoints/区域/候选/取数 113/156/413 全吻合）、
+  0x5A1FB0 洪泛 emu（work +0x3C/+0x45 0 差异）、布矿 emu（p2/p3/p4/sz1 全 0
+  差异，**p4/sz1 与真值 ore_diff=0 完美复现**）。
+- RNG 流平移 Δ∈[-250,250]（p2/p3 各 501 点）：**Δ=0 唯一最优**（269/280），
+  无移位解。ND flag=1 变体（k∈[-50,50] Marsaglia 缓存）：无命中。
+- FPCW 变体（chop/near/up/down × PC53/64）：unicorn 忽略 FPCW，无差异。
+- work queued/flag45 初值变体：queued 无影响；**flag45 是关键约束**（f0 → 567），
+  但 0x5A1FB0 emu 已证 CLI 的洪泛正确。
+- 区域格子顺序（DFS）：emu 原版 == CLI member 行逐格一致。
+- min/max 矿量（900/1050）：0x5981F0 从 RMGMD.INI 读，双端一致。
+- MapType 分支：mt0 不走 0x59C580（河湖）/making_regions，无遗漏调用。
+
+**结论**：sz0 布矿入口状态在一切可 dump 的维度都与 CLI 一致，但游戏输出不同；
+p4/sz1 同法完美复现证明 harness 可信。判定需要游戏侧布矿入口真身状态。
+
+**所需活体采集**（游戏空闲时做，案 = s12345_mt0_t0_th0_sz0_r0_p2，
+cleanregen + 点击前清 [MapSeed+0x178]，与 sweep 同条件；x64dbg headless）：
+1. **bp 0x598EF2**（call 0x5A23A0 前）：dump 0xABE890(0x3F4 RNG 全状态)、
+   0xABDFB8(0x18 ND)、0xABDFD8(0x360 MapSeed)、cells 12B、work([0xABED10]
+   side²×0x50, side=157)、区域向量 [0xABDFA0]/[0xABDF94]+各区域对象及候选/
+   格子向量、waypoints [0xA8B230]+0x632×8、哑元 0xABDC50(0x170)。
+2. **bp 0x598EF9**（布矿返回）：cells 12B + work（= 游戏 after_tiberium，
+   与 CLI 的 after_tiberium 直对，隔离布矿与下游）。
+探针工具链已就绪：`.qwen/tmp/_mt0fix_delta2.py`（入口态布矿对拍）、
+`_p3_selfcheck.py`（同法任意案）。喂入 BP1 状态即可立即定位分歧字段。
 
 ---
 
