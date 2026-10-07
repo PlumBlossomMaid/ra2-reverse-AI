@@ -368,6 +368,69 @@ bool LoadRulesForGame(const std::string& game_dir,
     std::fprintf(stderr, "[DEBUG] Loaded NeutralTechBuildings: %zu types\n",
                  rules->neutral_tech_buildings.size());
   }
+
+  // 建筑占地（0x595400/0x5A95B0 的占地检查与落地占用）：原版的 Foundation=
+  // 键读的是 **art** 系 INI（0x474da0，ecx=0x887180）。装载顺序 art.ini →
+  // artmd.ini → 各 expand 的 artmd.ini，同类型后者盖前者。
+  {
+    std::string art_text, artmd_text, expand_artmd_text;
+    ReadFile(game_dir + "\\art.ini", &art_text);
+    ReadFile(game_dir + "\\artmd.ini", &artmd_text);
+    if (art_text.empty()) {
+      std::ifstream mixf(game_dir + "\\ra2.mix", std::ios::binary);
+      if (mixf) {
+        std::ostringstream ss;
+        ss << mixf.rdbuf();
+        std::string mix_data = ss.str();
+        ra2::mix::MixArchive mix, local;
+        if (mix.Open(std::vector<std::uint8_t>(mix_data.begin(),
+                                               mix_data.end())) &&
+            local.OpenNested(mix, "local.mix")) {
+          std::vector<std::uint8_t> raw;
+          if (local.Read("art.ini", &raw))
+            art_text.assign(raw.begin(), raw.end());
+        }
+      }
+    }
+    if (artmd_text.empty()) {
+      std::ifstream mixf(game_dir + "\\ra2md.mix", std::ios::binary);
+      if (mixf) {
+        std::ostringstream ss;
+        ss << mixf.rdbuf();
+        std::string mix_data = ss.str();
+        ra2::mix::MixArchive mix, local;
+        if (mix.Open(std::vector<std::uint8_t>(mix_data.begin(),
+                                               mix_data.end())) &&
+            local.OpenNested(mix, "localmd.mix")) {
+          std::vector<std::uint8_t> raw;
+          if (local.Read("artmd.ini", &raw))
+            artmd_text.assign(raw.begin(), raw.end());
+        }
+      }
+    }
+    for (const char* expand : {"expandmd01.mix"}) {
+      std::ifstream mixf(game_dir + "\\" + expand, std::ios::binary);
+      if (!mixf) continue;
+      std::ostringstream ss;
+      ss << mixf.rdbuf();
+      std::string mix_data = ss.str();
+      ra2::mix::MixArchive mix;
+      if (!mix.Open(
+              std::vector<std::uint8_t>(mix_data.begin(), mix_data.end())))
+        continue;
+      std::vector<std::uint8_t> raw;
+      if (mix.Read("artmd.ini", &raw))
+        expand_artmd_text.assign(raw.begin(), raw.end());
+    }
+    ra2::cli::LoadArtFoundations(art_text, rules->neutral_tech_buildings,
+                                 rules);
+    ra2::cli::LoadArtFoundations(artmd_text, rules->neutral_tech_buildings,
+                                 rules);
+    ra2::cli::LoadArtFoundations(expand_artmd_text,
+                                 rules->neutral_tech_buildings, rules);
+    std::fprintf(stderr, "[DEBUG] Loaded art foundations: %zu types\n",
+                 rules->foundations.size());
+  }
   return true;
 }
 

@@ -98,7 +98,8 @@ std::uint8_t RecalcLandTypeFull(const LandTypeInput& in,
 // NoUseTileLandType=true）→ overlay 专属路径（不经 tile 查表/空洞清理）。
 struct OverlayLandInfo {
   int land = 0;          // OverlayTypeClass +0x298（GroundType 枚举）
-  bool owns_land = false;
+  bool owns_land = false;  // +0x2AC（NoUseTileLandType；不含 Tiberium）
+  bool tiberium = false;   // +0x2A9（Tiberium；Land 缺省时原版补 5）
 };
 // RecalcLandType 0x483DDF 需要的树 OccupationBits。INI 键缺省 = 7
 // （活体 TIBTRE 格 zone=2 实锤——TIBTRE 小节没有 OccupationBits 键）。

@@ -390,34 +390,48 @@ void CliWorld::SetStartLocation(int slot, const ra2::rmg::CellCoord& c) {
 }
 
 void CliWorld::PlaceRandomBuilding(ra2::rmg::RegionClass* r) {
-  // 0x595400。两个取数点：0x595461 抽种类（NeutralTechBuildings 表）、
-  // 0x5954DA 每 attempt 抽一格区域格子。建筑种类只抽一次，位置最多 100 次。
+  // 0x595400。两个取数点都是**两次乘法**那一路（PickBelowMul）：
+  // 0x595461 抽种类（NeutralTechBuildings 表）、0x5954DA 每 attempt 抽一格
+  // 区域格子。建筑种类只抽一次，位置最多 100 次；占地表是该建筑类型
+  // 虚函数 +0x90(1) 返回的 (dx,dy) 列表（锚点 = 左上角），逐格检查、
+  // 第一格失败即放弃本次 attempt；层高比的是**锚点格**（不是区域 level）。
   const int n = static_cast<int>(neutral_tech_buildings_.size());
   if (n <= 0) return;
-  const int k = ra2::rmg::PickBelow(rng_, n);
-  const std::string& type = neutral_tech_buildings_[static_cast<std::size_t>(k)];
-  for (int attempt = 0; attempt < 100; ++attempt) {
+  const int k = ra2::rmg::PickBelowMul(rng_, n);
+  const int handle = CreateBuilding(k);
+  bool placed = false;                                  // [esp+0x13]
+  for (int attempt = 0; attempt < 100 && !placed; ++attempt) {
     const int m = static_cast<int>(r->cells.size());
-    if (m <= 0) return;
-    const int j = ra2::rmg::PickBelow(rng_, m);
+    if (m <= 0) break;   // 原版此时越界读 cells[0]，真·未定义，实际不发生
+    const int j = ra2::rmg::PickBelowMul(rng_, m);
     const ra2::rmg::CellCoord at = r->cells[static_cast<std::size_t>(j)];
-    // 逐格检查占地（默认 1×1，真实占地表 e2e 时校准）。
-    if (HasOccupier(at)) continue;
-    if (!IsPlain(at)) continue;
-    if (Level(at) != r->level) continue;
-    if (Field0xEC(at) == 3) continue;
-    if (!WithinUsableArea(at)) continue;
-    if (work_[WorkIdx(at)].flag45) continue;
-    BuildingRecord b;
-    b.type = type;
-    b.owner = 0;
-    b.x = at.x;
-    b.y = at.y;
-    b.health = 256;
-    buildings_.push_back(b);
-    Mut(at).object = 1;   // 占了这一格
-    return;
+    const int base_level = Level(at);                   // 0x595522 锚点 +0x11B
+    const std::vector<ra2::rmg::FoundationOffset>& fnd = Foundation(handle);
+    bool ok = true;                                     // bl
+    for (std::size_t i = 0;; ++i) {
+      const ra2::rmg::FoundationOffset& f = fnd[i];
+      if (f.dx == 0x7FFF && f.dy == 0x7FFF) {           // 0x59553B 表尾
+        if (ok) placed = Unlimbo(handle, at);           // 0x5955F0 虚函数 +0xD8
+        break;
+      }
+      // 0x59554E 起：占地偏移与锚点按 **int16** 相加
+      const ra2::rmg::CellCoord nc{
+          static_cast<std::int16_t>(f.dx + at.x),
+          static_cast<std::int16_t>(f.dy + at.y)};
+      // +0x45 的工作记录下标由**请求坐标**算（出图时 GetCellAt 落哑元，
+      // 哑元 +0x24/+0x26 刚被写成请求坐标，所以下标与 nc 一致）
+      if (HasOccupier(nc) ||                            // 0x595580 +0xE4
+          !IsPlain(nc) ||                               // 0x59558C 0x486380
+          Level(nc) != base_level ||                    // 0x595595
+          Field0xEC(nc) == 3 ||                         // 0x5955A0
+          !WithinUsableArea(nc) ||                      // 0x5955B1 0x578540(c,1)
+          work_[static_cast<std::size_t>(nc.y * grid_.side() + nc.x)].flag45) {
+        ok = false;                                     // 0x5955DE
+      }
+      if (!ok) break;                                   // 第一格失败即弃
+    }
   }
+  if (!placed) Destroy(handle);                         // 0x595655 虚函数 +0x20(1)
 }
 
 // ── TechWorld ───────────────────────────────────────────────────────────
@@ -888,6 +902,25 @@ void CliWorld::RecalcAttributes(const ra2::rmg::CellCoord& c, int arg) {
         ground = ra2::rmg::kTerrainToGround[terrain];
       }
     }
+    // 0x47D818-0x47D8B0：SetupLAT 之后、CliffBack 之前按 overlay 改写 +0xEC。
+    //   overlay == -1                          → 保持 0x544BE0 的查表结果
+    //   0x5FDD20(overlay) == -1（非矿）        → 同上（走到这里时必不占地）
+    //   是矿 且 ramp(+0x11C) > 4               → ground=查表结果、overlay=-1、od=0
+    //   是矿 且 ramp <= 4（0x47D859）           → Land(+0x298) ? Land : 5
+    // 矿格靠这一段保住 ground=5：**不必** owns_land（原版 +0x2AC 只看
+    // NoUseTileLandType，Tiberium=yes 的 GEM01-12/TIB01-12 是 false）。
+    if (cell.overlay != -1) {
+      const ra2::rmg::OverlayLandInfo ol = OverlayLandOf(cell.overlay);
+      // 0x5FDD20：overlay==-1 → -1；否则先查 +0x2A9(Tiberium)，再查是否落在
+      // TiberiumTypes 的 id 区间（RMG 的矿石 = 27..38 / 102..113）。
+      const bool is_tib = ol.tiberium && ContainedTiberiumIndex(c) != -1;
+      if (is_tib && cell.ramp > 4) {
+        cell.overlay = -1;      // 0x47D849
+        cell.overlayData = 0;   // 0x47D850
+      } else if (is_tib) {
+        ground = (ol.land != 0) ? ol.land : 5;  // 0x47D864-0x47D878
+      }
+    }
     // 0x47DB59-0x47DD2A：**有效路径的第二段 CliffBack**（CLI 之前缺失）。
     // SubTilePresent=true 时 RecalcAttributes 在 SetupLAT 之后、RecalcLandType
     // （0x47DD34 call 0x483C80）之前还会做一遍 6 方向邻居检查：
@@ -962,14 +995,10 @@ int CliWorld::ComputeLandType(const ra2::rmg::CellCoord& c) const {
 }
 
 ra2::rmg::OverlayLandInfo CliWorld::OverlayLandOf(int overlay) const {
-  // 矿石区间（gems 27-38 / tib 102-113，同 ContainedTiberiumIndex）：
-  // gamemd 对这段 id **恒按矿石处理**（ground=5、占地）——mod INI 把
-  // 27=NAWALL、102-104=LOBRDG26-28 重排过，与 exe 硬编码区间错位，但活体
-  // 这些格 ground=5/zone=0 实锤（与既有 ContainedTiberiumIndex 取证一致：
-  // 102-104 在本版确为矿石）。优先于 INI 表。
-  if ((overlay >= 102 && overlay <= 113) || (overlay >= 27 && overlay <= 38)) {
-    return {5, true};
-  }
+  // ⚠️ 2026-10-14：id→小节的映射在 rules_loader 里按**条目出现次序**构建
+  // （原版 0x668CE0/0x5FEC70 的行为），矿石区间 27-38/102-113 对应的
+  // GEM01-12/TIB01-12 靠 INI 的 Tiberium=yes（loader 0x5FE8E7 把 Land 补成 5），
+  // 无需在此硬编码。
   const auto it = overlay_land_.find(overlay);
   if (it != overlay_land_.end()) return it->second;
   // 表未注入（测试合成 world）：其余 overlay 回落 {0, 不占地}

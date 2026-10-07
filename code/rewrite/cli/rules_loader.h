@@ -45,6 +45,15 @@ struct RmgRules {
 // ';' 注释、节名/键名大小写不敏感、键值行首尾去空白。
 bool LoadRmgRules(const std::string& text, RmgRules* out);
 
+// 解析 art(md).ini 文本里各建筑小节的 Foundation=，展开成占地偏移表
+// （原版 BuildingTypeClass::LoadFromINI 读 art 的 Foundation 键，经字符串→
+// 枚举表（1x1=0 … 6x4=20、3x3Refinery=9、0x0=21）索引 0x89C900 的静态占地
+// 表——row-major、左上角为锚点、3x3Refinery 缺 (2,1)、0x0 为空表）。
+// 只对 type_names 列出的类型取键；同一类型后读的文本覆盖先读的（artmd 盖 art）。
+void LoadArtFoundations(const std::string& art_text,
+                        const std::vector<std::string>& type_names,
+                        RmgRules* out);
+
 bool LoadRmgRulesFile(const std::string& path, RmgRules* out);
 
 }  // namespace cli
