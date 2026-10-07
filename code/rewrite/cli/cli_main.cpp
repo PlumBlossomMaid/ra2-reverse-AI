@@ -251,6 +251,17 @@ void WriteArlStateDump(const std::string& path,
   }
 }
 
+bool HasArg(int argc, char** argv, const char* key) {
+  const std::size_t n = std::strlen(key);
+  for (int i = 1; i < argc; ++i) {
+    if (std::strncmp(argv[i], key, n) == 0 &&
+        (argv[i][n] == 0 || argv[i][n] == '=')) {
+      return true;
+    }
+  }
+  return false;
+}
+
 std::string ArgValue(int argc, char** argv, const char* key) {
   const std::size_t n = std::strlen(key);
   for (int i = 1; i < argc; ++i) {
@@ -392,7 +403,7 @@ std::string ChainIndexedPath(const std::string& pattern, int index) {
 int RunChain(const std::string& chain_path, const std::string& seed_tok,
              const std::string& game_dir, const std::string& rules_path,
              const std::string& out_arg, const std::string& cells12_pattern,
-             const std::string& stage_cells_prefix) {
+             const std::string& stage_cells_prefix, bool fresh_per_game) {
   std::string text;
   if (!ReadFile(chain_path, &text)) {
     std::fprintf(stderr, "cannot read chain file: %s\n", chain_path.c_str());
@@ -455,7 +466,8 @@ int RunChain(const std::string& chain_path, const std::string& seed_tok,
   std::string err;
   if (!ra2::cli::RunPipelineChain(games, assets.data(), tiles, rules,
                                   assets.TileCount(), &results, &err,
-                                  !stage_cells_prefix.empty())) {
+                                  !stage_cells_prefix.empty(),
+                                  fresh_per_game)) {
     std::fprintf(stderr, "chain failed: %s\n", err.c_str());
     return 1;
   }
@@ -554,7 +566,8 @@ static int RunCli(int argc, char** argv) {
       return 2;
     }
     return RunChain(chain_path, seed_tok, game_dir, rules_path, out_path,
-                    dump_cells12_path, dump_stage_cells_prefix);
+                    dump_cells12_path, dump_stage_cells_prefix,
+                    HasArg(argc, argv, "--fresh-per-game"));
   }
 
   // ── 1. 读 .sed ──

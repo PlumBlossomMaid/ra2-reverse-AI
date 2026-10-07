@@ -1,8 +1,106 @@
 # RA2 随机地图复刻对齐工作手册（Seed=62298）
 
-> 最后更新：2026-10-07（rmg_hook 修改器全链路打通，hook 活体 == CLI 字节级一致）
+> 最后更新：2026-10-07 晚（连生语义彻底实锤 + cleanregen 补丁 + 不动点机理）
 > 本文件是跨 Agent 的记忆索引（kimi / qwen code 不互通，一切以本文件为准）。
 > **每轮工作结束立刻更新本文件**。更久远的取证结论在 `memory/` 与 `docs/random-map/`。
+
+---
+
+## 2026-10-07 晚：连生（dirty-chain）语义实锤 —— 当前主线
+
+### ✅ 游戏连生的完整语义（全部实证，非推测）
+
+1. **进程首局（gen#1）= 唯一干净变体**：cells 全新分配（扩展字段全零）+
+   0x599650(RandomMap::SetupTheater) 走完整重置子路径 0x599B1D（析构四对象
+   数组 + 0x599E70 清格子循环：iso=0,sub=0,lv=4,ramp=0,ov=-1,od=0）。
+2. **gen#2 起 = 不动点**：重置子路径被参数门控跳过（0x599A20 `jne 0x599B1D`
+   的 arg 恒 0），cells 全字段（含 +0xE4/+0xEC/+0x4C/+0x10A/+0x113 等 0x150
+   全部扩展字段）与对象数组（树/建筑/Anim/House）原样带入下一局。
+   实测 seed1：g1≠g2（7021 格），**g2==g3==g4 逐字节相等（不动点）**。
+3. **不动点历史无关**：T0/T1/T0/T1 交叉生成，同参两次输出逐字节一致。
+   且 **Time 参数对 cells 无影响**（T0==T1，Time 只影响光照/地图头）。
+4. **work 数组每局重置**：0x59A2E8-0x59A378 每局 free+new 并全零化
+   （+0x38=-1、+0x42=1）——CLI 的 work 重置行为正确。
+5. **gen#1 vs 不动点的差异源 = 12B 之外的扩展字段**（gen#1 它们为零，
+   gen#2+ 为脏）。正在逐字段二分定位决定性字段集（_zero_ext_fields.py）。
+6. 真实玩家几乎永远玩到不动点变体（首局是进程级一次性异常）——
+   **CLI 脏链模式（复现不动点）是主交付物**，干净模式（gen#1）已对齐。
+
+### ✅ cleanregen 补丁（已验证，已 commit 4050749）
+
+- 两个补丁强制每局走原版完整重置路径：0x599A20 `jne 0x599B1D`→`jmp`、
+  0x599BD3 `mov [esp+0xf],bl`→NOP（flag 恒 1）。
+- 效果：c1==c2==c3==自然不动点（g2/g3）0 差异；新进程 gen#1+cleanregen
+  == 自然干净首局 0 差异。**8960 案穷举无需链语义，任意顺序采集即可**。
+- rmgctl `cleanregen on/off`（OpenJob(true) 可 inject 前预置）。
+
+### ✅ 修改器 MASM 陷阱修复（重大 bug）
+
+`HookTibAfter` 里 `mov eax, dword ptr [0x82AF14]` 被 MASM 编成
+`B8 imm32`（[imm] 无寄存器基址时被当成立即数）→ 游戏 `call eax` 跳进
+.data 执行数据（崩于 0x82AF1F）。**naked asm 里绝对地址必须写
+`mov eax, dword ptr ds:[82AF14h]`**。之前两轮"游戏莫名崩溃"全是它。
+
+### ⚠️ 闹鬼事件（已解决）
+
+后台子代理 **agent-4（mt0）超时后 loop 不死**（同进程协程，任务系统
+杀不掉），2 小时内批量弹出十余个"取证请求"MessageBox。**教训：
+子代理超时 ≠ loop 终止；它启动的 `Start-Process` 分离进程更难缠**。
+最终靠用户重启 kimi code 才杀掉（wire 出现 `agent.turn.ended: aborted`）。
+**弹窗一律当闹鬼处理：沿 ParentProcessId 链查到哪个 node，再查该
+node 的 agents/*/wire.jsonl 是否还在增长。**
+
+### CLI 双模式目标（用户拍板）
+
+1. 干净模式：复现进程首局（已对齐 ✅）。
+2. 脏链模式：复现不动点（**当前攻关**）。CLI chain/replay 现在能灌 12B
+   脏态，但与不动点差 ~8.7K 格——缺扩展字段的建模。正用
+   `_zero_ext_fields.py`（活体清零指定 offset + gen）二分决定性字段。
+   注意：ov/iso/zoneId/ground 按 **dword** 保留（游戏按 int32 读 ov，
+   清错高半字 → 0xFFFF 索引进 OverlayType 表崩溃 0x47D30F）；
+   全清会波及渲染链（ra2md.dll+0x2BAA ddraw 崩溃，同 pristine 判死点）。
+   只能清直方图指控的标量字段：0x100/0x10A/0x10C/0x10E/0x113-116/
+   0x122/0x124/0x140/0xDD。
+
+### ✅ 干净连生采集模式定型（k 系列实验，全部实证）
+
+1. **开关 = [MapSeed+0x178]**（上一局参数快照指针，0x178 字节 MapSeedClass
+   拷贝）：点击生成**之前**外部清零 → 该局输出 == 进程首局干净变体
+   （z4/k1-k3 全部逐字节 == g1）。注意：**在 RMG 入口清（hook 内）是错误
+   位置**——handler 的 delete+alloc 已发生，会产出第三变体（z6-z8，
+   格子表延迟分配只有 3539 格）。已在 dllmain.cpp 注释中记录，勿再犯。
+2. 采集链路：`_game_session.py` 的 `gen_clean()`（先清 +0x178 再 rmgctl gen）。
+   `ensure_game` 幂等（已注入跳过 inject）。
+3. **CLI 干净批量**：`ra2_rmg_cli --chain=X --fresh-per-game`——每局全新
+   CliWorld == 独立单局（干净变体历史无关已实锤），~2s/案。
+4. **gen#1 与不动点的差异源**：不是 cells 扩展标量（全区域清零无效）、
+   不是副随机流（钉流无效）、不是对象（析构后输出不变）——只剩
+   +0x178 存在性相关的行为差异（待后续挖，脏链模式复现不动点时需要）。
+5. **Time 参数对 cells 无影响**（T0==T1 逐字节），4 个 Time 值只影响地图头。
+
+### 🚀 8960 案大穷举执行中（2026-10-07 午后）
+
+- 游戏侧：`_clean_sweep.py 12345` → `sweeps/12345/<case>.bin`（~3.2s/案，
+  崩溃自动重启续跑，progress.log）。
+- CLI 侧：`_cli_sweep.py <seed> <th>`（每 th 10 块 × 224 案，
+  --fresh-per-game）→ `sweeps_cli/<seed>/th<T>_c<CC>_<II>.bin`。
+- 对拍：`_sweep_cmp.py 12345` → `sweeps_cmp_12345.txt`。
+- **首轮（mt0 全部 234 案）**：158 pass / 76 diff——全部集中在
+  th0_sz0（温带小图）的 p2/p3/p5/p7/p8，每案 ~845 格（iso/ov/od/gnd），
+  y 52-124 矿田放置不同。th1 雪地 112/112 全过。
+  agent-5（coder）正在修，方向=Recalc#1 zone 输入侧（agent-3 取证）。
+- dll 被锁（僵尸 gamemd 持有旧 dll）：**改名规避**（Windows 允许对有
+  活跃映射的文件 rename）——`os.rename` 后即可重新链接。
+
+### 工具链新增
+
+- `.qwen/tmp/_game_session.py`：ensure_game()/gen_to()——起游戏、导航、
+  cleanregen、inject、arm、gen 一条龙（全 PostMessage，无弹窗）。
+- `.qwen/tmp/_zero_ext_fields.py`：活体按 offset 清格子字段+gen+ dump。
+- `E:\code\RA2YR_ReSource`（克隆）：他人全二进制重建项目，只有函数名/
+  类布局有价值（RandomMap::Generate=0x598960、SetupTheater=0x599650 等），
+  RMG 无实现，我们远超。真实实现仅 472/19067 函数（2.5%），exe 能链接
+  不能跑（810 个 return-0 桩）。已停更一个月。
 
 ---
 

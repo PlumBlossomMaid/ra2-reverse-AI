@@ -295,6 +295,10 @@ static void InjectParams() {
     if (g_job->cmd != 1) return;
     volatile uint32_t* dst = reinterpret_cast<volatile uint32_t*>(MAPSEED + 0x38);
     for (int i = 0; i < 16; ++i) dst[i] = g_job->params[i];
+    // ⚠️ 不要在 RMG 入口清 [MapSeed+0x178]：handler 的 delete+alloc 已发生，
+    // 此时清零会产出第三变体（z6-z8，3539 格延迟分配表）。
+    // 正确做法 = 点击生成**之前**由外部清零（z4 实验 == g1 逐字节），
+    // 采集编排器 _game_session.gen_clean() 负责。
     if (g_job->rand_state_enable) {
         uint32_t obj = *reinterpret_cast<uint32_t*>(SEC_OBJ);
         if (obj != 0) {

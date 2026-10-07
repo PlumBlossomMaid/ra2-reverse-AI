@@ -656,21 +656,43 @@ bool RunPipelineChain(const std::vector<ChainGame>& games,
                       const std::vector<rmg::TileType>& tiles,
                       const RmgRules& rules, int tile_count,
                       std::vector<PipelineResult>* results, std::string* err,
-                      bool capture_stage_cells) {
+                      bool capture_stage_cells, bool fresh_per_game) {
   if (results == nullptr || games.empty() ||
       results->size() != games.size()) {
     if (err != nullptr) *err = "RunPipelineChain: bad arguments";
     return false;
   }
-  // 首局建 grid/rng/work/world；第 2 局起全部复用——CliWorld 内存态
-  // （cells + terrains_ 记录 + 哑元 + loaded_tiles_ …）自然延续，
-  // 与真实游戏同会话连续生成同构。
   const rmg::MapSize ms0 =
       rmg::ComputeMapSize(games[0].params.width, games[0].params.height,
                           games[0].params.num_players, games[0].params.map_type);
   const rmg::MapGrid grid(ms0.width + 4, ms0.height + 12);
   const std::size_t n =
       static_cast<std::size_t>(grid.side()) * static_cast<std::size_t>(grid.side());
+  if (fresh_per_game) {
+    // 干净模式批量：每局一套全新 grid/rng/work/world == 独立进程单局
+    // （干净变体历史无关——游戏侧 T0/T1 交叉实验实锤），免去进程重启。
+    for (std::size_t i = 0; i < games.size(); ++i) {
+      const rmg::MapSize ms_i = rmg::ComputeMapSize(
+          games[i].params.width, games[i].params.height,
+          games[i].params.num_players, games[i].params.map_type);
+      const rmg::MapGrid gdim(ms_i.width + 4, ms_i.height + 12);
+      const std::size_t ni = static_cast<std::size_t>(gdim.side()) *
+                             static_cast<std::size_t>(gdim.side());
+      std::vector<rmg::PaintWorkCell> wk(ni);
+      rmg::Randomizer rng_i;
+      CliWorld world_i(gdim, theater, tiles, rng_i, wk, tile_count);
+      (*results)[i].capture_stage_cells = capture_stage_cells;
+      if (!RunGameOnWorld(games[i].params, games[i].seed, theater, rules,
+                          tile_count, gdim, &rng_i, &wk, &world_i,
+                          &(*results)[i], err, /*first_game=*/true)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  // 首局建 grid/rng/work/world；第 2 局起全部复用——CliWorld 内存态
+  // （cells + terrains_ 记录 + 哑元 + loaded_tiles_ …）自然延续，
+  // 与真实游戏同会话连续生成同构。
   std::vector<rmg::PaintWorkCell> work(n);
   rmg::Randomizer rng;
   CliWorld world(grid, theater, tiles, rng, work, tile_count);
