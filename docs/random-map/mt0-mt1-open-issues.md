@@ -123,5 +123,41 @@ none/<none> 与重名），与 INI 数字键无关。runtime id 168 = **SROCK01*
 - 症状A sz0_r3_p5 ×4 + sz1_th1_r*_p7 ×12 —— GrowTreePatch 单次决策差异，
   mt1 唯一剩余开放问题。
 
+### mt1 单格树根因收窄（2026-10-08 活体取证）
+
+代表案 `s12345_mt1_t0_th0_sz0_r3_p5`（发散格 (91,44)）与
+`s12345_mt1_t0_th1_sz1_r0_p7`（发散格 (66,81)）。两格同型：
+内部格、ground=0(Clear)、lv=4、ramp=0、无 overlay、u 远不贴 prob 边。
+
+**活体实锤（断点 0x71BC7F = TerrainClass ctor 内 Unlimbo 失败路径）**：
+该断点只在「树放置失败」时执行——全程 **0 命中**，且 live.bin 与真值
+**逐字节一致**（0 diff）。⇒ 原版**从未调用 ctor** 种这棵树，是在
+ctor 之前就拒绝了它，且取数净额与 CLI 完全一致（否则 rounds 3-99 会错位）。
+
+**机制推论**：原版的 GrowTreePatch 在 u<prob 判定或更早的过滤/pop 上
+就拒绝了该格，但消耗的取数与 CLI 的种植（u+idx 共 2 次）净额相同。
+最可能的形态：round 内某处比 CLI **多推了一个堆节点**（+1 key 取数）
+→ (91,44) 的 u 取数错一位变成 >= prob → 拒（省 idx 取数 -1）→ 净额 0。
+多发的那一格来自更早 patch 的 flag47 残留差异（pop 序差 1 格导致
+某格 flag47 状态不同）。
+
+**已排除**：u<prob 浮点边界（u 离边很远）、RNG 流分叉（其余 211/212 树
+逐格一致）、PickFrom1 拒绝差异（拒绝仅在 draw=0xFFFFFFFF）、可玩区边界
+0x578540（格深在内部）、MoveCost[ground=0][zone]（全 190 棵树 ground=0）、
+heap pop 序（该格全图只被推一次）。
+
+**取证卡点**：Python 调试器挂 INT3 采逐次取数时游戏生成卡死（调试器挂上
+后 gen 能点但生成不推进/极慢，多次复现；0x71BC7F 那次能完成是因为它
+从未命中）。**可靠路径 = 给 rmg_hook.dll 加「树阶段取数日志」**（进程内
+hook 0x5A47F2/0x5A4826/0x5A49B8，按返回地址过滤，写入大缓冲或落盘），
+绕开调试器。需重建 DLL——**注意：采集期别动 rmg_hook.dll**（游戏已注入
+旧版，换 DLL 会导致真值口径不一致），另建变体或等采集空窗。
+
+**临时探针**：`code/rewrite/rmg/lat_spread.cpp` 的 TREEDRAW 加了 ground
+字段（env 门控 RA2_RMG_TREES_TRACE，未提交）；CLI 侧脚本
+`.qwen/tmp/_mt1_tree_probe.py` / `_mt1_case_probe.py` / `_mt1_draw_cmp.py`、
+活体脚本 `_mt1_fail_capture.py`（0x71BC7F）/ `_mt1_draw_capture.py`（取数序列，
+含单步 INT3 处理——修复了重武装死锁 bug）。
+
 对拍工具：`.qwen/tmp/_rerun_and_cmp.py <seed> [case名子串过滤]`；
 mt1 专项：`.qwen/tmp/_mt1_verify.py`（从 sweeps_cmp_12345.txt 提取发散案重跑）。
