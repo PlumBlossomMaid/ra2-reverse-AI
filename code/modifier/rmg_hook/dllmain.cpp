@@ -23,6 +23,12 @@
 #define TECHNO_CTOR    0x6F2B40
 #define TECH_COUNT     0x5A966A
 #define CLEAR_CLASSES  0x6851F0
+// 树阶段取数日志（mt1 单格树取证）：GrowTreePatch 三个取数点返回后
+#define TREE_UDRAW     0x5A47FC   // u<prob 取数后（eax=draw, ebx=cell）
+#define TREE_IDRAW     0x5A4826   // idx 取数后（eax=draw）
+#define TREE_KDRAW     0x5A49C2   // 邻居 key 取数后（eax=draw, [esp+0x24]=邻坐标）
+#define TREE_KEY       0x5A49EE   // key 计算完（[ebx+4]=key f32, [esp+0x24]=邻坐标）
+#define TREE_LOG_FLAG  "E:\\code\\ra2-reverse-AI\\.qwen\\tmp\\_treedraw_on.flag"
 #define SEC_OBJ        0xA8B230
 #define MAPSEED        0xABDFD8
 #define CELLTBL        0x87F924
@@ -81,6 +87,19 @@ static HANDLE g_map = nullptr;
 static HANDLE g_unload_evt = nullptr;
 static HWND g_game_wnd = nullptr;
 static WNDPROC g_old_wndproc = nullptr;
+
+// 树取数日志（mt1 单格树取证）：定义提前，供 InjectParams/DumpCellsTramp 用。
+// DLL 本地缓冲（不进共享内存，无需 rmgctl 改动）；rmg_done 时落盘。
+// 门控：标志文件存在才安装钩子（正常采集零开销）。
+#define TREE_LOG_MAX 200000
+static uint32_t g_tree_log[TREE_LOG_MAX][4];
+static volatile uint32_t g_tree_log_n = 0;
+static bool g_treedraw_on = false;
+static uint8_t g_orig_udraw[8];
+static uint8_t g_orig_idraw[8];
+static uint8_t g_orig_kdraw[12];
+static uint8_t g_orig_tkey[6];
+static void DumpTreeLog();
 
 // 主窗口 WndProc 子类：在消息边界（主线程、非回调嵌套）执行
 // Scenario_ClearClasses——官方场景重置。在 BN_CLICK 回调内直调会崩
@@ -279,6 +298,7 @@ static void DumpTibState(const char* suffix) {
 
 // ── 参数注入（在 RMG 入口钩子里进程内执行）──
 static void InjectParams() {
+    g_tree_log_n = 0;   // 每局重置树取数日志
     // 入口主 RNG 快照（id=3，总是记录，用于判定主 RNG 是否逐局重播种）
     uint32_t n0 = g_job->rand_log_n;
     if (n0 < 512) {
@@ -408,6 +428,7 @@ __declspec(naked) static void HookDone() {
 // DumpCells 本身可能被优化内联出问题，用独立包装保证裸函数里安全调用
 static void DumpCellsTramp() {
     DumpCells();
+    DumpTreeLog();
     ++g_job->dump_count;
     g_job->status = 3;
 }
@@ -443,6 +464,144 @@ __declspec(naked) static void HookTibAfter() {
         push 0x598EFE
         ret
     }
+}
+
+// ── 树阶段取数日志（mt1 单格树取证）──
+// （缓冲/标志/原始字节定义已提前到文件头部）
+
+static void TreeDrawLog(uint32_t site, uint32_t x, uint32_t y, uint32_t draw) {
+    if (!g_treedraw_on) return;
+    uint32_t n = g_tree_log_n;
+    if (n < TREE_LOG_MAX) {
+        g_tree_log[n][0] = site;
+        g_tree_log[n][1] = x;
+        g_tree_log[n][2] = y;
+        g_tree_log[n][3] = draw;
+        g_tree_log_n = n + 1;
+    }
+}
+
+// 0x5A47FC 原始 8 字节: 89 44 24 3C 89 7C 24 40
+//   (mov [esp+0x3c],eax; mov [esp+0x40],edi)
+// pushad 后：eax=draw 在 [esp+0x1C]，ebx=cell 在 [esp+0x10]
+// C 调用约定从右到左压栈：draw, y, x, site
+__declspec(naked) static void HookTreeUDraw() {
+    __asm {
+        pushad
+        mov ebx, [esp + 0x10]      // cell
+        movzx edx, word ptr [ebx + 0x26]   // y
+        movzx ecx, word ptr [ebx + 0x24]   // x
+        mov eax, [esp + 0x1C]      // draw
+        push eax                   // draw
+        push edx                   // y
+        push ecx                   // x
+        push 0                     // site
+        call TreeDrawLog
+        add esp, 16
+        popad
+        mov dword ptr [esp + 0x3c], eax
+        mov dword ptr [esp + 0x40], edi
+        push 0x5A4804
+        ret
+    }
+}
+
+// 0x5A4826 原始 8 字节: 89 44 24 44 | 89 7C 24 48
+//   (mov [esp+0x44],eax=draw; mov [esp+0x48],edi=0)  fild qword[esp+0x44] 在 0x5A482E
+__declspec(naked) static void HookTreeIDraw() {
+    __asm {
+        pushad
+        mov eax, [esp + 0x1C]      // draw
+        push eax                   // draw
+        push -1                    // y
+        push -1                    // x
+        push 1                     // site
+        call TreeDrawLog
+        add esp, 16
+        popad
+        mov dword ptr [esp + 0x44], eax
+        mov dword ptr [esp + 0x48], edi
+        push 0x5A482E
+        ret
+    }
+}
+
+// 0x5A49C2 原始 12 字节: 89 44 24 4C | C7 44 24 50 00000000
+//   (mov [esp+0x4c],eax; mov dword [esp+0x50],0)
+// 邻居坐标在函数 esp+0x24（pushad 后函数 esp 在 [esp+0x0C]）
+__declspec(naked) static void HookTreeKDraw() {
+    __asm {
+        pushad
+        mov ecx, [esp + 0x0C]      // 函数 esp
+        movzx edx, word ptr [ecx + 0x26]   // y（先读，ecx 马上被覆写）
+        movzx ecx, word ptr [ecx + 0x24]   // x
+        mov eax, [esp + 0x1C]      // draw
+        push eax                   // draw
+        push edx                   // y
+        push ecx                   // x
+        push 2                     // site
+        call TreeDrawLog
+        add esp, 16
+        popad
+        mov dword ptr [esp + 0x4c], eax
+        mov dword ptr [esp + 0x50], 0
+        push 0x5A49CE
+        ret
+    }
+}
+
+// 0x5A49EE 原始 6 字节: C6 47 47 01 8B 0E
+//   (mov byte [edi+0x47],1; mov ecx,[esi])   紧跟 fstp [ebx+4]=key
+// 这里读 [ebx+4] = 计算完的 key（f32），坐标在函数 esp+0x24
+// 另：首次调用时读 FPU 控制字（fnstcw），site=4 记一条——判定游戏真实舍入/精度模式
+static bool g_cw_logged = false;
+__declspec(naked) static void HookTreeKey() {
+    __asm {
+        pushad
+        mov ecx, [esp + 0x0C]      // 函数 esp
+        movzx edx, word ptr [ecx + 0x26]   // y
+        movzx ecx, word ptr [ecx + 0x24]   // x
+        mov eax, [ebx + 4]         // key (float bits)
+        push eax                   // draw 槽位放 key
+        push edx                   // y
+        push ecx                   // x
+        push 3                     // site=3 = key
+        call TreeDrawLog
+        add esp, 16
+        // 一次性记录 FPU 控制字
+        cmp g_cw_logged, 0
+        jne skip_cw
+        mov g_cw_logged, 1
+        sub esp, 4
+        fnstcw word ptr [esp]
+        movzx eax, word ptr [esp]
+        add esp, 4
+        push eax
+        push 0
+        push 0
+        push 4
+        call TreeDrawLog
+        add esp, 16
+skip_cw:
+        popad
+        mov byte ptr [edi + 0x47], 1
+        mov ecx, dword ptr [esi]
+        push 0x5A49F4
+        ret
+    }
+}
+
+// 落盘：rmg_done 时把树取数日志写到 <dump_path>.treedraw
+static void DumpTreeLog() {
+    if (!g_treedraw_on || g_tree_log_n == 0) return;
+    char path[300];
+    _snprintf_s(path, sizeof(path), _TRUNCATE, "%s.treedraw", g_job->dump_path);
+    FILE* f = nullptr;
+    if (fopen_s(&f, path, "wb") != 0 || f == nullptr) return;
+    uint32_t n = g_tree_log_n;
+    fwrite(&n, 4, 1, f);
+    fwrite(g_tree_log, 4, n * 4, f);
+    fclose(f);
 }
 
 // ── 副随机流消耗取证 ──
@@ -627,6 +786,24 @@ static DWORD WINAPI Worker(LPVOID) {
     bool ht2 = WriteJump(TIB_AFTER,
                          reinterpret_cast<uintptr_t>(&HookTibAfter),
                          g_orig_tib_after, 5);
+    // 树取数日志钩子：仅当标志文件存在时安装（正常采集零开销）
+    g_treedraw_on = GetFileAttributesA(TREE_LOG_FLAG) !=
+                    INVALID_FILE_ATTRIBUTES;
+    bool tu = false, ti = false, tk = false, tkk = false;
+    if (g_treedraw_on) {
+        tu = WriteJump(TREE_UDRAW,
+                       reinterpret_cast<uintptr_t>(&HookTreeUDraw),
+                       g_orig_udraw, 8);
+        ti = WriteJump(TREE_IDRAW,
+                       reinterpret_cast<uintptr_t>(&HookTreeIDraw),
+                       g_orig_idraw, 8);
+        tk = WriteJump(TREE_KDRAW,
+                       reinterpret_cast<uintptr_t>(&HookTreeKDraw),
+                       g_orig_kdraw, 12);
+        tkk = WriteJump(TREE_KEY,
+                        reinterpret_cast<uintptr_t>(&HookTreeKey),
+                        g_orig_tkey, 6);
+    }
     // 干净连生补丁：强制 0x599650(RandomMap::SetupTheater) 每局走完整重置
     if (g_job->clean_regen) {
         // 0x599A20: 0F 85 F7 00 00 00 (jne 0x599B1D) → E9 F8 00 00 00 90
@@ -660,6 +837,10 @@ static DWORD WINAPI Worker(LPVOID) {
     if (hr4) Restore(TECH_COUNT, g_orig_techcount, 5);
     if (ht1) Restore(TIB_ENTRY, g_orig_tib_entry, 5);
     if (ht2) Restore(TIB_AFTER, g_orig_tib_after, 5);
+    if (tu) Restore(TREE_UDRAW, g_orig_udraw, 8);
+    if (ti) Restore(TREE_IDRAW, g_orig_idraw, 8);
+    if (tk) Restore(TREE_KDRAW, g_orig_kdraw, 12);
+    if (tkk) Restore(TREE_KEY, g_orig_tkey, 6);
     if (g_clean_regen_patched) {
         RestoreBytes(0x599A20, g_orig_reset_gate, 6);
         RestoreBytes(0x599BD3, g_orig_flag_clear, 4);

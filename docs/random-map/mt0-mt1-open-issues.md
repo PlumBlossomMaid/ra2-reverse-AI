@@ -123,41 +123,59 @@ none/<none> 与重名），与 INI 数字键无关。runtime id 168 = **SROCK01*
 - 症状A sz0_r3_p5 ×4 + sz1_th1_r*_p7 ×12 —— GrowTreePatch 单次决策差异，
   mt1 唯一剩余开放问题。
 
-### mt1 单格树根因收窄（2026-10-08 活体取证）
+### ✅ mt1 单格树 + mt0 残差根因已实锤并修复（2026-10-09，X87SpreadKey fldcw 笔误）
 
-代表案 `s12345_mt1_t0_th0_sz0_r3_p5`（发散格 (91,44)）与
-`s12345_mt1_t0_th1_sz1_r0_p7`（发散格 (66,81)）。两格同型：
-内部格、ground=0(Clear)、lv=4、ramp=0、无 overlay、u 远不贴 prob 边。
+**两个残差的共同根因，是一个字节的笔误。**（下面 2026-10-08 的「ctor 前拒绝」
+机制推论是**错的**——真正根因是 SpreadKey 的浮点控制字。）
 
-**活体实锤（断点 0x71BC7F = TerrainClass ctor 内 Unlimbo 失败路径）**：
-该断点只在「树放置失败」时执行——全程 **0 命中**，且 live.bin 与真值
-**逐字节一致**（0 diff）。⇒ 原版**从未调用 ctor** 种这棵树，是在
-ctor 之前就拒绝了它，且取数净额与 CLI 完全一致（否则 rounds 3-99 会错位）。
+**根因**：`fast_math.cpp` 的 `X87SpreadKey`（x64 x87 机器码 kCode2）里，
+加载 FPU 控制字的指令写成了 `DB 6C 24 08`（= `fld xword [rsp+8]`，80 位装载），
+而正确的是 `D9 6C 24 08`（= `fldcw [rsp+8]`，加载控制字 0x0E7F）。
+fldcw 从未生效 → 全程跑 fninit 默认值 **0x037F（PC=64 / 最近舍入）**，
+而游戏是 **0x0E7F（PC=53 / chop 向零截断）**。fstp f32 用最近舍入而非 chop
+→ CLI 的树/矿 key 系统性比原版**高 1 ULP** → 平局/近平局的堆 pop 序翻转。
 
-**机制推论**：原版的 GrowTreePatch 在 u<prob 判定或更早的过滤/pop 上
-就拒绝了该格，但消耗的取数与 CLI 的种植（u+idx 共 2 次）净额相同。
-最可能的形态：round 内某处比 CLI **多推了一个堆节点**（+1 key 取数）
-→ (91,44) 的 u 取数错一位变成 >= prob → 拒（省 idx 取数 -1）→ 净额 0。
-多发的那一格来自更早 patch 的 flag47 残留差异（pop 序差 1 格导致
-某格 flag47 状态不同）。
+**取证链**（全部活体实证，案 = `s12345_mt1_t0_th0_sz0_r3_p5`）：
+1. 给 rmg_hook.dll 加进程内树取数日志（hook 0x5A47FC/0x5A4826/0x5A49C2/0x5A49EE，
+   记 draw 与算完的 key，rmg_done 落盘 `.treedraw`），绕开调试器
+   （调试器挂 INT3 会让生成卡死）。
+2. 活体 vs CLI 对拍：u-draw 序列 0-122 逐格一致，pop (107,42) 与 (91,39) 的
+   **堆 pop 序在 key 0x412DBDBD 处翻转**——CLI 把它们当平局，原版不是。
+3. 活体记 key + FPU 控制字：CLI 的 key 比活体**高 1 ULP ×3633 格**（另 3552 格一致），
+   活体控制字实测 **0x0E7F**（PC=53/chop），证明 CLI 的 fldcw 没生效。
+4. 精确复算（Fraction 无限精度 + PC=53 chop 模拟）：正确 key = 0x408E73C8 =
+   **活体值**；CLI 的 X87SpreadKey 给 0x408E73C9（+1 ULP）。
+5. 反汇编 kCode2 实锤 `DB 6C 24 08`（fld xword）应为 `D9 6C 24 08`（fldcw）。
 
-**已排除**：u<prob 浮点边界（u 离边很远）、RNG 流分叉（其余 211/212 树
-逐格一致）、PickFrom1 拒绝差异（拒绝仅在 draw=0xFFFFFFFF）、可玩区边界
-0x578540（格深在内部）、MoveCost[ground=0][zone]（全 190 棵树 ground=0）、
-heap pop 序（该格全图只被推一次）。
+**修复**：kCode2 的 `0xDB,0x6C,0x24,0x08` → `0xD9,0x6C,0x24,0x08`（一个字节）。
 
-**取证卡点**：Python 调试器挂 INT3 采逐次取数时游戏生成卡死（调试器挂上
-后 gen 能点但生成不推进/极慢，多次复现；0x71BC7F 那次能完成是因为它
-从未命中）。**可靠路径 = 给 rmg_hook.dll 加「树阶段取数日志」**（进程内
-hook 0x5A47F2/0x5A4826/0x5A49B8，按返回地址过滤，写入大缓冲或落盘），
-绕开调试器。需重建 DLL——**注意：采集期别动 rmg_hook.dll**（游戏已注入
-旧版，换 DLL 会导致真值口径不一致），另建变体或等采集空窗。
+**验证**（全部用修复后 build_verify）：
+- mt1 单格树 ×16：**全部 PASS** ✅
+- mt0 残差 th1_sz0_r3_p2 ×4（原 60 格 zone/obj）：**全部 PASS** ✅（同一根因）
+- mt0 采样 30 案：**30/30 PASS** ✅（矿段无回归）
+- 62298 回归：11 格不变（那是进对局后运行时矿生长，不可复现，非本问题）
+- ctest build_x86：42/43（唯一失败 `ChopLog.MatchesArchIndependentGolden`
+  是 X87Fyl2x 的**同源 fldcw 笔误**的既有问题，stash 我的改动后仍失败 → 与本次无关，
+  见下「遗留」）
 
-**临时探针**：`code/rewrite/rmg/lat_spread.cpp` 的 TREEDRAW 加了 ground
-字段（env 门控 RA2_RMG_TREES_TRACE，未提交）；CLI 侧脚本
-`.qwen/tmp/_mt1_tree_probe.py` / `_mt1_case_probe.py` / `_mt1_draw_cmp.py`、
-活体脚本 `_mt1_fail_capture.py`（0x71BC7F）/ `_mt1_draw_capture.py`（取数序列，
-含单步 INT3 处理——修复了重武装死锁 bug）。
+**取证工具**：rmg_hook.dll 新增「树阶段取数日志」（进程内 hook，标志文件
+`.qwen/tmp/_treedraw_on.flag` 门控安装，rmg_done 落盘 `<dump>.treedraw`）。
+CLI 侧 TREEDRAW 探针（lat_spread.cpp，env 门控 RA2_RMG_TREES_TRACE）。
+脚本 `.qwen/tmp/_mt1_treedraw_capture.py`（采集）、`_mt1_key_cmp.py`/
+`_mt1_keydist.py`/`_mt1_keycmp2.py`（key 对拍）、`_mt1_seq.py`/`_mt1_between.py`
+（交错序列）、`_key_exact.py`（精确复算）、`_kcode2_dis.py`（kCode2 反汇编）、
+`_fastsqrt_pe.py`（FastSqrt 表值）。
+
+### ⚠️ 遗留：X87Fyl2x 也有同源 fldcw 笔误（ChopLog 测试失败的真因）
+
+`x87_fyl2x.h` 的 X87Fyl2x kCode 里，两处「fldcw」同样写成了 `0xDB`：
+- `0xDB,0x6C,0x24,0x08`（fldcw [rsp+8] 设置，应为 D9）
+- `0xDB,0x2C,0x24`（fldcw [rsp] 恢复，应为 D9）
+
+→ ChopLog 也跑在最近舍入，与 golden（chop）差 1 ULP →
+`ChopLog.MatchesArchIndependentGolden` 失败。**这是既有问题，与 SpreadKey 修复无关**
+（stash 验证）。但 ChopLog 的 1 ULP 差会经 NormalDeviate → TruncNormal 传播，
+可能还有未发现的影响面，应一并修（X87Fyl2x 的 DB→D9 同样修掉并回归）。
 
 对拍工具：`.qwen/tmp/_rerun_and_cmp.py <seed> [case名子串过滤]`；
 mt1 专项：`.qwen/tmp/_mt1_verify.py`（从 sweeps_cmp_12345.txt 提取发散案重跑）。

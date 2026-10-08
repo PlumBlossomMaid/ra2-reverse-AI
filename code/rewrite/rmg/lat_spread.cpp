@@ -292,9 +292,16 @@ int GrowTreePatch(LatContext& ctx, const CellCoord& seed, int size, double prob)
     if (IsUndecidedTile(world.IsoTile(at)) && world.Field0xE4(at) == 0 &&
         world.Overlay(at) == -1 && world.Field0xEC(at) != 3) {
       // 取数点 0x5A47F2：r * 1/(2^32-1) < prob 才栽；**失败也烧随机数**
+      const std::uint32_t u_draw = ctx.rng->Random();
       const double u =
-          static_cast<double>(static_cast<std::uint64_t>(ctx.rng->Random())) *
+          static_cast<double>(static_cast<std::uint64_t>(u_draw)) *
           kInvUintMax;
+      if (gtrace) {
+        std::fprintf(stderr, "TREEDRAW at=(%d,%d) draw=%u u=%.17g prob=%.17g "
+                             "pass=%d ground=%d\n",
+                     at.x, at.y, u_draw, u, prob, u < prob ? 1 : 0,
+                     world.Field0xEC(at));
+      }
       if (u < prob) {
         // 取数点 0x5A481C：_ftol(r * 25/(2^32-1) + 1.0)，拒绝 > 25
         // → 下界是 1，所以只会是 TREE01..TREE25，**TREE00 永不出现**
