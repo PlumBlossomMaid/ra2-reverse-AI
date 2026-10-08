@@ -112,11 +112,16 @@ none/<none> 与重名），与 INI 数字键无关。runtime id 168 = **SROCK01*
 - **sz2 各种 ×44 + sz3 各种 ×24：全部 PASS** ✅（kimi 的系列修复连带闭合）。
 - **症状A（sz0_r3_p5 ×4）：仍 1 格（zone:1,obj:1）**——GrowTreePatch 单次决策差异未解。
 - **sz1_th1_r*_p7 ×12：仍 1 格（zone:1,obj:1）**——与症状A 同类（单棵树 zone/obj）。
-- **sz0_r*_p8 ×24（新确认的大发散组）：完全未变**——th0 恒 4517 格
-  （iso_lo:3890,iso_hi:2092,gnd:1829,ramp:1812,lv:1707）、th1 恒 3525 格；
-  与 t、r 均无关（同 p8 下逐案逐格一致），差异从早期阶段就定型，与本次修复无关。
-  **这是 mt1 当前最大开放问题**：p8 + sz0（最小图 8 玩家紧岛屿）在岛屿/出生点
-  布局阶段整体分岔，需要与 mt0 同法的活体入口态采集（bp 0x598EF2 区）。
+- ~~sz0_r*_p8 ×24（大发散组）~~——**已闭合**：2026-10-08 TIBTRE 清矿修复
+  （CreateTerrain overlay 清除，见 mt0 节）重跑后全部 PASS，th0/th1 均无差异。
+  该组与 mt0 布矿发散同根因。
+
+### mt1 终态（2026-10-08，TIBTRE 清矿修复后重跑 128 案）
+
+**pass=112 diff=16**，剩余 16 案全部是单格树（zone:1,obj:1）：
+
+- 症状A sz0_r3_p5 ×4 + sz1_th1_r*_p7 ×12 —— GrowTreePatch 单次决策差异，
+  mt1 唯一剩余开放问题。
 
 对拍工具：`.qwen/tmp/_rerun_and_cmp.py <seed> [case名子串过滤]`；
 mt1 专项：`.qwen/tmp/_mt1_verify.py`（从 sweeps_cmp_12345.txt 提取发散案重跑）。
