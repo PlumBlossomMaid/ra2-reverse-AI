@@ -45,28 +45,31 @@ class X87Fyl2x {
     //   fninit                    ; DB E3           (reset x87 FPU)
     //   mov ax, 0x0E7F            ; 66 B8 7F 0E     (PC=53bit+RC=chop+all-masked)
     //   mov [rsp+8], ax           ; 66 89 44 24 08
-    //   fldcw [rsp+8]             ; DB 6C 24 08
+    //   fldcw [rsp+8]             ; D9 6C 24 08
     //   fnclex                    ; DB E2           (clear exceptions)
     //   fldln2                    ; D9 ED           (st0=ln2)
     //   fld qword [rcx]           ; DD 01           (st0=x, st1=ln2)
     //   fyl2x                     ; D9 F1           (st0=ln2*log2(x)=ln(x))
     //   fstp qword [rcx]          ; DD 19           (store result)
-    //   fldcw [rsp]               ; DB 2C 24        (restore original CW)
+    //   fldcw [rsp]               ; D9 2C 24        (restore original CW)
     //   add rsp, 16               ; 48 83 C4 10
     //   ret                       ; C3
+    // ⚠️ 2026-10-09 修复：两处 fldcw 误写成 0xDB（fld xword）→ 控制字从未生效，
+    // 全程跑 fninit 默认 0x037F（最近舍入）而非 chop。应为 0xD9。与 X87SpreadKey
+    // 同源笔误（详见 docs/random-map/mt0-mt1-open-issues.md）。
     static const unsigned char kCode[] = {
       0x48, 0x83, 0xEC, 0x10,
       0xDD, 0x3C, 0x24,
       0xDB, 0xE3,
       0x66, 0xB8, 0x7F, 0x0E,
       0x66, 0x89, 0x44, 0x24, 0x08,
-      0xDB, 0x6C, 0x24, 0x08,
+      0xD9, 0x6C, 0x24, 0x08,   // ← 0xD9 = fldcw（修复）
       0xDB, 0xE2,
       0xD9, 0xED,
       0xDD, 0x01,
       0xD9, 0xF1,
       0xDD, 0x19,
-      0xDB, 0x2C, 0x24,
+      0xD9, 0x2C, 0x24,         // ← 0xD9 = fldcw（修复）
       0x48, 0x83, 0xC4, 0x10,
       0xC3,
     };
