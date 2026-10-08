@@ -166,16 +166,25 @@ CLI 侧 TREEDRAW 探针（lat_spread.cpp，env 门控 RA2_RMG_TREES_TRACE）。
 （交错序列）、`_key_exact.py`（精确复算）、`_kcode2_dis.py`（kCode2 反汇编）、
 `_fastsqrt_pe.py`（FastSqrt 表值）。
 
-### ⚠️ 遗留：X87Fyl2x 也有同源 fldcw 笔误（ChopLog 测试失败的真因）
+### ✅ 遗留已修：X87Fyl2x 同源 fldcw 笔误（2026-10-09，commit 396aee7）
 
-`x87_fyl2x.h` 的 X87Fyl2x kCode 里，两处「fldcw」同样写成了 `0xDB`：
-- `0xDB,0x6C,0x24,0x08`（fldcw [rsp+8] 设置，应为 D9）
-- `0xDB,0x2C,0x24`（fldcw [rsp] 恢复，应为 D9）
+`x87_fyl2x.h` 的 X87Fyl2x kCode 里，两处「fldcw」同样写成了 `0xDB`
+（与 X87SpreadKey 同源笔误）：`0xDB,0x6C,0x24,0x08`（设置）与
+`0xDB,0x2C,0x24`（恢复），应为 `0xD9`。→ ChopLog 也跑在最近舍入，与
+golden（chop）差 1 ULP → `ChopLog.MatchesArchIndependentGolden` 失败。
 
-→ ChopLog 也跑在最近舍入，与 golden（chop）差 1 ULP →
-`ChopLog.MatchesArchIndependentGolden` 失败。**这是既有问题，与 SpreadKey 修复无关**
-（stash 验证）。但 ChopLog 的 1 ULP 差会经 NormalDeviate → TruncNormal 传播，
-可能还有未发现的影响面，应一并修（X87Fyl2x 的 DB→D9 同样修掉并回归）。
+**排查踩坑（重要）**：修复后 ctest 仍失败，一度以为修复无效。真因是
+**exe 是旧的**——x87_fyl2x.h 改动时间晚于 exe 构建时间，而 **ninja 的
+依赖跟踪没把 x87_fyl2x.h 列入 target 源**（CMake 未跟踪头文件依赖），
+`ninja test_fast_math` 报 "no work to do" 不重编。**强制重编**
+（删 `fast_math.cpp.obj`）后 kCode 才更新为 D9，ChopLog 测试通过。
+**教训**：改头文件后必须删 obj 强制重编，别信 ninja 的 "no work to do"。
+
+**验证**（build_x86 + build_verify 双修复 CLI）：
+- ctest build_x86：**43/43 全绿**（ChopLog.MatchesArchIndependentGolden 通过）
+- mt1 单格树 ×16：**全 PASS**（无回归）
+- mt0 残差 ×4：**全 PASS**（无回归）
+- mt0 采样 30 案：**30/30 PASS**（无回归）
 
 对拍工具：`.qwen/tmp/_rerun_and_cmp.py <seed> [case名子串过滤]`；
 mt1 专项：`.qwen/tmp/_mt1_verify.py`（从 sweeps_cmp_12345.txt 提取发散案重跑）。
