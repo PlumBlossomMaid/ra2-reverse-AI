@@ -106,3 +106,29 @@ work.queued/flag45 入口态（全表 0 diff）。
 - theater1 修复：morphable 逐砖表改由 theater ini 的 Morphable= 键展开（commit b8d3e84）。
 - SmoothShoreline 按原版双调用点分 flag——涂块收尾 0x59C433=1，湖/瀑布收尾
   0x59D282=0（commit 4ec579d）。
+
+---
+
+## 🎉 8960 案全量逐字节对齐达成（2026-10-10）
+
+**结论**：种子 12345 与 62298 各 4480 案（mt5×t4×th2×sz4×r4×p8），
+CLI 最终态与游戏侧 cleanregen 真值 **pass=4480 diff=0 missing=0**
+（两 seed 全 8960 案逐字节一致，`sweeps_cmp_<seed>.txt`）。
+
+**最后一公里**：seed=12345 修复前剩 632 案（sz1/sz2）的 isoTile 发散。
+根因 = `pipeline.cpp` 的 `world.SetDummyIsoTile(theater.green_tile)`
+把共享哑元 0xABDC50 钉死成 493，导致 `SetupLAT` 段 3 ClearToGreenLat
+把出图邻居误判为「同组」（m 少置位 → 少产过渡砖 503）。
+游戏真值 dump 实锤：出图格 (57,30)/(56,31) 的 iso=**0**（不是 493），
+游戏靠哑元=0 置出过渡位（m=9 → 503）。移除钉死后哑元保持 0，与游戏一致。
+
+**哑元残留铁律**：出图格（exists=0）读 iso 回退共享哑元，其值在
+LAT 段 3 时刻为 **0**（Seeding water (h) 段沿岸刷绿会把哑元写成
+green_tile，但后续阶段又改回 0）。不得钉死——钉死会让
+ClearToGreenLat 的豁免集合误命中（{green}∪[clear_to_green_lat,+0xF]∪
+[shore,+0x29]∪[water_bridge,+1] 不含 0）。
+
+**管道死锁坑**：`_cli_sweep.py` 的 `subprocess.run(capture_output=True)`
+在 Windows 上会管道死锁（CLI stderr 输出超过管道缓冲，CLI 阻塞写 stderr，
+communicate 读不到）。修复：重定向 stdout/stderr 到文件
+（`stdout=lf, stderr=subprocess.STDOUT`）。

@@ -84,7 +84,13 @@ bool LoadRmgRules(const std::string& text, RmgRules* out) {
     bool has_land = false;
     int land = 0;
     bool tiberium = false;
-    bool no_use_tile = false;
+    // ⚠️ 原版 OverlayTypeClass 构造函数（0x5FE250，0x5FE25E `mov eax,1` /
+    // 0x5FE271 `mov [esi+0x2ac],al`）把 +0x2AC（NoUseTileLandType）默认成
+    // **1（true）**——INI 没显式写 NoUseTileLandType=no 的 overlay（含全部
+    // TIB/GEM 矿）都进 RecalcAttributes 的 overlay 专属路径（0x47D333，
+    // cliff_back 变体 0x47D53E 无条件写 ground=3）。
+    // CLI 旧版默认 false（只在 INI 有该键时才设置）是错的。
+    bool no_use_tile = true;
   };
   std::map<std::string, OverlaySec> overlay_secs;
   std::vector<std::string> overlay_list;  // [OverlayTypes] 条目名，按出现次序
@@ -203,6 +209,11 @@ bool LoadRmgRules(const std::string& text, RmgRules* out) {
       if (tib && info.land == 0) info.land = 5;
       // 0x47D325 读的 +0x2AC 就是 NoUseTileLandType（0x5FE958-0x5FE973），
       // **不含** Tiberium——Tiberium 是 +0x2A9（0x5FE7EB-0x5FE805）。
+      // 但 +0x2AC 构造默认 = 1（0x5FE250 构造函数 0x5FE25E `mov eax,1` /
+      // 0x5FE271 `mov [esi+0x2ac],al`），只有 INI 显式写
+      // NoUseTileLandType=no 才翻成 false；TIB/GEM 矿全不写该键 →
+      // 恒 true → 走 overlay 专属路径（0x47D333，cliff_back 变体
+      // 0x47D53E 无条件写 ground=3）。默认值修正见上方 OverlaySec 定义。
       info.owns_land = ntl || info.land == 4 || info.land == 9;
       out->overlay_land[oid] = info;
     }

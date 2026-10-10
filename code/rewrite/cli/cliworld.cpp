@@ -5,6 +5,8 @@
 #include "cliworld.h"
 
 #include <algorithm>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 
@@ -777,6 +779,23 @@ void CliWorld::SetupLAT(const ra2::rmg::CellCoord& c) {
 }
 
 void CliWorld::RecalcAttributes(const ra2::rmg::CellCoord& c, int arg) {
+  // 临时探针（RA2_PROBE_CELL=x,y 门控）：观测失败格的完整轨迹
+  static int probe_x = -2, probe_y = -2;
+  static bool probe_init = false;
+  if (!probe_init) {
+    probe_init = true;
+    const char* e = std::getenv("RA2_PROBE_CELL");
+    if (e) std::sscanf(e, "%d,%d", &probe_x, &probe_y);
+  }
+  const bool probe = (c.x == probe_x && c.y == probe_y);
+  if (probe) {
+    const CliCell& cc = At(c);
+    std::fprintf(stderr,
+        "[PROBE] enter (%d,%d) iso=%d sub=%d lv=%d ramp=%d ov=%d od=%d gnd=%d zone=%d cbi=%d\n",
+        c.x, c.y, IsoTile(c), (int)cc.subtile, (int)cc.level, (int)cc.ramp,
+        Overlay(c), (int)cc.overlayData, (int)cc.ground, (int)cc.zoneId,
+        cliff_back_impassability_);
+  }
   // 0x47D2F6-0x47D32D：overlay != -1 时**无条件**写
   // +0xEC = OverlayTypeClass+0x298（任何 overlay，不止矿石——活体石头格
   // iso=423/493 仍 ground=3 实锤；CLI 旧版只对矿写、其余走 tile 查表是错的）。
@@ -842,6 +861,11 @@ void CliWorld::RecalcAttributes(const ra2::rmg::CellCoord& c, int arg) {
   const bool tmp_present = tt != nullptr && !tt->cells.empty();
   const bool empty_path =
       (tile == 0xFFFF) || (tile >= tile_count_) || !tmp_present;
+  if (probe)
+    std::fprintf(stderr,
+        "[PROBE] branch tile=%d tile_count=%d tt=%p cells=%d tmp=%d empty=%d\n",
+        tile, tile_count_, (const void*)tt, tt ? (int)tt->cells.size() : -1,
+        (int)tmp_present, (int)empty_path);
   if (!empty_path) SetupLAT(c);
 
   CliCell& cell = Mut(c);
@@ -923,6 +947,11 @@ void CliWorld::RecalcAttributes(const ra2::rmg::CellCoord& c, int arg) {
       // 0x5FDD20：overlay==-1 → -1；否则先查 +0x2A9(Tiberium)，再查是否落在
       // TiberiumTypes 的 id 区间（RMG 的矿石 = 27..38 / 102..113）。
       const bool is_tib = ol.tiberium && ContainedTiberiumIndex(c) != -1;
+      if (probe)
+        std::fprintf(stderr,
+            "[PROBE] tilepath tilelookup_ground=%d ov=%d ol.land=%d ol.tib=%d cti=%d is_tib=%d ramp=%d\n",
+            ground, cell.overlay, ol.land, (int)ol.tiberium,
+            ContainedTiberiumIndex(c), (int)is_tib, (int)cell.ramp);
       if (is_tib && cell.ramp > 4) {
         cell.overlay = -1;      // 0x47D849
         cell.overlayData = 0;   // 0x47D850
@@ -962,9 +991,16 @@ void CliWorld::RecalcAttributes(const ra2::rmg::CellCoord& c, int arg) {
       }
     }
     cell.ground = static_cast<std::int16_t>(ground);
+    if (probe)
+      std::fprintf(stderr, "[PROBE] tilepath final ground=%d\n", ground);
   }
   // 0x47DD34 call 0x483C80：+0x4C 全分支（overlay/占据者/地面三路）。
   cell.zoneId = static_cast<std::uint8_t>(ComputeLandType(c));
+  if (probe) {
+    const CliCell& cc = At(c);
+    std::fprintf(stderr, "[PROBE] exit (%d,%d) ground=%d zone=%d iso=%d ov=%d\n",
+        c.x, c.y, (int)cc.ground, (int)cc.zoneId, IsoTile(c), Overlay(c));
+  }
 }
 
 // 0x483C80 全分支的输入装配：overlay 数据来自 rules 注入表（缺失时矿按

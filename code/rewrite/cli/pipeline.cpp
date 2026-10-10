@@ -386,10 +386,10 @@ bool RunGameOnWorld(const rmg::MapSeedParams& params, unsigned seed,
   // 而在 SpreadGreen 结束后、Recalc 前补上实机同款残留。
   rmg::SpreadGreen(world, grid, theater, rng);
   snap_cells("after_spread_green_raw");
-  // 实机此时哑元=493（SpreadGreen 抽中出图邻写绿）。CLI 这一轮可能没抽中
-  // 出图邻，哑元仍是 0；对拍表明 SetupLAT 段 3 必须有这个残留（7 差异格
-  // 根因），这里强制归位，等价于实机那次「抽中」的副作用。
-  world.SetDummyIsoTile(theater.green_tile);
+  // 2026-10-10 修正：实机哑元 0xABDC50 的 +0x38 在 LAT 段 3 时刻为 **0**
+  // （真值 dump 出图格 iso=0 实锤；且实机靠哑元=0 置出过渡位 m=9 → 503）。
+  // 此前「实机哑元=493」结论错误，该钉死已移除——哑元残留必须与实机一致为 0，
+  // 否则 ClearToGreenLat 会把出图邻误判为同组（m 少置位 → 少产过渡砖）。
   // 原版 0x598E31-0x598E4D 走 CellClass::RecalcAttributes(-1)。CliWorld 的
   // 版本比算法库的 SmoothWorld 版多更新 +0xEC/+0x4C（阶段 6 的输入），
   // 所以这里不调 RecalcAttributesPass，改逐格走 world 的完整版。

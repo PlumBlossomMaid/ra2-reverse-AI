@@ -188,3 +188,22 @@ golden（chop）差 1 ULP → `ChopLog.MatchesArchIndependentGolden` 失败。
 
 对拍工具：`.qwen/tmp/_rerun_and_cmp.py <seed> [case名子串过滤]`；
 mt1 专项：`.qwen/tmp/_mt1_verify.py`（从 sweeps_cmp_12345.txt 提取发散案重跑）。
+
+---
+
+## ✅ 哑元钉死根因闭合（2026-10-10，8960 案全对齐达成）
+
+seed=12345 修复前剩 632 案（sz1/sz2）的 isoTile 发散，根因是
+`pipeline.cpp` 的 `world.SetDummyIsoTile(theater.green_tile)` 把共享哑元
+0xABDC50 钉死成 493（green_tile）。
+
+**取证链**：
+1. 游戏真值 dump（`sweeps/12345/s12345_mt3_t0_th0_sz1_r0_p5.bin`）出图格
+   (57,30)/(56,31) 的 iso=**0**，而 (57,31) 游戏产出 503
+   （=clear_to_green_lat 494 + m 9，m=9 说明方向 0/3 未被豁免）。
+2. CLI 探针实测：钉死 493 时 `m=0 n0=493 n3=493`（全豁免 → 493）；
+   删钉死后 `m=9 n0=0 n3=0`（置位 → 503）。
+3. 单案验证：删钉死后 (57,31)/(51,37)/(49,39)/(37,51) 全部 iso=503。
+
+**修复**：删除 `pipeline.cpp` 的 `SetDummyIsoTile` 调用，哑元保持 0。
+全量对拍：seed=12345 与 62298 各 4480 案 **pass=4480 diff=0 missing=0**。
