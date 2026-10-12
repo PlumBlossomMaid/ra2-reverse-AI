@@ -8,7 +8,20 @@
 #include <cstdint>
 #include <cstring>
 
-#if defined(_M_X64) || defined(__x86_64__)
+#include "scaled_random.h"  // kInvUintMax / ChopFloat（下方可移植实现要用）
+
+// x87 机器码只在 **Windows x64** 上可用，两个条件缺一不可：
+//   1. 调用约定是 Windows x64，第一个参数走 RCX。Linux x86_64 同样定义
+//      __x86_64__，但 SysV ABI 下第一个参数走 RDI，机器码会读错寄存器，
+//      算出的 ln 完全不是期望值——不能只按架构判。
+//   2. 靠 VirtualAlloc/VirtualProtect 申请可执行页，这是 Win32 API。
+// 其余平台（ARM、LoongArch、以及 CI 的 ubuntu-latest x86_64）一律走下方
+// 文件内联的可移植实现：ChopLog 走 dd::ChopLogPortable（见 dd_log.h）。
+#if defined(_WIN32) && (defined(_M_X64) || defined(__x86_64__))
+#define RA2_X87_FYL2X_WIN64 1
+#endif
+
+#ifdef RA2_X87_FYL2X_WIN64
 
 #ifndef _WIN32_WINNT
 #define _WIN32_WINNT 0x0600
@@ -95,12 +108,12 @@ class X87Fyl2x {
 
 }  // namespace ra2::rmg
 
-#endif  // x64
+#endif  // RA2_X87_FYL2X_WIN64
 
 namespace ra2::rmg {
 
-// SpreadKey 的 x87 80位精度版本（仅 x64 声明，实现在 .cpp 或 inline）
-#if defined(_M_X64) || defined(__x86_64__)
+// SpreadKey 的 x87 80位精度版本（仅 Windows x64 声明，实现在 .cpp 或 inline）
+#ifdef RA2_X87_FYL2X_WIN64
 // 在 x64 上用 x87 机器码执行 SpreadKey 的完整计算链：
 //   fild draw → fmul 5.0 → fmul 1/(2^32-1) → fadd dist → fstp dword (chop)
 // 中间计算在 80 位扩展精度下进行，最后 fstp 截断到 float（RC=chop）。

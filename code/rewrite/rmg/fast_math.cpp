@@ -145,7 +145,7 @@ double Atan(double x) {
 // NormalDeviate 用 ChopLog(ln(s)) → 1 ULP 差传播到 TruncNormal → GrowTreePatch
 // → trees RNG 750 差异。修法：在 x64 上直接执行 x87 fyl2x 指令。
 double ChopLog(double s) {
-#if defined(_M_X64) || defined(__x86_64__)
+#ifdef RA2_X87_FYL2X_WIN64
   return X87Fyl2x::Instance().Compute(s);
 #else
   return dd::ChopLogPortable(s);
@@ -172,7 +172,7 @@ double ChopLogX87(double s) {
 // Pop 顺序翻转 → trees BFS 路径分岔 → 766 RNG 差异。
 // ⚠️ Unicorn 的 x87 模拟与真实硬件不一致 → 无法用 emu 验证。
 // 但真实游戏用真实 x87 → CLI 用 X87SpreadKey 应更接近真实游戏。
-#if defined(_M_X64) || defined(__x86_64__)
+#ifdef RA2_X87_FYL2X_WIN64
 float X87SpreadKey(double dist, std::uint32_t draw) {
   struct SpreadKeyInput { double draw_d; double dist; };
   // ⚠️ 2026-10-09 实锤：原 kCode2 的 `DB 6C 24 08` 是 fld xword（错），
