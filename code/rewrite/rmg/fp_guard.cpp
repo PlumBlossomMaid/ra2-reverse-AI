@@ -1,47 +1,58 @@
 ﻿#include "fp_guard.h"
 
+#include <atomic>
+#include <cstdio>
+#include <cstring>
+
 namespace ra2::rmg {
 
 namespace {
-// volatile 让编译期常量折叠无法把探针整个吃掉——否则探到的是编译器的舍入而非 CPU 的
+// volatile 读 + volatile 写：两端都堵死，编译器无法把除法折成编译期常量，
+// 也无法把两次读取合并成同一次除法。
 volatile double g_one = 1.0;
 volatile double g_ten = 10.0;
 
-// 优化屏障：告诉编译器「这个 double 已被改动、内容未知」。
-// 缺了它，两次 1.0/10.0 会被 GCC 折叠/复用成同一个编译期常量，
-// 探针恒假——而它恰恰是专门用来发现「舍入模式被编译器架空」的检查，
-// 自己被架空就失去了意义。CI ubuntu 上 fast_math / map_size 两个
-// 舍入探针即栽在这（-frounding-math 不足以阻止此处折叠）。
-// MSVC 侧靠 /fp:strict 本就通过，这里同样加上以防将来换工具链。
-inline void OpaqueBarrier(double& v) {
+// 编译屏障：禁止把除法跨越 fesetround 重排。
+inline void CompilerBarrier() {
 #if defined(__GNUC__) || defined(__clang__)
-  asm volatile("" : "+x"(v));
+  asm volatile("" ::: "memory");
 #else
-  (void)v;
+  std::atomic_signal_fence(std::memory_order_seq_cst);
 #endif
+}
+
+unsigned long long Bits(double v) {
+  unsigned long long b;
+  std::memcpy(&b, &v, sizeof b);
+  return b;
 }
 }  // namespace
 
 bool FpuRoundingModeWorks() {
   const int saved = std::fegetround();
 
-  double a = g_one;
-  OpaqueBarrier(a);
-  std::fesetround(FE_TONEAREST);
-  const double nearest = a / g_ten;
+  const int rc_near = std::fesetround(FE_TONEAREST);
+  CompilerBarrier();
+  volatile double nearest = g_one / g_ten;
+  const int mode_near = std::fegetround();
 
-  a = g_one;
-  OpaqueBarrier(a);
-  std::fesetround(FE_TOWARDZERO);
-  const double chop = a / g_ten;
+  const int rc_chop = std::fesetround(FE_TOWARDZERO);
+  CompilerBarrier();
+  volatile double chop = g_one / g_ten;
+  const int mode_chop = std::fegetround();
 
   std::fesetround(saved);
 
-  // 0.1 的十进制值落在两个 double 之间且更靠近上方：
-  //   就近舍入 -> 0x3FB999999999999A（比 0.1 大）
-  //   向零截断 -> 0x3FB9999999999999（比 0.1 小）
-  // 两者必须不同，否则说明 fesetround 被忽略了（多半是 -ffast-math）。
-  return nearest != chop;
+  const bool ok = (nearest != chop);
+  if (!ok) {
+    std::fprintf(stderr,
+                 "[fp_guard] FAIL rc_near=%d rc_chop=%d mode_near=%d "
+                 "mode_chop=%d nearest=%016llx chop=%016llx "
+                 "(expect nearest=3fb999999999999a chop=3fb9999999999999)\n",
+                 rc_near, rc_chop, mode_near, mode_chop,
+                 Bits(nearest), Bits(chop));
+  }
+  return ok;
 }
 
 }  // namespace ra2::rmg
