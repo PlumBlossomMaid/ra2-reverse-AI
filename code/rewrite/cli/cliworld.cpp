@@ -46,21 +46,27 @@ CliWorld::CliWorld(const ra2::rmg::MapGrid& grid,
 }
 
 void CliWorld::InitCells(bool first_run) {
-  // 首局 = 原版 0x599650 重置子路径（0x599E70-0x599EB7 的 CellIterator 清
-  // 6 字段）；第 2 局起该路径被跳过，cells 全字段原样残留。
-  if (first_run) {
-    grid_.ForEachCell([&](const ra2::rmg::CellCoord& c) {
-      CliCell& cell = Mut(c);
-      cell.ramp = 0;         // +0x11C
-      cell.level = 4;        // +0x11B = 常数 4
-      cell.isoTile = 0;      // +0x38
-      cell.subtile = 0;      // +0x11A
-      cell.overlay = -1;     // +0x44 = 0xFFFFFFFF
-      cell.overlayData = 0;  // +0x11E
-      // 原版阶段 1 只重置上面 6 个字段，不碰
-      // +0xE4(object)/+0xEC(ground)/+0x4C(zoneId)。
-    });
-  }
+  // 原版预览路径（FUN_00598960 调用点 0x59664c）每局都向 SetupTheater
+  // (0x599650) 传 arg=1，故每局都进重置子路径，CellIterator 清 6 字段
+  // （0x599E8D-0x599EAA）。此前"第 2 局起跳过"的假设被活体 gen#2 tibentry
+  // （0 矿格）证伪——预览每局清 cells，gen1==gen2==gen3。
+  // first_run 参数保留仅为兼容签名，不再门控清 cells。
+  (void)first_run;
+  grid_.ForEachCell([&](const ra2::rmg::CellCoord& c) {
+    CliCell& cell = Mut(c);
+    cell.ramp = 0;         // +0x11C
+    cell.level = 4;        // +0x11B = 常数 4
+    cell.isoTile = 0;      // +0x38
+    cell.subtile = 0;      // +0x11A
+    cell.overlay = -1;     // +0x44 = 0xFFFFFFFF
+    cell.overlayData = 0;  // +0x11E
+    // 原版重置子路径除 CellIterator 清 6 字段外，还有**对象清理循环**
+    // （0x599D95-0x599E65，不被 flag 门控）销毁全部对象——树/建筑销毁时清
+    // cell +0xE4(object)。否则 gen#2 的 ComputeLandType（读 object +
+    // terrain_by_cell_ 占用位）会吃到上一局残留树 → zoneId 分岔 →
+    // start_points 的 RNG 消耗分岔（实测 gen#1/2/3 = 53/50/55 次）。
+    cell.object = 0;       // +0xE4
+  });
   // 工作数组（stage-init.md §五 / 0x59A321-0x59A376 的初始化循环）：
   // **每局** free+new 后全零，但 +0x42 = 1（有效位）、+0x38 = -1
   // （掩码缓存未计算）。
@@ -79,6 +85,8 @@ void CliWorld::InitCells(bool first_run) {
   start_locations_.clear();
   waypoints_.clear();
   active_buildings_.clear();
+  terrains_.clear();          // 原版对象清理循环销毁全部 TerrainClass
+  terrain_by_cell_.clear();   // （树记录随对象销毁一并清）
 }
 
 bool CliWorld::LoadInitCells12(const std::string& path, std::string* err) {

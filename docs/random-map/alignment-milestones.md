@@ -132,3 +132,42 @@ ClearToGreenLat 的豁免集合误命中（{green}∪[clear_to_green_lat,+0xF]�
 在 Windows 上会管道死锁（CLI stderr 输出超过管道缓冲，CLI 阻塞写 stderr，
 communicate 读不到）。修复：重定向 stdout/stderr 到文件
 （`stdout=lf, stderr=subprocess.STDOUT`）。
+
+## 🎉 脏链（连生）逐字节对齐达成（2026-10-12）
+
+**口径**：游戏侧自然脏链真值 = 同进程对同一 .sed 连点 3 次「预览地图」
+（`.qwen/tmp/_dirty_capture3/gen1,2,3.bin`，9B/格）；CLI 侧 = `--chain`
+（同 .sed 三行，非 --fresh-per-game）逐局 `--dump-cells12`。二者逐格比前
+9 字节同构字段（ex/iso/sub/lv/ramp/od/ov）。
+
+**关键实锤（修正先前误标）**：预览路径 FUN_00598960 的调用点 0x59664c
+每局都 `push 1` → SetupTheater(0x599650) arg=1 → **每局都进重置子路径**
+（0x599B1D）：CellIterator 清 6 字段（0x599E8D-0x599EAA）+ 对象清理循环
+（0x599D95-0x599E65，**不被 param-snapshot flag 门控**）销毁全部对象。
+所以预览每局都清 cells，gen#1==gen#2==gen#3（三局 SHA 完全相同）。此前
+"第 2 局起重置子路径被跳过、cells 全字段残留"的假设（pipeline.cpp 旧注释）
+被活体 gen#2 tibentry（0 矿格、lv=4/ramp=0/ov=-1/od=0）证伪。
+
+**bug 1：gen#2 PlaceTiberium 死循环**。CreateOreField(0x5A28C0) heap push
+第二条件 `(od<11 && ContainedTiberiumIndex!=-1)` 不查 work.queued →
+flag45=true 的矿格 pop 后跳过加厚（od 不变）、又被邻域 push 回来 → heap
+永不空。CLI gen#2 残留 gen#1 的矿（overlay/od 没清）+ MarkStartInfluence
+flag45 保护区覆盖矿田 → ping-pong 闭合簇。修法：InitCells 每局清 6 字段
+（复刻 CellIterator 清格），不再按 first_run 门控。
+
+**bug 2：gen#2 布矿后分岔（修完死循环后暴露）**。逐阶段对拍：布矿前
+cells(9B) 字节一致，但 RNG 检查点在 **after_start_points** 分岔（gen#1/2/3
+消耗 53/50/55 次）。根因：start_points 的 `CellZoneId`（=ComputeLandType）
+读 `cell.object`(+0xE4) 和 `terrain_by_cell_`（树/建筑占用位），这两个
+**不在** InitCells 原清空的 6 字段里 → 残留 gen#1 的树 → zoneId 分岔 →
+出生点选取的 RNG 消耗分岔。修法：InitCells 每局再清 `cell.object=0` +
+`terrains_.clear()` + `terrain_by_cell_.clear()`（复刻对象清理循环净效果；
+`ComputeLandType` 仅在 object!=0 时查 terrain_by_cell_，清 object 即短路）。
+
+**验证**：修复后 CLI gen#1==gen#2==gen#3（SHA 一致），CLI#1/2/3 与游戏
+#1/2/3 逐字节一致（0 diff cells，262144 格全等）；种子 60556/12345/62298
+均通过（各 3 局，rc=0 无死循环、STUCK=0）。ctest 43/43 全绿。
+
+**坑**：stage cells dump（WriteCellsDump）是 **9B/格**（ex/iso/sub/lv/ramp/
+od/ov），不含 object/ground/zoneId；--dump-cells12 才是 12B/格。对拍阶段
+快照时按 12B 读会错位出假分岔（误以为布矿前一致其实只是前 7 字段一致）。

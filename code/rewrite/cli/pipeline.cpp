@@ -166,8 +166,9 @@ bool RunGameOnWorld(const rmg::MapSeedParams& params, unsigned seed,
   world.set_terrain_occ_bits(rules.terrain_occ);
   world.set_theater_id(params.theater);
   // 回放模式（--init-cells）：灌入上一局终态 cells 作为本局初始状态。
-  // 2026-10-07 门控实锤：原版连生不再清 cells（重置子路径仅进程首局
-  // 进入），所以回放脏局后**不再**清 6 字段（first_run=false）。
+  // 2026-10-12 修正：原版预览路径每局都向 SetupTheater 传 arg=1（调用点
+  // 0x59664c push 1），故每局都进重置子路径清 6 字段——InitCells 不再按
+  // first_run 门控。活体 gen#2 tibentry 实测 0 矿格（gen1==gen2==gen3）。
   if (!out->init_cells_path.empty() &&
       !world.LoadInitCells12(out->init_cells_path, err)) {
     return false;
