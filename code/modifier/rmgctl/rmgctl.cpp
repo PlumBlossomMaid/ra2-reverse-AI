@@ -21,7 +21,7 @@
 #define JOB_NAME   "Local\\RMGHookJob2"
 #define JOB_MAP_SIZE 0x10000
 #define UNLOAD_EVT "Local\\RMGHookUnload"
-#define DLL_PATH   "E:\\code\\ra2-reverse-AI\\code\\modifier\\build\\rmg_hook.dll"
+#define DLL_PATH   "E:\\code\\ra2-reverse-AI\\code\\modifier\\build\\rmg_hook_static.dll"
 
 #pragma pack(push, 1)
 struct RmgJob {
