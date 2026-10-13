@@ -1,0 +1,104 @@
+frontier batch 139 — FileClass::ReadWholeFile（闭合 batch 104 partial）+ CCFileClass::Close + 尺寸进度计算（2026-10-13）
+
+口径：承接 batch 138 候选，ranking.tsv unique_callers 降序取 0x4A3890（13 callers，
+CCFileClass.h:47-48 实锤）、0x473CE0（13 callers，ranking 名 CCFileClass::Close）、
+0x5F1C60（14 callers）。三者 prologue 均干净。
+
+================================================================================
+0x4A3890  FileClass::ReadWholeFile（13 callers）
+================================================================================
+身份实锤：YRpp CCFileClass.h:47-48
+    void* ReadWholeFile()
+        { JMP_THIS(0x4A3890); }
+地址 + JMP_THIS 无参 + 返回 void* 三证吻合。★**batch 104 的 partial 闭合**：
+当时登记 ConvertClass::CreateFromFile 时留注「0x4A3890 的打开细节」——本批
+实锤它是 FileClass::ReadWholeFile（读整个文件）。
+
+机器码还原（全 0x37，55B）：
+    mov esi, ecx                    ; this（FileClass*）
+    xor edi, edi
+    mov eax, [esi] / push edi
+    call [eax+0x14]                 ; ★ 虚表槽 +0x14（Exists/IsOpen）
+    test al / je 收尾               ; 不存在 → 返回 NULL
+    mov edx, [esi] / mov ecx, esi
+    call [edx+0x2C]                 ; ★ 虚表槽 +0x2C（取文件大小）
+    mov ebx, eax
+    push ebx / call 0x7C8E17        ; ★ CRT::_new(size) 分配缓冲（batch 001）
+    mov edi, eax / test / je 收尾
+    mov eax, [esi] / push ebx / push edi / mov ecx, esi
+    call [eax+0x24]                 ; ★ 虚表槽 +0x24（读入缓冲）
+  收尾:
+    mov eax, edi / ret              ; ★ 返回缓冲指针（NULL 失败）
+
+语义：**读整个文件到新分配缓冲（ReadWholeFile）**——Exists/IsOpen 检查 → 虚表
+槽 +0x2C 取长度 → CRT::_new(size) 分配 → 虚表槽 +0x24 读满 → 返回缓冲。
+★与 batch 094（0x4A38D0 FileSystem::LoadWholeFileEx）同语义但不同实现——本条
+是 FileClass 的成员直读版，0x4A38D0 是 FileSystem:: 加缓存查的包装版。
+
+★跨批次连接：batch 104 partial 闭合（CreateFromFile 的 `lea ecx,[esp+0x14]/
+call 0x4A3890` 即读文件）+ 虚表三槽 +0x14/+0x24/+0x2C（batch 094 已见）+ 与
+batch 131 的 FileClass::Read（0x473B10）配套（Read = 分段读、ReadWholeFile =
+整读）。
+
+⚠️ partial：无（55B 全读完）。
+
+================================================================================
+0x473CE0  CCFileClass::Close（13 callers，0x23 全读完）
+================================================================================
+机器码（全 0x23，35B）：
+    mov esi, ecx                    ; this（CCFileClass*）
+    lea ecx, [esi+0x58]             ; ★ +0x58（缓冲子对象）
+    test ecx / je 跳过
+    push 0 / push 0
+    call 0x43AD00                   ; ★（对 +0x58 调双参方法）
+  跳过:
+    mov dword [esi+0x64], 0         ; ★ +0x64 = 0（缓存计数清零）
+    mov ecx, esi
+    call 0x4325C0                   ; ★ BufferIOFileClass::Close（batch 133 实锤）
+    ret
+
+语义：**CCFileClass 关闭**——先对 +0x58 缓冲子对象调 0x43AD00（双空参，
+疑缓冲释放），清 +0x64 缓存计数，再委托 batch 133 登记的
+BufferIOFileClass::Close（0x4325C0，+0x29 门卫 → 释放 +0x50 缓冲 → 清三标志）。
+★跨批次连接：batch 133（0x4325C0 同家族）+ batch 131（FileClass::Read 0x473B10
+同家族）——CCFileClass 的 Read/Close 全链闭合。
+
+⚠️ partial：0x43AD00 身份（双参缓冲释放推断）、+0x58 子对象类型。
+
+================================================================================
+0x5F1C60  尺寸进度计算（14 callers）
+================================================================================
+机器码（前段）：
+    mov esi, ecx                    ; this
+    mov eax, [esi+0x3C]             ; ★ +0x3C 门卫
+    test eax / je 返 0
+    mov eax, [esi+0x58]             ; ★ +0x58
+    mov ecx, [esi+0x54]             ; ★ +0x54
+    mov edx, [esi+0x50]             ; ★ +0x50
+    sub ecx, eax / add edx, eax     ; ★ 差值/叠加
+    push ecx / mov ecx, [0xB72D20]  ; ★ 全局（batch 102 的 0xB72D20 邻域?）
+    push edx / call 0x774B30        ; ★（0x774B30 计算）
+    mov ecx, [esi+0x58] / add ecx, eax
+    cmp ecx, 0xB / mov [esi+0x58], ecx   ; ★ +0x58 += 结果，与 0xB（11?）比较
+    ...
+
+语义：**尺寸/进度计算**——以 [esi+0x50]/[0x54]/[0x58] 三个字段做差值/叠加，
+经 0x774B30 计算后写回 +0x58，并与常量 0xB 比较——疑缓冲指针推进/进度条
+逻辑。⚠️ 0x774B30 身份与完整语义未读完（0x5F1C9C 起）。
+
+⚠️ partial：+0x50/+0x54/+0x58 字段语义、0x774B30 身份、0xB 常量含义、与
+[0xB72D20]（batch 102 窗口栈使用同地址）的关系。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x4A3890 → batch 104（partial 闭合）+ batch 094（虚表三槽 +_new）+ batch
+   131（Read 配套，整读/分段读）。
+2. 0x473CE0 → batch 133（0x4325C0 Close 委托）+ batch 131（Read 同家族）。
+3. 0x5F1C60 → [0xB72D20]（batch 102 同地址）+ 0x774B30。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x473CE0 的 0x43AD00 身份。
+2. 0x5F1C60 的 0x774B30 与字段语义、0xB 常量。
