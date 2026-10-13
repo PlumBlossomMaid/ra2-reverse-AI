@@ -1,0 +1,120 @@
+frontier batch 120 — BuildingClass::PlayAnim + 矩形交集运算 + 名+索引查表（2026-10-13）
+
+口径：承接 batch 119 候选，ranking.tsv unique_callers 降序取 0x451890（18 callers，
+ranking 名 BuildingClass::PlayAnim）、0x487F40（18 callers）、0x68CA50（18 callers）。
+三者 prologue 均干净。
+
+================================================================================
+0x451890  BuildingClass::PlayAnim（18 callers）
+================================================================================
+身份实锤：YRpp BuildingClass.h:117-118
+    void PlayAnim(const char* animName, BuildingAnimSlot Slot, bool Damaged,
+                  bool Garrisoned, int effectDelay = 0)
+        { JMP_THIS(0x451890); }
+地址 + JMP_THIS + 5 参签名（animName/Slot/Damaged/Garrisoned/effectDelay）三证。
+
+机器码还原（前 0xC0）：
+    mov esi, ecx
+    cmp byte [esi+0x6E6], bl         ; ★ Slot 状态对比（0x6E6）
+    je 0x4518CF                       ; 未变化 → 跳过第一段
+    mov byte [esi+0x6E6], bl          ; 记录 Slot
+    xor edi, edi / lea ebp, [esi+0x55C]  ; ★ 遍历 21 个动画槽（+0x55C 起）
+  loop:
+    cmp [ebp], 0 / je 跳过            ; 槽非空才播
+    push 0/0/bl/edi → call 0x451750   ; ★ 逐槽动画处理（Slot 附属）
+    inc edi / add ebp,4 / cmp edi,0x15 / jl loop   ; ★ 0x15=21 槽
+  0x4518CF:
+    mov ecx, [esp+0x38] → call 0x427CB0   ; ★（animName 相关查询）
+    cmp eax, -1 / je 收尾
+    mov eax, [esp+0x3C] / lea edx, [esp+0x1C]
+    ; ★ Slot×80 步进（shl 4 + ×2 = ×80）→ 定位动画槽记录
+    mov eax, [esi+0x520] / lea ecx, [eax+edi+0xF7C]
+    push ecx / mov ecx, [0x887324] / push edx
+    call 0x6D2360                     ; ★ 坐标变换（TacticalClass 区，batch 096 同区）
+    mov ecx, esi / call [esi->vtable+0xAC]  ; ★ 虚表槽 0xAC（动画/渲染）
+    push 0x1C8 / call 0x7C8E17        ; ★ CRT::_new（batch 001，分配动画对象）
+    ...
+
+语义：**建筑播放动画（建筑动画槽系统）**——先把 Slot 记录到 +0x6E6，遍历 21
+个动画槽（+0x55C 起、4B/槽）逐槽调 0x451750；再经 0x427CB0 查动画名、按
+Slot×80 定位槽记录、0x6D2360 坐标变换（TacticalClass 区）、虚表槽 0xAC +
+CRT::_new 分配动画对象。是 BuildingClass 视觉状态的入口（animName 指定
+BuildingAnimSlot 播哪段动画）。
+
+★跨批次连接：0x6D2360 与 batch 096（AdjustForZ 同 TacticalClass 区）、
+0x7C8E17 CRT::_new（batch 001）、虚表槽 0xAC（batch 102/109/113 虚表调用族）。
+
+⚠️ partial：0x451750 逐槽处理语义、0x427CB0 查询、+0x55C/+0x520/+0x6E6
+字段布局、后半动画对象初始化未读完。
+
+================================================================================
+0x487F40  矩形交集/交点运算（18 callers，0x1D5 全读完）
+================================================================================
+机器码（全 0x1D5）——矩形运算主逻辑：
+    mov eax, [edx+8] / test / jle 走拷贝   ; ★ 矩形1（edx）宽/高（+8/+0xC）
+    mov eax, [edx+0xC] / test / jle 拷贝
+    mov ecx, [esp+0x18] / mov eax, [ecx+8]  ; 矩形2（ecx）宽/高（+8/+0xC）
+    test / jle 拷贝2
+    mov esi, [ecx+0xC] / test / jle 拷贝2
+    ; 四边裁剪（矩形1 与矩形2 的交点计算）：
+    mov edi, [edx] / mov esi, [ecx]         ; X 起点
+    cmp / jle / sub / add / mov             ; ★ min/max 裁剪
+    ...（X 起点/终点、Y 起点/终点逐边裁剪）
+    mov [ecx], edi / [ecx+4], ebx / [ecx+8], ebp / [ecx+0xC], edx  ; ★ 输出交点矩形
+    ret 4
+  拷贝路径:
+    ; 直接复制矩形（原样拷贝 4 dword）
+    ret 4
+
+语义：**两矩形交集计算（裁剪后输出）**——矩形1（edx 指向，+0/+4/+8/+0xC =
+X/Y/宽/高）与矩形2（ecx 指向，[esp+0x18] 传入）求相交部分，裁剪后的新矩形写
+回输出；矩形尺寸无效（宽/高 <=0）时走原样拷贝。是引擎的「可见区域裁剪/交集」
+几何工具（与 batch 086 CoordinatesLegal、batch 103 尺寸查询同几何族）。
+
+⚠️ partial：输出缓冲与参数布局细节（edx/ecx 两个矩形的精确指向语义）、
+宿主类（DisplayClass/雷达裁剪推断）。
+
+================================================================================
+0x68CA50  名+索引查表（18 callers，0x5F 全读完）
+================================================================================
+机器码（全 0x5F）：
+    mov eax, [0xB054E0]              ; ★ 全局数组计数
+    test eax / jle 返 0
+    mov eax, [0xB054D4]              ; ★ 全局数组基址（4B/项）
+  loop:
+    mov ecx, [eax+esi*4]             ; item
+    mov ecx, [ecx+0x304]             ; ★ item->+0x304（名字指针）
+    push ecx / push ebx / call 0x7C8D20  ; ★ CRT::strcmpi（batch 093 实锤）
+    test eax / jne 下一个             ; 名字不等 → 下一个
+    mov edx, [eax+esi*4]             ; item
+    cmp [edx+0x310], edi             ; ★ item->+0x310 == 索引参数
+    je 命中                           ; 名字+索引双条件 → 命中
+  下一个:
+    inc esi / cmp esi, [0xB054E0] / jl loop
+  命中:
+    mov eax, [eax+esi*4] / ret        ; ★ 返回 item
+
+语义：**「名字相等 且 索引匹配」的双键查表**——遍历 [0xB054D4] 数组（计数
+[0xB054E0]），strcmpi(item->+0x304, name) 且 item->+0x310==idx 才返回该 item，
+否则 NULL。紧邻 0x68CAB0 是同构第二成员（同数组同条件，仅签名变体）。
+★跨批次连接：strcmpi（batch 093）+ 全局数组/计数对（batch 101/109 登记册族）
++ 双键匹配（batch 113 LiberateMember 的 idx+遍历同思路）。
+
+⚠️ partial：[0xB054D4]/[0xB054E0] 数组宿主（疑 HouseType/Country 表）、
++0x304 名字字段与 +0x310 索引字段的类对齐。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x451890 → batch 096（TacticalClass 区坐标变换）/batch 001（CRT::_new）/
+   虚表槽调用族——BuildingClass 视觉状态入口。
+2. 0x487F40 → batch 086/103（几何族）——矩形交集工具。
+3. 0x68CA50 → batch 093（strcmpi）+ batch 101/109（登记册族）+ batch 113
+   （双条件匹配）——名字+索引查表。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x451890 的逐槽处理（0x451750）、0x427CB0、动画对象初始化。
+2. 0x487F40 的矩形参数布局与宿主类。
+3. 0x68CA50 的 [0xB054D4] 表宿主与字段类对齐。
