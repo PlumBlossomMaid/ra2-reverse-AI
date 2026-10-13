@@ -1,0 +1,201 @@
+frontier batch 058 — CRT/runtime 层（2026-10-13）
+
+口径：ranking.tsv 扇入度排序，取未登记的 CRT 候选，逐个 capstone 反汇编
+（code/randmap/disasm.py，按 VA 直反汇编，不依赖 Ghidra 函数边界）。
+本批 8 个条目，全部登记为 crt_runtime_verified* 三态。
+
+================================================================================
+0x007CBED3  CRT _initterm
+================================================================================
+26B，6 条指令：
+
+    007cbed3  push esi
+    007cbed4  mov esi, [esp+8]            ; 表首
+    007cbed8  cmp esi, [esp+0xc]          ; 表尾
+    007cbedc  jae  0x7cbeeb
+    007cbede  mov eax, [esi]
+    007cbee0  test eax, eax
+    007cbee2  je   0x7cbee6               ; 跳过 NULL 项
+    007cbee4  call eax                    ; 调用函数指针
+    007cbee6  add esi, 4
+    007cbee9  jmp  0x7cbed8
+    007cbeeb  pop esi / ret
+
+判据：按 [begin,end) 字节区间逐 dword 取值、非 NULL 则 call —— MSVC6
+静态 CRT 的 _initterm 标准实现（C++ 全局构造/析构函数指针表遍历）。
+
+================================================================================
+0x007CBDAF  CRT C++ 静态构造分发（_cinit）
+================================================================================
+45B：
+
+    007cbdaf  mov eax, [0x87BEB8]
+    007cbdb4  test eax, eax
+    007cbdb6  je   0x7cbdba               ; 为 0 则跳过
+    007cbdb8  call eax                    ; 早期 CRT 钩子
+    007cbdba  push 0x815DBC               ; 表尾
+    007cbdbf  push 0x815DA8               ; 表首
+    007cbdc4  call 0x7cbed3               ; _initterm
+    007cbdc9  push 0x815DA4               ; 表尾
+    007cb dce push 0x812000               ; 表首
+    007cbdd3  call 0x7cbed3               ; _initterm
+    007cbdd8  add esp, 0x10 / ret
+
+两轮 _initterm，表区间分别为 [0x812000,0x815DA4) 与 [0x815DA8,0x815DBC)。
+注意两表之间恰好跳过 0x815DA4..0x815DA8 四字节 —— 典型的 .CRT$XCU 分段
+布局（各 TU 的静态构造段按字母序分段，中间是段头指针）。
+
+================================================================================
+0x007CBDDC  CRT atexit 注册包装（flag=0, quick=0）
+================================================================================
+17B：
+
+    007cbddc  push 0
+    007cbdde  push 0
+    007cbde0  push [esp+0xc]             ; 首参（被注册函数指针）
+    007cbde4  call 0x7cbe1c
+    007cbde9  add esp, 0xc / ret
+
+同地址邻接三兄弟构成 atexit 家族四种 flag 组合：
+    0x7CBDDC  (0,0)   0x7CBDED  (0,1)
+    0x7CBDFE  (1,0)   0x7CBE0D  (1,1)
+
+================================================================================
+0x007CBE1C  CRT atexit 注册本体
+================================================================================
+
+    007cbe1c  push edi
+    007cbe1d  call 0x7cbec1               ; 首次初始化判定
+    007cbe22  push 1 / pop edi            ; edi = 1
+    007cbe25  cmp [0xB78204], edi
+    007cbe2b  jne 0x7cbe3e
+    007cbe2d  push [esp+8]
+    007cbe31  call [0x7E11A4]             ; 间接：模块句柄/CRT 数据
+    007cbe37  push eax
+    007cbe38  call [0x7E11B0]             ; 间接：注册入表
+    007cbe3e  cmp [esp+0xc], 0            ; flag == 0 ?
+    007cbe43  push ebx
+    007cbe44  mov ebx, [esp+0x14]
+    007cbe48  mov [0xB78200], edi         ; 置已初始化标志
+    007cbe4e  mov byte [0xB781FC], bl     ; 存 flag 低字节
+    007cbe54  jne 0x7cbe92
+    007cbe56  mov eax, [0xB78BC0]         ; 链表头
+    007cbe5b  test eax, eax / je ...
+    007cbe5f  mov ecx, [0xB78BBC]         ; 链表尾
+    007cbe65  push esi
+    007cbe66  lea esi, [ecx-4]
+    007cbe69  cmp esi, eax / jb ...       ; 未越过头则继续
+    007cbe6d  mov eax, [esi] / test / call eax   ; 反向逐个 call
+
+flag==0 分支遍历 [0xB78BC0]/[0xB78BBC] 反向链表并逐个 call 已注册收尾函数。
+⚠️ partial：间接槽 [0x7E11A4]/[0x7E11B0] 的实际目标未实锤。
+
+================================================================================
+0x007CD93C  CRT 进程退出收尾
+================================================================================
+
+    007cd93c  cmp dword [0xB78230], 1
+    007cd943  jne 0x7cd94a
+    007cd945  call 0x7d5ef8               ; 条件收尾
+    007cd94a  push [esp+4]
+    007cd94e  call 0x7d5f31               ; 必做收尾
+    007cd953  pop ecx
+    007cd954  push 0xff
+    007cd959  call [0x7E1214]             ; 间接：ExitProcess 家族
+    007cd95f  ret
+
+同区邻接 0x7CD960 为反向清理四块 region 的 _release：
+    push [0x87C2EC] / call esi
+    push [0x87C2DC] / call esi
+    push [0x87C2CC] / call esi
+    push [0x87C2AC] / call esi        （esi = [0x7E11F4]）
+注意 [0x87C2A8] 是 region lock 锁槽表基址（见 frontier batch 022 的
+0x7CD9F5/0x7CDA56 条目），本处四块与之相邻但低 0x1C，属同一 region 结构。
+
+================================================================================
+0x007D5AC0  CRT 环境块解析（_setenvp 形态）
+================================================================================
+
+    007d5ac0  push ebx / xor ebx, ebx
+    007d5ac3  cmp [0xB78BB8], ebx
+    007d5ac9  push esi / push edi
+    007d5acb  jne 0x7d5ad2
+    007d5acd  call 0x7d386a               ; 惰性建表
+    007d5ad2  mov esi, [0xB78228]         ; 环境串
+    007d5ad8  xor edi, edi                ; 段计数
+    007d5ada  mov al, [esi]
+    007d5adc  cmp al, bl / je 0x7d5af2    ; '\0' 结束
+    007d5ae0  cmp al, 0x3d / je 0x7d5ae5  ; '=' 跳过不计数
+    007d5ae4  inc edi
+    007d5ae5  push esi
+    007d5ae6  call 0x7d15a0               ; strlen
+    007d5aeb  pop ecx
+    007d5aec  lea esi, [esi+eax+1]        ; 步进到下一段
+    007d5af0  jmp 0x7d5ada
+    007d5af2  lea eax, [edi*4+4]          ; 指针数组大小
+    007d5af9  push eax
+    007d5afa  call 0x7c9430               ; malloc
+    007d5aff  mov esi, eax
+    007d5b01  pop ecx
+    007d5b02  cmp esi, ebx
+    007d5b04  mov [0xB781E4], esi
+    007d5b0a  jne 0x7d5b14
+    007d5b0c  push 9                       ; 错误码 9
+
+'=' 跳过的分段方式 = _setenvp 的 _getenvp 前置计数。
+
+================================================================================
+0x007D3164  CRT locale/facet 记录表分配
+================================================================================
+
+    007d3164  push ebp / mov ebp, esp / sub esp, 0x48
+    007d316d  push 0x480                   ; 固定块大小 1152
+    007d3172  call 0x7c9430               ; malloc
+    007d3177  mov esi, eax
+    007d317c  test esi, esi / jne 0x7d3186
+    007d317e  push 0x1b                    ; 错误码 27
+    007d3180  call 0x7cd917                ; 报错
+    007d3186  mov [0xB78A80], esi          ; 块首
+    007d318c  mov [0xB78B80], 0x20         ; 步长常量
+    007d3196  lea eax, [esi+0x480]
+    007d319c  cmp esi, eax / jae 0x7d31be
+    007d31a0  and byte [esi+4], 0          ; 清标志
+    007d31a4  or  dword [esi], 0xFFFFFFFF  ; 置哨兵
+    007d31a7  and dword [esi+8], 0
+    007d31ab  mov byte [esi+5], 0x0A       ; 分隔符 LF
+
+0xFFFFFFFF 哨兵 + 0x0A 分隔符 + 0x20 步长是 MSVC6 locale/_lconv 记录表的
+标准布局。块大小固定 0x480（1152 字节）。
+
+================================================================================
+0x007CF6B1  CRT 多线程初始化判定
+================================================================================
+
+    007cf6b1  xor eax, eax
+    007cf6b3  push 0
+    007cf6b5  cmp [esp+8], eax
+    007cf6b9  push 0x1000                  ; MEM_COMMIT
+    007cf6be  sete al                      ; (入参 == 0)
+    007cf6c1  push eax
+    007cf6c2  call [0x7E1298]              ; 间接：CreateThread 家族
+    007cf6c8  test eax, eax
+    007cf6ca  mov [0xB78B9C], eax
+    007cf6cf  je 0x7cf6e6
+    007cf6d1  call 0x7cf77f                ; 二次确认
+    007cf6d6  test eax, eax / jne 0x7cf6e9
+    007cf6da  push [0xB78B9C]
+    007cf6e0  call [0x7E1190]              ; 间接：CloseHandle
+    007cf6e6  xor eax, eax / ret           ; 失败返 0
+    007cf6e9  push 1 / pop eax / ret       ; 成功返 1
+
+sete 得 (入参==0) 标志、连同 0x1000(MEM_COMMIT) 与首参 0 一起压栈共 3 参
+调用间接槽 —— _beginthreadex 的标准调用形态。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. [0x7E11A4] / [0x7E11B0] / [0x7E1214] / [0x7E1190] / [0x7E1298] 五个
+   间接槽的实际目标 —— 均在 IAT 区，按 import 名称才可定名，未查。
+2. 0x7CD960 的 esi = [0x7E11F4] 同上。
+3. 0x7CBEC1（首次初始化判定）与 0x7CF77F（二次确认）的内部逻辑未展开。
+4. 0x7D5B14 之后的环境指针数组填充循环未逐条取。
