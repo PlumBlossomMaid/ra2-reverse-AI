@@ -1,0 +1,164 @@
+frontier batch 094 — UI::BeginDialog / FocusOnWindow / EndDialog 家族（2026-10-13）
+
+口径：承接 batch 093 候选，ranking.tsv unique_callers 降序取 0x622650（31 callers
+/ 4085 transitive dependents）与 0x622800（31 callers / 4083 dependents）。两者
+prologue 均干净。
+
+本批三条（含 batch 089 已登记的 0x622720）全部拿到 YRpp `JMP_STD` 实锤，且把
+batch 089 遗留的 partial「[0xB72D28] 表宿主未实锤」正式闭合为 **UI 对话框栈**。
+
+================================================================================
+0x622650  UI::BeginDialog（31 callers，193B）
+================================================================================
+身份实锤：YRpp UI.h:18
+    static HWND __fastcall BeginDialog(LPCTSTR lpName, Callback windProc, DWORD dwUnk)
+        { JMP_STD(0x622650); }
+地址 + `__fastcall`（ecx=lpName、edx=windProc、栈参=dwUnk）+ `ret 4` 三证吻合。
+
+机器码还原：
+    sub esp,0xc / push ebx/ebp/esi
+    mov esi, ecx                    ; lpName
+    mov [esp+0xc], edx              ; 保存 windProc 到局部
+    and ebp, 0xffff                 ; ★ lpName 截成 16 位（MAKEINTRESOURCE 惯用法）
+    push edi
+    mov edx, 5                      ; ★ lpType = 5 = RT_DIALOG（对话框模板资源类型）
+    mov ecx, ebp
+    call 0x4a3b40                   ; ★ UI::GetResource(lpName16, RT_DIALOG)
+    test eax, eax / jne 主路径      ; GetResource 失败 → 直接返回 0
+  主路径 (0x62267F):
+    mov ecx, [0xb72f50]             ; 对话框栈计数
+    lea edx, [esp+0x14]
+    push edx                        ; dwInitParam（局部地址）
+    mov edx, [0xb73550]             ; ★ Game::hWnd（YRpp Unsorted.h:17）
+    lea edi, [ecx*8 + 0xb72d28]     ; ★ 栈项头 = count*8 + 表基址（与 0x622720 完全同表）
+    lea ebx, [ecx*8 + 0xb72d2c]
+    mov word [esp+0x18], si         ; 保存 lpName16
+    inc ecx / mov [0xb72f50], ecx   ; ★ count++
+    mov ecx, [esp+0x24]             ; dwUnk（第三参数）
+    mov [esp+0x1c], ecx
+    mov ecx, [esp+0x14]
+    push ecx                        ; lpDialogFunc（≈windProc）
+    push edx                        ; hWndParent = Game::hWnd
+    push eax                        ; hDialogTemplate = GetResource 的 HGLOBAL
+    mov eax, [0xb732f0]             ; ★ Game::hInstance（Unsorted.h:18）
+    mov [edi], 0
+    push eax                        ; hInstance
+    mov [ebx], 0
+    call [0x7e1450]                 ; ★ CreateDialogIndirectParamA
+                                    ;   （YRpp StaticInits.cpp:63 实锤导入槽身份）
+    mov esi, eax
+    test esi, esi / jne 成功
+  失败 (0x6226D7):
+    mov eax,[0xb72f50] / dec / mov [0xb72f50],eax   ; count--
+    xor eax,eax / ret 4              ; 返回 NULL
+  成功 (0x6226EE):
+    mov [edi], esi                  ; 栈项 +0 = hDlg
+    mov ecx, esi
+    mov [ebx], ebp                  ; 栈项 +4 = lpName16
+    call 0x5d4e70                   ; 对 hDlg 做某事（★见 partial 1）
+    mov [0xb72f44], esi             ; ★ 全局「当前对话框 hDlg」
+    mov [0xb72f48], ebp             ; ★ 全局「当前对话框 lpName16」
+    mov eax, esi                    ; 返回 hDlg
+    ret 4
+
+语义：**创建对话框的两段式标准实现**——先把 lpName（字符串或 16 位资源 ID，
+`and 0xffff` 同时覆盖两种情况）喂 `UI::GetResource(lpName, RT_DIALOG)` 拿内存
+模板 HGLOBAL；失败即返回 NULL；成功则 `CreateDialogIndirectParamA(hInstance,
+hTemplate, hWnd, windProc, dwInitParam)` 创建窗口，把 hDlg/lpName16 压进
+[0xB72D28] 对话框栈（8B/项），写 [0xB72F44]/[0xB72F48] 全局当前项，返回 hDlg。
+
+★调用约定细节：CreateDialog 用 5 参数 stdcall，压栈顺序从右到左
+（hInstance 最后压）——反汇编的 push 序列（dwInitParam→windProc→hWnd→
+hTemplate→hInstance）与之完全对应。
+
+★原版怪癖/细节（照抄）：
+1. lpName 用 `and ebp,0xffff` 截断——超过 16 位的字符串指针会被截成低位 ID，
+   但 MAKEINTRESOURCE 判定在 GetResource/Windows 侧，这一截断只是把 lpName16
+   存进栈项（+4 字段永远只存 16 位）。
+2. GetResource 失败时 count 不动、直接返回；CreateDialog 失败时推进入口已
+   count++，「退位」用 count-- 还原——两个入口的计数处理对称但代码路径分离。
+
+================================================================================
+0x622800  UI::FocusOnWindow（31 callers，32B）
+================================================================================
+身份实锤：YRpp UI.h:27
+    static void __fastcall FocusOnWindow(HWND hWnd)
+        { JMP_STD(0x622800); }
+地址 + `__fastcall`（ecx=hWnd）+ 无返回 + 无 `ret n`（纯 __fastcall 一参）三证。
+
+机器码（全 32B）：
+    push esi / mov esi, ecx         ; esi = hWnd
+    push 1 / push esi
+    call [0x7e1498]                 ; ★ ShowWindow(hWnd, SW_SHOWNORMAL=1)
+    push esi
+    call [0x7e14d0]                 ; ★ SetForegroundWindow(hWnd)
+    mov ecx, [0x87f770]             ; ★ InputManagerClass::Instance（InputManagerClass.h:9）
+    call 0x54f720                   ; ★ InputManagerClass::DoSomething()（h:12 JMP_THIS）
+    pop esi / ret
+
+语义：**把窗口带到前台并通知输入管理器**——ShowWindow(hWnd, 1) → 
+SetForegroundWindow(hWnd) → Instance->DoSomething()。31 个调用方（与
+BeginDialog 几乎同集合）是「切到某界面/窗口时抢焦点 + 刷新键位状态」。
+
+★导入槽实锤链路：0x7E1498 = ShowWindow、0x7E14D0 = SetForegroundWindow
+（YRpp StaticInits.cpp:82/96 ALIAS），配合 [0x87F770] 的 InputManagerClass
+符号，32B 的每个间接调用都有名有姓。
+
+================================================================================
+0x622720  UI::EndDialog —— batch 089 该条登记升级（2026-10-13 修正）
+================================================================================
+batch 089 把它登记为「全局表指针查找（35 callers / 4112 deps）」并留 partial
+「表宿主（全局对象登记表？哪类对象）未实锤」。本批三方交叉实锤：
+
+身份：YRpp UI.h:21
+    static void __fastcall EndDialog(HWND hDlg)
+        { JMP_STD(0x622720); }
+
+与 0x622650 互证的表结构：
+    [0xB72D28] = 对话框栈（8B/项：+0 = hDlg / +4 = lpName16，BeginDialog 压入）
+    [0xB72F44] / [0xB72F48] = 栈顶全局缓存（BeginDialog/EndDialog 共同维护）
+    [0xB72F50] = 计数
+
+补齐的两处间接调用身份（闭合 partial）：
+    前奏 `push esi / call [0x7e13f4]` = ★ DestroyWindow(hDlg)（StaticInits.cpp:39）
+    命中移除 `call 0x7ca090` = ★ CRT::memcpy（CRT.h:85）——把后续项整体前移
+    移除后 [0xB72F44]/[0xB72F48] 更新为新的栈顶项。
+
+语义：**销毁窗口并从对话框栈摘除该项**——DestroyWindow → 线性查栈找 hDlg
+（8B/项步进）→ 命中用 memcpy 把后继项前移一格 → count-- → 刷新栈顶全局。
+
+================================================================================
+顺带实锤（本批与 0x622650 同一家族）
+================================================================================
+0x4A3B40 = UI::GetResource（YRpp UI.h:16 `static HGLOBAL __fastcall
+GetResource(LPCTSTR lpName, LPCTSTR lpType)`）：
+    mov eax,[0x89f974]（hInstance 镜像）/ and ecx,0xffff / push edx(lpType)
+    / push ecx / push eax / call [0x7e122c]（FindResourceA）
+    → test eax / je 返 0
+    / mov ecx,[0x89f974] / push eax / push ecx / call [0x7e1230]（LoadResourceA）
+    → test / je 返 0
+    / push eax / call [0x7e1228]（LockResourceA）→ 返回 HGLOBAL
+三条导入槽（0x7E122C/0x7E1230/0x7E1228）的 Win32 API 身份按 YRpp Imports
+约定待逐一 ALIAS 核实（本批发现在 0x622650 里它是 BeginDialog 的模板源）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x622650/0x622800/0x622720 三位一体：同 [0xB72D28] 栈，BeginDialog 压入、
+   EndDialog 弹出、FocusOnWindow 无关（只碰前台）。
+2. batch 089 的 0x622720 一条在此升级为 UI::EndDialog——它当时记的 8B/项表、
+   命中索引算术、count-- 全部正确，只差「表是什么」；本批用 UI.h + StaticInits
+   补上宿主身份（对话框栈）。
+3. 0x54F720 = InputManagerClass::DoSomething 在 0x622800 里被调用——它是
+   ranking 里 30 callers 的未登记高扇入候选，本批先引用了它，登记留给后续批次。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x5D4E70 对 hDlg 的具体动作（读 [0xabfc98]/[0xabfca0]/[0xabfc90] 等全局，
+   疑录音/wave 相关类注册，未读完）。
+2. BeginDialog 里 [esp+0x14] 局部（dwInitParam 指向的 4 字节）的确切初值与用途
+   （CreateDialogIndirectParamA 的 dwInitParam 语义未在调用点回查）。
+3. 0x7E122C/0x7E1230/0x7E1228 三个导入槽的 API 名（按 Imports 族推断为
+   FindResourceA/LoadResourceA/LockResourceA，未逐一 ALIAS 实锤）。
+4. 0x89F974 的「hInstance 镜像」确切写入点（与 Game::hInstance=0xB732F0 的关系）。
