@@ -1,0 +1,123 @@
+frontier batch 116 — 坐标→格子解析变体 + 链表节点析构孪生 + UI 控件创建链（2026-10-13）
+
+口径：承接 batch 115 候选，ranking.tsv unique_callers 降序取 0x56E990（21 callers）、
+0x631C80（21 callers）、0x5E2CD0（19 callers）。三者 prologue 均干净，YRpp 无
+符号覆盖（按机器码判类推断）。
+
+================================================================================
+0x56E990  坐标→格子解析变体（21 callers）
+================================================================================
+机器码（前 0xC0 实读）——与 batch 109 登记的 0x56EB80 **高度同构**：
+    mov edi, [esp+0x2C]             ; ★ CellStruct* 坐标对（同 0x56EB80）
+    movsx eax, word [edi+2] / movsx ecx, word [edi]
+    shl eax, 9 / add eax, ecx        ; ★ Y*512 + X 线性格索引
+    js 越界 / cmp 0x40000 / jge 越界
+    mov edx, [0x87F924] / mov eax, [edx+eax*4]   ; ★ 格数组取 cell
+    test / je 越界
+    mov esi, eax / jmp 主路径
+  越界:
+    mov eax, [edi] / mov esi, 0xABDC50   ; ★ 哑元 0xABDC50（batch ⑨ 实锤）
+    mov [0xABDC74], eax                  ; 全局当前坐标
+  主路径 (0x56E9D1):
+    mov al, [esp+0x34] / test / jne 0x56EA9D（分支）
+    mov eax, [esi+0x38] / cmp 0xFFFF / je 跳过
+    cmp 0xFF / je 跳过
+    mov ecx, [0xA8ED2C]              ; ★ 全局表（batch ⑪ QWEN.md 提到的
+                                     ;   MapSeedClass 表? 0xA8ED2C）
+    mov dl, [esi+0x11A] / mov eax, [ecx+eax*4]
+    push edx / call 0x5471F0          ; ★ 查询（cell 属性判定）
+    test / je 跳过
+    movsx eax, word[edi] / movsx ecx, word[edi+2]
+    shl eax, 8 / add eax, 0x80        ; ★ (X<<8)+0x80 半像素对齐（同 0x56EB80）
+    shl ecx, 8 / add ecx, 0x80
+    ...（[0x887324] 相机类 → CoordsToClient 系坐标变换）
+
+语义：**batch 109 0x56EB80 的参数变体**——同一条「CellStruct → CellClass
+指针 + 越界哑元 + 半像素对齐」解析链，差异在 0x56E9D1 起先查 [0xA8ED2C] 表
++ cell->[0x11A] + 0x5471F0 判定，命中才走坐标变换。两个变体共享
+[0x87F924]/0xABDC50/[0xABDC74] 基础设施，是「坐标→格子」解析的两个入口。
+
+⚠️ partial：0x56E9D1 后的 [0xA8ED2C] 表语义（疑走近路判断/地形属性表）、
+0x5471F0 身份、主路径后半变换细节未读完（0x56EA9D 分支）。
+
+================================================================================
+0x631C80  链表节点析构（孪生或同族第二份）（21 callers，0x31B 全读完）
+================================================================================
+机器码（全 0x31B）——与 batch 106 登记的 0x6C9850 **同构**：
+    mov esi, ecx / xor edi, edi
+    mov eax, [esi+4]                 ; ★ 前向指针
+    mov [esi], 0x7E6218              ; ★ 装虚表 0x7E6218（vs 0x6C9850 的 0x7E61F0）
+    cmp eax, edi / je skip1
+    mov ecx, [esi+8] / mov [eax+8], ecx   ; 前向->+8 = 后向
+  skip1:
+    mov ecx, [esi+8] / cmp edi / je skip2
+    mov eax, [esi+4] / mov edx, [ecx]     ; 后向->虚表
+    push eax / call [edx + 0xC]           ; ★ 虚表槽 +0xC（vs 0x6C9850 的 +4）
+  skip2:
+    mov [esi+8], edi / mov [esi+4], edi   ; 双指针置 NULL
+    ret
+
+语义：**双向链表节点析构**——装虚表 0x7E6218、前向->后向贯通、后向节点虚表槽
++0xC 挂接通知、双指针置 NULL。与 batch 106 的 0x6C9850（装 0x7E61F0、槽 +4）
+**仅虚表地址与通知槽位不同**——两个不同类/不同虚表布局的同类析构（未做归一化
+比对不写「孪生副本」，按「同族第二份」登记）。
+
+★跨批次连接：链表析构家族成员增至 0x407450（batch 104）/0x6C9850（batch 106）/
+本条（batch 116）三份 + batch 107（SHPStruct 析构里的链摘除）。
+
+⚠️ partial：虚表 0x7E6218 类归属、槽 +0xC 方法身份。
+
+================================================================================
+0x5E2CD0  UI 控件创建链（19 callers）
+================================================================================
+机器码（前 0xA0 实读）：
+    mov ebp, ecx / mov ebx, edx       ; 参数（宽串?）
+    test ebp / je 收尾
+    push ebp / call 0x7CA405           ; ★ CRT::wcslen（batch 097 实锤）
+    test eax / je 收尾                 ; 空串 → 直接收尾
+    mov al, [esp+0x14] / test          ; 标志入参
+    ; 按分支选 edi 值：
+    al 非空 → edi=0xFB（疑新控件高度/标志）
+    ebx==0 → edi=0xD0
+    ebx==1 → edi=0xFC
+    % 默认 → sub ebx,4 / neg / sbb / and 0xFFFFFFD5 / add 0x126
+    ; ★（常量选择族，batch 108 查表式的算术变体）
+    mov eax, [0xB73550]               ; ★ Game::hWnd（Unsorted.h:17）
+    mov ecx, [0xB732F0]               ; ★ Game::hInstance（Unsorted.h:18）
+    push 0 / push 0x5E2E40 / push eax  ; 创建参数（对话框模板/回调）
+    mov edx, edi
+    call 0x775700                     ; ★ 窗口/控件创建
+    mov esi, eax
+    mov edx, edi / mov ecx, esi
+    call 0x622820                     ; ★ UI::RegisterWindow（UI.h:27 实锤!
+                                       ;   紧邻 batch 094 登记的 FocusOnWindow）
+    mov edi, [0x7E14A8]               ; ★ GetDlgItem（batch 099 实锤导入槽）
+    ...
+    call edi 取子控件 → [0x7E1474]（SendMessage 系）组装
+
+语义：**「创建窗口/对话框并注册、再取子控件填文本」的 UI 创建链**——按标志选
+大小常量（0xFB/0xD0/0xFC/公式 0x126）→ Game::hWnd+hInstance 创建（0x775700）
+→ UI::RegisterWindow（0x622820，batch 094 UI 家族）→ GetDlgItem + SendMessage
+系填控件。★跨批次价值：**UI 家族（batch 094 的 FocusOnWindow/RegisterWindow
+邻区、batch 099 的 GetDlgItem）在 UI 创建方向的又一消费者**。
+
+⚠️ partial：0x775700 精确语义（CreateWindow 系推断）、0x622820 与 batch 094
+文档互证（当时 grep 到 UI.h 有 RegisterWindow）、0x5E2E40 模板常量、
+0x5471F0 在 0x56E990 里的身份。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x56E990 ↔ batch 109（0x56EB80 坐标→格子解析同构）+ batch ⑨（0xABDC50
+   哑元）+ [0x87F924] 格数组——解析族双入口。
+2. 0x631C80 ↔ batch 106（0x6C9850 同族）+ batch 104（0x407450）+ batch 107
+   （SHPStruct 链摘除）——链表析构家族。
+3. 0x5E2CD0 → batch 094（UI::RegisterWindow 邻区）+ batch 099（GetDlgItem）+
+   batch 097（wcslen）+ Unsorted.h（Game::hWnd/hInstance）——UI 创建链。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x56E990 的 [0xA8ED2C] 表语义与 0x5471F0 身份、后半变换细节。
+2. 0x631C80 的虚表 0x7E6218 归属与 0x6C9850 的精确关系（未归一化比对）。
+3. 0x5E2CD0 的 0x775700 语义、常量选择族（0xFB/0xD0/0xFC/0x126）含义。
