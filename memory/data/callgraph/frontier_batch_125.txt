@@ -1,0 +1,108 @@
+frontier batch 125 — LocomotionClass 析构 + 按名注册器 + 宽串 operator= 补登（2026-10-13）
+
+口径：承接 batch 124 候选，ranking.tsv unique_callers 降序取 0x55A6F0（17 callers，
+ranking 名在 LocomotionClass.h）、0x52B390（17 callers）、0x7B6720（16 callers，
+batch 097 已提及的 WStringClass operator= 变体）。三者 prologue 均干净。
+
+================================================================================
+0x55A6F0  LocomotionClass::~LocomotionClass（17 callers）
+================================================================================
+身份实锤：YRpp LocomotionClass.h:190-193
+    //Destructor
+    virtual ~LocomotionClass()
+        { JMP_THIS(0x55A6F0); }
+地址 + JMP_THIS + YRpp 注释「//Destructor」三证吻合。
+
+机器码（全 0x10，16B）：
+    mov [ecx], 0x7EAEC0            ; ★ 装虚表 0x7EAEC0
+    mov [ecx+4], 0x7EADF4          ; ★ 第二虚表 0x7EADF4
+    mov [ecx+0xC], 0               ; ★ +0xC = 0
+    ret
+
+语义：**LocomotionClass 析构**——装两个虚表（0x7EAEC0/0x7EADF4，多重继承
+接口）并把 +0xC 清 0。LocomotionClass 是单位移动方式（Hover/Track/Drive 等
+Traction 体系）的公共基类（YRpp 类图），战争行为（Walk/Drive/Hover 等）都
+继承它。析构只做虚表切装 + 清字段（子类析构取回魔后再释放资源）。
+
+紧邻 0x55A710（同族成员）：把两参写入 +4/+8 后返 8——同类的字段设置成员。
+
+★跨批次连接：双虚表安装（0x7EAEC0/0x7EADF4）与 batch 123（AbstractTypeClass
+四虚表：0x7E2000...）、batch 117（ObjectClass 单虚表）同属「多重继承虚表
+安装」家族；Locomotion 与 batch 083（FacingStruct 转向）、batch 122
+（DistanceFrom3D）同移动/物理体系。
+
+⚠️ partial：0x7EAEC0/0x7EADF4 对应继承接口、+0xC 字段语义（仅 16B 全读完，
+无 partial 疑点——均为 dtor 常规初始化）。
+
+================================================================================
+0x52B390  按名注册/创建器（17 callers）
+================================================================================
+机器码（前 0x40 实读）：
+    mov ebx, ecx                    ; this
+    mov ecx, [ebx+4]                ; ★ this->+4（名字/键?）
+    test ecx / je 尾段（0x52B40E）
+    mov eax, [ebx+0x10]             ; ★ this->+0x10
+    mov esi, [esp+0x14]             ; 参数
+    test eax / je 走主路径
+    mov eax, [eax] / mov edx, [esi]
+    cmp eax, edx / jne 走主路径
+    mov al, 1 / ret 4                ; ★ 命中名（+0x10 首对象名 == 参数）→ 提前返 true
+  走主路径 (0x52B3B9):
+    mov al, [ebx+0xC] / test / jne 分支
+    push 0x52B720 / push 8 / push ecx
+    mov ecx, [ebx] / push ecx
+    call 0x7C8B48                    ; ★（CRT 系：排序/比较? 0x7C8B48）
+
+语义：**「按名注册/查找对象」器**——+4 疑名字/键、+0x10 疑对象表首；参数与
++0x10 首对象名相同则提前返 true，否则走 0x7C8B48（疑按名插入/比较）主路径。
++0xC 分支 + 0x52B720 回调参数——疑技术树/单位创建的按名注册入口。
+
+⚠️ partial：0x7C8B48 精确身份（疑 CRT::sort/operator< 包装或自定义比较）、
++4/+0xC/+0x10 字段语义、0x52B720 函数参数回调、后半分支。
+
+================================================================================
+0x7B6720  宽串 operator=（batch 097 补登）（16 callers，0x37 全读完）
+================================================================================
+机器码（全 0x37，55B）：
+    push esi/edi
+    mov edi, [esp+0xC]              ; ★ 源（WStringClass*）
+    mov esi, ecx                    ; this
+    mov [esi], 0                    ; ★ 先清 this->[0]
+    mov eax, [edi]                  ; ★ 源内部指针 [edi]
+    test eax / je 收尾（空源不动）
+    push eax / call 0x7CA405        ; ★ CRT::wcslen（batch 097 实锤）
+    lea eax, [eax+eax+2]            ; ★ (len*2+2) 字节（wchar + 空终）
+    push eax / call 0x7C8E17        ; ★ CRT::_new（batch 001）
+    mov [esi], eax                  ; this->[0] = 新缓冲
+    mov ecx, [edi] / push ecx / push eax
+    call 0x7CA489                   ; ★ CRT::wcscpy（batch 097 实锤）
+    add esp, 0x10
+    mov eax, esi / ret 4            ; 返 this
+
+语义：**宽字符串类 operator=(const WStringClass*)（拷自身型）**——batch 097
+登记 0x7B66C0（operator= const wchar_t*）时已提及本条为「从 [edi] 取内部指针
+的变体」，本批正式单独立案：先清空 → 源 wcslen+1 定长 → _new 分配 → wcscpy
+拷贝。与 0x7B66C0（拷裸指针）成对——宽串族两版 operator=（batch 090 窄串
+两版 operator= 的 UTF-16 镜像）。
+
+★跨批次连接：wcslen/wcscpy/_new 三件套与 batch 097/110/115 宽串族全链咬合；
+语义引用 batch 097 条目（WStringClass 命名推断）。
+
+⚠️ partial：无新取证（三件套身份 batch 097 已实锤）；宿主类名（WStringClass
+推断）与 batch 097 一致。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x55A6F0 → batch 123/117（多重继承虚表安装族）+ 移动/物理体系
+   （batch 083/122）。
+2. 0x52B390 → batch 091/105（按名注册/查表体系：FileSystem::LoadFile/FindBy
+   CountryIndex 同思路）+ 0x7C8B48（CRT 系）。
+3. 0x7B6720 → batch 097（宽串 operator= 补登）+ batch 097/110/115（宽串族）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x55A6F0 的双虚表接口归属与 +0xC 字段。
+2. 0x52B390 的 0x7C8B48 身份与 +4/+0xC/+0x10 字段语义、0x52B720 回调。
+3. 0x7B6720 宿主类名（沿用 batch 097 WStringClass 推断）。
