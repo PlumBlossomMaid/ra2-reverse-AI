@@ -1,0 +1,73 @@
+frontier batch 087 — ScenarioClass::GetWaypointCoords + ScenarioClass::Instance 计数分配器（2026-10-13）
+
+口径：承接 batch 086 候选，ranking.tsv unique_callers 降序取 0x410230（37 callers）
+与 0x68BCC0（35 callers）。先验 prologue 均干净。
+
+================================================================================
+0x68BCC0  ScenarioClass::GetWaypointCoords(CellStruct* dest, int idx)
+================================================================================
+★ 身份实锤：YRpp ScenarioClass.h:75
+   `CellStruct * GetWaypointCoords(CellStruct *dest, int idx) { JMP_THIS(0x68BCC0); }`
+   ——地址、签名、this 约定三证吻合。
+
+14 字节完整反汇编：
+    mov eax, [esp+8]            ; idx
+    mov ecx, [ecx + eax*4 + 0x632]   ; ★ this->Waypoints[idx]（CellStruct 4B）
+    mov eax, [esp+4]            ; dest
+    mov [eax], ecx              ; *dest = Waypoints[idx]
+    ret 8
+
+★ 字段实锤：YRpp ScenarioClass.h:104 `CellStruct Waypoints[702];` @ +0x632
+   ——Waypoints 数组 702 项，每项 CellStruct（int16 x | int16 y 打包 4B）。
+   紧邻 0x68BCE0 是孪生：`lea ecx,[ecx+eax*4+0x632]; push ecx; mov ecx,0x87f7e8;
+   call 0x5657a0` —— 把 `&Waypoints[idx]` 交给 MapClass::GetCellAt（batch 082
+   已登记），即「按 waypoint 索引查格子对象」。
+   0x68BD80 = IsDefinedWaypoint(int idx)（YRpp:72，合法范围 [0..701]）。
+
+================================================================================
+0x410230  ScenarioClass::Instance 计数分配器（37 callers）
+================================================================================
+20 字节完整反汇编：
+    mov ecx, [0xA8B230]         ; ★ ScenarioClass::Instance（YRpp ScenarioClass.h:58）
+    test ecx, ecx / jne next
+    mov ecx, [esp+4]            ; out
+    xor eax, eax
+    mov [ecx+0xC], eax          ; ★ Instance 为 NULL → out->[0xC] = 0
+    ret 4
+next:
+    call 0x68BCB0               ; ecx = Instance（沿用）
+    mov edx, [esp+4]
+    mov [edx+0xC], eax          ; out->[0xC] = 递增后的计数器
+    ret 4
+
+0x68BCB0（10 字节）：
+    mov eax, [ecx+0x214]        ; Instance->[0x214]（计数）
+    inc eax
+    mov [ecx+0x214], eax        ; 自增
+    ret
+
+语义：**取「全局唯一计数」写进 out->[0xC]**——Instance 未建时给 0，
+已建时给 `Instance->[0x214]` 自增后的新值。`0x214` 落在 YRpp 布局的
+UniqueID 域附近（ScenarioClass.h:93 `int UniqueID; //defaults to 1,000,000
+- random salt for this game's communications`），推断是「每次取用加一的
+会话内 ID 源」（Team/Trigger/Tag 等 37 处调用方各领一个 ID）。
+⚠️ partial：0x214 与 UniqueID 的精确对齐未逐字段算（ScenarioFlags 体量
+需查）；调用方对 out->[0xC] 的具体语义（ID 用途）未逐个追。
+
+================================================================================
+跨批次连接
+================================================================================
+1. `[0xA8B230]` = ScenarioClass::Instance（YRpp 符号实锤）——与 batch 的
+   `[0xA8B238]` = SessionClass::Instance（GameMode/观察者全局）物理相邻，
+   是同一个「游戏会话状态区」。
+2. 0x68BCE0 调 MapClass::GetCellAt（batch 082 补登记 0x5657A0）——waypoint
+   索引→格子对象，RMG 出生点（阶段 6）正是按 waypoint 落位的。
+3. 0x68BCC0/0x68BCE0/0x68BD80 三兄弟构成「waypoint 访问器族」，是
+   ScenarioClass 从「存档/选关读的静态数据」通向「运行时地图」的桥。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x214 计数器的回绕/初始值（ctor 0x6832C0 里怎么种）。
+2. out->[0xC] 在各调用方的具体用途（37 处逐一追超纲，留待按模块批次）。
+3. Waypoints 702 项与地图尺寸（[0x87F8DC]=W）的关系。
