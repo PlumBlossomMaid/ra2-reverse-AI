@@ -1,0 +1,98 @@
+frontier batch 097 — 宽字符串类 operator= 家族 + [ecx+0x514] 读取族（2026-10-13）
+
+口径：承接 batch 096 候选，ranking.tsv unique_callers 降序取 0x7B66C0（28 callers，
+7B 家族）与 0x705D20（29 callers）。两者 prologue 均干净。
+
+================================================================================
+0x7B66C0  WStringClass（宽字符串）operator=(const wchar_t*)（28 callers，90B）
+================================================================================
+YRpp 无此地址符号（0x7B6xxx 区不在 YRpp 覆盖），按机器码判类归属（窄字符串类
+0x7B46xx 的宽字符兄弟，命名 WStringClass 为推断名）。
+
+机器码还原（90B）：
+    mov eax, ecx                     ; this
+    mov dword ptr [eax], 0           ; ★ this->[0] = NULL（先清空）
+    ret                              ; ← 0x7B66C0 只有 8 字节！这只是「置空」入口
+  operator=(const wchar_t* src) @ 0x7B66D0:
+    push esi/edi
+    mov edi, [esp+0xC]               ; src
+    mov esi, ecx                     ; this
+    test edi, edi
+    mov [esi], 0                     ; ★ 先清 this->[0]
+    je 0x7B66EE                      ; src==NULL → 长度用 1
+    push edi / call 0x7CA405         ; ★ CRT::wcslen(src)（YRpp CRT.h:19 实锤）
+    add esp, 4
+    inc eax                          ; +1 给 '\0'
+    jmp 0x7B66F3
+  len=1:
+    mov eax, 1
+  alloc:
+    add eax, eax                     ; ★ 长度×2（wchar_t 2 字节）
+    push eax / call 0x7C8E17         ; ★ CRT::_new（batch 001）
+    add esp, 4
+    mov [esi], eax                   ; this->[0] = 新缓冲
+    test edi, edi
+    mov word [eax], 0                ; ★ 先写 '\0' 占位
+    je 0x7B6715                      ; src==NULL → 空串完成
+    mov ecx, [esi]
+    push edi / push ecx
+    call 0x7CA489                    ; ★ CRT::wcscpy(dst, src)（CRT.h:15 实锤）
+    add esp, 8
+  done:
+    mov eax, esi / ret 4             ; 返回 this
+
+语义：**宽字符串（UTF-16）类的 operator=**——先置 NULL，按 src 求 wcslen+1
+（src==NULL 则长度 1），分配 (len+1)×2 字节（wchar_t 宽），wcscpy 拷贝
+（src==NULL 时只留空串）。三件套 CRT::wcslen/wcscpy/_new 全部实锤身份。
+与窄字符串族（batch 062/085/088/090）同设计族：单指针字段 this->[0]、
+NULL 与空串等价、先清后写。
+
+紧邻成员 0x7B6720（55B）：operator=(const WStringClass* src) 变体——从
+[edi] 取 src 内部指针再走同流程（wcslen→×2→_new→wcscpy），判为宽字符串类
+的「拷自身型」赋值（与 0x7B66C0 的「拷裸指针」成对，同 batch 090 窄字符串
+两版 operator= 的镜像）。
+紧邻成员 0x7B6760（26B）：析构/释放（this->[0] 非空则 CRT::_delete
+(0x7C8B3D，batch 001 对偶) + 置 NULL）——标准单指针字符串类 dtor。
+
+================================================================================
+0x705D20  [ecx+0x514] 单 getter（29 callers，6B）
+================================================================================
+机器码（全 6B）：
+    mov eax, dword ptr [ecx + 0x514]
+    ret
+
+单 getter，按方法论（语义全在被读字段与调用方）只做登记不写模型。字段
+[+0x514] 宿主类未定（0x705xxx 区）；调用方全在 0x633xxx-0x635xxx
+（FUN_00633e70/FUN_006349b0 等，同一功能区）。
+
+紧邻带判定成员 0x705D30（23B）：
+    mov ecx, [ecx + 0x514]           ; 取同一字段
+    test ecx, ecx / je 返 0          ; NULL → false
+    call 0x636DC0                    ; [0x636DC0]=单 getter（mov eax,[ecx+0x14] / ret）
+    test eax, eax / setg al / ret    ; 对象->[0x14] > 0 → true
+语义：**「[0x514] 指向的对象存在且其 [0x14] 计数 > 0」的判定**——是 0x705D20
+的布尔化版本（把裸指针换成非空+计数验证）。0x636DC0 是 6B 单 getter
+（mov eax,[ecx+0x14]/ret），0x636DD0 是其带 -1 哨兵变体
+（[ecx+0x8C]!=-1 时用 [0x8C]，否则回退 [0x14]）。
+
+⚠️ partial：0x705D20/0x705D30 的宿主类（0x705xxx 区类归属，疑某显示/相机类
+成员）未与 YRpp 对齐；[+0x514] 字段语义（指针？句柄？）未实锤。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x7B66C0/0x7B6720/0x7B6760 与窄字符串族（batch 062 ctor/assign、batch 085
+   c_str、batch 088 length、batch 090 operator= 变体、batch 059 dtor）同一
+   「单指针 + NULL≡空串」设计族——宽字符串是窄字符串的 UTF-16 镜像，三件套
+   CRT 身份（wcslen/wcscpy/_new/_delete）全部实锤。
+2. 0x705D30 的 `call 0x636DC0`（6B getter）+ setg 判定 = 「对象存在 + 计数>0」
+   惯用法，与 batch 093 VoxClass::PlayIndex 守卫链（多项 test/jl/jge 直退）
+   同属引擎「入口守卫」家族。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x7B66C0 的宿主类名（WStringClass 为推断命名，YRpp 无此地址覆盖；真实类名
+   可能叫 StringClassW 之类，未证）。
+2. 0x705D20/0x705D30 的宿主类与 [+0x514] 字段语义。
+3. 0x636DD0 的 [ecx+0x8C] 字段（哨兵 -1 的含义）。
