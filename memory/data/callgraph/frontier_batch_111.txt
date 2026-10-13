@@ -1,0 +1,123 @@
+frontier batch 111 — CRT 异常帧函数 + AudioIDX 链初始化 + 标志/定点族（2026-10-13）
+
+口径：承接 batch 110 候选，ranking.tsv unique_callers 降序取 0x7CAAE4（22 callers，
+CRT 区）、0x405BE0（21 callers）、0x407150（21 callers）。三者 prologue 均干净。
+
+================================================================================
+0x7CAAE4  CRT 异常帧安装/过滤器（22 callers，>0x180 未读完）
+================================================================================
+机器码还原（前段，SEH 帧安装完整）：
+    push ebp / mov ebp, esp
+    push -1
+    push 0x7F9650                 ; ★ 异常类型描述符/作用域表
+    push 0x7CC1D4                 ; ★ SEH 处理器（_except_handler3 形态）
+    mov eax, fs:[0] / push eax
+    mov fs:[0], esp               ; ★ 安装 SEH 帧（标准 C 异常帧头）
+    sub esp, 0x3C / push ebx/esi/edi
+    mov [ebp-0x18], esp
+    mov esi, [ebp+8]              ; 参数
+    test esi / jne 主路径
+    xor eax,eax
+    mov ecx, [ebp-0x10] / mov fs:[0], ecx
+    pop edi/esi/ebx / leave / ret  ; 空参早退（拆帧）
+  主路径 (0x7CAB22):
+    and [ebp-4], 0
+    push esi / call 0x7CAC4C      ; ★ 对象 meta 读取（vtable[-1] 大小/基址解析）
+    mov edi, eax
+    mov eax, [esi] / mov eax, [eax-4]   ; vtable 前向元数据
+    ...（按标志 test cl,1 / cl,2 三选一调 0x7CAC66 / 0x7CACC0 / 0x7CADB9）
+    结果非空 → call 0x7CAEF1
+  ; 异常码检查（尾部）：
+    mov eax, [ebp-0x14] / mov eax, [eax] / mov eax, [eax]
+    cmp eax, 0xC0000005           ; ★ ACCESS_VIOLATION
+    sete cl / mov eax, ecx / ret   ; 返回「是否访问违例」
+
+语义：**CRT 异常帧安装 + 过滤器识别**——标准 C/C++ 异常帧头（push -1 + 作用域
+表 0x7F9650 + handler 0x7CC1D4 + fs:[0] 链），按对象元数据与标志位分派到三个
+内部处理器（0x7CAC66/0x7CACC0/0x7CADB9），尾部把异常码与 0xC0000005
+（ACCESS_VIOLATION）比较返回布尔——这是 0x7C-0x7D CRT 层异常处理机制的一环，
+与 batch 110 _alloca_probe、batch 098 wcsncpy 同区。
+
+★跨批次连接：SEH 帧头 push 序列（-1/作用域表/handler）与 batch 083 的
+FacingStruct 定时器、batch 092 虚表安装同属「MSVC6 运行时模板」；0x7CC1D4
+处理器形态可对照 MSVC6 CRT 标准 _except_handler3。
+
+⚠️ partial：确切 CRT 函数名（_except_handler3 系 vs 自定义过滤器未对齐）、
+三个内部处理器（0x7CAC66/0x7CACC0/0x7CADB9）各自语义、0x7F9650 作用域表。
+
+================================================================================
+0x405BE0  AudioIDX 链初始化（21 callers，0x1 全读完）
+================================================================================
+机器码（全 0x1，14B）：
+    xor eax, eax
+    mov [ecx+0xC], 0x87E294       ; ★ +0xC = &AudioIDXData::IDX（0x87E294）
+    mov [ecx], eax                ; +0 = NULL
+    mov [ecx+4], eax              ; +4 = NULL
+    mov [ecx+8], eax              ; +8 = NULL
+    ret
+
+语义：**AudioIDX 链路对象构造/复位**——+0xC 固定指向全局
+AudioIDXData::IDX（YRpp Audio.h:53 `reference<AudioIDXData*, 0x87E294>` 实锤，
+batch 105 消息泵的 [0x887368] 同 0x887xxx 全局区邻域），+0/+4/+8 三指针清零。
+紧邻 0x405C00（读 [0x87E2A0] + 比较 [eax+0xC]==0x87E294）是它的消费者——
+按 +0xC 是否为 IDX 全局判断对象归属后走分支。
+
+★跨批次连接：0x87E294 = AudioIDXData::IDX（Audio.h:53）/AudioController::
+Audio_IDX_Container（struct_audio_controller.html 双 ALIAS）——**Audio 体系的
+全局容器指针**，register 表设计家族（batch 088/089/091/109）在音频域的实例。
+
+⚠️ partial：宿主类名（AudioController 推断）、+0/+4/+8 三个指针的具体链字段、
+0x405C00 的完整消费逻辑（0x80B 未读完）。
+
+================================================================================
+0x407150  标志位/定点运算族（21 callers）
+================================================================================
+机器码（族成员）：
+  0x407150（12B）：
+    mov eax, [ecx]                ; 读 +0 标志
+    or al, 1                      ; ★ 置 bit0
+    shl edx, 0x10                 ; edx 左移 16（进高半）
+    mov [ecx], eax / mov [ecx+8], edx
+    ret
+  0x407160（6B）：mov eax,[ecx] / or al,1 / mov [ecx],eax / ret
+    —— 仅置 bit0 变体
+  0x407170（0x2A）：
+    mov esi,ecx / mov edi,edx
+    mov edx,[esi] / mov eax,[esi+8] / mov ecx,[esi+4]
+    and edx, 0xfffffffe            ; ★ 清 bit0
+    cmp eax, ecx / mov [esi],edx
+    jne 跳过
+    call 0x4093B0                  ; ★ 函数指针 [0x87E848] trampoline
+    mov [esi+0x18],eax / mov [esi+0x1C],edx
+  ; 族成员 0x4071A0（0x1D，定点除）：
+    mov eax,edx / shl eax,0x10 / div esi
+    mov [ecx+0x10],esi / mov [ecx+0xC],eax / mov [ecx+0x14],esp+8
+    ret 8
+
+语义：**标志位（bit0）+ 高半 word 打包 + 定点数除法的运算族**——0x407150 把
+edx 左移 16 存入 +8（高低字打包）、0x407160 只置 bit0、0x407170 清 bit0 后
+按 +8/+4 计数比较触发 0x4093B0（trampoline 到 [0x87E848] 全局函数指针，
+读 NULL 则返 0——batch 104/106 的 0x87E8xx 全局函数指针族）、0x4071A0 是
+16.16 定点除法（shl 16 + div）。⚠️ 宿主对象与字段组合语义（+0 标志/+4/+8 计数/
++0x18/~0x1C 输出）未对齐。
+
+★跨批次连接：0x4093B0 trampoline（[0x87E848] 函数指针，读 NULL 返 0）与
+batch 102（[0xABFD34] 函数指针钩子）、batch 105（[0xAA0430] 计数）同属
+「全局函数指针 + 守卫」模式；定点 shl16+div 与 batch 096（AdjustForZ x87 取整）
+同理论域。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x7CAAE4 → batch 110/098/093（CRT 层 SEH/栈探测/字符串三件套同区）。
+2. 0x405BE0 → 0x87E294 AudioIDXData::IDX（Audio.h:53 实锤）+ batch 088/089/091
+   /109（登记册/全局容器指针家族）。
+3. 0x407150 族 → batch 102/105（全局函数指针 + 计数守卫）+ batch 096（定点
+   运算理论域）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x7CAAE4 确切 CRT 名与三个内部处理器语义、0x7F9650 作用域表。
+2. 0x405BE0 宿主类与 +0/+4/+8 链字段、0x405C00 完整消费逻辑。
+3. 0x407150 族宿主对象与 [0x87E848] 函数指针身份。
