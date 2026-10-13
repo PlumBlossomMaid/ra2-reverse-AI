@@ -1,0 +1,104 @@
+frontier batch 137 — Matrix3D::RotateZ + 按名注册器族第三成员 + 窄串→宽串转换（2026-10-13）
+
+口径：承接 batch 136 候选，ranking.tsv unique_callers 降序取 0x5AF1A0（14 callers，
+ranking 名 Matrix3D::RotateZ）、0x52B4F0（14 callers）、0x735060（14 callers）。
+三者 prologue 均干净，YRpp 无 JMP 宏覆盖（按机器码判类推断）。
+
+================================================================================
+0x5AF1A0  Matrix3D::RotateZ（14 callers）
+================================================================================
+ranking.tsv 符号名 Matrix3D::RotateZ（confirmed_identity 列非空）。YRpp
+Matrix3D 类（GeneralStructures.h 区域）无此地址 JMP 宏，按机器码判类。
+
+机器码还原（前 0x40）：
+    sub esp, 8
+    fld dword [esp+0xC]             ; ★ 入参角度（float）
+    fstp qword [esp+8]
+    mov ebx, [esp+8]
+    mov edi, [esp+0x10]             ; 第二参
+    push edi / push ebx
+    call 0x4CAD00                   ; ★ 浮点 helper（sin/cos 表?）
+    fstp dword [esp+0x20]
+    push edi / push ebx
+    call 0x4CACB0                   ; ★ 浮点 helper（cos/sin 表?）
+    fld dword [esi] / fld dword [esi+4]
+    fld st(0) / fmul st(3)          ; ★ 旋转矩阵合成（cos/sin 乘矩阵元）
+    fld st(2) / fmul dword [esp+0x28]
+    faddp st(1)
+    ...（faddp/fmul 链 → 旋转后的矩阵元素）
+
+语义：**Matrix3D 绕 Z 轴旋转（RotateZ）**——入参角度经 0x4CAD00/0x4CACB0
+（sin/cos 系 helper）求正余弦，与矩阵元素做 fld/fmul/faddp 合成——绕 Z 轴
+旋转矩阵的标准构造。★与 batch 103（0x5AFB80 4×3 矩阵变换）、batch 115
+（0x5AE860 MakeIdentity）、batch 106（0x5AFC00 矩阵拷贝）同 Matrix3D 族——
+RotateZ 是族中「旋转构造」成员。
+
+⚠️ partial：0x4CAD00/0x4CACB0 精确身份（sin/cos 表推断）、旋转公式后半
+（0x5AF1E0 起）、与 YRpp Matrix3D 布局对齐。
+
+================================================================================
+0x52B4F0  按名注册器族第三成员（14 callers）
+================================================================================
+机器码（前 0x40）——与 batch 125（0x52B390）、batch 130（0x52B620）高度同构：
+    mov esi, ecx                    ; this
+    mov eax, [esi+4]                ; ★ this->+4（名字/键）
+    test eax / je 返 0
+    mov cl, [esi+0xC] / test / jne 已注册
+    push 0x52B6A0 / push 8 / push eax
+    mov eax, [esi] / push eax
+    call 0x7C8B48                   ; ★（0x52B390/0x52B620 完全同款调用）
+    mov [esi+0x10], 0 / mov byte [esi+0xC], 1   ; ★ 标记已注册
+  已注册:
+    mov ecx, [esp+8] / mov edi, [esi] / mov ebx, [ecx] ...
+    ; （把参数并入对象表/链）
+
+语义：**batch 125/130 按名注册器族第三成员**——同款「+4 名字/键 + +0xC 注册
+标志 + 回调 + 0x7C8B48 排序/比较」结构，差异在回调常量（0x52B6A0 vs
+0x52B720）。族成员增至 3（0x52B390/0x52B620/0x52B4F0），均为同一注册器的
+重载/变体（未归一化比对按同族登记）。
+
+★跨批次连接：batch 125（0x52B390）+ batch 130（0x52B620）+ 0x7C8B48
+（CRT 系）——按名注册器族第三份。
+
+⚠️ partial：0x7C8B48 精确身份（沿用 batch 125 推断）、与 0x52B390/0x52B620
+的差异语义（回调常量不同）、0x52B6A0 回调功能。
+
+================================================================================
+0x735060  窄串→宽串转换（14 callers，0x2C 全读完）
+================================================================================
+机器码（全 0x2C）：
+    mov al, [edx]                   ; ★ 源窄串（edx）
+    test al / je 写终止符           ; 空 → 直接写 word 0
+    mov esi, [esp+8]                ; ★ arg2（长度上限，-1 或计数）
+    test esi / je 写终止符
+  loop:
+    movzx ax, al / mov [ecx], ax    ; ★ 窄字符 → word 写入目标
+    add ecx, 2 / inc edx            ; 目标 +2B / 源 +1B
+    cmp esi, -1 / je 继续           ; 无上限 → 继续
+    dec esi                         ; 有上限 → 计数递减
+  继续:
+    mov al, [edx] / test al / jne loop   ; 源遇 '\0' 停
+  写终止符:
+    mov word [ecx], 0               ; ★ 写宽串终止符
+    ret 4
+
+语义：**窄串→宽串转换器（char* → wchar_t*）**——逐字节把窄字符扩成 word
+写入目标，遇源 '\0' 或长度上限（arg2，-1=无限）停，末尾写 word 0。紧邻
+0x735090 是反向宽→窄版（cmp word [edx],0）。⚠️ 原版怪癖：arg2 上限
+「-1=无限」用 cmp esi,-1 判定，其余值逐次递减。
+
+⚠️ partial：宿主类（0x735xxx 区，转换工具）与调用方用途。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x5AF1A0 → batch 103/115/106（Matrix3D 族：变换/单位化/拷贝/RotateZ）。
+2. 0x52B4F0 → batch 125/130（按名注册器族第三份）。
+3. 0x735060 → 宽窄串转换（batch 097/110/115/125/128/134 宽窄串族镜像）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x5AF1A0 的 0x4CAD00/0x4CACB0 身份与旋转公式后半。
+2. 0x52B4F0 与 0x52B390/0x52B620 的差异语义（回调常量）。
+3. 0x735060 宿主类与调用方用途。
