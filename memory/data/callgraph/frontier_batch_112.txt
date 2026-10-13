@@ -1,0 +1,115 @@
+frontier batch 112 — INIClass::ReadDouble（含 ×0.01 百分比路径）+ 打包构造 + 宽串 getter（2026-10-13）
+
+口径：承接 batch 111 候选，ranking.tsv unique_callers 降序取 0x45A130（22 callers）、
+0x5283D0（22 callers，ranking 名 PhobosHook_INIClass_ReadDouble_Overwrite）、
+0x7B7100（21 callers）。三者 prologue 均干净。
+
+================================================================================
+0x5283D0  INIClass::ReadDouble（22 callers，>0x1D0 未读完）
+================================================================================
+身份实锤：YRpp CCINIClass.h:108-113
+    double ReadDouble(const char* pSection, const char* pKey, double dDefault)
+        { double* pdDefault=&dDefault; PUSH_VAR64(pdDefault); PUSH_VAR32(pKey);
+          PUSH_VAR32(pSection); THISCALL(0x5283D0); _asm {fstp dDefault}; }
+地址 + THISCALL + `ret 0x10`（16B = pSection4 + pKey4 + pdDefault8）三证吻合。
+调用约定核对：机器码 `mov ebp,[esp+0x18]`（dDefault 拷贝低位）+ `mov ebx,ecx`
+(this) + `mov edx,[esp+0x1C]`（pKey）——栈布局与 YRpp 封装完全对应。
+
+机器码还原（主路径结构）：
+    mov ebp, [esp+0x18] / mov ebx, ecx
+    test ebp / je 返默认               ; pdDefault 无效 → 直接返默认
+    mov edx, [esp+0x1C] / test / je 返默认   ; pKey 空 → 返默认
+    mov ecx, [ebx+4]                   ; ★ this->+4（Sections 链表头）
+    cmp ebp, ecx / jne 另一路径          ; 分两条查找路径
+    路径1 (0x5283FE)：esi = [ebx+8]（★ Sections 数组）
+      ; 对 pKey 求 strlen + call 0x4A1DE0（★ CRC 字节处理器，batch 082 实锤）
+      ; 在 section 里按 CRC 哈希查 entry（0x52B4F0 挂新节点/命中返回）
+      ; 命中后取 entry 值字符串：
+      call 0x7CA530                    ; ★ 字符串→?（float 系解析）
+      fld dword [esp+0x2C] / fstp qword [esp+0x38]
+      push 0x2525                      ; ★ '%%' 形态检查（百分比后缀?）
+      call 0x7CAF30                    ; ★（格式/转换系）
+      test / je 结束
+      fld qword [esp+0x28]
+      fmul qword [0x7E3808]            ; ★★ ×0.01（read_const 实测 = 0.01）
+      fstp qword [esp+0x28]            ; ★ 值乘 0.01（百分比 → 小数）
+    结束: fld qword [esp+0x28] / pop×4 / ret 0x10   ; ★ 返回值走 st0
+    路径2 (0x52849C)：用 pSection 做 strlen + CRC → [ebx+0x28] section 头找 section
+
+语义：**INI 读 double 标准实现**——pSection→pKey 双段查找（CRC 哈希进 section/
+entry，batch 082 的 0x4A1DE0 复用），命中把值字符串解析成浮点，**尾部路径发现
+×0.01**（[0x7E3808]=0.01 实测）——结合 % 形态检查（push 0x2525），这是「值含
+百分号时除以 100」的百分比语支。⚠️ 需对照 YRpp/B 社区：标准 ReadDouble 无×0.01，
+疑本函数是「带默认值 double 读取」的扩展版或另有内联百分比处理——**该 ×0.01
+路径为原版特性，若重写必须照抄**（登记为疑似怪癖，待调用点回查确认触发条件）。
+
+⚠️ partial：×0.01 路径的精确触发条件（0x7CA530/0x7CAF30 身份未实锤、0x2525
+检查语义）、两条查找路径的完整循环未逐一读、与 Ranking 里 PhobosHook_INI... 名
+（Phobos 侧 hook 命名，非引擎原符号）。
+
+================================================================================
+0x45A130  16B 打包构造（22 callers，0x1 全读完）
+================================================================================
+机器码（全 0x1，49B）：
+    mov eax, ecx                      ; this/输出
+    mov ecx, [esp+4]                  ; arg1（指针）
+    mov edx, [ecx] / mov [eax], edx    ; out+0 = arg1->[0]
+    mov ecx, [ecx+4] / mov [eax+4], ecx ; out+4 = arg1->[4]（★8B 源）
+    mov edx, [esp+8] / mov [eax+8], edx ; out+8 = arg2
+    mov ecx, [esp+0xC] / mov [eax+0xC], ecx ; out+0xC = arg3
+    ret 0xC
+
+语义：**把「8 字节源 + 两个 dword」打包成 16 字节对象**——arg1 指向的 8B
+（疑 CellStruct 坐标/Point2D）+ arg2 + arg3 组装成输出结构。ret 0xC = 3 栈参 +
+ecx 输出。宿主结构（16B = 坐标对+两标量）未定，推断为某几何/格子组合构造器。
+
+紧邻 0x45A160/0x45A170（各 8B）：安全解引用后调 [obj->vtable+8]/[+4]——
+batch 089 安全解引用谓词（0x4073C0 同款）的虚表调用变体，同 0x4073xx 区基建。
+
+⚠️ partial：输出结构布局语义（18B 坐标 + 两标量的具体含义）、arg1 指向的
+8B 类型（CellStruct 推断）。
+
+================================================================================
+0x7B7100  宽字符串 getter/索引访问（21 callers）
+================================================================================
+机器码（族成员）：
+  0x7B7100（0xB 全读完）：
+    mov eax, [ecx]                    ; ★ this->[0]（宽串指针）
+    test eax / jne ret
+    mov eax, 0x887734                 ; ★ NULL → 全局兜底 0x887734（空宽串哨兵）
+    ret
+  0x7B7110（0x3 全读完）：
+    push esi / mov esi, ecx
+    mov eax, [esi] / push eax
+    call 0x7CA405                     ; ★ CRT::wcslen（batch 097 实锤）
+    mov ecx, [esp+0xC]                ; 索引
+    cmp ecx, eax / jae 越界           ; ★ 越界（>= len）→ 返 0
+    mov edx, [esi] / mov ax, word [edx+ecx*2]   ; ★ wchar 取值
+    ret 4
+  越界: xor ax, ax / ret 4
+
+语义：**宽字符串类的两个访问器**——0x7B7100 = 「取内部指针（NULL 兜底到全局
+空缓冲 0x887734）」、0x7B7110 = 「按索引取 wchar（wcslen 边界检查，越界返 0）」。
+★与窄字符串族（batch 085 c_str()/[] 孪生族、batch 090 operator=）镜像：宽串版
+（0x7B46xx 区之后）同样「NULL≡空串」设计，wcslen/wcscpy/wcscmp（batch 097/110）
+三件套的 getter 消费端。0x887734 疑空宽串全局（未读字节确认内容）。
+
+⚠️ partial：宿主类名（0x7B7xxx 区在窄串族 0x7B46xx 之后，疑 WStringClass 推断，
+batch 097 已预设该命名）、0x887734 全局内容。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x5283D0 → batch 082（CRC 0x4A1DE0 复用）+ batch 105/107（INI 读取族互证）
+   + **×0.01 百分比路径（疑似原版怪癖，须照抄）**。
+2. 0x7B7100 → batch 097（wcslen 0x7CA405 + WStringClass 推断命名）+ batch 110
+   (wcscmp 三件套)。
+3. 0x45A130 → batch 089（安全解引用谓词邻域 0x45A160/170 变体）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x5283D0 的 ×0.01 触发条件与 0x7CA530/0x7CAF30/0x2525 语义（百分比 vs
+   其它）；只确认 0x7E3808=0.01 与存在乘路径。
+2. 0x45A130 输出结构语义与 arg1 的 8B 类型。
+3. 0x7B7100 宿主类精确名与 0x887734 内容。
