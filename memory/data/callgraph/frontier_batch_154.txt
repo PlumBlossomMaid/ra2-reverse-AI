@@ -1,0 +1,111 @@
+frontier batch 154 — AnimClass::SetOwnerObject + RadarEventClass::Add + word 对相等判定（2026-10-13）
+
+口径：承接 batch 153 候选，ranking.tsv unique_callers 降序取 0x50E470（12 callers）、
+0x65FA70（12 callers，RadarEventClass.h:13 实锤）、0x424B50（12 callers，
+AnimClass.h:44-45 实锤）。三者 prologue 均干净。
+
+================================================================================
+0x424B50  AnimClass::SetOwnerObject（12 callers）
+================================================================================
+身份实锤：YRpp AnimClass.h:44-45
+    void SetOwnerObject(ObjectClass *pOwner)
+        { JMP_THIS(0x424B50); }
+地址 + JMP_THIS + 单参三证吻合（AnimClass.h:78 注释：OwnerObject // set by
+AnimClass::SetOwnerObject (0x424B50)）。
+
+机器码还原（前 0x50）：
+    mov esi, ecx                    ; this（AnimClass*）
+    mov ebp, [esi+0xCC]             ; ★ +0xCC（当前 OwnerObject?）
+    test ebp / je 跳过
+    mov bl, [esi+0x74]              ; ★ +0x74 标志
+    test bl / je 跳过
+    push esi / mov ecx, 0x87F7E8    ; ★ MapClass::Instance
+    call 0x4A9770                   ; ★（0x4A9770，MapClass 系注销）
+  跳过:
+    mov edi, [0xA8E9B8]             ; ★ 全局计数（AnimClass 数组?）
+    xor ecx / test edi / jle 0x424BA7
+    mov edx, [0xA8E9AC]             ; ★ 全局数组基址
+    mov eax, [edx] / cmp eax, esi   ; ★ 遍历找 this
+    je 0x424B9F
+    mov eax, [eax+0xCC] / cmp eax, [esi+0xCC]   ; ★ +0xCC 匹配
+    je 0x424BA7
+    inc ecx ...（遍历循环）
+
+语义：**设置动画的属主对象（SetOwnerObject）**——先按 +0x74 标志与 +0xCC
+当前属主调 0x4A9770（MapClass::Instance 上下文注销旧属主），再遍历
+[0xA8E9AC] 全局数组（计数 [0xA8E9B8]）按 +0xCC 关联。AnimClass 是动画对象
+（子弹轨迹/特效/破坏动画），OwnerObject 指向产生它的单位。
+
+★跨批次连接：MapClass::Instance（batch 069/101 实锤）+ 全局数组/计数对
+（登记册族）+ AnimClass（YRpp 类定义）——动画属主管理端。
+
+⚠️ partial：+0xCC/+0x74 字段语义、0x4A9770 身份、数组遍历后续（0x424BA7 起）。
+
+================================================================================
+0x65FA70  RadarEventClass::Add（12 callers）
+================================================================================
+身份实锤：YRpp RadarEventClass.h:13
+    void Add(int nType, int nMapCoords)
+        { PUSH_VAR32(nMapCoords); SET_REG32(ecx, nType); CALL(0x65FA70); }
+地址 + 签名（ecx=nType、栈参=nMapCoords）两证吻合。
+
+机器码还原（前 0x50）：
+    push ebp / mov ebp, esp / and esp, 0xFFFFFFF8 / sub esp, 0xC
+    mov edi, ecx                    ; ★ nType
+    mov ebx, [ebp+8]                ; ★ nMapCoords（栈参）
+    shl eax, 4                      ; ★ nType×16（查类型表）
+    mov cl, [eax + 0x7F09A4]        ; ★ [0x7F09A4] 类型表
+    test cl / je 收尾
+    mov eax, [0xB04DB8]             ; ★ 雷达事件计数
+    test eax / jle 收尾
+    mov ecx, [0xB04DAC]             ; ★ 雷达事件数组
+    mov di, [ebp+0xA]               ; ★ 地图坐标
+    loop: mov edx, [ecx+esi*4] / cmp [edx], eax / jne 下一个
+    cmp cx, di / je 收尾 ...        ; ★ 遍历查重复
+    下一个: inc esi ...（循环）
+
+语义：**雷达事件入队（Add）**——nType 查 [0x7F09A4] 类型表（×16 索引）门卫，
+遍历 [0xB04DAC] 雷达事件数组（计数 [0xB04DB8]）查重复（坐标/类型匹配则
+跳过），否则入队。RadarEventClass 是雷达小地图的事件（红点/闪光），Add =
+雷达图标的产生入口（batch 148 的 [0x7F09A4] 同 .rdata 表区）。
+
+★跨批次连接：类型表（[0x7F09A4]，×16 索引）+ 全局数组/计数对（登记册族）
++ RadarEventClass（YRpp 类）——雷达事件注册端。
+
+⚠️ partial：[0x7F09A4] 表语义、[0xB04DAC]/[0xB04DB8] 数组宿主、入队动作后半。
+
+================================================================================
+0x50E470  word 对相等判定（12 callers，0x1B 全读完）
+================================================================================
+机器码（全 0x1B）：
+    mov eax, [esp+4]                ; ★ arg（另一结构指针）
+    mov dx, [ecx]                   ; ★ this->+0（word）
+    cmp dx, [eax] / jne 返 0        ; ★ 首 word 不等 → false
+    mov cx, [ecx+2]                 ; ★ this->+2（word）
+    cmp cx, [eax+2] / jne 返 0      ; ★ 第二 word 不等 → false
+    mov eax, 1 / ret 4              ; ★ 两 word 全等 → true
+  返 0: xor eax / ret 4
+
+语义：**两结构的 4 字节 word 对相等判定**——this 与 arg 的 +0/+2 两 word 全等
+返回 true——疑 CellStruct/Point2D 坐标对相等比较（batch 106 的 0x42D470 双
+word 打包的判等端）。紧邻 0x50E4A0 是容器析构（+4 数组按 +0xD 标志释放）——
+对象「判等 + 析构」配套。
+
+★跨批次连接：batch 106（0x42D470 双 word 打包）+ batch 129/131（坐标对运算
+族）——坐标对判等工具。
+
+⚠️ partial：宿主结构（4B word 对，疑坐标/尺寸）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x424B50 → batch 069/101（MapClass::Instance）+ 登记册族 + AnimClass。
+2. 0x65FA70 → 类型表 + 登记册族 + RadarEventClass。
+3. 0x50E470 → batch 106/129/131（坐标对运算族）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x424B50 的 +0xCC/+0x74 字段与 0x4A9770 身份。
+2. 0x65FA70 的 [0x7F09A4] 表与数组宿主。
+3. 0x50E470 宿主结构（4B word 对）。
