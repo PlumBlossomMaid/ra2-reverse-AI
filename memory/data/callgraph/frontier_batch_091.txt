@@ -1,0 +1,86 @@
+frontier batch 091 — IsAlliedWith 抽象变体 + 文件名→CRC→文件缓存装载器（2026-10-13）
+
+口径：承接 batch 090 候选，ranking.tsv unique_callers 降序取 0x4F9A90
+（HouseClass::IsAlliedWith，33 callers / 2799 deps）与 0x5B40B0（35 callers /
+3100 deps）。先验 prologue 均干净。
+
+================================================================================
+0x4F9A90  HouseClass::IsAlliedWith（AbstractClass 变体，33 callers）
+================================================================================
+81 字节。与 batch 073 登记的 0x4F9A50（HouseClass* 变体，45 callers）同一
+语义的两个重载——**本条多一步「虚表取宿主」**。
+
+    push esi / esi = this（HouseClass*）
+    ecx = [esp+8]（arg：AbstractClass*）
+    test ecx,ecx / je 返 0                ; arg NULL → 非联盟
+    eax = [ecx] / call [eax+0x3C]         ; ★ 虚表偏移 0x3C：取宿主/owning house
+    test eax,eax / je 返 0                ; 取不到 → 非联盟
+    cmp eax, esi / je 返 1                ; 宿主 == this → 是
+    eax = [eax+0x30] / ecx = [esi+0x30]   ; 两者联盟下标
+    cmp eax,ecx / je 返 1                 ; ★ 下标相等 → 是（同阵营）
+    cmp eax,-1 / je 返 0                  ; 对方下标 -1（无阵营）→ 退避
+    edx = 1 / cl = eax / shl edx,cl       ; 1 << 对方下标
+    eax = [esi+0x5788]                    ; ★ 联盟位掩码
+    test edx,eax / setne al / ret         ; 位掩码命中
+
+★ 与 batch 073 的 0x4F9A50 对齐：+0x30=联盟下标、+0x5788=联盟位掩码，
+优先级 自身 > 同下标 > 位掩码 完全一致；**差异只有入口多一次
+`call [arg->vtable+0x3C]` 把 AbstractClass 解析成宿主 HouseClass**。
+[0xA8B238]（SessionClass::Instance/GameMode）在 batch 062/064 已登记，
+本条是 HouseClass 联盟体系的第二种入口形态。
+
+⚠️ partial：虚表槽 0x3C 具体是哪个函数（GetOwningHouse?）未逐地址确认；
+arg 非 HouseClass 子类时的行为未取证。
+
+================================================================================
+0x5B40B0  文件名→大写→CRC→哈希表缓存→CCFileClass（35 callers）
+================================================================================
+435 字节。签名 `void __thiscall f(const char* filename, char flag)`。
+
+    mov byte [esp+0x13], dl               ; 保存 flag
+    ; 拷贝文件名到栈缓冲 [esp+0x8C]
+    repne scasb 求长 / rep movsd+movsb 拷到栈
+    call 0x7DCFC4                          ; ★ _strupr（batch 057 已登记，原地转大写）
+    ; 对栈里的大写文件名求 strlen → call 0x4A1DE0（★ CRC 字节处理器，batch 082）
+    edi = CRC 值
+    ; 查哈希表 [0xABF00C]（节点：+0 前向/+4 后向/+8 key(CRC)/+0xC 文件对象）
+    loop: 比较 [ecx+8] 与 edi；命中看 +0xC 非空直接跳收尾
+    ; 未命中：
+    lea ecx,[esp+0x24] / call 0x4739F0    ; ★ CCFileClass 构造（batch 063）
+    lea ecx,[esp+0x20] / push 0 / call 0x473C50  ; ★ Exists（batch 075，三态缓存）
+    test al,al / jne 存在路径
+    ; 不存在路径：call 0x43AE50（三字段析构，batch 059）
+    ; 存在路径（0x5B41AD）：
+    push 0x10 / call 0x7C8E17            ; 分配 0x10B 哈希节点
+    [esi+8] = edi(CRC) / 挂进 [0xABF00C] 表（空表则设头，否则按 key 排序插）
+    cmp flag / jne 收尾
+
+语义：**把文件名正规化（大写）→ CRC 哈希 → 在全局文件缓存表里查/建条目**，
+条目持有 CRC key 与 CCFileClass 对象；调用方（35 处，清一色资源加载）
+凭文件名拿缓存的文件对象。flag 控制是否再叠加别的行为（未读完，partial）。
+
+★ 跨批次连接（本批价值点）：
+1. `_strupr`（batch 057）+ `0x4A1DE0`（batch 082 CRC 处理器）+ CCFileClass
+   ctor/Exists（batch 063/075）——**四条已登记证据在一条 435B 函数里串成
+   完整管线**，验证了此前各批次独立取证的语义互相咬合。
+2. 哈希表节点布局（+8 key / +0xC 对象）与 batch 089 0x622720 的 8B/项
+   线性表、batch 088 0x6551C0 的 4B/项 CellStruct 向量是同一「登记册」
+   设计家族——引擎处处是「key→对象」缓存表。
+
+⚠️ partial（证据不足不下断言）：
+1. [0xABF00C] 哈希表的桶数/装载策略/节点计数上限；
+2. flag 参数在存在路径收尾的具体作用（0x5B420E 之后未读完）；
+3. 虚表槽 0x3C（0x4F9A90 内）的函数身份。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x4F9A90 ↔ batch 073 0x4F9A50：联盟判定双入口（句柄 vs 抽象对象）。
+2. 0x5B40B0 ↔ batch 057/082/063/075：一条函数串起四批已登记证据。
+3. 哈希缓存表 ↔ batch 088/089：登记册设计家族三胞胎。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 虚表槽 0x3C 的身份（0x4F9A90）。
+2. 0x5B40B0 的 flag 分支（0x5B420E 起）与哈希表细节。
