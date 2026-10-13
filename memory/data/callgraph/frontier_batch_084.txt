@@ -1,0 +1,92 @@
+frontier batch 084 — VocClass::PlayAt（音效按位置播放，0x7509E0）（2026-10-13）
+
+口径：承接 batch 083（FacingStruct）候选，ranking.tsv unique_callers 降序取
+0x7509E0（47 callers / 2181 transitive dependents，调用方含
+AirstrikeClass::InvalidatePointer、AnimClass::Start、BombListClass::Plant、
+BuildingClass::ClearBunker/EmptyBunker/UpdateBunker——全是"某物在场景里
+出现/消失/状态变"的事件，正是播放位置音效的地方）。先验 prologue 干净。
+
+================================================================================
+0x7509E0  VocClass::PlayAt(int n, const CoordStruct& coords, AudioController*)
+================================================================================
+身份实锤三重：
+  ① YRpp VocClass.h `static void __fastcall PlayAt(int n, const CoordStruct &coords,
+     AudioController *pCtrl = nullptr) { JMP_STD(0x7509E0); }` —— 地址吻合。
+  ② __fastcall 寄存器约定与反汇编逐项吻合：ecx = n、edx = &coords、
+     栈参 = pCtrl（`mov ebp, [esp+0x14]`，函数 ret 4）。
+  ③ 行为与 VocClass 体系吻合（见下）。
+符号名 symbol_source=USER_DEFINED（YRpp 覆盖），但地址+约定+行为三证互证。
+
+结构（0x7509E0，220B）：
+  - 入口门禁 `mov al, [0x8464AC]` → 0 直接 `xor eax,eax; ret 4`。
+    ★ **[0x8464AC] = VocClass::VoicesEnabled**（YRpp VocClass.h:36 实锤）
+    ——静音开关，关着时整个函数立即返回。
+  - 取样本：`ecx=n`；`n<0` 或 `n>= [0xB1D388]` → 不取；
+    否则 `eax=[0xB1D37C]`（Items 指针）、`edi = [eax+n*4]`（该 VocClass*）。
+    ★ **[0xB1D37C]/[0xB1D388] = VocClass::Array 的 Items/Count**
+    （YRpp `Array @ 0xB1D378` DynamicVectorClass<VocClass*>，Count 在 +0x10）。
+
+  - pCtrl 处理（栈参非空时）：`call 0x406130` 校验，0x406310 取值与 edi 比较，
+    不等则 `call 0x4052F0` 清掉并把 esi 置 0。
+    ★ 0x406130 = 陈旧指针校验器：要求 `[ecx+0xC] == 0x87E294`（某类虚表哨兵），
+    成立再比 `[ecx+8]`/`[ecx+4]` 与 `[*ecx+0x24]`/`[*ecx+0x138]`，
+    任一不符即 `mov [ecx], eax(0)` 把指针清零（0x406160-0x406162 实锤）。
+    ★ 0x406310 = `mov eax,[ecx+0x24]; ret` 及其带标志位变体
+    （`test byte [eax+0x10],1`，且 `[eax+0x4C]==0` 时返 1）。
+
+  - ★ **音量衰减**：有 edi 时 `call 0x750AC0`（helper，见下）得 st(0) 浮点；
+    `fcom [0x7E1748]`（=0.0f，实测）与 0 比较判符号；再
+    `fmul [0x7EF38C]` → `call 0x7C5F00`（_ftol 向零截断）→
+    `cmp ebx,0x4000 / jb skip / mov ebx,0x4000` 钳到 0x4000。
+    ★ **0x4000 = 16384 正是 VolumeStruct::Volume 的量程**
+    （YRpp VocClass.h 注释："Between 0 and 16384, lowest bit is forced to 1"）——
+    位置音效音量随距离线性衰减再钳上限，与 VolumeStruct 语义完全自洽。
+  - `esi==0` 时 `call 0x405190`（全局表 [0x816108] 查找）取控制器，
+    非空则 `0x4061D0(esi, volume)` 下发音量、`0x406270(esi, coords)` 下发位置。
+  - 收尾 `ebp` 非空时 `call 0x4060F0(ebp, edi, esi)`，返回 esi。
+
+--------------------------------------------------------------------------------
+0x750AC0  音量/距离衰减 helper（Yann 未命名，本批新发现）
+--------------------------------------------------------------------------------
+`[ebp]=0` 起手写 out 参数。核心：
+  - `fild [0x886FA8]` × `[0x7E5168]`(=0x3F000000 实测 = **0.5f**) → 视口半宽
+    同理 `[0x886FAC]` → 视口半高。即用屏幕分辨率算视口中心。
+  - `call 0x405130` ×`0x405160`（后者返回的 AH 测 bit 8/0x40/0x10 = 显示模式标志）
+    + `lea eax,[eax+eax*2]`/`[eax+eax*4]`/`shl eax,2` = eax×60 缩放，
+    得像素比例因子存 [esp+0x14]。
+  - 目标坐标经 `call 0x6D2140`（CoordsToClient，已登记）转屏幕坐标
+    （`mov ecx,[0x887324]` 取全局对象），`fild` 后 `fsub [esp+0x20]` 得相对视口中心的 dx。
+  - ★ 曼哈顿距离：`fild` 取 dy、`fsub`、`call 0x7C5F00`(_ftol)、
+    `cdq/xor eax,edx/sub eax,edx`（**取绝对值惯用法，与 PickBelow 同款**），
+    与 dx 分量相加。
+  - `sar ecx,8` / `sar eax,8`（**除 256**，把像素距离换成格距）；
+    `cmp cx,[0xB1D310]` / `cmp ax,[0xB1D312]` 与两个全局比较——
+    两分量都相等则直接 `fld [0x7E1748]`(0.0f) 返回静音（0x750B75-0x750B82）。
+  - 距离为负钳 0（0x750C20 `mov [esp+0x38],0`）；
+    衰减比例 `(far - near)/(far/near)` 型 `fsub st(1)` / `fdiv [esp+0x14]`。
+  - `test bl,0x10/0x40` 分支按显示模式决定是否二次夹取。
+
+⚠️ partial：0x750AC0 的局部变量（[esp+0x20]/[0x24]/[0x14]/[0x18] 各代表什么
+音量参数，0x405130/0x405160 返回值语义、0xB1D310/0xB1D312 两个全局的写入点）
+未取证；衰减曲线完整形态未逐分支复刻。
+⚠️ partial：0x4060F0/0x4061D0/0x406270/0x405190 未命名（低层音频控制器分发）。
+
+================================================================================
+跨批次连接（本次的价值点）
+================================================================================
+1. `0x7C5F00` = `_ftol`（batch 已登记）：0x7509E0 音量钳位与 0x750AC0 距离
+   取整都走它，向零截断——与全局 [0x822D80] FPCW=0x0E7F（RC=chop）一致。
+2. `0x6D2140` = CoordsToClient（已登记）：音效位置→屏幕坐标走同一等距投影。
+3. `0x5657A0` = MapClass::GetCellAt（batch 082 补登记）：0x750AC0 在
+   0x750B8F `mov ecx,0x87F7E8` 取格后测 `byte [eax+0x12C],0x18` 判可听性。
+4. ★ **`0x486380` CellClass「无主」谓词是本条的上游**：Buildings/Anim/Bombs
+   的对象失效清理（InvalidatePointer / EmptyBunker）都在移除对象时触发音效，
+   与 batch 082 的 cell->[0x38] 判定同属一套"对象生命周期"基础设施。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x750AC0 内部各局部槽的精确含义与 0x405130/0x405160 的返回值语义。
+2. [0xB1D310]/[0xB1D312]（疑似视口格距上限）的写入点。
+3. VolumeStruct 内部字段（unknown_4..unknown_1C）的具体作用。
+4. 音量"最低位强制为 1"（VolumeStruct 注释）是否在本条路径生效。
