@@ -1,0 +1,101 @@
+frontier batch 117 — ObjectClass 构造器 + 表项读取器 + 链表摘除重挂（2026-10-13）
+
+口径：承接 batch 116 候选，ranking.tsv unique_callers 降序取 0x5F3900（19 callers，
+ranking 名 ObjectClass::ObjectClass）、0x69E7E0（19 callers）、0x40E340（19 callers）。
+三者 prologue 均干净。
+
+================================================================================
+0x5F3900  ObjectClass::ObjectClass（19 callers）
+================================================================================
+身份实锤：YRpp ObjectClass.h:249-251
+    ObjectClass() noexcept : ObjectClass(noinit_t())
+        { JMP_THIS(0x5F3900); }
+地址 + JMP_THIS + 无参构造三证吻合。
+
+机器码还原（前段实读）：
+    push ebx/esi / mov esi, ecx
+    call 0x410170                    ; ★ 基类构造（AbstractClass 系）
+    xor ebx, ebx
+    mov eax, 0xFF
+    mov [esi+0x24], ebx / [esi+0x28] / [esi+0x2C]   ; ★ +0x24/28/2C 清零
+    mov [esi+0x6C], eax / [esi+0x70], eax           ; ★ +0x6C/+0x70 = 0xFF
+    mov eax, 1
+    mov [esi+0x78], eax                             ; ★ +0x78 = 1
+    mov byte [esi+0x81], al / [esi+0x90] / [esi+0x99] ; ★ 三个字节标志 = 1
+    mov [esi+0x30], ebx
+    ...（继续初始化）
+
+语义：**ObjectClass 默认构造**——调基类 AbstractClass 构造（0x410170）后按字段
+逐个初始化：+0x24/+0x28/+0x2C/+0x30 清零、+0x6C/+0x70 置 0xFF（哨兵）、+0x78
+=1、+0x81/+0x90/+0x99 三字节标志置 1。ObjectClass 是 AnimClass/TechnoClass/
+BuildingClass 等所有对象的公共基类（YRpp 类图实锤），其构造器是引擎对象初始
+化的第一站。★字段默认值取证价值：+0x6C/+0x70=0xFF、三标志=1 是后续大量逻辑
+的依赖初值（原版怪癖级细节，重写必须照抄）。
+
+⚠️ partial：0x410170 基类构造的字段初始化细节（AbstractClass 前半布局）、
+函数全长（0x5F3900-0x5F39D0 后段）未逐一读。
+
+================================================================================
+0x69E7E0  表项读取器（19 callers）
+================================================================================
+机器码（0x100 前段实读）：
+    call 0x69E580                    ; ★ 取表基址（上一函数族，SHP/资源表）
+    test eax / je 回退
+    movsx edx, word [eax+6]          ; ★ 表项计数
+    mov ecx, [esp+8]                 ; 索引参数
+    cmp ecx, edx / jae 回退          ; ★ 越界 → 回退
+    lea ecx, [ecx+ecx*2] / lea eax, [eax+ecx*8+8]   ; ★ 索引×24B + 8 步进
+    movsx ecx, word [eax]            ; 取表项 4 个 word
+    movsx edx, word [eax+2] / movsx esi, word [eax+4] / movsx edi, word [eax+6]
+    mov ebx, [esp+0x10] / mov [ebx], ecx / [ebx+4], edx / [ebx+8], esi / [ebx+0xC], edi
+    ret 8                            ; ★ 输出 4 word（16B）到调用者缓冲
+  回退 (0x69E829):
+    mov ecx, [0xB077A0] / [0xB077A4] / [0xB077A8] / [0xB077AC]
+    ; ★ 越界 → 用全局常量区 [0xB077A0..B077AC] 的 4 个 dword 填充输出
+    ret 8
+
+语义：**按索引读全局表项（4 word = 16B）**——0x69E580 返回表基址，表首 +6
+word 是项数，项步长 24B（lea ecx*2 → ecx*8+8 = 24B×索引+8）；索引越界时回退
+到全局 [0xB077A0] 的常量 4-dword。紧邻 0x69E860 是同族字节版（读 3 byte 输出）。
+疑「SHP/地形属性表」按索引取记录。⚠️ partial：0x69E580 表身份（SHP 内嵌表?）、
+[0xB077A0] 常量区内容、调用方语义。
+
+================================================================================
+0x40E340  链表摘除重挂（19 callers）
+================================================================================
+机器码（0x40 前段实读）：
+    mov eax, [esp+4]                 ; ★ 节点参数
+    test eax / je 继续
+    mov esi, [eax+4] / test / je 继续 ; 节点前向
+    mov edx, [eax+8] / test / je 继续 ; 节点后向
+    mov [edx+4], esi                 ; ★ 前向->后向贯通（摘除）
+    mov edx, [eax+4] / mov esi, [eax+8]
+    mov [edx+8], esi
+    mov [eax+8], 0 / mov [eax+4], 0  ; 节点指针清零
+  继续 (0x40E371):
+    mov edx, [ecx+4]                 ; ★ ecx = 目标链头
+    mov [eax+8], ecx / mov [eax+4], edx   ; ★ 节点重挂到 ecx 链
+    mov edx, [ecx+4] / test / ...
+    ...
+
+语义：**从原链摘除节点并重挂到 ecx 指向的链头**——双向链表的「移动节点」操作：
+先校验节点前后向都非空，贯通摘除并清零节点指针；再把节点接到 ecx 链（+8=链头、
++4=链头前向）。与 batch 104（0x407450 摘除+自环）、batch 106/116（链表节点
+析构）同族的「链表移动」成员。⚠️ partial：链表宿主类、重挂后的通知/计数处理。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x5F3900 → ObjectClass 是 Anim/Techno/Building 等公共基类（YRpp 类图），
+   引擎对象初始化第一站；0x410170 AbstractClass 构造与 batch 102
+   （AnnounceExpiredPointer 同类）咬合。
+2. 0x69E7E0 → batch 097/110/115（0x7C-0x7D CRT + 宽串族邻域）+ 0x69E580
+   （batch 101 已登记的 0x69E500 SHPStruct dtor 同区——SHP 资源族）。
+3. 0x40E340 → batch 104/106/116（链表基建家族）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x5F3900 的 0x410170 基类构造字段细节与函数后段。
+2. 0x69E7E0 的 0x69E580 表身份与 [0xB077A0] 常量区内容。
+3. 0x40E340 的链表宿主类与重挂后的通知处理。
