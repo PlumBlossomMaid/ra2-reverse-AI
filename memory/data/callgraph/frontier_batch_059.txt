@@ -1,0 +1,138 @@
+frontier batch 059 — 引擎基础层高扇入叶子（2026-10-13）
+
+口径：ranking.tsv 按 unique_callers 降序，取未登记项，capstone 直反汇编
+（code/randmap/disasm.py）。本批 4 条。
+
+⚠️ 读表注意：ranking.tsv 的扇入列名是 `unique_callers`（第 4 列），
+依赖数列名是 `transitive_dependents`（不是 `dependents`）——取错列名会让
+依赖数全部显示 0，扇入仍正确。
+
+================================================================================
+0x00565730  MapClass::GetTargetCell —— 0x5657A0 的孪生兄弟（固定点坐标版）
+================================================================================
+137 callers。反汇编全部 0x68 字节：
+
+    00565730  mov edi, [esp+0xc]          ; 入参：指向两个 int32 的结构
+    00565736  mov eax, [edi]              ; 取第 1 个
+    00565738  cdq
+    00565739  and edx, 0xff               ; 取符号字节
+    0056573f  add eax, edx                ; 有符号扩展
+    00565741  mov esi, eax
+    00565743  mov eax, [edi+4]            ; 取第 2 个
+    00565746  cdq
+    00565747  and edx, 0xff
+    0056574d  add eax, edx
+    0056574f  sar eax, 8                  ; ★ 算术右移 8
+    00565752  mov edx, eax
+    00565754  sar esi, 8                  ; ★ 同样右移 8
+    00565757  shl edx, 9
+    0056575a  add edx, esi                ; idx = (Y>>8) + ((X>>8)<<9) 同族布局
+    0056575c  js   0x56577a                ; 负 → 越界
+    0056575e  cmp edx, [ecx+0x140]        ; ★ 边界来自实例字段，不是硬编码
+    00565764  jge  0x56577a                ; >= → 越界
+    00565766  mov ecx, [ecx+0x13c]        ; 格子指针表
+    0056576c  mov edx, [ecx + edx*4]
+    0056576f  test edx, edx
+    00565771  je   0x56577a                ; NULL 也算越界
+    00565773  pop edi / mov eax, edx / pop esi / ret 4
+
+    ; ---- 越界出口 ----
+    0056577a  mov word [esp+0xc], si      ; ★ 回写两个 int16
+    0056577f  mov word [esp+0xe], ax
+    00565784  mov edx, [esp+0xc]
+    00565788  pop edi
+    00565789  mov [0xabdc74], edx          ; ★ 同一诊断全局
+    0056578f  mov eax, 0xabdc50            ; ★ 同一哨兵 CellClass*
+    00565794  pop esi / ret 4
+
+**与 0x005657A0 的关系（两者是孪生，本轮交叉确认）**：
+
+| 维度 | `0x5657A0` | `0x565730` |
+|---|---|---|
+| 坐标表 | `this->[0x13C]` | `this->[0x13C]`（同一张） |
+| 索引 | `x + (y<<9)` | 同（两轴各自 >>8 后同布局） |
+| 边界 | 硬编码 `cmp eax, 0x40000` | **实例字段 `this->[0x140]`** |
+| 入参 | 已是格坐标（`movsx word`） | **8.8 定点数**，需先右移 8 |
+| 越界哨兵 | `0xABDC50` | `0xABDC50`（同一） |
+| 越界记录 | `mov [0xabdc74], edx` | 同 |
+
+两函数共用 `[0x13C]` 格子表、`[0xABDC50]` 哨兵、`[0xABDC74]` 诊断全局，
+说明 `0x565730` 是「实数坐标 → 格」的入口，`0x5657A0` 是「格坐标 → 格」的
+直接入口。
+
+★ **`cdq / and edx,0xff / add eax,edx / sar eax,8` 是 8.8 定点转整数的经典序列**
+（MSVC 的 `_ftol` 之外的整数定点路径）：先按低字节符号扩展，再算术右移 8。
+符号位由 `cdq` 产生、由 `and 0xff` 取出并加回，故负坐标能正确向下取整。
+
+⚠️ 未实锤：`this->[0x140]` 的语义（很可能是格子表容量或行列跨度），
+未找到写入点，故不写成「= side²」之类断言。
+
+================================================================================
+0x007B46F0  带空指针置位的析构（delete + null）
+================================================================================
+163 callers。全部 0x1A 字节：
+
+    007b46f0  push esi
+    007b46f1  mov esi, ecx
+    007b46f3  mov eax, [esi]
+    007b46f5  test eax, eax
+    007b46f7  je 0x7b4702                  ; 为 NULL 则跳过 delete
+    007b46f9  push eax
+    007b46fa  call 0x7c8b3d                ; operator delete
+    007b46ff  add esp, 4
+    007b4702  mov dword [esi], 0           ; ★ 无论是否 delete 都置 NULL
+    007b4708  pop esi / ret
+
+即「安全 delete 单一指针成员并自清空」。`0x7C8B3D` 是 operator delete
+（frontier batch 001 已登记为 delete/operator delete forwarding wrapper）。
+
+紧邻的 `0x007B4710`（40B 起）是**两字节一组的 strcmp**（手写展开）：
+
+    007b4710  mov eax, [ecx] / push esi
+    007b4713  mov esi, [esp+8]
+    007b4717  test eax, eax / jne ...      ; 任一为 NULL → 跳出
+    007b471b  test esi, esi / jne ...
+    007b471f  mov al, 1                    ; 双 NULL → 相等，返回 1
+    ...
+    007b472e  mov dl, [eax] / mov bl, [esi] / mov cl, dl
+    007b4734  cmp dl, bl / jne 0x7b475e
+    007b4738  test cl, cl / je 0x7b4752    ; 命中 NUL → 视为相等
+    007b473c  mov dl, [eax+1] / mov bl, [esi+1] / ...   ; ★ 一次比 2 字节
+    007b4752  xor eax, eax
+    007b4757  sete al                      ; 返回「是否相等」的布尔
+    ...
+    007b475e  sbb eax, eax                 ; 不等 → 1 / -1
+
+**注意返回值是布尔（相等返 1）而非 C 的 0/负数** —— 是 `stricmp`-family
+的 `bool operator==` 形态，不是标准 `strcmp`。⚠️ 该函数未单独登记（不在
+本批扇入 top 内），仅作为邻域观察记录。
+
+================================================================================
+0x0043AE50  三字段带标志位的析构（且与 0x43AE80 是重复体）
+================================================================================
+123 callers。0x43AE50 与 0x43AE80 相隔 0x30，**反汇编逐指令完全相同**：
+
+    0043ae50  push esi / mov esi, ecx
+    0043ae53  mov al, [esi+8]              ; 标志字节
+    0043ae56  test al, al / je 0x43ae65    ; 为 0 则不 delete
+    0043ae5a  mov eax, [esi] / push eax
+    0043ae5d  call 0x7c8b3d                ; operator delete
+    0043ae62  add esp, 4
+    0043ae65  mov [esi], 0
+    0043ae6b  mov [esi+4], 0
+    0043ae72  mov byte [esi+8], 0          ; ★ 三字段全部清零
+    0043ae76  pop esi / ret
+
+结构布局：`+0x00` 可释放指针、`+0x04` 第二个字段、`+0x08` 持有标志。
+与 `0x7B46F0` 的差别是**多了 `+0x08` 标志门控与 `+0x04` 清零**。
+
+⚠️ 这是编译器重复展开的析构（同源码两份实例），但**未做归一化逐字节比对**
+（只肉眼比对了这 7 条指令），故不写「已证为同一函数副本」。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. `this->[0x140]` 的语义（0x565730 的边界来源）。
+2. 0x7B4710 的调用者与用途（虽与 0x7B46F0 物理相邻，但未证实同属一类）。
+3. 0x43AE50 / 0x43AE80 两份析构所属的类（未查 vtable 归属）。
+4. 0x43AE50 所在结构中 `+0x04` 字段的语义。
