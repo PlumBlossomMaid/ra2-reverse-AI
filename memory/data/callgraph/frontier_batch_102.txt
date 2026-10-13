@@ -1,0 +1,154 @@
+frontier batch 102 — AbstractClass::AnnounceExpiredPointer + 0x7757E0 窗口栈摘除 + Vector Resize 兄弟（2026-10-13）
+
+口径：承接 batch 101 候选，ranking.tsv unique_callers 降序取 0x7258D0（25 callers）、
+0x7757E0（26 callers）、0x42F860（26 callers）。三者 prologue 均干净。
+
+================================================================================
+0x7258D0  AbstractClass::AnnounceExpiredPointer（25 callers）
+================================================================================
+身份实锤：YRpp AbstractClass.h:117-118
+    static void __fastcall AnnounceExpiredPointer(AbstractClass* pAbstract, bool removed = true)
+        { JMP_THIS(0x7258D0); }
+地址 + `__fastcall`（ecx=pAbstract、edx=removed）+ 全引擎 25 个调用方场景
+（对象消亡前通知登记表）三证吻合。这是 YRpp 明确命名的核心对象生命周期函数。
+
+机器码还原（前段实读）：
+    mov esi, ecx                        ; pAbstract
+    mov edi, edx                        ; removed
+    mov eax, [esi] / call [eax+0x2C]    ; ★ 虚表槽 0x2C：取对象类型/类别句柄
+    mov ebx, eax
+    mov eax, [0x88098C]
+    cmp eax, esi / jne over1
+    ; 当前对象 == [0x88098C]（★某全局当前选中/悬停对象）→ 清空
+    xor ebp, ebp / mov [0x88098C], ebp
+  over1:
+    cmp [0x880990], esi / jne over2
+    ; == [0x880990]（★第二全局）→ 清空 + 回调
+    push ebp / mov ecx, 0x87f7e8       ; ★ MapClass::Instance（0x87F7E8，QWEN.md 实锤）
+    mov [0x880990], ebp
+    call 0x4A8BF0                       ; ★ MapClass 系重算
+  over2:
+    cmp ebx, 0x18 / jne 0x7259DA        ; ★ 类型句柄 != 0x18 → 跳过
+    cmp esi, [0xA8ED78] / jne over3
+    mov [0xA8ED78], ebp                 ; ★ 第三全局（[0xA8ED78]）清空
+  over3:
+    test esi, esi / je 收尾
+    mov al, [esi+0x14]                  ; ★ 标志位检查
+    ...
+
+语义：**对象消亡时的全局登记表广播**——把所有「还引用着 this 的全局指针槽」
+逐个比对并清空（[0x88098C]/[0x880990]/[0xA8ED78] 等），命中 [0x880990] 时额外
+回调 MapClass::Instance 的重算（0x4A8BF0），并对类型句柄 == 0x18 的对象做类别
+专属清理。removed 参数走尾部差异分支。
+
+★跨批次连接：0x87F7E8=MapClass::Instance 与 RMG 阶段文档互证（QWEN.md 已实锤
+0x87F7E8）；清全局 = batch 099 MessageBox::Show 的「结果槽」同族写零逻辑。
+
+⚠️ partial：函数全长未读完（0x7258D0-0x7259DA 之后的类型专属清理路径）、三个
+全局的准确语义（0x88098C/0x880990 疑「当前选中的可交互对象」与「悬停对象」）、
+0x4A8BF0 具体重算内容、类型句柄 0x18 对应的类。
+
+================================================================================
+0x7757E0  窗口栈摘除/级联销毁（26 callers，0x60B 读至中途）
+================================================================================
+机器码还原：
+    mov [esp], edx                     ; 保存 arg2（bool）
+    mov edx, [0xb72f50]                ; ★ 计数（batch 094 的 UI 对话框栈计数）
+    test ecx, ecx / jne 扫描入口         ; arg1==0 走「查末项」快路
+    test edx, edx / je 返 0
+    mov ecx, [edx*8 + 0xb72d20]        ; ★ 栈末项（0xB72D20 = 表基址-8）
+    test ecx, ecx / jne 扫描入口         ; 末项非空 → 从栈顶摘
+    ; 返 0 路径
+  scan @ 0x775806:
+    xor eax, eax
+    test edx, edx / jle 返 0
+    mov esi, 0xb72d28                   ; ★ 对话框栈基址
+    loop: cmp [esi], ecx / je 命中
+    inc eax / add esi, 8 / cmp eax, edx / jl loop
+    ; 未命中返 0
+  hit @ 0x775823:
+    mov edi, eax                        ; 命中下标
+    call 0x608070                       ; ★（batch 089 0x622720 前奏同款调用）
+    mov eax, [0xb72f50] / dec eax
+    cmp eax, edi / jl 收尾
+    lea esi, [eax*8 + 0xb72d28]
+    loop2:
+      mov ecx, [esi]
+      call 0x5D4ED0                     ; 逐项 0x5D4ED0
+      push ecx / call [0x7E13F4]        ; ★ DestroyWindow（StaticInits.cpp:39 实锤）
+      dec esi 步进…
+    …
+
+语义：**从对话框栈 [0xB72D28] 摘除对象并把栈上其上的窗口级联销毁**——与
+batch 094 登记的 UI::BeginDialog/EndDialog（同栈同计数）是同一家族的第四个成员：
+BeginDialog 压入、EndDialog 按 hDlg 弹出、本条按「末项快查/全栈线性查」找匹配后
+连带上层窗口 DestroyWindow 级联关闭。arg2（edx 保存的 bool）控制摘除后是否连带
+其它动作。
+
+⚠️ partial：0x608070/0x5D4ED0 身份、尾部级联循环细节（0x775873 之后未读完）、
+arg2 分支语义、宿主类归属（0x7757xx 区疑某 Window 管理器）。
+
+================================================================================
+0x42F860  Vector 类 Resize（带外部缓冲）（26 callers，0xC8B 全读完）
+================================================================================
+机器码还原（ret 8 = 2 栈参，+ecx=this）：
+    mov ebp, [esp+0xC]                 ; arg1 = 新容量（元素数）
+    mov esi, ecx                        ; this
+    test ebp, ebp / je 0x42F904         ; ★ 容量==0 → 走虚表路径收尾
+    mov ebx, [esp+0x18]                 ; arg3 = 外部缓冲指针（可为 NULL）
+    mov byte [esi+0xC], 0               ; ★ +0xC 标志清零
+    test ebx, ebx / jne 采用外部         ; 有外部缓冲 → 直接用
+    lea eax, [ebp*4] / call 0x7C8E17    ; ★ CRT::_new（容量×4，batch 001）
+    test eax, eax / je 分配失败
+    lea ecx, [ebp-1] / mov edi, eax     ; edi = 新数组
+  alloc_done:
+    test edi, edi
+    mov byte [esi+0xC], 1               ; ★ +0xC 标志置 1
+    je 0x42F921                         ; 分配失败 → 返 0
+    ; 拷贝旧数组到新缓冲（按 min(旧容量, 新容量) 项）：
+    mov eax, [esi+4] / test / je 跳过拷贝
+    mov ecx, [esi+8] / cmp ebp, ecx / jge / mov ecx, ebp   ; n = min
+    loop: mov edx, [esi+4] / mov edx, [edx+eax*4-4] / mov [edi+eax*4-4], edx / inc / jl loop
+    mov al, [esi+0xD] / test / je 跳过释放
+    mov eax, [esi+4] / push / call 0x7C8B3D    ; ★ 旧缓冲非外借则 CRT::_delete
+    mov [esi+4], 0
+  ...
+    mov [esi+4], edi                    ; ★ 数组指针 = 新/外借缓冲
+    sete al (ebx==0 → +0xD = 1)         ; ★ +0xD：是否为自分配（非外借）
+    mov [esi+8], ebp                    ; ★ 容量 = arg1
+    mov byte [esi+0xD], al
+  ret_ok:
+    mov eax, [esi+8] / cmp [esi+0x10], eax / jge / mov [esi+0x10], eax  ; ★ +0x10 = 计数上限自增
+    mov al, 1 / ret 8
+  cap_zero @ 0x42F904:
+    mov edx, [esi] / mov ecx, esi / call [edx+0xC]   ; ★ 虚表槽 0xC（清零）
+    …
+
+语义：**Vector 类 Resize/重建**——arg1 新容量、arg3 外部缓冲（非空则外借不分配），
+内部分配则 `_new(容量×4)`；旧数组按 min(旧容量, 新容量) 拷贝、非外借则 _delete
+释放；+0xC 持有标志、+0xD 自分配标志、+0x10 计数上限同步更新；容量 0 走虚表槽
+0xC 的专用清零路径。
+
+★跨批次价值：**与 batch 092 登记的 0x42FCB0（可选外部缓冲数组构造器）同布局
+兄弟**——都是 +0x4 数组/+0x8 容量/+0xC 持有/+0xD 自分配/虚表安装的容器对象，
+0x42FCB0 是 ctor、本条是 resize，两函数字段排布逐字节互证，**可判定属同一类**
+（DynamicVectorClass 系）。至此该容器类已有 ctor+resize 两个成员实锤。
+
+⚠️ partial：虚表槽 0xC 方法身份、类名精确对齐（DynamicVectorClass 推断）、
+0x42F8F2-0x42F904 间跳转细节。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x7757E0 ↔ batch 094（0xB72D28 对话框栈四成员：BeginDialog 压入/EndDialog
+   弹出/本条级联销毁）。
+2. 0x42F860 ↔ batch 092（0x42FCB0 同布局容器，ctor+resize 成对实锤）。
+3. 0x7258D0 → batch 88/90（0x87F7E8=MapClass::Instance，QWEN.md 实锤）、
+   batch 099（写零清槽同族）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x7258D0 的后段类型专属清理（0x7259DA 起）与三全局语义。
+2. 0x7757E0 的 0x608070/0x5D4ED0 身份与级联销毁尾部。
+3. 0x42F860 的类名精确对齐与虚表槽 0xC 身份。
