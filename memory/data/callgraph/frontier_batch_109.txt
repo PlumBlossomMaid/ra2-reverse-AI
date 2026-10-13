@@ -1,0 +1,130 @@
+frontier batch 109 — HouseTypeClass::FindIndexOfName + 坐标→格子解析 + 对象数组索引族（2026-10-13）
+
+口径：承接 batch 108 候选，ranking.tsv unique_callers 降序取 0x5117D0（23 callers）、
+0x56EB80（23 callers）、0x65AD30（23 callers）。三者 prologue 均干净。
+
+================================================================================
+0x5117D0  HouseTypeClass::FindIndexOfName（23 callers，>0x40 未读完）
+================================================================================
+身份实锤：YRpp HouseTypeClass.h:45
+    static signed int __fastcall FindIndexOfName(const char *name)
+        { JMP_STD(0x5117D0); }
+地址 + `static __fastcall`（ecx=name）+ YRpp 注释「返回国家类型索引或 -2/-1」
+（由调用方 FindParentCountryIndex 语义推断）三证吻合。
+
+机器码还原（前段）：
+    mov edi, ecx
+    push 0x81C008                  ; ★ 某常量字符串
+    push edi / call 0x7C8D20        ; ★ CRT::strcmpi（batch 093 实锤，大小写不敏感）
+    test eax / jne 继续
+    mov eax, 0xfffffffe             ; ★ 与 [0x81C008] 相等 → 返回 -2
+    ret
+  继续:
+    test edi / je 返 -1
+    mov eax, [0xA83CA8]             ; ★ HouseTypeClass 数组计数
+    xor ebx, ebx
+    test eax / jle 返 -1
+    mov eax, [0xA83C9C]             ; ★ 数组基址（4B/项）
+    push edi / mov esi, [eax+ebx*4] / lea ecx, [esi+0x64]
+    push ecx / call 0x7C8D20        ; ★ 逐项 strcmpi(item->+0x64 名, name)
+    ...
+
+语义：**按名字找国家类型索引**——先与全局常量串 [0x81C008] 比对（相等即 -2，
+疑「Unknown/无国家」哨兵），再线性扫描 [0xA83C9C] HouseTypeClass 数组（计数
+[0xA83CA8]），逐项比较 item->[+0x64] 名字，命中返回索引，未命中 -1。调用方
+FindParentCountryIndex 用它解析 ParentCountry 国家名 → 索引。
+
+★跨批次连接：0x7C8D20 = CRT::strcmpi（batch 093 实锤）、[0xA83C9C]/[0xA83CA8]
+与 batch 073 联盟体系（HouseClass 数组同数据区）、batch 103 FindByCountryIndex
+（HouseClass 数组的另一个入口）。
+
+⚠️ partial：函数后半（0x511830 之后）未读完、[0x81C008] 常量串内容（疑
+"Unknown"）未读字节。
+
+================================================================================
+0x56EB80  坐标→格子解析 + 重绘（23 callers，>0x180 未读完）
+================================================================================
+机器码还原（前段，串起多条已登记证据）：
+    mov edi, [esp+0x2C]             ; ★ CellStruct* 坐标对
+    movsx eax, word [edi+2] / movsx ecx, word [edi]
+    shl eax, 9 / add eax, ecx        ; ★ Y*512 + X → 线性格索引
+    js 越界 / cmp eax, 0x40000 / jge 越界
+    mov edx, [0x87F924] / mov eax, [edx+eax*4]    ; ★ [0x87F924] 格数组取 cell
+    test eax / je 越界
+    mov esi, eax                    ; cell 指针
+    jmp 0x56EBC1
+  越界:
+    mov eax, [edi] / mov esi, 0xABDC50   ; ★ 哑元 0xABDC50（batch ⑨ 实锤）
+    mov [0xABDC74], eax                  ; ★ 全局当前坐标写 [0xABDC74]
+  主路径 (0x56EBC1):
+    mov al, [esp+0x3C] / mov ebp, [esp+0x30] / test al / jne 跳过变换
+    movsx ecx, word [edi] / movsx edx, word [edi+2]
+    shl ecx, 8 / add ecx, 0x80           ; ★ (X<<8)+0x80 半像素对齐
+    shl edx, 8 / add edx, 0x80
+    mov ecx, [0x887324]                  ; ★ 相机/地图类全局
+    push eax / push ecx / call 0x6D2140  ; ★ CoordsToClient（batch 084 实锤！）
+    movsx eax, byte [esi+0x11B]          ; ★ cell->+0x11B（高度/层级）
+    ...（高度换算 + 屏幕偏移合成）
+    mov ecx, [0x887324] / call 0x6D2790  ; 第二坐标变换
+    ...
+    cmp [esi+0x38], ebp / je 已处理
+    mov ecx, esi / push edx / mov [esi+0x38], ebp
+    call 0x47D2B0                        ; ★ CellClass::RecalcAttributes（batch 088 实锤！）
+    add esi, 0x24 / mov ecx, 0x87F7E8    ; ★ MapClass::Instance
+    push esi / call 0x6551C0             ; ★ batch 088 登记 4B/项 CellStruct 向量！
+    ; 再按 [0x89F688]（★方向偏移表，batch 106/086 已引）算 8 邻域格索引
+    mov cx, word [eax*4+0x89F688] / add cx, word [edi]  ; 邻格坐标叠加
+    ...
+
+语义：**CellStruct 坐标 → CellClass 指针 + 触发重算的完整解析链**——①Y*512+X
+线性索引查 [0x87F924] 格数组取 cell，越界落哑元 0xABDC50；②坐标×256+0x80
+半像素对齐 → 0x6D2140（CoordsToClient）转屏幕坐标 → 高度+屏幕偏移合成；
+③cell->+0x38 归属变化时调 CellClass::RecalcAttributes（batch 088）重算属性，
+并把 cell+0x24 挂进 MapClass::Instance 的 4B/项向量（batch 088 的 0x6551C0）；
+④按 [0x89F688] 方向表扩展 8 邻域。**这是格子渲染/占用变更的核心驱动之一**，
+一条函数串起 batch 084/086/088 四条已登记证据。
+
+⚠️ partial：函数后半（0x56ED16 之后）未读完、[0x87F924] 格数组精确身份
+（MapClass 内部 cell 数组）、+0x11B/+0x38/+0x24 字段语义。
+
+================================================================================
+0x65AD30  对象数组索引/查找族（23 callers）
+================================================================================
+机器码（族成员）：
+  0x65AD30（索引访问，ret 4）：
+    mov eax, [ecx+0xE4]        ; ★ this->+0xE4 数组基址
+    mov ecx, [esp+4]           ; arg（索引）
+    mov eax, [eax+ecx*4]       ; ★ 数组[索引]（4B/项）
+    ret 4
+  0x65AD50（按值线性查找→bool，ret 4）：
+    mov esi, [esp+8] / test / je 返 0
+    mov edx, [ecx+0xE8]        ; ★ this->+0xE8 计数
+    mov ecx, [ecx+0xE4]        ; 数组
+    loop: cmp [ecx], esi / je 命中（返 1）
+    inc eax / add ecx, 4 / cmp eax, edx / jl loop
+    返 0
+  0x65ADC0（查空位→bool）：遍历数组找 [0]==NULL 项，找到返 1
+  0x65ADF0（按值查找排除自身→bool）：跳过与 arg 相同项找命中
+
+语义：**对象数组容器（+0xE4 数组指针 / +0xE8 计数）的四个访问成员**——索引
+取值、按值查找、查空位、排除式查找。是「登记册设计家族」（batch 088/089/091
+同族）又一个 4B/项指针数组容器，宿主类未定。
+
+⚠️ partial：宿主类（+0xE4/+0xE8 字段的类归属未对齐）、[0x65AD30] 的 arg 越界
+语义（无边界检查，照抄原版信任调用方）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x5117D0 → batch 093（CRT::strcmpi）+ batch 073/103（HouseClass 数组同区）。
+2. 0x56EB80 → batch 084（CoordsToClient 0x6D2140）+ batch 088（RecalcAttributes
+   0x47D2B0 + 0x6551C0 向量）+ batch ⑨（哑元 0xABDC50）+ batch 106/086
+   （0x89F688 方向表）——**一条函数串起四条已登记证据，本批最高价值点**。
+3. 0x65AD30 族 → batch 088/089/091/104/106/107（登记册/容器基建家族）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x5117D0 后半（0x511830 起）与 [0x81C008] 常量串内容。
+2. 0x56EB80 后半（0x56ED16 起）与 [0x87F924] 格数组精确身份、+0x11B/+0x38 字段。
+3. 0x65AD30 族宿主类与 +0xE4/+0xE8 字段名。
