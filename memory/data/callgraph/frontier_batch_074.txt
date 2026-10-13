@@ -1,0 +1,45 @@
+frontier batch 074 — INI 读取核心（节/键查找孪生对）（2026-10-13）
+
+口径：承接 batch 073 候选，capstone 直反汇编，先验 prologue（两候选均干净）。
+本批 2 条。这两条是 INI 规则的**读取侧**核心——rules.ini 的每个键值都要经它们。
+
+================================================================================
+0x00526960  INISection::GetKeyCount / 0x00526CC0  INISection::GetKeyName（孪生对）
+================================================================================
+各 47 callers（符号名 USER_DEFINED，YRpp 覆盖，按推断名标注）。两者共享
+同一条路径（仅中段的查找调用不同）：
+
+    mov edx, [esp+4]             ; 节名 arg
+    test edx, edx / je exit      ; 节名 NULL → 退出
+    mov edi, edx / or ecx,-1 / xor eax,eax / repne scasb   ; strlen(节名)
+    not ecx / dec ecx
+    push ecx / push edx / lea ecx,[esp+0x10]
+    call 0x4a1de0                ; ★ 分配+拷贝节名
+    add esi, 0x28                ; this += 0x28 → 节表
+    mov eax, [esi+4] / test / je exit
+    mov eax, [esi+0x10]          ; ★ this->[0x10] = 上次命中的节缓存
+    test eax, eax / je 0x52xxx
+      cmp [eax], edi / je match  ; 缓存命中 → 直接用
+    ...否则 call 0x52B600 / 0x52B620 在节表里查找...
+
+判据：
+① `this->[0x10]` 是**节缓存**（先查上次命中的节，miss 才走全表查找）——
+   INI 读取的热路径优化。
+② `this+0x28` 是节表（与 batch 069 的 WriteString 用的 this+0x28 一致，
+   读写两侧共用同一节表）。
+③ 两个 helper：`0x4A1DE0`（分配+拷贝字符串）、`0x52B600`/`0x52B620`
+   （节/键查找）。
+
+★ **INI 读取核心成形**：`0x526960`（GetKeyCount）与 `0x526CC0`
+（GetKeyName）是同构孪生，加上 batch 069 的 `0x528660`（WriteString），
+INI 的读（节/键查找）与写（写串）两侧都已有取证锚点。
+⚠️ partial：GetKeyCount vs GetKeyName 的**返回值差异**（一个返计数、一个
+返键名串）在中段分叉处未逐条取；0x52B600/0x52B620 的查找语义未实锤。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x526960 vs 0x526CC0 的返回值差异（计数 vs 键名）——两者中段同构，
+   分叉点未逐条取。
+2. 0x4A1DE0（字符串分配+拷贝）与 0x52B600/0x52B620（节/键查找）的内部。
+3. 节表 this+0x28 的具体数据结构（链表/数组）。
