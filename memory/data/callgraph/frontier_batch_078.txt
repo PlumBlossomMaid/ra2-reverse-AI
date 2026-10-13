@@ -1,0 +1,60 @@
+frontier batch 078 — 矩形合并 helper（闭合 batch 075 partial）+ 全局 getter 族（2026-10-13）
+
+口径：承接 batch 077 候选，capstone 直反汇编，先验 prologue（两候选均干净）。
+本批 2 条。
+
+================================================================================
+0x00421B60  矩形合并 helper —— 闭合 batch 075 的 RegisterDirtyArea partial
+================================================================================
+40 callers。`sub esp,0x18` + push 四寄存器。入参 ecx=矩形A 指针、edx=矩形B
+指针，各读 `{+0 left, +4 top, +8 width, +0xC height}`：
+
+    00421b6f  mov ebx, [esi]            ; A.left
+    00421b71  mov edi, [esi+4]          ; A.top
+    00421b74  mov ebp, [esi+8]          ; A.width
+    00421b7b  mov esi, [esi+0xc]        ; A.height
+    00421b82  mov esi, [edx+8]          ; B.width
+    00421b85  test esi, esi / jle exit  ; B.width<=0 → 退出（空矩形）
+    00421b8d  mov ebp, [edx+0xc] / test / jle exit  ; B.height<=0 → 退出
+    ...
+    00421bb2  mov ecx, [edx]            ; B.left
+    00421bb4  cmp ebx, ecx              ; A.left vs B.left
+    00421bb6  jge 0x421bc6
+    00421bb8  mov ebp, [esp+0x20]       ; A.width
+    00421bbc  sub ebx, ecx              ; A.left - B.left
+    00421bbe  add ebp, ebx              ; 宽度调整
+    00421bc0  mov ebx, ecx              ; 新 left = min(A.left, B.left)
+
+判据：**两矩形按 left/top/width/height 合并**，`cmp left; jge; sub; add` 是
+并集边界（取较小 left、调整 width 覆盖两者）的经典形态。这是 batch 075
+`0x6D2790`（RegisterDirtyArea 累加脏区）调的合并 helper——**闭合该 partial**：
+RegisterDirtyArea 用 0x421B60 把每个脏矩形并入总包围盒。
+
+⚠️ partial：是「并集」还是「交集」未逐条追完（`cmp/jge/sub/add` 两种
+都可能，需读完 0x421C68 之后的收敛段才能定死）；空矩形（宽/高<=0）的
+短路语义已实锤。
+
+================================================================================
+0x00775B10 / 0x00775B20 / 0x00775B30  全局 getter 族
+================================================================================
+39 callers（0x775B10）。三个紧邻的同构 getter：
+
+    00775b10  mov eax, [0xb72f44] / ret   ; 返全局 [0xB72F44]
+    00775b20  mov eax, [0xb72f48] / ret   ; 返全局 [0xB72F48]
+    00775b30  mov eax, [0xb72f4c] / ret   ; 返全局 [0xB72F4C]
+
+即三个「读一个全局并返回」的访问器。`0xB72F44`/`0xB72F48`/`0xB72F4C`
+是相邻的三个全局（间隔 4 字节，同一结构的连续字段）。紧邻的 `0x775B40`
+是 `xor eax,eax; ret 0x10`（恒返 0 的桩，4 参）。`0x775B50` 是另一族
+（`and ecx,0xffff` 后调 IAT `[0x7E1508]`）。
+
+⚠️ partial：这三个全局的语义未实锤（需查 [0xB72F44] 族的写入点）。
+这类「单 getter」函数扇入高但信息量低——它们的语义完全由被读的全局决定，
+单看函数本身无法定性。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x421B60 是并集还是交集（需读完 0x421C68 后的收敛段）。
+2. [0xB72F44]/[0xB72F48]/[0xB72F4C] 三个全局的语义（getter 族的价值
+   取决于被读全局——这类函数单看自身无法定性，应转去查全局的写入点）。
