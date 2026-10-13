@@ -94,3 +94,25 @@ TEST(Ra2StringTest, EqualsHandlesOddLengthStrings) {
     const char* c = "abd";
     EXPECT_FALSE(ra2::runtime::narrow_equals_legacy(&a, &c));
 }
+
+// 0x7B54B0 GetLength：NULL → 0（0x7B54B7 xor eax,eax 分支）。
+TEST(Ra2StringTest, LengthOfNullIsZero) {
+    const char* buf = nullptr;
+    const void* self = &buf;
+    EXPECT_EQ(ra2::runtime::narrow_length_legacy(self), 0u);
+}
+
+// 0x7B54B0 GetLength：非 NULL 求 strlen（repne scasb 路径）。
+TEST(Ra2StringTest, LengthCountsBytesExcludingTerminator) {
+    const char* buf = kHello;  // "hello" = 5
+    const void* self = &buf;
+    EXPECT_EQ(ra2::runtime::narrow_length_legacy(self), 5u);
+}
+
+// 空串长度为 0；奇数字节字符串也正确计数。
+TEST(Ra2StringTest, LengthHandlesEmptyAndOddLength) {
+    const char* empty = "";
+    EXPECT_EQ(ra2::runtime::narrow_length_legacy(&empty), 0u);
+    const char* odd = "abc";
+    EXPECT_EQ(ra2::runtime::narrow_length_legacy(&odd), 3u);
+}

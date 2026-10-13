@@ -60,4 +60,18 @@ bool narrow_equals_legacy(const void* lhs, const void* rhs) {
     }
 }
 
+std::uint32_t narrow_length_legacy(const void* self) {
+    // 0x7B54B0：NULL → 0（0x7B54B7 xor eax,eax）；否则 repne scasb 求 strlen
+    // （or ecx,-1 / xor eax,eax / repne scasb / not ecx / dec ecx → eax=长度）。
+    const char* p = *static_cast<const char* const*>(self);
+    if (p == nullptr) {
+        return 0;
+    }
+    std::uint32_t len = 0;
+    while (p[len] != '\0') {
+        ++len;
+    }
+    return len;
+}
+
 }  // namespace ra2::runtime

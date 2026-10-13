@@ -1,0 +1,85 @@
+frontier batch 088 — CellStruct 跟踪向量「查找/追加」+ 窄字符串 GetLength（2026-10-13）
+
+口径：承接 batch 087 候选，ranking.tsv unique_callers 降序取 0x6551C0（37 callers
+/ 1906 transitive dependent，调用方全是 CellClass 系的 DamageWall/IncreaseTiberium/
+MarkForRedraw/ReduceTiberium/FUN_0047e040 等）与 0x7B54B0（36 callers / 3217
+deps，调用方 FUN_004f2c70/FUN_004f3460/FUN_005ae100 等）。先验 prologue 均干净。
+
+================================================================================
+0x6551C0  CellStruct 跟踪向量「查找或追加」（37 callers）
+================================================================================
+139 字节。签名 `void __thiscall f(CellStruct* cell)`（ecx=this、栈参=命中格）。
+
+第一阶段——倒序线性查找（已存在的跟踪格）：
+    mov eax, [edi+0x1234]      ; 计数
+    dec eax / js 0x6551F5      ; 空表跳过
+    mov ecx, [edi+0x1228]      ; ★ 数组基址
+    mov dx, [ebx] / mov si, [ebx+2]   ; 命中格 {x,y}
+loop:
+    cmp word [ecx], dx / jne skip
+    cmp word [ecx+2], si / je FOUND ; ★ 四项逐字节相等 → 命中
+skip:
+    dec eax / sub ecx,4 / test eax,eax / jge loop
+
+第二阶段——未命中则扩容并追加（动态数组语义）：
+    ecx = [edi+0x122C]         ; 容量
+    eax = [edi+0x1234]         ; 计数
+    esi = edi + 0x1224         ; ★ 向量对象头（+0=虚表, +4=数组, +8=容量, +0x10=计数）
+    cmp eax, ecx / jl 直接追加
+    ; 计数>=容量 → 扩容：call [esi] 虚表偏移 +8（Reserve/Capacity 类）
+    push 0 / push 新容量 / call [edx+8]
+追加：
+    edx = [esi+4]              ; 数组
+    eax = [esi+0x10]           ; 旧计数
+    [esi+0x10] = eax+1         ; 计数+1
+    [edx + eax*4] = [ebx]      ; 写入 new CellStruct（4B）
+FOUND/追加后：
+    mov byte [edi+0x14D9], 1   ; ★ 置脏标
+
+语义：**把格坐标登记进一个「已跟踪格」集合**（已存在则不改、仅置脏标；
+不存在则扩容后追加并置脏标）。+0x1224 是一个 4B/项的 CellStruct 动态数组，
++0x14D9 是宿主脏标（调用方全是 CellClass 的 DamageWall/IncreaseTiberium/
+MarkForRedraw——即「这个格子被改动过，需要重算/重绘」的登记册）。
+★ 与 `0x578E60`（RepaintAll，batch 060 实锤的 work 数组）+0x45 保护区尾部
+置 1 的惯用法同款：**操作后置一个「有活干过」的布尔**供上层扫描。
+
+⚠️ partial：宿主对象（edi）的类未确认——调用方是 CellClass 方法但 this 很可能是
+MapClass::Instance 里的某个成员数组（[0x87F7E8] 全局），字段 +0x1224/+0x14D9
+的宿主归属未对齐到 YRpp 结构体。
+⚠️ partial：扩容虚函数偏移 +8 的精确语义（是 Reserve 还是直接 Realloc）未深挖。
+
+================================================================================
+0x7B54B0  窄字符串类 GetLength（36 callers）
+================================================================================
+25 字节。签名 `uint32 __thiscall GetLength()`（ecx=this）。
+
+    mov edi, [ecx]            ; str 指针
+    test edi, edi / jne over  ; NULL → 直接返 0
+    xor eax, eax / pop edi / ret
+over:
+    or ecx, 0xffffffff        ; ecx = -1
+    xor eax, eax              ; al = 0（scasb 比较基准）
+    repne scasb               ; 扫到 '\0'；此时 ecx = -(strlen) - 1
+    not ecx / dec ecx         ; ecx = strlen
+    mov eax, ecx / ret
+
+语义：求字符串长度。NULL 安全（返 0）——与 batch 085 c_str()/[]、batch 086
+== 同一个「NULL 与空串等价」设计族。属 0x7B46xx 窄字符串类模块
+（batch 062 ctor/assign、batch 059 dtor、batch 072 Get/[]、batch 085 孪生族、
+batch 086 ==、batch 088 本条）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x6551C0 是「格子改动登记册」——与 batch 060 的 RepaintAll(0x578E60) work
+   数组、batch 082 的 CellClass「无主」谓词同属 CellClass 生命周期基建；
+   DamageWall/IncreaseTiberium 调用它 = **改动事件统一进集合**。
+2. 0x7B54B0 是窄字符串族第 8 个成员——0x7B46xx 模块至此拼齐
+   ctor/assign/dtor/Get/[]/==/length，只剩 0x7B47xx 的孪生副本核对。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x6551C0 宿主类与字段映射（+0x1224/+0x14D9 归属哪个 YRpp 结构体）。
+2. 扩容虚函数（+8）的实现细节与初始容量。
+3. 0x7B54B0 与 0x7B54D0（邻域 assign 类似物）是否还有第三四处孪生。

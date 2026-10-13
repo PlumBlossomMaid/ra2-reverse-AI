@@ -25,4 +25,8 @@ char narrow_char_at_legacy(const void* self, std::uint32_t index);
 // 首字节即决定返回值（sbb 归一化，不比较剩余部分）。
 bool narrow_equals_legacy(const void* lhs, const void* rhs);
 
+// 0x7B54B0: 窄字符串 GetLength（36 callers）。NULL → 0；否则 repne scasb
+// 求 strlen（or ecx,-1 / xor eax,eax / repne scasb / not ecx / dec ecx）。
+std::uint32_t narrow_length_legacy(const void* self);
+
 }  // namespace ra2::runtime
