@@ -1,0 +1,105 @@
+frontier batch 095 — INIClass::Reset + InputManagerClass::DoSomething（2026-10-13）
+
+口径：承接 batch 094 候选，ranking.tsv unique_callers 降序取 0x526B00（30 callers
+/ INISection::Reset 曾用名）与 0x54F720（30 callers / InputManagerClass::DoSomething）。
+两者 prologue 均干净（0x526B00 全函数仅 9 字节）。
+
+================================================================================
+0x526B00  INIClass::Reset（30 callers，9B）
+================================================================================
+身份实锤：YRpp CCINIClass.h:67
+    void Reset()
+        { JMP_THIS(0x526B00); }
+地址 + `__thiscall` 无参 + 9 字节极短实现三证吻合（ranking 曾标 INISection::Reset，
+实际宿主是 INIClass——YRpp 符号为准）。
+
+机器码（全 9B）：
+    xor eax, eax
+    mov [ecx + 4], eax       ; ★ this->[+4] = NULL
+    mov [ecx + 8], eax       ; ★ this->[+8] = NULL
+    ret
+
+字段语义：YRpp CCINIClass.h:270 `List<INISection> Sections`——INIClass 数据成员
+布局：+0 = 虚表（INIClass 有 virtual ~INIClass），+4/+8 = Sections 链表头
+（Node 结构头两个指针：前向/后向）。Reset 只清链表头两根指针（不释放节点、
+不计数归零）——是「复用同一 INIClass 对象前把节列表置空」的最小化重置。
+
+★跨批次连接：batch 090 登记的 INISection::Clear（0x5257C0）也以
+`mov [esi+4],0 / mov [esi+8],0` 开篇（清键链表头）——同一「链表头清空」惯用法
+在两级对象（INIClass::Sections / INISection::Entries）上各出现一次，互为佐证。
+
+⚠️ partial：无（9B 全读完）。唯一未定：+4/+8 与 List<INISection> 的具体字段
+对应（Head/Count 精确排布未与 GenericList.h 逐字段对齐，但语义「清空链表头」实锤）。
+
+================================================================================
+0x54F720  InputManagerClass::DoSomething（30 callers，105B）
+================================================================================
+身份实锤：YRpp InputManagerClass.h:12
+    byte DoSomething()
+        { JMP_THIS(0x54F720); }
+地址 + `__thiscall` 无参 + 无返回语句三证吻合。batch 094（0x622800 FocusOnWindow）
+已引用本条——FocusOnWindow 收尾调 `Instance->DoSomething()` 就是它。
+
+机器码还原（105B，签名 byte __thiscall()）：
+    push esi / mov esi, ecx                    ; this
+    mov eax, [esi + 0x318]                     ; ★ this->[0x318]（计数器）
+    inc eax
+    and eax, 0x800000ff                        ; ★ 低 8 位回绕+符号扩展（-128..127 环）
+    jns over / dec eax / or eax, 0xffffff00 / inc eax
+  over:
+    cmp eax, [esi + 0x314]                     ; ★ 与 this->[0x314]（上一值）比较
+    je skip
+    call 0x5d4d50                              ; 不等 → 调 helper（见下）
+  skip:
+    mov eax, [esi + 0x318]
+    mov [esi + 0x314], eax                     ; this->[0x314] = this->[0x318]
+    lea ecx, [eax + 1]
+    and ecx, 0x800000ff / jns over2 / dec / or 0xffffff00 / inc
+  over2:
+    cmp ecx, eax
+    je done
+    call 0x5d4d50                              ; ★ 第二次 helper 调用（回绕触发）
+  done:
+    mov eax, [esi + 0x318]
+    mov [esi + 0x314], eax                     ; this->[0x314] = this->[0x318]
+    pop esi / ret
+
+语义：**把 this->[0x318] 的 8 位回绕「下一值」与 this->[0x314] 比对，变化时调
+0x5D4D50 做一次轮询/同步**，然后把 [0x318] 拷贝进 [0x314] 作为上次值缓存。
+两次比较点的差异：
+  ① `(byte)([0x318]+1) != [0x314]` —— 首次进入或上次值不匹配；
+  ② `(byte)([0x318]+1) != [0x318]` —— 仅当 [0x318] 是 0x7F/0x80 邻域回绕时触发
+     （即值跨越 ±128 边界，低 8 位环到另一侧）。
+推断：这是「帧间轮询游标推进」——[0x318] 是当前游标/键位组索引，[0x314] 是上
+一次处理过的值；调用方每帧（或每次 FocusOnWindow）调它，游标环内推进，跨边界
+时触发 0x5D4D50 刷新。⚠️ 0x318/0x314 字段的 YRpp 名称（Keycodes 后的计数器）
+未对齐布局文档，语义为推断。
+
+0x5D4D50 helper（被本条调用的轮询动作）：
+    mov eax, [0xb73550]              ; ★ Game::hWnd（Unsorted.h:17）
+    test eax,eax / je 退出            ; 无窗口 → 不动
+    mov ebx, [0xaa0430] / inc / mov [0xaa0430], ebx   ; ★ [0xAA0430] 自增（调用计数/帧号）
+    push 0/0/0 / xor edx,edx / lea ecx,[esp+0x1c] / call 0x53e770
+    test eax,eax / je 退出
+    mov ebx, [0x7e14f4]              ; ★ IsDialogMessageA（StaticInits.cpp:105 实锤）
+    ...
+
+推断：以 Game::hWnd 为宿主、[0xAA0430] 计数、经 0x53E770 + IsDialogMessageA 做
+「窗口消息泵一次推进」。语义级联：DoSomething = 「游标跨边界时泵一次窗口消息」。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x54F720 是 batch 094 0x622800 FocusOnWindow 的收尾调用——跨批互证闭合。
+2. 0x526B00 与 batch 090 INISection::Clear 同用「链表头两根指针清空」惯用法。
+3. 0x5D4D50 里 [0x7E14F4]=IsDialogMessageA、[0xB73550]=Game::hWnd——导入槽
+   身份与 UI 家族（batch 094）共用同一 StaticInits 证据源。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x54F720 的 [0x314]/[0x318] 字段名称与 InputManagerClass 布局对齐（YRpp
+   InputManagerClass.h 只列到 field_314，[0x318] 无符号）。
+2. 0x5D4D50 的 0x53E770 身份与消息泵细节未读完（只确认 IsDialogMessageA 槽）。
+3. [0xAA0430] 自增计数的语义（调用计数？帧号？）未实锤。
+4. 0x526B00 的 +4/+8 与 GenericList.h 逐字段对齐未做（语义已实锤为链表头清空）。
