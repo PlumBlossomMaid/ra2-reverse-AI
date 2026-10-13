@@ -1,0 +1,90 @@
+frontier batch 083 — FacingStruct 家族（朝向旋转控制器，0x4C91xx 区）（2026-10-13）
+
+口径：承接 batch 082 候选（ranking.tsv unique_callers 降序，0x4C93D0=67 callers 为
+全表最高未登记项之一），capstone 直反汇编 + **三层交叉验证**（RA2 asm ↔ YRpp
+GeneralStructures.h ↔ OpenTS code/facing.cpp ↔ RA1 FACING.H lineage）。
+本批 1 个家族注册（8 个成员函数），三层参照链完整闭合。
+
+★ 方法论落地：依据 docs/references/ts-ra2-engine-line-source-situation.md 的
+「先对齐再逆向」，每个候选先查三层源码（RA1 GPL 公共库 → OpenTS TS 重建 → YRpp
+RA2 符号层），能对上的直接引用语义，把纯逆向集中到 TS/RA2 独有部分。
+本批 FacingStruct 三处全部对上，取证速度快了一倍。
+
+================================================================================
+FacingStruct —— 16 位朝向控制器（0x18 字节）
+================================================================================
+布局（逐偏移由汇编确认，与 YRpp GeneralStructures.h:255 一致）：
+    +0x00  uint16 Value    目标朝向（想转去哪）
+    +0x04  uint16 Initial  本次旋转起点朝向
+    +0x08  uint32 StartTime  Timer.StartTime（0xFFFFFFFF=未启动/-1 哨兵）
+    +0x0C  uint32 unused   匿名位域，本家族从不读
+    +0x10  uint32 TimeLeft  Timer.TimeLeft（旋转总帧数）
+    +0x14  uint16 ROT      转速 = INI 值 ×256（ctor clamp 到 127）
+DirType 16 位：0x10000 = 一整圈。
+
+家族成员（8 个）：
+  0x4C91E0  ctor(rot)：Value/Initial/TimeLeft=0、StartTime=CurrentFrame、
+           ROT=clamp(rot,0..127)<<8（0x4C91FF cmp 0x7F / jl / mov 0x7F 实锤）
+  0x4C9220  SetDesired(DirType)：Value==target 返 false；否则
+           Initial=current()（旋转中途改向 = 从此刻实际朝向继续）、Value=target、
+           ROT>0 时 StartTime=CurrentFrame、TimeLeft=|Value-Initial|/ROT
+           （0x4C92B1 mov [ecx+4],eax 实锤 Initial 记的是 current()）
+  0x4C93D0  GetFacing(DWORD*)：current() 插值主函数（★ 本批主登记项）
+  0x4C9470  裸 getter：*out = *(uint32*)this（3 callers）
+  0x4C9480  IsRotating（YRpp 符号）：ROT>0 && GetTimeLeft()>0
+  0x4C94B0  IsRotatingCW（YRpp 符号）：旋转中 && (Value-Initial)>0（setg）
+  0x4C94F0  IsRotatingCCW（YRpp 符号）：旋转中 && (Value-Initial)<0（sets）
+  0x4C9530  Difference()：Value - current()（1 caller）
+  0x4C95D0  Difference(DirType)：给定朝向 - current()（ret 8 双参）
+  0x4C9300  同 0x4C93D0 但经 TimerStruct::GetTimeLeft(0x426630) 调用（未注册）
+辅助：0x426630 = TimerStruct::GetTimeLeft——StartTime==-1 原样返回 TimeLeft；
+      elapsed=frame-StartTime；elapsed>=TimeLeft 钳 0（无符号 jge）。
+
+★ 插值公式（机器码顺序，关键差异点）：
+    steps = |Value-Initial| / ROT；per_step = (Value-Initial) / steps
+    current = Value - per_step * GetTimeLeft()
+  机器码是「先除后乘」：0x4C943B idiv（diff/steps）→ 0x4C943D imul（×remaining）。
+  OpenTS facing.cpp Current() 同序：`dir.Facing -= RotationTimer * (diff / rot)`。
+  **YRpp 头文件写反了**：`steps_left * diff / num_steps`（先乘后除），整数截断
+  点不同（如 diff=2047,steps=7,left=10：机器码=292*10，先乘后除=(10*2047)/7=2924）
+  ——模型按机器码/OpenTS 写，单测 DivideBeforeMultiplyMatchesMachineCode 钉死。
+
+三层参照：
+  RA1 FACING.H（CnCRemastered GPL）：老版 FacingClass 更简单（Current/Desired
+  两字段 + Difference，无定时器插值）——RA2 版是 TS 时代演化，加了 StartFacing/
+  RotationTimer/ROT 三字段做匀速旋转。
+  OpenTS code/facing.{h,cpp}（TS 重建）：SetDesired/Current/Is_Rotating_CW/CCW/
+  Difference/Set_ROT 与 RA2 asm 逐函数对应，是本批的语义蓝本。
+  YRpp GeneralStructures.h:255：FacingStruct 布局与成员方法名（current/turn/
+  in_motion/difference/num_steps）全部吻合。
+
+================================================================================
+C++ 模型（code/rewrite/runtime/facing.{h,cpp}，已入 ctest）
+================================================================================
+runtime 新增 facing.h/cpp + test/test_facing.cpp：
+  - facing_get_facing            （0x4C93D0，含全部早退分支：ROT<=0 / elapsed>=TimeLeft
+                                 / remaining==0 / steps==0）
+  - facing_is_rotating/_cw/_ccw  （0x4C9480/0x4C94B0/0x4C94F0）
+  - facing_set_desired           （0x4C9220）
+  - facing_difference / _from    （0x4C9530/0x4C95D0）
+  - facing_construct             （0x4C91E0）
+  - timer_get_time_left          （0x426630）
+单测 20 项（FacingCtorTest 2 + TimerGetTimeLeftTest 3 + FacingGetTest 6 +
+FacingIsRotatingTest 2 + FacingDirectionTest 3 + FacingSetDesiredTest 4 +
+FacingDifferenceTest 3），覆盖所有早退分支与插值推进，含 ★ 先除后乘 对照断言。
+完整 ctest **43/43 全绿**（runtime 101 tests：原 81 + 新增 20）。
+
+⚠️ partial 项（证据不足不下断言）：
+  1. +0x0C 字段（YRpp 匿名位域）确认永不被本家族读写——SetDesired 0x4C92E5
+     写的是栈上未初始化 dword，模型置 0。
+  2. 0x4C9300 与 0x4C93D0 的编译器差异（一个调 0x426630 一个内联）未深究。
+  3. CurrentFrame 全局 = [0xA8ED84] 已实锤（YRpp:None::CurrentFrame）；
+     时间推进语义未做动态对拍（静态逐分支验证）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 各函数在真实游戏帧循环里的调用节奏（UnitClass::UpdateRotation 等调用点
+   的上下文）——上游语义待后续批次。
+2. ROT<=0 时 SetDesired 语义：Initial 仍记 current() 但不起步定时器
+   （0x4C92BF jle 跳过 Timer 块）——行为已复刻，不含「立即到位」之外的解释。
