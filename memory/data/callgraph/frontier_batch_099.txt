@@ -1,0 +1,104 @@
+frontier batch 099 — MessageBox::Show + IPXManagerClass::Send_Global_Message（2026-10-13）
+
+口径：承接 batch 098 候选，ranking.tsv unique_callers 降序取 0x5D3490（27 callers
+/ 4298 transitive）与 0x5410F0（27 callers / 2847 deps）。两者 prologue 均干净。
+
+================================================================================
+0x5D3490  MessageBox::Show（27 callers，524B）
+================================================================================
+身份实锤：YRpp MessageBox.h:16-29（源码级完整实现可见，__asm 宏直呼 CALL）
+    static eMessageBoxResult Show(const wchar_t* pMessage,
+                                  const wchar_t* pButton1Text,
+                                  const wchar_t* pButton2Text)
+        { ... SET_REG32(ecx,ppTitle); CALL(0x5D3490); }
+调用约定：**ecx = wchar_t**（指向标题字符串的指针），栈参 pMessage /
+pButton1Text / pButton2Text / 0 / 0 —— 机器码与源码一一对应。
+
+机器码还原（主结构）：
+    mov ecx, [0x887640] / mov eax,[ecx] / call [eax+0x28]   ; 取某对象 vtable+0x28
+    mov [esp+0x8], -1                                    ; ★ 结果初值 -1（=取消）
+    ; 三段「参数是否非空且首 word 非零」检查 → 各置一个 bool 局部：
+    [esp+0x1c]（pMessage）  → byte [esp+0xE]
+    [esp+0x20]（pButton1）  → byte [esp+0xF]
+    [esp+0x24]（pButton2）  → byte [esp+0xC]
+    [esp+0x28]              → byte [esp+0xD]
+    mov dl,1 / xor ecx,ecx / call 0x52FEC0                ; 前置（引擎消息泵？）
+    ; 按 bool 组合选对话框资源 ID：
+    b9 ce000000            ; 默认 0xCE
+    test al(button2 非空) / je ...
+    b9 21010000            ; ★ 0x121（两按钮）
+    ...
+    b9 20010000            ; ★ 0x120（仅 button2）
+    push 0 / mov edx,0x5D36A0 / call 0x622650             ; ★ UI::BeginDialog
+    ; 标题：
+    push ebp / lea ecx,[esp+0x10] / push ecx / push 8 / push esi
+    call [0x7E1470]                                        ; ★ SetWindowLongA(StaticInits.cpp:72)
+    ; 每按钮：GetDlgItem(edi=[0x7E14A8], StaticInits.cpp:86) → SendMessageA
+    (ebp=[0x7E14A4], StaticInits.cpp:85) 设置按钮文本
+    ebx = 1 / 2 / 3                                        ; ★ 点击结果编码
+    call 0x622800                                          ; ★ UI::FocusOnWindow（batch 097 登记）
+    ; 消息泵：
+    loop: [0x887640] vtable+0x28 → test eax / je 跳出
+          vtable+0x10（泵一步）→ 再查 vtable+0x28 循环
+    ; 结果判定：
+    call 0x623120                                          ; ★ UI::Updated（batch 098 登记）
+    test al / jne 收尾
+    mov al,[0xa8e9a0] / test al / jne ...
+    xor cl,cl / call 0x532100                              ; 无结果时调某函数
+    call 0x622720                                          ; ★ UI::EndDialog（batch 094 登记）
+
+语义：**YR 风格游戏内消息框的标准实现**——①三段参数有效性检查（NULL 或空串
+都算无效）②按有效按钮组合从资源 0xCE/0x120/0x121 里选对话框模板 ③
+UI::BeginDialog 建窗 ④SetWindowLongA 挂标题 + GetDlgItem/SendMessageA 给每个
+按钮填文本 ⑤UI::FocusOnWindow 置前 ⑥手动泵消息直到对话框消失 ⑦结果为负则
+问 UI::Updated 并调 0x532100 兜底 ⑧UI::EndDialog 收尾。返回 eMessageBoxResult
+（0=OK / 1=CANCEL，ebx=1/2/3 是点击的控件序）。
+
+★跨批次价值（本批最高点）：这是 batch 094/097/098 三批登记的 UI 家族函数的
+**唯一汇聚点**——BeginDialog(0x622650) / FocusOnWindow(0x622800) /
+EndDialog(0x622720) / Updated(0x623120) 四条全部在一个 524B 函数里被调用。
+此前它们各自登记时只见到「31/25 个调用方」，现在看清了：这些调用方高度
+重叠，共同消费者就是 MessageBox 这类模态对话框。
+
+⚠️ partial：[0x887640] 对象类型与 vtable 槽 0x28/0x10 的身份；0x52FEC0 与
+0x532100 的语义；资源 ID 0xCE/0x120/0x121 对应的模板名。
+
+================================================================================
+0x5410F0  IPXManagerClass::Send_Global_Message（27 callers，127B）
+================================================================================
+身份：ranking.tsv 已给出符号名 IPXManagerClass::Send_Global_Message（该表
+confirmed_identity 列非空），但 YRpp 头文件未覆盖本地址（grep IPXManagerClass
+无命中）→ **符号名来自 callgraph 数据而非 YRpp 源码实锤**。
+
+机器码还原（127B，ret 0x18 = 6 个栈参）：
+    push esi / mov esi, ecx                    ; this = IPXManagerClass*
+    mov al, [esi+4] / test al / je 返 0        ; ★ 成员 +4 字节标志
+    mov al, [esi+5] / test al / je 返 0        ; ★ 成员 +5 字节标志
+    ebx = edi = [esp+0x18]                     ; 第一个栈参（同址两份）
+    test edi,edi / je skip
+    test ebx,ebx / je zero                     ; 任一为 NULL → edi=0
+    mov ecx,ebx / call 0x53EE00 / test eax,eax / je zero
+    ; 主发包：
+    mov ecx,[esi+0x48]                         ; ★ 网卡/套接字对象
+    mov eax,[ecx] / ...
+    push（6 个参）→ call [eax+0x2C]            ; ★ 虚表槽 0x2C = 发送
+    mov edi, eax
+    test edi,edi / jne 返回
+    ; 失败：计数并记日志
+    mov ebx,[esi+0xA0] / inc / mov [esi+0xA0],ebx   ; ★ +0xA0 失败计数++
+    push esi / push 0x8283D4 / call 0x4068E0   ; sprintf 类
+  早退:
+    xor eax, eax / ret 0x18                    ; ★ 失败统一返回 0
+
+语义：**局域网全局消息发送**——双字节成员标志（+4/+5，很可能是「已初始化」
+与「已连接」）把关 → 参数与 0x53EE00 前置校验 → 经 this->[0x48] 网卡对象的
+虚表槽 0x2C 发出 → 失败则 [0xA0] 失败计数自增并写日志串 [0x8283D4]。
+返回 0 = 失败/未连接，非 0 = 成功（发送结果）。
+
+★跨批次连接：+0xA0 失败计数 + sprintf 记日志，与 batch 095 的 0x5D4D50
+（[0xAA0430]++ 计数）同属「引擎内嵌失败计数器 + 日志」惯例；虚表槽调用
+（[eax+0x2C]）与 batch 093 VoxClass::PlayIndex 的 [node+0xC]->[0x50] 写值同族。
+
+⚠️ partial：符号名只有 callgraph 表支撑、无 YRpp 源码三方印证（按纪律不写
+「实锤」）；0x53EE00 与 0x4068E0 身份；[esi+4]/[+5]/[0x48]/[0xA0] 字段语义；
+虚表槽 0x2C 的具体方法名；[0x8283D4] 日志格式串内容。
