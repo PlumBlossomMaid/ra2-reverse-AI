@@ -1,0 +1,107 @@
+frontier batch 105 — 游戏主消息泵 + BuildingTypeClass 基金会尺寸孪生对（2026-10-13）
+
+口径：承接 batch 104 候选，ranking.tsv unique_callers 降序取 0x5D4D50（24 callers）、
+0x45EC90（24 callers）、0x45ECA0（24 callers，BuildingTypeClass 尺寸查询族）。
+三者 prologue 均干净。
+
+★本批最大价值：**0x5D4D50 是 batch 095（InputManagerClass::DoSomething 的 helper）、
+batch 098（UI::Updated 的第一步）、batch 099（MessageBox::Show 的前置）三处都
+引用过、却一直未独立立案的函数**——本批正式登记，三批的 partial 交叉收口。
+
+================================================================================
+0x5D4D50  游戏主消息泵（24 callers，0x11E 全读完）
+================================================================================
+身份：**Win32 消息泵（非阻塞排空 + 阻塞等待两段式）**。导入槽身份全部实锤：
+    [0x7E14F4] = Imports::IsDialogMessageA   （StaticInits.cpp:105）
+    [0x7E14F8] = Imports::TranslateAcceleratorA（StaticInits.cpp:106）
+    [0x7E14BC] = Imports::TranslateMessage    （StaticInits.cpp:91）
+    [0x7E14C0] = DispatchMessageA（batch 095 已实锤同族导入槽，本条按调用位置推定）
+    [0xB73550] = Game::hWnd（Unsorted.h:17，batch 094/103 已实锤）
+
+机器码还原：
+    mov eax, [0xb73550] / test eax, eax / je 退出      ; 无窗口 → 直接返回
+    mov ebx, [0xaa0430] / inc / mov [0xaa0430], ebx     ; ★ 消息泵调用计数++
+    lea ecx, [esp+0x1C] / push 0/0/0 / xor edx, edx
+    call 0x53E770                                       ; ★ PeekMessageA 包装（PM_REMOVE=0）
+    test eax, eax / je 退出
+    mov ebx, [0x7e14f4]  ; IsDialogMessageA
+    mov edi, [0x7e14f8]  ; TranslateAcceleratorA
+    mov ebp, [0x7e14bc]  ; TranslateMessage
+    lea ecx, [esp+0x18] / push 0/0/0 / xor edx, edx
+    call 0x53E730                                       ; ★ GetMessageA 包装（阻塞）
+    test eax, eax / je 退出
+    lea ecx, [esp+0x10] / call 0x49F740                ; MSG 结构清零/初始化
+    ; ★可选钩子：[0x887368] 非空 → call 0x724200(&msg)
+    ; 分派优先级链（任一命中即跳到 TranslateMessage+DispatchMessage）：
+    ;   ① 遍历对话框栈 [0xABFC94]（计数 [0xABFCA0]），逐项
+    ;      IsDialogMessageA(hDlg, &msg) —— 对话框内消息优先走内部对话框循环
+    ;   ② 遍历加速键表 [0xABFCBC]（计数 [0xABFCC8]，8B/项双指针），
+    ;      TranslateAcceleratorA(hwnd, hAccel, &msg)
+    ;   ③ 函数指针钩子 [0xABFD34] 非空 → call（返非 0 则独占处理）
+    ; 兜底：TranslateMessage(&msg) → [0x7E14C0] DispatchMessage(&msg)
+    ; 循环尾：再 PeekMessage(0x53E770) → 非零则回到 GetMessage 段继续
+    pop×4 / add esp,0x1c / ret
+
+语义：**每帧驱动一次的完整 Win32 消息泵**——PeekMessage 清空队列后用
+GetMessage 阻塞等一条，再按「对话框 → 加速键 → 自定义钩子 → 默认窗口过程」
+的优先级分派。注意 ① 用的 [0xABFC94]/[0xABFCA0] 表与 batch 094/102 登记的
+对话框栈（[0xB72D28]/[0xB72F50]）**是两套不同的表**（本条是消息路由用的对话
+框集合，batch 094 那套是 UI::BeginDialog/EndDialog 的创建栈）——两个表语义
+不同不可混为一谈（修正此前可能的误联想）。
+
+★跨批次收口（本批核心价值）：
+1. batch 095 的 0x54F720（InputManagerClass::DoSomething）：游标跨边界时调
+   本函数做一次泵——「输入状态轮询顺带泵窗口」；
+2. batch 098 的 0x623120（UI::Updated）：第一句 `call 0x5d4d50`——「本帧是否
+   允许 UI 更新」的判定前先泵消息；
+3. batch 099 的 0x5D3490（MessageBox::Show）：开框前 `call 0x52fec0`（另有其
+   身份），而模态循环段直接以本函数的泵行为依赖。
+三条 partial 中的「0x5D4D50 身份」至此全部闭合。
+
+⚠️ partial：0x53E770/0x53E730 的精确签名（PeekMessage/GetMessage 包装，形态
+已实锤但函数名未对齐 YRpp）、[0x887368] 与 0x724200 的钩子语义、
+[0xABFC94]/[0xABFCBC]/[0xABFD34] 三张表/钩子的准确命名。
+
+================================================================================
+0x45EC90 / 0x45ECA0  BuildingTypeClass 基金会尺寸孪生对（各 24 callers）
+================================================================================
+身份实锤（两函数各一行 JMP_THIS）：
+    YRpp BuildingTypeClass.h:59-62
+        short GetFoundationWidth() const                    { JMP_THIS(0x45EC90); }
+        short GetFoundationHeight(bool bIncludeBib) const  { JMP_THIS(0x45ECA0); }
+
+0x45EC90（14B，全读完）：
+    mov eax, [ecx + 0xef0]            ; ★ this->+0xEF0（基金会格数索引）
+    mov eax, [eax*4 + 0x8192b8]       ; ★ 查全局宽表 [0x8192B8]（DWORD/项）
+    ret
+
+0x45ECA0（0x3E 全读完）：
+    mov al, [esp+4] / test al, al / je 基础路径          ; ★ bIncludeBib 入参
+    mov al, [ecx+0x1570] / test al, al / je 基础路径     ; ★ 且 this->+0x1570（HasBib）成立
+    mov eax, [ecx+0xef0] / mov edx, 1
+    mov eax, [eax*4 + 0x819310] / add eax, edx           ; ★ 高表 [0x819310] 项 + 1（计入 Bib）
+    ret 4
+  基础路径:
+    mov eax, [ecx+0xef0] / xor edx, edx
+    mov eax, [eax*4 + 0x819310] / add eax, edx           ; 高表项 + 0
+    ret 4
+
+语义：**建筑基金会（占地）的格数尺寸查询**——两者共享索引 this->+0xEF0，各自
+查一张全局表（宽=[0x8192B8]、高=[0x819310]，DWORD/项）。GetFoundationHeight 的
+bIncludeBib 参数在「this 确实有 Bib（+0x1570）」时返回高表项 **+1**——Bib
+（建造动画基座）在占地上多占一格，是 RAY/建造前置基座的规则。
+
+紧邻第三成员 0x45ECE0（多乘法变体）：
+    mov eax, [ecx+0xef0] / mov eax, [eax*4+0x8192b8]
+    lea eax,[eax+eax*2] / lea eax,[eax+eax*4] / shl eax,2 / cdq / and edx,7 / add eax,edx
+    ...（带 7 取模的对齐运算，疑基金会缓冲区字节数）
+—— 宽表值 ×60（3×5×4）再按 8 对齐，是「宽格数 → 每格 60 字节的 footprint 缓冲
+大小」换算（partial）。
+
+★跨批次连接：this->+0xEF0 索引 + 全局查表模式与 batch 101 的 0x5B3A00
+（`&Array()[this->[0xAC]]`）同族——「对象持索引 + 查全局数组表」是 BuildingType
+与 MissionControl 共用的类型数据寻址风格。FoundationData（YRpp
+BuildingTypeClass.h:105 `CellStruct* FoundationData`）是这两函数的上游数据源。
+
+⚠️ partial：[0x8192B8]/[0x819310] 两张表的宿主语义（疑 CellStruct 占地描述
+宽/高换算表）、this->+0xEF0/+0x1570 字段名、0x45ECE0 的完整换算与 7 取模用途。
