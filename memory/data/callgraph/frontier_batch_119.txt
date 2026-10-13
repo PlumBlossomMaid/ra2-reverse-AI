@@ -1,0 +1,104 @@
+frontier batch 119 — CellClass::GetCenterCoords + 虚调用重试包装器 + word 数组移位（2026-10-13）
+
+口径：承接 batch 118 候选，ranking.tsv unique_callers 降序取 0x480A30（18 callers，
+ranking 名 CellClass::GetCenterCoords）、0x5F1BF0（18 callers）、0x69BBF0
+（0x69BBE0 的邻域实效成员，18 callers）。三者 prologue 均干净。
+
+================================================================================
+0x480A30  CellClass::GetCenterCoords（18 callers）
+================================================================================
+身份实锤：YRpp CellClass.h:156-157
+    // used by ambient waves and stuff
+    CoordStruct* GetCenterCoords(CoordStruct* pOutBuffer) const
+        { JMP_THIS(0x480A30); }
+地址 + JMP_THIS + YRpp 注释「used by ambient waves and stuff」三证吻合。
+
+机器码还原（前段）：
+    sub esp, 8
+    mov eax, [ecx+0x24]              ; ★ this->+0x24（格坐标 X 打包）
+    movsx edi, word [esp+0xA]        ; 读出 X（低 16 位）
+    movsx esi, ax                    ; 读出 Y（低 16 位）
+    shl esi, 8 / mov eax, 0x80
+    shl edi, 8 / add esi, 0x80 / add edi, 0x80   ; ★ (X<<8)+0x80 半像素对齐
+    mov [esp+8], eax / [esp+0xC], eax
+    lea eax, [esp+8] / push eax
+    call 0x47B3A0                    ; ★ CellClass::GetFloorHeight（CellClass.h:151
+                                     ;   实锤，同文件邻居）
+    mov ecx, [esp+0x14]              ; pOutBuffer
+    mov [edx], esi / mov [edx+4], edi   ; ★ 输出 X/Y（半像素对齐坐标）
+    ...（+ Z 由 GetFloorHeight 合成）
+
+语义：**格子的中心世界坐标**——把格坐标 X/Y 左移 8 + 0x80（半像素对齐到格中心，
+与 batch 109/116 坐标→格子解析的同一惯用法），Z 经 GetFloorHeight（0x47B3A0）
+获取后写入 CoordStruct 输出。调用方是「ambient waves 和音效定位」（YRpp 注释）。
+
+★跨批次连接：0x47B3A0 = GetFloorHeight（同文件实锤）；半像素对齐
+（(X<<8)+0x80）与 batch 109（0x56EB80）、batch 116（0x56E990）同款——格子
+中心坐标换算的引擎标准写法。
+
+⚠️ partial：函数后半（Z 合成与返回）未读完；+0x24 字段打包布局（X/Y 各 16 位
+确认，但偏移语义未与 YRpp 布局逐字段对齐）。
+
+================================================================================
+0x5F1BF0  虚调用重试包装器（18 callers，0x31B 全读完）
+================================================================================
+机器码（全 0x31B）：
+    push esi / mov esi, ecx
+    mov eax, [esi+0x3C]              ; ★ this->+0x3C（子对象指针）
+    test eax / je 返 0（ret 0xC）
+    mov edx, [esp+0x10] / mov ecx, [esi+0x38]   ; ★ +0x38（服对象）
+    push 0 / push edx / mov edx, [esp+0x14]
+    mov eax, [ecx] / push edx / mov edx, [esp+0x14]
+    push edx / call [eax+8]          ; ★ 服对象虚表槽 +8（四参调用）
+    test eax / jne 收尾
+    inc [esi+0x68]                   ; ★ 失败 → 重试计数++
+    ret 0xC
+  收尾: ret 0xC
+
+语义：**「调子对象虚方法，失败则计数」的包装器**——+0x3C 门卫（空则直接返 0），
+对 +0x38 服对象的虚表槽 +8 做 4 参调用，结果为假时对 +0x68（重试计数/失败
+计数）自增。紧邻 0x5F1C30 是同族三参版（虚表槽 +0x10）。★+0x68 计数与
+batch 095/099 的「失败计数 + 日志」惯例同族。
+
+⚠️ partial：+0x3C/+0x38/+0x68 字段语义与宿主类（ObjectClass 继承体系推断）、
+虚表槽 +8 的目标方法身份。
+
+================================================================================
+0x69BBF0  word 数组移位（18 callers，0x27B 全读完）
+================================================================================
+机器码（全 0x27B）：
+    mov edx, [esp+4]                 ; ★ 索引参数
+    cmp edx, 7 / jge 收尾            ; 索引 >= 7 → 不动
+    lea eax, [ecx+edx*2+0x307A]      ; ★ 数组基址 + 偏移（+0x307A 起，2B/项）
+    mov ecx, 7 / sub ecx, edx        ; 移位次数 = 7 - 索引
+   loop:
+    mov dx, word [eax+2]             ; ★ 把后一项 word 复制到前一项
+    mov word [eax], dx
+    add eax, 2 / dec ecx / jne loop
+    ret 4
+  收尾: ret 4
+
+语义：**把 [ecx+0x307A] 起的 7 项 word 数组从索引处整体左移一格**（索引项丢弃，
+末项重复）——疑「历史状态/缓冲滚动」：调用者在索引 i 处覆盖后把 i+1..7 前移。
+紧邻 0x69BBE0（mov al,[ecx+0x30D8]/ret）是同结构体的单字节标志 getter——
+两台词的同一宿主（0x307A 数组 + 0x30D8 标志）。⚠️ 0x69BBE0 是单 getter，
+按方法论只登记实移位函数。
+
+⚠️ partial：宿主结构（+0x307A 的 7×word 数组 + 0x30D8 标志）+ 移位语义
+（历史缓冲 vs 栈滚动）未实锤。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x480A30 → batch 109/116（半像素对齐惯用法）+ 0x47B3A0 GetFloorHeight
+   （同文件实锤）。
+2. 0x5F1BF0 → batch 095/099（失败计数惯例）+ 虚表槽调用族。
+3. 0x69BBF0 → batch 117（0x69E7E0 同 0x69xxxx 区的表项操作）/batch 101
+   （0x69E500 SHPStruct dtor 同区）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x480A30 的后半 Z 合成与 +0x24 字段布局逐字段对齐。
+2. 0x5F1BF0 的宿主类与 +0x3C/+0x38/+0x68 字段语义、虚表槽 +8 方法身份。
+3. 0x69BBF0 的宿主结构与移位语义。
