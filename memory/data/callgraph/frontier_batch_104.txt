@@ -1,0 +1,127 @@
+frontier batch 104 — ConvertClass::CreateFromFile + CCINIClass::ReadCCFile + 双向链表摘除（2026-10-13）
+
+口径：承接 batch 103 候选，ranking.tsv unique_callers 降序取 0x72ADE0（25 callers，
+ConvertClass 区）、0x4741F0（24 callers，CCINIClass 区）、0x407450（25 callers，
+0x4073xx 基础基建区）。三者 prologue 均干净。
+
+================================================================================
+0x72ADE0  ConvertClass::CreateFromFile（25 callers）
+================================================================================
+身份实锤：YRpp ConvertClass.h:30
+    static void __fastcall CreateFromFile(const char* pFilename,
+                                          BytePalette* &pPalette,
+                                          ConvertClass* &pDestination)
+        { JMP_STD(0x72ADE0); }
+地址 + `static __fastcall`（ecx=pFilename、edx=&pPalette、栈参=&pDestination）
++ ConvertClass.h 注释「Converts are palettes」三证吻合。
+
+机器码还原（主结构）：
+    mov ebx, edx                      ; &pPalette
+    lea ecx, [esp+0x18] / call 0x4739F0   ; ★ CCFileClass 构造（pFilename，batch 063）
+    lea ecx, [esp+0x14] / call 0x4A3890   ; ★ 打开文件/读头（返回 handle/尺寸）
+    test eax, eax / je 失败返 0
+    push 0x300 / call 0x7C8E17        ; ★ CRT::_new(0x300)（768B 调色板缓冲）
+    ; 清零 0x300 字节（0x100 次 × 3B 步进循环）
+    ; ★ 调色板扩展循环（0x100 次）：每源字节 shl 2（×4），按 8 位回绕索引
+    ;   （and ecx,0x800000ff / jns / dec / or 0xffffff00 / inc = batch 083 同款
+    ;   带符号 8 位回绕）写 word+byte 到目标调色板
+    push 0x188 / call 0x7C8E17        ; ★ CRT::_new(0x188)（ConvertClass 本体）
+    push 0 / push 1 / push [0x887310] / push edx / push edx
+    mov ecx, eax / call 0x48E740      ; ★ ConvertClass 构造器（ConvertClass.h:48 实锤
+                                      ;   JMP_THIS(0x48E740)，收 BytePalette×2+DSurface+
+                                      ;   shadeCount+skipBlitters）
+    mov [esp+0x84], eax               ; ★ &pDestination = 新 ConvertClass*
+
+语义：**从文件（SHP 内嵌调色板）创建 ConvertClass**——CCFileClass 打开 → 分配
+0x300B 调色板缓冲并清零 → 256 色源数据按 ×4 扩张成引擎调色板格式 → 构造
+ConvertClass（0x48E740，接收两调色板+表面+色阶数+跳过 blitter 标志）→ 写回
+&pDestination。是「把色板资源物化为可绘制对象」的标准工厂。
+
+★跨批次连接：0x48E740 是 ConvertClass 构造器（YRpp 源码可见完整签名），本条是
+其工厂端；CCFileClass ctor（batch 063）+ CRT::_new（batch 001）串联；8 位回绕
+索引与 batch 083/092/093 的 x87 族同款。
+
+⚠️ partial：0x4A3890 的打开细节（是 CCFileClass::Open 包装还是读 SHP 头未证）、
+调色板 ×4 扩张的目标布局（BytePalette 结构）、0x887310 全局身份。
+
+================================================================================
+0x4741F0  CCINIClass::ReadCCFile（24 callers，>0xB0 未读完）
+================================================================================
+身份实锤：YRpp CCINIClass.h:313
+    CCINIClass* ReadCCFile(FileClass* pCCFile, byte bUnk = 0, int iUnk = 0)
+        { JMP_THIS(0x4741F0); }
+地址 + `__thiscall` + 签名（pCCFile/bUnk/iUnk）三证吻合。**ranking.tsv 曾标
+「variables::ReadCCFile」——实际宿主是 CCINIClass（YRpp 为准，本批修正口径**）。
+
+机器码还原（前段）：
+    mov esi, ecx                      ; this = CCINIClass*
+    lea edx, [esp+0xC] / mov ecx, [esp+0xC0] / push ecx / push edx
+    mov ecx, esi / call 0x525A60      ; ★ 读文件（batch 074 INI 读取族）
+    mov ebp, eax
+    mov byte [esi+0x40], bl           ; 清 +0x40 标志
+    test ebp, ebp / je 失败返          ; 读失败 → 返
+    cmp byte [esp+0xBC], bl / je 失败返
+    lea eax, [esp+0xA0] / push 0x14 / push eax / push 0x81BFE0
+    mov ecx, esi / call 0x526FB0      ; ★ 按 key 取 section
+    test eax, eax / je 特殊分支
+    push edi / push ebx / push 0x81BFE0
+    mov ecx, esi / call 0x5257C0      ; ★ INISection::Clear（batch 090 实锤！）
+    ...
+
+语义：**从 FileClass 读取并解析 INI**——CCINIClass::ReadCCFile 是引擎 INI 装载
+主入口：读文件（0x525A60 族）→ 清 +0x40 状态位 → 按 [0x81BFE0]（疑文件名/
+section 名全局）查/建 section → 调用 INISection::Clear（batch 090）清理旧键 →
+后续解析键值对。调用方含各 RulesClass/战役 INI 装载点。
+
+★跨批次连接：0x5257C0 = INISection::Clear（batch 090 已登记「清键链表头双指针」
+惯用法）——本批给出它的「在 ReadCCFile 主路径被调用」的实际场景；0x526FB0 属
+batch 074 INI 函数族（GetKeyCount/GetKeyName/WriteString 同区）；0x81BFE0 与
+batch 090 的 CRC 查表（0x5257C0 附近）同数据区。
+
+⚠️ partial：0x525A60 读文件细节、0x526FB0 精确签名（疑 GetSection/Find）、
+0x81BFE0 全局身份、函数后半解析循环未读完（>0xB0）。
+
+================================================================================
+0x407450  双向链表摘除+自环（25 callers，25B）
+================================================================================
+机器码（全 25B）：
+    mov eax, [ecx+4]      ; ★ node->prev
+    mov edx, [ecx]        ; ★ node->next
+    mov [eax], edx        ; prev->next = next
+    mov eax, [ecx]        ; node->next
+    mov edx, [ecx+4]      ; node->prev
+    mov [eax+4], edx      ; next->prev = prev
+    mov [ecx], ecx        ; ★ node->next = node（自环）
+    mov [ecx+4], ecx      ; ★ node->prev = node（自环）
+    ret
+
+语义：**标准双向链表节点摘除，并把被摘节点重构成「自环空链表」**——把节点从
+宿主链表解链后，让节点自身的 next/prev 都指向自己，使其成为可独立使用的空表头
+（引擎「登记册」体系里节点退役后复用/重挂的惯用手法）。与 batch 088/089/091
+登记的登记册设计家族（CellStruct 向量/对象指针表/哈希节点表）同属「链表/登记」
+基建层。
+
+★孪生邻域：紧随 0x407470 是**又一个安全解引用谓词**（mov eax,[ecx] / test /
+je / cmp eax,[eax+8] / jne / xor eax,eax / ret）——与 batch 089 的 0x4073C0/
+0x4073E0 逐字节同款，**0x4074xx 是同一谓词系的第三个编译副本**（未做归一化
+比对不写「已证为副本」，但形态一致）。0x4073xx-0x4074xx 整体是一个
+「安全解引用 + 链表摘除」的基础容器工具区。
+
+⚠️ partial：宿主链表类型（ObjectClass 的某登记链？）未对齐；0x407470 孪生
+仅形态目视。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x72ADE0 → batch 063（CCFileClass ctor）+ batch 001（CRT::_new）+ 0x48E740
+   （ConvertClass ctor，YRpp 源码实锤）。
+2. 0x4741F0 → batch 090（INISection::Clear 0x5257C0 在 ReadCCFile 主路径被调）
+   + batch 074（INI 函数族 0x526FB0/0x525A60）。
+3. 0x407450 → batch 088/089/091（登记册设计家族）+ 0x4073C0/0x4073E0 孪生系。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x72ADE0 的 0x4A3890 打开细节、调色板扩张目标布局、0x887310 身份。
+2. 0x4741F0 的 0x525A60/0x526FB0 精确签名、0x81BFE0 身份、后半解析循环。
+3. 0x407450 宿主链表类型与 0x407470 孪生（未归一化比对）。
