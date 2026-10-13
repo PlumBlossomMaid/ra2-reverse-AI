@@ -1,0 +1,117 @@
+frontier batch 162 — CellClass::ScatterContent + FindInfantrySubposition + 数组 getter/setter 族（2026-10-13）
+
+口径：承接 batch 161 候选，ranking.tsv unique_callers 降序取 0x481670（11 callers，
+CellClass.h:104-105 实锤）、0x481180（11 callers，CellClass.h:300-301 实锤）、
+0x717880（11 callers）。三者 prologue 均干净。
+
+================================================================================
+0x481670  CellClass::ScatterContent（11 callers）
+================================================================================
+身份实锤：YRpp CellClass.h:104-105
+    void ScatterContent(const CoordStruct &crd, bool ignoreMission,
+                        bool ignoreDestination, bool alt)
+        { JMP_THIS(0x481670); }
+地址 + JMP_THIS + 4 参签名三证吻合。
+
+机器码还原（前 0x50）：
+    mov al, [esp+0x10]              ; ★ alt 参数
+    test al / je 用 +0xE4
+    mov esi, [edi+0xE8]             ; ★ alt → 起始链 +0xE8
+    jmp 遍历
+  用 +0xE4:
+    mov esi, [edi+0xE4]             ; ★ 默认起始链 +0xE4
+  遍历:
+    mov al, [esp+0x34] / mov byte [esp+0xF], 0 / test al / jne 跳过
+    test esi / je 跳过
+  loop:
+    mov ecx, esi / call 0x40DD70    ; ★ batch 114 实锤的类型分派跳转表!
+    test eax / je 下一个
+    lea ecx, [eax+0x150] / call 0x750010   ; ★（batch 127 已见的 0x750010 判定）
+    test al / jne 跳过
+  下一个:
+    mov esi, [esi+0x30]             ; ★ 链步进（+0x30）
+    test esi / jne loop
+    ...
+
+语义：**散布格子内容（ScatterContent）**——按 alt 选 +0xE8/+0xE4 起始链，
+遍历链（+0x30 步进）对每项先过 batch 114 的类型分派（0x40DD70），再按
++0x150 处 0x750010 判定决定是否散布。★与 batch 156（0x487A10 桥遍历）共用
++0xE4/+0x30 链字段 + 0x750010 判定——CellClass 内容处理链。
+
+★跨批次连接：batch 114（0x40DD70 类型分派）+ batch 127/156（0x750010 +
++0xE4/+0x30 链）——CellClass 内容族。
+
+⚠️ partial：散布动作主体（0x4816C8 起）、alt 三参（ignoreMission 等）语义、
+链宿主类型。
+
+================================================================================
+0x481180  CellClass::FindInfantrySubposition（11 callers）
+================================================================================
+身份实锤：YRpp CellClass.h:300-301
+    CoordStruct* FindInfantrySubposition(CoordStruct* pOutBuffer,
+        const CoordStruct& coords, bool ignoreContents, bool alt,
+        bool useCellCoords)
+        { JMP_THIS(0x481180); }
+地址 + JMP_THIS + 5 参签名三证吻合。
+
+机器码还原（前 0x50）：
+    mov ebp, [esp+0x2C]             ; ★ coords 参数
+    mov esi, ecx                    ; this
+    lea edx, [esp+0x14] / mov eax, [ebp] / mov ecx, [ebp+4]
+    and eax, 0xFF / and ecx, 0xFF   ; ★ 坐标掩码（取低字节）
+    mov [esp+0xC], eax / lea eax, [esp+0x20]
+    mov [esp+0x14], ecx / mov ebx, 0x80   ; ★ 0x80 初值
+    push edx / push eax / lea ecx, [esp+0x18]
+    mov [esp+0x20], ebx / mov [esp+0x24], ebx
+    call 0x487F20                   ; ★ batch 120 实锤的矩形交集/交点运算!
+    fild dword [eax+4] / fild dword [eax]   ; ★ 结果转 float
+    ...（坐标浮点合成 → 输出子位置）
+
+语义：**找步兵子位置（FindInfantrySubposition）**——坐标掩码（取低字节）+ 0x80
+初值，经 batch 120 实锤的矩形运算（0x487F20）求交点，再 fild 转 float 合成
+输出。★调用方：步兵单位寻找站位的子坐标（多单位同一格时的偏移）。
+
+★跨批次连接：batch 120（0x487F20 矩形交集）+ fild 浮点转换（batch 083/092
+族）+ CellClass 几何族——步兵站格子位置计算。
+
+⚠️ partial：0x487F20 返回结构语义、坐标浮点合成公式（0x4811D0 起）、
+ignoreContents/useCellCoords 参数用途。
+
+================================================================================
+0x717880  +0x808/+0x814 数组家族（11 callers）
+================================================================================
+机器码（fy 三成员）：
+  0x717880（0x07 全读完）：
+    mov edx, [ecx+0x808]            ; ★ this->+0x808（计数?）
+    xor eax / test edx / setg al / ret   ; ★ +0x808 > 0 判定
+  0x717890（数组写）：
+    mov eax, [esp+8] / mov edx, [esp+4]
+    mov [ecx+eax*4+0x814], edx      ; ★ this->+0x814 数组[索引] = 值
+    ret 8
+  0x7178B0（数组读）：
+    mov eax, [esp+4] / mov eax, [ecx+eax*4+0x814]   ; ★ 数组[索引]
+    ret 4
+
+语义：**+0x808（计数）+ 0x814 起数组（4B/项）的 getter/setter 族**——0x717880
+判 +0x808 > 0、0x717890 写数组、0x7178B0 读数组。★0x717xxx 区（batch 159
+的 0x717880 邻域）——对象「计数 + 动态数组」基建。
+
+★跨批次连接：数组/计数对（登记册族）+ 0x717xxx 区——对象数组基建的
+读写判三成员。
+
+⚠️ partial：+0x808 计数语义、+0x814 数组宿主（疑 0x7178C0 起对象方法族）、
+紧邻 0x7178C0（+0x7BC 标志分支）的成员关系。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x481670 → batch 114/127/156（类型分派 + 0x750010 + 链字段）。
+2. 0x481180 → batch 120（0x487F20 矩形）+ fild 浮点族。
+3. 0x717880 → 登记册数组/计数对 + 0x717xxx 区。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x481670 散布动作主体与 alt 三参语义。
+2. 0x481180 的 0x487F20 返回结构与坐标合成公式。
+3. 0x717880 的 +0x808/+0x814 宿主与计数语义。
