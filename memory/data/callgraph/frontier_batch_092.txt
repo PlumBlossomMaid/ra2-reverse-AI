@@ -1,0 +1,79 @@
+frontier batch 092 — BuildingClass 电力比例 helper + 可选外部缓冲数组构造器（2026-10-13）
+
+口径：承接 batch 091 候选，ranking.tsv unique_callers 降序取 0x5F5C60（35 callers
+/ 2174 deps，调用方 BuildingClass::BeginMode/GetCurrentFrame/GetPowerOutput/
+UpdateAnimations 等）与 0x42FCB0（34 callers / 1997 deps，调用方
+BaseClass::BaseClass/FUN_00565090 等）。先验 prologue 均干净。
+
+================================================================================
+0x5F5C60  BuildingClass 电力/比例浮点 helper（35 callers，32B）
+================================================================================
+    sub esp, 8
+    fild dword ptr [ecx + 0x6c]          ; this->[0x6C]（整数）
+    mov eax, [ecx]                       ; this->vtable
+    fstp qword ptr [esp]                 ; 存为 double
+    call dword ptr [eax + 0x88]          ; ★ vtable[0x88]() 取关联对象
+    fild dword ptr [eax + 0xA0]          ; 关联对象->[0xA0]（整数）
+    fdivr qword ptr [esp]                ; ★ st0 = this->[0x6C] / 关联->[0xA0]
+    add esp, 8 / ret
+
+语义：返回 `(double)this->[0x6C] / (double)(vtable[0x88]()() )->[0xA0]`——
+「本对象某计数 / 关联对象某计数」的比例。调用方含 GetPowerOutput → 疑为
+`产出比例`（Power 类，输出/容量比）。紧邻 0x5F5C80（55B）是同族第二成员：
+    fld qword [esp+4]                    ; 入参 double
+    fcomp qword [0x7E2800]               ; 与 0.0 比较（实测 0x7E2800=0.0）
+    test ah,0x41 / jne 收尾
+    call vtable[0x88]() 再取对象 → fild [eax+0xA0] → fmul qword [esp+8]
+    call 0x7C5F00（_ftol）→ mov [esi+0x6C] = eax
+    ; ★ 把「关联对象计数 × 入参比例」截断成 int 写回 this->[0x6C]
+
+⚠️ partial：vtable 槽 0x88 与 [0xA0]/[0x6C] 字段的确切语义（是 PowerOutput/
+PowerDrain 还是别的）未对齐 YRpp BuildingClass 布局；两个函数是否同一源
+成员（重载/内联展开）未证。
+
+================================================================================
+0x42FCB0  可选外部缓冲数组构造器（34 callers，114B）
+================================================================================
+    push esi / edi
+    edi = [esp+0xC]（arg1：容量） / esi = ecx（this）
+    test edi,edi
+    mov [esi+4] = 0                      ; 数组指针先置 NULL
+    mov [esi+8] = edi                    ; 容量 = arg1
+    mov byte [esi+0xC] = 1               ; ★ 标志：已分配/持有
+    mov byte [esi+0xD] = 0               ; 第二标志
+    mov [esi] = 0x7E38D0                 ; ★ 安装虚表 0x7E38D0
+    je 0x42FD1B                          ; 容量 0 → 跳过分配
+    eax = [esp+0x10]（arg2：外部缓冲指针）
+    test eax,eax / je 0x42FCEB
+    ; arg2 非空 → 采用外部缓冲（不分配）：
+    dec edi / mov [esi+4] = eax          ; 数组 = arg2
+    mov [esp+0xC] = edi / ret 8
+    ; arg2 为空 → operator new 分配容量×4：
+0x42FCEB:
+    lea eax, [edi*4] / push / call 0x7C8E17（operator new，batch 001）
+    test eax,eax / je 0x42FD12           ; 分配失败 → 容量清零路径
+    dec edi / mov [esi+4] = eax
+
+语义：**标准「可带外部缓冲的数组/向量」构造器**——安装虚表 0x7E38D0，
+容量取 arg1；arg2 给指针则直接采用（外部存储、不分配），否则 operator new
+分配 arg1×4 字节；+0xC 持有标志、+0xD 第二标志。调用方含 BaseClass::BaseClass
+→ 这是引擎基础对象内嵌数组成员的统一构造件。
+
+⚠️ partial：虚表 0x7E38D0 对应的类名未确认（疑 DynamicVectorClass 或
+同类容器）；分配失败分支（0x42FD12-0x42FD1B）未读完。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x5F5C60 用 `fild`/`fdivr`/`_ftol(0x7C5F00)`——batch 083 FacingStruct、
+   batch 084 音量钳位同款 x87 向零截断家族；[0x822D80] FPCW=0x0E7F 上下文一致。
+2. 0x42FCB0 的 operator new（0x7C8E17，batch 001）+ 虚表安装 + 双标志——
+   与 batch 089 0x4073C0 安全解引用（含 [eax+8] 自引用哨兵）、batch 091
+   0x5B40B0 哈希节点分配同属「基础对象/容器基建」。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x5F5C60 的 vtable[0x88] 槽身份与 [0x6C]/[0xA0] 字段语义（Yrpp 布局对齐）。
+2. 0x42FCB0 虚表 0x7E38D0 的类归属与分配失败分支细节。
+3. 两个函数与各自紧邻孪生（0x5F5C80 / 0x42FCD8 区域）的成员关系。
