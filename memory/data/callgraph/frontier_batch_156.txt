@@ -1,0 +1,116 @@
+frontier batch 156 — 状态校验门禁 + 桥对象遍历 + 宽串 operator= 先比较版（2026-10-13）
+
+口径：承接 batch 155 候选，ranking.tsv unique_callers 降序取 0x5F4EC0（12 callers）、
+0x487A10（12 callers，batch 155 BlowUpBridge 同 +0xE4 字段）、0x7B68E0（12 callers）。
+三者 prologue 均干净，YRpp 无 JMP 宏覆盖（按机器码判类）。
+
+================================================================================
+0x5F4EC0  状态校验门禁（12 callers，>0x50 未读完）
+================================================================================
+机器码还原（前 0x50）：
+    mov edi, [esp+0x40]             ; ★ arg（待校验对象）
+    mov esi, ecx                    ; this
+    mov ecx, [0xAC1380]             ; ★ 全局 A
+    mov eax, [edi] / cmp eax, ecx / jne 继续   ; ★ 三字段比对
+    mov ecx, [edi+4] / mov eax, [0xAC1384]
+    cmp ecx, eax / jne 继续          ; ★ 第二字段
+    mov edx, [edi+8] / mov eax, [0xAC1388]
+    cmp edx, eax / je 收尾           ; ★ 第三字段全等 → 直接收尾
+  继续:
+    mov al, [0xA8E9A0]              ; ★ 门禁全局（batch 098/099 同区）
+    test al / je 收尾
+    mov al, [esi+0x81]              ; ★ this->+0x81 标志
+    test al / je 收尾
+    ...（后续动作）
+
+语义：**对象与三全局（[0xAC1380]/[0xAC1384]/[0xAC1388]）比对 + 双门禁的状态
+校验**——arg 三字段全等全局则收尾，否则按 [0xA8E9A0] 与 this->+0x81 门禁
+决定后续动作。★[0xA8E9A0] 与 batch 099（MessageBox::Show 用 [0xa8e9a0]）、
+batch 098（UI::Updated 同区）互证——游戏状态全局区。
+
+★跨批次连接：batch 099（[0xA8E9A0] 同全局）+ 0xAC1xxx 全局区（batch 136
+的 [0xAC1B00] 哈希表邻域）——状态门禁链。
+
+⚠️ partial：三全局语义、+0x81 标志、后续动作（0x5F4F02 起）。
+
+================================================================================
+0x487A10  桥对象遍历 + 虚表槽 0x1AC（12 callers）
+================================================================================
+机器码还原（前 0x50）：
+    mov edi, ecx                    ; this
+    mov esi, [edi+0xE4]             ; ★ this->+0xE4（桥对象，batch 155 同字段）
+    test esi / je 0x487AAA
+    mov bl, [esp+0x30]              ; ★ arg 标志
+    mov eax, [esi] / mov ebp, [esi+0x30]   ; ★ 链步进（+0x30）
+    push 1/0/-1/-1 / push edi
+    mov ecx, esi
+    call [eax+0x1AC]                ; ★ 虚表槽 0x1AC（桥动作）
+    cmp eax, 7 / je 0x487A78        ; ★ 结果 == 7 分支
+    test bl, bl / je 0x487A68       ; ★ arg 标志分支
+    test esi / je 0x487AA4
+    test byte [esi+0x14], 1 / je 0x487A68
+    mov edx, [esi] / mov ecx, esi
+    call [edx+0x84]                 ; ★ 虚表槽 0x84
+    ...
+
+语义：**桥对象遍历处理（batch 155 BlowUpBridge 的兄弟）**——同 +0xE4 起始桥
+对象链（+0x30 步进），调虚表槽 0x1AC（带多参），按结果 ==7 与 arg 标志分支，
+再按 +0x14 bit0 调虚表槽 0x84。★与 batch 155 的 0x47DD70（BlowUpBridge）
+共用 +0xE4/+0x30 桥链字段——桥逻辑的第二入口。
+
+★跨批次连接：batch 155（0x47DD70 同 +0xE4 桥链）+ 虚表槽 0x1AC/0x84
+（高槽位虚表调用）——桥/动画对象处理族。
+
+⚠️ partial：虚表槽 0x1AC/0x84 方法身份、+0x14 bit0 语义、arg 标志分支、
+链遍历后半。
+
+================================================================================
+0x7B68E0  宽串 operator= 先比较版（12 callers，0x50 未读完）
+================================================================================
+机器码还原（前 0x50）：
+    mov esi, ecx                    ; this
+    mov edi, [esp+0xC]              ; ★ 源（宽串对象/指针）
+    mov eax, [esi] / test / jne 有旧
+    cmp [edi], 0 / je 收尾           ; ★ 双空 → 不动
+  有旧:
+    test eax / je 0x7B690B
+    mov ecx, [edi] / test / je 0x7B690B
+    push ecx / push eax
+    call 0x7CA5D3                   ; ★ CRT::wcscmp（batch 110 实锤）
+    test eax / je 收尾               ; ★ 相同 → 不重分配
+  0x7B690B:
+    mov edi, [edi] / test / jne 有源
+    mov edi, 0x887734               ; ★ 空源 → 全局兜底（batch 112 实锤）
+  有源:
+    mov eax, [esi] / test / je 跳过
+    push eax / call 0x7C8B3D        ; ★ _delete 旧（batch 001）
+  跳过:
+    mov [esi], 0 / test edi ...
+    ; ★（wcslen 定长 → _new → 拷贝——与 0x7B48D0 同构后半）
+
+语义：**宽串 operator=（先 wcscmp 比较、相同则跳过重分配的优化版）**——
+若新旧串相等（wcscmp==0）直接返回（不释放不重分配）；否则释放旧值（_delete）
+→ 兜底空源（0x887734）→ 重新分配拷贝。★与 batch 155 的窄串 0x7B48D0
+（直接释放旧值）不同——本条多了 wcscmp 提前返回优化；与 batch 134 的
+0x7B7600、batch 143 的 0x7B6880 同族（宽串 operator= 家族第五变体）。
+
+★跨批次连接：batch 110（wcscmp 0x7CA5D3）+ batch 134/143/152（宽窄串
+operator= 家族）+ _delete/_new + 0x887734 兜底——「比较后决定是否重分配」
+的优化形态。
+
+⚠️ partial：拷贝段（wcslen→_new→拷贝）未读完、宿主类名（WStringClass
+推断）、与 0x7B48D0 的精确差异（窄/宽 + 比较优化）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x5F4EC0 → batch 098/099（[0xA8E9A0] 同全局）+ 0xAC1xxx 全局区。
+2. 0x487A10 → batch 155（+0xE4 桥链同字段）+ 虚表槽 0x1AC/0x84。
+3. 0x7B68E0 → batch 110/134/143/152（宽窄串 operator= 家族 + wcscmp）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x5F4EC0 三全局语义与后续动作。
+2. 0x487A10 虚表槽 0x1AC/0x84 身份与桥链遍历。
+3. 0x7B68E0 拷贝段与宿主类名、与 0x7B48D0 差异。
