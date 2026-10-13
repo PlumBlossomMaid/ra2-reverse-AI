@@ -1,0 +1,81 @@
+frontier batch 086 — MapClass::CoordinatesLegal（菱形坐标合法性）+ 窄字符串 operator==（2026-10-13）
+
+口径：承接 batch 085 候选，ranking.tsv unique_callers 降序取 0x7B4780（41 callers）
+与 0x568300（35 callers）。先验 prologue 均干净。
+
+================================================================================
+0x568300  MapClass::CoordinatesLegal（CellStruct）——等距菱形坐标合法性
+================================================================================
+★ 身份实锤：YRpp MapClass.h:332
+   `bool CoordinatesLegal(const CellStruct& cell) const { JMP_THIS(0x568300); }`
+   ——地址、签名、JMP_THIS 约定三证吻合。
+
+字段（与 YRpp MapClass.h:471 `RectangleStruct MapRect` 布局吻合）：
+  this->[0xF4] = MapRect.W（Width）
+  this->[0xF8] = MapRect.H（Height）
+
+68 字节完整反汇编：
+    mov eax, [esp+4]          ; arg = &CellStruct{x,y}
+    mov edx, [ecx+0xf4]       ; edx = W
+    movsx esi, word [eax]     ; x（int16 符号扩展）
+    movsx eax, word [eax+2]   ; y
+    lea edi, [eax + esi]      ; edi = x + y
+    cmp edi, edx / jle exit0  ; ★ x + y <= W → 非法
+    ebx = esi - eax (= x - y) / cmp ebx,edx / jge exit0   ; ★ x - y >= W → 非法
+    eax -= esi (= y - x) / cmp eax,edx / jge exit0         ; ★ y - x >= W → 非法
+    mov eax, [ecx+0xf8]       ; eax = H
+    lea ecx, [edx + eax*2]    ; ecx = W + 2H
+    cmp edi, ecx / jg exit0   ; ★ x + y > W + 2H → 非法
+    mov al, 1 / ret           ; 合法
+
+即合法区 = `{ (x,y) : W < x+y <= W+2H  且  -(W) < x-y < W }`
+           = 以 W 为中心、沿 x+y 方向拉开的**平行四边形/菱形**。
+
+★ **跨批次连接（重要）**：这与 `docs/random-map/dead-code-functions.md` 里
+batch 060/061 实锤的 `[0xABED04]`=W、`[0xABED08]`=W+2H 是**同一组菱形谓词**——
+死代码 `0x5A7250`（单点菱形检查）与 `0x5A76E0`（矩形四角全落在菱形）就是
+本函数的手写内联版本。本条把该全局对（`[0xABED04]`/`[0xABED08]`）追溯到了
+**其活代码权威来源**：MapClass::MapRect 的 W/H，经 `0x566306` 写入全局缓存。
+⇒ 死代码那组 x+y / x-y / y-x 三路比较不再只是"看起来像菱形"，而是与引擎
+正身逐指令同构。
+
+⚠️ partial：`CellStruct` 为 `Vector2D<short>`（GeneralStructures.h），
+`movsx` 符号扩展确认；负坐标是否在调用侧已被排除未取证。
+
+================================================================================
+0x7B4780  窄字符串类 operator==（41 callers）
+================================================================================
+100 字节。签名 `bool operator==(const StringClass* rhs)`（ecx=this、栈参=rhs）。
+
+    mov eax, [ecx]            ; lhs->[0]
+    mov ecx, [esp+4]          ; rhs 对象
+    test eax, eax / jne L_cmp
+    cmp dword [ecx], 0 / jne L_cmp
+    mov al, 1 / ret 4         ; ★ 双方都 NULL → 相等（真）
+L_cmp:
+    test eax, eax / je 0x7b47e0        ; lhs NULL 而 rhs 非 NULL → 0
+    mov esi, [ecx] / test esi,esi / je 0x7b47e0   ; rhs NULL → 0
+    ; 2 字节展开比较循环（unrolled strcmp 形态）：
+    dl = [eax]; bl = [esi]; cmp dl,bl / jne L_ne
+    test cl,cl / je L_eq              ; 读到 '\0' → 串相等
+    dl = [eax+1]; bl = [esi+1]; cmp dl,bl / jne L_ne
+    add eax,2 / add esi,2 / test cl,cl / jne loop
+L_eq: xor eax,eax / sete al / ret 4   ; → 1
+L_ne: sbb eax,eax / sbb eax,-1 / sete al / ret 4  ; ★ 差值符号→0/1 归一化
+L_0: xor al,al / ret 4                ; → 0
+
+★ 三个要点：
+① **双 NULL 判等**——两个空指针视为相等字符串（与 c_str() 路径的 NULL→空串
+   回退是同一套「NULL 与空串可互换」的设计，见 batch 085）。
+② 2 字节展开循环：每轮比 2 字节而非 1 字节，是 MSVC 对 memcmp/strcmp 的
+   典型优化（读 dword 前先逐字节判零）。
+③ `sbb eax,eax / sbb eax,-1 / sete al` 是编译器把 `a-b` 的符号位收敛成
+   bool 的惯用法——**不是原版手写**，但语义确定（首字节不同则按大小关系取
+   0/1，最终只保留"是否相等"）。
+
+属 0x7B46xx 窄字符串类模块（batch 062 ctor/assign、batch 059 dtor、
+batch 072 Get/[]、batch 085 c_str()/[] 孪生族）。0x7B5450 之后另有一份
+0x7B4780 的孪生（待后续批次取证其地址与调用者是否重叠）。
+
+⚠️ partial：字符串比较是否对非 ASCII 有 locale 依赖（此处逐字节比较，无）；
+未知调用点是否都经由本条（存在多份编译副本，见 batch 085 的孪生现象）。

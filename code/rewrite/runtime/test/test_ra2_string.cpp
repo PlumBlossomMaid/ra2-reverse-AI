@@ -46,3 +46,51 @@ TEST(Ra2StringTest, CharAtOnEmptyStringIsAlwaysZero) {
     EXPECT_EQ(ra2::runtime::narrow_char_at_legacy(self, 0), '\0');
     EXPECT_EQ(ra2::runtime::narrow_char_at_legacy(self, 1), '\0');
 }
+
+// 0x7B4780 operator==：双方皆 NULL 判等（0x7B4790 mov al,1）。
+TEST(Ra2StringTest, EqualsTreatsTwoNullsAsEqual) {
+    const char* a = nullptr;
+    const char* b = nullptr;
+    EXPECT_TRUE(ra2::runtime::narrow_equals_legacy(&a, &b));
+}
+
+// 一方 NULL 一方非 NULL 判不等（0x7B47E0 xor al,al）。
+TEST(Ra2StringTest, EqualsRejectsNullAgainstNonNull) {
+    const char* a = nullptr;
+    const char* b = kHello;
+    EXPECT_FALSE(ra2::runtime::narrow_equals_legacy(&a, &b));
+    EXPECT_FALSE(ra2::runtime::narrow_equals_legacy(&b, &a));
+}
+
+// 内容相同判等（走 2 字节展开循环）。
+TEST(Ra2StringTest, EqualsAcceptsIdenticalStrings) {
+    const char* a = kHello;
+    const char* b = "hello";
+    EXPECT_TRUE(ra2::runtime::narrow_equals_legacy(&a, &b));
+}
+
+// 首字节不同即不等，不继续比较（0x7B47A9 jne → 0x7B47D1 sbb 归一化）。
+TEST(Ra2StringTest, EqualsRejectsOnFirstDifferingByte) {
+    const char* a = kHello;
+    const char* b = "hellp";
+    EXPECT_FALSE(ra2::runtime::narrow_equals_legacy(&a, &b));
+    // 前缀相同、长度不同也算不等。
+    const char* c = "hell";
+    EXPECT_FALSE(ra2::runtime::narrow_equals_legacy(&a, &c));
+}
+
+// 两个空串（非 NULL 指针）判等——循环首个字节即 '\0'。
+TEST(Ra2StringTest, EqualsAcceptsTwoEmptyStrings) {
+    const char* a = "";
+    const char* b = "";
+    EXPECT_TRUE(ra2::runtime::narrow_equals_legacy(&a, &b));
+}
+
+// 奇数长度串走展开循环的第二个字节分支（"abc" 长度 3，2 字节展开需读 a[3]）。
+TEST(Ra2StringTest, EqualsHandlesOddLengthStrings) {
+    const char* a = "abc";
+    const char* b = "abc";
+    EXPECT_TRUE(ra2::runtime::narrow_equals_legacy(&a, &b));
+    const char* c = "abd";
+    EXPECT_FALSE(ra2::runtime::narrow_equals_legacy(&a, &c));
+}

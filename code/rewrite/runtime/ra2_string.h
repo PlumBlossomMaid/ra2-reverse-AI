@@ -20,4 +20,9 @@ const char* narrow_cstr_legacy(const void* self);
 // 用 repne scasb 求 strlen，下标越界返回 0，否则返回 str[index]。
 char narrow_char_at_legacy(const void* self, std::uint32_t index);
 
+// 0x7B4780: 窄字符串 operator==（41 callers）。双方指针为 NULL 视为相等，
+// 一方 NULL 一方非 NULL 视为不等；否则逐字节比较（2 字节展开循环形态），
+// 首字节即决定返回值（sbb 归一化，不比较剩余部分）。
+bool narrow_equals_legacy(const void* lhs, const void* rhs);
+
 }  // namespace ra2::runtime
