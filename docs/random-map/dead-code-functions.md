@@ -295,6 +295,28 @@ return base + jitter;
 这是放置实体时"在两个锚点之间取一个偏移格"的写法，与 `0x5A6BA0`
 （邻域合法性扫描）配套：先按切比雪夫距离取偏移，再用扫描器验证落点。
 
+### `0x5A5360` —— 废弃方案里最大的单个函数（1913 B）
+
+```
+operator_new ×3                       // 开场三次堆分配
+MapClass::CellIterator_Reset(0x578350)
+MapClass::CellIterator_Next(0x578290)  ×N
+  imul eax, [0x89c2dc]                 // × 边长 → Y*side+X 线性索引
+  work = [0xabed10]
+FUN_005ad870(...) ; operator_new ; FUN_0042fcb0(...)   // 造对象
+GetCellAt(0x5657a0) ; FUN_00486380
+Randomizer::Random ×3                 // 3 个取数点
+FUN_007c8b3d (delete) ×3
+```
+
+实测 1913 字节，3 个取数点。与 `0x5A3A60` 相比：同一套「CellIterator 双轮
+遍历 + `imul [0x89C2DC]` 线性索引」骨架，多了三次堆分配与对象构造。
+
+> 至此这套废弃方案的形状已经清楚：**遍历 work 数组 → 校验格子 → 造对象 →
+> 写回**，全程不碰 tile/level/ramp 等地形字段。与 `0x58BE20`（挑已占用格）、
+> `0x5A6BA0`（邻域扫描）、`0x5A5AE0`（切比雪夫距离取偏移）、
+> `0x5A6510`（派生区间取槽位）拼起来是一套完整的「遭遇战实体布置」。
+
 ## 孪生签名分析：排除「活函数的未引用复制品」
 
 按「出边目标集合」作签名，在全表 8655 个函数里检索同签名者：
