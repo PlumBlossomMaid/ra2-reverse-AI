@@ -1,0 +1,77 @@
+frontier batch 068 — AnimClass 构造 + 句柄→对象查表（2026-10-13）
+
+口径：承接 batch 067 候选，capstone 直反汇编，先验 prologue（两候选均干净）。
+本批 2 条。
+
+================================================================================
+0x00421EA0  AnimClass::AnimClass —— 构造函数（批量字段初始化）
+================================================================================
+57 callers（符号名 USER_DEFINED，YRpp 覆盖，按推断名标注）。
+`and esp,0xfffffff8`（SSE 对齐）+ `sub esp,0x54` 帧。反汇编起始 0x66 字节：
+
+    00421ea0  push ebp / mov ebp, esp / and esp, 0xfffffff8 / sub esp, 0x54
+    00421ea9  push ebx / push esi / push edi
+    00421eac  mov esi, ecx                  ; this
+    00421eae  call 0x5f3900                 ; ★ 基类构造（链上第一环）
+    00421eb3  mov ecx, [ebp+8]              ; arg1
+    00421eb8  mov dword [esi+0xac], 0       ; +0xAC = 0
+    00421ebe  mov byte  [esi+0xb0], 0       ; +0xB0 = 0
+    00421ec4  mov eax, [0xa8ed84]           ; ★ 读全局 [0xA8ED84]
+    00421ec9  mov dword [esi+0xbc], 0       ; +0xBC = 0
+    00421ecf  mov [esi+0xb4], eax           ; +0xB4 = 全局 [0xA8ED84]
+    00421ed5  mov dword [esi+0xc0], 0       ; +0xC0 = 0
+    00421edb  mov dword [esi+0xc4], 1       ; +0xC4 = 1
+    00421ee5  mov [esi+0xc8], ecx           ; +0xC8 = arg1
+    00421eeb  or eax, -1                    ; eax = -1
+    00421eee  mov dword [esi+0xcc], 0       ; +0xCC = 0
+    00421ef4  mov [esi+0xd0], eax           ; +0xD0 = -1（哨兵）
+    00421efa  mov dword [esi+0xd4], 0       ; +0xD4 = 0
+    00421f00  mov [esi+0xd8], eax           ; +0xD8 = -1（哨兵）
+    00421f06  mov dword [esi+0xfc], 0x3e8   ; +0xFC = 1000
+
+判据（这是构造而非普通方法）：① 首条副作用是 `call 0x5F3900`（基类构造）；
+② 随后**批量初始化 this 字段**到默认值（0 / 1 / -1 哨兵 / 1000）；③
+`and esp,0xfffffff8` 对齐是构造/大函数的典型栈帧形态。
+
+★ 字段默认值（已实锤）：`+0xC4`=1、`+0xD0`/`+0xD8`=-1（哨兵）、`+0xFC`=1000、
+`+0xB4` = 全局 `[0xA8ED84]` 的当前值。⚠️ partial：各字段语义与
+基类 0x5F3900 的身份未实锤；+0xAC..+0xFC 区间外还有字段未取。
+
+================================================================================
+0x00750920  句柄→对象查表 + 方法链
+================================================================================
+58 callers。反汇编起始 0x5E 字节：
+
+    00750920  push ecx
+    00750921  mov al, [0x8464ac]            ; ★ 全局使能开关
+    00750926  mov [esp], edx
+    0075092a  test al, al
+    0075092c  jne 0x750934
+    0075092e  xor eax, eax / pop ecx / ret 8  ; 关 → 返 0
+    00750934  push ebx / xor ebx,ebx / push ebp / push esi
+    00750939  test ecx, ecx / jl 0x75094f   ; 句柄 < 0 → 跳过
+    0075093d  cmp ecx, [0xb1d388]           ; ★ 与计数 [0xB1D388] 比较
+    00750943  jge 0x75094f                  ; >= 计数 → 跳过
+    00750945  mov eax, [0xb1d37c]           ; ★ 表基址
+    0075094a  mov ecx, [eax + ecx*4]        ; ★ table[句柄]
+    0075094d  mov ebx, [ecx]                ; 对象->[0]
+    0075094f  mov ebp, [esp+0x18]           ; arg
+    00750953  xor esi, esi
+    00750955  test ebp, ebp / je 0x75097a   ; arg==0 → 跳过方法链
+    00750959  mov ecx, ebp
+    0075095b  call 0x406130                 ; ★ 方法链第一环
+    ...（0x406310 / 0x4052F0 续）
+
+语义：**按句柄（ecx）查全局对象表 `[0xB1D37C]`（边界 `[0xB1D388]` 计数），
+取对象，再对入参 arg 跑一条方法链**。`[0x8464AC]` 是全局使能开关，
+`[0xB1D37C]`/`[0xB1D388]` 是句柄表的基址与计数（与 batch 064 的
+`[0xA8ED2C]`/`[0xA8ED38]` 同形态——RA2 有多张句柄/对象注册表）。
+⚠️ partial：方法链三环（0x406130/0x406310/0x4052F0）的具体作用未实锤；
+句柄表承载的对象类型未实锤。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. AnimClass 基类 0x5F3900 的身份与各字段语义。
+2. 0x750920 的方法链三环作用、句柄表对象类型。
+3. 全局 [0xA8ED84]（AnimClass 构造读取）与 [0xB1D37C] 表的关系。
