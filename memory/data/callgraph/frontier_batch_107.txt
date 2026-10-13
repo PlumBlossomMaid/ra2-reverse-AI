@@ -1,0 +1,124 @@
+frontier batch 107 — SHPStruct 析构 + INI 读取包装 + 全局门铃（2026-10-13）
+
+口径：承接 batch 106 候选，ranking.tsv unique_callers 降序取 0x69E500（24 callers，
+SHP 文件区）、0x525A10（23 callers，INI 区）、0x532100（23 callers，全局门铃）。
+三者 prologue 均干净。
+
+================================================================================
+0x69E500  SHPStruct::~SHPStruct（24 callers，0x70B 全读完）
+================================================================================
+身份实锤：YRpp FileFormats/SHP.h:20-21
+    struct SHPStruct { ... ~SHPStruct() { JMP_THIS(0x69E500); } }
+地址 + `__thiscall` 无参析构 + SHP 文件区三证吻合。紧邻 0x69E580 是 SHP.h 同
+文件的 GetData（下一函数边界确认）。
+
+机器码还原（0x70B 全读完）：
+    mov esi, ecx
+    cmp word ptr [esi], -1 / jne 0x69E56F     ; ★ [0x00] word == -1（引用哨兵）
+    mov al, [esi+0x10] / test / je 0x69E534   ; ★ +0x10 持有标志
+    mov edi, [esi+0xC] / test edi / je 0x69E528
+    mov ecx, edi / call 0x69E500              ; ★ 递归析构 +0xC 子对象（同 dtor）
+    push edi / call 0x7C8B3D                  ; ★ CRT::_delete（batch 001/096 族）
+    mov [esi+0xC], 0 / mov byte [esi+0x10], 0
+  next:
+    mov eax, [esi+0x18] / test / je 0x69E558
+    mov ecx, [esi+0x1C] / mov [eax+0x1C], ecx ; ★ 双向链表摘除：前向->后向贯通
+    mov eax, [esi+0x1C] / test / je 0x69E550
+    mov edx, [esi+0x18] / mov [eax+0x18], edx
+    jmp 0x69E558
+  head:
+    mov eax, [esi+0x18] / mov [0xB077B0], eax ; ★ 全局链头 [0xB077B0] 更新
+  buffer:
+    mov eax, [esi+8] / test / je 0x69E56F
+    push eax / call 0x7C93E8                  ; ★ CRT::free（batch 001/096 族）
+    mov [esi+8], 0
+  done:
+    ret
+
+语义：**SHP 文件引用/缓存对象的析构**——word 哨兵 [0x00]==-1 判定引用形态 →
+递归释放 +0xC 子句柄（自身 dtor）+ _delete → +0x18/+0x1C 双向链表摘除（SHP
+引用缓存链，链头 [0xB077B0]）→ +8 数据缓冲 CRT::free。与 SHP.h 注释
+「reference used for caching」完全对应——SHPReference 缓存管理层析构。
+
+★跨批次连接：CRT::_delete(0x7C8B3D)/free(0x7C93E8) 与 batch 001/096/101/104
+CRT 族同源；双向链表布局（+0x18/+0x1C）与 batch 104 的 0x407450、batch 106
+的 0x6C9850 同族（SHP 缓存链是登记册/链表基建的又一实例）。
+
+⚠️ partial：[0xB077B0] 链头语义（疑 SHPStruct* 缓存链表头）、+0xC 子对象类型
+（疑 SHPReference 引用计数句柄）、word 哨兵 -1 与 SHPFile/SHPReference 两形态
+的精确对应。
+
+================================================================================
+0x525A10  INI 读取包装（23 callers）
+================================================================================
+机器码还原（前段）：
+    mov edx, [esp+0x18]                ; 参数
+    xor eax, eax
+    mov [ecx+4], eax / mov [ecx+8], eax   ; ★ 清 +4/+8（INISection 链表头，batch 095/104 同款）
+    mov [esp+4], eax / mov [esp+8], eax / mov byte [esp+0x10], al
+    mov eax, [esp+0x1C]                ; 参数
+    mov dword [esp+0xC], 0x7E4D90      ; ★ 装虚表 0x7E4D90（CCIniClass 系）
+    push eax / lea edx, [esp+4] / push edx
+    call 0x525A60                      ; ★ 0x525A60 = 0x468B 的 INI 解析主函数
+    mov esi, eax                       ;   （batch 105 ReadCCFile 里的读文件函数）
+    ...
+
+语义：**INI 读取的统一包装入口**——先清 INISection 链表头（+4/+8，同
+INIClass::Reset batch 095 惯用法），装 CCIniClass 虚表 0x7E4D90，调 0x525A60
+主解析（0x468 大栈帧的 INI 解析循环），返回解析结果。调用方含 RulesClass/
+art/ai MOD 装载点（23 处）。
+
+★跨批次连接：0x525A60 在 batch 105 的 CCINIClass::ReadCCFile 里作为读文件
+函数被调——本条是它的另一个调用端，两处互证「0x525A60 = INI 文件 → INIClass
+解析主函数」；虚表安装（0x7E4D90）与 batch 104（0x7E61F0）、batch 092
+（0x7E38D0）同族。
+
+⚠️ partial：0x525A60 的解析循环细节（0x468B 栈帧远未读完）、0x7E4D90 虚表类
+归属、两个栈参数的精确语义。
+
+================================================================================
+0x532100  全局门铃/一次性初始化（23 callers，0x2C 全读完）
+================================================================================
+机器码（全 0x2C）：
+    mov al, [0x8A00A0]                 ; ★ 全局标志 [0x8A00A0]
+    test al, al / jne 0x53210D         ; 已置位 → 走初始化分支
+    test cl, cl / je 0x53212C          ; 未置位且 cl==0 → 直接返回
+  init:
+    mov dl, 1 / xor ecx, ecx
+    mov byte [0x8A00A0], 0             ; ★ 标志清零（一次性语义）
+    call 0x52FEC0                      ; ★（batch 099 MessageBox 前置同款函数）
+    mov edx, [0x88730C]
+    xor cl, cl / push 0
+    call 0x4F4780                      ; ★ 带 0 参数的配置/上报调用
+    ret
+  early_exit:
+    ret
+
+语义：**全局门铃——首次进入执行一次性初始化，之后直接跳过**——[0x8A00A0]
+作「已初始化/回调未挂」标志：首次（al==0 且 cl 非 0）执行 0x52FEC0 +
+0x4F4780(0) 完成设置，随后标志清零但内部分支保证不再重复。⚠️ 语义细节：
+al==0 时 cl==0 直接返回（未触发初始化），al!=0 走 0x53210D 执行初始化——
+判定极性待回查调用方。
+
+★跨批次连接：0x52FEC0 与 batch 099 MessageBox::Show 前置（mov dl,1/xor
+ecx,ecx/call 0x52fec0）完全同款——同一「界面初始化前置」函数在两个场景复用；
+[0x88730C] 与 batch 105 消息泵的 [0x887368]、batch 099 的 [0x887640] 同
+0x8873xx 全局区（Windows/渲染子系统单例）。
+
+⚠️ partial：[0x8A00A0] 标志语义、0x4F4780 身份、0x52FEC0 精确功能（界面初始化
+推断）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x69E500 → batch 001/096/104/106（CRT _delete/_free + 双向链表家族）。
+2. 0x525A10 ↔ batch 105（0x525A60 双端互证 = INI 解析主函数）+
+   batch 095/104（INISection 链表头清空惯用法）。
+3. 0x532100 → batch 099（0x52FEC0 同款）+ 0x8873xx 全局区（渲染/Windows 单例族）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x69E500 的 [0xB077B0] 链头、+0xC 子对象类型、word 哨兵形态对应。
+2. 0x525A10 的 0x525A60 解析循环细节与 0x7E4D90 虚表归属。
+3. 0x532100 的 [0x8A00A0] 标志极性、0x4F4780/0x52FEC0 精确身份。
