@@ -1,0 +1,109 @@
+frontier batch 131 — GenericList/List 构造器 + FileClass::Read 实现 + 字段拆分 getter（2026-10-13）
+
+口径：承接 batch 130 候选，ranking.tsv unique_callers 降序取 0x52ACE0（16 callers，
+GenericList.h:56/79 实锤）、0x473B10（15 callers，CCFileClass 区）、0x53EDA0
+（15 callers）。三者 prologue 均干净。
+
+================================================================================
+0x52ACE0  GenericList()/List() 构造器（16 callers）
+================================================================================
+身份实锤：YRpp GenericList.h:54-56 与 77-79
+    GenericList() : GenericList(noinit_t())
+        { JMP_THIS(0x52ACE0); }
+    template <typename T> class List : public GenericList { List() : List(noinit_t())
+        { JMP_THIS(0x52ACE0); } }
+——**GenericList 与 List 两个构造器共用同一地址**（都 JMP_THIS(0x52ACE0)），
+YRpp 源码三证。
+
+机器码还原（前段）：
+    mov eax, ecx                    ; this
+    lea esi, [eax+4]                ; ★ this->+4（First 节点）
+    lea edx, [eax+0x10]             ; ★ this->+0x10（Last 节点）
+    mov [esi], 0x7E1B0C             ; ★ 装 First 虚表 0x7E1B0C
+    mov [esi+4], 0 / [esi+8], 0     ; First 前后指针 NULL
+    mov [edx], 0x7E1B0C             ; ★ 装 Last 虚表
+    mov [edx+4], 0 / [edx+8], 0
+    mov [eax], 0x7E1B04             ; ★ 装头虚表 0x7E1B04
+    ; ★ 双向链表自环初始化（First/Last 互指）：
+    mov ebx, [edx+4] / mov edi, [edx+8]
+    mov [edi+4], ebx / mov [edi+8], edi
+    ...
+
+语义：**GenericList/List 双向链表构造器**——装三虚表（0x7E1B04 头/
+0x7E1B0C 节点），First（+4）与 Last（+0x10）两个哨兵节点做自环初始化。
+GenericList 是引擎所有「节点链表容器」（Node<T> 家族，batch 095/104/106 的
+链表基建）的模板基类。★跨批次连接：batch 095（INIClass::Reset 的
+List<INISection> Sections）、batch 091（哈希表挂链）、batch 104/106/116
+（链表摘除/析构）——链表容器的「构造端」正式登记。
+
+⚠️ partial：三虚表（0x7E1B04/0x7E1B0C）对应类方法、函数后段（自环细节）。
+
+================================================================================
+0x473B10  FileClass::Read 实现（15 callers）
+================================================================================
+机器码还原（全 0x8B，ret 8 = 2 栈参 pBuffer/nNumBytes）：
+    mov esi, ecx                    ; this（FileClass*）
+    mov eax, [esi] / call [eax+0x18]  ; ★ 虚表槽 +0x18（IsOpen/Exists 检查）
+    test al / jne 有缓冲路径
+    mov edx, [esi] / push 1 / mov ecx, esi
+    call [edx+0x1C]                  ; ★ 虚表槽 +0x1C（打开/Open，arg=1）
+    test eax / je 继续
+    mov bl, 1
+  有缓冲路径 (0x473B2F):
+    mov edx, [esi+0x58] / test / je 底层路径   ; ★ +0x58 缓冲指针
+    mov ecx, [esi+0x64] / mov eax, [esi+0x5C]  ; ★ 缓冲计数对
+    mov edi, [esp+0x14]              ; nNumBytes
+    sub eax, ecx / cmp eax, edi / jge / mov edi, eax   ; ★ 可读量 = min(剩余, 请求)
+    mov eax, [esp+0x10]              ; pBuffer
+    add ecx, edx / push edi / push ecx / push eax
+    call 0x7CA090                    ; ★ CRT::memcpy（batch 089/094 实锤）
+    mov eax, [esi+0x64] / add eax, edi / mov [esi+0x64], eax   ; ★ 计数 += 读入
+  底层路径 (0x473B78):
+    call 0x4322A0                    ; ★ 底层读（RawFileClass::Read 系）
+    test bl / je 返回
+    call [esi->vtable+0x34]          ; ★ 虚表槽 +0x34（Close/收尾）
+    mov eax, edi / ret 8             ; ★ 返回读入字节数
+
+语义：**FileClass 的 Read（读文件到缓冲）实现**——先查缓冲缓存（+0x58 指针/
++0x5C/+0x64 计数，疑读入缓冲），命中用 CRT::memcpy 从缓存拷出并按请求裁剪；
+缓存无效走底层 0x4322A0（RawFileClass::Read 系）直读；成功开过的文件收尾调
+虚表槽 +0x34。★跨批次连接：CCFileClass 家族（batch 063 ctor/075 Exists/
+091 FileSystem::LoadFile）的读取端正式登记；memcpy 0x7CA090（batch 089/094）。
+
+⚠️ partial：+0x58/+0x5C/+0x64 缓存字段语义、0x4322A0 底层读身份、虚表槽
++0x34 方法名（疑 Close）。
+
+================================================================================
+0x53EDA0  字段拆分输出 getter（15 callers，0x1D 全读完）
+================================================================================
+机器码（全 0x1D，ret 8 = 2 栈参）：
+    mov edx, [esp+8]                 ; 输出 A
+    mov eax, [ecx+4]                 ; ★ this->+4（dword）
+    mov esi, [eax] / mov [edx], esi  ; outA->[0] = [this+4]
+    mov ax, [eax+4] / mov [edx+4], ax ; ★ outA->[2] = [this+4+2]（word）
+    mov edx, [esp+4]                 ; 输出 B
+    mov ecx, [ecx]                   ; ★ this->[0]
+    mov [edx], ecx                   ; outB->[0] = this->[0]
+    ret 8
+
+语义：**把 this 的 [0] dword 与 [4] 的 dword+word 拆分输出到两个缓冲**——
+疑「坐标/索引对拆分」（[0]=大索引、[4] 指向的结构含 dword+word）。紧邻
+0x53EDC0 是单输出版（只取 +4 结构的 dword+word）。⚠️ 宿主结构与拆分语义未定
+（[4] 指向的 6B 结构 + [0] 的 4B 值）。
+
+⚠️ partial：宿主对象与字段拆分语义。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x52ACE0 → batch 095/091/104/106/116（链表基建构造端登记）。
+2. 0x473B10 → batch 063/075/091（CCFileClass 家族读取端）+ batch 089/094
+   （CRT::memcpy）。
+3. 0x53EDA0 → batch 114（0x42B1C0 坐标对拆分同思路）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x52ACE0 三虚表对应方法与自环细节。
+2. 0x473B10 缓存字段语义与 0x4322A0/虚表槽 +0x34 身份。
+3. 0x53EDA0 宿主结构与拆分语义。
