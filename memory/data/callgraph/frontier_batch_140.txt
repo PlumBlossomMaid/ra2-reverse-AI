@@ -1,0 +1,99 @@
+frontier batch 140 — AudioController::DTOR_1 + 航点坐标 getter + BitFont 尺寸包装（2026-10-13）
+
+口径：承接 batch 139 候选，ranking.tsv unique_callers 降序取 0x405D40（13 callers，
+Audio.h:131 实锤）、0x410220（14 callers）、0x433ED0（14 callers）。三者 prologue
+均干净。
+
+================================================================================
+0x405D40  AudioController::DTOR_1（13 callers）
+================================================================================
+身份实锤：YRpp Audio.h:130-131
+    void DTOR_1()
+        { JMP_THIS(0x405D40); }
+地址 + JMP_THIS + YRpp 注释「no idea how these differ really」（DTOR_1 与
+DTOR_2/ShutUp 的区别社区不知）三证吻合。
+
+机器码还原（前 0x40）：
+    mov eax, [0x87E2A0]             ; ★ 全局状态（ShutUp 同款 [0x87E2A0]）
+    test eax / je 收尾
+    cmp [eax+0xC], 0x87E294         ; ★ this->+0xC == &AudioIDXData::IDX（batch 132 互证）
+    jne 收尾
+    mov esi, [eax] / test / je 收尾  ; ★ this->[0] 音频对象
+    mov ecx, [eax+8] / mov edx, [esi+0x24]
+    cmp ecx, edx / jne 0x405E6F     ; ★ 对象身份核对（与 batch 132 ShutUp 同款守卫）
+    ...（[0x87E2A0] 全局状态相关停止语义）
+
+语义：**AudioController 析构/停止变体（DTOR_1）**——与 batch 132 登记的
+ShutUp（0x406060）共用同一串守卫（[0x87E2A0] 全局 + +0xC→AudioIDXData::IDX
++ [0] 音频对象 + +8/+0x24 身份核对），差异在守卫通过后的动作（ShutUp 清
+标志、DTOR_1 疑走析构路径）。YRpp 注释「no idea how these differ」——社区
+口径与本批守卫链互证。
+
+★跨批次连接：batch 132（0x406060 ShutUp 同守卫）+ batch 111（AudioIDX
+[0x87E294]）——AudioController 族的第三个成员（ShutUp/DTOR_1/DTOR_2）。
+
+⚠️ partial：DTOR_1 与 ShutUp/DTOR_2 的动作差异、+0x24/+8 字段语义、后半。
+
+================================================================================
+0x410220/0x410230  航点坐标 getter（14 callers）
+================================================================================
+机器码（fy 连续两函数）：
+  0x410220（0x0A 全读完）：
+    mov eax, [esp+4]               ; ★ 输出指针
+    mov eax, [eax+0xC]             ; out->+0xC
+    ret 4                          ; ★ 纯 getter（读 out->+0xC）
+  0x410230（0x2A 全读完）：
+    mov ecx, [0xA8B230]            ; ★ ScenarioClass::Instance（batch 073 实锤）
+    test ecx / jne 继续
+    mov ecx, [esp+4] / xor eax / mov [ecx+0xC], eax
+    ret 4                          ; ★ Instance 空 → out->+0xC = 0
+  继续:
+    call 0x68BCB0                  ; ★ GetWaypointCoords（ScenarioClass.h 系）
+    mov edx, [esp+4] / mov [edx+0xC], eax   ; ★ out->+0xC = 航点坐标
+    ret 4
+
+语义：**航点坐标 getter（waypoint 数 → 坐标）**——0x410230 以
+ScenarioClass::Instance（[0xA8B230]，batch 073 实锤）为宿主调
+GetWaypointCoords（0x68BCB0）得航点坐标写 out->+0xC；0x410220 是纯读
+out->+0xC 的配套 getter。14 个调用方 = 地图生成/脚本按航点号取坐标。
+
+★跨批次连接：batch 073（ScenarioClass::Instance + GetWaypointCoords 已登记
+0x68BCC0/0x68BCE0——本批 0x68BCB0 疑三兄弟之一）+ QWEN.md 的 700/699
+waypoint 文档（RMG 阶段已见 waypoint 700/699）。
+
+⚠️ partial：0x68BCB0 与 batch 073 登记的 0x68BCC0/0x68BCE0 的关系（三兄弟
+未归一化比对）、out->+0xC 字段语义。
+
+================================================================================
+0x433ED0  BitFont 尺寸包装（14 callers，0x1D 全读完）
+================================================================================
+机器码（全 0x1D）：
+    mov eax, [esp+8]               ; ★ 参数
+    lea edx, [esp+8]
+    push eax / mov eax, [esp+8]
+    push 0 / push edx / push eax
+    call 0x433CF0                  ; ★ BitFont 文本尺寸（batch 133 已登记）
+    mov eax, [esp+8] / ret 8
+
+语义：**batch 133 登记的 BitFont 文本尺寸（0x433CF0）的包装**——整理参数
+（push 顺序）后委托 0x433CF0，返回输出缓冲。与 batch 133 的 0x433CF0 配套
+（该条 partial「宿主类与输出公式」由本条补上下文——4 参包装形态）。
+
+★跨批次连接：batch 133（0x433CF0 文本尺寸）+ 绘制/字体族（batch 136
+0x7BC2B0 坐标浮点换算同绘制区）。
+
+⚠️ partial：参数语义（pText/标志/location 的精确对应）、调用方用途。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x405D40 → batch 132/111（AudioController 守卫链族三成员）。
+2. 0x410230 → batch 073（ScenarioClass::Instance + GetWaypointCoords）。
+3. 0x433ED0 → batch 133（BitFont 文本尺寸包装）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x405D40 与 ShutUp/DTOR_2 的动作差异。
+2. 0x68BCB0 与 batch 073 的 0x68BCC0/0x68BCE0 关系。
+3. 0x433ED0 的参数语义（4 参包装）。
