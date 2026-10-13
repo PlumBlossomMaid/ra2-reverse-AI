@@ -1,0 +1,127 @@
+frontier batch 127 — TechnoClass::HasAbility + RadioClass::HasAnyLink + CounterClass 数组族（2026-10-13）
+
+口径：承接 batch 126 候选，ranking.tsv unique_callers 降序取 0x70D0D0（16 callers，
+ranking 名 TechnoClass::HasAbility）、0x65AE30（16，ranking 名 RadioClass::HasAnyLink）、
+0x49FAE0（16，CounterClass 数组族）。三者 prologue 均干净。
+
+================================================================================
+0x70D0D0  TechnoClass::HasAbility（16 callers）
+================================================================================
+身份实锤：YRpp TechnoClass.h:437-438
+    bool HasAbility(Ability ability) const
+        { JMP_THIS(0x70D0D0); }
+地址 + JMP_THIS + 单参（Ability 枚举）三证吻合。
+
+机器码还原（全 0x7E 读完）：
+    mov esi, ecx
+    lea edi, [esi+0x150]            ; ★ this->+0x150（Ability 结构?）
+    mov ecx, edi / call 0x74FF90     ; ★ 0x74FF90 = 浮点比较（fld [ecx] / fcomp
+                                    ;   [0x7E2AC8] + [0x7E37B4]，双界比较）
+    test al / jne 走虚表槽 0x84
+    mov ecx, edi / call 0x750010     ; ★ 第二判定（0x750010）
+    test al / je 返 0
+  走虚表槽 (0x70D0F1):
+    call [esi->vtable+0x84]          ; ★ 虚表槽 0x84（取 Ability 状态对象?）
+    mov esi, eax / mov ecx, edi
+    call 0x74FF90                    ; 再比较
+    mov ebx, [esp+0x10]              ; ability 参数（索引）
+    test al / je 0x70D11F
+    mov al, [esi+ebx+0x29C]          ; ★ 状态数组 [esi+ebx+0x29C] 查位
+    test al / je 0x70D11F
+    mov al, 1 / ret 4                ; 命中 → true
+  0x70D11F:
+    call 0x750010 再判定 → mov al,[esi+ebx+0x29C] 或 [esi+ebx+0x2AE]
+    ...
+
+语义：**单位是否拥有某能力（Ability）**——先对 this->+0x150 做浮点双界比较
+（0x74FF90，疑「能力窗口/阈值」判定）与 0x750010（第二条件），再经虚表槽
+0x84 取能力状态对象，按参数索引查 [obj+0x29C]/[obj+0x2AE] 字节位，任一命中
+返 true。16 个调用方 = 「有幽灵能力/隐身能力/雷达能力」等特性检查（YRpp
+Ability 枚举：Dock/Crush/Retaliation/...）。
+
+★跨批次连接：0x74FF90 浮点双界比较（fcomp 两常量）与 batch 096（AdjustForZ
+的 0x7E1738 常量）、batch 083（x87 比较族）同源；虚表槽 0x84 调用与 batch
+102/109/113 虚表调用族。
+
+⚠️ partial：+0x150 结构身份、虚表槽 0x84 方法名、+0x29C/+0x2AE 字节数组语义
+（Ability 位图）、0x750010 身份。
+
+================================================================================
+0x65AE30  RadioClass::HasAnyLink（16 callers，0x24 全读完）
+================================================================================
+身份实锤：YRpp RadioClass.h:52-53
+    bool HasAnyLink() const
+        { JMP_THIS(0x65AE30); }
+地址 + JMP_THIS 无参 + 布尔返回三证吻合。
+
+机器码（全 0x24，36B）：
+    mov edx, [ecx+0xE8]              ; ★ this->+0xE8（链接计数）
+    xor eax / test edx / jle 返 0
+    mov ecx, [ecx+0xE4]              ; ★ this->+0xE4（链接数组，4B/项）
+   loop:
+    cmp [ecx], 0 / jne 命中（返 1）
+    inc eax / add ecx, 4 / cmp eax, edx / jl loop
+    返 0
+  命中:
+    mov al, 1 / ret
+
+语义：**单位是否有任何无线链接（Radio 连接）**——遍历 +0xE4 链接数组（计数
++0xE8，4B/项），任一槽非 NULL 即 true。紧邻 0x65AE60 是同族成员（带参数版：
+把目标写入链接槽）。RadioClass 是单位间 Radio 通信（被引导/补给线）的基类
+（YRpp 类图），HasAnyLink = 「我有 Radio 链接吗」。
+
+★跨批次连接：+0xE4/+0xE8 数组/计数对与 batch 109（0x65AD30 族同布局！——
+同一 0x65Axxx 区的数组容器）、batch 101/113 登记册族——**0x65AD30（数组索引/
+查找族）与 0x65AE30（HasAnyLink）共用 +0xE4/+0xE8 布局，疑同一宿主类**。
+
+⚠️ partial：+0xE4 链接数组元素类型（RadioLink? 指针）、与 0x65AD30 家族宿主
+类的精确关系。
+
+================================================================================
+0x49FAE0  CounterClass 数组成员（16 callers）
+================================================================================
+身份：YRpp Documentation/class_counter_class.html:247 JMP_THIS(0x49FAE0)
+（CounterClass 内联成员，数组类计数）。
+
+机器码还原（前段）：
+    mov ebx, [esp+8]                 ; ★ arg（索引/计数目标）
+    mov esi, ecx                     ; this
+    mov edi, [esi+8]                 ; ★ this->+8（当前计数）
+    cmp ebx, edi / jl 走已有路径      ; arg < 当前 → 已有足够空间
+    mov eax, [esi]                   ; 虚表
+    lea ecx, [ebx+0xA]               ; ★ arg + 10（扩容幅度）
+    push 0 / push ecx
+    call [eax+8]                     ; ★ 虚表槽 +8（Resize）
+    test al / je 返
+    mov ecx, [esi+8] / mov eax, edi
+    cmp edi, ecx / jge 收尾
+    mov edx, [esi+4]                 ; 数组指针
+    inc eax / mov [edx+eax*4-4], 0   ; ★ 新槽清零
+    jl loop
+    ...
+
+语义：**CounterClass 的「保证至少 N 个计数槽」成员（Resize 型）**——arg 超过
+当前计数时经虚表槽 +8 扩容（arg+10），新槽清零。CounterClass 是模板计数数组
+（YRpp 数组类，batch 088/089 登记册家族成员）。
+
+★跨批次连接：虚表槽 +8（Resize）与 batch 092/106（0x42F860 Vector Resize、
+0x42FCB0 容器构造器）同「数组扩容」族——引擎数组容器的标准 Resize 形态。
+
+⚠️ partial：CounterClass 模板参数类型、+4/+8 字段（数组指针/计数）、虚表槽
++8 方法名。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x70D0D0 → batch 096/083（x87 浮点比较族）+ batch 102/109/113（虚表槽调用）。
+2. 0x65AE30 → batch 109（0x65AD30 数组族同 +0xE4/+0xE8 布局）+ batch 101/113
+   （登记册族）。
+3. 0x49FAE0 → batch 092/106（数组 Resize/容器构造族）+ batch 088/089（登记册
+   家族）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x70D0D0 的 +0x150 结构、虚表槽 0x84、+0x29C/+0x2AE 位图语义。
+2. 0x65AE30 链接数组元素类型与 0x65AD30 宿主类关系。
+3. 0x49FAE0 的 CounterClass 模板参数与虚表槽 +8 身份。
