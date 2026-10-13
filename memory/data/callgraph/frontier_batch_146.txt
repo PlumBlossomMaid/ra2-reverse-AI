@@ -1,0 +1,108 @@
+frontier batch 146 — 格合法/放置判定 + 浮点键最小选择 + 文件类构造器（2026-10-13）
+
+口径：承接 batch 145 候选，ranking.tsv unique_callers 降序取 0x56D100（13 callers）、
+0x5AD870（13 callers）、0x473A30（13 callers）。三者 prologue 均干净，YRpp 无
+JMP 宏覆盖（按机器码判类）。
+
+================================================================================
+0x56D100  格合法性/放置判定（13 callers）
+================================================================================
+机器码还原（前 0x50）：
+    mov eax, [esp+0x10]             ; ★ 参数（坐标/格索引）
+    cmp eax, -1 / je 返 true        ; -1（无效/任意）→ true
+    mov ebx, [esp+0x18]             ; 参数
+    push 1 / push ebx
+    mov ecx, 0x87F7E8               ; ★ MapClass::Instance（batch 069/101 实锤）
+    call 0x578460                   ; ★（0x578460 取格/判定子函数）
+    movsx ecx, word [ebx]           ; ★ X（word）
+    mov esi, [0x87F8DC]             ; ★ MapRect.W（batch 114 实锤）
+    movsx eax, word [ebx+2]         ; ★ Y（word）
+    lea edx, [eax+ecx] / cmp edx, esi / jle 通过   ; X+Y <= W
+    mov edi, ecx / sub edi, eax / cmp edi, esi / jge 通过  ; X-Y >= W
+    sub eax, ecx / ...
+    ; ★（X/Y 与 MapRect.W 的菱形/矩形边界判定）
+
+语义：**格坐标合法性/可放置判定**——先调 0x578460（MapClass::Instance
+上下文取格），再按 X/Y 与 [0x87F8DC]=MapRect.W 做边界判定（X+Y 与 X-Y 的
+上限比较）。★与 batch 086 的 CoordinatesLegal（0x568300 菱形坐标合法性
+`W < x+y <= W+2H 且 |x-y| < W`）同属「格坐标边界判定」族——本函数是带
+MapClass::Instance 取格的那一侧。
+
+★跨批次连接：batch 086（CoordinatesLegal）/batch 114（[0x87F8DC]=W 实锤）+
+0x578460（0x578xxx 区 MapClass 工具）。
+
+⚠️ partial：0x578460 精确身份与后半判定链、参数语义（-1 true 快路含义）。
+
+================================================================================
+0x5AD870  浮点键最小选择（13 callers）
+================================================================================
+机器码还原（前 0x50）：
+    mov ebx, [ecx]                  ; ★ this->[0]（计数/大小）
+    mov esi, [esp+0x10]             ; ★ 索引参数
+    lea edx, [esi+esi] / lea edi, [esi+esi+1]   ; 左右子索引（2i/2i+1）
+    cmp edx, ebx / jg 跳过左         ; ★ 2i > 计数 → 无左子
+    mov eax, [ecx+8]                ; ★ 数组 [ecx+8]
+    mov ebp, [eax+edx*4] / mov eax, [eax+esi*4]  ; 左子/当前
+    fld dword [ebp+4] / fld dword [eax+4] / fcompp  ; ★ 浮点键比较
+    fnstsw ax / test ah, 0x41 / je 第
+    ; ★（选 min：fcompp 比较两元素键（+4 float），test B/C3 位）
+    cmp edi, ebx / jg 右跳过
+    ... （右子同理，浮点比较选较小）
+    ; ★（二叉堆下沉式最小选择：2i/2i+1 与当前的最小者）
+
+语义：**浮点键二叉堆的下沉选择（min-heap sift / extract）**——比较节点 i 与其
+左右子（2i/2i+1）的浮点键（元素 +4），选出最小者（fcompp + fnstsw + test
+ah,0x41 是 MSVC 标准「比较无符号序」惯用法）。★这是寻路/排序（priority
+queue 或 Dijkstra 堆）的堆调整核心——与 QWEN.md「候选机制：寻路
+MapClass::Update_Pathfinding_1/2」同理论域。
+
+★跨批次连接：fcompp/fnstsw 浮点比较惯用法（batch 083/096/127 同族）+
+二叉堆（0x5ADxxx 区排序/堆族）——「浮点键堆」引擎实现。
+
+⚠️ partial：堆完整语义（max/min、sift up/down）、用法（寻路队列 vs 排序）、
+后半。
+
+================================================================================
+0x473A30  文件类构造器（13 callers，0x43 全读完）
+================================================================================
+机器码（全 0x43）：
+    mov esi, ecx                    ; this
+    call 0x47AA30                   ; ★ 基类/成员初始化
+    push 0 / push 0 / lea ecx, [esi+0x58]
+    call 0x43AD00                   ; ★（对 +0x58 子对象双空参初始化——
+                                    ;   batch 139 的 Close 同款 +0x58 子对象）
+    mov dword [esi+0x64], 0         ; ★ +0x64 = 0（计数/位置）
+    mov [esi], 0x7E16B0             ; ★ 装虚表 0x7E16B0
+    mov dword [esi+0x68], 0         ; +0x68 = 0
+    mov ecx, [esp+8]                ; 参数字符串
+    call 0x7B5440                   ; ★ 窄串 c_str（batch 085 实锤孪生族）
+    push eax
+    mov ecx, esi / mov [esi+0x68], 0
+    call 0x47AE10                   ; ★（用 c_str 做打开/初始化 0x47AE10）
+    mov eax, esi / ret 4
+
+语义：**文件类（CCFileClass/BufferIOFileClass 系）构造器**——继承 batch 139
+的 +0x58 子对象（0x43AD00 双空参初始化，同一子对象类型）+ 装虚表 0x7E16B0
++ 调窄串 c_str（0x7B5440）取名后传 0x47AE10（疑 Open/初始化）。★与 batch
+139（0x473CE0 Close 用同 +0x58 子对象 + [0x64]）、batch 131（0x473B10 Read
+同家族）——0x473xxx 文件类家族的构造端补全。
+
+★跨批次连接：batch 139（0x473CE0 Close）+ batch 131（0x473B10 Read）+
+batch 085（c_str 0x7B5440）——文件类 Read/Close/Ctor 三端闭合。
+
+⚠️ partial：0x47AE10 精确身份（Open/初始化推断）、+0x58 子对象类型、
+参数字符串语义（文件名?）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x56D100 → batch 086/114（格边界判定族 + [0x87F8DC]=W）。
+2. 0x5AD870 → batch 083/096/127（浮点比较族）+ 二叉堆（寻路理论域）。
+3. 0x473A30 → batch 139/131/085（文件类家族三端 + c_str）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x56D100 的 0x578460 身份与后半判定链。
+2. 0x5AD870 的堆语义与用法（寻路队列 vs 排序）。
+3. 0x473A30 的 0x47AE10 身份与 +0x58 子对象类型。
