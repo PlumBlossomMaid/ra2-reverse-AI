@@ -1,0 +1,113 @@
+frontier batch 155 — AbstractClass::GetTotalAmount + CellClass::BlowUpBridge + 数组弹出循环（2026-10-13）
+
+口径：承接 batch 154 候选，ranking.tsv unique_callers 降序取 0x45ADD0（12 callers）、
+0x6C9650（12 callers，AbstractClass.h:23-24 实锤）、0x47DD70（12 callers，
+CellClass.h:97-98 实锤）。三者 prologue 均干净。
+
+================================================================================
+0x6C9650  AbstractClass::GetTotalAmount（12 callers）
+================================================================================
+身份实锤：YRpp AbstractClass.h:23-24
+    float GetTotalAmount() const
+        { JMP_THIS(0x6C9650); }
+地址 + JMP_THIS 无参 + 返回 float 三证吻合。
+
+机器码还原（全 0x30，48B）：
+    mov esi, ecx                    ; this
+    mov [esp+8], 0                  ; ★ 累加器 = 0（int 初值）
+    mov edi, 4                      ; ★ 计数 4
+  loop:
+    fild dword [esp+8]              ; ★ 累加器转 float
+    fadd dword [esi]                ; + 当前 float 字段
+    call 0x7C5F00                   ; ★ _ftol（转回 int，batch 083/092 同款）
+    add esi, 4 / dec edi / mov [esp+8], eax
+    jne loop                        ; ★ 4 次累加
+    fild dword [esp+8] / ret        ; ★ 最终转 float 返回
+
+语义：**对象前 4 个 float 字段（+0/+4/+8/+0xC）的整数截断累加（GetTotalAmount）**
+——fild/_ftol 交替（每步累加后向零截断回 int），4 项求和后转 float 返回。
+★原版怪癖：**中间每一步都 _ftol 截断**——不是 float 连续累加，而是「int 累加
+器 + 每步转 int」的离散累加（[0x822D80] FPCW=chop 向零截断），重写必须照抄
+该动作序列而非直接 `sum += field`。
+
+★跨批次连接：fild/_ftol（batch 083/092/096 同族）+ 0x7C5F00 截断——「每步
+截断累加」原版怪癖实例。
+
+⚠️ partial：4 字段语义（+0/+4/+8/+0xC 各是什么 float）、调用方用途。
+
+================================================================================
+0x47DD70  CellClass::BlowUpBridge（12 callers）
+================================================================================
+身份实锤：YRpp CellClass.h:97-98
+    void BlowUpBridge()
+        { JMP_THIS(0x47DD70); }
+地址 + JMP_THIS 无参三证吻合。
+
+机器码还原（前 0x50）：
+    mov al, [0xA8ED6B]              ; ★ 全局门禁（batch 124 TagClass 同款）
+    test al / jne 0x47E031          ; 已触发 → 跳过
+    mov ecx, [esi+0xE4]             ; ★ this->+0xE4（桥对象?）
+    test ecx / je 跳过
+  loop:
+    mov edx, [0x8871E0]             ; ★ 全局（DisplayClass 区?）
+    mov eax, [ecx] / mov edi, [ecx+0x30]
+    push 0/1/1/0 / mov edx, [edx+0xFA8]
+    push edx / lea edx, [ecx+0x6C]
+    push 0 / push edx
+    call [eax+0x16C]               ; ★ 虚表槽 0x16C（炸桥动作）
+    test edi / jne loop             ; ★ 遍历链（+0x30 下一项）
+    mov ecx, [esi+0xE8] ...
+
+语义：**炸桥（BlowUpBridge）**——[0xA8ED6B] 门禁（batch 124 同款触发器全局）
+守卫，遍历 +0xE4 起始的桥对象链（+0x30 步进），对每个桥调虚表槽 0x16C（炸毁
+动作，多参）。CellClass 的桥格（Bridge=可炸的过河设施）。
+
+★跨批次连接：batch 124（[0xA8ED6B] 同全局）+ 虚表槽 0x16C（高槽位虚表调用）
++ 0x8871E0 全局（DisplayClass 区）——桥爆炸逻辑。
+
+⚠️ partial：+0xE4/+0xE8/+0x30 链字段语义、虚表槽 0x16C 方法身份、
+0x8871E0->+0xFA8 参数、后半（0x47E031 分支）。
+
+================================================================================
+0x45ADD0  数组弹出循环（12 callers，0x2D 全读完）
+================================================================================
+机器码（全 0x2D）：
+    mov edx, [ecx+0x10]             ; ★ this->+0x10（计数）
+    mov eax, [esp+4]                ; ★ arg（弹出位置）
+    cmp eax, edx / jge 返 false     ; ★ 位置 >= 计数 → false
+    dec edx / cmp eax, edx / mov [ecx+0x10], edx   ; ★ 计数--
+    jge 返 true                     ; 位置 == 旧末位 → 直接 true
+    push esi
+    mov edx, [ecx+4]                ; ★ 数组指针
+    inc eax
+  loop:
+    mov esi, [edx+eax*4]            ; ★ item[i]
+    mov [edx+eax*4-4], esi          ; ★ 前移（覆盖弹出位置）
+    mov edx, [ecx+0x10] / cmp eax, edx / jl loop   ; ★ 直到末位
+    pop esi / mov al, 1 / ret 4
+  返 false: xor al / ret 4
+
+语义：**数组元素弹出（删除第 N 个并把后继前移）**——+0x10 计数、+4 数组
+（4B/项）；位置越界返 false，命中则计数-- 并把位置后的项整体前移一格。
+★与 batch 141 的 0x4072E0（有序插入）互补——数组容器的「插入/弹出」对
+（0x45ADD0 是弹出端）。紧邻 0x45AE10 是同构第二成员（同逻辑变体）。
+
+★跨批次连接：batch 141（0x4072E0 插入）+ 数组容器（batch 092/102/136）——
+4B/项数组的删除成员。
+
+⚠️ partial：宿主类（0x45xxx 区容器）、弹出位置语义（栈顶 vs 任意）、
+0x45AE10 变体差异。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x6C9650 → batch 083/092/096（fild/_ftol）+「每步截断累加」怪癖。
+2. 0x47DD70 → batch 124（[0xA8ED6B]）+ 虚表槽 0x16C + 0x8871E0。
+3. 0x45ADD0 → batch 141（插入互补）+ 数组容器家族。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x6C9650 的 4 字段语义与调用方用途。
+2. 0x47DD70 的桥链字段与虚表槽 0x16C 身份。
+3. 0x45ADD0 宿主类与弹出语义。
