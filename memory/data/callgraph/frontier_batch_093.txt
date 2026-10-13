@@ -1,0 +1,174 @@
+frontier batch 093 — VoxClass::Play/PlayIndex + FileSystem::LoadWholeFileEx（2026-10-13）
+
+口径：承接 batch 092 候选，ranking.tsv unique_callers 降序取 0x4A38D0（32 callers
+/ 3065 transitive dependents）与 0x752700（32 callers / 2158 dependents）。两者
+prologue 均干净（非 mid-function 假入口）。
+
+本批三条全部拿到 YRpp `JMP_STD` 实锤（非推断名），并把 batch 091 的 0x5B40B0
+猜测升级为 `FileSystem::LoadFile`。
+
+================================================================================
+0x752700  VoxClass::Play（32 callers，95B）
+================================================================================
+身份实锤：YRpp VoxClass.h:41
+    static void __fastcall Play(const char* pName, int nUnk = -1, int nUnk2 = -1)
+        { JMP_STD(0x752700); }
+地址 + `__fastcall` + 调用方语义三证吻合（调用方含 BuildingClass::GoOffline/
+GoOnline/SetRallypoint、CellClass::CollectCrate —— 全是「事件发生→播报 EVA
+语音」的场景）。
+
+机器码（签名核对：ecx=pName、edx=nUnk、栈参=nUnk2）：
+
+    push ebx / push edi
+    mov edi, ecx                     ; pName
+    mov ebx, edx                     ; nUnk
+    test edi, edi
+    je 0x752746                      ; ★ pName==NULL → 直接返回，连 PlayIndex 都不调
+    mov eax, [0xb1d4b0]              ; Count
+    push esi / xor esi, esi
+    test eax, eax / jle 0x752736     ; Count<=0 → 未命中路径
+  loop:
+    mov eax, [0xb1d4a4]              ; ★ Array->Items
+    mov ecx, [eax + esi*4]           ; Items[i]（Name 是首成员 @ +0x00）
+    push ecx / push edi
+    call 0x7c8d20                    ; ★ CRT::strcmpi(Items[i]->Name, pName)
+    add esp, 8
+    test eax, eax / je 0x75274b      ; 命中 → PlayIndex(i, nUnk, nUnk2)
+    mov eax, [0xb1d4b0] / inc esi / cmp esi, eax / jl loop
+  miss (0x752736):
+    mov edx, [esp+0x10]              ; nUnk2
+    or ecx, 0xffffffff               ; ★ index = -1（照样调 PlayIndex，由其内部 jl 兜住）
+    push edx / mov edx, ebx
+    call 0x752480                    ; VoxClass::PlayIndex
+    pop esi / [0x752746] pop edi / pop ebx / ret 4
+
+语义：**按名字在大小写不敏感的意义下线性查找 VoxClass::Array，命中最先匹配项
+并以索引调 PlayIndex**。未命中也调 PlayIndex(-1, ...)，PlayIndex 首行
+`test ecx,ecx / jl` 直接返回，故等价于 no-op——但**调用发生与否是可观察差异**：
+pName==NULL 时连调用都不发生（0x752746 提前 ret），名字非空但未命中时调用发生。
+忠实复刻必须区分这两条 no-op 路径。
+
+★与 YRpp 源码逐行一致：VoxClass.h:26 `FindIndex` 的循环体就是上面 loop
+（`_strcmpi(Array->Items[i]->Name, pName)` 返 0 即命中、未命中 return -1），
+本函数等价于 `PlayIndex(FindIndex(pName), nUnk, nUnk2)` 加上 NULL 快路。
+
+字段实锤：[0xB1D4A0] = VoxClass::Array（DynamicVectorClass<VoxClass*>，
+VoxClass.h:16）+0x4 = Items([0xB1D4A4]) / +0x10 = Count([0xB1D4B0])，
+机器码读法与 DynamicVectorClass 布局完全吻合。
+
+================================================================================
+0x752480  VoxClass::PlayIndex（Play 的巢函数，258B）
+================================================================================
+身份实锤：YRpp VoxClass.h:44
+    static void __fastcall PlayIndex(int index, int nUnk = -1, int nUnk2 = -1)
+        { JMP_STD(0x752480); }
+签名核对：ecx=index、edx=nUnk、栈参=nUnk2。
+
+守卫链（原版怪癖照抄）：
+    mov eax, [0xb1d4cc] / test eax,eax / je 退出     ; 全局门禁（[0xB1D4CC]）
+    test ecx, ecx / jl 退出                          ; ★ index<0 直退（未命中 no-op）
+    cmp ecx, [0xb1d4b0] / jge 退出                    ; ★ index>=Count 直退
+    mov eax, [0xb1d3d8] / test eax,eax / jne 退出      ; 第二个门禁，非 0 直退
+    mov eax, [0xb1d4a4] / mov ebx, [eax+ecx*4]        ; item = Items[index]
+    mov eax, [0xb1d4c4] / cmp ebx, eax / je 退出       ; ★ item == [0xB1D4C4] 直退（同一条不重播）
+    cmp ebp, -1 / jne / mov ebp, [ebx + 0x4c]          ; nUnk 默认 -1 → 取 item->[0x4C]
+    cmp [esp+0xc], -1 / jne / mov ecx, [ebx + 0x48] / mov [esp+0xc], ecx
+                                                     ; nUnk2 默认 -1 → 取 item->[0x48]
+    ...
+    cmp ebp, 2 / jne 跳过                             ; 条件分支：nUnk==2 走清理
+    → 0x4073C0（batch 089 已登记的安全解引用谓词，ecx=[0xB1D3C8]）取链表头
+      → [node+0xC]->[0x50] = 2 / 0x7C8B3D（CRT::_delete）逐个释放
+      → [0xB1D4C4]->[0x50] = 2 / [0xB1D4C4] = 0
+      → call 0x407F40（[0xB1D4CC] 非空时）/ call 0x752370
+      → [0xB1D4D0] = 0 / [0xB1D4D4] = 0
+    mov ecx, ebx / call 0x752680                      ; item->某查询
+    cmp [eax+0x18], ebp / je 收尾                      ; 命中同优先级 → 不重复播放
+    push nUnk2 / mov edx, nUnk / mov ecx, ebx / call 0x752590   ; 播放/入队
+    call 0x752760                                    ; 收尾刷新
+    pop ebp / pop ebx / ret 4
+
+★跨批次连接：守卫链里的 0x4073C0 正是 batch 089 登记的安全解引用谓词
+（this->[0]==NULL 或 [0]->[8] 自引用哨兵则返 0），本条给出它第二个实际用途
+——「从全局链表头安全取首节点并清空整链」，补上了 batch 089 未实锤的「哪些对象
+把自身指针写进自己 +8」线索方向（此处链表节点自带 +0x50 状态字段 = 2）。
+
+⚠️ partial：
+1. item->[0x48]/[0x4C] 的字段语义（对照 VoxClass.h 布局：Name[0x28]@0x00、
+   Volume@0x28、Yuri[9]@0x2C、Russian[9]@0x35、Allied[9]@0x3E，
+   Priority/Type 紧随其后但枚举宽度未逐字段确认，+0x48/+0x4C 对应关系待验）；
+2. [0xB1D3D8]/[0xB1D4C4]/[0xB1D4CC]/[0xB1D3C8]/[0xB1D4D0]/[0xB1D4D4] 六个全局
+   的准确命名（[0xB1D4C8]=EVAIndex 见 VoxClass.h:18，其邻域另五项未定）；
+3. 0x752590（0x20 字节播放记录节点：+0x0C=item / +0x14=nUnk2 / +0x18=nUnk）
+   与 0x752680/0x752760 的完整语义未读完。
+
+================================================================================
+0x4A38D0  FileSystem::LoadWholeFileEx（32 callers，151B）
+================================================================================
+身份实锤：YRpp FileSystem.h:50
+    static void* __fastcall LoadWholeFileEx(const char* pFilename, bool &outAllocated)
+        { JMP_STD(0x4A38D0); }
+签名核对：ecx=pFilename、edx=&outAllocated —— 机器码 `mov ebx, edx` 后立刻
+`mov byte [ebx], 0` 写 out 引用，双证吻合。
+
+    sub esp, 0x6c
+    mov ebx, edx                     ; &outAllocated
+    mov esi, ecx                     ; pFilename
+    xor dl, dl                       ; ★ bLoadAsSHP = false
+    mov byte [ebx], 0                ; ★ outAllocated = false（默认「非新分配」）
+    call 0x5b40b0                    ; ★ FileSystem::LoadFile(pFilename, false)
+    test eax, eax / jne 0x4a3961     ; 命中缓存 → 直接返回缓存指针（out 保持 false）
+    push edi / push esi
+    lea ecx, [esp+0x10] / call 0x4739f0   ; CCFileClass 构造（batch 063）
+    lea ecx, [esp+0xc] / mov eax, [esp+0xc] / push 0 / call [eax+0x14]  ; 虚表 +0x14
+    test al, al / je 0x4a392d        ; 假 → 走失败路径（out=false，返回 NULL）
+    call [edx+0x2c]                  ; 虚表 +0x2C：取长度
+    push edi / call 0x7c8e17          ; ★ CRT::_new(length) 分配新缓冲
+    mov esi, eax / test esi, esi / je 0x4a392f
+    push edi / push esi / call [eax+0x24]   ; 虚表 +0x24：读入缓冲
+    mov [ebx], (esi != 0)            ; ★ outAllocated = 真的分配了新块
+    ...
+    mov eax, esi / ret               ; 返回新分配的数据块指针
+
+语义：**「取整个文件内容」的标准两段式实现**——
+① 先问 `FileSystem::LoadFile(name, false)`（bLoadAsSHP=false）能不能直接拿
+共享缓存（打比方：资源已在内存里就别重复读盘），能就返回**共享指针**并把
+`outAllocated` 留在 false；② 不能则现开 CCFileClass、按虚表 +0x2C 取长度、
+`CRT::_new` 分配、虚表 +0x24 读满，把 `outAllocated` 置 true 后返回**自有指针**。
+调用方据 outAllocated 决定要不要自己释放——这个「共享 vs 自有」二态是本函数
+的全部存在理由。
+
+★跨批次连接（本批价值最高处）：
+1. 0x5B40B0 = `FileSystem::LoadFile(const char*, bool bLoadAsSHP)`（FileSystem.h:47）
+   —— batch 091 把它登记为「文件名→大写→CRC→哈希表缓存→CCFileClass」，当时
+   记的签名是 `__thiscall(const char* filename, char flag)`。本批三方交叉修正：
+   它是 `__fastcall`（ecx=文件名、edx=bLoadAsSHP 的 bool），本函数调用点
+   `xor dl,dl` 正是传 false。语义不变（正则化→CRC→缓存表查/建），签名口径改正。
+2. CCFileClass 构造 0x4739F0（batch 063）+ `CRT::_new` 0x7C8E17（batch 001）
+   + 虚表槽 +0x14/+0x24/+0x2C 三件套——至此 CCFileClass 的读盘接口三槽齐了。
+
+⚠️ partial：
+1. 虚表 +0x14（Exists/IsOpen 判别）、+0x24（Read）、+0x2C（GetSize）的具体方法名
+   未逐槽取证；
+2. 收尾两个析构（[esp+0x64] 虚表 0x7E16B0 → 0x43AE50、[esp+0xc] 虚表 0x7E1668
+   → 0x431B80）对象类型未定；
+3. 紧邻孪生 0x4A3970（同样 LoadWholeFileEx 语义，但先 `call 0x7B5440`
+   = batch 085 的窄字符串 c_str() 取内部指针）——判定为「传 StringClass*
+   的重载/内联展开」，未做归一化逐字节比对，故不写「已证为副本」。
+
+================================================================================
+跨批次连接汇总
+================================================================================
+1. 0x4A38D0 → batch 091（0x5B40B0 符号升级）、batch 063（CCFileClass ctor）、
+   batch 001（CRT::_new）、batch 085（0x4A3970 孪生用 c_str）。
+2. 0x752480 → batch 089（0x4073C0 安全解引用谓词的第二个实用场景）。
+3. 0x752700 ↔ YRpp VoxClass::FindIndex 源码：机器码循环 = 源码循环。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. VoxClass item +0x48/+0x4C 字段语义与 Priority/Type 枚举宽度的逐字段对齐。
+2. PlayIndex 里 6 个邻域全局（[0xB1D3C8]/[0xB1D3D8]/[0xB1D4C4]/[0xB1D4CC]/
+   [0xB1D4D0]/[0xB1D4D4]）的命名（[0xB1D4C8]=EVAIndex 已实锤）。
+3. 0x752590/0x752680/0x752760 三个播放链函数的完整语义。
+4. CCFileClass 虚表 +0x14/+0x24/+0x2C 的方法名。
+5. 0x4A38D0 vs 0x4A3970 未做归一化逐字节比对。
