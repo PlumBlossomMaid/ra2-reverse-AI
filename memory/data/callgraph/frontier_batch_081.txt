@@ -1,0 +1,86 @@
+frontier batch 081 — GetMovementZoneType（GetCellAt 第六兄弟）+ RecalcAttributes（RMG 管线核心）（2026-10-13）
+
+口径：承接 batch 080 候选，capstone 直反汇编，先验 prologue（两候选均干净）。
+本批 2 条，都是 RMG 高价值（一个解掉死代码里的存疑符号，一个是管线核心）。
+
+================================================================================
+0x0056D230  MapClass::GetMovementZoneType —— GetCellAt 家族第六兄弟
+================================================================================
+33 callers（符号名 USER_DEFINED，YRpp 覆盖，按推断名标注）。反汇编起始
+0x48 字节：
+
+    0056d230  mov al, [esp+0x10]          ; 标志 arg
+    0056d23d  mov edi, ecx                ; this
+    0056d23f  test al, al
+    0056d245  je 0x56d33f                 ; 标志==0 → 退出
+    0056d24b  movsx eax, word [esi+2]     ; y
+    0056d24f  movsx ecx, word [esi]       ; x
+    0056d252  shl eax, 9
+    0056d255  add eax, ecx                ; idx = x + (y<<9)
+    0056d257  js 0x56d26d                 ; 负 → 哨兵
+    0056d259  cmp eax, 0x40000            ; ★ 边界 0x40000
+    0056d25e  jge 0x56d26d
+    0056d260  mov edx, [0x87f924]         ; ★ 全局格子表
+    0056d266  mov eax, [edx + eax*4]      ; 取格
+    0056d269  test eax, eax / jne 0x56d279
+    0056d26d  mov eax, [esi]
+    0056d26f  mov [0xabdc74], eax         ; ★ 同一诊断全局
+    0056d274  mov eax, 0xabdc50           ; ★ 同一哨兵
+    0056d279  mov ecx, [eax + 0x140]      ; ★ cell->[0x140]（dword 标志）
+    0056d27f  test ch, 1                  ; 测 bit 0x100
+    ...
+    0056d28f  call 0x56da10               ; ★ 续调
+
+★ **GetCellAt 家族第六个兄弟**——`idx = x+(y<<9)`、全局表 `[0x87F924]`、
+硬编码边界 `0x40000`、哨兵 `0xABDC50`、诊断 `[0xABDC74]` 全套指纹齐。
+不同点：取格后读 `cell->[0x140]`（dword 标志域）测 bit 0x100，再调
+`0x56DA10`。即「坐标→格→读 cell->[0x140] 标志→按位判定移动区类型」。
+
+★ **解掉了死代码里的一个存疑符号**：dead-code-functions.md 里
+`0x58C5A0` 调的 `MapClass::GetMovementZoneType`（USER_DEFINED）——
+本条实锤这个地址的行为（读 cell->[0x140] 标志 + 调 0x56DA10），
+**符号名与行为不矛盾**，可信度提升。
+
+================================================================================
+0x0047D2B0  CellClass::RecalcAttributes —— RMG 管线核心（格子属性重算）
+================================================================================
+35 callers（符号名 USER_DEFINED，YRpp 覆盖，按推断名标注）。
+`sub esp,0x38` 帧。骨架：
+
+    0047d2b8  cmp esi, 0xabdc50           ; ★ this == 哨兵格 0xABDC50 ?
+    0047d2bf  je 0x47dd5a                 ; 是哨兵 → 跳过（防御）
+    0047d2c5  lea edi, [esi + 0x24]       ; this->[0x24]（坐标）
+    0047d2c8  mov ecx, 0x87f7e8           ; MapClass::Instance
+    0047d2cd  push edi / call 0x56d3f0    ; ★ 坐标→索引（调两次）
+    0047d2d3  mov ecx, [0x87f850]         ; ★ 全局（区域表）
+    0047d2da  lea ebx, [ecx + eax*4]      ; 区域表[eax]
+    0047d2e6  call 0x56d3f0               ; 再调一次
+    0047d2eb  lea edx, [eax + eax*4]      ; eax*5
+    0047d2ee  mov eax, [0x87f858]         ; ★ 另一全局表
+    0047d2f6  mov eax, [esi + 0x44]       ; cell->[0x44]
+    0047d2f9  cmp eax, -1                 ; == -1 ?
+    0047d300  je 0x47d57b                 ; 是 → 跳过
+    0047d306  mov edx, [0xa83d84]         ; 全局表
+    0047d30c  mov ebp, [edx + eax*4]      ; 表[cell->[0x44]]
+    0047d30f  mov ecx, [ebp + 0x298]      ; obj->[0x298]
+    0047d318  mov [esi + 0xec], ecx       ; ★ cell->[0xEC] = ...
+
+语义：**按格子的内容重算其通行/地形属性**——跳过哨兵格，用坐标经
+`0x56D3F0` 算索引，查两张全局表（`0x87F850`/`0x87F858`），再按
+`cell->[0x44]` 索引 `[0xA83D84]` 表取对象、读 `obj->[0x298]`、写回
+`cell->[0xEC]`。这是 RMG 管线里「Recalculating cell attributes」阶段
+的核心——把格子内容（建筑/地形/矿石）折算成通行属性。
+
+★ **跨层连接**：`cell->[0x24]`（坐标）与 `0xABDC50`（哨兵格）与
+GetCellAt 家族一致；`cell->[0x44]` 与 `[0xA83D84]` 表与 batch 065
+的 `0xA8ED2C` 表同形态（按下标取对象的全局表）。
+
+⚠️ partial：`0x56D3F0`（坐标→索引）、`0x87F850`/`0x87F858` 两张表的
+内容、`obj->[0x298]` 与 `cell->[0xEC]` 的语义均未实锤。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. GetMovementZoneType 的 cell->[0x140] 各位含义与 0x56DA10 的作用。
+2. RecalcAttributes 的两张全局表（0x87F850/0x87F858）与 obj->[0x298]/
+   cell->[0xEC] 的语义。
