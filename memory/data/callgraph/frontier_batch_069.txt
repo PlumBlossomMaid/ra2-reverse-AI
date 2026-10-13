@@ -1,0 +1,90 @@
+frontier batch 069 — 宽字符串类 + 链表递归析构 + INI 写串（2026-10-13）
+
+口径：承接 batch 068 候选，capstone 直反汇编，先验 prologue（三候选均干净）。
+本批 3 条。
+
+================================================================================
+0x007B66D0  宽字符串类赋值 operator= —— 第二个字符串类（宽字符版）
+================================================================================
+54 callers。全部 0x4A 字节：
+
+    007b66d0  push esi / push edi
+    007b66d2  mov edi, [esp+0xc]            ; 源宽串
+    007b66d6  mov esi, ecx                  ; this
+    007b66d8  test edi, edi
+    007b66da  mov dword [esi], 0            ; this->wstr = NULL
+    007b66e0  je 0x7b66ee                   ; 源 NULL → 分配 1 宽字符
+    007b66e2  push edi / call 0x7ca405      ; ★ wcslen（宽版求长）
+    007b66eb  inc eax                       ; len+1
+    007b66f3  add eax, eax                  ; ★ ×2（宽字符每字符 2 字节）
+    007b66f5  push eax / call 0x7c8e17      ; operator new
+    007b66fe  mov [esi], eax                ; this->wstr = 新缓冲
+    007b6702  mov word [eax], 0             ; ★ 宽 NUL（word 写 0）
+    007b6707  je 0x7b6715                   ; 源 NULL → 完成
+    007b6709  mov ecx, [esi] / push edi / push ecx
+    007b670d  call 0x7ca489                 ; ★ wcscpy（宽版拷贝）
+    007b6715  mov eax, esi / ret 4
+
+**判据**：`add eax,eax`（×2）+ `mov word [eax],0`（word 级 NUL）+
+`0x7CA405`(wcslen)/`0x7CA489`(wcscpy) —— 全部是**宽字符**操作。
+
+★ **引擎有两个并存的字符串类**：
+- 窄：`0x7B46xx`（batch 062，char、operator new 长度×1）
+- 宽：`0x7B66xx`（本条，wchar_t、长度×2）
+0x7B66D0 是宽字符串类的 operator=（NULL 安全：源 NULL 分配 1 宽字符空串）。
+紧邻的 0x7B6760（batch 061 的 delete+null 析构）很可能就是它的析构——
+**0x7B66xx 宽字符串类与 0x7B46xx 窄字符串类物理相邻**。
+
+================================================================================
+0x0065D460  链表节点递归析构（虚表 0x7F094C）
+================================================================================
+53 callers。全部 0x1C 字节：
+
+    0065d460  mov eax, ecx                  ; this
+    0065d462  mov ecx, [eax+4]              ; this->[4] = next
+    0065d465  mov dword [eax], 0x7f094c     ; ★ 设虚表 0x7F094C
+    0065d46b  test ecx, ecx
+    0065d46d  je 0x65d47b                   ; next==NULL → 返回
+    0065d46f  mov dword [eax+4], 0          ; this->[4] = 0
+    0065d476  mov eax, [ecx]                ; next->vtable
+    0065d478  jmp dword ptr [eax+8]         ; ★ 尾调 next->vtable->[8]()
+    0065d47b  ret
+
+即「设自身虚表 → 若 next 非空则递归调 next 的删除析构（vtable+8 是
+scalar deleting destructor 槽）」——**析构整条链的递归析构**（尾调用，
+MSVC `virtual ~Node(int)` 沿链递归的形态）。
+
+紧邻的 `0x65D480` 是链插入/替换：`inc [edi+4]`（next 的引用计数+1）+
+删除旧节点 + 设新节点。`+0x04` 既是链下节又是引用计数——**侵入式引用计数
+链表节点**。
+
+================================================================================
+0x00528660  INISection::WriteString —— INI 序列化
+================================================================================
+52 callers（符号名 USER_DEFINED，YRpp 覆盖，按推断名标注）。
+`sub esp,0x38` + push 四寄存器：
+
+    mov edx, [esp+0x3c]            ; value 字符串
+    mov ebp, ecx                   ; this（INISection）
+    test edx, ebx / je exit        ; value==NULL → 退出
+    cmp [esp+0x50], ebx / je exit  ; arg5==NULL → 退出
+    mov edi, edx / or ecx,-1 / xor eax,eax / repne scasb   ; strlen(value)
+    not ecx / dec ecx              ; ecx = strlen
+    push ecx / push edx / lea ecx,[esp+0x38]
+    call 0x4a1de0                  ; 分配+拷贝 value
+    mov esi, eax
+    add ebp, 0x28                  ; this += 0x28（节内条目表）
+    lea eax, [esp+0x28] / push eax / mov ecx, ebp
+    call 0x52b390                  ; ★ 节内查找/添加条目
+    test al, al / je ...
+
+语义：求 value 长度、分配拷贝、然后调 `0x52B390` 在节条目表（this+0x28）
+里查找或添加 key=value。这是 INI 写串的标准形态。
+⚠️ partial：key 的处理路径与 0x52B390 的查找/添加语义未实锤。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 宽字符串类（0x7B66xx）与窄字符串类（0x7B46xx）的各自用途与调用方。
+2. 0x65D460 链表节点承载的数据类型（虚表 0x7F094C 归属哪个类）。
+3. 0x528660 的 key 处理路径与 0x52B390 的查找/添加语义。
