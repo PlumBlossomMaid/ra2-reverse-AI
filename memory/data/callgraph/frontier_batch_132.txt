@@ -1,0 +1,123 @@
+frontier batch 132 — AudioController::ShutUp + TiberiumClass::FindIndex + PCX::GetSurface（2026-10-13）
+
+口径：承接 batch 131 候选，ranking.tsv unique_callers 降序取 0x406060（15 callers，
+Audio 区）、0x5FDD20（15 callers，TiberiumClass）、0x6BA140（15 callers，PCX 区）。
+三者 prologue 均干净，全部拿到 YRpp JMP_THIS 实锤。
+
+================================================================================
+0x406060  AudioController::ShutUp（15 callers）
+================================================================================
+身份实锤：YRpp Audio.h:137-138
+    void ShutUp()
+        { JMP_THIS(0x406060); }
+地址 + JMP_THIS 无参三证吻合（batch 111 登记 0x405BE0 时提到的
+AudioController 宿主类互证——[0x87E294] AudioIDXData::IDX 与 [0x87E2A0] 全局
+正是 AudioController 上下文）。
+
+机器码还原（前段）：
+    mov eax, [0x87E2A0]              ; ★ 全局（AudioController 状态）
+    test eax / je 收尾
+    cmp [esi+0xC], 0x87E294          ; ★ this->+0xC == &AudioIDXData::IDX
+                                       ;   （batch 111 实锤互联）
+    jne 收尾
+    mov edi, [esi] / test / je 收尾   ; ★ this->[0]（音频对象）
+    mov eax, [edi+0x24] / mov ecx, [esi+8]
+    cmp ecx, eax / jne 0x4060E5      ; ★ 对象身份核对
+    mov ecx, [esi+4] / mov edx, [edi+0x138]
+    cmp ecx, edx / jne 0x4060E5
+    test byte [eax+0x10], 1 / je 收尾 ; ★ 标志检查
+    cmp [eax+0x4C], ebx
+    ...
+
+语义：**AudioController 停止播放（ShutUp）**——一串身份/标志守卫
+（+0xC→AudioIDX 全局、[0] 音频对象、对象索引核对、标志位），全过后停止当前
+音频。15 个调用方 = 各资源切换/结束播放场景。
+
+★跨批次连接：batch 111（0x405BE0 AudioIDX 链初始化 + [0x87E294] 实锤）——
+0x405BE0 是「构造/复位」，本条是「停止」，同 AudioController 宿主互证；
+[0x87E2A0] 与 batch 111 的 0x405C00（读 [0x87E2A0]）互证。
+
+⚠️ partial：+0xC/+0x24/+0x138/+0x4C 字段语义与虚表槽、函数后半停止细节未读完。
+
+================================================================================
+0x5FDD20  TiberiumClass::FindIndex（15 callers）
+================================================================================
+身份实锤：YRpp TiberiumClass.h:43-45
+    static int FindIndex(int idxOverlayType) {
+        SET_REG32(ecx, idxOverlayType);
+        CALL(0x5FDD20);
+    }
+地址 + `ecx=idxOverlayType` + static int 三证吻合（ranking 曾标
+OverlayClass::GetTiberiumType，YRpp 实为 TiberiumClass::FindIndex）。
+
+机器码还原（前段）：
+    cmp ecx, -1 / je 返 0            ; ★ -1 → 直接返 0
+    mov eax, [0xA83D84]              ; ★ 全局表（batch 100/103 实锤的
+                                       ;   cell→关联对象表，0xA83D84 同地址）
+    mov eax, [eax+ecx*4]             ; ★ 表[索引]（overlay 对象）
+    mov [esp+0x10], eax
+    mov dl, [eax+0x2A9]              ; ★ 对象->+0x2A9（Tiberium 标志）
+    test dl / je 返 0                ; 非泰伯利亚 → 0
+    mov edx, [0xB0F4F8]              ; ★ 全局计数（TiberiumClass 数组）
+    xor ebx / test edx / jle 返 0
+    mov edi, [0xB0F4EC]              ; ★ 数组基址
+    ; ★ 线性扫描 TiberiumClass 数组找匹配项返回索引
+
+语义：**按 overlay 类型找 TiberiumClass 索引（FindIndex）**——先把 overlay
+对象查出来（[0xA83D84] 表，batch 100/103 同源），确认其 +0x2A9 泰伯利亚标志，
+再在 [0xB0F4EC] TiberiumClass 数组（计数 [0xB0F4F8]）里找索引。调用方
+Find() 用它 GetItemOrDefault 取 TiberiumClass*（YRpp 源码可见完整下游）。
+
+★跨批次连接：batch 100（（CellClass::GetContainingRect 的 [0xA83D84] = 格子
+关联表）+ batch 103 复用——本条是 TiberiumClass 侧的消费者）+登记册族。
+
+⚠️ partial：+0x2A9 标志语义、[0xB0F4EC]/[0xB0F4F8] 数组与 YRpp
+TiberiumClass::Array 的精确对应、后半扫描循环。
+
+================================================================================
+0x6BA140  PCX::GetSurface（15 callers）
+================================================================================
+身份实锤：YRpp PCX.h:32-34
+    // Get a BSurface for a PCX file. File needs to be loaded some time first!
+    BSurface* GetSurface()
+        { JMP_THIS(0x6BA140); }
+地址 + JMP_THIS 无参 + YRpp 注释（File needs to be loaded some time first）
+三证吻合。PCX 类 Instance @ [0xAC4848]（PCX.h:19），独立 PCX 文件加载器
+（类注释「This can be used to load PCX files into BSurfaces!」）。
+
+机器码还原（前段）：
+    mov eax, [esp+4]                 ; 参数（疑文件名/索引）
+    mov esi, ecx                     ; this（PCX::Instance）
+    push eax / lea ecx, [esp+0xC]
+    call 0x7B4630                    ; ★ 字符串构造（batch 062 实锤窄串 ctor）
+    mov al, [0xB0B930]               ; ★ 全局标志（初始化状态）
+    test al, 1 / jne 已初始化
+    mov dl, al / or dl, 1 / mov [0xB0B930], dl     ; ★ 置初始化位
+    mov [0xB0B948], 0
+    push 0x6BA220 / call 0x7C978A    ; ★ atexit 注册（0x7C978A = CRT::atexit）
+    ...
+
+语义：**PCX 文件 → BSurface 表面**——PCX 单例首次调用时初始化（[0xB0B930]
+标志置位 + atexit 注册清理 0x6BA220），经窄串构造（0x7B4630）处理文件名后
+返回加载的 BSurface。YRpp 注释明示该调用前必须先 LoadFile。
+
+★跨批次连接：0x7B4630（batch 062 实锤窄串 ctor）+ CRT::atexit 0x7C978A
+（batch 001 CRT 族）+ PCX::Instance [0xAC4848]（渲染资源单例）——
+「加载图片资源为表面」的引擎基建。
+
+⚠️ partial：0x6BA220 清理回调、[0xB0B948] 语义、BSurface 创建细节未读完。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x406060 → batch 111（AudioController/AudioIDX 互证）+ [0x87E2A0] 全局。
+2. 0x5FDD20 → batch 100/103（[0xA83D84] 表复用）+ 登记册族。
+3. 0x6BA140 → batch 062（窄串 ctor）+ batch 001（CRT::atexit）+
+   PCX::Instance 单例。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x406060 的守卫字段语义与后半停止逻辑。
+2. 0x5FDD20 的数组与 +0x2A9 标志、后半扫描。
+3. 0x6BA140 的 0x6BA220 清理与 BSurface 创建细节。
