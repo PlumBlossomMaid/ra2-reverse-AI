@@ -1,0 +1,116 @@
+frontier batch 122 — AbstractClass::DistanceFrom3D + 哨兵值对 getter 族 + 窄串字符扫描（2026-10-13）
+
+口径：承接 batch 121 候选，ranking.tsv unique_callers 降序取 0x5F6360（17 callers，
+ranking 名 AbstractClass::DistanceFrom3D）、0x696F10（17 callers）、0x7B5F10
+（17 callers）。三者 prologue 均干净。
+
+================================================================================
+0x5F6360  AbstractClass::DistanceFrom3D（17 callers）
+================================================================================
+身份：ranking.tsv 符号名 AbstractClass::DistanceFrom3D（confirmed_identity 列
+非空），YRpp 无 JMP 宏覆盖（AbstractClass.h 中按机器码推断）。
+
+机器码还原（0x100 实读）：
+    mov edi, [esp+0x30]             ; ★ 目标对象（arg）
+    test edi / je 返 0
+    mov eax, [edi] / lea ecx, [esp+0x14] / push ecx
+    mov ecx, edi / call [eax+0x48]  ; ★ 目标虚表槽 0x48（取坐标/位置）
+    mov edx, [ebx] / mov esi, eax   ; 本对象虚表
+    lea eax, [esp+0x24] / push eax / mov ecx, ebx
+    call [edx+0x48]                 ; ★ 本对象虚表槽 0x48
+    ; ★ 3D 距离计算（与 batch 106 0x41C380 同款 fild/fmul 链）：
+    mov ecx, [eax] / mov edx, [esi] / mov ebx, [esi+8]
+    sub ecx, edx / mov edx, [eax+4] / mov eax, [eax+8]
+    sub edx, [esi+4] / sub eax, ebx
+    fild ×3 → fld/fmul 平方和 → 0x4CAC40（平方根）→ 0x7C5F00（_ftol）→ 距离
+    mov edx, [edi] / mov ecx, edi
+    call [edx+0x2C]                 ; ★ 目标虚表槽 0x2C（取类型）
+    mov esi, eax / sub esi, 6 / neg / sbb / not / and esi, edi
+    test esi / je 收尾
+    ; ★ 建筑类专用修正（复用 batch 105 登记的尺寸查询）：
+    mov ecx, [esi+0x520]            ; BuildingTypeClass*
+    push 0 / call 0x45ECA0          ; ★ GetFoundationHeight（batch 105 实锤）
+    mov ecx, [esi+0x520]
+    mov edi, eax / call 0x45EC90    ; ★ GetFoundationWidth（batch 105 实锤）
+    add edi, eax / neg edi / shl edi, 6   ; ★ -(W+H)×64
+    add ebx, edi / jns 收尾 / xor ebx, ebx  ; 负值钳 0
+  收尾:
+    mov eax, ebx / ret 4
+
+语义：**两对象间的 3D 距离取整**——双方虚表槽 0x48 取坐标 → fild 平方和 +
+0x4CAC40 平方根 + _ftol（与 batch 106 0x41C380 同款 x87 链）→ 若目标是建筑
+类（虚表槽 0x2C 判定），用 GetFoundationWidth/Height（batch 105 实锤）算出
+地基修正量 -(W+H)×64 叠加，负值钳 0。
+
+★跨批次价值（本批最高点）：0x45EC90/0x45ECA0（batch 105 登记的基金会尺寸
+查询）在 DistanceFrom3D 的「建筑地基修正」路径被实际调用——跨批互证闭合。
+
+⚠️ partial：虚表槽 0x48（取坐标）与 0x2C（取类型）的精确方法名、修正公式
+-(W+H)×64 的语义推导（疑「距离要算到建筑地基边」）、后半收尾细节。
+
+================================================================================
+0x696F10  哨兵值对 getter 族（17 callers）
+================================================================================
+机器码（族三成员，各 ~0x10）：
+  0x696F10:
+    mov edx, [ecx+0x4F] / mov eax, 0xFFFFFFFE
+    cmp edx, eax / je 返 -2
+    mov eax, [ecx+0x4B] / ret        ; ★ [0x4F]==-2 → -2，否则返 [0x4B]
+  0x696F20:
+    mov edx, [ecx+0x57] / mov eax, 0xFFFFFFFE
+    cmp / je / mov eax, [ecx+0x53] / ret   ; ★ 同构（+0x57 哨兵 / +0x53 值）
+  0x696F30:
+    mov edx, [ecx+0x57] / cmp 0xFFFFFFFE
+    jne 返 [0x53] / cmp [ecx+0x53], -1 / je 返 -2
+    mov eax, [ecx+0x53] / ret        ; ★ 三态（哨兵/值/-1 特殊）
+
+语义：**「配对字段带 -2 哨兵」的取值 getter 族**——每成员读「哨兵字段」判断
+是否为 -2（未设置/特殊），否则返回「值字段」。三成员同构（+0x4B/+0x4F、
++0x53/+0x57 两对字段），疑宿主对象里多个「可选值+有效性标志」对。
+
+⚠️ partial：宿主类（+0x4B..+0x57 字段对的对象未对齐）、-2 哨兵语义
+（未设置 vs 特殊值）、0x696F30 的 -1 三态。
+
+================================================================================
+0x7B5F10  窄串字符扫描（17 callers，>0x90 未读完）
+================================================================================
+机器码（前 0x90 实读）：
+    mov esi, [esp+0x10]             ; ★ 起始索引（arg1）
+    test esi / js 返 -1（ret 0xC）
+    mov ebp, [esp+0x18]             ; arg2（回调/判定函数?）
+    mov edx, [ebx]                  ; this->[0]（串指针）
+    test edx / je len0
+    repne scasb 求 strlen → ecx
+    cmp esi, ecx / jge 收尾
+    movsx eax, byte [edx+esi]       ; ★ 取 [idx] 字符
+    push eax / push ebp / call 0x7CAF30   ; ★（判定函数，逐字符）
+    test / je 停
+    inc esi / 循环回查
+  ...
+    再求 strlen / cmp esi / jl 续
+    ...
+    收尾: or eax, -1 / ret 0xC
+
+语义：**从索引 i 开始向后扫描串中字符、对每个字符做判定（0x7CAF30），直到
+判定失败或越界**——疑「跳过匹配字符段，返回第一个不匹配位置」（或反之）。
+ret 0xC = 3 栈参（idx + 两个回调/边界参）。与窄串族（batch 085/088/090/118）
+同设计。
+
+⚠️ partial：0x7CAF30 判定函数身份（batch 112 ReadDouble 里也见过它——
+字符分类/转换系）、函数后半（0x7B5F90 起）、返回语义（命中位置 vs -1）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x5F6360 → batch 105（GetFoundationWidth/Height 实际调用）+ batch 106
+   （0x41C380 3D 距离同款 x87 链）+ batch 092/093（_ftol 族）——跨批互证。
+2. 0x696F10 → batch 112（ReadDouble 的 -1 哨兵语义同思路）+ 字段对 getter
+   惯例（batch 103/121）。
+3. 0x7B5F10 → batch 112（0x7CAF30 复用）+ 窄串族（batch 085/088/090/118）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x5F6360 的虚表槽 0x48/0x2C 方法名与 -(W+H)×64 修正公式推导。
+2. 0x696F10 宿主类与 -2 哨兵语义。
+3. 0x7B5F10 的 0x7CAF30 判定身份与返回语义。
