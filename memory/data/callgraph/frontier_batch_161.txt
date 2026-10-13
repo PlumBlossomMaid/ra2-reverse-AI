@@ -1,0 +1,118 @@
+frontier batch 161 — CRT::strstr + MapClass::RevealArea3 + UnselectAll 遍历（2026-10-13）
+
+口径：承接 batch 160 候选，ranking.tsv unique_callers 降序取 0x7CA4B0（11 callers，
+CRT.h:68 实锤）、0x567DA0（11 callers，MapClass.h:407-408 实锤）、0x48DC90（11
+callers，ranking 名 PhobosHook_MapClass_UnselectAll）。三者 prologue 均干净。
+
+================================================================================
+0x7CA4B0  CRT::strstr（11 callers，0x84 前段未读完）
+================================================================================
+身份实锤：YRpp CRT.h:68
+    static char *__cdecl strstr(const char *Str, const char *SubStr)
+        { JMP_STD(0x7CA4B0); }
+地址 + __cdecl 两参（Str/SubStr）+ 返回 char* 三证吻合。
+
+机器码还原（前 0x84）：
+    mov ecx, [esp+8]                ; ★ SubStr
+    mov dl, [ecx]                   ; ★ SubStr 首字符
+    test dl / je 返 0               ; 空子串 → 0
+    mov dh, [ecx+1]                 ; ★ SubStr 第二字符
+    test dh / je 单字符模式
+    mov edi, [esp+0x10]             ; ★ Str
+    mov al, [edi] / inc esi
+    loop: cmp al, dl / je 首字符命中  ; ★ 扫描 Str 找 SubStr[0]
+    test al / je 返 0
+    mov al, [esi] / inc esi / cmp al, dl / je 命中
+    test al / jne loop
+  命中:
+    mov al, [esi] / cmp al, dh / jne 回 loop   ; ★ 第二字符匹配
+    ...（后续按 SubStr[2..] 长串匹配 + 返回 Str 命中位置指针）
+
+语义：**标准 CRT 子串查找（strstr）**——先取 SubStr 首字符在 Str 里扫描定位，
+再比对后续字符（双字符展开 + 长串继续匹配），命中返回 Str 中位置指针、未
+命中 NULL。★0x7C-0x7D CRT 层字符串家族再添 strstr（查找方向），与 batch
+126（strchr 单字符）、batch 141（strncmp 比较）同区同源。
+
+★跨批次连接：batch 126（strchr 0x7CAF30）+ batch 141（strncmp 0x7CA610）
+——CRT 字符串查找/比较族三件套。
+
+⚠️ partial：长串匹配后续（0x7CA4F1 起 SubStr[2..] 循环）、返回指针定位细节。
+
+================================================================================
+0x567DA0  MapClass::RevealArea3（11 callers）
+================================================================================
+身份实锤：YRpp MapClass.h:407-408
+    void RevealArea3(CoordStruct *Coords, int Height, int Radius, bool SkipReveal)
+        { JMP_THIS(0x567DA0); }
+地址 + JMP_THIS + 4 参签名三证吻合。
+
+机器码还原（前 0x50）：
+    mov eax, [esp+0x10]             ; ★ Radius 参数
+    cmp eax, 0xB / jle 钳位下        ; ★ Radius > 0xB → 钳 0xB
+    mov eax, 0xB
+    jmp 继续
+  钳位下:
+    cmp eax, 3 / jge 继续            ; ★ Radius < 3 → 钳 3
+    mov eax, 3
+  继续:
+    mov ecx, [esp+0xC]              ; ★ Height 参数
+    test ecx / jge 钳位高
+    mov eax, [eax*4 + 0x7ED3D0]     ; ★ 查表 [0x7ED3D0]（按 Radius 取扩展）
+    mov [esp+0xC], 0                ; Height < 0 → 0
+    jmp 收尾
+  钳位高:
+    cmp ecx, 8 / jle 收尾            ; ★ Height > 8 → 钳 8
+    mov [esp+0xC], 8
+    ...
+
+语义：**RevealArea3（区域揭示）**——Radius 钳位到 [3, 0xB]、Height 钳位到
+[0, 8]，按 Radius 查 [0x7ED3D0] 表（疑揭示半径→格数扩展表）后进入揭示逻辑。
+★与 batch 109/116（坐标→格子解析）、batch 129（菱形线性换算）同 MapClass
+几何族——「揭示区域」是战争迷雾的对立面（shrouded 检查的另一端）。
+
+★跨批次连接：batch 114（IsLocationShrouded 迷雾判定）+ MapClass 几何族 +
+[0x7ED3D0] 表（.rdata 常数区）——迷雾揭示双向闭合。
+
+⚠️ partial：[0x7ED3D0] 表内容、揭示循环主体（0x567DFD 起）、SkipReveal
+参数用途。
+
+================================================================================
+0x48DC90  UnselectAll 遍历（11 callers，0x30 全读完 + 邻域）
+================================================================================
+机器码（全 0x30）：
+    mov eax, [0xA8ECC8]             ; ★ 全局计数
+    test eax / je 0x48DCB1
+  loop:
+    mov eax, [0xA8ECBC]             ; ★ 全局数组基址
+    mov ecx, [eax] / mov edx, [ecx]
+    call [edx+0x150]                ; ★ 对象虚表槽 0x150（取消选择）
+    mov eax, [0xA8ECC8] / test / jne loop   ; ★ 遍历（计数不变 → 死循环?
+                                    ;   疑链式遍历直到无对象）
+  0x48DCB1:
+    xor ecx / call 0x731D00          ; ★（0x731D00，重置/清理）
+    mov ecx, 0x89C3B0 / jmp 0x431060 ; ★ 尾跳（0x431060，对象方法）
+
+语义：**UnselectAll（全部取消选择）**——遍历 [0xA8ECBC] 全局数组（计数
+[0xA8ECC8]），对每个对象调虚表槽 0x150（取消选择），计数不为 0 时循环（疑
+链式：每次取头对象取消后计数由虚表槽内部递减）；收尾调 0x731D00 + 尾跳
+0x431060（0x89C3B0 对象方法）。
+
+★跨批次连接：虚表槽 0x150（高槽位调用）+ 0xA8ECxx 全局区（batch 098/099
+同区）+ 0x431060（0x431xxx 区对象方法）——选择系统清理链。
+
+⚠️ partial：0xA8ECBC/0xA8ECC8 数组宿主、0x731D00 与 0x431060 身份、
+循环终止条件（计数不变却循环的精确语义）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x7CA4B0 → batch 126/141（CRT 字符串查找/比较族三件套）。
+2. 0x567DA0 → batch 114/109/116（MapClass 迷雾/格子几何族）。
+3. 0x48DC90 → 0xA8ECxx 全局区（batch 098/099）+ 虚表槽 0x150。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x7CA4B0 长串匹配后续与返回定位。
+2. 0x567DA0 的 [0x7ED3D0] 表与揭示循环。
+3. 0x48DC90 的 0xA8ECxx 宿主与 0x731D00/0x431060 身份。
