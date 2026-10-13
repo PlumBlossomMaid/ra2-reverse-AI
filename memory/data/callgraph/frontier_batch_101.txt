@@ -1,0 +1,124 @@
+frontier batch 101 — 0x53ECB0 FF 填值 + 0x65CA00 缓冲类析构 + MissionControlClass 表索引族（2026-10-13）
+
+口径：承接 batch 100 候选，ranking.tsv unique_callers 降序取 0x53ECB0（25 callers）、
+0x65CA00（25 callers，调用方含 BufferIOFileClass::~BufferIOFileClass）、0x5B3A00
+（25 callers）。三者 prologue 均干净。YRpp 无前两者的符号覆盖（机器码判类），
+0x5B3A00 家族拿到两条全局实锤。
+
+================================================================================
+0x53ECB0  10 字节 FF 填值（25 callers，34B）
+================================================================================
+机器码（全 34B）：
+    mov eax, ecx                    ; this
+    mov cl, 0xff
+    mov [eax+0], cl / [eax+1] / [eax+2] / ... / [eax+9]
+    ret
+连续 10 次单字节写 0xFF（未用 rep stos 或 DWORD 优化，纯展开）——把
+this->[0..9] 全部置为 0xFF。
+
+语义：**某结构的 10 字节「填哨兵」**——0xFF 作占位/未初始化标记（类似
+Tiberium 相关的索引 -1 语义但按字节充填）。调用方 0x53F430/0x53FA90/
+0x541680 等全在 0x53xx-0x54xx 区。⚠️ 宿主结构未定（10 字节 = 5×2B 或 2×4B+2B
+的布局猜测），语义按机器码形态标注为「全 FF 初始化」。
+
+紧邻 0x53ECE0（0x54B，ret 0xC = 3 栈参）：结构拷贝变体——[edx]（源）→
+this->[4]（dword）+ [edx+4]→this-[8]（word），然后按全局 [0x828140]
+（★实测 = 1）分支决定 this->[0] 来自 [esp+4] 还是置 0 + word 拷贝。
+[0x828140] 是引擎标志（值 1），语义未实锤。
+
+================================================================================
+0x65CA00  缓冲类析构/降级（25 callers，103B，调用方含 BufferIOFileClass dtor）
+================================================================================
+机器码还原：
+    push esi / mov esi, ecx
+    mov [esi], 0x7f0904             ; ★ 安装虚表 A（0x7F0904）
+    call [0x7f091c]                 ; ★ 全局函数指针（引擎回调）
+    test al, al / je 收尾            ; 回调失败 → 跳过主体
+    mov eax, [esi+0x14] / push eax
+    call [0x7e11e0]                 ; ★ 导入槽 A
+    test eax, eax / jne 已置哨兵
+    mov ecx, [esi+0x18]
+    push edi / mov edi, [esi] / push ecx / push eax
+    call [0x7e1200]                 ; ★ 导入槽 B
+    push eax / mov ecx, esi
+    call [edi + 0x40]               ; ★ 虚表槽 0x40（当前虚表的 0x40）
+  done:
+    mov [esi+0x14], 0xffffffff      ; ★ +0x14 置 -1（哨兵）
+    mov al, [esi+0x20] / test / je 收尾
+    mov eax, [esi+0x18] / test / je 收尾
+    push eax / call 0x7c93e8        ; ★ CRT::free（0x7C93E8，YRpp CRT.h:30 实锤）
+    mov [esi+0x18], 0               ; 清 +0x18
+    mov byte [esi+0x20], 0          ; 清 +0x20
+  exit:
+    mov [esi], 0x7f08bc             ; ★ 切换虚表 B（0x7F08BC）
+    ret
+
+语义：**文件缓冲类析构/释放**——调用方含 `BufferIOFileClass::~BufferIOFileClass`
+（ranking caller_examples 列），结构为：先装虚表 A → 引擎回调判断 → 两个导入槽
+（疑 Close/Flush 系 Win32 句柄操作）+ 虚表槽 0x40 → +0x14 置 -1 → 按 +0x20 标志
+free 掉 +0x18 缓冲区 → 最后**切换为精简虚表 B（0x7F08BC）**。虚表切换是
+「析构尾声把对象置为无害状态」的 C++ 惯例（防再调虚函数的二次释放）。
+
+⚠️ partial：[0x7F091C] 回调身份、0x7E11E0/0x7E1200 导入槽 API 名（YRpp
+StaticInits 未覆盖）、+0x14/+0x18/+0x20 字段语义、虚表 0x7F0904/0x7F08BC 类归属。
+
+================================================================================
+0x5B3A00 / 0x5B3A10 / 0x5B3A20  MissionControlClass 表索引与计时族（25 callers）
+================================================================================
+两条全局实锤：
+    [0xA8E3A8] = MissionControlClass::Array() 基址（YRpp MissionClass.h:15 实锤）
+    [0xA8ED84] = Unsorted::CurrentFrame（YRpp Fundamentals.h:9 实锤）
+    [0xA8ED84] 即 batch 083 已登记的 None::CurrentFrame——跨批地址同源。
+
+0x5B3A00（15B）：
+    mov eax, [ecx + 0xac]           ; this->[0xAC]（索引）
+    shl eax, 5                      ; ★ ×32
+    add eax, 0xa8e3a8               ; + MissionControlClass 数组基址
+    ret
+语义：`MissionControlClass* Get(int idx) == &Array()[this->[0xAC]]`——
+**按 this->+0xAC 索引取 MissionControlClass 表项指针**，每项 32B。
+
+0x5B3A10（14B）：
+    mov edx, [ecx + 0xb0]
+    xor eax, eax
+    cmp edx, -1 / setne al / ret
+语义：`this->[0xB0] != -1`——布尔：索引是否有效（-1 = 无效）。
+
+0x5B3A20（34B）：
+    mov edx, [ecx + 0xc8]           ; 起始帧（-1 = 未启动哨兵）
+    mov eax, [ecx + 0xd0]           ; 总时长
+    cmp edx, -1 / je 返 0           ; 未启动 → 0
+    mov ecx, [0xa8ed84]             ; ★ CurrentFrame
+    sub ecx, edx                    ; 已过帧数 = CurrentFrame - 起始帧
+    cmp ecx, eax / jge 返 0         ; 已超时 → 0
+    sub eax, ecx / ret              ; ★ 剩余帧数 = 总时长 - 已过帧数
+语义：**帧计时器剩余帧数 getter**——`remaining = max(0, [0xD0] - (CurrentFrame
+- [0xC8]))`，未启动（[0xC8]==-1）返 0。与 batch 083 TimerStruct::GetTimeLeft
+（0x426630 家族，也读全局帧计数器）同族——本族用对象字段而非嵌套定时器对象。
+
+★跨批次价值：0x5B3A20 是 TimerStruct::GetTimeLeft 语义家族在南辕北辙结构上
+的第二个实例（对象内联字段版），且 [0xA8ED84] 地址与 batch 083 完全同源互证。
+
+⚠️ partial：0x5B3A00 家族宿主类名（MissionControl 相关但未对齐 YRpp 布局）、
++0xAC 索引语义（0x5B3A10 的 -1 哨兵暗示先查有效再取表）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. [0xA8ED84] CurrentFrame 与 batch 083（None::CurrentFrame）、Fundamentals.h 三方
+   同源——全局帧计数器的第 N 个消费者。
+2. 0x65CA00 的 CRT::free(0x7C93E8) 与 batch 001/096 的 CRT 函数族同源；虚表
+   安装/切换与 batch 092（0x42FCB0 安装虚表 0x7E38D0）、batch 101 的 0x7F0904/
+   0x7F08BC 同族。
+3. ★batch 099 补全：0x5410F0（Send_Global_Message）日志串 [0x8283D4] 实测
+   = **"Send overflow %d"**（read_const bytes = 53 65 6E 64 20 6F 76 65 72
+   66 6C 6F 77 20 25 64）——发送溢出计数的日志格式串，闭合该条 partial。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x53ECB0 宿主结构与 0xFF 哨兵的确切语义。
+2. 0x65CA00 的 [0x7F091C] 回调、0x7E11E0/0x7E1200 导入槽、虚表 0x7F0904/
+   0x7F08BC 类归属。
+3. 0x5B3A00 家族宿主类名与 +0xAC 索引契约。
+4. [0x828140] 标志（0x53ECE0 用）语义。
