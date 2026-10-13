@@ -1,0 +1,112 @@
+frontier batch 103 — HouseClass::FindByCountryIndex + 4×3 矩阵变换 + CellClass::ShapeRect（2026-10-13）
+
+口径：承接 batch 102 候选，ranking.tsv unique_callers 降序取 0x502D30（25 callers）、
+0x5AFB80（25 callers）、0x47FDE0（25 callers，ranking 符号 CellClass::ShapeRect）。
+三者 prologue 均干净。
+
+================================================================================
+0x502D30  HouseClass::FindByCountryIndex（25 callers，45B）
+================================================================================
+身份实锤：YRpp HouseClass.h:336
+    static HouseClass * __fastcall FindByCountryIndex(int HouseType) // find first house of this houseType
+        { JMP_STD(0x502D30); }
+地址 + `static __fastcall`（ecx=HouseType）+ YRpp 注释「find first house of this
+houseType」三证吻合。
+
+机器码（全 45B）：
+    mov edi, [0xa80238]                 ; ★ 计数（HouseClass 数组大小）
+    xor edx, edx
+    test edi, edi / jle 返 0
+    mov esi, [0xa8022c]                 ; ★ 数组基址（HouseClass**，4B/项）
+    mov eax, [esi]                      ; item = 数组[i]
+    mov ebx, [eax + 0x34]               ; ★ item->[0x34]（Type 指针？HouseTypeClass*）
+    cmp [ebx + 0xb8], ecx               ; ★ Type->[0xB8] == HouseType → 命中
+    je 返回 item
+    inc edx / add esi, 4 / cmp edx, edi / jl loop
+    返 0                                  ; 未命中 NULL
+
+语义：**按国家/阵营类型找第一个 House**——线性扫描全局 HouseClass 数组
+（[0xA8022C]，计数 [0xA80238]），比较每项的 Type（[eax+0x34]）的 [0xB8] 字段
+与目标 HouseType，命中返回 HouseClass*，未命中 NULL。这是地图初始化/脚本触发
+「按类型找玩家」的惯用入口（YRpp 注释指名用途）。
+
+⚠️ partial：[0xA8022C]/[0xA80238] 与 HouseClass::Array 的精确对应（YRpp
+HouseClass 数组地址未逐字段核对）、Type->[0xB8] 字段名。
+
+================================================================================
+0x5AFB80  4×3 矩阵 × 3D 向量仿射变换（25 callers，120B）
+================================================================================
+YRpp 无符号覆盖（0x5AFBxx 区），按机器码形态判类（调用方含 0x6D2360/0x6D6D10/
+0x6D71E0/0x6D7560 等 TacticalClass 区——batch 096 的 AdjustForZ 同区，3D 渲染
+几何族）。
+
+机器码（全 120B）还原，签名 `void __fastcall f(float* dst /*ecx*/, const float*
+matrix /*edx*/, const float* vec /*[esp+4]*/)`：
+    ; 三行点积+平移，每行 4 float（矩阵 12 float = 4×3）：
+    dst[0] = vec[0]*m[0]  + vec[1]*m[4]  + vec[2]*m[8]  + m[0xC]
+    dst[1] = vec[0]*m[0x10]+ vec[1]*m[0x14]+ vec[2]*m[0x18]+ m[0x1C]
+    dst[2] = vec[0]*m[0x20]+ vec[1]*m[0x24]+ vec[2]*m[0x28]+ m[0x2C]
+    用 fld/fmul/faddp 链完成，最终 3 个 dword 写回 [ecx+0..8]，ret 4
+
+语义：**标准 4×3 仿射矩阵变换**——把 3D 向量乘旋转/缩放 + 加平移（12 float
+行主序矩阵，末列是平移）。紧邻 0x5AFC00（12 float = 48B 的 rep movsd 拷贝）
+是同一矩阵类的拷贝/赋值成员，进一步佐证「4×3 矩阵类」身份。
+
+⚠️ partial：宿主类名未定（Matrix3D/MatrixClass 推断，YRpp 无此地址）、vec 参数
+的实际语义（是世界坐标还是局部偏移未证）、调用方 0x6Dxxxx 的具体场景。
+
+================================================================================
+0x47FDE0  CellClass::ShapeRect（25 callers，404B）
+================================================================================
+ranking.tsv 符号名 CellClass::ShapeRect（confirmed_identity 列非空），YRpp 无
+JMP 宏覆盖 → 按推断名登记。紧邻 batch 100 登记的 0x47FB90（GetContainingRect）
+——两条共享同一个全局表 [0xA83D84] 与 this->[0x44] 索引，是同一 CellClass
+「几何查询」族的相邻成员。
+
+机器码还原（前段）：
+    mov edi, ecx                        ; this = CellClass*
+    mov eax, [edi + 0x44]               ; ★ this->+0x44（同 0x47FB90 的索引）
+    cmp eax, -1 / je 归零               ; -1 → 输出矩形全 0 返
+    mov ecx, [0xa83d84]                 ; ★ 全局表（同 0x47FB90）
+    mov esi, [ecx + eax*4]              ; ★ 关联对象 = 表[+0x44]
+    mov ecx, esi
+    mov edx, [esi] / call [edx + 0x9c]  ; ★ 关联对象虚表槽 0x9C
+    mov ebx, eax
+    test ebx, ebx / jne 主路径          ; 取不到 → 归零
+  归零:
+    ; 输出 RectangleStruct（[esp+0x34] 指向，4 dword = 0）后返
+  主路径 (0x47FE2B):
+    mov al, [edi + 0x11e]               ; ★ this->+0x11E 标志（同 0x47FB90）
+    mov [esp+0xC], al
+    mov al, [esi + 0x2aa] / test / je / mov [esp+0xC], 0   ; 关联对象 +0x2AA 覆盖
+    movsx eax, word [ebx + 6]           ; 关联对象返回体的 +6 坐标
+    ...（多个 word 坐标读入 + shl/sar 半像素对齐 + 合成输出矩形）
+
+语义：**计算 CellClass 的绘制包围矩形**——与 GetContainingRect（batch 100）
+同源（+0x44 索引 → [0xA83D84] 表 → 关联对象），差异在查询路径（虚表槽 0x9C
+而非 0x28 系）与输出语义（ShapeRect 的矩形含半像素对齐的坐标合成）。关联对象
+的 +0x2AA 字节可强制覆盖 this 的 +0x11E 标志，是「关联对象决定绘制形态」的
+标志传递链。
+
+★跨批次连接：0x47FDE0 与 0x47FB90（batch 100）共用 [0xA83D84] 表与 +0x44
+索引——同一个表被 CellClass 两个几何成员使用，互证该全局是「格子→关联地形
+对象」注册表。
+
+⚠️ partial：虚表槽 0x9C 方法身份、[0xA83D84] 表宿主类型（CellClass/Overlay 系
+未定）、后半坐标合成细节（0x47FE9C 之后未读完）、+0x11E/+0x2AA 字段语义。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x47FDE0 ↔ batch 100（0x47FB90 GetContainingRect）：同表同索引的几何查询族。
+2. 0x5AFB80 ↔ batch 096（0x6D20E0 AdjustForZ 同 TacticalClass 区）：3D 渲染
+   几何族，x87 fld/fmul/faddp 链与 batch 083/084/092 同源。
+3. 0x502D30 的 [0xA8022C]/[0xA80238] 与 batch 073（HouseClass 联盟体系）同
+   类全局——HouseClass 实例数组的又一出入口。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x502D30 的 Type->[0xB8] 字段名与 HouseClass 数组地址精确对应。
+2. 0x5AFB80 宿主类名（Matrix3D 推断）与 vec 参数语义。
+3. 0x47FDE0 的虚表槽 0x9C、[0xA83D84] 表宿主、后半坐标合成。
