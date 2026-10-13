@@ -1,0 +1,113 @@
+frontier batch 138 — [0xA8ED2C] 表查询（QWEN.md 待确认项闭合）+ ScriptClass::GetCurrentAction + Input 族变体（2026-10-13）
+
+口径：承接 batch 137 候选，ranking.tsv unique_callers 降序取 0x5A6C10（14 callers，
+★QWEN.md 待确认项「0x5A6C10 的 [0xA8ED2C] 表写入点」）、0x691500（14 callers，
+ranking 名 ScriptClass::GetCurrentAction）、0x54F050（14 callers）。三者 prologue
+均干净。
+
+================================================================================
+0x5A6C10  [0xA8ED2C] 表查询（14 callers）
+================================================================================
+★回应 QWEN.md 待确认项：「0x5A6C10 的 [0xA8ED2C] 表写入点」——本批正式立案
+（QMEN.md 记录于 batch 092 阶段「stage ① 剩余字段级语义——0x5A6C10 的
+[0xA8ED2C] 表写入点」）。
+
+机器码还原（前 0x60）：
+    sub esp, 0x14
+    mov eax, [0xA8ED2C]              ; ★ 全局表基址 [0xA8ED2C]
+    mov ebp, [eax+ecx*4]             ; ★ 按索引查表项（4B/项指针数组）
+    mov ecx, ebp
+    mov edx, [ebp] / call [edx+0x9C] ; ★ 表项虚表槽 0x9C（取坐标/状态）
+    test eax / je 失败
+    mov eax, [ebp+0x2E8] / xor ebx / test / jle 失败   ; ★ 表项 +0x2E8 计数
+    mov esi, [0xABED04]              ; ★ MapRect.W 缓存（batch 092 实锤）
+    mov eax, [ebp+0x2E4] / test / jle 失败              ; +0x2E4 计数
+    ...（双重循环，按 +0x2E4/+0x2E8 计数遍历表项内部数据）
+
+语义：**「按索引查 [0xA8ED2C] 全局表 + 表项虚表槽 0x9C + 内部双计数遍历」**——
+[0xA8ED2C] 是全局对象表（4B/项指针数组），表项经虚表槽 0x9C 取数据后用
++0x2E4/+0x2E8 双计数遍历，[0xABED04]=MapRect.W 参与。与 batch 092 的 RMG
+阶段工作数组（0xABED10、0x87F8DC 等）同数据区。
+
+★跨批次连接：QWEN.md 待确认项闭合 + [0xABED04]（batch 092）+ 虚表槽 0x9C
+（batch 130 同槽）——RMG 死代码区（0x5A6xxx）表查询链。
+
+⚠️ partial：表项类型（+0x2E4/+0x2E8 计数对应的内部结构）、虚表槽 0x9C 方法名、
+双重循环遍历细节（0x5A6C64 起）。
+
+================================================================================
+0x691500  ScriptClass::GetCurrentAction（14 callers）
+================================================================================
+身份实锤：YRpp ScriptClass.h:31-32
+    ScriptActionNode* GetCurrentAction(ScriptActionNode *buffer) const
+        { JMP_THIS(0x691500); }
+地址 + JMP_THIS + 单参（buffer 输出）三证吻合。
+
+机器码（全 0x37，55B）：
+    mov edx, [ecx+0x2C]              ; ★ this->+0x2C（当前动作索引）
+    cmp edx, -1 / jne 有动作
+    mov eax, [esp+4]                 ; buffer
+    mov [eax], ecx / mov [eax+4], edx   ; ★ 无动作 → buffer 写 (this, -1)
+    ret 4
+  有动作:
+    mov ecx, [ecx+0x24]              ; ★ this->+0x24（动作表基址）
+    mov eax, [esp+4]
+    mov esi, [ecx+edx*8+0xA4]        ; ★ 表[索引×8 + 0xA4]（动作节点）
+    mov [eax], esi                   ; buffer->? = 节点
+    mov edx, [ecx+edx*8+0xA8]        ; ★ 表[索引×8 + 0xA8]（第二字段）
+    mov [eax+4], edx
+    ret 4
+
+语义：**ScriptClass 当前动作节点查询**——+0x2C 为当前动作索引（-1=无动作），
+有动作则从 +0x24 动作表按索引×8+0xA4 取节点（+0xA4/+0xA8 双字段）写入 buffer。
+ScriptClass 是 AI 脚本（触发脚本）容器，GetCurrentAction 供 AI 决策取当前
+要执行的动作。14 个调用方 = 各 AI/脚本执行器取当前动作。
+
+★跨批次连接：ScriptClass 与 batch 124（TagClass::RaiseEvent 战役脚本体系）
+互证——脚本/触发器体系的动作端。
+
+⚠️ partial：动作表 +0x24/+0x2C 与节点 +0xA4/+0xA8 字段语义（ScriptActionNode
+结构对齐未做）。
+
+================================================================================
+0x54F050  Input 族变体（14 callers）
+================================================================================
+机器码（前 0x40）——与 batch 095 登记的 0x54F720（InputManagerClass::
+DoSomething）**高度同构**：
+    mov esi, ecx                     ; this
+    mov eax, [esi+0x318]             ; ★ 计数器（同 0x54F720 的 [0x318]）
+    inc eax / and eax, 0x800000FF    ; ★ 8 位回绕 + 符号扩展（同款）
+    jns / dec / or 0xFFFFFF00 / inc
+    cmp eax, [esi+0x314]             ; ★ 与 [0x314] 上值比较
+    je 跳过
+    call 0x5D4D50                    ; ★ 消息泵 helper（batch 105 实锤）
+  跳过:
+    mov eax, [esi+0x314] / mov ecx, [esi+0x318]
+    cmp eax, ecx / je 循环
+    cmp word [esi+eax*2+0x114], 0    ; ★ 键码数组 +0x114（word 项）
+    ...
+
+语义：**InputManager 家族的另一个成员（DoSomething 变体/前一成员）**——与
+batch 095 的 0x54F720 共用 [0x314]/[0x318] 计数器 + 8 位回绕 + 0x5D4D50 消息
+泵 + 0x114 键码数组，差异在比较/扫描逻辑分支（0x54F720 是「游标跨边界泵消息」，
+本条多一个键码数组 +0x114 的 word 项判定）。⚠️ 与 0x54F720 的精确关系（同一
+类两成员 vs 顺序执行段）未归一化比对。
+
+★跨批次连接：batch 095（0x54F720 DoSomething）+ batch 105（0x5D4D50 消息泵）
+——Input 家族的第三成员。
+
+⚠️ partial：+0x114 键码数组语义、与 0x54F720 的分工、函数后半。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x5A6C10 → QWEN.md 待确认项闭合 + batch 092（[0xABED04]）。
+2. 0x691500 → batch 124（战役脚本体系动作端）。
+3. 0x54F050 → batch 095/105（Input 家族 + 消息泵）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x5A6C10 的表项结构与双重循环细节。
+2. 0x691500 的 ScriptActionNode 字段对齐。
+3. 0x54F050 与 0x54F720 的精确关系（未归一化比对）。
