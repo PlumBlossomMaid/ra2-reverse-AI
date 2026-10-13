@@ -1,0 +1,108 @@
+frontier batch 153 — UI 控件消息链 + CRT::toupper + 结构拷贝变体（[0x828140] 分支）（2026-10-13）
+
+口径：承接 batch 152 候选，ranking.tsv unique_callers 降序取 0x4E5ED0（12 callers）、
+0x7C97D3（12 callers，0x7CA610 邻域）、0x53F0E0（12 callers，batch 101 已见
+[0x828140]）。三者 prologue 均干净，YRpp 无 JMP 宏覆盖（按机器码判类）。
+
+================================================================================
+0x4E5ED0  UI 控件消息链（12 callers）
+================================================================================
+机器码还原（前 0x50）：
+    mov esi, edx                    ; ★ 参数 1
+    mov edi, ecx                    ; this
+    push esi / push edi
+    call [0x7E14A8]                 ; ★ GetDlgItem（batch 099 实锤导入槽）
+    push 0 / push eax
+    call [0x7E1498]                 ; ★ ShowWindow（batch 094 实锤）
+    sete byte [esp+0x27]            ; 记录显示结果
+    push 0 / push 0 / push 0x146    ; ★ 消息号 0x146
+    push esi / push edi
+    call [0x7E1490]                 ; ★（0x7E1490，batch 144 同款调用?）
+    test eax / jle 收尾
+    push 0 / push ebp / push 0x150  ; ★ 消息号 0x150
+    push esi / push edi ...
+    ; ★（GetDlgItem → ShowWindow → SendMessage(0x146/0x150) 序列）
+
+语义：**UI 控件消息链（batch 144 的 0x4E49A0 同族扩展）**——GetDlgItem 取控件
+→ ShowWindow 显隐 → 按 0x146/0x150 消息号 SendMessage 循环发送。★与 batch
+144（0x4E49A0 同 GetDlgItem+ShowWindow 组合）、batch 094/099（导入槽）串链——
+UI 家族「取控件→显隐→发消息」完整链。
+
+★跨批次连接：batch 144（0x4E49A0 同族）+ batch 099/094（GetDlgItem/
+ShowWindow）+ 0x146/0x150 消息号（batch 141 的 0x4A0 同消息号区）。
+
+⚠️ partial：0x7E1490 导入槽身份、0x146/0x150 消息号语义（疑自定义控件
+消息）、循环次数（test eax/jle 后的循环）。
+
+================================================================================
+0x7C97D3  CRT::toupper（12 callers，0x53 前段未读完）
+================================================================================
+机器码还原（前 0x53）：
+    cmp [0xB782A0], 0               ; ★ locale 检查（batch 135 tolower 同款）
+    jne 走 locale 路径
+    mov eax, [esp+8]                ; ★ 字符参数
+    cmp eax, 0x61 / jl 原样         ; ★ 非 'a'..'z'（0x61-0x7A）原样
+    cmp eax, 0x7A / jg 原样
+    sub eax, 0x20                   ; ★ 小写 → 大写（-0x20）
+    ret
+  走 locale (0x7C97F1):
+    push esi / mov esi, 0xB78BA4
+    push edi / push esi / call [0x7E11C8]   ; ★ 导入槽（锁?）
+    cmp [0xB78BA0], 0 / mov edi, [0x7E11CC]
+    je 0x7C981B
+    push esi / call edi / push 0x13 / call 0x7CD9F5   ; ★ locale 初始化
+    ...
+
+语义：**CRT toupper（小写转大写）**——[0xB782A0] locale 检查：C locale 时对
+'a'..'z'（0x61-0x7A）减 0x20 转大写，非 C locale 走 locale 路径（0x7E11C8/
+0x7E11CC 导入槽 + 0x7CD9F5 locale 初始化）。★与 batch 135 的 CRT::tolower
+（0x7CAFF4，A-Z→+0x20）**反向对称**——tolower/toupper 对。
+
+★跨批次连接：batch 135（0x7CAFF4 tolower 反向）+ [0xB782A0] locale 全局
+（batch 135 同）+ 0x7CD9F5（locale 初始化）——CRT 字符大小写家族闭合。
+
+⚠️ partial：locale 路径细节（0x7C981B 起）、0x7E11C8/0x7E11CC 导入槽身份
+（疑 CRT 内部锁/调用）。
+
+================================================================================
+0x53F0E0  结构拷贝变体（[0x828140] 分支）（12 callers）
+================================================================================
+机器码还原（前 0x50）：
+    mov edx, [esp+4]                ; ★ arg1（源指针，NULL→this）
+    test edx / jne 继续
+    mov edx, ecx                    ; 空 → 用 this
+  继续:
+    lea eax, [edx+4]                ; ★ 源+4
+    mov esi, eax / mov eax, [esi]   ; ★ 源结构首字段
+    mov [esp+0xC], eax
+    mov si, word [esi+4] / mov [esp+0x10], si   ; 第二字段 word
+    mov esi, [0x828140]             ; ★ 全局（batch 101 已见 [0x828140]=1）
+    cmp esi, 1 / jne 0x53F198       ; ★ 分支
+    mov ecx, [edx] / mov edx, [esp+0xD]
+    and edx, 0xFF / and eax, 0xFF ...
+    ; ★（按 [0x828140]==1 走不同拷贝路径）
+
+语义：**batch 101 的 0x53ECE0（结构拷贝变体）同区家族成员**——按 [0x828140]
+全局（batch 101 已见，当时标注「实测=1」）分支做结构字段拷贝（+4 首 dword +
++6 word 等）。★与 batch 101（0x53ECE0 同 [0x828140] 分支）互证——该全局
+是「拷贝路径选择器」。
+
+★跨批次连接：batch 101（0x53ECE0 同族 + [0x828140]）+ 结构拷贝（batch 131
+的 0x437F30 8B 拷贝同思路）。
+
+⚠️ partial：[0x828140] 语义（==1 的选择含义）、结构字段布局（+4 dword/+6
+word 等）、两条拷贝路径差异。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x4E5ED0 → batch 144/099/094（UI 控件链）+ 消息号区。
+2. 0x7C97D3 → batch 135（tolower 反向）+ locale 全局。
+3. 0x53F0E0 → batch 101（0x53ECE0 同族 + [0x828140]）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x4E5ED0 的 0x7E1490 身份与消息号语义。
+2. 0x7C97D3 的 locale 路径细节与导入槽身份。
+3. 0x53F0E0 的 [0x828140] 语义与两拷贝路径差异。
