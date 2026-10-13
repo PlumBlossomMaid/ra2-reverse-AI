@@ -1,0 +1,113 @@
+frontier batch 124 — MapClass::DamageArea + TagClass::RaiseEvent + FacingStruct 家族补员（2026-10-13）
+
+口径：承接 batch 123 候选，ranking.tsv unique_callers 降序取 0x489280（17 callers，
+QWEN.md「候选机制」点名）、0x6E53A0（17 callers）、0x4C9300（17 callers，batch 083
+FacingStruct 家族邻域）。三者 prologue 均干净。
+
+================================================================================
+0x489280  MapClass::DamageArea（17 callers）
+================================================================================
+身份实锤：YRpp MapClass.h:253-261
+    static DamageAreaResult __fastcall DamageArea(
+        const CoordStruct& Coords, int Damage,
+        TechnoClass* SourceObject, WarheadTypeClass *WH,
+        bool AffectsTiberium, HouseClass* SourceHouse)
+        { JMP_STD(0x489280); }
+地址 + JMP_STD + 6 参签名三证吻合。★QWEN.md「候选机制」点名
+（「弹道伤害 MapClass::DamageArea（0x489000 区 22 hook）」），本批正式立案。
+
+机器码还原（前段）：
+    mov edi, ecx / mov esi, edx          ; 前两参（Coords 引用 + Damage）
+    push ebx/0/0 → lea ecx,[esp+0x40]
+    call 0x48B070                        ; ★ 子函数（区爆炸范围初始化?）
+    mov [esp+0x38], 0x7E5170             ; ★ 静默装虚表/模板
+    mov [esp+0x4C], 0xA                  ; ★ 常量 10（半径初值?）
+    mov [esp+0x48], ebx
+    ...（Damage/WH/轰击点展开）
+
+语义：**对坐标点施加一次范围伤害**——DamageArea 是弹道/爆炸伤害的统一入口：
+给定世界坐标、伤害值、攻击者、弹头（WH）、是否影响泰伯利亚、来源阵营，按弹头
+的爆炸半径/衰减在 [0x489000] 区展开伤害结算。YRpp 参数文档完整（MapClass.h
+「The object which caused the damage... the owner/bringer of damage」）。
+
+★跨批次连接：QWEN.md 候选机制点名函数正式登记；[0x489000 区] 还有 22 个 hook
+（QWEN.md 原记录）留作后续候选。
+
+⚠️ partial：爆炸展开主体（0x48B070 之后）未读完、0x48B070 身份、0x7E5170 模板
+与常量 0xA 语义。
+
+================================================================================
+0x6E53A0  TagClass::RaiseEvent（17 callers）
+================================================================================
+身份实锤：YRpp TagClass.h:78-81
+    bool RaiseEvent(TriggerEvent event, ObjectClass* pTagOwner, CellStruct location,
+                    bool forceAllOccured = false, TechnoClass* pSource = nullptr)
+        { JMP_THIS(0x6E53A0); }
+地址 + JMP_THIS + 5 参签名三证吻合（ret 0x14 = 20B = 5 栈参）。
+
+机器码还原（前段）：
+    mov al, [0xA8ED6B]                   ; ★ 全局标志（触发器总开关?）
+    test al / jne 0x6E5551（大分支）
+    mov al, [ebp+0x35] / test / jne 0x6E5551   ; ★ this->+0x35
+    mov al, [ebp+0x34] / test / jne 0x6E5551   ; ★ this->+0x34
+    mov eax, [ebp+0x24] / test / je 0x6E5551   ; ★ this->+0x24
+    push esi → 继续
+
+语义：**触发触发器事件（RaiseEvent）**——一长串前置守卫（[0xA8ED6B] 全局开关、
+trigger 对象多个条件字段），全过才进入事件处理主体。TagClass 是战役/任务脚本
+的触发器对象（触发条件表 + 行为表），RaiseEvent 是「事件发生 → 检查并执行
+行为」的入口。17 个调用方 = 各游戏事件（部队到达/被攻击/区域进入等）上报。
+
+（先验：batch 102 登记的 AbstractClass::AnnounceExpiredPointer 与 tag 系统
+互有引用——战役脚本体系的另一个节点。）
+
+⚠️ partial：[0xA8ED6B] 全局开关与后面守卫字段语义、0x6E5551 分支、事件主体
+处理逻辑未读完。
+
+================================================================================
+0x4C9300  FacingStruct 家族成员（batch 083 补员，17 callers）
+================================================================================
+家族归属：batch 083 已登记 FacingStruct 核心成员（0x4C91E0 ctor / 0x4C9220
+SetDesired / 0x4C93D0 GetFacing(current) / 0x4C9480-0x4C94F0 IsRotating 三兄弟
+/ 0x4C9530/0x4C95D0 Difference / 0x426630 TimerStruct::GetTimeLeft）。
+0x4C9300 位于 SetDesired（0x4C9220）与 GetFacing（0x4C93D0）之间——家族中
+未登记的一环。
+
+机器码还原（前段）：
+    cmp word ptr [esi+0x14], 0           ; ★ +0x14（TimeLeft/步数）
+    jle 收尾（返 ax=0 语义）
+    lea ebx, [esi+8] / mov ecx, ebx
+    call 0x426630                        ; ★ TimerStruct::GetTimeLeft（batch 083 实锤）
+    test eax / je 收尾
+    mov ax, [esi] / sub ax, [esi+4]      ; ★ Value - Initial（差值）
+    movsx ecx, [esi+0x14]                ; 步数
+    movsx edi, ax / cdq / xor / sub       ; 取绝对值
+    idiv ecx                             ; ★ |Value-Initial| / 步数 → 
+    ...
+    ; ★（疑「每步角速度/速率」计算——对照 YRpp current():
+    ;   diff = difference(); num_steps; steps_left = Timer.GetTimeLeft();
+    ;   ret.value(ret.value() - steps_left * diff / num_steps)）
+
+语义：**FacingStruct 的「每步增量/速率」内部 helper**——用 (Value-Initial) 的
+绝对值除以步数算出每帧转向量，供 current()（0x4C93D0）插值用。与 YRpp
+GeneralStructures.h:255 FacingStruct 的 current()/turn_rate()/in_motion() 实现
+对应（batch 083 关键发现「先除后乘」同款）。⚠️ 具体方法名未逐一对应（疑
+num_steps() 或内部步进 helper），按机器码判类 partial。
+
+★跨批次连接：batch 083 FacingStruct 家族补员——该家族成员数增至 8+；
+0x426630 TimerStruct::GetTimeLeft 第三次引用。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x489280 → QWEN.md 候选机制点名（DamageArea 正式立案）+ [0x489000] 区 22
+   hook 后续候选。
+2. 0x6E53A0 → batch 102（Trigger/Tag 体系互证）+ 全局开关 [0xA8ED6B]。
+3. 0x4C9300 → batch 083（FacingStruct 家族补员）+ 0x426630 三引。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x489280 的爆炸展开主体、0x48B070、0x7E5170 模板与 0xA 常量。
+2. 0x6E53A0 的守卫字段与事件主体、[0xA8ED6B] 开关语义。
+3. 0x4C9300 的精确方法名（num_steps/内部 helper）与后半。
