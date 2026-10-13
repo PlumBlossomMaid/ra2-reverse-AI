@@ -1,0 +1,119 @@
+frontier batch 098 — CRT::wcsncpy + MapClass::Update_Pathfinding_1 + UI::Updated（2026-10-13）
+
+口径：承接 batch 097 候选，ranking.tsv unique_callers 降序取 0x7CA422（28 callers，
+CRT 区）、0x56C510（28 callers，MapClass 寻路）、0x623120（25 callers，UI 区）。
+三者 prologue 均干净。
+
+================================================================================
+0x7CA422  CRT::wcsncpy（28 callers）
+================================================================================
+身份实锤：YRpp CRT.h:16 `static wchar_t *__cdecl wcsncpy(wchar_t *Dest,
+const wchar_t *Source, size_t Count) { JMP_STD(0x7CA422); }` 地址+签名三证吻合。
+
+机器码（0x30 前段实读）：
+    mov ecx, [esp+0xC]              ; Count（第三参）
+    push esi/edi
+    mov edi, [esp+0xC]              ; Dest（第一参）
+    test ecx, ecx / je 收尾
+    mov edi 循环基址 / mov edx=[esp+0x10]（Source）
+   copy_loop:
+    mov ax, [edx] / mov [edi], ax   ; ★ 2 字节/次（wchar_t 拷贝）
+    inc edi×2 / inc edx×2
+    test ax, ax / je 截断            ; 遇 L'\0' 提前停
+    dec ecx / jne copy_loop
+   …
+
+语义：标准 CRT 宽字符定长拷贝——按 Count 上限逐 wchar_t 复制，遇源串
+L'\0' 停/补。与 batch 093 的 CRT::strcmpi（0x7C8D20）、batch 095 的 CRT
+数字解析（0x7C9BFD）同属 0x7C-0x7D MSVC6 静态 CRT 层（项目既有实证
+ra2_code_region_layout_crt_provenance），登记价值=确认 28 个调用点是宽字符
+定长拷贝而非引擎自写循环（引擎侧对窄串用 memcpy/rep movsd 时走 CRT::memcpy
+0x7CA090，batch 089/094 已登记）。
+
+⚠️ partial：尾部的 0 填充路径（Count 未用完时补 L'\0'）未读到函数末端；
+确切调用约定细节（返回值=Dest）按 CRT 标准形态标注。
+
+================================================================================
+0x56C510  MapClass::Update_Pathfinding_1（28 callers，>0x240 未读完）
+================================================================================
+身份实锤：YRpp MapClass.h:301
+    // Pathfinding voodoo
+    // do not touch them, mmkay, they trigger ZoneConnection recalc which is
+    // a MUST for firestorm to work
+    void Update_Pathfinding_1()
+        { JMP_THIS(0x56C510); }
+地址 + `__thiscall` 无参 + YRpp 源码注释三证吻合。这是 QWEN.md「候选机制」里
+点过名的寻路函数（MapClass::Update_Pathfinding_1/2 = 0x56C510/0x586990，
+「寻路 MapClass::Update_Pathfinding_1/2」候选），本批正式立案登记。
+
+主体结构（已读 0x240，函数未读完）：
+    开栈 0x54 + 局部对象（[esp+0x48] 虚表 0x7ED580，+0x54 布尔初始 1）
+    mov eax=[ebp+0x6C] / mov ecx=[ebp+0x68] / lea edx=[ecx+eax*4]（★
+        终点指针 = base + count×4，4B/项数组）
+    ; 第一段：遍历 [ebp+0x14] 指向的对象表——
+        循环 0x18B/项步进、调每项 vtable+0xC（23B 子对象的方法）
+    ; 第二段：清 [ebp+0x18..+0x40] 的 13 个（0xD 次 × 4B）指针
+        非空则 CRT::_delete(0x7C8B3D) + 置 NULL
+    ; 第三段：把 [ebp+0x68] 数组的 [+2] word 字段全部清零（4B 步进至 edx）
+    ; 进入寻路扫描主循环（0x56C61F 起）：
+        读 [esi] 首字节（well=7 跳过）、[esi+2] word==0 才处理
+        调 0x56CB90（内层寻路步进）→ [0xABDE8C]=0 前置
+        检查 [esp+0x54]/[esp+0x5C]（计数 300=0x12C 上限）
+        双层 cmp/ja 越界钳位（坐标 imul 后 clamp [0, size-1]）
+
+语义概判：**以 [ebp+0x68] 的寻路格数组为核心的重算入口**——先批量回调
+vtable 子对象、清空 13 个指针 slot 与 4B/项的 [+2] 标记字段，再逐格扫描
+（阈值 0x12C=300 的迭代上限）做格状态刷新。YRpp 注释点名了后果：触发
+ZoneConnection recalc（火风暴/通行区域判定必须）。⚠️ 0x240 读到中途，后段
+（0x56C7E6 起的循环迭代器推进与收尾）未读完，本批登记为语义级 proven +
+结构 partial。
+
+================================================================================
+0x623120  UI::Updated（25 callers）
+================================================================================
+身份实锤：YRpp UI.h:24 `static bool Updated() { JMP_STD(0x623120); }`
+地址+签名（__cdecl 无参返 bool，ret 无参）两证。
+
+机器码（全 0x42B，含出口）：
+    call 0x5d4d50                   ; ★ InputManager 系链路第一步
+                                    ;  （batch 095 已登记 0x54F720 同类，0x5D4D50 是
+                                    ;   0x54F720 的 helper——见 batch 095 partial）
+    mov eax, [0xa8b238]             ; ★ SessionClass::Instance（GameMode）
+    test eax / je return_false      ; GameMode==NULL → false
+    cmp eax, 5 / je return_false     ; ★ GameMode==5 → false
+    mov al, [0xa8d60e] / test / jne return_false
+    mov eax, [0xa8dab4] / test / jne return_false
+    call 0x55cbf0 / test al / jne return_false   ; 引擎某判定
+    call 0x55d360 / test al / je return_false    ; ★ MainLoop（QWEN.md 已登记
+                                    ;   0x55D360=MainLoop，胜负判定 0x4F8440 区）
+    mov al, 1 / ret                  ; 全通过 → true
+  return_false:
+    call 0x48d080 / xor al, al / ret ; → false
+
+语义：**「本帧是否允许 UI 更新」的门铃**——一系列游戏状态快检（GameMode
+非 NULL 且 !=5、两个全局标志零、引擎判定通过、MainLoop 存活）全部满足才返回
+true。0x55D360=MainLoop 的身份与 QWEN.md 游戏循环文档互证；0x55CBF0 未登记
+（本批标 reference 待查）。
+
+⚠️ partial：0x55CBF0 的身份（疑 MainGame 系，未对齐游戏循环文档）；
+[a8d60e]/[a8dab4] 两个全局标志含义未实锤。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x7CA422 与 0x7CA090(memcpy)/0x7C8D20(strcmpi)/0x7C9BFD(数字解析) 同属
+   CRT 层，0x7C-0x7D 的 MSVC6 静态链接证据链继续延长。
+2. 0x56C510 是 QWEN.md「候选机制」点名函数，本批正式立案；0x586990
+   （Update_Pathfinding_2）留作后续候选。
+3. 0x623120 内部调 0x55D360=MainLoop——与 QWEN.md 游戏循环记录（WinMain →
+   MainGame → MainLoop）直接接榫；0x5D4D50 与 batch 095 的 0x54F720 共用
+   helper，跨批互证。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x56C510 的 0x56CB90 内层寻路步进语义与函数后段（0x56C7E6 起）。
+2. 0x623120 的 0x55CBF0 身份与 [a8d60e]/[a8dab4] 标志语义。
+3. 0x7CA422 的尾部 0 填充细节。
+4. 0x56C510 的 [ebp+0x68]/[ebp+0x6C]/[ebp+0x14] 字段与 MapClass 布局的精确
+   对齐（YRpp MapClass.h 中对应成员未逐字段确认）。
