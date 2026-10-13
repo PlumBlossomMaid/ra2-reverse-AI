@@ -1,0 +1,120 @@
+frontier batch 096 — TacticalClass::AdjustForZ + 孪生副本字节级实锤（2026-10-13）
+
+口径：承接 batch 095 候选，ranking.tsv unique_callers 降序取 0x6D20E0（29 callers）
+与 0x7C9BFD（29 callers）。另做一件方法论补证：把 batch 089 台账里
+「0x4073E0 是 0x4073C0 的逐字节相同孪生」这条**从推断升级为字节级实证**。
+
+================================================================================
+0x6D20E0  TacticalClass::AdjustForZ（29 callers，63B）
+================================================================================
+身份实锤：YRpp TacticalClass.h:35
+    // convert xyz height to xy height?
+    static int __fastcall AdjustForZ(int Height)
+        { JMP_STD(0x6D20E0); }
+地址 + `static __fastcall`（ecx=Height、无栈参与 ret）+ YRpp 源码注释
+「convert xyz height to xy height?」三证吻合。
+
+机器码还原：
+    sub esp, 8
+    cmp ecx, 0x2d8                  ; ★ Height vs 728
+    mov [esp+4], ecx                ; 备份 Height（给 fild 用）
+    mov [esp], 0
+    jl  over
+    mov [esp], 1                    ; ★ Height >= 728 → 加数 = 1
+  over:
+    fild dword ptr [esp+4]          ; st0 = (double)Height
+    fmul qword ptr [0xb0cd48]       ; × 比例常数（★该地址读不出，见 partial）
+    fiadd dword ptr [esp]           ; ★ + (Height>=728 ? 1 : 0)
+    fadd qword ptr [0x7e1738]       ; ★ + 0.5（实测常量，见下）
+    call 0x7c5f00                   ; ★ _ftol（batch 092/093 同族 x87 转换）
+    add esp, 8 / ret
+
+常量取证：`read_const.py double 0x7E1738` → **0.5**（raw=3fe0000000000000）。
+[0xB0CD48] 报「不在任何节内」= 落在 .bss 虚拟尾巴，文件里没有初值 → 运行时
+初始化写入（partial 1）。
+
+语义：`AdjustForZ(Height) = trunc(Height * K + (Height >= 728 ? 1 : 0) + 0.5)`
+其中 K = [0xB0CD48] 运行时比例常数。
+
+★原版取整惯癖（照抄，与 QWEN.md 怪癖清单第「阶段 9 造山 §2.5」同款）：
+先 `+0.5` 再 `_ftol`，而全局 FPCW=0x0E7F（RC=chop，向零截断，batch 已实锤
+WinMain `_control87(_RC_CHOP)`）→ 整体等价于 **round-half-up（正数侧）**，
+不是 x87 FRNDINT 的 ties-to-even。对负数侧会退化成 toward-zero 方向的
+half-up 变体——本函数 Height 恒非负，故不影响，但复刻必须保留
+「+0.5 后 _ftol」这个动作序列而非替换为 std::nearbyint/round。
+
+★`Height >= 728` 的 +1 分支：728 = 0x2D8，是高度上界相关的分段补偿
+（超出某阈值时整体结果 +1）。0x2D8 的来历未追（partial 2）。
+
+紧邻第二成员 0x6D2120（16B，反向）：
+    push ecx / mov [esp], ecx
+    fild dword ptr [esp]
+    fsub qword ptr [0x7e1738]       ; ★ -0.5（同一常量）
+    fmul qword ptr [0xb0cdd8]       ; × 逆比例常数
+    call 0x7c5f00 / pop ecx / ret
+语义：`trunc((Height - 0.5) * K2)`——与 0x6D20E0 成对，一加一减对称
+「XY→Z / Z→XY」互逆变换的两个方向。两条都走 _ftol 收尾。
+
+================================================================================
+0x7C9BFD  CRT 数字解析 thunk（29 callers，11B）
+================================================================================
+11 字节全读完：
+    push dword ptr [esp + 4]
+    call 0x7c9b72
+    pop ecx / ret
+纯参数转发 thunk → 0x7C9B72。
+
+0x7C9B72（前 0x60B 实读）含：与 [0x87c79c]（>1 走 0x7D1311 的 locale 字符类查询，
+否则查 [0x87c590] 的字符类型表 `mov al,[ecx+eax*2]` + `and eax,8` 取「是否空白」
+位）→ 循环跳过前导空白 → 读符号（`cmp esi,0x2d` / `cmp esi,0x2b` = '-'/'+'）
+→ 数字累加 —— **标准 CRT 字符串转整数族**（strtol/atoi 的实现形态）。
+
+判定：0x7C-0x7D 整段是 MSVC6 静态 CRT 而非 Westwood 手写（项目既有实证
+ra2_code_region_layout_crt_provenance），本条属 CRT 层而非游戏逻辑层。
+⚠️ partial：确切 CRT 函数名（atoi / _atoi64 / strtol）未实锤——29 个调用点
+的实参形态未逐个回查，不下断言。
+
+================================================================================
+★方法论补证：0x4073C0 ↔ 0x4073E0 孪生关系字节级实锤
+================================================================================
+batch 089 登记 0x4073C0（安全解引用谓词）时，台账写了「0x4073E0 是逐字节相同
+孪生（36+31 callers 两处编译副本）」——但当时只有 disasm 目视比对本项目通用
+纪律「不做归一化逐字节比对就不写『已证为副本』」。本批补做原始字节 dump：
+
+    0x004073C0 = 85c9740b8b0185c074073b4008750233c0c3
+    0x004073E0 = 85c9740b8b0185c074073b4008750233c0c3
+                 ↑ 完全一致的 18 字节
+
+逐条对应：85c9(test ecx,ecx) 740b(je +0x0B→本函数内 xor 段) 8b01(mov eax,[ecx])
+85c0(test eax,eax) 7407(je +0x07→ret) 3b4008(cmp eax,[eax+8]) 7502(jne +0x02→ret)
+33c0(xor eax,eax) c3(ret)。
+
+相对跳转偏移 0x0B/0x07/0x02 全同，绝对落点因基址差 0x20 而异（0x4073CF vs
+0x4073EF 等）——**这正是「同一源码在两个 TU 各编译出一份」的机器码指纹**
+（同 batch 085 的 c_str()/[] 孪生族、batch 086 的坐标菱形谓词同款现象）。
+
+结论：batch 089 台账该断言由「目视比对」升级为「原始字节 dump 完全一致」，
+**无需修正内容，只需记录证据强度提升**。两个地址各自 36/31 个调用点意味着
+编译器为不同调用上下文各内联了一份。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x6D20E0/0x6D2120 的 `+0.5 → _ftol` 与 batch 092/093 的 x87 向零截断家族
+   同源；[0x822D80] FPCW=0x0E7F（RC=chop）上下文一致。
+2. 0x7C9BFD 落在 0x7C-0x7D CRT 段（本项目既有实证：MSVC6 静态链接 CRT），
+   与 0x7C8D20 CRT::strcmpi（batch 093 实锤）、0x7C8E17 CRT::_new（batch 001）
+   同区同源。
+3. 孪生字节级比对方法可复用于所有「疑似孪生」条目——本批把它固化为
+   `read_const.py bytes <VA> <n>` 一条命令即可，无需再写探针脚本
+   （早前 _twin_compare.py 因自行实现节表解析出错，read_const.py 已有正确实现）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. [0xB0CD48]/[0xB0CDD8] 的比例常数实际数值（落在 .bss 虚拟尾巴，文件里没有
+   初值，需运行时或初始化点取证）。
+2. 0x6D20E0 里 `Height >= 0x2D8(728)` 的 728 阈值来历。
+3. 0x7C9BFD/0x7C9B72 的确切 CRT 函数名（atoi/_atoi64/strtol 未定）。
+4. AdjustForZ 的 K 常量与「convert xyz height to xy height?」注释的确切含义
+   （YRpp 源码注释本身带问号，未由社区给出定论）。
