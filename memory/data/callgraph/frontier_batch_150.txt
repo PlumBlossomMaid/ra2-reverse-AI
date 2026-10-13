@@ -1,0 +1,105 @@
+frontier batch 150 — GScreenClass 渲染链 + 对象清零构造/数组比较 + 迭代回调循环（2026-10-13）
+
+口径：承接 batch 149 候选，ranking.tsv unique_callers 降序取 0x4F4480（12 callers，
+ranking 名 GScreenClass::Render）、0x49EA10（12 callers）、0x4068F0（12 callers）。
+三者 prologue 均干净，YRpp 无 JMP 宏覆盖（按机器码判类）。
+
+================================================================================
+0x4F4480  GScreenClass 渲染链（12 callers，ranking 名 Render）
+================================================================================
+机器码还原（前 0x50）：
+    mov eax, [0x88731C]             ; ★ 全局 A（当前表面?）
+    mov ebp, [0x887314]             ; ★ 全局 B（备份表面?）
+    mov esi, ecx                    ; this（GScreenClass*，YRpp Instance @ 0x87F7E8）
+    mov [0x887314], eax             ; ★ 表面交换（B ← A）
+    mov ecx, [0x887640]             ; ★ GScreenClass 子对象（batch 099 同对象）
+    push 0 / push eax / mov edx, [ecx]
+    call [edx+0x40]                 ; ★ 虚表槽 0x40（绘制/刷新）
+    mov eax, [esi+0xC] / mov [esi+0xC], 0
+    test eax / setne cl / cmp eax, 2 / sete dl
+    mov [esp+8], cl / mov [esp+0xC], dl
+    call 0x53BAE0                   ; ★（帧逻辑/消息泵?）
+    test al / jne 0x4F451B
+    ...
+
+语义：**GScreenClass 渲染/帧更新链**——表面指针交换（[0x887314]←[0x88731C]）、
+经 [0x887640] 对象虚表槽 0x40 绘制、+0xC 状态检查（==2 判定）、0x53BAE0 帧
+逻辑。GScreenClass 是引擎屏幕基类（YRpp GScreenClass.h:7 class NOVTABLE
+GScreenClass : public IGameMap，Instance @ 0x87F7E8）——渲染/输入/光标接口
+宿主。
+
+★跨批次连接：GScreenClass（YRpp 类定义实锤）+ [0x88731C]/[0x887314]（batch
+105 的 0x8873xx 全局区）+ [0x887640]（batch 099 MessageBox 同对象）——渲染
+全局区 + UI 家族的屏幕端。
+
+⚠️ partial：0x53BAE0 身份、+0xC 状态语义（==2 的用途）、虚表槽 0x40 方法名。
+
+================================================================================
+0x49EA10  对象清零构造 + 数组相等比较（12 callers）
+================================================================================
+机器码（fy 两函数）：
+  0x49EA10（0x12 全读完）：
+    mov eax, ecx / xor ecx / mov [eax], ecx / [eax+4] / [eax+8]
+    mov byte [eax+0xC], cl / mov [eax+0x10], ecx
+    ret                             ; ★ 六字段清零构造（+0/+4/+8/+0xC/+0x10）
+  0x49EA30（数组相等比较）：
+    mov esi, [ecx+8] / mov edi, [esp+0x10]
+    cmp esi, [edi+8] / jne 返 0     ; ★ 计数不同 → false
+    xor edx / test esi / jle 返 1
+    mov eax, [ecx+4] / mov ecx, [edi+4]
+    sub ecx, eax / loop: mov edi, [eax] / mov ebx, [ecx+eax]
+    cmp edi, ebx / jne 返 0         ; ★ 逐项 [i] 比较
+    inc edx / add eax, 4 / cmp edx, esi / jl loop
+    返 1                            ; ★ 全等 → true
+
+语义：**对象清零构造（0x49EA10）+ 数组逐项相等比较（0x49EA30）**——
+0x49EA10 把六字段（+0/+4/+8 dword + +0xC byte + +0x10 dword）清零（构造端点）；
+0x49EA30 比较两对象数组（+4 指针 / +8 计数）逐项（item->[0]）相等。★与
+batch 120（0x68CA50 名+索引查表）、batch 147（0x634290 按值找索引）同登记册
+数组家族——本对是「构造 + 比较」。
+
+★跨批次连接：batch 120/147（数组查找族）+ 清零构造（batch 149 的 0x6406E0
+同款）——0x49EAxx 区对象基建。
+
+⚠️ partial：六字段宿主类、数组元素类型（item->[0] 语义）。
+
+================================================================================
+0x4068F0  迭代回调循环（12 callers，0x27 全读完）
+================================================================================
+机器码（全 0x27）：
+    mov eax, [esp+0xC]              ; ★ 次数参数
+    dec eax / js 收尾               ; 次数-1 < 0 → 收尾（0 次）
+    mov ebx, [esp+0x14]             ; ★ 回调指针
+    mov ebp, [esp+0x10]             ; ★ 步长
+    mov esi, [esp+0x10]             ; ★ 游标（步进基址）
+    lea edi, [eax+1]                ; ★ 实际次数 = eax+1
+  loop:
+    mov ecx, esi / call ebx         ; ★ 调回调（ecx=游标）
+    add esi, ebp                    ; 游标 += 步长
+    dec edi / jne loop
+    ret 0x10                        ; 4 栈参
+
+语义：**迭代回调循环（对游标序列逐个调回调）**——次数 N、游标 base、步长
+step、回调 fn 四参；对 i=0..N-1 调 fn(base + i×step)。★通用「遍历步进回调」
+工具——batch 148 的 0x4068E0（sprintf 类）同 0x4068xx 区，回调循环是区内
+配套模式。
+
+★跨批次连接：0x4068E0（batch 148/149 sprintf 类）+ 回调循环（batch 102/105
+函数指针模式）——0x4068xx 区「格式化 + 迭代」工具族。
+
+⚠️ partial：回调语义（每次调用的 ecx=游标用途）、四参的精确角色（次数/游标/
+步长/回调）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x4F4480 → GScreenClass（YRpp）+ [0x8873xx] 全局区 + batch 099。
+2. 0x49EA10 → batch 120/147（数组查找族）+ 清零构造。
+3. 0x4068F0 → batch 148/149（0x4068xx 工具族）+ 回调循环模式。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x4F4480 的 0x53BAE0 身份与虚表槽 0x40。
+2. 0x49EA10 六字段宿主类与数组元素类型。
+3. 0x4068F0 回调语义与四参角色。
