@@ -1,0 +1,118 @@
+frontier batch 126 — CRT::strchr + CRT::wcscat + 消息泵第二实例（2026-10-13）
+
+口径：承接 batch 125 候选，ranking.tsv unique_callers 降序取 0x7CAF30（16 callers，
+CRT 区）、0x7CA45F（16 callers，CRT 区）、0x77F900（17 callers）。三者 prologue
+均干净。
+
+================================================================================
+0x7CAF30  CRT::strchr（16 callers）
+================================================================================
+身份实锤：YRpp CRT.h:58-59
+    static char *__cdecl strchr(const char *Str, int Val)
+        { JMP_STD(0x7CAF30); }
+地址 + __cdecl 两参（Str/Val）+ 返回 char* 三证吻合。
+
+机器码还原（全 0x83）：
+
+    mov al, [esp+8]                ; ★ Val（目标字节）
+    mov ebx, eax / shl eax, 8      ; 高字节填充 Val
+    mov edx, [esp+8]               ; Str
+    test edx, 3 / je 对齐路径      ; ★ 非 4 对齐 → 逐字节路径
+  逐字节:
+    mov cl, [edx] / inc edx
+    cmp cl, bl / je 命中            ; 找到 → 返回（edx-1）
+    test cl, cl / je 未命中         ; '\0' → 返 0
+    test edx, 3 / jne 逐字节
+  对齐路径:
+    or ebx, eax / shl ebx, 0x10 / or ebx, eax   ; ★ 4 字节填满 Val
+    mov ecx, [edx] / mov edi, 0x7EFEFEFF         ; ★ SWAR 魔数
+    ; ★ 经典 haszero 技巧：逐 dword 检查是否含目标字节或 '\0'
+    lea / xor 0x1010100 / and ... / jne 慢路
+    ...（eax 内测 4 字节哪一字节命中 → 返回精确地址）
+
+语义：**标准 CRT 字节查找（strchr）**——非对齐时逐字节、对齐后 4 字节 SWAR
+优化（0x7EFEFEFF 魔数 = haszero/hasvalue 惯用法），找到返回指针、未找到返回
+NULL。0x7C-0x7D 静态 CRT 层（项目既有实证 ra2_code_region_layout_crt_provenance）
+的字符串查找成员。
+
+★跨批次连接：0x7C-0x7D CRT 层字符串家族再添一员（此前 strcmpi/wcsncpy/
+wcscmp/wcslen 已登记）——查找/比较/拷贝三类齐；SWAR 魔数 0x7EFEFEFF 是
+MSVC6 标准实现指纹。
+
+⚠️ partial：无（全读完）；末段 4 字节内定位的精确位移逻辑未逐字节展开。
+
+================================================================================
+0x7CA45F  CRT::wcscat（16 callers）
+================================================================================
+身份实锤：YRpp CRT.h:24-25
+    static wchar_t *__cdecl wcscat(wchar_t *Dest, const wchar_t *Source)
+        { JMP_STD(0x7CA45F); }
+地址 + __cdecl 两参（Dest/Source）+ 返回 Dest 三证吻合。
+
+机器码还原（全 0x2A，42B）：
+    mov eax, [esp+4]               ; Dest
+    mov ecx, eax
+    loop1: cmp word [eax], 0 / je 找到尾   ; ★ 宽串找 '\0'（2B 步进）
+    inc eax×2 / jne loop1
+  找到尾:
+    mov edx, [esp+8]               ; Source
+    loop2: mov si, [edx] / mov [ecx], si    ; ★ 2B 拷贝
+    inc ecx×2 / inc edx×2
+    test si / jne loop2            ; ★ 连 '\0' 一起拷完
+    ret
+
+语义：**标准 CRT 宽字符拼接（wcscat）**——先找到 Dest 的空终止符，再把 Source
+逐 wchar_t（含终止符）拷到其后。紧邻 0x7CA489（= CRT::wcscpy，batch 097 已
+实锤）——wcscat 是 wcscpy 加上「先找尾」的组合。
+
+★跨批次连接：宽字符三件套（wcscpy/wcscmp/wcslen，batch 097/098/110）再添
+wcscat——拷贝家族补齐；batch 072/085/090 窄串族的宽串镜像继续扩展。
+
+⚠️ partial：无（全 0x2A 读完）。
+
+================================================================================
+0x77F900  消息泵第二实例（17 callers）
+================================================================================
+机器码（前 0x100 实读）——与 batch 105 登记的 0x5D4D50（游戏主消息泵）同族：
+    sub esp, 0xA0
+    call 0x532100                  ; ★ 全局门铃（batch 107 登记！）
+    mov eax, [0xAA0430] / inc / mov [0xAA0430], eax   ; ★ 消息泵计数++（batch 105 同款）
+    push 1/0/0 / xor edx / lea ecx,[esp+0x34]
+    call 0x53E770                  ; ★ PeekMessageA 包装（batch 105 同款）
+    test eax / je 尾段
+    mov edi, [0x7E14BC] / mov ebp, [0x7E14C0]   ; ★ TranslateMessage / DispatchMessageA
+  loop:
+    lea eax,[esp+0x28] / push eax
+    call edi                       ; TranslateMessage(&msg)
+    lea ecx,[esp+0x28] / push ecx
+    call ebp                       ; DispatchMessageA(&msg)
+    inc esi / cmp esi, 0x64 / je 尾段   ; ★ 上限 100 次
+    call 0x53E770 / test / jne loop
+  尾段 (0x77F966):
+    mov eax, [0xA8B244]            ; ★ GameMode（与 [0xA8B238] 相邻）
+    cmp eax, 3/1/2 → 分支（异步/同步路径）
+    ...（[0xB77D70]/[0xB73A20]/[0x7CA67F] 的时差/心跳判定）
+
+语义：**每帧消息泵的第二个实例（带 100 次上限与 GameMode 分支）**——先走
+batch 107 的全局门铃、计数 ++、PeekMessage → TranslateMessage → DispatchMessage
+循环，上限 0x64（100）；尾段按 [0xA8B244] GameMode（1/2/3）分支，并结合
+[0xB77D70]/[0xB73A20]/[0x7CA67F]（时钟/心跳）决定要不要额外处理。
+与 batch 105 的 0x5D4D50（同含 0x53E770/0xAA0430/[0x7E14BC]/[0x7E14C0]）
+共享整套导入槽与计数——两个消息泵实例分别服务不同主循环段。
+
+⚠️ partial：尾段 GameMode 分支（0x77F981 起各路径[0x7CA67F 时钟/0xB77D70 心跳]
+语义）、与 0x5D4D50 的调用关系（谁在何时用哪个）未实锤。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x7CAF30 → batch 093/098/110（CRT 字符串家族）+ SWAR 魔数 0x7EFEFEFF。
+2. 0x7CA45F → batch 097/098/110（宽字符三件套+wcscat 补齐）。
+3. 0x77F900 → batch 105（0x5D4D50 同族导入槽/计数）+ batch 107（0x532100
+   门铃）+ [0xA8B244]（GameMode 全局第四消费）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x7CAF30 的 SWAR 尾段位移定位逻辑逐字节展开。
+2. 0x77F900 尾段 GameMode 分支与 [0x7CA67F]/[0xB77D70] 心跳语义。
