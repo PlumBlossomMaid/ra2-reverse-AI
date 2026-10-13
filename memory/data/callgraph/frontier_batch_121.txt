@@ -1,0 +1,91 @@
+frontier batch 121 — GadgetClass 析构清全局 + TechnoClass::SetFocus + 窄串释放（2026-10-13）
+
+口径：承接 batch 120 候选，ranking.tsv unique_callers 降序取 0x4E1390（18 callers，
+ranking 名 GadgetClass::~GadgetClass）、0x70C610（17 callers，ranking 名
+TechnoClass::SetArchiveTarget）、0x7B5340（17 callers）。三者 prologue 均干净。
+
+================================================================================
+0x4E1390  GadgetClass 析构/清全局（18 callers）
+================================================================================
+机器码（前 0x40 实读）——ranking 名 GadgetClass::~GadgetClass：
+    mov [ecx], 0x7E92BC            ; ★ 装虚表 0x7E92BC
+    mov eax, [0x8B3E90]            ; ★ 全局（当前 Gadget 指针）
+    cmp ecx, eax / jne 跳过1
+    mov eax, [ecx+0x20] / and ah, 0xFE / mov [ecx+0x20], eax   ; ★ 清 +0x20 bit
+    xor eax / mov [0x8B3E90], eax   ; ★ 全局清空
+  跳过1:
+    mov esi, [0x8B3E88] / cmp ecx, esi / jne 跳过2
+    mov [0x8B3E88], edx             ; ★ 第二全局清空
+  跳过2:
+    mov esi, [0x8B3E8C] / cmp ecx, esi / jne 跳过3
+    ...                             ; ★ 第三全局清空（0x8B3E8C）
+
+语义：**「析构时若自己是全局注册对象则清对应全局」的模式**——装虚表 0x7E92BC，
+逐一比对三个全局槽（[0x8B3E90]/[0x8B3E88]/[0x8B3E8C]），命中则清空该槽（首个
+还顺带清 +0x20 的低位 bit）。与 batch 102（AnnounceExpiredPointer 清
+[0x88098C] 等全局槽）同思路——「对象消亡时解除全局引用」的引擎惯例。三个
+全局槽疑为 GadgetClass 的「当前/焦点/悬停 gadget」注册。
+
+⚠️ partial：三个全局槽（0x8B3E88/0x8B3E8C/0x8B3E90）语义、+0x20 bit 含义、
+函数后半（0x4E13D3 起）未读完、宿主类名（GadgetClass 为 ranking 名）。
+
+================================================================================
+0x70C610  TechnoClass::SetFocus（17 callers，0x1 全读完）
+================================================================================
+身份实锤：YRpp TechnoClass.h:417-419
+    void SetFocus(AbstractClass* pFocus)
+        { JMP_THIS(0x70C610); }
+地址 + JMP_THIS + 单参签名三证吻合（ranking 曾标 SetArchiveTarget，YRpp 为准
+修正）。
+
+机器码（全 0x1，5B）：
+    mov eax, [esp+4]               ; ★ pFocus
+    mov [ecx+0x218], eax           ; ★ this->+0x218 = pFocus
+    ret 4
+
+语义：**设置单位的当前焦点对象**——把 pFocus（AbstractClass*）写入 this->+0x218
+（Focus 槽），`ret 4` = 1 栈参。纯 5B setter（单字段写入）。17 个调用方 = 各
+单位/事件设置焦点时的统一入口。紧邻 0x70C620 是读取/坐标处理成员（+0x9C
+字段 → 0x6D2140 CoordsToClient 族）。
+
+★跨批次连接：+0x218 Focus 槽与 batch 093（VoxClass::Play）、batch 100
+（MessageListClass）同属「对象持目标/焦点指针」模式；紧邻坐标变换 0x6D2140
+（batch 084 实锤）。
+
+⚠️ partial：+0x218 字段名（Focus 推断，YRpp TechnoClass 布局未逐字段对齐）。
+
+================================================================================
+0x7B5340  窄串释放（17 callers，0x19 全读完）
+================================================================================
+机器码（全 0x19）：
+    push esi / mov esi, ecx
+    mov eax, [esi]                 ; ★ this->[0]
+    test eax / je 跳过
+    push eax / call 0x7C8B3D       ; ★ CRT::_delete（batch 001/096 族）
+    add esp, 4
+  跳过:
+    mov [esi], 0                   ; ★ 指针置 NULL
+    pop esi / ret
+
+语义：**窄字符串类释放（operator delete + 置空）**——this->[0] 非空则
+CRT::_delete 释放并置 NULL。紧邻 0x7B5360 是同族拷贝变体（先释放再按参数
+拷贝）。★与 batch 059（窄串 dtor）、batch 090（operator= 释放旧值）同族——
+窄串生命周期释放端。
+
+⚠️ partial：宿主类（StringClass 推断，batch 085 命名）、与 0x7B5360 的精确
+成员关系（释放 vs 拷贝释放）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x4E1390 → batch 102（清全局引用惯例）+ 虚表安装（batch 092/104/115）。
+2. 0x70C610 → batch 084（0x6D2140 紧邻坐标族）+ 对象持焦点指针模式
+   （batch 093/100）。
+3. 0x7B5340 → batch 001/096（CRT::_delete）+ batch 059/090（窄串族）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x4E1390 三全局槽语义、+0x20 bit、后半析构细节、GadgetClass 名。
+2. 0x70C610 的 +0x218 字段名（Focus 推断）。
+3. 0x7B5340 宿主类与 0x7B5360 成员关系。
