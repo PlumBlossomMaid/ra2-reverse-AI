@@ -1,0 +1,110 @@
+frontier batch 113 — TeamClass::LiberateMember + GameMode 门禁标志 + 查表族第三套（2026-10-13）
+
+口径：承接 batch 112 候选，ranking.tsv unique_callers 降序取 0x4E41D0（21 callers）、
+0x77D970（21 callers）、0x6EA870（21 callers，ranking 名 TeamClass::LiberateMember）。
+三者 prologue 均干净。
+
+================================================================================
+0x6EA870  TeamClass::LiberateMember（21 callers，>0x100 未读完）
+================================================================================
+身份实锤：YRpp TeamClass.h:34-35
+    void LiberateMember(FootClass* pFoot, int idx=-1, byte count=0)
+        { JMP_THIS(0x6EA870); }
+地址 + `__thiscall` + `ret 0xC`（3 栈参：pFoot/idx/count）三证吻合。
+
+机器码还原（前 0x100）：
+    push ecx/ebp/edi
+    mov ebp, [esp+0xC]             ; ★ pFoot
+    mov edi, ecx                    ; this（TeamClass*）
+    mov eax, [ebp+0x5D4]            ; ★ pFoot->+0x5D4
+    mov byte [ebp+0x6B8], 1         ; ★ pFoot->+0x6B8 = 1（标志置位）
+    cmp edi, eax / je 继续          ; ★ this == pFoot->+0x5D4 → 继续
+    mov al, 1 / ret 0xC              ; 不等 → 直接返 true（?）
+  继续 (0x6EA892):
+    mov eax, [ebp+0x34] / mov ecx, [edi+0x70]
+    cmp eax, ecx / jne 分支         ; ★ pFoot->+0x34 vs this->+0x70
+    mov ecx, [ebp+0x21C] / xor ebx, ebx
+    test ecx / je 分支2
+    call 0x50B730 / test al / jne 分支2   ; ★ 前置判定（FootClass 相关）
+    push ebx / mov ecx, ebp / call 0x5F5B50  ; ★（pFoot 处理）
+  分支2 (0x6EA8BE):
+    mov eax, [esp+0x18]            ; ★ idx 参数
+    cmp eax, -1 / jne 用 idx        ; idx==-1 → 遍历队表找
+    mov eax, [edi+0x24] / test / je 收尾      ; this->+0x24（?）
+    mov eax, [eax+0xE4] / test / je 收尾      ; →+0xE4（成员数组）
+    mov ecx, [eax+0x9C] / jle 收尾             ; ★ 计数 [eax+0x9C]
+    ; 遍历：ebx=0xA8 步进 8，call [edx+0x88]（虚表槽 0x88）
+    ;   比对 [ebx+esi]（成员槽）== 虚表结果 → 命中
+    ;   未命中 inc / add ebx,8 / jl 循环
+    ...（成员槽递减 / +0x54 遍历处理，0x6EA943 起）
+
+语义：**从小队释放一个成员**——先做类型/归属核对（pFoot->+0x5D4 是否指向
+this、+0x6B8 标志置位、+0x34 vs this->+0x70 关联），前置判定（0x50B730）与
+0x5F5B50 处理，然后按 idx（-1 则遍历队表查）定位成员槽，递减计数并收尾。
+调用方 21 处 = 各单位死亡/离队时向 TeamClass 报告「我走了」。
+
+★跨批次连接：虚表槽 0x88 调用与 batch 102（AnnounceExpiredPointer 的虚表槽
+0x2C）、batch 109（0x56EB80 虚表槽 +0x28）同属「虚表槽调用」族；+0xE4 数组/
++0x9C 计数与 batch 109（0x65AD30 +0xE4/+0xE8 数组族）、batch 111（0x405BE0
++0xC 指向 AudioIDX）同属「对象持数组+计数」登记册风格。
+
+⚠️ partial：pFoot->+0x5D4/+0x6B8/+0x34、this->+0x70 字段语义；0x50B730/
+0x5F5B50 身份；成员槽遍历后半（0x6EA943 起）细节。
+
+================================================================================
+0x77D970  GameMode 门禁标志（21 callers，0x1B 全读完）
+================================================================================
+机器码（全 0x1B）：
+    cmp [0xA8B238], 4 / je 继续     ; ★ [0xA8B238] == 4
+    xor al, al / ret                 ; 否则返 false
+  继续:
+    mov eax, [0xB76B30]              ; ★ 全局 [0xB76B30]
+    shr eax, 8 / and al, 1           ; ★ bit8
+    ret
+
+语义：**「当前为 GameMode==4 且全局 [0xB76B30] bit8 置位」的布尔门禁**——
+[0xA8B238] = SessionClass::Instance/GameMode（YRpp SessionClass.h:54、
+Unsorted.h:43 实锤），==4 是某游戏模式（对战/遭遇战？）。紧邻 0x77D990 是
+同门禁 + [ecx+0x20] bit8（对象字段版）。⚠️ [0xB76B30] 全局身份与 GameMode
+枚举 4 的具体值未实锤。
+
+★跨批次连接：[0xA8B238] = SessionClass::Instance（GameMode）与 batch 098
+（UI::Updated 读同一地址判 ==5）、batch 099（MessageBox::Show）同全局——
+**游戏模式全局的第三个消费者**，三处判定值不同（4 vs 5）暗示不同模式语义。
+
+⚠️ partial：[0xB76B30] 身份、GameMode 枚举 4 的含义。
+
+================================================================================
+0x4E41D0  索引→值查表（第三套）（21 callers，0x60B 全读完）
+================================================================================
+机器码（全 0x60B）：与 batch 108 的 0x4E37D0/0x4E5940 **同构第三套**——
+    test eax / je → 0x6A2
+    cmp 1 / jne → 0x522
+    cmp 2 / jne → 0x523
+    cmp 3 / jne → 0x524
+    cmp 4 / jne → 0x525
+    cmp 5 / jne → 0x526
+    cmp 6 / jne → 0x527
+    ≥7 → sub/neg/sbb/and 0xFFFFFAD7 + add 0x528
+紧邻 0x4E4230 是反向（cmp 0x6A2→0 / 0x522→1 / ...严格互逆）。
+
+语义：**第三套「紧凑索引 → 稀疏内部 ID」正向映射**（0→0x6A2、1→0x522、
+2→0x523、...、6→0x527、≥7→0x528 起连续）。★与 batch 108 两套（0x4E37D0：
+0→0x6A1/1→0x510-0x520；0x4E5940：0→0x76D/1→0x76E-0x774）对照：本套的
+0x522-0x528 与 0x4E37D0 的 0x510-0x521 **同处 0x5xx ID 空间但起始不同**——
+三套映射共用「0→大 ID、1..N→连续小 ID、≥N→+1」模板，是引擎多对象类型
+（派别/阵型?）的索引体系。⚠️ 映射对象（哪三类枚举↔哪些 ID）未对齐。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x6EA870 → batch 102/109/111（虚表槽调用 + 对象持数组+计数家族）。
+2. 0x77D970 → batch 098/099（SessionClass::Instance 同全局第三消费者）。
+3. 0x4E41D0 → batch 108（查表孪生对同族，第三套映射模板复用）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x6EA870 字段语义与后半成员槽遍历、0x50B730/0x5F5B50 身份。
+2. 0x77D970 的 [0xB76B30] 身份与 GameMode==4 语义。
+3. 0x4E41D0 映射对象与三套查表的精确对应关系。
