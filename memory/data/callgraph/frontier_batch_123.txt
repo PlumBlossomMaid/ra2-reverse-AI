@@ -1,0 +1,114 @@
+frontier batch 123 — AbstractTypeClass 构造器 + BufferIOFileClass::Exists + TeamClass 目标指派（2026-10-13）
+
+口径：承接 batch 122 候选，ranking.tsv unique_callers 降序取 0x410800（17 callers，
+ranking 名 AbstractTypeClass::AbstractTypeClass）、0x431F10（17 callers，ranking
+名 BufferIOFileClass::Exists）、0x6E9050（17 callers，ranking 名
+TeamClass::AssignMissionTarget）。三者 prologue 均干净。
+
+================================================================================
+0x410800  AbstractTypeClass::AbstractTypeClass（17 callers）
+================================================================================
+身份实锤：YRpp AbstractTypeClass.h:64
+    AbstractTypeClass(...) { JMP_THIS(0x410800); }
+地址 + JMP_THIS + 构造器签名三证吻合。AbstractTypeClass 是
+BuildingTypeClass/UnitTypeClass/InfantryTypeClass 等的公共基类（YRpp 类图）。
+
+机器码还原（前段）：
+    mov ebp, ecx
+    call 0x410170                    ; ★ 基类构造（batch 117 ObjectClass 同款基类）
+    mov eax, [esp+0x58]              ; 参数
+    lea ebx, [ebp+0x24]
+    mov byte [ebx], 0                ; ★ +0x24 = 0
+    mov byte [ebp+0x3D], 0           ; ★ +0x3D = 0
+    mov byte [ebp+0x64], 0           ; ★ +0x64 = 0
+    mov [ebp], 0x7E2000              ; ★ 装虚表 0x7E2000
+    mov [ebp+4], 0x7E1FE4            ; ★ 第二虚表 0x7E1FE4
+    mov [ebp+8], 0x7E1FDC            ; ★ 第三虚表 0x7E1FDC
+    mov [ebp+0xC], 0x7E1FD4          ; ★ 第四虚表 0x7E1FD4
+    test eax / jne 分支
+    ...
+
+语义：**AbstractTypeClass 构造器**——调基类 AbstractClass 构造（0x410170，
+与 batch 117 的 ObjectClass 同一基类链），初始化三个字节（+0x24/+0x3D/+0x64）
+并连续安装 4 个虚表（0x7E2000/0x7E1FE4/0x7E1FDC/0x7E1FD4——多重继承
+AbstractClass/ObjectClass/AbstractTypeClass 的虚表槽）。★4 个虚表 = 多重
+继承的类虚表族（MFC/IAccessible 系接口的多重继承），与 batch 117 ObjectClass
+单虚表安装对照。
+
+★跨批次连接：0x410170 基类构造与 batch 117（ObjectClass ctor 首句 call
+0x410170）完全同源——所有游戏对象的公共基类链第一站；多虚表安装与 batch
+092/104/115（单虚表安装）对照。
+
+⚠️ partial：4 个虚表对应继承的哪个接口（0x7E2000 主虚表，其余 IUnknown 系?）、
+参数分支（test eax 后的按参初始化）、函数后段。
+
+================================================================================
+0x431F10  BufferIOFileClass::Exists（17 callers）
+================================================================================
+机器码（全 0x15，21B）：
+    mov al, [ecx+0x29]              ; ★ +0x29 字节标志
+    test al / je 走查询
+    mov al, 1 / ret 4                ; 标志已置 → 直接返 true
+  走查询:
+    push 0 / call 0x65CBF0          ; ★ 0x65CBF0（底层 Exists/Open 查询）
+    ret 4
+
+语义：**「先查缓存标志，未置位才走底层查询」的 Exists**——+0x29 疑「已确认
+存在/已打开」缓存标志；命中直接返 true，否则调 0x65CBF0 做真实查询。
+ret 4 = 1 栈参（bWriteShared？）。
+
+紧邻 0x431F30（同族第二成员）：+0x25/+0x29 双标志检查 + [ecx+0x14]!=-1
+判定——同一对象的另一个存在性/有效性查询。⚠️ 0x431F10 与 0x431F30 是两个
+不同判据的兄弟（未逐字节比对，不写孪生）。
+
+⚠️ partial：0x65CBF0 底层查询身份、+0x25/+0x29/+0x14 字段语义（BufferIOFile
+打开状态）、与 RawFileClass/CCFileClass 的虚表关系（CCFileClass.h:86 Exists
+R0 是虚方法但无地址标注）。
+
+================================================================================
+0x6E9050  TeamClass 目标指派（17 callers，>0xA0 未读完）
+================================================================================
+机器码（前 0xA0 实读）：
+    mov ebp, [esp+8]               ; ★ 目标对象（arg）
+    mov edi, ecx                    ; this（TeamClass*）
+    mov eax, [edi+0x3C]            ; ★ this->+0x3C（当前目标）
+    cmp ebp, eax / je 收尾          ; 目标相同 → 直接收尾
+    mov esi, [edi+0x54]            ; ★ this->+0x54（队员链/对象）
+    test eax / je 收尾
+    test esi / je 收尾
+    ; ★ 队员遍历（[esi+0x5D8] 步进）：
+    mov ebx, [esi+0x2B4] / mov edx, [esi+0x5A4]
+    cmp / sete cl / cmp / sete bl   ; 队员状态判定（与 this->+0x3C 比较）
+    ; 命中分支：call [esi->vtable+0x1E8]（停止/解除）
+    ;   + [esi->vtable+0x480]（条件）/ [esi->vtable+0x3C8]
+    ; 收尾：mov [edi+0x40], ebp / mov [edi+0x3C], ebp（★写入新目标）
+    call [ebp->vtable+0x2C]        ; 目标类型查询
+    ...
+
+语义：**给小队的每个队员指派新目标**——先比较新目标与当前目标（相同则跳过），
+再遍历队员链（[esi+0x5D8] 步进），对每个队员按虚表槽 0x1E8/0x480/0x3C8 做
+解除/重定向，最后把新目标写入 this->+0x3C/+0x40 并查目标类型。⚠️ 0x6E90E1
+起的队员处理细节与虚表槽身份未读完。
+
+★跨批次连接：虚表槽调用族（0x1E8/0x480/0x3C8 高槽位——队员对象的方法表）；
+TeamClass 与 batch 113（LiberateMember 同 TeamClass 类）互证。
+
+⚠️ partial：0x6E90E1 后队员处理细节、三虚表槽方法身份、+0x3C/+0x40/+0x54/
++0x5D8 字段语义。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x410800 → batch 117（0x410170 公共基类链）+ batch 092/104/115（虚表安装）：
+   类型类构造器族（BuildingType/UnitType/InfantryType 等公共基类）。
+2. 0x431F10 → CCFileClass.h:86（BufferIOFileClass::Exists 虚方法）+ batch 063
+   （CCFileClass ctor）+ batch 091（FileSystem::LoadFile）——文件缓存存在性
+   查询链。
+3. 0x6E9050 → batch 113（TeamClass 类互证）+ 虚表槽调用族。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x410800 的 4 虚表继承接口与参数分支。
+2. 0x431F10 的 0x65CBF0 底层查询与 +0x25/+0x29/+0x14 字段语义。
+3. 0x6E9050 的后半队员处理与三虚表槽身份。
