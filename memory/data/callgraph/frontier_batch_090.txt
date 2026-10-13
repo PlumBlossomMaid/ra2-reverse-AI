@@ -1,0 +1,68 @@
+frontier batch 090 — 窄字符串拷贝赋空 + INISection::Clear（2026-10-13）
+
+口径：承接 batch 089 候选，ranking.tsv unique_callers 降序取 0x7B4690（35 callers
+/ 字符串族邻域）与 0x5257C0（INISection::Clear，33 callers，符号名
+USER_DEFINED，YRpp 覆盖但行为吻合）。先验 prologue 均干净。
+
+================================================================================
+0x7B4690  窄字符串类「拷贝/赋空」变体（35 callers）
+================================================================================
+80 字节。签名 `StringClass* __thiscall f(const StringClass* src)`（ecx=this，
+栈参=src，返回 this——operator= 形态）。
+
+    push 保护 / esi = src / ebx = this
+    mov [ebx], 0              ; ★ 目标先置 NULL
+    mov edi, [esi] / test edi,edi / je DONE   ; ★ src 为 NULL → 直接结束
+    ; src 非 NULL：strlen+1 → operator new → 拷贝
+    or ecx,-1 / xor eax,eax / repne scasb
+    push ecx / call 0x7C8E17 (operator new, batch 001)
+    mov [ebx], eax            ; this->[0] = 新分配
+    rep movsd / rep movsb 拷贝
+DONE:
+    mov eax, ebx / ret 4      ; 返回 this
+
+★ 与 batch 062 已登记的 0x7B4630（81 callers）语义差异（两版 operator=）：
+  0x7B4630：源 NULL → **仍分配 1 字节空串**（mov ecx,1 / call new / mov [eax],0）
+  0x7B4690：源 NULL → **不分配、目标保持 NULL**（test edi,edi / je DONE）
+  ——两个重载/两处实现，赋空的行为不同！调用方按编译期选择走哪版。
+  ★ 与 batch 085 c_str()（NULL→[0x889F64] 空串回退）设计族一致：
+  这版把「NULL 就是合法空态」贯彻到底（不清串为 0 长度，而是置 NULL）。
+
+================================================================================
+0x5257C0  INISection::Clear（33 callers）
+================================================================================
+约 0x240 字节。签名 `void __thiscall Clear(const char* arg)`（ecx=this，
+栈参=arg）。
+
+arg == 0 分支（0x5257D9 起）——清空整节：
+    [esi+4] = 0 / [esi+8] = 0
+    ; 遍历键链表（this+0x14 头）：
+    ecx = [esi+0x14]
+    loop: je done / cmp [ecx+4]/[ecx+8] 非空才继续
+          call [ecx] 虚表偏移 0（析构并 delete，push 1）
+    ; 释放 +0x28 动态数组（operator delete 0x7C8B3D）并清零
+    +0x28/+0x2C/+0x30 = 0 / byte +0x34 = 0 / +0x38 = 0
+    ; +0x3C（另一数组）非空继续清
+arg != 0 分支（0x52584B 起）——按名清单键：
+    repne scasb 求 arg 长 → call 0x4A1DE0（★ CRC 字节处理器，batch 082 已登记）
+      ——把键名喂 CRC → 查 0x52B390（哈希表查找）拿节点
+    → 0xB7882C 兜底表 → 命中则删除节点
+
+★ 跨批次连接（重要）：
+1. arg!=0 分支调 0x4A1DE0（CRCEngine 字节处理器，batch 082 已登记）——
+   INI 键查找的哈希key就是 CRC 引擎喂出来的，证据链闭合：
+   batch 074 的 INI 函数（0x526960 GetKeyCount/0x526CC0 GetKeyName）
+   → batch 082 的 CRC 处理器 → 本条的键名 CRC 查表，三处互证。
+2. +0x28 动态数组释放模式与 batch 089 0x622720 的线性表查找同族
+   （登记册结构）；this+0x14 键链表虚表析构与 batch 084 的 0x406130
+   陈旧指针校验同属「对象生命周期管理」基建。
+
+⚠️ partial：arg!=0 分支的删除路径（0x5259B9-0x5259F7 未读完）；0x52B390
+哈希表结构与 0xB7882C 兜底表语义未实锤。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x7B4690 与 0x7B4630 分别在哪些调用点被选中的分界（编译器重载解析）。
+2. INISection 完整布局（+0x14 链表头/+0x28 数组/+0x3C 数组的节类型）。
+3. 0x52B390 表结构与桶大小。
