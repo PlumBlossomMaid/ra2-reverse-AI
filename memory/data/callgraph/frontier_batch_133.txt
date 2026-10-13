@@ -1,0 +1,103 @@
+frontier batch 133 — 临界区保护释放 + BitFont 文本尺寸 + BufferIO 关闭（2026-10-13）
+
+口径：承接 batch 132 候选，ranking.tsv unique_callers 降序取 0x407F40（15 callers，
+0x407xxx 基建区）、0x433CF0（15 callers，ranking 名 BitFont::GetTextDimension）、
+0x4325C0（15 callers，ranking 名 BufferIOFileClass::Close）。三者 prologue 均
+干净。YRpp 均无 JMP 宏覆盖（按机器码判类推断）。
+
+================================================================================
+0x407F40  临界区保护资源释放（15 callers，0x33 全读完）
+================================================================================
+机器码（全 0x33）：
+    mov esi, ecx                    ; this
+    mov eax, [esi+0x88]             ; ★ this->+0x88（锁已持计数?）
+    test eax / jne 收尾              ; 已持锁 → 收尾（避免重入）
+    mov eax, [esi+0x14]             ; ★ this->+0x14（受保护资源指针）
+    test eax / je 收尾
+    push 0x87E7F8                   ; ★ 全局临界区 [0x87E7F8]
+    call [0x7E11E8]                 ; ★ 导入槽（疑 EnterCriticalSection）
+    mov ecx, [esi+0x14] / call 0x4025B0   ; ★ 对受保护对象调 0x4025B0（释放）
+    push 0x87E7F8
+    call [0x7E11EC]                 ; ★ 导入槽（疑 LeaveCriticalSection）
+    ret
+
+语义：**「临界区保护的资源释放」**——+0x88 防重入（已持锁直接跳过），+0x14
+非空则进临界区 [0x87E7F8]、对对象调 0x4025B0（疑析构/释放）、出临界区。
+★与 batch 089 的 0x4073xx 家族（安全解引用/链表）同 0x407xxx 基建区——本条
+是「并发保护」方向。
+
+★跨批次连接：0x7E11E8/0x7E11EC 两个导入槽成对出现（Enter/LeaveCriticalSection
+形态，YRpp StaticInits 未覆盖按形态推断）；0x4025B0（释放目标）。
+
+⚠️ partial：两导入槽精确 API 名、0x4025B0 身份、+0x88/+0x14 字段语义。
+按方法论「不做字节比对不写已证」——0x7E11E8/0x7E11EC 为 Enter/Leave
+CriticalSection 的强形态推断（成对 + 同一临界区指针参数）但未实锤。
+
+================================================================================
+0x433CF0  BitFont 文本尺寸（15 callers，>0x40 未读完）
+================================================================================
+机器码（前段，ranking 名 BitFont::GetTextDimension）：
+    sub esp, 0x1C
+    mov eax, [ecx+4]                ; ★ this->+4（字体位图数据?）
+    test eax / je 0x433E88          ; 空 → 收尾返 0
+    mov ebx, [esp+0x24]             ; 参数字符串指针
+    test ebx / je 0x433E88
+    mov eax, [ecx+0x1C]             ; ★ this->+0x1C
+    mov di, [ebx]                   ; ★ 读 wchar（2B）
+    add ebx, 2
+    test di / je 收尾                ; 到千结束
+    ; ★ 逐字符循环：按字形的宽度/高度累加
+    ...
+    ;（wchar → 字形表查宽高 → 累加输出矩形）
+
+语义：**位图字体文本尺寸测量（GetTextDimension）**——遍历 wchar 参数字符串，
+按 this->+4 字体位图（+0x1C 疑字形表）逐字符查宽高累加，输出文本包围矩形。
+ranking 名 BitFont::GetTextDimension（0x43xxxx 区 = 字体/绘制族）。
+
+⚠️ partial：+4/+0x1C 字形结构、累加细节与输出语义（宽/高公式）未读完；
+宿主类名（BitFont 为 ranking 名，YRpp Drawing.h 的 GetTextDimensions 是
+0x4A59E0 另一函数，非本条）。
+
+================================================================================
+0x4325C0  BufferIO 关闭（15 callers，>0x40 未读完）
+================================================================================
+机器码（前段，ranking 名 BufferIOFileClass::Close）：
+    mov esi, ecx                    ; this（BufferIOFileClass*）
+    mov al, [esi+0x29]              ; ★ +0x29（打开标志）
+    test al / je 0x432607
+    call 0x431DD0                   ; ★ 底层关闭（RawFileClass::Close 系）
+    mov al, [esi+0x26]              ; ★ +0x26（缓冲有效标志）
+    test al / je 0x432601
+    mov eax, [esi+0x50]             ; ★ +0x50（缓冲指针）
+    test eax / je 0x4325F6
+    mov eax, [esi] / call [eax+0x34]  ; ★ 虚表槽 +0x34（释放缓冲）
+    mov byte [esi+0x29], 0 / [esi+0x26], 0 / [esi+0x25], 0   ; ★ 清标志
+    ret
+  0x4325F6:
+    call 0x65CCA0                   ; ★ 替代释放（缓冲为空时）
+    ...
+
+语义：**BufferIOFileClass 关闭（Close）**——+0x29 打开标志门卫 → 底层关闭
+（0x431DD0）→ 按 +0x26 缓冲标志释放 +0x50 缓冲（虚表槽 +0x34 或 0x65CCA0）
+→ 清三标志。与 batch 131 登记的 FileClass::Read（0x473B10）同
+BufferIOFileClass 家族——Read/Close 配套。
+
+★跨批次连接：batch 131（0x473B10 Read 同家族）+ batch 104（BufferIOFileClass
+dtor 调用方）+ 虚表槽 +0x34（与 0x473B10 的读后收尾同槽）。
+
+⚠️ partial：0x431DD0/0x65CCA0 身份、+0x25/+0x26/+0x29/+0x50 字段语义、
+虚表槽 +0x34 方法名。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x407F40 → batch 089（0x407xxx 基建区）+ 线程安全释放族。
+2. 0x433CF0 → ranking 名 BitFont + Drawing.h 文本尺寸系（0x4A59E0 对照）。
+3. 0x4325C0 → batch 131（FileClass::Read 同家族）+ batch 104（BufferIO dtor）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x407F40 的两导入槽精确 API 名与 0x4025B0 身份。
+2. 0x433CF0 的字形结构与输出公式、宿主类名。
+3. 0x4325C0 的 0x431DD0/0x65CCA0 身份与虚表槽 +0x34。
