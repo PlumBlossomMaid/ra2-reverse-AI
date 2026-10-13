@@ -231,6 +231,47 @@ return true;                    ; al=1  —— 邻域全不可用
 不消耗随机数的辅助函数根本不会进入清单。这是原筛选口径的系统性盲区，
 不止影响 `0x5A6BA0`/`0x5A1E10`/`0x5A3A60` 三个。
 
+### `0x5A1E10` —— MapType 3/4 门禁（与活代码平行的一套编排）
+
+```
+if (this->[0x3c] == 3 || this->[0x3c] == 4) {
+    FUN_0058ebc0(this);
+    FUN_0058ef10(this);
+    FUN_005a19e0(this);
+    RepaintAll(MapClass::Instance, /*owner=*/0, /*?=*/-1);   // 0x578E60
+    FUN_005a17f0(this);
+}
+```
+
+实测 56 字节，**零取数点**。
+
+关键：`0x578E60` 带 `(-1, 0)` 实参——这正是
+[stage-making-regions.md](stage-making-regions.md) 记录的 `RepaintAll` 实锤
+调用形态（调用点 `0x598D73` 为 `push -1`）。故这是一条 **MapType 3/4 门禁**。
+
+> **这是本轮最重要的发现**：死代码区里躺着一份**与活代码 MapType 3/4 分支
+> 平行的一套编排**。它直接回答了「它们被什么替代了」——不是被另一套地形
+> 方案替代，而是被**另一套 MapType 3/4 编排**替代。原版作者为同一分支写过
+> 两版，最终保留一版、链接器把另一版留下。
+
+⚠️ 「保留了一版」是**推断**：零引用只证明静态不可达，exe 内没有痕迹表明
+哪一版曾被调用。
+
+### `0x5A3A60` —— 全图扫描 + `Y*side+X` 线性索引（零取数点）
+
+```
+MapClass::CellIterator_Reset(0x578350)
+loop {
+    cell = MapClass::CellIterator_Next(0x578290);
+    work = [0xabed10] + index * side;      // imul eax, [0x89c2dc]
+    ...
+}
+MapClass::CellIterator_Next(0x578290)     // 第二轮遍历
+```
+
+实测 125 字节，零取数点。`imul eax, [0x89C2dc]`（× 边长）即 RMG 工作数组
+的 `Y*side + X` 线性索引约定——与活代码同一套寻址。
+
 ## 孪生签名分析：排除「活函数的未引用复制品」
 
 按「出边目标集合」作签名，在全表 8655 个函数里检索同签名者：
