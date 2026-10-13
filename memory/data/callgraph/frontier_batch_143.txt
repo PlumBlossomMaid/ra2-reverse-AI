@@ -1,0 +1,115 @@
+frontier batch 143 — BuildingClass::DestroyNthAnim + 三层指针链 getter + 宽串 operator=（2026-10-13）
+
+口径：承接 batch 142 候选，ranking.tsv unique_callers 降序取 0x451E40（13 callers，
+BuildingClass.h:96-97 实锤）、0x5422D0（13 callers）、0x7B6880（13 callers）。
+三者 prologue 均干净。
+
+================================================================================
+0x451E40  BuildingClass::DestroyNthAnim（13 callers）
+================================================================================
+身份实锤：YRpp BuildingClass.h:96-97
+    void DestroyNthAnim(BuildingAnimSlot Slot)
+        { JMP_THIS(0x451E40); }
+地址 + JMP_THIS + 单参（BuildingAnimSlot）三证吻合。
+
+机器码（前 0x50 实读）：
+    mov edx, [esp+4]                ; ★ Slot 参数
+    cmp edx, -2 / jne 单槽路径      ; ★ Slot == -2（全清）走遍历
+    lea esi, [ecx+0x55C]            ; ★ 动画槽数组基址（+0x55C）
+    mov edi, 0x15                   ; ★ 0x15 = 21 槽
+  loop:
+    mov ecx, [esi] / test / je 跳过  ; 槽空 → 跳过
+    mov [esi], 0                    ; 槽指针置 NULL
+    mov eax, [ecx] / push 1
+    call [eax+0x20]                 ; ★ 虚表槽 0x20（销毁动画对象）
+  跳过:
+    add esi, 4 / dec edi / jne loop ; ★ 21 槽遍历
+    ret 4
+  单槽路径 (0x451E74):
+    mov eax, [ecx+edx*4+0x55C]      ; ★ 按 Slot 索引取槽
+    test eax / je 收尾
+    mov [ecx+edx*4+0x55C], 0        ; 槽指针置 NULL
+    mov edx, [eax] / push 1
+    mov ecx, eax / call [edx+0x20]  ; ★ 虚表槽 0x20 销毁
+    ret 4
+
+语义：**销毁建筑的第 N 个动画（DestroyNthAnim）**——Slot == -2 时遍历全部
+21 个动画槽（+0x55C 起，4B/项）逐个销毁（虚表槽 0x20 + arg=1）；否则按
+Slot 索引销毁单个槽。★与 batch 120 的 PlayAnim（0x451890，同 +0x55C 槽数组 +
+Slot 参数）成对——PlayAnim 播放、DestroyNthAnim 销毁，同一动画槽系统的读写端。
+
+★跨批次连接：batch 120（PlayAnim 同槽数组互证）+ 虚表槽 0x20（batch 102/113
+虚表调用族）+ 0x15=21 槽常量（batch 120 同常量）。
+
+⚠️ partial：虚表槽 0x20 方法名（疑 AnimClass 析构/停止）、槽对象类型
+（AnimClass 推断）。
+
+================================================================================
+0x5422D0  三层指针链 getter（13 callers）
+================================================================================
+机器码（fy 两成员）：
+  0x5422D0（0x1A 全读完）：
+    mov al, [ecx+4] / test / je 返 0   ; ★ 门卫 1（+4 字节）
+    mov al, [ecx+5] / test / je 返 0   ; ★ 门卫 2（+5 字节）
+    mov eax, [ecx+0x48] / mov ecx, [eax+4]
+    mov eax, [ecx+0x28] / ret          ; ★ 链：+0x48 → +4 → +0x28 读值
+  0x5422F0（同构）：
+    门卫 1/2 同 → +0x48 → +4 → [ecx+0x38] / ret   ; ★ 链：… → +0x38
+
+语义：**「双标志门卫 + 三层指针链取值」的 getter 族**——+4/+5 双字节标志
+（batch 099 IPXManager 同款双标志形态）把关，经 +0x48 → +4 → +0x28/+0x38
+三层指针解引用取值。紧邻 0x542310 是同构第三成员（三链变体）——同一宿主
+对象的多个「配置指针 → 字段」getter。
+
+★跨批次连接：双字节门卫与 batch 099（IPXManager::Send_Global_Message 的
++4/+5 标志）同形态；三层指针链与 batch 130（0x633BC0 解包链）同思路。
+
+⚠️ partial：+0x48 指向对象类型（+4 → +0x28/+0x38 字段的对象）、门卫语义。
+
+================================================================================
+0x7B6880  宽串 operator=（释放旧值）（13 callers）
+================================================================================
+机器码（前 0x4B）——与 batch 134 登记的 0x7B7600 高度同构：
+    mov esi, ecx                    ; this
+    mov eax, [esi] / test / je 跳过  ; ★ 旧串指针
+    push eax / call 0x7C8B3D         ; ★ CRT::_delete 释放旧（batch 001/096）
+  跳过:
+    mov edi, [esp+0xC]               ; 源参数字符串
+    mov [esi], 0                     ; 先置 NULL
+    test edi / je 空源
+    push edi / call 0x7CA405         ; ★ CRT::wcslen（batch 097 实锤）
+    inc eax / jmp 定长
+  空源:
+    mov eax, 1
+  定长:
+    add eax, eax                     ; ×2（wchar_t）
+    push eax / call 0x7C8E17         ; ★ CRT::_new（batch 001）
+    mov [esi], eax
+    mov word [eax], 0                ; 先写空串
+    test edi / je 收尾
+    ...（wcscpy 拷贝，batch 097 实锤 0x7CA489）
+
+语义：**宽字符串类 operator=（释放旧值 + 重新分配）**——与 batch 134 的
+0x7B7600 **逐段同构**（_delete 旧 → wcslen → ×2 → _new → 空串占位 → wcscpy），
+差异在细节排布（0x7B7600 先置 NULL 再判源、本条先释放再判源）。宽串
+operator= 家族第四成员（batch 097/125/134/本条）。
+
+★跨批次连接：batch 134（0x7B7600 同构）+ batch 097/125（宽串 operator= 族）+
+_delete/_new/wcslen 三件套。
+
+⚠️ partial：拷贝段（wcscpy 之后）未读完、宿主类名（WStringClass 推断）、与
+0x7B7600 精确关系（未归一化比对不写孪生）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x451E40 → batch 120（PlayAnim 同槽数组）+ 虚表槽 0x20。
+2. 0x5422D0 → batch 099（双标志门卫同形态）+ 三层指针链。
+3. 0x7B6880 → batch 134/097/125（宽串 operator= 族第四成员）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x451E40 虚表槽 0x20 方法名与槽对象类型。
+2. 0x5422D0 的 +0x48 对象类型与门卫语义。
+3. 0x7B6880 拷贝段与宿主类名、与 0x7B7600 精确关系。
