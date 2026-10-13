@@ -1,0 +1,108 @@
+frontier batch 157 — INIClass::WriteBool + ConvertClass::ConvertClass + 字符串处理大帧（2026-10-13）
+
+口径：承接 batch 156 候选，ranking.tsv unique_callers 降序取 0x529560（11 callers，
+CCINIClass.h:98-99 实锤）、0x48E740（11 callers，ConvertClass.h:41-47 实锤）、
+0x4A61C0（12 callers）。三者 prologue 均干净。
+
+================================================================================
+0x529560  INIClass::WriteBool（11 callers）
+================================================================================
+身份实锤：YRpp CCINIClass.h:98-99
+    bool WriteBool(const char* pSection, const char* pKey, bool bValue)
+        { JMP_THIS(0x529560); }
+地址 + JMP_THIS + 3 参签名三证吻合（batch 142 登记的 WriteInteger 同文件邻域、
+batch 074 的 WriteString 0x528660 下游）。
+
+机器码还原（全 0x35）：
+    mov al, [esp+0xC]               ; ★ bValue（bool）
+    test al / je 写 false 串
+    mov eax, [esp+8] / mov edx, [esp+4]
+    push 0x825BF8                   ; ★ 格式串 1（疑 "true"?）
+    push eax / push edx
+    call 0x528660                   ; ★ INIClass::WriteString（batch 074 实锤）
+    ret 0xC
+  写 false 串:
+    push 0x825BF4                   ; ★ 格式串 2（疑 "false"?）
+    ...（同样 0x528660 三参调用）
+    ret 0xC
+
+语义：**INI 写布尔值（WriteBool）**——按 bValue 选格式串（0x825BF8 vs
+0x825BF4，疑 "true"/"false" 字符串常量），委托 batch 074 实锤的 WriteString
+（0x528660）三参写出。★与本批 WriteInteger（batch 142 的 0x5275C0 三格式串
+分支）同族——INI 按模式选格式串的写入端。
+
+★跨批次连接：batch 074（WriteString 0x528660）+ batch 142（WriteInteger 同族）
++ 格式串常量区（0x825xxx）——INI 写入函数族再添成员。
+
+⚠️ partial：格式串内容（read_const 未读字节，疑 "true"/"false" 推断）。
+
+================================================================================
+0x48E740  ConvertClass::ConvertClass（11 callers）
+================================================================================
+身份实锤：YRpp ConvertClass.h:41-47
+    ConvertClass(BytePalette* pColorData, BytePalette* pUnknownColorData,
+                 DSurface* pSurface, size_t Count, bool SkipBlitters)
+        { JMP_THIS(0x48E740); }  // 调基类 ConvertClass(noinit_t())
+地址 + JMP_THIS + 5 参签名三证吻合（batch 104 已实锤 CreateFromFile 的
+0x48E740 构造器调用——当时标注「ConvertClass 构造器实锤」，本批正式立案）。
+
+机器码还原（前 0x50）：
+    mov ecx, [esp+0x2C]             ; ★ pColorData
+    mov eax, [ecx] / call [eax+0x70]  ; ★ 调 pColorData 虚表槽 0x70（取数据）
+    mov [esi+4], eax                ; ★ +4 = 调色板数据
+    xor ebx
+    mov [esi+8]..[esi+0x50], ebx    ; ★ 大段字段清零（缓冲/计数区）
+    ...（后续按 Count/SkipBlitters 初始化）
+
+语义：**ConvertClass 构造器（batch 104 的 CreateFromFile 调用端）**——取
+pColorData 数据（虚表槽 0x70）存入 +4，清零 +0x8..+0x50 缓冲/计数区，再按
+Count/SkipBlitters 初始化 blitters。ConvertClass 是调色板转换器（YRpp 类图：
+继承 AbstractClass，含 BufferA/BufferB/Blitters/Count 等字段），+4 存调色板
+数据指针、后续字段是转换缓冲。
+
+★跨批次连接：batch 104（CreateFromFile 的 _new(0x188) + call 0x48E740 闭合）
++ 虚表槽 0x70 + 调色板数据——ConvertClass 构造/工厂两端闭合。
+
+⚠️ partial：虚表槽 0x70 方法身份、+0x8..+0x50 字段语义（BufferA/BufferB/
+Count/SkipBlitters 布局未逐字段对齐）、后续初始化（0x48E7A0 起）。
+
+================================================================================
+0x4A61C0  字符串处理大帧（12 callers，0x40C 栈帧未读完）
+================================================================================
+机器码还原（前 0x50）：
+    mov eax, [esp+8]                ; ★ 参数（字符串/长度）
+    sub esp, 0x40C                  ; ★ 大栈帧（1KB+）
+    test eax / je 收尾
+    lea ecx, [esp+0x434] / lea edx, [esp+0x10]
+    push ecx / push eax / push edx
+    call 0x7CA858                   ; ★（batch 110/145 已见的 CRT 三参处理）
+    mov ecx, [esp+0x434] / mov esi, [esp+0x43C]
+    add esp, 0xC
+    lea eax, [esp+0xC] / add ecx, 0x308
+    push eax
+    call 0x517440                   ; ★ batch 144 实锤的除 255 比例运算!
+    mov dx, word [eax] / mov cl, [0x8A0DD4]  ; ★ 全局 [0x8A0DD4]
+    ...（字符串 → 比值 → 全局标志，颜色 R/G/B 转换链?）
+
+语义：**字符串处理 + 颜色比例换算的大帧函数**——0x7CA858 处理（batch 110
+的 0x5E2820 控件文本组装同款调用）→ batch 144 的 0x517440（除 255 比例运算，
+RGB→比例）→ 全局 [0x8A0DD4]——疑「RGB 字符串 → 颜色缩放」处理。
+
+★跨批次连接：0x7CA858（batch 110/145 同款）+ 0x517440（batch 144 实锤）+
+[0x8A0DD4] 全局——颜色/文本处理链。
+
+⚠️ partial：0x7CA858 身份、[0x8A0DD4] 全局语义、函数后半（0x4A6230 起）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x529560 → batch 074（WriteString 0x528660）+ batch 142（WriteInteger 同族）。
+2. 0x48E740 → batch 104（CreateFromFile 调用闭合）+ 调色板数据。
+3. 0x4A61C0 → batch 144（0x517440 除 255）+ batch 110/145（0x7CA858）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x529560 格式串内容（疑 true/false）。
+2. 0x48E740 的 +0x8..+0x50 字段与虚表槽 0x70。
+3. 0x4A61C0 的 [0x8A0DD4] 全局与后半。
