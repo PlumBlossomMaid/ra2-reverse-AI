@@ -1,0 +1,125 @@
+frontier batch 114 — 类型分派跳转表 + 地图尺寸算术 + MapClass::IsLocationShrouded（2026-10-13）
+
+口径：承接 batch 113 候选，ranking.tsv unique_callers 降序取 0x40DD70（21 callers）、
+0x42B1F0（21 callers）、0x586360（21 callers，ranking 名 MapClass::IsLocationShrouded）。
+三者 prologue 均干净。
+
+================================================================================
+0x40DD70  类型分派跳转表（21 callers，0x2F 全读完 + 跳转表数据）
+================================================================================
+机器码（0x2F 加跳转表）：
+    push esi / mov esi, ecx          ; this
+    test esi / je 返 0
+    mov eax, [esi] / call [eax+0x2C] ; ★ 虚表槽 0x2C 取类型值
+    dec eax
+    cmp eax, 0xE / ja 返 0           ; ★ 类型值 > 15 → 0
+    mov cl, [eax + 0x40DDA4]         ; ★ 索引字节表（0x40DDA4，15 项）
+    jmp [ecx*4 + 0x40DD9C]           ; ★ 跳转表（0x40DD9C：目标0=0x40DD91 返 this、
+                                     ;   目标1=0x40DD95 返 0）
+  0x40DD91: mov eax, esi / ret       ; 命中 → 返回 this
+  0x40DD95: xor eax, eax / ret       ; 未命中 → 返回 0
+
+跳转表数据（read_const 实读）：
+    0x40DD9C: 91 DD 40 00  95 DD 40 00 00 00 01 01 01 00 01 01
+              （第 1-2 dword = 目标地址；第 3-4 = 索引表起点重叠）
+    0x40DDA4: 00 00 01 01 01 00 01 01 01 01 01 01 01 01 00
+              （★索引字节：0/1/5/14 → 0（返 this），其余 → 1（返 0））
+
+语义：**「虚表槽 0x2C 返回的类型值是否属于白名单」的判定**——白名单
+{1, 2, 6, 15}（dec 后 0/1/5/14 索引 0）返回 this（truthy），其余返 0。
+★原版怪癖照抄：类型值边界用 `ja`（无符号）比较 0xE，= 类型值 0..15 都走表，
+负值（如 dec 后 -1 → 0xFFFFFFFF）也会被无符号视为 >0xE 而拒——无需符号分支。
+
+⚠️ partial：虚表槽 0x2C 的函数身份（疑取「对象子类型/类别」）、白名单
+{1,2,6,15} 对应的具体类型、跳转表为何用「两目标+索引字节」而非直接 15 目标
+（编译器把重复目标折叠的产物）。
+
+================================================================================
+0x42B1F0  地图尺寸算术（21 callers，全 0x1 读完）
+================================================================================
+机器码（全 0x1，17B）：
+    mov eax, [0x87F8E0]              ; ★ [0x87F8E0]
+    add eax, 4
+    imul eax, [0x87F8DC]             ; ★ ([0x87F8E0]+4) × [0x87F8DC]
+    shl eax, 1                       ; ★ ×2
+    ret
+
+语义：**`(([0x87F8E0]+4) * [0x87F8DC]) * 2` 的纯算术 getter**。[0x87F8DC] =
+MapRect.W（QWEN.md 已实锤：MapRect 由 0x566306 缓存、[0x87F8DC]=W），
+[0x87F8E0] = 疑 MapRect.H（相邻字段）。则公式 = (H+4)×W×2——
+**（高+4）× 宽 × 2 的字节数/元素数换算**（H+4 = 带 4 行 padding 的高、×2 疑
+每格 2 字节或双缓冲）。纯算术无调用，是某缓冲大小 getter。
+
+★跨批次连接：[0x87F8DC] = MapRect.W（QWEN.md 阶段文档实锤、batch 086
+CoordinatesLegal 同源）；[0x87F8E0] 补入 MapRect.H 的推断但未逐字节实锤。
+
+⚠️ partial：[0x87F8E0] 精确身份（MapRect.H 推断）、2 倍常数的语义（元素宽 or
+双缓冲）、宿主类（疑 MapClass 缓冲分配）。
+
+================================================================================
+0x586360  MapClass::IsLocationShrouded（21 callers，>0xC0 未读完）
+================================================================================
+身份实锤：YRpp MapClass.h:211-212
+    bool IsLocationShrouded(const CoordStruct &crd) const
+        { JMP_THIS(0x586360); }
+地址 + JMP_THIS + CoordStruct 引用参数三证吻合。
+
+机器码还原（前段）：
+    mov esi, [esp+0x10]              ; ★ crd（CoordStruct*）
+    mov eax, [esi+8]                 ; crd->Z
+    cdq / idiv [0xABDE88]            ; ★ Z / 高度格数（[0xABDE88]）
+    test al, 1 / je 偶数分支          ; ★ (Z/H) 奇偶分支
+    sub eax, edx / mov ecx, eax       ; 奇数路径
+    mov eax, [esi]                   ; crd->X
+    cdq / and edx, 0xFF / add eax, edx
+    sar eax, 8                       ; ★ (X+符号校正)>>8 → 格 X
+    mov word [esp+4], ax
+    mov eax, [esi+4] / cdq / and edx, 0xFF / add
+    sar eax, 8                       ; → 格 Y
+    sar ecx, 1 / mov word [esp+6], ax
+    inc ecx
+    movsx eax, ax / movsx ecx, dx
+    shl eax, 9 / add eax, ecx         ; ★ Y*512 + X 线性格索引
+    js 越界 / cmp 0x40000 / jge 越界
+    mov edx, [0x87F924] / mov eax, [edx+eax*4]   ; ★ [0x87F924] 格数组取 cell
+    test / je 越界
+    mov ecx, eax
+    jmp 已得
+  越界:
+    mov eax, [esp+0x10] / mov ecx, 0xABDC50   ; ★ 哑元 0xABDC50（batch ⑨ 实锤）
+    mov [0xABDC74], eax
+  已得:
+    test byte ptr [ecx + 0x12C], 8    ; ★ cell->+0x12C bit3（已揭示？）
+    jne 返 1
+    push 3 / call 0x481810            ; ★ CellClass::GetNeighbourCell(direction=3)
+                                      ;   （YRpp CellClass.h:108 实锤）
+    ...
+    （0x481810 = 8 邻域方向 3 的邻居格查询——沿 [0x89F688] 方向表叠加坐标，
+     再经 MapClass::Instance 查格——batch 109 0x56EB80 同款方向表用法）
+
+语义：**坐标是否在战争迷雾（shrouded）下**——CoordStruct → 格坐标换算
+（Z/高度格数 + X/Y 带符号右移 8）→ Y*512+X 查 [0x87F924] 取 cell（越界落哑元）
+→ 检查 cell->+0x12C bit3（揭示标志）→ 未揭示再查 3 方向邻居判定（GetNeighbourCell
+batch 实锤）。与 batch 109 的 0x56EB80（坐标→格子解析）共用 [0x87F924] 格数组、
+0xABDC50 哑元、[0x89F688] 方向表三件套，是「坐标→格→迷雾状态」的迷雾版。
+
+⚠️ partial：函数后半（0x586408 起偶数分支、0x58648C 揭示返回）未读完、
+[0xABDE88]（高度格数常量）精确值未读、[0x12C] bit3 与 8 邻域判定组合语义。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x586360 → batch 109（0x56EB80 坐标→格子解析三件套复用）+ batch ⑨（哑元
+   0xABDC50）+ batch 082（0x4A1DE0 CRC 同数据区）+ CellClass::GetNeighbourCell
+   （CellClass.h:108）——迷雾判定链与格子解析链共享基础设施。
+2. 0x42B1F0 → QWEN.md/[0x87F8DC]=MapRect.W 实锤（batch 086 CoordinatesLegal
+   同源）。
+3. 0x40DD70 → batch 089（安全解引用谓词）+ 虚表槽调用族（batch 102/109/113）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x40DD70 虚表槽 0x2C 身份与白名单类型 {1,2,6,15} 语义。
+2. 0x42B1F0 的 [0x87F8E0]（疑 MapRect.H）与 2 倍常数语义。
+3. 0x586360 后半（偶数分支/揭示返回）、[0xABDE88] 精确值、[0x12C] bit3 组合
+   语义。
