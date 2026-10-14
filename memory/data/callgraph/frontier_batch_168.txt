@@ -1,0 +1,135 @@
+frontier batch 168 — 界面初始化前置收口 + 环形索引表访问 + 字符串 trim（2026-10-14）
+
+口径：承接 batch 167 候选，ranking.tsv unique_callers 降序取 0x727CF0（20 callers）、
+0x52FEC0（20 callers，batch 099/107 引用未立案）、0x54F000（20 callers，调 batch 105
+实锤的 0x5D4D50）。三者 prologue 均干净，机器码读全/读尽。
+
+================================================================================
+0x52FEC0  界面初始化前置（20 callers，0x52FEC0-0x52FF89 读完）
+================================================================================
+身份：batch 099（MessageBox::Show 前置）、batch 107（0x532100 全局门铃条目）
+均已引用——「mov dl,1/xor ecx,ecx/call 0x52fec0」同款调用形态，标注
+「界面初始化前置」推断；本批正式立案收口。
+
+机器码还原：
+    sub esp,0x14 / push esi / push edi
+    mov edi,ecx                  ; ★ this/参数对象
+    xor esi,esi / cmp edi,esi / jne 有对象
+    mov edi,[0x88730C]           ; ★ this==0 → 全局 [0x88730C]
+  有对象:
+    mov eax,[edi] / mov ecx,edi / call [eax+0x18]   ; ★ vtable 槽 0x18
+    mov edx,[edi] / mov ecx,edi / call [edx+0x7C]   ; ★ vtable 槽 0x7C → ebx
+    mov eax,[edi] / mov ecx,edi / call [eax+0x80]   ; ★ vtable 槽 0x80 → ebp
+    push 0x20 / call 0x7C8E17    ; ★ _new(0x20) 分配 0x20 字节对象（batch 001）
+    mov esi,eax / test / je 失败
+    mov [esi+8],ebp              ; ★ +8 = vtable 槽 0x80 返回值
+    imul ebp,ebx / shl ebp,1     ; ★ 宽×高×2（字节数）
+    push ebp / push 0 / lea ecx,[esi+0x14]
+    mov [esi+4],ebx              ; ★ +4 = vtable 槽 0x7C 返回值
+    mov [esi+0xC],0
+    mov [esi],0x7E2104           ; ★ 装虚表 0x7E2104
+    mov [esi+0x10],2
+    call 0x43AD00                ; ★ batch 063 已登记：缓冲包装构造
+    mov [esi],0x7E2070           ; ★ 换虚表 0x7E2070
+    push 0 / lea edx,[esp+0x18] / mov ecx,esi / call 0x72E820   ; ★ 0x72E820
+    mov edx,[edi] / mov ecx,edi / push 1 / push 0 / push esi / call [edx+4]
+                                 ; ★ 注册到父对象 vtable 槽 0x04
+    test esi / je 返回 / mov eax,[esi] / push 1 / mov ecx,esi / call [eax]
+                                 ; ★ vtable 槽 0（dtor 风格调用?）
+    mov al,[esp+0xB] / test al / je 返回
+    push 0 / mov edx,edi / xor cl,cl / call 0x4F4780   ; ★ dl 参数分支
+    ret
+
+语义：**界面初始化前置（batch 099/107 引用的 0x52FEC0 正式立案）**——this
+为空时改用全局 [0x88730C]（与 batch 105 消息泵、batch 128 快照器同
+0x8873xx 全局区），经父对象 vtable 槽 0x18/0x7C/0x80 取三个参数，_new(0x20)
+分配缓冲对象（虚表 0x7E2104→0x7E2070，+4/+8 存槽返回值，+0x10=2），
+imul+shl 得宽×高×2 字节数后调 batch 063 的缓冲包装构造（0x43AD00）
+初始化 +0x14 缓冲，再经 0x72E820 完成构造并注册回父对象 vtable 槽 0x04。
+
+★跨批次连接：batch 099（MessageBox::Show 前置引用）+ batch 107（0x532100
+门铃调用引用）+ batch 001（_new）+ batch 063（0x43AD00 缓冲包装）+
+batch 105（[0x88730C] 同区）——「界面初始化前置」引用未立案收口。
+
+⚠️ partial：vtable 槽 0x18/0x7C/0x80 精确语义（宽/高/尺寸推断）、0x72E820
+身份、vtable 槽 0 与 0x04 调用用途、dl 参数分支（0x4F4780）。
+
+================================================================================
+0x54F000  环形索引 word 表访问（20 callers，0x54F000-0x54F043 读完）
+================================================================================
+机器码（全 0x43）：
+    push esi / mov esi,ecx       ; ★ this
+    mov eax,[esi+0x318] / inc eax
+    and eax,0x800000FF           ; ★ 字节级回绕（有符号 8 位）
+    jns 0x54F018 / dec eax / or eax,0xFFFFFF00 / inc eax   ; ★ 符号扩展
+   0x54F018:
+    cmp eax,[esi+0x314] / je 0x54F025
+    call 0x5D4D50                ; ★ 不等 → 调 batch 105 实锤的游戏主消息泵!
+   0x54F025:
+    mov eax,[esi+0x314] / mov ecx,[esi+0x318]
+    cmp eax,ecx / jne 0x54F03A
+    xor ax,ax / ret              ; ★ 相等 → 返回 0
+   0x54F03A:
+    mov ax,word ptr [esi+eax*2+0x114]   ; ★ 读 +0x114 起 word 数组[索引]
+    ret
+
+语义：**环形索引 word 表访问**——+0x318 索引自增后按有符号字节回绕
+（and 0x800000FF + jns/dec/or/inc 符号扩展），与 +0x314 上限比较：不等时
+先调 0x5D4D50（batch 105 实锤的游戏主消息泵——疑消息处理/重入刷新），
+然后读 this->+0x114 起 2 字节/项的数组；索引与上限相等则返回 0。
+
+★跨批次连接：batch 105（0x5D4D50 游戏主消息泵实锤）——本批首次发现
+消息泵的普通调用方（此前 batch 095/098/099 都是引擎侧驱动）。
+
+⚠️ partial：+0x114 word 表语义（疑事件/音效/状态表）、+0x314/+0x318
+字段名、消息泵调用触发条件（索引不等时泵一次）。
+
+================================================================================
+0x727CF0  字符串 trim（首尾空白去除；20 callers，0x727CF0-0x727D56 读完）
+================================================================================
+机器码（全 0x66）：
+    mov edx,ecx                  ; ★ 入参（ecx，this/串指针）
+    push ebx / test edx / je 返回
+    mov al,[edx] / test al / je 尾部    ; ★ 空串
+    mov ebx,edx
+  跳过前导:
+    cmp al,0x20 / ja 有内容      ; ★ al <= 0x20（空白/控制字符）跳过
+    mov al,[ebx+1] / inc ebx / test al / jne 跳过前导
+  有内容:
+    cmp ebx,edx / je 尾部        ; ★ 全空白 → 尾部清零
+    mov edi,ebx / or ecx,-1 / xor eax,eax
+    repne scasb / not ecx / sub edi,ecx   ; ★ strlen(有内容起点)
+    mov eax,ecx / mov esi,edi / mov edi,edx
+    shr ecx,2 / rep movsd / and ecx,3 / rep movsb   ; ★ 前移（去前导空白）
+  尾部:
+    mov edi,edx / or ecx,-1 / xor eax,eax
+    repne scasb / not ecx / dec ecx / dec ecx       ; ★ strlen-2
+    js 返回
+    cmp byte[ebx],0 / je 返回
+  去尾循环:
+    cmp byte[ecx+edx],0x20 / ja 返回    ; ★ 尾部 <= 0x20 的置 0
+    mov byte[ecx+edx],0 / dec ecx / jns 去尾循环
+  返回:
+    mov eax,edx / pop ebx / ret  ; ★ 返回去空白后的串
+
+语义：**字符串 trim（首尾空白去除）**——跳过前导 <=0x20 的空白/控制字符，
+rep movsd/movsb 前移到串头，再从尾部倒查把 <=0x20 的字节置 0；返回原指针。
+★0x727xxx 区字符串工具（batch 164 的 0x726910 +0x2C getter/setter 族同区）。
+
+⚠️ partial：宿主（StringClass/工具函数）、调用方上下文、宽字符变体
+（紧邻 0x727D60 mov ax,word[edi] 疑 wchar 版）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x52FEC0 → batch 099/107（引用收口）+ batch 001（_new）+ batch 063
+   （0x43AD00）+ batch 105（[0x88730C]）。
+2. 0x54F000 → batch 105（0x5D4D50 消息泵首个普通调用方）。
+3. 0x727CF0 → 0x727xxx 区（batch 164 邻域）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x52FEC0 的 vtable 槽 0x18/0x7C/0x80 语义与 0x72E820 身份。
+2. 0x54F000 的 +0x114 word 表语义与泵调用触发条件。
+3. 0x727CF0 宿主与紧邻 0x727D60 的宽字符变体。
