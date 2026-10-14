@@ -1,0 +1,96 @@
+frontier batch 229 — CellClass::RevealCellObjects + MapClass::MakeTraversable（2026-10-14）
+
+口径：承接 batch 228，ranking.tsv unique_callers 降序取未登记候选。TOP 12 中
+0x483480（30B，符号名 CellClass::RevealCellObjects）与 0x578AD0（149B，符号名
+MapClass::MakeTraversable）为**带名游戏类成员**优先纳入。两函数均全反汇编读完。
+取证手段：disasm.py 直反汇编 + frontier_status.tsv 既有登记交叉（0xABDC50 哑元
+= RMG emu 灌入坑实锤全局；0x87F924 = MapClass cell 数组基址推断）。
+
+================================================================================
+0x483480 —— CellClass::RevealCellObjects（7 callers，全 0x1E=30B 读完）
+================================================================================
+机器码（全 0x1E）：
+    push esi
+    mov esi,[ecx+0xE4]              ; ★★this->+0xE4 = 该格对象链表头
+    test esi,esi / je 0x48349C       ; 空链表直接返回
+    循环 0x48348B: mov eax,[esi] / mov ecx,esi
+      call [eax+0xFC]               ; ★★虚表槽 0xFC（揭示/显示每个对象）
+      mov esi,[esi+0x30]            ; ★链表 next 指针
+      test esi,esi / jne 0x48348B
+    0x48349C: pop esi / ret
+
+语义：**CellClass::RevealCellObjects（符号名与机器码吻合）**——遍历本格
+`+0xE4` 的对象单向链表（`+0x30` 为 next），对每个对象调其虚表槽 `0xFC`
+（Reveal 揭示接口推断）；空链表直接返回。30B 全读，极简遍历模板。
+
+★跨批次连接：`cell->[0xE4]` 对象字段（RMG 阶段 9 造山 §4/阶段 10 LAT 装饰
+同字段——`cell.object(+0xE4)` 在 trees/rocks RNG 分岔根因里实锤过）——
+CellClass 对象链表的消费端第一实例。
+⚠️ partial：虚表槽 0xFC 精确语义（Reveal/SetVisible 推断）、链表节点结构
+（+0x30 next 之外字段）、对象类型判定（本轮不判定类型，全对象都调）
+
+================================================================================
+0x578AD0 —— MapClass::MakeTraversable（7 callers，全 0x95=149B 读完）
+================================================================================
+机器码（全 0x95）：
+    mov ecx,[esp+8]                 ; ★参数2 = CellStruct* 坐标
+    movsx eax,word[ecx+2]           ; ★Y（int16 符号扩展）
+    movsx edx,word[ecx]             ; ★X
+    shl eax,9                       ; ★Y<<9
+    add eax,edx                     ; ★★idx = Y*512 + X（cell 线性索引）
+    js 0x578AF6                     ; 负 → 用默认
+    cmp eax,0x40000 / jge 0x578AF6  ; ★≥ 512² → 用默认
+    mov edx,[0x87F924]              ; ★★MapClass cell 数组基址（[0x87F7E8] 邻域）
+    mov eax,[edx+eax*4]             ; cell = Array[idx]
+    test eax,eax / jne 0x578B02
+    0x578AF6: mov eax,[ecx]         ; ★默认路径：取 CellStruct 首字段
+      mov [0xABDC74],eax            ; ★★存哑元全局
+      mov eax,0xABDC50              ; ★★哑元 cell 0xABDC50（RMG emu 灌入坑已见同全局!）
+    0x578B02: push esi
+    mov esi,[eax+0xE4]              ; ★cell->+0xE4 对象链表
+    test esi,esi / push edi / je 0x578B54（★空链表 → al=1 返回）
+    循环 0x578B0E: mov edi,[esp+0xC]（★参数3 = 目标对象指针）
+      cmp edi,esi / je 0x578B4D（★跳过目标对象自身）
+      mov edx,[esi] / mov ecx,esi / call [edx+0x2C]（★虚表槽 0x2C 取类型）
+      cmp eax,6 / jne 0x578B4D（★类型 != 6 → 跳过）
+      mov eax,[esi+0x520] / mov cl,[eax+0x16B7]（★对象+0x520 → +0x16B7 标志位）
+      test cl,cl / je 0x578B4D（★标志清 → 跳过）
+      mov ecx,[esi+0x21C] / push edi / call 0x4F9A90（★★判定1：+0x21C 子对象 vs 目标）
+      test al,al / mov ecx,esi / jne 0x578B5B（★判定1 真 → 走 0x452540 处理）
+      call 0x4525F0（★判定2）/ test al,al / jne 0x578B54（★判定2 真 → al=1 返回）
+      0x578B4D: mov esi,[esi+0x30] / test esi,esi / jne 0x578B0E（★next）
+    0x578B54: pop edi / mov al,1 / pop esi / ret 8（★返回 1 = 可穿越）
+    0x578B5B: call 0x452540 / pop edi/esi / ret 8（★命中处理分支）
+
+语义：**MapClass::MakeTraversable（符号名与机器码吻合）**——①坐标→cell
+索引：`idx = Y*512 + X`（X/Y 均 int16 符号扩展），负或 ≥ 0x40000（512²）则
+回落哑元 cell `0xABDC50`（并把 CellStruct 首字段存 `[0xABDC74]`）；②对目标
+cell 的 `+0xE4` 对象链表遍历：跳过目标对象自身，对**类型==6**（虚表槽 0x2C
+判定）且 `+0x520->+0x16B7` 标志置位的对象，经 `0x4F9A90`（+0x21C 子对象 vs
+目标）判定——真则 0x452540 处理返回；假再经 0x4525F0 判定——真则直接返回
+1；③全链空/跳过返回 1。ret 8 = 3 参（this + CellStruct* + 对象*）。
+
+★原版怪癖（照抄）：① `Y<<9` 是**硬编码 512 列宽**（非 `[0x89C2DC]` side）——
+MakeTraversable 的坐标索引不依赖当前地图尺寸，用全图最大 512×512 布局；
+② 越界回落哑元 `0xABDC50` 而非返回失败——**哑元 cell 被当作"可穿越"**（其
+`+0xE4` 链表空 → 直接返回 1）；③ 返回恒 1（遍历无碍即放行）。
+
+★跨批次连接：**哑元 0xABDC50（RMG emu 灌入坑实锤：`_emu_hills.py` 曾用
+0xABDC50 填空槽绕过 CellIterator 终止——本函数是它的原版消费侧！）**+
+`[0x87F924]`（MapClass cell 数组基址，与 QWEN.md 实锤的 `[0x87F7E8]`
+MapClass::Instance、`[0x87F8DC]` MapRect.W 同全局区）+`cell->[0xE4]`
+对象链表（0x483480 同字段）。
+⚠️ partial：虚表槽 0x2C 精确语义（GetType/GetClass 推断）、对象类型 6 对应
+类（+0x520->+0x16B7 标志的宿主类）、0x4F9A90/0x4525F0/0x452540 三判定身份、
+[0x87F924] 与 [0x87F7E8] 的精确关系（Instance 偏移推断）
+
+================================================================================
+（batch 229 说明：C++ 模型决策）
+================================================================================
+本批两函数**不新增 C++ 模型**，理由：
+① 0x483480（30B）是极简链表遍历模板（`while (node) { node->vtable[0xFC]();
+node = node->next; }`），逻辑即实现，建模收益为零。
+② 0x578AD0 的语义依赖三处未取证后端（0x4F9A90/0x4525F0/0x452540）+对象类型
+6 的宿主类——按「证据不足保留 partial」纪律此刻建模会固化推断；其坐标索引
+公式 `Y*512+X` 与哑元回落行为已在本文件完整记录，未来 reimplementation 照抄。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。
