@@ -1,0 +1,111 @@
+frontier batch 185 — IsWithinUsableArea 实锤 + GetCellLevel 实锤 + 战斗伤害累加（2026-10-14）
+
+口径：承接 batch 184 候选，ranking.tsv unique_callers 降序取 0x6F3970（9 callers）、
+0x578540（9 callers，YRpp MapClass.h:326 实锤）、0x5F5F00（9 callers，YRpp
+ObjectClass.h:227 实锤）。三者 prologue 均干净，机器码读全/读尽。
+
+================================================================================
+0x578540  MapClass::IsWithinUsableArea（9 callers，0x578540-0x578599 前段读完）
+================================================================================
+身份实锤：YRpp MapClass.h:326-327
+    bool IsWithinUsableArea(CellClass* pCell, bool checkLevel) const
+        { JMP_THIS(0x578540); }
+地址 + JMP_THIS + 2 参签名（ret? cdecl 栈参 2）三证（另有 0x578460 CellStruct
+版、0x5785F0 CoordStruct 版——同族三成员）。
+
+机器码（前 0x59）：
+    mov eax,[esp+4]              ; ★ pCell 参数
+    mov bl,byte[esp+0xC]         ; ★ checkLevel 参数
+    movsx edx,word[eax+0x26]     ; ★ pCell->+0x26（Y 坐标 word）
+    xor esi / movsx edi,word[eax+0x24]  ; ★ pCell->+0x24（X 坐标 word）
+    test bl / je 0x578585        ; ★ checkLevel==0 → 跳过层检查
+    mov bl,byte[eax+0x11C]       ; ★ pCell->+0x11C 字节（层标志）
+    movsx esi,byte[eax+0x11B]    ; ★ pCell->+0x11B（地板层字节）
+    test bl / je 0x578585
+    mov eax,[ecx+0x100] / mov ebx,[ecx+0xF4]  ; ★ MapClass->+0xF4/+0x100（边界）
+    lea eax,[ebx+eax*2+4] / lea ebx,[edx+edi] ; ★ 边界表达式 (F4+2*100+4)
+    add eax,esi / cmp ebx,eax / jge 0x578585
+    inc esi                     ; ★ 层 +1 再比
+  0x578585:
+    mov ebx,[ecx+0x100] / mov eax,[ecx+0xF4]
+    lea ebp,[edx+edi] / lea ebx,[eax+ebx*2]
+    add ebx,esi / cmp ebp,ebx / jle 0x5785E6 ...（继续：X/Y 越界判定）
+
+语义：**MapClass::IsWithinUsableArea（格是否在可用区域内）**——取 pCell 的
++0x24/+0x26 坐标（word），checkLevel 时查 +0x11C 标志与 +0x11B 层字节并做
+层补偿（+1 再比），用 MapClass->+0xF4/+0x100 边界表达式与坐标和比较判定
+可用性。★0x578xxx 区 MapClass 族（batch 173 的 0x4834A0 同体系 + 0x87F7E8
+MapClass::Instance）。
+
+⚠️ partial：+0xF4/+0x100 边界字段精确语义、+0x11C 标志、+0x11B 层补偿
+(+1) 的几何含义、0x5785E6 收尾（X 越界分支）。
+
+================================================================================
+0x5F5F00  ObjectClass::GetCellLevel（9 callers，全 0x24 读完）
+================================================================================
+身份实锤：YRpp ObjectClass.h:227-228
+    int GetCellLevel() const
+        { JMP_THIS(0x5F5F00); }
+地址 + JMP_THIS + 无参签名三证。
+
+机器码（全 0x24）：
+    push esi / mov esi,ecx
+    mov eax,[esi] / call [eax+0x1BC]          ; ★ 虚表槽 0x1BC（取所属格）
+    mov cl,byte[esi+0x8C]                     ; ★ this->+0x8C 字节标志
+    movsx edx,byte[eax+0x11B]                 ; ★ 格->+0x11B（地板层字节）
+    neg cl / sbb ecx,ecx / and ecx,4          ; ★ cl==0 → 0；cl!=0 → 4
+    add ecx,edx                               ; ★ 层 + 4×标志
+    mov eax,ecx / pop esi / ret
+
+语义：**ObjectClass::GetCellLevel（对象所在格层级）**——经虚表槽 0x1BC
+取所属格，读格 +0x11B 地板层字节；this->+0x8C 标志非零时加 4（楼层偏移），
+返回格层+偏移。★neg/sbb/and 是编译器对「cl ? 4 : 0」的优化形态。
+★与 batch 173 的 0x4834A0（+0x11B 层字节）同字段——地板层字段族。
+
+⚠️ partial：虚表槽 0x1BC 身份、+0x8C 标志含义（楼层/高度标志推断）、
++4 偏移几何语义。
+
+================================================================================
+0x6F3970  战斗伤害累加（9 callers，0x6F3970-0x6F3A70 前段读完）
+================================================================================
+身份：rank 观察名 TechnoClass::CombatDamage——注意与 YRpp RulesClass.h:106
+`Read_CombatDamage(CCINIClass*)` 同名不同义（后者是规则 INI 读取）；本条
+机器码是伤害计算语义，名字按观察名保留但标注区分。
+
+机器码（前 0x100）：
+    mov ebx,[esp+8]              ; ★ 参数（-1/索引）
+    xor edi / cmp ebx,-1 / mov esi,ecx / jne 0x6F3A83
+    mov eax,[esi] / xor ebx / call [eax+0x84]  ; ★ 虚表槽 0x84（取类型）
+    mov ecx,eax / call 0x717880               ; ★ batch 159 已登记 +0x808 getter
+    test al / je 0x6F39F4
+    mov edx,[esi] / call [edx+0x84]           ; ★ 再取类型
+    mov cl,byte[eax+0xCD5] / test cl / jne 0x6F39F4  ; ★ 类型 +0xCD5 标志
+    mov ecx,[esi+0x138] / call [eax+0x3F8]    ; ★ 虚表槽 0x3F8（取单位）
+    test eax / je 返0
+    mov eax,[eax] / test / je 返0
+    mov edi,[eax+0xA4] / mov ecx,[eax+0x98]   ; ★ 单位 +0x98/+0xA4 字段
+    add edi,ecx / mov ebx,1 / mov eax,edi / cdq / idiv ebx  ; ★ 累加+除 1
+    ...（继续：0x6F39F4 起多组虚表槽 0x3F8 取不同单位累加 +0xA4/+0x98）
+
+语义：**战斗伤害/加成累加（CombatDamage 行为）**——参数 -1 时经虚表槽
+0x84 取类型、batch 159 的 0x717880 校验、类型 +0xCD5 标志门控；随后多次
+虚表槽 0x3F8（按 0/1 索引）取单位，累加其 +0xA4 与 +0x98 字段（伤害/护甲
+加成推断），idiv 除 1 后返回。
+★跨批次：batch 159（0x717880 调用方）+ 虚表槽 0x84/0x3F8（类型/单位链）。
+
+⚠️ partial：+0x98/+0xA4 字段精确语义（伤害/护甲推断）、+0xCD5 标志、
+虚表槽 0x3F8 的 0/1 双索引语义、0x6F3A83 分支（参数非 -1 时）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x578540 → MapClass 族（batch 173 的 0x4834A0 同体系）+ 0x87F7E8。
+2. 0x5F5F00 → +0x11B 地板层字段（batch 173 同字段）+ 虚表槽 0x1BC。
+3. 0x6F3970 → batch 159（0x717880）+ 虚表槽 0x84/0x3F8 链。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x578540 的 +0xF4/+0x100 边界字段与层补偿几何含义。
+2. 0x5F5F00 的 +0x8C 标志与虚表槽 0x1BC 身份。
+3. 0x6F3970 的 +0x98/+0xA4 字段与虚表槽 0x3F8 双索引语义。
