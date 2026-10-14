@@ -1,0 +1,110 @@
+frontier batch 186 — AttachTrigger 引用计数 + 电力百分比 + Audio 析构（2026-10-14）
+
+口径：承接 batch 185 候选，ranking.tsv unique_callers 降序取 0x5F5B50（9 callers）、
+0x4FCE30（9 callers）、0x405C00（9 callers）。三者 prologue 均干净，机器码读全/读尽。
+
+================================================================================
+0x5F5B50  ObjectClass 触发器引用计数 setter（9 callers，0x5F5B50-0x5F5B7E 读完）
+================================================================================
+身份：rank 观察名 ObjectClass::AttachTrigger（YRpp ObjectClass.h 未收录该名
+JMP——名字未确认，语义由机器码独立判定；0x5F 系 ObjectClass 区 batch 117/
+177/185 同族）。
+
+机器码（全 0x2E）：
+    mov eax,[ecx+0x34]           ; ★ this->+0x34 旧 trigger
+    test eax / je 0x5F5B65       ; ★ 空 → 跳过 dec
+    mov edx,[eax+0x2C] / dec edx / mov [eax+0x2C],edx  ; ★ 旧 trigger +0x2C 计数--
+    mov [ecx+0x34],0             ; ★ 清 this->+0x34
+  0x5F5B65:
+    mov eax,[esp+4]              ; ★ 参数：新 trigger
+    test eax / je 0x5F5B7C       ; ★ 空 → 返 false
+    mov [ecx+0x34],eax           ; ★ this->+0x34 = 新 trigger
+    mov ecx,[eax+0x2C] / inc ecx / mov [eax+0x2C],ecx  ; ★ 新 trigger +0x2C 计数++
+    mov al,1 / ret 4             ; ★ 返 true
+  0x5F5B7C: xor al,al / ret 4
+
+语义：**ObjectClass 触发器引用计数 setter（AttachTrigger 行为）**——把
+this->+0x34 的旧 trigger 引用计数（+0x2C）-- 并清 0，换上新 trigger 并
+++ 其 +0x2C 计数，返回是否挂载成功。
+★**引用计数模式**（batch 175 的 0x483E30 LightConvert 计数 setter 同款：
+旧 dec/新 inc/字段替换）——对象挂载计数族第二例。
+
+⚠️ partial：+0x34/+0x2C 字段语义（trigger 对象）、宿主类（ObjectClass
+推断）、调用方上下文。
+
+================================================================================
+0x4FCE30  HouseClass 电力百分比（9 callers，0x4FCE30-0x4FCE6F 读完）
+================================================================================
+身份：rank 观察名 HouseClass::GetPowerPercentage（YRpp HouseClass.h 未收录
+该名 JMP——名字未确认，语义独立判定；0x4FCExx 区 HouseClass，batch 171 的
+0x4FAE50 同区）。
+
+机器码（全 0x3F）：
+    sub esp,8
+    mov eax,[ecx+0x53A4]         ; ★ this->+0x53A4（当前电力）
+    mov ecx,[ecx+0x53A8]         ; ★ this->+0x53A8（电力上限）
+    cmp eax,ecx / mov [esp],eax / mov [esp+4],ecx
+    jge 0x4FCE69                 ; ★ 当前 >= 上限 → 返 1.0
+    test ecx / je 0x4FCE69       ; ★ 上限 0 → 返 1.0（避免除零）
+    test eax / je 0x4FCE5F       ; ★ 当前 0 → 返 0.0
+    fild dword[esp] / fidiv dword[esp+4]  ; ★ (double)当前 / 上限
+    add esp,8 / ret              ; ★ 返比例
+  0x4FCE5F:
+    fld qword[0x7E2800] / ret    ; ★ 当前==0 → 返 [0x7E2800]（0.0 推断）
+  0x4FCE69:
+    fld qword[0x7E1718] / ret    ; ★ 兜底 → 返 1.0（[0x7E1718]=1.0 batch 166 实锤）
+
+语义：**HouseClass 电力百分比（GetPowerPercentage 行为）**——当前电力
++0x53A4 与上限 +0x53A8 的 fild/fidiv 浮点比例；当前>=上限或上限==0 兜底
+返 1.0（[0x7E1718]=1.0，batch 166 实锤常量），当前==0 返 [0x7E2800]
+（0.0 推断）。
+★**与 batch 172 的 0x4E3560（索引→常量表分发）同 HouseClass 区**——
+电力/资源计算端。★fild/fidiv 走 x87 长双精度（FPU 精度链，batch 096 区）。
+
+⚠️ partial：+0x53A4/+0x53A8 精确字段（电力推断）、[0x7E2800] 值（0.0
+推断未读字节）、调用方上下文。
+
+================================================================================
+0x405C00  AudioStream 析构/链表摘除（9 callers，0x405C00-0x405C59 前段读完）
+================================================================================
+身份：rank 观察名 AudioStream::~AudioController（0x405Cxx 区音频系统，
+YRpp 未收录该名 JMP——名字未确认，语义独立判定）。
+
+机器码（前 0x59）：
+    push ecx / mov eax,ecx
+    mov ecx,[0x87E2A0]           ; ★ 全局链表头 [0x87E2A0]
+    xor ebp / cmp ecx,ebp / je 0x405D31（收尾）
+    cmp dword[eax+0xC],0x87E294  ; ★ this->+0xC == 0x87E294（链表节点标记）
+    jne 0x405D31
+    mov esi,[eax] / test esi / je 0x405D31
+    mov ecx,[eax+8] / mov edx,[esi+0x24] / cmp ecx,edx / jne 0x405D2F
+    mov edx,[eax+4] / mov ecx,[esi+0x138] / cmp edx,ecx / jne 0x405D2F
+    test byte[esi+0x18],1 / jne 0x405D2F
+    mov ecx,[esi+0xB0] ...        ; ★ 匹配条件后取 +0xB0 继续
+    ;（0x405D2F/0x405D31 收尾：条件不满足时跳过）
+
+语义：**AudioStream 析构/链表摘除（0x405Cxx 音频区）**——检查全局链表头
+[0x87E2A0] 与 this->+0xC==0x87E294 节点标记，随后与链表头节点 [esi] 的
++0x24/+0x138 字段匹配（+0x18 bit0 门控），匹配后取 [esi+0xB0] 继续清理。
+★全局链表 [0x87E2A0]（batch 181 的 0x5F3B80 双链表模式同思路）——
+音频流注册表摘除。
+
+⚠️ partial：0x405D2F/0x405D31 收尾分支、+0xB0 清理细节、[0x87E2A0] 链表
+节点结构、+0xC 标记语义。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x5F5B50 → batch 175（0x483E30 引用计数 setter 同款）——挂载计数族
+   第二例。
+2. 0x4FCE30 → batch 172（0x4E3560 同 HouseClass 区）+ batch 166
+   （[0x7E1718]=1.0 实锤）+ FPU 精度链（batch 096）。
+3. 0x405C00 → 全局链表模式（batch 181 的 0x5F3B80 同思路）+ 0x87Exxx
+   全局区（batch 169 的 0x87E848 trampoline 同区）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x5F5B50 的 trigger 对象与 +0x34/+0x2C 字段名。
+2. 0x4FCE30 的 +0x53A4/+0x53A8 精确字段与 [0x7E2800] 值。
+3. 0x405C00 的 [0x87E2A0] 链表节点结构与 +0xB0 清理语义。
