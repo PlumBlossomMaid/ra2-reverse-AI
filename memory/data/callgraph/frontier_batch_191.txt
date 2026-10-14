@@ -1,0 +1,105 @@
+frontier batch 191 — CCINI 装载封装（batch 104 闭合）+ 递减 getter/链表族 + 三字段清理器（2026-10-14）
+
+口径：承接 batch 190 候选，ranking.tsv unique_callers 降序取 0x49DB00（9 callers）、
+0x401F90（9 callers）、0x755D10（9 callers）。三者 prologue 均干净，机器码读全。
+
+================================================================================
+0x49DB00  CCINI 装载封装（9 callers，0x49DB00-0x49DB54 前段读完）
+================================================================================
+机器码（前 0x54）：
+    sub esp,0x134 / push ebx/ebp / mov ebp,ecx
+    push 0x81F3C0                ; ★ 常量（文件名/section 推断）
+    lea ecx,[esp+0x54] / call 0x4739F0   ; ★ batch 063 已登记：构造（虚表 0x7E16B0
+                                         ;   CCFileClass 系）
+    xor ebx / lea eax,[esp+0x50] / push ebx / push ebx / push eax
+    mov ecx,ebp / call 0x4741F0   ; ★★ batch 104 已登记：ReadCCFile（CCINI 读取
+                                  ;   FileClass 主入口）!
+    test eax / jne 0x49DB6A（成功路径）
+    lea ecx,[esp+0xA8] / mov [ebp+0x5C],ebx / mov [ebp+0x58],ebx
+    mov byte[ebp+0x60],al         ; ★ 失败：清 +0x58/+0x5C/+0x60 标志
+    mov [esp+0x50],0x7E16B0       ; ★ 装虚表 0x7E16B0（CCFileClass）
+    call 0x43AE50                 ; ★ batch 059 已登记：三字段带标志位析构
+    lea ecx,[esp+0x50] / mov [esp+0x50],0x7E1668  ; ★ 换虚表 0x7E1668（batch 173
+                                    ;   构造器族同款虚表）
+    ...（0x49DB54 起继续）
+
+语义：**CCINI 装载封装（读文件失败时清理）**——先经 batch 063 的 0x4739F0
+构造临时对象（虚表 0x7E16B0），调 **batch 104 的 0x4741F0（ReadCCFile）**
+读 CCFile；失败路径清 this->+0x58/+0x5C/+0x60 标志、经 batch 059 的
+0x43AE50（三字段析构）释放、换虚表 0x7E1668 继续处理。
+★**批量闭合既有引用**：0x4741F0（batch 104）/0x43AE50（batch 059）/
+0x4739F0（batch 063）三函数在本条的实际组合场景——CCINI 读取+失败清理链
+全景落地。
+
+⚠️ partial：0x81F3C0 常量、成功路径（0x49DB6A 起）、+0x58/+0x5C/+0x60
+标志语义、虚表 0x7E16B0→0x7E1668 切换原因。
+
+================================================================================
+0x401F90  递减 getter + 链表族邻域（9 callers，0x401F90-0x401FE8 读完）
+================================================================================
+机器码：
+  0x401F90（递减 getter，0x12 全读完）：
+    mov eax,[ecx+0xC] / dec eax / test eax / mov [ecx+0xC],eax
+    jge 0x401FA2 / mov [ecx+0xC],0   ; ★ +0xC 计数递减，下溢钳 0
+    ret
+  0x401FB0（读 getter，0x04 读完）：
+    mov eax,[ecx+0xC] / ret          ; ★ 读 +0xC 计数
+  0x401FC0（链表族邻域，0x28 读完）：
+    push ebx/esi/edi / mov edi,ecx
+    cmp [edi+4],edi / je 0x401FCF    ; ★ +4 已自环 → 跳过
+    call 0x407450                    ; ★ batch 141 链表族（0x4072D0 邻域）
+    lea ebx,[edi+0x24] / mov ecx,ebx / call 0x407470  ; ★ 0x407470（链表）
+    mov esi,eax / test / je 0x402007
+    mov ecx,esi / call 0x407450 / mov ecx,esi
+    call 0x408600                   ; ★ 0x408600（清理）
+    mov eax,[edi+0x3C] ...           ; ★ 继续遍历
+
+语义：**递减 getter + 链表族邻域（0x401Fxx 区）**——0x401F90 是 +0xC 计数
+递减（下溢钳 0）、0x401FB0 是读计数、0x401FC0 是链表清理：+4 未自环时调
+batch 141 族的 0x407450、对 +0x24 子对象调 0x407470 后逐个 0x407450 +
+0x408600 清理。
+★**与 batch 182 的 0x401000（定点族外层）同 0x401xxx 区**——0x401Fxx
+是 0x401xxx 区的第二族（计数/链表管理）。
+
+⚠️ partial：+0xC 计数语义、0x407450/0x407470/0x408600 精确身份（batch 141
+邻域推断）、+0x3C 字段、宿主类。
+
+================================================================================
+0x755D10  三字段清理器（9 callers，0x755D10-0x755D51 读完）
+================================================================================
+机器码（全 0x41）：
+    push esi/edi / mov esi,ecx / xor edi
+    mov eax,[esi+0x10] / cmp eax,edi / je 0x755D26
+    push eax / call 0x7C8B3D / add esp,4   ; ★ 释放 +0x10（CRT free 族）
+    mov [esi+0x10],edi
+  0x755D26:
+    mov eax,[esi+0x14] / cmp eax,edi / je 0x755D39
+    push eax / call 0x7C8B3D / mov [esi+0x14],edi   ; ★ 释放 +0x14
+  0x755D39:
+    mov eax,[esi+0x18] / cmp eax,edi / je 0x755D4C
+    push eax / call 0x7C8B3D / mov [esi+0x18],edi   ; ★ 释放 +0x18
+  0x755D4C: pop edi / pop esi / ret
+
+语义：**三字段清理器**——把 this->+0x10/+0x14/+0x18 三个指针依次经
+0x7C8B3D（CRT 释放，batch 182 的 0x42F7C0 同款）释放并清 0。
+★与 batch 059 的 0x43AE50（三字段带标志位析构）同构但**无条件释放**
+（无 +0x08 持有标志门控——本条三字段全清）。★0x755xxx 区（batch 182 的
+0x7564B0 3D 结构索引同区）——渲染/网格缓冲清理端。
+
+⚠️ partial：+0x10/+0x14/+0x18 字段语义、宿主类、与 0x43AE50 的差异原因。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x49DB00 → batch 104（0x4741F0 ReadCCFile）+ batch 059（0x43AE50 析构）+
+   batch 063（0x4739F0 构造）——CCINI 装载+失败清理链全景。
+2. 0x401F90 → batch 141（0x407450 链表族）+ batch 182（0x401000 同区）。
+3. 0x755D10 → batch 182（0x42F7C0 清理器）+ batch 059（0x43AE50 同构）+
+   0x7C8B3D（CRT 释放）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x49DB00 的 0x81F3C0 常量与成功路径。
+2. 0x401F90 的 +0xC 计数语义与 0x407450/0x408600 身份。
+3. 0x755D10 的 +0x10/+0x14/+0x18 字段语义。
