@@ -1,0 +1,150 @@
+frontier batch 252 — CRT::__amsg_exit + 对象析构器 0x5D5D20 + 包围盒查找 0x56DA10（2026-10-14）
+
+口径：承接 batch 251，候选池 TOP 12 取三个函数：0x7CD917（34B，带名
+__amsg_exit CRT 函数）、0x5D5D20（142B）、0x56DA10（196B）。三函数均全反汇编
+读完（0x7CD917 全 0x24=36B、0x5D5D20 全 0x8E=142B、0x56DA10 全 0xC4=196B）。
+取证手段：disasm.py 直反汇编 + YRpp 查覆盖（三地址均无）+ 已登记函数交叉验证
+（batch 001 导入槽、batch 097 宽串析构、batch 250 同族）。
+
+================================================================================
+0x7CD917 —— CRT::__amsg_exit（7 callers，全 0x24=36B 读完）
+================================================================================
+⚠️ YRpp 无覆盖（CRT 静态层 0x7C-0x7D，batch 169 同层）；符号名 __amsg_exit
+为 ranking USER_DEFINED（MSVC6 CRT 标准名，按纪律标推断名，地址语义以机器码
+为准）。
+
+机器码（全 0x24）：
+    cmp dword[0xB78230],1（★★MSVC 环境标志 [0xB78230]）
+    jne 0x7CD925（★非 1 → 跳过）
+    call 0x7D5EF8（★★[0xB78230]==1 → 0x7D5EF8（环境/全局初始化））
+    0x7CD925: push [esp+4]（★★参数 = 错误码/消息码）
+    call 0x7D5F31（★★0x7D5F31（参数）——错误消息写入/记录）
+    push 0xFF（★★退出码 255）
+    call dword[0x87C2A0]（★★★导入槽 [0x87C2A0] = 退出进程（ExitProcess 类））
+    pop ecx ×2 / ret（★尾清理）
+
+语义：**CRT::__amsg_exit（推断名：报错后退出）**——当 [0xB78230]==1 时先调
+0x7D5EF8；再 0x7D5F31（错误码）记录消息；最后经导入槽 [0x87C2A0] 以退出码
+255 终止进程。MSVC6 CRT 的「运行时错误消息 + 退出」标准通道（_amsg_exit 族）。
+
+★原版怪癖（照抄）：① **环境标志 [0xB78230] 决定是否预初始化**（==1 才调
+0x7D5EF8——MSVC 全局环境引导）；② **退出码固定 255**（push 0xFF——非 0 硬
+编码，不动参数）；③ **导入槽间接退出**（call dword[0x87C2A0]——.rdata 导入区
+（batch 238 的 [0x7E11BC] 同机制，0x87xxxx 是另一导入/跳板区））；④ 参数只
+用于消息（0x7D5F31 消费），退出码独立。
+★跨批次连接：**CRT 静态层（batch 169 同层）+_amsg_exit 家族（0x7D5EF8/
+0x7D5F31 邻居）+导入槽 [0x87C2A0]（.rdata 导入区，batch 238 [0x7E11BC]
+CreateFileA 同机制不同地址）+[0xB78230]（MSVC 环境标志，batch 093 locale
+[0xB782A0] 近邻全局区）**。
+⚠️ partial：[0x87C2A0] 导入槽精确函数（ExitProcess 推断，可用 PE 导入表
+比对确证）、0x7D5EF8/0x7D5F31 精确身份（环境引导/消息记录推断）、[0xB78230]
+标志语义
+
+================================================================================
+0x5D5D20 —— 对象析构器（容器 + 宽串族析构链）（7 callers，全 0x8E=142B 读完）
+================================================================================
+机器码（全 0x8E 主结构）：
+    push ebx/esi/edi / mov esi,ecx（★this）/ xor ebx,edi
+    mov [esi],0x7EED60（★装虚表 0x7EED60——析构态虚表）
+    mov eax,[esi+0x18]（★★+0x18 计数）/ cmp eax,ebx / jle 0x5D5D4E
+    循环1: mov eax,[esi+0xC]（★★+0xC 对象数组基址）
+      mov ecx,[eax+edi*4]（★数组[i]）/ cmp ecx,ebx / je 跳过
+      mov edx,[ecx] / push 1 / call [edx]（★★★虚表槽 0 = 析构（带删除标志 1））
+      mov eax,[esi+0x18] / inc edi / cmp edi,eax / jl 循环1（★遍历 0..计数-1）
+    0x5D5D4E: mov eax,[esi+8] / lea edi,[esi+8] / mov ecx,edi
+      call [eax+0xC]（★★+0x8 子对象虚表槽 0xC）
+      mov ecx,[esi+0x38] / cmp ecx,ebx / je 跳过
+      mov edx,[ecx] / push 1 / call [edx]（★★+0x38 对象虚表槽 0 析构）
+      lea ecx,[esi+0x30] / call 0x7B46F0（★★+0x30 子对象析构（未登记））
+      lea ecx,[esi+0x2C] / call 0x7B46F0（★★+0x2C 子对象析构）
+      lea ecx,[esi+0x24] / call 0x7B6760（★★★batch 097 宽串析构！）
+      lea ecx,[esi+0x20] / call 0x7B6760（★★宽串析构第二个）
+      mov eax,[edi+4]（★★edi = &this->+0x8 容器）mov [edi],0x7EEE54（★换虚表）
+      cmp eax,ebx / je / cmp byte[edi+0xD],bl / je（★★+0xD 自分配门控）
+      push eax / call 0x7C8B3D（★★CRT::_delete 释放数组，batch 001 实锤）
+      mov [edi+4],ebx（★数组置 NULL）
+      mov byte[edi+0xD],bl / mov [edi+8],ebx（★清 +0xD/+0x8）
+    pop 族 / ret（★无返回值）
+
+语义：**对象析构器（推断名：容器/对象集合析构链）**——装析构态虚表 0x7EED60
+→ ①遍历 +0x18 计数对象数组（+0xC，每项虚表槽 0 带删除标志析构）；②+0x8
+子对象虚表槽 0xC 清理；③+0x38 单对象虚表槽 0 析构；④+0x30/+0x2C 经 0x7B46F0
+析构；⑤+0x24/+0x20 **宽串析构（batch 097 0x7B6760）**；⑥尾容器（+0x8 处虚表
+换 0x7EEE54）+0xD 门控 _delete 释放数组。
+
+★原版怪癖（照抄）：① **首尾两次装虚表**（0x7EED60 → 0x7EEE54——构造态/析构态
+多阶段虚表切换，QWEN.md 怪癖清单「构造态/完成态双虚表切换」批注）；② **对象
+数组遍历即虚表槽 0 析构且带 push 1**（删除标志=1——每项删除）；③ **两级子对象
+链**（+0x30/+0x2C 经 0x7B46F0、+0x24/+0x20 经 0x7B6760——0x7B46F0 是另一个
+未登记的析构，0x7B6760 是 batch 097 宽串析构）；④ **尾容器 +0xD 门控释放**（非
+自分配不 delete——batch 242 0x5251C0 容器析构同款语义）。
+★跨批次连接：**0x7B6760（batch 097 宽串析构实锤——本条第 N 个调用点）**+
+0x7C8B3D（batch 001 _delete）+容器析构（batch 242 0x5251C0）+0x7B46F0（宽串族
+析构变体未登记，batch 097 邻域）+虚表 0x7EED60/0x7EEE54（新虚表，0x7Exxxx
+.rdata 区）。
+⚠️ partial：宿主类（0x5D5Dxx 区对象/集合推断）、0x7B46F0 精确身份（析构变体
+推断）、+0x18 计数数组的对象类型（虚表槽 0=析构推断）、虚表 0x7EED60/0x7EEE54
+类归属
+
+================================================================================
+0x56DA10 —— 包围盒/区域查找（7 callers，全 0xC4=196B 读完）
+================================================================================
+机器码（全 0xC4 主结构）：
+    sub esp,8 / mov eax,[esp+0x14]（★★参数1 = 查找起点索引）
+    mov edx,[ecx+0x60]（★★+0x60 = 表计数）/ push 族
+    cmp eax,edx / jge 0x56DAB9（★起点超界 → 返 -1）
+    mov ecx,[ecx+0x54]（★★+0x54 = 表基址）/ mov edi,[esp+0x1C]（★★参数4 = 目标结构）
+    shl eax,4（★★×16B/项）/ add ecx,eax / mov eax,[ecx+0xC]（★★项->+0xC）
+    test eax,eax / jne 0x56DAA5（★项不可用 → 下一项）
+    mov esi,[ecx]（★★项->[0] = X1?）/ mov eax,[ecx+4]（★★项->[4] = X2?）
+    movsx edx,si / movsx ebx,ax（★★★★16 位格子坐标 X1/X2）
+    mov ebp,edx / mov [esp+0x1C],esi / sub ebp,ebx（★X1 - X2 跨度）
+    mov [esp+0x10],eax / jne 0x56DA80（★跨度非 0 → 分支2）
+    分支1（跨度 0，垂直维度匹配）:
+      mov ax,[edi+2]（★★目标 Y）/ cmp ax,[esp+0x1E] / jl 0x56DAA5（★Y 与项 X2 比较）
+      cmp ax,[esp+0x12] / jg 0x56DAA5（★Y 与项 X1 比较）
+      movsx eax,[edi]（★目标 X）/ sub eax,edx / cdq / xor / sub（★★abs(目标X - 项X)）
+      mov edx,[esp+0x20]（★★参数3 = 距离阈值）/ cmp eax,edx / jle 0x56DAC6（★命中 → 返索引）
+      jmp 0x56DAA5
+    分支2（跨度非 0）0x56DA80:
+      mov dx,[edi]（★目标 X）/ cmp dx,ax / jg / cmp dx,si / jl → 跳过（★X 在项范围外）
+      movsx eax,[edi+2] / movsx edx,[esp+0x1E] / sub / cdq / xor / sub（★★abs(目标Y - 项)）
+      mov edx,[esp+0x20] / cmp eax,edx / jle 0x56DAC6（★命中）
+    0x56DAA5 下一项: mov eax,[esp+0x24] / mov edx,[esp+0x14]
+      inc eax / add ecx,0x10 / cmp eax,edx / mov [esp+0x24],eax / jl 0x56DA3A（★循环）
+    0x56DAB9: or eax,-1 / ret 0xC（★未命中 → -1）
+    0x56DAC6: mov eax,[esp+0x24] / ret 0xC（★命中 → 返回索引）
+
+语义：**包围盒/区域查找（推断名）**——从起点索引遍历 [+0x54] 表（计数 +0x60，
+16B/项：+0/+4 = 16 位格子坐标 X1/X2）与目标结构（参数4，+0/+2 = X/Y）比较：
+跨度为 0 时按垂直维（目标 Y vs 项 X）判定 + abs(目标X - 项X) ≤ 阈值（参数3）
+命中；跨度非 0 时按水平维（目标 X 在项范围内）+ abs(目标Y - 项Y) ≤ 阈值命中；
+命中返索引，未命中返 -1。
+
+★原版怪癖（照抄）：① **16B/项且坐标是 16 位**（movsx word——++0/+4 为 word
+格子坐标、+0xC 可用标志）；② **两个维度分支**（跨度 0 vs 非 0——项是「线/列
+形」区域还是「面」区域的区分推断）；③ **差值 abs 用 cdq/xor/sub 链**（无分支
+绝对值——编译器标准 idiv-free abs）；④ **跳过非可用项（+0xC != 0）但消耗索引**
+（test eax / jne 下一项——可用标志控制）；⑤ **ret 0xC = 3 参**（起点索引/距
+离阈值/目标结构——this 走 ecx）。
+★跨批次连接：+0x54/+0x60 表结构（16B/项区域表——batch 218 8B/项键值对表、
+batch 250 12B/项表、batch 251 环形缓冲同「表+计数」基建族）+cdq/xor/sub abs
+惯用（batch 249 0x6E6E20 ÷1000 同 math 惯用）+0x5xxxxx 区（batch 235
+Update_Pathfinding_2 寻路区邻域——疑地图区域/寻路辅助表）。
+⚠️ partial：宿主类（0x56xxxx 区 MapClass 邻域推断）、项 16B 布局（+0/+4 坐标、
++0x8/+0xC 字段语义）、两维度分支的语义（线/面区域推断）、参数3 距离阈值的
+单位（格/像素）
+
+================================================================================
+（batch 252 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x7CD917（__amsg_exit）是 CRT 标准函数（MSVC6 静态层），C++ 重写直接用
+   标准 error/exit 即可（无字节级复刻价值）；登记价值 = 确认 7 callers 经此
+   报错通道 + 导入槽 [0x87C2A0] 是退出进程。
+② 0x5D5D20（析构器）依赖 0x7B46F0（未登记）+宿主类（+0x18 计数数组对象类型
+   partial）——留待对象集合家族整体建模。
+③ 0x56DA10（包围盒查找）逻辑即实现，但项 16B 布局与两维分支语义为推断——
+   地图区域家族（batch 235 寻路线）整体立案时闭合。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部 semantics_verified
+（三函数全段反汇编读完 + 已登记函数交叉验证 batch 097/001），partial 项如实标注。
