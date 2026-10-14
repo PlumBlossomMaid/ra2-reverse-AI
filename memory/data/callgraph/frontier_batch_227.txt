@@ -1,0 +1,104 @@
+frontier batch 227 — _strrchr + RandMap.Sed 谓词 + GDlgSupp 搜索（2026-10-14）
+
+口径：承接 batch 226，ranking.tsv unique_callers 降序取未登记候选。TOP 12 中
+0x7C8DF0（39B，符号名 `_strrchr`）为 CRT 区带名函数优先纳入；0x69ADF0（23B）
+与 0x776E10（84B）prologue 干净（0x776E10 与 batch 223/224 GDlgSupp 家族交叉）。
+三函数均全反汇编读完。取证手段：disasm.py 直反汇编 + PE 字符串读取
+（_probe_batch227.py）。
+
+================================================================================
+0x7C8DF0 —— _strrchr（符号名，39B 全读）
+================================================================================
+机器码（全 0x27=39B）：
+    push ebp / mov ebp,esp / push edi
+    mov edi,[ebp+8]                 ; ★参数1 = 源串
+    xor eax,eax / or ecx,0xFFFFFFFF
+    repne scasb al,es:[edi]         ; ★正向扫 NUL 定位串尾（strlen 惯用法）
+    inc ecx / neg ecx               ; ecx = strlen(str)+1
+    dec edi                         ; ★edi 指向串尾
+    mov al,[ebp+0xC]                ; ★参数2 = 目标字符
+    std                             ; ★方向标志置反向
+    repne scasb al,es:[edi]         ; ★反向扫目标字符
+    inc edi
+    cmp byte[edi],al                ; ★命中验证（scasb 后 edi 多走一位）
+    je 0x7C8E11
+    xor eax,eax / jmp 0x7C8E13      ; ★未命中 → 返回 NULL
+    0x7C8E11: mov eax,edi           ; ★命中 → 返回字符指针
+    0x7C8E13: cld                   ; ★恢复方向标志（不变量维护）
+    pop edi / leave / ret
+
+语义：**strrchr 字符串反向查找**（MSVC6 标准实现，符号名 `_strrchr` 与
+ranking.tsv 一致）——正向 scasb 量串长定位末尾，`std` 后反向 scasb 找最后
+一次出现的目标字符，命中返回指针、未命中返回 NULL；**函数退出前必 `cld`
+恢复方向标志**（x86 方向标志的跨调用不变量）。
+
+★原版怪癖（照抄）：方向标志 `std`→`cld` 是严格配对（任何路径都恢复）；
+未命中返回 NULL（eax=0），命中返回串内指针（含位于串首的可能）。
+★跨批次连接：batch 001（0x7C8D20 strcmp 同 CRT 字符串族）——CRT 字符串
+原语（strcmp/strrchr）同区登记。
+⚠️ partial：无（39B 全读完，标准实现逐字节吻合）
+
+================================================================================
+0x69ADF0 —— RandMap.Sed 文件名谓词（23B 全读）
+================================================================================
+机器码（全 0x17=23B）：
+    add ecx,0x58                    ; ★this + 0x58
+    push 0x82BC30                   ; ★★字符串常量 [0x82BC30]="RandMap.Sed"
+    push ecx                        ; ★push (this+0x58)
+    call 0x7C8D20                   ; ★strcmp（batch 001/002 CRT 族已登记）
+    add esp,8
+    neg eax / sbb eax,eax / inc eax ; ★三元组 → strcmp==0 ? 1 : 0
+    ret
+
+语义：**文件名等值谓词**——`this->+0x58`（文件名/名字段）与常量
+**"RandMap.Sed"** 逐字节比较，相等返回 1、不等返回 0。★**与 RMG 主线交叉**：
+RandMap.Sed 是随机地图种子存档（QWEN.md 已实锤：存档 CONTENTS 引用
+RANDMAP.SED，游戏按当时种子重建地图）——本条是游戏侧「判断某文件条目是否为
+随机地图种子文件」的名字检查；`neg/sbb/inc` 三元组把 strcmp 结果归一成布尔。
+
+★原版怪癖（照抄）：`neg eax / sbb eax,eax / inc eax` 是 MSVC 惯用的
+`strcmp==0 → 1` 归一化（等价 boolean 化），不是 `test/je` 分支。
+★跨批次连接：0x7C8D20 strcmp（batch 001/002）+RandMap.Sed 存档线（QWEN.md
+savegame 章节）。
+⚠️ partial：宿主类（+0x58 名字段的文件条目类）、[0x82BC30] 常量区归属
+
+================================================================================
+0x776E10 —— GDlgSupp 搜索循环（84B 全读）
+================================================================================
+机器码（全 0x54=84B）：
+    push ecx / push ebx / mov ebx,[0x7E14A4]   ; ★★[0x7E14xx] GDlgSupp 表
+    push ebp/esi/edi / mov edi,ecx（★this）
+    push 0 / push 0 / push 0x146 / push edi / call ebx   ; (this,0x146,0,0) 取计数
+    mov esi,edx（★参数2=目标）/ cmp esi,eax / mov [esp+0x10],eax
+    jge 0x776E4F（★目标 ≥ 计数 → 未找到）
+    循环 0x776E37: push 0 / push esi / push 0x150 / push edi / call ebx
+                                               ; (this,0x150,索引,0) 逐个取值
+      cmp eax,[esp+0x18]（★★参数3=目标值）/ je 0x776E5A（★命中返回索引）
+      mov eax,[esp+0x10] / inc esi / cmp esi,eax / jl 循环
+    0x776E4F: or eax,0xFFFFFFFF / 收尾 ret 4（★未命中返回 -1）
+    0x776E5A: mov eax,esi / 收尾 ret 4（★命中返回索引 esi）
+
+语义：**GDlgSupp 索引搜索循环**——经 [0x7E14A4]（GDlgSupp 全局函数指针表，
+batch 223 已登记）发消息 0x146 查计数，再循环发 0x150 按索引取值与参数3
+比较：命中返回索引、全程未命中返回 -1。与 batch 223/224 的 0x4E50C0/0x4E45A0
+（同为 [0x7E14A4] + 消息码派发）同族——GDlgSupp 家族第四成员形态（搜索变体）。
+
+★原版怪癖（照抄）：① 计数先查一次（0x146），循环上限用该计数；② 命中
+返回索引（0 起），未命中 -1——「索引即句柄」契约；③ `cmp esi,eax/jge` 是
+**有符号**比较（目标为负时提前退出）。
+★跨批次连接：batch 223/224（GDlgSupp 家族 [0x7E14xx] 表 + 消息码体系）
++0x146/0x150 消息码（0x4E4170 已见 0x150 必发 + 0x147 预消息，系同一消息域）。
+⚠️ partial：0x146/0x150 消息码精确语义（取计数/取索引值推断）、宿主对话框类
+
+================================================================================
+（batch 227 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由与 batch 226 一致：
+① `_strrchr`（0x7C8DF0）是 MSVC6 标准 CRT 原语，`crt_behavior_contracts.md`
+   已确立「现代 CRT 天然等价行为，lockstep 不涉及」口径；逻辑等价于
+   `std::strrchr`，无游戏特定语义可复刻。
+② 0x69ADF0 是 6 条指令的 strcmp 包装（23B），`neg/sbb/inc` 归一化已是
+   QWEN.md「连 bug 一起复刻」口径下最简形态，建模收益趋零（谓词本身即实现）。
+③ 0x776E10 依赖 [0x7E14xx] 运行期表 + 消息码合约，与 batch 223/224 同——
+   语义登记的推进以家族闭合为准，模型留待清单位置的宿主类建模时一并落地。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。
