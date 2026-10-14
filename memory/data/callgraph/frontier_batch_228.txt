@@ -1,0 +1,131 @@
+frontier batch 228 — lazy-init 单例 + GDlgSupp 表外派发 + 宽串累加（2026-10-14）
+
+口径：承接 batch 227，ranking.tsv unique_callers 降序取未登记候选。本批选取
+0x5D5E10（192B）、0x46B050（100B）、0x5DAC00（116B）——均 7 callers 且
+prologue 干净。三函数全反汇编读完（0x5D5E10 全 0xC0、0x46B050 全 0x64、
+0x5DAC00 全 0x74；0x64DE80 被调者 17B 一并读完）。取证手段：disasm.py 直反汇编
++ frontier_status.tsv/契约文档既有登记交叉（0x7C978A atexit / 0x7CA405 wcslen
+等）。
+
+================================================================================
+0x5D5E10 —— lazy-init 全局单例访问器（7 callers，全 0xC0=192B 读完）
+================================================================================
+机器码（全 0xC0）：
+    mov al,[0xABFD70]                  ; ★★全局 guard 字节 [0xABFD70]
+    push ebx / xor ebx,ebx
+    test al,1 / jne 0x5D5E67           ; ★guard bit0 已置 → 跳过初始化
+    首次初始化块:
+    mov dl,al / push 0x5D5B20
+    or dl,1                            ; ★置 guard bit0
+    mov [0xABFDA4],ebx / mov [0xABFD70],dl
+    mov [0xABFDA8],ebx / mov byte[0xABFDAC],1 / mov [0xABFDAD],bl
+    mov [0xABFDA0],0x7EED20            ; ★★对象虚表 0x7EED20
+    mov [0xABFDB4],0xA                 ; ★容量/计数 0xA
+    mov [0xABFDB0],ebx
+    call 0x7C978A                      ; ★★CRT::atexit（batch 132 实锤）注册 0x5D5B20 析构
+    add esp,4
+    0x5D5E67: cmp [0xABFDB0],ebx / jne 0x5D5E73
+    xor eax,eax / ret                  ; ★对象空 → 返回 NULL
+    0x5D5E73（第二段与首段同构，指向 [0xABFDB0] 就绪检查）:
+    mov al,[0xABFD70] / test al,1 / jne 0x5D5EC7
+    mov dl,al / push 0x5D5B20 / or dl,1
+    mov [0xABFDA4],ebx / mov [0xABFD70],dl
+    mov [0xABFDA8],ebx / mov byte[0xABFDAC],1 / mov [0xABFDAD],bl
+    mov [0xABFDA0],0x7EED20 / mov [0xABFDB4],0xA / mov [0xABFDB0],ebx
+    call 0x7C978A / add esp,4
+    0x5D5EC7: mov eax,[0xABFDA4] / pop ebx
+    mov eax,[eax] / ret               ; ★★返回 对象->[0]（首字段指针）
+
+语义：**lazy-init 全局单例访问器（MSVC6 静态局部对象惯用法）**——guard
+字节 [0xABFD70] bit0 判断是否已初始化；首次调用时初始化全局对象
+[0xABFDA0..0xABFDB4]（虚表 0x7EED20、计数 0xA、标志 0xAC=1/0xAD=0）并经
+**CRT::atexit（0x7C978A）注册析构 0x5D5B20**；对象非空则返回其首字段
+`[0xABFDA4]->[0]`。★原版怪癖（照抄）：两段初始化块**逐字节同构**（编译器
+展开/复制粘贴形态，不是一次初始化分两个分支）；guard 检查与初始化是
+**非线程安全**的裸位操作（无锁）。
+
+★跨批次连接：CRT::atexit 0x7C978A（batch 132 PCX::GetSurface 实锤）+全局
+对象区 [0xABFDA0..0xABFDB4]（lazy 单例分配区）+虚表 0x7EED20（.rdata 类表）。
+⚠️ partial：单例宿主类（虚表 0x7EED20 类归属）、0x5D5B20 析构回调、
+[0xABFDAC]/[0xABFDAD] 标志语义
+
+================================================================================
+0x46B050 —— GDlgSupp 表外五参派发（7 callers，全 0x64=100B 读完）
+================================================================================
+机器码（全 0x64）：
+    push ecx / push ebx
+    lea eax,[esp+4] / push edi
+    push eax                          ; ★第五参 &局部
+    push 0x7F7C90                     ; ★第四参 常量 0x7F7C90（.rdata 串/表）
+    push 7                            ; ★第三参 7
+    push 0                            ; ★第二参 0
+    mov edi,edx / mov ebx,ecx
+    push 0x7E96E0                     ; ★第一参 常量 0x7E96E0（.rdata）
+    mov dword[esp+0x1C],0
+    call [0x7E15FC]                   ; ★★全局函数指针表 [0x7E15FC]（非 0x7E14xx，
+                                      ;    是 [0x7E14xx] 表外侧的另一槽）
+    test eax,eax / jge 0x46B084
+    失败: pop edi / xor eax,eax / pop ebx / pop ecx / ret 0x14   ; ★<0 返 0
+    0x46B084: mov edx,[esp+0x20] / mov eax,[esp+0x1C]
+      push esi / mov ecx,[esp+0xC]
+      push edx / push eax / push edx / push eax / push edx
+      push edi / push ebx             ; ★七参转调 0x4664C0
+      mov esi,ecx / call 0x4664C0
+      mov eax,esi / pop esi/edi/ebx/ecx / ret 0x14              ; ★返 this
+
+语义：**GDlgSupp 表外派发包装**——经全局函数指针 [0x7E15FC] 五参调用
+（0x7E96E0, 0, 7, 0x7F7C90, &局部）：返回 <0 则返 NULL；成功则把结果与常量
+七参转调 0x4664C0 并返 this。★跨批次连接：[0x7E14xx]（batch 223/224 GDlgSupp
+表）外侧槽位 [0x7E15FC]（同 .rdata 函数指针区，0x7E15xx 族）——GDlgSupp 派发
+体系邻槽；0x7E96E0/0x7F7C90 为 .rdata 常量（类型表/串推断）。
+⚠️ partial：0x7E15FC/0x4664C0 精确身份（GetWindowTextA/控件枚举推断未实锤）、
+常量 0x7E96E0/0x7F7C90 内容、七参契约
+
+================================================================================
+0x5DAC00 —— 宽串逐字符累加（7 callers，全 0x74=116B 读完）
+================================================================================
+机器码（全 0x74）：
+    sub esp,0xA4 / push esi
+    lea eax,[esp+8] / xor esi,esi
+    push ecx / push eax
+    mov dword[esp+0xC],0
+    call 0x7CA489                    ; ★CRT::wcscpy（batch 097 实锤）→ 拷贝入局部
+    lea ecx,[esp+0x10] / push ecx
+    call 0x7DDCD6                    ; ★加锁宽字符拷贝（契约文档 batch 0x7DDCD6）
+    lea edx,[esp+0x14] / push edx
+    call 0x7CA405                    ; ★CRT::wcslen（batch 097 实锤）→ 长度
+    add esp,0x10
+    test eax,eax / jbe 0x5DAC68       ; ★长度 0 → 直接返参数
+    循环: push edi / lea edi,[esp+0xC]
+      xor edx,edx / lea ecx,[esp+8]
+      mov dx,word[edi]                ; ★取 2B 宽字符
+      call 0x64DE80                   ; ★★累加原语（17B：mov esi,[ecx]; mov eax,esi;
+                                      ;     shr eax,0x1F; lea eax,[eax+esi*2]; add
+                                      ;     eax,edx; mov [ecx],eax → *ptr =
+                                      ;     2*(*ptr)+signbit(*ptr)+char）
+      lea eax,[esp+0xC] / inc esi / push eax / add edi,2
+      call 0x7CA405 / add esp,4
+      cmp esi,eax / jb 循环           ; ★按 wcslen 上限逐字符
+    0x5DAC5B: mov eax,[esp+8] / pop edi/esi / add esp,0xA4 / ret
+    0x5DAC68: mov eax,[esp+4] / ... / ret（★空串直接返参数）
+
+语义：**宽字符串逐字符累加/校验**——wcscpy 拷贝入局部 → 加锁宽拷 0x7DDCD6 →
+wcslen 定上限 → 循环每宽字符经 0x64DE80 累加进计数（`*ptr = 2*ptr + signbit +
+char`，17B 原语）→ 返回局部缓冲。★跨批次连接：0x7CA405 wcslen + 0x7CA489
+wcscpy（batch 097）+0x7DDCD6 加锁宽拷（契约文档）+0x64DE80（17B 累加原语，
+与 0x64DEA0 同区第二成员——batch 226 曾见 0x64DEA0 为 fclose 调用方）。
+⚠️ partial：0x64DE80 累加语义的精确用途（校验和/哈希推断）、0x7DDCD6 加锁
+变体与 0x7CA489 的分工、宿主类
+
+================================================================================
+（batch 228 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x5D5E10 的 lazy-init 单例模式是 MSVC6 标准惯用法（guard + atexit），
+   `crt_init.cpp`/`lowlevel.cpp` 已有 initterm/句柄层模型覆盖同类语义；
+   游戏侧单例宿主类（虚表 0x7EED20）未取证，建模会固化未验证推断。
+② 0x46B050 依赖 [0x7E15FC]/0x4664C0 两个未取证后端（同 batch 223/224
+   GDlgSupp 家族口径——表外派发留待家族宿主类建模时一并落地）。
+③ 0x5DAC00 的 0x64DE80 累加原语用途未确认（校验和/哈希推断）——按
+   「证据不足保留 partial」纪律此刻不建模。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。
