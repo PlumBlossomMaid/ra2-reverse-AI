@@ -1,0 +1,167 @@
+frontier batch 166 — FindTechnoNearestTo 实锤 + 浮点判定族（Veterancy 阈值闭合）+ 坐标变换（2026-10-14）
+
+口径：承接 batch 165 候选，ranking.tsv unique_callers 降序取 0x6D1F10（20 callers，
+坐标变换）、0x750010（20 callers，batch 162/163 已引用）、0x47C3D0（19 callers，
+CellClass.h:51 实锤）。三者 prologue 均干净。
+
+================================================================================
+0x47C3D0  CellClass::FindTechnoNearestTo（19 callers，全 0xF7 读完）
+================================================================================
+身份实锤：YRpp CellClass.h:51
+    TechnoClass* FindTechnoNearestTo(Point2D const& offsetPixel, bool alt,
+        TechnoClass const* pExcludeThis = nullptr) const
+        { JMP_THIS(0x47C3D0); }
+地址 + JMP_THIS + 3 参签名（ret 0xc = this + offsetPixel + alt + pExcludeThis）三证吻合。
+
+机器码还原：
+    push ebp / mov ebp,esp / and esp,0xfffffff8 / sub esp,0x34
+    mov edx,[ebp+8]                   ; ★ offsetPixel 指针
+    mov eax,[edx] / lea edi,[eax*8] / sub edi,eax   ; ★ X*7（lea*8-eax = ×7）
+    mov eax,[edx+4] / lea ebx,[eax*8] / sub ebx,eax ; ★ Y*7
+    mov al,[ebp+0xc]                  ; ★ alt 参数
+    test al,al / je 用+0xE4 / mov ecx,[ecx+0xE8] / jmp 遍历   ; ★ alt→+0xE8 副链
+   用+0xE4: mov ecx,[ecx+0xE4]         ; ★ 默认 +0xE4 主链（batch 162 ScatterContent 同字段）
+  遍历: cmp ecx,esi / je 返回 NULL（+0xE4=0 或 alt=0 空链）
+    mov esi,ecx
+    test esi / je 收尾
+    mov al,[esi+0x14] / and al,1 / je 跳过   ; ★ 对象存在标志 bit0
+    cmp esi,[ebp+0x10] / je 跳过       ; ★ pExcludeThis 排除
+    mov edx,[esi] / lea eax,[esp+0x28] / push eax / mov ecx,esi
+    call [edx+0x48]                   ; ★ 虚表槽 0x48 取坐标（返回指针）
+    mov edx,eax / sub esp,8
+    mov eax,[edx] / and eax,0xff       ; ★ 坐标 X 低 8 位（cell 坐标取低字节）
+    mov ecx,[edx+4] / and ecx,0xff     ; ★ 坐标 Y 低 8 位
+    sub eax,edi / sub ecx,ebx          ; ★ 与目标 X*7/Y*7 之差
+    mov edx,[edx+8]                    ; ★ Z（存栈备用）
+    fild dword[esp+0x28] / fild dword[esp+0x24]
+    fld st(0) / fmul st(1)             ; ★ dx*dx
+    fld st(2) / fmul st(3)             ; ★ dy*dy
+    faddp st(1)                        ; ★ dx²+dy²
+    fstp qword[esp] / call 0x4CAC40    ; ★ sqrt（台账已登记：MSVC6 sqrt）
+    call 0x7C5F00                      ; ★ _ftol 截断（每候选一次）
+    mov ecx,[esp+0x14] / test ecx / je 首次
+    cmp eax,[esp+0x18] / jge 跳过      ; ★ 与当前 best 比较，保留最小
+   首次/更小: mov [esp+0x14],esi / mov [esp+0x18],eax  ; ★ 记录 best 对象+距离
+  跳过: mov esi,[esi+0x30] / test esi / jne 遍历      ; ★ 链步进 +0x30
+  收尾: mov eax,[esp+0x14]             ; ★ 返回 best（最近对象）
+    ret 0xc
+
+语义：**CellClass::FindTechnoNearestTo（找最近技术单位）**——按 alt 选
++0xE8/+0xE4 链（batch 162 ScatterContent 同款链字段），遍历每对象（存在标志
++0x14 bit0 + 排除 pExcludeThis），虚表槽 0x48 取坐标，X/Y 各取低 8 位与目标
+×7 之差求平方和 → sqrt(0x4CAC40) → _ftol 逐步截断，保留最小距离对象返回。
+
+★跨批次连接：batch 162（ScatterContent 同 +0xE4/+0xE8/+0x30 链字段 + 0x750010
+判定）+ 台账 0x4CAC40（MSVC6 sqrt）+ _ftol 族——CellClass 对象链遍历 + 距离
+择优族。
+
+⚠️ partial：×7 系数语义（offsetPixel 像素→cell 坐标换算）、坐标取低 8 位原因、
+虚表槽 0x48 方法身份（取坐标）、best 距离用途（索敌/就近）。
+
+================================================================================
+0x750010  浮点判定族（20 callers；0x750010-0x750110 读 0x120 字节）
+================================================================================
+常量取证（PE 原始字节）：
+    [0x7E37B4] = 2.0f     （0x750010 与 0x750030 共用）
+    [0x7E2AC8] = 1.0f     （0x750030 用）
+    [0x7F6890] = 100.0f   （0x7500D0 的 fmul 系数）
+    [0x7E3808] = 0.01     （double，0x7500E0 的 fmul 系数）
+
+机器码还原：
+  0x750010（0x27 读完）：
+    fld dword[ecx] / fcomp dword[0x7E37B4] (=2.0f)
+    fnstsw ax / test ah,1 / jne 返0      ; ★ C0 位（ST < 2.0 → 返 0）
+    mov eax,1 / ret                      ; ★ ST >= 2.0 → 返 1
+  0x750030（双界三档）：
+    fld dword[ecx] / fcomp [0x7E37B4] (=2.0f) / fnstsw / test ah,1
+    jne 0x750042 / xor eax,eax / ret     ; ★ ST>=2.0 → 0
+   0x750042: fld dword[ecx] / fcomp [0x7E2AC8] (=1.0f) / fnstsw / test ah,1
+    mov eax,1 / je 0x75005b / mov eax,2 / ret  ; ★ ST>=1.0 → 1；ST<1.0 → 2
+  0x750060（setter 族）：
+    mov al,[esp+4] / test al,al / je 写0
+    mov dword[ecx],0xBE800000 / ret 4   ; ★ 真 → 写 -1.0f
+   写0: mov dword[ecx],0 / ret 4
+  0x750080: mov dword[ecx],0 / ret 4    ; ★ 恒写 0
+  0x750090: 真 → 0x3F800000 (=1.0f) / 假 → 0
+  0x7500B0: 真 → 0x40000000 (=2.0f) / 假 → 0
+  0x7500D0: fld dword[ecx] / fmul [0x7F6890] (=100.0f) / jmp 0x7C5F00
+           ; ★ [ecx]×100 → _ftol（截断取整——百分比转换?）
+  0x7500E0: fild dword[esp+4] / fmul qword[0x7E3808] (=0.01) / fstp [ecx]
+           ; ★ int×0.01 → 写回 [ecx]（float 百分比）
+  0x7500F0: xor eax / mov [0xB1D300..0xB1D30C],eax ×4 / ret
+           ; ★ 清全局 0xB1D300 四 dword
+  0x750110: fld qword[0x7E1710] (=256.0) / fld qword[0x7E1708] (=2.0)
+           / call 0x7C8FB0 / fadd st,st / ...（后续成员）
+
+语义：**浮点判定 + setter/转换工具族**——0x750010 是「ST >= 2.0f → 1」单界
+判定，0x750030 是「ST>=2.0→0 / ST>=1.0→1 / else→2」双界三档；0x750060/0x750090/
+0x7500B0 是按 bool 写 ±1/2/0 的 setter；0x7500D0 是 ×100 后 _ftol 截断；
+0x7500E0 是 int×0.01 转 float。★**与 batch 163 登记的 0x74FF90（VeterancyStruct
+判定，同为 [0x7E2AC8]/[0x7E37B4] 双界）同族**——1.0/2.0 正是 Veteran/Elite
+等级阈值；batch 162 的 ScatterContent 也引用 0x750010 做对象 +0x150 判定。
+
+★跨批次连接：batch 163（0x74FF90 VeterancyStruct 同族同常量）+ batch 162
+（ScatterContent 引用 0x750010）+ _ftol 族——Veterancy/等级阈值判定 + 浮点
+工具族正式立案。
+
+⚠️ partial：0x750010 宿主（疑 Veterancy/等级对象）、0x750030 三档与 0x74FF90
+的分工、0x7500D0 百分比用途、0x750110 后续成员、0x7500F0 全局 0xB1D300 语义。
+
+================================================================================
+0x6D1F10  坐标变换（等距→屏幕；20 callers，前 0xC5 读完）
+================================================================================
+身份：ranking.tsv 观察名 TacticalClass::CoordsToScreen；YRpp 未收录同名
+JMP_THIS（名字未确认，语义由机器码独立判定）。
+
+机器码还原：
+    sub esp,8 / push ebx / mov ebx,[esp+0x14]   ; ★ 入参结构指针
+    mov esi,[ebx]                ; ★ X
+    mov eax,[ebx+4] / mov [esp+0x10],eax        ; ★ Y
+    mov ebx,[ebx+8]              ; ★ Z
+    ; X 变换：lea eax,[esi+esi*2]→[eax+eax*4]→shl 2 → ×60；cdq/sub/sar 1
+    ;         = 30x（floor）                    ; ★ 30*X
+    ; Y 变换：mov eax,edi / shl 4 / sub eax,edi → ×15；neg / shl 2 → ×60
+    ;         cdq/sub/sar 1 = -30Y
+    add ecx,eax                  ; ★ 30*(X - Y)（等距对角）
+    ; esi = 15X（lea×3→×5→shl 1 → 30x → sar 1 = 15x）
+    ; lea eax,[edi+edi*2]→×15→shl 1=30y→sar 1=15y；add esi,eax → 15*(X+Y)
+    mov eax,ecx / cdq / and edx,0xff / add eax,edx / sar edi,8
+                                ; ★ (30*(X-Y) + 符号修正) >> 8 = 屏幕 X
+    mov eax,esi / cdq / and edx,0xff / add eax,edx / sar esi,8
+                                ; ★ (15*(X+Y) + 符号修正) >> 8 = 屏幕 Y 基
+    cmp ebx,0x2D8 / jl 跳过      ; ★ Z 与 728 比较（屏幕高度基准?）
+    mov [esp+0x1C],1             ; ★ Z>=728 → 标志 1
+    fild dword[esp+0xC]          ; ★ fild Z
+    fmul qword[0xB0CD48]         ; ★ × 全局缩放（BSS，运行期值，未确认）
+    fiadd dword[esp+0x1C]        ; ★ + 0/1 标志
+    fadd qword[0x7E1738] (=0.5)  ; ★ +0.5（round-half-away 前奏）
+    call 0x7C5F00                ; ★ _ftol 截断
+    sub esi,eax                  ; ★ 屏幕 Y -= ftol(Z×s + flag + 0.5)
+    mov eax,[esp+0x18]           ; ★ 输出指针
+    mov [eax],edi / mov [eax+4],esi / ret 8
+
+语义：**等距坐标 → 屏幕坐标变换（CoordsToScreen 行为）**——输入
+(X,Y,Z) 结构，屏幕 X = (30(X-Y) + 符号修正)>>8，屏幕 Y =
+(15(X+Y))>>8 − ftol(Z×[0xB0CD48] + (Z>=728?1:0) + 0.5)，输出
+(Point2D) 两值。★+0.5 后 _ftol = round-half-away（QWEN.md 怪癖
+清单同款——每个取整点都要看汇编，这里是 +0.5 截断非 ties-to-even）。
+
+★跨批次连接：_ftol 族 + [0x7E1738]（batch 096 同 .rdata 区）+ 坐标/
+屏幕基建——战术视图坐标换算端。
+
+⚠️ partial：0xB0CD48 全局缩放值（BSS 文件无 raw，未确认）、728 基准
+语义、虚表/宿主类（TacticalClass 名字未确认）、紧邻 0x6D1FE0 同构变体。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x47C3D0 → batch 162（同 +0xE4/+0xE8/+0x30 链字段）+ 台账 0x4CAC40（sqrt）。
+2. 0x750010 → batch 163（0x74FF90 同族同常量）+ batch 162（ScatterContent 引用）。
+3. 0x6D1F10 → _ftol 族 + [0x7E1738] 常量区。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x47C3D0 的 ×7 系数与坐标低 8 位语义。
+2. 0x750010 宿主类与 0x750030 三档分工。
+3. 0x6D1F10 名字（YRpp 无同名 JMP）与 0xB0CD48 运行期值。
