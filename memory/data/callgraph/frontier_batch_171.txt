@@ -1,0 +1,116 @@
+frontier batch 171 — HouseClass::Fire_SW 实锤 + 全局名字表查找 + 链表自环变体（2026-10-14）
+
+口径：承接 batch 170 候选，ranking.tsv unique_callers 降序取 0x5D1C20（11 callers）、
+0x45E7B0（11 callers）、0x4FAE50（10 callers，YRpp HouseClass.h:581 实锤）、
+0x4072C0（11 callers，batch 141 链表族邻域）。择优取三：0x4FAE50（身份实锤）、
+0x45E7B0（完整小函数）、0x4072C0（闭合 batch 141 引用）。三者 prologue 均干净。
+
+================================================================================
+0x4FAE50  HouseClass::Fire_SW（10 callers，0x4FAE50-0x4FAEF5 读完）
+================================================================================
+身份实锤：YRpp HouseClass.h:581-582
+    bool Fire_SW(int idx, const CellStruct &coords)
+        { JMP_THIS(0x4FAE50); }
+地址 + JMP_THIS + 2 参签名（ret 8）三证。
+
+机器码还原：
+    push ebx / mov ebx,ecx          ; ★ this（HouseClass）
+    mov ecx,[esp+8]                 ; ★ idx 参数
+    mov eax,[ebx+0x258]             ; ★ this->+0x258 超级武器数组（SW 表）
+    mov edi,[eax+ecx*4]             ; ★ SW = 表[idx]（4B/项）
+    mov ecx,[edi+0x28]              ; ★ SW->+0x28 SuperWeaponTypeClass
+    mov dl,byte[ecx+0xEE]           ; ★ Type->+0xEE 标志（关联 SW 存在?）
+    test dl / je 跳过关联
+    mov edx,[ecx+0xF0]              ; ★ Type->+0xF0 关联 SW 索引
+    mov esi,[eax+edx*4]             ; ★ 关联 SW = 表[关联索引]
+    test esi / je 跳过关联
+    mov eax,[esi+0x62] / mov [edi+0x62],eax   ; ★ 复制 +0x62 字段（时间戳?）
+  跳过关联:
+    mov eax,[0xA83D4C]              ; ★ 全局当前 House（PlayerPtr）
+    mov ebp,[esp+0x18]              ; ★ coords 参数（CellStruct）
+    cmp ebx,eax / sete cl           ; ★ isCurrent = (this == PlayerPtr)
+    push ebp / push ecx / mov ecx,edi / call 0x6CB920   ; ★ SW 发射核心
+    mov edx,[edi+0x28] / mov al,byte[edx+0xEE] / test / je 跳过2
+    test esi / je 跳过2
+    push 0 / mov ecx,esi / call 0x6CB820              ; ★ 关联 SW 前置
+    mov edx,[0xA83D4C] / mov ecx,esi / cmp ebx,edx / sete al
+    push eax / call 0x6CB830                           ; ★ 关联 SW 发射
+  跳过2:
+    mov ecx,[0xA80238] / lea esi,[ecx-1] / test esi / jl 收尾
+    mov edx,[0xA8022C] / mov ecx,[edx+esi*4] / test / je 下一个
+    push ebp / push edi / call 0x4FAF00                ; ★ 子函数：逐 House 通知
+   下一个: dec esi / jns 循环
+  收尾: mov al,1 / ret 8            ; ★ 返回 true
+
+语义：**HouseClass::Fire_SW（发射超级武器）**——按 idx 取 this->+0x258
+SW 表项，查 Type->+0xEE 关联标志与 +0xF0 关联索引取关联 SW 并复制 +0x62
+字段，经 0x6CB920（发射核心，isCurrent 参数）发射主 SW，存在关联时再经
+0x6CB820/0x6CB830 发射关联 SW，最后遍历 [0xA80238] 计数（[0xA8022C] 数组）
+逐项调 0x4FAF00（逐 House 通知子函数），返回 true。
+
+★跨批次连接：0x6CB920/0x6CB820/0x6CB830（超级武器发射族，未登记）+ 全局
+[0xA83D4C]（PlayerPtr，batch 169 的 0x45E7B0 也用 0xA83Cxx 全局区）+
+[0xA80238]/[0xA8022C]（House 数组，batch 169 的 0x4FAE50 同文件）。
+
+⚠️ partial：+0x258 SW 表宿主类型、+0x62 字段语义、0x6CB920/0x6CB820/
+0x6CB830 身份、0x4FAF00 子函数（逐 House 通知语义）、+0xEE/+0xF0 标志。
+
+================================================================================
+0x45E7B0  全局名字表查找（11 callers，全 0x42 读完）
+================================================================================
+机器码（全 0x42）：
+    push esi / push edi / mov edi,ecx    ; ★ 入参（查找名字，ecx）
+    test edi / je 返-1
+    mov eax,[0xA83C78]                   ; ★ 全局计数（名字表项数）
+    xor esi,esi / test eax / jle 返-1
+    mov eax,[0xA83C6C]                   ; ★ 全局数组基址
+    loop: mov ecx,[eax+esi*4] / add ecx,0x24   ; ★ 每项 +0x24 偏移（名字字段）
+    push edi / push ecx / call 0x7C8D20  ; ★ 字符串比较（batch 170 的 0x69BC60 同调用）
+    test eax / je 命中
+    mov eax,[0xA83C78] / inc esi / cmp esi,eax / jl loop
+   返-1: or eax,-1 / ret
+   命中: mov eax,esi / ret                ; ★ 返回命中索引
+
+语义：**全局名字表查找**——遍历全局数组 [0xA83C6C]（计数 [0xA83C78]），
+对每项取 +0x24 偏移处名字经 0x7C8D20 与入参比较，命中返回索引，未命中返
+-1。★与 batch 170 的 0x69BC60（0xA8DA90 表）同思路——全局名字/状态表
+查找族第二实例。
+
+⚠️ partial：[0xA83C6C]/[0xA83C78] 表宿主（与 0x4FAE50 的 [0xA83D4C]
+同 0xA83Cxx 全局区——House/Player 名字表推断）、+0x24 字段、0x7C8D20
+比较语义。
+
+================================================================================
+0x4072C0  链表节点自环初始化变体（11 callers，全 0x0C 读完）
+================================================================================
+机器码（全 0x0C）：
+    mov [ecx],ecx / mov [ecx+4],ecx / mov [ecx+8],ecx / ret
+    ; ★ +0/+4/+8 全部自环指向自身
+
+语义：**链表节点自环初始化变体（三字段全自环）**——与 batch 141 登记的
+0x4072D0（自环 +0/+4，+8 清 0）同族：本条 +8 也自环（+8 也是节点指针
+而非计数）。紧邻 0x4072E0（batch 141 已登记的有序插入）、0x407420（batch
+158 头插入）——链表基建家族补员。
+
+★跨批次连接：batch 141（0x4072D0 自环 + 0x4072E0 有序插入）+ batch 158
+（0x407420 头插入）+ batch 164（0x40E320 GenericNode 构造器）——链表节点
+初态族第三例（全新构造 Next/Prev=NULL / 自环构造 Next/Prev=this / 本条
++8 也自环）。
+
+⚠️ partial：+8 字段语义（疑另一条链或标志位）、宿主类。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x4FAE50 → 超级武器发射族（0x6CB920 等）+ [0xA83D4C] PlayerPtr 全局区
+   （batch 169 的 0x45E7B0 同区）。
+2. 0x45E7B0 → batch 170（0x69BC60 名字表查找同思路）+ 0x7C8D20。
+3. 0x4072C0 → batch 141/158/164（链表节点初态族）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x4FAE50 的 +0x258 SW 表宿主、0x6CB920/0x6CB820/0x6CB830 身份、
+   0x4FAF00 子函数语义。
+2. 0x45E7B0 的 [0xA83C6C] 表宿主（House/Player 名字表推断）。
+3. 0x4072C0 的 +8 字段语义。
