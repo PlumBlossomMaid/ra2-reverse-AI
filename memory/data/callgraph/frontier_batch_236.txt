@@ -1,0 +1,121 @@
+frontier batch 236 — SidebarClass::RepaintSidebar + 对象刷新 0x5F4D30（2026-10-14）
+
+口径：承接 batch 235，ranking.tsv unique_callers 降序取未登记候选。TOP 12 中
+0x6A60A0（59B，符号名 SidebarClass::RepaintSidebar）为带名 UI 成员优先纳入；
+0x5F4D30（398B）prologue 干净（[0xA8E9A0] 全局门卫 + 虚表槽族）一并取证。
+两函数均全反汇编读完（0x6A60A0 全 0x3B=59B、0x5F4D30 全 0x18E=398B）。
+取证手段：disasm.py 直反汇编 + YRpp 交叉验证（SidebarClass.h:82-83 三证）。
+
+================================================================================
+0x6A60A0 —— SidebarClass::RepaintSidebar（7 callers，全 0x3B=59B 读完）
+================================================================================
+身份实锤：YRpp SidebarClass.h:82-83
+  `void RepaintSidebar(int tab = 0) { JMP_THIS(0x6A60A0); }`
+地址+JMP_THIS+int 参（tab 默认 0）三证。
+
+机器码（全 0x3B）：
+    mov eax,[esp+4]（★★参数 tab）
+    mov edx,[ecx+0x539C]（★this->+0x539C 当前 tab）
+    cmp eax,edx / jne 0x6A60D8（★★tab == 当前 → 直接返回）
+    push esi / mov esi,eax
+    shl esi,5 / sub esi,eax（★esi = tab*31）
+    mov dl,1 / mov byte[ecx+0x53A6],dl（★置 +0x53A6 = 1 刷新标志）
+    push 0 / lea esi,[eax+esi*8]（★esi = tab + tab*31*8 = tab*249）
+    lea eax,[eax+esi*4]（★eax = tab + tab*249*4 = tab*997）
+    mov byte[ecx+eax*4+0x1580],dl（★★★+0x1580 + tab*997*4 处置 1——Sidebar
+      控件表按 tab 索引的标记位，步长 997*4=3988B）
+    mov ecx,0x87F7E8（★MapClass::Instance）/ call 0x4F42F0（★batch 230 同款）
+    pop esi / ret 4
+
+语义：**SidebarClass::RepaintSidebar（侧边栏重绘请求，三证吻合）**——参数 tab
+与当前 tab（+0x539C）相同则直接返回（无变化不重绘）；否则置 `+0x53A6=1` 刷新
+标志 + 在 `+0x1580 + tab*997*4`（tab 索引到控件表的标记位，每 tab 3988B）处置
+1 + 经 MapClass::Instance 0x4F42F0 触发地图级刷新。★原版怪癖（照抄）：
+① **三连 LEA 合成 ×997**（`shl 5/sub = ×31`、`lea [eax+esi*8] = ×249`、
+`lea [eax+esi*4] = ×997`）——编译器把 tab*997 展开成加法链（997 不是 2 的幂）；
+② tab 与当前相同**静默返回**（无返回值、无标志变动）。
+
+★跨批次连接：MapClass::Instance 0x4F42F0（batch 230 MakeAlly 同款收尾调用）
++Sidebar 控件表 +0x1580（UI 侧边栏 tab 布局）+`tab*997*4` 步长（每 tab 控件表
+大小推断）。⚠️ partial：+0x539C 当前 tab 字段语义、+0x1580 控件表结构（步长
+3988B 内容推断）、+0x53A6 刷新标志消费端
+
+================================================================================
+0x5F4D30 —— 对象刷新流程（7 callers，全 0x18E=398B 读完）
+================================================================================
+机器码（全 0x18E）：
+    mov al,[0xA8E9A0]（★★全局字节门卫）/ sub esp,0x20 / test al / push 族
+    mov esi,ecx（★this）/ je 0x5F4EB5（★门卫关闭 → 返回 0）
+    mov al,[esi+0x81] / test / jne 0x5F4EB5（★★+0x81 防重标志 → 已处理跳过）
+    mov eax,[esi] / call [eax+0x150]（★虚表槽 0x150）
+    mov edx,[esi] / push 1 / mov ecx,esi / call [edx+0xDC]（★虚表槽 0xDC (1)）
+    mov eax,[esi] / push 0 / call [eax+0x124]（★虚表槽 0x124 (0)）
+    push esi / mov ecx,0x87F7E8 / call 0x4A9770（★MapClass::Instance + 0x4A9770）
+    lea ecx,[esi+0x3C] / call 0x405D40（★+0x3C 子对象构造/调用）
+    lea ecx,[esi+0x50] / call 0x405FD0（★+0x50 子对象）
+    mov edx,[esi] / mov ecx,esi / call [edx+0x88]（★虚表槽 0x88 取对象）
+    test eax / je 0x5F4DD8
+    mov eax,[esi] / call [eax+0x88] / mov cl,[eax+0x234]（★对象+0x234 标志）
+    test cl / je 0x5F4DD8
+    mov eax,[0xA8B238]（★全局，batch 230 MakeAlly 同全局）/ test / je 0x5F4DCD
+    cmp eax,5 / je 0x5F4DCD（★==5 跳过）
+    mov ecx,[esi+4] / lea eax,[esi+4] / push eax / call [ecx+0x10]（★+4 子对象虚表槽 0x10）
+    cmp eax,-2 / je 0x5F4DD8（★返回 -2 → 跳过）
+    push esi / mov ecx,0x87F778 / call 0x55BAE0（★另一全局 [0x87F778] 调用）
+    0x5F4DD8: mov edx,[esi] / mov ecx,esi / call [edx+0x88]（★槽 0x88 再取）
+    test eax / je 0x5F4E94
+    mov eax,[esi] / call [eax+0x88] / mov ecx,[eax+0xAC]（★对象+0xAC 字段）
+    test ecx / je 0x5F4E94
+    mov edx,[esi] / lea eax,[esp+0x20] / push eax / mov ecx,esi / call [edx+0x48]
+      （★虚表槽 0x48 取坐标三字段）
+    mov ecx,[eax] / mov [esp+0x14],ecx / mov edx,[eax+4] / mov [esp+0x1C],edx
+    mov eax,[eax+8] / mov [esp+0x24],eax（★存坐标 (x,y,z)）
+    mov ecx,[0x887324]（★★全局坐标/布局对象）/ call 0x6D2140（★坐标变换 1）
+    mov eax,[esi] / call [eax+0x88] / mov ecx,[eax+0xAC]（★再取对象+0xAC）
+    push 1 / sub esp,0x10（★栈帧坐标结构）
+    movsx eax,word[ecx+2] / cdq / sub eax,edx / mov edi,eax（★Y 符号半格准备）
+    movsx eax,word[ecx+4] / cdq / sub eax,edx
+    mov edx,[esp+0x20] / sar edi,1 / sub edx,edi（★★半格换算：目标 x - Y/2）
+    mov edi,[esp+0x24] / sar eax,1 / sub edi,eax（★★目标 y - X/2）
+    mov [ebx],edx / mov [esp+0x20],edx / mov [esp+0x24],edi（★写栈结构）
+    movsx eax,word[ecx+2] / movsx ecx,word[ecx+4]
+    mov [ebx+4],edi / mov [ebx+8],eax / mov [ebx+0xC],ecx（★结构 4 字段完成）
+    mov ecx,[0x887324] / call 0x6D2790（★★[0x887324] 坐标变换 2——半格换算闭环）
+    0x5F4E94: mov edx,[esi] / mov ecx,esi / call [edx+0x11C]（★虚表槽 0x11C 收尾）
+    mov byte[esi+0x81],1（★★置 +0x81 = 1 处理完成）
+    mov byte[esi+0x80],0（★★清 +0x80 = 0）
+    mov al,1 / pop 族 / add esp,0x20 / ret（★返回 1）
+    0x5F4EB5: xor al,al / ... / ret（★★门卫关闭/已处理 → 返回 0）
+
+语义：**对象刷新流程（0x5F4D30，门卫 + 防重 + 坐标重算 + 完成标记）**——
+`[0xA8E9A0]` 全局门卫开启且 `+0x81` 未置位时：虚表槽 0x150 + 0xDC(1) + 0x124(0)
+三连清理 → MapClass::Instance 0x4A9770 → 子对象 +0x3C（0x405D40）/+0x50
+（0x405FD0）→ 槽 0x88 取对象（+0x234 标志门卫 + [0xA8B238] 全局 !=5 时经 +4
+子对象槽 0x10，-2 返回跳过，否则 [0x87F778] 0x55BAE0）→ 槽 0x48 取坐标三字段
+→ [0x887324] 全局坐标对象两次变换（0x6D2140/0x6D2790，半格 sar 换算：目标
+坐标减 Y/2、X/2）→ 槽 0x11C 收尾 → **置 +0x81=1、清 +0x80=0** → 返回 1；
+门卫关或已处理返回 0。
+
+★原版怪癖（照抄）：① **门卫 [0xA8E9A0] + 防重 [esi+0x81] 双闸**（门卫是全局
+开关、+0x81 是实例级「本帧已处理」标志——处理完置 1 防重复）；② **+0x80 与
++0x81 成对**（+0x81=处理完成、+0x80=清空）；③ 半格换算用 `sar`（算术右移，
+负坐标正确取整）且**目标坐标直接减去半格**（不是加到中心）；④ 坐标经
+[0x887324] 全局对象两段变换（0x6D2140 存、0x6D2790 算）——布局坐标对象的
+前后端分离形态。
+
+★跨批次连接：MapClass::Instance [0x87F7E8]（batch 208/209/218/221/230）+
+[0x887324] 全局坐标对象（batch 221 会话状态区 [0x887308]/[0x88730C]/[0x887310]
+邻域——UI 布局坐标全局族）+[0xA8B238]（batch 230 MakeAlly 同全局）+虚表槽
+0x88/0xDC/0x124/0x150/0x48/0x11C（对象 UI 接口族）。⚠️ partial：宿主类名
+（UI 对象刷新类推断）、0x4A9770/0x405D40/0x405FD0/0x55BAE0/0x6D2140/0x6D2790
+精确身份、+0x234/+0xAC 字段语义、[0x887324] 坐标对象结构
+
+================================================================================
+（batch 236 说明：C++ 模型决策）
+================================================================================
+本批两函数均不新增 C++ 模型，理由：
+① 0x6A60A0（RepaintSidebar）59B 逻辑即实现（tab 相同直返 + 标记位 + 0x4F42F0），
+   Sidebar 控件表结构未取证，建模留待 UI 家族整体落地。
+② 0x5F4D30 的刷新链依赖十余个未取证后端（虚表槽族 + [0x887324] 坐标对象 +
+   0x6D2140/0x6D2790）——按纪律留待宿主类建模时一并闭合。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。
