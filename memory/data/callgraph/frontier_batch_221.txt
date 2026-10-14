@@ -1,0 +1,135 @@
+frontier batch 221 — EventClass 构造器 + 全局守卫尾调用 + 会话初始化大函数（MapClass/窗口双全局第四连）（2026-10-14）
+
+口径：承接 batch 220 候选，ranking.tsv unique_callers 降序取 0x4C66C0（7 callers）、
+0x406E80（7 callers）、0x560BF0（7 callers）。三者 prologue 均干净，机器码读全（0x560BF0 读前段）。
+
+================================================================================
+0x4C66C0  EventClass::EventClass（7 callers，全 0x57 读完）
+================================================================================
+机器码（全 0x57，body=87，rank 带名 EventClass::EventClass）：
+    push ebx / mov ebx,[esp+0xc]        ; ★ 参数 1 = 类型
+    mov eax,ebx / and eax,0xff          ; ★ 低 8 位作索引
+    mov esi,ecx                          ; ★ this
+    mov ecx,[eax*4+0x82091C]            ; ★★ 查表 [0x82091C]（事件名表推断）
+    push ecx / push 0x820BF0 / call 0x4068E0  ; ★ 日志（batch 001 空 stub）
+    mov eax,[esp+0x14]                  ; ★ 参数 2 = 数值
+    test eax / jl 0x4C6701              ; ★ 负 → 默认路径
+    mov byte[esi+2],al / mov byte[esi],bl   ; ★ 写 +0=类型、+2=数值字节
+    mov edx,[0xA8ED84] / mov [esi+3],edx ; ★ 存全局 [0xA8ED84] 到 +3
+    mov eax,esi / pop esi/ebx / ret 8
+  0x4C6701:
+    mov byte[esi+2],0xff / mov byte[esi],0   ; ★ 默认：+0=0、+2=0xFF
+    mov eax,[0xA8ED84] / mov [esi+3],eax     ; ★ 同上存全局
+    mov eax,esi / ret 8
+
+语义：**EventClass 构造器（rank 带名，机器码验证吻合）**——类型参数低
+8 位作索引查表 [0x82091C]（事件名表推断）喂 0x4068E0（日志，batch 001
+空 stub）+ 0x820BF0 串；参数 2 非负则写 +0=类型字节、+2=数值字节，
+负则写默认（+0=0、+2=0xFF）；+3 恒存全局 [0xA8ED84]。ret 8 = 2 参。
+★**[0x82091C] 事件名表**（按类型索引）+ [0xA8ED84] 全局（事件序号推断）——
+事件体系新登记。
+★0x4Cxxxx 区（batch 216 的 0x4B4D50 邻域）——事件/消息类端。
+
+⚠️ partial：事件名表 [0x82091C] 内容、+0/+2/+3 字段语义（事件码/参数/
+序号推断）、[0xA8ED84] 全局身份、负数值默认路径的调用方契约。
+
+================================================================================
+0x406E80  全局守卫尾调用（7 callers，全 0x19 读完）
+================================================================================
+机器码（全 0x19，body=25）：
+    mov ecx,[0x87E728]                  ; ★ 全局 [0x87E728]（对象推断）
+    test ecx / je 0x406E94              ; ★ 空 → 直接尾调用
+    mov edx,1 / call 0x403730           ; ★ 0x403730(1) 条件处理
+  0x406E94:
+    jmp 0x404E70                         ; ★ 尾调用 0x404E70
+  紧邻 0x406EA0（同族第二份）:
+    mov ecx,[0x87E728] / test ecx / je 0x406EB4
+    mov edx,1 / call 0x403730 ...       ; ★ 同样式
+
+语义：**全局守卫尾调用（0x40xxxx 区）**——[0x87E728] 非空时经
+0x403730(1) 处理，最后**无条件尾调用 0x404E70**（不因守卫结果分叉）。
+紧邻 0x406EA0 是同族第一份（同样式）。
+★**守卫+尾调用模板**（条件处理 + 无条件汇合）——0x4068E0（日志 stub）
+邻域的新调用形态；0x403730（1 参条件处理推断）/0x404E70（汇合函数
+推断）为新登记调用。
+
+⚠️ partial：[0x87E728] 对象身份、0x403730/0x404E70 身份、尾调用不分叉
+的调用方契约。
+
+================================================================================
+0x560BF0  会话初始化大函数（7 callers，前 0x219 读完，body=1418）
+================================================================================
+机器码（前 0x219）：
+    sub esp,0x60 / push ebx/ebp/esi/edi / mov esi,edx / mov edi,ecx
+    push 0x82A500 / call 0x4068E0       ; ★ 日志（batch 001）
+    mov eax,[0x8A00A4] / mov ecx,[0x8A00A8] / mov [esp+0x28],eax / mov [esp+0x2C],ecx
+    call 0x4BBC40 / mov ebp,eax ...（0x4BBC40/0x4BBC30/0x4BBC60/0x4BBC50/
+    0x4BBC80/0x4BBC70 六连调用取 6 值存栈）   ; ★ 配置快照推断
+    mov ecx,[0x887640] / mov edx,[ecx] / call [edx+0xC]  ; ★ 全局 [0x887640] 槽 0xC
+    call 0x4A4830
+    cmp byte[0x89F978],1 / jne 0x560CA3 ; ★ 全局字节分支
+  真分支:
+    push esi / push edi / push 0x82A4EC / call 0x4068E0  ; ★ 日志
+    mov [0x886FB0],eax / [0x886FB4],ebx / [0x886FB8],edi / [0x886FBC],esi
+    mov [0x8A00A4],edi / mov [0x8A00A8],esi   ; ★ 全局四连写 + 对写回
+    jmp 0x560E01                        ; ★ 直接收尾
+  假分支:
+    mov eax,[0x887640] / cmp eax,ebx / je +8 / push 0x82A4D4 / call 0x4068E0
+    mov ecx,[0x887640] / mov eax,[ecx] / push 1 / call [eax]   ; ★ 槽 0 释放
+    mov [0x887640],0                    ; ★ 清全局
+    cmp [0x887308],ebx / je / ... 同样式释放 [0x887308]
+    mov ecx,[0xB73550] / push 0x10 / push esi / mov edx,edi
+    call 0x4A42F0                        ; ★★ 经 [0xB73550]（batch 200/203 同窗口句柄）
+    test al / jne 0x560DCF
+    push 0x82A4A0 / call 0x4068E0 / xor ecx / call 0x4BA770  ; ★ 创建
+    mov [0x887308],eax
+    push 0x98 / call 0x7C8E17            ; ★★ operator new ×0x98（batch 001）
+    mov ecx,[0xB73550] / mov edx,[0x887308] / push ecx / push edx
+    mov ecx,eax / call 0x7B8730         ; ★ 构造
+    mov [0x887640],eax                   ; ★ 存全局
+    xor dl / mov ecx,0x82604C / call 0x5B40B0
+    cmp eax,ebx / je +4 / push ebx / push eax / lea eax,[esp+0x28] / push eax
+    mov ecx,[0x887640] / mov edx,[ecx] / call [edx+4]  ; ★ 虚表槽 4
+    push ebx / push ebx / mov ecx,0x87F7E8 / call 0x5BDA80  ; ★★★ MapClass::Instance
+    push ebx / push ebx / mov ecx,0x87F7E8 / call 0x5BDC80  ; ★★★ [0x87F7E8] 二连
+    mov ecx,[0x887640] / mov edx,[ecx] / call [edx+0x10]    ; ★ 虚表槽 0x10
+    xor al,al / ret
+  命中路径 0x560DCF:
+    push 0x82A450 / call 0x4068E0 / ... 全局四连写同真分支
+
+语义：**会话初始化大函数（0x560BF0，0x56xxxx MapClass 区）**——按全局
+[0x89F978]==1 分叉：①真分支：直接写全局 [0x886FB0..0x886FBC] 四连 +
+[0x8A00A4]/[0x8A00A8] 对，收尾；②假分支：释放 [0x887640]/[0x887308]
+（槽 0 释放）→ 经 **[0xB73550]（batch 200 的 0x775690、batch 203 的
+0x657CE0 同窗口句柄）** 0x4A42F0 创建 → 失败则 0x4BA770 创建 + operator
+new ×0x98 + 0x7B8730 构造 → 虚表槽 4/0x10 → 经 **MapClass::Instance
+[0x87F7E8]（batch 208/209/218 已登记）** 0x5BDA80/0x5BDC80 二连。
+★★★**跨批双全局第四连**：[0x87F7E8]（batch 208 的 0x5FC380、batch 209
+的 0x56D460、batch 218 的 0x6D8700 之后**第四处**）+ [0xB73550]（batch
+200 的 0x775690、batch 203 的 0x657CE0 之后）——两个 QWEN.md/台账主线
+全局在**同一函数同框**（MapClass 主线 + 窗口句柄线交叉）。
+★0x4BBCxx 六连调用（配置快照）+ [0x8A00A4]/[0x8A00A8]/[0x886FB0..0xFBC]/
+[0x887308]/[0x887640]/[0x89F978] 全局群——会话状态区新登记。
+★0x5BDA80/0x5BDC80 经 [0x87F7E8] 二连（展示/地图查询推断）。
+
+⚠️ partial：0x4A42F0/0x4BA770/0x7B8730/0x5B40B0/0x5BDA80/0x5BDC80/
+0x4A4830 身份、[0x89F978]/[0x887640]/[0x887308] 全局语义、6 值快照内容、
+后续 0x4B8 字节未读（收尾主体）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x4C66C0 → [0x82091C] 事件名表 + [0xA8ED84] 全局——EventClass
+   构造器（事件体系新登记）。
+2. 0x406E80 → 0x40xxxx 区（batch 001 的 0x4068E0 邻域）——守卫+尾调用
+   新模板。
+3. 0x560BF0 → batch 208/209/218（[0x87F7E8] MapClass::Instance 第四连）
+   + batch 200/203（[0xB73550] 窗口句柄）+ batch 001（0x7C8E17 operator
+   new）——★★双全局同框，多线交叉闭合。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x4C66C0 的事件名表内容与 +0/+2/+3 字段语义。
+2. 0x406E80 的 [0x87E728]/0x403730/0x404E70 身份。
+3. 0x560BF0 的 0x4A42F0/0x4BA770/0x7B8730 与 [0x887640]/[0x887308] 语义。
