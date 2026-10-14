@@ -1,0 +1,176 @@
+frontier batch 251 — CDFileClass::SetFileName + 文件刷新 0x431DD0 + 环形缓冲推进 0x4091C0（2026-10-14）
+
+口径：承接 batch 250，候选池 TOP 12 取三个函数：0x47AE10（244B，带名
+CDFileClass::SetFileName）、0x431DD0（164B）、0x4091C0（237B）。三函数均全
+反汇编读完（0x47AE10 全 0xF4=244B——尾 0x47AF01 ret 4 + nop 对齐、0x431DD0
+全 0xA4=164B、0x4091C0 全 0xE5=229B+ret）。0x62B5E0 ParticleClass::WhatAmI
+（1343B）过大仍留后续。取证手段：disasm.py 直反汇编 + 已登记函数交叉验证
+（batch 238/249、001）。
+
+================================================================================
+0x47AE10 —— CDFileClass::SetFileName（7 callers，全 0xF4=244B 读完）
+================================================================================
+⚠️ YRpp 无 CDFileClass::SetFileName 覆盖（CCFileClass.h 只声明构造/析构）；
+按 machine code 形态（参数=文件名 + 0x431E80 循环设置 + 虚表槽 0x4 收尾）标
+「推断名 SetFileName」。
+
+机器码（全 0xF4 主结构）：
+    mov eax,[esp+4]（★★参数 = 文件名指针）/ sub esp,0x104（★260B 栈帧）
+    push 族 / mov ebx,ecx（★this）
+    push eax / call 0x431E80（★★文件名处理/保存核心（文件族，未登记））
+    mov al,[ebx+0x54]（★★+0x54 标志（batch 249 CDFileClass 构造置 0））/ test
+    jne 0x47AEF0（★置位 → 跳过链表查重直接虚表槽 0x4）
+    mov eax,[0x89E410]（★★全局链表头）/ test eax,eax / je 0x47AEF0（★空链 → 直跳）
+    push 0 / mov ecx,ebx / call 0x431F10（★★链上查找/校验）
+    test al / jne 0x47AEF0（★命中 → 直跳）
+    mov ebp,[0x89E410]（★链头）/ test ebp / je 0x47AECD
+    链表遍历 0x47AE59:
+      mov edi,[ebp+4]（★★node->[+4] = 名字字段）
+      repne scasb 求长 / rep movsd 拷贝 node 名字 → 栈缓冲 [esp+0x10]
+      mov edi,[esp+0x118]（★参数名）/ repne scasb 求长 / rep movsd 拷贝参数名
+      追加到栈缓冲尾部（第 5 块）
+      lea eax,[esp+0x10] / push / mov ecx,ebx / call 0x431E80（★★再保存）
+      push 0 / mov ecx,ebx / call 0x431F10（★再查）
+      test al / jne 0x47AEDC（★命中 → 跳收尾）
+      mov ebp,[ebp]（★node 前向指针 next）/ test ebp / jne 0x47AE59（★继续链）
+    0x47AECD: mov eax,[esp+0x118] / push eax / mov ecx,ebx / call 0x431E80（★最后保存）
+    0x47AEDC: mov edx,[ebx] / mov ecx,ebx / call dword[edx+4]（★★虚表槽 0x4 收尾）
+    pop 族 / add esp,0x104 / ret 4
+    0x47AEF0: mov eax,[ebx] / mov ecx,ebx / call dword[eax+4]（★同名快路径：虚表槽 0x4）
+    pop 族 / ret 4
+
+语义：**CDFileClass::SetFileName（推断名：设置文件名 + 全局链重名处理）**——
+先把文件名经 0x431E80 保存；若链表 [0x89E410] 非空且 0x431F10 未命中：遍历
+链表每节点（node->[+4] 名）+ 当前文件名拼栈缓冲再 0x431E80 保存 + 0x431F10
+复查，直到链空；收尾虚表槽 0x4。+0x54 置位或链空/命中时走快路径（直接保存
++虚表槽 0x4）。
+
+★原版怪癖（照抄）：① **+0x54 快路径门禁**（CDFileClass 构造置 0——SetFileName
+被调用后 +0x54 置位则跳过链处理）；② **链表 [0x89E410] 每个 node->[+4] 是名字**
+（与 batch 238 RawFileClass/+0x18 名字字段不同偏移——两个文件类布局）；③ **拼
+接操作**（当前名 + 节点名各拷到栈缓冲、参数字符串追加——链查重语义是「已存在
+同名」就再拼一次）；④ 260B 大栈帧 + 手写 strcpy×2（repne scasb+rep movsd，
+batch 090/152 同款）；⑤ 虚表槽 0x4 收尾（文件类接口，batch 250 0x5B4430 同
+槽位）。
+★跨批次连接：**batch 249（0x47AA30 CDFileClass 构造器 0x431B20 基类 + +0x54
+清零 + 虚表 0x7E1668——本条是其 Set 侧成员）**+0x431E80/0x431F10（文件族未登记
+核心）+[0x89E410]（全局文件链表头，新登记）+虚表槽 0x4。
+⚠️ partial：0x431E80/0x431F10 精确身份（文件名保存/链查重推断）、+0x54 置位
+写回点（SetFileName 后由谁置位）、[0x89E410] 链表节点布局（+4 名字，+0 前向）
+
+================================================================================
+0x431DD0 —— 文件刷新双路（RawFileClass::Open 调用点）（7 callers，全 0xA4=164B 读完）
+================================================================================
+机器码（全 0xA4 主结构）：
+    push esi / mov esi,ecx（★this）
+    mov al,[esi+0x29] / test al,al / je 0x431E70（★门禁1 +0x29 未置 → 返 false）
+    mov al,[esi+0x28] / test al,al / je 0x431E70（★门禁2 +0x28 未置 → 返 false）
+    mov eax,[esi+0x40]（★★+0x40 = 偏移字段）/ mov cl,[esi+0x26]（★★+0x26 分支键）
+    push edi / mov edi,[esi+0x44]（★★+0x44 = 结束偏移）
+    sub edi,eax（★长度 = 0x44 - 0x40）
+    test cl,cl / je 0x431E34（★+0x26 == 0 → 走第二路）
+    第一路（+0x26 != 0）:
+      mov ecx,[esi+0x3C] / mov edx,[esi+0x50] / add ecx,edx（★0x3C+0x50）
+      push 0 / add ecx,eax（★+0x40）/ push ecx / mov ecx,esi
+      call 0x65CF00（★★原始位置写入/回读（文件族，未登记））
+      mov edx,[esi+0x30] / push edi / push edx / mov ecx,esi
+      call 0x65CDD0（★★长度读取/写入（文件族））
+      mov eax,[esi+0x4C] / mov edx,[esi+0x50] / add eax,edx（★0x4C+0x50）
+      push 0 / push eax / mov ecx,esi / call 0x65CF00（★第二段）
+      mov byte[esi+0x28],0（★★清门禁2）
+      mov al,1 / pop edi / pop esi / ret（★返 true）
+    第二路（+0x26 == 0）0x431E34:
+      push 1 / mov ecx,esi / call 0x65CB50（★★★RawFileClass::Open(1)——batch 238
+        已登记！mode 1 = GENERIC_READ + OPEN_EXISTING）
+      mov ecx,[esi+0x50] / mov edx,[esi+0x3C] / mov eax,[esi+0x40]
+      add ecx,edx / add ecx,eax（★三段偏移和）
+      push 0 / push ecx / mov ecx,esi / call 0x65CF00（★写入）
+      mov edx,[esi+0x30] / push edi / push edx / mov ecx,esi / call 0x65CDD0
+      mov ecx,esi / call 0x65CCA0（★★文件族收尾，未登记）
+      mov byte[esi+0x28],0（★清门禁2）
+      mov al,1 / pop 族 / ret（★返 true）
+    0x431E70: xor al,al / ret（★门禁未通过 → 返 false）
+
+语义：**文件刷新双路（推断名）**——[+0x29]/[+0x28] 双门禁未全置返 false；
+已打开（+0x26 != 0）：直接 0x65CF00×2 + 0x65CDD0 读写偏移段；未打开
+（+0x26 == 0）：**先 RawFileClass::Open(1)（batch 238）** 再 0x65CF00 +
+0x65CDD0 + 0x65CCA0；两路都清 +0x28 返 true。
+
+★原版怪癖（照抄）：① **双门禁 [+0x29]/[+0x28]**（都置位才干活，清 +0x28
+收尾——与 batch 236 0x5F4D30 的 +0x81/+0x80 成对、batch 249 0x6E6E20 分派键
+同「低偏移状态字节」族）；② **+0x26 分支键**（0=未打开先 Open、非 0=已打开直
+用）——同一刷新函数两路聚合；③ **偏移段计算**（0x3C+0x50+0x40 三段和、长度
+=0x44-0x40——文件视窗/缓冲区间语义）；④ 第二路先 Open(1) 但不显式关闭
+（0x65CCA0 收尾推断含关闭）。
+★跨批次连接：**0x65CB50 RawFileClass::Open（batch 238 实锤，mode 1=GENERIC_READ
++OPEN_EXISTING）——本条是其第二调用点（batch 238 登记时 mode1 语义据机器码）**
++0x65CF00/0x65CDD0/0x65CCA0（0x65xxxx RawFileClass 文件区，均未登记）
++0x431B20/0x431E80（batch 249 文件族基类/核心）。
+⚠️ partial：0x65CF00/0x65CDD0/0x65CCA0 精确身份（读写/长度/收尾推断）、
++0x26/+0x28/+0x29/+0x3C/+0x40/+0x44/+0x4C/+0x50 字段语义（文件视窗布局推断）、
+0x65CB50 的 mode 1 精确映射（batch 238 已记 partial 同款）
+
+================================================================================
+0x4091C0 —— 环形缓冲推进（指针 + 取模）（7 callers，全 0xE5 读完）
+================================================================================
+机器码（全 0xE5 主结构）：
+    push ecx/ebp/esi/edi / xor edi,edi / mov [esp+0xC],edi（★局部清 0）
+    mov eax,[ecx+0x34]（★★+0x34 = 尾）/ mov esi,[ecx+0x38]（★★+0x38 = 头）
+    sub eax,esi（★尾 - 头）/ sub eax,[ecx+0x2C]（★★减 +0x2C 已用）/ mov ebp,eax
+    jne 0x4091E3 / mov [ecx+8],edi / xor eax / ret（★空间 0 → [ecx+8]=0 返 0）
+    0x4091E3: cmp ebp,edx / jge 0x4091E9 / mov edx,ebp（★edx = min(要求, 剩余)）
+    mov eax,[ecx+0x14]（★★+0x14 = 元素大小）/ lea ebx,[eax*8+0x20]（★★+0x20 对齐偏移）
+    mov esi,[ecx+0xC]（★★+0xC = 环形数组基址）/ mov al,[ecx+0x10]（★★+0x10 标志）
+    test al,1 / jne 0x409215（★位 0 → 直写）
+    mov eax,[esi+ebx+4] / mov edi,[ecx+4] / sub eax,edi / mov edi,[esi+ebx]
+    add eax,edi / cmp eax,ebp / jge 0x409215（★越界检查）
+    mov [ecx+8],eax / jmp 0x409218
+    0x409215: mov [ecx+8],ebp（★容量写入）
+    0x409218: test edx,edx / mov edi,edx / je 0x40926F（★需求 0 → 尾部处理）
+    mov eax,[ecx+8] / cmp edx,eax / jl 0x409257（★需求 < 容量）
+    0x409225: mov edi,eax / ...（★需求 ≥ 容量 → 链式/分段）
+    mov eax,[esi+0x30] / mov esi,[esi] / add eax,4 / cmp esi,eax / jne
+    ...（★环形段切换/自环检测）
+    0x40926F 尾部: mov ebx,[esp+0x10]（★参数偏移）/ mov edi,[ecx+0x2C]
+    mov esi,[ecx+0x30] / mov edx,[ecx]（★虚表）
+    add edi,ebx / add esi,ebx（★+0x2C/+0x30 都加参数偏移）
+    mov [ecx+0x2C],edi / mov [ecx+0x30],esi
+    mov eax,esi / mov esi,[edx+0x14]（★★虚表槽 → 容量上限）
+    cmp eax,esi / jb 0x409295 / xor edx,edx / div esi
+    mov [ecx+0x30],edx（★★超上限 → 取模回绕）
+    0x409295: test edi,edi / je 0x4092A5 / mov eax,[ecx+0x18]
+    test eax,eax / jne 0x4092A5 / call 0x409100（★尾部回调 0x409100）
+    0x4092A5: mov eax,ebx / pop 族 / ret（★返回参数偏移）
+
+语义：**环形缓冲推进（推断名：+0x2C/+0x30 指针按参数推进 + 越界取模）**——
+算剩余容量（尾-头-已用）；按元素大小 +0x20 对齐偏移算术；[+0xC] 环形数组基址
+与 +0x10 位 0 标志决定直写/分段；尾部把 +0x2C/+0x30 都加参数偏移，+0x30 超过
+虚表槽 0x14 容量上限时 div 取模回绕；[+0x18] 未置位且偏移非 0 时调 0x409100。
+参数为「推进量（字节）」，返回同值。
+
+★原版怪癖（照抄）：① **+0x30 取模回绕**（`cmp eax,esi / jb / xor edx / div esi /
+mov [ecx+0x30],edx`——超过容量上限用无符号除取余，**不是 - 减容量**）；②
+**+0x2C 与 +0x30 配对推进**（一个不取模一个取模——+0x2C 是「总消费」、+0x30
+是「环形位置」推断）；③ **需求 ≥ 容量走分段**（0x409225 链式/自环检测——
+环形跨段语义）；④ 元素大小 +0x14 ×8 +0x20 的对齐偏移（段内偏移算术）；
+⑤ 返回参数偏移（调用方可链式）。
+★跨批次连接：环形缓冲/链表基建（batch 089/104 链表摘除、batch 141 自环初始化、
+batch 250 0x4073C0 安全解引用——0x4091C0 的 0x409100 尾部回调是 0x409xxx 基建
+区成员）+0x7C8B3D _delete（batch 001，本条未直接调但同族）。
+⚠️ partial：宿主类（0x409xxx 区缓冲/队列推断）、+0x10 位 0 直写 vs 分段语义、
++0x14/+0x20 对齐偏移精确公式、0x409100 回调身份（刷新/同步推断）、
++0x2C/+0x30 字段语义（消费/位置推断）
+
+================================================================================
+（batch 251 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x47AE10（CDFileClass::SetFileName）依赖 0x431E80/0x431F10（文件族核心未
+   登记）与 [0x89E410] 链表语义——文件系统家族（batch 238 RawFileClass /
+   batch 249 CDFileClass）整体建模时一并闭合。
+② 0x431DD0 依赖 0x65CF00/0x65CDD0/0x65CCA0 三未登记 + 文件视窗布局
+   （+0x26..+0x50 字段）partial——同左留待文件族整体。
+③ 0x4091C0 是环形缓冲推进（逻辑即实现），但 +0x10/+0x14/+0x2C/+0x30 字段
+   语义为推断——缓冲基建族整体立案时落地。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部 semantics_verified
+（三函数全段反汇编读完 + 已登记函数交叉验证 batch 238/249），partial 项如实标注。
