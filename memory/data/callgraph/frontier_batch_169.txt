@@ -1,0 +1,154 @@
+frontier batch 169 — INI 查找/注册大函数 + 全局单例引用计数族 + CRT 格式化族（2026-10-14）
+
+口径：承接 batch 168 候选，ranking.tsv unique_callers 降序取 0x7CA530（20 callers）、
+0x528C00（20 callers）、0x407000（19 callers）。三者 prologue 均干净；0x528C00
+内部调 batch 168 的 0x727CF0 与 batch 082 的 0x4A1DE0——跨批次闭合。
+
+================================================================================
+0x528C00  INI 查找/注册大函数（20 callers，0x528C00-0x528DF5 读完，ret 0x10）
+================================================================================
+机器码还原（关键路径）：
+    sub esp,0x418 / push ebx/ebp/esi/edi
+    mov ebp,ecx                  ; ★ this（INISection 类）
+    mov ecx,[esp+0x430] / call 0x7B5440  ; ★ 字符串 GetString（batch 072 已登记）
+    mov ecx,[esp+0x430] / call 0x7B5440  ; ★ 再取一次 → edi
+    mov ecx,[esp+0x42c] / call 0x7B5440  ; ★ 第三参 → ebx
+    lea eax,[esp+0x28]           ; ★ 输出缓冲
+    test eax / je 0x528D9E（失败路径）
+    xor eax,eax / cmp ebx,eax / je 失败    ; ★ 名字空 → 失败
+    cmp edi,eax / je 失败
+    cmp ebx,[ebp+4] / jne 0x528CE6         ; ★ 名字 == this->+4（节名）→ 主路径
+    mov esi,[ebp+8] / test / je 0x528D92
+    ; 主路径（名字==节名）：
+    repne scasb（strlen edi）/ push len / push str
+    lea ecx,[esp+0x24] / call 0x4A1DE0     ; ★ CRC 字节处理器（batch 082 已登记!
+                                            ;   INI 读写的完整性校验走 CRC 引擎）
+    mov ecx,[esi+0x30] / add esi,0x2c / test / je 0x528D92
+    mov ecx,[esi+0x10] / test / je 继续
+    cmp [ecx],eax / je 命中                 ; ★ 已有注册项首字段==CRC
+   继续: lea edx,[esp+0x10] / mov ecx,esi / push edx
+    call 0x52B4F0                           ; ★ 按名注册器族第三成员（batch 137 已登记）
+    test eax / je 0x528D92 / mov [esi+0x10],eax
+   命中: lea eax,[esp+0x10] / mov ecx,esi / push eax
+    call 0x52B170                           ; ★ 注册器族成员（11 callers 未登记）
+    test al / je 0x528D7C
+    mov esi,[esi+0x10] / add esi,4 / jmp 收尾
+    ; 分支路径（名字 != 节名，0x528CE6）：
+    mov edi,ebx / repne scasb / push len / push ebx
+    lea ecx,[esp+0x24] / call 0x4A1DE0      ; ★ CRC 同样走 CRC 引擎
+    lea esi,[ebp+0x28] / mov edi,eax / mov [esp+0x14],edi
+    mov eax,[esi+4] / test / je 0x528D72
+    lea ecx,[esp+0x14] / push ecx / mov ecx,esi / call 0x52B600   ; ★ 注册器族
+    test al / jne 0x528D3C
+    lea edx,[esp+0x14] / mov ecx,esi / push edx / call 0x52B620   ; ★ 注册器族（batch 130）
+    test eax / je 0x528D72 / mov [esi+0x10],eax
+   0x528D3C: lea eax,[esp+0x14] / mov ecx,esi / push eax / call 0x52B390  ; ★ 注册器族（batch 125）
+    test al / je 0x528D58
+    mov esi,[esi+0x10] / add esi,4 / jmp 0x528D5D
+   0x528D58: mov esi,[0xB7882C]             ; ★ 兜底全局 [0xB7882C]
+   0x528D5D: mov esi,[esi] / test / je 0x528D72
+    mov edi,[esp+0x10] / mov [ebp+8],esi / mov [ebp+4],ebx
+    jmp 0x528C66                           ; ★ 循环回主路径
+   0x528D72: xor eax,eax / mov [ebp+4],eax / mov [ebp+8],eax / jmp 0x528D92
+   0x528D7C: mov esi,[0xB78830] / mov esi,[esi] / test / je 0x528D92
+    mov esi,[esi+0x10] / mov [esp+0x18],esi
+   收尾: mov eax,[esp+0x18] / test / jne 0x528DC0
+    mov byte[esp+0x28],al / jmp 0x528D9E
+   0x528DC0: push 0x3FF / lea ecx,[esp+0x2C] / push eax / push ecx / call 0x7C91D0
+    add esp,0xC / lea ecx,[esp+0x28] / mov byte[esp+0x426],0 / call 0x727CF0
+                                            ; ★★ batch 168 刚登记的字符串 trim!
+    lea edi,[esp+0x28] / repne scasb / not ecx / dec ecx
+    mov esi,ecx / jmp 0x528DA0
+   0x528D9E: xor esi,esi / mov ecx,[esp+0x438] / lea edx,[esp+0x28] / push edx
+    call 0x7B48D0                          ; ★ 字符串赋值（0x7B 系）
+    mov eax,esi / ret 0x10
+
+语义：**INI 节内按名查找/注册条目的大函数（INISection 方法）**——参数
+(节名, 条目名, 输出缓冲)；名字==节名走主路径，否则走注册路径；两者都先把
+名字喂给 batch 082 的 CRC 引擎（0x4A1DE0）算完整性校验值，经注册器族
+（0x52B4F0/0x52B170/0x52B600/0x52B620/0x52B390，batch 125/130/137 已登记）
+在 this->+0x28 起的条目表中查找/插入，命中后经 0x7C91D0 + batch 168 的
+0x727CF0（trim）清洗，最后经 0x7B48D0 写入输出缓冲，返回 CRC/长度。
+
+★跨批次闭合：batch 082（0x4A1DE0 CRC 引擎——本批确认 INI 查找也走
+CRC）+ batch 125/130/137（注册器族 5 成员全被本函数调用）+ batch 168
+（0x727CF0 trim）+ batch 072（0x7B5440 GetString）——INI 系统查找注册
+链路全景。
+
+⚠️ partial：[0xB7882C]/[0xB78830] 兜底全局语义、0x7C91D0 身份、
+0x52B170 未登记（11 callers）、返回值的精确含义（CRC/长度）。
+
+================================================================================
+0x407000  全局单例引用计数族（19 callers，0x407000-0x407056 读完）
+================================================================================
+机器码（四成员 + 两 trampoline）：
+  0x407000（0x0E 读完）：
+    mov ecx,[0x87E728] / xor eax,eax / test ecx / setne al / ret
+    ; ★ [0x87E728] 单例指针非空判定（返回 0/1）
+  0x407010（0x06 读完）：
+    mov eax,[0x87E728] / ret              ; ★ getter 读单例指针
+  0x407020（AddRef 形态，0x14 读完）：
+    mov eax,[0x87E730] / test eax / jne 0x40702E
+    call 0x40A940                          ; ★ 首次 → trampoline 初始化
+   0x40702E: inc dword[0x87E730] / ret     ; ★ 引用计数++
+  0x407040（Release 形态，0x16 读完）：
+    mov eax,[0x87E730] / test / je 返回
+    dec dword[0x87E730] / jne 返回
+    jmp 0x40A950                           ; ★ 归零 → trampoline 释放
+  0x40A940（trampoline，0x0F 读完）：
+    mov eax,[0x87E8A0] / test / je 返回
+    mov ecx,[eax] / push eax / call [ecx+0x48]   ; ★ 全局函数指针 虚表槽 0x48
+  0x40A950（trampoline，0x0F 读完）：
+    push ecx / mov eax,[0x87E8A0] / test / je 返回
+    mov ecx,[eax] / lea edx,[esp] / push edx / push eax / call [ecx+0x24]
+    ; ★ 虚表槽 0x24
+
+语义：**全局单例引用计数族**——[0x87E728] 存单例指针（0x407000 判空 /
+0x407010 getter），[0x87E730] 存引用计数：0x407020 首次计数为 0 时经
+0x40A940（[0x87E8A0] 全局函数指针 trampoline，虚表槽 0x48）初始化后
+计数++；0x407040 计数归零时经 0x40A950（同指针 虚表槽 0x24）释放。
+★与 batch 118 登记的 0x4093B0（[0x87E848] 全局函数指针 trampoline）
+同型——0x87Exxx 区全局函数指针 trampoline 族第二/三例。
+
+⚠️ partial：[0x87E728] 单例对象身份、[0x87E8A0] 指针初始化点、虚表槽
+0x48/0x24 方法身份。
+
+================================================================================
+0x7CA530  CRT 格式化族（20 callers，0x7CA530-0x7CA563 读完）
+================================================================================
+机器码（0x7CA530，0x33 读完）：
+    push ebp / mov ebp,esp / sub esp,0x20
+    mov eax,[ebp+8]                ; ★ arg1（目标缓冲）
+    mov dword[ebp-0x14],0x49       ; ★ 常量 0x49（'I'）
+    push eax / mov [ebp-0x18],eax / mov [ebp-0x20],eax
+    call 0x7D15A0                  ; ★ 0x7D 系内部（strlen?）
+    mov [ebp-0x1C],eax
+    lea eax,[ebp+0x10] / push eax / lea eax,[ebp-0x20]
+    push [ebp+0xC] / push eax / call 0x7D170D   ; ★ 0x7D 系格式化核心
+    add esp,0x10 / leave / ret
+  紧邻 0x7CA564 是同构变体（常量 0x42='B'、上限 0x7FFFFFFF、调 0x7D21BE）
+  0x7CA530/0x7CA564 均为 0x7C-0x7D 区（MSVC6 静态 CRT，非 Westwood 手写）。
+
+语义：**CRT 字符串格式化包装（vsnprintf 形态）**——0x7CA530 用 'I' 常量、
+0x7CA564 用 'B' 常量 + 0x7FFFFFFF 上限（vsnprintf 标准形态），两者都委托
+0x7D 系内部核心（0x7D15A0/0x7D170D/0x7D21BE）。★0x7C-0x7D 是 MSVC6
+静态 CRT 区（项目记忆 ra2_code_region_layout_crt_provenance）——本批按
+「CRT 格式化族」归类登记。
+
+⚠️ partial：0x49/0x42 常量精确含义（格式标志/长度）、0x7D 系核心身份、
+与 0x7CA564 的差异语义。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x528C00 → batch 082（CRC 引擎）+ batch 125/130/137（注册器族）+ batch 168
+   （0x727CF0 trim）+ batch 072（0x7B5440）——INI 查找注册链路。
+2. 0x407000 → batch 118（0x4093B0 trampoline 同型）——0x87Exxx 函数指针族。
+3. 0x7CA530 → 0x7C-0x7D MSVC6 CRT 区（项目记忆三层来源）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x528C00 的 [0xB7882C]/[0xB78830] 兜底全局与返回值含义。
+2. 0x407000 的 [0x87E728] 单例对象身份与 [0x87E8A0] 初始化点。
+3. 0x7CA530 的 0x49/0x42 常量含义与 0x7D 系核心身份。
