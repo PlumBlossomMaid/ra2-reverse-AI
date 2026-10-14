@@ -1,0 +1,173 @@
+frontier batch 277 — RawFileClass::Close 0x65CCA0 + RawFileClass::ReadBytes 0x65CCE0 + INISection::ReadUUBlock 0x526FB0（2026-10-14）
+
+口径：承接 batch 276，候选池 TOP 12 取三个函数：0x65CCA0（56B，带名
+RawFileClass::Close）、0x65CCE0（238B，带名 RawFileClass::ReadBytes）、0x526FB0
+（523B，带名 INISection::ReadUUBlock）。三函数均全反汇编读完（0x65CCA0 尾
+0x65CCD6 ret + 9 nop、0x65CCE0 尾 0x65CDCB ret 8 + 2 nop、0x526FB0 尾 0x527182
+ret 0xC + 分支尾 0x527185..0x5271BA + nop——body 与 ranking 吻合）。YRpp 查覆盖
+（三地址带名）。取证手段：disasm.py 直反汇编 + 已登记函数交叉验证（batch
+276/001/261/255 共 4 函数）。
+
+================================================================================
+0x65CCA0 —— RawFileClass::Close（带名，关闭文件）（6 callers，全 0x38=56B 读完）
+================================================================================
+机器码（全 0x38 主结构）：
+    push esi/mov esi,ecx（★this RawFileClass*）
+    mov eax,[esi]/call [eax+0x18]（★虚表槽 0x18 = 打开状态判定）→ test al/
+      je 0x65CCD6（★未打开 → 直接收尾）
+    mov ecx,[esi+0x14]（★★+0x14 = 文件句柄推断）→ push ecx/call [0x7E11E0]
+      （★★导入槽 A——CloseHandle 推断，batch 238 的 [0x7E11BC] 同槽区）→
+      test eax/jne 0x65CCCF（★句柄有效 → 跳过内存释放）
+    mov edx,[esi+0x18]（★★+0x18 = 映射/缓冲推断）→ push edi/mov edi,[esi]/
+      push edx/push eax/call [0x7E1200]（★★导入槽 B——释放/反映射推断）→
+      push eax/mov ecx,esi/call [edi+0x40]（★虚表槽 0x40 清理）→ pop edi
+    0x65CCCF: mov [esi+0x14],0xFFFFFFFF（★★句柄 = -1 哨兵——已关闭）
+    0x65CCD6: pop esi/ret
+
+语义：**RawFileClass::Close（关闭文件，带名）**——虚表槽 0x18 判打开状态（未
+打开直接收尾）；句柄（+0x14）经导入槽 [0x7E11E0]（CloseHandle 推断）关闭；成
+功后缓冲（+0x18）经导入槽 [0x7E1200]（释放推断）+ 虚表槽 0x40 清理；句柄置 -1
+哨兵。无返回值。
+
+★原版怪癖（照抄）：① **+0x14 句柄 / +0x18 缓冲双资源**（两导入槽分关）；②
+**句柄有效跳过内存释放**（test eax/jne——CloseHandle 失败才走释放路径？）；③
+**句柄 -1 哨兵**（mov [esi+0x14],0xFFFFFFFF——关闭完成标记）；④ **虚表槽 0x18
+打开判定**（未打开幂等）。
+★跨批次连接：**[0x7E11E0]/[0x7E1200] 导入槽**（batch 238 的 [0x7E11BC]
+CreateFileA 同 .rdata 槽区）+0x65Cxxx 区（batch 238 RawFileClass 家族——本条
+邻 0x65CCE0 ReadBytes）。
+⚠️ partial：虚表槽 0x18/0x40 方法名（IsOpen/Clear 推断）、[0x7E11E0]/[0x7E1200]
+精确函数（CloseHandle/释放推断）、+0x14/+0x18 字段语义（句柄/缓冲推断）、关闭
+后资源回收细节
+
+================================================================================
+0x65CCE0 —— RawFileClass::ReadBytes（带名，读取字节）（6 callers，全 0xEE=238B 读完）
+================================================================================
+机器码（全 0xEE 主结构）：
+    sub esp,8/push ebx/esi/mov esi,ecx（★this RawFileClass*）/xor ebx
+    mov [esp+8],ebx/mov [esp+0xC],ebx（★结果/计数清零）
+    mov eax,[esi]/call [eax+0x18]（★虚表槽 0x18 = 打开判定）→ test al/
+      jne 0x65CD17（★已打开 → 跳过）
+    mov edx,[esi]/push 1/mov ecx,esi/call [edx+0x1C]（★虚表槽 0x1C = 打开）→
+      test eax/jne 0x65CD0F / 收尾返 0（★打开失败 → 返 0 字节）
+    mov [esp+0xC],1（★标志置位）
+    0x65CD17: mov eax,[esi+0x10]（★+0x10 = 文件位置推断）→ push edi/cmp eax,
+      -1/je 0x65CD3B（★位置 -1 → 直读参数长度）
+    mov eax,[esi]/push 1/push ebx/mov ecx,esi/call [eax+0x28]（★虚表槽 0x28 =
+      取剩余）→ mov ecx,[esi+0x10]/mov edi,[esp+0x1C]（★参数 = 请求长度）→
+      sub ecx,eax（★剩余 = 位置 - 已读）→ cmp edi,ecx/jl 0x65CD3F /
+      mov edi,ecx（★★请求 > 剩余 → 用剩余）
+    0x65CD3F: cmp edi,ebx/jle 0x65CDA7（★长度 <= 0 → 收尾）
+    循环 0x65CD48: push ebp/mov ebp,[esp+0x1C]/mov edx,[esi+0x14]（★句柄）/
+      lea ecx,[esp+0x10]/push 0×2/push ecx/push edi/push ebp/push edx/
+      call [0x7E111C]（★★导入槽——ReadFile 推断，batch 238 的 [0x7E11BC]
+      同槽区）→ test eax/mov eax,[esp+0x10]/jne 0x65CD98（★读到）
+      → add ebp,eax/sub edi,eax/add ebx,eax（★计数累加）→ mov al,[0xB04BEC]/
+        test al/mov [esp+0x20],ebx/jne 0x65CDA6（★★[0xB04BEC] 全局字节门控）
+      → mov eax,[esi+0x18]/mov ebx,[esi]/push eax/push 1/call [0x7E1200]（★★
+        导入槽 B = 释放）→ push eax/mov ecx,esi/call [ebx+0x40]（★虚表槽 0x40
+        清理）→ mov ebx,[esp+0x20] → jmp 0x65CDA2
+      0x65CD98: 同款 add/sub/add 累加 → test eax/je 0x65CDA6（★读 0 字节 →
+        收尾）
+      0x65CDA2: test edi/jg 0x65CD48（★剩余 > 0 → 循环）
+    0x65CDA6: pop ebp/0x65CDA7: mov eax,[esp+0x10]/mov [esp+0xC],ebx（★结果存）
+      /test eax/cmp byte[0xB04BEC],0/jne 收尾（★[0xB04BEC] 清）→ 虚表槽 0x34
+      （★收尾清理）→ mov eax,[esp+8]/pop esi/pop ebx/add esp,8/ret 8（★返计数）
+
+语义：**RawFileClass::ReadBytes（读取字节，带名）**——虚表槽 0x18 判打开（未
+打开则 0x1C 打开，失败返 0）；位置（+0x10）< 0 直读请求长度，否则与 [esi+0x10]
+剩余比较取 min；循环经导入槽 [0x7E111C]（ReadFile 推断）读取，计数累加
+（ebp/edi/ebx 三寄存器流水），[0xB04BEC] 全局字节门控控制 buffer 释放（0x7E1200
++ 虚表槽 0x40）路径；读 0 字节或剩余耗尽收尾，返实际读入字节数。ret 8 双栈参。
+
+★原版怪癖（照抄）：① **三段读取控制**（位置/剩余/请求三值互钳——min 语义）；
+② **读 0 字节即停**（test eax/je 0x65CDA6——EOF 判定）；③ **[0xB04BEC] 全局字
+节双处门控**（0x65CD7C 与 0x65CDB1——缓冲释放策略开关推断）；④ **虚表槽 0x18/
+0x1C/0x28/0x34/0x40 五槽串联**（判开/打开/取剩余/清理/清理）；⑤ **三寄存器流水
+累加**（ebp=缓冲基址、edi=剩余、ebx=总计数）。
+★跨批次连接：**[0x7E111C]/[0x7E1200] 导入槽**（batch 238 的 [0x7E11BC]
+CreateFileA 同 .rdata 槽区——ReadFile/释放推断）+0x65Cxxx 区（batch 238
+RawFileClass 家族——本条邻 0x65CCA0 Close）+[0xB04BEC]（新登记全局字节）。
+⚠️ partial：虚表槽 0x18/0x1C/0x28/0x34/0x40 方法名、[0x7E111C]/[0x7E1200] 精确
+函数（ReadFile/释放推断）、+0x10/+0x14/+0x18 字段语义、[0xB04BEC] 开关语义、参
+数（请求长度/缓冲指针推断）
+
+================================================================================
+0x526FB0 —— INISection::ReadUUBlock（带名，读取 UU 编码块）（6 callers，全 0x20B=523B 读完）
+================================================================================
+机器码（全 0x20B 主结构）：
+    sub esp,0xD0（★208B 栈帧）/push ebx/ebp/esi
+    mov esi,[esp+0xE0]（★参数 1 = 块名推断）/xor ebx/mov ebp,ecx（★this
+      INISection*）→ cmp esi,ebx/jne 0x526FDA → 收尾返 0（★块名空 → 返 0）
+    mov eax,[esp+0xE8]/mov ecx,[esp+0xE4]（★参数 2/3）
+    → 栈上三对象初始化: [esp+0x24]=0x7EB774/[esp+0x40]=0x7E6218/[esp+0x3C]=
+      0x7E6200（★★三虚表——数组/容器/边界推断）→ call 0x43AD00（★构造 1）
+      → lea edx,[esp+0x38]/lea ecx,[esp+0x1C]/push edx/call 0x631CC0（★★★
+      batch 276 链节点替换——栈对象链！）→ mov edi,esi/or ecx,0xFFFFFFFF/
+      xor eax/repne scasb/not ecx/dec ecx（★★strlen 块名）→ push ecx/push
+      esi/push ebx/lea ecx,[esp+0x60]/call 0x52AEC0（★构造 2——未登记）→
+      mov ecx,eax/call 0x4A1DE0（★同 0x4Axxxx 区——未登记）→ mov esi,eax/
+      lea edi,[ebp+0x28]/lea eax,[esp+0x10]/push eax/mov ecx,edi/call 0x52B390
+      （★判定 1）→ test al/je 0x527095 → lea ecx,[esp+0x10]/push ecx/mov
+      ecx,edi/call 0x52B430（★判定 2）→ mov eax,[eax]/cmp/jl → mov eax,
+      [eax+0x30]/mov [esp+0x10],eax（★表项 +0x30）→ 0x527099: mov eax,[esp+
+      0x10]/cmp eax,ebx/jle 0x52714A（★计数 <= 0 → 收尾）
+    主循环 0x5270A7: mov eax,[esp+0xE4]（★参数 2）/mov edi,[esp+0x18]/push
+      eax/mov ecx,edi/mov esi,ebp/call 0x526810（★★batch 261 同 INI 查键——
+      未登记）→ cmp eax,ebx/je 0x5270EA → mov ebp,[eax+0x30]/cmp esi,ebp/
+      jge 0x5270EA → mov eax,[eax+0x18]/cmp/test/je 跳过（★链遍历元素）→
+      mov ecx,[eax+4]/cmp ecx,ebx/je → cmp [eax+8],ebx/je 跳过 → dec esi/
+      链 walk（[eax+4] 指针链）→ 0x5270E5: mov eax,[eax+0xC]（★取元素）
+      → 0x5270EC: lea ecx,[esp+0x60]/mov esi,0x818A0C（★★常量串——新登记）/
+      test ecx/je 0x527122 → cmp eax,ebx/je 0x527122 → mov edx,[esp+0xE4]/
+      push eax/push edx/mov ecx,edi/call 0x526B10（★处理——未登记）→ cmp
+      eax,ebx/je 0x52711A → mov esi,[eax+0x10]/cmp/je → 0x52711A: cmp esi,
+      ebx/jne 0x527185（★非空 → 收尾路径）→ mov byte[esp+0x60],bl
+      0x527122: xor ecx/push ecx/lea ecx,[esp+0x64]/push ecx/lea ecx,[esp+
+      0x24]/call 0x42DDB0（★构造——未登记）→ add edx,eax/mov eax,[esp+0x10]/
+      inc ebp/mov [esp+0x14],edx/cmp ebp,eax/jl 0x5270A7（★循环）
+    0x52714A 收尾: mov edx,[esp+0x1C]/lea ecx,[esp+0x1C]/call [edx+4]（★虚表
+      槽 4）→ mov esi,eax/lea ecx,[esp+0x44]/call 0x43AE50（★★batch 059 析
+      构）→ lea ecx,[esp+0x38]/call 0x631C80（★★batch 276 邻函数析构）→
+      lea ecx,[esp+0x1C]/call 0x631C80（★再析构）→ mov eax,[esp+0x14]/add
+      eax,esi/ret 0xC（★返统计）
+    0x527185 收尾路径: push 0x80/lea eax,[esp+0x64]/push esi/push eax/call
+      0x7C91D0（★★CRT strncpy batch 169 实锤！）→ add esp,0xC/lea ecx,[esp+
+      0x60]/mov byte[esp+0xDF],bl/call 0x727CF0（★串处理）→ repne scasb
+      strlen → jmp 0x527124
+
+语义：**INISection::ReadUUBlock（读取 UU 编码块，带名）**——栈上三对象装配
+（虚表 0x7EB774/0x7E6218/0x7E6200 + 0x43AD00 + **0x631CC0 链节点**）；块名
+strlen → 0x52AEC0/0x4A1DE0/0x52B390/0x52B430 处理（0x818A0C 常量串）；0x526810
+查键 + [eax+0x30]/[eax+0x18]/[eax+4]/[eax+8]/[eax+0xC] 链遍历逐项 + 0x526B10
+处理 + 0x42DDB0 构造；收尾虚表槽 4 + 0x43AE50 + 0x631C80 ×2 三重析构；特殊路径
+用 0x7C91D0（strncpy）拷贝剩余。ret 0xC 三栈参——返统计值。
+
+★原版怪癖（照抄）：① **栈上三虚表对象**（0x7EB774/0x7E6218/0x7E6200——数组/
+容器/边界推断）；② **0x631CC0 链节点应用**（batch 276——栈对象链）；③
+**0x818A0C 常量串 + strlen**（块名处理）；④ **链遍历五字段**（[eax+0x30]/
++0x18/+4/+8/+0xC 多段跳转）；⑤ **三重析构**（虚表槽 4 + 0x43AE50 + 0x631C80
+×2）；⑥ **0x7C91D0 strncpy 收尾分支**（batch 169——余量拷贝）；⑦ **块名为空返
+0**（先验参数）。
+★跨批次连接：★★**0x631CC0（batch 276 链节点替换——本条栈对象链应用点）**+
+0x7C91D0（batch 169 strncpy 实锤）+0x43AE50（batch 059 析构）+0x526810（batch
+261 同 INI 查键——未登记）+0x52AEC0/0x52B390/0x52B430/0x526B10/0x42DDB0/
+0x727CF0/0x4A1DE0/0x43AD00（未登记）+[0x818A0C]（新登记常量串）+0x7EB774/
+0x7E6218/0x7E6200（新登记虚表）。
+⚠️ partial：宿主 INISection 结构（+0x28 链首）、参数 1/2/3 语义（块名/键/输出推
+断）、三虚表对象类型、0x52AEC0/0x52B390/0x52B430/0x526B10/0x42DDB0/0x727CF0/
+0x4A1DE0 精确身份、[0x818A0C] 内容、UU 编码解算细节（编码块解码推断）、返
+统计的业务含义
+
+================================================================================
+（batch 277 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x65CCA0/0x65CCE0（RawFileClass 家族带名）依赖两导入槽精确函数 + 虚表槽
+   方法名（partial）——文件家族（batch 238）建模时落地；本条价值 = 导入槽
+   应用点 + 读取流水循环实锤。
+② 0x526FB0（ReadUUBlock 带名）依赖 8+ 未登记子函数 + 三虚表对象类型（全
+   partial）——INI/编码家族整体立案时闭合；本条价值 = 0x631CC0 应用点 +
+   三重析构链实锤。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部 semantics_verified
+（三函数全段反汇编读完 + 4 个已登记函数交叉验证），partial 项如实标注。
