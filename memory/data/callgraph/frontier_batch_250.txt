@@ -1,0 +1,139 @@
+frontier batch 250 — VoxClass 链清理 0x752370 + 按名二分查找 0x5B4430 + 4B getter 0x48BA80（2026-10-14）
+
+口径：承接 batch 249，候选池 TOP 12 取三个函数：0x752370（237B）、0x5B4430
+（348B）、0x48BA80（4B）。三函数均全反汇编读完（0x752370 全 0xED=237B、
+0x5B4430 全 0x15C=348B、0x48BA80 全 0x4=4B）。0x62B5E0 ParticleClass（1343B）
+体量过大，留后续批次。取证手段：disasm.py 直反汇编 + 已登记函数交叉验证
+（batch 093/091/082/089/104、001）。
+
+================================================================================
+0x752370 —— VoxClass 语音链清理（batch 093 调用点闭合）（7 callers，全 0xED=237B 读完）
+================================================================================
+★**batch 093 partial 闭合**：VoxClass::PlayIndex（0x752480）nUnk==2 分支曾留
+「call 0x752370→[0xb1d4d0]=0/[0xb1d4d4]=0」——本条即该调用点，正式立案。
+
+机器码（全 0xED 主结构）：
+    mov eax,[0xB1D4BC]（★★全局门禁）/ test eax,eax / je 0x75245C（★关 → 直接返回）
+    mov eax,[0xB1D4B8]（★★首条链头）/ push ebx/esi/edi
+    test eax,eax / mov ebx,2（★★释放标志值 2）/ je 0x7523AD
+    mov eax,[eax+0xC] / mov [eax+0x50],ebx（★★node->[0xC]->[0x50] = 2 释放标志）
+    push [0xB1D4B8] / call 0x7C8B3D（★★CRT::_delete，batch 001 实锤）
+    mov [0xB1D4B8],0（★★链头置空）
+    0x7523AD 链2 [0xB1D3F0]:
+    mov ecx,0xB1D3F0 / call 0x4073C0（★★安全解引用谓词，batch 089 实锤：NULL/
+      哨兵返 0）→ mov esi,eax / test esi / je 0x7523E3
+    loop: mov ecx,esi / call 0x407450（★★双向链表摘除+自环，batch 104 实锤）
+      mov edx,[esi+0xC] / push esi / mov [edx+0x50],ebx（★[0x50]=2 标记）
+      call 0x7C8B3D（★_delete 释放）
+      mov ecx,0xB1D3F0 / call 0x4073C0（★再取头）/ mov esi,eax / test / jne loop
+      （★★while 循环摘到空）
+    0x7523E3 链3 [0xB1D3C8]: 同构（0x4073C0/0x407450/[0x50]=2/_delete 循环）
+    0x752419 链4 起点 [0xB1D450]:
+    mov edi,0xB1D450 / mov ecx,edi / call 0x4073C0 → 循环同构
+    0x75244E: add edi,0xC / cmp edi,0xB1D480 / jl 0x75241E（★★**12 条链**：
+      0xB1D450 起步进 0xC 到 0xB1D480——[0xB1D450,0xB1D480) 共 12 个链头）
+    0x752459: pop 族 / ret（★无返回值）
+
+语义：**VoxClass 语音播放链清理（batch 093 调用点）**——[0xB1D4BC] 门禁开启时：
+①清 [0xB1D4B8] 单链（node->[0xC]->[0x50]=2 + _delete）；②遍历 12 条链
+（[0xB1D3F0]/[0xB1D3C8]/[0xB1D450..0xB1D480）步进 0xC），每条经 0x4073C0 安全
+取头 → 0x407450 摘除 → node->[0xC]->[0x50]=2 → _delete，直到空。
+
+★原版怪癖（照抄）：① **释放标志 2 写在 node->[0xC]->[0x50]**（不是 node 本身
+——[0x50] 是节点关联子对象的释放状态字段，batch 093 PlayIndex 同款读法）；
+② **[0xB1D4B8] 单链先清**（独占链），其余 12 链共用循环模板（三条链同构代码
++ 循环展开）；③ **12 链步进 0xC**（每链头 12B——链表头对象含多字段）；
+④ 0x4073C0 安全解引用 + 0x407450 摘除的组合（batch 089/104 实锤——链条基建
+三件套）；⑤ 全程无返回值（纯副作用清理）。
+★跨批次连接：**batch 093（VoxClass::PlayIndex 调用点闭合）**+0x4073C0（batch
+089 安全解引用谓词）+0x407450（batch 104 链表摘除）+CRT::_delete（batch 001）
++[0xB1D4A0] VoxClass::Array（batch 093）+[0xB1D4BC]/[0xB1D4B8]/[0xB1D450]/
+[0xB1D480]（VoxClass 全局链家族）。
+⚠️ partial：12 条链的具体内容（每链对应一个语音优先级/音色组？）、[0xB1D4BC]
+门禁写入点（何时开/关）、node->[0xC] 子对象类型（播放节点推断）、与 PlayIndex
+的 [0xB1D4C4] 正在播对象关系
+
+================================================================================
+0x5B4430 —— 按名二分查找 + 多输出（7 callers，全 0x15C=348B 读完）
+================================================================================
+机器码（全 0x15C 主结构）：
+    sub esp,0x118（★280B 栈帧）/ push 族 / mov [esp+0x10],edx（★参数2 存档）
+    cmp ecx,0 / je 0x5B457D（★★参数1（名字）为空 → 返 false）
+    mov edi,ecx（★名字）/ repne scasb 求 strlen（★0x5B444A-0x5B4469 手写 strcpy）
+    → 拷贝名字到栈缓冲 [esp+0x24]
+    lea ecx,[esp+0x24] / push / call 0x7DCFC4（★★_strupr，batch 091 实锤：原地转大写）
+    lea edi,[esp+0x28] / repne scasb 再求长 / dec ecx（★长度）
+    lea edx,[esp+0x24] / push 长度 / push 名字 / lea ecx,[esp+0x20]
+    mov 三槽 0（★栈结构清零）→ call 0x4A1DE0（★★CRC 字节处理器，batch 082 实锤）
+    mov ebp,[0xABEFE0]（★★全局表对象）/ mov ebx,eax（★CRC 值）/ test ebp / je 0x5B457D
+    mov eax,[ebp+4] / test / je 0x5B457D（★+4 数组空 → 返 false）
+    mov eax,[ebp+8] / test / je 0x5B457D（★+8 计数 0 → 返 false）
+    二分主循环（0x5B44CB）:
+    mov ecx,[ebp+0x14]（★★表长）/ mov edi,[ebp+0x20]（★★表基址）
+    test ecx / jle 0x5B4507（★空表 → 未命中）
+    loop: mov eax,ecx / cdq / sub / sar 1（★折半）
+      lea edx,[eax+eax*2] / mov esi,[edi+edx*4]（★★12B/项：+0=key）
+      lea edx,[edi+edx*4] / cmp esi,ebx（★项 key vs CRC）
+      jle 0x5B44ED / mov ecx,eax / jmp（★key > CRC → 左半）
+      je 0x5B4503（★== 命中）/ lea edi,[edx+0xC]（★右半 +12B）/ ...
+      test ecx / jg 循环（★二分）
+    未命中: mov ebp,[esp+0x14] / jmp 0x5B44A9（★回到外层重查）
+    命中（0x5B450D）:
+      mov eax,[esp+0x12C]（★★输出1 指针）/ test / je 跳过 / mov [eax],ebp（★*out1 = 表对象）
+      mov eax,[esp+0x134]（★★输出2）/ test / je / mov ecx,[edx+8] / mov [eax],ecx（★*out2 = 项->[8]）
+      mov esi,[esp+0x10]（★★输出3 = 参数2）/ test / je / mov [esi],0（★*out3 = 0）
+      mov ecx,[esp+0x130]（★★输出4）/ test / je / mov eax,[edx+4] / mov [ecx],eax（★*out4 = 项->[4]）
+      ...尾部校正（项->[4]+偏移 等条件改写 out3/out4）...
+      0x5B456E: mov al,1（★返 true）/ add esp,0x118 / ret 0xC（★★3 栈参）
+    0x5B457D: xor al / ret 0xC（★返 false）
+
+语义：**按名二分查找 + 多输出（推断名：全局表按键查询）**——参数1（名字）空返
+false；否则手写 strcpy 拷贝 → _strupr 转大写 → CRC（0x4A1DE0）得键 → 在
+[0xABEFE0] 全局表（+4 数组/+8 计数/+0x14 表长/+0x20 表基址，12B/项：+0=CRC key/
++4=值1/+8=值2）二分查 key → 命中写最多 4 个输出指针（表对象/项->[8]/0/项->[4]）
+并做条件校正，返 true；未命中/表空返 false。ret 0xC = 3 栈参 + 名字经 ecx。
+
+★原版怪癖（照抄）：① **手写 strcpy**（repne scasb 求长 + rep movsd/movsb 拷
+——batch 090/152 同款）；② **_strupr 原地转大写**（查表键 = 大写名字的 CRC）；
+③ **12B/项**（lea [eax+eax*2]*4——项含 CRC 键 + 两个值字段）；④ 二分循环里
+**未命中回跳外层重查**（`jmp 0x5B44A9` 重新载入表对象——编译器对二分边界处理
+的冗余重载）；⑤ **4 输出指针全判空**（任一输出指针 NULL 跳过对应写——调用方
+可选填输出）；⑥ 尾部校正链（项->[4]+[ebp+0x24] 等条件改写——两输出联动）。
+★跨批次连接：**0x7DCFC4 _strupr（batch 091）+0x4A1DE0 CRC（batch 082）**+
+[0xABEFE0] 全局表（新登记，3 段式表对象：+4 数组/+8 计数/+0x14 表长/+0x20
+基址——batch 091 的 [0xABF00C] 文件缓存哈希表同 A 区邻域）+12B/项键值对
+（batch 218 0x52B430 8B 键值对二分查找同思路——本表 12B/项键+两值）。
+⚠️ partial：宿主类与表内容（[0xABEFE0] 表登记什么资源？）、4 个输出的精确
+语义（表对象/项->[8]/项->[4] 推断）、CRC 键的碰撞处理（二分前提 key 有序——
+写入点未追）、0x5B4430 与 FileSystem::LoadFile（batch 091 同 [0xABF00C] 区）关系
+
+================================================================================
+0x48BA80 —— 4B getter（7 callers，全 0x4=4B 读完）
+================================================================================
+机器码（全 0x4）：
+    mov eax,[ecx+0x1C]（★返回 this->[+0x1C]）
+    ret（★无参）
+
+语义：**getter（this->[+0x1C]）**——纯字段读取返回。
+
+★原版怪癖（照抄）：① **4B 极简**（mov+ret 两指令，无栈帧无保护）；② **函数边界
+16B 对齐**（尾 12 个 nop）；③ 该 getter 被 7 callers 高频复用（内联未生效——
+编译器选了调用而非内联的实例）。
+★跨批次连接：+0x1C 字段（低偏移字段族——batch 246 0x7BBAB0 虚表槽、batch
+249 0x433C90 +0x41 同族）；0x48BA80 邻 0x48BAxx（batch 240 0x47E040 CellClass
+区邻域——0x48xxxx 是 CellClass/ObjectClass 方法区）。
+⚠️ partial：宿主类（ObjectClass 推断）、+0x1C 字段语义（计数/索引推断）
+
+================================================================================
+（batch 250 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x752370（VoxClass 链清理）是纯链表清理（0x4073C0/0x407450/_delete 三件套
+   已登记），逻辑即实现，但 12 链的具体内容与门禁写入点未追——留待 VoxClass
+   家族整体（batch 093 PlayIndex 同线）。
+② 0x5B4430（按名二分查找）依赖 [0xABEFE0] 表内容与 4 输出语义（partial）——
+   资源加载家族（batch 091 FileSystem::LoadFile 同 [0xABF00C] 区）整体建模时
+   一并闭合。
+③ 0x48BA80（4B getter）逻辑即实现，宿主类未定，建模无新增信息。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部 semantics_verified
+（三函数全段反汇编读完 + 5 个已登记函数交叉验证），partial 项如实标注。
