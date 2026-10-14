@@ -1,0 +1,148 @@
+frontier batch 265 — 会话更新循环 0x5D2410 + 空函数 0x5D0590 + RadarClass::SetVisibleRect 0x654490（2026-10-14）
+
+口径：承接 batch 264，候选池 TOP 12 取三个函数：0x5D2410（273B）、0x5D0590
+（1B）、0x654490（439B，带名 RadarClass::SetVisibleRect）。三函数均全反汇编
+读完（0x5D2410 尾 0x5D251E ret 4 + 15 nop、0x5D0590 尾 0x5D0590 ret 纯 1B、
+0x654490 尾 0x654644 ret 4 + 8 nop——body 与 ranking 吻合）。YRpp 查覆盖
+（0x654490 无覆盖但带名；0x578350/0x578290 经 disasm 注释自动标注 = 
+MapClass::CellIterator_Reset/Next——QWEN.md RMG 阶段 9 造山实锤族）。
+取证手段：disasm.py 直反汇编 + 已登记函数交叉验证（batch 221/105/098/060/
+079/253 共 6 函数）。
+
+================================================================================
+0x5D2410 —— 会话更新循环（推断名：带超时的状态刷新）（6 callers，全 0x111=273B 读完）
+================================================================================
+机器码（全 0x111 主结构）：
+    sub esp,0x18/push ebx/ebp/esi/edi/mov edi,ecx（★this）
+    lea ecx,[esp+0x14]/call 0x6C8C40（★★batch 060 timeGetTime>>4 实锤）→
+      mov [esp+0x10],eax（★起始时刻）/mov ebp,[0x7E11F0]（★Sleep 导入槽）
+      /mov [esp+0x18],1（★剩余时间=1）/or ebx,-1（★哨兵）
+    循环 0x5D2437:
+      call 0x48D080（★收尾/伴生——batch 098 同款）
+      mov eax,[edi]/mov ecx,edi/call [eax+8]（★虚表槽 8）
+      call 0x4A4830（★会话/游戏状态，未登记——batch 221 同区伴生）
+      mov ecx,[0x88730C]（★★batch 221 会话状态区全局）/push ecx/
+        mov ecx,edi/call 0x5D1E70（★会话更新 1）
+      mov edx,[0x88730C]/mov ecx,edi/push edx/call 0x5D2260（★会话更新 2）
+      call 0x5D4D50（★★batch 105 游戏主消息泵实锤）
+      mov al,[0xA8ED80]/test/jne 0x5D24B7（★[0xA8ED80] 门禁 → 出循环）
+      时间检查: mov eax,[esp+0x10]/cmp eax,ebx/je 0x5D249D（★时刻 ==-1
+        哨兵 → 跳过）/mov esi,[esp+0x18]/lea ecx,[esp+0x14]/call 0x6C8C40
+        → sub eax,[esp+0x10]/cmp eax,esi/jge 0x5D2493（★超时 → 剩 0）/
+        sub esi,eax（★剩 = 上限-已耗）→ 0x5D2495: mov [esp+0x18],esi/
+        mov [esp+0x10],ebx（★时刻置 -1）
+      mov ecx,edi/call 0x5D2530（★子循环，未登记）/cmp [esp+0x10],ebx/
+        jne 0x5D24B7（★时刻 != -1 → 出循环）/lea ecx,[esp+0x14]/
+        call 0x6C8C40/mov [esp+0x10],eax（★重记时刻 → 回循环）
+    0x5D24B7: push 0/call ebp（★★Sleep(0)——让出时间片）
+      mov eax,[esp+0x10]/mov esi,[esp+0x18]/cmp eax,ebx/je 0x5D24DA
+      → lea ecx,[esp+0x14]/call 0x6C8C40/sub eax,[esp+0x10]（★剩余再算）
+      /cmp eax,esi/jge 0x5D24E2/sub esi,eax → 0x5D24DA: test esi,esi/
+        jg 0x5D2437（★剩余 > 0 → 回循环）
+    0x5D24E2 收尾: lea ecx,[esp+0x20]/call 0x6C8C40/mov [esp+0x1C],eax/
+      mov eax,[esp+0x20]/mov ecx,1/mov [esp+0x14],eax/mov eax,[esp+0x2C]/
+      dec eax（★参数递减）/mov [esp+0x24],ecx/mov [esp+0x18],ecx/
+      mov [esp+0x2C],eax/jne 0x5D2437（★参数非 0 → 再循环）→ pop 族/
+      add esp,0x18/ret 4（★1 栈参）
+
+语义：**会话更新循环（推断名：带超时/计次的刷新循环）**——0x6C8C40 记起始
+时刻（剩余 1 tick），循环内：0x48D080 + 虚表槽 8 + 0x4A4830 + [0x88730C]
+会话状态区（0x5D1E70/0x5D2260 两次更新）+ 0x5D4D50 消息泵；[0xA8ED80] 门禁
+或时刻 -1 哨兵控制跳动；每轮按 0x6C8C40 差递减剩余时间，0x5D2530 子循环，
+剩余 > 0 或参数未减尽时继续；Sleep(0) 让出时间片；尾参数递减（dec）非 0 再
+循环。ret 4 单栈参（循环次数推断）。
+
+★原版怪癖（照抄）：① **-1 时刻哨兵双段计时**（[esp+0x10] 为 -1 时跳过检查
+——首轮/子循环后重记）；② **剩余时间单调递减两处**（循环内与 0x5D24B7 后各
+算一次）；③ **Sleep(0) 让出**（push 0 + [0x7E11F0]——忙等+让出混合）；④
+**[0xA8ED80] 门禁提前出**（外部信号打断循环）；⑤ **参数 dec 非 0 续循环**
+（外层计数与内层超时双退出条件）；⑥ **0x5D2530 子循环夹在中间**（时刻置 -1
+后调用，返回后重记时刻）。
+★跨批次连接：**[0x88730C]（batch 221 会话状态区全局）+0x5D4D50（batch 105
+游戏主消息泵）**+0x6C8C40（batch 060 timeGetTime）+0x48D080（batch 098
+收尾）+[0x7E11F0]（Sleep 导入槽）+[0xA8ED80]（GameMode 门禁全局 batch 262
+同）。
+⚠️ partial：宿主类（0x5Dxxxx 区会话家族）、0x4A4830/0x5D1E70/0x5D2260/
+0x5D2530 精确身份、[esp+0x2C] 参数语义（循环次数推断）、[0xA8ED80] 精确含义
+
+================================================================================
+0x5D0590 —— 空函数（纯 ret 桩）（6 callers，全 0x01=1B 读完）
+================================================================================
+机器码（全 0x01）：
+    ret
+
+语义：**空函数（推断名：纯 ret 桩）**——无操作直接返回，无栈帧无寄存器保存。
+紧邻 0x5D05A0 起为另一函数（清 +0x10、检查 +4 字段的清理器）。
+
+★原版怪癖（照抄）：① **纯 ret 1B**（无任何操作——C++ 空函数体编译产物）；
+② 相邻 0x5D05A0 是独立函数（清理器）——空函数与函数边界由 nop 填充隔离。
+★跨批次连接：0x5D05A0（未登记清理器，邻函数）+0x5Dxxxx 区（batch 255
+0x5DAC00 宽串累加同区）。
+⚠️ partial：空函数语义（占位/钩子推断——6 个调用方消费它但返回无值）、
+0x5D05A0 清理器身份
+
+================================================================================
+0x654490 —— RadarClass::SetVisibleRect（带名，设置雷达可见矩形）（6 callers，全 0x1B7=439B 读完）
+================================================================================
+机器码（全 0x1B7 主结构）：
+    sub esp,0x10/mov eax,[esp+0x14]（★参数）/push ebx/esi/edi
+    mov esi,ecx（★this RadarClass*）
+    push eax/call 0x567230（★★参数处理，未登记——batch 082 GetCellAt 族 0x56xxxx
+      区）
+    mov edx,[esi+0xFC]/mov ecx,[esi+0x100]/mov eax,0x2710（★★10000 初始
+      大值）/mov [esi+0x14A8],0/mov [esi+0x14A0],eax/mov [esi+0x149C],eax
+      （★边界字段初始）
+    mov eax,[esi+0xF4]/lea edi,[edx+ecx+1]/sub eax,edx/add eax,ecx（★矩形
+      组合: x0+w+1 / w+θ 计算）→ word 存 [esp+0xC]/[esp+0xE]/[esp+0x14]/
+      [esp+0x16]→ mov [esi+0x14A4],0/mov [esi+0x1498],0xFFFFFFFF（★-1
+      哨兵）/mov edx,[esi+0x104]（★宽高）
+    → 四角/边界 movsx 组合（lea ecx,[ecx-1] + 1-cx + add 链）→ movsx 展开 →
+      mov [esi+0x1494],ecx/mov [esi+0x1490],eax（★矩形左上/右下差值）
+    mov ecx,0x87F7E8（★★MapClass::Instance）/call 0x578350（★★★MapClass::
+      CellIterator_Reset——QWEN.md RMG 阶段 9 造山实锤 CellIterator(0x578350)
+      起点 = (1, W)！本条是雷达侧应用点）
+    循环 0x65454B:
+      mov ecx,esi/call 0x578290（★★★MapClass::CellIterator_Next——QWEN.md
+        实锤 Next(0x578290) 返回槽指针）/mov edi,eax/test/je 0x65463E（★空
+        槽 → 结束）
+      push ebp/mov eax,[edi+0x24]（★cell->+0x24 格坐标推断）/push 1/
+        lea ecx,[esp+0x24]/mov ecx,esi/call 0x578460（★★batch 079 五兄弟
+        格判定——cell+0x24 过判定）/test al/je 0x65462C（★本格跳过）
+      → [esi+0x1498] == -1（★首格）: movsx edx,[edi+0x26]/movsx eax,
+        [edi+0x24]/add edx,eax/mov [esi+0x1498],edx（★首格 XY 和入边界）
+      → 边界收缩: mov eax,[esi+0x1490]/mov ebp,[esi+0x1498]/sub eax,
+        [esp+0x26]/add eax,di/mov ecx,[esp+0x26]/sub ecx,ebp/add ecx,di
+        （★X/Y 差 + 偏移）
+      → 边界钳制: cmp eax,-1/jne 0x6545C2（★==-1 → 值 0）→ 0x6545C2:
+        cmp eax,[edi+edi-1]（★[esi+0x104] 宽）→ 分档取 1/2 → cmp
+        [esi+0x149C]/jge 0x6545E7（★min 更新 [esi+0x149C]）→ 否则
+        [esi+0x14A4] 累加更新（lea ebx,[edx+eax] 头花）→ [esi+0x14A0]
+        比较更新（★max）→ [esi+0x14A8] 累加（lea edi,[ecx+1]）
+      0x65462C: mov ecx,esi/call 0x578290（★Next）/mov edi,eax/test/
+        jne 0x65455B（★循环）→ pop ebp
+    0x65463E 收尾: pop 族/add esp,0x10/ret 4（★1 栈参）
+
+语义：**RadarClass::SetVisibleRect（设置雷达可见矩形，带名）**——参数经
+0x567230 处理后：矩形字段（+0xF4/+0xFC/+0x100/+0x104）组合出边界值族
+（[+0x1490]/[+0x1494] 差值、[+0x1498]=-1 首格哨兵、[+0x149C]/[+0x14A0]/
+[+0x14A4]/[+0x14A8] min/max 边界，初始 0x2710 大值）；经 MapClass::Instance
+（0x87F7E8）+ 0x578350（CellIterator_Reset）启动格子遍历，0x578290（Next）
+逐格 + 0x578460 判定，每格更新边界字段族（首格 XY 和入 [0x1498]，后续按
+X/Y 差收缩 [0x149C]/[0x14A0]、累加 [0x14A4]/[0x14A8]）——最终得到雷达可
+见矩形的 min/max 界。ret 4 单栈参。
+
+★原版怪癖（照抄）：① **边界初始 0x2710（10000）与 -1 哨兵**（max 用大值
+min 用 -1——首格特殊处理）；② **[0x1498]、[0x1494]、[0x1490] 差值族语义**
+（XY 和/差组合）；③ **首格判定 `[esi+0x1498]==-1` 先入 XY 和`**（第一格特
+例）；④ **0x578460 格判定门控**（cell+0x24 坐标过判定才更新边界）；⑤
+**cmp eax,-1 → 值 0 钳制**（差值 -1 特判）；⑥ **矩形四字段组合算术**
+（x0+w+1、w+1-x 等 lea 链——含端点矩形）。⑦ CellIterator 逐格遍历（0x578350
+Reset → 0x578290 Next 循环——非直接双层循环）。
+★跨批次连接：★★★**0x578350（MapClass::CellIterator_Reset）+0x578290
+（CellIterator_Next）+0x578460（格判定）——QWEN.md RMG 阶段 9 造山实锤的
+CellIterator 族（起点=(1,W)，Next 返回槽指针，Apply 循环 je 退出），本批是
+callgraph 侧对它的雷达侧应用点**；[0x87F7E8]（MapClass::Instance batch
+208/209）+[0x88730C] 区无关；+0x567230（0x56xxxx MapClass 区，batch 082 同区）。
+⚠️ partial：宿主 RadarClass 结构（+0xF4..+0x104 矩形字段、+0x1490..+0x14A8
+边界字段精确布局）、0x567230 身份、边界字段的雷达语义（可见矩形 vs 冲突检测
+推断）、0x578460 精确身份（batch 079 同链成员）
