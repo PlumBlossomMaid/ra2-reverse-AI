@@ -1,0 +1,116 @@
+frontier batch 184 — RemoveFirstPassenger 实锤 + DisplayClass 提交/移除对（2026-10-14）
+
+口径：承接 batch 183 候选，ranking.tsv unique_callers 降序取 0x473430（9 callers，
+YRpp TechnoClass.h:121 实锤）、0x4A9720（9 callers，DisplayClass::Submit 观察名）、
+0x4A9770（9 callers，DisplayClass::Remove 观察名）。三者 prologue 均干净，机器码读全。
+
+================================================================================
+0x473430  TechnoClass::RemoveFirstPassenger（9 callers，全 0x17 读完）
+================================================================================
+身份实锤：YRpp TechnoClass.h:120-121
+    FootClass* RemoveFirstPassenger()
+        { JMP_THIS(0x473430); }
+地址 + JMP_THIS + 无参签名三证（FootClass.h:108 同签名双声明——Techno/
+Foot 双类共用）。
+
+机器码（全 0x17）：
+    mov eax,[ecx+4]             ; ★ this->+4 头指针（乘客链表头）
+    test eax / jne 0x473438
+    ret                          ; ★ 空 → 返回 NULL（eax=0）
+  0x473438:
+    mov edx,[eax+0x30]          ; ★ 首节点 +0x30 = 后继
+    mov [ecx+4],edx             ; ★ this->+4 = 后继（摘首）
+    mov [eax+0x30],0            ; ★ 首节点 +0x30 清 0
+    dec dword[ecx]              ; ★ 计数 --
+    ret                          ; ★ 返回被摘节点（eax）
+
+语义：**TechnoClass::RemoveFirstPassenger（摘除首个乘客）**——单链表摘首
+节点：this->+4 头指针前移到首节点 +0x30 后继，被摘节点 +0x30 清零、计数
+（this->+0）递减，返回被摘节点指针。
+★**与 batch 164 登记的 0x473450/0x473460（+4 链遍历累加）同链字段
+（+0x30 步进）**——0x473xxx 区乘客/链管理族闭合：0x473430 摘首、
+0x473450 读头、0x473460 遍历求和。
+
+⚠️ partial：乘客节点宿主（FootClass 推断）、+0x30 字段名（Next 推断）、
+计数 +0 字段语义。
+
+================================================================================
+0x4A9770  DisplayClass::Remove（9 callers，0x4A9770-0x4A97CE 前段读完）
+================================================================================
+身份：rank 观察名 DisplayClass::Remove（0x4A97xx 区 DisplayClass——UI/渲染
+选择管理，YRpp 未收录该名 JMP——名字未确认，语义由机器码独立判定）。
+
+机器码（0x4A9770，前 0x5E）：
+    push esi/edi / mov edi,[esp+0xC]        ; ★ 参数：对象
+    test edi / je 0x4A9836（收尾）
+    mov eax,[edi+0x94] / cmp eax,-1 / je 0x4A9836  ; ★ +0x94 索引 ==-1 → 未登记
+    lea eax,[eax+eax*2]                    ; ★ 索引×3
+    mov edx,[eax*8+0x8A0360]                ; ★ 表 [0x8A0360 + i*24] 项（虚表指针）
+    lea esi,[eax*8+0x8A0360]                ; ★ esi = 表项
+    lea eax,[esp+0xC] / mov ecx,esi / push eax
+    call [edx+0x10]                         ; ★ 虚表槽 0x10：查对象索引
+    cmp eax,-1 / je 0x4A97DC
+    mov ecx,[esi+0x10] / cmp eax,ecx / jge 0x4A97DC ; ★ 计数边界
+    dec ecx / cmp eax,ecx / mov [esi+0x10],ecx       ; ★ 计数--
+    jge 0x4A97D2
+    mov ecx,[esi+4] / inc eax
+    loop: mov edx,[ecx+eax*4] / mov [ecx+eax*4-4],edx ; ★ 数组前移摘除
+    mov ecx,[esi+0x10] / cmp eax,ecx / jl loop
+    ...（0x4A97D2/0x4A97DC 收尾）
+
+语义：**DisplayClass::Remove（从提交表摘除对象）**——参数对象 +0x94 索引
+有效（!=-1）时，从全局表 [0x8A0360]（每项 24B，含虚表指针+0 与计数+0x10、
+数组+0x04）经虚表槽 0x10 查自身索引，计数-- 后数组前移摘除。
+★**与 batch 181 的 0x5F3B80（双全局链表摘除）同款数组前移模式**——全局
+对象表摘除第二例；[0x8A0360] 表结构（24B/项：虚表/计数/数组）与 0x5F3B80
+的 [0xB0F698]/[0xA8E360] 同构。
+
+⚠️ partial：+0x94 索引字段语义、[0x8A0360] 表宿主（DisplayClass 提交表
+推断）、虚表槽 0x10 身份、0x4A97D2/0x4A9836 收尾分支。
+
+================================================================================
+0x4A9720  DisplayClass::Submit（9 callers，0x4A9720-0x4A976A 读完）
+================================================================================
+身份：rank 观察名 DisplayClass::Submit（0x4A97xx 区 DisplayClass，与 0x4A9770
+Remove 配对——提交/摘除对，名字未确认，语义独立判定）。
+
+机器码（全 0x4A）：
+    push esi / mov esi,[esp+8]             ; ★ 参数：对象
+    test esi / je 0x4A9768（收尾）
+    cmp dword[esi+0x94],-1 / je 0x4A9739   ; ★ +0x94 已登记 → 跳过 Remove
+    push esi / call 0x4A9770               ; ★★ 已登记则先 Remove（配对本函数）
+  0x4A9739:
+    mov eax,[esi] / mov ecx,esi / call [eax+0x78]  ; ★ 虚表槽 0x78：取对象类别/索引
+    mov edi,eax / cmp edi,-1 / je 收尾
+    cmp edi,2 / lea edx,[edi+edi*2] / sete cl
+    push ecx / push esi / lea ecx,[edx*8+0x8A0360]  ; ★ 表 [0x8A0360 + i*24]
+    call 0x5519B0                          ; ★ 0x5519B0 提交核心（未登记）
+    test al / je 收尾
+    mov [esi+0x94],edi                     ; ★ 成功后存索引 +0x94
+  收尾: pop edi / pop esi / ret 4
+
+语义：**DisplayClass::Submit（提交对象到全局表）**——对象 +0x94 已有索引
+时先调配对的 Remove（0x4A9770）摘除，经虚表槽 0x78 取类别（edi==2 时
+sete 得 cl=1 作参数），把对象提交到 [0x8A0360] 表对应项（0x5519B0 核心，
+未登记），成功则存索引到 +0x94。
+★**与 0x4A9770 组成提交/摘除对**：[0x8A0360] 表（24B/项）同一宿主，
+Submit 写 +0x94 索引、Remove 读 +0x94 索引——一对反向操作。
+★0x5519B0 未登记（★下批优先取证）。
+
+⚠️ partial：虚表槽 0x78 类别语义、0x5519B0 提交核心（未登记）、edi==2
+的 sete 参数含义、[0x8A0360] 表项结构（24B）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x473430 → batch 164（0x473450/0x473460 同链字段 +0x30）——0x473xxx 区
+   乘客/链管理族闭合。
+2. 0x4A9770 → batch 181（0x5F3B80 数组前移摘除同款）——全局表摘除第二例。
+3. 0x4A9720 → 0x4A9770（配对角）+ 0x5519B0（★未登记下批优先）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x473430 的乘客节点宿主与 +0x30/+0 字段名。
+2. 0x4A9770 的 [0x8A0360] 表宿主与虚表槽 0x10 身份。
+3. 0x4A9720 的虚表槽 0x78 与 0x5519B0 核心（未登记）。
