@@ -1,0 +1,130 @@
+frontier batch 243 — VocClass::FindIndex + 宽串持有构造器 0x600630 + 窄串 operator= 0x7B5A40（2026-10-14）
+
+口径：承接 batch 242，候选池 TOP 12 取三个小函数（体量 45-109B，可全读）：
+0x7514D0（80B，带名 VocClass::FindIndex）、0x600630（45B）、0x7B5A40（109B）。
+三函数均全反汇编读完。取证手段：disasm.py 直反汇编 + YRpp 交叉验证（VocClass.h:56
+三证）+ PE .data 字符串探针 + 已登记函数交叉验证（batch 097/068/084/152/170）。
+
+================================================================================
+0x7514D0 —— VocClass::FindIndex 按名找音效索引（7 callers，全 0x50=80B 读完）
+================================================================================
+身份实锤：YRpp VocClass.h:56
+  `static int __fastcall FindIndex(const char *pName) { JMP_STD(0x7514D0); }`
+地址+JMP_STD（ecx=pName）+int 返回三证；**上方注释还给了"不工作版"FindIndexOf
+作对照**（`if(!_strcmpi(Array->Items[i]->Name, pName)) return Array->Items[i];`
+——返回指针而非索引，且注释说原版这版不工作）——与本条逐字节行为一致，
+说明原版确实返回**索引**而非指针（注释即证据）。
+
+机器码（全 0x50）：
+    push esi/edi / mov edi,ecx（★★参数 = pName 名字指针）
+    test edi,edi / je 0x751515（★空名 → 直接返 -1）
+    mov eax,[0xB1D388]（★★VocClass::Array 计数，batch 068/084 实锤）/ xor esi,esi
+    test eax,eax / jle 0x751515（★空表 → 返 -1）
+    0x7514E3 loop: mov eax,[0xB1D37C]（★★Array Items 数组，batch 068/084 实锤）
+      mov eax,[eax+esi*4]（★item）/ mov ecx,[eax]（★item->[0] 名字指针）
+      test ecx,ecx / je 0x7514F8（★item 无名 → 用常量串 0x846574）
+      call 0x405170（★★★取名 accessor：ecx=item）
+      jmp 0x7514FD
+      0x7514F8: mov eax,0x846574（★★回退名）
+      0x7514FD: push eax / push edi / call 0x7C8D20（★★★strcmpi，取名 vs pName，
+        batch 093 实锤）/ add esp,8 / test eax,eax / je 0x75151B（★相等 → 命中）
+      mov eax,[0xB1D388] / inc esi / cmp esi,eax / jl 0x7514E3（★继续扫）
+    0x751515: pop edi / or eax,0xFFFFFFFF（★未命中返 -1）/ pop esi / ret
+    0x75151B: mov eax,esi（★命中返索引）/ pop edi / pop esi / ret
+
+取名 accessor 0x405170（前 0x11B 全读）：
+    mov eax,[0x87E2A0]（★★音频使能全局，.data 初始 0xFF 实测）/ test eax,eax
+    mov eax,0x816204（★★常量串 "no events" .data 实测）/ je 0x405181（★禁用 → 用常量）
+    lea eax,[ecx+0x6C]（★★使能时取 item->+0x6C 名字字段）/ ret
+
+语义：**VocClass::FindIndex（按名找音效索引，三证吻合）**——pName 空或 Array
+为空返 -1；逐项经 0x405170（音频使能时取 item->+0x6C，禁用时用常量名
+"no events"）取名，item->[0] 为 NULL 时用回退名 `"Invalid Voc"`（0x846574
+.data 实测），再 strcmpi 与 pName 比较（batch 093）；命中返**索引**，未命中 -1。
+
+★原版怪癖（照抄）：① **双回退名机制**——item->[0] 为空用 `"Invalid Voc"`、
+音频禁用用 `"no events"`；两者都是"用假名参与比较"的兜底（不会崩，但会产生
+误命中——查 "Invalid Voc" 会命中无名音效）；② 返回**索引**而非指针（YRpp
+注释明说 FindIndexOf 版"不工作"，说明 YRpp 作者也确认原版行为）；③ 名字比较
+经 0x405170 取名函数而非直接读 item->[0]（**item->[0] 只用于判空，实际名字在
++0x6C**——两个名字字段并存）。
+★跨批次连接：**0x405170 取名 accessor（本批新登记）+[0xB1D37C]/[0xB1D388]
+VocClass::Array（batch 068 0x750920、batch 084 0x7509E0 实锤）+[0x8464AC]
+VocClass::VoicesEnabled（batch 068/084 实锤，本批实测初始值 1）+[0x87E2A0]
+音频使能全局（初始 0xFF 实测）+strcmpi（batch 093）+**窄串族（batch 062/085/
+088/090/118/152）**——音频家族核心检索入口。
+⚠️ partial：+0x6C 与 item->[0] 两个名字字段的关系（AudioController 布局推断）、
+0x846574/0x816204 的比较用途（是否作为合法查询名）
+
+================================================================================
+0x600630 —— 宽串持有结构构造器（7 callers，全 0x2D=45B 读完）
+================================================================================
+机器码（全 0x2D）：
+    push esi / mov esi,ecx（★this）
+    lea ecx,[esi+4] / call 0x7B66C0（★★WStringClass::operator=(NULL)，batch 097 实锤
+      ——清 this->+4 的字符串指针）
+    lea ecx,[esi+8] / call 0x7B66C0（★★同款清 this->+8）
+    or eax,0xFFFFFFFF（★eax = -1）
+    mov [esi],0（★+0x0 = 0）/ mov [esi+0xC],eax（★+0xC = -1）
+    mov [esi+0x14],eax（★+0x14 = -1）/ mov [esi+0x10],0（★+0x10 = 0）
+    mov eax,esi（★返回 this）/ pop esi / ret
+
+语义：**构造器（两个宽字符串成员 + 四个标量字段，+0x00=0/+0x10=0/+0xC=-1/+0x14=-1）**
+——两个宽串成员（+0x4、+0x8）经 operator=(NULL) 清空；四个标量字段两两成对
+置 0 与 -1（成对的"上界/下界"或"起止索引"形态推断）。纯字段搬运，无分配无分支。
+
+★原版怪癖（照抄）：① **+0x0 与 +0x10 置 0、+0xC 与 +0x14 置 -1**——字段成对
+出现（0/-1 对），疑似"范围/计数上下界"惯用；② 两个宽串成员用 operator=(NULL)
+而非直接置 NULL（**走函数调用而非内联清零**——编译器不省略空 operator=）。
+★跨批次连接：0x7B66C0（WStringClass operator=，batch 097 实锤，**本条是该函数的
+第 N 个构造器调用点**）+宽串族（batch 097/110/115/125/128）。
+⚠️ partial：宿主类（0x600xxx 区 AudioController/音效类推断）、+0xC/+0x14 的 -1
+语义（哨兵/上界推断）
+
+================================================================================
+0x7B5A40 —— 窄串 operator=（释放旧值+重分配）（7 callers，全 0x6D=109B 读完）
+================================================================================
+机器码（全 0x6D）：
+    push ebx/esi/edi / mov ebx,ecx（★this）
+    mov eax,[ebx]（★★this->[0] 旧串指针）/ test eax,eax / je 0x7B5A54
+    push eax / call 0x7C8B3D（★★CRT::_delete 释放旧，batch 001/096 族）/ add esp,4
+    0x7B5A54: mov esi,[esp+0x10]（★★源串参数）/ mov [ebx],0（★先置 NULL）
+    test esi,esi / je 0x7B5A6F（★源空 → 长度 1）
+    mov edi,esi / or ecx,-1 / xor eax,eax / repne scasb（★★strlen 求长）/ not ecx / jmp
+    0x7B5A6F: mov ecx,1（★源空 → 长度 1 = 只放 '\0'）
+    push ecx / call 0x7C8E17（★★CRT::_new(batch 001)）/ mov [ebx],eax（★新缓冲）
+    mov byte[eax],0（★首字节清 '\0'）/ test esi,esi / je 0x7B5AA5（★源空跳过拷贝）
+    mov edi,esi / or ecx,-1 / xor eax,eax / repne scasb / not ecx / sub edi,ecx
+    mov eax,ecx / mov esi,edi / mov edi,[ebx] / shr ecx,2 / rep movsd（★dword 整块拷）
+    mov ecx,eax / and ecx,3 / rep movsb（★余字节 movsb）
+    0x7B5AA5: pop 族 / mov al,1（★返回 true）/ ret 4
+
+语义：**窄字符串类 operator=（释放旧值+重分配，返回 bool）**——先 _delete 释放
+旧串 → 源串 strlen 定长（空串→1）→ _new 分配 → 首字节 '\0' → rep movsd/rep
+movsb 手写拷贝 → **返回 true**（非 this）。
+
+★原版怪癖（照抄）：① **返回 bool 1 而非 this**（与 batch 090/125/134/152 的
+operator= 返回 this 族**不同**——本条返回 bool，可能是 `SetString` 类辅助或
+编译器把返回值改成成功标志）；② 旧值**无条件释放**（不判自分配标志——与
+batch 242 的 0x5251C0 容器析构 +0xD 门控释放形成对比）；③ 手写 strcpy
+（rep movsd + and 3 + rep movsb，batch 090/152 同款）；④ 源空仍分配 1 字节空串
+（NULL≡空串，与 batch 152 的"赋空不分配"版本不同——本条**分配 1 字节**）。
+★跨批次连接：**窄串 operator= 家族第五成员**（batch 090 两版 +batch 152 释放版
++batch 143/134 宽串镜像）+_delete/_new（batch 001）+strlen（repne scasb 惯用）。
+⚠️ partial：宿主类（StringClass 推断）、返回值语义（bool vs this 的调用点差异
+未追）、与 batch 152（0x7B48D0）精确关系（本条无「源空不分配」分支，与之有别）
+
+================================================================================
+（batch 243 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x7514D0 是 VocClass::FindIndex（音频检索入口），依赖 0x405170 取名 accessor
+   的 +0x6C 字段语义（partial）、两个回退名的比较用途未追——建模会把"用假名
+   参与比较"的怪癖简化掉，重写必须照抄但需先取全消费端语义。
+② 0x600630 是纯字段搬运构造器（两个 operator= 调用 + 4 字段），宿主类未定
+   （0x600xxx 区推断），逻辑即实现。
+③ 0x7B5A40 是窄串 operator= 第五变体——窄串族已有 4+ 成员登记，建模宜在
+   **窄串族整体立案**时把 5 版 operator= 一并对齐（返回 bool vs this 的差异
+   需要调用点取证）。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部 semantics_verified
+（三函数全段反汇编读完 + YRpp 三证 + 5 个已登记函数交叉验证），partial 项如实标注。
