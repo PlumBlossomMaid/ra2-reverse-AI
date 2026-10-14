@@ -1,0 +1,97 @@
+frontier batch 177 — ObjectTypeClass 构造器实锤 + ABuffer/ZBuffer GetBuffer 同构对（2026-10-14）
+
+口径：承接 batch 176 候选，ranking.tsv unique_callers 降序取 0x5F7090（10 callers，
+YRpp ObjectTypeClass.h:52 实锤）、0x4114B0（10 callers，ABuffer::GetBuffer）、
+0x7BD130（10 callers，ZBuffer::GetBuffer）。三者 prologue 均干净，机器码读全。
+
+================================================================================
+0x5F7090  ObjectTypeClass::ObjectTypeClass（10 callers，前 0x60 读完）
+================================================================================
+身份实锤：YRpp ObjectTypeClass.h:52
+    ObjectTypeClass(const char* pID) noexcept
+        : ObjectTypeClass(noinit_t())
+    { JMP_THIS(0x5F7090); }
+地址 + JMP_THIS + 1 参签名（pID）三证。
+
+机器码还原（前 0x60）：
+    mov eax,[esp+4]              ; ★ pID 参数（const char*）
+    sub esp,0x1C / push ebx/ebp / mov ebp,ecx
+    push eax
+    call 0x410800                ; ★ AbstractTypeClass 构造（batch 123 已登记!）
+    xor ebx,ebx
+    lea eax,[ebp+0xC8]
+    mov byte[ebp+0x98],bl / mov byte[ebp+0x99],bl / mov byte[ebp+0x9A],bl
+    mov [ebp+0x9C],ebx / [ebp+0xA0],ebx / [ebp+0xA4],ebx
+    mov byte[ebp+0xA8],bl
+    mov [ebp+0xAC],ebx / [ebp+0xB0],ebx / [ebp+0xB4],ebx / [ebp+0xB8],ebx
+    ...（+0x98 起大段字段清零 + +0xC8 子对象初始化）
+
+语义：**ObjectTypeClass 构造器（类型类基类）**——先调 batch 123 已登记的
+AbstractTypeClass 构造（0x410800，AbstractTypeClass.h:64 四虚表链），然后
+把 +0x98 起一段字段清零（+0x98-0xB8 字节/双字交替）、初始化 +0xC8 子对象。
+★ObjectTypeClass 是 BuildingType/UnitType/InfantryType 等的公共基类（YRpp
+ObjectTypeClass.h 全套 Type 类基）。
+
+★跨批次：batch 123（0x410800 AbstractTypeClass 构造——0x410800 在
+frontier_status.tsv:425 登记为 17 callers 基类构造）+ batch 117（ObjectClass
+同基类链）——类型类构造链：ObjectTypeClass → AbstractTypeClass →
+AbstractClass。
+
+⚠️ partial：+0x98-0xB8 字段语义、+0xC8 子对象类型、后续成员（0x5F70E5 起）。
+
+================================================================================
+0x4114B0 / 0x7BD130  ABuffer/ZBuffer GetBuffer 同构对（各 10 callers）
+================================================================================
+机器码（两者前 0x31 几乎逐字节一致）：
+  0x4114B0（ABuffer::GetBuffer）：
+    mov edx,[esp+8]              ; ★ 参数
+    push esi / mov esi,ecx / push edi
+    push edx
+    mov edx,[esp+0x10]           ; ★ 参数 2
+    mov ecx,[esi+0x14]           ; ★ this->+0x14 子对象
+    push edx
+    mov eax,[ecx] / call [eax+0x5C]   ; ★ 虚表槽 0x5C（子对象查询）
+    mov ecx,[esi+0x14] / mov edi,eax
+    mov eax,[ecx] / call [eax+0x60]   ; ★ 虚表槽 0x60
+    mov eax,[esi+0x10]           ; ★ this->+0x10
+    mov ecx,[esi+0x1C]           ; ★ this->+0x1C
+    add eax,edi / cmp eax,ecx / jb 返回
+    sub eax,[esi+0x20]           ; ★ 越界回绕（减 +0x20）
+   返回: pop edi / pop esi / ret 8
+  0x7BD130（ZBuffer::GetBuffer）：
+    mov edx,[esp+8] / push esi / mov esi,ecx / push edi
+    push edx
+    mov edx,[esp+0x10] / mov ecx,[esi+0x14] / push edx
+    mov eax,[ecx] / call [eax+0x5C] / mov ecx,[esi+0x14] / mov edi,eax
+    mov eax,[ecx] / call [eax+0x60] / mov eax,[esi+0x10]
+    mov ecx,[esi+0x1C] / add eax,edi / cmp eax,ecx / jb 返回
+    sub eax,[esi+0x20]
+   返回: pop edi / pop esi / ret 8
+  0x4114F0（ABuffer 邻域）：mov al,1 / ret 8（恒真成员）
+  0x7BD170（ZBuffer 邻域）：sub esp,0x10 / push esi / mov eax,[esi+0x78C]...（深拷贝成员）
+
+语义：**缓冲 GetBuffer 同构对（ABuffer::GetBuffer 0x4114B0 / ZBuffer::GetBuffer
+0x7BD130）**——两者结构完全一致：经 this->+0x14 子对象的虚表槽 0x5C/0x60
+取两个量，与 this->+0x10 相加得结果，超过 +0x1C 上限则回绕减 +0x20，返回
+缓冲位置。★ABuffer（Surface.h 族的缓冲基类）与 ZBuffer 是渲染缓冲体系中
+的两个实例——同一模板/模式的**同构特化**，同批登记互证。
+★跨批次：虚表槽 0x5C/0x60 方法（缓冲查询）+ Surface 渲染体系（batch 165
+的 DSurface 0x4BA5A0 / batch 132 PCX 同体系）——渲染缓冲取位置端。
+
+⚠️ partial：+0x10/+0x1C/+0x20 字段语义（缓冲游标/上限/回绕步长推断）、
+虚表槽 0x5C/0x60 身份、ABuffer/ZBuffer 精确类层次（Surface.h 推断）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x5F7090 → batch 123（0x410800 AbstractTypeClass）+ batch 117（ObjectClass
+   基类链）——类型类构造链全景。
+2. 0x4114B0/0x7BD130 → batch 165（DSurface 渲染体系）+ batch 132（PCX）——
+   渲染缓冲 GetBuffer 同构对。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x5F7090 的 +0x98-0xB8 字段与 +0xC8 子对象。
+2. 0x4114B0/0x7BD130 的虚表槽 0x5C/0x60 身份与 ABuffer/ZBuffer 类层次。
+3. 0x4114F0/0x7BD170 邻域成员语义。
