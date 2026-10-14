@@ -1,0 +1,132 @@
+frontier batch 267 — 宽串受限比较 0x7CB4CC + 查找或新建 0x6E52A0 + 浮点标量 getter 0x48ACF0（2026-10-14）
+
+口径：承接 batch 266，候选池 TOP 12 取三个函数：0x7CB4CC（56B）、0x6E52A0
+（67B）、0x48ACF0（18B）。三函数均全反汇编读完（0x7CB4CC 尾 0x7CB503 pop ebp/
+ret + 紧邻 0x7CB504 下一函数无 nop、0x6E52A0 尾 0x6E52E2 ret + 13 nop、
+0x48ACF0 尾 0x48AD01 ret + 14 nop——body 与 ranking 吻合）。YRpp 查覆盖：
+**CRT.h 只有 wcsncpy（CRT.h:15）、无 wcsncmp** → 0x7CB4CC 按推断名标注（机器码
+形态为 CRT wcsncmp）。取证手段：disasm.py 直反汇编 + 已登记函数交叉验证
+（batch 001/259/266 共 3 函数）。
+
+================================================================================
+0x7CB4CC —— 宽串受限比较（推断名：CRT wcsncmp，6 callers，全 0x38=56B 读完）
+================================================================================
+机器码（全 0x38 主结构）：
+    push ebp/mov ebp,esp（★老式 __cdecl 帧——ebp 建栈）
+    cmp dword [ebp+0x10],0（★第三参 Count）/jne 0x7CB4D9
+    xor eax,eax/pop ebp/ret（★★Count==0 直接返 0——不等长也不比较）
+    dec dword [ebp+0x10]（★Count 先减 1——下方循环按 -1 计）
+    mov edx,[ebp+0xC]（★第二参 s2）/mov ecx,[ebp+8]（★第一参 s1）
+    je 0x7CB4FA（★s1==NULL → 直奔收尾）
+    循环 0x7CB4E4:
+      mov ax,word [ecx]（★取 s1 宽字符 2B）/test ax,ax/je 0x7CB4FA
+        （★★s1 遇 '\0' 提前退出）
+      cmp ax,word [edx]/jne 0x7CB4FA（★★不等 → 提前退出）
+      inc ecx/inc ecx/inc edx/inc edx（★双指针各 2B 前进——wchar_t 步进）
+      dec dword [ebp+0x10]/jne 0x7CB4E4（★按 Count 循环）
+    0x7CB4FA 收尾: movzx eax,word [ecx]（★零扩展取当前字符）/movzx ecx,
+      word [edx]/sub eax,ecx（★★返回字符差 s1-s2——0 表示相等）
+    pop ebp/ret
+
+语义：**宽串受限比较（推断名：CRT wcsncmp——按 Count 限定的宽字符比较）**——
+`int __cdecl wcsncmp(const wchar_t* s1, const wchar_t* s2, size_t Count)`：
+Count==0 立即返 0；否则 Count 先减 1（循环按 0x10C-1 计），循环内逐个 2B 宽
+字符比较（s1 遇 '\0' 提前退、s2 相应位不等也提前退），双指针各 inc ×2（2B 步
+进），最终返回当前两个字符之差（零扩展后相减——0 表示相等、否则为 s1-s2 差）。
+
+★原版怪癖（照抄）：① **Count==0 返 0 而非比较首字符**（与标准 wcsncmp 语义一
+致但实现先行短路）；② **Count 先 dec 再循环**（少比一个字符的经典 CRT 写法——
+循环体内不再判 Count，退出后到 0x7CB4FA 做差）；③ **s1 遇 '\0' 提前退出但仍返
+差**（0 - s2[当前] 形式）；④ **movzx 零扩展取 word 后相减**（不做有符号比较）；⑤
+**老式 ebp 帧**（push ebp/mov ebp,esp——MSVC6 CRT __cdecl 惯用，与 batch 126
+0x7CA45F wcscat、batch 097 0x7CA405 wcslen 同风格）。
+★跨批次连接：**CRT 宽字符族同区（batch 126 的 0x7CA45F wcscat/batch 097 的
+0x7CA405 wcslen/0x7CA489 wcscpy 同风格老式 __cdecl 帧）**——本条补齐「比较」
+侧三件套（比较/长度/拷贝）。
+⚠️ partial：YRpp CRT.h 无 wcsncmp 声明（wcsncpy 在 CRT.h:15）——符号名为推断
+（机器码形态与 CRT wcsncmp 完全吻合：Count 上限 + 逐宽字符 + 返回字符差）；
+调用方用途（宽串前缀匹配推断）
+
+================================================================================
+0x6E52A0 —— 查找或新建（推断名：按 +0x24 键查表）（6 callers，全 0x43=67B 读完）
+================================================================================
+机器码（全 0x43 主结构）：
+    push esi/mov esi,[0xB0E730]（★★全局计数——新登记）/push edi
+    mov edi,ecx（★参数 = 查找键（ObjectClass* 推断））
+    xor ecx,ecx/test esi,esi/jle 0x6E52C5（★计数 <=0 → 走新建）
+    查找循环 0x6E52B0:
+      mov edx,[0xB0E724]（★★全局数组基址——新登记）/mov eax,[edx]
+        （★元素 0）/cmp dword [eax+0x24],edi（★★元素+0x24 == 键 → 命中）
+        /je 0x6E52E0（★命中 → 直接返 eax——返回已存在对象）
+      inc ecx/add edx,4/cmp ecx,esi/jl 0x6E52B6（★线性扫 4B 步进）
+    未命中 0x6E52C5:
+      push 0x38/call 0x7C8E17（★★_new(0x38) batch 001——56 字节对象）
+      test eax/je 0x6E52DE（★分配失败 → xor eax 返 NULL）
+      push edi（★构造传键）/mov ecx,eax/call 0x6E4DE0（★★构造器 0x6E4DE0
+        ——未登记，同 0x6E5xxx 族）
+      pop edi/pop esi/ret（★返新对象）
+    0x6E52DE: xor eax/0x6E52E0: pop edi/pop esi/ret（★命中路径返 eax=元素指针）
+
+语义：**查找或新建（推断名：按 +0x24 键线性查全局表，未命中则构造）**——
+参数为查找键（ecx）；遍历全局数组 [0xB0E724]（计数 [0xB0E730]，4B 步进），
+元素 +0x24 字段 == 键时返该元素指针（0x6E52E0 pop/ret 保留 eax）；遍历完毕
+未命中则 `_new(0x38)` 分配 56 字节对象 + 0x6E4DE0(键) 构造后返新对象（分配失
+败返 NULL）。**find-or-create 惯用**。
+
+★原版怪癖（照抄）：① **命中与未命中共用一处 ret**（0x6E52E0 pop 族/ret 保留
+eax——未命中分支 fallthrough 到同一出口）；② **+0x24 字段作键**（不比较指针本
+身，比较对象内字段）；③ **线性扫 4B 步进**（元素指针数组）；④ **Count<=0 视
+作空表**（test esi/jle → 直接新建）；⑤ **分配失败静默返 NULL**（xor eax）。
+★跨批次连接：**0x7C8E17（batch 001 _new）**+0x6E4DE0（未登记构造器）+[0xB0E730]/
+[0xB0E724]（新登记全局表族）+0x6Exxxx 区（batch 142 0x6E6AB0 NetID::Pack 同
+邻区）。
+⚠️ partial：宿主类（0x6E5xxx 区推断）、[0xB0E724] 表元素类型与 +0x24 键字段
+语义、0x6E4DE0 构造器身份、0x38 字节对象布局、表用途（对象缓存/注册表推断）、
+相邻函数 0x6E52F0（*this+0x30 → *out 纯 getter）/0x6E5300（*this+0x24 经
+0x6E6280 判定）
+
+================================================================================
+0x48ACF0 —— 浮点标量 getter（[0x8871E0]+0x16B8 × 常量）（6 callers，全 0x12=18B 读完）
+================================================================================
+机器码（全 0x12）：
+    mov eax,[0x8871E0]（★★全局实例——batch 259/266 之后**第三次应用**）
+    fild dword [eax+0x16B8]（★int → x87 浮点转换）
+    fmul qword [0x7E1738]（★× 8 字节 double 常量）
+    ret（★返回 x87 ST0 中的 double——无栈帧无寄存器保存）
+
+语义：**浮点标量 getter（推断名：读实例字段并乘常量）**——从全局实例
+[0x8871E0] 取 +0x16B8 的 int 字段，x87 `fild` 转浮点后乘 8 字节 double 常量
+[0x7E1738]，结果留在 x87 ST(0) 返回（浮点返回约定）。
+
+★原版怪癖（照抄）：① **无栈帧三指令**（mov/fild/fmul/ret——x87 返回约定不需
+eax）；② **int 字段经 fild 隐式转 double**（dword 整数字面、无显式 cvt）；③
+**[0x7E1738] 8 字节 double 常量**（.rdata 浮点常量族——batch 262 的
+[0x7E2800]/[0x7E1718]/[0x7E3570] 同族）。
+★跨批次连接：**[0x8871E0] 第三次跨批应用**（batch 259 SelectDamageAnimation /
+batch 266 HouseClass::AllyAIHouses 之后——本条确认该全局是高频共享实例指针）；
+[0x7E1738] 新登记 double 常量（.rdata 浮点常量族）。
+⚠️ partial：宿主实例类（[0x8871E0] 实例类型——batch 259 称 MapClass 系、batch
+266 称 HouseClass::Instance 推断，两者冲突未解，见下）、+0x16B8 字段语义、
+[0x7E1738] 常量数值（未读字节）、调用方用途
+
+================================================================================
+（batch 267 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x7CB4CC（宽串受限比较）是纯 CRT 算法（Count 上限 + 逐宽字符 + 返回差），
+   **逻辑即实现**——但属 CRT 族成员，应在 CRT 建模批次（batch 169 strncpy/
+   wcslen 等已复刻族）整体落地时按本条口径实现，故本批只登记不单建。
+② 0x6E52A0（查找或新建）依赖 0x6E4DE0 构造器 + 表元素结构（全 partial）——
+   对象缓存/注册表家族立案时闭合；本条价值 = find-or-create 惯用实锤 + 新全
+   局表族登记。
+③ 0x48ACF0（浮点标量 getter 18B）是纯计算（fild+fmul+ret），逻辑即实现；
+   宿主实例类未定（见下）——建模价值低，只登记。
+
+**⚠️ 本批发现的矛盾（如实记录，不擅自消解）**：[0x8871E0] 的宿主类型在三处
+登记里说法不一——batch 259 记为「全局实例（MapClass 系）」、batch 266 记为
+「HouseClass::Instance 推断」、本条 0x48ACF0 从「+0x16B8 字段经 fild 转浮点
+×double 常量」看更像 GameRules/House 类标量字段而非地图对象。**三处均标注推断，
+本批不做单方面改写**，留待后续取 xref 写入点或 YRpp 对应类时统一裁定。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部
+semantics_verified（三函数全段反汇编读完 + 3 个已登记函数交叉验证），partial
+项如实标注。
