@@ -1,0 +1,133 @@
+frontier batch 263 — 全局注册表查找 0x5D5F30 + 全局 getter 0x777B50 + 对话框控件初始化 0x4E3B00（2026-10-14）
+
+口径：承接 batch 262，候选池 TOP 12 取三个函数：0x5D5F30（201B）、0x777B50
+（6B）、0x4E3B00（142B）。三函数均全反汇编读完（0x5D5F30 尾 0x5D5FF8 ret + 7
+nop、0x777B50 尾 0x777B55 ret + 10 nop、0x4E3B00 尾 0x4E3B8D ret + 2 nop——
+body 与 ranking 吻合）。YRpp 查覆盖（三地址无）。取证手段：disasm.py 直反汇编
++ 已登记函数交叉验证（batch 001/099/094/224 共 4 函数）。
+
+================================================================================
+0x5D5F30 —— 全局注册表查找（推断名：懒初始化数组查值）（6 callers，全 0xC9=201B 读完）
+================================================================================
+机器码（全 0xC9 主结构）：
+    push ecx/push ebx/ebp/esi/edi/xor ebx/xor ebp（★局部清零）
+    mov edi,0x7EED20（★★初始化值 A）/mov esi,0xA（★★初始化值 B）
+    mov al,[0xABFD70]（★★全局懒初始化标志）/test al,1/jne 0x5D5F86
+    （★已初始化跳过）
+    首次初始化分支:
+      mov cl,al/or cl,1/mov [0xABFD70],cl（★★置初始化位）
+      push ebx×2（★双 0 参数）/mov ecx,0xABFDA0/call 0x5D89F0（★构造）
+      mov [0xABFDA0],edi/mov [0xABFDB4],esi（★写初始值）
+      push 0x5D5B20（★★清理回调指针——atexit 参数）/mov [0xABFDB0],ebx
+      call 0x7C978A（★★CRT::atexit batch 001 族——注册清理 0x5D5B20！）
+      add esp,4
+    循环 0x5D5F86:
+      cmp ebp,[0xABFDB0]/jge 0x5D5FF1（★计数上限 → 返 0 未命中）
+      mov al,[0xABFD70]/test al,1/jne 0x5D5FDA（★已初始化直接查）
+      再初始化分支（二次进入保障）:
+        or dl,1/mov [0xABFD70],dl/push 0x5D5B20/call 0x7C978A（★再注册——
+          分支防御）
+        mov [0xABFDA4],ebx/mov [0xABFDA8],ebx/mov byte[0xABFDAC],1/
+          mov byte[0xABFDAD],bl/mov [0xABFDA0],edi/mov [0xABFDB4],esi/
+          mov [0xABFDB0],ebx（★完整字段族初始化）
+      0x5D5FDA: mov eax,[0xABFDA4]/mov ecx,[esp+0x10]（★参数 this/值）
+        mov eax,[eax+ebp*4]（★数组元素）→ cmp [eax+0x28],ecx/je 0x5D5FF3
+        （★元素+0x28 == 参数 → 返 1 命中）/inc ebp/jmp 循环
+    0x5D5FF1: xor eax/0x5D5FF3: pop 族/ret（★命中返 1/未命中返 0）
+
+语义：**全局注册表查找（推断名：懒初始化数组查值）**——[0xABFD70] 字节懒初
+始化标志：首次进入时置位并初始化 [0xABFDA0] 族（构造 + 初值 0x7EED20/0xA +
+atexit 注册清理 0x5D5B20）；循环遍历 [0xABFDA4] 数组（计数 [0xABFDB0]），
+元素 +0x28 字段 == 参数（ecx）时返 1 命中，否则返 0。二次进入路径有防御性
+再初始化分支（置 [0xABFDAC]=1 完整族）。
+
+★原版怪癖（照抄）：① **[0xABFD70] 懒初始化字节 + 双分支**（首次走完整构造、
+循环内还有防御性再初始化分支——两处都置位 + atexit 各注册一次）；②
+**0x5D5B20 清理回调经 0x7C978A（atexit）注册**（静态对象清理惯用）；③
+**数组元素 +0x28 字段比较**（参数匹配判定——注册表键值）；④ **返 1/返 0
+布尔**（命中/未命中，无索引返回）。
+★跨批次连接：**0x7C978A（batch 001 CRT atexit 族）**+[0xABFD70]/[0xABFDA0]/
+[0xABFDA4]/[0xABFDAC]/[0xABFDAD]/[0xABFDB0]/[0xABFDB4]（新登记全局族）+0x5D89F0
+（未登记构造）+0x5D5B20（未登记清理回调）+0x7EED20（未登记常量表）。
+⚠️ partial：宿主类（0x5Dxxxx 区推断）、[0xABFDA4] 数组元素类型（+0x28 键字
+段）、[0xABFDAC]/[0xABFDAD] 字节语义、0x5D5B20 清理内容、初值 0x7EED20/0xA
+语义
+
+================================================================================
+0x777B50 —— 全局 getter（[0x822D1C]）（6 callers，全 0x06=6B 读完）
+================================================================================
+机器码（全 0x06）：
+    mov eax,[0x822D1C]（★★读全局 [0x822D1C]）
+    ret
+
+语义：**全局 getter（推断名：读 [0x822D1C]）**——纯读全局返回，无参无栈帧。
+紧邻 0x777B60（下函数）是配对初始化：0x7C91D0 把 [0x822D20] 起 0x20 字节拷入
+[esi]（★同一全局区的初始化拷贝）。
+
+★原版怪癖（照抄）：① **纯 getter 无栈帧**（6B 单 mov+ret）；② **[0x822D1C]
+与其配对初始化 0x822D20+0x20B 拷贝相邻**（0x777B60——getter/初始化分文件）；
+③ 紧邻 0x822D1C 是 QWEN.md 实锤浮点环境缓存 [0x822D80] 同 0x822xxx 全局区。
+★跨批次连接：[0x822D1C]（新登记全局——0x822xxx 区，batch 001/096 的
+[0x822D80] FPU 控制字缓存同区）+0x777B60（未登记初始化）+0x7C91D0（未登记
+CRT 拷贝）。
+⚠️ partial：[0x822D1C] 全局语义（读哪个状态）、宿主、0x777B60 初始化来源
+[0x822D20] 内容
+
+================================================================================
+0x4E3B00 —— 对话框控件初始化链（推断名）（6 callers，全 0x8E=142B 读完）
+================================================================================
+机器码（全 0x8E 主结构）：
+    push ebx/ebp/esi/edi/push edx/push ecx（★参数 = 控件 ID 推断）
+    call [0x7E14A8]（★★batch 099 GetDlgItem 实锤——取控件）
+    mov ebp,[0x7E1498]（★★batch 094 ShowWindow 导入槽）/mov esi,eax
+    push 0/push esi/call ebp（★★ShowWindow(hDlg, 0)——先隐藏）
+    mov edi,[0x7E14A4]（★★batch 099 SendMessageA 实锤）
+    push 0/0/0x14B/push esi/call edi（★★SendMessage(hDlg, 0x14B, 0, 0)）→
+      sete bl（★记录 0x14B 返回值 == 0 的布尔）
+    push 7/0/0x4DE/push esi/call edi（★★SendMessage 0x4DE）
+    DebugLog: xor edx/mov ecx,0x8229EC（★文件 0x8229EC）/push 0x135（★行
+      0x135=309）/push 0x8229C0（★格式串）/call 0x734E60（★★batch 224
+      DebugLog 实锤）
+    push eax/0/0x4C2/push esi/call edi（★★SendMessage 0x4C2——DebugLog 结果
+      压栈）
+    push -3/push eax/0x151/push esi/call edi（★★SendMessage 0x151）
+    push 0/0/0x14E/push esi/call edi（★★SendMessage 0x14E）
+    push 1/0/0x4F1/push esi/call edi（★★SendMessage 0x4F1）
+    test bl,bl/jne 0x4E3B89（★0x14B 成功门控）
+    push 5/push esi/call ebp（★★ShowWindow(hDlg, 5)——显示）
+    pop 族/ret
+
+语义：**对话框控件初始化链（推断名：控件显隐 + 多条 SendMessage 设置）**——
+GetDlgItem（[0x7E14A8]）取控件 → ShowWindow（[0x7E1498]）先隐藏（0）→
+SendMessageA（[0x7E14A4]）族连发 6 条（0x14B/0x4DE/0x4C2/0x151/0x14E/0x4F1
+——控件设置消息推断）→ DebugLog（0x734E60，文件 0x8229EC 行 0x135）→ 按
+0x14B 返回值布尔门控最终 ShowWindow(5) 显示。
+
+★原版怪癖（照抄）：① **先隐藏再连发设置最后显示**（ShowWindow 0 → 6 条
+SendMessage → ShowWindow 5——显隐状态机）；② **0x14B 返回值 sete 门控**（
+记录该消息返回值 == 0 的布尔，最终决定是否显示）；③ **DebugLog 夹在发送链
+中间**（0x734E60 行 0x135——调试输出穿插业务）；④ **6 条 SendMessage 各带
+不同第二参**（0x14B/0x4DE/0x4C2/0x151/0x14E/0x4F1——控件消息 ID 族）；
+⑤ 压栈顺序 push 0/0/0x14B/push esi（★lParam/wParam/消息/句柄——stdcall
+自右向左）。
+★跨批次连接：**[0x7E14A8]/[0x7E14A4]（batch 099 GetDlgItem/SendMessageA 实
+锤应用点）**+[0x7E1498]（batch 094 ShowWindow 导入槽）+0x734E60（batch 224
+DebugLog）+0x8229EC/0x8229C0（新登记文件/格式串常量）。
+⚠️ partial：宿主类（0x4Exxxx 区 UI 推断）、6 条 SendMessage 消息 ID 精确
+语义（0x14B 等控件消息）、[0x7E1498]/[0x7E1490] 导入槽精确函数名、bl 门控
+的业务含义、0x8229EC/0x8229C0 串内容
+
+================================================================================
+（batch 263 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x5D5F30（全局注册表查找）依赖 [0xABFDA4] 数组元素类型 + 0x5D5B20 清理回
+   调（全 partial）——注册表/工厂家族立案时闭合；本条价值 = atexit 应用点
+   + 懒初始化双分支实锤。
+② 0x777B50（全局 getter 6B）是纯读全局，逻辑即实现——语义由 [0x822D1C]
+   写入点决定（转查写入端），单登记录入。
+③ 0x4E3B00（对话框控件初始化）依赖 6 条 SendMessage 消息 ID 精确语义（全
+   partial）——UI/对话框家族整体建模时落地；本条价值 = 三导入槽 + DebugLog
+   同框实锤。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部 semantics_verified
+（三函数全段反汇编读完 + 4 个已登记函数交叉验证），partial 项如实标注。
