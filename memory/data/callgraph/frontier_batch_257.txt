@@ -1,0 +1,128 @@
+frontier batch 257 — CCFileClass::SetFileName + 转发器 0x4790A0 + Session 随机分配 0x69B7E0（2026-10-14）
+
+口径：承接 batch 256，候选池 TOP 12 取三个函数：0x473FC0（20B，带名
+CCFileClass::SetFileName）、0x4790A0（13B）、0x69B7E0（205B）。三函数均全
+反汇编读完（0x473FC0 全 0x14=20B、0x4790A0 全 0xD=13B、0x69B7E0 全 0xCD=205B
+——尾 0x69B8AC ret 8 + nop 对齐）。取证手段：disasm.py 直反汇编 + 已登记函数
+交叉验证（batch 251/214/207/095、001）。
+
+================================================================================
+0x473FC0 —— CCFileClass::SetFileName（包装器，batch 251 互证）（7 callers，全 0x14=20B 读完）
+================================================================================
+身份：ranking 带名 CCFileClass::SetFileName（YRpp 无 JMP 覆盖，按机器码形态
++调用链标推断名）；**与 batch 251 登记的 CDFileClass::SetFileName（0x47AE10）
+构成「CCFileClass 层包装 → CDFileClass 层实现」的委托链**。
+
+机器码（全 0x14）：
+    mov eax,[esp+4]（★★参数 = 文件名指针）
+    mov [ecx+0x68],0（★★this->+0x68 清零——CCFileClass 层标志）
+    push eax / call 0x47AE10（★★★**batch 251 实锤 CDFileClass::SetFileName**
+      ——CCFileClass 层把参数委托给 CDFileClass 层实现）
+    ret 4（★返回 0x47AE10 结果）
+
+语义：**CCFileClass::SetFileName（包装器）**——清 this->+0x68 后把文件名委托
+给 batch 251 的 0x47AE10（CDFileClass::SetFileName 全实现：0x431E80 保存 +
+[0x89E410] 链查重 + 虚表槽 4）。CCFileClass 是 CDFileClass 的薄包装层。
+
+★原版怪癖（照抄）：① **+0x68 清零先行**（CCFileClass 层自己的标志字段，
+在委托前复位）；② **纯委托**（20B 只做清字段 + 尾调用——业务全在 0x47AE10）；
+③ **call 而非 jmp**（0x47AE10 返回后 ret 4 直通——包装层保留返回值）。
+★跨批次连接：**batch 251（0x47AE10 CDFileClass::SetFileName 实锤——本条是其
+包装调用方，委托链互证）**+batch 249（0x47AA30 CDFileClass 构造器）+batch 238
+（RawFileClass 文件族）+0x68 字段（CCFileClass 层标志，batch 249 的 +0x54 同
+文件类低偏移状态字段族）。
+⚠️ partial：+0x68 字段语义（CCFileClass 层标志推断）、CCFileClass 与 CDFileClass
+的继承/组合关系精确结构（YRpp CCFileClass.h 只列构造/析构）
+
+================================================================================
+0x4790A0 —— 转发器（尾跳 0x4A80D0）（7 callers，全 0xD=13B 读完）
+================================================================================
+机器码（全 0xD）：
+    mov edx,ecx（★★参数经 edx 转发）
+    mov ecx,[0x89E414]（★★全局对象作新 this）
+    jmp 0x4A80D0（★★★尾跳 0x4A80D0（未登记））
+    ret 族（★尾跳后不返回）
+
+语义：**转发器**——以 [0x89E414]（全局对象）为 this、原参数经 edx 尾跳
+0x4A80D0。
+
+★原版怪癖（照抄）：① **尾跳 0x4A80D0**（无 call 无栈帧——编译器尾调用优化）；
+② **[0x89E414] 全局对象作为目标 this**（全局单例转发惯用）；③ 参数经 edx
+（__fastcall 第二参槽位——0x4A80D0 的约定）。
+★跨批次连接：[0x89E414]（0x89Exxx 区——batch 214 0x481A00 CollectCrate 的
+[0x89E748] 同区）+0x4A80D0（0x4A8xxx 区，batch 210 0x4AF2A0 同区——UI 族）+0x47xxxx
+区（batch 251 CDFileClass 同区——本条 0x4790A0 邻 0x47xxxx CellClass/FileClass
+方法区）。
+⚠️ partial：0x4A80D0 身份（未登记）、[0x89E414] 全局对象（单例推断）、宿主类
+（0x47xxxx 区推断）
+
+================================================================================
+0x69B7E0 —— Session 随机分配（Randomizer::RandomRanged 调用点）（7 callers，全 0xCD=205B 读完）
+================================================================================
+机器码（全 0xCD 主结构）：
+    mov eax,[esp+4]（★★参数1 = 期望值/选择值）/ push ebx/ebp
+    mov ebp,0xFFFFFFFE（★★-2 哨兵）/ cmp eax,ebp / mov ebx,ecx（★this）
+    jne 0x69B880（★参数1 != -2 → 快路径写死值）
+    慢路径（参数1 == -2，随机选择）0x69B7F5:
+      mov al,[esp+0x10]（★★参数3 标志）/ test al / je 0x69B86E（★标志 0 → 直接写 0）
+      push esi/edi
+      mov eax,[0xA8B230]（★★全局对象，batch 214 同）
+      push 7 / push 0（★★区间 [0,7)）
+      lea ecx,[eax+0x218]（★★[0xA8B230]+0x218 随机器对象）
+      call 0x65C7E0（★★★**Randomizer::RandomRanged(0,7)——batch 214 同款调用**：
+        QWEN.md RNG 里程碑实锤 0x65C7E0 掩码+拒绝采样）
+      cmp eax,ebp / je 0x69B85E（★返回 -2 → 写 -2 收尾）
+      mov edi,[ebx+0x284C]（★★this->+0x284C 计数）/ xor edx / test edi / jle 0x69B849
+      数组查重 0x69B823: mov esi,[ebx+0x2840]（★★this->+0x2840 数组基址）
+        mov ecx,[esi]（★数组[i]）/ cmp [ecx+0x57],ebp / jne 0x69B83A（★项+0x57 哨兵判定）
+        cmp [ecx+0x53],-1 / jne 0x69B83A
+        mov ecx,ebp / jmp / 0x69B83A: mov ecx,[ecx+0x53]（★★项->+0x53 取选择值）
+        cmp ecx,eax / je 0x69B7FF（★已用 → 重抽！）
+        inc edx / add esi,4 / cmp edx,edi / jl 0x69B823（★查重循环）
+      0x69B849: xor ecx / lea edx,[ebx+0x84]（★★this->+0x84 8 项表）
+        查重 2: cmp [edx],eax / je 0x69B7FF（★已用 → 重抽！）
+        inc ecx / add edx,4 / cmp ecx,8 / jl 0x69B851（★8 项循环）
+      0x69B85E: mov [ebx+0x17C],eax（★★写结果值 +0x17C）
+        mov [ebx+0x180],ebp（★★+0x180 = -2 哨兵）
+        jmp 0x69B890
+      0x69B86E（标志 0）: mov [ebx+0x17C],0 / mov [ebx+0x180],ebp / jmp
+    0x69B880 快路径: mov [ebx+0x17C],eax（★参数1 直写）
+      mov [ebx+0x180],0xFFFFFFFF（★★+0x180 = -1）
+    0x69B890: mov ecx,[ebx+0x17C] / mov edx,[ebx+0x180]
+      mov [ebx+0x15C],ecx / mov [ebx+0x160],edx（★★镜像写 +0x15C/+0x160）
+      pop 族 / ret 8（★2 参 + 参数3 标志？ret 8 = 2 栈参）
+
+语义：**Session 随机分配（推断名）**——参数1 非 -2：直写 +0x17C 且 +0x180=-1；
+参数1 == -2 且参数3 标志非 0：**Randomizer::RandomRanged(0,7)（0x65C7E0，batch
+214 同款）**随机选值，并做两重查重（this->+0x2840 数组项 +0x53 与 this->+0x84
+8 项表——命中已用值则**重抽**（跳回 0x69B7FF））；结果写 +0x17C/+0x180 并镜像
+到 +0x15C/+0x160。
+
+★原版怪癖（照抄）：① **RandomRanged 区间 [0,7)**（push 7/push 0——0..6 七档）；
+② **两重查重 + 重抽循环**（数组项 [0x53] 与 8 项表各查一遍，命中直接跳回
+0x69B7FF 重新 RandomRanged——**失败轮已花掉的随机数不退回**，QWEN.md 阶段 6
+出生点怪癖同款语义）；③ **+0x17C 结果与 +0x15C 镜像双写**（两处状态并存）；
+④ **-2/-1 双哨兵**（ebp=-2 表示「随机路径结果」、0xFFFFFFFF=-1 表示「快路径
+参数值」——调用方按哨兵区分来源）；⑤ 标志 0 时写 0 不随机（参数3 门控）。
+★跨批次连接：**Randomizer::RandomRanged 0x65C7E0（QWEN.md RNG 里程碑实锤——
+batch 214 0x481A00 CollectCrate 的 [0xA8B230]+0x218+0x65C7E0 同款调用，本条是
+第二实例）**+[0xA8B230]（batch 214/254/255 同全局）+ret 8 双栈参（+0x17C/
++0x180/+0x15C/+0x160 字段族）。
+⚠️ partial：宿主类（0x69xxxx SessionClass 区推断，batch 193 0x69AE90 同区）、
+参数1/参数3 语义（期望值/门控标志推断）、+0x2840 数组项 +0x53/+0x57 字段语义、
++0x84 8 项表内容、重抽上限（无上限循环？）
+
+================================================================================
+（batch 257 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x473FC0（CCFileClass::SetFileName）是 20B 纯包装（清 +0x68 + 委托
+   0x47AE10），逻辑即实现，宿主结构（CCFileClass/CDFileClass 组合关系）
+   partial——文件族整体建模时一并落地。
+② 0x4790A0（转发器）是 13B 尾跳转发（[0x89E414] 全局 + 0x4A80D0 未登记），
+   依赖方未取证，逻辑即实现。
+③ 0x69B7E0（Session 随机分配）依赖 +0x2840 数组/+0x84 表语义（partial）+两
+   重查重重抽语义——SessionClass 家族（batch 193 同区）整体立案时闭合；本条
+   核心价值是 **RandomRanged(0,7) 第二调用点实锤**。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部 semantics_verified
+（三函数全段反汇编读完 + 4 个已登记函数交叉验证），partial 项如实标注。
