@@ -1,0 +1,123 @@
+frontier batch 165 — DSurface::DSurface + ToolTipManager::Remove + 标志/定点族补员（2026-10-13）
+
+口径：承接 batch 164 候选，ranking.tsv unique_callers 降序取 0x724730（11 callers，
+ToolTipManager::Remove）、0x4BA5A0（11 callers，Surface.h:467 实锤）、0x407170
+（11 callers，batch 111 已见 0x407150 族邻域）。三者 prologue 均干净。
+
+================================================================================
+0x4BA5A0  DSurface::DSurface（11 callers）
+================================================================================
+身份实锤：YRpp Surface.h:467
+    DSurface(int width, int height, bool backBuffer, bool force3D) noexcept
+        : DSurface(noinit_t())
+        { JMP_THIS(0x4BA5A0); }
+地址 + JMP_THIS + 4 参签名三证吻合（XSurface 子类，YRpp 注释 backBuffer/
+force3D 是构造参数）。
+
+机器码还原（前 0x50）：
+    mov eax, [esp+4]                ; ★ width
+    mov ecx, [esp+0x18]             ; ★（参数，+0x18 排布）
+    mov esi, ecx                    ; this
+    lea ebp, [esi+0x1C]             ; ★ +0x1C 子对象
+    push 0x6C / mov [esi+4], eax    ; ★ +4 = width
+    mov [esi+8], ecx                ; ★ +8 = height
+    xor ebx / mov [esi+0xC..+0x14], ebx   ; ★ 清字段
+    mov byte [esi+0x18], bl / [esi+0x19], bl ; 字节标志清零
+    mov [ebp], ebx / mov [esi+0x20], ebx
+    mov [esi], 0x7E85D4             ; ★ 装虚表 0x7E85D4
+    call 0x7C8E17                   ; ★ CRT::_new（0x6C 分配，batch 001）
+    mov [esi+0x20], edi             ; ★ +0x20 = 子对象缓冲
+    test / je 分配失败
+    mov ecx, 0x1B                   ; ★ 0x1B（27）初值
+    ...
+
+语义：**DSurface 构造器（表面对象）**——+4/+8 存宽/高、装虚表 0x7E85D4、
++0x1C 子对象初始化、_new(0x6C) 分配 +0x20 缓冲、+0x18/+0x19 字节标志。
+★0x4BAxxx 区（batch 164 的 0x473450 邻域不同——本条是渲染表面）——
+DSurface 是引擎所有渲染表面的基类（YRpp XSurface→DSurface 继承链）。
+
+★跨批次连接：batch 001（CRT::_new）+ 虚表安装（0x7E85D4）+ Surface.h 族
+（batch 132 的 PCX::GetSurface 同渲染体系）——表面对象构造端。
+
+⚠️ partial：+0x1C 子对象类型、+0x20 缓冲用途、0x1B 初值、四参到字段的
+精确映射（backBuffer/force3D 在 +0x18/+0x19?）。
+
+================================================================================
+0x724730  ToolTipManager::Remove（11 callers）
+================================================================================
+机器码还原（前 0x50）：
+    mov eax, [ebp+0x250]            ; ★ this->+0x250（计数）
+    lea esi, [ebp+0x24C]            ; ★ this->+0x24C（链头）
+    test eax / je 收尾
+    mov eax, [esi+0x10]             ; ★ +0x10（当前项）
+    test eax / je 走查找
+    mov eax, [eax] / mov ecx, [esp+0x18]
+    cmp eax, ecx / je 命中           ; ★ 当前项首字段 == 参数 → 直接摘
+  走查找:
+    lea ecx, [esp+0x18] / push ecx / mov ecx, esi
+    call 0x724FC0                   ; ★ 0x724FC0（按参数查找/摘除）
+    test eax / je 收尾
+    mov [esi+0x10], eax             ; ★ 更新当前项
+    ...
+    mov eax, [esi+4] / test / je 收尾   ; ★ 链尾处理
+    mov eax, [esi+0x10] ...
+
+语义：**ToolTipManager 移除工具提示（Remove）**——先查当前项（+0x10 首字段
+== 参数直接命中），否则调 0x724FC0 查找/摘除，更新当前项与链尾（+0x10/+4）。
+★ToolTipManager 是 UI 工具提示管理器（YRpp ToolTipManagerClass 类）——
+提示的移除入口。
+
+★跨批次连接：ToolTipManagerClass（YRpp）+ 链管理（0x724FC0 查找）+
+0x724xxx 区——UI 提示系统清理端。
+
+⚠️ partial：0x724FC0 查找/摘除细节、+0x24C/+0x250 链结构语义、移除后的
+刷新动作（0x724773 起）。
+
+================================================================================
+0x407170  标志/定点族补员（batch 111 邻域，11 callers，0x2A 全读完）
+================================================================================
+机器码（全 0x2A）：
+    mov esi, ecx                    ; this
+    mov edi, edx                    ; arg
+    mov edx, [esi] / mov eax, [esi+8] / mov ecx, [esi+4]
+    and edx, 0xFFFFFFFE             ; ★ 清 bit0（batch 111 的 0x407170 已在
+                                    ;   0x407150 族描述中标注「清 bit0 变体」）
+    cmp eax, ecx / mov [esi], edx
+    jne 跳过
+    call 0x4093B0                   ; ★ 全局函数指针 trampoline（batch 118
+                                    ;   实锤登记 [0x87E848]）
+    mov [esi+0x18], eax / mov [esi+0x1C], edx   ; ★ 结果存 +0x18/+0x1C
+  跳过:
+    shl edi, 0x10                   ; ★ arg << 16（高半字打包）
+    mov [esi+8], edi                ; ★ +8 = arg<<16
+    ret
+  紧邻 0x4071A0（定点除，batch 111 已描述）：
+    mov eax, edx / shl eax, 0x10 / div esi
+    mov [ecx+0x10], esi / mov [ecx+0xC], eax / mov [ecx+0x14], [esp+8]
+    ret 8
+
+语义：**batch 111 登记的 0x407150 标志/定点族的正式补员**——0x407170 清
+this->+0 bit0，+8/+4 计数相等时调 0x4093B0（batch 118 实锤的全局函数指针
+trampoline）把结果存 +0x18/+0x1C，再 arg<<16 打包进 +8；0x4071A0 是 16.16
+定点除（batch 111 已描述）。★batch 111 当时在 0x407150 条目标注「0x407170
+清 bit0 后按 +8/+4 计数比较触发 0x4093B0」——本批正式立案闭合该引用。
+
+★跨批次连接：batch 111（0x407150 族）+ batch 118（0x4093B0 trampoline）+
+定点 shl16/div（batch 111 同族）——0x407xxx 标志/定点基建补全。
+
+⚠️ partial：+0/+4/+8 字段语义（沿用 batch 111 推断）、+0x18/+0x1C 结果用途、
+与 0x407150/0x407160 的分工。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x4BA5A0 → batch 001（_new）+ 虚表安装 + Surface.h 渲染族。
+2. 0x724730 → ToolTipManagerClass + 0x724FC0 链管理。
+3. 0x407170 → batch 111（0x407150 族）+ batch 118（0x4093B0）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x4BA5A0 的 +0x1C/+0x20/0x1B 字段与四参映射。
+2. 0x724730 的 0x724FC0 查找细节与链结构。
+3. 0x407170 的 +0/+4/+8 字段语义与结果用途。
