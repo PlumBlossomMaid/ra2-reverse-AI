@@ -1,0 +1,141 @@
+frontier batch 281 — 三元组相等比较 0x459F60 + 字符串拼接器变体 0x7B4DA0 + 地图矩形区域扫描 0x575EE0（2026-10-14）
+
+口径：承接 batch 280，候选池 TOP 12 取三个函数：0x459F60（46B）、0x7B4DA0
+（303B）、0x575EE0（793B）。三函数均全反汇编读完（0x459F60 尾 0x459F8B ret 4
++ 3 nop、0x7B4DA0 尾 0x7B4ECC ret 8 + 3 nop、0x575EE0 尾 0x5761F6 ret 8 + 8 nop
+——body 与 ranking 吻合）。YRpp 查覆盖（三地址无）。取证手段：disasm.py 直反
+汇编 + 已登记函数交叉验证（batch 001/202/215 + 0x5657A0/0x42D510/0x6E53A0
+共 6 函数）。
+
+================================================================================
+0x459F60 —— 三元组相等比较（推断名：三 dword 逐项比较）（6 callers，全 0x2E=46B 读完）
+================================================================================
+机器码（全 0x2E）：mov eax,[esp+4]（★参数指针）/mov edx,[ecx]（★this->+0）/
+push esi/cmp edx,[eax]/jne 0x459F88（★+0 不等 → 返 0）→ mov edx,[ecx+4]/
+mov esi,[eax+4]/cmp edx,esi/jne 0x459F88（★+4 不等 → 返 0）→ mov ecx,[ecx+8]/
+mov edx,[eax+8]/cmp ecx,edx/jne 0x459F88（★+8 不等 → 返 0）→ mov eax,1/
+pop esi/ret 4（★全等返 1）→ 0x459F88: xor eax,eax/pop esi/ret 4（★返 0）
+
+语义：**三元组相等比较（推断名：三 dword 逐项比较）**——this 与参数指针指向的
+两个 12B 同构结构逐 dword 比较 +0/+4/+8，全等返 1，任一不等返 0。ret 4=1 栈参
+（参数 = 比较对象指针）。紧邻 0x459F90 是析构函数（+4 指针 +0xD 门控 + 0x7C8B3D
+释放）——疑似同一宿主类族的释放侧，本函数疑似其相等比较运算符。
+
+★原版怪癖（照抄）：① **三 dword 逐项短路**（jne 链——不等即返 0）；② **12B
+同构结构**（+0/+4/+8 三 dword）；③ **返回位标志**（1/0 无多余语义）。
+★跨批次连接：0x459F90（邻函数——析构，+4 指针 +0xD 门控 + 0x7C8B3D 释放——
+batch 001 _delete 应用点）+0x459xxx 区（同区推断——0x459xxx 与 batch 238
+RawFileClass 0x65Cxxx 无直接关系，宿主待定）。
+⚠️ partial：宿主类（0x459F90 推断同族）、三个 dword 的业务语义（坐标/状态推断）、
+相等比较用途（运算符重载推断）
+
+================================================================================
+0x7B4DA0 —— 字符串拼接器变体（0x7B4ED0 同族前邻）（6 callers，全 0x12F=303B 读完）
+================================================================================
+机器码（全 0x12F 主结构）：
+    push ebx/ebp/esi/mov esi,ecx（★this）/push edi/xor ebx
+    mov edi,[esi]（★this->+0 字符串指针）/test edi/je 0x7B4DE1（★空 → 跳过首段）
+    repne scasb 求长（含 NUL）/push ecx/call 0x7C8E17（★★operator new）
+    rep movsd/movsb 拷贝（★this 串 → 新内存 ebx）——首段复制
+    0x7B4DE1: mov esi,[esp+0x18]（★参数2 = 待拼字符串指针）/test esi/je 0x7B4E79
+    （★空 → 跳过拼接）
+    repne scasb 求长/dec/inc/mov ebp,ebx（★保存首段指针）
+    test ebx/strlen 首段 → 合计 = len(首段)+len(参数2)
+    push edx/call 0x7C8E17（★★op_new 拼接总长）
+    test ebp/je 0x7B4E42 → rep movsd/movsb（★首段 → 新缓冲）
+    0x7B4E42: mov byte[ebx],0 → 0x7B4E45: rep movsd/movsb（★参数2 续接拼尾到
+    [edi] 指向的当前位置——初始 edi 在总长缓冲开头）
+    test ebp/je → push ebp/call 0x7C8B3D（★★CRT 释放首段）
+    0x7B4E79: mov ebp,[esp+0x14]（★参数1 = 输出指针）/test ebx/mov [ebp],0
+    （★输出清零）/je 0x7B4EC6 → repne scasb 求长/push ecx/call 0x7C8E17
+    （★再分配）/mov [ebp],edx（★写输出指针）/rep movsd/movsb（★结果 → 输出）/
+    push ebx/call 0x7C8B3D（★释放中间串）→ 0x7B4EC6: pop 族/ret 8
+
+语义：**字符串拼接器变体（0x7B4ED0 同族前邻）**——把 this->+0 字符串与参数串
+（[esp+0x18] 处指针）拼接：strlen 求长 → operator new（0x7C8E17）分配 → 手写
+两段 strcpy → CRT 释放（0x7C8B3D）首段；最后按需重分配并把结果写入调用方输出
+指针（[esp+0x14]），返回前释放中间缓冲。ret 8=2 参。与 batch 202 的 0x7B4ED0
+同族同构（buf 段：rep movsd+and 3/rep movsb 收尾），差异：a) 空参数时不回退
+默认串 0x889F64（0x7B4ED0 回退，本条直接跳过拼接段）；b) 首段/尾段拼接顺序
+（本条首段随后参数2，0x7B4ED0 旧串随后参数串）。
+
+★原版怪癖（照抄）：① **strlen+op_new+手写 strcpy 三件套第四例**（batch 202
+0x7B4ED0、batch 198 0x5E32D0、batch 199 0x7B6290 同款）；② **参数空不回退**
+（与 0x7B4ED0 的空参数默认串 0x889F64 行为不同——同族两变体）；③ **三次分配
+两次释放**（首段/总长/输出各分配，中间链式释放）；④ **输出指针先清零后写**
+（mov [ebp],0 前置）。
+★跨批次连接：**0x7B4ED0（batch 202 字符串拼接器——本条同族变体前邻）**
++0x7C8E17（batch 001 op_new）+0x7C8B3D（batch 001 delete）+0x7B4Exx 区（batch
+202 同区）。
+⚠️ partial：宿主字符串类（0x7B4Exx 区推断——dynamic string 推断）、参数 1/2 精确
+角色（输出/输入推断）、拼接业务用途、为什么同族保留两变体
+
+================================================================================
+0x575EE0 —— 地图矩形区域扫描 + 触发器事件（推断名：MapClass 区域遍历）（6 callers，全 0x319=793B 读完）
+================================================================================
+机器码（全 0x319 主结构）：
+    mov ax,[esp+6]/sub esp,0x1c/push 族/mov bp,[esp+0x2e]（★坐标对 A）
+    cmp ax,bp/jne 0x575F18 → mov eax,[esp+0x30]/mov edi,[esp+0x34]（★坐标对 B）
+    cmp ax,di/bl=1/jle 0x575F37（★X 相等标志）/交换排序（★保证有序）
+    0x575F18: jle 0x575F2F/交换 → 0x575F37: 循环入口
+    循环 0x575F3B: mov cx,[esp+0x34]/cmp cx,di/jne 0x575F50 → cmp [esp+0x36],bp/
+    je 0x5761EF（★双坐标到界 → 收尾 ret 8）
+    0x575F50: movsx eax,[esp+0x36]/movsx ecx,cx/shl eax,9/add eax,ecx（★★idx =
+      y<<9+x）/js 越界/cmp 0x40000/jge 越界 → mov edx,[0x87F924]（★★地图 cell
+      数组基址）/mov eax,[edx+eax*4]/test/jne 命中 → 0x575F73: mov [0xABDC74],
+      eax/mov eax,0xABDC50（★★哨兵 cell——QWEN.md 阶段 9 哑元实锤）
+    命中: mov ecx,[eax+0x3C]/test/je → call 0x6E53A0（★★TagClass::RaiseEvent
+      已登记——event=0x1f, 0, [0xABD480], 0, 0）——cell->+0x3C 非空即触发
+    test bl/bl / je 0x5760DD（★X 相等分支 → 用 [0x89F688] 坐标偏移）
+    0x575FA4: mov eax,[0x89F698]/add 坐标/add [0x89F69A] word（★[0x89F6xx] 区
+      坐标字段）→ 0x42D510（★★二维点加法已登记：this=[0x89F688], arg=当前坐标
+      → *out）→ 内联查表（同 idx=y<<9+x + [0x87F924] + 0xABDC50 哨兵）→
+      cell->+0x3C 触发 RaiseEvent 同款
+    0x5760DD（bl==0）: 0x42D510（this=[0x89F690]）→ 内联查表 → 触发同款 →
+      0x42D510（this=[0x89F6A0]）→ 内联查表 → 触发 → ecx=0x87F7E8（★★MapClass::
+      Instance，QWEN.md 实锤）/call 0x5657A0（★★坐标→CellClass* 查表已登记——
+      回落后再触发一次）
+    循环步进: inc word [esp+0x34]（★X++）→ jmp 0x575F3B / inc word [esp+0x36]
+    （★Y++）→ jmp 0x575F3B
+    0x5761EF 收尾: pop 族/add esp,0x1c/ret 8
+
+语义：**地图矩形区域扫描 + 触发器事件（推断名：MapClass 区域遍历）**——以两个
+坐标对为矩形边界，双层循环遍历区域内每个 cell：坐标 → idx=y<<9+x → [0x87F924]
+cell 数组查表（越界/空 → 哨兵 0xABDC50 + [0xABDC74] 存坐标），cell->+0x3C
+（触发器槽推断）非空时调 TagClass::RaiseEvent(0x1f, 0, [0xABD480], 0, 0)。
+X 坐标相等时经 [0x89F688]/[0x89F698]/[0x89F69A] 坐标偏移 + 0x42D510 点加法走
+偏移路径；否则走 [0x89F690]/[0x89F6A0] 三组坐标 + 0x5657A0（MapClass::Instance
+回落）路径。两路径查表/触发同款内联实现。
+
+★原版怪癖（照抄）：① **idx=y<<9+x 512 网格**（shl 9 + 0x40000=512² 边界，参 2
+为 int16 分量）；② **哨兵 cell 0xABDC50 + [0xABDC74] 坐标缓存**（QWEN.md 阶段 9
+实锤复用）；③ **cell->+0x3C 门控触发**（非空才 RaiseEvent）；④ **触发参数
+event=0x1f(push 0x1f)、[0xABD480] 常量**；⑤ **双路径扫描**（X 相等偏移路径 vs
+三坐标常规路径——触发语义差异推断）；⑥ **0x5657A0 回落**（MapClass::Instance
+查表统一入口）。
+★跨批次连接：**0x6E53A0（TagClass::RaiseEvent——batch 已登记，本函数为该全局
+事件通道的最大应用点之一）**+**0x5657A0（坐标→CellClass* 查表已登记——ev
+ecx=0x87F7E8 MapClass::Instance）**+**0x42D510（二维点加法已登记×3 应用）**
++0x87F7E8（MapClass::Instance，QWEN.md 实锤、第六处应用）+[0x87F924]（新登记
+——cell 数组基址，batch 231 0x56DC20 空间查询同数据源推断）+[0xABDC50]/
+[0xABDC74]（QWEN.md 阶段 9 哑元）+[0xABD480]（新登记触发参数常量）+[0x89F688]/
+[0x89F690]/[0x89F6A0]/[0x89F698]/[0x89F69A]（新登记 0x89F6xx 区坐标字段——
+QWEN.md 曾提 0x89F688 属 RMG 工作区）。
+⚠️ partial：宿主函数精确身份（MapClass 区域遍历/平滑重算推断——21 触发器区域
+扫描）、cell->+0x3C 字段语义（触发器槽推断）、event=0x1f 的 TriggerEvent 枚举
+含义、[0xABD480] 常量语义（CellStruct 推断）、双路径的业务差异、0x87F924 与
+[0x87F7E8] 的隶属关系（MapClass 内字段 vs 独立全局）
+
+================================================================================
+（batch 281 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x459F60（三元组比较 46B）逻辑即实现（三 dword 短路比较），宿主未定——单
+   登记录入，宿主族立案时闭合。
+② 0x7B4DA0（拼接器变体 303B）与 batch 202 的 0x7B4ED0 同族，字符串类家族整体
+   建模时一并落地；本条价值 = 同族两变体差异实锤（空参数行为/拼接顺序）。
+③ 0x575EE0（区域扫描 793B）依赖 cell->+0x3C 触发器槽 + [0xABD480] 参数常量
+   （全 partial）——地图/触发器家族立案时闭合；本条价值 = 512 网格扫描 + 哨兵
+   cell 复用 + RaiseEvent 全局事件通道应用点 + [0x87F924] 数组基址新登记。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部 semantics_verified
+（三函数全段反汇编读完 + 6 个已登记函数交叉验证），partial 项如实标注。
