@@ -1,0 +1,119 @@
+frontier batch 182 — 定点族调用方 + 3D 结构数组索引 + 对象清理器（2026-10-14）
+
+口径：承接 batch 181 候选，ranking.tsv unique_callers 降序取 0x401000（10 callers）、
+0x7564B0（10 callers）、0x42F7C0（10 callers）。三者 prologue 均干净，机器码读全。
+
+================================================================================
+0x401000  定点族外层初始化（10 callers，0x401000-0x4010BA 读完）
+================================================================================
+机器码（0x401000，全 0xBA）：
+    push ebx/esi/edi / mov esi,ecx
+    mov edx,0x4000 / call 0x407100          ; ★ 0x407100(this, 0x4000=16384=1.0)
+    lea edi,[esi+0x28] / mov edx,0x64 / mov ecx,edi / call 0x407100
+    ; ★ 0x407100(+0x28, 0x64=100)
+    lea ebx,[esi+0x50] / mov edx,0x2000 / mov ecx,ebx / call 0x407100
+    ; ★ 0x407100(+0x50, 0x2000=8192=0.5)
+    mov edx,0xA / mov ecx,edi / push 0 / push 0x3E8 / call 0x4071A0
+    ; ★ 0x4071A0(+0x28, 0x3E8=1000, 0, 0xA)——batch 166 登记的 16.16 定点除!
+    mov edx,0x4000 / mov ecx,esi / push 0 / push 0x3E8 / call 0x4071A0
+    ; ★ 0x4071A0(this, 1000, 0, 16384)
+    mov edx,0x4000 / mov ecx,ebx / push 0 / push 0x3E8 / call 0x4071A0
+    ; ★ 0x4071A0(+0x50, 1000, 0, 16384)
+    mov ecx,esi / mov edx,0x4000
+    pop edi/esi/ebx / jmp 0x407150          ; ★★ 尾调用 0x407150（batch 111 定点族）
+  紧邻 0x401080（同族第二函数）：
+    call 0x4071C0 / lea ecx,[esi+0x28] / call 0x4071C0
+    lea ecx,[esi+0x50] / jmp 0x4071C0       ; ★ 三个子对象同走 0x4071C0
+  紧邻 0x4010A0（判定成员）：
+    mov dl,byte[ecx] / mov al,2 / test al,dl / jne 返1
+    test byte[ecx+0x28],al / jne 返1
+    test byte[ecx+0x50],al / jne 返1 / xor eax / ret
+    返1: mov eax,1 / ret                     ; ★ 三子对象任一 bit1 → 1
+
+语义：**定点（16.16）子对象族外层初始化**——对 this、+0x28、+0x50 三个
+子对象：先 0x407100 设比例（1.0/100/0.5），再 0x4071A0（batch 166 已登记
+的 16.16 定点除）做三组 (1000, 0, 每子对象量) 除法，尾调用 0x407150
+（batch 111 定点族）。紧邻判定成员检查三个子对象 byte 任一 bit1。
+★**闭合 batch 111/166 引用**：0x407100/0x407150（batch 111 定点族）与
+0x4071A0（batch 166 实锤 16.16 定点除）的实际调用方——定点族使用端。
+
+⚠️ partial：宿主类（0x401xxx 区）、三个子对象（this/+0x28/+0x50）字段
+语义、0x407100/0x407150/0x4071C0 精确公式、0x3E8=1000 与 0x64=100 常量。
+
+================================================================================
+0x7564B0  3D 结构数组索引（10 callers，0x7564B0-0x756531 读完）
+================================================================================
+机器码（0x7564B0，0x81 读完）：
+    mov eax,[esp+4]              ; ★ 参数 1（索引）
+    mov edx,[ecx+0x10] / mov ecx,[ecx+0x14]  ; ★ this->+0x10/+0x14 数组指针
+    lea eax,[eax+eax*2]          ; ★ ×3
+    mov eax,[edx+eax*4]          ; ★ 查表 [edx + i*12]
+    mov edx,[esp+8]              ; ★ 参数 2
+    add eax,edx                  ; ★ + 参数 2
+    lea edx,[eax+eax*4]          ; ★ ×5
+    lea eax,[eax+edx*8]          ; ★ ×45（6×8-3=45）
+    lea eax,[ecx+eax*4]          ; ★ 数组指针 [ecx] + i*180
+    ret 8
+  紧邻 0x7564E0（浮点读）：
+    mov eax,[esp+0x20] / mov edx,[ecx+0x10] / mov ecx,[ecx+0x14]
+    lea eax,[eax+eax*2] / mov eax,[edx+eax*4] / mov edx,[esp+0x24]
+    add eax,edx / lea edx,[eax+eax*4] / lea eax,[eax+edx*8]
+    fld dword[ecx+eax*4+0x70] / fadd dword[ecx+eax*4+0x58]
+    fld dword[ecx+eax*4+0x74] / fadd dword[eax+0x5C]
+    fstp dword[esp+0x10] / fld dword[eax+0x78] / fadd dword[eax+0x60]
+    fmul dword[0x7E5168] ...     ; ★ 浮点字段求和（+0x58/+0x5C/+0x60 +
+                                 ;   +0x70/+0x74/+0x78 两组合）
+
+语义：**3D 结构数组索引（60B/项网格/顶点阵）**——参数 1 经 [this->+0x10]
+的 12B 索引表查偏移，加参数 2 后 ×45 得 180B 步进（=60B×3? 或结构大小
+变体），返回 [this->+0x14] + 偏移；浮点版再读 +0x58/0x5C/0x60 与
++0x70/0x74/0x78 两组 float 求和对。★0x756xxx 区 3D/网格基建（[0x7E5168]
+常量区）。
+
+⚠️ partial：+0x10/+0x14 数组宿主、索引表 12B/项语义、180B 结构布局、
+[0x7E5168] 系数、求和用途。
+
+================================================================================
+0x42F7C0  对象清理器（10 callers，0x42F7C0-0x42F81A 读完）
+================================================================================
+机器码（0x42F7C0，全 0x5A）：
+    push ebx/esi / mov esi,ecx
+    xor ebx
+    mov eax,[esi+4]              ; ★ this->+4
+    test eax / je 0x42F7DE       ; ★ 空 → 跳过释放
+    cmp byte[esi+0xD],bl / je 0x42F7DE  ; ★ +0xD 标志为 0 → 不释放
+    push eax / call 0x7C8B3D     ; ★ 释放缓冲（CRT free 族）
+    add esp,4
+    mov [esi+4],ebx              ; ★ +4 清 0
+  0x42F7DE:
+    mov byte[esi+0xD],bl         ; ★ +0xD 标志清 0
+    mov [esi+8],ebx              ; ★ +8 清 0
+    pop esi/ebx / ret
+  紧邻 0x42F7F0（查找成员）：
+    mov al,byte[ecx+0xC] / test / jne 继续 / xor eax / ret 4
+    继续: mov edx,[ecx+8] / test edx / jle 返回
+    mov esi,[esp+0x10] / mov ecx,[ecx+4]
+    mov di,word[esi] / cmp word[ecx],di / jne 下一个 ...
+    ; ★ 遍历 word 数组比较（按首 word 查找）
+
+语义：**对象清理器（释放 + 标志清零）**——this->+4 非空且 +0xD 标志置位
+时经 0x7C8B3D 释放缓冲，之后 +4/+8/+0xD 全部清 0。紧邻 0x42F7F0 是按
+word 首字段线性查找成员。★0x42F7xx 区小对象族——清理/释放基建。
+
+⚠️ partial：宿主类、+4/+8/+0xC/+0xD 字段语义、0x7C8B3D 精确身份（CRT
+free 推断）、查找成员用途。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x401000 → batch 111（0x407150 族）+ batch 166（0x4071A0 定点除）——
+   定点族使用端闭合。
+2. 0x7564B0 → 0x7E5168 常量区 + [0x7E1710]/[0x7E1708] 邻域（batch 176）。
+3. 0x42F7C0 → 0x7C8B3D（CRT free 族）+ 清理器模式（batch 181 析构器族）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x401000 的宿主类与 0x407100/0x407150 精确公式。
+2. 0x7564B0 的 +0x10/+0x14 数组宿主与 180B 结构布局。
+3. 0x42F7C0 的宿主类与 0x7C8B3D 身份。
