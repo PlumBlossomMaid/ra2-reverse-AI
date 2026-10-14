@@ -1,0 +1,96 @@
+frontier batch 180 — 字符串复制+大写转换 + 嵌套 getter 链族 + 双虚表构造器（2026-10-14）
+
+口径：承接 batch 179 候选，ranking.tsv unique_callers 降序取 0x7B5B80（10 callers）、
+0x5F1EA0（10 callers）、0x624110（10 callers）。三者 prologue 均干净，机器码读全。
+
+================================================================================
+0x7B5B80  字符串复制+大写转换（10 callers，0x7B5B80-0x7B5BE0 读完）
+================================================================================
+机器码（0x7B5B80，关键路径）：
+    push ebx/ebp/esi/edi / mov esi,ecx
+    xor ebx / mov edi,[esi]              ; ★ this->[0] 源串
+    test edi / je 收尾
+    or ecx,-1 / xor eax / repne scasb / not ecx   ; ★ strlen(源串)
+    push ecx / call 0x7C8E17             ; ★ _new(strlen)（batch 001 CRT）
+    mov edi,[esi] / mov ebx,eax          ; ★ 新缓冲
+    repne scasb（再 strlen）/ sub edi,ecx
+    rep movsd + rep movsb                ; ★ 复制串到新缓冲
+    xor esi / test ebx / je 收尾
+    mov edi,ebx / repne scasb / not ecx / dec ecx  ; ★ strlen(新串)
+    cmp esi,ecx / jae 收尾
+    大写循环:
+    mov al,byte[esi+ebx] / cmp al,0x41 / jl 下一个   ; ★ <'A' 跳过
+    cmp al,0x5A / jg 下一个               ; ★ >'Z' 跳过
+    and al,0xDF / mov byte[esi+ebx],al    ; ★★ 转大写（and 0xDF = -0x20）
+    下一个: inc esi / jmp 大写循环
+    收尾: mov eax,ebx / ret               ; ★ 返回大写串副本
+
+语义：**字符串复制+原地大写转换（strtoupper 形态）**——strlen 源串后
+_new 分配同长缓冲、逐字节复制，然后第二遍遍历把 ['A','Z'] 区间字符
+`and al,0xDF` 转大写（等价 -0x20），返回新串。★0x7B 系字符串工具
+（batch 072 的 0x7B5440 GetString 同区）——文本规范化族。
+
+⚠️ partial：宿主（StringClass/工具函数）、调用方上下文、收尾分支
+（ebx==0 时返回什么未读尽 0x7B5BF4 起）。
+
+================================================================================
+0x5F1EA0  嵌套 getter 链族（10 callers，0x5F1EA0-0x5F1EF1 读完）
+================================================================================
+机器码（三成员）：
+  0x5F1EA0（getter 1）：
+    mov eax,[ecx+0x38] / test / je 返 0
+    mov eax,[eax+4] / mov eax,[eax+0x28] / ret   ; ★ this->+0x38→+4→+0x28
+   返 0: xor eax / ret
+  0x5F1EC0（getter 2）：
+    mov eax,[ecx+0x38] / test / je 返 0
+    mov eax,[eax+4] / mov eax,[eax+0x38] / ret   ; ★ this->+0x38→+4→+0x38
+  0x5F1EE0（getter 3）：
+    mov eax,[ecx+0x38] / test / je 返 0
+    mov ecx,[eax+4] / jmp 0x48BA80              ; ★ this->+0x38→+4→0x48BA80
+   返 0: xor eax / ret
+
+语义：**嵌套 getter 链族（0x5F1Exx）**——三条成员都从 this->+0x38 出发
+（+0x38 指向子对象/管理器），经子对象 +4 再取不同字段（+0x28/+0x38 或
+jmp 0x48BA80 委托）。★0x5F 系（batch 117 的 ObjectClass 0x5F3900 /
+batch 177 的 ObjectTypeClass 0x5F7090 同区）——对象链式访问端。
+★0x48BA80 未登记（getter 3 委托目标）。
+
+⚠️ partial：+0x38 子对象类型、+4/+0x28/+0x38 字段语义、0x48BA80 身份。
+
+================================================================================
+0x624110  双虚表构造器（10 callers，0x624110-0x62414C 读完）
+================================================================================
+机器码：
+  0x624110（构造器 1）：
+    mov eax,ecx / xor ecx
+    mov [eax+4],ecx / mov byte[eax+8],cl   ; ★ +4 清 0、+8 字节清 0
+    mov [eax],0x7EF738                     ; ★ 装虚表 0x7EF738
+    ret
+  0x624130（构造器 2）：
+    mov [ecx],0x7EF720                     ; ★ 只装虚表 0x7EF720
+    ret
+  0x624140（成员）：
+    mov eax,[esp+8] / push esi / mov esi,ecx / push edi
+    mov ecx,[esp+0xC] / mov [esi+4],eax    ; ★ +4 = 参数 1
+    ...（后续成员）
+
+语义：**双虚表构造器（0x6241xx 区）**——0x624110 是完整构造（+4/+8 清零、
+虚表 0x7EF738），0x624130 是简化构造（只装虚表 0x7EF720），0x624140 是
+成员（+4 存参数）。★虚表安装家族（batch 117 单虚表 / batch 123 四虚表 /
+batch 170 双虚表同族）——0x6241xx 区对象基建。
+
+⚠️ partial：宿主类（虚表 0x7EF738/0x7EF720）、0x624140 后续成员。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x7B5B80 → batch 001（_new 0x7C8E17）+ 0x7B 系字符串族（batch 072）。
+2. 0x5F1EA0 → 0x5F 系（batch 117 ObjectClass / batch 177 ObjectTypeClass）。
+3. 0x624110 → 虚表安装家族（batch 117/123/170）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x7B5B80 的宿主与收尾分支。
+2. 0x5F1EA0 的 +0x38 子对象与 0x48BA80 身份。
+3. 0x624110 的宿主类与 0x624140 成员语义。
