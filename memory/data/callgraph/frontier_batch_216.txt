@@ -1,0 +1,119 @@
+frontier batch 216 — CellClass::GetTerrain（Overlay 系链遍历）+ 偏移合成 + 多区间归属判定（2026-10-14）
+
+口径：承接 batch 215 候选，ranking.tsv unique_callers 降序取 0x47C550（8 callers）、
+0x4115F0（8 callers）、0x4865D0（8 callers）。三者 prologue 均干净，机器码读全。
+
+================================================================================
+0x47C550  CellClass::GetTerrain（8 callers，全 0x43 读完）
+================================================================================
+机器码（全 0x43，body=67，rank 带名 CellClass::GetTerrain）：
+    mov al,[0xA8E9A0] / push esi / test al,al / je 0x47C587  ; ★ 全局 [0xA8E9A0] 字节
+    mov al,[esp+8] / test al,al / je 0x47C56A                ; ★ 参数异或位
+    mov esi,[ecx+0xE8] / jmp 0x47C570
+  0x47C56A:
+    mov esi,[ecx+0xE4]                 ; ★ this->+0xE8 或 +0xE4（二选一项）
+  0x47C570:
+    test esi / je 0x47C587            ; ★ 空 → 返 0
+  链遍历:
+    mov eax,[esi] / mov ecx,esi / call [eax+0x2C]   ; ★ 项虚表槽 0x2C
+    cmp eax,0x24 / je 0x47C58D        ; ★ 虚表槽 0x2C == 0x24 命中
+    mov esi,[esi+0x30] / test esi / jne 链遍历      ; ★ 沿 +0x30 链
+    xor eax,eax / pop esi / ret 4     ; ★ 未命中 → 返 0
+  0x47C58D:
+    mov eax,esi / pop esi / ret 4     ; ★ 命中 → 返该项
+
+语义：**CellClass::GetTerrain（rank 带名，机器码验证吻合）**——
+①全局 [0xA8E9A0] 字节 + 参数异或位决定取 this->+0xE8 还是 +0xE4
+（两个候选链头推断）；②沿 +0x30 链遍历每个项，项虚表槽 0x2C 返回
+等于 0x24 的项即为目标地形；未命中返 0。
+★**链 + 槽判定**：虚表槽 0x2C 返回值 == 0x24（36）作为命中判据——
+地形类型码推断（CellClass 的 0x24=36 对应特定 Overlay 类型）。
+★[0xA8E9A0] 全局字节（异或选头）——新全局登记；+0xE4/+0xE8 候选链头
+字段。
+★**与 batch 208 的 0x5FC380（OverlayClass 构造器，经 +0x44 Overlay +
+MapClass::Instance [0x87F7E8] 找格）相关**——CellClass 地形/Overlay 系
+的查询侧（本条目栏头链，batch 208 是构造登记侧）。
+
+⚠️ partial：+0xE4/+0xE8 链头结构、虚表槽 0x2C 判定语义（0x24=地形类型
+推断）、[0xA8E9A0] 全局身份。
+
+================================================================================
+0x4115F0  偏移合成（8 callers，全 0x31 读完）
+================================================================================
+机器码（全 0x31，body=49）：
+    push ebx/esi/edi / mov esi,ecx
+    mov edi,[esi+0xC]                ; ★ this->+0xC（计数）
+    mov eax,[esi] / inc edi / mov [esi+0xC],edi   ; ★ 计数++
+    mov edi,[esi+0x14]               ; ★ this->+0x14（基数）
+    call [eax+0x70]                  ; ★ 虚表槽 0x70（X 分量）
+    mov edx,[esi] / mov ebx,eax
+    imul ebx,[esp+0x10]              ; ★ X 分量 × 参数 1
+    mov ecx,esi / call [edx+0x74]    ; ★ 虚表槽 0x74（Y 分量）
+    imul eax,[esp+0x14]              ; ★ Y 分量 × 参数 2
+    add edi,ebx / add eax,edi        ; ★ +0x14 基数 + 和
+    pop edi/esi/ebx / ret 8
+
+语义：**偏移合成（0x411xxx 区）**——this->+0xC 计数自增；虚表槽 0x70
+返回 X 分量 × 参数 1 + 虚表槽 0x74 返回 Y 分量 × 参数 2 + this->+0x14
+基数——**两轴加权求和**（坐标/偏移计算推断）。ret 8 = 2 参。
+★**虚表槽 0x70/0x74 分量对**——两轴分量查询（台账新槽号）；+0xC 计数
+自增副作用（每次调用推进——原版怪癖照抄）。
+★0x411xxx 区（batch 207 的 0x40BD00 邻域）——数学/坐标计算端。
+
+⚠️ partial：虚表槽 0x70/0x74 分量语义、+0xC 计数的业务、+0x14 基数含义、
+宿主类。
+
+================================================================================
+0x4865D0  多区间归属判定（8 callers，全 0x72 读完）
+================================================================================
+机器码（全 0x72，body=114）：
+    mov eax,[ecx+0x38]               ; ★ this->+0x38 值
+    mov ecx,[0xABAD28] / cmp eax,ecx / jl 0x4865E7
+    add ecx,0x2A / cmp eax,ecx / jge 0x4865E7
+    mov al,1 / ret                   ; ★ 区间 1：[0xABAD28, +0x2A)
+  0x4865E7:
+    mov ecx,[0xAA0738] / cmp eax,ecx / jl 0x4865F8
+    add ecx,0xE / cmp eax,ecx / jl 0x48663C   ; ★ 区间 2：[0xAA0738, +0xE) → 1
+    mov ecx,[0xAA073C] / cmp eax,ecx / jl 0x486609
+    add ecx,4 / cmp eax,ecx / jl 0x48663C     ; ★ 区间 3：[0xAA073C, +4) → 1
+    mov ecx,[0xABB110] / cmp eax,ecx / jl 0x48661A
+    add ecx,4 / cmp eax,ecx / jl 0x48663C     ; ★ 区间 4：[0xABB110, +4) → 1
+    mov ecx,[0xAA1050] / cmp eax,ecx / jl 0x48662B
+    add ecx,4 / cmp eax,ecx / jl 0x48663C     ; ★ 区间 5：[0xAA1050, +4) → 1
+    mov ecx,[0xAA10A0] / cmp eax,ecx / jl 0x48663F
+    add ecx,4 / cmp eax,ecx / jge 0x48663F    ; ★ 区间 6：[0xAA10A0, +4) → 1
+  0x48663C:
+    mov al,1 / ret
+  0x48663F:
+    xor al,al / ret                  ; ★ 所有区间外 → 返 0
+
+语义：**多区间归属判定（0x486xxx 区，batch 200 的 0x486770 邻域）**——
+this->+0x38 落在 6 个全局基址区间之一（[0xABAD28,+0x2A)、[0xAA0738,
++0xE)、[0xAA073C,+4)、[0xABB110,+4)、[0xAA1050,+4)、[0xAA10A0,+4)）
+即返 1；全不落返 0——**区间基址表 + 判定链**（区间 1 跨度 0x2A，其余
+跨度 4）。
+★★**batch 200 的 0x486770（区间判定器 [[0xABAD1C],+0x10)）同族**——
+同 0x48 区、同 +0x38 字段、同半开区间判定模板；本条是**多区间扩展版**
+（6 区间 vs 单区间），且 [0xABAD28]/[0xABAD1C] 同 [0xABADxx] 全局族。
+★全局族新登记：[0xABAD28]/[0xAA0738]/[0xAA073C]/[0xABB110]/[0xAA1050]/
+[0xAA10A0]。
+
+⚠️ partial：+0x38 字段语义（batch 200 同 partial）、6 区间基址的业务
+含义（地块/状态表区间推断）、区间跨度差异（0x2A vs 4）的原因。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x47C550 → batch 208（0x5FC380 OverlayClass 构造）——CellClass 地形/
+   Overlay 系查询侧 + [0xA8E9A0] 新全局。
+2. 0x4115F0 → batch 207（0x40BD00 邻域）——两轴加权合成（虚表槽
+   0x70/0x74 分量对）。
+3. 0x4865D0 → batch 200（0x486770 区间判定同族）——多区间扩展版 +
+   [0xABADxx] 全局族。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x47C550 的 +0xE4/+0xE8 链头与槽 0x2C 判定语义。
+2. 0x4115F0 的槽 0x70/0x74 分量身份与 +0xC 计数业务。
+3. 0x4865D0 的 6 区间基址业务含义。
