@@ -1,0 +1,177 @@
+frontier batch 273 — SpawnManagerClass::KillNodes 0x6B7100 + 单位列表状态刷新 0x4ADCD0 + 类型分派 0x6ABC60（2026-10-14）
+
+口径：承接 batch 272，候选池 TOP 12 取三个函数：0x6B7100（294B，带名
+SpawnManagerClass::KillNodes）、0x4ADCD0（520B）、0x6ABC60（103B）。三函数
+均全反汇编读完（0x6B7100 尾 0x6B7225 ret + 9 nop、0x4ADCD0 尾 0x4ADED5 ret 8
++ 8 nop、0x6ABC60 尾 0x6ABCC4 ret 4 + 8 nop——body 与 ranking 吻合）。YRpp
+查覆盖（0x6B7100 带名，其余两地址无）。取证手段：disasm.py 直反汇编 + 已登记
+函数交叉验证（batch 262/263/264/272/190 共 5 函数）。
+
+================================================================================
+0x6B7100 —— SpawnManagerClass::KillNodes（带名，击杀/清理节点）（6 callers，全 0x126=294B 读完）
+================================================================================
+机器码（全 0x126 主结构）：
+    sub esp,0xC/push ebx/esi/mov esi,ecx（★this SpawnManagerClass*）/push edi
+    mov eax,[esi+0x24]/mov ecx,[eax+0x6C]/test ecx/jle 0x6B7120（★[esi+0x24]->
+      +0x6C 计数门控）→ mov cl,[eax+0x90]/test/je 0x6B7120（★+0x90 标志）
+      → xor ebx/jmp 0x6B7123（★条件命中 → ebx=0）→ 0x6B7120: mov ebx,
+      [esi+0x30]（★★ebx = 0 或 [esi+0x30]——按 [esi+0x24] 族条件选）
+    mov edi,[esi+0x48]/dec edi/js 0x6B721F（★倒序 count-1 起）
+    push ebp/mov ebp,7（★状态值 7）
+    循环 0x6B7133: mov eax,[esi+0x3C]/mov eax,[eax+edi*4]（★节点数组
+      [esi+0x3C]）→ mov ecx,[eax+4]（★节点 +4 状态）
+      cmp ecx,ebp/je 0x6B7217（★==7 跳过——已清理）
+      test ecx/je 0x6B71DE（★==0 → 分支 A）
+      cmp ecx,6/je 0x6B71DE（★==6 → 分支 A）
+      cmp ecx,1/jne 0x6B71A2（★==1 → 分支 B）
+      分支 B（==1）0x6B715A: push [eax]/mov ecx,0xABC5F8（★★全局对象）/call
+        0x54E590（★未登记——[0xABC5F8] 方法）→ mov edx,[esi+0x3C]/mov eax,
+        [edx+edi*4]/mov [eax+4],ebp（★★节点状态置 7）→ mov ecx,[esi+0x3C]/
+        mov edx,[ecx+edi*4]/mov ecx,[edx]/mov eax,[ecx]/call [eax+0xF8]（★
+        虚表槽 0xF8 调用）→ mov [edx],0（★清节点 0）→ mov ecx,[esi+0x3C]/
+        mov eax,[0xA8ED84]（★★batch 262/264 主循环计数全局！）→ mov [edx+8],
+        eax（★★节点 +8 = 时间戳）→ mov eax,[esp+0x14]（★参数）→ jmp 0x6B7211
+      其它 0x6B71A2: mov [eax+4],ebp（★置 7）→ mov edx,[esi+0x3C]/mov ecx,
+        [esi+0x68]/mov eax,[edx+edi*4]/push ecx/push [eax]/mov ecx,0xABC5F8/
+        call 0x54E3B0（★未登记——[0xABC5F8] 方法二号，带 [esi+0x68]）→ mov
+        [eax],0/.../mov [edx+8],[0xA8ED84]（★同款清 0 + 时间戳）→ jmp 0x6B7211
+      分支 A（==0/6）0x6B71DE: mov [eax+4],ebp（★置 7）→ 虚表槽 0xF8 → mov
+        [edx],0 → mov [edx+8],[0xA8ED84] → mov eax,[esp+0x14]（★参数）
+      0x6B7211: mov [edx+4],eax（★★节点 +4 = 参数）/mov [edx+8],ebx（★★节点
+        +8 = ebx）
+      dec edi/jns 0x6B7133（★倒序循环）
+    0x6B721F: pop 族/add esp,0xC/ret
+
+语义：**SpawnManagerClass::KillNodes（击杀/清理节点，带名）**——先按
+[esi+0x24]->+0x6C 计数与 +0x90 标志选 ebx（命中则 0、否则 [esi+0x30]）；
+倒序遍历 [esi+0x3C] 节点数组（[esi+0x48] 计数）：节点 +4 状态分派——==1 走
+0x54E590、其它（非 7/非 0/非 6）走 0x54E3B0+[esi+0x68]、==0/==6 直走虚表槽
+0xF8；统一置节点 +4=7（已清理）、清 +0、写 +8=[0xA8ED84]（帧计数时间戳）、
++4=参数、+8=ebx。倒序（count-1→0）。
+
+★原版怪癖（照抄）：① **ebx 双源选择**（[esi+0x24]->+0x6C/+0x90 条件命中 → 0、
+否则 [esi+0x30]——清理目标标志推断）；② **状态 7 哨兵跳过**（已清理节点不重
+复处理）；③ **三分派清理**（==1 走 0x54E590、其它走 0x54E3B0+[esi+0x68]、0/6
+直走虚表槽 0xF8）；④ **节点四字段写回**（+4=7 状态、+0=清、+8=时间戳/ebx、
++4=参数）；⑤ **[0xA8ED84] 帧计数作时间戳**（主循环计数全局应用）；⑥ **倒序
+遍历**（dec/js）。
+★跨批次连接：**[0xA8ED84]（batch 262 主循环帧计数/264 会话配置同全局——本条
+节点清理写时间戳）**+0xABC5F8（新登记全局对象）+0x54E590/0x54E3B0（未登记
+[0xABC5F8] 方法）+虚表槽 0xF8。
+⚠️ partial：宿主 SpawnManagerClass 结构（+0x24/+0x30/+0x3C/+0x48/+0x68）、
+[esi+0x3C] 节点结构（+0/+4/+8 字段）、节点状态枚举（0/1/6/7）、0x54E590/
+0x54E3B0 身份、[0xABC5F8] 全局对象、参数语义、[esi+0x24]->+0x6C/+0x90 条件
+含义
+
+================================================================================
+0x4ADCD0 —— 单位列表状态刷新（推断名：遍历处理/移除）（6 callers，全 0x208=520B 读完）
+================================================================================
+机器码（全 0x208 主结构）：
+    sub esp,0x24/push ebx/mov ebx,[0xA8EC88]（★★全局计数——batch 264 的
+      [0xA8ECBC] 同 0xA8ECxx 区！）/push edi/xor edi/test ebx/jle 0x4ADED0
+    push ebp/mov ebp,[esp+0x38]（★参数 1）/push esi
+    循环 0x4ADCEB: mov eax,[0xA8EC7C]（★★全局数组基址）/mov esi,[eax+edi*4]
+      /test/je 0x4ADEC5 → mov al,[esi+0x81]/test/jne 0x4ADEC5（★★+0x81 标志
+      跳过）→ mov edx,[esi]/mov ecx,esi/call [edx+0x2C]（★虚表槽 0x2C 类型）→
+      cmp eax,6/jne 0x4ADD21 → mov al,[esp+0x38]（★参数）/test/jne 0x4ADEC5
+    mov ecx,[esi+0x21C]/call 0x50B6F0（★★归属判定——未登记，0x50xxxx 区 batch
+      263 的 0x501640 同区）→ test al/je 0x4ADDA6
+    命中路径 A 0x4ADD30: mov al,[esi+0x41B]/test/je 0x4ADEC5（★+0x41B 标志）→
+      虚表槽 0x488（push 5×0——★★五参大调用）→ lea ecx,[esi+0x9C]（★坐标结
+      构）→ push 0/push [esi+0x260]+3（★+0x260 高度/半径+3）→ lea eax,[esp+0x18]/
+      mov ecx,0x87F7E8（★★MapClass::Instance batch 208/209/262/270/272）/
+      call 0x567DA0（★★坐标处理——未登记，0x56xxxx MapClass 区）→ mov edx,
+      [esi]/mov ecx,esi/call [edx+0x84]（★虚表槽 0x84）→ mov cl,[eax+0xCD1]/
+      test/je 0x4ADEC5（★★+0xCD1 标志）→ jmp 0x4ADEBB
+    路径 B 0x4ADDA6: 虚表槽 0x2C == 6 → mov eax,[0x8871E0]（★★★[0x8871E0] 全
+      局——batch 259/266/267/269/270 后**第六次应用**！）/mov cl,[eax+0x17E7]/
+      test/je 0x4ADE26（★实例 +0x17E7 标志）→ mov ecx,[0xA83D4C]（★★batch 262
+      会话全局）/push ecx/mov ecx,[esi+0x21C]/call 0x4F9A50（★★★batch 272 的
+      0x4F9A90 同 0x4F9xxx House 家族！）→ test al/je 0x4ADE26 → 虚表槽 0x488
+      （含参数 ebp）→ lea [esi+0x9C] 坐标 → push 0/[esi+0x260]+3 → 0x567DA0
+      → jmp 0x4ADEC5
+    路径 C 0x4ADE26: 虚表槽 0x2C == 6 → 虚表槽 0x84 → mov cl,[eax+0x5EE]/test/
+      je 0x4ADEA7（★+0x5EE 标志）→ mov ecx,[esi+0x21C]/call 0x50B6F0 → test al/
+      jne 0x4ADEA7（★归属命中则跳过——与路径 A 相反）→ push 0/[0xA83D4C]/push
+      1/0/0 → 虚表槽 0x488 → lea [esi+0x9C] → push 0/[esi+0x260]+3 → 0x567DA0
+      → jmp 0x4ADEC5
+    路径 D 0x4ADEA7: 虚表槽 0x84 → mov cl,[eax+0xCD1]/test/je 0x4ADEC5 → 
+      0x4ADEBB: 虚表槽 0x414（★★收尾调用）
+    0x4ADEC5: inc edi/cmp edi,[0xA8EC88]/jl 0x4ADCEB（★循环）
+    0x4ADED0: pop 族/add esp,0x24/ret 8（★1 栈参）
+
+语义：**单位列表状态刷新（推断名：按状态遍历处理/移除单位）**——遍历全局数组
+[0xA8EC7C]（计数 [0xA8EC88]）：元素 +0x81 标志跳过；虚表槽 0x2C 类型==6 且参
+数 0 时经 0x50B6F0 归属判定分四路：A（归属命中+0x41B）：虚表槽 0x488 五参大调
+用 + [esi+0x9C] 坐标 + [esi+0x260]+3 + MapClass::Instance（0x87F7E8）0x567DA0
++ 槽 0x84 查 +0xCD1 → 槽 0x414；B（[0x8871E0]+0x17E7 + [0xA83D4C] + 0x4F9A50）：
+同款虚表槽 0x488 链；C（+0x5EE 且归属未命中）：虚表槽 0x488 链；D：槽 0x84 查
++0xCD1 → 槽 0x414。按路径处理后归入循环。
+
+★原版怪癖（照抄）：① **[0xA8EC7C]/[0xA8EC88] 全局单位数组**（batch 264 的
+[0xA8ECBC] 同 0xA8ECxx 区——会话/对象表家族）；② **+0x81 标志快速跳过**；③
+**虚表槽 0x488 五参大调用 ×3**（不同路径同款调用形态——单位操作/移除推断）；
+④ **[esi+0x260]+3 高度修正**（+3 偏移——发射/生成高度推断）；⑤ **0x50B6F0 归
+属判定正反两用**（路径 A 命中才走、路径 C 命中跳过——两种筛选语义）；⑥ **[0x8871E0]
+第六次应用**（+0x17E7 标志字段）；⑦ **[0xA83D4C] 会话全局作参**（batch 262 同）。
+★跨批次连接：★★★**[0x8871E0] 全局第六次跨批应用**（batch 259/266/267/269/270
+之后——本条 +0x17E7 标志）**+0x4F9A50（batch 272 的 0x4F9A90 同 0x4F9xxx
+House 家族调用点）**+0x50B6F0（batch 263 的 0x501640 同 0x50xxxx 区）+[0x87F7E8]
+（MapClass::Instance batch 208/209/262/270/272 之后）+[0xA83D4C]（batch 262 会
+话全局）+[0xA8EC7C]/[0xA8EC88]（batch 264 的 [0xA8ECBC] 同区）。
+⚠️ partial：宿主类（0x4ADxxx 区推断）、[0xA8EC7C] 元素结构（+0x81/+0x21C/
++0x9C/+0x260/+0x41B/+0x5EE/+0xCD1 字段）、0x50B6F0/0x567DA0/0x4F9A50 精确身
+份、虚表槽 0x2C/0x84/0x488/0x414 方法名、[0x8871E0]+0x17E7 语义、四条路径的
+业务差异（移除/生成/重定位推断）
+
+================================================================================
+0x6ABC60 —— 类型分派（推断名：按值分类返回 2/3/1/-1）（6 callers，全 0x67=103B 读完）
+================================================================================
+机器码（全 0x67）：
+    cmp ecx,0xF/je 0x6ABCBF（★0xF → 返 2）
+    cmp ecx,0x10/je 0x6ABCBF（★0x10 → 返 2）
+    cmp ecx,1/je 0x6ABCB7（★1 → 返 3）
+    cmp ecx,0x28/je 0x6ABCB7（★0x28 → 返 3）
+    cmp ecx,2/je 0x6ABCB7（★2 → 返 3）
+    cmp ecx,3/je 0x6ABCB7（★3 → 返 3）
+    cmp ecx,6/je 0x6ABCA5（★6 → 调 0x5004E0）
+    cmp ecx,7/je 0x6ABCA5（★7 → 调 0x5004E0）
+    cmp ecx,0x39/je 0x6ABC9D（★0x39 → 返 1）
+    cmp ecx,0x20/je 0x6ABC9D（★0x20 → 返 1）
+    cmp ecx,0x1F/je 0x6ABC9D（★0x1F → 返 1）
+    or eax,0xFFFFFFFF/ret 4（★★未命中 → 返 -1）
+    0x6ABC9D: mov eax,1/ret 4（★返 1）
+    0x6ABCA5: call 0x5004E0（★★★batch 190 partial——IsBuildCat5 推断！本条是
+      调用点）→ xor ecx/cmp eax,5/sete cl/mov eax,ecx/ret 4（★★0x5004E0()==5
+      → 1、否则 0）
+    0x6ABCB7: mov eax,3/ret 4（★返 3）
+    0x6ABCBF: mov eax,2/ret 4（★返 2）
+
+语义：**类型分派（推断名：按 ecx 值分类返回 2/3/1/-1）**——值 ∈ {0xF,0x10}
+返 2；∈ {1,0x28,2,3} 返 3；∈ {6,7} 调 0x5004E0（batch 190 partial——IsBuildCat5
+推断）==5 返 1 否则 0；∈ {0x39,0x20,0x1F} 返 1；其它返 -1。ret 4 单栈参。
+
+★原版怪癖（照抄）：① **多分支 cmp 链 + 共用出口**（11 条 cmp/je——无 jump
+table，顺序比较）；② **{6,7} 动态判定**（0x5004E0()==5 而非常量——唯一调用
+点）；③ **-1 未命中哨兵**（or eax,0xFFFFFFFF——全 1）；④ **分组常量**（
+{0xF,0x10}→2、{1,0x28,2,3}→3、{0x39,0x20,0x1F}→1——类型家族分组推断）。
+★跨批次连接：★★**0x5004E0（batch 190 partial——「IsBuildCat5 推断」；本条
+是其调用点，坐实该 partial 函数被类型分派消费）**。
+⚠️ partial：宿主类（0x6ABCxx 区推断）、分组常量语义（{0xF,0x10} 等类型码）、
+返回值的调用方用途（分类/权重推断）、0x5004E0()==5 的业务含义
+
+================================================================================
+（batch 273 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x6B7100（KillNodes 带名）依赖节点结构 + 0x54E590/0x54E3B0 身份（partial）
+   ——SpawnManager 家族立案时落地；本条价值 = [0xA8ED84] 时间戳应用 + 三分派
+   清理实锤。
+② 0x4ADCD0（单位列表刷新）依赖 [0xA8EC7C] 元素结构 + 0x50B6F0/0x567DA0/
+   0x4F9A50 身份（全 partial）——单位/会话家族整体立案时闭合；本条价值 =
+   [0x8871E0] 第六次应用 + 0x4F9A50 House 家族调用点。
+③ 0x6ABC60（类型分派 103B）逻辑即实现（cmp 链 + 常量分组），但分组语义未
+   定——分类家族立案时闭合；本条价值 = 0x5004E0 调用点坐实（batch 190
+   partial 用途落地）。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部 semantics_verified
+（三函数全段反汇编读完 + 5 个已登记函数交叉验证），partial 项如实标注。
