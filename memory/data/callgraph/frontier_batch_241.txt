@@ -1,0 +1,151 @@
+frontier batch 241 — AudioClass::sub_4060F0 + MapClass::SetPlaceBeaconMode + ConvertClass::SelectPlainBlitter（2026-10-14）
+
+口径：承接 batch 240，候选池 TOP 12 中三个带名（YRpp 覆盖）函数优先纳入：
+0x4060F0（52B）、0x4AC960（167B）、0x490B90（695B）。三函数均全反汇编读完
+（0x4060F0 全 0x34=52B、0x4AC960 全 0xA4=164B+ret、0x490B90 全 0x2B7=695B）。
+取证手段：disasm.py 直反汇编 + YRpp 头文件三证（地址+JMP 约定+签名）。
+
+================================================================================
+0x4060F0 —— AudioClass::sub_4060F0 事件设置（7 callers，全 0x34=52B 读完）
+================================================================================
+身份实锤：YRpp Audio.h:141
+  `void __fastcall sub_4060F0(int a1, int a2) { JMP_STD(0x4060F0); }`
+地址+JMP_STD（__fastcall：ecx=this、edx=a1、栈参 [esp+4]=a2）+推断名三证。
+（ranking 名 AudioStream::SetEvent 为 USER_DEFINED；YRpp 无 SetEvent 覆盖，
+按纪律用 YRpp 的 sub_4060F0 推断名，地址语义以机器码为准。）
+
+机器码（全 0x34）：
+    cmp dword[ecx+0xC],0x87E294（★★门卫：this->+0xC == 0x87E294 才处理）
+    jne 0x406121（★不等 → 直接返回）
+    mov eax,[esp+4]（★★a2）/ mov [ecx],edx（★this->[0] = a1）
+    test edx,edx / mov [ecx+8],eax（★this->[8] = a2）/ je 0x406121（★a1 空 → 返回）
+    push esi / mov esi,[edx+0x138]（★★a1->[0x138]）/ mov [ecx+4],esi（★this->[4] = a1->[0x138]）
+    pop esi / test eax,eax / jne 0x40611B（★a2 非空 → 跳过回退）
+    mov eax,[edx+0x24]（★★a2==0 → this->[8] 回退为 a1->[0x24]）
+    mov [ecx+8],eax
+    0x40611B: mov [edx+0x278],ecx（★★a1->[0x278] = this（回写））
+    0x406121: ret 4（★1 栈参）
+
+语义：**AudioClass::sub_4060F0（推断名：事件/回调设置）**——门卫
+`this->+0xC == 0x87E294`（事件类型哨兵）命中才处理：`this->[0]=a1`（事件源
+对象）、`this->[8]=a2`（参数）、`this->[4]=a1->[0x138]`（源对象回调字段）、
+`a1->[0x278]=this`（源对象回写本对象）；a2==0 时 `this->[8]` 回退为
+`a1->[0x24]`。
+
+★原版怪癖（照抄）：① **+0xC 门卫**（事件类型 == 0x87E294 常量才处理，否则
+静默返回）；② **a1 非空才写 +0x4/+0x278**（空源只写 +0/+0x8）；③ **a2==0
+回退链**（参数为空时从源对象 +0x24 取默认值）；④ **双向挂链**（this->[4] 取
+源 +0x138、源 +0x278 回写 this——事件源/接收器互相引用）。
+★跨批次连接：0x87E294 常量（AudioClass 事件类型哨兵，.rdata 区 0x87Exxx
+邻 batch 221 会话状态区 [0x887308]/[0x88730C]/[0x887310]）+AudioClass 族
+（Audio.h 系：ShutUp 0x406060、sub_406130/406170/4061D0 同族）+`+0x24`/`+0x138`
+（AudioClass 布局，0x138 疑似回调指针槽）。
+⚠️ partial：0x87E294 常量精确语义（事件 ID/类型）、a1/a2 类型（事件源/参数
+推断）、+0x138/+0x24/+0x278 字段精确含义
+
+================================================================================
+0x4AC960 —— MapClass::SetPlaceBeaconMode（7 callers，全 0xA4=164B 读完）
+================================================================================
+身份实锤：YRpp MapClass.h:431
+  `void SetPlaceBeaconMode(int mode) { JMP_THIS(0x4AC960); }`
+地址+JMP_THIS+int mode 参三证。（MapClass 侧边栏模式族：SetSellMode 0x4AC660/
+SetRepairMode 0x4AC8C0/SetTogglePowerMode 0x4AC820 紧邻同族。）
+
+机器码（全 0xA4）：
+    mov eax,[esp+4]（★★参数 mode）/ push ebx/esi / mov esi,ecx（★this MapClass）
+    mov bl,[esi+0x11B0]（★★+0x11B0 当前 beacon 模式）/ cmp eax,-1 / je 0x4AC984
+    test eax,eax / je 0x4AC980（★mode==0 → bl=0）
+    cmp eax,1 / jne 0x4AC989（★mode 其它 → 保持 bl）
+    mov bl,al / jmp 0x4AC989（★mode==1 → bl=1）
+    0x4AC980: xor bl,bl / jmp 0x4AC989
+    0x4AC984: test bl,bl / sete bl（★★mode==-1 → bl = !当前（toggle））
+    0x4AC989: cmp bl,[esi+0x11B4]（★★+0x11B4 已置模式）/ je 0x4ACA02（★无变化 → 返回）
+    mov eax,[esi+0x11A8] / test / jne 0x4ACA02（★★+0x11A8 非 0 → 跳过）
+    test bl,bl / je 0x4AC9B8（★bl==0 → 跳过校验）
+    mov eax,[0xA83D4C]（★★HouseClass 数组?）→ mov ecx,[eax+0x30] / push / mov ecx,0x89C3B0
+    call 0x430F30（★★(0x89C3B0 对象) 校验调用）/ test al / jne 0x4AC9B8 / xor bl,bl（★校验失败 → bl=0）
+    0x4AC9B8: mov edx,[esi]（★虚表）/ push 0×2 / mov ecx,esi
+    mov byte[esi+0x11B1],0 / [0x11B2],0 / [0x11B3],0 / [0x11B0],0（★★清四个状态字节）
+    call [edx+0x48]（★虚表槽 0x48 清理）
+    test bl,bl / je 0x4AC9F4
+    mov byte[esi+0x11B4],1（★★置 +0x11B4=1）/ call 0x48DC90 / pop / ret 4
+    0x4AC9F4: mov eax,[esi] / mov ecx,esi / mov byte[esi+0x11B4],0（★★清 +0x11B4）
+    call [eax+0x50]（★虚表槽 0x50 收尾）/ pop / ret 4
+
+语义：**MapClass::SetPlaceBeaconMode（放置信标模式开关，三证吻合）**——
+mode 三态（-1/0/1）转 bl：-1=toggle（取反 +0x11B0 当前值）、0=off、1=on；
+bl 与 +0x11B4（已置状态）不同且 +0x11A8==0（无活动对象）时：bl 置位前经
+[0xA83D4C] 取 House 对象 + 0x430F30 校验（失败回 bl=0）→ 清 +0x11B0-0x11B3
+四状态字节 → 虚表槽 0x48 清理 → bl=1 置 +0x11B4 调 0x48DC90；bl=0 清 +0x11B4
+虚表槽 0x50 收尾。
+
+★原版怪癖（照抄）：① **mode==-1 是 toggle**（`sete bl` 取当前取反——不传
+具体值只翻转）；② **mode 非 -1/0/1 保持 bl 原值**（走 0x4AC989 用 +0x11B0
+旧值）；③ **校验失败静默回 bl=0**（0x430F30 返 0 → xor bl,bl，不报错继续
+走关闭路径）；④ **+0x11A8 非 0 直接跳过**（有活动对象时不切换）；⑤ 四字节
+连清（+0x11B0/+0x11B1/+0x11B2/+0x11B3）与 +0x11B4 分开管理。
+★跨批次连接：MapClass 侧边栏模式族（SetSellMode 0x4AC660/SetRepairMode
+0x4AC8C0/SetTogglePowerMode 0x4AC820——batch 阶段③ 曾登记 SetSellMode+
+SetRepairMode）+[0xA83D4C]（HouseClass 数组，batch 103/109 FindByCountryIndex
+同数组区）+虚表槽 0x48/0x50（MapClass 清理/收尾接口族）+0x430F30（校验调用）。
+⚠️ partial：0x430F30/0x48DC90 身份、+0x11A8/+0x11B0-0x11B4 字段精确语义
+（beacon 状态推断）、[0xA83D4C] 精确对象
+
+================================================================================
+0x490B90 —— ConvertClass::SelectPlainBlitter（7 callers，全 0x2B7=695B 读完）
+================================================================================
+身份实锤：YRpp ConvertClass.h:34
+  `BlitterCore* SelectPlainBlitter(BlitterFlags flags) const { JMP_THIS(0x490B90); }`
+地址+JMP_THIS+BlitterFlags 位标志参三证；注释「if you're drawing a SHP, call
+SHPStruct::HasCompression and choose one of these two based on that」——
+SelectPlainBlitter 与 SelectRLEBlitter(0x490E50) 二选一，0x490E50 邻域已见
+同构开头（push esi/mov esi,ecx/mov eax,[esi+8]/test/jne/call 0x48EBF0）。
+
+机器码（全 0x2B7，结构）：
+    push esi / mov esi,ecx（★this ConvertClass）/ mov eax,[esi+8] / test / jne
+    call 0x48EBF0（★★[esi+8] 空 → 0x48EBF0 初始化）
+    mov eax,[esp+8]（★★参数 flags：al=低字节、ah=高字节）
+    分派树（按位测试多分支，30+ 个出口，每出口返回 this 的不同偏移字段）：
+    test al,0x10 → 分支1: test ah,0x40 → test ah,8 → 返 [esi+0xC0] / 返 [esi+0x58]
+       → [0x81DC24] 全局测试 → test ah,8 → 返 [esi+0x9C] / 返 [esi+0x30]
+       → test ah,8 → 返 [esi+0x70] / 返 [esi+0x14]
+    test al,0x1 → 分支2: ... 返 [esi+0x54]/[0x2C]/[0x10]
+    test al,0x20 → 分支3: ... 返 [esi+0xBC]/[0x98]/[0x68]/[0x8]
+    （分支 4/5/6 同构，出口字段覆盖 +0x8/+0x10/+0x14/+0x18/+0x1C/+0x20/
+     +0x28/+0x2C/+0x30/+0x34/+0x38/+0x3C/+0x40/+0x44/+0x48/+0x50/+0x54/
+     +0x58/+0x5C/+0x60/+0x64/+0x68/+0x6C/+0x70/+0x74/+0x78/+0x7C/+0x80/
+     +0x84/+0x88/+0x8C/+0x90/+0x98/+0x9C/+0xA0/+0xA4/+0xA8/+0xAC/+0xB0/
+     +0xB4/+0xBC/+0xC0/+0xC4/+0xC8/+0xCC 共 40+ 槽）
+    test eax,0x10000 → 返 [esi+0x90]；test eax,0x20000 → 返 [esi+0x8C]；
+    默认返 [esi+0x1C]（分支4 默认）/ [esi+0x20]（分支6 默认）
+
+语义：**ConvertClass::SelectPlainBlitter（按 BlitterFlags 选择 BlitterCore 指针，
+三证吻合）**——[esi+8] 空时先 0x48EBF0 初始化；按 flags 的位组合（al 低字节
+bit0/0x10/0x20/0x40 + ah 高字节 bit0x40/0x80/0x8/0x1 + [0x81DC24] 全局测试 +
+0x10000/0x20000 高位）分派到 40+ 个字段槽之一返回 BlitterCore*。每个分支是
+「test 位 → 返对应偏移」，无副作用、无写操作——纯指针选择器。
+
+★原版怪癖（照抄）：① **多级 test/je 链**（先 al 低字节分 6 分支、再 ah 高字节
+细分、[0x81DC24] 全局做第三级）——手写展开的位分派树，30+ 出口；② **[esi+8]
+空时惰性初始化**（call 0x48EBF0 补建）；③ **返回值是 this 的字段**（BlitterCore*
+存于 ConvertClass 内 40+ 槽，按 flags 选择）；④ 默认出口（无位命中）返
+[esi+0x1C]/[esi+0x20]（各分支族默认）；⑤ 0x10000/0x20000 高位独立分支。
+★跨批次连接：ConvertClass 家族（batch 104 CreateFromFile 0x72ADE0 实锤
+ConvertClass 构造器 0x48E740 + SHP 内嵌调色板 → ConvertClass 工厂）+SelectRLEBlitter
+0x490E50（同族，HasCompression 二选一）+[0x81DC24]（全局标志）+0x48EBF0
+（初始化）。⚠️ partial：flags 各 bit 精确语义（BlitterFlags 枚举映射）、40+
+槽位到 BlitterCore 家族字段布局（0x490E50 RLE 版同构待全读）、[0x81DC24]
+全局语义
+
+================================================================================
+（batch 241 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x4060F0 是 AudioClass 事件设置（纯字段搬运 + 门卫 + 双向挂链），依赖
+   [0x87E294] 常量语义与 AudioClass 布局（partial），建模留待音频家族整体。
+② 0x4AC960 是 MapClass 侧边栏信标模式（mode 三态 + 校验调用 0x430F30 +
+   虚表槽 0x48/0x50），依赖 UI 家族未闭合宿主。
+③ 0x490B90 是 BlitterCore 指针选择器（位分派树），与 batch 104 CreateFromFile
+   同族但 40+ 槽位布局未取证（partial）——建模会把未验证布局固化。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部 semantics_verified
+（三函数全段反汇编读完 + YRpp 三证），partial 项如实标注。
