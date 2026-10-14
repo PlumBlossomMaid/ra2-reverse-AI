@@ -1,0 +1,114 @@
+frontier batch 183 — InputManagerClass::IsKeyPressed 实锤 + 主控判定（PlayerPtr 闭合）+ 条件 word setter 族（2026-10-14）
+
+口径：承接 batch 182 候选，ranking.tsv unique_callers 降序取 0x54F5C0（9 callers，
+YRpp InputManagerClass.h:14 实锤）、0x697E70（9 callers，SessionClass::Am_I_Master
+观察名）、0x53F200（10 callers）。三者 prologue 均干净，机器码读全/读尽。
+
+================================================================================
+0x54F5C0  InputManagerClass::IsKeyPressed（9 callers，全 0x43 读完）
+================================================================================
+身份实锤：YRpp InputManagerClass.h:14-15
+    bool IsKeyPressed(int key) const
+        { JMP_THIS(0x54F5C0); }
+地址 + JMP_THIS + 1 参签名（ret 4）三证（类单例 Instance @ [0x87F770]）。
+
+机器码（全 0x43）：
+    push esi / mov esi,[esp+8]           ; ★ key 参数
+    and esi,0xFF                        ; ★ key & 0xFF（截断到低 8 位）
+    cmp si,1 / je 查鼠标
+    cmp si,2 / jne 0x54F5EE
+  查鼠标:
+    push 0x17                           ; ★ VK_CAPITAL=0x11? 不，0x17=23
+    call dword[0x7E13EC]                ; ★ 导入表（GetAsyncKeyState 推断）
+    cmp eax,1 / jne 0x54F5EE
+    dec si / neg si / sbb esi,esi / add esi,2   ; ★ si 归一（1→1 / 2→2）
+  0x54F5EE:
+    mov ecx,esi / and ecx,0xFFFF
+    call 0x53EC90                       ; ★★ 0x53EC90 键盘状态查询（未登记）
+    neg ax / sbb eax,eax               ; ★ bool 化：ax != 0 → 1
+    pop esi / neg eax / ret 4
+
+语义：**InputManagerClass::IsKeyPressed（按键状态查询）**——key 先 & 0xFF
+截断；key∈{1,2}（鼠标左右键推断）时先经导入表 [0x7E13EC] 查一次（配
+常量 0x17）再归一化 key 值；随后统一调 **0x53EC90**（按键状态查询，未
+登记）取 ax，最后 `neg ax/sbb eax,eax` bool 化返回。
+★输入管理查询端——GameOptionsClass 的 KeyForceFire1/2 等（YRpp
+InputManagerClass.h:18-29 六个 IsForceXxxKeyPressed 包装都走本函数）。
+
+⚠️ partial：0x53EC90 未登记（★下批优先取证）、[0x7E13EC] 导入身份
+（GetAsyncKeyState 推断）、常量 0x17 含义、si 归一（1→1/2→2）的精确算式。
+
+================================================================================
+0x697E70  SessionClass::Am_I_Master（9 callers，0x697E70-0x697EAB 前段读完）
+================================================================================
+身份：rank 观察名 SessionClass::Am_I_Master（YRpp SessionClass.h 未收录该名
+JMP——名字未确认；0x697xxx 区 Session/网络会话区，batch 178 的 0x721210
+不同区）。
+
+机器码（前 0x3C）：
+    push ebx/esi/edi
+    mov edi,[esp+0x10]                  ; ★ 参数（可选 owner）
+    test edi / jne 0x697E81
+    mov edi,[0xA83D4C]                  ; ★★ 参数空 → 全局 [0xA83D4C]（PlayerPtr）
+   0x697E81:
+    cmp dword[0xA8B238],4 / jne 0x697ECD  ; ★ 全局 [0xA8B238] 必须 == 4（会话状态）
+    test edi / je 0x697ECD
+    mov eax,[ecx+0x3074]                ; ★ this->+0x3074（本地 ID）
+    cmp eax,-1 / je 0x697EAB
+    mov edx,[edi+0x30]                  ; ★ owner->+0x30（House/Player ID）
+    xor ecx,ecx / cmp edx,eax / sete cl
+    pop edi/esi / mov al,cl / pop ebx / ret 4
+    ; ★ 返回 (owner->+0x30 == this->+0x3074)
+
+语义：**SessionClass::Am_I_Master（是否为主控端）**——参数空时取全局
+**[0xA83D4C]（PlayerPtr）**；要求全局会话状态 [0xA8B238]==4（联机进行中
+推断），然后比较 owner->+0x30 与 this->+0x3074 返回相等判定。
+★**闭合 batch 171 的 0xA83Dxx 全局区引用**：batch 171 的 0x4FAE50
+（HouseClass::Fire_SW）用 [0xA83D4C] 判 isCurrent，本条同款全局但语义是
+「会话主控归属」——[0xA83D4C] 确认是 PlayerPtr/House 指针全局。
+
+⚠️ partial：0x697ECD 分支（[0xA8B238]!=4 时返回）、this->+0x3074 字段名、
+owner->+0x30 字段语义（House ID 推断）、会话状态 4 的枚举值。
+
+================================================================================
+0x53F200  条件 word setter 族（10 callers，0x53F200-0x53F25C 读完）
+================================================================================
+机器码（三成员）：
+  0x53F200（条件 word setter）：
+    cmp dword[0x828140],2 / jne 返回    ; ★ 全局 [0x828140] 必须 == 2 才写
+    mov ax,word[esp+4] / mov [ecx],ax  ; ★ 写 word 到 this[0]
+   返回: ret 4
+  0x53F220（全局清零）：
+    xor eax / mov [0xAA0510],eax / [0xAA0514] / [0xAA0518] / [0xAA051C]
+    ret                                 ; ★ 清 [0xAA0510..0xAA051C] 四 dword
+  0x53F240（sqrt 静初始化）：
+    fld qword[0x7E1710] (=256.0) / fld qword[0x7E1708] (=2.0)
+    call 0x7C8FB0 / fadd st(0),st(0) / sub esp,8 / fstp qword[esp]
+    call 0x4CAC40                      ; ★ 台账已登记 MSVC6 sqrt
+    ...                                 ; ★ 存全局（0x53F259 起）
+
+语义：**条件 word setter 族（0x53F2xx 区）**——0x53F200 是受全局状态
+门控的 word setter（[0x828140]==2 才写，非 2 时**静默跳过不写**——原版
+怪癖级细节：调用方无法从返回值察觉未写入）；0x53F220 清 [0xAA0510..0xAA051C]
+四 dword 全局；0x53F240 是 batch 176 的 0x42E430 同款 sqrt 静初始化模板
+（[0x7E1710]=256.0/[0x7E1708]=2.0 → 0x7C8FB0 → fadd → sqrt）。
+
+★跨批次：batch 176（0x42E430 同款 sqrt 模板）+ batch 166（[0x7E1710]=256.0/
+[0x7E1708]=2.0 实测常量）——0x53F2xx 区浮点常量静初始化族第二处。
+⚠️ partial：[0x828140] 状态 2 的语义、[0xAA0510..] 全局用途、
+0x53F240 后续成员、宿主类。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x54F5C0 → YRpp InputManagerClass（0x87F770 单例）+ 0x53EC90（★未登记，
+   下批优先）。
+2. 0x697E70 → batch 171（[0xA83D4C] PlayerPtr 同全局区闭合）。
+3. 0x53F200 → batch 176（0x42E430 sqrt 模板）+ batch 166（常量实锤）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x54F5C0 的 0x53EC90 语义与 [0x7E13EC] 导入身份。
+2. 0x697E70 的 [0xA8B238] 会话状态枚举与 +0x3074/+0x30 字段名。
+3. 0x53F200 的 [0x828140] 状态语义与宿主类。
