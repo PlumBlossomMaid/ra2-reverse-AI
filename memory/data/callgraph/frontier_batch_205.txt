@@ -1,0 +1,90 @@
+frontier batch 205 — ScenarioClass::IsDefinedWaypoint + HouseClass::GiveMoney + 恒返 -15 桩（2026-10-14）
+
+口径：承接 batch 204 候选，ranking.tsv unique_callers 降序取 0x68BD80（8 callers）、
+0x4F9950（8 callers）、0x48ACE0（8 callers）。三者 prologue 均干净，机器码读全。
+
+================================================================================
+0x68BD80  ScenarioClass::IsDefinedWaypoint（8 callers，全 0x38 读完）
+================================================================================
+机器码（全 0x38，body=59）：
+    mov eax,[esp+4]                          ; ★ 参数 = waypoint 索引
+    cmp eax,0x2BE / jge 0x68BDB6            ; ★ 越界（≥702）→ 返 0
+    test eax,eax / jl 0x68BDB6              ; ★ 负 → 返 0
+    mov dx,[ecx+eax*4+0x632]                ; ★ 数组 +0x632 每项 4B，取 word X
+    cmp dx,[0xB05458] / jne 0x68BDB1        ; ★ 与全局 [0xB05458] 比对
+    mov ax,[ecx+eax*4+0x634]                ; ★ +0x634 = word Y（同项）
+    cmp ax,[0xB0545A] / je 0x68BDB6         ; ★ 与全局 [0xB0545A] 比对
+  0x68BDB1:
+    mov al,1 / ret 4                         ; ★ 任一不等 → 已定义 返 1
+  0x68BDB6:
+    xor al,al / ret 4                        ; ★ 越界/坐标全等 → 未定义 返 0
+
+语义：**ScenarioClass::IsDefinedWaypoint（rank 带名，机器码验证吻合）**——
+参数 waypoint 索引 ∈ [0, 0x2BE) 且该 waypoint 坐标
+（数组 [ecx+0x632] 每项 4B 的 word X @+0 / word Y @+2，即 +0x632/+0x634）
+与全局 [0xB05458]/[0xB0545A]（当前生效坐标对推断）**不全等**时返回 1
+（已定义），越界或与全局坐标对全等时返回 0（未定义）。
+★带名验证：ScenarioClass::IsDefinedWaypoint 与机器码行为一致——
+waypoint 数组 +0x632（4B/项 word 坐标对）实锤为 ScenarioClass waypoint
+表（YRpp WaypointClass 系推断）。
+★[0xB05458]/[0xB0545A] 全局坐标对——新全局登记（当前 waypoint 目标推断）。
+
+⚠️ partial：[0xB05458]/[0xB0545A] 语义（当前 waypoint 目标推断）、
++0x632 waypoint 表精确类型（YRpp WaypointClass* 推断）、0x2BE=702 上限
+（waypoint 数量推断）。
+
+================================================================================
+0x4F9950  HouseClass::GiveMoney（8 callers，全 0x15 读完）
+================================================================================
+机器码（全 0x15，body=21）：
+    mov eax,[esp+4]                          ; ★ 参数 = 金额
+    mov edx,[ecx+0x30C]                     ; ★ this->+0x30C（资金字段）
+    add edx,eax / mov [ecx+0x30C],edx       ; ★ 直接累加
+    ret 4
+
+语义：**HouseClass::GiveMoney（rank 带名，机器码验证吻合）**——
+把参数金额直接累加到 this->+0x30C（HouseClass 资金/Credits 字段推断），
+无符号性检查、无上下界 clamp（原版怪癖：裸加，负数也可累加——负收入
+直接扣资金，与 YRpp HouseClass::GiveMoney 语义一致）。
+★带名验证：HouseClass::GiveMoney 与机器码行为一致——+0x30C 实锤为
+HouseClass 资金字段（YRpp HouseClass::GiveMoney 的 Credits 语义推断）。
+★0x4Fxxxx 区（batch 200 的 0x4F9950 邻域）——HouseClass/经济系统端；
+紧邻 0x4F9970 是同族第二份（3 参、复杂分支——转账/扣款类推断）。
+
+⚠️ partial：+0x30C 字段精确身份（Credits 推断）、负金额语义、紧邻
+0x4F9970 身份。
+
+================================================================================
+0x48ACE0  恒返 -15 桩（8 callers，全 0x08 读完）
+================================================================================
+机器码（全 0x08，body=8）：
+    mov eax,0xFFFFFFF1                       ; ★ 恒返 -15
+    ret 0xC                                  ; ★ 3 参清理
+
+语义：**恒返 -15 桩（0x48xxxx 区）**——固定返回 0xFFFFFFF1（-15）
+并清理 3 个参数（ret 0xC）。同 batch 001 的 0x4068E0（空 stub 返 0，
+诊断/日志调用点）思路——**带固定错误码的占位桩**（未实现接口/禁用
+路径推断）。紧邻 0x48ACF0 是另一函数（fild dword 浮点入口——0x48xxxx
+区浮点计算端）。
+★0x48xxxx 区（batch 195 的 0x4870D0、batch 200 的 0x486770 同区）——
+对象判定/浮点计算端。
+★-15 = 0xFFFFFFF1 为固定哨兵错误码（HRESULT 风格推断）。
+
+⚠️ partial：-15 错误码业务含义、宿主调用方契约、0x48ACF0 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x68BD80 → rank 带名 ScenarioClass::IsDefinedWaypoint——waypoint 表
+   +0x632 实锤（[0xB05458]/[0xB0545A] 新全局）。
+2. 0x4F9950 → rank 带名 HouseClass::GiveMoney——+0x30C 资金字段实锤
+   （经济系统端）。
+3. 0x48ACE0 → batch 001（0x4068E0 空 stub 同思路）+ batch 195/200
+   （0x48 区同区）——固定错误码桩。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x68BD80 的 [0xB05458]/[0xB0545A] 与 +0x632 waypoint 表精确身份。
+2. 0x4F9950 的 +0x30C 字段精确身份与紧邻 0x4F9970。
+3. 0x48ACE0 的 -15 错误码业务含义。
