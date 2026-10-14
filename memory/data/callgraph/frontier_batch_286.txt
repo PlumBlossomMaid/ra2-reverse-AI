@@ -1,0 +1,132 @@
+frontier batch 286 — 全局门控取址 0x405170 + Matrix3D::RotateY 0x5AF080 + 网络注册分派 0x634E10（2026-10-14）
+
+口径：承接 batch 285，候选池 TOP 12 取三个函数：0x405170（18B）、0x5AF080
+（156B，带名 Matrix3D::RotateY）、0x634E10（585B）。三函数均全反汇编读完
+（0x405170 尾 0x405181 ret + 15 nop、0x5AF080 尾 0x5AF119 ret 4 + 6 nop、
+0x634E10 尾 0x635056 ret 4 + 8 nop——body 与 ranking 吻合）。YRpp 查覆盖
+（0x5AF080 带名；0x405170/0x634E10 无）。取证手段：disasm.py 直反汇编 + 已
+登记函数交叉验证（batch 268/269/272/281/282 + 0x705D20 共 7 函数）。
+
+================================================================================
+0x405170 —— 全局门控取址（推断名：全局空则常量串，否则 this+0x6C）（6 callers，全 0x12=18B 读完）
+================================================================================
+机器码（全 0x12）：mov eax,[0x87E2A0]（★全局指针）/test eax,eax
+（★空判定）/mov eax,0x816204（★常量指针——预设值）/je 0x405181（★空 → 直
+接 ret，eax=0x816204）/lea eax,[ecx+0x6C]（★非空 → this->+0x6C）→ ret
+
+语义：**全局门控取址（推断名：全局空则常量串，否则 this+0x6C）**——
+[0x87E2A0] 全局为空时返回常量 0x816204（字符串/静态对象推断），非空时返回
+this->+0x6C 字段地址。18 字节紧凑门控 getter。
+
+★原版怪癖（照抄）：① **先预设后改写**（mov eax,0x816204 恒执行，je 跳过 lea
+——无分支冗余）；② **全局 [0x87E2A0] 门控**（空/非空两态）；③ **常量 0x816204
+与字段 +0x6C 二选一**。
+★跨批次连接：[0x87E2A0]（新登记全局——门控标志推断）+0x816204（新登记常量
+指针）+0x405xxx 区（batch 279 的 0x407A90 同 0x40xxxx 区）。
+⚠️ partial：宿主类（0x405xxx 区推断）、[0x87E2A0] 语义（实例存在推断）、
+0x816204 指向对象（字符串/静态数据推断）、+0x6C 字段含义
+
+================================================================================
+0x5AF080 —— Matrix3D::RotateY（带名，Y 轴旋转矩阵）（6 callers，全 0x9C=156B 读完）
+================================================================================
+机器码（全 0x9C 主结构）：
+    sub esp,8/fld dword[esp+0xC]（★参数 = 角度）/fstp qword[esp+8]（★转 double）
+    mov ebx,[esp+8]/mov edi,[esp+0x10]/mov esi,ecx（★this 3×3 矩阵）
+    push edi/push ebx/call 0x4CACB0（★★表驱动 sin——batch 268 实锤）
+    fstp dword[esp+0x20]（★sin 存栈）
+    push edi/push ebx/call 0x4CAD00（★★表驱动 cos——batch 268 实锤）
+    三行旋转：fld [esi]/fld [esi+8]/fld st(1)/fmul st(3)（★cos×元素）
+      fld st(1)/fmul [esp+0x28]（★sin×元素）/fsubp st(1)（★x' = x*cos - z*sin）
+      fstp [esi] → fmul st(2)/fxch/fmul [esp+0x14]/faddp（★z' = x*sin + z*cos）
+      fstp [esi+8]
+    第二行同款：+0x10/+0x18（fld 对 + cos/sin 交叉）
+    第三行同款：+0x20/+0x28
+    ret 4（★1 栈参）
+
+语义：**Matrix3D::RotateY（Y 轴旋转矩阵，带名）**——对 3×3 矩阵三行（每行前
+两元素，实际是 X/Z 对）做 Y 轴旋转：新 x = x·cos - z·sin、新 z = x·sin +
+z·cos，角度经 0x4CACB0（sin）/0x4CAD00（cos）表驱动三角求值。与 batch 269 的
+0x5AF4D0（__RotateVector）/0x5AFC20（共轭计算）同 Matrix3D 家族。
+
+★原版怪癖（照抄）：① **角度转 double 传参**（fld float → fstp qword 再拆两
+dword 压栈——sin/cos 取 double 入参）；② **三行手写展开**（+0/+8、+0x10/+0x18、
++0x20/+0x28——无循环）；③ **x'=x·cos-z·sin / z'=x·sin+z·cos 标准 Y 旋公式**；
+④ **常量经 [esp+0x28]/[esp+0x14] 复用**（sin/cos 栈槽）。
+★跨批次连接：**0x4CACB0（sin batch 268）/0x4CAD00（cos batch 268）——本条应用
+点**+**0x5AF4D0（Matrix3D::__RotateVector batch 269）/+0x5AFC20（batch 269 共轭）
+——Matrix3D 家族第三成员**。
+⚠️ partial：宿主调用方（旋转用途推断）、角度单位（弧度推断）、0x5AF120 邻函
+数（疑似 RotateX）
+
+================================================================================
+0x634E10 —— 网络注册分派（推断名：查名注册 + 向量压入 + 坐标匹配）（6 callers，全 0x249=585B 读完）
+================================================================================
+机器码（全 0x249 主结构）：
+    sub esp,0x118/push 族/mov ebp,[esp+0x124]（★参数 = 输出指针推断）
+    mov ebx,ecx（★this）/mov edi,[ebp]（★输出->+0 对象指针）
+    push edi/call 0x634CC0（★查名索引——未登记）/or edx,-1/cmp eax,edx
+      /jne 0x635033（★已存在 → 路径 B 引用计数）
+    mov ecx,edi/call 0x705D20（★★[ecx+0x514] getter——已登记）
+    mov esi,eax/mov eax,[esi+4]/lea edx,[esp+0x10]/mov [esp+0x10],ebx
+    lea ecx,[esi+4]/push edx/call [eax+0x10]（★虚表槽 0x10 查找）
+    cmp eax,-1/jne 0x634E5B/xor esi（★未找到 → esi=0）
+    0x634E5B: mov ecx,[esi+0x14]/cmp ecx,1/jne 0x634E67/mov esi,ebx（★计数 1
+      → this）/0x634E67: dec eax/jns 0x634E6D/lea eax,[ecx-1]/push eax/
+      mov ecx,esi/call 0x636E60（★★batch 282 循环缓冲索引访问——应用点！）
+    mov esi,eax
+    mov ecx,edi/call 0x705D20（★再 getter）/mov ecx,[eax+0x14]/dec/jns
+      /[eax+8][ecx*4]（★取末元素）
+    cmp esi,ecx/jne 0x634EA5（★相同 → 输出 -1 收尾）
+    0x634EA5: push edi/mov ecx,esi/call 0x6346B0（★对象取——未登记）
+    mov esi,[eax+4]/mov ecx,0x1b/lea edi,[esp+0x48]/push 0x78
+    rep movsd 0x1b dword + movsw + movsb（★★拷贝 0x6F 字节对象——0x1B×4+2+1）
+    call 0x7C8E17（★★operator new batch 001）/xor ebp/je 0x634EDD
+    mov [eax+0x70],ebp/mov byte[eax],0/mov [eax+0x74],-1（★新对象初始化）
+    再拷贝 0x1B dword 到新对象 → mov edx,[ebp+0x70]/inc/mov [ebp+0x70],edx
+      （★引用计数++）
+    lea esi,[ebx+0x20]（★this 向量）+8 容量/+0x10 计数/jl 直写
+    满：+0xD 标志/容量 0 检查/虚表槽 8 Resize（★★batch 282 的 0x5AD7D0 同款
+      压入模式——应用点）→ [esi+0x10]++/[edx+eax*4]=ebp（★压入新对象）
+    坐标匹配段: [ebx+0x30] 计数 + [ebx+0xA8] 门控/lea [ebx+0x38] 拷贝 0x1B
+      dword 到栈 → 循环 [ebx+0x24][ebp*4] 取元素 → 拷贝 → call 0x633BC0
+      （★★batch 282 网络解包→坐标——应用点）×2 → call 0x459F60
+      （★★batch 281 三元组相等比较——应用点！坐标对比对）
+    jne 0x635008 → [ebx+0xB0]=ebp（★命中记录）→ [ebx+0xB4]=-1 → 输出
+      [edx+8]=eax → ret 4
+    路径 B: mov ecx,[ebx+0x24]/mov ecx,[ecx+eax*4]/mov [ecx+0x74],edx
+      （★-1）/mov [ebx+0xB4],edx/inc [ecx+0x70]（★引用计数++）→ 输出
+      [ebp+8]=eax → ret 4
+
+语义：**网络注册分派（推断名：查名注册 + 向量压入 + 坐标匹配）**——按名字查
+（0x634CC0）对象索引；已存在走路径 B（引用计数++ + 输出）；否则经 getter
+（0x705D20）+ 虚表槽 0x10 + 循环缓冲（0x636E60）解析目标，未找到时创建新对象
+（0x7C8E17 分配 0x78B + 拷贝 0x6F 字节 + 引用计数），压入 this+0x20 向量（满
+时虚表槽 8 Resize——batch 282 压入模式）；再从 [ebx+0x24] 表遍历逐项做网络坐标
+解包（0x633BC0）+ 三元组相等比较（0x459F60）匹配命中记录 [ebx+0xB0]。585B
+大分派函数。
+
+★原版怪癖（照抄）：① **三函数跨批应用**（0x636E60 循环缓冲 + 0x633BC0 解包 +
+0x459F60 三元组比较——batch 282/281 登记函数在此汇聚）；② **0x6F 字节对象拷贝**
+（rep movsd 0x1B + movsw + movsb 手写）；③ **引用计数 +0x70**（inc 语义）；
+④ **虚表槽 8 Resize 压入**（同 batch 282 的 0x5AD7D0 模式）；⑤ **查名双路径**
+（已存在引用++ vs 新建压入）；⑥ **输出 [ebp+8] 写索引/值**。
+★跨批次连接：**0x636E60（batch 282 循环缓冲——本条应用点）**+**0x633BC0（batch
+282 网络解包）**+**0x459F60（batch 281 三元组比较）**+**0x705D20（getter 已登记）**
++0x7C8E17（batch 001 op_new）+0x634CC0/0x6346B0（未登记）+[0x87E2A0] 无关。
+⚠️ partial：宿主类（0x634xxx 区网络消息族推断——batch 282 的 0x634400 同区）、
+0x634CC0/0x6346B0 精确身份、+0x20 向量元素类型、[ebx+0x24] 表语义、坐标匹配的
+业务含义（对端同步推断）
+
+================================================================================
+（batch 286 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x405170（全局门控取址 18B）逻辑即实现（全局空/非空二选一），宿主未定——单
+   登记录入。
+② 0x5AF080（Matrix3D::RotateY 156B）与 batch 269 的 0x5AF4D0/0x5AFC20 同家族
+   ——Matrix3D 家族立案时整体落地；本条价值 = sin/cos 应用点 + 标准 Y 旋公式。
+③ 0x634E10（网络注册分派 585B）依赖 0x634CC0/0x6346B0 未登记 + 向量元素/表
+   语义 partial——网络消息家族立案时闭合；本条价值 = 三个已登记函数（batch
+   281/282）的汇聚应用点实锤。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部 semantics_verified
+（三函数全段反汇编读完 + 7 个已登记函数交叉验证），partial 项如实标注。
