@@ -1,0 +1,126 @@
+frontier batch 196 — RMG 工作数组索引（直连主线）+ 全局表分配 + session 区大函数（2026-10-14）
+
+口径：承接 batch 195 候选，ranking.tsv unique_callers 降序取 0x58C2A0（9 callers）、
+0x775700（9 callers）、0x6EBAD0（9 callers）。三者 prologue 均干净，机器码读全。
+
+================================================================================
+0x58C2A0  RMG 工作数组索引（9 callers，0x58C2A0-0x58C39D 读完）
+================================================================================
+机器码（0x58C2A0，全 0x1E）：
+    movsx eax,word[ecx+2]        ; ★ 坐标 Y（word 符号扩展）
+    imul eax,[0x89C2DC]          ; ★★ × side（[0x89C2DC]=side，QWEN.md 实锤）
+    movsx ecx,word[ecx]          ; ★ 坐标 X
+    add eax,ecx                  ; ★ Y*side + X（一维索引）
+    mov ecx,[0xABED10]           ; ★★ 工作数组基址 [0xABED10]（QWEN.md 实锤
+                                  ;   每格 0x50B，0x578E60 分配 side²×0x50）
+    lea eax,[eax+eax*4]          ; ★ ×5
+    shl eax,4                    ; ★ ×16 → ×0x50 步进
+    add eax,ecx                  ; ★ 返 &work[Y*side+X]
+    ret
+  紧邻 0x58C2C0（单参索引）：
+    lea eax,[ecx+ecx*4] / mov ecx,[0xABED10] / shl eax,4 / add eax,ecx / ret
+    ; ★ 直接 ×0x50 步进（无 Y*side+X，调用方已给一维索引）
+  紧邻 0x58C2D0（遍历计数）：
+    mov [ecx+0xC],0 / mov edx,[0x89C2DC] / imul edx,edx（side²）
+    jle 收尾 / mov esi,[0xABED10] / mov edi,[ecx+8]
+    loop: cmp [eax+esi+0x38],edi / jne 下一个    ; ★ 项 +0x38 字段 == 参数
+    cmp word[eax+esi],0 / jne 命中               ; ★ X 坐标非零
+    cmp word[eax+esi+2],0 / je 下一个              ; ★ Y 坐标
+    命中: inc dword[ecx+0xC]                      ; ★ 计数++
+    下一个: add eax,0x50 / dec edx / jne loop      ; ★ 0x50 步进遍历
+  紧邻 0x58C320（浮点比例+拒绝采样，0x58C320-0x58C39D）：
+    mov eax,[0x89C2DC] / sub esp,0x18 ...
+    mov ebx,eax / imul ebx,eax（side²）/ lea esi,[ebx-1]
+    fild qword[esp+0x10]（side²）/ fstp qword[esp+0x20]
+  采样:
+    mov ecx,0xABE890 / call 0x65C780             ; ★★ Randomizer::Random
+    fild qword[esp+0x18] / fmul qword[esp+0x20]（×side²）
+    fmul qword[0x7ED898]                          ; ★★ × 1/2^32（batch 175 同常量）
+    call 0x7C5F00                                 ; ★ _ftol 截断
+    cmp eax,esi / ja 采样                         ; ★★ 拒绝采样（> side²-1 重试）
+    lea ecx,[eax+eax*4] / shl ecx,4 / add ecx,[0xABED10]  ; ★ 命中 work[索引]
+    cmp [ecx+0x38],... /（后续条件循环）
+
+语义：**RMG 工作数组索引与采样（直连 QWEN.md 主线）**——
+①0x58C2A0 是 `&work[Y*side+X]`（坐标系索引，×0x50 步进，[0xABED10] 基址 +
+[0x89C2DC]=side——QWEN.md 实锤的 MapClass 工作数组）；②0x58C2C0 是单参
+变体；③0x58C2D0 遍历 side² 项按 +0x38 字段+XY 坐标非零计数；④0x58C320
+是**浮点比例+拒绝采样**（Randomizer::Random × side² × 1/2^32 → _ftol →
+`ja` 重试）——与 batch 175 登记的 PickRange 0x598030 **完全同款惯用法**
+（fild/fmul [0x7ED898]/_ftol/ja），QWEN.md 的「取数惯用法」第二条实例。
+★**闭合 QWEN.md 实锤全局**：[0xABED10]（工作数组，QWEN.md ⑤已实锤）与
+[0x89C2DC]（side，QWEN.md ⑤已实锤）在 callgraph 台账的首次正式引用——
+RMG 主线基建接入 callgraph 体系。
+
+⚠️ partial：0x58C2D0 的 +0x38 字段语义、0x58C320 采样后的完整条件循环、
+与 0x598030（PickRange）的精确差异（side² vs hi-lo 区间）。
+
+================================================================================
+0x775700  全局表分配（9 callers，0x775700-0x77577B 读完）
+================================================================================
+机器码（前 0x7C）：
+    mov eax,[0xB72F50]           ; ★ 全局计数 [0xB72F50]
+    mov edi,[eax*8+0xB72D28]     ; ★ 全局表 [0xB72D28]（8B/项步进）
+    mov ebx,edx / mov esi,ecx
+    mov edx,5 / mov [edi],0 / mov [eax*8+0xB72D2C],0  ; ★ 清表项
+    mov ecx,ebx / call 0x4A3B40   ; ★ 0x4A3B40（校验）
+    test eax / jne 0x77573A
+    ret 0xC                       ; ★ 失败 → 返（eax=0）
+  0x77573A:
+    mov edx,[0xB72F50] / inc edx / mov [0xB72F50],edx  ; ★ 计数++
+    push 0 / mov ecx,[esp+0x14] / push ecx
+    push edx / mov edx,[esp+0x14] / push edx / push eax / push esi
+    call [0x7E1450]               ; ★ 导入表 [0x7E1450]（注册）
+    mov esi,eax / test esi / jne 0x775774
+    mov eax,[0xB72F50] / dec eax / mov [0xB72F50],eax  ; ★ 失败 → 计数回退
+    xor eax / ret 0xC
+  0x775774:
+    mov eax,[0xA8ED8C] / inc eax / mov [0xA8ED8C],eax   ; ★ 全局 [0xA8ED8C]++
+    ...（继续初始化）
+
+语义：**全局表分配+注册（[0xB72D28] 8B/项表）**——按计数 [0xB72F50] 取
+表项清 0，经 0x4A3B40 校验后计数++，经导入表 [0x7E1450] 注册新对象；
+失败则计数回退（原版怪癖：已 ++ 的回退成立，未被污染的计数保持一致性）；
+成功再 inc 全局 [0xA8ED8C]。
+
+⚠️ partial：0x4A3B40 校验语义、[0x7E1450] 导入身份、[0xB72D28] 表项结构
+（8B）、[0xA8ED8C] 全局、宿主类（0x775xxx 区）。
+
+================================================================================
+0x6EBAD0  会话区大函数（9 callers，0x6EBAD0-0x6EBB28 前段读完）
+================================================================================
+机器码（前 0x58）：
+    sub esp,0x38 / push ebp / mov ebp,ecx
+    mov byte[esp+0xA],1 / mov esi,[ebp+0x54]（★ this->+0x54 子对象）
+    mov byte[esp+0xB],0 / test esi / je 0x6EBF45（收尾）
+    mov eax,[ebp+0x40] / test / jne 0x6EBB01
+    mov eax,[ebp+0x3C] / test / mov [ebp+0x40],eax / je 0x6EBF45
+    mov ecx,ebp / call 0x6EBF50    ; ★ 0x6EBF50（校验/初始化）
+    test al / jne 0x6EBF45
+    push ebx/edi / test esi / je 0x6EBBD2
+    mov al,[esi+0x90] / test al / je 0x6EBBD2  ; ★ 子对象 +0x90 标志
+    mov eax,[esi+0x6C] / test ...（★ 子对象 +0x6C 字段继续）
+
+语义：**会话/对象管理大函数（0x6EBxxx 区）**——this->+0x54 子对象存在时
+处理：+0x40 为空则取 +0x3C（延迟初始化），经 0x6EBF50 校验通过后按子对象
++0x90 标志与 +0x6C 字段继续。0x6EBxxx 区（batch 183 的 0x697E70 session 区
+邻域）——会话状态推进端。
+
+⚠️ partial：+0x54/+0x40/+0x3C 字段语义、0x6EBF50 身份、子对象 +0x90/+0x6C
+字段、0x6EBF45 收尾。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x58C2A0 → QWEN.md 实锤全局（[0xABED10]/[0x89C2DC]）+ batch 175
+   （0x598030 PickRange 同款拒绝采样）——RMG 主线基建接入 callgraph。
+2. 0x775700 → 导入表 [0x7E1450]（batch 190 的 0x4E4770 同区）+ 全局表
+   分配模式（batch 181 的 0x5F3B80 同思路）。
+3. 0x6EBAD0 → 0x6E 区（batch 183 的 session 区邻域）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x58C2A0 的 0x58C2D0 +0x38 字段与 0x58C320 采样后循环。
+2. 0x775700 的 0x4A3B40 与 [0x7E1450] 身份。
+3. 0x6EBAD0 的 +0x54 子对象与 0x6EBF50 身份。
