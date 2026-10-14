@@ -1,0 +1,147 @@
+frontier batch 175 — TacticalClass::RegisterCellAsVisible 实锤 + RMG PickRange 台账闭合 + LightConvert 引用计数（2026-10-14）
+
+口径：承接 batch 174 候选，ranking.tsv unique_callers 降序取 0x6DA7D0（10 callers，
+YRpp TacticalClass.h:46 实锤）、0x598030（10 callers，RMG 怪癖清单已实锤）、
+0x483E30（10 callers）。三者 prologue 均干净，机器码读全/读尽。
+
+================================================================================
+0x6DA7D0  TacticalClass::RegisterCellAsVisible（10 callers，前 0x1A0 读完）
+================================================================================
+身份实锤：YRpp TacticalClass.h:46
+    void RegisterCellAsVisible(CellClass* pCell)
+        { JMP_THIS(0x6DA7D0) };
+地址 + JMP_THIS + 1 参签名三证。
+
+机器码还原（关键路径）：
+    mov eax,[0x87F7F4]           ; ★ 全局（MapClass/帧相关）
+    test eax / jne 0x6DA96F      ; ★ 非空 → 跳过登记
+    mov edi,[esp+0x1C]           ; ★ pCell 参数（CellClass*）
+    mov eax,[0xA8ED84]           ; ★ 全局标记（batch 124 同款触发器全局）
+    cmp [edi+0x5C],eax / je 跳过 ; ★ 已登记（+0x5C 时间戳/标记）→ 跳过
+    test byte[edi+0x12C],8 / jne 继续2   ; ★ +0x12C bit3
+    mov cl,byte[edi+0x138] / test cl / je 跳过  ; ★ +0x138 标志
+  继续2:
+    mov [edi+0x5C],eax           ; ★ 记录登记标记（+0x5C = [0xA8ED84]）
+    lea eax,[esp+0xC] / push ebp / push eax / mov ecx,edi
+    call 0x480A30                ; ★ CellClass::GetCenterCoords（YRpp CellClass.h:158 实锤）
+    mov ecx,[eax] / mov esi,[eax+4] / mov edx,[eax+8]  ; ★ 中心坐标 (X,Y,Z)
+    mov eax,[edi+0x12C] / test al,8 / jne 分支A
+    test al,0x10 / jne 分支A
+    ; ★★ 分支A 与 分支B 是同一组等距坐标变换（batch 166 的 0x6D1F10 同款）：
+    ;    lea eax,[ecx+ecx*2]/lea eax,[eax+eax*4]/shl 2 → ×30
+    ;    sar ... → 30x、15x、-30y、15y → 变换后 X'=30(X-Y)>>8、Y'=15(...)
+    ;    （与 batch 166 0x6D1F10 的 lea ×3/×5/shl/sar 序列逐条同构）
+    call 0x6D20E0                ; ★ TacticalClass 内部（相机/坐标换算）
+    ...
+    mov edx,[ebx+0xB4] / mov ecx,[ebx+0xB0]   ; ★ this->+0xB0/+0xB4（相机偏移）
+    sub esi,ecx / sub eax,edx    ; ★ 减相机位置
+    mov ecx,[0x886FA0]           ; ★ 视口边界 [0x886FA0..0x886FAC]（batch 128 同全局区）
+    lea edx,[ecx-0x1E] / cmp esi,edx / jl 跳过   ; ★ 边界检查 [-0x1E, +0x1E] 外 → 不登记
+    ...
+    mov eax,[ebx+0xE0]           ; ★ this->+0xE0 可视单元计数
+    cmp eax,0x31F / jge 跳过     ; ★ 上限 799
+    mov ecx,[esp+0x1C] / mov [ebx+eax*4+0xE4],ecx  ; ★ ★ 写入 +0xE4 可视单元表[计数]
+    inc dword[ebx+0xE0]          ; ★ 计数++
+    mov edx,[esp+0x1C] / mov byte[edx+0x138],0     ; ★ 清 pCell->+0x138 标志
+    mov byte[ebx+0xD7D],1        ; ★ this->+0xD7D 脏标志置 1
+    ...
+
+语义：**TacticalClass::RegisterCellAsVisible（登记可视单元）**——pCell 满足
+条件（[0xA8ED84] 标记未登记过 +0x12C/0x138 标志）时：取格中心坐标
+（0x480A30 GetCenterCoords），经与 batch 166 的 0x6D1F10 同款等距坐标
+变换（30(X-Y)>>8 等），减相机偏移（+0xB0/+0xB4）后做视口边界检查
+（[0x886FA0..]），在边界内则写入 +0xE4 可视单元表（上限 799 项），
+清 pCell->+0x138、置 +0xD7D 脏标志。
+★跨批次：batch 166（0x6D1F10 等距坐标变换同款序列）+ batch 128
+（0x886xxx 全局区）+ batch 124（[0xA8ED84] 触发器全局）+ YRpp
+CellClass::GetCenterCoords（0x480A30）——TacticalClass 可视性登记端。
+
+⚠️ partial：0x6D20E0/0x480A30 精确语义、+0x12C/+0x138 字段含义、
+0x31F=799 上限合理性、0x6DA96F 分支（[0x87F7F4] 非空时）。
+
+================================================================================
+0x598030  RMG PickRange（10 callers，全 0x61 读完）
+================================================================================
+身份：QWEN.md 怪癖清单已实锤条目
+    「PickRange@0x598030：+lo 发生在 _ftol 之前，且拒绝判定用无符号 ja
+    与 hi 比」——本条为 callgraph 台账正式补登记，闭合怪癖清单↔台账。
+
+机器码（全 0x61）：
+    sub esp,0x18 / push esi / mov esi,edx    ; ★ hi（edx）
+    mov eax,esi / sub eax,ecx / inc eax      ; ★ range = hi-lo+1
+    xor edi / mov [esp+8],eax / mov [esp+0xC],edi
+    fild qword[esp+8]                        ; ★ (double)range
+    mov [esp+8],ecx / mov [esp+0xC],edi
+    fstp qword[esp+0x10]                     ; ★ 存 range
+    fild qword[esp+8]                        ; ★ (double)lo
+    fstp qword[esp+0x18]                     ; ★ 存 lo
+    mov ecx,0xABE890 / call 0x65C780         ; ★ Randomizer::Random（全局 [0xABE890]）
+    mov [esp+8],eax / mov [esp+0xC],edi
+    fild qword[esp+8]                        ; ★ (double)Random()
+    fmul qword[esp+0x10]                     ; ★ × range
+    fmul qword[0x7ED898]                     ; ★ × 1/2^32（比例系数）
+    fadd qword[esp+0x18]                     ; ★★ + lo 发生在 _ftol 之前!
+    call 0x7C5F00                            ; ★ _ftol 截断（向零）
+    cmp eax,esi / ja 0x59805E                ; ★★ 无符号 ja 与 hi 比 → 重采!
+    pop edi / pop esi / add esp,0x18 / ret
+
+语义：**RMG 区间随机（PickRange）**——range=hi-lo+1、lo 分别 fild 入栈，
+Randomizer::Random（0x65C780，全局 0xABE890）取 32 位无符号，×(double)
+range × [0x7ED898]（1/2^32 归一）**+lo**，_ftol 截断，结果与 hi 用
+**无符号 ja** 比较超出则重采——三条怪癖逐条对上 QWEN.md 清单。
+★跨批次：batch 163（0x5980C0 浮点数学链同区）[0x7ED898] 常量（RMG
+rng-ledger 已实锤 = 除法系数）+ Randomizer 族（0x65C780）——RMG 取数
+基建登记到 callgraph 台账。
+
+⚠️ partial：[0x7ED898] 精确值（rng-ledger 断言 1/2^32 未逐字节复核）、
+相对 0x65C7E0 RandomRanged 的关系。
+
+================================================================================
+0x483E30  LightConvert 引用计数 setter（10 callers，前 0xA0 读完）
+================================================================================
+机器码（关键路径）：
+    mov eax,[esp+4]              ; ★ 参数：新 LightConvert 指针
+    sub esp,0x14 / push esi / mov esi,ecx   ; ★ this（CellClass）
+    test eax / je 0x483E8B       ; ★ 空指针 → 走坐标检查分支
+    mov ecx,[esi+0x34]           ; ★ this->+0x34 旧 LightConvert
+    test ecx / je 0x483E55
+    mov dl,[0xA8E9A0] / test dl / je 0x483E55
+    dec dword[ecx+0x194]         ; ★ 旧对象引用计数 --（+0x194）
+   0x483E55:
+    mov [esi+0x34],eax           ; ★ 存新指针到 this->+0x34
+    mov ecx,[eax+0x194] / inc ecx / mov [eax+0x194],ecx  ; ★ 新对象计数 ++
+    mov eax,[esi+0x34] / mov ecx,[eax+0x198] / mov [esp+0x1C],ecx
+    mov edx,[eax+0x19C] / mov [esp+4],edx
+    mov eax,[eax+0x1A0] / mov [esp+8],eax    ; ★ 复制 +0x198/+0x19C/+0x1A0
+    jmp 0x483F7A
+   0x483E8B:                    ; ★ 空指针分支：
+    cmp word[esi+0x24],0 / jne 0x483E9D     ; ★ +0x24/+0x26 坐标检查
+    cmp word[esi+0x26],0 / je 0x483FDF
+    ...
+
+语义：**LightConvert 引用计数 setter（InitLightConvert 行为）**——把 this->+0x34
+从旧对象换成新对象：旧计数（+0x194）在 [0xA8E9A0] 开启时--，新计数++，
+然后复制 +0x198/+0x19C/+0x1A0 三个字段到栈参数。★[0xA8E9A0] 全局开关
+（batch 066/173 的 GetBuilding/GetSomeObject 同款）——CellClass 灯光转换
+管理。
+★跨批次：batch 066/173（[0xA8E9A0] 全局开关）+ [0x89E410]（batch 173
+构造器族同全局区）——CellClass 灯光/内容字段族。
+
+⚠️ partial：[0xA8E9A0] 开关语义、+0x198/+0x19C/+0x1A0 字段含义、
+0x483F7A/0x483FDF 后续分支。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x6DA7D0 → batch 166（同款等距坐标变换）+ batch 128（0x886xxx 全局）+
+   batch 124（[0xA8ED84]）+ YRpp CellClass::GetCenterCoords（0x480A30）。
+2. 0x598030 → QWEN.md 怪癖清单（PickRange 三条闭合）+ Randomizer 族
+   （0x65C780）+ batch 163（同区浮点链）。
+3. 0x483E30 → 0xA8E9A0 全局开关（batch 066/173）+ CellClass 灯光族。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x6DA7D0 的 0x6D20E0/0x480A30 精确语义与 +0x12C/+0x138 字段。
+2. 0x598030 的 [0x7ED898] 精确值（rng-ledger 断言 1/2^32 未复核）。
+3. 0x483E30 的 +0x198/+0x19C/+0x1A0 字段含义。
