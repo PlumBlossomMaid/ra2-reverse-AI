@@ -1,0 +1,142 @@
+frontier batch 200 — 窗口坐标变换 + 区间判定器 + MainLoop 驱动宿主循环（2026-10-14）
+
+口径：承接 batch 199 候选，ranking.tsv unique_callers 降序取 0x775690（9 callers）、
+0x486770（9 callers）、0x6241F0（8 callers）。三者 prologue 均干净，机器码读全。
+
+================================================================================
+0x775690  窗口坐标变换（9 callers，全 0x6C 读完）
+================================================================================
+机器码（全 0x6C）：
+    sub esp,0x10 / push esi / mov esi,edx   ; ★ 参数2 = 输出结构
+    push edi / push esi / push ecx          ; ★ ecx = 窗口句柄
+    call [0x7E13BC]                         ; ★★ USER32!GetWindowRect（IAT 实测）
+    mov edi,eax / test edi,edi / jne 0x7756ab  ; ★ 失败 → 返 0
+  0x7756ab:
+    mov ecx,[0xB73550]                      ; ★ 全局窗口 [0xB73550]
+    lea eax,[esp+8] / push eax / push ecx
+    call [0x7E14C4]                         ; ★★ USER32!GetClientRect（IAT 实测）
+    mov eax,[0xB73550] / lea edx,[esp+8] / push edx / push eax
+    call [0x7E14B8]                         ; ★★ USER32!ClientToScreen（IAT 实测）
+    mov edx,[esi] / mov ecx,[esi+8] / mov eax,[esp+8]
+    sub edx,eax / sub ecx,eax               ; ★ 左/右 - 屏幕偏移X
+    mov eax,[esp+0xc] / mov [esi],edx / mov edx,[esi+4]
+    mov [esi+8],ecx / mov ecx,[esi+0xc] / sub edx,eax / sub ecx,eax
+    mov eax,edi / mov [esi+4],edx / mov [esi+0xc],ecx  ; ★ 上/下 - 屏幕偏移Y
+    pop edi / pop esi / add esp,0x10 / ret
+
+语义：**窗口 RECT 屏幕→客户坐标变换（0x775xxx 区）**——对句柄 ecx 调
+GetWindowRect 把窗口矩形写入 esi 结构（+0/+4/+8/+0xC = left/top/right/bottom），
+失败返 0；成功则对全局窗口 [0xB73550] 取 GetClientRect，再对客户原点
+ClientToScreen 得屏幕偏移，把矩形四边全部减去该偏移——矩形从屏幕坐标
+换算成 [0xB73550] 客户区坐标。返回 GetWindowRect 结果。
+★**IAT 三连实锤**：0x7E13BC=USER32!GetWindowRect、0x7E14C4=USER32!
+GetClientRect、0x7E14B8=USER32!ClientToScreen（PE 导入表解析实测）。
+★0x775xxx 区（batch 196 的 0x775700 同区）+ [0xB73550] 全局窗口句柄——
+本批的 0x775690 与 batch 196 的 0x775700（全局表分配，[0xB72D28] 表）共享
+0x775xxx 宿主类区，但用不同的全局（[0xB73550] vs [0xB72F50]/[0xB72D28]）。
+
+⚠️ partial：[0xB73550] 窗口身份、esi 输出结构精确用途、GetWindowRect
+失败返 0 的调用方处理。
+
+================================================================================
+0x486770  区间判定器（9 callers，全 0x1F 读完）
+================================================================================
+机器码（全 0x1F）：
+    mov edx,[0xABAD1C] / cmp edx,-1 / je 0x48678c  ; ★ 全局==-1 → 恒 0
+    mov eax,[ecx+0x38] / cmp eax,edx / jl 0x48678c ; ★ 值 < 下界 → 0
+    add edx,0x10 / cmp eax,edx / jge 0x48678c      ; ★ 值 >= 下界+0x10 → 0
+    mov al,1 / ret                                 ; ★ 区间内 → 1
+  0x48678c:
+    xor al,al / ret
+  紧邻 0x486790（同族第二份）：
+    mov eax,[ecx+0x38] / mov ecx,[0xAA0E24] / cmp eax,ecx
+    jl 0x4867a7 / add ecx,0x10 ...                 ; ★ 同模板，[0xAA0E24] 全局
+
+语义：**区间判定器（0x486xxx 区）**——this->+0x38 落在
+[[0xABAD1C], [0xABAD1C]+0x10) 区间内返回 1；[0xABAD1C]==-1（未初始化）
+恒返 0；越界返 0。紧邻 0x486790 是同模板第二份（全局 [0xAA0E24]）。
+★0x48 区（batch 195 的 0x4870D0 word 数组判定族、batch 199 的 0x45AEA0
+邻域）——对象判定/状态查询端；[0xABAD1C] 为区间基址全局。
+
+⚠️ partial：+0x38 字段语义、[0xABAD1C]/[0xAA0E24] 全局语义、区间跨度 0x10
+的含义。
+
+================================================================================
+0x6241F0  MainLoop 驱动宿主循环（8 callers，全 0xB7 读完）
+================================================================================
+机器码（全 0xB7，body=182）：
+    push esi / mov esi,[esp+8]             ; ★ 参数1 = 宿主对象
+    push edi / push esi / call 0x622650    ; ★ 0x622650（校验+取句柄）
+    mov edi,eax / test edi,edi / jne 0x624212
+  失败:
+    mov eax,[esi] / push edi / push edi / mov ecx,esi
+    call [eax+4]                           ; ★ 虚表槽 4（清理）
+    xor eax,eax / pop edi / pop esi / ret 4
+  0x624212:
+    push 1 / push edi / call [0x7E1498]    ; ★★ USER32!ShowWindow（IAT 实测）
+    push edi / call [0x7E14D0]             ; ★★ USER32!SetForegroundWindow
+    mov ecx,[0x87F770] / call 0x54F720     ; ★ 全局 [0x87F770] 帧推进（读 +0x318
+                                            ;   计数 vs +0x314 上次，不等 call 0x5D4D50）
+    mov edx,[esi] / mov ecx,esi / call [edx+8]  ; ★ 虚表槽 8 条件
+    test al,al / jne 0x624293              ; ★ 非零 → 退出循环
+    mov eax,[esi] / mov ecx,esi / call [eax+0x10] ; ★ 虚表槽 0x10 条件
+    test al,al / jne 0x624293
+    call 0x5D4D50
+    mov eax,[0xA8B238] / test eax,eax / je 0x62427c
+    cmp eax,5 / je 0x62427c                ; ★ [0xA8B238]∈{0,5} 跳过
+    mov al,[0xA8D60E] / test al,al / jne 0x62427c  ; ★ [0xA8D60E] 字节
+    mov eax,[0xA8DAB4] / test eax,eax / jne 0x62427c ; ★ [0xA8DAB4] 字节
+    call 0x55CBF0 / test al,al / jne 0x624281 ; ★ 0x55CBF0 = mov al,[0xABCD58]
+                                                ;   （[0xABCD58] 标志读取）
+    call 0x55D360 / test al,al / jne 0x624293  ; ★★★ MainLoop 0x55D360
+                                                ;   （QWEN.md 游戏运行流实锤！）
+  0x624281:
+    xor cl,cl / call 0x532100               ; ★ 0x532100（读 [0x8A00A0] 标志，
+                                              ;   条件链 0x52FEC0/0x4F4780）
+    mov edx,[esi] / mov ecx,esi / call [edx+8]  ; ★ 虚表槽 8
+    test al,al / je 0x624238               ; ★ 循环！回到虚表槽 8 判定
+  0x624293:
+    mov ecx,edi / call 0x622720            ; ★ 0x622720（0x54F720 帧推进 +
+                                              ;   0x608070 + [0x7E13F4] +
+                                              ;   遍历 [0xB72F50] 计数收尾）
+    mov eax,[esi] / mov ecx,esi / call [eax+0xc] ; ★ 虚表槽 0xC（收尾）
+    pop edi / pop esi / ret 4
+
+语义：**MainLoop 驱动宿主循环（0x62xxxx 区）**——
+①0x622650 校验并取句柄（内部用 batch 196 的 0x4A3B40 校验，失败返 0）；
+②ShowWindow(1) + SetForegroundWindow 激活窗口；③[0x87F770] 对象 0x54F720
+帧推进（+0x318 计数 vs +0x314 上次值）；④主循环：虚表槽 8/0x10 条件判定 +
+[0xA8B238]∈{0,5}/[0xA8D60E]/[0xA8DAB4] 全局筛选 + [0xABCD58] 标志
+（0x55CBF0）→ **调用 MainLoop 0x55D360**，然后 0x532100（含 0x52FEC0/
+0x4F4780 条件链）；⑤虚表槽 8 返回假才退出，走 0x622720 收尾 + 虚表槽 0xC。
+★★★**直连 QWEN.md 游戏运行流主线**：QWEN.md 实锤「MainLoop 0x55D360 →
+胜负判定 0x4F8440 区」——本条 0x6241F0 是 **MainLoop 的调用方实锤**
+（宿主循环层，循环内每次迭代调 MainLoop 直到虚表槽 8 条件终结）。
+★**IAT 二连实锤**：0x7E1498=USER32!ShowWindow、0x7E14D0=USER32!
+SetForegroundWindow（PE 导入表解析实测）。
+★0x622650 用 batch 196 的 0x4A3B40（0x775700 同款校验）+ 0x622720 遍历
+[0xB72F50]（batch 196 的 0x775700 计数全局）——0x62xxxx 区与 0x775xxx 区
+共享全局表体系（跨区同体系第二例，batch 198 的 0x5E32D0 同 0x7CA67F）。
+★[0x87F770] 全局对象（0x54F720 帧推进，+0x314/+0x318 计数对）——0x87F7xx
+区与 MapClass::Instance [0x87F7E8] 同区（QWEN.md 实锤邻域）。
+
+⚠️ partial：宿主类（0x62xxxx 区）、虚表槽 8/0x10/0xC 身份、[0xA8B238]/
+[0xA8D60E]/[0xA8DAB4]/[0xABCD58] 全局语义、0x532100 的 0x4F4780 条件链
+（0x4F8440 胜负判定区邻域推断）、0x622650/0x622720 精确行为。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x775690 → batch 196（0x775700 同 0x775xxx 区）+ IAT 三连
+   （GetWindowRect/GetClientRect/ClientToScreen）——窗口坐标变换族。
+2. 0x486770 → batch 195（0x4870D0 word 数组判定族同 0x48 区）——
+   区间判定模板（紧邻 0x486790 第二份）。
+3. 0x6241F0 → **QWEN.md 游戏运行流主线（MainLoop 0x55D360 调用方）** +
+   batch 196（0x4A3B40 校验 + [0xB72F50] 计数同体系）——宿主循环驱动族。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x775690 的 [0xB73550] 窗口身份与输出结构用途。
+2. 0x486770 的 [0xABAD1C] 全局与 +0x38 字段语义。
+3. 0x6241F0 的宿主类、虚表槽身份与 0x532100 条件链。
