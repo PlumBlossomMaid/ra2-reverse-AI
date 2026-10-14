@@ -1,0 +1,139 @@
+frontier batch 167 — Swizzle 注册（存档 swizzle 待验证项闭合）+ 矩形/Point 运算 + 枚举→ID 映射（2026-10-14）
+
+口径：承接 batch 166 候选，ranking.tsv unique_callers 降序取 0x4E4E60（20 callers）、
+0x6CF240（19 callers，SwizzleManagerClass 邻域）、0x487F20（18 callers，batch 162
+已引用未登记）。三者 prologue 均干净，机器码读全/读尽。
+
+================================================================================
+0x6CF240  SwizzleManagerClass 注册（Swizzle；19 callers，0x6CF240-0x6CF2C0 读完）
+================================================================================
+身份实锤：YRpp SwizzleManagerClass.h——构造器 `JMP_THIS(0x6CF180)`；类含
+    DynamicVectorClass<SwizzlePointerClass> Swizzles_Old;   // 8 字节元素
+    DynamicVectorClass<SwizzlePointerClass> Swizzles_New;   // {DWORD unknown_0; void* pAnything}
+0x6CF240 落在构造器后的成员区（紧邻 0x6CF350 = QWEN.md 存档系统「待验证」
+SwizzleManager::Process 同区）。
+
+机器码（0x6CF240，0x76 读完）：
+    push ebx / push edi
+    mov edi,[esp+0x10]           ; ★ 参数 2：void** pointer（待注册指针的地址）
+    test edi,edi / jne 继续
+    mov eax,0x80004003 / ret 8   ; ★ E_POINTER（COM 错误码）
+  继续:
+    mov ebx,[edi]                ; ★ ebx = *pointer（指针值）
+    test ebx,ebx / jne 继续2
+    xor eax,eax / ret 8          ; ★ *pointer==0 → 直接返回 S_OK（无事可做）
+  继续2:
+    mov eax,[esp+0xc]            ; ★ 参数 1：vector 结构（Swizzles_New +0x4?）
+    mov ecx,[eax+0xc]            ; ★ +0xC = Count
+    lea esi,[eax+4]              ; ★ esi = &vector->+4（Items 区）
+    mov eax,[eax+0x14]           ; ★ +0x14 = 容量/上限
+    cmp eax,ecx / jl 直接追加    ; ★ Count >= 上限 → 走扩展
+    mov al,[esi+0xd]             ; ★ +0xD 字节标志（IsAllocated?）
+    test al,al / jne 继续3
+    test ecx,ecx / jne 跳到收尾  ; ★ 标志==0 且 Count>0 → 跳过
+  继续3:
+    mov eax,[esi+0x14] / test eax,eax / jle 收尾
+    mov edx,[esi] / add eax,ecx  ; ★ 新容量 = Count + delta
+    push 0 / push eax / mov ecx,esi / call [edx+8]  ; ★ 虚表槽 8：Resize/扩展
+    test al,al / je 收尾
+  直接追加:
+    mov eax,[esi+0x10]           ; ★ +0x10 = Count（此 vector 的）
+    mov edx,[esi+4]              ; ★ +0x4 = Items 缓冲
+    lea ecx,[eax+1] / mov [esi+0x10],ecx  ; ★ Count++
+    mov [edx+eax*8],ebx          ; ★ 条目 +0 = 指针值（*pointer）
+    mov [edx+eax*8+4],edi        ; ★ 条目 +4 = 指针地址（pointer）
+  收尾:
+    mov [edi],0                  ; ★★ *pointer = 0（注册后把源指针置空！）
+    xor eax,eax / ret 8          ; ★ 返回 S_OK
+
+语义：**SwizzleManagerClass::Swizzle(void** pointer) 注册语义**——把
+(*pointer, pointer) 8 字节对追加进 Swizzles_New 条目区，随后**把 *pointer
+置 0**（防重复注册/标记已接管）。参数空 → E_POINTER（0x80004003）；*pointer
+空 → 直接 S_OK。紧邻 0x6CF2C0 是同构变体（+0x2C/+0x1C 偏移 → Swizzles_Old）。
+
+★**闭合 QWEN.md 存档系统待验证项**：「SwizzleManager::Process(0x6CF350)
+对无条目地址的处理」——本条先落地其**注册侧**（Swizzle）；Process 侧 0x6CF350
+紧邻同区，后续可续证。★YRpp 的 ISwizzle::Swizzle 是存档加载时
+`SwizzleManagerClass::Instance.Swizzle((void**)&var)` 的入口（Macro.h:32）。
+
+⚠️ partial：+0xC/+0x14/+0x10 精确字段名（DynamicVectorClass 布局未逐一
+对齐）、0x6CF2C0 变体与 Swizzles_Old 的精确对应、0x6CF350 Process 侧。
+
+================================================================================
+0x487F20  Point 差 + 矩形交集/合并（18 callers，0x487F20-0x488020 读完）
+================================================================================
+身份：batch 162（CellClass::FindInfantrySubposition）已引用
+    「call 0x487F20（★batch 120 实锤的矩形交集/交点运算!）」——本次登记
+    闭合该引用。
+
+机器码：
+  0x487F20（0x1D 全读完）——Point 差：
+    mov eax,[esp+8]              ; ★ 参数 2：输出/目标 Point
+    mov edx,[ecx] / mov ecx,[ecx+4]  ; ★ this(X,Y)
+    mov esi,[eax] / mov esi,[eax+4]
+    sub edx,esi / sub ecx,esi     ; ★ this - arg（X/Y 各自相减）
+    mov [eax],edx / mov [eax+4],ecx ; ★ 结果写回 arg
+    ret 8
+  0x487F40（矩形运算，主体到 0x487FE7）：
+    mov eax,[edx+8] / test eax / jle 直拷       ; ★ this.W/H 检查
+    mov eax,[edx+0xc] / test eax / jle 直拷
+    mov ecx,[esp+0x18] / mov eax,[ecx+8] / test / jle 直拷   ; ★ arg.W/H
+    mov esi,[ecx+0xc] / test / jle 直拷
+    ; 交点计算：this(Left,Top,Right,Bottom) 与 arg 的
+    ;   max(Left)/max(Top)/min(Right)/min(Bottom) 裁剪
+    ;   若 this 在 arg 内则扩边（add ebp,edi / add edx,ebx）
+    ;   输出 4 值到 [esp+0x20] 目标
+    mov [ecx],edi / mov [ecx+4],ebx / mov [ecx+8],ebp / mov [ecx+0xc],edx
+    ret 4
+  直拷分支（0x487FEA / 0x48800A）：整结构 4 dword 直拷。
+
+语义：**0x487F20 = 两点坐标差（Point2D 减法）；0x487F40 = 两矩形
+(Left,Top,Right,Bottom) 的交集/合并裁剪运算**——batch 162 引用语义
+（矩形交集/交点运算）实锤。★与 CellClass 坐标/矩形基建相关（batch 162
+FindInfantrySubposition 用于求步兵子位置交点）。
+
+⚠️ partial：0x487F40 精确公式（扩展 vs 收缩分支语义）、宿主类、调用方
+上下文。
+
+================================================================================
+0x4E4E60  枚举→ID 映射（20 callers，全 0x60 读完）
+================================================================================
+机器码（全 0x60）：
+    mov eax,ecx                  ; ★ 入参（ecx，枚举值）
+    test eax,eax / jne 1
+    mov eax,0x6A3 / ret          ; ★ 0 → 0x6A3
+   1: cmp eax,1 / jne 2 / mov eax,0x6A4 / ret   ; ★ 1 → 0x6A4
+   2: cmp eax,2 / jne 3 / mov eax,0x6A5 / ret   ; ★ 2 → 0x6A5
+   3: cmp eax,3 / jne 4 / mov eax,0x6A6 / ret   ; ★ 3 → 0x6A6
+   4: cmp eax,4 / jne 5 / mov eax,0x6A7 / ret   ; ★ 4 → 0x6A7
+   5: cmp eax,5 / jne 6 / mov eax,0x6A8 / ret   ; ★ 5 → 0x6A8
+   6: cmp eax,6 / jne else / mov eax,0x6AA / ret ; ★★ 6 → 0x6AA（跳过 0x6A9！）
+  else:
+    sub eax,7 / neg eax / sbb eax,eax
+    and eax,0xFFFFF954 / add eax,0x6AB / ret
+    ; ★ 编译器分支优化：x==7 → 0x6AB；x>=8 → -1（0xFFFFFFFF）
+
+语义：**枚举→ID 常量映射（7 项 + 哨兵）**——0..5 → 0x6A3..0x6A8、
+6 → 0x6AA、7 → 0x6AB、>=8 → -1。★★**原版怪癖：6 跳过 0x6A9 直跳 0x6AA**
+（映射表里 0x6A9 缺失——疑对应被移除的枚举项，照抄）。末尾
+`sub/neg/sbb/and/add` 是编译器对「==7 ? 0x6AB : -1」的优化形态，语义
+等价于 `x==7 ? 0x6AB : (x<8 ? … : -1)`（已按分支语义还原，非神秘魔法数）。
+
+⚠️ partial：0x6A3-0x6AB 常量含义（疑 ID/索引表）、宿主类、调用方语义
+（20 callers 分布未逐一查）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x6CF240 → YRpp SwizzleManagerClass（0x6CF180 构造器）+ QWEN.md 存档
+   待验证项（0x6CF350 Process 邻域）。
+2. 0x487F20 → batch 162（FindInfantrySubposition 引用闭合）+ batch 120
+   （矩形交集实锤）。
+3. 0x4E4E60 → 枚举映射族（无既有登记，新增）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x6CF240 的 +0xC/+0x14/+0x10 字段名与 Swizzles_Old/New 精确对应。
+2. 0x487F40 矩形运算的精确裁剪公式分支语义。
+3. 0x4E4E60 的 0x6A3-0x6AB 常量含义（0x6A9 缺失原因）。
