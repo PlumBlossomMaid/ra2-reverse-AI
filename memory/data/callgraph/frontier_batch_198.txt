@@ -1,0 +1,159 @@
+frontier batch 198 — -2 特判 setter 族中间份（族三份全齐）+ 双标志虚表转发器 + 配置快照变更检测（2026-10-14）
+
+口径：承接 batch 197 候选，ranking.tsv unique_callers 降序取 0x696FF0（9 callers）、
+0x541370（9 callers）、0x5E32D0（9 callers）。三者 prologue 均干净，机器码读全。
+
+================================================================================
+0x696FF0  -2 特判 setter 族中间份（9 callers，全 0x23 读完）
+================================================================================
+机器码（全 0x23）：
+    mov eax,[esp+4]              ; ★ 参数
+    cmp eax,-2 / jne 0x697006    ; ★ 特判：参数 == -2
+    mov [ecx+0x5b],-1 / mov [ecx+0x5f],eax  ; ★ 写入 +0x5B=-1、+0x5F=-2
+    ret 4
+  0x697006:
+    mov [ecx+0x5b],eax / mov [ecx+0x5f],-1  ; ★ 常规：+0x5B=参数、+0x5F=-1
+    ret 4
+
+语义：**-2 特判 setter 对（族中间份）**——与 batch 197 的 0x697020（+0x63/+0x67）
+逐字节同构、与 batch 194 的 0x696F90（+0x4B/+0x4F）同构，仅偏移不同
+（+0x4B/+0x4F、+0x5B/+0x5F、+0x63/+0x67，步进 +0x10）。
+★**族三份至此全齐**：batch 194 登记首份 0x696F90（+0x4B/+0x4F）→ batch 197
+登记第三份 0x697020（+0x63/+0x67）→ 本条登记中间份 0x696FF0（+0x5B/+0x5F）——
+族口径正式闭合为三成员，全部同一机器码模板（cmp eax,-2/jne + 双写对）。
+★0x69xxxx 区（batch 193 的 0x69AE90、batch 197 的 0x697020 同区）——会话/房间
+字段管理端。
+
+⚠️ partial：+0x5B/+0x5F 字段语义（会话属性推断）、-2 特判含义（batch 194/197
+同 partial）。
+
+================================================================================
+0x541370  双标志虚表转发器（9 callers，全 0x32 读完）
+================================================================================
+机器码（全 0x32）：
+    mov al,[ecx+4] / test al,al / je 0x54139d   ; ★ 标志 +4
+    mov al,[ecx+5] / test al,al / je 0x54139d   ; ★ 标志 +5（双标志闸门）
+    mov edx,[esp+0x10] / mov ecx,[ecx+0x48]     ; ★ 子对象 [ecx+0x48]
+    push edx / mov edx,[esp+0x10] / mov eax,[ecx]
+    push edx / mov edx,[esp+0x10] / push edx
+    mov edx,[esp+0x10] / push edx               ; ★ 连续压 4 参（转发）
+    call [eax+0x34]                             ; ★ 虚表槽 0x34
+    ret 0x10                                    ; ★ 4 参 × 4B
+  0x54139d:
+    xor eax,eax / ret 0x10                      ; ★ 任一标志为 0 → 返 0
+
+语义：**双标志闸门 + 虚表槽 0x34 四参转发器（0x541xxx 区）**——this->+4 与
++5 两个字节标志都非零时才转发：从调用者栈连续取 4 个参数（[esp+0x10] 处系列，
+每次 push 后 esp 位移使四次读数对应调用方的 4 个实参），经 this->+0x48 子对象
+的虚表槽 0x34 调用，ret 0x10 清 4 参；任一标志为 0 直接返 0（静默跳过）。
+★与紧邻 0x5413B0（mov al,[ecx+4]/test/je 0x5413e7……同构第二份）同族——
+0x541370/0x5413B0 是同一转发模板的两个成员。
+★0x541xxx 区（batch 195 的 0x541820 IPXManagerClass::Service 同区）——网络/
+会话服务端。
+
+⚠️ partial：+4/+5 标志语义、+0x48 子对象类型、虚表槽 0x34 身份、被转发 4 参
+语义（0x5413B0 同 partial）。
+
+================================================================================
+0x5E32D0  配置快照变更检测+镜像同步（9 callers，全 0x2CB 读完）
+================================================================================
+机器码（全 0x2CB，body=715）：
+  prologue:
+    sub esp,0x20c / push ebx / mov [esp+7],dl / mov [esp+6],cl
+    ; ★ cl/dl 两个字节参数存入栈槽
+  时间戳比对:
+    push 0 / call 0x7CA67F            ; ★ 取当前时间戳（batch 196 同款计数）
+    mov ecx,[0xAC11B8] / add esp,4 / sub eax,ecx
+    jne 0x5E3310                       ; ★ 与上次记录不等 → dirty 路径
+    mov al,[esp+6] / test al,al / je 0x5E3304
+    mov [0xAC11BC],1                   ; ★ 参数 1 非零 → 置延迟 dirty 标记
+  0x5E3304:
+    mov al,[esp+7] / test al,al / je 0x5E3593  ; ★ 参数 2 非零 → 直接收尾
+  0x5E3310 (dirty 路径):
+    mov al,[0xAC11BC] / test al,al / je 0x5E331e
+    mov [esp+6],1                       ; ★ 延迟标记被消费 → 强制参数 1=1
+    mov eax,[0xAC116C] / mov [0xAC11BC],0 ; ★ 清延迟标记
+    test eax,eax                        ; ★ [0xAC116C] 分支阈值
+    push 0 / je 0x5E3347
+    call 0x7CA67F / sub eax,[0xAC11B8] / cmp eax,5
+    jl 0x5E335e / mov bl,1              ; ★ 距上次 >5 → bl=1
+    jmp 0x5E335e
+  0x5E3347:
+    call 0x7CA67F / sub eax,[0xAC11B8] / cmp eax,2
+    jl 0x5E335e / mov bl,1              ; ★ >2 → bl=1
+  0x5E335e:
+    mov al,[esp+6] / test al,al / je +2 / mov bl,1  ; ★ 参数 1 也置 bl
+  字段快照比较（8 处，任一不等 → bl=1）:
+    [0x8316D8] vs [0xA8B268]  (dword)   ; ★ 快照区 vs 配置源
+    [0x8316DC] vs [0xA8B25C]  (dword)
+    [0x8316E0] vs [0xA8B270]  (dword)
+    [0xAC11BD] vs [0xA8B262]  (byte)
+    [0xAC11BE] vs [0xA8B263]  (byte)
+    [0xAC11BF] vs [0xA8B264]  (byte)
+    [0xAC11C0] vs [0xA8B320]  (byte)
+    [0xAC11C1] vs [0xA8B261]  (byte)
+  字符串比较（3 处，非 0 返回 → bl=1）:
+    push 0xA8B322 / push 0xAC10F0 / mov word[0xAC1146],0
+    call 0x7DD0F8                     ; ★ [0xAC10F0] vs [0xA8B322]
+    push 0xA8B8E0 / push 0xAC0CF0 / mov byte[0xAC0CFD],0
+    call 0x7C8D20                     ; ★ [0xAC0CF0] vs [0xA8B8E0]
+    push 0xA8BAE2 / push 0xAC0D00 / mov byte[0xAC0D20],0
+    call 0x7C8D20                     ; ★ [0xAC0D00] vs [0xA8BAE2]
+    [0x8316E8] vs [0xA8BB04] (dword) / [0x8316E4] vs [0xA8BB08] (byte)
+    test bl,bl / je 0x5E3593          ; ★ 全等 → 直接收尾
+  镜像同步（bl==1）:
+    push 0 / call 0x7CA67F / mov [0xAC11B8],eax  ; ★ 更新记录时间戳
+    mov ecx,[0xA8B268] / mov [0x8316D8],ecx      ; ★ 配置源 → 快照区
+    mov edx,[0xA8B25C] / mov [0x8316DC],edx
+    mov eax,[0xA8B270] / mov [0x8316E0],eax
+    mov cl,[0xA8B262] / mov [0xAC11BD],cl        ; ★ 配置源 → 镜像区
+    mov dl,[0xA8B263] / mov [0xAC11BE],dl
+    mov al,[0xA8B264] / mov [0xAC11BF],al
+    mov cl,[0xA8B320] / mov [0xAC11C0],cl
+    mov dl,[0xA8B261] / mov [0xAC11C1],dl
+    push 0xA8B322 / push 0xAC10F0 / call 0x7CA489  ; ★ strcpy 类
+    ; 手写 strlen+memset 拷贝 [0xA8BAE2]→[0xAC0D00]、[0xA8B8E0]→[0xAC0CF0]
+    ;（repne scasb 求长 + shr 2/rep movsd + and 3/rep movsb 收尾——strcpy 标准写法）
+    mov eax,[0xA8BB04] / mov [0x8316E8],eax
+    mov cl,[0xA8BB08] / mov [0x8316E4],cl        ; ★ 最后两处快照
+    lea edi,[esp+0x10] / mov ecx,0x82 / rep stosd ; ★ 清 0x208B 局部缓冲
+  收尾:
+    lea ecx,[esp+8] / mov eax,[0xAC116C] / test eax,eax / je 0x5E3585
+    call 0x77E430                     ; ★ [0xAC116C] 非空 → 收尾初始化
+    jmp 0x5E357d... / call 0x5E3720   ; ★ 0x5E3720（后续初始化/下一阶段）
+  0x5E3585:
+    call 0x5DBB60 / call 0x5E3720     ; ★ 空 → 另一收尾路径
+  0x5E3593:
+    pop ebx / add esp,0x20c / ret
+
+语义：**配置快照变更检测 + 镜像同步大函数（0x5E3xxx 区）**——
+①[0x8316xx] 与 [0xAC11xx] 是两套已同步镜像（快照区/镜像区），[0xA8Bxxx] 是
+配置源；②以时间戳 [0xAC11B8]（0x7CA67F 记录）+ 8 字段比较 + 3 字符串比较
+判定配置是否变更；③有变更（bl==1）时把配置源整组拷进快照区/镜像区（含手写
+strcpy），更新记录时间戳，清 0x208B 局部缓冲，再按 [0xAC116C] 分支走
+0x77E430（收尾初始化）或 0x5DBB60 + 0x5E3720（后续阶段）；④参数 2 非零
+直接跳过（强制不检测）；参数 1 与延迟标记 [0xAC11BC] 会强制 dirty。
+★**时间戳+阈值模式**（0x7CA67F 计数，>5/>2 分支）与 batch 196 的 0x775700
+（0x7CA67F 计数 + 全局快照）同一体系——[0xAC11B8] 是共享的「上次记录
+时间戳」全局，两个函数共用同一计数源。
+
+⚠️ partial：配置的字段/字符串语义（[0xA8B268]/[0xA8B25C]/[0xA8B270]、
+[A8B322]/[A8B8E0]/[A8BAE2] 字符串内容）、0x7CA67F 精确身份、0x77E430/
+0x5DBB60/0x5E3720 身份、[0xAC116C] 分支语义、清 0x208B 缓冲的用途。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x696FF0 → batch 197（0x697020）+ batch 194（0x696F90）——-2 特判 setter
+   族三份全齐，族口径闭合。
+2. 0x541370 → batch 195（0x541820 IPXManagerClass::Service 同区）+ 紧邻
+   0x5413B0（同族第二份）——网络/会话虚表转发器族。
+3. 0x5E32D0 → batch 196（0x775700 同 0x7CA67F 计数/快照体系）+ 批量 191
+   （0x755D10 清理器族邻域 0x5E 区）——配置快照同步体系。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x696FF0 的 +0x5B/+0x5F 字段语义与 -2 特判含义（族三份同 partial）。
+2. 0x541370 的 +4/+5 标志、+0x48 子对象与虚表槽 0x34 身份。
+3. 0x5E32D0 的配置字段/字符串语义与 0x77E430/0x5DBB60/0x5E3720 身份。
