@@ -1,0 +1,130 @@
+frontier batch 199 — 字符串持有器赋值 + 双形态结构拷贝构造 + COM QueryInterface 包装 setter（2026-10-14）
+
+口径：承接 batch 198 候选，ranking.tsv unique_callers 降序取 0x7B6290（9 callers）、
+0x53ED20（9 callers）、0x45AEA0（9 callers）。三者 prologue 均干净，机器码读全。
+
+================================================================================
+0x7B6290  字符串持有器赋值（9 callers，全 0x85 读完）
+================================================================================
+机器码（全 0x85）：
+    sub esp,0x10 / lea eax,[esp]          ; ★ 局部缓冲
+    push ebx / push edi
+    push edx / push 0x817f6c              ; ★ 格式串 0x817F6C = "%d"（.data 实测）
+    mov ebx,ecx / push eax
+    call 0x7C8EF4                        ; ★ 格式化（sprintf 类，3 参：缓冲/格式串/值）
+    lea ecx,[esp+0x14] / add esp,0xc / test ecx,ecx
+    mov [ebx],0 / je 0x7b62c7            ; ★ this->+0 清零
+    lea edi,[esp+8] / or ecx,-1 / xor eax,eax
+    repne scasb / not ecx                ; ★ strlen（求源串长）
+    jmp 0x7b62cc
+  0x7b62c7:
+    mov ecx,1                            ; ★ 源空 → 长度 1
+  0x7b62cc:
+    push ecx / call 0x7C8E17             ; ★ operator new（batch 001 已登记）
+    lea edx,[esp+0xc] / add esp,4
+    mov [ebx],eax / mov byte[eax],0      ; ★ this->+0 = 新内存，清首字节
+    test edx,edx / je 0x7b630d           ; ★ 源串空 → 跳过拷贝
+    lea edi,[esp+8] / or ecx,-1 / xor eax,eax
+    push esi / repne scasb / not ecx / sub edi,ecx
+    mov eax,ecx / mov esi,edi / mov edi,[ebx]
+    shr ecx,2 / rep movsd / and ecx,3 / rep movsb  ; ★ 手写 strcpy 到新内存
+    pop esi / pop edi / pop ebx / add esp,0x10 / ret
+  0x7b630d:
+    mov eax,ebx / pop edi / pop ebx / add esp,0x10 / ret
+
+语义：**字符串持有器赋值/构造（0x7Bxxxx CRT 邻域）**——先经 0x7C8EF4
+（格式化，格式串 0x817F6C="%d"）把参数写入局部缓冲，再以缓冲内容为源串：
+strlen 求长 → operator new（0x7C8E17）分配 → 手写 strcpy 拷入 this->+0；
+源串为空时只分配 1 字节空串（`mov byte[eax],0`）。
+★**strlen+operator new+手写 strcpy 三件套**（repne scasb 求长 + shr 2/rep
+movsd + and 3/rep movsb 收尾）与 batch 198 的 0x5E32D0 手写 strcpy 完全
+同款——CRT 字符串惯用法在台账的又一实例。
+★0x7C8EF4（格式化）为 0x7Bxxxx 区新成员；0x817F6C="%d" 是 .data 实测格式串。
+
+⚠️ partial：0x7C8EF4 精确身份（sprintf/格式化类推断）、this->+0 字符串
+语义、源串 [esp+8]/[esp+0xc] 布局细节。
+
+================================================================================
+0x53ED20  双形态结构拷贝构造（9 callers，全 0x3B 读完）
+================================================================================
+机器码（全 0x3B）：
+    mov edx,[esp+8]                      ; ★ 参数 2（源结构指针）
+    push esi / lea eax,[ecx+4]           ; ★ this+4
+    mov esi,[edx] / mov [eax],esi        ; ★ 拷贝 dword
+    mov dx,[edx+4] / mov [eax+4],dx      ; ★ 拷贝 word（this+4 共 6 字节）
+    mov eax,[0x828140] / cmp eax,1 / jne 0x53ed4a  ; ★ 全局 [0x828140]==1 分支
+    mov eax,[esp+4] / mov edx,[eax] / mov [ecx],edx  ; ★ 参数 1 的 dword → this+0
+    ret 0xc
+  0x53ed4a:
+    mov ax,[esp+0xc] / mov [ecx],0 / mov [ecx],ax    ; ★ 参数 3 的 word → this+0
+    ret 0xc                            ; ★ 低 word 写入、高 word 清零
+
+语义：**双形态 6+4 字节结构拷贝构造器（0x541xxx IPX/网络区）**——
+this+4 恒从参数 2 拷 6 字节（dword+word）；this 首 4 字节按全局
+[0x828140]==1 分支：等于 1 时从参数 1（指针）拷 dword，否则从参数 3
+（word）拷低 word 且高 word 清零。ret 0xc = 3 参 + this。
+★[0x828140] 全局分支——开关式形态选择（IPX 地址/连接结构推断）。
+★0x541xxx 区（batch 195 的 0x541820、batch 198 的 0x541370 同区）——
+网络/会话服务端。
+
+⚠️ partial：+4 六字节字段语义、[0x828140] 开关含义、双形态（dword vs word）
+用途、参数 1/2/3 精确类型。
+
+================================================================================
+0x45AEA0  COM QueryInterface 包装 setter（9 callers，全 0x75 读完）
+================================================================================
+机器码（全 0x75）：
+    mov eax,[esp+4]                      ; ★ 参数 1（源对象指针）
+    push esi / push edi / mov esi,ecx
+    mov eax,[eax] / test eax,eax / je 0x45aef7  ; ★ 源接口空 → E_NOINTERFACE 路径
+    mov ecx,[eax] / lea edx,[esp+0xc]（输出槽）
+    push edx / push 0x818858 / push eax
+    call [ecx]                           ; ★★ 虚表槽 0 = QueryInterface
+    mov edi,eax / test edi,edi / jge 0x45aedc  ; ★ HRESULT ≥0 = 成功
+  失败（HRESULT<0）:
+    mov eax,[esi] / test eax,eax / je +5
+    mov ecx,[eax] / push eax / call [ecx+8]   ; ★ 释放旧持有（虚表槽 8 = Release）
+    mov eax,edi / mov [esi],0 / pop edi / pop esi / ret 4
+  成功（HRESULT≥0）:
+    push ebx / mov ebx,[esp+0x10]        ; ★ 参数 3 = 新接口指针
+    mov eax,[esi] / test eax,eax / je +5
+    mov edx,[eax] / push eax / call [edx+8]   ; ★ 释放旧持有
+    mov [esi],ebx                        ; ★ this->+0 = 新接口
+    mov eax,edi / pop ebx / pop edi / pop esi / ret 4
+  0x45aef7（源接口空）:
+    mov eax,[esi] / test eax,eax / je +9
+    mov [esi],0 / mov ecx,[eax] / push eax / call [ecx+8]  ; ★ 释放旧持有
+    mov edi,0x80004002                   ; ★★ E_NOINTERFACE（HRESULT）
+    mov eax,edi / pop edi / pop esi / ret 4
+
+语义：**COM 接口持有包装 setter（0x45xxxx 区）**——从参数 1 源对象经其
+虚表槽 0（QueryInterface）请求 IID 0x818858，成功后把参数 3（QueryInterface
+输出指针）存入 this->+0 并释放旧持有（虚表槽 8 = Release，标准 IUnknown
+布局：槽 0=QI、槽 4=AddRef、槽 8=Release）；失败（HRESULT<0）释放旧持有
+返回 HRESULT；源接口为空返回 0x80004002（E_NOINTERFACE）。
+★**IID 已实锤**：0x818858 = {0000010C-0000-0000-C000-000000000046}
+（PE .data 16 字节实测格式化，微软保留 C000...0046 区）——本函数是
+「QI 指定接口 → 替换持有」的通用包装，宿主类持有任意 IUnknown 指针。
+★0x818858 上下文含 `>?AVVectorClass@@G@@"` 类型名字符串——该区域是
+.data 类型信息/GUID 混合区，0x818858 恰为 IID 表项。
+★0x45xxxx 区（batch 195 的 0x4870D0 邻域）——CellClass/对象管理端。
+
+⚠️ partial：IID 0x10C 的接口精确身份（微软保留区）、宿主类、参数 3 的
+AddRef 归属（QI 输出通常已带引用，包装器只存不增）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x7B6290 → batch 198（0x5E32D0 手写 strcpy 同款）+ batch 001（0x7C8E17
+   operator new）——CRT 字符串三件套惯用法。
+2. 0x53ED20 → batch 198（0x541370 同 0x541xxx 网络区）+ batch 195
+   （0x541820 IPX 区）——网络/会话结构拷贝族。
+3. 0x45AEA0 → batch 195（0x4870D0 邻域）+ IUnknown 三槽标准布局
+   （槽 0=QI/4=AddRef/8=Release）——COM 接口持有包装族。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x7B6290 的 0x7C8EF4 精确身份与 this->+0 字符串语义。
+2. 0x53ED20 的 [0x828140] 开关与双形态用途。
+3. 0x45AEA0 的 IID 0x10C 接口身份与宿主类。
