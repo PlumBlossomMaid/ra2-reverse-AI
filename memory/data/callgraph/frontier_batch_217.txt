@@ -1,0 +1,132 @@
+frontier batch 217 — ToolTipManager::Add（batch 211 动态数组布局复用）+ 单字段释放 + 结构批量 setter（2026-10-14）
+
+口径：承接 batch 216 候选，ranking.tsv unique_callers 降序取 0x724580（8 callers）、
+0x5BD5A0（8 callers）、0x433CA0（8 callers）。三者 prologue 均干净，机器码读全。
+
+================================================================================
+0x724580  ToolTipManager::Add（8 callers，全 0x1AE 读完）
+================================================================================
+机器码（全 0x1AE，body=430，rank 带名 ToolTipManager::Add）：
+    push ebx/ebp/esi/edi / mov edi,[esp+0x14]  ; ★ 参数 = 提示数据指针
+    mov ebx,ecx（this）/ mov eax,[edi] / lea esi,[ebx+0x24C]  ; ★ 子对象 +0x24C 映射
+  查重:
+    mov eax,[esi+4] / test eax / je 0x7245CD    ; ★ +0x24C 有项才查重
+    lea ecx,[esp+0x14] / push ecx / mov ecx,esi
+    call 0x724FA0 / test al / jne 0x724725      ; ★ 0x724FA0 查重命中 → 直接返 0
+    lea edx,[esp+0x14] / mov ecx,esi / push edx
+    call 0x724FC0 / test eax / je 0x7245CD
+    mov [esi+0x10],eax / pop/ret 0              ; ★ 0x724FC0 命中存槽返 0
+  分配拷贝:
+    push 0x1C / call 0x7C8E17                    ; ★★ operator new（batch 001）×0x1C
+    mov ebp,eax / test / je 0x724725             ; ★ 分配失败返 0
+    mov eax,[edi] / mov [ebp],eax ...（+0..+0x18 共 0x1C 字节 memcpy）
+    ; ★ 参数结构整块拷贝到新分配（ebp）
+  数组 +0x234 插入（batch 211 布局）:
+    lea edi,[ebx+0x234]                          ; ★ 子对象 +0x234 动态数组
+    mov eax,[edi+8] / mov ecx,[edi+0x10] / cmp ecx,eax / jl 0x72464C
+    mov cl,[edi+0xd] / test / jne 0x72462D
+    test eax / jne 0x72471C
+    mov ecx,[edi+0x14] / test / jle 0x72471C     ; ★ 容量/计数/增量检查（batch 211 同款）
+    mov edx,[edi] / add ecx,eax / push 0 / push ecx
+    mov ecx,edi / call [edx+8]                   ; ★ 虚表槽 8 扩容
+    test al / je 0x72471C
+  0x72464C:
+    mov eax,[edi+0x10] / mov edx,[edi+4] / lea ecx,[eax+1]
+    mov [edi+0x10],ecx / mov [edx+eax*4],ebp     ; ★ 计数++ 并插入指针（4B 项）
+  映射 +0x24C 插入（8B 键值对）:
+    mov ecx,[esi+4] / mov eax,[esi+8] / inc ecx / cmp ecx,eax
+    jle 0x7246F4                                 ; ★ 容量足够
+    mov [esp+0x14],0xA / ...  扩容: lea eax,[ebx*8] / push eax
+    call 0x7C8E17 / ... 拷贝旧 8B 项（eax*8 步进）
+    push [esi] / call 0x7C8B3D                    ; ★★ CRT 释放旧缓冲
+    mov [esi],edi / mov [esi+8],ecx               ; ★ 新缓冲 + 新容量
+    mov [esi+0x10],0                              ; ★ 计数重置
+  0x7246F4:
+    mov ecx,[esi+4] / mov edx,[esi] / mov eax,[ebp]
+    mov [edx+ecx*8],eax                           ; ★ 键 = [ebp] 首 dword
+    mov [edx+ecx*8+4],ebp                         ; ★ 值 = 新分配指针（8B 键值对）
+    mov eax,[esi+4] / inc eax / mov byte[esi+0xc],0
+    mov [esi+4],eax / mov al,1 / ret 4            ; ★ 计数++ 返 1
+  失败路径 0x72471C:
+    push ebp / call 0x7C8B3D / add esp,4          ; ★ 释放新分配
+    xor al,al / ret 4                             ; ★ 返 0
+
+语义：**ToolTipManager::Add（rank 带名，提示注册）**——
+①0x724FA0/0x724FC0 查重（命中即存槽返 0，不重复注册）；②operator new
+（0x7C8E17）×0x1C 分配并整块 memcpy 参数结构；③**动态数组 +0x234 插入
+（batch 211 登记的布局：+8 容量/+0x10 计数/+0x14 增量/+0xd 标志/虚表槽
+8 扩容）**存指针；④**映射 +0x24C 插入 8B 键值对**（键=结构首 dword、
+值=分配指针），容量不足时 operator new 扩容 + 0x7C8B3D 释放旧缓冲；
+⑤任一步失败释放新分配返 0，成功返 1。
+★★**跨批布局复用**：+0x234 数组的容量/计数/增量/标志/虚表槽 8 判定
+与 batch 211 的 0x5253B0（动态数组 Add）**逐段同构**——batch 211 布局
+的第二次正式出现；+0x24C 的 8B 键值对映射是**新形态**（键值对 vs 单项）。
+
+⚠️ partial：0x724FA0/0x724FC0 查重语义、提示结构字段（8B 键值对键
+语义）、+0x234/+0x24C 两个容器的关系、0x4068F0 调用（0x7246AC 扩容
+路径的初始化）身份。
+
+================================================================================
+0x5BD5A0  单字段释放（8 callers，全 0x1C 读完）
+================================================================================
+机器码（全 0x1C，body=28）：
+    push esi / mov esi,ecx
+    mov eax,[esi+0xC] / test eax / je 0x5BD5B3   ; ★ +0xC 非空才释放
+    push eax / call 0x7C8B3D                     ; ★★ CRT 释放（batch 197 同款）
+    add esp,4
+    mov [esi+0xC],0                              ; ★ 清指针
+    pop esi / ret
+  紧邻 0x5BD5C0（同区第二成员）:
+    sub esp,0x7c / ... mov eax,[ebx+0xc] ...      ; ★ 大栈函数（继续处理 +0xC）
+
+语义：**单字段释放（0x5BD5xx 区）**——this->+0xC 非空时经 0x7C8B3D 释放
+并置 NULL（无条件释放型：仅清本字段，不带标志判定——比 batch 211 的
+0x50EA00 容器释放器更简，后者有 +0xD 已分配标志门闩）。
+★0x7C8B3D（CRT 释放）batch 197/202/211/215 已多登记——释放侧第 N 处。
+★紧邻 0x5BD5C0 是同区大函数（+0xC 继续处理）。
+
+⚠️ partial：+0xC 字段语义、宿主类、紧邻 0x5BD5C0 身份。
+
+================================================================================
+0x433CA0  结构批量 setter（8 callers，全 0x33 读完）
+================================================================================
+机器码（全 0x33，body=51）：
+    mov eax,[esp+4] / xor edx / cmp eax,edx / je 0x433CC4  ; ★ 参数为空
+    mov edx,[eax] / mov [ecx+0x30],edx           ; ★ +0x30 = 参数 +0
+    mov edx,[eax+4] / mov [ecx+0x34],edx         ; ★ +0x34 = 参数 +4
+    mov edx,[eax+8] / mov [ecx+0x38],edx         ; ★ +0x38 = 参数 +8
+    mov eax,[eax+0xC] / mov [ecx+0x3C],eax       ; ★ +0x3C = 参数 +0xC
+    ret 4
+  0x433CC4:
+    mov [ecx+0x3C],edx / mov [ecx+0x38],edx / mov [ecx+0x34],edx / mov [ecx+0x30],edx
+    ; ★ 参数为空 → 四字段全清零
+    ret 4
+
+语义：**结构批量 setter（0x433xxx 区）**——参数非空时把 16 字节结构
+（+0/+4/+8/+0xC）四字段整块拷到 this->+0x30/+0x34/+0x38/+0x3C；
+参数为空则四字段全清零。ret 4 = 1 参。
+★**16B 结构写入对**（参数结构 → 对象 4 字段 / NULL → 清空）——批量
+赋值模板；+0x30..0x3C 四字段与新登记批次的 +0x38（区间判定）字段
+共享偏移族（batch 200 的 0x486770 用 +0x38、batch 216 的 0x4865D0 用
++0x38——本批 0x433CA0 也写 +0x38——**+0x38 字段三处交叉**）。
+★0x433xxx 区（batch 059/063 的 0x43AD00 邻域）——对象字段管理端。
+
+⚠️ partial：四字段语义（+0x30..0x3C 角色）、宿主类、NULL 清零分支的
+调用方契约。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x724580 → batch 211（0x5253B0 动态数组 Add 布局逐段同构）——batch
+   211 容器布局第二次正式出现 + 8B 键值对映射新形态。
+2. 0x5BD5A0 → batch 197/202/211/215（0x7C8B3D CRT 释放多处登记）—
+   无条件单字段释放（无标志门闩简化版）。
+3. 0x433CA0 → batch 200（0x486770 +0x38）/+ batch 216（0x4865D0 +0x38）
+   ——+0x38 字段三处交叉（本批写 +0x38 四字段之一）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x724580 的查重语义与 8B 键值对映射业务。
+2. 0x5BD5A0 的 +0xC 字段与紧邻 0x5BD5C0。
+3. 0x433CA0 的四字段语义与 NULL 清零分支契约。
