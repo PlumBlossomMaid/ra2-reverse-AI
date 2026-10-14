@@ -1,0 +1,129 @@
+frontier batch 174 — CellClass::GetFloorHeight 实锤 + 子区域重算 + ToolTip 状态设置（2026-10-14）
+
+口径：承接 batch 173 候选，ranking.tsv unique_callers 降序取 0x47B3A0（10 callers，
+YRpp CellClass.h:152 实锤）、0x584550（10 callers，rank 观察名 RecalculateSubZones）、
+0x7241A0（10 callers，rank 观察名 ToolTipManager::SetState）。三者 prologue 均干净。
+
+================================================================================
+0x47B3A0  CellClass::GetFloorHeight（10 callers，0x47B3A0-0x47B3A6 起读 0x60）
+================================================================================
+身份实锤：YRpp CellClass.h:152-153
+    int GetFloorHeight(Point2D const& subcoords) const
+        { JMP_THIS(0x47B3A0); }
+地址 + JMP_THIS + 1 参签名三证。
+
+机器码还原（前 0x60）：
+    push ebp / mov ebp,esp / and esp,0xfffffff8 / sub esp,0xC
+    mov al,byte[0x89E770]        ; ★ 全局位标志（惰性初始化缓存标志）
+    test al,1 / jne 跳过1
+    fild dword[0x89E7C0]         ; ★ int 常量 → 缓存
+    or al,1 / mov byte[0x89E770],al
+    fstp qword[0x89E720]         ; ★ [0x89E720] = (double)[0x89E7C0]
+  跳过1:
+    test al,2 / jne 跳过2
+    fld qword[0x89E720] / fmul qword[0x7E1740] / or al,2 / mov byte[0x89E770],al
+    fstp qword[0x89E740]         ; ★ [0x89E740] = [0x89E720]×[0x7E1740]
+  跳过2:
+    test al,4 / jne 0x47BA94
+    mov ecx,[0x89E724] / or al,4 / mov byte[0x89E770],al
+    mov eax,[0x89E720] ...（后续：第三层缓存 + 主计算）
+
+语义：**CellClass::GetFloorHeight（取地板高度）**——带**惰性初始化位标志**
+（[0x89E770] bit0-2 三阶段）的全局常量缓存：首用 fild [0x89E7C0] 算第一
+缓存 [0x89E720]，第二缓存 [0x89E740] = ×[0x7E1740]，第三层 [0x89E724] 等，
+每层完成置位标志防重复。★[0x7E1740] 常量区（batch 096 的 0x7E1738 同
+.rdata 区）——floor 高度换算系数。
+
+★跨批次连接：.rdata 常量区（[0x7E1740] 与 batch 096/166/168 同区）+
+全局惰性缓存模式（batch 159 的 0x726950 虚表+字段类似但不同）——CellClass
+几何/高度字段访问族。
+
+⚠️ partial：第三层缓存内容与主计算式（0x47B3E5 起）、[0x89E7C0] 初始值、
+[0x7E1740] 精确值、subcoords 参数用途（Point2D）。
+
+================================================================================
+0x584550  MapClass 子区域重算（10 callers，0x584550-0x5846CD 读完）
+================================================================================
+机器码还原（关键路径）：
+    sub esp,0x94 / mov eax,[esp+0x98]        ; ★ 参数（坐标/尺寸）
+    mov ebx,ecx                              ; ★ this（MapClass）
+    push 1 / push eax / call 0x578460        ; ★ 0x578460（MapClass 查询/校验）
+    test al / je 0x584E35（提前退出）
+    mov dword[esp+0x1C],2 / mov ebp,2        ; ★ 区域计数初值 2
+    mov edi,[esp+0xA8]                       ; ★ 参数（矩形结构）
+    mov esi,1 / lea ecx,[ebp+1] / shl esi,cl ; ★ 1<<(2+1)=8（除数）
+    movsx ecx,word[edi] / mov eax,ecx / cdq / idiv esi   ; ★ X / 8
+    sub ecx,edx / mov [esp+0x28],ecx         ; ★ X 校正（余数扣除）
+    movsx edi,word[edi+2] / cdq / idiv esi / sub edi,edx ; ★ Y / 8 校正
+    call 0x42DD60                            ; ★ 0x42DD60（结构/计算）
+    mov esi,[ebx+ebp*4+0x80]                 ; ★ this->+0x80+2*4 子区域表
+    mov [esp+0x3C],0x7E3844                  ; ★ 虚表 0x7E3844
+    mov [esp+0x50],0xA                       ; ★ 常量 10
+    ...
+    mov eax,[esi+8] / test / jle 跳过         ; ★ 表项计数
+    loop: mov eax,[ecx] / call [eax+0xC]     ; ★ 逐项虚表槽 0xC
+    ...
+    lea edx,[ebx+ecx*8+0x8C]                 ; ★ this->+0x8C 子区域数组
+    ...（双层循环：X/Y 网格遍历 + 0x56D3F0 查询 + 0x70 字段索引 +
+    子区域表 [edi+eax*2] 检查 + 去重 [esp+0x40] + 虚表槽 8 扩展）
+
+语义：**MapClass 子区域重算（RecalculateSubZones 行为）**——参数矩形按
+除数 8 校正（idiv+余数扣除）后，经 0x578460 校验与 0x42DD60 计算，遍历
+this->+0x80 子区域表（虚表 0x7E3844）与 +0x8C 子区域数组，双层网格循环
+内经 0x56D3F0 逐格查询、0x70 字段索引子区域表、查重后按需虚表槽 8 扩展。
+★0x584xxx 区 MapClass（QWEN.md 的 MapClass::Instance 0x87F7E8 同体系）——
+区域/子区域基建。
+
+★跨批次连接：0x578460/0x42DD60/0x56D3F0（MapClass 查询族，前列候选
+0x4834A0 也用 0x56D230 同体系）+ 0x87F7E8（MapClass::Instance）——地图
+区域重算端。
+
+⚠️ partial：参数语义（坐标矩形 vs 区域尺寸）、idiv 8 除数的精确含义、
+0x578460/0x42DD60/0x56D3F0 身份、+0x80/+0x8C 子区域表与虚表 0x7E3844
+宿主、0x584E35 提前退出分支。
+
+================================================================================
+0x7241A0  ToolTipManager::SetState（10 callers，全 0x57 读完）
+================================================================================
+机器码（0x7241A0，0x57 读完）：
+    mov al,[esp+4]               ; ★ bool 参数（新状态）
+    push esi / mov esi,ecx       ; ★ this（ToolTipManager）
+    cmp byte[esi+0xC],al / je 0x7241F3   ; ★ 状态不变 → 直接返回
+    mov byte[esi+0xC],al         ; ★ 写状态字节 +0xC
+    test al / jne 0x7241D4       ; ★ 新状态非 0 → 跳过摘除
+    mov eax,[esi+8] / push 0x54544950 / push eax
+    call [0x7E148C]              ; ★ 导入表（'PITT' 常量——类名标记）
+    mov eax,[esi+4] / test eax / je 0x7241D4
+    mov edx,[esi] / lea eax,[esi+0x18] / push eax / mov ecx,esi
+    call [edx+8]                 ; ★ 虚表槽 8（摘除/清理回调）
+  0x7241D4:
+    mov al,[esi+0xC] / cmp al,1
+    mov eax,0x8394E8 / je 0x7241E5 / mov eax,0x8394E4
+    push eax / push 0x8449B8 / call 0x4068E0   ; ★ 按状态选字符串调 0x4068E0
+    add esp,8
+  0x7241F3: pop esi / ret 4
+
+语义：**ToolTipManager::SetState（设置工具提示状态）**——比较并写状态字节
++0xC；状态变为 0 时经导入表 [0x7E148C]（带 'PITT' 常量标记）与虚表槽 8
+摘除提示；随后按状态（==1 → 0x8394E8，否则 0x8394E4）选字符串调
+0x4068E0（[0x8449B8] 目标）记录。
+★rank 观察名 ToolTipManager::SetState——YRpp 无同名 JMP（名字未确认，
+语义由机器码独立判定；0x724xxx 区与 batch 165 的 0x724730 同 ToolTip
+体系）。★0x4068E0 疑日志/状态输出（batch 172 的 0x4068E0 同款）。
+
+⚠️ partial：'PITT' 常量与 [0x7E148C] 导入身份、0x8394E8/0x8394E4 字符串
+内容、0x4068E0 身份、宿主与 batch 165 的 0x724730 关系。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x47B3A0 → .rdata 常量区（batch 096/166/168 同区）。
+2. 0x584550 → MapClass 查询族（0x578460/0x56D3F0）+ 0x87F7E8。
+3. 0x7241A0 → batch 165（0x724730 ToolTipManager::Remove 同体系）+ 0x4068E0。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x47B3A0 的主计算式与 [0x7E1740] 系数值。
+2. 0x584550 的参数语义与 0x578460/0x56D3F0 身份。
+3. 0x7241A0 的 'PITT' 常量与 0x4068E0 身份。
