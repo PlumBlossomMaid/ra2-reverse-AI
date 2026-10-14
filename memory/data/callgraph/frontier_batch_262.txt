@@ -1,0 +1,243 @@
+frontier batch 262 — 粒子构造 0x62B5E0 + 主循环帧步进 0x55D360 + 会话对话框构建 0x5DAFE0（2026-10-14）
+
+口径：承接 batch 261，候选池 TOP 12 取三个函数：0x62B5E0（1343B，带名
+ParticleClass::WhatAmI）、0x55D360（2940B，带名 PhobosHook_MainLoop_FrameStep_Begin）、
+0x5DAFE0（1528B）。三函数均全反汇编读完（0x62B5E0 尾 0x62BB1C ret 0x10 + 3 nop、
+0x55D360 尾 0x55DEDB ret + 4 nop、0x5DAFE0 尾 0x5DB5D7 ret——body 与 ranking 吻合；
+0x5DB5D8 起是 jmp table 数据）。YRpp 查覆盖（三地址无）。取证手段：disasm.py
+直反汇编 + 已登记函数交叉验证（batch 117/060/105/142/067/131/099/132/122/134/
+224/151/110/001/214 共 15 函数）。
+
+================================================================================
+0x62B5E0 —— 粒子对象构造+注册（推断名；ranking 名 WhatAmI 与机器码形态不符）
+================================================================================
+（7 callers，全 0x53F=1343B 读完）
+机器码（全 0x53F 主结构）：
+    sub esp,0x18/push ebx/ebp/esi/edi/mov esi,ecx（★this）
+    call 0x5F3900（★★★batch 117 ObjectClass::ObjectClass 实锤——基类构造！）
+    mov eax,[esp+0x2C]/xor ebx/mov [esi+0xAC],eax（★参数 1 → +0xAC）
+    → 批量字段初始化: [esi+0xB0..+0xE0] 全 0（byte ×3 + dword ×8）/
+      [esi+0xD4]=0xBF800000（★-1.0f 浮点哨兵——粒子速度初值）
+    → 3D 向量拷贝 ×3: 参数 → [esi+0xE4]（+0x2FC 来源）/参数 → [esi+0xE8]/
+      参数 → [esi+0xF4]/[0xAC49D8]+[0xAC49DC]+[0xAC49E0]（★★全局向量）→
+      [esi+0x100]（★三组向量：起点/方向/全局）
+    → 浮点向量差: [esi+0x10C] 存参数向量差（sub 三轴 + fild/fstp float——
+      ★粒子坐标-目标坐标）
+    → 参数向量副本 → [esi+0x118]/[0x11C]/[0x120]（★目标位置）
+    mov [esi+0x124],参数4（★参数 4 存 +0x124）
+    mov dl,[eax+0x30B]/mov [esi+0x12C],dl（★类型字段拷贝 [eax+0x30A..0x30F]
+      → +0x12C..+0x131 字节族）
+    → 四虚表换装: mov [esi],0x7EF954/mov [esi+4],0x7EF938/mov [esi+8],
+      0x7EF930/mov [esi+0xC],0x7EF928（★★四层虚表——多重继承）
+    lea eax,[esi+4]/push eax/call 0x410230（★子对象构造）
+    → 注册进全局数组: [0xA83DD0]/[0xA83DD8] 计数比较 → 条件满足则
+      [0xA83DD8]++/[0xA83DCC][eax*4]=esi（★★全局粒子数组 [0xA83DC8] 注册）
+    → 分支 [eax+0x314]==1: Randomizer::Random（0x65C780，[0xA8B230]+0x218）
+      and 0x80000001 回绕 → fild/fadd [esi+0xE4]（★随机扰动速度）
+    mov cx,[eax+0x2DC]/mov [esi+0x12A],cx（★类型 word 拷贝）
+    → 分支 [eax+0x314]==4: Randomizer::Random → idiv 0xA（★%10）/abs →
+      add [eax+0x2E0]（★随机偏移量）
+    → 否则: Randomizer::Random → idiv [eax+0x2E0]/abs → add（★%n 随机偏移）
+      → [esi+0x128]（★随机散布半径）
+    → 0x578080（★★batch 259 MapClass 取格二号）→ cmp/jg 取格 → 0x5F6940
+      （★同区调用）→ 浮点归一化（fld/fmul/fadd 向量长度 + 0x4CAC40 +
+      0x7E2800 比较 + 0x7E1718 + fdiv——★速度归一化/钳制）→ [ebp] 向量更新
+    → 分支 [eax+0x30F]==0（★标志）: 0x7C5F00（_ftol）向量/缩放计算
+      （0x7EF920/0x7EF918 常量）→ [esi+0x12C]=结果字节
+    → 分支 [eax+0x2C8]>0: 六字节 [eax+0x2D4..0x2D9] 全 0 → 用 [eax+0x2BC]
+      指向数据（word+byte → [esi+0xB0]/[esi+0xB2]）；否则
+      Randomizer::RandomRanged（0x65C7E0，[0xA8B230]+0x218，push 0/
+      0x7FFFFFFE）→ fild/fmul 0x7E3570 → 0x661020 → word+byte → [esi+0xB0]/
+      [esi+0xB2]（★★随机初始朝向）
+    → 0x5F4EC0（★同区收尾）→ mov eax,esi → pop 族/add esp,0x18/
+      ret 0x10（★4 栈参返 this）
+
+语义：**粒子对象构造+注册（推断名——ranking 名 WhatAmI 误标，机器码形态是
+构造器：字段初始化+向量组装+全局注册+随机散布）**——调 batch 117 的
+ObjectClass 基类构造后：批量字段清零（+0xB0..+0xE0，+0xD4=-1.0f）、三组
+3D 向量（起点/方向/全局 [0xAC49D8]）、向量差 fild/fstp、四虚表换装
+（0x7EF954/0x7EF938/0x7EF930/0x7EF928 多重继承）、注册进 [0xA83DC8] 全局
+粒子数组（计数 [0xA83DD0]/[0xA83DD8]）；按 [eax+0x314]（类型码）分支：
+==1 用 Randomizer::Random 扰动速度、==4 用 Random idiv 10 随机偏移、否则
+idiv [eax+0x2E0] 随机散布半径；0x578080 取格 + 0x4CAC40 向量归一化；按
+[eax+0x30F] 分支 _ftol 缩放；六标志全 0 时用 [eax+0x2BC] 直接数据否则
+RandomRanged(0,0x7FFFFFFE) 随机初始朝向。ret 0x10 四栈参。
+
+★原版怪癖（照抄）：① **+0xD4 = 0xBF800000（-1.0f）初值**（粒子速度哨兵）；
+② **四虚表换装**（0x7EF954/0x7EF938/0x7EF930/0x7EF928——多重继承四表）；
+③ **Randomizer 三处消费**（Random×3 扰动/散布 + RandomRanged 朝向——同一条
+序列连续取数）；④ **注册计数先判后增**（[0xA83DD0]/[0xA83DD8] 双计数比较 +
+门控 [0xA83DD5] 字节）；⑤ **idiv 取余 + cdq/xor/sub abs**（随机散布半径按
+类型码分支——%10 与 %[eax+0x2E0] 两种）；⑥ **类型字段 [eax+0x2DC..0x30F]
+批量拷入 +0x12A..+0x131**（word+多字节族）。
+★跨批次连接：**0x5F3900（batch 117 ObjectClass::ObjectClass 实锤——本条基
+类构造应用点）**+Randomizer::Random 0x65C780 / RandomRanged 0x65C7E0（QWEN.md
+RNG 里程碑——[0xA8B230]+0x218 同款，batch 214/257/259 后再次同框）+0x578080
+（batch 259 MapClass 取格二号）+[0xA8B230]（batch 214 全局随机对象）+[0xAC49D8]
+（全局向量，新登记）+0x410230/0x5F6940/0x5F4EC0/0x661020/0x4CAC40（未登记
+粒子/数学链）。
+⚠️ partial：宿主类（0x62xxxx 区粒子系统推断）、[eax+0x314]/[eax+0x2DC]/
+[eax+0x30F] 等类型字段语义（粒子类型码）、[0xA83DC8] 数组结构、[0x7E2800]/
+[0x7E1718]/[0x7E3570] 浮点常量、0x5F6940/0x5F4EC0/0x4CAC40 精确身份、+0xB0/
++0xB2 朝向数据语义
+
+================================================================================
+0x55D360 —— 主循环帧步进（推断名：MainLoop 主帧；ranking 名 PhobosHook 为挂钩命名）
+================================================================================
+（7 callers，全 0xB7C=2940B 读完）
+机器码（全 0xB7C 主结构）：
+    mov al,[0xA8E9A0]（★★全局游戏状态字节）/sub esp,0x1B4/push 4 寄存器
+    test al/je 0x55DECF（★门禁——直接收尾返 true）
+    mov byte[0xABCD58],1（★进入标志）
+    → GameMode 门控等待: mov al,[0xA8ED80]/[0x7E11F0] 导入槽（Sleep 推断）
+      → 按 [0xA8B238]（★★GameMode 全局 batch 113/118 同）分支：==0/==5
+      push 0x1F4（500ms）/否则 push 0xA（10ms）→ call 导入槽 → call
+      0x5D4D50（★★batch 105 游戏主消息泵实锤！）→ 循环等 [0xA8ED80]
+    → 帧时标: [0x7E1530]（★★batch 060 timeGetTime 导入槽实锤）→
+      [0xA8B55C]=eax（★帧开始时刻）→ [0xA8ED84]++ 计数
+    → GameMode==0（单人）分支: [0xA8E378]==1 → 0x407000 → [0xA83D14]/
+      [0xA83D18] 哨兵比较 → 0x720EA0/0x720B20（会话状态）
+    → GameMode 分派 [0xA8B238]: ==0/==5（0x55D767 单人）: [0xA8EDDC] 门禁 →
+      [0xA8EB60]=2 → 0x6C8C40（★★batch 060 timeGetTime>>4 实锤）→
+      [0x887348]/[0x88734C]/[0x887350] 时间戳全局
+      ==4（多人 0x55D456）: [0xA8D5F8] 位 2 → 0x6C8C40 → [0x887348] 族 →
+      会话计时: [0xA8B558]/0x5D5890/0x5D5870/0x5D5880 → [0x887328]/
+      [0x88732C]/[0x887330]（★会话时间全局族）→ 0x540F90（会话列表）→
+      [0xA8DB7C] 数组遍历找最小 → [0xABCE04]=esi → 0x5D4D50（消息泵）
+    → [0x887328] 时间计算（0x5D5890 差值 + 0x887330 钳制）→ 0x55E160
+    → [0xA8B230]+0x630 标志 → 0x6C8C40 → 0x684180（★同区调用）
+    → [0xA8B230]+0x62C 非空 → 0x5D4D50 + 0x48D080 + 0x53B560 +
+      [0x887324]（相机）槽 0x5C + 0x4F4480（MapClass 胜负判定区）+ 0x55E160
+    → [0xA8D5F8] 分支: 0x55D878: [0xA8EDA0]/[0xA8ED80] 门禁 → 0x4F4320
+      （MapClass）→ 0x55DEE0 → [0xA8B8B4] → 0x55F1E0 → [0xA8ED84]&7==7 &
+      [0xA8B238]==4 → 0x542520 → 0x4D2370 + 0x4F4480
+    → 0x55D918 分支: [0x887324] 0x6D6170 → 0x473AE0/0x473B10（★★batch 131
+      FileClass::Read 家族实锤——[0xA8D58C] 文件对象读写）→ [0xA8ECBC]/
+      [0xA8ECC8] 数组遍历 + 0x6E6AB0（★★batch 142 NetID::Pack 实锤！）→
+      颜色/值域打包（shl 0x18/or）→ [0xABCDFC]/[0xABCE00] 全局
+    → 0x6D6000 相机坐标 → 0x55F690 → 0x6E6FF0 → 0x55F690 → 虚表槽 0x14C
+      → [0x822CF2] 标志 → 0x4F42F0（★★batch 067 MapClass::RedrawSidebar
+      实锤！）+ 0x4F4480
+    → 0x551A30 → 0x55AFB0 → 0x54F5C0 ×4（[0x87F770] 查询）→
+      [0x87F8DC]/[0x87F8E0]（★★QWEN.md 实锤 MapRect）→ 0x7C5F00（_ftol）
+      → 0x4A9840（★★batch 261 同 0x4A95A0 区）×4（按 [0xABCE14] 位分支）
+    → 0x637550 + 0x5D4430 → [0xA8B238]==3/4 → [0xA8B23C] 槽 4 →
+      [0x87F8DC]<<0xB + [0x87F924]（★★QWEN.md cell 数组）+ 0x281C 取格 →
+      [eax+0x130]==1 & [eax+0x12C] 位 0x18 → Randomizer::RandomRanged
+      （0x65C7E0，[0xA8B230]+0x218，push 2/push 0——★随机消费）
+    → 帧计数: [0x7E1530] 时标差 → [0xA8B560]+=delta / [0xA8B564]++（★帧
+      计数对）→ 0x647260 + 0x637550 + 0x48D080 → [0xA83D49]/[0xA8ECD0]/
+      [0x8B41C0]/[0xA83D48] 门禁 → [0xA8ED84]++ → 0x684290 + 0x55E160 +
+      0x725C70 + 0x637270
+    → mov byte[0xABCD58],0 → sete al（★返 [0xA8E9A0]==0 的布尔）/ret
+
+语义：**主循环帧步进（推断名——ranking 名 PhobosHook_MainLoop_FrameStep_Begin
+为挂钩命名，机器码是主循环帧主体）**——[0xA8E9A0] 全局状态门禁（==0 直接收
+尾返 true）；进入后 [0xABCD58]=1：按 [0xA8B238] GameMode 分支（==0/==5
+单人 500ms、否则 10ms）经导入槽 Sleep + 0x5D4D50 消息泵等待；[0x7E1530]
+timeGetTime 记帧首时刻；单人路径 [0xA8E378] 门控 + 会话状态；多人路径会话
+计时（0x5D5890/0x5D5870/0x5D5880 + [0x887328] 族 + 0x540F90 会话列表）；
+[0xA8B230]+0x62C 时更新链（0x48D080/0x53B560/[0x887324] 槽 0x5C/0x4F4480）；
+[0xA8D5F8] 分支经 0x4F4320/0x55DEE0/0x55F1E0 + [0xA8ED84] 计数；文件对象
+[0xA8D58C] 经 0x473AE0/0x473B10 读写 + [0xA8ECBC] 数组 + 0x6E6AB0 打包；
+0x54F5C0 ×4 查询 + [0x87F8DC]/[0x87F924] cell 取格 + RandomRanged(0,2) 随
+机消费；帧计数 [0xA8B560]/[0xA8B564] 累加；多子系统更新（0x647260/0x637550/
+0x637270/0x48D080/0x684290/0x725C70）；收尾 [0xABCD58]=0 返 [0xA8E9A0]
+取反布尔（游戏结束语义推断）。
+
+★原版怪癖（照抄）：① **GameMode 分支等待**（==0/==5 500ms vs 其它 10ms——
+单人慢等待多人快轮询）；② **[0xA8E9A0] 状态门禁 + 返回其取反**（游戏状态
+字节驱动帧循环退出）；③ **帧计数 [0xA8B560]/[0xA8B564] 对**（帧时刻差累加 +
+计数自增）；④ **[0xABCD58] 进入/退出标志**（帧内互斥）；⑤ **RandomRanged(0,2)
+每帧消费**（[0xA8B230]+0x218——主循环级随机消费点）；⑥ **[0x87F8DC]<<0xB +
+[0x87F924] + 0x281C 取格**（MapRect×2048 + cell 数组基址 + 0x281C 偏移的
+线性索引）。
+★跨批次连接：★★**0x5D4D50（batch 105 游戏主消息泵）在本条主循环多次调用**
++0x6C8C40/[0x7E1530]（batch 060 timeGetTime 实锤）+0x6E6AB0（batch 142
+NetID::Pack）+0x4F42F0（batch 067 MapClass::RedrawSidebar）+0x473B10（batch
+131 FileClass::Read）+[0xA8B238]（batch 113/118 GameMode）+RandomRanged
+0x65C7E0（QWEN.md RNG 里程碑）+[0x87F8DC]/[0x87F924]/[0x887324]/[0x887328]
+族（QWEN.md 实锤 MapRect/cell 数组/相机）**+0x4A9840（batch 261 同区）。
+⚠️ partial：宿主类（0x55xxxx 区主循环系统）、[0xA8E9A0]/[0xA8ED80]/[0xA8D5F8]/
+[0xABCD58] 状态语义、0x5D5890/0x5D5870/0x5D5880/0x540F90/0x55DEE0/0x55F1E0/
+0x55F690/0x551A30/0x55AFB0/0x54F5C0/0x647260/0x637550/0x637270/0x684180/
+0x684290/0x725C70/0x48D080/0x53B560/0x4F4480/0x4F4320 精确身份、[0xA8ECBC]
+数组内容、会话文件对象 [0xA8D58C] 结构、[0xABCE14] 位标志
+
+================================================================================
+0x5DAFE0 —— 会话对话框内容构建（推断名）（7 callers，全 0x5F8=1528B 读完）
+================================================================================
+机器码（全 0x5F8 主结构）：
+    sub esp,0x264/push 4 寄存器/mov bl,cl（★参数 1 = 标志推断）
+    call 0x775B10（★★batch 094/110 对话框栈 getter [0xB72F44] 实锤）/mov esi,eax
+    call 0x775B20（★★batch 151 getter [0xB72F48]）→ cmp 0xBC/0xBD（★窗口
+      ID 判定）→ 0x5DB1A2 分支（0x5EA3E0 调用）
+    → 链遍历: call 0x7759B0 → 0x60D320（类型）→ cmp 0xBC/0xBD 循环
+    → 主路径 0x5DB045: 0x775B10 → [0x7E14A8]（★★batch 099 GetDlgItem 实锤）
+      → push 0x53E/push ebp/call → [0x7E1490] 导入槽（★SendMessage 族）→
+      0x600630（★同区）→ 0x5E5F10（★哈希表构造，未登记）→ 浮点常量
+      0x9999999A/0x3FC99999/0x3FE99999（★0.8/0.45 系数推断）→ 0x7C8E17
+      （★★_new batch 001）分配 + rep stosd 清零 → [0x5E2670] 栈虚表 →
+      call 0x5E5F10 → [0x7E1490] 再调
+    → [0xAC0260] 门禁: 0x735120（转串）→ [0x7E14A4]（★★batch 099
+      SendMessageA 实锤）→ [0xA8DA54]/[0xA8DA48] 数组遍历逐项发送
+    → 分支 [0xA8DA84]>0: [0xA8DA78] 数组: 0x5E8740 判定 → [eax+0x77]=1
+      标志 → 0x7CA564（★★batch 258 字符串输出）→ 0x696F10（★★batch 122
+      哨兵值对 getter 实锤）→ 0x4E3560（★类型）→ jmp table [esi*4+0x5DB5D8]
+      8 分支: 0x5DB252/0x5DB265/0x5DB278/0x5DB28E/0x5DB2A1/0x5DB2B4/
+      0x5DB2BB/0x5DB2DE——各分支 DebugLog（0x734E60，文件 0x831288/
+      0x831280/0x831278，行 0x18E..0x1A6 多连）→ 0x7CA564 输出
+    → 数据打包: [0xAC01A0]/[0xAC01D0]/[0xAC01E0] 全局 word 打包（and 0xFFFF
+      + shl 0x10 + or——★位打包）→ 0x7B7600（★★batch 134 宽串 operator=）
+      → 0x6BA140（★★batch 132 PCX::GetSurface 实锤！——[0xAC4848] 单例，
+      按标志选图片 0x81B2B8/0x81B2AC）→ 0x7B7600 再拷
+    → 哈希 rehash: [esp+0x38] 计数 > [esp+0x60] 上限 → 0x7C8E17 分配新桶 +
+      rep stosd 清零 → 桶链重挂（虚表槽 [esp+0x48]=0x5E2670 取桶号 + 头插
+      链）→ 0x7C8B3D 释放旧桶
+    → 收尾: 0x7C8B3D 释放 + 0x7B6760（宽串析构）×2 → pop 族/add esp,0x264/ret
+
+语义：**会话对话框内容构建（推断名：网络会话列表/对话框渲染）**——经
+0x775B10/0x775B20 读对话框栈全局（[0xB72F44]/[0xB72F48]），按窗口 ID
+（0xBC/0xBD）分派（0x5DB1A2 走 0x5EA3E0）；GetDlgItem（[0x7E14A8]）取控件 +
+[0x7E1490] 导入槽发送；0x5E5F10 哈希表构造（浮点常量 0.8/0.45 系数推断 +
+_new 分配）；[0xAC0260] 门禁时经 [0x7E14A4] 发送 [0xA8DA48] 数组项；[0xA8DA78]
+对象数组按 0x5E8740 判定逐项经 jmp table 8 分支（DebugLog + 0x7CA564 输出）；
+[0xAC01A0]/[0xAC01D0]/[0xAC01E0] 全局 word 位打包 + 宽串 + 0x6BA140
+（PCX::GetSurface 按标志加载 0x81B2B8/0x81B2AC 两图）；哈希表超容量 rehash
+（新桶 + 头插 + 释放旧）；收尾释放。
+
+★原版怪癖（照抄）：① **窗口 ID 0xBC/0xBD 判定分派**（两个窗口走 0x5EA3E0
+捷径）；② **[0x7E14A8]/[0x7E14A4]/[0x7E1490] 三导入槽同框**（GetDlgItem +
+SendMessageA + SendMessage 族）；③ **jmp table 8 分支 DebugLog**（文件
+0x831288/0x831280/0x831278 三文件、行 0x18E..0x1A6——8 种类型诊断）；
+④ **浮点常量 0x9999999A/0x3FC99999/0x3FE99999**（0.8/0.45 系数推断——哈希
+负载因子）；⑤ **word 位打包**（and 0xFFFF + shl 0x10 + or——两个 16 位值
+合一 dword）；⑥ **哈希 rehash 扩容**（计数 > 上限 → 翻倍新桶 + 头插重挂）。
+★跨批次连接：**0x775B10/0x775B20（batch 094/110/151 对话框栈 getter）**+
+[0x7E14A8]/[0x7E14A4]（batch 099 GetDlgItem/SendMessageA）+0x6BA140（batch
+132 PCX::GetSurface——[0xAC4848] 单例应用点）+0x696F10（batch 122 哨兵值对
+getter）+0x7B7600/0x7B6760（batch 134/061 宽串）+0x734E60（batch 224
+DebugLog）+0x7CA564（batch 258 字符串输出）+0x7C8E17/0x7C8B3D（batch 001
+_new/_delete）+0x735120（batch 260 转串）+[0xAC01A0]/[0xAC01D0]/[0xAC01E0]
+（全局，新登记）。
+⚠️ partial：宿主类（0x5DAxxx 区会话/UI 推断）、[0xA8DA48]/[0xA8DA78]/
+[0xA8DA84] 数组内容、0x5E5F10/0x5E8740/0x5E6230/0x600630/0x60D320/0x696F10
+调用对象、jmp table 8 分支语义、0x81B2B8/0x81B2AC 图片内容、[esp+0x48]
+虚表 0x5E2670 身份
+
+================================================================================
+（batch 262 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x62B5E0（粒子构造）依赖 6+ 未登记子函数（0x410230/0x5F6940/0x5F4EC0/
+   0x661020/0x4CAC40）+ 粒子类型字段语义（[eax+0x314] 等 partial）——粒子
+   系统整体立案时落地；本条价值 = ObjectClass 基类构造应用点 + Randomizer
+   三消费同框实锤。
+② 0x55D360（主循环帧步进）是主循环级调度，依赖大量未登记子系统函数 +
+   全局状态语义（全 partial）——主循环家族（batch 105 消息泵 0x5D4D50 已
+   登记）整体建模时闭合；本条价值 = 主循环与消息泵/相机/cell 数组/RNG 的
+   咬合全景。
+③ 0x5DAFE0（会话对话框构建）依赖哈希表构造 0x5E5F10 + 数组内容 + 分支语
+   义（全 partial）——会话/UI 家族整体建模时落地。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部 semantics_verified
+（三函数全段反汇编读完 + 15 个已登记函数交叉验证），partial 项如实标注。
