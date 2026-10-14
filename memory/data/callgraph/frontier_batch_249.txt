@@ -1,0 +1,145 @@
+frontier batch 249 — ObjectTypeClass::IsBuildCat5 + byte setter + 对象分发（2026-10-14）
+
+口径：承接 batch 248，候选池 TOP 12 取三个函数：0x5004E0（40B，YRpp 带名）、
+0x433C90（13B）、0x6E6E20（246B）。三函数均全反汇编读完（0x5004E0 全 0x28=40B、
+0x433C90 全 0xD=13B、0x6E6E20 全 0xF6=246B——尾 0x6E6F15 ret + nop 对齐）。
+取证手段：disasm.py 直反汇编 + YRpp 交叉验证（ObjectTypeClass.h:43 三证）+
+PE 探针 + 已登记函数交叉验证（batch 189/093/082、001）。
+
+================================================================================
+0x5004E0 —— ObjectTypeClass::IsBuildCat5（7 callers，全 0x28=40B 读完）
+================================================================================
+身份实锤：YRpp ObjectTypeClass.h:43
+  `static bool __fastcall IsBuildCat5(AbstractType abstractID, int idx) { JMP_STD(0x5004E0); }`
+地址+JMP_STD（__fastcall：ecx=abstractID、edx=idx）+bool 返回三证。
+**相邻行 `GetTechnoType { JMP_STD(0x48DCD0); }`（ObjectTypeClass.h:45）佐证**
+——0x48DCD0 才是 GetTechnoType 本体（batch 189 已登记），0x5004E0 是调用它的
+薄包装。**闭合 batch 190 留的 partial「0x5004E0 入口关系」**。
+
+机器码（全 0x28）：
+    push esi / mov esi,ecx（★★esi = abstractID，__fastcall 第一参）
+    test edx,edx / jge 0x5004EB（★idx >= 0？）
+    xor eax,eax / pop esi / ret（★★idx < 0 → 返 false）
+    0x5004EB: mov ecx,esi
+    call 0x48DCD0（★★★GetByTypeAndIndex(abstractID, idx)——batch 189 实锤：
+      abs 减 1 查跳转表 [0x48DD24] 四路分派取类型数组）
+    cmp esi,6 / je 0x500500（★abstractID == 6？）
+    cmp esi,7 / je 0x500500（★abstractID == 7？）
+    xor eax,eax / pop esi / ret（★★其余 abstractID → 返 false）
+    0x500500: mov eax,[eax+0xE08]（★★取 type->[+0xE08] 字段）
+    pop esi / ret（★返该字段）
+
+语义：**ObjectTypeClass::IsBuildCat5（是否第五类建造单位，三证吻合）**——
+idx 非负且 abstractID∈{6,7} 时经 GetByTypeAndIndex(0x48DCD0) 取类型对象并
+返回 `type->[+0xE08]`（该位标志）；其余情况返回 0。**薄包装**：业务逻辑在
+0x48DCD0（batch 189 已全读），本条只是「限 abstractID 6/7 + 取 +0xE08」。
+
+★原版怪癖（照抄）：① **薄包装**（只做 abstractID 门禁 + 字段提取，不重查逻辑）；
+② **idx 负直接拒**（先验 idx 再查表）；③ **返回值是 type->[+0xE08] 而非 bool
+归一化**（调用方能拿到原始字段值——not 严格 bool，真值语义由字段决定）；
+④ abstractID 硬编码 {6,7} 两值（其余类型全部 false）。
+★跨批次连接：**0x48DCD0 GetByTypeAndIndex（batch 189 实锤）——本条是其调用方，
+正好闭合 batch 190 的「0x5004E0 入口关系」partial**+[0x48DD10]/[0x48DD24]
+跳转表（batch 189）+[0xA83CE4]/[0xA83C6C]/[0xA8E34C]/[0xA8B21C] 类型数组
+（batch 189/247 同族）。
+⚠️ partial：+0xE08 字段语义（isBuildCat5 标志推断）、abstractID 6/7 对应类型
+（AbstractType 枚举映射确认）、调用方（哪些单位查询）
+
+================================================================================
+0x433C90 —— byte setter（返回旧值惯用）（7 callers，全 0xD=13B 读完）
+================================================================================
+机器码（全 0xD）：
+    mov dl,[esp+4]（★★参数 = 新值 byte）
+    mov al,[ecx+0x41]（★★读旧值到 al——**非死读**，见语义）
+    mov [ecx+0x41],dl（★写新值到 byte[+0x41]）
+    ret 4（★返回时 al 承载旧值）
+
+语义：**byte setter（返回旧值）**——`byte[this+0x41] = 参数`，返回值（eax）
+承载**旧值**。经典 C 风格「赋值并返回被替换值」惯用（`old = *p; *p = new;
+return old;`）。
+
+★原版怪癖（照抄）：① **mov al 读取不是死代码**（编译器把旧值留在 al 当返回值
+——若只 setter 不返回旧值，编译器会省略这行 mov）；② 参数 byte 从栈 [esp+4]
+取（1 字节参数按 4B 槽位压栈）；③ **16B 对齐但函数体仅 13B**（尾部 nop 补齐）。
+★跨批次连接：低偏移状态字节族（batch 234 +0x81 完成位/batch 236 +0x80/+0x81
+对/batch 237 +0x00 错误位/batch 246 0x7BBAB0 状态读取）——本条 +0x41 是同一族
+的「可写入可读回」字节（对照 batch 234 的构造即错位、batch 239 0x47E040 的
++0x11E 三处赋值）。
+⚠️ partial：宿主类（0x433xxx 区推断）、+0x41 字节语义（标志/状态 推断）、
+返回值旧值的调用方消费情况（若从未消费则编译器不会生成——故必有消费端）
+
+================================================================================
+0x6E6E20 —— 按 byte[+0x4] 分发的对象方法（7 callers，全 0xF6=246B 读完）
+================================================================================
+机器码（全 0xF6 主结构）：
+    sub esp,8 / push esi / mov esi,ecx（★this）
+    mov al,[esi+4]（★★this->byte[+0x4] 类型/模式分派键）
+    cmp al,0x34（★★== 0x34？） / jne 0x6E6ED0
+    ==0x34 分支:
+      mov edx,[0xB0E844]（★★全局对象指针）/ test / je 0x6E6EAD（★空 → 回退）
+      mov eax,[0xB0E850]（★★全局缓存指针）/ test eax,eax / je 0x6E6E4E
+      mov ecx,[eax] / cmp ecx,[esi]（★缓存首字段 == this->[0]？）
+      je 0x6E6EA8（★命中缓存 → 直接 +4）
+      0x6E6E4E: test edx,edx / je 0x6E6EAD
+        mov al,[0xB0E84C]（★★初始化标志）/ test al,al / jne 0x6E6E89
+        push 0x41C610 / push 8 / push edx / mov edx,[0xB0E840]
+        push edx / call 0x7C8B48（★★CRT 批量分配/排序，batch 125/130/137/170
+          「按名注册器」同款调用）→ 置 [0xB0E850]=0 / [0xB0E84C]=1
+        0x6E6E89: mov eax,[esi] / push &栈槽 / mov ecx,[0xB0E840] / mov 栈槽,eax
+          call 0x523440（★★查询：经 [0xB0E840] 全局查 this->[0]）
+          test eax / je 0x6E6EAD（★未命中 → 回退）
+          mov [0xB0E850],eax（★缓存查询结果）
+        0x6E6EA8: add eax,4（★命中 +4 返回）
+        jmp 0x6E6EB2
+      0x6E6EAD: mov eax,0xB78828（★★回退常量指针）
+      0x6E6EB2: mov edx,[eax] / push 0×2 / push 0x8177C8×2 / push 0
+      push edx / call 0x7CAAE4（★★5 参调用收尾，含 0x8177C8 常量串双参）
+      add esp,0x14 / pop esi / add esp,8 / ret（★返回 0x7CAAE4 结果）
+    ==0xB 分支（0x6E6ED0）:
+      cmp al,0xB / jne 0x6E6F0F（★其它值 → 返 0）
+      mov ecx,[esi]（★★this->[0] = 32 位坐标值）/ mov esi,0x3E8（★★1000）
+      mov eax,ecx / cdq / idiv esi（★★坐标 ÷ 1000 → dx = 余数）
+      mov eax,0x10624DD3 / imul ecx / sar edx,6（★★÷1000 乘数倒数
+        （0x10624DD3 = 2^38/1000）→ edx = 商）
+      mov word[esp+4],dx（★★余数存 X word）/ shr eax,0x1F / add edx,eax
+      mov word[esp+0xA],dx（★★商存 Y word）
+      lea ecx,[esp+4] / mov ecx,0x87F7E8（MapClass::Instance）/ push ecx
+      call 0x5657A0（★★★GetCellAt，batch 082 实锤）
+      pop esi / add esp,8 / ret（★返回 cell 指针）
+    其它值（0x6E6F0F）:
+      xor eax,eax / ret（★返 0）
+
+语义：**按 byte[+0x4] 分发的对象方法（推断名）**——分派键 +0x4：
+①==0x34：经 [0xB0E840]/[0xB0E844]/[0xB0E850] 全局表查 this->[0]（首次经
+0x7C8B48 初始化 + 0x523440 查询，未命中回退常量 [0xB78828]），命中/回退后
+0x7CAAE4 五参收尾；②==0xB：`this->[0]`（32 位坐标）÷1000 拆 x/y（idiv +
+0x10624DD3 乘数倒数双路），经 GetCellAt 取 cell 返回；③其它值返 0。
+
+★原版怪癖（照抄）：① **分支键是 byte[+0x4]**（对象首字节后的类型标志）；
+② ==0xB 分支**双除数算法**（idiv 0x3E8 手工 + 0x10624DD3 imul 数学——编译器
+把「÷1000」拆成「余数用 idiv、商用乘数倒数」两条路径，**且 X=余数/Y=商是
+反的**（word[esp+4]=dx 余数在前、word[esp+0xA]=商在后））；③ ==0x34 分支的
+**三层全局**（[0xB0E840] 表/查询器 + [0xB0E844] 对象 + [0xB0E850] 缓存 +
+[0xB0E84C] 初始化标志——带缓存的惰性初始化结构）；④ **回退常量 [0xB78828]**
+（未命中用常量地址而非 NULL）；⑤ 0x7CAAE4 五参收尾中 **0x8177C8 压两次**
+（同一个串双参——非 ASCII 实测，疑宽串/结构化数据）；⑥ ==0x34 分支缓存命中
+直接 `add eax,4`（缓存的是「查询结果的前一槽」）。
+★跨批次连接：**0x5657A0 GetCellAt（batch 082）**+0x7C8B48（batch 125/130/137/170
+按名注册器同款批量分配调用）+[0x87F7E8] MapClass::Instance +÷1000 乘数倒数
+（0x10624DD3，batch 250 预告：整型优化惯用）+0x7CAAE4（新 CRT/引擎函数，
+5 参）+0x8177C8（常量串，非 ASCII 待探）。
+⚠️ partial：宿主类（0x6E6xxx 区对象推断）、+0x4 分派键语义（0x34=52/0xB=11
+枚举）、0x523440/0x7CAAE4 身份、[0xB0E840] 族全局语义、0x41C610/0x8177C8 常量
+串内容、==0xB 分支 X=余数/Y=商的坐标换算实际含义（单元格=像素÷1000?）
+
+================================================================================
+（batch 249 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x5004E0（IsBuildCat5）是 40B 薄包装，逻辑即实现（abstractID 门禁 + +0xE08
+   提取），依赖 0x48DCD0 已在 batch 189 建模规划内——留待类型系统整体。
+② 0x433C90（byte setter）是 13B 纯字段搬运，宿主类未定，逻辑即实现。
+③ 0x6E6E20 是多分支对象方法，依赖 0x523440/0x7CAAE4/[0xB0E840] 族三个未取证
+   依赖 +分派键语义 partial——按纪律留待宿主类建模时一并闭合。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部 semantics_verified
+（三函数全段反汇编读完 + YRpp 三证/探针/已登记函数交叉验证），partial 项如实标注。
