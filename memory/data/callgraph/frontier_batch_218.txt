@@ -1,0 +1,128 @@
+frontier batch 218 — TacticalClass::GetOcclusion（MapClass 主线第三连）+ 键比对判定 + 8B 键值对二分查找（batch 217 查找侧）（2026-10-14）
+
+口径：承接 batch 217 候选，ranking.tsv unique_callers 降序取 0x6D8700（8 callers）、
+0x52B600（8 callers）、0x52B430（8 callers）。0x6D8700 读全，其余读全。
+
+================================================================================
+0x6D8700  TacticalClass::GetOcclusion（8 callers，全 0x3D5 读完）
+================================================================================
+机器码（全 0x3D5，body=989，rank 带名 TacticalClass::GetOcclusion）：
+    push ebx/ebp/esi/edi / mov esi,[esp+0x10]   ; ★ 参数 = 坐标指针
+    push esi / mov ecx,0x87F7E8                  ; ★★ MapClass::Instance（QWEN.md 实锤）
+    call 0x5657A0                                ; ★★ 0x5657A0（batch 208/209 已登记找格）
+    mov cl,[esp+0x18] / test cl / je 0x6D88F4    ; ★ 参数 2 分支
+    mov eax,[eax+0x140] / test al,3 / jne +5 / mov edi,0xFFFFFFFE  ; ★ 格字节 +0x140
+    mov ebx,2 / test bl,al / je 0x6D8AD4         ; ★ 位 2 判定
+  8 方向遮挡聚合（分支 1，+0x140）:
+    mov ax,[esi] / mov cx,[esi+2] / dec ax / dec cx ...（8 个方向各一次）
+    push 坐标 / mov ecx,0x87F7E8 / call 0x5657A0  ; ★ 每方向找格
+    test byte[eax+0x140],bl / jne 方向已遮挡 / or ebp,0x40|0x80|1|0x20|2|0x10|8|4
+    ; ★★ 8 方向位掩码聚合到 ebp（0x40/0x80/1/0x20/2/0x10/8/4）
+  0x6D88F4（分支 2，+0x12C）:
+    mov eax,[eax+0x12C] / test al,0x18 / jne +5 / mov edi,0xFFFFFFFE
+    mov ebx,8 / test bl,al / je 0x6D8AD4         ; ★ 格字节 +0x12C 位 8
+    同样的 8 方向循环（+0x12C 判定，同 or ebp 位掩码）
+  收尾:
+    test bl,cl / jne / or ebp,4                  ; ★ 中心格遮挡补位 4
+    movsx eax,byte[ebp+0x7F4194]                 ; ★★ ebp 索引 [0x7F4194] 字节表
+    pop edi/esi/ebp / ret 4                      ; ★ 返查表值
+
+语义：**TacticalClass::GetOcclusion（rank 带名，8 方向遮挡聚合）**——
+①经 **MapClass::Instance [0x87F7E8] + 0x5657A0（找格，batch 208/209 已
+登记）** 取中心格；②按参数 2 分两条分支（+0x140 或 +0x12C 字节位测试）；
+③对 8 个相邻方向各调一次 0x5657A0 找格，按邻居格子字节的位标志把方向
+位 or 进 ebp（0x40/0x80/1/0x20/2/0x10/8/4 = 8 方向位掩码）；④中心格
+遮挡补位 4；⑤最终用 ebp 位掩码索引 **字节表 [0x7F4194]** 返回遮挡值。
+★★★**MapClass 主线第三连**：[0x87F7E8] + 0x5657A0 组合在 batch 208
+（0x5FC380 OverlayClass 构造）、batch 209（0x56D460 ResetZones 用
+[0x87F7E8]）之后本批**第三次出现**——找格惯用法完全稳定。
+★**8 方向位掩码 + 查表**：位聚合 → [0x7F4194] 字节表索引（遮挡值
+映射表）——方向位掩码模式台账首次登记。
+★0x6Dxxxx 区（batch 204 的 0x6D6070 TacticalClass::SetTacticalPosition
+同族）——TacticalClass 视图/遮挡计算端。
+
+⚠️ partial：+0x140/+0x12C 字节位语义（遮挡标志推断）、[0x7F4194] 表
+内容、0xFFFFFFFE 哨兵（edi 初始化的两分支差异）、分支 1/2 的切换条件。
+
+================================================================================
+0x52B600  键比对判定（8 callers，全 0x1B 读完）
+================================================================================
+机器码（全 0x1B，body=27）：
+    mov eax,[ecx+0x10] / test eax / je 0x52B616   ; ★ this->+0x10 为空 → 返 0
+    mov ecx,[esp+4] / mov eax,[eax] / cmp eax,[ecx]
+    jne 0x52B616                                 ; ★ [this->+0x10]（首 dword）vs [参数]
+    mov al,1 / ret 4                             ; ★ 相等 → 返 1
+  0x52B616:
+    xor al,al / ret 4                            ; ★ 返 0
+  紧邻 0x52B620（同区第二成员）:
+    mov esi,ecx / mov eax,[esi+4] / test eax / jne ...  ; ★ 链表操作
+
+语义：**键比对判定（0x52B6xx 区）**——this->+0x10 非空且其**首 dword**
+与参数指针的**首 dword** 相等时返 1，否则返 0——**首字段键比对**
+（对象/记录键相等判定）。
+★0x52Bxxx 区（batch 211 的 0x5253B0 动态数组 Add 邻域）——容器/映射
+管理端；+0x10 字段与 batch 211/217 布局的计数槽相关（同区交叉）。
+
+⚠️ partial：+0x10 字段精确语义、宿主类、键比对的调用方契约。
+
+================================================================================
+0x52B430  8B 键值对二分查找（8 callers，全 0x93 读完）
+================================================================================
+机器码（全 0x93，body=149）：
+    push ebx/ebp/esi/edi / mov ebx,ecx
+    mov ecx,[ebx+4] / test ecx / je 0x52B4A5      ; ★ 数组为空 → 默认
+    mov eax,[ebx+0x10] / mov esi,[esp+0x14]       ; ★ 参数 = 键指针
+    test eax / je 0x52B450
+    mov eax,[eax] / mov edx,[esi] / cmp eax,edx / je 0x52B4B8  ; ★ 缓存键命中
+  0x52B450:
+    mov al,[ebx+0xc] / test al / jne 0x52B475     ; ★ +0xC 标志（已初始化）
+    push 0x52B720 / push 8 / push ecx / mov ecx,[ebx] / push ecx
+    call 0x7C8B48                                 ; ★★ 0x7C8B48（批量分配，8B×元素数）
+    mov [ebx+0x10],0 / mov byte[ebx+0xc],1        ; ★ 置已初始化 + 缓存清零
+  0x52B475:
+    mov ecx,[ebx+4] / mov ebp,[esi] / mov edi,[ebx] ; ★ 键值 vs 数组
+    test ecx / jle 0x52B4A5
+  二分循环:
+    mov eax,ecx / cdq / sub eax,edx / sar eax,1   ; ★ 折半
+    mov esi,[edi+eax*8] / lea edx,[edi+eax*8]     ; ★ 8B 元素
+    cmp esi,ebp / jle 0x52B495
+    mov ecx,eax / jmp 0x52B4A1
+    je 0x52B4B1 / lea edi,[edx+8] / or edx,-1 / sub edx,eax / add ecx,edx
+    test ecx / jg 二分循环                        ; ★ 二分查找（8B 元素首 dword 键）
+  0x52B4A5:
+    pop/ret / mov eax,0xB7882C / ret 4            ; ★ 未命中返默认 0xB7882C
+  0x52B4B8:
+    mov eax,[ebx+0x10] / add eax,4 / ret 4        ; ★ 缓存命中 → 返 +0x10+4（值）
+  0x52B4B1:
+    test edx / je 0x52B4A5 / mov [ebx+0x10],edx   ; ★ 写入缓存
+    mov eax,[ebx+0x10] / add eax,4 / ret 4        ; ★ 返值槽
+
+语义：**8B 键值对二分查找（0x52B4xx 区）**——在 [ebx] 数组（8B/元素
+键值对，首 dword 键）中二分查找参数键：命中返键值对 +4（值槽）；未
+命中返默认 0xB7882C；+0x10 缓存命中直接返（缓存键 + 值槽）；首次
+经 0x7C8B48（批量分配 8B×元素数）初始化 + 置 +0xC 标志。
+★★**batch 217 的 0x724580 查找侧**：batch 217 的 ToolTipManager::Add
+（+0x24C 映射插入 8B 键值对：键=首 dword/值=指针）与本条 0x52B430
+（8B 键值对二分查找）**同族**——插入侧（batch 217）/查找侧（本条）
+8B 键值对映射两段闭合；[ebx+0x10] 缓存 + +0xC 标志布局一致。
+★0x7C8B48（批量分配）为新 CRT 分配入口（区别于 0x7C8E17 operator
+new）——批量元素分配推断。
+
+⚠️ partial：0x7C8B48 精确身份（批量分配推断）、0x52B720（初始化回调
+推断）身份、默认值 0xB7882C 语义、+0x10 缓存键语义、宿主类。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x6D8700 → batch 208（0x5FC380）+ batch 209（0x56D460）——★★[0x87F7E8]
+   MapClass::Instance + 0x5657A0 找格第三连 + 8 方向位掩码新形态。
+2. 0x52B600 → batch 211（0x5253B0 同 0x52 区）——键比对判定。
+3. 0x52B430 → batch 217（0x724580 8B 键值对映射）——★★插入侧/查找侧
+   两段闭合 + 0x7C8B48 新分配入口。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x6D8700 的 +0x140/+0x12C 位语义与 [0x7F4194] 表内容。
+2. 0x52B600 的 +0x10 字段与宿主类。
+3. 0x52B430 的 0x7C8B48 身份与 0x52B720 初始化回调。
