@@ -1,0 +1,98 @@
+frontier batch 189 — BuildingClass 构造器实锤 + GetByTypeAndIndex 实锤 + 位测试 getter 族（2026-10-14）
+
+口径：承接 batch 188 候选，ranking.tsv unique_callers 降序取 0x43B740（9 callers，
+YRpp BuildingClass.h:198 实锤）、0x48DCD0（9 callers，YRpp TechnoTypeClass.h:118
+实锤）、0x5176B0（10 callers）。三者 prologue 均干净，机器码读全/读尽。
+
+================================================================================
+0x43B740  BuildingClass::BuildingClass（9 callers，前 0x60 读完）
+================================================================================
+身份实锤：YRpp BuildingClass.h:197-198（构造器 JMP_THIS(0x43B740)，类注释
+BuildingClass 继承链 BuildingClass→TechnoClass→...）。
+
+机器码还原（关键路径）：
+    mov eax,[esp+8]              ; ★ 参数（pType 推断）
+    push ebx/ebp/esi/edi / mov esi,ecx
+    push eax / call 0x6F2B40      ; ★ 基类构造（0x6F2B40 未登记，Techno/建筑
+                                   ;   链推断）
+    mov ecx,[esp+0x14] / mov [esi+0x520],ecx   ; ★ +0x520 = 参数 2
+    xor ebx / mov [esi+0x524],ebx              ; ★ +0x524 清 0
+    mov edx,[0xA8ED84] / mov [esi+0x528],edx   ; ★ +0x528 = [0xA8ED84]（全局标记
+                                                ;   batch 175 的 0x6DA7D0 同款）
+    or eax,-1
+    mov [esi+0x530],ebx / mov [esi+0x534],eax  ; ★ +0x534 = -1
+    mov [esi+0x538],eax / mov [esi+0x53C],ebx  ; ★ +0x538 = -1、+0x53C 清 0
+    mov [esi+0x540],ebx / [0x544] / [0x548] / [0x54C] ...（大段字段初始化）
+
+语义：**BuildingClass 构造器**——先调基类构造（0x6F2B40，TechnoClass 链、
+未登记），随后大段字段初始化：+0x520 存参数 2、+0x524 系列清零、+0x528 取
+全局 [0xA8ED84] 标记（batch 175 的 0x6DA7D0 RegisterCellAsVisible 同款全
+局——建筑登记时间戳）、+0x534/+0x538 初始 -1（哨兵索引推断）。
+★0x43Bxxx 区 BuildingClass（batch 117 的 ObjectClass 链下游）——建筑对象
+构造端首条。
+
+⚠️ partial：0x6F2B40 基类构造身份（未登记）、+0x520..0x54C 字段名、参数
+语义、后续成员（0x43B7A0 起）。
+
+================================================================================
+0x48DCD0  TechnoTypeClass::GetByTypeAndIndex（9 callers，全 0x40 读完）
+================================================================================
+身份实锤：YRpp TechnoTypeClass.h:117-118
+    static TechnoTypeClass* __fastcall GetByTypeAndIndex(AbstractType abs, int index)
+        { JMP_THIS(0x48DCD0); }
+地址 + JMP_THIS + 2 参签名（__fastcall ecx/edx）三证；ObjectTypeClass.h:44-46
+静态封装 GetTechnoType 同名引（JMP_STD(0x5004E0) 是其另一入口）。
+
+机器码（全 0x40）：
+    lea eax,[ecx-1]              ; ★ abs = AbstractType（下标从 1 起）
+    cmp eax,0x27 / ja 0x48DD0D    ; ★ 超 [1,0x28]（40 类）→ 返 NULL
+    mov cl,byte[eax+0x48DD24]     ; ★ 跳转表 [0x48DD24 + abs] 取索引
+    jmp dword[ecx*4+0x48DD10]     ; ★ 四路跳转表 [0x48DD10]
+   分支1: mov eax,[0xA83CE4] / mov eax,[eax+edx*4] / ret  ; ★ 数组1[edx]
+   分支2: mov ecx,[0xA83C6C] / mov eax,[ecx+edx*4] / ret  ; ★ 数组2[edx]
+   分支3: mov eax,[0xA8E34C] / mov eax,[eax+edx*4] / ret  ; ★ 数组3[edx]
+   分支4: mov ecx,[0xA8B21C] / mov eax,[ecx+edx*4] / ret  ; ★ 数组4[edx]
+   返 NULL: xor eax / ret
+
+语义：**TechnoTypeClass::GetByTypeAndIndex（按类型+索引取类型类）**——
+AbstractType 减 1 后查跳转表 [0x48DD24]（0x28 项）得到 1-4 分支，四分支
+分别从全局数组 [0xA83CE4]/[0xA83C6C]/[0xA8E34C]/[0xA8B21C] 按 index 取
+类型指针返回；abs 越界（>0x28）返 NULL。
+★**批量闭合全局数组引用**：[0xA83C6C]（batch 171 的 0x45E7B0 用同款——
+确认是类型数组）、[0xA83CE4]/[0xA8E34C]/[0xA8B21C] 三数组首见——
+四类（步兵/车辆/建筑/飞行器 Type 数组推断，40 类 AbstractType 分区）。
+★跨批次：batch 171（0x45E7B0 [0xA83C6C] 同数组）+ AbstractType 枚举
+（batch 123 AbstractTypeClass 四虚表区）——类型分发核心端。
+
+⚠️ partial：跳转表 [0x48DD24] 0x28 项的精确分区（各 AbstractType 归属）、
+[0xA83CE4]/[0xA8E34C]/[0xA8B21C] 三维数组的宿主类型、0x5004E0 入口关系。
+
+================================================================================
+0x5176B0  位测试 getter（10 callers，0x5176B0-0x5176C7 读完）
+================================================================================
+机器码（两成员）：
+  0x5176B0: mov eax,[ecx] / not al / shr al,1 / and al,1 / ret
+    ; ★ this->[0] 字节取反后 bit1 测试（not al → 反码 shr 1 → bit1）
+  0x5176C0: mov eax,[ecx] / not al / shr al,2 / and al,1 / ret
+    ; ★ this->[0] 取反后 bit2 测试
+
+语义：**位测试 getter（取反后 bitN）**——两成员都读 this->[0] 字节取反
+后测试指定位（0x5176B0→bit1、0x5176C0→bit2），返回 0/1。
+★与 batch 178 登记的 0x5175F0（紧邻注册表读取包装，邻域 0x5176A0 bit0
+同款）同簇——0x5176xx 位标志测试簇第四/五成员。
+
+⚠️ partial：宿主类（0x5176xx 区）、bit0/bit1/bit2 三段标志语义。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x43B740 → batch 117（ObjectClass 链下游）+ batch 175（[0xA8ED84] 同款）。
+2. 0x48DCD0 → batch 171（[0xA83C6C] 同数组）+ batch 123（AbstractType 区）。
+3. 0x5176B0 → batch 178（0x5175F0 邻域同簇）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x43B740 的 0x6F2B40 基类构造身份与字段名。
+2. 0x48DCD0 的跳转表 0x28 项分区与三维数组宿主。
+3. 0x5176B0 的位标志语义。
