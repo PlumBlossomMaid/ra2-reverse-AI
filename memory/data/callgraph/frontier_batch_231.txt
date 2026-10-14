@@ -1,0 +1,97 @@
+frontier batch 231 — FactoryClass::AbandonProduction + HouseClass::IonSensitivesShouldBeOffline（2026-10-14）
+
+口径：承接 batch 230，ranking.tsv unique_callers 降序取未登记候选。TOP 12 中
+0x4C9FF0（301B，符号名 FactoryClass::AbandonProduction）与 0x53A130（3B，符号名
+HouseClass::IonSensitivesShouldBeOffline）为带名游戏类成员优先纳入。两函数均全
+反汇编读完（0x4C9FF0 全 0x12D=301B；0x53A130 全 3B）。取证手段：disasm.py 直
+反汇编 + YRpp 交叉验证（FactoryClass.h:58 / HouseClass.h:456 双三证）。
+
+================================================================================
+0x4C9FF0 —— FactoryClass::AbandonProduction（7 callers，全 0x12D=301B 读完）
+================================================================================
+身份实锤：YRpp FactoryClass.h:57-58
+  `bool AbandonProduction() { JMP_THIS(0x4C9FF0); }`
+地址+JMP_THIS+无参三证。
+
+机器码（全 0x12D）：
+    sub esp,0xc / push esi / mov esi,ecx（★this FactoryClass）/ push edi / xor edi,edi
+    mov ecx,[esi+0x58] / cmp ecx,edi / je 0x4CA115（★★+0x58 子对象空 → 返回 0）
+    mov eax,[ecx] / push ebp / call [eax+0x88]（★虚表槽 0x88 取生产对象）
+    add eax,0x64 / push eax / push 0x8222AC / call 0x4068E0（★日志，0x8222AC 串）
+    mov ecx,[esi+0x58] / mov edx,[ecx] / call [edx+0x88]（★槽 0x88 再取）
+    mov ecx,[esi+0x58] / mov edx,[eax] / mov ecx,[ecx+0x21C]（★子对象+0x21C）
+    push ecx / mov ecx,eax / call [edx+0x84]（★虚表槽 0x84 更新（+0x21C 参数））
+    mov edx,[esi+0x60] / mov ecx,[esi+0x6C] / sub eax,edx / push eax
+    call 0x4F9950（★差值计算/剩余进度折算）
+    mov eax,[esi+0x68] / or ebp,-1 / cmp eax,edi / mov [esi+0x60],edi
+    je / mov [esi+0x68],ebp（★清 +0x60/+0x68）
+    mov eax,[0xA8ED84]（★★全局帧计数，batch 083 TimerStruct 同源） 
+    lea edx,[esi+0x2C] / xor ecx,ecx / mov [esi+0x38],edi
+    mov [edx],eax / mov [edx+4],[esp+0x10] / mov [edx+8],ecx（★写 +0x2C 起三字段）
+    mov ecx,[esi+0x6C] / mov [esi+0x24],edi / mov byte[esi+0x70],1 / mov byte[esi+0x5D],1
+    call 0x50B730（★判定）/ test al,al / jne 0x4CA0E3
+    类型分支（★按子对象类型写不同字段）:
+    mov ecx,[esi+0x58] / mov edx,[ecx] / call [edx+0x2C]（★虚表槽 0x2C 取类型）
+      cmp eax,0xf / jne / mov eax,[esi+0x6C] / mov [eax+0x5654],ebp（★类型15 → +0x5654=-1）
+      cmp eax,1 / jne / mov [eax+0x5650],ebp（★类型1 → +0x5650=-1）
+      cmp eax,2 / jne / mov [eax+0x5658],ebp（★类型2 → +0x5658=-1）
+      cmp eax,6 / jne 0x4CA0E3 / mov [eax+0x564C],ebp（★类型6 → +0x564C=-1）
+    0x4CA0E3: mov ecx,[0xA8E7AC] / pop ebp / inc ecx / mov [0xA8E7AC],ecx（★★计数++）
+    mov ecx,[esi+0x58] / cmp ecx,edi / je / mov edx,[ecx] / push 1 / call [edx+0x20]（★槽 0x20 (1)）
+    mov [esi+0x58],edi（★+0x58 置空）
+    mov eax,[0xA8E7AC] / dec eax / mov [0xA8E7AC],eax（★★计数--）
+    mov al,1 / pop edi/esi / add esp,0xc / ret（★返回 1）
+    0x4CA115: pop edi / xor al,al / pop esi / add esp,0xc / ret（★★+0x58 空 → 返回 0）
+
+语义：**FactoryClass::AbandonProduction（放弃生产，与符号名/YRpp 完全吻合）**——
+`+0x58` 子对象非空时：虚表槽 0x88 取生产对象 + 日志（0x8222AC）→ 槽 0x84 更新
+（带子对象 +0x21C 参数）→ 0x4F9950 差值折算剩余进度 → 清 +0x60/+0x68 → 写
++0x2C 起三字段（含 [0xA8ED84] 帧计数、当前进度 +0x30、类型 +0x34）→ +0x24 清理
++ +0x5D/+0x70 置 1 → 0x50B730 判定 → 按子对象类型（虚表槽 0x2C：1/2/6/0xf）
+把 `-1` 写回 +0x6C 对象的 `+0x5650/+0x5658/+0x564C/+0x5654`（不同生产类型的
+冷却/清空字段）→ [0xA8E7AC] 计数 +1 → 虚表槽 0x20(1) 通知 → +0x58 置空 →
+[0xA8E7AC] 计数 -1 → 返回 1。空子对象直接返回 0。
+
+★原版怪癖（照抄）：① [0xA8E7AC] 计数在调用前后 ±1（放弃期间持有的活跃度
+引用计数）；② 类型分支是 4 连 if（1/2/6/0xf 各写不同偏移，非 switch 表）；
+③ 返回 0/1 双出口（空子对象 0 / 正常放弃 1）。
+
+★跨批次连接：**QF 生产系统主线（QWEN.md「生产系统全量逆向 FactoryClass +
+TimeToBuild + 测试 45 项全过」——本条是其 AbandonProduction 成员）**+[0xA8ED84]
+全局帧计数（batch 083 TimerStruct 同源）+[0xA8E7AC] 计数（batch 230 MakeAlly
+同全局区）+虚表槽 0x88/0x84/0x2C/0x20（FactoryClass 子对象接口族）。
+⚠️ partial：虚表槽 0x88/0x84 精确语义（取生产对象/更新 推断）、0x4F9950 差值
+公式、0x50B730 判定（生产状态检查推断）、+0x564C/0x5650/0x5654/0x5658 的
+生产类型归属（0xf=建造/1=步兵/2=载具/6=? 推断）、0x8222AC 日志串内容
+
+================================================================================
+0x53A130 —— HouseClass::IonSensitivesShouldBeOffline（7 callers，全 3B 读完）
+================================================================================
+身份实锤：YRpp HouseClass.h:455-456
+  `bool IonSensitivesShouldBeOffline() const { JMP_THIS(0x53A130); }`
+地址+JMP_THIS+const+bool 三证。
+
+机器码（全 3B）：
+    0x53A130: xor al,al / ret        ; ★恒返回 false（空桩）
+
+语义：**HouseClass::IonSensitivesShouldBeOffline（名称实锤但函数体为空桩）**——
+`xor al,al; ret` 恒返回 false（离子风暴敏感单位不需要下线）。★原版怪癖（照抄）：
+该查询在 exe 里被**空桩化**（YR 实现为立即返回 false 的 stub，非真实探测逻辑）——
+任何调用点得到的就是恒 false；与 batch 001 的 0x4068E0（空日志 stub）同类空桩
+形态，但本条带真实 YRpp 符号名（空桩化的是功能本身）。
+
+★跨批次连接：HouseClass（batch 230 MakeAlly 同家族）+stub 形态（batch 001
+0x4068E0 / batch 225 0x4A4AC0 同类空桩）。⚠️ partial：无（3B 全读完，恒 false
+明确）；「空桩原因」（TS 残留/功能禁用 推断）
+
+================================================================================
+（batch 231 说明：C++ 模型决策）
+================================================================================
+本批两函数均不新增 C++ 模型，理由：
+① 0x4C9FF0（AbandonProduction）的语义链依赖虚表槽 0x88/0x84/0x2C/0x20 与
+   0x4F9950/0x50B730 两个未取证后端——QWEN.md 已有 TimeToBuild 测试 45 项全过
+   的 FactoryClass 基础，本批登记锚定 AbandonProduction 地址语义，模型留待
+   FactoryClass 生产家族整体建模时与既有 45 项测试合并落地。
+② 0x53A130（IonSensitivesShouldBeOffline）是 3 字节恒 false 空桩，逻辑即实现
+   （无模型价值）；且 YRpp 带名 + 空桩的组合已在登记中明确（照抄恒 false）。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。
