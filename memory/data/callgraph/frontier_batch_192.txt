@@ -1,0 +1,106 @@
+frontier batch 192 — 菱形范围判定（batch 086 同全局闭合）+ FPU 控制字族 + CRT strcmp 对齐版（2026-10-14）
+
+口径：承接 batch 191 候选，ranking.tsv unique_callers 降序取 0x5AC230（9 callers）、
+0x7DBC77（9 callers）、0x7CDA90（9 callers）。三者 prologue 均干净，机器码读全。
+
+================================================================================
+0x5AC230  菱形坐标范围判定（9 callers，全 0x34 读完）
+================================================================================
+机器码（全 0x34）：
+    movsx edx,word[ecx]          ; ★ 坐标 X（word 符号扩展）
+    movsx eax,word[ecx+2]        ; ★ 坐标 Y
+    mov ecx,[0xABED04]           ; ★★ 全局 [0xABED04]（batch 086 实锤 MapRect.W!）
+    push esi / lea esi,[eax+edx] ; ★ X+Y
+    cmp esi,ecx / jle 0x5AC261   ; ★ (X+Y) <= W → 非法
+    push edi / mov edi,edx       
+    sub edi,eax / cmp edi,ecx / jge 0x5AC261  ; ★ (X-Y) >= W → 非法
+    sub eax,edx / cmp eax,ecx / jge 0x5AC261  ; ★ (Y-X) >= W → 非法
+    cmp esi,[0xABED08]           ; ★★ 全局 [0xABED08]（batch 086 实锤 W+2H!）
+    jg 0x5AC261                  ; ★ (X+Y) > W+2H → 非法
+    mov al,1 / ret               ; ★ 全过 → 合法
+   0x5AC261: xor al,al / ret
+
+语义：**菱形坐标范围判定（MapClass::CoordinatesLegal 同构手写版）**——
+四路判据（符号扩展 word 坐标）：①(X+Y) <= W → 非法；②(X-Y) >= W →
+非法；③(Y-X) >= W → 非法；④(X+Y) > W+2H → 非法。合法区 =
+{(x,y): W < x+y <= W+2H 且 |x-y| < W}。
+★**与 batch 086 的 0x568300（MapClass::CoordinatesLegal）逐条指令同构**，
+差异在上界来源：batch 086 读 [ecx+0xF4]/[ecx+0xF8]（this 字段），本条读
+全局 [0xABED04]/[0xABED08]（batch 086 实锤是经 0x566306 缓存的 W 与 W+2H）
+——**RMG 区（0x5Axxxx）与引擎 MapClass 用同一组缓存的菱形谓词**。
+★0x5ACxxx 区为 RMG 区前哨（batch 138 的 0x5A6C10 同 [0xABED04] 引用）——
+菱形边界检查手写内联第三实例。
+
+⚠️ partial：[0xABED04]/[0xABED08] 的精确写入点（0x566306 推断未验）、
+紧邻 0x5AC270（析构形态成员）与宿主类。
+
+================================================================================
+0x7DBC77  FPU 控制字设置族（9 callers，0x7DBC77-0x7DBC99 读完）
+================================================================================
+机器码（0x7DBC77，0x22 读完）：
+    push ebp / mov ebp,esp / push ecx
+    wait / fnstcw word[ebp-4]     ; ★ 读 x87 控制字
+    mov eax,[ebp+0xC] / mov ecx,eax
+    and eax,[ebp+8]               ; ★ 掩码 1
+    not ecx / and ecx,[ebp-4]     ; ★ 掩码 2（~参数 & 原控制字）
+    or ecx,eax                    ; ★ 组合：新控制字 = (原 & ~参数) | (参数 & 掩码)
+    mov [ebp+0xC],ecx / fldcw word[ebp+0xC]  ; ★ 写回 x87 控制字
+    movsx eax,word[ebp-4]         ; ★ 返回旧控制字（符号扩展）
+    leave / ret
+
+语义：**FPU 控制字设置（_controlfp 形态）**——读当前 x87 控制字
+（fnstcw），按 (参数 & 掩码) 替换指定位后 fldcw 写回，返回旧控制字。
+★**与项目记忆 ra2_fpu_env_global 线直接对应**：batch 001 区已实锤
+WinMain 0x6BBFB7 `_control87(0x300, 0x300)` 设全局 RC_CHOP（向零截断）——
+本条是 CRT 的 _controlfp/_control87 实现本身（0x7D 系 MSVC6 静态 CRT），
+引擎调用它时走的就是这个写回流程。
+★**FPU 环境设置链闭合**：0x7DBC77（_controlfp 写回）+ 0x7DB C9A（同族
+变体，fld xword [0x87D704] 10 字节 x87 常量——控制字与状态字组合）——
+x87 控制字读写基建。
+
+⚠️ partial：0x7DBC9A 变体的 [0x87D704]/[0x87D710] 常量、参数掩码组合的
+具体 bit 布局、与 WinMain 0x6BBFB7 调用点的精确对应（未逐一验证）。
+
+================================================================================
+0x7CDA90  CRT strcmp 对齐优化版（9 callers，0x7CDA90-0x7CDAD0 前段读完）
+================================================================================
+机器码（前 0x40）：
+    mov edx,[esp+4]              ; ★ 串 1
+    mov ecx,[esp+8]              ; ★ 串 2
+    test edx,3 / jne 0x7CDADC    ; ★ 未 4 字节对齐 → 走非对齐路径
+    mov eax,[edx] / cmp al,[ecx]  ; ★ 对齐路径：dword 载入逐字节比
+    jne 0x7CDAD4
+    or al,al / je 0x7CDAD0       ; ★ 首字节 0 → 结束
+    cmp ah,[ecx+1] / jne 0x7CDAD4 / or ah,ah / je 0x7CDAD0
+    shr eax,0x10 / cmp al,[ecx+2] / jne 0x7CDAD4 / or al,al / je 0x7CDAD0
+    cmp ah,[ecx+3] / jne 0x7CDAD4 / add ecx,4 / add edx,4
+    or ah,ah / jne 0x7CDA90       ; ★ 4 字节块循环
+    ...
+    ; （0x7CDAD4/0x7CDADC 起：不等/非对齐收尾）
+
+语义：**CRT strcmp 对齐优化版（dword 分块）**——串 1 4 字节对齐时每次
+`mov eax,[edx]` 载入 4 字节，移位逐字节与 [ecx] 比较并检查 NUL，
+循环步进 4 字节；非对齐或不等时走逐字节路径。
+★与 batch 001 登记的 0x7C8D20（strcmp with locale branch）同 CRT 字符串
+比较族——0x7CDA90 是无 locale 的纯对齐快速路径。
+★0x7C-0x7D MSVC6 静态 CRT 区（项目记忆同）——字符串比较族补员。
+
+⚠️ partial：0x7CDAD4 之后的完整收尾（返回值约定）、非对齐路径细节、
+与 0x7C8D20 的关系（同一 strcmp 的 fast/slow 分支推断）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x5AC230 → batch 086（[0xABED04]=W/[0xABED08]=W+2H 同全局闭合）+
+   0x568300 同构谓词——菱形谓词第三实例 + RMG 区（batch 138 的 0x5A6C10
+   同区同全局）。
+2. 0x7DBC77 → ra2_fpu_env_global 线（_control87(_RC_CHOP) 实现本体）+
+   0x7D 系 CRT。
+3. 0x7CDA90 → batch 001（0x7C8D20 同族）——strcmp 对齐版。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x5AC230 的 [0xABED04]/[0xABED08] 写入点（0x566306 推断未验）。
+2. 0x7DBC77 的 0x7DBC9A 变体常量与调用点对应。
+3. 0x7CDA90 的收尾返回值约定。
