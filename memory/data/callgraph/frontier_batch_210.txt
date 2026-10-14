@@ -1,0 +1,150 @@
+frontier batch 210 — 大栈帧表面工厂 + 11 参转发器 + CCFileClass 文件项查找（跨批虚表链）（2026-10-14）
+
+口径：承接 batch 209 候选，ranking.tsv unique_callers 降序取 0x630310（8 callers）、
+0x4AF2A0（8 callers）、0x69E740（8 callers）。0x630310 大函数读前段，其余读全。
+
+================================================================================
+0x630310  大栈帧表面工厂（8 callers，前 0x200 读完）
+================================================================================
+机器码（前 0x200，body=1635）：
+    sub esp,0x8B4 / push ebx/ebp/esi/edi   ; ★ 大栈帧
+    mov esi,ecx / mov [esp+0x34],edx
+    mov eax,[esi] / push 0 / mov [esp+0x18],esi
+    call [eax+0x14]                        ; ★ 虚表槽 0x14（校验）
+    test al / je 返 0                      ; ★ 失败直接返 0
+    mov edx,[esi] / push 1 / mov ecx,esi / call [edx+0x1c]  ; ★ 槽 0x1C
+    lea ecx,[esp+0x44] / push 0x80 / push ecx
+    call [eax+0x24]                        ; ★ 槽 0x24（0x80 缓冲查询）
+    cmp byte[esp+0x44],0xA / cmp byte[esp+0x45],5
+    cmp byte[esp+0x47],8 / je 0x63037C      ; ★ 格式字节检查（0xA/5/8）→ 不符返 0
+  尺寸计算:
+    and eax/edi/edx/ecx,0xFFFF             ; ★ 四个 word 尺寸
+    sub edi,eax / sub ecx,edx / inc ecx / inc edi
+    mov al,[esp+0x85] / cmp al,1 / setne dl / inc edx  ; ★ 参数判定
+    mov [esp+0x1c],ecx / mov [esp+0x2c],ebp（imul 积）
+    div ecx / dec eax / cmp eax,edi / jge / mov edi,eax   ; ★ 除法取整（尺寸分配）
+  分配分支:
+    push 0x20 / call 0x7C8E17               ; ★★ operator new（batch 001）×0x20
+    mov ebx,eax / test / je 返 0
+    mov [ebx+0x10],esi / imul esi,edi × 宽   ; ★ 面积计算（imul 链）
+    mov [ebx+4],eax / mov [ebx+8],edi / mov [ebx],0x7E2104  ; ★ 装虚表 A
+    lea ecx,[ebx+0x14] / push esi / push ecx（0x43AD00 两参）
+    call 0x43AD00                           ; ★★ batch 059/063 已登记：
+                                            ;   缓冲包装构造（三字段带标志位）
+    mov [ebx],0x7E2070                       ; ★ 换虚表 B（0x7E2104→0x7E2070）
+    lea ecx,[esp+0x38] / call 0x43AE50       ; ★ 收尾（另一构造）
+    call [edx+0x5c]（push 0/0）              ; ★ 槽 0x5C（子对象查询）
+    ...
+  后续: lea eax,[esp+0xc4] / push 0x800 / push eax / call [edx+0x24]
+    ; ★ 0x800 大缓冲再查询（继续处理）
+
+语义：**大栈帧表面/缓冲工厂（0x630xxx 区）**——0x8B4 栈帧 + 虚表
+槽 0x14/0x1C/0x24/0x5C 多段查询：①槽 0x14 校验失败返 0；②槽 0x24 填
+0x80 缓冲并检查格式字节（0xA/5/8——表面格式标识推断）；③四个 word
+尺寸裁剪 + div 取整（尺寸换算）；④operator new（0x7C8E17）×0x20 分配
+对象、装虚表 0x7E2104 → 换 0x7E2070（**双虚表基类+派生切换**）、经
+**batch 059/063 已登记的 0x43AD00（缓冲包装构造）**初始化 +0x14 子缓冲、
+0x43AE50 收尾；⑤后续 0x800 大缓冲槽 0x24 查询继续处理。
+★★**跨批连接**：0x43AD00（缓冲包装构造）在 batch 063/059 已登记——
+本条 0x630310 是其又一处调用（batch 197 的 0x473A80 也调 0x43AD00）。
+★0x7E2104→0x7E2070 双虚表切换 = 基类构造后换派生表（batch 201 的
+0x4779E0 同款双虚表模式）。
+
+⚠️ partial：宿主类（0x630xxx 区）、虚表槽 0x14/0x1C/0x24/0x5C 身份、
+格式字节 0xA/5/8 语义、尺寸换算公式、0x43AE50 身份。
+
+================================================================================
+0x4AF2A0  11 参转发器（8 callers，全 0x2D 读完）
+================================================================================
+机器码（全 0x2D，body=144）：
+    mov eax,[esp+0x18] / sub esp,0x20 / push esi/edi
+    mov edi,ecx / mov ecx,[esp+0x3c] / mov [edx+0x17c],ecx  ; ★ edx 目标 +0x17C 存参
+    test eax / jne 0x4AF2C8
+    neg ecx / sbb ecx,ecx / and ecx,0x10    ; ★ 标志 → 0/0x10（条件位）
+    push ecx / mov ecx,edx / call 0x490B90  ; ★ 0x490B90（条件调用）
+  0x4AF2C8:
+    mov ecx,[esp+0x34] / mov esi,[esp+0x2c] ; ★ 两参指针
+    mov edx,[ecx] / mov ecx,[ecx+4] / mov [esp+0xc],ecx
+    mov [esp+8],edx / mov ecx,[esp+0x30]    ; ★ 结构 a 装配（+8/+0xc）
+    mov edx,[ecx+8] / mov [esp+0x10],edx / mov edx,[ecx+0xc]
+    mov [esp+0x14],edx                      ; ★ 结构 b 装配（+0x10/+0x14）
+    连续 push [esp+0x54] ×5 / push eax（标志）
+    push ecx / lea ecx,[esp+0x34] / push ecx
+    mov ecx,esi / call [eax+0x78]           ; ★ 虚表槽 0x78（5 参 + 标志 + 结构）
+    lea edx,[esp+0x24] / mov ecx,edi / push eax / push esi / push edx
+    mov edx,[esp+0x60] / call 0x4373B0      ; ★ 0x4373B0（收尾转发）
+    add esp,0x20 / ret 0x2C                 ; ★ 11 参（0x2C/4）
+
+语义：**11 参转发器（0x4AF2xx 区）**——①edx 目标对象 +0x17C 存参数；
+②标志参数为 0 时经 0x490B90 条件调用（0/0x10 位）；③从两个指针参数
+装配两个结构（+8/+0xc、+0x10/+0x14）；④连续压 5 个相同槽参数 + 标志 +
+结构指针调虚表槽 0x78；⑤收尾 0x4373B0（3 参）。ret 0x2C = 11 参。
+★**多参转发模板**（batch 198 的 0x541370 四参转发同思路，本条 11 参
+更复杂——结构装配 + 重复压参）。
+★紧邻 0x4AF330 起是浮点常量链（fld [0x7E1710]/[0x7E1708] + fadd +
+0x7C8FB0 → [0x8A0778] → fdiv [0x7E6230] → [0x8A07C8] → fdiv → [0x8A07B0]）
+——0x4AFxxx 区浮点计算邻域（与 0x4AF2A0 同区但不同函数）。
+
+⚠️ partial：宿主类（0x4AF2xx 区）、虚表槽 0x78 身份、0x490B90/0x4373B0
+身份、+0x17C 字段语义、浮点链 0x4AF330 的归属（相邻独立函数推断）。
+
+================================================================================
+0x69E740  CCFileClass 文件项查找（8 callers，全 0x98 读完）
+================================================================================
+机器码（全 0x98，body=152）：
+    sub esp,0x6c / push esi / mov esi,ecx
+    cmp word[esi],-1 / jne 0x69E79E         ; ★ this->+0 == -1 才初始化
+    mov al,[esi+0x10] / test al / jne 0x69E79E  ; ★ +0x10 已初始化跳过
+    mov eax,[esi+8] / lea ecx,[esp+4] / push eax
+    call 0x4739F0                            ; ★★★ batch 063 已登记：
+                                            ;   CCFileClass 构造（虚表 0x7E16B0）
+    lea ecx,[esp+4] / call 0x4A3890          ; ★ 0x4A3890（文件打开/查询）
+    test eax / je 0x69E774
+    mov [esi+0xc],eax / mov byte[esi+0x10],1 ; ★ 存句柄 + 置已初始化
+  0x69E774:
+    lea ecx,[esp+0x5c] / mov [esp+4],0x7E16B0  ; ★★ 虚表 0x7E16B0
+                                            ;   （batch 197 实锤 CCFileClass）
+    mov [esp+0x68],0 / call 0x43AE50
+    mov [esp+4],0x7E1668 / call 0x431B80    ; ★ 换虚表 0x7E1668 + 收尾
+  0x69E79E:
+    mov ecx,esi / call 0x69E580             ; ★ 0x69E580（条目查找）
+    test eax / je 返 0
+    movsx edx,word[eax+6] / mov ecx,[esp+0x70]
+    cmp ecx,edx / jae 返 0                  ; ★ 索引越界（[eax+6] 上限）
+    lea ecx,[ecx+ecx*2] / lea ecx,[eax+ecx*8+8]  ; ★ index×3×8+8 子项定位
+    test ecx / je 返 0
+    mov ecx,[ecx+0x14] / test ecx / je 返 0
+    add eax,ecx / ret 4                     ; ★ 返回 0x69E580 结果 + 子项偏移
+
+语义：**CCFileClass 文件项查找（0x69Exxx 区）**——①this->+0 未初始化
+（word==-1）且 +0x10==0 时：经 **batch 063 已登记的 0x4739F0（CCFileClass
+构造）** + 0x4A3890（文件打开）取句柄存 +0xc、置 +0x10=1；②栈上装虚表
+0x7E16B0（batch 197 实锤 CCFileClass 系）→ 0x43AE50 构造 → 换 0x7E1668
++ 0x431B80 收尾；③0x69E580 条目查找，索引越界（[eax+6] word 上限）返 0；
+④index×3×8+8 子项定位 + 子项 +0x14 偏移，返回 0x69E580 结果 + 偏移。
+★★★**跨批虚表链闭合**：0x4739F0（batch 063 登记的 CCFileClass 构造）
++ 虚表 0x7E16B0（batch 197 登记的 CCFileClass 系）在本条 0x69E740 同框
+出现——CCFileClass 构造/虚表/使用的三端闭合（batch 191 的 0x49DB00
+CCINI 体系邻域）。
+★0x4A3890（文件打开）+ 0x69E580（条目查找）+ 0x7E1668（第二虚表）为
+新登记调用。
+
+⚠️ partial：0x4A3890/0x69E580/0x43AE50/0x431B80 身份、+0 句柄 word
+语义、index×3×8+8 子项结构、0x7E1668 虚表身份。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x630310 → batch 059/063（0x43AD00 缓冲包装构造）+ batch 197
+   （0x473A80 同调 0x43AD00）+ batch 001（0x7C8E17 operator new）——
+   表面工厂虚表链。
+2. 0x4AF2A0 → batch 198（0x541370 多参转发同思路）——11 参复杂转发。
+3. 0x69E740 → batch 063（0x4739F0 CCFileClass 构造）+ batch 197
+   （虚表 0x7E16B0 CCFileClass 系）——★★跨批虚表链三端闭合。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x630310 的虚表槽身份与格式字节语义。
+2. 0x4AF2A0 的虚表槽 0x78 与 0x490B90/0x4373B0 身份。
+3. 0x69E740 的 0x4A3890/0x69E580 与 0x7E1668 身份。
