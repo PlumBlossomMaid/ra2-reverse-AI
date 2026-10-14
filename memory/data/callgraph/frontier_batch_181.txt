@@ -1,0 +1,111 @@
+frontier batch 181 — 析构器（双全局链表摘除）+ 链表节点重连 + 字段 setter 族（2026-10-14）
+
+口径：承接 batch 180 候选，ranking.tsv unique_callers 降序取 0x5F3B80（10 callers）、
+0x6C9890（10 callers）、0x433C70（10 callers）。三者 prologue 均干净，机器码读全。
+
+================================================================================
+0x5F3B80  析构器（双全局链表摘除；10 callers，0x5F3B80-0x5F3C3D 读完）
+================================================================================
+机器码（0x5F3B80，全 0xBD）：
+    push ecx / push esi / mov esi,ecx
+    mov ecx,[esi+0x38]           ; ★ this->+0x38 子对象
+    mov [esi],0x7EF060 / mov [esi+4],0x7EF044
+    mov [esi+8],0x7EF03C / mov [esi+0xC],0x7EF034
+    ; ★★ 四虚表安装（0x7EF060/0x44/0x3C/0x34——多重继承虚表槽）
+    test ecx / je 跳过
+    call 0x4389B0               ; ★ 0x4389B0（子对象清理）
+  跳过:
+    ; 第一个全局链表 [0xB0F698]：
+    mov edx,[0xB0F698] / lea eax,[esp+4] / push eax
+    mov ecx,0xB0F698 / mov [esp+8],esi
+    call [edx+0x10]             ; ★ 虚表槽 0x10：查 this 索引
+    cmp eax,-1 / je 跳过2
+    mov ecx,[0xB0F6A8] / cmp eax,ecx / jge 跳过2
+    dec ecx / cmp eax,ecx / mov [0xB0F6A8],ecx / jge 跳过2
+    mov ecx,[0xB0F69C] / inc eax
+    loop: mov edx,[ecx+eax*4] / mov [ecx+eax*4-4],edx
+    mov ecx,[0xB0F6A8] / cmp eax,ecx / jl loop
+    ; ★★ 数组前移：把 eax 起的项整体左移一位（摘除 this）
+  跳过2:
+    ; 第二个全局链表 [0xA8E360]：完全同构（[0xA8E360]/[0xA8E370]/
+    ;   [0xA8E364] 三全局，同款虚表槽 0x10 查索引 + 数组前移摘除）
+
+语义：**析构器（dtor）**——先装四虚表（0x7EF060/0x44/0x3C/0x34 多重继承
+槽），+0x38 子对象非空时经 0x4389B0 清理；然后从**两个全局对象链表**
+（[0xB0F698] 与 [0xA8E360]，各配计数 [0xB0F6A8]/[0xA8E370] 与数组
+[0xB0F69C]/[0xA8E364]）经虚表槽 0x10 查自身索引后**数组前移摘除**。
+★**双全局链表登记模式**：同一个对象同时挂在两个全局链表上，析构时都要
+摘——引擎全局对象管理标准形态。
+★跨批次：虚表槽 0x10（FindIndex——batch 178 的 0x721210 同语义）+ 四虚表
+安装（batch 123 AbstractTypeClass 同款）+ 0x5F 系（batch 117/177/180）。
+
+⚠️ partial：[0xB0F698]/[0xA8E360] 链表宿主类、0x4389B0 子对象清理语义、
++0x38 字段、虚表槽 0x10 与四虚表的精确对应。
+
+================================================================================
+0x6C9890  链表节点重连（10 callers，0x6C9890-0x6C98D0 读完）
+================================================================================
+机器码（全 0x40）：
+    push esi / mov esi,[esp+8]   ; ★ 参数：新节点
+    push edi / mov edi,ecx       ; ★ this（宿主）
+    cmp [edi+4],esi / je 收尾    ; ★ 已是目标 → 直接返回
+    test esi / je 0x6C98B6      ; ★ 新节点空 → 只清旧
+    mov ecx,[esi+8] / test / je 0x6C98B6  ; ★ 新节点已挂别处（+8=宿主）
+    mov eax,[ecx] / push 0 / call [eax+4] ; ★ 虚表槽 0x04（旧宿主解除通知）
+    mov [esi+8],0
+  0x6C98B6:
+    mov eax,[edi+4] / test / je 0x6C98C4 ; ★ 旧节点
+    mov [eax+8],0                ; ★ 旧节点 +8 宿主清 0
+  0x6C98C4:
+    mov [edi+4],esi              ; ★ this->+4 = 新节点
+    test esi / je 收尾
+    mov [esi+8],edi              ; ★ 新节点 +8 = this（双向链接）
+  收尾: pop edi / pop esi / ret 4
+
+语义：**链表节点重连（父子链接 setter）**——把 this->+4 指向的节点换成
+新节点：旧节点 +8 宿主清 0、新节点若已挂别处先经虚表槽 0x04 解除再挂到
+this（新节点 +8=this），双向链保持一致。
+★0x6Cxxxx 区（batch 179 的 0x6CB920 超级武器族同区）——对象父子链管理。
+
+⚠️ partial：宿主类、虚表槽 0x04（解除通知）身份、+4/+8 字段名。
+
+================================================================================
+0x433C70  字段 setter 族（10 callers，0x433C70-0x433CD0 读完）
+================================================================================
+机器码（六成员）：
+  0x433C70: mov dx,word[esp+4] / mov ax,word[ecx+0x24] / mov [ecx+0x24],dx / ret 4
+    ; ★ +0x24 word setter（保留旧值于 ax——setter 也返回旧值?）
+  0x433C80: mov ax,word[esp+4] / mov [ecx+0x26],ax / mov ax,word[ecx+0x24] / ret 4
+    ; ★ +0x26 word setter + 返回 +0x24
+  0x433C90: mov dl,byte[esp+4] / mov al,byte[ecx+0x41] / mov [ecx+0x41],dl / ret 4
+    ; ★ +0x41 字节 setter
+  0x433CA0: mov eax,[esp+4] / xor edx / test eax / je 清零
+    mov edx,[eax] / mov [ecx+0x30],edx / mov edx,[eax+4] / mov [ecx+0x34],edx
+    mov edx,[eax+8] / mov [ecx+0x38],edx / mov eax,[eax+0xC] / mov [ecx+0x3C],eax
+    ret 4
+    ; ★ 4-dword 结构拷贝：源 +0/4/8/C → this->+0x30/34/38/3C
+   清零: mov [ecx+0x3C],edx / [ecx+0x38],edx / [ecx+0x34],edx / [ecx+0x30],edx / ret 4
+    ; ★ 空源 → 四字段清零
+
+语义：**紧凑字段 setter 族（0x433Cxx 区）**——+0x24/+0x26 是 word setter
+（0x433C70 还保留旧值、0x433C80 返回 +0x24 读旧）、+0x41 是字节 setter、
+0x433CA0 是 4-dword（16 字节矩形/坐标结构）拷贝 setter（源空则清零
++0x30..0x3C）。★与 batch 178 的 0x5176B0 位测试 getter 族、batch 176 的
+0x42E410 字段 setter 族同思路——紧凑字段访问族。
+
+⚠️ partial：宿主类、+0x24/+0x26/+0x41/+0x30..0x3C 字段语义（矩形/坐标推断）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x5F3B80 → 虚表槽 0x10 FindIndex（batch 178）+ 四虚表安装（batch 123）+
+   0x5F 系（batch 117/177/180）——析构 + 全局链表摘除模式。
+2. 0x6C9890 → 0x6Cxxxx 区（batch 179 超级武器族）——对象父子链。
+3. 0x433C70 → 紧凑字段 setter 族（batch 176/178 同思路）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x5F3B80 的 [0xB0F698]/[0xA8E360] 链表宿主与 0x4389B0 语义。
+2. 0x6C9890 的宿主类与虚表槽 0x04 身份。
+3. 0x433C70 的宿主类与 +0x24/+0x26/+0x30..0x3C 字段。
