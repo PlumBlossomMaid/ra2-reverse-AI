@@ -1,0 +1,162 @@
+frontier batch 242 — CCINIClass::Read3Bytes + 容器析构/构造对 + House 工厂 0x4653C0（2026-10-14）
+
+口径：承接 batch 241，候选池 TOP 12 取四个体量适中函数：0x474B50（207B，带名
+INISection::Read3Bytes）、0x5251C0（39B）+0x525250（93B）疑似容器析构/构造对、
+0x4653C0（131B）prologue 与 batch 239 的 0x428B80 高度同构。四函数均全反汇编
+读完。取证手段：disasm.py 直反汇编 + YRpp 交叉验证 + PE .data 字符串探针 +
+已登记函数交叉验证（batch 092/136/171/189/199/239）。
+
+================================================================================
+0x474B50 —— CCINIClass::Read3Bytes（7 callers，全 0xCF=207B 读完）
+================================================================================
+身份实锤：YRpp CCINIClass.h:136
+  `bool Read3Bytes(...)`（JMP_THIS(0x474B50) 覆盖）
+地址+JMP_THIS 三证（ranking 名 INISection::Read3Bytes 为推断名；CCINIClass 是
+INI 解析标准类，batch 112 ReadDouble 同族）。
+
+机器码（全 0xCF）：
+    sub esp,0x8C / xor eax,eax / xor edx,edx / push esi
+    mov esi,[esp+0xA0]（★★参数 = 源 3 字节结构 {byte[0],byte[1],byte[2]}）
+    push edi / mov edi,ecx（★this CCINIClass）
+    mov al,[esi+2] / mov dl,[esi] / xor ecx,ecx / mov cl,[esi+1]（★取三字节）
+    lea eax,[esp+0x18]（★目标缓冲）
+    push eax×3 / push 0x8189B0 / push eax
+    call 0x7C8EF4（★★sprintf 格式化，batch 199 实锤；格式串 [0x8189B0]="%d,%d,%d"
+      .data 实测）→ 三字节拼成 "b0,b1,b2" 字符串
+    mov eax,[esp+0xB4]（★★输出结构指针）/ add esp,0x14
+    lea ecx,[esp+0x54] / lea edx,[esp+0x14]
+    push 0x40 / push ecx / mov ecx,[esp+0xA4]（★section 名）/ push edx / push eax
+    push ecx / mov ecx,edi / call 0x528A10（★★INI 查询：section+key+格式串→值字符串）
+    test eax,eax / je 0x474BFF（★查询失败 → 走直拷路径）
+    成功路径: lea edx,[esp+0xC] / lea eax,[esp+0x10]
+      push edx / lea ecx,[esp+0xC] / push eax / push ecx / lea edx,[esp+0x60]
+      push 0x8189B0 / push edx / call 0x7CA530（★★sscanf 族解析，batch 169 实锤
+        CRT 格式化族）→ 从值字符串 "%d,%d,%d" 解析回三整数
+      mov al,[esp+0x1C] / mov cl,[esp+0x24] / mov [esp+0x1C],al / mov [esp+0x1D],cl
+      mov eax,[esp+0xAC]（★输出指针）/ mov si,[esp+0x1C] / mov cl,[esp+0x20]
+      mov word[edx],si（★写回 word）+ mov byte[edx+2],cl（★第三字节）
+      ret 0x10
+    0x474BFF 失败路径: mov eax,[esp+0x98]（★输出）/ mov dx,[esi] / mov [ecx],dx
+      mov dl,[esi+2] / mov [ecx+2],dl（★直接拷源三字节）→ ret 0x10
+
+语义：**CCINIClass::Read3Bytes（读 INI 三字节，三证吻合）**——取源结构
+三字节（+0/+1/+2）经 0x7C8EF4+sprintf（[0x8189B0]="%d,%d,%d"）格式化字符串
+→ 0x528A10（INI 查询）读值 → 命中则 0x7CA530（sscanf 族）解析回三整数写
+输出（word+byte）；查询失败则把源三字节直拷输出（默认值路径）。
+
+★原版怪癖（照抄）：① **三字节经 sprintf 拼串再 sscanf 拆回**（不是直接读三个
+int——字符串中转的「格式化桥」惯用，格式串 [0x8189B0]="%d,%d,%d"）；② 失败
+路径**直拷源字节**（读不到就用源结构当默认值，不报错）；③ 输出写 word+byte
+（前两字节 word、第三字节 byte）；④ 0x528A10 是 INI 通用查询（section+key+
+格式串三参），0x7CA530 是 CRT sscanf 族。
+★跨批次连接：**0x7C8EF4（batch 199 格式化 sprintf 类）+ 0x7CA530（batch 169
+CRT 格式化族）+ [0x8189B0]="%d,%d,%d"（.data 实测）**+0x528A10（INI 查询内部，
+batch 112 ReadDouble 的 0x52B4F0 同 INI 族未登记）+CCINIClass 族（batch 112
+ReadDouble 0x5283D0 同族）。
+⚠️ partial：0x528A10 精确身份（INI 查询推断）、+0x8C 栈帧完整布局、
+ret 0x10 的 4 参排布（section/key/输出/源 推断）
+
+================================================================================
+0x5251C0 —— 容器析构（7 callers，全 0x27=39B 读完）
+================================================================================
+机器码（全 0x27）：
+    push ebx/esi / mov esi,ecx（★this）
+    xor ebx,ebx / mov eax,[esi+4]（★★+0x4 数组指针）/ cmp eax,ebx / je 0x5251DE
+    cmp byte[esi+0xD],bl / je 0x5251DE（★★+0xD 自分配标志——非自分配不释放）
+    push eax / call 0x7C8B3D（★★CRT::_delete，batch 001 实锤）/ add esp,4
+    mov [esi+4],ebx（★数组置 NULL）
+    0x5251DE: mov byte[esi+0xD],bl（★清 +0xD）/ mov [esi+8],ebx（★清 +0x8 容量）
+    pop esi/ebx / ret
+
+语义：**容器析构（DynamicVectorClass 系）**——+0x4 数组指针非空且 +0xD
+自分配标志置位时 CRT::_delete 释放数组 → 置 NULL + 清 +0xD（自分配标志）+
+清 +0x8（容量）。与 batch 136/092/102 的容器布局（+0x4 数组/+0x8 容量/+0xC
+持有/+0xD 自分配）完全吻合——是**该容器族的析构成员**。
+
+★原版怪癖（照抄）：① **+0xD 门控释放**（非自分配（外借缓冲）不 delete——
+所有权纪律）；② 析构只清数组/容量/标志，**不碰 +0xC 持有标志**；③ 清容量
+置 0 但计数（+0x10）不动。
+★跨批次连接：**batch 136（0x477BE0 ctor）+batch 092（0x42FCB0 ctor）+batch
+102（0x42F860 resize）+batch 145（0x477D20 析构/索引）**同族——本条是
+0x525xxx 区的同族成员（布局逐字节吻合）。
+⚠️ partial：宿主类名（DynamicVectorClass 系推断）、+0x10 计数不动的原因、
+与 0x477D20 精确关系（未归一化比对不写孪生）
+
+================================================================================
+0x525250 —— 容器构造器（7 callers，全 0x5D=93B 读完）
+================================================================================
+机器码（全 0x5D）：
+    mov eax,[esp+4]（★★参数1 容量）/ push esi / mov esi,ecx（★this）
+    test eax,eax / mov [esi+4],0（★数组先置 NULL）
+    mov [esi+8],eax（★+0x8=容量）/ mov byte[esi+0xC],1（★+0xC 持有标志=1）
+    mov byte[esi+0xD],0（★+0xD 自分配=0）
+    mov [esi],0x7EB6F4（★装虚表 0x7EB6F4）/ je 0x525293（★容量 0 → 跳过分配）
+    mov ecx,[esp+0xC]（★★参数2 外部缓冲指针）/ test ecx / je 0x525280
+    mov [esi+4],ecx（★采用外部缓冲）/ jmp 0x525293
+    0x525280: shl eax,2（★容量×4）/ push eax / call 0x7C8E17（★★CRT::_new，
+      batch 001）/ mov [esi+4],eax / mov byte[esi+0xD],1（★自分配=1）
+    0x525293: mov [esi],0x7EB714（★★虚表换装 0x7EB714！）
+    mov [esi+0x14],0xA（★★+0x14=0xA）/ mov [esi+0x10],0（★★+0x10=0）
+    mov eax,esi（★返回 this）/ pop esi / ret 8
+
+语义：**容器构造器（DynamicVectorClass 系，batch 092/136 同族）**——+0x4
+数组/+0x8 容量/+0xC 持有标志=1/+0xD 自分配标志、装虚表 0x7EB6F4；参数2 给
+外部缓冲则采用（自分配=0），否则 CRT::_new(容量×4) 自分配（自分配=1）；
+**虚表换装 0x7EB714** + 初始化 +0x14=0xA、+0x10=0。
+
+★原版怪癖（照抄）：① **双虚表换装**（0x7EB6F4 → 0x7EB714——构造态/完成态
+双虚表切换，与 QWEN.md 原版怪癖清单「构造态/完成态双虚表切换」吻合）；②
++0x14 初始 0xA、+0x10 初始 0（容量/计数初始值语义）；③ 与 batch 136 的
+0x477BE0（虚表 0x7E4DB8）同族但虚表不同——同一容器类不同实例化。
+★跨批次连接：**batch 136（0x477BE0 同族 ctor）+batch 092（0x42FCB0）+batch
+102（0x42F860 resize）+batch 145（0x477D20）**——布局（+0x4/+0x8/+0xC/+0xD）
+逐字节吻合；与 0x5251C0（本批析构）配成**构造/析构对**（同一地址区 0x525xxx）。
+⚠️ partial：宿主类名（DynamicVectorClass 系推断）、双虚表 0x7EB6F4/0x7EB714
+身份、+0x14=0xA 语义
+
+================================================================================
+0x4653C0 —— House 类型工厂（batch 239 0x428B80 同构兄弟）（7 callers，全 0x83=131B 读完）
+================================================================================
+机器码（全 0x83）与 batch 239 的 0x428B80 **逐字节同构**（仅表地址/分配大小/
+子构造不同）：
+    push esi/edi / mov edi,ecx（★★参数 = 名字指针）
+    push edi / push 0x817474 / call 0x7C8D20（★★strcmpi(名字,"<none>")，batch 093）
+    test / je 返 NULL → push edi / push 0x817694 / call 0x7C8D20（★strcmpi(,"none")）
+    test / je 返 NULL
+    mov eax,[0xA83C78]（★★House 表计数）/ xor esi / jle 0x465416
+    loop: mov eax,[0xA83C6C]（★★House 表基址）/ mov ecx,[eax+esi*4] / add ecx,0x24
+      push 两参 / call 0x7C8D20（★strcmpi(表[i]->+0x24,名字)）/ je 命中 → inc/cmp/jl
+    未命中: push 0x1798 / call 0x7C8E17（★★CRT::_new(0x1798)）/ test / je 返 NULL
+      push edi / mov ecx,eax / call 0x45DD90（★★子构造 0x45DD90(new,名字)）/ ret
+    命中: mov edx,[0xA83C6C] / mov eax,[edx+esi*4] / ret（★返回表[i]）
+    失败: xor eax,eax / ret
+
+语义：**House 类型工厂（推断名：按名查找/分配 HouseClass 派生对象）**——
+与 batch 239 的 0x428B80（AbstractTypeClass 工厂）**同一模板**：哨兵双判
+（<none>/none 返 NULL）→ 线性扫 [0xA83C6C] 表（计数 [0xA83C78]，item->+0x24
+名字字段）→ 未命中 CRT::_new(0x1798) + 子构造 0x45DD90 分配新对象返回。
+差异：表地址（[0xA83C6C] vs [0x8B4154]）、对象大小（0x1798 vs 0x378）、
+子构造（0x45DD90 vs 0x427530）。
+
+★原版怪癖（照抄）：同 0x428B80（batch 239）：① 双哨兵串；② 未命中才分配、
+失败静默返 NULL；③ 构造器自带注册（0x45DD90 内，未读）；④ 表项 +0x24 名字
+字段。
+★跨批次连接：**batch 239 0x428B80 同构模板**+[0xA83C6C]/[0xA83C78]（batch 171
+全局名字表 House/Player 推断、batch 189 TechnoTypeClass::GetByTypeAndIndex
+同数组区）+strcmpi（batch 093）+CRT::_new（batch 001）。**「按名工厂」模板
+在 AbstractTypeClass 与 HouseClass 两族复用**——两实例逐字节同构实锤。
+⚠️ partial：宿主类（HouseClass 家族推断）、0x45DD90 子构造身份/注册动作、
+0x1798 对象布局
+
+================================================================================
+（batch 242 说明：C++ 模型决策）
+================================================================================
+本批四函数**不新增 C++ 模型**，理由：
+① 0x474B50 是 INI 三字节读取（sprintf 拼串 + sscanf 拆回的中转惯用），依赖
+   0x528A10 未登记查询函数，留待 INI 家族（batch 112 ReadDouble 同线）整体落地。
+② 0x5251C0/0x525250 是容器析构/构造对（布局 batch 092/136/102 已实锤），但
+   双虚表 0x7EB6F4/0x7EB714 与宿主类名未定——按纪律不固化推断。
+③ 0x4653C0 与 0x428B80 同构模板已在 batch 239 分析，本条补充 House 族实例；
+   0x45DD90 未取证，建模留待 HouseClass 家族。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记四行全部 semantics_verified
+（四函数全段反汇编读完 + YRpp/已登记函数交叉验证），partial 项如实标注。
