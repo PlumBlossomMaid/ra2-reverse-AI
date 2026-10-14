@@ -1,0 +1,96 @@
+frontier batch 235 — MapClass::Update_Pathfinding_2（2026-10-14）
+
+口径：承接 batch 234，ranking.tsv unique_callers 降序取未登记候选。TOP 12 中
+0x586990（289B，符号名 MapClass::Update_Pathfinding_2）为带名 MapClass 成员，
+**且正是 QWEN.md 候选机制清单地址**（「寻路 MapClass::Update_Pathfinding_1/2
+0x56C510/0x586990」）——本轮直接立案闭合。全函数反汇编读完（0x11E=286B）。
+取证手段：disasm.py 直反汇编 + YRpp 交叉验证（MapClass.h:303-304 三证）。
+
+================================================================================
+0x586990 —— MapClass::Update_Pathfinding_2（7 callers，全 0x11E=286B 读完）
+================================================================================
+身份实锤：YRpp MapClass.h:303-304
+  `void Update_Pathfinding_2(const DynamicVectorClass<CellStruct> &where)`
+  `{ JMP_THIS(0x586990); }`
+地址+JMP_THIS+向量引用参（where）三证。
+
+机器码（全 0x11E）：
+    第一段（倒序遍历 count-1 → 0）:
+    mov ebx,[esp+8]（★★参数 = DynamicVectorClass<CellStruct>* where）
+    mov ebp,[ebx+0x10]（★向量项数 count，DynamicVectorClass 布局 +0x10）
+    dec ebp / js 0x586A3D（★空向量跳第二段）
+    mov eax,[ebx+4]（★+0x4 = 数据数组基址）
+    lea edi,[ebp*4] / add eax,edi（★&where->[count-1]）
+    push 1 / push eax / mov ecx,esi（★this MapClass）/ call 0x578460
+    test al / je 0x586A36（★★0x578460(cell,1) 判定——合法/占位门卫）
+    合法分支:
+    mov ecx,[ebx+4] / mov edx,[esi+0xF8] / mov eax,[esi+0xF4]
+    add ecx,edi / lea eax,[edx+eax+1]（★★行宽 = [0xF8]+[0xF4]+1——动态宽！）
+    movsx edx,word[ecx+2] / movsx ecx,word[ecx]（★Y, X）
+    imul eax,edx / add eax,ecx（★idx = (F8+F4+1)*Y + X 行优先）
+    jns / xor eax,eax（★负 → 0）/ jmp
+    mov ecx,[esi+0x6C] / cmp eax,ecx / jl / lea eax,[ecx-1]（★idx ≥ [0x6C] → clamp）
+    lea edx,[eax+eax*4]（★×5）
+    mov eax,[esi+0x70] / mov word[eax+edx*2],0（★★★[esi+0x70][idx*5*2] = 0
+      ——每格 5 word（10B）权重数组清当前格）
+    mov eax,[ebx+4] / add eax,edi（★再次取当前格坐标）
+    movsx ecx,word[eax+2] / movsx edx,word[eax]（★Y, X）
+    shl ecx,9 / add ecx,edx（★★idx = Y*512+X——固定 512 列宽）
+    js / cmp ecx,0x40000 / jge（★越界 → 哑元）
+    mov edx,[0x87F924]（★★MapClass cell 数组基址）/ mov ecx,[edx+ecx*4] / test / jne
+    哑元路径: mov eax,[eax] / mov ecx,0xABDC50 / mov [0xABDC74],eax（★★哑元 cell）
+    push -1 / call 0x47D2B0（★★★CellClass::RecalcAttributes(cell,-1)！——QMEN.md
+      阶段 4/9/10 反复出现的属性重算，本条是其寻路侧调用点）
+    dec ebp / jns 0x5869A4（★倒序循环 count-1 → 0）
+    第二段（正序遍历 0 → count-1）:
+    mov edi,[ebx+0x10] / dec edi / js 0x586AAA
+    mov ecx,[ebx+4] / lea eax,[esp+0x14]
+    push 1 / push eax / mov edx,[ecx+edi*4] / mov ecx,esi / mov [esp+0x1C],edx
+    call 0x578460 / test al / je 0x586AA7（★同款 0x578460 判定）
+    mov ecx,[esi+0xF8] / mov edx,[esi+0xF4] / lea eax,[ecx+edx+1]（★动态宽）
+    movsx ecx,word[esp+0x16] / movsx edx,word[esp+0x14]（★Y, X）
+    imul eax,ecx / add eax,edx（★idx = (F8+F4+1)*Y+X）
+    jns/xor / cmp [esi+0x6C] / jl / lea eax,[ecx-1]（★同款 clamp）
+    mov ecx,[esi+0x70] / lea eax,[eax+eax*4]
+    cmp word[ecx+eax*2],0 / jne 0x586AA7（★★★[esi+0x70][idx*5*2] 非 0 → 跳过！
+      ——第一段清过的格子这次不处理，未清的才走 0x584550）
+    lea edx,[esp+0x14] / mov ecx,esi / push edx / call 0x584550（★更新/触发格）
+    dec edi / jns 0x586A43（★正序循环 0 → count-1）
+    0x586AAA: pop 族 / ret 4
+
+语义：**MapClass::Update_Pathfinding_2（寻路路径刷新，与符号名/YRpp 完全吻合）**——
+对 `where` 向量（DynamicVectorClass<CellStruct>）的两遍遍历：
+①**倒序**（count-1→0）：每格过 0x578460 判定，合法则清 `[esi+0x70][(F8+F4+1)*Y+X]*5*2` 权重
+字段，再按 `Y*512+X` 取 cell（越界回落哑元 0xABDC50）→ **RecalcAttributes(cell,-1)**
+（0x47D2B0，属性重算）；
+②**正序**（0→count-1）：同款判定与权重检查，`[esi+0x70][idx*5*2]` 仍为 0 的格子
+（第一段清过的）调 `0x584550(&cell)` 做路径更新。
+ret 4 = 1 参（this + where 引用）。
+
+★原版怪癖（照抄）：① **两遍遍历方向相反**（倒序清权重+重算、正序只对未清格
+更新）——不是单遍循环，语义是「先全部重置属性，再逐格触发更新」的两阶段拆解；
+② **两套索引并存**：权重数组用**动态行宽** `[0xF8]+[0xF4]+1`，取 cell 用
+**固定 512**（Y<<9）——同一函数内两种索引（与 batch 229 MakeTraversable 的
+硬编码 512 同族，但权重侧用 MapClass 实例动态宽）；③ `[esi+0x70]` 每格 5 word
+（idx*5*2 字节）——10B/格权重表；④ clamp 用 `[esi+0x6C]` 上限（idx ≥ 6C → 6C-1，
+**非回绕**）；⑤ 第二段跳过条件 `word[ecx+eax*2] != 0 → 跳过`——**只处理第一段
+刚清成 0 的格子**（两段的协同契约）。
+
+★跨批次连接：**QWEN.md 候选机制地址实锤（寻路 Update_Pathfinding_1/2）**+
+CellClass::RecalcAttributes 0x47D2B0（QMEN.md 阶段 4/9/10 属性重算主线，本条是
+寻路侧调用点）+[0x87F924] cell 数组基址 + 哑元 0xABDC50/[0xABDC74]（batch 229
+MakeTraversable 同源！）+`Y*512+X` 硬编码（batch 229 同款怪癖）+[esi+0x6C]/
+[esi+0x70]/[esi+0xF4]/[esi+0xF8]（MapClass 地图尺寸/权重/行宽字段族）。⚠️ partial：
+0x578460（格判定推断）、0x584550（路径更新推断）、[esi+0x70] 权重表 5 word 布局
+（邻接权重 vs 代价推断）、[esi+0x6C]/[esi+0xF4]/[esi+0xF8] 精确语义（地图列数/
+行宽 推断）
+
+================================================================================
+（batch 235 说明：C++ 模型决策）
+================================================================================
+本批不新增 C++ 模型，理由：0x586990 的两遍遍历 + RecalcAttributes(0x47D2B0) +
+0x584550 依赖链是**寻路系统主干**（QWEN.md 已列为候选机制，与 Update_Pathfinding_1
+0x56C510 成对）——建模应在**寻路候选机制整体立案**时与 0x56C510、0x578460、
+0x584550 一并落地（当前三个下游全未取证，单独建模会把推断固化）。本条登记
+semantics_verified 锚定地址语义与两阶段契约，为寻路主线后续批次铺路。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。
