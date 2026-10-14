@@ -1,0 +1,165 @@
+frontier batch 173 — CellClass::GetSomeObject 实锤（batch 166 闭合）+ 可移动性判定 + 构造器族（2026-10-14）
+
+口径：承接 batch 172 候选，ranking.tsv unique_callers 降序取 0x47A9D0（11 callers）、
+0x47C5A0（10 callers，YRpp CellClass.h:76 实锤）、0x4834A0（10 callers）。
+三者 prologue 均干净，机器码读全/读尽。
+
+================================================================================
+0x47C5A0  CellClass::GetSomeObject（10 callers，全 0x77 读完）
+================================================================================
+身份实锤：YRpp CellClass.h:76 + 注释（逐段对上，见下）
+    /* craziest thing... first iterates Content looking to Aircraft,
+     * failing that, calls FindTechnoNearestTo,
+     * if that fails too, reiterates Content looking for Terrain */
+    ObjectClass* GetSomeObject(const CoordStruct& coords, bool alt) const
+        { JMP_THIS(0x47C5A0); }
+地址 + JMP_THIS + 2 参签名（ret 8）三证 + 注释三段逐段对上机器码。
+
+机器码还原：
+    mov al,byte[0xA8E9A0]        ; ★ 全局开关（batch 066 同款）
+    mov edi,ecx / test al / je 跳到中段
+    ; 第一段（找 Aircraft）：
+    mov esi,[edi+0xE4]           ; ★ +0xE4 对象链（batch 066/162/166 同字段）
+    test esi / je 跳到中段
+    loop: mov eax,[esi] / mov ecx,esi / call [eax+0x2C]  ; ★ vtable 槽 0x2C 类型
+    cmp eax,2 / je 命中           ; ★ AbstractType==2（Aircraft）
+    mov esi,[esi+0x30]           ; ★ 链步进 +0x30
+    test esi / jne loop
+    ; 中段（FindTechnoNearestTo）：
+    mov ecx,[esp+0x10] / mov edx,[esp+0xC] / push 0
+    push ecx / push edx / mov ecx,edi
+    call 0x47C3D0                 ; ★★ batch 166 实锤 FindTechnoNearestTo!
+    test eax / jne 返回命中
+    ; 第三段（找 Terrain）：
+    mov al,byte[0xA8E9A0] / test al / je 返回 NULL
+    mov esi,[edi+0xE4] / test esi / je 返回 NULL
+    loop: mov eax,[esi] / mov ecx,esi / call [eax+0x2C]
+    cmp eax,0x24 / je 命中        ; ★ AbstractType==0x24（Terrain）
+    mov esi,[esi+0x30] / test esi / jne loop
+    返回 NULL: xor eax / ret 8
+   命中: mov eax,esi / ret 8
+
+语义：**CellClass::GetSomeObject（取格上某对象：飞机→最近单位→地形）**——
+先遍历 +0xE4 链找 AbstractType==2（Aircraft），失败调 batch 166 的
+0x47C3D0（FindTechnoNearestTo），再失败重遍历 +0xE4 链找 ==0x24
+（Terrain）——与 YRpp 注释三段完全一致。
+★跨批次闭合：batch 166（0x47C3D0 FindTechnoNearestTo，本条是它的调用方）+
+batch 066（0x47C520 GetBuilding 同 +0xE4/+0x30 链 + 虚表槽 0x2C 家族）+
+batch 162（ScatterContent 同链字段）。
+
+⚠️ partial：[0xA8E9A0] 开关极性（第三段与第一段都查但第一段 je 跳中段——
+疑似「关则跳过 Aircraft 段」）、命中是否按类型优先级有别的顺序。
+
+================================================================================
+0x4834A0  可移动性/通行判定（10 callers，前 0xE0 读完）
+================================================================================
+机器码（关键路径）：
+    mov eax,[esp+4] / cmp eax,4 / je 0x4835FF    ; ★ 参数 1 ==4 → 走 0x4835FF
+    mov esi,ecx
+    mov edi,[esp+0x20] / mov ebp,[esp+0x24] / mov ebx,[esp+0x2C]
+    cmp edi,-1 / je 跳2
+    lea eax,[esi+0x24] / push ebx / push ebp / push eax
+    mov ecx,0x87F7E8 / call 0x56D230              ; ★ MapClass::Instance 相关（0x87F7E8）
+    cmp edi,eax / je 跳2
+    → 返 false                              ; ★ 与 MapClass 查询结果不符 → 不可移动
+  跳2:
+    mov eax,[esp+0x28] / mov edx,0x100
+    cmp eax,-1 / je 0x483527
+    movsx ecx,byte[esi+0x11B]                    ; ★ +0x11B 符号扩展字节（地板高度层）
+    cmp eax,ecx / je 0x483512
+    test dword[esi+0x140],edx                    ; ★ +0x140 bit8（0x100）标志
+    je 返false
+    add ecx,4 / cmp eax,ecx / je 0x483527        ; ★ 层 +4 变体
+    → 返 false
+  0x483527:
+    xor cl,cl / cmp eax,-1 / je 0x48353C
+    movsx edi,byte[esi+0x11B] / add edi,4 / cmp eax,edi / jne 0x483550
+   0x48353C: test dword[esi+0x140],edx / je 0x483550
+    xor eax / mov cl,1 / mov al,byte[esi+0x128]  ; ★ +0x128 字节取位源 A
+    → jmp 0x483558
+   0x483550: xor eax / mov al,byte[esi+0x124]    ; ★ +0x124 字节取位源 B
+  0x483558:
+    mov dl,byte[esp+0x18] / test dl / je / and eax,0xE0   ; ★ 参数掩码 0xE0
+    mov dl,byte[esp+0x1C] / test dl / je / and eax,0x5F   ; ★ 参数掩码 0x5F
+    test eax / jne 返false                        ; ★ 掩码后非零 → 阻挡
+  通过:
+    mov eax,[esi+0xEC] / mov esi,[esi+0x44]        ; ★ +0x44 索引
+    cmp esi,-1 / je 0x4835D5
+    mov edx,[0xA83D84] / mov esi,[edx+esi*4]      ; ★ 全局表 [0xA83D84]
+    test esi / je 0x4835D5
+    mov dl,byte[esi+0x2A8] / test dl / je 0x4835D5
+    cmp ebp,2 / je 0x4835D3 / cmp ebp,3 / je 0x4835D3
+    cmp ebp,8 / je 0x4835D3
+    cmp ebp,1 / je 0x4835BB / cmp ebp,4 / jne 0x4835C5
+   0x4835BB: mov al,byte[esi+0x22D] / test al / jne 0x4835D3  ; ★ +0x22D 标志
+   0x4835C5: cmp ebp,0xC / je 0x4835D3            ; ★ 参数 12 也放行
+    → 返 false
+   0x4835D3: xor eax,eax                          ; ★ 通过
+
+语义：**格子可移动性/通行判定（多条件合取）**——①参数 1 !=4 时先用
+MapClass::Instance（0x87F7E8）经 0x56D230 查询 +0x24，结果不符即返 false；
+②按 [esp+0x28] 与 +0x11B（地板层字节）及 +0x140 bit8 交叉判定；③取
++0x128 或 +0x124 字节（按分支），按参数掩码 0xE0/0x5F 过滤后非零即
+阻挡；④按 +0x44 索引取全局表 [0xA83D84] 项，查 +0x2A8 标志后按参数
+（2/3/8/12 直接放行，1/4 查 +0x22D）判定。
+★0x4834A0 是 CellClass 上的移动性判定（rank 观察名 IsClearToMove，
+YRpp 未收录同名 JMP——名字未确认，语义由机器码独立判定）。
+
+★跨批次连接：0x87F7E8（MapClass::Instance，QWEN.md 已实锤）+ 0x56D230
+（MapClass 查询）+ [0xA83D84]（全局表，batch 171 的 0x4FAE50 用
+[0xA83D4C] 同区）+ +0x11B/+0x124/+0x128/+0x140 地板/地块字段族。
+
+⚠️ partial：0x56D230 精确语义（MapClass 合法性查询推断）、[0xA83D84] 表
+宿主（疑技术/单位类型表）、0x4835FF（参数 1==4）分支、掩码参数语义。
+
+================================================================================
+0x47A9D0  构造器族（11 callers，0x47A9D0-0x47A9F1 读完 + 0x47AA00 变体）
+================================================================================
+机器码（0x47A9D0，0x22 读完）：
+    push esi / mov esi,ecx
+    call 0x431B20                 ; ★ 基类构造（字段初始化，见下）
+    mov eax,[esp+8] / mov ecx,esi / push eax
+    mov byte[esi+0x54],0          ; ★ +0x54 字节标志清零
+    mov [esi],0x7E1668            ; ★ 装虚表 0x7E1668
+    call 0x47AE10                 ; ★ 子构造（0x104 栈帧）
+    mov eax,esi / pop esi / ret 4
+
+基类 0x431B20（前 0x2B 读完，字段初始化模板）：
+    mov eax,ecx / or edx,-1 / xor ecx
+    mov byte[eax+4],cl / mov [eax+8],1 / mov [eax+0xC],ecx
+    mov [eax+0x10],edx / mov [eax+0x14],edx / mov [eax+0x18],ecx
+    mov word[eax+0x1C],cx / mov word[eax+0x1E],cx
+    mov byte[eax+0x20],cl / mov byte[eax+0x24],cl / mov byte[eax+0x25],cl
+    ; ★ +8=1、+0x10/+0x14=-1、其余清 0 的标准字段初始化模板
+
+0x47AA00（紧邻同构变体，0x27 读完）：
+    push esi / mov esi,ecx / call 0x431B20
+    mov ecx,[esp+8] / mov byte[esi+0x54],0 / mov [esi],0x7E1668
+    call 0x7B5440                 ; ★ batch 072 已登记字符串 GetString
+    push eax / mov ecx,esi / call 0x47AE10 / ret 4
+
+语义：**构造器族（虚表 0x7E1668，双重载）**——0x47A9D0（1 参版）与
+0x47AA00（字符串参版，经 0x7B5440 取串）都先调 0x431B20 字段初始化模板
+（+8=1、+0x10/+0x14=-1、其余清 0），清 +0x54，装虚表 0x7E1668，再调
+0x47AE10 子构造（0x104 栈帧，内含 0x431E80/0x431F10 与 [0x89E410] 全局
+检查）。
+★0x431B20 是可复用的**字段初始化模板**（多处构造器共用的基类初始化）。
+
+⚠️ partial：宿主类（虚表 0x7E1668，0x47Axxx 区）、0x47AE10 子构造语义、
+[0x89E410] 全局含义。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x47C5A0 → batch 166（0x47C3D0 FindTechnoNearestTo 调用方闭合）+ batch
+   066（0x47C520 同链家族）。
+2. 0x4834A0 → [0x87F7E8] MapClass::Instance + [0xA83D84] 全局表（batch 171
+   同 0xA83Dxx 区）。
+3. 0x47A9D0 → batch 072（0x7B5440）+ 0x431B20 字段初始化模板族。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x47C5A0 的 [0xA8E9A0] 开关极性。
+2. 0x4834A0 的 0x56D230 语义与 [0xA83D84] 表宿主。
+3. 0x47A9D0 的宿主类与 0x47AE10 子构造。
