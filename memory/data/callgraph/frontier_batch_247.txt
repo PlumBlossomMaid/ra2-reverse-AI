@@ -1,0 +1,129 @@
+frontier batch 247 — CDFileClass 构造器 + 名字表查找 + 坐标双路径输出（2026-10-14）
+
+口径：承接 batch 246，候选池 TOP 12 取三个函数：0x47AA30（22B，带名
+CDFileClass::OpenEx 实为构造器）、0x747370（65B）、0x50DF30（164B）。三函数均
+全反汇编读完（0x47AA30 全 0x16=22B、0x747370 全 0x41=65B、0x50DF30 全 0xA4=164B）。
+取证手段：disasm.py 直反汇编 + YRpp 交叉验证（CCFileClass.h:176 三证）+ PE 探针
++ 已登记函数交叉验证（batch 171/082/084、001/093）。
+
+================================================================================
+0x47AA30 —— CDFileClass 构造器（7 callers，全 0x16=22B 读完）
+================================================================================
+身份实锤：YRpp CCFileClass.h:176
+  `CDFileClass() : CDFileClass(noinit_t()) { JMP_THIS(0x47AA30); }`
+地址+JMP_THIS+无参构造语义三证（ranking 名 CDFileClass::OpenEx 为 USER_DEFINED
+误标——机器码是构造器形态（清字段+装虚表+返 this），无任何打开动作，按纪律纠
+正为构造器）。
+
+机器码（全 0x16）：
+    push esi / mov esi,ecx（★this）
+    call 0x431B20（★★基类构造：清 +0x4..+0x25 字段、+0x8=1、+0x10/+0x14=-1）
+    mov byte[esi+0x54],0（★★+0x54 = 0）
+    mov [esi],0x7E1668（★装虚表 0x7E1668；探针实测 vtable 首槽 = 0x401950）
+    mov eax,esi（★返回 this）/ pop esi / ret
+
+基类构造 0x431B20（前 0x2B 读）：清 +0x4 字节 + 0x8=1 + 0xC..0x18=0 +
+0x10/+0x14=-1 + 0x1C/0x1E word=0 + 0x20/0x24/0x25 字节=0——FileClass 基类字段
+族（batch 238 RawFileClass 布局 +0x8 mode/+0x14 句柄/+0x18 名字同族）。
+
+语义：**CDFileClass 构造器（三证吻合）**——调基类构造 0x431B20（FileClass 族
+字段初始化）→ 清 +0x54 → 装虚表 0x7E1668 → 返回 this。纯构造，无文件打开动作。
+
+★原版怪癖（照抄）：① **+0x54 收尾清零**（构造器最后一步补清一个字节，且仅在
+CDFileClass 层不参与基类初始化——派生类专用字段）；② 基类 0x431B20 里
++0x10/+0x14 置 -1（句柄/模式哨兵，batch 238 RawFileClass 同 -1 语义族）；
+③ YRpp 里 CDFileClass() 委托 noinit_t 版本——机器码即该委托入口。
+★跨批次连接：**batch 238（RawFileClass::Open/Exists 文件系统族，+0x8 mode/
++0x14 句柄/+0x18 名字布局）**+0x431B20（FileClass 基类构造，本批新取证）+
+虚表 0x7E1668（vtable 首槽 0x401950 探针实测）——CDFileClass = CD 文件专用
+FileClass 派生。
+⚠️ partial：0x401950（虚表首槽方法）身份、+0x54 字段语义（CD 专用标志推断）、
+0x431B20 与 0x65CA80（batch 238 提到的 RawFileClass 构造）精确关系
+
+================================================================================
+0x747370 —— 名字表查找（batch 171 同构第四例）（7 callers，全 0x41=65B 读完）
+================================================================================
+机器码（全 0x41）：
+    push esi/edi / mov edi,ecx（★★参数 = 名字指针）
+    test edi,edi / je 0x7473A6（★空名 → 返 -1）
+    mov eax,[0xA83CF0]（★★全局计数）/ xor esi,esi / test eax,eax / jle 0x7473A6
+    loop: mov eax,[0xA83CE4]（★★全局数组基址 4B/项）
+      mov ecx,[eax+esi*4]（★item）/ add ecx,0x24（★item->+0x24 名字字段）
+      push edi / push ecx / call 0x7C8D20（★★strcmpi，batch 093 实锤）
+      add esp,8 / test eax / je 0x7473AC（★相等 → 命中）
+      mov eax,[0xA83CF0] / inc esi / cmp esi,eax / jl loop
+    0x7473A6: pop edi / or eax,-1（★未命中返 -1）/ pop esi / ret
+    0x7473AC: mov eax,esi（★命中返索引）/ pop edi / pop esi / ret
+
+语义：**名字表查找（返回索引）**——遍历 [0xA83CE4] 数组（计数 [0xA83CF0]，每项
++0x24 名字字段）与入参经 0x7C8D20 比较，命中返索引未命中返 -1。空名/空表返 -1。
+
+★原版怪癖（照抄）：① 空名判 -1 在计数判之前（先验参数再验表）；② item->+0x24
+名字字段偏移固定（batch 171/187/245 同 +0x24 族）；③ 命中返回**索引**（同
+batch 171 的 0x45E7B0——同为返索引版，与 batch 187 的 0x6A46D0 同）。
+★跨批次连接：**batch 171（0x45E7B0 同构首例 [0xA83C6C] 表）+batch 187
+（0x6A46D0 同构 [0x8B4124] 表）+batch 245 0x75E3B0（按名工厂表扫）+batch 178
+（0x721210 对象内表）**——「全局名字表按名找索引」族第四例；[0xA83CE4]/
+[0xA83CF0]（batch 189 TechnoTypeClass::GetByTypeAndIndex 分支2 同 [0xA83C6C]
+邻域——House/Technology 类型数组区）。
+⚠️ partial：该表宿主（0x74xxxx 区对象推断）、与 0x45E7B0（batch 171）表差异
+（[0xA83CE4] vs [0xA83C6C]——不同类型表）
+
+================================================================================
+0x50DF30 —— 坐标比较双路径输出（7 callers，全 0xA4=164B 读完）
+================================================================================
+机器码（全 0xA4）：
+    mov eax,[0xA8EF98]（★★全局坐标 X）/ mov dx,[0xA8EF9A]（★★全局坐标 Y）
+    sub esp,0x14
+    cmp word[ecx+0x5494],ax（★this->+0x5494 vs 全局 X）/ jne 0x50DF59
+    cmp word[ecx+0x5496],dx（★this->+0x5496 vs 全局 Y）/ jne 0x50DF59
+    mov ecx,[ecx+0x5490]（★★命中 → 取 this->+0x5490 目标指针）/ jmp 0x50DF5F
+    0x50DF59: mov ecx,[ecx+0x5494]（★未命中 → 取 this->+0x5494 目标指针）
+    0x50DF5F: cmp cx,ax / mov [esp],ecx / mov [esp+4],ecx（★两槽写栈）
+    jne 0x50DF99（★低 16 位不等 → 走查格路径）
+    cmp word[esp+2],dx / jne 0x50DF99
+    命中完善路径: mov eax,[esp+0x18]（★★输出指针）
+      mov edx,[0xA8EFF8] / mov [eax],edx（★输出[0]=全局+0xEFF8）
+      mov edx,[0xA8EFFC] / mov [eax+4],edx（★输出[4]=全局+0xEFFC）
+      mov edx,[0xA8F000] / mov [eax+8],edx（★输出[8]=全局+0xF000）
+      add esp,0x14 / ret 4（★★命中 → 全局三字段直写输出）
+    0x50DF99 查格路径: lea eax,[esp+4] / push esi / push eax
+      mov ecx,0x87F7E8 / call 0x5657A0（★★★MapClass::GetCellAt，batch 082 实锤）
+      mov edx,[eax]（★cell 虚表）/ lea ecx,[esp+0xC] / push ecx
+      mov ecx,eax / call dword[edx+0x48]（★★cell 虚表槽 0x48 取坐标三字段）
+      mov edx,eax / mov eax,[esp+0x1C]（★输出指针）/ mov ecx,eax
+      mov esi,[edx] / mov [ecx],esi（★输出[0]）/ mov esi,[edx+4] / mov [ecx+4],esi
+      mov edx,[edx+8] / mov [ecx+8],edx（★输出[8]）
+      pop esi / add esp,0x14 / ret 4（★★未命中 → cell 坐标三字段写输出）
+
+语义：**坐标比较双路径输出（推断名）**——比较 this->+0x5494/+0x5496（坐标）与
+全局 [0xA8EF98]/[0xA8EF9A]：相等时从 [0xA8EFF8]/[0xA8EFFC]/[0xA8F000] 三字段
+直写输出（全局缓存坐标）；不等时经 GetCellAt(0x5657A0) 取该坐标对应 cell 的
+虚表槽 0x48 读坐标三字段写输出（动态坐标）。
+
+★原版怪癖（照抄）：① **双路径**（全局缓存命中直写 vs 查格动态取——性能分层
+惯用）；② 命中路径的校验条件是 `cmp cx,ax` + `cmp [esp+2],dx`（**32 位栈拷贝后
+再逐 16 位比较**——比较的是低 16 位坐标，非完整 32 位）；③ 两路径输出布局一致
+（+0/+4/+8 三 dword）；④ 未命中路径输出取 **cell 虚表槽 0x48**（batch 236
+0x5F4D30 同槽位坐标三字段读取）。
+★跨批次连接：**0x5657A0 GetCellAt（batch 082）+虚表槽 0x48（batch 236 坐标
+三字段读取同槽）+[0x87F7E8] MapClass::Instance（batch 208/209/218 族）+[0xA8EF98]/
+[0xA8EF9A]/[0xA8EFF8]/[0xA8EFFC]/[0xA8F000]（A8EFxx 坐标缓存全局族，全 BSS 探针
+实测）+cell->+0x5490/+0x5494/+0x5496（宿主类布局高偏移字段）。⚠️ partial：宿主类
+（0x50xxxx 区推断）、[0xA8EF98] 族全局写入点（坐标缓存来源未追）、+0x5490/
++0x5494 字段语义、A8EFxx 与 A8EDxx（batch 阶段① 0x5A6C10）区关系
+
+================================================================================
+（batch 247 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x47AA30 是 22B 构造器（基类 + 清字段 + 装虚表），依赖 0x431B20/0x401950/
+   +0x54 语义（partial），且文件系统家族（batch 238 RawFileClass 线）整体
+   建模时一并闭合更合理。
+② 0x747370 是名字表查找（65B 逻辑即实现），但表宿主未定、与 batch 171 的
+   0x45E7B0 精确关系未追（不同类型表）——纯字段搬运加索引无新增建模价值。
+③ 0x50DF30 是双路径坐标输出，依赖 [0xA8EF98] 族写入点与虚表槽 0x48 精确身份
+   （partial）——布局坐标系统整体立案时落地。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部 semantics_verified
+（三函数全段反汇编读完 + YRpp 三证/探针/已登记函数交叉验证），partial 项如实
+标注。
