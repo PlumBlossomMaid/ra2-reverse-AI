@@ -1,0 +1,143 @@
+frontier batch 272 — BuildingClass::CanBeOccupiedBy 0x457CE0 + 方向编码判定 0x4810A0 + WaypointPathClass::GetWaypoint 0x763980（2026-10-14）
+
+口径：承接 batch 271，候选池 TOP 12 取三个函数：0x457CE0（255B，带名
+BuildingClass::CanBeOccupiedBy）、0x4810A0（132B）、0x763980（30B，带名
+WaypointPathClass::GetWaypoint）。三函数均全反汇编读完（0x457CE0 尾 0x457DDC
+ret 4 + 3 nop、0x4810A0 尾 0x481123 ret + 11 nop、0x763980 尾 0x76399B ret 4 +
+2 nop——body 与 ranking 吻合）。YRpp 查覆盖（两地址带名，0x4810A0 无）。取证
+手段：disasm.py 直反汇编 + 已登记函数交叉验证（batch 079/208/262/266/268/270/
+271 共 7 函数）。
+
+================================================================================
+0x457CE0 —— BuildingClass::CanBeOccupiedBy（带名，建筑可占用判定）（6 callers，全 0xFF=255B 读完）
+================================================================================
+机器码（全 0xFF 主结构）：
+    sub esp,0xC/push esi/edi/mov edi,[esp+0x18]（★参数 = 单位对象推断）/mov esi,ecx
+    （★this BuildingClass*）
+    test edi/je 0x457DA3（★参数空 → 返 false）
+    mov eax,[esi+0x520]/mov cl,[eax+0x157B]/test cl/je 0x457DA3（★★this->+0x520
+      对象 +0x157B 字节门禁）
+    mov eax,[esi+0xAC]/cmp eax,0x12/je 返 false/cmp eax,0x13/je 返 false（★★
+      类型排除 {0x12, 0x13}）
+    mov edx,[esi]/lea eax,[esp+8]/push eax/mov ecx,esi/call [edx+0x48]（★虚表
+      槽 0x48 取坐标）→ push eax/mov ecx,0x87F7E8（★★★MapClass::Instance
+      batch 208/209/262/270）/call 0x5785F0（★★格判定，batch 079 五兄弟族）
+      /test al/je 返 false
+    mov edx,[esi]/mov ecx,esi/call [edx+0x1D4]（★虚表槽 0x1D4 状态）/test al/
+      jne 返 false
+    mov eax,[edi+0x6C0]/mov cl,[eax+0xEB4]/test cl/je 0x457DAD（★参数 +0x6C0->
+      +0xEB4 标志分派）
+    +0xEB4 置位路径 0x457D58: mov eax,[esi+0x21C]/mov ecx,[edi+0x21C]/cmp/je
+      0x457D75（★归属比较）→ 不等: mov eax,[eax+0x34]/mov cl,[eax+0x1A6]/test/
+      je 返 false（★★归属对象 +0x1A6 门控）
+      → 0x457D75: 虚表槽 0x408（★取某字段）/mov ecx,[esi+0x520]/cmp eax,
+        [ecx+0x1580]/je 返 false（★★字段与 +0x1580 比较）
+      → mov ecx,esi/call 0x5F5CD0（★未登记判定）/test al/jne 返 false
+      → mov ecx,edi/call 0x7105E0（★未登记，0x71xxxx 阵营族）/test al/
+      je 0x457DD5（★通过 → 返 true）
+    +0xEB5 路径 0x457DAD: mov cl,[eax+0xEB5]/test cl/je 返 false（★★+0xEB5
+      备用标志）→ mov ecx,[esi+0x21C]/push edi/call 0x4F9A90（★★★batch 266
+      House 家族 0x4F9F90/0x4F9B70 同区）/test al/jne 返 false → 虚表槽 0x408/
+      test eax/je 返 false → 落 0x457DD5
+    0x457DA3: xor al（★失败）/0x457DD5: mov al,1（★成功）→ pop 族/add esp,0xC/
+      ret 4（★1 栈参）
+
+语义：**BuildingClass::CanBeOccupiedBy（建筑可占用判定，带名）**——参数（单
+位）非空、this->+0x520 对象 +0x157B 字节置位、this->+0xAC 不属于 {0x12,
+0x13}、虚表槽 0x48 坐标经 MapClass::Instance（0x87F7E8）+ 0x5785F0 格判定、
+虚表槽 0x1D4 状态通过后：参数 +0x6C0->+0xEB4 置位走归属路径（[esi+0x21C] vs
+[edi+0x21C] 比较 + 归属对象 +0x1A6 门控 + 虚表槽 0x408 与 [esi+0x520]+0x1580
+比较 + 0x5F5CD0 + 0x7105E0 判定）；+0xEB5 置位走 0x4F9A90 + 虚表槽 0x408 路
+径；全过返 true，任一失败返 false。ret 4 单栈参。
+
+★原版怪癖（照抄）：① **+0xEB4/+0xEB5 双标志分派**（同一对象两个字节两套判
+定）；② **类型排除法而非白名单**（[esi+0xAC] != 0x12 && != 0x13 才继续——默
+认可、排除两型）；③ **虚表槽 0x48/0x1D4/0x408 三槽串联**（坐标/状态/字段）；
+④ **归属比较 [esi+0x21C] vs [edi+0x21C]**（指针相等则跳过后续 +0x1A6 门控）；
+⑤ **多条失败路径共用 0x457DA3 出口**（xor al 单一失败点）。
+★跨批次连接：**[0x87F7E8] MapClass::Instance（batch 208/209/262/270 之后第五处
+应用）**+0x5785F0（batch 079 五兄弟格判定族）+**0x4F9A90（batch 266
+HouseClass::AllyAIHouses 的 0x4F9F90/0x4F9B70 同 0x4F9xxx 家族）**+0x7105E0
+（0x71xxxx 阵营族，未登记）+0x5F5CD0（未登记）。
+⚠️ partial：宿主 BuildingClass 结构（+0x520/+0xAC/+0x21C 字段）、参数结构
+（+0x6C0/+0xEB4/+0xEB5 字段）、虚表槽 0x48/0x1D4/0x408 方法名、0x5F5CD0/
+0x7105E0/0x4F9A90 精确身份、{0x12,0x13} 排除的类型语义
+
+================================================================================
+0x4810A0 —— 方向编码判定（推断名：像素偏移方向分类）（6 callers，全 0x84=132B 读完）
+================================================================================
+机器码（全 0x84 主结构）：
+    sub esp,8/push esi/mov esi,[ecx]（★this->+0 偏移 dword）/push edi/mov edi,
+      [ecx+4]（★this->+4 偏移 dword）
+    and edi,0xFF/and esi,0xFF（★★各取低 8 位——signed byte 惯用）
+    sub esp,8/lea ecx,[edi-0x80]/lea eax,[esi-0x80]（★★-0x80 中心化偏移）
+    mov [esp+0x14],ecx/mov [esp+0x10],eax
+    fild dword[esp+0x14]/fild dword[esp+0x10]（★两轴入 x87）
+    fld st(0)/fmul st(1)/fld st(2)/fmul st(3)/faddp st(1)（★★x²+y² 平方和）
+    fstp qword[esp]/fstp st(0)/fstp st(0)（★存回 + 双次栈清理）
+    call 0x4CAC40（★★★**sqrt 实锤**——batch 268 的 0x4CAC40 浮点数学族，本条
+      用途坐实：平方和开根 = 向量长度）
+    add esp,8/call 0x7C5F00（★★_ftol QWEN.md 实锤）
+    cmp eax,0x3C/jge 0x4810FA（★★★距离阈值 60——不足 60 直接返 0）
+    0x4810FA: xor eax,eax/cmp esi,0x80/jle 0x481109（★X 偏移 > 0x80 → 置位 1）
+      /mov eax,1
+    0x481109: cmp edi,0x80/jle 0x481113（★Y 偏移 > 0x80 → or al,2）/or al,2
+    0x481113: test eax,eax/jne 0x48111D（★非零 → 跳过）/pop 族/ret（★返 0）
+    0x48111D: pop edi/inc eax（★编码 +1）/pop esi/add esp,8/ret
+
+语义：**方向编码判定（推断名：像素偏移方向分类）**——this->+0/+4 取低 8 位为
+signed 偏移，-0x80 中心化 → x87 平方和 → 0x4CAC40（sqrt）→ _ftol 得距离；距
+离 < 0x3C（60）返 0；否则按 esi/edi 是否 > 0x80（正偏移）置位 1/2：单轴置位
+→ 编码 1（+1）或 2，双轴置位 → 3（or 2 后 inc）。即「无移动=0 / +X=1 / +Y=2 /
+两轴=3」的四向编码。
+
+★原版怪癖（照抄）：① **低 8 位截取 + -0x80 中心化**（and 0xFF 后视作 signed
+byte——像素偏移中心在 0x80）；② **距离阈值 60 短路**（< 60 一律 0——死区）；
+③ **or 位编码而非分支枚举**（1/2 位或 + inc——两个轴独立置位）；④ **双
+fstp st(0) 清栈**（平方和弹出后连清两个多余栈顶——x87 栈平衡）；⑤ **0x4CAC40
+sqrt 实锤**（batch 268 该地址曾按「浮点数学族」登记，本条坐实为平方根）。
+★跨批次连接：**0x4CAC40（batch 268 浮点数学族——本条实锤 sqrt 用途）**+0x7C5F00
+（_ftol QWEN.md FPU 环境）+0x80 中心偏移（batch 270 ActivateVeins <<8+0x80 /
+batch 271 坐标量化同族）。
+⚠️ partial：宿主类（0x48xxxx 区推断——CellClass 邻区）、偏移语义（像素偏移推
+断）、阈值 60 的业务含义（点击容差/移动死区推断）、返回编码的调用方消费方式
+
+================================================================================
+0x763980 —— WaypointPathClass::GetWaypoint（带名，按索引取航点）（6 callers，全 0x1E=30B 读完）
+================================================================================
+机器码（全 0x1E）：
+    mov eax,[esp+4]（★参数 = 索引）
+    test eax,jl 0x763999（★索引 < 0 → NULL）
+    cmp eax,[ecx+0x38]/jge 0x763999（★索引 >= [this+0x38] 计数 → NULL）
+    mov ecx,[ecx+0x2C]（★★数组基址 [this+0x2C]）
+    lea eax,[eax+eax*2]/lea eax,[ecx+eax*4]（★★★×3×4 = 12 字节步进）
+    ret 4（★返回 &array[i]）
+
+语义：**WaypointPathClass::GetWaypoint（按索引取航点，带名）**——索引 i 满足
+`0 <= i < [this+0x38]`（计数）时返回 `[this+0x2C] + i*12`（每航点 3 个 dword
+= 12 字节记录），越界（负或 >= 计数）返 NULL。ret 4 单栈参。
+
+★原版怪癖（照抄）：① **×3×4 = 12 字节步进**（lea [eax+eax*2] + lea [ecx+eax*4]
+——3 个 int 的航点记录）；② **双重边界检查**（jl 负 + jge 计数——单 cmp 无符号
+技巧，纯两次分支）；③ **NULL 而非断言**（越界静默返 NULL——调用方需判空）；
+④ **计数与基址分列 +0x38/+0x2C**（DynamicVectorClass 布局推断）。
+★跨批次连接：**12 字节结构族**（batch 269 Matrix3D 共轭输出/ batch 271 三维混
+合输出同 12B 记录）；+0x2C 基址/+0x38 计数布局（DynamicVectorClass 惯例推断）。
+⚠️ partial：WaypointPathClass 结构（+0x2C/+0x38）、12 字节航点记录字段语义
+（航点号/坐标推断）、调用方用途（路径规划消费推断）
+
+================================================================================
+（batch 272 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x457CE0（CanBeOccupiedBy 带名）依赖 8 个虚表槽 + 4 个未登记子函数 + 字段
+   语义（全 partial）——建筑/占用系统整体立案时落地；本条价值 = [0x87F7E8] 第
+   五处应用 + 0x4F9A90 House 家族调用点。
+② 0x4810A0（方向编码判定）**0x4CAC40 = sqrt 实锤**——这是本批最高价值取证（浮
+   点数学族身份坐实）；但函数本身依赖 [this+0/+4] 偏移语义（partial），且逻辑
+   已完整可读（阈值+位编码），**建议在浮点工具库建模批次按本条口径实现**
+   sqrt 包装——故本批登记不建模。
+③ 0x763980（GetWaypoint 带名）逻辑即实现（边界检查 + 数组索引），但宿主
+   WaypointPathClass 结构与 12B 记录布局未定——路径家族立案时闭合。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部 semantics_verified
+（三函数全段反汇编读完 + 7 个已登记函数交叉验证），partial 项如实标注。
