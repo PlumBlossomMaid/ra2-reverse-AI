@@ -1,0 +1,126 @@
+frontier batch 270 — CaptureManagerClass::FreeAll 0x472140 + CellClass::ActivateVeins 0x486920 + 全局非零判定 0x53B400（2026-10-14）
+
+口径：承接 batch 269，候选池 TOP 12 取三个函数：0x472140（32B，带名
+CaptureManagerClass::FreeAll）、0x486920（332B，带名 CellClass::ActivateVeins）、
+0x53B400（11B）。三函数均全反汇编读完（0x472140 尾 0x47215F ret、0x486920 尾
+0x486A6B ret + 4 nop、0x53B400 尾 0x53B40A ret + 5 nop——body 与 ranking 吻合）。
+YRpp 查覆盖（两地址带名，0x53B400 无）。取证手段：disasm.py 直反汇编 + 已登记
+函数交叉验证（batch 068/001/259/266/267/269 共 6 函数）。
+
+================================================================================
+0x472140 —— CaptureManagerClass::FreeAll（带名，释放全部捕获）（6 callers，全 0x20=32B 读完）
+================================================================================
+机器码（全 0x20）：
+    push esi/push edi/mov edi,ecx（★this CaptureManagerClass*）
+    mov esi,[edi+0x34]（★计数）/dec esi/js 0x47215D（★-1 起始倒序）
+    循环 0x47214A: mov eax,[edi+0x28]（★对象数组基址）/mov ecx,[eax+esi*4]
+      （★元素）→ mov edx,[ecx]/mov ecx,edi/push edx/call 0x471FF0（★★专用释放
+      器——每元素释放）
+      dec esi/jns 0x47214A（★倒序循环）
+    0x47215D: pop edi/pop esi/ret
+
+语义：**CaptureManagerClass::FreeAll（释放全部捕获，带名）**——从 [edi+0x34]
+计数减 1 起倒序遍历 [edi+0x28] 对象数组，逐元素经 0x471FF0（专用释放器）释放。
+32 字节紧凑循环。
+
+★原版怪癖（照抄）：① **倒序遍历**（mov esi,[+0x34] → dec → js 出口——count-1
+到 0）；② **每元素走专用释放器**（0x471FF0 而非直接 _delete——释放链）；③
+**this 经 ecx 传递**（mov ecx,edi + push edx——释放器是 CaptureManagerClass
+成员（this + 元素））；④ 无栈帧无返回值（纯副作用清理）。
+★跨批次连接：0x471FF0（未登记专用释放器）+0x472xxx 区（0x472160 邻函数构造器
+同区——CaptureManagerClass 家族）。
+⚠️ partial：宿主 CaptureManagerClass 结构（+0x28 数组/+0x34 计数）、0x471FF0
+精确身份（释放器语义）、捕获对象类型、调用方用途
+
+================================================================================
+0x486920 —— CellClass::ActivateVeins（带名，激活矿脉）（6 callers，全 0x14C=332B 读完）
+================================================================================
+机器码（全 0x14C 主结构）：
+    sub esp,0x20/push ebx/mov ebx,ecx（★this CellClass*）/push esi
+    cmp dword[ebx+0x44],0x7E/jne 0x486A66（★★类型 == 0x7E（矿脉推断）才继续）
+    cmp byte[ebx+0x11E],0x30/jb 0x486A66（★★+0x11E >= 0x30 条件）
+    mov al,[ebx+0x11C]/test/jne 0x486A66（★+0x11C 标志门控）
+    test dword[ebx+0x140],0x20000/jne 0x486A66（★★+0x140 位 0x20000 防重门禁）
+    mov esi,[ebx+0xE4]（★链）/test/je 0x486A66（★空链收尾）
+    push ebp/push edi
+    链循环 0x486972: mov eax,[esi]/mov ecx,esi/call [eax+0x1C8]（★虚表槽
+      0x1C8 = 类型）→ cmp eax,5/jg 0x486A55（★类型 > 5 跳过）
+      mov cl,[esi+0x14]/and cl,1/mov [esp+0x13],cl/je 0x486A55（★★+0x14 位
+        1 门控）
+      mov edx,[esi]/call [edx+0x84]（★虚表槽 0x84）→ mov cl,[eax+0xC91]/
+        test/jne 0x486A55（★★对象 +0xC91 标志——已处理跳过）
+      push 8/mov ecx,esi/call 0x70D0D0（★★判定 8 档——未登记）→ test al/
+        jne 0x486A55（★判定过才继续）
+      push 0x1C8/call 0x7C8E17（★★_new(0x1C8) = 456 字节对象）→ mov ebp,eax
+        /test/je 0x486A4B（★分配失败跳过）
+      mov eax,[ebx+0x24]（★this->+0x24 坐标）/movsx edi,word[esp+0x1A]/
+        movsx esi,ax/shl esi,8/add esi,0x80（★★坐标 <<8 + 0x80 中心量化）/
+        shl edi,8/add edi,0x80
+      mov eax,0x80/mov [esp+0x1C],eax/mov [esp+0x20],eax
+      lea eax,[esp+0x1C]/push eax/call 0x47B3A0（★坐标处理——未登记）
+      lea edx,[edi-0x80]/lea ecx,[esi-0x80]/mov [esp+0x28],edx/mov edx,
+        [0x8871E0]（★★★[0x8871E0] 全局——batch 259/266/267/269 后**第 5 次
+        应用**！）/mov [esp+0x2C],ecx/push 0×2/push 0x600/push 1/push 0/
+        lea ecx,[esp+0x34]/push ecx/push [edx+0xE8]（★实例 +0xE8）/mov ecx,
+        ebp/call 0x421EA0（★★★batch 068 AnimClass::AnimClass 实锤——构造！
+        456B 对象 + 坐标 + [0x8871E0]+0xE8 组装）
+      or dword[ebx+0x140],0x20000（★★置位防重标志）
+      0x486A55: mov esi,[esi+0x30]（★链 next +0x30）/test/jne 0x486972（★链
+        循环）
+    0x486A64: pop edi/pop ebp/0x486A66: pop esi/pop ebx/add esp,0x20/ret
+
+语义：**CellClass::ActivateVeins（激活矿脉，带名）**——this->+0x44 == 0x7E（矿
+脉类型推断）+ +0x11E >= 0x30 + +0x11C 未置 + +0x140 位 0x20000 未置（防重）时
+遍历 [ebx+0xE4] 链（next +0x30）：元素虚表槽 0x1C8 类型 <= 5、+0x14 位 1、+0xC91
+未置、0x70D0D0（8 档判定）通过 → `_new(0x1C8)`（456B）分配 + 坐标处理（<<8 +
+0x80 中心量化 + 0x47B3A0）+ **AnimClass 构造（0x421EA0——batch 068 实锤）**（参
+数含 [0x8871E0]+0xE8）→ 置 +0x140 位 0x20000（防重标记）；遍历完收尾。
+
+★原版怪癖（照抄）：① **类型 0x7E + 多条件门禁**（+0x44/+0x11E/+0x11C/+0x140
+四位全查才继续）；② **+0x140 位 0x20000 防重**（处理后置位——本格不重复激活）；
+③ **链元素虚表槽 0x1C8 类型 <= 5**（白名单）；④ **+0x14 位 1 门控 + +0xC91 已处
+理标志**（双跳）；⑤ **坐标 <<8 + 0x80 中心量化**（像素/格坐标转换）；⑥ **_new(0x1C8)
+456 字节大对象 + AnimClass 构造**（矿脉动画实例）；⑦ **0x421EA0 应用点**（batch
+068 实锤构造器在本条使用）。
+★跨批次连接：★★★**0x421EA0（batch 068 AnimClass::AnimClass 实锤——本条构造
+应用点！）**+**[0x8871E0] 全局第 5 次跨批应用**（batch 259/266/267/269 之后——
+本条取 +0xE8 作构造参数）+0x7C8E17（batch 001 _new）+0x70D0D0/0x47B3A0（未登记
+判定/坐标处理）+[ebx+0xE4] 链（batch 269 ConnectsToOverlay 同链字段——同宿主
+CellClass！）。
+⚠️ partial：宿主 CellClass 结构（+0x44 类型/+0xE4 链——batch 269 同）、+0x11E/
++0x11C/+0x140 字段语义（矿脉激活条件推断）、链元素结构（+0x14/+0xC91/+0x30）、
+0x70D0D0/0x47B3A0 身份、0x421EA0 的参数含义（AnimClass 构造参数——[0x8871E0]+0xE8
+推断）、0x1C8 对象布局
+
+================================================================================
+0x53B400 —— 全局非零判定（读 [0xA9FAC0] 返回布尔）（6 callers，全 0x0B=11B 读完）
+================================================================================
+机器码（全 0x0B）：
+    mov eax,[0xA9FAC0]（★读全局 [0xA9FAC0]）
+    test eax,eax/setne al（★非 0 → 1）
+    ret
+
+语义：**全局非零判定（推断名：读 [0xA9FAC0] 非空布尔）**——读取全局 [0xA9FAC0]，
+非 0 返回 1 否则 0。11 字节纯 getter 变体。
+
+★原版怪癖（照抄）：① **setne 布尔化**（test + setne——非 0 → 1 而非返回值本身）；
+② **无栈帧无参数**（纯读全局）；③ 紧邻 0x53B410 是 DebugLog 大函数（不同函数——
+nop 隔离）。
+★跨批次连接：[0xA9FAC0]（新登记全局——0xA9xxxx 区，batch 262 的 [0xA8E9A0] 游
+戏状态字节同区推断）。
+⚠️ partial：[0xA9FAC0] 全局语义（游戏状态/可用性推断）、调用方用途（布尔门禁推
+断）
+
+================================================================================
+（batch 270 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x472140（FreeAll）是 32B 紧凑循环（遍历 + 专用释放器 0x471FF0）——依赖
+   0x471FF0 身份 + 数组结构（partial）——CaptureManager 家族立案时闭合。
+② 0x486920（ActivateVeins）价值在 AnimClass 构造应用点 + [0x8871E0] 第 5 次
+   应用 + CellClass 链字段（batch 269 同宿主）；依赖 0x70D0D0/0x47B3A0 身份 +
+   激活条件字段语义（partial）——CellClass/矿脉系统整体立案时落地。
+③ 0x53B400（11B 非零判定）是纯读全局，逻辑即实现——语义由 [0xA9FAC0] 写入
+   点决定，单登记录入。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部 semantics_verified
+（三函数全段反汇编读完 + 6 个已登记函数交叉验证），partial 项如实标注。
