@@ -1,0 +1,154 @@
+frontier batch 209 — CellClass::GetContainedTiberiumIndex（记忆直连）+ MapClass::ResetZones（MapRect 直连）+ 寻路候选收集（0x56C510/0x586990 主线）（2026-10-14）
+
+口径：承接 batch 208 候选，ranking.tsv unique_callers 降序取 0x485010（8 callers）、
+0x56D460（8 callers）、0x5868A0（8 callers）。三者 prologue 均干净，机器码读全。
+
+================================================================================
+0x485010  CellClass::GetContainedTiberiumIndex（8 callers，全 0x08 读完）
+================================================================================
+机器码（全 0x08，body=8，rank 带名 CellClass::GetContainedTiberiumIndex）：
+    mov ecx,[ecx+0x44]      ; ★ this->+0x44（Overlay 子对象推断）
+    jmp 0x5FDD20            ; ★ 尾调用 0x5FDD20（tiberium 索引计算）
+  紧邻 0x485020（同族第二份，8 字节后）：
+    mov ecx,[esi+0x44] / call 0x5FDD20 / cmp eax,-1 / jne 0x485034 ...
+    ; ★ 同 +0x44 → 0x5FDD20，多了 -1 结果检查（getter 完整版推断）
+
+语义：**CellClass::GetContainedTiberiumIndex（rank 带名）**——thiscall
+无参：取 this->+0x44（含矿对象/Overlay 指针推断）尾调用 0x5FDD20
+（tiberium 索引计算）；紧邻 0x485020 是同族第二份（调用后检查 -1）。
+★★**项目记忆直连**：`contained_tiberium_index_range_20261005` 记录
+「GetContainedTiberiumIndex 正确区间 [27,38]∪[102,113]」——本条 0x485010
+即该函数本体（+0x44 → 0x5FDD20 的尾调用形态），区间语义与 0x5FDD20
+返回值对应，台账首次登记该函数的地址与调用形态。
+
+⚠️ partial：+0x44 字段精确身份（CellClass Overlay 槽推断）、0x5FDD20
+内部计算（tiberium 类型→索引映射）、紧邻 0x485020 与 0x485010 的调用方
+分工（-1 检查差异）。
+
+================================================================================
+0x56D460  MapClass::ResetZones（8 callers，全 0x139 读完）
+================================================================================
+机器码（全 0x139，body=315，rank 带名 MapClass::ResetZones）：
+  坐标索引（与 batch 208 的 0x56D3F0 同款）:
+    mov eax,[ecx+0xF8] / mov edx,[ecx+0xF4] / lea eax,[eax+edx+1]
+    mov edx,[esp+0x2c] / movsx esi,word[edx+2] / movsx edx,word[edx]
+    imul eax,esi / add eax,edx       ; ★ 步长×Y+X 一维索引
+    jns 0x56D48C / xor eax / jmp     ; ★ 负 → 0
+    mov edx,[ecx+0x6C] / cmp eax,edx / jl / lea eax,[edx-1]  ; ★ clamp
+  工作数组定位:
+    mov edx,[ecx+0x68] / mov [esp+0x1c],1 / mov [esp+0x2c],-1
+    lea ebp,[edx+eax*4]             ; ★ 工作数组 [0x68] + 索引*4
+    mov eax,[0x87F8DC] / mov edx,[0x87F8E0]  ; ★★ MapRect W/H（QWEN.md 实锤
+                                            ;   [0x87F8DC]=MapRect.W 邻域）
+    lea eax,[edx+eax+1]             ; ★ W+H+1
+    mov [esp+0x24],eax / neg edx / mov [esp+0x14],edx  ; ★ 邻域偏移表
+    mov edx,1 / sub edx,eax / mov [esp+0x18],edx
+    lea edx,[eax+1] / mov [esp+0x20],edx / lea edx,[eax-1]
+    mov [esp+0x28],edx / or edx,-1 / sub edx,eax / mov [esp+0x30],edx
+    mov al,[ebp] / cmp al,7 / mov [esp+0x30],edx / je 0x56D51B
+    ; ★★ 当前格 zone 值 == 7 → 跳过（不重置）
+  8 邻域扫描:
+    xor esi / lea eax,[esp+0x14]
+    mov edx,[eax] / mov bl,[ebp+edx*4] / lea edx,[ebp+edx*4]
+    test bl / je 0x56D524            ; ★ 邻域 zone 非 0 计数
+    inc esi / add eax,4 / cmp esi,8 / jl 循环
+    mov ecx,0x87F7E8 / call 0x56C510 ; ★★★ MapClass::Instance + 0x56C510
+                                      ;   （QWEN.md 候选机制实锤
+                                      ;   Update_Pathfinding_1）
+    pop/ret 4
+  0x56D524（有邻居分支）:
+    mov edx,[ecx+0x18]               ; ★ this->+0x18
+    ... 内层: 取邻域格 word[+2] 与 [edx+...*2] 比对、[ecx]==7 跳过、
+    edi 记录匹配邻居计数 [esp+0x3c]
+    cmp eax,3 / jg 0x56D511          ; ★ 匹配邻居 >3 → 放弃（跳 0x56C510）
+    cmp byte[ebp],0 / jne 0x56D511   ; ★ 当前格 zone 非 0 → 放弃
+    mov dx,[ecx+2] / mov [ebp+2],dx  ; ★ 写回邻域坐标到当前格 +2
+    pop/ret 4
+
+语义：**MapClass::ResetZones（rank 带名）**——对给定坐标格做 zone
+重置：①同 batch 208 的 0x56D3F0 索引公式（步长=宽+高+1，负→0、越界
+clamp）；②工作数组 [ecx+0x68] 定位当前格；③**用 MapRect W/H
+（[0x87F8DC]/[0x87F8E0]，QWEN.md 实锤 MapRect.W 邻域）构造 8 邻域偏移
+表**；④当前格 zone==7 直接跳过；⑤8 邻域扫描：邻域 zone 非 0 则计数，
+全部扫描后经 [0x87F7E8] MapClass::Instance 调 **0x56C510**（QWEN.md
+候选机制实锤的 Update_Pathfinding_1）；⑥有邻居分支：匹配邻居 >3 或当前
+zone 非 0 则放弃，否则把匹配邻居坐标写回当前格 +2。
+★★**QWEN.md 候选机制主线直连**：QWEN.md「候选机制：寻路 MapClass::
+Update_Pathfinding_1/2（0x56C510/0x586990）」——本条 0x56D460 调
+0x56C510（第一处），0x5868A0（本批候选三）调 0x586990（第二处）——
+**寻路主线两入口同批闭合**。
+★MapRect [0x87F8DC]/[0x87F8E0]（QWEN.md ⑤实锤 [0x87F8DC]=MapRect.W）
+在台账的正式引用（batch 196 的 0x58C2A0 用 [0x89C2DC]=side 不同全局）。
+
+⚠️ partial：+0x68 工作数组语义、zone==7 含义（区域类型推断）、8 邻域
+偏移表与 W+H+1 的精确关系、0x56C510 内部、+0x18 字段、写回 +2 的业务。
+
+================================================================================
+0x5868A0  寻路候选收集（8 callers，全 0xEE 读完）
+================================================================================
+机器码（全 0xEE，body=240）：
+    sub esp,0x18 / push ebx/ebp/esi
+    mov esi,[esp+0x28]              ; ★ 参数 = 矩形结构指针
+    mov ebp,ecx                     ; ★ this（MapClass）
+    mov ebx,[esi] / mov edx,[esi+8] / add edx,ebx  ; ★ X 范围 [esi]..[esi+8]
+    mov [esp+0x10],0 / mov [esp+0x14],0 / mov byte[esp+0x18],1
+    mov [esp+0x19],al / mov [esp+0xc],0x7E3890  ; ★ 虚表 0x7E3890（动态数组）
+    mov [esp+0x20],0xa / mov [esp+0x1c],0
+    jge 0x58695A                    ; ★ X 空范围 → 直接收尾
+  双层循环:
+    mov edi,[esi+4] / mov edx,[esi+0xc] / add edx,edi  ; ★ Y 范围 [esi+4]..[esi+0xc]
+    cmp edi,edx / jge 0x58694D
+    内层: mov word[esp+0x2c],bx / mov word[esp+0x2e],di  ; ★ 当前 (X,Y)
+    mov edx,[esp+0x20] / cmp edx,eax / jl 0x586922
+    mov dl,[esp+0x1d] / test dl / jne 0x58690A / test eax / jne 0x58693C
+    mov ecx,[esp+0x20] / test ecx / jle 0x58693C
+    add eax,ecx / push 0 / push eax / lea ecx,[esp+0x18]
+    call [eax+8]                    ; ★ 虚表槽 8（数组 Add 推断）
+    test al / je 0x586938
+    mov ecx,[esp+0x20] / mov edx,[esp+0x14] / mov eax,ecx / inc ecx
+    mov [esp+0x20],ecx / mov ecx,[esp+0x2c] / mov [edx+eax*4],ecx
+    ; ★ 把当前格加入候选数组（[esp+0x14] 基址 + [esp+0x20] 计数）
+    inc edi / cmp edi,[esi+0xc]+[esi+4] 范围 / jl 内层
+    inc ebx / cmp ebx, X 范围 / jl 双层循环
+  收尾:
+    lea eax,[esp+0xc] / mov ecx,ebp / push eax
+    call 0x586990                    ; ★★★ MapClass::Update_Pathfinding_2
+                                      ;   （QWEN.md 候选机制实锤）
+    mov eax,[esp+0x10] / mov [esp+4],0x7E38D0  ; ★ 换虚表
+    test eax / je 0x58698A
+    mov cl,[esp+0xd] / test cl / je 0x58698A
+    push eax / call 0x7C8B3D         ; ★ CRT 释放（batch 197 同款）
+    add esp,0x18 / ret 4
+
+语义：**寻路候选收集（0x5868xx 区，直连 QWEN.md 寻路候选机制）**——
+按参数矩形（[esi]+0/+4/+8/+0xC 的 X/Y 范围）双层循环遍历，把满足条件
+的格子（虚表 0x7E3890 动态数组槽 8 Add）收集进候选数组（计数 [esp+0x20]、
+基址 [esp+0x14]），收尾经 0x586990（MapClass::Update_Pathfinding_2）
+处理候选，然后 CRT 释放（0x7C8B3D）数组。
+★★**QWEN.md 候选机制主线闭合**：QWEN.md「候选机制：寻路 MapClass::
+Update_Pathfinding_1/2（0x56C510/0x586990）」——本条 0x5868A0 收尾调
+0x586990（第二处入口），与 0x56D460（第一处 0x56C510）同批闭合——
+**寻路候选机制两个入口全部登记**。
+★虚表 0x7E3890（动态数组容器，槽 8=Add）+ 0x7E38D0（释放后换表）+ CRT
+释放 0x7C8B3D（batch 197 的 0x5C6120 同款）——容器生命周期完整。
+
+⚠️ partial：虚表 0x7E3890 的数组容器精确身份、矩形参数语义（路径搜索
+范围推断）、0x586990 内部、收集条件（[esp+0x1d] 标志推断）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x485010 → 项目记忆 contained_tiberium_index_range（[27,38]∪[102,113]）
+   ——GetContainedTiberiumIndex 首次登记地址与形态。
+2. 0x56D460 → batch 208（0x56D3F0 同索引公式）+ QWEN.md（MapRect
+   [0x87F8DC]/[0x87F8E0] + Update_Pathfinding_1 0x56C510）——ResetZones
+   直连寻路候选主线。
+3. 0x5868A0 → QWEN.md（Update_Pathfinding_2 0x586990）+ batch 197
+   （0x7C8B3D CRT 释放）——寻路候选收集器，两入口同批闭合。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x485010 的 +0x44 字段与 0x5FDD20 内部计算。
+2. 0x56D460 的 zone==7 语义与 0x56C510 内部。
+3. 0x5868A0 的虚表 0x7E3890 容器与收集条件。
