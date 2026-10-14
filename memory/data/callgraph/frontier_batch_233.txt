@@ -1,0 +1,98 @@
+frontier batch 233 — MapClass::SetSellMode + SetRepairMode（2026-10-14）
+
+口径：承接 batch 232，ranking.tsv unique_callers 降序取未登记候选。TOP 12 中
+0x4AC660（152B，符号名 MapClass::SetSellMode）与 0x4AC8C0（152B，符号名
+MapClass::SetRepairMode）为带名 MapClass 成员，且**两函数逐字节同构**——成对
+取证价值高。两函数均全反汇编读完。取证手段：disasm.py 直反汇编 + YRpp 交叉
+验证（MapClass.h:433/437 双三证）。
+
+================================================================================
+0x4AC660 —— MapClass::SetSellMode（7 callers，全 0x98=152B 读完）
+================================================================================
+身份实锤：YRpp MapClass.h:433-434
+  `void SetSellMode(int mode) { JMP_THIS(0x4AC660); }`
+地址+JMP_THIS+int 参三证。
+
+机器码（全 0x98）：
+    push ebx/push esi / mov esi,ecx（★this MapClass）
+    mov ecx,[esp+0xC]（★★参数1 = mode，int）
+    mov al,[esi+0x11B1]（★★this->+0x11B1 = 当前 sell 模式标志）
+    cmp ecx,-1 / mov bl,al
+    je 0x4AC686（★-1 → 取反分支）
+    test ecx / je 0x4AC682（★0 → 清分支）
+    cmp ecx,1 / jne 0x4AC68B（★其他 → 保持原值）
+    mov bl,cl / jmp 0x4AC68B（★1 → 置分支）
+    0x4AC682: xor bl,bl / jmp 0x4AC68B（★mode=0 → bl=0）
+    0x4AC686: test al,al / sete bl（★★mode=-1 → bl=!al 取反）
+    0x4AC68B: cmp bl,al / je 0x4AC6F3（★★新标志 == 旧标志 → 无变化直接返回）
+    mov eax,[esi+0x11A8] / test / jne 0x4AC6F3（★★+0x11A8 非空 → 返回，模式锁！
+      ——「当前已有模式处理对象时拒绝切换」）
+    mov eax,[esi] / push 0/push 0/mov ecx,esi / call [eax+0x48]（★虚表槽 0x48 模式切换）
+    mov byte[esi+0x11B0],0（★清 repair 标志）
+    mov byte[esi+0x11B2],0 / mov byte[esi+0x11B3],0 / mov byte[esi+0x11B4],0（★四标志清零）
+    test bl,bl / je 0x4AC6E5（★新标志假 → 关路径）
+    真路径: mov ecx,[0xA83D4C]（★全局 House）
+      mov eax,[ecx+0x2F0] / test / jle 0x4AC6E5（★★+0x2F0 计数 > 0 才开）
+      mov byte[esi+0x11B1],1（★置 sell 标志）/ call 0x48DC90（★进入 sell 模式处理）
+      pop 族 / ret 4
+    关路径 0x4AC6E5: mov edx,[esi] / mov ecx,esi / mov byte[esi+0x11B1],0（★清 sell 标志）
+      call [edx+0x50]（★虚表槽 0x50 退出模式）
+    pop 族 / ret 4
+
+语义：**MapClass::SetSellMode（三态模式接口，与符号名/YRpp 完全吻合）**——
+参数 mode 三分支：`-1`=取反当前标志（toggle）、`0`=关、`1`=开、其他=保持原值；
+新标志与旧标志相同直接返回；`+0x11A8` 非空（模式锁/活动模式对象）也直接返回；
+否则调虚表槽 `0x48` 进入切换，清四标志（+0x11B0/+0x11B2/+0x11B3/+0x11B4），
+真路径：`[0xA83D4C]` 全局 House 的 `+0x2F0` 计数 > 0 才置 `+0x11B1=1` 并调
+`0x48DC90`；假路径：置 `+0x11B1=0` 并调虚表槽 `0x50`。
+
+★原版怪癖（照抄）：① **mode=-1 是取反（toggle）而非切换到「无模式」**——
+原版用 -1 表示「翻转当前状态」，调用点语义为「开/关切换」；② **模式锁
++0x11A8**：已有模式处理对象时直接返回（拒绝再切）——sell/repair 互斥的共享锁；
+③ `[0xA83D4C]->+0x2F0` 计数门卫：全局 House 的某计数 <= 0 时真路径静默走关
+路径（**开了也不让开**，白调 0x48 切换）；④ 清四标志用 `mov byte 0` 连写
+（编译器展开），其中 +0x11B0 是 repair 标志位（SetRepairMode 的字段）。
+
+★跨批次连接：虚表槽 0x48/0x50（MapClass 模式接口族）+[0xA83D4C] 全局 House
+（batch 230 MakeAlly 特殊 House 同全局）+**+0x11B0/+0x11B1 相邻字段**（sell/
+repair 双模式标志——与 SetRepairMode 0x4AC8C0 成对）。⚠️ partial：虚表槽
+0x48/0x50 精确语义（进入/退出模式推断）、0x48DC90（sell 处理入口推断）、
++0x11A8 锁字段宿主语义、+0x11B2/+0x11B3/+0x11B4 三标志
+
+================================================================================
+0x4AC8C0 —— MapClass::SetRepairMode（7 callers，全 0x98=152B 读完）
+================================================================================
+身份实锤：YRpp MapClass.h:436-437
+  `void SetRepairMode(int mode) { JMP_THIS(0x4AC8C0); }`
+地址+JMP_THIS+int 参三证。
+
+机器码（全 0x98）×与 0x4AC660 **逐字节同构**，仅两处差异：
+① 标志字段：**+0x11B0**（repair）而非 +0x11B1（sell）；
+② 顺序细节：SetRepairMode 在 `call [eax+0x48]` 之前先写 `mov byte[esi+0x11B1],0`
+   （主动清 sell 标志），SetSellMode 是在之后清四标志（含 +0x11B1 自身）；
+其余逐条指令一致（-1/0/1 三分支 → 无变化返回 → +0x11A8 锁 → 槽 0x48 → 清
++0x11B2/+0x11B3/+0x11B4 → true 路径 [0xA83D4C]+0x2F0 门卫 → 置 +0x11B0=1 +
+0x48DC90 / false 路径槽 0x50 + 置 +0x11B0=0）。
+
+语义：**MapClass::SetRepairMode（修理模式三态接口，与 SetSellMode 成对）**——
+同款三态 mode（-1 toggle/0 关/1 开）+ 模式锁 +0x11A8 + [0xA83D4C]+0x2F0 门卫；
+差异：标志字段为 +0x11B0（repair），且切换前主动清 +0x11B1（sell）——**两模式
+互斥的显式实现**（设 repair 时先关 sell）。
+
+★原版怪癖（照抄）：① 与 SetSellMode 同构体（编译器对两个模式函数生成逐指令
+相同的展开，仅字段/顺序微差）；② **先清对方标志**（+0x11B1）——sell/repair
+互斥锁的软件侧实现（不依赖 +0x11A8 单一锁）；③ +0x2F0 门卫同样应用于 repair
+（全局 House 计数 <= 0 时静默走关路径）。
+★跨批次连接：SetSellMode（0x4AC660 同批同构对）+虚表槽 0x48/0x50 族。
+⚠️ partial：同上（槽 0x48/0x50、0x48DC90、+0x11A8 锁、+0x11B2..0x11B4 语义）
+
+================================================================================
+（batch 233 说明：C++ 模型决策）
+================================================================================
+本批两函数**不新增 C++ 模型**，理由：
+① 两函数是 UI 模式门卫逻辑（三态 mode + 锁 + 计数门卫 + 虚表回调），语义依赖
+  虚表槽 0x48/0x50 与 0x48DC90、以及 +0x11A8 锁与 +0x11B0/+0x11B1 字段的宿主
+  语义——UI 侧建模留待 MapClass 家族整体落地。
+② 152B×2 的成对同构形态已在登记中完整记录（含两处差异），future
+  reimplementation 直接照抄即可。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。
