@@ -1,0 +1,127 @@
+frontier batch 238 — RawFileClass::Open + RawFileClass::Exists（2026-10-14）
+
+口径：承接 batch 237，ranking.tsv unique_callers 降序取未登记候选。TOP 12 中
+0x65CB50（155B，USER_DEFINED 名 RawFileClass::Open）与 0x65CBF0（171B，
+USER_DEFINED 名 RawFileClass::Exists）为带名文件系统成员优先纳入。两函数均全
+反汇编读完（0x65CB50 全 0x9B=155B、0x65CBF0 全 0xA8=168B）。取证手段：
+disasm.py 直反汇编 + 导入槽引用识别（[0x7E11BC] CreateFileA 等）。
+
+================================================================================
+0x65CB50 —— RawFileClass::Open（7 callers，全 0x9B=155B 读完）
+================================================================================
+⚠️ 符号名 RawFileClass::Open 为 ranking USER_DEFINED（YRpp 无 RawFileClass 覆盖
+——RawFileClass 是 YRpp FileClass 系列实类之一，但 Open 无 JMP 声明），按纪律为
+**推断名**，地址语义以机器码为准。
+
+机器码（全 0x9B）：
+    push esi / mov esi,ecx（★this RawFileClass）
+    mov eax,[esi] / call [eax+0x34]（★虚表槽 0x34 取状态）
+    mov eax,[esi+0x18]（★★+0x18 = 文件名字符串指针）
+    test eax / jne 0x65CB70（★名字非空 → 走打开路径）
+    空名分支: push eax/push eax（★0,0）/ push 2 / mov ecx,esi
+      call [edx+0x40]（★虚表槽 0x40 (0,0,2)）→ xor eax,eax / ret 4（★返回 0 = 失败）
+    0x65CB70: mov ecx,[esp+8]（★★参数1 = 打开模式 mode）
+      mov [esi+8],ecx（★+0x8 = mode 存档）
+      dec ecx / je 0x65CBA8（★mode==1）
+      dec ecx / je 0x65CB94（★mode==2）
+      dec ecx / jne 0x65CBC4（★mode==3 或其它 → 落 CreateFileA）
+      mode==3: push 0 / push 0x80（★★share=FILE_SHARE_WRITE?）/ push 4（★★creation=CREATE_NEW）
+        push 0 / push 0 / push 0xC0000000（★★access=READ|WRITE）/ jmp 0x65CBBA
+      mode==2: push 0 / push 0x80 / push 2（★★creation=CREATE_ALWAYS）
+        push 0 / push 0 / push 0x40000000（★★access=GENERIC_WRITE）/ jmp 0x65CBBA
+      mode==1: push 0 / push 0x8000080（★★share=READ|WRITE 组合）/ push 3（★★creation=OPEN_EXISTING）
+        push 0 / push 3（★flags）/ push 0x80000000（★★access=GENERIC_READ）/ 落 0x65CBBA
+      0x65CBBA: push eax（★★+0x18 文件名压入）
+        call [0x7E11BC]（★★★CreateFileA 导入槽！）
+        mov [esi+0x14],eax（★★句柄存 +0x14）
+    0x65CBC4: mov eax,[esi+0xC] / test / jne / cmp [esi+0x10],-1 / je（★跳过清理）
+      push 0 ×2 / call [edx+0x28]（★虚表槽 0x28 清理）
+    mov ecx,[esi+0x14] / xor eax,eax / cmp ecx,-1 / setne al（★★★返回 INVALID_HANDLE 取反 = 成功标志）
+    pop esi / ret 4
+
+语义：**RawFileClass::Open（推断名，打开文件）**——文件名字段 `+0x18` 为空则
+经虚表槽 0x40(0,0,2) 创建并返回 0；非空则按参数 mode（**1/2/3**）映射 CreateFileA
+参数：mode1=GENERIC_READ(0x80000000)+OPEN_EXISTING(3)+share 0x8000080、
+mode2=GENERIC_WRITE(0x40000000)+CREATE_ALWAYS(2)+share 0x80、
+mode3=READ|WRITE(0xC0000000)+CREATE_NEW(4)+share 0x80；
+经 `[0x7E11BC]`（CreateFileA 导入槽）打开，句柄存 `+0x14`；最后返回
+`句柄 != INVALID_HANDLE_VALUE(-1)` 的布尔。
+
+★原版怪癖（照抄）：① **mode 用多分支 dec/je 链**（1/2/3 三档，default 落 0x65CBC4
+不重设句柄语义——即 mode 非 1/2/3 时**跳过 CreateFileA 直接返回旧句柄状态**）；
+② 空文件名走虚表槽 0x40 而非 CreateFileA（**名字为空用对象内创建路径**）；
+③ 返回值是 `setne`（-1 判等取反），不是 `test eax` 直判——句柄有效返回 1；
+④ share 常量 0x8000080 = GENERIC_READ 组合位（access 复用 share 槽位，注释
+按位值记录）。
+
+★跨批次连接：**导入槽 [0x7E11BC]（CreateFileA）/[0x7E11E0]（CloseHandle）/
+[0x7E1200]**（.rdata 导入区 0x7E11xx 族——与 batch 223/224 的 [0x7E14xx]
+GDlgSupp 表同 .rdata 函数指针区，0x7E11xx 是更早槽位）+虚表槽 0x34/0x40/0x28
+（FileClass 接口族）+`+0x14` 句柄 / `+0x18` 名字 / `+0x8` mode / `+0xC`/`+0x10`
+（RawFileClass 布局，0x65CA80 构造同文件系统族）。⚠️ partial：符号名（YRpp
+无覆盖 USER_DEFINED 推断）、mode 3 档的精确语义（访问/创建/共享组合映射）、
+虚表槽 0x34/0x40/0x28 精确身份、[0x7E11BC] 导入槽确证（CreateFileA 推测，可
+用 PE 导入表比对）
+
+================================================================================
+0x65CBF0 —— RawFileClass::Exists（7 callers，全 0xA8=168B 读完）
+================================================================================
+⚠️ 符号名 RawFileClass::Exists 同 USER_DEFINED 推断名，地址语义以机器码为准。
+
+机器码（全 0xA8）：
+    push esi / mov esi,ecx（★this）/ push edi
+    mov eax,[esi+0x18]（★★+0x18 文件名字段）
+    test eax / jne 0x65CC02（★非空继续）→ 空名: xor al,al / ret 4（★返回 0 = 不存在）
+    0x65CC02: mov eax,[esi] / mov ecx,esi / call [eax+0x18]（★虚表槽 0x18 快速判定）
+      test al / jne 0x65CC94（★返回 1 = 已存在）
+    mov eax,[esp+0xC]（★★参数1 = 模式标志）
+    test eax / je 0x65CC43（★模式 0 → 直接 CreateFileA 探测）
+    模式非 0 分支:
+      push 1 / mov ecx,esi / call 0x65CB50（★★★Open(1)！本批前一函数）
+      mov edx,[esi] / mov ecx,esi / call [edx+0x18]（★再槽 0x18 判定）
+      test al / je 0x65CC94（★Open 后仍判不存在 → 返回 1（？见怪癖 ③））
+      mov eax,[esi+0x14]（★句柄）/ push eax / call [0x7E11E0]（★★CloseHandle 导入槽）
+      test eax / jne 0x65CC8D
+      mov ecx,[esi+0x18] / mov edi,[esi] / push ecx / jmp 0x65CC7F
+    0x65CC43（模式 0 探测）:
+      mov edx,[esi+0x18] / push 0 / push 0x80 / push 3（★★OPEN_EXISTING）/ push 0
+      push 1（★★flags=1）/ push 0x80000000（★★GENERIC_READ）/ push edx
+      call [0x7E11BC]（★★★CreateFileA）→ cmp eax,-1 / mov [esi+0x14],eax
+      je 0x65CC95 族（★INVALID → 返回 0）→ push eax / call [0x7E11E0]（CloseHandle）
+      test / jne 0x65CC8D
+      mov eax,[esi+0x18] / mov edi,[esi] / push eax
+      0x65CC7F: push 0 / call [0x7E1200]（★第三导入槽，取值/属性查询）
+      push eax / call [edi+0x40]（★虚表槽 0x40 收尾）
+    0x65CC8D: mov [esi+0x14],0xFFFFFFFF（★★句柄置 INVALID）
+    0x65CC94: mov al,1 / ret 4（★返回 1 = 存在）
+
+语义：**RawFileClass::Exists（推断名，探测文件存在）**——文件名字段 `+0x18`
+为空直接返回 0；非空：先经虚表槽 0x18 快速判定（命中返回 1）；未命中则按参数
+模式分两路：①模式非 0——**调本批 Open(1)（0x65CB50）**再判定，句柄经
+`[0x7E11E0]`（CloseHandle）关闭；②模式 0——直接 `[0x7E11BC]`（CreateFileA）
+以 GENERIC_READ+OPEN_EXISTING 探测，失败（INVALID）返回 0，成功关闭句柄并
+经 `[0x7E1200]`+虚表槽 0x40 收尾；最后统一置 `+0x14=-1` 返回 1。
+
+★原版怪癖（照抄）：① **探测打开后必定把 `+0x14` 置 INVALID_HANDLE**（0x65CC8D）
+——句柄用完即丢，不留缓存；② 模式非 0 分支复用 **Open(1)（本批函数内部调用）**
+——Exists 与 Open 的代码耦合点，两函数同批登记互相印证；③ 模式非 0 分支「Open
+后仍判不存在」时**落到 0x65CC94 返回 1**（可能为原版「有名字即认为存在」的
+语义分层——非 0 模式走的是「已 open 过」的预设）；④ 空名直接返 0、虚表槽 0x18
+快速判定在前——三层判定（空名→快速→探测）的顺序是原版性能分层。
+
+★跨批次连接：**[0x7E11BC] CreateFileA / [0x7E11E0] CloseHandle / [0x7E1200]**
+（导入槽族，与 0x65CB50 同批同族）+Open(0x65CB50)（本批内部调用，互证）
++`+0x14` 句柄 / `+0x18` 名字（RawFileClass 布局）。⚠️ partial：同 0x65CB50
+（符号名推断、导入槽确证、模式 1 的「存在即 1」语义分层解读）
+
+================================================================================
+（batch 238 说明：C++ 模型决策）
+================================================================================
+本批两函数**不新增 C++ 模型**，理由：
+① RawFileClass 是文件系统层（QWEN.md 环境速查已列 RawFileClass::构造
+   0x65CA80 为参照），但两函数的 CreateFileA 导入槽 [0x7E11BC] 未被 PE 导入表
+   交叉确证（推测），且 mode 三档映射的语义部分 partial——按「证据不足保留
+   partial」纪律，建模需先闭合导入槽比对 + mode 语义。
+② 两函数逻辑即实现（mode→CreateFileA 参数映射表 + 句柄管理），但依赖
+   FileClass 系列宿主——留待文件系统家族整体建模时一并落地。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。
