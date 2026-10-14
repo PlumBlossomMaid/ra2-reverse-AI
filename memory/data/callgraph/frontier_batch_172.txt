@@ -1,0 +1,108 @@
+frontier batch 172 — 向量追加（batch 167 同族）+ 索引→常量表分发（PCX 闭合）+ CRT 宽字符查找（2026-10-14）
+
+口径：承接 batch 171 候选，ranking.tsv unique_callers 降序取 0x5D1C20（11 callers）、
+0x4E3560（11 callers）、0x7CA8C6（11 callers）。三者 prologue 均干净，机器码读全。
+
+================================================================================
+0x5D1C20  向量追加（Add_Item 形态；11 callers，0x5D1C20-0x5D1C7F 读完）
+================================================================================
+机器码（0x5F 读完）：
+    mov eax,[esp+4]              ; ★ 参数：待追加项
+    test eax / je 返 -1          ; ★ 空项 → -1
+    mov eax,[ecx+0x28]           ; ★ this->+0x28 上限/容量
+    lea esi,[ecx+0x18]           ; ★ esi = this->+0x18（vector 子结构）
+    mov ecx,[ecx+0x20]           ; ★ this->+0x20 计数
+    cmp eax,ecx / jl 直接追加    ; ★ 容量 >= 计数 → 跳过扩展
+    mov al,[esi+0xD] / test / jne 扩展
+    test ecx / jne 返 -1
+  扩展:
+    mov eax,[esi+0x14] / test / jle 返 -1
+    mov edx,[esi] / add eax,ecx  ; ★ 新容量 = 计数 + 步长
+    push 0 / push eax / mov ecx,esi / call [edx+8]  ; ★ 虚表槽 8：Resize
+    test al / je 返 -1
+  直接追加:
+    mov eax,[esi+0x10]           ; ★ +0x10 计数（此子结构）
+    mov edx,[esi+4]              ; ★ +0x4 缓冲
+    lea ecx,[eax+1] / mov [esi+0x10],ecx   ; ★ 计数++
+    mov ecx,[esp+8] / mov [edx+eax*4],ecx  ; ★ 4B/项写缓冲[计数]
+    mov edx,[esi] / lea eax,[esp+8] / mov ecx,esi
+    push eax / call [edx+0x10]   ; ★ 虚表槽 0x10（尾回调/通知）
+    mov eax,1 / ret 4            ; ★ 返 1
+   返 -1: or eax,-1 / ret 4
+
+语义：**向量容器追加（Add_Item 形态，4B/项）**——检查容量（this->+0x28
+上限 vs +0x20 计数，子结构 +0x18），不足时经虚表槽 8 扩展，然后 4B/项写
+缓冲[计数]并计数++，最后经虚表槽 0x10 通知。
+★**与 batch 167 登记的 0x6CF240（Swizzle 注册 8B/项）同族**——完全同构
+的「容量检查 + 虚表槽 8 Resize + 计数++ + 写缓冲 + 虚表槽 0x10 通知」，
+仅项宽 4B vs 8B；0x5D1C20 是通用 4B 向量版，0x6CF240 是 SwizzlePointer
+(8B) 特化。紧邻 0x5D1C90 是同构第二成员（含删除语义，虚表槽 0x10 查找）。
+
+⚠️ partial：宿主（0x5D1C90 起的 vector 类）、+0x28/+0x20 精确字段名、
+虚表槽 8/0x10 方法身份。
+
+================================================================================
+0x4E3560  索引→常量表→分发（11 callers，0x4E3560-0x4E3686 读完）
+================================================================================
+机器码（0x127 读完，-3 到 9 共 14 分支）：
+    xor eax,eax                  ; ★ 默认参数 0
+    cmp ecx,-2 / jne 分支0        ; ★ ecx 为索引（-3..9）
+   -2: push eax / mov eax,[0x844AE8] / push eax / mov ecx,0xAC4848 / call 0x6BA140 / ret
+    0: push ecx / mov ecx,[0x844AF0] / push ecx / mov ecx,0xAC4848 / call 0x6BA140 / ret
+    1: mov edx,[0x844AF4] / push 0 / push edx / mov ecx,0xAC4848 / call 0x6BA140 / ret
+    2: mov eax,[0x844AF8] / push 0 / push eax / call 0x6BA140 / ret
+    3: mov ecx,[0x844AFC] / push 0 / push ecx / call 0x6BA140 / ret
+    4: mov edx,[0x844B00] / push 0 / push edx / call 0x6BA140 / ret
+    5: mov eax,[0x844B04] / push 0 / push eax / call 0x6BA140 / ret
+    6: mov ecx,[0x844B08] / push 0 / push ecx / call 0x6BA140 / ret
+    7: mov edx,[0x844B0C] / push 0 / push edx / call 0x6BA140 / ret
+    8: mov eax,[0x844B10] / push 0 / push eax / call 0x6BA140 / ret
+   -3: mov ecx,[0x844AEC] / push 0 / push ecx / call 0x6BA140 / ret
+    9: mov edx,[0x844B14] / push 0 / push edx / call 0x6BA140 / ret
+    ; ★ 每分支：this=0xAC4848（PCX::Instance），参数=(0 或 ecx, [0x844Axx] 常量)
+
+语义：**索引→全局常量表→分发到 PCX::GetSurface（0x6BA140）**——按 ecx
+索引（-3..9）从 [0x844AE8..0x844B14] 常量表取指针，以 [0xAC4848]
+（batch 132 实锤的 PCX::Instance）为 this 调 0x6BA140。
+★**闭合 batch 132**：0x6BA140 = PCX::GetSurface（YRpp PCX.h:32 实锤）；
+[0x844Axx] 疑 PCX 文件名字符串表（每索引一个 PCX 资源），-2 分支额外传
+eax=0（第二参数）。
+
+⚠️ partial：[0x844AE8..0x844B14] 常量表内容（疑 PCX 文件名）、-2 分支
+双参差异、调用方语义（11 callers 分布）。
+
+================================================================================
+0x7CA8C6  CRT 宽字符查找（11 callers，0x7CA8C6-0x7CA8EE 读完）
+================================================================================
+机器码（0x28 读完）：
+    mov eax,[esp+4]              ; ★ 串指针
+    mov cx,word[eax] / test cx / je 收尾   ; ★ 逐 2 字节扫描
+    cmp cx,word[esp+8] / je 收尾          ; ★ 与目标宽字符比较
+    inc eax / inc eax / jmp 开头           ; ★ 步进 2 字节
+   收尾: mov cx,word[eax] / sub cx,word[esp+8]
+    neg cx / sbb ecx,ecx / not ecx / and eax,ecx   ; ★ 未命中 → eax=0
+    ret
+
+语义：**宽字符逐 2 字节查找（wcslen/wcschr 形态）**——在窄串指针按 word
+步进扫描直到命中目标宽字符或串尾，命中返回指针、未命中返回 NULL。
+★0x7C-0x7D 区（MSVC6 静态 CRT，非 Westwood 手写——batch 169 的
+0x7CA530 同区）——CRT 宽字符工具族。
+
+⚠️ partial：宿主（0x7CA8EF 起是 SEH 帧函数——本函数为 CRT 内部工具）、
+具体 CRT 函数名（wcsstr/wcschr 推断）。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x5D1C20 → batch 167（0x6CF240 Swizzle 注册 8B/项同族）——向量追加
+   通用版。
+2. 0x4E3560 → batch 132（0x6BA140 PCX::GetSurface + [0xAC4848]
+   PCX::Instance 实锤）——PCX 资源分发入口。
+3. 0x7CA8C6 → 0x7C-0x7D MSVC6 CRT 区（batch 169 同区）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x5D1C20 的 vector 宿主类与虚表槽 8/0x10 身份。
+2. 0x4E3560 的 [0x844Axx] 常量表内容（疑 PCX 文件名）。
+3. 0x7CA8C6 的具体 CRT 函数名。
