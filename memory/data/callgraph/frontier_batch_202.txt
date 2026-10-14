@@ -1,0 +1,131 @@
+frontier batch 202 — 表键查询链 + 清理等待循环 + 字符串拼接器（2026-10-14）
+
+口径：承接 batch 201 候选，ranking.tsv unique_callers 降序取 0x5E26C0（8 callers）、
+0x5D2530（8 callers）、0x7B4ED0（8 callers）。三者 prologue 均干净，机器码读全。
+
+================================================================================
+0x5E26C0  表键查询链（8 callers，全 0x35 读完）
+================================================================================
+机器码（全 0x35）：
+    mov ecx,0xC2 / call 0x775940            ; ★ 查表键 0xC2
+    test eax,eax / jne 0x5E26F4            ; ★ 命中 → 返表值
+    mov ecx,0xC9 / call 0x775940            ; ★ 查表键 0xC9
+    test eax,eax / jne 0x5E26F4
+    mov ecx,0xBC / call 0x775940            ; ★ 查表键 0xBC
+    test eax,eax / jne 0x5E26F4
+    mov ecx,0xBD / jmp 0x775940             ; ★ 尾调用查表键 0xBD
+  0x5E26F4:
+    ret
+
+语义：**表键查询链（0x5E2xxx 区）**——对全局表连续查 4 个键
+（0xC2/0xC9/0xBC/0xBD），任一命中立即返回表值；全部未命中返回最后
+一次查询结果（0x775940 未命中返 0）。4 个键值像是「键盘/输入状态
+索引」推断（常见 UI 键位枚举区）。
+★**0x775940 实锤（本批补的配套）**：`mov eax,[0xB72F50]（计数）/dec
+eax/test jl 返 0 → lea edx,[eax*8+0xB72D2C]/cmp [edx],ecx（★键）→ je
+命中 → dec eax/sub edx,8 → 命中: mov eax,[eax*8+0xB72D28]（★值）→ ret`
+——**倒序遍历 batch 196 的 0x775700 全局表（[0xB72F50] 计数、
+[0xB72D28] 8B/项、+0x4 偏移存键）的查找器**：键 → 值映射（8B 对 =
+值 @+0、键 @+4）。batch 196 登记「分配」，本批补全「查找」——表体系
+读写两侧闭合。
+★0x8305E8/0x8305D0/0x8305B0 与 0x5D2530 的 DebugLog 串（.data 区，
+本批扫描不可读，未断言内容）。
+
+⚠️ partial：4 键（0xC2/0xC9/0xBC/0xBD）的语义、表项值含义、宿主
+（0x5E2xxx 区）、0x775940 的装箱语义（值即句柄推断）。
+
+================================================================================
+0x5D2530  清理+等待循环（8 callers，全 0x97 读完）
+================================================================================
+机器码（全 0x97，body=151）：
+    mov al,[0xA8ED80] / cmp al,1 / je 0x5D25C4   ; ★ 全局开关 ==1 直接收尾
+    push 0x8305E8 / call 0x4068E0               ; ★ 日志（batch 001 空 stub）
+    mov eax,[esi+0x28] / test eax,eax / jle 0x5D256A  ; ★ 计数
+  清理循环:
+    mov eax,[esi+0x1C] / mov ecx,[eax+edi*4]    ; ★ 第 edi 项
+    mov edx,[ecx] / call [edx+8]                ; ★ 虚表槽 8（清理）
+    inc edi / cmp edi,[esi+0x28] / jl 清理循环  ; ★ 遍历 +0x1C 数组
+  等待循环:
+    mov al,[0xA8ED80] / test al,al / jne 0x5D259B  ; ★ 开关变 1 跳出
+    push 0x8305D0 / call 0x4068E0               ; ★ 日志
+    mov edi,[0x7E11F0] / push 0x1F4 / call edi  ; ★★ KERNEL32!Sleep(500)
+    call 0x5D4D50                               ; ★ 帧推进（batch 200 同款）
+    jmp 等待循环                                 ; ★ 轮询直至 [0xA8ED80]!=0
+    push 0x8305B0 / call 0x4068E0               ; ★ 日志
+  收尾循环:
+    mov eax,[esi+0x1C] / mov ecx,[eax+edi*4]
+    mov edx,[ecx] / call [edx+0xC]              ; ★ 虚表槽 0xC（收尾）
+    inc edi / cmp edi,[esi+0x28] / jl 收尾循环
+  0x5D25C4:
+    pop edi / pop esi / ret
+
+语义：**清理+等待循环（0x5D2xxx 区）**——[0xA8ED80] 全局开关 ==1 直接
+跳过；否则遍历 this->+0x1C 指针数组（+0x28 计数）逐个调虚表槽 8（清理），
+然后**轮询等待**：[0xA8ED80] 未变 1 时 Sleep(500)+0x5D4D50（帧推进）反复
+循环，变 1 后转第二阶段——再遍历数组调虚表槽 0xC（收尾）。典型
+**异步任务等待/后台线程汇合**模式（开关由外部/工作线程置位）。
+★★IAT 实锤：0x7E11F0=KERNEL32!Sleep（PE 导入表解析）；0x5D4D50 与
+batch 200 的 0x6241F0 调用同一帧推进函数——跨批第二条调用。
+★0x4068E0（batch 001 已实锤空 stub）的 3 个日志调用点（0x8305E8/
+0x8305D0/0x8305B0 字符串）——阶段日志。
+
+⚠️ partial：[0xA8ED80] 开关身份与置位者、+0x1C 数组元素类型、虚表槽
+8/0xC 身份、日志串内容（.data 未读出）。
+
+================================================================================
+0x7B4ED0  字符串拼接器（8 callers，全 0x146 读完，body=326）
+================================================================================
+机器码（全 0x146，body=326）：
+    mov esi,ecx / mov edi,[esi]                 ; ★ this->+0 字符串
+    test edi / je 0x7B4F11
+    repne scasb(+1) 求长 / push ecx / call 0x7C8E17  ; ★ operator new
+  第一段拷贝:
+    repne scasb 求长 / rep movsd/movsb          ; ★ this 串 → 新内存（ebx）
+    mov ecx,[esp+0x18] / mov eax,[ecx]          ; ★ 参数串指针
+    test eax / jne +7 / mov esi,0x889F64        ; ★ 空 → 默认串 0x889F64
+  第二段长度:
+    repne scasb 求长 / dec ecx / mov edx,ecx / inc edx
+    test ebx / je +7 / repne scasb 求长 / dec ecx / add edx,ecx  ; ★ 合计两段长
+    push edx / call 0x7C8E17                    ; ★ operator new（拼接总长）
+    test ebp（指向旧 this 串的拷贝）/ je +7
+    rep movsd/movsb                             ; ★ 旧串 → 新缓冲
+    mov esi,[esp+0x18]（参数串）/ rep movsd/movsb  ; ★ 参数串续接（拼尾）
+    test ebp / je +4 / push ebp / call 0x7C8B3D ; ★★ CRT 释放旧串
+  第三段（输出）:
+    mov ebp,[esp+0x14] / mov [ebp],0            ; ★ 输出指针清零
+    test ebx / je 0x7B500D
+    repne scasb 求长 / push ecx / call 0x7C8E17 ; ★ 再分配
+    mov [ebp],edx（新缓冲）/ rep movsd/movsb    ; ★ 结果写回输出
+    push ebx / call 0x7C8B3D                    ; ★★ 释放中间串
+    ret 8
+
+语义：**字符串拼接/组合器（0x7B4Exx 区）**——把 this->+0 字符串与
+参数串（[esp+0x18] 处指针；为空用默认串 0x889F64）拼接：
+strlen 求长 → operator new（0x7C8E17）分配 → 手写 strcpy 两段拷贝 →
+CRT 释放（0x7C8B3D）旧缓冲；第三段按需重分配并把结果写入调用方输出
+指针（[esp+0x14]）。ret 8 = 2 参。
+★**strlen+operator new+手写 strcpy 三件套第三次出现在台账**（batch 198
+的 0x5E32D0、batch 199 的 0x7B6290 同款——repne scasb 求长 + shr 2/rep
+movsd + and 3/rep movsb 收尾），CRT 字符串惯用法的第三个登记实例。
+★0x7C8B3D（CRT 释放）与 batch 197 的 0x5C6120 同款——释放侧第四个登记
+实例。★0x889F64 为默认串（.data，本批扫描未读出内容，标注未确认）。
+
+⚠️ partial：宿主类（0x7B4Exx 区）、默认串 0x889F64 内容、拼接语义的业务
+用途、输出指针的调用方契约。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x5E26C0 → batch 196（0x775700 全局表分配）——0x775940 表查找器
+   闭合表体系读写两侧。
+2. 0x5D2530 → batch 200（0x6241F0 同调 0x5D4D50）+ KERNEL32!Sleep
+   （IAT 实测）——异步等待/汇合模式。
+3. 0x7B4ED0 → batch 198（0x5E32D0 手写 strcpy）+ batch 199（0x7B6290）
+   + batch 197（0x5C6120 CRT 释放）——CRT 字符串三件套第三次登记。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x5E26C0 的四键语义与 0x775940 表值身份。
+2. 0x5D2530 的 [0xA8ED80] 开关置位者与虚表槽 8/0xC 身份。
+3. 0x7B4ED0 的默认串 0x889F64 内容与输出契约。
