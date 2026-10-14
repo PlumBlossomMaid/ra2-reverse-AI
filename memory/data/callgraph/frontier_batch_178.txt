@@ -1,0 +1,131 @@
+frontier batch 178 — FileClass::Open 全路径 + 注册表读取包装 + 名字表 findindex（2026-10-14）
+
+口径：承接 batch 177 候选，ranking.tsv unique_callers 降序取 0x5175F0（10 callers）、
+0x721210（10 callers）、0x473D10（9 callers）。三者 prologue 均干净，机器码读全。
+
+================================================================================
+0x473D10  FileClass::Open（9 callers，0x473D10-0x473E4B 读完）
+================================================================================
+身份：rank 观察名 CCFileClass::Open；YRpp FileClass 体系（CCFileClass 是其子类，
+CCINIClass.h:315-316 WriteCCFile/ReadCCFile 用 FileClass* 参数——同族）。
+机器码全路径（5 个出口）：
+    mov eax,[esi] / call [eax+0x34]          ; ★ 虚表槽 0x34（Close/预清理）
+    test byte[esp+0x20],2 / jne 错误出口      ; ★ 参数 bit1 → 错误
+    xor ebx / call 0x431F10 / test al / jne 错误出口  ; ★ 0x431F10（校验族）
+    ; 成功路径：
+    call [edx+4]                            ; ★ 虚表槽 0x04（取文件名）
+    call 0x5B4430                           ; ★ 路径校验/存在性
+    test al / je 错误出口2
+    cmp [esp+0x10],ebx / jne 0x473E01       ; ★ 参数 2 非空 → 跳
+    cmp [esp+0x14],ebx / je 0x473E01
+    mov eax,[eax+0xC] / push 1 / push eax
+    call [edx+0x20]                         ; ★ 虚表槽 0x20（Exists?）
+    test eax / je 0x473DF6（返 0）
+    mov eax,[esi] / call [edx+4] / push eax
+    call 0x7D5408                           ; ★ 取串（0x7D 系 CRT/string）
+    mov edi,eax / push edi
+    mov byte[esi+0x54],1                    ; ★ 置 +0x54 已打开标志
+    call [eax+8]                            ; ★ 虚表槽 0x08（Write/写路径）
+    push -1 / push ebx / mov byte[esi+0x54],bl  ; ★ 清标志
+    call 0x65D2B0                           ; ★ seek/写（-1 与 0 两参）
+    call 0x65D2B0（第二次）                 ; ★ 再写一次（双段写）
+    call [edx+0x28]                         ; ★ 虚表槽 0x28（Flush/Commit）
+    push edi / call 0x7C93E8                ; ★ CRT 释放
+    mov eax,1 / ret 4                       ; ★ 返 true
+   0x473E01: lea ecx,[esi+0x58] / test / push/push / call 0x43AD00
+    ; ★ +0x58 缓冲区 = 参数内容（0x43AD00 缓冲包装构造，batch 063 族）
+    mov [esi+0x64],ebx / mov eax,1 / ret 4
+   错误出口/错误出口2: call 0x47AAB0 / ret 4  ; ★ 0x47AAB0（错误处理）
+
+语义：**FileClass::Open（打开文件/内存流）**——先经虚表槽 0x34 预清理，
+参数 bit1 或 0x431F10 校验失败走错误出口（0x47AAB0）；成功时经虚表槽
+0x04 取文件名、0x5B4430 校验；若无附加参数则虚表槽 0x20 查存在性，
+经 0x7D5408 取串后临时置 +0x54 标志→虚表槽 0x08→两次 0x65D2B0 写→虚表槽
+0x28 提交→0x7C93E8 释放；若有参数则写入 +0x58 缓冲（0x43AD00）并清 +0x64。
+★+0x54 标志「临时置位后立即清零」的写法——原版怪癖级细节（照抄）。
+
+⚠️ partial：虚表槽 0x34/0x08/0x20/0x28 方法名、0x5B4430/0x7D5408/0x65D2B0
+身份、+0x54/+0x58/+0x64 字段。
+
+================================================================================
+0x5175F0  注册表读取包装（10 callers，0x5175F0-0x5176A6 读完）
+================================================================================
+机器码（0x5175F0，0xB0 读完）：
+    sub esp,0x90 / push ebp/esi/edi / mov ebp,ecx
+    mov edi,0x8254E4            ; ★ 全局字符串（注册表子键名）
+    mov byte[ebp+4],0           ; ★ this->+4 成功标志清零
+    repne scasb / not / sub     ; ★ strlen
+    （rep movsd + rep movsb 拷到栈缓冲）
+    lea ecx,[esp+0x10] / push ecx
+    push 0xF003F                ; ★ 权限 KEY_READ|KEY_WRITE（0xF003F）
+    push 0
+    push edx                    ; ★ 子键名
+    push 0x80000002             ; ★★ HKEY_LOCAL_MACHINE
+    call [0x7E100C]             ; ★★ RegOpenKeyExA
+    test eax / jne 关闭分支
+    ; 查询值名 0x8254DC：
+    push 0x8254DC               ; ★ 值名常量
+    call [0x7E1008]             ; ★★ RegQueryValueExA
+    test eax / jne 关闭分支
+    cmp dword[esp+0x18],4       ; ★ 返回类型 == 4（REG_DWORD）
+    jne 关闭分支
+    mov ecx,[esp+0xC] / mov byte[ebp+4],1 / mov [ebp],ecx
+    ; ★ 成功：置 +4=1、+0=值
+   关闭分支: push edx / call [0x7E1004]  ; ★ RegCloseKey
+    mov al,byte[ebp+4] / ret    ; ★ 返回 +4 标志
+  紧邻 0x5176A0：mov eax,[ecx]/not al/and al,1/ret（★bit0 取反测试 getter）
+  紧邻 0x5176B0：mov eax,[ecx]/not al/shr al,1/and al,1/ret（★bit1 getter）
+  紧邻 0x5176C0：mov eax,[ecx]/not al/shr al,2/and al,1/ret（★bit2 getter）
+
+语义：**注册表值读取包装（HKEY_LOCAL_MACHINE 固定根）**——从
+HKLM\[0x8254E4] 读值 [0x8254DC]，要求类型 REG_DWORD（4），成功置
+this->+4=1、this->+0=值；三个 WinAPI 走导入表 [0x7E100C]=RegOpenKeyExA /
+[0x7E1008]=RegQueryValueExA / [0x7E1004]=RegCloseKey。紧邻三成员是
+this->[0] 的 bit0/bit1/bit2 **取反后**测试 getter（not al/shr N/and 1）。
+★**权限 0xF003F = KEY_READ(0x20019)+KEY_WRITE(0x20006)** 属罕见取值
+（比标准 KEY_ALL_ACCESS 0xF003F 小——缺 KEY_CREATE_SUB_KEY 等），照抄。
+
+⚠️ partial：[0x8254E4]/[0x8254DC] 具体注册表路径/值名、+0/+4 字段语义
+（bits 表示哪三个状态未确认）。
+
+================================================================================
+0x721210  名字表 findindex（10 callers，全 0x51 读完）
+================================================================================
+机器码（全 0x51）：
+    push ebx/ebp / mov ebp,[esp+0xC] / push esi
+    test ebp / je 返 -1
+    mov ebx,ecx
+    push edi / mov edi,ebp / or ecx,-1 / xor eax
+    repne scasb / not ecx / dec ecx / pop edi  ; ★ strlen(名字)
+    test ecx / je 返 -1                        ; ★ 空串 → -1
+    mov eax,[ebx+0x24]                         ; ★ this->+0x24 计数
+    test eax / jle 返 -1
+    mov eax,[ebx+0x18]                         ; ★ this->+0x18 名字数组
+    loop: push ebp / mov ecx,[eax+esi*4] / push ecx
+    call 0x7C8D20                              ; ★ CRT strcmp（batch 001 已登记）
+    test eax / je 命中
+    mov eax,[ebx+0x24] / inc esi / cmp esi,eax / jl loop
+   返 -1: or eax,-1 / ret 4
+   命中: mov eax,esi / ret 4                   ; ★ 返索引
+
+语义：**名字表线性查找（FindIndex）**——strlen 名字后遍历 this->+0x18
+数组（+0x24 项计数），每项经 CRT strcmp（0x7C8D20）比较，命中返索引、
+未命中返 -1。★与 batch 171 的 0x45E7B0（全局表 [0xA83C6C] 查找）、
+batch 170 的 0x69BC60（名字匹配找索引）同族——引擎里「按名找索引」三例。
+★rank 观察名 ThemeClass::FindIndex（YRpp 无此名——名字未确认）。
+
+⚠️ partial：宿主类（Theme 音乐主题区推断）、+0x18/+0x24 字段。
+
+================================================================================
+跨批次连接
+================================================================================
+1. 0x473D10 → batch 063（0x43AD00 缓冲包装）+ YRpp CCINIClass（FileClass 族）。
+2. 0x5175F0 → CRT 导入族（0x7D 系/0x7C 系）+ 位测试 getter 族（batch 164/171）。
+3. 0x721210 → batch 001（0x7C8D20 strcmp）+ batch 171（0x45E7B0 同思路）。
+
+================================================================================
+本批未实锤项（不下断言）
+================================================================================
+1. 0x473D10 的虚表槽方法名与 0x5B4430/0x7D5408/0x65D2B0 身份。
+2. 0x5175F0 的 [0x8254E4]/[0x8254DC] 注册表路径与 +0/+4 字段语义。
+3. 0x721210 的宿主类与 +0x18/+0x24 字段。
