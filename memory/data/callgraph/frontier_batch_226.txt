@@ -1,0 +1,124 @@
+frontier batch 226 — CRT FILE 关闭链：0x7CA75B + 0x7CA845（2026-10-14）
+
+口径：承接 batch 225，ranking.tsv unique_callers 降序取未登记候选。TOP 12 中
+0x7CA845（19B）与 0x7CA75B（49B）落在 MSVC6 静态 CRT 区（0x7C-0x7D）——正属
+CRT/runtime 主线，两函数均全读（19B / 49B）。取证手段：disasm.py 直反汇编 +
+direct_edges.tsv 调用方核查 + crt_behavior_contracts.md 既有契约交叉
+（0x7CB3F9/0x7CB44B 流锁对 = batch 046；0x7CB1F9 = batch 049；0x7D2C0C = batch 045）。
+
+================================================================================
+0x7CA75B —— FILE 关闭（fclose 家族主入口）（7 callers，全 0x31=49B 读完）
+================================================================================
+机器码（全 0x31）：
+    push esi / mov esi,[esp+8]        ; ★参数 = FILE* 流槽
+    push edi / or edi,0xFFFFFFFF      ; ★返回值预置 -1（EOF）
+    test byte ptr [esi+0xc], 0x40     ; ★★流槽+0xC 标志位测试 _IOSTRG(0x40)
+    je 0x7CA770
+    and dword ptr [esi+0xc], 0        ; ★字符串流分支：直接清零整个标志字
+    jmp 0x7CA787                      ;   跳过全部解锁流程
+    0x7CA770: push esi / call 0x7CB3F9 ; ★★流锁 Enter（batch 046 已登记）
+      push esi / call 0x7CA78C        ; ★★关闭内核（0x7CA78C，见下）
+      push esi / mov edi,eax          ;   取内核返回值
+      call 0x7CB44B                   ; ★★流锁 Leave（batch 046 已登记）
+      add esp,0xc
+    0x7CA787: mov eax,edi / pop edi / pop esi / ret   ; ★返回 -1 或内核结果
+
+语义：**FILE 关闭（fclose 家族）**——若 `流槽+0xC` 带 `_IOSTRG`(0x40) 位（内存/
+字符串流，无底层 OS 句柄），则**只清标志字、返回 -1、不进锁**；否则走标准三步：
+流锁 Enter(`0x7CB3F9`) → 关闭内核(`0x7CA78C`，返回值透传) → 流锁 Leave(`0x7CB44B`)。
+
+★**原版怪癖（照抄）**：`_IOSTRG` 分支**直接返回 -1（EOF）且完全不解锁**——
+不解锁是安全的，因为该分支根本没进临界区；但**返回值恒为失败**（哪怕是字符串流
+的语义上"关闭成功"）——这是一条容易被"顺手修成正确"的怪癖。
+★跨批次连接：0x7CB3F9/0x7CB44B（batch 046 流锁 Enter/Leave 对，标准流走
+`[0x87BF50,0x87C1B0)` 线性映射 key=`(ptr-0x87BF50)>>5 + 0x1C`，用户流走
+`ptr+0x20` 临界区）+ 流槽 `+0xC` 标志字（batch 045/046/049 已反复出现：bit0x10
+_IOFLRTN / 0x20 _IOERROR / 0x80 EOF / 0x40 _IOSTRG / 0x108 缓冲组合）。
+
+调用方核查（direct_edges.tsv）：0x48E0B0、0x53E1D0、0x53E770、**0x5DC170**、
+0x64DEA0 等 7 处。★`0x5DC170` 是 **woldata.key 解密公式**（QWEN.md 实锤的 YR 正版
+校验全链函数）——该链需要临时打开数据文件，fclose 出现在此处完全吻合；
+0x53E770（1156B，本轮候选 TOP 之一）与 0x48E0B0 为文件/资源 I/O 侧。
+⚠️ partial：精确 CRT 符号名（`_fclose` 本体 vs `_fcloseall` 内层 vs `freopen`
+关闭旧流路径，三者机器码形态在本 exe 里同款，7 个调用方均为单参数 `FILE*` 调用，
+按调用点契约判为 fclose-family 但未与符号表交叉）；`0x7CA78C` 内核的失败路径细节
+
+================================================================================
+0x7CA78C —— FILE 关闭内核（buffer + fd 关闭 + tmpname 释放）（fclose 内层）
+================================================================================
+（0x7CA75B 的直接被调者，非 ranking 候选，一并读取以闭合 0x7CA75B 语义，74B 全读）
+机器码（全 0x4A）：
+    push esi / mov esi,[esp+8] / push edi / or edi,0xFFFFFFFF
+    test byte ptr [esi+0xc], 0x83     ; ★标志位测试 0x83 = 0x80|0x02|0x01
+    je 0x7CA7CF                       ;   无这些位 → 跳过释放，仅清标志
+    push esi / call 0x7CB1F9          ; ★flushbuf（batch 049 已登记）
+    push esi / mov edi,eax            ;   edi = flush 结果
+    call 0x7D2B54                     ; ★缓冲区释放/收缩
+    push dword ptr [esi+0x10]         ; ★★流槽+0x10 = OS 句柄 fd
+    call 0x7D2A74                     ; ★_close(fd) 等价（fd 关闭）
+    add esp,0xc / test eax,eax / jge 0x7CA7BD
+      or edi,0xFFFFFFFF               ; ★fd 关闭失败 → 结果降级为 -1
+    0x7CA7BD: mov eax,[esi+0x1c]       ; ★★流槽+0x1C = tmpname 缓冲指针
+      test eax,eax / je 0x7CA7CF
+      push eax / call 0x7C93E8        ; ★_free(tmpname)（CRT 释放，batch 001 族）
+      and dword ptr [esi+0x1c], 0     ; ★清 tmpname 指针
+    0x7CA7CF: and dword ptr [esi+0xc],0 / mov eax,edi / pop edi / pop esi / ret
+
+语义：**FILE 关闭内核**——标志含 0x83 时依次：`0x7CB1F9` flush 缓冲 →
+`0x7D2B54` 收/释放缓冲 → `0x7D2A74(流槽+0x10)` 关闭 OS 句柄（失败则整体结果
+降级 -1）→ `[流槽+0x1C]` 非空则 `0x7C93E8` 释放 tmpname 并清指针；最后无条件
+清标志字，返回 flush 结果。
+
+★跨批次连接：`0x7CB1F9`（batch 049 `_flushbuf` 底层）+ `0x7C93E8`（CRT `_free`，
+batch 001 族 0x7C8B3D 同区）+ **流槽三字段实证**：`+0x0C` 标志 / `+0x10` fd /
+`+0x1C` tmpname——与 batch 045/046/049 记录的标准流槽布局一致。
+⚠️ partial：`0x7D2A74`/`0x7D2B54` 精确身份（fd 关闭 / 缓冲释放推断，未取符号表）；
+0x83 三位（0x80 EOF 标记 + 0x02 + 0x01）与 0x40 `_IOSTRG` 的具体位定义
+
+================================================================================
+0x7CA845 —— 句柄表操作包装（7 callers，全 0x13=19B 读完）
+================================================================================
+机器码（全 0x13）：
+    push 0x40                         ; ★常量 0x40 第三参数
+    push dword ptr [esp+0xc]          ; ★原 [esp+8] = 参数1 转发
+    push dword ptr [esp+0xc]          ; ★原 [esp+8] = 参数1 再转发（两参相同）
+    call 0x7CA814                     ; ★转调 0x7CA814
+    add esp,0xc / ret
+
+被调 0x7CA814（0x2F=47B，全读）：
+    push esi / call 0x7D2DA6           ; ★取表项（句柄表查找）
+    mov esi,eax / test esi,esi / jne 0x7CA822
+    pop esi / ret                     ;   未命中 → 返回 NULL
+    0x7CA822: push edi / push esi
+      push dword ptr [esp+0x18] / push dword ptr [esp+0x18] / push dword ptr [esp+0x18]
+      call 0x7D2C36                   ; ★三参操作（首参=句柄）
+      push esi / mov edi,eax
+      call 0x7CB44B                   ; ★释放/解锁（与流锁 Leave 同地址族）
+      add esp,0x14 / mov eax,edi / pop edi / pop esi / ret
+
+语义：**句柄表操作包装**——固定压常量 `0x40` + 参数 1 两次转调 `0x7CA814`；
+后者先 `0x7D2DA6` 取句柄（未命中返回 NULL），命中则三参调 `0x7D2C36` 并以
+`0x7CB44B` 收尾，返回 `0x7D2C36` 结果。
+
+★跨批次连接：`0x7CB44B`（batch 046 流锁 Leave）与 0x7CA75B/0x7CA78C 同族——
+同一释放原语在流路径与句柄路径复用；`0x7D2DA6`/`0x7D2C36` 与 batch 048 的
+`0x7D7754`/`0x7D7710` 同属句柄表后端（Handles 层，`handles.cpp` 已建模）。
+
+调用方核查：0x48E0B0、0x53E4F0、0x53E550、**0x5DC170**、0x64DEA0、0x6516F0 等 7 处
+——与 0x7CA75B 的调用方高度重叠（同样含 woldata.key 解密函数 0x5DC170）。
+⚠️ partial：`0x40` 常量语义（长度/模式/权限位推断）、两参相同是否原版刻意
+（**照抄机器码，不改写成两参不同**）、`0x7D2DA6`/`0x7D2C36` 精确身份
+
+================================================================================
+（batch 226 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由（与台账既有口径一致）：
+① `0x7CA75B`/`0x7CA78C` 是 MSVC6 标准 FILE 关闭路径，`crt_behavior_contracts.md`
+   已明确记载"现代 CRT 天然等价行为，lockstep 不涉及"，其依赖的
+   `initterm_legacy`/`cinit_legacy`（`crt_init.cpp`）与句柄层（`handles.cpp`）
+   已有独立模型 + 单测；新增模型会与 `crt_init`/`handles` 重叠。
+② `0x7CA845` 的精确语义依赖 `[0x40]` 常量与 `0x7D2DA6`/`0x7D2C36` 两个未取证
+   后端——按"证据不足保留 partial"纪律，此刻建模会固化未验证推断。
+③ 本批无产品代码改动，`ctest` 维持 **43/43 全绿**（上一轮已全量验证）。
+★`_IOSTRG`(0x40) 分支"返回 -1 且不解锁"的怪癖已完整记入本文件，future
+reimplementation 时按此照抄（不改写成"字符串流关闭成功返回 0"）。
