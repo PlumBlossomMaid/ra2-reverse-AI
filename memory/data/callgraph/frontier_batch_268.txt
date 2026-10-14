@@ -1,0 +1,168 @@
+frontier batch 268 — 随机圆周分布 0x49F420 + 对象注册 0x750E20 + AircraftTrackerClass::Remove 0x4135D0（2026-10-14）
+
+口径：承接 batch 267，候选池 TOP 12 取三个函数：0x49F420（289B）、0x750E20
+（152B）、0x4135D0（233B，带名 AircraftTrackerClass::Remove）。三函数均全反
+汇编读完（0x49F420 尾 0x49F53E ret 8 + 16 nop、0x750E20 尾 0x750EB5 ret 4 +
+8 nop、0x4135D0 尾 0x4136B6 ret 4 + 8 nop——body 与 ranking 吻合）。YRpp 查
+覆盖（0x4135D0 带名，其余两地址无）。取证手段：disasm.py 直反汇编 + 已登记
+函数交叉验证（batch 214/259/001/262 共 4 函数）。
+
+================================================================================
+0x49F420 —— 随机圆周分布（推断名：随机角/径散射坐标）（6 callers，全 0x121=289B 读完）
+================================================================================
+机器码（全 0x121 主结构）：
+    sub esp,0x20/mov eax,[0xA8B230]（★★batch 214 全局随机对象）/push ebx/ebp
+    mov [esp+0x14],ecx（★参数 1 = 输出坐标推断）/push esi/edi/mov esi,edx
+    lea ecx,[eax+0x218]/mov word[esp+0x10],0
+    call 0x65C780（★★★Randomizer::Random（[0xA8B230]+0x218）——QWEN.md RNG
+      里程碑实锤，本条是 Random 调用点）
+    mov edx,[esp+0x10]/xor ecx/mov ch,al/and dh,0/or ecx,edx（★随机低 8 位
+      入高 byte——合成随机数）
+    mov edi,[esi+8]（★★参数 2 结构 +8 = 半径/Z 推断）
+    movsx eax,ax/sub eax,0x3FFF（★★随机数 - 0x3FFF（16383）→ 有符号角度域）
+    → fild/fmul qword[0x7E2810]（★随机 * 常量[0x7E2810]）/fstp 存栈
+    fild dword[esp+0x34]（★角度域 → 浮点）→ push（参数）/call 0x4CACB0
+      （★★浮点函数——batch 262 的 0x4CAC40 同族：sin/cos 推断）
+    → fmul qword[esp+0x28] → fsubr qword[esp+0x30]（★组合）
+    call 0x7C5F00（★★_ftol QWEN.md 实锤）→ mov [esp+0x44],eax
+    push 参数/call 0x4CAD00（★★浮点函数二号——cos/sin 推断）→
+      fmul qword[esp+0x30]/add esp,0x10/fiadd dword[esi]（★★+圆心 x）
+    call 0x7C5F00（★_ftol）→ push eax/0x34/call 0x41C230（★★三参组装——未
+      登记，0x41xxxx 构造族）
+    → 边界钳制: mov eax,[esp+0x10]/cdq/and edx,0xFF/add eax,edx/sar eax,8/
+      cmp eax,0x200/jae 0x49F4FA（★>>8 与 0x200 边界——≥512 用原始值）
+      → 对 edi 同款钳制（>>8 & 0x200）
+    0x49F4FA: mov ecx,[esi]/mov edi,[esi+4]/mov ebx,[esi+8]（★原始坐标回退）
+    0x49F502: mov al,[esp+0x38]（★参数 3 标志）/test/je 0x49F529 → 中心偏移:
+      and eax,0xFF/and edx,0xFF/sub ecx,eax/sub edi,edx/add ecx,0x80/
+      add edi,0x80（★★标志置位 → 减低 8 位 + 加 0x80——量化修正）
+    0x49F529: mov eax,[esp+0x1C]/mov [edx],ecx/mov [edx+4],edi/mov [edx+8],ebx
+      （★★写 12 字节输出结构 +0/+4/+8）→ pop 族/add esp,0x20/ret 8（★2 栈参）
+
+语义：**随机圆周分布（推断名：随机角×半径散射坐标）**——Randomizer::Random
+（0x65C780，[0xA8B230]+0x218）取随机数，低 8 位合成通道后映射到角度域
+（-0x3FFF 偏移 + 常量 [0x7E2810]），经 0x4CACB0/0x4CAD00（浮点数学——sin/cos
+推断）生成 X/Y 分量，fiadd 圆心（[esi] 参数 2）+ _ftol 整数化；边界钳制
+（>>8 与 0x200）；参数 3 标志置位时做中心量化修正（减低 8 位 + 0x80）；
+最终写 12 字节输出坐标结构（+0/+4/+8）。ret 8 双栈参。
+
+★原版怪癖（照抄）：① **Randomizer::Random 调用点**（[0xA8B230]+0x218——
+QWEN.md RNG 里程碑同款；mov ch,al 合成高字节）；② **角度域 -0x3FFF 偏移**（随
+机值减 16383——半周期对称域）；③ **0x4CACB0/0x4CAD00 浮点数学对**（0x4CAC40
+家族——sin/cos 成对使用推断）；④ **_ftol 双发**（分量两次整数化）；⑤ **边界
+钳制 >>8 与 0x200（512）**（超界回退原始坐标）；⑥ **0x80 中心量化修正**
+（标志位触发——组装坐标的取整怪癖）；⑦ **输出 12 字节结构**（+0/+4/+8 三 dword）。
+★跨批次连接：**Randomizer::Random 0x65C780（QWEN.md RNG 里程碑——batch 214
+CollectCrate/262 粒子后再次同款 [0xA8B230]+0x218）**+[0xA8B230]（batch 214）
++0x4CACB0/0x4CAD00（batch 262 的 0x4CAC40 浮点数学族）+0x7C5F00（_ftol
+QWEN.md FPU 环境实锤）+0x41C230（未登记 0x41xxxx 构造族）+[0x7E2810]
+（.rdata 浮点常量族，batch 262 同区）。
+⚠️ partial：宿主类（0x49xxxx 区推断——随机散射/散布系统）、0x4CACB0/0x4CAD00
+精确身份（sin/cos 推断）、0x41C230 身份、[0x7E2810] 常量数值、输出结构语义
+（坐标/速度推断）、参数 3 标志含义
+
+================================================================================
+0x750E20 —— 对象注册（推断名：容器分配 + 登记）（6 callers，全 0x98=152B 读完）
+================================================================================
+机器码（全 0x98 主结构）：
+    push ebp/mov ebp,ecx（★参数 1 = 索引/键推断）/push esi/edi/mov edi,edx
+    test ebp/jge 0x750E33（★参数 1 >= 0 继续）→ 收尾返 0（★<0 → 返 NULL）
+    0x750E33: mov ecx,[0xB1D3A4]（★★全局容器——新登记）/call 0x407520（★
+      从容器取对象）→ mov esi,eax/test/jne → 失败返 0
+    lea ebx,[esi+0xC]（★子对象 +0xC）/mov ecx,ebx/call 0x405BE0（★子对象初
+      始化）→ mov ecx,esi/call 0x4072D0（★主对象初始化）
+    mov [esi+0x30],0（★+0x30 初始化）
+    mov ecx,[edi]（★★参数 2 = 12 字节来源结构）/lea edx,[esi+0x20]  → 拷贝
+      [edi]+0/+4/+8 → [esi+0x20]/[+0x24]/[+0x28]（★★12 字节搬运）
+    mov eax,[esp+0x18]（★参数 3）/mov [esi+0x2C],eax（★+0x2C = 参数 3）
+    mov ecx,ebp/call 0x7509E0（★同区调用——返回 edi）
+    mov edx,esi/mov ecx,0xB1D320（★★全局容器基址）→ call 0x407420（★★登记
+      对象入 [0xB1D320] 容器）
+    mov eax,[0xB1D3A8]/mov ecx,[0xB1D3AC]/inc eax（★计数 ++）/cmp eax,ecx/
+      jle 0x750EB0/mov [0xB1D3AC],eax（★★计数上限更新 [0xB1D3A8]/[0xB1D3AC]）
+    0x750EB0: mov eax,edi（★返 0x7509E0 结果）→ pop 族/ret 4（★1 栈参
+
+语义：**对象注册（推断名：容器分配 + 字段填充 + 登记）**——参数 1（索引）< 0
+返 NULL；否则从全局容器 [0xB1D3A4] 经 0x407520 取/分配对象（失败返 0），初
+始化子对象（+0xC 经 0x405BE0）+ 主对象（0x4072D0），清 +0x30；参数 2 的 12
+字节拷入 +0x20/+0x24/+0x28，参数 3 存 +0x2C；0x7509E0 处理 + 0x407420 把
+对象登记入全局容器 [0xB1D320]；全局计数 [0xB1D3A8]/[0xB1D3AC] 自增更新上限。
+
+★原版怪癖（照抄）：① **参数 1 < 0 直接返 NULL**（先验键入参）；② **[0xB1D3A4] 与
+[0xB1D320] 双容器**（分配源 + 登记目标）；③ **+0xC 子对象先于主对象初始化**（
+0x405BE0 → 0x4072D0 顺序）；④ **12 字节结构纯搬**（[edi]+0/+4/+8 → +0x20 起
+——无计算直拷）；⑤ **计数上限更新**（[0xB1D3A8]++ 超 [0xB1D3AC] 则带上限）;
+⑥ 0x7509E0 返回值经 edi 透传（登记后返回处理结果）。
+★跨批次连接：[0xB1D3A4]/[0xB1D320]/[0xB1D3A8]/[0xB1D3AC]（新登记全局容器族）
++0x407520/0x4072D0/0x407420/0x405BE0（0x407xxx 容器/登记族，未登记）+0x7509E0
+（未登记同区）。
+⚠️ partial：宿主类（0x750xxx 区推断）、[0xB1D3A4]/[0xB1D320] 容器类型与元素
+布局、12 字节来源结构（参数 2）语义、参数 1/3 语义、0x407520/0x4072D0/
+0x407420/0x405BE0/0x7509E0 精确身份
+
+================================================================================
+0x4135D0 —— AircraftTrackerClass::Remove（带名，移除追踪对象）（6 callers，全 0xE9=233B 读完）
+================================================================================
+机器码（全 0xE9 主结构）：
+    sub esp,8/push ebx/mov ebx,ecx（★this AircraftTrackerClass*）
+    mov ecx,[esp+0x10]（★参数 = 追踪对象指针推断）/lea edx,[esp+8]
+    mov eax,[ecx]/call [eax+0x2F4]（★虚表槽 0x2F4——取 X 座标）
+    mov ecx,[esp+0x14]/mov esi,[eax]（★结果 word 低 16 位 [eax]）
+    mov edx,[0x887850]（★★全局——新登记）/mov [esp+8],esi
+    call [eax+0x2F8]（★虚表槽 0x2F8——取 Y 座标）
+    test si,si/jge 0x41360A/xor esi（★X < 0 → 0）/movsx esi（★否则符号扩展）
+    mov ax,word[esp+0xA]/test ax/jge 0x41361C/xor edi/movsx edi（★Y 同款）
+    mov ecx,[0x87F914]（★★全局 ÷10 除数——新登记）/mov eax,0x66666667
+      （★★÷10 乘数倒数——batch 259 的 0xEA0EA0EB/0x51EB851F 同族！）
+    imul ecx/sar edx,3/shr eax,0x1F/add_ecx（★÷10 完成）
+    mov eax,esi/cdq/idiv ecx/mov esi,0x13/cmp eax,0x13（★★X/10 钳制 0x13=19）
+      /jg 0x413649/mov esi,eax（★X 格号 = min(X/10, 19)）
+    mov ecx,[0x87F918]（★★全局 ÷10 除数二号）→ 0x66666667 同款 ÷10
+    mov eax,edi/cdq/idiv/cmp eax,0x13/jle 0x413672/mov eax,0x13（★Y/10 钳制 19）
+    lea eax,[eax+eax*4]/lea eax,[esi+eax*4]/lea ecx,[eax+eax*2]（★★×5×4×3
+      = ×60：Y*10+ X 网格单元号）
+    lea eax,[esp+0x14]/push eax/mov edx,[ebx+ecx*8]（★★this+单元*8 指针）/
+      lea esi,[ebx+ecx*8]/mov ecx,esi/call [edx+0x10]（★虚表槽 0x10 = 计数
+      查询）→ cmp eax,-1/je 0x4136B1（★-1 无单元 → 收尾）
+    mov ecx,[esi+0x10]/cmp eax,ecx/jge 0x4136B1（★索引 >= 计数 → 收尾）
+    dec ecx/mov [esi+0x10],ecx（★★计数递减）→ 数组前移: mov ecx,[esi+4]/
+      inc eax/mov edx,[ecx+eax*4]/mov [ecx+eax*4-4],edx（★★元素前移覆盖）
+      → cmp eax,[esi+0x10]/jl 循环（★搬移循环）
+    0x4136B1: pop 族/add esp,8/ret 4（★1 栈参）
+
+语义：**AircraftTrackerClass::Remove（移除追踪对象，带名）**——参数（追踪对
+象）经虚表槽 0x2F4/0x2F8 取 X/Y 座标（与全局 [0x887850] 关联推断）；X/Y 负数
+钳 0、符号扩展；各按 ÷10（0x66666667 乘数倒数，除数全局 [0x87F914]/[0x87F918]）
+并钳制 19 → 合成 ×60 网格单元号（Y*10+X）；查 this+单元*8 的单元对象，虚表
+槽 0x10 取计数（-1 或越界收尾）；否则计数递减 + 数组元素前移覆盖删除目标。
+
+★原版怪癖（照抄）：① **两个 ÷10 乘数倒数**（0x66666667 imul + sar edx,3 +
+shr——batch 259 的 ÷17/÷100 同族，本条 ×2）；② **钳制 19**（X/10、Y/10 各超
+19 用 19——20×20 网格推断）；③ **×60 网格索引**（lea [eax+eax*4]+[esi+eax*4]
++[eax+eax*2] 组合 = ×5×4×3）；④ **负数座标钳 0**（X/Y <0 各自处理——象限回
+退）；⑤ **this+单元*8 的单元指针表**（每单元 8 字节——单元头 + 数组）；⑥
+**计数递减 + 前移覆盖**（dec count + [ecx+eax*4-4] 搬迁——紧凑删除）；⑦
+**虚表槽 0x2F4/0x2F8 取座标**（目标对象虚表两槽——GetCell/坐标取值推断）。
+★跨批次连接：**÷10 乘数倒数 0x66666667（batch 259 SelectDamageAnimation 的
+0xEA0EA0EB÷17/0x51EB851F÷100 同族——本条第三/四实例 ×2）**+[0x87F914]/
+[0x87F918]（新登记全局——0x87F9xx MapClass 区，batch 208/209 的 [0x87F7E8]
+Instance 同区）+[0x887850]（新登记全局）+0x66666667 模式（QWEN.md 常量取证
+里程碑同款）。
+⚠️ partial：宿主类（AircraftTrackerClass 推断）、虚表槽 0x2F4/0x2F8 精确身份
+（座标取值推断）、[0x87F914]/[0x87F918] 除数全局语义、[0x887850] 全局、单元
+对象结构（this+index*8，+0x10 计数/+4 数组）、20×20 网格推断
+
+================================================================================
+（batch 268 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x49F420（随机圆周分布）依赖 0x4CACB0/0x4CAD00 精确身份（sin/cos 推断）+
+   0x41C230 身份 + [0x7E2810] 常量数值（全 partial）——随机散射/散布系统整体
+   立案时落地；本条价值 = Randomizer::Random 调用点实锤 + 圆周变换链。
+② 0x750E20（对象注册）依赖 0x407xxx 容器族身份 + 双容器结构（全 partial）——
+   容器/登记家族整体建模时闭合；本条价值 = [0xB1D320] 系全局容器族新登记。
+③ 0x4135D0（AircraftTrackerClass::Remove 带名）价值在 ÷10 乘数倒数第三/四实
+   例 + 网格删除链；依赖虚表槽 0x2F4/0x2F8 身份 + 单元结构（partial）——
+   Aircraft 追踪家族立案时落地。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部 semantics_verified
+（三函数全段反汇编读完 + 4 个已登记函数交叉验证），partial 项如实标注。
