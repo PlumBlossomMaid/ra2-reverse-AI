@@ -1,0 +1,106 @@
+frontier batch 362 — 全局宽串相等判定 0x005E8760（窄→宽转换 + wcscmp 双调用现场）+ 全局单例惰性初始化 0x005D5ED0（门控字节 + 虚表 0x7EED20）+ ARTMD.INI 读取 0x00679EE0（CCFileClass + ReadCCFile 双调用现场 + 串实锤）（2026-10-15）
+
+口径：承接 batch 361，候选池按 unique_callers 扇入度降序取 callers=4 高 deps
+组：0x005E8760（30B，5 refs/4 callers，deps=2802）、0x005D5ED0（88B，7
+refs/4 callers，deps=2799）、0x00679EE0（96B，4 refs/4 callers，deps=2883）。
+三函数均全反汇编读完（0x005E8760 尾 0x5E877D ret / 0x005D5ED0 尾 0x5D5F27
+ret / 0x00679EE0 尾 0x679F3F ret——body 与 ranking 吻合，30/88/96B）。
+YRpp/已登记交叉验证：**0x005E8760 的转发目标 0x735120 = batch 071 已登记窄
+字符→宽字符转换（8 槽轮换静态缓冲）+ 0x7CA5D3 = batch 110 已登记 CRT::wcscmp**
+（比较目标 0xA8D610 为 BSS 全局宽串，非字面量——PE 段表实测不在 .rdata）；
+**0x00679EE0 的 0x4739F0 = batch 063 已登记 CCFileClass 构造（虚表 0x7E16B0）+
+0x4741F0 = batch 104 已登记 CCINIClass::ReadCCFile**，且文件名 **0x826254 =
+"ARTMD.INI"（_read_str3.py 实测实锤——ART 美术资源 INI 链）**，尾段双析构
+（虚表 0x7E16B0→0x43AE50、0x7E1668→0x431B80）与 batch 093 同款；0x005D5ED0
+的 0x7C978A 调用带函数指针参（batch 004 布尔归一化包装——本条传 0x5D5B20 清
+理函数指针，语义推断）。取证手段：disasm.py 直反汇编 + _read_str3.py 串实测 +
+3 个已登记批函数调用现场 + PE 段表 BSS 判定。
+
+================================================================================
+0x005E8760 —— 全局宽串相等判定（推断名：窄→宽转换 + wcscmp，30B）（4 callers：FUN_0046d4a0、FUN_0046dd70、FUN_005c21d0、FUN_005e00b0，全 0x1E=30B 读完；deps=2802）
+================================================================================
+机器码（全 0x1E 主结构）：mov ecx,0xA8B380（★全局窄串指针）→ call 0x735120
+（★★已登记——batch 071 窄→宽字符转换，8 槽轮换静态缓冲，返宽串）→ push
+0xA8D610（★比较目标——BSS 全局宽串，非字面量）→ push eax（★转换结果）→
+call 0x7CA5D3（★★已登记——batch 110 CRT::wcscmp 宽字符字典序比较）→ add
+esp,8 → neg eax/sbb eax,eax/inc eax（★==0 → 1，否则 0）→ ret。语义：**全局
+宽串相等判定（推断名）**——全局窄串 [0xA8B380] 经 0x735120 转宽，与全局宽串
+[0xA8D610] 做 wcscmp 不分大小写…（实为字典序）比较，相等返 1。★原版怪癖
+（照抄）：① 0x735120 转换（batch 071 8 槽轮换——返回缓冲非持久）；② 比较目
+标 [0xA8D610] 是 BSS 全局宽串（运行期写入——非 .rdata 常量）；③ 相等→1 惯用
+（neg/sbb/inc）；④ ecx 直传全局窄串（无 this——纯全局比较）。★跨批次连接：
+**0x735120（batch 071——窄→宽转换 8 槽轮换，本条=调用现场）**+**0x7CA5D3
+（batch 110——CRT::wcscmp，本条=调用现场）**+[0xA8B380]/[0xA8D610]（★新登记
+全局对——窄/宽串全局，配置/状态串推断）+callers 0x46/0x5C/0x5E 区。⚠️
+partial：函数精确名（全局宽串相等判定推断）、[0xA8B380]/[0xA8D610] 内容（未实
+测——BSS 运行期写入）、用途（全局串比对推断）。
+
+================================================================================
+0x005D5ED0 —— 全局单例惰性初始化（推断名：门控字节 + 虚表 0x7EED20，88B）（4 callers：FUN_005e3d10、FUN_005ed5a0、FUN_00679d90、FUN_006ae6e0，全 0x58=88B 读完；deps=2799）
+================================================================================
+机器码（全 0x58 主结构）：mov al,[0xABFD70]（★★全局门控字节）→ mov cl,1/
+test cl,al/jne 0x5D5F22（★已初始化 → 直接读 [0xABFDB0] 返——单例快速路径）→
+mov dl,al/xor eax,eax/or dl,cl（★置位门控）→ push 0x5D5B20（★清理函数指针）
+→ mov byte[0xABFD70],dl（★写门控=1）→ mov [0xABFDA4],0/mov [0xABFDA8],0（★
+清字段）→ mov byte[0xABFDAC],1（★+0xAC=1）→ mov byte[0xABFDAD],0（★+0xAD=0）
+→ mov dword[0xABFDA0],0x7EED20（★★装虚表 0x7EED20——全局对象初始化）→ mov
+[0xABFDB4],0xA（★+0xB4=0xA 容量）→ mov [0xABFDB0],0（★+0xB0=0 计数/指针）→
+call 0x7C978A（★batch 004 布尔归一化包装——本条传清理函数指针，atexit 类注册
+推断）/add esp,4 → 0x5D5F22: mov eax,[0xABFDB0]/ret。语义：**全局单例惰性初始
+化（推断名）**——首次调用初始化 [0xABFDA0] 系全局对象（装虚表 0x7EED20、清
+零字段、置 +0xAC=1、容量 0xA、计数 0），注册清理（0x7C978A(0x5D5B20)），并置
+门控字节 [0xABFD70]=1；后续调用直接返回 [0xABFDB0]（单例指针/计数）。
+★原版怪癖（照抄）：① **门控字节 + 快速路径**（[0xABFD70] 置位后直接返——
+单例惯用）；② 清理注册经 0x7C978A（传函数指针 0x5D5B20——atexit 类推断）；③
+虚表 0x7EED20 装于 [0xABFDA0]（全局对象头）；④ 返回 [0xABFDB0]（计数/指针字
+段）。★跨批次连接：**0x7C978A（batch 004——布尔归一化包装，本条传清理函数指
+针——身份待核）**+[0xABFD70]/[0xABFDA0] 系/[0xABFDB0]（★新登记全局簇——单例
+对象区推断）+callers 0x5E/0x67/0x6A 区（FUN_00679d90 与 0x679EE0 同区）。
+⚠️ partial：函数精确名（全局单例惰性初始化推断）、0x7C978A 传参语义（清理注册
+推断——batch 004 记录为布尔归一化，本条用法不同）、[0xABFDA0] 系对象类型、
+[0xABFDB0] 返回语义。
+
+================================================================================
+0x00679EE0 —— ARTMD.INI 读取（推断名：清 INI → CCFileClass 读 → ReadCCFile，96B）（4 callers：FUN_005b49b0、FUN_005b77e0、FUN_005dc350、FUN_00780110，全 0x60=96B 读完；deps=2883）
+================================================================================
+机器码（全 0x60 主结构）：sub esp,0x6C → push 0/push 0（★两栈参）→ mov
+ecx,0x887180（★全局 INI 对象 [0x887180]）→ call 0x5257C0（★已登记——batch 090
+INISection::Clear，arg==0 清整节——两参推测量核对留 partial）→ lea ecx,[esp]
+（★栈上 CCFileClass 槽）→ push 0x826254（★★文件名 = "ARTMD.INI"——_read_str3.
+py 实测！）→ call 0x4739F0（★★已登记——batch 063 CCFileClass 构造，虚表
+0x7E16B0）→ lea eax,[esp]（★&CCFileClass）→ mov ecx,0x887180（★全局 INI）→
+push 0/push 0/push eax（★ReadCCFile(pCCFile, 0, 0)）→ call 0x4741F0（★★已登
+记——batch 104 CCINIClass::ReadCCFile 从文件读并解析 INI）→ lea ecx,[esp+0x58]
+（★第二析构槽）→ mov dword[esp],0x7E16B0/mov dword[esp+0x64],0（★装虚表准备
+析构）→ call 0x43AE50（★batch 093 同款析构一）→ lea ecx,[esp]/mov dword[esp],
+0x7E1668 → call 0x431B80（★batch 093 同款析构二）→ add esp,0x6C/ret。语义：
+**ARTMD.INI 读取（推断名）**——先清全局 INI 对象 [0x887180]，在栈上构造
+CCFileClass("ARTMD.INI")（batch 063），经 ReadCCFile 把文件内容解析进全局 INI
+（batch 104），随后双析构收尾（与 batch 093 的 LoadWholeFileEx 尾段同款虚表
+对）。★原版怪癖（照抄）：① 栈上临时 CCFileClass（lea esp 槽 + 构造 + 读 + 析
+构——局部生命周期）；② 读后双析构（0x7E16B0→0x43AE50 + 0x7E1668→0x431B80
+——batch 093 同款收尾）；③ 全局 INI [0x887180]（读入目标——引擎全局 INI 对
+象）；④ 文件名 "ARTMD.INI"（_read_str3.py 串实锤——ART 美术资源 INI 链）。
+★跨批次连接：**0x4739F0（batch 063——CCFileClass 构造虚表 0x7E16B0，本条=调
+用现场）**+**0x4741F0（batch 104——CCINIClass::ReadCCFile，本条=调用现场）**
++**0x5257C0（batch 090——INISection::Clear，本条=清 INI 调用现场）**+"ARTMD.INI"
+（0x826254 串实锤——ART 资源链）+[0x887180]（★新登记全局 INI 对象）+双析构
+（batch 093 同款尾）。⚠️ partial：函数精确名（ARTMD.INI 读取推断）、0x5257C0
+两栈参语义（清节 + 附加参——partial）、[0x887180] 精确类型（CCINIClass 推断）、
+0x43AE50/0x431B80 析构对象类型。
+
+================================================================================
+（batch 362 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x005E8760（全局宽串相等判定 30B）推断名——本条价值 = **batch 071 窄→宽转
+   换 + batch 110 wcscmp 双调用现场 + [0xA8B380]/[0xA8D610] 全局串对**——全局
+   串比对链立案时闭合。
+② 0x005D5ED0（全局单例惰性初始化 88B）推断名——本条价值 = **门控字节单例惯用
+   + 虚表 0x7EED20 全局对象初始化 + 清理注册模式**——全局单例系统立案时闭合。
+③ 0x00679EE0（ARTMD.INI 读取 96B）推断名——本条价值 = **CCFileClass 构造 +
+   ReadCCFile + INISection::Clear 三调用现场 + "ARTMD.INI" 串实锤 + 双析构同款
+   尾**——ART 资源 INI 装载链立案时闭合（batch 063/104/090 链收束）。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部 semantics_verified
+（三函数全段反汇编读完 + 3 个已登记批函数调用现场 + 串实测 + PE 段表 BSS 判
+定），推断名 partial 项如实标注。
