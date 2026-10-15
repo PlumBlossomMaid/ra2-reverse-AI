@@ -1,0 +1,109 @@
+frontier batch 337 — AbstractClass::GetRTTIName 0x40DCB0 + NetworkEvents 记录写入 0x4C6720（★YRpp 带名）+ 对象析构/重置 0x5CF5F0（2026-10-15）
+
+口径：承接 batch 336，候选池按 unique_callers 扇入度降序取 TOP 3：0x5CF5F0
+（191B，5 callers，deps=268）、0x4C6720（94B，5 callers，deps=573——★带名
+NetworkEvents）、0x40DCB0（36B，5 callers，deps=205——★带名 GetRTTIName）。
+三函数均全反汇编读完（0x40DCB0 尾 0x40DCD3 ret / 0x4C6720 尾 0x4C677B ret 0xC /
+0x5CF5F0 尾 0x5CF6AE ret——body 与 ranking 吻合）。YRpp 查覆盖（0x4C6720 命中
+NetworkEvents.h:54 带名 CALL，0x40DCB0 带名来源 ranking 无 JMP——推断名，
+0x5CF5F0 无——推断名）。取证手段：disasm.py 直反汇编 + 已登记函数交叉验证
+（0x4068E0/0x7C8B3D/0x7B46F0 共 3 函数）+ YRpp 带名核对。
+
+================================================================================
+0x40DCB0 —— AbstractClass::GetRTTIName（带名推断：RTTI 名字查找——表扫+默认回退，36B）（5 callers，全 0x23=35B 读完）
+================================================================================
+机器码（全 0x23 主结构）：xor edx/xor → mov eax,0x816EE4（★RTTI 表起点）→
+0x40DCB7: cmp [eax],ecx/je 0x40DCCC（★表项 [0] == this → 命中）→ add eax,8/
+inc edx/cmp eax,0x817134/jl 0x40DCB7（★8B/项扫表到上限 0x817134）→
+0x40DCC6: mov eax,0x817130/ret（★未命中 → 返默认名字指针）→ 0x40DCCC: mov
+eax,[edx*8+0x816EE0]/ret（★命中 → 返 [edx*8+0x816EE0] 名字表项）
+
+语义：**AbstractClass::GetRTTIName（带名推断：RTTI 名字查找）**——扫
+[0x816EE4, 0x817134) 8B/项 RTTI 表，每项 [0] 与 this 比较：命中返
+[edx*8+0x816EE0]（相邻名字表项指针）；未命中返 0x817130（默认名字）。类 RTTI
+名字查询推断。
+
+★原版怪癖（照抄）：① **8B/项 RTTI 表**（[0x816EE4, 0x817134) 区间线性扫）；
+② **表项 [0] 比较**（this == 项首 dword）；③ **名字表相邻**（[edx*8+0x816EE0]
+——索引 ×8 复用）；④ **默认回退**（未命中返 0x817130 固定指针）。
+★跨批次连接：**[0x816EE0]/[0x816EE4]/[0x817130]/[0x817134]（新 RTTI 全局区
+——.rdata 类名表）**+AbstractClass 家族（batch 328 BecomeUntargetable 同类）
++YRpp 无 JMP（带名来源 ranking——推断名）。
+⚠️ partial：函数精确名（GetRTTIName 推断——YRpp 无 JMP 宏）、RTTI 表宿主
+（类名表推断）、名字项内容、默认名字 0x817130 语义。
+
+================================================================================
+0x4C6720 —— NetworkEvents 记录写入（★★YRpp 带名实锤！NetworkEvents.h:54，94B）（5 callers，全 0x5B=91B 读完）
+================================================================================
+机器码（全 0x5B 主结构）：push ebx/mov ebx,[esp+0xC]（★参2——事件数据推断）
+→ mov eax,ebx/and eax,0xFF（★参2 低字节）→ push esi/mov esi,ecx（★this=记录
+结构）→ mov ecx,[eax*4+0x82091C]（★按低字节查表 [0x82091C]——事件类型映射推
+断）→ push ecx/push 0x820BF0/push eax/call 0x4068E0（★★已登记——stub batch
+001！三参诊断调用现场）→ test eax,jl 0x4C6767（★stub 失败 → 写失败路径）→
+mov edx,[esp+0x14]/mov byte[esi+2],al/mov byte[esi],bl/mov [esi+7],edx（★写
+记录四字段：+0=参2低字节/+2=stub 返回值/+7=参1）→ mov eax,[0xA8ED84]/mov
+[esi+3],eax（★+3 = [0xA8ED84] 全局）→ mov eax,esi/ret 0xC（★3 栈参）→
+0x4C6767: mov byte[esi+2],0xFF/mov byte[esi],0/mov ecx,[0xA8ED84]/mov
+[esi+3],ecx/ret 0xC（★失败路径：+0=0/+2=0xFF/+3=全局）
+
+语义：**NetworkEvents 记录写入（★★YRpp 带名实锤！）**——YRpp NetworkEvents.h:54
+带名 CALL（3 参 this=记录结构）：按参2 低字节查 [0x82091C] 事件类型表，经
+0x4068E0（stub 诊断）验证；成功写记录四字段（+0=参2 低字节/+2=stub 值/+3=
+[0xA8ED84] 全局/+7=参1），失败写 +0=0/+2=0xFF 仍留 +3。网络事件记录写入带名
+实锤。
+
+★原版怪癖（照抄）：① **低字节查表**（参2 and 0xFF → [0x82091C] 表——事件
+类型映射）；② **0x4068E0 stub 诊断**（batch 001 已登记=调用现场——三参带
+0x820BF0 文件/标签推断）；③ **四字段记录**（+0/+2/+3/+7——紧凑位域结构）；
+④ **+3 = [0xA8ED84] 全局**（两路径都写）；⑤ **失败路径 +2=0xFF**（stub 失败
+标记）；⑥ **ret 0xC = 3 栈参**。
+★跨批次连接：**0x4068E0（batch 001——stub，本条=调用现场）**+**[0xA8ED84]
+（batch 多个——全局）**+[0x82091C]/[0x820BF0]（新全局——事件类型表/标签）+
+NetworkEvents 家族（YRpp 带名）。
+⚠️ partial：记录结构精确字段语义（位域布局推断）、[0x82091C] 表内容、参1/参2
+精确含义、0x820BF0 标签内容。
+
+================================================================================
+0x5CF5F0 —— 对象析构/重置（推断名：三数组释放 + 尺寸重置，191B）（5 callers，全 0xBE=190B 读完）
+================================================================================
+机器码（全 0xBE 主结构）：push ebx/esi/mov esi,ecx（★this）→ xor ebx/push
+edi/mov eax,[esi+0x54]/test/jle 0x5CF620（★+0x54 计数 A）→ 循环 A（0x5CF5FE）：
+mov eax,[esi+0x48]/mov edi,[eax+ebx*4]/test edi/je 0x5CF618 → mov ecx,edi/call
+0x7B46F0（★★已登记——batch 287 析构 thunk！）→ push edi/call 0x7C8B3D（★★
+已登记——delete batch 001！）→ inc ebx/cmp [esi+0x54]/jl 循环（★数组 A 逐项
+析构+释放）→ 0x5CF620: mov edx,[esi+0x44]/lea ecx,[esi+0x44]/call [edx+0xC]
+（★子对象虚表槽 0xC 收尾）→ mov [esi+0x18],0/mov [esi+0x1C],0/mov
+[esi+0x20],0x280/mov [esi+0x24],0x190（★重置尺寸 640×400）→ 循环 B（+0x3C
+计数 +0x30 数组）：同样 0x7B46F0+delete → 子对象虚表槽 0xC（+0x2C）→ 循环 C
+（+0x10 计数 +4 数组）：call 0x5D0070（★未登记——析构变体）+delete → 主虚
+表槽 0xC → ret
+
+语义：**对象析构/重置（推断名：三数组释放 + 尺寸重置）**——三个动态数组
+（[+0x48]/[+0x30]/[+4] 指针数组，计数 +0x54/+0x3C/+0x10）逐项 0x7B46F0（析构
+thunk）+ delete 释放（第三数组用 0x5D0070 变体）；三个子对象虚表槽 0xC 收尾；
+重置尺寸字段 0x280×0x190（640×400）。对象清理+尺寸重置推断。
+
+★原版怪癖（照抄）：① **三数组逐项析构**（0x7B46F0 + delete ×3 组——前两组
+同析构器、第三组 0x5D0070 变体）；② **子对象虚表槽 0xC 收尾 ×3**（+0x44/
++0x2C/+0 三子对象）；③ **重置 640×400**（+0x20=0x280/+0x24=0x190——初始化
+尺寸回写）；④ **计数递减遍历**（每循环重读计数——数组可能变化）。
+★跨批次连接：**0x7B46F0（batch 287——析构 thunk，本条=调用现场 ×2 组）**+
+**0x7C8B3D（batch 001——delete，本条=调用现场 ×3 组）**+0x5D0070（未登记——
+析构变体，留作独立候选）+YRpp 无覆盖（推断名）。
+⚠️ partial：函数精确名（对象析构/重置推断）、宿主类（0x5CFxxx 区——游戏界面
+/会话对象推断）、三数组元素类型、0x5D0070 精确身份、640×400 尺寸语义（界面
+默认视口推断）。
+
+================================================================================
+（batch 337 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x40DCB0（GetRTTIName 36B）带名推断——本条价值 = RTTI 表扫+默认回退模式；
+   AbstractClass 家族立案时闭合。
+② 0x4C6720（NetworkEvents 94B）**YRpp 带名实锤**——本条价值 = 0x4068E0 stub
+   调用现场 + [0xA8ED84] 全局 + 四字段记录结构；网络事件族立案时本条是写入端。
+③ 0x5CF5F0（对象析构 191B）推断名——本条价值 = 0x7B46F0 析构 thunk 调用现
+   场 ×2 + delete ×3 + 尺寸重置；0x5CFxxx 区族立案时闭合。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部 semantics_verified
+（三函数全段反汇编读完 + 3 个已登记函数交叉验证 + YRpp 带名），推断名 partial
+项如实标注。
