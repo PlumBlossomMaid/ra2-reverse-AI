@@ -1,0 +1,88 @@
+frontier batch 461 — 单位死亡邻域爆破 0x004DB260（347B，单函数批）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（callers=4/deps=212，ranking 唯一调用者
+FUN_00414080/FUN_00517d90/FUN_0051df10/FUN_00735780）。
+**347B 全字节读完**（= 0x15B）。取证手段：disasm.py 全读 + **batch 454
+（0x4D3590 退场移除同域）+ batch 082（0x5657A0 GetCellAt）+ batch 106/086
+（[0x89F688] 方向表）交叉核验**。
+
+================================================================================
+0x004DB260 —— 单位死亡邻域爆破（推断名，347B，ret c3 = __thiscall 无参）
+================================================================================
+机器码（完整主结构）：
+```
+004db260  sub esp,8 / push edi / mov edi,ecx（★this 单位对象）
+004db266  mov al,[edi+0x81] / test / jne 0x4db3af      ; ★+0x81 防重标志 → 收尾
+004db274  mov eax,[edi] / call [eax+0x84]             ; ★虚表槽 0x84 判定
+004db27c  test eax / je 0x4db3af                      ; ★判定失败 → 收尾
+004db285  mov ebx,[edi+0x55c] / mov bp,word[esp+0x12] ; ★this->+0x55C 坐标对
+004db296  xor esi / 循环 0x4db298:
+004db29a  mov ecx,esi / and ecx,7                     ; ★0..7 索引
+004db29d  mov dx,word[ecx*4+0x89f688]                 ; ★★[0x89F688] 方向表 dx
+004db2a5  lea eax,[ecx*4+0x89f688] / add dx,bx        ; x + dx
+004db2af  mov ax,word[eax+2] / add ax,bp              ; ★y + dy（方向表 dy）
+004db2bb  lea edx,[esp+0x14] / mov ecx,[esp+0x10]
+004db2c4  mov [esp+0x14],ecx / push edx / mov ecx,0x87f7e8
+004db2d2  call 0x5657a0                               ; ★★batch 082 GetCellAt（MapClass::Instance）
+004db2d7  mov dl,byte[eax+0x122] / dec dl
+004db2e3  mov byte[eax+0x122],dl                      ; ★★cell->+0x122 递减！
+004db2e0  inc esi / cmp esi,8 / jl 0x4db298           ; ★8 邻域全递减
+004db2eb  mov eax,[0xa8e7ac] / test eax / jne 0x4db301 ; ★全局 [0xA8E7AC]（batch 230 同）
+004db2f7  mov eax,[edi] / mov ecx,edi / call [eax+0x500] ; ★虚表槽 0x500（空才调）
+004db301  mov eax,[edi+0x674] / test / je 0x4db34d    ; ★+0x674 子对象
+004db309  非空 → 0x7DC720 空检断言（0x80004003）+ push 0/push eax
+004db322  mov ecx,[eax] / call [ecx+0x9c]             ; ★子对象虚表槽 0x9C (0)
+004db33e  再取 → call [edx+0xb0]                      ; ★虚表槽 0xB0 释放
+004db34d  lea ecx,[edi+0x544] / call 0x405fd0         ; ★★batch 236 Audio 族
+004db358  mov eax,[edi] / mov ecx,edi / call [eax+0x84] ; ★虚表槽 0x84 再判
+004db362  mov ecx,[eax+0x5f0] / test / je 0x4db37c    ; ★+0x5F0 子对象
+004db36c  mov eax,[0x8b3d88] / mov edx,[edi] / push eax
+004db376  call [edx+0x4ec]                            ; ★虚表槽 0x4EC (全局坐标对)
+004db37c  mov edx,[edi] / lea eax,[esp+8] / push eax / mov ecx,edi
+004db385  call [edx+0x2f4]                            ; ★虚表槽 0x2F4 取坐标
+004db38b  mov cx,[eax] / cmp cx,word[0x8b3d88] / jne 0x4db3a4 ; ★★与全局坐标对比较
+004db397  mov dx,[eax+2] / cmp dx,word[0x8b3d8a] / je 0x4db3af  ; ★★batch 454 同全局
+004db3a4  push edi / mov ecx,0x887888 / call 0x4135d0 ; ★0x887888 全局 + 0x4135D0（新候选）
+004db3af  mov ecx,edi / call 0x6f6ac0                 ; ★收尾（batch 454 0x6F4500 邻区）
+004db3b6  pop edi / add esp,8 / ret
+```
+**语义（推断名）**：**单位死亡邻域爆破**——`+0x81` 防重标志未置且虚表槽
+0x84 判定通过时：**8 邻域循环**（索引 0..7，[0x89F688] 方向表 dx/dy 偏移）
+经 `GetCellAt`（0x5657A0）逐格取 cell → **`cell->+0x122` 递减**（邻域伤害/
+占用递减推断）；`[0xA8E7AC]` 全局空时调虚表槽 0x500；`+0x674` 子对象经槽
+0x9C/0xB0 双释放（含 0x7DC720 空检断言）；`+0x544` Audio 族 0x405FD0 清理；
+虚表槽 0x84 再判 → `+0x5F0` 子对象经槽 0x4EC（传全局坐标对 [0x8B3D88]）；
+槽 0x2F4 取本对象坐标与 `[0x8B3D88]/[0x8B3D8A]` 比较，不等时经 `0x887888`
+全局 + 0x4135D0 处理；收尾 0x6F6AC0。
+★★★与 batch 454（退场移除 0x4D3590）同域同参：**两者共用 `[0x8B3D88]/
+[0x8B3D8A]`（全局坐标对——batch 454 刚登记）**、同用 `+0x674` 子对象槽释放、
+同用 `+0x544` Audio 清理、收尾函数相邻（0x6F4500 vs 0x6F6AC0）——**同一
+0x4D 区宿主（UnitClass 域）的死亡/退场两条路径**；调用者 3/4 重叠（batch
+454 同 FUN_00414080/FUN_00517d90/FUN_00735780）。
+★原版怪癖（照抄）：① **防重 + 虚表槽 0x84 双闸**（+0x81 与 batch 454 同字段
+家族）；② **8 邻域方向表 + GetCellAt**（[0x89F688] dx/dy 每项 4B——batch
+106/086/454 同表）；③ **cell->+0x122 递减**（new 字段——邻域占用计数推断）；
+④ **0x7DC720 空检断言**（0x80004003 = E_FAIL——子对象空则断言，batch 454
+无此）；⑤ **虚表槽 0x500 条件调**（[0xA8E7AC] 空才调）；⑥ **坐标对比较决定
+是否 0x4135D0**（相等跳过处理）；⑦ **收尾 0x6F6AC0**（batch 454 0x6F4500
+邻区——同族收尾）。
+★跨批次：**batch 454 0x4D3590（退场移除——同域同参姊妹，[0x8B3D88] 对偶
+第 2 消费点）**+**batch 082 0x5657A0（GetCellAt ×8——第 N 次消费）**+**batch
+106/086 [0x89F688]（方向表）**+**batch 236 0x405FD0（Audio 族）**+**batch 230
+[0xA8E7AC]**+**batch 001 0x7DC720（同区 CRT 推断——0x80004003 断言）**。
+★新登记：**cell->+0x122（邻域递减计数——new 字段）**；**this 字段 +0x55C
+（坐标对）+0x5F0/+0x674（子对象）+0x81（防重）**；**0x4135D0/0x6F6AC0（收尾
+处理——新候选）**；**「单位死亡邻域爆破」惯用**（8 邻域递减 + 双子对象释放）。
+⚠️ partial：宿主（UnitClass 域——与 batch 454 同 0x4D 区推断）、虚表槽
+0x84/0x500/0x9C/0xB0/0x4EC/0x2F4 方法名、cell->+0x122 业务（占用计数推断）、
+0x4135D0/0x6F6AC0 身份（坐标处理/收尾推断）、0x887888 全局。
+
+================================================================================
+（batch 461 说明：C++ 模型决策）
+================================================================================
+本批**新增 1 行**，**不新增 C++ 模型**：宿主未确认 + 虚表槽未读。
+模型价值：**「单位死亡邻域爆破」惯用**（8 邻域递减——batch 454 姊妹路径
+同域参闭合）+ [0x8B3D88] 对偶第 2 消费点 + cell +0x122 新字段。本批无产品
+代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（全段字节读完），
+partial 项如实标注。
