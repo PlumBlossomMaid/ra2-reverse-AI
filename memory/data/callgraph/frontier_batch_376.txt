@@ -1,0 +1,202 @@
+frontier batch 376 — 场景启动 0x00683AB0（QWEN.md 带名 ScenarioClass::Start，deps=3418）+ 距离判定 0x0070D590（sqrt 消费点）（2026-10-15）
+
+口径：承接 batch 375，候选池按 unique_callers/依赖扇入度取（`_pick_batch323.py`）：
+0x00683AB0（1011B，4 callers，**deps=3418——本批最高**，QWEN.md「游戏运行流」
+条目与 docs/game-loop/ 已记载为 **ScenarioClass::Start**）、
+0x0070D590（224B，4 callers，deps=2595）。两条**全段字节读完**
+（1011 / 224 与 ranking 的 body_bytes 吻合；0x683AB0 以 `mov al,1 / add esp,0xEC /
+ret 4` 收尾、0x70D590 以 `ret 4` 收尾）。
+本批核心价值：**0x683AB0 把 batch 370 的「INI/文件临时对象」四件套再命中一次**
+（`0x52ACE0` GenericList + 虚表 `0x7E1AFC`/`0x7E1AF4` + `0x4739F0` CCFileClass +
+`0x4741F0` ReadCCFile/0x4741F0 系），**并同时命中 batch 004 的
+`0x5256F0`（INISection::~INIClass）与 batch 370 的同款双析构虚表对
+`0x7E16B0`/`0x7E1668`**；`0x70D590` 则给出 **`0x4CAC40`（MSVC6 `sqrt`，
+身份已在 docs/random-map/dead-code-functions.md「本轮已解掉」实锤）的调用现场**。
+取证手段：disasm.py 分段反汇编全读 + 多批已登记函数调用现场 + 虚表对拍。
+
+================================================================================
+0x00683AB0 —— 场景启动（QWEN.md 带名 ScenarioClass::Start，1011B，ret 4）（4 callers，全 0x3F3=1011B 读完；deps=3418）
+================================================================================
+机器码（1011 字节，入口契约：`ecx`=this、`dl`=寄存器参2、栈参在 `[esp+0xFC]`）：
+```
+开段：sub esp,0xEC / push ebx/ebp / mov ebp,ecx（★this）/ xor ebx,ebx /
+      mov byte [esp+0xB],dl（★dl 存局部）/ push esi / mov edx,[esp+0xFC]（★栈参）/
+      cmp ebp,ebx / je 0x683ADB →
+      对 this 做内联 strlen（or ecx,-1 / xor eax,eax / repne scasb / not ecx / dec ecx）：
+      非空串继续，空串兜底
+0x683ADB  cmp edx,-1 / je 0x683AFE                    ; ★-1 哨兵
+0x683AE0  cmp byte [0xA8ED5D],1 / jne 0x683AF0
+          → ebp = 0xA83E48（★全局缓冲区）
+0x683AF0  mov eax,[0xA83CFC] / mov ebp,[eax+edx*4] / add ebp,0x9C
+          （★按索引 edx 在 [0xA83CFC] 表取对象，+0x9C）
+0x683AFE  mov ecx,[0xA8B230] / push ebp / push 0x83D8C4 /
+          mov dword [ecx+0x34CC],edx / call 0x4068E0   ; ★日志/格式化（带串 0x83D8C4）
+          再 push [0xA8DA84] / push 0x83D8B0 / call 0x4068E0
+          内联 strcpy：把 ebp 串拷到 [0xA8B230]+0x125C（rep movsd + rep movsb 尾）
+          push ecx / call 0x7DCFC4                     ; ★CRT（0x7D = MSVC6 静态 CRT 区）
+          or ecx,-1 / call 0x4790B0                    ; ★（成对，两次）
+0x683B6D  cmp dword [0xA8B238],ebx / jne 0x683B97
+          【分支 A（==0）】mov edx,[0xA8B230] / mov eax,[edx+0x34CC] /
+                          cmp eax,-1 / je 0x683BCE /
+                          mov ecx,[0xA83CFC] / mov edx,[ecx+eax*4] /
+                          mov ecx,[edx+0x98] / jmp 0x683BC9
+          【分支 B（!=0）】mov eax,[0xA8B254] / cmp -1 / je 0x683BCE /
+                          mov ecx,[0xA8B8CC] / mov esi,[ecx+eax*4] /
+                          mov ecx,0x3C / call 0x4790A0 / mov ecx,esi /
+                          push eax / call 0x69AC30 / test al / jne 0x683BCE /
+                          mov ecx,esi / call 0x69ACC0 / mov ecx,eax
+0x683BC9  call 0x4790B0
+0x683BCE  mov edi,[0xA8DAB4] / mov edx,[0x81C1D0] / inc edi / push edx /
+          lea ecx,[esp+0x18] / mov [0xA8DAB4],edi /
+          mov dword [esp+0x18],0x7E4C30 / call [0x7E4C30]   ; ★导入/虚调用（RAII 守卫推断）
+          test al,al / je 0x683D35                          ; ★失败 → 尾部收束
+0x683BFC  dec dword [0xA8DAB4]                              ; ★还原计数（与 inc 配对）
+0x683C09  mov ecx,[0x887640] / mov eax,[ecx] / call [eax+0xC]  ; ★全局对象虚表槽 0xC
+0x683C14  lea ecx,[esp+0x28] / mov [esp+0x20],ebx / mov [esp+0x24],ebx /
+          call 0x52ACE0                                     ; ★★batch 131 GenericList 构造
+0x683C25  lea ecx,[esp+0x74] / mov dword [esp+0x28],0x7E1AFC /
+          push ebp / …… / mov dword [esp+0x20],0x7E1AF4 /
+          call 0x4739F0                                     ; ★★batch 063 CCFileClass 构造
+0x683C5B  lea ecx,[esp+0x74] / push ebx / push 1 / push ecx / lea ecx,[esp+0x28] /
+          call 0x4741F0                                     ; ★★batch 104 ReadCCFile
+          test eax,eax / je 0x683CC2
+0x683C70  push -1 / push 0x8241C0 / push 0x82BF9C /
+          call 0x4757D0（两次，第二次带 0x83D8A8）            ; ★失败路径（两条候选串）
+          失败到底 → 0x683CC2
+0x683CA7  push ebx / mov ecx,0xA83D10 / call 0x720EA0 /
+          or edx,-1 / mov ecx,esi / push 1×3 / call 0x5BF260  ; ★三参 1 + edx=-1
+0x683CC2  双析构：mov dword [esp+0x74],0x7E16B0 / call 0x43AE50 →
+                  mov dword [esp+0x74],0x7E1668 / call 0x431B80
+          ★★**与 batch 370 的 0x679D90 完全同款虚表对**
+0x683CEE  lea ecx,[esp+0x1C] / call 0x5256F0                ; ★★batch 004 INISection::~INIClass
+0x683CF7  push ebp / push 0x83D890 / call 0x4068E0
+0x683D05  mov ecx,0xA83D10 / push 0x82C1BC / call 0x721210 /
+          mov ecx,0xA83D10 / push eax / call 0x720BB0
+0x683D1F  mov ecx,ebp / call 0x684620（★同区函数）/ test al /
+          jne 0x683D59（成功路径）/ 否则 mov ecx,[0x887640] / call [edx+0x10]
+0x683D35  cmp dword [0xA8B238],4 / jne 0x683D4A /
+          成功分支：mov edx,0x887734 / xor cl,cl / call 0x78ABF0
+          出口：pop 族 / xor al,al / add esp,0xEC / ret 4     ; ★**返回 0**
+0x683D59 【成功路径】mov eax,[0xA8B230] / mov eax,[eax+0x1438] / cmp -1 / je /
+          mov ecx,[0xABF394] / mov edx,[ecx+eax*4] /
+          push edx / push 0x83D888 / lea eax,[esp+0xE0] / push eax /
+          call [0x7E14B0]                                     ; ★导入（格式化，2 串 + 缓冲）
+          cmp dword [0xA8B230+0x34D0],0 / jle / call 0x4B6C30
+          byte [esp+0x13] 门控 → push 1×3 / [eax+0x1444] / edx=-1 / call 0x5BF260
+          call 0x72DEF0 / mov ecx,0xA8EB60 / call 0x5FB160
+          mov ecx,[0x88730C] / mov edx,[ecx] / push ebx / call [edx+0x18]
+          mov edx,[0x88730C] / mov cl,1 / push ebx / call 0x4F4780
+          mov eax,[0xA8B230] / lea esi,[eax+0x614] /
+          若 [eax+0x614] == -1 → lea ecx,[esi+4] / call 0x6C8C40 / mov [esi],eax  ; ★惰性建立
+          若 [ecx+0x1C70] == -1 → push 1 / mov ecx,0xA83D10 / call 0x720EA0
+                               否则 push eax / call 0x720B20
+          call 0x7781A0
+          mov byte [0xA8ED5C],1 / mov byte [0xA8E378],1        ; ★★两处全局标志置 1
+          cmp dword [0xA8B238],4 / jne 出口 /
+          mov edx,0x887734 / xor cl,cl / call 0x78ABF0
+          出口：pop 族 / **mov al,1** / add esp,0xEC / ret 4    ; ★**返回 1**
+```
+语义：**场景启动（QWEN.md 带名 `ScenarioClass::Start`）**——入口先做入参规整
+（this 串长度检查 + `-1` 哨兵 + 全局开关 `[0xA8ED5D]` 决定取全局缓冲区
+`0xA83E48` 还是按索引取 `[0xA83CFC]` 表对象 +0x9C），写
+`[0xA8B230]+0x34CC`、把名字串**内联 strcpy** 到 `[0xA8B230]+0x125C` 并过一道
+CRT（`0x7DCFC4`）；随后按 `[0xA8B238]` 分两路取"当前场景对象"，进一段以
+`[0xA8DAB4]` 计数自增/push-pop 的**临界区式守卫**（`call [0x7E4C30]`）；守卫通过后
+构造临时对象读一个文件（`0x52ACE0` GenericList + 虚表 `0x7E1AFC`/`0x7E1AF4` +
+`0x4739F0` CCFileClass + `0x4741F0` ReadCCFile），**无论成败**都走同款双析构
+（`0x43AE50`/`0x431B80`）与 `0x5256F0`（INISection 析构）；再经 `0x684620` 判定，
+成功则做一长串初始化（读 `[0xA8B230]+0x1438` 索引表 + `call [0x7E14B0]` 格式化、
+`0x72DEF0`、`[0x88730C]` 虚表槽 0x18/`0x4F4780`、`[0xA8B230]+0x614` **惰性建立**、
+`0x7781A0`），最后**置 `byte [0xA8ED5C]=1` 与 `byte [0xA8E378]=1` 两个全局标志**并
+**返回 1**；失败路径则 `xor al,al` **返回 0**（两条出口都带
+`cmp [0xA8B238],4` 的特判分支）。
+★原版怪癖（照抄）：① **入口 `dl` 走寄存器、其余走栈**（混合契约）；② **`[0xA8DAB4]`
+自增后带失败还原**（`inc` … 守卫失败 `je` 时不 dec 而走另一出口，
+0x683BFC 只覆盖成功分支——**计数泄漏风险**）；③ **两处入口串拼接用内联 strcpy**
+（`rep movsd` + `rep movsb` 尾字节）；④ **`[0xA8B238]==4` 的特判在两处重复出现**
+（成功/失败出口各一份，`0x887734` + `xor cl,cl` + `0x78ABF0`）；⑤ **`-1` 哨兵三处**
+（栈参、`[+0x34CC]`、`[+0x1438]`、`[+0x1C70]`）。
+★跨批次连接（**本条一次命中 4 个已登记批函数**）：**`0x52ACE0`（batch 131 GenericList
+构造）**+**`0x4739F0`（batch 063 CCFileClass 构造）**+**`0x4741F0`（batch 104
+ReadCCFile）**+**`0x5256F0`（batch 004 INISection::~INIClass）**，且
+**双析构虚表对 `0x7E16B0`/`0x7E1668` 与 batch 370 的 `0x679D90`、batch 375 的
+`0x71DCA0` 三处同款**——**「临时文件对象加载」模板已成为跨批次的稳定指纹**。
+新登记全局/常量簇：`[0xA8B230]`（场景对象，字段 `+0x614`/`+0x125C`/`+0x1438`/
+`+0x1C70`/`+0x34CC`/`+0x34D0`）、`[0xA8B238]`（状态，**值 4 特判**）、
+`[0xA83CFC]`（对象表）、`[0xA8DAB4]`（守卫计数）、`[0xA8ED5D]`/`[0xA8ED5C]`/
+`[0xA8E378]`（全局标志）、`[0xA8EB60]`/`[0xA8EB84]`/`[0xA8EB88]`、
+`0xA83D10`（全局子对象）、`0x82BF9C`/`0x8241C0`/`0x82C1BC`/`0x83D888`-`0x83D8C4`
+（串常量簇）。
+⚠️ partial：`0x4068E0`/`0x4757D0`/`0x720EA0`/`0x720BB0`/`0x721210`/`0x5BF260`/
+`0x684620`/`0x7781A0`/`0x6C8C40`/`0x4F4780` 等被调函数名、`[0xA8B238]` 各值语义、
+`[0xA8DAB4]` 守卫的性质（临界区/递归深度推断）、`call [0x7E4C30]`/`[0x7E14B0]`
+导入 API 名、`dl` 参数语义。
+
+================================================================================
+0x0070D590 —— 距离判定（推断名，224B，ret 4）（4 callers，全 0xE0=224B 读完；deps=2595）
+================================================================================
+机器码（224 字节）：
+```
+0070d590  sub esp,0x18 / push ebp / mov ebp,ecx（★this）
+          mov ecx,[esp+0x20]（★栈参1）/ mov eax,[ebp] / push ecx /
+          call [eax+0x3F8]                          ; ★虚表槽 0x3F8（返回对象）
+          mov eax,[eax] / test eax,eax / jne 0x70D5B5
+          mov al,1 / pop ebp / add esp,0x18 / ret 4 ; ★**空则返回 1**（默认真）
+0x70D5B5  mov al,byte [eax+0x12E]                   ; ★对象 +0x12E 标志字节
+          push esi/edi / test al,al / mov [esp+0x28],al / jne 0x70D663
+          mov ecx,[ebp+0x2B4] / test ecx,ecx / je 0x70D663   ; ★this+0x2B4
+          lea esi,[ebp+0x9C]                        ; ★this+0x9C 起三字段坐标
+          push ebx
+          复制 [esi]/[esi+4]/[esi+8] → [esp+0x10]/[esp+0x14]/ebx
+          mov edx,[ecx] / push &[esp+0x10] / call [edx+0x48]  ; ★虚表槽 0x48（取坐标对象）
+          mov edi,[eax+8] / sub edi,ebx             ; ★Z 差
+          pop ebx / test edi,edi / jle 0x70D663     ; Z 差 <= 0 → 出口
+          mov ecx,[ebp+0x2B4] / lea eax,[esp+0x18] / push eax /
+          mov edx,[ecx] / call [edx+0x48]           ; ★再调一次
+          mov ebp,[eax+4] / mov ecx,[esi+4] / mov edx,[eax] / mov eax,[esi]
+          sub ecx,ebp / sub eax,edx                 ; ★X/Y 差
+          mov [esp+0x10],ecx / mov [esp+0xc],eax
+          fild [esp+0x10] / fild [esp+0xc]
+          mov esi,[esi+8] / sub esp,8 / mov [esp+0x1C],esi
+          **x87 手算平方和**：fld st(0) / fmul st(1) / fld st(2) / fmul st(3) /
+                            faddp st(1) / fstp qword [esp] / fstp st(0) / fstp st(0)
+          call 0x4CAC40                             ; ★★MSVC6 `sqrt`（身份已实锤）
+          add esp,8 / call 0x7C5F00                 ; ★_ftol
+          cmp eax,edi / jge 0x70D663
+          mov byte [esp+0x28],1                     ; ★置 1
+0x70D663  mov al,[esp+0x28] / pop edi/esi/ebp / add esp,0x18 / ret 4
+```
+语义：**距离判定（推断名）**——`判定(this, arg)`：① 调 `this` 的**虚表槽 0x3F8**
+取一个对象，其首指针为空时**直接返回 1（默认真）**；② 否则读该对象
+`+0x12E` 标志字节，**非 0 就把该字节本身当返回值**（真值直传）；③ 否则取
+`this+0x2B4` 的对象、调其**虚表槽 0x48** 取坐标对象，先算 **Z 差**
+（`[eax+8] - this[+0xA4]`），**Z 差 ≤ 0 直接返回 0**；④ 再调一次虚表槽 0x48 取
+X/Y，算 `dx`/`dy`，用**手写 x87 序列求平方和**后 `call 0x4CAC40`（**`sqrt`**）
+再 `_ftol`，与 Z 差比较决定最终布尔。
+★原版怪癖（照抄）：① **手写 x87 平方和**（`fld st(0) / fmul st(1) / fld st(2) /
+fmul st(3) / faddp`——**没有调 CRT 的 `pow`，直接在 x87 栈上凑 dx²+dy²**，
+且末尾 `fstp st(0)` ×2 清栈）；② **`sqrt` 结果经 `_ftol` 后与 Z 差做整数比较**
+（把浮点距离截断成整数再比——**精度损失点**）；③ **三档早退**（空对象返 1 /
+`+0x12E` 标志直返 / Z 差 ≤0 返 0）；④ **虚表槽 0x48 被调两次**（同一对象取两次
+坐标，未复用第一次结果）。
+★跨批次连接（**本条最大价值**）：**`0x4CAC40` 的调用现场**——该地址的身份
+（**MSVC6 `sqrt`**：负数检查 + `0x8650BC` 指数查表 + 位操作，110 B / 280 callers）
+已在 **docs/random-map/dead-code-functions.md §「本轮已解掉」**实锤；本条是它在
+**活代码区**的一处消费点（此前只登记过 CRT 归属，未登记调用方）。另：虚表槽
+`0x48`/`0x3F8`、`this+0x2B4`/`+0x9C`（三字段坐标）/`+0xA4`（Z）/对象 `+0x12E`
+（标志字节）为本条新登记字段。
+⚠️ partial：宿主类与 `+0x2B4` 对象类型、虚表槽 0x3F8/0x48 方法名、`+0x12E` 标志
+语义、"Z 差 ≤0 即 false"的几何含义、`dl`/栈参语义（是否距离阈值）。
+
+================================================================================
+（batch 376 说明：C++ 模型决策）
+================================================================================
+本批**不新增 C++ 模型**（本批 2 条，均为"接线/消费点"性质）：
+① 0x00683AB0（ScenarioClass::Start 1011B）——**语义由十余个全局与四个已登记批
+   函数共同定义**，其价值是把「临时文件对象加载 + 双析构」模板钉到场景启动链上；
+   重写该函数的前提是先有 ScenarioClass/全局状态表，属后续阶段。
+② 0x0070D590（距离判定 224B）——**本条把 `sqrt`（0x4CAC40）从"CRT 归属"升级为
+   "有调用现场的活代码消费点"**，并给出三档早退与 `_ftol` 截断两个照抄点；
+   因宿主（`this+0x2B4`/`+0x9C`）未定，暂不落独立模型。
+本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实；本批仅改
+取证文档与登记表）。
