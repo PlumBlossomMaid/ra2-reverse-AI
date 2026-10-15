@@ -1,0 +1,166 @@
+frontier batch 382 — 小体积高扇入四件（CellClass::GetUnit / FactoryClass::Suspend / 二维向量长度 / 单字段 setter）（2026-10-15）
+
+口径：承接 batch 381，候选池按 unique_callers 扇入度取（`_pick_batch323.py`，未登记
+7116 条）。本批**取 4 个「小体积 + 高扇入」项**（callers 均 = 4，deps 均 > 1900），
+**全段字节读完**（与 ranking.tsv body_bytes 逐条吻合）：
+- `0x0047EBA0` CellClass::GetUnit（67B，deps=1961）——**YRpp 带名实锤**
+- `0x004C9E60` FactoryClass::Suspend（64B，deps=1919）——**YRpp 带名实锤**
+- `0x0041C350` 二维向量长度（34B，deps=1949）——无分支纯 x87
+- `0x0050E000` 单字段 setter（13B，deps=1943）
+取证手段：disasm.py 四段全读 + **YRpp 头文件逐行核对**（`CellClass.h:60` /
+`FactoryClass.h:44/48/127`）+ 跨批次公用函数调用现场（`0x4CAC40` CRT sqrt、
+`[0xA8ED84]` 全局帧计数）。
+
+================================================================================
+① 0x0047EBA0 —— CellClass::GetUnit（YRpp 带名实锤，67B，ret 4）
+================================================================================
+**YRpp 实锤**：`E:\code\YRpp\CellClass.h:60` —
+`UnitClass* GetUnit(bool alt) const`（Documentation 中带 `[inline]` 标记，即
+YRpp 以 `JMP_THIS(0x0047EBA0)` 形式声明；**参数名 `alt`、返回 `UnitClass*`
+逐字吻合**）。
+
+机器码（全段）：
+```
+0047eba0  mov al, byte ptr [0xa8e9a0]     ; ★全局门控 [0xA8E9A0]
+0047eba5  push esi / test al,al / **je 0x47ebd7**（门控关 → 返回 0）
+0047ebaa  mov al, byte ptr [esp + 8]      ; ★栈参1（alt，字节）
+0047ebb0  je 0x47ebba → [ecx + 0xE4]      ; alt==0 → 链表头 A
+0047ebb2  mov esi, dword ptr [ecx + 0xe8]; alt!=0 → 链表头 B
+0047ebc0  test esi,esi / je 0x47ebd7      ; 空链 → 返回 0
+循环 0x47ebc4：
+  0047ebc4  mov eax, dword ptr [esi]      ; vtable
+  0047ebc6  mov ecx, esi
+  0047ebc8  **call dword ptr [eax + 0x2c]**  ; ★虚表槽 0x2C = 第 11 槽
+  0047ebcb  cmp eax, 1 / **je 0x47ebdd**  ; ★判据：返回值 == **1**（非"非零"）
+  0047ebd0  mov esi, dword ptr [esi + 0x30]  ; ★链表步进固定 +0x30
+  0047ebd3  test esi,esi / jne 0x47ebc4
+0047ebd7  xor eax,eax / pop esi / **ret 4** ; 未命中 → NULL
+0047ebdd  mov eax, esi / pop esi / **ret 4**; 命中 → 返回该项
+```
+**语义（实锤名）**：`CellClass::GetUnit(bool alt)`——① 先查全局门控 `[0xA8E9A0]`，
+为 0 直接返回 NULL；② 按 `alt` 选 **`this+0xE8`（alt!=0）或 `this+0xE4`（alt==0）**
+作为链表头；③ 沿 **`+0x30` 单向链**遍历，对每项调**虚表槽 `+0x2C`**，**返回值为
+1** 者即为结果（否则继续）。
+★原版怪癖（照抄）：① **门控关时完全不看链表**（静默 NULL，调用者拿不到"未启用"
+与"没有单位"的区分）；② **判据是 `cmp eax,1` 而非 `test eax,eax`**——虚表槽返回
+2 或 -1 都会被跳过（只认恰好 1）；③ 两链表头偏移只差 4（`+0xE4`/`+0xE8`），
+**由参数决定读哪个**，不合并。
+★跨批次连接：`[0xA8E9A0]` 作为**全局功能门控**、虚表槽 `+0x2C` 的"只认 1"判据，
+与本项目已登记的虚表槽调用族同型（对照 batch 368 的 `+0xD68` 双门、batch 381 的
+"三处判据"）。
+⚠️ partial：`[0xA8E9A0]` 的业务含义（门控的是"单位查询功能是否启用"还是
+"地图是否已初始化"——**未读其写入点，不猜**）、虚表槽 `+0x2C` 对应的虚拟方法名、
+`+0xE4`/`+0xE8` 两链表各自装的是哪一类地面对象（YRpp 只给 `UnitClass*` 返回类型）。
+
+================================================================================
+② 0x004C9E60 —— FactoryClass::Suspend（YRpp 带名实锤，64B，ret 4）
+================================================================================
+**YRpp 实锤**：`E:\code\YRpp\FactoryClass.h:48` — `bool Suspend(bool manual)`；
+同文件 `:44` 注释 **"aborts current product and puts the object in, completed and
+suspended"**；`:127` 字段 **`bool IsSuspended; //completed production, before next
+(or waiting to place)`** —— 与机器码写 `+0x70` 的字节**逐字吻合**。
+
+机器码（全段）：
+```
+004c9e60  mov al, byte ptr [ecx + 0x70]   ; ★this+0x70 = IsSuspended
+004c9e63  xor edx,edx / sub esp,0xc / **cmp al,dl / jne 0x4c9e98**
+                                          ; ★已挂起 → 直接返回 0（幂等拒绝）
+004c9e6c  mov al, byte ptr [esp + 0x10]   ; ★栈参1（manual，**字节读**）
+004c9e71  mov byte ptr [ecx + 0x71], al   ; ★+0x71 = manual（字节）
+004c9e74  mov byte ptr [ecx + 0x70], 1    ; ★置 IsSuspended = 1
+004c9e78  mov eax, dword ptr [0xa8ed84]   ; ★全局帧计数 [0xA8ED84]
+004c9e7d  lea esi, [ecx + 0x2c]
+004c9e80  mov dword ptr [ecx + 0x38], edx ; +0x38 = 0
+004c9e83  mov dword ptr [esi], eax        ; +0x2C = [0xA8ED84]
+004c9e85  mov eax, dword ptr [esp + 8]    ; ★**同一栈槽的 dword 读**
+004c9e89  mov dword ptr [esi + 4], eax    ; ★+0x30 = manual（**dword 回落**）
+004c9e8c  mov al, 1
+004c9e8e  mov dword ptr [esi + 8], edx    ; +0x34 = 0
+004c9e91  pop esi / add esp,0xc / **ret 4**（返回 1）
+004c9e98  xor al,al / add esp,0xc / **ret 4**（返回 0）
+```
+**语义（实锤名）**：`FactoryClass::Suspend(bool manual)`——① 若 `IsSuspended`
+（`+0x70`）已为 1，**直接返回 false**（不覆盖已有挂起状态）；② 否则把 `manual`
+存 `+0x71`、置 `+0x70 = 1`、清 `+0x38 = 0`、把**全局帧计数 `[0xA8ED84]`** 写
+`+0x2C`、把 `manual` 的 **dword** 写 `+0x30`、清 `+0x34 = 0`，返回 true。
+★原版怪癖（照抄）：**同一参数被落盘两次且宽度不同**——`+0x71` 存**字节**
+（`mov al,[esp+0x10]`），`+0x30` 存**整个栈槽 dword**（`mov eax,[esp+8]`，未
+`movsx`）。由于签名是 `bool manual` 且 `ret 4`（调用者按 4 字节压参），
+**若调用者只写了低字节通道，高 3 字节是垃圾并将原样进入 `+0x30`**。
+★跨批次连接（**本条命中 batch 368**）：`[0xA8ED84]` = batch 368
+（SpawnManagerClass::ResetTarget）登记的同款**全局帧计数**（当时写作
+`[0xABC5F8]=[0xA8ED84]`）——本批给出它的**第 2 个 live 消费点**，并实锤其语义为
+"当前帧号"（`FactoryClass` 用挂起起始帧做计时基线）。
+★与 QWEN.md「待确认」的闭合关系：清单里 **"`Unsuspend` 资金不足时挂起标志的
+行为"** 正处在本对函数（`Suspend`/`Unsuspend`）上；本批**只闭合 `Suspend`
+侧**（幂等拒绝 + 三字段初值 + 帧基线），`Unsuspend` 侧仍待单独取证。
+⚠️ partial：`+0x2C`/`+0x30`/`+0x34` 三元组的字段名（YRpp 未给这三个名字，
+只能说是"挂起起始帧 / manual 回落副本 / 复位值"）、`+0x38` 的业务含义。
+
+================================================================================
+③ 0x0041C350 —— 二维向量长度（无分支纯 x87，34B，ret）
+================================================================================
+机器码（全段）：
+```
+0041c350  fld qword ptr [ecx + 8]     ; st0 = y（this+8，double）
+0041c353  fld qword ptr [ecx]         ; st0 = x（this+0，double）
+0041c355  fld st(0)                   ; st0 = x
+0041c357  fmul st(1)                  ; st0 = x * x
+0041c359  fld st(2)                   ; st0 = y
+0041c35b  fmul st(3)                  ; st0 = y * y
+0041c35d  sub esp, 8
+0041c360  faddp st(1)                 ; st0 = x*x + y*y
+0041c362  fstp qword ptr [esp]        ; ★经内存中转给 call
+0041c365  fstp st(0)                  ; 清栈（y）
+0041c367  fstp st(0)                  ; 清栈（x）
+0041c369  call 0x4cac40               ; ★★CRT sqrt（batch 376 已登记）
+0041c36e  add esp, 8 / ret
+```
+**语义**：`double Vector2D::Length() const`——`ecx` = this，`this+0` = x、
+`this+8` = y（**两个连续 double**），返回 `sqrt(x*x + y*y)`。
+★跨批次连接：`0x4CAC40` = **batch 376 登记的 CRT 归属 `sqrt`**（当时由 `0x70D590`
+升级为 live-code consumer）——**本批是它的第 2 个独立消费点**，证明 `0x4CAC40`
+是**引擎内被多处复用的 CRT 平方根**（不是单点内联物）。
+★原版怪癖（照抄）：① **手写全套 x87 乘法序列**（`fld st(0)` 复制 + `fmul st(1)`
+两轮）而**不去调 CRT 的 `pow`/`hypot`**——只有最后一步 `sqrt` 才复用 CRT；
+② **`fstp st(0)` 连续两次显式清栈**（不做 `fstp` 配对清理，x87 栈手动排空）；
+③ 结果**经 `[esp]` 内存中转**才传参（不直接 `fstp` 到参数位）。
+⚠️ partial：宿主类型（`this+0`/`+8` 是 `Coord2D` 还是某个 `WideCoord`/`Point2D`
+的 double 变体——**未读调用点，不猜**）。
+
+================================================================================
+④ 0x0050E000 —— 单字段 setter（13B，ret 4）
+================================================================================
+机器码（全段，仅 3 条）：
+```
+0050e000  mov eax, dword ptr [esp + 4]
+0050e004  mov dword ptr [ecx + 0x5490], eax
+0050e00a  ret 4
+```
+**语义**：`void Set_XXXX(int)`——`this->+0x5490 = 参1`，无任何分支/校验/副作用。
+★价值（作为"字段证据"）：**`+0x5490` 是已实锤的字段偏移**，且此函数是该字段的
+**唯一写入口形态**（13B 纯 setter、callers=4）——后续定位宿主类时可直接以
+"谁在 `+0x5490` 上方读到这个值"为线索反查。
+⚠️ partial：**宿主类未确认**——`+0x5490`（≈21.6KB）说明宿主是**大体量对象或单例**
+（本项目已实锤的同类量级对象可对照 `MapClass`/`HouseClass` 族），但**未读 callers
+现场，故不猜类名**；参数语义与字段含义均待定。
+
+================================================================================
+（batch 382 说明：C++ 模型决策）
+================================================================================
+本批 4 个函数，**均不新增 C++ 模型**，理由逐条：
+① `CellClass::GetUnit`——依赖**全局门控 `[0xA8E9A0]` + 虚表槽 `+0x2C` 的虚调用 +
+两个未定链表**，等价模型必须先实锤这三者；照抄式重写会退化成"重写一个更好的
+查询器"，违反原样复现纪律。
+② `FactoryClass::Suspend`——**已具备可复现的完整字段语义**，但其价值在于**服务
+`FactoryClass` 生产系统**（本项目生产系统已于既有批次全量逆向并登记），此单函数
+重写**不产生新的可验证接口**；且 `+0x2C/+0x30/+0x34` 字段名未定，写模型即发明命名。
+③ 二维向量长度——纯数值函数（x87 序列 + CRT sqrt），**其字节级等价物已在
+`code/rewrite` 的 FP 基础层按"手写乘法序列 + CRT sqrt"覆盖**；本批只登记**第 2 个
+`0x4CAC40` 消费点**这一新事实。
+④ 单字段 setter——13B 无逻辑，重写无意义。
+故按纪律**只登记机器码事实 + 三态标注 + 跨批次连接**，不落模型、不猜类名与字段名。
+本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实；本批仅改取证
+文档与登记表）。登记四行均为 semantics_verified +
+assembly_verified_semantics_confirmed（全段字节读完；①②另有 YRpp 头文件逐行实锤），
+partial 项如实标注。
