@@ -1,0 +1,59 @@
+frontier batch 453 — htonl（WSOCK32 IAT 转发）0x007C8962（6B，单函数批）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（callers=4/deps=283，ranking 唯一调用者
+FUN_00541680/FUN_006c6f50/FieldClass::HostToNet/UnitTrackerClass::ToNetworkFormat）。
+**6B 全字节读完**（= 0x06）。取证手段：disasm.py 全读 + **PE 导入表 IAT 槽
+实锤（WSOCK32.dll 序数导入） + batch 365（ntohl 0x7C896E）孪生交叉核验**。
+
+================================================================================
+0x007C8962 —— htonl（ranking 带名，WSOCK32 导入转发，6B）
+================================================================================
+机器码（完整，6B 整数）：
+```
+007c8962  ff2550157e00  jmp dword ptr [0x7e1550]   ; ★★★纯尾跳转发 IAT 槽 [0x7E1550]
+```
+**语义（★ranking 带名 + PE 导入表实锤）**：**htonl（主机序转网络序 32 位）**——
+纯导入转发 thunk：调用直接跳到 IAT 槽 `[0x7E1550]`。**PE 导入表解析实锤：
+IAT 0x7E1550 <- WSOCK32.dll!ord#8**（本批 _iat453.py 逐槽解析）。
+★★★孪生对闭合（batch 365 反向）：**batch 365 已登记 ntohl（0x7C896E `jmp
+[0x7E1544]`，WSOCK32 ord#14）**——本批是**网络字节序双向对的另一侧**：
+callers `FieldClass::HostToNet` / `UnitTrackerClass::ToNetworkFormat`（主机→网络
+序写入）vs batch 365 的 `NetToHost` / `ToPCFormat`（网络→主机序读取）——**同一
+IAT thunk 族按调用方向成对出现**。
+★五连 thunk 族（0x7C8960-0x7C897A，WSOCK32 序数导入连续排布）：
+```
+007c8960  jle 0x7c8962                    ; ★前一函数尾部（非本批）
+007c8962  jmp [0x7E1550]  = WSOCK32 ord#8   ; ★本批 htonl
+007c8968  jmp [0x7E1548]  = WSOCK32 ord#9   ; ★同族（htons 推断）
+007c896e  jmp [0x7E1544]  = WSOCK32 ord#14  ; ★batch 365 ntohl
+007c8974  jmp [0x7E155C]  = WSOCK32 ord#15  ; ★同族（ntohs 推断）
+007c897a  jmp [0x7E1574]  = WSOCK32 ord#111 ; ★同族（更高序数——扩展 API 推断）
+```
+★原版怪癖（照抄）：① **jmp 转发无 prologue**（ff 25 绝对地址间接跳——MSVC6
+静态 CRT 导入 thunk 惯用形态，0x7C-0x7D 区特征）；② **WSOCK32 按序数导入**
+（非按名——导入表显式 ord#，PE 实锤）；③ **五连成族相邻排布**（0x7C8962/
+0x8968/0x896E/0x8974/0x897A——编译期按 DLL 导出表顺序生成）；④ **ret 由被调
+函数负责**（跳板不参与栈——caller 栈帧直穿）；⑤ **正反向成对**（htonl/ntohl
+双向对——batch 365+453 网络字节序全链闭合）。
+★跨批次：**batch 365 0x7C896E（ntohl——本批反向对偶，孪生闭合）**；
+**0x7C-0x7D 区 MSVC6 静态 CRT 层（QWEN.md 实锤本区为 MSVC6 静态 CRT）**；
+[0x7E1544]/[0x7E1548]/[0x7E1550]/[0x7E155C]/[0x7E1574]（IAT 槽——PE 实锤
+WSOCK32 序数）。
+★新登记：**IAT 槽 [0x7E1550] = WSOCK32 ord#8（htonl——PE 导入表实锤，batch
+365 的「partial：0x7E1544 API 名」同法闭合路线）**；**同族 thunk 4（0x7C8968/
+0x8974/0x897A + batch 365 的 0x896E——WSOCK32 序数导入族 5 连）**；**「网络
+字节序 IAT 转发对」惯用（htonl/ntohl 双向）**。
+⚠️ partial：ord#9/ord#15/ord#111 精确 API 名（htonl/htons/ntohl/ntohs 推断——
+序数表未逐项展开；batch 365 同法标注）、前一函数尾部（0x7C8960 jle）归属、
+WSOCK32 扩展 API（ord#111——非标准 winsock 序数推断）。
+
+================================================================================
+（batch 453 说明：C++ 模型决策）
+================================================================================
+本批**新增 1 行**，**不新增 C++ 模型**：纯 CRT/IAT 转发 thunk（0x7C-0x7D
+MSVC6 静态 CRT 层——按纪律不重实现，crt_runtime 语义由 WSOCK32 提供）。
+模型价值：**「网络字节序 IAT 转发对」惯用闭合**（batch 365 ntohl + 本批
+htonl——网络序列化全链）+ PE 导入表 IAT 槽实锤（batch 365 partial 同法补证
+路线）+ WSOCK32 序数导入族 5 连登记。本批无产品代码改动，ctest 维持
+**43/43 全绿**（batch 372 已实跑核实）。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（全段字节读完），partial 项如实标注。
