@@ -1,0 +1,82 @@
+frontier batch 400 — BuildingLightClass::SetBehaviour 0x00436BE0（433B，单函数批）（2026-10-15）
+
+口径：候选**只从 picker 未登记池取**（de 区，带名，callers=4/deps=1922）。
+**433B 全字节读完**（= 0x1B1）。取证手段：disasm.py 全读 + **全被调方已登记交叉核验**
+（本批零新函数依赖——0x5657A0/0x4F9A90/0x7C5F00/0x87F7E8 全部此前批次已实锤）。
+
+================================================================================
+0x00436BE0 —— BuildingLightClass::SetBehaviour（带名，433B，ret 4 = 1 栈参）
+================================================================================
+机器码（要点）：
+```
+00436be0  push ebp / mov ebp,esp / and esp,-8 / sub esp,0x4c
+          mov eax,[ebp+8]               ; ★参1 = behaviour 值
+          mov edi,ecx                   ; this
+          xor esi,esi
+          cmp eax,3 / mov [edi+0xdc],eax ; ★+0xDC = behaviour（无条件存）
+          mov [edi+0xb0],esi / mov [edi+0xb4],esi  ; 清零 +0xB0/+0xB4
+          jne 0x436d88                   ; ★behaviour != 3 → 直接返回（唯一分支）
+          ; —— behaviour==3：目标追踪
+00436c12  mov eax,[edi] / lea ecx,[esp+0x28] / push ecx / mov ecx,edi
+          call [eax+0x1b8]               ; ★vtbl[+0x1B8]，this 取坐标 → 返回值 edx=[eax] 存 [esp+0x2C]
+          mov eax,[edi+0xe4]             ; this->+0xE4（场景对象）→ [eax+0x21C] 作候选中心
+          mov [esp+0x14],0x98967f        ; ★常量 0x98967f = 9,999,999（距离哨兵，非 INT_MAX！）
+          ; —— 双重扫描循环：(i,j) ∈ {-1,0}²（★4 格，非 3×3！）：
+00436c4b  edx=i / eax=[esp+0x2C] / add / 低 16 位字存候选 x
+00436c61  lea edx,[j+[esp+0x2E]] / 低 16 位字存候选 y
+00436c71  push &[esp+0x24] / mov ecx,0x87f7e8（MapClass::Instance）→ call 0x5657a0（★取格链）
+00436c84  mov esi,[eax+0xe4]            ; 格对象链头
+00436c8a  test esi / je 下一格
+          ; —— 顺对象链（+0x30 next）：
+00436c98  call [esi->vtbl+0x2c]         ; ★类型码
+00436c9f  cmp eax,0xf → je 0x436cb4     ; ==0xF(15) 候选
+          call 0x2c 再调 / cmp eax,1 → jne 链下个   ; ★==1 候选（两判分开、重复调用）
+00436cb4  mov ecx,[esp+0x28] / push esi → call 0x4f9a90（★batch 390 实锤 IsAlliedWith）
+00436cbe  test al / jne 链下个          ; 是同盟 → 跳过
+00436cc6  add edi,0x9c                  ; ★this+0x9C 位置结构（x/y/z 三 dword）
+          call [esi->vtbl+0x48](&out)   ; ★对象取位置
+          dx=out.x-[this+0x9C].x / dy=out.y-.y / dz=out.z-.z
+          fild dy / fild dz / fild dx → fmul/fadd 组合（dx²+dy²+dz²）→ fstp [esp]
+          call 0x4cac40                 ; ★sqrt（推断）→ call 0x7c5f00（★_ftol 截断）
+00436d39  cmp eax,[esp+0x14] / jge 链下个  ; ★严格 < 才更新（首个等距者保留）
+          mov [esp+0x20],esi / mov [esp+0x14],eax    ; 记录最优对象 + 最短距离
+00436d47  mov esi,[esi+0x30]            ; 链下个
+00436d5a  inc j / cmp 2 / jl            ; j: -1 → 0 → 停
+00436d68  inc i / cmp 2 / jl            ; i: -1 → 0 → 停
+00436d7a  mov eax,[esp+0x20] / test / je 返回
+00436d82  mov [edi+0xe0],eax            ; ★this->+0xE0 = 最优对象
+00436d88  ret 4
+```
+**语义（带名）**：**BuildingLightClass::SetBehaviour(int)**——无条件存 `+0xDC`、清零
+`+0xB0/+0xB4`；**仅 behaviour==3** 时在**自身坐标的 4 邻格**（偏移 {(0,0),(-1,0),(0,-1),(-1,-1)}）
+扫描对象链：类型码 ==0xF 或 ==1 且**非同盟**（IsAlliedWith）者按 **3D 欧氏距离**（含 z，
+sqrt+_ftol 截断）求最近，存入 `this->+0xE0`（光照目标跟踪）。
+★被调方实锤（全部此前批次已登记）：**0x5657A0**（batch 387/392/393/396/397 取格链，
+MapClass 0x87F7E8 取格）、**0x4F9A90**（batch 390 YRpp 实锤 IsAlliedWith——本批首次作为
+**被调方出现真实调用现场**）、**0x7C5F00**（_ftol）、**0x87F7E8**（MapClass::Instance）。
+★原版怪癖（照抄）：① **4 邻格扫描而非 3×3**（i/j 各仅 -1..0 两值，左上象限）；
+② 距离 = **3D 欧氏含 z**（fild 三轴 + 平方和）经 0x4CAC40 + **_ftol 截断**；
+③ **哨兵 0x98967F = 9,999,999**（≈1e7，非 INT_MAX）——超过该距离的对象全被忽略；
+④ 类型码**双判分开**（==0xF 一个 je、==1 一个 jne，`vtbl[0x2C]` 调 2 次）；
+⑤ **严格 `<` 才更新**（`jge` 跳过 → 等距时保留先扫到的）；
+⑥ behaviour!=3 直接返回（其它行为值只存 +0xDC）；
+⑦ `0x96` 低 16 位截断坐标（word 存候选 x/y——坐标 → CellStruct 截断）；
+⑧ 距离哨兵 `jge` 比较对 `_ftol` 截断结果（非浮点比）。
+★跨批次（全已登记链）：0x5657A0 第 6 消费点、0x4F9A90 首次调用现场、0x87F7E8
+MapClass 实例、0x7C5F00 _ftol（batch 384/387 同款）、**0x4CAC40 新消费点**（batch 399
+0x6C8C80 亦用——数学函数族，sqrt 推断）。★新登记：**BuildingLightClass+0xDC（行为值）/
++0xB0/+0xB4（清零）/ +0xE0（最优对象）/ +0x9C（三轴位置结构）/ +0xE4-（场景对象）+
+0x21C（候选中心坐标）**；常量 **0x98967F = 9,999,999**；**vtbl 槽 +0x1B8（取坐标）/
++0x2C（类型码）/ +0x48（取位置）**；类型码 0xF(15)/1 候选语义（推断步兵类，未确认）。
+⚠️ partial：0x4CAC40 sqrt 推断（未全读）、0xF 与 1 具体类（步兵推断）、+0xE4 场景
+对象与 +0x21C 坐标语义、vtbl 三槽接口签名、behaviour 0/1/2 语义（本函数只处理 3）。
+
+================================================================================
+（batch 400 说明：C++ 模型决策）
+================================================================================
+本批**新增 1 行**，**不新增 C++ 模型**：0x4CAC40 未确认（sqrt 推断）+ BuildingLightClass
+宿主类 vtbl 三槽接口未读。模型价值：**0x4F9A90 IsAlliedWith 首次真实调用现场** + 0x5657A0
+第 6 消费点 + 光源行为 3 = "追踪最近非同盟步兵对象"语义落定。本批无产品代码改动，ctest
+维持 **43/43 全绿**（batch 372 已实跑核实）。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（全段字节读完 + 全被调方已登记交叉核验），
+partial 项如实标注。
