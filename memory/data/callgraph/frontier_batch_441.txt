@@ -1,0 +1,92 @@
+frontier batch 441 — VersionClass::Version_Name 0x0074FAE0（412B，单函数批）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（callers=4/deps=352，ranking 唯一调用者
+FUN_004c85e0/FUN_0064dea0/FUN_006516f0/FUN_006c6f50）。
+**412B 全字节读完**（= 0x19C）。取证手段：disasm.py 全读 + PE 字符串实锤 +
+**batch 004/238/277/101/199/242 已登记函数联合调用现场交叉核验**。
+
+================================================================================
+0x0074FAE0 —— VersionClass::Version_Name（★ranking 带名，412B，ret c3 = __thiscall 无参）
+================================================================================
+机器码（完整主结构）：
+```
+0074fae0  sub esp,0x24 / push ebx,ebp,esi / mov esi,ecx（★this）/ xor ebx,ebx
+0074faeb  test byte[esi+0x44],8 / jne 0x74fb69        ; ★位 8 门控（已初始化→跳过）
+  ── 块 1（this 版本串初始化）──
+0074faf1  push 0x84635c（"VERSION.TXT"）/ lea ecx,[esp+0x14] / call 0x65ca80
+          （★batch 004 RawFileClass 构造——栈上文件对象）
+0074faff  push ebx / lea ecx,[esp+0x14] / call 0x65cbf0（★batch 238 Exists）
+0074fb09  test al / je 0x74fb55                        ; 文件不存在→跳
+0074fb0d  lea ebp,[esi+0x2a] / push 0x10 / push ebp / lea ecx,[esp+0x18]
+0074fb17  call 0x65cce0（★batch 277 ReadBytes——读 16B 到 this+0x2A）
+0074fb1c  mov edi,ebp / or ecx,-1 / xor eax / mov byte[esi+0x39],bl
+0074fb26  repne scasb / not ecx / dec ecx              ; ★strlen(this+0x2A)
+0074fb2b  cmp byte[ecx+esi+0x29],0xd / jne 0x74fb58    ; ★末字节==0xD（\r）？
+0074fb32  剥 \r 循环：strlen → mov byte[ecx+esi+0x29],bl（置 0）
+          → strlen 再查末字节==0xD → je 循环             ; ★★循环剥尾部 \r
+0074fb55  mov byte[esi+0x2a],bl                        ; 不存在→空串
+0074fb58  lea ecx,[esp+0x10] / call 0x65ca00（★batch 101 缓冲类析构）
+0074fb61  mov eax,[esi+0x44] / or al,8 / mov [esi+0x44],eax   ; 置位 8
+  ── 块 2（this 版本号 word）──
+0074fb69  mov eax,[esi+0x44] / test al,4 / je 0x74fb76
+0074fb70  mov bp,word[esi+0xa] / jmp 0x74fb84          ; 已置位→读 this+0xA
+0074fb76  mov ebp,1 / or al,4 / mov word[esi+0xa],bp   ; 未置→默认 1 并置位 4
+  ── 块 3（全局 [0xA8ED24] 位 8 门控，同款版本串初始化到 [0xA8ED0A]）──
+0074fb84  test byte[0xa8ed24],8 / jne 0x74fc22
+          （0x65ca80("VERSION.TXT") → 0x65cbf0(Exists) → 0x65cce0(读 16B 到 0xA8ED0A)
+           → 同款剥 \r 循环 → 0x65ca00 析构 → [0xA8ED24]|=8）
+  ── 块 4（全局版本号 word）──
+0074fc22  mov cl,byte[0xa8ed24] / mov eax,2 / test al,cl / je 0x74fc38
+0074fc31  mov eax,[0xa8ece8] / jmp 0x74fc54            ; 已置位→读 [0xA8ECE8]
+0074fc38  mov word[0xa8ece8],1 / or [0xa8ed24],al / mov eax,1  ; 默认 1 并置位 2
+  ── 收尾：组版本串 ──
+0074fc54  and ebp,0xffff / and eax,0xffff              ; ★双 16 位钳制
+0074fc5f  push ebp / add esi,0xc / push eax / push 0x846368（"%d.%3.3d"）
+0074fc69  push esi / call 0x7c8ef4（★batch 199/242 sprintf）/
+0074fc6f  add esp,0x10 / mov eax,esi / ret              ; ★返回 this+0xC（版本串）
+```
+**语义（★ranking 带名，YRpp 无覆盖——USER_DEFINED 推断名）**：**VersionClass::
+Version_Name（版本名生成）**——两套独立惰性初始化（this 版 + 全局版各读一遍
+VERSION.TXT）+ 组串：
+① this->+0x44 位 8 门控：未初始化则栈上构造 RawFileClass("VERSION.TXT") →
+Exists 判存在 → ReadBytes 读 **16 字节**到 this+0x2A → **循环剥尾部 \r**（CRLF
+归一）→ 析构文件对象 → 置位；文件不存在 → this+0x2A 置空串。
+② this->+0x44 位 4 门控：未置位 → this+0xA（word）默认 **1** 并置位；已置直接读。
+③ 全局 [0xA8ED24] 位 8 门控：同上流程读 **VERSION.TXT 16B 到 [0xA8ED0A]** + 剥 \r。
+④ 全局 [0xA8ED24] 位 2 门控：未置位 → [0xA8ECE8]（word）默认 1 并置位；已置直接读。
+⑤ 收尾：`sprintf(this+0xC, "%d.%3.3d", [0xA8ECE8]&0xffff, this+0xA&0xffff)` →
+返回 this+0xC 版本串指针。= 主版本号（全局 .ini/文件注册，默认 1）+ 小版本号
+（this，默认 1）拼 `N.NNN` 格式。
+★原版怪癖（照抄）：① **双门控各自独立**（this +0x44 与全局 [0xA8ED24] 都是
+位 8 门控版本串、位 4/2 门控版本号——**VERSION.TXT 被读两遍**（this 版与全局版
+各自构造 RawFileClass+Exists+ReadBytes 全链）；② **剥 \r 循环**（repne scasb
+strlen + 末字节 0xD 判定 + 置 0 循环——CRLF 归一化，两处同款）；③ **strlen 三连**
+（首查/剥后复查/再剥——循环内重复 strlen 未缓存长度）；④ **失败静默空串**
+（Exists 失败跳过读取，this+0x2A=0）；⑤ **默认版本号 1 的 word 写入**（未置位
+时 mov word=1 而非 0——版本从 1 起）；⑥ **尾部双 and 0xffff**（ebp/eax 各钳
+16 位——防高字节污染 sprintf）；⑦ **返回 this+0xC 缓冲**（非静态——调用者须
+在对象存活期内用）；⑧ **ret c3 无参**（纯 getter 风格）。
+★跨批次（联合调用现场——本批是已登记函数链的最大组装点）：**batch 004
+RawFileClass 构造（0x65CA80）×2** + **batch 238 Exists（0x65CBF0）×2** +
+**batch 277 ReadBytes（0x65CCE0）×2** + **batch 101 缓冲类析构（0x65CA00）×2**
++ **batch 199/242 sprintf（0x7C8EF4）×1**——五函数同框，RawFileClass 文件族
+完整生命周期演示。
+★新登记：**字符串常量 0x84635C="VERSION.TXT" / 0x846368="%d.%3.3d"（PE 字节
+实锤）**；**this 字段 +0x2A（16B 版本串）/ +0xA（word 版本号）/ +0xC（输出串
+缓冲）/ +0x39（剥 \r 终结符）/ +0x44（位 8 串门控 + 位 4 号门控）**；**全局
+[0xA8ED24]（位 8 串门控 + 位 2 号门控）/ [0xA8ED0A]（16B 版本串）/ [0xA8ECE8]
+（word 版本号）**；**「版本串惰性初始化」惯用**（门控标志 + VERSION.TXT 读取 +
+剥 \r + 默认 1）。
+⚠️ partial：宿主 VersionClass 类（YRpp 无覆盖——0x74xxxx 区版本/配置类推断）、
+this+0xA 与 [0xA8ECE8] 版本号业务含义（主/小版本推断）、VERSION.TXT 内容格式
+（"%d.%3.3d" 前导数字推断）、四个调用者分工（版本名展示推断）。
+
+================================================================================
+（batch 441 说明：C++ 模型决策）
+================================================================================
+本批**新增 1 行**，**不新增 C++ 模型**：宿主 VersionClass 未确认 + 版本号业务
+含义推断。模型价值：**「版本串惰性初始化」惯用**（门控+文件读+剥 \r+默认 1——
+可复用模板）+ 五函数联合调用现场（RawFileClass 族生命周期实证）+ 3 全局 4 字段
+登记。本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。
+登记一行 semantics_verified + assembly_verified_semantics_confirmed（全段字节
+读完），partial 项如实标注。
