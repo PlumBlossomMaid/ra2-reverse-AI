@@ -1,0 +1,92 @@
+frontier batch 467 — DynamicVectorClass::Add 0x0063E540（80B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（callers=4/deps=204/body=80B，ranking 名
+FUN_0063e540）。**80B 全字节读完**（= 0x50，0x63E540-0x63E58D ret 4；尾部
+0x63E590 是邻接函数）。取证手段：disasm.py 全读 + **batch 209 虚表槽 8
+推断纠正** + 邻接 0x63E590（Remove）同构对照 + 容器族布局交叉验证。
+
+================================================================================
+0x0063E540 —— DynamicVectorClass::Add（推断名，80B，ret 4 = 1 栈参）
+================================================================================
+机器码（完整，80B 整数）：
+```
+0063e540  push esi
+0063e541  mov esi,ecx                 ; esi = this
+0063e543  mov ecx,[esi+8]             ; ecx = 容量
+0063e546  mov eax,[esi+0x10]          ; eax = 计数
+0063e549  cmp eax,ecx / jl 0x63e575   ; 计数<容量 → 直接写
+0063e54d  mov al,[esi+0xd] / test al,al
+0063e552  jne 0x63e558                ; 自分配标志(+0xD) → 尝试扩容
+0063e554  test ecx,ecx / jne 0x63e56f ; 非自分配且容量≠0 → 失败返 0
+0063e558  mov eax,[esi+0x14]          ; eax = 增长步长(+0x14)
+0063e55b  test eax,eax / jle 0x63e56f ; 增长步长≤0 → 失败返 0
+0063e55f  mov edx,[esi]               ; edx = 虚表
+0063e561  add eax,ecx                 ; eax = 容量+增长步长（新容量）
+0063e563  push 0 / push eax           ; ★两栈参 (0, 新容量)
+0063e566  mov ecx,esi
+0063e568  call [edx+8]                ; ★★虚表槽 8 = Resize(新容量,0)（al 判定）
+0063e56b  test al,al / jne 0x63e575   ; 扩容成功 → 写
+0063e56f  xor al,al / pop esi / ret 4 ; 失败返 0
+0063e575  mov eax,[esi+0x10]          ; eax = 计数（旧值）
+0063e578  mov edx,[esi+4]             ; edx = 数组指针
+0063e57b  lea ecx,[eax+1]
+0063e57e  mov [esi+0x10],ecx          ; ★计数+1
+0063e581  mov ecx,[esp+8]             ; ecx = 栈参 1（&item）
+0063e586  mov ecx,[ecx]               ; ecx = *item
+0063e588  mov [edx+eax*4],ecx         ; ★★array[旧计数] = *item
+0063e58b  mov al,1 / ret 4            ; 返 1
+```
+**语义（推断名）**：**容器 Add（按值追加，自动扩容）**——计数<容量直接
+`array[count++]=*item` 返 1；满时按 +0xD 自分配标志判定：可扩容则新容量=
+容量+增长步长（+0x14），经**虚表槽 8（Resize）**两栈参扩容（(0,新容量)，
+0=外部缓冲 NULL）成功返写，失败返 0；非自分配且容量≠0 直接返 0。
+★跨批次纠正：**batch 209（0x5868A0）把虚表槽 8 推断为「Add」——本批实锤
+槽 8 = Resize（扩容）**（0x63E540 的 `push 0/push 新容量/call [edx+8]` 现场
+与 0x5868A0 的 `add eax,ecx/push 0/push eax/call [eax+8]` **逐指令同构**——
+后者即 Add 满时扩容现场，本批是它的成员实现）。
+★原版怪癖（照抄）：① **扩容走虚表槽 8 动态分发**（Resize 是虚方法——
+多态容器 Resize 覆盖点）；② **容量 0 且非自分配也扩容**（首次 Add 时
+capacity=0/self-alloc=0 → 仍走扩容分支——test ecx,ecx jne 才失败）；
+③ **增长步长 +0x14≤0 扩容失败**（步长非法直接返 0）；④ **栈参是
+&item 指针**（压地址、解引用拷贝——4B/项按值写，非值参）；⑤ **计数先
++1 后写**（[esi+0x10]=count+1 在 array[count] 写之前，但 eax 保持旧计数
+索引——MSVC 重排产物，语义等价）；⑥ **扩容双栈参第二参恒 0**（外部
+缓冲 NULL=内部 _new 分配，Resize 内部分配）。
+★跨批次：容器族生命周期**再添 Add 成员**（batch 092/102/136/246 已登记
+ctor×5+resize+拷贝——布局 +4 数组/+8 容量/+0xC 持有/+0xD 自分配/+0x10
+计数互证闭合）；**batch 466 的 0x58C070 全局注册表移除 = Remove 内联版**
+（邻接 0x63E590 同构对照见下）。
+⚠️ partial：宿主容器类精确名（DynamicVectorClass 推断——batch 092 预设）、
+虚表内容（0x63xxxx 区虚表未读）、Resize 虚表槽 8 具体实现（batch 102
+0x42F860 疑似同族——未归一化比对不写孪生）、四调用者分工细节。
+
+================================================================================
+邻接对照（非本批主体）：0x0063E590 = Remove(索引)（47B，ret 4）
+================================================================================
+```
+0063e590  mov edx,[ecx+0x10]          ; 计数
+0063e593  mov eax,[esp+4]             ; 索引
+0063e597  cmp eax,edx / jge 0x63e5bc  ; 索引≥计数 → 返 0
+0063e59b  dec edx / cmp eax,edx
+0063e59e  mov [ecx+0x10],edx          ; ★计数先减
+0063e5a1  jge 0x63e5b7                ; 末项（索引==新计数）→ 直接返 1
+0063e5a3  mov edx,[ecx+4]             ; 数组指针
+0063e5a7  inc eax
+0063e5a8  mov esi,[edx+eax*4]         ; tmp=array[i]
+0063e5ab  mov [edx+eax*4-4],esi       ; array[i-1]=array[i]（左移覆盖）
+0063e5af  mov edx,[ecx+0x10] / cmp eax,edx / jl 0x63e5a4  ; 循环
+0063e5b7  mov al,1 / ret 4            ; 返 1
+```
+**与 batch 466（0x58C070 全局注册表移除）逐段同构**：计数先减→末项跳过
+移动→从 idx+1 起左移覆盖→直到 i>=新计数——**Remove(索引) 是容器成员、
+0x58C070 是全局内联版（同一惯用两处编译实例）**。
+
+================================================================================
+（batch 467 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：容器族无模型（宿主类名未确认 +
+DynamicVectorClass 系列生命周期成员均未落模型）。模型价值：**虚表槽 8
+= Resize 实锤**（batch 209 推断纠正）+ 容器 Add 惯用（计数/步长/自分配
+三字段扩容判定）。本批无产品代码改动，ctest 维持 **43/43 全绿**（batch
+372 已实跑核实）。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（全段字节读完），partial 项如实标注。
