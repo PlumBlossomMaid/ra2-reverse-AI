@@ -1,0 +1,88 @@
+frontier batch 452 — 调色板文件加载 + ConvertClass 构造 0x005CB590（292B，单函数批）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（callers=4/deps=291，ranking 唯一调用者
+FUN_004f2f10/FUN_007681e0/FUN_007691e0/FUN_0076cbf0）。
+**292B 全字节读完**（= 0x124）。取证手段：disasm.py 全读 + **batch 104
+（0x72ADE0 CreateFromFile）逐段同构交叉核验 + batch 157/093/146/075/001
+已登记函数联合调用现场**。
+
+================================================================================
+0x005CB590 —— 调色板文件加载 + ConvertClass 构造（推断名，292B，ret c3 无参）
+================================================================================
+机器码（完整主结构）：
+```
+005cb590  sub esp,0x70 / push esi / mov esi,ecx（★this）
+005cb596  push 0 / call 0x7b4710               ; ★窄串族判空（新候选）
+005cb59d  test al / jne 0x5cb5f1               ; ★非空 → 失败返 0
+005cb5a1  push esi / lea ecx,[esp+0xc] / call 0x473a30
+                                               ; ★★batch 146 文件类构造器
+005cb5ab  lea ecx,[esp+8] / push 0 / call 0x473c50
+                                               ; ★★batch 075 Exists
+005cb5b6  test al / je 0x5cb5c7
+005cb5ba  lea ecx,[esp+8] / call 0x4a3890      ; ★★batch 093 LoadWholeFileEx
+005cb5c3  test eax / jne 0x5cb5f8              ; ★成功 → 解析路径
+005cb5c7  双析构（0x43AE50/0x431B80）→ 返 0
+005cb5f8  push ebx,ebp / xor esi,esi           ; ★循环索引 0
+005cb5fc  lea edx,[eax+2] / 每轮 3 字节一组:
+005cb5ff  mov cl,[edx-2] / shl cl,2            ; ★源字节0 ×4
+005cb607  mov [esp+0xc],cl / mov cl,[edx-1] / shl cl,2  ; ★源字节1 ×4
+005cb615  mov ecx,esi / and ecx,0x800000ff     ; ★★8 位回绕索引（batch 083 同款）
+005cb620  jns / dec/or 0xffffff00/inc          ; ★符号扩展修正
+005cb62a  mov bp,word[esp+0xc] / lea ecx,[ecx+ecx*2+0x886080]
+                                               ; ★★[0x886080 + idx*3]（全局调色板表）
+005cb636  inc esi / add edx,3 / mov word[ecx],bp / cmp esi,0x100
+005cb646  mov byte[ecx+2],bl / jl 0x5cb5ff     ; ★0x100 次（256 色）
+005cb648  push eax / call 0x7c8b3d             ; ★★CRT delete（batch 001）
+005cb64e  push 0x188 / call 0x7c8e17           ; ★★operator new 0x188（batch 001）
+005cb65b  test eax / je 0x5cb681
+005cb661  mov edx,[0x887308]                   ; ★全局 [0x887308]（构造参）
+005cb667  push 0 / push 1 / push edx / push 0x886080 / push 0x886080
+005cb678  mov ecx,eax / call 0x48e740          ; ★★batch 157 ConvertClass 构造器（5 参）
+005cb67d  mov esi,eax / jmp 0x5cb683           ; ★成功 → esi=新对象
+005cb681  xor esi,esi                          ; ★new 失败 → NULL
+005cb683  双析构（0x43AE50/0x431B80）→ mov eax,esi / ret
+```
+**语义（推断名）**：**调色板文件加载 + ConvertClass 构造**——窄串判空失败
+返 0 → 构造 CCFileClass（0x473A30）+ Exists（0x473C50）判存在 → LoadWholeFileEx
+（0x4A3890）读整个文件 → **256 色解析循环**：每色 3 字节源（r,g,b）各 ×4
+（shl cl,2——6 位→8 位扩展推断）写全局调色板表 `[0x886080 + idx*3]`
+（word+byte）→ delete 源数据 → `_new 0x188` → **0x48E740 ConvertClass 构造
+（5 参：0x886080 调色板×2 + [0x887308] 全局 + 1 + 0——Count/SkipBlitters）**
+→ 收尾双析构返新对象。
+★★★与 batch 104（0x72ADE0 CreateFromFile）**逐段同构**：batch 104 = CCFileClass
+构造（0x4739F0）→ 0x4A3890 → `_new 0x300` 调色板缓冲 → 清零 → 调色板扩展循环
+（0x100 次，每源字节 shl 2=×4 + 8 位回绕 and 0x800000ff + 写 word+byte）→
+`_new 0x188` → 0x48E740（收 BytePalette×2+DSurface+shadeCount+skipBlitters）
+——**本批是同一模板的姊妹实例**（文件对象构造 0x473A30 vs 0x4739F0 不同
+入口、调色板写 [0x886080] 全局表 + [0x887308] 构造参 vs batch 104 的
+[0x887310]——同族两分支：SHP 内嵌调色板 vs 独立调色板文件）。
+★原版怪癖（照抄）：① **8 位回绕索引**（and ecx,0x800000ff + jns/dec/or
+0xffffff00/inc——batch 083 同款符号扩展）；② **每源字节 ×4 扩展**（shl cl,2
+——6→8 位）；③ **写 word+byte 三字节项**（mov word[ecx],bp + byte[ecx+2],bl
+——每色 RGB 三字节）；④ **全局调色板表 [0x886080]**（idx*3 索引——256 色
+×3B=768B 表）；⑤ **0x100 次循环**（256 色硬编码）；⑥ **new 失败静默 NULL**
+（test eax/je 0x5cb681）；⑦ **5 参 ConvertClass 构造**（0x886080×2 + [0x887308]
++ 1 + 0——Count=1/SkipBlitters=0 推断）；⑧ **双析构收尾**（0x43AE50/0x431B80
+——batch 093 同款文件对象析构对）。
+★跨批次：**batch 104 0x72ADE0（CreateFromFile——本批逐段同构姊妹实例）**+
+**batch 157 0x48E740（ConvertClass 构造器——5 参调用现场）**+**batch 093
+0x4A3890（LoadWholeFileEx）+ 0x43AE50/0x431B80（双析构）**+**batch 146
+0x473A30（文件类构造器）**+**batch 075 0x473C50（Exists）**+**batch 001
+0x7C8B3D/0x7C8E17（CRT delete/new）**+**[0x887308]（batch 221/254/323 会话
+状态区全局——构造参新角色）**。
+★新登记：**全局调色板表 [0x886080]（256 色 ×3B）**；**「调色板文件加载 +
+ConvertClass 构造」惯用**（batch 104 同构姊妹实例第 2 例）；**0x7B4710（窄串
+族判空——新候选）**；[0x887308] 构造参数角色。
+⚠️ partial：宿主（0x5CBxxx 区调色板/资源类推断）、0x7B4710 精确身份（窄串
+族成员推断）、+0x886080 表宿主（全局调色板——batch 104 用局部缓冲 vs 本批
+全局表差异）、[0x887308] 构造参语义、4 个调用者分工（调色板创建场景推断）。
+
+================================================================================
+（batch 452 说明：C++ 模型决策）
+================================================================================
+本批**新增 1 行**，**不新增 C++ 模型**：宿主未确认 + 0x7B4710 未读。
+模型价值：**「调色板文件加载 + ConvertClass 构造」惯用**（batch 104 逐段同构
+姊妹——模板第 2 例实证）+ 6 个已登记函数联合调用现场 + [0x886080] 全局表
+登记。本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。
+登记一行 semantics_verified + assembly_verified_semantics_confirmed（全段
+字节读完），partial 项如实标注。
