@@ -1,0 +1,163 @@
+frontier batch 375 — 全局对象表遍历重建 0x00725C70 + 单元格 +0x11C getter 0x006D6AD0 + 逐项文件装载 0x0071DCA0（assemble_path/CCFileClass/ReadWholeFile 三调用链）（2026-10-15）
+
+口径：承接 batch 374，候选池按 unique_callers 扇入度降序取（`_pick_batch323.py`）：
+0x00725C70（287B，4 callers，deps=3132）、0x006D6AD0（28B，4 callers，deps=1970）、
+0x0071DCA0（220B，4 callers，deps=2595）。三条**全段字节读完**
+（286/28/220 与 ranking 的 body_bytes 吻合；0x725C70 以 `pop esi/pop ecx/ret`
+收尾、0x6D6AD0 后接 4 个 nop、0x71DCA0 后接 4 个 nop）。
+本批核心价值 = **0x71DCA0 一次性命中三个已登记批函数**（batch 004 的
+`assemble_path` 0x7C9FF0 五参 / batch 063 的 CCFileClass 0x4739F0 /
+batch 139 的 ReadWholeFile 0x4A3890），且其收尾双析构虚表对
+（0x7E16B0 + 0x43AE50 / 0x7E1668 + 0x431B80）与 **batch 370 的 0x679D90 完全同款**
+——把这两条「文件装载 + 临时对象析构」链路接在了一起。
+取证手段：disasm.py 直反汇编 + body 长度核对 + 三处已登记批函数调用现场 +
+跨批次虚表对拍。
+
+================================================================================
+0x00725C70 —— 全局对象表遍历重建（推断名，286B）（4 callers，全段读完；deps=3132）
+================================================================================
+机器码（要点）：
+```
+push ecx（腾局部）；mov eax,[0xB0F6A8]（★全局计数）；push esi；xor esi,esi
+test eax,eax / jle 出口
+循环 0x725C81：
+  mov eax,[0xB0F69C]（★全局数组基址）；mov ecx,[eax+esi*4]（项）
+  mov [esp+4],ecx（存局部）
+  mov edx,[ecx] / call [edx+0x44]（★虚表槽 0x44，返回 al）
+  test al,al / je 0x725D7F（不通过 → 下一个）
+  mov edx,[0xB0F698]（★全局对象）/ lea eax,[esp+4] / push eax
+  mov ecx,0xB0F698（★this = 全局对象）/ call [edx+0x10]（★虚表槽 0x10 → 索引或 -1）
+  cmp eax,-1 / je 0x725CE1
+  cmp eax,[0xB0F6A8] / jge 0x725CE1
+  dec [0xB0F6A8]（计数--）
+  cmp eax,ecx / jge 0x725C9A        ← ★跳回重试（重新调虚表槽 0x10）
+  数组前移：mov edx,[ecx+eax*4] / mov [ecx+eax*4-4],edx …… jl → jmp 0x725C9A
+  0x725CE1：push [esp+4] / mov ecx,[eax] / call [ecx+8]（★虚表槽 8）
+            test eax,eax / je 0x725D80
+            名字比较链 ×4：
+              call 0x7CAA05（每轮对同一对象取串）→ mov ecx,0x818D60 /
+              call 0x7C8AD3 → test/jne 命中
+              再 0x842D80、0x825508、0x817B90（共 4 个常量串）
+  0x725D63（命中任一）：mov byte [eax+0x90],1（★置标志）
+  0x725D6E：mov ecx,[esp+4] / test / je / mov edx,[ecx] / push 1 /
+            call [edx+0x20]（★虚表槽 0x20 带参 1 —— 自删除）
+  0x725D7F：inc esi
+  0x725D80：cmp esi,[0xB0F6A8] / jl 0x725C81
+出口：pop esi / pop ecx / ret
+```
+语义：**全局对象表遍历重建（推断名）**——按 `[0xB0F6A8]` 计数遍历 `[0xB0F69C]`
+对象数组：① 每项先过**虚表槽 0x44** 判据；② 通过后调全局对象 `[0xB0F698]` 的
+**虚表槽 0x10** 求索引，索引有效则**从数组里移除该项（元素前移 + 计数--）并跳回
+重试**（同一项被反复投喂直到返回 -1/越界）；③ 再调**虚表槽 8**，把结果串与
+**4 个常量串**（0x818D60 / 0x842D80 / 0x825508 / 0x817B90）逐一比较，命中则
+`byte [obj+0x90] = 1`；④ 最后经**虚表槽 0x20 `push 1`** 自删除。
+★原版怪癖（照抄）：① **移除后跳回重试**（`jge 0x725C9A` 跳回**虚表槽 0x10 调用
+点**而非循环头——同一项被当作新的一项重复投喂）；② **数组前移用 `inc eax` 后
+`[ecx+eax*4-4]` 的写法**（`+eax*4-4` 抵消，等价于从 idx 起逐个覆写）；③ 命中
+后**先置标志再自删除**（`+0x90` 置 1 后立刻 delete）。
+★跨批次连接：`[0xB0F69C]`/`[0xB0F6A8]`（全局数组 + 计数）与 `[0xB0F698]`
+（全局对象）为本条新登记的**全局三元组**；4 个常量串地址已登记待读
+（0x818D60 / 0x842D80 / 0x825508 / 0x817B90——⚠️ 内容未读，**不猜语义**）。
+⚠️ partial：宿主/全局对象类型、虚表槽 0x44/0x10/8/0x20 方法名、4 个常量串内容、
+`+0x90` 标志语义、"移除后重试"的业务意图。
+
+================================================================================
+0x006D6AD0 —— 单元格 +0x11C 字节 getter（推断名，28B，ret 4）（4 callers，全 0x1C=28B 读完；deps=1970）
+================================================================================
+机器码（**全 28 字节**）：
+```
+006d6ad0  mov eax, [esp+4]        ; ★栈参1 = 坐标指针
+006d6ad4  mov ecx, 0x87F7E8       ; ★MapClass::Instance（QWEN.md 实锤）
+006d6ad9  push eax
+006d6ada  call 0x565730           ; ★cell 访问器（与 0x5657A0 GetCellAt 同族）
+006d6adf  xor ecx, ecx
+006d6ae1  mov cl, byte [eax+0x11C] ; ★读 IsoCell+0x11C 字节
+006d6ae7  mov eax, ecx             ; ★**零扩展**（movzx 等价）
+006d6ae9  ret 4
+```
+语义：**单元格 +0x11C 字节 getter（推断名）**——`return (unsigned)MapCell(coords)->f_0x11C;`
+（**经 `mov cl` + `xor ecx,ecx` 构造零扩展，非 `movsx`**——与 batch 372 的
+`0x4F4CA0`、死代码区的 `movsx byte [eax+0x11B]` 形成**同族字节读的两种符号策略**，
+本条是**无符号**）。
+★跨批次连接：`IsoCell` 布局锚点群再 +1：`+0x11B`（死代码区 `movsx` 有符号读，
+见 docs/random-map/dead-code-functions.md）/ **`+0x11C`（本条，零扩展读）** /
+`+0xE4`（object 指针，多处）/ `+0xEC`/`+0xE8`（死代码判定用）。`0x565730`
+与 `0x5657A0`（GetCellAt）**相邻且同族**（同为 `MapClass::Instance` 的 cell 访问器，
+前者未被独立登记）。
+⚠️ partial：宿主无、字段 `+0x11C` 语义、`0x565730` 与 `0x5657A0` 的精确差异
+（是否越界钳制/不同寻址式）、返回值是否有符号。
+
+================================================================================
+0x0071DCA0 —— 逐项文件装载（推断名，220B）（4 callers，全 0xDC=220B 读完；deps=2595）
+================================================================================
+机器码（全 220 字节，**本批最强证据**）：
+```
+0071dca0  mov eax,[0xA8E328]      ; ★全局计数
+0071dca5  sub esp,0x26C           ; ★大帧
+push ebx/ebp/edi；xor ebx,ebx；xor edi,edi
+cmp eax,ebx / mov ebp,ecx（★this）/ jle 0x71DD72（出口）
+push esi
+0x71DCBD  mov eax,[0xA8E31C]      ; ★全局数组基址
+esi = [eax+edi*4]                 ; 项
+cmp byte [esi+0x22C],bl / je 0x71DD63    ; ★+0x22C 门控字节 == 0 → 跳过
+; ★★路径装配参数：第 5 参 = 0x7E1BC6 + this*112
+lea ecx,[ebp*8] / lea edx,[esi+0x24] / sub ecx,ebp / lea eax,[esp+0x7C]
+shl ecx,4 / add ecx,0x7E1BC6
+push ecx / push edx / push ebx / push ebx / push eax
+call 0x7C9FF0                     ; ★★batch 004 assemble_path（五参）
+add esp,0x14
+mov al,[esi+0xA8] / cmp al,bl / je 0x71DD14
+mov eax,[esi+0xA4] / test / je
+push eax / call 0x7C8B3D / add esp,4   ; ★★batch 001 operator delete（释放旧缓冲）
+0x71DD14  lea ecx,[esp+0x7C] / mov [esi+0xA4],ebx（清 +0xA4）
+push ecx / lea ecx,[esp+0x14] / mov byte [esi+0xA8],bl（清 +0xA8）
+call 0x4739F0                     ; ★★batch 063 CCFileClass 构造
+lea ecx,[esp+0x10] / call 0x4A3890 ; ★★batch 139 ReadWholeFile（读整个文件）
+lea ecx,[esp+0x68] / mov [esi+0xA4],eax   ; ★★回写新缓冲到 +0xA4
+mov dword [esp+0x10],0x7E16B0 / mov [esp+0x74],ebx
+call 0x43AE50                     ; ★★析构体 A（虚表 0x7E16B0）
+lea ecx,[esp+0x10] / mov dword [esp+0x10],0x7E1668
+call 0x431B80                     ; ★★析构体 B（虚表 0x7E1668）
+0x71DD63  mov eax,[0xA8E328] / inc edi / cmp edi,eax / jl 0x71DCBD
+出口：pop 族 / add esp,0x26C / ret   ; ★无栈参（__thiscall：ecx = this）
+```
+语义：**逐项文件装载（推断名）**——按 `[0xA8E328]` 计数遍历 `[0xA8E31C]` 对象
+数组，对每个 `+0x22C` 字节非 0（"需要装载"）的项：① 用 **`assemble_path`
+（0x7C9FF0）五参**拼出文件路径（第 5 参 = `0x7E1BC6 + this*112`——以本对象索引
+×112 为步长在 `0x7E1BC6` 基址的路径串表里选目录/模板）；② 用 **`CCFileClass` +
+`ReadWholeFile`** 把整个文件读进内存，指针**回写到项 `+0xA4`**；③ 读前**先释放
+旧缓冲**（`operator delete` 后清 `+0xA4`）并清标志 `+0xA8`；④ 收尾**双析构**
+（虚表 `0x7E16B0` → 0x43AE50；虚表 `0x7E1668` → 0x431B80）。
+★跨批次连接（**本条集中命中**）：
+- **`0x7C9FF0`（batch 004 —— `assemble_path`）**：本条为**五参调用现场**，且第 5 参
+  形态（`0x7E1BC6 + idx*112`）与 **batch 367 的 `0x6B5490`** 记录的同款写法一致
+  ——两处互为佐证。
+- **`0x4739F0`（batch 063 —— CCFileClass 构造）** + **`0x4A3890`（batch 139 ——
+  ReadWholeFile）**：构成「构造 → 读整个文件」的成对链（与 batch 370 的
+  `0x679D90` 同一条链）。
+- **`0x7C8B3D`（batch 001 —— `operator delete`）**：释放旧缓冲。
+- **双析构虚表对 `0x7E16B0`/0x43AE50 + `0x7E1668`/0x431B80 与 batch 370 的
+  `0x679D90` 完全同款**——**两条独立的「临时文件对象析构」链路同模板**，可据此
+  推断是同一个 CCFileClass 家族的两个不同用途实例。
+- 新登记全局：`[0xA8E31C]`（对象数组）/`[0xA8E328]`（计数）/`0x7E1BC6`（路径串表
+  基址）；项字段 `+0x22C`（装载门控）/`+0xA4`（缓冲指针）/`+0xA8`（标志）。
+★原版怪癖（照抄）：① **`this*112` 的步长寻址**（`lea ecx,[ebp*8]; sub ecx,ebp;
+shl ecx,4` = `this×7×16 = this×112`——编译器把 ×112 拆成乘法链）；② **门控字节
+`+0x22C` 决定是否装载**；③ **先 delete 旧缓冲再清零**（不判空直接进，靠前置
+`mov eax,[esi+0xA4] / test / je` 保护）；④ **双析构在循环体内**（每次装载都构造
++析构一对临时对象）。
+⚠️ partial：`[0xA8E31C]` 数组元素类型、`0x7E1BC6` 路径串表内容、`+0x22C`/`+0xA4`/
+`+0xA8` 语义、`0x43AE50`/`0x431B80` 析构体身份、`assemble_path` 五参的各参语义。
+
+================================================================================
+（batch 375 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x00725C70（全局对象表遍历重建 286B）——**语义依赖 4 个全局（数组/计数/对象）
+与 4 个常量串内容**，其中串内容本轮未读；重写需先补齐这些外部锚点，故不落模型。
+② 0x006D6AD0（cell +0x11C getter 28B）——一行取值，脱离 IsoCell 布局无意义；
+其价值是**登记 `+0x11C` 的零扩展读**（与 `+0x11B` 的有符号读成对）。
+③ 0x0071DCA0（逐项文件装载 220B）——**本条价值全部在调用链与布局锚点上**（三个
+已登记批函数 + 同款双析构），属"接线证据"而非可独立单测的算法切片。
+本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实；本批仅改取证
+文档与登记表）。
