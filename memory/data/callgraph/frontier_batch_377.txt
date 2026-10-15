@@ -1,0 +1,157 @@
+frontier batch 377 — 玩家槽位装配 0x005E9E70（四连映射 + GDlgSupp 槽族 + 玩家名表）+ 命令序号双向映射 0x004E5700（消息 0x147/0x150 + 0x4E50C0）（2026-10-15）
+
+口径：承接 batch 376，候选池按 unique_callers/依赖扇入度取（`_pick_batch323.py`）：
+0x005E9E70（593B，4 callers，deps=2763）、0x004E5700（507B，4 callers，deps=2748）。
+两条**全段字节读完**（593 / 507 与 ranking 的 body_bytes 吻合；0x5E9E70 以
+`add esp,0x10 / ret 4` 收尾（0x5EA0BE）、0x4E5700 以 `pop esi/pop ebx/ret` 收尾
+（0x4E58FA），后接 nop 垫到下一函数）。
+本批核心价值 = **两条都是「已登记基础设施的消费现场」**：
+- `0x5E9E70` 集中消费 **batch 364 的成果**（四套索引→ID 映射
+  `0x4E37D0`/`0x4E41D0`/`0x4E4E60`/`0x4E5940` + GDlgSupp 表区双槽
+  `[0x7E14A8]`查/`[0x7E14A0]`写 + `[0x7E1498]` + **玩家名表 `[0xA8DA90]`**）。
+- `0x4E5700` 集中消费 **batch 363/365 的成果**（GDlgSupp 槽 `[0x7E1490]` +
+  **消息 `0x147`/`0x150`** + `0x4E50C0`「同表同码初始化段」），并复现
+  **batch 376 的 `[0xA8B238]∈{3,4}` 特判**与玩家名表 `[0xA8DA90]`。
+取证手段：disasm.py 分段反汇编全读 + 多批已登记函数调用现场 + 常量/表几何核对。
+
+================================================================================
+0x005E9E70 —— 玩家槽位装配（推断名，593B，ret 4）（4 callers，全 0x251=593B 读完；deps=2763）
+================================================================================
+机器码（593 字节；入口 `ecx`=this、`edx`=寄存器参2（存 `[esp+0x18]`））：
+```
+005e9e70  sub esp,0x10 / push ebx/ebp/esi / mov ebp,edx / mov esi,ecx / push edi
+          mov ecx,ebp / [esp+0x18]=ebp
+          **四连映射（batch 364 登记的四套索引→ID 映射）**：
+            call 0x4E37D0 → edi          ; ★映射 1
+            call 0x4E41D0 → ebx          ; ★映射 2
+            call 0x4E4E60 → [esp+0x10]   ; ★映射 3
+            call 0x4E5940 → [esp+0x14]   ; ★映射 4
+005e9ea7  mov eax,[0x8316A4] / test / jl 0x5E9F6E        ; ★全局 <0 → 备用支
+          cmp ebp,eax / jne 0x5E9F6E
+          mov eax,[ebp*4 + 0xA8DA90]   ; ★★玩家名表（batch 364 同一表）
+          mov ecx,[0xAC11B4] / cmp eax,ecx / je 0x5E9EDB
+          test ebp,ebp / je 0x5E9EDB
+          cmp dword [eax+0x6B],-1 / jne 0x5E9F6E   ; ★对象 +0x6B（HouseClass 家族字段）
+005e9edb  【主路】push -3 / edx=edi / call 0x4E3F70      ; ★写四槽之一（初值 -3）
+          push -2 / edx=ebx / call 0x4E49A0             ; ★-2
+          push -2 / edx=[esp+0x10] / call 0x4E5480      ; ★-2
+          push -2 / edx=[esp+0x14] / call 0x4E5ED0      ; ★-2
+          **GDlgSupp 表槽族**：edi=[0x7E14A8] / push edi / push esi / call edi  ; ★槽 1（查）
+          ebp=[0x7E14A0] / push 0 / push eax / call ebp                        ; ★槽 2（写）
+          对 ebx / [esp+0x10] / [esp+0x14] 同样三板斧：
+            call edi（[0x7E14A8]）→ call ebp（[0x7E14A0]）→
+            ebx=[0x7E1498] / push 0 / push eax / call ebx                       ; ★槽 3
+005e9f6e  【备用支】byte [esp+0x24] 门控 → 为 0 时用 -2 重复上述四连调用
+          → 再走 GDlgSupp 三槽（[0x7E14A8]/[0x7E14A0]）
+          → mov eax,[0xA8B23C] / test / je / mov cl,byte [eax+0x3C] / test /
+            非 0 → push 0；否则 push edi（★**`[0xA8B23C]+0x3C` 标志决定第三个参数**）
+0x5EA00E  mov ecx,[0xA8B254] / mov edi,4 /
+          cmp ecx,-1 / jne → **esi = 8**（★-1 哨兵 → 8）；否则 call 0x5E6520 → esi
+          mov ecx,[0xA8B23C] / test / je /
+          mov edx,[ecx] / call [edx+0x98] / cmp eax,-1 / je / cmp eax,esi /
+          jge / mov esi,eax          ; ★虚表槽 0x98 返回值取较小者
+          cmp dword [0xA8B238],edi(4) / jne 0x5EA06D
+            成功支：call 0x77D970 / test / **and esi,0xFFFFFFFE**（★偶数化）
+                   否则 call 0x77D940 / test / **mov esi,2**
+0x5EA06D  mov ecx,[0x8316A4] / test / jne 0x5EA07D
+          cmp esi,7 / jge / **inc esi**              ; ★全局为 0 且 esi<7 → esi++
+          mov eax,[esp+0x18](=原栈参) / cmp eax,esi / jl 0x5EA089
+          cmp eax,ecx / jne 0x5EA0B7
+0x5EA089  esi=[0x7E1498] / **push 5** / push [esp+0x1c] / call esi
+          push 5 / push [esp+0x10] / call esi        ; ★**用参数 5 调槽 3**
+          cmp dword [0xA8B238],edi(4) / jne → call 0x77D970 / test / jne 0x5EA0B7
+          否则 push 5 / push ebp / call esi
+0x5EA0B7  出口：pop 族 / add esp,0x10 / ret 4
+```
+语义：**玩家槽位装配（推断名）**——`装配(this, arg)`：先对 `arg` 跑**四连映射**
+（`0x4E37D0`/`0x4E41D0`/`0x4E4E60`/`0x4E5940`，即 batch 364 登记的四套索引→ID
+映射）得到四个代数；再按 `[0x8316A4]` 与**玩家名表 `[ebp*4 + 0xA8DA90]`**
+（含 `[0xAC11B4]` 排除项与 `+0x6B != -1` 门控）判定走主路还是备用支；主路把四个
+代数**逐一写进四槽**（首槽 `-3`、其余 `-2` 初值，函数 `0x4E3F70`/`0x4E49A0`/
+`0x4E5480`/`0x4E5ED0`），随后经 **GDlgSupp 表三槽**
+（`[0x7E14A8]` 查 / `[0x7E14A0]` 写 / `[0x7E1498]` 收尾）逐个"查-写-收"；
+备用支用 `-2` 重复并多一层 `[0xA8B23C]+0x3C` 标志选择第三参数。尾段用
+`[0xA8B254]`（`-1` 哨兵 → **8**）、`[0xA8B23C]` 的**虚表槽 0x98** 取较小值、
+`[0xA8B238]==4` 特判（`0x77D970` → **`esi &= 0xFFFFFFFE` 偶数化**；否则
+`0x77D940` → **`esi = 2`**）、`[0x8316A4]==0 && esi<7 → esi++`，最后按
+`esi` 与原始参数的关系**用参数 `5` 调 `[0x7E1498]` 槽**收尾。
+★原版怪癖（照抄）：① **初值 `-3`/`-2` 混用**（第一槽 `-3`、其余 `-2`——疑似
+"未定/无效"两种哨兵的区分）；② **`esi &= 0xFFFFFFFE` 偶数化**（把索引强制成偶数
+——网络/组队编号推断）；③ **`esi` 被三处独立修正**（`8` 哨兵值 → 虚表槽 0x98
+取小 → 偶数化/置 2 → `esi<7` 时 `++`），**没有单一来源**；④ **备用支与主路
+只差初值 `-3` vs `-2`**（`[esp+0x24]` 门控切换）。
+★跨批次连接（**batch 364 的完整消费现场**）：四连映射 `0x4E37D0`/`0x4E41D0`/
+`0x4E4E60`/`0x4E5940`（batch 364 登记）+ GDlgSupp 表区双槽 `[0x7E14A8]`/`[0x7E14A0]`
+（batch 364）+ `[0x7E1498]`（batch 365 引用）+ **玩家名表 `[0xA8DA90]`**（batch 364）
++ `[0xA8B238]==4` 特判（**batch 376 同款**）+ `[0xA8B23C]`（**batch 376 同款全局**）。
+⚠️ partial：宿主类、四个代数语义（玩家编号/队伍/颜色 推断）、`+0x6B`/`+0x3C` 字段
+语义、`[0x8316A4]` 全局语义（模式开关推断）、`0x5E6520`/`0x77D940`/`0x77D970` 函数名、
+`esi` 三处修正的业务含义、"偶数化"是否即队伍编号。
+
+================================================================================
+0x004E5700 —— 命令序号双向映射（推断名，507B）（4 callers，全 0x1FB=507B 读完；deps=2748）
+================================================================================
+机器码（507 字节；入口 `ecx`=对象(ebx)、`edx`=命令 ID(esi)）：
+```
+004e5700  push ebx/esi / mov esi,edx / mov ebx,ecx
+          **第一次正向映射（8 组 cmp + 无分支兜底）**：
+            0x6A3→0 / 0x6A4→1 / 0x6A5→2 / 0x6A6→3 / 0x6A7→4 / 0x6A8→5 / 0x6AA→6
+            兜底（0x6AB 及以后）：mov eax,esi / sub eax,0x6AB / neg eax / sbb eax,eax /
+                                   and al,0xF8 / add eax,7     ; ★★无分支映射到 7
+004e577c  push edi / xor edx,edx / mov ecx,0x8B3F38
+          **表查找**：cmp dword [ecx],eax / je 命中 /
+                     add ecx,0xC（★步长 12）/ inc edx / cmp ecx,0x8B3FA4（★上界）/ jl
+          命中且 edx != -1 → lea eax,[edx+edx*2] / mov dword [eax*4 + 0x8B3F38],-1
+                              ; ★★**把匹配表项首 dword 置 -1（从表中移除）**
+004e57a9  mov edi,[0x7E1490]（★GDlgSupp 槽）/ 
+          push 0 / push 0 / push 0x147 / push esi / push ebx / call edi   ; ★**消息 0x147**
+          push 0 / push eax / push 0x150 / push esi / push ebx / call edi ; ★**消息 0x150**
+004e57c8  **第二次映射（同 8 组 cmp）**，把 esi 再映射一次
+004e583f  cmp eax,-2（★-2 哨兵）/ je 跳过写表
+          否则 lea ecx,[eax+eax*2] / mov dword [ecx*4 + 0x8B3F38],esi  ; ★回写表项
+004e584e  **第三段（esi = 0..7 反向映射回 0x6A3..）**：
+            0→0x6A3 / 1→0x6A4 / 2→0x6A5 / 3→0x6A6 / 4→0x6A7 / 5→0x6A8 / 6→0x6AA
+            兜底：sub edx,7 / neg / sbb / and edx,0xFFFFF954 / add edx,0x6AB ; ★无分支
+004e58b8  mov eax,[0xA8B238] / cmp eax,3 / je 0x4E58C7 / cmp eax,4 / jne 0x4E58DE
+0x4E58C7  【状态 3 或 4】mov eax,[esi*4 + 0xA8DA90]（★玩家名表）/ mov ecx,[0xAC11B4] /
+          cmp eax,ecx / je 0x4E58E7 / cmp dword [eax+0x6B],-1 / je 0x4E58E7
+0x4E58DE  【否则】mov ecx,ebx / call 0x4E50C0      ; ★★batch 363/365 的「同表同码初始化段」
+0x4E58E7  【名字表命中】mov ecx,ebx / call 0x4E5260
+004e58ee  inc esi / cmp esi,8 / jl 0x4E5850（★循环 8 次）/ pop esi / pop ebx / ret
+```
+语义：**命令序号双向映射（推断名）**——`映射(obj, cmdId)`：① 把命令 ID
+（`0x6A3`–`0x6AB` 号段）**正向映射**成 `0..7`（8 组 `cmp` + `sub/neg/sbb/and/add`
+**无分支兜底**到 7）；② 在 `[0x8B3F38, 0x8B3FA4)` 表（**每项 12 字节 = 9 项**）里
+线性查找该值，**命中则把表项首 dword 置 -1（移除）**；③ 经 **GDlgSupp 槽
+`[0x7E1490]`** 连发**两条消息 `0x147` 与 `0x150`**；④ 再跑一次同款映射，把结果
+（除 `-2` 哨兵外）**回写表项**；⑤ 尾段做 `0..7 → 0x6A3..0x6AB` 的**反向映射**
+（同样无分支兜底），并**循环 8 次**对每个序号按 `[0xA8B238]∈{3,4}` 走
+**玩家名表 `[esi*4 + 0xA8DA90]`** 门控（含 `[0xAC11B4]` 排除项与 `+0x6B != -1`），
+命中走 `0x4E5260`、否则走 **`0x4E50C0`**。
+★原版怪癖（照抄）：① **双向映射各写 8 组 `cmp`**（16 处展开，未用跳转表）；
+② **无分支映射兜底**（`sub/neg/sbb/and 0xF8/add 7` 与 `and 0xFFFFF954/add 0x6AB`
+——两处 `and` 掩码是 `-8`/`-684` 的补码，靠 `sbb` 造全 0/全 1 再掩码）；③
+**"先移除再回写"表项**（命中置 -1，随后按第二次映射回写——中间态表项为 -1）；
+④ **`-2` 哨兵跳过回写**；⑤ **消息 0x147/0x150 固定成对**（与 batch 365 记录
+完全一致）。
+★跨批次连接（**batch 363/365 的完整消费现场**）：**GDlgSupp 槽 `[0x7E1490]`**
+（batch 365 第五次引用）+ **消息 `0x147`/`0x150` 双发**（batch 365 同款）+
+**`0x4E50C0`**（batch 363/365 登记的「GDlgSupp 表同表同码初始化段」）+ 玩家名表
+`[0xA8DA90]`（batch 364）+ `[0xA8B238]∈{3,4}`（batch 376）+ `[0xA8B23C]`（batch 376/377）。
+新登记：**表 `[0x8B3F38, 0x8B3FA4)`（12 字节/项 × 9）**、`0x4E5260`。
+⚠️ partial：宿主类与"命令 ID"语义（`0x6A3`–`0x6AB` 号段含义）、12 字节表项结构
+（首 dword 为键值）、`0x4E5260` 函数名、循环 8 次的业务含义（8 玩家推断）、
+正向/反向映射的用途（网络同步序号 ↔ 本地标号 推断）。
+
+================================================================================
+（batch 377 说明：C++ 模型决策）
+================================================================================
+本批两函数**不新增 C++ 模型**，理由：
+① 0x005E9E70（玩家槽位装配 593B）——**语义由四连映射 + 三槽 GDlgSupp + 玩家名表
+   共同定义**（全部为已登记基础设施），且 `esi` 被三处独立修正、初值 `-3`/`-2`
+   混用，属"宿主/接口相关"逻辑；本条价值 = 把 batch 364 的成果接到**消费现场**上。
+② 0x004E5700（命令序号双向映射 507B）——**同上**：两处无分支映射 + 表增删 +
+   消息派发，全部依赖外部全局与 GDlgSupp 槽；重写需先有 GDlgSupp/名表模型。
+本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实；本批仅改
+取证文档与登记表）。登记两行全部 semantics_verified（全段字节读完 + 4 批已登记
+函数调用现场 + 表几何核对），推断名 partial 项如实标注。
