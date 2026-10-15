@@ -1,0 +1,151 @@
+frontier batch 378 — 回调式流状态机 0x007BF470（0x7B 区，706B；处理器换入换出 + 操作码 5/7/9 + 28 位位域抽取）（2026-10-15）
+
+口径：承接 batch 377，候选池按 unique_callers/依赖扇入度取（`_pick_batch323.py`）：
+0x007BF470（706B，5 callers，deps=29——**0x7B 区**，紧邻 QWEN.md 记载的 MSVC6
+静态 CRT 区 `0x7Cxxxx-0x7Dxxxx`）。**全段字节读完**（706 与 ranking 的 body_bytes
+吻合，`ret` 收尾于 0x7BF731，后接 8 个 `nop`）。本批为**单函数批**（候选池里
+≤40B 的小函数已在 batch 371-373 全数消化，余下均为 500B+）。
+本条价值 = **登记一个「自身回调指针会被临时换出再换回」的状态机形态**，并给出
+它的操作码/位域/段表三项结构证据，供后续在 0x7B 区判同族时比对。
+取证手段：disasm.py 两段反汇编全读 + 常量/结构核对（**通篇不含已登记批函数调用**，
+属新链路，故只按机器码事实登记、不复述任何跨批结论）。
+
+================================================================================
+0x007BF470 —— 回调式流状态机（推断名，706B）（5 callers，全 0x2C2=706B 读完；deps=29）
+================================================================================
+**入口契约**：`ecx`=this（存 esi）、`edx`=寄存器参2（存 `[esp+0x20]`）；无 `ret N`
+（`ret` 平返回）。
+
+机器码（要点，按结构分组）：
+
+**(1) 双门控 + 缓存载入**
+```
+007bf470  sub esp,0x1C / push ebx/ebp/esi / mov esi,ecx / [esp+0x20]=edx / xor ebx,ebx
+          mov al,byte [esi+0x84]        ; ★标志字节
+          mov ecx,[esi+0x764]           ; ★缓存指针 A
+          mov edx,[esi+0x180]           ; ★索引 B
+          test al,0x20 / je 0x7BF6C4    ; ★门 1：bit5
+          test byte [esi+0x154],4 / je 0x7BF6C4   ; ★门 2：bit2
+          mov eax,[esi+0x120] / cmp eax,ebx / jl 0x7BF6C4  ; ★门 3：非负
+          cmp edx,[esi+0x10] / jge 0x7BF4D7
+            mov ebp,[ecx+edx*4] / and ebp,0x0FFFFFFF / shl ebp,1
+            ; ★★**28 位掩码 + 左移 1**（位域抽取：取 28 位有效值后加倍）
+```
+
+**(2) 段基准更新（一大段字段搬运）**
+```
+007bf4d7  cmp edx,[esi+0x128] / jne 0x7BF5E6
+          cmp eax,[esi+0x710] / je 0x7BF5E6
+          cmp edx,[esi+0x708] / je 0x7BF509
+            mov [esi+0x6FC],ebp / mov [esi+0x700],ebx / mov [esi+0x704],ebx
+007bf509  mov eax,[esi+0x120] / mov [esi+0x710],eax      ; ★把 +0x120 抄进 +0x710
+          mov eax,[esi+0x128] / mov [esi+0x708],eax      ; ★把 +0x128 抄进 +0x708
+          mov dword [esi+0x70C],0xFFFFFFFF               ; ★-1 哨兵
+```
+
+**(3) 内循环：段内累计 + 边界时"预取"**
+```
+007bf52b  mov edi,[esi+0x128] / mov eax,[esi+0x12C] / cmp edi,eax / jg 0x7BF5C5
+007bf53f  lea ecx,[ecx + edi*4] / [esp+0x18]=ecx
+循环 0x7BF54C：
+  edx = [esi+0x10] − 1 / cmp edi,edx / jge 0x7BF56F
+    内联：取 [ecx+4]/[ecx] 两值 → **各自 `and 0x0FFFFFFF` + `shl 1`** → 相减 →
+          add ebx, 差            ; ★段内相邻差累加
+  0x7BF56F（到边界）：**预取回调**
+          lea edx,[esp+0x20] / push 0 / push edx / **push 9** / push esi /
+          call dword [esi+0x40]      ; ★★**操作码 9**（带一个出参指针）
+          add esp,0x10 / test eax,eax / jne 0x7BF5BA
+          取 [esi+0x12C] 的表项 → `and 0x0FFFFFFF` + `shl 1` → 与出参相减 → add ebx
+  0x7BF5A0：cmp ebx,[esi+0x6F8] / jge 0x7BF5BA     ; ★与阈值 +0x6F8 比
+          否则 inc edi / 指针 +4 / cmp edi,eax / jle 循环
+  0x7BF5BA：**dec edi / mov [esi+0x70C],edi**       ; ★回退一格并记账
+```
+**(4) 区间判定 + 单元命中**
+```
+007bf5c5  cmp ebx,[esi+0x6F8] / jge 0x7BF5E2
+          cmp dword [esi+0x70C],-1 / jne 0x7BF5E2
+            mov eax,[esi+0x12C] / mov [esi+0x70C],eax  ; ★-1 → 取 +0x12C 填回
+007bf5e6  cmp edx,[esi+0x708] / jl 0x7BF6C4
+          cmp edx,[esi+0x70C] / jg 0x7BF6C4          ; ★区间 [＋0x708, ＋0x70C]
+          mov eax,[esi+0x700] / mov ebx,[esi+0x6FC] / add eax,ebx / cmp ebp,eax /
+          jne 0x7BF697                               ; ★与「基准+已收」比对
+```
+
+**(5) 差值 + **处理器换入/换出****
+```
+007bf614  edx=[esi+0x10]−1 / cmp edx / jge 0x7BF62C
+            edi = [ecx+edx*4+4] & 0x0FFFFFFF << 1 / sub edi,ebp
+          0x7BF62C（到边界）：**push 0 / push &var / push 9 / push esi / call [esi+0x40]**
+                               （★第二次操作码 9）
+007bf64a  test edi,edi / jle 0x7BF697
+007bf64e  mov eax,[esi+0x40]
+          cmp eax, 0x7BF3A0 / je 0x7BF663          ; ★★**判断当前处理器是否已是 0x7BF3A0**
+          否则：push ebp / push 0 / **push 7** / push esi / call eax   ; ★**操作码 7**
+007bf663  edx=[esi+0x704] + [esi+0x6F4]
+          push edi / push edx / **push 5** / push esi / call [esi+0x40]  ; ★**操作码 5**
+          test eax,eax / je 0x7BF68D
+          非 0 → **mov eax,0xFFFFFFFC / ret**（★返回 -4）
+007bf68D  add [esi+0x700],edi                    ; ★累计已收
+007bf697  eax=[esi+0x6FC] + [esi+0x700] / cmp ebp,eax / jge 0x7BF6C4
+          sub ebp,eax / byte [esp+0x13]=1 / mov [esi+0x704],ebp
+          **mov eax,[esi+0x40] / [esp+0x28]=eax / mov dword [esi+0x40],0x7BF3A0**
+          ; ★★**把自身处理器指针换入 0x7BF3A0**（保存原值到 [esp+0x28]）
+```
+
+**(6) 段表查询 + 收尾还原**
+```
+007bf6c4  test edx,edx / je 0x7BF6FD
+          ax = word [esi+0x714] / test / jle /
+          test byte [esi+0x716],3 / je /
+          edi=[esi+0x71C] / 循环 ecx=0..ax-1：
+            bx = word [edi] / cmp edx,bx / je 0x7BF6FD / inc ecx / edi += 4
+          ; ★**4 字节步进的段表，word 键比对**
+007bf6fd  test byte [esp+0x24],0x20 / jne 0x7BF710
+            mov ecx,[esi+0x164] / mov [esi+0x168],ecx   ; ★+0x164 → +0x168 抄写
+007bf710  mov edx,[esp+0x24] / mov ecx,esi / **call 0x7BF740**  ; ★同区子函数
+007bf71b  cl=[esp+0x13] / test / je 0x7BF72A
+            mov edx,[esp+0x28] / **mov [esi+0x40],edx**      ; ★★**换回原处理器**
+007bf72a  出口：pop edi/esi/ebp/ebx / add esp,0x1C / ret
+```
+
+**语义（推断名）**：**回调式流状态机**——`推进(this, arg)`：三条门控
+（`[+0x84]` bit5 / `[+0x154]` bit2 / `[+0x120]` 非负）通过后，按索引
+`[+0x180]` 从缓存 `[+0x764]` 取**28 位位域值并左移 1**（`and 0x0FFFFFFF; shl 1`），
+用它更新段基准（`[+0x6FC]/[+0x700]/[+0x704]`，并把 `[+0x120]`→`[+0x710]`、
+`[+0x128]`→`[+0x708]`、`[+0x70C] = -1`）；随后在区间 `[+0x708, +0x70C]` 内
+**累加相邻位域差**（每项同样 `and 0x0FFFFFFF; shl 1`），越界时**经 `[esi+0x40]`
+以操作码 9 预取**下一个值续算；当累计量越过阈值 `[+0x6F8]` 时，用
+**操作码 7** 提交基准、**操作码 5** 提交差值段（失败**返回 `0xFFFFFFFC`**），
+并**把自身处理器指针 `[esi+0x40]` 临时换成 `0x7BF3A0`**（保存原值），最后经
+**4 字节步进段表**（`[+0x71C]`，键 `word[+0x714]`）查表、抄 `[+0x164]`→`[+0x168]`、
+调用同区 `0x7BF740`，并在标志位置位时**把处理器换回原值**。
+★原版怪癖（照抄）：① **自身回调指针被换出再换回**（`[esi+0x40]`：存原值到
+`[esp+0x28]` → 写 `0x7BF3A0` → 收尾按 `[esp+0x13]` 标志还原——**重入保护/两阶段
+处理的实现方式**，且**还原与否取决于中途置位的栈标志**）；② **28 位掩码 + 左移 1**
+（`and 0x0FFFFFFF; shl 1` 出现 **6 处**——同一"取 28 位值加倍"惯用法反复内联）；
+③ **操作码固定 5/7/9**（未用跳转表，且 `5` 是"提交差值"、`7` 是"提交基准"、
+`9` 是"预取"——**5 出现在两处**）；④ **失败返回 `0xFFFFFFFC`（-4）**
+（非 0/1，而是 -4 哨兵）；⑤ **`0x7BF3A0` 自比较**（`cmp [esi+0x40],0x7BF3A0 / je`
+跳过操作码 7——**避免在已换入状态下重复提交**）。
+★**未确认（严守纪律，不作断言）**：本函数**通篇不含任何已登记批函数的调用**
+（无 `MapClass`/`Randomizer`/`GDlgSupp`/CRT 已登记项），属**全新链路**；
+其"流/位域"形态**暗示压缩或位平面解码**，但**本批不宣称**（既无表结构证实，
+也无与 `code/rewrite/map/` 的 LCW/LZO 参考实现对照）——**留待后续批次**。
+⚠️ partial：函数精确名与宿主类、`[esi+0x40]` 回调的**真实目标**（0x7BF3A0 是否即
+本函数的另一入口/被 0x7BF740 替换）、操作码 5/7/9 各参语义（`push 0`/出参指针）、
+`[+0x6F4]/[+0x6F8]/[+0x6FC]/[+0x700]/[+0x704]/[+0x708]/[+0x70C]/[+0x710]/
+[+0x714]/[+0x716]/[+0x71C]` 字段簇语义、`[+0x84]`/`[+0x154]` 门控位含义、
+`0x7BF740`（同区子函数）身份、"段表"`[+0x71C]` 的键值域。
+
+================================================================================
+（batch 378 说明：C++ 模型决策）
+================================================================================
+本批为**单函数批**，**不新增 C++ 模型**：
+0x007BF470（回调式流状态机 706B）——**其语义完全建立在未登记的 0x7BF3A0/0x7BF740
+与 `[esi+0x40]` 回调协议之上**，且字段簇（+0x6F4..+0x71C）语义未定；在
+`0x7BF740` 与 `0x7BF3A0` 落地前**不具备可独立单测的输入输出切片**，故按纪律
+**只登记机器码事实、不落模型、不宣称压缩语义**。
+本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实；本批仅改
+取证文档与登记表）。登记一行记 semantics_verified +
+assembly_verified_semantics_confirmed（全段字节读完 + 常量/结构核对），
+**推断名与 11 项 partial 如实标注**。
