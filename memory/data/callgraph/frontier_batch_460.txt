@@ -1,0 +1,72 @@
+frontier batch 460 — 等距坐标变换 0x006D62E0（137B，单函数批）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（callers=4/deps=222，ranking 唯一调用者
+FUN_0058b820/FUN_0068ad70/PreviewClass::DrawMap/PreviewClass::GeneratePreviewImage）。
+**137B 全字节读完**（= 0x89）。取证手段：disasm.py 全读 + **batch 236/262
+（0x6D2140/0x6D2790 坐标变换域）交叉核验 + PreviewClass（RMG 预览域）
+调用者域**。
+
+================================================================================
+0x006D62E0 —— 等距坐标变换（推断名，137B，ret 0x10 = 4 栈参）
+================================================================================
+机器码（完整主结构）：
+```
+006d62e0  push esi / mov esi,[esp+8]           ; ★栈参1 = A
+006d62e5  mov ecx,[esp+0x10]                  ; ★栈参3 = 输出1 指针
+006d62e9  push edi / lea eax,[esi+esi*2]      ; eax = A×3
+006d62ed  mov edi,[esp+0x10]                  ; ★栈参2 = B
+006d62f1  lea eax,[eax+eax*4]                 ; eax = A×15
+006d62f4  shl eax,2 / cdq / sub eax,edx / sar eax,1   ; ★(A×60)÷2 = A×30（符号修正）
+006d62fc  mov [ecx],eax                       ; ★输出1 = A×30
+006d62fe  lea eax,[esi+esi*2] / mov esi,[esp+0x18]    ; ★栈参4 = 输出2 指针
+006d6305  lea eax,[eax+eax*4] / shl eax,1 / cdq / sub eax,edx / sar eax,1
+                                               ; ★(A×30)÷2 = A×15
+006d630f  mov [esi],eax                        ; ★输出2 = A×15
+006d6311  mov eax,edi / shl eax,4 / sub eax,edi       ; eax = B×15
+006d6318  neg eax / shl eax,2 / cdq / sub eax,edx / sar eax,1   ; ★−B×60÷2 = −B×30
+006d6324  add edx,[ecx] / mov [ecx],edx        ; ★输出1 += −B×30 → (A−B)×30
+006d6326  lea eax,[edi+edi*2] / lea eax,[eax+eax*4] / shl eax,1
+006d6331  cdq / sub eax,edx / sar eax,1        ; ★B×30÷2 = B×15
+006d6338  add edx,[esi] / mov [esi],edx        ; ★输出2 += B×15 → (A+B)×15
+006d633c  mov eax,[ecx] / cdq / and edx,0xff / add eax,edx / sar eax,8
+                                               ; ★输出1 = 输出1 >> 8（符号感知，batch 262 同款）
+006d634c  mov eax,[esi] / cdq / and edx,0xff / add eax,edx / sar eax,8
+                                               ; ★输出2 = 输出2 >> 8
+006d635c  mov eax,[ecx] / add eax,0x3c00       ; ★输出1 += 0x3C00（=60×256 中心偏移）
+006d6366  ret 0x10                             ; ★4 栈参
+```
+**语义（推断名）**：**等距坐标变换（双输入 → 双输出定点换算）**——ret 0x10
+= 4 栈参（A/B 输入 + 输出1/输出2 指针）：**输出1 = ((A−B)×30 + 0x3C00)>>8**、
+**输出2 = (A+B)×15>>8**。lea 链手写乘 15/30（×3×5 组合）+ cdq 符号修正 +
+sar 8 定点（÷256）——**等距投影坐标换算**：屏幕 x = (格x − 格y) × 半宽、
+屏幕 y = (格x + 格y) × 半高（0x3C00 = 60×256 = 中心偏移——地图中心平移）。
+★调用者域实锤：**PreviewClass::DrawMap / GeneratePreviewImage（ranking 带名
+——RMG 预览图绘制，RandMap.img 预览域）**——等距坐标变换被预览渲染消费
+（格坐标 → 预览图屏幕坐标推断）。
+★原版怪癖（照抄）：① **lea 链手写乘 15/30**（[esi+esi*2]×3 + [eax+eax*4]×5
+= ×15，再 shl 2/shl 1 = ×60/×30——编译器对常量的 lea 展开，无 imul）；②
+**cdq/sub/sar 符号修正**（有符号除法——负坐标正确向下取整）；③ **sar 8 定点**
+（÷256——格→像素比例推断，batch 262 主循环同款 [0x87F8DC]<<0xB 定点族）；
+④ **0x3C00 中心偏移**（=60×256——地图中心平移到正区）；⑤ **×15 vs ×30
+不对称**（输出1 用 30（×2）、输出2 用 15——等距投影半宽/半高比例推断）；
+⑥ **ret 0x10 4 栈参**（双输入双输出——无 this 依赖纯函数推断）。
+★跨批次：**batch 236/262 0x6D2140/0x6D2790（坐标变换域——[0x887324] 全局
+坐标对象族，本批纯函数版）**+**batch 262 [0x87F8DC]<<0xB（定点换算同族——
+MapRect×2048 vs 本批 ×256）**+**PreviewClass（RMG 预览——QWEN.md RandMap.img
+预览图）**+0x58B820/0x68AD70（预览/渲染域调用者）。
+★新登记：**0x3C00 常量（=60×256 等距中心偏移）**；**「等距坐标变换」惯用**
+（(A−B)×30>>8 + (A+B)×15>>8——预览渲染定点换算模板）；**lea 链乘 15/30 +
+cdq 符号修正惯用**。
+⚠️ partial：宿主（等距投影类推断——0x6D2xxx 坐标变换域）、输入 A/B 语义
+（格坐标推断）、输出语义（预览图屏幕坐标推断）、四个调用者分工（预览绘制
+/坐标换算场景推断）。
+
+================================================================================
+（batch 460 说明：C++ 模型决策）
+================================================================================
+本批**新增 1 行**，**不新增 C++ 模型**：宿主未确认 + 输入语义推断。
+模型价值：**「等距坐标变换」惯用**（定点换算模板——(A−B)×30>>8 + 0x3C00
+中心偏移，可复用）+ PreviewClass 预览域调用者 + lea 链乘惯用。本批无产品
+代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（全段字节读完），
+partial 项如实标注。
