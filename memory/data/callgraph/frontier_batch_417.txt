@@ -1,0 +1,66 @@
+frontier batch 417 — RawFileClass::GetFileSize 0x0065D0D0（118B，单函数批）（2026-10-15）
+
+口径：候选**只从 picker 未登记池取**（带名，callers=4/deps=773）。
+**118B 全字节读完**（= 0x76）。取证手段：disasm.py 全读 + **IAT 槽比对 +
+YRpp FileClass 签名形态核验**。
+
+================================================================================
+0x0065D0D0 —— RawFileClass::GetFileSize（带名，118B，ret c3 = __thiscall）
+================================================================================
+机器码（要点）：
+```
+0065d0d0  push esi / mov esi,ecx（this）/ push edi / xor edi,edi
+          mov eax,[esi+0x10]（★+0x10 = 尺寸缓存）
+          cmp eax,-1 / jne 0x65d143（★缓存命中 → 直接返回 eax）
+          mov eax,[esi] / call [eax+0x18]（★vtbl[+0x18] = IsOpen?）→ test al / je 0x65d11c
+          ; —— 已打开路径：
+0065d0e7  mov ecx,[esi+0x14]（★+0x14 = 句柄）
+          push edi（=0）/ push ecx → call [0x7e1120]（★IAT 槽，GetFileSize 推断）→ mov edi,eax
+          cmp edi,-1 / jne 0x65d139（◆GetFileSize 成功 → 跳过重开）
+          mov edx,[esi+0x18]（★+0x18 = 文件名指针）→ push edx / push 0
+          call [0x7e1200]（★IAT 槽，CreateFile 推断）→ push eax / mov ecx,esi
+          call [ebx+0x40]（★vtbl[+0x40] = 设句柄）→◆失败重开路径
+0065d11c  ; —— 未打开路径：
+          mov eax,[esi] / push 1 / mov ecx,esi / call [eax+0x1c]（★vtbl[+0x1C] = Open(1)）
+          test eax / je 0x65d139（◆打开失败 → edi 保持 0）
+          call [edx+0x2c]（★vtbl[+0x2C] = Seek）→ mov edi,eax（◆seek 结果 = 尺寸）
+          call [eax+0x34]（★vtbl[+0x34] = 另一调用，返回值弃）
+0065d139  mov ecx,[esi+0xc]（★+0xC = 尺寸基准偏移）
+          mov eax,edi / sub eax,ecx（★结果 = seek/GetFileSize - +0xC）
+          mov [esi+0x10],eax（★缓存尺寸）
+0065d143  pop edi / pop esi / ret（★返回 eax = 尺寸）
+```
+**语义（带名）**：**RawFileClass::GetFileSize()**——返回文件大小：`+0x10` 缓存
+非 -1 直接返回；已打开 → **IAT GetFileSize(handle,0)**（失败 -1 时 CreateFile
+重开 + vtbl[+0x40] 设句柄）；未打开 → **Open(1) → Seek → vtbl[+0x34]**；最终
+**`尺寸 - +0xC` 基准偏移**后写回缓存返回。
+★原版怪癖（照抄）：① **缓存优先**（+0x10 非 -1 直接返回，不重取——"打开后
+尺寸不变"假设）；② **尺寸 - +0xC 基准偏移**（文件内容尺寸 = 物理尺寸减头部
+偏移推断——mix/打包文件场景）；③ **GetFileSize 失败 → 静默 CreateFile 重开**
+（失败不报错，重开后再走 0x65d139 汇总）；④ 未打开路径 Seek 结果即当尺寸
+（vtbl[+0x34] 返回值**丢弃**——可能恢复原位置）；⑤ IAT 槽 **0x7E1120/
+0x7E1200**（GetFileSize/CreateFile 推断——batch 365/399 IAT thunk 同机制）；
+⑥ 打开失败 edi 保持 0 → 尺寸 = -0xC（**负值静默缓存**）；⑦ 返回 eax 缓存值
+（0x65d143 处 eax 仍是 +0x10——缓存路径无需重新载入）。
+★跨批次（同族连接）：**batch 365/399 IAT 槽族**（0x7E1544 ntohl / 0x7E1530
+tick——本批 0x7E1120/0x7E1200 同 0x7E1xxx IAT 区）；**RawFileClass 文件族**
+（batch 405 CCFileClass::Seek 为同文件类的另一成员——picker 后续候选）；
+vtbl 槽 +0x18/+0x1C/+0x2C/+0x34/+0x40（文件类虚表族）。
+★新登记：**RawFileClass [+0x10]（尺寸缓存）/ [+0xC]（尺寸基准偏移）/ [+0x14]
+（句柄）/ [+0x18]（文件名）**；IAT 槽 **[0x7E1120]（GetFileSize 推断）/ [0x7E1200]
+（CreateFile 推断）**；vtbl 槽 **[+0x18]（IsOpen）/ [+0x1C]（Open）/ [+0x2C]
+（Seek）/ [+0x34] / [+0x40]（设句柄）**；**「缓存优先 + 尺寸减基准 + 失败静默
+重开」文件尺寸惯用**。
+⚠️ partial：0x7E1120/0x7E1200 API 名推断（未用 _read_iat 补证）、+0xC 基准偏移
+业务语义（mix 头推断）、vtbl[+0x34] 语义、vtbl[+0x18] IsOpen 确认、
+4 个调用者分工。
+
+================================================================================
+（batch 417 说明：C++ 模型决策）
+================================================================================
+本批**新增 1 行**，**不新增 C++ 模型**：两个 IAT API 名未补证 + 文件类布局未
+全读。模型价值：**IAT 槽族新成员**（0x7E1120/0x7E1200）+ RawFileClass 尺寸
+缓存惯用（对全量重写的 FileClass 族是基础）。本批无产品代码改动，ctest 维持
+**43/43 全绿**（batch 372 已实跑核实）。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（全段字节读完 + IAT 机制核验），partial
+项如实标注。
