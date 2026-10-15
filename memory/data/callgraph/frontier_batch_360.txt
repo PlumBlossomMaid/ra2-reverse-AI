@@ -1,0 +1,84 @@
+frontier batch 360 — 条件 strncpy 0x00686700（_strncpy 调用现场 + Init random map 链）+ 768B 整拷 0x006260D0（rep movsd 0xC0）+ RandMap.Sed 相等判定 0x0069AE70（stricmp 调用现场 + 串实锤）（2026-10-15）
+
+口径：承接 batch 359，候选池按 unique_callers 扇入度降序取 callers=4 高 deps
+组：0x00686700（43B，5 refs/4 callers，deps=3470）、0x006260D0（26B，6
+refs/4 callers，deps=3001）、0x0069AE70（26B，8 refs/4 callers，deps=2842）。
+三函数均全反汇编读完（0x00686700 尾 0x686728 ret 4 / 0x006260D0 尾 0x6260E7
+ret 4 / 0x0069AE70 尾 0x69AE89 ret——body 与 ranking 吻合，43/26/26B）。
+YRpp/已登记交叉验证：**0x00686700 的转发目标 0x7C91D0 = batch 003 已登记
+_strncpy（crt_runtime_verified，含 REIMPL 0x7C91D0_REIMPL strncpy_legacy）**，
+且 caller FUN_00599650 = QWEN.md 实锤 Init random map（0x59B650 区? 实为
+0x599650 主流程 Init random map 上游——callers 全 RMG 链）；**0x0069AE70 的
+转发目标 0x7C8D20 = batch 001 已登记 Case-insensitive byte-string comparison
+（stricmp）**，且比较目标串 **0x82BC30 = "RandMap.Sed"（_read_str2.py 实测
+实锤——QWEN.md 的 .sed 种子文件链）**。取证手段：disasm.py 直反汇编 +
+_read_str2.py 实测串 + 2 个已登记批函数调用现场 + QWEN.md RMG 链实锤。
+
+================================================================================
+0x00686700 —— 条件 strncpy 到 this+0x125C（推断名，43B）（4 callers：FUN_00596300、FUN_00599650、FUN_005adf20、FUN_005ae100——全 RMG/0x59 链，全 0x2B=43B 读完；deps=3470）
+================================================================================
+机器码（全 0x2B 主结构）：mov eax,[esp+4]（★栈参1=源串）→ test eax,eax/je
+0x686727（★空源 → 跳过）→ push 0x104（★长度 0x104=260）→ push eax（★源）→
+lea eax,[esi+0x125C]（★dst = this+0x125C）/push eax → call 0x7C91D0（★★已登记
+——batch 003 _strncpy！）→ add esp,0xC（★3 栈参）→ mov byte[esi+0x135F],0（★
+清 this+0x135F）→ 0x686727: pop esi/ret 4。语义：**条件 strncpy 到
+this+0x125C（推断名）**——栈参1 源串非空时，把源拷到 this+0x125C（长度上限
+0x104），并清 this+0x135F；源空则跳过（不动目标）。★原版怪癖（照抄）：① 空
+源跳过（test eax/je——不置空目标，保持旧值）；② 定长 0x104（260B 上限——
+_strncpy 的 n）；③ 拷贝后清标志字节（this+0x135F——伴随状态位）；④ 转发
+0x7C91D0（batch 003 _strncpy 三栈参契约）。★跨批次连接：**0x7C91D0（batch
+003——_strncpy，crt_runtime_verified + REIMPL strncpy_legacy，本条=调用现
+场）**+**FUN_00599650（Init random map 相关 0x59 链——QWEN.md RMG 主干）**+
+[+0x125C]/[+0x135F]（★字段——260B 串缓冲 + 伴随标志推断）。⚠️ partial：函数
+精确名（条件 strncpy 推断）、宿主类（0x59 链 RMG 对象推断）、+0x125C 串内容
+（地图名/路径推断）、+0x135F 标志语义。
+
+================================================================================
+0x006260D0 —— 768B 结构整拷（推断名：rep movsd 0xC0，self 检查，26B）（4 callers：FUN_0052ba60、FUN_005349c0、FUN_0068c3b0、FUN_0068c500，全 0x1A=26B 读完；deps=3001）
+================================================================================
+机器码（全 0x1A 主结构）：push esi/mov esi,[esp+8]（★栈参1=源指针）→ mov
+eax,ecx（★this）→ cmp eax,esi/je 0x6260E6（★this==源 → 跳过——self 检查）→
+push edi/mov ecx,0xC0（★0xC0 dwords）→ mov edi,eax（★dst=this）→ rep movsd
+（★★0xC0×4 = 768 字节整拷）→ pop edi → 0x6260E6: pop esi/ret 4。语义：**768B
+结构整拷（推断名）**——this != 源时把源 768B（0xC0 dwords）整块拷到 this；
+相等则跳过（self-copy 防护）。★原版怪癖（照抄）：① rep movsd 0xC0（768B——
+192 float / 96 dword 结构推断）；② self 检查跳过（cmp/je——防自拷）；③ 无逐
+字段处理（整块拷贝——POD 结构）。★跨批次连接：**0x5AE610（batch 353——
+Matrix3D 拷贝 48B rep movsd，本条=同族大尺寸版 768B）**+callers 0x52/0x53/
+0x68 区（FUN_0052ba60 选关邻区 + FUN_0068c3b0 DoWin 邻区推断）。⚠️ partial：
+函数精确名（768B 整拷推断）、宿主结构（192 float / 96 dword 推断）、768B 内容
+（大配置/场景快照推断）。
+
+================================================================================
+0x0069AE70 —— RandMap.Sed 相等判定（推断名：stricmp + 串实锤，26B）（4 callers：FUN_005dc350、FUN_005dd8a0、FUN_005e74e0、FUN_00795cd0，全 0x1A=26B 读完；deps=2842）
+================================================================================
+机器码（全 0x1A 主结构）：add ecx,0x6A8（★this+0x6A8 串字段）→ push 0x82BC30
+（★★全局串 = "RandMap.Sed"——_read_str2.py 实测！）→ push ecx（★this+0x6A8）
+→ call 0x7C8D20（★★已登记——batch 001 stricmp case-insensitive！）→ add
+esp,8 → neg eax/sbb eax,eax/inc eax（★==0 → 1，否则 0）→ ret。语义：
+**RandMap.Sed 相等判定（推断名）**——this+0x6A8 串与全局 "RandMap.Sed"
+（0x82BC30 实锤）做不分大小写比较，相等返 1。★原版怪癖（照抄）：① 不分大小
+写（0x7C8D20 stricmp——batch 001 实锤）；② 比较目标 "RandMap.Sed"
+（0x82BC30 串实测——QWEN.md .sed 种子文件链）；③ 相等→1 惯用（neg/sbb/inc
+——stricmp==0 映射为 1）；④ this+0x6A8（串字段——路径/文件名推断）。
+★跨批次连接：**0x7C8D20（batch 001——stricmp，本条=调用现场）**+**"RandMap.Sed"
+（0x82BC30 串实锤——QWEN.md 种子文件链：输入 .sed = [RandomMap] INI 17 键）**
++[+0x6A8]（★串字段）。⚠️ partial：函数精确名（RandMap.Sed 相等判定推断）、
+宿主类（0x5D 区——串/路径工具推断）、this+0x6A8 语义（当前文件名字段推断）、
+用途（种子文件检测推断）。
+
+================================================================================
+（batch 360 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x00686700（条件 strncpy 43B）推断名——本条价值 = **batch 003 _strncpy 调
+   用现场 + Init random map 链（caller 0x599650 系）+ 空源跳过怪癖**——RMG
+   字符串配置写入立案时闭合。
+② 0x006260D0（768B 整拷 26B）推断名——本条价值 = **rep movsd 大尺寸整拷 +
+   self 检查模式（batch 353 的 48B 版大尺寸变体）**——POD 整拷家族闭合。
+③ 0x0069AE70（RandMap.Sed 判定 26B）推断名——本条价值 = **batch 001 stricmp
+   调用现场 + "RandMap.Sed" 串实锤（_read_str2.py）+ QWEN.md 种子文件链呼
+   应**——RMG 种子文件检测链立案时闭合。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部 semantics_verified
+（三函数全段反汇编读完 + 2 个已登记批函数调用现场 + 串实测 + QWEN.md 链核对），
+推断名 partial 项如实标注。
