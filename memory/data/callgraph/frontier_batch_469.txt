@@ -1,0 +1,122 @@
+frontier batch 469 — DynamicVectorClass::SetCapacity 0x0050EA90（176B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=200/
+body=176B，ranking 名 FUN_0050ea90，unique_callers FUN_005054b0（10 处）/
+FUN_00506ef0/FUN_0067b550/**HouseClass::AI_BaseConstructionUpdate**（带名——
+AI 基地建造队列场景））。
+**176B 全字节读完**（= 0xB0，0x50EA90-0x50EB3D ret 8；邻接 0x50EB40 =
+FindItemIndex 类遍历函数、0x50EB70 = InsertItem/AddItem 类扩容函数——
+同族容器成员）。取证手段：disasm.py 全读 + **YRpp ArrayClasses.h 逐行对照**
++ 被调全登记交叉验证。
+
+================================================================================
+0x0050EA90 —— DynamicVectorClass<int 系>::SetCapacity（176B，ret 8 = 2 栈参）
+================================================================================
+机器码（完整，176B 整数）：
+```
+0050ea90  push ebx / push ebp
+0050ea92  mov ebp,[esp+0xc]        ; ebp = 栈参 1（capacity）
+0050ea96  push esi / push edi
+0050ea9a  mov esi,ecx              ; esi = this
+0050ea9c  test ebp,ebp / je 0x50eb1a  ; ★capacity==0 → 0x50EB1A
+0050ea9e  mov ebx,[esp+0x18]       ; ebx = 栈参 2（pMem 外部数组）
+0050eaa2  mov byte[esi+0xc],0      ; ★IsInitialized(+0xC) = false
+0050eaa6  test ebx,ebx
+0050eaa8  jne 0x50eabe             ; pMem 非空 → 直接接管
+0050eaaa  lea eax,[ebp*4] / push eax
+0050eab2  call 0x7c8e17            ; ★operator_new(capacity*4)（batch 001 = GameCreateArray）
+0050eab7  add esp,4
+0050eaba  mov edi,eax              ; edi = 新数组
+0050eabc  jmp 0x50eac0
+0050eabe  mov edi,ebx              ; edi = pMem
+0050eac0  test edi,edi
+0050eac2  mov byte[esi+0xc],1      ; ★IsInitialized = true（先置后验）
+0050eac6  je 0x50eb37              ; 数组空 → 返 0
+0050eac8  mov eax,[esi+4]          ; eax = 旧 Items
+0050eacb  test eax,eax
+0050eacd  je 0x50eb08              ; 无旧 Items → 跳过拷贝
+0050eacf  mov ecx,[esi+8]          ; ecx = 旧 Capacity
+0050ead2  cmp ebp,ecx
+0050ead4  jge 0x50ead8             ; capacity>=旧容量 → n=旧容量
+0050ead6  mov ecx,ebp              ; 否则 n=capacity（★min(capacity,旧Capacity)）
+0050ead8  xor eax,eax / test ecx,ecx
+0050eadc  jle 0x50eaee             ; n<=0 → 跳过
+0050eade  mov edx,[esi+4]          ; 拷贝循环：pMem[i]=Items[i]
+0050eae1  inc eax / cmp eax,ecx
+0050eae4  mov edx,[edx+eax*4-4]
+0050eae8  mov [edi+eax*4-4],edx
+0050eaec  jl 0x50eade
+0050eaee  mov al,[esi+0xd]         ; al = 旧 IsAllocated(+0xD)
+0050eaf1  test al,al
+0050eaf3  je 0x50eb08              ; 非自分配 → 不删旧
+0050eaf5  mov eax,[esi+4] / push eax
+0050eaf9  call 0x7c8b3d            ; ★operator_delete(旧Items)（batch 001 = GameDeleteArray）
+0050eafe  add esp,4
+0050eb01  mov [esi+4],0            ; Items = nullptr
+0050eb08  xor eax,eax
+0050eb0a  mov [esi+4],edi          ; Items = 新数组
+0050eb0d  test ebx,ebx
+0050eb0f  sete al                  ; al = (pMem==nullptr) = bMustAllocate
+0050eb12  mov [esi+8],ebp          ; Capacity = capacity
+0050eb15  mov [esi+0xd],al         ; IsAllocated = bMustAllocate
+0050eb18  jmp 0x50eb21
+0050eb1a  mov edx,[esi]            ; ★★capacity==0 分支
+0050eb1c  mov ecx,esi
+0050eb1e  call [edx+0xc]           ; ★★虚表槽 0xC = Clear()（YRpp 实锤）
+0050eb21  mov eax,[esi+8]          ; ★★Count 截断（DynamicVectorClass 专属）
+0050eb24  mov ecx,[esi+0x10]       ; ecx = Count(+0x10)
+0050eb27  cmp eax,ecx
+0050eb29  jge 0x50eb2e             ; Capacity>=Count → 跳过
+0050eb2b  mov [esi+0x10],eax       ; Count = Capacity
+0050eb2e  pop edi / pop esi / pop ebp
+0050eb31  mov al,1 / pop ebx / ret 8  ; 返 1
+0050eb37  pop edi / pop esi / pop ebp
+0050eb3a  xor al,al / pop ebx / ret 8  ; 返 0（数组空）
+```
+**语义（YRpp ArrayClasses.h:231-237 逐行实锤）**：**DynamicVectorClass<int 系>::
+SetCapacity(int capacity, T* pMem=nullptr)**——capacity==0 时经虚表槽 0xC
+（= Clear()）清空容器；否则：IsInitialized=false → pMem 空则 operator_new
+(capacity*4)（GameCreateArray）→ IsInitialized=true → 数组空返 0 → 旧 Items
+存在时拷贝 min(capacity,旧Capacity) 个元素 → 旧 IsAllocated 时
+operator_delete(旧Items)+Items=nullptr → Items=新数组 → Capacity=capacity →
+IsAllocated=(pMem==nullptr)（外部数组接管标记非自分配）→ Count 截断
+（if Capacity<Count then Count=Capacity）→ 返 1。
+★原版怪癖（照抄）：① **capacity==0 走 Clear() 虚调用**而非直接清字段——
+Clear 同为虚函数，实际经 DynamicVectorClass::Clear 重写（清 Items/Capacity/
+Count=0）；② **IsInitialized 先置 1 再验数组空**——operator_new 失败时
+返 0 但 IsInitialized 已为 true（标志与结果不同步，原版小瑕疵照抄）；
+③ **拷贝循环 i 从 1 起、[edi+eax*4-4] 索引**——与 batch 466/467 同款
+循环惯用；④ **旧 IsAllocated 才删旧数组**——pMem 接管的旧外部数组不删
+（所有权转移语义）；⑤ **IsAllocated=(pMem==nullptr)**——接管外部数组时
+标记非自分配，析构/再 SetCapacity 不删外部数组；⑥ **Count 截断仅存在于
+DynamicVectorClass 层**（基类 VectorClass::SetCapacity 无此逻辑，YRpp
+override 结构 = 调基类 + 截断 + 返回）；⑦ 返回语义：成功 1 / 数组空 0。
+★跨批次闭合：**batch 467 虚表槽 8 命名纠正**——0x63E540 AddItem 满时
+`push 0/push 容量+步长/call [vt+8]` 在 YRpp 里对应 **SetCapacity(capacity+
+increment, nullptr)**（ArrayClasses.h:278-280 AddItem），batch 467 推断名
+"Resize"规范名应为 **SetCapacity(int capacity, T* pMem=nullptr)**（同一槽
+位、同一虚调用现场，仅命名不同）；**虚表槽序实锤**（YRpp ArrayClasses.h:28-135
+声明序）：槽 0x00 ~VectorClass / 槽 0x04 operator== / 槽 0x08 SetCapacity /
+槽 0x0C **Clear**（本批 capacity==0 现场）/ 槽 0x10 FindItemIndex / 槽 0x14
+GetItemIndex / 槽 0x18 GetItem；**容器族布局再互证**（+4 Items/+8 Capacity/
++0xC IsInitialized/+0xD IsAllocated/+0x10 Count/+0x14 CapacityIncrement——
+batch 467 同表、本批 +0xC 先 0 后 1 / +0xD 自分配 / +0x10 截断全部落位）；
+被调全登记（operator_new 0x7C8E17 batch 001 / operator_delete 0x7C8B3D
+batch 001；虚表槽 0xC 间接调用不可静态解析）。**callers 含带名
+HouseClass::AI_BaseConstructionUpdate**——AI 基地建造队列场景，容器
+SetCapacity 是基地 AI 扩建建造列表的实际入口。
+⚠️ partial：T 的确切类型（int/指针 4 字节推断）、邻接 0x50EB40/0x50EB70
+身份（FindItemIndex/InsertItem 类推断未完整登记）、FUN_005054b0（10 处
+调用者）身份未登记。
+
+================================================================================
+（batch 469 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（容器族已有 DynamicVectorClass 布局
+互证 + YRpp 源码权威，但 T 类型与调用者未确认；ValueType 定后与 batch 467
+AddItem 合并实现可复用同一容器模型）。模型价值：**容器族 SetCapacity 成员
+闭合**（batch 467 AddItem 的扩容出口即本批）+ 虚表槽 0xC=Clear 实锤 +
+槽 8 命名纠正（Resize→SetCapacity）+ AI 基地建造队列场景实证。本批无产品
+代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（全段字节读完 +
+YRpp 源码逐行对照 + 容器布局互证），partial 项如实标注。
