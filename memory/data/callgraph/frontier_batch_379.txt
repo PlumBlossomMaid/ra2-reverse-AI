@@ -1,0 +1,125 @@
+frontier batch 379 — 链式哈希表插入（装载因子触发扩容）0x0060F760（566B，deps=2819）（2026-10-15）
+
+口径：承接 batch 378，候选池按 unique_callers/依赖扇入度取（`_pick_batch323.py`）：
+0x0060F760（566B，4 callers，deps=2819）。**全段字节读完**（566 与 ranking 的
+body_bytes 吻合；两处 `ret 8` 出口分别位于 0x60F979 与 0x60F993，后接 10 个 `nop`
+垫到 0x60F9A0 的下一函数——后者以 `sub esp,0xAB0` 另起）。**本批为单函数批**
+（候选池里 ≤40B 的小函数已在 batch 371-373 全数消化，余下候选均为 500B+，
+本批挑出这一条**结构完整、可自证**的容器实现）。
+本条价值 = **实锤一个「链式哈希表 + 装载因子触发扩容」的容器实现**，并把
+`0x7C8E17`（batch 001 已登记的 `operator new`）接为它的分配点。
+取证手段：disasm.py 两段反汇编全读 + 常量/表几何核对 + 1 处已登记调用现场。
+
+================================================================================
+0x0060F760 —— 链式哈希表插入（推断名，566B，ret 8）（4 callers，全 0x236=566B 读完；deps=2819）
+================================================================================
+**入口契约**：2 个栈参（`ret 8`）；`[esp+0x214]`/`[esp+0x218]` 为其**压栈后的位置**
+（函数开段 `sub esp,0x208` + 4 个 push = 0x218 位移，故 栈参1 在 `[esp+0x214]`、
+栈参2 在 `[esp+0x218]`）。
+
+机器码（要点，按阶段分组）：
+
+**(1) 查表：哈希 → 掩码 → 链遍历**
+```
+0060f760  mov eax,[0xAC1B04]（★全局元素数）/ sub esp,0x208 / push ebx/ebp / xor ebx,ebx /
+          xor ebp,ebp / cmp eax,ebx / je 0x60F7B3（★表空 → 直接走插入）
+0060f775  lea ecx,[esp+0x214] / call dword [0xAC1B18]     ; ★★**哈希函数是全局函数指针**
+0060f782  mov ecx,[0xAC1B0C]（★桶位宽）/ mov edx,1 / **shl edx,cl / dec edx** /
+          **and edx,eax**                                  ; ★★**掩码 = (1<<位宽) − 1**
+0060f792  mov eax,[0xAC1B00]（★桶数组基址）/ mov eax,[eax + edx*4]   ; ★取链头
+0060f79a  cmp eax,ebx / je 0x60F7B3
+链遍历 0x60F7A5：cmp dword [eax], ecx（★**比较 key = 节点首 dword 与 栈参1**）/
+                je 0x60F7EE（命中）/
+                mov eax,[eax+0x204]（★**next 指针在 +0x204**）/ cmp eax,ebx / jne 0x60F7A5
+```
+
+**(2) 未命中 → 建对象 + 头插**
+```
+0060f7b3  mov edx,[0x89C4D0] / push edi / mov ecx,0x80 / xor eax,eax /
+          lea edi,[esp+0x14] / **push 4** / **rep stosd**（★清 0x80 个 dword = 512B 栈缓冲）/
+          mov dword [esp+0x80],0xB / mov [esp+0x7C],edx /
+          **call 0x7C8E17**（★★**batch 001 已登记的 operator new**）/ add esp,4 /
+          test eax,eax / je 0x60F80C（失败 → xor eax,eax）/
+          mov ecx,eax / **call 0x7B66C0**（★构造/初始化）/ jmp 0x60F80E
+0060f7ee  【链上命中】cmp eax,ebx / je / mov ecx,[esp+0x218]（★栈参2）/
+          **mov [eax+0x24],ecx**（★写节点 +0x24）/ mov eax,1 / ret 8
+0060f80e  push esi / **push 0x208**（★520B）/ mov [esp+0x54],eax / [esp+0x58]=ebx /
+          [esp+0x74]=ebx / **mov dword [esp+0xA8],0xFFFFFFFF**（★-1 哨兵）/
+          **call 0x7C8E17**（★★第二次 operator new）/ mov esi,eax / add esp,4 /
+          test / je → xor esi,esi / 否则 lea ecx,[esi+4] / **call 0x623340**（★子构造）
+0060f845  mov eax,[esp+0x218]（★栈参2）/ lea ecx,[esp+0x14] / push ecx /
+          lea ecx,[esi+4] / **mov [esi],eax**（★节点首 dword = **key**）/
+          **call 0x623610**（★把栈缓冲灌进节点）
+0060f85b  lea ecx,[esp+0x218] / **mov [esi+0x204],ebx（next 先置 0）** /
+          call dword [0xAC1B18]（★再算一次哈希）
+0060f86e  同 (1) 的掩码计算 →
+          mov eax,[ecx+edx*4]（★取当前链头）/ **mov [ecx+edx*4],esi（★★头插：桶指向新节点）** /
+          cmp eax,ebx / je 0x60F894 / **mov [esi+0x204],eax（★新节点 next = 旧头）**
+0060f894  mov eax,[0xAC1B04] / mov edx,[0xAC1B08]（★容量）/ **inc eax** / mov [0xAC1B04],eax
+          （★元素数++）→ **fild qword [esp+0xC] / fidiv dword [esp+0xC]（= 元素数 / 容量）** /
+          **fcomp qword [0xAC1B28]（★装载因子阈值）**
+          fnstsw ax / test ah,1 / jne 0x60F8D5
+          → **mov ecx,0xAC1B00 / call 0x624FC0**（★★**越阈 → 扩容/重哈希**）
+```
+
+**(3) 插入后再查一遍 + 收尾**
+```
+0060f8d5  cmp dword [0xAC1B04],ebx / je 0x60F924
+          （重做 (1) 的哈希 + 掩码 + 链遍历，命中 → 0x60F91D）
+0060f91d  cmp eax,ebx / je / **lea ebp,[eax+4]**（★把命中节点 +4 存进 ebp）
+0060f924  清理栈缓冲：mov eax,[esp+0x38] / test / je →
+          **push eax / call 0x7C8B3D**（★★**batch 001 operator delete**）/ add esp,4 /
+          mov [esp+0x38],ebx
+0060f939  mov eax,[esp+0x44] / test / je → 循环 **push eax / lea ecx,[esp+0x14] /
+          call 0x623460**（★逐项释放子对象，直到空）
+0060f953  mov ecx,[esp+0x4C] / test ecx,ecx / je 0x60F97C
+          → **push 1 / call 0x624480**（★带参 1 的收尾调用）
+          mov eax,1 / mov ecx,[esp+0x218] / **mov [ebp+0x20],ecx（★写 +0x20）** / ret 8
+0060f97c  mov edx,[esp+0x218] / mov eax,1 / **mov [ebp+0x20],edx** / ret 8
+```
+
+**语义（推断名）**：**链式哈希表插入**——`插入(this, key, value)`：① 若表非空，
+经**全局哈希函数指针 `[0xAC1B18]`** 求哈希，用 **`(1 << [0xAC1B0C]) − 1` 掩码**定位桶
+（`[0xAC1B00]`），沿 **`+0x204` 链**比对节点首 dword（**key**）；② **命中**则把
+栈参2 写进节点 `+0x24` 并返回 1；③ **未命中**则 `operator new`（`0x7C8E17`）建节点
+（`0x7B66C0` 构造 + `0x623340` 子构造 + `0x623610` 灌栈缓冲），**头插到桶**
+（`[esi+0x204] = 旧头`），**元素数 `[0xAC1B04]++`**，再算
+**装载因子 = 元素数 / 容量（`fidiv [0xAC1B08]`）**并与**阈值 `[0xAC1B28]`** 比较，
+**越阈即调 `0x624FC0` 扩容/重哈希**；④ 插入后**再查一遍**拿到节点（`lea ebp,[eax+4]`），
+清理栈缓冲（`operator delete` + `0x623460` 逐项释放 + `0x624480`），
+最后把栈参2 写进节点 `+0x20` 返回 1。
+★原版怪癖（照抄）：① **哈希函数与扩容函数都经全局指针/全局参数驱动**
+（`[0xAC1B18]` 调用、`[0xAC1B0C]` 位宽、`[0xAC1B08]` 容量、`[0xAC1B28]` 阈值、
+`[0xAC1B00]` 桶数组、`[0xAC1B04]` 元素数——**同一个容器有 6 个全局变量**，
+而非成员字段）；② **插入后再查一遍**（明明刚插入，却又走一次哈希+链遍历——
+**为拿到节点偏移 +0x20**，而非用插入时的 `esi` 直写）；③ **两处写目标不同**
+（命中路径写 `+0x24`、插入路径写 `+0x20`——**同名操作两个字段**）；④ **装载因子用
+`fild qword`（把 32 位计数当 64 位读）+ `fidiv dword`（32 位容量）**——x87 混宽
+（与 QWEN.md 记载的 `fild qword` 无符号读怪癖同源）；⑤ **栈缓冲 0x80 dword 清零 +
+`push 0x208` 两段式分配**（先 512B 栈暂存再 520B 堆节点）。
+★跨批次连接：**`0x7C8E17`（batch 001 已登记 `operator new`，本条出现 2 次）** +
+**`0x7C8B3D`（batch 001 `operator delete`，收尾释放栈缓冲）**——两者与
+batch 370/375/376 的「构造-释放成对」模式一致。新登记全局簇：
+`[0xAC1B00]`（桶数组）/`[0xAC1B04]`（元素数）/`[0xAC1B08]`（容量）/
+`[0xAC1B0C]`（桶位宽）/`[0xAC1B18]`（**哈希函数指针**）/`[0xAC1B28]`（装载因子阈值）+
+`[0x89C4D0]`；节点布局 **`+0x00` key / `+0x20`（插入路径写）/ `+0x24`（命中路径写）/
+`+0x204` next**；helper `0x7B66C0`/`0x623340`/`0x623610`/`0x623460`/`0x624480`/
+`0x624FC0`（扩容）。
+⚠️ partial：宿主类与容器类型名、`+0x20` 与 `+0x24` 两个写目标的语义差异、
+`[0x89C4D0]` 全局语义、6 个全局变量与容器的绑定方式（是否模板静态成员）、
+`0x623340`/`0x623610`/`0x623460`/`0x624480`/`0x624FC0`/`0x7B66C0` 各函数名、
+`0x208` 与 `0x80 dword` 两种分配尺寸的用途分工。
+
+================================================================================
+（batch 379 说明：C++ 模型决策）
+================================================================================
+本批为**单函数批**，**不新增 C++ 模型**：
+0x0060F760（链式哈希表插入 566B）——**其哈希函数、桶位宽、容量、阈值、桶数组
+全部经 6 个全局变量间接绑定**（`[0xAC1B18]` 还是**函数指针**），且节点 `+0x20`/`+0x24`
+两个写目标语义未定；在容器全局的归属（模板静态成员 vs 单例）确认前，
+**无法构造与原版等价的独立模型**（照抄式重写需要这些全局的确切绑定）。
+故按纪律**只登记机器码事实与布局锚点、不落模型**。
+本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实；本批仅改
+取证文档与登记表）。登记一行记 semantics_verified +
+assembly_verified_semantics_confirmed（全段字节读完 + 2 处已登记调用现场 +
+表几何核对），partial 项如实标注。
