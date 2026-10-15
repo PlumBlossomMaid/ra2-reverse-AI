@@ -1,0 +1,87 @@
+frontier batch 473 — InfantryTypeClass 按名工厂 0x00524CB0（131B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=191/
+body=131B，ranking 名 FUN_00524cb0，unique_callers FUN_00511850/
+FUN_0067bac0/FUN_0067bb10/**RulesClass::Read_InfantryTypes**（带名——读
+步兵类型 INI 时按名建对象，场景实锤））。
+**131B 全字节读完**（= 0x83，0x524CB0-0x524D32 ret）。取证手段：disasm.py
+全读 + **yrpp_symbols.tsv:527 构造器实锤** + **batch 338 同表对交叉** +
+**batch 341 AircraftTypeClass 变体逐字节同构对拍**。
+
+================================================================================
+0x00524CB0 —— InfantryTypeClass 按名工厂（131B，ret 无栈参）
+================================================================================
+机器码（完整，131B 整数）：
+```
+00524cb0  push esi / push edi
+00524cb2  mov edi, ecx              ; ★edi = 名字指针（ecx 传入）
+00524cb4  push edi / push 0x817474
+00524cba  call 0x7c8d20             ; ★★strcmpi(名字,"<none>")（batch 001/093 实锤）
+00524cbf  add esp,8 / test eax
+00524cc4  je 0x524d2e               ; ★== "<none>" → 返 0
+00524cc6  push edi / push 0x817694
+00524ccc  call 0x7c8d20             ; ★★strcmpi(名字,"none")
+00524cd1  add esp,8 / test eax
+00524cd6  je 0x524d2e               ; ★== "none" → 返 0
+00524cd8  mov eax,[0xa8e358]        ; ★★全局计数（batch 338 已登记表对）
+00524cdd  xor esi,esi
+00524cdf  test eax / jle 0x524d06   ; ★空表 → 直接创建分支
+00524ce3  mov eax,[0xa8e34c]        ; ★★全局表基址（batch 338 已登记表对）
+00524ce8  push edi
+00524ce9  mov ecx,[eax+esi*4]       ; ecx = 表[i]
+00524cec  add ecx,0x24              ; ★item->+0x24 名字字段（家族一致）
+00524cef  push ecx
+00524cf0  call 0x7c8d20             ; ★strcmpi(表[i]+0x24, 名字)
+00524cf5  add esp,8 / test eax
+00524cfa  je 0x524d22               ; ★命中 → 返表项
+00524cfc  mov eax,[0xa8e358] / inc esi
+00524d02  cmp esi,eax / jl 0x524ce3 ; ★线性扫
+00524d06  push 0xed0                ; ★★0xED0 = 3792B = InfantryTypeClass 大小
+00524d0b  call 0x7c8e17             ; ★★operator_new(0xED0)（batch 001 实锤）
+00524d10  add esp,4 / test eax
+00524d15  je 0x524d2e               ; ★分配失败 → 返 0
+00524d17  push edi
+00524d18  mov ecx, eax
+00524d1a  call 0x5236a0             ; ★★★InfantryTypeClass::InfantryTypeClass（yrpp_symbols.tsv:527 实锤！）
+00524d1f  pop edi / pop esi / ret   ; ★返新对象
+00524d22  mov edx,[0xa8e34c]
+00524d29  mov eax,[edx+esi*4]       ; ★命中返表项
+00524d2c  pop edi / pop esi / ret
+00524d2e  pop edi / xor eax,eax / pop esi / ret  ; ★失败返 0
+```
+**语义（构造器实锤 + 家族同构）**：**InfantryTypeClass 按名工厂**——双哨兵
+串排除（"<none>" 0x817474 / "none" 0x817694 返 0）→ 线性扫 [0xA8E34C]
+表（计数 [0xA8E358]，表项 +0x24 名字字段 strcmpi）→ 命中返既有表项 →
+未命中 operator_new(0xED0) + **0x5236A0（InfantryTypeClass 构造函数，
+yrpp_symbols.tsv:527 实锤）** 惰性创建返回。
+★原版怪癖（照抄）：① **双哨兵串分层**（"<none>"/"none" 分居 .data 两处，
+空名不入表）；② **未命中才分配、分配失败静默返 0**；③ **表项名字字段
+固定 +0x24**（家族布局一致性）；④ **线性扫无优化**（每次从 0 起全扫）；
+⑤ **0xED0=3792B 硬编码对象大小**；⑥ 命中返项指针/未中返新对象（创建/
+查询双用）。
+★跨批次闭合：**构造器 0x5236A0 = InfantryTypeClass::InfantryTypeClass
+（yrpp_symbols.tsv:527 实锤——★★工厂身份坐实）**；**与 batch 341
+0x41CEF0（AircraftTypeClass 变体）逐字节同构**（仅表地址 [0xA8E34C] vs
+[0xA8B21C]、大小 0xED0 vs 0xE10、构造器 0x5236A0 vs 0x41C8B0 三差——
+同模板再实例）；**表对 [0xA8E34C]/[0xA8E358] = batch 338 已登记（0x523C90
+纯查找返索引——本批同表"取或建"角色，查找/创建双用闭环）**；**「按名工厂」
+模板家族再添实例**（batch 239 0x428B80 / 242 0x4653C0 / 245 0x75E3B0 /
+280 0x7480D0 / 340 0x644890 / 341 0x41CEF0 / 430 0x71E2A0 + 本批）；
+**strcmpi 0x7C8D20（batch 001/093）+ operator_new 0x7C8E17（batch 001）
+×3 消费点**；**callers 含带名 RulesClass::Read_InfantryTypes**——读
+[InfantryTypes] INI 时按名建 InfantryTypeClass 对象（0x67BAC0/0x67BB10
+疑即 RulesClass 读族/析构区，batch 472 同 callers 重叠）。
+⚠️ partial：0xED0 与 YRpp InfantryTypeClass 大小精确对齐未逐字段算、
+0x5236A0 内注册动作未读（0x427530 同款自带入表推断）、表项 +0x24 字段
+精确语义。
+
+================================================================================
+（batch 473 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（InfantryTypeClass 构造器 0x5236A0
+未读 + 对象布局未确认）。模型价值：**InfantryTypeClass 注册表取或建工厂
+登记（构造器 YRpp 实锤）**+「按名工厂」模板第 8 实例 + batch 338 表对
+双用闭环。本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实
+跑核实）。登记一行 semantics_verified + assembly_verified_semantics_
+confirmed（全段字节读完 + 构造器符号实锤 + 家族同构 + 表对交叉），partial
+项如实标注。
