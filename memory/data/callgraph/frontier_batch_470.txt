@@ -1,0 +1,72 @@
+frontier batch 470 — TeamTypeClass::GetWaypoint 0x006F18A0（57B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=193/
+body=57B，ranking 名 **TeamTypeClass::GetWaypoint**（带名），unique_callers
+FUN_0065d8e0/FUN_0065ec30/FUN_006eaa90/**TeamClass::WhatAmI**（带名））。
+**57B 全字节读完**（= 0x39，0x6F18A0-0x6F18D8 ret 4；邻接 0x6F18E0 = 孪生
+GetTransportWaypoint 同构）。取证手段：disasm.py 全读 + **YRpp TeamTypeClass.h:51
+三证实锤** + 被调 0x68BCC0 已登记交叉验证。
+
+================================================================================
+0x006F18A0 —— TeamTypeClass::GetWaypoint（ranking 带名 + YRpp 实锤，57B，ret 4）
+================================================================================
+机器码（完整，57B 整数）：
+```
+006f18a0  push ecx
+006f18a1  mov eax,[ecx+0xd4]        ; ★eax = this->+0xD4（Waypoint 字段）
+006f18a7  cmp eax,-1
+006f18aa  jne 0x6f18bc              ; != -1 → 走 GetWaypointCoords
+006f18ac  mov eax,[esp+8]           ; eax = 栈参 1（buffer 输出）
+006f18b0  mov ecx,[0xb0e9c8]        ; ★★[0xB0E9C8] = 未确认全局（默认坐标推断）
+006f18b6  mov [eax],ecx             ; *buffer = [0xB0E9C8]
+006f18b8  pop ecx
+006f18b9  ret 4
+006f18bc  mov ecx,[0xa8b230]        ; ★★ecx = [0xA8B230] = ScenarioClass::Instance
+006f18c2  lea edx,[esp]             ; edx = &栈上局部 CellStruct
+006f18c6  push eax                  ; 栈参 2 = Waypoint 索引（this+0xD4）
+006f18c7  push edx                  ; 栈参 1 = &局部（dest）
+006f18c8  call 0x68bcc0             ; ★★ScenarioClass::GetWaypointCoords(&局部, Waypoint)
+006f18cd  mov ecx,[eax]             ; ecx = *返回值（dest 指向的坐标）
+006f18cf  mov eax,[esp+8]           ; eax = 栈参 1（调用者 buffer）
+006f18d3  mov [eax],ecx             ; *buffer = 坐标
+006f18d5  pop ecx
+006f18d6  ret 4
+```
+**语义（YRpp TeamTypeClass.h:51 三证实锤）**：**TeamTypeClass::GetWaypoint
+(CellStruct* buffer) const**（`{ JMP_THIS(0x6F18A0); }`）——读取 TeamType
+Script 任务的目标 waypoint 坐标写入调用者 buffer：
+- **this->+0xD4（Waypoint 字段）== -1**（未设 waypoint）→ `*buffer = [0xB0E9C8]`
+  （未确认全局——默认坐标/哨兵值推断）；
+- **!= -1** → `*buffer = *ScenarioClass::GetWaypointCoords(&局部, Waypoint)`
+  ——先经 0x68BCC0（batch 087 已登记：`this->Waypoints[idx]` @ +0x632 702 项表）
+  写入栈上局部 CellStruct，再把 [eax]（*返回值）拷入调用者 buffer；
+- 返回 buffer（eax = 栈参 1 原值）。
+★原版怪癖（照抄）：① **Waypoint==-1 不查表直接写默认**（[0xB0E9C8] 全局；
+未确认语义，标注 pending）；② **先写栈上局部再拷 buffer**（GetWaypointCoords
+写 dest 到局部，返回值 [eax] 再拷——C++ 层 `*buffer = *GetWaypointCoords(...)`
+惯用现场，多一层拷贝）；③ **call 0x68BCC0 隐式读 [0xA8B230]=ScenarioClass::
+Instance**（批量实锤全局，非本函数显式取参）；④ 返回 buffer 指针与参数相同
+（STL 式返回约定）。
+★跨批次闭合：**0x68BCC0（batch 087 已登记 ScenarioClass::GetWaypointCoords）
+= 本批被调（现场 push 顺序 [esp+4]=dest/[esp+8]=idx 与 batch 087 的数组
+读取逐栈吻合）**；**[0xA8B230]=ScenarioClass::Instance（batch 087/329/330
+等多批实锤）**；**孪生 0x6F18E0=GetTransportWaypoint（YRpp TeamTypeClass.h:52
+`CellStruct* GetTransportWaypoint(CellStruct *buffer) const { JMP_THIS(0x6F18E0); }`
+——同构 57B，读 **+0xD8=TransportWaypoint 字段**，字段排布互证：
+Waypoint@+0xD4 / TransportWaypoint@+0xD8 相邻，YRpp 字段表 `int Waypoint;
+int TransportWaypoint;` 落位吻合）**；**TeamTypeClass 家族（带名：
+CreateTeam 0x6F09C0/GetGroup 0x6F1870/GetHouse 0x6F2070/FindFirstInstance
+0x6F1F70 等已登记或候选）**。
+⚠️ partial：**[0xB0E9C8] 全局语义未确认**（默认坐标推断——栈读 [esp+8]
+buffer、写 4 字节，疑似预定义坐标或哨兵）；this+0xD4 精确字段名（Waypoint
+推断——YRpp 字段表顺序 + 孪生 +0xD8 互证）；调用者姓名的 AI 任务语义未追。
+
+================================================================================
+（batch 470 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（AI/TeamType 任务系统依赖链未读 + 调用
+者语义未确认）。模型价值：**TeamTypeClass 任务 waypoint 访问器闭合**（带名
+实锤 + 0x68BCC0 调用现场 + 孪生字段排布互证）+ [0xB0E9C8] 新全局候选登记。
+本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。登记
+一行 semantics_verified + assembly_verified_semantics_confirmed（全段字节
+读完 + YRpp 三证 + 已登记被调交叉），partial 项如实标注。
