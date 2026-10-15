@@ -1,0 +1,80 @@
+frontier batch 424 — 玩家选项轮询同步函数 0x005EBC00（464B，单函数批）（2026-10-15）
+
+口径：候选**只从 picker 未登记池取**（callers=4/deps=763）。
+**464B 全字节读完**（= 0x1D0）。取证手段：disasm.py 全读 + **batch 364/365
+GDlgSupp 表槽 + 四套索引→ID 映射交叉核验**。
+
+================================================================================
+0x005EBC00 —— 玩家选项轮询同步函数（推断名，464B，ret c3 = __fastcall 双寄存器参）
+================================================================================
+机器码（要点）：
+```
+005ebc00  sub esp,0x1c / cmp edx,8 / push ebx,ebp
+          mov ebx,ecx（★参1 = 玩家对象/表指针）→ mov ebp,edx（★参2 = 起始 index）
+          jge 0x5ebdca（★index>=8 → 直接返回）
+          mov esi,[0x7e14a8]（★GDlgSupp 查槽——batch 364/365 实锤同槽）
+          mov edi,[0x7e1498]（★GDlgSupp 槽——batch 365 同表）
+          ; —— 主循环 index 0..7：
+005ebc20  cmp ebp,[0x8316a4] / je 0x5ebdbe（★跳过槽位全局——"本玩家"推断）
+          test ebp / jne → 常量表分支; else 0x6d2/0x411
+          cmp 1 → 0x6d3/0x412；cmp 2 → 0x6d4/0x413；... cmp 7 → 0x6d9/0x418
+          默认（越界）→ -1/-1
+005ebcf4  ; —— 5 连调索引→ID 映射（★batch 364 四套 + 第 5 套）：
+          mov ecx,ebp / call 0x4e3320 → [esp+0x18]
+          mov ecx,ebp / call 0x4e37d0 → [esp+0x1c]（batch 364 实锤）
+          mov ecx,ebp / call 0x4e41d0 → [esp+0x20]（batch 364 实锤）
+          mov ecx,ebp / call 0x4e4e60 → [esp+0x24]（batch 364 实锤）
+          mov ecx,ebp / call 0x4e5940 → [esp+0x28]（batch 364 实锤）
+          ; —— GDlgSupp 查槽 ×5（call esi，参 = [esp+X] + ebx）：
+          push [esp+0x10] / push ebx → call esi → [esp+0x10]
+          push [esp+0x14] / push ebx → call esi → [esp+0x14]
+          push [esp+0x18] / push ebx → call esi → [esp+0x18]
+          push [esp+0x1c] / push ebx → call esi → [esp+0x1c]
+          push [esp+0x20] / push ebx → call esi → [esp+0x20]
+          push [esp+0x24] / push ebx → call esi → [esp+0x24]
+          push [esp+0x28] / push ebx → call esi → [esp+0x28]
+          ; —— GDlgSupp 回写 ×7（call edi，参 = 0 + 槽值）：
+          push 0 / push [esp+0x10] → call edi
+          ... ×7（0x10..0x28 各槽）
+005ebdbe  inc ebp / cmp ebp,8 / jl 0x5ebc20（循环）
+005ebdca  pop 族 / add esp,0x1c / ret
+```
+**语义（推断名）**：**玩家选项轮询同步函数**——遍历玩家槽位 index（跳过
+`[0x8316A4]` 记录的"本玩家"槽推断）：每槽取 **{0x6D2..0x6D9}（=1746..1753）×
+{0x411..0x418}（=1041..1048）双常量对**（index 与 8 组常量一一映射），经
+**5 连调索引→ID 映射函数**（0x4E3320/0x4E37D0/0x4E41D0/0x4E4E60/0x4E5940）
+算 5 个映射 ID，**`[0x7E14A8]`（GDlgSupp 查槽）读 7 组玩家设置**、**`[0x7E1498]`
+（GDlgSupp 槽）回写 7 组**——玩家选项与对话框控件的双向同步。
+★原版怪癖（照抄）：① **跳过槽位全局 `[0x8316A4]`**（!= 才处理——"本玩家不动"
+推断）；② **8 组 0x6D2..0x6D9 / 0x411..0x418 常量硬编码**（往来 ID 对，逐 index
+cmp 分支表——无移位索引计算，编译器对 8 组常量展开成 if 链）；③ 越界（index
+不在 0..7）→ **-1/-1**（哨兵对传给槽调用）；④ **5 连调映射函数**（batch 364
+的 4 套 + 0x4E3320 共 5 套——同函数族第 5 成员）；⑤ GDlgSupp 查槽**返回值回写
+栈位**（`mov [esp+0x10],eax` 原地更新——每槽值被下一槽调用读取，串行依赖）；
+⑥ 回写用 **7 组 push 0 + 槽值**（零参前缀 + 值——`[0x7E1498]` 槽的双参数
+写约定）；⑦ 查 7 组 / 映 5 组 / 写 7 组（**数量不对称**——5 个映射 ID 中
+前 2 个直接取自常量对，后 5 个取自映射）；⑧ **双寄存器参**（ecx=玩家表/
+edx=起始 index——支持从任意 index 续跑）。
+★跨批次（同族连接）：**batch 364 玩家名表三操作同域**（0x5EDDE0 同用 4 套
+索引→ID 映射 0x4E37D0/0x4E41D0/0x4E4E60/0x4E5940——本批与其共享映射函数族
+且多出 0x4E3320，**两函数为同一玩家选项系统的两个视图**）；**batch 365
+GDlgSupp 消息派发同区**（[0x7E14A8]/[0x7E1498] 槽——batch 365 实锤
+"[0x7E14A8]/[0x7E1498]/[0x7E14A4] 三槽"同表）；[0x7E1490] 槽族
+（batch 365 GDlgSupp 表）。
+★新登记：全局 **[0x8316A4]（跳过槽位）**；**常量对 {0x6D2..0x6D9}×
+{0x411..0x418}（ID 配对表）**；**「5 连调映射 + GDlgSupp 查/写双向同步」惯用**；
+0x4E3320（5 号映射函数，batch 364 四套外的第 5 成员）；[0x7E14A8]/[0x7E1498]
+槽在玩家选项域的用途（batch 365 消息派发外的第二消费场景）。
+⚠️ partial：0x4E3320 映射语义（未读）、[0x8316A4] 语义（本玩家推断）、常量对
+具体含义（控件 ID 推断）、0x7E14A8/0x7E1498 槽指函数（batch 365 已登记但未
+读全）、宿主类、4 个调用者分工。
+
+================================================================================
+（batch 424 说明：C++ 模型决策）
+================================================================================
+本批**新增 1 行**，**不新增 C++ 模型**：5 个映射函数 + 2 个槽函数未读全。
+模型价值：**batch 364/365 玩家选项系统的最强串接**（映射函数族 4→5 成员 +
+GDlgSupp 槽第二消费场景——两批次双向互证）+「查/写双向同步」惯用。本批无产品
+代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（全段字节读完 +
+跨批核验），partial 项如实标注。
