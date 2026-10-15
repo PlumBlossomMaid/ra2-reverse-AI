@@ -1,0 +1,77 @@
+frontier batch 402 — AircraftTrackerClass::Add 0x004134A0（236B，单函数批）（2026-10-15）
+
+口径：候选**只从 picker 未登记池取**（带名，callers=4/deps=1898）。
+**236B 全字节读完**（= 0xEC）。取证手段：disasm.py 全读 + **batch 400 vtbl[+0x1B8]
+跨类对照**（本函数与 BuildingLight 共用同一虚表槽）。
+
+================================================================================
+0x004134A0 —— AircraftTrackerClass::Add（带名，236B，ret 4 = thiscall + 1 栈参）
+================================================================================
+机器码（要点）：
+```
+004134a0  push ecx / push ebx / mov ebx,[esp+0xc]（★参1 = aircraft 对象）
+          push ebp / mov ebp,ecx（this = tracker）
+          mov eax,[ebx] / lea ecx,[esp+8] / push ecx（&coord）/ mov ecx,ebx
+          call [eax+0x1b8]              ; ★vtbl[+0x1B8]——★batch 400 BuildingLight 同槽！
+          mov esi,[eax]                 ; 返回对象首字段（格坐标分量）
+          mov edx,[ebx] / push esi / mov ecx,ebx / mov [esp+0x18],esi
+          call [edx+0x2f8]              ; vtbl[+0x2F8]（另一查询，消耗前述值）
+          test si,si / jge 0x4134d3 / xor esi,esi（★负 → 0）/ jmp / movsx esi,si（★16 位符号扩展）
+          mov ax,[esp+0x16] / push edi / test ax,ax / jge / xor edi,edi / movsx edi,ax（★同款钳制）
+          ; —— 网格桶定位（20×20）：
+          mov ecx,[0x87f914]（★地图宽）→ mov eax,0x66666667 → imul ecx → sar ecx,3 →
+          shr eax,0x1f → add ecx,eax（★÷10 魔数）→ mov eax,esi → cdq → idiv ecx
+          mov esi,0x13（=19）/ cmp eax,0x13 / jg 0x413512 / mov esi,eax（★列钳制 [0..19]）
+          mov ecx,[0x87f918]（★地图高）→ 同款 ÷10 → mov eax,edi → cdq → idiv ecx
+          cmp eax,0x13 / jle 0x41353b / mov eax,0x13（★行钳制）
+          lea eax,[eax+eax*4]（=5×row）→ lea eax,[esi+eax*4]（=col+20×row）→
+          lea ecx,[eax+eax*2]（=3×(col+20×row)）→ ★桶寻址 [ebp+ecx*8]（★24 字节步长）
+          ; —— 桶条件检查 + 加入：
+          mov eax,[ebp+ecx*8+8] / lea esi,[ebp+ecx*8] / mov ecx,[ebp+ecx*8+0x10]
+          cmp ecx,eax / jl 0x413576（+0x10 < +8 → 直接入）
+          mov cl,[esi+0xd]（★+0xD 字节标志）/ test / jne 0x41355f
+          test eax,eax / jne 0x413585（◆+0xD==0 且 +8!=0 → 跳过）
+          mov ecx,[esi+0x14]（容量）/ test / jle 0x413585
+          mov edx,[esi] / add ecx,eax / push 0 / push ecx / mov ecx,esi
+          call [edx+8]                  ; 桶列表 vtbl[+8]（扩容，2 参）
+          test al / je 0x413585
+          mov eax,[esi+0x10]（计数）/ mov edx,[esi+4]（数组）
+          lea ecx,[eax+1] / mov [esi+0x10],ecx / mov [edx+eax*4],ebx（★array[count++]=obj）
+00413585  pop esi/ebp/ebx/ecx / ret 4
+```
+**语义（带名）**：**AircraftTrackerClass::Add(aircraft\*)**——取飞机格坐标（vtbl[+0x1B8]）→
+钳制为无符号 16 位 → **20×20 网格桶定位**（坐标 ÷ (地图尺寸÷10)，超界钳 19）→ 在
+24 字节步长的桶结构中做加入：桶 `+0x10`（计数）< `+8` 直接入；`+0xD` 字节标志与 `+8`
+非零则跳过；容量 `+0x14` > 0 时经桶列表 `vtbl[+8]`（2 参扩容）后 `array[count++]=obj`。
+★原版怪癖（照抄）：① **坐标取自 vtbl[+0x1B8] 返回对象的首字段**——与 batch 400
+BuildingLight 完全同槽（跨类共用取格虚表槽）；② **16 位符号扩展 + 负值钳 0**（
+`test si,si / jge / xor esi,esi` 与 `movsx` 双路径，行/列同款不对称写法）；③ **÷10
+用魔数 0x66666667**（带符号 imul+sar+shr 修正，非 IDIV）；④ 网格钳制两轴不对称
+（列 `cmp 0x13 / jg`、行 `cmp 0x13 / jle`，结果同为 [0..19]）；⑤ **桶索引算式
+`lea eax,[eax+eax*4] → lea eax,[esi+eax*4] → lea ecx,[eax+eax*2]` = 3×(col+20·row)，
+寻址再 ×8 → 24 字节桶步长**（三 lea 手写乘法）；⑥ 加入前先 vtbl[+8] 扩容（2 参：
+容量+旧值、0）且返回值 al 判定；⑦ 计数器 `+0x10` 自增发生在数组写入**之后**（
+`mov [edx+eax*4],ebx` 用旧计数索引）。◆已比对 batch 400：0x436BE0 的
+vtbl[+0x1B8] 也是"取坐标"——两函数各自 pass 各有其类，此槽语义一致。
+★跨批次（同族连接）：**batch 400 `vtbl[+0x1B8]` 取坐标槽跨类复用实证**（两函数
+各自 class 虚表同槽位）；**batch 383 魔数除法族**（0x4BDA12F7÷54 先例，
+本批 0x66666667÷10 同套路）；地图尺寸全局 **[0x87F914]/[0x87F918]**（MapClass
+尺寸域，batch 372 QWEN.md 实锤 0x87F8DC=MapRect.W 同域新增）。
+★新登记：全局 **[0x87F914]（地图宽）/ [0x87F918]（地图高）**；常量 **0x66666667
+（÷10 魔数）**、**0x13=19（网格上界）**；AircraftTracker 桶结构 **[+0x0]（列表
+vtbl）/ [+0x4]（数组指针）/ [+0x8]（阈值字段）/ [+0xD]（字节标志）/ [+0x10]
+（计数）/ [+0x14]（容量）**；vtbl 槽 **[+0x1B8]（取格坐标）/ [+0x2F8]（查询）/
+[+8]（列表扩容）**。
+⚠️ partial：vtbl[+0x2F8] 查询语义与返回值用途、桶结构 [+0x8] 阈值字段业务含义、
+[+0xD] 字节标志语义、20×20 网格与地图尺寸的换算关系（÷10 后钳 19 的桶覆盖范围）、
+4 个调用者分工。
+
+================================================================================
+（batch 402 说明：C++ 模型决策）
+================================================================================
+本批**新增 1 行**，**不新增 C++ 模型**：vtbl 三槽接口 + 桶结构字段语义未定。
+模型价值：**vtbl[+0x1B8] 取格槽跨类实证**（batch 400+402 两函数同一槽位共识）+
+**0x66666667 ÷10 魔数惯用**（batch 383 除法族并列）+ [0x87F914]/[0x87F918] 地图
+尺寸域登记。本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。
+登记一行 semantics_verified + assembly_verified_semantics_confirmed（全段字节读完 +
+跨类对照），partial 项如实标注。
