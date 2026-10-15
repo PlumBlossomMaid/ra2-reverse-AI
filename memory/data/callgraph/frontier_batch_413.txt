@@ -1,0 +1,64 @@
+frontier batch 413 — MSVC6 CRT wcsncat 0x007CB504（64B，单函数批）（2026-10-15）
+
+口径：候选**只从 picker 未登记池取**（callers=4/deps=850）。
+**64B 全字节读完**（= 0x40）。取证手段：disasm.py 全读 + **CRT 区归属核验**
+（0x7CBxxx ∈ 0x7C-0x7D MSVC6 静态 CRT 区，记忆 `ra2_code_region_layout_crt_provenance`
+实锤）+ 标准 wcsncat 语义对照。
+
+================================================================================
+0x007CB504 —— MSVC6 CRT wcsncat（推断名，64B，ret c3，3 栈参）
+================================================================================
+机器码（完整）：
+```
+007cb504  mov ecx,[esp+4]                ; ★参1 = dst（目标缓冲）
+007cb508  mov eax,ecx                    ; ★eax = dst（返回值保留）
+007cb50a  mov dx,word ptr [ecx]          ; 读 dst word
+007cb50d  inc ecx / inc ecx              ; +2（★word 步进 = 宽字符）
+007cb50f  test dx,dx / jne 0x7cb50a      ; 扫 dst 找 0 结尾（strlen 宽版）
+007cb514  push ebx / mov ebx,[esp+0x10]  ; ★参3 = limit（长度上限）
+007cb519  dec ecx                        ; 回退 1 word → dst 尾（0 处）
+007cb51a  mov edx,ebx / dec ecx / dec ebx ; edx=limit / ecx 再回退 / limit--
+007cb51e  test edx,edx / push esi / je 0x7cb53d   ; ★limit==0 → 只写终止
+007cb523  mov esi,[esp+0x10]             ; ★参2 = src
+007cb527  mov dx,word ptr [esi]          ; 读 src word
+007cb52a  mov word ptr [ecx],dx          ; ★写 dst（先复制后检查）
+007cb52d  inc ecx×2 / inc esi×2
+007cb531  test dx,dx / je 0x7cb541       ; ★src word==0 → 完成（0 已复制）
+007cb536  mov edx,ebx / dec ebx / test edx,edx / jne 0x7cb527  ; limit 递减循环
+007cb53d  and word ptr [ecx],0           ; ★limit 耗尽 → 补写终止 0
+007cb541  pop esi / pop ebx / ret
+```
+**语义（推断名）**：**MSVC6 CRT `wcsncat(dst, src, limit)`**——宽字符（word 步进）
+带长度连接：① 扫 dst 找 0 word 结尾；② 从 src 复制 word 直到 **src 结束（0 已随
+复制写入）或 limit 耗尽（补写终止 0）**；③ 返回 dst（eax 在开头保存、循环不触碰）。
+★被调方/区域核验：0x7CB504 位于 **0x7C-0x7D MSVC6 静态 CRT 区**（记忆
+`ra2_code_region_layout_crt_provenance`：0x7C0000-0x7D0000 是 VC6 CRT 非
+Westwood 手写——ntohl 0x7C896E/operator new 0x7C8E17/delete 0x7C8B3D/
+sprintf 0x7CA564/strcpy 0x7CA489/_ftol 0x7C5F00 同区先例）。
+★原版怪癖（照抄）：① **word 步进**（2 字节 = 宽字符，非 char 版 strncat）；
+② 扫描 dst 用**两次 `inc ecx`**（无 `lea`/`add ecx,2` 单指令——编译器展开偏好）；
+③ **先复制后检查**（src word 先写目标再判 0——src 的终止 0 会一并复制，
+`je 0x7cb541` 不再补写）；④ **limit 耗尽路径 `and word [ecx],0` 补终止**（
+先 `dec ecx` 回退使 ecx 指最后一个已写 word 位置——原版回退 2 次再写，含
+limit==0 特判共用）；⑤ **limit==0 直接只写终止**（dst 尾 0 word 处 and 0）；
+⑥ 返回 dst 靠 **eax 开头保存 + 循环不触碰 eax**（无尾部 mov eax 指令）。
+★跨批次（CRT 同区）：**0x7C-0x7D CRT 区**（batch 365 ntohl 0x7C896E /
+batch 384 operator new 0x7C8E17 / batch 001 delete 0x7C8B3D / batch 397
+sprintf 0x7CA564 / batch 401 0x7CA489（strcpy 推断）/ batch 403 0x7CA405
+（strlen 推断）——**strcpy/strcat/strlen 宽字符族首登**）。
+★新登记：**0x7CB504 = wcsncat（宽字符连接推断）**；CRT 区 **宽字符串函数族**
+（wcsncat 首实例）；参数布局 **dst/src/limit 3 栈参**。
+⚠️ partial：是否为标准 `wcsncat` 符号名（推断——按 word 步进 + limit 语义对照
+标准库，MSVC6 CRT 具体导出名未核验）、调用方 4 处分工（宽串连接场景推断）。
+
+================================================================================
+（batch 413 说明：C++ 模型决策）
+================================================================================
+本批**新增 1 行**，**不新增 C++ 模型**：CRT 区函数按纪律**不重复实现**（MSVC6
+标准库行为以 VC6 运行库为准，重写时直接链接 CRT）；状态记
+**crt_runtime_verified + semantics_verified**（CRT 区归属实锤 + 全段字节读完）。
+模型价值：**CRT 区宽字符串族首实例**（wcsncat）+ 与 batch 397/401 的 sprintf/
+strcpy 同区互证。本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372
+已实跑核实）。登记一行 semantics_verified + crt_runtime_verified +
+assembly_verified_semantics_confirmed（CRT 区归属 + 全段字节读完），
+partial 项如实标注。
