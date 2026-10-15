@@ -1,0 +1,59 @@
+frontier batch 440 — FactoryClass::IsDone 0x004CA130（37B，单函数批）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（callers=4/deps=378，ranking 唯一调用者
+FUN_00653100/FUN_00653fa0/FUN_00656ec0/FUN_006579e0）。
+**37B 全字节读完**（= 0x25）。取证手段：disasm.py 全读 + **YRpp FactoryClass.h
+带名实锤 + batch 382/383/231/212 交叉核验**。
+
+================================================================================
+0x004CA130 —— FactoryClass::IsDone（★YRpp 带名实锤，37B，ret c3 = __thiscall 无参）
+================================================================================
+机器码（完整）：
+```
+004ca130  mov edx, dword ptr [ecx + 0x58]    ; ★this->+0x58 = Object（TechnoClass*）
+004ca133  mov eax, 0x36                      ; ★eax = 0x36 = 54（进度满步数常量）
+004ca138  test edx, edx
+004ca13a  je 0x4ca144                        ; Object==0 → 转第二判据
+004ca13c  cmp dword ptr [ecx + 0x24], eax    ; ★this->+0x24 = Production 进度 vs 54
+004ca13f  jne 0x4ca144                       ; 进度≠54 → 转第二判据
+004ca141  mov al, 1 / ret                    ; ★返回 true
+004ca144  cmp dword ptr [ecx + 0x68], -1     ; ★this->+0x68 = SpecialItem vs -1（none）
+004ca148  je 0x4ca152                        ; ==-1 → 返回 false
+004ca14a  cmp dword ptr [ecx + 0x24], eax    ; 进度 vs 54
+004ca14d  jne 0x4ca152                       ; ≠54 → 返回 false
+004ca14f  mov al, 1 / ret                    ; 返回 true
+004ca152  xor al, al / ret                   ; ★返回 false
+```
+**语义（★YRpp 带名实锤）**：YRpp FactoryClass.h:64 `bool IsDone() const { JMP_THIS(0x4CA130); }`
+——地址+JMP_THIS+无参三证。**判据 = ((Object != 0) || (SpecialItem != -1)) && (Production == 54)**：
+① Object（+0x58）非空且进度满 54 → done；② SpecialItem（+0x68）非 -1（有特殊项）且进度满
+54 → done；③ 否则 not done。YRpp 同文件 :32 注释 **`ProgressTimer Production; // hardcoded to
+be 54 steps (so cameo clock should be 54 frames)`** —— **0x36=54 正是进度满步数常量实锤**。
+★字段映射（batch 383 Unsuspend 已实锤 + 本批闭合）：**+0x24 = Production 进度**（ProgressTimer，
+54 上限）、**+0x58 = Object**（TechnoClass*）、**+0x68 = SpecialItem（-1 = none）**。
+★原版怪癖（照抄）：① **常量 0x36 提升到函数顶**（eax=54 一次装载、两条判据的 4 个 cmp 共用——
+寄存器复用指纹）；② **双判据 OR 结构**（两条独立命中分支 + 汇聚到公共失败出口 0x4CA152）；
+③ **失败出口合并**（je/jne 全跳 0x4CA152 单点返回 false）；④ **bool 低字节返回**（mov al,1 /
+xor al,al——无 movzx 扩展）；⑤ **无栈帧**（37B 纯寄存器无 push——极简判函数）；⑥ **与
+Unsuspend 判据同构但出口反转**（见跨批次）。
+★跨批次（生产系统主线）：**batch 383 Unsuspend（0x4C9EA0）判据完全同构**——其机器码
+「③ [+0x24]==0x36 的两条前置判据（+0x58 非零时 / +0x68!=-1 时）命中 → 返回 0」与本批
+**逐字段一致**（同一判据「生产完成」被两个函数以相反出口复用：IsDone 返回判据真值 /
+Unsuspend 命中判据即拒绝）；**batch 382 Suspend（0x4C9E60）**（+0x70 IsSuspended/+0x2C
+挂起参数块）；**batch 231 AbandonProduction（0x4C9FF0）**（+0x58 子对象+0x24 清理+0x5D/0x70
+标志——同一家族字段）；**batch 212 field getters（0x4CA160 读 +0x58 / 0x4CA170 读 +0x68）**
+（本批即这两个 getter 字段的判函数消费端）；**QWEN.md「生产系统全量逆向（FactoryClass +
+TimeToBuild + 测试 45 项全过）」主线**。
+★新登记：**+0x68 = SpecialItem（-1 none）语义闭合**（batch 383 记「哨兵，-1 特殊」→ 本批
+YRpp 带名 SpecialItem 实锤）；**「生产完成判据」惯用**（((Object)||(SpecialItem))&&进度满）；
+**FactoryClass::Array @ 0xA83E30**（YRpp 带名实锤——工厂数组）；0x36=54 常量业务语义闭合。
+⚠️ partial：无——本批 YRpp 带名 + 全字节读完 + 同族判据交叉，证据闭合。
+
+================================================================================
+（batch 440 说明：C++ 模型决策）
+================================================================================
+本批**新增 1 行**，**不新增 C++ 模型**：纯判函数（无模型价值增量——FactoryClass 族
+C++ 模型由 QWEN.md 生产系统逆向承载）。模型价值：**「生产完成判据」惯用登记** +
++0x68 SpecialItem 语义闭合 + batch 383/440 判据同构互证（跨函数复用实证）。本批无产品
+代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（全段字节读完）。
