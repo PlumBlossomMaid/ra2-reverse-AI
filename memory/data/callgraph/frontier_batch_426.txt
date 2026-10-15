@@ -1,0 +1,90 @@
+frontier batch 426 — 对象注册入队例程 0x007712C0（490B，单函数批）（2026-10-15）
+
+口径：候选**只从 picker 未登记池取**（callers=4/deps=686）。
+**490B 全字节读完**（= 0x1EA）。取证手段：disasm.py 全读 + **batch 399 tick /
+batch 407 VectorClass 构造 / batch 402/423 vtbl[+8] 扩容 / QWEN.md RandomRanged
+0x65C7E0 交叉核验**。
+
+================================================================================
+0x007712C0 —— 对象注册入队例程（推断名，490B，ret 0x14 = 5 栈参）
+================================================================================
+机器码（要点）：
+```
+007712c0  sub esp,0x10 / push 族 / mov edi,ecx（this）
+          mov ebx,[edi+0x3d0]（★计数 A）/ mov ecx,[edi+0x3bc]（★计数 B）
+          ; —— 收缩循环：A > B 时倒序移除多余（0x7B4940 移动）：
+          mov eax,[edi+0x3d0] / dec ebx / cmp / jle 0x77131e
+          内层：mov eax,[edi+0x3c4]（★数组）→ lea ecx,[eax+esi*4+4] / push /
+                lea ecx,[eax+esi*4] / call 0x7b4940（★元素移动）→ inc esi / jl 循环
+          外层：dec ebx / cmp edx,eax / jg 0x7712dc
+          mov eax,[edi+0x3bc] / test / jne → mov byte [edi+0x3b8],1（★B==0 → 标志置 1）
+          ; —— 本地对象构造 + 主判定：
+          lea ecx,[esp+0x10] / call 0x7b4620（★本地对象构造）
+          mov eax,[esp+0x24] / lea ×9 / lea ×37 → esi = this + 补/坐标三元组
+          lea ebx,[esi+edx*4]（★ebx = this+偏移结构）→ push &本地 / lea edx,[ebx+8] →
+          call 0x770c10（★判定 this=ebx+8）→ test al / je 0x771497（失败跳尾）
+          ; —— 成功：全局检查 + tick 记录：
+          call 0x7529e0（★全局状态检查）→ jne 0x771396
+          lea ecx,[esp+0x18] / call 0x6c8c40（★batch 399 tick÷16）→ mov [edi+0x3ac],eax
+          mov eax,[esp+0x18] / mov [edx+4],eax / mov [edx+8],ecx（★+0x3AC..+0x3B4 三元组）
+          ; —— 入队（+0x3C0 处 VectorClass-like）：
+          mov ecx,[edi+0x3c8] / mov eax,[edi+0x3d0] / lea esi,[edi+0x3c0]
+          cmp eax,ecx / jl 0x7713ce（未满直接写）
+          mov al,[esi+0xd]（★batch 407 实锤 +0xD 自分配标志）/ test / jne
+          test ecx,ecx / jne 0x7713e7；mov eax,[esi+0x14]（容量）/ jle
+          mov edx,[esi] / add eax,ecx / push 0 / push eax / mov ecx,esi /
+          call [edx+8]（★vtbl[+8] 扩容——batch 402/407/423 同款）→ test al / je
+          mov eax,[esi+0x10]（计数）→ lea ecx,[eax+1] / mov [esi+0x10],ecx /
+          mov ecx,[esi+4] / lea ecx,[ecx+eax*4] / call 0x7b4940（★array[count] 写）→
+          mov al,[esp+0x30] / test / je → inc [edi+0x3bc]（★B++）
+          ; —— 第二路径：RNG 随机选：
+          mov al,[esp+0x2c] / test / je 0x771497
+          mov ebp,[edi] / lea ecx,[esp+0x10] / call 0x7b5340（本地对象方法）
+          mov eax,[ebx+0x30]（★数量）/ jle / cmp 1 → 0 或 dec
+          mov ecx,0x886b88（★RNG 对象——另一个实例推断）/ push eax / push 0 /
+          call 0x65c7e0（★QWEN.md 实锤 Randomizer::RandomRanged）
+          mov ecx,[ebx+0x24] / mov edx,[ecx+eax*4] / mov ecx,ebp / call 0x770ce0（★判定）
+          → test al / je 0x771497 → **同款入队**（0x7713ce 结构复制一遍）→ inc [edi+0x3bc]
+00771497  lea ecx,[esp+0x10] / call 0x7b46f0（本地对象析构）→ pop 族 / ret 0x14
+```
+**语义（推断名）**：**对象注册入队例程**——把对象登记进 this 的数组（`+0x3C0`
+处 VectorClass-like 容器）：先按计数 B 收缩数组、B==0 置标志 → 构造本地对象 →
+`0x770C10` 判定通过 → 全局检查（0x7529E0）+ **tick 记录 `+0x3AC` 三元组** →
+容器满时 `vtbl[+8]` 扩容 → `array[count++]` 写入、B++；第二路径经
+**RandomRanged（0x65C7E0，RNG 实例 [0x886B88] 推断）随机选** `ebx->+0x30`
+项 → 判定（0x770CE0）→ 同款入队。ret 0x14 = 5 栈参。
+★原版怪癖（照抄）：① **前置收缩**（计数 A>B 时倒序逐元素移动移除——入队前先
+保证容量）；② B==0 → `+0x3B8=1`（空表标志）；③ **本地对象构造/析构成对**
+（0x7B4620 构造 / 0x7B46F0 析构——函数级 RAII，非子调用）；④ 判定失败**静默
+跳尾**（0x770C10 返回 0 直接结束，无错误返回）；⑤ **tick 三元组 `+0x3AC`**
+（batch 399 同款 0x6C8C40 + 栈值——事件时间戳记录）；⑥ **VectorClass-like
+容器**（+0x0D 自分配标志 batch 407 实锤同款、vtbl[+8] 扩容 batch 402/407/423
+同款——**跨函数族第四实例**）；⑦ 入队后 B++ 由栈字节门控（`[esp+0x30]` 判定
+后才增）；⑧ **RNG 随机选路径**（0x65C7E0 RandomRanged——QWEN.md 实锤函数的
+runtime 域消费点，ecx=0x886B88 非全局 0xABE890，**第二 RNG 实例推断**）；
+⑨ 两路径入队代码**结构复制两遍**（0x7713ce 段在 0x771470 重复——Westwood
+复制粘贴惯用，batch 397 孪生同族）；⑩ ret 0x14 = 5 栈参。
+★跨批次（同族连接）：**batch 399 `0x6C8C40` tick÷16**；**batch 407 VectorClass
+`+0xD` 自分配标志 / batch 402+423 `vtbl[+8]` 扩容**（容器族第 4 实例）；
+**QWEN.md `0x65C7E0` Randomizer::RandomRanged 实锤**（runtime 域新消费点 +
+RNG 实例 [0x886B88] 新登记）；**batch 397 代码复制两份同族**（入队段两遍）；
+0x77xxxx 区（batch 399 0x775B20 同区——runtime 工具区推断）。
+★新登记：**对象 [+0x3AC..+0x3B4]（tick 三元组）/ [+0x3B8]（空表标志）/ [+0x3BC]
+（计数 B）/ [+0x3C0]（VectorClass-like 容器：+0x00 vtbl/+0x04 数组/+0x0D 标志/
++0x10 计数/+0x14 容量）/ [+0x3C4]（收缩数组）/ [+0x3C8]/[+0x3D0]（计数 A）**；
+**RNG 实例 [0x886B88]**（全局 0xABE890 外第二实例推断）；**0x7B4620/0x7B46F0/
+0x7B4940/0x7B5340/0x770C10/0x770CE0/0x7529E0 七新候选**；「入队前收缩 +
+tick 记录 + RNG 随机选」惯用。
+⚠️ partial：七新被调方语义、RNG 实例 [0x886B88] 确认、+0x3AC 三元组业务含义、
+5 栈参布局、宿主类（实体/事件管理器推断）、4 个调用者分工。
+
+================================================================================
+（batch 426 说明：C++ 模型决策）
+================================================================================
+本批**新增 1 行**，**不新增 C++ 模型**：7 个新被调方未读 + 宿主类未确认。
+模型价值：**VectorClass 容器族第 4 实例**（+0xD 标志/vtbl[+8] 扩容跨函数族共识
+加强）+ **RandomRanged 0x65C7E0 的 runtime 域消费点 + 第二 RNG 实例 [0x886B88]**
+（QWEN.md 全局 RNG 之外的并行实例线索）+ 入队前收缩惯用。本批无产品代码改动，
+ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。登记一行 semantics_verified
++ assembly_verified_semantics_confirmed（全段字节读完 + 跨批核验），partial 项
+如实标注。
