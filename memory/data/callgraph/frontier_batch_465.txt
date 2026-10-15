@@ -1,0 +1,92 @@
+frontier batch 465 — INISection::WriteUnicodeString 0x00528E00（199B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（callers=4/deps=206/body=199B，ranking 唯一
+调用者 FUN_00528ed0/FUN_005fad10/FUN_0068ad70/FUN_006990a0，ranking 名
+INISection::WriteUnicodeString）。
+**199B 全字节读完**（= 0xC7，0x528E00-0x528EC4 ret 0xC；尾部 0x528EC7 起 nop
+对齐到邻接函数 0x528ED0）。取证手段：disasm.py 全读 + **YRpp CCINIClass.h:91
+签名实锤** + 被调全部已登记交叉验证。
+
+================================================================================
+0x00528E00 —— INISection::WriteUnicodeString（YRpp 带名实锤，199B，ret 0xC）
+================================================================================
+**身份实锤**：YRpp CCINIClass.h:91-93 `bool WriteUnicodeString(const char*
+pSection, const char* pKey, const wchar_t* pString) { JMP_THIS(0x528E00); }`
+（注释 "Writes an escaped Unicode string."）——地址+JMP_THIS+三栈参
+（pSection/pKey/pString，ret 0xC=12B）三证吻合。
+机器码（199B 完整，关键现场）：
+```
+00528e00  push ecx / push ebx / push ebp / push esi
+00528e04  mov esi,[esp+0x1c]      ; esi = pString（栈参4——4 push 后偏移）
+00528e08  xor bl,bl               ; 返回值 = false
+00528e0a  mov [esp+0xc],ecx       ; ★this 存回首个 push 槽
+00528e0e  test esi,esi
+00528e10  je  0x528ebe            ; ★pString==NULL → 直接返 false
+00528e16  push esi / call 0x7ca405   ; ★CRT::wcslen（batch 097 实锤）
+00528e1c  shl eax,3 / inc eax     ; ★len×8+1（每字符上限 8B 冗余）
+00528e21  push eax / call 0x7c8e17   ; ★CRT::_new（batch 001）
+00528e26  mov ebp,eax; add esp,8
+00528e2b  test ebp,ebp / je 0x528ebe ; 分配失败 → 返 false
+00528e33  mov byte[ebp],0         ; 缓冲首字节置 0（空串基础）
+00528e37  mov ax,[esi]            ; ★取当前宽字符
+00528e3d  mov ebx,ebp             ; ebx = 缓冲当前位置
+00528e3f  je  0x528e9f            ; pString 空串 → 跳过编码循环
+00528e41  push edi
+00528e42  push 0x10               ; ★radix = 16（十六进制）
+00528e44  and eax,0xffff          ;   eax = 宽字符码（截断 16 位）
+00528e49  push ebx                ;   目标 = 缓冲当前位置
+00528e4a  push eax                ;   值 = 宽字符码
+00528e4b  call 0x7d468c           ; ★★0x7D468C = _ultoa(值,目标,16)（batch 023
+                                 ;   已登记 wrapper——本批补强：radix=16 走无符号
+                                 ;   分支，0x7D46B9 核心 div 取余 + add bl,0x57
+                                 ;   小写 'a'-'f' + 字符串反转 = MSVC _ultoa 族）
+00528e50  mov edi,0x817f70        ; ★"," 串（batch 451 实锤逗号）
+00528e5d  repne scasb 等四段     ; ★strlen(",")=2 → 复制 ","+NUL 到缓冲末尾
+00528e7d  mov edi,ebp / repne scasb ; strlen(缓冲) 重定位当前位置
+00528e84  mov eax,[esp+0x20]      ;   源指针推进 +2（下一宽字符）
+00528e92  add ecx,ebp             ;   ebx = 缓冲末尾（追加点）
+00528e94  mov ax,[eax] / test ax,ax
+00528e9c  jne 0x528e42            ; ★逐字符循环：_ultoa(码,16) + 追加 ","
+00528e9f  mov eax,[esp+0x18]      ; eax = pKey（4 push 后 +0x18）
+00528ea3  mov ecx,[esp+0x14]      ; ecx = pSection
+00528ea7  push ebp / push eax / push ecx   ; push hex串 / pKey / pSection
+00528eaa  mov ecx,[esp+0x18]      ; ecx = this
+00528eae  call 0x528660           ; ★★INISection::WriteString(this,pSection,
+                                 ;   pKey,hex串)（batch 069 已登记）
+00528eb3  push ebp / mov bl,al    ; bl = WriteString 返回值
+00528eb6  call 0x7c8b3d           ; ★CRT::_delete 缓冲（batch 001）
+00528ebe  mov al,bl / pop×4 / ret 0xc  ; 返 bl（WriteString 成功态）
+```
+**语义（推断名→实锤名）**：**INISection::WriteUnicodeString**——把宽字符串
+编码成**每字符小写十六进制 + 逗号分隔**的窄串（YRpp 注释 "escaped Unicode
+string"，即 "48,65,6c,6c,6f," 形态），再经 WriteString 写入 INI 条目。
+流程：①pString==NULL → 返 false；②wcslen×8+1 分配缓冲（每字符上限 8B）；
+③逐宽字符 `_ultoa(码, 缓冲当前位置, 16)` 转小写 hex 并追加 ","；
+④WriteString(this, pSection, pKey, hex串) 落盘；⑤delete 缓冲返回其 bool。
+**原版怪癖（照抄）**：① **每字符小写 hex（_ultoa radix=16，0x7D46B9
+`add bl,0x57`='a'-10——大写话应 0x37）**，非大写十六进制；② **尾逗号**
+（每字符后无条件追加 ","，含末字符——"48,65,6c,6c,6f,"）；③ **wcslen×8+1
+冗余分配**（实际每字符最多 4 hex+1 逗号+NUL=6B，×8 是拍脑袋上限）；
+④ **and eax,0xffff 截断宽字符码**（wchar 本就 16 位——防御性编译产物）；
+⑤ pString==NULL 提前返 false（不写任何东西）；⑥ 空串仍分配 1B、走完整
+WriteString 路径；⑦ 返回值=WriteString 的 bool（编码本身成败不检查）。
+★跨批次闭合：**INIClass 写族拼接完整**——WriteUnicodeString(0x528E00 本批)+
+WriteString(0x528660 batch 069)+ReadString(0x528A10 batch 002)+ReadDouble
+(0x5283D0 batch 112)；被调全登记（wcslen 0x7CA405 batch 097 / _ultoa
+0x7D468C batch 023 补强 / _new 0x7C8E17+_delete 0x7C8B3D batch 001 / ","
+0x817F70 batch 451）；**邻接 0x528ED0（4 callers 之首）= StringClass* 版
+包装重载**（先 0x7B7140 batch 115 宽串 getter + 0x7B5440 batch 072 GetString
+×2，再调 0x528E00——读侧 ReadUnicodeString 0x528F00 在 picker 池）。
+⚠️ partial：pSection/pKey 具体值由调用者定（0x528F00 读侧未对拍）、0x528ED0
+包装完整逻辑（非本批主体，未读完）、四调用者分工细节未逐点核对。
+
+================================================================================
+（batch 465 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（宿主 INISection 写族无模型、编码语义
+已由 _ultoa 模型 forward_numeric_format_legacy（lowlevel.cpp，batch 023）覆盖
+大半）。模型价值：**INIClass 写族最后一块**（WriteUnicodeString 编码管线
+= _ultoa(radix=16) + 逗号拼接 + WriteString 落盘）。本批无产品代码改动，
+ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。登记一行 semantics_verified
++ assembly_verified_semantics_confirmed（全段字节读完 + YRpp 签名实锤），
+partial 项如实标注。
