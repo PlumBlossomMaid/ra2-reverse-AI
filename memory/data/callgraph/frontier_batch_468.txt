@@ -1,0 +1,100 @@
+frontier batch 468 — INISection::WriteUUBlock 0x00526E80（304B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=5/unique=4/deps=201/
+body=304B，ranking 名 INISection::WriteUUBlock，unique_callers
+FUN_004ad7e0/PhobosHook_OverlayClass_WriteINI/PreviewClass::WritePreviewPack/
+variables::WriteCCFile——★含 RMG 预览图写入与 Phobos INI 写场景）。
+**304B 全字节读完**（= 0x130，0x526E80-0x526FAD ret 0xC；邻接 0x526FB0 =
+batch 277 已登记 ReadUUBlock）。取证手段：disasm.py 全读 + **batch 277 读侧
+对偶** + 被调全登记交叉验证。
+
+================================================================================
+0x00526E80 —— INISection::WriteUUBlock（ranking 名，304B，ret 0xC = 3 栈参）
+================================================================================
+机器码（完整，304B 整数）：
+```
+00526e80  sub esp,0xa0             ; 160B 栈帧
+00526e88  mov ebp,[esp+0xac]       ; ebp = 栈参 1（节名/块名?）
+00526e95  mov edi,ecx              ; edi = this
+00526e97  je  0x526fa1             ; 栈参 1 空 → 返 0
+00526e9d  cmp [esp+0xb8],ebx / je  ; 栈参 2（数据指针?）空 → 返 0
+00526eaa  mov esi,[esp+0xbc]       ; esi = 栈参 3（长度?）
+00526eb1  cmp esi,1 / jl 0x526fa1  ; ★长度 < 1 → 返 0
+00526eba  push ebx / push ebp
+00526ebc  call 0x5257c0            ; ★INISection::Clear(this, 栈参1)（batch 090）
+00526ec1  mov eax,[esp+0xb8]       ; eax = 栈参 2
+00526ec8  push esi / push eax
+00526eca  lea ecx,[esp+0x24]
+00526ed6  mov [esp+0x18],0x7e61f0  ; ★栈对象 A 装虚表 0x7E61F0（batch 106 同表）
+00526ede  call 0x43ad00            ; ★缓冲包装构造(栈参2, 栈参3)（batch 063）
+00526ee3  lea ecx,[esp+0x10] / push ecx
+00526eec  lea ecx,[esp+0x30]
+00526ef0  mov [esp+0x14],0x7e61e0  ; ★栈对象 B 装虚表 0x7E61E0（新）
+00526ef8  mov [esp+0x34..0x40],ebx
+00526f08  mov [esp+0x30],0x7eb764  ; ★栈对象 C 装虚表 0x7EB764（新）
+00526f10  call [0x7eb768]          ; ★★call 全局函数指针 [0x7EB768]（新全局）
+00526f16  lea edx,[esp+0x48]       ; &栈缓冲
+00526f1a  push 0x46 / push edx
+00526f1d  lea ecx,[esp+0x34]       ; ecx = &对象 C
+00526f21  mov esi,1                ; ★索引从 1 起
+00526f26  call 0x42df90            ; ★★0x42DF90(&对象C,&缓冲,0x46)→eax（解块长度）
+00526f2b  cmp eax,ebx
+00526f2d  mov byte[esp+eax+0x48],bl ; 缓冲[eax]=0（终止）
+00526f31  je  0x526f77             ; eax==0 → 收尾
+00526f33  循环:                    ; ★★主循环（逐块写）
+00526f33  push esi / lea eax,[esp+0x94]
+00526f3b  push 0x817f6c            ; ★格式串 "%d"（batch 199/482 实锤）
+00526f40  push eax
+00526f41  call 0x7c8ef4            ; ★sprintf(&索引串,"%d",esi)（batch 057/199）
+00526f49  lea ecx,[esp+0x48] / lea edx,[esp+0x90]
+00526f54  push ecx / push edx / push ebp
+00526f57  mov ecx,edi
+00526f59  call 0x528660            ; ★★INISection::WriteString(this,栈参1,索引串,缓冲)
+00526f5e  lea eax,[esp+0x48] / push 0x46 / push eax
+00526f65  lea ecx,[esp+0x34] / inc esi
+00526f6a  call 0x42df90            ; 再解块 → eax
+00526f6f  cmp eax,ebx / mov byte[esp+eax+0x48],bl
+00526f75  jne 0x526f33             ; 循环直到 0x42DF90 返 0
+00526f77  收尾:
+00526f77  lea ecx,[esp+0x2c] / call 0x6c9850   ; ★batch 106 双向链表析构
+00526f80  lea ecx,[esp+0x1c] / call 0x43ae50   ; ★batch 059 三字段析构
+00526f89  lea ecx,[esp+0x10] / call 0x6c9850   ; ★再析构
+00526f95  mov al,1 / ret 0xc                   ; 返 1
+00526fa1  失败: xor al,al / ret 0xc            ; 返 0
+```
+**语义（ranking 名实锤）**：**INISection::WriteUUBlock（UU 编码块写入，
+batch 277 ReadUUBlock 的写侧对偶）**——三栈参 (节名, 数据指针, 长度)；
+先 Clear(this, 节名) 清节，缓冲包装构造(数据, 长度)（batch 063），装配三
+栈对象（虚表 0x7E61F0/0x7E61E0/0x7EB764）+ call [0x7EB768] 全局回调；主
+循环逐块：0x42DF90 从对象 C 解出第 esi 块到缓冲（0x46=块大小参数）→
+sprintf("%d",esi) 生成索引串 → WriteString(this, 节名, 索引串, 缓冲) 写
+键值对；0x42DF90 返 0 停止；收尾三重析构。
+★原版怪癖（照抄）：① **长度 < 1（非 ≤0）才失败**——栈参 3 最小合法值 1；
+② **写前 Clear 清节**（先清后写，节内旧键全清除）；③ **0x42DF90 解块
+循环 + 缓冲[eax]=0 终止**（每块独立 NUL 结尾）；④ **sprintf("%d",esi)
+索引串作 key**（索引 1-based 从 1 起，非 0-based）；⑤ **WriteString 传
+(节名, 索引串, 缓冲) 三栈参**（写每条块）；⑥ **0x46=70 硬编码块大小参数**；
+⑦ **收尾三重析构固定顺序**（0x6C9850→0x43AE50→0x6C9850）；
+⑧ **[0x7EB768] 全局回调**（栈对象 C 虚表装配后立即调用）。
+★跨批次闭合：**batch 277（ReadUUBlock 0x526FB0 读侧）→ 本批写侧对偶**——
+UU 编码块读写双侧齐（读用 0x7EB774/0x7E6218/0x7E6200 三虚表+0x631CC0，
+写用 0x7E61F0/0x7E61E0/0x7EB764+0x43AD00——同族不同虚表实例）；被调几乎
+全登记（Clear batch 090 / WriteString batch 069 / sprintf 0x7C8EF4 batch
+057+199 / 双向链表析构 0x6C9850 batch 106 ×2 / 三字段析构 0x43AE50 batch
+059 / 缓冲包装构造 0x43AD00 batch 063 / "%d" 0x817F6C batch 199+482）；
+**ranking callers 含 PreviewClass::WritePreviewPack（RMG 预览图——写族
+实际场景）+ PhobosHook_OverlayClass_WriteINI（Phobos 侧命名）**。
+⚠️ partial：三栈参精确语义（节名/数据指针/长度推断）、0x42DF90 身份
+（0x42Dxxx 构造族——batch 277 提到 0x42DDB0 同区未登记）、[0x7EB768]
+回调身份、栈对象 A/B/C 类型（缓冲包装/链表节点/容器推断）、0x46 语义
+（块大小/终止符推断）、Clear 两参调用与 batch 090 单参签名的差异点。
+
+================================================================================
+（batch 468 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（被调 0x42DF90/[0x7EB768] 未登记 +
+UU 编码解算细节未确认）。模型价值：**UU 编码块写族对偶闭合**（ReadUUBlock
+batch 277 ↔ WriteUUBlock 本批）+ 新虚表 0x7E61E0/0x7EB764 + [0x7EB768]
+全局回调登记。本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372
+已实跑核实）。登记一行 semantics_verified + assembly_verified_semantics_
+confirmed（全段字节读完 + ranking 带名 + 读侧对偶），partial 项如实标注。
