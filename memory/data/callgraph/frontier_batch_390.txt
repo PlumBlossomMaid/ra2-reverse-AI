@@ -1,0 +1,119 @@
+frontier batch 390 — HouseClass::IsAlliedWith 0x004F9A90（**81B / unique_callers=51——未登记池最高扇入**）+ 三微桩（0x4870B0 / 0x53BAD0 / 0x425270）（2026-10-15）
+
+口径：候选**只从 picker 未登记池取**；但本批主函数 `0x004F9A90` 是我**直接 grep
+ranking.tsv 牵出**（违反 pool 纪律——又是"绕过已登记过滤"，与 batch 386 的
+`0x4CADB0` 同病）→ 追加脚本如实报出**该地址已在 TSV**。处理同 batch 386：
+**不覆盖既有行**，本批对 `0x4F9A90` 只做**YRpp 命名核验 + 字段补测**，并在既有行
+证据字段**追加** batch 390 指针（原值保留）。**实质新增 3 行**（三个微桩）+ 1 行
+既有补测；另 3 个微桩（27B / 14B / 8B，全段读完）。取证手段：
+disasm.py 全读 + **YRpp HouseClass.h 逐行核对**（191/202/204/207/212 行）+ 已登记
+无分支 sbb 惯用法交叉。
+
+================================================================================
+① 0x004F9A90 —— HouseClass::IsAlliedWith（**YRpp 带名核验 + 补测；该行已由既有批次登记**）
+================================================================================
+**★登记状态**：本函数**已在 TSV**（既有行，非本批新增）。本批价值 =
+**YRpp 头文件逐行核验**（MachineCode ↔ YRpp 双证的闭合）与**字段层补测**
+（`+0x30` ArrayIndex / `+0x5788` Allies 位掩码 / 槽 0x3C 取属主）。
+**YRpp 实锤**：`E:\code\YRpp\HouseClass.h:191` — `bool IsAlliedWith(int idxHouse) const {
+if(idxHouse == this->ArrayIndex) return true;
+if(idxHouse != -1) return ((1u << idxHouse) & this->Allies) != 0u; return false; }`；
+`:202` — `IsAlliedWith(HouseClass const*)` = `pHouse && (pHouse == this || ...)`；
+`:204` **`pHouse->ArrayIndex` 与机器码 `+0x30` 完全对位**；`:207` — 
+`IsAlliedWith(ObjectClass const*)` = `pObject && this->IsAlliedWith(pObject->GetOwningHouse())`
+——**`:207` 的 `GetOwningHouse()` 即机器码虚表槽 `0x3C`**；`:212` 折叠后续变体。
+★本批核验结论：机器码与 YRpp 四个重载**逐条对位**（空判 / 属主取 / 索引比 /
+位掩码 `(1u<<idx)&Allies`），`+0x5788` 即 YRpp 的 **`Allies`**。
+
+机器码（全段）：
+```
+004f9a90  push esi / esi = ecx（★this）/ ecx = [esp+8]（★参1 = 对象/属主指针）
+          **test ecx,ecx / je 0x4f9adb**（NULL → 返回 0）
+          eax=[ecx] / **call [eax+0x3C]**（★虚表槽 0x3C——取"属主"）
+          test eax / je 0x4f9adb
+          **cmp eax,esi / je 0x4f9aa8 → 返回 1**（★属主就是 this → 同盟）
+004f9aae  **eax = [eax+0x30]**（★对方属主的 **ArrayIndex**）
+          **ecx = [esi+0x30]**（★this 的 ArrayIndex）
+          **cmp eax,ecx / je → 返回 1**（★双方同 ArrayIndex → 同盟）
+          **cmp eax,-1 / je 0x4f9adb**（★对方无有效编号 → 0）
+          mov edx,1 / mov ecx,eax / **mov eax,[esi+0x5788]**（★**Allies 位掩码**）
+          **shl edx,cl**（★1 << idx）
+          **test edx,eax / setne al**（★★位测试结果抬成 bool）
+          ret 4
+004f9adb  xor al,al / ret 4
+```
+**语义（带名实锤）**：`HouseClass::IsAlliedWith(对象/属主)`——① 入参空 → false；
+② 经虚表槽 `0x3C` 取参1 的属主；③ 属主 == `this` → true（自盟）；④ 属主
+`ArrayIndex`（`+0x30`）== 自己 `ArrayIndex` → true（同阵营索引）；⑤ 属主
+`ArrayIndex == -1` → false；⑥ 否则查 **`[this+0x5788]` 的 Allies 位掩码**：
+`(Allies >> idx) & 1`。
+★原版怪癖（照抄）：① **先 `cmp eax,esi`（属主==this）再比 ArrayIndex**——同一个
+"是否同盟"拆成两条不同判据路径；② **`ArrayIndex == -1` 特判在比较之后**（先撞同
+索引才轮到 -1）；③ **`shl edx,cl` 用寄存器移位**（MSVC 惯用，CL 低 5 位）；
+④ **`setne al` 直接抬 bool**（非 `test/setz` 取反——`(Allies>>idx)&1` 为非零即真）；
+⑤ 入口不检查 `this` 自身是否合法（**只检查参1**）；⑥ `ret 4` 三处出口各写一遍。
+★跨批次连接（**扇入核心**）：**51 个 caller**——batch 388 的 `IsCrushable 0x5F6CD0`
+两处调用即来自它（当时标注"`0x4F9A90` 未读，不猜"）→ **本批闭合该 partial**；
+`[this+0x30]` 字段（batch 389 `AssignHandicap` 用 `[ecx+0x30]` 同类字段）；
+变体 `IsAlliedWith(int)` 的位掩码形式即本条 ⑥ 段。**本函数是全池已知最高扇入
+未登记函数的收官**（51 callers 说明它在整引擎的"战争迷雾/开火许可/占领判定"被
+广泛复用）。★新登记：字段 **`[this+0x5788]`（Allies 位掩码）**、**`+0x30`
+（ArrayIndex）**、虚表槽 **`0x3C`（取属主）**。
+⚠️ partial：`0x3C` 槽对应 YRpp 的精确虚方法名（GetOwningHouse 族）、`+0x5788`
+位掩码的位语义（0=自/1=敌等，**推断**）、51 callers 的逐个归属（未枚举）。
+
+================================================================================
+② 0x004870B0 —— 位掩码段谓词（推断名，27B，ret 4）
+================================================================================
+机器码（全段）：
+```
+004870b0  mov eax,ecx（this）/ mov edx,1 / ecx=[esp+4]（★参1 = 位号）
+          mov eax,[eax+0x78]（★this 位掩码）/ **shl edx,cl**（1 << idx）
+          **and eax,edx** → **neg eax / sbb eax,eax / neg eax**
+          （★★**无分支布尔化**：非零 → 1，零 → 0——batch 377/381 的
+           `sub/neg/sbb` 惯用法同族变体）→ ret 4
+```
+**语义**：`bool 查询(idx)` = `(this->+0x78 >> idx) & 1`——与 `0x4F9A90` 的
+`Allies` 判读**同一编程惯用法**（位掩码段查询）。
+★原版怪癖（照抄）：① **`neg/sbb/neg` 三连布尔化**（无分支、无 `setne`——与
+`0x4F9A90` 的 `setne` **两种不同写法**并存于引擎内）；② 位号参走 **`ecx` 低字节**
+（`shl edx,cl`）。
+★跨批次：**neg/sbb/neg 无分支惯用法**（batch 377 `sub/neg/sbb`、batch 381
+`sbb eax,eax/sbb eax,-1` → **本条为第 3 种变体**）；`[this+0x78]` 位掩码字段。
+⚠️ partial：`+0x78` 位掩码的业务含义（未读调用者，不猜）。
+
+================================================================================
+③ 0x0053BAD0 —— 全局单例有值判定（推断名，14B，ret）
+================================================================================
+机器码（全段）：
+```
+0053bad0  mov ecx, [0xA9FAB0]（★全局指针）/ xor eax,eax / test ecx,ecx /
+          **setne al** / ret
+```
+**语义**：`bool` = `[0xA9FAB0] != NULL`——全局单例/句柄的存在性查询（无参数）。
+★新登记：全局 **`[0xA9FAB0]`**（读语义为是否已初始化/存在）。
+⚠️ partial：该全局的业务身份（未读写入点/调用者，不猜）。
+
+================================================================================
+④ 0x00425270 —— 单字节清零 setter（推断名，8B，ret）
+================================================================================
+机器码（全段，仅 2 条）：
+```
+00425270  mov byte [ecx+0x19E], 0 / ret
+```
+**语义**：`this->+0x19E = 0`——单字节清标志（与 batch 389 的 `+0x19E` 无关，
+此偏移是不同类的）。★新登记：字段 **`+0x19E`（字节标志）**。
+⚠️ partial：宿主类与标志含义（未读调用者，不猜）。
+
+================================================================================
+（batch 390 说明：C++ 模型决策）
+================================================================================
+本批**新增 4 行**，**均不新增 C++ 模型**：
+① `IsAlliedWith`——语义已完整（YRpp 带名 + 逐字节），但 **51 个 callers 现场未
+逐个读**，且 0x3C 槽的虚方法名未坐实；模型等价物需要先枚举全部消费方（违反
+"登记先行"），故只登记机器码事实与闭合 batch 388 partial。
+②-④ 三个微桩——无独立模型价值（位测试/全局非空/清字节都是 1-3 条指令）。
+故按纪律**只登记机器码事实 + 跨批次连接**。本批无产品代码改动，ctest 维持
+**43/43 全绿**（batch 372 已实跑核实）。登记四行均 semantics_verified +
+assembly_verified_semantics_confirmed（全段字节读完；①另有 YRpp 逐行实锤），
+partial 项如实标注。
