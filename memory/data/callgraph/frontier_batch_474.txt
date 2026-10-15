@@ -1,0 +1,64 @@
+frontier batch 474 — 容器清理例程孪生 0x005134D0（39B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=190/
+body=39B，ranking 名 FUN_005134d0，unique_callers FUN_00511850/
+FUN_005137d0/FUN_0067b8f0/**RulesClass::~RulesClass**（带名——规则类析构
+清理场景））。
+**39B 全字节读完**（= 0x27，0x5134D0-0x5134F6 ret）。取证手段：disasm.py
+全读 + **batch 472 0x512D30 逐字节同构对拍**（同一容器清理模板第二实例）。
+
+================================================================================
+0x005134D0 —— 容器清理例程孪生（VectorClass::Clear 系，39B）
+================================================================================
+机器码（完整，39B 整数）：
+```
+005134d0  push ebx / push esi
+005134d2  mov esi, ecx              ; ★this
+005134d4  xor ebx, ebx
+005134d6  mov eax, [esi+4]          ; ★eax = this->+4（Items 数组指针）
+005134d9  cmp eax, ebx
+005134db  je 0x5134ee               ; ★数组空 → 跳过删除
+005134dd  cmp byte ptr [esi+0xd], bl ; ★this->+0xD（IsAllocated 自分配标志）
+005134e0  je 0x5134ee               ; ★非自分配 → 不删（外部数组）
+005134e2  push eax
+005134e3  call 0x7c8b3d             ; ★★operator_delete(Items)（batch 001 实锤）
+005134e8  add esp, 4
+005134eb  mov [esi+4], ebx          ; ★Items = NULL
+005134ee  mov byte ptr [esi+0xd], bl ; ★IsAllocated = 0
+005134f1  mov [esi+8], ebx          ; ★Capacity = 0
+005134f4  pop esi / pop ebx / ret
+```
+**语义（batch 472 孪生，同构确认）**：**容器清理例程（VectorClass::Clear
+系）**——本批 0x5134D0 与 batch 472 的 0x512D30 **逐字节同构**（39B 全段
+一致，仅两处 call 指令的 rel32 立即数不同——两处都指向同一 0x7C8B3D
+operator_delete，差异纯因源地址不同导致的目标偏移重定位）：Items(+4) 非空
+且 IsAllocated(+0xD) 置位时 operator_delete(Items) 释放数组并置 NULL；
+随后无条件清 IsAllocated=0、Capacity=0；未清 +0xC（IsInitialized）。
+★原版怪癖（照抄）：① **双条件门控删除**（数组非空 与 自分配标志 都满足
+才 delete——外部 pMem 接管数组 [batch 469 同语义] 不会被删）；② **删除后
+置 NULL 但接着无条件清标志/容量**（没删也清——状态复位完整）；③ **全部写
+ebx 清零寄存器**（xor 一次复用三处——MSVC 惯用）；④ **不清 IsInitialized
+(+0xC)**——与 SetCapacity 的 false→true 时序衔接。
+★跨批次闭合：**与 batch 472 0x512D30 逐字节同构 = 同一 VectorClass 清理
+模板第二编译实例**（Westwood/MSVC 模板实例化——同 T 或不同 T 两副本推断，
+callers 重叠 FUN_00511850/RulesClass::~RulesClass 证实同一宿主家族多容器
+成员）；**布局与 batch 469 完全一致**（+4 Items/+8 Capacity/+0xC
+IsInitialized/+0xD IsAllocated——容器生命周期三件套家族：Add 467 /
+SetCapacity 469 / Clear 472 + 本批孪生）；**被调 0x7C8B3D（batch 001
+已登记 operator delete 侧）**；**callers 含带名 RulesClass::~RulesClass**
+——规则类析构时经本函数释放容器内存（与 batch 472 同一析构路径的兄弟
+容器成员）。
+⚠️ partial：两副本的宿主容器差异（同 T 重排 vs 不同 T 模板实例——MSVC
+模板每类型实例化一次，两副本 = 两种元素类型推断）、+0xC 未清原因
+（IsInitialized 语义推断）、RulesClass 析构现场未追。
+
+================================================================================
+（batch 474 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（容器族已有 batch 467/469/472 布局互证
++ 本批为孪生确认；ValueType 定后并入同一容器模型即可，暂无独立价值）。
+模型价值：**容器清理模板第二实例登记**（batch 472 孪生逐字节同构对拍——
+证明容器族清理在 RulesClass 宿主内多容器成员复用，MSVC 模板实例化证据）。
+本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。
+登记一行 semantics_verified + assembly_verified_semantics_confirmed
+（全段字节读完 + 孪生逐字节对拍 + 被调登记），partial 项如实标注。
