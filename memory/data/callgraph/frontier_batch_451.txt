@@ -1,0 +1,91 @@
+frontier batch 451 — 窄串双参构造器（百分比→字节换算）0x005D0470（271B，单函数批）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（callers=4/deps=295，ranking 唯一调用者
+FUN_004f3460/FUN_004f38b0/FUN_005ceef0/FUN_0076ca60）。
+**271B 全字节读完**（= 0x10F）。取证手段：disasm.py 全读 + PE 字符串实锤
+（0x817F70=","）+ **batch 213 登记错误纠正（0x7B6280 语义实锤）**。
+
+================================================================================
+0x005D0470 —— 窄串双参构造器（推断名：百分比→字节换算，271B，ret 8 = 2 栈参）
+================================================================================
+机器码（完整主结构）：
+```
+005d0470  sub esp,8 / push esi / mov esi,ecx（★this）
+005d0476  push 0 / call 0x7b4630            ; ★batch 062 窄串 operator= (this->+0=空)
+005d047d  mov ecx,[esp+0x10]                ; ★栈参1（名字/键推断）
+005d0481  push 0 / mov byte[esi+4],0        ; ★+4=0
+005d0487  mov dword[esi+8],0                ; ★+8=0
+005d048e  mov dword[esi+0xc],0xff           ; ★+0xC=0xFF（默认 255）
+005d0495  call 0x7b47f0                     ; ★batch 118 窄串比较
+005d049a  test al / je 0x5d0576             ; ★空串 → 收尾返 this
+005d04a2  call 0x407000                     ; ★batch 169 全局单例 getter
+005d04a7  test eax / je 0x5d0576            ; ★无单例 → 收尾
+005d04af  push ebp,edi / lea ecx,[esp+0x10] / call 0x7b4620   ; ★窄串构造 1
+005d04ba  mov edi,[esp+0x1c]                ; ★栈参2（值串推断）
+005d04be  lea eax,[esp+0x10] / push eax / push 0x817f70 / push 0 / mov ecx,edi
+005d04cc  call 0x7b5f10                     ; ★组装（格式 "," 实锤）
+005d04d1  lea ecx,[esp+0xc] / mov ebp,eax / call 0x7b4620   ; ★窄串构造 2
+005d04dc  lea ecx,[esp+0xc] / push ecx / push 0x817f70 / push ebp / mov ecx,edi
+005d04e9  call 0x7b5f10                     ; ★再组装
+005d04ee  push 0 / lea ecx,[esp+0x10] / call 0x7b47f0       ; ★比较
+005d04f9  pop edi,ebp / test al / je 0x5d0542
+005d04ff  lea ecx,[esp+4] / call 0x7b6280   ; ★★字符串→整数（batch 213 纠正！）
+005d0508  cmp eax,0x64 / mov [esi+0xc],eax  ; ★解析值存 +0xC
+005d050e  jle 0x5d0519 / mov [esi+0xc],0x64 ; ★clamp 上界 100
+005d0519  test eax,eax / jge 0x5d0524 / mov [esi+0xc],0     ; ★clamp 下界 0
+005d0524  mov eax,[esi+0xc] / mov ecx,eax / shl ecx,8 / sub ecx,eax
+          mov eax,0x51eb851f / imul ecx / sar edx,5 / shr eax,0x1f / add edx,eax
+005d053f  mov [esi+0xc],edx                 ; ★×255/100（百分比→字节 0-255）
+005d0542  mov eax,[esi+0xc] / test / jle 0x5d0564
+005d0549  push 0 / lea ecx,[esp+0xc] / call 0x7b47f0 / test al / je 0x5d0564
+005d0558  mov ecx,[esp+0x10] / push ecx / mov ecx,esi / call 0x7b4940
+                                            ; ★batch 118 窄串赋值（非空写回）
+005d0564  lea ecx,[esp+4] / call 0x7b46f0   ; ★窄串析构 ×2
+005d056d  lea ecx,[esp+8] / call 0x7b46f0
+005d0576  mov eax,esi / pop esi / add esp,8 / ret 8   ; ★返 this
+```
+**语义（推断名）**：**窄串双参构造器（百分比→字节换算）**——ret 8 = 2 栈参；
+this 初始化为窄串对象（+0=空、+4=0、+8=0、**+0xC=0xFF 默认**）；栈参1 非空且
+全局单例存在时：用格式串 `0x817F70=","`（PE 实锤——逗号分隔）把栈参1/2 组装
+两次（0x7B5F10 ×2）→ 结果串非空 → **0x7B6280 解析整数值** → **clamp [0,100]**
+→ **×255/100（0x51EB851F 魔数 ÷100）**存 +0xC（百分比→字节 0-255 换算）→
+非空时 0x7B4940 写回 this 串 → 析构临时串 → 返 this。典型用途：透明度/亮度
+百分比字段（0-100%）→ 字节值（0-255）的 INI/配置加载构造器。
+★★★跨批次纠正（batch 213 登记错误实锤）：**batch 213 把 0x7B6280 登记为
+「字符串持有器释放器」（mov eax,[ecx]; call 0x7C9BFD; add esp,4; ret——推断
+0x7C9BFD=释放）——本批实锤纠正**：① 本批调用现场 `call 0x7B6280; cmp eax,0x64;
+clamp [0,100]`——返回值被当**整数**用（释放器无返回契约，不可能）；②
+**0x7C9BFD 本体反汇编 = 转发器**（`push [esp+4]; call 0x7C9B72`）；③
+**0x7C9B72 本体 = 标准 atoi/strtol 核心**（[0x87C79C] 门控 → ctype 表
+[0x87C590] 或 0x7D1311 判空白 → 符号 0x2D/0x2B → `ebx*10+digit` 累加 →
+0x2D 负号取反 → 返回整数）——**0x7B6280 = 字符串→整数解析器**，非释放器。
+batch 213 当时的 0x7C9BFD「释放」推断被证伪（当时记 partial，现闭合为解析）。
+★原版怪癖（照抄）：① **+0xC 默认 0xFF**（255）先写再覆盖（构造器默认值）；
+② **clamp [0,100] 双边界**（jle/jge 两处钳制）；③ **×255/100 魔数换算**
+（0x51EB851F + sar edx,5 + shr 0x1F 符号修正——÷100 标准魔数序列）；
+④ **组装两次**（0x7B5F10 ×2，格式 "," 逗号分隔——两段拼串）；
+⑤ **栈参1 空 → 整个换算跳过**（保持默认 0xFF）；⑥ **全局单例门控**
+（0x407000 非空才换算——batch 169 单例）；⑦ **失败静默**（各 je 直接收尾返
+this 无错误码）；⑧ **窄串三构造/两析构**（0x7B4630/0x7B4620/0x7B47F0/
+0x7B4940/0x7B46F0 窄串族全明星）。
+★跨批次：**batch 213 0x7B6280（登记纠正——字符串→整数非释放器）**+**batch
+062 0x7B4630 / batch 118 0x7B47F0+0x7B4940 / 窄串族（0x7B4620/0x7B46F0）**+
+**batch 169 0x407000（全局单例门控）**+**0x7C9BFD/0x7C9B72（atoi 核心——
+0x7C-0x7D 静态 CRT 区新成员）**。
+★新登记：**0x817F70=","（PE 字节实锤——组装分隔符）**；**「窄串双参构造
+百分比→字节」惯用**（clamp[0,100] + ×255/100 魔数）；**this 字段 +0（窄串）/
++4/+8/+0xC（字节值，默认 0xFF）**；**0x7C9B72（atoi 核心——0x7C CRT 区新
+成员）**；**batch 213 纠正记录**。
+⚠️ partial：宿主类（0x5D 区配置/颜色类推断）、栈参1/2 精确语义（名字/值串
+推断）、0x7B5F10 组装语义（sprintf 系推断）、+0xC 字节值业务（透明度/亮度
+推断）。
+
+================================================================================
+（batch 451 说明：C++ 模型决策）
+================================================================================
+本批**新增 1 行**，**不新增 C++ 模型**：宿主未确认 + 0x7B5F10 未读。
+模型价值：**「窄串双参构造百分比→字节」惯用**（clamp+魔数换算——可复用模板）
++ **batch 213 登记纠正（0x7B6280 语义实锤——字符串→整数非释放器）** + atoi
+核心 0x7C9B72 新 CRT 成员 + 0x817F70 格式串登记。本批无产品代码改动，ctest
+维持 **43/43 全绿**（batch 372 已实跑核实）。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（全段字节读完），partial 项如实标注。
