@@ -1,0 +1,60 @@
+frontier batch 407 — VectorClass 构造器 0x004D0440（74B，单函数批）（2026-10-15）
+
+口径：候选**只从 picker 未登记池取**（callers=4/deps=1901）。
+**74B 全字节读完**（= 0x4A）。取证手段：disasm.py 全读 + **batch 384 0x7C8E17
+CRT operator new 交叉核验 + YRpp VectorClass 签名对照**。
+
+================================================================================
+0x004D0440 —— VectorClass 构造器（推断名，74B，ret 8 = 2 栈参）
+================================================================================
+机器码（完整）：
+```
+004d0440  mov eax,[esp+4]                ; ★参1 = size（容量）
+004d0444  push esi / mov esi,ecx         ; this
+004d0447  xor edx,edx
+004d0449  cmp eax,edx                    ; size==0?
+004d044b  mov [esi+4],edx                ; this->+4 = 0（★数据指针初 0）
+004d044e  mov [esi+8],eax                ; this->+8 = size（容量）
+004d0451  mov byte [esi+0xc],1           ; +0xC = 1
+004d0455  mov byte [esi+0xd],dl          ; +0xD = 0
+004d0458  mov [esi],0x7e192c             ; ★虚表 = 0x7E192C
+004d045e  je 0x4d0484                    ; size==0 → 跳过分配
+004d0460  mov ecx,[esp+0xc]              ; ★参2 = array（外部缓冲）
+004d0464  cmp ecx,edx
+004d0466  je 0x4d0471                    ; array==0 → 自分配
+004d0468  mov [esi+4],ecx                ; this->+4 = 外部缓冲（★直用）
+004d046b  mov eax,esi / pop esi / ret 8  ; 返回 this
+004d0471  shl eax,2                      ; size × 4
+004d0474  push eax
+004d0475  call 0x7c8e17                  ; ★CRT operator new（batch 384 同款）
+004d047a  add esp,4
+004d047d  mov [esi+4],eax                ; this->+4 = 新缓冲
+004d0480  mov byte [esi+0xd],1           ; ★+0xD = 1（自分配标志）
+004d0484  mov eax,esi / pop esi / ret 8
+```
+**语义（推断名）**：**VectorClass 构造器**——`Vector(size, array)`（**YRpp
+`VectorClass(int size=0, T* array=0)` 签名吻合**）：`+0xC=1`、`+8=size`、`+4=0`、
+虚表 0x7E192C；size≠0 时 array≠0 → **外部缓冲直用**（`+4=array`，不自分配）；
+array==0 → **`operator new(size×4)`** 自分配（`+4=新缓冲`、`+0xD=1` 标记）。
+★原版怪癖（照抄）：① **`+0xD` 自分配标志仅在 array==0 路径置 1**（外部缓冲
+路径保持 0——"谁分配谁负责释放"的运行时标记）；② `size==0` 时**完全跳过
+分配段**（`+4` 保持 0、`+0xD` 保持 0——惰性构造）；③ `+0xC` 恒 1（与 size 无关）；
+④ 参 2 优先级高于自分配（**外部缓冲直用不复制**——非 `new+copy`，是裸接管）；
+⑤ `shl eax,2` = `size×4`（元素 4 字节，未乘元素类型尺寸——调用方已按 T 换算）；
+⑥ 虚表 0x7E192C 直接写（非通过 ctor 链）。
+★跨批次（同族连接）：**batch 384 `0x7C8E17`（CRT operator new）第 2 消费点**；
+虚表 **0x7E192C**（0x7E19xx .rdata 虚表区）；ret 8 = 2 栈参（size/array）。
+★新登记：**VectorClass 字段 [+0]（虚表）/ [+4]（数据指针）/ [+8]（容量）/ [+0xC]/
+[+0xD]（自分配标志）**；虚表 **0x7E192C**；「外部缓冲 vs 自分配」双路径构造惯用。
+⚠️ partial：宿主类确认（VectorClass 推断——YRpp 签名吻合但类名未核验）、
++0xC 字段含义（类型大小/标志推断）、4 个调用者分工、0x7E192C 虚表槽布局。
+
+================================================================================
+（batch 407 说明：C++ 模型决策）
+================================================================================
+本批**新增 1 行**，**不新增 C++ 模型**：宿主类 + 字段语义未确认。模型价值：
+**0x7C8E17 第二消费点**（batch 384 CRT new 复用实证）+ VectorClass 构造形态
+（外部缓冲/自分配双路径 + 自分配标志）——对全量重写容器层是基础模板。
+本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。
+登记一行 semantics_verified + assembly_verified_semantics_confirmed
+（全段字节读完），partial 项如实标注。
