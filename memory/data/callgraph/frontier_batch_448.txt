@@ -1,0 +1,59 @@
+frontier batch 448 — TechnoClass::GetControllingHouse 0x006339B0（37B，单函数批）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（callers=4/deps=296，ranking 唯一调用者
+FUN_004f2c70/FUN_004f3140/FUN_007681e0/FUN_0076f970）。
+**37B 全字节读完**（= 0x25）。取证手段：disasm.py 全读 + **batch 062（0x50B6F0
+IsControlledByCurrentPlayer）调用现场 + [0xA83D4C] PlayerPtr 交叉核验**。
+
+================================================================================
+0x006339B0 —— TechnoClass::GetControllingHouse（★ranking 带名，37B，ret c3）
+================================================================================
+机器码（完整）：
+```
+006339b0  mov ecx, dword ptr [ecx + 0x21c]   ; ★this->+0x21C = 所属对象（House* 推断）
+006339b6  push esi
+006339b7  mov esi, dword ptr [ecx + 0x30]    ; ★esi = [House->+0x30]（返回候选 1）
+006339ba  call 0x50b6f0                      ; ★★batch 062 已登记
+                                             ;   HouseClass::IsControlledByCurrentPlayer
+006339bf  test al, al
+006339c1  je 0x6339d1                        ; ★非当前玩家控制 → 返 esi
+006339c3  mov eax, dword ptr [0xa83d4c]      ; ★★[0xA83D4C] = 当前玩家指针（batch 171/183/230）
+006339c8  test eax, eax
+006339ca  je 0x6339d1                        ; ★当前玩家 NULL → 返 esi
+006339cc  mov eax, dword ptr [eax + 0x30]    ; ★[当前玩家->+0x30]（返回候选 2）
+006339cf  pop esi / ret                       ; ★返 [当前玩家->+0x30]
+006339d1  mov eax, esi / pop esi / ret        ; ★返 [所属 House->+0x30]
+```
+**语义（★ranking 带名，YRpp 无覆盖）**：**TechnoClass::GetControllingHouse
+（获取控制方）**——从 `this->+0x21C` 取所属对象（HouseClass* 推断），若该 House
+由当前玩家控制（0x50B6F0 判定）且当前玩家指针 `[0xA83D4C]` 非空，则返回
+`[0xA83D4C]->+0x30`；否则返回 `[所属 House]->+0x30`。**两候选都取 +0x30 字段**
+（House/玩家对象偏移 +0x30 的 ID/指针——batch 183 同偏移语义）。
+★原版怪癖（照抄）：① **先算默认候选再判定**（esi=所属 House->+0x30 先存，
+判定命中才用当前玩家——非短路两候选）；② **双重门控**（0x50B6F0 判定 + 当前
+玩家 NULL 检查——判定真但无当前玩家仍落默认）；③ **两出口都取 +0x30 字段**
+（不是返回 House 指针本身——+0x30 字段语义 ID/指针推断）；④ **37B 无栈帧
+极简**（单 push esi——纯取字段链）；⑤ 判定函数 batch 062 复用（HouseClass::
+IsControlledByCurrentPlayer 就是查 [0xA8B238] + this->[0x1EC]/[0x1ED] 标志）。
+★跨批次（已登记函数调用现场）：**batch 062 0x50B6F0（HouseClass::
+IsControlledByCurrentPlayer——本条=调用现场，控制方判定链）**；**[0xA83D4C]
+（当前玩家指针——batch 171 Fire_SW isCurrent、batch 183 Am_I_Master、batch 230
+MakeAlly 特殊 House 同全局——PlayerPtr 共识第 4 次出现）**；**+0x30 字段（batch
+183 Am_I_Master 的 owner->+0x30 House/Player ID——跨函数偏移复用）**。
+★新登记：**this->+0x21C（所属 House 指针——TechnoClass 布局）**；**「控制方
+获取」惯用**（IsControlledByCurrentPlayer 判定 + 当前玩家回退双候选）；
+**[0xA83D4C]->+0x30 与 [所属->+0x30] 双候选模式**。
+⚠️ partial：this->+0x21C 精确身份（House 指针推断——也见于 batch 442 +0x21C
+比较，TechnoClass 家族字段共识待闭合）、+0x30 精确语义（ID/指针——batch 183
+记为 ID，本批两者取同偏移）、返回类型（rank 名 GetControllingHouse 返 House*
+推断 vs 机器码返 +0x30 值）、YRpp 无此名映射（USER_DEFINED）。
+
+================================================================================
+（batch 448 说明：C++ 模型决策）
+================================================================================
+本批**新增 1 行**，**不新增 C++ 模型**：+0x30 返回语义未确认 + YRpp 无覆盖。
+模型价值：**「控制方获取」惯用**（玩家判定 + 双候选回退——House 系交互查询
+模板）+ batch 062 调用现场 + [0xA83D4C] 第 4 次出现计数。本批无产品代码改动，
+ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（全段字节读完），
+partial 项如实标注。
