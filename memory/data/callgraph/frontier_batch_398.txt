@@ -1,0 +1,89 @@
+frontier batch 398 — HouseClass::MakeEnemy 0x004F9F90（634B，单函数批）（2026-10-15）
+
+口径：候选取自 picker 未登记池（HouseClass 区，带名，callers=4/deps=1877）。
+**634B 全字节读完**（= 0x27A）。取证手段：disasm.py 全读 + **batch 390 IsAlliedWith
+同族对照**（Allies 位掩码 [this+0x5788]）+ batch 374 UpdateAngerNodes。
+
+================================================================================
+0x004F9F90 —— HouseClass::MakeEnemy（推断名/带名，634B，ret 8）
+================================================================================
+机器码（要点）：
+```
+004f9f90  mov eax,[0xa8b238]（★门控）→ sub esp,0xa0 / push ebx,esi,edi / xor bl,bl
+          mov edi,[esp+0xb0]（★参1 = other house）/ mov esi,ecx（this）
+          [0xa8b238]!=0 → 双早退检查：edi->+0x34->[+0x1A6] / this->+0x34->[+0x1A6]
+            任一非零 → 0x4fa1e8（直接 ret 8）
+004f9fcf  push 0/0 / ecx=0x87f7e8 → call 0x4adee0（MapClass 段）
+          push edi / push 1 / ecx=esi → call 0x504790（★batch 374 UpdateAngerNodes）
+          ; —— 第一段"已结盟才清位"检查：
+          edi==NULL → 尾；edi==this 或 ArrayIndex 相同 → 0x4fa020（直接清）
+          edi->+0x30==-1 → 尾；**this->Allies[+0x5788] 无 edi 位（shl/test/setne）→ 尾**
+004fa020  ; —— 第一段清除（this 侧）：
+          this->Allies &= ~(1<<edi->ArrayIndex)（not/and）
+          [0xa8e7ac]!=0（★门控）→ this->+0x1D8 位掩码：**neg edx / sbb edx,edx / inc edx / and**
+            （[0x1D8] &= ~(1<<edi->ArrayIndex) 的布尔化 3 变体）
+          ecx=esi → call 0x509400（this 侧通知）
+          ; —— 第二段对称检查（方向反转）：
+          this==edi → 0x4fa094；ArrayIndex 相同 → 跳；this->ArrayIndex==-1 → 尾
+          edi->Allies[+0x5788] 无 this 位（setne）→ 尾
+004fa094  ; —— 第二段清除（edi 侧 + this 自身位）：
+          mov bl,1（★标志：第二段执行过）
+          edi->Allies &= ~(1<<this->ArrayIndex)（not/and）
+          [0xa8e7ac]!=0 → **this->+0x1D8 &= ~(1<<this->ArrayIndex)**（not/and——★清的是
+            this 的"自身位"，与第一段的 edi 位不对称）
+          ecx=edi → call 0x509400；push edi/1 / ecx=edi → call 0x504790
+004fa0e4  ; —— 尾部 DebugLog 门控：
+          [0xa8b238]!=0 && [0xa8e7ac]==0 && this->+0x1EC!=0 →
+          lea edi+0x1602a / lea this+0x1602a（★HouseClass+0x1602A = 名字串）
+          push 名1/名2 / push 0xd98（=3472）/ push 0x824724（文件）→ call 0x734e60（DebugLog）
+          push eax / lea [esp+0x18] → call 0x7ca564（sprintf）
+          mov ecx,[0x8871e0]（★世界单例）→ **fld qword [ecx+0x14c0] × fmul qword [0x7e27f8]
+          → push 0 → call 0x7c5f00（_ftol）**（★batch 392 Win 同款时间算式）
+          push eax / push 0x4046（=16454）/ lea [esp+0x18] / mov eax,[this+0x34]->+0xC0
+          push 0/0 / ecx=0xa8bc60 → call 0x5d3ba0（7 参通知）；push 0 / ecx=0x87f7e8 → call 0x4f42f0
+          ; —— 次尾段：栈返回字节 && bl（第二段执行过）：
+          [0xa8b238]!=0 → **esi/edi 与 [0xa83d4c]（当前家）sete 比较** → 命中 → 0x4fa1cb
+          else → this->+0x1EC / +0x1ED → 都 0 → 检查 edi->+0x1EC / +0x1ED → 都 0 → 尾
+004fa1cb  push -1 / or edx,-1 / ecx=0x824808 → call 0x752700（DebugLog 变体）
+004fa1da  push 0/0 / ecx=0x87f7e8 → call 0x4adcd0（MapClass 收尾）→ pop 族 / add esp,0xa0 / **ret 8**
+```
+**语义（带名）**：**HouseClass::MakeEnemy(house)**——把另一家设为敌（双向解除同盟）：
+① `[0xA8B238]` 门控 + 双侧 `+0x34` 对象 `[+0x1A6]` 字节非零**早退**（ret 8）；
+② 先 `0x4ADEE0`(MapClass 双零参) + **UpdateAngerNodes(1, other)**；③ **双向清除
+Allies 位掩码 `[+0x5788]`**（与 batch 390 IsAlliedWith 同族异向）——第一段清 this 的
+edi 位、第二段清 edi 的 this 位（带 bl 标志）；④ `[0xA8E7AC]` 门控下清 `[+0x1D8]`
+位掩码（**不对称：第一段清 edi 位用 neg/sbb/inc、第二段清 this 自身位用 not/and**）；
+⑤ 双向 `0x509400` 通知 + UpdateAngerNodes；⑥ DebugLog 行号 0xD98=3472、文件 0x824724、
+双方名字串 `+0x1602A`；⑦ **时间算式与 batch 392 Win 同款**（`[0x8871E0]+0x14C0 ×
+[0x7E27F8] → _ftol`）→ 0x5D3BA0(ecx=0xA8BC60, 7 参) + 0x4F42F0(MapClass)；
+⑧ 尾段门控（[0xA8B238] 分支走 `[0xA83D4C]` 当前家 sete，else 分支查双侧 +0x1EC/+0x1ED）
+→ 0x752700(push -1, 格式 0x824808)；⑨ `0x4ADCD0` 收尾 + **ret 8 = 2 栈参**。
+★原版怪癖（照抄）：① **先判 "Allies 是否含对方位" 再清除**（setne 检查，未结盟直接
+跳尾不耗 0x509400）；② `[+0x1D8]` 位掩码清除两段**不对称**（第一段 neg/sbb/inc/
+and 的布尔化 3 变体，用 edi 位；第二段 not/and 用 this 自身位）；③ bl 标志
+（第二段清除执行过才可能走次尾段 DebugLog）；④ 尾部双门控分支（[0xA8B238]≠0 走
+当前家比较、==0 走双侧 +0x1EC/+0x1ED 检查）；⑤ **ret 8 但只读参 1**（参 2 未读，
+多余栈参原版保留）；⑥ DebugLog 行号 0xD98=3472 + 文件 0x824724 + HouseClass+0x1602A
+名字串偏移（新常量）。
+★跨批次（同族连接）：**batch 390 `IsAlliedWith` 同族**（Allies 位掩码 +0x5788 +
+ArrayIndex +0x30 + GetOwningHouse 槽 0x3C——本函数是它的"写向"对偶）；**batch 374
+`0x504790` UpdateAngerNodes**；**batch 392 Win 同款**（[0x7E27F8] 常量、[0x8871E0]
+世界单例、0x5D3BA0/0x4F42F0/0x4046）；**batch 393 `0xA8E7AC` 门控**（DamageWall 同）
+；[0xA8B238] 门控族（batch 389/392/393）；`[0xA83D4C]` 当前家、`0x509400` 双调用、
+`0x4ADEE0`/`0x4ADCD0`(MapClass 双零参对)。★新登记：HouseClass+0x1602A 名字串、0x824724
+文件名、0x82481C/0x824808 格式串、行号 0xD98=3472、0x4046=16454、[0x7E27F8] 常量引用
+（batch 392 已实测）、双侧 +0x1EC/+0x1ED 字节门控、`+0x1D8` 位掩码族、
+`+0x34→+0x1A6` 字节、ret 8 双参签名。
+⚠️ partial：`0x509400`（双向通知，语义未读）、`0x5D3BA0`（ecx=0xA8BC60 全局，7 参，
+未读）、`0x4ADEE0`/`0x4ADCD0`（MapClass 双零参对，未读）、+0x1A6/+0x1EC/+0x1ED
+门控字节具体含义、0x4046=16454 参数语义（消息 ID 推断）。
+
+================================================================================
+（batch 398 说明：C++ 模型决策）
+================================================================================
+本批**新增 1 行**，**不新增 C++ 模型**：`0x4F9F90` 依赖 3 个未读函数（0x509400/
+0x5D3BA0/0x4ADEE0/0x4ADCD0）+ 未知宿主（HouseClass 布局 +0x1602A 大偏移名字串），
+按纪律只登记机器码事实 + Allies 位掩码族对照。模型价值：坐实 IsAlliedWith 的
+"写向"对偶 + Win 时间算式跨函数复用（0x7E27F8 常量第 2 消费点）。本批无产品代码
+改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。登记一行 semantics_verified
++ assembly_verified_semantics_confirmed（全段字节读完），partial 项如实标注。
