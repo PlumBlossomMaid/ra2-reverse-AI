@@ -1,0 +1,116 @@
+frontier batch 342 — INIClass 百分比读取 0x474620 + Bink 视频类析构器 0x432700 + 坐标解包 getter 0x6343C0（2026-10-15）
+
+口径：承接 batch 341，候选池按 unique_callers 扇入度降序取 TOP 3：0x474620
+（58B，5 callers，deps=420）、0x432700（80B，5 callers，deps=403）、0x6343C0
+（52B，5 callers，deps=312）。三函数均全反汇编读完（0x474620 尾 0x474657 ret
+0xC / 0x432700 尾 0x43274F ret / 0x6343C0 尾 0x6343F1 ret 4——body 与 ranking
+吻合）。YRpp 交叉验证：0x474620 非 ReadInteger（CCINIClass.h:102 实锤
+ReadInteger=0x5276D0、ReadDouble=0x5283D0——本条为独立包装，YRpp 无覆盖）；
+0x432700/0x6343C0 无 YRpp 覆盖（推断名）。取证手段：disasm.py 直反汇编 +
+已登记函数交叉验证（0x5283D0 batch 112、0x633BC0 batch 130、0x7C8B3D batch
+001 共 3 函数）+ PE 导入表实锤（0x432700 两 IAT 槽）+ read_const 实测
+（[0x7E4900]=-1.0、[0x7E1710]=256.0）。
+
+================================================================================
+0x474620 —— INIClass 百分比读取（推断名：读 double 默认 -1.0 哨兵 + ×256.0 定点化，58B）（5 callers：RulesClass::Read_General / Read_AudioVisual / Read_CombatDamage / Read_CrateRules + FUN_00712170，全 0x3A=58B 读完）
+================================================================================
+机器码（全 0x3A 主结构）：mov eax,[esp+8]/mov edx,[esp+4]（★栈参2/栈参1）→
+push 0xBFF00000/push 0（★double -1.0 高/低 32 位）→ push eax/push edx → call
+0x5283D0（★★已登记——INIClass::ReadDouble batch 112！pSection/pKey/-1.0）→
+fcom qword[0x7E4900]（★与 [0x7E4900]=-1.0 实测比较）→ fnstsw ax/test ah,0x40
+（★C3 相等标志）→ je 0x47464C（★C3==0 即读值 != -1.0 → 跳定点分支）→ fstp
+st(0)/mov eax,[esp+0xC]（★C3==1 即读值 == -1.0 → 丢弃、取栈参3=int 默认）
+→ ret 0xC → 0x47464C: fmul qword[0x7E1710]（★×256.0 实测——8.8 定点化）→
+call 0x7C5F00（★★已登记——_ftol batch 001！向零截断）→ ret 0xC
+
+语义：**INIClass 百分比读取（推断名）**——三参（pSection/pKey/int 默认）：
+调 ReadDouble(pSection, pKey, -1.0) 读 double；**读值 == -1.0（哨兵）→ 直接返
+回栈参3（int 默认）**；否则 ×256.0 定点化 + _ftol 向零截断返回 int。callers
+全为 RulesClass::Read_*（规则 INI 读取现场）——语义自洽。
+
+★原版怪癖（照抄）：① **-1.0 哨兵**（读值恰为 -1.0 时返回 int 默认——「未配
+置」语义）；② **fcom 相等判断**（C3 标志，不是 < / >——只有恰好 -1.0 才走默
+认分支）；③ **×256.0 定点化**（[0x7E1710]=256.0 实测——百分比→8.8 定点）；
+④ **_ftol 向零截断**（0x7C5F00——batch 001 已登记=调用现场）；⑤ **push
+0xBFF00000/push 0 直接合成 -1.0**（常量折叠）。
+★跨批次连接：**0x5283D0（batch 112——ReadDouble，本条=调用现场）**+
+**0x7C5F00（batch 001——_ftol，本条=调用现场）**+RulesClass::Read_General/
+Read_CombatDamage 等（callers——规则读取现场）+[0x7E4900]/[0x7E1710]（新常
+量，read_const 实测 -1.0/256.0）+YRpp 无覆盖（独立包装，ReadInteger=0x5276D0
+另址实锤——本条非 ReadInteger）。
+⚠️ partial：函数精确名（百分比读取推断——YRpp 无 JMP）、×256.0 精确用途
+（8.8 定点推断）、-1.0 哨兵精确触发语义（未配置推断）。
+
+================================================================================
+0x432700 —— Bink 视频类析构器（推断名：三资源释放——子对象 delete + _BinkClose + CloseHandle，80B）（5 callers：FUN_005BED40 / 005C0600 / 005C0A30 / 005CC820 / 005CEC70，全 0x50=80B 读完）
+================================================================================
+机器码（全 0x50 主结构）：push esi/mov esi,ecx（★this）→ mov edi,[esi+0x20]
+（★+0x20 子对象指针）→ test edi/je 0x432722 → mov ecx,edi/call 0x6C9AE0（★
+未登记——子对象释放函数，留独立候选）→ push edi/call 0x7C8B3D（★★已登记——
+delete batch 001！）→ mov [esi+0x20],0 → mov eax,[esi+4]（★+0x4 句柄）→
+test eax/je 0x432737 → push eax/call [0x7E15A4]（★★IAT 实锤——binkw32.dll!
+_BinkClose@4！）→ mov [esi+4],0 → mov eax,[esi+0x28]（★+0x28 句柄）→ cmp
+eax,-1/je 0x43274D（★-1 哨兵）→ push eax/call [0x7E11E0]（★★IAT 实锤——
+KERNEL32.dll!CloseHandle！）→ mov [esi+0x28],0xFFFFFFFF → ret
+
+语义：**Bink 视频类析构器（推断名：三资源释放）**——三段清理：① +0x20 子
+对象：先调 0x6C9AE0（子对象释放）再 delete；② +0x4：**Bink 视频流句柄**（
+_binkw32.dll!_BinkClose@4 实锤——RA2 过场动画 Bink 视频）；③ +0x28：
+**KERNEL32 句柄**（CloseHandle 实锤，-1 哨兵=无句柄）。宿主 = 含 Bink 流的视
+频播放类（过场动画系统）。
+
+★原版怪癖（照抄）：① **-1 哨兵**（+0x28 句柄未持有=0xFFFFFFFF）；②
+**Bink 流句柄经 IAT 直调**（[0x7E15A4]——binkw32.dll!_BinkClose@4，非进程内
+包装）；③ **子对象先释放函数再 delete**（0x6C9AE0 + 0x7C8B3D 双调用）；④
+**句柄清零 + 哨兵复位**（每段释放后字段归零/-1）。
+★跨批次连接：**0x6C9AE0（★未登记——子对象释放，本条=调用现场，留作后续
+候选：deps=154 body=83B）**+**0x7C8B3D（batch 001——delete，本条=调用现
+场）**+**IAT 槽 [0x7E15A4]=_BinkClose / [0x7E11E0]=CloseHandle（★PE 导入表
+实锤——本条最重要证据）**+[0x7E15A4]/[0x7E11E0]（新 IAT 地址）+0x5C 区
+callers（FUN_005BED40 等——Bink 视频系统邻域）。
+⚠️ partial：函数精确名（析构器推断——Bink 视频类名未知）、+0x20 子对象精确
+类型（0x6C9AE0 身份未登记）、0x6C9AE0 自身语义（子对象释放推断——留候选）。
+
+================================================================================
+0x6343C0 —— 坐标解包 getter（推断名：调 0x633BC0 网络抽象解包 → 拷 12B 坐标，52B）（5 callers：FUN_00637E00 / 0063AB60 / 0063B150 / 0063C690 / 0063CAE0，全 0x34=52B 读完）
+================================================================================
+机器码（全 0x34 主结构）：mov eax,[ecx+4]（★this->+4 指针）→ sub esp,0xC →
+mov ecx,[eax]（★*+4）→ mov edx,[ecx+4]（★★**+4 链）→ lea ecx,[esp+8]（★
+栈上输出缓冲）→ call 0x633BC0（★★已登记——网络抽象解包→坐标 batch 130！）
+→ mov ecx,[eax]/mov edx,[eax+4]/mov esi,[eax+8]（★返回值 +0/+4/+8 三 dword）
+→ mov eax,[esp+0x18]（★栈参1=输出结构指针）→ mov edi,eax → mov [edi],ecx/
+mov [edi+4],edx/mov [edi+8],esi（★拷 12B）→ ret 4
+
+语义：**坐标解包 getter（推断名）**——单栈参（输出结构指针）：沿 this->+4 →
+* → +4 取输入，调 **0x633BC0（batch 130 已登记：网络抽象解包→坐标，输出 3
+dword）**，把返回的三 dword（坐标对）拷到调用者输出结构。ret 4 = 1 栈参。
+0x633BC0 返回结构（+0/+4/+8）与 batch 130 登记一致。
+
+★原版怪癖（照抄）：① **三层指针链取输入**（this->+4 → * → +4——对象嵌套
+访问）；② **栈上临时缓冲**（lea ecx,[esp+8]——解包输出到栈再拷贝）；③
+**12B 三 dword 整体拷贝**（mov [edi] 链——坐标对结构）；④ **ret 4 = 1 栈参**
+（输出结构指针）。
+★跨批次连接：**0x633BC0（batch 130——网络抽象解包，本条=包装层调用现场）**
++**0x6D2140（batch 084——CoordsToClient，batch 130 邻链：解包→世界坐标→客
+户端坐标全链闭合线索）**+[esp+8]/[esp+0x18]（栈布局）+0x63 区 callers（网
+络坐标系统邻域）。
+⚠️ partial：函数精确名（getter 推断）、输出结构精确语义（坐标对推断）、
+0x633BC0 返回值 eax 与 batch 130 [esi] 输出的一致性（调用现场与登记描述核对
+——eax 指向 12B 结构，同结构）。
+
+================================================================================
+（batch 342 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x474620（INIClass 百分比读取 58B）推断名——本条价值 = **ReadDouble 调用
+   现场 + -1.0 哨兵语义 + ×256.0 定点化怪癖**（规则读取现场，RulesClass 立
+   案时闭合）。
+② 0x432700（Bink 视频类析构器 80B）推断名——本条价值 = **两个 IAT 实锤
+   （_BinkClose/CloseHandle）揭示 Bink 视频系统 + 0x6C9AE0 新候选**——Bink
+   视频系统立案时闭合。
+③ 0x6343C0（坐标解包 getter 52B）推断名——本条价值 = **batch 130 的
+   0x633BC0 包装层调用现场**（网络坐标全链闭合线索）。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部 semantics_verified
+（三函数全段反汇编读完 + 3 个已登记函数交叉验证 + PE 导入表实锤 + read_const
+实测常量），推断名 partial 项如实标注。0x6C9AE0 作为新候选记录（0x432700
+调用现场揭示）。
