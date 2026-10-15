@@ -1,0 +1,72 @@
+frontier batch 455 — WaypointPathClass::GetWaypointAfter 0x00763BA0（61B，单函数批）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（callers=4/deps=263，ranking 唯一调用者
+DisplayClass::DecideAction/FUN_004d82b0/FUN_004de580/FUN_006dad60）。
+**61B 全字节读完**（= 0x3D）。取证手段：disasm.py 全读 + **batch 272
+（WaypointPathClass::GetWaypoint 0x763980）兄弟函数交叉核验**。
+
+================================================================================
+0x00763BA0 —— WaypointPathClass::GetWaypointAfter（★ranking 带名，61B，ret 4）
+================================================================================
+机器码（完整）：
+```
+00763ba0  mov edx, dword ptr [esp + 4]    ; ★栈参1 = 索引/航点 ID
+00763ba4  push esi / mov esi, ecx         ; ★this
+00763ba7  push edx
+00763ba8  mov eax, dword ptr [esi + 0x28] ; ★this->+0x28 子对象虚表
+00763bab  lea ecx, [esi + 0x28]           ; ecx = &this->+0x28
+00763bae  call dword ptr [eax + 0x14]     ; ★虚表槽 0x14 查后继（参数=栈参1）
+00763bb1  mov ecx, dword ptr [esi + 0x24] ; ★this->+0x24（哨兵/默认值）
+00763bb4  inc eax                         ; ★查询结果 + 1
+00763bb5  cmp ecx, -1
+00763bb8  je 0x763bc1                     ; ★+0x24 == -1 → 用 eax（无回退）
+00763bba  cmp eax, dword ptr [esi + 0x38] ; eax vs 计数
+00763bbd  jne 0x763bc1                    ; != → 用 eax
+00763bbf  mov eax, ecx                    ; ★== 计数 → 回退用 +0x24（环尾推断）
+00763bc1  test eax, eax
+00763bc3  jl 0x763bd7                     ; ★< 0 → NULL
+00763bc5  cmp eax, dword ptr [esi + 0x38]
+00763bc8  jge 0x763bd7                    ; ★>= 计数 → NULL
+00763bca  mov ecx, dword ptr [esi + 0x2c] ; ★数组基址 [this+0x2C]
+00763bcd  lea eax, [eax + eax*2]          ; ★idx*3
+00763bd0  pop esi
+00763bd1  lea eax, [ecx + eax*4]          ; ★★&array[idx*12]（×3×4=12B 步进）
+00763bd4  ret 4
+00763bd7  xor eax, eax / pop esi / ret 4  ; ★越界 → NULL
+```
+**语义（★ranking 带名）**：**WaypointPathClass::GetWaypointAfter（按索引取
+后继航点）**——栈参1（航点索引/ID）先经 `this->+0x28` 子对象虚表槽 0x14
+查「后继」返回索引；`this->+0x24` 哨兵 == -1 时直接用查询结果，`查询+1 ==
+计数`（到队尾）时回退用 `this->+0x24`（环形/兜底推断）；最终边界检查
+`0 <= idx < [this+0x38]` 后返回 `[this+0x2C] + idx*12`（每航点 3 dword =
+12 字节记录），越界返 NULL。
+★★★兄弟函数闭合（batch 272 布局复用）：**batch 272（0x763980 GetWaypoint
+按索引取航点）**记录「+0x2C 基址/+0x38 计数/×3×4=12B 步进/双重边界/NULL
+而非断言/DynamicVectorClass 布局」——**本批 0x763BA0 逐条复用同一布局**，
+差异在**查询层**：GetWaypoint 直接按栈参 1 取，本批先经子对象虚表槽 0x14
+算后继再取（+0x24 哨兵回退）——**同容器两种访问入口（直取/后继查）**。
+★原版怪癖（照抄）：① **子对象虚表槽 0x14 查询**（this->+0x28 子对象——航点
+后继逻辑封装在子对象）；② **+0x24 哨兵 -1 双分支**（== -1 无回退直接用查询
+结果）；③ **环尾回退**（查询+1 == 计数 → 用 +0x24——环形航点/兜底推断）；
+④ **×3×4 = 12B 步进**（lea [eax+eax*2] + lea [ecx+eax*4]——batch 272 同款）；
+⑤ **双重边界检查**（jl 负 + jge 计数）；⑥ **NULL 而非断言**；⑦ **inc eax 在
+哨兵检查前**（查询结果先 +1——后继语义）。
+★跨批次：**batch 272 0x763980（GetWaypoint——兄弟函数布局复用实证，同容器
+双入口）**+**12 字节结构族（batch 269 Matrix3D 共轭/ batch 271 三维混合——
+batch 272 同记录）**+DisplayClass::DecideAction（调用者带名——航点路径规划
+消费域）。
+★新登记：**this->+0x28（航点后继查询子对象）+0x24（-1 哨兵默认值）**；
+**「GetWaypoint/GetWaypointAfter 双入口」惯用**（直取 vs 子对象查询+哨兵回退）；
+虚表槽 0x14 查询（子对象接口——新候选点）。
+⚠️ partial：+0x28 子对象身份（航点后继查询器推断）、+0x24 哨兵业务（环形航点/
+默认回退推断）、虚表槽 0x14 方法名、调用者用途（路径规划消费推断）。
+
+================================================================================
+（batch 455 说明：C++ 模型决策）
+================================================================================
+本批**新增 1 行**，**不新增 C++ 模型**：+0x28 子对象未读 + 哨兵业务推断。
+模型价值：**「GetWaypoint 双入口」惯用闭合**（batch 272 直取 + 本批后继查
+——同容器两访问入口）+ 子对象虚表槽 0x14 查询点 + 12B 记录布局第 3 次确认。
+本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。
+登记一行 semantics_verified + assembly_verified_semantics_confirmed（全段
+字节读完），partial 项如实标注。
