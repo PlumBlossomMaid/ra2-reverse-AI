@@ -1,0 +1,64 @@
+frontier batch 472 — 容器清理例程 0x00512D30（39B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=191/
+body=39B，ranking 名 FUN_00512d30，unique_callers FUN_00511850/
+FUN_00513860/FUN_0067bb10/**RulesClass::~RulesClass**（带名——规则类析构
+清理场景））。
+**39B 全字节读完**（= 0x27，0x512D30-0x512D56 ret；前邻接 0x512D1E =
+SetCapacity 类函数尾段同构现场）。取证手段：disasm.py 全读 + **batch 469
+（SetCapacity +4 Items/+8 Capacity/+0xD IsAllocated 布局）同布局交叉核验**
++ 被调 0x7C8B3D 已登记。
+
+================================================================================
+0x00512D30 —— 容器清理例程（VectorClass::Clear 系推断名，39B）
+================================================================================
+机器码（完整，39B 整数）：
+```
+00512d30  push ebx / push esi
+00512d32  mov esi, ecx              ; ★this
+00512d34  xor ebx, ebx
+00512d36  mov eax, [esi+4]          ; ★eax = this->+4（Items 数组指针）
+00512d39  cmp eax, ebx
+00512d3b  je 0x512d4e               ; ★数组空 → 跳过删除
+00512d3d  cmp byte ptr [esi+0xd], bl ; ★this->+0xD（IsAllocated 自分配标志）
+00512d40  je 0x512d4e               ; ★非自分配 → 不删（外部数组）
+00512d42  push eax
+00512d43  call 0x7c8b3d             ; ★★operator_delete(Items)（batch 001 实锤）
+00512d48  add esp, 4
+00512d4b  mov [esi+4], ebx          ; ★Items = NULL
+00512d4e  mov byte ptr [esi+0xd], bl ; ★IsAllocated = 0
+00512d51  mov [esi+8], ebx          ; ★Capacity = 0
+00512d54  pop esi / pop ebx / ret
+```
+**语义（推断名）**：**容器清理例程（VectorClass::Clear 系）**——无栈参
+（纯 this；ret 无清理 = 0 栈参）：Items（+4）非空且 IsAllocated（+0xD）
+置位时 operator_delete(Items) 释放数组并置 NULL；随后无条件清 IsAllocated
+= 0、Capacity = 0。★未清 +0xC（IsInitialized）——清理后容器仍可复用
+（下一次 SetCapacity 会先置 0 再置 1，与 batch 469 现场吻合）。
+★原版怪癖（照抄）：① **双条件门控删除**（数组非空 与 自分配标志 都满足
+才 delete——外部 pMem 接管数组 [batch 469 同语义] 不会被删）；② **删除后
+置 NULL 但接着无条件清标志/容量**（即使没删也清——状态复位完整）；③
+**全部写 ebx 清零寄存器**（xor 一次复用三处——MSVC 惯用）；④ **不清
+IsInitialized（+0xC）**——与 SetCapacity 的 false→true 时序衔接。
+★跨批次闭合：**布局与 batch 469 完全一致**（+4 Items/+8 Capacity/+0xC
+IsInitialized/+0xD IsAllocated——同容器族第三条成员现场，467 Add/469
+SetCapacity/472 Clear 构成容器生命周期三件套）；**被调 0x7C8B3D（batch
+001 已登记 operator_new/delete 配对的 delete 侧）**；**前邻接 0x512D1E**
+（`mov edx,[esi]; mov ecx,esi; call [edx+0xc]; ... mov al,1; ret 8`
+——batch 469 capacity==0 分支同构：虚表槽 0xC=Clear 的调用者现场，同区
+SetCapacity 族）；**callers 含带名 RulesClass::~RulesClass**——规则对象
+析构时经本函数释放容器内存（FUN_0067bb10 疑即 RulesClass 析构区）。
+⚠️ partial：+0xC 未清的原因（IsInitialized 语义推断）、exact 宿主类
+（VectorClass 模板实例 vs DynamicVectorClass——+0x10 Count 未动倾向
+VectorClass）、RulesClass 析构现场未追。
+
+================================================================================
+（batch 472 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（容器族已有 batch 467/469 布局互证 +
+本批为纯清理语义；ValueType 定后并入同一容器模型即可，暂无独立价值）。
+模型价值：**容器生命周期三件套闭合**（Add 467 / SetCapacity 469 / Clear
+472）+ RulesClass 析构经本函数清理的现场证据。本批无产品代码改动，ctest
+维持 **43/43 全绿**（batch 372 已实跑核实）。登记一行 semantics_verified
++ assembly_verified_semantics_confirmed（全段字节读完 + 布局互证 + 被调
+登记），partial 项如实标注。
