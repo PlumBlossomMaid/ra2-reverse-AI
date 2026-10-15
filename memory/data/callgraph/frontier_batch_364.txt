@@ -1,0 +1,133 @@
+frontier batch 364 — 玩家名表三操作 0x005EDDE0（按名查表写四选项值）+ 0x005E8DC0（八名拼接串）+ 0x007A0EA0（ping 分级写名表）（2026-10-15）
+
+口径：承接 batch 363，候选池按 unique_callers 扇入度降序取 callers=4 高 deps
+组：0x005EDDE0（262B，5 refs/4 callers，deps=2869）、0x005E8DC0（214B，4
+refs/4 callers，deps=2841）、0x007A0EA0（158B，4 refs/4 callers，deps=2837）。
+三函数均全反汇编读完（0x005EDDE0 尾 0x5EDEE5 ret / 0x005E8DC0 尾 0x5E8E95 ret
+/ 0x007A0EA0 尾 0x7A0F3D ret——body 与 ranking 吻合，262/214/158B）。YRpp/已
+登记交叉验证：**三函数共享 [0xA8DA90..0xA8DAB0] 八项全局表（每次 4B 步进、8
+项——玩家名字表推断），且 0x007A0EA0 的日志串 0x84D1F8 = "Got ping from
+gameoptions.  name = %s, ping = %d\x0A"（_read_str4.py 实测——宿主 GameOptions
+系实锤）**；0x005EDDE0 的 0x4E37D0/0x4E41D0/0x4E4E60/0x4E5940 = batch 108/113/
+167/108 已登记索引→ID 映射族四套；0x005E8DC0 的 0x7CA45F = batch 126 已登记
+CRT::wcscat（拼接 "," 0x8304FC）+ 0x7B66C0/0x7B7ED0/0x7B68E0/0x7B6760/0x7B46F0/
+0x7B7100 = batch 097/194/156/061/059/112 宽串族；0x007A0EA0 的 0x7350C0 = batch
+067 已登记宽→窄转换 + 0x5E26C0 = batch 202 已登记表键查询链 + 0x4068E0 = batch
+001 空桩。取证手段：disasm.py 直反汇编 + _read_str4.py 串实测 + 多已登记批函
+数调用现场。
+
+================================================================================
+0x005EDDE0 —— 按名查表写四选项值（推断名：八项表匹配 + 四套 ID 映射 + 双函数指针，262B）（4 callers：FUN_005dbe20、FUN_005e00b0、FUN_0077e900、FUN_00785740，全 0x106=262B 读完；deps=2869）
+================================================================================
+机器码（全 0x106 主结构）：push 族/mov ebp,ecx（★this）→ test ebp/je 0x5EDEE0
+（★空 this 跳过）→ mov eax,[0xA8DA84]/test/jne 0x5EDE01（★全局 gate [0xA8DA84]
+非零才继续）→ 失败: or esi,0xFFFFFFFF（★-1）→ 0x5EDE01: mov eax,[0xA8DA78]（★
+全局名指针）→ xor edi/mov esi,0xA8DA90（★八项表基址）→ 循环：mov ebx,[eax]/mov
+eax,[esi]/test eax/je 0x5EDE23（★空项跳过）→ push eax/push ebx/call 0x7DD0F8
+（★★已登记——batch 057 _wcsicmp！）/test eax/je 0x5EDE32（★匹配 → edi=idx）→
+add esi,4/inc edi/cmp esi,0xA8DAB0/jl 循环（★八项遍历）→ 未匹配 or edi,
+0xFFFFFFFF → 0x5EDE32: mov esi,edi → cmp [0x8316A4]/je 0x5EDEE0（★特殊值跳过）
+→ mov ecx,esi/call 0x4E37D0（★★batch 108——索引→ID 正向映射第一套）→ mov
+edi,[0x7E14A8]（★函数指针槽）→ push eax/push ebp/call edi（★经 [0x7E14A8]
+查值）→ test/je 跳过 → mov ecx,esp+0x10 参/and 0xFF/push/call [0x7E14A0]（★经
+[0x7E14A0] 写值）→ 重复三段（0x4E41D0 batch 113 / 0x4E4E60 batch 167 /
+0x4E5940 batch 108）→ 末段 cmp cl,1 特判：[0xA8B23C] 非空且 byte[+0x3C]==0 →
+push 0/push eax/call [0x7E14A0]（★特殊写 0）→ 收尾 pop 族/ret。语义：**按名查
+表写四选项值（推断名）**——全局名 [0xA8DA78] 在 [0xA8DA90..0xA8DAB0] 八项表
+里 _wcsicmp 匹配（batch 057），命中取索引；经四套索引→ID 映射（batch 108/113/
+167/108）各转一次 ID，分别经函数指针槽 [0x7E14A8] 取回数据、[0x7E14A0] 写回
+（带 0xFF 低位掩码），末段按 [0xA8B23C] 条件特判写 0。★原版怪癖（照抄）：①
+**八项表 _wcsicmp 匹配**（[0xA8DA90..0xA8DAB0]——玩家名字表推断，batch 057 调
+用现场）；② 未命中 → -1（or edi,0xFFFFFFFF）；③ **四套 ID 映射连续调用**
+（0x4E37D0/0x4E41D0/0x4E4E60/0x4E5940——batch 108/113/167 家族，每套转一次
+ID 查一次值）；④ 双函数指针槽（[0x7E14A8] 查/[0x7E14A0] 写——GDlgSupp 表区
+推断，batch 228 的 0x7E14D8 同区）；⑤ 0xFF 低位掩码（and ecx,0xFF——参数缩
+窄）；⑥ [0xA8B23C] 条件特判（+0x3C==0 时写 0）。★跨批次连接：**0x7DD0F8
+（batch 057——_wcsicmp，本条=调用现场）**+**0x4E37D0/0x4E41D0/0x4E4E60/
+0x4E5940（batch 108/113/167/108——索引→ID 映射族四套，本条=连续调用现场）**
++[0xA8DA78]/[0xA8DA84]/[0xA8DA90 系]/[0xA8B23C]（★新登记全局簇——玩家名/Gate/
+选项全局）+[0x7E14A8]/[0x7E14A0]（★GDlgSupp 表区推断）。⚠️ partial：函数精确
+名（按名查表写四选项值推断）、宿主类（GameOptions 系推断）、四套映射与四选项
+值对应、[0x7E14A8]/[0x7E14A0] 方法名。
+
+================================================================================
+0x005E8DC0 —— 八名拼接串（推断名：八项表 wcscat 逗号拼接，214B）（4 callers：FUN_005daf30、FUN_005dc350、FUN_005e00b0、FUN_005ea3e0，全 0xD6=214B 读完；deps=2841）
+================================================================================
+机器码（全 0xD6 主结构）：sub esp,0xC/push 族/mov ebx,ecx（★this）→ mov
+word[ebx],0（★清目标串）→ mov edi,0xA8DA90（★八项表基址）→ 循环：mov esi,[edi]
+（★表项）→ lea ecx,[esp+0xC]/call 0x7B66C0（★★batch 097——宽串 operator=）
+→ test esi/je 0x5E8E59（★空项跳过）→ cmp esi,[0xAC119C]/[0xAC11A0]/[0xAC11B0]/
+[0xAC11B4]/[0xAC11A4]/[0xAC11A8]/[0xAC11AC]/je 跳过（★七全局排除表——七次 cmp
+je 0x5E8E25）→ 0x5E8E19: push esi/lea ecx,[esp+0x10]/call 0x7B6880（★batch 143
+宽串 operator= 释放旧值）→ jmp 0x5E8E59 → 0x5E8E25: mov edx,esi/lea ecx,
+[esp+0x10]/call 0x5EDEF0（★未登记——副本化）→ lea edx,[esp+0x10]/lea ecx,
+[esp+0x14]/call 0x7B7ED0（★★batch 194——字符串宽化复制）→ lea ecx,[esp+0xC]/
+push eax/call 0x7B68E0（★batch 156 宽串 operator= 先比较版）→ lea ecx,
+[esp+0x14]/call 0x7B6760（★batch 061 析构）→ lea ecx,[esp+0x10]/call 0x7B46F0
+（★batch 059 析构）→ 0x5E8E59: lea ecx,[esp+0xC]/call 0x7B7100（★batch 112 宽
+串 getter）→ push eax/push ebx/call 0x7CA45F（★★batch 126——CRT::wcscat 拼到
+this）→ push 0x8304FC（★★串 ","——_read_str4.py 实测）→ push ebx/call
+0x7CA45F（★再拼 ","）→ add esp,0x10 → lea ecx,[esp+0xC]/call 0x7B6760（★析构
+临时）→ add edi,4/cmp edi,0xA8DAB0/jl 循环（★八项遍历）→ pop 族/ret。语义：
+**八名拼接串（推断名）**——遍历 [0xA8DA90..0xA8DAB0] 八项表，跳过七个全局排
+除值（[0xAC119C] 等），其余项经宽串族逐项处理（operator=/宽化复制/比较版）后
+用 wcscat（batch 126）以 ","（0x8304FC）分隔拼到 this 目标串——玩家名列表字
+符串构造。★原版怪癖（照抄）：① **七全局排除**（[0xAC119C]/[0xAC11A0]/
+[0xAC11B0]/[0xAC11B4]/[0xAC11A4]/[0xAC11A8]/[0xAC11AC]——七次 cmp je 跳过）；
+② **wcscat 双拼**（表项 + "," 分隔符——batch 126 调用现场×2）；③ 宽串族六件
+套齐用（0x7B66C0/0x7B6880/0x7B68E0/0x7B6760/0x7B46F0/0x7B7100——batch 097/
+143/156/061/059/112）；④ 临时串多次析构（0x7B6760/0x7B46F0——栈上临时宽串）。
+★跨批次连接：**0x7CA45F（batch 126——CRT::wcscat，本条=拼接调用现场）**+
+**宽串族（batch 097/143/156/061/059/112——六成员齐用）**+**0x7B7ED0（batch
+194——字符串宽化复制）**+串 ","（0x8304FC 实测）+[0xAC119C 系]/[0xA8DA90 系]
+（★新登记全局表——排除表/玩家名表）+0x5EDEF0（★未登记——副本化，留候选）。
+⚠️ partial：函数精确名（八名拼接串推断）、宿主类（GameOptions 系推断）、七全
+局排除值语义、0x5EDEF0 身份。
+
+================================================================================
+0x007A0EA0 —— ping 分级写名表（推断名：八项名匹配 + ping 三档分级，158B）（4 callers：FUN_005e3d10、FUN_00785740、FUN_007a0e50、FUN_007a0f40，全 0x9E=158B 读完；deps=2837）
+================================================================================
+机器码（全 0x9E 主结构）：push 族/mov ebp,edx（★栈参1=ping 值推断）→ mov
+ebx,ecx（★this=名指针推断）→ push ebp/push ebx/push 0x84D1F8/call 0x4068E0
+（★★batch 001 空桩 log——串 "Got ping from gameoptions.  name = %s, ping =
+%d\x0A" 实锤！）→ add esp,0xC → xor edi → 循环：mov ecx,[edi*4+0xA8DA90]（★八
+项表）→ test ecx/je 0x7A0F33（★空项跳过）→ mov esi,ebx/call 0x7350C0（★★
+batch 067——宽→窄转换，八槽轮换）→ 逐字节比较（cmp dl,[esi]/双步进/遇 \0 停
+——窄串匹配循环）→ 相等: xor eax/不等: sbb 族 → test eax/je 0x7A0F33（★匹配
+才继续）→ mov [edi*4+0xB76440],ebp（★★写 ping 值到 [0xB76440+idx*4]）→ call
+0x5E26C0（★★batch 202——表键查询链）→ mov ecx,eax/test/je 0x7A0F33 → 分级：
+cmp ebp,0/jl → push -1（★负 → -1）→ cmp ebp,0x12C（300）/jl → push 0（★<300
+→ 0）→ cmp ebp,0x1F4（500）/jl → push 1（★<500 → 1）→ else push 2（★≥500 →
+2）→ mov edx,edi/call 0x4E34A0（★未登记——按分级写表）→ inc edi/cmp edi,8/jl
+循环（★八项遍历）→ pop 族/ret。语义：**ping 分级写名表（推断名）**——先把
+"Got ping from gameoptions. name = %s, ping = %d" 经空桩 log（batch 001）输
+出；遍历 [0xA8DA90..0xA8DAB0] 八项玩家名，经 0x7350C0（batch 067）宽→窄转换后
+逐字节匹配入参名（this），命中则把 ping 值写 [0xB76440+idx*4]，经 0x5E26C0
+（batch 202 表键查询）后按 ping 三档（<0→-1 / <300→0 / <500→1 / ≥500→2）经
+0x4E34A0 写分级。★原版怪癖（照抄）：① **空桩 log 实锤宿主**（0x84D1F8 串
+"Got ping from gameoptions..."——GameOptions 系）；② 宽→窄逐字节匹配（0x7350C0
+batch 067 八槽轮换 + 手写循环）；③ **ping 三档阈值硬编码**（0/0x12C=300/
+0x1F4=500→-1/0/1/2）；④ 写双表（[0xB76440+idx*4] 原始 + 0x4E34A0 分级）。
+★跨批次连接：**0x7350C0（batch 067——宽→窄转换，本条=调用现场）**+**0x5E26C0
+（batch 202——表键查询链，本条=调用现场）**+**0x4068E0（batch 001——空桩
+log，本条=宿主串实锤现场）**+串 "Got ping from gameoptions..."（0x84D1F8 实
+测）+[0xA8DA90 系]/[0xB76440 系]（★新登记全局表——玩家名表/分级表）+0x4E34A0
+（★未登记——分级写表，留候选）。⚠️ partial：函数精确名（ping 分级写名表推
+断）、宿主类（GameOptions 系实锤）、ping 值来源（网络/游戏内推断）、0x4E34A0
+身份。
+
+================================================================================
+（batch 364 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x005EDDE0（按名查表写四选项值 262B）推断名——本条价值 = **八项玩家名表 +
+   四套 ID 映射连续调用（batch 108/113/167 家族）+ GDlgSupp 表区双槽**——
+   GameOptions 选项写入链立案时闭合。
+② 0x005E8DC0（八名拼接串 214B）推断名——本条价值 = **宽串族六成员齐用 + 七全
+   局排除表 + wcscat 逗号拼接**——玩家名列表 UI 串构造立案时闭合。
+③ 0x007A0EA0（ping 分级写名表 158B）推断名——本条价值 = **"Got ping from
+   gameoptions" 串实锤宿主 + ping 三档硬编码阈值 + 宽→窄匹配 + batch 202 查表
+   **——GameOptions 网络状态链立案时闭合。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部 semantics_verified
+（三函数全段反汇编读完 + 5 个已登记批函数调用现场 + 串实测），推断名 partial
+项如实标注。0x5EDEF0/0x4E34A0 作为新候选记录（副本化/分级写表）。
