@@ -1,0 +1,134 @@
+frontier batch 380 — 键盘热键分派器 0x0055DEE0（636B；方向键/ESC/TAB → 全局 UI 标志位翻转）（2026-10-15）
+
+口径：承接 batch 379，候选池按 unique_callers/依赖扇入度取（`_pick_batch323.py`）：
+0x0055DEE0（636B，4 callers，deps=2525）。**全段字节读完**（636 与 ranking 的
+body_bytes 吻合；`ret` 出口多处——0x55E089 / 0x55E09F / 0x55E0C0 / 0x55E0CF /
+0x55E0F0 / 0x55E0FF / 0x55E11F / 0x55E12D / 0x55E14D / 0x55E15B，末者后接 4 个
+`nop` 垫到 0x55E160 下一函数）。**本批为单函数批**。
+本条价值 = **识别出一个可命名的"键盘热键分派器"**，并据 `cmp` 字面量把四个分支
+**实锤为方向键**（`0x25`/`0x26`/`0x27`/`0x28` = VK_LEFT/VK_UP/VK_RIGHT/VK_DOWN）、
+`0x1B` = VK_ESCAPE、`0x09` = VK_TAB——**此后 RTS/UI 相关批次可直接复用这些键码
+常量**。
+取证手段：disasm.py 两段反汇编全读 + 键码字面量核对 + 4 批已登记函数调用现场
+（batch 057 / 138 / 168 / 369）。
+
+================================================================================
+0x0055DEE0 —— 键盘热键分派器（推断名，636B）（4 callers，全 0x27C=636B 读完；deps=2525）
+================================================================================
+**入口契约**：`ecx`=this（存 ebp）；`ret` 平返回（无栈参）。
+
+机器码（要点，按段分组）：
+
+**(1) 取键 + 掩码归并**
+```
+0055dee0  sub esp,8 / push ebx/ebp/esi / mov ebp,ecx
+          call 0x55E420                          ; ★前置（键状态刷新推断）
+          mov eax,[ebp]（★键值/标志 dword）/ test eax,eax / je 0x55E155（出口）
+          **and ah,0xF7**                        ; ★★**清 bit 11**
+          mov edi,eax / mov eax,[0x87F684]（★全局）
+          mov ebx,edi / **and bh,0xE8**          ; ★★**清 bit 11/13/14**
+          mov [esp+0x14],ebx                     ; ★归并后的键码
+```
+
+**(2) 三级查表（+ 一套"未命中"回退）**
+```
+0055df08  test eax,eax / je 0x55DF3A
+          mov eax,[0x87F690]（★表项）/ test / je / cmp dword [eax],ebx / je 0x55DF35
+          lea eax,[esp+0x14] / mov ecx,0x87F680 / push eax / **call 0x55F6E0**（★查找 1）
+          test / je 0x55DF3A / mov [0x87F690],eax
+0055df35  lea ecx,[eax+4] / jmp 0x55DF44
+0055df3a  mov eax,[0x87F690] / mov ecx,0xB7883C（★兜底常量表）
+0055df44  mov esi,[ecx] / test esi / jne 0x55DF7D
+          ……（第二套：0x87F684 判据 + **call 0x55F6E0** + **call 0x55F6C0**）
+0055df7d  mov edx,[esi] / push edi / mov ecx,esi / **call [edx+0x14]**（★虚表槽 0x14）
+          test al / jne 0x55DFD3（命中 → 用该对象）
+          ……（第三套：**call 0x55F6C0** + **call 0x55F6E0**）
+0055dfd1  mov esi,[eax] / test esi / pop edi / je 0x55E079
+```
+
+**(3) 命中后的三段虚表分派 + 名字排除**
+```
+0055dfdc  mov al,[0xA8ED9C]（★全局开关）/ test / je 0x55DFFE
+            成功支：mov eax,[esi] / **push 0x8278B4** / call [eax+0xC]（★虚表槽 0xC）
+            push eax / **call 0x7DD0F8**（★★**batch 057 已登记的 `_wcsicmp`**——宽串比较）
+            test eax / jne 0x55E079（**命中排除串则跳过**）
+0055dffe  mov eax,[ebp]（原键值）/ mov edx,[esi] / push eax / call [edx+0x18]（★虚表槽 0x18）
+          test al / je 0x55E018
+              成功支：同上 + **call [edx+0x20]**（★虚表槽 0x20）
+0055e018  mov eax,[ebp] / call [edx+0x1C]（★虚表槽 0x1C）/ test al / je 0x55E155
+```
+
+**(4) 特殊键走"环形 word 表"扫描（`esi` 限 10 次）**
+```
+0055e02b  mov ecx,[0x87F770]（★全局）/ xor esi,esi / **call 0x54F000**（★★batch 168/369 环形表）
+          and eax,0xFFFF / cmp eax,[ebp] / jne 0x55E155
+循环 0x55E048：mov ecx,[0x87F770] / **call 0x54F050**（★★batch 138）
+              mov ecx,[0x87F770] / **call 0x54F000** / and eax,0xFFFF /
+              inc esi / **cmp esi,0xA**（★**上限 10**）/ jge 0x55E155 /
+              cmp eax,[ebp] / je 循环
+```
+★即"**同一键值最多在环形表里扫 10 个槽**"——与 batch 369 的 `0x4F4320`（同样用
+`0x54F000`/`0x54F050`）**同一族扫描惯用法**。
+
+**(5) ★★键码分派（本条最有价值的可命名部分）**
+```
+0055e079  cmp ebx, 0x1B          ; ★**VK_ESCAPE(27)**
+          0x55E08A  cmp ebx, 9   ; ★**VK_TAB(9)** → mov ecx,0x87F7E8（MapClass::Instance）
+                                   / **call 0x6ABC40**
+          0x55E0A0  cmp ebx, 0x25 ; ★**VK_LEFT(37)**
+             mov eax,[ebp] / **test ah,8**（★方向位）→
+               置位：**and ah,0xFE**（清 bit8）   ← 关
+               未置：**or ah,1**（置 bit8）        ← 开
+             mov **dword [0xABCE14]**, eax / ret   ; ★★**翻转全局标志位**
+          0x55E0D0  cmp ebx, 0x27 ; ★**VK_RIGHT(39)** → **and ah,0xEF / or ah,0x10**（bit12）
+          0x55E100  cmp ebx, 0x26 ; ★**VK_UP(38)**    → **and al,0xFE / or al,1**（bit0）
+          0x55E12E  cmp ebx, 0x28 ; ★**VK_DOWN(40)**  → **and al,0xEF / or al,0x10**（bit4）
+0055e155  出口：pop esi / pop ebp / pop ebx / add esp,8 / ret
+```
+**四对掩码**：`0x25`→`ah` bit0、`0x26`→`al` bit0、`0x27`→`ah` bit4、`0x28`→`al`
+bit4——**两两成对且位置固定**（`ah`/`al` 各管两个方向、bit0/bit4 各管一对）。
+
+**语义（推断名）**：**键盘热键分派器**——`分派(this)`：读 `[this]` 的键值，先做
+**两次位掩码归并**（`and ah,0xF7`、`and bh,0xE8`——把"修饰位/左右键重复标志"抹掉
+以归一化键码），再经**三级查表**（全局 `0x87F680`/`0x87F684` 映射 + `0x87F690`
+表项 + `0xB7883C` 兜底常量表，查表函数 `0x55F6E0`/`0x55F6C0`）找到目标对象；
+命中后按**虚表槽 0x14 → 0x18 → 0x20 → 0x1C** 依次询问（每次询问返回真才继续），
+并用 **`_wcsicmp`（0x7DD0F8）与常量串 `0x8278B4` 做排除判定**（`[0xA8ED9C]`
+门控）；随后经**环形 word 表 `[0x87F770]` 的 `0x54F000`/`0x54F050`** 做**最多 10 次**
+的同键扫描；最后按**键码**分派：**ESC → `0x647040`**、**TAB → `MapClass::Instance`
+的 `0x6ABC40`**、**四个方向键 → 各自翻转全局 `[0xABCE14]` 的一个指定位**
+（`ah`/`al` 的 bit0/bit4，翻转方向由键值的 **bit 11** 决定）。
+★原版怪癖（照抄）：① **键码归并用 `and` 掩码而非查表**（`ah ^= 0xF7` 等效清 bit11、
+`bh &= 0xE8`——**同一键的多个物理变体被归并成同一键码**，是"左/右 Shift、扩展键"
+的廉价处理）；② **`[0xABCE14]` 用一个 dword 存四个方向开关**（`ah`/`al` × bit0/bit4
+——**位位置两两成对**，注释级信息全在掩码常量里）；③ **翻转方向由键值的 bit 11
+决定**（同一个键码既能开也能关——**按键的"按下/抬起"或"扩展位"编码在同一 dword**）；
+④ **环形表扫描硬编码上限 `cmp esi,0xA`**（10 次）——与 batch 369 同族的廉颇式
+遍历；⑤ **查表失败有三级回退 + 常量兜底 `0xB7883C`**（永不空手）。
+★跨批次连接（**本条集中命中 4 批**）：**`0x7DD0F8`（batch 057 `_wcsicmp`）** +
+**`0x54F000`（batch 168/369 环形索引 word 表访问）** + **`0x54F050`（batch 138
+Input 族变体）** + `0x87F770`（batch 369 同款全局）——**与 batch 369 的 `0x4F4320`
+是同一条输入/环形表链路的两个消费点**，两条互相印证。
+★新登记：全局 **`[0xABCE14]`（四方向 UI 开关 dword）**、`[0x87F680]`/`[0x87F684]`/
+`[0x87F690]`（三级映射表簇）、`[0xA8ED9C]`（排除判定门控）、`0xB7883C`（兜底常量表）、
+串 `0x8278B4`；函数 `0x55F6E0`/`0x55F6C0`（查表）/`0x55E420`（前置）/`0x6ABC40`
+（TAB 处理）/`0x647040`（ESC 处理）。
+⚠️ partial：宿主类与 `[ebp]` 键值结构（是否含"按下/抬起 + 修饰位"）、
+`0x8278B4` 串内容（**未读，不猜**）、`0x6ABC40`/`0x647040` 函数名与具体行为、
+四个方向位在 `[0xABCE14]` 中的业务含义（**地图滚动/视角/选择模式 推断，不作断言**）、
+`0x87F680` 映射表内容。
+
+================================================================================
+（batch 380 说明：C++ 模型决策）
+================================================================================
+本批为**单函数批**，**不新增 C++ 模型**：
+0x0055DEE0（键盘热键分派器 636B）——**语义依赖三级全局映射表
+（`0x87F680`/`0x87F684`/`0x87F690` + 兜底 `0xB7883C`）与四段虚表协议
+（0x14/0x18/0x1C/0x20）**，且方向位的业务含义未定；在映射表内容与宿主虚表
+按类确认前，**无可独立单测的切片**。
+故按纪律**只登记机器码事实 + 键码常量表（ESC/TAB/←↑→↓）+ 位翻转布局**，
+不落模型、不宣称方向位的具体业务含义。
+本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实；本批仅改
+取证文档与登记表）。登记一行记 semantics_verified +
+assembly_verified_semantics_confirmed（全段字节读完 + 键码字面量核对 +
+4 批已登记调用现场），partial 项如实标注。
