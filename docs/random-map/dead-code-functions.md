@@ -835,3 +835,87 @@ b - a
 `0x486380`/`0x578540`/`0x43B740` 函数名、虚表槽 `+8`/`0x90`/`0xD8`/`0x20` 方法名。
 **本条与活代码无任何同签名孪生**（孪生签名分析已证），故仍属"独一份、从没被接线"
 的算法分支。
+
+## 2026-10-15 续：`0x5A89D0` —— 批量放置主循环（1024 环形槽，1320 B）
+
+**全段实测 `0x5A89D0`–`0x5A8EF8`**（`ret 4` 后 7 个 `nop` 垫到 `0x5A8F00`，
+`disasm.py` 四段拼读）。开头的 `mov eax,0x6058` + `call 0x7CA650` 是
+**24664 字节栈帧探测**（`__chkstk` 惯用法）——死代码区最大栈帧。
+
+**两个 1024 槽并行数组**（同一栈帧）：
+- `[esp+0x68]` 起：**1024 × 0x14 = 20 字节**的放置项数组；开段用
+  `lea esi,[esp+0x68]` / `mov edi,0x400` / `call 0x5A99B0` / `add esi,0x14` /
+  `dec edi` 逐项**构造**（`0x5A99B0` 是项构造器）。
+- `[esp+0x5068]` 起：1024 个 dword 的辅助数组（存 `call [0x7E1530]` 的返回值）。
+
+**主循环（`0x5A8A0A` 起）分七步：**
+
+1. **11 值类型拒绝采样**：`Random()` → `fild qword` → `fmul [0x7EDB28]`
+   → `_ftol`（`0x7C5F00`）→ `cmp edi,0xA / ja 0x5A8A0A`——**上界 10（11 个类型）**。
+2. **11 次表内探测**：`lea eax,[edi+ebx]` + `mov ecx,0xB` + `cdq` + `idiv ecx`
+   → **`(采样值 + 计数器) % 11`**（余数）→ `add esi,[0xABAD20]`（**11 项全局
+   类型表**）→ `call 0x5A7D00` 判定；`inc ebx / cmp ebx,0xB / jl` 最多 11 次，
+   **全失败则 `xor al,al / ret 4`（返回 0）**。
+3. **入队**：成功项以 `rep movsd` ×5（**正好 0x14 字节**）从栈临时区拷进
+   `[esp+0x68] + idx*0x14`；写入位置 `inc edx / and edx,0x3ff`（**1024 环形**），
+   计数 `inc eax`；随后 `cmp eax,0x3FC / jge 0x5A8E7C`——**计数 ≥1020 转"排空"
+   分支**。
+4. **哨兵 + 两项子处理**：当前项首 dword `cmp ecx,0xFFFF`（**0xFFFF 哨兵 = 空**）；
+   第一 dword 非哨兵时 `call 0x5A7FA0`；随后 `push -1 / push -1` +
+   `call 0x5A6C10`（**已登记：表派发 + 虚调用 + 坐标累加**）。
+5. **LAT 类型索引映射（原位三档判定，值得单独记）**：
+   `mov edx,[0xABC1D4]` → 若 `[0xABC1D4] ≤ ecx < [0xABC1D4]+0x65` 则
+   `idx = ecx - [0xABC1D4]`；否则测 `[0xABBEC0]`，若
+   `[0xABBEC0] ≤ ecx < [0xABBEC0]+8` 则 `idx = ecx - [0xABBEC0] + 0x65`；
+   **否则 idx = 0**——即"**0x65(101) 个 LAT 号段 + 8 个特例号段**"，落空归 0。
+   随后 `lea edx,[eax+eax*2]` + `mov eax,[edx*4 + 0xABE370]` → **12 字节/项的全局
+   表**（`[0xABE370]`）。
+6. **≥2 项时开临时数组**：`cmp eax,1 / jle 0x5A8D06`（1 项及以下跳过）→
+   `lea edx,[esi+esi*4] / shl edx,2`（**计数 ×0x14**）→ `call 0x7C8E17`
+   （`operator new`）→ 失败 `je 0x5A8CFA`；成功则逐项填初值：
+   `mov dword [esi-8],0xFFFF` + 两次 `call 0x42D470` 取值写 `[esi-4]`/`[esi+4]`
+   + `mov dword [esi],0xFFFF` + `mov dword [esi+8],-1`（**每项双 0xFFFF 哨兵 +
+   尾字段 -1**），步进 0x14。
+7. **定位 + 校验 + 提交**：取项内 dword 作 iso 号 → `and eax,7` / `and esi,7`
+   （**取模 8 索引**）→ `mov bx,word [eax*4 + 0x89F688]` /
+   `mov ax,word [eax*4 + 0x89F688 + 2]`——**`0x89F688` 即 8 方向偏移表**
+   （每项 4 字节 = 两个 word，QWEN.md 记载的 CST 邻域表）→ 与基准坐标相加得
+   目标格 → **`call 0x5A8F00` 两次**（下一次取点的目标）：
+   - 第一次 4 栈参：`push 1 / push [edi+4] / push [edi+8] / push [esp+0x34]`
+   - 第二次 4 栈参：`push 4 / push [edi-4] / push edi / push [edi+0xC]`
+   两次返回 `al` 都参与判定（`test al,al / je 0x5A8DC0` 清标志字节
+   `[esp+0x13]=0`；第二次成功走 `0x5A8D79`）。随后
+   `call [0x7E1530]`（**导入 API**）→ 结果写 `[esp+ecx*4+0x5068]` 辅助数组 →
+   环形下标 `inc eax / and eax,0x3ff` + 计数 `inc`；容量门
+   `cmp [esp+0x5c],0x400 / jge` 跳过写入。
+
+**收尾（`0x5A8DED`）**：遍历临时数组逐项 `cmp [esi-8],0xFFFF` → `call 0x5A7FA0`；
+`cmp esi,0xFFFF` → `push -1 / push -1` + `call 0x5A6C10`；
+`test eax,eax / je` → `push eax` + **`call 0x7C8B3D`**（batch 001 `operator delete`）；
+环形计数 `inc edx / and edx,0x3ff` + `dec eax`；循环判 `jne 0x5A8AE1`。
+**返回值**：`cmp [esp+0x30],1 / jle 0x5A8A65`（返回 0）→ 否则 `mov al,1 / ret 4`
+——即**"本轮是否放置了 ≥2 项"**。另有一处 `0x5A8E7C` 排空分支（计数 ≥1020 时
+走同一套"逐项 0x5A7FA0 + 0x5A6C10 + 释放 + 环形 dec"清理）。
+
+**语义（推断名）**：**批量放置主循环**——在 1024 槽环形数组上反复投递放置项：
+11 类型拒绝采样选类型 → 按 11 项表 `[0xABAD20]` 探 11 次找可放置项 → 项入队
+（20 字节/项）→ 经 `[0xABC1D4]`/`[0xABBEC0]` 号段把 iso 号映射成 LAT 类型索引
+（落空归 0）→ 取 `[0xABE370]` 12 字节表项 → 用 `0x89F688` 8 邻域表偏移定位 →
+`0x5A8F00` 双向校验 → 写入环形队列并推进。
+
+★**跨批次连接（本条价值）**：
+- **`0x5A8F00` 在本条被调用两次**（4 栈参契约：`(mode, [edi+4], [edi+8], [edi+0xC])`
+  与 `(4, [edi-4], edi, [edi+0xC])`）——**心跳点名的下一个待解函数，连接点就此建立**。
+- `0x5A6C10`（已登记：表派发 + 虚调用 + 坐标累加）**三处调用现场**（主循环 1 +
+  收尾 2）。
+- `0x7C8B3D`（batch 001 `operator delete`）与 `0x7C8E17`（`operator new`）成对。
+- `0x89F688` **8 方向偏移表**（每项 4B = 2×word）与 `[0xABAD20]`（11 项类型表）/
+  `[0xABE370]`（12B/项表）/`[0xABC1D4]`+`[0xABBEC0]`（LAT 号段基准）为本条新登记
+  的全局簇。
+- 同族 helper：`0x5A7D00`（判定）、`0x5A7FA0`（项清理/释放，多次）、`0x5A7E90`、
+  `0x5A99B0`（项构造器）。
+
+⚠️ partial：函数精确名、`[0xABAD20]` 表项语义、`0x65`/`8` 两个号段的确切含义
+（LAT 编号区间推断）、`[0xABE370]` 12 字节项结构、`0x5A8F00` 的 `mode` 参数语义
+（1 与 4 两档推断）、`[0x7E1530]` 的导入 API 名、返回值的业务含义
+（"放置 ≥2 项"推断）。
