@@ -1,0 +1,124 @@
+frontier batch 324 — 格子三字段读取 0x68BD00 + 线性扫表 0x540FC0 + TechnoClass::KillPassengers 0x707CB0（2026-10-15）
+
+口径：承接 batch 323，候选池按 unique_callers 扇入度降序取 TOP 3：0x68BD00
+（88B，5 callers，deps=2561）、0x540FC0（55B，5 callers，deps=2550）、
+0x707CB0（112B，5 callers，deps=2002——★带名 TechnoClass::KillPassengers）。
+三函数均全反汇编读完（0x68BD00 尾 0x68BD55 ret 8 + 8 nop、0x540FC0 尾
+0x540FE7 ret 4 段（0x541000 紧邻同构第二份）、0x707CB0 尾 0x707D1D ret 4 +
+2 nop——body 与 ranking 吻合）。YRpp 查覆盖（0x707CB0 带名命中
+TechnoClass::KillPassengers，另两地址无）。取证手段：disasm.py 直反汇编 +
+已登记函数交叉验证（0x5657A0/0x473450/0x473430/0x6EA870 共 4 函数）。
+
+================================================================================
+0x68BD00 —— 格子三字段读取（推断名：GetCellAt + 虚表槽 0x48 读三字段写回，88B）（6 callers，全 0x58=88B 读完）
+================================================================================
+机器码（全 0x58 主结构）：mov eax,[esp+8]（★栈参1）→ lea ecx,[ecx+eax*4+
+0x632]（★this+参1*4+0x632——数组项索引推断）→ mov ecx,0x87F7E8（★★
+MapClass::Instance）→ call 0x5657A0（★★已登记——GetCellAt）→ mov esi,eax
+（★cell 指针）→ lea eax,[esp+8]/push eax/mov ecx,esi/call [esi虚表+0x48]
+（★虚表槽 0x48——取数据推断）→ mov edx,[eax]/mov edi,[eax+4]/mov ecx,
+[eax+8]（★三字段读出）→ mov eax,[esi+0x140]/test ah,5/je 0x68BD42（★字节标
+志 ah&5——位 0/2）→ add ecx,[0xB054BC]（★命中时第三字段加全局偏移）→
+0x68BD42: mov eax,[esp+0x18]（★输出参数）→ mov [eax],edx/mov [eax+4],edi/
+mov [eax+8],ecx（★三字段写回输出）→ ret 8（★2 栈参）。紧邻 0x68BD60 是数组
+填充循环：lea eax,[ecx+0x632]/mov ecx,0x2BE/loop: mov edx,[0xB05458]/mov
+[eax],edx/add eax,4/dec ecx/jne（★0x2BE=702 项 × 4B 填 [0xB05458]——初始化
+同数组推断）
+
+语义：**格子三字段读取（推断名：GetCellAt + 虚表槽 0x48 读三字段写回）**——
+this+参1*4+0x632 定位数组项（0x2BE 项，紧邻初始化循环同区）→ GetCellAt
+（0x5657A0）取 cell → cell 虚表槽 0x48 读出三字段（(x,y,z) 或坐标+值推断）
+→ [cell+0x140] 字节标志 ah&5 命中时第三字段加 [0xB054BC] 偏移 → 三字段写
+回输出参数。地图坐标/格数据读取推断。
+
+★原版怪癖（照抄）：① **this+参1*4+0x632 数组索引**（0x2BE 项 ×4B——紧邻初
+始化循环同区）；② **MapClass::Instance 直连 GetCellAt**（0x5657A0 调用现
+场）；③ **虚表槽 0x48 取数据**（cell 方法推断）；④ **ah&5 字节标志加偏移**
+（[cell+0x140] 位 0/2——第三字段微调）；⑤ **紧邻数组填充循环**（0x2BE 次写
+[0xB05458]——同数组初始化端）。
+★跨批次连接：**0x5657A0（GetCellAt 已登记——本条=调用现场）**+[0x87F7E8]
+（MapClass::Instance）+[0xB05458]/[0xB054BC]（新全局——填充源/偏移）+0x68BD60
+（紧邻——数组初始化循环同族）。
+⚠️ partial：虚表槽 0x48 精确方法（cell 数据读取推断）、三字段语义（坐标/值推
+断）、ah&5 标志含义
+
+================================================================================
+0x540FC0 —— 线性扫表返回命中项+0x68（推断名：计数表扫描+项偏移，55B）（6 callers，全 0x37=55B 读完）
+================================================================================
+机器码（全 0x37 主结构）：mov esi,[ecx+0x44]（★计数）→ xor eax（★索引）→
+test esi/jle 0x540FE2（★空 → 返 0）→ mov edi,[esp+0x10]（★栈参1——目标值）
+→ lea edx,[ecx+0x28]（★数组起始——指针数组）→ 循环：mov ebx,[edx]/cmp
+[ebx+0x64],edi/je 0x540FEA（★命中——[ebx+0x64] 比较）→ inc eax/add edx,4/
+cmp eax,esi/jl 0x540FD3（★线性扫）→ 0x540FE2: 返 0（★未命中）→ 0x540FEA:
+mov eax,[ecx+eax*4+0x28]（★命中项）→ add eax,0x68（★★返回命中项+0x68——
+偏移字段推断）→ ret 4。紧邻 0x541000 是同构第二份（cmp [ebx+0x64] 相同开
+头——编译双份变体，batch 313/314/323 双份模式延续）
+
+语义：**线性扫表返回命中项+0x68（推断名：计数表扫描+项偏移）**——[+0x44]
+计数遍历 [+0x28] 指针数组，每项 [ebx+0x64] 与栈参1（目标值）比较，命中返回
+该项指针 +0x68（偏移字段推断——项内数据结构指针推断）。紧邻 0x541000 同构
+第二份（编译双份）。
+
+★原版怪癖（照抄）：① **线性扫表**（[+0x44] 计数 [+0x28] 数组——简单遍历无
+二分）；② **[ebx+0x64] 字段比较**（每项 +0x64 与目标值）；③ **命中返该项
++0x68**（偏移字段——非项本身）；④ **紧邻同构第二份**（0x541000——batch
+313/314/323 双份模式延续）。
+★跨批次连接：0x541000（紧邻——同构第二份）+**batch 313/314/323（编译双份
+模式——本条延续）**+[0xB054BC] 无关。
+⚠️ partial：宿主（对象注册表/配置表推断）、[ebx+0x64] 字段语义、+0x68 偏移
+含义、调用方契约
+
+================================================================================
+0x707CB0 —— TechnoClass::KillPassengers（★★YRpp 带名实锤！递归击杀链，112B）（6 callers，全 0x70=112B 读完）
+================================================================================
+机器码（全 0x70 主结构）：mov ebx,ecx（★this=TechnoClass）→ mov eax,[ebx+
+0x118]（★乘客计数推断）→ test/je 0x707D1C（★空 → 返回）→ mov ebp,[esp+0xC]
+（★栈参1——击杀原因推断）→ lea edi,[ebx+0x114]（★乘客列表起点）→
+0x707CCA: mov ecx,edi/call 0x473450（★★已登记——batch 164 +4 单 getter+邻域
+链遍历）→ mov ecx,[eax+0x5D4]（★乘客单元对象）→ test/je 0x707CE5 → push
+0/push -1/push eax/call 0x6EA870（★★已登记——TeamClass::LiberateMember
+batch 113——释放）→ 0x707CE5: mov ecx,edi/call 0x473430（★★已登记——
+TechnoClass::RemoveFirstPassenger batch 184——摘除首个乘客）→ mov esi,eax
+（★乘客指针）→ test/je 0x707D0F → push esi/mov ecx,esi/call 0x707CB0
+（★★★递归调用自身！嵌套乘客击杀）→ mov eax,[esi]/push ebp/mov ecx,esi/call
+[eax+0xE0]（★虚表槽 0xE0——击杀处理推断）→ mov edx,[esi]/mov ecx,esi/call
+[edx+0xF8]（★虚表槽 0xF8）→ 0x707D0F: mov eax,[ebx+0x118]/test/jne
+0x707CCA（★循环直到乘客清空）→ ret 4
+
+语义：**TechnoClass::KillPassengers（★★YRpp 带名实锤！）**——YRpp
+TechnoClass.h 定义 `void KillPassengers(int a) { JMP_THIS(0x707CB0); }`——
+击杀所有乘客：循环遍历乘客列表（+0x114 起点、[+0x118] 计数）：0x473450 取乘
+客单元 → [eax+0x5D4] 存在则 0x6EA870（LiberateMember）释放 → 0x473430
+（RemoveFirstPassenger）摘除 → **递归调自身**（乘客的乘客也杀——嵌套击杀）
+→ 虚表槽 0xE0（击杀原因处理）+0xF8 收尾 → 循环直到计数清空。杀乘客全链
+（摘除+释放+递归+虚表处理）带名实锤。
+
+★原版怪癖（照抄）：① **YRpp 带名实锤**（TechnoClass::KillPassengers——
+JMP_THIS 单槽）；② **递归击杀**（call 0x707CB0 自身——嵌套乘客递归）；③
+**LiberateMember 0x6EA870 释放**（batch 113 已登记=调用现场）；④
+**RemoveFirstPassenger 0x473430**（batch 184 已登记=调用现场）；⑤ **虚表槽
+0xE0/0xF8 双处理**（击杀原因+收尾推断）；⑥ **[+0x118] 计数循环**（直到乘客
+清空——循环头在列表起点 0x707CCA）。
+★跨批次连接：**0x473430（batch 184 已登记——TechnoClass::RemoveFirstPassenger，
+本条=调用现场）**+**0x6EA870（batch 113 已登记——TeamClass::LiberateMember，
+本条=调用现场）**+**0x473450（batch 164 已登记——+4 单 getter，本条=调用现
+场）**+YRpp TechnoClass.h（带名核对）+[ebx+0x114]/[ebx+0x118]（乘客列表/计
+数）。
+⚠️ partial：虚表槽 0xE0/0xF8 精确方法名、乘客单元 [eax+0x5D4] 字段语义、栈参
+1 击杀原因精确含义
+
+================================================================================
+（batch 324 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x68BD00（格子三字段读取 88B）依赖虚表槽 0x48 方法名 + 三字段语义
+   （partial）——地图坐标族立案时闭合；本条价值 = GetCellAt 调用现场 + 数组
+   索引模式。
+② 0x540FC0（线性扫表 55B）逻辑即实现（线性扫+命中返 +0x68），宿主表语义
+   partial——单登记录入；本条价值 = 编译双份模式延续实锤。
+③ 0x707CB0（TechnoClass::KillPassengers 112B）**YRpp 带名实锤**——若需
+   TechnoClass 家族 C++ 模型，本条是杀乘客链起点（摘除+释放+递归全链）；
+   当前阶段仅登记（TechnoClass 家族未立案）。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记三行全部 semantics_verified
+（三函数全段反汇编读完 + 4 个已登记函数交叉验证 + YRpp 带名核对），partial
+项如实标注。
