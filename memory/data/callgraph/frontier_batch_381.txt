@@ -1,0 +1,148 @@
+frontier batch 381 — 按名查对象 + 文件段比对 0x006951F0（719B；CCFileClass/INISection/GenericList 四件套第 4 次同现）（2026-10-15）
+
+口径：承接 batch 380，候选池按 unique_callers/依赖扇入度取（`_pick_batch323.py`）：
+0x006951F0（719B，4 callers，deps=2625）。**全段字节读完**（719 与 ranking 的
+body_bytes 吻合；**三处 `ret 0xC`**：0x69540D、0x69544E 与成功路径尾部，后接
+nop 垫到下一函数）。**本批为单函数批**。
+本条价值 = **「CCFileClass + 读数 + 临时对象双析构」模板的第 4 次独立出现**
+（前三次：batch 370 的 `0x679D90`、batch 375 的 `0x71DCA0`、batch 376 的
+`0x683AB0`），并**首次把 batch 131 `GenericList` + batch 004 `INISection` 析构 +
+`0x528A10` 拼串**三者串在同一条名字查表链上；同时复现 batch 376/377 的
+**`[0xA8DAB4]` 守卫计数与 `call [0x7E4C30]`**。
+取证手段：disasm.py 两段反汇编全读 + 5 批已登记函数调用现场 + 虚表对拍。
+
+================================================================================
+0x006951F0 —— 按名查对象 + 文件段比对（推断名，719B，ret 0xC）（4 callers，全 0x2CF=719B 读完；deps=2625）
+================================================================================
+**入口契约**：`ecx`=this（存 esi）、`edx`=寄存器参2（存 `[esp+0x18]` 与
+`[esp+0x14]`）；**3 个栈参**（`ret 0xC`），栈参1 在 `[esp+0xF0]`、栈参2（字节）
+在 `[esp+0xF8]`。
+
+机器码（要点，按阶段分组）：
+
+**(1) 前置串比较（大门）**
+```
+006951f0  sub esp,0xDC / push ebx/ebp/esi/edi / mov esi,ecx
+          **push 0x82BC30** / [esp+0x18]=edx / **push esi** / **call 0x7C8D20**
+          （★★**宽串比较**：this 与常量串 0x82BC30）/ add esp,8 / test / **je 0x695401**
+0069521a  mov eax,[0xA8B8D8]（★全局计数）/ xor ebx,ebx / xor ebp,ebp /
+          cmp eax,ebx / **jle 0x695401**（计数 <=0 → 直接返回 0）
+          edi = [esp+0xF0]（★栈参1）
+```
+
+**(2) 数组遍历 + 项名字比较**
+```
+循环 0x695232：
+  mov eax,[0xA8B8CC]（★全局数组）/ mov ecx,[eax+ebp*4] / **add ecx,0x58**（★项 +0x58 = 名字）
+  push esi / push ecx / **call 0x7C8D20**（★宽串比较）/ add esp,8 / test /
+  **jne 0x6953F3**（不匹配 → 下一个）
+  ; —— 匹配：
+  eax = [0xA8B8CC] / eax = [eax+ebp*4] / **add eax,0x58** / push eax /
+  **call 0x4739F0**（★★**batch 063 CCFileClass 构造**）
+  lea ecx,[esp+0x60] / push ebx(0) / **call 0x473C50**（★CCFileClass 方法 1）
+  test al / **jne 0x6952E1**
+  **cmp byte [esp+0xF8],1** / jne 0x6952E1     ; ★栈参2 门控 == 1
+```
+
+**(3) 门控命中 → 走"守卫 + 特殊调用"支**
+```
+0069527d  ecx=[0xA8B8CC] / esi=[ecx+ebp*4] / **mov ecx,0x3C** / **call 0x4790A0**
+          mov ecx,esi / push eax / **call 0x69AC30** / test al / jne 0x6952AA
+          mov ecx,esi / **call 0x69ACC0** / mov ecx,eax / **call 0x4790B0**
+006952aa  eax=[0xA8DAB4] / **inc eax / mov [0xA8DAB4],eax**（★★batch 376/377 守卫计数）/
+          edx=[0x81C1D0] / push edx / lea ecx,[esp+0x1C] /
+          **mov dword [esp+0x1C],0x7E4C30 / call [0x7E4C30]**（★★batch 376 同款守卫）
+          test al / **je 0x695410**（★失败 → 独立路径）/ **dec eax / mov [0xA8DAB4],eax**
+```
+
+**(4) 二次 CCFileClass 方法 + 字段比较**
+```
+006952e1  push ebx / lea ecx,[esp+0x64] / **call 0x473C50**（★方法 1 第二次）
+          test al / je 0x6953C3
+          lea ecx,[esp+0x60] / **call 0x473C00**（★方法 2：取字段）
+          **cmp eax,[esp+0x14]**（★与寄存器参2 比较）/ **jne 0x6953C3**
+```
+
+**(5) 拼串 + 内联比较**
+```
+00695306  lea ecx,[esp+0x2C] / …… / **call 0x52ACE0**（★★**batch 131 GenericList 构造**）
+00695317  **mov dword [esp+0x34],0x7E1AFC**（★★与 batch 370/375/376 同款虚表）
+          并写 0x7EA5F4 / **call 0x525A10**（★StringClass 族方法）
+0069534E  **push 0x20 / push ecx / push 0x83189C / push 0x831898 / push 0x81BFE0 /
+          call 0x528A10**（★★**拼串**：格式 0x81BFE0 + 两常量串 0x831898/0x83189C）
+00695370  cmp edi,ebx / je 0x695451 / **cmp byte [edi],bl / je 0x695451**（★空串早退）
+内联比较循环 0x695389（**按 2 字节步进**）：
+  mov dl,[eax] / cl=dl / cmp dl,[esi] / jne 0x6953AD /
+  cmp cl,bl / je 0x6953A9 / mov dl,[eax+1] / cmp dl,[esi+1] / jne /
+  add eax,2 / add esi,2 / cmp cl,bl / jne 0x695389
+006953a9  xor eax,eax / jmp 0x6953B2          ; ★相等 → 0
+006953ad  **sbb eax,eax / sbb eax,-1**（★无分支造 ±1——与 batch 377 的
+                                           sub/neg/sbb 惯用法同族）
+006953b2  cmp eax,ebx / **je 0x695451**（★相等 → 成功出口）
+006953ba  lea ecx,[esp+0x20] / **call 0x5256F0**（★★**batch 004 INISection::~INIClass**）
+```
+
+**(6) 统一双析构 + 出口**
+```
+006953c3  **mov dword [esp+0x60],0x7E16B0 / call 0x43AE50 →
+          mov dword [esp+0x60],0x7E1668 / call 0x431B80**
+          （★★**双析构虚表对——第 4 次出现**：batch 370 的 0x679D90、
+            batch 375 的 0x71DCA0、batch 376 的 0x683AB0、本条）
+006953ef  esi=[esp+0x10]（恢复）/ mov eax,[0xA8B8D8] / inc ebp / cmp / **jl 循环**
+00695401  出口：pop 族 / **xor al,al** / add esp,0xDC / **ret 0xC**（★返回 0）
+00695410  【守卫失败路径】dec eax / mov [0xA8DAB4],eax（★**还原计数**）→ 双析构 → 返回 0
+00695451  【成功路径】eax=[0xA8B8CC] / edi=[eax+ebp*4] / **add edi,0x58** /
+          **内联 strcpy**（repne scasb 求长 + not/sub 修正 + rep movsd + rep movsb 尾）
+          → 拷到 [esp+0x10] → **call 0x5256F0**（batch 004 析构）→ 双析构 →
+          **mov al,1** / pop 族 / add esp,0xDC / **ret 0xC**（★返回 1）
+```
+
+**语义（推断名）**：**按名查对象 + 文件段比对**——`查询(this, 参2, 参3)`：① 先做
+**前置宽串比较**（this 与常量串 `0x82BC30`），不匹配直接返回 0；② 若全局计数
+`[0xA8B8D8] > 0`，**遍历全局数组 `[0xA8B8CC]`**，把每项的 **`+0x58`（名字）**与
+this 做**宽串比较**；③ 命中项后用 **`CCFileClass`（`0x4739F0` + 方法
+`0x473C50`/`0x473C00`）**打开/查询文件，并**与寄存器参2 比较字段**；④ 若栈参2
+（字节）等于 1，先走一段**"守卫 + `0x4790A0`/`0x69AC30`/`0x69ACC0`/`0x4790B0`
+四连 + `[0xA8DAB4]` 计数自增 + `call [0x7E4C30]` 守卫"**（失败则还原计数并返回 0）；
+⑤ 随后用 **`GenericList`（`0x52ACE0`）+ 虚表 `0x7E1AFC`/`0x7EA5F4` + 拼串
+`0x528A10`（格式 `0x81BFE0` + 两常量串 `0x831898`/`0x83189C`）**组装出一个名字串，
+**逐 2 字节内联比较**它与栈参1；⑥ 相等则把命中项 `+0x58` 的**名字 strcpy 到栈参1
+的缓冲**并返回 1；⑦ 全程无论成败都走 **`INISection::~INIClass`（`0x5256F0`）+
+双析构（`0x7E16B0`/`0x7E1668`）**。
+★原版怪癖（照抄）：① **同一函数内两套"命中判据"**（`0x7C8D20` 宽串比较命中、
+以及后面 `0x528A10` 拼串后**再逐字节比一次**——**同一名字被比较两次**）；
+② **内联比较按 2 字节步进**（`mov dl,[eax+1] / cmp dl,[esi+1]`——**手写宽字符
+比较**，未调 CRT）；③ **`sbb eax,eax / sbb eax,-1` 造 ±1**（无分支比较结果，与
+batch 377 的 `sub/neg/sbb` 同族）；④ **`[0xA8DAB4]` 计数在守卫失败路径还原、
+成功路径不还原**（**与 batch 376 的同一处计数泄漏模式相同**）；
+⑤ **三处 `ret 0xC`**（失败 0 / 守卫失败 0 / 成功 1——三条物理出口各写一遍收尾）。
+★跨批次连接（**本条一次命中 5 批**）：
+- **`0x4739F0`（batch 063 CCFileClass 构造）** + `0x473C50`/`0x473C00`（其方法）
+- **`0x52ACE0`（batch 131 GenericList 构造）** + **虚表 `0x7E1AFC`**
+- **`0x5256F0`（batch 004 INISection::~INIClass）**
+- **双析构虚表对 `0x7E16B0`/`0x7E1668`**（batch 370/375/376 → **本条为第 4 次**）
+- **`[0xA8DAB4]` 守卫计数 + `call [0x7E4C30]` + `[0xA8B8CC]`**（batch 376/377）
+—— **「临时文件对象加载 + 双析构」模板已 4 次独立出现**，可**正式视为该编译单元的
+稳定代码指纹**（此前 batch 376 只敢说"三处同款"）。
+★新登记：常量串 **`0x82BC30`**（前置比较串）、**`0x831898`/`0x83189C`**（拼串两段）、
+**`0x81BFE0`**（格式串）、虚表 **`0x7EA5F4`**；数组项字段 **`+0x58`（名字）**；
+函数 `0x7C8D20`（宽串比较）/`0x473C50`/`0x473C00`（CCFileClass 方法）/
+`0x525A10`/`0x528A10`（StringClass 族）/`0x4790A0`/`0x4790B0`/`0x69AC30`/`0x69ACC0`。
+⚠️ partial：宿主类与 `[0xA8B8CC]` 数组元素类型、`+0x58` 是"名字"还是"路径"
+（**推断，未读串内容故不宣称**）、`0x82BC30` 与三串 `0x828.../0x831...` 的内容
+（**未读，不猜**）、三处判据的业务分工、栈参2 字节的门控语义、
+`0x473C50`/`0x473C00` 的精确方法名。
+
+================================================================================
+（batch 381 说明：C++ 模型决策）
+================================================================================
+本批为**单函数批**，**不新增 C++ 模型**：
+0x006951F0（按名查对象 + 文件段比对 719B）——**语义由 5 个已登记批函数
+（CCFileClass/GenericList/INISection/双析构/守卫）+ 6 个未读常量串共同定义**，
+且三处判据的分工未定；在串内容与数组元素类型确认前**不可构造等价模型**
+（照抄式重写需要这些常量）。
+故按纪律**只登记机器码事实 + 调用链 + 指纹第 4 次出现**，不落模型、不猜串内容。
+本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实；本批仅改
+取证文档与登记表）。登记一行记 semantics_verified +
+assembly_verified_semantics_confirmed（全段字节读完 + 5 批已登记调用现场 +
+虚表对拍），partial 项如实标注。
