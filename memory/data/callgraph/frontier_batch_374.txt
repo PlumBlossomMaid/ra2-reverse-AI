@@ -1,0 +1,151 @@
+frontier batch 374 — 计数组自增 0x00749020 + 怒气节点更新 0x00504790（HouseClass::UpdateAngerNodes，YRpp 带名实锤）+ 三浮点字段标量乘 0x0043A0D0（2026-10-15）
+
+口径：承接 batch 373，候选池按 unique_callers 扇入度降序取（`_pick_batch323.py`）：
+0x00749020（20B，4 callers，deps=2012——ranking 名 `UnitTrackerClass::IncrementUnitCount`）、
+0x00504790（205B，4 callers，deps=2044——ranking 名 `HouseClass::UpdateAngerNodes`）、
+0x0043A0D0（33B，4 callers，deps=1970）。本批三条**均为「带名候选」**，
+逐条核对 YRpp：
+- `0x00504790` → **YRpp 实锤**：`HouseClass.h:908` 有
+  `DynamicVectorClass<AngerStruct> AngerNodes; //arghghghgh bugged`
+  （**原版注记「bugged」**——与本条读出的多重跳过判定正好呼应）。
+- `0x00749020` → **YRpp 无匹配**（`class UnitTrackerClass` / `UnitCount[` /
+  `IncrementUnitCount` 三种检索全零命中），名字仅来自 ranking 符号源，
+  **类名/方法名未获独立交叉验证**，按纪律保留 partial。
+- `0x0043A0D0` → ranking 无名，按机器码判定。
+三条全段字节读完（20/205/33 与 ranking 的 body_bytes 完全吻合）。
+取证手段：disasm.py 直反汇编 + YRpp 带名核对 + body 长度核对 + 邻函数边界确认。
+
+================================================================================
+0x00749020 —— 计数组自增（推断名；ranking 名 UnitTrackerClass::IncrementUnitCount，20B，ret 4）（4 callers，全 0x14=20B 读完；deps=2012）
+================================================================================
+机器码（**全 20 字节**）：
+```
+00749020  mov eax, [esp+4]        ; ★栈参1 = 索引
+00749024  mov edx, [ecx+0x800]    ; ★this+0x800 = 上限
+0074902a  cmp eax, edx
+0074902c  jge 0x749031            ; 索引 >= 上限 → 跳过（静默失败）
+0074902e  inc dword [ecx+eax*4]   ; ★this[ idx*4 ]++（计数数组基址 = this+0）
+00749031  ret 4
+```
+语义：**带边界检查的计数组自增**——`if (idx < this->limit) this->counters[idx]++;`
+其中**计数数组基址就是 this+0**（`[ecx+eax*4]` 无偏移），**上限存在 this+0x800**
+（相邻上方一个字段）。由此**实锤宿主布局**：`int counters[0x200]`（0x800 字节 =
+512 个 dword）+ `int limit`（位于 +0x800）。这与 ranking 名
+`UnitTrackerClass::IncrementUnitCount` 的功能描述**一致**（单位计数器按索引自增）。
+⚠️ **partial（类名未交叉验证）**：`UnitTrackerClass` 在 YRpp 三种检索下零命中
+（`class UnitTrackerClass` / `UnitCount[` / `IncrementUnitCount`），故**类名与
+方法名仅属 ranking 符号源的单点证据**；本条只把「20 字节机器码 + 宿主布局
+（512 计数 + 上限）」记为 semantics_verified，**不宣称类身份**。
+★原版怪癖（照抄）：① **越界静默跳过**（`jge` 直接 ret，不报错、不返回失败码）；
+② **数组零偏移**（计数数组就是对象首字段——宿主类第一个成员是数组，无 vtable，
+说明不是多态类）。
+★跨批次连接：本条为**新的宿主布局锚点**（`+0` 数组 / `+0x800` 上限），可供后续
+批次比对 caller 集时确认同一宿主。
+
+================================================================================
+0x00504790 —— 怒气节点更新（ranking 名 HouseClass::UpdateAngerNodes，YRpp 带名实锤，205B，ret 8）（4 callers，全 0xCD=205B 读完；deps=2044）
+================================================================================
+机器码（全 205 字节，两栈参）：
+```
+入口：mov eax,ecx（★this）→ push ebx/ebp/esi/edi → xor ebx,ebx
+00504796  mov ecx, [eax+0x5614]     ; ★count
+0050479f  cmp ecx,ebx / jle 0x5047CA ; count <= 0 → 跳过第一段
+005047A4  mov esi, [esp+0x18]        ; ★栈参2 = 目标 id
+005047A8  mov edi, [esp+0x14]        ; ★栈参1 = 增量 delta
+**第一段（累加）** 循环 edx = 0..count-1：
+   ecx = [eax+0x5608]                ; ★items 基址
+   ebp = [ecx + edx*8]               ; 项.id（8 字节/项）
+   cmp ebp, esi / jne skip
+   add dword [ecx+4], edi            ; ★项.value += delta（命中才加）
+   skip: 重新读 count、edx++、jl 循环
+**第二段（选最大值）**
+005047CA  ecx = [eax+0x5614] / [esp+0x14]=0 / cmp ecx,ebx / jle 0x50484C
+005047D8  edi = [eax+0x5608]（items）/ [esp+0x18] = count
+循环（每项 8 字节，edi += 8）：
+   esi = [edi+4]                     ; value
+   edx = [edi]                       ; id（**对象指针**）
+   cmp esi, ebx / jle skip           ; ① value <= 0 跳过
+   mov cl, byte [edx+0x1F5] / jne skip ; ② ★对象 +0x1F5 字节非 0 跳过
+   test edx,edx / je 0x504820        ; （NULL 也落到"接受"路径）
+   cmp edx,eax / je skip             ; ③ id == this 跳过
+   ecx = [edx+0x30]; ebp = [eax+0x30]
+   cmp ecx,ebp / je skip             ; ④ 同一 house（+0x30 相等）跳过
+   cmp ecx,-1 / je 0x504820
+   ebp = 1 / shl ebp,cl              ; ★1 << houseIndex
+   test [eax+0x5788], ebp            ; ⑤ ★+0x5788 位掩码已置位 → 跳过
+   setne cl / test / jne skip
+   0x504820: ebx = esi（best value）; [esp+0x14] = edx（best id）
+末：ecx = [esp+0x14]（best id）
+   test ecx,ecx / je 0x50484C
+   edx = [ecx+0x30]
+   mov [eax+0x5600], edx             ; ★结果 = best.id 的 +0x30（house 号）
+   ret 8
+0x50484C: mov dword [eax+0x5600], -1 ; ★无候选 → -1
+   ret 8
+```
+语义：**怒气节点更新（ranking 名 HouseClass::UpdateAngerNodes）**——两段式：
+① 遍历 `this+0x5608` 的 AngerNodes 表（`this+0x5614` 项数、8 字节/项
+`{对象指针, value}`），把 id 等于栈参2 的项的 value **加上**栈参1（delta）；
+② 再遍历一遍挑 value 最大的项，**经五重过滤**（value ≤ 0 / `[id+0x1F5]` 字节非 0 /
+id == this / 同 house（`+0x30` 相等）/ `[this+0x5788]` 位掩码中 `1 << id+0x30` 已置位），
+把胜者的 `+0x30`（house 号）写到 `this+0x5600`，无候选则写 **-1**。
+★YRpp 交叉验证（**本批最强证据**）：`HouseClass.h:908`
+`DynamicVectorClass<AngerStruct> AngerNodes; //arghghghgh bugged`——① **带名实锤**
+（函数名与表名一致）；② **原版注记「bugged」**，与本条读出的**五重过滤 + 两遍
+遍历（先加后选）**、以及 `id == 0` 时仍会读 `[edx+0x1F5]`（顺序上先解引用后判空）
+这类可疑写法互相呼应——**这是「原版自己承认有问题的代码」的又一处实锤**。
+★原版怪癖（照抄）：① **先解引用后判空**（`mov cl,[edx+0x1F5]` 在 `test edx,edx`
+**之前**——NULL 检查形同虚设）；② **两遍遍历**（先累加再选优，未合并）；
+③ **选中条件用位掩码反选**（`1 << houseIndex` 打到 `+0x5788`，置位反而跳过）；
+④ **无候选写 -1**（哨兵）。
+★跨批次连接：新登记字段簇 `this+0x5600`（结果）/`+0x5608`（AngerNodes items）/
+`+0x5614`（count）/`+0x5788`（house 位掩码）/对象 `+0x1F5`（标志字节）/
+对象 `+0x30`（house 号）——**HouseClass 的内部布局锚点群**。
+⚠️ partial：`AngerStruct` 首字段的精确类型（`TechnoClass*` 推断——因被当对象指针
+解引用）、`+0x1F5` 标志语义、`+0x5788` 位掩码语义（敌对/已攻击位图推断）、
+栈参 1/2 的调用方语义。
+
+================================================================================
+0x0043A0D0 —— 三浮点字段标量乘（推断名，33B，ret 4）（4 callers，全 0x21=33B 读完；deps=1970）
+================================================================================
+机器码（**全 33 字节，三次同构展开**）：
+```
+0043a0d0  fld dword [esp+4]      ; ★重新加载栈参
+0043a0d4  mov eax, ecx           ; ★this
+0043a0d6  fmul dword [eax]       ; this[0] *= s
+0043a0d8  fstp dword [eax]
+0043a0da  fld dword [esp+4]      ; ★再加载一次
+0043a0de  fmul dword [eax+4]     ; this[4] *= s
+0043a0e1  fstp dword [eax+4]
+0043a0e4  fld dword [esp+4]      ; ★第三次加载
+0043a0e8  fmul dword [eax+8]     ; this[8] *= s
+0043a0eb  fstp dword [eax+8]
+0043a0ee  ret 4
+```
+语义：**三浮点字段标量乘（推断名）**——`this[0..8]`（三个连续 float，0/4/8 步进）
+各自乘以栈参 1 的标量，**原地写回**；无返回值。宿主是「三个 float 一组」的结构
+（RGB 分量 / 速度向量 / Lepton 三轴 等推断）。
+★原版怪癖（照抄）：**标量被 `fld [esp+4]` 重新加载三次**，而不是在 x87 栈上
+留一份再 `fmul st(1)`——**同一地址读三次**（编译器未做 CSE，或源码就是三次
+独立表达式）；重写若改成"加载一次复用"结果位级相同，但**指令序列不同**——
+按本项目纪律（字节级对齐）应照抄三次加载。
+★邻函数边界：`0x0043A0F0` 后即 7 个 `nop` 垫到 `0x0043A100`，本条边界干净。
+⚠️ partial：宿主类、三个 float 的语义（三分量推断）、调用方为何传标量。
+
+================================================================================
+（batch 374 说明：C++ 模型决策）
+================================================================================
+本批三函数**不新增 C++ 模型**，理由：
+① 0x00749020（计数组自增 20B）——行为 = 一次越界判定 + 一次自增；重写时随宿主
+   类内联即可，脱离宿主（512 计数器 + 上限）无法单测。
+② 0x00504790（怒气更新 205B）——**语义依赖 HouseClass 内六个字段布局**（含
+   `DynamicVectorClass<AngerStruct>` 的 items/count）与两个外部对象字段
+   （`+0x1F5`/`+0x30`），属"宿主相关"逻辑；其价值在本批已全部转为**布局锚点
+   与 YRpp 带名实锤**（含原版「bugged」注记），推理侧无独立可测切片。
+③ 0x0043A0D0（三浮点标量乘 33B）——纯逐字段乘法，虽有"三次 fld"怪癖但无可测
+   分支；重写时按目标结构内联。
+本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实；本批仅改
+取证文档与登记表）。
+登记三行：0x00504790 与 0x0043A0D0 记 semantics_verified +
+assembly_verified_semantics_confirmed；**0x00749020 同为 semantics_verified
+（机器码与布局实锤），但类名/方法名因 YRpp 零命中而在行内显式标注 partial**。
