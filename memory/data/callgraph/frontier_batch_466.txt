@@ -1,0 +1,91 @@
+frontier batch 466 — 全局注册表注销+容器析构 0x0058C070（135B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（callers=4/deps=204/body=135B，ranking 唯一
+调用者 FUN_0058d620/FUN_0058ef10/FUN_00594b50/FUN_005958e0）。
+**135B 全字节读完**（= 0x87，0x58C070-0x58C0F6 ret；尾部 nop 对齐到邻接
+0x58C100）。取证手段：disasm.py 全读 + **batch 253 全局交叉验证** + 邻接
+0x58C100（全表清理配对函数）前段对照 + ranking callers RMG 区定位。
+
+================================================================================
+0x0058C070 —— 全局注册表注销+容器析构（推断名，135B，ret，无栈参）
+================================================================================
+机器码（完整，135B 整数）：
+```
+0058c070  push ecx / push ebx / push esi
+0058c073  mov esi,ecx                ; esi = this
+0058c075  xor ebx,ebx
+0058c077  mov ecx,[esi]              ; ecx = this->+0 子对象
+0058c07b  je  0x58c085               ; NULL 跳过
+0058c07d  mov eax,[ecx]
+0058c07f  push 1
+0058c081  call [eax]                 ; ★虚表槽 0 析构(1) —— 销毁子对象
+0058c083  mov [esi],ebx              ;   this->+0 = NULL
+0058c085  mov edx,[0xabdf90]         ; ★edx = [0xABDF90]（注册表宿主对象）
+0058c08b  lea ecx,[esp+8] / push ecx
+0058c090  mov ecx,0xabdf90           ; this = 0xABDF90
+0058c095  mov [esp+0xc],esi          ;   保存 this
+0058c099  call [edx+0x10]            ; ★★[0xABDF90]->vtable+0x10 查索引（eax）
+0058c09c  cmp eax,-1 / je 0x58c0ce   ;   -1（未登记）→ 跳收尾
+0058c0a1  mov ecx,[0xabdfa0]         ; ecx = 全局计数
+0058c0a7  cmp eax,ecx / jge 0x58c0ce ;   索引>=计数 → 跳收尾
+0058c0ab  dec ecx
+0058c0ac  cmp eax,ecx
+0058c0ae  mov [0xabdfa0],ecx         ; ★★[0xABDFA0] = 计数-1（先递减）
+0058c0b4  jge 0x58c0ce               ;   索引==新计数（末项）→ 跳过移动
+0058c0b6  mov ecx,[0xabdf94]         ; ecx = 全局数组基址（4B/项）
+0058c0bc  inc eax
+0058c0bd  mov edx,[ecx+eax*4]        ; edx = arr[i+1]
+0058c0c0  mov [ecx+eax*4-4],edx      ; ★★arr[i] = arr[i+1]（左移覆盖）
+0058c0c4  mov ecx,[0xabdfa0]         ;   新计数
+0058c0ca  cmp eax,ecx / jl 0x58c0b6  ;   i++ 直到 i>=新计数
+0058c0ce  mov eax,[esi+0x2c]         ; eax = this->+0x2C
+0058c0d1  mov [esi+0x28],0x7e38d0    ; ★★装虚表 0x7E38D0（+0x28 内嵌容器）
+0058c0d8  cmp eax,ebx / je 0x58c0ed  ;   +0x2C NULL 跳过
+0058c0dc  cmp byte[esi+0x35],bl
+0058c0df  je  0x58c0ed               ;   +0x35 持有标志==0 跳过
+0058c0e1  push eax / call 0x7c8b3d   ; ★CRT::_delete(+0x2C)（batch 001）
+0058c0ea  mov [esi+0x2c],ebx         ;   +0x2C = NULL
+0058c0ed  mov byte[esi+0x35],bl      ;   +0x35 = 0
+0058c0f0  mov [esi+0x30],ebx         ;   +0x30 = NULL
+0058c0f3  pop esi / pop ebx / pop ecx / ret
+```
+**语义（推断名）**：**对象析构 + 全局注册表注销**——①销毁 this->+0
+子对象（虚表槽 0 传 1 → delete 标志）；②经 [0xABDF90] 注册表宿主
+vtable+0x10 查 this 索引，命中且界内则全局计数 [0xABDFA0] 先递减、
+数组 [0xABDF94] 该索引后逐项左移（覆盖移除）；③尾部装虚表
+0x7E38D0（+0x28 内嵌容器复位防二次释放），+0x2C 缓冲按 +0x35 标志
+门控 delete，清 +0x2C/+0x35/+0x30。
+★跨批次闭合：**batch 253（0x5943E0 按项 +8 查找返索引——同 [0xABDF94]/
+[0xABDFA0] 全局，注册表查找侧）→ 本批注销侧，两端闭合**；[0xABDF90]
+（注册表宿主，vtable+0x10=查索引——新全局登记）；虚表 0x7E38D0
+（batch 092 0x42FCB0 容器构造器同表——本批 +0x28 内嵌实例）；CRT::
+_delete（batch 001）；**RMG 区实锤：ranking callers 含 0x594B50
+（QWEN.md Creating starting points）**。
+★原版怪癖（照抄）：① **计数先递减再判定跳过**（末项索引==新计数时
+jge 跳过移动——数组长度已减 1，末项天然在界外，逻辑自洽但顺序怪）；
+② 索引==-1 或越界静默跳过（不报错不置标志）；③ 数组左移覆盖用
+「arr[i]=arr[i+1] 从 idx+1 起」手写循环（非 memmove）；④ 子对象销毁必
+传 1（delete 标志）；⑤ +0x28 写 0x7E38D0 在销毁子对象**之后**（先注销
+后复位）；⑥ +0x2C delete 需 +0x35 标志同时非 0（外部缓冲时持有标志）。
+⚠️ partial：宿主类名（RMG 0x59 区对象推断）、[0xABDF90] 精确对象身份
+（注册表容器推断）、+0x28/+0x2C/+0x30/+0x35 字段精确语义（容器内嵌
++缓冲持有推断）、[0xABDF90] vtable+0x10 方法内部（batch 253 0x5943E0
+同数据不同方法）、四调用者分工细节。
+
+================================================================================
+（batch 466 说明：邻接 0x58C100 对照 + C++ 模型决策）
+================================================================================
+邻接 **0x58C100**（非本批主体，前段已读）：`mov eax,[0xabdfa0] / lea edi,
+[eax-1] / mov [0xabed14],ebx / cmp edi/ jl 收尾` → 从尾到首遍历注册表
+逐项：销毁项->+0 子对象（虚表槽 0 传 1）→ [0xABDF90] vtable+0x10 查索引
+→ 数组移除（同 0x58C070 后半套）→ 循环——**全表清理配对函数**（0x58C070
+单项注销析构 vs 0x58C100 全表注销清理，同批编译孪生布局）。
+**batch 253 → 466 双向闭合**：0x5943E0（查找：遍历 [0xABDF94] 按项+8
+匹配返回指针）+ 0x58C070（注销：vtable+0x10 查索引 + 数组左移 + 计数--
+）= 全局注册表「查/删」基建。
+本批**新增 1 行**，**不新增 C++ 模型**：宿主类名与字段语义未确认 +
+RMG 区对象无模型增量。模型价值：**全局注册表注销惯用**（[0xABDF90]
+宿主 + vtable+0x10 索引 + 左移覆盖 + 先减计数）+ [0xABDF90] 新全局登记。
+本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。
+登记一行 semantics_verified + assembly_verified_semantics_confirmed（全段
+字节读完），partial 项如实标注。
