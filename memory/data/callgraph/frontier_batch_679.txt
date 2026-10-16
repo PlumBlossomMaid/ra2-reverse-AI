@@ -1,0 +1,127 @@
+frontier batch 679 —— 0x0045AF20 COM 接口查询持有器（推断名）
+
+地址：0x0045AF20（functions.tsv 边界 0x45AF20-0x45AF92 = 117B 吻合，
+后邻 0x45AFA0 新函数（fld [0x7E1710]/fld [0x7E1708]/call 0x7C8FB0
+浮点族）确认边界；ranking callers=3/unique=3/deps=1923）
+状态：semantics_verified + assembly_verified_semantics_confirmed
+（机器码 160B 全读：0x45AF20-0x45AF92 ret 4 + 0x45AF95-0x45AF9F nop
++ 0x45AFA0 后邻）
+
+=== 机器码全读（0x45AF20-0x45AF92） ===
+
+0045af20  mov eax,[esp+4]        ; 栈参1 = 字段地址 &obj->+0x674
+0045af24  push esi / push edi
+0045af26  mov esi,ecx            ; this = 调用方栈输出槽
+0045af28  mov eax,[eax]          ; eax = *栈参1 = 字段对象指针
+0045af2a  test eax,eax / je 0x45AF77   ; 空 → E_NOTIMPL 分支
+0045af2e  mov ecx,[eax]          ; 虚表指针
+0045af30  lea edx,[esp+0xc]      ; 输出槽
+0045af34  push edx               ; out
+0045af35  push 0x819088          ; ★IID 指针（GUID+串）
+0045af3a  push eax               ; QueryInterface(this=字段对象)
+0045af3b  call [ecx]             ; 虚表槽 0 = QueryInterface
+0045af3d  mov edi,eax            ; HRESULT
+0045af3f  test edi,edi / jge 0x45AF5C  ; >=0 成功
+0045af43  mov eax,[esi]          ; 失败：读 this->+0 旧指针
+0045af45  test eax,eax / je 0x45AF4F
+0045af49  mov ecx,[eax] / push eax / call [ecx+8]  ; 旧指针 Release（槽 8）
+0045af4f  mov eax,edi / mov [esi],0   ; this->+0=0
+0045af51  ... ret 4               ; 返 HRESULT（失败清空）
+0045af5c  mov eax,[esi]          ; 成功：读 this->+0 旧指针
+0045af5e  push ebx
+0045af5f  mov ebx,[esp+0x10]     ; out = QI 结果
+0045af63  test eax,eax / je 0x45AF6D
+0045af67  mov edx,[eax] / push eax / call [edx+8]  ; 旧指针 Release（槽 8）
+0045af6d  mov [esi],ebx          ; this->+0 = 新接口
+0045af6f  pop ebx / mov eax,edi / ret 4  ; 返 HRESULT（成功替换）
+0045af77  mov eax,[esi]          ; 字段空分支：读旧指针
+0045af79  test eax,eax / je 0x45AF89
+0045af7d  mov [esi],0
+0045af83  mov ecx,[eax] / push eax / call [ecx+8]  ; 旧指针 Release（槽 8）
+0045af89  mov edi,0x80004002     ; ★E_NOTIMPL
+0045af8e  mov eax,edi / ret 4
+
+=== 0x819088 常量（PE 实锤） ===
+
+0x819088（.data 段，RVA 0x419088）字节：
+00 a8 fe 92 84 a1 d1 11 b7 0a 00 a0 24 dd af d1
+57 65 61 70 6f 6e 73 20 66 61 63 74 6f 72 79 20
+→ 前 16 字节 = **GUID {92FEA800-A184-11D1-B70A-00A024DDAFD1}**
+（Data1=0x92FEA800 LE、Data2=0xA184、Data3=0x11D1、Data4=B7 0A 00 A0
+24 DD AF D1）
+→ 后 16 字节 ASCII = **"Weapons factory "**（接口调试名/相邻串推断）
+
+=== 语义 ===
+
+**COM 接口查询持有器（推断名）**：__thiscall 1 栈参 ret 4。this = 调用
+方栈上的输出槽（持有 COM 指针，+0）；栈参1 = 对象字段地址（&obj->+0x674）：
+① 字段对象非空时对其做 QueryInterface(虚表槽 0, 0x819088 的 GUID, &out)
+（__stdcall 三参：push out/push IID/push this）；② 成功：this->+0 旧指针
+Release（虚表槽 8）→ 存入 out（QI 结果）→ 返 HRESULT；③ 失败：this->+0
+旧指针 Release → 清 0 → 返 HRESULT；④ 字段空：this->+0 旧指针 Release →
+清 0 → 返 E_NOTIMPL(0x80004002)。
+
+★调用形态：调用方 `push &obj->+0x674; lea ecx,[esp+N]（输出槽）;
+call 0x45AF20`——this 不是对象而是栈槽，QI 结果写入调用方局部变量。
+
+★IID = {92FEA800-A184-11D1-B70A-00A024DDAFD1}（"Weapons factory" 接口
+推断——Westwood 自定义 COM 接口，宿主字段 +0x674 为该接口持有槽）。
+
+=== 调用现场（18 处扫描 + 3 处反汇编确认） ===
+
+带名归属 5 处：
+1) SuperClass::Launch（★0x6CC390-0x6Cde42 带名）×2：0x6CC973 /
+   0x6CCAEF。现场（0x6CC95A-0x6CC97A）：mov eax,[esi+0x674] / lea
+   ebx,[esi+0x674] / cmp eax,ebp / je 跳过 / mov [esp+0x28],ebp /
+   push ebx / lea ecx,[esp+0x2c] / call 0x45af20 / cmp eax,ebp /
+   jge 跳过——**超武发射时对 +0x674 字段对象查询 "Weapons factory"
+   接口存栈槽**。
+2) FootClass::FootClass_ImbueLocomotor（★0x710000-0x71040e 带名）×3：
+   0x71007A / 0x7101ED / 0x71025B。现场（0x71005D-0x71007A）：mov
+   eax,[esi+0x674] / lea edi,[esi+0x674] / test eax,eax / mov
+   [esp+0x10],0 / je 跳过 / push edi / lea ecx,[esp+0x14] / call
+   0x45af20——**步兵注入移动引擎时同款查询**。
+3) 无归属 13 处：0x44DFC0 / 0x4D9325 / 0x4DB918 / 0x4DF887 / 0x51AFE1 /
+   0x51B0AC / 0x51B149 / 0x521F82 / 0x52200A / 0x523107 / 0x742513 /
+   0x74260D（functions.tsv 未覆盖区间——0x4Dxxx UnitClass 域 /
+   0x51xxx / 0x52xxx / 0x74xxx 推断），0x4D831F→FUN_004d82b0。
+
+=== 原版怪癖（照抄） ===
+
+① 输出槽作 this（调用方栈局部——QI 结果直写栈，非对象成员）；
+② 旧指针 Release 槽 8 双路径（成功/失败/空 三分支都先释放旧）；
+③ E_NOTIMPL(0x80004002) 字段空分支（与 batch 275/278/292 错误哨兵
+   同族——0x80004002/0x80004003 家族）；
+④ QueryInterface 三参 push 序（out/IID/this——__stdcall 约定）；
+⑤ 三分支返回值统一 HRESULT（成功 S_OK 或 QI 返回、失败原码、
+   空 E_NOTIMPL）；
+⑥ IID 常量 0x819088 后紧跟 ASCII "Weapons factory "（GUID+调试名
+   相邻布局）。
+
+=== 跨批次闭合 ===
+
++SuperClass::Launch（带名 caller×2——超武发射域，+0x674 接口字段
+  查询现场）；
++FootClass::FootClass_ImbueLocomotor（带名 caller×3——步兵机动引擎
+  注入域）；
++0x80004002 E_NOTIMPL（batch 275/278/292 错误哨兵家族——本条第三
+  分支同族）；
+++0x674 字段（batch 275 UpdatePathfinding 门控 / batch 461 死亡爆破
+  子对象槽 0x9C/0xB0 / batch 897 AStarAttempt 引用管理——Techno 域
+  COM 接口持有槽跨批闭合）。
++虚表槽 0（QueryInterface）/槽 8（Release）——COM IUnknown 三件套
+  惯例（batch 330 COM 提类厂链同域）。
+
+=== 新候选 ===
+
+0x819088 GUID+串（IID {92FEA800-A184-11D1-B70A-00A024DDAFD1} /
+"Weapons factory "——新登记常量）、+0x674 字段（Techno/Foot 域接口
+持有槽）、13 处无归属调用点宿主（0x4D/0x51/0x52/0x74 区）、
+FUN_004d82b0（0x4D831F caller）。
+
+=== partial ===
+
+函数精确名（推断 COM 接口查询持有器）、IID 精确接口身份（Weapons
+factory 接口推断——Westwood 自定义 COM）、+0x674 字段宿主类（Techno
+系推断）、13 处无归属调用点宿主、输出槽消费端语义、0x819088 后串
+用途（调试名/接口名推断）。
