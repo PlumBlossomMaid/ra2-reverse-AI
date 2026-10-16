@@ -1,0 +1,64 @@
+frontier batch 640 — RadarClass::CreateEmptyMap 转发 thunk 0x00653F50（28B）（2026-10-17）
+
+口径：候选**只从 picker 未登记池取**（0x005285B0 后下一未登记高扇入候选 0x00653F50
+RadarClass::CreateEmptyMap（★ranking 带名）callers=3/unique=3/deps=2577/body=28B，
+unique_callers FUN_00599650（★RMG 主流程 Init random map）/FUN_005bdf70（★COMPUTED
+CALL）/FUN_00686b20（★batch 624/626/628 同域配置链三连）。**28B 全字节读完**
+（0x653F50-0x653F6B，ret 0x10 = 4 栈参 + thiscall，纯参数透传转发）。
+取证手段：disasm.py 100B 全读（含后邻 0x653F70/0x653F90 同族函数开头确认边界——
+0x653F70 以 [0x887324] batch 370 单例为 this 调 0x6D6070 batch 204 SetTacticalPosition、
+0x653F90 调 0x578460 取格） + direct_edges 调用图核对（★17491/20090/32985 行 3
+caller） + **批文档横向比对（batch 287 纯尾跳 thunk/batch 585 析构 shim/batch 603
+参数预设尾跳/619 双字节门控透传——本条=参数原样透传 + call + ret 0x10 形态）** +
+functions.tsv 边界核对（0x653F50-0x653F6B=28B 吻合）。
+
+================================================================================
+0x00653F50 —— RadarClass::CreateEmptyMap 转发 thunk（28B）
+================================================================================
+机器码（完整 28B）：
+```
+00653f50  mov eax,[esp+0x10]        （★参 4）
+00653f54  mov edx,[esp+0xc]         （★参 3）
+00653f58  push eax                  （★push 参 4）
+00653f59  mov eax,[esp+0xc]         （★esp 已移 4——此处 = 参 2）
+00653f5d  push edx                  （★push 参 3）
+00653f5e  mov edx,[esp+0xc]         （★esp 再移 4——此处 = 参 1）
+00653f62  push eax                  （★push 参 2）
+00653f63  push edx                  （★push 参 1——四参逆序入栈还原原序）
+00653f64  call 0x565c10            （★尾调——真实实现，新候选）
+00653f69  ret 0x10                  （★清 4 栈参）
+```
+**语义（ranking 带名 + 调用现场）**：**RadarClass::CreateEmptyMap 转发 thunk——
+4 栈参原样透传 0x565C10（真实实现）**——thiscall，ecx=this（RadarClass），4 栈参
+按参 4→参 3→参 2→参 1 逆序读出再入栈（还原调用方原序）后尾调 0x565C10，ret
+0x10 回收 4 栈参——**纯转发无逻辑**。被调方 0x565C10（未登记新候选）为真实
+CreateEmptyMap 实现（雷达空地图创建——body/尺寸参数推断）。后邻 0x653F70/0x653F90
+为同族 Radar 方法（[0x887324] 单例 SetTacticalPosition batch 204 / 0x578460 取格）。
+★原版怪癖（照抄）：① **四参逆序读再逆序入栈**（mov [esp+X] 随 push 逐次移位读
+   ——栈偏移相对当前 esp 的编译器惯用，非 rep 循环）；② **纯透传零逻辑**（无门控
+   无分支——与 batch 619 双字节门控透传不同，本条无条件转发）；③ **ret 0x10 清
+   栈**（转发后由 wrapper 回收 4 参——被调方按自身约定处理）；④ **caller 含
+   COMPUTED_CALL**（FUN_005BDF70 经虚表/指针间接调用——雷达空地图创建经多态路
+   由）；⑤ **caller 含 RMG 主流程**（FUN_00599650 Init random map——引擎侧初始
+   化创建雷达空地图一环）。
+★跨批次闭合：**batch 370（[0x887324] 单例——后邻 0x653F70 以它为 this 调
+   SetTacticalPosition，Radar 族与 Tactical 单例互连）**+**batch 204（0x6D6070
+   TacticalClass::SetTacticalPosition——后邻调用现场）**+**batch 624/626/628
+   （caller FUN_00686B20 同域——配置链三连）**+**RMG 主流程 FUN_00599650
+   （Init random map——本条=雷达空地图创建一环）**+**batch 287/585/603/619
+   （thunk 家族横向比对——本条=参数原样透传形态）**+0x565C10（★★新候选——真实
+   CreateEmptyMap 实现）。
+⚠️ partial：0x565C10（新候选未读——真实实现细节）、4 栈参语义（尺寸/坐标推断）、
+   本类 this 用法（RadarClass 推断——ranking 带名）、后邻 0x653F90（0x578460 取格
+   方法推断）。
+
+================================================================================
+（batch 640 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：28B 纯参数透传 thunk 无逻辑切片；被调 0x565C10
+未读、宿主 RadarClass 未入重写范围。模型价值：**RadarClass::CreateEmptyMap 转发
+thunk**（ranking 带名 + caller 含 RMG 主流程——thunk 家族新形态"参数原样透传 +
+ret 0x10"闭合；0x565C10 留作下一候选）。本批无产品代码改动，ctest 维持 **43/43
+全绿**。登记一行 semantics_verified + assembly_verified_semantics_confirmed
+（28B 全段字节读完 + ranking 带名 + 三 caller 核对 + functions.tsv 边界核对），
+partial 项如实标注。
