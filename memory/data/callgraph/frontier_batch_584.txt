@@ -1,0 +1,83 @@
+frontier batch 584 — RulesClass::Read_Countries 0x006722F0（106B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x6722F0 **RulesClass::Read_Countries**
+callers=3/unique=3/deps=3160/body=106B，unique_callers FUN_00686b20/FUN_006980c0/
+FUN_006ae2c0——均未登记）。**106B 全字节读完**（0x6722F0-0x672357，ret 4 = 清 1
+栈参，thiscall）。
+取证手段：disasm.py 全读 + **YRpp 带名实锤（RulesClass.h:139-140
+`void Read_Countries(CCINIClass *pINI) { JMP_THIS(0x6722F0); }`——签名+地址双证）**+
+已登记锚点交叉（0x526960 batch 074 INISection::GetKeyCount、0x526CC0 batch 074
+INISection::GetKeyName、0x528A10 batch 002 INISection::ReadString、0x889F64
+batch 072/077 共享空串常量）。
+
+================================================================================
+0x006722F0 —— RulesClass::Read_Countries（YRpp 带名实锤，106B）
+================================================================================
+机器码（完整 106B）：
+```
+006722f0  mov eax,[0x7f0cac]        ; ★★全局（节名指针推断——"Countries" 节）
+006722f5  sub esp,0x20              ; ★栈缓冲 0x20
+006722f8  push ebx/esi/edi
+006722fb  mov edi,[esp+0x30]        ; ★★栈参 1 = pINI（CCINIClass*，YRpp 签名）
+006722ff  push eax                  ; 节名
+00672300  mov ecx,edi
+00672302  call 0x526960             ; ★★batch 074 INISection::GetKeyCount → eax
+00672307  mov ebx,eax               ; ★★键计数
+00672309  xor esi,esi / test ebx / jle 0x67234a   ; 计数<=0 → 收尾
+0067230f  mov edx,[0x7f0cac]        ; ★全局节名
+00672315  lea ecx,[esp+0xc]         ; ★★栈缓冲 &buf
+00672319  push 0x20                 ; ★长度 0x20
+0067231b  push ecx / push 0x889f64  ; ★★默认值=共享空串（batch 072/077）
+00672321  push esi                  ; ★索引
+00672322  push edx                  ; 节名
+00672323  mov ecx,edi
+00672325  call 0x526cc0             ; ★★batch 074 INISection::GetKeyName → 键名
+0067232a  push eax                  ; 键名
+0067232b  mov eax,[0x7f0cac] / push eax   ; 节名
+00672331  mov ecx,edi
+00672333  call 0x528a10             ; ★★batch 002 INISection::ReadString → 值
+00672338  test eax/je 0x672345      ; ★空结果 → 跳过（不处理）
+0067233c  lea ecx,[esp+0xc]         ; ★&buf（读出的值）
+00672340  call 0x512680             ; ★★0x512680（未登记——每国处理，新候选）
+00672345  inc esi / cmp esi,ebx / jl 0x67230f     ; ★下一键
+0067234a  xor eax,eax / pop edi / test ebx / pop esi/ebx
+00672351  setg al                   ; ★★返回 (计数>0)
+00672357  ret 4
+```
+**语义（YRpp 带名实锤）**：**RulesClass::Read_Countries**——thiscall，
+`Read_Countries(CCINIClass *pINI)`（RulesClass.h:139-140）：
+① `[0x7F0CAC]` 全局作节名（"Countries" 推断）→ `0x526960`（INISection::
+   GetKeyCount，batch 074）取键计数 → ebx；
+② **逐键循环**（esi=0..ebx-1）：`0x526CC0`（GetKeyName，batch 074）以
+   （节名/索引/默认=共享空串/&buf/0x20）取键名 → `0x528A10`（ReadString，
+   batch 002）以（节名/键名）读值入栈缓冲 → **非空则 `0x512680(&buf)` 处理每
+   国**（未登记——国家条目处理推断）；
+③ **返回 (计数 > 0)**（setg al——读入是否非空）。
+★原版怪癖（照抄）：① **节名走全局 [0x7F0CAC]**（硬编码节名字符串指针，而非
+   从 this 取）；② **GetKeyName + ReadString 两段式**（先取键名再按名读值——
+   而非直接按索引读值，多一次查表）；③ **零值跳过**（ReadString 返回空/失败
+   时 `je` 跳过 0x512680——不处理空国名）；④ **默认值用共享空串 0x889F64**
+   （batch 072/077 实锤的字符串类共享常量，第 4 消费点）；⑤ **返回 (计数>0)
+   而非 void**（YRpp 声明 void 但机器码 setg al——返回值被忽略，编译器保留）；
+   ⑥ 栈缓冲 0x20 固定长度（GetKeyName bounded copy）。
+★跨批次闭合：**0x526960（batch 074——INISection::GetKeyCount，本条=调用现场）**+
+   **0x526CC0（batch 074——INISection::GetKeyName，本条=调用现场）**+**0x528A10
+   （batch 002——INISection::ReadString，本条=调用现场）**+**0x889F64（batch
+   072/077——共享空串常量，本条=第 4 消费点）**+**YRpp RulesClass.h:139-140（带名
+   实锤——签名+地址双证，RulesClass 家族首个解析入口）**。
+⚠️ partial：节名 [0x7F0CAC] 内容（"Countries" 推断——PE 未读串）、0x512680
+   身份（**未登记新候选**——每国处理）、返回值消费方（VRpp 声明 void）、
+   FUN_00686b20/FUN_006980c0/FUN_006ae2c0（调用者新候选——RulesClass::Read*
+   兄弟链推断）。
+
+================================================================================
+（batch 584 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：RulesClass 宿主字段未闭合，106B 纯"INI 遍历
++调处理"无算法切片；依赖未读 0x512680（国家条目处理）。模型价值：**RulesClass
+家族首个解析入口实锤**（YRpp 带名 + 三 INI 原语调用现场）+ **INI 遍历三段式模板**
+（GetKeyCount → GetKeyName → ReadString → 处理——可复用于后续 Read_* 兄弟）+ 共享
+空串第 4 消费点。1 个新被调候选（0x512680）+ 3 个调用者候选。本批无产品代码改动，
+ctest 维持 **43/43 全绿**。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（106B 全段字节读完 + YRpp 带名实锤 + 4 已
+登记锚点交叉），partial 项如实标注。
