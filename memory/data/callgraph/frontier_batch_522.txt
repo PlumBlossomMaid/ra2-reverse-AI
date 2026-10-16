@@ -1,0 +1,105 @@
+frontier batch 522 — MapClass::SetWaypointMode 0x004AC700（274B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=82/
+body=274B，ranking 名 **MapClass::SetWaypointMode**（带名实锤）），
+unique_callers FUN_004aad30/FUN_007311c0/FUN_007313a0/FUN_007314c0
+（与 batch 519 SetTogglePowerMode **同 4 个 caller**——姊妹函数）。
+**274B 全字节读完**（= 0x112，0x4AC700-0x4AC80F，ret 8 = 2 栈参）。
+取证手段：disasm.py 全读 + **batch 519 0x4AC820 SetTogglePowerMode 逐段
+同族比对** + **[0xA83D4C] PlayerPtr / 0x48DC90 UnselectAll（batch 171/161
+已登记）交叉**。
+
+================================================================================
+0x004AC700 —— MapClass::SetWaypointMode（带名，274B，ret 8 = 2 栈参）
+================================================================================
+机器码（完整，274B 整数）：
+```
+004ac700  mov eax,[esp+4]         ; ★栈参 1 = 模式参数
+004ac704  push ebx/esi / mov esi,ecx
+004ac708  cmp eax,-1
+004ac70b  mov cl,[esi+0x11b3]     ; ★★this+0x11B3 = 当前模式（SetTogglePower 用 +0x11B2）
+004ac711  mov bl,cl
+004ac713  je 0x4ac726             ; ★参数 -1 → toggle
+004ac715  test eax,eax / je 0x4ac722
+004ac719  cmp eax,1 / jne 0x4ac72b
+004ac71e  mov bl,al / jmp 0x4ac72b ; ★参数 1 → 开
+004ac722  xor bl,bl / jmp 0x4ac72b ; ★参数 0 → 关
+004ac726  test bl,bl / sete bl     ; ★★toggle：bl = !当前
+004ac72b  cmp bl,cl / je 0x4ac80d ; ★★无变化 → 早退
+004ac733  mov eax,[esi+0x11a8] / test / jne 0x4ac80d  ; ★★+0x11A8 门控
+004ac741  mov byte[esi+0x11b0],0 / mov byte[esi+0x11b1],0
+004ac74f  mov byte[esi+0x11b2],0 / mov byte[esi+0x11b4],0  ; ★★清四字节（注意清的是 +0x11B2 而非 +0x11B3）
+004ac75d  mov ecx,[0xa83d4c]      ; ★★[0xA83D4C] PlayerPtr（batch 171）
+004ac763  call 0x5090a0           ; ★未登记——PlayerPtr 方法
+004ac768  test bl,bl / je 0x4ac7c6 ; ★bl==0 → 关路径
+004ac76c  mov cl,[esp+0x10]       ; ★栈参 2（字节标志）
+004ac770  cmp eax,-1 / jne 0x4ac7a5
+004ac775  test cl,cl / je 0x4ac788
+004ac779  mov edx,[0xa83d4c] / cmp [edx+0x20c],-1 / jne 0x4ac7a5  ; ★★PlayerPtr+0x20C 检查
+004ac788  mov eax,[esi] / mov ecx,esi
+004ac78c  mov byte[esi+0x11b3],0  ; ★置模式 0
+004ac793  call [eax+0x50]         ; ★★虚表槽 0x50（关）
+004ac796  mov [esi+0x11bc],0       ; ★★+0x11BC 清 0
+004ac7a0  pop 族 / ret 8
+004ac7a5  test cl,cl
+004ac7a7  mov byte[esi+0x11b3],1  ; ★置模式 1
+004ac7ae  jne 0x4ac7bc
+004ac7b0  mov ecx,[0xa83d4c] / mov [ecx+0x20c],eax  ; ★★PlayerPtr+0x20C = 返回值
+004ac7bc  call 0x48dc90           ; ★★UnselectAll 遍历（batch 161 已登记!）
+004ac7c1  pop 族 / ret 8
+004ac7c6  mov edx,[esi] / mov ecx,esi
+004ac7ca  mov byte[esi+0x11b3],0  ; ★置模式 0
+004ac7d1  call [edx+0x50]         ; ★★虚表槽 0x50（关）
+004ac7d4  mov eax,[esi+0x11bc]    ; ★★+0x11BC（坐标缓冲指针）
+004ac7da  test eax / je 0x4ac80d
+004ac7de  lea ecx,[esi+0x11c0]    ; ★★+0x11C0（坐标源）
+004ac7e4  mov edx,[esi+0x11c0] / mov [eax],edx   ; ★★拷贝 12B 坐标
+004ac7ec  mov edx,[ecx+4] / mov [eax+4],edx
+004ac7f2  mov ecx,[ecx+8] / mov [eax+8],ecx
+004ac7f8  mov [esi+0x11bc],0      ; ★★+0x11BC 清 0
+004ac802  mov ecx,[0x887640] / mov edx,[ecx] / call [edx+0x10]  ; ★★[0x887640] 虚表槽 0x10
+004ac80d  pop 族 / ret 8
+```
+**语义（带名实锤）**：**MapClass::SetWaypointMode**——航点模式设置/
+切换（ret 8 = 2 栈参：模式参数 + 字节标志）：
+1. **模式分派**（与 batch 519 同款）：-1 → toggle（bl = !当前
+   +0x11B3）；0 → 关；1 → 开；其他保持；
+2. **无变化早退** + **+0x11A8 门控**（batch 519 同族）；
+3. **清四标志字节**（+0x11B0/+0x11B1/+0x11B2/+0x11B4——注意清的是
+   +0x11B2 而非主字段 +0x11B3，与 SetTogglePowerMode 清四字节对照）；
+4. **PlayerPtr 方法 0x5090A0**（未登记——取当前航点/计数推断）；
+5. **开路径**：返回值 != -1 或 PlayerPtr+0x20C == -1 时置 +0x11B3=1、
+   PlayerPtr+0x20C=返回值、调 **0x48DC90 UnselectAll**；
+6. **关路径**：置 +0x11B3=0、虚表槽 0x50、**+0x11BC 坐标缓冲拷贝
+   （+0x11C0 源 12B → +0x11BC 目标）**、**[0x887640] 虚表槽 0x10**。
+★原版怪癖（照抄）：① **toggle 用 -1 + sete**（batch 519 同款——无
+中间态）；② **无变化早退 + +0x11A8 门控**（幂等 + 外部锁定）；③
+**清四字节不含主字段**（清 +0x11B0/B1/B2/B4 而主字段 +0x11B3 单独
+处理——清/置分离）；④ **开路径多 UnselectAll**（0x48DC90 + 回写
+PlayerPtr+0x20C——不对称）；⑤ **关路径坐标缓冲拷贝**（+0x11C0 → 
++0x11BC 12B 三 dword——关模式时保存航点坐标推断）；⑥ **[0x887640]
+虚表槽 0x10 尾部调用**（关路径收尾——通知/刷新推断）；⑦ ret 8 = 2
+栈参（模式 + 字节标志）。
+★跨批次闭合：**batch 519 0x4AC820（SetTogglePowerMode——姊妹函数
+同族：同 caller 集/同 toggle 分派/同 +0x11A8 门控/同清四字节/同
+0x48DC90/同虚表槽 0x50）**+**[0xA83D4C]（batch 062/159/171——PlayerPtr，
+本条=两处读取+回写）**+**0x48DC90（batch 161——UnselectAll 遍历，本条=
+开路径调用现场）**+**batch 076/123/159（虚表槽 0x50/0x10 系）**。
+⚠️ partial：+0x11B3/+0x11A8/+0x11B0..B4 字段语义（航点模式/标志——
++0x11B3 主字段实锤、+0x11B2 为 SetTogglePower 主字段）、0x5090A0
+PlayerPtr 方法身份（取当前航点/计数推断）、PlayerPtr+0x20C 字段语义
+（航点索引/坐标推断）、+0x11BC/+0x11C0 坐标缓冲结构（CellStruct 12B
+推断）、[0x887640] 宿主（全局对象——虚表槽 0x10 调用推断）。
+
+================================================================================
+（batch 522 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（MapClass 航点字段无业务闭环 +
+0x5090A0 未登记——batch 519 同纪律）。模型价值：**MapClass 航点/
+电源双模式姊妹函数闭合**（0x4AC700 + 0x4AC820 同族对——同 caller 集/
+同 toggle 分派/差异点：主字段 +0x11B3 vs +0x11B2、开路径 PlayerPtr
+回写 + UnselectAll vs 单 UnselectAll、关路径坐标拷贝 vs 无）+ **新候选
+0x5090A0 入列**。本批无产品代码改动，ctest 维持 **43/43 全绿**（batch
+372 已实跑核实）。登记一行 semantics_verified + assembly_verified_
+semantics_confirmed（全段字节读完 + 姊妹同族比对 + 双锚点交叉），
+partial 项如实标注。
