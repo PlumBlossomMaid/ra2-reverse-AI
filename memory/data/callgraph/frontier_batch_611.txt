@@ -1,0 +1,67 @@
+frontier batch 611 — 三控件清理调度器 0x005EE350（73B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（0x788800 后下一未登记高扇入候选 0x005EE350
+FUN_005ee350 callers=3/unique=3/deps=2734/body=73B，unique_callers FUN_0077E110/
+FUN_00789B60/FUN_0079FC40——均未登记；FUN_0079FC40 与 batch 610 caller 重叠）。
+**73B 全字节读完**（0x5EE350-0x5EE398，ret c3，thiscall，ecx=首参）。
+取证手段：disasm.py 全读 + 清理目标 0x5EE200 前 64B 反汇编确认形态 + direct_edges
+调用图核对 + 已登记锚点交叉（**batch 071 0x775940 表查找 + batch 099/152 [0x7E14A8]
+GetDlgItem + [0x7E14A4] 消息槽**）。
+
+================================================================================
+0x005EE350 —— 三控件清理调度器（推断名，73B）
+================================================================================
+机器码（完整 73B）：
+```
+005ee350  test ecx,ecx / je 0x5ee359       ; ★首参==0 → 跳过先行清理
+005ee354  call 0x5ee200（★清理目标——若首参非零先清一次）
+005ee359  mov ecx,0x116 / call 0x775940     ; ★★batch 071 表查找（key=0x116）
+005ee363  test eax / je 0x5ee36e            ; ★未命中跳过
+005ee367  mov ecx,eax / call 0x5ee200       ; ★命中 → 清理
+005ee36e  mov ecx,0x113 / call 0x775940     ; ★★batch 071（key=0x113）
+005ee373  test eax / je 0x5ee383
+005ee37c  mov ecx,eax / call 0x5ee200
+005ee383  mov ecx,0xbb / call 0x775940      ; ★★batch 071（key=0xBB）
+005ee38d  test eax / je 0x5ee398
+005ee391  mov ecx,eax / jmp 0x5ee200        ; ★命中 → 尾调清理
+005ee398  ret
+```
+清理目标 0x5EE200（前 64B 反汇编）：
+```
+005ee200  push ebp/esi/edi / mov edi,ecx（★控件） / test edi / je 返回
+005ee20e  mov ebx,[0x7e14a8]（★★GetDlgItem——batch 099/152 实锤导入槽）
+005ee214  push 0x760 / push edi / call ebx（★GetDlgItem(控件,0x760)——取子控件）
+005ee21c  test eax / je 0x5ee23c
+005ee220  mov ebp,[0xac10c8]（★★全局 [0xAC10C8]——新登记）/ test / setne cl
+005ee22d  push 0 / push ecx / push 0xf1 / push eax / call [0x7e14a4]   ; ★★消息槽派发
+005ee236  ...（继续 GDlgSupp 家族消息序列）
+```
+**语义（推断名）**：**三控件清理调度器**——thiscall，ecx=首参：
+① 首参非零 → 0x5EE200 先清理一次（GDlgSupp 家族控件清理：GetDlgItem(0x760) 取子
+   控件 + [0x7E14A4] 消息槽 0xF1 派发——[0xAC10C8] 全局状态作参）；
+② 三连 0x775940（batch 071 表查找）按 key 0x116/0x113/0xBB 查控件——命中各自调
+   0x5EE200 清理（末次为尾调 jmp）；
+③ 全部处理完 ret。
+★原版怪癖（照抄）：① **首参先行清理 + 三 ID 表查找**（首参非零先清、再按三固定
+   ID 查表清——两个来源合并清理）；② **三个 key 常数 0x116/0x113/0xBB**（控件 ID
+   族——疑主菜单/设置类对话框控件）；③ **末次命中用 jmp 尾调**（编译器对最后调用
+   的尾调用折叠——batch 585 同款）；④ **清理目标走 GDlgSupp 家族**（0x5EE200：
+   GetDlgItem(0x760) + [0x7E14A4] 0xF1 消息——[0xAC10C8] 全局状态绑定）；⑤
+   batch 071 表查找三连（key 查 value——对象查控件推断）。
+★跨批次闭合：**batch 071（0x775940——本条=3 次调用现场）**+**batch 099/152
+   （[0x7E14A8] GetDlgItem——本条=清理目标内调用现场）**+**batch 610（FUN_
+   0079FC40 caller 重叠——同域）**+[0xAC10C8]（新全局）。
+⚠️ partial：函数精确名（三控件清理调度器推断）、三 ID 语义（0x116/0x113/0xBB 控
+   件推断）、0x5EE200 完整形态（只读前 64B）、[0xAC10C8] 全局语义、首参来源（相
+   当/对话框推断）、callers FUN_0077E110/FUN_00789B60/FUN_0079FC40（未登记）。
+
+================================================================================
+（batch 611 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：73B 纯调度编排（先行清理 + 三连查表清理）无
+算法切片；控件 ID 语义未闭合。模型价值：**控件清理调度模板**（首参先清 + 三固定
+ID 查表清理 + 尾调用折叠——batch 071 表查找应用端 + GDlgSupp 家族清理目标呼唤）
++ 末次 jmp 尾调实例（batch 585 同款）。无新被调候选（0x5EE200 未登记——留独立候
+选）。本批无产品代码改动，ctest 维持 **43/43 全绿**。登记一行 semantics_verified
++ assembly_verified_semantics_confirmed（73B 全字节读完 + 清理目标形态确认 + batch
+071/099/152 锚点命中），partial 项如实标注。
