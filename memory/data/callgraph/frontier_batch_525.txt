@@ -1,0 +1,58 @@
+frontier batch 525 — LogicClass::AddObject 0x0055BAA0（54B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=73/
+body=54B，ranking 名 **LogicClass::AddObject**（带名实锤）），unique_callers
+BuildingLightClass::BuildingLightClass/FUN_005f4ec0/FUN_0075f8b0/
+TechnoClass::EnteredOpenTopped。
+**54B 全字节读完**（= 0x36，0x55BAA0-0x55BAD3，ret 8 = 2 栈参）。
+取证手段：disasm.py 全读 + **callers 带名交叉（BuildingLightClass/
+TechnoClass——逻辑对象添加消费端）**。
+
+================================================================================
+0x0055BAA0 —— LogicClass::AddObject（带名，54B，ret 8 = 2 栈参）
+================================================================================
+机器码（完整，54B 整数）：
+```
+0055baa0  push esi
+0055baa1  mov esi,[esp+8]          ; ★栈参 1 = 对象指针（this 推断）
+0055baa5  mov al,[esi+0x98]        ; ★★对象 +0x98 = 已添加标志
+0055baab  test al,al / je 0x55bab5
+0055baaf  mov al,1 / pop esi / ret 8  ; ★已添加 → 返 1（幂等早退）
+0055bab5  mov eax,[esp+0xc]        ; ★栈参 2
+0055bab9  push eax
+0055baba  push esi                 ; ★对象（第一参）
+0055babb  call 0x5519b0            ; ★★0x5519B0（逻辑添加核心——新候选）
+0055bac0  test al,al / je 0x55bad0
+0055bac2  mov al,1 / mov [esi+0x98],al  ; ★★成功 → 置已添加标志 + 返 1
+0055bacc  pop esi / ret 8
+0055bad0  xor al,al / pop esi / ret 8    ; ★失败 → 返 0
+```
+**语义（带名实锤）**：**LogicClass::AddObject**——逻辑对象添加
+（ret 8 = 2 栈参：对象指针 + 参数 2）：
+1. **幂等早退**：对象 +0x98（已添加标志）置位 → 直接返 1；
+2. **核心添加**：调 **0x5519B0**（对象 + 参数 2）——成功 → 置 +0x98
+   标志并返 1；失败 → 返 0。
+★原版怪癖（照抄）：① **+0x98 标志幂等**（已添加再调直接返 1——
+重复 Add 零副作用）；② **标志成功后置位**（0x5519B0 返回 al 判成败
+再写 +0x98——失败不污染标志）；③ **return al 直传**（0x5519B0 的
+al 成功标志物化到本函数返回值）；④ **入参顺序**（对象在栈参 1，
+但作为 0x5519B0 的第二参 push——栈参 2 是 0x5519B0 第一参推断）；
+⑤ ret 8 = 2 栈参。
+★跨批次闭合：**callers 带名交叉（BuildingLightClass::BuildingLightClass
+/TechnoClass::EnteredOpenTopped——逻辑对象注册消费端）**+**0x5519B0
+（新候选——逻辑添加核心，本函数=调用现场）**+**0x55xxxx LogicClass
+区（batch 524 的 0x557730 同区——Logic/容器域）**。
+⚠️ partial：0x5519B0 核心身份（逻辑注册/链表挂接推断——未读）、
+对象 +0x98 标志语义（已注册/已激活推断）、栈参 2 语义（逻辑组/
+类型推断）、this 与栈参 1 的关系（本函数是否 LogicClass 方法——
+esi 存栈参 1 非 ecx，静态工具函数形态推断）。
+
+================================================================================
+（batch 525 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（0x5519B0 未登记 + 宿主关系未确认
+——AddObject 包装依赖核心添加实现）。模型价值：**LogicClass::
+AddObject 带名登记**（幂等标志 + 成功置位惯用）+ **新候选 0x5519B0
+入列**。本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已
+实跑核实）。登记一行 semantics_verified + assembly_verified_semantics_
+confirmed（全段字节读完 + 带名 callers 交叉），partial 项如实标注。
