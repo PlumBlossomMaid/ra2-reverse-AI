@@ -1,0 +1,95 @@
+frontier batch 627 — 缓冲持有类析构器 0x005CEE60（132B）（2026-10-17）
+
+口径：候选**只从 picker 未登记池取**（0x005349C0 后下一未登记高扇入候选 0x005CEE60
+FUN_005cee60（unclassified 无带名）callers=3/unique=3/deps=2610/body=132B，
+unique_callers FUN_005add10（268B）/FUN_005ade20（247B）/FUN_005ae5a0（51B——5ADxxx
+区紧邻，同一 UI/会话类家族推断）。**132B 全字节读完**（0x5CEE60-0x5CEEE3，ret c3，
+thiscall，ecx=this 存 esi）。
+取证手段：disasm.py 200B 全读（含前文衔接 + 后邻 0x5CEEF0 下一函数开头确认边界） +
+direct_edges 调用图核对（★20646 行 0x5CF5F0 调用位 + 18803/18816/18893 行 3 caller） +
+**已登记锚点交叉（3 项全命中：batch 337 0x5CF5F0 对象析构/重置（前置）+ batch 059
+0x7B46F0 带空指针置位的析构（+0x28 子对象）+ batch 001 0x7C8B3D delete（×3））** +
+**functions.tsv 边界核对（0x5CEE60-0x5CEEE3=132B 吻合）** + **YRpp 无覆盖确认（虚表
+0x7EEAB4/0x7EEAD4/0x7EEAF4 均无 JMP 映射）**。
+
+================================================================================
+0x005CEE60 —— 缓冲持有类析构器（132B，多缓冲子对象释放）
+================================================================================
+机器码（完整 132B，三层缓冲模式 + 中间子对象）：
+```
+005cee60  push ebx / push esi / mov esi,ecx（★this）
+005cee64  call 0x5cf5f0            （★★batch 337 对象析构/重置——前置：三数组释放
+                                    + 尺寸重置 640×400）
+005cee69  mov eax,[esi+0x48]       （★缓冲 A 指针）/ xor ebx
+005cee70  mov [esi+0x44],0x7eeaf4  （★装虚表 0x7EEAF4——+0x44 子对象）
+005cee77  je 0x5cee8a              （★空指针跳过）
+005cee79  cmp byte[esi+0x51],bl    （★持有标志 A +0x51）
+005cee7c  je 0x5cee8a              （★标志 0 → 不删，仅清字段）
+005cee7e  push eax / call 0x7c8b3d （★★batch 001 delete）
+005cee87  mov [esi+0x48],ebx       （★清指针）
+005cee8a  mov byte[esi+0x51],bl    （★清持有标志）/ mov [esi+0x4c],ebx（★清第二字段）
+005cee90  mov eax,[esi+0x30]       （★缓冲 B 指针）
+005cee93  mov [esi+0x2c],0x7eead4  （★装虚表 0x7EEAD4——+0x2C 子对象）
+005cee9a  je 0x5ceeaf
+005cee9e  cmp byte[esi+0x39],bl    （★持有标志 B +0x39）
+005ceea1  je 0x5ceeaf
+005ceea3  push eax / call 0x7c8b3d （★★delete）
+005ceeac  mov [esi+0x30],ebx
+005ceeaf  lea ecx,[esi+0x28]       （★+0x28 子对象）
+005ceeb2  mov byte[esi+0x39],bl    （★清标志）/ mov [esi+0x34],ebx（★清第二字段）
+005ceeb8  call 0x7b46f0            （★★batch 059 带空指针置位的析构——安全 delete
+                                    单一指针成员并自清空）
+005ceebd  mov eax,[esi+4]          （★缓冲 C 指针——外层）
+005ceec0  mov [esi],0x7eeab4       （★装外层虚表 0x7EEAB4）
+005ceec6  je 0x5ceedb
+005ceec8  cmp byte[esi+0xd],bl     （★持有标志 C +0x0D）
+005ceecd  je 0x5ceedb
+005ceecf  push eax / call 0x7c8b3d （★★delete）
+005ceed8  mov [esi+4],ebx
+005ceedb  mov byte[esi+0xd],bl     （★清标志）/ mov [esi+8],ebx（★清第二字段）
+005ceee1  pop esi / pop ebx / ret
+```
+**语义（unclassified + 三锚点 + 虚表族 + batch 337 配对）**：**缓冲持有类析构器
+（推断名：多缓冲子对象释放——0x5CExxx 区 UI/会话类家族）**——thiscall，ecx=this：
+① 前置 call 0x5CF5F0（batch 337 已登记：三数组释放 + 尺寸重置 640×400——本条为
+   它的调用现场，先做数组级清理）；
+② **三层缓冲子对象"持有标志门控"释放**（同模板 ×3）：
+   - 缓冲 A：+0x48 指针 +1 个 hang持有标志 +0x51 + 第二字段 +0x4C，子对象 +0x44
+     装虚表 0x7EEAF4；
+   - 缓冲 B：+0x30/+0x39/+0x34，子对象 +0x2C 装虚表 0x7EEAD4；
+   - 缓冲 C（外层）：+0x04/+0x0D/+0x08，外层虚表 0x7EEAB4；
+   每层：指针非空 **且** 持有标志非 0 → operator delete（batch 001）；随后无条件
+   清指针 + 清持有标志 + 清第二字段（**标志 0 时也清字段——不删除但状态归零**）；
+③ 中间 +0x28 子对象经 0x7B46F0（batch 059：安全 delete 单一指针成员并自清空）。
+类布局推断：[0]=虚表（0x7EEAB4）、+0x04 缓冲 C 指针/+0x08 第二字段/+0x0D 持有标志、
++0x28~+0x2C 子对象（0x7EEAD4）+0x30 缓冲 B/+0x34 第二字段/+0x39 持有标志、
++0x44 子对象（0x7EEAF4）+0x48 缓冲 A/+0x4C 第二字段/+0x51 持有标志——三组缓冲
+为"指针+长度/容量+持有"三元组（batch 059 的三字段带标志位析构同族布局）。
+★原版怪癖（照抄）：① **持有标志门控 delete 但字段无条件清**（标志 0 时跳过
+   delete 却照常清指针/标志/第二字段——状态归零优先于内存回收）；② **三层缓冲
+   同模板平铺展开**（×3 组无循环——编译器内联展开，每组 7 条；缓冲 A/C 4 分支
+   结构相同、缓冲 B 中间夹 +0x28 子对象调用）；③ **三虚表并存**（0x7EEAB4 外层 +
+   0x7EEAD4/0x7EEAF4 两个子对象虚表——同一类族多虚表体系）；④ **前置 0x5CF5F0**
+   （batch 337 大函数先清数组段，本条只收缓冲成员——析构分层：数组层/缓冲层）；
+   ⑤ **delete 后立即清指针**（每层 delete 后 mov 0——防悬垂）；⑥ 紧邻 0x5CEEF0
+   下一函数（0x5CF5F0 的另一调用者——加载器 counterpart 推断）。
+★跨批次闭合：**batch 337（0x5CF5F0 对象析构/重置——本条=前置调用现场，同族
+   剖析）**+**batch 059（0x7B46F0 带空指针置位的析构——本条=+0x28 子对象调用
+   现场，163 callers 扇入第一再消费）**+**batch 001（0x7C8B3D delete——本条=调用
+   现场 ×3）**+虚表 0x7EEAB4/0x7EEAD4/0x7EEAF4（新虚表族——YRpp 无映射）。
+⚠️ partial：函数精确名（unclassified 无带名——推断缓冲持有类析构器）、宿主类
+   （0x5CExxx 区 UI/会话对象，与 batch 337 同域）、+0x48/+0x30/+0x04 缓冲语义
+   （指针+长度/容量推断）、三虚表类归属、+0x28 子对象身份（0x7B46F0 目标）、
+   第二字段（+0x4C/+0x34/+0x08）语义（长度/容量推断）。
+
+================================================================================
+（batch 627 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：132B 纯析构编排（三层缓冲持有标志门控释放 +
+中间子对象调 0x7B46F0），无独立算法切片；宿主类未确认（0x5CExxx UI/会话家族），
+三虚表归属待闭合。模型价值：**缓冲持有类析构模板**（持有标志门控 delete + 字段
+无条件清零 + 三虚表族——batch 337 前置配对 + batch 059/001 锚点全命中）。无新被调
+候选（3 个 caller 均在 0x5ADxxx 区未登记——可作后续批次候选提示）。本批无产品
+代码改动，ctest 维持 **43/43 全绿**。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（132B 全段字节读完 + 三锚点全命中 +
+functions.tsv 边界核对），partial 项如实标注。
