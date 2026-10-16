@@ -1,0 +1,97 @@
+frontier batch 692 —— 0x006CE2D0 数组按值移除器（经虚表槽 0x10 查索引）
+
+地址：0x006CE2D0（functions.tsv 边界 0x6CE2D0-0x6CE30E = 65B 吻合，
+ret 4 = 1 栈参 + thiscall；后邻 0x6CE320 同模板第二份（按直参移除
+——读 [esp+4] 值直接对比）确认边界；ranking callers=3/unique=3/
+deps=1903）
+状态：semantics_verified + assembly_verified_semantics_confirmed
+（机器码 112B 全读：0x6CE2D0-0x6CE30E ret 4 + 0x6CE311-0x6CE31F nop
++ 0x6CE320 后邻同构第二份）
+
+=== 机器码全读（112B） ===
+
+006ce2d0  push esi / mov esi,ecx（this）
+006ce2d3  mov ecx,[esp+8]              ; 栈参1 = 待移除值
+006ce2d7  mov eax,[esi]                ; 虚表
+006ce2d9  push ecx / mov ecx,esi / call [eax+0x10]  ; ★虚表槽 0x10 查索引
+006ce2df  cmp eax,-1 / je 0x6CE30B     ; ★-1 未命中 → 返 0
+006ce2e4  mov ecx,[esi+0x10]           ; ★this->+0x10 计数
+006ce2e7  cmp eax,ecx / jge 0x6CE30B   ; ★索引越界 → 返 0
+006ce2eb  dec ecx / cmp eax,ecx / mov [esi+0x10],ecx  ; ★计数-1 写回
+006ce2f1  jge 0x6CE305                 ; ★索引==旧计数-1（末项）→ 直接成功
+006ce2f3  mov ecx,[esi+4]              ; ★数组基址
+006ce2f6  inc eax
+006ce2f7  mov edx,[ecx+eax*4] / mov [ecx+eax*4-4],edx  ; ★元素前移覆盖
+006ce2fe  mov ecx,[esi+0x10] / cmp eax,ecx / jl 0x6CE2F3  ; ★循环
+006ce305  mov al,1 / ret 4             ; ★成功返 1
+006ce30b  xor al / ret 4               ; ★失败返 0
+
+=== 语义 ===
+
+**数组按值移除器（推断名：经虚表槽 0x10 查索引的 VectorClass 移除）**
+——__thiscall 1 栈参（待移除值）ret 4：① this 虚表槽 0x10 查栈参1
+值的索引（DynamicVectorClass::FindItem 推断——未命中 -1）；② 索引
+-1 或越界（>= 计数）→ 返 0；③ 计数-1 写回 + 从索引处起 4B 元素
+前移覆盖被移除项（末项直接成功）→ 返 1。
+
+★后邻 0x6CE320 同模板第二份（按直参对比移除——读 [esp+4] 值经
+计数递减 + 元素前移，少一层虚表槽 0x10 查询）——编译双份变体
+（batch 313/314/323 双份模式同款）。
+
+=== 调用现场（5 处扫描 + 1 处反汇编确认） ===
+
+1) 0x6CB6D2 / 0x6CB6EA → **SuperClass::Grant（★带名 0x6CB560-
+   0x6CB7AB——超武授予！）×2**。现场（0x6CB6B4-0x6CB6F2）：mov
+   eax,[esi+0x68]（★Super 槽指针）→ cmp eax,ebx/je 跳过 → mov byte
+   [eax+0x195],bl（★清子对象标志）→ lea edx,[esp+0x1C]（值）→ push
+   edx/mov ecx,0xB0F5B8（★★batch 327 已登记全局数组！ParasiteClass
+   ExitUnit 同 [0xB0F5B8] 数组）→ mov [esi+0x68],ebx（清槽）→ mov
+   [esp+0x20],esi → call 0x6CE2D0 → 后续 cmp byte[esi+0x6C],bl
+   （★+0x6C 第二槽同款）——**this=[0xB0F5B8] 全局数组 + 双槽移除
+   （+0x68/+0x6C）惯用**。
+
+2) 0x6CBC14 / 0x6CBC2C → **SuperClass::ClickFire（★带名 0x6CB920-
+   0x6CBC9E——超武点击开火！）×2**（同函数内两处）。
+
+3) 0x6CC5BC → **SuperClass::Launch（★带名 0x6CC390-0x6CDE42——超武
+   发射！）**——batch 679 COM 接口查询持有器的同栈兄弟函数（0x6CC390
+   是 batch 679 的 host caller）。
+
+★统一形态：SuperClass 家族三函数（Grant/ClickFire/Launch）经
+[0xB0F5B8] 全局数组按值移除子对象（超武系统对象移除推断）。
+
+=== 原版怪癖（照抄） ===
+
+① 虚表槽 0x10 查索引（FindItem 推断——先查后删）；
+② -1 与越界双守卫（cmp -1 / jge 计数——都返 0）；
+③ 计数-1 写回先于元素搬运（mov [esi+0x10],ecx 在前）；
+④ 末项直接成功（索引==新计数 → jge 0x6CE305 跳搬运）；
+⑤ 元素前移循环（inc eax 后 mov [ecx+eax*4-4],edx——从+1 位开始
+   搬覆盖）；
+⑥ 返 al 布尔（mov al,1 / xor al——成功/失败）；
+⑦ 后邻同模板第二份（0x6CE320——直参版 vs 本条查索引版）。
+
+=== 跨批次闭合 ===
+
++[0xB0F5B8]（batch 327——ParasiteClass ExitUnit 已登记全局数组，
+  本条=SuperClass 家族消费端，数组移除器闭环；batch 327 记录「dec
+  计数 + memmove 前移」=本条行为）；
++SuperClass 家族（Grant/ClickFire/Launch 带名 caller×5——超武系统
+  对象移除）；
++batch 679（0x6CC390 SuperClass::Launch——同函数调用现场再确认）；
++0x6CE2D0 后邻 0x6CE320（同模板第二份——编译双份变体，batch
+  313/314/323 同模式）。
+
+=== 新候选 ===
+
+0x6CE320（直参版移除器——后邻同模板）、0xB0F5B8 全局数组宿主
+（batch 327 已登记 ParasiteClass::Array 相邻——精确宿主待续）、
+this->+0x10 计数/+4 数组基址（VectorClass 标准布局）、+0x68/+0x6C
+双槽语义（Super 子对象槽）。
+
+=== partial ===
+
+函数精确名（推断 数组按值移除器——经虚表槽 0x10 查索引）、虚表槽
+0x10 方法名（FindItem 推断）、0x6CE320 直参版完整语义（读了一半）、
+[0xB0F5B8] 宿主精确身份（SuperClass::Array 推断）、+0x195 子对象
+标志语义、Super 家族移除业务。
