@@ -1,0 +1,101 @@
+frontier batch 565 — Session 恢复门控 0x0069BAB0（144B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x69BAB0 观察名 SessionClass::Resume
+（**YRpp 无该名覆盖**——grep YRpp 仅得无关的同名成员，按推断名登记）/body=144B、
+callers=6/unique=3/**deps=4293**，unique_callers FUN_0048c8b0/**FUN_0048ccc0 =
+MainGame 0x48CCC0（QWEN.md 实锤）**/FUN_0055cfd0——均未登记）。**144B 全字节读完**
+（0x69BAB0-0x69BB3F，ret 无栈参，thiscall）。
+取证手段：disasm.py 全读 + ranking 调用者 + 九批次锚点交叉（087/111/255/256/548/
+563/257/260 等）+ YRpp 命名核对（无覆盖）。
+
+================================================================================
+0x0069BAB0 —— Session 恢复门控（推断名，144B）
+================================================================================
+机器码（完整 144B）：
+```
+0069bab0  mov al,[ecx+0x30d8]              ; ★this->+0x30D8 已恢复标志
+0069bab6  test al,al/jne 0x69bb3f          ; ★已置位 → 直接返回（幂等）
+0069babe  mov al,[0xa8e9a0]                ; ★★全局门控（batch 403/563 同全局）
+0069bac3  test al,al/je 0x69bb3f           ; 门控为 0 → 返回
+0069bac7  mov byte [ecx+0x30d8],1          ; ★置 this->+0x30D8 = 1
+0069bace  mov eax,[0x83ed20]               ; ★全局（-1 = 未初始化哨兵）
+0069bad3  cmp eax,-1/jne 0x69bae2
+0069bad8  mov eax,[0xa8eb60]               ; ★一次性初始化：取 [0xA8EB60]
+0069badd  mov [0x83ed20],eax               ;   存入 [0x83ED20]
+0069bae2  cmp dword [ecx],0                ; ★this->[0]（首字段/虚表槽？）
+0069bae5  jne 0x69baf1
+0069bae7  mov [0xa8eb60],2                 ; ★this->[0]==0 → [0xA8EB60] = 2
+0069baf1  mov ecx,[0xa8b230]               ; ★★ScenarioClass::Instance（batch 087
+                                               实锤 / YRpp ScenarioClass.h:58）
+0069baf7  mov al,[ecx+0x35a2]              ; ★Instance->+0x35A2 标志
+0069bafd  test al,al/jne 0x69bb15          ; ★已置位 → 跳过清理
+0069bb01  call 0x684240                    ; ★★batch 255 会话清理（MapClass 清理
+                                               + [0x887640] 槽 0x28/0xC + 置
+                                               +0x35A2=1 + InputManager 帧推进
+                                               + 清 [0xB07784]）
+0069bb06  mov edx,[0xa8ed84]               ; ★★帧计数全局（batch 548 剩余时长查询
+                                               器同全局）
+0069bb0c  add edx,3
+0069bb0f  mov [0xb07784],edx               ; ★★deadline = 帧 + 3（batch 255 清它、
+                                               batch 256 邻域 [0xB077B0] SHP 链头）
+0069bb15  mov ecx,[0x887640]               ; ★★全局对象（batch 150/179/221/236/563）
+0069bb1b  mov eax,[ecx]
+0069bb1d  call [eax+0x1c]                  ; ★虚表槽 0x1C
+0069bb20  test al,al/jne 0x69bb2f          ; 成功 → 跳过补调
+0069bb24  mov ecx,[0x887640]
+0069bb2a  mov edx,[ecx]
+0069bb2c  call [edx+0x18]                  ; ★虚表槽 0x18（槽 0x1C 假才补）
+0069bb2f  mov ecx,[0x87e758]               ; ★全局对象指针
+0069bb35  mov edx,0x4000
+0069bb3a  jmp 0x407150                     ; ★★batch 111 尾跳：置 this+0 bit0 +
+                                               0x4000<<16 打包进 +8
+0069bb3f  ret
+```
+**语义（推断名）**：**Session 恢复门控**——thiscall 无栈参：
+① **双门控幂等**：`this->+0x30D8` 已置 → 返回；全局 `[0xA8E9A0]`（引擎门控）为 0
+   → 返回；两者通过后置 `this->+0x30D8 = 1`；
+② **一次性初始化**：`[0x83ED20] == -1`（未初始化哨兵）→ 取 `[0xA8EB60]` 存入
+   （单次快照）；
+③ **首字段空则改写来源**：`this->[0] == 0` → `[0xA8EB60] = 2`；
+④ **场景侧清理 + 帧 deadline**：`ScenarioClass::Instance`（[0xA8B230]）的 `+0x35A2`
+   未置 → 调 batch 255 的 `0x684240`（会话清理：MapClass 清理 + [0x887640] 虚表
+   槽 0x28/0xC + 置 `+0x35A2=1` + `[0xA8ED9C]=1` + InputManager 帧推进 0x54F720
+   + 清 `[0xB07784]`）→ 随后 `[0xB07784] = [0xA8ED84] + 3`（**帧计数 + 3 = 恢复
+   后 3 帧的截止点**）；
+⑤ **视图刷新**：全局对象 `[0x887640]` 虚表槽 `0x1C` → 返回假再补槽 `0x18`
+   （batch 255 0x684240 同款双槽兜底）；
+⑥ **帧基准置位**：尾跳 batch 111 的 `0x407150`（`ecx = [0x87E758]` 对象指针、
+   `edx = 0x4000`）→ 置对象 `+0` 的 bit0 标志并把 `0x4000 << 16 = 0x40000000`
+   打包进 `+8`（**帧/时间基准写入**）。
+★原版怪癖（照抄）：① **`this->+0x30D8` + `[0xA8E9A0]` 双门控**（前者是"本对象已
+   恢复"，后者是"引擎允许"——两条各自独立短路）；② **`[0x83ED20] == -1` 一次性
+   快照初始化**（从 `[0xA8EB60]` 拷入，`-1` 作未初始化哨兵）；③ **`this->[0] == 0`
+   才写 `[0xA8EB60] = 2`**（条件改写，非无条件）；④ **帧 deadline = 帧 + 3 硬编码**
+   （`add edx,3`）；⑤ **虚表槽 0x1C 假则补槽 0x18**（与 batch 255 0x684240 同款
+   兜底模式）；⑥ **尾跳 `0x407150` 复用 batch 111 的"置 bit0 + 高半字打包"族**
+   （`0x4000<<16` 常量）；⑦ 全函数无返回值语义（仅副作用）。
+★跨批次闭合：**batch 255（0x684240 会话清理——本条调用现场；其清理 [0xB07784]
+   本条立即改写为帧+3）**+**batch 087（[0xA8B230] = ScenarioClass::Instance 实锤
+   + YRpp ScenarioClass.h:58）**+**batch 111（0x407150 标志位/定点族——尾跳目标）**
+   +**batch 403/563（[0xA8E9A0] 门控全局）**+**batch 150/179/221/236/563
+   （[0x887640] 全局对象虚表族）**+**batch 548（[0xA8ED84] 帧计数全局）**+
+   **batch 257（0x69B7E0 Session 随机分配——同 0x69Bxxx 区同类）+batch 260
+   （0x69AC30/0x69ACC0 同区）**——**0x69Bxxx Session 家族第二成员**；
+   **MainGame 0x48CCC0（QWEN.md 实锤）调用本条**——游戏主循环入口的会话恢复路径。
+⚠️ partial：函数精确名（ranking 观察名成分为 SessionClass::Resume，**YRpp 无
+   覆盖故按推断名**）、`this->+0x30D8`/`this->[0]` 字段语义（恢复标志/形态字段
+   推断）、`[0x83ED20]`/`[0xA8EB60]` 全局语义（配置快照对推断）、`+0x30D8` 与
+   Scenario 的 `+0x35A2` 两标志分工、`0x4000<<16` 常量含义（帧基准/速度档推断）、
+   FUN_0048c8b0/FUN_0055cfd0（新候选调用者）。
+
+================================================================================
+（batch 565 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：宿主类（Session 族）未闭合，且动作全部是
+门控 + 已登记被调编排（0x684240/0x407150/[0x887640] 虚表槽）。模型价值：
+**"恢复"流程的完整动作序**（双门控 → 一次性快照 → 场景清理 → 帧+3 deadline →
+视图槽 0x1C/0x18 → 0x407150 帧基准置位）+ **Session 家族第二成员**（batch 257
+0x69B7E0 之后）+ **MainGame 0x48CCC0 调用链再确认**。2 个新调用者候选
+（FUN_0048c8b0/FUN_0055cfd0）。本批无产品代码改动，ctest 维持 **43/43 全绿**。
+登记一行 semantics_verified + assembly_verified_semantics_confirmed（144B 全段
+字节读完 + 九批次锚点交叉 + YRpp 命名核对），partial 项如实标注。
