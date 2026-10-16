@@ -1,0 +1,82 @@
+frontier batch 609 — 全局 VectorClass 插入通知器 0x0077EF90（399B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（0x76F080 后下一未登记高扇入候选 0x0077EF90
+FUN_0077ef90 callers=3/unique=3/deps=2741/body=399B，unique_callers FUN_0079CE70/
+FUN_0079F140（2 处）/FUN_0079FC40——均未登记）。**399B 全字节读完**（0x77EF90-
+0x77F11E，ret c3，thiscall，ecx=this 存 esi、edx=参 2 存 edi）。
+取证手段：disasm.py 分两段全读 + direct_edges 调用图核对 + 已登记锚点交叉
+（**batch 001 0x4068E0 sprintf + 0x7C8E17/0x7C8B3D new/delete + batch 031 0x7CA090
+memmove + batch 597 0x7AE5D0 VectorClass 插入模板同族**）+ 新全局登记
+（[0xAC116C]/[0xB76520]/[0xB76524]/[0xB76528]）。
+
+================================================================================
+0x0077EF90 —— 全局 VectorClass 插入通知器（推断名，399B）
+================================================================================
+机器码（完整 399B，分四段）：
+```
+; ── 段 1：sprintf 日志 + 全局对象槽 0x18 通知
+0077ef90  sub esp,8 / push esi/edi / mov edi,edx（★参 2）/ mov esi,ecx（★this）/
+          and edi,0xff（★参 2 低字节）
+0077efa3  push edi/push esi/push 0x84a554（★格式串——BSS .rdata 串）/call 0x4068e0
+          （★★batch 001 sprintf）
+0077efaf  mov eax,[0xac116c]（★★全局对象 [0xAC116C]——新登记）/ mov ecx,[eax] /
+          push edi/push esi/push eax / call [ecx+0x18]（★全局槽 0x18 虚调用——
+          3 参：this=eax/参1=esi/参2=edi）
+0077efbf  test eax / je 0x77efcb / pop 族 / xor al / ret   ; ★调用返非 0 → 失败返 0
+; ── 段 2：全局 VectorClass 扩容（[0xB76520]=计数、[0xB76524]=容量、[0xB76528]=数组）
+0077efcb  mov eax,[0xb76520]（★★全局计数）/ mov esi,eax
+0077efe0  mov ebp,[0xb76524]（★★全局容量）/ cmp esi,ebp / jl 0x77f05b（★计数<容量跳过）
+0077efee  lea ebp,[eax+eax]（2×计数）/ cmp ebp,0xa / jge / mov ebp,0xa（★max(2×,10)）
+0077effb  lea edi,[ebp*4] / push edi / call 0x7c8e17（★★batch 001 new(容量×4)）
+0077f012  add esp,4 / shr ecx,2 / rep stosd / and ecx,3 / rep stosb（★清零）
+0077f021  mov eax,[0xb76528]（★★全局旧数组）/ test / je 0x77f03f
+0077f02a  mov ecx,[0xb76520] / rep movsd/movsb（★memcpy 旧→新）
+0077f03f  push eax / call 0x7c8b3d（★★batch 001 delete 旧数组）
+0077f04d  mov [0xb76528],ebx（★新数组）/ mov [0xb76524],ebp（★新容量）
+; ── 段 3：第二遍扩容检查（0x77F061 起同结构）
+0077f061  cmp eax,ebp / jl 0x77f0d0 / ...（again 2×/max10/new/清零/memcpy/delete）
+; ── 段 4：memmove 移位 + 槽位写入 + 计数+1
+0077f0d0  cmp esi,eax / jge 0x77f0fd（★参 2 >= 计数跳过移位）
+0077f0d4  lea edx,[ebx+esi*4] / shl ecx,0x1e / sub ecx,esi / add ecx,eax / shl ecx,2
+          （★长度算式 (计数-索引)×4——batch 597 同款）
+0077f0ea  push ecx/push edx/push eax / call 0x7ca090（★★batch 031 memmove 移位）
+0077f0fd  lea ecx,[ebx+esi*4] / test / je 0x77f111
+0077f10a  mov edx,[esp+0xc] / mov [ecx],edx   ; ★槽位写 [数组+idx*4] = this
+0077f111  inc eax / mov [0xb76520],eax       ; ★★全局计数+1
+0077f118  mov al,1 / pop 族 / ret              ; ★返 1
+```
+**语义（推断名）**：**全局 VectorClass 插入通知器**——thiscall，ecx=this、edx=参
+2（索引）：
+① sprintf 日志（[0x84A554] 格式串——含参 2 低字节）；
+② [0xAC116C] 全局对象槽 0x18 虚调用通知（3 参）——返非 0 → 失败返 0；
+③ 全局 VectorClass（[0xB76520]=计数、[0xB76524]=容量、[0xB76528]=数组）标准扩
+   容插入：容量不足按 max(2×计数,10) 扩容（new+清零+memcpy+delete 旧——双遍检
+   查）→ memmove 尾部移位（batch 031）→ 槽位写 this → 计数+1 → 返 1。
+★原版怪癖（照抄）：① **VectorClass 三字段在全局而非 this**（[0xB76520]/
+   [0xB76524]/[0xB76528]——与 batch 597 0x7AE5D0 的 this 布局同构、全局版变体）；
+   ② **前置 sprintf 日志 + 全局槽 0x18 通知**（先日志后虚调用再扩容——插入前
+   通知外部对象，失败短路返 0）；③ **通知虚调用 3 参**（eax=全局对象/esi=this/
+   edi=索引低字节——and edi,0xff 截断）；④ **扩容双遍检查**（0x77EFCB 与
+   0x77F061 同结构——batch 597 同款双保险）；⑤ **memmove 长度算式
+   shl 0x1e/sub/add/shl 2**（(计数-索引)×4 编译器奇偶优化——batch 597 逐字节同
+   款）；⑥ 槽位写 this 后计数+1 返 1（插入成功标志）。
+★跨批次闭合：**batch 001（0x4068E0 sprintf + 0x7C8E17 new/0x7C8B3D delete——
+   本条=多现场）**+**batch 031（0x7CA090 memmove——本条=尾部移位现场）**+**batch
+   597（0x7AE5D0 VectorClass 插入器——本条=全局版同族，扩容/移位/计数模板逐字节
+   呼应）**+[0xAC116C]（新全局对象——虚表槽 0x18 通知端）。
+⚠️ partial：函数精确名（全局 VectorClass 插入通知器推断）、[0xAC116C] 全局对象
+   身份（通知接收方推断）、[0x84A554] 格式串内容、参 2 语义（索引推断——and
+   0xff 截断后作槽位）、[0xB76520] 全局容器宿主类、FUN_0079CE70/FUN_0079F140/
+   FUN_0079FC40（未登记，0x79 区与 [0xAC116C] 通知域推断）。
+
+================================================================================
+（batch 609 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：399B 纯插入编排（日志+通知+扩容+移位）无独
+立算法切片；[0xAC116C] 通知对象未闭合。模型价值：**全局 VectorClass 插入通知模
+板**（sprintf 日志 + 全局槽 0x18 虚调用 + 全局三字段扩容插入——batch 597 模板的
+全局变体 + batch 001/031 锚点现场）+ 新全局四件（[0xAC116C]/[0xB76520]/
+[0xB76524]/[0xB76528]）。无新被调候选。本批无产品代码改动，ctest 维持 **43/43
+全绿**。登记一行 semantics_verified + assembly_verified_semantics_confirmed
+（399B 全段字节读完 + batch 597 模板呼应 + batch 001/031 锚点全命中），partial
+项如实标注。
