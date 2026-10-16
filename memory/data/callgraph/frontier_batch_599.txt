@@ -1,0 +1,81 @@
+frontier batch 599 — VersionClass::Clip_Version 0x0074FD60（61B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（0x74FD20 后下一未登记高扇入候选 0x0074FD60
+VersionClass::Clip_Version（ranking 带名）callers=3/unique=3/deps=2813/body=61B，
+unique_callers FUN_005b6020/FUN_005ba060/FUN_005e00b0——均未登记，与 batch 598
+Version_Protocol 的 caller 集完全相同）。**61B 全字节读完**（0x74FD60-0x74FD9C，
+ret 8 = 2 栈参，thiscall，ecx=this）。
+取证手段：disasm.py 全读 + ranking/direct_edges 核对（带名来源 Ghidra 符号表——
+YRpp/Phobos grep 无 VersionClass/Clip_Version 匹配）+ 三处调用现场反汇编 + 相邻
+函数家族核对（0x74FD50 双界初始化、0x74FDA0 返 0x20000 getter）。
+
+================================================================================
+0x0074FD60 —— VersionClass::Clip_Version（61B，版本窗口钳制器）
+================================================================================
+机器码（完整 61B）：
+```
+0074fd60  mov edx,[esp+4]        ; ★参 1（版本值 A）
+0074fd64  push esi/edi
+0074fd66  mov edi,[ecx+0x40]     ; ★this->+0x40（上限）
+0074fd69  cmp edx,edi / jbe 0x74fd75   ; 参 1 <= 上限 → 继续
+0074fd6d  pop edi / or eax,0xffffffff  ; ★参 1 > 上限 → 返 -1
+0074fd71  pop esi / ret 8
+0074fd75  mov eax,[ecx+0x3c]     ; ★this->+0x3C（下限）
+0074fd78  mov esi,[esp+0x10]     ; ★参 2（版本值 B）
+0074fd7c  cmp esi,eax / jae 0x74fd87   ; 参 2 >= 下限 → 继续
+0074fd80  pop edi / xor eax,eax        ; ★参 2 < 下限 → 返 0
+0074fd83  pop esi / ret 8
+0074fd87  cmp edx,eax / jbe 0x74fd8e   ; 参 1 <= 下限 → 不升
+0074fd8b  mov [ecx+0x3c],edx     ; ★下限 = 参 1（升下限）
+0074fd8e  cmp esi,edi / jae 0x74fd95   ; 参 2 >= 上限 → 不降
+0074fd92  mov [ecx+0x40],esi     ; ★上限 = 参 2（降上限）
+0074fd95  mov eax,[ecx+0x40]     ; ★返更新后上限
+0074fd98  pop 族 / ret 8
+```
+**语义（ranking 带名）**：**VersionClass::Clip_Version（版本窗口钳制器）**——
+thiscall，ecx=this（+0x3C=下限/+0x40=上限），栈参 1=版本值 A、参 2=版本值 B：
+① 参 1 > 上限 → 返 -1（0xFFFFFFFF 哨兵）；
+② 参 2 < 下限 → 返 0（哨兵）；
+③ 有效（下限 <= 参 2 且参 1 <= 上限）→ 下限只升（参 1 > 下限才写 +0x3C）、
+   上限只降（参 2 < 上限才写 +0x40）——窗口单调收紧；
+④ 返回更新后的上限（+0x40）。
+三处调用现场：
+```
+0x5B620D/0x5BA26D（同构）：mov edx,[esp+0x4e] / mov eax,[esp+0x4a] / add esp,4 /
+    mov ecx,0xa8ece0 / push edx（参 2）/ push eax（参 1）/ call 0x74fd60 / test
+    eax,eax / jne（★非 0 分支——-1 与正上限都跳）
+0x5E1842：mov edx,[0xa8d677] / mov eax,[0xa8d673] / push edx（参 2）/ push eax
+    （参 1）/ mov ecx,0xa8ece0 / call 0x74fd60 / test eax,eax
+    ★★参 1 = [0xA8D673]、参 2 = [0xA8D677]——两个全局版本值
+```
+★原版怪癖（照抄）：① **三态返回值**（-1=参 1 超上限、0=参 2 低下限、正=新上限
+   ——哨兵 -1 与 0 都归调用者错误分支，但语义不同）；② **窗口单调收紧**（下限只
+   升、上限只降——版本协商逐步收敛）；③ **返回上限而非成功标志**（调用者 test
+   eax 判非 0——-1 也非 0，调用者无法区分 -1 与正常上限，只能区分 0=无效）；
+   ④ **相邻 0x74FD50 双界同置 0x20000**（`mov eax,0x20000 / mov [ecx+0x3c],eax /
+   mov [ecx+0x40],eax / ret`——VersionClass 初始化/重置，默认窗口 [0x20000,
+   0x20000]，0x20000=131072）；⑤ **相邻 0x74FDA0 返 0x20000 常数 getter**（`mov
+   eax,0x20000 / ret`——家族常量源）；⑥ caller 集与 batch 598 Version_Protocol
+   完全相同（VersionClass 家族三件套消费点：Version_Protocol 查表 + Clip_Version
+   钳窗）。
+★跨批次闭合：**batch 598（0x74FD20 Version_Protocol——同家族带名孪生，同 3
+   callers，0xA8ECE0 同全局）**+**0x74FD50/0x74FDA0（相邻家族函数——双界初始化/
+   常数 getter，未登记）**+**0xA8ECE0（VersionClass 实例全局）**+**[0xA8D673]/
+   [0xA8D677]（版本值全局对——调用者读入作参）**。
+⚠️ partial：版本窗口业务语义（下限/上限=协议版本协商区间推断）、0x20000 常量含
+   义（版本号 131072 推断）、[0xA8D673]/[0xA8D677] 全局身份（版本值对推断）、调
+   用者 jne 分支处理（-1 vs 正常上限的区分方式——0x5B6226/0x5BA286/0x5E1859 后
+   续未读）、0x74FD50/0x74FDA0 身份、callers FUN_005b6020/FUN_005ba060/
+   FUN_005e00b0（未登记）。
+
+================================================================================
+（batch 599 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：61B 纯窗口钳制无算法切片；VersionClass 家
+族语义（版本窗口协商）未闭合。模型价值：**版本窗口钳制模板**（参 1 超上限返 -1、
+参 2 低下限返 0、有效则单调收紧窗口返新上限——与 batch 598 查表器组成
+VersionClass 家族两条路径）+ VersionClass 实例全局 0xA8ECE0 + 版本值全局对
+[0xA8D673]/[0xA8D677]。无新被调候选。本批无产品代码改动，ctest 维持 **43/43 全
+绿**。登记一行 semantics_verified + assembly_verified_semantics_confirmed（61B
+全字节读完 + 三调用现场一致 + batch 598 家族闭合 + 相邻 0x74FD50/0x74FDA0 佐
+证），partial 项如实标注。
