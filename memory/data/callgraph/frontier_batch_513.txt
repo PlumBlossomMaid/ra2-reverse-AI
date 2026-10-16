@@ -1,0 +1,52 @@
+frontier batch 513 — 8 位值钳制写入器 0x004C9680（25B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=97/
+body=25B，ranking 名 FUN_004c9680 unclassified——**推断名**），unique_callers
+FUN_00413f80/FUN_00442c40/**InfantryClass::GetFireError**/**UnitClass::
+AStarAttempt**。
+**25B 全字节读完**（= 0x19，0x4C9680-0x4C9696，ret 4 = 1 栈参）。
+取证手段：disasm.py 全读 + **callers 带名交叉（InfantryClass::GetFireError/
+UnitClass::AStarAttempt——单元 AI 消费端）** + **0x4Cxxxx 区数学/工具
+簇（batch 076 同区）**。
+
+================================================================================
+0x004C9680 —— 8 位值钳制写入器（推断名，25B，ret 4 = 1 栈参）
+================================================================================
+机器码（完整，25B 整数）：
+```
+004c9680  mov eax,[esp+4]        ; ★栈参 1 = 输入值
+004c9684  cmp eax,0x7f           ; ★与 0x7F（127）比较
+004c9687  jl 0x4c968e            ; ★< 127 → 保留
+004c9689  mov eax,0x7f           ; ★★≥ 127 → 钳到 127
+004c968e  xor edx,edx
+004c9690  mov dh,al              ; ★★al 进高字节（DX = 值<<8）
+004c9692  mov word[ecx+0x14],dx  ; ★★this+0x14（word）= DX
+004c9696  ret 4                  ; 1 栈参
+```
+**语义（推断名）**：**8 位值钳制写入器**——__thiscall + 1 栈参（值）：
+输入值钳制到 **0x7F（127）上限**，`mov dh,al` 放入 16 位 DX 的高字节
+（= 值<<8），写入 **this+0x14 word**。即 `this->+0x14 = min(值,127)<<8`。
+★原版怪癖（照抄）：① **钳制上限 0x7F 硬编码**（非 0xFF——7 位语义，
+127 上限）；② **负值未钳到下界**（只 cmp 0x7F/jl 单边钳制——负 al
+进 DH 会变 0x80..0xFF 高字节，未清低字节外的符号位）；③ **mov dh,al
+手动组装**（值<<8 用寄存器高字节落位而非 shl——编译器选择）；④
+**this+0x14 是 word 字段**（16 位存储）；⑤ ret 4 = 1 栈参，返回无
+（void setter 推断）。
+★跨批次闭合：**callers 带名交叉（InfantryClass::GetFireError/
+UnitClass::AStarAttempt——0x4C9680 被单元开火/寻路逻辑调用，字段语义
+= 单元 AI 参数推断）**+**0x4Cxxxx 区（batch 076 数学/工具簇——0x4CACxx-
+0x4CAExx，本函数在 0x4C9 更前区，同为 0x4C 工具域）**。
+⚠️ partial：this+0x14 字段的精确业务语义（单元 AI 参数推断——开火
+阈值/寻路代价相关）、调用方 FUN_00413f80/FUN_00442c40 身份、钳制
+上限 0x7F 的物理含义（7 位定点/百分比推断）、负输入行为（未钳下界）。
+
+================================================================================
+（batch 513 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（this+0x14 字段业务语义未确认——
+单字段钳制 setter，模型价值受限于宿主字段未读）。模型价值：**钳制
+左移写入器登记**（0x7F 上限 + <<8 + word 写——8 位→16 位字段的惯用
+形态）+ **UnitClass/InfantryClass AI 链路消费端登记**。本批无产品代码
+改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（全段字节读完 +
+带名 callers 交叉），partial 项如实标注。
