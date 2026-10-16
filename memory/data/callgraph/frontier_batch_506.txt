@@ -1,0 +1,86 @@
+frontier batch 506 — INISection 键查找原语（惰性排序 + 二分 + 缓存）0x0052B210（149B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=111/
+body=149B，ranking 名 FUN_0052b210 unclassified——**推断名**），unique_callers
+FUN_00529a30/**INISection::Read2Integers**/**INISection::Read3Integers**/
+**INISection::WriteString**。
+**149B 全字节读完**（= 0x95，0x52B210-0x52B2A2，ret 4 = 1 栈参）。
+取证手段：disasm.py 全读 + **crt_behavior_contracts.md 0x7C8B48=qsort 主
+实现实锤** + **batch 002/004 0xB78830 默认串交叉** + **batch 125/130/137
+同族对照**。
+
+================================================================================
+0x0052B210 —— INISection 键查找原语（推断名，149B，ret 4 = 1 栈参）
+================================================================================
+机器码（完整，149B 整数）：
+```
+0052b210  push ebx / mov ebx,ecx            ; this
+0052b215  mov ecx,[ebx+4]                   ; ★this->+4 = 项计数
+0052b219  test ecx,ecx / je 0x52b285        ; ★空 → 返默认串
+0052b21d  mov eax,[ebx+0x10]                ; ★this->+0x10 = 命中缓存指针
+0052b220  mov esi,[esp+0x14]                ; ★栈参 1 = 键名
+0052b224  test eax,eax / je 0x52b230
+0052b228  mov eax,[eax] / mov edx,[esi]     ; ★缓存项->[0] vs 键->[0]
+0052b22c  cmp eax,edx / je 0x52b298         ; ★缓存命中 → 返缓存项+4
+0052b230  mov al,[ebx+0xc]                  ; ★this->+0xC = 已排序标志
+0052b233  test al,al / jne 0x52b255
+0052b237  push 0x52b6a0 / push 8 / push ecx / mov ecx,[ebx]
+0052b242  push ecx / call 0x7c8b48          ; ★★惰性 qsort(数组, 计数, 8, 0x52B6A0)
+0052b247  add esp,0x10 / mov dword[ebx+0x10],0
+0052b251  mov byte[ebx+0xc],1               ; ★置已排序标志
+0052b255  mov ecx,[ebx+4] / mov ebp,[esi]   ; 计数 / 键值
+0052b25a  mov edi,[ebx]                     ; ★this->[0] = 项数组基址
+0052b25c  test ecx,ecx / jle 0x52b285
+0052b260  mov eax,ecx / cdq / sub eax,edx / sar eax,1   ; ★mid = n/2（二分）
+0052b267  mov esi,[edi+eax*8]               ; ★8 字节/项，取 [0] 键字段
+0052b26a  lea edx,[edi+eax*8]
+0052b26d  cmp esi,ebp / jle 0x52b275
+0052b271  mov ecx,eax / jmp 0x52b281        ; 高半
+0052b275  je 0x52b291                       ; ★命中 → 缓存+返值
+0052b277  lea edi,[edx+8] / or edx,-1 / sub edx,eax / add ecx,edx  ; 低半
+0052b281  test ecx,ecx / jg 0x52b260        ; 循环
+0052b285  mov eax,0xb78830 / ret 4          ; ★★默认串 0xB78830
+0052b291  test edx,edx / je 0x52b285
+0052b295  mov [ebx+0x10],edx                ; ★缓存命中项指针
+0052b298  mov eax,[ebx+0x10] / add eax,4 / ret 4   ; ★★返 项+4（值指针）
+```
+**语义（推断名）**：**INISection 键查找原语（惰性排序 + 二分 + 缓存）**
+——__thiscall + 1 栈参（键名）：
+1. **缓存命中**：this->+0x10（上次命中项指针）非空且项 [0] == 键 →
+   直接返 项+4（值指针）；
+2. **惰性排序**：首次（+0xC 已排序标志 == 0）调 **0x7C8B48（qsort
+   主实现）** 对项数组排序（8 字节/项、比较回调 0x52B6A0），置标志；
+3. **二分查找**：`sar eax,1` 折半，比较项 [0]（键字段）与键名；命中 →
+   缓存到 +0x10 返 项+4；未命中 → 返**默认串 0xB78830**。
+对象布局：this->[0] = 项数组基址（8B/项：+0=键字符串指针、+4=值指针）、
++4 = 项计数、+0xC = 已排序标志、+0x10 = 命中缓存指针。
+★原版怪癖（照抄）：① **惰性排序**（首次查找才 qsort——数组在写入期
+不排序，读取期才排，排序后不再插入的假设）；② **单槽缓存**（+0x10
+只缓存上一个命中项——顺序访问友好，随机访问缓存命中率低）；③
+**缓存键比对用首指针**（`mov eax,[eax]` 取缓存项 [0] 与键 [0] 直接
+cmp 指针/首个字段，非 strcmp）；④ **qsort 回调 0x52B6A0**（未读内部
+——batch 137 提到 0x52B6A0 vs 0x52B720 回调常量差异）；⑤ **8 字节
+项**（键/值双指针——INISection entry 布局）；⑥ **默认串 0xB78830**
+（未命中返回固定串——batch 002/004 同串多现场）；⑦ 二分用 `cdq/sar`
+（有符号折半，n 为 int）。
+★跨批次闭合：**0x7C8B48（crt_behavior_contracts.md——qsort 主实现，
+本条=惰性排序调用现场）**+**0xB78830（batch 002/004——默认串多现场
+交叉）**+**batch 125/130/137（0x52B390/0x52B620 同族——带回调 +
+0x7C8B48 排序/比较结构；本批=纯查找形态，那些=注册/插入形态）**+
+**callers 全 INISection 家族（Read2Integers/Read3Integers/WriteString
+——键查找消费端）**。
+⚠️ partial：0x52B6A0 比较回调内部（键字符串 strcmp 推断）、0xB78830
+串内容（默认值推断）、+0xC/+0x10 字段与数组写入侧的衔接（写入后标志
+是否复位未确认）、二分边界精确语义（低半计算 or edx,-1 形态）、
+FUN_00529a30 身份。
+
+================================================================================
+（batch 506 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（0x52B6A0 回调未读 + INISection
+写入侧未闭合——查找原语依赖完整 entry 布局）。模型价值：**INISection
+键查找原语登记**（qsort 惰性排序调用现场 + 二分 + 缓存——INI 系统
+读取路径核心）+ **batch 125/130/137 同族形态对照**（查找 vs 注册/插入）。
+本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。
+登记一行 semantics_verified + assembly_verified_semantics_confirmed
+（全段字节读完 + qsort 实锤 + 默认串交叉），partial 项如实标注。
