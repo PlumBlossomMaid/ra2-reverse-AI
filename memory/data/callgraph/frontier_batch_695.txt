@@ -1,0 +1,187 @@
+frontier batch 695 —— 0x00480630 CellClass 墙体连接重算（推断名）
+
+地址：0x00480630（functions.tsv 边界 0x480630-0x480A24 = 1013B，
+ret 4 = 1 栈参 + thiscall；后邻 0x480A30 新函数（mov eax,[ecx+0x24]
+坐标取用族）确认边界；ranking callers=3/unique=3/deps=1896）
+身份：unclassified-yet-named（ranking 无带名——按机器码语义 +
+★带名 caller DamageWall/SellWall 推断 CellClass 墙体连接重算；
+「DestroyWall/墙体重算」语义推断）
+状态：semantics_verified + assembly_verified_semantics_confirmed
+（机器码 1050B 全读：0x480630-0x480A24 ret 4 + 0x480A27-0x480A2F
+nop + 0x480A30 后邻）
+
+=== 机器码全读要点（1050B 五段） ===
+
+段1（0x480630-0x48068D 入口+主循环头部）：sub esp,0xcc / push
+ebx/ebp/esi/edi → mov edi,0x81CC70（★★驱动表基址——PE 实测 5 项
+{0,2,4,6,-1}）→ mov [esp+0x2c],ecx（this=cell）→ mov [esp+0x18],
+edi → 主循环 0x480649: mov eax,[edi]（★驱动表项值）→ cmp eax,8 /
+jb 0x480658（★值<8 走「邻居 cell 处理」）→ 否则 esi=ecx / jmp
+0x48068f（★值>=8 直用 this）→ 0x480658: mov ecx,[ecx+0x24]（★this
+->+0x24 坐标）→ and eax,7（★表项值 and 7 作方向索引）→ lea edx,
+[eax*4+0x89F688]（★方向偏移表，QWEN.md 实锤族）→ lea eax,
+[esp+0x40] → call 0x42D510（★batch 070 二维点加法）→ mov eax,[eax]
+→ lea ecx,[esp+0x28] → mov ecx,0x87F7E8（★MapClass::Instance）→
+call 0x5657A0（★坐标→CellClass* 查表，batch 241 全表扇入最高）→
+esi=eax（★邻居 cell）。
+
+段2（0x48068F-0x4806FC 栈参门控+矩形处理）：al=[esp+0xe0]（★栈参
+1 字节标志）→ test / je 0x48069f → cmp [edi],-1 / je 0x4806fd（★
+表项==-1 且参1 非零 → 跳过矩形处理）→ 0x48069f: lea edx,[esp+0x7c]
+→ mov ecx,esi → call 0x47FB90（★GetContainingRect batch 100）→
+mov edi,eax → lea eax,[esp+0x5c] → mov ecx,esi → call 0x47FDE0
+（★ShapeRect batch 103）→ 检查两矩形尺寸（+8/+0xc 宽高 >0）→
+矩形并集扩展（取最小起点 + 宽度扩展）。
+
+段3（0x4806FD-0x4807E9 脏区登记+覆盖类型门控）：lea ecx,[esp+0xbc]
+→ call 0x47FDE0（ShapeRect）→ lea edx,[esp+0x9c] → call 0x47FB90
+（GetContainingRect）→ push → lea eax,[esp+0x74] → call 0x47FF80
+（★坐标转换/地形查询 batch 330）→ call 0x487F40（★矩形交集 batch
+120）→ push eax → lea ecx,[esp+0xdc] → call 0x45A130（★16B 打包
+batch 112）→ 16B 拷贝入栈 → mov ecx,[0x887324]（★全局）→ call
+0x6D2790（★RegisterDirtyArea batch 075 脏区登记）→ lea edi,[esi+
+0x24] → mov ecx,0x87F7E8 → call 0x6551C0（★CellStruct 向量 batch
+088）→ mov eax,[esi+0x44]（★cell->+0x44 覆盖类型/索引）→ cmp -1 /
+je 0x480A03 → mov ecx,[0xA83D84]（★★batch 269 同全局表）→ edx=
+[ecx+eax*4]（★+0x44 索引表项）→ al=[edx+0x2A8]（★表项+0x2A8 标志
+——batch 269 同字段）→ test / je 0x480A03。
+
+段4（0x4807EA-0x480965 连接掩码收集+覆盖类型清理）：mov
+[esp+0x10],ebx=0 → mov ebp,0x81CC70（★内循环驱动表 4 项 {0,2,4,6}）
+→ 0x4807F3: mov eax,[ebp] → cmp eax,8 / jb 0x4807ff → 否则 mov
+eax,esi / jmp 0x480844 → 0x4807ff: mov ecx,[edi]（★cell 坐标+0x24）
+→ and eax,7 → mov dx,[eax*4+0x89F688]（★方向 X 偏移）→ lea eax,
+[eax*4+0x89F688] → add dx,cx → mov ax,[eax+2]（★方向 Y 偏移）→
+add ax,[esp+0x16]（★cell+0x26）→ 坐标合成 [esp+0x14] → mov ecx,
+0x87F7E8 → call 0x5657A0（★查邻居 cell）→ 0x480844: mov ecx,[ebp]
+（★驱动表项=方向值）→ mov edx,[esi+0x44] → push ecx/push edx →
+mov ecx,eax（★邻居 cell）→ call 0x480510（★★CellClass::
+ConnectsToOverlay batch 269——方向值+本格覆盖类型判定连接）→ test
+al / je 0x480864 → 命中: mov eax,1 / mov ecx,ebx / shl eax,cl（★
+位掩码 1<<i）→ or [esp+0x10],eax（★收集连接掩码）→ 0x480864: add
+ebp,4 / inc ebx / cmp ebp,0x81CC80 / jb 0x4807F3（★内循环 4 方向）
+→ 0x480870: al=[esi+0x11E]（★cell->+0x11E 字节）→ mov ecx,[esi+
+0x4C] → and al,0xf0（★高 4 位保留）→ or al,bl（★低 4 位=连接掩码）
+→ mov [esi+0x11E],al（★写回）→ cmp [esi+0x44],2 / je 0x48089A /
+cmp 0x1A / jne 0x4808BC（★覆盖类型 2/0x1A 分支）→ 0x48089A: cmp
+al,0x30 / je 0x4808A2 / cmp 0x20 / jne 0x4808BC → 0x4808A2: or
+ebp,-1 / mov dl,1 / mov [esi+0x44],ebp（★置 -1）→ mov byte[esi+
+0x11E],0（★清标志）→ call 0x7258D0（★AnnounceExpiredPointer batch
+102 对象消亡广播！）→ bl=1（★变化标志）→ 0x4808BC: or ebp,-1 →
+0x4808BF: mov eax,[esi+0x44] → test / jne 0x4808EC → 0x4808C6:
+al=[esi+0x11E] → cmp 0x10 / je / cmp 0x20 / jne → 命中: 置 +0x44=-1
+/ 清 +0x11E / mov [esi+0x50],ebp（★+0x50=-1）→ call 0x7258D0 →
+bl=1 → 0x4808EC: cmp [esi+0x44],1 / jne 0x480913 → cmp byte[esi+
+0x11E],0x20 → 命中: 置 -1/清/call → bl=1 → 0x480913: cmp [esi+
+0x44],0x16 / jne 0x48093F → cmp al,0x10/0x20 → 命中: 置 -1/清
++0x50=-1/call → bl=1 → 0x48093F: cmp [esi+0x44],3 / jne 0x480966
+→ cmp byte[+0x11E],0x10 → 命中: 置 -1/清/call → bl=1。
+
+段5（0x480966-0x480A24 重算收尾+外层循环）：push ebp → mov ecx,esi
+→ call 0x47D2B0（★CellClass::RecalcAttributes batch 081！）→ mov
+edx,[esp+0x10]（旧掩码）→ mov eax,[esi+0x4C] → cmp / je 0x480A03
+（无变化）→ 0x48097D: test bl（★有清理）→ push edi / mov ecx,
+0x87F7E8 / je 0x4809F3 → 0x480987: call 0x56D460（★MapClass::
+ResetZones batch 209）→ push edi → call 0x584550（★MapClass 子区域
+重算 batch 174）→ 8 邻居循环: mov cx,[edi] → and eax,7 → add cx,
+[eax*4+0x89F688] → mov dx,[eax*4+0x89F68A]（★+2 偏移）→ add dx,
+[edi+2] → 坐标合成 → mov ecx,0x87F7E8 → call 0x5657A0 → mov dl,
+[eax+0x122] → dec dl → mov [eax+0x122],dl（★邻居 cell->+0x122 递减
+work 计数）→ inc esi / cmp esi,8 / jb（★8 方向循环）→ 0x4809F3:
+call 0x56D5A0（★未登记候选）→ push edi → call 0x584550 → 0x480A03:
+mov edi,[esp+0x18] → add edi,4 → cmp edi,0x81CC84 / jb 0x480649（★
+外层循环 5 项）→ pop 族 / ret 4。
+
+=== 语义 ===
+
+**CellClass 墙体连接重算（推断名，1 栈参字节标志）**——__thiscall
+1 栈参（[esp+0xe0] 字节门控）ret 4：① 外层循环遍历全局驱动表
+[0x81CC70] 5 项 {0,2,4,6,-1}：表项 <8 时用 0x42D510 把 this->+0x24
+坐标加方向偏移（表项 and 7 索引 0x89F688 方向表）→ 0x5657A0 查
+邻居 cell → 算包含矩形（0x47FB90）/绘制矩形（0x47FDE0）→ 交集
+（0x487F40）→ 16B 打包（0x45A130）→ RegisterDirtyArea（0x6D2790）
+脏区登记；② cell->+0x44 索引 [0xA83D84] 表项 +0x2A8 标志有效时：
+内层循环驱动表 {0,2,4,6} 逐方向查邻居 cell → ConnectsToOverlay
+（0x480510，batch 269 实锤）判定连接 → 收集 4 位掩码写回 cell->
++0x11E（高 4 位保留 | 低 4 位掩码）；③ 按 cell->+0x44 覆盖类型
+{2/0x1A, 0, 1, 0x16, 3} 配合 +0x11E 掩码值（0x30/0x20/0x10）分支：
+命中则置 +0x44=-1、清 +0x11E、部分 +0x50=-1、调 AnnounceExpired
+Pointer（0x7258D0 对象消亡广播）、置变化标志；④ RecalcAttributes
+（0x47D2B0）+ 有清理时 ResetZones（0x56D460）+ 子区域重算
+（0x584550）+ 8 邻居 work 计数（+0x122）递减；无清理时 0x56D5A0 +
+子区域重算；⑤ 外层循环驱动表 {0,2,4,6,-1} 5 项走完。
+
+★墙体连接重算：驱动表 {0,2,4,6} 4 正交方向 + 0x89F688 方向偏移表
++ ConnectsToOverlay 连接判定 + 掩码写 +0x11E + 覆盖类型清理
+（AnnounceExpiredPointer）——墙体破坏/出售后重算周边墙连接状态。
+
+=== 调用现场（19 处扫描 + 归属定位） ===
+
+1) 0x480F5E / 0x480F95 / 0x480FCC / 0x481010 → **CellClass::DamageWall**
+   （0x480CB0 带名，body=1007）——★名字即身份：毁墙后重算墙体连接！
+   现场 0x480F40: call 0x42D510（点加法）/ 0x480F55: call 0x5657A0
+   （查 cell）→ mov ecx,eax → push 0 → call 0x480630（★栈参1=0）。
+2) 0x4FCFFB → **HouseClass::SellWall**（0x4FCE80 带名，body=443）——
+   ★名字即身份：卖墙后重算！现场 0x4FCFE0: call 0x5657A0 → mov
+   ecx,eax → push 0 → call 0x480630（栈参1=0，前段 RecalcAttributes
+   0x47D2B0 已先调）。
+3) 0x445B3A / 0x445BC9 / 0x445BF5 / 0x445C47 / 0x445C73 → FUN_00445880
+   （0x445880-0x445E45，body=1478，未登记）×5——建筑域大函数。
+4) 0x440FBA / 0x440FE7 / 0x441014 / 0x44103F / 0x4410A4 / 0x4410D1 /
+   0x441131 / 0x44115E → 无归属（8 处，前 0x43EF90 BuildingClass::
+   GetCurrentFrame 距 7750B / 后 0x441F60 BuildingClass::AfterDestruction
+   距 4006B——建筑域大间隙，未登记 BuildingClass 大函数内部）。
+5) 0x5FC721 → 无归属（前 0x5FC380 OverlayClass::OverlayClass 距 600B /
+   后 0x5FD270 距 2895B）。
+
+★统一形态：墙体事件（DamageWall/SellWall/建筑域）触发连接重算。
+
+=== 原版怪癖（照抄） ===
+
+① 驱动表 [0x81CC70] {0,2,4,6,-1}：值 <8 走邻居处理、>=8 直用
+   this、==-1 且栈参1 非零跳过矩形处理（三态门控）；
+② 方向索引 = 表项值 and 7（0x89F688 方向表 4B/项，X 偏移 +0、
+   Y 偏移 +2——两处偏移表同款）；
+③ 栈参1 字节只控制「表项==-1 时跳过矩形处理」（非零才跳过）——
+   0 值完全绕过该门控；
+④ 连接掩码写回 +0x11E = (旧 & 0xF0) | 低 4 位掩码（高 4 位保留）；
+⑤ 覆盖类型清理分支 {2/0x1A, 0, 1, 0x16, 3} × 掩码值 {0x30/0x20/
+   0x10} 的组合判断（多分支重复块）——部分分支清 +0x50、部分不
+   清（不对称）；
+⑥ 清理动作 = 置 +0x44=-1 + 清 +0x11E + AnnounceExpiredPointer
+   （0x7258D0 对象消亡广播）+ 变化标志 bl=1；
+⑦ 重算链：RecalcAttributes →（有清理）ResetZones + 子区域重算 +
+   8 邻居 work 计数（+0x122）递减 /（无清理）0x56D5A0 + 子区域重算
+   ——两条路径不对称；
+⑧ 脏区登记（0x6D2790）在覆盖类型门控之前无条件执行（含 +0x44
+   ==-1 的格子——登记后才判断）。
+
+=== 跨批次闭合 ===
+
+**+CellClass::DamageWall / HouseClass::SellWall（带名 caller——墙体
+域两事件直连，名字即身份）**；+0x480510（batch 269 ConnectsToOverlay
+——本条=连接判定调用现场，参数=方向值+本格覆盖类型）；+0x47D2B0
+（batch 081 RecalcAttributes）；+0x7258D0（batch 102
+AnnounceExpiredPointer 对象消亡广播）；+0x56D460（batch 209
+ResetZones）；+0x584550（batch 174 MapClass 子区域重算）；+0x5657A0
+（batch 241 全表扇入最高坐标→CellClass 查表）；+0x42D510（batch 070
+二维点加法）；+0x47FB90/0x47FDE0（batch 100/103 矩形对）；+0x47FF80
+（batch 330 坐标转换/地形查询）；+0x487F40/0x45A130（batch 120/112
+矩形交集/16B 打包）；+0x6D2790（batch 075 RegisterDirtyArea）；
++0x6551C0（batch 088 CellStruct 向量）；+[0xA83D84]/+0x2A8（batch
+269 同全局表同字段）；+[0x81CC70] 驱动表（PE 实测 {0,2,4,6,-1}）。
+
+=== 新候选 ===
+
+0x56D5A0（无清理路径重算——未登记）、[0x81CC70] 驱动表完整语义
+（4 正交方向+哨兵）、+0x122 work 计数字段、+0x11E 掩码低 4 位
+消费端、FUN_00445880（建筑域大函数）、0x440xxx-0x441xxx 建筑域
+间隙宿主、0x5FC721 宿主、+0x2A8 标志语义。
+
+=== partial ===
+
+函数精确名（推断 CellClass 墙体连接重算——ranking 无带名）、
+驱动表 {0,2,4,6,-1} 精确含义（方向索引+哨兵门控推断）、栈参1
+精确语义（跳过矩形处理开关推断）、+0x11E 掩码位消费端、覆盖
+类型 {2/0x1A,0,1,0x16,3} 语义、+0x122 work 计数用途、0x56D5A0
+身份、无归属 9 处调用点宿主。
