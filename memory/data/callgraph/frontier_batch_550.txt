@@ -1,0 +1,65 @@
+frontier batch 550 — CellClass::CleanFog 0x00486BF0（93B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x486BF0 callers=4/unique=4/
+deps=20/body=93B，ranking 名 **CellClass::CleanFog**（带名实锤）；unique_
+callers FUN_004a9890/FUN_004a9ca0/FUN_004a9dd0/FUN_00586720——均未登记）。
+**93B 全字节读完**（0x486BF0-0x486C4C，ret 无栈参）。
+取证手段：disasm.py 全读 + **0x5657A0 已登记锚点**（TSV 行 241 坐标→
+CellClass* 查表）+ **batch 232 CellClass ctor 字段互证**（+0x24=[0x89E748]
+坐标）+ batch 517/232 标志位模式核对。
+
+================================================================================
+0x00486BF0 —— CellClass::CleanFog（带名实锤，93B）
+================================================================================
+机器码（完整 93B，关键段）：
+```
+00486bf0  push ecx / mov eax,[ecx+0x24]        ; ★this+0x24 = 起点坐标（batch 232 ctor=[0x89E748]）
+00486bf4  push esi / mov [esp+4],eax           ; 栈上坐标结构
+00486bf9  mov esi,1                            ; ★esi = 1（循环带索引，步进 2）
+00486bfe  lea ecx,[esp+4] / push ecx / mov ecx,0x87f7e8 / call 0x5657a0  ; ★★取格（MapClass::Instance + 查表）
+00486c0d  movsx ecx,byte[eax+0x11b]            ; ★★cell+0x11B = 带符号字节高度
+00486c14  lea edx,[esi-2]                      ; 带下界 = esi-2
+00486c17  cmp ecx,edx / jl 0x486c38            ; 高度 < 下界 → 跳过
+00486c1b  cmp ecx,esi / jg 0x486c38            ; 高度 > 上界(esi) → 跳过
+00486c1f  mov ecx,[eax+0x140] / and ecx,0xffbfffff / mov [eax+0x140],ecx  ; ★★清 cell+0x140 位 0x400000
+00486c31  mov ecx,eax / call 0x486c50          ; ★★0x486C50 辅助（带高带 cell 清理）
+00486c38  inc word[esp+4] / inc word[esp+6]    ; ★坐标 (X,Y) 各 +1（对角线步进）
+00486c42  add esi,2 / cmp esi,0xf / jl 0x486bfe ; ★7 次循环（esi=1,3,5,7,9,11,13）
+00486c4a  ret
+```
+**语义（带名实锤）**：**CellClass::CleanFog（清雾）**——thiscall 无栈参，
+沿对角线清理 7 格：
+① 起点坐标 = `this+0x24`（batch 232 ctor 该字段=[0x89E748]）；
+② 循环 7 次（esi = 1,3,5,7,9,11,13 步进 2），每次对当前 (X,Y)：
+   - 经 `MapClass::Instance`（0x87F7E8）+ 0x5657A0 取格；
+   - 读 `cell+0x11B`（带符号字节高度）：
+     - 高度在 `[esi-2, esi]` 带内 → **清 `cell+0x140` 位 0x400000** 并调
+       0x486C50（带内高度清理辅助）；
+     - 高度带外 → 跳过（不处理该格）；
+   - (X,Y) 各 +1（对角线推进）。
+★原版怪癖（照抄）：① **对角线推进**（X/Y 各 +1——沿主对角线扫 7 格）；
+② **高度带 [esi-2,esi] 窗**（esi 步进 2、带宽 2——高度分层窗 1-13）；
+③ **cell+0x11B 带符号字节**（movsx——负高度参与比较）；
+④ **清 +0x140 位 0x400000**（打包标志位——batch 232 ctor `+0x140 &=
+0xFF800000` 保留高 9 位，本条清位 22）；
+⑤ **高度带内才调 0x486C50**（带外静默跳过——分区处理）；
+⑥ 起点 `this+0x24`（ctor 从 [0x89E748] 全局取）。
+★跨批次闭合：**0x5657A0（TSV 行 241 已登记——坐标→CellClass* 查表，本条
+=取格现场）**+**batch 232（CellClass ctor——+0x24=[0x89E748] 起点坐标、
++0x140 掩码写回，本条=消费端）**+**0x87F7E8（QWEN.md MapClass::Instance）**。
+⚠️ partial：+0x11B 高度语义（cell 高度字段——batch 232 ctor +0x118=0xFF
+族邻域）、+0x140 位 0x400000 含义（雾/可见标志推断）、0x486C50（带内
+清理辅助——未登记新候选）、清雾业务场景（沿对角线 7 格清雾——出生点/
+路径清雾推断）、FUN_004a9890/FUN_004a9ca0/FUN_004a9dd0/FUN_00586720
+（4 调用者——新候选入列）。
+
+================================================================================
+（batch 550 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：+0x140 位 0x400000 语义（雾标志推断）
+与 0x486C50 身份未闭合。模型价值：**CellClass 域首个带名方法登记**（CleanFog
+——batch 232 ctor 的字段消费端）+ **对角线 7 格清雾模式**（高度分层窗
+1-13）。1 个新被调 + 4 个新调用者候选入列。本批无产品代码改动，ctest
+维持 **43/43 全绿**。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（93B 全段字节读完 + 带名 + 双锚点
+交叉），partial 项如实标注。
