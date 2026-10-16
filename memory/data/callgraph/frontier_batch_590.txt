@@ -1,0 +1,98 @@
+frontier batch 590 — 哈希表清空+收缩器 0x007ACE60（267B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x7ACE60 FUN_007ace60 callers=3/
+unique=3/deps=2852/body=267B，unique_callers FUN_00780110/FUN_00787770/
+FUN_0079fc40——均未登记）。**267B 全字节读完**（0x7ACE60-0x7ACF6A，ret c3，
+thiscall，ecx=this 存 ebx）。
+取证手段：disasm.py 全读 + 已登记锚点交叉（0x7B46F0 batch 059 带空指针置位析构、
+0x7C8B3D batch 001 operator delete、0x7C8E17 batch 001 operator new）+ YRpp 无带
+名核对。
+
+================================================================================
+0x007ACE60 —— 哈希表清空+收缩器（推断名，267B）
+================================================================================
+机器码（完整 267B，分五段）：
+```
+; ── 段 1：清空循环（逐槽销毁链表）
+007ace60  push ecx/ebx / mov ebx,ecx / xor ebp,ebp
+007ace67  mov eax,[ebx+8]               ; ★★count
+007ace6e  jbe 0x7acea8                  ; count<=0 → 跳收缩判定
+007ace70  mov eax,[ebx] / mov esi,[eax+ebp*4]  ; ★★array[ebp] 槽
+007ace75  test esi,esi / je 0x7ace96     ; 空槽跳过
+007ace79  mov edi,esi / mov esi,[esi+8]  ; ★★item + item->next(+8)
+007ace7e  test edi,edi / je 0x7ace92
+007ace82  mov ecx,edi / call 0x7b46f0   ; ★★batch 059 带空指针置位析构（delete+置NULL）
+007ace89  push edi / call 0x7c8b3d       ; ★★batch 001 delete 项本体
+007ace92  test esi,esi / jne 0x7ace79    ; 链表循环
+007ace96  mov ecx,[ebx] / inc ebp
+007ace99  mov [ecx+ebp*4-4],0            ; ★★槽位清 0
+007acea1  cmp ebp,[ebx+8] / jb 0x7ace70  ; 槽循环
+; ── 段 2：收缩判定
+007acea8  mov eax,[ebx+0x30] / mov esi,[ebx+8]  ; ★★容量上限 / count
+007aceae  cmp esi,eax / mov [ebx+4],0           ; ★this+4=0
+007aceb7  jbe 0x7acf65                          ; count<=容量 → 收尾
+007acebd  mov cl,[ebx+0x14] / test cl,cl / jne 0x7acf65  ; ★+0x14 标志锁定 → 不收缩
+007acec8  cmp esi,eax / jbe 0x7acf57             ; 再判
+; ── 段 3：减半 + 新表分配清零
+007aced0  mov ecx,[ebx+0xc] / mov ebp,[ebx]      ; ★★shift(+0xC) / 旧表基址
+007aced5  mov eax,esi / mov [esp+0x10],ebp       ; ★存旧表
+007acedb  shr eax,1 / dec ecx                    ; ★★新count=count/2 / shift-1
+007acede  mov [ebx+8],eax / mov [ebx+0xc],ecx    ; ★写回
+007acee1  lea edx,[eax*4] / push edx / call 0x7c8e17  ; ★★new(count/2*4)（batch 001）
+007acf00  mov [ebx],edi                          ; ★★新表基址
+007acf05  rep stosd + rep stosb                  ; ★清零新表
+; ── 段 4：重散列（hash 函数指针 +0x18，头插）
+007acf0c  test esi,esi / jle 0x7acf4e            ; ★旧 count<=0 → 跳过
+007acf12  mov edi,ebp / mov ebp,esi              ; ★edi=旧表 / ebp=旧count
+007acf16  mov esi,[edi] / test esi,esi / je 0x7acf44   ; 旧槽空跳过
+007acf1c  mov ecx,esi / call [ebx+0x18]          ; ★★hash 函数指针（+0x18）
+007acf21  mov ecx,[ebx+0xc] / mov edx,1 / shl edx,cl / dec edx
+007acf2c  and edx,eax                            ; ★★idx = hash & ((1<<shift)-1)
+007acf2e  mov eax,[ebx] / mov ecx,[eax+edx*4]    ; 新表[idx] 旧头
+007acf33  lea edx,[eax+edx*4] / mov [edx],esi    ; ★★头插
+007acf38  mov eax,[esi+8] / mov [esi+8],ecx      ; ★项->next = 旧头
+007acf3e  mov esi,eax / test / jne 0x7acf1c      ; 链表循环
+007acf44  add edi,4 / dec ebp / jne 0x7acf16     ; 旧表槽循环
+007acf4e  push ebp（旧表）/ call 0x7c8b3d        ; ★★delete 旧表
+; ── 段 5：复查循环
+007acf57  mov eax,[ebx+0x30] / mov esi,[ebx+8] / cmp esi,eax
+007acf5f  ja 0x7acebd                            ; ★★仍超限 → 再收缩一轮
+007acf65  pop 族 / ret
+```
+**语义（推断名）**：**哈希表清空+收缩器**——thiscall 无栈参，267B：
+① **清空**：遍历 `this+0` 表（count `+8`）逐槽销毁链表——每项 `0x7B46F0`
+   （batch 059 带空指针置位析构）释放子资源 + `0x7C8B3D` delete 项本体，槽位清 0；
+② **收缩判定**：`this+4` 置 0；若 `count(+8) <= 容量(+0x30)` → 收尾；若
+   `+0x14` 标志（锁定）非 0 → 不收缩；
+③ **减半重建**：`new count = count/2`、`shift(+0xC)-1` → `operator new`（batch
+   001）分配 `count/2*4` 新表并清零 → 写回 `+0`/`+8`/`+0xC`；
+④ **重散列**：遍历旧表每链每项——`call [this+0x18]`（**hash 函数指针**）→
+   `idx = hash & ((1<<shift)-1)` → **新表头插**（项 `+8` 链旧头）→ 逐槽/逐链；
+   完成后 `0x7C8B3D` delete 旧表；
+⑤ **复查循环**：若仍 `count > 容量` → 回到收缩段再缩一轮（逐轮减半）。
+★原版怪癖（照抄）：① **先清空再收缩两段独立**（清空永远执行，收缩只在超限且
+   未锁定）；② **逐项 0x7B46F0 析构 + delete**（带空指针置位——batch 059 模板，
+   每项先释放子对象再删自身）；③ **+0x18 存 hash 函数指针**（间接调用而非内联
+   哈希——可替换 hash）；④ **mask 用 `(1<<shift)-1`**（shift 减半后同步）；
+   ⑤ **头插重散列**（新表同槽冲突项挂链头——顺序反转，非尾插）；⑥ **收缩循环**
+   （一次减半后仍超限继续减半——直到 <= 容量）；⑦ `this+4` 无条件清 0；⑧
+   `+0x14` 锁定标志阻止收缩（锁定表不缩容）。
+★跨批次闭合：**0x7B46F0（batch 059——带空指针置位析构，本条=清空段调用现场）**+
+   **0x7C8B3D（batch 001——operator delete，本条=三处现场：项/旧表）**+**0x7C8E17
+   （batch 001——operator new，本条=新表分配）**。
+⚠️ partial：函数精确名（哈希表清空+收缩器推断）、宿主哈希表字段语义（+0 shift /
+   +0x14 锁定标志 / +0x18 hash 指针 / +0x30 容量——推断）、+0x18 hash 函数身份
+   （未登记新候选）、+0x14 锁定标志写入点、callers FUN_00780110/FUN_00787770/
+   FUN_0079fc40（未登记——容器使用者推断）。
+
+================================================================================
+（batch 590 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：宿主哈希表类未闭合（+0x18 hash 指针身份
+partial），267B 纯"清空+收缩"容器操作无独立算法切片；依赖全已登记（batch
+001/059）。模型价值：**哈希表容器清空+缩容模板**（清空段 0x7B46F0 析构链 +
+缩容段减半重建 + +0x18 hash 指针 + 头插重散列 + 复查循环——可复用于后续容器类）+
+**收缩锁 +0x14 标志**。1 个新候选（+0x18 hash 函数）+ 3 个调用者候选。本批无产品
+代码改动，ctest 维持 **43/43 全绿**。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（267B 全段字节读完 + 3 已登记锚点交叉），
+partial 项如实标注。
