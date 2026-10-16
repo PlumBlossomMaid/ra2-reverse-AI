@@ -1,0 +1,64 @@
+frontier batch 607 — 七全局宽串比较选择器 0x005E8BF0（267B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（0x4E4C20 后下一未登记高扇入候选 0x005E8BF0
+FUN_005e8bf0 callers=3/unique=3/deps=2747/body=267B，unique_callers FUN_005E3D10
+（★batch 601-606 配置链）/FUN_005E8EA0/FUN_00792F10（2 处）——后两者未登记）。
+**267B 全字节读完**（0x5E8BF0-0x5E8CFA，ret c3，thiscall，ecx=this 存 ebx）。
+取证手段：disasm.py 全读 + direct_edges 调用图核对 + **已登记锚点交叉（batch 110
+0x7CA5D3 CRT::wcscmp + batch 159 [0xAC119C]/[0xAC11A0] 七全局系 + [0xAC11B4] 哨兵
+（batch 591/602/604/606）+ [0xA8DA78]/[0xA8DA84] 玩家名表（batch 364/577/589）**）。
+
+================================================================================
+0x005E8BF0 —— 七全局宽串比较选择器（推断名，267B）
+================================================================================
+机器码（完整 267B，分三段）：
+```
+; ── 段 1：七全局 wcscmp 链（命中返回对应全局指针）
+005e8bf0  mov eax,[0xac119c]      ; ★★[0xAC119C]（batch 159 七全局系）
+005e8bf8  mov ebx,ecx（★this）/ push ebx / push eax / call 0x7ca5d3   ; ★★batch 110 CRT::wcscmp(this, 全局)
+005e8c02  add esp,8 / test eax / jne 0x5e8c13            ; ★不等 → 下一全局
+005e8c09  mov eax,[0xac119c] / pop 族 / ret              ; ★相等 → 返回 [0xAC119C]
+005e8c13  mov ecx,[0xac11a0] / push ebx / push ecx / call 0x7ca5d3   ; ★★[0xAC11A0] 同式
+         ; （模式重复 7 遍：0xAC119C/0xAC11A0/0xAC11A4/0xAC11A8/0xAC11AC/0xAC11B0/0xAC11B4
+         ;   每全局 wcscmp 后 test eax/jne 下一全局，相等直接返回该全局指针）
+; ── 段 2：全不中 → 玩家名表扫描
+005e8cc5  mov ebp,[0xa8da84]      ; ★★计数 [0xA8DA84]（batch 577 玩家名表）
+005e8ccb  xor esi / test ebp / jle 0x5e8ced              ; ★计数<=0 → 返 0
+005e8cd1  mov ecx,[0xa8da78]      ; ★★玩家名表 [0xA8DA78]
+005e8cd7  mov edi,[ecx+esi*4]     ; ★表项
+005e8cd8  push ebx / push edi / call 0x7ca5d3            ; ★wcscmp(this, 表项)
+005e8ce4  test eax / je 0x5e8cf4                          ; ★相等 → 返回该表项
+005e8ce8  inc esi / cmp esi,ebp / jl 0x5e8cd1            ; ★扫描 0..count-1
+005e8ced  xor eax,eax / ret                               ; ★全不中 → 返 0
+005e8cf4  mov eax,edi / pop 族 / ret                      ; ★命中返回表项
+```
+**语义（推断名）**：**七全局宽串比较选择器**——thiscall，ecx=this（宽字符串）：
+① 依次与七个全局宽串（[0xAC119C]/[0xAC11A0]/[0xAC11A4]/[0xAC11A8]/[0xAC11AC]/
+   [0xAC11B0]/[0xAC11B4]）wcscmp（batch 110 0x7CA5D3）比较，相等 → 返回该全局
+   指针；② 全不中 → 扫描 [0xA8DA78] 玩家名表（计数 [0xA8DA84]）逐项 wcscmp，
+   命中返回表项；③ 全表不中返 0。
+★原版怪癖（照抄）：① **七连 wcscmp 平铺链**（每全局立即数加载 + 2 参 call + test
+   + jne——编译器对七静态串选择的平铺展开，无循环）；② **返回全局本身而非索引**
+   （命中返回 [0xAC11xx] 值——调用者直接用指针）；③ **每组相等出口独立成段**
+   （每全局的相等路径都完整 pop 族 + ret——7 个相同出口）；④ **[0xAC119C] 系七全
+   局与玩家名表双级查找**（先固定七全局后动态玩家表——两级名称解析）；⑤ 全不中
+   返 0（无缺省哨兵——调用者另作处理）。
+★跨批次闭合：**batch 110（0x7CA5D3 CRT::wcscmp——本条=8 次调用现场（七全局+玩家
+   表扫描），CRT 宽字符比较应用端）**+**batch 159（[0xAC119C]/[0xAC11A0] 七全局排
+   除表系——本条=比较端）**+**batch 591/602/604/606（[0xAC11B4] 哨兵——本条=同
+   表第七个）**+**batch 577（[0xA8DA78] 玩家名表/[0xA8DA84]——本条=双级查找第二
+   级现场）**+**batch 600-606（FUN_005E3D10 配置链同域——GDlgSupp 家族聚类）**。
+⚠️ partial：函数精确名（七全局宽串比较选择器推断）、七全局内容（运行时 BSS——
+   batch 591 推断默认玩家名/槽默认值）、返回指针用途（调用者消费推断）、[0xAC11A4]/
+   [0xAC11A8]/[0xAC11AC] 三全局语义、FUN_005E8EA0/FUN_00792F10（未登记）。
+
+================================================================================
+（batch 607 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：267B 纯名称解析编排（平铺比较 + 表扫描）无
+算法切片；七全局内容未闭合。模型价值：**名称双级解析模板**（七静态串 wcscmp 平
+铺链 + 动态玩家表扫描 + 双级回退返 0——batch 110 CRT 比较的应用端 + [0xAC119C] 系
+第 N 消费点）+ 与 GDlgSupp 家族（600-606）同域。无新被调候选。本批无产品代码改
+动，ctest 维持 **43/43 全绿**。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（267B 全字节读完 + 8 处 wcscmp 调用现场 +
+batch 159/577/591 锚点全命中），partial 项如实标注。
