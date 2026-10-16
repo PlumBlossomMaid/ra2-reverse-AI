@@ -1,0 +1,76 @@
+frontier batch 520 — 宽字符串格式化薄封装（vsprintfW 族）0x007CA858（110B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=86/
+body=110B，ranking 名 FUN_007ca858 unclassified——**推断名 + 契约交叉实锤**），
+unique_callers FUN_004a60e0/FUN_004a61c0/FUN_005e2700/FUN_005e2790。
+**110B 全字节读完**（= 0x6E，0x7CA858-0x7CA8C5，ret 无栈参 3 参）。
+取证手段：disasm.py 全读 + **crt_behavior_contracts.md 0x7CA564 契约
+逐点比对（vsprintfW 薄封装——batch 054 升级 semantics_verified）** +
+**0x7D21BE（batch 050 宽格式化引擎）/0x7CE18D（batch 052 流写单字符）
+双被调交叉**。
+
+================================================================================
+0x007CA858 —— 宽字符串格式化薄封装（推断名，110B，3 栈参）
+================================================================================
+机器码（完整，110B 整数）：
+```
+007ca858  push ebp / mov ebp,esp / sub esp,0x20
+007ca85e  mov eax,[ebp+8]        ; ★栈参 1 = 输出缓冲
+007ca861  push esi
+007ca862  push [ebp+0x10]        ; ★栈参 3 = args（va_list）
+007ca865  mov [ebp-0x18],eax     ; 本地 = 输出缓冲
+007ca868  mov [ebp-0x20],eax     ; 本地 2 = 输出缓冲
+007ca86b  lea eax,[ebp-0x20]
+007ca86e  push [ebp+0xc]         ; ★栈参 2 = 宽格式串
+007ca871  mov [ebp-0x14],0x42    ; ★★0x42 = flags（0x40|0x2）
+007ca878  mov [ebp-0x1c],0x7fffffff  ; ★★无限宽哨兵（0x7FFFFFFF）
+007ca87f  push eax
+007ca880  call 0x7d21be          ; ★★0x7D21BE 宽格式化引擎（batch 050 已登记）
+007ca885  add esp,0xc
+007ca888  dec [ebp-0x1c]         ; ★★0x7FFFFFFF - 1（剩余计数）
+007ca88b  mov esi,eax
+007ca88d  js 0x7ca89a            ; ★溢出 → 0x7CE18D 路径
+007ca88f  mov eax,[ebp-0x20] / and byte[eax],0  ; ★★写 L'\0'（NUL 终止）
+007ca895  inc [ebp-0x20]
+007ca898  jmp 0x7ca8a7
+007ca89a  lea eax,[ebp-0x20] / push eax / push 0 / call 0x7ce18d  ; ★★batch 052 单字符写
+007ca8a5  pop ecx / pop ecx
+007ca8a7  dec [ebp-0x1c] / js 0x7ca8b4    ; ★第二个 L'\0' 同样处理
+007ca8ac  mov eax,[ebp-0x20] / and byte[eax],0 / jmp 0x7ca8c1
+007ca8b4  lea eax,[ebp-0x20] / push eax / push 0 / call 0x7ce18d
+007ca8c1  mov eax,esi / pop esi / leave / ret
+```
+**语义（推断名 + 契约交叉实锤）**：**宽字符串格式化薄封装（vsprintfW
+族）**——`(宽输出缓冲, 宽格式串, args)`：构建 **0x42 flags（0x40|0x2）+
+0x7FFFFFFF 无限宽哨兵 + 双份缓冲指针**结构 → 调 **0x7D21BE（批量 050
+宽格式化引擎）** → 返回后**写两个 L'\0' 结尾**（剩余计数 0x7FFFFFFF-1
+递减，溢出走 **0x7CE18D（batch 052 单字符写）** abort 路径，否则直接
+写缓冲）。**与 crt_behavior_contracts.md 登记的 0x7CA564（vsprintfW
+薄封装，111B，batch 054 升级 semantics_verified）逐点同构**——本条为
+同一模板的另一实例（110B vs 111B 微差，3 栈参相同结构）。
+★原版怪癖（照抄）：① **0x42 flags（0x40|0x2）硬编码**（batch 045/057
+同款——格式化标志组合）；② **0x7FFFFFFF 无限宽哨兵**（无缓冲上限
+检查——「安全」版 swprintf 在此实际不受限）；③ **双份缓冲指针**
+（[ebp-0x18]/[ebp-0x20] 两份——engine 内部消费一份/收尾另一份）；
+④ **双 L'\0' 结尾**（写两个终止符——宽串双击尾推断）；⑤ **溢出走
+0x7CE18D**（超出 0x7FFFFFFF 字节 → 单字符写兜底——实际永不触发）；
+⑥ **返回 esi**（engine 返回值透传——写入长度推断）。
+★跨批次闭合：**0x7D21BE（batch 050——宽字符格式化引擎 vsprintfW 实例，
+本条=调用现场）**+**0x7CE18D（batch 052——流写单字符带缓冲/错误标志，
+本条=溢出路径调用现场）**+**crt_behavior_contracts.md 0x7CA564
+（vsprintfW 薄封装 batch 054——本函数同族同构实例）**+**batch 045/057
+（0x42 flags + 0x7FFFFFFF 哨兵——same 结构交叉）**。
+⚠️ partial：函数的精确导出名（vsprintfW/vswprintf 族推断——与 0x7CA564
+的精确关系：独立二份 vs 孪生未归一化比对）、输出缓冲双指针的精确分工
+（engine 内部/收尾推断）、callers 四函数身份（0x40/0x4A 区消费端）。
+
+================================================================================
+（batch 520 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（格式化链路已由 batch 050/052/054
+契约覆盖，本条=同族实例登记；0x7CA564 已建 swap/vswprintf 模型）。
+模型价值：**vsprintfW 薄封装族第二实例登记**（与契约 0x7CA564 逐点
+同构——同一模板多 TU 展开）+ **batch 050/052 双被调调用现场**。本批
+无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。
+登记一行 semantics_verified + assembly_verified_semantics_confirmed
+（全段字节读完 + 契约逐点比对 + 双被调交叉），partial 项如实标注。
