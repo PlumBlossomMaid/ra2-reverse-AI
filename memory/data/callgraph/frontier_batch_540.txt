@@ -1,0 +1,51 @@
+frontier batch 540 — 双字节标志空检 0x004A51D0（20B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x4A51D0 callers=4/unique=4/
+deps=53/body=20B，unique_callers BuildingClass::MakeTraversable（带名，
+自身未登记）/FUN_0073b0b0/FUN_00740a90/FUN_00740b10）。**20B 全字节读完**
+（0x4A51D0-0x4A51E3，ret 无栈参）。
+取证手段：disasm.py 全读 + caller 语境（YRpp BuildingClass 域 + batch 229
+MapClass::MakeTraversable 姊妹对照）。
+
+================================================================================
+0x004A51D0 —— 双字节标志空检（推断名，20B，ret 无栈参）
+================================================================================
+机器码（完整，20B 整数）：
+```
+004a51d0  mov al,byte[ecx+0x18]    ; ★this+0x18 = 字节标志 1
+004a51d3  test al,al
+004a51d5  jne 0x4a51e1             ; 非 0 → 返 0
+004a51d7  mov al,byte[ecx+0x19]    ; ★this+0x19 = 字节标志 2（紧邻 +1）
+004a51da  test al,al
+004a51dc  jne 0x4a51e1             ; 非 0 → 返 0
+004a51de  mov al,1                 ; ★★两者皆 0 → 返 1
+004a51e0  ret
+004a51e1  xor al,al                ; 任一非 0 → 返 0
+004a51e3  ret
+```
+**语义（推断名）**：**双字节标志空检**——thiscall 无栈参，检查 this+0x18
+与 this+0x19 两个**相邻字节**（+1 间隔）标志：**两者皆 0 → 返回 1**（空闲/
+未占用），**任一非 0 → 返回 0**。20B 三段直落（双 test/jne 短路 + 双出口）。
+★原版怪癖（照抄）：① **相邻双字节各自独立判空**（非打包位——两个独立
+字节标志）；② **短路清空才返 1**（双 0 才真——与"任一置位即占用"语义
+等价）；③ **双出口 al 直返**（无栈参纯 this 查询，极薄封装）；④ 20B 极简
+（编译器未内联——跨模块调用点复用）。
+★跨批次闭合：**batch 229（MapClass::MakeTraversable 0x578AD0——姊妹函数
+参照**：MapClass 版遍历 cell.+0xE4 对象链判定可穿越，本条为 BuildingClass
+内嵌的小判定——"建筑可穿越"的前置检查推断）；callers 4 个（0x4A51D0 域
+BuildingClass + 0x73xxxx/0x74xxxx Unit/Vehicle 域——跨类复用工具形态）。
+⚠️ partial：this+0x18/+0x19 字段语义（占用/锁定标志推断——BuildingClass
+布局未展开）、宿主类精确身份（BuildingClass 推断）、与
+BuildingClass::MakeTraversable（0x4B55F0 区？自身未登记）的调用点关系、
+0x73/0x74 域调用者用途（单位寻路途经判定推断）。
+
+================================================================================
+（batch 540 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：+0x18/+0x19 字段语义未闭合（宿主
+BuildingClass 布局未展开）。模型价值：**BuildingClass 域首个登记函数** +
+与 batch 229 MapClass::MakeTraversable 的姊妹对照（两组"可穿越判定"分层）。
+BuildingClass::MakeTraversable/FUN_0073b0b0/FUN_00740a90/FUN_00740b10
+4 个新候选入列。本批无产品代码改动，ctest 维持 **43/43 全绿**。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（20B 全段字节
+读完），partial 项如实标注。
