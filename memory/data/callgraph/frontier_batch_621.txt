@@ -1,0 +1,99 @@
+frontier batch 621 — 对话框关闭等待器 0x00608070（496B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（0x5422F0 后下一未登记高扇入候选 0x00608070
+FUN_00608070 callers=3/unique=3/deps=2645/body=496B，unique_callers FUN_00622720
+（★★batch 094 UI::EndDialog——前奏含本条调用，batch 089 文档已提及"call 0x608070"
+待登记））/FUN_006ACEE0（★batch 600-615 配置链）/FUN_007757E0（★★batch 102 窗口
+栈摘除——其中"hit 后 call 0x608070"即本条）。**496B 全字节读完**（0x608070-0x60825F，
+ret c3，thiscall，ecx=this 存 ebp）。
+取证手段：disasm.py 分两段全读 + direct_edges 调用图核对 + **多已登记锚点交叉
+（batch 170 0x69BBE0 全局名字表 + batch 105 0x5D4D50 游戏主消息泵 + batch 068
+0x750920 句柄查表 + batch 094 0x622720 EndDialog 前奏 + batch 102 0x7757E0 调用
+现场——跨批引用 5 处）**。
+
+================================================================================
+0x00608070 —— 对话框关闭等待器（推断名，496B）
+================================================================================
+机器码（完整 496B，分五段）：
+```
+; ── 段 1：门控 + 哈希表查询（[0xAC1B00] 系）
+00608070  sub esp,0xc / push ebx/ebp / mov ebp,ecx（★this）/ push edi
+00608078  mov ecx,0xa8b238 / call 0x69bbe0（★★batch 170 [0xA8B238] 域标志 getter）
+          → test al / jne 0x6080cb（★门控通过 → 早退返 0）
+00608086  mov eax,[0xac1b04]（★★全局计数 [0xAC1B04]）/ test / je 0x6080cb
+00608093  lea ecx,[esp+0xc] / call [0xac1b18]（★★函数指针 [0xAC1B18]——哈希/登记
+          查询调用）
+0060809d  mov ecx,[0xac1b0c] / mov edx,1 / shl edx,cl / dec edx / and edx,eax
+          （★★掩码 (1<<[0xAC1B0C])-1）
+006080ad  mov eax,[0xac1b00] / mov eax,[eax+edx*4]（★★表 [0xAC1B00] 取项）
+006080b5  test eax / je 0x6080cb / mov ecx,[esp+0xc] / cmp [eax],ecx（★项首==this）
+          → je 0x6080d4 → mov eax,[eax+0x204] / test / jne 0x6080bd（★链表 +0x204）
+; ── 段 2：命中标记判断（+0xBD/+0xB0）
+006080d4  test eax / je 0x6080cb / add eax,4 / test / je 0x6080cb
+006080df  mov cl,[eax+0xbd]（★项+0xBD 字节）/ test cl / je 0x6080f6
+006080e9  cmp [eax+0xb0],1 / jne 0x6080f6 → mov bl,1 / jmp 0x6080f8
+006080f6  xor bl,bl
+; ── 段 3：双检查 + 通知
+006080f8  push ebp / call [0x7e14e0]（★导入槽检查 → setne al）
+00608104  test bl / je 0x6080cb / test al / je 0x6080cb（★双条件）
+0060810c  mov ecx,[0x8871e0] / push 0 / mov edx,0x2000 / push 0x3f800000 /
+          mov ecx,[ecx+0x19c] / call 0x750920（★★batch 068 句柄→对象查表+方法链）
+00608129  push ebp / call [0x7e14e8] → setne dl → push 0/push ebp / call [0x7e14a0]
+00608142  push 1 / push 0x606800（★串） / push ebp / call [0x7e14e4]
+; ── 段 4：二次查询 + 等待循环（消息泵）
+00608150  同段 1 模式：[0xAC1B04] → [0xAC1B18] → 掩码 → [0xAC1B00] 取项 → 链表
+006081b9  mov byte[edi+0xbe],1（★置忙标志）→ push 0/0/ebp / call [0x7e149c]
+006081cc  mov ebx,[0x7e1138] / call ebx（★时间戳）→ mov [esp+0x14],eax
+006081d8  call 0x5d4d50（★★batch 105 游戏主消息泵）
+006081dd  mov eax,[0xa8b238] / test / je 0x608211 / cmp 5 / je / mov al,[0xa8d60e]
+          / test / jne / mov eax,[0xa8dab4] / test / jne → call 0x55cbf0（★未登记）
+          → call 0x55d360（★★QWEN.md 实锤 MainLoop——胜负判定/选关驱动？）→
+          jmp 0x608216 → call 0x48d080（★主循环伴生）
+00608216  mov al,[edi+0xbe] / sete cl → mov esi,ecx → call ebx / sub eax,[esp+0x14]
+          / cmp 0x1388（★5000 上限——限时轮询模板第四实例）/ jg 0x608236 /
+          test esi / je 0x6081d8（★循环）
+; ── 段 5：收尾通知 + 返 1
+00608236  push 0 / push 0x606800 / push ebp / call [0x7e14e4]
+00608244  mov edx,[esp+0x18] / and edx,0xff / push edx / push ebp / call [0x7e14a0]
+00608256  mov al,1 / ret
+```
+**语义（推断名）**：**对话框关闭等待器**——thiscall，ecx=this（对话框/窗口）：
+① 门控（[0xA8B238] 域标志 getter batch 170）+ 哈希表查询：经 [0xAC1B18] 函数指针
+   查 [0xAC1B00] 表（掩码 (1<<[0xAC1B0C])-1）定位 this 对应项（链表 +0x204）；
+② 命中项 +0xBD/+0xB0 标记判断；
+③ 双检查（[0x7E14E0] 检查 + 项标记）通过 → [0x8871E0] 对象 + 0x750920（batch 068）
+   句柄查表 + 三通知（[0x7E14E8]/[0x7E14A0]/[0x7E14E4]，串 0x606800）；
+④ 二次查询置忙标志（+0xBE=1）→ **限时等待循环**：消息泵 0x5D4D50（batch 105）+
+   MainLoop 0x55D360（QWEN.md 实锤）+ 0x48D080，时间戳差上限 0x1388=5000（batch
+   577/568/610 限时轮询模板第四实例）等对话框关闭；
+⑤ 收尾通知 + 返 1。
+★原版怪癖（照抄）：① **哈希登记表查询两遍**（段 1 与段 4 同构——先查判存在、后
+   查置忙/等待）；② **掩码 (1<<[0xAC1B0C])-1**（哈希表容量 2^shift 推断——[0xAC1B0C]
+   是 shift、[0xAC1B18] 是哈希函数指针、[0xAC1B04] 是计数、[0xAC1B00] 是桶表——
+   四件套全局哈希表）；③ **链表 +0x204 冲突链**（哈希冲突线性链）；④ **限时等待
+   5000 + 消息泵**（batch 577/568/610 同款——等对话框真正关闭才返 1）；⑤ **MainLoop
+   0x55D360 直接调用**（QWEN.md 已实锤——本条=其调用现场，等待期间泵主循环）；
+   ⑥ **+0xBD/+0xB0/+0xBE 三标记**（可见/类型/忙状态推断）；⑦ 串 0x606800 三处
+   出现（通知参数——对话框名推断）。
+★跨批次闭合：**batch 170（0x69BBE0 全局名字表——本条=门控 getter 调用现场）**
+   **+batch 105（0x5D4D50 游戏主消息泵——本条=等待循环泵）**+**batch 068（0x750920
+   句柄→对象查表——本条=方法链现场）**+**batch 094（0x622720 UI::EndDialog——本
+   条=其前奏调用，batch 089 已预告待登记）**+**batch 102（0x7757E0 窗口栈摘除——
+   本条=命中后调用现场，batch 102 已预告待登记）**+**QWEN.md（0x55D360 MainLoop—
+   —本条=调用现场）**+限时轮询模板第四实例（batch 577/568/610）。
+⚠️ partial：函数精确名（对话框关闭等待器推断）、[0xAC1B00] 哈希表宿主（对话框登
+   记表推断）、0x606800 串内容、+0xBD/+0xB0/+0xBE 三标记语义、0x55CBF0/0x48D080
+   身份、[0x7E1138]/[0x7E149C]/[0x7E14E0]/[0x7E14E8] 导入槽语义、FUN_006ACEE0
+   （未登记，配置链重叠）。
+
+================================================================================
+（batch 621 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：496B 纯查询+等待编排无算法切片；哈希表宿主
+未闭合。模型价值：**对话框关闭等待模板**（哈希登记表两遍查询 + 限时消息泵等待 +
+MainLoop 泵 + batch 094/102 跨批引用预告的一次兑现——batch 170/105/068/094/102
+五锚点全命中 + 限时轮询第四实例）+ [0xAC1B00] 哈希表四件套全局（新登记）。无新
+被调候选（0x55CBF0/0x48D080 未登记留候选）。本批无产品代码改动，ctest 维持
+**43/43 全绿**。登记一行 semantics_verified + assembly_verified_semantics_
+confirmed（496B 全段字节读完 + batch 170/105/068/094/102 五锚点全命中），partial
+项如实标注。
