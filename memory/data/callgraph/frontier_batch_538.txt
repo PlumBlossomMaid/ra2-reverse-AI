@@ -1,0 +1,68 @@
+frontier batch 538 — 持有缓冲释放器（子对象析构）0x0069DDC0（57B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x69DDC0 callers=6/unique=4/
+deps=57/body=57B，unique_callers FUN_004b55f0/FUN_004b57f0/FUN_00557600/
+FUN_00558060——其中 0x557600 已登记 batch 351）。**57B 全字节读完**
+（0x69DDC0-0x69DDF8，ret 无栈参）。
+取证手段：disasm.py 全读 + **batch 351 调用现场闭合**（0x557600 析构器两次
+调 0x69DDC0 处理 +0x58/+0xB8 子对象）+ batch 121/001 锚点交叉。
+
+================================================================================
+0x0069DDC0 —— 持有缓冲释放器（子对象析构，推断名，57B，ret 无栈参）
+================================================================================
+机器码（完整，57B 整数）：
+```
+0069ddc0  push ebx / push esi
+0069ddc2  mov esi,ecx                    ; this
+0069ddc4  xor ebx,ebx
+0069ddc6  mov al,byte[esi+0x5c]          ; ★this+0x5C = 持有标志
+0069ddc9  mov dword[esi],0x7e8088        ; ★★装虚表 0x7E8088（析构开头装表惯用）
+0069ddcf  cmp al,bl / je 0x69ddef        ; 标志 0 → 跳过释放
+0069ddd3  mov eax,[esi+0x58]             ; ★this+0x58 = 缓冲指针
+0069ddd6  cmp eax,ebx / je 0x69ddef      ; 指针空 → 跳过
+0069ddda  push eax
+0069dddb  call 0x7c8b3d                  ; ★★CRT operator delete（batch 001）
+0069dde0  add esp,4
+0069dde3  mov [esi+0x58],ebx             ; ★this+0x58 = NULL
+0069dde6  mov byte[esi+0x5c],bl          ; ★this+0x5C = 0
+0069dde9  mov [esi+0x14],ebx             ; ★this+0x14 = 0
+0069ddec  mov [esi+0x18],ebx             ; ★this+0x18 = 0
+0069ddef  mov ecx,esi
+0069ddf1  call 0x4e1390                  ; ★★batch 121 GadgetClass 析构/清全局
+0069ddf6  pop esi / pop ebx
+0069ddf8  ret
+```
+**语义（推断名）**：**持有缓冲释放器（子对象析构）**——thiscall 无栈参：
+① **装虚表 0x7E8088**（析构器开头重装虚表——MSVC6 惯用）；
+② **门控释放**：`+0x5C` 持有标志非 0 且 `+0x58` 缓冲指针非空 → 经
+   `0x7C8B3D`（CRT operator delete）释放缓冲，随后清四字段：
+   `+0x58=NULL` / `+0x5C=0` / `+0x14=0` / `+0x18=0`；
+③ **收尾**：调 `0x4E1390`（batch 121——GadgetClass 析构/清全局）后返回。
+**与 batch 351 直接咬合**：0x557600（析构器）析构三内嵌对象时对
+`+0x58`/`+0xB8` 两个子对象各调一次 0x69DDC0——**本函数是复合对象的
+子对象析构器**（每内嵌对象带独立 +0x5C 持有标志 + +0x58 缓冲）。
+★原版怪癖（照抄）：① **装虚表 0x7E8088 在析构开头**（防双重析构惯用）；
+② **双门控**（+0x5C 标志 && +0x58 非空才释放——持有缓冲条件释放）；
+③ **四字段连清**（+0x58/+0x5C/+0x14/+0x18——完全释放态）；
+④ **0x4E1390 收尾**（Gadget 清全局——batch 121 已登记调用现场）；
+⑤ ret 无栈参（纯 this 清理）。
+★跨批次闭合：**batch 351（0x557600——三子对象析构链：+0x118→0x6B1D00、
++0xB8/+0x58→0x69DDC0×2；本批登记闭合其"0x69DDC0 未登记"partial）**+
+**batch 121（0x4E1390——GadgetClass 析构/清全局，收尾调用现场）**+
+**batch 001（0x7C8B3D——CRT operator delete 锚点）**。
+⚠️ partial：宿主类（batch 351 复合对象的子对象——内嵌 Gadget 组件推断）、
++0x14/+0x18 字段语义（辅助状态推断）、0x7E8088 虚表归属（新虚表——宿主
+类虚表推断）、FUN_004b55f0/FUN_004b57f0/FUN_00558060（未登记调用者——
+新候选入列）。
+
+================================================================================
+（batch 538 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：宿主类（batch 351 复合对象的子对象
+Gadget 组件）身份未确认 + 0x7E8088 虚表归属未闭合。模型价值：**batch 351
+partial 闭合**（0x557600 子对象析构链补全：0x6B1D00 留候选、0x69DDC0 本条
+登记）+ **Gadget 组件生命周期收尾链**（装虚表 → 门控释放 → 清四字段 →
+0x4E1390 清全局）+ 3 个新候选（FUN_004b55f0/FUN_004b57f0/FUN_00558060）
+入列。本批无产品代码改动，ctest 维持 **43/43 全绿**。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（57B 全段字节
+读完 + 三批次锚点交叉），partial 项如实标注。
