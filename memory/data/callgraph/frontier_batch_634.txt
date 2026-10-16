@@ -1,0 +1,92 @@
+frontier batch 634 — BuildingClass::GoOffline 0x00452360（170B）（2026-10-17）
+
+口径：候选**只从 picker 未登记池取**（0x0053ED60 后下一未登记高扇入候选 0x00452360
+BuildingClass::GoOffline（★ranking 带名）callers=3/unique=3/deps=2586/body=170B，
+unique_callers FUN_0044f820/FUN_004c6cb0（★batch 623 BombClass::Detonate 同
+caller！）/TActionClass::Execute（0x6DD8B0）。**170B 全字节读完**（0x452360-0x452409，
+ret c3，thiscall，ecx=this 存 esi）。
+取证手段：disasm.py 220B 全读（含后邻 0x452410 下一函数开头确认边界） +
+direct_edges 调用图核对（★2733/7195/38011 行 3 caller） + **已登记锚点交叉（batch
+062 0x50B6F0 IsControlledByCurrentPlayer + batch 093 0x752700 VoxClass::Play +
+batch 392 0x509140 Update_FactoriesQueues——三锚点一次全命中）** + **batch 093 批
+文档预告兑现（明确列出 BuildingClass::GoOffline 为 VoxClass::Play 调用方——本条
+即该现场）** + **PE 字符串读取（0x819108='EVA_BuildingOffLine'——GoOffline 触发
+的 EVA 语音）** + functions.tsv 边界核对（0x452360-0x452409=170B 吻合）。
+
+================================================================================
+0x00452360 —— BuildingClass::GoOffline（170B，建筑下线）
+================================================================================
+机器码（完整 170B）：
+```
+00452360  push esi / mov esi,ecx（★this BuildingClass）
+00452363  mov al,[esi+0x660]（★+0x660 下线标志）/ test / je 0x452408（★标志 0 →
+          直接收尾——幂等门控）
+00452371  mov eax,[esi+0x520]（★+0x520 = TypeClass 指针）/ mov ecx,[eax+0xee4]
+          （★Type->+0xEE4 计数）/ test / jg 0x45238b（★>0 → 跳过下线条件）
+00452381  mov cl,[eax+0x1573]（★Type->+0x1573 标志）/ test / je 0x452408（★两
+          条件都 0 → 收尾）
+0045238b  mov ecx,[esi+0x21c]（★+0x21C = Owner House 指针）
+00452391  mov al,1 / mov byte[esi+0x660],0（★清 +0x660）/ mov byte[esi+0x80],al
+          （★+0x80 = 1 下线状态）
+004523a0  mov byte[ecx+0x5778],al（★House->+0x5778 = 1）
+004523a6  mov edx,[esi+0x21c] / mov byte[edx+0x5779],al（★House->+0x5779 = 1）
+004523b2  mov ecx,[esi+0x21c] / mov byte[ecx+0x1fc],al（★House->+0x1FC = 1）
+004523be  mov ecx,esi / call 0x452480（★新候选——本类方法）
+004523c5  mov ecx,[esi+0x21c]（House）→ call 0x50b6f0（★★batch 062
+          IsControlledByCurrentPlayer——当前玩家判定）
+004523d0  test al / je 0x4523e3（★非当前玩家 → 跳过语音）
+004523d4  push -1 / or edx,-1 / mov ecx,0x819108（★'EVA_BuildingOffLine'）/
+          call 0x752700（★★batch 093 VoxClass::Play(pName,-1,-1)——EVA 语音
+          "建筑下线"）
+004523e3  mov eax,[esi+0x520]（Type）/ mov ecx,[eax+0xeb8]（★Type->+0xEB8）/
+          test / je 0x452408
+004523f3  mov dl,[eax+0xcce]（★Type->+0xCCE）/ push 0 / push edx / push ecx /
+          mov ecx,[esi+0x21c]（House）/ call 0x509140（★★batch 392
+          Update_FactoriesQueues(3 参)——工厂队列更新）
+00452408  pop esi / ret
+```
+**语义（ranking 带名 + 三锚点 + EVA 串取证）**：**BuildingClass::GoOffline（建筑
+下线——电力/维修下线状态切换）**——thiscall，ecx=this（BuildingClass）：
+① 门控：+0x660 标志为 0 → 直接收尾（幂等——已下线不重复执行）；TypeClass 指针
+   （+0x520）+0xEE4 计数 >0 或 +0x1573 标志非 0 才继续（★两条件任一满足）；
+② 置下线状态：清 +0x660 → +0x80 = 1（建筑下线标志）→ Owner House（+0x21C）三
+   字段 +0x5778/+0x5779/+0x1FC = 1；
+③ 本类方法 0x452480（新候选——下线后处理推断）；
+④ **当前玩家判定**：HouseClass::IsControlledByCurrentPlayer（batch 062）→ 真时
+   播 EVA 语音 `EVA_BuildingOffLine`（batch 093 VoxClass::Play(pName, -1, -1)
+   ——0x819108 串 PE 实测）；
+⑤ Type->+0xEB8 非空 → HouseClass::Update_FactoriesQueues（batch 392，3 参：
+   +0xEB8 值/+0xCCE 值/0——工厂队列下线响应）。
+★原版怪癖（照抄）：① **+0x660 幂等门控**（标志 0 直接收尾——GoOnline/GoOffline
+   对称开关标志，避免重复执行）；② **Type 双条件**（+0xEE4 计数 >0 或 +0x1573
+   标志非 0——任一满足即继续，两个字段语义未实锤）；③ **House 三字段同置 1**
+   （+0x5778/+0x5779/+0x1FC 分三次写入——下线广播三槽）；④ **+0x80 置 1 但
+   +0x660 清 0**（状态字段 + 门控字段分离——+0x80 是"当前状态"、+0x660 是"待
+   切换"推断）；⑤ **语音仅当前玩家**（IsControlledByCurrentPlayer 门控——AI 的
+   建筑下线不播玩家语音）；⑥ **VoxClass::Play 参数 (-1,-1)**（nUnk 双默认值——
+   batch 093 签名吻合）；⑦ **Update_FactoriesQueues 3 参**（push 0 在前——枚举/
+   标志参数推断）；⑧ **caller FUN_004C6CB0 与 batch 623 重叠**（同一大函数同时
+   调 BombClass::Detonate 与本条——建筑摧毁链推断）。
+★跨批次闭合：**batch 093（0x752700 VoxClass::Play——本条=调用现场，其批文档明
+   确预告 BuildingClass::GoOffline 为调用方——预告兑现）**+**batch 062（0x50B6F0
+   IsControlledByCurrentPlayer——本条=当前玩家门控现场）**+**batch 392（0x509140
+   Update_FactoriesQueues——本条=工厂队列下线响应现场）**+**batch 623（caller
+   FUN_004C6CB0 重叠——建筑摧毁链同域）**+[0x819108]（★★新登记 EVA 语音串
+   'EVA_BuildingOffLine'）。
+⚠️ partial：0x452480（新候选——本类下线后处理方法）、+0x660/+0x80/+0x5778/
+   +0x5779/+0x1FC 字段语义（下线状态/广播槽推断）、TypeClass +0xEE4/+0x1573/
+   +0xEB8/+0xCCE 字段（计数/标志/工厂链推断）、Update_FactoriesQueues 3 参语义
+   （枚举/标志推断）、3 caller 业务含义（0x44F820/0x4C6CB0/TActionClass::
+   Execute——售出/摧毁/行动触发推断）。
+
+================================================================================
+（batch 634 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：170B 纯下线编排（门控 + 状态置位 + 语音 + 工厂
+队列响应）无独立算法切片；BuildingClass 生产系统未入重写范围。模型价值：
+**BuildingClass::GoOffline 下线全景**（ranking 带名 + 三锚点一次全命中 + batch 093
+预告兑现 + EVA 语音串 PE 实测——GoOnline/GoOffline 对称开关推断）。1 个新被调候选
+（0x452480）+ [0x819108] EVA 串登记。本批无产品代码改动，ctest 维持 **43/43
+全绿**。登记一行 semantics_verified + assembly_verified_semantics_confirmed
+（170B 全段字节读完 + ranking 带名 + 三锚点全命中 + batch 093 预告兑现 +
+functions.tsv 边界核对），partial 项如实标注。
