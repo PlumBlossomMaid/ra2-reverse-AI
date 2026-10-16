@@ -1,0 +1,69 @@
+frontier batch 510 — 光照/相机迟滞窗口查询（推断名）0x0055AF60（73B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=103/
+body=73B，ranking 名 FUN_0055af60 unclassified——**推断名**），unique_callers
+FUN_0048a620/**FUN_005509f0**/FUN_006d7840/**SpotlightClass::Draw**。
+**73B 全字节读完**（= 0x49，0x55AF60-0x55AFA8，双出口 ret）。
+取证手段：disasm.py 全读 + **batch 163 FlashbangWarheadAt 调用现场点名
+（partial「0x55AF60 身份」——本批补闭合）** + **batch 391 0x55AF40
+（[0x829FF4] setter）写端对偶** + **[0xABCD44]（batch 161/163 已出现）
+交叉**。
+
+================================================================================
+0x0055AF60 —— 光照/相机迟滞窗口查询（推断名，73B，双出口 ret）
+================================================================================
+机器码（完整，73B 整数）：
+```
+0055af60  mov al,[0xabcd50]        ; ★★[0xABCD50] = 迟滞标志（带记忆）
+0055af65  test al,al / je 0x55af8a
+0055af69  mov ecx,[0x829ff4]       ; ★★[0x829FF4] = 基准值 A（batch 391 setter 写端）
+0055af6f  mov eax,[0x829ff8]       ; ★★[0x829FF8] = 跨度 B
+0055af74  mov edx,[0xabcd44]       ; ★★[0xABCD44] = 当前值 C（batch 161/163 同全局）
+0055af7a  add eax,ecx              ; A + B
+0055af7c  cmp edx,eax / jb 0x55afa8; ★标志=1 且 C < A+B → 返 A+B（保持延展）
+0055af80  mov byte[0xabcd50],0     ; ★★否则清标志
+0055af87  mov eax,ecx / ret        ; ★返 A（回落基准）
+0055af8a  mov eax,[0x829ff4]       ; 标志 = 0 路径
+0055af8f  mov ecx,[0xabcd44]       ; C
+0055af95  cmp ecx,eax / jae 0x55afa8; ★标志=0 且 C >= A → 返 A（保持基准）
+0055af99  mov ecx,[0x829ff8] / mov byte[0xabcd50],1  ; ★★否则置标志
+0055afa6  add eax,ecx              ; A + B
+0055afa8  ret                      ; ★返 A+B（进入延展）
+```
+**语义（推断名）**：**光照/相机迟滞窗口查询**——带记忆的区间进退
+（hysteresis）：
+- [0x829FF4] = 基准值 A（batch 391 实锤 setter 写端——唯一写入口）；
+- [0x829FF8] = 跨度 B；[0xABCD44] = 当前值 C（光照/闪光系统共享）；
+- [0xABCD50] = 迟滞标志（上一次的状态记忆）：
+  - 标志 = 1（在延展区）：C < A+B → 返 A+B（保持）；否则清标志返 A；
+  - 标志 = 0（在基准区）：C >= A → 返 A（保持）；否则置标志返 A+B。
+即：**进入延展需 C 跌到 A 之下，退出延展需 C 涨到 A+B 之上**——两个
+不同阈值，防抖（区别于单阈值抖动）。
+★原版怪癖（照抄）：① **迟滞标志跨调用记忆**（[0xABCD50] 先判后改——
+双阈值判定依赖上一次状态）；② **两档返回值 A / A+B**（带偏移的
+返值——返回"处理基准"而非布尔）；③ **[0x829FF4] 由 0x55AF40 setter
+写**（batch 391——同区相邻函数成对，读/写端对偶）；④ **[0xABCD44]
+被 batch 163 Flashbang 消费**（`cmp [0xABCD44],eax`——本函数返回值
+与 Flashbang 阈值比较的调用现场）；⑤ ret 无清理（c3 两出口，无栈
+参——纯全局状态查询）；⑥ `mov al,[0xabcd50]` 字节标志（8 位记忆位）。
+★跨批次闭合：**batch 163 MapClass::FlashbangWarheadAt 0x48A620（本
+函数 = 其 caller 之一——彼时 partial「0x55AF60 身份」，本批补闭合）**+
+**batch 391 0x55AF40（[0x829FF4] 全局 setter——本函数 = 读取消费端，
+写读对偶闭合）**+**[0xABCD44]（batch 161/163——光照/闪光系统共享
+当前值）**+**batch 161（RevealArea3 同 [0xABCD44] 区）**。
+⚠️ partial：三全局的业务语义（相机/光照参数推断——基准 A/跨度 B/
+当前值 C 的物理含义未确认）、[0xABCD50] 标志的写入方（除本函数外
+是否有别处置位未确认）、callers FUN_005509f0/FUN_006d7840 身份
+（SpotlightClass::Draw 为带名——探照灯渲染，光照系统消费端推断）。
+
+================================================================================
+（batch 510 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（三全局业务语义未确认——延迟滞
+窗口组件，模型价值低于字段含义确认；batch 163 已有 Flashbang 消费
+现场）。模型价值：**batch 163 partial 点名项闭合**（0x55AF60 身份 =
+迟滞窗口查询）+ **batch 391 setter 的读取端闭合**（[0x829FF4] 写读
+对偶）+ **迟滞双阈值判定原语登记**。本批无产品代码改动，ctest 维持
+**43/43 全绿**（batch 372 已实跑核实）。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（全段字节读完 + 跨批调用现场 +
+写读对偶），partial 项如实标注。
