@@ -1,0 +1,75 @@
+frontier batch 545 — LinkClass::~LinkClass 0x005565A0（79B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x5565A0 callers=4/unique=4/
+deps=47/body=79B，ranking 名 **LinkClass::~LinkClass**（带名实锤）；
+unique_callers FUN_00473920/FUN_004e1a60/FUN_004e1ad0/
+GadgetClass::~GadgetClass——均未登记）。**79B 全字节读完**（0x5565A0-
+0x5565EE，ret 无栈参）。
+取证手段：disasm.py 全读 + batch 214（LinkClass::Zap）同族 + batch 107
+（SHP 链摘除）跨家族 + 虚表/全局槽核对。
+
+================================================================================
+0x005565A0 —— LinkClass::~LinkClass（带名实锤，79B，ret 无栈参）
+================================================================================
+机器码（完整 79B，关键段）：
+```
+005565a5  mov dword[esi],0x7e9344       ; ★装虚表 0x7E9344
+005565ab  call [0x7e935c]               ; ★★[0x7E935C] 全局函数槽调用 → edi（链头查询推断）
+005565b3  mov eax,[esi] / mov ecx,esi
+005565b7  call [eax+0x1c]               ; ★虚表槽 0x1C（析构钩子）
+005565ba  mov edx,[esi+8]               ; ★this+8 = next
+005565c1  je 0x5565c9                    ; next 空 → 跳过
+005565c3  mov ebx,[esi+4]                ; this+4 = prev
+005565c6  mov [edx+4],ebx                ; ★★next->+4 = prev（正向贯通）
+005565c9  mov edx,[esi+4]                ; this+4 = prev
+005565ce  je 0x5565d6                     ; prev 空 → 跳过
+005565d0  mov ebx,[esi+8]                ; this+8 = next
+005565d3  mov [edx+8],ebx                ; ★★prev->+8 = next（反向贯通）
+005565d6  cmp edi,esi                    ; ★[0x7E935C] 返回值 == this？（链头判定）
+005565d8  mov [esi+8],0 / mov [esi+4],0  ; ★★清 this+8/this+4
+005565de  jne 0x5565eb                   ; 非链头 → 收尾
+005565e0  cmp eax,esi / je 0x5565eb      ; 虚表指针==this？（防误判）
+005565e4  mov edx,[eax] / mov ecx,eax
+005565e8  call [edx+0x18]                ; ★★虚表槽 0x18（链头更新/收尾）
+005565ee  ret
+```
+**语义（带名实锤）**：**LinkClass::~LinkClass**——thiscall 无栈参，
+双向链表节点析构（**摘除+清引用**）：
+① 装虚表 0x7E9344；
+② 调 `[0x7E935C]`（全局函数槽——链头/管理器查询推断）→ edi；
+③ 虚表槽 0x1C（析构钩子）；
+④ **双向链表摘除**：`this+8`（next）非空 → `next->+4 = this->+4`（前向
+   贯通）；`this+4`（prev）非空 → `prev->+8 = this->+8`（后向贯通）；
+⑤ 清 `this+8 = NULL`、`this+4 = NULL`；
+⑥ **链头特判**：`edi == this`（[0x7E935C] 返回当前链头）且虚表指针非空
+   → 调虚表槽 0x18（链头更新/收尾）。
+**与 batch 214 直接同族**：0x5565F0（LinkClass::Zap——清 +4/+8 两链接
+字段）——本条是**析构端完整摘除**（先贯通再清零），Zap 是**断链工具**。
+★原版怪癖（照抄）：① **双向贯通先于清引用**（next/prev 各自把对方指针
+接续后再清自身——链表完整性优先）；② **链头经全局函数槽 [0x7E935C] 查询**
+（返回当前头节点——非直接全局读）；③ **链头特判双条件**（edi==this &&
+虚表指针!=this——后一条件防误判）；④ **虚表槽 0x18 链头收尾**（仅链头析构
+时调——头节点更新）；⑤ 虚表槽 0x1C 恒调（析构钩子）；⑥ 清空后无
+operator delete（**只摘除不释放**——调用方负责 delete，析构语义纯粹）；
+⑦ +4=prev/+8=next 布局（与 batch 214 Zap 同族字段）。
+★跨批次闭合：**batch 214（0x5565F0 LinkClass::Zap——+4/+8 链接字段同
+族，本条=析构端完整摘除）**+**batch 107（0x69E500 SHPStruct::~SHPStruct
+——同款双向链表摘除：+0x18/+0x1C 前向/后向贯通，跨家族同模式）**+
+**batch 104/106（链表基建族——0x407450/0x6C9850）**。
+⚠️ partial：[0x7E935C] 全局函数槽语义（链头查询/管理器回调推断）、虚表
+槽 0x1C/0x18 身份（析构钩子/链头更新推断）、+4/+8 精确语义（prev/next
+推断——batch 214 同 partial）、宿主类（LinkClass 布局——+4/+8 两指针）、
+FUN_00473920/FUN_004e1a60/FUN_004e1ad0/GadgetClass::~GadgetClass（4
+调用者——Gadget 继承 LinkClass 推断，新候选入列）。
+
+================================================================================
+（batch 545 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：宿主 LinkClass 布局（+4/+8 prev/next
+推断）与 [0x7E935C] 链头查询槽未闭合。模型价值：**LinkClass 家族第二成员**
+（batch 214 Zap + 本条析构——链表节点生命周期两端）+ **跨家族双向链表
+摘除模式第三实例**（batch 107 SHP 链/104/106——统一模式确认）+ Gadget
+继承链提示（GadgetClass::~GadgetClass 调用者）。4 个新调用者候选入列。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（79B 全段字节
+读完 + 带名 + 三批次交叉），partial 项如实标注。
