@@ -1,0 +1,66 @@
+frontier batch 630 — C 串追加器（回退变体）0x007B4CD0（195B）（2026-10-17）
+
+口径：候选**只从 picker 未登记池取**（0x007B4C20 后下一未登记高扇入候选 0x007B4CD0
+FUN_007b4cd0（unclassified 无带名）callers=3/unique=3/deps=2591/body=195B，
+unique_callers FUN_007710b0/FUN_0079d110/FUN_007a0690（★12 处调用站点——与 batch
+629 同 caller 集，配置/工具链聚类）。**195B 全字节读完**（0x7B4CD0-0x7B4D90，ret
+4 = 1 栈参 + thiscall，ecx=this 存 ebp，栈参=指向 C 串的指针存 [esp+0x10]）。
+取证手段：disasm.py 220B 全读（含后邻 0x7B4DA0 下一函数开头确认边界） +
+direct_edges 调用图核对（★49155/49420..49456 行 12 处调用站点全核对） +
+**已登记锚点交叉（batch 001 0x7C8E17 operator new + 0x7C8B3D operator delete——
+本条=分配/释放现场各 1）** + **PE 字符串读取（0x889F64='t'——回退串单字符）** +
+**batch 629 同模板逐指令比对（0x7B4C20 vs 0x7B4CD0——仅入口差异：参数指针解引用 +
+NULL 回退）** + functions.tsv 边界核对（0x7B4CD0-0x7B4D90=195B 吻合）。
+
+================================================================================
+0x007B4CD0 —— C 串追加器（回退变体，195B）
+================================================================================
+机器码（完整 195B，与 batch 629 逐指令同模板）：
+```
+007b4cd0  mov eax,[esp+4]           （★栈参 = 指向 C 串的指针 char**）/
+          push ebx/ebp/esi
+007b4cd7  mov eax,[eax]             （★解引用 *param——取实际串指针）
+007b4cd9  mov ebp,ecx               （★this）
+007b4cdb  test eax,eax / jne 0x7b4cea（★*param 非空 → 用之）
+007b4cdf  mov esi,0x889f64          （★*param==NULL → 回退串 0x889F64='t'）
+007b4ce8  jmp 0x7b4cf0
+007b4cea  mov [esp+0x10],eax / mov esi,eax（★esi = 实际串）
+007b4cf0  test esi,esi / je 0x7b4d8b（★追加串 NULL → 直接返 this）
+007b4cf8  与 batch 629 0x7B4C20 完全相同：strlen(param) → 旧缓冲 strlen → 新尺寸
+          = len1+len2+1 含 NUL → operator new（batch 001）→ 旧非空复制旧串
+          （rep movsd+movsb）→ 追加 param 含 NUL（repne scasb 定位 NUL 后 dec
+          edi——冗余 strlen）→ delete 旧缓冲 → ret 4
+```
+**语义（unclassified + 两锚点 + batch 629 孪生比对 + 回退串取证）**：**C 串追加器
+（回退变体）**——thiscall，ecx=this（宿主 +0 为 C 串缓冲指针），1 栈参 = **指向 C
+串的指针**（char**）：① 解引用取实际串；**实际串 NULL → 用回退串 0x889F64
+（'t' 单字符）**；② 回退串/实际串再判 NULL（理论上不可达——回退串非 NULL）→
+③ 其余与 batch 629 完全一致：新尺寸 = strlen(old)+strlen(追加串)+1（含 NUL）→
+operator new → 复制旧串 → 追加新串含 NUL → delete 旧缓冲 → 返 this（ret 4）。
+★原版怪癖（照抄）：① **参数指针解引用 + NULL 回退**（char** 入参——*param==NULL
+   用回退串 't'——调用方传可选串指针，宿主给默认值）；② **回退串单字符 't'**
+   （0x889F64——极短回退值，追加后结果如 "xxxt"）；③ **入口 8 字节前缀不同**
+   （0x7B4CD0 多 8 字节：mov eax,[esp+4]/mov eax,[eax] + 回退分支 vs 0x7B4C20
+   直接 mov esi,[esp+0x10]——同模板两变体，编译器按入参类型分别展开）；④ **回退
+   判定后再判 NULL**（[esp+0x10] 写回 + test esi——双保险冗余判定）；⑤ 其余怪癖
+   全继承 batch 629（尺寸含 NUL/双 strlen 复用/rep movsd+movsb 两段/追加定位用
+   strlen 而非 memchr/old 空非空双路径/delete 后置/返 this）。
+★跨批次闭合：**batch 629（0x7B4C20——本条=逐指令同模板孪生，唯一差异回退入口，
+   编译器同模板两实例）**+**batch 001（0x7C8E17 new + 0x7C8B3D delete——本条=分配/
+   释放现场）**+**batch 090（0x7B4690 槽位构造——0x7B4xxx 区 StringClass 家族
+   同区）**+**batch 059（0x7B46F0 带空指针置位的析构——同区家族）**。
+⚠️ partial：函数精确名（unclassified——推断 C 串追加器回退变体；YRpp 无
+   StringClass 覆盖）、宿主类（StringClass-like 缓冲持有者推断）、0x889F64 回退串
+   't' 的业务含义（短名/标记字符推断——调用方传 NULL 时宿主名默认 't'？）、
+   caller 业务含义（0x7710B0/0x79D110/0x7A0690——与 batch 629 同调用者集）。
+
+================================================================================
+（batch 630 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：195B 纯 C 串追加惯用法（回退变体），宿主类未
+确认，与 batch 629 同模板——两实例共同构成 StringClass-like 追加器家族（直参/指
+针回退两入口形态）。模型价值：**C 串追加器回退变体**（char** 入参 + NULL 回退
+'t'——batch 629 孪生配对，编译器同模板两实例闭合）。无新被调候选。本批无产品
+代码改动，ctest 维持 **43/43 全绿**。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（195B 全段字节读完 + 两锚点全命中 +
+0x889F64 回退串 PE 取证 + batch 629 逐指令比对），partial 项如实标注。
