@@ -1,0 +1,88 @@
+frontier batch 604 — GDlgSupp 槽位派发器 0x005EBA00（502B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（0x785360 后下一未登记高扇入候选 0x005EBA00
+FUN_005eba00 callers=3/unique=3/deps=2765/body=502B，unique_callers FUN_005E3D10
+（★batch 601/602/603 同 caller——0x6AE 区配置链）/FUN_005EBDD0（2 处）/FUN_
+005EC030——均未登记）。**502B 全字节读完**（0x5EBA00-0x5EBBF5，ret c3，thiscall，
+ecx=this 存 edi）。
+取证手段：disasm.py 分两段全读 + direct_edges 调用图核对 + 已登记锚点交叉
+（**batch 223/301 [0x7E14A8]/[0x7E1498] GDlgSupp 派发槽 + batch 113 0x77D970
+GameMode 门禁 + batch 591/600 [0xA8DA90] 八项表/[0xA8B238] GameMode + batch 159
+[0xAC119C]/[0xAC11A0] 七全局系**）+ 全局新登记（[0x8316A4]/[0xA8BB0C]/[0xAC11B0]）。
+
+================================================================================
+0x005EBA00 —— GDlgSupp 槽位派发器（推断名，502B）
+================================================================================
+机器码（完整 502B，分五段）：
+```
+; ── 段 1：槽索引读取 + 范围门控
+005eba00  sub esp,0x1c / push esi / mov esi,[0x8316a4]   ; ★★全局槽索引 [0x8316A4]
+005eba0a  push edi / mov edi,ecx（★this）/ test esi,esi / jl 0x5ebbf0   ; si<0 → 退出
+005eba15  jne 0x5eba1d / mov esi,[0xa8bb0c]   ; ★★si==0 → 回退 [0xA8BB0C]
+005eba1d  cmp esi,8 / jge 0x5ebbf0            ; si>=8 → 退出
+; ── 段 2：八槽双值映射（ebp=命令值 0x6D2+si / ebx=第二值 0x411+si）
+005eba28  si==0→ebp=0x6D2,ebx=0x411；1→0x6D3/0x412；2→0x6D4/0x413；
+          3→0x6D5/0x414；4→0x6D6/0x415；5→0x6D7/0x416；6→0x6D8/0x417；
+          7→0x6D9/0x418；else→ebp=ebx=-1（0xFFFFFFFF 哨兵）
+; ── 段 3：五访问器取字段（ecx=si，未登记 0x4E 区）
+005ebab5  call 0x4e3320 → [esp+0x18] / call 0x4e41d0 → [esp+0x14]
+          / call 0x4e37d0 → [esp+0x1c] / call 0x4e4e60 → [esp+0x20]
+          / call 0x4e5940 → [esp+0x24]
+; ── 段 4：八项表槽项三哨兵选路（置 [esp+0x13] 标志）
+005ebae8  mov esi,[esi*4+0xa8da90]     ; ★★八项表 [0xA8DA90] 槽项（batch 296/589/591 同表）
+005ebaf3  cmp esi,[0xac11b4] / je 0x5ebb24     ; ★★项==[0xAC11B4] → flag=1
+005ebafb  test esi,esi / je 0x5ebb1d           ; ★项==NULL → flag=0
+005ebafd  cmp [0xac119c] / je 0x5ebb1d         ; ★★==[0xAC119C] → flag=0（batch 159 七全局系）
+005ebb05  cmp [0xac11a0] / je 0x5ebb1d         ; ★★==[0xAC11A0] → flag=0
+005ebb0f  cmp [0xac11b0] / je 0x5ebb1d         ; ★★==[0xAC11B0] → flag=0（新全局）
+005ebb17  cmp dword[esi+0x6b],-1 / je 0x5ebb24 ; ★项+0x6B==-1 → flag=1
+005ebb1d  mov byte[esp+0x13],0 / jmp 0x5ebb29  ; flag=0
+005ebb24  mov byte[esp+0x13],1                 ; flag=1
+; ── 段 5：GDlgSupp 派发槽批量消息 + 标志分支
+005ebb29  mov esi,[0x7e14a8]     ; ★★batch 223/301 派发槽 [0x7E14A8]
+005ebb2f  连发 6 条：(this,ebp=0x6D2+si) → (this,ebx=0x411+si) → (this,访问器1)
+          → (this,访问器2) → (this,访问器3) → (this,访问器4)
+005ebb73  mov esi,[0x7e1498]     ; ★★batch 223/301 消息槽 [0x7E1498]
+005ebb7b  连发 3 条：(ebp,5) → (ebx,5) → (访问器5,5)
+005ebb8e  mov al,[esp+0x13] / test al / jne 0x5ebbd0   ; ★标志分支
+; 分支 flag=0（0x5EBB98）：(0xc,5)→(0x10,5) → cmp [0xa8b238],4 / jne 0x5ebbbc
+;   → call 0x77d970（★★batch 113 GameMode 门禁）→ test al / jne 0x5ebbe7
+;   → (this,5)→(访问器,5) → ret
+; 分支 flag=1（0x5EBBD0）：(0xc,0)→(0x10,0)→(this,0) → (访问器,5) → ret
+```
+**语义（推断名）**：**GDlgSupp 槽位派发器**——thiscall，ecx=this：
+① 槽索引 [0x8316A4]（si==0 回退 [0xA8BB0C]），<0 或 >=8 直接返回；
+② 八槽双值映射：命令值 0x6D2+si / 第二值 0x411+si（越界 -1 哨兵）；
+③ 5 个访问器（0x4E3320/0x4E41D0/0x4E37D0/0x4E4E60/0x4E5940）以 si 取各字段；
+④ 八项表 [0xA8DA90] 槽项三哨兵选路：项==[0xAC11B4] 或项+0x6B==-1 → flag=1；
+   项==NULL/[0xAC119C]/[0xAC11A0]/[0xAC11B0] → flag=0；
+⑤ GDlgSupp 派发槽 [0x7E14A8] 连发 6 条 + 消息槽 [0x7E1498] 连发 3 条；
+⑥ flag=0 分支再发 2 条 + GameMode==4（[0xA8B238]）门控 0x77D970（batch 113）判
+   补发；flag=1 分支以 0 参补发 3 条。
+★原版怪癖（照抄）：① **双值映射与 batch 602 的 0x6A3/0x76D 系不同值域**（本条
+   0x6D2-0x6D9/0x411-0x418——第三组 GDlgSupp 命令码）；② **槽索引 0 回退
+   [0xA8BB0C]**（默认槽——全局第二来源）；③ **三哨兵选路**（四全局相等 + 项
+   +0x6B==-1 双条件——flag 语义：1=特殊路径/0=常规）；④ **5 访问器取字段再
+   [0x7E14A8] 连发**（取字段 → 消息派发两段式——GDlgSupp 家族一贯模式）；⑤
+   **flag 分支参数 5 vs 0**（flag=0 用 5、flag=1 用 0——消息尾参不同）；⑥ 越界
+   哨兵 -1（si 理论 0..7 但映射表含 else 分支——防御性哨兵）。
+★跨批次闭合：**batch 223/301（[0x7E14A8]/[0x7E1498] GDlgSupp 派发/消息槽——本
+   条=批量派发现场）**+**batch 113（0x77D970 GameMode 门禁——本条=flag=0 分支调
+   用现场）**+**batch 591/600（[0xA8DA90] 八项表/[0xA8B238] GameMode）**+**batch
+   159（[0xAC119C]/[0xAC11A0] 七全局系——本条=选路哨兵现场）**+**batch 601/602/
+   603（caller FUN_005E3D10 重叠——0x6AE/5E 区 GDlgSupp 配置链聚类）**。
+⚠️ partial：函数精确名（GDlgSupp 槽位派发器推断）、5 访问器身份（0x4E3320/
+   0x4E41D0/0x4E37D0/0x4E4E60/0x4E5940 未登记）、命令值语义（0x6D2+si/0x411+si）、
+   [0x8316A4]/[0xA8BB0C]/[0xAC11B0] 全局语义、flag 两分支业务差异、callers
+   FUN_005E3D10/FUN_005EBDD0/FUN_005EC030（未登记）。
+
+================================================================================
+（batch 604 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：502B 纯派发编排（读索引→映射→取字段→选路→
+批量消息）无独立算法切片；访问器身份未闭合。模型价值：**GDlgSupp 槽位派发模板**
+（双值映射 + 三哨兵选路 + [0x7E14A8]/[0x7E1498] 批量消息 + GameMode 门控——batch
+223/301/113/591/600/159 多锚点一次全命中）+ 新全局三件（[0x8316A4]/[0xA8BB0C]/
+[0xAC11B0]）+ 5 个新被调候选（0x4E 区访问器）。本批无产品代码改动，ctest 维持
+**43/43 全绿**。登记一行 semantics_verified + assembly_verified_semantics_
+confirmed（502B 全段字节读完 + 6 已登记锚点全命中），partial 项如实标注。
