@@ -1,0 +1,113 @@
+frontier batch 561 — 磁盘剩余空间检查 0x0048DD50（284B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x48DD50 callers=3/unique=3/deps=4451/
+body=284B，unique_callers FUN_00558dd0/FUN_00697ad0/**FUN_006bb9a0 = WinMain
+0x6BB9A0（QWEN.md 实锤）**——均未登记）。**284B 全字节读完**（0x48DD50-0x48DE6B，
+ret 无栈参无 this）。
+取证手段：disasm.py 全读 + **IAT 槽四实锤（_read_b561.py 解析 PE 导入表）** +
+**8 条字符串常量实测读出** + 浮点常量字节实测 + batch 001（0x4068E0 诊断桩 /
+0x7C5F00 _ftol）锚点。
+
+================================================================================
+0x0048DD50 —— 磁盘剩余空间检查（推断名，284B）
+================================================================================
+**IAT 槽实锤（PE 导入表解析）**：
+```
+[0x7E1240] = KERNEL32.dll!GetModuleHandleA
+[0x7E1250] = KERNEL32.dll!GetProcAddress
+[0x7E1200] = KERNEL32.dll!GetLastError
+[0x7E1254] = KERNEL32.dll!GetDiskFreeSpaceA
+```
+**字符串常量实测（GBK 解码）**：
+```
+0x81D830 = "Checking available disk space\n"
+0x81D820 = "KERNEL32.DLL"
+0x81D80C = "GetDiskFreeSpaceExA"
+0x81D7F0 = "Using GetDiskFreeSpaceEx\n"
+0x81D7A0 = "Free disk space is %d Mb\n"
+0x81D7BC = "GetDiskFreeSpaceEx failed with error code %d - %s\n"
+0x81D770 = "GetProcAddress failed with error code %d - %s\n"
+0x81D740 = "Failed to get module handle for KERNEL32.DLL\n"
+```
+**浮点常量实测（read_constants 字节）**：
+```
+0x7E51F8 = 4294967296.0 = 2^32      （64 位重建用）
+0x7E51F0 = 0.0009765625 = 1/1024    （bytes → KB）
+```
+机器码（完整 284B，关键段）：
+```
+0048dd50  sub esp,0x28/push esi
+0048dd54  push 0x81d830/call 0x4068e0          ; ★"Checking available disk space"
+0048dd61  push 0x81d820/call [0x7e1240]        ; ★★GetModuleHandleA("KERNEL32.DLL")
+0048dd6c  test eax/eax/je 0x48de0d             ; NULL → "Failed to get module handle"
+0048dd74  push 0x81d80c/push eax/call [0x7e1250]  ; ★★GetProcAddress(h,"GetDiskFreeSpaceExA")
+0048dd80  mov esi,eax/test/je 0x48ddf5         ; NULL → GetLastError + "GetProcAddress failed"
+0048dd86  push 0x81d7f0/call 0x4068e0          ; ★"Using GetDiskFreeSpaceEx"
+0048dd93  lea eax,[esp+0x1c]/lea ecx,[esp+0x24]/lea edx,[esp+0x14]
+0048dd9f  push eax/push ecx/push edx/push 0    ; ★★ExA(NULL,&freeAvail,[esp+0x14],&total,&freeTotal)
+0048dda4  call esi                              ; 间接调用（动态绑定函数指针）
+0048dda6  test al,al/jne 0x48ddc2              ; 失败 → GetLastError + "GetDiskFreeSpaceEx failed"
+0048ddc2  fild dword [esp+0x18]                ; ★HighPart（freeAvail 的 ULARGE 高 32 位）
+0048ddc6  fmul qword [0x7e51f8]                ; ★× 2^32
+0048ddcc  fiadd dword [esp+0x14]               ; ★+ LowPart → 64 位重建为 double
+0048ddd0  fmul qword [0x7e51f0]                ; ★× 1/1024（bytes → KB）
+0048ddd6  call 0x7c5f00                        ; ★★_ftol（batch 001，向零截断）
+0048dddb  mov esi,eax/shr eax,0xa              ; ★★KB 存 esi；MB = KB >> 10
+0048dde1  push eax/push 0x81d7a0/call 0x4068e0 ; ★"Free disk space is %d Mb"
+0048ddee  mov eax,esi/pop esi/add esp,0x28/ret ; ★★返回 KB（esi 未右移值）
+0048de1a  ; ← 失败回退路径（三条失败分支共用）
+0048de1a  lea ecx,[esp+0x10]/lea edx,[esp+0xc]/push ecx
+0048de23  lea eax,[esp+0xc]/push edx/lea ecx,[esp+0xc]/push eax/push ecx/push 0
+0048de30  call [0x7e1254]                       ; ★★GetDiskFreeSpaceA(NULL,&spc,&bps,&nfc,&ntc)
+0048de36  test eax/eax/je 0x48de65             ; 失败 → return 0
+0048de3a  mov esi,[esp+4]/imul esi,[esp+8]     ; ★spc × bps（簇字节数）
+0048de43  shr esi,0xa                           ; ★★>>10 中间截断（簇字节 → 簇 KB，丢精度）
+0048de46  imul esi,[esp+0xc]                    ; ★× nfc（空闲簇数）
+0048de4d  shr edx,0xa                           ; MB = 总 KB >> 10
+0048de50  push edx/push 0x81d7a0/call 0x4068e0  ; 同一日志格式串
+0048de5e  mov eax,esi/pop esi/add esp,0x28/ret  ; ★返回 KB
+0048de65  xor eax,eax/pop esi/add esp,0x28/ret  ; ★★失败统一返回 0
+```
+**语义（推断名）**：**磁盘剩余空间检查**（无参、返回 int）——thiscall/cdecl 无栈参：
+① 打日志 "Checking available disk space"；
+② `GetModuleHandleA("KERNEL32.DLL")` → 失败记日志并走回退；
+③ `GetProcAddress(h,"GetDiskFreeSpaceExA")` 动态绑定 → 失败记日志（含 GetLastError）
+   并走回退；
+④ **主路径**（ExA 可用）：`GetDiskFreeSpaceExA(NULL, &freeAvail, &total, &freeTotal)`
+   （NULL = 当前目录）→ 读 **lpFreeBytesAvailableToCaller** 的 ULARGE_INTEGER
+   （LowPart=[esp+0x14]、HighPart=[esp+0x18]）→ `fild High × 2^32 + Low` 重建 64 位为
+   double → `× 1/1024` → `_ftol`（向零截断）得 **KB** → 日志 "Free disk space is %d Mb"
+   （MB = KB>>10）→ **返回 KB**；
+⑤ **回退路径**（ExA 缺失或调用失败）：`GetDiskFreeSpaceA(NULL,&spc,&bps,&nfc,&ntc)`
+   → `((spc × bps) >> 10) × nfc` 得 **KB**（★中间截断）→ 同一日志格式（MB = KB>>10）
+   → **返回 KB**；调用失败 → **返回 0**。
+★原版怪癖（照抄）：① **回退路径的中间截断**（`(spc × bps) >> 10 × nfc`——先把簇字节
+   数截断成 KB 再乘空闲簇数，标准公式 `(nfc × spc × bps) >> 10` 先乘后除；**丢精度**，
+   必须照抄不可"顺手修正"）；② **64 位重建不精确**（`High × 2^32 + Low` 走 double
+   53 位尾数——超过 2^53 字节的盘低位被舍入，但原版就这么算）；③ **每次调用都重新
+   GetModuleHandleA + GetProcAddress**（无函数指针缓存，可被多次调用）；④ **两条路径
+   返回值单位都是 KB**（非 MB——日志印 MB 但返回 KB，调用者拿到的是 KB）；⑤ 三条失败
+   分支统一汇入回退路径/返 0；⑥ 全部诊断走 0x4068E0（batch 001 诊断桩——字符串在
+   发行版中不实际打印）。
+★跨批次闭合：**batch 001（0x4068E0 诊断/log 调用桩 + 0x7C5F00 _ftol——本条的日志与
+   取整锚点）**+**batch 559（0x720770 容器清空器——同一调用者 FUN_006bb9a0=WinMain）**
+   +**batch 560（0x7CB673 _splitpath——同一调用者 WinMain）**——**WinMain 启动链三连
+   实锤**：QWEN.md 实锤的 WinMain 0x6BB9A0 同时调用【容器清空器 / 路径拆分 / 磁盘空间
+   检查】三件启动基础设施；本条与 MainGame 0x48CCC0（QWEN.md 实锤）同 0x48Cxxx-0x48Dxxx
+   区。
+⚠️ partial：FUN_00558dd0/FUN_00697ad0 身份（0x55/0x69 区调用者——新候选）、返回 KB 的
+   消费方式（调用者如何用 KB 阈值判定未取证）、[esp+0x1c]/[esp+0x24] 两个 ExA 输出
+   （total/freeTotal）未被本条读取（只读 freeAvail——意图推断为"可用空间"检查）。
+
+================================================================================
+（batch 561 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：本条为自由函数无宿主类，但核心依赖 **kernel32 动态
+绑定**（GetModuleHandleA/GetProcAddress 运行期解析 + GetDiskFreeSpaceExA/A 双后端），
+建模型需引入 Windows API 抽象层，与本项目"gamemd 自有代码不得用等价库替换"纪律下的
+模型边界不符（CRT/平台 API 层只 dump 汇编）。模型价值记入文档：**64 位重建 + 中间截断
+怪癖**的完整动作序列（回退路径 `(spc×bps)>>10×nfc` 与主路径 `(High×2^32+Low)/1024` 的
+单位与精度差异）。3 个调用者候选入列（FUN_00558dd0/FUN_00697ad0/WinMain FUN_006bb9a0）。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（284B 全段字节读完 + IAT 四槽 PE 实锤 + 8 条字符串
+实测 + 二批次锚点交叉），partial 项如实标注。
