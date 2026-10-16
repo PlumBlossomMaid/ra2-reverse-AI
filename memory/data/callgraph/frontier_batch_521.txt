@@ -1,0 +1,88 @@
+frontier batch 521 — HouseClass::GetPlanningWaypointAt 0x005023B0（163B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=84/
+body=163B，ranking 名 **HouseClass::GetPlanningWaypointAt**（带名实锤）），
+unique_callers DisplayClass::DecideAction/FUN_004aae90/FUN_004ae750/
+FUN_00700600。
+**163B 全字节读完**（= 0xA3，0x5023B0-0x502450，ret 4 = 1 栈参）。
+取证手段：disasm.py 全读 + **batch 509 姊妹函数 0x502460 逐段比对**
+（同 12 槽结构） + **0x763810/0x763980（WaypointPathClass ctor/
+GetWaypoint——batch 509 已登记）双被调交叉**。
+
+================================================================================
+0x005023B0 —— HouseClass::GetPlanningWaypointAt（带名，163B，ret 4）
+================================================================================
+机器码（完整，163B 整数）：
+```
+005023b0  push ecx / push ebx/ebp
+005023b3  mov ebp,[esp+0x10]      ; ★栈参 1 = 目标坐标指针
+005023b7  push esi / xor esi,esi / push edi
+005023bb  mov [esp+0x10],esi      ; 槽索引 i = 0
+005023bf  lea ebx,[ecx+0x210]     ; ★★this+0x210 = 12 槽起点
+005023c5  cmp dword[ebx],0 / jne 0x5023e6   ; ★槽空 → 惰性创建
+005023ca  push 0x40 / call 0x7c8e17  ; ★★operator_new(0x40=64B)（batch 001）
+005023d1  test eax / je 0x5023e2
+005023d8  push esi / mov ecx,eax
+005023db  call 0x763810           ; ★★WaypointPathClass::WaypointPathClass
+005023e0  jmp 0x5023e4
+005023e2  xor eax,eax
+005023e4  mov [ebx],eax           ; ★槽 = 新对象（失败 NULL）
+005023e6  mov ecx,[ebx] / xor edi,edi      ; ★槽内索引 j = 0
+005023ea  mov eax,[ecx+0x38]      ; ★★槽对象 +0x38 = 航点数
+005023ed  test eax,eax / jle 0x502430
+005023f1  push edi / call 0x763980 ; ★★WaypointPathClass::GetWaypoint(j)
+005023f7  mov esi,eax             ; ★★esi = 航点对象
+005023f9  mov eax,[esi]           ; ★★航点对象 +0 = X 坐标字段
+005023fb  cdq / and edx,0xff / add eax,edx  ; ★★符号扩展（sar 前加 0xFF 掩码）
+00502402  mov ecx,eax
+00502406  mov eax,[esi+4]         ; ★★+4 = Y 坐标字段
+00502409  cdq / and edx,0xff / add eax,edx  ; ★★符号扩展 Y
+00502412  sar ecx,8 / sar eax,8   ; ★★定点 >>8（÷256 坐标换算）
+00502418  cmp cx,word[ebp] / jne 0x502424   ; ★★X vs 目标.X（16 位比较）
+0050241e  cmp ax,word[ebp+2] / je 0x50243f  ; ★★Y vs 目标.Y（命中）
+00502424  mov ecx,[ebx] / inc edi
+00502427  cmp edi,[ecx+0x38] / jl 0x5023f1  ; ★槽内循环
+0050242c  mov esi,[esp+0x10]
+00502430  inc esi / add ebx,4
+00502434  cmp esi,0xc / mov [esp+0x10],esi
+0050243b  jge 0x502449 / jmp 0x5023c5      ; ★★12 槽循环
+0050243f  mov eax,esi / pop 族 / ret 4      ; ★★命中 → 返槽号
+00502449  xor eax,eax / pop 族 / ret 4      ; ★未命中 → 返 0
+```
+**语义（带名实锤）**：**HouseClass::GetPlanningWaypointAt**——按坐标
+查规划航点（ret 4 = 1 栈参 = 目标坐标指针）：与 batch 509 的
+**GetPlanningWaypointProperties** 同构（this+0x210 起 12 槽 ×
+WaypointPathClass 惰性创建 + 槽内 +0x38 遍历），差异在**命中判定**：
+- 航点对象 +0/+4（X/Y 坐标字段）经 **cdq/and 0xFF/add + sar 8**（有
+  符号定点 >>8 换算，÷256）得坐标；
+- 与目标坐标 word（[ebp]/[ebp+2]）**16 位比较**，命中 → 返槽号 esi；
+- 未命中 → 返 0。
+与 0x502460（Properties 版，返槽号+槽内号双索引）互补：本条返槽号
+单值。
+★原版怪癖（照抄）：① **同 12 槽 + 惰性创建**（0x502460 同构——读
+路径写内存）；② **坐标定点换算 cdq/and 0xFF/add**（sar 前手工符号
+扩展：负数 >>8 需先加 0xFF 掩码——**非 movsx 而是 cdq+掩码+add 的
+等价实现**）；③ **sar 8 = ÷256**（坐标 >>8 量化）；④ **16 位 word
+比较命中**（cmp cx/ax vs [ebp]/[ebp+2]——截断到 16 位坐标比较）；
+⑤ **返槽号单值**（0x502460 返双索引，本条只返槽号——姊妹函数差异）；
+⑥ **未命中返 0**（xor eax——无哨兵负值）。
+★跨批次闭合：**batch 509 0x502460（GetPlanningWaypointProperties——
+姊妹函数逐段同构 + 差异点：坐标判定 vs 值判定）**+**0x763810
+（WaypointPathClass::WaypointPathClass——batch 509 已登记带名）**+
+**0x763980（WaypointPathClass::GetWaypoint——batch 272/509 已登记
+带名）**+**0x7C8E17（batch 001 operator_new——本条=调用现场）**+
+**0x50xxxx HouseClass 规划航点区（batch 509/515 同区）**。
+⚠️ partial：+0/+4 坐标字段的完整语义（定点坐标——÷256 后 16 位推断）、
+目标坐标指针的结构（CellStruct/坐标对推断）、命中返槽号的下游用途
+（规划路径索引推断）、FUN_00700600 身份（新 caller）。
+
+================================================================================
+（batch 521 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（规划航点宿主未展开——batch 509
+同纪律；坐标定点换算为该族独有）。模型价值：**GetPlanningWaypointAt
+带名登记**（姊妹函数差异点：坐标 word 判定 vs 值判定）+ **cdq/and
+0xFF/sar 8 符号扩展怪癖**（非 movsx 的手工定点换算——重写须照抄）。
+本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。
+登记一行 semantics_verified + assembly_verified_semantics_confirmed
+（全段字节读完 + 姊妹同构比对 + 双被调带名），partial 项如实标注。
