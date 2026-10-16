@@ -1,0 +1,126 @@
+frontier batch 675 —— 0x00505310 按标志位查找器（推断名）
+
+地址：0x00505310（functions.tsv 边界 0x505310-0x50535E = 79B 吻合，
+后邻 0x505360 新函数 `push ecx/...` 确认边界；ranking callers=3/unique=3/
+deps=1940，direct_edges 1 条 E8 调用边）
+状态：semantics_verified + assembly_verified_semantics_confirmed
+（机器码 112B 全读：0x505310-0x50535C ret 4 + 0x50535F nop + 0x505360 后邻）
+
+=== 机器码全读（0x505310-0x50535C） ===
+
+00505310  8b4934       mov ecx, dword ptr [ecx+0x34]    ; this->+0x34 子对象
+00505313  53           push ebx
+00505314  56           push esi
+00505315  57           push edi
+00505316  81c198000000 add ecx, 0x98                    ; 子对象+0x98
+0050531c  e8afc40000   call 0x5117D0                     ; ★返回索引 → eax/cl
+00505321  8b742410     mov esi, dword ptr [esp+0x10]     ; 栈参1（push×3 后 = 第一栈参）
+00505325  ba01000000   mov edx, 1
+0050532a  8bc8         mov ecx, eax
+0050532c  33c0         xor eax, eax
+0050532e  d3e2         shl edx, cl                       ; 1<<cl 位掩码
+00505330  8b4e10       mov ecx, dword ptr [esi+0x10]     ; param1->+0x10 计数
+00505333  85c9         test ecx, ecx
+00505335  7e17         jle 0x50534E                      ; 计数<=0 → 返 0
+00505337  8b7e04       mov edi, dword ptr [esi+4]        ; param1->+4 数组基址
+0050533a  8bf7         mov esi, edi
+0050533c  8b1e         mov ebx, dword ptr [esi]          ; item = 数组[i]
+0050533e  8593cc060000 test dword ptr [ebx+0x6CC], edx   ; item->+0x6CC & 掩码
+00505344  7510         jne 0x505356                      ; 非零 → 命中返项
+00505346  40           inc eax
+00505347  83c604       add esi, 4
+0050534a  3bc1         cmp eax, ecx
+0050534c  7cee         jl 0x50533C
+0050534e  5f           pop edi
+0050534f  5e           pop esi
+00505350  33c0         xor eax, eax                      ; 未命中 → 返 0
+00505352  5b           pop ebx
+00505353  c20400       ret 4                             ; __thiscall + 1 栈参
+00505356  8b0487       mov eax, dword ptr [edi+eax*4]    ; 命中 → 返数组元素
+00505359  5f           pop edi
+0050535a  5e           pop esi
+0050535b  5b           pop ebx
+0050535c  c20400       ret 4
+0050535f  90           nop
+00505360  ...          （后邻新函数，边界确认）
+
+=== 语义 ===
+
+**按标志位查找器（推断名）**：this->+0x34 子对象 +0x98 调 0x5117D0 取索引
+（cl）→ `1<<cl` 构造位掩码 → 遍历栈参1 的 DynamicVectorClass（+4 数组基址、
++0x10 计数）→ 返回第一个 `[item+0x6CC] & 掩码` 非零的元素指针；未命中返 0。
+
+★与 batch 187 HouseClass::FirstBuildableFromArray（0x5051E0）同模板兄弟：
+两函数同形态（this->+0x34→+0x98 调 0x5117D0 → 1<<cl → 遍历向量筛 +0x6CC
+位标志），差异：0x5051E0 额外做 +0xDA0/+0xDA4 国家/阵营位二次筛选且返首个
+通过（本批无二次筛、返首个命中元素指针）——0x505xxx 区 HouseClass 建造
+系统两个查找器，同模板不同筛选强度。
+
+★0x5117D0 已登记：TSV 行 383 = HouseTypeClass::FindIndexOfName（batch 109
+实锤，按名字线性扫描国家类型数组返索引/未命中 -1）。两调用形态衔接：
+batch 109 签名 ecx=name（const char* 字符串指针），本批/187 传
+this->+0x34 子对象 +0x98 值——推断该偏移即名字字符串指针（HouseClass->
++0x34 子对象 +0x98 = 名字字段，partial 待实锤）。
+
+=== 调用现场（5 处扫描 + 3 处反汇编确认） ===
+
+1) CellClass::CollectCrate（0x481A00-0x483393，batch 214 已登记带名）×3：
+   0x481BAF / 0x482076 / 0x482146。现场（0x481B99-0x481BE4）：
+   mov edx,[ebp+8]（拾取者）→ mov eax,[0x8871E0] → add eax,0xB20
+   （param1 = [0x8871E0]+0xB20 DynamicVectorClass）→ mov edi,[edx+0x21C]
+   （this = 拾取者->+0x21C 子对象）→ push eax / mov ecx,edi / call 0x505310
+   → 返回值存 [esp+0x50] → 后续 mov eax,[edx+0xDF8] / push / call 0x49FAE0
+   （返回值+0xDF8 字段参与判定——0x49FAE0 仍待查）。
+   ★闭合 batch 214 TSV 行 699 partial「0x6E53A0/0x505310/0x49FAE0/0x477D20
+   身份」中的 0x505310 项（其余三项待查不变）。
+
+2) MPGameModeClass::SpawnBaseUnits（0x5D7030-0x5D70E4，USER_DEFINED 带名）
+   ×1：0x5D7059。现场：mov al,[0xA8B258] 门控（je 直接 ret 8 返 1）→
+   mov eax,[0x8871E0] → add eax,0xB20 → mov edi,[esp+0x18]（栈参1 = this）
+   → push eax / mov ecx,edi / call 0x505310 → mov esi,eax（返回值）→
+   test esi/je 0x5D70DB（NULL 跳过）→ push 0x8E8 / call 0x7C8E17
+   （batch 001 operator_new 0x8E8=2280B——命中项后分配对象）。
+
+3) FUN_006886b0（0x6886B0-0x688ECB，未登记）×1：0x688B5E。现场
+   （0x688B4C-0x688B66）：mov eax,[0x8871E0] → mov edi,[esp+0x10]（栈参1
+   = this）→ add eax,0xB20 → push edi/push eax（双压，0x505310 ret 4 只弹
+   一个，残留由调用方清）→ mov ecx,edi / call 0x505310 → 返回值 push 后
+   call 0x7353C0（★新候选）。注：0x688B40-0x688B4B 反汇编错位（非指令
+   边界起读，出现 add byte ptr [ebx-...] 垃圾指令），无碍——调用点归属
+   已由 functions.tsv 边界实锤。
+
+=== 原版怪癖（照抄） ===
+
+① 1<<cl 位掩码（SHL 只取 CL 低 5 位——cl>31 掩码退 0，与 QWEN.md
+   RandomRanged 0x65C7E0 同款 SHL 怪癖家族）；
+② DynamicVectorClass 布局直接读（+4 数组基址/+0x10 计数——无边界检查
+   直接遍历，batch 187 同款读法）；
+③ 命中返「数组元素指针」（mov eax,[edi+eax*4]）而非索引/副本；
+④ 未命中返 0 与计数<=0 早退（jle）双零路径；
+⑤ ret 4 单栈参 + 调用方残留清理（FUN_006886b0 双压形态）；
+⑥ 查找键来自 this->+0x34→+0x98（非函数参数——查询对象内嵌国家标识）。
+
+=== 跨批次闭合 ===
+
++batch 109（0x5117D0 FindIndexOfName——本条调用现场再消费，登记引用）；
++batch 187（0x5051E0 FirstBuildableFromArray——同模板兄弟闭合，0x505xxx
+  HouseClass 建造区两个查找器）；
++batch 214（0x481A00 CollectCrate——本条 caller×3，宝箱域三函数闭环：
+  宝箱类型加权抽取 0x65C7E0 + 地图格随机放置 0x56BD40 + 本条按国家位筛
+  可拾取对象；[0x8871E0] 同全局 +0xB20 消费，partial「0x505310 身份」闭合）；
++batch 001（0x7C8E17 operator_new——SpawnBaseUnits 现场再消费 0x8E8）；
++[0xA8B258]（SpawnBaseUnits 门控全局——batch 214 同全局）。
+
+=== 新候选 ===
+
+0x7353C0（FUN_006886b0 现场返回值消费函数）、FUN_006886b0（未登记 caller）、
+[0x8871E0]+0xB20（DynamicVectorClass 全局向量——三调用方共享）、
+拾取者->+0x21C 子对象（CollectCrate 传入 this 形态）。
+
+=== partial ===
+
+函数精确名（推断「按标志位查找器」）、宿主类（0x505xxx HouseClass 建造
+区推断）、this->+0x34 子对象 +0x98 与 FindIndexOfName 名字指针衔接（推断）、
++0x6CC 位标志布局（国家位 vs 建造等级位——batch 187 同字段推断）、
+param1 数组元素类型（BuildingTypeClass* 推断）、0x49FAE0/0x477D20 身份
+（batch 214 partial 剩余项待查）。
