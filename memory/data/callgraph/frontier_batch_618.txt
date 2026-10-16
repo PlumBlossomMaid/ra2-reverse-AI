@@ -1,0 +1,68 @@
+frontier batch 618 — VectorClass 收缩器 0x007AE730（134B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（0x6BEC50 后下一未登记高扇入候选 0x007AE730
+FUN_007ae730 callers=3/unique=3/deps=2672/body=134B，unique_callers FUN_0079CE70/
+FUN_007A1060/FUN_007A1330——均未登记）。**134B 全字节读完**（0x7AE730-0x7AE7B5，
+ret c3，thiscall，ecx=this 存 ebp）。
+取证手段：disasm.py 全读 + direct_edges 调用图核对 + **与 batch 597 0x7AE5D0 插
+入器紧邻同族核对（同一 VectorClass 布局 +0=计数/+4=容量/+8=数组——收缩配手）**
++ batch 001 new/delete 锚点。
+
+================================================================================
+0x007AE730 —— VectorClass 收缩器（推断名，134B）
+================================================================================
+机器码（完整 134B，分四段）：
+```
+; ── 段 1：拒绝收缩判定（count 超容 3 倍保护区）
+007ae730  push ecx / push ebx/ebp / mov ebp,ecx（★this）
+007ae735  mov eax,[ebp]          ; ★this->+0（计数）
+007ae738  mov ecx,[ebp+4]        ; ★this->+4（容量）
+007ae73b  lea eax,[eax+eax*2]    ; ★计数 ×3
+007ae73e  cmp eax,ecx / jle 0x7ae748   ; 计数×3 <= 容量 → 继续
+007ae742  pop 族 / xor al / ret        ; ★计数×3 > 容量 → 返 0（拒绝收缩）
+; ── 段 2：新容量计算
+007ae748  mov eax,ecx / cdq / sub eax,edx / mov ebx,eax   ; ★(容量 + 符号) / 2 — 容量/2
+007ae74f  sar ebx,1 / cmp ebx,0xa / jge 0x7ae75b
+007ae756  mov ebx,0xa            ; ★max(容量/2, 10)
+007ae75b  cmp ebx,ecx / jl 0x7ae765   ; 新容量 < 旧容量 → 继续
+007ae75f  pop 族 / xor al / ret        ; ★新容量 >= 旧容量 → 返 0
+; ── 段 3：分配 + 拷贝 + 释放
+007ae765  lea ecx,[ebx*4] / push esi / push ecx / call 0x7c8e17   ; ★★batch 001 new(新容量×4)
+007ae773  mov esi,[ebp+8]         ; ★this->+8（旧数组）
+007ae779  test esi / je 0x7ae799
+007ae781  mov ecx,[ebp] / shl ecx,2 / mov edx,ecx / mov edi,eax
+007ae78c  shr ecx,2 / rep movsd / mov ecx,edx / and ecx,3 / rep movsb   ; ★memcpy 计数×4B
+007ae799  mov eax,[ebp+8] / push eax / call 0x7c8b3d   ; ★★batch 001 delete 旧数组
+007ae7a2  mov ecx,[esp+0x10] / add esp,4 / mov [ebp+8],ecx   ; ★+8 = 新数组
+007ae7ac  mov [ebp+4],ebx         ; ★+4 = 新容量
+007ae7af  pop 族 / mov al,1 / ret ; ★返 1（成功）
+```
+**语义（推断名）**：**VectorClass 收缩器**——thiscall，ecx=this（+0=计数、+4=
+容量、+8=数组指针）：
+① **保护判定**：计数×3 > 容量 → 返 0（拒绝收缩——容量低于计数 3 倍时保持）；
+② **新容量** = max(容量/2, 10)；新容量 >= 旧容量 → 返 0（无收益不收缩）；
+③ **收缩**：new(新容量×4) + memcpy 计数×4B + delete 旧数组 → +8=新数组、
+   +4=新容量、返 1。
+★原版怪癖（照抄）：① **3 倍保护区**（计数×3 > 容量即拒缩——防止收缩后频繁再扩
+   张，保持 3 倍余量）；② **新容量一律减半**（容量/2、下限 10——与 batch 597 扩
+   容的 ×2 完全对称）；③ **无收益判定**（新容量 >= 旧容量返 0——容量已 <20 时拒
+   绝）；④ **cdq + sub + sar 的负数安全的/2**（eax=ecx/cdq/sub eax,edx/sar 1——
+   signed 除法 2 的编译器惯用法）；⑤ 与 batch 597 0x7AE5D0 紧邻（0x730 相差
+   0x160=352B——插入器/收缩器配对，同一 VirtualClass 布局）。
+★跨批次闭合：**batch 597（0x7AE5D0 VectorClass-like 容器插入器——本条=紧邻配
+   手，同 +0/+4/+8 布局、同 batch 001 new/delete、扩容×2 vs 收缩/2 对称）**
+   **+batch 001（0x7C8E17 new/0x7C8B3D delete——本条=分配合释放现场）**。
+⚠️ partial：函数精确名（VectorClass 收缩器推断）、宿主容器类（DynamicVectorClass
+   推断——batch 597 同族）、3 倍保护区精确语义、调用触发时机（三个 caller 各自
+   收缩场景推断）、FUN_0079CE70/FUN_007A1060/FUN_007A1330（未登记）。
+
+================================================================================
+（batch 618 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：134B 纯容器收缩编排无算法切片；宿主类与调用
+时机未闭合。模型价值：**VectorClass 收缩模板**（3 倍保护 + 减半 + 无收益拒绝 +
+new/memcpy/delete——与 batch 597 插入器构成"扩/缩"成对完整生命周期）+ 对称性证
+据（×2 扩容 ↔ /2 收缩）。无新被调候选。本批无产品代码改动，ctest 维持 **43/43
+全绿**。登记一行 semantics_verified + assembly_verified_semantics_confirmed
+（134B 全字节读完 + batch 597 配对核对 + batch 001 锚点命中），partial 项如实标
+注。
