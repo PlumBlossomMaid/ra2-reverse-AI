@@ -1,0 +1,100 @@
+frontier batch 537 — 矩形占用表放置器 0x005D1FD0（650B，自递归）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x5D1FD0 callers=5/unique=4/
+deps=58/body=650B，unique_callers FUN_005d1e70/FUN_005d1fd0（自递归）/
+FUN_0076ea20/FUN_0076eaf0——后两者已登记）。**650B 全字节读完**（0x5D1FD0-
+0x5D2257，ret 4=1 栈参）。
+取证手段：disasm.py 全读 + **batch 259/299 调用现场闭合**（0x76EA20 与
+0x76EAF0 均标注"0x5D1FD0 未登记——子对象处理"）+ 前移压缩家族核对。
+
+================================================================================
+0x005D1FD0 —— 矩形占用表放置器（推断名，650B，ret 4，自递归）
+================================================================================
+**对象布局（索引算式反推）**：
+```
+栈参  = 16B 矩形结构 {x, y, xSize, ySize}（[esi+0]/[esi+4]/[esi+8]/[esi+0xC]）
+this+0x04 = 当前计数 Count
+this+0x0C = 数组基址（16B/项 {x, y, xSize, ySize}）
+this+0x10 = 容量 Capacity（上限）
+```
+机器码（完整 650B，关键段）：
+```
+005d1fd3  push ebx/ebp/esi / mov esi,[esp+0x3c]  ; 栈参 = 矩形指针
+005d1fdc  mov eax,ecx                            ; this
+005d1fde  mov ebx,[esi+8] / cmp ebx,0 / jle 0x5d2250   ; ★xSize<=0 → 直接返回
+005d1ff2  mov ecx,[esi+0xc] / cmp ecx,0 / jle 0x5d2250  ; ★ySize<=0 → 直接返回
+005d2001  mov ebp,[eax+4] / jle 0x5d2079         ; Count<=0 → 追加路径
+005d2010  mov edi,[esi]  mov ecx,[esi+4]         ; x / y
+005d2015  mov eax,[eax+0xc]                      ; ★数组基址
+     ── 遍历循环（每项 16B）──
+005d2020  mov byte[esp+0x40],0                   ; 命中标志复位
+005d2024  mov edx,[eax]                          ; item.x
+005d2026  cmp edi,edx / jge 0x5d2032
+         add ebx,edi / cmp ebx,edx / jl 跳过      ; 分支1：x < item.x 判定
+005d2032  mov ebx,[eax+8] / add ebx,edx / cmp ebx,edi / jl 跳过  ; 分支2
+005d203b  mov byte[esp+0x40],1                   ; ★X 方向相交
+005d2040  mov edx,[eax+4]  cmp ecx,edx / jge 0x5d2053  ; y 方向同构判定
+005d205c  cmp byte[esp+0x40],1 / je 0x5d20b2     ; ★★X 且 Y 都相交 → 合并路径
+005d2063  add eax,0x10 / inc edx / cmp edx,ebp / jl 0x5d201a  ; 下一项
+     ── 未相交 → 追加路径 0x5d2079 ──
+005d2079  cmp ebp,[eax+0x10] / jge 0x5d2165      ; ★★Count >= 容量 → 满表驱逐
+005d2082  mov edx,[eax+0xc]  shl ebp,4  add ebp,edx   ; &arr[Count]
+005d208d  mov [ebp],ecx ...  mov [ebp+0xc],edx    ; ★★16B 矩形整体拷贝进表尾
+005d20a3  mov ecx,[eax+4] / inc ecx / mov [eax+4],ecx ; ★Count++
+005d20af  ret 4
+     ── X 且 Y 相交 → 合并且递归 0x5d20b2 ──
+005d20b2  lea ebp,[edi+edx]  ... 计算交集矩形 {max(x,item.x),
+         max(y,item.y), min(x+xSize, item.x+item.xSize)-max,
+         min(y+ySize, item.y+item.ySize)-max} 存 [esp+0x2c..0x38]
+005d211a  dec eax / mov [ecx+4],eax               ; ★Count--
+005d2122  shl eax,4 / lea edi,[eax+edx+0x10]      ; 前移压缩 arr[i]=arr[i+1]
+005d2134  mov ebx,[edi]  mov [edx],ebx            ; ★★16B/项 4 dword 搬移循环
+         ...  mov edi,[edi+0xc]  mov [edx+0xc],edi
+005d2151  lea eax,[esp+0x2c] / push eax / call 0x5d1fd0  ; ★★自递归（交集矩形）
+005d2162  ret 4
+     ── 满表驱逐 0x5d2165 ──
+005d2165  mov [esp+0x40],0xffffffff               ; 最佳面积 = INT_MAX
+005d218b  mov ebx,[esi] ... 计算与各项交集宽高
+005d21f4  imul eax,esi / cmp eax,[esp+0x40] / jae 跳过
+005d21fd  mov [esp+0x40],eax                      ; ★更新最小交集面积与最佳矩形
+005d222d  shl ecx,4 / add ecx,edx                 ; &arr[最佳项]
+005d223d  mov [ecx],edx ...  mov [ecx+0xc],eax     ; ★★用交集矩形覆盖该项
+005d2257  ret 4
+```
+**语义（推断名）**：**矩形占用表放置器**——把 16B 查询矩形 {x,y,xSize,ySize}
+写入 this 的矩形表（16B/项，Count=+4，数组=+0xC，容量=+0x10）：
+① **空尺寸短路**：xSize 或 ySize <= 0 → 直接返回（不写入）；
+② **相交检测**：遍历现有项做 X/Y 两维区间判定，X 且 Y 都相交 → **合并路径**：
+   移除该项（Count-- + 16B 前移压缩 arr[i]=arr[i+1]——**batch 515/524/529
+   前移压缩家族的 16B 项新实例**），用**交集矩形**（存栈 [esp+0x2c..0x38]）
+   **自递归**继续合并后续相交项；
+③ **追加路径**：无相交项且 Count < 容量 → 16B 矩形整体拷进表尾，Count++；
+④ **满表驱逐**：Count >= 容量 → 遍历找交集面积（宽×高 imul）最小项，用
+   交集矩形**覆盖**该项（不增计数）。
+★原版怪癖（照抄）：① **自递归合并链**（相交项移除后交集矩形继续吸并——
+递归深度=连续相交链长度）；② **满表不扩容而是驱逐最小交集项**（容量写死
+的占用表——覆盖语义）；③ **16B/项前移压缩**（4 dword 搬移——与 4B/项
+DynamicVectorClass 家族同构异宽）；④ **三出口 ret 4**（空尺寸/追加/合并
+各自返回）；⑤ 交集矩形在栈 [esp+0x2c..0x38] 组装后取址递归（16B 栈布局=
+同型矩形结构）；⑥ 下标乘 16 用 shl 4（手写 16 字节步长）；⑦ 空数组时
+Count<=0 直接跳追加路径（无相交检测）。
+★跨批次闭合：**batch 259（0x76EA20——调用现场：+0x45C+0x7C 坐标结构传
+0x5D1FD0"子对象处理"，本批登记闭合其 partial）**+**batch 299（0x76EAF0——
++0x45C→+0x8C 16B 结构读取后调 0x5D1FD0，闭合其 partial）**+**batch 515
+（0x4109C0——前移压缩移除家族）**+**batch 524（0x557730——同族）**+
+**batch 529（0x63EF70 DynamicVectorClass::Remove——同族 4B 项对照）**。
+⚠️ partial：宿主类（UI 布局/占用表推断——0x76xxxx 弹出/下拉组件区调用
+现场）、矩形业务语义（屏幕区域占用/合并推断）、交集合并的目的（区域去重/
+布局分配推断）、FUN_005d1e70（未登记调用者——新候选入列）、0x76EA20/
+0x76EAF0 的精确宿主（弹出对象装配链）。
+
+================================================================================
+（batch 537 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：宿主 UI 布局类身份未确认 + 矩形业务
+语义未闭合（交集合并的目的推断）。模型价值：**batch 259/299 双 partial
+闭合**（两批均标注 0x5D1FD0 未登记）+ **矩形表的完整生命周期**（追加/合并/
+驱逐三路径 + 自递归）+ **前移压缩家族 16B 项新实例**。FUN_005d1e70 新候选
+入列。本批无产品代码改动，ctest 维持 **43/43 全绿**。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（650B 全段字节
+读完 + 两调用者现场闭合），partial 项如实标注。
