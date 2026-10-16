@@ -1,0 +1,91 @@
+frontier batch 581 — INI 串读查表包装 0x004757D0 + 字符串索引查表器 0x0048DF30（2026-10-16）
+
+口径：承接 batch 580，picker 候选 0x4757D0（73B，callers=3，deps=3375）；被调
+0x48DF30（80B，callers=2，已全读 96B）同批合并登记（同一查表链）。两函数均全反
+汇编读完（0x4757D0 尾 0x475816 ret 0xC、0x48DF30 尾 0x48DF7F ret——body 与
+ranking 吻合）。**重大闭合**：0x4757D0 的 callers = FUN_0046ccd0（未登记）/
+FUN_00683ab0（batch 376 已登记 ScenarioClass::Start，调用现场 "push -1/
+0x8241C0/0x82BF9C + call 0x4757D0（两次，第二次带 0x83D8A8）"）/FUN_00689e90
+（未登记）；0x48DF30 的 callers = FUN_004757d0（本条）+RulesClass::Read_Movies
+（ranking 带名未登记）——**batch 376 已记录 "0x4757D0 未登记"，本条正式补登**。
+取证手段：disasm.py 直反汇编 + 字符串 PE 读取实锤（0x817474="<none>"、
+0x8241C0="Intro"、0x82BF9C="Basic"、0x83D8A8="Brief"）+ 已登记锚点交叉
+（0x528A10 batch 002 INISection::ReadString、0x7C8D20 batch 001 strcmpi、
+0x889F64 batch 072/077 共享空串、[0xABF394]/[0xABF3A0] batch 294 全局表/表长）。
+
+================================================================================
+0x004757D0 —— INI 串读取 + 全局表索引查找包装（推断名，73B，ret 0xC=3 栈参）
+================================================================================
+机器码（完整 0x49）：mov edx,[esp+8]（★栈参 2）→ sub esp,0x80（★栈缓冲 0x80）→
+lea eax,[esp]（★&缓冲）→ push 0x80/push eax → mov eax,[esp+0x8c]（★栈参 1，经
+sub+两 push 后偏移恢复）→ push 0x889f64（★★共享空串——batch 072/077 实锤默认
+值）→ push edx（★栈参 2）→ push eax（★栈参 1）→ call 0x528a10（★★batch 002
+INISection::ReadString——5 参：节名/键名/默认空串/缓冲/0x80 上限）→ test eax/
+je 0x475809（★失败 → 返回栈参 1）→ lea ecx,[esp]（★读出的串）→ call 0x48df30
+（★★字符串索引查表——本条被调）→ cmp eax,-1/jne 0x475810（★命中索引 → 返回）→
+0x475809: mov eax,[esp+0x8c]（★★失败回退栈参 1 原值）→ add esp,0x80/ret 0xC。
+语义（推断名）：**INI 串读取 + 全局表索引查找包装**——3 栈参（ret 0xC）：
+① 调 0x528A10（INISection::ReadString，batch 002）以（栈参 1=节名/栈参 2=键名/
+默认空串/缓冲/0x80 上限）读串到栈缓冲；
+② 调 0x48DF30 把读出的串在 [0xABF394] 全局表里查索引；
+③ 命中返回索引，失败（ReadString 失败或查表 -1）**返回栈参 1 原值**。
+★原版怪癖（照抄）：① **失败回退栈参 1 而非空串/0**（查表失败把"节名"当返回值——
+调用方约定栈参 1 可作兜底值推断）；② **5 参 ReadString 含显式 0x80 缓冲上限**
+（bounded copy 现场，batch 002 语义吻合）；③ **两个 call 共用一个栈缓冲**
+（ReadString 写入 → 查表器读取同一缓冲）；④ **栈偏移经 sub 0x80 + 两 push 后
+按 [esp+0x8c] 手工恢复取参**（编译器未用 frame pointer——栈偏移链推断）。
+★跨批次闭合：**0x528A10（batch 002——INISection::ReadString，本条=调用现场）**+
+   **0x48DF30（本条被调——字符串索引查表器，一并登记）**+**0x7C8D20（batch 001
+   ——strcmpi，0x48DF30 内部使用）**+**0x889F64（batch 072/077——共享空串常量）**+
+   **[0xABF394]/[0xABF3A0]（batch 294——全局表/表长，本条查表目标）**+**batch 376
+   （0x683AB0 ScenarioClass::Start——调用现场 "push -1/0x8241C0/0x82BF9C"，当时
+   标"未登记"）**+**字符串 0x8241C0="Intro"/0x82BF9C="Basic"/0x83D8A8="Brief"
+   （batch 376 现场串，PE 实锤——剧情模式节名推断）**。
+⚠️ partial：函数精确名（INI 串读取+全局表索引查找包装推断）、0x528A10 5 参精确
+   语义（节名/键名分配推断——[Basic] 节 Intro 键 vs [Intro] 节 Basic 键未定）、
+   栈参 1 回退语义（兜底值推断）、[0xABF394] 表元素内容（batch 294 partial 延
+   续）、FUN_0046ccd0/FUN_00689e90（调用者新候选）。
+
+================================================================================
+0x0048DF30 —— 字符串→索引查表器（推断名，80B，thiscall 1 参）（2 callers：FUN_004757d0 本条 + RulesClass::Read_Movies）
+================================================================================
+机器码（完整 0x50）：push esi/edi/mov edi,ecx（★参 1=字符串）→ test edi/je
+0x48df75（★NULL → 返 -1）→ push edi/push 0x817474/call 0x7c8d20（★★strcmpi(串,
+"<none>")——batch 001）/test/je 0x48df75（★等于 "<none>" → 返 -1）→ mov eax,
+[0xabf3a0]（★★表长）/xor esi/jle 0x48df75（★表空 → 返 -1）→ mov eax,[0xabf394]
+（★★表基址）→ 循环：mov ecx,[eax+esi*4]（★表项）→ push ecx/push edi/call
+0x7c8d20（★strcmpi(串,表项)）/test/je 0x48df7b（★相等 → 返 esi 索引）→ inc
+esi/cmp esi,[0xabf3a0]/jl 循环 → 0x48df75: or eax,-1/ret（★未找到 → -1）→
+0x48df7b: mov eax,esi/ret（★返回索引）。
+语义（推断名）：**字符串→索引查表器**——thiscall，1 参=字符串：
+① **排除 "<none>"**：NULL 或等于 0x817474（"<none>"，PE 实锤）→ 返 -1；
+② **查表**：遍历 [0xABF394] 全局字符串表（[0xABF3A0] 长度）逐项 strcmpi
+   （batch 001），相等返回索引 esi；
+③ **未找到 → -1**。
+★原版怪癖（照抄）：① **"<none>" 特判返回 -1**（字符串哨兵——"无"与"查不到"
+   同值，调用方据 -1 回退）；② **先 NULL 后表空两级门控**；③ **strcmpi 大小写
+   不敏感**（batch 001 语义——表项匹配忽略大小写）；④ **返回索引或 -1 的简单
+   二分**（未用哈希/排序假设——线性扫描）；⑤ 与 0x4757D0 构成"读串→查索引"
+   一条链。
+★跨批次闭合：**0x7C8D20（batch 001——strcmpi 三处调用现场）**+**[0xABF394]/
+   [0xABF3A0]（batch 294——全局表/表长，本条=查表现场）**+**0x817474="<none>"
+   （PE 实锤新常量）**+**0x4757D0（本条主函数——调用现场）**+**RulesClass::
+   Read_Movies（ranking 带名未登记——另一调用者候选）**。
+⚠️ partial：函数精确名（字符串→索引查表器推断）、[0xABF394] 表宿主与元素内容
+   （batch 294 partial 延续——电影/剧情节名表推断）、"<none>" 哨兵消费语义
+   （调用方 -1 回退推断）、RulesClass::Read_Movies 身份。
+
+================================================================================
+（batch 581 说明：C++ 模型决策）
+================================================================================
+本批两函数**不新增 C++ 模型**，理由：
+① 0x4757D0（INI 串读查表包装）逻辑即实现（ReadString → 查表 → 回退），但
+   0x528A10 5 参精确语义与栈参 1 回退语义 partial——单登记录入；本条价值 =
+   **batch 376 已记录调用现场（"0x4757D0 未登记"）的正式闭合** + "Intro/Basic/
+   Brief" 节名串 PE 实锤 + 失败回退栈参 1 怪癖。
+② 0x48DF30（字符串→索引查表器）逻辑即实现（排除 "<none>" + 线性 strcmpi 扫
+   描），宿主表语义 partial——单登记录入；本条价值 = **"<none>" 哨兵字符串实锤**
+   + [0xABF394] 表（batch 294）的消费现场 + RulesClass::Read_Movies 关联。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记两行全部 semantics_verified
+（两函数全段反汇编读完 + 字符串 PE 实锤 + 4 已登记锚点 + batch 376 调用现场交叉
+验证），partial 项如实标注。
