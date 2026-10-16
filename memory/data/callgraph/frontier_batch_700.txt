@@ -1,0 +1,124 @@
+frontier batch 700 —— 0x00684060 会话推进器（推断名，batch 255 同族变体）
+
+地址：0x00684060（functions.tsv 边界 0x684060-0x68417E = 287B，
+ret 无参纯 thiscall（+0x630 门控返回）；后邻 0x684180 新函数
+（mov ecx,[0xA8B230] / mov eax,[ecx+0x62C] 同计数器族）确认边界；
+ranking callers=3/unique=3/deps=1890）
+身份：unclassified（无带名——按机器码语义 + ★batch 255 同族
+对照推断"会话推进器"；0x684240 是"会话清理/结束"，本条是
+"会话推进/开始"变体）
+状态：semantics_verified + assembly_verified_semantics_confirmed
+（机器码 310B 全读：0x684060-0x68417E ret + 0x68417F nop +
+0x684180 后邻）
+
+=== 机器码全读要点（310B 六段） ===
+
+段1（0x684060-0x6840B5 this 门控+时间戳写入）：sub esp,0xc /
+push esi / mov esi,ecx（this）→ test esi,esi / je 0x6840B6（★
+this==NULL → 跳过第一段）→ lea ecx,[esp+8] → call 0x6C8C40
+（★★WINMM timeGetTime()>>4 batch 060！）→ mov edx,[0xA8B230]
+（★SessionClass::Instance 推断）→ 写 [edx+0x620] 三元组（0x620=
+eax / 0x624=[esp+8] / 0x628=[esp+0xc]——★时间戳三元组写回）→
+mov cl,[eax+0x630]（★+0x630 字节标志）→ test / jne 0x68417A（★
+已置 → 直接返回）→ mov byte[eax+0x630],1（★置 +0x630=1）。
+
+段2（0x6840B6-0x6840C9 计数器门控）：mov edx,[0xA8B230] → mov
+eax,[edx+0x62C]（★+0x62C 计数器）→ test / jne 0x68416F（★非零
+→ 跳过全部处理跳计数器++）→ call 0x406F00（★未登记候选——前置
+处理）。
+
+段3（0x6840CA-0x68410C GameMode 门控+计时折减）：mov eax,
+[0xA8B238]（★GameMode）→ test / je 0x6840DD → cmp 5 / jne
+0x68410D（★0 或 5 走折减，其它跳过）→ 0x6840DD: mov eax,
+[0xA8B230] → lea esi,[eax+0x614]（★+0x614 三元组基址）→ mov
+eax,[eax+0x614] → cmp -1 / je 0x68410D（★哨兵 -1 跳过）→ lea
+ecx,[esi+4] → call 0x6C8C40（timeGetTime）→ 折减：sub eax,
+[esi]（已过）→ mov [esi],-1 → add ecx,eax → mov [esi+8],ecx
+（★+0x614 三元组剩余时间更新——与 batch 083 计时折减同款）。
+
+段4（0x68410D-0x68416E 会话推进链）：mov ecx,[0xA8B230] → mov
+al,[ecx+0x35A2]（★+0x35A2 标志）→ mov byte[0xB054CC],al（★写
+全局 [0xB054CC]）→ test al / jne 0x68416F（★已置 → 跳计数器++）
+→ mov ecx,0x87F7E8（★MapClass::Instance）→ call 0x6938C0（★★
+batch 412 已登记状态清理！）→ mov ecx,[0x887640]（★全局对象
+batch 255 同）→ mov edx,[ecx] → call [edx+0x28]（★虚表槽 0x28）
+→ test eax / jne 0x684146（★成功 → 跳过槽 0xC）→ call [eax+0xC]
+（★虚表槽 0xC——第一路才调）→ 0x684146: mov ecx,[0xA8B230] →
+mov byte[ecx+0x35A2],1（★置 +0x35A2=1）→ mov ecx,[0x87F770]
+（★★InputManagerClass::Instance batch 200 实锤）→ mov byte
+[0xA8ED9C],1（★置全局）→ call 0x54F720（★★batch 095 已登记
+InputManagerClass::DoSomething 帧推进！）→ mov dword[0xB07784],0
+（★清全局 [0xB07784]）。
+
+段5（0x68416F-0x68417E 计数器收尾）：mov eax,[0xA8B230] → inc
+[eax+0x62C]（★+0x62C 计数++）→ 0x68417A: pop esi / add esp,0xc /
+ret。
+
+=== 语义 ===
+
+**会话推进器（推断名，batch 255 同族变体）**——纯 thiscall 无参
+ret：① this 非空时写 [0xA8B230]+0x620 时间戳三元组（timeGetTime
+>>4 ×2 + 步长）+ 置 +0x630=1（已置 → 直接返回）；② +0x62C 计数
+器为 0 时走处理链（非零 → 只计数++）：0x406F00 前置 → GameMode
+（[0xA8B238]）0 或 5 时折减 +0x614 三元组（timeGetTime 剩余时间，
+哨兵 -1 跳过）→ +0x35A2 标志写 [0xB054CC] → 未置时：0x6938C0
+（batch 412 状态清理）→ [0x887640] 虚表槽 0x28（成功跳过槽 0xC）
+→ 置 +0x35A2=1 + [0xA8ED9C]=1 → 0x54F720（batch 095 InputManager
+帧推进）→ 清 [0xB07784]；③ 计数器 +0x62C++ 收尾。
+
+★会话推进：时间戳记录 + GameMode 门控计时折减 + InputManager 帧
+泵——batch 255 的 0x684240（会话清理/结束）的开始侧配对（两函数
+共享 [0xA8B230]/[0x887640]/[0x87F770]/[0xA8ED9C]/[0xB07784]/
+0x54F720 全链）。
+
+=== 调用现场（4 处扫描 + 归属定位） ===
+
+1) 0x53B612 → **FUN_0053b560**（0x53B560-0x53B76C，body=525，
+   未登记——场景/加载域）：现场 xor ecx（★this=NULL——走
+   0x6840B6 分支，跳过时间戳写入）→ call 0x684060——前置
+   [0xA9FA98] 计数递减 ==1 时调（★清场/重开会话推断）。
+2) 0x657CA0 → **FUN_006579e0**（0x6579E0-0x657CDB，body=764，
+   未登记——MapClass 域）。
+3) 0x6DF703 → **TActionClass::Execute**（0x6DD8B0 带名 body=9530
+   ——地图触发器动作执行器）：现场 mov ecx,[esi+0x90]（★this=
+   触发器数据对象）→ call 0x684060——触发器动作推进会话。
+4) 0x6E4086 → 无归属（函数间隙）。
+
+=== 原版怪癖（照抄） ===
+
+① this==NULL 时跳过时间戳写入段（只有计数器链）；
+② +0x630 标志幂等（已置 → 直接返回——不推进）；
+③ +0x62C 计数器非零 → 跳过整条处理链只计数++（首次才完整
+   处理——初始化语义）；
+④ GameMode（[0xA8B238]）只有 0 或 5 才折减 +0x614 三元组
+   （其它模式跳过计时）；
+⑤ +0x614 三元组哨兵 -1 跳过（未启动不折减）；
+⑥ +0x35A2 标志写 [0xB054CC] 全局副本（双写）；
+⑦ [0x887640] 虚表槽 0x28 成功则跳过槽 0xC（双路兜底——batch
+   255 同款惯用）；
+⑧ 收尾置 +0x35A2=1 + [0xA8ED9C]=1 两标志成对 + 0x54F720 帧泵
+   + 清 [0xB07784]——与 batch 255 逐字节同构。
+
+=== 跨批次闭合 ===
+
+**+batch 255（会话清理 0x684240——本条是其开始侧配对，全链 8
+锚点逐项复用）**；+0x6C8C40（batch 060 timeGetTime>>4——时间戳
+写入调用现场）；+0x54F720（batch 095 InputManagerClass::
+DoSomething——帧推进调用现场）；+0x6938C0（batch 412 状态清理
+——前置调用现场）；+[0x87F770]（batch 200 InputManagerClass::
+Instance）；+[0xA8B238]（batch 113 GameMode）；+[0xA8ED84] 系
+（batch 101 同域）；+0x87F7E8（MapClass::Instance）。
+
+=== 新候选 ===
+
+0x406F00（前置处理）、[0xA8B230]+0x620/0x624/0x628 时间戳三元组、
++0x62C 计数器、+0x614 三元组、+0x630 标志、[0xB054CC] 全局、
+FUN_0053b560（场景/加载域）、FUN_006579e0（MapClass 域）、
+0x6E4086 宿主。
+
+=== partial ===
+
+函数精确名（推断"会话推进器"——无带名）、this 语义（推进器
+对象推断）、[0xA8B230]+0x620 三元组精确含义、+0x62C 计数器
+语义、0x406F00 身份、FUN_0053b560/FUN_006579e0 身份、0x6E4086
+宿主、+0x630 标志写入点。
