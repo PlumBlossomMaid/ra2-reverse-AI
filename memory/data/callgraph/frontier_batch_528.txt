@@ -1,0 +1,65 @@
+frontier batch 528 — 倒序数组回调遍历器 0x0040AFD0（49B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=70/
+body=49B，ranking 名 FUN_0040afd0 unclassified——**推断名**），unique_callers
+FUN_004e0b10/FUN_0069cbc0/FUN_006f24b0/FUN_00770430。
+**49B 全字节读完**（= 0x31，0x40AFD0-0x40AFFE，ret 0x10 = 4 栈参）。
+取证手段：disasm.py 全读（栈偏移逐条推演确认 4 参签名）。
+
+================================================================================
+0x0040AFD0 —— 倒序数组回调遍历器（推断名，49B，ret 0x10 = 4 栈参）
+================================================================================
+机器码（完整，49B 整数）：
+```
+0040afd0  mov eax,[esp+0xc]      ; ★栈参 3 = count（元素数）
+0040afd4  push ebx
+0040afd5  mov ebx,[esp+0xc]      ; ★栈参 2 = stride（步长字节）
+0040afd9  push esi
+0040afda  mov ecx,ebx
+0040afdc  mov esi,[esp+0xc]      ; ★栈参 1 = base（数组基址）
+0040afe0  imul ecx,eax           ; ★★stride × count
+0040afe3  add esi,ecx            ; ★★esi = base + stride*count（末元素之后）
+0040afe5  dec eax
+0040afe6  js 0x40affc            ; ★count-1 < 0（count<=0）→ 跳过
+0040afe8  push ebp
+0040afe9  mov ebp,[esp+0x1c]     ; ★★栈参 4 = callback（函数指针）
+0040afed  push edi
+0040afee  lea edi,[eax+1]        ; ★edi = count（循环计数）
+0040aff1  sub esi,ebx            ; ★★esi -= stride（前移一格）
+0040aff3  mov ecx,esi            ; ★参数 = 当前元素地址
+0040aff5  call ebp               ; ★★callback(元素地址)
+0040aff7  dec edi
+0040aff8  jne 0x40aff1           ; ★循环 count 次
+0040affa  pop edi / pop ebp
+0040affc  pop esi / pop ebx
+0040affe  ret 0x10               ; ★★4 栈参
+```
+**语义（推断名）**：**倒序数组回调遍历器（for_each reverse）**——4 栈参
+`(base, stride, count, callback)`：`esi = base + stride*count` 后，
+循环 `esi -= stride` → `ecx = esi`（当前元素地址）→ **调用
+callback(元素地址)**，共 count 次（无返回值）。即**从末元素到首元素
+倒序**对每个 stride 步长的元素调用回调。
+★原版怪癖（照抄）：① **倒序遍历**（从末元素往前——dec/jne 结构，
+非正序 inc）；② **callback 收元素地址（ecx 传参）**（非值——
+调用方自取自解释）；③ **count<=0 直接跳过**（dec / js 前测——
+零元素零调用）；④ **stride 由调用方给定**（元素字节宽可变——
+通用遍历器）；⑤ **栈偏移逐条推演定签名**（push ebx/esi/ebp 各改变
+[esp+0xc]/[esp+0x1c] 读数——4 参经多重偏移确认）；⑥ **ret 0x10 = 4
+栈参**；⑦ **无返回值**（void 遍历）。
+★跨批次闭合：**callers 四函数跨域（FUN_004e0b10/FUN_0069cbc0/
+FUN_006f24b0/FUN_00770430——通用遍历工具推断）**+**0x40xxxx 区工具族
+（batch 278 的 0x4085A0 清零 / batch 527 的 0x408600 单字段清零——
+同 0x40 工具区）**。
+⚠️ partial：callback 各调用方的具体回调身份（未查——工具型函数），
+宿主/用途（通用容器遍历推断）、stride 的实际取值（元素宽度由调用方
+决定）。
+
+================================================================================
+（batch 528 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（通用遍历器——回调与宿主未确认，
+无独立模型价值；语义完全由 49B 机器码确定）。模型价值：**倒序 for_each
+遍历器登记**（4 参签名 + 倒序 + 地址传参惯用）+ **0x40xxxx 工具区
+扩展**。本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已
+实跑核实）。登记一行 semantics_verified + assembly_verified_semantics_
+confirmed（全段字节读完 + 栈偏移推演），partial 项如实标注。
