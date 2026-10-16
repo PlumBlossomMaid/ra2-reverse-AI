@@ -1,0 +1,70 @@
+frontier batch 531 — 宽字符浮点解析器（FPU 设置包裹）0x007DBB55（136B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=67/
+body=136B，ranking 名 FUN_007dbb55 unclassified——**推断名 + 被调交叉**），
+unique_callers FUN_007db49a/FUN_007db4ee/FUN_007db54e/FUN_007db5e6
+（全 0x7DBxxx CRT 数字解析区——均调 0x7DBC77 同族）。
+**136B 全字节读完**（= 0x88，0x7DBB55-0x7DBBDC，ret 返 double）。
+取证手段：disasm.py 全读 + **batch 192 0x7DBC77（FPU 控制字设置族
+_controlfp 形态）调用现场**。
+
+================================================================================
+0x007DBB55 —— 宽字符浮点解析器（推断名，136B，ret 返 double）
+================================================================================
+机器码（完整，136B 整数）：
+```
+007dbb55  push ebp / mov ebp,esp / sub esp,0x20
+007dbb5b  push [ebp+0xc]          ; ★栈参 2
+007dbb5e  call 0x7dbc05           ; ★0x7DBC05（未登记——状态/转换检查推断）
+007dbb63  test eax / pop ecx / mov [ebp-0x1c],eax
+007dbb69  je 0x7dbbc0             ; ★检查失败 → 简单路径
+007dbb6b  mov eax,[ebp+0x10] ...  ; ★成功路径：多 dword 栈参拷贝到本地
+007dbb84  push 0xffff             ; ★★★0xFFFF 常量（宽字符宽值推断）
+007dbb89  push [ebp+0x28]         ; ★栈参 6
+007dbb8c  ...
+007dbb9e  call 0x7dbc77           ; ★★FPU 控制字设置（batch 192 已登记 _controlfp 形态）
+007dbba3  lea eax,[ebp-0x20] / push eax
+007dbba7  call 0x7dbc57           ; ★0x7DBC57（未登记——转换核心推断）
+007dbbac  add esp,0xc / test eax / jne 0x7dbbba
+007dbbb3  push esi / call 0x7dbbdd ; ★0x7DBBDD（未登记——收尾/错误推断）
+007dbbba  fld qword [ebp-8] / pop esi / leave / ret  ; ★★返 double（fld qword）
+007dbbc0  push 0xffff / push [ebp+0x28] / call 0x7dbc77  ; ★简单路径也调 FPU 设置
+007dbbcd  push [ebp+8] / call 0x7dbbdd
+007dbbd5  fld qword [ebp+0x20] / add esp,0xc / leave / ret  ; ★返 double（栈参直取）
+```
+**语义（推断名 + 被调交叉）**：**宽字符浮点解析器（FPU 设置包裹）**——
+CRT 区数字解析函数（0x7DBB55，返 double）：
+1. **入口检查**：0x7DBC05 检查（成功/失败分派）；
+2. **成功路径**：多 dword 参数栈拷贝 → **0x7DBC77（FPU 控制字设置）**
+   → 0x7DBC57（转换核心）→ 失败兜底 0x7DBBDD → **fld qword 返 double**；
+3. **失败路径**：直接 FPU 设置 + 0x7DBBDD → 从栈参取 double 返回。
+**0xFFFF 常量 + 多参 + FPU 设置包裹 = CRT 宽字符数值解析（wcsxfrm/
+wcstod 家族推断）**——0x7DBC77 是 _controlfp 实现（batch 192 已登记：
+读 x87 控制字 → 按掩码替换 → fldcw 写回 → 返旧控制字），本函数在解析
+前后包裹 FPU 环境设置（解析精度/舍入控制推断）。
+★原版怪癖（照抄）：① **双路径（成功/失败）都包裹 FPU 设置**（0x7DBC77
+两次调用——解析前设环境）；② **0xFFFF 常量硬编码**（push 0xffff——
+宽字符界值/掩码推断）；③ **多 dword 栈拷贝**（8 个 dword 从栈参搬
+本地——参数打包传给子转换）；④ **返 double 走 x87**（fld qword——
+x87 栈返值，与 QWEN.md FPU 环境一致）；⑤ **0x7DBBDD 两路径兜底**
+（成功失败都调用——收尾/清理推断）；⑥ 136B 无 ret 0xC（cdecl——
+调用方清栈，CRT 内部函数推断）。
+★跨批次闭合：**batch 192 0x7DBC77（FPU 控制字设置族 _controlfp 形态
+——本条=调用现场，两处）**+**0x7DBBxx 区（CRT 数字解析——0x7DBBDD
+候选池同区）**+**0x7DBC05/0x7DBC57/0x7DBBDD（新候选——转换链成员）**。
+⚠️ partial：0x7DBC05/0x7DBC57/0x7DBBDD 精确身份（状态检查/转换核心/
+收尾推断——均未登记）、0xFFFF 常量语义（宽界值推断）、多 dword 参数
+布局（浮点解析参数推断——目标类型/宽度推断）、callers 四函数身份
+（0x7DB49A 等——解析消费端，同调 0x7DBC77 家族推断）。
+
+================================================================================
+（batch 531 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（三个被调 0x7DBC05/0x7DBC57/0x7DBBDD
+未登记 + 函数精确身份未实锤——CRT 解析链整体建模时一并闭合；0x7DBC77
+已有 batch 192 契约）。模型价值：**CRT 数字解析链新成员登记**（FPU
+设置包裹形态 + 0x7DBC77 双调用现场）+ **新候选 0x7DBC05/0x7DBC57/
+0x7DBBDD 入列**。本批无产品代码改动，ctest 维持 **43/43 全绿**（batch
+372 已实跑核实）。登记一行 semantics_verified + assembly_verified_
+semantics_confirmed（全段字节读完 + 被调 batch 192 交叉），partial 项
+如实标注。
