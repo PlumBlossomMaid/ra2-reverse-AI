@@ -1,0 +1,127 @@
+frontier batch 636 — isometric tile 装载统计器 0x00546DA0（637B）（2026-10-17）
+
+口径：候选**只从 picker 未登记池取**（0x00427940 后下一未登记高扇入候选 0x00546DA0
+FUN_00546da0（unclassified 无带名）callers=3/unique=3/deps=2585/body=637B）。**637B
+全字节读完**（0x546DA0-0x54701C，ret c3，thiscall 形态但 ecx 低字节作标志参数——
+非标准 this 用法，bl=参1 字节、dl=参2 字节）。
+取证手段：disasm.py 三段全读（300+300+140B 覆盖到 ret 及后邻 0x547020 开头确认边
+界） + direct_edges 调用图核对 + **已登记锚点交叉（batch 613/QWEN.md ⑨ 0x578350
+CellIterator_Reset + 0x578290 CellIterator_Next + batch 060 0x6C8C40 timeGetTime
+>>4 + batch 065 0x48D080 游戏模式分发器 + batch 274 0x547020 文件读取对象构建 +
+batch 428 0x4814F0 随机 8 方向表查询 + batch 001 0x7C8B3D delete——7 锚点一次全命
+中）** + **PE 字符串读取（0x82961C='Loaded %d isometric tiles consuming %d Kb.'
+——函数用途实锤）** + **QWEN.md（[0x87F7E8] MapClass::Instance + [0xAA10B0] 草地
+哑元）** + functions.tsv 边界核对（0x546DA0-0x54701C=637B 吻合）。
+
+================================================================================
+0x00546DA0 —— isometric tile 装载统计器（637B）
+================================================================================
+机器码（完整 637B，分三段）：
+```
+; ── 段 1：参数标志 + CellIterator 全图扫描（0x546DA0-0x546EC1）
+00546da0  sub esp,0x20 / push 族 / mov bl,cl（★参1 字节标志）/ mov [esp+0x13],dl
+          （★参2 字节标志）
+00546dad  lea ecx,[esp+0x1c] / call 0x6c8c40（★★batch 060 timeGetTime>>4——tick
+          封装）/ test bl / jne 0x546ec1（★参1 非 0 → 跳过全图扫描）
+00546dce  mov ecx,0x87f7e8（★MapClass::Instance）→ call 0x578350（★★batch 613/
+          QWEN.md ⑨ CellIterator_Reset——起点 (1,W) 菱形遍历）
+00546ddd  mov ecx,0x87f7e8 → call 0x578290（★★CellIterator_Next——空槽 NULL 终止）
+          → edi=cell / test / je 0x546ec1
+00546dec  mov ecx,[edi+0x38]（★cell->+0x38 tile 索引）/ cmp 0xffff / je 0x546e64
+          （★0xFFFF 无效 → 走默认分支）/ cmp [0xa8ed38] / jge 0x546e64（★越界表
+          头 → 默认）
+00546e01  mov edx,[0xa8ed2c]（★[0xA8ED2C] 表基址）/ mov esi,[edx+ecx*4]（★表项
+          tile 对象）/ cmp dword[esi+0x2f0],1 / jle 0x546e81（★tile 计数 ≤1 → 跳过）
+00546e13  mov al,[edi+0x11a]（★cell->+0x11A 字节）→ call [esi->vtable+0x9c]（★虚
+          表槽 0x9C）→ ecx=eax / test / je 0x546e58 → mov ebx,[ecx+4] / mov eax,
+          ebp / imul ebx,[ecx] / cdq / idiv ebx（★÷除数对——batch 428 同款双除数
+          换算）→ mov ecx,[ecx+edx*4+0x10]（★查表）→ test / je → mov eax,[ecx+
+          0x24] / shr 2 / and 1（★位检查）→ je → mov eax,[edi+0x140] / shr 0xd /
+          and 1（★cell->+0x140 位检查）→ jmp 0x546e81
+00546e58  默认路径：push [esi+0x2f0] / mov eax,[edi+0x38] → 0x546e64: mov eax,
+          [0xaa10b0]（★★QWEN.md ⑨ 草地哑元）→ mov esi,[0xa8ed2c+eax*4] →
+          push [esi+0x2f0] → push eax → mov ecx,edi → call 0x4814f0（★★batch 428
+          随机 8 方向表查询/朝向换算）
+00546e81  mov ecx,[esi+0x2f0]（★tile 计数）/ mov edx,eax / lea edi,[ecx-1] /
+          cmp eax,edi / jle / cdq / idiv ecx → test edx / je 0x546ea0 → mov esi,
+          [esi+0x2bc]（★+0x2BC 链 next）/ dec edx / jne（★沿链走 edx 步）
+00546ea0  mov ecx,[esi+0x308] / inc / mov [esi+0x308],ecx（★★tile 计数++）→
+          mov ecx,0x87f7e8 → call 0x578290（★Next 续扫）→ jne 循环
+; ── 段 2：表遍历 + 缓冲装载/释放统计（0x546EC1-0x546FF8）
+00546ec1  lea ecx,[esp+0x28] / call 0x6c8c40（★tick 封装 2）→ mov edx,[esp+0x28]
+          / mov ecx,1 / mov [esp+0x18],eax / mov [esp+0x20],esi / mov eax,
+          [0xa8ed38]（★计数）/ jle 0x546ff8（★空表 → 收尾）
+00546efe  循环：cmp [esp+0x18],-1 / je 0x546f18 → lea ecx,[esp+0x1c] / call
+          0x6c8c40（★tick 更新）/ sub eax,[esp+0x18] / cmp eax,esi / jge / sub
+          esi,eax（★剩余时间递减）→ test esi / jne 0x546f47 → call 0x48d080
+          （★★batch 065 游戏模式分发器——限时触发泵）→ tick 重置四槽
+00546f47  mov ecx,[0xa8ed2c] / mov esi,[ecx+edi*4]（★表项）/ test / je 0x546fe6
+          → mov al,[esi+0x2f4]（★+0x2F4 标志）/ test / je 跳过 → lea edi,
+          [esi+0x2f5] / repne scasb（★strlen +0x2F5 文件名串）/ dec ecx / je 跳过
+          （★空名跳过）
+00546f74  mov al,[esp+0x12]（★参1）/ test / jne 0x546fc0 → mov eax,[esi+0x308]
+          （★计数）/ test / jne 0x546fc0 → mov al,[esp+0x13]（★参2）/ test / je
+          0x546f98 → mov al,[esi+0x2e3] / test / jne 0x546fc0
+00546f98  mov eax,[esi+0xa4]（★缓冲指针）/ test / je 0x546fd4 → push eax / call
+          0x7c8b3d（★★batch 001 delete——条件释放）/ mov [esi+0xa4],0 / mov
+          byte[esi+0xa8],0
+00546fc0  mov eax,[esi+0xa4] / test / jne 0x546fd4 → mov ecx,esi / call 0x547020
+          （★★batch 274 文件读取对象构建——读 +0x2F5 文件到缓冲）/ add ebp,eax
+          （★累加字节数）/ inc ebx（★计数）
+00546fd4  mov esi,[esi+0x2bc]（★链 next）/ test / jne 循环 → edi++ / cmp edi,
+          [0xa8ed38] / jl 循环
+; ── 段 3：统计收尾 + 日志（0x546FF8-0x54701C）
+00546ff8  mov eax,ebp（★总字节数）/ cdq / and edx,0x3ff / add eax,edx / sar
+          eax,0xa（★★÷1024 含入——KB 换算）/ push eax / push ebx / push
+          0x82961c（★'Loaded %d isometric tiles consuming %d Kb.'）→ call
+          0x4068e0（★日志桩）→ pop 族 / ret
+```
+**语义（unclassified + 七锚点 + 日志串实锤）**：**isometric tile 装载统计器（推断
+名——全图 tile 装载/释放统计 + 日志）**——
+① 参 1 非 0 跳过扫描（条件开关）；参 1==0 时 **CellIterator 全图扫描**（batch 613
+   Reset/Next——起点 (1,W) 菱形遍历）：cell->+0x38 tile 索引 → 0xFFFF/越界走草地
+   哑元 [0xAA10B0] 默认分支 → 有效则查 [0xA8ED2C] 表 tile 对象 → 计数>1 才处理
+   → 虚表槽 0x9C 查表/除换算 → 0x4814F0（batch 428 随机 8 方向查询）→ 沿 +0x2BC
+   链走 edx 步 → **tile 计数 +0x308++**；
+② **表遍历统计**：[0xA8ED38] 计数/[0xA8ED2C] 表逐项——+0x2F4 标志 + +0x2F5 文件
+   名非空才处理；按参 1/参 2/+0x2E3 标志门控：条件满足释放 +0xA4 缓冲（batch
+   001 delete），否则若缓冲空则 0x547020（batch 274）读 +0x2F5 文件装载并累加
+   字节（ebp）+ 计数（ebx）；限时机制（tick 递减 → 0x48D080 分发器泵）；
+③ 收尾：总字节 ÷1024 含入（sar 0xA + 0x3FF 舍入）→ 日志 `Loaded %d isometric
+   tiles consuming %d Kb.`（0x82961C + 0x4068E0）——**tile 装载统计输出**。
+★原版怪癖（照抄）：① **参 1 字节条件跳过扫描**（bl 标志——调用方选择只统计不
+   装载）；② **CellIterator 全图遍历**（0x578350/0x578290——QWEN.md ⑨ 起点
+   (1,W) 菱形覆盖 + 空槽 NULL 终止）；③ **0xFFFF 索引/越界 → 草地哑元默认分支**
+   （[0xAA10B0]——无效 tile 走草地路径）；④ **虚表槽 0x9C + idiv 双除数**（batch
+   428 同款除换算）；⑤ **沿 +0x2BC 链走 edx 步**（链式随机游走——计数定位）；⑥
+   **tile 计数 +0x308++**（每次命中累加）；⑦ **限时泵**（tick 递减剩余 → 0x48D080
+   分发器——时间片轮转）；⑧ **双标志门控释放/装载**（参1/参2/+0x2E3 组合——条件
+   装载复用）；⑨ **+0x2F5 内嵌文件名**（读自身字段路径——batch 274 同款）；⑩
+   **÷1024 含入**（cdq/and 0x3FF/add/sar——KB 换算四舍五入）；⑪ **日志串实锤用
+   途**（'Loaded %d isometric tiles consuming %d Kb.'——全函数出口即统计打印）。
+★跨批次闭合：**batch 613/QWEN.md ⑨（0x578350/0x578290 CellIterator——本条=装载
+   统计遍历现场，同一迭代器另一消费端）**+**batch 274（0x547020 文件读取对象构
+   建——本条=装载调用现场，+0x2F5/+0xA4/+0xA8 字段族互证）**+**batch 428（0x4814F0
+   随机 8 方向表查询——本条=统计路径调用现场，[0xA8ED2C] 表头同用）**+**batch 060
+   （0x6C8C40 timeGetTime>>4——本条=限时泵 tick 现场×2）**+**batch 065（0x48D080
+   游戏模式分发器——本条=限时触发泵现场）**+**batch 001（0x7C8B3D delete——本条=
+   条件释放现场）**+**QWEN.md（[0x87F7E8] MapClass::Instance + [0xAA10B0] 草地哑
+   元）**+[0xA8ED2C]/[0xA8ED38]（★★与 batch 628 场景重置器同表——对象注册表跨
+   函数复用）。
+⚠️ partial：函数精确名（unclassified——推断 isometric tile 装载统计器；日志串
+   实锤用途但无带名）、宿主类（tile 对象 +0x2F0/+0x2BC/+0x308/+0x2F4/+0x2F5/
+   +0xA4/+0xA8 字段族推断——batch 274 同域）、虚表槽 0x9C 方法、+0x11A/+0x140
+   位检查语义、参 1/参 2 字节业务含义、0x547020 返回值（读取长度）与 ebp 累加关
+   系、3 caller 业务含义。
+
+================================================================================
+（batch 636 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：637B 纯 tile 装载统计编排（CellIterator 遍历 +
+表统计 + 释放/装载 + 日志），宿主类未确认，无独立算法切片（÷1024 含入为通用换算）。
+模型价值：**isometric tile 装载统计器**（日志串实锤用途 + 七锚点一次全命中——
+CellIterator/0x547020/0x4814F0/0x6C8C40/0x48D080 跨五批闭合 + [0xA8ED2C] 表与
+batch 628 场景重置器互证）。无新被调候选。本批无产品代码改动，ctest 维持 **43/43
+全绿**。登记一行 semantics_verified + assembly_verified_semantics_confirmed
+（637B 全段字节读完 + 七锚点全命中 + 日志串 PE 实锤 + functions.tsv 边界核对），
+partial 项如实标注。
