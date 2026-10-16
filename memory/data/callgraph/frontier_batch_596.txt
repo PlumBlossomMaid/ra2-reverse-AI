@@ -1,0 +1,87 @@
+frontier batch 596 — TiberiumClass 数组重置器（+0x10C 区变体）0x00722D00（329B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（0x722240 后下一未登记高扇入候选 0x00722D00
+FUN_00722d00 callers=3/unique=3/deps=2817/body=329B，unique_callers FUN_00598960/
+FUN_0067e440/FUN_00686b20——与 batch 595 0x722240 完全相同）。**329B 全字节读完**
+（0x722D00-0x722E48，ret c3，无参——纯全局操作）。
+取证手段：disasm.py 分两段全读 + ranking/direct_edges 调用图核对 + 已登记锚点
+交叉（**batch 595 0x722240 同模板孪生 + batch 369 0x722E50 0x10C 清理器配对 +
+[0xB0F4EC]/[0xB0F4F8] 全局对 + batch 114 0x42B1F0 + batch 001 new/delete**）。
+
+================================================================================
+0x00722D00 —— TiberiumClass 数组重置器（+0x10C 区变体，推断名，329B）
+================================================================================
+机器码（完整 329B——与 0x722240 逐字节同构，唯一差异为槽偏移整体 +0x1C）：
+```
+; ── 段 1：遍历前置（同 0x722240）
+00722d00  push ecx / mov eax,[0xb0f4f8]   ; ★★全局计数 [0xB0F4F8]
+00722d08  xor ebx,ebp / cmp eax,ebx / jle 0x722e45   ; ★计数 <=0 → 直接返回
+; ── 段 2：逐项循环（ebp=索引）
+00722d16  mov eax,[0xb0f4ec] / mov edi,[eax+ebp*4]   ; ★★[0xB0F4EC] 取项
+00722d1e  mov eax,[edi+0x110] / cmp eax,ebx / je 0x722d62   ; ★+0x110 容器（0x722240 用 +0xF4）
+00722d28  mov edx,[eax] / xor ecx / cmp edx,ebx / jl 0x722d3e
+00722d30  循环：mov edx,[eax+8] / inc ecx / mov [edx+ecx*4-4],ebx   ; ★逐项置 0
+00722d3e  mov [eax],ebx / mov esi,[edi+0x110] / cmp esi,ebx / je 0x722d5c
+00722d4a  mov eax,[esi+8] / push eax / call 0x7c8b3d    ; ★★batch 001 delete（数据区）
+00722d53  push esi / call 0x7c8b3d / add esp,8          ; ★★batch 001 delete（容器本体）
+00722d5c  mov [edi+0x110],ebx            ; ★+0x110 置 NULL
+00722d62  mov eax,[edi+0x118] / cmp eax,ebx / je 0x722d7b
+00722d6c  push eax / call 0x7c8b3d / add esp,4 / mov [edi+0x118],ebx   ; ★delete +0x118
+00722d7b  mov eax,[edi+0x114] / cmp eax,ebx / je 0x722d94
+00722d85  push eax / call 0x7c8b3d / add esp,4 / mov [edi+0x114],ebx   ; ★delete +0x114
+00722d94  mov [edi+0x10c],ebx            ; ★+0x10C 置 NULL
+; ── 段 3：重分配（同 0x722240，offset 全套平移）
+00722d9a  call 0x42b1f0 / lea ecx,[esi*8] / push ecx / call 0x7c8e17   ; ★★ 0x42B1F0 尺寸 + new(size*8)
+00722dae  add esp,4 / cmp eax,ebx / je 0x722dbc / dec esi / mov [esp+0x10],esi
+00722dbe  mov [edi+0x118],eax            ; ★+0x118 = new(size*8)（或 0）
+00722dc4  call 0x42b1f0 / push eax / call 0x7c8e17   ; new(size)
+00722dcf  push 0x14 / mov [edi+0x114],eax ; ★+0x114 = new(size)、push 0x14
+00722dd7  call 0x7c8e17 / mov esi,eax / add esp,8     ; new(0x14=20B)
+00722de1  cmp esi,ebx / je 0x722e26
+00722de5  call 0x42b1f0 / lea edx,[eax*4+4] / mov [esi+0xc],ebx / push edx
+00722df5  mov [esi+0x10],0xffffffff / mov [esi],ebx / mov [esi+4],eax   ; ★容器头 +0xC=0/+0x10=-1/+0=0/+4=size
+00722e01  call 0x7c8e17 / mov ecx,[esi+4] / mov [esi+8],eax / add esp,4  ; new(size*4+4) → +8
+00722e0f  xor eax,eax / cmp ecx,ebx / jl 0x722e28
+00722e15  循环：mov ecx,[esi+8] / inc eax / mov [ecx+eax*4-4],ebx   ; ★逐项置 0
+00722e24  jmp 0x722e28
+00722e26  xor esi,esi
+00722e28  mov ecx,edi / mov [edi+0x110],esi / call 0x7233a0   ; ★+0x110=新容器、★0x7233A0（每项重置——0x722240 用 0x7228B0）
+; ── 段 4：循环收尾
+00722e35  mov eax,[0xb0f4f8] / inc ebp / cmp ebp,eax / jl 0x722d16
+00722e43  pop 族 / ret
+```
+**语义（推断名）**：**TiberiumClass 数组重置器（+0x10C 区变体）**——与 0x722240
+（batch 595）**逐字节同构**，唯一差异：操作的槽偏移整体平移 +0x1C：+0xF4→**+0x110**
+、+0xFC→**+0x118**、+0xF8→**+0x114**、+0xF0→**+0x10C**；每项收尾子函数
+0x7228B0→**0x7233A0**（同模板但独立内联子函数）。作用同一 [0xB0F4EC]（TiberiumClass
+数组）/ [0xB0F4F8]（计数）全局对，清旧三槽（+0x110 容器双层 delete、+0x118/+0x114
+单 delete、+0x10C 置 NULL）→ 按 0x42B1F0 尺寸重分配三槽（+0x118=new(size×8)、
++0x114=new(size)、+0x110=new(20B) 容器头 +0x10=-1 哨兵）→ 每项 0x7233A0 收尾。
+★原版怪癖（照抄）：① **同模板两区平移实例**（0xF0 区 vs 0x10C 区——编译器对两个
+   同型字段区展开同一重分配模板，偏移整体 +0x1C）；② **与同区清理器配对**
+   （0x722D00 建 vs 0x722E50 清——batch 369 已登记的 0x722E50 是 0x10C 区清理器，
+   本条是它的重建配对）；③ caller 集与 0x722240/0x722390/0x722E50 完全相同（四
+   件套成对消费点）；④ 每项收尾子函数与 0x722240 不同（0x7233A0 vs 0x7228B0——
+   同模板展开时编译器生成了两个内联体）。
+★跨批次闭合：**batch 595（0x722240——0xF0 区重置器，本条 0x10C 区同模板变体，
+   逐字节同构仅偏移）**+**batch 369（0x722E50——0x10C 区清理器，本条=重建配对；
+   batch 369 文档原话"与 0x722E50 同构偏移不同（0xF0 区 vs 0x10C 区——同模板两实
+   例）"现补全为四件套）**+**batch 114（0x42B1F0 地图尺寸 getter）**+**batch
+   132/274/325/369（[0xB0F4EC]=TiberiumClass 数组基址、[0xB0F4F8]=计数）**+
+   **batch 001（0x7C8E17 new/0x7C8B3D delete）**。
+⚠️ partial：函数精确名（+0x10C 区重置器推断）、0x7233A0 身份（未登记子函数）、
+   +0x10C..+0x118 四槽与 0xF0 区四槽的语义差异（两槽区推断——可能两个同型容器/
+   双缓冲）、0x722D00 vs 0x722E50 精确配对关系（同区建/清推断）、callers 三处调
+   用时机业务含义。
+
+================================================================================
+（batch 596 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：与 batch 595 同判断——宿主类精度未闭合、
+纯清旧+重建内存管理编排无算法切片。模型价值：**同模板两区平移实例确认**（0xF0
+区/0x10C 区——batch 369 预告的两实例现全部落地为四件套：0x722240 建+0x722390 清
+（F0 区）、0x722D00 建+0x722E50 清（10C 区））+ [0xB0F4EC]/[0xB0F4F8] 全局对第
+6 个消费点。1 个新被调候选（0x7233A0）。本批无产品代码改动，ctest 维持 **43/43
+全绿**。登记一行 semantics_verified + assembly_verified_semantics_confirmed
+（329B 全段字节读完 + batch 595 逐字节同构核对 + 0x722E50 配对 + 全局对/尺寸
+源/CRT 多锚点全命中），partial 项如实标注。
