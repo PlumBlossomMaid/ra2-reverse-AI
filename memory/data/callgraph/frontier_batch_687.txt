@@ -1,0 +1,82 @@
+frontier batch 687 —— 0x004135A0 AircraftTrackerClass::IsJumpjet（悬停判定器）
+
+地址：0x004135A0（functions.tsv 边界 0x4135A0-0x4135C6 = 41B 吻合，
+ret 4 = 1 栈参 + 无 this 依赖（栈参1 作对象）；后邻 0x4135D0 新函数
+（sub esp,8 + 虚表槽 0x2F4 调用）确认边界；ranking callers=3/
+unique=3/deps=1915）
+身份：★ranking 带名 AircraftTrackerClass::IsJumpjet（YRpp grep 无
+覆盖——按带名+机器码语义记录；4 调用点全落 0x54xxxx AircraftClass
+域——悬停/飞行器判定强化）
+状态：semantics_verified + assembly_verified_semantics_confirmed
+（机器码 80B 全读：0x4135A0-0x4135C6 ret 4 + 0x4135C9-0x4135CF nop
++ 0x4135D0 后邻）
+
+=== 机器码全读（80B） ===
+
+004135a0  push esi
+004135a1  mov esi,[esp+8]              ; 栈参1 = 对象指针
+004135a5  mov ecx,esi                  ; this = 栈参1
+004135a7  mov eax,[esi]                ; 虚表指针
+004135a9  call [eax+0x1BC]             ; ★虚表槽 0x1BC 取子对象
+004135af  mov eax,[eax+0xE0]           ; ★子对象 +0xE0 字段
+004135b5  test eax,eax / je 0x4135C3   ; 空 → 返 0
+004135b9  cmp eax,esi / je 0x4135C3    ; == 自身 → 返 0
+004135bd  mov al,1 / ret 4             ; 非空且 != 自身 → 返 1
+004135c3  xor al,al / ret 4            ; 否则返 0
+
+=== 语义 ===
+
+**AircraftTrackerClass::IsJumpjet（悬停判定器，ranking 带名）**——
+1 栈参 ret 4（栈参1 作对象，无 this 依赖）：对栈参1 对象调虚表槽
+0x1BC 取关联子对象 → 读子对象 +0xE0 字段 → 非空且 != 栈参1 → 返 1
+（真悬停），否则返 0。★isJumpjet 语义推断：虚表槽 0x1BC 取跟踪器/
+挂载对象、+0xE0 为挂载目标指针、非自引用判真——"是否有另一对象
+挂在本机/是否悬停状态"。
+
+=== 调用现场（4 处扫描 + 1 处反汇编确认） ===
+
+1) 0x54BAEA → FUN_0054ba30（0x54BA30-0x54BD2C，未登记——0x54xxxx
+   AircraftClass 域）。
+2) 0x54C241 → FUN_0054bff0（0x54BFF0-0x54C54B，未登记）。现场
+   （0x54C220-0x54C25A）：mov eax,[esi+0xC]（★栈参对象 +0xC 子对象）
+   → mov cl,[eax+0x6AD]（★+0x6AD 标志门控）→ test/jne 跳过 → push
+   eax（栈参1 = +0xC 子对象）→ mov ecx,0x887888（★新全局——0x887888
+   = AircraftTracker 相关推断）→ call 0x4135A0 → test al/je →
+   mov ecx,[0xA8B230]（★Randomizer 宿主）/push 7/push 0/add ecx,0x218
+   /call 0x65C7E0（★★Randomizer::RandomRanged——真悬停时随机弹跳
+   参数）——★+0x6AD 标志 + 0x887888 全局 + RandomRanged 链。
+3) 0x54C300 → FUN_0054bff0（同函数第二处）。
+4) 0x54C5B5 → FUN_0054c550（0x54C550-0x54CA83，未登记）。
+
+★统一形态：AircraftClass 域悬停判定（真悬停走 RandomRanged 随机
+参数）。
+
+=== 原版怪癖（照抄） ===
+
+① 栈参1 作对象且 this（ecx）被忽略（无 this 依赖——独立判定函数）；
+② 虚表槽 0x1BC 间接取子对象（非直接字段读——多一层虚调用）；
+③ 子对象 +0xE0 字段双判（空 或 == 自身都返 0——仅非空非自引用返 1）；
+④ 返 al 单字节布尔（mov al,1/xor al——非 eax 归一化）；
+⑤ ret 4 单栈参（调用方 push 对象即回）。
+
+=== 跨批次闭合 ===
+
++0x65C7E0（Randomizer::RandomRanged——FUN_0054bff0 现场真悬停分支
+  再消费，RNG 家族）；
++[0xA8B230]（Randomizer 宿主——batch 670 同全局）；
++0x54xxxx AircraftClass 域（4 调用点——飞行器/悬停单位家族）；
++ranking 带名 AircraftTrackerClass::IsJumpjet（YRpp 无覆盖——按带名
+  记录）。
+
+=== 新候选 ===
+
+0x887888（新全局——AircraftTracker 相关推断）、对象 +0xC 子对象 +
+0x6AD 标志、虚表槽 0x1BC（取跟踪器/挂载对象）、子对象 +0xE0 挂载
+字段、FUN_0054ba30/FUN_0054bff0/FUN_0054c550（未登记 caller）。
+
+=== partial ===
+
+函数精确名（ranking 带名 AircraftTrackerClass::IsJumpjet——YRpp 无
+直证）、虚表槽 0x1BC 精确方法名（取跟踪器推断）、+0xE0 字段语义
+（挂载目标指针推断）、0x887888 全局身份、+0x6AD 标志语义、
+FUN_0054bff0 中真悬停 RandomRanged 参数业务（7/0——弹跳推断）。
