@@ -1,0 +1,82 @@
+frontier batch 482 — 数据缓冲接管 setter 0x0069DE00（99B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=171/
+body=99B，ranking 名 FUN_0069de00，unique_callers FUN_00653010/
+FUN_006a5840/FUN_006d03a0/FUN_006d0fd0）。
+**99B 全字节读完**（= 0x63，0x69DE00-0x69DE60 ret 0xC = 3 栈参）。取证手段：
+disasm.py 全读 + 被调 0x7C8B3D 已登记交叉验证。
+
+================================================================================
+0x0069DE00 —— 数据缓冲接管 setter（推断名，99B，ret 0xC = 3 栈参）
+================================================================================
+机器码（完整，99B 整数）：
+```
+0069de00  push ebx / push esi
+0069de02  mov esi,ecx               ; ★this
+0069de04  xor ebx,ebx
+0069de06  cmp byte[esi+0x5c],bl     ; ★this->+0x5C（持有/占用标志字节）
+0069de09  je 0x69de27               ; ★标志 0 → 跳过清理
+0069de0b  mov eax,[esi+0x58]        ; eax = this->+0x58（数据指针）
+0069de0e  cmp eax,ebx
+0069de10  je 0x69de27               ; 指针空 → 跳过
+0069de12  push eax
+0069de13  call 0x7c8b3d            ; ★★operator_delete(+0x58)（batch 001 实锤）
+0069de18  add esp,4
+0069de1b  mov [esi+0x58],ebx        ; +0x58 = NULL
+0069de1e  mov byte[esi+0x5c],bl     ; +0x5C = 0
+0069de21  mov [esi+0x14],ebx        ; +0x14 = 0
+0069de24  mov [esi+0x18],ebx        ; +0x18 = 0
+0069de27  mov eax,[esp+0xc]         ; ★eax = 栈参 1（新数据指针）
+0069de2b  cmp eax,ebx
+0069de2d  mov [esi+0x58],eax        ; ★+0x58 = 栈参 1（无条件装）
+0069de30  je 0x69de42               ; 空 → +0x14/+0x18 = 0
+0069de32  movsx ecx,word[eax+2]     ; ★+0x14 = (signed)数据[+2]（16 位字段符号扩展）
+0069de36  mov [esi+0x14],ecx
+0069de39  movsx edx,word[eax+4]     ; ★+0x18 = (signed)数据[+4]
+0069de3d  mov [esi+0x18],edx
+0069de40  jmp 0x69de48
+0069de42  mov [esi+0x14],ebx
+0069de45  mov [esi+0x18],ebx
+0069de48  mov eax,[esp+0x10]        ; ★eax = 栈参 2
+0069de4c  cmp eax,ebx
+0069de4e  je 0x69de53
+0069de50  mov [esi+0x14],eax        ; ★栈参 2 非空 → +0x14 = 栈参 2（覆盖）
+0069de53  mov eax,[esp+0x14]        ; ★eax = 栈参 3
+0069de57  cmp eax,ebx
+0069de59  je 0x69de5e
+0069de5b  mov [esi+0x18],eax        ; ★栈参 3 非空 → +0x18 = 栈参 3（覆盖）
+0069de5e  pop esi / pop ebx
+0069de60  ret 0xc                   ; 3 栈参
+```
+**语义（推断名）**：**数据缓冲接管 setter**——3 栈参（栈参 1 = 新数据
+指针、栈参 2/3 = 可选覆盖值），this 布局 +0x58 = 数据指针、+0x5C = 持有
+标志字节、+0x14/+0x18 = 两个 int（16 位坐标符号扩展推断）：
+1. **清旧**：+0x5C 标志置位且 +0x58 非空 → operator_delete(+0x58) + 清
+   指针/标志/+0x14/+0x18；
+2. **装新**：+0x58 = 栈参 1（无条件）；非空时 +0x14/+0x18 =
+   movsx 数据[+2]/[+4]（**16 位字段带符号扩展**——CellStruct 坐标对 {x,y}
+   推断）；空则 +0x14/+0x18 = 0；
+3. **覆盖**：栈参 2/3 非空时分别覆盖 +0x14/+0x18。
+★原版怪癖（照抄）：① **movsx 符号扩展取 16 位字段**（数据[+2]/[+4]——非
+movzx，坐标可负，CellStruct 16 位坐标推断）；② **先清旧后装新**（标志+指针
+双条件门控 delete——batch 001 语义）；③ **+0x5C 持有标志与操作分离**
+（只在清理时置 0，装新时不置 1——被调方或别处置位推断）；④ **覆盖参数
+非空才写**（栈参 2/3 零值不覆盖——可为 NULL 参数）；⑤ **路径复制**
+（非空/空两条路径写 +0x14/+0x18——编译器未合并）。
+★跨批次闭合：**被调 0x7C8B3D（batch 001——operator delete，本条=调用
+现场）**；+0x58 数据指针布局（0x58/0x5C/0x14/0x18 四字段——宿主类推断）；
+与 batch 471/477（0x50DA80 受限 getter 前邻接 0x50DA6B 写 setter）同为
+字段访问族但布局不同（本批 0x58 系）。
+⚠️ partial：宿主类（0x69xxxx 区推断）、+0x14/+0x18 字段语义（坐标对
+推断——movsx 16 位证据强）、+0x5C 标志的写端（本次未置 1）、栈参 2/3
+覆盖的来源语义（调用方传参推断）、数据指针指向的结构布局。
+
+================================================================================
+（batch 482 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（宿主类未确认 + 四字段布局未闭合，
+setter 模式已由 batch 471 覆盖）。模型价值：**数据缓冲接管 setter 登记**
+（99B 完整——先清旧后装新 + movsx 16 位坐标 + 可选覆盖三特点 + 被调登记）。
+本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。
+登记一行 semantics_verified + assembly_verified_semantics_confirmed
+（全段字节读完 + 被调登记交叉），partial 项如实标注。
