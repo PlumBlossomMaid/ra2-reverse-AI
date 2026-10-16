@@ -1,0 +1,104 @@
+frontier batch 586 — CD 驱动器盘符列表构建器 0x0047AB10（562B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x47AB10 FUN_0047ab10 callers=3/
+unique=3/deps=2998/body=562B，unique_callers FUN_0047aac0/FUN_0052ba60/
+FUN_0052f620——均未登记）。**562B 全字节读完**（0x47AB10-0x47AD41，ret 无栈参，
+thiscall，ecx=参 1=驱动串指针）。
+取证手段：disasm.py 全读 + **字符串 PE 读取实锤（0x81C8FC=';'、0x81C8F8='?:'、
+0x815E74='\\'）**+ 6 个已登记锚点交叉（0x7D5408 batch 024 strdup、0x7C9CC2 batch
+023 strtok、0x7CA610 batch 141 strncmp、0x7C8E17 batch 001 new、0x7C93E8 batch
+020 free、**0x4A80D0 batch 420 CDDriveManagerClass::GetCDNumber 常数桩返回 2**）+
+[0x89E410]（batch 173 已提及）+ 0x89E41C 在 BSS（运行时构建缓冲，PE 无 NUL——
+预期）。
+
+================================================================================
+0x0047AB10 —— CD 驱动器盘符列表构建器（推断名，562B）
+================================================================================
+机器码（完整 562B，分五段）：
+```
+; ── 段 1：NULL 门控 + strdup 输入
+0047ab10  sub esp,0x108 / push ebx / xor bl,bl
+0047ab19  test ecx,ecx / jne 0x47ab27 / xor eax,eax / ret  ; ★NULL → 返 0
+0047ab2a  push ecx / call 0x7d5408     ; ★★strdup(参1)（batch 024）→ ebp
+; ── 段 2：全局串累加（strcat(0x89E41C, ';') + strcat(0x89E41C, ebp)）
+0047ab35  cmp ebp,0x89e41c / je 0x47ab92   ; ★★与全局 0x89E41C 指针比较
+0047ab3d  strlen(0x81C8FC=';') → strcat 到 0x89E41C 尾  ; ★★先拼 ';'
+0047ab6a  strlen(ebp) → strcat 到 0x89E41C 尾            ; ★★再拼 token
+; ── 段 3：strtok 切段循环（分隔符 ';'）
+0047ab92  push 0x81c8fc / push ebp / call 0x7c9cc2   ; ★★strtok(ebp, ";")（batch 023）首段
+0047aba2  test edx,eax / je 0x47ad27     ; 无段 → 收尾
+0047abaa  strlen(edx) / dec ecx / je 0x47ad0e   ; ★空段跳过
+0047abbc  copy 段到 [esp+0x14] 栈缓冲
+0047abe1  取末字节：若 ':'(0x3a) 或 '\'(0x5c) → je 0x47ac27  ; ★★尾已带分隔符则不再拼 '\'
+0047abfb  否则 strcat(缓冲, 0x815E74='\\')               ; ★★拼反斜杠
+0047ac27  push 2 / lea eax,[esp+0x18] / push 0x81c8f8='?:' / push eax / call 0x7ca610
+          ; ★★strncmp(段, "?:", 2)（batch 141）——"?:" 前缀判定
+; ── 段 4：分支 A（"?:" 前缀命中）→ 盘符字母分配
+0047ac3f  mov ecx,[0x89e414] / test / je 0x47ad0e     ; ★★全局盘符计数
+0047ac4d  mov edx,0x78 / mov bl,1 / call 0x4a80d0     ; ★★GetCDNumber()（batch 420 恒返 2）
+0047ac59  cmp eax,-1 / jle 0x47ad0e                    ; ★门控（恒 2 > -1 不跳）
+0047ac62  mov cl,[0x89e414] / add cl,0x41              ; ★★计数+'A' → 盘符字母
+0047ac68  push 8 / mov [esp+0x18],cl / call 0x7c8e17   ; ★★new(8)（batch 001）→ esi 节点
+0047ac7d  push &字母 / call 0x7d5408 / mov [esi+4],eax / mov [esi],0
+0047ac8b  mov ecx,[0x89e410] / test / jne 0x47aca0
+0047ac98  mov [0x89e410],esi                           ; ★★头空 → 挂新头
+0047aca0  mov eax,[ecx] / test / je 0x47ad0c / mov ecx,eax / jne 0x47aca6  ; ★★尾遍历
+0047ad0c  mov [ecx],esi                                 ; ★★尾插
+; ── 段 4b：分支 B（非 "?:" 前缀）→ 字母起始判定 + 同款节点挂链
+0047acb0  movsx ecx, byte[esp+0x14] / sub ecx,0x41 / test / jle 0x47ad0e  ; ★首字母-'A'<=0 跳过
+0047acbc  mov edx,0x78 / call 0x4a80d0 / cmp eax,2 / jne 0x47ad0e          ; ★★GetCDNumber 恒 2 不跳
+0047accb  push 8 / mov bl,1 / call 0x7c8e17 / mov esi,eax
+0047acd4  lea eax,[esp+0x18] / push eax / call 0x7d5408 / mov [esi+4],eax / mov [esi],0
+0047ace9  mov ecx,[0x89e410] / ... 同款头空/尾插
+; ── 段 5：strtok(NULL) 续段循环 + 收尾 free
+0047ad0e  push 0x81c8fc / push 0 / call 0x7c9cc2      ; ★★strtok(NULL, ";") 下一段
+0047ad1f  test edx / jne 0x47abaa                      ; ★循环
+0047ad27  push ebp / call 0x7c93e8                     ; ★★free(strdup'd)（batch 020）
+0047ad30  xor eax,eax / test bl,bl / sete al           ; ★★返回 !bl（0 建过节点/1 无建）
+0047ad41  ret
+```
+**语义（推断名）**：**CD 驱动器盘符列表构建器**——thiscall，参 1=分号分隔驱动串
+指针（如 "D:;E:;?:" 推断）：
+① **NULL 门控**：参 1 空 → 返 0；否则 `0x7D5408`（strdup，batch 024）拷贝输入；
+② **全局串累加**：把 `';'` 与 token 依次 strcat 到全局 `[0x89E41C]`（运行时构建
+   的盘符清单串，BSS 缓冲）；
+③ **strtok 切段循环**（`0x7C9CC2`，batch 023，分隔符 `';'`）：逐段处理——末字节
+   是 `':'`/`'\'` 则不补反斜杠，否则 strcat `'\\'`；`0x7CA610`（strncmp，batch
+   141）判 `"?:"` 前缀；
+④ **分支 A（"?:" 命中）**：取全局盘符计数 `[0x89E414]` → **计数+'A' 得盘符字母**
+   （A、B、C…）→ `new(8)` 节点（`[0]`=next、`[4]`=strdup 字母）→ 挂入全局链表
+   `[0x89E410]`（头空则新头、否则尾插）；
+⑤ **分支 B（非 "?:"）**：首字符-'A'≤0 跳过 → 同款节点挂链；
+⑥ **续段循环 + 收尾**：strtok(NULL) 续段直至空 → `free(strdup'd)`（batch 020）
+   → **返回 !bl**（bl=1 建过节点 → 返 0；未建 → 返 1）。
+★原版怪癖（照抄）：① **strdup 后与全局 0x89E41C 指针比较**（新分配地址不可能
+   等于全局——该分支实质恒走累加，比较是死逻辑）；② **"A:;B:;" 式全局累加
+   （[0x89E41C]）与链表（[0x89E410]）双份记录**（同一盘符清单两份形态）；③ **GetCDNumber（batch 420 恒返 2）两处门控全恒通过**（cmp -1/jle 与 cmp 2/jne——
+   常数桩使分支 B 的 "!=2 跳过" 恒不触发——CD 号检查纯形式）；④ **盘符字母 = 计
+   数+'A'**（[0x89E414] 字节自增推断）；⑤ **尾末 ':'/'\\' 不重复补反斜杠**；
+   ⑥ **空段跳过**（dec ecx/je）；⑦ **返回 !bl**（"本次是否新增盘符"反相——0=建
+   过/1=未建）；⑧ strtok 家族就地改写（batch 023 已实锤 delimiter bitmap +
+   可变终止）。
+★跨批次闭合：**0x7D5408（batch 024——strdup 三处调用现场）**+**0x7C9CC2（batch
+   023——strtok 族两处调用现场）**+**0x7CA610（batch 141——strncmp 现场）**+
+   **0x7C8E17（batch 001——operator new 两处）**+**0x7C93E8（batch 020——CRT
+   free）**+**0x4A80D0（batch 420——GetCDNumber 常数桩返回 2，本条两处消费现场
+   ——**CD 驱动域互连实锤**）**+**[0x89E410]（batch 173 已提及——本条=链表构建
+   现场）**+**串 0x81C8FC=';'/0x81C8F8='?:'/0x815E74='\\'（PE 实锤）**。
+⚠️ partial：函数精确名（CD 驱动器盘符列表构建器推断）、参 1 精确内容（"D:;E:;?:"
+   驱动串推断）、[0x89E414] 计数写入点（何处自增未登记）、[0x89E41C] 全局串消费
+   方、[0x89E410] 链表消费方（CD 域枚举推断）、"?: " 前缀语义（可移动驱动器推断）、
+   返回 !bl 消费方、callers FUN_0047aac0/FUN_0052ba60/FUN_0052f620（未登记新候
+   选）。
+
+================================================================================
+（batch 586 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：CD 域全局（[0x89E410]/[0x89E414]/[0x89E41C]）
+消费链未闭合，562B 纯"切段+挂链+累加"编排无算法切片；依赖全已登记（strdup/
+strtok/strncmp/new/free/GetCDNumber 6 函数）。模型价值：**CD 驱动域链表/串构建
+现场实锤**（batch 420 GetCDNumber 常数桩的双消费点 + [0x89E410] 链表 + [0x89E41C]
+累加串 + 盘符字母计数）+ **strtok 切段 + "?: " 前缀 + 反斜杠补齐模板** + **strdup
+指针比较死逻辑怪癖**。3 个调用者候选。本批无产品代码改动，ctest 维持 **43/43 全
+绿**。登记一行 semantics_verified + assembly_verified_semantics_confirmed（562B
+全段字节读完 + 3 串 PE 实锤 + 6 已登记锚点交叉），partial 项如实标注。
