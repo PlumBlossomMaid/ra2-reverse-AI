@@ -1,0 +1,81 @@
+frontier batch 502 — 两点方向计算（推断名，safe-div 家族）0x004265B0（99B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=114/
+body=99B，ranking 名 FUN_004265b0 unclassified——**推断名**），unique_callers
+FUN_00425670/FUN_004cefb0/FUN_0051b350/**UnitClass::UpdateTube**。
+**99B 全字节读完**（= 0x63，0x4265B0-0x426610，ret 8 = 2 栈参）。
+取证手段：disasm.py 全读 + **batch 384 常量实测交叉（[0x7E2820]=π/2、
+[0x7E2818]=-10430.06004——read_const 实测非猜值）** + **batch 076
+0x4CAE30（safe-div 已登记）调用现场** + **batch 340 GetTargetDirection
+同款换算链对比**。
+
+================================================================================
+0x004265B0 —— 两点方向计算（推断名，99B，ret 8 = 2 栈参）
+================================================================================
+机器码（完整，99B 整数）：
+```
+004265b0  mov eax,[esp+4]                   ; ★栈参 1 = 点 A 指针
+004265b4  push esi / mov esi,ecx            ; ★ecx = 输出指针（this）
+004265b7  push edi
+004265b8  mov ecx,[esp+0x10]                ; ★栈参 2 = 点 B 指针
+004265bc  mov edx,[eax] / cmp edx,[ecx]     ; ★A.x vs B.x
+004265c0  jne 0x4265d1                      ; ★不等 → 跳过写 0
+004265c2  mov edx,[eax+4] / mov edi,[ecx+4] / cmp edx,edi
+004265ca  jne 0x4265d1
+004265cc  mov word [esi],0                  ; ★★坐标对相等 → 输出低 16 位先写 0
+004265d1  fild dword[ecx] / sub esp,8 ×2    ; B.x int→double
+004265d9  fisub dword[eax]                  ; - A.x = dx
+004265db  fstp qword[esp+8]
+004265df  fild dword[eax+4] / fisub [ecx+4] ; A.y - B.y = -(dy)
+004265e5  fstp qword[esp]
+004265e8  call 0x4CAE30                     ; ★★safe-div（batch 076 已登记！）
+004265ed  fsub qword[0x7E2820]              ; ★- π/2（batch 384 实测 1.570796327）
+004265f3  add esp,0x10
+004265f6  fmul qword[0x7E2818]              ; ★× -10430.06004（batch 384 实测）
+004265fc  call 0x7C5F00                     ; ★★_ftol（batch 001 已登记！）
+00426601  mov word[esp+0xc],ax              ; ★只取低 16 位
+00426606  mov eax,[esp+0xc]                 ; ★按 dword 读回
+0042660a  mov [esi],eax                     ; ★写回输出（dword）
+0042660c  mov eax,esi / pop edi / pop esi / ret 8
+```
+**语义（推断名）**：**两点方向计算（safe-div 家族）**——__thiscall：
+ecx=输出指针、栈参 1=点 A、栈参 2=点 B（各 8 字节 x/y 两个 int32）：
+1. **坐标对先判等**：A.x==B.x && A.y==B.y → 输出低 16 位写 0；
+2. 无论是否相等**继续计算**：`fild B.x − A.x`（dx）与 `fild A.y − B.y`
+   （=−dy，**y 差分取负**！）两路 double 入栈 → **0x4CAE30（safe-div）**
+   取比值 → `fsub [0x7E2820]（−π/2）` → `fmul [0x7E2818]（×−10430.06004）`
+   → **_ftol** 向零截断 → **只取低 16 位** → 写回输出 dword。
+与 batch 340 的 **0x5F3DB0（AbstractClass::GetTargetDirection 推断）**
+同款换算式（fsub π/2 + fmul −10430.06 + _ftol + int16 输出），但**签名
+不同**：本函数直收**两个坐标对指针**（非双虚表槽 0x48 取坐标）。
+链路推断：两点差 → 方向量化（≈atan2 系 → 16 位整圆刻度）。
+★原版怪癖（照抄）：① **坐标对相等先写 0 但计算照跑**（`mov word
+[esi],0` 后 fall-through 无条件重算覆盖——死写不跳过，safe-div 对
+0/0 的行为决定最终值）；② **y 差分取负**（A.y−B.y 而非 B.y−A.y——
+与 batch 340 的 GetTargetDirection 符号相反）；③ **0x4CAE30 safe-div**
+（batch 076——比值防除零特值保护）；④ **fsub π/2 在前、fmul −10430.06
+在后**（运算次序钉死——batch 384 同款）；⑤ **_ftol 向零截断**
+（0x7C5F00——QWEN.md 规范 4 确认点：此处用 _ftol 非 ties-to-even）；
+⑥ **只 mov word 取低 16 位 + dword 读回写输出**（高 16 位来自栈槽原
+内容——batch 384 同现象：16 位截断 + dword 写回）；⑦ **ret 8 = 2 栈参
++ ecx 输出**（this 返回 eax=esi）。
+★跨批次闭合：**0x4CAE30（batch 076——safe-div，本条=调用现场）**+
+**0x7C5F00（batch 001——_ftol，本条=调用现场）**+**[0x7E2820]=π/2 /
+[0x7E2818]=-10430.06004（batch 384 read_const 实测——输入换算链
+三实例已闭合：0x48A8D0/0x5F3DB0/本条）**+**batch 340 0x5F3DB0
+（同款换算、异签名对照）**+callers 含 **UnitClass::UpdateTube**（batch
+495 的 0x437160 同 UnitClass 域）。
+⚠️ partial：两坐标对指针的类语义（CellStruct/Point2D 推断）、
+safe-div 对 0/0 的精确特值（batch 076 同 partial）、输出 int16 的
+精确语义（方向值推断）、函数精确名（两点朝向推断——Facing 系）。
+
+================================================================================
+（batch 502 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（典型 safe-div/朝向换算组件——
+batch 340/384 已覆盖同式算法，本条仅登记新签名实例）。模型价值：
+**换算链第三实例闭合**（0x48A8D0 + 0x5F3DB0 + 本条，常量/运算次序/
+截断方式三点一致实锤）+ **y 差分取负怪癖**新样本。本批无产品代码
+改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（全段字节读完 +
+常量实测 + 跨批调用现场），partial 项如实标注。
