@@ -1,0 +1,116 @@
+frontier batch 480 — 两点朝向计算 0x0075F230（256B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=176/
+body=256B，ranking 名 FUN_0075f230，unique_callers FUN_0062d830/
+FUN_0062f9a0/FUN_00693440/**WaveClass::WaveClass**（带名——冲击波类构造
+场景，YRpp WaveClass 系））。
+**256B 全字节读完**（= 0x100，0x75F230-0x75F32F ret；c3 无栈参 = 纯
+ecx/edx 参数约定）。取证手段：disasm.py 全读 + **被调 0x4CACB0/0x4CAD00
+（batch 065 sin/cos 表驱动）已登记交叉验证** + **[0x7E1718]=1.0（batch 166
+实锤）**。
+
+================================================================================
+0x0075F230 —— 两点朝向计算（WaveClass 系推断名，256B，c3 无栈参）
+================================================================================
+机器码（完整，256B 主结构）：
+```
+0075f230  sub esp,0x10
+0075f233  push esi
+0075f234  mov esi,[edx]             ; ★esi = 点B.X（edx → 点B {x,y}）
+0075f237  push edi
+0075f239  mov edi,[ecx]             ; ★edi = 点A.X（ecx → 点A {x,y}）
+0075f23b  sub esi,edi               ; ★dx = B.X - A.X
+0075f23e  mov edi,[ecx+4]           ; edi = 点A.Y
+0075f241  mov ecx,[edx+4]           ; ecx = 点B.Y
+0075f246  push 0x3fd921fb           ; ★高 4 字节 π/8
+0075f248  sub edi,ecx               ; ★-dy = A.Y - B.Y
+0075f24d  mov [esp+0x14],esi        ; 存 dx 局部
+0075f251  mov [esp+0x10],edi        ; 存 -dy 局部
+0075f255  call 0x4cacb0             ; ★★0x4CACB0（batch 065 表驱动 sin 实锤）——入参 = 8 字节 double π/8
+0075f25a  fstp qword[esp+0x18]      ; 存 sin(π/8)
+0075f25e  push 0x3fd921fb
+0075f263  push 0x54442d18           ; 再压 π/8
+0075f268  call 0x4cad00             ; ★★0x4CAD00（batch 065 cos 孪生 partial）——cos(π/8)
+0075f26d  fdivr qword[esp+0x20]     ; cot 组合
+0075f271  add esp,0x10
+0075f274  test esi,esi              ; ★dx 符号判定
+0075f276  je 0x75f31b
+0075f27c  fild dword[esp+8]         ; dx → 浮点
+0075f280  fidiv dword[esp+0xc]      ; ★dx / -dy（斜率）
+0075f284  fld qword[0x7e1718]       ; ★★[0x7E1718] = 1.0（batch 166 实锤）
+0075f28a  fdiv st(2)                ; 1.0 / 斜率
+0075f28c  fld st(1)
+0075f28e  fcompp                    ; 比较
+0075f290  fnstsw ax
+0075f292  fcom st(1)
+0075f294  test ah,1 / fnstsw ax
+0075f299  je 0x75f2b7
+0075f29b  test ah,1 / jne 0x75f2bc
+0075f2a0  xor eax,eax / pop edi
+0075f2a3  test esi,esi
+0075f2a5  setle al / dec eax
+0075f2aa  fstp st(0) / and al,0xfc
+0075f2ae  fstp st(0) / add eax,5     ; ★★返回 5（象限编码）
+0075f2b7  test ah,1 / je 0x75f2e2
+0075f2bc  fld st(1) / fchs / fld st(1)
+0075f2c2  fcompp / fnstsw ax
+0075f2c6  test ah,1 / jne 0x75f2e2
+0075f2cb  xor eax,eax / pop edi
+0075f2ce  test esi,esi
+0075f2d0  setle al / dec eax
+0075f2d4  fstp st(0) / and al,0xfc
+0075f2d9  fstp st(0) / add eax,6     ; ★★返回 6
+0075f2e2  fld st(1) / fchs / fld st(1)
+0075f2e8  fcompp / fnstsw ax
+0075f2ec  test ah,1 / je 0x75f319
+0075f2f1  fld qword[0x7e4900]
+0075f2f7  fdiv st(2) / fxch st(1)
+0075f2fb  fcompp / fnstsw ax
+0075f2ff  test ah,1 / fstp st(0)
+0075f304  jne 0x75f31d
+0075f306  xor eax,eax / pop edi
+0075f309  test esi,esi
+0075f30b  setle al / dec eax
+0075f30e  pop esi / and al,0xfc
+0075f312  add eax,7                 ; ★★返回 7
+0075f319  fstp st(0)
+0075f31b  fstp st(0)
+0075f31d  xor eax,eax / test edi,edi
+0075f321  setle al / dec eax
+0075f324  and al,0xfc / pop edi
+0075f326  pop esi / add eax,4       ; ★★返回 4（收尾默认）
+0075f32f  ret
+```
+**语义（推断名 + 被调登记链）**：**两点朝向计算（WaveClass 系）**——ecx
+指向点 A {x,y}、edx 指向点 B {x,y}（两 int 坐标）：算 dx=B.X-A.X、
+-dy=A.Y-B.Y；经 sin/cos（0x4CACB0/0x4CAD00，batch 065）+ π/8 常量组合
+求斜率基准（cot(π/8)）；随后 fild dx / fidiv(-dy) 斜率与 1.0（[0x7E1718]）
+分扇区比较，多分支按 dx/dy 符号返回 **4/5/6/7 象限朝向编码**（add eax,4/
+5/6/7 + setle 符号修正 + and 0xfc 掩码）。c3 无栈参 = 纯寄存器传参
+（ecx 点A + edx 点B）。
+★原版怪癖（照抄）：① **-dy 取反存储**（A.Y-B.Y 而非 B.Y-A.Y——斜率的
+y 轴反向，等距坐标系 y 向下推断）；② **π/8 常量双压**（0x3FD921FB54442D18
+= 0.3927rad = 22.5°——8 扇区半宽角）；③ **fcompp/fnstsw ax/test ah,1
+比较序列**（x87 比较后读状态字——MSVC 惯用）；④ **setle/dec/and 0xfc/
+add 4-7 编码**（象限 → 0-7 朝向数，低 2 位象限+高位符号——8 方向朝向
+推断）；⑤ **返回 4 默认收尾**（edi 符号判定兜底——象限下边界）。
+★跨批次闭合：**被调 0x4CACB0（batch 065——表驱动 sin 实锤）/0x4CAD00
+（batch 065——cos 孪生 partial）——本条=调用现场 ×2**；**[0x7E1718]=1.0
+（batch 166 实锤）**；**[0x7E4900] 新常量（第二斜率基准）**；**callers 含
+带名 WaveClass::WaveClass**——冲击波类构造时经本函数算两点朝向（YRpp
+WaveClass 系）；**batch 327 0x70BCB0（方位计算函数）同 sin/cos+朝向
+家族**（GetFacing half 解码 + 0x4CACB0/0x4CAD00 应用点）。
+⚠️ partial：宿主类（0x75xxxx 区 WaveClass 系推断）、fcompp 比较链的
+精确扇区划分（8 扇区推断）、[0x7E4900] 常量值（未读字节）、返回编码
+4/5/6/7 的象限语义精确映射（8 方向朝向推断）、cot(π/8) 组合的用途
+（斜率基准推断）。
+
+================================================================================
+（batch 480 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（朝向族已有 FacingStruct 模型 batch
+083 + 本批为两点朝向变体，扇区划分未完全取证前不建模型）。模型价值：
+**两点朝向计算登记**（WaveClass 构造场景实锤 + sin/cos 应用点 + π/8 常量
+新登记）。本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实
+跑核实）。登记一行 semantics_verified + assembly_verified_semantics_
+confirmed（全段字节读完 + 被调登记交叉 + 常量实锤），partial 项如实标注。
