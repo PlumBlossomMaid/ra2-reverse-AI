@@ -1,0 +1,84 @@
+frontier batch 573 — 窗口相对定位器 0x00777080（218B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x777080 callers=3/unique=3/deps=4058/
+body=218B，unique_callers **FUN_0052d9a0（选关 0x52D9A0，QWEN.md 游戏运行流实锤）**/
+FUN_00531cc0/FUN_00777060（0x777060 邻函数）——均未登记）。**218B 全字节读完**
+（0x777080-0x777159，ret 无栈参 = 双寄存器参 ecx/edx）。
+取证手段：disasm.py 全读 + **IAT 三槽 PE 实锤** + 四批次锚点交叉（200/221/361/483）+
+ranking 调用者。
+
+================================================================================
+0x00777080 —— 窗口相对定位器（推断名，218B）
+================================================================================
+**IAT 槽实锤（PE 导入表解析）**：
+```
+[0x7E13F0] = USER32.dll!SetWindowPos
+[0x7E14C4] = USER32.dll!GetClientRect
+[0x7E14B8] = USER32.dll!ClientToScreen
+```
+机器码（完整 218B，关键段）：
+```
+00777080  sub esp,0x20/lea eax,[esp]/push 族
+00777089  mov ebp,[0x7e14c4]              ; ★★GetClientRect 槽
+00777091  mov ebx,edx（★参数2=hWndA）/mov edi,ecx（★参数1=hWndB）
+00777093  push eax/push ebx/call ebp      ; ★★GetClientRect(hWndA, &rect1)
+00777099  cmp ebx,[0xb73550]              ; ★★hWndA == Game::hWnd（batch 200/203/221 实锤）
+0077709f  jne 0x7770b5
+007770a1  mov ecx,[0x8a00a4]/mov edx,[0x8a00a8]
+007770ad  mov [esp+0x18],ecx/[esp+0x1c],edx ; ★★rect2 = [0x8A00A4]/[0x8A00A8]（分辨率对）
+007770b5  mov esi,[0x7e14b8]              ; ★★ClientToScreen 槽
+007770bb  lea eax,[esp+0x10]/push eax/push ebx/call esi   ; ★ClientToScreen(hWndA,&pt1)
+007770c3  lea ecx,[esp+0x18]/push ecx/push ebx/call esi   ; ★ClientToScreen(hWndA,&rect2)
+007770cb  mov ebx,[esp+0x1c]/…                            ; ★换算（rect2.right）
+007770db  sub eax,edx/[esp+0x1c] = eax                    ; ★rect3.left = rect2.left - pt1.x
+007770e6  sub ebx,eax/[esp+0x24] = ebx                    ; ★rect3.w = rect2.right - rect2.left
+007770ed  call ebp                        ; ★★GetClientRect(hWndB, &rect3)
+007770ef  lea edx,[esp+0x20]/push edx/push edi/call esi   ; ★ClientToScreen(hWndB,&pt2)
+007770f7  lea eax,[esp+0x28]/push eax/push edi/call esi   ; ★ClientToScreen(hWndB,&rect4)
+00777113  sub ecx,ebp/sub eax,ecx/sub esi,ebx             ; ★两窗偏差
+00777119  inc eax/cdq/sub eax,edx/sar ecx,1 ; ★★(diff+1)/2（半程折半，符号修正）
+0077712f  inc eax/cdq/sub eax,edx/sar eax,1 ; ★★(diff+1)/2
+00777135  test ecx/jge/xor ecx              ; ★★负值钳 0
+0077713b  test eax/jge/xor eax              ; ★★负值钳 0
+00777141  push 5/push -1/push -1/push eax/push ecx/push 0/push edi
+0077714c  call [0x7e13f0]                 ; ★★SetWindowPos(hWndB, 0, x, y, -1, -1, 5)
+00777152  pop 族/add esp,0x20/ret
+```
+**语义（推断名）**：**窗口相对定位器**——`__fastcall` 双寄存器参（ecx=hWndB 目标窗口、
+edx=hWndA 参照窗口）：
+① `GetClientRect(hWndA, &rect1)` 取参照窗口客户区；
+② 若 `hWndA == Game::hWnd`（`[0xB73550]`）→ 用**全局分辨率对** `[0x8A00A4]`/`[0x8A00A8]`
+   覆盖矩形（**主窗口尺寸取引擎分辨率而非 Win32 客户区**）；
+③ `ClientToScreen(hWndA, …)` 两次把矩形转屏幕坐标 → 算出相对偏移与宽度；
+④ 对目标窗口 `hWndB` 同样 `GetClientRect` + 两次 `ClientToScreen` → 求两窗偏差 →
+   **`(diff+1)/2` 半程折半**（`inc` + `cdq/sub` + `sar 1`——算术右移的手写符号修正
+   除法）→ **负值钳 0**；
+⑤ `SetWindowPos(hWndB, 0, x, y, -1, -1, 5)`——**移动目标窗口到居中位置**（cx/cy=-1
+   保持尺寸，flags=5=SWP_NOSIZE|SWP_NOZORDER 不激活不改 Z 序）。
+★原版怪癖（照抄）：① **主窗口尺寸用全局分辨率对 [0x8A00A4]/[0x8A00A8] 覆盖**
+   （非 Win32 客户区——引擎分辨率与实际窗口可能不一致，必须照抄）；② **`(diff+1)/2`
+   手写半程折半**（`inc`/`cdq`/`sub`/`sar` 四步——MSVC 除法符号修正惯用；先 +1 再
+   折半 = 向上取整的居中）；③ **负值钳 0 两处**（`test/jge/xor` 惯用——居中量为负
+   时贴边）；④ **cx/cy = -1 + flags 5**（SWP_NOSIZE|SWP_NOZORDER——只移不改尺寸/不
+   激活）；⑤ **双寄存器参**（ecx=hWndB/edx=hWndA，ret 无栈参）；⑥
+   `ClientToScreen` 槽被**两次**取用（同槽不同目标）。
+★跨批次闭合：**batch 200（0x775690 窗口坐标变换——GetWindowRect/GetClientRect/
+   ClientToScreen 三槽实锤同族，本条为 SetWindowPos 移动端）**+**batch 203（0x657CE0
+   同 [0xB73550] 窗口句柄）**+**batch 221（0x560BF0 会话初始化——[0x8A00A4]/[0x8A00A8]
+   分辨率对写回）**+**batch 361/483（分辨率判定 0x320/0x280 同全局）**——**窗口/分辨率
+   主线**：分辨率对 `[0x8A00A4]`/`[0x8A00A8]` 从"会话初始化写入"到"窗口定位读取"闭合。
+⚠️ partial：函数精确名（窗口相对定位器推断）、两参窗口角色（hWndB 目标/hWndA 参照
+   推断）、居中语义（半程折半=居中推断）、`[0x8A00A4]`/`[0x8A00A8]` 精确字段对
+   （宽/高 或 左/右 推断——batch 361 判分辨率 0x320=800）、FUN_00531cc0/
+   FUN_00777060（调用者新候选，后者为 0x777060 邻函数）。
+
+================================================================================
+（batch 573 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：无宿主类（自由函数），核心是 Win32 窗口几何
+API 编排。模型价值：**窗口相对定位完整动作序**（GetClientRect → 分辨率对覆盖 →
+ClientToScreen ×4 → 半程折半 + 负值钳 0 → SetWindowPos(cx/cy=-1, flags=5)）+ **窗口/
+分辨率主线闭合**（[0x8A00A4]/[0x8A00A8] 写入端 batch 221 → 读取端本条）。2 个调用者
+候选。本批无产品代码改动，ctest 维持 **43/43 全绿**。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（218B 全段字节读完 + IAT 三槽 PE 实锤 +
+四批次锚点交叉），partial 项如实标注。
