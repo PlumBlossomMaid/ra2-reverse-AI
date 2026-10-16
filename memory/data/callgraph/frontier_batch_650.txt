@@ -1,0 +1,110 @@
+frontier batch 650 — FrameSync 只发数据包构造器 0x0064A000（178B）（2026-10-17）
+
+口径：候选**只从 picker 未登记池取**（0x00528F00 后下一未登记高扇入候选
+0x0064A000 FUN_0064a000（unclassified 无带名）callers=3/unique=3/deps=2551/
+body=178B（functions.tsv 边界 0x64A000-0x64A0B1 = 178B 吻合），direct_edges
+7 条调用边 → unique_callers FUN_006475f0（1 处，★未登记）/FUN_00648350（5 处
+——★未登记，0x648468 现场：call 0x4068e0 → mov edx,[0xafa400] → and edx,0xffff
+→ mov ecx,esi（★this=esi）→ 调本条）/FUN_00648710（1 处，★未登记））。
+**224B 全字节读完**（0x64A000-0x64A0D0，0x64A0B2 起 nop 对齐 ×14 + 0x64A0C0
+下一函数开头确认边界；thiscall，2 寄存器参：ecx=this、edx=param2）。
+取证手段：disasm.py 224B 全读（含 0x647900/0x648468 两个 caller 现场 48B）+
+PE 字符串读取（`_read_strs_8377.py`——0x8377DC='Sent FrameSync only packet\n'
+日志串实锤）+ xref_abs.py 0xA83D4C 交叉验证（batch 062/171/183 PlayerPtr）
++ frontier_status.tsv 交叉验证（全部相关全局未登记、caller 均未登记）+ 
+functions.tsv 边界核对。
+
+================================================================================
+0x0064A000 —— FrameSync 只发数据包构造器（178B）
+================================================================================
+机器码（完整 178B）：
+```
+0064a000  sub esp,0x70                     （★112B 栈帧）
+0064a005  mov ebx,ecx                      （★this）
+0064a008  mov ecx,0x1b / xor eax,eax
+0064a00a  lea edi,[esp+0xC] / rep stosd ×0x1B + stosw + stosb
+                                           （★清 111B 缓冲：0x1B dword=108 +
+                                            2 word + 1 byte）
+0064a013  mov ebp,edx                      （★param2 = edx）
+0064a01a  mov eax,[0xa8b24c]               （★[0xA8B24C] 模式标志）
+0064a01f  mov byte [esp+0xC],0x19          （★缓冲[0]=0x19 类型码）
+0064a024  cmp eax,2 / jne 0x64a051         （★[0xA8B24C]==2 分支）
+0064a029  mov ecx,[0xa8b550] / mov edx,[0xa8ed84]
+0064a036  mov esi,[0xa8b554]
+0064a03c  lea eax,[esi+ecx] / lea eax,[eax+edx-1]
+0064a045  xor edx,edx / div esi / imul eax,esi
+0064a04a  mov [esp+0x13],eax               （★对齐计算：([0xA8B554]+
+                                            [0xA8B550]+[0xA8ED84]-1)/
+                                            [0xA8B554]*[0xA8B554]——向上
+                                            取整到 [0xA8B554] 倍数；写缓冲
+                                            +0x07）
+0064a051  mov ecx,[0xa8b550] / mov eax,[0xa8ed84]
+0064a05c  lea edx,[ecx+eax] / mov [esp+0xF],edx
+                                           （★else 分支：缓冲+0x03 =
+                                            [0xA8B550]+[0xA8ED84]）
+0064a063  mov eax,[0xa83d4c]               （★★★batch 062/171/183 PlayerPtr）
+0064a06a  push -1                          （★虚调用栈参1 = -1）
+0064a06c  push 0                           （★栈参2 = 0）
+0064a06e  push 0xe                         （★栈参3 = 0xE）
+0064a06e  mov dl,[eax+0x30] / mov [esp+0x1A],dl（★PlayerPtr->+0x30 家号
+                                             → 缓冲+0x0E）
+0064a071  mov eax,[0xa8e7a8] / mov [esp+0x1F],eax（★[0xA8E7A8] → 缓冲+0x13）
+0064a084  mov [esp+0x25],cl                （★cl = [0xA8B550] 低字节 ——
+                                             ★0x64A029/0x64A051 mov ecx,
+                                            [0xa8b550] 后 cl 恒=其低字节，
+                                            两分支一致 → 缓冲+0x19）
+0064a08b  mov word [esp+0x27],bp           （★param2 低字 → 缓冲+0x1B）
+0064a080  lea eax,[esp+0x18] / push eax    （★缓冲+0x0C 指针作第 4 栈参）
+0064a090  call [edx+8]                     （★this->虚表槽 8——会话对象
+                                            发送方法；thiscall this=ecx=ebx，
+                                            4 栈参 -1/0/0xE/缓冲指针）
+0064a093  push 0x8377DC / call 0x4068E0    （★★★'Sent FrameSync only
+                                            packet\n'——batch 001 日志桩）
+0064a09d  mov eax,[0xb0487c] / inc eax / mov [0xb0487c],eax
+                                           （★[0xB0487C] 计数 +1）
+0064a0b1  ret
+```
+**语义（日志串实锤 + 六全局 + 虚表槽 8 派发 + 三 caller）**：**FrameSync 只发
+数据包构造器（推断名——不带头部用户输入的纯同步包）**——thiscall，ecx=this
+（会话/同步对象）、edx=param2（帧号/序号推断）：① 清 111B 栈缓冲并置缓冲[0]
+=0x19 类型码；② [0xA8B24C]==2 时缓冲+0x07 = 对齐到 [0xA8B554] 倍数的
+([0xA8B554]+[0xA8B550]+[0xA8ED84]-1)/[0xA8B554]*[0xA8B554]（★含 [0xA8ED84]
+——batch 645 场景重置器登记的同区全局），否则缓冲+0x03 = [0xA8B550]+
+[0xA8ED84]；③ 填 PlayerPtr（[0xA83D4C]）->+0x30 家号至缓冲+0x0E、[0xA8E7A8]
+至缓冲+0x13、[0xA8B550] 低字节至缓冲+0x19、param2 低字至缓冲+0x1B；④
+this->虚表槽 8（4 栈参 -1/0/0xE/缓冲+0x0C 指针）派发送出——**FrameSync
+（帧同步）网络机制：每帧向所有玩家广播的精简同步包**；⑤ 日志 'Sent
+FrameSync only packet' + [0xB0487C] 计数自增。
+★原版怪癖（照抄）：① **缓冲[0]=0x19 类型码硬编码**（0x19=25——FrameSync
+only 包类型标记推断）；② **[0xA8B24C]==2 双分支写不同偏移**（==2 走对齐
+公式写 +0x07，!=2 走简单和写 +0x03——模式相关布局切换）；③ **对齐公式=
+向上取整到 [0xA8B554] 倍数**（(a+b+c-1)/b*b 经典上取整惯用法）；④ **cl
+复用 [0xA8B550] 低字节**（0x64A029/0x64A051 mov ecx,[0xa8b550] 的残留——
+两分支恰好都写 cl=[0xA8B550] 低字节，编译器寄存器复用）；⑤ **虚调用 4 栈参
+含 -1/0/0xE 常量与缓冲+0x0C 指针**（非缓冲首址——传的是局部交互窗口）；
+⑥ **[0xB0487C] 全局计数自增**（帧同步包发送次数统计推断）；⑦ 清缓冲 111B
+= 0x1B dword + word + byte 非对齐长度（108+2+1——结构尾 1 字节字段推断）。
+★跨批次闭合：**batch 062/171/183（[0xA83D4C] PlayerPtr 全局再命中——家号
++0x30 字段读入同步包）**+**batch 645（[0xA8ED84] 场景重置同区全局——对齐
+公式含它）**+**batch 001（0x4068E0 日志桩——FrameSync 字符串经它输出）**。
+新候选：三 caller（FUN_006475f0/FUN_00648350 五调用点/FUN_00648710）、
+[0xA8B24C]/[0xA8B550]/[0xA8B554]/[0xA8E7A8]/[0xB0487C] 五全局（全部未登记）、
+this->虚表槽 8 目标函数（未解析）。
+⚠️ partial：函数精确名（unclassified——推断 FrameSync 只发数据包构造器）、
+this 宿主类（会话/同步对象推断）、param2 语义（帧号/序号推断）、缓冲[0]=0x19
+精确含义（包类型码推断）、[0xA8B24C] 双分支语义（请求/强制模式推断）、
+[0xA8B550]/[0xA8B554]/[0xA8E7A8] 语义（同步窗口/序号/尾戳推断）、[0xB0487C]
+计数用途、虚表槽 8 目标身份、三 caller 身份。
+
+================================================================================
+（batch 650 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：178B FrameSync 数据包构造惯用法（111B
+缓冲 + 对齐公式 + 虚表槽发送），宿主与五全局语义 partial，无独立算法切片
+（随网络会话框架整体立案时落地——FrameSync 网络机制域，batch 648 网络会话
+发送同域）。模型价值：**FrameSync 帧同步网络机制首条线索**（batch 648 主玩家
+列表发送 + 本条只发同步包——网络同步家族两成员，全局 [0xA8B550]/
+[0xA8B554]/[0xA8ED84] 成组出现待后续立案）。本批无产品代码改动，ctest 维持
+**43/43 全绿**。登记一行 semantics_verified + assembly_verified_semantics_
+confirmed（178B 全段字节读完 + 日志串 PE 实锤 + 六全局交叉验证），partial
+项如实标注。
