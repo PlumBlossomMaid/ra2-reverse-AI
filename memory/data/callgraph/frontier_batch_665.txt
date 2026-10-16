@@ -1,0 +1,97 @@
+frontier batch 665 — FUN_00773070 门控 sqrt 换算器 0x00773070（92B）（2026-10-17）
+
+口径：候选**只从 picker 未登记池取**（0x00489180 后下一未登记高扇入候选
+0x00773070 FUN_00773070（unclassified 无带名，functions.tsv 边界
+0x773070-0x7730CB=92B 吻合——后邻 0x7730D0 `mov eax,0x160` 确认边界）
+callers=3/unique=3/deps=1959，body=92B，**3 条 E8 call 调用边** →
+unique_callers **FUN_006fda00（0x6FDB0A，0x6FDA00-0x6FDB77 未登记）**/
+**FUN_006fdd50（0x6FE53A，0x6FDD50-0x6FF94E 未登记）**/**FUN_0070bcb0
+（0x70BD91，0x70BCB0-0x70BE44 未登记）**。**112B 全字节读完**（0x773070-
+0x7730CB ret 4 + 0x7730CC-0x7730CF nop + 0x7730D0 后邻确认边界）。取证
+手段：disasm.py 112B 全读 + frontier_status.tsv 交叉验证（0x48ACF0 batch
+267 已登记——[0x8871E0]+0x16B8×常量 getter，本条调用现场再消费；
+0x48AB90 batch 346 已登记——加权 sqrt 换算，本条调用现场再消费 + 本体
+0x48AB90 反汇编 48B 确认传参形态）+ functions.tsv 边界 + E8 调用边扫描
+（自写脚本 3 处 + 归属区间判定 + 三处调用现场反汇编）。
+================================================================================
+0x00773070 —— FUN_00773070 门控 sqrt 换算器（92B）
+================================================================================
+机器码（全 92B 主结构）：
+```
+00773070  mov eax, [ecx+0xa0]            （★this->+0xA0 对象指针）
+00773076  sub esp, 8
+00773079  test eax, eax
+0077307b  je 0x7730c0                    （★+0xA0==NULL → 返 this->+0xA8）
+0077307d  mov edx, [eax+0x2dc]           （★对象 +0x2DC 字段）
+00773083  test edx, edx
+00773085  jne 0x7730c0                   （★+0x2DC≠0 → 返 this->+0xA8——
+                                           状态门控）
+00773087  mov cl, [eax+0x295]            （★对象 +0x295 字节标志）
+0077308d  test cl, cl
+0077308f  je 0x773098                    （★==0 → 直读路径）
+00773091  call 0x48acf0                  （★★★batch 267 浮点标量 getter——
+                                           [0x8871E0]+0x16B8 × [0x7E1738]
+                                           常量 → ST0 double）
+00773096  jmp 0x7730a3
+00773098  mov eax, [0x8871e0]            （★全局实例 [0x8871E0]）
+0077309d  fild dword [eax+0x16b8]        （★★直读 [0x8871E0]+0x16B8 int →
+                                           double——不乘常量）
+007730a3  fstp qword [esp]               （★double 存栈）
+007730a7  mov ecx, [esp+4]               （★取 double 高 32 位）
+007730ab  mov edx, [esp]                 （★取 double 低 32 位）
+007730af  push ecx                       （★push 高半——栈参2）
+007730b0  mov ecx, [esp+0x10]            （★this 重读——push 后偏移补偿）
+007730b4  push edx                       （★push 低半——栈参1）
+007730b5  call 0x48ab90                  （★★★batch 346 加权 sqrt 换算——
+                                           fild×权重×1.2 → sqrt → _ftol）
+007730ba  add esp, 8
+007730bd  ret 4                          （★1 栈参回收）
+007730c0  mov eax, [ecx+0xa8]            （★门控失败 → 返 this->+0xA8 默认值）
+007730c6  add esp, 8
+007730c9  ret 4
+```
+**语义（112B 全读 + 双锚点 + 三调用现场）**：**FUN_00773070 门控 sqrt
+换算器（推断名）**——thiscall 1 栈参：① this->+0xA0 对象非空且对象
++0x2DC==0（状态门控）才进入换算，否则返 this->+0xA8 默认值；② 按对象
++0x295 字节标志选值：≠0 经 0x48ACF0（[0x8871E0]+0x16B8 × 常量 getter）
+取 double、==0 直读 `fild [0x8871E0]+0x16B8`（int→double 不乘常量）——
+**两路径值来源相同字段但是否乘 [0x7E1738] 常量不同**；③ double 拆高低
+半入栈传 0x48AB90（加权 sqrt：×1.2 → sqrt → _ftol 向零截断）→ 返回 int；
+④ ret 4 收 1 栈参。**调用现场**：三处均为 sqrt(_ftol) 预处理值 push +
+this 传入（0x6FDB0A 现场 `call 0x4cac40（sqrt）/call 0x7c5f00（_ftol）/
+mov ebx,eax / mov ecx,edi / push ebx / call 0x773070`；0x6FE53A 现场同款
+`fild→fstp→sqrt→_ftol→push eax / mov ecx,ebx`；0x70BD91 现场
+`fild [esp+0x10]→fstp→push eax→call`）——**调用方先算 sqrt 值作栈参1、
+本条再对 [0x8871E0]+0x16B8 加权 sqrt 换算**（值+权双路 sqrt）。
+★原版怪癖（照抄）：① **双门控**（+0xA0 空 / +0x2DC≠0 都返 +0xA8 默认——
+对象存在且空闲才换算）；② **+0x295 标志两路径**（经 getter ×常量 vs 直读
+fild——同字段不同缩放，标志=缩放开关推断）；③ **double 拆高低半传参**
+（fstp 栈 + mov/push 高低半——0x48AB90 以 2 栈参收 double，编译器惯用）；
+④ **调用方双 sqrt**（调用方先 sqrt 预处理 + 本条内部 0x48AB90 再 sqrt——
+嵌套开方）；⑤ **this 重读偏移补偿**（push 后 `mov ecx,[esp+0x10]`——栈
+偏移随 push 变化编译器惯用）；⑥ **[0x8871E0]+0x16B8 共享字段**（batch 267
+getter 与 batch 664 +0x16C8 上限同实例邻域）。
+★跨批次闭合：**batch 267（0x48ACF0 浮点标量 getter——本条调用现场再
+消费，[0x8871E0]+0x16B8 × 常量）**+**batch 346（0x48AB90 加权 sqrt 换算
+——本条调用现场再消费 + 本体反汇编传参形态确认）**+**batch 664（[0x8871E0]
++0x16C8 上限——同实例邻域字段，+0x16B8 值来源互证）**+[0x8871E0]
+（batch 221/259/266/267/269/270 共享实例——+0x16B8 又偏移应用）+0x4CAC40
+sqrt（batch 065——调用现场 0x6FDB0A/0x6FE53A 内预处理）。新候选：
+FUN_006fda00/FUN_006fdd50/FUN_0070bcb0（未登记 caller）、对象 +0x2DC/
++0x295 字段（门控标志推断）、[0x7E1738]（batch 267 常量再确认）。
+⚠️ partial：函数精确名（推断 门控 sqrt 换算器）、+0x2DC/+0x295 字段
+精确语义（空闲/缩放开关推断）、两路径值用途（射程/速度/伤害计算推断——
+调用方 sqrt 预处理支持战斗数值域）、+0xA8 默认值来源、0x48AB90 传参
+双 dword 精确语义（batch 346 partial 延续）、三 caller 业务含义。
+
+================================================================================
+（batch 665 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：门控 sqrt 换算惯用法（双门控 +
+两路径取值 + 嵌套 sqrt——战斗数值域附属换算，无独立算法切片；精确业务
+语义 partial，随宿主类立案时落地）。模型价值：**门控换算域调用现场全景**
+（batch 267/346 双锚点再消费 + [0x8871E0]+0x16B8 值来源第三消费点 +
+三 caller sqrt 预处理模式——值+权双路 sqrt 惯用实锤）。本批无产品代码
+改动，ctest 维持 **43/43 全绿**。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（92B 全段字节读完 + 双锚点交叉
+验证 + 3 调用现场归属），partial 项如实标注。
