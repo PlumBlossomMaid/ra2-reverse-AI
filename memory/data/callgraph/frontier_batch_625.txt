@@ -1,0 +1,62 @@
+frontier batch 625 — CRT::_rand 0x007CB4AA（34B）（2026-10-17）
+
+口径：候选**只从 picker 未登记池取**（0x00641EE0 后下一未登记高扇入候选 0x007CB4AA
+_rand（ranking 带名）callers=3/unique=3/deps=2616/body=34B，unique_callers
+FUN_00558dd0/FUN_005b82f0/★FUN_00631d40（4 处调用）——★FUN_005B82F0 与 batch 624
+同 caller 重叠）。**34B 全字节读完**（0x7CB4AA-0x7CB4CB，ret c3，__cdecl 无参）。
+取证手段：disasm.py 60B 全读（含前文衔接确认无前缀栈操作 + 后邻 0x7CB4CC 是 batch
+267 已登记的 wcsncmp——边界清晰） + direct_edges 调用图核对（★50978 行 _rand →
+0x7D140B 唯一被调） + **已登记锚点交叉（batch 008 0x7D140B _getptd——本条=唯一
+被调，Per-thread CRT error-state allocation）** + **ranking.tsv 带名 _rand** +
+**MSVC6 CRT 标准实现比对（LCG 常量与 VC6 源码逐项吻合）**。
+
+================================================================================
+0x007CB4AA —— CRT::_rand（34B，标准 MSVC6 随机数）
+================================================================================
+机器码（完整 34B）：
+```
+007cb4aa  call 0x7d140b            （★_getptd——batch 008 实锤：取线程局部数据
+                                   指针返回 eax）
+007cb4af  mov ecx,[eax+0x14]       （★ptd->holdrand——+0x14 随机数状态）
+007cb4b2  imul ecx,ecx,0x343fd     （★holdrand ×= 0x343FD = 214013）
+007cb4b8  add ecx,0x269ec3         （★holdrand += 0x269EC3 = 2531011）
+007cb4be  mov [eax+0x14],ecx       （★写回 ptd->holdrand）
+007cb4c1  mov eax,ecx
+007cb4c3  shr eax,0x10             （★>>16）
+007cb4c6  and eax,0x7fff           （★& 0x7FFF）
+007cb4cb  ret
+```
+**语义（ranking 带名 + MSVC6 标准实现比对）**：**CRT::_rand（标准 C 随机数）**——
+__cdecl 无参，`int rand(void)`：① `_getptd()`（batch 008 实锤 0x7D140B）取线程局部
+数据；② `ptd->holdrand = holdrand*0x343FD + 0x269EC3`——**标准 MSVC6 LCG**（乘法
+214013 = 0x343FD、增量 2531011 = 0x269EC3 与 VC6 CRT rand.c 逐项吻合）；③ 返回
+`(holdrand >> 16) & 0x7FFF`——**范围 [0, 32767]**（MSVC6 rand 的标准高位截取，
+取 16-30 位后再清最高位）。★与游戏内 Randomizer（R250 滞后 103/250，0x65C780）
+**完全无关**——_rand 是 CRT 标准函数，Randomizer 是 Westwood 自研生成器（QWEN.md
+RNG 里程碑实锤）；两套并存。
+★原版怪癖（照抄）：① **返回值 [0,32767]**（& 0x7FFF——高位截取非标准 C 的
+   [0,RAND_MAX] 全区间语义，量级减半）；② **32 位状态全程无符号回绕**（imul/add
+   自然回绕，无显式 mask——LCG 周期 2^32 依赖回绕）；③ **>>16 取中高位**（非取
+   低位——低位线性度差的经典规避，MSVC6 惯用）；④ **每次调用 _getptd**（无缓存
+   ——线程安全走 TLS 而非全局，与 batch 008 每次取 ptd 一致）；⑤ **ptd+0x14 状态**
+   （+0x14 字段——与 VC6 _threaddata 布局 holdrand 位置吻合）；⑥ ▲grep 显示
+   YRpp 无 _rand 封装（标准 C 函数不包）——Yrrp 只包游戏自有 Randomizer。
+★跨批次闭合：**batch 008（0x7D140B _getptd——本条=唯一被调，线程局部数据
+   实锤消费端）**+**batch 624（caller FUN_005B82F0 重叠——同一调用者同时调
+   ReadPCXPreview 与本条）**+**batch 267（0x7CB4CC wcsncmp——紧邻其后，CRT
+   0x7CB4xx 区相邻函数边界确认）**+**MSVC6 CRT 标准实现比对（LCG 常量
+   214013/2531011 吻合——CRT 归属实锤，非 Westwood 手写）**。
+⚠️ partial：无（34B 全读完）；函数名从 ranking.tsv（Ghidra 带名 _rand）——MSVC6
+   标准实现逐项吻合（常量 + 高位截取），CRT 归属确认；调用现场用途未逐一核对
+   （3 调用者语义推断为通用随机数消费）。
+
+================================================================================
+（batch 625 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：34B 标准 MSVC6 LCG 已由编译器 CRT 提供等价物
+（std::rand 或自写同 LCG 均有层选择），无独立算法切片。模型价值：**CRT::_rand 归属
+确认**（ranking 带名 + MSVC6 常量比对——0x7CB4xx 区 CRT 家族再闭合一员；与游戏
+Randomizer R250 双轨并存的实锤证据）。本批无产品代码改动，ctest 维持 **43/43
+全绿**。登记一行 crt_runtime_verified + assembly_verified_semantics_confirmed
+（34B 全段字节读完 + ranking 带名 + batch 008 _getptd 锚点 + MSVC6 标准实现比对），
+partial 项如实标注。
