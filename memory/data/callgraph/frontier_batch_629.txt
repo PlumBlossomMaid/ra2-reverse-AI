@@ -1,0 +1,92 @@
+frontier batch 629 — C 串追加器 0x007B4C20（172B）（2026-10-17）
+
+口径：候选**只从 picker 未登记池取**（0x006851F0 后下一未登记高扇入候选 0x007B4C20
+FUN_007b4c20（unclassified 无带名）callers=3/unique=3/deps=2594/body=172B，
+unique_callers FUN_007710b0/FUN_0079d110/FUN_007a0690（★7 处调用——配置/工具链聚
+类））。**172B 全字节读完**（0x7B4C20-0x7B4CC9，ret 4 = 1 栈参 + thiscall，ecx=this
+存 ebp，栈参=追加 C 串存 esi）。
+取证手段：disasm.py 200B 全读（含后邻 0x7B4CD0 下一函数开头确认边界——同区下一候选）
+ + direct_edges 调用图核对（★45601/49154/49418..49440 行 13 处调用站点全核对） +
+ **已登记锚点交叉（batch 001 0x7C8E17 operator new + 0x7C8B3D operator delete——
+ 本条=分配/释放现场各 1）** + **0x7B4xxx 区家族比对（batch 090 0x7B4690 槽位构造/
+ batch 059 0x7B46F0 带空指针置位的析构——同区 StringClass 家族）** + **YRpp 无
+ StringClass 覆盖确认（仅 StringTable.h 命中——0x7B4C20 无 JMP 映射）** +
+ functions.tsv 边界核对（0x7B4C20-0x7B4CC9=172B 吻合）。
+
+================================================================================
+0x007B4C20 —— C 串追加器（172B，StringClass-like Append/+=）
+================================================================================
+机器码（完整 172B）：
+```
+007b4c20  push ebx / push ebp / push esi
+007b4c23  mov esi,[esp+0x10]        （★栈参 1 = 追加 C 串）/ test esi / je 0x7b4cc4
+                                     （★参数 NULL → 直接返 this——整段跳过）
+007b4c29  mov ebp,ecx               （★this）
+007b4c32  mov edi,esi / or ecx,-1 / xor eax / repne scasb（★strlen(param)）
+007b4c3b  mov ebx,[ebp]             （★this->[0] = 旧缓冲指针）
+007b4c3e  not ecx / dec ecx         （★ecx = len2）
+007b4c41  mov edx,ecx / inc edx     （★edx = len2+1）
+007b4c44  test ebx,ebx / je 0x7b4c54（★旧缓冲空 → 跳过 strlen）
+007b4c48  mov edi,ebx / or ecx,-1 / repne scasb / not ecx / dec ecx
+                                     （★strlen(old) = len1）
+007b4c52  add edx,ecx               （★edx = len1+len2+1——总长含 NUL）
+007b4c54  push edx / call 0x7c8e17  （★★batch 001 operator new(total)）
+007b4c5d  mov edx,eax / test ebx / mov [ebp],edx（★this->[0] = 新缓冲）
+007b4c64  je 0x7b4c8b               （★旧缓冲空 → 跳直接置 NUL）
+007b4c66  mov edi,ebx / or ecx,-1 / xor eax / repne scasb / not ecx
+007b4c71  sub edi,ecx               （★edi = old 起始）/ mov eax,ecx
+007b4c75  mov esi,edi / mov edi,edx（★esi=old 源 / edi=新缓冲目标）
+007b4c79  shr ecx,2 / rep movsd     （★dword 段拷贝）→ mov ecx,eax / and ecx,3 /
+          rep movsb                 （★尾部 byte 段拷贝——len1 字节复制）
+007b4c85  mov esi,[esp+0x14]        （★重新载入 param）
+007b4c8b  mov byte[edx],0           （★旧缓冲空路径：新缓冲[0]=NUL）
+007b4c8e  mov edi,esi / or ecx,-1 / xor eax / repne scasb（★strlen(param)）
+007b4c97  not ecx / sub edi,ecx     （★edi = param 起始）/ mov esi,edi
+007b4c9d  mov edi,[ebp]             （★edi = 新缓冲）/ mov edx,ecx（★edx = len2+1）
+007b4ca2  or ecx,-1 / repne scasb   （★strlen(new)——★冗余：只用于把 edi 移到 NUL）
+007b4ca7  mov ecx,edx / dec edi     （★edi 指向新缓冲的 NUL 位置）
+007b4caa  shr ecx,2 / rep movsd     （★dword 段拷贝 param 含 NUL）
+007b4caf  mov ecx,edx / and ecx,3 / rep movsb（★尾部 byte 段）
+007b4cb6  test ebx,ebx / pop edi / je 0x7b4cc4（★旧缓冲空 → 不删）
+007b4cbb  push ebx / call 0x7c8b3d  （★★batch 001 operator delete(old)）
+007b4cc4  mov eax,ebp / pop 族 / ret 4（★返 this）
+```
+**语义（unclassified + 两锚点 + 0x7B4xxx 家族）**：**C 串追加器（推断名：StringClass
+like Append/+=——C 串缓冲追加）**——thiscall，ecx=this（宿主 +0 为 C 串缓冲指针），
+1 栈参 = 追加串：① 参数 NULL → 直接返 this（不追加）；② 计算新尺寸 = strlen(old) +
+strlen(param) + 1（含 NUL——旧缓冲空则仅 len(param)+1）；③ operator new 分配 →
+this->[0] = 新缓冲；④ 旧缓冲非空 → 复制旧串（rep movsd dword 段 + rep movsb 尾部
+byte 段——strlen 复用）；旧缓冲空 → 新缓冲[0]=NUL；⑤ 追加 param：repne scasb 定位
+新缓冲 NUL 位置（★冗余 strlen 仅移动指针）→ dec edi 指向 NUL → rep movsd/movsb 拷
+入 param 含 NUL——结果串 = old + param；⑥ 旧缓冲非空 → delete 旧缓冲；⑦ 返 this
+（ret 4）。
+★原版怪癖（照抄）：① **参数 NULL 整段跳过**（test esi/je 入口——NULL 追加直接返
+   this 不重分配）；② **尺寸 = len1+len2+1**（含 NUL——C 串语义非 StringClass 计数
+   语义）；③ **双 strlen 复用**（先算长度、拷贝前再重算——非一次扫描两用）；④
+   **rep movsd + 尾部 rep movsb 两段拷贝**（4 字节对齐快路径 + 余数 byte——strlen
+   结果 shr 2 分段，编译器展开标准模式）；⑤ **追加定位用 strlen 而非 memchr**
+   （repne scasb 到 NUL 后 dec edi——冗余计算 ecx 不用于计数，仅指针移动）；⑥
+   **old 空/非空双路径**（首次调用 new 缓冲直接写 byte[0]=0 再追加；非空复制旧串）；
+   ⑦ **delete 旧缓冲在拷贝完成后**（先新分配+拷贝+追加全部完成再释放旧——临时双
+   缓冲窗口）；⑧ **返回 this**（链式调用支持推断）；⑨ **ret 4 = 1 栈参**。
+★跨批次闭合：**batch 001（0x7C8E17 new + 0x7C8B3D delete——本条=分配/释放现场）**
+   +**batch 090（0x7B4690 槽位构造——0x7B4xxx 区 StringClass 家族同区）**+**batch
+   059（0x7B46F0 带空指针置位的析构——同区家族）**+**batch 597（VectorClass 插入
+   器内 StringClass operator= 槽位构造——0x7AE5D0 消费端推断同源）**+0x7B4CD0
+   （紧邻下一候选——同区同模板推断）。
+⚠️ partial：函数精确名（unclassified——推断 C 串追加器/StringClass Append；YRpp
+   无 StringClass 覆盖，0x7B4xxx 区家族推断）、宿主类（StringClass-like 缓冲持有者
+   推断——+0 缓冲指针）、0x7B4CD0 精确关系（紧邻同模板推断）、3 caller 业务含义
+   （0x7710B0/0x79D110/0x7A0690——配置/工具链聚类推断，0x7A0690 7 处高频调用）。
+
+================================================================================
+（batch 629 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：172B 纯 C 串追加惯用法（strlen×3 + rep movsd/
+movsb 两段拷贝 + new/delete），宿主类未确认（StringClass-like 推断），无独立算法
+切片——追加语义为通用 C 串操作，重写时 std::string 或自建缓冲均可按宿主落地。
+模型价值：**C 串追加器模板**（StringClass-like Append/+=——0x7B4xxx 家族成员 +
+batch 001 双锚点 + 0x7A0690 7 处高频调用现场）。无新被调候选。本批无产品代码改动，
+ctest 维持 **43/43 全绿**。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（172B 全段字节读完 + 两锚点全命中 +
+functions.tsv 边界核对），partial 项如实标注。
