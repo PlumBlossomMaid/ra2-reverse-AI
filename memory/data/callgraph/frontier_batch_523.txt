@@ -1,0 +1,54 @@
+frontier batch 523 — 句柄关闭器（DebugLog + CloseHandle + 置 -1）0x00774950（41B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=76/
+body=41B，ranking 名 FUN_00774950 unclassified——**推断名**），unique_callers
+FUN_005f1650/FUN_005f19e0/FUN_005f1b70/FUN_005f3650（全 0x5F 区——
+ObjectClass 附近）。
+**41B 全字节读完**（= 0x29，0x774950-0x774978，ret 无栈参）。
+取证手段：disasm.py 全读 + **batch 238 [0x7E11E0]=CloseHandle 实锤** +
+**xref_abs.py 0x7E11E0 40 处引用确认** + **0x4068E0 DebugLog（batch 001）**。
+
+================================================================================
+0x00774950 —— 句柄关闭器（推断名，41B，ret 无栈参）
+================================================================================
+机器码（完整，41B 整数）：
+```
+00774950  push esi / mov esi,ecx
+00774953  cmp dword[esi+0x5c],-1     ; ★★this+0x5C = 句柄字段
+00774957  je 0x774977                ; ★-1（无效）→ 跳过
+00774959  push 0x8497a4              ; ★DebugLog 参数（0x8497A4 字符串）
+0077495e  call 0x4068e0              ; ★★DebugLog（batch 001 已登记）
+00774963  mov eax,[esi+0x5c]         ; 句柄
+00774966  add esp,4
+00774969  push eax
+0077496a  call [0x7e11e0]           ; ★★CloseHandle 导入槽（batch 238 实锤）
+00774970  mov dword[esi+0x5c],0xffffffff  ; ★★置 -1
+00774977  pop esi / ret
+```
+**语义（推断名）**：**句柄关闭器**——__thiscall 无栈参：
+this+0x5C 句柄非 -1（有效）时：**DebugLog(0x8497A4)** + **CloseHandle**
+（[0x7E11E0] 导入槽，batch 238 实锤）→ 置 this+0x5C = -1；无效句柄
+直接跳过。
+★原版怪癖（照抄）：① **-1 哨兵即无效句柄**（先判后关——幂等：重复
+调用不重关）；② **关闭前 DebugLog**（带 0x8497A4 串——关闭事件日志，
+调试冗余推断）；③ **置 -1 无条件在关闭后**（防二次释放——惯用）；
+④ **CloseHandle 走 IAT 槽 [0x7E11E0]**（batch 238 已实锤同名导入槽）；
+⑤ ret 无栈参（纯 this 清理）。
+★跨批次闭合：**batch 238（[0x7E11E0]=CloseHandle 导入槽——本条=调用
+现场）**+**0x4068E0（batch 001——DebugLog，本条=调用现场）**+
+**batch 277/290（[0x7E11E0]/[0x7E1200] 导入槽族——文件句柄关闭同类）**+
+**0x7E11xx IAT 槽区（batch 133 的 [0x87E7F8] 临界区同区）**。
+⚠️ partial：0x8497A4 串内容（关闭日志标签推断——未读）、this+0x5C
+句柄的业务对象（文件/设备句柄推断——0x77 区宿主）、callers 四函数
+身份（0x5F 区——ObjectClass 家族析构链推断）。
+
+================================================================================
+（batch 523 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（宿主类未确认——句柄关闭惯用
+通用工具，模型价值受限于宿主；batch 238 已有 CloseHandle 导入槽
+登记）。模型价值：**CloseHandle 惯用登记**（-1 哨兵 + DebugLog +
+置 -1 三件套）+ **batch 238 导入槽调用现场**。本批无产品代码改动，
+ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（全段字节
+读完 + 导入槽实锤 + 跨批交叉），partial 项如实标注。
