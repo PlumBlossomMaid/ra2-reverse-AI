@@ -1,0 +1,67 @@
+frontier batch 616 — 状态消息格式化器 0x0077E7A0（114B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（0x4E59A0 后下一未登记高扇入候选 0x0077E7A0
+FUN_0077e7a0 callers=3/unique=3/deps=2694/body=114B，unique_callers FUN_0077F900
+（★★batch 126 消息泵第二实例）/FUN_00789B60/FUN_0078F000——后两者未登记）。
+**114B 全字节读完**（0x77E7A0-0x77E811，ret c3，thiscall，ecx=this 存 edi）。
+取证手段：disasm.py 全读 + direct_edges 调用图核对 + 已登记锚点交叉（**batch 057
+0x7C8EF4 printf 族 + batch 263 0x777B50 getter + batch 126 caller 0x77F900**）。
+
+================================================================================
+0x0077E7A0 —— 状态消息格式化器（推断名，114B）
+================================================================================
+机器码（完整 114B，分四段）：
+```
+; ── 段 1：数组遍历（[0xB76E58] 步长 0x94，写死槽）
+0077e7a0  push ecx / push esi/edi / mov edi,ecx（★this）
+0077e7a5  mov ecx,[0xb76b1c]（★★计数 [0xB76B1C]）/ test ecx / jle 0x77e7c2
+0077e7af  mov eax,0xb76e58（★★数组基址 [0xB76E58]）
+0077e7b4  循环：mov edx,[eax] / add eax,0x94（★步长 0x94=148B）/ dec ecx /
+          mov [esp+8],edx（★写 [esp+8] 死槽）/ jne 0x77e7b4
+; ── 段 2：三全局 XOR 组合
+0077e7c2  mov esi,[0xb77e04] / mov edx,[0xb77e08] / mov ecx,[0xb77e00]（★★三全局
+          [0xB77E00]/[0xB77E04]/[0xB77E08]）
+0077e7d4  xor esi,edx / push 0xa8b8e0 / xor esi,ecx（★三值 XOR → esi）
+; ── 段 3：格式化链（0x5E9560 → 0x5E9580 → 0x5E94D0 → 0x777B50 → printf）
+0077e7dd  call 0x5e9560（★未登记——0xA8B8E0 作参）
+0077e7e2  neg al / sbb eax,eax / inc eax / push eax（★布尔归一）
+0077e7e8  call 0x5e9580（★未登记）→ and eax,0xff / push eax
+0077e7f3  call 0x5e94d0（★未登记）→ push eax
+0077e7f8  push esi（★XOR 结果）→ call 0x777b50（★★batch 263 getter [0x822D1C]）
+          → push eax / push 0x84a540（★格式串）/ push edi（★this）
+0077e806  call 0x7c8ef4（★★batch 057 printf 族带计数包装——写 this）
+; ── 段 4：收尾
+0077e80b  add esp,0x20 / pop 族 / ret
+```
+**语义（推断名）**：**状态消息格式化器**——thiscall，ecx=this（目标字符串）：
+① 遍历 [0xB76E58] 数组（计数 [0xB76B1C]，步长 0x94）——每项首 dword 写入死槽
+   [esp+8]（结果未用）；
+② 三全局 [0xB77E00]/[0xB77E04]/[0xB77E08] XOR 组合 → esi；
+③ 格式化链：0x5E9560（0xA8B8E0 作参）→ 0x5E9580 → 0x5E94D0 → 0x777B50
+   （batch 263 getter [0x822D1C]）→ printf（batch 057 0x7C8EF4）格式串 [0x84A540]
+   写入 this。
+★原版怪癖（照抄）：① **数组遍历写死槽**（[esp+8] 每轮写入但最终未用——死存储，
+   编译器未消除；疑源码为"取末项"但结果未消费）；② **三全局 XOR 组合**（
+   [0xB77E00]^[0xB77E04]^[0xB77E08]——状态位组合推断）；③ **四连格式化链**（
+   0x5E9560 → 0x5E9580 → 0x5E94D0 → 0x777B50——前三个未登记、末一个 batch 263
+   getter）；④ **0xA8B8E0 作参**（0x5E9560 的实参——batch 605 也见 0xA8B8E0 同
+   全局）；⑤ **printf 写 this**（batch 057 0x7C8EF4——目标字符串变量）。
+★跨批次闭合：**batch 057（0x7C8EF4 printf 族——本条=调用现场）**+**batch 263
+   （0x777B50 getter [0x822D1C]——本条=格式化链末环）**+**batch 126（FUN_0077F900
+   消息泵第二实例——本条=其调用者，消息泵产出状态消息推断）**+[0xA8B8E0]（batch
+   605/264 同全局——场景/会话文件名推断）。
+⚠️ partial：函数精确名（状态消息格式化器推断）、[0xB76E58]/[0xB76B1C] 数组语义
+   （148B 步长条目推断）、三全局 XOR 业务语义、0x5E9560/0x5E9580/0x5E94D0 身份
+   （未登记新候选）、[0x84A540] 格式串内容、[esp+8] 死槽来源、FUN_00789B60/
+   FUN_0078F000（未登记）。
+
+================================================================================
+（batch 616 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：114B 纯格式化编排（数组遍历 + XOR + printf 链）
+无算法切片；三全局语义未闭合。模型价值：**状态消息格式化模板**（死槽数组遍历 +
+三全局 XOR + 四连格式化链 + printf 写 this——batch 057/263 锚点 + 消息泵 caller
+推断）+ 死存储怪癖实例（编译器未消除的 [esp+8]）。3 个新被调候选（0x5E9560/
+0x5E9580/0x5E94D0）。本批无产品代码改动，ctest 维持 **43/43 全绿**。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（114B 全字节读完 +
+batch 057/263 锚点命中 + caller 重叠确认），partial 项如实标注。
