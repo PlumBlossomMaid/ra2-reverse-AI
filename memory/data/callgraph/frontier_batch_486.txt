@@ -1,0 +1,79 @@
+frontier batch 486 — VectorClass 析构器 0x0040BCB0（73B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=161/
+body=73B，ranking 名 FUN_0040bcb0，unique_callers FUN_00732280/
+FUN_00732600/FUN_007327d0/FUN_00732950——与 batch 484 构造器 0x7342D0
+callers 重叠 FUN_00732280/FUN_00732950，同宿主构造/析构成对）。
+**73B 全字节读完**（= 0x49，0x40BCB0-0x40BCF6 ret 4 = 1 栈参）。取证手段：
+disasm.py 全读 + **batch 484 构造器 0x7342D0 同表互证** + **batch 479
+0x624480 析构器惯用同构对拍** + 被调 0x7C8B3D 已登记。
+
+================================================================================
+0x0040BCB0 —— VectorClass 析构器（推断名，73B，ret 4 = 1 栈参）
+================================================================================
+机器码（完整，73B 整数）：
+```
+0040bcb0  push esi
+0040bcb1  mov esi,ecx               ; ★esi = this
+0040bcb3  mov eax,[esi+4]           ; ★eax = this->+4（Items 指针）
+0040bcb6  mov [esi],0x7e180c        ; ★★装虚表 0x7E180C（batch 484 构造器先装表——构造/析构两端同基类表）
+0040bcbc  test eax,eax
+0040bcbe  je 0x40bcd7               ; ★Items 空 → 跳过
+0040bcc0  mov cl,[esi+0xd]          ; ★cl = this->+0xD（IsAllocated 自分配标志）
+0040bcc3  test cl,cl
+0040bcc5  je 0x40bcd7               ; ★非自分配 → 不删（外部 pMem 接管数组）
+0040bcc7  push eax
+0040bcc8  call 0x7c8b3d             ; ★★operator_delete(Items)（batch 001 实锤）
+0040bccd  add esp,4
+0040bcd0  mov [esi+4],0             ; ★Items = NULL
+0040bcd7  mov al,[esp+8]            ; ★al = 栈参 1（delete 标志）
+0040bcdb  mov byte[esi+0xd],0       ; ★IsAllocated = 0
+0040bcdf  test al,1                 ; ★栈参 1 位 0 判定
+0040bce1  mov [esi+8],0             ; ★Capacity = 0
+0040bce8  je 0x40bcf3               ; ★未置位 → 跳过 delete this
+0040bcea  push esi
+0040bceb  call 0x7c8b3d             ; ★★operator_delete(this)（batch 001 实锤）
+0040bcf0  add esp,4
+0040bcf3  mov eax,esi               ; ★返 this（已删则悬挂指针）
+0040bcf5  pop esi
+0040bcf6  ret 4
+```
+**语义（布局互证 + 惯用同构）**：**VectorClass 析构器（容器析构端）**——
+ret 4 = 1 栈参（delete 标志，位 0）：
+1. **装虚表 0x7E180C**（batch 484 构造器先装表——构造/析构两端同形态，
+   编译器对基类虚表的统一装填）；
+2. **清 Items**：+4 非空 且 +0xD IsAllocated → operator_delete(Items) +
+   置 NULL（外部 pMem 接管数组不删——batch 469/472/484 同语义）；
+3. **清状态**：+0xD = 0、+8 Capacity = 0；
+4. **栈参 1 位 0 置位 → operator_delete(this)**（对象自身释放）；
+5. 返 this（已删则悬挂指针——调用方不可再解引用）。
+**与 batch 479 0x624480（析构器惯用）同构**（清成员 + 位 0 门控 delete
+this + 返 this）；**与 batch 484 0x7342D0（构造器）布局逐字段互证**（+4
+Items/+8 Capacity/+0xC IsInitialized/+0xD IsAllocated）——**构造/析构成
+对闭合**。
+★原版怪癖（照抄）：① **析构也装虚表**（mov [esi],0x7E180C 在析构开头——
+基类虚表统一装填形态，非仅构造）；② **Items 双条件门控删除**（非空 +
+IsAllocated——batch 469/472 同语义，外部数组不删）；③ **栈参 1 位 0
+门控 delete this**（batch 463/479 同款惯用——析构时传 1/清理时传 0 推断）；
+④ **清状态与 delete this 分离**（+0xD/+8 无条件清、this 释放按标志）；
+⑤ **返 this 悬挂**（已删后仍返回）。
+★跨批次闭合：**batch 484 0x7342D0（构造器）——本条=析构成对，虚表
+0x7E180C 同表互证（容器族 ctor/dtor 两端）**；**batch 479 0x624480
+（析构器惯用模板）同构对拍**；**容器生命周期五件套闭合**（ctor 484/
+Add 467/SetCapacity 469/Clear 472+474/dtor 本批）；**被调 0x7C8B3D
+（batch 001——operator_delete ×2：Items + this）**；**callers 与 batch
+484 重叠（FUN_00732280/FUN_00732950——0x73xxxx 区宿主构造/析构成对）**。
+⚠️ partial：宿主类（0x73xxxx 区推断——batch 484 同区）、0x7E180C 精确
+宿主（VectorClass 基类表推断）、栈参 1 位 0 的调用方传值模式（析构 1/
+清理 0 推断）、+0xC IsInitialized 析构时未动（编译器省略推断）。
+
+================================================================================
+（batch 486 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（容器族已有 batch 484 构造器 + 析构
+惯用模式覆盖，ValueType 定后并入同一容器模型）。模型价值：**容器族析构端
+闭合**（与 batch 484 构造器成对 + 虚表 0x7E180C 双端互证 + 生命周期五件套
+完整）。本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑
+核实）。登记一行 semantics_verified + assembly_verified_semantics_
+confirmed（全段字节读完 + 构造器互证 + 惯用同构 + 被调登记），partial 项
+如实标注。
