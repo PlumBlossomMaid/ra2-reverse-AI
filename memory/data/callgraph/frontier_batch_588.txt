@@ -1,0 +1,81 @@
+frontier batch 588 — 资源清理器 0x0072CF90（114B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x72CF90 FUN_0072cf90 callers=3/
+unique=3/deps=2917/body=114B，unique_callers FUN_005dc350/FUN_006ae2c0/
+FUN_00785740——前两与 batch 361 已登记 0x72CF40 的 callers 重叠）。**114B 全字节
+读完**（0x72CF90-0x72D001，ret c3，thiscall 但 ecx 未用——纯全局操作）。
+**重大配对闭合**：本条 = **batch 361 已登记 0x72CF40（全局单次初始化：`[0xB0FCD9]`
+门控 + LoadWholeFileEx + ConvertClass::CreateFromFile）的清理端**——同五全局
+（[0xB0FCD8]/[0xB0FCD9]/[0xB0FA18]/[0xB0FCDC]/[0xB0FCE0]）+ caller 集重叠。
+取证手段：disasm.py 全读 + batch 361 文档对照（同全局 + 同 caller）+ 已登记锚点
+（0x69E500 batch 107 SHPStruct::~SHPStruct、0x7C8B3D batch 001 operator delete）。
+
+================================================================================
+0x0072CF90 —— 资源清理器（推断名：SHP 缓存 + 转换器缓存释放，114B）
+================================================================================
+机器码（完整 114B）：
+```
+0072cf90  mov al,[0xb0fcd9]        ; ★★全局字节门控（batch 361 初始化标志）
+0072cf95  push ebx / xor ebx,ebx
+0072cf98  cmp al,bl / je 0x72cffa  ; ★★未初始化 → 直接清门控（幂等）
+; ── 段 2：SHP 数据释放（[0xB0FCD8] 子标志门控）
+0072cf9c  cmp byte [0xb0fcd8],bl / je 0x72cfc6
+0072cfa4  push esi / mov esi,[0xb0fa18]   ; ★★全局 SHP 数据指针（batch 361 存）
+0072cfab  cmp esi,ebx / je 0x72cfbf
+0072cfaf  mov ecx,esi / call 0x69e500     ; ★★batch 107 SHPStruct::~SHPStruct
+0072cfb6  push esi / call 0x7c8b3d        ; ★★batch 001 operator delete
+0072cfbf  mov byte [0xb0fcd8],bl          ; ★清子标志
+0072cfc5  pop esi
+; ── 段 3：[0xB0FCDC] 释放
+0072cfc6  mov eax,[0xb0fcdc] / mov [0xb0fa18],ebx   ; ★清 [0xB0FA18]
+0072cfd1  cmp eax,ebx / je 0x72cfe4
+0072cfd5  push eax / call 0x7c8b3d        ; ★★operator delete
+0072cfde  mov [0xb0fcdc],ebx              ; ★清
+; ── 段 4：[0xB0FCE0] 虚表槽 0 释放
+0072cfe4  mov ecx,[0xb0fce0] / cmp ecx,ebx / je 0x72cffa
+0072cfee  mov eax,[ecx] / push 1 / call [eax]   ; ★★虚表槽 0 delete(1)
+0072cff4  mov [0xb0fce0],ebx              ; ★清
+; ── 段 5：清门控（幂等收尾）
+0072cffa  mov byte [0xb0fcd9],bl          ; ★★清门控 [0xB0FCD9]
+0072d001  ret
+```
+**语义（推断名）**：**资源清理器**——thiscall 但 ecx 未用（纯全局操作，114B）：
+① **门控检查**：`[0xB0FCD9]`（batch 361 初始化标志）为 0 → 直接跳到清门控
+   （幂等——未初始化则无需释放）；
+② **SHP 数据释放**：`[0xB0FCD8]` 子标志门控 → `[0xB0FA18]`（batch 361 存的
+   LoadWholeFileEx 结果）非空则 `0x69E500`（SHPStruct::~SHPStruct batch 107）+
+   `0x7C8B3D`（operator delete batch 001）→ 清 `[0xB0FCD8]`；
+③ **转换器缓冲释放**：`[0xB0FCDC]`（batch 361 pFilename）→ operator delete →
+   清（同时清 `[0xB0FA18]`）；
+④ **转换器对象释放**：`[0xB0FCE0]`（batch 361 &输出参）→ **虚表槽 0 delete(1)**
+   → 清；
+⑤ **清门控** `[0xB0FCD9]=0`（幂等收尾——可重复调用）。
+★原版怪癖（照抄）：① **门控 + 幂等**（[0xB0FCD9] 为 0 直接跳尾清——重复调用安全）；
+   ② **三种释放方式并存**（SHP 对象先析构后 delete / 裸缓冲直接 delete / 虚表对象
+   槽 0 delete(1)——同一函数三种资源形态）；③ **子标志 [0xB0FCD8] 独立门控**
+   （batch 361 未提该标志——SHP 数据是否加载的细分标志推断）；④ **清 [0xB0FA18]
+   在段 3 而非段 2**（延迟清理——即使段 2 跳过也清）；⑤ **[0xB0FCE0] 虚表槽 0
+   delete(1)**（C++ 虚析构惯用——vs 段 2/3 的裸 delete）；⑥ 与 batch 361 初始化成
+   对（init 置门控/建三资源 → 本条清门控/释三资源）。
+★跨批次闭合：**batch 361（0x72CF40——全局单次初始化，本条=配对清理端；同五全局
+   [0xB0FCD8]/[0xB0FCD9]/[0xB0FA18]/[0xB0FCDC]/[0xB0FCE0] + caller 集重叠
+   FUN_005dc350/FUN_006ae2c0）**+**0x69E500（batch 107——SHPStruct::~SHPStruct，
+   本条=调用现场）**+**0x7C8B3D（batch 001——operator delete，本条=两处现场）**+
+   **0x72ADE0（batch 104——ConvertClass::CreateFromFile，batch 361 创建端↔本条
+   释放端）**+**0x4A38D0（batch 093——FileSystem::LoadWholeFileEx，batch 361 加载
+   端）**。
+⚠️ partial：函数精确名（资源清理器推断）、[0xB0FCD8] 子标志写入点（未登记）、
+   [0xB0FA18] SHPStruct 精确类型（SHP 缓存推断）、[0xB0FCDC]/[0xB0FCE0] 精确对象
+   类型（文件名缓冲/转换器推断）、callers FUN_005dc350/FUN_006ae2c0/FUN_00785740
+   （清理调用方——FUN_00785740 新候选）。
+
+================================================================================
+（batch 588 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：114B 纯"门控+三种释放"清理无算法切片，宿主
+全局（B0FC 区）语义部分闭合（batch 361 partial 延续）。模型价值：**init/cleanup
+配对闭合实锤**（batch 361 0x72CF40 ↔ 本条 0x72CF90——同五全局 + caller 重叠 +
+SHP 资源族）+ **三形态释放模板**（析构+delete / 裸 delete / 虚表槽 0 delete(1)）+
+**幂等门控**。1 个调用者候选。本批无产品代码改动，ctest 维持 **43/43 全绿**。登记
+一行 semantics_verified + assembly_verified_semantics_confirmed（114B 全段字节读
+完 + batch 361 配对 + 2 已登记锚点交叉），partial 项如实标注。
