@@ -1,0 +1,92 @@
+frontier batch 691 —— 0x0056BC50 等距坐标→cell 索引换算器（推断名）
+
+地址：0x0056BC50（functions.tsv 边界 0x56BC50-0x56BC7D = 48B 吻合，
+ret 4 = 1 栈参 + 无 this 依赖；后邻 0x56BC80 逆变换（÷0x82=130 拆
+商余 + imul 0x7E07E07F >>6 除法——等距坐标逆换算）确认边界；
+ranking callers=3/unique=3/deps=1905）
+状态：semantics_verified + assembly_verified_semantics_confirmed
+（机器码 96B 全读：0x56BC50-0x56BC7D ret 4 + 0x56BC80 后邻）
+
+=== 机器码全读（96B） ===
+
+0056bc50  mov ecx,[esp+4]              ; 栈参1 = 坐标结构指针
+0056bc54  push esi
+0056bc55  movsx eax,word[ecx+2]        ; ★Y（有符号 word）
+0056bc59  cdq / and edx,3 / add eax,edx / sar eax,2   ; ★Y/4 带符号向零
+0056bc62  mov esi,eax                  ; esi = Y/4
+0056bc64  shl esi,6 / add esi,eax      ; ★esi = Y/4 × 65（×64+×1）
+0056bc69  movsx eax,word[ecx]          ; ★X（有符号 word）
+0056bc6c  cdq / and edx,3 / add eax,edx / sar eax,2   ; ★X/4 带符号向零
+0056bc75  lea eax,[eax+esi*2+0x83]     ; ★eax = X/4 + (Y/4×65)×2 + 0x83
+0056bc7c  pop esi / ret 4
+
+=== 语义 ===
+
+**等距坐标→cell 索引换算器（推断名）**——1 栈参（坐标结构指针）
+ret 4：读取 word X（+0）/ word Y（+2）有符号坐标 → X/4 与 Y/4
+带符号向零截断（cdq/and 3/add/sar 2——MSVC 负除数优化）→ 返回
+`X/4 + (Y/4)×130 + 0x83`（131 中心偏移）——等距坐标系 cell 索引
+换算（×130 = 地图行宽 65×2 推断）。
+
+★后邻 0x56BC80 = 逆变换（cell 索引→等距坐标：idiv 0x82 拆商余 +
+imul 0x7E07E07F >>6 快速除法 + word 写回）——正逆成对（batch 353
+0x56BCD0 同 0x56xxxx MapClass 区）。
+
+=== 调用现场（5 处扫描 + 2 处反汇编确认） ===
+
+1) 0x481884 → **CellClass::UpdateThreat（★带名 0x481870-0x4818DA——
+   格子威胁更新！）**。现场（0x481871-0x481896）：mov eax,[ecx+0x24]
+   （★this cell +0x24 坐标对）→ lea ecx,[esp+4]/push ecx/mov ecx,
+   0x87F7E8（★MapClass::Instance）/mov [esp+0xC],eax → call 0x56BC50
+   → mov ebx,eax（★返回值=cell 索引）→ mov eax,[0xA80238]（★全局
+   单位计数）/xor edi/test/jle → 遍历 [0xA8022C]（单位数组）——
+   ★坐标→索引后扫单位表更新威胁。
+
+2) 0x5094BE / 0x50957C → **HouseClass::AdjustThreats（★带名 0x509400-
+   0x5095CA——威胁调整！）×2**。现场（0x5094A0-0x5094C9）：mov
+   eax 坐标 → cmp ax,[0xA8EF98]/cmp dx,[0xA8EF9A]（★鼠标 cell 比对
+   ——batch 631 同全局）→ je 0x5095B6 跳过 → push eax/mov ecx,
+   0x87F7E8/call 0x56BC50 → mov esi,[esi+0x21C]（House）/cmp esi,
+   ebx——★威胁调整中坐标→索引。
+
+3) 0x4D8657 / 0x4D8664 → FUN_004d85d0（0x4D85D0-0x4D8F30，未登记）
+   ×2（同函数内两处——0x4Dxxxx UnitClass 域推断）。
+
+★统一形态：调用方传坐标结构指针（栈参1）→ 返 cell 索引（eax）
+→ 用于单位表遍历/威胁调整/格定位。
+
+=== 原版怪癖（照抄） ===
+
+① Y/4 与 X/4 带符号向零截断（cdq/and 3/add/sar 2——MSVC 负除数
+   优化，负坐标 +3 后移）；
+② 行宽 ×65（shl 6 + add——编译器把 ×65 拆 ×64+×1）；
+③ 结果 lea 三合一（X/4 + Y/4×130 + 0x83——中心偏移 131 硬编码）；
+④ word 有符号扩展（movsx——坐标可能为负）；
+⑤ 无栈帧最简（push esi 单保存——48B）；
+⑥ 后邻逆变换成对（idiv 0x82 拆商余 + 0x7E07E07F 快速除法——正逆
+   两函数紧邻）。
+
+=== 跨批次闭合 ===
+
++CellClass::UpdateThreat（带名 caller——格子威胁更新域，坐标→索引
+  后扫 [0xA80238] 单位表）；
++HouseClass::AdjustThreats（带名 caller×2——威胁调整域）；
++[0xA8EF98]/[0xA8EF9A]（batch 631 鼠标 cell 全局——AdjustThreats
+  现场比对再消费）；
++[0xA80238]/[0xA8022C]（batch 631 SellWall 同全局单位表——UpdateThreat
+  现场遍历）；
++0x87F7E8 MapClass::Instance（QWEN.md/多批实锤——两现场统一 this）；
++0x56BC80 后邻（逆变换——正逆成对，batch 353 0x56BCD0 同区家族）。
+
+=== 新候选 ===
+
+0x56BC80（逆变换——cell 索引→等距坐标）、FUN_004d85d0（未登记
+caller×2——UnitClass 域推断）、[坐标结构+0x24] 字段（cell 坐标对）、
+行宽常量 0x83（131 中心偏移——地图中心推断）。
+
+=== partial ===
+
+函数精确名（推断 等距坐标→cell 索引换算器）、行宽 65/130 与 0x83
+（131）精确语义（地图尺寸推断）、FUN_004d85d0 宿主身份、0x56BC80
+逆变换完整语义（读了一半——idiv 0x82 + 0x7E07E07F 快速除法）、
+UpdateThreat 中单位表遍历业务。
