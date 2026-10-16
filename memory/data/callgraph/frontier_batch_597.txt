@@ -1,0 +1,88 @@
+frontier batch 597 — VectorClass-like 容器插入器 0x007AE5D0（348B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（0x722D00 后下一未登记高扇入候选 0x007AE5D0
+FUN_007ae5d0 callers=3/unique=3/deps=2816/body=348B，unique_callers FUN_00787770
+（3 处）/FUN_00797c20（12 处）/FUN_007a1060（1 处）——均未登记）。**348B 全字节
+读完**（0x7AE5D0-0x7AE729，ret 8 = 2 栈参，thiscall，ecx=this 存 ebx）。
+取证手段：disasm.py 分三段全读 + direct_edges 调用图核对（17 处调用/3 个唯一
+caller）+ 已登记锚点交叉（**batch 031 0x7CA090 memmove + batch 090 0x7B4690
+StringClass operator= + batch 001 new/delete**）。
+
+================================================================================
+0x007AE5D0 —— VectorClass-like 容器插入器（推断名，348B）
+================================================================================
+机器码（完整 348B，分四段）：
+```
+; ── 段 1：参数钳制
+007ae5d0  push ecx / push ebx / mov ebx,ecx（★this）/ push esi
+007ae5d5  mov esi,[esp+0x14]      ; ★参 1（索引/大小）
+007ae5d9  mov ecx,[ebx]           ; ★this->+0（计数）
+007ae5db  cmp esi,ecx / jle 0x7ae5e5
+007ae5df  mov [esp+0x14],ecx / mov esi,ecx   ; ★参 1 > 计数 → 钳制到计数
+007ae5e5  mov eax,[ebx+4]         ; ★this->+4（容量）
+007ae5e8  push ebp / cmp esi,eax / push edi / jl 0x7ae666   ; ★参 1 < 容量 → 跳过扩容
+007ae5ee  cmp ecx,eax / jl 0x7ae666
+; ── 段 2：扩容（计数 >= 容量）
+007ae5f2  lea eax,[ecx+ecx]       ; 2×计数
+007ae5f5  cmp eax,0xa / mov [esp+0x10],eax / jge 0x7ae60a
+007ae5fe  mov [esp+0x10],0xa      ; ★max(2×计数, 10)
+007ae60a  lea esi,[eax*4] / push esi / call 0x7c8e17   ; ★★batch 001 new(新容量×4)
+007ae617  mov ecx,esi / mov ebp,eax / mov edx,ecx / xor eax,eax / mov edi,ebp
+007ae624  shr ecx,2 / rep stosd / and ecx,3 / rep stosb  ; ★新数组清零
+007ae630  mov esi,[ebx+8] / test esi / je 0x7ae64c      ; ★旧数组
+007ae637  mov ecx,[ebx] / mov edi,ebp / shl ecx,2 / rep movsd/movsb  ; ★memcpy 旧→新（计数×4B）
+007ae64c  mov ecx,[ebx+8] / push ecx / call 0x7c8b3d    ; ★★batch 001 delete 旧数组
+007ae660  mov [ebx+8],ebp         ; ★+8 = 新数组
+007ae663  mov [ebx+4],edx         ; ★+4 = 钳制后的参 1（新容量）
+; ── 段 3：再扩容（第二遍同结构——0x7AE666 起）
+007ae666  mov eax,[ebx] / mov ecx,[ebx+4] / cmp eax,ecx / jl 0x7ae6e2
+007ae66f  add eax,eax / cmp eax,0xa / ... / lea esi,[eax*4] / call 0x7c8e17   ; ★★again new
+007ae6a8  清零 + memcpy + delete 旧（同段 2 结构）
+007ae6dc  mov [ebx+8],ebp / mov [ebx+4],edx
+; ── 段 4：移位 + 构造 + 计数+1
+007ae6e2  mov ecx,[ebx] / pop edi / cmp esi,ecx / pop ebp / jge 0x7ae70b  ; ★参 1 >= 计数 → 跳过移位
+007ae6ea  mov eax,[ebx+8] / mov edx,esi / shl edx,0x1e / sub edx,esi / add edx,ecx
+007ae6f6  lea ecx,[eax+esi*4] / shl edx,2 / push edx / lea edx,[eax+esi*4+4] / push ecx / push edx
+007ae703  call 0x7ca090          ; ★★batch 031 memmove（[array+idx*4]  ← [array+(idx+1)*4]，长 (计数-idx)*4）
+007ae70b  mov eax,[ebx+8] / lea ecx,[eax+esi*4] / test ecx / je 0x7ae71f
+007ae715  mov edx,[esp+0x10] / push edx / call 0x7b4690   ; ★★batch 090 StringClass operator=（槽位构造）
+007ae71f  mov eax,[ebx] / pop esi / inc eax / mov [ebx],eax  ; ★计数+1
+007ae725  mov al,1 / pop 族 / ret 8   ; ★返 1
+```
+**语义（推断名）**：**VectorClass-like 容器插入器**——thiscall，ecx=this（+0=
+计数、+4=容量、+8=数组指针），栈参 1=插入索引、参 2=值（StringClass 引用）：
+① **索引钳制**：参 1 > 计数 → 钳制到计数；
+② **扩容**：参 1 或计数 >= 容量时按 max(2×计数, 10) 扩容（new 新数组 + 清零 +
+   memcpy 旧数组计数×4B + delete 旧数组 → +8=新数组、+4=钳制后参 1）；
+③ **第二遍扩容**（0x7AE666 同结构再查一次——计数 vs 容量，仍不足再扩）；
+④ **尾部移位**：参 1 < 计数时 memmove 从索引处后移一位（长度 (计数-索引)×4）；
+⑤ **槽位构造**：[array+idx*4] 用参 2 经 0x7B4690（StringClass operator=）构造；
+⑥ **计数+1**、返 1。
+★原版怪癖（照抄）：① **扩容段连续两遍**（0x7AE5F2 与 0x7AE666 同结构——插入后
+   再查一次容量，双保险/两路径编译展开）；② **扩容尺寸 max(2×计数, 10)**（10
+   为最小初始容量下限）；③ **新容量写 +4 用钳制后参 1**（非 2×计数——第二遍扩
+   容时才用 2×计数）；④ **memmove 长度算式奇诡**：`shl edx,0x1e / sub edx,esi /
+   add edx,ecx / shl edx,2` = (计数 + esi×2^30 - esi)×4——32 位截断后等价
+   (计数-esi)×4（编译器对 (计数-索引)×4 的奇偶优化）；⑤ **槽位构造走 StringClass
+   operator=（batch 090 变体）**——容器是 VectorClass<StringClass> 推断，深拷贝
+   语义；⑥ **返 1 恒定 + ret 8**（2 栈参——索引/值）。
+★跨批次闭合：**batch 031（0x7CA090 memmove——本条=尾部移位现场）**+**batch 090
+   （0x7B4690 StringClass operator=——本条=槽位构造现场，35 callers 家族再添一
+   消费点）**+**batch 001（0x7C8E17 new/0x7C8B3D delete——本条=多处分配合释放
+   现场）**。
+⚠️ partial：函数精确名（VectorClass-like 容器插入器推断）、宿主容器类（+0 计数/
+   +4 容量/+8 数组布局——DynamicVectorClass 家族推断）、参 2 类型（StringClass 推
+   断——0x7B4690 是窄字符串 operator=）、callers FUN_00787770/FUN_00797c20/
+   FUN_007a1060（未登记，17 处调用 3 个唯一 caller——高扇入容器基础设施）。
+
+================================================================================
+（batch 597 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：宿主容器类（VectorClass<StringClass> 推断）
+与参 2 类型未闭合，348B 纯容器插入编排（扩容/移位/构造）无独立算法切片；依赖
+batch 031/090/001 三个已登记函数（本条=调用现场）。模型价值：**容器插入模板**
+（索引钳制 → 双遍扩容 max(2×cap,10) → memmove 移位 → StringClass operator= 槽
+位构造 → 计数+1）+ 高扇入容器基础设施信号（17 处调用）。无新被调候选。本批无产
+品代码改动，ctest 维持 **43/43 全绿**。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（348B 全段字节读完 + batch 031/090/001
+锚点全命中），partial 项如实标注。
