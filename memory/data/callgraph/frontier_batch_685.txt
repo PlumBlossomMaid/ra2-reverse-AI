@@ -1,0 +1,116 @@
+frontier batch 685 —— 0x0042E820 建筑格校验器（推断名）
+
+地址：0x0042E820（functions.tsv 边界 0x42E820-0x42E981 = 368B 吻合，
+ret 4 = 1 栈参 + thiscall；后邻 0x42E990 新函数（同宿主家族——
+[ebp+0x21C] 与 [ebx+0x74] House 比较 + [ebx+0x14] 计数遍历）确认
+边界；ranking callers=3/unique=3/deps=1916）
+状态：semantics_verified + assembly_verified_semantics_confirmed
+（机器码 400B 全读：0x42E820-0x42E981 ret 4 + 0x42E990 后邻）
+
+=== 机器码全读要点（400B） ===
+
+段1（0x42E820-0x42E8D7）：sub esp,0x18/push 族/mov esi,[esp+0x28]
+（★栈参1=索引）/mov edi,ecx（this）→ shl esi,4（★索引×16 步长）
+→ mov eax,[edi+8]（★this->+8 数组）/add eax,esi → mov ecx,[eax+4]/
+test cx,cx/je 0x42E984（★项+4 word 检查）→ mov eax,[eax]（★项首
+值）/test/jl 0x42E984 → mov ecx,[0xA83C6C]（★House 表——batch 171/
+242 同全局）/lea edx,[esp+0x14]/push edx/mov ebp,[ecx+eax*4]（★表
+按项首值索引取 House）→ mov ecx,0x87F7E8（MapClass::Instance）/
+call 0x5657A0（★★batch 082 GetCellAt 取格）→ mov ecx,eax/call
+0x47C520（★★batch 066 CellClass::GetBuilding 取建筑）→ mov ebx,eax/
+test ebx/je 0x42E984（★无建筑早退）→ mov eax,[edi+8]/mov edx,[ebx]/
+mov ecx,ebx/lea esi,[esi+eax+4]/lea eax,[esp+0x10]/push eax/call
+[edx+0x1B8]（★建筑虚表槽 0x1B8 取格坐标）→ mov cx,[eax]/cmp cx,
+[esi]（★坐标 X 比对）/jne 0x42E984 → mov dx,[eax+2]/cmp dx,[esi+2]
+（★坐标 Y 比对）/jne 0x42E984 → mov eax,[ebx+0x21C]/mov ecx,[edi+
+0x74]（★建筑 House vs this House）→ cmp/jne 0x42E984 → cmp [ebx+
+0x520],ebp（★建筑 Type vs House 表项）/jne 0x42E8D8 → 命中：mov
+eax,ebx（返建筑）/ret 4。
+
+段2（0x42E8D8-0x42E981）：mov al,[ebp+0xE88]（★House 表项 +0xE88
+标志）/test/je 0x42E984 → xor edx/lea eax,[ebx+0x5EC]（★建筑 +0x5EC
+三槽表——batch 677 item2 同字段！）/mov ecx,3 → 循环：cmp [eax],
+ebp（★槽==House）/jne/inc edx/add eax,4/dec ecx/jne（★三槽计数）→
+mov ebp,[esp+0x2C]（栈参2=数组计数）→ test ebp/jle 0x42E970 → mov
+esi,[edi+8]（数组）/mov eax,[esi]/test/jl 0x42E966 → mov edx,
+[0xA83C6C]/mov ecx,[esp+0x18]/cmp [edx+eax*4],ecx（★再比对 House）/
+jne 0x42E966 → lea eax,[ebx+0x9C]（★建筑坐标结构）/取三字段 → cdq/
+and 0xFF/sar 8（★>>8 量化——batch 677/682 同款）→ cmp word[esi+4],
+cx/cmp word[esi+6],ax（★坐标比对）/jne → dec [esp+0x10]（★命中
+计数递减）→ add esi,0x10（★16B 步长）/dec ebp/jne 循环 → mov edx,
+[esp+0x10] → test edx/setle al/dec eax/and eax,ebx（★按计数返建筑
+或 0）→ ret 4 → 0x42E984：xor eax/ret 4（★未命中返 0）。
+
+=== 语义 ===
+
+**建筑格校验器（推断名）**——__thiscall 1 栈参（索引）+ 1 栈参（数组
+计数）ret 4：① 索引×16 进 this->+8 数组（16B/项）取项（+4 word +
+首值检查）→ [0xA83C6C] House 表按首值索引取 House → GetCellAt
+（0x5657A0）取格 → GetBuilding（0x47C520）取格上建筑；② 建筑虚表
+槽 0x1B8 取格坐标与数组项坐标（+4/+6 word）比对 + 建筑 House
+（+0x21C）== this->+0x74 + 建筑 Type（+0x520）== House 表项——全中
+返建筑；③ 未全中走二级：House 表项 +0xE88 标志 + 建筑 +0x5EC 三槽
+表比对 House（三槽计数）+ 再遍历数组（16B 步长）坐标比对（+0x9C
+建筑坐标 >>8 量化）→ 按命中计数 setle/dec/and 返建筑或 0。
+
+★宿主：调用方统一 `lea ebp,[this+0x5700]`（数组）+ `[this+0x5714]`
+（计数，dec 后作栈参）——16B/项表按索引校验建筑格。
+
+=== 调用现场（3 处扫描 + 3 处反汇编确认） ===
+
+1) 0x42E789 → FUN_0042e780（0x42E780-0x42E7FA，紧邻包装）。现场
+   （0x42E780-0x42E795）：push esi/mov esi,[esp+8]（栈参1=索引）/
+   mov edi,ecx（this）/push esi/call 0x42E820 → test eax/je → mov
+   al,1（★成功返 1——布尔包装）。
+
+2) 0x4FDEBD → FUN_004fdd10（0x4FDD10-0x4FE3D7，未登记——0x4FDE9A
+   前 call [edx+0x84] 虚表槽）。现场（0x4FDE9A-0x4FDEC6）：mov eax,
+   [esi+0x5714]（★计数）/dec/mov ebx,eax/shl eax,4（×16）/lea ebp,
+   [esi+0x5700]（★this+0x5700 数组）→ push ebx（索引）/mov ecx,ebp
+   （this=&+0x5700）/call 0x42E820 → mov edi,eax（返回值）→ test/
+   je → mov eax,[edi]（★命中建筑处理）。
+
+3) 0x50C3BD → FUN_0050c340（0x50C340-0x50C8B6，未登记）。现场
+   （0x50C3A1-0x50C3C6）：mov edx,[esp+0x64]（计数）/lea edi,[edx-1]/
+   test/jl → lea esi,[edi+1]/lea ebp,[ebx+0x5700]/shl esi,4/push edi
+   （索引）/mov ecx,ebp/call 0x42E820 → test eax/je → mov ecx,[eax+
+   0x520]（★命中建筑 Type 处理）。
+
+★统一形态：调用方传 this->+0x5700 数组（+0x5714 计数）按索引校验
+建筑格。
+
+=== 原版怪癖（照抄） ===
+
+① 索引×16 步长 + 16B/项（shl 4——宿主表项 16 字节）；
+② 项+4 word 与首值双检查（word 零/首值负都早退）；
+③ [0xA83C6C] House 表按首值索引取 House（表项指针数组）；
+④ 建筑虚表槽 0x1B8 取格坐标比对（坐标 word 与数组项比对）；
+⑤ 建筑 House（+0x21C）== this->+0x74（this 持目标 House）；
+⑥ 建筑 Type（+0x520）== House 表项（类型精确匹配）；
+⑦ 二级：+0xE88 标志 + +0x5EC 三槽表计数（固定 3 项循环）；
+⑧ +0x9C 坐标 >>8 量化再比对（cdq/and 0xFF/sar 8 带符号舍入）；
+⑨ 返回按命中计数 setle/dec/and（计数<=0 → 返 0——哨兵技巧）；
+⑩ 未命中统一返 0（多处 0x42E984 汇聚）。
+
+=== 跨批次闭合 ===
+
++batch 082（0x5657A0 GetCellAt——本条=取格调用现场再消费）；
++batch 066（0x47C520 CellClass::GetBuilding——本条=取建筑现场）；
++batch 171/242（[0xA83C6C] House 表——本条=表索引取 House 第 3 消费
+  点）；
++batch 677（+0x5EC 三槽表/+0x9C 坐标结构/>>8 量化——同字段再消费，
+  House 域对象表家族）；
++虚表槽 0x1B8（batch 275/327/328 多处——取格坐标惯用槽）。
+
+=== 新候选 ===
+
+FUN_0042e780/FUN_004fdd10/FUN_0050c340（未登记 caller）、this->+0x5700
+数组/+0x5714 计数（16B/项宿主表）、House 表项 +0xE88 标志、建筑
++0x5EC 三槽表（batch 677 同字段升级为跨函数共识）、this->+0x74 目标
+House 字段。
+
+=== partial ===
+
+函数精确名（推断 建筑格校验器）、+0x5700 数组项结构（16B 布局推断）、
++0xE88 标志语义、+0x74 字段宿主、三级比对业务（坐标/House/Type 精确
+匹配用途——落格建筑确认推断）、FUN_004fdd10/FUN_0050c340 宿主身份。
