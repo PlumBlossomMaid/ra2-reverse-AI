@@ -1,0 +1,84 @@
+frontier batch 519 — MapClass::SetTogglePowerMode 0x004AC820（152B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=86/
+body=152B，ranking 名 **MapClass::SetTogglePowerMode**（带名实锤）），
+unique_callers FUN_004aad30/FUN_007311c0/FUN_007313a0/FUN_007314c0。
+**152B 全字节读完**（= 0x98，0x4AC820-0x4AC8B5，ret 4 = 1 栈参）。
+取证手段：disasm.py 全读 + **0x48DC90 UnselectAll 遍历（batch 161 已
+登记）调用现场** + **[0xA83D4C] PlayerPtr（batch 062/159/171 已登记）**。
+
+================================================================================
+0x004AC820 —— MapClass::SetTogglePowerMode（带名，152B，ret 4 = 1 栈参）
+================================================================================
+机器码（完整，152B 整数）：
+```
+004ac820  push ebx / push esi / mov esi,ecx        ; this
+004ac824  mov ecx,[esp+0xc]                        ; ★栈参 1 = 模式参数
+004ac828  mov al,[esi+0x11b2]                      ; ★★this+0x11B2 当前模式
+004ac82e  cmp ecx,-1 / mov bl,al
+004ac833  je 0x4ac846                              ; ★参数 -1 → toggle
+004ac835  test ecx,ecx / je 0x4ac842
+004ac839  cmp ecx,1 / jne 0x4ac84b
+004ac83e  mov bl,cl / jmp 0x4ac84b                 ; ★参数 1 → 开
+004ac842  xor bl,bl / jmp 0x4ac84b                 ; ★参数 0 → 关
+004ac846  test al,al / sete bl                     ; ★★toggle：bl = !当前
+004ac84b  cmp bl,al / je 0x4ac8b3                  ; ★★无变化 → 早退
+004ac84f  mov eax,[esi+0x11a8] / test eax,eax / jne 0x4ac8b3  ; ★★+0x11A8 门控
+004ac859  mov eax,[esi] / push 0 / push 0 / mov ecx,esi
+004ac861  call [eax+0x48]                          ; ★★虚表槽 0x48（0/0 两参）
+004ac864  test bl,bl
+004ac866  mov byte[esi+0x11b0],0                   ; ★清 +0x11B0
+004ac86d  mov byte[esi+0x11b1],0                   ; ★清 +0x11B1
+004ac874  mov byte[esi+0x11b3],0                   ; ★清 +0x11B3
+004ac87b  mov byte[esi+0x11b4],0                   ; ★清 +0x11B4
+004ac882  je 0x4ac8a5                              ; ★bl==0 → 关路径
+004ac884  mov ecx,[0xa83d4c]                       ; ★★[0xA83D4C] PlayerPtr（batch 171）
+004ac88a  mov eax,[ecx+0x2f0]                      ; ★★PlayerPtr+0x2F0（计数）
+004ac890  test eax,eax / jle 0x4ac8a5
+004ac894  mov byte[esi+0x11b2],1                   ; ★置 +0x11B2 = 1
+004ac89b  call 0x48dc90                            ; ★★UnselectAll 遍历（batch 161 已登记!）
+004ac8a0  pop esi / pop ebx / ret 4
+004ac8a5  mov edx,[esi] / mov ecx,esi
+004ac8a9  mov byte[esi+0x11b2],0                   ; ★置 +0x11B2 = 0
+004ac8b0  call [edx+0x50]                          ; ★★虚表槽 0x50（关路径）
+004ac8b3  pop esi / pop ebx / ret 4
+```
+**语义（带名实锤）**：**MapClass::SetTogglePowerMode**——电源模式
+设置/切换（ret 4 = 1 栈参 = 模式参数）：
+1. **模式分派**：-1 → toggle（bl = !当前 +0x11B2）；0 → 关；1 → 开；
+   其他值 → 保持当前；
+2. **无变化早退**（bl == 当前 → 直接返回）；
+3. **+0x11A8 门控**非 0 → 早退；
+4. **虚表槽 0x48**（push 0/0 两参——暂停/冻结推断）；
+5. **清四个标志字节** +0x11B0/+0x11B1/+0x11B3/+0x11B4；
+6. **开路径**：查 **[0xA83D4C] PlayerPtr+0x2F0** 计数 > 0 → 置
+   +0x11B2=1 并调 **0x48DC90（UnselectAll 遍历，batch 161）**；
+7. **关路径**：置 +0x11B2=0 + 虚表槽 0x50。
+★原版怪癖（照抄）：① **toggle 用 -1 + sete**（bl = !al——无中间态，
+二进制切换）；② **无变化早期返回**（cmp bl,al/je——幂等调用零副作用：
+重复设同值直接返）；③ **+0x11A8 门控**（非 0 跳过——外部锁定/占用
+推断）；④ **清四字节在 bl 判定前**（+0x11B0/+0x11B1/+0x11B3/+0x11B4
+——不管开/关都清）；⑤ **开路径才 UnselectAll**（PlayerPtr+0x2F0
+计数 > 0 才走 0x48DC90——有条件清选）；⑥ 关路径只清 +0x11B2 + 虚表
+槽 0x50（不对称——开路径多 UnselectAll）；⑦ 虚表槽 0x48 先于清标志
+（顺序固定）。★跨批次闭合：**0x48DC90（batch 161——UnselectAll 遍历，
+本条=开路径调用现场）**+**[0xA83D4C]（batch 062/159/171——全局当前
+House PlayerPtr，本条=读取现场）**+**虚表槽 0x48/0x50（MapClass 虚表
+推断——0x48 槽 batch 340 的取坐标槽异类对照）**+callers 含 FUN_004aad30
+（0x4Axxxx 区同 MapClass 域）+0x4AC7xx 相邻（0x4AC700 SetWaypointMode
+候选）。
+⚠️ partial：+0x11B2/+0x11A8/+0x11B0/+0x11B1/+0x11B3/+0x11B4 字段语义
+（电源模式/标志——+0x11B2 为模式主字段实锤）、虚表槽 0x48/0x50 身份
+（冻结/恢复推断）、PlayerPtr+0x2F0 计数语义（选中对象数/单位数推断）、
+调用方 FUN_007311c0/FUN_007313a0/FUN_007314c0 身份（配置/热键推断）。
+
+================================================================================
+（batch 519 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（MapClass 电源字段无业务闭环——
++0x11B2 等字段仅本族读写；虚表槽 0x48/0x50 未确认）。模型价值：
+**MapClass::SetTogglePowerMode 带名登记** + **0x48DC90 UnselectAll 调用
+现场闭合**（batch 161 的消费端）+ **PlayerPtr+0x2F0 计数读取**。本批无
+产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。登记
+一行 semantics_verified + assembly_verified_semantics_confirmed（全段
+字节读完 + 带名 + 双锚点交叉），partial 项如实标注。
