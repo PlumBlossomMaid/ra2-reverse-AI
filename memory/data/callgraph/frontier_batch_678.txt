@@ -1,0 +1,114 @@
+frontier batch 678 —— 0x004AEB10 MapClass 门控对象指针 getter（+ 配对 setter 0x4AEB30）
+
+地址：0x004AEB10（functions.tsv 边界 0x4AEB10-0x4AEB26 = 23B 吻合，
+后邻 0x4AEB30 配对 setter（ret 4）+ 0x4AEB48 nop 收尾确认边界；
+ranking callers=3/unique=3/deps=1931）
+状态：semantics_verified + assembly_verified_semantics_confirmed
+（机器码 64B 全读：0x4AEB10-0x4AEB26 getter ret + 0x4AEB27-0x4AEB2F nop
++ 0x4AEB30-0x4AEB45 setter ret 4 + 0x4AEB48 nop）
+
+=== 机器码全读（0x4AEB10-0x4AEB45） ===
+
+Getter 0x4AEB10（23B）：
+004aeb10  8a819c110000   mov al, byte ptr [ecx+0x119C]   ; this->+0x119C 有效标志
+004aeb16  84c0           test al, al
+004aeb18  740a           je 0x4AEB24                     ; 标志 0 → 返 0
+004aeb1a  8b81a0110000   mov eax, dword ptr [ecx+0x11A0] ; this->+0x11A0 对象指针
+004aeb20  85c0           test eax, eax
+004aeb22  7502           jne 0x4AEB26                    ; 非空 → 返指针
+004aeb24  33c0           xor eax, eax                    ; 返 0
+004aeb26  c3             ret                             ; __thiscall 无栈参
+
+Setter 0x4AEB30（22B，配对）：
+004aeb30  8b442404       mov eax, dword ptr [esp+4]      ; 栈参1 = 新指针
+004aeb34  85c0           test eax, eax
+004aeb36  8981a0110000   mov dword ptr [ecx+0x11A0], eax ; this->+0x11A0 = 参
+004aeb3c  0f95c0         setne al                         ; al = (参 != 0)
+004aeb3f  88819c110000   mov byte ptr [ecx+0x119C], al    ; this->+0x119C = 非零
+004aeb45  c20400         ret 4                            ; 1 栈参
+
+=== 语义 ===
+
+**MapClass 门控对象指针 getter（推断名）**：__thiscall 无栈参。读
+this->+0x119C（有效标志）非零且 this->+0x11A0（对象指针）非空时返
++0x11A0 指针，否则返 0。★配对 setter 0x4AEB30：写 +0x11A0=栈参1 且
++0x119C=(参!=0)——"持有对象指针+有效标志"双字段原子写。
+
+★this 实锤：5 处调用点全部 `mov ecx,0x87F7E8`（MapClass::Instance，
+QWEN.md/多批实锤）——宿主 = MapClass::Instance 的 +0x119C/+0x11A0
+门控指针对（推断：地图当前交互/放置对象指针）。
+
+=== 调用现场（5 处扫描 + 3 处反汇编确认） ===
+
+1) 0x537A1E → 宿主 0x537A10 起未登记函数（0x537B40 前 9B 小函数之前）。
+   现场（0x537A10-0x537A2E）：mov eax,[0xA8ECC8]（★全局计数）/test/je
+   → mov ecx,0x87F7E8/call 0x4AEB10 → test eax/jne 0x537A3C（★getter
+   非空跳过后续）→ mov eax,[0xA8ECBC]（★全局对象）/mov ecx,[eax]/
+   push ecx/... —— getter 判空门控 + [0xA8ECC8]/[0xA8ECBC] 资源池全局。
+
+2) 0x55B6B8/0x55B6CA → LogicClass::Update（★带名 0x55AFB0-0x55B71C，
+   QWEN.md「逻辑心脏」候选点名函数）收尾段双调用。现场
+   （0x55B68D-0x55B6EF）：先遍历 [0xA80238]/[0xA8022C] 数组调虚表槽
+   0x5C（★batch 631 SellWall 同 [0xA8022C]）→ mov ecx,0x87F7E8/call
+   0x4AEB10（第一处 getter）→ pop 族 → test eax/je 0x55B6F8（★空则
+   收尾）→ mov ecx,0x87F7E8/call 0x4AEB10（第二处 getter）→ add eax,
+   0x9C（★★返回值 +0x9C = 坐标结构）→ mov ecx,[eax]/[eax+4]/[eax+8]
+   三字段存栈 → push/lea [esp+4]/mov ecx,[0x887324]（★★batch 236 同
+   全局坐标对象）/... 坐标变换——★getter 取地图交互对象坐标做变换。
+
+3) 0x5F4503 → FUN_005f44a0（0x5F44A0-0x5F451A，未登记）。现场
+   （0x5F44ED-0x5F4513）：mov ecx,[0xA8ECC8]（★同 0x537A10 宿主全局）/
+   cmp/循环 → mov ecx,0x87F7E8/call 0x4AEB10 → cmp eax,esi（★getter
+   返回值 != 当前对象 esi）→ jne 0x5F4518 → push 0/mov ecx,0x87F7E8/
+   call 0x4AEB30（★★配对 setter(0)——清持有对象）→ ret。★getter+
+   setter 配对清除惯用。
+
+4) 0x5F52F4 → FUN_005f5280（0x5F5280-0x5F531A，未登记）。现场
+   （0x5F52D0-0x5F5306）：mov bl,1/test edi/je → mov ecx,edi/call
+   0x50B6F0（★★batch 062 IsControlledByCurrentPlayer）→ 门控 →
+   mov ecx,0x87F7E8/call 0x4AEB10 → cmp eax,esi（★getter 返回值 !=
+   当前对象 esi）→ jne → push 0/mov ecx,0x87F7E8/call 0x4AEB30
+   （★★配对 setter(0)）——同 0x5F4503 配对清除惯用。
+
+★统一形态：getter 判持有对象是否 == 当前对象，不等则配对 setter(0)
+清除；LogicClass::Update 取持有对象坐标（+0x9C）做 [0x887324] 坐标
+变换。
+
+=== 原版怪癖（照抄） ===
+
+① 双字段门控（+0x119C 标志与 +0x11A0 指针分别判——标志 0 或指针空
+   都返 0）；
+② 配对 setter 原子写（+0x11A0 与 +0x119C 一起写，setne 生成标志）；
+③ getter 无栈参 ret c3 / setter 1 栈参 ret 4（对称对）；
+④ this 恒为 0x87F7E8（MapClass::Instance——单例直接地址）；
+⑤ LogicClass::Update 收尾双调用（判空后再取一次做坐标变换——不
+   保存第一次返回值复用）；
+⑥ FUN_005f44a0/FUN_005f5280 getter+setter 配对清除（持有对象 !=
+   当前对象时清空——"失效清除"惯用）。
+
+=== 跨批次闭合 ===
+
++LogicClass::Update（★带名 0x55AFB0-0x55B71C——QWEN.md 点名的逻辑
+  心脏 MainLoop 驱动候选，本条=其收尾段调用现场）；
++[0x887324]（batch 236 同全局坐标对象——本条=坐标变换调用现场再
+  消费）；
++batch 062（0x50B6F0 IsControlledByCurrentPlayer——FUN_005f5280 现场
+  门控再消费）；
++[0xA8022C]（batch 631 SellWall 同全局——LogicClass::Update 收尾段
+  遍历数组现场再消费）；
++[0x87F7E8] MapClass::Instance（QWEN.md/多批实锤——5 调用点统一 this）。
+
+=== 新候选 ===
+
+0x4AEB30（配对 setter——本条后邻已读全）、[0xA8ECC8]/[0xA8ECBC]
+（资源池计数/对象全局——0x537A10 宿主与 FUN_005f44a0 同用）、
+0x537A10 宿主（未登记函数）、FUN_005f44a0/FUN_005f5280（未登记
+caller——0x5F 区对象清理域推断）、[0x887324] 坐标变换 0x55B6EF 后续
+（未读全）。
+
+=== partial ===
+
+函数精确名（推断 MapClass 门控对象指针 getter）、+0x119C/+0x11A0
+字段语义（地图当前交互/放置对象指针推断）、持有对象身份、+0x9C
+坐标结构（3 dword 世界坐标推断）、[0xA8ECC8]/[0xA8ECBC] 资源池精确
+身份、LogicClass::Update 坐标变换后续用途、0x537A10 宿主函数名。
