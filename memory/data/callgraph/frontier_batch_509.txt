@@ -1,0 +1,89 @@
+frontier batch 509 — HouseClass::GetPlanningWaypointProperties 0x00502460（134B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=105/
+body=134B，ranking 名 **HouseClass::GetPlanningWaypointProperties**（带名
+实锤）），unique_callers DisplayClass::DecideAction/FUN_004aae90/
+FUN_004ae750/FUN_004dc8c0。
+**134B 全字节读完**（= 0x86，0x502460-0x5024E3，ret 0xC = 3 栈参）。
+取证手段：disasm.py 全读 + **0x763810 WaypointPathClass::WaypointPathClass
+（带名 USER_DEFINED，functions.tsv:7343）** + **0x763980 WaypointPathClass::
+GetWaypoint（batch 272 已登记带名）** 双被调全带名交叉。
+
+================================================================================
+0x00502460 —— HouseClass::GetPlanningWaypointProperties（带名，134B，ret 0xC）
+================================================================================
+机器码（完整，134B 整数）：
+```
+00502460  push ebx / push ebp
+00502462  mov ebp,[esp+0xc]          ; ★栈参 1 = 目标航点值
+00502466  push esi / push edi
+00502468  xor edi,edi                ; ★槽索引 i = 0
+0050246a  lea esi,[ecx+0x210]        ; ★★this+0x210 = 槽数组起点（12 槽×4B）
+00502470  cmp dword[esi],0 / jne 0x502491   ; ★槽空 → 惰性创建
+00502475  push 0x40 / call 0x7c8e17  ; ★★operator_new(0x40=64B)（batch 001）
+0050247c  test eax / je 0x50248d
+00502483  push edi / mov ecx,eax
+00502486  call 0x763810              ; ★★WaypointPathClass::WaypointPathClass
+0050248b  jmp 0x50248f
+0050248d  xor eax,eax
+0050248f  mov [esi],eax              ; ★槽 = 新对象（失败则 NULL）
+00502491  mov ecx,[esi] / xor ebx,ebx      ; ★槽内索引 j = 0
+00502495  mov eax,[ecx+0x38]         ; ★★槽对象 +0x38 = 航点数
+00502498  test eax,eax / jle 0x5024AE
+0050249c  push ebx / call 0x763980   ; ★★WaypointPathClass::GetWaypoint(j)
+005024a2  cmp eax,ebp / je 0x5024D1  ; ★★命中 → 返（槽号，槽内号）
+005024a6  mov ecx,[esi] / inc ebx
+005024a9  cmp ebx,[ecx+0x38] / jl 0x50249C   ; ★槽内循环
+005024ae  inc edi / add esi,4
+005024b2  cmp edi,0xc / jl 0x502470  ; ★★12 槽循环
+005024b7  未命中：mov edx,[esp+0x18] / mov eax,[esp+0x1c]
+005024bf  pop 族 / mov dword[edx],0xffffffff   ; ★★槽号 = -1
+005024c7  mov byte[eax],0                     ; ★★槽内号 = 0
+005024ca  xor al,al / ret 0xC                 ; ★返 0（未命中）
+005024d1  命中：mov eax,[esp+0x18] / mov ecx,[esp+0x1c]
+005024d9  mov dword[eax],edi                  ; ★★槽号 = edi
+005024db  mov byte[ecx],bl                    ; ★★槽内号 = bl
+005024e0  mov al,1 / ret 0xC                  ; ★返 1（命中）
+```
+**语义（带名实锤）**：**HouseClass::GetPlanningWaypointProperties**——
+HouseClass 规划航点查找：this+0x210 起 **12 槽**（4B/槽，
+WaypointPathClass*），逐槽：
+1. 槽空 → **惰性创建**：operator_new(0x40=64B) +
+   WaypointPathClass::WaypointPathClass(槽号)；
+2. 槽内按 +0x38（航点数）循环调 **WaypointPathClass::GetWaypoint(j)**
+   取值与栈参 1 比较；
+3. 命中 → 写输出（栈参 2 ← 槽号 edi、栈参 3 ← 槽内号 bl）返 1；
+4. 未命中 → 栈参 2 ← 0xFFFFFFFF、栈参 3 ← 0，返 0。
+与 **HouseClass::GetPlanningWaypointAt 0x5023B0**（ranking 已见带名，
+163B，同区同 12 槽结构）为姊妹函数（本函数返回槽/槽内双索引，
+0x5023B0 返回航点对象推断）。
+★原版怪癖（照抄）：① **12 槽固定数组**（this+0x210 起，4B/槽——槽数
+硬编码 0xC）；② **查找时惰性创建槽**（未命中也要建对象——读路径写
+内存！槽空就 new(0x40)+构造）；③ **operator_new 失败静默置 NULL**
+（0x7C8E17 → test → xor eax → mov [esi],eax——NULL 槽继续遍历，下次
+再试）；④ **双层循环**（12 槽 × 槽内 +0x38 计数）；⑤ **命中/未命中
+双出口写不同值**（-1/0 vs 槽号/槽内号）；⑥ **ret 0xC = 3 栈参**
+（目标值 + 两个输出指针）；⑦ 槽内号只写 **byte**（bl——槽内索引
+8 位）。
+★跨批次闭合：**0x763810 WaypointPathClass::WaypointPathClass（带名
+USER_DEFINED；内部调 batch 076 的 0x410170 AbstractClass::AbstractClass
+——继承链）**+**0x763980 WaypointPathClass::GetWaypoint（batch 272 已
+登记带名——本函数=其 12 槽宿主调用现场）**+**0x7C8E17（batch 001
+operator_new——本条=调用现场）**+**HouseClass::GetPlanningWaypointAt
+0x5023B0 / EnsurePlanningPathExists 0x504740（ranking 同族带名——同
+0x50xxxx 区同 12 槽体系，WaypointPathClass ctor 的其余调用点）**。
+⚠️ partial：this+0x210 槽数组的语义（12 个——玩家/AI 规划槽推断）、
++0x38 航点数字段（batch 272 GetWaypoint 侧同 partial）、栈参 1 的
+业务语义（航点 ID/坐标推断）、0x5023B0 姊妹函数差异（返回值不同）。
+
+================================================================================
+（batch 509 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（WaypointPathClass 布局未展开——
+其 ctor 0x763810 未逐字节读；12 槽宿主字段语义 partial）。模型价值：
+**规划航点系统登记**（HouseClass 12 槽 × WaypointPathClass 惰性创建
++ 双层查找）+ **WaypointPathClass 家族调用现场**（ctor/GetWaypoint 双
+带名被调）。本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372
+已实跑核实）。登记一行 semantics_verified + assembly_verified_
+semantics_confirmed（全段字节读完 + 双被调带名 + 跨批交叉），partial
+项如实标注。
