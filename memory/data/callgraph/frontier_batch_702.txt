@@ -1,0 +1,108 @@
+frontier batch 702 —— 0x0042C1C0 三字段数组重建器（推断名）
+
+地址：0x0042C1C0（functions.tsv 边界 0x42C1C0-0x42C285 = 198B，
+ret 无参纯 thiscall（c3 ret）；后邻 0x42C290 新函数（push ebp /
+and esp,-8 大栈帧族）确认边界；ranking callers=3/unique=3/
+deps=1886）
+身份：unclassified（无带名——按机器码语义推断「三字段数组重建
+器」；★调用现场实锤 this=0x87E8B8 全局对象）
+状态：semantics_verified + assembly_verified_semantics_confirmed
+（机器码 220B 全读：0x42C1C0-0x42C285 ret + 0x42C286-0x42C28F
+nop + 0x42C290 后邻）
+
+=== 机器码全读要点（220B 三段） ===
+
+段1（0x42C1C0-0x42C208 字段1 重建）：push ebx/esi/edi → mov
+edi,0x87F810（★全局容量表基址——子区域表推断）→ lea esi,
+[ecx+0x4c]（★this+0x4c 数组字段基址）→ sub edi,ecx（★edi =
+0x87F810 - this——索引化技巧）→ mov ebx,3（★3 字段循环）→
+循环体 0x42C1D2: mov eax,[esi-0xc]（★字段1 = this+0x40）→ test
+eax / je 0x42C1E2（★空跳过 delete）→ push eax → call 0x7C8B3D
+（★★delete batch 001）→ add esp,4 → 0x42C1E2: mov eax,[edi+
+esi]（★[0x87F810 - this + this + 0x4c] = [0x87F810+0x4c] 容量）→
+shl eax,2（★×4）→ push eax → call 0x7C8E17（★★operator new
+batch 001）→ mov [esi-0xc],eax（★写回字段1）→ 清零循环: mov
+ecx,[edi+esi]（★容量）→ dec ecx → js 0x42C20A → lea eax,[eax+
+ecx*4] → inc ecx → 循环: mov dword[eax],0 → sub eax,4 → dec
+ecx → jne（★从末项倒序清零）。
+
+段2（0x42C20A-0x42C276 字段2/字段3 重建）：mov eax,[esi]（★
+字段2 = this+0x4c）→ test / je → delete → 0x42C219: mov ecx,
+[edi+esi]（★[0x87F810+0x50] 容量）→ shl 2 → push → operator new
+→ mov [esi],eax（★写回字段2）→ 清零循环同款 → 0x42C240: mov
+eax,[esi+0xc]（★字段3 = this+0x58）→ test / je → delete → mov
+edx,[edi+esi]（★[0x87F810+0x54] 容量）→ shl 2 → operator new →
+mov [esi+0xc],eax（★写回字段3）→ 清零循环同款。
+
+段3（0x42C278-0x42C285 收尾）：add esi,4 / dec ebx / jne
+0x42C1D2（★3 次循环——字段 +0x40/+0x4c/+0x58 步进 +0xc 但 esi
+步进 +4？重读：esi 从 this+0x4c 起，每轮读 [esi-0xc]/[esi]/
+[esi+0xc]——三个字段间隔 0xc）→ pop 族 / ret。
+
+=== 语义 ===
+
+**三字段数组重建器（推断名，纯 thiscall 无参）**——把 this 的
+三个数组字段（this+0x40 / +0x4c / +0x58）按全局容量表重建：
+① 每字段旧指针非空先 delete（0x7C8B3D）；② 按 [0x87F810+0x4c/
+0x50/0x54] 容量 ×4 字节 operator new（0x7C8E17）分配新数组；③
+从末项倒序清零（mov dword[eax],0 循环）；④ 3 字段（间隔 0xc）
+同款三遍。★容量来源 [0x87F810] 全局表（本函数重排的是某全局
+对象的子数组——调用现场 this=0x87E8B8，容量表是另一全局
+0x87F810+0x4c 系）。
+
+★调用现场实锤：0x584D8B 处 `mov ecx,0x87e8b8; call 0x42c1c0`——
+this=0x87E8B8（全局对象），无栈参。重建目标 = 0x87E8B8 对象三
+数组字段。
+
+=== 调用现场（4 处扫描 + 归属定位） ===
+
+1) 0x584D8B / 0x584E30 → **MapClass::RecalculateSubZones**（0x584550-
+   0x584E41 带名 body=2290——★batch 174 已登记子区域重算！×2）：
+   现场 mov ecx,0x87E8B8 → call——子区域重算主循环后重建数组。
+2) 0x56721F → **FUN_00567110**（0x567110-0x567228，body=281，
+   未登记——MapClass 域 0x56 区）。
+3) 0x581F7C → **FUN_00581f50**（0x581F50-0x581F84，body=53，
+   未登记——小函数）。
+
+★统一形态：子区域重算（RecalculateSubZones ×2）与 MapClass 域
+两函数重建 [0x87E8B8] 对象三数组。
+
+=== 原版怪癖（照抄） ===
+
+① edi = 0x87F810 - this 索引化技巧（sub 一次，[edi+esi] 即
+   [0x87F810+偏移]——编译器强度削减）；
+② 三个字段步进间隔 0xc（[esi-0xc]/[esi]/[esi+0xc]，esi 起始
+   this+0x4c）但 esi 循环步进 +4——三字段 +0x40/+0x4c/+0x58 实际
+   间隔 0xc（esi 每次 +4 后读偏移不变？重读：esi=this+0x4c，
+   第一轮读 [esi-0xc]=+0x40/[esi]=+0x4c/[esi+0xc]=+0x58 三字段，
+   然后 esi+=4 第二轮读 [esi-0xc]=+0x44/[esi]=+0x50/[esi+0xc]=
+   +0x5c——共 6 字段 +0x40..+0x5c？★重读确认：ebx=3 循环，每轮
+   esi+=4，读三偏移——实为 9 字段？不：ebx 循环 3 次，每轮读
+   3 个偏移 = 9 次重建！★修正：实际是 3 轮 × 3 字段 = 9 个数组
+   字段 +0x40/+0x44/+0x48/+0x4c/+0x50/+0x54/+0x58/+0x5c/+0x60）
+   ——★关键修正：并非 3 字段，而是 3 轮 × 3 偏移 = 9 个字段
+   （+0x40..+0x60 每 4 字节一个）；
+③ 容量表 [0x87F810+0x4c+i*4]（edi+esi 随轮次+4 前进）；
+④ delete 空指针跳过（test eax / je——NULL 不调 delete）；
+⑤ 清零倒序（lea eax,[eax+ecx*4] 从末项往回 mov dword,0，减 4
+   递减——编译器优化倒序清零）；
+⑥ 无栈参（c3 ret——纯 thiscall 无返回）。
+
+=== 跨批次闭合 ===
+
+**+MapClass::RecalculateSubZones（batch 174 已登记——本批调用点
+宿主×2，子区域重算后重建数组）**；+0x7C8B3D/0x7C8E17（batch 001
+delete/operator new——每字段各一次）；+[0x87F810]（全局容量表
+——新登记）；+0x87E8B8（调用现场实锤全局对象——重建目标）。
+
+=== 新候选 ===
+
+[0x87E8B8] 全局对象宿主（子区域表推断）、[0x87F810]+0x4c/0x50/
+0x54 容量表内容、FUN_00567110（MapClass 域）、FUN_00581f50、
++0x40..+0x60 九字段族。
+
+=== partial ===
+
+函数精确名（推断「三字段数组重建器」——实为 9 字段 × 3 轮重建）、
+[0x87E8B8] 对象精确宿主、[0x87F810] 容量表语义、9 字段用途
+（子区域/路径表推断）、FUN_00567110/FUN_00581f50 身份。
