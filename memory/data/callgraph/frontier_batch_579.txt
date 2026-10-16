@@ -1,0 +1,94 @@
+frontier batch 579 — RNG 参数化对象初始化器 0x00597260（282B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x597260 FUN_00597260 callers=3/
+unique=3/deps=3429/body=282B，unique_callers **FUN_00596300/FUN_00596c70/
+FUN_00597380——三者全在 0x5956E7-0x59A63A = QWEN.md 实锤 MapGen.cpp TU 内**）。
+**282B 全字节读完**（0x597260-0x597377，ret 4 = 清 1 栈参，thiscall）。
+取证手段：disasm.py 全读 + **参数表 PE 逐项读取（lo/hi 成对 8 组表内容实锤）**+
+已登记锚点交叉（0x65C7E0 已登记 RandomRanged + QWEN.md RNG 里程碑）+ [0x886B88]
+RNG 实例（batch 426/428 已推断"第二 RNG 实例"）+ 0xABED10 区（QWEN.md 实锤工作
+记录数组）+ MapGen.cpp TU（QWEN.md 编译单元测绘）。
+
+================================================================================
+0x00597260 —— RNG 参数化对象初始化器（推断名，282B，9 字段随机初始化）
+================================================================================
+机器码（完整 282B）：
+```
+00597260  push esi / mov esi,[esp+8]      ; ★★栈参 1 = 索引（esi 查表）
+00597266  mov edi,ecx                     ; ★this
+; ── 组 1-5：5 组 lo/hi 表对 → RandomRanged → this 字段
+00597268  mov eax,[esi*4+0x82b0bc]        ; ★hi 表 [0x82B0BC+esi*4]，实测 [100,25,100,100,100,100,100,100]
+0059726f  mov ecx,[esi*4+0x82b0a8]        ; ★lo 表 [0x82B0A8+esi*4]，实测 [75,0,50,0,0,100,25,100]
+00597276  push eax / push ecx             ; ★★先压 hi 后压 lo（RandomRanged(lo,hi) 压栈惯例，batch 257 同款）
+00597278  mov ecx,0x886b88                ; ★★RNG 实例 [0x886B88]（batch 426/428 第二实例推断）
+0059727d  call 0x65c7e0                   ; ★★RandomRanged → this+0x4C
+00597285  eax=[0x82b120][esi] / ecx=[0x82b10c][esi]  ; hi/lo（实测 hi=[100,100,100,100,100,8544888,8566796,8566788]）
+0059729a  call 0x65c7e0 → this+0x44
+005972a2  eax=[0x82b0f8][esi]（hi，实测 [50,100,100,100,0,20,20,20]）/ ecx=[0xabed40][esi]（lo，运行时表 PE 无初始值）
+005972b7  call 0x65c7e0 → this+0x60
+005972bf  eax=[0x82b0d0][esi]（hi，实测 [100,100,100,100,20,100,100,100]）/ ecx=[0xabed18][esi]（lo，运行时表）
+005972d4  call 0x65c7e0 → this+0x6C
+005972dc  eax=[0x82b094][esi]（hi，实测 [100,100,100,100,50,75,0,50]）/ ecx=[0x82b080][esi]（lo，实测 [50,0,35,0,0,100,100,100]）
+005972f1  call 0x65c7e0 → this+0x70
+; ── 组 6：+0x40×20 手写乘法 + RandomRanged(0,100)
+005972f9  mov eax,[edi+0x40] / lea eax,[eax+eax*4] / shl eax,2  ; ★★+0x40 ×5×4 = ×20
+005972f9  mov [edi+0x54],eax             ; this+0x54 = +0x40×20
+005972fc  push 0x64 / push 0 / call 0x65c7e0 → this+0x58       ; ★RandomRanged(0,100)
+; ── 组 7：双表 clamp [0,100] + min 不对称 → RandomRanged
+00597316  mov ecx,[0xabe260] / mov edx,[0xabe27c]              ; ★★两运行时数组基址（PE 无初始值）
+00597322  mov eax,[ecx+esi*4] / mov esi,[edx+esi*4]            ; ★表 1 值 / 表 2 值
+00597328  test eax,eax / jge 0x597330 / xor eax,eax            ; ★负数 → 0
+00597330  cmp eax,0x64 / jle 0x59733a / mov eax,0x64           ; ★>100 → 100
+0059733a  test esi,esi / jge 0x597342 / xor esi,esi            ; ★表 2 同款双向钳
+00597342  cmp esi,0x64 / jle 0x59734c / mov esi,0x64
+0059734c  cmp eax,esi / jle 0x597352 / mov eax,esi             ; ★eax = min(eax,esi)
+00597352  push esi / push eax / call 0x65c7e0 → this+0x5C      ; ★RandomRanged(min, 表2)——上界恒是表 2
+; ── 组 8
+0059735e  push 0xffff / push 0 / call 0x65c7e0 → this+0x74     ; ★RandomRanged(0,0xFFFF) 全 word 范围
+00597377  ret 4
+```
+**语义（推断名）**：**RNG 参数化对象初始化器**——thiscall，1 栈参=索引 esi：
+① **8 组 RandomRanged**（组 1-5 用 5 组 lo/hi 表对、组 6-8 用混合/常数）经
+   **RNG 实例 [0x886B88]** 写 this 九字段（+0x4C/+0x44/+0x60/+0x6C/+0x70/
+   +0x54/+0x58/+0x5C/+0x74）；
+② 表对来源三种：纯 .rdata 静态表（0x82B0A8..0x82B120 六组）、运行时表
+   （0xABED18/0xABED40——PE 无初值，0xABED10 工作记录数组同区）、双数组
+   （0xABE260/0xABE27C——综合值）；
+③ **+0x54 = +0x40×20**（lea ×5 + shl 2 手写乘法）；
+④ **组 7 双钳+min**：两表各自 clamp [0,100]，min 作下界、表 2 恒作上界；
+⑤ **+0x74 = RandomRanged(0,0xFFFF)** 全 word 范围。
+★原版怪癖（照抄）：① **索引表驱动参数化**（esi 查表而非直参——按地形/规模/难度
+   选参数区间）；② **[0x886B88] RNG 实例**（非 QWEN.md 实锤的 RMG 全局
+   [0xABE890]——batch 426/428 已推断第二实例，本批 8 连调用现场验证）；③ **先压
+   hi 后压 lo**（RandomRanged(lo,hi) 压栈惯例，batch 257 同款）；④ **组 6 表内
+   0x82B120 后几项是 >100 的"指针级"大数**（8544888/8566796/8566788——该表
+   复用/越界项，正常 lo/hi 只前 4 项）；⑤ **组 7 min 不对称**（下界=min(表1,表2)、
+   上界恒=表 2——表 1>表 2 时退化为单点区间，不正常但照抄）；⑥ **+0x40×20 手写
+   lea 乘法**（×5 再 ×4，无 imul）；⑦ **+0x74 用 0xFFFF 上限**（word 范围全开——
+   与百分比区间区分）；⑧ 运行时表（0xABED18/0xABED40/0xABE260/0xABE27C）
+   PE 无初值（BSS/运行时构建——读不到是预期，非取证失败）。
+★跨批次闭合：**0x65C7E0（已登记 RandomRanged + QWEN.md RNG 里程碑——本条=8
+   连调用现场）**+**[0x886B88]（batch 426/428——第二 RNG 实例推断，本条=8 连验证
+   实锤）**+**0xABED10 区（QWEN.md 实锤每格 0x50 字节工作记录数组——本条
+   0xABED18/0xABED40 同区，运行时表宿主推断）**+**callers 三函数全 ∈ MapGen.cpp
+   TU（0x5956E7-0x59A63A，QWEN.md 编译单元测绘——RMG 参数初始化链）**+**batch
+   257（RandomRanged(0,7) 压栈惯例 lo/hi 顺序同款）**。
+⚠️ partial：函数精确名（RNG 参数化对象初始化器推断）、this 字段语义（+0x40 基数
+   /+0x4C..0x74 九字段用途——颜色/规模/数量推断）、esi 索引语义（地图类型/难度/
+   尺寸推断）、[0xABE260]/[0xABE27C] 双数组宿主与构建方、0xABED18/0xABED40 运行
+   时表构建方、组 7 min 不对称成因（表 1/表 2 语义）、0x82B120 表后几项大数语义、
+   callers 三函数身份（MapGen.cpp 内——阶段参数初始化推断）。
+
+================================================================================
+（batch 579 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：宿主 this 九字段语义未闭合（+0x40 基数来源、
+九字段消费方均推断），282B 纯"查表+RandomRanged+写字段"无独立算法切片；RNG
+消费点虽多（8 连）但 RNG 本体已建模（randomizer.{h,cpp}），本函数只是参数的
+消费端。模型价值：**RMG 参数化初始化模板**（索引表驱动 lo/hi 区间 + [0x886B88]
+第二 RNG 实例 8 连现场实锤 + 组 7 clamp/min 不对称怪癖 + 手写 ×20）。若后续
+MapGen 逆向确认 this 宿主（疑阶段参数对象），可补登记字段语义。1 个新候选
+（0xABE260/0xABE27C 双数组宿主）+ 3 个调用者候选。本批无产品代码改动，ctest
+维持 **43/43 全绿**。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（282B 全段字节读完 + 参数表 PE 逐项实测 +
+2 批次锚点 + QWEN.md RNG/TU 实锤交叉），partial 项如实标注。
