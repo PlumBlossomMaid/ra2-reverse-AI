@@ -1,0 +1,96 @@
+frontier batch 543 — WaypointPathClass::WaypointPathClass 0x00763810（175B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x763810 body=175B/unique=4/
+deps=49，ranking 名 **WaypointPathClass::WaypointPathClass**；unique_callers
+FUN_00502290/HouseClass::EnsurePlanningPathExists/HouseClass::
+GetPlanningWaypointAt/HouseClass::GetPlanningWaypointProperties——后两者
+batch 509/521 已登记）。**175B 全字节读完**（0x763810-0x7638BC，ret 4=1
+栈参）。
+取证手段：disasm.py 全读 + batch 509/521/272/076 家族交叉 + [0xB72608..]
+全局注册表核对。
+
+================================================================================
+0x00763810 —— WaypointPathClass::WaypointPathClass（带名实锤，175B，ret 4）
+================================================================================
+机器码（完整 175B，关键段）：
+```
+00763810  push esi / mov esi,ecx               ; this
+00763813  call 0x410170                        ; ★★基类构造（batch 076 AbstractClass::AbstractClass）
+00763818  mov eax,[esp+8]                      ; ★栈参 = 槽索引（0..11）
+0076381c  xor edx,edx
+0076381e  mov dword[esi+0x24],0xffffffff       ; ★+0x24 = -1
+00763825  mov [esi+0x2c],edx                   ; ★+0x2C = 0（航点数组基址预热）
+00763828  mov [esi+0x30],edx                   ; ★+0x30 = 0
+0076382b  mov byte[esi+0x34],1                 ; ★+0x34 = 1
+0076382f  mov byte[esi+0x35],dl                ; ★+0x35 = 0
+00763832  mov dword[esi+0x28],0x7f6ed4         ; ★+0x28 = 子虚表 0x7F6ED4
+00763839  mov dword[esi+0x3c],0xa              ; ★+0x3C = 10（容量预热）
+00763840  mov [esi+0x38],edx                   ; ★+0x38 = 0（航点计数预热）
+00763843  cmp eax,edx
+00763845  mov dword[esi],0x7f6e70              ; ★★装四虚表 +0=0x7F6E70
+0076384b  mov dword[esi+4],0x7f6e54            ; ★+4=0x7F6E54
+00763852  mov dword[esi+8],0x7f6e4c            ; ★+8=0x7F6E4C
+00763859  mov dword[esi+0xc],0x7f6e44          ; ★+0xC=0x7F6E44
+00763860  jl 0x7638b9                          ; ★槽索引<0 → 不注册
+00763862  cmp eax,0xc / jge 0x7638b9           ; ★槽索引>=12 → 不注册
+00763867  mov eax,[0xb72610]                   ; ★★[0xB72610] = 注册表上界
+0076386c  mov ecx,[0xb72618]                   ; ★★[0xB72618] = 当前计数
+00763872  cmp ecx,eax / jl 0x7638a1            ; ★未满 → 直接注册
+00763876  cmp byte[0xb72615],dl / jne 0x763882 ; ★[0xB72615] 标志判断
+0076387e  cmp eax,edx / jne 0x7638b9           ; ★上界==0 → 不注册
+00763882  mov ecx,[0xb7261c]                   ; ★★[0xB7261C] = 扩展步长
+00763888  cmp ecx,edx / jle 0x7638b9           ; ★步长<=0 → 不注册
+0076388c  add ecx,eax
+0076388e  mov eax,[0xb72608]                   ; ★★[0xB72608] = 注册表对象虚表
+00763893  push edx / push ecx / mov ecx,0xb72608
+0076389a  call [eax+8]                         ; ★★虚表槽 8 = SetCapacity 扩容
+0076389d  test al,al / je 0x7638b9             ; ★扩容失败 → 不注册
+007638a1  mov ecx,[0xb72618]                   ; ★计数
+007638a7  mov eax,ecx / inc ecx
+007638aa  mov [0xb72618],ecx                   ; ★★计数++
+007638b0  mov ecx,[0xb7260c]                   ; ★★[0xB7260C] = 数组基址
+007638b6  mov [ecx+eax*4],esi                  ; ★★数组[计数] = this（自注册）
+007638b9  mov eax,esi / pop esi / ret 4        ; 返 this
+```
+**语义（带名实锤）**：**WaypointPathClass::WaypointPathClass**——thiscall
++ 1 栈参（槽索引）：
+1. **基类构造**：调 0x410170（batch 076 AbstractClass::AbstractClass）；
+2. **字段初始化**：+0x24=-1、+0x28=子虚表 0x7F6ED4、+0x2C=0（航点数组
+   基址）、+0x30=0、+0x34=1、+0x35=0、+0x38=0（航点计数）、+0x3C=10
+   （容量）；
+3. **装四虚表**：+0=0x7F6E70、+4=0x7F6E54、+8=0x7F6E4C、+0xC=0x7F6E44
+   （多继承布局）；
+4. **全局注册（条件）**：栈参槽索引在 **[0, 12)** 内才注册——经全局注册表
+   `[0xB72608]`（对象虚表）+`[0xB7260C]`（数组）+`[0xB72610]`（上界）+
+   `[0xB72618]`（计数）+`[0xB7261C]`（扩展步长）+`[0xB72615]`（标志）：
+   未满直接 `数组[计数]=this / 计数++`；满了经虚表槽 8（SetCapacity）
+   扩容后再注册；扩容失败/上界 0/步长<=0 静默跳过。
+★原版怪癖（照抄）：① **槽索引范围门控注册**（[0,12) 外不注册——12 槽
+   全局池）；② **满表经虚表槽 8 扩容**（DynamicVectorClass 系 SetCapacity
+   语义——[0xB72608] 是容器对象）；③ **扩容失败静默跳过**（test al/je——
+   无错误上报）；④ **+0x34=1 位标志**（分配持有标志预热）；⑤ **四虚表
+   多继承布局**（+0/+4/+8/+0xC 四个槽）；⑥ **+0x24 预热 -1、+0x3C 预热 10**
+   （容量初值 10）；⑦ 返 this（构造器惯例）。
+★跨批次闭合：**batch 509（0x502460 GetPlanningWaypointProperties——
+"0x763810 WaypointPathClass::WaypointPathClass 带名 USER_DEFINED；内部调
+batch 076 的 0x410170——继承链"——本条登记闭合其引用）**+**batch 521
+（0x5023B0 GetPlanningWaypointAt——"0x763810 batch 509 已登记带名"——
+本批正式落地）**+**batch 272（0x763980 GetWaypoint——+0x2C 基址/+0x38
+计数，本条=构造器侧对应）**+**batch 076（0x410170 AbstractClass::AbstractClass
+基类构造）**。
+⚠️ partial：`[0xB72608..0xB7261C]` 全局注册表类身份（WaypointPathClass
+全局池推断——其余写入点未查）、虚表槽 8 SetCapacity 的容器类名、
++0x28 子虚表 0x7F6ED4 归属、12 槽全局池与 HouseClass +0x210 12 槽的关系
+（独立推断）、FUN_00502290 身份（新调用者候选入列）。
+
+================================================================================
+（batch 543 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：`[0xB72608..]` 全局注册表类身份未
+闭合 + 虚表族归属未展开。模型价值：**WaypointPathClass 家族收口**（ctor
+本条 + GetWaypoint batch 272 + HouseClass 规划航点姊妹 batch 509/521——
+家族 4 函数全登记）+ **全局对象池注册表新模式**（[0xB72608] 容器对象 +
+满表扩容——[0xA8E968]/[0xA8B1E0] 注册表外的又一池化实例）。FUN_00502290
+新候选入列。本批无产品代码改动，ctest 维持 **43/43 全绿**。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（175B 全段字节
+读完 + 带名 + 三批次交叉），partial 项如实标注。
