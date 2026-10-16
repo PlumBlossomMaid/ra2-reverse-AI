@@ -1,0 +1,90 @@
+frontier batch 651 — HouseClass::FlagToDie 0x004FC980（87B）（2026-10-17）
+
+口径：候选**只从 picker 未登记池取**（0x0064A000 后下一未登记高扇入候选
+0x004FC980 HouseClass::FlagToDie（functions.tsv USER_DEFINED 带名，87B，
+thiscall 无栈参——ret 无立即数两出口）callers=3/unique=3/deps=2550，direct_
+edges 4 条边 → unique_callers FUN_004c6cb0（0x4C7BE1，★batch 623/646/648 链
+同 caller）/FUN_005da750（0x5DA875/0x5DA90F 两处，★batch 401 玩家退场 + batch
+646/648 同 caller）/FUN_0064c380（0x64C85D，未登记））。**128B 全字节读完**
+（0x4FC980-0x4FC9D6 ret + nop 对齐 + 0x4FC9E0 后邻=**batch 392 已登记的
+HouseClass::Win** 开头确认边界；0x4FC9D3/0x4FC9D6 双 ret）。
+取证手段：disasm.py 128B 全读（含三 caller 现场 0x4C7BC0/0x5DA860/0x64C830
+共 96B）+ frontier_status.tsv 交叉验证（**0x4FC9E0 HouseClass::Win 在 TSV
+1224 行已登记——batch 392，本批镜像配对**）+ 三 caller 推参核实（均无 push）。
+================================================================================
+0x004FC980 —— HouseClass::FlagToDie（87B）
+================================================================================
+机器码（完整 87B）：
+```
+004fc980  mov al,[ecx+0x1F7]               （★this->+0x1F7 = Win 标志——batch
+                                           392 Win 写入点 +0x1F7）
+004fc986  sub esp,0xc                      （★12B 栈帧）
+004fc989  test al,al / mov al,[ecx+0x1F6]  （★预读 +0x1F6 = Die 标志）
+004fc991  jne 0x4FC9D3                     （▸+0x1F7 已置 → 直返——幂等门控）
+004fc993  test al,al / jne 0x4FC9CD        （▸+0x1F6 已置 → 返 +0x1F6）
+004fc997  mov al,[ecx+0x1F8] / test al,al / jne 0x4FC9CD
+                                            （▸+0x1F8 已置 → 返 +0x1F6——三邻接
+                                             标志幂等）
+004fc9a1  push esi
+004fc9a2  mov byte [ecx+0x1F6],1           （★★★置 Die 标志 = 1——本条核心）
+004fc9a9  mov eax,[0xA8ED84]               （★★★[0xA8ED84] 帧计数——batch 392
+                                           说第 7 消费点，本条第 8）
+004fc9ae  lea esi,[ecx+0x298]              （★+0x298 三元组——batch 392 实锤
+                                           「帧号/参/时长」HouseClass 惯用结构）
+004fc9b4  xor edx,edx
+004fc9b6  mov [esi],eax                    （★+0x298[0] = 帧计数）
+004fc9b8  mov eax,[esp+8]                  （★[esp+8] = 返回地址下方 8B——
+                                           详见怪癖④）
+004fc9bc  mov [esi+4],eax                  （★+0x298[4] = 该值）
+004fc9bf  mov al,[ecx+0x1F6]               （★重读 Die 标志 → 返回）
+004fc9c5  mov [esi+8],edx                  （★+0x298[8] = 0）
+004fc9cc  pop esi / add esp,0xc / ret      （★返回 al = +0x1F6 = 1）
+004fc9cd  mov al,[ecx+0x1F6] / add esp,0xc / ret
+                                            （▸幂等出口：返回当前 +0x1F6）
+004fc9d3  add esp,0xc / ret                （▸+0x1F7 已置出口：返回预读的 +0x1F6）
+```
+**语义（batch 392 Win 镜像配对 + 三 caller 门控 + 帧计数三元组）**：
+**HouseClass::FlagToDie（标记死亡/战败）**——thiscall，this=HouseClass：①
+三邻接标志 +0x1F7(Win)/+0x1F6(Die)/+0x1F8 任一已置 → 幂等返回（返回当前
++0x1F6）；② 全未置 → 置 +0x1F6=1 并写 +0x298 三元组 [0]=[0xA8ED84] 帧计数、
+[4]=[esp+8] 值、[8]=0；③ 返回 al=+0x1F6（置位后恒 1）。**与 batch 392
+HouseClass::Win 镜像配对：Win 置 +0x1F7=1、FlagToDie 置 +0x1F6=1，两者都写
+同 +0x298 三元组、同三标志幂等门控、同帧计数[0xA8ED84]——胜利/战败条件双
+写入点成对收口**。
+★原版怪癖（照抄）：① **三邻接标志幂等**（+0x1F7/+0x1F6/+0x1F8 任一非零即
+跳过置位——Win 与 Die 互斥互锁）；② **返回值为标志本身**（al=+0x1F6，非
+bool 真值判断）；③ **+0x298 三元组与 Win 同构**（[0]=帧计数 [0xA8ED84]、
+[4]=参数、[8]=时长/0——batch 392 同型）；④ ★**`mov eax,[esp+8]` 读返回地址
+下方 8 字节**（sub esp,0xc + push esi 后 esp=E-0x10 → [esp+8]=E-0x8——三
+caller 现场 0x4C7BE1/0x5DA875/0x5DA90F/0x64C85D **均无显式 push**，非标准
+栈参槽（真参应在 [esp+0x14]）；值为**调用者局部区残留/前序调用遗留**——原
+义推断=「击杀者/原因 which」与 Win 的参数槽对应，但编译形态读的是调用者栈
+残留，**照抄不改**）；⑤ 置位后重读 +0x1F6 作返回值（非缓存寄存器）。
+★跨批次闭合：**batch 392（0x4FC9E0 HouseClass::Win 镜像配对——+0x1F7 写入
+点 + 同 +0x298 三元组 + 同帧计数[0xA8ED84] + 同三标志幂等；batch 392 标注
+「+0x1F6/+0x1F8 精确语义（败/中立推断）」——**本批实锤 +0x1F6=Die 标志，
+partial 项部分闭合**）**+**batch 623/646/648（caller 0x4C6CB0/0x5DA750 同
+链——玩家退场/炸弹/连接链上 HouseClass 标记死亡再消费）**+batch 401
+（0x5DA750 玩家退场移除例程两调用点——退场前标记 Die）**+[0xA8ED84]（batch
+392 帧计数第 7 消费点 → 本条第 8）。caller 现场新发现：0x5DA750 在 0x5DA8F7
+**cmp [0xA8B238],4（GameMode==4 联机）门控** + 0x5DA904/0x4C7BC7 读
+[0xB779C4] 门控（未登记全局）、0x4C7BD2 调 0x50B730（未登记谓词）。
+新候选：0x64C380（未登记 caller）、[0xB779C4]（门控全局）、0x50B730
+（0x4C6CB0 谓词）。
+⚠️ partial：[esp+8] 值精确来源（三 caller 无 push——调用者局部残留/前序遗留
+推断；原义疑「击杀者 which」与 Win 参数槽对应未实锤）、+0x1F8 语义（Win/Die
+外第三态推断——batch 392 未闭合项保持）、+0x298 三元组 [4] 与 [8] 字段名、
+0x64C380 身份。
+
+================================================================================
+（batch 651 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：87B HouseClass 死亡标记惯用法（三标志
+幂等 + 帧计数三元组写入），宿主 HouseClass 属引擎数据层家族（batch 392 Win
+同宿主），无独立算法切片（随 HouseClass 家族整体建模时落地——非 RMG 算法域）。
+模型价值：**HouseClass 胜利/战败条件双写入点成对收口**（batch 392 Win +0x1F7
++ 本条 Die +0x1F6——QWEN.md「待确认 house+0x1F7 胜利条件写入点」批 392 已
+闭合，本条补全 +0x1F6 死亡侧）+ 帧计数[0xA8ED84] 第 8 消费点 + 三标志家族
+语义部分闭合。本批无产品代码改动，ctest 维持 **43/43 全绿**。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（87B 全段字节读完
++ batch 392 镜像配对 + 三 caller 现场核实），partial 项如实标注。
