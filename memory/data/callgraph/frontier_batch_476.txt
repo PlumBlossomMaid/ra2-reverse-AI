@@ -1,0 +1,116 @@
+frontier batch 476 — 网络对象坐标→客户端屏幕 0x0063D210（184B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=185/
+body=184B，ranking 名 FUN_0063d210，unique_callers FUN_0063b550/
+FUN_0063be60/FUN_0063c690/FUN_0063cae0——0x63xxxx 网络/会话区调用族，
+与 batch 342 的 0x6343C0 callers 重叠 FUN_0063C690/FUN_0063CAE0）。
+**184B 全字节读完**（= 0xB8，0x63D210-0x63D2C5 ret 4 = 1 栈参）。取证手段：
+disasm.py 全读 + **被调 0x633BC0（batch 130）/0x6D2140（batch 070）/
+[0x887324]/[0x886FA0]/[0x886FA4] 全已登记交叉验证** + **batch 344 0x6339E0
+同链对拍**。
+
+================================================================================
+0x0063D210 —— 网络对象坐标→客户端屏幕（推断名，184B，ret 4 = 1 栈参）
+================================================================================
+机器码（完整，184B 整数）：
+```
+0063d210  sub esp,0x94              ; 栈帧
+0063d216  or eax,0xffffffff          ; eax = -1（默认坐标）
+0063d219  push ebx
+0063d21a  mov ebx,ecx               ; ★ebx = ecx（this/输出指针）
+0063d21c  or ecx,0xffffffff
+0063d21f  test edx,edx
+0063d221  je 0x63d2b7              ; ★★edx（输入结构指针）为空 → 跳收尾（写 -1,-1）
+0063d227  push esi/push edi
+0063d229  mov ecx,0x1b             ; 27 dword
+0063d22e  mov esi,edx              ; esi = 输入
+0063d230  lea edi,[esp+0x30]       ; &栈缓冲
+0063d234  lea edx,[esp+0x30]
+0063d238  rep movsd                ; 拷贝 27 dword = 108B
+0063d23a  movsw                    ; +2B = 110B
+0063d23c  lea ecx,[esp+0x18]
+0063d240  movsb                    ; +1B = 111B
+0063d241  call 0x633bc0            ; ★★0x633BC0(&栈缓冲)——网络抽象解包→坐标（batch 130）
+0063d246  mov ecx,eax              ; ecx = 返回坐标结构
+0063d248  mov eax,[ecx]            ; eax = x
+0063d24a  cmp eax,-1
+0063d24d  mov edx,[ecx+4]          ; edx = y
+0063d250  mov esi,[ecx+8]          ; esi = z
+0063d253  jne 0x63d27c             ; x != -1 → 直接用
+0063d255  cmp edx,eax              ; y == -1?
+0063d257  jne 0x63d27c
+0063d259  cmp esi,eax              ; z == -1?
+0063d25b  jne 0x63d27c
+0063d25d  mov ecx,[esp+0xa4]       ; ★★栈参1（prologue 后 = 原 [esp+4]）——回退对象
+0063d264  test ecx,ecx
+0063d266  je 0x63d27c              ; 栈参1 空 → 用 (-1,-1,-1)
+0063d268  mov edx,[ecx]            ; 虚表
+0063d26a  lea eax,[esp+0x24]
+0063d26e  push eax
+0063d26f  call [edx+0x58]          ; ★虚表槽 0x58——回退查询坐标
+0063d272  mov ecx,eax              ; 结果
+0063d274  mov eax,[ecx]            ; 新 x
+0063d276  mov edx,[ecx+4]          ; 新 y
+0063d279  mov esi,[ecx+8]          ; 新 z
+0063d27c  mov ecx,[0x887324]       ; ★★ecx = [0x887324]（TacticalClass/坐标对象——batch 084 实锤）
+0063d282  mov [esp+0x10],edx
+0063d286  mov [esp+0xc],eax
+0063d28a  lea edx,[esp+0x18]       ; &输出
+0063d28e  lea eax,[esp+0xc]        ; &输入坐标
+0063d292  push edx/push eax
+0063d294  mov [esp+0x1c],esi
+0063d298  call 0x6d2140            ; ★★TacticalClass::CoordsToClient（batch 070/084——等距世界→客户端屏幕）
+0063d29d  mov esi,[0x886fa0]       ; ★★全局偏移 1（batch 130/282 实锤）
+0063d2a3  mov edx,[0x886fa4]       ; ★★全局偏移 2
+0063d2a9  mov eax,[esp+0x18]       ; 变换结果 x
+0063d2ad  mov ecx,[esp+0x1c]       ; 变换结果 y
+0063d2b1  add eax,esi              ; x + [0x886FA0]
+0063d2b3  pop edi
+0063d2b4  add ecx,edx              ; y + [0x886FA4]
+0063d2b6  pop esi
+0063d2b7  mov [ebx],eax            ; ★*this = x
+0063d2b9  mov [ebx+4],ecx          ; ★this+4 = y
+0063d2bc  mov eax,ebx              ; 返回 this
+0063d2be  pop ebx
+0063d2bf  add esp,0x94
+0063d2c5  ret 4
+```
+**语义（推断名 + 被调全登记链）**：**网络对象坐标→客户端屏幕**——签名
+（__thiscall + 1 栈参）：ecx = 输出指针（this）、edx = 输入结构、栈参1 =
+回退对象：
+1. edx（输入）为空 → 直接写 (-1,-1) 收尾；
+2. 否则 111B 结构（27 dword + word + byte）拷栈 → 0x633BC0（batch 130
+   网络抽象解包→坐标）取 {x,y,z}；
+3. 解包结果 == (-1,-1,-1)（失败哨兵）→ 栈参1 非空时经其**虚表槽 0x58**
+   回退查询坐标；
+4. 最终坐标经 **TacticalClass::CoordsToClient（0x6D2140，this=[0x887324]，
+   batch 070/084 实锤）** 等距世界→客户端屏幕变换；
+5. 加全局偏移 **[0x886FA0]/[0x886FA4]**（batch 130/282 实锤）；
+6. 写 *this = {x,y}，返回 this。
+★原版怪癖（照抄）：① **111B 手写拷贝**（rep movsd 0x1B + movsw + movsb——
+27 dword 结构，batch 339/286 同款）；② **解包失败哨兵 (-1,-1,-1) 回退
+虚表槽 0x58**（失败才走回退查询——双路径坐标来源）；③ **输入为空直接写
+(-1,-1)**（无回退——快路径）；④ **CoordsToClient + 偏移双段**（先变换再
+加全局偏移——batch 344 0x6339E0 同款链）；⑤ **ret 4 = 1 栈参**（回退对象
+栈传）。
+★跨批次闭合：**0x633BC0（batch 130——网络抽象解包，本条=调用现场）**；
+**0x6D2140（batch 070/084——TacticalClass::CoordsToClient，本条=调用
+现场）**；**[0x887324]（batch 084——全局坐标对象）**；**[0x886FA0]/
+[0x886FA4]（batch 130/282——全局偏移）**；**与 batch 344 0x6339E0
+（客户端坐标转换——CoordsToClient+偏移合成）同链**；**与 batch 342
+0x6343C0（坐标解包 getter——0x633BC0 包装）同族（callers 重叠
+FUN_0063C690/FUN_0063CAE0）**；**网络坐标→世界坐标→客户端坐标全链
+再次闭合**（batch 130 链 + 本批 + 344）。
+⚠️ partial：宿主类（0x63xxxx 区网络/会话对象推断）、栈参1 回退对象的
+精确类（虚表槽 0x58 = 取坐标推断）、111B 结构字段语义、[0x886FA0]/
+[0x886FA4] 偏移精确语义（屏幕原点推断）。
+
+================================================================================
+（batch 476 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（宿主类与回退对象虚表槽 0x58 身份未
+确认 + 坐标链已由既有模型覆盖）。模型价值：**网络坐标→客户端屏幕链再添
+包装层登记**（解包+回退+变换+偏移四段全被调登记交叉——batch 130/070/
+344 链闭合）。本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372
+已实跑核实）。登记一行 semantics_verified + assembly_verified_semantics_
+confirmed（全段字节读完 + 被调全登记链 + 同链对拍），partial 项如实标注。
