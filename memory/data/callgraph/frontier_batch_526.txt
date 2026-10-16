@@ -1,0 +1,93 @@
+frontier batch 526 — 文件缓冲读取器（全局缓存 + 惰性加载）0x0069E580（438B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=73/
+body=438B，ranking 名 FUN_0069e580 unclassified——**推断名**），unique_callers
+FUN_0069e740/FUN_0069e7e0/FUN_0069e860/FUN_0069e900（全 0x69xxxx 区）。
+**438B 全字节读完**（= 0x1B6，0x69E580-0x69E735，多出口 ret）。
+取证手段：disasm.py 全读 + **五个被调全已登记交叉**（0x4739F0 CCFileClass
+构造 batch 063 / 0x473C50 Exists batch 075 / 0x473B10 FileClass::Read batch
+131 / 0x43AE50 析构 batch 059 / 0x431B80 文件族 batch 249）。
+
+================================================================================
+0x0069E580 —— 文件缓冲读取器（推断名，438B，多出口）
+================================================================================
+机器码（完整，438B 整数）：
+```
+0069e580  sub esp,0x70 / push ebp/edi / mov edi,ecx（this）
+0069e587  mov [esp+8],edi
+0069e58b  cmp word[edi],-1 / je 0x69e599   ; ★★this+0 哨兵 -1 检查
+0069e591  mov eax,edi / pop 族 / ret       ; ★已初始化 → 返 this
+0069e599  mov al,[edi+0x10] / test / je 0x69e5a9
+0069e5a0  mov eax,[edi+0xc] / pop 族 / ret ; ★★+0x10 标志 → 返 +0xC
+0069e5a9  mov eax,[0xb077bc] / mov ecx,[edi+0x14] / cmp / jne 0x69e5c0
+0069e5b5  mov eax,[0xb077b4] / pop 族 / ret ; ★★全局 [0xB077B4] 缓存命中
+0069e5c0  mov ecx,[edi+8] / push ecx
+0069e5c4  lea ecx,[esp+0x10]
+0069e5c8  call 0x4739f0        ; ★★CCFileClass 构造（batch 063 已登记）
+0069e5cd  xor ebp,ebp / lea ecx,[esp+0xc] / push ebp
+0069e5d3  call 0x473c50        ; ★★Exists（batch 075 已登记）
+0069e5d9  test al / je 0x69e702 ; ★不存在 → 失败路径
+0069e5e1  push ebx/esi
+0069e5e3  lea ecx,[esp+0x14]
+0069e5e7  call 0x473c00        ; ★CCFileClass 方法（未登记——大小推断）
+0069e5ec  mov ebx,eax          ; ★ebx = 文件大小
+0069e5ee  mov eax,[0xb077b4] / cmp eax,ebp / jne 0x69e61e  ; ★全局已有缓冲
+0069e5f7  cmp ebx,0x300000 / mov eax,0x300000 / jl 0x69e606 / mov eax,ebx  ; ★max(0x300000, 大小)
+0069e606  push eax / mov [0xb077b8],eax
+0069e60c  call 0x7c8e17        ; ★★operator_new（batch 001）
+0069e611  mov [0xb077b4],eax   ; ★★全局 [0xB077B4] = 新缓冲
+0069e619  jmp 0x69e6b3
+0069e61e  cmp [0xb077b8],ebx / jge 0x69e6b3  ; ★★容量够 → 复用
+0069e62a  ... 释放旧缓冲（0x69E930 + delete 0x7C8B3D + 链表摘除）...
+0069e6b3  cmp eax,ebp / je 0x69e6c7
+0069e6b7  push ebx / push eax / lea ecx,[esp+0x1c]
+0069e6bd  call 0x473b10        ; ★★FileClass::Read（batch 131 已登记）
+0069e6c2  mov eax,[0xb077b4]
+0069e6c7  mov ecx,[edi+0x14] / mov esi,eax / mov [0xb077bc],ecx  ; ★★[0xB077BC] = this->+0x14
+0069e6d2  lea ecx,[esp+0x6c] / mov [esp+0x14],0x7e16b0 / mov [esp+0x78],ebp
+0069e6e2  call 0x43ae50        ; ★★析构（batch 059 已登记）
+0069e6e7  lea ecx,[esp+0x14] / mov [esp+0x14],0x7e1668
+0069e6f3  call 0x431b80        ; ★★文件族（batch 249 已登记）
+0069e6f8  mov eax,esi / pop 族 / ret  ; ★返全局缓冲指针
+0069e702  失败路径：... 返回 0
+```
+**语义（推断名）**：**文件缓冲读取器（全局缓存 + 惰性加载）**——
+读取文件内容到全局缓冲 [0xB077B4]（多级短路）：
+1. **三级短路**：this+0 哨兵 -1 检查（已初始化 → 返 this）/ +0x10 标志
+   （→ 返 +0xC）/ 全局 [0xB077BC] == this->+0x14（缓存命中 → 返
+   [0xB077B4]）；
+2. **惰性加载**：CCFileClass 构造（0x4739F0）→ Exists 检查（0x473C50）
+   → 取大小（0x473C00）→ **全局缓冲分配/复用**（[0xB077B8] 容量，
+   max(0x300000, 大小) 下限；已有且够大则复用；否则释放旧缓冲——
+   0x69E930 + delete + 链表摘除 → 重分配）→ **FileClass::Read**
+   （0x473B10）读入；
+3. **缓存标记**：全局 [0xB077BC] = this->+0x14（下次短路）；
+4. 收尾双析构（0x43AE50 + 0x431B80——栈上对象清理）。
+★原版怪癖（照抄）：① **三级短路**（this 哨兵/标志/全局缓存——重复
+读取零 IO）；② **全局单缓冲**（[0xB077B4] 全游戏一份——后读覆盖前读，
+调用方须立即消费）；③ **0x300000 下限**（缓冲至少 3MB——容量下限
+硬编码）；④ **容量够复用不够释放重分配**（[0xB077B8] 容量跟踪）；
+⑤ **0x473C00 取大小在 Exists 后**（文件不存在直接失败路径）；⑥
+**[0xB077BC] 缓存标记 = this->+0x14**（对象身份比对——多对象共享
+单缓冲的识别键）；⑦ 收尾双析构（栈对象 RAII）。
+★跨批次闭合：**0x4739F0（batch 063——CCFileClass 构造，本条=调用
+现场）**+**0x473C50（batch 075——Exists 三态缓存，本条=调用现场）**+
+**0x473B10（batch 131——FileClass::Read，本条=调用现场）**+**0x43AE50
+（batch 059——析构，本条=调用现场）**+**0x431B80（batch 249——文件
+族核心，本条=调用现场）**+**0x7C8E17/0x7C8B3D（batch 001——new/delete）**。
+⚠️ partial：0x473C00 身份（文件大小查询推断——未登记）、this+0/+0xC/
++0x10/+0x14 字段语义（文件对象布局推断）、[0xB077B4]/[0xB077B8]/
+[0xB077BC] 全局缓冲宿主（全局文件缓存推断——写入点未全查）、
+0x69E930（旧缓冲清理子例程推断）、宿主类（0x69xxxx 区——资源/配置
+加载推断）。
+
+================================================================================
+（batch 526 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（0x473C00/0x69E930 未登记 + 全局
+缓冲宿主未确认——读取器依赖文件类布局；五个被调已有登记）。模型
+价值：**文件缓冲读取器登记**（五被调汇聚调用现场 + 三级短路 + 全局
+单缓冲 + 0x300000 下限）+ **新候选 0x473C00/0x69E930 入列**。本批无
+产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。登记
+一行 semantics_verified + assembly_verified_semantics_confirmed（全段
+字节读完 + 五被调交叉），partial 项如实标注。
