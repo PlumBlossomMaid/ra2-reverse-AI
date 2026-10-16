@@ -1,0 +1,77 @@
+frontier batch 605 — Scenario 出生点配置更新器 0x0058BB30（231B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（0x5EBA00 后下一未登记高扇入候选 0x0058BB30
+FUN_0058bb30 callers=3/unique=3/deps=2750/body=231B，unique_callers FUN_005E74E0
+（★batch 264 已登记——会话配置读取端）/FUN_005ED5A0/FUN_006AE6E0（★batch 600/601/
+602/604 配置链同域））。**231B 全字节读完**（0x58BB30-0x58BC16，ret c3，无参——
+纯全局操作）。
+取证手段：disasm.py 全读 + direct_edges 调用图核对 + **batch 576 PreviewClass::
+DrawStartPoints 读取端字段族配对（+0x112C..0x1138/+0x113C/+0x1140——写端 vs 读端
+同族实锤）** + 8 个新全局登记。
+
+================================================================================
+0x0058BB30 —— Scenario 出生点配置更新器（推断名，231B）
+================================================================================
+机器码（完整 231B，分四段）：
+```
+; ── 段 1：宿主空检 + 计数写入
+0058bb30  push ecx / mov eax,[0xa8b230]         ; ★★宿主对象 [0xA8B230]（ScenarioClass 实例推断）
+0058bb36  test eax,eax / je 0x58bc15            ; ★空 → 直接返回
+0058bb3e  mov ecx,[0xabed0c] / mov [eax+0x113c],ecx   ; ★★计数 [0xABED0C] → 宿主+0x113C
+; ── 段 2：两项表复制循环（i=0..count-1）
+0058bb4b  mov ebx,[0xa8b230] / xor edi
+0058bb54  mov eax,[ebx+0x113c] / test eax / jle 0x58bbd4   ; count<=0 → 跳过
+0058bb60  mov eax,0x1140              ; ★目标偏移起点 0x1140
+0058bb65  mov esi,0xabe328 / sub esi,eax     ; ★源表基址 0xABE328 → 调成 0xABD1E8
+0058bb6c  mov ebp,0xabe304 / mov ecx,0x11c0 / sub ebp,ecx  ; ★第二源表 0xABE304 → 0xABD144
+0058bb86  循环：cmp eax,0x1140 / jl 0x58bb9e（★越界清零）
+0058bb8d  cmp edi,[0xabed0c] / jge 0x58bb9e（★i>=count 清零）
+0058bb95  mov edx,[esi+eax] / mov esi2,[esi+eax+4]   ; ★源 [0xABD1E8+off] 双 dword
+0058bb9e  清零：xor edx / xor esi
+0058bba2  mov [eax+ebx],edx / mov [eax+edx+4],esi    ; ★目标 [宿主+0x1140+off] 写 8B
+0058bbb9  mov edx,[ecx+ebp-4] / mov [ecx+esi-4],edx  ; ★第二表复制（4B 项——源 [0xABD144+ecx-4] → 目标 [宿主+ecx-4]）
+0058bbca  inc edi / add ecx,4 / add eax,8 / cmp edi,[ebx+0x113c] / jl 0x58bb82   ; ★i 循环
+; ── 段 3：四全局写入宿主四字段
+0058bbd4  mov eax,[0xabdfd4] / mov [ebx+0x112c],eax   ; ★★+0x112C = [0xABDFD4]
+0058bbe0  mov edx,[0xabdfd0] / mov [ecx+0x1130],edx   ; ★★+0x1130 = [0xABDFD0]
+0058bbf3  mov ecx,[0xabec90] / mov [eax+0x1134],ecx   ; ★★+0x1134 = [0xABEC90]
+0058bc04  mov eax,[0xabecd0] / mov [edx+0x1138],eax   ; ★★+0x1138 = [0xABCD0]
+0058bc15  pop ecx / ret
+```
+**语义（推断名）**：**Scenario 出生点配置更新器**——无参纯全局操作，宿主对象
+[0xA8B230]（ScenarioClass::Instance 推断）：
+① 宿主空检（NULL 直接返回）；
+② 计数 [0xABED0C] 写入宿主 +0x113C；
+③ 循环复制两项表：从 [0xABE328] 表复制 count 项（每项 8B = 双 dword）到宿主
+   +0x1140 起；从 [0xABE304] 表复制 count 项（每项 4B）到宿主 +0x11C0 族（偏移
+   复用）；越界/超计数项清零；
+④ 收尾四全局写入：+0x112C=[0xABDFD4]、+0x1130=[0xABDFD0]、+0x1134=
+   [0xABEC90]、+0x1138=[0xABCD0]。
+★原版怪癖（照抄）：① **源表基址减目标偏移后存取**（0xABE328-0x1140=0xABD1E8、
+   0xABE304-0x11C0=0xABD144——编译器把"源=表+偏移"优化成"常数差+偏移"）；②
+   **双表复制**（8B 项表到 +0x1140、4B 项表到 +0x11C0 族——两个不同元素宽度的
+   表）；③ **越界/超计数清零**（cmp eax,0x1140 jl 与 cmp edi,[0xabed0c] jge 双
+   条件——表不足时写 0）；④ **四全局收尾**（+0x112C/+0x1130/+0x1134/+0x1138 分
+   别取四个不同全局——非同一来源块）；⑤ **宿主空检直接返回**（[0xA8B230] NULL
+   时整函数跳过）。
+★跨批次闭合：**batch 576（PreviewClass::DrawStartPoints——ScenarioClass 出生点
+   表字段族读取端：+0x113C 计数 1..8 硬限/+0x1140 8B 项/+0x112C/+0x1130 原点/
+   +0x1134/+0x1138 尺寸——本条=同一字段族的写入端，读写配对实锤）**+**batch 264
+   （FUN_005E74E0 会话配置读取端——本条=其调用现场）**+**batch 600/601/602/604
+   （FUN_005ED5A0/FUN_006AE6E0 配置链同域——GDlgSupp/会话家族聚类）**。
+⚠️ partial：函数精确名（Scenario 出生点配置更新器推断）、宿主对象 [0xA8B230]
+   精确身份（ScenarioClass::Instance 推断——与 batch 576 读取端字段族配对支撑）、
+   四全局 [0xABDFD4]/[0xABDFD0]/[0xABEC90]/[0xABCD0] 语义、两项表内容（0xABE328/
+   0xABE304 BSS）、+0x1140 与 +0x11C0 两表区精确语义、FUN_005ED5A0/FUN_006AE6E0
+   （未登记）。
+
+================================================================================
+（batch 605 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：231B 纯表复制编排无算法切片；宿主对象精确
+身份待闭合。模型价值：**Scenario 出生点配置更新模板**（宿主空检 → 计数 → 双表
+复制 + 越界清零 → 四全局收尾）+ **与 batch 576 读取端字段族配对实锤**（+0x112C..
++0x1138/+0x113C/+0x1140 写读两端同族——出生点配置完整生命周期）+ 8 个新全局。
+无新被调候选。本批无产品代码改动，ctest 维持 **43/43 全绿**。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（231B 全字节读完 +
+batch 576 字段族配对 + 调用图核对），partial 项如实标注。
