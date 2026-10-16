@@ -1,0 +1,71 @@
+frontier batch 532 — DynamicVectorClass 族析构器（配对 delete flag 版）0x0042FBF0（73B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=65/
+body=73B，ranking 名 FUN_0042fbf0 unclassified——**推断名 + 构造器配对
+实锤**），unique_callers FUN_0058e740/FUN_005a0160/FUN_005a0410/
+FUN_005a5360（含 0x5Axxxx RMG 区）。
+**73B 全字节读完**（= 0x49，0x42FBF0-0x42FC36，ret 4 = 1 栈参）。
+取证手段：disasm.py 全读 + **batch 092 0x42FCB0（构造器——同虚表
+0x7E38D0 配对）** + **batch 001 0x7C8B3D（operator_delete）** +
+**batch 469（DynamicVectorClass 字段表）+0xD IsAllocated 交叉**。
+
+================================================================================
+0x0042FBF0 —— DynamicVectorClass 族析构器（推断名，73B，ret 4 = 1 栈参）
+================================================================================
+机器码（完整，73B 整数）：
+```
+0042fbf0  push esi / mov esi,ecx          ; this
+0042fbf3  mov eax,[esi+4]                 ; ★this->+4 = Items 数组指针
+0042fbf6  mov dword[esi],0x7e38d0         ; ★★装虚表 0x7E38D0（batch 092 构造器同虚表!）
+0042fbfc  test eax / je 0x42fc17
+0042fc00  mov cl,[esi+0xd] / test / je 0x42fc17  ; ★+0xD = IsAllocated 门控
+0042fc07  push eax / call 0x7c8b3d        ; ★★operator_delete(Items)（batch 001）
+0042fc0d  mov dword[esi+4],0              ; ★+4 = NULL（自清空）
+0042fc17  mov al,[esp+8]                  ; ★栈参 1 = delete flag
+0042fc1b  mov byte[esi+0xd],0             ; ★+0xD = 0（IsAllocated 清）
+0042fc1f  test al,1
+0042fc21  mov dword[esi+8],0              ; ★+8 = 0（Capacity 清）
+0042fc28  je 0x42fc33
+0042fc2a  push esi / call 0x7c8b3d        ; ★★operator_delete(this)（flag 位 1 → 删自身）
+0042fc30  add esp,4
+0042fc33  mov eax,esi / pop esi / ret 4
+```
+**语义（推断名 + 构造器配对实锤）**：**DynamicVectorClass 族析构器
+（配对 delete flag 版）**——ret 4 = 1 栈参（delete flag）：
+1. **装虚表 0x7E38D0**（与 batch 092 构造器 0x42FCB0 同一虚表——构造/
+   析构配对实锤）；
+2. **Items 释放**：+4 数组非空且 +0xD（IsAllocated）置位 → operator_
+   delete(Items) + 置 NULL（'safe delete pointer member + self-null'
+   惯用——batch 061/059/488 同族）；
+3. **标志清理**：+0xD = 0、+8 Capacity = 0；
+4. **delete this**：栈参 1 位 1 → operator_delete(this)（调用方控制
+   是否连对象壳一起释放）；
+5. 返 this（若未删自身）。
+★原版怪癖（照抄）：① **析构也装虚表**（mov [esi],0x7E38D0——析构
+调用时虚表仍在，与构造器对称）；② **IsAllocated 门控删 Items**
+（+0xD 才删——外部注入缓冲不释放，batch 469/092 同语义）；③ **删后
+自清空**（mov [esi+4],0——防二次释放惯用）；④ **delete-this 由栈参
+1 位 1 控制**（调用方可只清 Items 保留壳——主析构/部分清理双模式）；
+⑤ **Capacity 无条件清**（+8=0 在 flag 判前——无论删不删壳都清）；
+⑥ ret 4 = 1 栈参 + 返 this。
+★跨批次闭合：**batch 092 0x42FCB0（可选外部缓冲数组构造器——同虚表
+0x7E38D0 配对析构）**+**batch 469（DynamicVectorClass 字段表 +4 Items/
++8 Capacity/+0xD IsAllocated——本函数布局逐字段对齐）**+**batch 001
+0x7C8B3D（operator_delete——本条=双调用现场）**+**batch 061/059/488
+（'safe delete single pointer member + self-null' 惯用族）**+**batch
+486 0x40BCB0（VectorClass dtor——同族对照）**。
+⚠️ partial：宿主类精确身份（DynamicVectorClass 模板实例推断——批量
+092 构造器同族）、栈参 1 位 1 的调用方场景（主析构 vs 部分清理推断）、
+callers FUN_0058e740/FUN_005a0160/FUN_005a0410/FUN_005a5360 身份
+（0x5A RMG 区——容器清理消费端推断）。
+
+================================================================================
+（batch 532 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（宿主类同 batch 092/469 推断——
+容器族建模时一并闭合；本批=析构器配对登记）。模型价值：**batch 092
+构造器的配对析构器闭合**（同虚表 0x7E38D0 双向实锤）+ **delete-this
+双模式怪癖**（flag 位 1 删壳）+ **safe-delete 惯用族新实例**。本批无
+产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。登记
+一行 semantics_verified + assembly_verified_semantics_confirmed（全段
+字节读完 + 构造器配对 + 字段对齐），partial 项如实标注。
