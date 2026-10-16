@@ -1,0 +1,77 @@
+frontier batch 544 — 窄串持有类拷贝构造器 0x007D2ED8（74B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x7D2ED8 callers=4/unique=4/
+deps=48/body=74B，unique_callers FUN_007ca9b4/FUN_007ca9cc/FUN_007cac34/
+operator=——含带名 operator=，均未登记）。**74B 全字节读完**（0x7D2ED8-
+0x7D2EFF，ret 4=1 栈参）。位于 **0x7D2xxx MSVC6 静态 CRT 异常/宽串区**。
+取证手段：disasm.py 全读 + **batch 035 配对准证（0x7D2F41 ~exception——
+同虚表 0x7F990C 且紧邻同区）** + 三被调锚点核对（batch 017/001/008）。
+
+================================================================================
+0x007D2ED8 —— 窄串持有类拷贝构造器（推断名，74B，ret 4）
+================================================================================
+机器码（完整，74B 整数）：
+```
+007d2ed8  push esi / push edi
+007d2eda  mov edi,[esp+0xc]            ; ★栈参 = 源对象指针
+007d2ede  mov esi,ecx                  ; this
+007d2ee0  mov [esi],0x7f990c           ; ★★装虚表 0x7F990C（batch 035 ~exception 同虚表！）
+007d2ee6  mov eax,[edi+8]              ; ★源 +8 = 长度/持有标志
+007d2ee9  test eax,eax
+007d2eeb  mov [esi+8],eax              ; this+8 = 源+8（拷贝）
+007d2eee  je 0x7d2f15                  ; ★+8==0 → 直接指针拷贝分支
+007d2ef0  push [edi+4]                 ; ★源 +4 = 源串指针
+007d2ef3  call 0x7d15a0                ; ★★_strlen（batch 017 实锤）
+007d2ef8  inc eax                      ; +1 给 '\0'
+007d2ef9  push eax
+007d2efa  call 0x7c8e17                ; ★★operator new（batch 001 实锤）
+007d2eff  pop ecx
+007d2f00  mov [esi+4],eax              ; this+4 = 新缓冲
+007d2f03  test eax,eax
+007d2f05  pop ecx
+007d2f06  je 0x7d2f1b                  ; ★new 失败 → 静默跳过拷贝
+007d2f08  push [edi+4]                 ; 源串
+007d2f0b  push eax                     ; 目标缓冲
+007d2f0c  call 0x7d4bf0                ; ★★strcpy（batch 008 实锤——Optimized forward copy）
+007d2f11  pop ecx / pop ecx
+007d2f13  jmp 0x7d2f1b
+007d2f15  mov eax,[edi+4]              ; ★+8==0 分支：this+4 = 源+4（指针共享）
+007d2f18  mov [esi+4],eax
+007d2f1b  mov eax,esi / pop edi / pop esi / ret 4   ; 返 this
+```
+**语义（推断名）**：**窄串持有类拷贝构造器**——thiscall + 1 栈参（源对象）：
+① **装虚表 0x7F990C**（与 batch 035 ~exception 完全相同——同类锚点）；
+② `this+8 = 源+8`（长度/持有标志拷贝）；
+③ **深拷分支**（源+8 != 0）：`_strlen(源+4)` → +1 → `operator new` →
+   `strcpy(新缓冲, 源串)`；new 失败静默置零跳过拷贝；
+④ **共享分支**（源+8 == 0）：`this+4 = 源+4`（不分配、指针共享）；
+⑤ 返 this。
+**与 batch 035 直接配对**：0x7D2F41（~exception）读 `this+8` 非 0 时
+`0x7C8B3D(this+4)` 释放消息串——本条构造器写 `this+8`/`this+4`（分配）
+正是它的构造端——**exception 消息串生命周期完整闭合**（构造深拷/析构
+按标志释放，+8 即"有串需释放"的持有标志）。
+★原版怪癖（照抄）：① **+8 作深拷/浅拷分叉开关**（非零深拷分配、零则
+指针共享——空串零成本）；② **new 失败静默跳过**（test/je——不抛异常，
+调用方可能拿到零串）；③ **strlen→inc→new→strcpy 四步链**（先量长再分配
+再拷贝——无扩容/无 realloc）；④ **同虚表 0x7F990C 装表**（拷贝构造也装
+防双重析构表——与 ~exception 收尾一致）；⑤ ret 4 = 1 栈参 + 返 this。
+★跨批次闭合：**batch 035（0x7D2F41 ~exception——同虚表 0x7F990C 同区
+邻函数，本条=其构造端配对）**+**batch 017（0x7D15A0 _strlen）+batch 001
+（0x7C8E17 operator new）+batch 008（0x7D4BF0 Optimized forward copy）**。
+⚠️ partial：宿主类名（exception/窄串持有类推断——batch 035 记 ~exception）、
++8 字段语义（长度 vs 持有标志推断）、FUN_007ca9b4/FUN_007ca9cc/
+FUN_007cac34/operator= 身份（CRT 区内调用者——operator= 疑为同类赋值
+运算，新候选入列）。
+
+================================================================================
+（batch 544 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：宿主类名未完全确认（exception 推断），
+且本函数是 CRT 内**组合既有原语**（_strlen/_new/strcpy 均已有 _REIMPL：
+string_length_legacy/operator new/string_copy_legacy）的容器类方法——非
+新底层原语，语义登记即可。模型价值：**batch 035 构造/析构配对闭合**（
+exception 消息串生命周期两端）+ **CRT 窄串持有类方法族**（拷贝构造+operator=
+调用者——同类家族候选）。4 个新调用者候选入列。本批无产品代码改动，
+ctest 维持 **43/43 全绿**。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（74B 全段字节读完 + 四批次锚点
+交叉），partial 项如实标注。
