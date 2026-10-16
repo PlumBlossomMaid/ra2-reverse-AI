@@ -1,0 +1,78 @@
+frontier batch 534 — TemporalClass::JustLetGo 0x0071AD40（98B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=64/
+body=98B，ranking 名 **TemporalClass::JustLetGo**（带名实锤）），unique_callers
+HouseClass::DestroyAll/HouseClass::DestroyAllBuildings/HouseClass::
+DestroyAllNonBuildingsNaval/HouseClass::DestroyAllNonBuildingsNonNaval
+（与 batch 533 GetOriginalOwner **同 caller 集**——DestroyAll 族）。
+**98B 全字节读完**（= 0x62，0x71AD40-0x71ADA1，ret 无栈参）。
+取证手段：disasm.py 全读 + **QWEN.md 崩溃候选点交叉（0x71ADE0 = 超时空
+崩溃排查三候选之一）** + **batch 533 同 caller 集对照**。
+
+================================================================================
+0x0071AD40 —— TemporalClass::JustLetGo（带名，98B，ret 无栈参）
+================================================================================
+机器码（完整，98B 整数）：
+```
+0071ad40  push ebx/esi / mov esi,ecx  ; this
+0071ad44  xor ebx,ebx
+0071ad46  mov eax,[esi+0x28]      ; ★this+0x28 = 挂起目标
+0071ad49  cmp eax,ebx / je 0x71ad5f
+0071ad4d  mov byte[eax+0x270],bl  ; ★★[+0x28]->+0x270 = 0（标志清）
+0071ad53  mov eax,[esi+0x28]
+0071ad56  mov dword[eax+0x278],ebx ; ★★[+0x28]->+0x278 = 0
+0071ad5c  mov [esi+0x28],ebx      ; ★★this+0x28 = NULL（释放引用）
+0071ad5f  mov eax,[esi+0x44]      ; ★this+0x44 = 挂起对象 A
+0071ad62  cmp eax,ebx / je 0x71ad79
+0071ad66  cmp [eax+0x40],esi / jne 0x71ad6e  ; ★★[A->+0x40] == this?（反向指针）
+0071ad6b  mov [eax+0x40],ebx      ; ★反向指针清
+0071ad6e  mov ecx,[esi+0x44] / call 0x71ade0  ; ★★0x71ADE0（QWEN.md 崩溃候选点!）
+0071ad76  mov [esi+0x44],ebx      ; ★this+0x44 = NULL
+0071ad79  mov eax,[esi+0x40]      ; ★this+0x40 = 挂起对象 B
+0071ad7c  cmp eax,ebx / je 0x71ad93
+0071ad80  cmp [eax+0x44],esi / jne 0x71ad88  ; ★★[B->+0x44] == this?（反向指针）
+0071ad85  mov [eax+0x44],ebx      ; ★反向指针清
+0071ad88  mov ecx,[esi+0x40] / call 0x71ade0  ; ★★0x71ADE0 再次调用
+0071ad90  mov [esi+0x40],ebx      ; ★this+0x40 = NULL
+0071ad93  mov [esi+0x44],ebx / mov [esi+0x40],ebx
+0071ad99  mov [esi+0x3c],ebx / mov [esi+0x38],ebx  ; ★★★收尾清四字段
+0071ad9f  pop 族 / ret
+```
+**语义（带名实锤）**：**TemporalClass::JustLetGo**——超时空效果释放器
+（ret 无栈参，纯 this）：
+1. **挂起目标清理**：this+0x28 非空 → 清其 +0x270/+0x278 标志、置
+   this+0x28 = NULL；
+2. **挂起对象 A**（this+0x44）：非空 → 反向指针 [A->+0x40] == this
+   则清 → **调 0x71ADE0** → 置 this+0x44 = NULL；
+3. **挂起对象 B**（this+0x40）：非空 → 反向指针 [B->+0x44] == this
+   则清 → **调 0x71ADE0** → 置 this+0x40 = NULL；
+4. **收尾清四字段**（+0x44/+0x40/+0x3C/+0x38 全 0）。
+**与 QWEN.md 崩溃排查直接咬合**：**0x71ADE0 = 超时空移除可驻军建筑
+崩溃三候选点之一**（docs/bug-triage/：0x51BB7A / 0x71ADE0 / 0x71B151）——
+本函数是调用 0x71ADE0 的释放路径（DestroyAll 场景触发）。
+★原版怪癖（照抄）：① **双向引用反向清**（[A->+0x40]==this 才清——
+交叉引用一致性）；② **0x71ADE0 双调用**（+0x44 与 +0x40 各调一次——
+两次释放处理）；③ **+0x28 与 +0x40/+0x44 不同处理**（目标清标志直接
+NULL vs 对象反向指针+调用——两类挂起语义）；④ **收尾四字段连清**
+（+0x38/+0x3C/+0x40/+0x44 全部置 0——完全释放态）；⑤ 判空跳过
+（je——空引用零副作用）；⑥ ret 无栈参（纯 this 清理）。
+★跨批次闭合：**QWEN.md（0x71ADE0 = 崩溃排查三候选点之一——本函数=
+其释放调用路径）**+**batch 533（TechnoClass::GetOriginalOwner——同
+DestroyAll caller 集：销毁时先取原主再释放超时空挂起）**+**batch 317
+区（超时空相关——0x71ADxx TemporalClass 家族）**。
+⚠️ partial：0x71ADE0 精确语义（崩溃候选点——未登记/未实锤）、+0x28/
++0x40/+0x44 挂起对象类型（TemporalClass 关联对象推断——+0x40<->+0x44
+互为反向指针推断）、+0x270/+0x278 标志语义（挂起状态推断）、+0x38/
++0x3C 收尾字段（辅助状态推断）。
+
+================================================================================
+（batch 534 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（0x71ADE0 未登记 + TemporalClass
+布局未展开——释放器依赖挂起对象结构；QWEN.md 崩溃排查待复现锁定）。
+模型价值：**TemporalClass::JustLetGo 带名登记**（释放路径 + 0x71ADE0
+双调用现场——为崩溃排查提供调用路径证据）+ **DestroyAll 释放链闭合**
+（batch 533 取原主 → 本条释放挂起）。本批无产品代码改动，ctest 维持
+**43/43 全绿**（batch 372 已实跑核实）。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（全段字节读完 + 带名 + QWEN.md
+候选点交叉），partial 项如实标注。
