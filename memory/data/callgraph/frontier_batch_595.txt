@@ -1,0 +1,105 @@
+frontier batch 595 — TiberiumClass 数组重置器 0x00722240（329B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（下一未登记高扇入候选 0x00722240 FUN_00722240
+callers=3/unique=3/deps=2817/body=329B，unique_callers FUN_00598960/FUN_0067e440/
+FUN_00686b20）。**329B 全字节读完**（0x722240-0x722388，ret c3，无参——纯全局
+操作）。
+取证手段：disasm.py 分三段全读 + ranking/direct_edges 调用图核对 + 已登记锚点
+交叉（**batch 369 0x722390 紧邻孪生 + batch 114 0x42B1F0 地图尺寸 getter +
+batch 132/274/325/369 的 [0xB0F4EC]/[0xB0F4F8] 全局对 + batch 001 new/delete**）
++ xref_abs + YRpp 无带名核对。
+
+================================================================================
+0x00722240 —— TiberiumClass 数组重置器（推断名，329B）
+================================================================================
+机器码（完整 329B，分四段）：
+```
+; ── 段 1：遍历前置
+00722240  push ecx / mov eax,[0xb0f4f8]   ; ★★全局计数 [0xB0F4F8]（TiberiumClass 数组）
+00722246  push ebx/ebp / xor ebx,ebx / xor ebp,ebp
+0072224c  cmp eax,ebx / jle 0x722385      ; ★计数 <=0 → 直接返回
+00722254  push esi/edi
+; ── 段 2：逐项循环（ebp=索引）
+00722256  mov eax,[0xb0f4ec] / mov edi,[eax+ebp*4]   ; ★★全局数组 [0xB0F4EC] 取项
+0072225e  mov eax,[edi+0xf4] / cmp eax,ebx / je 0x7222a2   ; ★+0xF4 容器（空跳过）
+00722268  mov edx,[eax] / xor ecx / cmp edx,ebx / jl 0x72227e   ; ★计数 <0 跳
+00722270  循环：mov edx,[eax+8] / inc ecx / mov [edx+ecx*4-4],ebx   ; ★逐项置 0
+00722278  mov edx,[eax] / cmp ecx,edx / jle 0x722270                ; 按计数循环
+0072227e  mov [eax],ebx                  ; ★容器计数 = 0
+00722280  mov esi,[edi+0xf4] / cmp esi,ebx / je 0x72229c
+0072228a  mov eax,[esi+8] / push eax / call 0x7c8b3d   ; ★★batch 001 delete（数据区）
+00722293  push esi / call 0x7c8b3d / add esp,8         ; ★★batch 001 delete（容器本体）
+0072229c  mov [edi+0xf4],ebx              ; ★+0xF4 置 NULL
+007222a2  mov eax,[edi+0xfc] / cmp eax,ebx / je 0x7222bb
+007222ac  push eax / call 0x7c8b3d / add esp,4 / mov [edi+0xfc],ebx   ; ★delete +0xFC
+007222bb  mov eax,[edi+0xf8] / cmp eax,ebx / je 0x7222d4
+007222c5  push eax / call 0x7c8b3d / add esp,4 / mov [edi+0xf8],ebx   ; ★delete +0xF8
+007222d4  mov [edi+0xf0],ebx              ; ★+0xF0 置 NULL
+; ── 段 3：重分配 +0xF4（调用 0x42B1F0 尺寸 getter）
+007222da  call 0x42b1f0                  ; ★★batch 114 地图尺寸 getter（(H+4)×W×2）
+007222df  mov esi,eax / lea ecx,[esi*8] / push ecx / call 0x7c8e17   ; ★★batch 001 new(esi*8)
+007222ee  add esp,4 / cmp eax,ebx / je 0x7222fc
+007222f5  dec esi / mov [esp+0x10],esi / jmp 0x7222fe
+007222fc  xor eax,eax
+007222fe  mov [edi+0xfc],eax              ; ★+0xFC = new 结果（或 0）
+00722304  call 0x42b1f0 / push eax / call 0x7c8e17   ; ★★ batch 001 new(size)
+0072230f  push 0x14 / mov [edi+0xf8],eax  ; ★+0xF8 = new(size)、push 0x14
+00722317  call 0x7c8e17 / mov esi,eax / add esp,8   ; ★★ batch 001 new(0x14=20B)
+0072231e  cmp esi,ebx / je 0x722366       ; ★alloc 失败走置 NULL
+00722325  call 0x42b1f0 / lea edx,[eax*4+4] / mov [esi+0xc],ebx   ; ★again size
+00722335  push edx / mov [esi+0x10],0xffffffff / mov [esi],ebx   ; ★构造容器头：+0xC=0、+0x10=-1、+0=0
+00722342  mov [esi+4],eax / call 0x7c8e17  ; ★+4=size、new(size*4+4)
+00722349  mov ecx,[esi+4] / mov [esi+8],eax / add esp,4
+00722351  xor eax,eax / cmp ecx,ebx / jl 0x722368
+00722355  循环：mov ecx,[esi+8] / inc eax / mov [ecx+eax*4-4],ebx   ; ★逐项置 0
+0072235d  mov ecx,[esi+4] / cmp eax,ecx / jle 0x722355
+00722364  jmp 0x722368
+00722366  xor esi,esi
+00722368  mov ecx,edi / mov [edi+0xf4],esi / call 0x7228b0   ; ★+0xF4=新容器、★0x7228B0（每项重置）
+; ── 段 4：循环收尾
+00722375  mov eax,[0xb0f4f8] / inc ebp / cmp ebp,eax / jl 0x722256
+00722383  pop edi/esi
+00722385  pop ebp/ebx/ecx / ret
+```
+（注：0x7228B0 是每项调用的子函数——this 传入表项，内部 [esi+0xF0]=0、遍历
+[esi+0xF4] 容器逐项置 0、再按 0x42B1F0 size 在 [esi+0xF8] 缓冲区上重写字节 0——
+是"项内重置"的收尾。）
+**语义（推断名）**：**TiberiumClass 数组重置器**——无参纯全局操作，按计数
+[0xB0F4F8] 遍历 [0xB0F4EC] 数组，每表项：
+① **清旧三槽**：+0xF4 容器先逐项置 0（计数循环）再双层 delete（数据区+本体）
+   后置 NULL；+0xFC/+0xF8 直接 delete 后置 NULL；+0xF0 置 NULL；
+② **重分配三槽**：+0xFC = new(地图尺寸×8)、+0xF8 = new(地图尺寸)、+0xF4 =
+   new(20B) 容器头（+0xC=0/+0x10=-1/+0x0=0/+0x4=size/+0x8=new(size×4+4) 逐项置
+   0）；
+③ **每项收尾** 0x7228B0（+0xF0=0、+0xF4 项置 0、+0xF8 缓冲按 size 重写 0）。
+尺寸一律来自 0x42B1F0（batch 114 `(H+4)×W×2` 地图缓冲大小）。
+★原版怪癖（照抄）：① **清旧 + 重分配同函数两段**（先 delete 旧三槽、再 new 新
+   三槽——原地重建非仅重置）；② **+0xF4 容器双层 delete**（数据区 + 本体两次
+   0x7C8B3D，batch 369 同款）；③ **容器头 0x10 字段 = -1（0xFFFFFFFF）哨兵**
+   （DynamicVectorClass 无容量上限惯用）；④ **重分配尺寸都来自 0x42B1F0**（
+   ×8、×1、×4+4 三种——不同字段不同元素大小）；⑤ **与 0x722390（batch 369）同
+   构相反**（清理 vs 重建——两函数紧邻 0x150 字节，0x722390 只清不建）；⑥ 计数
+   <=0 直接返回（无表项跳过全流程）。
+★跨批次闭合：**batch 369（0x722390 容器逐项清理——本条紧邻孪生，同 [0xB0F4EC]/
+   [0xB0F4F8] 目标、同 +0xF0..+0xFC 四槽、相反方向）**+**batch 114（0x42B1F0
+   地图尺寸 getter——本条=3 处重分配尺寸源）**+**batch 132/274/325/369
+   （[0xB0F4EC]=TiberiumClass 数组基址、[0xB0F4F8]=计数实锤）**+**batch 001
+   （0x7C8E17 new / 0x7C8B3D delete——本条=多处分配合释放现场）**。
+⚠️ partial：函数精确名（TiberiumClass 数组重置器推断）、0x7228B0 身份（未登记
+   子函数）、表项类身份（TiberiumClass 推断——[0xB0F4EC] 已实锤数组）、+0xF0/
+   +0xF4/+0xF8/+0xFC 各字段语义（buffer/容器/count 推断）、callers
+   FUN_00598960（RMG 主流程）/FUN_0067e440（存档加载）/FUN_00686b20（场景/INI
+   初始化）三处调用时机的业务含义。
+
+================================================================================
+（batch 595 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：宿主类（TiberiumClass 数组 + 表项四槽）精度
+未闭合（+0xF0..+0xFC 语义推断），且本函数是"清旧+重建"的全局内存管理编排、无算
+法切片；依赖已登记锚点全命中。模型价值：**TiberiumClass 数组重置模板**（清旧三
+槽 → 按地图尺寸重分配三槽 → 每项收尾）+ 与 batch 369 清理器的孪生闭合（清 vs 建
+相反方向）+ [0xB0F4EC]/[0xB0F4F8] 全局对第 5 个消费点。1 个新被调候选
+（0x7228B0）。本批无产品代码改动，ctest 维持 **43/43 全绿**。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（329B 全段字节读完 +
+batch 369 孪生/batch 114 尺寸源/全局对/CRT new-delete 多锚点全命中），partial 项
+如实标注。
