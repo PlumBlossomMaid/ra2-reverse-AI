@@ -1,0 +1,102 @@
+frontier batch 490 — 容器数组宿主构造器 0x00628070（157B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=145/
+body=157B，ranking 名 FUN_00628070，unique_callers FUN_006263d0/
+FUN_006269a0/FUN_00626ab0/FUN_00626da0）。
+**157B 全字节读完**（= 0x9D，0x628070-0x62810A ret 0xC = 3 栈参）。取证手段：
+disasm.py 全读 + **batch 484 构造器 0x7342D0 元素布局逐字段互证** + 被调
+0x7C8E17 已登记。
+
+================================================================================
+0x00628070 —— 容器数组宿主构造器（推断名，157B，ret 0xC = 3 栈参）
+================================================================================
+机器码（完整，157B 整数）：
+```
+00628070  push ebx/esi/edi
+00628073  mov edi,[esp+0x14]        ; ★edi = 栈参 3（容量 count）
+00628077  mov eax,[esp+0x18]        ; ★eax = 栈参 4
+0062807b  mov ebx,[esp+0x10]        ; ★ebx = 栈参 2
+0062807f  mov esi,ecx               ; ★esi = this（宿主）
+00628081  lea ecx,[edi+edi*2]       ; count*3
+00628084  mov [esi+4],eax           ; ★this->+4 = 栈参 4
+00628087  mov [esi+8],edi           ; ★this->+8 = 容量（栈参 3）
+0062808a  lea edx,[ecx*8+4]         ; count*24+4（每个元素 24B + 4B 头）
+00628091  mov [esi+0xc],ebx         ; ★this->+0xC = 栈参 2
+00628094  push edx
+00628095  call 0x7c8e17             ; ★★operator_new(count*24+4)（batch 001 实锤）
+0062809a  xor ecx,ecx
+0062809f  cmp eax,ecx
+006280a1  je 0x6280e7               ; ★分配失败 → this->+0 = 0
+006280a3  push ebp
+006280a4  lea edx,[edi-1]           ; edx = count-1
+006280a7  lea ebp,[eax+4]           ; ★ebp = 缓冲+4（跳 4B 头）
+006280aa  mov [eax],edi             ; ★缓冲[0] = 容量（4B 头）
+006280ac  cmp edx,ecx/mov eax,ebp
+006280b0  jl 0x6280e2               ; count-1 < 0 → 跳过元素循环
+006280b2  inc edx
+006280b3  mov bl,1
+006280b5  mov edi,0xa
+006280ba  mov [eax+4],ecx           ; ★元素 +4 = 0（Items）
+006280bd  mov [eax+8],ecx           ; ★元素 +8 = 0（Capacity）
+006280c0  mov byte[eax+0xc],bl      ; ★元素 +0xC = 1（IsInitialized）
+006280c3  mov byte[eax+0xd],cl      ; ★元素 +0xD = 0（IsAllocated）
+006280c6  mov [eax],0x7ef7d0        ; ★★虚表 0x7EF7D0（基类表——batch 484 同形态）
+006280cc  mov [eax],0x7ef770        ; ★★虚表 0x7EF770（派生表覆盖）
+006280d2  mov [eax+0x14],edi        ; ★元素 +0x14 = 0xA（CapacityIncrement 默认 10）
+006280d5  mov [eax+0x10],ecx        ; ★元素 +0x10 = 0（Count）
+006280d8  add eax,0x18              ; ★下一个元素（24B 步进）
+006280db  dec edx
+006280dc  jne 0x6280ba              ; ★★循环 count 次批量构造
+006280de  mov ebx,[esp+0x14]
+006280e2  mov eax,ebp / pop ebp
+006280e5  jmp 0x6280e9
+006280e7  xor eax,eax               ; 分配失败
+006280e9  mov edx,[esi+8]
+006280ec  mov [esi],eax             ; ★this->+0 = 缓冲指针
+006280ee  xor eax,eax
+006280f0  cmp edx,ecx / jle 0x628105
+006280f4  mov edx,[esi]             ; ★遍历 count 个元素
+006280f6  inc eax
+006280f7  mov [ecx+edx+0x14],ebx    ; ★★每元素 +0x14 = 栈参 2（步长统一覆盖）
+006280fb  mov edx,[esi+8] / add ecx,0x18
+00628101  cmp eax,edx / jl 0x6280f4
+00628105  mov eax,esi / pop 族 / ret 0xc  ; ★3 栈参
+```
+**语义（布局互证实锤）**：**容器数组宿主构造器**——ret 0xC = 3 栈参
+（栈参 2 = 每元素步长覆盖值、栈参 3 = 容量 count、栈参 4 = 宿主 +4 字段）：
+1. **宿主字段**：+4 = 栈参 4、+8 = 容量、+0xC = 栈参 2；
+2. **批量分配**：operator_new(count*24+4)——4B 头（缓冲[0]=容量）+ count
+   个 24B 元素；
+3. **批量构造**：每个元素按 **batch 484 DynamicVectorClass 布局**初始化
+   （+0 虚表 0x7EF7D0 → 0x7EF770 基类/派生双装、+4 Items=0、+8 Capacity=0、
+   +0xC IsInitialized=1、+0xD IsAllocated=0、+0x10 Count=0、+0x14
+   CapacityIncrement=0xA）——24B 步进循环 count 次；
+4. **收尾批置**：再遍历一遍，每元素 +0x14 = 栈参 2（统一覆盖步长）；
+5. this->+0 = 缓冲指针；分配失败 → +0 = NULL。
+★原版怪癖（照抄）：① **4B 头存容量 + 元素批量布局**（缓冲[0]=count 后再
+元素数组——宿主头部字段语义推断）；② **24B 元素与 batch 484 逐字段一致**
+（+0 虚表双装/+0xC=1/+0xD=0/+0x10=0/+0x14=0xA——批量容器数组）；③ **两次
+遍历**（先批量构造元素、再批置 +0x14 覆盖值——构造与赋步长分离）；④
+**虚表先 0x7EF7D0 后 0x7EF770**（基类/派生双装——batch 484/486 同形态，
+编译器构造中途装表）；⑤ **分配失败静默 NULL**（+0=0，无错误码）；
+⑥ **lea 手写乘法 count*24+4**（ecx*8+4——批量缓冲大小计算）。
+★跨批次闭合：**batch 484 0x7342D0（DynamicVectorClass 构造器）——本批
+元素布局逐字段互证，容器数组宿主 = 批量容器构造端**；**batch 486
+0x40BCB0（VectorClass 析构器）——容器族生命周期将在宿主数组场景复用**；
+**batch 467 Add/469 SetCapacity/472+474 Clear——24B 元素即这些方法的
+容器实例**；**被调 0x7C8E17（batch 001——operator_new，本条=调用现场）**；
+**虚表 0x7EF7D0/0x7EF770 新登记**（batch 484 [0x7E180C]/[0x7E17AC] 同
+0x7Exxxx 容器虚表区）。
+⚠️ partial：宿主类（0x62xxxx 区——容器数组宿主推断）、栈参 2/4 语义
+（步长覆盖/宿主 +4 字段推断）、+4/+0xC 宿主字段语义、批量数组的业务用途
+（对象表/注册表推断——N 个独立容器并行）。
+
+================================================================================
+（batch 490 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（容器族已有 batch 484 构造器模型基础 +
+批量宿主语义未确认）。模型价值：**容器数组宿主构造端登记**（批量 24B 元素
+构造 + batch 484 布局互证 + 双虚表 + 两遍遍历形态）。本批无产品代码改动，
+ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。登记一行 semantics_
+verified + assembly_verified_semantics_confirmed（全段字节读完 + 布局互证
++ 被调登记），partial 项如实标注。
