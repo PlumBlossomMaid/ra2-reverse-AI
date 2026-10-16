@@ -1,0 +1,81 @@
+frontier batch 569 — 胜负结算状态更新器 0x005DB680（97B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x5DB680 callers=3/unique=3/deps=4111/
+body=97B，unique_callers **FUN_0052d9a0（选关 0x52D9A0，QWEN.md 游戏运行流实锤）**/
+**FUN_00685670（DoWin 0x685670，QWEN.md 实锤）**/**FUN_00685dc0（DoLose 0x685DC0，
+QWEN.md 实锤）**——均未登记）。**97B 全字节读完**（0x5DB680-0x5DB6E0，ret 无栈参
+无 this）。
+取证手段：disasm.py 全读 + **收尾被调 0x5E87A0 反汇编（前 60B）** + 四批次锚点交叉
+（131/258/296/399）+ ranking 调用者（QWEN.md 游戏运行流三函数同框）。
+
+================================================================================
+0x005DB680 —— 胜负结算状态更新器（推断名，97B）
+================================================================================
+机器码（完整 97B）：
+```
+005db680  sub esp,0xc                          ; 2 个 8B 输出槽 + 对齐
+005db683  mov ecx,0xa8e9c0/call 0x540a80       ; ★★全局对象方法（判定；未登记）
+005db68d  test eax,eax/jne 0x5db697
+005db691  xor al,al/add esp,0xc/ret            ; ★★判定失败 → 返回 false
+005db697  cmp dword [0xa8b238],4/je 0x5db6cc   ; ★★GameMode==4 → 跳过中段
+005db6a0  mov eax,[0xa8d5fc]/test/je 0x5db6cc  ; ★★[0xA8D5FC]==0 → 跳过中段
+005db6a9  lea eax,[esp+4]/lea ecx,[esp]/push eax/push ecx
+005db6b3  mov ecx,0xa8d600/call 0x53eda0       ; ★★字段拆分输出（batch 131：this->[0]
+                                                ;   dword + [4] 的 dword+word → 两缓冲）
+005db6bd  lea edx,[esp]/mov ecx,0xa8e9c0/push edx
+005db6c7  call 0x542fc0                        ; ★★全局对象方法（上报；未登记）
+005db6cc  call 0x5e87a0                        ; ★★惰性初始化 + DebugLog（未登记，见下）
+005db6d1  call 0x5e8b40                        ; ★★batch 258 配置区四字节清零
+005db6d6  call 0x5e8b60                        ; ★★batch 296 三态表填充（GameMode 分派
+                                                ;   + 8 槽表 [0xA8DA90]）
+005db6db  mov al,1/add esp,0xc/ret             ; ★★返回 true
+```
+**收尾被调 0x5E87A0（前 60B 实读）**：
+```
+mov eax,[0xac117c]/test eax/jne 0x5e886a       ; ★★[0xAC117C] 单次门控
+push 0xfee/push 0x8317d8/xor edx,edx/mov ecx,0x831c80/call 0x734e60
+                                                ; ★★DebugLog(文件 0x8317D8, 行 0xFEE=4078)
+… mov [0xac117c],eax                           ; ★写入门控值
+push 0xfef/push 0x8317d8/mov ecx,0x831c74/call 0x734e60
+                                                ; 第二处 DebugLog（行 0xFEF=4079）
+```
+**语义（推断名）**：**胜负结算状态更新器**——无参无 this：
+① **前置判定**：以 `[0xA8E9C0]`（全局对象）为 this 调 `0x540A80`（未登记）——失败
+   → **返回 false**；
+② **中段门控**：`GameMode（[0xA8B238]）== 4` **或** `[0xA8D5FC] == 0` → 跳过中段；
+   否则：`0x53EDA0`（batch 131 字段拆分输出 getter，ret 8）把 `[0xA8D600]` 的
+   `[0]` dword 与 `[4]` 的 dword+word 拆到两个栈缓冲 → 以 `[0xA8E9C0]` 为 this 调
+   `0x542FC0`（未登记）上报该缓冲；
+③ **收尾三连**（无条件）：`0x5E87A0`（惰性初始化 + DebugLog，`[0xAC117C]` 单次门控、
+   日志行 0xFEE/0xFEF）→ `0x5E8B40`（batch 258：清 `[0xAC0AC8]`/`[0xAC0AEC]`/
+   `[0xAC0EA4]`/`[0xAC0B10]` 四字节）→ `0x5E8B60`（batch 296：GameMode 分派 2/6/8 +
+   8 槽表 `[0xA8DA90]` 分段填充 `[0xAC119C]`/`[0xAC11A0]` + `-1` 哨兵）；
+④ **返回 true**。
+★原版怪癖（照抄）：① **双出口 true/false**（判定失败返 0、其余一律返 1——门控失败
+   与成功共用收尾三连）；② **中段双条件短路**（GameMode==4 或 `[0xA8D5FC]==0` 任一
+   成立即跳过上报——两个独立门）；③ **收尾三连恒执行**（即便中段被跳过）；
+④ **栈上两 8B 输出槽**（`sub esp,0xc` 只给 2 个 dword 对 + 对齐——buf 由被调填）；
+⑤ 全函数无 this（ecx 由各被调自行加载全局对象）。
+★跨批次闭合：**batch 131（0x53EDA0 字段拆分输出 getter——本条调用现场）**+**batch
+   258（0x5E8B40 配置区四字节清零）**+**batch 296（0x5E8B60 三态表填充 GameMode
+   分派）**+**batch 399（[0xA8D5FC]/[0xA8D600] 全局——三通道上报轮询器同门控对）**
+   +**QWEN.md 游戏运行流**：**调用者=选关 0x52D9A0 / DoWin 0x685670 / DoLose
+   0x685DC0 三函数同框**——胜利、失败、选关三条出口共用同一状态更新器（**胜负结算
+   共用收尾链实锤**）。
+⚠️ partial：函数精确名（胜负结算状态更新器推断）、`0x540A80`/`0x542FC0`（**未登记
+   新候选**——[0xA8E9C0] 全局对象方法）、`0x5E87A0`（**未登记**——惰性初始化 + 
+   DebugLog，仅前 60B 实读；`[0xAC117C]` 门控语义/日志串 0x8317D8/0x831C80/0x831C74
+   内容未读）、`[0xA8D600]`/`[0xA8D5FC]` 字段业务语义、`[0xA8E9C0]` 全局对象类名、
+   GameMode==4 分支含义、栈两缓冲去向。
+
+================================================================================
+（batch 569 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：无宿主（ecx 由被调自取全局），动作是判定 + 已
+登记/未登记被调编排。模型价值：**胜负结算收尾链实锤**（QWEN.md 游戏运行流的
+选关/DoWin/DoLose 三出口共用 0x5DB680 → 0x5E87A0/0x5E8B40/0x5E8B60 三连）+ **中段
+双门控（GameMode==4 || [0xA8D5FC]==0）**。2 个新被调（0x540A80/0x542FC0）+ 1 个新
+被调（0x5E87A0）+ 3 个调用者（QWEN.md 实锤函数，非新候选）。本批无产品代码改动，
+ctest 维持 **43/43 全绿**。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（97B 全段字节读完 + 收尾被调 60B 实读 +
+四批次锚点交叉 + QWEN.md 游戏运行流接榫），partial 项如实标注。
