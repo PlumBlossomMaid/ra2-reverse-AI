@@ -1,0 +1,168 @@
+frontier batch 535 — GDI 网格文本绘制器 0x005BD490（208B）+ 单格绘制回调 0x005BD3D0（187B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x5BD490 callers=4/unique=4/
+deps=63/body=208B；其**独占被调** 0x5BD3D0 callers=1/deps=7/body=187B — 两者
+均未登记，构成完整语义闭环，本批一并登记）。
+**两函数全字节读完**：0x5BD490 = 0x5BD490-0x5BD560（0xD0=208B，ret 0x10）；
+0x5BD3D0 = 0x5BD3D0-0x5BD48B（0xBB=187B，ret 0xC）。
+取证手段：disasm.py 全读 ×2 + **IAT 槽 API 名实测（7 槽）** + **batch 307
+（0x5BC180 八槽位布局表构造）交叉闭合** + 全局家族归属核对。
+
+================================================================================
+IAT 槽实测（`.qwen/tmp/_read_iat_b535.py`，PE 导入表解析）
+================================================================================
+```
+007e13a4 -> USER32.dll!GetDC          007e105c -> GDI32.dll!SelectObject
+007e1074 -> GDI32.dll!SetBkMode       007e1464 -> USER32.dll!ReleaseDC
+007e107c -> GDI32.dll!SetBkColor      007e1068 -> GDI32.dll!TextOutA
+007e106c -> GDI32.dll!SetTextColor
+```
+纯 GDI/USER32 文本绘制族 —— 无 Westwood 代码参与，绘制语义无歧义。
+
+================================================================================
+0x005BD490 —— GDI 网格文本绘制器（推断名，208B，ret 0x10）
+================================================================================
+机器码（完整，0xD0 字节）：
+```
+005bd490  sub esp,8 / mov al,[0xabf23a]      ; ★门控 1 = 字节标志
+005bd498  push edi / test al,al
+005bd49b  mov [esp+4],ecx                    ; 保存 this
+005bd49f  je 0x5bd559                         ; 标志为 0 → 直接返回
+005bd4a5  cmp ecx,[0xabf23c]                  ; ★门控 2 = this == 头槽指针
+005bd4ab  jne 0x5bd559
+005bd4b1  mov eax,[0xabf240] / push eax
+005bd4b7  call [0x7e13a4]                     ; GetDC([0xABF240] = hWnd)
+005bd4bd  mov edi,eax                         ; edi = hDC
+005bd4bf  push 2 / push edi
+005bd4c2  call [0x7e1074]                     ; SetBkMode(hDC, 2 = TRANSPARENT)
+005bd4c8  mov ecx,[0xabf128] / push ecx / push edi
+005bd4d0  call [0x7e107c]                     ; SetBkColor(hDC, [0xABF128])
+005bd4d6  mov edx,[0xabf110] / push edx / push edi
+005bd4de  call [0x7e106c]                     ; SetTextColor(hDC, [0xABF110])
+005bd4e4  test edi,edi / je 0x5bd559          ; ★hDC 为空 → 返回（DC 未释放）
+005bd4e8  mov eax,[0xabf244] / push ebx / push eax / push edi
+005bd4f0  call [0x7e105c]                     ; SelectObject(hDC, [0xABF244] = 字体)
+005bd4f6  mov ebx,[esp+0x18]                  ; ebx = param2（外层起点 = 列）
+005bd4fa  mov ecx,[esp+0x20]                  ; ecx = param4（外层计数 = 列数）
+005bd4fe  mov [esp+0xc],eax                   ; ★保存旧字体对象
+005bd502  lea eax,[ebx+ecx] / cmp ebx,eax
+005bd507  mov [esp+0x18],eax                  ; 外层终点 = param2+param4
+005bd50b  jge 0x5bd53e
+005bd50d  mov edx,[esp+0x1c]                  ; edx = param3（内层计数 = 行数）
+005bd511  push ebp / push esi
+005bd513  mov esi,[esp+0x1c]                  ; esi = param1（内层起点 = 行）
+005bd517  lea ebp,[esi+edx]                   ; 内层终点 = param1+param3
+005bd51a  cmp esi,ebp / jge 0x5bd537
+005bd51e  mov ecx,[esp+0x10]                  ; ecx = this（网格对象）
+005bd522  push ebx / push esi / push edi
+005bd525  call 0x5bd3d0                       ; ★逐格回调(hDC, 列, 行)
+005bd52a  inc esi / cmp esi,ebp / jl 0x5bd51e ; 内层循环
+005bd52f  mov esi,[esp+0x1c] / mov eax,[esp+0x20]
+005bd537  inc ebx / cmp ebx,eax / jl 0x5bd51a ; 外层循环
+005bd53c  pop esi / pop ebp
+005bd53e  mov eax,[esp+0xc] / push eax / push edi
+005bd544  call [0x7e105c]                     ; ★SelectObject(hDC, 旧字体) 恢复
+005bd54a  mov ecx,[0xabf240] / push edi / push ecx
+005bd552  call [0x7e1464]                     ; ReleaseDC([0xABF240], hDC)
+005bd558  pop ebx / pop edi / add esp,8 / ret 0x10
+```
+**语义（推断名）**：**GDI 网格文本绘制器**——把网格对象的字符/颜色缓冲绘到窗口：
+① **双门控**：`[0xABF23A]` 字节标志非 0 **且** `this == [0xABF23C]`（头槽）才绘制；
+② **DC 前置**：`GetDC([0xABF240])` → `SetBkMode(hDC,2=TRANSPARENT)` →
+   `SetBkColor(hDC,[0xABF128])` → `SetTextColor(hDC,[0xABF110])`；
+③ **选字体**：`SelectObject(hDC,[0xABF244])` 并保存旧对象；
+④ **双层遍历**：外层 = param2..param2+param4（列），内层 = param1..param1+param3（行），
+   逐格 `call 0x5BD3D0(this, hDC, 列, 行)`；
+⑤ **收尾**：恢复旧字体 + `ReleaseDC`。
+签名推断 = `(int rowStart, int colStart, int rowCount, int colCount)`。
+★原版怪癖（照抄）：① **双门控只放行头槽**（[0xABF23C] 只在 0x5BC180 里被赋为
+首槽对象 → 8 槽中**只有 idx 0 能绘制**）；② **hDC 为空提前返回但已调三次 GDI
+设置且不 ReleaseDC/不恢复字体**（资源处理不对称）；③ `SelectObject` 返回值
+保存于栈槽 `[esp+0xC]` 供恢复（旧字体）；④ 循环边界 = 起点 + 计数（非终点直给）。
+★跨批次闭合：**batch 307（0x5BC180 八槽位布局表构造）**——该批实锤 0x5BC180
+用 `(0,0,0x50,0x19)` 四参调 0x5BD490 做"初始化"，**本批证伪该命名**：0x5BD490
+不是初始化器而是**绘制器**，构造时调用它 = 把刚建好的空网格（全 0x20 空格）
+**首绘一次**；0x2738B 对象布局由此闭合（见下）。
+
+⚠️ partial：宿主窗口身份（[0xABF240] hWnd 归属窗口类——UI 网格/菜单推断）、
+`[0xABF1C8]/[0xABF1D8]/[0xABF1E0]` 定位常量语义（像素步进推断）、
+`[0xABF23A]/[0xABF23C]` 精确含义（已初始化标志 + 头槽指针推断）。
+
+================================================================================
+0x005BD3D0 —— 网格单格绘制回调（推断名，187B，ret 0xC）
+================================================================================
+机器码（完整，0xBB 字节）：
+```
+005bd3d0  push ebx / mov ebx,[esp+0x10]      ; ebx = param3（列索引）
+005bd3d5  push ebp / push esi
+005bd3d7  mov esi,[esp+0x14]                 ; esi = param2（行索引）
+005bd3db  push edi / mov edi,ecx             ; edi = this（网格对象）
+005bd3de  lea eax,[esi+esi*4+0x64]           ; eax = 行*5 + 0x64
+005bd3e2  lea ecx,[ebx+eax*4]
+005bd3e5  add eax,ecx                        ; eax = 5*(行*5+0x64) + 列 = 行*25+列+500
+005bd3e7  mov ebp,[edi+eax*4]                ; ★颜色值 = this[(行*25+列+500)*4]
+005bd3ea  mov eax,[edi+0x2714]               ; ★颜色缓存
+005bd3f0  cmp ebp,eax / je 0x5bd442          ; 同缓存 → 跳过全部 Set*Color
+005bd3f4  cmp ebp,1 / jne 0x5bd419
+005bd3f9  mov edx,[0xabf110] / push edx / push hDC
+005bd405  call [0x7e107c]                    ; 值==1：SetBkColor(hDC,[0xABF110])
+005bd40b  mov ecx,[0xabf128] / ... / jmp 0x5bd436
+005bd419  mov eax,[0xabf128] / push eax / push hDC
+005bd424  call [0x7e107c]                    ; 值!=1：SetBkColor(hDC,[0xABF128])
+005bd42a  mov edx,[0xabf110] / push edx / push hDC
+005bd436  call [0x7e106c]                    ; ★SetTextColor(hDC, 另一色) —— 交叉
+005bd43c  mov [edi+0x2714],ebp               ; ★更新颜色缓存
+005bd442  lea eax,[esi+esi*4]                ; eax = 行*5
+005bd445  push 1                             ; TextOutA 末参 cchString = 1
+005bd447  lea ecx,[ebx+eax*4]
+005bd44a  add eax,ecx                        ; eax = 行*25 + 列
+005bd44c  mov ecx,[0xabf1c8]
+005bd452  mov dl,[eax+edi]                   ; ★字符 = this[行*25+列]（byte）
+005bd45a  mov [esp+0x1c],dl
+005bd45e  mov edx,[0xabf1d8] / add ecx,edx   ; x 步进 = [0xABF1C8]+[0xABF1D8]
+005bd466  imul eax,esi                       ; hmm: eax=[0xABF1E0] 被重载后 * 行
+005bd469  imul ecx,ebx                       ; x = 步进 * 列
+005bd46c  lea edx,[esp+0x1c]                 ; &字符
+005bd470  add ecx,0xa / add eax,0xa          ; x/y 各 +10 像素
+005bd476  push edx / push ecx / push eax / push hDC
+005bd47e  call [0x7e1068]                    ; TextOutA(hDC, x, y, &char, 1)
+005bd484  pop edi / pop esi / pop ebp / pop ebx / ret 0xc
+```
+**语义（推断名）**：**网格单格绘制回调**（thiscall，ecx = 网格对象；3 栈参
+= hDC, 行, 列）：
+① **读颜色**：`this[(行*25+列+500)*4]`（dword 网格，偏移 500 个 dword = 2000
+   字节处起）；与缓存 `this+0x2714` 相同则跳过两个 Set*Color（**GDI 调用去重**）；
+② **选色（两常量交叉）**：
+   - 值 == 1 → `SetBkColor(hDC,[0xABF110])` + `SetTextColor(hDC,[0xABF128])`
+   - 值 != 1 → `SetBkColor(hDC,[0xABF128])` + `SetTextColor(hDC,[0xABF110])`
+   然后 `this+0x2714 = 颜色值`（更新缓存）；
+③ **画字符**：`TextOutA(hDC, x=步进*列+10, y=[0xABF1E0]*行+10, &this[行*25+列], 1)`
+   （字节网格字符，单字符输出）。
+★对象布局（**由索引算式反推，与 batch 307 的 0x2738B 精确吻合**）：
+```
+this+0x0000 .. 0x07CF : byte 字符网格 [80 行 × 25 列]（行主序，index = 行*25+列）
+this+0x07D0 .. 0x2713 : dword 颜色网格 [80 × 25]（index = 行*25+列）
+this+0x2714           : dword 颜色缓存（上次绘出的颜色值）
+```
+（2000 字节 byte 网格 + 8000 字节 dword 网格 = 0x2710，+4 缓存 = 0x2714；
+对象总大小 0x2738 = batch 307 op_new 实锤值 —— **闭环**。）
+
+★原版怪癖（照抄）：① **两颜色常量交叉使用**（值 1 与非 1 各把两常量对调分配给
+BkColor/TextColor）；② **颜色缓存去重**（`this+0x2714` 与当前值相同则完全跳过
+Set*Color —— 相邻同色格只设一次）；③ **单字符 TextOutA**（cchString 恒 1，
+逐格一次 GDI 调用 —— 无批量优化，原版口味）；④ **行/列索引非对称**（字符与
+颜色网格用同一 index 算式但对颜色网格 +500 dword 基址）；⑤ 坐标各 +10 像素
+硬偏移（写死 0xa，无配置）。
+
+================================================================================
+（batch 535 说明：C++ 模型决策）
+================================================================================
+本批新增 **2 行**，**不新增 C++ 模型**：依赖 Win32 GDI 运行时 + UI 全局家族
+（[0xABF23A..0xABF244]、[0xABF1C8..0xABF1E0] 共 9 全局）——宿主窗口类身份未确认，
+按纪律不建模型。模型价值：**batch 307 partial 闭合**（0x5BD490 由"初始化器"
+修正为 **GDI 网格文本绘制器**；0x2738B 对象布局反推实锤）+ **UI 网格绘制链
+补全**（构造 0x5BC180 → 绘制 0x5BD490 → 单格 0x5BD3D0）+ 3 个新候选调用者
+（FUN_005bc4d0 / FUN_005bcc90 / FUN_005bd0d0）入列。本批无产品代码改动，
+ctest 维持 **43/43 全绿**。登记 2 行 semantics_verified +
+assembly_verified_semantics_confirmed（全段字节读完 + IAT 实测 + batch 307
+交叉），partial 项如实标注。
