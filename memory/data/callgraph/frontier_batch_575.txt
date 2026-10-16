@@ -1,0 +1,132 @@
+frontier batch 575 — 全局状态区对象池清理器 0x006370B0（446B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x6370B0 FUN_006370b0 callers=3/
+unique=3/deps=4056/body=446B，unique_callers **FUN_0052d9a0（选关 0x52D9A0，
+QWEN.md 游戏运行流实锤）**/FUN_006851f0/thunk_FUN_006370b0）。**446B 全字节读
+完**（0x6370B0-0x63726D，ret 无栈参，thiscall 形态但 ecx 未用——纯全局操作）。
+取证手段：disasm.py 全读 + 已登记锚点交叉（0x705D10=batch 358、0x7C8B3D=batch
+001）+ ranking 调用者 + 同区批文档对照（batch 312 0x637070/0x6370A0、
+batch 547 [0xAC4B48] 池注册表）。
+
+================================================================================
+0x006370B0 —— 全局状态区对象池清理器（推断名，446B）
+================================================================================
+机器码（完整 446B，分四段）：
+```
+; ── 段 1：入口三字节标志预置 + 主循环门控
+006370b0  push ecx / push ebx / push ebp
+006370b3  mov ebp,[0xac4c88]        ; ★★全局计数 Count
+006370b9  push edi / xor ebx,ebx / xor edi,edi
+006370be  cmp ebp,ebx
+006370c0  mov byte [0xac4cf5],1     ; ★★[0xAC4CF5]=1（入口哨兵）
+006370c7  mov byte [0xac4cf4],bl    ; ★[0xAC4CF4]=0
+006370cd  mov byte [0xac4cf6],bl    ; ★[0xAC4CF6]=0
+006370d3  jle 0x637145             ; Count<=0 → 跳过主循环
+; ── 段 2：对象数组逐项析构（edi 下标，[0xAC4C7C] 基址）
+006370d5  push esi
+006370d6  mov eax,[0xac4c7c]        ; ★★对象数组基址
+006370db  mov esi,[eax+edi*4]       ; 项指针
+006370de  cmp esi,ebx / je 0x63713f ; 项 NULL → 跳过
+006370e2  mov ecx,[esi] / cmp ecx,ebx / je 0x6370ee
+006370e8  push ebx / call 0x705d10  ; ★★+0x514 字段 setter（batch 358，arg=0）
+006370ee  mov al,[0xac4cf5]         ; ★循环内重读哨兵
+006370f3  mov [esp+0x10],esi
+006370f7  cmp al,bl / jne 0x63710a  ; ★哨兵!=0 → 跳过额外清理
+006370fb  lea ecx,[esp+0x10] / push ecx
+00637100  mov ecx,0xac4c78 / call 0x63ebd0  ; ★★0xAC4C78 容器 + &item 额外清理
+0063710a  mov ecx,esi / call 0x636120       ; ★★0x636120 项清理器（未登记）
+00637111  mov eax,[esi+8]           ; ★子对象指针（+8）
+00637114  mov [esi+4],0x7efe64      ; ★★装虚表 0x7EFE64
+0063711b  cmp eax,ebx / je 0x637130
+0063711f  cmp byte [esi+0x11],bl / je 0x637130  ; ★+0x11 自持标志门控
+00637124  push eax / call 0x7c8b3d  ; ★★delete 子对象（batch 001）
+0063712a  add esp,4 / mov [esi+8],ebx
+00637130  push esi / mov byte [esi+0x11],bl / mov [esi+0xc],ebx
+00637137  call 0x7c8b3d             ; ★★delete 项本体（batch 001）
+0063713c  add esp,4
+0063713f  inc edi / cmp edi,ebp / jl 0x6370d6   ; 下一项
+; ── 段 3：0x18 dword 区清零 + 四全局数组释放（各配对标志字节门控）
+00637145  mov ecx,0x18 / xor eax,eax / mov edi,0xac4b84
+00637151  mov [0xac4c50],ebx
+00637157  rep stosd                 ; ★★[0xAC4B84..0xAC4BE4) 24 dword 清零
+00637159  mov eax,[0xac4c44] / cmp ebx / je 0x637179
+00637162  cmp byte [0xac4c4d],bl / je 0x637179
+0063716a  push eax / call 0x7c8b3d / mov [0xac4c44],ebx   ; ★释放数组 1
+00637179  mov eax,[0xac4c7c] / mov byte [0xac4c4d],bl
+00637186  mov [0xac4c48],ebx / mov [0xac4c88],ebx        ; ★计数归零
+00637192  cmp ... / je 0x6371ab
+00637194  cmp byte [0xac4c85],bl / je 0x6371ab
+0063719d  call 0x7c8b3d / mov [0xac4c7c],ebx             ; ★释放数组 2
+006371ab  mov eax,[0xac4b34] ...                        ; ★释放数组 3
+006371c6  cmp byte [0xac4b3d],bl ...  call 0x7c8b3d → [0xac4b34]=0
+006371dd  mov eax,[0xac4c1c] ...                        ; ★释放数组 4
+006371f8  cmp byte [0xac4c25],bl ... call 0x7c8b3d → [0xac4c1c]=0
+; ── 段 4：约 15 全局归零 + [0xAC4C90]=-1 哨兵收尾
+0063720f  xor edx,edx / pop edi
+00637212  [0xac4bf4]=0 / [0xac4c25]=0 / [0xac4bf8]=0 / [0xac4c20]=0 /
+00637236  [0xac4bfc]=0 / [0xac4ccc]=0        / [0xac4c00]=0 / [0xac4cd0]=0 /
+00637248  [0xac4cc8]=0 / [0xac4c3c]=0        / [0xac4c08]=0 / [0xac4cf5]=0
+0063725a  pop ebp
+0063725b  mov [0xac4c90],0xffffffff  ; ★★-1 哨兵（"已清理"标记）
+00637265  [0xac4c04]=0
+0063726b  pop ebx / pop ecx / ret
+```
+**语义（推断名）**：**全局状态区对象池清理器**——thiscall 形态但 ecx 未用（纯
+全局操作，446B）：
+① **入口三字节标志预置**：`[0xAC4CF5]=1`（哨兵）、`[0xAC4CF4]=0`、
+   `[0xAC4CF6]=0`；
+② **主循环**（`edi` 从 0 到 `[0xAC4C88]` 计数）：取 `[0xAC4C7C][edi*4]` 项，
+   非空则——子对象 `[esi]` 非空 → `0x705D10(0)`（batch 358 的 `+0x514`
+   字段清 0）；**重读** `[0xAC4CF5]`：若为 0 → 额外调 `0x63EBD0(0xAC4C78,
+   &item)`；`0x636120(esi)` 项清理；装虚表 `0x7EFE64` 到 `+4`；`[esi+8]`
+   非空且 `[esi+0x11]` 标志非 0 → `0x7C8B3D` 释放子对象；最后 `0x7C8B3D`
+   释放项本体（并清 `+0x11`/`+0xC`）；
+③ **四全局数组释放**：`[0xAC4C44]`/`[0xAC4C7C]`/`[0xAC4B34]`/`[0xAC4C1C]`
+   依次——各以**配对标志字节**门控（`[0xAC4C4D]`/`[0xAC4C85]`/`[0xAC4B3D]`/
+   `[0xAC4C25]`）后释放指针并清 0；[0xAC4C7C] 释放时连带清 `[0xAC4C48]`/
+   `[0xAC4C88]`（计数归零）；
+④ **0x18 dword 区清零**：`rep stosd` 从 `[0xAC4B84]` 起 24 个 dword；
+⑤ **约 15 个全局归零**（`0xAC4BF4`/`0xAC4BF8`/`0xAC4BFC`/`0xAC4C00`/
+   `0xAC4C04`/`0xAC4C08`/`0xAC4C20`/`0xAC4C25`/`0xAC4C3C`/`0xAC4CCC`/
+   `0xAC4CC8`/`0xAC4CD0`/`0xAC4CF5`）；
+⑥ **`[0xAC4C90]=0xFFFFFFFF` 哨兵收尾**（"已清理"状态标记）。
+★原版怪癖（照抄）：① **入口置哨兵 1 但循环内重读**（`[0xAC4CF5]=1` 后
+   `0x6370EE` 又读回判定——故意"首项跳过额外清理"：首项时哨兵仍 1 → `jne`
+   跳过 `0x63EBD0`；若 `0x705D10`/`0x636120` 把哨兵改回 0，则**后续项**才走
+   `0x63EBD0` 分支），单字节哨兵作跨迭代状态；② **先装虚表 0x7EFE64 再条件
+   delete**（`[esi+4]=0x7EFE64` 写在门控判定之前——即使不释放也换表，析构期
+   换"已死"虚表推断）；③ **删除双门控**（`[esi+8]` 非空 **且** `[esi+0x11]`
+   非 0 才释放子对象——标志位防重复 delete）；④ **四数组配对标志字节门控**
+   （每个全局数组旁配一字节"是否堆分配"标志，非 0 才 delete——分配路径未
+   登记，推断与 batch 312 的 `[0xAC4CF4]`/`[0xAC4CF5]` 字节对同族）；⑤
+   **`[0xAC4C90]=-1` 哨兵**（清理完毕标记，`0xAC4C90` 未在其它已登记批出现
+   ——本批新全局面）；⑥ **446B 单函数四大段无子函数**（清理器惯用"顺序展
+   开"）；⑦ **`[0xAC4CF5]` 先置 1 后置 0**（入口置 1 → 收尾 `0x637254` 置
+   0——生命周期首尾翻转）。
+★跨批次闭合：**0x705D10（batch 358——`+0x514` 字段 setter，callers 含本函数
+   ——本条=调用现场补全）**+**0x7C8B3D（batch 001——operator delete，本条=三
+   处调用现场：子对象/项本体×四数组）**+**batch 312（0x637070 八全局清零 + 
+   0x6370A0 thunk 同区——本条=该区"大函数"另一端：312 复位 → 本条清理）**+
+   **batch 547（[0xAC4B48..0xAC4B5C] PlanningToken 池注册表——与本条
+   [0xAC4B34]/[0xAC4B84]/[0xAC4Cxx] 同状态区家族）**+**thunk_FUN_006370b0
+   @0x6370A0（5B，callers=FUN_006bb9a0 WinMain 0x6BB9A0 / FUN_006be1c0
+   ——启动/退出侧双调）**+**FUN_0052d9a0（选关 0x52D9A0，QWEN.md 实锤）。
+⚠️ partial：函数精确名（全局状态区对象池清理器推断）、`[0xAC4C7C]` 数组项
+   元素类型（含 `[esi]`/`+4`/`+8`/`+0xC`/`+0x11` 字段的子对象池项推断）、
+   0x63EBD0（65B，唯一调用者=本函数——新候选，"额外清理"）、0x636120
+   （492B，唯一调用者=本函数——新候选，项清理器）、虚表 0x7EFE64 语义
+   （已析构态推断）、四数组与配对标志字节语义（堆分配标志推断）、
+   [0xAC4C90]=-1 哨兵消费方、FUN_006851f0（调用者新候选）。
+
+================================================================================
+（batch 575 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：宿主全局状态区（`0xAC4Bxx-0xAC4Cxx`）类
+型未闭合，446B 纯"遍历+释放+清零"清理无算法切片。模型价值：**对象池清理四段
+式模板**（数组逐项析构 → 四全局数组配对标志门控释放 → rep stosd 区清零 →
+哨兵 0xFFFFFFFF 收尾）+ **单字节哨兵跨迭代状态**（`[0xAC4CF5]` 首项跳过/后续
+触发额外清理）+ **析构前装"已死"虚表**（`[esi+4]=0x7EFE64` 先于门控）。3 个新
+被调候选（0x63EBD0/0x636120/虚表 0x7EFE64）+ 1 个调用者候选（FUN_006851f0）。
+本批无产品代码改动，ctest 维持 **43/43 全绿**。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（446B 全段字节读完 + 两批次锚点交叉），
+partial 项如实标注。
