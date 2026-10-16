@@ -1,0 +1,69 @@
+frontier batch 644 — 宽字符串 trim 0x00727D60（95B）（2026-10-17）
+
+口径：候选**只从 picker 未登记池取**（0x0045E970 后下一未登记高扇入候选 0x00727D60
+FUN_00727d60（unclassified 无带名）callers=3/unique=3/deps=2568/body=95B，
+unique_callers FUN_00558dd0（★batch 566 LoadOptionsClass 家族 LoadDialog 主体
+0x558DD0——已登记）/FUN_006c9f10（★4 处）/FUN_006ca310）。**95B 全字节读完**
+（0x727D60-0x727DBE，ret c3，thiscall，ecx=this 存 edi——宽串指针）。
+取证手段：disasm.py 160B 全读（含后邻 0x727DC0 下一函数开头确认边界） +
+direct_edges 调用图核对（★14051/37133..37159 行 6 处调用站点） +
+**已登记锚点交叉（batch 045 0x7CA489 宽字符字符串拷贝 wcscpy + 0x7CA405 宽字符
+前导 NUL 长度——双锚点一次全命中）** + functions.tsv 边界核对（0x727D60-0x727DBE
+=95B 吻合）。
+
+================================================================================
+0x00727D60 —— 宽字符串 trim（95B）
+================================================================================
+机器码（完整 95B）：
+```
+00727d60  push esi / push edi / mov edi,ecx（★this = 宽串指针）
+00727d64  test edi / je 0x727dba（★NULL → 直接返 this）
+00727d68  mov ax,[edi]（★首 word）/ mov esi,edi / test ax / je 0x727d92
+          （★首字符 0 → 跳到后缀）
+00727d72  cmp ax,0x20 / ja 0x727d84（★>0x20 非空白 → 停扫）
+00727d78  mov ax,[esi+2] / add esi,2（★前进 2 字节）
+00727d7c  test ax / jne 0x727d72（★循环扫到非空白或串尾）
+00727d84  cmp esi,edi / je 0x727d92（★无前导空白 → 跳到后缀）
+00727d88  push esi / push edi → call 0x7ca489（★★batch 045 wcscpy——把前导空白
+          后串拷回头部——去除前导）
+00727d92  push edi → call 0x7ca405（★★batch 045 宽字符前导 NUL 长度——返回
+          wcslen 推断）→ dec eax / js 0x727dba（★空串 → 返）
+00727d9e  lea ecx,[edi+eax*2]（★尾部指针）
+00727da1  cmp word[esi],0 / je 0x727dba（★扫到串尾 → 返）
+00727da5  cmp word[ecx],0x20 / ja 0x727dba（★>0x20 非空白 → 返）
+00727dad  mov word[ecx],0（★★把尾部空白置 0——去除后缀）
+00727db2  dec eax / sub ecx,2（★从尾向前走）
+00727db6  test eax / jge 0x727da1（★循环）
+00727dba  mov eax,edi / pop 族 / ret（★返 this）
+```
+**语义（unclassified + 双锚点）**：**宽字符串 trim（前后空白去除——≤0x20 字符族
+视为空白）**——thiscall，ecx=this（宽串 wchar_t*），返回 this：
+① NULL 直接返；② 前导：word 扫描 ≤0x20（空格/制表/换行族）前进，遇非空白停；
+   有前导空白 → wcscpy（0x7CA489 batch 045）把余串拷回头部；③ 后缀：0x7CA405
+   （batch 045 前导 NUL 长度）取串长 → 从尾部 word 反向扫描，≤0x20 置 0 截断，
+   遇非空白停。
+★原版怪癖（照抄）：① **≤0x20 判空白**（cmp 0x20/ja——ASCII 控制字符+空格全族，
+   非标准 isspace 语义）；② **前导去除用 wcscpy 回拷**（移动整个余串——非指针前
+   移，原缓冲不变地址）；③ **后缀置 0 截断**（mov word[ecx],0——原地改串尾）；
+   ④ **NULL 短路**（test edi/je——空串安全返 this）；⑤ **双循环独立**（前导
+   2B/步、后缀 2B/步反向——同模板双向扫描）；⑥ **返回 this**（链式支持）；⑦
+   **0x7CA405 复用前导 NUL 长度**（batch 045 修正过语义——此处作 wcslen 用）；
+   ⑧ **caller 含 LoadOptionsClass 家族**（0x558DD0——输入串 trim 后落 INI）。
+★跨批次闭合：**batch 045（0x7CA489 wcscpy + 0x7CA405 宽字符前导 NUL 长度——
+   本条=trim 双调用现场，CRT 宽字符族再消费）**+**batch 566（caller FUN_00558dd0
+   LoadOptionsClass LoadDialog 主体——已登记，输入 trim 现场）**+0x6C9F10/
+   0x6CA310（新候选调用者推断——链家族）。
+⚠️ partial：函数精确名（unclassified——推断宽字符串 trim）、宿主（无 this 字段
+   访问——纯宽串工具函数推断）、0x7CA405 在本条的精确角色（wcslen 推断——batch
+   045 已修正前导 NUL 语义）、caller 业务含义（输入 trim 推断）。
+
+================================================================================
+（batch 644 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：95B 纯宽串 trim 惯用法（双向 ≤0x20 扫描 +
+wcscpy 回拷 + 尾部置 0），宿主未确认，无独立算法切片（trim 语义随宿主落地）。
+模型价值：**宽字符串 trim**（batch 045 双锚点全命中 + caller 含 LoadOptionsClass
+家族——输入串规范化惯用）。无新被调候选。本批无产品代码改动，ctest 维持 **43/43
+全绿**。登记一行 semantics_verified + assembly_verified_semantics_confirmed
+（95B 全段字节读完 + 双锚点全命中 + functions.tsv 边界核对），partial 项如实标
+注。
