@@ -1,0 +1,104 @@
+frontier batch 566 — BATTLEMD*.INI 目录扫描装载器 0x0052CB90（473B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x52CB90 callers=4/unique=3/deps=4210/
+body=473B，unique_callers FUN_0052ba60（batch 559 0x720770 调用者候选）/FUN_
+0052d9a0/FUN_006851f0（batch 370 0x6D1C20 调用者候选）——均未登记）。**473B
+全字节读完**（0x52CB90-0x52CD68，ret 无栈参）。
+取证手段：disasm.py 全读 + **IAT 三槽 PE 实锤** + **两字符串常量实测**
+（"BATTLEMD*.INI"/"BATTLEMD.INI"）+ 六批次锚点交叉（104/131/063/059/060/370）。
+
+================================================================================
+0x0052CB90 —— BATTLEMD*.INI 目录扫描装载器（推断名，473B）
+================================================================================
+**IAT 槽实锤（PE 导入表解析）**：
+```
+[0x7E1208] = KERNEL32.dll!FindFirstFileA
+[0x7E120C] = KERNEL32.dll!FindNextFileA
+[0x7E1300] = KERNEL32.dll!FindClose
+```
+**字符串常量实测**：
+```
+0x8261A8 = "BATTLEMD*.INI"      （扫描通配）
+0x826198 = "BATTLEMD.INI"       （精确名：标志比对 + 兜底装载）
+```
+机器码（完整 473B，关键段）：
+```
+0052cb98  lea eax,[esp+0x7c]/push eax/push 0x8261a8/call [0x7e1208]
+                                                     ; ★★FindFirstFileA("BATTLEMD*.INI",&fd)
+0052cbaf  mov esi,eax/cmp esi,-1/je 0x52cccd          ; ★INVALID_HANDLE → 直接兜底装载
+0052cbbf  test dword [esp+0x84],0x116/jne 0x52cca2     ; ★★fd 属性掩码 0x116 命中 → 跳过
+0052cbe3  repne scasb/not ecx/dec ecx                  ; strlen(cFileName)
+0052cbea  lea ebp,[esp+0xb0]                           ; 空名 → 备用缓冲
+0052cbf1  push ebp/lea ecx,[esp+0x1c]/call 0x4739f0     ; ★★CCFileClass ctor(文件名)（batch 063）
+0052cbfb  push 0x58/call 0x7c8e17                      ; ★★operator new(0x58)（batch 001）
+0052cc0b  lea edi,[esi+0xc]/mov [esi+4],ebx/mov [esi+8],ebx
+0052cc16  call 0x52ace0                                ; ★★GenericList ctor +0xC（batch 131）
+0052cc1b  mov [edi],0x7e1afc/mov [esi],0x7e1af4        ; ★★虚表对 0x7E1AFC/0x7E1AF4
+                                                       ;   （batch 370 同款对象链表族）
+0052cc21  mov [esi+0x28..0x3C],ebx + byte[+0x34]/[+0x40]=0（清零字段）
+0052cc40  push 0/push 0/push (esp+0x1c CCFileClass)/mov ecx,esi
+0052cc49  call 0x4741f0                                ; ★★CCINIClass::ReadCCFile（batch 104）
+0052cc4e  push 0x826198/push ebp/call 0x7c8d20         ; ★★strcmpi(文件名,"BATTLEMD.INI")（batch 001）
+0052cc60  mov byte [esp+0x13],1                        ; ★相等 → 置"见过来"标志
+0052cc67  mov ecx,esi/call 0x46ce10                    ; ★★0x46CE10（未登记，装载后处理）
+0052cc70  mov edx,[esi]/push 1/mov ecx,esi/call [edx]  ; ★虚表槽 0 delete(1) 对象
+0052cc78  mov [esp+0x18],0x7e16b0/call 0x43ae50        ; ★★析构 CCFileClass（batch 059）
+0052cc91  mov [esp+0x18],0x7e1668/call 0x431b80        ; ★★析构（batch 060）
+0052cca2  lea eax,[esp+0x84]/push eax/push esi(call [0x7e120c])
+                                                     ; ★★FindNextFileA 循环
+0052ccb9  push esi/call [0x7e1300]                    ; ★★FindClose
+0052ccc0  mov al,[esp+0x13]/cmp al,bl/jne 0x52cd5f     ; ★标志置位 → 跳过兜底
+0052cccd  push 0x826198/lea ecx,[esp+0x18]/call 0x4739f0
+                                                     ; ★兜底：直接装载精确 BATTLEMD.INI
+0052ccdb  push 0x58/call 0x7c8e17                      ; 同款 new(0x58)
+0052cceb  lea edi,[esi+0xc]/call 0x52ace0              ; ★GenericList ctor
+0052ccff  mov [edi],0x7e1afc/mov [esi],0x7e1af4        ; ★虚表对
+0052cd25  call 0x4741f0                                ; ★ReadCCFile
+0052cd2c  mov ecx,esi/call 0x46ce10                    ; ★0x46CE10
+0052cd31  mov edx,[esi]/push 1/call [edx]              ; ★槽 0 delete
+0052cd39  mov [esp+0x14],0x7e16b0/call 0x43ae50        ; ★双析构
+0052cd4e  mov [esp+0x14],0x7e1668/call 0x431b80
+0052cd5f  pop/ret
+```
+**语义（推断名）**：**BATTLEMD*.INI 目录扫描装载器**——无参无 this：
+① **扫描**：`FindFirstFileA("BATTLEMD*.INI", &fd)` → INVALID_HANDLE → 直接兜底
+   装载精确名；
+② **逐文件循环**：fd 属性掩码 `0x116`（HIDDEN|SYSTEM|DIRECTORY|TEMPORARY 位）命中
+   则跳过 → 对每个匹配文件：**分配 0x58 字节新对象**（`operator new`）→ 内嵌
+   `GenericList` 子对象（+0xC，0x52ACE0 构造）+ 装**虚表对 0x7E1AFC/0x7E1AF4**
+   （batch 370 同款）→ 栈上 `CCFileClass`（0x4739F0 构造，文件名 = WIN32_FIND_DATA
+   的 cFileName）→ **`ReadCCFile(新对象, pCCFile, 0, 0)`（0x4741F0）装载 INI** →
+   `strcmpi(文件名, "BATTLEMD.INI")`（0x7C8D20）相等则置"已见"标志字节 → 0x46CE10
+   （装载后处理，未登记）→ 虚表槽 0 delete 对象 → 双析构 CCFileClass
+   （0x43AE50/0x431B80）→ `FindNextFileA` 循环；
+③ **收尾**：`FindClose` → 若已见过精确 "BATTLEMD.INI" 则返回；否则**兜底直接装载**
+   精确 `BATTLEMD.INI`（同款分配/装载/处理/析构链）→ 返回。
+★原版怪癖（照抄）：① **0x116 属性掩码跳过文件**（HIDDEN/SYSTEM/DIRECTORY/TEMPORARY
+   位——隐藏/系统/目录/临时文件一律不载）；② **"已见"标志控制兜底装载**
+   （扫描中命中精确 BATTLEMD.INI 则不再重复装载——避免双载）；③ **每次匹配文件都
+   new(0x58)+GenericList+双虚表**（batch 370 同款"临时文件对象加载"稳定指纹——本条
+   证实该模式跨编译单元复用）；④ **read 循环与兜底两段代码几乎全同**（复制粘贴
+   惯用，仅文件名指针/栈偏移略异）；⑤ 空 cFileName 时用 [esp+0xb0] 备用缓冲
+   （strlen==0 分支）；⑥ 全函数无显式错误码（任何失败静默走兜底或直接返回）。
+★跨批次闭合：**batch 104（0x4741F0 CCINIClass::ReadCCFile——本条读文件主调用）**
+   +**batch 063（0x4739F0 CCFileClass ctor）**+**batch 131（0x52ACE0 GenericList
+   ctor）**+**batch 059（0x43AE50 三字段带标志位析构）**+**batch 060（0x431B80
+   BufferIOFileClass dtor）**+**batch 370（0x679D90——同款虚表对 0x7E1AFC/0x7E1AF4
+   + GenericList + CCFileClass + ReadCCFile + 双析构链，"临时文件对象加载"模板跨
+   批互证）**+**batch 001（0x7C8E17 operator new / 0x7C8D20 strcmpi）**。
+⚠️ partial：0x46CE10（装载后处理——**未登记新候选**，语义推断）、BATTLEMD.INI 业务
+   含义（多人游戏/遭遇战菜单配置推断——未读文档）、fd 属性掩码 0x116 与
+   WIN32_FIND_DATAA 精确偏移（0x7C 栈槽 vs 属性字段）、[esp+0xb0] 备用缓冲用途、
+   装载对象宿主类（含 GenericList 的 INI 子类推断）、FUN_0052ba60/FUN_0052d9a0/
+   FUN_006851f0（调用者新候选）。
+
+================================================================================
+（batch 566 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：宿主类（含 GenericList 的 INI 装载对象）未闭合，
+且路径全部是 Win32 文件枚举 + 已登记被调链的编排。模型价值：**BATTLEMD*.INI 扫描
+装载的完整动作序**（FindFirst/循环/属性过滤/ReadCCFile/兜底）+ **"已见"标志防双载
+怪癖** + **batch 370 临时文件对象加载模板的跨批第二实例**。1 个新被调（0x46CE10）
++ 3 个新调用者候选。本批无产品代码改动，ctest 维持 **43/43 全绿**。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（473B 全段字节读完 +
+IAT 三槽 PE 实锤 + 两字符串实测 + 六批次锚点交叉），partial 项如实标注。
