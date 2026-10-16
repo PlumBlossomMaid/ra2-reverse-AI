@@ -1,0 +1,118 @@
+frontier batch 662 — CellClass::ReplaceTag 0x00485250（122B）（2026-10-17）
+
+口径：候选**只从 picker 未登记池取**（0x00668BF0 后下一未登记高扇入候选
+0x00485250 CellClass::ReplaceTag（USER_DEFINED 带名——YRpp 符号层，
+functions.tsv 边界 0x485250-0x4852C9=122B 吻合）callers=3/unique=3/
+deps=2004，body=122B，**3 条 E8 call 调用边** → unique_callers **FUN_004ace70
+（0x4AD2D0，未登记——★batch 659 的 0x527CC0 同宿主）**/**FUN_00577920
+（0x577994，未登记——现场 `cmp [edi+0x3C],esi / jne / push 0 / mov ecx,edi /
+call`——传空 tag 的清除路径）**/**TagClass::RaiseEvent（0x6E54DC——★★
+functions.tsv USER_DEFINED 带名 + TSV batch 124 已登记，tag 家族直调；
+现场 `cmp cx,[0xB0E702] / je 跳过 / lea edx,[esp+0x20] / push 0 / push edx /
+mov ecx,0x87F7E8（MapClass::Instance）/ call 0x5657A0（★★batch 082 坐标→
+CellClass* 查表）/ mov ecx,eax / call 0x485250`——先查格再替换 tag）**）。
+**160B 全字节读完**（0x485250-0x4852C9 ret 4 = 1 栈参 + 0x4852CA-0x4852CF
+nop 对齐 + 0x4852D0 后邻用 movsx word [edi+0x24]/[edi+0x26] 坐标处理确认
+CellClass +0x24/+0x26 布局）。取证手段：disasm.py 160B 全读 +
+frontier_status.tsv 交叉验证（0x5657A0 batch 082/0x6E53A0 batch 124 已登记
+——本条调用现场再消费）+ functions.tsv 边界 + E8 调用边扫描（自写脚本 3
+处 + 归属区间判定）。
+================================================================================
+0x00485250 —— CellClass::ReplaceTag（122B）
+================================================================================
+机器码（全 122B）：
+```
+00485250  push esi
+00485251  mov esi, ecx                          （★this = CellClass*）
+00485253  mov eax, [esi+0x3c]                   （★旧 tag 对象指针）
+00485256  test eax, eax
+00485258  je 0x48525d
+0048525a  dec dword ptr [eax+0x2c]              （★★旧 tag 引用计数 +0x2C --）
+0048525d  mov eax, [esp+8]                      （★栈参1 = 新 tag）
+00485261  test eax, eax
+00485263  mov [esi+0x3c], eax                   （★this->+0x3C = 新 tag）
+00485266  je 0x4852c6                           （★新 tag NULL → 直接收尾）
+00485268  mov eax, [0x88094c]                   （★★全局脏格向量上限 cap）
+0048526d  mov ecx, [0x880954]                   （★★全局脏格向量计数 count）
+00485273  cmp ecx, eax
+00485275  jl 0x4852a5                           （count < cap → 直接登记）
+00485277  mov cl, [0x880951]                    （★★字节标志——batch 662
+                                                新候选 [0x880951]）
+0048527d  test cl, cl
+0048527f  jne 0x485285
+00485281  test eax, eax
+00485283  jne 0x4852c0                          （cap≠0 且标志 0 → 跳过登记）
+00485285  mov ecx, [0x880958]                   （★★额外容量 [0x880958]）
+0048528b  test ecx, ecx
+0048528d  jle 0x4852c0                          （额外 ≤0 → 跳过登记）
+0048528f  add ecx, eax                          （★cap + 额外 = 新容量）
+00485291  mov eax, [0x880944]                   （★★向量对象 [0x880944]）
+00485296  push 0
+00485298  push ecx                              （★新容量参数）
+00485299  mov ecx, 0x880944
+0048529e  call dword ptr [eax+8]                （★★★向量虚表槽 8 =
+                                                Grow/Reserve——扩容调用）
+004852a1  test al, al
+004852a3  je 0x4852c0                           （★扩容失败 → 跳过登记）
+004852a5  mov ecx, [0x880954]                   （count）
+004852ab  mov edx, [0x880948]                   （★★向量基址 [0x880948]）
+004852b1  mov eax, ecx
+004852b3  inc ecx
+004852b4  mov [0x880954], ecx                   （★count++）
+004852ba  mov ecx, [esi+0x24]                   （★★this->+0x24 = cell
+                                                坐标 dword（X 在 +0x24/Y
+                                                在 +0x26 双 word））
+004852bd  mov [edx+eax*4], ecx                  （★★登记 cell 坐标进脏格
+                                                向量）
+004852c0  mov esi, [esi+0x3c]                   （★新 tag）
+004852c3  inc dword ptr [esi+0x2c]              （★★新 tag 引用计数 +0x2C ++）
+004852c6  pop esi
+004852c7  ret 4                                 （★1 栈参回收）
+```
+**语义（tag 引用计数替换 + 脏格登记 + 三调用现场 + 三锚点）**：
+**CellClass::ReplaceTag（替换 cell 的 tag 对象引用，带双向引用计数与脏格
+登记）**——thiscall，1 栈参（新 tag 对象指针）：① 旧 tag（this->+0x3C）
+非空则旧 tag 引用计数（旧->+0x2C）--；② this->+0x3C = 新 tag；③ 新 tag
+NULL → 直接返回（不登记）；④ 新 tag 非空 → **cell 坐标（this->+0x24
+打包 dword）登记进全局脏格向量** [0x880948]（计数 [0x880954]）——计数
+< 上限 [0x88094C] 直接登记；满时经 [0x880951] 标志 + [0x880958] 额外容量
+判定，调 [0x880944] 对象虚表槽 8（Grow/Reserve）扩容成功后登记，失败
+跳过；⑤ 新 tag 引用计数（新->+0x2C）++。**脏格登记语义推断**：被 tag 的
+cell 坐标入全局列表供后续处理（TagClass 处理/重绘扫描推断——[0x880944]
+向量与 batch 124 RaiseEvent 的 tag 体系同域互证）。
+★原版怪癖（照抄）：① **引用计数在 +0x2C 且新旧双侧对称**（旧 --/新 ++——
+tag 对象生命周期引用计数）；② **新 tag NULL 不登记但旧计数已减**（清除
+路径 `push 0` 调用——计数净平衡）；③ **脏格向量满时扩容**（[0x880944]
+虚表槽 8 + cap+extra——动态向量 Grow/Reserve 形态）；④ **扩容失败静默
+跳过登记**（al==0 → 跳收尾，不报错）；⑤ **[0x880951] 字节标志门控**
+（cap≠0 且标志 0 → 直接跳过——标志=是否允许扩容推断）；⑥ **cell 坐标
+打包登记**（+0x24 dword = X(+0x24)+Y(+0x26) 双 word 一次写入——坐标
+紧凑存储）；⑦ **清除路径与 tag 家族调用现场**（FUN_00577920 传 0 /
+TagClass::RaiseEvent 先取格再替换）。
+★跨批次闭合：**batch 124（0x6E53A0 TagClass::RaiseEvent——本条调用现场
+再消费，tag 事件体系同域：RaiseEvent 触发 → 经 MapClass::Instance 取格 →
+ReplaceTag 替换 tag 并登记脏格）**+**batch 082（0x5657A0 坐标→CellClass*
+查表——RaiseEvent 调用现场内取格）**+**batch 659（FUN_004ace70——本条
+caller 与 0x527CC0 同宿主，INI 读族/单元格操作同域宿主函数）**+
+[0x87F7E8] MapClass::Instance（QWEN.md 实锤 + batch 208/209 族）+CellClass
+字段族（+0x24/+0x26 坐标——后邻 0x4852D0 同布局互证）。新候选：
+FUN_00577920（未登记 caller）、[0x880944]/[0x880948]/[0x88094C]/[0x880951]/
+[0x880954]/[0x880958]（脏格向量六全局——动态向量对象+基址+cap+标志+
+count+extra）、[0xB0E702]（RaiseEvent 现场门控 word）。
+⚠️ partial：脏格向量消费端语义（登记后谁遍历处理——TagClass/重绘推断）、
+[0x880944] 向量对象精确布局（DynamicVectorClass 推断）、[0x880951] 标志
+精确含义、扩容失败跳过登记的实际后果、FUN_004ace70/FUN_00577920 中本条
+调用的业务场景（清除/替换 tag 推断）、+0x3C/+0x2C 字段宿主类精确布局。
+
+================================================================================
+（batch 662 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：CellClass::ReplaceTag 引用计数惯用法
+（tag 生命周期 + 脏格向量登记——CellClass 核心域，无独立算法切片；脏格
+向量消费端语义 partial，随 CellClass/TagClass 框架整体立案时落地——batch
+124 同域）。模型价值：**tag 体系替换侧收口**（ReplaceTag 写引用计数 +
+RaiseEvent 调用现场 + 脏格向量六全局——batch 124/082 双锚点再消费 +
+FUN_004ace70 跨域宿主）。本批无产品代码改动，ctest 维持 **43/43 全绿**。
+登记一行 semantics_verified + assembly_verified_semantics_confirmed
+（122B 全段字节读完 + 3 调用现场归属 + 双锚点交叉验证），partial 项如实
+标注。
