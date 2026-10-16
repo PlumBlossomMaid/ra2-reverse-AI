@@ -1,0 +1,91 @@
+frontier batch 571 — 模态对话框主循环 0x0060D380（175B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x60D380 callers=5/unique=3/deps=4067/
+body=175B，unique_callers **FUN_0052d9a0（选关 0x52D9A0，QWEN.md 游戏运行流实锤）**/
+FUN_005c9720/FUN_006c8e80——均未登记）。**175B 全字节读完**（0x60D380-0x60D42C，
+ret 4 = 1 栈参）。
+取证手段：disasm.py 全读 + **IAT 三槽 PE 实锤** + 六批次锚点交叉（094/089/095/
+098/105/065/200）+ ranking 调用者。
+
+================================================================================
+0x0060D380 —— 模态对话框主循环（推断名，175B）
+================================================================================
+**IAT 槽实锤（PE 导入表解析）**：
+```
+[0x7E1470] = USER32.dll!SetWindowLongA
+[0x7E1498] = USER32.dll!ShowWindow
+[0x7E14D0] = USER32.dll!SetForegroundWindow
+```
+机器码（完整 175B）：
+```
+0060d380  push ecx/push esi/push 0/call 0x622650   ; ★★UI::BeginDialog（batch 094）
+0060d389  mov esi,eax/xor eax/test esi/mov [esp+4],eax
+0060d393  je 0x60d42a                            ; ★创建失败 → 返 0
+0060d399  lea eax,[esp+4]/push eax/push 8/push esi
+0060d3a1  call [0x7e1470]                        ; ★★SetWindowLongA(hDlg, 8, &out)
+0060d3a7  push 1/push esi/call [0x7e1498]        ; ★★ShowWindow(hDlg, 1)
+0060d3b0  push esi/call [0x7e14d0]               ; ★★SetForegroundWindow(hDlg)
+0060d3b7  mov ecx,[0x87f770]/call 0x54f720       ; ★★InputManager 帧推进（batch 095/200）
+0060d3c2  mov al,[esp+0xc]/test al/je 0x60d3d1   ; ★附加标志
+0060d3ca  mov ecx,esi/call 0x52b9b0              ; ★★0x52B9B0（未登记新候选）
+0060d3d1  mov eax,[esp+4]/test eax/jne 0x60d41f  ; ★返回标志非 0 → 退出循环
+0060d3d9  call 0x5d4d50                          ; ★★游戏主消息泵（batch 105 实锤）
+0060d3de  mov eax,[0xa8b238]                     ; ★★GameMode（batch 113/118）
+0060d3e3  test eax/je 0x60d412                  ; ★GameMode==0 → 模式分发
+0060d3e7  cmp eax,5/je 0x60d412                 ; ★GameMode==5 → 模式分发
+0060d3ec  mov al,[0xa8d60e]/test/jne 0x60d412   ; ★[0xA8D60E] → 模式分发
+0060d3f5  mov eax,[0xa8dab4]/test/jne 0x60d412  ; ★[0xA8DAB4] → 模式分发
+0060d3fe  call 0x55cbf0/test al/jne 0x60d417    ; ★★引擎判定（batch 098 同）
+0060d407  call 0x55d360/test al/jne 0x60d41f    ; ★★MainLoop（batch 098/200 实锤，
+                                                   QWEN.md 游戏运行流）
+0060d410  jmp 0x60d417
+0060d412  call 0x48d080                         ; ★★游戏模式分发器（batch 065）
+0060d417  mov eax,[esp+4]/test eax/je 0x60d3d9  ; ★★循环：标志 0 → 回消息泵
+0060d41f  mov ecx,esi/call 0x622720             ; ★★UI::EndDialog（batch 089/094）
+0060d426  mov eax,[esp+4]/pop esi/pop ecx/ret 4 ; ★★返回标志
+```
+**语义（推断名）**：**模态对话框主循环**——1 栈参（ret 4）：
+① **创建对话框**：`0x622650`（batch 094 UI::BeginDialog）→ 失败返 0；
+② **激活**：`SetWindowLongA(hDlg, 8, &out)`（取/存窗口长字）→ `ShowWindow(hDlg,1)`
+   + `SetForegroundWindow(hDlg)` 置顶激活；
+③ **帧推进**：`0x54F720`（batch 095 InputManagerClass::DoSomething——输入游标
+   推进）→ 附加标志非 0 → `0x52B9B0`（新候选）；
+④ **主循环**（返回标志为 0 时反复）：`0x5D4D50`（batch 105 游戏主消息泵——
+   Peek/Get/IsDialogMessage/Translate/Dispatch 完整泵）→ **GameMode 门控**
+   （`[0xA8B238] ∈ {0,5}` 或 `[0xA8D60E]` 或 `[0xA8DAB4]` 任一成立 → 走 `0x48D080`
+   游戏模式分发器）→ 否则 `0x55CBF0` 引擎判定 → `0x55D360` **MainLoop**
+   （batch 098/200 实锤，QWEN.md 游戏运行流核心）→ 返回值置**退出标志**；
+⑤ **收尾**：退出标志非 0 → `0x622720`（batch 089/094 UI::EndDialog 关闭对话框）→
+   返回退出标志。
+★原版怪癖（照抄）：① **GameMode {0,5} + 两全局短路**（`[0xA8B238]∈{0,5}` 或
+   `[0xA8D60E]`/`[0xA8DAB4]` 任一非 0 → 跳过 MainLoop 只走模式分发——与 batch
+   200 的 0x6241F0 主循环判定完全相同）；② **消息泵每轮无条件先跑**（0x5D4D50
+   在门控之前——batch 105 模态循环依赖自身在此）；③ **MainLoop 命中直接退出**
+   （0x55D360 返非 0 → jmp 退出循环）；④ **`0x622650`/`0x622720` 成对**（batch 094
+   BeginDialog 压栈 / EndDialog 弹栈——对话框栈 [0xB72D28] 生命周期闭合）；⑤
+   **SetWindowLongA 的 8 号图标**（GWL_ID=0xFFFFFFF0? 8 = DWL_MSGRESULT 推断——
+   partial）；⑥ **ret 4 = 1 栈参**（thiscall/cdecl 混合形态）。
+★跨批次闭合：**batch 094（0x622650 BeginDialog——创建）**+**batch 089/094（0x622720
+   EndDialog——收尾）**+**batch 095/200（0x54F720 InputManager 帧推进 + [0x87F770]
+   Instance）**+**batch 105（0x5D4D50 游戏主消息泵——模态循环核心）**+**batch 065
+   （0x48D080 游戏模式分发器）**+**batch 098/200（0x55CBF0 + 0x55D360 MainLoop）**+
+   **batch 200（0x6241F0 MainLoop 驱动宿主循环——本条与之高度同构：同为
+   0x622650→ShowWindow/SetForeground→0x54F720→主循环→0x622720 模板，本条是
+   "模态对话框"变体）**+**QWEN.md 游戏运行流（MainLoop 0x55D360 实锤）**。
+⚠️ partial：函数精确名（模态对话框主循环推断）、0x52B9B0（**未登记新候选**——
+   附加标志门控调用）、栈参/返回标志业务语义（对话框结果码推断）、
+   SetWindowLongA 第 2 参 8 的确切含义（GWL_/DWL_ 常量推断）、[0x87F770] 对象
+   非 InputManager 情形（batch 200 同对象）、FUN_005c9720/FUN_006c8e80
+   （调用者新候选）。
+
+================================================================================
+（batch 571 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：无宿主类（自由函数），核心是 Win32 对话框 +
+消息泵 + MainLoop 编排。模型价值：**模态对话框主循环完整动作序**（BeginDialog →
+激活 → 帧推进 → 消息泵 + GameMode 门控 + MainLoop → EndDialog）+ **与 batch 200
+的 0x6241F0 构成"宿主循环/模态框循环"孪生对**（同一模板两变体）。1 个新被调
+（0x52B9B0）+ 2 个调用者候选。本批无产品代码改动，ctest 维持 **43/43 全绿**。
+登记一行 semantics_verified + assembly_verified_semantics_confirmed（175B 全段
+字节读完 + IAT 三槽 PE 实锤 + 六批次锚点交叉 + QWEN.md MainLoop 接榫），partial
+项如实标注。
