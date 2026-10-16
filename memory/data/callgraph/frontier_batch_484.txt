@@ -1,0 +1,84 @@
+frontier batch 484 — DynamicVectorClass 构造器 0x007342D0（93B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=168/
+body=93B，ranking 名 FUN_007342d0，unique_callers FUN_00732280/
+FUN_00732950/FUN_00733380/FUN_007336c0——0x73xxxx 区批量生产/工厂类
+调用族推断）。
+**93B 全字节读完**（= 0x5D，0x7342D0-0x73432A ret 8 = 2 栈参）。取证手段：
+disasm.py 全读 + **batch 467 Add 0x63E540 / 469 SetCapacity 容器族布局
+互证** + 被调 0x7C8E17 已登记。
+
+================================================================================
+0x007342D0 —— DynamicVectorClass 构造器（推断名，93B，ret 8 = 2 栈参）
+================================================================================
+机器码（完整，93B 整数）：
+```
+007342d0  mov eax,[esp+4]           ; ★eax = 栈参 1（capacity）
+007342d4  push esi
+007342d5  mov esi,ecx               ; ★esi = this
+007342d7  test eax,eax
+007342d9  mov [esi+4],0             ; ★this->+4 = NULL（Items 先清）
+007342e0  mov [esi+8],eax           ; ★this->+8 = capacity（Capacity）
+007342e3  mov byte[esi+0xc],1       ; ★+0xC = 1（IsInitialized）
+007342e7  mov byte[esi+0xd],0       ; ★+0xD = 0（IsAllocated 初值）
+007342eb  mov [esi],0x7e180c        ; ★★虚表 0x7E180C（第一张——基类 VectorClass 推断）
+007342f1  je 0x734313               ; ★capacity==0 → 跳过分配
+007342f3  mov ecx,[esp+0xc]         ; ★ecx = 栈参 2（pMem 外部数组）
+007342f7  test ecx,ecx
+007342f9  je 0x734300               ; ★pMem 空 → 自分配路径
+007342fb  mov [esi+4],ecx           ; ★this->+4 = pMem（接管外部数组）
+007342fe  jmp 0x734313
+00734300  shl eax,2                 ; ★capacity*4（元素 4B）
+00734303  push eax
+00734304  call 0x7c8e17             ; ★★operator_new(capacity*4)（batch 001 实锤）
+00734309  add esp,4
+0073430c  mov [esi+4],eax           ; ★this->+4 = 新分配
+0073430f  mov byte[esi+0xd],1       ; ★+0xD = 1（IsAllocated = 自分配）
+00734313  mov [esi],0x7e17ac        ; ★★虚表 0x7E17AC（第二张——派生 DynamicVectorClass 覆盖）
+00734319  mov [esi+0x14],0xa        ; ★+0x14 = 0xA（CapacityIncrement 默认 10）
+00734320  mov [esi+0x10],0          ; ★+0x10 = 0（Count）
+00734327  mov eax,esi               ; 返 this
+00734329  pop esi
+0073432a  ret 8                     ; 2 栈参
+```
+**语义（布局互证实锤）**：**DynamicVectorClass<T> 构造器（int capacity,
+T* pMem = nullptr）**——2 栈参：
+1. **字段初值**：+4 Items = NULL、+8 Capacity = 栈参 1、+0xC IsInitialized
+   = 1、+0xD IsAllocated = 0、虚表 0x7E180C；
+2. **capacity != 0 分支**：pMem（栈参 2）非空 → Items = pMem（接管外部
+   数组，IsAllocated 保持 0）；pMem 空 → operator_new(capacity*4) +
+   IsAllocated = 1（自分配）；
+3. **收尾**：虚表覆盖为 0x7E17AC、+0x14 CapacityIncrement = 0xA（默认
+   10）、+0x10 Count = 0、返 this。
+**与 batch 467（Add 0x63E540）/469（SetCapacity 0x50EA90）容器族布局
+逐字段互证**：+4 Items/+8 Capacity/+0xC IsInitialized/+0xD IsAllocated/
++0x10 Count/+0x14 CapacityIncrement——本批是**构造端**（Add/SetCapacity
+的运行前提），容器生命周期四件套闭合（ctor 484/Add 467/SetCapacity 469/
+Clear 472+474）。
+★原版怪癖（照抄）：① **双虚表装填**（0x7E180C → 0x7E17AC——基类
+VectorClass 虚表先装、派生 DynamicVectorClass 虚表后覆盖——编译器构造
+中途的基类/派生表切换形态）；② **capacity==0 不分配**（je 跳过——空容器
+Items 保持 NULL）；③ **pMem 接管不置 IsAllocated**（外部数组所有权不转移
+——batch 469/472 同语义）；④ **CapacityIncrement 默认 0xA=10**（batch
+467 AddItem 满时 `容量+步长` 的默认步长——本批=步长初值实锤）；⑤
+**Count=0 收尾**（新容器空计数）；⑥ **先清 +4 再赋 capacity**（mov
+[esi+4],0 在 [esi+8],eax 前——Items 预清空时序）。
+★跨批次闭合：**batch 467（Add 0x63E540——满时 `push 0/push 容量+步长/
+call [vt+8]` 扩容现场）+batch 469（SetCapacity——两栈参 (capacity,pMem)
+同签名）——本批=容器族构造端**（+0x14 默认 10 与 467 步长互证）；**被调
+0x7C8E17（batch 001——operator_new，本条=调用现场）**；**虚表 0x7E180C/
+0x7E17AC 新登记**（0x7Exxxx 容器虚表区——batch 467 [0x7EB774]/469
+[0x7E61F0] 同区）；容器生命周期四件套（ctor/Add/SetCapacity/Clear）闭合。
+⚠️ partial：0x7E180C/0x7E17AC 精确宿主（基类 VectorClass/派生
+DynamicVectorClass 推断）、T 元素类型（4B 推断）、0x73xxxx 区调用者的
+工厂语义（批量生产推断）。
+
+================================================================================
+（batch 484 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（容器族已有 facing/VectorClass 布局
+模型基础 + ValueType 未定前构造器并入同一容器模型）。模型价值：**容器族
+构造端闭合**（batch 467/469/472/474 生命周期四件套 + 双虚表 + 默认步长
+10 实锤）。本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已
+实跑核实）。登记一行 semantics_verified + assembly_verified_semantics_
+confirmed（全段字节读完 + 布局互证 + 被调登记），partial 项如实标注。
