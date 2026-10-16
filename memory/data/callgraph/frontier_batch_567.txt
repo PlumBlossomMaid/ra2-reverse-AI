@@ -1,0 +1,90 @@
+frontier batch 567 — LoadOptionsClass::LoadDialog 入口 0x005587F0（19B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x5587F0 观察名 LoadOptionsClass::
+LoadDialog/body=19B、callers=3/unique=3/**deps=4142**，unique_callers FUN_0052d9a0
+（batch 566 0x52CB90 调用者）/FUN_00596300/FUN_00597a10（★0x595xxx 区——QWEN.md
+实锤 MapGen.cpp TU 0x5956E7-0x59A63A 内，FUN_00597a10 邻 0x597A30=LoadMission——RMG
+主线调用方）——均未登记）。**19B 全字节读完**（0x5587F0-0x5587FE，ret 无栈参，
+thiscall）。
+取证手段：disasm.py 全读 + **尾跳目标 0x558DD0 反汇编（前 140B）** + **同类构造器
+0x558740 反汇编（75B 参照）** + ranking 调用者。
+
+================================================================================
+0x005587F0 —— LoadOptionsClass::LoadDialog 入口 setter（推断名，19B）
+================================================================================
+机器码（完整 19B）：
+```
+005587f0  mov dword [ecx+4], 1     ; ★★this->+4 = 1（对话框模式/状态置 1）
+005587f7  mov dword [ecx+0xc], 0   ; ★this->+0xC = 0（字段清零）
+005587fe  jmp 0x558dd0             ; ★★尾跳 LoadDialog 主体
+```
+**尾跳目标 0x558DD0（前 140B 实读）**：
+```
+00558dd0  sub esp,0x3b8/push ebx/ebp/esi/edi/mov esi,ecx/xor ebp,ebp
+00558dde  mov eax,[esi+4]          ; ★★读 this->+4（入口 setter 刚置 1）
+00558de3  dec eax/je 0x558f2e      ; ★分派 1：+4==1 → 0x558F2E
+00558dee  dec eax/je 0x558e5d      ; ★分派 2：+4==2 → 0x558E5D
+00558df1  dec eax/jne 0x558f9f     ; ★分派 3：+4==3 → 继续，否则收尾
+00558df8  push ebp/mov edx,0x558cb0/mov ecx,0x2b5/call 0x622650
+                                     ; ★★UI::BeginDialog（batch 094 实锤）
+00558e08  mov ebx,[0x7e14a8]       ; ★★IAT GetDlgItem（batch 099 实锤导入槽）
+00558e10  push 0x528/push edi/call ebx       ; ★GetDlgItem(hDlg, 0x528)
+00558e18  push 0x6c8/push edi/call ebx       ; ★GetDlgItem(hDlg, 0x6C8)
+00558e24  push 0x694/push edi/call ebx       ; ★GetDlgItem(hDlg, 0x694)
+00558e30  mov eax,[esi]/call [eax+0x1c]      ; ★this 虚表槽 0x1C
+00558e37  push eax/push 0/push 0x4b2/push ebx/call [0x7e14a4]
+                                             ; ★★IAT 槽 0x7E14A4（消息发送）
+00558e46  mov ecx,0xa8b238/call 0x69bbe0     ; ★SessionClass::Instance 判定
+00558e50  test al/al/jne 0x558f9f            ; ★命中 → 直接收尾
+```
+**同类构造器 0x558740（75B 参照，未登记候选）**：
+```
+push esi/mov esi,ecx/xor eax/lea ecx,[esi+0x20]   ; ★this+0x20 子对象
+mov [ecx+4],0/[ecx+8],0/byte[ecx+0xc]=1/byte[ecx+0xd]=0
+mov [ecx],0x7ed30c/mov [ecx+0x14],0xa             ; ★子对象虚表 0x7ED30C + 上限 10
+mov [ecx+0x10],0/mov [esi+4],0/mov [esi+0xc],0/mov [esi+0x14],0
+mov [esi],0x7ed2e4                                ; ★★主虚表 0x7ED2E4
+mov [esi+8],0x829ea0                              ; ★+8 = 串指针（配置串）
+mov [esi+0x10],0x800                              ; ★+0x10 = 0x800（缓冲上限）
+call [eax+0xc]                                    ; 子对象虚表槽 0xC
+mov eax,esi/ret                                   ; 返 this
+```
+**语义（推断名）**：**LoadOptionsClass::LoadDialog 入口 setter**——thiscall 无栈参：
+① `this->+4 = 1`（**把对话框模式/状态置为 1**——0x558DD0 主体按 +4 值 1/2/3 三分派，
+   本入口固定走"模式 1"分支）；
+② `this->+0xC = 0`（清零字段）；
+③ 尾跳 0x558DD0（**LoadDialog 主体**：0x3B8 大栈帧，按 `this->+4` 分派——模式 1
+   分支：UI::BeginDialog（0x622650，batch 094 实锤）创建对话框 → GetDlgItem
+   （[0x7E14A8]）连取三个控件（0x528/0x6C8/0x694）→ this 虚表槽 0x1C 取值 → 经
+   [0x7E14A4] 发消息 → `SessionClass::Instance`（0xA8B238）判定 0x69BBE0——命中直接
+   收尾）。
+★原版怪癖（照抄）：① **19B 极简 setter + 大函数主体分离**（入口只写两字段即尾跳，
+   MSVC6 薄封装惯用）；② **+4 状态值三分派**（1/2/3 三个 dec+je 链——三个模式共享
+   同一 LoadDialog 主体的分派表形态）；③ **三个 GetDlgItem 控件 ID 硬编码**
+   （0x528/0x6C8/0x694）；④ 虚表槽 0x1C 取值参与消息发送（控件文本取用推断）；
+   ⑤ **SessionClass::Instance 命中直接收尾**（0x69BBE0 判定——会话态门控）。
+★跨批次闭合：**batch 094（0x622650 UI::BeginDialog——创建对话框主调用）**+**batch
+   099（[0x7E14A8] GetDlgItem 导入槽实锤）**+**batch 087/565（[0xA8B230]
+   ScenarioClass::Instance 邻域 [0xA8B238]=SessionClass::Instance）**+**batch 566
+   （FUN_0052d9a0 同调用者——INI 装载链共享调用方）**+**0x595xxx 区（FUN_
+   00596300/FUN_00597a10——QWEN.md 实锤 MapGen.cpp TU 内，**RMG 加载链调用
+   LoadOptionsClass::LoadDialog**，呼应 QWEN.md "MapSeedClass : LoadOptionsClass
+   继承"）**。
+⚠️ partial：宿主类字段语义（+4 模式值/0xC 清零字段/+8 串/+0x10 上限）、尾跳主体
+   0x558DD0（**新候选**——仅前 140B 实读，后半 0x3B8 栈帧主体未读完）、0x558740
+   （同类构造器——新候选）、0x69BBE0（Session 判定——新候选）、FUN_00596300/
+   FUN_00597a10（调用者新候选）、控件 ID 0x528/0x6C8/0x694 语义（LoadDialog 的
+   三个控件推断）。
+
+================================================================================
+（batch 567 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：宿主类（LoadOptionsClass）未闭合，且入口函数
+仅两字段写 + 尾跳，无独立算法切片。模型价值：**LoadOptionsClass::LoadDialog 入口
+语义**（+4=1 置模式 + 0 清字段 + 尾跳主体）+ **+4 三分派主体结构**（1/2/3 模式共享
+大函数）+ **RMG 主线调用方确认**（MapGen.cpp TU 内 FUN_00596300/FUN_00597a10 调
+LoadOptionsClass——QWEN.md "MapSeedClass : LoadOptionsClass" 继承链的调用侧证据）。
+3 个新候选（0x558DD0/0x558740/0x69BBE0）+ 3 个调用者候选。本批无产品代码改动，
+ctest 维持 **43/43 全绿**。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（19B 全段字节读完 + 尾跳目标 140B 实读 +
+同类构造器参照 + 四批次锚点交叉），partial 项如实标注。
