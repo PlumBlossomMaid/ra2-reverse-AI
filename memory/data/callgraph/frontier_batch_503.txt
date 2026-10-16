@@ -1,0 +1,93 @@
+frontier batch 503 — 环形缓冲文件读取器（推断名）0x00409030（187B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=113/
+body=187B，ranking 名 FUN_00409030 unclassified——**推断名**），unique_callers
+FUN_0053e1d0/FUN_0053e550/FUN_0053e6b0/FUN_0053e770。
+**187B 全字节读完**（= 0xBB，0x409030-0x4090E8，ret 8 = 2 栈参）。
+取证手段：disasm.py 全读 + **batch 251 0x4091C0（环形缓冲推进已登记）
+调用现场交叉** + **CRT 包装 0x7C95D3/0x7C94BC 反汇编确认（_lock/核心/
+_unlock 三明治——MSVC6 CRT fread 家族）**。
+
+================================================================================
+0x00409030 —— 环形缓冲文件读取器（推断名，187B，ret 8 = 2 栈参）
+================================================================================
+机器码（完整，187B 整数）：
+```
+00409030  push ecx/ebx/ebp/esi / mov ebp,edx（★edx=外部读入缓冲指针）
+          push edi / mov edi,ecx（★this）→ xor edx,edx
+0040903b  call 0x4091C0            ; ★★batch 251 环形缓冲推进(0)——刷新 [this+8] 剩余容量
+00409040  mov eax,[esp+0x1c]       ; ★栈参 2 = 输出计数指针（可 NULL）
+00409044  test eax,eax / jne 0x409050
+00409048  lea eax,[esp+0x10] / mov [esp+0x1c],eax   ; NULL → 栈上临时
+00409050  mov ecx,[esp+0x1c] / mov ebx,[esp+0x18]   ; ★栈参 1 = 请求字节数 n
+00409058  mov dword[ecx],0         ; 计数清零
+0040905e  mov eax,[edi+8]          ; ★[this+8] = 刚刷新的剩余容量
+00409061  cmp eax,ebx / jle 0x409067 / mov eax,ebx   ; eax = min(容量, 请求)
+00409067  test eax,eax / je 0x4090de                 ; ★0 → 返 1（读满）
+0040906b  mov ecx,[edi+0x14]       ; ★[this+0x14] = 初始化标志
+0040906e  push ebp / test ecx,ecx / push eax / push 1
+00409074  je 0x40908a              ; ★标志 0 → 0x7C94BC 分支
+00409076  mov edx,[edi+4] / push edx / call 0x7C95D3  ; ★★CRT fread 包装 A
+0040907f  mov esi,eax / add esp,0x10 / test esi,esi / jge 0x4090a5
+00409088  jmp 0x40909c
+0040908a  mov eax,[edi+4] / push eax / call 0x7C94BC  ; ★★CRT fread 包装 B
+00409093  mov esi,eax / add esp,0x10 / test esi,esi / jge 0x4090a5
+0040909c  mov dword[edi+0x24],0x80040000  ; ★★失败 → [this+0x24] = 0x80040000
+004090a3  test esi,esi
+004090a5  je 0x4090c7              ; ★esi==0 → 返 2（EOF）
+004090a7  cmp esi,-1 / je 0x4090d4 ; ★esi==-1 → 返 0（错误）
+004090ac  mov edx,esi / mov ecx,edi / call 0x4091C0   ; ★★推进已读 esi 字节
+004090b5  mov eax,[esp+0x1c] / sub ebx,esi            ; 剩余 -= 已读
+004090bb  mov ecx,[eax] / add ecx,esi / test ebx,ebx
+004090c1  mov [eax],ecx            ; 计数 += 已读
+004090c3  je 0x4090de              ; ★剩余 0 → 返 1（读满）
+004090c5  jmp 0x40905e             ; ★循环再读
+004090c7  返 2（eax=2）/ 0x4090d4 返 0（eax=0）/ 0x4090de 返 1（eax=1）→ ret 8
+```
+**语义（推断名）**：**环形缓冲文件读取器**——__thiscall：this=环形缓冲
+文件对象（[+4]=FILE*/句柄、[+8]=剩余容量、[+0x14]=初始化标志、[+0x24]=
+错误码）、edx=外部读入缓冲指针、栈参 1=请求字节数 n、栈参 2=输出计数
+指针（可 NULL）：
+1. **开头 call 0x4091C0(0) 刷新剩余容量**到 [this+8]（batch 251：推进
+   0 字节时写 [ecx+8]=剩余可用）；
+2. **分段读取**：每次 `min(剩余, 请求剩余)` → 按 [this+0x14] 标志分支调
+   **CRT fread 包装**（0x7C95D3 或 0x7C94BC，参数 (FILE*, 1, count,
+   外部缓冲)）读一段 → 返回值 esi：
+   - esi < 0 → 写错误码 0x80040000 到 [this+0x24]，esi==0 返 2（EOF）/
+     esi==-1 返 0（错误）；
+   - esi > 0 → **call 0x4091C0(esi) 推进环形位置**、计数 += esi、
+     剩余 -= esi；
+3. 剩余 0 → 返 1（读满）；循环直到读满/EOF/错误。
+返回码：**1=读满、2=读到 0 字节（EOF）、0=出错**。
+★原版怪癖（照抄）：① **开头推进 0 刷新容量**（call 0x4091C0 的
+edx=0 路径写 [this+8] 剩余——batch 251 已登记语义，本条=刷新调用现场）；
+② **输出计数指针可 NULL**（NULL → 栈上临时，调用方不必关心计数）；
+③ **双 CRT 分支**（[this+0x14] 标志选 0x7C95D3/0x7C94BC——两个 fread
+包装，锁版/非锁版推断）；④ **失败写 0x80040000**（HRESULT FACILITY_ITF
+区错误码——非 0x80004003 E_POINTER，batch 167 同族对照）；⑤ **错误码
+写后仍按 esi 分派 0/2**（先写码再分派——错误与 EOF 出口分离）；
+⑥ **分段循环**（fread 每段读 min(容量,剩余)，读后推进环形再循环）；
+⑦ **ret 8 = 2 栈参 + edx 寄存器缓冲指针**（混合传参）。
+★跨批次闭合：**0x4091C0（batch 251——环形缓冲推进，本条=两个调用
+现场：开头刷新容量 + 读后推进）**+**0x7C95D3/0x7C94BC（本条=新登记
+CRT fread 包装对——_lock 0x7CB3F9 → 核心 0x7C9602/0x7C94EB →
+_unlock 0x7CB44B 三明治，MSVC6 CRT fread 家族）**+**0x7CB3F9/0x7CB44B/
+0x7C9602/0x7C94EB（新候选——CRT 锁/核心函数）**+callers 全 0x53xxxx
+区（FUN_0053e1d0/0x53e550/0x53e6b0/0x53e770——未登记，推断为文件
+读取消费端）。
+⚠️ partial：宿主类（0x409xxx 区缓冲/队列——batch 251 同 partial）、
+[this+4] 句柄类型（FILE*/HANDLE 推断）、[this+0x14] 标志语义（初始化/
+锁推断——两 fread 包装分支）、0x80040000 精确 HRESULT 名（FACILITY_ITF
+推断）、调用者 0x53xxxx 区身份。
+
+================================================================================
+（batch 503 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（宿主类与 [this+4] 句柄类型未确认；
+fread 包装 0x7C95D3/0x7C94BC 属 CRT 层——按「宿主/被调用方未确认不建
+模型」纪律）。模型价值：**batch 251 环形缓冲推进的第二/三调用现场**
+（刷新容量 + 读后推进——环形缓冲文件读写的完整闭环）+ CRT fread 包装
+对登记。本批无产品代码改动，ctest 维持 **43/43 全绿**（batch 372 已
+实跑核实）。登记一行 semantics_verified + assembly_verified_semantics_
+confirmed（全段字节读完 + 跨批调用现场 + CRT 包装反汇编确认），partial
+项如实标注。
