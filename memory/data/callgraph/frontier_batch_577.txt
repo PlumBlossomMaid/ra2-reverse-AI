@@ -1,0 +1,131 @@
+frontier batch 577 — NET_PORT_UNREACHABLE 广播 + 限时轮询 0x006523A0（413B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x6523A0 FUN_006523a0 callers=3/
+unique=3/deps=3495/body=413B，unique_callers FUN_0055cf10/FUN_0055cfd0/
+FUN_00648710——均未登记）。**413B 全字节读完**（0x6523A0-0x65253C，ret 无栈参，
+thiscall 形态但 ecx 全程被重设——纯全局操作）。
+取证手段：disasm.py 全读 + **字符串 PE 读取实锤（0x8391CC="Sending
+NET_PORT_UNREACHABLE packets\n"、0x8391A8="Sending NET_PORT_UNREACHABLE to
+%s\n"）**+ 11 处已登记锚点交叉（0x4068E0 batch 001 日志 stub、0x7C8D20 batch 001
+strcmpi、0x6C8C40 batch 060 时间基、0x48D080 batch 065 分发器、0x7350C0 batch 067
+宽→窄、0x5410F0 batch 099 IPXManagerClass::Send_Global_Message、0x5422D0 batch 143
+三层指针链 getter、0x543080/0x543090 batch 366 标志对）+ 全局交叉（[0xA8B238]
+GameMode、[0xA8DA78] 玩家名表 batch 160/170、[0xB052D0] 对象族 batch 220/401/570、
+[0xA8E9C0] 网络对象 batch 099/399）。
+
+================================================================================
+0x006523A0 —— NET_PORT_UNREACHABLE 广播 + 限时轮询等待（推断名，413B）
+================================================================================
+机器码（完整 413B）：
+```
+006523a0  sub esp,0x1e4
+006523a6  push 0x8391cc / call 0x4068e0     ; ★★日志 stub（batch 001）"Sending NET_PORT_UNREACHABLE packets\n"
+006523b0  mov eax,[0xa8b238]                ; ★★GameMode/SessionClass::Instance
+006523b8  cmp eax,4 / jne 0x652536          ; ★★GameMode!=4 → 直接返回
+006523c4  mov ecx,0xa8e9c0 / call 0x543080  ; ★★batch 366 +0xC8 标志清 0
+006523ce  mov ecx,0xa8e9c0 / call 0x5422d0  ; ★★batch 143 三层指针链 getter
+006523d8  mov edi,eax                       ; ★初始值快照（轮询基线）
+006523da  mov eax,[0xb052e0]                ; ★★对象计数 [0xB052E0]
+006523e5  test eax,eax / jle 0x6524c5       ; 计数<=0 → 跳过广播
+; ── 广播循环（ebx=0..计数）
+006523ed  mov ecx,0xb / xor eax,eax / lea edi,[esp+0x28] / rep stosd   ; ★★清 44B
+006523fa  stosw / stosb                     ; +3B = 47B 栈缓冲清零
+006523fd  mov eax,[0xa8da78]                ; ★★玩家名表（batch 160/170）
+00652402  mov [esp+0x28],0x2f               ; ★★缓冲首字节=0x2F（包类型标记）
+0065240a  mov ecx,[eax] / call 0x7350c0     ; ★★batch 067 宽→窄（本地名）
+00652413  or ecx,-1 / xor eax,eax / repne scasb   ; strlen
+00652422  push ebx / rep movsd / movsb      ; ★本地名拷入 [esp+0x2C]
+00652435  mov ecx,0xb052d0 / call 0x6643e0  ; ★★[0xB052D0] 对象取项（未登记 26B）→ esi
+00652441  test esi,esi / je 0x6524b3        ; NULL → 跳过
+00652445  mov ecx,[0xa8da78]/mov ecx,[ecx]/call 0x7350c0  ; ★本地名再取窄串
+00652454  call 0x7c8d20                     ; ★★batch 001 strcmpi(项名,本地名)
+0065245c  test eax,eax / je 0x6524b3        ; ★名字相等 → 跳过（只发非本地）
+00652460  push esi / push 0x8391a8 / call 0x4068e0    ; ★★日志 "Sending NET_PORT_UNREACHABLE to %s\n"
+0065246e  mov ecx,0xb052d0 / push esi / call 0x6642a0 ; ★★未登记 210B → 3 dword 结构
+00652479  mov / [esp+0x1c]=edx / [esp+0x28]=ecx / [esp+0x2c]=edx   ; ★三项收集
+0065247f  push 0 / push esi / mov ecx,0xb052d0 / call 0x664390     ; ★★未登记 72B
+0065249a  lea ecx,[esp+0x2c]/push eax/lea eax,[esp+0x24]/push eax
+006524a4  push 1 / push 0x2f / push ecx
+006524a9  mov ecx,0xa8e9c0
+006524ae  call 0x5410f0                     ; ★★batch 099 IPXManagerClass::Send_Global_Message（6 栈参）
+006524b3  mov eax,[0xb052e0] / inc ebx / cmp ebx,eax / jl 0x6523ed   ; 循环
+; ── 限时轮询等待段
+006524c5  lea ecx,[esp+0x10] / call 0x6c8c40    ; ★★batch 060 timeGetTime>>4 → start
+006524d3  mov [esp+0xc],eax
+006524d7  mov [esp+0x14],0x12c             ; ★★上限 300 tick
+006524df  mov ecx,0xa8e9c0 / call 0x5422d0 / cmp eax,edi / jle 0x65251f
+006524e8  mov eax,[esp+0xc] / mov esi,[esp+0x14]
+006524f0  cmp eax,-1 / je 0x652508         ; ★★start==-1 哨兵（batch 568 同款）
+006524f9  call 0x6c8c40 / sub eax,[esp+0xc] / cmp eax,esi / jge 0x65251f
+00652506  sub esi,eax                       ; ★★递减式剩余 = 300-elapsed
+00652508  test esi,esi / je 0x65251f
+0065250c  call 0x48d080                    ; ★★batch 065 游戏模式分发器（泵）
+00652516  call 0x5422d0 / cmp eax,edi / jg 0x6524e8   ; ★值仍>基线 → 继续轮询
+0065251f  mov eax,[0xa8b238] / cmp eax,4 / jne 0x652536
+0065252c  mov ecx,0xa8e9c0 / call 0x543090 ; ★★batch 366 +0xC8 标志置 1
+00652536  add esp,0x1e4 / ret
+```
+**语义（推断名）**：**NET_PORT_UNREACHABLE 广播 + 限时轮询等待**——thiscall 形态但
+ecx 全程被重设（纯全局操作，413B）：
+① **入口 GameMode 门控**：`[0xA8B238]==4` 才继续，否则直接返回（日志先打
+   "Sending NET_PORT_UNREACHABLE packets"）；
+② **准备**：对 `[0xA8E9C0]`（网络对象）先 `0x543080`（batch 366 清 `+0xC8`）
+   → `0x5422D0`（batch 143 三层指针链 getter）取**初始值快照**存 edi 作轮询
+   基线；
+③ **广播循环**（ebx 从 0 到 `[0xB052E0]` 计数）：
+   - 清 47B 栈缓冲（rep stosd 44B + stosw + stosb），首字节置 `0x2F`（包类型）；
+   - `[0xA8DA78]->[0]`（玩家名表首项）经 `0x7350C0` 宽→窄 → strlen → 拷入
+     栈缓冲 `[esp+0x2C]`；
+   - `[0xB052D0]` 对象 `0x6643E0`（未登记 26B）取项 → esi；NULL 跳过；
+   - 再取本地名窄串与项名 `0x7C8D20`（strcmpi）**比较——名字相等则跳过**
+     （只对非本地玩家发包）；
+   - 打日志 "Sending NET_PORT_UNREACHABLE to %s\n" → `0x6642A0`（未登记
+     210B）取 3 dword 结构 → `0x664390`（未登记 72B）→
+     **`0x5410F0` Send_Global_Message**（batch 099，6 栈参：包类型 `0x2F`、
+     标志 1、坐标结构、`0xA8E9C0` 作 this）；
+④ **限时轮询等待**：`0x6C8C40`（batch 060 时间基）取 start → 上限
+   `0x12C=300` tick → 循环：`0x5422D0` 值与基线 edi 比较（未超则退出）+
+   **start==-1 哨兵**（batch 568 同款）+ **递减式剩余**（`sub esi,eax`）+
+   `0x48D080`（batch 065 分发器）驱动；
+⑤ **收尾**：`[0xA8B238]` 复查 ==4 → `0x543090`（batch 366 置 `+0xC8`）。
+★原版怪癖（照抄）：① **`[0xA8B238]` 入口/出口双重检查**（两处 `cmp eax,4`——
+   中途被改也不补救，出口只决定是否置标志）；② **47B 栈缓冲混合清零**
+   （`rep stosd` 11 dword + `stosw` + `stosb`——编译器未合并成 byte 循环）；
+   ③ **缓冲首字节 `0x2F` 手写包类型**（`mov dword [esp+0x28],0x2f`）；
+   ④ **同一宽→窄调用两次**（0x7350C0 是 8 槽轮换静态缓冲——两次调用拿不同
+   槽，本地名既要入栈缓冲又要参与 strcmpi，靠轮换避免互相覆盖）；
+   ⑤ **名字相等的项跳过**（`je` 只对非本地玩家发包）；⑥ **300 tick 上限 +
+   start==-1 哨兵 + 递减式剩余**三件套（与 batch 568 的 900 tick 轮询器
+   同模板）；⑦ **轮询内既查值变化又泵消息**（0x5422D0 比较 + 0x48D080）；
+   ⑧ `+0xC8` 标志在入口清、出口置（成对包裹）。
+★跨批次闭合：**0x4068E0（batch 001——日志 stub，本条"NET_PORT_UNREACHABLE
+   packets"记日志现场）**+**0x7C8D20（batch 001——strcmpi，玩家名比较现场）**+
+   **0x7350C0（batch 067——宽→窄 8 槽轮换，本条两次调用）**+**0x5410F0（batch
+   099——IPXManagerClass::Send_Global_Message，本条=发包现场）**+**0x5422D0
+   （batch 143——三层指针链 getter，本条=轮询基线来源）**+**0x543080/0x543090
+   （batch 366——+0xC8 清/置标志对，本条=成对消费点，且 batch 366 已登记
+   0x6523A0 在 caller 集中！）**+**0x6C8C40（batch 060——timeGetTime>>4 时间
+   基）**+**0x48D080（batch 065——游戏模式分发器）**+**[0xA8B238]（GameMode）**+
+   **[0xA8DA78]（玩家名表，batch 160/170）**+**[0xB052D0]（对象族，batch
+   220/401/570）**+**[0xA8E9C0]（网络对象，batch 099 IOXManager this / batch
+   399 轮询器 this）**+**与 batch 568（0x664530 限时轮询器 900 tick）同模板
+   （开始时间+递减剩余+start==-1 哨兵+0x48D080 泵）**。
+⚠️ partial：函数精确名（NET_PORT_UNREACHABLE 广播+限时轮询推断）、`0x6643E0`/
+   `0x6642A0`/`0x664390` 三被调身份（`[0xB052D0]` 对象族方法——新候选）、
+   3 dword 结构语义（包体字段推断）、`0x2F` 包类型常量语义（NET_* 类型码推
+   断）、`[0xB052D0]` 对象族身份（连接/玩家列表推断）、`[0xA8E9C0]` 精确类型
+   （网络管理器推断）、轮询判据语义（基线值变化=连接建立推断）、
+   FUN_0055cf10/FUN_0055cfd0/FUN_00648710（调用者新候选）。
+
+================================================================================
+（batch 577 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：宿主全局对象（`[0xA8E9C0]`/`[0xB052D0]`）
+类型未闭合，413B 纯"广播+轮询"编排无算法切片；依赖未读被调（0x6643E0/
+0x6642A0/0x664390 三件）。模型价值：**"限时轮询等待"模板第二实例**（300 tick +
+递减剩余 + start==-1 哨兵 + 0x48D080 泵——与 batch 568 的 900 tick 版同构，可
+抽出共用模板）+ **宽→窄 8 槽轮换缓冲的双调用用法**（0x7350C0 两次取不同槽避免
+覆盖）+ **包类型 0x2F/NET_PORT_UNREACHABLE 语义链**。3 个新被调 + 3 个调用者
+候选。本批无产品代码改动，ctest 维持 **43/43 全绿**。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（413B 全段字节读完 +
+字符串 PE 实锤 + 11 批次锚点交叉），partial 项如实标注。
