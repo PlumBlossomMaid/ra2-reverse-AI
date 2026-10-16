@@ -1,0 +1,129 @@
+frontier batch 562 — CSF 语言文件加载器 0x007346A0（752B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x7346A0 callers=3/unique=3/deps=4450/
+body=752B，unique_callers **FUN_006bb9a0 = WinMain 0x6BB9A0（QWEN.md 实锤）**/
+FUN_00734f50/FUN_00734f80——均未登记）。**752B 全字节读完**（0x7346A0-0x73498F，
+ret 无栈参）。
+取证手段：disasm.py 全读 + 邻近被调 0x734990 反汇编（160B） + **字符串/表常量
+PE 实测** + 八批次已登记锚点交叉（001/049/059/060/063/075/126/131/178）。
+
+================================================================================
+0x007346A0 —— CSF 语言文件加载器（推断名，752B，thiscall 1 参数：ecx=文件名）
+================================================================================
+**实测常量（PE 字节读出）**：
+```
+文件头魔数  0x43534620 = " FSC"（CSF 文件签名）
+邻近魔数    0x4C424C20 = " LBL"（CSF Label 块签名，0x734990 校验）
+0x8457EC = ".csf"                  （扩展名，拼接到去扩展名的输入串）
+0x8457D8 = "MaxLabelLen = %d\n"
+0x8457C8 = "Language: %s\n"
+0x816210 = "unknown"               （语言查不到时的默认名）
+0x8161F0 = "mpool size = %d\n"     （同区串，本条未直接引用）
+[0x845678] 语言表（stride 0x10，首字段=语言 ID，ID==0xA 终止；+4=语言名指针）
+[0x845728] 语言 ID/代码区（字节实测含 "Chinese"/"Korean"/"Jabberwocky" 片段）
+```
+机器码（完整 752B，关键段）：
+```
+007346a0  mov eax,[0xb1cf80]/sub esp,0x84/test eax/je 0x7346bf
+007346b1  mov eax,1/.../ret                      ; ★已初始化标志 → 直接返 1（幂等）
+007346bf  test ecx,ecx/je 0x734947               ; 文件名 NULL → 返 0
+007346c7  cmp byte [ecx],0/je 0x734947           ; 空名 → 返 0
+007346d0  mov [0xb1cf68],ecx                     ; ★全局文件名指针
+007346dd  mov [0xb1cf80],1                       ; ★置已初始化
+007346e7  mov [0xb1cf58],0                       ; ★MaxLabelLen 复位 0
+007346f1  repne scasb                            ; strlen(文件名)
+007346f7  push 0x2e/push 0xb13eb0/call 0x7caf30  ; ★★strchr(缓冲,'.')（batch 126）
+0073471f  mov byte [eax],0                       ; ★在第一个 '.' 处截断
+0073472c  push 0xb13eb0                          ; 再拼 [0x8457EC]=".csf"（手写 strlen+拷贝）
+00734754  lea ecx,[esp+0x24]/call 0x4739f0       ; ★★CCFileClass ctor（batch 063）
+00734764  lea ecx,[esp+0x20]/push 0/call 0x473c50; ★★CCFileClass::Exists（batch 075）
+00734777  push 1/lea ecx,[esp+0x24]/call 0x473d10; ★★FileClass::Open(1)（batch 178）
+0073478f  push 0x18/push buf/call 0x473b10       ; ★★FileClass::Read(buf,0x18)（batch 131）
+00734794  cmp eax,0x18/jne 0x7347d4               ; 头部读满 24B 才继续
+00734799  cmp dword [esp+8],0x43534620           ; ★★" FSC" 魔数校验
+007347a7  mov ecx,[esp+0x10]/mov edx,[esp+0x14]  ; 头内字段
+007347b1  cmp esi,2/setl al/dec eax/mov esi,1    ; ★版本 <2 → 掩码全 1
+007347b4  mov [0xb1cf6c],ecx                     ; ★★[0xB1CF6C]=Label 数
+007347be  mov [0xb1cf70],edx                     ; ★★[0xB1CF70]=Value 数
+007347cd  and eax,[esp+0x1c]/mov [0x845728],eax  ; ★★语言 ID（版本相关）
+007347d4  mov [esp+0x20],0x7e16b0/call 0x43ae50  ; ★析构临时（batch 059）
+007347f4  mov [esp+0x20],0x7e1668/call 0x431b80  ; ★析构临时（batch 060）
+00734801  test esi,esi/je 0x734947               ; ★头部校验失败 → 返 0
+00734823  lea ecx,[eax+eax*4]/shl ecx,3          ; ★★Label 数 × 40 字节
+0073482a  push ecx/call 0x7c8e17                 ; ★★operator new（batch 001）
+00734836  mov [0xb1cf74],edi                     ; ★★40B/项 Label 表
+00734854  rep stosd                              ; 整表清零
+0073485d  lea ecx,[eax*4]/call 0x7c8e17          ; ★★Value 数 × 4 → [0xB1CF78]
+00734892  lea eax,[edx*4]/call 0x7c8e17          ; ★★Value 数 × 4 → [0xB1CF7C]（第三块）
+007348bc  mov ecx,0xb13eb0/call 0x734990         ; ★★Label 块读取（" LBL"，邻近同族）
+007348d2  push 0x7c8d20/push 0x28/push ecx/push edx/call 0x7c8b48
+                                                  ; ★★qsort(表,Label 数,0x28,0x7C8D20)
+007348e0  push [0xb1cf58]/push 0x8457d8/call 0x4068e0
+                                                  ; ★"MaxLabelLen = %d"（batch 001 桩）
+007348f0  mov ecx,[0x845678]/cmp ecx,0xa/je 0x73495b
+                                                  ; ★★语言表遍历（stride 0x10，0xA 终止）
+00734909  cmp ecx,[0x845728]/je 0x734952         ; ★★命中语言 ID → 取 +4
+00734956  mov eax,[eax+4]/jmp 0x734960           ; 命中项 +4 = 语言名
+0073495b  mov eax,0x816210                       ; ★"unknown" 兜底
+00734961  push 0x8457c8/call 0x4068e0            ; ★"Language: %s"
+0073496e  mov ecx,0xa8b238/call 0x6977c0         ; ★★SessionClass::Instance 方法
+00734978  mov ecx,0xabdfd8/call 0x595710         ; ★★MapSeedClass::Instance（QWEN.md）方法
+00734982  mov eax,1/.../ret                      ; ★成功返 1
+00734947  xor eax,eax/.../ret                    ; ★全部失败出口返 0
+```
+**语义（推断名）**：**CSF 语言文件加载器**——thiscall（ecx=语言文件名）：
+① **幂等门**：`[0xB1CF80]!=0` 直接返 1（只加载一次）；
+② **路径构造**：名 NULL/空 → 返 0；拷入 `[0xB13EB0]` 缓冲，`strchr('.')` 截断
+   （**去掉原扩展名**），再拼 `.csf`（`[0x8457EC]`）；
+③ **打开与读头**：CCFileClass 构造（0x4739F0）→ Exists（0x473C50）→ Open(1)
+   （0x473D10）→ Read 24 字节头（0x473B10）；
+④ **头校验**：首 dword == `" FSC"`（0x43534620）且头读满 24B；解析
+   `[0xB1CF6C]`=Label 数、`[0xB1CF70]`=Value 数、`[0x845728]`=语言 ID
+   （版本 <2 时掩码全 1——版本兼容分支）；析构两个临时对象（0x43AE50/0x431B80）；
+⑤ **分配**：`operator new`（0x7C8E17）三次——`Label 数 × 40` 字节 Label 表
+   （`[0xB1CF74]`）、`Value 数 × 4` × 2 块（`[0xB1CF78]`/`[0xB1CF7C]`），全部
+   `rep stosd` 清零；
+⑥ **填表**：调 0x734990（Label 块读取器，校验 `" LBL"`，回填 `[0xB1CF58]`=
+   MaxLabelLen）；
+⑦ **排序**：`qsort(Label 表, Label 数, 0x28, 0x7C8D20)`（batch 049 的 qsort +
+   batch 001 的**大小写不敏感**比较器——按标签名不敏感排序，供后续二分/查表）；
+⑧ **语言名**：日志 `"MaxLabelLen = %d"`；遍历语言表 `[0x845678]`（stride 0x10，
+   首字段 == 语言 ID 则取 +4 作语言名，首字段 == 0xA 终止），命中记
+   `"Language: %s"`，未命中用 `"unknown"`（0x816210）；
+⑨ **收尾通知**：`SessionClass::Instance`（0xA8B238）方法 0x6977C0 →
+   `MapSeedClass::Instance`（0xABDFD8，QWEN.md 实锤）方法 0x595710 → 返 1。
+★原版怪癖（照抄）：① **扩展名强制替换**（先按第一个 '.' 截断原扩展名再拼
+   ".csf"——输入自带路径分隔符语义未处理）；② **幂等门 + 部分状态早退**：
+   `[0xB1CF80]` 置 1 发生在头校验**之前**——头部校验失败返 0 但标志已置 1，
+   后续调用直接返 1（**失败被缓存成成功**，必须照抄）；③ 版本 <2 时的
+   `setl/dec/and` 掩码惯用法（0 或 -1）；④ 三次独立 `operator new` 无失败回滚
+   （中途失败直接返 0，已分配块泄漏）；⑤ 语言名查找是**线性遍历 + 0xA 终止**
+   （无二分）；⑥ 全部诊断走 0x4068E0（发行版不打印）。
+★跨批次闭合：**batch 063（0x4739F0 CCFileClass ctor）**+**batch 075（0x473C50
+   Exists）**+**batch 178（0x473D10 Open）**+**batch 131（0x473B10 Read）**+
+   **batch 059（0x43AE50 三字段带标志位析构）**+**batch 060（0x431B80
+   BufferIOFileClass dtor）**+**batch 126（0x7CAF30 strchr 实锤）**+**batch
+   049（0x7C8B48 qsort 主实现）**+**batch 001（0x7C8E17 operator new /
+   0x7C8D20 大小写不敏感比较器 / 0x4068E0 诊断桩）**——**文件类 I/O 家族
+   （构造/Exists/Open/Read/析构）+ CRT 字符串/排序/分配家族在 CSF 装载场景的
+   首次组合落地**。**WinMain 启动链再添一员**（batch 559 容器清空器 / 560
+   _splitpath / 561 磁盘空间检查 / 本条 CSF 语言文件——**启动链四连**）。
+⚠️ partial：宿主类名（CSF/语言加载器——0x734xxx 区家族推断）、0x734990（Label
+   块读取器——**未登记新候选**，已读首 160B 见 `" LBL"` 校验）、
+   0x734F50/0x734F80（调用者——新候选，同族）、0x6977C0（SessionClass 方法——
+   新候选）、0x595710（MapSeedClass::Instance 方法——新候选；**为何语言加载
+   要通知 RMG 生成器未取证**）、[0x845678] 表项 +4 精确含义（语言名 vs 代码
+   指针）、[0xB1CF58]（MaxLabelLen 写入方在 0x734990 内未逐字节读）、
+   24B 头各字段（+4 版本/+8/+0xC/+0x10/+0x14/+0x1C）精确角色。
+
+================================================================================
+（batch 562 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：宿主类（CSF/语言加载器）未闭合，且核心走
+CCFileClass I/O + 三块动态分配，模型边界不清。模型价值记入文档：**启动链四连
+（WinMain 调容器清空器/_splitpath/磁盘检查/CSF 装载）**+**"失败被缓存成成功"
+的幂等门怪癖**（[0xB1CF80] 早置位）+ **qsort 用大小写不敏感比较器**（Label 表
+按名不敏感排序）。3 个新候选入列（0x734990 / 0x734F50 / 0x734F80）+ 2 个新被调
+（0x6977C0 / 0x595710）。本批无产品代码改动，ctest 维持 **43/43 全绿**。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（752B 全段字节读完 +
+字符串/表常量 PE 实测 + 邻近被调反汇编 + 八批次锚点交叉），partial 项如实标注。
