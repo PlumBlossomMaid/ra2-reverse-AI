@@ -1,0 +1,83 @@
+frontier batch 606 — GDlgSupp 槽位注册派发器 0x004E4C20（507B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（0x58BB30 后下一未登记高扇入候选 0x004E4C20
+FUN_004e4c20 callers=3/unique=3/deps=2747/body=507B，unique_callers FUN_005E9C00/
+FUN_005ED5A0/FUN_006ACEE0——均未登记；FUN_005ED5A0/FUN_006ACEE0 与 batch 600-605
+配置链重叠）。**507B 全字节读完**（0x4E4C20-0x4E4E1A，ret c3，thiscall，ecx=this
+存 ebx、edx=参 2 存 esi）。
+取证手段：disasm.py 分两段全读 + direct_edges 调用图核对 + 已登记锚点交叉
+（**batch 190 0x4E4770 导入表调试日志 + batch 224 0x4E45A0 GDlgSupp 命令路由第三
+变体 + batch 600 0x4E4230 同款映射 + batch 223 [0x7E1490] GDlgSupp 表槽** + batch
+113/591/600 [0xA8B238]/[0xA8DA90]/[0xAC11B4]）。
+
+================================================================================
+0x004E4C20 —— GDlgSupp 槽位注册派发器（推断名，507B）
+================================================================================
+机器码（完整 507B，分五段）：
+```
+; ── 段 1：值→索引映射（与 batch 600 0x4E4230 完全相同）
+004e4c20  push ebx/esi / mov esi,edx（★参 2）/ mov ebx,ecx（★this）
+004e4c2c  esi==0x6A2 → eax=0；esi==0x522 → eax=1；0x523→2；0x524→3；0x525→4；
+          0x526→5；0x527→6；末段 sub 0x528/neg/sbb/and 0xF8/add 7 → 0x528→7
+          （其余→255）——与 batch 600 0x4E4230 逐字节同款
+; ── 段 2：[0x8B4040] 槽位表扫描置 -1
+004e4c9c  push edi / xor edx / mov ecx,0x8b4040（★★槽位表 [0x8B4040]——batch 224
+          同表）/ cmp [ecx],eax / je 0x4e4cb6 / add ecx,0xc / inc edx /
+          cmp ecx,0x8b40ac / jl（★8 项×12B 扫描）
+004e4cb6  cmp edx,-1 / je 0x4e4cc9 / lea eax,[edx+edx*2] /
+          mov [eax*4+0x8b4040],0xffffffff   ; ★命中项写入 -1（标记已用）
+; ── 段 3：[0x7E1490] 消息派发（0x147/0x150）
+004e4cc9  mov edi,[0x7e1490]（★★batch 223 GDlgSupp 表槽 [0x7E1490]）
+004e4ccf  push 0/push 0/push 0x147/push esi/push ebx/call edi        ; ★(this,参2,0x147,0,0)
+004e4cdc  push 0/push eax/push 0x150/push esi/push ebx/call edi      ; ★(this,参2,0x150,eax,0)
+; ── 段 4：再映射写回 [0x8B4040]
+004e4ce8  esi 再映射（同上表：0x6A2→0、0x522-0x528→1..7）
+004e4d5f  cmp eax,-2 / je / lea ecx,[eax+eax*2] /
+          mov [ecx*4+0x8b4040],esi      ; ★[0x8B4040+idx*12] = 新映射值
+; ── 段 5：八槽迭代双路派发（si=0..7）
+004e4d6e  xor esi / 索引→值映射（0x6A2、0x522-0x528——与 batch 602 同结构）
+004e4dd8  mov eax,[0xa8b238]（★★GameMode）/ cmp 3 / je / cmp 4 / jne 0x4e4dfe
+004e4de7  mov eax,[esi*4+0xa8da90]（★★八项表 [0xA8DA90]）/ mov ecx,[0xac11b4] /
+          cmp eax,ecx / je 0x4e4e07（★项==[0xAC11B4] → 默认路）
+004e4df8  cmp dword[eax+0x6b],-1 / je 0x4e4e07（★项+0x6B==-1 → 默认路）
+004e4dfe  mov ecx,ebx / call 0x4e45a0  ; ★★batch 224 GDlgSupp 命令路由第三变体（主路）
+004e4e07  mov ecx,ebx / call 0x4e4770  ; ★★batch 190 导入表调试日志（默认路）
+004e4e0e  inc esi / cmp esi,8 / jl 0x4e4d70  ; ★八槽迭代
+004e4e18  pop esi/ebx / ret
+```
+**语义（推断名）**：**GDlgSupp 槽位注册派发器**——thiscall，ecx=this、edx=参 2
+（对话框命令值）：
+① 值→索引映射（0x6A2→0、0x522-0x528→1..7、其余 255——batch 600 同款）；
+② [0x8B4040] 槽位表（8 项×12B）扫描：已有同索引项 → 写入 -1（标记已用）；
+③ [0x7E1490]（batch 223 GDlgSupp 表槽）派发两条消息（0x147/0x150）；
+④ 参 2 再映射 → 写回 [0x8B4040+idx*12]（登记槽值）；
+⑤ 八槽迭代（si=0..7）：索引→值映射 → GameMode（[0xA8B238]==3/4）门控查八项表
+   [0xA8DA90] 槽项 ==[0xAC11B4] 或项+0x6B==-1 → 默认路 0x4E4770（batch 190）/
+   否则主路 0x4E45A0（batch 224）。
+★原版怪癖（照抄）：① **映射段出现两次**（段 1 与段 4——先映射查表后映射写回，
+   同一映射表内联两次）；② **[0x8B4040] 表双重职责**（扫描匹配置 -1 + 写回登记新
+   值——注册与去重一体）；③ **[0x7E1490] 消息码 0x147/0x150**（batch 223 提及的
+   GDlgSupp 消息码家族——本条=派发现场）；④ **八槽迭代与 batch 602 0x4E5310 同
+   结构**（索引→值映射 + GameMode 门控 + 八项表双哨兵选路——家族模板复用）；⑤
+   **两被调全已登记**（batch 224 主路 / batch 190 默认路——本条=两个调用现场）。
+★跨批次闭合：**batch 224（0x4E45A0 GDlgSupp 命令路由第三变体——本条=主路调用现
+   场，[0x8B4040] 同表）**+**batch 190（0x4E4770 导入表调试日志——本条=默认路调
+   用现场）**+**batch 600（0x4E4230 同款值→索引映射——本条=逐字节同款第 2 消费）**
+   **+batch 223（[0x7E1490] GDlgSupp 表槽——本条=消息派发现场）**+**batch 113/591
+   （[0xA8B238] GameMode/[0xA8DA90] 八项表）**+**batch 600-605（FUN_005ED5A0/
+   FUN_006ACEE0 配置链同域）**。
+⚠️ partial：函数精确名（GDlgSupp 槽位注册派发器推断）、参 2 业务语义（对话框命令
+   值推断）、[0x8B4040] 表项结构（12B 项——槽值+数据推断）、0x147/0x150 消息语义、
+   映射两次执行差异（段 1 结果存 eax、段 4 结果存 esi）、callers FUN_005E9C00/
+   FUN_005ED5A0/FUN_006ACEE0（未登记）。
+
+================================================================================
+（batch 606 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：507B 纯注册/派发编排无算法切片；功能名与槽
+位表语义未闭合。模型价值：**GDlgSupp 槽位注册模板**（双映射 + [0x8B4040] 表扫描
+置 -1/写回 + [0x7E1490] 消息派发 + 八槽双路派发——batch 190/224/600/223 四锚点
+一次全命中）+ 与 batch 602 八槽迭代模板结构复用确认。无新被调候选。本批无产品
+代码改动，ctest 维持 **43/43 全绿**。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（507B 全段字节读完 + batch 190/224/600/223
+锚点全命中），partial 项如实标注。
