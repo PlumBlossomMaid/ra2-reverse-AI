@@ -1,0 +1,67 @@
+frontier batch 475 — TeamTypeClass::GetHouse 0x006F2070（44B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=187/
+body=44B，ranking 名 **TeamTypeClass::GetHouse**（带名），unique_callers
+FUN_0065d8e0/FUN_0065dd30/FUN_0065e010/FUN_0065ec30——AI/TeamType 任务区
+调用族，与 batch 470 GetWaypoint 的 callers 重叠 FUN_0065d8e0/
+FUN_0065ec30）。
+**44B 全字节读完**（= 0x2C，0x6F2070-0x6F209B ret）。取证手段：disasm.py
+全读 + **YRpp TeamTypeClass.h:72 三证实锤** + **被调 0x510F60（batch 129）/
+0x510ED0（batch 145）已登记交叉验证**。
+
+================================================================================
+0x006F2070 —— TeamTypeClass::GetHouse（ranking 带名 + YRpp 实锤，44B）
+================================================================================
+机器码（完整，44B 整数）：
+```
+006f2070  push esi
+006f2071  mov esi, ecx              ; ★esi = this
+006f2073  mov eax, [esi+0xc4]       ; ★eax = this->+0xC4（Owner 字段）
+006f2079  test eax, eax
+006f207b  jne 0x6f209a              ; ★+0xC4 非空 → 直接返 Owner
+006f207d  mov ecx, [esi+0xc8]       ; ★ecx = this->+0xC8（idxHouse 字段）
+006f2083  call 0x510f60             ; ★★HouseClass::Index_IsMP(ecx)（batch 129 已登记）
+006f2088  test al, al
+006f208a  je 0x6f2098              ; ★非 MP 特殊索引 → 返 0
+006f208c  mov ecx, [esi+0xc8]       ; ecx = idxHouse
+006f2092  pop esi
+006f2093  jmp 0x510ed0             ; ★★尾跳 HouseClass::FindByIndex(ecx)（batch 145 已登记）
+006f2098  xor eax, eax              ; 返 0
+006f209a  pop esi
+006f209b  ret
+```
+**语义（YRpp TeamTypeClass.h:72 三证实锤）**：**TeamTypeClass::GetHouse
+() const**（`HouseClass* GetHouse() const { JMP_THIS(0x6F2070); }`）——
+**this+0xC4（Owner 字段）非空 → 直接返回 Owner**；否则 this+0xC8
+（idxHouse 字段）经 **HouseClass::Index_IsMP（batch 129——idx ∈
+{0x117B..0x1182} MP 特殊玩家槽判定）** 检查：非 MP 特殊索引 → 返 0；
+是 MP 索引 → **尾跳 HouseClass::FindByIndex（batch 145——MP 索引先映射
+0..7 再查 HouseClass 数组返回 House*）**。对应 YRpp HouseClass.h:332-334
+注释惯用（`IsMP() ? Find_YesMP() : Find_NoMP()`）——Owner 优先、否则按
+idxHouse MP 解析。
+★原版怪癖（照抄）：① **Owner 优先短路**（+0xC4 非空直接返——idxHouse
+仅作回退路径）；② **非 MP 索引静默返 0**（无 FindByIndex 调用——普通
+idxHouse 不解析）；③ **尾跳 jmp 0x510ED0**（无独立返回点——编译器
+尾调用优化，返回值直接透传）；④ **两次读 +0xC8**（一次经 Index_IsMP、
+一次经 FindByIndex——各读各的，非寄存器复用）。
+★跨批次闭合：**+0xC4/+0xC8 字段与 batch 470 GetWaypoint（+0xD4 Waypoint/
++0xD8 TransportWaypoint）同 YRpp TeamTypeClass 字段表排布互证**（Owner@
++0xC4/idxHouse@+0xC8/TechLevel@+0xCC/Tag@+0xD0/Waypoint@+0xD4/Transport
+Waypoint@+0xD8——相邻 int/指针字段按声明序落位）；**被调 0x510F60（batch
+129 Index_IsMP）/0x510ED0（batch 145 FindByIndex）全已登记——本批为
+调用现场，MP 索引簇三函数成链闭合（IsMP 判定 → FindByIndex 取值）**；
+**TeamTypeClass 家族再添成员**（batch 470 GetWaypoint + 本批 GetHouse，
+同 AI/TeamType 任务区 callers 重叠证实同一调用族）。
+⚠️ partial：+0xC4/+0xC8 精确字段名（Owner/idxHouse 依 YRpp 字段表推断
+——与 GetWaypoint +0xD4 排布互证）、FUN_0065d8e0 等调用者的 AI 任务
+语义未追。
+
+================================================================================
+（batch 475 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（AI/TeamType 任务系统依赖链未读 + 调用
+者语义未确认）。模型价值：**TeamTypeClass::GetHouse 闭合（带名实锤 + MP
+索引簇三函数成链）**。本批无产品代码改动，ctest 维持 **43/43 全绿**
+（batch 372 已实跑核实）。登记一行 semantics_verified + assembly_verified
+_semantics_confirmed（全段字节读完 + YRpp 三证 + 已登记被调交叉），partial
+项如实标注。
