@@ -1,0 +1,120 @@
+frontier batch 676 —— 0x004389B0 BombClass::Disarm（拆弹）
+
+地址：0x004389B0（functions.tsv 边界 0x4389B0-0x4389E0 = 49B 吻合，
+后邻 0x4389F0=IsDeathBomb（mov eax,[ecx+0x30];ret）/0x438A00=
+GetCurrentFlickerFrame（cmp [ecx+0x30],1 → eax=0xC）YRpp 直证；
+ranking callers=3/unique=3/deps=1939，direct_edges 4 条 E8 调用边）
+状态：semantics_verified + assembly_verified_semantics_confirmed
+（机器码 96B 全读：0x4389B0-0x4389E0 ret + 0x4389E1-0x4389EF nop + 后邻两
+函数 YRpp 方法序确认边界）
+身份：★★★ YRpp BombClass.h:33 `void Disarm() { JMP_THIS(0x4389B0); }`
+——地址+JMP_THIS+方法序列（Detonate 0x438720 → Disarm 0x4389B0 →
+IsDeathBomb 0x4389F0 → GetCurrentFlickerFrame 0x438A00 → TimeToExplode
+0x438A70）三证，与 batch 623 已登记 BombClass::Detonate 同族。
+
+=== 机器码全读（0x4389B0-0x4389E0） ===
+
+004389b0  53           push ebx
+004389b1  56           push esi
+004389b2  8bf1         mov esi, ecx                ; this = BombClass
+004389b4  33db         xor ebx, ebx                ; ebx = 0
+004389b6  8b462c       mov eax, [esi+0x2C]         ; Target 对象指针
+004389b9  3bc3         cmp eax, ebx
+004389bb  7409         je 0x4389C6                 ; Target==NULL → 跳过
+004389bd  895838       mov [eax+0x38], ebx         ; Target->+0x38 = 0
+004389c0  8b462c       mov eax, [esi+0x2C]         ; 重读 Target
+004389c3  885868       mov byte [eax+0x68], bl     ; Target->+0x68 = 0
+004389c6  8d4e3c       lea ecx, [esi+0x3C]         ; Audio 子对象
+004389c9  c6465801     mov byte [esi+0x58], 1      ; +0x58 = 1
+004389cd  895e24       mov [esi+0x24], ebx         ; Owner = 0
+004389d0  895e2c       mov [esi+0x2C], ebx         ; Target = 0
+004389d3  895e28       mov [esi+0x28], ebx         ; OwnerHouse = 0
+004389d6  e8f5d5fcff   call 0x405FD0               ; AudioStream::End(+0x3C)
+004389db  895e54       mov [esi+0x54], ebx         ; TickSound = 0
+004389de  5e           pop esi
+004389df  5b           pop ebx
+004389e0  c3           ret                         ; __thiscall 无栈参
+
+=== 语义 ===
+
+**BombClass::Disarm（拆弹——拆除不引爆）**：__thiscall 无栈参。① Target
+（+0x2C，YRpp BombClass.h 字段）非空时清目标 +0x38（DetonationFrame 推断）
+与 +0x68（目标对象标志位）——"解除炸弹在目标上的挂接"；② 清自身三指针
+Owner(+0x24)/Target(+0x2C)/OwnerHouse(+0x28)；③ 置 +0x58=1（完成标志——
+YRpp ShouldPlayTickingSound 推断，拆弹后停止滴答）；④ Audio(+0x3C) 子对象
+经 0x405FD0（batch 187 AudioStream::End 实锤）收尾清音频；⑤ TickSound
+(+0x54) 清零。
+
+★与 batch 623 BombClass::Detonate（0x438720）**收尾段逐字节同构**：
+Detonate 段4 `lea ecx,[esi+0x3C] / 清 +0x24/+0x2C/+0x28 / call 0x405FD0 /
+清 +0x54 / ret` == 本批尾部；且 Detonate 段1 同样 `mov [eax+0x38],ebp`
+（清目标+0x38）、段2 `mov byte[ecx+0x68],0`（清目标+0x68）——两方法共享
+目标解除+Audio 收尾模板，Detonate=引爆后清理、Disarm=拆除不引爆。
+
+=== 调用现场（4 处扫描 + 3 处反汇编确认） ===
+
+1) 0x44828E → 宿主 0x448260 起**未登记大函数**（0x448159=FUN_00448070 终点
+   之后新起点，尾 je 0x4493FC——体超 0x448260-0x4493FC+，BuildingClass 区
+   推断）。现场（0x448260-0x448293）：sub esp,0x50/push ebx/mov ebx,
+   [esp+0x58]（栈参）/mov esi,ecx/cmp ebx,[esi+0x21C]/je 0x4493FC →
+   mov ecx,[esi+0x38]/test/je 跳过 → mov eax,[esi+0x520]/mov dl,[eax+0x157B]
+   /test/jne 跳过 → call 0x4389B0（Disarm）——**this->+0x38 门控拆弹**
+   （+0x520 Type +0x157B 标志门控），与 ObjectClass::UnInit 同形态。
+
+2) 0x4699F9 → BulletClass::Detonate（★带名 0x4690B0-0x46A303）。现场
+   （0x4699D0-0x4699FE）：test cl,cl/je 跳过 → mov eax,[esi+0x10C]（子对象）
+   → test byte[eax+0x14],2/je 跳过 → mov eax,[eax+0x38]/test/je 跳过 →
+   mov ecx,eax/call 0x4389B0（Disarm）——**Bullet 的 +0x10C 子对象 +0x38
+   炸弹拆除**（+0x14 位1 门控）。
+
+3) 0x5F3BA6 → FUN_005f3b80（0x5F3B80-0x5F3D83，未登记，析构/清理推断）。
+   现场（0x5F3B80-0x5F3BC5）：push ecx/push esi/mov esi,ecx → mov ecx,
+   [esi+0x38] → 写四虚表指针 [esi]=0x7EF060/[esi+4]=0x7EF044/[esi+8]=
+   0x7EF03C/[esi+0xC]=0x7EF034（多重继承 vftable 切换推断）→ test ecx/je
+   跳过 → call 0x4389B0（Disarm）→ 后续 [0xB0F698] 链表摘除
+   （[0xB0F698]+0x10 虚表槽调用 + [0xB0F6A8] 计数递减）——析构拆弹+
+   链表清理，宿主对象 +0x38 为炸弹指针。
+
+4) 0x5F65FA → ObjectClass::UnInit（★带名 0x5F65F0-0x5F6681）。现场
+   （0x5F65F0-0x5F6616）：push esi/mov esi,ecx → mov ecx,[esi+0x38]/test/
+   je 跳过 → call 0x4389B0（Disarm）→ test esi,esi → test byte[esi+0x14],1
+   → push 0/mov ecx,esi/call 0x707CB0（新候选）→ mov dl,1/mov ecx,esi/call
+   0x7258D0（新候选）——**ObjectClass 销毁时拆 +0x38 炸弹**。
+
+★统一形态：持有对象 +0x38 = BombClass 指针（若持有炸弹），销毁/清理时
+Disarm 拆除。三条现场（0x448260 宿主/0x5F3B80/0x5F65F0）同门控。
+
+=== 原版怪癖（照抄） ===
+
+① Target 非空才清目标（cmp/je 跳过——无目标不动目标字段）；
+② 清自身三指针分三次独立写（+0x24/+0x2C/+0x28——非 rep 无 memset）；
+③ +0x58 置 1 用 byte 写（c6465801——置位于清 Audio 之前）；
+④ Audio 收尾用 lea 子对象（+0x3C 内嵌 AudioController 而非 this）；
+⑤ 与 Detonate 共享收尾模板（两方法同尾逐字节——引爆/拆除共用清理路径）；
+⑥ 调用方 +0x38 门控读炸弹指针（多宿主统一持有形态）。
+
+=== 跨批次闭合 ===
+
++batch 623（0x438720 BombClass::Detonate——本条同族兄弟，收尾段逐字节
+  同构、共享目标解除模板；BombClass 家族 Detonate/Disarm 双方法闭合）；
++batch 187（0x405FD0 AudioStream::End——本条=Audio 收尾调用现场再消费）；
++YRpp BombClass.h（JMP_THIS 直证 + 方法序列 IsDeathBomb/GetCurrentFlickerFrame
+  后邻边界确认——batch 623 partial「YRpp 无 JMP_THIS 直证」部分收口，本条
+  用 JMP_THIS 直证补强家族）。
++BulletClass::Detonate（带名 caller——弹头域拆弹现场）。
++ObjectClass::UnInit（带名 caller——对象销毁域拆弹现场）。
+
+=== 新候选 ===
+
+0x448260（未登记大函数——BuildingClass 区，+0x38 拆弹门控宿主）、
+FUN_005f3b80（未登记析构/清理——四虚表指针 0x7EF060/0x7EF044/0x7EF03C/
+0x7EF034 写表形态）、0x707CB0/0x7258D0（ObjectClass::UnInit 现场后续调用）、
+[0xB0F698]/[0xB0F6A8]（链表头/计数全局）、持有对象 +0x38 炸弹指针字段、
+Target->+0x68 目标对象标志字段。
+
+=== partial ===
+
+函数精确名（ranking 带名 BombClass::Disarm + YRpp JMP_THIS 直证——已实锤）、
++0x58 字段语义（完成标志/ShouldPlayTickingSound 推断）、Target->+0x38/+0x68
+字段语义（DetonationFrame/目标标志推断）、0x448260 宿主精确身份、0x707CB0/
+0x7258D0/0x574C20 等身份、FUN_005f3b80 四虚表指针宿主类。
