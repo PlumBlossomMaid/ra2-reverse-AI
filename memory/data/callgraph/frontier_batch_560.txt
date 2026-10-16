@@ -1,0 +1,115 @@
+frontier batch 560 — _splitpath 路径四段拆分 0x007CB673（327B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x7CB673 callers=3/unique=3/deps=4452/
+body=327B——超高扇出 CRT 基础设施，unique_callers FUN_00686b20/FUN_006bb9a0/
+FUN_006c99d0——均未登记）。**327B 全字节读完**（0x7CB673-0x7CB7B9，ret 无栈参）。
+取证手段：disasm.py 全读 + **batch 017 _strlen 锚点** + **batch 040 _strncpy
+加锁变体 + [0xB78961]&4 同款消费** + batch 006 同表消费点 + 调用者交叉。
+
+================================================================================
+0x007CB673 —— _splitpath（CRT 路径四段拆分，推断名，327B）
+================================================================================
+**签名（栈布局反推）**：
+```
+void __cdecl _splitpath(const char* path, char* drive, char* dir, char* fname, char* ext)
+   [ebp+8]=path   [ebp+0xC]=drive   [ebp+0x10]=dir   [ebp+0x14]=fname   [ebp+0x18]=ext
+```
+机器码（完整 327B，关键段）：
+```
+007cb673  push ebp/mov ebp,esp/push ecx/and [ebp-4],0   ; 局部 [ebp-4]=0（'.' 位置）
+007cb67b  push ebx/mov ebx,[ebp+8]                      ; ebx = path
+007cb67f  push esi/push edi
+007cb681  push ebx/call 0x7d15a0                        ; ★★_strlen(path)（batch 017）
+007cb687  cmp eax,1/pop ecx/jb 0x7cb6ae                 ; strlen<1 → drive 置空
+007cb68d  cmp byte ptr [ebx+1],0x3a                     ; path[1]==':'（盘符前缀判定）
+007cb691  jne 0x7cb6ae
+007cb693  mov esi,[ebp+0xc]/test esi,esi/je 0x7cb6aa    ; drive==NULL → 只跳过
+007cb69a  push 2/push ebx/push esi/call 0x7d3886        ; ★★_strncpy(drive,path,2)（batch 040）
+007cb6a3  add esp,0xc/and byte ptr [esi+2],0            ; drive[2]=0（"C:" 手动补 NUL）
+007cb6aa  inc ebx/inc ebx/jmp 0x7cb6b8                  ; path += 2（跳过 "C:"）
+007cb6ae  mov eax,[ebp+0xc]/test/je 0x7cb6b8/and byte ptr [eax],0  ; *drive=0
+007cb6b8  and dword ptr [ebp+0xc],0                     ; 清 [ebp+0xC]（复用为 dir 起点）
+007cb6bc  cmp byte ptr [ebx],0                          ; *path==0？
+007cb6bf  mov eax,ebx                                   ; eax = 扫描游标
+007cb6c1  mov esi,0xff                                  ; ★上限 255（各段截断）
+007cb6c6  mov [ebp+8],eax                               ; [ebp+8] 槽复用 = path 起点
+007cb6c9  je 0x7cb730                                   ; 空串 → dir 置空
+主循环 007cb6cb:
+  mov cl,[eax]/movzx edx,cl
+  test byte ptr [edx+0xb78961],4                        ; ★★[0xB78961]&4（batch 040 同款）
+  je 0x7cb6dc
+  inc eax/jmp 0x7cb6f6                                  ; ★命中=双字节字符整体跳过（+2）
+007cb6dc  cmp cl,0x2f/je 0x7cb6f0                       ; '/'
+007cb6e1  cmp cl,0x5c/je 0x7cb6f0                       ; '\'
+007cb6e6  cmp cl,0x2e/jne 0x7cb6f6                      ; '.'
+007cb6eb  mov [ebp-4],eax                               ; ★记录最后一个 '.'（覆盖式）
+007cb6ee  jmp 0x7cb6f6
+007cb6f0  lea ecx,[eax+1]/mov [ebp+0xc],ecx             ; ★记录最后一个分隔符后一位置
+007cb6f6  inc eax/cmp byte ptr [eax],0/jne 0x7cb6cb     ; 继续扫描
+007cb6fc  mov edi,[ebp+0xc]/mov [ebp+8],eax             ; edi=dir 起点；[ebp+8]=串尾
+007cb702  test edi,edi/je 0x7cb730                      ; 无分隔符 → dir 置空
+007cb706  cmp dword ptr [ebp+0x10],0/je 0x7cb72b        ; dir==NULL → 跳过拷贝
+007cb70c  sub edi,ebx/cmp edi,esi/jb/mov edi,esi        ; ★len=min(dir起点-path,255)
+007cb714  push edi/push ebx/push [ebp+0x10]/call 0x7d3886  ; ★★_strncpy(dir,path,len)（batch 040）
+007cb71e  mov eax,[ebp+0x10]/add esp,0xc/and byte ptr [edi+eax],0  ; dir[len]=0
+007cb728  mov eax,[ebp+8]
+007cb72b  mov ebx,[ebp+0xc]                             ; ebx = dir 起点（= fname 起点）
+007cb72e  jmp 0x7cb73a
+007cb730  mov ecx,[ebp+0x10]/test/je 0x7cb73a/and byte ptr [ecx],0  ; *dir=0
+007cb73a  mov edi,[ebp-4]                               ; edi = '.' 位置
+007cb73d  test edi,edi/je 0x7cb78d                      ; 无 '.' → fname=全部
+007cb741  cmp edi,ebx/jb 0x7cb78d                       ; '.' 在 fname 起点前 → 走无点分支
+007cb745  cmp dword ptr [ebp+0x14],0/je 0x7cb76a        ; fname==NULL → 跳过
+007cb74b  sub edi,ebx/cmp edi,esi/jb/mov edi,esi        ; len=min(点-fname起点,255)
+007cb753  push edi/push ebx/push [ebp+0x14]/call 0x7d3886  ; ★★_strncpy(fname,fname起点,len)
+007cb75d  mov eax,[ebp+0x14]/add esp,0xc/and byte ptr [edi+eax],0  ; fname[len]=0
+007cb767  mov eax,[ebp+8]
+007cb76a  mov edi,[ebp+0x18]/test edi,edi/je 0x7cb7b5   ; ext==NULL → 结束
+007cb771  sub eax,[ebp-4]/cmp eax,esi/jae/mov esi,eax   ; len=min(串尾-点,255)
+007cb77a  push esi/push [ebp-4]/push edi/call 0x7d3886  ; ★★_strncpy(ext,点,len)
+007cb784  add esp,0xc/and byte ptr [esi+edi],0          ; ext[len]=0
+007cb78b  jmp 0x7cb7b5
+007cb78d  mov edi,[ebp+0x14]/test/je 0x7cb7ab           ; 无点分支：fname==NULL → 跳过
+007cb794  sub eax,ebx/cmp eax,esi/jae/mov esi,eax       ; len=min(串尾-fname起点,255)
+007cb79c  push esi/push ebx/push edi/call 0x7d3886      ; ★★_strncpy(fname,fname起点,len)
+007cb7a4  add esp,0xc/and byte ptr [esi+edi],0
+007cb7ab  mov eax,[ebp+0x18]/test/je/and byte ptr [eax],0  ; *ext=0
+007cb7b5  pop edi/pop esi/pop ebx/leave/ret
+```
+**语义（推断名）**：**MSVC6 静态 CRT `_splitpath`（路径四段拆分）**——cdecl 5 参：
+① **drive**：`strlen(path)>=1` 且 `path[1]==':'` → 前 2 字符 `_strncpy` 到 drive 并手动
+   补 NUL（`drive[2]=0`），path += 2 跳过盘符；否则 `*drive=0`；
+② **扫描**：从 path 起逐字符，`[0xB78961]&4` 命中的双字节字符整体跳过（+2，DBCS
+   lead-byte 感知——batch 040 同款），遇最后一个 `/` 或 `\` 记录**分隔符后一位置**
+   为 dir 起点，遇最后一个 `.` 覆盖记录；③ **dir** = `path[0..最后一个分隔符]`
+   （**含尾分隔符**，len 截断 255）；④ **fname** = `[分隔符后..最后一个点)`（无点则
+   = 全部剩余）；⑤ **ext** = `[最后一个点..串尾)`；各段 `_strncpy` 后手动补 NUL。
+★原版怪癖（照抄）：① **dir 含尾分隔符**（len = 分隔符后一位置 - path 起点，把
+   分隔符本身算进 dir）；② **各段截断 255**（0xFF 上限 + 手动 NUL，标准 _MAX_* 表
+   观）；③ **drive 固定拷 2 字节 + 手动 NUL**（"C:" 形态，不查缓冲区）；④ **[0xB78961]&4
+   lead-byte 整体跳过**（DBCS 感知，命中 +2——与 batch 040 的 0x7D3886 同表同位）；⑤
+   **多个 '.' 只记最后一个**（覆盖写 [ebp-4]）；⑥ **'.' 在 fname 起点前 → 整体走无点
+   分支**（fname 取全部、ext 空）；⑦ 无分隔符 → dir 置空；⑧ **[ebp+8]/[ebp+0xC] 参数槽
+   复用为临时变量**（MSVC 栈槽复用优化痕迹）；⑨ 调用约定 cdecl（ret 无栈参、无 this）。
+★跨批次闭合：**batch 017（0x7D15A0 _strlen——drive 判定的长度检查）**+**batch 040
+   （0x7D3886 _strncpy 加锁变体——全部 4 段拷贝都走它 + [0xB78961]&4 lead-byte 语义
+   实锤）**+**batch 006（0x7D16A0 同表第三消费点）**+**batch 559（FUN_006bb9a0 为
+   0x720770 与本条共同调用者——超高扇出基建区互证）**。
+⚠️ partial：三个调用者身份（FUN_00686b20——batch 370 已作为 0x6D1C20 调用者候选入
+   列/FUN_006bb9a0——batch 559 候选/FUN_006c99d0——新候选）、[0xB78961] 表确切位义
+   （batch 040 已按 lead-byte 登记，本条沿用）、0x7CB673 是否还有 0x7CB720 起独立函数
+   （邻接边界未核）、各 _MAX_* 常量与标准 CRT 精确对应（255 vs 256 表观）。
+
+================================================================================
+（batch 560 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：0x7CB673 位于 0x7CBxxx MSVC6 静态 CRT 区（非
+Westwood 手写——ra2_code_region_layout_crt_provenance 记忆三层分区实锤），属标准
+CRT `_splitpath` 商业库实现，重写端直接等价映射标准库 `_splitpath`（CRT 层语义等
+价即合规，与 batch 017/040/169 CRT 区登记同口径）。模型价值：**路径四段拆分语义
+完整记录**（drive 判定/dir 含尾分隔符/255 截断/lead-byte 跳过——batch 040 家族的
+上层消费者形态）+ **超高扇出 CRT 基础设施再确认**（deps=4452）。1 个新候选（
+FUN_006c99d0）+ 2 个既有候选复核（FUN_00686b20/FUN_006bb9a0）。本批无产品代码改
+动，ctest 维持 **43/43 全绿**。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（327B 全段字节读完 + 三批次锚点交叉），
+partial 项如实标注。
