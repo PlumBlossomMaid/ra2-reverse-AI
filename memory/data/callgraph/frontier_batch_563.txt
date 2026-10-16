@@ -1,0 +1,127 @@
+frontier batch 563 — WinMain 退出清理器 0x006BEC60（239B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x6BEC60 callers=3/unique=3/deps=4433/
+body=239B，unique_callers FUN_005b3c20/FUN_00647260/**FUN_006bb9a0 = WinMain
+0x6BB9A0（QWEN.md 实锤）**——均未登记）。**239B 全字节读完**（0x6BEC60-0x6BED4E，
+ret 无栈参无 this）。
+取证手段：disasm.py 全读 + **IAT 五槽 PE 实锤** + **oleaut32.dll 导出表序号解析**
+（#34）+ 两收尾被调反汇编（0x5DA720 34B / 0x6BE1C0 60B）+ 六批次锚点交叉。
+
+================================================================================
+0x006BEC60 —— WinMain 退出清理器（COM/OLE 反初始化 + 窗口销毁 + 缓存销毁）
+================================================================================
+**IAT 槽实锤（PE 导入表解析）**：
+```
+[0x7E14AC] = USER32.dll!PostMessageA        （★2 参调用=WM_DESTROY(0x2)）
+[0x7E1384] = OLEAUT32.dll!#34                （★序号导入 → 本机 oleaut32.dll
+                                                导出表解析 = RevokeActiveObject）
+[0x7E15DC] = ole32.dll!CoDisconnectObject
+[0x7E15D0] = ole32.dll!OleUninitialize
+[0x7E1444] = USER32.dll!PostQuitMessage
+```
+机器码（完整 239B，关键段）：
+```
+006bec60  mov eax,[0xb73550]                    ; ★Game::hWnd（batch 200/203/221 实锤）
+006bec66  push 0/push 0/push 2/push eax         ; ★★PostMessageA(hWnd, 2=WM_DESTROY,0,0)
+006bec6a  mov esi,1
+006bec72  mov [0xa8edd8],esi                    ; ★全局退出标志 = 1
+006bec78  call [0x7e14ac]                       ; 投递销毁消息
+006bec7e  mov eax,[0xb73550]/test/je 0x6bec9d   ; 窗口已销毁 → 退出循环
+006bec87  call 0x5d4d50                         ; ★★消息泵（batch 095 实锤，
+                                                    [0xAA0430]++ + IsDialogMessageA）
+006bec8c  cmp [0xa8edd8],esi/jne 0x6bec9d       ; ★标志被清 → 退出
+006bec92  mov eax,[0xb73550]/test/jne 0x6bec87  ; 循环泵到窗口销毁
+006bec9d  mov eax,[0x840a74]/cmp eax,-1/je skip ; ★全局（-1 哨兵=未创建）
+006beca7  push 0/push eax/call [0x7e1384]       ; ★★RevokeActiveObject(eax, 0)
+006becb0  mov [0x840a74],-1                     ; 复位哨兵
+006becba  push 0/push 0x89a29c/call [0x7e15dc]  ; ★★CoDisconnectObject(0x89A29C, 0)
+006becc7  call [0x7e15d0]                       ; ★★OleUninitialize
+006beccd  mov ecx,[0x887640]/test/je skip       ; ★全局对象（batch 150/179/221 实锤）
+006becd7  mov edx,[ecx]/call [edx+0x14]         ; ★虚表槽 0x14（无参）
+006becdc  mov ecx,[0x887640]/test/je skip
+006bece6  mov eax,[ecx]/push esi/call [eax]     ; ★虚表槽 0（arg=1）
+006becf0  mov [0x887640],0                      ; ★清全局
+006becfa  mov al,[0xb0bcf4]/test al/je 0x6bed3b ; ★数组有效标志
+006becfe  mov ecx,[0xb0bcf0]/test ecx/je 0x6bed34
+006bed08  mov eax,[ecx-4]                       ; ★★数组长度（存于指针前 4 字节）
+006bed0f  lea edx,[eax+eax*8]                   ; ×9
+006bed13  lea esi,[ecx+edx*4]                   ; ★尾指针 = 基址 + 长度×36
+006bed12  dec eax/js 0x6bed2a                   ; 长度-1 < 0 → 跳过
+006bed1c  sub esi,0x24                          ; ★★36 字节/项（项大小）
+006bed1f  mov ecx,esi/call 0x69e500             ; ★★SHPStruct::~SHPStruct（batch 107）
+006bed26  dec edi/jne 0x6bed1c                  ; 倒序析构全部项
+006bed2a  push ebp/call 0x7c8b3d                ; ★★operator delete（batch 001）
+006bed34  mov byte [0xb0bcf4],0                 ; 清标志
+006bed3b  push 0/call [0x7e1444]                ; ★★PostQuitMessage(0)
+006bed43  call 0x5da720                         ; ★★网络管理器释放（未登记，新候选）
+006bed48  call 0x6be1c0                         ; ★★SHP/对象缓存销毁（未登记，新候选）
+006bed4e  ret
+```
+**被调 0x5DA720（34B，未登记）**：
+```
+mov ecx,[0x887628]        ; ★网络/会话管理器（batch 195 实锤全局）
+push esi/xor esi,esi/cmp ecx,esi
+mov word [0xa8d610],si    ; ★清零 [0xA8D610] word
+je skip/mov eax,[ecx]/push 1/call [eax]   ; ★虚表槽 0（arg=1）→ 释放
+mov [0x887628],esi        ; ★清全局
+ret
+```
+**被调 0x6BE1C0（60B 首段，未登记）**：
+```
+mov esi,[0xa8f794]/xor ebx,ebx
+mov byte [0xa8e9a0],bl    ; ★清 [0xA8E9A0] 门控（batch 403 同全局）
+cmp esi,ebx/je next
+mov ecx,esi/call 0x69e500 ; ★★SHPStruct::~SHPStruct（batch 107）
+push esi/call 0x7c8b3d    ; ★operator delete（batch 001）
+mov [0xa8f794],ebx
+next: mov ecx,[0xa8f798]  ; ★第二个全局对象
+      test/je → 虚表槽 0（arg=1）释放
+```
+**语义（推断名）**：**WinMain 退出清理器**——无参无 this，退出序列：
+① **窗口销毁**：`PostMessageA(Game::hWnd, WM_DESTROY, 0, 0)` → 置 `[0xA8EDD8]=1`
+   → **循环泵消息**（0x5D4D50，batch 095 实锤消息泵）直到 `Game::hWnd` 变 0 或
+   `[0xA8EDD8]` 被清（经典 "post WM_DESTROY then pump until destroyed"）；
+② **COM/OLE 反初始化**：若 `[0x840A74] != -1` → `RevokeActiveObject(eax, 0)`
+   （oleaut32 序号 #34）→ 复位哨兵 → `CoDisconnectObject(0x89A29C, 0)` →
+   `OleUninitialize()`（**完整 OLE 拆解三段**）；
+③ **全局对象释放**：`[0x887640]` 对象虚表槽 0x14（无参）→ 槽 0（arg=1）→ 清全局；
+④ **SHP 缓存数组销毁**：`[0xB0BCF4]` 有效标志 → 数组基址 `[0xB0BCF0]`，**长度存于
+   基址前 4 字节**，**36 字节/项**（0x24），**倒序**逐项 `SHPStruct::~SHPStruct`
+   （0x69E500，batch 107）→ 整块 `operator delete`（0x7C8B3D）→ 清标志；
+⑤ **收尾**：`PostQuitMessage(0)` → 网络管理器释放（0x5DA720：清 `[0xA8D610]` word
+   + `[0x887628]` 虚表槽 0(arg=1) + 清全局）→ SHP/对象缓存销毁（0x6BE1C0：清
+   `[0xA8E9A0]` 门控 + `[0xA8F794]` SHPStruct 析构+delete + `[0xA8F798]` 虚表槽
+   0(arg=1)）→ ret。
+★原版怪癖（照抄）：① **长度存于数组基址前 4 字节**（`[ecx-4]`，`operator new`
+   前置长度头形态）；② **36 字节/项倒序析构**（尾指针 `基址+长度×36` 起逐项 -0x24）；
+   ③ **退出标志 `[0xA8EDD8]` 参与泵循环终止**（消息泵清它即停）；④ **`-1` 哨兵**
+   控制 RevokeActiveObject 调用（未创建不调用）；⑤ 两个收尾函数各自释放一对全局
+   对象，**都用虚表槽 0、参数恒 1**（"释放且析构"惯用约定）；⑥ 全部为无参 free
+   函数，**无返回值**。
+★跨批次闭合：**batch 095（0x5D4D50 消息泵：`[0xAA0430]++` + IsDialogMessageA）**+
+   **batch 107（0x69E500 SHPStruct::~SHPStruct + CRT::_delete/free）**+**batch 001
+   （0x7C8B3D operator delete）**+**batch 200/203/221（[0xB73550] = Game::hWnd）**+
+   **batch 150/179/221/236（[0x887640] 全局对象虚表族）**+**batch 195（[0x887628]
+   网络管理器）**+**batch 403（[0xA8E9A0] 门控全局）**——**QWEN.md「待确认：WinMain
+   COM 类清单」退出侧闭环**：RevokeActiveObject + CoDisconnectObject +
+   OleUninitialize 三段实锤（oleaut32 序号导入首次解析出函数名）。
+   **WinMain 启动链/退出链第一批次同框**（batch 559/560/561/562 启动侧 vs 本条
+   退出侧）。
+⚠️ partial：0x840A74 全局物体类型（RevokeActiveObject 目标——OLE 自动化对象推断）、
+   0x89A29C（CoDisconnectObject 的 IUnknown* / 静态 COM 对象地址）、[0xA8EDD8]
+   写入方除本条外未取证、0xB0BCF0 数组宿主（36B/项 SHP 引用记录推断）、
+   0x5DA720/0x6BE1C0（新候选，仅读首段）、0xA8D610/0xA8F794/0xA8F798 字段语义、
+   FUN_005b3c20/FUN_00647260（两个非 WinMain 调用者——新候选）。
+
+================================================================================
+（batch 563 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：本条为退出编排函数，全部动作是外部 API
+（PostMessageA/RevokeActiveObject/CoDisconnectObject/OleUninitialize/PostQuitMessage）
+与已登记被调的编排，无独立算法切片。模型价值：**退出序列完整动作序**（投递销毁→泵
+到销毁→OLE 三段拆解→全局对象释放→36B/项数组倒序析构→PostQuitMessage→网络/SHP 收尾）
++ **长度头数组 + 36B/项 + 倒序析构**布局证据。2 个新候选收尾被调（0x5DA720 /
+0x6BE1C0）+ 2 个新调用者（FUN_005b3c20/FUN_00647260）。本批无产品代码改动，ctest
+维持 **43/43 全绿**。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（239B 全段字节读完 + IAT 五槽 PE 实锤 +
+oleaut32 序号导出表解析 + 两被调反汇编 + 七批次锚点交叉），partial 项如实标注。
