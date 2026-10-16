@@ -1,0 +1,53 @@
+frontier batch 642 — 空检尾跳 getter 包装 0x005F1EE0（18B）（2026-10-17）
+
+口径：候选**只从 picker 未登记池取**（0x00527C10 后下一未登记高扇入候选 0x005F1EE0
+FUN_005f1ee0（unclassified 无带名）callers=3/unique=3/deps=2574/body=18B，
+unique_callers FUN_005b5ef0/FUN_005b9f30/FUN_005bac60）。**18B 全字节读完**
+（0x5F1EE0-0x5F1EF1，ret c3，thiscall，ecx=this）。
+取证手段：disasm.py 80B 全读（含后邻 0x5F1F00 孪生函数 + 0x5F1F20 下一函数开头确
+认边界） + direct_edges 调用图核对（★19339/19781/19876 行 3 caller） +
+**已登记锚点交叉（batch 250 0x48BA80 4B getter——本条=尾跳目标）** +
+functions.tsv 边界核对（0x5F1EE0-0x5F1EF1=18B 吻合）。
+
+================================================================================
+0x005F1EE0 —— 空检尾跳 getter 包装（18B）
+================================================================================
+机器码（完整 18B）：
+```
+005f1ee0  mov eax,[ecx+0x38]        （★this->+0x38 = 子对象指针）
+005f1ee3  test eax,eax
+005f1ee5  je 0x5f1eef              （★NULL → 返 0）
+005f1ee7  mov ecx,[eax+4]          （★+0x38 对象 +4 = 二级 this）
+005f1eea  jmp 0x48ba80             （★★batch 250 4B getter——尾跳取 [+0x1C]）
+005f1eef  xor eax,eax / ret        （★NULL 路径返 0）
+; 后邻孪生 0x5F1F00（ret 4 = 1 栈参）：同空检 → mov ecx,[eax+4] → push 1 /
+;           call 0x48baa0（★新候选——0x48BA80 孪生带 1 参版）→ ret 4
+```
+**语义（unclassified + batch 250 尾跳比对）**：**空检尾跳 getter 包装（先查
+this->+0x38 非空，再以 +0x38 对象的 +4 字段为 this 尾跳取 [+0x1C]）**——
+thiscall，ecx=this：① this->+0x38（子对象指针）NULL → 直接返 0（安全路径）；
+② 非空 → ecx = [+0x38]+4（二级对象）→ **jmp 0x48BA80**（batch 250 实锤：mov
+eax,[ecx+0x1C]; ret——无参 getter）——**链式两层解引用 + 尾跳折叠**。
+★原版怪癖（照抄）：① **两级解引用**（this→+0x38→+4 才到目标 this——宿主持
+   "指针的指针"结构）；② **尾跳 jmp 而非 call**（不建新栈帧——编译器尾调用优化，
+   返回链直通）；③ **NULL 空检短路返 0**（+0x38 空 → 0 而非崩溃）；④ **后邻孪生
+   0x5F1F00**（同空检同两级解引用但带 1 参调 0x48BAA0——0x48BA80 的 1 参孪生，
+   同模板两实例）；⑤ **18B 极简**（无栈帧——getter 包装最小形态）。
+★跨批次闭合：**batch 250（0x48BA80 4B getter——本条=尾跳目标，fan-in 7 再消费；
+   0x48BAxx 区 CellClass/ObjectClass 方法区同域）**+0x48BAA0（★★新候选——1 参
+   孪生 getter，后邻 0x5F1F00 调用）。
+⚠️ partial：函数精确名（unclassified——推断空检尾跳 getter 包装）、宿主类
+   （+0x38 子对象指针结构推断——0x48BAxx ObjectClass 区推断）、+0x38/+4 字段语义
+   （子对象/二级指针推断）、3 caller 业务含义（0x5B5EF0/0x5B9F30/0x5BAC60——
+   对象链查询推断）。
+
+================================================================================
+（batch 642 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：18B 纯空检 + 尾跳折叠惯用法，宿主未确认，无
+独立算法切片（两级解引用 getter 语义随宿主落地）。模型价值：**空检尾跳 getter 包
+装**（batch 250 尾跳目标再消费 + 后邻孪生同模板两实例——0x48BAxx getter 家族配
+套包装端）。1 个新被调候选（0x48BAA0）。本批无产品代码改动，ctest 维持 **43/43
+全绿**。登记一行 semantics_verified + assembly_verified_semantics_confirmed
+（18B 全段字节读完 + batch 250 尾跳目标 + functions.tsv 边界核对），partial 项如
+实标注。
