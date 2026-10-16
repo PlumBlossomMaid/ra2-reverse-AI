@@ -1,0 +1,120 @@
+frontier batch 684 —— 0x00523440 8B 项有序数组二分查找器（推断名）
+
+地址：0x00523440（functions.tsv 边界 0x523440-0x523481 = 68B 吻合，
+ret 4 = 1 栈参 + __fastcall（ecx=数组/edx=计数）；后邻 0x523490
+新函数（fld [0x7E1710]/fld [0x7E1708]/call 0x7C8FB0 浮点族）确认
+边界；ranking callers=3/unique=3/deps=1917）
+状态：semantics_verified + assembly_verified_semantics_confirmed
+（机器码 96B 全读：0x523440-0x523481 ret 4 + 0x523484-0x52348F nop
++ 0x523490 后邻）
+
+=== 机器码全读（96B） ===
+
+00523440  push ebx/push esi
+00523442  test edx,edx              ; 计数（__fastcall 第二参）
+00523444  push edi
+00523445  mov esi,edx               ; esi = 计数
+00523447  jle 0x523474              ; 计数<=0 → 返 0
+00523449  mov eax,[esp+0x10]        ; 栈参1 = 目标值指针
+0052344d  mov ebx,[eax]             ; ebx = 目标值
+0052344f  循环: mov eax,esi / cdq / sub eax,edx / sar eax,1   ; ★mid = esi/2（算术右移）
+00523456  mov edi,[ecx+eax*8]       ; ★数组[mid*8] 首字段
+00523459  lea edx,[ecx+eax*8]       ; &数组[mid*8]
+0052345c  cmp edi,ebx / jle 0x523464 ; 值<=目标 → 走右侧
+00523460  mov esi,eax / jmp 0x523470 ; 值>目标 → 上界=mid
+00523464  je 0x52347c               ; == 目标 → 命中
+00523466  lea ecx,[edx+8] / or edx,-1 / sub edx,eax / add esi,edx  ; 右侧下界=mid+1
+00523470  test esi,esi / jg 0x52344f ; 循环
+00523474  pop 族 / xor eax,eax / ret 4  ; 未命中 → 返 0
+0052347c  pop 族 / mov eax,edx / ret 4   ; ★命中 → 返 &数组[mid*8]
+
+=== 语义 ===
+
+**8B 项有序数组二分查找器（推断名）**——__fastcall（ecx=数组基址、
+edx=计数）+ 1 栈参（目标值指针）ret 4：计数<=0 早退返 0；取目标值
+后二分循环：mid = 计数/2（sar 1 算术右移）→ 比较数组[mid*8] 首字段
+与目标：>目标 上界=mid、== 命中、< 走右侧下界=mid+1；命中返
+&数组[mid*8]（项指针）、未命中返 0。
+
+★调用形态实锤（4 处现场）：调用方先 [0xB0E840] 全局有序表扩容 +
+0x7C8B48（CRT qsort，比较器 0x41C610）排序 + [0xB0E844] 计数 →
+置 [0xB0E850]=0 / byte[0xB0E84C]=1 → 栈上存目标值 → push &目标 /
+mov ecx,[0xB0E840] → call 0x523440 → 命中 sub eax,[0xB0E840]
+（指针减基址 = 索引）——**查 [0xB0E840] 有序 pair 表（8B/项：
+getter 值 + this）**。
+
+=== 调用现场（4 处扫描 + 4 处反汇编确认） ===
+
+1) 0x517F18 → FUN_00517d90（0x517D90-0x517F94，未登记）。现场
+   （0x517EE0-0x517F21）：mov eax,[0xB0E840]（★表）→ push 0x41C610
+   （★排序比较器）→ push 8（元素大小）→ push edx（计数 [0xB0E844]）
+   → push eax → call 0x7C8B48（★★CRT qsort/批量分配——batch 296
+   qsort 已登记）→ mov edx,[0xB0E844] → mov [0xB0E850],ebx /
+   mov byte[0xB0E84C],1 → lea ecx,[esp+0xC]/mov [esp+0xC],edi（★
+   目标值=edi）→ push ecx → mov ecx,[0xB0E840] → call 0x523440 →
+   cmp eax,ebx/je 未中 → sub eax,[0xB0E840]（★索引换算）。
+
+2) 0x6E6E9A → **FUN_006e6e20（★batch 249 已登记——按 byte[+0x4]
+   分发的对象方法！）**。现场（0x6E6E60-0x6E6EA3）：push 8/push
+   edx/mov edx,[0xB0E840]/push edx/call 0x7C8B48（★排序）→ mov
+   edx,[0xB0E844] → mov [0xB0E850],0/mov byte[0xB0E84C],1 →
+   mov eax,[esi]/lea ecx,[esp+4]/push ecx/mov ecx,[0xB0E840]/mov
+   [esp+8],eax → call 0x523440 → test eax/je → mov [0xB0E850],eax
+   （★缓存查询结果）——★batch 249 partial「0x523440 身份待查」
+   本批闭合！
+
+3) 0x71B8A0 → FUN_0071b7b0（0x71B7B0-0x71B915，未登记）。现场
+   （0x71B870-0x71B8B5）：同款：0x7C8B48 排序 → [0xB0E844] 计数 →
+   [0xB0E850]=0/[0xB0E84C]=1 → lea ecx,[esp+8]/mov [esp+8],edi（目标
+   =edi）→ push ecx → mov ecx,[0xB0E840] → call 0x523440 → test/
+   je → sub eax,[0xB0E840]/sar eax,3（★(ptr-base)/8 = 索引）。
+
+4) 0x71CE0A → 无归属（0x71C000 区未登记，现场 0x71CDC0 起）。
+   现场（0x71CDC0-0x71CE0A）：mov ecx,[0xB0E840]/push 0x41C610/
+   push 8/push edx/push ecx/call 0x7C8B48 → mov edx,[0xB0E844] →
+   mov [0xB0E850],0/mov byte[0xB0E84C],1 → mov ecx,[0xB0E840] /
+   lea eax,[esp+0xC]/push eax/mov [esp+0x10],edi → call 0x523440
+   ——同款完全一致。
+
+★统一形态：4 处全部是 **[0xB0E840] 有序 pair 表排序后二分查值**
+（排序 0x7C8B48 + 比较器 0x41C610 + 8B 元素 + [0xB0E844] 计数 +
+[0xB0E850] 缓存 + [0xB0E84C] 懒标志——batch 285/897 入列端配对）。
+
+=== 原版怪癖（照抄） ===
+
+① mid = 计数/2 用 sar 1（算术右移——负计数已由 jle 拦截，仍带符号
+   语义）；
+② 8B 元素只比首 dword（值字段），命中返项指针非索引；
+③ 计数<=0 早退（test edx/jle）与未命中返 0 双零路径；
+④ 比较链三态（> 上界=mid / == 命中 / < 下界=mid+1——标准二分但
+   用 jle+je 两跳）；
+⑤ 调用方统一先排序再查（qsort 0x7C8B48 每查必排——懒标志
+   [0xB0E84C] 只在表扩容后置 0 触发重排）；
+⑥ 命中后 sub 基址/sar 3 索引换算（调用方做，本函数只管指针）。
+
+=== 跨批次闭合 ===
+
++batch 249（0x6E6E20——本批=其调用现场，partial「0x523440 身份
+  待查」正式闭合！）；
++batch 323（0x6E6F20 有序表二分查找——同模板内联版：本批独立
+  函数版 vs 内联二分版，[0xB0E840] 表 + 0x41C610 比较器同款）；
++batch 218（0x52B430 8B 键值对二分查找——同模板第三实例：本批
+  [0xB0E840] 表 vs batch 218 [ebx] 表，8B/项键值对二分惯例家族）；
++batch 285/897（[0xB0E840] 表入列端——InfantryClass 构造器/
+  AStarAttempt 扩容三件套 + 本批查找端配对，有序表读写闭环）；
++0x7C8B48（CRT qsort——batch 080/296 等已登记，本条=4 处排序调用
+  现场再消费）。
+
+=== 新候选 ===
+
+0x41C610（排序比较器——4 现场共用）、0x7C8B48 精确身份再确认
+（qsort/批量分配推断）、FUN_00517d90/FUN_0071b7b0（未登记 caller）、
+0x71CE0A 宿主（0x71C000 区未登记）、[0xB0E840] 表项 getter 值来源
+（batch 285 已记录 {getter 值,this}）。
+
+=== partial ===
+
+函数精确名（推断 8B 项有序数组二分查找器）、0x41C610 比较器精确
+语义（按值 dword 排序推断）、[0xB0E840] 表宿主（AbstractTypeClass
+家族有序表推断——batch 285 已记录）、FUN_00517d90/FUN_0071b7b0
+宿主、0x71CE0A 宿主函数名、目标值来源（调用方 edi/esi 字段语义）。
