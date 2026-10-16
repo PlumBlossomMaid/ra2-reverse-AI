@@ -1,0 +1,145 @@
+frontier batch 576 — PreviewClass::DrawStartPoints 0x00640710（812B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x640710 PreviewClass::DrawStartPoints
+callers=3/unique=3/deps=3516/body=812B，unique_callers **FUN_00596300（0x5956E7-
+0x59A63A = QWEN.md 实锤 MapGen.cpp TU 内！）**/FUN_006ae3f0/FUN_007a2600——均未
+登记）。**812B 全字节读完**（0x640710-0x640A39，ret 4 = 清 1 栈参，thiscall，
+ecx=this，栈参 esi=[esp+0x90]）。
+取证手段：disasm.py 全读 + **IAT 双槽 PE 导入表解析实锤（0x7E1478=USER32!ValidateRect、
+0x7E14A8=USER32!GetDlgItem）**+ **字符串 PE 读取实锤（0x836DE4="STARTBUT.SHP"、
+0x820524="Yellow"、0x81B3D0="%"）**+ 6 个已登记锚点交叉（0x775690 batch 200、
+0x4A38D0 batch 093、0x72E280 batch 443、0x68CA50 batch 120、0x4A61C0 batch 157、
+0x4AED70 batch 079）+ [0x887310]（batch 221 会话状态区邻域）+ [0xA8B230]=
+ScenarioClass::Instance（batch 087 实锤）+ ranking 带名 + YRpp 无覆盖核对。
+
+================================================================================
+0x00640710 —— PreviewClass::DrawStartPoints（ranking 带名，812B）
+================================================================================
+机器码（完整 812B，分十段）：
+```
+; ── 段 1：入口 + ValidateRect 全窗口无效化 + this 门控
+00640710  sub esp,0x80 / push ebx/ebp/esi
+00640719  mov esi,[esp+0x90]        ; ★★栈参 1（窗口句柄）
+00640720  push edi
+00640721  push 0 / push esi / call [0x7e1478]   ; ★★IAT=USER32!ValidateRect(hWnd,NULL)
+0064072c  cmp [edi],0 / je 0x640a2f             ; ★this->+0 空 → 跳全部绘制
+; ── 段 2：GetDlgItem 取预览控件 + 窗口→客户坐标变换
+00640735  push 0x468 / push esi / lea ebx,[esp+0x68]
+0064073f  call [0x7e14a8]           ; ★★IAT=USER32!GetDlgItem(hWnd,1128)
+00640745  mov ecx,eax / mov edx,ebx / call 0x775690   ; ★★batch 200 窗口坐标变换→[esp+0x60..0x6C]
+; ── 段 3：控件矩形宽高
+0064074e  mov eax,[esp+0x60] / mov edx,[esp+0x68] / sub edx,eax      ; right-left
+0064075a  mov [esp+0x40],eax        ; left
+0064075e  mov eax,[esp+0x6c] / mov ecx,[esp+0x64] / sub eax,ecx     ; bottom-top
+0064076a  mov ecx,[edi]             ; this->+0 对象
+00640774  lea eax,[esp+0x20] / push eax / mov edx,[ecx] / call [edx+0x78]  ; ★虚表槽 0x78
+; ── 段 4：×1000/除数比例（lea 五连链 = ×1000）
+0064077e  mov ecx,[eax] / mov ebx,[esp+0x4c] / mov [esp+0x30],ecx
+00640788  mov edx,[eax+4] / mov [esp+0x34],edx / mov ecx,[eax+8] / mov esi,[eax+0xc]
+00640799  lea eax,[ebx+ebx*4] ×3  + shl eax,3     ; ★★lea 五连链 = ×1000
+006407a5  cdq / idiv esi            ; 高×1000/除数
+; ── 段 5：同款第二比例 + 0x10624DD3 魔数快速除法
+006407ac  lea eax,[ebp+ebp*4] ×3 + shl eax,3 / cdq / idiv ecx
+006407c6  imul ecx,eax              ; ★
+006407cd  mov eax,0x10624dd3 / imul ecx          ; ★★0x10624DD3 魔数
+006407d9  sar edx,7 / shr eax,0x1f / add edx,eax  ; ★★sar 7 = ÷2000（同魔数双移位）
+006407f2  sar eax,1 / sub eax,edx ... add eax,[esp+0x44] → [esp+0x54]
+00640800  mov eax,0x10624dd3 / imul esi / sar edx,7 / ... → [esp+0x58]
+; ── 段 6：另两组 ÷1000 + [0x887310] 虚表槽 0x14/8 绘制
+00640826  mov eax,0x10624dd3 / imul ecx / sar edx,6 / ... → [esp+0x5c]   ; ★★sar 6 = ÷1000
+0064083c  mov ecx,[0x887310] / mov edx,[ecx] / lea eax,[esp+0x44] / push eax
+0064085d  call [edx+0x14]           ; ★★[0x887310] 虚表槽 0x14
+00640860  mov edx,[0x887310] / mov ecx,[edi] / push 0/push 0/lea edx,[esp+0x38]/push edx
+00640875  call [eax+0x78]           ; ★this->+0 虚表槽 0x78 再调
+00640878  push eax / push [edi] / lea ecx,[esp+0x5c]/push ecx / mov ecx,[0x887310]
+00640887  call [esi+8]              ; ★★[0x887310] 虚表槽 8 五参调用
+; ── 段 7：STARTBUT.SHP 幂等懒加载
+0064088a  mov al,[0xac4e90] / mov ebx,1 / test bl,al / jne 0x6408b7   ; ★标志已置→跳过
+0064089f  lea edx,[esp+0x13] / mov ecx,0x836de4   ; ★★"STARTBUT.SHP"
+006408a8  mov [0xac4e90],al / call 0x4a38d0      ; ★★batch 093 FileSystem::LoadWholeFileEx
+006408b2  mov [0xac4e80],eax        ; ★★缓存指针 [0xAC4E80]
+; ── 段 8：调色板 getter + "Yellow" 查表 + 出生点计数门控
+006408b7  call 0x72e280             ; ★★batch 443 调色板转换器 getter [0xB0FBCC]
+006408be  mov ecx,0x820524          ; ★★"Yellow"
+006408c7  call 0x68ca50             ; ★★batch 120 名字+索引双键查表 → ebp
+006408cc  mov ecx,[0xa8b230]        ; ★★ScenarioClass::Instance（batch 087 实锤）
+006408d4  mov eax,[ecx+0x113c]      ; ★★出生点计数 +0x113C
+006408da  test eax,eax / jle 0x640a2f   ; ★<=0 → 跳
+006408e2  cmp eax,8 / jg 0x640a2f       ; ★★>8 → 跳（1..8 硬限）
+; ── 段 9：出生点主循环（esi 索引）
+006408f5  mov eax,[ecx+esi*8+0x1140]   ; ★★出生点 X 表 +0x1140+esi*8
+006408fc  mov edi,[ecx+0x112c] / sub eax,edi   ; ★减地图原点 +0x112C
+00640904  mov ebx,[ecx+0x1130]        ; ★地图原点 Y +0x1130
+00640913  shl eax,3 / cdq / idiv [ecx+0x1134]  ; ★★×1000/地图宽 +0x1134
+0064091f  0x10624dd3 / imul edx,[esp+0x58] ... / sar edx,6 / add [esp+0x50]  ; ★÷1000
+0064093b  mov eax,[ecx+esi*8+0x1144]  ; ★★出生点 Y 表 +0x1144+esi*8
+00640942  sub eax,ebx / ... / idiv [ecx+0x1138]  ; ★×1000/地图高 +0x1138
+00640976  add edx,[esp+0x54]          ; → edi=屏幕 X / ebx=屏幕 Y
+0064097c  mov eax,[0xac4e80] / test eax,eax / je 0x6409d7  ; ★未加载→跳按钮绘制
+; ── 段 9a：按钮绘制（STARTBUT.SHP）
+00640986  push 0×5 ... / lea edx,[edi-9] / push 0x3e8 / push 0 / push 0x400
+006409b6  call [eax+0x78] / push eax / lea eax,[esp+0x40]/push eax / push 0
+006409cc  push ecx（STARTBUT 数据）/ mov ecx,[0x887310] / call 0x4aed70   ; ★★batch 079
+; ── 段 9b：数字标签（"%" printf 族）
+006409dd  add edi,-2 / add ebx,-6     ; ★★坐标偏移 -2/-6
+006409e4  push esi（索引）/ push 0x19（25）/ push 8 / lea edx,[esp+0x2c]/push ebp/push edx
+00640a01  call [eax+0x78] / push eax / push [0x887310] / lea ecx,[esp+0x4c]
+00640a0f  push 0x81b3d0 / push ecx / call 0x4a61c0     ; ★★"%" 格式串 + batch 157
+00640a1a  mov ecx,[0xa8b230] / add esp,0x24 / cmp esi,[ecx+0x113c] / jl 0x6408f5
+; ── 段 10：收尾
+00640a2f  pop edi/esi/ebp/ebx / add esp,0x80 / ret 4    ; ★清 1 栈参
+```
+**语义（ranking 带名）**：**PreviewClass::DrawStartPoints**——在预览控件上绘制
+出生点（thiscall，1 栈参=窗口句柄）：
+① **ValidateRect(hWnd,NULL) 全窗口无效化**（重绘触发）→ `GetDlgItem(hWnd,1128)`
+   取预览控件 → 0x775690 窗口→客户坐标变换 → 算控件宽高；
+② `this->+0` 对象虚表槽 0x78 取表面 → **×1000/除数比例链**（lea 五连链 ×1000 +
+   有符号 idiv）→ **0x10624DD3 魔数快速除法**（sar 6=÷1000 / sar 7=÷2000）组合
+   坐标 → [0x887310] 全局对象虚表槽 0x14/槽 8 五参绘制调用；
+③ **STARTBUT.SHP 幂等懒加载**（[0xAC4E90] 位标志先行置位 → FileSystem::
+   LoadWholeFileEx → [0xAC4E80] 缓存指针）；
+④ "Yellow" 经 0x68CA50 双键查表（取玩家颜色 → ebp）；
+⑤ 遍历 `[0xA8B230]`（ScenarioClass::Instance）**出生点表**：计数 `+0x113C`
+   （1..8 硬限）、位置表 `+0x1140/+0x1144`（每 8 字节 X/Y 对）、地图原点
+   `+0x112C/+0x1130`、地图宽高 `+0x1134/+0x1138`；
+⑥ 每点：画 STARTBUT.SHP 按钮（若已加载；坐标 -9/-6 偏移）→ 画数字标签
+   （"%" 格式串 + 索引经 0x4A61C0 printf 族；坐标 -2/-6 偏移）→ 循环至计数。
+★原版怪癖（照抄）：① **0x10624DD3 魔数同常数双移位**（sar 6=÷1000 /
+   sar 7=÷2000——2^39/2000 = 2^38/1000 同魔数，MSVC 有符号除法模板标准形态）；
+   ② **×1000 用 lea 五连链**（lea [x+x*4]×3 + shl 3——无乘法指令）；③ **出生点
+   计数 1..8 双向硬限**（jle/jg——8 玩家上限）；④ **STARTBUT.SHP 幂等懒加载且
+   失败也置位**（[0xAC4E90] 位标志先行置位再调用——加载失败不重试，[0xAC4E80]=0
+   后续 je 跳过按钮绘制）；⑤ **按钮/数字坐标偏移解耦**（-9/-6 vs -2/-6）；
+   ⑥ **GetDlgItem ID 0x468=1128 硬编码**；⑦ ValidateRect 全区域无效化；
+   ⑧ 按钮绘制参数含 0x3E8=1000/0x400=1024 魔数；⑨ 未加载 STARTBUT 时照样画
+   数字标签（按钮绘制段 je 跳过，标签段独立）。
+★跨批次闭合：**0x775690（batch 200——窗口坐标变换 IAT 三连）**+**0x4A38D0
+   （batch 093——FileSystem::LoadWholeFileEx，STARTBUT.SHP 加载）**+**0x72E280
+   （batch 443——调色板转换器 getter [0xB0FBCC]）**+**0x68CA50（batch 120——
+   名字+索引双键查表，"Yellow" 现场）**+**0x4A61C0（batch 157——字符串处理
+   大帧，"%" 格式串现场）**+**0x4AED70（batch 079——链表遍历+虚回调，按钮
+   绘制现场）**+**[0x887310]（batch 221 会话状态区邻域全局——本条虚表槽
+   0x14/8 新消费）**+**[0xA8B230]=ScenarioClass::Instance（batch 087 实锤——
+   **本条新登记出生点表字段族 +0x113C/+0x1140/+0x1144/+0x112C/+0x1130/
+   +0x1134/+0x1138**）**+**caller FUN_00596300 ∈ MapGen.cpp TU（0x5956E7-
+   0x59A63A，QWEN.md 编译单元测绘实锤——RMG 预览绘制链）**。
+⚠️ partial：函数精确名语义（ranking 带名但 YRpp 无覆盖）、`this->+0` 对象类型
+   与虚表槽 0x78 语义（取表面推断）、[0x887310] 全局对象身份与虚表槽 0x14/8
+   语义（绘制准备/绘制推断）、出生点表 +0x112C/+0x1130 精确语义（地图原点推
+   断）与 +0x1134/+0x1138（地图宽高推断）、"Yellow" 查表结果消费（玩家颜色推
+   断）、0x4AED70 在本帧绘制参数细节（batch 079 已 partial）、FUN_006ae3f0/
+   FUN_007a2600（调用者新候选）、按钮绘制五参中的 0x3E8/0x400 语义。
+
+================================================================================
+（batch 576 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：PreviewClass 宿主类未闭合（YRpp 无覆盖），
+812B 纯绘制例程（UI 层）无算法切片可复刻；且 STARTBUT.SHP 加载/绘制依赖完整
+渲染管线（[0x887310] 虚表槽 0x14/8 + 0x4A61C0 printf 族）——依赖未读被调。模型
+价值：**出生点表字段族实锤**（ScenarioClass+0x113C 计数/+0x1140 位置表 8B/项
++0x112C/0x1130 原点 +0x1134/0x1138 尺寸——RMG 阶段 6 出生点的引擎侧消费端）+
+**÷1000/÷2000 同魔数双移位模板**（复刻 RMG 浮点比例时直接抄）。7 个新全局面/
+字段（[0xAC4E80]/[0xAC4E90]/ScenarioClass+0x113C/0x1140/0x112C/0x1130/0x1134/
+0x1138）+ 2 个调用者候选。本批无产品代码改动，ctest 维持 **43/43 全绿**。登记
+一行 semantics_verified + assembly_verified_semantics_confirmed（812B 全段字节
+读完 + IAT/字符串 PE 实锤 + 6 批次锚点交叉），partial 项如实标注。
