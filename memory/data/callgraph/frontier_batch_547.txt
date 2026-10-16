@@ -1,0 +1,107 @@
+frontier batch 547 — TechnoClass::TryNextPlanningTokenNode（thunk 0x00705D60 + 实现 0x006385C0）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（picker 命中 thunk 0x705D60：5B/
+unique=4/deps=26，ranking 名 **TechnoClass::TryNextPlanningTokenNode**；
+反汇编确认是纯尾跳 `jmp 0x6385C0`——目标 0x6385C0 才是真身：276B/unique=3/
+deps=200，ranking 同名，且**自调用**（递归））。本批 **thunk + 实现一并
+登记**（同 ranking 名）。
+**两函数全字节读完**：0x705D60 = 0x705D60-0x705D64（5B）；0x6385C0 =
+0x6385C0-0x6386D3（276B，ret 无栈参）。
+取证手段：disasm.py 全读 ×2 + **batch 543 注册表模式同构对照**
+（[0xB72608..] vs [0xAC4B48..]）+ batch 001（operator new）+ ranking
+同名实锤。
+
+================================================================================
+0x00705D60 —— 尾跳 thunk（5B）
+================================================================================
+```
+00705d60  e95b28f3ff   jmp 0x6385c0    ; ★无条件尾跳——跨 TU 跳板
+```
+纯转发 thunk（无独立语义），目标 0x6385C0。
+
+================================================================================
+0x006385C0 —— TechnoClass::TryNextPlanningTokenNode（带名实锤，276B）
+================================================================================
+**全局注册表**（新登记家族，与 batch 543 的 [0xB72608..] 同构）：
+```
+[0xAC4B48] = 容器对象虚表   [0xAC4B4C] = 数组基址   [0xAC4B50] = 上界
+[0xAC4B55] = 字节标志       [0xAC4B58] = 计数       [0xAC4B5C] = 扩展步长
+```
+机器码（完整 276B，关键段）：
+```
+006385c6  push ebx/esi / mov esi,ecx               ; this
+006385ca  call 0x705d20                            ; ★★0x705D20（邻居——规划节点取件）
+006385cf  mov ebx,eax / test / je 0x6386c9          ; 空 → 返 0
+006385d9  mov eax,[ebx+0x14] / test / jle 0x6386c9  ; ★+0x14 计数 <=0 → 返 0
+006385e4  mov eax,[ebx+0x8c] / cmp -1 / je / test / jle 0x6386c9  ; ★+0x8C 无效 → 返 0
+006385f7  mov al,byte[ebx+0x1c] / test / jne 0x6386c9 ; ★+0x1C 已处理标志 → 返 0
+00638602  mov eax,[esi] / push 1 / push 0x1c / mov ecx,esi
+0063860c  call [eax+0x1e8]                         ; ★★this 虚表槽 0x1E8（分配/准备）
+00638612  lea ecx,[esp+0x80] / push ecx / mov ecx,ebx
+0063861c  call 0x636590                            ; ★★0x636590（构建/读取规划节点——未登记）
+00638621  mov ecx,0x1b / mov esi,eax
+0063862c  push 0x6f / rep movsd / movsw / movsb    ; ★★111B 结构拷贝（27 dword+word+byte）→ 栈
+00638633  call 0x7c8e17                            ; ★★operator new（batch 001）
+0063863b  test / je 0x638646 / mov byte[eax],0
+00638642  mov ebp,eax / jmp 0x638648
+00638646  xor ebp,ebp                              ; ★new 失败 → NULL
+00638648  mov ecx,0x1b / lea esi,[esp+0x10] / mov edi,ebp
+00638653  rep movsd / movsw / movsb                ; ★★111B 栈 → 新对象
+00638658  cmp byte[ebp],4 / jne 0x638662
+0063865e  mov byte[ebp+0x1d],2                     ; ★★类型==4 → +0x1D=2
+00638662  mov eax,[0xac4b50] / mov ecx,[0xac4b58] / cmp ecx,eax / jl 0x6386a0  ; 未满→直注册
+00638671  mov cl,byte[0xac4b55] / test / jne 0x63867f
+0063867b  test eax,eax / jne 0x6386b8              ; 上界==0 → 不注册
+0063867f  mov ecx,[0xac4b5c] / test / jle 0x6386b8  ; 步长<=0 → 不注册
+00638689  mov edx,[0xac4b48] / add ecx,eax / push 0 / push ecx / mov ecx,0xac4b48
+00638699  call [edx+8]                             ; ★★容器虚表槽 8（SetCapacity 扩容）
+0063869c  test al / je 0x6386b8                    ; 扩容失败 → 不注册
+006386a0  mov ecx,[0xac4b58] / mov eax,ecx / inc ecx / mov [0xac4b58],ecx  ; ★★计数++
+006386af  mov ecx,[0xac4b4c] / mov [ecx+eax*4],ebp  ; ★★数组[计数]=新对象（自注册）
+006386b8  mov byte[ebx+0x1c],1                     ; ★★+0x1C=1（标记已处理）
+006386be  mov al,1 / ret                           ; 返 1
+006386c9  mov al,0 / ret                           ; 返 0
+```
+**语义（带名实锤）**：**TechnoClass::TryNextPlanningTokenNode**——尝试取
+下一个规划 token 节点（thiscall 无栈参）：
+① 调 0x705D20 取候选规划节点 → ebx；
+② **门控四连**：ebx 非空 && `+0x14`（计数）>0 && `+0x8C`（!=-1 且 >0）
+   && `+0x1C`（已处理标志）==0——任一不满足返 0；
+③ this 虚表槽 0x1E8（参数 0x1C,1）分配/准备；
+④ 0x636590 构建规划节点数据 → 栈缓冲；
+⑤ **111B 结构拷贝**（27 dword+word+byte 精确尺寸）经 operator new
+   （batch 001）落新对象（先清首字节）；
+⑥ 新对象类型字节 ==4 → `+0x1D=2`；
+⑦ **全局注册表 [0xAC4B48..0xAC4B5C] 注册**：未满直接
+   `数组[计数]=新对象/计数++`；满则经 [0xAC4B48] 虚表槽 8 扩容后再注册；
+   扩容失败/上界 0/步长<=0 静默跳过；
+⑧ 置 `ebx+0x1C=1` 返 1（成功）；门控失败返 0。
+**与 batch 543 直接同构**：注册表模式逐字段一致（容器对象虚表/数组/上界/
+标志/计数/步长六件套 + 满表槽 8 扩容 + 失败静默跳过）——**同一模板第二
+实例**（[0xAC4B48] 系 vs [0xB72608] 系）。
+★原版怪癖（照抄）：① **111B 结构拷贝两段**（0x636590 → 栈 → operator
+new 落堆——中间态经栈缓冲）；② **类型==4 特判 +0x1D=2**（读路径写内存）；
+③ **注册表满表扩容**（槽 8 SetCapacity——不丢新对象）；④ **门控四连
+短路**（+0x14/+0x8C/+0x1C 三个字段依次判）；⑤ **+0x1C 已处理标志置位**
+（防重复注册）；⑥ **thunk 尾跳**（0x705D60 跨 TU 跳板——与目标同名）；
+⑦ 返回 bool（1 成功/0 门控失败）。
+★跨批次闭合：**batch 543（[0xB72608] 注册表——同模板第一实例）**+
+**batch 001（0x7C8E17 operator new）**+**ranking 同名实锤（thunk 与实现
+同一 ranking 名）**。
+⚠️ partial：0x705D20/0x636590 精确身份（规划节点取件/构建——新被调候选）、
+111B 结构布局（规划 token 节点字段推断）、+0x8C/+0x1C/+0x14 字段语义
+（计数/有效性/已处理推断）、[0xAC4B48] 容器类名（规划 token 全局池推断）、
+递归自调用语义（TryNext 链推断）、FUN_00637e00/FUN_00709a40（其余调用者
+——新候选入列）。
+
+================================================================================
+（batch 547 说明：C++ 模型决策）
+================================================================================
+本批新增 **2 行**（thunk + 实现），**不新增 C++ 模型**：111B 规划节点布局
+未展开 + 注册表容器类未确认。模型价值：**注册表模板第二实例实锤**
+（[0xAC4B48] 系与 batch 543 [0xB72608] 系逐字段同构——规划节点全局池）
++ **TechnoClass 规划 token 链**（TryNext 递归 + 取件 0x705D20 + 构建
+0x636590）。2 个新被调 + 2 个新调用者候选入列。本批无产品代码改动，
+ctest 维持 **43/43 全绿**。登记 2 行 semantics_verified +
+assembly_verified_semantics_confirmed（5B+276B 全段字节读完 + 带名 +
+注册表同构对照），partial 项如实标注。
