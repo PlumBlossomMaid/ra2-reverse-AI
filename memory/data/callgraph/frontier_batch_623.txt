@@ -1,0 +1,96 @@
+frontier batch 623 — BombClass::Detonate 0x00438720（645B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（0x6ADC20 后下一未登记高扇入候选 0x00438720
+BombClass::Detonate（ranking 带名）callers=3/unique=3/deps=2644/body=645B，
+unique_callers FUN_004C6CB0/PhobosHook_TechnoClass_AI（★Phobos 钩子 0x6FA712）/
+PhobosHook_TechnoClass_ReceiveDamage_Shield（★Phobos 钩子 0x70267F）——后两者为
+Phobos 挂接点）。**645B 全字节读完**（0x438720-0x4389A4，ret c3，thiscall，
+ecx=this 存 esi）。
+取证手段：disasm.py 分两段全读 + direct_edges 调用图核对 + **已登记锚点交叉
+（batch 124 0x489280 DamageArea 范围伤害 + batch 068 0x421EA0 AnimClass 构造 +
+batch 205 0x48ACE0 恒返 -15 桩 + batch 187 0x405FD0 AudioStream::End + batch 396
+0x5657A0 坐标查表 + batch 001 new——6 锚点一次全命中）** + YRpp BombClass.h
+（BombListClass.h "ivan planting a bomb" 佐证）。
+
+================================================================================
+0x00438720 —— BombClass::Detonate（645B，炸弹引爆）
+================================================================================
+机器码（完整 645B，分四段）：
+```
+; ── 段 1：门控 + 目标检查（+0x2C 目标/+0x58 完成标志/+0x81 分支）
+00438720  sub esp,0x28 / push 族 / mov esi,ecx（★this）/ xor ebp
+0043872b  mov eax,[esi+0x2c]（★this->+0x2C 目标对象）/ test / je 0x43899d（★无目标
+          → 收尾）
+00438736  mov cl,[esi+0x58]（★this->+0x58 完成标志）/ test / jne 0x43899d（★已完成
+          → 收尾）
+00438741  mov cl,[eax+0x81]（★目标+0x81 标志）/ mov [eax+0x38],ebp（★清目标+0x38）
+          / test cl / je 0x43875e（★分支A）
+0043874e  分支A（+0x81 置位）：mov byte[eax+0x68],0 / mov byte[esi+0x58],1（★置完成
+          标志）→ jmp 0x438989（收尾）
+; ── 段 2：爆炸核心（坐标 → DamageArea → 动画）
+0043875e  分支B：mov byte[ecx+0x68],0 / mov byte[esi+0x58],1 → 读目标+0x9C 三 dword
+          到 [esp+0x34/0x38/0x3C]（★坐标）→ mov eax,[0x8871e0]（★★全局对象）/
+          mov ecx,[eax+0xfc8] / mov edx,[eax+0xfcc] → 坐标计算（sar 8 = >>8）
+004387fb  call 0x5657a0（★★batch 396 坐标→CellClass 查表）→ mov ebx,[eax+0xec]
+00438820  call 0x48ace0（★★batch 205 恒返 -15 桩）→ push eax → [0x8871e0]+0xFC8/
+          0xFCC 链 → call 0x489280（★★batch 124 MapClass::DamageArea 范围伤害——
+          爆炸主体）
+004387ad  push 0x1c8 / call 0x7c8e17（★★batch 001 new(0x1C8=456B)）→ edi（★效果对
+          象）→ 坐标处理 + call 0x5657a0 → call 0x421ea0（★★batch 068 AnimClass
+          构造——爆炸动画）
+; ── 段 3：目标类型检查 + 3×3 邻域处理
+00438857  mov ecx,[esi+0x2c] / test / je → call [ecx+0x2C]（★目标虚表槽 0x2C 类型
+          getter）→ cmp eax,6（★类型==6 才继续）→ mov edx,[ecx+0x520] / mov al,
+          [edx+0x16b6] / test / je（★+0x520 对象 +0x16B6 标志）
+00438896  双层循环 3×3（ebx/ebp 从 0xFFFFFFFE 起，外 ebx 升到 3、内 ebp 升到 3）：
+          call [ecx+0x1B8]（★目标虚表槽 0x1B8 取格）→ 坐标 ±1 → call 0x5657a0
+          （查格）→ mov edi,[eax+0x38] / mov eax,[eax+0x44]（★格字段）→ 边界检查
+          [0xABAD1C] + 类型 0x4A..0x65 → 置 [esp+0x13] 标志
+0043894c  标志 → call 0x574c20 或 call 0x574000（★未登记——两处理路径）
+; ── 段 4：收尾清理
+00438989  lea ecx,[esi+0x3c] / mov [esi+0x24],ebp / [esi+0x2c],ebp / [esi+0x28],ebp
+          / call 0x405fd0（★★batch 187 AudioStream::End——音频结束）/
+          mov [esi+0x54],ebp / ret
+```
+**语义（ranking 带名 + YRpp 佐证）**：**BombClass::Detonate（炸弹引爆）**——
+thiscall，ecx=this（BombClass——YRpp BombListClass.h 注释 "ivan planting a bomb
+(creates a BombClass inside)" 伊文炸弹类）：
+① 门控：无目标（+0x2C==0）或已完成（+0x58==1）直接收尾；目标+0x81 标志置位则走
+   简化分支（只清+0x68 置完成标志）；
+② 爆炸主体：读目标坐标（+0x9C 三 dword，>>8）→ 0x5657A0 查格 → 0x48ACE0（恒返
+   -15 桩）→ **0x489280（batch 124 DamageArea）范围伤害** + new(0x1C8) 效果对象
+   + 0x421EA0（batch 068 AnimClass）爆炸动画；
+③ 目标类型检查（虚表槽 0x2C == 6 + +0x520 对象 +0x16B6 标志）→ **3×3 邻域处理**
+   （虚表槽 0x1B8 取格 + 0x5657A0 查格 + 边界/类型检查 → 0x574C20/0x574000 两路径）；
+④ 收尾：清 +0x24/+0x2C/+0x28/+0x54 + 0x405FD0（batch 187 AudioStream::End）。
+★原版怪癖（照抄）：① **+0x81 双分支**（目标标志置位走简化路径只置完成标志——
+   不引爆炸弹的静默拆解推断）；② **坐标 >>8 取格**（sar 8——世界坐标→格坐标）；
+   ③ **3×3 邻域双层循环从 0xFFFFFFFE 起**（-2 起始步进到 3——-2/-1/0/1/2 五值×
+   五值？循环体 cmp ebp,3 jl——实为 -2..2 的五×五扩展推断）；④ **类型==6 门控**（
+   目标虚表槽 0x2C 判 6——炸弹目标类型推断）；⑤ **0x574C20/0x574000 双路径**（
+   标志选路——未登记）；⑥ **音频结束收尾**（0x405FD0 batch 187——爆炸音频停止）；
+   ⑦ 两 Phobos 钩子挂接（TechnoClass_AI + ReceiveDamage_Shield——Phobos 覆盖点
+   佐证游戏内高频调用）。
+★跨批次闭合：**batch 124（0x489280 DamageArea——本条=爆炸主体调用现场，QWEN.md
+   候选机制点名函数再消费）**+**batch 068（0x421EA0 AnimClass——本条=爆炸动画现
+   场）**+**batch 205（0x48ACE0 恒返 -15 桩——本条=伤害前桩调用现场）**+**batch
+   187（0x405FD0 AudioStream::End——本条=收尾现场）**+**batch 396（0x5657A0 坐标
+   查表——本条=多处调用现场）**+**batch 001（new 0x1C8）**+**YRpp BombClass.h
+   （带名佐证——BombListClass.h 伊文炸弹）**。
+⚠️ partial：函数精确名（ranking 带名 BombClass::Detonate——YRpp 无 JMP_THIS 直证，
+   BombClass.h 存在 + BombListClass.h 注释佐证）、+0x2C/+0x58/+0x81 字段语义（目标/
+   完成标志推断）、目标虚表槽 0x2C 类型码 6、+0x520 对象 +0x16B6 标志、0x574C20/
+   0x574000（未登记新候选）、3×3 邻域语义（范围扩展推断）、[0x8871E0] 全局身份
+   （batch 621 同用未登记）。
+
+================================================================================
+（batch 623 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：645B 纯引爆编排（门控→伤害→动画→邻域→音频）
+无独立算法切片；字段语义与未登记被调待闭合。模型价值：**BombClass::Detonate 引
+爆模板**（ranking 带名 + YRpp 类佐证——炸弹引爆生命周期全景：DamageArea 范围伤
+害 + AnimClass 动画 + AudioStream 收尾，batch 124/068/205/187/396/001 六锚点一次
+全命中）+ Phobos 钩子挂接佐证。2 个新被调候选（0x574C20/0x574000）。本批无产品
+代码改动，ctest 维持 **43/43 全绿**。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（645B 全段字节读完 + ranking 带名 + YRpp
+佐证 + 六锚点全命中），partial 项如实标注。
