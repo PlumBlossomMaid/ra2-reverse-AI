@@ -1,0 +1,95 @@
+frontier batch 556 — COM VARIANT 类型转换器 0x007DC7CB（1005B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x7DC7CB callers=4/unique=4/
+deps=9/body=1005B，unique_callers FUN_007dc78f/FUN_007dcc74/
+FUN_007dccec/FUN_007dcd45——全 0x7DCxxx 区，均未登记）。位于 0x7Dxxxx
+**MSVC6 静态 CRT 区**。**1005B 全字节读完**（0x7DC7CB-0x7DCBB7，ret
+无栈参但 8 栈参读取）。
+取证手段：disasm.py 全读 + **IAT 槽实测**（_read_iat_b556.py：lstrlenW +
+OLEAUT32 序号导入）+ HRESULT/COM 常量识别。
+
+================================================================================
+IAT 槽实测
+================================================================================
+```
+007e133c -> KERNEL32.dll!lstrlenW（宽串长度）
+007e1380 -> OLEAUT32.dll!#8（序号导入——OLE Automation）
+007e137c -> OLEAUT32.dll!#9
+007e1378 -> OLEAUT32.dll!#202
+007e1374 -> OLEAUT32.dll!#12
+```
+**OLEAUT32 序号导入 + lstrlenW = OLE Automation VARIANT 转换组件**——
+MSVC6 静态链接进来的 OLE 自动化辅助代码。
+
+================================================================================
+0x007DC7CB —— COM VARIANT 类型转换器（推断名，1005B）
+================================================================================
+机器码（完整 1005B，关键结构）：
+```
+007dc7cb  push ebp / mov ebp,esp / sub esp,0x54     ; 大栈帧
+007dc7d1  mov eax,[ebp+0x24] / and [eax],0           ; ★输出指针清 0
+007dc7da  cmp [ebp+8],0 / jne → mov eax,0x80004003 / jmp err  ; ★参数空 → E_POINTER
+007dc7f0  mov ebx,[ebp+0x1c]                        ; ★输入串指针
+007dc7fa  push ebx / call [0x7e133c]                ; ★★lstrlenW 宽串长度
+007dc809  test byte[ebp+0x10],0xc / je              ; ★flags 位测试
+007dc816  test eax,eax / jbe 0x7dc9b7               ; 长度 0 → E_INVALIDARG 路径
+007dc833  shl eax,4 / add eax,3 / and al,0xfc / call 0x7ca650  ; ★★CRT 栈检查（16B 项分配）
+007dc876  mov edx,[ebp+0x20] / 循环主处理           ; ★★★逐字符类型分派
+007dc898  movzx esi,word[edi] / cmp esi,0x4002 / jg  ; ★类型常量分派
+007dc8b9  jmp [esi*4+0x7dcbb8]                     ; ★★跳转表1（16 项——VT 类型分支）
+007dc8c0  ... 各分支：word/dword 拷贝/neg sbb/movsd 连拷（16B 项写 VARIANT）...
+007dc94a  jmp [esi*4+0x7dcbf8]                     ; ★★跳转表2（高类型段）
+007dc951  test di,0x2000 / je err                  ; ★VT_BYREF 位测试
+007dc961  add [ebp-8],2 / sub [ebp-4],0x10         ; ★推进（2B 输入 → 16B 项）
+007dc97f  mov ecx,[ebp-0x2c] / 收尾扫描            ; ★倒序扫输入尾部
+007dc99d  and edi,0xffffbfff / cmp edi,0x80c / jne ; ★VT_ERROR 判定（0x80C = 0x800|0xC）
+007dc9e7  ... 前移压缩（16B 项 movsd ×4）          ; ★删除匹配项
+007dca0e  lea eax,[ebp-0x24] / push eax / call [0x7e1380]  ; ★★OLEAUT32 #8
+007dca12  ... 虚表槽 0x18 调用（8 参）              ; ★★COM 接口调用
+007dca68  call [0x7e137c]                          ; ★★OLEAUT32 #9（错误路径）
+007dca8d  call [0x7e1378]                          ; ★★OLEAUT32 #202
+007dcb39  call [0x7e1374]                          ; ★★OLEAUT32 #12
+007dcb50  jmp [eax*4+0x7dcc34]                     ; ★★跳转表3（写回分派——dword/word/byte）
+007dcbae  mov eax,ebx / err 路径                   ; 返 HRESULT
+007dcbb6  leave / ret
+```
+**语义（推断名）**：**COM VARIANT 类型转换器**——OLE Automation 转换
+组件（MSVC6 静态链接），把宽字符串按 VT 类型转换为 VARIANT 结构：
+① **参数检查**：输入空 → E_POINTER（0x80004003）；
+② **lstrlenW 求宽串长** → 按 16B 项分配（0x7CA650 栈检查）并清零；
+③ **逐字符类型分派**：读输入 word → 按 VT 类型常量（0x4002 等）跳转
+   [0x7DCBB8]/[0x7DCBF8] 两张 16 项表——各分支做 word/dword/16B 拷贝
+   或 neg/sbb 符号扩展写 VARIANT 项；
+④ **VT_BYREF 位（0x2000）测试** → 分支处理；
+⑤ **收尾扫描**：倒序扫输入尾部，按 0x80C（VT_ERROR）判定删除匹配项
+   （16B 前移压缩）；
+⑥ **COM 接口调用**：经 OLEAUT32 序号导入（#8/#9/#202/#12）+ 目标对象
+   虚表槽族（0x18/0x10/0x14/0x1C/0xC/0）多参调用；
+⑦ **写回分派**：[0x7DCC34] 表按类型写 dword/word/byte 到输出；
+⑧ 返回 HRESULT（成功 0/负值错误码）。
+★原版怪癖（照抄）：① **三张跳转表**（[0x7DCBB8] 主表 + [0x7DCBF8] 高段表
+   + [0x7DCC34] 写回表——类型分派三阶）；② **输入 2B/项 输出 16B/项**
+   （宽字符 word 输入 → VARIANT 项推进）；③ **0x80004003/0x80070057/
+   0x80020004/0x80020009/0x8004FFFF HRESULT 族**（E_POINTER/E_INVALIDARG/
+   DISP_E_BADPARAMTYPE/DISP_E_EXCEPTION）；④ **OLEAUT32 序号导入**（#8/#9/
+   #202/#12——MSVC6 静态链接 OLE 自动化的稳定序号）；⑤ **VT_BYREF 位
+   0x2000 门控**；⑥ 16B 项前移压缩收尾（删除匹配类型项）；⑦ 输出指针
+   清 0 先行。
+★跨批次闭合：**batch 531（0x7DBB55 宽字符浮点解析器——同 0x7DBxxx/0x7DCxxx
+CRT 数字/自动化解析区）**+**batch 552（0x7DBBDD errno 设置器——同区）**
++**0x7CA650（CRT 栈检查——batch 265 的 0x7CA650 同款大栈帧调用）**。
+⚠️ partial：OLEAUT32 序号 #8/#9/#202/#12 精确 API 名（序号导入——未反查
+导出表）、VT 类型常量到具体 VARIANT 类型的映射（0x4002/0x80C 推断）、
+COM 接口虚表槽族（转换目标接口）、FUN_007dc78f/FUN_007dcc74/FUN_007dccec/
+FUN_007dcd45（4 调用者——新候选入列）。
+
+================================================================================
+（batch 556 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：OLEAUT32 序号 API 名未反查 + VT 类型
+映射未闭合（COM 层依赖）。模型价值：**MSVC6 静态链接 OLE Automation 转换
+组件确认**（CRT 区第三类大函数——数字解析/errno/自动化三件套）+ **三张
+跳转表类型分派模板**（VT 转换主结构）。4 个新调用者候选入列。本批无产品
+代码改动，ctest 维持 **43/43 全绿**。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（1005B 全段字节读完 + IAT 槽实测 +
+HRESULT 常量识别），partial 项如实标注。
