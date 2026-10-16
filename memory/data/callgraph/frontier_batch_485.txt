@@ -1,0 +1,87 @@
+frontier batch 485 — COM 对象对注册器 0x00410380（90B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=162/
+body=90B，ranking 名 FUN_00410380，unique_callers FUN_005f5e80/
+FUN_005f9720/FUN_00721e80/FUN_0075e0c0）。
+**90B 全字节读完**（= 0x5A，0x410380-0x4103D7 ret 8 = 2 栈参）。取证手段：
+disasm.py 全读 + **被调 0x6CF2C0（batch 345 动态数组按值追加）已登记交叉**
++ **batch 167 Swizzle 同错误码 E_POINTER 对照**。
+
+================================================================================
+0x00410380 —— COM 对象对注册器（Swizzle 系推断名，90B，ret 8 = 2 栈参）
+================================================================================
+机器码（完整，90B 整数）：
+```
+00410380  push edi
+00410381  mov edi,[esp+0xc]         ; ★edi = 栈参 2（对象 A）
+00410385  test edi,edi
+00410387  jne 0x410392
+00410389  mov eax,0x80004003        ; ★★E_POINTER（batch 167 Swizzle 同错误码）
+0041038e  pop edi
+0041038f  ret 8                      ; ★对象 A 空 → 返 E_POINTER
+00410392  mov eax,[edi]              ; eax = 对象 A 虚表
+00410394  push 0
+00410396  lea ecx,[esp+0x10]        ; &栈缓冲
+0041039a  push 4
+0041039c  push ecx
+0041039d  push edi
+0041039e  call [eax+0xc]            ; ★虚表槽 0xC（对象 A：4 参读/枚举）
+004103a1  test eax,eax
+004103a3  jl 0x4103d6               ; ★返回值负 → 跳过主体
+004103a5  mov edx,[esp+0xc]         ; edx = 对象 A（重读）
+004103a9  push ebx/push ebp/push esi
+004103ac  mov esi,[esp+0x14]        ; ★esi = 栈参 1（对象 B）
+004103b0  push esi
+004103b1  push edx
+004103b2  push 0xb0c110             ; ★★[0xB0C110] 容器全局
+004103b7  call 0x6cf2c0             ; ★★0x6CF2C0（batch 345：动态数组按值追加 8B 对）
+004103bc  mov eax,[esi]             ; eax = 对象 B 虚表
+004103be  mov ebx,[esi+0x1c]        ; ★备份对象 B +0x1C
+004103c1  mov ebp,[edi]             ; ebp = 对象 A 虚表
+004103c3  push 0
+004103c5  mov ecx,esi
+004103c7  call [eax+0x30]           ; ★虚表槽 0x30（对象 B，单参）
+004103ca  push eax
+004103cb  push esi
+004103cc  push edi
+004103cd  call [ebp+0xc]            ; ★虚表槽 0xC（对象 A：3 参再调）
+004103d0  mov [esi+0x1c],ebx        ; ★恢复对象 B +0x1C
+004103d3  pop esi/pop ebp/pop ebx
+004103d6  pop edi
+004103d7  ret 8
+```
+**语义（推断名 + 被调登记链）**：**COM 对象对注册器（Swizzle 系推断名）**
+——2 栈参（栈参 2 = 对象 A、栈参 1 = 对象 B）：
+1. **对象 A 空 → 返 E_POINTER（0x80004003）**（batch 167 Swizzle 同错误码
+   同门控）；
+2. 非空 → 对象 A 虚表槽 0xC（(A, &栈缓冲, 4, 0) 读/枚举——4 参 COM 风格）；
+3. 成功（≥0）→ **{对象 A, 对象 B} 经 0x6CF2C0（batch 345 动态数组按值
+   追加：8B 对 {值1, 值2} 写 [基址+计*8]）注册进 [0xB0C110] 容器**；
+4. 对象 B 虚表槽 0x30（单参）+ 对象 A 虚表槽 0xC（3 参 (A, B, 返回值)）
+   再调 → 恢复 B+0x1C（调用前后守恒）→ 收尾。
+★原版怪癖（照抄）：① **E_POINTER 空门控**（对象 A 空直接返 0x80004003——
+batch 167 Swizzle 同款 COM 错误码）；② **{A,B} 成对注册**（0x6CF2C0 8B 对
+追加——Swizzle::Swizzles_New 同构的 pair 表语义，[0xB0C110] 为容器全局）；
+③ **虚表槽 0xC 双调用**（前读后调——槽 0xC 在 A 上出现两次，参数集不同
+(4 参读/3 参再调)）；④ **B+0x1C 备份恢复**（call 前后 mov/还原——被调方会
+改 B+0x1C 推断）；⑤ **对象 B 槽 0x30 返回值透传给 A 槽 0xC**（push eax——
+链式回调）。
+★跨批次闭合：**0x6CF2C0（batch 345——动态数组按值追加，本条=调用现场：
+{对象 A, 对象 B} 8B 对入 [0xB0C110]）**；**0x80004003 E_POINTER（batch
+167 SwizzleManagerClass::Swizzle 同错误码——COM 注册族同门控）**；
+**[0xB0C110] 新全局（pair 容器——batch 285 [0xB0E840] 系同 B0Exxx 区）**；
+虚表槽 0xC/0x30（对象接口族——0x4Axxxx 区 COM/注册对象）。
+⚠️ partial：宿主类（0x4Axxxx 区 COM/注册对象推断）、对象 A/B 精确类型
+（接口对象推断——槽 0xC 读枚举 + 槽 0x30 单参）、槽 0xC 两次调用的参数
+语义（读缓冲/回调推断）、[0xB0C110] 容器精确结构、B+0x1C 字段语义、
+E_POINTER 门控的业务含义（未初始化接口推断）。
+
+================================================================================
+（batch 485 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（宿主 COM 对象未确认 + 槽语义未闭合）。
+模型价值：**对象对注册链登记**（90B 完整——E_POINTER 门控 + 0x6CF2C0 8B
+对追加应用点 + 槽 0xC/0x30 双回调 + B+0x1C 守恒）。本批无产品代码改动，
+ctest 维持 **43/43 全绿**（batch 372 已实跑核实）。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（全段字节读完 +
+被调登记交叉 + 同错误码对照），partial 项如实标注。
