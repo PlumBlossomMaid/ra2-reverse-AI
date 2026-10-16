@@ -1,0 +1,97 @@
+frontier batch 539 — 地图坐标钳制器（TacticalClass 辅助）0x006D8640（190B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x6D8640 callers=4/unique=4/
+deps=57/body=190B，unique_callers FUN_006d5f60/FUN_006d6000/
+FUN_006da230/TacticalClass::SetTacticalPosition（0x6D6070——batch 204
+已登记））。**190B 全字节读完**（0x6D8640-0x6D86FB，ret 4=1 栈参）。
+取证手段：disasm.py 全读 + **batch 204 调用现场闭合**（0x6D6070
+SetTacticalPosition 标注"0x6D8640 校验"）+ batch 114/128/175 全局交叉 +
+cdq/sub/sar 带符号除 2 惯用核对（batch 070）。
+
+================================================================================
+0x006D8640 —— 地图坐标钳制器（TacticalClass 辅助，推断名，190B，ret 4）
+================================================================================
+**入口契约**：ret 4 = 1 栈参（[esp+0x14] 处 = `{int x, int y}` 坐标指针，
+函数**原地改写**入参坐标）；返回 al = bool（有任一维被钳制 → 1）。
+机器码（完整 190B，关键段）：
+```
+006d8640  mov eax,[0x87f8e4]        ; ★地图尺寸全局 A
+006d8645  mov ecx,[0x87f8dc]        ; ★★[0x87F8DC] = MapRect.W（batch 114 实锤）
+006d864b  add eax,eax               ; A*2
+006d864e  mov ebx,[0x886fa8]        ; ★★视口边界全局 B1（batch 175 同 [0x886FA0..] 区）
+006d8654  sub eax,ecx               ; 2A - W
+006d8658  lea eax,[eax+eax*2]       ; *3
+006d865c  mov ebp,[esp+0x14]        ; 栈参 = 坐标指针
+006d8660  lea esi,[eax+eax*4]       ; *5 → esi = 30A-15W
+006d8663  mov eax,ebx / cdq / sub eax,edx
+006d866e  sar eax,1                 ; ★B1/2（带符号除 2——batch 070 惯用）
+006d8670  lea edi,[eax+esi*2]       ; x 下限 = B1/2 + 60A-30W
+006d8673  mov eax,[0x87f8ec]        ; ★地图尺寸全局 C
+006d8678  lea eax,[eax+eax*2]       ; *3
+006d867b  lea esi,[eax+eax*4]       ; *5 → 15C
+006d867e  lea eax,[ecx+edx*2-5]     ; W + 2*[0x87F8E8] - 5
+006d8682  shl esi,2                 ; 60C
+006d8685  lea eax,[eax+eax*2]       ; *3
+006d8688  sub esi,ebx               ; 60C - B1
+006d868a  mov ebx,[0x886fac]        ; ★★视口边界全局 B2
+006d8690  add esi,edi               ; x 上限 = 60C - B1 + B1/2 + 60A-30W
+006d8692  lea ecx,[eax+eax*4]       ; 15(W+2D-5) = 15W+30D-75
+006d8695  mov eax,ebx / cdq / sub eax,edx
+006d869a  sar eax,1                 ; B2/2
+006d869c  add ecx,eax               ; y 下限 = 15W+30D-75 + B2/2
+006d869e  mov eax,[0x87f8f0]        ; ★地图尺寸全局 E
+006d86a3  lea eax,[eax+eax*2] / lea eax,[eax+eax*4]  ; 15E
+006d86a9  lea eax,[eax*4+0x10e]     ; 60E + 0x10E
+006d86b0  cdq / sub eax,edx / sar eax,1   ; (60E+0x10E)/2 = 30E+0x87
+006d86b8  sub eax,ebx               ; - B2
+006d86bc  add eax,ecx               ; y 上限 = 30E+0x87 - B2 + y下限
+006d86be  cmp edx,ecx / jge 0x6d86c9       ; ★y < 下限?
+006d86c2  mov bl,1 / mov [ebp+4],ecx       ; y = 下限，bl=1
+006d86c9  cmp edx,eax / jle 0x6d86d2       ; y > 上限?
+006d86cd  mov [ebp+4],eax / mov bl,1       ; y = 上限，bl=1
+006d86d2  mov eax,[ebp] / cmp eax,edi / jge 0x6d86e5  ; ★x < 下限?
+006d86d9  mov [ebp],edi / mov al,1 / ret 4 ; x = 下限，返 1
+006d86e5  cmp eax,esi / jle 0x6d86f5       ; x > 上限?
+006d86e9  mov [ebp],esi / mov al,1 / ret 4 ; x = 上限，返 1
+006d86f5  mov al,bl / ret 4                ; 返 bl（仅 y 被改 → 1）
+```
+**语义（推断名）**：**地图坐标钳制器（TacticalClass 辅助）**——把入参
+`{x,y}` 坐标钳制进地图/视口边界：
+```
+x_min = [0x886FA8]/2 + 60*[0x87F8E4] - 30*[0x87F8DC]
+x_max = 60*[0x87F8EC] - [0x886FA8] + [0x886FA8]/2 + 60*[0x87F8E4] - 30*[0x87F8DC]
+y_min = 15*[0x87F8DC] + 30*[0x87F8E8] - 75 + [0x886FAC]/2
+y_max = 30*[0x87F8F0] + 0x87 - [0x886FAC] + y_min
+```
+x 维度下限用 edi、上限用 esi 提前返回 1（x 改动直接 al=1）；y 维度用 bl
+标志合并（仅 y 改动时收尾 mov al,bl）。**原地改写入参坐标**（[ebp]/[ebp+4]）。
+**与 batch 204 直接咬合**：0x6D6070（SetTacticalPosition）在等距变换+相机
+偏移后调 0x6D8640 校验（"test al/je 0x6D613F/mov al,[0xA8ED6B]"）——
+本函数把屏幕/世界坐标钳制回合法范围，返回值参与 [0xA8ED6B] 守卫判定。
+★原版怪癖（照抄）：① **x 提前返回、y 标志合并**（x 改动直接返 1，y 改动
+走 bl 收尾——两维不对称的返回路径）；② **两维边界用不同全局组合**（x 用
+[0x87F8E4]/[0x87F8EC]/[0x886FA8]，y 用 [0x87F8E8]/[0x87F8F0]/
+[0x886FAC]——x/y 方向尺寸独立推导）；③ **cdq/sub/sar 带符号除 2**（batch
+070 惯用——负数向 -∞ 舍入）；④ **常数 0x10E/0x87/75/5 硬编码**（尺寸换算
+偏移写死）；⑤ **原地改写入参**（无副本——调用方契约）；⑥ ret 4 = 1 栈参
++ 返回 bool（双出口）。
+★跨批次闭合：**batch 204（0x6D6070 SetTacticalPosition——调用现场
+"0x6D8640 校验"partial 闭合）**+**batch 114（[0x87F8DC]=MapRect.W
+实锤）**+**batch 175（[0x886FA0..0x886FAC] 视口边界全局区）**+**batch 070
+（cdq/sub/sar 带符号除 2 惯用）**。
+⚠️ partial：7 个地图/视口全局的精确语义（[0x87F8E4]/[0x87F8E8]/
+[0x87F8EC]/[0x87F8F0] 为 MapRect 邻域尺寸推断、[0x886FA8]/[0x886FAC] 视口
+原点/尺寸推断）、边界公式的几何推导（菱形地图坐标合法域推断）、
+FUN_006d5f60/FUN_006d6000/FUN_006da230（未登记调用者——新候选入列）。
+
+================================================================================
+（batch 539 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：7 全局精确语义未闭合（地图尺寸/视口
+边界推断）+ 边界公式几何推导未实锤。模型价值：**batch 204 partial 闭合**
+（SetTacticalPosition 的"0x6D8640 校验"身份实锤）+ **TacticalClass 视图
+定位链补全**（等距变换 → 相机偏移 → 坐标钳制 → [0xA8ED6B] 守卫 → 写入
++0xD64/+0xD68）+ 3 个新候选（FUN_006d5f60/FUN_006d6000/FUN_006da230）
+入列。本批无产品代码改动，ctest 维持 **43/43 全绿**。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（190B 全段字节
+读完 + 四批次锚点交叉），partial 项如实标注。
