@@ -1,0 +1,71 @@
+frontier batch 529 — DynamicVectorClass::Remove 0x0063EF70（49B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking callers=4/unique=4/deps=69/
+body=49B，ranking 名 FUN_0063ef70 unclassified——**推断名 + 字段布局实锤**），
+unique_callers FUN_00636120/FUN_00636310/FUN_00636b50/FUN_00638840
+（全 0x63xxxx 区）。
+**49B 全字节读完**（= 0x31，0x63EF70-0x63EF9E，ret 4 = 1 栈参，双出口
+bool）。
+取证手段：disasm.py 全读 + **batch 469 字段表逐项比对（DynamicVectorClass:
++4 Items/+8 Capacity/+0xC IsInitialized/+0xD IsAllocated/+0x10 Count）** +
+**batch 515/524 前移压缩移除同族对照**。
+
+================================================================================
+0x0063EF70 —— DynamicVectorClass::Remove（推断名，49B，ret 4 = 1 栈参）
+================================================================================
+机器码（完整，49B 整数）：
+```
+0063ef70  mov edx,[ecx+0x10]      ; ★★this+0x10 = Count（batch 469 字段表）
+0063ef73  mov eax,[esp+4]         ; ★栈参 1 = 索引 index
+0063ef77  cmp eax,edx / jge 0x63ef9c   ; ★index >= Count → 返 0（失败）
+0063ef7b  dec edx / cmp eax,edx
+0063ef7e  mov [ecx+0x10],edx      ; ★★Count--
+0063ef81  jge 0x63ef97            ; ★移除末元素 → 跳过搬移
+0063ef83  push esi
+0063ef84  mov edx,[ecx+4]         ; ★★this+4 = Items（数组基址）
+0063ef87  inc eax
+0063ef88  mov esi,[edx+eax*4]     ; ★★前移压缩：Items[i] = Items[i+1]
+0063ef8b  mov [edx+eax*4-4],esi
+0063ef8f  mov edx,[ecx+0x10] / cmp eax,edx / jl 0x63ef84  ; ★搬移循环
+0063ef96  pop esi
+0063ef97  mov al,1 / ret 4        ; ★★成功 → 返 1
+0063ef9c  xor al,al / ret 4       ; ★越界 → 返 0
+```
+**语义（推断名 + 字段布局实锤）**：**DynamicVectorClass::Remove(index)**
+——ret 4 = 1 栈参（索引），双出口 bool：
+1. **越界检查**：index >= Count（+0x10）→ 返 0；
+2. **Count--**（+0x10）；
+3. **前移压缩**：Items[i] = Items[i+1] 循环（+4 基址，**4 字节/项**）；
+4. 成功返 1。
+**字段布局与 batch 469（DynamicVectorClass::SetCapacity，YRpp
+ArrayClasses.h 实锤）完全一致**：**+4 Items / +0x10 Count**（对照表：
++4 Items/+8 Capacity/+0xC IsInitialized/+0xD IsAllocated/+0x10 Count）
+——本函数是 **batch 469 SetCapacity 的姊妹成员 Remove**（Add 已有
+batch 467 0x63E540）。
+★原版怪癖（照抄）：① **越界返 0 不抛异常**（bool 双出口——静默失败）；
+② **前移压缩保持顺序**（Items[i]=Items[i+1]——batch 515/524 同族
+O(n) 搬移）；③ **末元素移除跳过搬移**（`jge 0x63EF97`——index==Count-1
+时零搬移快路径）；④ **计数先减后搬**（dec/mov [Count]/再进搬移循环
+——batch 524 同款中间态）；⑤ **4 字节/项硬编码**（`[edx+eax*4]`——
+int/指针元素）；⑥ **不缩容不释放**（只减 Count——容量保持，
+SetCapacity 才处理内存）；⑦ ret 4 + 双出口（1 成功 / 0 失败）。
+★跨批次闭合：**batch 469 0x50EA90（DynamicVectorClass::SetCapacity
+——字段表实锤：+4/+8/+0xC/+0xD/+0x10；本条=其 Remove 姊妹成员）**+
+**batch 467 0x63E540（Add——容器三件套 Add/Remove/SetCapacity 齐备）**+
+**batch 472/474（Clear 0x512D30/0x5134D0 孪生）**+**batch 515 0x4109C0
+（全局对象数组反注册器——前移压缩同族）**+**batch 524 0x557730（计数
+数组元素移除器——前移压缩 + 计数先减后搬同族）**。
+⚠️ partial：宿主容器元素类型（4 字节——int/指针推断，DynamicVectorClass
+模板实例），callers 四函数身份（0x63xxxx 区——容器消费端推断）。
+
+================================================================================
+（batch 529 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**（DynamicVectorClass 容器族已由
+batch 469 建模 SetCapacity、467 建模 Add——本条=同族 Remove 成员，
+字段布局完全对齐；模板元素类型未确认）。模型价值：**容器三件套齐备**
+（Add 467 / Remove 本条 / SetCapacity 469）+ **前移压缩移除第三实例**
+（batch 515/524/本条）。本批无产品代码改动，ctest 维持 **43/43 全绿**
+（batch 372 已实跑核实）。登记一行 semantics_verified +
+assembly_verified_semantics_confirmed（全段字节读完 + 字段表逐项对齐 +
+同族交叉），partial 项如实标注。
