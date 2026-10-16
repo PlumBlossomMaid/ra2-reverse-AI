@@ -1,0 +1,66 @@
+frontier batch 572 — LoadOptionsClass::LoadOptionsClass 0x00558740（75B）（2026-10-16）
+
+口径：候选**只从 picker 未登记池取**（ranking 0x558740 观察名 LoadOptionsClass::
+LoadOptionsClass/body=75B、callers=3/unique=3/**deps=4061**，unique_callers
+FUN_004f1720/**FUN_0052d9a0（选关 0x52D9A0，QWEN.md 游戏运行流实锤）**/**MapSeed
+Class::MapSeedClass（ranking 带名——RMG 生成器构造链）**——均未登记）。**75B 全字节
+读完**（0x558740-0x55878A，ret 无栈参，thiscall；batch 567 已作为 LoadDialog 入口
+的同类构造器全读参照）。
+取证手段：disasm.py 全读（batch 567 复用）+ **+8 串常量 PE 实测（"SAV"）** +
+batch 359（0x558790 析构配对端）+ batch 567（0x5587F0 LoadDialog 入口）+ ranking
+调用者。
+
+================================================================================
+0x00558740 —— LoadOptionsClass::LoadOptionsClass（推断名，75B）
+================================================================================
+机器码（完整 75B）：
+```
+00558740  push esi/mov esi,ecx/xor eax
+00558745  lea ecx,[esi+0x20]                     ; ★★this+0x20 子对象
+00558748  mov [ecx+4],0/mov [ecx+8],0
+0055874e  mov byte [ecx+0xc],1                   ; ★子对象标志 = 1
+00558752  mov byte [ecx+0xd],0
+00558755  mov [ecx],0x7ed30c                     ; ★★子对象虚表 0x7ED30C
+0055875b  mov [ecx+0x14],0xa                     ; ★上限 10
+00558762  mov [ecx+0x10],0
+00558765  mov [esi+4],0/mov [esi+0xc],0/mov [esi+0x14],0
+00558770  mov [esi],0x7ed2e4                     ; ★★主虚表 0x7ED2E4
+00558776  mov [esi+8],0x829ea0                   ; ★★+8 = 串指针（PE 实测 = "SAV"）
+0055877d  mov [esi+0x10],0x800                   ; ★★+0x10 = 0x800 = 2048（缓冲上限）
+00558784  call [eax+0xc]                         ; ★子对象虚表槽 0xC（收尾）
+00558787  mov eax,esi/pop esi/ret                ; ★返 this
+```
+**串常量实测（PE 读取）**：`0x829EA0 = "SAV"`（len 3）——+8 字段指向"SAV"标记串。
+**语义（推断名）**：**LoadOptionsClass::LoadOptionsClass**——thiscall 无栈参：
+① **+0x20 子对象初始化**：清 +4/+8、置 byte+0xC=1/+0xD=0、装虚表 0x7ED30C、+0x14=10
+   （上限）、+0x10=0；
+② **主对象初始化**：清 +4/+0xC/+0x14、装主虚表 0x7ED2E4、+8="SAV" 串指针、
+   +0x10=0x800（2048 缓冲上限）；
+③ **子对象收尾**：子对象虚表槽 0xC（初始化链）→ 返 this。
+★原版怪癖（照抄）：① **双虚表**（主 0x7ED2E4 + 子对象 0x7ED30C——C++ 内嵌子对象
+   布局）；② **+8 固定指向 "SAV" 串**（保存/载入模式标记推断——LoadOptions 的
+   SAVE 语义）；③ **+0x10 = 0x800（2048）缓冲上限 + 子对象 +0x14 = 10 上限**（两处
+   容量常量）；④ **子对象 byte+0xC=1 / +0xD=0**（标志对）；⑤ 收尾调子对象虚表槽
+   0xC（构造器内子对象初始化链）。
+★跨批次闭合：**batch 359（0x558790 MapSeed 链容器析构——同装主虚表 0x7ED2E4、
+   +0x20 子对象虚表槽 0xC 析构链、+0xD 标志——本条=其构造配对端，构造/析构双虚表
+   对闭合）**+**batch 567（0x5587F0 LoadDialog 入口——同类紧邻，+4 模式字段与
+   0x558DD0 主体）**+**MapSeedClass::MapSeedClass（ranking 带名调用者——QWEN.md
+   "MapSeedClass : LoadOptionsClass 继承"的基类构造调用点实锤）**+**FUN_0052d9a0
+   （选关 0x52D9A0，QWEN.md 实锤）**。
+⚠️ partial：宿主类精确身份（LoadOptionsClass 推断——ranking 观察名成分为
+   LoadOptionsClass::LoadOptionsClass）、+8 "SAV" 串语义（保存模式标记推断）、
+   +0x10=0x800/+0x14=10 容量含义、子对象虚表槽 0xC 方法名、FUN_004f1720（调用者
+   新候选）、+4/+0xC/+0x14 字段语义。
+
+================================================================================
+（batch 572 说明：C++ 模型决策）
+================================================================================
+本批新增 1 行，**不新增 C++ 模型**：宿主类（LoadOptionsClass）未闭合，构造器为纯
+字段初始化 + 虚表安装，无算法切片。模型价值：**LoadOptionsClass 构造布局**（主虚表
+0x7ED2E4 + 子对象 0x7ED30C + "SAV" 串 + 双容量常量）+ **MapSeedClass 基类构造链
+实锤**（ranking 带名调用者——QWEN.md 继承链的构造端证据，与 batch 567 LoadDialog
+入口 + batch 359 析构端构成 LoadOptions 生命周期三端）。1 个调用者候选
+（FUN_004f1720）。本批无产品代码改动，ctest 维持 **43/43 全绿**。登记一行
+semantics_verified + assembly_verified_semantics_confirmed（75B 全段字节读完 +
+串常量 PE 实测 + 三批次锚点交叉），partial 项如实标注。
