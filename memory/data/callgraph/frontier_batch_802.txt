@@ -1,0 +1,176 @@
+frontier batch 802 —— 0x007B64E0 窄字符串拼接赋值器（推断名）
+================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=167 / body=334B）。
+TARGET = 0x007B64E0（.text，334B，thiscall 2 参 ret 4）
+推断名：窄字符串拼接赋值器（edx 源串 + 栈参1 追加串 → 合并赋给
+this->+0——strlen+operator new+手写 strcpy 三件套 + 默认空串常量
+0x889F64 回退，与 batch 202/281 拼接器同族）
+
+一、函数体全读（334B，disasm 0x7B64E0 400）
+------------------------------------------
+参数契约（thiscall ret 4 = 1 栈参）：
+  ecx = this（存 ebp——输出目标，最终写 [this]=新串）
+  edx = 源串对象指针（[edx] = 源串指针——第一输入）
+  栈参1 = [esp+8]（追加串对象指针——取其 +0 串；该对象 +0 为
+          NULL 时回退默认常量 0x889F64 空串）
+  返回 eax = this
+
+机器码（334B 全读）：
+  入口：mov esi,edx（源串对象）→ mov ebp,ecx（this）→ mov edi,
+  [esi]（源串指针）→ xor ebx,ebx → test edi,edi / je 0x7b6528
+  （★源串空 → 无副本）→ 复制源串：repne scasb / not ecx（strlen
+  +1）→ push ecx / call 0x7C8E17（★★operator new batch 001）→
+  重新取 [esi] → mov ebx,eax（★ebx = 源串副本）→ 再 repne scasb
+  求长 → sub edi,ecx / mov esi,edi（源串起点）→ shr ecx,2 /
+  rep movsd / and ecx,3 / rep movsb（★★手写 strcpy 含 NUL）
+  0x7b6528: mov ecx,[esp+0x18]（栈参1 对象）→ mov eax,[ecx]
+  （+0 串）→ test eax,eax / jne 0x7b653d → mov esi,0x889F64（★★
+  空串常量——batch 202 同款回退）→ 0x7b653d: esi = 追加串
+  0x7b6543: test esi,esi / je 0x7b65db（追加串空 → 跳过拼接）→
+  mov edi,esi / repne scasb / not ecx / dec ecx → mov edx,ecx /
+  inc edx（len 追加串）→ mov ebp,ebx（★保存源串副本）→ test
+  ebx,ebx / je → mov edi,ebx / repne scasb / not ecx / dec ecx →
+  add edx,ecx（计总长 = len(源串)+len(追加串)+1）→ 0x7b656c:
+  push edx / call 0x7C8E17（★★operator new 拼接缓冲）→ mov
+  ebx,eax（新拼接缓冲）→ test ebp / je 0x7b65a0（无源串 → 写空）
+  → 拷源串副本到新缓冲（rep movsd/movsb）→ 0x7b65a3: mov edi,
+  esi（追加串）→ repne scasb / not ecx / sub edi,ecx（追加串起
+  点）→ rep movsd/movsb（★拼接到新缓冲末尾——dec edi 退 NUL）
+  → test ebp / je → push ebp / call 0x7C8B3D（★★delete 源串副本
+  batch 001）→ 0x7b65d7: mov ebp,[esp+0x10]（恢复 this）→
+  0x7b65db: test ebx（拼接缓冲）→ mov [ebp],0（★this->+0 先清
+  NULL）→ je 0x7b6624（空 → 无写）→ 复制 ebx 到新分配（又一次
+  0x7C8E17 new + rep movsd/movsb——★★最终 this->+0 = 拼接结果新
+  副本，防别名）→ push ebx / call 0x7C8B3D（delete 中间拼接缓
+  冲）→ 0x7b6624: pop 族 / mov eax,ebp（返 this）/ ret 4
+
+语义：**窄字符串拼接赋值器（推断名）**——把 edx 指向的源串与栈
+参1 对象的 +0 串（空回退 0x889F64）拼接后赋给 this->+0：
+①源串复制进副本；②追加串 strlen 求长、与源串副本长合计 → 分配
+拼接缓冲 → 拷源串副本 → 拼追加串 → 释放源串副本；③为防源串/追
+加串与 this->+0 别名，最后再 new 一份拼接结果副本写入 this->+0、
+释放中间拼接缓冲。返回 this。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_802_calls.py：8 处调用点
+  0x767343 / 0x769A78 / 0x76F9E4 / 0x76FA2A / 0x770627 /
+  0x770746 / 0x770869 / 0x7710D0
+_locate_802_callers.py：归属
+  0x767343 → 无归属（函数间隙——0x767320 起函数未登记）
+  0x769A78 → 无归属（函数间隙）
+  0x76F9E4 → 0x0076F970 FUN_0076F970 [0x76F970-0x76FB8C]
+    body=541（0x65/76 区宿主）
+  0x76FA2A → 0x0076F970 FUN_0076F970 body=541
+  0x770627 → 0x00770550 FUN_00770550 [0x770550-0x770844]
+    body=757
+  0x770746 → 0x00770550 FUN_00770550 body=757
+  0x770869 → 无归属（函数间隙——0x770850 起函数未登记）
+  0x7710D0 → 0x007710B0 FUN_007710B0 [0x7710B0-0x7712BB]
+    body=524
+
+三、调用点现场（形态统一——前置串构造 + push + call）
+----------------------------------------------------
+【调用点 1】0x767343（间隙——0x767320 起函数）
+  00767320  push ecx/esi / mov esi,ecx / mov ecx,[esp+0x10] /
+  mov eax,[esi] / push ecx / mov ecx,esi / call [eax+0x14]（★宿
+  主虚调用）→ mov edx,eax / lea ecx,[esp+4] / call 0x7B6290（★
+  batch 199 字符串持有器赋值）→ push eax（★栈参1=追加串持有器）
+  → lea edx,[esi+0x10]（★源串字段 +0x10）→ lea ecx,[esp+0x14]
+  （目标临时）→ call 0x7B64E0
+【调用点 2】0x769A78（间隙）
+  00769a60  xor esi,esi / push 2 / mov edx,edi / lea ecx,[esp+0x64]
+  / call 0x7B6320（★batch 276 宽串组装赋值）→ lea ecx,[esp+0x38]
+  → mov edx,[esp+0x74]（★源串）→ push eax（栈参1）→ call 0x7B64E0
+【调用点 3】0x76F9E4 in FUN_0076F970（body=541）
+  0076f9b5  push 0x849198（★常量串——宿主 vtable 0x7F7334 构造
+  域）→ [esi+0x24/0x28/0x2C]=0 → lea eax,[esp+0x18] / push eax /
+  push 2 / mov edx,ebp / lea ecx,[esp+0x28] / mov [esi],0x7F7334
+  → call 0x7B6320（★batch 276 宽串组装赋值）→ mov edx,[esp+0x3C]
+  （源串）→ push eax（栈参1）→ lea ecx,[esp+0x24]（目标）→ call
+  0x7B64E0 → mov ecx,eax / call 0x7B4DA0（★★batch 281 字符串拼
+  接器变体——调用点后立即复用返回值）
+【调用点 4】0x76FA2A in FUN_0076F970
+  0076fa06  call 0x7B46F0（★串析构？）×2 → push 2 / mov edx,ebp
+  / lea ecx,[esp+0x38] / call 0x7B6320 → mov edx,[esp+0x38]（源
+  串）→ push eax（栈参1）→ lea ecx,[esp+0x14]（目标）→ call
+  0x7B64E0
+【调用点 5】0x770627 in FUN_00770550（body=757）
+  00770603  push 0x8491E0（常量串）→ lea ecx,[esp+0x18] / call
+  0x7B4630（★串构造）→ mov esi,[esp+0x10] → lea eax,[esp+0x14] /
+  push eax / mov ecx,[esi] / call 0x7AF2A0（★取成员串）→ mov
+  edx,eax（源串）→ lea ecx,[esp+0x1C]（目标）→ call 0x7B64E0
+【调用点 6】0x770746 in FUN_00770550
+  00770722  push 0x8491D0（常量串）→ ... 与调用点 5 同构（0x7B4630
+  + 0x7AF2A0 + call 0x7B64E0）
+【调用点 7】0x770869（间隙——0x770850 起函数）
+  00770850  mov eax,[esp+0x10] / sub esp,8 / push esi / mov esi,ecx
+  → push eax / mov ecx,[esi] / call 0x7AF2A0（取成员串）→ mov
+  edx,eax（源串）→ lea ecx,[esp+0x10]（目标）→ call 0x7B64E0
+【调用点 8】0x7710D0 in FUN_007710B0（body=524）
+  007710b0  push ecx / mov eax,[esp+0x18] / push ebx/esi / mov esi,
+  ecx / push edi / lea ecx,[esp+0xC] / push eax / push ecx / mov
+  ecx,[esp+0x24] / push esi / call 0x7AF2A0（★取成员串）→ mov
+  edx,eax（源串）→ lea ecx,[esp+0x28]（目标）→ call 0x7B64E0 →
+  mov ecx,eax / call 0x7B4ED0（★★batch 202 字符串拼接器——调用
+  点后立即复用返回值）
+  形态：全部为「取成员串/构造临时串 → edx=源串 → 栈参1=追加串
+  → ecx=目标 → call」——调用点 3/8 后接已登记拼接器（0x7B4DA0/
+  0x7B4ED0）复用返回值，证明 0x7B64E0 返回值语义 = 目标对象指针。
+
+四、被调/全局登记核验（grep frontier_status.tsv）
+-----------------------------------------------
+  0x7C8E17 —— ★★★batch 001 已登记 operator new（本函数 3 次调用
+    ——源串副本/拼接缓冲/最终副本）
+  0x7C8B3D —— ★★★batch 001 已登记 C++ delete（本函数 3 次调用
+    ——源串副本/中间拼接缓冲）
+  0x7B4DA0 —— ★★batch 281 已登记字符串拼接器变体（调用点 3 后
+    接复用）
+  0x7B4ED0 —— ★★batch 202 已登记字符串拼接器（调用点 8 后接复
+    用——0x7B64E0 与它同族同构）
+  0x7B6320 —— ★★batch 276 已登记宽串组装赋值（调用点 2/3/4 前置
+    ——构造栈参1 追加串）
+  0x7B6290 —— ★★batch 199 已登记字符串持有器赋值（调用点 1 前置）
+  0x889F64 —— 空串常量（batch 202 默认串同款）——未登记（新候选）
+  0x7AF2A0 / 0x7B4630 / 0x7B46F0 —— 调用点取串/构造辅助——未登记
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★★0x7B4ED0（batch 202 字符串拼接器）= 同族同构——函数体
+    「源串副本+追加拼尾+final 再 new 防别名＋空串 0x889F64 回退」
+    与 0x7B4ED0 完全同款（batch 202 文档：空参数回退 0x889F64）；
+    调用点 8 后接 0x7B4ED0 复用返回——家族两成员同宿主联动
+  ★★0x7B4DA0（batch 281 字符串拼接器变体）= 调用点 3 后接复用
+    ——拼接器家族第三成员实锤
+  ★★0x7C8E17/0x7C8B3D（batch 001 operator new/delete）= 三件套
+    分配释放锚点（批次 198/199/202/276/281 六例同款）
+  ★★strlen（repne scasb）+operator new+手写 strcpy（shr 2/rep
+    movsd+and 3/rep movsb）三件套在台账的第七例（前六：
+    0x5E32D0/0x7B6290/0x7B4ED0/0x7B6320/0x7B4DA0 等）
+  新候选：0x889F64（空串常量）、0x7AF2A0/0x7B4630/0x7B46F0
+    （串辅助族）、FUN_0076F970/FUN_00770550/FUN_007710B0
+    （0x76/77 区宿主）、两间隙宿主（0x767320 起/0x770850 起
+
+六、原版怪癖（照抄）
+-------------------
+① 追加串对象 +0 为 NULL 时回退默认常量 0x889F64 空串（与 batch
+   202 0x7B4ED0 同款回退）；
+② 最终写入前【先清 this->+0 再 new 副本】——mov [ebp],0 前置防
+   别名（batch 281 同款「输出指针先清零后写」）；
+③ 三件套分配两次释放（源串副本/拼接缓冲/最终副本 = new×3
+   delete×2，中间拼接缓冲释放、源串副本视有无释放）；
+④ 拼接用 strlen 两段合计（含 +1 NUL），追加串段 dec edi 退 NUL
+   再续写；
+⑤ 返回 this（调用点后接 0x7B4DA0/0x7B4ED0 复用——返回值语义实
+   锤）。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：宿主类名与字段语义（this->+0 窄串指针、[edx]/[esp+8]
+对象结构——StringClass 推断）；栈参1 对象精确类型（追加串持有
+器——0x7B6320/0x7B6290 返回对象推断）；0x889F64 常量内容（空串
+推断——batch 202 同款但未 dump）；三个宿主真实身份（0x76/77 区
+——构造 0x7F7334 vtable 对象后拼接域推断）；调用点 2/4 前置
+0x7B6320（宽串组装）与 0x7B64E0（窄串拼）混用的业务场景。
