@@ -1,0 +1,199 @@
+frontier batch 818 —— 0x00486FF0 格子可通行判定（寻路系谓词）
+============================================================
+
+候选来源：ranking.tsv（callers=3 / deps=136 / body=182B）。
+TARGET = 0x00486FF0（.text，182B，thiscall 无栈参，返回 al 布尔）
+★★推断名：格子可通行判定（寻路系谓词）——13 调用点 3 个带名
+宿主全在寻路/移动系统（FootClass::UpdatePathfinding / MapClass::
+NearByLocation / UnitClass::AssignDestination），形态统一全经
+GetCellAt 系取 CellClass* 传 ecx
+
+一、函数体全读（182B，disasm 0x486FF0 182）
+---------------------------------------------
+参数契约（thiscall 无栈参）：ecx = this（CellClass*），返回
+al（1=可通行/无阻挡，0=被阻挡）。
+机器码（182B 全读）：
+  00486ff0  push esi / push edi
+  00486ff2  mov edi,ecx                 ; this
+  00486ff4  push 1                      ; ★checkLevel=1
+  00486ff6  push edi                    ; pCell = this
+  00486ff7  mov ecx,0x87F7E8            ; ★★MapClass::Instance
+  00486ffc  call 0x578540               ; ★★IsWithinUsableArea
+                                        ;   （batch 185 已登记）
+  00487001  test al,al / jne 0x48700A   ; ★al!=0（在可用区域）
+                                        ;   继续；al==0（不在）→
+                                        ;   0x487005 返 1（边缘放行）
+  00487005  pop edi / mov al,1 / pop esi / ret   ; ★不在可用区域返 1
+  0048700A  mov eax,[edi+0x38]          ; ★cell+0x38 索引
+  0048700d  test eax,eax / jl 0x48702C  ; 索引<0 → 跳过查表
+  00487011  cmp eax,[0xA8ED38]          ; ★表长
+  00487017  jge 0x48702C                ; 索引>=表长 → 跳过查表
+  00487019  mov ecx,[0xA8ED2C]          ; ★★[0xA8ED2C] 全局对象表
+                                        ;   （batch 222 init/322 dtor）
+  0048701f  mov edx,[ecx+eax*4]         ; 取表项
+  00487022  mov al,[edx+0x305]          ; ★项+0x305 字节
+  00487028  test al,al / je 0x4870A1    ; ==0 → 返 0（表标记阻挡）
+  0048702C  mov al,[edi+0x11C]          ; ★cell+0x11C 层标志
+  00487032  test al,al / jne 0x4870A1   ; 非 0 → 返 0
+  00487036  mov eax,[edi+0x140]         ; ★cell+0x140 位字
+  0048703c  test ah,5 / jne 0x4870A1    ; 高位 bit0/bit2 → 返 0
+  00487041  mov al,[0xA8E9A0]           ; ★★全局开关（batch 066 等）
+  00487046  test al,al / je 0x48709C    ; 关 → 返 1
+  0048704A  mov esi,[edi+0xE4]          ; ★★+0xE4 对象链头
+                                        ;   （batch 066 同字段）
+  00487050  test esi,esi / je 0x48706D  ; 链空 → 跳过
+  00487054  loop1: mov eax,[esi] / mov ecx,esi / call [eax+0x2C]
+                                        ; ★虚表槽 0x2C 类型查询
+  0048705b  cmp eax,6 / je 0x487069     ; ★==6（建筑）→ 命中
+  00487060  mov esi,[esi+0x30] / test / jne 0x487054  ; 沿 +0x30 推进
+  00487067  jmp 0x48706D
+  00487069  test esi,esi / jne 0x4870A1 ; ★★找到建筑 → 返 0
+  0048706D  mov al,[0xA8E9A0] / test / je 0x48709C  ; 开关复查
+  00487076  mov esi,[edi+0xE4] / test / je 0x48709C  ; 链空 → 返 1
+  00487080  loop2: mov edx,[esi] / mov ecx,esi / call [edx+0x2C]
+  00487087  cmp eax,0x24 / je 0x487098  ; ★==0x24（地形）→ 命中
+  0048708c  mov esi,[esi+0x30] / test / jne 0x487080  ; 沿 +0x30 推进
+  00487093  pop edi / mov al,1 / pop esi / ret   ; ★链尽 → 返 1
+  00487098  test esi,esi / jne 0x4870A1 ; ★★找到地形 → 返 0
+  0048709C  pop edi / mov al,1 / pop esi / ret   ; ★返 1
+  004870A1  pop edi / xor al,al / pop esi / ret   ; ★返 0
+语义：**格子可通行判定（寻路系谓词，推断名）**——判定 CellClass*
+指向的格子是否可通行/无阻挡：
+① 首段调 MapClass::IsWithinUsableArea(pCell=this, checkLevel=1)
+   （batch 185 已登记）——不在可用区域直接返 1（边缘格放行）；
+② 在可用区域内：cell+0x38 索引查 [0xA8ED2C] 全局对象表（batch
+   222/322），表项 +0x305 字节非 0 → 返 0（被表标记阻挡）；
+③ cell+0x11C 层标志非 0 → 返 0；cell+0x140 高位 bit0/bit2
+   （0x500）→ 返 0；
+④ [0xA8E9A0] 全局开关开启时：遍历 cell+0xE4 对象链（+0x30 链
+   节），虚表槽 0x2C 类型 ==6（建筑——batch 066 GetBuilding 同
+   判据）→ 返 0；再遍历 ==0x24（地形——batch 216 GetTerrain 同
+   判据）→ 返 0；
+⑤ 其余全部返 1。
+★返回极性：1=可通行/无阻挡，0=被阻挡（建筑/地形/表标记）。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_816_calls.py（复用，TARGET=0x486FF0）：13 处调用点
+  0x4D3AEE / 0x4D3D50 / 0x56DE5F / 0x56E075 / 0x56E2B8 /
+  0x56E4BA / 0x72A0BF / 0x74211C / 0x742186 / 0x742943 /
+  0x742969 / 0x74482E / 0x7448B1
+_locate_816_callers.py：归属（★★3 个带名宿主全在寻路/移动系统）
+  0x4D3AEE / 0x4D3D50 → FootClass::UpdatePathfinding [0x4D3920-
+    0x4D41F2] body=2259（★★带名——步兵寻路更新）
+  0x56DE5F / 0x56E075 / 0x56E2B8 / 0x56E4BA → MapClass::
+    NearByLocation [0x56DC20-0x56E7B5] body=2966（★★带名——
+    邻近位置搜索）
+  0x74482E / 0x7448B1 → UnitClass::AssignDestination_7447B0
+    [0x7447B0-0x745FF6] body=6215（★★带名——单位指派目的地）
+  0x72A0BF / 0x74211C / 0x742186 / 0x742943 / 0x742969 → 无归属
+    （函数间隙——UnitClass/TechnoClass 区）
+
+三、调用点现场（全部干净——★★形态统一）
+--------------------------------------
+【调用点 1】0x4D3AEE in FootClass::UpdatePathfinding
+  004d3ad0  mov cl,[eax+0xD2C] / test / je 0x4D3AFC
+  004d3ada  lea eax,[esp+0x1FB0] / mov ecx,0x87F7E8 / push eax
+  004d3ae7  call 0x5657A0              ; ★★GetCellAt（坐标→CellClass*，
+                                        ;   TSV 241 已登记）
+  004d3aec  mov ecx,eax / call 0x486FF0; ★本条——this = 取回的 CellClass*
+  004d3af3  test al,al                 ; ★判可通行
+【调用点 2】0x56DE5F in MapClass::NearByLocation
+  0056de52  mov al,[esp+0x218] / test / je 0x56DE6C
+  0056de5d  mov ecx,esi / call 0x486FF0; ★本条——esi = 邻近候选格
+  0056de64  test al,al                 ; ★判可通行
+  形态：★★NearByLocation 内候选格逐个做可通行判定
+【调用点 3】0x72A0BF（间隙——0x72A088 起 disasm 错位）
+  0072a090  push ecx / mov al,[0xA8ED6B] / test / jne 0x72A0D1
+  0072a09a  mov cx,[esp+0xE] / mov ax,[esp+0xC]  ; ★CellStruct 坐标
+  0072a0a4  lea edx,[esp] / mov word[esp+2],cx / push edx
+  0072a0ae  mov ecx,0x87F7E8 / mov word[esp+4],ax
+  0072a0b8  call 0x5657A0              ; ★★GetCellAt
+  0072a0bd  mov ecx,eax / call 0x486FF0; ★本条
+  0072a0c4  test al,al
+【调用点 4】0x74211C（间隙）
+  00742110  mov ecx,0x87F7E8 / call 0x5657A0  ; ★★GetCellAt
+  0074211a  mov ecx,eax / call 0x486FF0; ★本条
+  00742121  mov edi,[esp+0x94] / 后续虚表槽 0x48 调用
+【调用点 5】0x742186（间隙）
+  00742173  call 0x5657A0              ; ★★GetCellAt
+  00742178  mov ebx,[eax+0x140] / mov ecx,eax / shr ebx,8 /
+    and bl,1                           ; ★检查 +0x140 位（与函数体同字段）
+  00742186  call 0x486FF0              ; ★本条
+【调用点 6】0x742943（间隙）
+  00742936  push eax / mov ecx,0x87F7E8 / call 0x565730
+                                        ; ★★GetTargetCell（batch 059）
+  00742941  mov ecx,eax / call 0x486FF0; ★本条
+  00742948  test al,al / je 0x7429D4
+【调用点 7】0x742969（间隙）——0x742950 起
+  00742959  call [edx+0x48] / push eax / mov ecx,0x87F7E8 /
+    call 0x565730                      ; ★★GetTargetCell
+  00742967  mov ecx,eax / call 0x486FF0; ★本条
+  0074296e  test al,al / je 0x7429D4
+  形态统一：★★13 处调用点全部「GetCellAt/GetTargetCell 取格 →
+  传 ecx 调本条 → test al」——本条是寻路系统公用的格子通过性
+  判定，取格两兄弟（0x5657A0 坐标版 / 0x565730 实数版）都是入口
+
+四、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x578540 —— ★★已登记（batch 185 MapClass::IsWithinUsableArea
+    YRpp MapClass.h:326-327 实锤）——函数体首段 checkLevel=1
+  0x5657A0 —— ★★已登记（TSV 241 坐标→CellClass* 查表，idx=x+
+    (y<<9)）——4 个调用点入口
+  0x565730 —— ★★已登记（batch 059 MapClass::GetTargetCell 实数
+    坐标版）——2 个调用点入口
+  0x47C520 —— ★★已登记（batch 066 CellClass::GetBuilding 虚表槽
+    0x2C==6 建筑）——函数体第一链同判据
+  0x47C550 —— ★★已登记（batch 216 CellClass::GetTerrain 虚表槽
+    0x2C==0x24 地形）——函数体第二链同判据
+  [0xA8ED2C]/[0xA8ED38] —— ★★已登记（batch 222 init/322 dtor
+    全局对象表）——batch 222 partial 原文「索引取自 cell->[0x38]
+    16 位 0xFFFF 无主哨兵」在本条 mov eax,[edi+0x38] 逐字节兑现
+  [0xA8E9A0] —— ★★已登记（batch 066/173/216/236/287 等全局开
+    关）——函数体双读门控
+  [0x87F7E8] —— MapClass::Instance（QWEN.md 实锤）
+  宿主 FootClass::UpdatePathfinding / MapClass::NearByLocation /
+    UnitClass::AssignDestination —— functions.tsv 带名（未登记
+    frontier，新候选）
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★batch 185（0x578540 IsWithinUsableArea——函数体首段调用，
+    本批给出该函数在寻路判定的使用场景）
+  ★★batch 222/322（[0xA8ED2C] 全局对象表 init/dtor——本条查表
+    应用点，partial 原文「索引取自 cell->[0x38]」逐字节兑现）
+  ★★batch 066（GetBuilding ==6 建筑）/batch 216（GetTerrain
+    ==0x24 地形）——函数体两链遍历判据同款
+  ★★TSV 241（0x5657A0 坐标→CellClass*）+batch 059（0x565730
+    GetTargetCell）——13 调用点全部经这两兄弟取格，寻路系取格
+    入口闭环
+  ★★3 个带名宿主全在寻路/移动系统——本条定位为寻路公用的
+    「格子可通行」判定（与 batch 287 的 CanThisExistHere 1116B
+    大判定不同——本条目是精简 182B 高频谓词）
+
+六、原版怪癖（照抄）
+-------------------
+① 首段 IsWithinUsableArea 失败返 1（不在可用区域反而放行——
+   边缘格/越界格默认可通行，寻路不会卡在地图边缘）；
+② 表查仅在索引 ∈ [0,表长) 时进行（jl/jge 双边界跳过——越界
+   索引不查表直接走后续）；
+③ [0xA8ED2C] 表项 +0x305 字节非 0 判定阻挡（表项字节标记）；
+④ 三处独立标志门控（+0x38 表查、+0x11C、+0x140 高位 0x500）
+   互不短路合并；
+⑤ [0xA8E9A0] 开关双读（第一次链遍历前、第二次链遍历前各读一
+   次——开关中途关闭则跳过链遍历）；
+⑥ 两链遍历判据不同（建筑==6 走 0x487069 出口、地形==0x24 走
+   0x487098 出口——各带 test esi 复查）；
+⑦ 返回极性 1=可通行/0=被阻挡（与 batch 287 CanThisExistHere
+   的返回语义不同——本谓词是寻路用「能否通过」非「能否存在」）。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「格子可通行判定」——YRpp 未对齐，
+寻路系 IsPassable/Can_Enter_Cell 类候选）、[0xA8ED2C] 表项
++0x305 字节业务语义（表项类型/标记位推断）、+0x11C/+0x140 位
+标志业务含义、[0xA8E9A0] 开关语义（全局对象链启用标志推断）、
+5 处间隙调用点的宿主（UnitClass/TechnoClass 区大函数）、本函
+数与 batch 287 CanThisExistHere（0x47C620）的调用关系（是否互
+调/分工）。
