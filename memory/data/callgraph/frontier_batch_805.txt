@@ -1,0 +1,195 @@
+frontier batch 805 —— 0x00688ED0 随机偏移试探放置器（推断名）
+==============================================================
+
+候选来源：ranking.tsv（callers=3 / deps=163 / body=1045B）。
+TARGET = 0x00688ED0（.text，1045B，thiscall 2 寄存器参 + 1 栈参
+ret 4）
+推断名：随机偏移试探放置器（地图对象——8 方向随机偏移 + 边界钳
+制 + 地面类型 0xF 判定 + 多次重试放置；推断名，未带名）
+
+一、函数体全读（1045B，disasm 0x688ED0 1088）
+------------------------------------------
+参数契约（thiscall ret 4 = 1 栈参）：
+  ecx = 目标对象（存 ebx——虚调用 [eax+0x2C] 判定类型 0xF、
+        [eax+0xD8] 放置确认）
+  edx = 坐标指针（存 esi——word [esi]={X,Y} 16 位坐标）
+  栈参1 = [esp+0x70]（尝试深度/轮次计数，入口读、循环用）
+  返回 eax：1 = 放置成功 / 0 = 全部重试失败
+
+机器码（1045B 全读）：
+  入口：sub esp,0x5C / push 四寄存器 → mov esi,edx（坐标）→ mov
+  ebx,ecx（对象）→ push 1 / push esi / mov ecx,0x87F7E8（★★
+  MapClass::Instance QWEN.md 实锤）→ call 0x578460（★★batch 277
+  MapClass::IsWithinUsableArea——区域合法性校验）→ test al / je
+  0x688FB7（★首次校验失败 → 转重试循环）
+  0x688EF8: lea eax,[esp+0x3C]（栈坐标）→ push 0/0/栈坐标/esi →
+  call 0x5657A0（★★batch 241 坐标→CellClass* 查表）→ mov ecx,eax
+  → call 0x47C3D0（★★batch 166 CellClass::FindTechnoNearestTo）
+  → cmp eax,0 / je 0x688F3B → mov edx,[eax] / call [edx+0x2C]（★
+  虚调用取类型）→ cmp eax,0xF / jne 0x688FB9（★类型!=15 → 重试）
+  → mov eax,[ebx] / call [eax+0x2C]（目标对象类型）→ cmp eax,0xF
+  / jne 0x688FB9
+  0x688F3B: movsx ecx,word[esi] / movsx edx,word[esi+2] → shl
+  ecx,8 / add ecx,0x80（★★×256+128 = 8.8 定点像素中心换算——与
+  batch 616/680 同款）→ shl edx,8 / add edx,0x80 → lea eax,[esp+
+  0x48] / push eax / mov ecx,0x87F7E8 → call 0x578080（★★batch
+  269 MapClass::GetCellFloorHeight——层高）→ mov [esp+0x44],eax
+  → 再算一遍 → lea ecx,[esp+0x3C] → push 0 / push ecx / mov ecx,
+  ebx → call [eax+0xD8]（★★虚调用 0xD8 放置确认）→ test al / jne
+  0x688FA8（★成功 → 返 1）
+  0x688FB7: xor edi,edi / 0x688FB9: mov eax,[esp+0x70]（栈参1 轮
+  次）→ cmp eax,0x20 / jge 0x6892D9（★>=32 次 → 失败返 0）→
+  0x688FCE: mov edx,[0xA8B230]（★★全局对象指针——batch 804 调用
+  点同源）→ push 7 / push 0 / lea ecx,[edx+0x218] → call 0x65C7E0
+  （★★★QWEN.md 实锤 Randomizer::RandomRanged——方向 0..7）→ mov
+  [esp+0x14],eax（★方向）→ [esp+0x18]=0 / [esp+0x34]=0
+  0x688FFA: mov ebp,[0x87F918] / mov edx,[0x87F914] / movsx ecx,
+  word[esi] / movsx eax,word[esi+2] / mov esi,[0x87F90C]（★★地图
+  边界四值全局 [0x87F90C..0x87F918]）→ lea ebx,[esi+edx-1] →
+  lea ebp,[edi+ebp-1] → mov [esp+0x20],ebp → mov ebp,[esp+0x14]
+  （方向）→ cmp ebp,7 / ja 0x689081 → jmp [ebp*4+0x6892E8]（★★
+  8 方向跳转表：0x689039 上/0x689041 右上/0x68904B 右/0x689053
+  右下/0x68905D 下/0x689065 左下/0x68906F 左/0x689077 左上——±
+  [esp+0x70] 步长加减组合）
+  0x689085: 边界钳制（cmp ecx,ebx / jle；cmp ecx,esi / jge——
+  X/Y 各自钳到 [0x87F90C..0x87F918] 边界）→ mov word[esp+0x1C],
+  cx / word[esp+0x1E],ax（★16 位坐标写栈）→ [esp+0x10]=坐标
+  0x6890B8: cmp [esp+0x18],0 / jle（深度判定）→ 随机距离链：
+  RandomRanged（push 1/0 → [0xA8B230]+0x218）：0x6890E9 距离
+  0..？→ cmp eax,0x32 / jge 0x68911E（★距离>=50 向回）→ 0x689138
+  RandomRanged（push 1/0）→ 0x68914E RandomRanged（push 0x63/0）
+  → cmp eax,0x32 / jge → 距目标加减
+  0x689196: 目标坐标检查（cmp bx,[esi] / word[esp+0x12] vs
+  [esi+2]）→ 相同置 [esp+0x30]=1 → lea edx,[esp+0x10] → push 1 /
+  push edx / mov ecx,0x87F7E8 → call 0x578460（★★IsWithinUsable
+  Area 二次校验）→ test al / je 0x689293（重试）
+  0x6891C7: mov eax,[esp+0x30] / test / jne 0x689295（★重合跳过）
+  → push ebx / lea eax,[esp+0x4C] / push ebx / lea ecx,[esp+0x18]
+  / push eax / push ecx / mov ecx,0x87F7E8 → call 0x5657A0（★★
+  GetCellAt）→ mov ecx,eax / call 0x47C3D0（★★FindTechnoNearest
+  To）→ 类型 0xF 判定（与入口同款）→ movsx 坐标 ×256+128 → 0x41C230
+  （★★batch 066 三字段初始化/赋值）→ 0x578080 层高 → 0x41C230 →
+  push 0 / push 栈坐 / mov ecx,edi → call [eax+0xD8]（★虚调用放
+  置确认）→ test al / je 0x689295 → 成功 0x688FA8 返 1
+  0x689295: 循环推进：[esp+0x14]++ / 超 7 归 0 → [esp+0x34]++ /
+  超 7 归 0 → [esp+0x18]++ / >=2 归 0 → jl 0x688FF8 → 0x6892CB:
+  inc ebp / cmp ebp,0x20 / mov [esp+0x70],ebp / jl 0x688FCC（★
+  外层 32 轮）
+  0x6892D9: xor eax,eax（失败返 0）/ ret 4
+
+语义：**随机偏移试探放置器（推断名）**——给定目标对象与基准坐
+标，在 32 轮 × 深度/方向组合内：IsWithinUsableArea/GetCellAt/
+FindTechnoNearestTo 校验 + 8 方向随机偏移（RandomRanged 0..7 方
+向 + 0..99/0..1 距离）→ ×256+128 定点像素换算 → 边界钳制
+[0x87F90C..0x87F918] → 地面/对象类型 0xF 判定 → 虚调用
+[eax+0xD8] 放置确认；成功返 1，32 轮全败返 0。用于出生点/单位
+的随机试探放置（SpawnBaseUnits 等）。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_805_calls.py：6 处调用点
+  0x5CAB9A / 0x5CB506 / 0x5D70BF / 0x5D73C4 / 0x688BC5 /
+  0x688CD0
+_locate_805_callers.py：归属
+  0x5CAB9A → 无归属（函数间隙）
+  0x5CB506 → 无归属（函数间隙）
+  0x5D70BF → 0x005D7030 MPGameModeClass::SpawnBaseUnits
+    [0x5D7030-0x5D70E4] body=181（★★带名——多人出生单位生成）
+  0x5D73C4 → 0x005D70F0 FUN_005D70F0 [0x5D70F0-0x5D749A]
+    body=939
+  0x688BC5 → 0x006886B0 FUN_006886B0 [0x6886B0-0x688ECB]
+    body=2076
+  0x688CD0 → 0x006886B0 FUN_006886B0 [0x6886B0-0x688ECB]
+    body=2076
+
+三、调用点现场（全部干净）
+------------------------
+【调用点 1】0x5CAB9A（间隙）
+  005cab91  call 0x50DEF0（★★batch 215 条件字段选择读取器——取
+  坐标）→ mov edx,eax / mov ecx,esi → call 0x688ED0 → test eax /
+  jne 成功 → 失败 push 1 / call [eax+0x20]（★虚调用回退）
+【调用点 2】0x5CB506（间隙）
+  005cb4fd  call 0x50DEF0（push 3）→ mov edx,eax / mov ecx,esi →
+  call 0x688ED0 → test / jne 成功
+【调用点 3】0x5D70BF in MPGameModeClass::SpawnBaseUnits（181B）
+  005d70ad  lea edx,[esp+0x18] / push 1 / push edx / mov ecx,edi /
+  call 0x50DEF0（★★batch 215——取坐标）→ mov edx,eax / mov ecx,
+  esi → call 0x688ED0 → test eax / je 0x5D70D2（★失败跳过）→ 成
+  功 mov al,1 / ret 8
+【调用点 4】0x5D73C4 in FUN_005D70F0（939B）
+  005d7393  call [eax+0x8C]（★虚调用）→ push 0/0x817B58/0x817AF8/
+  0/push eax → call 0x7CAAE4（串格式化）→ lea ecx,[esp+0x14] →
+  push 4 / push ecx / mov ecx,ebx / call 0x50DEF0 → mov edx,eax /
+  mov ecx,edi → call 0x688ED0 → test / jne 成功
+【调用点 5】0x688BC5 in FUN_006886B0（2076B）
+  00688bb3  call [eax+0xD8]（★放置确认）→ test / jne 成功 → push
+  1 / lea edx,[esp+0x20] / mov ecx,esi → call 0x688ED0 → test /
+  jne 成功 → 失败 cmp esi,ebp
+【调用点 6】0x688CD0 in FUN_006886B0（2076B）
+  00688ca2  call 0x65C7E0（★★RandomRanged）→ mov esi,[ecx+eax*4]
+  → mov edx,[esi] → push eax / mov ecx,esi / call [edx+0x8C]（虚
+  调用）→ mov edi,eax → call 0x40DD70（★★batch 114 类型分派跳
+  转表——类型白名单判定）→ mov ebp,eax → lea edx,[esp+0x1C] →
+  push 4 / mov ecx,edi → call 0x688ED0 → test / jne 成功
+  形态统一：★放置确认失败后 → 0x50DEF0 取坐标 → call 0x688ED0
+  重试；SpawnBaseUnits 带名宿主实锤出生点场景。
+
+四、被调/全局登记核验（grep frontier_status.tsv）
+-----------------------------------------------
+  0x65C7E0 —— ★★★QWEN.md 实锤 Randomizer::RandomRanged + TSV:244
+    登记（4 次调用——方向/距离随机）
+  0x578460 —— ★★批量登记 MapClass::IsWithinUsableArea（TSV:277，
+    2 次调用——区域校验）
+  0x5657A0 —— ★★批量登记 坐标→CellClass* 查表（TSV:241，2 次调
+    用——GetCellAt）
+  0x47C3D0 —— ★★batch 166 CellClass::FindTechnoNearestTo（2 次调
+    用——找最近技术单位）
+  0x578080 —— ★★批量登记 MapClass::GetCellFloorHeight（TSV:269，
+    2 次调用——层高）
+  0x41C230 —— ★★batch 066 三字段初始化/赋值（2 次调用）
+  0x40DD70 —— ★★batch 114 类型分派跳转表（调用点 6 前置）
+  0x50DEF0 —— ★★batch 215 条件字段选择读取器（调用点 1/2/3/4 前置
+    ——取坐标）
+  [0x87F7E8] —— ★★MapClass::Instance（QWEN.md/batch 208 族实锤）
+  [0x87F90C..0x87F918] / [0xA8B230] —— 地图边界四值/对象指针全局
+    ——未登记（新候选）
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★★Randomizer::RandomRanged 0x65C7E0（QWEN.md RNG 里程碑）= 4
+    次随机偏移（方向 0..7 + 距离 0..99）——随机放置原语
+  ★★MapClass 家族五兄弟一次全命中（0x87F7E8 Instance + 0x578460
+    IsWithinUsableArea + 0x5657A0 GetCellAt + 0x578080 层高 +
+    0x47C3D0 找最近单位）——地形校验链
+  ★★0x50DEF0（batch 215 条件字段选择读取器）= 调用点前置取坐标
+    ——放置触发链
+  ★★带名宿主 MPGameModeClass::SpawnBaseUnits 调用——多人出生单
+    位放置场景实锤
+  新候选：地图边界四值全局 [0x87F90C..0x87F918]、[0xA8B230]+0x218
+    （随机器宿主对象）、8 方向跳转表 0x6892E8、FUN_006886B0
+    （2076B 大宿主）、FUN_005D70F0（939B）、两间隙宿主
+
+六、原版怪癖（照抄）
+-------------------
+① 坐标 ×256+128 定点像素中心换算（movsx → shl 8 → add 0x80——
+   batch 616/680 同款，出现 3 次）；
+② 8 方向跳转表 jmp [ebp*4+0x6892E8] 直接加减 [esp+0x70] 步长
+   （无方向向量表——编译期展开 8 分支）；
+③ 边界钳制双重判定（jle/jge 各自钳 [0x87F90C]/[0x87F918]——
+   两组四值全局）；
+④ 外层 32 轮（cmp 0x20）× 内层方向 8 × 深度 2 × 尝试 8 的多重
+   重试金字塔（[esp+0x14]/[esp+0x34]/[esp+0x18] 三个循环计数器）；
+⑤ 类型判定恒 0xF（虚调用 [eax+0x2C] == 15 两次——目标对象 + 找
+   到对象各自校验）；
+⑥ 首次 IsWithinUsableArea 失败直接转重试循环（不初始化栈坐标）；
+⑦ 虚调用 [eax+0xD8] 放置确认 + [eax+0x20]/[eax+0x8C] 触发放置
+   （三槽位并存）。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：目标对象精确类（虚调用 0x2C/0xD8/0x20/0x8C 槽——放置器/
+单位推断）、[0xA8B230]+0x218 宿主对象精确身份（随机器宿主推断）、
+8 方向步长 [esp+0x70] 语义（尝试深度推断）、地面类型 0xF 的精确
+含义（可通行地型推断）、三循环计数器精确语义（轮次/方向/尝试）、
+FUN_006886B0 大宿主与两间隙宿主真实身份。
