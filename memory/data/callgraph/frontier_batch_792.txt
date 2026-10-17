@@ -1,0 +1,134 @@
+frontier batch 792 —— 0x00777AC0 时间戳格式化写串器（推断名）
+================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=184 / body=109B）。
+TARGET = 0x00777AC0（.text，109B，thiscall 无栈参 ret）
+
+一、函数体全读（109B，disasm 0x777AC0 160）
+------------------------------------------
+00777ac0  83ec10  sub esp, 0x10                    ; ★0x10 栈帧（时间缓冲）
+00777ac3  8d442400  lea eax, [esp]                 ; ★eax = &[esp]（缓冲）
+00777ac7  56      push esi
+00777ac8  50      push eax                         ; ★参2 = 缓冲指针
+00777ac9  8bf1    mov esi, ecx                     ; ★this → esi
+00777acb  685c2d8200  push 0x822d5c               ; ★参1 = 0x822D5C（空串
+                                                   ;   dump 实锤）
+00777ad0  ff15f4107e00  call [0x7e10f4]           ; ★★导入槽 [0x7E10F4]
+                                                   ;   （未登记——时间查询
+                                                   ;   推断，两参 stdcall）
+00777ad6  85c0    test eax, eax
+00777ad8  744e    je 0x777b28                      ; ★失败 → 静默收尾
+00777ada  8b4c2410  mov ecx, [esp + 0x10]         ; ★读缓冲 word（时间字段）
+00777ade  8b54240e  mov edx, [esp + 0xe]
+00777ae2  8b44240c  mov eax, [esp + 0xc]
+00777ae6  81e1ffff0000  and ecx, 0xffff           ; ★16 位截断
+00777aec  81e2ffff0000  and edx, 0xffff
+00777af2  51      push ecx                         ; ★sprintf 第 6 参
+00777af3  8b4c2408  mov ecx, [esp + 8]
+00777af7  25ffff0000  and eax, 0xffff
+00777afc  52      push edx                         ; ★第 5 参
+00777afd  8b542412  mov edx, [esp + 0x12]
+00777b01  50      push eax                         ; ★第 4 参
+00777b02  8b442412  mov eax, [esp + 0x12]
+00777b06  81e1ffff0000  and ecx, 0xffff
+00777b0c  81e2ffff0000  and edx, 0xffff
+00777b12  51      push ecx                         ; ★第 3 参
+00777b13  25ffff0000  and eax, 0xffff
+00777b18  52      push edx                         ; ★第 2 参
+00777b19  50      push eax                         ; ★第 1 参
+00777b1a  68209f8400  push 0x849f20               ; ★★格式串 "%02d/%02d/
+                                                   ;   %04d - %02d:%02d:%02d"
+                                                   ;   （.data dump 实锤——
+                                                   ;   时间戳格式串）
+00777b1f  56      push esi                         ; ★目标 = this
+00777b20  e8cf130500  call 0x7c8ef4               ; ★★★batch 057 printf 族
+                                                   ;   sprintf（8 参）
+00777b25  83c420  add esp, 0x20                    ; ★清 8 栈参
+00777b28  5e      pop esi
+00777b29  83c410  add esp, 0x10
+00777b2c  c3      ret
+
+参数契约（thiscall 无栈参）：
+  ecx = this（目标窄串推断）
+  返回 void
+  语义：**时间戳格式化写串器（推断名）**——经导入槽
+  [0x7E10F4]（时间查询推断——参1=0x822D5C 空串/参2=&[esp] 缓
+  冲，stdcall 两参）取系统时间 6 个 16 位字段（月/日/年/时/
+  分/秒推断——SYSTEMTIME 布局），成功后 6 值全部 and 0xffff
+  截断 → sprintf（0x7C8EF4 batch 057）按格式串 0x849F20
+  "%02d/%02d/%04d - %02d:%02d:%02d" 写入 this（窄串）；失败
+  静默返回（不写）。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_792_calls.py：4 处调用点
+  0x4C8A66 / 0x531AF2 / 0x64DF8D / 0x6517CB
+_locate_792_callers.py：归属
+  0x4C8A66 → 0x004C85E0 FUN_004c85e0 [0x4C85E0-0x4C8FDB] body=2556
+  0x531AF2 → 无归属（函数间隙）
+  0x64DF8D → 0x0064DEA0 FUN_0064dea0 [0x64DEA0-0x650A89] body=11242
+  0x6517CB → 0x006516F0 FUN_006516f0 [0x6516F0-0x652060] body=2417
+
+三、调用点现场（正确指令边界重读）
+--------------------------------
+【调用点 1】0x4C8A66 in FUN_004c85e0（body=2556 大宿主）
+  004c8a66  call 0x777ac0
+  004c8a6b  lea eax, [esp + 0x254]                ; ★后续处理
+  004c8a72  mov edx, 0x80
+  004c8a77  push eax / lea ecx, [esp + 0x3dc]      ; ★另一缓冲
+  形态：时间戳写 this 后继续大栈帧装配。
+
+【调用点 3】0x64DF8D in FUN_0064dea0（body=11242 巨型宿主）
+  0064df8d  call 0x777ac0
+  0064df92  lea edx, [esp + 0xc0] / lea ecx, [esp + 0x140]
+  0064dfa0  push edx / mov edx, 0x80
+  形态：同款——写串后继续装配。
+
+【调用点 4】0x6517CB in FUN_006516f0（body=2417）
+  006517c6  mov byte [esp + 0x30], 0              ; ★预置空串
+  006517cb  call 0x777ac0
+  006517d0  lea eax, [esp + 0x30] / mov edx, 0x80
+  006517d9  push eax / lea ecx, [esp + 0xb4]
+  006517e1  call 0x777b60                         ; ★相邻窄串格式化函数
+  形态：时间戳写串后立即 0x777B60 处理（相邻族）。
+
+四、被调/全局登记核验（grep frontier_status.tsv）
+-----------------------------------------------
+  0x7C8EF4 —— ★★★batch 057 已登记「printf 族带计数包装」
+    （flags 0x42 + 无限宽哨兵，fan-in 200）——本条=sprintf 8 参
+  0x7E10F4 —— 未登记（新导入槽——时间查询推断）
+  0x822D5C —— 空串（.data dump 实锤 len=0——导入槽参1）
+  0x849F20 —— ★★"%02d/%02d/%04d - %02d:%02d:%02d"（.data dump
+    实锤——时间戳格式串，31B）
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★★0x7C8EF4（batch 057——printf 族，本条 sprintf 8 参收尾）
+  ★0x777B60（调用点 4 后续——相邻窄串格式化函数，新候选）
+  新候选：FUN_004c85e0（2556B）/FUN_0064dea0（11242B 巨型）/
+  FUN_006516f0（2417B）/0x531AF2（间隙）宿主业务 + 0x777B60
+  （相邻族）+ [0x7E10F4]（新导入槽）
+
+六、原版怪癖（照抄）
+-------------------
+① 导入槽查询先行（[0x7E10F4] 两参 stdcall——失败静默返回不写
+   串，无错误码）；
+② 6 值 and 0xffff 全截断（时间字段按 16 位——SYSTEMTIME word
+   布局推断）；
+③ sprintf 8 参一次组装（6 字段 + 格式串 + 目标——无中间缓冲
+   拼装直接格式化）；
+④ 格式串硬编码（0x849F20 "%02d/%02d/%04d - %02d:%02d:%02d"
+   ——月/日/年-时:分:秒顺序，零填充）；
+⑤ 0x10 栈帧（[esp+0xC..0x12] 读 6 个 word 字段——重叠读取邻
+   近 dword）；
+⑥ ret 无操作数（thiscall 无栈参——纯副作用写串）。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「时间戳格式化写串器」——ranking 无
+带名）；导入槽 [0x7E10F4] 精确身份（时间查询推断——GetLocalTime/
+GetSystemTime 类）；6 字段精确排布（月/日/年-时/分/秒推断——
+SYSTEMTIME 结构推断）；三宿主业务（FUN_004c85e0 大栈帧装配/
+FUN_0064dea0 巨型宿主/FUN_006516f0 + 0x777B60 相邻族）；
+0x531AF2 间隙。
