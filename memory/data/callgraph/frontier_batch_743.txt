@@ -1,0 +1,115 @@
+frontier batch 743 —— 0x00410E50 ABuffer::ReleaseSurface 缓冲释放器
+
+地址：0x00410E50（functions.tsv 边界 0x410E50-0x410E68 = 25B，
+ret 无栈参 = thiscall 无参成员——push esi/mov esi,ecx 首段；前
+邻 0x410E00 区=同族填充函数（movsx 字节循环+回绕），后邻
+0x410E70=3 栈参填充器（ret 0xC，rep stosd 0x10 拼装 + 尾字——
+ABuffer 家族第二成员推断）；ranking callers=3/unique=3/
+deps=744——E8 扫描实得 4 调用点落 3 宿主）
+身份：**ranking 带名 ABuffer::ReleaseSurface**（USER_DEFINED——
+机器码验证吻合 + TSV:25 已登记 ABuffer::ABuffer 构造器 + TSV:587
+已登记 ABuffer::GetBuffer 0x4114B0 家族交叉）
+状态：semantics_verified + assembly_verified_semantics_confirmed
+（机器码 25B 全读 + 4 调用点现场全读 + TSV:25/587 家族登记交叉）
+
+=== 机器码全读要点（25B 函数） ===
+
+0x410E50（25B 全读）：push esi → mov esi,ecx（★this）→ mov
+ecx,[esi+0x14]（★this+0x14 子对象指针——batch 177 GetBuffer
+同字段）→ test ecx,ecx → je 0x410E60（★子对象 NULL → 跳过）→
+mov eax,[ecx]（★子对象虚表）→ push 1（★删除标志）→ call
+[eax]（★★虚表槽 0 虚析构——scalar deleting destructor）→
+0x410E60: mov [esi+0x14],0（★清子对象指针）→ pop esi → ret。
+★★结构：null 检查 → 子对象虚析构 → 清指针。
+
+=== 语义 ===
+
+**ABuffer::ReleaseSurface（缓冲释放器——ranking 带名）**——
+thiscall 无栈参：① this+0x14 子对象（surface 推断）非空 → 调其
+虚表槽 0（push 1 删除标志的标量删除析构）释放；② 清
+this+0x14=0；③ 返回无值。
+★语义统一：ABuffer 是 Surface.h 渲染缓冲基类（batch 177 已
+述）——ReleaseSurface 是析构自身的子表面释放成员，与 batch
+177 的 GetBuffer（读 +0x14 子对象虚表槽 0x5C/0x60）成对（一个
+访问一个释放）；+0x14 是 ABuffer 类内嵌 Surface 子对象指针。
+
+=== 调用现场（4 处扫描 + 归属定位） ===
+
+1) 0x4A8A8B → **FUN_004a8960**（0x4A8960-0x4A8BE3 body=644 未
+   登记——0x4A8xxx 区 DisplayClass 域推断）——现场（0x4A8A6B-
+   0x4A8AB0）：cmp eax,ebx/je → push 0x8200C4/call 0x4068E0
+   （★日志）→ mov esi,[0x87E8A4]（★★全局 ABuffer 实例！）→
+   cmp esi,ebx/je 0x4A8A99 → mov ecx,esi/call 0x410E50（★本条
+   ——ReleaseSurface 释放全局！）→ push esi/call 0x7C8B3D（★★
+   batch 001 delete——本体释放）→ mov [0x87E8A4],ebx（★清全局）
+   → push 0x30/call 0x7C8E17（★★batch 001 new 0x30——重建！）。
+2) 0x4B761B → **FUN_004b6c30**（0x4B6C30-0x4B9690 body=10849B
+   大函数未登记——0x4Bxxxx 区超级函数）——现场（0x4B7604-
+   0x4B7640）：mov ecx,[0x887640]/mov edx,[ecx]/call [edx+0xC]
+   （★★全局 [0x887640] 槽 0xC——batch 221 会话状态区同全局）
+   → mov esi,[0x87E8A4] → cmp esi,ebp/je 0x4B7629 → mov ecx,esi/
+   call 0x410E50（★本条）→ push esi/call 0x7C8B3D → mov
+   [0x87E8A4],ebp → push 0x30/call 0x7C8E17（★重建同款）。
+3) 0x4B948E → **FUN_004b6c30**（同大函数内第二调用点——二次释
+   放！）——现场（0x4B9472-0x4B94B0）：mov ecx,[0x887640]/call
+   [edx+0xC]（★同款槽 0xC）→ mov esi,[0x87E8A4] → xor edi,edi
+   → cmp esi,edi/je 0x4B949C → mov ecx,esi/call 0x410E50（★本
+   条）→ push esi/call 0x7C8B3D → mov [0x87E8A4],edi → push
+   0x30/call 0x7C8E17（★重建同款——同一宿主两处一前一后）。
+4) 0x6BE42E → **FUN_006be1c0**（0x6BE1C0-0x6BEC48 body=2697 未
+   登记——★★batch 719 的 0x6BE238 已点名 0x6BE1C0 宿主！）——
+   现场（0x6BE419-0x6BE44E）：mov [0x887644],ebx → mov esi,
+   [0x87E8A4] → cmp esi,ebx/je 0x6BE442 → mov ecx,esi/call
+   0x410E50（★本条）→ push esi/call 0x7C8B3D → mov
+   [0x87E8A4],ebx（★清全局）→ 0x6BE442: mov ecx,[0x89C4B8]/
+   cmp/je → mov eax,[ecx]/push 1/call [eax]（★另一子对象虚析构
+   ——同批释放链）。
+
+★统一形态：四调用点全「**ReleaseSurface([0x87E8A4]) → delete
+本体 → 清 [0x87E8A4] → new 0x30 重建**」模板——[0x87E8A4] 是
+全局 ABuffer 实例（游戏显示缓冲推断），释放重建成对出现；
+FUN_004b6c30 同一大函数内两处（前/后两个时机各重建一次）。
+
+=== 原版怪癖（照抄） ===
+
+① **虚表槽 0 直接调用析构**（call [eax] + push 1——scalar
+deleting destructor 约定，非显式 delete 调用）；
+② **释放后立即清指针**（mov [esi+0x14],0——重复 ReleaseSurface
+   安全）；
+③ **null 检查前置**（test ecx,ecx/je——子对象从未创建时静默跳
+   过不报错）；
+④ 25B 超短析构不建帧（push esi 单保存）；
+⑤ 全局 [0x87E8A4] 释放重建模板四处重复（同构拷贝不封装——
+   原版风格）；
+⑥ 与 GetBuffer（batch 177）共用 +0x14 字段（访问/释放对）。
+
+=== 跨批次闭合 ===
+
+**++TSV:25/batch 005（ABuffer::ABuffer 构造器——家族登记交叉，
+    本批=释放端配对）**；
+**++TSV:587/batch 177（ABuffer::GetBuffer 0x4114B0——+0x14 子
+    对象虚表槽 0x5C/0x60 读取端 vs 本条释放端，同一父类两成员
+    同批交叉）**；
++[0x87E8A4]（★新全局——ABuffer 实例，四调用点全用）；+0x7C8B3D
+（batch 001 delete——四调用点本体释放）；+0x7C8E17（batch 001
+new 0x30——四调用点重建）；+[0x887640]（batch 221 会话状态区全
+局——宿主 2/3 前置槽 0xC）；+0x4068E0（batch 001 日志——宿主 1
+前置）；++FUN_006be1c0（batch 719 已点名宿主——本批 0x6BE42E 现
+场跨批兑现同宿主）。
+
+=== 新候选 ===
+
+FUN_004a8960（0x4A8960-0x4A8BE3 644B——DisplayClass 域宿主）、
+FUN_004b6c30（0x4B6C30-0x4B9690 10849B——超级大函数，双调用点
+宿主，二次重建语义）、FUN_006be1c0（0x6BE1C0 2697B——batch 719
+已列）、[0x87E8A4] 全局消费方/写入方（创建端）、0x410E70（3 栈
+参填充器——ABuffer 家族第二成员）、[0x89C4B8] 对象（宿主 4 同
+批释放链）、0x4A8xxx/0x4B6C30 宿主类。
+
+=== partial ===
+
+[0x87E8A4] 全局 ABuffer 实例的创建端（谁 new 0x30 首建）与销毁
+时机（Four 宿主触发条件）、+0x14 子对象精确类（surface 类型推
+断）、FUN_004a8960/FUN_004b6c30/FUN_006be1c0 宿主业务、0x410E70
+精确语义（填充器推断）、虚表槽 0 析构对象的类层次（ABuffer 父
+类/Surface 虚表归属）。
