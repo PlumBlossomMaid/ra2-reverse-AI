@@ -1,0 +1,143 @@
+frontier batch 827 —— 0x00552450 双段池析构器（batch 826 构造器配对）
+=====================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=122 / body=53B）。
+TARGET = 0x00552450（.text，53B，thiscall 无栈参 ret）
+★★batch 826 配对兑现：与 0x5523E0（双段动态数组构造器——
+虚表 0x7ECF44）构成「构造/析构」两件套——虚表相同 0x7ECF44、
+字段完全对齐（+0x14 主段/+0x18 次段），析构端 delete 双段
+后调 0x6C9850（batch 106 双向链表节点析构）收尾
+
+一、函数体全读（53B，disasm 0x552450 53）
+-------------------------------------------
+参数契约（thiscall 无栈参）：ecx = this（池对象），无返回值。
+机器码（53B 全读）：
+  00552450  push esi / mov esi,ecx       ; this
+  00552453  mov eax,[esi+0x14]           ; ★主段指针
+  00552456  mov [esi],0x7ECF44           ; ★★虚表 0x7ECF44（与
+                                        ;   batch 826 构造器同表）
+  0055245c  push eax / call 0x7C8B3D     ; ★★delete 主段（batch
+                                        ;   001 operator delete）
+  00552462  mov ecx,[esi+0x18]           ; ★次段指针
+  00552465  mov [esi+0x14],0             ; 主段清 0
+  0055246c  push ecx / call 0x7C8B3D     ; ★★delete 次段
+  00552472  add esp,8
+  00552475  mov ecx,esi / mov [esi+0x18],0  ; 次段清 0
+  0055247e  call 0x6C9850               ; ★★batch 106 双向链表
+                                        ;   节点析构（虚表 0x7E61F0
+                                        ;   装表 + 摘除通知）
+  00552483  pop esi / ret
+语义：**双段池析构器（推断名）**——①装本类析构虚表 0x7ECF44
+（与构造器 batch 826 同表——析构态虚表 = 正常态虚表）；
+②delete +0x14 主段（batch 001 0x7C8B3D）；③delete +0x18 次
+段；④主/次段指针清 0；⑤调 0x6C9850（batch 106 双向链表节
+点析构——装虚表 0x7E61F0 + 摘除通知 + 双指针置 NULL）——
+池对象同时是链表节点，析构时走链表摘除协议；⑥ret 无栈参。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_816_calls.py（复用，TARGET=0x552450）：4 处调用点
+  0x56B769 / 0x56B887 / 0x5FD52F / 0x5FD665
+_locate_816_callers.py：归属（★★与 batch 826 构造器调用点
+  完全重合——构造/析构成对出现）
+  0x56B769 → 0x0056B5A0 FUN_0056B5A0 [0x56B5A0-0x56B775]
+    body=470
+  0x56B887 → 0x0056B780 FUN_0056B780 [0x56B780-0x56B893]
+    body=276
+  0x5FD52F / 0x5FD665 → 0x005FD2E0 PhobosHook_OverlayClass_
+    ReadINI [0x5FD2E0-0x5FD69A] body=955（★★带名——Overlay
+    类 INI 读取钩子）
+
+三、调用点现场（全部干净——★★栈上池对象析构，前序 CellClass 构造）
+----------------------------------------------------------------
+【调用点 1】0x56B769 in FUN_0056B5A0（470B——收尾处）
+  0056b754  mov ecx,0xABDC50            ; ★★哨兵 cell（QWEN.md
+                                        ;   哑元 0xABDC50）
+  0056b760  call 0x47BBF0               ; ★★CellClass 构造（batch
+                                        ;   232 实锤）
+  0056b765  lea ecx,[esp]               ; ★this = 栈上池对象
+  0056b769  call 0x552450               ; ★本条——池对象析构
+  0056b76e  mov al,1
+  形态：★★FUN_0056B5A0 收尾处栈上池对象析构（前序构造哨兵
+  cell 0xABDC50——与 batch 826 调用点 1 同宿主配对）
+【调用点 2】0x56B887 in FUN_0056B780（276B——收尾处）
+  （0x56B870 起 disasm 错位，真实边界 0x56B872）
+  0056b872  mov ecx,0xABDC50 / call 0x47BBF0  ; ★★CellClass 构造
+  0056b883  lea ecx,[esp+0xC]           ; ★this = 栈上池对象
+  0056b887  call 0x552450               ; ★本条——池对象析构
+  0056b88c  mov al,1
+  形态：★★与调用点 1 同构（宿主 FUN_0056B780 = batch 826 调
+  用点 2 配对）
+【调用点 3】0x5FD52F in PhobosHook_OverlayClass_ReadINI（955B）
+  （0x5FD500 起重读——双层循环后）
+  005fd500-005fd51C 双层循环收尾（esi/edi 各 0..0x200 =
+    512×512 全图遍历——Overlay 地图格循环）
+  005fd522  mov eax,[esp+0x48] / lea ecx,[esp+0x5C]
+    / dec eax / mov [esp+0x48],eax
+  005fd52F  call 0x552450               ; ★本条（E8 扫描命中）
+  形态：★★PhobosHook 双层循环后栈上池对象析构
+【调用点 4】0x5FD665 in PhobosHook_OverlayClass_ReadINI（955B）
+  005fd650  cmp edi,0x200 / jl 0x5FD5F9  ; ★内层循环
+  005fd658  mov eax,[esp+0x48] / lea ecx,[esp+0x5C]
+    / dec eax / mov [esp+0x48],eax
+  005fd665  call 0x552450               ; ★本条
+  005fd66a  lea ecx,[esp+0x2C]          ; 后续
+  形态统一：★★4 处调用点全「栈上池对象析构」；调用点 1/2 前
+  序 CellClass 构造（0x47BBF0），调用点 3/4 在 PhobosHook 全
+  图循环（0x200×0x200）后——析构器与构造器（batch 826）同批
+  调用点成对出现，Overlay 解析场景栈上池生命周期
+
+四、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x7C8B3D —— ★★已登记（batch 001 operator delete——双段释放）
+  0x6C9850 —— ★★已登记（batch 106 双向链表节点析构——装虚表
+    0x7E61F0 + 摘除通知 + 双指针置 NULL）——函数体收尾调用
+  0x47BBF0 —— ★★已登记（batch 232 CellClass 构造函数 YRpp
+    CellClass.h:325 实锤）——调用点 1/2 前序
+  0x7ECF44 —— ★★batch 826 刚登记（双段动态数组构造器虚表——
+    本批析构端同表）
+  [0xABDC50] —— ★★QWEN.md 实锤哑元 cell（RMG 哨兵——调用点
+    1/2 前序 CellClass 构造目标）
+  宿主 PhobosHook_OverlayClass_ReadINI / FUN_0056B5A0 /
+    FUN_0056B780 —— functions.tsv（PhobosHook 带名，未登记
+    frontier）
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 826（0x5523E0 双段动态数组构造器——本批 0x552450
+    是其析构配对：虚表同 0x7ECF44、字段 +0x14/+0x18 完全对
+    齐，构造/析构两件套跨批闭合；调用点宿主完全重合——
+    FUN_0056B5A0/FUN_0056B780/PhobosHook_OverlayClass_ReadINI
+    的构造点（batch 826）与析构点（本批）成对出现）
+  ★★batch 001（0x7C8B3D operator delete——双段释放两次调用）
+  ★★batch 106（0x6C9850 双向链表节点析构——函数体收尾调
+    用，池对象同时是链表节点）
+  ★★batch 232（0x47BBF0 CellClass 构造——调用点 1/2 前序，
+    [0xABDC50] 哨兵 cell 构造）
+  ★★PhobosHook_OverlayClass_ReadINI（带名宿主——2 处全图
+    循环后池析构）
+
+六、原版怪癖（照抄）
+-------------------
+① 析构态虚表 = 正常态虚表（0x7ECF44 与构造器 batch 826 同
+   表——无单独析构虚表换装）；
+② 双段 delete 顺序固定（主段 +0x14 先、次段 +0x18 后——
+   batch 826 构造顺序相反：主段先建次段后建，析构同序）；
+③ 双段清 0 在 delete 之后（0x552465/0x552477——先释放再清
+   指针，析构中清字段收尾）；
+④ 收尾调 0x6C9850（batch 106 链表节点析构——池对象同时是
+   链表节点，装虚表 0x7E61F0 + 摘除通知协议）；
+⑤ 调用点前序 CellClass 构造（0x47BBF0 + [0xABDC50] 哨兵——
+   栈上池对象与哨兵 cell 同场景）；
+⑥ 调用点 3/4 在 PhobosHook 全图循环（0x200×0x200=512×512）
+   后析构——Overlay 解析的每帧/每局池生命周期。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：同 batch 826（函数精确名 YRpp 未对齐、池对象宿主类、
++0x04/+0x08/+0x10 清零字段语义）+ 0x6C9850 收尾调用的宿主
+关系（池对象嵌入链表节点——0x7E61F0 虚表类归属）+ [0xABDC50]
+哨兵 cell 与池对象的关系（同场景构造/析构推断）+
+PhobosHook_OverlayClass_ReadINI 的池用途（Overlay 数据解析
+缓冲推断）+ FUN_0056B5A0/FUN_0056B780 宿主业务。
