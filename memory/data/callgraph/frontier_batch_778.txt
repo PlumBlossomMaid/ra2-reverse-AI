@@ -1,0 +1,186 @@
+frontier batch 778 —— 0x00526A30 规则键注册器缓存查询器（推断名）
+================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=241 / body=200B）。
+TARGET = 0x00526A30（.text，200B，thiscall 1 栈参 ret 4）
+
+一、函数体全读（200B，disasm 0x526A30 220）
+------------------------------------------
+00526a30  sub esp, 0x10
+00526a33  push esi
+00526a34  mov esi, ecx             ; ★this → esi
+00526a36  mov ecx, [esp + 0x18]    ; ★栈参1（[入口 esp+4]）= 键名 → ecx
+00526a3a  push edi
+00526a3b  call 0x7b5440           ; ★★★batch 072 字符串 GetString
+                                    ;   （thiscall，ecx=键名——取键值串）
+00526a40  mov edx, eax             ; ★返回值 → edx
+00526a42  test edx, edx
+00526a44  je 0x526aee            ; ★串空 → 收尾返 0
+00526a4a  mov edi, edx
+00526a4c  or ecx, 0xffffffff
+00526a4f  xor eax, eax
+00526a51  mov [esp + 0xc], 0
+00526a59  repne scasb             ; ★strlen(键值串)
+00526a5b  not ecx
+00526a5d  dec ecx
+00526a5e  mov [esp + 0x10], 0
+00526a66  push ecx                 ; 长度
+00526a67  push edx                 ; 串
+00526a68  lea ecx, [esp + 0x14]
+00526a6c  mov [esp + 0x1c], 0
+00526a74  call 0x4a1de0           ; ★★★batch 082 CRC 字节处理器
+                                    ;   （串+长度 → CRC）
+00526a79  add esi, 0x28            ; ★esi = this+0x28（缓存区）
+00526a7c  mov edi, eax             ; ★CRC → edi
+00526a7e  mov [esp + 0x1c], edi    ; 局部 CRC
+00526a82  mov eax, [esi + 4]       ; 缓存区+4
+00526a85  test eax, eax
+00526a87  je 0x526aee            ; ★缓存区+4 空 → 收尾
+00526a89  mov eax, [esi + 0x10]    ; ★缓存区+0x10（注册槽）
+00526a8c  test eax, eax
+00526a8e  je 0x526a94
+00526a90  cmp [eax], edi          ; ★注册槽首字段 vs CRC
+00526a92  je 0x526aa7            ; ★命中 → 直接用
+00526a94  lea eax, [esp + 0x1c]   ; &CRC
+00526a98  mov ecx, esi            ; this = this+0x28
+00526a9a  push eax
+00526a9b  call 0x52b620          ; ★★★batch 130 按名注册器同族
+                                    ;   （&CRC → 注册返回对象）
+00526aa0  test eax, eax
+00526aa2  je 0x526aee
+00526aa4  mov [esi + 0x10], eax   ; ★注册槽 = 结果
+00526aa7  mov eax, [esi + 4]
+00526aaa  mov [esp + 8], edi
+00526aae  test eax, eax
+00526ab0  je 0x526ad8            ; ★缓存区+4 空 → 兜底
+00526ab2  mov eax, [esi + 0x10]   ; 再查注册槽
+00526ab5  test eax, eax
+00526ab7  je 0x526abd
+00526ab9  cmp [eax], edi          ; 再次 CRC 比对
+00526abb  je 0x526ad0
+00526abd  lea ecx, [esp + 8]      ; &CRC
+00526ac1  push ecx
+00526ac2  mov ecx, esi
+00526ac4  call 0x52b620          ; ★再次注册（重复代码块）
+00526ac9  test eax, eax
+00526acb  je 0x526ad8
+00526acd  mov [esi + 0x10], eax
+00526ad0  mov esi, [esi + 0x10]   ; ★注册槽值
+00526ad3  add esi, 4              ; ★+4（跳过首字段）
+00526ad6  jmp 0x526add
+00526ad8  mov esi, 0xb7882c       ; ★★★batch 763/769 兜底全局表
+00526add  mov esi, [esi]          ; ★解引用（注册槽+4 处 / 兜底值处）
+00526adf  test esi, esi
+00526ae1  je 0x526aee
+00526ae3  mov eax, [esi + 0x30]   ; ★返回 对象+0x30 字段
+00526ae6  pop edi / pop esi
+00526ae8  add esp, 0x10
+00526aeb  ret 4                  ; ★ret 4 = 1 栈参
+00526aee  pop edi / xor eax, eax / pop esi / add esp, 0x10 / ret 4
+
+参数契约（thiscall ret 4 = 1 栈参）：
+  ecx = this（规则对象/注册器宿主推断——+0x28 缓存区）
+  栈参1 = 键名（经 0x7B5440 GetString 取键值串）
+  返回 eax = 缓存对象+0x30 字段；失败/空返 0
+  语义：**规则键注册器缓存查询器（推断名）**——① 0x7B5440
+  GetString 取键值串，空 → 返 0；② strlen + 0x4A1DE0 CRC 键值
+  串；③ this+0x28 缓存区：+0x10 注册槽 CRC 命中（cmp [eax],
+  edi）直接取，未命中 0x52B620 注册 → 缓存；④ 注册槽值+4 解
+  引用取对象（或 [0xB7882C] 兜底全局表 batch 763/769）；⑤ 返
+  回对象+0x30 字段。★与 batch 763 规则字符串查询器（0x527F20
+  ——CRC 键+注册器缓存）同构——同一框架的 INI 侧实例。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_778_calls.py：4 处调用点
+  0x5CF45D / 0x5CF57E / 0x5D7637 / 0x76CA81
+_locate_778_callers.py：归属
+  0x5CF45D → 0x005CEEF0 FUN_005ceef0 [0x5CEEF0-0x5CF5EB] body=1788
+  0x5CF57E → 0x005CEEF0 FUN_005ceef0（同宿主第二调用点）
+  0x5D7637 → 0x005D7590 FUN_005d7590 [0x5D7590-0x5D7CC8] body=1849
+            ★★batch 770/771 配置域大宿主（5 处尾剥离调用者）
+  0x76CA81 → 0x0076CA60 FUN_0076ca60 [0x76CA60-0x76CBEF] body=400
+
+三、调用点现场（正确指令边界重读）
+--------------------------------
+【调用点 1】0x5CF45D in FUN_005ceef0（body=1788，×2 调用点）
+  005cf450  lea edx, [esp + 0x1c]   ; ★&键名缓冲 → edx
+  005cf454  lea ecx, [esp + 0x28]   ; ★this = &栈对象（[esp+0x28]）
+  005cf458  push edx                ; 栈参1 = &键名
+  005cf459  mov [esp + 0x1c], esi
+  005cf45d  call 0x526a30
+  005cf462  test eax, eax
+  005cf464  jle 0x5cf58b           ; ★返回值 <= 0 → 跳过
+  形态：栈上构造 this + 键名缓冲 → call → 返回值判正。
+
+【调用点 3】0x5D7637 in FUN_005d7590（batch 770/771 大宿主）
+  005d762c  jle 0x5d7c82
+  005d7632  push esi                ; ★栈参1 = esi（键名）
+  005d7633  lea ecx, [esp + 0x74]   ; this = &栈对象
+  005d7637  call 0x526a30
+  005d763c  cmp eax, ebx           ; ★返回值与 ebx 比较
+  005d763e  mov [esp + 0x68], eax  ; 存返回值
+  005d7642  mov [esp + 0x30], ebx
+  005d7646  jle 0x5d7c82
+  形态：push 键名 → this 栈对象 → call → 返回值比较+存储。
+
+【调用点 4】0x76CA81 in FUN_0076ca60（body=400）
+  0076ca7a  mov edi, [esp + 0x28]   ; ★this = [esp+0x28] 载入
+  0076ca7e  push ebp                ; 栈参1 = ebp（键名）
+  0076ca7f  mov ecx, edi
+  0076ca81  call 0x526a30
+  0076ca86  xor ecx, ecx
+  0076ca88  mov [esp + 0x20], eax  ; 存返回值
+  0076ca8c  test eax, eax
+  0076ca8e  mov [esp + 0x18], ecx
+  0076ca92  jle 0x76cbdd
+  形态：寄存器载入 this + push 键名 → call → 返回值 test。
+
+四、被调登记核验（grep frontier_status.tsv）
+-------------------------------------------
+  0x7B5440 —— ★★★batch 072 字符串 GetString（跨批锚点，函数
+    体第一步调用现场：取键值串）
+  0x4A1DE0 —— ★★★batch 082 CRC 字节处理器（跨批锚点，函数
+    体键值串 CRC 调用现场）
+  0x52B620 —— ★★★batch 130 按名注册器同族（注册器族，函数
+    体两次注册调用现场——重复代码块）
+  [0xB7882C] —— ★★★batch 763/769 兜底全局表（函数体兜底路
+    径读取）
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★★0x7B5440（batch 072——GetString，键值串取用）
+  ★★★0x4A1DE0（batch 082——CRC 字节处理器，键值串 CRC）
+  ★★★0x52B620（batch 130——按名注册器同族，两次注册调用）
+  ★★★[0xB7882C]（batch 763/769——兜底全局表）
+  ★★batch 763（0x527F20 规则字符串查询器——同构模板再确认：
+    CRC 键+注册器缓存框架，本条为同框架 INI 侧实例）
+  ★★FUN_005d7590（batch 770/771——配置域大宿主，跨批三连）
+  新候选：FUN_005ceef0（1788B 双调用点宿主）、FUN_0076ca60
+  （400B）、0x52B620 返回对象布局（+0 首字段 CRC/+4 数据/+0x30
+  值——partial）
+
+六、原版怪癖（照抄）
+-------------------
+① 键值串经 0x7B5440 GetString 取用（非直接键查找——先转串）；
+② strlen + 0x4A1DE0 CRC 键值串（CRC 键缓存——batch 763 同款）；
+③ 注册器两次调用（0x526A9B/0x526AC4 几乎相同代码块——第二
+   次带 [esp+8] 变体重复）；
+④ 注册槽 CRC 命中跳过注册（cmp [eax],edi / je——命中直接用）；
+⑤ 注册槽值+4 解引用（mov esi,[esi+0x10] → add esi,4 → mov
+   esi,[esi]——对象+4 处存数据指针再取）；
+⑥ 兜底 [0xB7882C]（缓存区+4 空时——batch 763/769 同款）；
+⑦ 返回对象+0x30 字段（非对象本身——值字段推断）；
+⑧ 失败路径返 0（xor eax,eax——空串/空缓存/兜底空）；
+⑨ 键名经栈参传递（ecx=this 非键名——GetString 内部取）；
+⑩ 缓存区 this+0x28/+0x10/+4 布局（注册槽/缓存键/表项）。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「规则键注册器缓存查询器」——ranking
+无带名，batch 763 同构交叉参照）；this 类（规则对象/注册器宿
+主推断——+0x28 缓存区）；0x52B620 返回对象布局（+0 首字段
+CRC/+4 数据/+0x30 值字段推断）；键值串 GetString 的键语义；
+FUN_005ceef0/FUN_005d7590/FUN_0076ca60 宿主业务；[0xB7882C]
+表项内容。
