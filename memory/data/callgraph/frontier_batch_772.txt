@@ -1,0 +1,120 @@
+frontier batch 772 —— 0x004355D0 三维坐标位域打包器（推断名）
+================================================================
+
+候选来源：ranking.tsv 下一批（picker 2 号位补）。callers=3 / deps=252 / body=63B。
+TARGET = 0x004355D0（.text，63B thiscall？——非严格 thiscall：用 ecx 但语义是参数1）
+
+一、函数体全读（63B，disasm 0x4355D0 90）
+--------------------------------------
+004355d0  8b442404          mov eax, dword ptr [esp + 4]    ; ★栈参1（坐标C）→ eax
+004355d4  56                push esi
+004355d5  8bf1              mov esi, ecx                    ; ★ecx（坐标A）→ esi
+004355d7  8b0ddc0d8a00      mov ecx, dword ptr [0x8a0ddc]   ; ★移位量槽1
+004355dd  d3f8              sar eax, cl                     ; 坐标C >>= cl（算术右移）
+004355df  8b0dd80d8a00      mov ecx, dword ptr [0x8a0dd8]   ; ★移位量槽2
+004355e5  d3e0              shl eax, cl                     ; 坐标C <<= cl
+004355e7  8b0de40d8a00      mov ecx, dword ptr [0x8a0de4]   ; ★移位量槽3
+004355ed  d3fa              sar edx, cl                     ; 坐标B >>= cl
+004355ef  8b0de00d8a00      mov ecx, dword ptr [0x8a0de0]   ; ★移位量槽4
+004355f5  d3e2              shl edx, cl                     ; 坐标B <<= cl
+004355f7  8b0dd40d8a00      mov ecx, dword ptr [0x8a0dd4]   ; ★移位量槽5
+004355fd  d3fe              sar esi, cl                     ; 坐标A >>= cl
+004355ff  8b0dd00d8a00      mov ecx, dword ptr [0x8a0dd0]   ; ★移位量槽6
+00435605  0bc2              or eax, edx                     ; 合成 |= 坐标B位域
+00435607  d3e6              shl esi, cl                     ; 坐标A <<= cl
+00435609  0bc6              or eax, esi                     ; 合成 |= 坐标A位域
+0043560b  5e                pop esi
+0043560c  c20400            ret 4                           ; 调用者清理 1 栈参
+
+参数契约：
+  ecx    = 坐标A（→ esi，经 [0x8A0DD4] sar / [0x8A0DD0] shl）
+  edx    = 坐标B（经 [0x8A0DE4] sar / [0x8A0DE0] shl）
+  栈参1  = 坐标C（经 [0x8A0DDC] sar / [0x8A0DD8] shl）
+  返回 eax = 坐标A位域 | 坐标B位域 | 坐标C位域（或合成）
+
+语义：**三维坐标位域打包器**——三个分量各自
+「sar x,cl → shl x,cl」（先右移再左移=保留中间位带、清掉两侧）
+后 or 合成单一 u32。六槽移位量全局 [0x8A0DD0..0x8A0DE4]
+（连续步长 4，dword），全部**未登记（新全局族）**。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_772_calls.py：3 处调用点
+  0x434E7C / 0x63BFBB / 0x643A70
+_locate_772_callers.py：归属 3 宿主
+  0x434E7C → 0x00434CD0 BitText::DrawText [0x434CD0-0x435312] body=1603 ★带名
+  0x63BFBB → 0x0063BE60 FUN_0063be60 [0x63BE60-0x63C684] body=2085
+  0x643A70 → 0x00643720 FUN_00643720 [0x643720-0x643ADA] body=955 / 983
+  （注：_locate 脚本 body 口径 = hi-lo+1，FUN_00643720 显示 955
+    与 ranking body=983 存 28B 差值，以 TSV 登记为准）
+
+三、调用点现场（正确指令边界重读）
+--------------------------------
+【调用点 1】0x434E7C in BitText::DrawText（带名宿主）
+  00434e66  8b4c2430      mov ecx, dword ptr [esp + 0x30]  ; 坐标A 从栈取
+  00434e6a  25ff000000    and eax, 0xff                    ; ★坐标C 掩 8 位
+  00434e6f  50            push eax                         ; ★栈参1 = 坐标C(8位)
+  00434e70  81e2ff000000  and edx, 0xff                    ; ★坐标B 掩 8 位
+  00434e76  81e1ff000000  and ecx, 0xff                    ; ★坐标A 掩 8 位
+  00434e7c  e84f070000    call 0x4355d0
+  00434e81  83f8ff        cmp eax, -1                      ; ★-1 哨兵检查
+  00434e84  0f8449040000  je 0x4352d3                      ; ==-1 → 错误路径
+  语义：三个 8 位分量打包 → -1 作哨兵错误值检查
+  （BitText 文本绘制——极可能打包 RGB/前后景色/索引）
+
+【调用点 2】0x63BFBB in FUN_0063be60
+  0063bf9c  66a1da3ca800  mov ax, word ptr [0xa83cda]      ; ★半字二进制源
+  0063bfa2  33c9          xor ecx, ecx
+  0063bfa4  8acc          mov cl, ah                       ; 坐标A = 半字高字节
+  0063bfa6  33d2          xor edx, edx
+  0063bfa8  51            push ecx                         ; ★栈参1 = 高字节
+  0063bfa9  33c9          xor ecx, ecx
+  0063bfab  8a0dd93ca800  mov cl, byte ptr [0xa83cd9]      ; ★坐标B = 字节源
+  0063bfb1  8ad0          mov dl, al                       ; 坐标C = 半字低字节
+  0063bfb3  c744247c04000000 mov dword ptr [esp+0x7c], 4   ; 局部 = 4
+  0063bfbb  e81096dfff    call 0x4355d0
+  0063bfc0  85ed          test ebp, ebp
+  0063bfc2  8bf8          mov edi, eax                     ; ★返回值 → edi
+  0063bfc4  743b          je 0x63c001
+  语义：三坐标来自全局 [0xA83CD9]（字节）+ [0xA83CDA]（半字拆
+  两半：al 低字节 → edx、ah 高字节 → 栈参1）——打包后存 edi。
+  [0xA83CD9]/[0xA83CDA] 未登记（新全局）。
+
+【调用点 3】0x643A70 in FUN_00643720
+  00643a64  68ff000000    push 0xff                        ; ★栈参1 = 0xFF
+  00643a69  33d2          xor edx, edx                     ; edx = 0
+  00643a6b  b9ff000000    mov ecx, 0xff                    ; ecx = 0xFF
+  00643a70  e85b1bdfff    call 0x4355d0
+  00643a75  8b0d0c738800  mov ecx, dword ptr [0x88730c]    ; 读全局
+  00643a7b  8bf8          mov edi, eax                     ; ★返回值 → edi
+  00643a7d  3bcb          cmp ecx, ebx
+  00643a7f  7424          je 0x643aa5
+  语义：固定常量打包 (坐标A=0xFF, 坐标B=0, 坐标C=0xFF)——构造
+  掩码/哨兵值形态；call 后返回值 → edi 参与后续比较。
+  [0x88730c] 未登记（新全局）。
+
+四、跨批次闭合
+-------------
+无被调（函数体 0 个 call）。六槽移位量全局系首次登记。
+调用点宿主 BitText::DrawText 为**带名**函数（首次进 frontier）。
+FUN_0063be60（2085B）/ FUN_00643720（955B）宿主未登记——新候选。
+
+五、原版怪癖（照抄）
+-------------------
+① sar（算术右移）后 shl——若坐标带符号会保留符号位影响，
+   但三个调用点全部先 and 0xff / 源受限 8 位，行为等价位段提取；
+② 移位量来自**全局表**而非立即数——运行时可变位域布局；
+③ 坐标A 走 ecx（类 thiscall 约定），但函数不保存/不恢复 esi
+   之外的寄存器，edx 直接消费——非标准调用约定（ecx+edx+栈参1
+   三输入）；
+④ 返回值不与全 1 哨兵比较在函数内处理——由调用点各自比较
+   （调用点 1 比 -1）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「三维坐标位域打包器」——ranking 无
+带名）；六槽移位量取值/语义（未确认谁写 [0x8A0DD0..0x8A0DE4]）；
+BitText::DrawText 打包内容（RGB/索引推断）；[0xA83CD9]/
+[0xA83CDA] 全局语义；[0x88730c] 全局语义；FUN_0063be60/
+FUN_00643720 宿主业务。
