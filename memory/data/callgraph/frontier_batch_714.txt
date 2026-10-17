@@ -1,0 +1,145 @@
+frontier batch 714 —— 0x00726720 TriggerClass::Destroy（ranking 带名）
+
+地址：0x00726720（functions.tsv 边界 0x726720-0x72677B = 92B，
+ret c3 无栈参 = 纯 thiscall；后邻 0x726780 4B getter（mov al,
+[ecx+0x30] ret——★读 Destroyed 标志）确认边界——getter 与本
+函数 +0x30 读写配对；ranking callers=3/unique=3/deps=1876）
+身份：ranking 带名 **TriggerClass::Destroy**（USER_DEFINED——机器码
+验证吻合：销毁标记 + 延迟入队）；★★与 batch 713 已登记的
+TriggerClass::FireActions（0x7265C0 前邻 0xA0B 距离）配对——
+本函数置 +0x30=1 正是 FireActions 的门控写侧（销毁后 Fires
+Actions 直接 false），触发家族销毁/触发两半闭环
+状态：semantics_verified + assembly_verified_semantics_confirmed
+（机器码 92B 全读 + 4 调用现场全读 + 双带名锚 + 全局向量簇
+交叉）
+
+=== 机器码全读要点（92B 函数） ===
+
+0x726720（92B 全读）：push esi → mov esi,ecx（★this=Trigger）→
+mov byte[esi+0x30],1（★★置 this+0x30=1——Destroyed 标记！batch
+713 FireActions 门控读侧：销毁后 FireActions 直接 false）→
+mov eax,[0xB0F6A0]（★全局向量容量 cap）→ cmp [0xB0F6A8],eax
+（★计数 count vs cap）→ jl 0x726762（★count<cap → 直接登记）→
+mov cl,[0xB0F6A5]（★字节标志）→ test cl,cl → jne 0x726742 →
+test eax,eax → jne 0x72677a（★cap!=0 → 返回，不扩容）→
+0x726742: mov ecx,[0xB0F6AC]（★额外容量 extra）→ test ecx,ecx
+→ jle 0x72677a（extra<=0 → 返回）→ add ecx,eax（★cap+extra）→
+mov eax,[0xB0F698]（★向量对象指针）→ push 0 → push ecx →
+mov ecx,0xB0F698（★this=&[0xB0F698]）→ call [eax+8]（★★虚表槽
+8 = Grow/Reserve 扩容——batch 662 同款向量扩容形态）→ test al,al
+→ je 0x72677a（扩容失败 → 返回）→ 0x726762: mov ecx,[0xB0F6A8]
+（★计数 count）→ mov eax,ecx → inc ecx → mov [0xB0F6A8],ecx
+（★count++）→ mov ecx,[0xB0F69C]（★数组基址）→ mov [ecx+eax*4],
+esi（★★数组[count]=this——Trigger* 延迟入队！）→ pop esi →
+ret c3。0x72677A（跳过出口）：无参数直接收尾。
+
+=== 语义 ===
+
+**TriggerClass::Destroy（触发销毁+延迟入队，ranking 带名）**——
+__thiscall 无栈参 ret c3：① 置 this->+0x30=1（Destroyed 标记——
+**batch 713 FireActions 的双门控之一：+0x30 非零 → 动作不执行，
+销毁与触发互斥闭环**）；② 向全局延迟销毁队列 [0xB0F698] 族登记
+this 指针：计数 count=[0xB0F6A8] < 容量 cap=[0xB0F6A0] 直接
+入队（数组基址 [0xB0F69C] 尾项写入）；count>=cap 时按
+[0xB0F6A5] 标志 + extra=[0xB0F6AC] 判定调向量对象虚表槽 8
+（Grow/Reserve）扩容后入队、失败跳过。★语义统一：触发器销毁
+不立即 delete——置标记 + 延迟入队（避免迭代器/遍历中删除的
+延迟回收队列，Trigger 全局数组 [0xA8EAEC] 由 TActionClass/
+FUN_006e2a10 遍历匹配后调用本函数）。
+
+=== 调用现场（4 处扫描 + 归属定位） ===
+
+1) 0x6DF07D → **TActionClass::Execute**（0x6DD8B0-0x6DFDE9 带名
+   body=9530——batch 713 已兑现其 0x6DF119 FireActions 调用点，
+   本批兑现其 Destroy 调用点）——现场（0x6DF051-0x6DF085）：
+   cmp [esi+0x50],ebp（★+0x50 vs 0）→ je 收尾 → mov edx,
+   [0xA8EAF8]（★TriggerClass 数组计数）→ lea edi,[edx-1]（★★
+   倒序！从尾遍历）→ cmp edi,ebp/jl 收尾 → 0x6DF06B: mov eax,
+   [0xA8EAEC]（★数组基址）→ mov ecx,[eax+edi*4]（★数组项=
+   Trigger）→ mov eax,[esi+0x50]（★TAction->+0x50）→ mov edx,
+   [ecx+0x24]（★Trigger->+0x24=Type）→ cmp edx,eax（★==匹配）→
+   jne 0x6DF082 → call 0x726720（★★Destroy——销毁匹配 Type 的
+   Trigger）→ 0x6DF082: dec edi → jns 0x6DF06B（★倒序循环）。
+   ★★与 batch 713 的 0x6DF119 FireActions 现场配对：FireActions
+   是 xor edi 正向循环、Destroy 是 lea edi,[edx-1] 倒序循环——
+   「触发全部/销毁全部」双循环同处 TActionClass::Execute 内。
+2) 0x6E2A3A → **FUN_006e2a10**（0x6E2A10-0x6E2A48 body=57 未登记）
+   ——现场（0x6E2A10-0x6E2A46）：mov edi,ecx（★this）→ mov eax,
+   [edi+0x50] → test/je 0x6E2A42（+0x50==0 → 跳过）→ mov eax,
+   [0xA8EAF8]（★计数）→ lea esi,[eax-1]（★★倒序）→ test/jl
+   0x6E2A42 → 0x6E2A27: mov ecx,[0xA8EAEC+esi*4]（★数组项）→
+   mov eax,[edi+0x50] → mov edx,[ecx+0x24]（★项->+0x24）→
+   cmp edx,eax/jne 0x6E2A3F → call 0x726720（★Destroy 匹配项）→
+   0x6E2A3F: dec esi → jns 0x6E2A27 → pop edi → mov al,1 →
+   ret 0x10（★★ret 16=4 栈参——与 batch 713 FUN_006e2aa0 的
+   ret 0x10 同签名；两者相邻 0x90B：FUN_006e2a10 销毁倒序、
+   FUN_006e2aa0 触发正向——Destroy/Fire 配对宿主函数）。
+3) 0x6E5457/0x6E5474 → **TagClass::RaiseEvent**（0x6E53A0-0x6E5558
+   带名 body=441——batch 713 已兑现其三处 FireActions 调用点，
+   本批兑现其两处 Destroy 调用点）——现场（0x6E5450-0x6E547B）：
+   …0x6E5450: call 0x7265C0（★==1 分支 FireActions——batch 713
+   已读）→ mov ecx,esi → 0x6E5457: call 0x726720（★★==1 分支
+   Destroy——动作执行后销毁！）→ mov byte[esp+0x13],1 → mov
+   bl,1 → jmp 0x6E5484；…0x6E546D: call 0x7265C0（★==2 分支
+   FireActions）→ mov ecx,esi → 0x6E5474: call 0x726720（★★
+   ==2 分支 Destroy——动作执行后销毁）→ mov bl,1 → 0x6E547B:
+   mov byte[esp+0x13],bl。★★==1/==2 分支均为「FireActions →
+   Destroy」紧邻对——事件触发动作执行完毕统一销毁触发器。
+
+★统一形态：四个调用点全部「先匹配后销毁」（TActionClass::
+Execute/FUN_006e2a10 倒序遍历 TriggerClass 数组匹配 +0x24、
+RaiseEvent 事件分派后直接销毁）——Destroy 与 FireActions
+（batch 713）构成 TriggerClass 触发/销毁双操作，全程配对出现。
+
+=== 原版怪癖（照抄） ===
+
+① 置 +0x30=1 标记在前、入队在后的顺序（标记先于队列——即使
+   入队失败也已置 Destroyed）；
+② 延迟入队不立即 delete（队列 [0xB0F698] 族——消费端/flush
+   时机未确认，推断为帧末/遍历结束统一回收）；
+③ 全局向量六元组 [0xB0F698](对象)/[0xB0F69C](基址)/[0xB0F6A0]
+   (容量)/[0xB0F6A5](字节标志)/[0xB0F6A8](计数)/[0xB0F6AC]
+   (额外)——与 batch 662 脏格向量同款布局（count<cap 直写、
+   虚表槽 8 扩容、标志门控）；
+④ 扩容判定三连：标志 [0xB0F6A5] 非零 → 直接扩容（绕过 cap 检查
+   ）、cap!=0 且标志 0 → 直接返回（不扩容）、extra<=0 → 返回；
+   扩容失败（虚表槽 8 返 al=0）静默跳过入队；
+⑤ 入队写基址 [0xB0F69C] 尾项 [ecx+eax*4]（count 作索引，写后
+   count++——VectorClass 标准 push 语义）；
+⑥ TActionClass::Execute/FUN_006e2a10 倒序遍历（lea [edx-1]+dec/
+   jns——从数组尾往头，与 FireActions 正向成镜像）；
+⑦ 匹配条件 Trigger->+0x24 == 宿主->+0x50（Type 指针相等——与
+   batch 713 同款匹配键）；
+⑧ RaiseEvent ==1/==2 分支 Destroy 紧邻 FireActions（事件处理
+   双段式）。
+
+=== 跨批次闭合 ===
+
+**+batch 713（TriggerClass::FireActions 0x7265C0——本函数前邻
+配对；置 +0x30=1 正是其门控写侧，销毁/触发互斥闭环；同宿主
+TActionClass::Execute 内部 FireActions 0x6DF119 与 Destroy
+0x6DF07D 正/倒双循环配对）**；+TActionClass::Execute（0x6DD8B0
+——batch 634/656/663/694/713 连续引用的带名 anchor，本批再兑现
+其内部 Destroy 调用点）+TagClass::RaiseEvent（0x6E53A0——batch
+713 兑现 FireActions、本批兑现 Destroy，==1/==2 分支双段式
+闭环）；+FUN_006e2a10/FUN_006e2aa0（相邻配对宿主——Destroy
+倒序/FireActions 正向）；+batch 662（全局向量布局同款——
+脏格向量 [0x880944] 族 vs 延迟销毁队列 [0xB0F698] 族）；
++[0xA8EAEC]/[0xA8EAF8]（TriggerClass 全局数组——batch 713 已
+登记，本批销毁遍历再消费）。
+
+=== 新候选 ===
+
+[0xB0F698] 队列消费端（谁 flush 延迟销毁队列——帧末/遍历收尾
+推断）、[0xB0F6A5] 标志写侧、FUN_006e2a10（57B 身份——配对
+宿主）、0x726780 getter 消费端（+0x30 读取点）、0x726790 后邻
+（调 0x410410）、TriggerClass+0x24/+0x50 Type 匹配键的写侧
+（触发器注册时 Type 赋值处）。
+
+=== partial ===
+
++0x30 Destroyed 标志的完整消费语义（FireActions 门控已证——
+其余消费点未穷尽）、[0xB0F698] 族六全局精确布局（VectorClass
+推断）、队列 flush 时机与消费者、扩容失败跳过入队的实际后果、
+FUN_006e2a10 身份（ret 0x10 四栈参宿主）、后邻 0x726790 身份、
+TriggerClass 数组 [0xA8EAEC] 的注册/注销机制。
