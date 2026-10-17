@@ -1,0 +1,139 @@
+frontier batch 775 —— 0x00623840 ComboBox 清空器（推断名）
+================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=245 / body=54B）。
+TARGET = 0x00623840（.text，54B，thiscall 无栈参 ret）
+
+一、函数体全读（54B，disasm 0x623840 80）
+-----------------------------------------
+00623840  push ebx
+00623841  mov ebx, [0x7e14a4]      ; ★IAT SendMessageA（batch 099/204 实锤）
+00623847  push esi / push edi
+00623849  push 0                   ; lParam = 0
+0062384b  mov edi, ecx             ; ★this → edi（组合框句柄推断）
+0062384d  push 0                   ; wParam = 0
+0062384f  push 0x146               ; ★消息 = 0x146 = CB_GETCOUNT
+00623854  push edi                 ; hWnd = this
+00623855  call ebx                 ; SendMessageA(this, 0x146, 0, 0)
+00623857  mov esi, eax             ; ★项数 → esi
+00623859  dec esi                  ; ★esi--（预减）
+0062385a  test eax, eax
+0062385c  je 0x623870             ; ★项数==0 → 收尾
+0062385e  push 0                   ; 循环体：lParam = 0
+00623860  push esi                 ; wParam = 当前索引
+00623861  push 0x144               ; ★消息 = 0x144 = CB_DELETESTRING
+00623866  push edi                 ; hWnd
+00623867  call ebx                 ; SendMessageA(this, 0x144, i, 0)
+00623869  mov ecx, esi
+0062386b  dec esi                  ; esi--
+0062386c  test ecx, ecx
+0062386e  jne 0x62385e            ; ★i≠0 继续循环
+00623870  pop edi / pop esi
+00623872  xor eax, eax             ; ★返回 0
+00623874  pop ebx
+00623875  ret
+
+语义：**ComboBox 清空器（推断名）**——thiscall（ecx=组合框
+句柄）：① SendMessageA(this, 0x146=CB_GETCOUNT, 0, 0) 查项
+数；② 项数==0 直接收尾返 0；③ 从 项数-1 递减到 0 逐项
+SendMessageA(this, 0x144=CB_DELETESTRING, i, 0) 删除；④ 返回
+0。消息码 WinUser.h 实锤：CB_GETCOUNT=0x0146、
+CB_DELETESTRING=0x0144（batch 203 已见 0x146/0x147/0x14E 同
+消息域）。被调仅 [0x7E14A4] 一个 IAT 槽。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_775_calls.py：9 处调用点
+  0x5C5DDA / 0x5D600D / 0x5D6458 / 0x5D6549 / 0x7896B2 /
+  0x78E78C / 0x798F59 / 0x799920 / 0x79A93F
+_locate_775_callers.py：归属
+  0x5C5DDA → 无归属（函数间隙）
+  0x5D600D → 无归属（函数间隙）
+  0x5D6458 → 无归属（函数间隙）
+  0x5D6549 → 0x005D6540 MPGameModeClass::PopulateTeamDropdownForPlayer
+              [0x5D6540-0x5D6610] body=209 ★★★带名实锤！
+  0x7896B2 → 0x007896A0 FUN_007896a0 [0x7896A0-0x78995D] body=702
+  0x78E78C → 无归属（函数间隙）
+  0x798F59 → 0x00798F50 FUN_00798f50 [0x798F50-0x799071] body=290
+  0x799920 → 无归属（函数间隙）
+  0x79A93F → 无归属（函数间隙）
+
+三、调用点现场（正确指令边界重读）
+--------------------------------
+【调用点 1】0x5D6549 in MPGameModeClass::PopulateTeamDropdownForPlayer
+            （★★带名——「Populate 下拉」语义与清空器直接吻合）
+  005d6540  push ebx / push esi / push edi
+  005d6543  mov edi, ecx            ; this → edi
+  005d6545  mov ecx, [esp + 0x10]   ; ★宿主栈参 → ecx（组合框句柄）
+  005d6549  call 0x623840          ; ★清空该下拉
+  005d654e  mov eax, [edi + 0x18]   ; 后续：this+0x18 计数
+  005d6551  xor esi, esi
+  005d6553  test eax, eax
+  005d6555  jle 0x5d656f
+  005d6557  mov eax, [edi + 0xc]    ; ★this+0xC 数组
+  形态：PopulateTeamDropdownForPlayer 先经 0x623840 清空目标下
+  拉，再遍历 this+0xC 数组（计数 this+0x18）填充——「清空→填
+  充」两段式。★跨函数域：MPGameModeClass 家族（batch 262 的
+  0x5DAFE0 会话对话框内容构建同 0x5Dxxxx 区）。
+
+【调用点 2】0x7896B2 in FUN_007896a0（body=702）
+  007896a0  sub esp, 0x38 / push 族
+  007896a4  mov bl, dl              ; ★dl 标志 → bl（第二寄存器参）
+  007896ae  mov edi, ecx            ; this → edi
+  007896b0  test bl, bl
+  007896b2  call 0x623840          ; ★bl≠0 走清空（本条）
+  007896b7  jmp 0x7896be
+  007896b9  call 0x623e00          ; ★bl==0 走对照函数 0x623E00（未登记）
+  007896be  mov eax, [0xb778d8]    ; 全局 → 后续填充
+  形态：__fastcall 双寄存器参（ecx=this、dl=标志）——标志≠0
+  先清空再填充（0x623E00 为对照填充路径）；★新候选 0x623E00。
+
+【调用点 3】0x798F59 in FUN_00798f50（body=290）
+  00798f50  sub esp, 0x1c / push ebx/ebp/esi/edi
+  00798f57  mov edi, ecx            ; this → edi
+  00798f59  call 0x623840          ; ★直接清空（无标志分支）
+  00798f5e  mov eax, [0xac116c]     ; 全局对象 → 虚表槽 0xD0 调用
+  00798f65  lea edx, [esp + 0x18]
+  00798f6d  mov ecx, [eax]
+  00798f6f  push edx / push eax
+  00798f71  call [ecx + 0xd0]       ; 后续填充逻辑
+  形态：thiscall 直调清空后经 [0xAC116C] 全局对象虚表槽 0xD0
+  继续——两段式另一实例。
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★[0x7E14A4]（batch 099/204——USER32!SendMessageA，本条=函
+    数体唯一被调：CB_GETCOUNT/CB_DELETESTRING 两消息实锤消费）
+  ★消息码 0x146=CB_GETCOUNT（batch 203 ComboBox 读侧/batch 227
+    GDlgSupp 搜索循环同码——再消费）
+  ★MPGameModeClass::PopulateTeamDropdownForPlayer（★★带名首
+    次进 frontier——与 0x623840 清空语义交叉实锤）
+  ★batch 262（0x5DAFE0 会话对话框内容构建——MPGameModeClass
+    家族同域参照）
+  新候选：0x623E00（FUN_007896a0 的 dl==0 对照函数）、
+  [0xB778D8]/[0xAC116C]（宿主全局）、0x5C5DDA/0x5D600D/
+  0x5D6458/0x78E78C/0x799920/0x79A93F（6 间隙宿主）
+
+五、原版怪癖（照抄）
+-------------------
+① 项数先查一次（CB_GETCOUNT），递减循环上限用该计数；
+② esi 预减（mov esi,eax/dec esi）后用 [esi] 作删除索引——从
+   项数-1 删到 0（含 0），先 dec 后判（mov ecx,esi/dec esi/
+   test ecx/jne——索引 0 轮也执行后退出）；
+③ 删除循环用 test ecx,ecx 而非 cmp esi,0——ecx 快照当前索引；
+④ 项数==0 特判提前收尾（test eax,je 0x623870）；
+⑤ 返回恒 0（xor eax,eax）；
+⑥ 消息码硬编码 0x146/0x144（CB_GETCOUNT/CB_DELETESTRING）；
+⑦ 无栈参 thiscall——句柄经 ecx 传入，无 ret n。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「ComboBox 清空器」——ranking 无带
+名，带名宿主交叉语义实锤）；this 精确类型（组合框句柄推断——
+宿主栈参传句柄）；CB_DELETESTRING 消息码（0x144 WinUser.h
+实锤，未与 CB_RESETCONTENT 0x14B 对比）；MPGameModeClass::
+PopulateTeamDropdownForPlayer 完整业务（this+0xC/+0x18 填充
+数组）；FUN_007896a0/FUN_00798f50 宿主业务（dl 标志/虚表槽
+0xD0/[0xB778D8]/[0xAC116C]）；6 间隙宿主身份；0x623E00 身份
+（dl==0 对照路径）。
