@@ -1,0 +1,132 @@
+frontier batch 814 —— 0x00476D80 variables::GetCRC（带名，SHA-1 初始化+CRC 处理）
+=====================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=149 / body=157B）。
+TARGET = 0x00476D80（.text，157B，thiscall 无栈参 ret）
+★★带名：variables::GetCRC（ranking 符号名；batch 493 的 0x69E9E0
+文档明确记录 unique_callers 含 variables::GetCRC——本函数为该
+预告兑现对象）
+
+一、函数体全读（157B，disasm 0x476D80 208）
+------------------------------------------
+参数契约（thiscall 无栈参）：
+  ecx = this（variables 对象——调用点全传全局 [0x887048]）
+  返回 eax（CRC/SHA 状态处理结果——调用点 mov edi,eax 接收）
+
+机器码（157B 全读）：
+  入口：sub esp,0x8C / push ebx/esi → mov esi,ecx → xor ebx,ebx
+  → cmp byte[esi+0x40],bl / jne 0x476DF9（★+0x40 惰性装载标志）
+  初始化段（首次）：lea eax,[esp+0x14] → [esp+0x18]=0 →
+  [esp+0x20]=0 → byte[esp+0x24]=0 → [esp+0x50]=0 → [esp+0x54]=0
+  （★清栈结构）→ mov [esp+0x3C],0x67452301 / [esp+0x40],
+  0xEFCDAB89 / [esp+0x44],0x98BADCFE / [esp+0x48],0x10325476 /
+  [esp+0x4C],0xC3D2E1F0（★★★SHA-1 五初始哈希常量 H0-H4 实锤！）
+  → mov [esp+0x18],0x7E4D78（★常量嵌入）→ call 0x526470（★★
+  batch 383 已登记文本对齐拼接器）→ lea ecx,[esi+0x41]（★this
+  +0x41 缓冲）→ push ecx → lea ecx,[esp+0x18] → call 0x69E9E0
+  （★★batch 493 已登记子对象方法转发器——variables 域方法族
+  转发端）→ lea ecx,[esp+0x14] → mov byte[esi+0x40],1（★置装载
+  标志）→ call 0x631C80（★★batch 116 已登记双向链表节点析构）
+  0x476DF9（公共尾段）：add esi,0x41（★this+0x41）→ push 0x14
+  （★★20 字节 = SHA-1 摘要长度）→ push esi → lea ecx,[esp+0x10]
+  → [esp+0x10]=0/[esp+0x14]=0/[esp+0x18]=0（清栈）→ call
+  0x4A1DE0（★★batch 082 已登记 CRC 字节处理器——字节逐个进
+  4 字节字缓冲）→ pop esi/ebx → add esp,0x8C → ret
+
+语义：**variables::GetCRC（带名）**——首次调用时惰性初始化：
+栈上装配 SHA-1 五初始常量（0x67452301/0xEFCDAB89/0x98BADCFE/
+0x10325476/0xC3D2E1F0——★★H0-H4 实锤）并经 0x526470（文本对齐
+拼接器）/0x69E9E0（variables 域转发器）/0x631C80（链表析构）设
+置上下文、置 +0x40 装载标志；随后以 this+0x41 缓冲（20 字节=SHA-
+1 摘要长度）喂入 0x4A1DE0（CRC 字节处理器）——SHA-1 摘要→CRC
+转换链。返回 eax 为 CRC 处理结果。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_814_calls.py：4 处调用点
+  0x679D39 / 0x679DA0 / 0x679DCD / 0x679E48
+_locate_814_callers.py：归属
+  0x679D39 → 无归属（函数间隙）
+  0x679DA0 → 0x00679D90 FUN_00679D90 [0x679D90-0x679EB5]
+    body=294
+  0x679DCD → 0x00679D90 FUN_00679D90 body=294
+  0x679E48 → 0x00679D90 FUN_00679D90 body=294
+
+三、调用点现场（全部干净——this 全为全局 [0x887048]）
+------------------------------------------------
+【调用点 1】0x679D39（间隙）
+  00679d1c  call 0x4739F0（★★batch 063 CCFileClass 构造）→
+  00679d2c  call 0x4741F0（★★batch 104 ReadCCFile——CCINI 读
+  取）→ test eax,eax / je 跳过 → lea ecx,[esp+4] → call 0x476D80
+  形态：★CCINI 读取成功后对 CC 对象求 CRC
+【调用点 2】0x679DA0 in FUN_00679D90（body=294）
+  00679d90  mov ecx,[0x887048]（★★全局对象作 this）→ call
+  0x476D80 → mov edi,eax（★接收返回）→ call 0x5D5ED0（★遍历）
+  → mov ebp,eax → cmp ebp,1 / jl → mov ecx,1 → call 0x5D5F30
+  形态：★全局 [0x887048] 对象 → GetCRC → 按返回遍历
+【调用点 3】0x679DCD in FUN_00679D90
+  与调用点 2 同构（循环第二次取 CRC）
+【调用点 4】0x679E48 in FUN_00679D90
+  00679e23  mov [esp+0x14],0x7E1AF4（虚表）→ call 0x4739F0
+  （CCFileClass 构造）→ call 0x4741F0（ReadCCFile）→ test
+  eax,eax / je → lea ecx,[esp+0x10] → call 0x476D80
+  形态：与调用点 1 同构（CCINI 读取后求 CRC）
+  形态统一：★CCINI/CCFile 读取成功后对对象求 CRC（0x476D80），
+  this 为全局 [0x887048] 或临时 CC 对象。
+
+四、被调/全局登记核验（grep frontier_status.tsv）
+-----------------------------------------------
+  0x4A1DE0 —— ★★★batch 082 已登记 CRC 字节处理器（公共尾段喂
+    入——SHA-1 摘要 20B → CRC）
+  0x69E9E0 —— ★★batch 493 已登记子对象方法转发器（★其文档明确
+    记录 unique_callers 含 variables::GetCRC/ReadCCFile/WriteCCFile
+    ——本函数即 GetCRC 兑现）
+  0x526470 —— ★★batch 383 已登记文本对齐拼接器
+  0x631C80 —— ★★batch 116 已登记双向链表节点析构
+  0x4739F0 —— ★★batch 063 已登记 CCFileClass 构造（调用点 1/4
+    前置）
+  0x4741F0 —— ★★batch 104 已登记 ReadCCFile（调用点 1/4 前置）
+  [0x887048] —— 全局对象（调用点 2/3 this——未登记新候选）
+  宿主 FUN_00679D90 —— 未登记（0x679 区——CRC 后遍历推断）
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★★0x69E9E0（batch 493 子对象方法转发器）= 本函数初始化段被
+    调——其文档明确预告 unique_callers 含 variables::GetCRC，
+    本批兑现
+  ★★SHA-1 五初始常量（0x67452301/0xEFCDAB89/0x98BADCFE/
+    0x10325476/0xC3D2E1F0）栈上装配实锤——★variables::GetCRC
+    的 SHA-1 上下文初始化语义
+  ★★0x4A1DE0（batch 082 CRC 字节处理器）= 公共尾段 SHA-1 摘要
+    20B→CRC 转换
+  ★★0x4739F0（batch 063 CCFileClass）+0x4741F0（batch 104
+    ReadCCFile）= 调用点 1/4 前置 CCINI 读取链
+  ★★0x526470（batch 383 拼接器）+0x631C80（batch 116 链表析构）
+    = 初始化段辅助
+  ★★全局 [0x887048] = variables 对象单例（调用点 2/3 this）
+  新候选：[0x887048]（variables 单例）、FUN_00679D90（0x679 区宿
+    主——GetCRC 后遍历消费）、0x7E1AF4（虚表常量）、0x7E4D78
+    （初始化段常量）
+
+六、原版怪癖（照抄）
+-------------------
+① +0x40 惰性装载标志：首次调用才做 SHA-1 上下文装配（五常量写
+   栈 + 三个辅助调用），之后直接走公共尾段——★懒初始化单例模式；
+② SHA-1 常量栈上装配（mov [esp+0x3C],0x67452301 等五条立即数）
+   ——★哈希上下文在栈上而非 this 内；
+③ 多辅助函数参杂（0x526470 文本拼接/0x69E9E0 转发/0x631C80 链
+   表析构——疑似复用的上下文 setup 混杂）；
+④ push 0x14（20 字节 = SHA-1 摘要长度）→ 0x4A1DE0 CRC 字节处理
+   ——SHA-1 摘要→CRC 转换链；
+⑤ 调用点全传全局 [0x887048] 或临时 CC 对象作 this——CRC 校验
+   工具函数风格。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：SHA-1 上下文与 CRC 的精确衔接（0x4A1DE0 喂入 20B 后的
+CRC 用途——文件完整性校验推断）；0x526470/0x69E9E0/0x631C80 在
+初始化段的精确角色（复用混杂推断）；[0x887048] 全局对象身份
+（variables 对象单例推断——与 batch 493 的 variables 域交叉）；
+FUN_00679D90 真实身份（GetCRC 后 5D5ED0/5D5F30 遍历消费推断）；
+0x7E4D78/0x7E1AF4 常量身份。
