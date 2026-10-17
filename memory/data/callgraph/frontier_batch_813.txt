@@ -1,0 +1,127 @@
+frontier batch 813 —— 0x0049E3B0 CCINI 按索引取条目 getter（推断名）
+======================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=150 / body=68B）。
+TARGET = 0x0049E3B0（.text，68B，thiscall 2 栈参 ret 8）
+推断名：CCINI 按索引取条目 getter（+0x60 标志惰性装载 + 索引边界
+检查 + ×76B 数组项地址输出，全局 this=0x89F518 CCINI 单例——
+推断名，未带名）
+
+一、函数体全读（68B，disasm 0x49E3B0 112）
+------------------------------------------
+参数契约（thiscall ret 8 = 2 栈参）：
+  ecx = this（CCINI 对象——调用点全传全局 [0x89F518]）
+  栈参1 = [esp+8] 入口（索引）
+  栈参2 = [esp+0xC] 入口（输出指针）
+  返回 al = 1（成功）/ 0（索引非法）
+
+机器码（68B 全读）：
+  0049e3b0  push esi → mov esi,ecx → mov al,[esi+0x60]（★+0x60
+  装载标志）→ test al,al / jne 0x49E3BF（★已装载跳过）→ call
+  0x49DB00（★★batch 191 已登记 CCINI 装载封装——惰性装载）
+  0x49e3bf  mov eax,[esp+8]（★栈参1 索引）→ test eax,eax / jl
+  0x49E3E4（★索引<0 → 失败）→ cmp eax,[esi+0x5C] / jge 0x49E3E4
+  （★索引>=+0x5C 计数 → 失败）
+  成功路径：lea ecx,[eax+eax*8]（★×9）→ lea edx,[eax+ecx*2]
+  （★×19）→ mov eax,[esi+0x58]（★+0x58 数组基址）→ pop esi →
+  lea ecx,[eax+edx*4]（★基址+索引×76B——每项 76B）→ mov edx,
+  [esp+8]（输出指针）→ mov al,1 → mov [edx],ecx（★输出项地址）
+  → ret 8
+  失败路径 0x49E3E4：mov eax,[esp+0xC]（输出指针）→ pop esi →
+  mov [eax],0（★输出 0）→ xor al,al（返 0）→ ret 8
+
+语义：**CCINI 按索引取条目 getter（推断名）**——thiscall 2 栈
+参：+0x60 标志未置时先经 0x49DB00（CCINI 装载封装）惰性装载；索
+引（栈参1）合法（>=0 且 <+0x5C 计数）时向输出指针（栈参2）写
+this->+0x58 基址 + 索引×76B 的条目地址并返 1；索引非法时输出 0
+返 0。★+0x58/+0x5C/+0x60 字段族与 batch 191 文档实锤完全一致。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_813_calls.py：13 处调用点（全在 0x5C 区——MPGameMode/会话
+域）
+  0x5C17CF / 0x5C19A5 / 0x5C1BB7 / 0x5C1EC4 / 0x5C1FBF /
+  0x5C240B / 0x5C253A / 0x5C2731 / 0x5C311E / 0x5C3527 /
+  0x5C3627 / 0x5C4369 / 0x5C45B1
+_locate_813_callers.py：归属
+  0x5C17CF → 无归属（函数间隙）
+  0x5C19A5 → 0x005C1980 FUN_005C1980 [0x5C1980-0x5C1A0D]
+    body=142
+  0x5C1BB7 → 无归属（函数间隙）
+  0x5C1EC4 → 无归属（函数间隙）
+  0x5C1FBF → 无归属（函数间隙）
+  0x5C240B → 0x005C23B0 FUN_005C23B0 [0x5C23B0-0x5C24FE]
+    body=335
+  0x5C253A → 0x005C2500 FUN_005C2500 [0x5C2500-0x5C263C]
+    body=317
+  0x5C2731 → 无归属（函数间隙）
+  0x5C311E → 无归属（函数间隙）
+  0x5C3527 → 无归属（函数间隙）
+  0x5C3627 → 无归属（函数间隙）
+  0x5C4369 → 无归属（函数间隙）
+  0x5C45B1 → 无归属（函数间隙）
+
+三、调用点现场（全部干净，形态统一——this 全为全局 [0x89F518]）
+--------------------------------------------------------
+【调用点 1】0x5C19A5 in FUN_005C1980（body=142）
+  005c1983  mov ecx,[0x89F574]（★全局计数）→ test / jle 跳过 →
+  lea eax,[esp+0x14]（输出指针）→ mov ecx,0x89F518（★★全局
+  CCINI 对象）→ push eax / push ebp（索引 0）→ call 0x49E3B0
+  形态：遍历全局 [0x89F574] 计数，索引从 0 起逐项取
+【调用点 2】0x5C240B in FUN_005C23B0（body=335）
+  005c2402  mov ecx,0x89F518 → lea edx,[esp+0x1C]（输出）→ push
+  edx / push eax（★索引 = [esi+0x33C]）→ call 0x49E3B0 → mov
+  eax,[esp+0x1C] / cmp eax,ebp / je 0x5C24F5（★返回指针判空）→
+  cmp dword[eax+0x20],ebp（★取条目 +0x20 字段）
+  形态：★★索引来自宿主 [esi+0x33C]，返回条目指针后读 +0x20
+【调用点 3】0x5C17CF（间隙）
+  005c17bd  mov ecx,[esi+0x33C]（★索引）→ mov ecx,0x89F518 →
+  push eax（输出 [esp+0xC]）→ push ecx → call 0x49E3B0 → mov
+  edx,[esp+0x10] / cmp edx,ebx / jne（★返回指针判空）
+  形态：与调用点 2 同构（[esi+0x33C] 索引 + 0x89F518 this）
+  13 处调用点全为「mov ecx,0x89F518（CCINI 单例）+ 索引（0 或
+  [宿主+0x33C]）+ 输出指针 → call」——★CCINI 全局条目访问器。
+
+四、被调/全局登记核验（grep frontier_status.tsv）
+-----------------------------------------------
+  0x49DB00 —— ★★★batch 191 已登记 CCINI 装载封装（文档明确记录
+    +0x58/+0x5C/+0x60 字段族——与本函数惰性装载门控完全一致！
+    读文件失败时清 +0x58/+0x5C/+0x60、成功装载后标志置位）
+  [0x89F518] —— ★全局 CCINI 对象（13 处调用点全部作 this）——
+    未登记（新候选）
+  宿主 FUN_005C1980/FUN_005C23B0/FUN_005C2500 —— 未登记（0x5C
+    区——MPGameMode/会话域推断）
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★★0x49DB00（batch 191 CCINI 装载封装）= 本函数惰性装载原语
+    ——+0x60 标志门控 + batch 191 文档记录的字段族逐一对上
+  ★★[0x89F518] 全局 CCINI 对象 = 13 处调用点统一 this——★CCINI
+    单例条目访问实锤
+  ★★0x5C 区宿主（MPGameMode/会话域）大量消费——★游戏设置读取
+    场景
+  新候选：[0x89F518]（CCINI 全局单例）、[0x89F574]（全局计数）、
+    FUN_005C1980/FUN_005C23B0/FUN_005C2500（0x5C 区宿主——条目
+    +0x20 字段消费推断）
+
+六、原版怪癖（照抄）
+-------------------
+① 惰性装载门控：+0x60 标志未置才调 0x49DB00（首次访问触发装
+   载，之后跳过——CCINI 懒加载单例模式）；
+② 索引合法双判：jl（有符号 <0）+ jge（与 +0x5C 计数比较）——
+   有符号比较（负索引拒）；
+③ ×76B 换算：lea ×9 → lea ×19 → ×4（eax+eax*8 = ×9、eax+
+   ecx*2 = ×19、edx*4 = 每项 76B）——三级 lea 乘法展开无 imul；
+④ 双出口返回值 al=1/0（成功/非法），失败路径输出指针写 0——
+   调用点判空（cmp/jne 或 je）区分；
+⑤ 调用点统一传全局 [0x89F518]（CCINI 单例）作 this——非宿主
+   对象方法而像全局工具访问。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：+0x58/+0x5C/+0x60 精确字段语义（数组基址/计数/装载标志
+——batch 191 已部分实锤但条目结构 76B 布局未 dump）；[0x89F518]
+CCINI 单例的对象身份（GameOptions/设置域推断）；[0x89F574] 全
+局计数与 0x89F518 的关系；条目 +0x20 字段语义（调用点 2 消费）
+；0x5C 区宿主真实身份（MPGameMode/会话域推断）。
