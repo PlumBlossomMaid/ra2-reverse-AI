@@ -1,0 +1,138 @@
+frontier batch 750 —— 0x005BF500 条件驱动调用器（游戏模式分发器伴生）
+
+地址：0x005BF500（functions.tsv 边界 0x5BF500-0x5BF518 = 25B，
+ret 无栈参 = 无参纯全局操作——mov eax,[0xB45B68] 首段；前邻
+0x5BF450=batch 256 已登记的数组逐项析构（[0xB45B68]/[0xB45B5C]
+同一全局的释放端！），后邻 0x5BF520=计数>0 布尔判定器（setg
+al/ret——紧邻配对）；ranking callers=3/unique=3/deps=529——
+E8 扫描实得 5 调用点落 3 宿主+2 间隙）
+身份：unclassified（ranking 无带名——按机器码语义 + batch 065
+同全局交叉推断「条件驱动调用器」：计数 >0 时调数组[0] 虚表槽
+0xC，调用者 ecx 作栈参传入）
+状态：semantics_verified + assembly_verified_semantics_confirmed
+（机器码 25B 全读 + 5 调用点现场全读 + batch 065/256 的
+[0xB45B68]/[0xB45B5C] 全局交叉）
+
+=== 机器码全读要点（25B 函数） ===
+
+0x5BF500（25B 全读）：mov eax,[0xB45B68]（★★读全局计数——
+batch 065 游戏模式分发器 0x48D080 同全局！）→ test eax,eax →
+jle 0x5BF518（★计数≤0 → 直接返回）→ mov eax,[0xB45B5C]（★★
+读全局数组/单例基址）→ push ecx（★压入调用者 ecx——作为虚表
+槽 0xC 的栈参！）→ mov eax,[eax]（★[0xB45B5C]->[0] = 数组[0]
+对象指针）→ mov ecx,eax（★this=对象）→ mov edx,[eax]（★虚表）
+→ call [edx+0xC]（★★虚表槽 0xC 调用——带 1 栈参）→ 0x5BF518:
+ret。
+★★结构：计数门控 → 数组[0] 对象 → 虚表槽 0xC + 调用者 ecx 栈
+参。★关键：**push ecx 在 mov ecx,eax 之前**——调用者传入的 ecx
+值（现场 3 处 mov cl,1/1 处 xor cl,cl）作为槽 0xC 的参 1。
+
+=== 语义 ===
+
+**条件驱动调用器（游戏模式分发器伴生，推断名）**——无参纯全
+局操作：① 读 [0xB45B68]（全局计数）；② ≤0 → 静默返回；③ >0
+→ 取 [0xB45B5C] 指向的数组[0] 对象，调其虚表槽 0xC，并把调用
+者 ecx（门控标志推断——3 处传 1/1 处传 0）作为栈参 1。
+★语义统一：与 batch 065 的 0x48D080（游戏模式分发器——读同一
+对 [0xB45B68]/[0xB45B5C]，[0xB45B5C] 单例虚调用 vtable+8）为
+**同一全局的两个消费端**——0x48D080 按 [0xA8B238] GameMode 值
+1/2/3/4 分支后调 0x48D1E0，本条 0x5BF500 是「计数>0 时调槽 0xC
+的驱动原语」；batch 256 的 0x5BF450 是同一数组的释放端（逐项虚
+表槽 0 析构+delete）。三函数围绕 [0xB45B68]/[0xB45B5C] 构成
+「创建/驱动/释放」全生命周期。
+
+=== 调用现场（5 处扫描 + 归属定位） ===
+
+1) 0x683F4F → **FUN_00683eb0**（0x683EB0-0x683FA9 body=250 未
+   登记——0x683xxx 区，batch 255 会话清理 0x684240 同区）——
+   现场（0x683F30-0x683F6B）：pop edi/je → lea ecx,[esi+4] →
+   call 0x6C8C40（★★batch 060 tick!）→ mov edx,[esi]/mov ecx,
+   [esi+8]/sub eax,edx/mov [esi],0xFFFFFFFF（★时刻置 -1 哨兵）/
+   add ecx,eax/mov [esi+8],ecx → mov cl,1（★门控标志=1）→ call
+   0x5BF500（★本条——条件驱动！）→ mov ecx,[0x887368]（★全局）
+   → test/je → push 0/call 0x7241A0 → mov ecx,0x87F7E8（★★
+   MapClass::Instance 锚点！）→ call 0x6938C0（★地图操作）。
+2) 0x684048 → **FUN_00683fb0**（0x683FB0-0x684051 body=162 未登
+   记——紧邻宿主 1，同一 0x683xxx 区族）——现场（0x684036-
+   0x68404D）：mov [0x83D834],0x4000（★写全局常量 0x4000）→
+   xor cl,cl（★门控标志=0！）→ call 0x5BF500（★本条——条件驱
+   动！）→ jmp 0x406F40（★★尾跳——batch 065 0x48D080 内部前
+   置 0x406F70 同 0x406Fxx 区！）。
+3) 0x7773CF → **无归属（间隙——0x7773C0 起未收录函数内部，
+   0x777xxx UI 域）**——现场（0x7773C0-0x7773E8）：push
+   0x849E94 → call 0x4068E0（★★batch 001 日志）→ mov cl,1（★
+   标志=1）→ call 0x5BF500（★本条——条件驱动！）→ call
+   0x407020（★batch 065 0x48D080 内部 0x406F70 同 0x4070xx 区）
+   → mov ecx,[0x887640]（★★batch 221 会话状态区全局！）→
+   test/je → call [eax+0x1C] → mov [0xB73560],al（★写全局字节）。
+4) 0x777594 → **FUN_00777420**（0x777420-0x7775BB body=412 未登
+   记——0x777xxx UI 对话框域）——现场（0x777560-0x7775AA）：
+   mov ecx,[0x887308]（★batch 221 会话状态区全局）→ push 0/
+   push 0x886FB0 → call [eax+0x14]（★虚表槽 0x14）→ push 2/mov
+   ecx,0x87F7E8（★★MapClass::Instance 锚点！）→ call 0x4F42F0
+   （★batch 067 RedrawSidebar）→ mov ecx,[0xB73550]（★batch
+   200/203 窗口句柄）→ push 0/push 0/push ecx → call
+   [0x7E149C]（★导入槽）→ xor cl,cl（★标志=0！）→ call 0x5BF500
+   （★本条——条件驱动！）→ call 0x775B10（★读 [0xB72F44] 当前
+   hDlg）→ test/je → call 0x775B10/push eax/call [0x7E1428]（★
+   UI 对话框链——batch 094/099 家族）。
+5) 0x7778E4 → **无归属（间隙——0x7778CE 起同款函数内部）**——
+   现场（0x7778C9-0x7778FA）：mov byte[0xA8ED80],al（★batch
+   262 GameMode 门禁全局！）→ jne → push 0x849E94 → call
+   0x4068E0（★日志）→ mov cl,1（★标志=1）→ call 0x5BF500（★
+   本条——与现场 3 同款！）→ call 0x407020 → mov ecx,[0x887640]
+   → cmp/je → call [eax+0x1C] → ...
+
+★统一形态：五调用点全「先设门控标志（mov cl,1 三处/xor cl,cl
+两处）→ call 0x5BF500 → 后续接 0x407020/0x775B10/[0x887640]
+等会话/UI 域处理」——**条件驱动调用是游戏更新/UI 链路的公共
+入口**；c 标志作槽 0xC 栈参（1=强制驱动推断/0=条件驱动推断）。
+
+=== 原版怪癖（照抄） ===
+
+① **push ecx 次序**（在 mov ecx,eax 之前压调用者 ecx——编译器
+   把 ecx 传入值转成显式栈参传给槽 0xC）；
+② **计数≤0 静默返回**（jle 直接 ret——计数门控无错误路径）；
+③ **数组[0] 硬取**（mov eax,[eax]——只驱动数组首对象，不遍历）；
+④ **虚表槽 0xC 间接调用**（call [edx+0xC]——不打桩不 inline）；
+⑤ 25B 超短函数不建帧（无 push 保存——纯单次驱动）；
+⑥ 调用者门控标志 1/0 混用（三处 1 两处 0——语义分层推断）；
+⑦ 与 batch 065 的 0x48D080 同全局双消费端（驱动原语 vs GameMode
+   分派器）、batch 256 0x5BF450 同数组释放端——[0xB45B68]/
+   [0xB45B5C] 三用途。
+
+=== 跨批次闭合 ===
+
+**++batch 065（0x48D080 游戏模式分发器——[0xB45B68]/[0xB45B5C]
+    同全局交叉，本条=驱动原语；现场 2 尾跳 0x406F40 同
+    0x406Fxx 区）**；
+**++batch 256（0x5BF450 数组逐项析构——同一全局的释放端，本
+    条=驱动端，跨批配对）**；
++0x6C8C40（batch 060 tick——现场 1 前置）；+0x87F7E8
+（MapClass::Instance 锚点——现场 1/4）；+[0x887640]/[0x887308]
+（batch 221 会话状态区全局——现场 3/4/5）；+[0xA8ED80]（batch
+262 GameMode 门禁——现场 5 前置）；+0x4068E0（batch 001 日志
+——现场 3/5）；+0x4F42F0（batch 067 RedrawSidebar——现场 4）；
++0x775B10/[0x7E149C]/[0x7E1428]/[0xB72F44]（batch 094/099 UI 家
+族——现场 4 对话框链）；+0x407020（batch 065 0x406F70 同区——
+现场 3/5 后续）；+[0x887368]/[0x83D834]/[0xB73560]（新全局——
+三现场）。
+
+=== 新候选 ===
+
+FUN_00683eb0（0x683EB0-0x683FA9 250B——tick+MapClass 宿主）、
+FUN_00683fb0（0x683FB0-0x684051 162B——0x4000 常量宿主）、
+FUN_00777420（0x777420-0x7775BB 412B——UI 对话框宿主）、两间
+隙函数（0x7773C0/0x7778CE 起——同款驱动+0x407020 链）、
+0x7241A0（现场 1 后续）、0x6938C0（现场 1 MapClass 操作）、
+0x407020 身份（batch 065 0x406F70 同区家族）、[0xB73560] 字节
+全局、（[0xB45B68]/[0xB45B5C] 数组[0] 对象的类——槽 0xC 方法
+身份）。
+
+=== partial ===
+
+函数精确名（推断「条件驱动调用器」——ranking 无带名）、
+[0xB45B68]/[0xB45B5C] 数组[0] 对象的类与槽 0xC 精确方法、调用
+者 ecx 门控标志的精确语义（1/0 分层推断）、计数写入端（谁递增
+[0xB45B68]）、FUN_00683eb0/FUN_00683fb0/FUN_00777420 宿主业
+务、0x407020 身份、两间隙宿主。
