@@ -1,0 +1,135 @@
+frontier batch 720 —— 0x00565B00 MapClass 单元数组清理器（推断名）
+
+地址：0x00565B00（functions.tsv 边界 0x565B00-0x565BB2 = 179B，
+ret c3 无栈参 = 纯 thiscall；后邻 0x565BC0 新函数（push ebx/
+ebp/esi/edi → mov ebp,ecx → xor edi/esi → mov [ebp+0x134],edi
+——★+0x134 计数清零族）确认边界；ranking callers=3/unique=3/
+deps=815）
+身份：unclassified（ranking 无带名——按机器码语义 + ★★★三个
+调用点统一 `mov ecx,0x87F7E8`（MapClass::Instance，QWEN.md 实锤）
+→ call 推断「MapClass 单元数组清理器」）；★★★★batch 628
+（0x6851F0 ScenarioClass 场景重置器）文档明列「0x565B00 新候选
+——未登记被调 17 个之一」——本批 = 该候选兑现！
+状态：semantics_verified + assembly_verified_semantics_confirmed
+（机器码 179B 全读 + 3 调用现场全读 + batch 628 预告交叉）
+
+=== 机器码全读要点（179B 函数） ===
+
+0x565B00（179B 全读）：push ebx → push esi → mov esi,ecx（★
+this=MapClass::Instance 0x87F7E8 推断）→ xor ebx,ebx → xor
+ecx,ecx（★ecx=索引）→ cmp [esi+0x140],ebx（★this+0x140 计数
+count）→ jle 0x565B2E（★count<=0 跳段2）→ 段1（0x565B10-0x565B2C
+清字段循环）：mov eax,[esi+0x13C]（★this+0x13C 数组基址）→
+mov eax,[eax+ecx*4]（★项）→ cmp eax,ebx/je 0x565B23（★空项跳过）
+→ mov [eax+0x2C],ebx（★项+0x2C=0）→ mov [eax+0x30],ebx（★项
++0x30=0——两字段清零）→ 0x565B23: mov eax,[esi+0x140] → inc
+ecx → cmp ecx,eax/jl 0x565B10（★全表循环）→ 段2（0x565B2E-
+0x565B63 虚析构循环）：mov eax,[esi+0x140] → push edi → xor
+edi,edi → cmp eax,ebx/jle 0x565B63 → 0x565B3B: mov ecx,[esi+
+0x13C] → mov ecx,[ecx+edi*4]（★项）→ cmp ecx,ebx/je 0x565B58
+（★空项跳过）→ mov edx,[ecx]（★虚表）→ push 1（★删除标志）→
+call [edx+0x20]（★★虚表槽 0x20 虚析构！）→ mov eax,[esi+0x13C]
+→ mov [eax+edi*4],ebx（★槽置 NULL）→ 0x565B58: mov eax,[esi+
+0x140] → inc edi → cmp edi,eax/jl 0x565B3B（★全表循环）→ 段3
+（0x565B63-0x565BB2 复位+扩容+全清）：mov dl,1 → xor ecx,ecx →
+call 0x544FF0（★未登记辅助——两参 0/1）→ mov eax,[esi+0x140]
+→ pop edi → cmp eax,0x40000（★★0x40000=262144=512×512 全图
+格数！）→ jge 0x565BB0（★已够不扩容）→ mov edx,[esi+0x138]
+（★this+0x138 向量对象）→ lea ecx,[esi+0x138] → push ebx（★0）
+→ push 0x40000（★目标容量）→ call [edx+8]（★★虚表槽 8 =
+Grow/Reserve 扩容到 0x40000）→ 0x565B8F: mov ecx,[esi+0x140]
+→ xor eax,eax → cmp ecx,ebx/jle 0x565BB0 → 0x565B9B: mov ecx,
+[esi+0x13C] → inc eax → mov [ecx+eax*4-4],ebx（★★槽置 NULL——
+全清）→ mov ecx,[esi+0x140] → cmp eax,ecx/jl 0x565B9B → 0x565BB0:
+pop esi → pop ebx → ret。
+
+=== 语义 ===
+
+**MapClass 单元数组清理器（推断名）**——__thiscall 无栈参 ret c3
+（this=MapClass::Instance 0x87F7E8，三个调用点统一）：① 段1：
+遍历 this+0x13C 数组（计数 +0x140），每项非空则清 +0x2C/+0x30
+两字段；② 段2：再遍历，每项非空则虚表槽 0x20 虚析构（push 1
+删除标志）+ 槽置 NULL；③ 段3：调 0x544FF0（两参 0/1——复位
+辅助推断）+ 计数 <0x40000 时虚表槽 8 Grow 扩容到 0x40000
+（=262144=512×512 全图 cell 数——地图单元数组容量对齐全图）+ 
+槽全部置 NULL。★语义统一：地图单元数组（cell 相关对象表）
+的完整清理复位——先清字段再逐项虚析构最后按全图容量扩容，
+调用方（场景重置/规则重载/清理链）统一以 MapClass::Instance
+为 this 触发。
+
+=== 调用现场（3 处扫描 + 归属定位） ===
+
+1) 0x534991 → **FUN_00534450**（0x534450-0x5349B1 body=1378 未
+   登记——0x53xxxx 区 Theater/启动域）——现场（0x534960-0x5349A0）：
+   …… mov edx,[ecx] → push 1 → call [edx+0x20]（★虚析构——同款
+   形态）→ cmp [0xA8E978],ebx（★队列计数全局）→ jne 0x534956
+   （★循环）→ call 0x725C70（★辅助）→ mov ecx,[0x887324]（★
+   batch 067 相机全局）→ cmp ecx,ebx/je → 虚表槽 0x20 push 1
+   释放 → 0x534986: mov ecx,0x87F7E8（★★MapClass::Instance）→
+   mov [0x887324],ebx（★相机清 NULL）→ call 0x565B00（★本条——
+   相机释放后清理地图单元数组！）→ call 0x725C70 → mov ecx,
+   0x89C3B0 → call 0x430980（★装载链）。
+2) 0x685318 → **FUN_006851f0**（0x6851F0-0x685663 body=1140——
+   ★★batch 628 已登记！ScenarioClass 场景重置/清理器，文档明列
+   「0x565B00 新候选」！）——现场（0x6852FA-0x685322）：mov
+   ecx,[0xA8E96C]（★队列表全局）→ mov [ecx+eax*4],esi（★注册）
+   → mov eax,[0xA8E970] → mov ecx,[0xA8ED38] → inc edi → cmp
+   edi,ecx/jl（★对象注册循环）→ 0x685313: mov ecx,0x87F7E8
+   （★★MapClass::Instance）→ call 0x565B00（★★本条——batch
+   628 段2 明文「mov ecx,0x87f7e8 → call 0x565b00」现场兑现！）
+   → mov eax,[0x87F83C] → mov [0x87F848],ebx（★地图缓冲清零）→
+   cmp eax,ebx/je 0x685343（★持有标志后续 delete）。
+3) 0x6BE3EE → **FUN_006be1c0**（0x6BE1C0-0x6BEC48 body=2697 未
+   登记——batch 719 刚登记的宿主，调 ColorScheme::~ColorScheme）
+   ——现场（0x6BE3C4-0x6BE3F3）：call 0x5257C0 → call 0x5FF800
+   → call 0x53D550（★辅助链）→ mov ecx,[0x887640]（★全局对象）
+   → cmp ecx,ebx/je → 虚表槽 [edx] push 1 释放（★虚析构）→ mov
+   [0x887640],ebx → 0x6BE3E9: mov ecx,0x87F7E8（★★MapClass::
+   Instance）→ call 0x565B00（★本条——全局对象释放后清理地图
+   单元数组）→ mov ecx,0x87F7E8（★再取 this 续链）。
+
+★统一形态：三个宿主（场景重置器/相机释放链/全局清理链）都在
+「释放关联对象后」以 MapClass::Instance 为 this 调本函数——
+地图单元数组的复位在场景切换/重载时统一触发。
+
+=== 原版怪癖（照抄） ===
+
+① 三段式清理（先清字段 → 再虚析构 → 最后扩容全清——顺序敏感：
+   字段清 +0x2C/+0x30、槽置 NULL 分两段完成）；
+② 段1 只清字段不析构、段2 只析构不碰字段（两遍遍历不对称——
+   先「静止」后「清除」推断）；
+③ 虚析构用虚表槽 0x20 + push 1（删除标志——C++ deleting
+   destructor 形态）；
+④ 扩容阈值 0x40000 硬编码（=262144=512×512 全图 cell 数——
+   地图单元数组容量对齐最大地图）；
+⑤ 扩容用虚表槽 8 Grow/Reserve（VectorClass 惯用，batch 662/714
+   同款）；
+⑥ 扩容后无条件全槽置 NULL（与段1/段2 的空项跳过不对称——
+   末尾强制清一遍）；
+⑦ 0x544FF0 辅助（两参 0/1——复位/通知推断）；
+⑧ 三调用点统一 this（0x87F7E8 MapClass::Instance——非局部对象）。
+
+=== 跨批次闭合 ===
+
+**+batch 628（FUN_006851f0 ScenarioClass 场景重置器——文档明列
+「0x565B00 新候选」，本批兑现其 0x685318 调用现场；场景重置链
+同域再确认）**；+MapClass::Instance（0x87F7E8——QWEN.md 实锤，
+三个调用点统一 this）；+0x887324（batch 067 相机全局——FUN_
+00534450 现场释放后清理）；+虚表槽 8 Grow（batch 662/714 同款
+向量扩容）；+0x544FF0（新登记辅助——两参复位推断）。
+
+=== 新候选 ===
+
+FUN_00534450（1378B——相机释放链，本批全读留候选）、FUN_006be1c0
+（2697B——batch 719 已登记宿主）、0x544FF0（复位辅助）、this+
+0x13C/+0x140 数组精确语义（cell 对象表推断）、+0x138 向量对象
+（DynamicVectorClass 推断）、0x40000 容量含义（全图 cell 数）、
+0x725C70/0x5257C0/0x5FF800/0x53D550（调用现场辅助链）。
+
+=== partial ===
+
+函数精确名（推断「MapClass 单元数组清理器」——ranking 无带名）、
+this+0x13C 数组项类型（cell 对象推断——+0x2C/+0x30 字段语义）、
+0x544FF0 精确身份（复位/通知推断）、0x40000 容量的精确业务含义
+（全图 cell 数推断）、FUN_00534450/FUN_006be1c0 宿主身份、
+0x725C70 辅助身份。
