@@ -1,0 +1,197 @@
+frontier batch 823 —— 0x006263D0 名字→句柄查表器（哈希桶+链）
+==============================================================
+
+候选来源：ranking.tsv（callers=3 / deps=129 / body=650B）。
+TARGET = 0x006263D0（.text，650B，thiscall 1 栈参 ret 4）
+★★推断名：名字→句柄查表器（哈希桶+链）——[0xAC48F0] 全局单例
+惰性构造（含 batch 490 容器数组宿主构造器 0x628070）→ 名字
+哈希定位桶 → 桶内 260B 链节 +0x100 链 → batch 343 宽字符比
+较 0x4F4CE0 → 命中返链节/未命中 0x627590 登记新名字
+
+一、函数体全读（650B，disasm 0x6263D0 650）
+---------------------------------------------
+参数契约（thiscall 1 栈参 ret 4）：
+  ecx = this（宿主对象/名字来源）
+  [esp+4] = param1（宿主指针——4F4C30 调用时传回）
+  返回 eax（句柄/链节指针，未命中登记后返回）
+机器码（650B 全读，分两段）：
+  ——段 1：惰性构造 [0xAC48F0] 全局单例——
+  006263d0  sub esp,0x20C / push 族
+  006263da  mov edi,[0xAC48F0]          ; ★★全局单例
+  006263e0  mov ebx,ecx / test edi,edi / jne 0x626490
+  006263ee  push 0x10 / call 0x7C8E17    ; ★★new（batch 001）
+  006263f5  mov edi,eax / test / je 0x626488（分配失败）
+  00626402  push 0x18 / mov [edi],0xFFFFFFFF
+  0062640a  call 0x7C8E17 / mov esi,eax / test / je 0x626439
+  00626418  push 0/push 0/mov ecx,esi/call 0x5AD6F0（构造）
+  00626423  mov [esi],0x7E5BC4          ; ★+4 子对象虚表 0x7E5BC4
+  00626429  mov [esi+0x14],0xA / mov [esi+0x10],0
+  0062643d  mov [edi+4],esi             ; ★+4 = 容器子对象
+  00626440  push 0x18 / call 0x7C8E17 / mov eax / je 0x626459
+  0062644c  push 0/push 0/mov ecx,eax/call 0x628240（构造）
+  0062645d  mov [edi+8],eax             ; ★+8 = 第二子对象
+  00626460  push 0x10 / call 0x7C8E17 / mov eax / je 0x626481
+  0062646c  push 0x626660 / push 0x1F / push 0xA / mov ecx,eax
+    / call 0x628070                     ; ★★batch 490 容器数组
+                                        ;   宿主构造器（3 参）
+  0062647c  mov [edi+0xC],eax           ; ★+0xC = 容器数组宿主
+  0062648a  mov [0xAC48F0],edi          ; ★★全局单例写入
+  ——段 2：名字哈希定位 + 桶内链遍历——
+  00626490  push ebx / lea ecx,[esp+0x1C] / call 0x4F4C30（★
+    batch 343 邻域——哈希定位）
+  0062649a  mov esi,[edi+0xC]           ; ★容器数组宿主
+  006264a1  call [esi+4]（虚表槽 4 取容量）/ cdq / idiv
+    [esi+8]                             ; ★★idiv 容量取模 = 哈希
+  006264a8  mov ecx,[esi] / lea eax,[edx+edx*2]（★余数×3）
+  006264ad  mov esi,[ecx+eax*8+0x10]    ; ★★桶数组表项
+  006264b1  lea ebp,[ecx+eax*8] / dec esi / js 0x6264FF（空桶）
+  006264b9  shl ebx,6 / add ebx,esi / shl ebx,2（★×0x104=260B
+    链节步长）/ mov ecx,[ebp+4] / add edi,ebx / lea edx,
+    [esp+0x18] / push edx / mov ecx,edi / call 0x4F4CE0
+                                        ; ★★batch 343 宽字符比较
+  006264d4  test al,al / jne 0x6264E5（★命中）
+  006264d8  dec esi / sub ebx,0x104 / jge 0x6264C1（★链遍历）
+  006264e5  lea eax,[edi+0x100] / mov eax,[eax] / mov eax,
+    [eax+0x100] / test / jne 0x62664F（★链 +0x100 尾返）
+  ——段 3：未命中 → 0x627590 登记新名字——
+  006264ff  mov ecx,[esp+0x10] / mov ebp,[0xAC48F0] / push
+    ecx / mov ecx,ebp / call 0x627590    ; ★★登记新名字（未登记）
+  00626513  push 0x104 / call 0x7C8E17   ; ★new 0x104=260B 名字
+                                        ;   缓冲
+  00626522  test edx / je 0x626553
+  00626526  repne scasb（strlen 名字）/ rep movsd/movsb（拷贝）
+  00626547  mov [edx+0x100],ebx          ; ★链尾 +0x100 = 登记结果
+  0062654d  mov [esp+0x14],edx
+  ——段 4：同构二次定位（0x62655B 起，同一模式再跑一遍）——
+  0062655b-0x626646 与段 2 同构（4F4C30 → idiv 取模 → 桶 →
+    链遍历 4F4CE0 比较 → 命中 0x626630）
+  ——段 5：收尾——
+  00626623  pop 族 / xor eax / ret（★未命中返 0 的路径）
+  00626630-0x626646 命中收尾 / 0x62664F 链尾返
+语义：**名字→句柄查表器（哈希桶+链，推断名）**——①开场惰性
+构造 [0xAC48F0] 全局单例：new 0x10 头 + 三个子对象（+4 容器
+虚表 0x7E5BC4 +0x14=0xA、+8 0x628240 构造、+0xC 经 0x628070
+容器数组宿主构造器——batch 490 实锤）；②名字哈希定位：
+0x4F4C30（哈希计算）→ 容器数组宿主 idiv 容量取模 → 余数×3 →
+桶数组 [ecx+eax*8+0x10] 取桶头；③桶内链遍历：0x104=260B 链
+节步长，逐节 0x4F4CE0（batch 343 宽字符相等比较）→ 命中取
++0x100 链尾返回；④未命中：0x627590 登记新名字（new 0x104
+拷贝名字 + 链入 +0x100）；⑤二次定位同构再跑；⑥收尾返句柄
+（命中）或 0（失败路径）。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_816_calls.py（复用，TARGET=0x6263D0）：4 处调用点
+  0x42536F / 0x716D9F / 0x717833 / 0x717865
+_locate_816_callers.py：归属
+  0x42536F → 无归属（函数间隙——0x425330 起实测为函数：
+    mov eax,[esi+0xD8]/cmp -1/jle 0x42535F + [0xB054D4] 表查 +
+    0x42535F 起名字分支）
+  0x716D9F → 0x007162F0 FUN_007162F0 [0x7162F0-0x716DB8]
+    body=2761
+  0x717833 → 无归属（函数间隙——0x717820 起实测：push esi/
+    mov esi,ecx/mov al,[esi+0xDD0]）
+  0x717865 → 0x00717840 FUN_00717840 [0x717840-0x71787C]
+    body=61
+
+三、调用点现场（全部干净——★★形态统一：名字→查表→结果）
+--------------------------------------------------------
+【调用点 1】0x42536F（间隙——0x425330 起实测）
+  00425330  mov eax,[esi+0xD8] / cmp eax,-1 / jle 0x42535F
+  0042533b  cmp eax,[0xB054E0] / jge 0x4253A2 / mov ecx,
+    [0xB054D4] / mov edx,[ecx+eax*4] / mov eax,[edx+0x30C] /
+    mov [esi+0xD4],eax / ret 8         ; ★表查分支
+  0042535f  mov al,[esi+0xDC] / lea ecx,[esi+0xDC]（★名字字段）
+    / test al,al / je 0x425398
+  0042536f  call 0x6263D0               ; ★本条——this=[esi+0xDC]
+  形态：★★宿主 [esi+0xDC] 名字字段 → 查表（0x42535F 起，表查
+  失败分支的登记路径）
+【调用点 2】0x716D9F in FUN_007162F0（2761B）
+  00716d82  push 0x824254 / push esi / mov ecx,0x887180 /
+    call 0x528A10                       ; ★★INISection::ReadString
+                                        ;   （batch 002 已登记）
+  00716d98  cmp byte[ebx],0 / je 0x716DAA（★空串跳过）
+  00716d9d  mov ecx,ebx                 ; this = 名字指针
+  00716d9f  call 0x6263D0               ; ★本条
+  形态：★★读 INI 串 → 非空则查表登记（FUN_007162F0 读名字后
+  调用）
+【调用点 3】0x717833（间隙——0x717820 起实测）
+  00717820  push esi / mov esi,ecx / mov al,[esi+0xDD0]
+    / lea ecx,[esi+0xDD0]（★名字字段）/ test al,al / je
+    0x71783E
+  00717833  call 0x6263D0               ; ★本条
+  00717838  mov [esi+0xDF0],eax         ; ★★结果存 [esi+0xDF0]
+  形态：★★[esi+0xDD0] 名字字段 → 查表 → 结果存 [esi+0xDF0]
+【调用点 4】0x717865 in FUN_00717840（61B）
+  00717850  test al,0 / mov esi,[eax+edi*4]（★表项取）
+  00717855  mov al,[esi+0xDD0] / lea ecx,[esi+0xDD0]（★名字
+    字段）/ test al,al / je 0x717870
+  00717865  call 0x6263D0               ; ★本条
+  0071786a  mov [esi+0xDF0],eax         ; ★★结果存 [esi+0xDF0]
+  形态统一：★★4 处调用点全「名字（指针或 +0xDD0/+0xDC 字段）
+  → 0x6263D0 查表登记 → 结果存 +0xDF0」——0x7178X 区的
+  +0xDD0 名字字段 + 0xDF0 结果字段 = 查表登记惯用（Techno
+  系类型推断）
+
+四、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x628070 —— ★★已登记（batch 490 容器数组宿主构造器 157B
+    ret 0xC=3 栈参——★登记文 unique_callers 明确含 FUN_006263d0！
+    本批函数体 0x62646C push 0x626660/0x1F/0xA + call 逐字节
+    兑现）
+  0x4F4CE0 —— ★★已登记（batch 343 宽字符相等比较——函数体
+    三处链遍历调用）
+  0x7C8E17 —— ★★已登记（batch 001 operator new——段 1 三处
+    + 段 3 名字缓冲分配）
+  0x528A10 —— ★★已登记（batch 002 INISection::ReadString——
+    调用点 2 前序）
+  0x4F4C30 —— ★未登记（哈希定位——batch 343 邻域，新候选）
+  0x627590 —— ★未登记（登记新名字——新候选）
+  0x628240 —— ★未登记（+8 子对象构造——新候选）
+  [0xAC48F0] —— ★★全局单例（未登记——本批首登记）
+  0x7E5BC4 —— ★新虚表（容器虚表——未登记）
+  [0xB054D4]/[0xB054E0] —— ★调用点 1 表/计数（未登记）
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 490（0x628070 容器数组宿主构造器——登记文
+    unique_callers 含 FUN_006263d0 预告，本批函数体段 1 逐字
+    节兑现：push 0x626660/0x1F/0xA + call + [edi+0xC] 存结果）
+  ★★batch 343（0x4F4CE0 宽字符相等比较——函数体段 2/段 4
+    桶内链遍历三处调用）
+  ★★batch 001（0x7C8E17 operator new——段 1 单例构造 3 处 +
+    段 3 名字缓冲）
+  ★★batch 002（0x528A10 INISection::ReadString——调用点 2 宿
+    主读名字前序）
+  ★★0x4F4C30/0x627590/0x628240 未登记新候选（哈希定位/登记
+    新名字/子对象构造——0x62xxxx 区名字表家族）
+
+六、原版怪癖（照抄）
+-------------------
+① 惰性单例构造（[0xAC48F0] 首次为 0 才构造——三子对象 + 头
+   0xFFFFFFFF 哨兵）；
+② 哈希 = idiv 容量取模（cdq 符号扩展 + idiv [esi+8]——有符
+   号除法取模，负余数→×3 桶索引异常风险照抄）；
+③ 桶数组索引 = 余数×3（lea eax,[edx+edx*2]）步进 8B（+0x10
+   桶头字段——3×8=24B 桶元组）；
+④ 链节步长 0x104=260B（shl 6/add/shl 2 手写 ×260）+ 链尾
+   +0x100 指针字段；
+⑤ 名字缓冲 0x104=260B 固定（new 0x104 + repne scasb 求长 +
+   rep movsd/movsb 拷贝——strlen+strcpy 惯用）；
+⑥ 二次定位同构代码（段 2/段 4 重复——未抽取公共函数）；
+⑦ 比较用 batch 343 宽字符比较（0x4F4CE0——wchar 逐对比较，
+   名字是宽字符存储推断）；
+⑧ 未命中返 0（段 5 xor eax）而命中返链节（不区分未登记/查
+   无——调用方自行登记）。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（名字→句柄查表器推断——YRpp 未对齐）、
+0x4F4C30 精确语义（哈希定位推断）、0x627590 精确语义（登记
+新名字推断）、[0xAC48F0] 单例宿主类（0x62xxxx 区名字表家族
+推断）、桶数组 24B 元组布局（3×8 元素字段语义）、链节 260B
+布局（名字 0x104 + 链尾 +0x100 + 其余字段）、调用点 1 宿主
+（0x425330 起间隙函数——[0xB054D4] 表家族）、FUN_007162F0/
+FUN_00717840 宿主业务（+0xDD0 名字/+0xDF0 结果字段语义——
+Techno 系类型推断）。
