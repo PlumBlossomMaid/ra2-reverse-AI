@@ -1,0 +1,164 @@
+frontier batch 801 —— 0x00658DE0 DynamicVectorClass 构造器（T=16B；YRpp 实锤）
+================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=168 / body=150B）。
+TARGET = 0x00658DE0（.text，150B，thiscall 2 栈参 ret 8）
+★★带名推断：DynamicVectorClass<T> 构造器（T=16B 结构）——YRpp
+ArrayClasses.h 布局逐字段实锤（构造器签名 + 字段偏移 + 默认值全对上）
+
+一、函数体全读（150B，disasm 0x658DE0 224）
+------------------------------------------
+参数契约（thiscall ret 8 = 2 栈参）：
+  ecx = this（存 esi）
+  栈参1 = [esp+0x10]（count——容量/元素数）
+  栈参2 = [esp+0x14]（pMem——外部缓冲指针，可为 NULL）
+  返回 eax = esi（this）
+
+机器码（150B 全读）：
+  00658de0  push ebx/esi/edi
+  00658de3  mov edi,[esp+0x10]          ; ★栈参1（count）
+  00658de7  mov esi,ecx                 ; this
+  00658de9  xor ebx,ebx
+  00658deb  cmp edi,ebx
+  00658ded  mov [esi+4],ebx             ; ★+0x04 Items = 0（先清）
+  00658df0  mov [esi+8],edi             ; ★+0x08 Capacity = count
+  00658df3  mov byte[esi+0xC],1         ; ★+0x0C IsInitialized = 1
+  00658df7  mov byte[esi+0xD],bl        ; ★+0x0D IsAllocated = 0（外置）
+  00658dfa  mov [esi],0x7F044C          ; ★★vtable = 0x7F044C（基类
+                                          ;   VectorClass vtable——两阶段
+                                          ;   切换第一步）
+  00658e00  je 0x658e5e                 ; count==0 → 跳过分配
+  00658e02  mov edx,[esp+0x14]          ; ★栈参2（pMem）
+  00658e06  cmp edx,ebx / je 0x658e28   ; pMem==NULL → 自分配
+  ; pMem 非空路径：
+  00658e0a  lea ecx,[edi-1]; cmp ecx,ebx / jl 0x658e23
+  00658e11  lea eax,[edx+4]; inc ecx     ; ★清零循环：count 个元素
+  00658e15  mov [eax-4],ebx; mov [eax],ebx; mov [eax+4],ebx
+                                          ;   ★每元素 16B 清前 12B
+                                          ;   （[eax-4]=偏移0/[eax]=4/
+                                          ;    [eax+4]=8，+0xC 不动）
+  00658e1d  add eax,0x10; dec ecx / jne 0x658e15
+  00658e23  mov [esi+4],edx             ; Items = pMem（直用外部缓冲）
+  00658e26  jmp 0x658e5e
+  ; pMem==NULL 自分配路径：
+  00658e28  mov eax,edi; shl eax,4       ; ★count×16B（T=16B 结构）
+  00658e2d  push eax; call 0x7C8E17      ; ★★batch 001 已登记 operator
+                                          ;   new——分配 count×16B
+  00658e36  cmp eax,ebx / je 0x658e55    ; 分配失败 → Items=0
+  00658e3a  lea edx,[edi-1]; cmp edx,ebx / jl 0x658e57
+  00658e41  lea ecx,[eax+4]; inc edx      ; ★同款清零循环
+  00658e45  mov [ecx-4],ebx; mov [ecx],ebx; mov [ecx+4],ebx
+  00658e4d  add ecx,0x10; dec edx / jne 0x658e45
+  00658e57  mov [esi+4],eax              ; Items = 新分配
+  00658e5a  mov byte[esi+0xD],1          ; ★+0x0D IsAllocated = 1
+  ; 公共收尾：
+  00658e5e  mov [esi],0x7F042C           ; ★★vtable = 0x7F042C（派生类
+                                          ;   DynamicVectorClass vtable——
+                                          ;   两阶段切换第二步）
+  00658e64  mov [esi+0x14],0xA           ; ★★+0x14 CapacityIncrement = 10
+                                          ;   （YRpp 默认 `int
+                                          ;   CapacityIncrement{10}` 实锤！）
+  00658e6b  mov [esi+0x10],ebx           ; ★+0x10 Count = 0
+  00658e6e  mov eax,esi                  ; 返回 this
+  00658e73  ret 8
+
+语义：**DynamicVectorClass<T> 构造器（T=16B 结构）**——标准 MSVC
+两阶段 vtable 构造（先基类 0x7F044C 再派生 0x7F042C）；count!=0 时
+若提供外部缓冲 pMem 则 Items 直用（IsAllocated=0）、否则 operator
+new 分配 count×16B（IsAllocated=1），元素 16B 每轮清前 12B（偏移
+0/4/8 三个 dword，+0xC 保留）；count==0 跳过分配。Capacity=count、
+Count=0、IsInitialized=1、CapacityIncrement=10（YRpp 默认值实锤）。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_801_calls.py：3 处调用点
+  0x652B99 / 0x6559FF / 0x655B90
+_locate_801_callers.py：归属（全在 0x65 区）
+  0x652B99 → 0x00652960 FUN_00652960 [0x652960-0x652BFD] body=670
+  0x6559FF → 0x00655990 FUN_00655990 [0x655990-0x655A84] body=245
+  0x655B90 → 0x00655B20 FUN_00655B20 [0x655B20-0x655C44] body=293
+
+三、调用点现场（重点：批量构造循环两实例同构）
+--------------------------------------------
+【调用点 1】0x652B99 in FUN_00652960（body=670）
+  00652b45  mov [esi],0x7F0344           ; ★宿主自身先构造 0x7F0344 类
+  00652b4b  call 0x7C8E17                ; ★operator new
+  00652b55  cmp edi,ebx / je 0x652bd7
+  00652b59  mov ebp,0xA
+  ...
+  00652b80  lea ebp,[eax+4]              ; ★成员槽 = eax+4
+  00652b83  mov [eax],0x100
+  00652b89  mov [esp+0x14],ebp
+  00652b8d  mov [esp+0x10],0x100         ; ★栈参1 = 0x100（count=256）
+  00652b95  push ebx; push ebx           ; ★栈参2 = ebx（pMem）
+  00652b97  mov ecx,ebp
+  00652b99  call 0x658de0                ; ★★构造到 [eax+4] 成员槽
+  形态：宿主在 operator new 出的对象 +4 偏移处构造内嵌
+  DynamicVectorClass 成员（count=0x100）。
+【调用点 2】0x6559FF in FUN_00655990（body=245）
+  006559e6  call 0x7C8E17                ; ★operator new
+  006559f2  lea ebx,[eax+4]
+  006559f5  mov [eax],ebp
+  006559f7  mov edi,ebx
+  006559f9  push 0; push 0               ; ★count=0、pMem=0（默认构造）
+  006559fd  mov ecx,edi
+  006559ff  call 0x658de0
+  00655a04  add edi,0x18                 ; ★★对象步长 0x18=24B
+  00655a07  dec ebp / jne 0x6559f9       ; ★批量构造循环（ebp 个对象）
+  形态：★★批量构造循环——operator new 分配连续块后逐 0x18B 构造
+  DynamicVectorClass 对象（对象总大小 0x18 = vtable4+Items4+
+  Capacity4+IsInit1+IsAlloc1+pad2+Count4+CapInc4，与函数体布局
+  完全一致！）
+【调用点 3】0x655B90 in FUN_00655B20（body=293）
+  00655b83  mov [eax],0x100
+  00655b88  mov edi,eax
+  00655b8a  push 0; push 0               ; ★count=0、pMem=0
+  00655b8e  mov ecx,edi
+  00655b90  call 0x658de0
+  00655b95  add edi,0x18; dec ebp / jne 0x655b8a  ; ★同款批量循环
+  形态：与调用点 2 同构的批量构造循环（0x18B 步长）。
+
+四、被调/全局登记核验（grep frontier_status.tsv）
+-----------------------------------------------
+  0x7C8E17 —— ★★★batch 001 已登记 operator new（Visual Studio
+    operator new -> __nh_malloc，crt_runtime_verified）——本函数
+    自分配路径直接调用——★构造器分配锚点
+  0x7F042C / 0x7F044C —— vtable 地址——未登记（新候选：派生/基类
+    vtable，具体类身份待符号表对齐）
+  宿主 FUN_00652960 / FUN_00655990 / FUN_00655B20 —— 未登记
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★★YRpp ArrayClasses.h 布局实锤（DynamicVectorClass 构造器签名
+    `(int capacity, T* pMem=nullptr)` + 字段偏移 +0x04 Items/+0x08
+    Capacity/+0x0C IsInitialized/+0x0D IsAllocated/+0x10 Count/
+    +0x14 CapacityIncrement + 默认 `CapacityIncrement{10}`——机器码
+    逐字段对上）
+  ★★0x7C8E17（batch 001 operator new）= 自分配路径分配原语
+  ★★两阶段 vtable（0x7F044C→0x7F042C）= MSVC 派生类构造器标准
+    模式（基类 vtable → 派生 vtable）
+  ★★调用点批量循环对象步长 0x18 = 函数体布局总大小——双向印证
+  新候选：0x7F042C/0x7F044C（vtable 表项）、FUN_00652960/
+    FUN_00655990/FUN_00655B20（0x65 区宿主）
+
+六、原版怪癖（照抄）
+-------------------
+① MSVC 两阶段 vtable 构造（先写基类 0x7F044C、末尾写派生 0x7F042C）；
+② 外部缓冲 pMem 直用时不清 IsAllocated（保持 0），自分配才置 1——
+  调用方可用此标志区分所有权；
+③ count==0 时完全跳过分配路径（Items 保持 0、IsAllocated 保持 0，
+  但仍设 IsInitialized=1 + CapacityIncrement=10）——默认构造形态；
+④ 清零循环每元素 16B 只写前 12B（偏移 0/4/8，+0xC 保留不动）；
+⑤ 对象总大小 0x18 含 2B 填充（IsInitialized/IsAllocated 两个 bool
+  后 pad 2B 对齐 Count）；
+⑥ CapacityIncrement 硬编码 0xA=10（YRpp 默认值，非调用方传入）。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：T 的精确类型（16B 结构——含 4B 保留槽 +0xC，语义未确认）；
+vtable 0x7F042C/0x7F044C 的精确类身份（VectorClass/DynamicVectorClass
+模板实例的符号表对齐未完成）；调用点 1 的 ebx（pMem）精确值（现场
+未追到更早赋值点，但 count=0 路径行为不受 pMem 影响）；三个宿主
+FUN_00652960/00655990/00655B20 的真实身份（0x65 区——批量持有
+DynamicVectorClass 数组的容器类推断，未确认）。
