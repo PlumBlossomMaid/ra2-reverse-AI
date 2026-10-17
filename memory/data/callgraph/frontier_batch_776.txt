@@ -1,0 +1,203 @@
+frontier batch 776 —— 0x00475610 INI 写串值选择器（推断名）
+================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=244 / body=219B）。
+TARGET = 0x00475610（.text，219B，thiscall 3 栈参 ret 0xC）
+
+一、函数体全读（219B，disasm 0x475610 240）
+------------------------------------------
+00475610  sub esp, 0x80
+00475616  xor eax, eax
+00475618  lea edx, [esp]            ; ★&栈缓冲
+0047561c  push ebx / push esi
+0047561e  mov ebx, ecx              ; ★this → ebx
+00475620  push edi
+00475621  mov edi, 0x817474         ; ★.rdata 默认串
+00475626  or ecx, 0xffffffff
+00475629  repne scasb al, byte ptr es:[edi]   ; ★strlen(0x817474)
+0047562b  not ecx
+0047562d  sub edi, ecx
+0047562f  mov eax, ecx
+00475631  mov esi, edi
+00475633  mov edi, edx
+00475635  shr ecx, 2
+00475638  rep movsd dword ptr es:[edi], dword ptr [esi]  ; ★手写 strcpy
+0047563a  mov ecx, eax
+0047563c  and ecx, 3
+0047563f  rep movsb byte ptr es:[edi], byte ptr [esi]
+00475641  mov esi, [esp + 0x98]     ; ★参3（[入口 esp+0xC]）→ esi
+00475648  mov ecx, esi
+0047564a  call 0x510f60             ; ★★★batch 129 HouseClass::
+                                    ;   Index_IsMP(参3)！
+0047564f  test al, al
+00475651  je 0x475665              ; ★非 MP 索引 → 值分支
+00475653  push 0x80
+00475658  lea edx, [esp + 0x10]
+0047565c  mov ecx, esi
+0047565e  call 0x510e10             ; ★MP 索引 → 0x510E10（未登记）
+00475663  jmp 0x4756c3
+00475665  cmp esi, -2               ; ★参3 == -2
+00475668  jne 0x475675
+0047566a  lea edx, [esp + 0xc]
+0047566e  mov edi, 0x81c008         ; ★★★batch 109 Unknown 哨兵串
+00475673  jmp 0x4756a6
+00475675  cmp esi, -3               ; ★参3 == -3
+00475678  jne 0x475685
+0047567a  lea edx, [esp + 0xc]
+0047567e  mov edi, 0x81c008         ; 同哨兵串
+00475683  jmp 0x4756a6
+00475685  cmp esi, -1               ; ★参3 == -1
+00475688  je 0x4756c3              ; → 保持默认串
+0047568a  test esi, esi
+0047568c  jl 0x4756c3              ; ★参3 < 0 → 默认串
+0047568e  cmp esi, [0xa83ca8]       ; ★★★batch 109 HouseTypeClass 计数
+00475694  jge 0x4756c3             ; ★越界 → 默认串
+00475696  mov ecx, [0xa83c9c]       ; ★★★batch 109 HouseTypeClass 数组基址
+0047569c  lea edx, [esp + 0xc]
+004756a0  mov edi, [ecx + esi*4]    ; ★数组[参3] 元素
+004756a3  add edi, 0x24             ; ★元素+0x24（名字串偏移推断——
+                                    ;   batch 109 的 FindIndexOfName 用 +0x64
+                                    ;   不同偏移——两字段标注 partial）
+004756a6  or ecx, 0xffffffff
+004756a9  xor eax, eax
+004756ab  repne scasb al, byte ptr es:[edi]   ; ★strlen(元素+0x24)
+004756ad  not ecx
+004756af  sub edi, ecx
+004756b1  mov eax, ecx
+004756b3  mov esi, edi
+004756b5  mov edi, edx
+004756b7  shr ecx, 2
+004756ba  rep movsd dword ptr es:[edi], dword ptr [esi]  ; ★手写 strcpy
+004756bc  mov ecx, eax
+004756be  and ecx, 3
+004756c1  rep movsb byte ptr es:[edi], byte ptr [esi]
+004756c3  mov edx, [esp + 0x94]     ; ★参2（[入口 esp+8]）
+004756ca  mov eax, [esp + 0x90]     ; ★参1（[入口 esp+4]）
+004756d1  lea ecx, [esp + 0xc]      ; ★&选出的串
+004756d5  push ecx                  ; 参3 = 串
+004756d6  push edx                  ; 参2 = 参2
+004756d7  push eax                  ; 参1 = 参1
+004756d8  mov ecx, ebx              ; this
+004756da  call 0x528660             ; ★★★batch 069 INISection::
+                                    ;   WriteString(this, 参1, 参2, 串)！
+004756df  pop edi / pop esi / pop ebx
+004756e2  add esp, 0x80
+004756e8  ret 0xc
+
+参数契约（thiscall ret 0xC = 3 栈参）：
+  ecx = this（INISection 推断——0x528660 WriteString 宿主）
+  参1 = [esp+4]（透传给 WriteString）
+  参2 = [esp+8]（透传给 WriteString）
+  参3 = [esp+0xC]（选择器：MP 索引 / -2 / -3 / -1 / [0,计数) 索引）
+  语义：**INI 写串值选择器**——按参3 从四候选选字符串值，经
+  INISection::WriteString 写入；默认值 = .rdata 串 0x817474。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_776_calls.py：4 处调用点
+  0x49C8D2 / 0x49C939 / 0x69917E / 0x6F161D
+_locate_776_callers.py：归属
+  0x49C8D2 → 0x0049C5A0 FUN_0049c5a0 [0x49C5A0-0x49CAEE] body=1359
+  0x49C939 → 0x0049C5A0 FUN_0049c5a0（同宿主第二调用点）
+  0x69917E → 0x006990A0 FUN_006990a0 [0x6990A0-0x699447] body=936
+  0x6F161D → 0x006F1550 FUN_006f1550 [0x6F1550-0x6F1860] body=785
+
+三、调用点现场（正确指令边界重读）
+--------------------------------
+【调用点 1】0x49C8D2 in FUN_0049c5a0（body=1359，×2 调用点）
+  0049c8b6  mov edx, [0xa8da78]     ; ★全局对象 → 虚表槽
+  0049c8bc  mov ecx, [edx]
+  0049c8be  call 0x696f10          ; ★取对象（batch 262 已见同调用）
+  0049c8c3  push eax                ; 参3 = 0x696F10 返回值（索引推断）
+  0049c8c4  lea eax, [esp + 0x70]
+  0049c8c8  push 0x81f17c          ; ★★键名串——batch 756 现场 1 同款！
+  0049c8cd  push eax                ; 参1 = &栈对象
+  0049c8ce  lea ecx, [esp + 0x20]   ; this = 栈对象
+  0049c8d2  call 0x475610
+  0049c8d7  mov ecx, [0xa8da78]     ; 后续同全局再处理
+  形态：0x696F10 取索引 → 0x475610 写串 → [0xA8DA78] 全局续用。
+  ★与 batch 756 现场 1（FUN_0049c0d0 用 0x81F17C）同键名——
+  本条宿主 0x49C5A0 与 batch 756 宿主 0x49C0D0 同 0x49Cxxx 区。
+
+【调用点 3】0x69917E in FUN_006990a0（body=936）
+  00699168  mov edx, [esi + 0x184]  ; 参3 = [esi+0x184]
+  0069916e  mov ecx, 0x8870c0      ; ★★this = 全局对象 0x8870C0！
+                                    ;   （batch 756 现场 3 同款）
+  00699173  push edx
+  00699174  push 0x817334          ; 参2 = 0x817334 串
+  00699179  push 0x82642c          ; ★参1 = 0x82642C 键名——batch 756
+                                    ;   现场 3 同款键名！
+  0069917e  call 0x475610
+  00699183  mov eax, [esi + 0x188]  ; 后续同对象字段
+  形态：this=0x8870C0 全局 + 0x82642C/0x817334 键名对——与
+  batch 756 现场 3（FUN_006980c0 同全局同键名）完全同款，跨
+  批同族闭合。★0x8870C0 全局在 batch 756 现场 3 已出现，本条
+  再确认。
+
+【调用点 4】0x6F161D in FUN_006f1550（body=785）
+  006f1600  mov al, [esi + 0xa7]
+  006f1606  mov ecx, ebx            ; this = ebx
+  006f1608  push eax / push 0x8430ac / push edi
+  006f160f  call 0x529560          ; 前一个写串调用（0x529560——同域）
+  006f1614  push ebp                ; 参3 = ebp
+  006f1615  push 0x8173e8          ; ★参2 = 0x8173E8 串——batch 756
+                                    ;   现场 4 同款键名！
+  006f161a  push edi                ; 参1 = edi
+  006f161b  mov ecx, ebx            ; this = ebx
+  006f161d  call 0x475610
+  006f1622  mov cl, [esi + 0xa8]    ; 后续同对象字段
+  形态：与 batch 756 现场 4（0x6F10DC 间隙用 0x8173E8 + this=ebx
+  + 参1=edi）同区同款——0x6F10xx/0x6F15xx 同宿主域再确认；
+  前邻 0x529560 也是写串调用（未登记——同域候选）。
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★0x528660（batch 069——INISection::WriteString，本条=函数
+    体唯一收尾调用：this+3 栈参透传写入，golden 闭合）
+  ★★★0x510F60（batch 129——HouseClass::Index_IsMP，本条=函数
+    体参3 判定调用：参3 是否 ∈ {0x117B..0x1182} MP 特殊玩家槽）
+  ★★★[0xA83C9C]/[0xA83CA8]（batch 109——HouseTypeClass 数组
+    基址/计数，本条=参3 合法区间 [0,计数) 内取元素 +0x24 名字串）
+  ★★★0x81C008（batch 109——Unknown 哨兵串，本条=参3 == -2/-3
+    时选此串）
+  ★★★batch 756（0x475540 规则对象检索器——本条 0x475610 是
+    batch 756 明确标注的「0x80 栈帧同族函数」，读写侧对：756
+    读规则键（0x528A10），本条写 INI（0x528660）；三调用点键
+    名串 0x81F17C/0x82642C+0x817334/0x8173E8 与 batch 756 现场
+    1/3/4 完全同款，跨批家族闭合）
+  +0x8870C0（全局对象——调用点 3 this，batch 756 现场 3 同款）
+  +0x696F10（调用点 1 前置取对象——batch 262 已见）
+  +0x817474（默认串——.rdata 未 dump）
+  新候选：0x510E10（MP 索引分支处理——未登记）、0x529560（调
+  用点 4 前邻写串调用——未登记）、FUN_0049c5a0（1359B 双调用
+  点宿主）、FUN_006990a0（936B）、FUN_006f1550（785B）
+
+五、原版怪癖（照抄）
+-------------------
+① 默认串 0x817474 先手写 strcpy 到栈缓冲，参3 各分支才覆盖
+   ——「先默认后选值」顺序固定；
+② 手写 strcpy 惯用（repne scasb strlen → shr 2/rep movsd +
+   and 3/rep movsb 收尾——与 batch 199/198 同款）；
+③ 参3 判定链：MP 检查（Index_IsMP）→ -2 → -3 → -1 → <0 →
+   ≥计数 → 合法区间取数组——五段 if 链硬编码不合并；
+④ 参3 == -2/-3 都选同一哨兵串 0x81C008（两分支同值）——
+   原版重复代码不优化；
+⑤ 0x510E10 的 MP 分支输出缓冲 [esp+0x10] 与 -2/-3 分支的
+   [esp+0xC] 是**不同栈槽**（MP 分支结果读 [esp+0x10]，其余
+   读 [esp+0xC]）——两套缓冲并存；
+⑥ ret 0xC thiscall + 0x528660 四参（this+3 栈参）——写入链
+   与 batch 756 读取链（0x528A10）对称；
+⑦ 数组元素偏移 +0x24 vs batch 109 FindIndexOfName 的 +0x64
+   ——同一 [0xA83C9C] 数组两个不同字段（名字/键推断）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「INI 写串值选择器」——ranking 无带
+名，batch 756 同族交叉实锤）；this 类型（INISection 推断——
+0x528660 WriteString 宿主）；参1/参2/参3 精确语义（参3=House
+TypeClass 索引推断，参1/参2=WriteString 透传推断）；0x510E10
+身份与 MP 分支输出；0x817474 默认串内容（未 dump）；[0xA83C9C]
+元素 +0x24 字段语义（vs batch 109 +0x64 两字段并存）；三宿主
+业务（FUN_0049c5a0/FUN_006990a0/FUN_006f1550）；0x529560 身
+份。
