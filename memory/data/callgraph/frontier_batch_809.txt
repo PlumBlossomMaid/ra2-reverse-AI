@@ -1,0 +1,118 @@
+frontier batch 809 —— 0x005B3910 全局名字表顺序查找索引器（推断名）
+=====================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=157 / body=57B）。
+TARGET = 0x005B3910（.text，57B，thiscall 1 寄存器参 ret 无 N）
+推断名：全局名字表顺序查找索引器（名字串 → [0x816CAC] 表索引，
+0x7C8D20 串比较；与 batch 501 GetNameByIndex 反向互补——推断名，
+未带名）
+
+一、函数体全读（57B，disasm 0x5B3910 96）
+------------------------------------------
+参数契约（thiscall 1 寄存器参，ret 无 N）：
+  ecx = 待查名字串指针（存 ebx）
+  返回 eax = 索引（0..31）/ -1（未命中或空指针）
+
+机器码（57B 全读）：
+  005b3910  push ebx → mov ebx,ecx（名字串）→ push esi/edi →
+  test ebx,ebx / je 0x5B393C（★空指针 → 返 -1）
+  005b391b  xor edi,edi（★索引 0）→ mov esi,0x816CAC（★★全局
+  名字表起点）
+  005b3920  mov eax,[esi]（取表项指针）→ push ebx（名字串）→
+  push eax（表项）→ call 0x7C8D20（★★batch 001 已登记
+  Case-insensitive byte-string comparison——大小写不敏感串比较）
+  → add esp,8 → test eax,eax / je 0x5B3943（★命中 → 返 edi 索引）
+  005b3930  add esi,4 / inc edi → cmp esi,0x816D2C / jl 0x5B3920
+  （★★遍历至表尾 0x816D2C——32 项指针表 [0x816CAC..0x816D2C)）
+  005b393c  or eax,-1（未命中 → 返 -1）
+  005b3943  mov eax,edi（命中 → 返索引）
+
+语义：**全局名字表顺序查找索引器（推断名）**——对给定名字串，自
+表起点 0x816CAC 起逐项与 [0x816CAC..0x816D2C) 32 项指针所指串经
+0x7C8D20（大小写不敏感比较）比对，命中返回索引（0..31），未命
+中或空指针返回 -1。★与邻函数 0x5B3950（batch 501 已登记
+GetNameByIndex：索引→表项，-1 → "<none>" 0x817474）构成**方向
+互补**：本函数名字→索引（查找）、0x5B3950 索引→名字（查名），
+共享同一 [0x816CAC] 表与 0x817474 哨兵串。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_809_calls.py：3 处调用点
+  0x41B2C5 / 0x51FCEB / 0x743452
+_locate_809_callers.py：归属（★★batch 501 预告的 caller 家族
+  0x41AF80/0x51FEF0 区 INI 读写宿主吻合）
+  0x41B2C5 → 0x0041B110 FUN_0041B110 [0x41B110-0x41B428]
+    body=793
+  0x51FCEB → 0x0051FB00 FUN_0051FB00 [0x51FB00-0x51FEE0]
+    body=993
+  0x743452 → 0x00743270 FUN_00743270 [0x743270-0x7436D6]
+    body=1127
+
+三、调用点现场（全部干净，形态统一——逗号分隔解析取名字串）
+--------------------------------------------------------
+【调用点 1】0x41B2C5 in FUN_0041B110（body=793）
+  0041b2a7  call 0x7C9CC2（★★batch 023 已登记 strtok/parse
+  decimal）→ push eax / call 0x7C9BFD → push 0x817F70（★★batch
+  451 已登记 "," 常量）→ push 0 / call 0x7C9CC2（★分隔解析取段
+  名）→ mov ecx,eax（名字串）→ call 0x5B3910 → mov ebx,eax（收
+  索引）
+【调用点 2】0x51FCEB in FUN_0051FB00（body=993）
+  0051fce1  call 0x7C9CC2 → add esp,0x14 → mov ecx,eax → call
+  0x5B3910 → mov ebx,eax → push 0x817F70 / push 0 / call 0x7C9CC2
+  （★逗号分隔续解析）
+【调用点 3】0x743452 in FUN_00743270（body=1127）
+  00743435  call 0x7C9CC2 → push eax / call 0x7C9BFD → push
+  0x817F70 / push ebx / call 0x7C9CC2 → mov ecx,eax → call
+  0x5B3910 → mov ebx,eax
+  形态统一：★0x7C9CC2 分隔解析（0x817F70=","）+ 0x7C9BFD 前置
+  取名字串 → call 0x5B3910 查表收索引（mov ebx,eax）——INI/
+  逗号分隔值读入后按名查索引写配置。
+
+四、被调/全局登记核验（grep frontier_status.tsv）
+-----------------------------------------------
+  0x7C8D20 —— ★★★batch 001 已登记 Case-insensitive byte-string
+    comparison（crt_runtime_semantics_verified——循环比较锚点）
+  0x5B3950 —— ★★batch 501 已登记 GetNameByIndex（索引→表项，
+    -1 → 0x817474 "<none>" 哨兵——★本函数反向互补 + 同表实锤）
+  0x7C9CC2 —— ★★batch 023 已登记 strtok/parse_decimal（调用点
+    分隔解析锚点）
+  0x817F70 —— ★★batch 451 已登记 "," 常量（调用点分隔符）
+  [0x816CAC..0x816D2C] / 0x817474 —— 名字表/哨兵串——表未登记
+    （新候选）
+  宿主 FUN_0041B110/FUN_0051FB00/FUN_00743270 —— 未登记
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★★0x5B3950（batch 501 GetNameByIndex）= 方向互补姊妹函数——
+    共享 [0x816CAC] 表 + 0x817474 哨兵；batch 501 文档明确预告
+    「按名工厂体系（名字↔对象表）——本函数=索引→名字方向、工厂
+    =名字→对象方向互补」——本批兑现名字→索引方向
+  ★★0x7C8D20（batch 001 大小写不敏感串比较）= 循环比对原语
+  ★★0x7C9CC2（batch 023 strtok）+ 0x817F70（batch 451 ","）=
+    调用点逗号分隔解析链
+  ★★调用点宿主区（0x41B110/0x51FB00）与 batch 501 预告 caller
+    家族（0x41AF80/0x51FEF0 同调 INISection::Clear/WriteString/
+    _ftol——INI 读写）吻合——INI 取名字现场交叉印证
+  新候选：名字表 [0x816CAC..0x816D2C)（32 项指针表内容）、
+    0x817474 哨兵串已登记表外、宿主 FUN_0041B110/FUN_0051FB00/
+    FUN_00743270（INI 读写域推断）
+
+六、原版怪癖（照抄）
+-------------------
+① 顺序线性查找（无哈希——32 项小表直接逐项比对）；
+② 大小写不敏感比较（0x7C8D20 而非 strcmp——名字规范化宽容）；
+③ 空指针与未命中同返 -1（两出口合一 or eax,-1）；
+④ 表区间 [0x816CAC..0x816D2C) 硬编码边界（cmp esi 立即数而非
+   表长——32 项假设内联）；
+⑤ 命中返 edi 索引（从 0 起）——与邻函数 0x5B3950 的 [ecx*4] 索
+   引语义一致（共享表布局）。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：名字表 [0x816CAC..0x816D2C) 的 32 项内容与宿主类（INI
+名字表推断——batch 501 同表但未 dump）；三个宿主真实身份（INI
+读写域推断——batch 501 caller 家族吻合但未逐名确认）；0x7C9BFD
+身份（调用点 1/3 前置——解析辅助推断）；名字↔对象工厂体系的
+对象侧（名字→对象方向——batch 239/242/245/280 名字↔对象表家
+族的对象侧未读）。
