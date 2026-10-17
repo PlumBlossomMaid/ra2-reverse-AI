@@ -1,0 +1,125 @@
+frontier batch 765 —— 0x0065CAC0 RawFileClass::SetFileName（带名）
+
+地址：0x0065CAC0（111B thiscall 1 栈参 ret 4——push esi/edi 小
+帧；前邻 0x65CB30=同族（虚表槽 8 调用——GetFileName 推断），
+后邻 0x65CB4E 起下一函数（0x65CB50 邻接 SetFileName 后操作——0x6C77CF 现场调用）；ranking 带名
+RawFileClass::SetFileName + callers=3/unique=3/deps=280——E8
+扫描实得 3 调用点落 3 宿主）
+身份：**带名 RawFileClass::SetFileName**（ranking 符号——YR 文
+件类文件名 setter；按机器码确认「释放旧名→strdup 新名→状态重
+置」三段）
+状态：semantics_verified + assembly_verified_semantics_confirmed
+（机器码 111B 全读 + 3 调用点 E8 扫描 + 3 宿主归属定位 + 3 调
+用点现场全读 + 被调 0x7C93E8 batch 020/0x7D5408 batch 024 双
+CRT 交叉——本批双闭合）
+
+=== 机器码全读要点（111B） ===
+
+0x65CAC0：push esi → mov esi,ecx（★this）→ push edi → mov
+eax,[esi+0x18]（★this+0x18=现文件名缓冲）→ test/je 0x65CAE6
+（★空则跳过释放）→ mov cl,[esi+0x20]（★this+0x20=标志）→
+test/je 0x65CAE6（★标志 0 则跳过——★双条件门控）→ push eax
+→ call 0x7C93E8（★★★batch 020 CRT 内部 free——释放旧名缓
+冲！）→ add esp,4 → mov [esi+0x18],0（★+0x18=NULL）→ mov
+byte[esi+0x20],0（★+0x20=0 清标志）→ 0x65CAE6: mov edi,
+[esp+0xC]（★栈参1=新文件名）→ test edi/je 0x65CAEF（★新名
+空→返 0）→ push edi（★压新名）→ mov [esi+0xC],0（★
+this+0xC=0 状态重置）→ mov [esi+0x10],0xFFFFFFFF（★
+this+0x10=-1）→ call 0x7D5408（★★★batch 024 strdup——复制新
+名！）→ add esp,4 → mov [esi+0x18],eax（★+0x18=strdup 结果）
+→ test eax/je 0x65CB02（★失败→错误路径）→ mov byte
+[esi+0x20],1（★+0x20=1 置标志）→ pop 族 → ret 4（★成功）→
+0x65CB02: mov eax,[esi]（★this 虚表）→ push edi（★新名）→
+push 0 → push 0xC → mov ecx,esi → call [eax+0x40]（★虚表槽
+0x40——3 参错误处理/上报？）→ pop 族 → xor eax,eax → ret 4
+（★失败返 0）。
+
+★★结构：旧名双条件释放（+0x18+0x20）→ 新名 strdup（+0xC=0/
++0x10=-1 状态重置）→ 失败虚表槽 0x40 上报 → 成功置 +0x20=1。
+
+=== 语义 ===
+
+**RawFileClass::SetFileName（带名）**——thiscall 1 栈参 ret 4
+（ecx=文件对象、栈参1=新文件名）：
+① 现文件名（+0x18）非空 且 +0x20 标志置位 → 0x7C93E8（batch
+  020 CRT free）释放旧缓冲 → +0x18=NULL、+0x20=0（★双条件门
+  控——标志位防悬空释放）；
+② 新名空 → 返回 0；
+③ 置 +0xC=0、+0x10=-1（★文件状态重置——位置/大小清空推断）
+  → 0x7D5408（batch 024 strdup）复制新名 → +0x18=副本；
+④ strdup 失败 → 虚表槽 0x40（3 参 0xC/0/新名——错误上报推
+  断）→ 返回 0；
+⑤ 成功 → +0x20=1（★占用标志）→ 返回（eax=strdup 结果）。
+★语义统一：文件类文件名标准 setter——「释放旧名→strdup 新名
+→状态重置→标志置位」；★派生类 BufferIOFileClass::SetFileName
+经此基类后虚表槽 4 收尾。
+
+=== 调用现场（3 处扫描 + 归属定位） ===
+
+1) 0x431EF2 → **BufferIOFileClass::SetFileName**（0x431E80-
+   0x431F02 body=131 未登记——★★带名 BufferIOFileClass 族派生
+   setter！）——现场（0x431EF0-0x431F02）：mov ecx,edi（★
+   this=edi——派生对象）→ call 0x65CAC0（★本条——基类
+   SetFileName！）→ mov edx,[edi] → mov ecx,edi → call [edx+4]
+   （★虚表槽 4——基类后收尾动作）→ pop edi/ebp → ret 4（★派
+   生 setter=cdecl 1 栈参调基类+虚表槽 4）。
+2) 0x431B01 → **FUN_00431a30**（0x431A30-0x431B13 body=228 未
+   登记——0x43 区）——现场（0x431AFA-0x431B11）：mov ecx,
+   [esp+0xC]（★栈参=新名）→ push ecx → mov ecx,esi（★this）→
+   call 0x65CAC0（★本条——SetFileName）→ mov edx,[esi] → mov
+   ecx,esi → call [edx+4]（★虚表槽 4——同款收尾）→ mov eax,
+   esi → ret 4（★返回 this）。
+3) 0x6C77CF → **FUN_006c6f50**（0x6C6F50-0x6C87C2 body=6259
+   巨型——0x6C 区 6259B 大函数）——现场（0x6C77C2-0x6C77E5）：
+   mov byte[esp+0x68],0 → mov [esp+0x48],0x7F0904（★常量——
+   .rdata 字符串推断）→ call 0x65CAC0（★本条——SetFileName）
+   → lea ecx,[esp+0x44] → push 1 → call 0x65CB50（★相邻函
+   数——SetFileName 之后的操作）→ mov eax,[esp+0x58] → cmp
+   eax,esi → je 0x6C7843（★后续判定）→ ...。
+
+★统一形态：派生 SetFileName（BufferIOFileClass）与普通宿主全
+「传 this+新名 → call 0x65CAC0 → 虚表槽 4/相邻函数收尾」——
+文件名 setter 的标准消费；FUN_006c6f50 巨型宿主（6259B）的资
+源加载路径。
+
+=== 原版怪癖（照抄） ===
+
+① **双条件门控释放**（+0x18 非空 且 +0x20 标志置位才 free——
+  标志位防「半初始化对象被释放」）；
+② **strdup 新名取代**（0x7D5408 batch 024——复制新名到堆，
+  非引用替换）；
+③ **状态双清**（+0xC=0/+0x10=-1——位置/大小重置，0xFFFFFFFF
+  哨兵同 batch 741/757 字段惯用）；
+④ **失败虚表槽 0x40 上报**（3 参 0xC/0/新名——错误处理多态推
+  断，构造失败静默不例外）；
+⑤ **成功置 +0x20=1**（占用标志——下次 SetFileName 触发释放前
+  提）；
+⑥ **返回 eax=strdup 结果**（成功路径 eax 未显式设置，管道残留
+  ——非 bool 显式返回的编译器痕迹）；
+⑦ **派生类复用**（BufferIOFileClass::SetFileName 直调基类+虚
+  表槽 4 收尾——继承惯用）。
+
+=== 跨批次闭合（★双闭合） ===
+
+**++batch 020（0x7C93E8 CRT 内部 free——函数体旧名释放调用，
+   完整释放链闭合）**；
+**++batch 024（0x7D5408 strdup——函数体新名复制调用，字符串
+   双副本语义实锤）**；
++this 布局（+0xC 位置/+0x10 大小哨兵/+0x18 名缓冲/+0x20 标
+志）；+虚表槽 0x40（错误上报推断）；+0x65CB40 后邻（0x65CB50
+SetFileName 后操作——新候选）；+0x7F0904（现场 3 常量）；
+★★BufferIOFileClass::SetFileName（带名派生宿主——基类复活延
+续）。
+
+=== 新候选 ===
+
+BufferIOFileClass::SetFileName（131B 派生 setter——0x431E80）、
+0x65CB50（SetFileName 后操作——现场 3 调用）、FUN_00431a30
+（228B）、FUN_006c6f50（6259B 巨型资源路径宿主）、0x7F0904
+常量内容、虚表槽 0x40 身份。
+
+=== partial ===
+
++0xC/+0x10 状态字段精确语义（位置/大小推断）、虚表槽 0x40 3
+参错误处理身份、0x65CB50 后操作内容、FUN_00431a30 宿主类、
+FUN_006c6f50 巨型宿主业务（资源加载推断）、0x7F0904 常量串。
