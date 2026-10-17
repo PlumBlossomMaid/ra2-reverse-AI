@@ -1,0 +1,141 @@
+frontier batch 820 —— 0x00513940 VectorClass 带参构造器孪生（0x7EAC48）
+==========================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=134 / body=74B）。
+TARGET = 0x00513940（.text，74B，thiscall 2 栈参 ret 8）
+★★batch 819 孪生逐字节同构兑现：与 0x5138F0（VectorClass 带参
+构造器——容量+外部缓冲）机器码逐字节一致，唯一差异 = 虚表
+立即数 **0x7EAC48**（0x5138F0 装 0x7EAC28）——容器模板第
+二编译副本（Westwood twin 模式）
+
+一、函数体全读（74B，disasm 0x513940 74）
+-------------------------------------------
+参数契约（thiscall 2 栈参 ret 8）：
+  ecx = this（容器对象基址）
+  [esp+4] = param1（容量）
+  [esp+8] = param2（外部缓冲指针，可 0）
+  返回 this（eax=esi）
+机器码（74B 全读——与 batch 819 逐指令同序）：
+  00513940  mov eax,[esp+4]             ; ★param1 = 容量
+  00513944  push esi
+  00513945  mov esi,ecx                 ; this
+  00513947  xor edx,edx
+  00513949  cmp eax,edx                 ; 容量==0?
+  0051394b  mov [esi+4],edx             ; ★+0x04 Items = NULL
+  0051394e  mov [esi+8],eax             ; ★+0x08 Capacity = param1
+  00513951  mov byte[esi+0xC],1         ; ★+0x0C IsInitialized = 1
+  00513955  mov byte[esi+0xD],dl        ; ★+0x0D IsAllocated = 0
+  00513958  mov [esi],0x7EAC48          ; ★★虚表 0x7EAC48（vs 819 的
+                                        ;   0x7EAC28——唯一差异）
+  0051395e  je 0x513984                 ; ★容量==0 → 跳收尾（不分配）
+  00513960  mov ecx,[esp+0xC]           ; ★param2 = 外部缓冲
+  00513964  cmp ecx,edx
+  00513966  je 0x513971                 ; param2==0 → 自行分配
+  00513968  mov [esi+4],ecx             ; ★+0x04 = 外部缓冲（复用）
+  0051396b  mov eax,esi → pop esi → ret 8   ; ★外部缓冲路径
+  00513971  shl eax,2                   ; ★容量 ×4B
+  00513974  push eax
+  00513975  call 0x7C8E17               ; ★★operator new（batch 001）
+  0051397a  add esp,4
+  0051397d  mov [esi+4],eax             ; ★+0x04 = 新数组
+  00513980  mov byte[esi+0xD],1         ; ★+0x0D IsAllocated = 1（自有）
+  00513984  mov eax,esi → pop esi → ret 8   ; ★自分配路径
+语义：**VectorClass 带参构造器孪生（容量+外部缓冲，推断名）**——
+与 batch 819 的 0x5138F0 语义完全一致（+0x04 Items/+0x08
+Capacity/+0x0C IsInitialized/+0x0D IsAllocated 布局 + 容量==0
+收尾 + 外部缓冲优先 + new(容量×4B) 自分配），仅虚表地址不同
+（0x7EAC48 vs 0x7EAC28）——同一容器构造模板的第二个类实例
+（两虚表相邻 0x20 字节，同一容器族虚表区）。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_816_calls.py（复用，TARGET=0x513940）：5 处调用点
+  0x51151B / 0x66651C / 0x66653F / 0x6667B4 / 0x67B761
+_locate_816_callers.py：归属（★★3 宿主与 batch 819 重合）
+  0x51151B → 0x005113F0 HouseTypeClass::HouseTypeClass
+    [0x5113F0-0x511647] body=600（★★带名——国家类型构造器）
+  0x66651C / 0x66653F / 0x6667B4 → 0x00665650 RulesClass::
+    RulesClass [0x665650-0x667A26] body=9175（★★带名——规则类
+    大构造器，3 处容器成员）
+  0x67B761 → 0x0067B720 FUN_0067B720 [0x67B720-0x67B8EF]
+    body=464（★★与 batch 819 的 FUN_0067BB10 相邻同长 464B——
+    RulesClass 读族，0x67B7xx-0x67BBxx 连续区）
+
+三、调用点现场（全部干净——★★容器成员子对象构造）
+------------------------------------------------
+【调用点 1】0x51151B in HouseTypeClass::HouseTypeClass（600B）
+  （0x511510 起错位——数据段，真实边界 0x511519）
+  00511519  mov ecx,edi                 ; this = 容器成员
+  0051151b  call 0x513940               ; ★本条
+  00511520  mov [edi+0x14],0xA          ; ★后续 +0x14 = 10
+  形态：★★与 batch 819 调用点 1（0x5114FC）同宿主同形态——
+  国家类型对象内容器成员构造
+【调用点 2】0x66651C in RulesClass::RulesClass（9175B）
+  （0x666510 起错位——数据段，真实边界 0x666515）
+  00666515  lea ecx,[esi+0xB20]         ; ★★容器成员 = 0xB20
+  0066651b  push ebx                    ; ★param2 = 0（外部缓冲空）
+  0066651c  call 0x513940               ; ★本条——(容量, 0)
+  00666521  push ebx / lea ecx,[esi+0xB3C]  ; ★下一容器成员 0xB3C
+  00666529  mov [esi+0xB34],edi / [esi+0xB30],ebx  ; 邻域字段写
+  形态：★★RulesClass 构造器内容器成员逐个构造（[esi+0xB20]/
+  [0xB3C]……共 3 处——与 batch 819 的 [0xC04]/[0xC20] 不同
+  偏移段，同类不同成员组）
+【调用点 3】0x67B761 in FUN_0067B720（464B）
+  （0x67B750 起错位——数据段，真实边界 0x67B760）
+  0067b760  push ebx                    ; ★param2 = 0
+  0067b761  call 0x513940               ; ★本条——(容量, 0)
+  0067b766  lea ecx,[esp+0x28]          ; 后续栈操作
+  形态：★★RulesClass 读族函数内容器构造（与 batch 819 调用点
+  3 的 FUN_0067BB10 同形态——0x67B720/0x67BB10 同族）
+
+四、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x7C8E17 —— ★★已登记（batch 001 operator new——自分配路径
+    调用）
+  0x7EAC48 —— ★新虚表（vs batch 819 的 0x7EAC28——相邻 0x20
+    字节同虚表区，容器族第 4 例：0x7EAC28/0x7EAC48/batch 341
+    0x7EAA08/0x7EAA28/batch 445 0x7ED90C/batch 459 0x7E4DD8）
+  ★★布局对照（grep 实锤——同 batch 819）：
+    batch 472/474（VectorClass::Clear 系清理端——+4/+8/+0xC/
+      +0xD 逐字段吻合）
+    batch 341（0x5AC900 动态版——双虚表 + +0x10/+0x14 差异）
+  宿主 HouseTypeClass::HouseTypeClass / RulesClass::RulesClass /
+    FUN_0067B720 —— functions.tsv（前两带名，新候选）
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 819（0x5138F0 VectorClass 带参构造器——本批逐字
+    节同构孪生，唯一差异虚表 0x7EAC48 vs 0x7EAC28）：宿主张
+    口完全重合（HouseTypeClass/RulesClass/RulesClass 读族），
+    同模板两编译副本——Westwood twin 模式第 N 例（batch
+    096 0x4073C0/0x4073E0、batch 445/459 0x5AC400/0x67A4F0
+    同模式）
+  ★★batch 472/474（VectorClass::Clear 系清理端——本批构造端
+    与其逐字段吻合，构造/清理两件套跨批闭合延续）
+  ★★batch 341（0x5AC900 动态版——布局差异明确，同模板两容器
+    类实例对比）
+  ★★batch 001（0x7C8E17 operator new）
+  ★★batch 472 partial「FUN_0067bb10 疑即 RulesClass 析构区」——
+    本批 FUN_0067B720（0x67B720，与 0x67BB10 同长同族）构造调
+    用，RulesClass 读族/构造区家族再添成员
+
+六、原版怪癖（照抄）
+-------------------
+① 与 batch 819 全部同款：容量==0 直接收尾、+0x0D 双路径分化、
+   外部缓冲优先复用、容量×4B 元素大小硬编码、+0x0C
+   IsInitialized 恒 1、ret 8 = 2 栈参；
+② **虚表双副本 0x7EAC28/0x7EAC48**（相邻 0x20 字节——同一容
+   器模板两实例各装各的虚表，不共享——Westwood twin 编译
+   产物特征）；
+③ 调用点宿主与 batch 819 完全重合但**成员偏移不同**（本批
+   [0xB20]/[0xB3C] vs 819 [0xC04]/[0xC20]——RulesClass 对象内
+   两组不同容器成员，各用各的构造器编译副本）。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：同 batch 819（函数精确名 YRpp 未对齐、虚表 0x7EAC48
+类归属、调用点 1 成员位置、RulesClass 容器成员字段语义
+[0xB20]/[0xB3C] 对应 rules 配置数组、FUN_0067B720 宿主业务）+
+0x7EAC28/0x7EAC48 两虚表的宿主类差异（同 T 两实例 vs 不同 T
+推断——与 batch 474 孪生分析同理）。
