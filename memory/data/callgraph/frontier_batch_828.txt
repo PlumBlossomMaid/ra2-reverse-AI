@@ -1,0 +1,137 @@
+frontier batch 828 —— 0x007BA420 条件子对象释放析构器
+======================================================
+
+候选来源：ranking.tsv（callers=3 / deps=122 / body=48B）。
+TARGET = 0x007BA420（.text，48B，thiscall 无栈参 ret）
+★★推断名：条件子对象释放析构器——装虚表 0x7E4DA0 后按
+「+0xC 子对象非空 且 +0x10 释放标志置位」双条件释放子对象
+（虚表槽 0x34），收尾调 0x631C80（batch 116 双向链表节点
+析构）；★调用点 1 宿主 variables::WriteCCFile 的 batch 179
+登记文原文点名「call 0x7BA420」——本批兑现
+
+一、函数体全读（48B，disasm 0x7BA420 48）
+-------------------------------------------
+参数契约（thiscall 无栈参）：ecx = this，无返回值。
+机器码（48B 全读）：
+  007ba420  push esi / mov esi,ecx       ; this
+  007ba423  mov ecx,[esi+0xC]            ; ★+0xC = 子对象指针
+  007ba426  mov [esi],0x7E4DA0           ; ★★装虚表 0x7E4DA0
+  007ba42c  test ecx,ecx / je 0x7BA447   ; ★子对象空 → 跳过释放
+  007ba430  mov al,[esi+0x10]            ; ★+0x10 = 释放标志
+  007ba433  test al,al / je 0x7BA447     ; ★标志 0 → 跳过释放
+  007ba437  mov byte[esi+0x10],0         ; ★清释放标志
+  007ba43b  mov eax,[ecx] / call [eax+0x34]  ; ★★子对象虚表槽
+                                        ;   0x34（释放/析构）
+  007ba440  mov [esi+0xC],0              ; ★+0xC 清 NULL
+  007ba447  mov ecx,esi
+  007ba449  call 0x631C80               ; ★★batch 116 双向链表
+                                        ;   节点析构（装虚表
+                                        ;   0x7E6218 + 摘除通知）
+  007ba44e  pop esi / ret
+语义：**条件子对象释放析构器（推断名）**——①装虚表 0x7E4DA0；
+②+0xC 子对象指针非空 且 +0x10 释放标志置位（双条件）时：
+清标志 → 子对象虚表槽 0x34 释放 → +0xC 清 NULL；③收尾调
+0x631C80（batch 116 双向链表节点析构——本对象同时是链表节
+点）；④ret 无栈参。字段语义：+0x00 虚表 0x7E4DA0/+0x0C 子
+对象指针/+0x10 释放标志。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_816_calls.py（复用，TARGET=0x7BA420）：3 处调用点
+  0x47451F / 0x477793 / 0x526458
+_locate_816_callers.py：归属（★★1 带名宿主）
+  0x47451F → 0x00474430 variables::WriteCCFile [0x474430-
+    0x474531] body=258（★★带名——CCINI 写文件带 SHA-1 校验，
+    batch 179 已登记）
+  0x477793 → 无归属（函数间隙——0x477780 起实测）
+  0x526458 → 0x00526420 FUN_00526420 [0x526420-0x526465]
+    body=70
+
+三、调用点现场（全部干净）
+------------------------
+【调用点 1】0x47451F in variables::WriteCCFile（258B——★★
+  batch 179 登记文原文「收尾: lea ecx,[esp+0xC]/call 0x7BA420」）
+  0047450d  push 0x81BFE0              ; ★名常量 [0x81BFE0]
+  00474516  call 0x5257C0              ; ★INI 段/清段（batch 179
+                                        ;   登记文同款）
+  0047451b  lea ecx,[esp+0xC]          ; ★this = 栈上常量对象
+  0047451f  call 0x7BA420              ; ★本条——★★与 batch 179
+                                        ;   登记文原文逐字节吻合
+  00474524  mov eax,edi / pop 族
+  形态：★★★batch 179 登记文「收尾: lea ecx,[esp+0xC]/call
+  0x7BA420」逐字兑现——WriteCCFile 收尾析构栈上常量对象
+【调用点 2】0x477793（函数间隙——0x477780 起实测）
+  00477780  call 0x7C8B3D              ; ★delete（batch 001）
+  0047778b  ret 4                       ; 前一个函数收尾
+  00477790  push esi / mov esi,ecx      ; ★this
+  00477793  call 0x7BA420              ; ★本条
+  00477798  test byte[esp+8],1          ; ★析构标志判定
+  0047779d  je 0x4777A8
+  0047779f  push esi                    ; ★delete this（推断）
+  形态：★★0x477790 起新函数（间隙未收录）——析构器带标志判定
+  的 delete 路径
+【调用点 3】0x526458 in FUN_00526420（70B）
+  00526440  push eax
+  00526445  mov [esp+8],0x7E4DA0        ; ★★虚表 0x7E4DA0 预装
+                                        ;   （batch 179 登记文同
+                                        ;   款「[esp+0xC]=0x7E4DA0」）
+  0052644d  call 0x526470              ; ★★batch 383 已登记文本
+                                        ;   对齐拼接器（variables
+                                        ;   域写族）
+  00526452  lea ecx,[esp+4]            ; ★this = 栈对象
+  00526458  call 0x7BA420              ; ★本条
+  0052645d  mov eax,esi
+  形态：★★FUN_00526420 栈对象构造（0x7E4DA0 预装 + 0x526470
+  拼接）后析构——variables 域写族生命周期
+
+四、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x631C80 —— ★★已登记（batch 116 双向链表节点析构——装虚表
+    0x7E6218、前向->后向贯通、后向节点虚表槽 +0xC 通知、双指
+    针置 NULL——函数体收尾调用）
+  0x7E4DA0 —— ★★batch 179 登记文已见（variables::WriteCCFile
+    内 [esp+0xC]=0x7E4DA0 常量对象）——本批为构造/析构对象虚表
+  0x526470 —— ★★已登记（batch 383 文本对齐拼接器——调用点 3
+    前序）
+  0x7C8B3D —— ★★已登记（batch 001 operator delete——调用点
+    2 前序）
+  [0x81BFE0] —— ★batch 179 登记文已见（WriteCCFile 名常量——
+    调用点 1 前序）
+  宿主 variables::WriteCCFile（batch 179 已登记）/ FUN_
+    00526420 / 0x477790 起间隙函数
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 179（variables::WriteCCFile 0x474430——登记文原
+    文「收尾: lea ecx,[esp+0xC]/call 0x7BA420」逐字兑现；登记
+    partial「0x7E4DA0/0x7E4D78 对象」本批给出构造/析构对象
+    虚表与双条件释放语义）
+  ★★batch 116（0x631C80 双向链表节点析构——函数体收尾调
+    用，本对象同时是链表节点）
+  ★★batch 383（0x526470 文本对齐拼接器——调用点 3 前序，
+    variables 域写族同框）
+  ★★batch 001（0x7C8B3D operator delete——调用点 2 前序）
+  ★★variables 域家族（batch 179 WriteCCFile/493 子对象转发
+    器/383 拼接器）——本条是域内对象析构端
+
+六、原版怪癖（照抄）
+-------------------
+① 双条件释放门控（+0xC 子对象非空 且 +0x10 释放标志置位——
+   标志未置位不释放，析构可跳过子对象）；
+② 清标志在释放前（0x7BA437 先清 +0x10 再调槽 0x34——防重
+   入释放）；
+③ 虚表 0x7E4DA0 装于条件判断前（0x7BA426 在 test ecx 之前
+   ——析构态虚表先装再判）；
+④ 收尾调 0x631C80（batch 116 链表节点析构——本对象同时是链
+   表节点，析构走链表摘除协议）；
+⑤ 调用点 2 析构带 delete 判定（test byte[esp+8],1 + push
+   esi delete this——栈/堆对象分形态）。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（条件子对象释放析构器推断——YRpp 未对
+齐）、子对象虚表槽 0x34 方法身份（释放/析构推断）、+0x10
+释放标志写入点（何时置位推断）、0x7E4DA0 对象类归属
+（variables 域栈对象推断）、FUN_00526420 宿主业务（0x526470
+拼接场景）、0x477790 起间隙函数宿主（析构带 delete 判定）。
