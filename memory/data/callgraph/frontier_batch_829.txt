@@ -1,0 +1,161 @@
+frontier batch 829 —— 0x007C34B0 区域范围设置器（三向坐标写回）
+=================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=122 / body=255B）。
+TARGET = 0x007C34B0（.text，255B，thiscall 3 栈参 ret 0xC）
+★★推断名：区域范围设置器（三向坐标写回）——边界检查链
+（edx/arg1 均 < this->+0x10 且 edx<arg1、arg3 ∈[0,3)，失败
+返 -23）+ 按 arg3 三向分派写 this 坐标字段 + arg3==2 调
+0x7C30D0 交叉检查
+
+一、函数体全读（255B，disasm 0x7C34B0 255）
+-----------------------------------------------
+参数契约（thiscall 3 栈参 ret 0xC）：
+  ecx = this（区域对象）
+  edx = 入参 1（下界坐标）
+  [esp+0x10] = arg1（上界坐标）
+  [esp+0x14] = arg2（第三值）
+  [esp+0x18] = arg3（方向/模式 ∈[0,3)）
+  返回 eax（0 成功/-1 成功变体/-23 失败）
+机器码（255B 全读）：
+  007c34b0  push ebx/esi/edi
+  007c34b3  mov edi,[ecx+0x10]          ; ★this->+0x10 = 上限
+  007c34b6  or eax,0xFFFFFFFF           ; ★eax = -1 初值
+  007c34b9  cmp edx,edi / jge 0x7C35A4  ; edx>=上限 → 失败
+  007c34c1  mov esi,[esp+0x10]          ; ★arg1 = 上界坐标
+  007c34c5  cmp esi,edi / jge 0x7C35A4  ; arg1>=上限 → 失败
+  007c34cd  cmp edx,esi / jge 0x7C35A4  ; edx>=arg1 → 失败
+  007c34d5  mov edi,[esp+0x18]          ; ★arg3 = 方向/模式
+  007c34d9  test edi,edi / jl 0x7C35A4  ; arg3<0 → 失败
+  007c34e1  cmp edi,3 / jge 0x7C35A4    ; arg3>=3 → 失败
+  007c34ea  mov ebx,[esp+0x14]          ; ★arg2 = 第三值
+  007c34ee  test ebx,ebx / jge 0x7C34F5 ; arg2<0 → 钳 -1
+  007c34f2  or ebx,0xFFFFFFFF
+  007c34f5  push ebp / mov ebp,[ecx+0x124]  ; ★this->+0x124
+  007c34fc  test ebp,ebp / jne 0x7C350C ; +0x124 非 0 → 跳
+  007c3500  cmp edi,1 / jne 0x7C350C    ; arg3==1 且 +0x124==0
+  007c3505  mov edi,2                   ; ★arg3 升 2
+  007c350a  jmp 0x7C3552
+  007c350c  cmp edi,2 / je 0x7C3552     ; arg3==2 → 跳主写
+  007c3511  test byte[ecx+0x150],0x80 / je 0x7C3546
+                                        ; ★+0x150 位 0x80 检查
+  007c351a  test edi,edi / mov [ecx+0x13C],edx  ; 写 +0x13C
+  007c3522  jne 0x7C3532                ; arg3!=0 → 跳
+  007c3524  mov [ecx+0x138],esi / mov esi,[ecx+0x12C] / jmp
+    0x7C3552                            ; ★arg3==0：写 +0x138、
+                                        ;   读 +0x12C
+  007c3532  mov ebp,[ecx+0x12C] / mov edx,[ecx+0x128] /
+    mov [ecx+0x138],ebp / jmp 0x7C3552 ; ★arg3 其它：读
+                                        ;   +0x12C/+0x128 写
+                                        ;   +0x138
+  007c3546  mov [ecx+0x144],edx / mov [ecx+0x140],esi
+                                        ; ★+0x150 位 0x80 未置：
+                                        ;   写 +0x144/+0x140
+  007c3552  cmp edi,1 / mov [ecx+0x128],edx  ; ★主写 +0x128
+  007c3555  pop ebp / jne 0x7C3570
+  007c355e  mov [ecx+0x130],esi / mov [ecx+0x134],ebx
+    / pop 族 / ret 0xC                  ; ★arg3==1：写 +0x130/
+                                        ;   +0x134 返回
+  007c3570  cmp edi,2 / mov [ecx+0x124],ebx  ; ★写 +0x124
+  007c3573  jne 0x7C35A9                ; arg3!=2 → 收尾
+  007c357b  push 0 / mov [ecx+0x12C],esi / mov [ecx+0x11C],
+    esi / call 0x7C30D0                 ; ★★arg3==2：写 +0x12C/
+                                        ;   +0x11C 调 0x7C30D0
+  007c358e  xor ecx,ecx / test eax,eax / setl cl / dec ecx /
+    and ecx,0x16 / add ecx,-0x17 / mov eax,ecx / ret 0xC
+                                        ; ★0x7C30D0<0 → -0x17；
+                                        ;   >=0 → -1
+  007c35a4  mov eax,0xFFFFFFE9 / ret 0xC ; ★失败返 -23
+  007c35a9  pop 族 / ret 0xC             ; ★成功返 eax=-1 残留
+语义：**区域范围设置器（三向坐标写回，推断名）**——①边界检
+查链：edx 与 arg1 都须 < this->+0x10 且 edx<arg1；arg3 ∈
+[0,3)（jl/jge 双界）；任一失败返 -23（0xFFFFFFE9）；②arg2
+<0 钳 -1；③按 arg3 分派：arg3==1 且 this->+0x124==0 时 arg3
+升 2；arg3==0/其它 且 +0x150 位 0x80 置位时写 +0x13C/+0x138
+（+0x12C 读回）；位未置时写 +0x144/+0x140；④主写 +0x128，
+arg3==1 补写 +0x130/+0x134 返回；arg3==2 写 +0x124/+0x12C/
++0x11C 后调 0x7C30D0 交叉检查（<0 返 -0x17、>=0 返 -1）；⑤
+其余成功返 eax=-1 残留。字段语义：+0x10 上限/+0x11C/
++0x124/+0x128/+0x12C/+0x130/+0x134/+0x138/+0x13C/+0x140/
++0x144 坐标与边界字段组/+0x150 位标志。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_816_calls.py（复用，TARGET=0x7C34B0）：3 处调用点
+  0x7598BF / 0x7C2BD2 / 0x7C3483
+_locate_816_callers.py：归属
+  0x7598BF → 0x00759880 FUN_00759880 [0x759880-0x7598CD]
+    body=78
+  0x7C2BD2 → 0x007C2590 FUN_007C2590 [0x7C2590-0x7C2C56]
+    body=1735
+  0x7C3483 → 0x007C3430 FUN_007C3430 [0x7C3430-0x7C34A1]
+    body=114（★★紧邻本函数之前——同区域类方法族）
+
+三、调用点现场（全部干净）
+------------------------
+【调用点 1】0x7598BF in FUN_00759880（78B）
+  007598bd  push esi                    ; ★arg2 = esi
+  007598be  push eax                    ; ★arg1 = eax
+  007598bf  call 0x7C34B0               ; ★本条
+  007598c4  cmp eax,-1 / pop esi        ; ★成功判定（==-1 成功）
+  形态：★★区域范围设置（arg1/arg2 双压 + edx 入参）
+【调用点 2】0x7C2BD2 in FUN_007C2590（1735B）
+  007c2bc3  mov edx,[ebx+0x11C]         ; ★edx = 下界（+0x11C）
+  007c2bc9  push 0×2                    ; ★arg2/arg3 = 0
+  007c2bce  xor edx,edx                 ; ★edx 清 0（？——与上文
+                                        ;   冲突观察，如实记录）
+  007c2bd0  mov ecx,ebx                 ; this
+  007c2bd2  call 0x7C34B0               ; ★本条
+  007c2bd7  cmp eax,esi / je 0x7C2BFD  ; ★返回值判定
+  形态：★★大函数内区域范围设置（arg2/arg3=0 简化形态）
+【调用点 3】0x7C3483 in FUN_007C3430（114B——紧邻前函数）
+  007c3468  lea ecx,[edx+edi*4] / xor edx / mov dx,[ecx]
+                                        ; ★读 word（坐标/索引）
+  007c3470  mov ecx,[esp+0x10] / push ecx×2 + push eax
+                                        ; ★arg 组
+  007c347b  mov ecx,esi / mov [esi+0x120],edi
+  007c3483  call 0x7C34B0               ; ★本条
+  形态：★★同区域类方法族内调用（本函数 + 0x7C3430 相邻——类
+  内两方法互调）
+
+四、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x7C30D0 —— ★未登记（arg3==2 分支交叉检查——0x7C30xx 区
+    0x7C3430 邻域，新候选）
+  0x7C34B0 / 0x7C3430 —— 均未登记（本批目标 + 相邻方法）
+  [ecx+0x150] 位 0x80 —— ★区域标志位（未登记字段）
+  宿主 FUN_00759880 / FUN_007C2590 / FUN_007C3430 —— 未登记
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★0x7C3430（紧邻前函数——同区域类方法族，FUN_007C3430 调
+    本条，同区 0x7C30D0 交叉检查）
+  ★★0x7C30D0（新候选——arg3==2 分支交叉检查）
+  ★★三宿主均未登记（0x7C34B0 区域类家族——0x7C30xx-0x7C35xx
+    连续区）
+
+六、原版怪癖（照抄）
+-------------------
+① 边界检查链逐级失败返 -23（edx/arg1 双上界 + edx<arg1 +
+   arg3 双界——jl/jge 独立判断不合并）；
+② arg2 负数钳 -1（test ebx/jge + or ebx,0xFFFFFFFF——负值
+   归一化）；
+③ arg3==1 且 +0x124==0 时 arg3 升 2（隐性模式升级——调用方
+   未显式传 2）；
+④ +0x150 位 0x80 双分支写不同字段组（+0x13C/+0x138 vs
+   +0x144/+0x140——同输入不同落点）；
+⑤ 主写 +0x128 恒执行（0x7C3552 在分支汇合点）；
+⑥ arg3==2 分支调 0x7C30D0 交叉检查后 setl/dec/and/add 链
+   （<0 → -0x17、>=0 → -1——两值语义不同）；
+⑦ 成功路径 eax=-1 残留（0x7C35A9 pop/ret 不带 mov——调用方
+   以 cmp eax,-1 判定成功，失败返 -23 区分）。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（区域范围设置器推断——YRpp 未对齐）、
+edx/arg1 坐标语义（上下界/两轴推断）、arg3 三档业务（方向/
+模式枚举推断）、+0x124/+0x150 字段与位标志语义（区域状态/
+配置推断）、0x7C30D0 精确语义（交叉检查/重算推断）、
+FUN_00759880/FUN_007C2590/FUN_007C3430 宿主业务、+0x120
+（调用点 3 写）字段语义。
