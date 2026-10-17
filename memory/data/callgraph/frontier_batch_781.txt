@@ -1,0 +1,166 @@
+frontier batch 781 —— 0x00500510 HouseClass::GetPrimaryFactory（带名实锤）
+================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=237 / body=99B）。
+TARGET = 0x00500510（.text，99B，thiscall 3 栈参 ret 0xC，返
+FactoryClass* 指针）
+
+一、身份实锤（YRpp 交叉验证）
+---------------------------
+YRpp HouseClass.h:613 源码级确认：
+  `FactoryClass* GetPrimaryFactory(AbstractType absID, bool naval,
+   BuildCat buildCat) const`
+三参签名（absID=目标类型 / naval=海军布尔 / buildCat=建造类
+别）与本函数三栈参逐点吻合：
+  参1 = absID（dec 后索引表 0x500588 → 跳转表 0x500574 分派）
+  参2 = naval（byte 判定选槽 +0x53B4 vs +0x53B8）
+  参3 = buildCat（==5 判定选槽 +0x53CC vs +0x53BC）
+**带名 + 签名双实锤**（ranking 带名 + YRpp 源码级）。★生产系
+统域：与 batch 780 的 FactoryClass::DemandProduction 同域衔
+接（此函数返回主工厂 → DemandProduction 排队）。
+
+二、函数体全读（99B，disasm 0x500510 120）
+------------------------------------------
+00500510  mov eax, [esp + 4]         ; ★栈参1（absID）→ eax
+00500514  dec eax                    ; ★dec（-1 归一 0-based？）
+00500515  cmp eax, 0x27
+00500518  ja 0x50056e              ; ★>0x27 → 返 0（未知类型）
+0050051a  xor edx, edx
+0050051c  mov dl, [eax + 0x500588]   ; ★★索引表 @ 0x500588（absID
+                                      ;   映射 0..5 分支索引）
+00500522  jmp [edx*4 + 0x500574]    ; ★★跳转表 @ 0x500574
+00500529  mov eax, [ecx + 0x53b0]   ; 分支: this+0x53B0
+0050052f  ret 0xc
+00500532  mov al, [esp + 8]         ; 分支: 栈参2（naval byte）
+00500536  test al, al
+00500538  je 0x500543
+0050053a  mov eax, [ecx + 0x53b8]   ; ★naval≠0 → this+0x53B8
+00500540  ret 0xc
+00500543  mov eax, [ecx + 0x53b4]   ; ★naval==0 → this+0x53B4
+00500549  ret 0xc
+0050054c  cmp [esp + 0xc], 5        ; 分支: 栈参3（buildCat）== 5 ?
+00500551  jne 0x50055c
+00500553  mov eax, [ecx + 0x53cc]   ; ★==5 → this+0x53CC
+00500559  ret 0xc
+0050055c  mov eax, [ecx + 0x53bc]   ; ★!=5 → this+0x53BC
+00500562  ret 0xc
+00500565  mov eax, [ecx + 0x53ac]   ; 分支: this+0x53AC
+0050056b  ret 0xc
+0050056e  xor eax, eax              ; ★默认 → 返 0（nullptr）
+00500570  ret 0xc
+00500573  nop
+00500574  跳转表（dump 实锤——前 5 项）: 0x500532 / 0x500565 /
+          0x50054C / 0x500529 / 0x50056E（索引 0..4）
+00500588  索引表（absID dec 后 0..0x27 → 0..4 字节映射）
+
+参数契约（thiscall ret 0xC = 3 栈参）：
+  ecx = this（HouseClass——[0xA83D4C] 全局 house 交叉）
+  栈参1 = [esp+4] = AbstractType absID（类型枚举，dec 后索引）
+  栈参2 = [esp+8] = bool naval（选槽 +0x53B4/+0x53B8）
+  栈参3 = [esp+0xC] = BuildCat buildCat（==5 选槽 +0x53CC/+0x53BC）
+  返回 eax = FactoryClass*（主工厂指针）；未知类型返 0
+  语义：**HouseClass::GetPrimaryFactory（带名）**——按
+  absID/naval/buildCat 三分派返回 this 工厂槽族
+  （+0x53AC/+0x53B0/+0x53B4/+0x53B8/+0x53BC/+0x53CC）中的主
+  工厂指针。★槽族与 batch 780（0x50B370 单位数量阈值判定器）
+  的 this+0x53AC..0x53BC 完全同族——生产系统槽位布局再确认。
+
+三、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_781_calls.py：6 处调用点
+  0x43E88F / 0x44EEF7 / 0x6A9C67 / 0x6AA89A / 0x6AB1A0 / 0x6AB619
+_locate_781_callers.py：归属
+  0x43E88F → 0x0043E7B0 BuildingClass::DrawInfoTipAndSpiedSelection
+            [0x43E7B0-0x43E8F4] body=325 ★★★带名实锤
+  0x44EEF7 → 无归属（函数间隙）
+  0x6A9C67 → 0x006A9540 FUN_006a9540 [0x6A9540-0x6AA5B1] body=4210
+            ★★★batch 773/780 同宿主三连！
+  0x6AA89A → 0x006AA600 FUN_006aa600 [0x6AA600-0x6AACAE] body=1711
+  0x6AB1A0 → 无归属（函数间隙）
+  0x6AB619 → 无归属（函数间隙）
+
+四、调用点现场（正确指令边界重读）
+--------------------------------
+【调用点 1】0x43E88F in BuildingClass::DrawInfoTipAndSpiedSelection
+            （★★带名——建筑信息提示/间谍选择绘制）
+  0043e887  push ecx                 ; 参3（buildCat 推断）
+  0043e888  mov ecx, [esi + 0x21c]   ; ★ecx = [esi+0x21C]（house 推断）
+  0043e88e  push edx                 ; 参2/参1（naval/absID 推断）
+  0043e88f  call 0x500510
+  0043e894  jmp 0x43e89c
+  0043e896  mov eax, [esi + 0x524]
+  0043e89c  test eax, eax / je 0x43e8ec → 后续 ecx,eax
+  形态：建筑对象取 house（+0x21C）→ GetPrimaryFactory → 主工厂
+  指针用于绘制信息提示。
+
+【调用点 3】0x6A9C67 in FUN_006a9540（batch 773/780 同宿主三连）
+  006a9c5c  push eax
+  006a9c5d  call [edx + 0x2c]        ; ★虚表槽 0x2C 取类型（absID）
+  006a9c60  mov ecx, [0xa83d4c]      ; ★★ecx = [0xA83D4C]（house 全
+                                      ;   局——batch 780 同全局！）
+  006a9c66  push eax                 ; 参1 = 类型
+  006a9c67  call 0x500510
+  006a9c6c  test eax, eax
+  006a9c6e  mov [esp + 0x18], eax
+  006a9c72  je 0x6a9d88           ; ★返 0 → 跳走
+  形态：虚表槽 0x2C 取类型 → house 全局 → GetPrimaryFactory →
+  主工厂非空处理。★★跨全局：[0xA83D4C] 是 house 对象推断再
+  确认（batch 780 调用点 2/3 同全局）。
+
+【调用点 4】0x6AA89A in FUN_006aa600（body=1711）
+  006aa890  call [edx + 0x2c]        ; ★虚表槽 0x2C 取类型
+  006aa893  mov ecx, [0xa83d4c]      ; ★★house 全局
+  006aa899  push eax                 ; 参1 = 类型
+  006aa89a  call 0x500510
+  006aa89f  test eax, eax
+  006aa8a1  je 0x6aa931           ; ★返 0 → 跳走
+  006aa8a7  mov ecx, [esi] / ...     ; 后续虚表处理
+  形态：与调用点 3 完全同款——house 全局 + 类型取主工厂。
+
+【调用点 6】0x6AB619（间隙宿主）
+  006ab619  call 0x500510
+  006ab61e  mov esi, eax             ; ★返回值 → esi
+  006ab620  mov eax, [esp + 0x20] / mov ecx, [eax + 0x2c]
+  006ab627  mov edx, [ebx + ecx + 0x58] / lea eax, [ebx + ecx]
+  形态：主工厂指针存 esi + 后续对象字段访问（间隙函数细节见
+  partial）。
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★★YRpp HouseClass.h:613（带名+签名双实锤——GetPrimaryFactory
+    源码级契约）
+  ★★★[0xA83D4C]（house 全局 ——batch 780 同全局交叉再确认）
+  ★★batch 780（0x50B370 单位数量阈值判定器——this+0x53AC..
+    0x53BC 槽族同族参照；FactoryClass::DemandProduction 生产
+    域衔接）
+  ★★batch 773（FUN_006a9540——同宿主跨批三连再确认）
+  ★★BuildingClass::DrawInfoTipAndSpiedSelection（带名——建筑
+    信息绘制域）
+  新候选：FUN_006aa600（1711B 双调用点宿主）、[0xA83D4C] 完整
+  结构、工厂槽族 +0x53AC..0x53CC 各槽对应工厂类型（partial）
+  三间隙宿主（0x44EEF7/0x6AB1A0/0x6AB619）
+
+六、原版怪癖（照抄）
+-------------------
+① absID dec 后索引（mov eax,[esp+4]/dec eax——调用方传 1-based
+   枚举，内部 dec 归 0-based 推断）；
+② 索引表+跳转表两级（索引表 0x500588 映射 absID→0..4 分支索
+   引，跳转表 0x500574 5 目标——与 batch 780 双跳转表同模板）；
+③ >0x27 直接返 0（未知类型 nullptr——上进位检查在 dec 后）；
+④ naval 布尔选槽（+0x53B4 vs +0x53B8——陆/海军主工厂分槽）；
+⑤ buildCat==5 特判（+0x53CC vs +0x53BC——建造类别 5 特殊槽）；
+⑥ 槽族集中（+0x53AC..0x53CC 六个工厂槽——陆军/海军/飞机/建
+   筑等对应关系 partial）；
+⑦ 默认返 0（xor eax,eax 兜底——未知类型无主工厂）；
+⑧ ret 0xC thiscall——3 栈参被调清栈；
+⑨ 99B 短函数含两表 + 六分支（密集分派——原版风格）。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+（★带名+YRpp 签名双实锤——本批可信度最高档）
+partial：工厂槽族 +0x53AC/0x53B0/0x53B4/0x53B8/0x53BC/0x53CC
+各槽精确对应关系（absID 枚举值↔槽映射推断——索引表内容未逐
+字节核对）；[0xA83D4C] house 全局完整结构；三间隙宿主身份
+（0x44EEF7/0x6AB1A0/0x6AB619）；FUN_006aa600（1711B）业务；
+调用点 1 的参 2/参 3 精确装载（紧凑 push 序列推断）。
