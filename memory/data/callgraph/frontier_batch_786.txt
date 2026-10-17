@@ -1,0 +1,157 @@
+frontier batch 786 —— 0x005289E0 INI 三键串转发写串器（推断名）
+================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=205 / body=44B）。
+TARGET = 0x005289E0（.text，44B，thiscall 3 栈参 ret 0xC）
+
+一、函数体全读（44B，disasm 0x5289E0 96）
+------------------------------------------
+005289e0  56      push esi
+005289e1  8bf1    mov esi, ecx                    ; ★this → esi
+005289e3  8b4c2410  mov ecx, [esp + 0x10]         ; ★栈参3（push esi 后
+                                                  ;   [esp+0x10]=入口 [esp+0xC]）
+005289e7  e854ca2800  call 0x7b5440               ; ★★★batch 072 字符串
+                                                  ;   GetString → eax₁（取栈参3 串）
+005289ec  8b4c240c  mov ecx, [esp + 0xc]          ; ★栈参2（入口 [esp+8]）
+005289f0  50      push eax                        ; ★push eax₁（保存栈参3 串——
+                                                  ;   最后会成为 WriteString 参3）
+005289f1  e84aca2800  call 0x7b5440               ; ★GetString → eax₂（取栈参2 串）
+005289f6  8b4c240c  mov ecx, [esp + 0xc]          ; ★栈参1（push eax₁ 后 esp-4，
+                                                  ;   [esp+0xC]=入口 [esp+4]——栈参1）
+005289fa  50      push eax                        ; ★push eax₂（保存栈参2 串——
+                                                  ;   最后会成为 WriteString 参2）
+005289fb  e840ca2800  call 0x7b5440               ; ★GetString → eax₃（取栈参1 串）
+00528a00  50      push eax                        ; ★push eax₃（栈参1 串——最后
+                                                  ;   会成为 WriteString 参1）
+00528a01  8bce    mov ecx, esi                    ; ★this → ecx
+00528a03  e858fcffff  call 0x528660               ; ★★★batch 069
+                                                  ;   INISection::WriteString
+                                                  ;   （3 栈参：参1=GetString(栈参1)、
+                                                  ;   参2=GetString(栈参2)、
+                                                  ;   参3=GetString(栈参3)——原序重建）
+00528a08  5e      pop esi
+00528a09  c20c00  ret 0xc                         ; ★ret 0xC = 3 栈参
+
+参数契约（thiscall ret 0xC = 3 栈参）：
+  ecx = this（INISection 推断——写串目标）
+  栈参1 = [esp+4]（→ GetString（最后一次）→ WriteString 参1）
+  栈参2 = [esp+8]（→ GetString（第二次）→ WriteString 参2）
+  栈参3 = [esp+0xC]（→ GetString（第一次）→ WriteString 参3）
+  ★取串顺序逆序（栈参3→栈参2→栈参1），push 保存顺序也是逆序，
+  最后调用 0x528660 时栈上三参从上到下 = eax₃/eax₂/eax₁ =
+  GetString(栈参1)/GetString(栈参2)/GetString(栈参3)——**原序
+  重建**转发给 WriteString。
+  返回 void（ret 0xC，无返回值保存）
+  语义：**INI 三键串转发写串器（推断名）**——三个入参（键名
+  串推断）全部经 batch 072 的 GetString（0x7B5440）取 c_str，
+  再按 1→2→3 原序三个串调 batch 069 的 WriteString（0x528660）
+  写入 INI。与 batch 785（INI 格式化写串选择器 0x527640）同族
+  ——785 是 4 参（2 键名 GetString + 1 数值 + 1 选择器格式化）、
+  786 是 3 参（3 键名全 GetString 后原序转发）。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_786_calls.py：5 处调用点
+  0x779D85 / 0x77A005 / 0x77A1D0 / 0x77A3E8 / 0x77A439
+_locate_786_callers.py：归属
+  0x779D85 → 0x00779C90 FUN_00779c90 [0x779C90-0x779DCC] body=317
+  0x77A005 → 0x00779F10 FUN_00779f10 [0x779F10-0x77A04C] body=317
+  0x77A1D0 → 0x0077A080 FUN_0077a080 [0x77A080-0x77A497] body=1048
+  0x77A3E8 → 0x0077A080 FUN_0077a080 [0x77A080-0x77A497] body=1048
+  0x77A439 → 0x0077A080 FUN_0077a080 [0x77A080-0x77A497] body=1048
+  ★★FUN_0077a080 是 batch 785 同一宿主（该宿主同时调 0x527640
+  ×8 和 0x5289E0 ×3——INI 写串家族在同一个大宿主同框，强证据）
+
+三、调用点现场（正确指令边界重读）
+--------------------------------
+【调用点 1】0x779D85 in FUN_00779c90（body=317）
+  ★完整序列从 0x779D74 重读（前导 0x779D74 起真实指令）：
+  00779d76  lea edx, [esp + 8]      ; ★edx = 栈对象（栈参2 窄串）
+  00779d7a  lea eax, [esp + 0xc]    ; ★eax = 栈对象（栈参3 窄串）
+  00779d7e  push esi                ; ★栈参1 = esi（宿主寄存器窄串）
+  00779d7f  push edx                ; ★栈参2 = [esp+8]
+  00779d80  push eax                ; ★栈参3 = [esp+0xC]
+  00779d81  lea ecx, [esp + 0x1c]   ; ★this = 栈对象
+  00779d85  call 0x5289e0
+  00779d8a  lea ecx, [esp + 0xc] / call 0x7b46f0  ; ★窄串析构
+  00779d93  lea ecx, [esp + 8] / call 0x7b46f0    ; ★再析构（第二窄串）
+  形态：3 push + this 栈对象 → call → 后续 0x7B46F0 析构 ×2。
+
+【调用点 2】0x77A1D0 in FUN_0077a080（body=1048，☆同宿主×3）
+  ★完整序列从 0x77A1B8 重读（0x77A1C8 起点是错位数据区
+   `24 10 and al,0x10`）：
+  0077a1be  lea edx, [esi + 0xc]    ; ★edx = [esi+0xC]（栈参1 窄串）
+  0077a1c1  lea eax, [esp + 8]      ; ★eax = 栈对象（栈参2）
+  0077a1c5  push edx                ; ★栈参1 = [esi+0xC]
+  0077a1c6  lea ecx, [esp + 0x10]   ; ★ecx = 栈对象（栈参3）
+  0077a1ca  push eax                ; ★栈参2 = [esp+8]
+  0077a1cb  push ecx                ; ★栈参3 = [esp+0x10]
+  0077a1cc  lea ecx, [esp + 0x20]   ; ★this = 栈对象
+  0077a1d0  call 0x5289e0
+  0077a1d5  lea ecx, [esp + 8] / call 0x7b46f0    ; ★窄串析构
+  0077a1de  push 0x849f7c           ; ★★键名串（.data——后续写键）
+  形态：同一标准形态（3 push + this 栈对象 → call → 0x7B46F0
+  析构 → take 键名串 0x849F7C 继续）。
+
+【调用点 3】0x77A3E8 in FUN_0077a080（body=1048）
+  现场（0x77A3E0 起，起点同样错位 `24 10`——从 0x77A3E2 真实
+  指令边界）：
+  0077a3e2  push eax                ; ★栈参3 = [esp+?]（宿主栈对象）
+  0077a3e3  push ecx                ; ★栈参2 = [esp+?]
+  0077a3e4  lea ecx, [esp + 0x20]   ; ★this = 栈对象
+  0077a3e8  call 0x5289e0
+  0077a3ed  lea ecx, [esp + 8] / call 0x7b46f0    ; ★窄串析构
+  0077a3f6  lea ecx, [esp + 0x10] / call 0x7b5340 ; ★再析构（宽/窄串变体）
+  形态：同一标准形态。
+
+四、被调登记核验（grep frontier_status.tsv）
+-------------------------------------------
+  0x7B5440 —— ★★★batch 072 已登记「字符串类 GetString 访问器」
+    （48 callers；this->[0] 非 NULL 返回之，NULL 返回 [0x889F64]
+    默认空串——c_str() 形态；本条函数体调 3 次：栈参1/2/3 全部
+    取串，跨批契约吻合）
+  0x528660 —— ★★★batch 069 已登记「INISection::WriteString」
+    （52 callers；值 NULL 退出/分配拷贝/init 条目表查找添加；
+    本条收尾写串（推 3 栈参=三键串），同 batch 785 的 3 参变体
+    使用方式）
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★★0x7B5440（batch 072——GetString，本条连调 3 次取三键串）
+  ★★★0x528660（batch 069——INISection::WriteString，本条收尾）
+  ★0x7B46F0（窄串析构——调用点后续清理标准动作）
+  ★★与 batch 785（0x527640 INI 格式化写串选择器）同族闭合：
+    ①同一宿主 FUN_0077a080（batch 785 ×8 调用 0x527640 + 本条
+    ×3 调用 0x5289E0——1048B 大函数批量写 INI）；
+    ②同被调 0x7B5440/0x528660（GetString/WriteString 双锚点）；
+    ③键名串同区（785 宿主后续 take 0x849FCC="LocaleVerified"、
+    786 调用点 2 后续 take 0x849F7C——0x849Fxx 键名串常量区）。
+  新候选：FUN_00779c90（317B）/FUN_00779f10（317B）——与本条
+  调用点 1/2 表现出的「多键 GetString 转发 WriteString」同一
+  INI 写串意图；FUN_0077a080（1048B）宿主业务。
+
+六、原版怪癖（照抄）
+-------------------
+① GetString 全取串（三个入参全部经 0x7B5440 访问器取 c_str，
+   不直接用指针——与 batch 785 双 GetString 一致，本条第 3 参
+   也不省）；
+② 取串逆序、push 逆序、调用处原序重建（栈参3→2→1 取串，
+   eax₁/₂/₃ 逆序进栈，WriteString 收到的却是原序 1→2→3——编
+   译器对多参转发的标准调度，但注意 GetString 调用有先后顺序
+   （栈参3 先取串）——若 GetString 有副作用顺序敏感）；
+③ 中间保存用 push 而非局部槽（eax₁/₂ 压栈暂存，最后连压第 3
+   个 eax₃ 凑齐三栈参——栈上 3 个槽位零开销暂存）；
+④ WriteString 推 3 栈参（3 键全部转发——0x528660 batch 069
+   登记的 INISection::WriteString 按 3 参变体使用，与 batch 785
+   相同）；
+⑤ ret 0xC 无返回值（结果全部落 INI，调用方不检查）。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「INI 三键串转发写串器」——ranking
+无带名）；this 类（INISection 推断——0x528660 承接）；三栈参
+键名串语义（键名 ×3 推断——WriteString 3 参变体排布，可能为
+节名/键名/子键）；三宿主业务（FUN_00779c90/FUN_00779f10/
+FUN_0077a080——后者与 batch 785 同宿主批量写 INI）与 0x849F7C
+键名串内容（未 dump，推断同 0x849FCC 区常量）。
