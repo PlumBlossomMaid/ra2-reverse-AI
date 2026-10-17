@@ -1,0 +1,144 @@
+frontier batch 800 —— 0x0063AC70 全局对象表匹配扫描器（推断名）
+=================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=169 / body=182B）。
+TARGET = 0x0063AC70（.text，182B，纯 ecx 单参 ret 无 N）
+推断名：全局对象表匹配扫描器（遍历全局指针数组 [0xA8ECBC]，对每项
+经 0x705D20 取 [item+0x514] 关联对象，虚调用 [obj+4]→[+0x10] 与入
+口参数匹配，返回匹配码——推断名，未带名）
+
+一、函数体全读（182B，disasm 0x63AC70 256）
+------------------------------------------
+参数契约：ecx = 入口参数（存 ebx；无栈参——ret 无 N 确认）。
+返回 eax：-1（遍历完无匹配）/ 1（[esi+0x94]>=0）/ 2（虚调用返
+[obj+0x14]-1）/ 3（虚调用返 [obj+0x14]-2）/ 5（虚调用返 -1）。
+
+机器码（182B 全读）：
+  0063ac70  sub esp,8 / push ebx/ebp/esi/edi
+  0063ac75  mov ebp,[0xa8ecc8]            ; ★全局数组长度 [0xA8ECC8]
+  0063ac7d  xor edi,edi                   ; ★索引 i=0
+  0063ac7f  test ebp,ebp / jle 0x63ad1b   ; 长度<=0 → 返 -1
+  0063ac89  mov eax,[0xa8ecbc]            ; ★全局指针数组基址 [0xA8ECBC]
+  0063ac8e  mov ecx,[eax+edi*4]           ; ★ecx = 数组[i]
+  0063ac91  test ecx,ecx / je 0x63ace0    ; 空项 → 下一项
+  0063ac95  mov dl,[ecx+0x14]; and dl,1   ; ★[item+0x14] bit0
+  0063ac9b  mov [esp+0x13],dl / je 0x63ace0 ; bit0=0 → 下一项
+  0063aca1  call 0x705d20                 ; ★★batch 097 已登记：
+                                          ;   [ecx+0x514] 单 getter
+                                          ;   （item→关联对象）
+  0063aca6  mov esi,eax / test esi,esi / je 0x63ace0 ; 空 → 下一项
+  0063acac  mov eax,[esi+0x94] / test eax,eax
+  0063acb4  jg 0x63ace7 / je 0x63ace7     ; ★[obj+0x94]>0 或 ==0 →
+                                          ;   返 1（立即命中）
+  0063acb8  mov eax,[esi+4]; lea ecx,[esi+4] ; ★this2 = obj+4
+  0063acbe  lea edx,[esp+0x14]; mov [esp+0x14],ebx ; ★局部槽=入口参数
+  0063acc6  push edx; call [eax+0x10]     ; ★★虚调用 [obj+4] 的
+                                          ;   [+0x10] 槽，栈参=&入口参数
+  0063acca  cmp eax,-1 / je 0x63acf4      ; 返 -1 → 结果 5
+  0063accf  mov esi,[esi+0x14]; lea ecx,[esi-1] ; ★[obj+0x14]-1
+  0063acd5  cmp eax,ecx / je 0x63ad01     ; 匹配 → 结果 2
+  0063acd9  add esi,-2; cmp eax,esi / je 0x63ad0e ; ★[obj+0x14]-2
+                                            ; 匹配 → 结果 3
+  0063ace0  inc edi; cmp edi,ebp / jge 0x63ad1b ; ★下一项 / 遍历完
+  0063ace5  jmp 0x63ac89
+  0063ace7  返 1；0063acf4 返 5；0063ad01 返 2；0063ad0e 返 3
+  0063ad1b  or eax,-1（返 -1）
+  0063ad25  ret
+
+语义：**全局对象表匹配扫描器（推断名）**——遍历全局指针数组
+[0xA8ECBC]（长度 [0xA8ECC8]），对每个 entry：非空且 [item+0x14]
+bit0 置位 → 经 0x705D20 取 [item+0x514] 关联对象 esi → [esi+0x94]
+非负则立即返回 1；否则以 [obj+4] 为 this2 虚调用 [+0x10] 槽（栈参
+= 入口 ecx 参数），按虚调用返回值分类：-1→结果 5、==[obj+0x14]-1
+→结果 2、==[obj+0x14]-2→结果 3、其余继续遍历。遍历完返回 -1。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_800_calls.py：3 处调用点
+  0x638F5E / 0x63A760 / 0x63AA6B
+_locate_800_callers.py：归属（全在 0x63 区）
+  0x638F5E → 0x00638E60 FUN_00638E60 [0x638E60-0x638F85] body=294
+  0x63A760 → 0x0063A5A0 FUN_0063A5A0 [0x63A5A0-0x63A8D1] body=818
+  0x63AA6B → 0x0063A8E0 FUN_0063A8E0 [0x63A8E0-0x63AAB1] body=466
+
+三、调用点现场（全部干净，无错位）
+--------------------------------
+【调用点 1】0x638F5E in FUN_00638E60（body=294）
+  00638f4f  mov eax,[0xac4c38] / test eax,eax / je 0x638f5c
+  00638f58  cmp eax,esi / jne 0x638f68   ; ★[0xAC4C38] 全局对象指针
+                                          ;   == esi 才继续
+  00638f5c  mov ecx,esi
+  00638f5e  call 0x63ac70
+  00638f63  cmp eax,-1 / je 0x638f70     ; ★-1=无匹配
+  00638f68  mov [0xac4c3c],esi / xor esi,esi ; ★失败写 [0xAC4C3C]
+【调用点 2】0x63A760 in FUN_0063A5A0（body=818）
+  0063a730  mov [0xac4c38],edx           ; ★写全局 [0xAC4C38]=edx
+  0063a742  mov eax,[esp+0x64] / test / jne 0x63a8c3
+  0063a75a  test esi,esi / je 0x63a7c4
+  0063a75e  mov ecx,esi
+  0063a760  call 0x63ac70
+  0063a765  cmp eax,-1 / je 0x63a736     ; ★-1 跳回（重试循环）
+【调用点 3】0x63AA6B in FUN_0063A8E0（body=466）
+  0063aa51  push 1; push edi; mov ecx,0x87f7e8; call 0x5bda80
+                                          ; ★★batch 179 已登记音乐
+                                          ;   状态 setter 族
+  0063aa5e  call 0x63ad50                 ; ★[0xAC4C38] 邻区大函数
+  0063aa65  test esi,esi / je 0x63aa81
+  0063aa69  mov ecx,esi
+  0063aa6b  call 0x63ac70
+  0063aa70  cmp eax,-1 / je 0x63aa81
+  0063aa78  mov al,1                      ; ★匹配成功 → 返 1
+
+形态：调用方把待匹配对象（esi）作为 ecx 传入，-1 一律视为失败/
+未命中；匹配成功返回非 -1（1/2/3/5）后分支处理。
+
+四、被调/全局登记核验（grep frontier_status.tsv）
+-----------------------------------------------
+  0x705D20 —— ★★★batch 097 已登记「[ecx+0x514] 单 getter」（29
+    callers / 327 deps，疑显示/相机类成员）——本函数 0x63aca1 调用
+    它取 entry 的关联对象——★★扫描语义直接衔接
+  0x5BDA80 —— ★★batch 179 已登记「音乐状态 setter 族」——调用点
+    3 宿主 FUN_0063A8E0 内部 0x63aa54 调用（ecx=0x87F7E8），非本
+    函数直接调用（宿主语境线索）
+  [0xA8ECBC] / [0xA8ECC8] / [0xAC4C38] / [0xAC4C3C] —— 全局对象
+    表/当前对象指针——未登记（新候选）
+  0x63AD30（mov [0xac4c38],ecx / ret——全局 setter）/ 0x63AD40
+    （mov eax,[0xac4c38] / ret——全局 getter）/ 0x63AD50（sub
+    esp,0x184 大函数）——紧邻本函数，未登记（新候选）
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★★0x705D20（batch 097 [ecx+0x514] 单 getter）= 本函数取关联对
+    象的原语——29 callers 热点 getter 的又一消费点实锤
+  ★★[0xAC4C38] 全局当前对象指针——0x63AD30/0x63AD40 setter/getter
+    紧邻本函数，调用点 1/2 直接读写该全局——★全局对象表 + 当前对
+    象指针构成「对象表管理簇」
+  ★★0x5BDA80（batch 179 音乐状态 setter 族）在调用点 3 宿主语境
+    ——0x63 区宿主与 0x5B 区音乐系统的调用链接触
+  新候选：0x63AD50（[0xAC4C38] 邻区 0x184 大函数——0x63A8E0 调用）、
+    0x63AD30/0x63AD40（全局 setter/getter 对）、FUN_00638E60/
+    FUN_0063A5A0/FUN_0063A8E0（0x63 区宿主）、全局 [0xA8ECBC]/
+    [0xA8ECC8]/[0xAC4C38]/[0xAC4C3C]
+
+六、原版怪癖（照抄）
+-------------------
+① 无栈参纯 ecx 传参（ret 无 N），入口参数经 ebx 中转后写入局部槽
+   [esp+0x14] 再作为栈参传给虚调用 [obj+4]→[+0x10]——★寄存器参
+   转栈参再虚调用的桥接模式；
+② [item+0x14] bit0 门控（置位才处理该 entry）；
+③ [obj+0x94] 非负（>0 或 ==0 同路）立即返回 1——★>=0 用 jg/je 双
+   跳实现；
+④ 虚调用返回值三分支：-1→结果 5、[obj+0x14]-1→结果 2、
+   [obj+0x14]-2→结果 3——★返回码 1/2/3/5/-1 语义族，调用点一律
+   用 cmp eax,-1/je 判失败；
+⑤ 遍历完直接 or eax,-1（未设 edi 哨兵，靠循环出口）。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：全局数组 [0xA8ECBC] 的元素类型与长度语义（[0xA8ECC8] 由
+谁维护）、[item+0x14] bit0 语义、[obj+0x94] 字段含义（计数？状态？）、
+[obj+4]→[+0x10] 虚调用身份（匹配谓词？）、返回码 1/2/3/5 的精确
+语义（调用方分支含义）、[0xAC4C38]/[0xAC4C3C] 全局的维护者、宿主
+FUN_00638E60/0063A5A0/0063A8E0 真实身份（0x63 区——推测与
+0x705D20 同属显示/相机域，未确认）。
