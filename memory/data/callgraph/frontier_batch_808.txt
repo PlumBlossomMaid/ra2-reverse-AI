@@ -1,0 +1,115 @@
+frontier batch 808 —— 0x005F8080 多指针槽批量释放器（推断名）
+================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=159 / body=142B）。
+TARGET = 0x005F8080（.text，142B，thiscall 无栈参 ret 无 N）
+推断名：多指针槽批量释放器（72 指针槽成对析构+删除——18 轮 × 4
+槽，槽 A/C 经 0x755D10、槽 B/D 经 0x5BD5A0，均 + operator delete
++ 清 NULL；推断名，未带名）
+
+一、函数体全读（142B，disasm 0x5F8080 192）
+------------------------------------------
+参数契约（thiscall 无栈参）：
+  ecx = this（宿主对象——esi 自 +0xCC 起步遍历槽区）
+  返回 void
+
+机器码（142B 全读）：
+  入口：push 四寄存器 → lea esi,[ecx+0xCC]（★槽区起点）→ mov
+  ebp,0x12（★18 轮）→ xor ebx,ebx
+  循环体（每轮 4 槽）：
+  槽 A: mov edi,[esi-4]（★[+0xC8+i*8]）→ test edi,edi / je 跳过 →
+    mov ecx,edi / call 0x755D10（★★batch 191 三字段清理器——
+    析构该对象内部 +0x10/+0x14/+0x18）→ push edi / call 0x7C8B3D
+    （★★operator delete）→ add esp,4 → mov [esi-4],ebx（★清 NULL）
+  槽 B: mov edi,[esi]（★[+0xCC+i*8]）→ je 跳过 → call 0x5BD5A0
+    （★★batch 217 单字段释放——析构该对象 +0xC）→ delete → 清
+  槽 C: mov edi,[esi+0x8C]（★[+0x158+i*8]）→ je 跳过 → call
+    0x755D10 → delete → 清
+  槽 D: mov edi,[esi+0x90]（★[+0x15C+i*8]）→ je 跳过 → call
+    0x5BD5A0 → delete → 清
+  add esi,8 / dec ebp / jne 循环
+  收尾：pop 四寄存器 / ret
+
+语义：**多指针槽批量释放器（推断名）**——遍历宿主 +0xC8 起、18
+组 × 4 槽 = 72 个对象指针槽（槽 A/B 步进 8 覆盖 [+0xC8,+0x154]、
+槽 C/D 同步进偏移 +0x8C 覆盖 [+0x158,+0x1E4]）：每组槽 A/C 指向
+的对象经 0x755D10（三字段清理器）析构、槽 B/D 指向的对象经
+0x5BD5A0（单字段释放）析构，随后统一 operator delete（0x7C8B3D）
+释放并清 NULL。非空才处理（test/je 跳过）。用于宿主析构时批量
+释放 72 个成员指针。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_808_calls.py：3 处调用点
+  0x5F7497 / 0x5F8ACB / 0x5F9839
+_locate_808_callers.py：归属
+  0x5F7497 → 0x005F7400 FUN_005F7400 [0x5F7400-0x5F75A3]
+    body=420
+  0x5F8ACB → 0x005F8110 FUN_005F8110 [0x5F8110-0x5F8CDA]
+    body=3019（★★大宿主）
+  0x5F9839 → 0x005F9720 FUN_005F9720 [0x5F9720-0x5F994A]
+    body=555（★★batch 804 记录的 0x5F96B0 邻函数宿主——交叉印证）
+
+三、调用点现场（全部干净，形态统一——宿主析构路径）
+------------------------------------------------
+【调用点 1】0x5F7497 in FUN_005F7400（body=420）
+  005f7480  push eax / call 0x7C8B3D（★前置释放 [esi+0xA4]）→
+  mov [esi+0xA4],ebx / mov byte[esi+0xA8],bl（★清 +0xA4/+0xA8）
+  → mov ecx,esi → call 0x5F8080（★批量释放 72 槽）
+  形态：宿主释放自身 +0xA4/+0xA8 成员后调 0x5F8080 收尾
+【调用点 2】0x5F8ACB in FUN_005F8110（body=3019 大宿主）
+  005f8a96  call 0x5BD5A0（★前置释放 [esi+0xB4] 成员）→ push
+  edi / call 0x7C8B3D → mov [esi+0xB4],ebx → mov eax,[esi] / call
+  [eax+0x2C]（★虚调用取类型）→ cmp eax,0x28 / jne 0x5F8AD5 →
+  call 0x717880（★类型判定——未登记）→ test al / je 跳过 → cmp
+  byte[esi+0xCD5],bl / jne 跳过 → mov ecx,esi → call 0x5F8080
+  形态：★★条件触发（类型==0x28 + 0x717880 判定 + [+0xCD5]==0）
+【调用点 3】0x5F9839 in FUN_005F9720（body=555——batch 804
+  0x5F96B0 邻函数宿主）
+  005f9823  call 0x5BD5A0（★前置释放 [esi+0xC4]）→ push ebp /
+  call 0x7C8B3D → mov [esi+0xC4],ebx（+0xC0=ebx 已清）→ mov ecx,
+  esi → call 0x5F8080
+  形态：宿主释放自身 +0xC0/+0xC4 成员后调 0x5F8080
+
+四、被调/全局登记核验（grep frontier_status.tsv）
+-----------------------------------------------
+  0x755D10 —— ★★batch 191 已登记三字段清理器（释放该对象
+    +0x10/+0x14/+0x18 三指针——槽 A/C 析构）
+  0x5BD5A0 —— ★★batch 217 已登记单字段释放（该对象 +0xC 非空
+    释放——槽 B/D 析构）
+  0x7C8B3D —— ★★★batch 001 已登记 operator delete（统一释放）
+  0x717880 —— 调用点 2 前置类型判定——未登记（新候选）
+  宿主 FUN_005F7400/FUN_005F8110/FUN_005F9720 —— 未登记（但
+    0x5F9720 是 batch 804 0x5F96B0 邻函数宿主，交叉印证同区族）
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★★0x755D10（batch 191 三字段清理器）+0x5BD5A0（batch 217 单
+    字段释放）= 槽 A/C 与槽 B/D 的成对析构器——两已登记清理器
+    在本函数内 18 组 × 2 交替复用（18 次各调用）
+  ★★0x7C8B3D（batch 001 operator delete）= 统一释放原语（36 次
+    调用路径）
+  ★★0x5F9720（batch 804 0x5F96B0 邻函数宿主）= 调用点 3 宿主——
+    同区 0x5F9xxx 家族交叉印证（地形/渲染域推断）
+  新候选：0x717880（调用点 2 类型判定）、FUN_005F7400/
+    FUN_005F8110（3019B 大宿主——类型 0x28 判定条件释放）
+
+六、原版怪癖（照抄）
+-------------------
+① 72 槽布局：esi 自 +0xCC 起步每轮 8 步进，槽 A=[esi-4]/
+   槽 B=[esi]/槽 C=[esi+0x8C]/槽 D=[esi+0x90]——四槽跨 0x90 但
+   步进仅 8（★同一轮内两槽组相距 0x8C，覆盖两段连续区域）；
+② 两析构器交替：槽 A/C 恒用 0x755D10（三字段清理器）、槽 B/D
+   恒用 0x5BD5A0（单字段释放）——★四槽两种对象类型交替排列；
+③ 非空才处理（test/je 跳过——无哨兵）；
+④ 每槽析构+delete+清 NULL 三件套（先析构内部字段再释放本体）；
+⑤ 调用点 2 条件触发（类型==0x28 + 0x717880 + [+0xCD5]==0 三重
+   门控才批量释放——非全路径析构）。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：宿主类精确身份（0x5F9xxx 区——地形/渲染域推断）、槽 A/
+C 与槽 B/D 两对象类型（0x755D10 三字段对象 vs 0x5BD5A0 单字段对
+象推断）、+0xC8..+0x1E4 槽区精确布局语义、0x717880 身份（调用点
+2 类型 0x28 判定推断）、调用点 2 的三重门控业务场景。
