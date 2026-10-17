@@ -1,0 +1,208 @@
+frontier batch 822 —— 0x00408610 RIFF/WAVE 音频头解析器
+=======================================================
+
+候选来源：ranking.tsv（callers=3 / deps=130 / body=475B）。
+TARGET = 0x00408610（.text，475B，thiscall 2 栈参 ret 4）
+★★推断名：RIFF/WAVE 音频头解析器——读流验证 "RIFF"/"WAVE"
+魔数 → 分派 fmt/data chunk → 解析音频格式（0x11=WAVE_FORMAT_
+EXTENSIBLE / 1=PCM）→ 填输出结构；宿主含 **ThemeClass::Scan**
+（带名——音乐扫描）
+
+一、函数体全读（475B，disasm 0x408610 475）
+---------------------------------------------
+参数契约（thiscall 2 栈参 ret 4）：
+  ecx = this（流对象——虚表槽 0x28 读/0x24 读 N 字节/0x18 判定）
+  [esp+4] = param1（输出结构指针，成功填 0x00..0x14）
+  edx = param2（输出结构指针 2，data 段解析写 [edx]=大小）
+  返回 eax（edi：成功 1 / 失败 0）
+机器码（475B 全读，主结构）：
+  00408610  sub esp,0x18 / push ebx/ebp/esi/edi / xor esi,edi
+  0040861f  mov ebx,edx                 ; param2
+  00408621  test eax,eax / mov ebp,ecx  ; this
+  00408625  mov [esp+0x10],edi          ; ★成功标志清 0
+  00408629  je 0x40862D / mov [eax],edi ; param1 非空则清 [0]
+  0040862d  test ebp,ebp / je 0x4087DF ; this==NULL → 收尾返 0
+  ——首段：读 12B 验证 RIFF/WAVE 魔数——
+  00408635  mov eax,[ebp] / push 0/push 0/mov ecx,ebp
+    / call [eax+0x28]                   ; ★虚表槽 0x28（读/推进）
+  00408641  mov edx,[ebp] / lea eax,[esp+0x1C] / push 0xC
+    / push eax / mov ecx,ebp / call [edx+0x24]
+                                        ; ★虚表槽 0x24 读 12B
+  00408650  cmp eax,0xC / jne 0x4087DF  ; 读不足 12B → 失败
+  00408659  cmp [esp+0x1C],0x46464952   ; ★"RIFF" 魔数
+  00408661  jne 0x4087DF
+  00408667  cmp [esp+0x24],0x45564157   ; ★"WAVE" 魔数
+  0040866f  jne 0x4087DF
+  ——第二段：读 4B 判断 chunk 类型——
+  00408675  mov edx,[ebp] / mov ecx,ebp / call [edx+0x18]
+                                        ; ★虚表槽 0x18（判定/推进）
+  0040867d  test al,al / je 0x4087DF
+  00408685  mov eax,[ebp] / lea ecx,[esp+0x14] / push 8
+    / push ecx / mov ecx,ebp / call [eax+0x24]  ; 读 8B chunk 头
+  00408694  cmp eax,8 / jne 0x4087D2
+  0040869d  mov eax,[esp+0x14]
+  004086a1  cmp eax,0x20746d66          ; ★"fmt " chunk
+  004086a6  je 0x4086C4
+  004086a8  cmp eax,0x61746164          ; ★"data" chunk
+  004086ad  je 0x40873F
+  004086b3  未知 chunk：mov eax,[esp+0x18]（chunk 大小）/
+    mov edx,[ebp] / push 1 / push eax / mov ecx,ebp /
+    call [edx+0x28]                     ; ★槽 0x28 跳过分块
+  004086c2  jmp 0x40872A                ; 回第二段循环
+  ——"fmt " chunk（0x4086C4）——
+  004086c4  mov eax,[esp+0x18]（chunk 大小）
+  004086c8  cmp eax,0x12 / jae 0x4086EE
+  004086cd  push 0x12 / call 0x7C9430   ; ★★malloc（batch 020）
+  004086d4  mov esi,eax / 清 0x14B      ; 小 chunk → 分配 0x12B 清 0
+  004086ee  push eax / call 0x7C9430    ; ★★malloc（batch 020）
+  004086f4  读 [esp+0x1C] 大小 → rep stosd/stosb 清 0
+  00408713  mov ecx,[esp+0x18] / mov eax,[ebp] / push ecx
+    / push esi / mov ecx,ebp / call [eax+0x24]  ; 读 chunk 数据入
+                                        ;   分配缓冲
+  00408721  mov dx,[esp+0x18] / mov [esi+0x10],dx  ; ★chunk 大小
+                                        ;   存缓冲 +0x10
+  0040872a  mov eax,[ebp] / mov ecx,ebp / call [eax+0x18]
+                                        ; ★槽 0x18 判定（循环）
+  00408732  test al,al / jne 0x408685   ; 继续读 chunk
+  0040873a  jmp 0x4087D2
+  ——"data" chunk（0x40873F）——
+  0040873f  mov edx,[esp+0x2C]（param2）→ mov ecx,[esp+0x18]
+    / mov [edx],ecx                     ; ★★param2[0] = chunk 大小
+  0040874b  test esi,esi / je 0x4087DF  ; 无 fmt 缓冲 → 失败
+  ——fmt 解析：0x11（WAVE_FORMAT_EXTENSIBLE）——
+  00408751  mov ax,[esi] / cmp ax,0x11 / jne 0x408773
+  0040875a  mov ax,[esi+0xC] / mov [ebx+4],1 / mov [ebx+0x18],
+    eax / mov [ebx+0x10],2              ; ★extensible：格式 1、
+                                        ;   +0x18=子格式、+0x10=2
+  00408771  jmp 0x40878C
+  ——fmt 解析：1（PCM）——
+  00408773  cmp ax,1 / jne 0x4087D2     ; 未知格式 → 失败
+  00408779  mov [ebx+4],0 / mov cx,[esi+0xE] / shr ecx,3
+    / mov [ebx+0x10],ecx                ; ★PCM：格式 0、+0x10=
+                                        ;   位深>>3（字节）
+  ——公共尾段：填输出结构——
+  0040878c  mov dx,[esi+2] / mov [ebx+0xC],edx  ; +0x0C=声道数
+  00408795  mov eax,[esi+8] / mov [ebx+0x14],eax  ; +0x14=数据速率
+  0040879b  mov eax,[ebx+0x10] / imul eax,edx / mov ecx,
+    [esi+4] / mov [ebx],4 / imul eax,ecx / mov [ebx+8],ecx
+                                        ; ★+0x00=4、+0x08=块对齐、
+                                        ;   +0x10×声道×块对齐
+  004087b0  mov ecx,[ebx+4] / cmp ecx,1 / je 0x4087C0
+    / cmp ecx,2 / jne 0x4087C6
+  004087c0  sar eax,2 / mov [ebx+0x14],eax
+                                        ; ★★格式 1/2：数据速率>>2
+                                        ;   （sar 算术右移——PCM16
+                                        ;   字节转样本数）
+  004087c6  mov [esp+0x10],1            ; ★成功标志 = 1
+  004087d2  test esi,esi / je 0x4087DF
+  004087d6  push esi / call 0x7C93E8    ; ★★free（batch 020）
+  004087df  mov eax,edi（成功标志）→ pop 族 / ret 4
+语义：**RIFF/WAVE 音频头解析器（推断名）**——thiscall 流对象
+（虚表槽 0x28 推进/0x24 读 N 字节/0x18 判定）：①读 12B 验证
+"RIFF"(0x46464952)+"WAVE"(0x45564157) 魔数，不足 12B 或魔数
+不符 → 返 0；②循环读 8B chunk 头（4B 类型+4B 大小）："fmt "
+(0x20746D66) → malloc(chunk 大小) 读入缓冲（小 chunk 固定
+0x12B）；"data"(0x61746164) → param2[0]=chunk 大小；未知
+chunk → 槽 0x28 跳过；③fmt 缓冲解析：0x11（WAVE_FORMAT_
+EXTENSIBLE）→ [ebx+4]=1/[ebx+0x10]=2/+0x18=子格式；1（PCM）
+→ [ebx+4]=0/[ebx+0x10]=位深>>3；其它 → 失败；④公共尾段填
+输出：[ebx]=4、+0x0C=声道数、+0x08=块对齐（字节/样本）、
++0x10×声道×块对齐、+0x14=数据速率（格式 1/2 时 sar eax,2
+字节→样本数）；⑤free 缓冲、返回成功标志。★数据布局：
+[ebx+0x00]=4（头长）、[+0x04]=格式、[+0x08]=块对齐、
+[+0x0C]=声道、[+0x10]=字节/样本、[+0x14]=数据速率。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_816_calls.py（复用，TARGET=0x408610）：3 处调用点
+  0x401837 / 0x407C51 / 0x7208B8
+_locate_816_callers.py：归属（★★1 带名宿主）
+  0x401837 → 0x004016F0 FUN_004016F0 [0x4016F0-0x4018B8]
+    body=457
+  0x407C51 → 0x00407B60 FUN_00407B60 [0x407B60-0x407F34]
+    body=981（★★batch 220 ThemeClass::Play 内 call 0x407B60
+    已见——本条=其调用方，音乐播放子函数）
+  0x7208B8 → 0x007207F0 ThemeClass::Scan [0x7207F0-0x720938]
+    body=329（★★带名——音乐扫描，ThemeClass 家族）
+
+三、调用点现场（全部干净）
+------------------------
+【调用点 1】0x401837 in FUN_004016F0（457B）
+  00401827  call 0x4085A0              ; ★前序（0x408xxx 音频区）
+  0040182c  lea ecx,[esp+0x10]         ; param1 = 输出结构栈
+  00401830  lea edx,[esp+0x14]         ; param2 = 输出结构栈 2
+  00401834  push ecx
+  00401835  mov ecx,esi                ; this = 流对象
+  00401837  call 0x408610              ; ★本条
+  0040183c  test eax,eax / je 0x401891 ; 失败分支
+  形态：★★栈上输出结构 + 流对象 → WAVE 头解析
+【调用点 2】0x407C51 in FUN_00407B60（981B）
+  00407c4c  mov ecx,[esi+0x7C]         ; this = 子对象 +0x7C
+  00407c4f  mov edx,ebx                ; param2 = ebx
+  00407c51  call 0x408610              ; ★本条
+  00407c56  test eax,eax / je 0x407ED4 ; 失败分支
+  形态：★★音乐播放子函数内的 WAVE 头解析（[esi+0x7C] 流对象）
+【调用点 3】0x7208B8 in ThemeClass::Scan（329B 带名）
+  007208a0  push 1 / lea ecx,[esp+0x3C] / call 0x473D10
+                                        ; ★前序（文件打开/读取）
+  007208ab  lea ecx,[esp+0x10]         ; param1 = 输出结构栈
+  007208af  lea edx,[esp+0x18]         ; param2 = 输出结构栈 2
+  007208b3  push ecx
+  007208b4  lea ecx,[esp+0x3C]         ; this = 流对象
+  007208b8  call 0x408610              ; ★本条
+  007208bd  test eax,eax
+  形态：★★ThemeClass::Scan 扫描音乐文件时解析 WAVE 头——
+  本条是 ThemeClass 家族（batch 148 Queue/178 FindIndex/179
+  Stop/220 Play）的音频格式解析入口
+
+四、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x7C9430 —— ★★已登记（batch 020 CRT 内部 malloc 入口）——
+    本条 fmt chunk 分配缓冲
+  0x7C93E8 —— ★★已登记（batch 020 CRT 内部 free）——本条收
+    尾释放
+  0x407B60 —— ★★batch 220 ThemeClass::Play 已见（call 0x407B60
+    播放）——本条调用方即它，身份再确认（音乐播放子函数）
+  ThemeClass 家族 —— ★★batch 148 Queue/178 FindIndex/179
+    Stop/220 Play 已登记——本条宿主 Scan 同族
+  虚表槽 0x28/0x24/0x18 —— ★流对象接口（读/读 N 字节/判定——
+    未登记，StreamClass 推断）
+  [0x7EAC28] 邻域虚表区 —— 0x408xxx 与 0x407xxx 基建区邻域
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★batch 020（0x7C9430 malloc + 0x7C93E8 free——fmt chunk
+    缓冲生命周期两端现场命中）
+  ★★batch 220（ThemeClass::Play 已见 0x407B60——本条调用点 2
+    宿主 FUN_00407B60 即 Play 内播放子函数，音乐播放链
+    Scan→解析→Play→Queue 贯通）
+  ★★ThemeClass 家族（batch 148/178/179/220）——本条是家族音
+    频格式解析入口（Scan 扫描 .wav 文件 → 本条解析 WAVE 头）
+  ★★0x4085A0（调用点 1 前序——0x408xxx 音频区邻域，未登记
+    新候选）
+
+六、原版怪癖（照抄）
+-------------------
+① 魔数硬编码比较（0x46464952 "RIFF"/0x45564157 "WAVE"/
+   0x20746D66 "fmt "/0x61746164 "data"——dword 直接 cmp 非
+   memcmp）；
+② fmt chunk 大小 <0x12 时固定分配 0x12B 清 0（小 chunk 兜底）；
+③ 未知 chunk 经虚表槽 0x28 跳过并回循环（跳过大小=chunk 大小）；
+④ 格式判定仅认 0x11（WAVE_FORMAT_EXTENSIBLE）/1（PCM）——
+   其它格式直接失败（sar eax,2 只在格式 1/2 执行——PCM 字节
+   转样本数）；
+⑤ +0x00=4 头长硬编码、+0x10×声道×块对齐累乘（imul 链）；
+⑥ 成功标志存 [esp+0x10]（edi 兼作）而失败路径不设——返回
+   值是上一状态残留的惯性错误风险（原版照抄）；
+⑦ 输出结构双参（param1 主体 + param2 仅 data 段写大小）——
+   调用方栈上两结构。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（RIFF/WAVE 音频头解析器推断——YRpp 未对
+齐）、流对象类（虚表槽 0x28/0x24/0x18——StreamClass/FileClass
+推断）、[ebx+0x10] 位深>>3 与 sar 2 的精确 PCM 语义（WAVE
+FORMAT 字段映射推断）、param2 的 data 段消费场景、FUN_004016F0/
+FUN_00407B60 宿主业务、0x4085A0 前序身份、0x473D10（Scan 内
+文件读取）身份。
