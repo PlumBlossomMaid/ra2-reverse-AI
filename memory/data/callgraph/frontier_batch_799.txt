@@ -1,0 +1,185 @@
+frontier batch 799 —— 0x007C2D00 回调式流状态机·上层推进器（推断名）
+=====================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=171 / body=962B）。
+TARGET = 0x007C2D00（.text，962B，thiscall 2 参 ret 4）
+推断名：回调式流状态机·上层推进器（调用已登记 0x7BF470 底层流状态机，
+处理其返回码并推进对象状态位——推断名，未带名）
+
+一、函数体全读（962B，disasm 0x7C2D00 1024）
+------------------------------------------
+参数契约（thiscall ret 4 = 1 栈参）：
+  ecx = this（存 esi）
+  edx = 模式参数（存 ebx → 复写入口 [esp+0xC] 槽）
+  栈参1 = [esp+4]（flags 字节，调用点传 ebx=0 或 push 0；[esp+0x18]
+          读取，bit0/bit1 → 影响 [this+0x1A4]）
+  返回 eax = edi（-1/-9/-0xb/-2/0xFFFFFFF6/0xFFFFFFF2 等状态码）
+
+模式三分支（栈布局逐槽核算全部对上）：
+  入口 push ecx/ebx/esi/edi 后 [esp+0xC] = saved ecx 槽（ecx 已备份
+  esi）→ 0x7c2d11 写入 ebx（模式参数）→
+  0x7c2dc5  mov eax,ebx; sub eax,2; je 0x7c2fdd   ; ★模式==2
+  0x7c2faf  cmp [esp+0x10],1; je 0x7c3083         ; ★模式==1（push ebp
+                                                    后 [esp+0x10] 即该槽）
+  0x7c3092  cmp [esp+0xC],3; jne 0x7c30b9         ; ★模式==3（pop ebp
+                                                    后 [esp+0xC] 即该槽）
+
+主流程（disasm 全读）：
+  入口 test byte [esi+0x150],8 / jne 0x7c2d8b    ; ★bit3=已初始化？
+    ——未置则初始化段：call 0x7BE660（★9B：or eax,-1; mov
+       [this+0x6D0],eax; ret——写 [this+0x6D0]=-1 哨兵）→ cmp edi,-1
+       / jne 0x7c30b9（异常返回）→ test [esi+0x150],0x10 / jne →
+       call 0x7BE4A0（未登记）→ test byte [esi+0x84],1 / je →（
+       [esi+0x794] 字节非 0 时）call 0x7BD270（未登记）→ mov ecx,
+       [esi+0x1A0]; mov eax,[ecx+0x1C]; lea eax,[eax+eax*2]; lea eax,
+       [eax+eax*4]; shl eax,2; cdq; idiv dword [esi+0x74]（★*60/
+       [this+0x74]）→ call 0x7C3910 → call 0x7C3960 → mov
+       [esi+0x20],eax（★缓存 1）→ or al,8 → 写回 [esi+0x150]（置
+       bit3 完成初始化）
+  0x7c2d8b  mov eax,[esi+0x54]; test eax,eax / je → push esi; call
+            eax（★[this+0x54] 回调——返回当前值）→ [this+0x28]==-1
+            则 [this+0x28]=eax,[this+0x2C]=0；否则新值>旧值 → [this+
+            0x2C]=差值（★最大差值跟踪）
+  模式==2（0x7c2fdd）：test al,0x40 / jne → or al,0x40（置 bit6）→
+            call 0x7C3960 → [this+0x24]=eax（★缓存 2）→ [this+0x7BC]
+            al bit6 → call 0x7BD290 → test [esp+0x18],2 / je 0x7c307e
+            → [this+0x1A4] |= 0x14 → call [this+0x77C]（★虚调用 1）→
+            eax==-1 → call 0x7C3750（★提交操作码 4/5）→ -1 → [this+
+            0x6D0]; [this+0x1A4] &= 0xE9；-9 → 分支置位 → 0x7c307e:
+            edi=0xFFFFFFF2
+  模式!=2（0x7c2dfb 起）：mov eax,[esi+0x150]; and edx,6; cmp dl,6 /
+            je 0x7c3083 → 主推进环 0x7c2e19：test bl,al（bit2）/ jne →
+            xor edx,edx; call 0x7BF470（★★batch 378 已登记回调式流
+            状态机——底层推进）→ edi==-1 → inc [esi+0x14]（计数）；
+            -9/-0xb → 跳过置位；否则 or [esi+0x150],ebx（bit2）→ test
+            [esi+0x84],0x200 / je / cmp edi,-9 → 分支处理（置 bit9、
+            [this+0x7BC] ah bit2 清除等）→ test byte [esi+0x80],2 /
+            jne → [this+0x1A0]+0x14=0 链处理 → 0x7c2ef1: mov al,
+            [esp+0x18]（栈参 flags）；bit0 → [this+0x1A4]|=2；bit1 →
+            [this+0x1A4]|=ebx(=4) → call [this+0x77C]（虚调用 2）→
+            -1 → [this+0x18]++ → call 0x7C3750 → eax==-1 → ...
+  0x7c2faf  cmp [esp+0x10],1 / je 0x7c3083        ; ★模式==1 收尾
+  0x7c3083  and edx,6; cmp dl,6 / je 0x7c3099 → cmp [esp+0xC],3 /
+            je 0x7c3099                             ; ★模式==3 收尾
+  0x7c3099  call 0x7C3960 → [this+0x24]=eax → [this+0x7BC] al bit6
+            → call 0x7BD2B0 → edi=0xFFFFFFFE
+  0x7c30b9  mov eax,edi; 恢复寄存器; ret 4
+
+语义：**回调式流状态机·上层推进器（推断名）**——管理一个带状态位
+（[this+0x150]：bit3=已初始化/bit2/bit6/bit9）的流式容器对象，按
+edx 模式参数推进：模式1=常规单轮推进（初始化门控+回调取数+最大差
+值跟踪+底层流状态机 0x7BF470 推进+虚调用）；模式2=特殊档（置 bit6、
+刷新 [this+0x24]、flags bit1 时深提交 0x7C3750 操作码 4/5）；模式3=
+收尾刷新（重算 [this+0x24]、返回 0xFFFFFFFE）。与 batch 378 的
+0x7BF470 构成上下层（0x7C2D00 调用它并处理 -1/-9/-0xb 返回码），
+0x7C3910/0x7C3960 共用 [this+0x50] 回调槽做 *60/[this+0x78] 换算。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_799_calls.py：5 处调用点
+  0x759AC8 / 0x759B47 / 0x759D2A / 0x759DDE / 0x759E34
+_locate_799_callers.py：归属（★★全落 759 区「显示/表面装配宿主」
+  家族——该族在 batch 784-790 反复命中）
+  0x759AC8 → 0x00759940 FUN_00759940 [0x759940-0x759BBD] body=638
+  0x759B47 → 0x00759940 FUN_00759940 [0x759940-0x759BBD] body=638
+  0x759D2A → 0x00759C30 FUN_00759C30 [0x759C30-0x759E08] body=473
+  0x759DDE → 0x00759C30 FUN_00759C30 [0x759C30-0x759E08] body=473
+  0x759E34 → 0x00759E10 FUN_00759E10 [0x759E10-0x759E41] body=50
+
+三、调用点现场（全部干净，无错位）
+--------------------------------
+【调用点 1】0x759AC8 in FUN_00759940（body=638）
+  00759abc  mov ecx, [esi + 0x200]          ; ★this = 宿主字段 [esi+0x200]
+  00759ac2  push ebx                        ; ★栈参1 = ebx（宿主 xor ebx,ebx
+                                            ;   后=0——flags=0）
+  00759ac3  mov edx, 1                      ; ★模式 = 1
+  00759ac8  call 0x7c2d00
+  00759acd  mov edi, eax                    ; ★取状态码
+【调用点 2】0x759B47 in FUN_00759940
+  00759b3b  mov ecx, [esi + 0x200]          ; ★this = [esi+0x200]
+  00759b41  push ebx                        ; ★栈参1 = 0（flags）
+  00759b42  mov edx, 2                      ; ★模式 = 2
+  00759b47  call 0x7c2d00
+【调用点 3】0x759D2A in FUN_00759C30（body=473）
+  00759d1d  mov ecx, [esi + 0x200]          ; ★this = [esi+0x200]
+  00759d23  push 0                          ; ★栈参1 = 0
+  00759d25  mov edx, 1                      ; ★模式 = 1
+  00759d2a  call 0x7c2d00
+  00759d2f  mov edi, eax / test edi,edi / jl ; ★<0 视为错误
+【调用点 4】0x759DDE in FUN_00759C30
+  00759dd1  mov ecx, [esi + 0x200]          ; ★this = [esi+0x200]
+  00759dd7  push 0                          ; ★栈参1 = 0
+  00759dd9  mov edx, 2                      ; ★模式 = 2
+  00759dde  call 0x7c2d00
+【调用点 5】0x759E34 in FUN_00759E10（body=50）
+  00759e27  mov ecx, [esi + 0x200]          ; ★this = [esi+0x200]
+  00759e2d  push 0                          ; ★栈参1 = 0
+  00759e2f  mov edx, 2                      ; ★模式 = 2
+  00759e34  call 0x7c2d00
+  形态：this 全部 = 宿主 [esi+0x200]（宿主对象字段——FUN_00759940/
+  00759C30 操作 [esi+0x508]/[esi+0x510]/[esi+0x514]/[esi+0x528]/
+  [esi+0x550] 与全局 [0xA8ED80] 门控字节 + 常量串 0x847B70/0x847B5C/
+  0x847BA4/0x847B80 → call 0x4068E0——显示/表面装配语境）；模式 1/2
+  交替出现（配对使用：先模式1推进再模式2特殊档）。
+
+四、被调/全局登记核验（grep frontier_status.tsv）
+-----------------------------------------------
+  0x7BF470 —— ★★★batch 378 已登记「回调式流状态机」（706B，回调
+    槽 [esi+0x40] 操作码 5/7/9 提交/预取，0x7BF3A0 处理器换入换出）——
+    本函数 0x7c2e25 调用它并处理 -1/-9/-0xb 返回码——★★同族上下层
+  0x7C3910/0x7C3960/0x7C3750/0x7BE660/0x7BE4A0/0x7BD270/0x7BD290/
+    0x7BD2B0 —— 均未登记（新候选）
+  宿主 FUN_00759940/FUN_00759C30/FUN_00759E10 —— 均未登记
+
+五、被调身份确认（disasm 单读）
+------------------------------
+  0x7BE660 —— ★9B 小函数：or eax,-1; mov [ecx+0x6D0],eax; ret（写
+    [this+0x6D0]=-1 哨兵，返回 -1）
+  0x7C3910 —— 56B thiscall：call [esi+0x50]（★共享回调槽）→ lea*3
+    → lea*5（截断，后续同 0x7C3960 形态）
+  0x7C3960 —— 36B thiscall：call [esi+0x50] → lea eax,[eax+eax*2] →
+    lea eax,[eax+eax*4] → shl eax,2 → div [esi+0x78]（★*60/[this+0x78]）
+    → mov ecx,eax; mov eax,[esi+0x148]...
+  0x7C3750 —— 208B thiscall：读 [esi+0x48] 回调 + [esi+0x6DC] +
+    [esi+0x120]，[edi+0x14] 位标志 test ch,1/ah,2 → push 4/push 5
+    操作码（★与 0x7BF470 操作码 5/7/9 同族提交风格）→ call eax
+
+六、跨批次闭合（全锚点）
+-----------------------
+  ★★★0x7BF470（batch 378 回调式流状态机）＝本函数底层——调用点
+    0x7c2e25 实锤 + 返回码 -1/-9/-0xb 处理实锤
+  ★★0x7C2D00 与 0x7C3910/0x7C3960/0x7C3750 构成 0x7C 区回调流家族
+    （共享 [this+0x50]/[this+0x48]/[this+0x40] 回调槽序列，操作码
+    提交风格一致）
+  ★★759 区显示/表面装配宿主家族（FUN_00759940/FUN_00759C30/
+    FUN_00759E10——batch 784-790 反复命中家族）＝5 处调用点全部宿主
+  新候选：0x7C3910/0x7C3960/0x7C3750/0x7BE4A0/0x7BD270/0x7BD290/
+    0x7BD2B0（0x7C/0x7B 区家族）+ FUN_00759940/FUN_00759C30/
+    FUN_00759E10（759 区宿主）+ 常量 0x847B70/0x847B5C/0x847BA4/
+    0x847B80 + 全局 [0xA8ED80]
+
+七、原版怪癖（照抄）
+-------------------
+① 入口 push ecx/ebx/esi/edi 后把模式参数复写到 saved ecx 槽
+   （[esp+0xC]），后续 pop 后【模式==3 判定】靠读 [esp+0xC]、模式
+   ==1 靠读 push ebp 后的 [esp+0x10]——同一槽位栈深不同时地址不同，
+   编译器显式跟踪；
+② 初始化门控 bit3 未置时先 call 0x7BE660 写 [this+0x6D0]=-1 哨兵，
+   依其返回 -1 判定继续（9B 微函数）；
+③ *60 换算用 lea*3+lea*5+shl 2（*15*4）而非 imul——无乘法器风格；
+④ [this+0x28]/[this+0x2C] 最大差值跟踪（新值<=旧值不更新）；
+⑤ 模式 2 深提交路径 flags bit1 时 [this+0x1A4] |= 0x14（bit2|bit4
+   一起置）；失败路径 edi=0xFFFFFFF2（-14）而非 0；
+⑥ 返回码家族：-1/-9/-0xb（0x7BF470 风格）/0xFFFFFFFE（模式3收尾）
+   /0xFFFFFFF6/0xFFFFFFF2——多负数状态码口语，调用点用 jl 判负。
+
+八、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：精确类名与宿主归属（0x7C 区 QWEN.md 标 MSVC6 CRT，但对象
+方法形态似 Westwood 流容器——未确认）；模式 1/2/3 精确语义（1=常规
+轮、2=特殊档、3=收尾刷新——仅 1/2 有调用点证据，3 为函数体保留）；
+[this+0x50]/[this+0x48]/[this+0x40] 回调槽身份与操作码 4/5/7/9 家族
+边界；字段簇语义（[this+0x1A0]/[this+0x1A4]/[this+0x794]/[this+0x7BC]/
+[this+0x74]/[this+0x78]/[this+0x6D0]/[this+0x6DC]）；栈参 flags bit0/
+bit1 精确含义；759 区宿主真实身份（显示/表面装配推断）。
