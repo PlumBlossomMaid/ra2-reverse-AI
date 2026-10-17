@@ -1,0 +1,126 @@
+frontier batch 806 —— 0x004074D0 预分配单链表池构造器（推断名）
+=================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=162 / body=61B）。
+TARGET = 0x004074D0（.text，61B，thiscall 2 寄存器参 ret 无 N）
+推断名：预分配单链表池构造器（一次 operator new 按步长布置 count
+个节点、每节点 +0 串 next、返回池头指针——推断名，未带名）
+
+一、函数体全读（61B，disasm 0x4074D0 96）
+------------------------------------------
+参数契约（thiscall 2 寄存器参，ret 无 N）：
+  ecx = count（节点数）
+  edx = 用户数据区大小（节点间距 = edx+8——+8 为 next 指针槽）
+  返回 eax = 池头指针（块首 [0] = 首节点地址）
+
+机器码（61B 全读）：
+  004074d0  push esi/edi
+  004074d2  lea edi,[edx+8]            ; ★edi = 节点间距 = edx+8
+  004074d5  mov esi,ecx                ; count
+  004074d7  mov eax,edi
+  004074d9  imul eax,esi               ; eax = (edx+8)*count
+  004074dc  add eax,8                  ; ★总分配 = (edx+8)*count + 8
+                                          ;   （+8 块首头指针槽）
+  004074df  push eax / call 0x7C8E17   ; ★★operator new batch 001
+  004074e8  test eax,eax / je 0x40750A ; 分配失败 → 返回 NULL
+  004074ec  lea edx,[esi-1]            ; ★循环次数 = count-1
+  004074ef  lea ecx,[eax+8]            ; ★首节点 = 块+8
+  004074f2  test edx,edx
+  004074f4  mov [eax],ecx              ; ★块首 [0] = 首节点（池头）
+  004074f6  jbe 0x407504               ; count<=1 → 直接尾 NULL
+  004074f8  mov esi,edx                ; 循环计数
+  004074fa  lea edx,[edi+ecx]          ; ★下一节点 = 当前 + 间距
+  004074fd  dec esi
+  004074fe  mov [ecx],edx              ; ★当前节点 +0 = 下一节点（next）
+  00407500  mov ecx,edx
+  00407502  jne 0x4074FA               ; 循环
+  00407504  mov [ecx],0                ; ★尾节点 +0 = NULL
+  0040750a  pop edi/esi / ret
+
+语义：**预分配单链表池构造器（推断名）**——一次 operator new 分
+配 `(edx+8)*count+8` 字节：块首 8B 存池头指针（首节点地址），自
+偏移 8 起以步长 `edx+8` 布置 count 个节点，每节点 +0 指向下一节
+点（next），尾节点 +0=NULL。返回池头指针。调用方后续经 0x407520
+（batch 511 链表头弹出）取节点、0x407530（batch 147 重挂）回收
+——本函数 = 池的**一次性预分配构造端**。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_806_calls.py：4 处调用点
+  0x401A17 / 0x401A28 / 0x403F4C / 0x7510EF
+_locate_806_callers.py：归属
+  0x401A17 → 0x004019E0 FUN_004019E0 [0x4019E0-0x401AF2]
+    body=275（0x401xxx 区）
+  0x401A28 → 0x004019E0 FUN_004019E0 body=275
+  0x403F4C → 0x00403ED0 FUN_00403ED0 [0x403ED0-0x403F99]
+    body=202（0x403xxx 区）
+  0x7510EF → 0x007510D0 FUN_007510D0 [0x7510D0-0x7513E6]
+    body=791（0x751xxx 区）
+
+三、调用点现场（形态统一——ecx=count / edx=步长）
+------------------------------------------------
+【调用点 1】0x401A17 in FUN_004019E0（body=275）
+  004019e8  push 0xE8 / call 0x7C8E17（宿主自身 new 0xE8）→ rep
+  stosd 0x3A（★宿主对象清零）→ mov eax,[esp+0x1C] → mov [ebx],
+  esi → mov [ebx+0x18],eax → lea esi,[eax+0x1C] → mov eax,ebp /
+  cdq / idiv esi（★count = ebp / (步长+0x1C)）→ mov edx,esi（★
+  edx = 步长）→ mov ecx,eax（count）→ call 0x4074D0 → mov
+  [ebx+4],eax（★池头存宿主 +4）
+【调用点 2】0x401A28 in FUN_004019E0
+  00401a20  mov edx,0x64（★步长 0x64=100）→ mov ecx,[esp+0x14]
+  （count）→ call 0x4074D0 → mov [ebx+4],eax（同一宿主第二个池）
+【调用点 3】0x403F4C in FUN_00403ED0（body=202）
+  00403f33  mov edx,0x100000 / call 0x4019E0（★宿主 1 构建）→
+  mov edx,0x280（★步长 0x280=640）→ mov ecx,0x12C（★count 0x12C
+  =300）→ call 0x4074D0 → mov [0x87E2A8],eax（★池头存全局
+  [0x87E2A8]）——前序 [0x87E28C]=esi/[0x87E2A0]=edi/[0x816108]
+  =edi 全局族
+【调用点 4】0x7510EF in FUN_007510D0（body=791）
+  007510db  mov ecx,0xB1D320 / call 0x4072C0（★宿主初始化）→
+  mov edx,0x3C（★步长 0x3C=60）→ mov ecx,0xC8（★count 0xC8=200）
+  → call 0x4074D0 → mov [0xB1D3A4],eax（★池头存全局 [0xB1D3A4]）
+  形态：★调用方指定 count（0x12C=300/0xC8=200/宿主计算值）与
+  步长（0x280=640/0x3C=60/0x64=100），返回值存全局链头或宿主字
+  段——通用对象池预分配。
+
+四、被调/全局登记核验（grep frontier_status.tsv）
+-----------------------------------------------
+  0x7C8E17 —— ★★★batch 001 已登记 operator new（分配原语）
+  0x407520 —— ★★batch 511 已登记链表头弹出（pop front——+0x10
+    紧邻同族，本池的消费端：mov eax,[ecx]/add eax,8 摘头）
+  0x407510 —— ★★batch 536 已登记裸内存释放包装（operator delete
+    转发——紧邻 +0x40，池的释放端）
+  0x407530 —— ★★batch 147 已登记链表重挂/插入（回收端推断）
+  [0x87E2A8]/[0xB1D3A4] —— 池头全局（新候选）
+  宿主 FUN_004019E0 / FUN_00403ED0 / FUN_007510D0 —— 未登记
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★★0x407520（batch 511 链表头弹出）= 本池消费端——紧邻
+    +0x10、同一链表布局（节点头 8B + 数据槽 +8）——构造/弹出成
+    对
+  ★★0x407510（batch 536 裸释放）+ 0x407530（batch 147 重挂）=
+    池的释放/回收端——0x407xxx 链表基建家族（batch 141 自环/
+    518 后插/511 弹出/536 释放/147 重挂）再添构造端
+  ★★0x7C8E17（batch 001 operator new）= 分配原语
+  新候选：池头全局 [0x87E2A8]/[0xB1D3A4]/[0x87E298]/[0x87E28C]/
+    [0x87E2A0]、宿主 FUN_004019E0/FUN_00403ED0/FUN_007510D0、
+    0x4072C0（调用点 4 宿主初始化）
+
+六、原版怪癖（照抄）
+-------------------
+① 节点间距 edx+8（next 指针槽 4B + 用户数据 edx 推断——调用方
+   只传 edx 数据区大小）；
+② 总分配 = (edx+8)*count+8（块首 8B 头指针槽——首节点偏移 8）；
+③ 块首 [0] = 首节点（池头 = 块首而非首节点自身）；
+④ count<=1 时 jbe 直接跳尾 NULL（单节点/零节点特判）；
+⑤ 无返回失败判定（分配失败返回 NULL，调用方自行处置）；
+⑥ 与 0x407520 弹出端精确对偶（构造正步进 8、弹出 +8 取数据槽）。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：用户数据区精确布局（edx 字节 + 后续数据语义）、池头全
+局 [0x87E2A8]/[0xB1D3A4] 的宿主对象身份（对象池推断）、宿主
+FUN_004019E0/00403ED0/007510D0 真实身份（0x401xxx 区宿主——new
+0xE8 清零后建双池推断）、0x4072C0（调用点 4 前置初始化）。
