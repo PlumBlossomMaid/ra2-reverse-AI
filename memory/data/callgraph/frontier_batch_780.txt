@@ -1,0 +1,216 @@
+frontier batch 780 —— 0x0050B370 单位数量阈值判定器（推断名）
+================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=239 / body=764B）。
+TARGET = 0x0050B370（.text，764B，thiscall 1 栈参 ret 4，返回 al=1/0）
+
+一、函数体全读（764B，disasm 0x50B370 780）
+------------------------------------------
+0050b370  sub esp, 8 / push ebx/ebp/esi
+0050b376  mov esi, [esp + 0x18]      ; ★栈参1（[入口 esp+4]）= 目标对象 → esi
+0050b37a  mov ebp, ecx               ; ★this → ebp
+0050b37c  push edi
+0050b37d  test esi, esi
+0050b37f  mov [esp + 0x14], ebp      ; this 存栈
+0050b383  je 0x50b654             ; ★目标空 → 返 1
+0050b389  mov al, [esi + 0xcce]      ; ★目标+0xCCE 字节标志
+0050b38f  mov edx, [esi]             ; ★虚表
+0050b391  xor ebx, ebx / mov ecx, esi → [esp+0x10]=0 → [esp+0x1C]=al
+0050b39d  call [edx + 0x2C]         ; ★虚表槽 0x2C（类型查询推断）→ eax
+0050b3a0  dec eax
+0050b3a1  cmp eax, 0x27
+0050b3a4  ja 0x50b472            ; ★>0x27 → 默认 0x50B472（edi=0）
+0050b3aa  mov cl, [eax + 0x50b680]  ; ★★索引表 1（0x50B680 字节表）
+0050b3b2  jmp [ecx*4 + 0x50b66c]   ; ★★跳转表 1（0x50B66C）
+
+跳转表 1（0x50B66C dump 实锤）：
+  [+0x00] 0x0050B43E（索引 0）
+  [+0x04] 0x0050B467（索引 1）
+  [+0x08] 0x0050B45C（索引 2）
+  [+0x0C] 0x0050B3B9（索引 3）
+  [+0x10] 0x0050B472（索引 4——默认/兜底）
+  索引字节表 @ 0x50B680（虚表槽返回 dec 后 [0..0x27] 各值映射 0..4）
+
+各分支（核心累加逻辑）：
+【0x50B3B9（索引 3）】mov edi, [ebp + 0x53b0]（★this+0x53B0 槽）
+  → test/je 0x50B3D1 → push esi/mov ecx,edi/call 0x4CA670（★目标
+  计数方法——未登记）→ [esp+0x10]=eax=ebx（累加）
+【0x50B43E（索引 0）】mov al, [esp + 0x1C]（★目标+0xCCE 标志重
+  读）→ test/je 0x50B451 → mov edi,[ebp+0x53B8] → jmp 0x50B3B9
+  / 0x50B451: mov edi,[ebp+0x53B4] → jmp 0x50B3B9（★+0xCCE 选
+  this+0x53B8 或 +0x53B4 槽）
+【0x50B45C（索引 2）】mov edi, [ebp + 0x53bc] → jmp 0x50B3B9
+【0x50B467（索引 1）】mov edi, [ebp + 0x53ac] → jmp 0x50B3B9
+【0x50B472（索引 4/默认）】xor edi → jmp 0x50B3D1
+
+0x50B3D1 汇合：mov edx,[esi] → call [edx+0x2C]（★虚表槽 0x2C
+  再查——二次分派）→ add eax,-3 → cmp eax,0x25 → ja 0x50B660
+  （返 0）→ mov cl,[eax+0x50B6BC]（★★索引表 2）→ jmp
+  [ecx*4+0x50B6A8]（★★跳转表 2）
+
+跳转表 2（0x50B6A8 dump 实锤）：
+  [+0x00] 0x0050B570（索引 0）
+  [+0x04] 0x0050B525（索引 1）
+  [+0x08] 0x0050B479（索引 2）
+  [+0x0C] 0x0050B3F3（索引 3）
+  [+0x10] 0x0050B660（索引 4——返 0）
+  索引字节表 @ 0x50B6BC
+
+【0x50B3F3（索引 3）】mov edi,[esi+0x3B8]（★目标+0x3B8 计数）
+  → test/jg 0x50B42B → call [edx+0x40]（★虚表槽 0x40）→ push
+  eax/lea ecx,[ebp+0x55B4]/call 0x49FAE0（★★★batch 127
+  CounterClass 数组成员——累加保证 N 槽）→ add ecx,ebx（★已有
+  累加）→ abs(edi)（cdq/xor/sub）→ cmp ecx,abs → jge 0x50B654
+  （已达→返 1）→ test/jle 0x50B660 → 0x50B42B: 同模式
+  [ebp+0x5514]
+【0x50B479（索引 2）】mov eax,[esi+0x3B8] → test/jg 0x50B4AD →
+  call [edx+0x40] → lea ecx,[ebp+0x55C8]/call 0x49FAE0 → 累加 →
+  jge 0x50B654 → 0x50B4AD: call [edx+0x40] → lea ecx,[ebp+0x5528]
+  /call 0x49FAE0 → [esp+0x1C]=累加 → mov al,[esi+0xEC6]（★目标
+  +0xEC6 标志）→ test/je 0x50B50A → 遍历 [0x8B4118]（★计数全局）
+  /[0x8B410C]（★数组全局）→ 每项 [edi+0x21C]==ebp 且 [edi+0x338]
+  == call [edx+0x40] 结果 → inc [esp+0x1C]（★★同目标累计）→
+  0x50B50A: mov esi,[esi+0x3B8] → test/jle 0x50B660 → eax=
+  [esp+0x1C]+ebx → cmp eax,esi → jl 0x50B660（★主动返 0 分支）
+  → jmp 0x50B652
+【0x50B525（索引 1）】mov edi,[esi+0x3B8] → test/jg 0x50B55D →
+  call [edx+0x40] → lea ecx,[ebp+0x55A0]/call 0x49FAE0 → 累加比
+  → jge 0x50B654 → 0x50B55D: lea ecx,[ebp+0x5500]/call 0x49FAE0
+【0x50B570（索引 0）】mov al,[esi+0xE0D]（★目标+0xE0D 标志）→
+  test/je 0x50B5F9 → mov eax,[0x8871E0]（★全局对象）→ 遍历
+  [eax+0xB68]（计数）/`[eax+0xB5C]`（数组）→ 每项 call [edx+0x40]
+  → lea ecx,[ebp+0x558C]/call 0x49FAE0 累加 ebx + 0x4CA670 累
+  加 [esp+0x1C] → 0x50B5DD: eax=[esp+0x1C]+ebx → cmp eax,
+  [ebp+0x2D4]（★this+0x2D4 阈值）→ jl 0x50B660（未达→返 0）→
+  返 1
+  / 0x50B5F9: mov edi,[esi+0x3B8] → test/jg 0x50B635 → 同模式
+  [ebp+0x55DC] → jl 0x50B631 返 1（★主动返 1 分支）→ 0x50B635:
+  lea ecx,[ebp+0x553C]/call 0x49FAE0
+【汇合】0x50B654: mov al,1（达成→返 1）→ ret 4
+         0x50B660: xor al（未达成→返 0）→ ret 4
+         0x50B66C 起 = 跳转表 1 数据 / 0x50B680 = 索引表 1
+         0x50B6A8 = 跳转表 2 / 0x50B6BC = 索引表 2
+
+参数契约（thiscall ret 4 = 1 栈参）：
+  ecx = this（生产者/侧边栏宿主推断——含 +0x53AC..0x53BC 槽、
+        +0x2D4 阈值、+0x55xx 累加槽族）
+  栈参1 = [esp+4] = 目标对象（虚表槽 0x2C 类型查询 + +0x3B8 计数
+        + +0xCCE/+0xEC6/+0xE0D 标志）
+  返回 al = 1（数量达成/阈值满足）/ 0（未达成）
+  语义：**单位数量阈值判定器（推断名）**——按目标对象类型
+  （虚表槽 0x2C）经双跳转表分派，把目标计数（+0x3B8）与 this
+  多槽（+0x53AC..0x53BC 选槽→0x4CA670 计）累加，再用虚表槽
+  0x40 结果 + 0x49FAE0（CounterClass 数组成员）累加各
+  +0x55xx 槽、或经全局数组（[0x8871E0]+0xB5C/[0x8B4118] 族）
+  遍历累计，与阈值（+0x2D4 等）比较，返回达成/未达成。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_780_calls.py：4 处调用点
+  0x4C9CEA / 0x6A5FE8 / 0x6A97EA / 0x6AB656
+_locate_780_callers.py：归属
+  0x4C9CEA → 0x004C9C70 FactoryClass::DemandProduction
+            [0x4C9C70-0x4C9E04] body=405 ★★★带名实锤！
+            （生产系统——QWEN.md 生产系统全量逆向同域）
+  0x6A5FE8 → 0x006A5F20 SidebarClass::OnTechnoDestroyed
+            [0x6A5F20-0x6A6090] body=369 ★★★带名实锤！
+            （侧边栏单位销毁——生产域再确认）
+  0x6A97EA → 0x006A9540 FUN_006a9540 [0x6A9540-0x6AA5B1] body=4210
+            ★★batch 773 同宿主（0x4A60E0 文本绘制格式化重载
+            的宿主之一——跨批宿主二连！）
+  0x6AB656 → 无归属（函数间隙——现场 0x6AB654 起错位，前邻
+            0x6AB663 mov eax,[esi+0x38] 后续对象字段）
+
+三、调用点现场（正确指令边界重读）
+--------------------------------
+【调用点 1】0x4C9CEA in FactoryClass::DemandProduction（带名！）
+  004c9ce6  mov ecx, [esi + 0x6c]    ; ★目标（this+0x6C 取出）
+  004c9ce9  push edi                 ; 栈参1 = edi（另一对象）
+  004c9cea  call 0x50b370
+  004c9cef  test al, al
+  004c9cf1  jne 0x4c9d3b           ; ★返 1 → 跳走（有量→不排队？）
+  004c9cf3  mov ecx, [esi + 0x48] / mov eax, [esi + 0x50]
+  004c9cf9  add esi, 0x40
+  004c9cfc  cmp eax, ecx / jl 0x4c9d22
+  形态：生产队列判断——0x50B370 返 1 则跳过排队路径；★生产域
+  消费者实锤（FactoryClass::DemandProduction 排队前检查）。
+
+【调用点 2】0x6A5FE8 in SidebarClass::OnTechnoDestroyed（带名！）
+  006a5fe2  or eax, 0xa83d4c        ; ★全局 0xA83D4C（house？）
+  006a5fe7  push edx                 ; 栈参1 = edx（目标）
+  006a5fe8  call 0x50b370
+  006a5fed  test al, al
+  006a5fef  je 0x6a608a           ; ★返 0 → 跳走
+  006a5ff5  mov eax, [edi + 0x539c]  ; 后续 this+0x539C 处理
+  形态：单位销毁回调中判定——0x50B370 返 1 时走某恢复/计数路径。
+
+【调用点 3】0x6A97EA in FUN_006a9540（batch 773 同宿主）
+  006a97dc  or eax, 0xa83d4c        ; ★同全局 0xA83D4C
+  006a97e1  cmp eax, -1
+  006a97e4  push edx                 ; 栈参1 = edx
+  006a97e5  sete byte [esp + 0x16]  ; ★eax==-1 记录
+  006a97ea  call 0x50b370
+  006a97ef  mov cl, [esp + 0x12] / test cl / jne 0x6A97FB → test
+  al,al / je 0x6A9800
+  形态：host 判定 ——0x50B370 结果与 eax==-1 记录联合门控。
+
+【调用点 4】0x6AB656（间隙宿主）
+  006ab657  call 0x50b370（错位边界推算）→ 后续 [esi+0x38] 字段
+  形态：间隙函数，细节 incomplete（见 partial）。
+
+四、被调登记核验（grep frontier_status.tsv）
+-------------------------------------------
+  0x49FAE0 —— ★★★batch 127 CounterClass 数组成员（函数体多
+    次调用现场：累加保证 N 槽——生产阈值计数语义吻合）
+  0x4CA670 —— 未登记（目标计数方法推断——新候选，多次调用
+    现场：push 目标/this=this+槽 → 返回计数）
+  0x8871E0 —— 未登记（全局对象——+0xB5C 数组/+0xB68 计数）
+  0x8B4118 / 0x8B410C —— 未登记（计数/数组全局对）
+  0xA83D4C —— 调用点 2/3 共用全局（house 对象推断——batch 041
+    及活动存档域曾涉，未独立登记验证）
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★★0x49FAE0（batch 127——CounterClass 数组成员，函数体
+    多分支累加调用现场）
+  ★★★FactoryClass::DemandProduction（带名——生产系统全量逆
+    向同域，QWEN.md 生产系统已闭合区域参照）
+  ★★★SidebarClass::OnTechnoDestroyed（带名——侧边栏生产域）
+  ★★batch 773（FUN_006a9540——同宿主跨批二连）
+  ★0x4CA670（新候选——目标计数方法）、[0x8871E0]/[0x8B4118]/
+  [0x8B410C]/[0xA83D4C]（新全局族）
+  新候选：0x4CA670（目标计数）、FUN_006a9540 业务（batch 773
+  已列宿主）、[0x8871E0] 全局对象结构、双跳转表分派模板
+
+六、原版怪癖（照抄）
+-------------------
+① 双跳转表分派（虚表槽 0x2C → dec → 索引表 → 跳转表——二
+   级查找：先类型后分支）；
+② 索引表 0-4 映射（5 分支，索引 4=默认/兜底；虚表槽返回值
+   dec 后 >0x27 直接走默认）；
+③ 二次分派（0x50B3D1 再查虚表槽 0x2C → add -3 → 索引表 2 →
+   跳转表 2——两轮类型分派嵌套）；
+④ this 多槽选一（+0x53AC/+0x53B0/+0x53B4/+0x53B8/+0x53BC 按
+   目标标志/类型选槽——五槽竞态选择）；
+⑤ 目标多标志判定（+0xCCE 选槽、+0xEC6 触发全局遍历、+0xE0D
+   触发 [0x8871E0] 遍历——三标志三分支）；
+⑥ 0x49FAE0 累加前 call [edx+0x40] 取参（虚表槽 0x40 结果喂
+   累加器——批量计数）；
+⑦ 全局数组遍历（[0x8871E0]+0xB5C/[0x8B4118] 族按 [edi+0x21C]
+   ==this 且 [edi+0x338]==计数匹配累计——同宿主聚合）；
+⑧ 阈值比较双向：（+0x2D4 未达返 0 / 各 +0x55xx 槽已达返 1）+
+   主动返 1/返 0 分支并存；
+⑨ abs 惯用（cdq/xor eax,edx/sub eax,edx——目标计数取绝对
+   值比较——有符号计数怪癖）；
+⑩ 目标空直接返 1（test esi/je 0x50B654——空目标视作达成）。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「单位数量阈值判定器」——ranking 无
+带名，两带名宿主+生产域交叉参照）；this 类（生产者/侧边栏宿主
+推断——QWEN.md 生产系统同域）；0x4CA670 精确身份（目标计数方
+法推断）；[0x8871E0]/[0x8B4118]/[0x8B410C] 全局结构；+0xCCE/
++0xEC6/+0xE0D 标志精确语义；各 +0x55xx/+0x53xx 槽业务；双跳转
+表各索引对应类型（0x27 阈值映射）；[0xA83D4C] 全局身份；
+0x6AB656 间隙宿主。
