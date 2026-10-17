@@ -1,0 +1,153 @@
+frontier batch 770 —— 0x007B5230 窄串尾字符集剥离器（StringClass::TrimRight 族，推断名）
+
+地址：0x007B5230（257B thiscall 1 栈参 ret 4——push
+ebx/ebp/esi/edi；前邻 0x7B5340=窄串释放（batch 121 已登记——
+operator delete+置空），后邻 0x7B51D0 起下一函数（batch picker
+候选 0x7B51D0 deps=256——同族）；ranking callers=3/unique=3/
+deps=257——E8 扫描实得 7 调用点落 3 宿主）
+身份：unclassified（ranking 无带名——按机器码语义+被调全登记
+推断「窄串尾字符集剥离器」：从尾反向扫描字符，经 CRT::strchr
+判定是否属于参1字符集，在首个不属于处截断）
+状态：semantics_verified + assembly_verified_semantics_confirmed
+（机器码 257B 全读 + 7 调用点 E8 扫描 + 3 宿主归属定位 + 3 调用
+点现场全读 + 被调 0x7CAF30 batch 126/0x7C8E17 batch 001/
+0x7C91D0 batch 003/0x7C8B3D batch 001 全部已登记交叉——本批
+全锚点闭合）
+
+=== 机器码全读要点（257B） ===
+
+0x7B5230：push ebx/ebp → mov ebp,ecx（★this——StringClass 推
+断）→ push esi/edi → mov edi,[ebp]（★this->+0=现有串）→
+test/je 0x7B523D（★空串→len=0）→ repne scasb（★strlen 现有
+串）→ not/dec → mov esi,ecx（★esi=串长）→ 0x7B524D: mov
+eax,esi → dec esi（★从尾向前扫描索引）→ test eax/je
+0x7B527F（★空串→跳）→ 扫描循环 0x7B5254: mov edi,[esp+0x14]
+（★栈参1=字符集字符串）→ mov eax,[edi]/test/jne 0x7B5263 →
+mov eax,0x889F64（★字符集空→用全局默认空串）→ 0x7B5263:
+mov ecx,[ebp] → movsx edx,byte[ecx+esi]（★现有串[esi] 字符带符
+号扩展）→ push edx（★字符）→ push eax（★字符集串）→ call
+0x7CAF30（★★★batch 126 CRT::strchr——字节查找！）→ add
+esp,8 → test/je 0x7B527F（★字符不在字符集→停——★首个不属于
+字符！）→ mov eax,esi → dec esi → test eax/jne 0x7B5254（★
+继续向前扫）→ 0x7B527F: mov eax,[ebp] → inc esi（★停位+1——
+截断长度）→ test/jne 0x7B528C → mov edi,0x889F64（★源空→全
+局默认）→ 0x7B528C: mov edi,eax（★源=现有串）→ lea ecx,
+[esi+1]（★新长度=截断长+1）→ push ecx → call 0x7C8E17（★★
+batch 001 operator new）→ mov ebx,eax（★新缓冲）→ add esp,4 →
+test edi → mov byte[ebx],0 → je 0x7B52AE（★源空→只置 NUL）→
+push esi（★长度）→ push edi（★源）→ push ebx（★目标）→ call
+0x7C91D0（★★batch 003 _strncpy——拷贝截断段）→ add esp,0xC
+→ 0x7B52AE: mov byte[ebx+esi],0（★补 NUL——截断终止）→ mov
+esi,0x889F64 → test ebx/je 0x7B52BD → mov esi,ebx（★esi=新截
+断串）→ 0x7B52BD: mov eax,[ebp] → test/je 0x7B52CD → push eax
+→ call 0x7C8B3D（★★batch 001 delete——释放旧串）→ add
+esp,4 → 0x7B52CD: test esi → mov [ebp],0（★this->+0 先清）→
+je 0x7B52E5 → mov edi,esi → repne scasb（★strlen 新串）→
+not/dec → jmp 0x7B52EA → 0x7B52E5: mov ecx,1 → 0x7B52EA:
+push ecx（★新长+1）→ call 0x7C8E17（★new 精确长度）→ add
+esp,4 → mov [ebp],eax（★this->+0=新分配）→ test esi → mov
+byte[eax],0 → je 0x7B531D → mov edi,esi → repne scasb → not/
+dec → sub edi,ecx（★重定位源）→ mov edx,ecx → mov esi,edi →
+mov edi,[ebp] → shr ecx,2 → rep movsd → mov ecx,edx → and
+ecx,3 → rep movsb（★精确拷贝新串——截断结果驻留）→ 0x7B531D:
+test ebx/je 0x7B532A → push ebx → call 0x7C8B3D（★delete 临时
+截断缓冲）→ pop 族 → ret 4。
+
+★★结构：尾向反向扫描（strchr 判字符集）→ 首个不属于字符处截
+断（new+strncpy+补 NUL）→ 释放旧串 → 精确长度重分配拷贝 →
+释放临时。★与 batch 121 窄串释放（前邻 0x7B5340）同族——窄串
+生命周期家族成员。
+
+=== 语义 ===
+
+**窄串尾字符集剥离器（StringClass::TrimRight 族，推断名）**
+——thiscall 1 栈参 ret 4（ecx=this 窄串、栈参1=字符集字符串）：
+① 现有串求长，从尾部反向扫描每个字符；
+② 逐字符经 0x7CAF30（batch 126 CRT::strchr）判定是否属于参1
+  字符集：属于 → 继续向前；不属于 → 停在首个不属于处；
+③ 在停位截断：0x7C8E17（batch 001）new 截断长+1 缓冲 →
+  0x7C91D0（batch 003）strncpy 拷贝 → 补 NUL；
+④ 0x7C8B3D（batch 001）释放旧串 → 重新 new 精确长度 →
+  rep movsd 拷贝截断结果驻留；
+⑤ 释放临时缓冲 → 返回。
+★语义统一：StringClass 尾部修剪（去掉结尾的指定字符集——如
+\n\r/空格/分隔符）；★调用点形态全「push 字符集指针 → call
+0x7B5230 → 后续 0x7B46F0 窄串析构/字段处理」——配置/文本处理
+时的尾清理标准消费。
+
+=== 调用现场（7 处扫描 + 归属定位） ===
+
+1) 0x5D772D / 0x5D77CD / 0x5D786D / 0x5D78D6 / 0x5D793D →
+   **FUN_005d7590**（0x5D7590-0x5D7CC8 body=1849 未登记——0x5D
+   区 5 处调用！）——现场（0x5D772C-0x5D774E）：push edx（★字
+   符集）→ call 0x7B5230（★本条——尾剥离）→ lea ecx,[esp+0x3C]
+   → call 0x7B46F0（★窄串析构——batch 072 邻域）→ lea ecx,
+   [esp+0x14] → push 0x406（★上限 0x406=1030）→ push 0x8309F4
+   （★key——.rdata 串）→ call 0x7B5400（★窄串构造——新候选）
+   → mov ecx,eax → ...（★配置读取循环）。
+2) 0x69A6F2 → **FUN_0069a3b0**（0x69A3B0-0x69A97A body=1483 未
+   登记——★batch 767/769 跨批宿主三连再确认！）——现场
+   （0x69A6F1-0x69A706）：push edx（★字符集）→ call 0x7B5230
+   （★本条）→ lea ecx,[esp+0x20] → call 0x7B46F0（★析构）→
+   mov ecx,[ebx+0x1AC]（★宿主字段）→ mov eax,[ebx+0x1B4] →
+   ...（★后续字段处理）。
+3) 0x69AB9A → **FUN_0069a980**（0x69A980-0x69AC28 body=681 未
+   登记——0x69 区）——现场（0x69AB99-0x69ABB5）：push edx（★
+   字符集）→ call 0x7B5230（★本条）→ lea ecx,[esp+0x20] →
+   call 0x7B46F0（★析构）→ mov ecx,[ebp+8] → mov eax,[ebp+0x10]
+   → cmp/jl 0x69ABD5 → mov al,[ebp+0xD] → test al,al → ...（★
+   后续判定）。
+
+★统一形态：调用点全「push 字符集指针 → call 0x7B5230（尾剥
+离）→ 后续 0x7B46F0 窄串析构/字段处理」——配置/文本尾清理标
+准链；★FUN_0069a3b0 为 batch 767/769 跨批宿主（variables 域
+中枢——字符串表+SHA-1 摘要+本尾剥离全在同一宿主）。
+
+=== 原版怪癖（照抄） ===
+
+① **尾向反向扫描 + strchr 判集**（逐字符查参1字符集，首个不属
+  于处停——典型的 TrimRight 实现）；
+② **movsx 符号扩展字符**（byte[ecx+esi] 带符号扩展传入
+  strchr——负字符也能匹配）；
+③ **字符集空 → 0x889F64 全局默认**（空串作字符集——等于永不
+  剥离？推断为设计容忍）；
+④ **两段分配**（先 new 截断长+1 拷贝，再 new 精确长重拷——
+  strncpy 后二次精确分配的编译器/源码痕迹）；
+⑤ **strncpy 后补 NUL**（mov byte[ebx+esi],0——不依赖 strncpy
+  补零）；
+⑥ **释放顺序**（旧串释放 → 新分配 → 临时截断缓冲释放——多级
+  缓冲生命周期）；
+⑦ **rep movsd 精确拷贝**（新长/4 dword + 余 3 movsb——宽拷贝
+  惯用）；
+⑧ **0x7B46F0 调用点后续析构**（调用点立即析构临时——窄串
+  RAII 惯用）。
+
+=== 跨批次闭合（★全锚点） ===
+
+**++batch 126（0x7CAF30 CRT::strchr——函数体核心判定调用，
+   SWAR 魔数实锤消费）**；
+**++batch 001（0x7C8E17 operator new ×2 + 0x7C8B3D delete ×2
+   ——多级缓冲分配/释放）**；
+**++batch 003（0x7C91D0 _strncpy——截断段拷贝）**；
+**++batch 121（0x7B5340 窄串释放——前邻同族，生命周期家族再
+   确认）**；
+**++batch 767/769（FUN_0069a3b0——跨批宿主三连：SHA-1 摘要器
+   +ReadStringtableEntry+本尾剥离同宿主，variables 域中枢）**；
++0x7B46F0（窄串析构——batch 072 邻域，调用点后续）；
++0x889F64（全局默认串——字符集空回退）；
++0x7B5400（现场 1 窄串构造——新候选）。
+
+=== 新候选 ===
+
+0x7B5400（窄串构造——现场 1 调用）、后邻 0x7B51D0（同族候选
+deps=256）、FUN_005d7590（1849B——5 调用点配置域宿主）、
+FUN_0069a980（681B）、0x8309F4（现场 1 key 串内容）。
+
+=== partial ===
+
+函数精确名（推断「窄串尾字符集剥离器」——StringClass::
+TrimRight 族，ranking 无带名）、宿主类（StringClass 推断——与
+batch 121 窄串释放同族）、栈参1 字符集精确语义（TrimRight 的
+字符集参数推断）、0x889F64 回退时行为（空字符集=不剥离推
+断）、两段分配的原因（源码实现推断）、FUN_005d7590/
+FUN_0069a3b0/FUN_0069a980 宿主业务、0x7B5400 身份。
