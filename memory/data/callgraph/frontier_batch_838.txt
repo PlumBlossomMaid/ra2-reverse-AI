@@ -1,0 +1,116 @@
+frontier batch 838 —— 0x00630250 向量容器追加（Add_Item 4B/项，虚表槽 8 SetCapacity 扩容）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=107 / body=80B）。
+TARGET = 0x00630250（80B，0x630250-0x63029D + nop 垫，thiscall 1 栈参 ret 4）。
+★★推断名：**向量容器追加（Add_Item 形态 4B/项）**——batch 172 的 0x5D1C20
+（向量追加）同族第二实例：布局 +4 Items/+8 Capacity/+0xC IsInitialized/
++0xD IsAllocated/+0x10 Count/+0x14 CapacityIncrement=0xA（batch 832 实锤
+DynamicVectorClass 布局），Count>=Capacity 时经虚表槽 8 SetCapacity 扩容，
+成功 Items[Count++]=*arg。
+
+一、函数体全读（80B，disasm 0x630250 0x60）
+-----------------------------------------------
+参数契约（thiscall 1 栈参 ret 4）：
+  ecx = this（容器对象）
+  [esp+4]（call 后 [esp+8]）= 栈参 1 = 值指针（解引用取 4B 项）
+机器码（80B 全读）：
+  00630250  push esi / mov esi,ecx（★this）
+  00630253  mov ecx,[esi+8]（★+8 Capacity）/ mov eax,[esi+0x10]（★+0x10 Count）
+  00630259  cmp eax,ecx / jl 0x630285      ; ★Count<Capacity → 直接追加
+  0063025d  mov al,[esi+0xD]（★+0xD IsAllocated）/ test / jne 0x630268
+  00630264  test ecx,ecx / jne 0x63027F    ; ★非自分配且容量非空 → 失败 0
+  00630268  mov eax,[esi+0x14]（★+0x14 CapacityIncrement=0xA）/ test
+    / jle 0x63027F                        ; ★步长<=0 → 失败 0
+  0063026f  mov edx,[esi]（★虚表）/ add eax,ecx（★新容量=容量+步长）
+  00630273  push 0 / push eax / mov ecx,esi / call [edx+8]
+                                            ; ★★虚表槽 8 SetCapacity 扩容
+                                            ;   （batch 467/469 实锤同款现场）
+  0063027b  test al,al / jne 0x630285      ; ★扩容成功 → 追加
+  0063027f  xor al,al / pop esi / ret 4     ; ★失败 0
+  00630285  mov eax,[esi+0x10]（★Count）/ mov edx,[esi+4]（★+4 Items）
+    / lea ecx,[eax+1] / mov [esi+0x10],ecx（★Count++）
+  00630291  mov ecx,[esp+8]（★栈参 1 值指针）/ mov ecx,[ecx]（★解引用取值）
+  00630298  mov [edx+eax*4],ecx            ; ★Items[Count] = 值
+  0063029b  mov al,1 / pop esi / ret 4      ; ★成功 1
+语义：**向量容器追加（Add_Item 形态 4B/项，推断名）**——① Count<Capacity
+直接追加；② 满时非自分配（+0xD==0）且容量非空 → 失败（batch 833 的
+0x49EA70 SetCapacity 同款条件链）；③ 步长（+0x14）<=0 → 失败；④ 经虚表
+槽 8 SetCapacity（容量+步长）扩容——成功继续追加；⑤ Items[Count++]=*值
+指针；⑥ 成功返 1/失败返 0。与 batch 172 的 0x5D1C20（Add_Item 形态 4B/项）
+同族——布局差异：0x5D1C20 用宿主 this->+0x28/+0x20 做容量/计数 + 子结构
++0x18 扩展，本条是纯容器（+8/+0x10）直接布局（batch 832 DynamicVectorClass
+字段序实锤）。
+
+二、调用点现场（4 处 E8，三宿主）
+------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x630250）：**命中 4 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) FUN_0062e840 [0x62E840-0x62ED3C] body=1277 —— 1 处（0x62E9F5）
+  2) FUN_0062ed40 [0x62ED40-0x62F226] body=1255 —— 2 处（0x62EF12/0x62EFDC）
+  3) FUN_0062f230 [0x62F230-0x62F99F] body=1904 —— 1 处（0x62F64F）
+现场 disasm 核验：
+  FUN_0062ed40（0x62EF00）：lea eax,[esp+0x18]（★栈值指针）→ lea ecx,
+    [esi+0xBC]（★容器子对象 = 宿主+0xBC）→ push eax（栈参 1）→ call
+    0x630250 → mov eax,[esp+0x18]（★读回值——被追加的对象指针）→ test
+    / je 0x62EF61 → mov ecx,[edi+0xE4] / mov [eax+0xE4],ecx（★追加后写
+    对象 +0xE4 字段 = 宿主+0xE4 值——链式注册）
+  FUN_0062f230（0x62F638）：lea eax,[esp+0x18] → lea ecx,[edi+0xBC]（★
+    容器子对象）→ push eax → call 0x630250 → mov ebx,[esp+0x18]（★被追加
+    对象）→ lea esi,[ebx+0x10C]（★追加后访问对象 +0x10C）
+  FUN_0062e840（0x62E9F5）：同类现场（lea eax,栈值指针 → lea ecx,宿主
+    +0xBC → push eax → call）推断——三宿主共用「栈上暂存值 → +0xBC 容器
+    Add → 读回对象指针继续字段操作」惯用。
+
+★要点：③ 三宿主全部以 +0xBC 为容器子对象偏移（宿主对象 +0xBC 处内嵌容器）
+  追加 4B 项（对象指针）；④ 值指针指向栈上 [esp+0x18] 暂存槽（先写槽再
+  Add——对象注册惯用）；⑤ 追加后宿主立刻读回 Items[Count] 做字段接力
+  （+0xE4 链式注册 / +0x10C 访问）——「Add + 读回 + 字段操作」三连惯用。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  虚表槽 8 SetCapacity —— ★★已登记（batch 467/469 实锤——本条=扩容调用
+    现场：push 0/push 容量+步长/call [edx+8] 完全同款）
+  容器布局 +4/+8/+0xC/+0xD/+0x10/+0x14 —— ★★已登记（batch 832 实锤
+    DynamicVectorClass 布局——+0x14=0xA 步长吻合）
+  0x5D1C20 —— ★★已登记（batch 172「向量追加 Add_Item 形态 4B/项」——
+    本条=同族第二实例对照）
+  0x630250 本身 —— ★未登记（本批首次登记）
+  宿主 FUN_0062e840/FUN_0062ed40/FUN_0062f230 —— ★未登记（0x62xxxx 区
+    对象家族——+0xBC 容器宿主）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★batch 172（0x5D1C20 向量追加——同族参照：容量检查+虚表槽 8 Resize+
+    计数++写缓冲+虚表槽 0x10 通知；本条=纯容器布局版（+8/+0x10 直接））
+  ★★batch 832（容器布局 +4 Items/+8 Capacity/+0xC IsInitialized/+0xD
+    IsAllocated/+0x10 Count/+0x14 CapacityIncrement=0xA——本条布局逐字段
+    吻合）
+  ★★batch 467/469（虚表槽 8 SetCapacity——本条=扩容调用现场：push 0/
+    push 容量+步长/call [edx+8] 完全同款；batch 469 的 DynamicVectorClass::
+    SetCapacity 0x50EA90 逐段同构）
+  ★★batch 833（0x49EA70 SetCapacity 系——「非自分配且容量非空 → 失败」+
+    「步长<=0 → 失败」条件链同款）
+  ★★batch 484（DynamicVectorClass 构造器——容器生命周期家族）
+
+五、原版怪癖（照抄）
+-------------------
+① Count<Capacity 直接追加（容量足够不调扩容——无预检批量模式）；
+② 满时非自分配（+0xD==0）且容量非空 → 失败（外部缓冲接管但已满——不
+   自扩容，batch 833 同款条件链）；
+③ 步长（+0x14）<=0 → 失败（0 步长容器不可自扩容）；
+④ 扩容经虚表槽 8 SetCapacity（容量+步长）——与 batch 469 完全同款协议
+   （push 0/push 容量+步长/call [edx+8]）；
+⑤ 追加取值为「值指针解引用」（mov ecx,[esp+8]/mov ecx,[ecx]——1 栈参
+   值指针而非值本体）；
+⑥ Items[Count] 写值用 [edx+eax*4]（旧 Count 索引——Count++ 在写值前）；
+⑦ 成功返 1/失败返 0（失败路径 0x63027F 不调扩容直接 xor al,al）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「向量容器追加」——batch 172 同族 Add_Item）、
+宿主类身份（0x62xxxx 区——+0xBC 容器子对象宿主，FUN_0062e840/FUN_0062ed40/
+FUN_0062f230 家族推断）、被追加对象类型（+0xE4 链式注册/+0x10C 访问——
+对象指针推断）、FUN_0062e840 调用点 0x62E9F5 现场细节（同型推断——未逐
+条 disasm 展开）。
