@@ -1,0 +1,186 @@
+frontier batch 879 —— 0x0055C0E0 缓冲打包/转换内核（457B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=56 / body=457B）。
+TARGET = 0x0055C0E0（457B，0x55C0E0-0x55C2A8，thiscall 3 栈参 ret 0xC，
+0x55xxxx 区——batch 332/423 双缓冲容器区）。
+★★推断名：**缓冲打包/转换内核（双缓冲容器扩容时的数据转换/拷贝原语
+——thiscall 3 栈参：ecx=this（目标对象）、edx=源长度、[esp+8]=源、
+[esp+0xC]=输出长度指针、[esp+0x10]=输出缓冲、[esp+0x14]=容量标志；
+字面量 0x11 阈值 + 控制字节 0x10/0x20/0x40 分档 + 0x4000 回拷窗口——
+LCW/decode5s 族压缩块转换内核，被 batch 423/332 双缓冲容器在扩容路径
+调用，两批文档点名「0x55c0e0 增长/子操作」= 本批兑现）**。
+
+一、函数体全读（457B，disasm 0x55C0E0 0x200 全量）
+------------------------------------------------
+参数契约（thiscall 3 栈参 ret 0xC）：ecx=this（目标对象）、edx=源长
+度、[esp+8]=源指针、[esp+0xC]=输出长度指针（[ebx] 写 0 起）、
+[esp+0x10]=输出缓冲、[esp+0x14]=容量标志。
+机器码（457B 全读，逐段要点）：
+  0055c0e0  push ebx → mov ebx,[esp+0xc]（★栈参2=输出长度指针）→
+    mov eax,ecx（★this/源）→ mov [ebx],0（★长度槽先清 0）→ mov
+    esi,[esp+0x10]（★栈参3=输出缓冲）→ lea ebp,[eax+edx]（★源末端=
+    源+长度）→ mov dl,[eax] → cmp dl,0x11 → jbe 0x55c109 → and
+    edx,0xff → sub edx,0x11 → jmp 0x55c14e（★★首字节>0x11 = 字面量
+    长度直接走拷贝）
+  0055c109  xor edx,edx → mov dl,[eax] → inc eax → cmp edx,0x10 →
+    jae 0x55c1c1（★控制字节<0x10 = 短字面量）→ test edx,edx →
+    jne 0x55c13b → 0x55c11b: mov cl,[eax] → mov edx,0xf → test
+    cl,cl → jne 0x55c134 → 0x55c126: mov cl,[eax+1] → add edx,0xff
+    → inc eax → test cl,cl → je 0x55c126（★★0xF 基准 + 0xFF 增量
+    扩展长度）→ 0x55c134: mov cl,[eax] → add edx,ecx → inc eax →
+    0x55c13b: mov cl,[eax] → mov [esi],cl → mov cl,[eax+1] → inc
+    esi → inc eax → mov [esi],cl → mov cl,[eax+1] → inc esi →
+    inc eax → mov [esi],cl → inc esi（★字面量 3 字节直接拷贝）
+  0055c14e  inc eax → 0x55c14f: mov cl,[eax] → mov [esi],cl → inc
+    esi → inc eax → dec edx → jne 0x55c14f（★★字面量循环拷贝——
+    edx 计数）
+  0055c158  xor edx,edx → mov dl,[eax] → inc eax → cmp edx,0x10 →
+    jae 0x55c1c1 → shr edx,2 → mov ecx,esi → sub ecx,edx → xor
+    edx,edx → mov dl,[eax] → shl edx,2 → sub ecx,edx → mov
+    dl,[ecx-0x801] → sub ecx,0x801 → inc eax → mov [esi],dl →
+    inc esi → inc ecx → mov dl,[ecx] → mov [esi],dl → mov cl,
+    [ecx+1] → inc esi → mov [esi],cl → inc esi → mov cl,[eax-2]
+    → and ecx,3 → je 0x55c109（★★回拷：距离 = 高低两字节×4 - 0x801，
+    3 字节回拷 + 尾部按 and 3 补拷）
+  0055c19a  mov dl,[eax] → mov [esi],dl → inc esi → inc eax → dec
+    ecx → jne 0x55c19a（★补拷循环）
+  0055c1a3  xor edx,edx → mov dl,[eax] → inc eax → cmp edx,0x10 →
+    jae 0x55c1c1 → shr edx,2 → mov ecx,esi → sub ecx,edx → xor
+    edx,edx → mov dl,[eax] → shl edx,2 → sub ecx,edx → dec ecx →
+    inc eax → jmp 0x55c183（★第二回拷形态：距离公式同款 -0x801）
+  0055c1c1  cmp edx,0x40 → jb 0x55c1e6 → mov ecx,edx → mov edi,esi
+    → shr ecx,2 → and ecx,7 → sub edi,ecx → xor ecx,ecx → mov
+    cl,[eax] → shl ecx,3 → sub edi,ecx → dec edi → inc eax →
+    shr edx,5 → dec edx → jmp 0x55c28e（★★控制字节≥0x40：距离 =
+    (edx>>2&7)×1 + 下一字节×8，edi 回拷起）
+  0055c1e6  cmp edx,0x20 → jb 0x55c22a → and edx,0x1f → jne
+    0x55c210 → 0x55c1f0: mov cl,[eax] → mov edx,0x1f → test cl,cl
+    → jne 0x55c209 → 0x55c1fb: mov cl,[eax+1] → add edx,0xff →
+    inc eax → test cl,cl → je 0x55c1fb（★0x1F 基准扩展）→
+    0x55c209: mov cl,[eax] → add edx,ecx → inc eax → 0x55c210:
+    mov edi,esi → mov cl,[eax] → shr ecx,2 → sub edi,ecx → mov
+    cl,[eax+1] → dec edi → inc eax → shl ecx,6 → sub edi,ecx →
+    inc eax → jmp 0x55c28e（★★0x20-0x40：距离 = 字节0>>2 + 字节1<<6）
+  0055c22a  mov ecx,edx → mov edi,esi → and ecx,8 → shl ecx,0xb →
+    sub edi,ecx → and edx,7 → jne 0x55c25b → 0x55c23b: mov cl,[eax]
+    → mov edx,7 → test cl,cl → jne 0x55c254 → 0x55c246: mov cl,
+    [eax+1] → add edx,0xff → inc eax → test cl,cl → je 0x55c246
+    （★7 基准扩展）→ 0x55c254: mov cl,[eax] → add edx,ecx → inc
+    eax → 0x55c25b: mov cl,[eax] → shr ecx,2 → sub edi,ecx → inc
+    eax → mov cl,[eax] → shl ecx,6 → sub edi,ecx → inc eax →
+    cmp edi,esi → jne 0x55c288 → 0x55c273: mov edi,[esp+0x14]（★栈
+    参4=容量标志）→ sub eax,ebp（★源消费量）→ sub esi,edi（★输出量
+    -容量）→ mov [ebx],esi（★★输出长度写回）→ neg eax → sbb
+    eax,eax → ret 0xC（★★返回 0/-1——源耗尽判定！）
+  0055c288  sub edi,0x4000（★★0x4000=16KB 回拷窗口）→ 0x55c28e:
+    mov cl,[edi] → mov [esi],cl → mov cl,[edi+1] → inc esi → inc
+    edi → mov [esi],cl → inc esi → inc edi → mov cl,[edi] → mov
+    [esi],cl → inc esi → inc edi → dec edx → jne 0x55c29b（★★回拷
+    循环 3 字节/轮）→ jmp 0x55c18e（★回主循环）
+语义：**缓冲打包/转换内核（推断名）**——thiscall 3 栈参 ret 0xC：
+  把 ecx 所指源数据（edx=长度）按压缩块格式解码/转换为输出缓冲：①
+  首字节>0x11 为字面量长度直接拷贝；② 控制字节分档（<0x10 短字面
+  量+0xF/0xFF 扩展、0x20-0x40 中距离回拷、≥0x40 长距离回拷、<0x20
+  带 0x4000 窗口回拷）；③ 距离公式多样（两字节×4-0x801、字节组合
+  >>2/<<6、&8<<0xb 等）；④ 收尾源消费量 neg/sbb 得 0/-1、输出长度
+  写回 [ebx]。★★与 batch 832 LCWStraw::Get 的 0x551C60/0x551E50 解
+  码块同族（LCW/decode5s 压缩族）——本批=容器扩容场景的压缩块转换
+  内核。
+
+二、调用点（3 处 E8，3 宿主全核验——统一「push 0 / push &长度槽 /
+   push 源 / mov ecx,目标 / mov 容量槽,N / call 0x55C0E0」扩容形态）
+----------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x55C0E0）：**命中 3 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x4A2C9E → FUN_004a2b60 [0x4A2B60-0x4A2CC7] body=360 —— 未登记
+  2) 0x55C43C → FUN_0055c350 [0x55C350-0x55C5DA] body=651 —— ★★batch
+     423 已登记（双缓冲容器追加/增长方法）
+  3) 0x55C8B8 → FUN_0055c7c0 [0x55C7C0-0x55C989] body=458 —— ★★batch
+     332 已登记（缓冲扩容操作）
+现场 disasm 核验（三处全读）：
+  FUN_004a2b60（0x4A2C9E，360B 未登记）——现场 0x4A2C80-0x4A2C9E：
+    cmp eax,edx → jne 0x4a2baa（★扩展查询结果校验）→ mov ecx,
+    [esi+0x18]（★源）→ lea eax,[esp+0xc]（★&长度槽）→ push 0（★栈
+    参3=0）→ push eax（★栈参2=&长度槽）→ push ecx（★栈参1=源）→
+    mov ecx,[esi+0x1c]（★this=目标对象+0x1C）→ mov [esp+0x18],
+    0x10000（★容量标志 64KB）→ 0x4A2C9E: call 0x55c0e0（★★本函数）
+    → mov edx,[esi+0x28] → mov [esi+0x14],edx（★字段回写）
+  FUN_0055c350（0x55C43C，651B ★★batch 423 已登记）——现场 0x55C426-
+    0x55C44E：mov ecx,[esi+0x18]（★源）→ lea eax,[esp+0x18]（★&长
+    度槽）→ push 0（★栈参3=0）→ push eax（★栈参2=&长度槽）→ push
+    ecx（★栈参1=源）→ mov ecx,[esi+0x14]（★this=+0x14）→ mov
+    [esp+0x24],4（★容量标志 4）→ 0x55C43C: call 0x55c0e0（★★本函
+    数——**batch 423 文档「call 0x55c0e0（★增长）」点名兑现**！）→
+    mov eax,[esi+0x18] → mov dx,[esi+0x26] → push edx → push eax →
+    call 0x631d10（★提交回调——batch 423 文档已提未登记）
+  FUN_0055c7c0（0x55C8B8，458B ★★batch 332 已登记）——现场 0x55C8A3-
+    0x55C8BD：mov ecx,[esi+0x14]（★源）→ lea eax,[esp+0x14]（★&长
+    度槽）→ push 0（★栈参3=0）→ push eax（★栈参2=&长度槽）→ push
+    ecx（★栈参1=源）→ mov ecx,edi（★this=目标缓冲）→ mov [esp+
+    0x20],4（★容量标志 4）→ 0x55C8B8: call 0x55c0e0（★★本函数——
+    **batch 332 文档「0x55C0E0/0x55BB90 子操作（未登记）」点名兑现**！）
+    → push edi → call 0x7c8b3d（★delete 旧缓冲——batch 001）
+★统一形态：三处调用点全「扩展查询校验（0x6C98E0 batch 353）→ push
+  0 / push &长度槽 / push 源 / mov ecx,目标 / mov 容量槽（0x10000 或
+  4）→ call 0x55C0E0」——本函数=双缓冲容器扩容时的压缩块转换内核，
+  写满时把旧缓冲内容解码/转换进新缓冲。★★两宿主 batch 423/332 已
+  登记且文档点名「0x55c0e0 增长/子操作」= 本批兑现，FUN_004a2b60 未
+  登记（新宿主——0x4A 区容器）。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x55C350 —— ★★已登记（batch 423 双缓冲容器追加/增长方法——本批调
+    用点 0x55C43C = 其字节流写满增长路径，「call 0x55c0e0（★增长）」
+    点名兑现）
+  0x55C7C0 —— ★★已登记（batch 332 缓冲扩容操作——本批调用点
+    0x55C8B8 = 其分支 A new 后转换路径，「0x55C0E0/0x55BB90 子操作
+    （未登记）」点名兑现）
+  0x7C8B3D —— ★★已登记（batch 001 delete——宿主 3 收尾现场）
+  0x6C98E0 —— ★★已登记（batch 353 子对象转发——三宿主扩展查询共用）
+  0x7CA090 —— ★★已登记（batch 031 memmove——同容器区搬运底层）
+  FUN_004a2b60 —— ★未登记（新宿主——0x4A 区）
+  0x631D10 —— ★未登记（宿主 2 提交回调——batch 423 文档已提候选）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 423（0x55C350 双缓冲容器追加/增长——本批调用点
+    0x55C43C = 其字节流写满增长路径，文档「call 0x55c0e0（★增长）」
+    点名兑现——+0xC==1 字节流 / !=1 多元素双路径写满均走本函数）
+  ★★★batch 332（0x55C7C0 缓冲扩容操作——本批调用点 0x55C8B8 = 其分
+    支 A（+0xC==1）扩展查询后转换路径，文档「0x55C0E0/0x55BB90 子操
+    作（未登记）」点名兑现）
+  ★★batch 832（LCWStraw::Get——0x551C60/0x551E50 LCW 解码族同区，
+    本批压缩块转换内核同族参照）
+  ★★batch 353（0x6C98E0 子对象转发——三宿主扩展查询共用）
+  ★★batch 001（0x7C8B3D delete——宿主 3 收尾）
+  ★★batch 031（0x7CA090 memmove——同容器区搬运底层）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★首字节>0x11 直接作字面量长度（cmp dl,0x11 / jbe——字面量优先
+   判定，不走控制字节）；
+② ★★控制字节 <0x10 短字面量 + 0xF/0xFF 扩展长度（mov edx,0xf →
+   add edx,0xff 循环——0xF 基准 + 每空字节 0xFF 递增）；
+③ ★★距离公式多样不统一（两字节×4-0x801、字节0>>2+字节1<<6、
+   &8<<0xb——三套回拷距离计算并存）；
+④ ★★0x4000=16KB 回拷窗口（sub edi,0x4000——长距离回拷越窗修正）；
+⑤ ★★0x20-0x40 与 ≥0x40 控制字节分档（cmp edx,0x40 / jb 0x55c1e6
+   → cmp edx,0x20——两档距离编码不同）；
+⑥ ★★3 字节/轮回拷循环（mov [esi],cl ×3 / inc esi ×3——回拷以 3
+   字节为最小步进）；
+⑦ ★★收尾源消费量 neg/sbb 得 0/-1（sub eax,ebp → neg eax → sbb
+   eax,eax——成功/耗尽布尔化）；
+⑧ ★★输出长度写回调用方长度槽（mov [ebx],esi——[esp+0xC] 所指）；
+⑨ ★★ret 0xC（3 栈参清理）；
+⑩ ★★容量标志入参（0x10000/4——调用方写 [esp+0x14] 区，宿主按容器
+   不同传不同值）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「缓冲打包/转换内核」——压缩块解码/转换推
+  断，与 LCWStraw 0x551C60/0x551E50 解码族关系待证）、具体压缩格式
+  （LCW/decode5s 推断）、三套距离公式的编码语义、容量标志精确语义、
+  [esp+0xC] 长度槽输出语义、FUN_004a2b60 宿主业务、0x631D10 提交回
+  调身份。
