@@ -1,0 +1,132 @@
+---
+
+frontier batch 928 —— 0x005A89D0 死代码复刻：批量放置主循环（1320B）
+=======================================================================
+
+候选来源：用户指令「RMG 死代码全部复现对齐（挖坟考古）」——0x5A89D0
+（1320B，TSV:1023 已 semantics 登记，本批做 C++ 复刻落地 + 单测对拍）。
+TARGET = 0x005A89D0（thiscall 无 this + 1 栈参 ret 4，坐标 CellStruct*
+指针；ret 4 后 7 个 nop 垫到 0x5A8F00）。
+C++ 模型：code/rewrite/rmg/batch_placer.{h,cpp} 新增 DeadCodeBatchPlacer
++ DeadBatchPlacerWorld 接口。单测：test_batch_placer.cpp 新增
+BatchPlacer.MatchesOriginal（12 用例对拍）。
+
+一、语义（完整汇编 390 行 + 黄金 12 用例闭环）
+------------------------------------------------
+真义（黄金实证 + 机器码逐段确认）：
+  ① 巨型 0x6058 栈帧（__chkstk 24664 字节），两套并行数组：
+     [esp+0x68] 起 1024 槽 × 0x14B 环形队列（逐项 call 0x5A99B0
+     构造 {type=0xFFFF, x=0, 0xFFFF, x2=0, back=-1}）、
+     [esp+0x5068] 起 1024 个 dword（存 call [0x7E1530] timeGetTime
+     的返回值——辅助数组只写不读），count/head/tail 在
+     [esp+0x5C]/[esp+0x60]/[esp+0x64]
+  ② 主循环 0x5A8A0A：Random()（0xABE890 全局随机器）→ fild qword
+     无符号 32 位 → fmul [0x7EDB28]=11/(2^32-1) → _ftol（RC=chop）
+     → 若 >10（ja 无符号）重抽——11 值类型采样，主循环只采样 1 次
+  ③ 11 次探测：(采样+计数器)%11（idiv 0xB，[0xABAD20] 基址 golden
+     灌 0）→ call 0x5A7D00 判定 → 通过则入队 1 槽；11 次全失败
+     → 返回 0
+  ④ 入队 0x5A8A74：槽 = {表项指针, 基准坐标, 0xFFFF, 基准坐标, -1}
+     → rep movsd ×5（0x14B）拷进 [esp+0x68]+tail*0x14 → timeGetTime
+     存辅助数组 → tail=(tail+1)&0x3FF、count++（count==0x400 跳过入队）
+  ⑤ 处理循环 0x5A8AE1：
+     - count>=0x3FC（1020）→ 0x5A8E7C 排空分支：逐槽 DispatchType +
+       出队到 count==0（不 placed++、不取数）
+     - 槽[0]==0xFFFF（空槽/清理分支 0x5A8DD6）：不入队，直接出队
+     - 否则 0x5A7FA0 清理（slot[2]!=0xFFFF 时）+ 0x5A6C10 表派发
+       （ecx=type、edx=&槽[3]、栈参 -1,-1）
+     - LAT 三档映射：type∈[kBaseA, kBaseA+0x65) → idx=type-kBaseA；
+       type∈[kBaseB, kBaseB+8) → idx=type-kBaseB+0x65；否则 idx=0
+       （golden 灌 kBaseA=kBaseB=0 → idx=type 恒成立）
+     - [0xABE370+idx*12] 表项 count<=1 → 0x5A8D06 收尾不入队
+     - count>1：operator new（0x7C8E17）分配 n=count-extra 项临时
+       数组（extra=(back!=-1)?1:0），填 {0xFFFF, 0x42D470(...),
+       0xFFFF, 0x42D470(...), -1}
+  ⑥ 子表遍历（上界 = 表项 count，0x5A8C2D mov ecx,[ebx]）：
+     - eax==slot.back 时跳过（0x5A8C44 je 0x5A8DA4，不取数！
+       ★写回槽位由「成功序号」而非 eax 决定——0x5A8DA1 add edi,0x14
+       只在非跳过路径执行）
+     - 子表项 8B/项：(eax<count 时 kx=sub[eax].first、
+       ky=sub[eax].second)；方向索引 dir=(ky-4)&7（0x5A8C73
+       lea esi,[eax-4]/and esi,7）；坐标合成 32 位：full=kx+slot.x
+       → x'=(full&0xFFFF)+方向表[ky&7][0]、y'=(kx>>16)+(slot.x>>16)
+       +方向表[ky&7][1]——[0x89F688] 八方向表 BSS 段全 0（黄金基准）
+     - call 0x5A8F00 两次（4 栈参契约）：第一次 mode=1 成功 →
+       temp[s].sentinel=0、temp[s].x2=0x11223344（★桩写序：mode=1
+       先写 +8/+0xC，mode=4 后写 +0/+4/+0x10 覆盖）；失败 flag=false
+       break；第二次 mode=4 成功 → temp[s].type=0、temp[s].x=
+       0x11223344、temp[s].back=3（★back=3 雪球关键）；失败 →
+       temp[s].type=0xFFFF、x=0、x2=3（0x5A8CEE 回填 [esp+0x34]）、
+       back=-1
+     - success 每项 +1（成功失败都算，0x5A8D85 汇合）
+  ⑦ 0x5A8D06 收尾：flag && success>0 → 批量入队 success 项
+     （count 上限 0x400，jge 跳过拷贝但 ebp-- 继续循环——continue
+     不是 break；golden 在此不触发上限）→ FreeTemp（0x7C8B3D）
+  ⑧ 出队 0x5A8E4D：head=(head+1)&0x3FF、count--、placed++
+     （count==0 时跳过出队但仍 placed++，然后返回）
+  ⑨ 返回 0x5A8EDF：al = (placed > 1) ? 1 : 0
+  ★常量：[0x7EDB28] = 11/(2^32-1) = 2.5611370807888771e-09
+  ★怪癖（登记）：写回槽位 = 成功序号（非 eax）；temp 只分配 count-extra
+    项但子表循环上界 = count（雪球槽 extra=1 时越界读堆垃圾——golden
+    桩不读该值，PICK 序列不受影响；C++ resize(abe.count) 用默认构造值
+    等价模拟）；[0x89F688] 八方向表 BSS 全 0（真机无从考证写入者，
+    死代码零引用——黄金以 0 为基准）
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+_queue 采集脚本 _golden_5A89D0.py（QueueOracle，继承 TechOracle）：
+  桩侧：[0x7E1530] timeGetTime 覆写（mov eax,0xC0FFEE00; ret）、
+  0x5A8F00 打桩（hook 记录 4 栈参 + ecx/edx，返回按用例 pick_ret；
+  成功写 *栈参3=0x11223344、*栈参2=0、*栈参4=3；失败写 *栈参2=0xFFFF、
+  *栈参3=0、*栈参4=-1）、0x7C8E17/0x7C8B3D new/delete bump 分配。
+  真身侧：Randomizer 0x65C780（seed 灌 [0xABE890]）、0x5A99B0 槽构造、
+  0x5A7D00 判定（灌 [0xA8ED2C] 11 个假表项对象：虚表槽 0x9C→数据指针、
+  +0x2E8 外计数、+0x2E4 内计数）、0x5A7E90/0x5A7FA0/0x5A6C10、
+  0x42D470 双 word 打包、0x486380/0x4863A0 cell 谓词、GetCellAt。
+  环境：[0xABAD20]=0、[0xABC1D4]=0、[0xABBEC0]=0、[0xABE370]
+  11 段 × 12B（count + 8B/项子表）。
+  覆盖：12 用例（plain-empty/zero-count/one-count/two-pick0/
+  nine-pick0/fail-verdict/ok-verdict/two-blocked/two-levels/two-veto/
+  two-pick1/nine-pick1）落盘 memory/data/rmg/
+  deadcode_batch_placer_golden.txt（6524 行：CASE/PICK(mode ecx ret)/
+  ABE(idx count kx0 ky0...) 行）。
+  ★对拍点只三样：Randomizer::call_count（rng=1 恒等）、0x5A8F00 调用
+  序列（mode+方向索引）、返回 al。被调族（0x5A7D00/0x5A6C10 等）不在
+  golden 输出之内（真身执行、不消耗 RNG、不影响 PICK 序列）。
+  ★雪球两用例数证：two-pick1 picks=4076 = 1019 槽 × 4 次（count 从
+  1 起每轮 +1 到 1020 排空）；nine-pick1 picks=2338 = 18 + 145×16
+  （初始槽 back=-1 → n=9 全 18 次；雪球槽 back=3 → n=8 跳过 eax==3
+  → 每轮 16 次，count 每轮净 +7，145 轮后 count=1024→1020 排空）。
+
+三、C++ 模型（code/rewrite/rmg/batch_placer.{h,cpp}）
+------------------------------------------------
+签名：int DeadCodeBatchPlacer(DeadBatchPlacerContext& ctx)；ctx 携带
+Randomizer*/DeadBatchPlacerWorld*/基准坐标。world 抽象桩语义：
+Rng/TimeGetTime/ProbeType（0x5A7D00）/CleanType（0x5A7FA0）/
+DispatchType（0x5A6C10）/HandleType（0x5A7E90）/AbeEntry（[0xABE370]）/
+PickPlace（0x5A8F00，本批打桩返回用例 pickret，next 批做真身模型）/
+AllocTemp/FreeTemp。
+
+四、单测（test_batch_placer.cpp，46 项测试之一）
+------------------------------------------------
+BatchPlacer.MatchesOriginal：读 golden 原档（RA2_GOLDEN_DIR 宏），
+12 用例全量对拍：rng 消耗数（Randomizer::call_count 应恒=1）、
+0x5A8F00 调用序列（mode + 方向索引 (ky-4)&7 与 PICK 行逐条比对）、
+返回值 al=(placed>1)?1:0。FakeBatchPlacerWorld 按用例配置
+（fail-verdict 探测恒 false，其余恒 true；pickret=用例值）。
+ctest 46/46 全绿（batch_placer #43 通过，全量无回归——较 927 后
+45 项新增 batch_placer）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：0x5A89D0 业务用途（批量放置调度器——与 0x5A82E0 同族，
+推测为废弃的「批量建筑放置」流水线，零引用无从追）、0x5A8F00 真身
+（下一批心跳点名，TSV:1025 已 semantics，黄金侧打桩——C++ 侧
+PickPlace 返回用例值，真身 NormalDeviate 0x5980C0 在 Unicorn 不可信
+须另行对拍）、[0x89F688] 表真机内容（BSS 段死代码零引用无从考证）。
+依赖模型：Randomizer（randomizer.{h,cpp}）、0x42D470 双 word 打包
+（TSV:374 已登记）、0x7EDB28 常量（kTypeScale）、0x89F688 八方向表
+（BSS 全 0）。被调族共享 [0xA8ED2C] 表族（0x5A7D00/0x5A7E90/
+0x5A7FA0/0x5A6C10/0x5A8F00/0x5A99B0）——next 批 0x5A8F00 真身模型
+落地时一并复核。
