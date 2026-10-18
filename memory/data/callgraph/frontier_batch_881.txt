@@ -1,0 +1,184 @@
+frontier batch 881 —— 0x007DAF28 CRT 字符转换/数值解析复用内核（312B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=55 / body=312B）——E8 全局扫描
+实测命中 62 处（0x7D61xx-0x7D6Axx ctype/locale 区大扇入）。
+TARGET = 0x007DAF28（312B，0x7DAF28-0x7DB05F，thiscall/cdecl 混合 3 栈
+参 ret，0x7Dxxxx MSVC6 静态 CRT 区）。
+★★推断名：**CRT 字符转换/数值解析复用内核（双模式解析状态机——模
+式1：缓冲查询+重试（error 0x7A=ERROR_INSUFFICIENT_BUFFER 判定）经
+0x7DC5DC/[0x7E1200]（batch 361 GetLastError）+ 0x7C9430（batch 020
+malloc）+ 0x7C93E8（batch 020 free）+ 0x7C91D0（batch 003 strncpy）收
+尾；模式0：十进制数字累加（[edi]=[edi]*10+byte-0x30）经 0x7DC4C9 +
+0x7D1311（batch 024/044 _isctype）+ [0x87C590] ctype 表；62 调用点
+全在 0x7D6xxx ctype/locale 区，宿主含 ★★batch 048 已登记 ctype 表装
+载 FUN_007d6aa2）**。
+
+一、函数体全读（312B，disasm 0x7DAF28 0x140 全量）
+------------------------------------------------
+参数契约（3 栈参 ret）：[ebp+8]=模式 mode、[ebp+0xC]=参2、[ebp+0x10]=
+参3、[ebp+0x14]=输出指针。
+机器码（312B 全读，逐段要点）：
+  007daf28  push ebp → mov ebp,esp → sub esp,0x80 → cmp [ebp+8],1 →
+    jne 0x7dafee（★模式分派）
+  分支 1（模式==1 缓冲查询路径）：
+  007daf3e  xor ebx,ebx → lea eax,[ebp-0x80]（★0x80 局部缓冲）→ push
+    ebx → push 0x80 → push eax → push [ebp+0x10]（★参3）→ push
+    [ebp+0xc]（★参2）→ call 0x7dc5dc（★5 参查询——未登记）→ mov
+    esi,eax → add esp,0x14 → cmp esi,ebx → jne 0x7dafb1（★非空跳过）
+  007daf64  call [0x7e1200]（★★★[0x7E1200]——batch 361 IAT 实锤
+    GetLastError！）→ cmp eax,0x7a → jne 0x7dafcd（★★0x7a=122=
+    ERROR_INSUFFICIENT_BUFFER 才重试！）→ push ebx/ebx/ebx → push
+    [ebp+0x10] → push [ebp+0xc] → call 0x7dc5dc（★零参重试——容量查
+    询）→ mov esi,eax → cmp esi,ebx → je 0x7dafcd → push esi → call
+    0x7c9430（★★已登记 batch 020 CRT 内部 malloc 入口）→ mov
+    edi,eax → cmp edi,ebx → je 0x7dafcd → push ebx → push esi → push
+    edi → mov [ebp+8],1 → push [ebp+0x10] → push [ebp+0xc] → call
+    0x7dc5dc（★真缓冲装载）→ mov esi,eax → cmp esi,ebx → je 0x7dafc6
+  007dafb1  push esi → call 0x7c9430（★★batch 020 malloc）→ mov
+    ecx,[ebp+0x14] → mov [ecx],eax（★输出写）→ jne 0x7dafd5
+  007dafc6  push edi → call 0x7c93e8（★★batch 020 free——错误清理）→
+    0x7dafcd: or eax,0xffffffff → ret（★失败返 -1）
+  007dafd5  push esi → push edi → push eax → call 0x7c91d0（★★batch
+    003 _strncpy——装载内容拷贝）→ add esp,0xc → 清理 path → ret
+  分支 0（模式==0 十进制数字累加路径）：
+  007dafee  cmp [ebp+8],0 → jne 0x7dafcd（★非 0 失败）
+  007daff4  push 0 → mov esi,0xb7858c（★[0xB7858C] 数字源表）→ push 4
+    → push esi（★源）→ push [ebp+0x10] → push [ebp+0xc] → call
+    0x7dc4c9（★5 参查询——未登记）→ add esp,0x14 → test eax → je
+    0x7dafcd → mov edi,[ebp+0x14]（★输出指针）→ and byte[edi],0 →
+    cmp [0x87c79c],1（★[0x87C79C] 计数全局）→ mov bl,[esi] → jle
+    0x7db030 → movzx eax,bl → push 4 → push eax → call 0x7d1311（★★
+    已登记 batch 024/044 字符分类查询 _isctype）→ 0x7db030: mov
+    ecx,[0x87c590]（★★[0x87C590] ctype 表）→ movzx eax,bl → mov
+    al,[ecx+eax*2] → and eax,4（★digit 位测试）→ test eax → je
+    0x7db059
+  007db043  mov al,[edi] → mov cl,0xa → imul cl（★★10 进位）→ add
+    al,bl → sub al,0x30（★★数字累加 = [edi]*10 + byte - '0'！）→ inc
+    esi → inc esi（★2 字节步进）→ mov [edi],al → cmp esi,0xb78594 →
+    jl 0x7db016（★★[0xB7858C..0xB78594] 范围累加）
+  007db059  xor eax,eax → jmp 0x7dafd0 → 0x7db060: mov eax,
+    [0x87d620] → ret（★尾部邻函数）
+语义：**CRT 字符转换/数值解析复用内核（推断名）**——3 栈参双模式
+  状态机：① 模式 1：0x7DC5DC 5 参查询（参数含 [ebp+0xC]/[ebp+0x10]/
+  &[ebp-0x80]/0x80/0）——失败且 [0x7E1200]=GetLastError==0x7A
+  (ERROR_INSUFFICIENT_BUFFER) 时以零参重试取容量 → 0x7C9430 malloc →
+  二次装载 → 0x7C91D0 strncpy 拷贝 → 成功写输出，失败 0x7C93E8 free+
+  返 -1；② 模式 0：0x7DC4C9 5 参查询 → [0x87C79C] 计数分派（>1 走
+  0x7D1311 _isctype / 否则查 [0x87C590] ctype 表 digit 位）→
+  [0xB7858C] 表 2 字节步进逐位十进制累加（[edi]=[edi]*10+bit-0x30）
+  到 [0xB78594]。★★与 batch 048（_setmbcp ctype 表装载）、batch
+  024/044（_isctype）、batch 020（malloc/free）、batch 003
+  （strncpy）、batch 361（GetLastError）构成 CRT 字符处理工具链。
+
+二、调用点（62 处 E8，5 宿主核验——全部 0x7D6xxx ctype/locale 区）
+----------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x7DAF28）：**命中 62 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x7D617C-0x7D6485（43 处）→ FUN_007d6146 [0x7D6146-0x7D6493]
+     body=846 —— 未登记，★+0x11 步进规律分发链（0x7D617C/618D/619E/
+     61AF/61C3/61D4/61E2/61F3/6207/6218/6229/623A/624E/625F/6270/
+     6281/6295/62A6/62B7/62C8/62DC/62ED/62FE/630F/6323/6334/6345/
+     6356/636A/637B/638C/639D/63B4/63C8/63DC/63F0/6407/641B/642F/
+     6443/645A/646E/6485）
+  2) 0x7D6649/0x7D6659/0x7D6669（3 处）→ 无归属（函数间隙）
+  3) 0x7D691E-0x7D6A0F（15 处）→ FUN_007d68fb [0x7D68FB-0x7D6A1C]
+     body=290 —— 未登记
+  4) 0x7D6ADA → FUN_007d6aa2 [0x7D6AA2-0x7D6CE6] body=581 —— ★★已登
+     记 batch 048 ctype 表装载（_setmbcp 核心，GetCPInfo + LeadByte
+     映射表）！
+现场 disasm 核验（三处代表性全读）：
+  FUN_007d6146（0x7D617C，846B 未登记——43 处+0x11 步进分发链首处）：
+    现场 0x7D6160-0x7D619D：inc ebp → mov [ebp-8],ecx → 失败路径 or
+    eax,-1 → push ebx → lea ecx,[esi+4]（★对象+4）→ push edi → push
+    ecx（★参1=&[esi+4]）→ push 0x31（★★'1' 字符常量！）→ push eax
+    → push 1（★模式=1）→ 0x7D617C: call 0x7daf28（★★本函数）→ mov
+    edi,eax → lea eax,[esi+8] → push eax → push 0x32（★★'2'！）→
+    push [ebp-4] → 0x7D618D: call 0x7daf28（★★第二处——0x31/0x32
+    字符递增，+0x11 步进 = 字符表逐项转换分发链！）
+  FUN_007d68fb（0x7D691E，290B 未登记——15 处）——现场 0x7D6900-
+    0x7D6A0F：push edi → movzx edi,word[0xb78534]（★[0xB78534] word
+    全局）→ test esi → 失败 or eax,-1 → lea eax,[esi+0xc] → push
+    ebx → push eax（★参1）→ push 0x15（★长度常量 21）→ push edi →
+    push 1（★模式=1）→ 0x7D691E: call 0x7daf28（★★本函数）→ mov
+    ebx,eax → lea eax,[esi+0x10] → push eax → push 0x14（★20）→
+    push edi → push 1 → 0x7D692E: call 0x7daf28（★★第二处——长度
+    常量 21/20 递增，同款模式 1 分发）
+  FUN_007d6aa2（0x7D6ADA，581B ★★batch 048 已登记 _setmbcp ctype 表
+    装载）——现场 0x7D6AC7-0x7D6AE4：movzx eax,word[0xb7852c]（★
+    [0xB7852C] word）→ push 0xb782b0（★参4=目标）→ push 0x1004（★
+    参3=长度 0x1004）→ push eax（★参2=[0xB7852C]）→ push ebx（★参
+    1=模式）→ 0x7D6ADA: call 0x7daf28（★★本函数——batch 048 宿主
+    装载路径现场！）→ add esp,0x10 → test eax → jne 0x7D6C98 → mov
+    esi,0x202（★后续 0x202 常量——代码页/状态推断）
+★统一形态：62 处调用点全在 0x7D6xxx ctype/locale 区，三形态——
+  FUN_007d6146 的「&[esi+N] + 字符常量 0x31/0x32/0x33… + 模式 1」+
+  0x11 步进转换分发链（43 处）、FUN_007d68fb 的「&[esi+N] + 长度常量
+  0x14/0x15/0x16… + 模式 1」分发链（15 处）、FUN_007d6aa2 的「模式 +
+  [0xB7852C] + 0x1004 + 目标」装载（1 处）——本函数=CRT 字符/数值转
+  换复用内核，被 ctype 表装载与多字符表转换链集中消费。★★宿主
+  FUN_007d6aa2 已登记（batch 048），FUN_007d6146/FUN_007d68fb 未登
+  记（两新宿主），0x7D6649-6669 三间隙。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x7D6AA2 —— ★★已登记（batch 048 ctype 表装载 _setmbcp 核心——本
+    批调用点 0x7D6ADA 宿主！）
+  0x7D1311 —— ★★已登记（batch 024/044 字符分类查询 _isctype——函数
+    体模式 0 分支调用）
+  0x7C9430 —— ★★已登记（batch 020 CRT 内部 malloc 入口——函数体两
+    处）
+  0x7C93E8 —— ★★已登记（batch 020 CRT 内部 free——函数体错误清理）
+  0x7C91D0 —— ★★已登记（batch 003 _strncpy——函数体模式 1 拷贝段，
+    且有 _REIMPL 行 strncpy_legacy 已 C++ 复刻！）
+  [0x7E1200] —— ★★batch 361 IAT 实锤 GetLastError——函数体 call 后
+    cmp eax,0x7a（ERROR_INSUFFICIENT_BUFFER=122）重试判定，语义完全
+    吻合！
+  FUN_007d6146/FUN_007d68fb —— ★未登记（两新宿主）
+  0x7DC5DC/0x7DC4C9 —— ★未登记（模式 1/0 的 5 参查询——新候选）
+  [0x87C79C]/[0x87C590]/[0xB7858C]/[0xB78594]/[0xB78534]/[0xB7852C]
+  —— ★未登记（新全局族——计数/ctype 表/数字源表）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 048（0x7D6AA2 ctype 表装载 _setmbcp——本批调用点
+    0x7D6ADA = 其装载路径现场，62 处中唯一已登记宿主！）
+  ★★★batch 024/044（0x7D1311 _isctype——函数体模式 0 分支 digit 分
+    类调用现场）
+  ★★★batch 020（0x7C9430/0x7C93E8 malloc/free——模式 1 缓冲装载与
+    错误清理）
+  ★★★batch 003（0x7C91D0 _strncpy——模式 1 拷贝段，C++ 复刻
+    strncpy_legacy 已在 runtime/ 落地！）
+  ★★★batch 361（[0x7E1200]=GetLastError——0x7A 重试判定的导入槽语
+    义与 batch 361 IAT 实锤互证）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★0x7A=ERROR_INSUFFICIENT_BUFFER 重试判定（call [0x7E1200] →
+   cmp eax,0x7a——仅容量不足才零参重试取容量，其它错误直接返 -1）；
+② ★★两段式缓冲装载（零参查容量 → 0x7C9430 malloc → 5 参真装载 →
+   0x7C91D0 strncpy 拷贝——查-分配-装-拷四步）；
+③ ★★错误清理走 free 非 delete（0x7C93E8——CRT 内部 free 家族）；
+④ ★★非 0 失败统一返 -1（or eax,0xffffffff——0x7dafcd 汇合）；
+⑤ ★★模式 0 十进制累加用 imul cl 单字节乘法（[edi]*10 + byte -
+   0x30——10 进位手写循环）；
+⑥ ★★[0xB7858C..0xB78594] 2 字节步进数字源表（inc esi ×2——word
+   步进逐位解析，结束比较 jl 0x7db016）；
+⑦ ★★[0x87C79C] 计数分派（>1 走 0x7D1311 _isctype / 否则查
+   [0x87C590] ctype 表 digit 位——两种 digit 判定路径并存）；
+⑧ ★★0x11 步进转换分发链（FUN_007d6146 43 处 +0x11 均匀步进 + 字符
+   常量 0x31/0x32/0x33 逐项递增——编译器展开的字符表转换循环）；
+⑨ ★★局部 0x80 缓冲栈上装载（lea [ebp-0x80]——固定 128B 栈缓冲首
+   查，不足才堆分配）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「CRT 字符转换/数值解析复用内核」——
+  MSVC6 CRT 多字符/代码页转换族推断，具体函数名未定位）、模式
+  1/0 的精确语义（缓冲查询 vs 数值解析推断）、0x7DC5DC/0x7DC4C9
+  精确身份（5 参查询——新候选）、[0x87C79C]/[0x87C590]/
+  [0xB7858C..0xB78594]/[0xB78534]/[0xB7852C] 全局精确语义（计数/
+  ctype 表/数字源表推断）、FUN_007d6146/FUN_007d68fb 宿主业务
+  （字符表转换分发链推断）、0x7DC5DC 与 0x7DC4C9 的分工（模式 1
+  vs 模式 0 查询）。
