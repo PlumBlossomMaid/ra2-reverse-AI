@@ -1,0 +1,157 @@
+frontier batch 875 —— 0x00582D70 地图格状态寻址处理单元（1028B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=59 / body=1028B）。
+TARGET = 0x00582D70（1028B，0x582D70-0x58316D，thiscall 2 栈参 ret）。
+★★推断名：**地图格状态寻址处理单元（MapClass 0x58xxxx 区格处理——坐标
+对→Y<<9+X→[0x87F924] 查格（空回落哑元 0xABDC50）→区间判定→方向表偏
+移→[edi+0x6C]/[edi+0x70] 权重寻址→位操作拼装→表查/收尾）**。
+
+一、函数体全读（1028B，disasm 0x582D70 0x400 全量）
+------------------------------------------------
+参数契约（thiscall 2 栈参）：ecx = this（MapClass）、[esp+4] = 栈参1
+（索引/偏移）、[esp+0x30] = 栈参2（输出缓冲）。
+机器码（1028B 全读，分段要点）：
+  00582d70  sub esp,0x28 → push 族 → mov ebx,[esp+0x34]（★栈参1=索引）
+    → mov edi,ecx（★this）→ mov eax,[edi+ebx*4+0x80]（★this+0x80 表取
+    项）→ 存栈 → mov ecx,[esp+0x3c]（★栈参2）→ 坐标对读入 [esp+0x40]/
+    [esp+0x10]
+  00582da6  movsx eax,word[esp+0x42]（★Y）→ movsx edx,cx（★X）→ shl
+    eax,9 → add eax,edx（★★idx = Y<<9 + X）→ js 0x582dcd → cmp
+    0x40000 → jge 0x582dcd（★越界）→ mov edx,[0x87f924]（★★cell 数组
+    基址）→ mov eax,[edx+eax*4]（★查格）→ test → je 0x582dcd → mov
+    esi,eax → jmp → 0x582dcd 回落: mov [0xabdc74],ecx（★哑元坐标缓存）
+    → mov esi,0xabdc50（★★回落哑元 cell——QWEN.md 阶段 9 实锤！）
+  00582dd8  mov ecx,esi → call 0x486750（★★batch 195 word 数组判定族
+    同区——区间判定）→ test → jne 0x582f22 → call 0x486770 → test →
+    jne → call 0x484f20（★cell 方法）→ mov esi,[eax+0x2c]（★+0x2C）→
+    方向表：lea eax,[esi+2] → and eax,7 → lea ecx,[eax*4+0x89f688]（★
+    0x89F688 方向表 QWEN.md 实锤）→ push → call 0x42d510（★★batch 070
+    二维点加法）→ 同款 esi-2 + 0x89F688 → call 0x42d510 ——★★双向偏
+    移（+2/-2）坐标计算
+  00582e8d  call 0x484f20（★第二 cell）→ mov ebp,eax → call 0x484f20
+    （★第三 cell）→ 分支 0x582ee1: mov eax,[ebp+0x1c0]（★+0x1C0）→
+    add ebp,0x30 → push 族 → call 0x429780（★★结构操作——未登记）→
+    同款 [esi+0x190] → call 0x429780 ——★★双对象 +0x1C0/+0x190 结构
+    装载
+  00582f22  （区间判定通过分支）mov ecx,[0xaa0e28]（★[0xAA0E28] 全局）
+    → test → jne → mov ecx,[0xabad1c]（★[0xABAD1C] 全局）→ mov
+    eax,[esi+0x38] → sub eax,ecx → mov esi,[eax*4+0x82a944]（★★
+    [0x82A944] 表索引——新全局！）→ 方向表 ±4 三次 0x42d510 坐标计算
+  00582fb2  push 坐标对 → call 0x56d430（★★★batch 355 MapClass 动态
+    行宽坐标索引！×5 次）→ test/jge → clamp [edi+0x6C] → mov ecx,
+    [edi+0x70]（★+0x6C 上界/+0x70 权重表）→ lea edx,[ebx+eax*4] → add
+    eax,edx → movsx esi,word[ecx+eax*2]（★★权重表 word 读取）→ 位操
+    作：shl eax,0x10 | or ecx / and 0xF / shl 4 / or（★★16 位拼装）→
+    存栈
+  00583029  mov edx,[ebp]（★表基址）→ lea ecx,[esi+esi*2] → mov esi,
+    [edx+ecx*8+4]（★项指针）→ mov edx,[ecx*8+0x10]（★计数）→ 循环
+    cmp eax,[esi] → je 命中 → add esi,0xc（★12B 步进）→ dec → jns →
+    未命中 push → call 0x58af80（★★表新增——未登记）→ 同款第二段 ×2
+    （三处同构表查/新增）→ 0x583165 收尾: push 族 → call 0x589e20（★
+    最终收尾——未登记）→ pop 族 → ret
+语义：**地图格状态寻址处理单元（推断名）**——thiscall 2 栈参：① 索引
+  取 this+0x80 表项 + 栈参2 坐标对；② 坐标对 → Y<<9+X → [0x87F924]
+  cell 数组查格（越界/空回落哑元 0xABDC50 + [0xABDC74] 存坐标）；③
+  0x486750/0x486770 区间判定（通过走 [0xAA0E28]/[0xABAD1C] 全局 +
+  [0x82A944] 表索引分支）；④ 0x484F20 取 cell → [0x89F688] 方向表 ±2/
+  ±4 偏移 + 0x42D510 点加法多段计算；⑤ 双对象 +0x1C0/+0x190 经
+  0x429780 装载；⑥ 0x56D430（动态行宽索引）×5 + [edi+0x6C] clamp +
+  [edi+0x70] 权重表 word 读取 + 位操作拼装；⑦ 表查（12B/项步进 +0x10
+  计数）未命中 0x58AF80 新增（三处同构）→ 0x589E20 收尾。★★与
+  MapClass 区域/路径系统同族（0x58xxxx RMG/MakingRegions 区），哑元回
+  落 + Y<<9+X 硬编码 512 宽索引（batch 235/281 同款）。
+
+二、调用点（3 处 E8，3 宿主全核验——统一「[项+8] 字节门控 → call」）
+----------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x582D70）：**命中 3 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x582358 → FUN_00581f90 [0x581F90-0x582499] body=1290 —— ★★batch
+     868/869 已多次核验宿主！
+  2) 0x582D57 → FUN_00582d30 [0x582D30-0x582D6D] body=62 —— 紧邻本函数
+     前批量调用器（未登记）
+  3) 0x584B2E → MapClass::RecalculateSubZones [0x584550-0x584E41]
+     body=2290 —— ★★batch 174 已登记带名！
+现场 disasm 核验（三处全读）：
+  FUN_00581f90（0x582358，1290B）——现场 0x582340-0x582366：push esi →
+    push esp（★坐标）→ mov eax,edi → add eax,edx（★[edi+edx+8] 项）→
+    mov cl,[eax+8]（★★[项+8] 字节门控！）→ test → je 0x58235d（★跳过）
+    → mov edx,[esp+0x80]（★栈参2）→ mov ecx,esi（★this）→ push edx →
+    push eax（★项）→ 0x582358: call 0x582d70（★★本函数——门控通过才
+    处理！）→ inc ebp → add edi,0x10 → cmp → jl 0x58233f（★批量循环——
+    +0x10 步进数组遍历）
+  FUN_00582d30（0x582D30，62B 紧邻批量调用器）——现场 0x582D30-0x582D6B
+    ：mov esi,ecx（★this）→ mov eax,[esi+0x60]（★计数）→ jle 0x582d69
+    → 循环: mov edx,[esi+0x54]（★数组基址）→ mov eax,edi → add eax,edx
+    → mov cl,[eax+8]（★★[项+8] 字节门控！）→ test → je 0x582d5c → mov
+    ebp,[esp+0x10]（★栈参）→ push ebp → push eax（★项）→ mov ecx,esi →
+    0x582D57: call 0x582d70（★★本函数——[+0x54] 数组逐项 +0x10 步进批
+    量处理！）→ mov eax,[esi+0x60] → inc ebx → add edi,0x10 → cmp →
+    jl 循环 → ret 4（★2 栈参）
+  MapClass::RecalculateSubZones（0x584B2E，2290B 带名——batch 174 已登
+    记）——现场 0x584B00-0x584B55：mov edi,0xf03b0471（★随机常数跳转
+    边界）→ 0x584B0E: movsx esi,word[ecx+6]（★Y 边界）→ cmp esi,edx →
+    jl 0x584b3f（★越界跳过）→ add ebp,edx → cmp esi,ebp → jge 跳过 →
+    cmp byte[ecx+8],0（★★[项+8] 字节门控！）→ je 0x584b3f → mov edx,
+    [esp+0x1c] → push edx（★栈参2）→ push ecx（★项）→ mov ecx,ebx（★
+    this）→ 0x584B2E: call 0x582d70（★★本函数——双层坐标边界判定 +
+    门控后处理！）→ 后续坐标恢复（sub ecx,0x10 / dec esi）→ jne
+    0x584adc（★双循环）
+★统一形态：三处调用点全「[项+8] 字节门控 → push 栈参/push 项 → call
+  0x582D70」——本函数=地图格处理单元，被批量循环（FUN_00582d30 数组逐
+  项 +0x10 步进 / FUN_00581f90 循环 / RecalculateSubZones 双层坐标循
+  环）按 [项+8] 标志择格调用。★★两宿主 batch 174/868 已登记，FUN_
+  00582d30 紧邻=本函数的批量消费端。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x56D430 —— ★★已登记（batch 355 MapClass 动态行宽坐标索引——本批 5
+    次调用现场！）
+  0x42D510 —— ★★已登记（batch 070 二维点加法——多次调用现场）
+  [0x87F924] —— ★★已登记（batch 281 cell 数组基址）
+  0xABDC50/[0xABDC74] —— ★★QWEN.md 阶段 9 实锤（哑元 cell + 坐标缓存）
+  [0x89F688] —— ★★QWEN.md 实锤方向表（本批 ±2/±4 多段偏移）
+  0x484F20 —— ★未登记（cell 方法——新候选）
+  0x429780 —— ★未登记（双对象 +0x1C0/+0x190 结构装载——新候选）
+  0x58AF80/0x589E20 —— ★未登记（表新增/收尾——新候选）
+  [0xAA0E28]/[0xABAD1C]/[0x82A944] —— ★未登记（新全局族）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 174（MapClass::RecalculateSubZones——本批调用点 0x584B2E
+    = 其双层坐标循环内部格处理，batch 864/868/870 同宿主再消费）
+  ★★★batch 355（0x56D430 动态行宽坐标索引——本批 5 次调用现场）
+  ★★★batch 281（[0x87F924] cell 数组 + 哑元回落 + Y<<9+X 索引——同款
+    内联查表模板）
+  ★★batch 070（0x42D510 二维点加法——多次调用）
+  ★★batch 195（0x486750/0x486770 word 数组判定族同区）
+  ★★batch 868/869（FUN_00581f90 宿主——本批同宿主格处理再消费）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★Y<<9+X 硬编码 512 宽索引 + cmp 0x40000 边界（batch 235/281 同款
+   怪癖——固定 512 网格）；
+② ★★哑元回落（[0x87F924] 查格空 → [0xABDC74] 存坐标 + esi=0xABDC50
+   ——QWEN.md 阶段 9 实锤复用）；
+③ ★★[项+8] 字节门控（三调用点统一——[+0x54] 数组/+0x80 表项/+0x30
+   子区域项的门控标志，置位才处理）；
+④ ★★方向表 ±2/±4 多段偏移（and 7 索引 0x89F688——前 0x582E04 和
+   0x582E1E 两处 +2/-2、0x582F4F 起三处 ±4）；
+⑤ ★★位操作拼装（shl eax,0x10 | or + and 0xF + shl 4 + or——16 位
+   坐标/ID 拼装）；
+⑥ ★★表查 12B/项步进 + 未命中 0x58AF80 新增（三处同构不带锁）；
+⑦ ★★[0xAA0E28]/[0xABAD1C] 双全局 + [0x82A944] 表索引分支（区间判定
+   通过分支的取值源）；
+⑧ ★★双对象 +0x1C0/+0x190 结构装载（0x429780 两次——对象对处理）；
+⑨ ★★0x584B00 处随机常数 0xF03B0471（jmp 边界推断——编译器跳转表混
+   入断言的形态）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「地图格状态寻址处理单元」）、this+0x80 表/
+  +0x54 数组/+0x60 计数/+0x6C 上界/+0x70 权重表的精确语义（格状态表推
+  断）、[项+8] 门控标志语义、[0x82A944] 表角色、0x484F20 身份（cell
+  区域查询推断）、0x429780 结构装载语义（+0x1C0/+0x190 字段推断）、
+  0x58AF80/0x589E20 身份、0x56D430 结果 clamp 的业务含义、位操作拼装
+  的消费端。
