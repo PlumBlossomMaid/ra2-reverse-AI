@@ -1,0 +1,122 @@
+frontier batch 894 —— 0x007C3910 换算剩余量写入器（56B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=34 / body=56B）——E8 全局扫描
+实测命中 4 处（0x7Bxxx/0x7Cxxx MSVC6 静态 CRT 区）。
+TARGET = 0x007C3910（56B，0x7C3910-0x7C3947，thiscall 1 栈参 ret 无清理，
+0x7C 区——QWEN.md 实锤「MSVC6 静态 CRT」）。
+★★推断名：**换算剩余量写入器（*60÷[+0x78] 换算——this+0x148 = 栈参1 -
+槽0x50()*60÷this+0x78；与紧邻 0x7C3960 查询器成写/读一对；**batch 799
+文档点名「0x7C3910/0x7C3960 共用 [this+0x50] 回调槽做 *60/[this+0x78]
+换算」= 本批兑现**）**。
+
+一、函数体全读（56B，disasm 0x7C3910 0x60 全量）
+------------------------------------------------
+参数契约（thiscall 1 栈参 ret 无清理）：ecx = this（esi）、edx = 栈参1
+（edi=edx——宿主实锤传商/字段值）。
+机器码（56B 全读，逐条要点）：
+  007c3910  push esi → mov esi,ecx（★this）→ push edi → mov edi,edx（★栈
+    参1=edi）→ push esi（★压 this 给回调槽）→ mov [esi+0x148],0（★
+    this+0x148 清零）→ call [esi+0x50]（★★虚表槽 0x50——batch 799 实锤
+    回调槽；返回值 eax）→ lea eax,[eax+eax*2]（★×3）→ xor edx,edx（★
+    无符号除法高位清）→ add esp,4（★清 push）→ lea eax,[eax+eax*4]
+    （★×5 → 累计×15）→ shl eax,2（★×4 → 累计×60）→ div [esi+0x78]
+    （★★÷this+0x78 无符号——batch 799 实锤 *60/[this+0x78] 换算）→ sub
+    edi,eax（★栈参1 - 换算值）→ mov eax,[esi+0x148]（★=0——刚清零）→
+    sub edi,eax（★-0 恒等）→ mov [esi+0x148],edi（★★this+0x148 = 栈参1
+    - 换算值）→ pop edi → pop esi → ret（★返回 eax=0——最后 mov eax 取
+    的是清零后的 +0x148）
+语义：**换算剩余量写入器（推断名）**——thiscall 1 栈参：① this+0x148
+  清零；② 虚表槽 0x50 返回量经 ×60 ÷ this+0x78 换算（lea×3+lea×5+shl2
+  +div——batch 799 实锤惯用）；③ 栈参1 - 换算值 → 写回 this+0x148（剩
+  余量 = 传入值 - 当前消费换算）；④ 返回 eax=0（恒——清零后读取）。
+  ★★与紧邻 0x7C3960（同构：槽 0x50 → ×60 ÷ this+0x78 → mov ecx,eax →
+  mov eax,[esi+0x148] → add eax,ecx → ret——返回 剩余+换算查询器）成
+  写/读一对：0x7C3910 写入剩余、0x7C3960 读剩余+当前换算。
+
+二、调用点（4 处 E8，3 宿主全核验）
+-----------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x7C3910）：**命中 4 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x7BEB48 → FUN_007bea80 [0x7BEA80-0x7BEE18] body=921 —— 未登记
+  2) 0x7C2D6E → FUN_007c2d00 [0x7C2D00-0x7C30C1] body=962 —— ★★已登记
+     batch 799（回调式流状态机·上层推进器——文档点名本批目标！）
+  3) 0x7C2DF6 → FUN_007c2d00（同上——第二次调用）
+  4) 0x7C320F → FUN_007c30d0 [0x7C30D0-0x7C322C] body=349 —— 未登记
+     （★batch 894 picker 池同现 0x007C30D0 body=349）
+现场 disasm 核验（代表性全读）：
+  FUN_007bea80（0x7BEB48，921B 未登记）——现场 0x7BEB38-0x7BEB4D：
+    lea eax,[ebp+ebp*2]（★×3）→ lea eax,[eax+eax*4]（★×5）→ shl eax,2
+    （★×4 → ×60）→ cdq → idiv [edi+0x34]（★★÷宿主对象+0x34——宿主自
+    己先算一个商！）→ mov edx,eax（★★栈参1=宿主算的商）→ 0x7BEB48:
+    call 0x7c3910（★本函数）→ or eax,0xffffffff（★★call 后强制 eax=-1
+    ——返回值忽略，-1 为成功哨兵！）
+  FUN_007c2d00（0x7C2D6E/0x7C2DF6，962B ★★batch 799 已登记）——第一处
+    0x7C2D60-0x7C2D7A：lea eax,×3 → lea ×5 → shl2 → cdq → idiv [esi+0x74]
+    （★★÷this+0x74——宿主算商）→ mov edx,eax → 0x7C2D6E: call 0x7c3910
+    → mov ecx,esi → call 0x7c3960（★★紧邻查询器——写后读配对实锤！）
+    → mov [esi+0x20],eax（★读结果存 +0x20）；第二处 0x7C2DF1-0x7C2E09：
+    mov edx,[esi+0x24]（★★栈参1=this+0x24 直接字段——非商！）→ mov
+    ecx,esi → 0x7C2DF6: call 0x7c3910 → mov eax,[esi+0x150] → and edx,6
+    → cmp dl,6 → je 0x7c3083（★后续状态位分支）
+  FUN_007c30d0（0x7C320F，349B 未登记——batch 894 picker 池同现）——
+    现场 0x7C31F1-0x7C3214：cmp edi,-1 → je 0x7C31FB → cmp edi,-2 →
+    jne 0x7C3214（★★edi∈{-1,-2} 哨兵才走计算路径！）→ lea eax,[ebp+
+    ebp*2]（×3）→ mov ecx,esi（this）→ mov edi,ebp → lea ×5 → shl2 →
+    cdq → idiv [esi+0x74]（★÷this+0x74）→ mov edx,eax → 0x7C320F: call
+    0x7c3910（★本函数）→ 0x7C3214: mov eax,edi → pop 族 → ret 4（★返回
+    哨兵/原值）
+★统一形态：三宿主全「宿主侧先算商（idiv [宿主+0x34]/[this+0x74]）或取
+  字段（[this+0x24]）→ mov edx → call 0x7C3910」——本函数 = 流容器对象
+  的剩余量写入器，被 batch 799 上层推进器（0x7C2D00）+ 两同级函数消费。
+  ★★四调用点里 0x7C2D6E 后紧跟 call 0x7C3960——写/读一对在同一宿主
+  初始化段连续调用（batch 799 文档「call 0x7C3910 → call 0x7C3960 →
+  mov [esi+0x20],eax」实锤）。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x7C2D00 —— ★★★已登记 batch 799（回调式流状态机·上层推进器——
+    **文档点名「0x7C3910/0x7C3960/0x7C3750/0x7BE660/0x7BE4A0/0x7BD270/
+    0x7BD290/0x7BD2B0 均未登记（新候选）」「0x7C3910/0x7C3960 共用
+    [this+0x50] 回调槽做 *60/[this+0x78] 换算」= 本批目标 0x7C3910 当场
+    兑现！且文档已列函数体形态（call [esi+0x50] → lea*3/lea*5/shl2/div
+    [esi+0x78]）**）
+  0x7C3960 —— ★未登记（batch 799 点名新候选——紧邻查询器，body=36B
+    过滤池外，本批文档带证）
+  0x7BEA80/0x7C30D0 —— ★未登记（两宿主）
+  0x7BE660/0x7BE4A0/0x7BD270/0x7BD290/0x7BD2B0/0x7C3750 —— ★batch 799
+    点名新候选族（本批未涉）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 799（0x7C2D00 回调式流状态机·上层推进器——**文档点名候选
+    「0x7C3910/0x7C3960（共用 [this+0x50] 回调槽做 *60/[this+0x78] 换
+    算）」= 本批目标 0x7C3910 当场兑现；且 0x7C2D00 初始化段正是本批调
+    用点 0x7C2D6E/0x7C2DF6 的宿主，现场实锤「call 0x7C3910 → call
+    0x7C3960 → mov [esi+0x20],eax」**）
+  ★★0x7C 区回调流家族（batch 799 文档：0x7C2D00/0x7C3910/0x7C3960/
+    0x7C3750 共享 [this+0x50]/[this+0x48]/[this+0x40] 回调槽序列——本批
+    再证槽 0x50 + 字段 +0x78/+0x148/+0x74 家族形态）
+  ★★batch 001/020 类（CRT free/new 家族——0x7C 区同区参照）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★*60 换算是 lea*3 + lea*5 + shl2 链（无乘法器指令——batch 799 同
+   款惯用）；② ★★div [esi+0x78] 无符号除法（xor edx 清高位）；③ ★★
+   this+0x148 先清零再写（写入非累加——重组语义）；④ ★★push esi 给
+   虚表槽 0x50 当栈参（thiscall 槽却压 this——回调槽约定）；⑤ ★★返回
+   eax=0 恒（清零后读——调用方忽略或用 -1 哨兵覆盖，0x7BEB48 现场 call
+   后 or eax,-1）；⑥ ★★宿主两侧各自算商（idiv [宿主+0x34]/[this+0x74]）
+   或直取字段（[this+0x24]）作为栈参1；⑦ ★★0x7C2DF6 调用点栈参1=
+   this+0x24 直接字段（非换算商——双用途栈参）；⑧ ★★0x7C320F 调用点
+   edi∈{-1,-2} 哨兵门控才走计算。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「换算剩余量写入器」——batch 799 未命名）、
+  槽 0x50/字段 +0x78/+0x148/+0x74/+0x24 精确业务语义（流容器剩余量推断）、
+  *60 换算的单位含义（批 799 同 partial——流量/进度换算推断）、FUN_
+  007bea80/FUN_007c30d0 宿主业务（921B/349B 未登记）、0x7C2DF6 调用点
+  （栈参1=this+0x24）与 0x7C2D6E（栈参1=商）的差异语义、返回值被
+  0x7BEB48 强制 or -1 的宿主原因。
