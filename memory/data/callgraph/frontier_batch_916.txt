@@ -1,0 +1,146 @@
+frontier batch 916 —— 0x00551E50 LCW/Format80 压缩编码内核（407B）
+===================================================================================
+
+候选来源：picker（_filter_batch799.py unique_callers 降序榜首——
+callers=3 / deps=8 / body=407B，0x55 区——LCW 压缩管道族）。
+TARGET = 0x00551E50（407B，0x551E50-0x00551FE4，cdecl/fastcall 混
+合签名 ret 4）。
+★★推断名：**LCW/Format80 压缩编码内核（被 LCW 压缩管道三件套共用
+（LCWPipe::Put×2/LCWPipe::Flush/LCWStraw::Get——后两者带名宿主）：
+0x81 头标记 + lodsb/stosb 字面量 + 64 前瞻匹配（repe scasb + 最小
+匹配 0x41）+ 三级长度编码 + 0x80 终止——batch 832 partial 点名
+「0x551E50 未登记候选」当场兑现）**。
+
+一、函数体全读（407B，disasm 0x551E50 0x1A0 全量）
+------------------------------------------------
+参数契约（ret 4 清 1 栈参 + ecx/edx 前两参——fastcall 混合）：
+ecx=输入串（esi）、edx=输入长度、[ebp+8]=栈参1（输出缓冲/预算——
+宿主 push eax 传入）。
+机器码（407B 全读，逐段要点）：
+  序言: push ebp → mov ebp,esp → sub esp,0x2c → push ebx/esi/edi →
+    mov [ebp-0x2c],edx（★输入长度）→ mov [ebp-0x28],ecx（★输入）→
+    cld → mov edi,[ebp-0x2c]（★输出缓冲）→ mov esi,[ebp-0x28] →
+    mov edx,[ebp+8]（★栈参1）→ mov ebx,esi → add ebx,edx（★输入
+    末端）→ mov [ebp-0x10],ebx（★末端缓存）→ mov al,0x81 → stosb
+    （★★0x81 头标记——LCW 格式！）→ lodsb → stosb（★首个字面量拷
+    贝）
+  主循环 0x551ed3: mov al,[esi] → cmp al,[esi+0x40] → jne 0x551f11
+    （★★64 前瞻匹配检测——LZ 类贪婪匹配）→ mov edi,esi → mov ecx,
+    [ebp-0x10] → sub ecx,edi → repe scasb → dec edi → mov ecx,edi
+    → sub ecx,esi → cmp ecx,0x41 → jb 0x551f0f（★★匹配长度<0x41
+    不采用——最小 65B）→ 匹配成功: mov al,0xfe → stosb（★★0xFE
+    匹配标记）→ xchg ecx,eax → stosw（★匹配偏移 word）→ mov al,ch
+    → stosb（★长度余量）→ jmp 主循环
+  字面量回退 0x551f11: mov ecx,esi → sub ecx,edi → je 0x551f4d →
+    repne scasb → jne 0x551f4d → mov ebx,[ebp-0xc] → mov ah,[esi+
+    ebx-1] → cmp ah,[edi+ebx-2] → jne 0x551f11（★★逐字节回退比对
+    ——最大匹配确认）→ repe cmpsb → 长度记录 → cmp eax,[ebp-0xc]
+    （★更新最长匹配）→ mov [ebp-0xc],eax → mov [ebp-0x20],ebx（★
+    偏移记录）
+  编码分档 0x551f4d: mov ecx,[ebp-0xc]（★匹配长度）→ cmp ecx,2 →
+    jbe 0x551f89（★长度<=2 → 字面量）→ cmp ecx,0xa → ja 0x551f79 →
+    mov eax,esi → sub eax,[ebp-0x20] → cmp eax,0xfff → ja 0x551f79
+    → mov bl,cl → sub bl,3 → shl bl,4 → add ah,bl → xchg al,ah →
+    stosw（★★短匹配：长度-3 高半字节 + 偏移低字节 组合 word）→
+    0x551f79: cmp ecx,0x40 → ja 0x551faa → sub cl,3 → or cl,0xc0 →
+    mov al,cl → stosb（★★中档：0xC0+len-3 单字节）→ 偏移 → jmp →
+    0x551faa: mov al,0xff → stosb → stosw 长度 → stosw 偏移（★★长
+    档：0xFF 标记 + 长度 word + 偏移 word）
+  字面量出口 0x551f89: cmp [ebp-8],0 → jne 0x551f95 → mov
+    [ebp-0x14],edi → mov al,0x80 → stosb（★★0x80 字面量段标记）→
+    0x551f95: cmp byte[ebx],0xbf → je → inc byte[ebx]（★0x80 计数
+    器 ++——0xBF 上限特判）→ lodsb → stosb（★字面量字节）
+  收尾 0x551fce: mov ax,0x80 → stosb（★★0x80 终止标记）→ mov eax,
+    edi → sub eax,[ebp-0x24]（★输出长度 = edi - 输出基址）→ ret 4
+语义：**LCW/Format80 压缩编码内核（推断名）**——把输入数据编码为
+  LCW 压缩块：① 0x81 头标记 + 首个字面量；② 主循环 64 前瞻匹配检
+  测 + 逐字节回退最大匹配确认；③ 三级长度编码（短=组合 word / 中
+  =0xC0+len / 长=0xFF+双 word）；④ 字面量段 0x80 计数器打包；⑤
+  0x80 终止 + 输出长度返回。★★被 LCWPipe::Put（写压缩流）、
+  LCWPipe::Flush（冲刷）、LCWStraw::Get（解压回读）三方调用——LCW
+  压缩管道家族共用的编码/解码转换内核。
+
+二、调用点（4 处 E8，3 宿主全带名核验）
+---------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x551E50）：**命中 4 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x005521FE → LCWPipe::Put [0x005520A0-0x005522C6] body=551 —
+    — ★★★带名
+  2) 0x0055224B → LCWPipe::Put（同宿主 ×2）
+  3) 0x0055234C → LCWPipe::Flush [0x005522D0-0x0055238E] body=191
+    — ★★★带名
+  4) 0x005525AB → LCWStraw::Get [0x00552490-0x005525E9] body=346 —
+    — ★★★batch 832 已登记带名
+现场 disasm 核验（四处全读）：
+  LCWPipe::Put（0x5521FE，551B）——现场 0x5521E0-0x55220E: mov
+    [esi+0x10],eax → mov ecx,eax → mov eax,[esi+0x1c] → sub edi,ebp
+    → cmp ecx,eax → jne 0x55223e → mov edx,[esi+0x18] → mov ecx,
+    [esi+0x14] → push eax（★栈参1）→ call 0x551e50 ★ → mov dx,
+    [esi+0x1c] → mov ebp,eax → lea eax,[esi+0x24] → push 4 → push
+    eax（★后续——头 4B 写 [esi+0x24]）
+  LCWPipe::Put（0x55224B，第二处）——现场 0x552230-0x55225D: mov
+    edx,[esi+0x18] → push eax → mov ecx,ebx → call 0x551e50 ★ →
+    mov cx,[esi+0x1c] → mov ebp,eax → mov eax,[esi+0x1c] → mov
+    [esi+0x26],cx → add ebx,eax（★块头 word 写 [esi+0x26]）
+  LCWPipe::Flush（0x5234C，191B）——现场 0x52328-0x52355: cld →
+    mov [esi+0x10],0 → mov word[ebx],0xffff → call 0x631d30 → add
+    eax,edi → ... 0x552345: mov edx,[esi+0x18] → mov ecx,[esi+0x14]
+    → push eax → call 0x551e50 ★ → mov cx,[esi+0x10] → mov
+    ebx,eax（★Flush 冲刷路径）
+  LCWStraw::Get（0x5525AB，346B ★★★batch 832 已登记）——现场
+    0x552590-0x5525BA: mov [esi+0x26],ax → je 0x5525d5 → mov edx,
+    [esi+0x18] → mov ecx,[esi+0x14] → and eax,0xffff → add edx,4 →
+    push eax → lea edi,[esi+0x24] → call 0x551e50 ★ → mov [edi],ax
+    → push 4 → push edi → push edx → call 0x7ca090（★★batch 031
+    memmove——后续 4B 头写回）
+★统一形态：三宿主全「mov edx,[esi+0x18] → mov ecx,[esi+0x14] →
+  push 长度/预算 → call 0x551E50 → 块头 word 写 [esi+0x24/+0x26]」
+  ——本函数=LCW 压缩管道家族共用编码/转换内核（LCWPipe=压缩器 /
+  LCWStraw=解压器，+0x14=输入/+0x18=长度/+0x24/+0x26=块头）。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  LCWStraw::Get 0x5524C0 —— ★★★已登记 batch 832（partial 点名
+    「0x551C60/0x551E50 未登记 LCW 解码族新候选」= 本批兑现）
+  LCWPipe::Put / LCWPipe::Flush —— ★★★带名未登记（LCW 压缩管道家
+    族——本批三宿主实锤）
+  0x7CA090 —— ★★★已登记 batch 031（memmove 双端变体——宿主4 后续
+    4B 头写回）
+  0x55C0E0 / 0x55BB90 —— ★★已登记 batch 879/880（LCW 族内核——同
+    族参照）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 832（LCWStraw::Get——本函数=其补读路径解码调用，partial
+    点名「0x551E50 未登记候选」当场兑现）
+  ★★★LCWPipe::Put/LCWPipe::Flush（带名宿主——LCW 压缩管道写端，本
+    批首登记）
+  ★★batch 879（0x55C0E0 缓冲打包/转换内核——同 LCW/decode5s 族）
+  ★★batch 880（0x55BB90 压缩字面量游程编码器——同族编码端）
+  ★★batch 031（0x7CA090 memmove——宿主4 补读头写回）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★0x81 头标记 + 收尾 0x80 终止（LCW 格式标记——0x81=压缩块开
+  始、0x80=结束，与 batch 879/880 编码族标记系统一）；② ★★64 前瞻
+  匹配检测（cmp al,[esi+0x40]——只查 64B 窗口，非全串扫描）；③ ★★
+  匹配长度 <0x41 不采用（cmp ecx,0x41 → jb——最小匹配 65 字节，短匹
+  配走字面量）；④ ★★逐字节回退最大匹配确认（repne scasb + cmp
+  ah,[edi+ebx-2]——回退比对防假匹配）；⑤ ★★三级长度编码分档（<=2
+  字面量 / <=0xa 短 word 组合（len-3 高半字节）/ <=0x40 中档 0xC0+
+  len-3 单字节 / >0x40 长档 0xFF+双 word）；⑥ ★★0x80 字面量段计数
+  器（inc byte[ebx]——0x80 段长度累积，0xBF 上限特判 je）；⑦ ★★
+  fastcall 混合签名 ret 4（ecx/edx 前两参 + 1 栈参）；⑧ ★★返回值=
+  输出长度（edi - 基址）；⑨ ★★三宿主统一「mov edx,[+0x18] → mov
+  ecx,[+0x14] → push → call」形态（LCW 管道 +0x14/+0x18 字段族）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（LCW/Format80 压缩编码内核推断——encode80 关联
+  推断）、0x81/0x80/0xFE 标记精确格式语义（Format80 标记推断、XCC
+  decode5s 对应关系待证）、三级长度编码与 batch 879/880 编码分档的
+  关系（同族未逐字节比对）、+0x14/+0x18/+0x24/+0x26 字段族语义（输
+  入/长度/块头——LCW 管道字段推断）、LCWPipe::Flush 前置 0x631D30
+  身份、与 QWEN.md encode80/[OverlayPack] 的关系（待证——C++ 侧
+  code/rewrite/map/ 已有 encode80 实现可对拍）。
