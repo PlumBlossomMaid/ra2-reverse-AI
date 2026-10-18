@@ -1,0 +1,120 @@
+frontier batch 860 —— 0x00406270 AudioStream::AdjustAudioEventPanning（带名，72B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=77 / body=72B，带名）。
+TARGET = 0x00406270（72B，0x406270-0x4062B7，fastcall 形态 ecx=this/edx=栈
+参值）。
+★★推断名：**音频位置下发器（AudioStream::AdjustAudioEventPanning——带名
+functions.tsv，batch 084 点名「0x4061D0 下发音量、0x406270 下发位置」的
+孪生第二环）**——与 batch 859 的 0x4061D0 逐结构同构的双胞胎：① this
+->+0x1C 类型分派（==3 分支 A / 其它分支 B）；② 栈参 edx clamp 到 [0,
+0x4000=16384]；③ 无定点缩放（同 0x4061D0 但省略 shr/imul 链），子对象偏
+置 **+0x108**（音量用 +0xB8）；④ 分支 A tail 0x407170 / 分支 B tail
+0x407150（batch 111 已登记）。
+
+一、函数体全读（72B，disasm 0x406270 0x60）
+------------------------------------------------
+参数契约（fastcall 形态：ecx=this（AudioClass 位置对象）、edx=栈参位置/
+值）。
+机器码（72B 全读，分段要点）：
+  段1（类型分派）：
+  00406270  mov eax,[ecx+0x1c]（★★this->+0x1C 位置类型字段）→ cmp eax,3
+    → jne 0x406298（★★+0x1C==3 → 分支 A，否则分支 B）
+  段2（clamp 值——共用双分支）：
+  00406278  分支 A: cmp edx,0x4000 / jbe 0x406287（★>0x4000 则钳）→ mov
+    edx,0x4000 → jmp 0x40628d → test edx,edx / jge 0x40628d（★<0 则钳
+    0）→ xor edx,edx → 0x40628d: add ecx,0x108（★★this+0x108 子对象——
+    与 0x4061D0 的 +0xB8 不同！位置子对象）→ jmp 0x407170（★★tail call
+    ——batch 111 已登记）
+  00406298  分支 B: cmp edx,0x4000 / jbe 0x4062a7 → mov edx,0x4000 →
+    jmp 0x4062ad → test edx,edx / jge 0x4062ad → xor edx,edx → 0x4062ad:
+    add ecx,0x108（★同款）→ jmp 0x407150（★★tail call——batch 111 已登
+    记）
+语义：**音频位置下发器（AudioStream::AdjustAudioEventPanning，带名）**
+——① 按 this->+0x1C 类型（==3 分支 A / 其它分支 B）分派位置处理路径；
+② 值 clamp 到 [0, 0x4000=16384]（VolumeStruct 量程钳制）；③ 无定点缩放
+（与 0x4061D0 差异：省略子+0x1C>>16×值>>14 链——位置不需缩放，直传钳后
+值）；④ 子对象偏置 +0x108（音量对象在 +0xB8、位置对象在 +0x108——同
+AudioClass 内两子对象）；⑤ 分支 A tail 0x407170、分支 B tail 0x407150。
+★★核心：AudioClass 位置设置（钳量程 + 0x407xxx 族收尾）——音量/位置双
+下发对中的位置端。
+
+二、调用点（3 处 E8，一带名+二函数）
+----------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x406270）：**命中 3 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x7509BD → FUN_00750920 [0x750920-0x7509D9] body=186 —— 未登记
+  2) 0x750A8F → FUN_007509e0 [0x7509E0-0x750ABB] body=220 ——
+    ★★batch 084 已登记 VocClass::PlayAt！
+  3) 0x750DE6 → FUN_00750d40 [0x750D40-0x750E1F] body=224 ——
+    ★★batch 329 已登记「音频播放变体」！
+现场 disasm 核验（三处全读——全为「0x4061D0 下发音量 → 紧邻 0x406270 下
+发位置」链的第二环）：
+  FUN_00750920（0x750920，186B）——现场 0x7509B2: call 0x4061d0（★下发
+    音量——batch 859 已登记调用点）→ 0x7509B7: mov edx,[esp+0x10]（★位
+    置值）→ mov ecx,esi → 0x7509BD: call 0x406270（★★本函数——下发位置！
+    ）→ 0x7509C2: test ebp/je → push ebx → mov edx,esi → mov ecx,ebp →
+    call 0x4060f0（★AudioClass 事件设置 batch 241）
+  FUN_007509e0（0x7509E0，220B——batch 084 已登记 VocClass::PlayAt）——
+    现场 0x750A84: call 0x4061d0（★下发音量）→ 0x750A89: mov edx,[esp
+    +0x14]（★位置值）→ mov ecx,esi → 0x750A8F: call 0x406270（★★本函
+    数——下发位置！）→ jmp 0x750aa5（★收尾）
+  FUN_00750d40（0x750D40，224B——batch 329 已登记「音频播放变体」）——
+    现场 0x750DDB: call 0x4061d0（★下发音量）→ 0x750DE0: mov edx,[esp
+    +0x14]（★位置值）→ mov ecx,esi → 0x750DE6: call 0x406270（★★本函
+    数——下发位置！）→ mov edx,esi → mov ecx,ebx → push edi → call
+    0x4060f0（★事件收尾 batch 241）
+★要点：三处调用点全部是「下发音量 → 下发位置 → 事件收尾」链的中环——
+与 batch 859 的 0x4061D0 调用点（0x7509B2/0x750A84/0x750DDB）紧邻成对
+（音量端后 5-6 字节即位置端），完整构成 batch 084 文档「0x4061D0 下发
+音量、0x406270 下发位置、0x4060F0 收尾」三连链条。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x407170 —— ★★已登记（batch 111 标志位/定点运算族——分支 A tail call
+    = 其调用现场）
+  0x407150 —— ★★已登记（batch 111 标志位/定点运算族——分支 B tail call
+    = 其调用现场）
+  0x4061D0 —— ★★已登记（batch 859 音频音量下发器——本函数=其孪生配对，
+    调用点紧邻成对）
+  0x7509E0 —— ★★已登记（batch 084 VocClass::PlayAt——调用点 0x750A8F
+    = 其内下发位置现场）
+  0x750D40 —— ★★已登记（batch 329 音频播放变体——调用点 0x750DE6 = 其
+    内下发位置现场）
+  0x4060F0 —— ★★已登记（batch 241 AudioClass 事件设置——三调用点后文
+    通用）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 084（VocClass::PlayAt + 音量/位置/事件三连——**本函数=其文
+    档点名「0x406270 下发位置」的兑现**；与 batch 859 的 0x4061D0「下发
+    音量」构成完整双下发链）
+  ★★batch 329（音频播放变体 0x750D40——本函数=其文档点名调用点
+    0x750DE6 兑现）
+  ★★batch 111（0x407150/0x407170 标志位/定点运算族——本函数两路径 tail
+    call 调用现场）
+  ★★batch 241（0x4060F0 AudioClass 事件设置——三调用点后文收尾）
+  ★★batch 859（0x4061D0 音频音量下发器——本函数=其孪生位置端，两批连
+    续闭合 AudioClass 下发链）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★与 0x4061D0 逐结构同构但省略定点缩放（位置直传钳后值——音量需缩
+   放、位置不需）；
+② ★★子对象偏置 +0x108 vs 音量 +0xB8（AudioClass 内两子对象分置）；
+③ clamp 双分支重复（分支 A/分支 B 各一段完整 clamp 序——编译器未合并
+   公共子表达式）；
+④ clamp 上限 0x4000=16384（VolumeStruct 量程硬编码）；
+⑤ 分支差异：A tail 0x407170、B tail 0x407150（均无 0x4071C0 中间调用
+   ——位置端收尾更简）；
+⑥ 调用点全部紧邻 0x4061D0 调用点后 5-6 字节（音量/位置双下发的固定编
+   排序）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（带名 AudioStream::AdjustAudioEventPanning——functions
+  .tsv 名；语义全读实锤「音频位置下发」）、this->+0x1C 位置类型枚举语义
+  （==3 分支含义）、+0x108 子对象身份（位置缓冲）、clamp 值业务含义（位
+  置/事件参数推断）、FUN_00750920 精确身份（未登记——PlayAt 变体前文）、
+  0x407170 收尾语义细节（触发 0x4093B0 的用途）。
