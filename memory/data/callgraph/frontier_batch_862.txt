@@ -1,0 +1,106 @@
+frontier batch 862 —— 0x007D4CE0 CRT 惰性初始化双检锁门控器（46B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=75 / body=46B）。
+TARGET = 0x007D4CE0（46B，0x7D4CE0-0x7D4D0D，纯全局 ret 0——无 thiscall/栈
+参）。
+★★推断名：**CRT 惰性初始化双检锁门控器**——[0xB783A8] 初始化标志==0 时：
+0x7CD9F5(0xB=11 锁槽) 进入临界区（**batch 244/841 已登记 CRT 锁包装**）→
+二次检查标志 → 0x7D4D24 初始化主体 → 标志++ → 0x7CDA56(0xB) 退出临界区
+（batch 244 明确 unlock 配对）——MSVC6 CRT `_lock/_unlock` 双检锁
+once-init 惯用法。
+
+一、函数体全读（46B，disasm 0x7D4CE0 0x40）
+------------------------------------------------
+参数契约（纯全局 ret 0——无 ecx/栈参，直接操作 [0xB783A8] 标志）。
+机器码（46B 全读，分段要点）：
+  007d4ce0  cmp [0xb783a8],0（★★[0xB783A8] 初始化标志）→ jne 0x7d4d0d
+    （★已初始化 → 直接返回）
+  007d4ce9  push 0xb（★★锁槽 0xB=11）→ call 0x7cd9f5（★★0x7CD9F5 锁进
+    入——batch 153/244/841 多次出现的 CRT 锁包装！）
+  007d4cf0  cmp [0xb783a8],0（★二次检查——双检锁）→ pop ecx → jne
+    0x7d4d05（★他线程已初始化 → 跳过主体）
+  007d4cfa  call 0x7d4d24（★★0x7D4D24 初始化主体——紧随本函数后，未登
+    记候选）
+  007d4cff  inc [0xb783a8]（★标志++）
+  007d4d05  push 0xb → call 0x7cda56（★★0x7CDA56 锁退出——batch 244 明
+    确 unlock 配对）→ pop ecx → 007d4d0d ret
+语义：**CRT 惰性初始化双检锁门控器（推断名）**——标准 MSVC6 CRT 惰性初
+  始化惯用法：① 首检 [0xB783A8] 标志（==0 未初始化才继续）；② 0x7CD9F5
+  (0xB) 进入临界区；③ 二次检查标志（他线程可能已完成——双检锁）；④
+  0x7D4D24 执行初始化主体；⑤ 标志++；⑥ 0x7CDA56(0xB) 退出临界区。
+★★核心：一次性初始化保护（[0xB783A8] 标志 + 0xB 锁槽 + 双检锁）——三
+  处 CRT 内部调用点共享该门控。
+
+二、调用点（3 处 E8，CRT 区三宿主）
+----------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x7D4CE0）：**命中 3 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x7CCE4C → FUN_007ccb2e [0x7CCB2E-0x7CCF1C] body=1007 —— 未登记
+  2) 0x7CD2DE → FUN_007cd2cb [0x7CD2CB-0x7CD42A] body=352 —— 未登记
+  3) 0x7D29F1 → FUN_007d29b2 [0x7D29B2-0x7D2A73] body=194 —— 未登记
+现场 disasm 核验（三处全读）：
+  FUN_007ccb2e（0x7CCB2E，1007B）——现场 0x7CCE30: je 0x7ccef0 → sub
+    eax,7/je 0x7cced3 → dec/je 0x7cce91 → dec/je 0x7cce6e → dec/jne
+    0x7ccf18（★switch 分派链）→ 0x7CCE4C: call 0x7d4ce0（★★本函数——
+    分派后惰性初始化）→ mov ecx,[ebp+0xc] → push [ebp+0x14] → xor eax →
+    cmp [ecx+0x20],eax → push [ebp+0x10]（★后续参数处理）
+  FUN_007cd2cb（0x7CD2CB，352B）——现场 mov ebp,esp → push esi → mov
+    esi,[ebp+8] → cmp [esi],0 / jge 0x7cd2de → xor eax/jmp 0x7cd3f0 →
+    0x7CD2DE: call 0x7d4ce0（★★本函数——[esi]>=0 检查后初始化）→ mov
+    eax,[esi] → cmp eax,0x3f480 / jle 0x7cd344（★后续 0x3F480=259200
+    大小比较）
+  FUN_007d29b2（0x7D29B2，194B）——现场 mov edi,[ebp+0xc] → mov esi,
+    [edi*4+0x87d5b0]（★★[0x87D5B0] 表索引——新全局）→ add esi,[ebp
+    +0x10] → test bl,3 / jne 0x7d29f1 → cmp edi,2 / jle 0x7d29f1 → inc
+    esi → 0x7D29F1: call 0x7d4ce0（★★本函数——日期换算上下文初始化）→
+    mov eax,ebx → lea ecx,[ebx-1] → imul eax,eax,0x16d（★★0x16D=365——
+    日期→天数换算！）→ sar ecx,2（★后续日期计算）
+★要点：三处调用点全在 CRT 内部——FUN_007cd2cb（[esi] 检查后）、
+  FUN_007d29b2（日期换算 imul 0x16d=365 + [0x87D5B0] 表）、FUN_007ccb2e
+  （switch 分派后）。共享惰性初始化门控（各自首次调用的 once-init）。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x7CD9F5 —— ★★已登记（batch 153 toupper 的 locale 初始化锁/batch 244
+    tolower 慢路径锁/batch 841 0x7CB25E 空指针路径「push 2 → call
+    0x7CD9F5」——CRT 锁进入包装实锤！本函数=其调用现场）
+  0x7CDA56 —— ★★已登记（batch 244 明确「push 0x13/call 0x7CDA56
+    （unlock 配对）」——CRT 锁退出包装实锤！本函数=其调用现场）
+  [0xB783A8] —— ★未登记（初始化标志——新全局）
+  0x7D4D24 —— ★未登记（初始化主体——紧随本函数后，候选）
+  0x7D4CE0 后邻 0x7D4D0E —— ★未登记（同款结构：push 0xb → call
+    0x7CD9F5 → call 0x7D4D24 → push 0xb → ...——第二实例/另一 once-init）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 244（CRT::tolower 慢路径锁——0x7CD9F5/0x7CDA56 锁对已登记，
+    本函数=其「0xB 锁槽」调用现场；锁槽编号 0xB=11 新锚点）
+  ★★batch 153（toupper locale 初始化「push 0x13 → call 0x7CD9F5」——
+    锁槽 0x13=19 vs 本函数 0xB=11——不同锁槽）
+  ★★batch 841（0x7CB25E 空指针路径「push 2 → call 0x7CD9F5」——锁槽 2
+    vs 本函数 0xB——CRT 多锁槽族）
+  ★★0x7C-0x7D=MSVC6 static CRT（项目记忆实锤——本函数同区）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★双检锁（double-checked locking）：首检标志 → 进入临界区 → 二次检
+   查标志 → 主体 → 标志++ → 退出——标准 MSVC CRT once-init 形态；
+② 锁槽编号 0xB=11 硬编码（push 0xb ×2——同函数进出同槽）；
+③ 标志用 inc 而非置 1（++——计数式初始化标志）；
+④ 主体 0x7D4D24 被锁内调用（初始化与锁同函数组织）；
+⑤ 他线程已初始化时跳过主体但仍进出临界区（二次检查后仍走 0x7CDA56 解
+   锁——对称解锁）；
+⑥ 后邻 0x7D4D0E 同款结构（第二 once-init 实例——CRT 双初始化器相邻排
+   布）；
+⑦ 三调用点共享门控（各自首调时触发——CRT 内部组件延迟初始化）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：初始化主体 0x7D4D24 具体内容（紧随本函数后——未读全，候选）、
+  [0xB783A8] 标志业务（初始化计数推断）、三宿主 FUN_007ccb2e/FUN_007cd2cb/
+  FUN_007d29b2 精确身份（CRT 内部组件推断）、0x7CD9F5/0x7CDA56 精确函数
+  名（_lock/_unlock 推断——batch 153/244 已登记行为未实名）、0x87D5B0
+  表语义（FUN_007d29b2 内——新全局）、0x3F480 比较语义（FUN_007cd2cb
+  内——容量/大小推断）。
