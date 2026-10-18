@@ -1,0 +1,127 @@
+frontier batch 844 —— 0x0062D5E0 ParticleClass 粒子更新器（类型分派坐标判定，261B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=101 / body=261B）。
+TARGET = 0x0062D5E0（261B，0x62D5E0-0x62D6E4 + nop 垫，thiscall 无栈参 ret）。
+★★推断名：**ParticleClass 粒子更新器（类型分派坐标判定）**——按 this+0xAC→
++0x314 粒子类型字段三分派（==0→0x62D2A0 / ==1→0x62D3F0 / ==2→主路径）；
+主路径读 [esi+0xE4] 浮点字段 fcomp [0x7E2800]=0.0（batch 052/262 已登记常
+量）→ 坐标组装 12B 结构 → [0x87F7E8] MapClass::Instance 调 **0x578080 ×2**
+（batch 259/262/433 已登记取格二号）比较 → 置 [esi+0x12D]/[esi+0x131] 标志
+→ 虚表槽 0x1B4 回调。字段族与 batch 262 的 0x62B5E0（粒子对象构造+注册）
+高度吻合——同 ParticleClass 家族。
+
+一、函数体全读（261B，disasm 0x62D5E0 0x120）
+------------------------------------------------
+参数契约（thiscall 无栈参 ret）：
+  ecx = this（ParticleClass 对象——batch 262 字段族：+0xE4 起点向量、
+    +0x100/+0x104/+0x108 向量、+0x12A..+0x131 字节族、+0xAC 类型来源）
+机器码（261B 全读）：
+  0062d5e0  sub esp,0x18 / push esi / mov esi,ecx（★this）
+  0062d5e6  mov eax,[esi+0xAC] / mov eax,[eax+0x314]（★类型来源 → +0x314 值）
+  0062d5f2  sub eax,0 / je 0x62D6D9          ; ★值==0 → 0x62D2A0
+  0062d5fb  dec eax / je 0x62D6CD            ; ★值==1 → 0x62D3F0
+  0062d602  dec eax / jne 0x62D6E0           ; ★值==2 走主路径 / 其它收尾
+  主路径：
+  0062d609  fld dword[esi+0xE4]（★浮点字段）/ fcomp qword[0x7E2800]
+            （★★=0.0——batch 052/262 已登记）→ fnstsw ax / test ah,0x41
+  0062d615  lea eax,[esi+0x9C]（★坐标结构槽）/ push ebx/edi / mov edi,eax
+  0062d61f  读 [esi+0x9C] 12B 结构（+0/+4/+8）到 [esp+0xC..+0x14] 栈槽
+  0062d64c  jne 0x62D672（★0.0 比较分支）
+  0062d64e  非零分支：mov ebx,[esi+0x100] / mov eax,[esi+0x108] /
+            mov ecx,[esi+0x104]（★三向量字段）→ 加到栈槽坐标（+0x100/+0x104/
+            +0x108 → [esp+0xC..+0x14] 分量相加）
+  0062d672  fld dword[esi+0xE4] / fcomp [0x7E2800] / fnstsw / test ah,0x41
+  0062d685  jne 0x62D6B7（★0.0 比较分支）
+  0062d685  零分支：lea ecx,[esp+0x18] → push / mov ecx,0x87F7E8（★★
+            MapClass::Instance）→ call 0x578080（★★★batch 259/262/433 已
+            登记「MapClass 取格二号」——第一坐标点）
+  0062d694  lea edx,[esp+0xC] → push / mov ecx,0x87F7E8 → mov edi,eax →
+            call 0x578080（★★第二坐标点）→ cmp eax,edi / jle 0x62D6B7
+  0062d6a9  第一格 > 第二格：mov al,1 / mov byte[esi+0x12D],al（★置标志）
+            / mov byte[esi+0x131],al（★★+0x12D/+0x131 双字节置 1）
+  0062d6b7  mov eax,[esi]（★虚表）/ lea ecx,[esp+0xC] → push → mov ecx,esi
+            → call [eax+0x1B4]（★虚表槽 0x1B4 回调——结果通知）
+            → pop 族 / add esp,0x18 / ret
+  0062d6cd  mov ecx,esi / call 0x62D3F0（★==1 分支：调用 0x62D3F0）/ ret
+  0062d6d9  mov ecx,esi / call 0x62D2A0（★==0 分支：调用 0x62D2A0）/ ret
+  0062d6e0  pop 族 / add esp,0x18 / ret（★其它值直接收尾）
+语义：**ParticleClass 粒子更新器（推断名）**——① 类型分派：this+0xAC→+0x314
+值 ==0 走 0x62D2A0、==1 走 0x62D3F0（两子函数为不同粒子类型更新路径推断）、
+==2 走主路径；② 主路径：读 [esi+0xE4] 浮点字段 fcomp [0x7E2800]（0.0）双
+分支（非零分支把 +0x100/+0x104/+0x108 三向量字段加到坐标栈槽）；③ 经
+[0x87F7E8] MapClass::Instance 调 0x578080（取格二号）两次比较两坐标点的格
+子结果，第一格 > 第二格时置 [esi+0x12D]/[esi+0x131] 标志；④ 虚表槽 0x1B4
+回调收尾。★核心：粒子运动/碰撞判定的坐标取格比较 + 类型分派——与 batch
+262 的 0x62B5E0（粒子构造+注册）同 ParticleClass 家族（字段族吻合）。
+
+二、调用点（3 处 E8，三宿主）
+--------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x62D5E0）：**命中 3 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) FUN_0062e6d0 [0x62E6D0-0x62E83D] body=366 —— 1 处（0x62E826）
+  2) FUN_0062ed40 [0x62ED40-0x62F226] body=1255 —— 1 处（0x62F037）
+  3) FUN_0062f9a0 [0x62F9A0-0x62FD56] body=951 —— 1 处（0x62F9C9）
+现场 disasm 核验：
+  FUN_0062e6d0（0x62E810）：mov ecx,ebx → call [edx+0xF8]（★虚表槽 0xF8 前
+    序）→ mov esi,[esp+0x14] → jmp 0x62E82B → 0x62E824: mov ecx,ebx → call
+    0x62D5E0（★本条——ebx 对象循环内）→ dec esi / mov [esp+0x14],esi /
+    jns 0x62E708（★循环回）——循环内每轮调本条
+  FUN_0062ed40（0x62F020）：（错位段）→ 0x62F035: mov ecx,edi → call
+    0x62D5E0（★本条——edi 对象）→ dec ebx / mov [esp+0x28],ebx / jns
+    0x62EDF1（★循环回）→ mov al,[esi+0xF8]（★后序）——循环内每轮调本条
+  FUN_0062f9a0（0x62F9B0）：call 0x62CE40（★前序）→ mov ecx,edi → call
+    0x62D5E0（★本条——edi 对象）→ dec ebx / jns 0x62F9B7（★循环回）→
+    mov edi,[esi+0xCC]（★后序）——循环内每轮调本条
+★要点：三宿主全为 0x62xxxx 粒子系统区大函数（366B/1255B/951B），且调用点
+全在循环内（dec + jns 回环）——批量更新粒子对象的每帧循环调用本条（与
+batch 262 的 ParticleClass 家族一致）。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  [0x7E2800] —— ★★已登记（batch 052 frexp 族「[0x7E2800]=0.0 已 dump」/
+    batch 262 浮点常量族——本条 fcomp 常量）
+  0x578080 —— ★★已登记（batch 259/262/433「MapClass 取格二号」——本条=
+    其调用现场：两坐标点取格比较）
+  [0x87F7E8] —— ★★已登记（MapClass::Instance——QWEN.md 实锤）
+  0x62D2A0/0x62D3F0 —— ★未登记（类型分派子函数——==0/==1 分支推断留候选）
+  0x62B5E0 —— ★★已登记（batch 262 粒子对象构造+注册——字段族对照：+0xE4
+    起点向量/+0x100 向量/+0x12A..+0x131 字节族吻合——ParticleClass 家族
+    交叉实锤）
+  宿主 FUN_0062e6d0/FUN_0062ed40/FUN_0062f9a0 —— ★未登记（0x62xxxx 粒子
+    系统区大函数——批量更新宿主推断）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 262（0x62B5E0 粒子对象构造+注册——字段族对照：本函数 +0xAC 类
+    型来源/+0xE4 浮点/+0x100/+0x104/+0x108 向量/+0x12D/+0x131 标志与 0x62B5E0
+    的 +0xAC/+0xE4/+0x100/+0x12A..+0x131 逐字段吻合——同 ParticleClass 家族
+    的构造端 ↔ 更新端配对）
+  ★★batch 052/262（[0x7E2800]=0.0——本条 fcomp 常量现场）
+  ★★batch 259/262/433（0x578080 MapClass 取格二号——本条=其调用现场：粒子
+    坐标取格比较）
+  ★★batch 111（0x407150 标志位族——同 0x40 区装配链与本粒子更新器的标志
+    置位模式类比推断）
+
+五、原版怪癖（照抄）
+-------------------
+① 类型分派用 sub eax,0 / dec / dec 三连（==0/==1/==2 判别的减法链——非常规
+   cmp 比较）；
+② 主路径 fld/fcomp [0x7E2800]（0.0）出现两次（0x62D609/0x62D672——首判 +
+   再判，两次独立比较）；
+③ 非零分支把 +0x100/+0x104/+0x108 三字段加到坐标栈槽（[esp+0xC..+0x14]
+   分量累加——位置向量偏移推断）；
+④ 两坐标点经 0x578080 取格比较用「第一 > 第二」置双标志（+0x12D/+0x131
+   同值置 1——双字节同标志）；
+⑤ 虚表槽 0x1B4 回调收尾（结果通知——粒子更新完成回调推断）；
+⑥ 三宿主全循环内调用（dec + jns 回环——批量粒子逐帧更新）；
+⑦ 其它类型值（>2）直接收尾不处理（分派表外静默）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「ParticleClass 粒子更新器」）、0x62D2A0/0x62D3F0
+身份（==0/==1 分派子函数——未登记留候选）、+0xAC→+0x314 类型值语义（粒子
+类型枚举推断）、两坐标点取格比较的业务含义（碰撞/地面判定推断）、虚表槽
+0x1B4 回调语义、三宿主 FUN_0062e6d0/FUN_0062ed40/FUN_0062f9a0 批量更新宿
+主业务（0x62xxxx 粒子系统区推断）。
