@@ -1,0 +1,117 @@
+frontier batch 904 —— 0x0055BAE0 LogicClass::RemoveObject（82B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=20 / body=82B）——E8 全局扫描
+实测命中 6 处（0x43/0x5F/0x75 区——逻辑对象注册消费端）。
+TARGET = 0x0055BAE0（82B，0x55BAE0-0x55BB31，thiscall 1 栈参 ret 4，
+0x55xxxx LogicClass 区——batch 525 AddObject 紧邻孪生）。
+★★推断名：**LogicClass::RemoveObject（ranking 带名——与 batch 525 的
+0x55BAA0 AddObject 成对：同 +0x98 标志字段，Add 置位 / Remove 清除 +
+数组前移压缩；82B thiscall 1 栈参 ret 4）**。
+
+一、函数体全读（82B，disasm 0x55BAE0 0x60 全量）
+------------------------------------------------
+参数契约（thiscall 1 栈参 ret 4）：ecx = this（esi——三调用点现场
+  实锤 this=0x87F778 LogicClass::Instance 推断）、[esp+4] = 栈参1（对
+  象指针——+0x98 标志字段，与 AddObject 同款）。
+机器码（82B 全读，逐段要点）：
+  标志门控: mov eax,[esp+4]（★栈参1=对象）→ push esi → mov esi,ecx
+    （★this）→ mov cl,[eax+0x98]（★★对象+0x98=已注册标志——batch 525
+    AddObject 同字段！）→ test cl,cl → je 0x55BB2E（★标志 0 → 幂等直
+    返——未注册）
+  索引查找: mov edx,[esi] → lea eax,[esp+8] → push eax → mov ecx,esi
+    → call [edx+0x10]（★★虚表槽 0x10——按对象找索引，宿主2 现场同款
+    前置调用）→ cmp eax,-1 → je 0x55BB23（★-1 未找到 → 清标志收尾）
+  计数判定 + 前移压缩: mov ecx,[esi+0x10]（★this+0x10=计数）→ cmp
+    eax,ecx → jge 0x55BB23（★索引 >= 计数 → 清标志收尾）→ dec ecx →
+    cmp eax,ecx → mov [esi+0x10],ecx（★计数--）→ jge 0x55BB23 →
+    压缩循环: mov ecx,[esi+4]（★this+4=数组基址）→ inc eax → mov edx,
+    [ecx+eax*4] → mov [ecx+eax*4-4],edx（★★前移一格——后面的元素挪到
+    被删位置）→ mov ecx,[esi+0x10] → cmp eax,ecx → jl 循环
+  清标志: 0x55BB23: mov eax,[esp+8] → mov byte[eax+0x98],0（★★清对
+    象+0x98 标志——移除完成）→ pop esi → ret 4
+语义：**LogicClass::RemoveObject（移除逻辑对象，ranking 带名）**——
+  thiscall 1 栈参：① 对象+0x98 标志 0 → 幂等直返；② 虚表槽 0x10 按
+  对象找索引（-1 未找到 → 清标志收尾）；③ 索引 < 计数 → 计数-- + 数
+  组 [esi+4] 前移压缩；④ 清对象+0x98 标志。★★与 batch 525 的
+  0x55BAA0 AddObject 成对（同 +0x98 字段：Add 置位 / Remove 清除——
+  LogicClass 逻辑对象注册/注销镜像操作）。
+
+二、调用点（6 处 E8，2 宿主+4 间隙全核验）
+----------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x55BAE0）：**命中 6 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x435B7E → 无归属（函数间隙——现场实锤 call 0x5F4D30 后调用）
+  2) 0x437042 → 无归属（函数间隙）
+  3) 0x4370EE → 无归属（函数间隙）
+  4) 0x5F3D75 → FUN_005f3b80 [0x5F3B80-0x5F3D83] body=516 —— 未登记
+  5) 0x5F4DD3 → FUN_005f4d30 [0x5F4D30-0x5F4EBD] body=398 —— 未登记
+  6) 0x75F9BD → 无归属（函数间隙）
+现场 disasm 核验（三处代表全读）：
+  FUN_005f3b80（0x5F3D75，516B 未登记）——现场 0x5F3D64-0x5F3D83：
+    前序 → call 0x55bae0 ★（本函数）→ mov ecx,esi → call 0x4101f0 →
+    pop 族 → ret
+  FUN_005f4d30（0x5F4DD3，398B 未登记）——现场 0x5F4DC0-0x5F4DD8：
+    call dword[ecx+0x10]（★★虚表槽 0x10 找索引——与本函数体同款前置！）
+    → cmp eax,-2 → je 0x5F4DD8（★-2 跳过）→ push esi（★栈参1=对象）→
+    mov ecx,0x87f778（★★★this=0x87F778——LogicClass::Instance 全局
+    推断！）→ 0x5F4DD3: call 0x55bae0 ★ → mov edx,[esi] → mov ecx,esi
+    → call [edx+0x88]（★虚表槽 0x88——后续）
+  间隙 0x435B7E（函数间隙——宿主链）——现场 0x435B6F-0x435B83：call
+    0x5f4d30（★先调宿主2！）→ test al,al → je 0x435B83 → push esi →
+    mov ecx,0x87f778（★★同 this！）→ 0x435B7E: call 0x55bae0 ★ →
+    mov edx,[0x8b4190]（★后续）
+  间隙 0x75F9BD（函数间隙）——现场 0x75F9A0-0x75F9C6：mov edx,[esi] →
+    push 0 → mov ecx,esi → call [edx+0x124]（★虚表槽 0x124）→ push
+    esi → mov ecx,0x87f7e8 → call 0x4a9770（★MapClass 方法）→ push
+    esi → mov ecx,0x87f778（★★同 this！）→ 0x75F9BD: call 0x55bae0
+    ★ → call [eax+0x11c]（★虚表槽 0x11C——后续）
+★统一形态：三处调用点全「mov ecx,0x87F778（★★LogicClass::Instance 全
+  局）→ push 对象 → call 0x55BAE0」——本函数=LogicClass 逻辑对象注销
+  器，this 恒为 0x87F778（单例直接地址，与 MapClass::Instance
+  0x87F7E8 同款模式）。★★宿主2 现场前置虚表槽 0x10 找索引（与本函数
+  体内部同款判定——调用方预查或复用）。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x55BAA0 —— ★★★已登记 batch 525（LogicClass::AddObject——★★本函
+    数紧邻孪生：同 +0x98 标志字段，Add 置位 / Remove 清除成对；batch
+    525 文档点名「callers 带名交叉 BuildingLightClass::BuildingLightClass/
+    TechnoClass::EnteredOpenTopped」）
+  0x87F778 —— ★未登记（LogicClass::Instance 全局推断——三调用点统一
+    this，与 MapClass::Instance 0x87F7E8 同款单例模式）
+  FUN_005f3b80/FUN_005f4d30 —— ★未登记（两宿主）
+  0x4101F0/0x4A9770 —— ★未登记（宿主/间隙后续调用）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 525（0x55BAA0 LogicClass::AddObject——**本函数=其移除端孪
+    生：同 +0x98 标志字段（Add 置位 / Remove 清除）、同虚表槽 0x10 索
+    引、同 [esi+4] 数组 [esi+0x10] 计数——LogicClass 逻辑对象注册/注
+    销镜像操作**）
+  ★★0x87F778（LogicClass::Instance——三调用点统一 this，与 MapClass::
+    Instance 0x87F7E8 同款单例直接地址模式）
+  ★★batch 524（0x557730 同 0x55xxxx LogicClass 区——batch 525 文档点
+    名同区）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★对象+0x98 标志门控（标志 0 幂等直返——未注册对象移除零副作用）；
+② ★★虚表槽 0x10 按对象找索引（-1 未找到 → 仍清标志收尾——不报错）；
+③ ★★索引 >= 计数 → 清标志收尾（越界静默）；④ ★★计数-- 与前移压缩
+   循环（[esi+4] 数组从被删位置起整体前移一格——非尾删标记）；⑤ ★★
+   清对象+0x98 标志（移除完成标记——与 AddObject 置位镜像）；⑥ ★★
+   this 恒为 0x87F778（单例直接地址，无 ecx 参数）；⑦ ★★ret 4 单栈参
+   （对象指针）；⑧ ★★宿主2 前置虚表槽 0x10 找索引（与本函数体内部同
+   款——调用方预查或复用）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：0x87F778 精确身份（LogicClass::Instance 推断——三调用点统一
+  this，MapClass::Instance 0x87F7E8 同款模式参照）、+0x98 标志精确语
+  义（已注册/已激活推断——batch 525 同 partial）、虚表槽 0x10 精确方
+  法名（索引查找推断）、FUN_005f3b80/FUN_005f4d30 宿主业务（516B/
+  398B——逻辑对象管理推断）、0x4101F0/0x4A9770 身份（宿主后续调
+  用）、3 间隙归属（0x435B7E/0x437042/0x4370EE——0x75F9BD 已现场）、
+  数组元素 4B 步进（前移压缩对象指针推断）。
