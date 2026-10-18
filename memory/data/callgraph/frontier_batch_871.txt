@@ -1,0 +1,172 @@
+frontier batch 871 —— 0x007DB68B 浮点异常状态结构转换器（约 690B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=65 / body=691B）。
+TARGET = 0x007DB68B（691B，0x7DB68B-0x7DB93D，cdecl 6 栈参无返回值）。
+★★推断名：**浮点异常状态结构转换器（CRT FPE 辅助——标志字节 → NTSTATUS
+浮点码 + 位域结构组装，与 batch 303 0x7D58F0「NTSTATUS→x87 状态字位」
+构成反向配对）**。
+
+一、函数体全读（约 690B，disasm 0x7DB68B 0x2C0 全量）
+------------------------------------------------
+参数契约（cdecl 6 栈参）：[ebp+8] = 目标结构指针（dst）、[ebp+0xC] =
+源状态结构指针（src）、[ebp+0x10] = 标志字节/NTSTATUS 槽（被改写）、
+[ebp+0x14] = 附加值（&0xFFF）、[ebp+0x18]/[ebp+0x1C] = 两个 double 源。
+ret 无栈参（cdecl 调用方清理）。
+机器码（全读，分段要点）：
+  007db68b  push ebp/mov ebp,esp → mov ecx,[ebp+8]（★dst）→ xor eax →
+    清 dst+4/+8/+0xC → mov cl,[ebp+0x10]（★标志字节）→ 位分派：
+    test cl,0x10 → je → mov [ebp+0x10],0xc000008f（★★NTSTATUS
+    STATUS_FLOAT_INVALID_OPERATION 推断！）→ or dst+4,1 → test cl,2 →
+    je → mov [ebp+0x10],0xc0000093（★★STATUS_FLOAT_STACK_CHECK?）→ or
+    dst+4,2 → test bl,cl → je → mov [ebp+0x10],0xc0000091（★★
+    STATUS_FLOAT_UNDERFLOW）→ or dst+4,4 → test cl,4 → je → mov
+    [ebp+0x10],0xc000008e（★★STATUS_FLOAT_DIVIDE_BY_ZERO）→ or dst+4,8
+    → test cl,8 → je → mov [ebp+0x10],0xc0000090（★★STATUS_FLOAT_
+    OVERFLOW）→ or dst+4,0x10——★★五标志位 → 五个 NTSTATUS 浮点码 + dst
+    +4 位域（1/2/4/8/0x10）
+  007db708  mov esi,[ebp+0xc]（★src）→ 五段位域搬移（src 首 dword 的位
+    → dst+8 位段）：not [esi] → and 位 → shl 4 / or dst+8 → 同款 shr 1/
+    shr 3/shr 5 各写 dst+8 位段——★★src 状态字 → dst+8 位域重组
+  007db781  call 0x7dbc5a（★被调——未登记）→ 返回值 al 分派：test bl,al
+    → or dst+0xC,0x10 → test al,4 → or dst+0xC,8 → test al,8 → or
+    dst+0xC,4 → test al,0x10 → or dst+0xC,2 → test al,0x20 → or
+    dst+0xC,1——★★0x7DBC5A 返回值 → dst+0xC 位域
+  007db7bb  mov eax,[esi] → and eax,0xc00 → 分支：==0 → and dst,0xfffffffc
+    /==0x400 → and dst,0xfffffffd|or 1 /==0x800 → and dst,0xfffffffe|or
+    2 /==0xc00 → or dst,3——★★src 位域 0xC00 两段 → dst 低 2 位
+  007db800  mov eax,[esi] → and eax,0x300 → 分支：==0 → and dst,0xffffffe3
+    |or 8 /==0x200 → and dst,0xffffffe7|or 4 /==0x300 → and dst,0xffffffe3
+    ——★★src 位域 0x300 → dst 位段（0x1C 区）
+  007db838  mov eax,[ebp+8] → mov ecx,[ebp+0x14] → and ecx,0xfff → shl
+    ecx,5 → and edx,0xfffe001f → or → dst——★★栈参4 &0xFFF <<5 → dst 位段
+  007db853  or dst+0x20,1 → and dst+0x20,0xffffffe3 → or 2（★dst+0x20
+    位段）→ fld qword[ebp+0x18] → fstp qword[dst+0x10]（★★double1 → dst
+    +0x10）→ or dst+0x50,1 → and dst+0x50,0xffffffe3 → or 2（★dst+0x50
+    位段）→ fld qword[ebp+0x1C] → fstp qword[dst+0x40]（★★double2 → dst
+    +0x40）
+  007db891  call 0x7dbc68（★被调——未登记）→ lea eax,[ebp+8] → push
+    eax（★&dst）→ push 1 → push 0 → push [ebp+0x10]（★★NTSTATUS 槽）→
+    call [0x7e12c0]（★★导入槽——未登记，新候选）——★★四参分发！
+  007db8a6  test byte[dst+8],0x10 → je → and [esi],0xfffffffe（★反写
+    src 位）→ 同款 test 8/4/2/1 → and [esi] 位——★★dst+8 位域反写回
+    src
+  007db8d5  mov ecx,[dst] → and ecx,3 → 分支 0/1/2/3：==3 → or [esi+1],
+    0xc /==2 → and ch,0xfb|or 8 /==1 → and ch,0xf7|or 4 /==0 → and
+    [esi],0xfffff3ff——★★dst 低 2 位 → src+1 高字节位段
+  007db90b  mov ecx,[dst] → shr ecx,2 → and ecx,7 → 分支 0/1/2/3：==3 →
+    and [esi],0xfffff3ff /==2 → and [esi]|or ch,2 /==1 → and|or ch,3 /
+    ==0 → and|or ch,3——★★dst 位段 → src 高字节
+  007db934  fld qword[dst+0x40] → fstp qword[edi]（★double2 回写
+    [ebp+0x1C] 所指）→ pop 族 → ret
+语义：**浮点异常状态结构转换器（推断名）**——cdecl 6 栈参无返回值：①
+  dst 清 +4/+8/+0xC；② 栈参3 标志字节五位置位 → 写 [ebp+0x10]=五个
+  NTSTATUS 浮点码（0xC000008F/0xC0000093/0xC0000091/0xC000008E/
+  0xC0000090——STATUS_FLOAT_INVALID_OPERATION/STACK_CHECK/UNDERFLOW/
+  DIVIDE_BY_ZERO/OVERFLOW 推断，与 batch 303 0x7D58F0 七码映射表同族）
+  + dst+4 位域；③ src 首 dword → dst+8 五段位域搬移；④ 0x7DBC5A 返回
+  值 → dst+0xC 位域；⑤ src &0xC00/&0x300 分支 → dst 低 2 位/位段；⑥
+  栈参4 &0xFFF<<5 → dst 位段；⑦ 两 double（[ebp+0x18]/[ebp+0x1C]）→
+  dst+0x10/+0x40；⑧ 0x7DBC68 → 四参分发 call [0x7E12C0]（&dst/1/0/
+  NTSTATUS）；⑨ dst+8 位域反写回 src；⑩ dst 低 2 位/位段 → src+1 高字
+  节；⑪ double2 回写 [ebp+0x1C]。★★语义统一：与 batch 303 0x7D58F0
+  构成浮点异常处理双端——303 是「NTSTATUS→x87 状态字位」分发端、本批
+  是「标志→NTSTATUS+结构组装」转换端（CRT _fpieee_flt / FPE 处理器辅
+  助推断）。
+
+二、调用点（3 处 E8，3 宿主全核验）
+----------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x7DB68B）：**命中 3 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x7D8CFE → FUN_007d8c6b [0x7D8C6B-0x7D8D3A] body=208 —— 未登记
+     （0x7D8Cxx 区 CRT FPE 域）
+  2) 0x7DB584 → FUN_007db54e [0x7DB54E-0x7DB5E5] body=152 —— 未登记
+     （紧邻本函数前！同族包装器）
+  3) 0x7DB628 → FUN_007db5e6 [0x7DB5E6-0x7DB68A] body=165 —— 未登记
+     （紧邻本函数前！同族包装器）
+现场 disasm 核验（三处全读——统一 6 参 cdecl 形态）：
+  FUN_007d8c6b（0x7D8C6B，208B CRT FPE 分发器）——现场 0x7D8CE0-0x7D8D3A：
+    fld qword[esi+0x10]（★double 前置）→ and ecx,0xffffffe3|or 3 →
+    mov [ebp-0x20],ecx（★局部结构）→ lea ecx,[esi+8] → push 族（6 参）→
+    lea eax,[ebp-0x58] → push eax（★&dst）→ 0x7D8CFE: call 0x7db68b（★★
+    本函数——6 参结构转换！）→ add esp,0x18（★cdecl 清 24B=6 参确认）→
+    push 0xffff → push [ebp+0x10]（★NTSTATUS 槽）→ call 0x7dbc77（★未
+    登记——再分发）→ cmp [esi],8 → je 0x7d8d2e → cmp [0x87d700],0 → jne
+    → push esi → call 0x7dbc57（★未登记）→ test → jne → 0x7d8d2e: push
+    [esi] → call 0x7dbbdd（★未登记）→ 收尾——CRT FPE 异常分发链推断
+  FUN_007db54e（0x7DB54E，152B 紧邻包装器）——现场 0x7DB54E-0x7DB589：
+    sub esp,0x58 → push [ebp+0x20] → lea eax,[ebp+0x18] → push eax →
+    push [ebp+8] → call 0x7db93e（★★0x7DB93E——紧邻本函数后的 picker
+    候选！先检查）→ add esp,0xc → test eax → jne 0x7db58c（★检查通过 →
+    跳过转换）→ 失败路径：lea eax,[ebp+0x18] → push 族（6 参）→ lea
+    eax,[ebp-0x58] → push eax → 0x7DB584: call 0x7db68b（★★本函数——
+    检查失败才做结构转换！）→ add esp,0x18（★6 参确认）
+  FUN_007db5e6（0x7DB5E6，165B 紧邻包装器）——现场 0x7DB5E6-0x7DB62D：
+    sub esp,0x58 → push [ebp+0x28] → lea eax,[ebp+0x20] → push eax →
+    push [ebp+8] → call 0x7db93e（★★同款前置检查）→ add esp,0xc → test
+    eax → jne 0x7db630（★通过跳过）→ 失败路径：mov eax,[ebp-0x20] →
+    and al,0xe3|or 3 → 存回 → push 族（6 参）→ lea eax,[ebp-0x58] →
+    push eax → 0x7DB628: call 0x7db68b（★★本函数——同款失败路径！）→
+    add esp,0x18 → 0x7DB630: push [ebp+8] → 后续（0x7DB93E 再调推断）
+★统一形态：宿主 2/3 为紧邻本函数的**检查-转换包装器**（先调 0x7DB93E
+  检查、失败才调本函数做结构转换）；宿主 1 为 CRT FPE 分发链（本函数转
+  换后经 0x7DBC77/0x7DBC57/0x7DBBDD 再分发）。★★三调用点全 6 参 cdecl
+  （push ×6 + add esp,0x18=24B）与函数体 [ebp+8..0x1C] 六栈参吻合。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x7D58F0 —— ★★已登记（batch 303 浮点异常状态字映射——NTSTATUS 浮点
+    码→x87 状态字位，七码映射表 0xC000008E→0x83/0xC0000090→0x81/
+    0xC0000091→0x84/0xC0000093→0x85/0xC000008D→0x82/0xC000008F→0x86/
+    0xC0000092→0x8A——**本批写入同一族 NTSTATUS 浮点码，303=分发端
+    本批=转换端双向配对**！）
+  0x7D140B —— ★★已登记（batch 008 per-thread CRT 错误态——batch 303
+    文档提及）
+  0x7E12C0 —— ★未登记（导入槽——本批四参分发调用，新候选）
+  0x7DBC5A/0x7DBC68 —— ★未登记（函数体被调——新候选）
+  0x7DBC77/0x7DBC57/0x7DBBDD —— ★未登记（宿主 1 FPE 分发链再分发——
+    新候选）
+  0x7DB93E —— ★picker 候选（紧邻本函数后的 535B 函数——宿主 2/3 检查
+    前置，本批关联登记）
+  [0x87D700] —— ★未登记（宿主 1 门控全局——新候选）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 303（0x7D58F0 浮点异常状态字映射——**本批写入的五个
+    NTSTATUS 浮点码与 303 的七码映射表同族逐码对应**：0xC000008E/
+    0xC0000090/0xC0000091/0xC0000093/0xC000008F 全在 303 表内——浮点异
+    常处理双端闭合：303 分发 NTSTATUS→状态字位、本批标志→NTSTATUS+结
+    构组装）
+  ★★batch 008（0x7D140B per-thread CRT 错误态——303 链上游，本批宿主
+    1 同 CRT FPE 域）
+  ★★batch 001（无直接——本批无 CRT new/delete）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★五标志位 → 五个 NTSTATUS 浮点码（test cl,位 → je → mov [ebp+0x10]
+   =0xC00000xx + or dst+4 位——标志字节直接决定异常码，位序 0x10/2/1/4/8
+   与码序非对称）；
+② ★★src 首 dword → dst+8 五段位域搬移（not → and → shl/shr → or——
+   bit 搬移惯用，位移 4/1/3/5 各不同）；
+③ ★★0x7DBC5A 返回值 al 位分派 → dst+0xC（test al,4/8/0x10/0x20 五段）；
+④ ★★两 double 直拷（fld [ebp+0x18]/[ebp+0x1C] → fstp dst+0x10/+0x40
+   ——六栈参中两参是 double 值）；
+⑤ ★★四参分发 call [0x7E12C0]（&dst/1/0/NTSTATUS——导入槽参数面）；
+⑥ ★★dst 位域反写回 src（test dst+8 位 → and [esi]——转换后回写源！）
+   + dst 低 2 位/位段 → src+1 高字节（ch 位操作）；
+⑦ ★★double2 回写 [ebp+0x1C]（fld dst+0x40 → fstp [edi]——入参所指被
+   改写）；
+⑧ ★★宿主 2/3 为紧邻包装器（先调 0x7DB93E 检查、失败才调本函数——
+   检查-转换两段式）；
+⑨ cdecl 6 参（调用方 add esp,0x18 清 24B）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「浮点异常状态结构转换器」——CRT FPE 辅助，
+  _fpieee_flt 家族推断）、五个 NTSTATUS 码精确语义（STATUS_FLOAT_*
+  推断——batch 303 表内同码已实锤）、dst/src 结构精确布局（+4/+8/+0xC/
+  +0x10/+0x20/+0x40/+0x50 字段语义推断）、0x7DBC5A/0x7DBC68/0x7DBC77/
+  0x7DBC57/0x7DBBDD 精确身份（FPE 分发链推断）、[0x7E12C0] 导入槽 API
+  名、0x7DB93E 检查语义（本批关联候选）、宿主 1 FUN_007d8c6b 业务（
+  CRT FPE 异常分发推断）、[0x87D700] 全局语义。
