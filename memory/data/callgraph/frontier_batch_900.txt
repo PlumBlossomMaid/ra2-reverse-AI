@@ -1,0 +1,107 @@
+frontier batch 900 —— 0x005AE9B0 Matrix3D::TranslateY（42B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=25 / body=42B）——E8 全局扫描
+实测命中 7 处（0x4xxxx/0x5xxxx/0x6xxxx 区——矩阵消费方）。
+TARGET = 0x005AE9B0（42B，0x5AE9B0-0x5AE9D9，thiscall 1 栈参 ret 4，
+0x5AExxx Matrix3D 区——batch 899 TranslateX 紧邻后续）。
+★★推断名：**Matrix3D::TranslateY（带名——ranking 符号名，Y 轴局部空间
+平移：Y += 距离×R01 / Y += 距离×R11 / Y += 距离×R21，42B thiscall
+1 栈参 ret 4，batch 899 TranslateX 的 Y 轴孪生**）**。
+
+一、函数体全读（42B，disasm 0x5AE9B0 0x40 全量）
+------------------------------------------------
+参数契约（thiscall 1 栈参 ret 4）：ecx = this（矩阵指针）、[esp+4] = 栈参
+（距离 float）。
+机器码（42B 全读，逐条要点）：
+  005ae9b0  fld dword[esp+4]（★距离入参）→ fmul dword[ecx+4]（★×R01——
+    矩阵 [ecx+4]=R01）→ fadd dword[ecx+0xc]（★+X 平移列）→ fstp dword
+    [ecx+0xc]（★★X += 距离×R01 写回）
+  005ae9bd  fld dword[esp+4]（★距离重读）→ fmul dword[ecx+0x14]（★×
+    R11）→ fadd dword[ecx+0x1c]（★+Y 平移列）→ fstp dword[ecx+0x1c]
+    （★★Y += 距离×R11 写回）
+  005ae9ca  fld dword[esp+4]（★距离重读）→ fmul dword[ecx+0x24]（★×
+    R21）→ fadd dword[ecx+0x2c]（★+Z 平移列）→ fstp dword[ecx+0x2c]
+    （★★Z += 距离×R21 写回）
+  005ae9d7  ret 4（★清 1 栈参）
+语义：**Matrix3D::TranslateY（Y 轴局部空间平移）**——thiscall 1 栈参：
+  把栈参（距离 d）沿矩阵 Y 轴平移：三个平移列分量（+0xC/+0x1C/+0x2C）
+  分别 += d×旋转列第 1 列对应分量（+4/+0x14/+0x24 = R01/R11/R21）——标
+  准局部空间沿 Y 轴平移（矩阵 3×4 行主序同 batch 899：+0x0/+0x4/+0x8
+  第一旋转行、+0xC 平移 X；+0x10/+0x14/+0x18 第二旋转行、+0x1C 平移 Y；
+  +0x20/+0x24/+0x28 第三旋转行、+0x2C 平移 Z）。★★与 batch 899 的
+  0x5AE980（TranslateX：X/Y/Z += d×R00/R10/R20）和紧邻 0x5AE9E0
+  （TranslateZ：X/Y/Z += d×R02/R12/R22）成 X/Y/Z 三兄弟——同模板三副
+  本（batch 397 复制粘贴惯用），仅旋转列索引不同（0/1/2 列）。
+
+二、调用点（7 处 E8，3 宿主+2 间隙全核验）
+----------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x5AE9B0）：**命中 7 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1-3) 0x45884D/0x4588D1/0x458957 → BuildingClass::GetVoxelBarrelOffset
+     Matrix [0x458810-0x4589BF] body=432 —— ★带名（建筑炮塔偏移矩阵
+     ——与 batch 899 同宿主集）
+  4) 0x4B014F → FUN_004aff60 [0x4AFF60-0x4B0404] body=1189 —— 未登记
+     （batch 899 同宿主）
+  5) 0x69F85F → FUN_0069f670 [0x69F670-0x69FB14] body=1189 —— 未登记
+     （batch 899 同宿主）
+  6) 0x514206 → 无归属（函数间隙）
+  7) 0x54DE83 → 无归属（函数间隙）
+现场 disasm 核验（三处代表全读）：
+  BuildingClass::GetVoxelBarrelOffsetMatrix（0x45884D，432B ★带名）——
+    现场 0x45883C-0x45884D：add eax 前续 → or dword[edi+edx] → adc al
+    → sbb al → 0x45884D: call 0x5ae9b0 ★（本函数）→ mov edx,[esi+0x520]
+    → push ecx → lea ecx,[esp+0x14] → fild dword[edx+0x1750]（★★建筑
+    +0x1750 整数偏移 fild 转 float！）——与 batch 899 现场（+0x1748）
+    同款偏移族（+0x1748/+0x174C/+0x1750 三连）
+  FUN_004aff60（0x4B014F，1189B 未登记）——现场 0x4B0140-0x4B014F：
+    fild dword[esp+0x14]（★整数转 float）→ push ecx → lea ecx,[esp+0x84]
+    → fstp dword[esp] → 0x4B014F: call 0x5ae9b0 ★ → mov ecx,[esi+8] →
+    mov edx,[ecx+0x328] → lea ecx,[esp+0x80] → push edx
+  间隙 0x54DE83（函数间隙）——现场 0x54DE70-0x54DE83：sbb al,0x24 →
+    call 0x5ae980（★★先调 batch 899 TranslateX！）→ push ecx → lea ecx,
+    [esp+0x24] → fild dword[esp+0x14] → fstp dword[esp] → 0x54DE83:
+    call 0x5ae9b0 ★（★X 后 Y 顺序——X/Y/Z 三兄弟顺序调用惯用）
+★统一形态：宿主全「fild 整数偏移（+0x1750 等）→ fstp 转 float 距离 →
+  push → lea ecx,&矩阵缓冲 → call 0x5AE9B0」——建筑炮塔/单位渲染装配
+  的矩阵平移调用（与 batch 899 同宿主同形态）。★★部分宿主先调
+  TranslateX（batch 899）再调 TranslateY（本批）——X/Y/Z 三兄弟顺序
+  调用。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x5AE980 —— ★★★已登记 batch 899（Matrix3D::TranslateX——本批=其 Y
+    轴孪生兄弟）
+  0x5AE9E0 —— ★未登记（紧邻 TranslateZ——同模板三兄弟末位）
+  BuildingClass::GetVoxelBarrelOffsetMatrix —— ★带名（functions.tsv
+    ——batch 899 同宿主集，frontier TSV 未登记）
+  FUN_004aff60/FUN_0069f670 —— ★未登记（batch 899 同宿主）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 899（0x5AE980 Matrix3D::TranslateX——**本批=其 Y 轴孪生兄
+    弟：仅旋转列索引不同（列 1 = +4/+0x14/+0x24 vs 列 0 = +0/+0x10/
+    +0x20），宿主集完全重叠**）
+  ★★★batch 899 文档（点名 X/Y/Z 三兄弟——本批=三兄弟第二位兑现）
+  ★★batch 103/115/269（矩阵 3×4 布局——+0xC/+0x1C/+0x2C 平移列逐字
+    节互证）
+  ★★batch 397（复制粘贴惯用——X/Y/Z 三兄弟同模板三副本）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★与 batch 899 逐字节同构（仅 fmul 偏移 +4/+0x14/+0x24 vs +0/+0x10/
+   +0x20——同模板两实例）；② ★★x87 纯浮点三连（fld/fmul/fadd/fstp——
+   无 SSE）；③ ★★距离入参三次重读 [esp+4]（不缓存）；④ ★★矩阵 3×4 行
+   主序布局（+0xC/+0x1C/+0x2C 平移列）；⑤ ★★ret 4 单栈参；⑥ ★★
+   TranslateY 只动 Y 平移列（+0xC/+0x1C/+0x2C = X/Y/Z 三分量各 += d×R
+   行 i 第 1 列——沿 Y 轴局部平移）；⑦ ★★调用方整数偏移 fild 转 float
+   惯用（+0x1750 字段）；⑧ ★★宿主先调 TranslateX 再调 TranslateY
+   （X 后 Y 顺序——三兄弟顺序调用）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：宿主 BuildingClass::GetVoxelBarrelOffsetMatrix 业务细节（建筑
+  +0x1750 字段语义——炮塔 barrel 偏移矩阵构建）、FUN_004aff60/
+  FUN_0069f670 宿主业务（1189B 双宿主——batch 899 同 partial）、2 间隙
+  归属（0x514206/0x54DE83）、TranslateZ 独立登记（紧邻未登）。
