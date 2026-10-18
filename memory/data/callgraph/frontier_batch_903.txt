@@ -1,0 +1,119 @@
+frontier batch 903 —— 0x0055A730 facing→旋转矩阵构建器（159B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=21 / body=159B）——E8 全局扫描
+实测命中 11 处（0x4B/0x51/0x54/0x69/0x72 区——矩阵消费方）。
+TARGET = 0x0055A730（159B，0x55A730-0x55A7CE，thiscall 3 栈参 ret 0xC，
+0x55xxxx 区——显示/表面装配家族推断）。
+★★推断名：**facing→旋转矩阵构建器（FacingStruct::GetFacing 角度量化
++ RotateZ 矩阵旋转 + 12 float 矩阵输出；三宿主含 batch 899/900 矩阵
+平移宿主 FUN_004aff60/FUN_0069f670 重叠）**。
+
+一、函数体全读（159B，disasm 0x55A730 0xA0 全量）
+------------------------------------------------
+参数契约（thiscall 3 栈参 ret 0xC）：ecx = this（未显式使用推断）、
+[esp+0x40] = 栈参1（目标对象——[+8] 再 +0x388 取 GetFacing 源）、
+[esp+0x48] = 栈参2（可选项指针 esi——哨兵 -1 跳过）、[esp+0x44] = 栈
+参3（输出矩阵指针——12 float rep movsd 目标）。
+机器码（159B 全读，逐段要点）：
+  矩阵初始化: sub esp,0x34 → push esi/edi → lea ecx,[esp+0xc]（★本地
+    矩阵缓冲）→ call 0x5ae860（★★★batch 115 Matrix3D::MakeIdentity——
+    单位化！）→ mov edi,[esp+0x40]（★栈参1=目标对象）
+  首次 GetFacing + 角度量化: lea eax,[esp+8] → push eax → mov ecx,
+    [edi+8]（★对象+8）→ add ecx,0x388（★+0x388 偏移——子对象）→ call
+    0x4c93d0（★★★batch 083 FacingStruct::GetFacing——用户三阶段指令
+    点名家族！）→ mov ecx,[eax]（★返回值 [eax]）→ shr ecx,0xa（★>>
+    10）→ inc ecx（★+1）→ shr ecx,1（★/2——round 半值）→ and ecx,0x1f
+    （★&31 五方向位）→ sub ecx,8（★-8 偏移）
+  角度转 float + RotateZ: mov [esp+0x40],ecx（★存量化值）→ push ecx →
+    fild dword[esp+0x44]（★转 float）→ lea ecx,[esp+0x10] → fmul
+    qword[0x7e4408]（★常量×角度）→ fstp dword[esp] → call 0x5af1a0
+    （★★★batch 137 Matrix3D::RotateZ——绕 Z 旋转！）
+  可选项组合: mov esi,[esp+0x48]（★栈参2=可选项指针）→ test → je
+    0x55A7B6 → mov eax,[esi] → cmp eax,-1 → je 0x55A7B6（★哨兵 -1 跳
+    过）→ shl eax,5（★<<5）→ mov [esi],eax → mov ecx,[edi+8] → lea
+    edx,[esp+0x40] → add ecx,0x388 → push edx → call 0x4c93d0（★第二
+    次 GetFacing）→ mov eax,[eax] → mov ecx,[esi] → shr eax,0xa → inc
+    → shr 1 → and 0x1f → or ecx,eax → mov [esi],ecx（★★组合 facing
+    位：低 5 位 or 高 5 位——组装全值）
+  矩阵输出: mov eax,[esp+0x44]（★栈参3=输出矩阵）→ mov ecx,0xc →
+    lea esi,[esp+0xc]（★本地矩阵）→ mov edi,eax → rep movsd 12 dword
+    （★★48B = 12 float 矩阵拷贝到输出）→ pop 族 → add esp,0x34 →
+    ret 0xC（★3 栈参清理）
+语义：**facing→旋转矩阵构建器（推断名）**——thiscall 3 栈参 ret 0xC：
+  ① MakeIdentity 初始化本地矩阵；② 目标对象+8 子对象经 GetFacing 取
+  facing → >>10/inc/>>1/&31/-8 量化角度值 → float×[0x7E4408] →
+  RotateZ 旋转本地矩阵；③ 可选项指针非 -1 时第二次 GetFacing 组合
+  facing 位（<<5 + or 低 5 位）；④ 12 float（48B）rep movsd 拷贝到栈
+  参3 输出矩阵。★单位朝向渲染矩阵构建（facing 值域量化 + Z 旋转）。
+
+二、调用点（11 处 E8，4 宿主+4 间隙全核验）
+----------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x55A730）：**命中 11 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1-2) 0x4B0197/0x4B02D7 → FUN_004aff60 [0x4AFF60-0x4B0404] body=1189
+     —— 未登记（★★batch 899/900 Matrix3D 平移宿主！）
+  3) 0x51408D → 无归属（函数间隙）
+  4) 0x51423B → 无归属（函数间隙）
+  5) 0x54DEB8 → 无归属（函数间隙）
+  6) 0x54DF24 → 无归属（函数间隙）
+  7-8) 0x69F8A7/0x69F9E7 → FUN_0069f670 [0x69F670-0x69FB14] body=1189
+     —— 未登记（★★batch 899/900 矩阵平移宿主！）
+  9-11) 0x729BBC/0x729C1B/0x729DCC → FUN_00729b40 [0x729B40-0x729E31]
+     body=754 —— 未登记（0x729xxx 区——batch 727/728 十连释放器同区）
+现场 disasm 核验（两宿主代表全读）：
+  FUN_004aff60（0x4B0197，1189B 未登记——batch 899/900 矩阵宿主）——
+    现场 batch 900 已读同段（fild 整数偏移 → 虚表槽 0x48 → 平移三兄
+    弟调用），本批 0x4B0197 同宿主内 facing 矩阵构建调用
+  FUN_0069f670（0x69F8A7，1189B 未登记——batch 899/900 矩阵宿主）——
+    现场 batch 900 已读同段，本批 0x69F8A7 同宿主内调用
+  FUN_00729b40（0x729BBC，754B 未登记——0x729xxx 区）——现场未读
+  （4 间隙 0x51408D/0x51423B/0x54DEB8/0x54DF24 无归属）
+★统一形态（推断）：宿主为矩阵装配链（batch 899/900 宿主集重叠）——
+  本函数=朝向旋转矩阵构建段，被装配链在取坐标/平移之间调用。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x4C93D0 —— ★★★已登记 batch 083（FacingStruct::GetFacing——★★用
+    户三阶段指令点名家族：current() 插值，cpp_reimplementation_verified
+    C++ 模型已入 ctest 20 项！本函数=函数体两次调用现场）
+  0x5AE860 —— ★★★已登记 batch 115（Matrix3D::MakeIdentity——矩阵单
+    位化，本函数=初始化调用）
+  0x5AF1A0 —— ★★★已登记 batch 137（Matrix3D::RotateZ——绕 Z 旋转，
+    本函数=旋转调用）
+  [0x7E4408] —— ★未登记（角度缩放常量——float 系数）
+  FUN_004aff60/FUN_0069f670 —— ★未登记（★batch 899/900 矩阵平移宿主
+    ——重叠消费）
+  FUN_00729b40 —— ★未登记（0x729xxx 区新宿主）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 083（0x4C93D0 FacingStruct::GetFacing——**用户三阶段指令
+    点名的 FacingStruct 家族核心，本函数=其调用点现场（两次调用：首
+    次角度量化 + 二次组合位）**）
+  ★★★batch 115（0x5AE860 MakeIdentity——矩阵初始化调用现场）
+  ★★★batch 137（0x5AF1A0 RotateZ——绕 Z 旋转调用现场）
+  ★★batch 899/900/901（Matrix3D::TranslateX/Y/Z——FUN_004aff60/
+    FUN_0069f670 宿主集完全重叠，本函数同宿主矩阵装配链）
+  ★★batch 727/728（0x729xxx 区——FUN_00729b40 同区家族）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★角度量化链（shr 0xa → inc → shr 1 → and 0x1f → sub 8——facing
+   >>10 半值舍入 + &31 + 偏置 -8 的怪算式）；② ★★角度转 float 用
+   fild + fmul [0x7E4408]（常量系数）；③ ★★可选项指针哨兵 -1 跳过
+   （[esi]==-1 直出）；④ ★★facing 组合位（<<5 高 5 位 + or 低 5 位
+   ——两次 GetFacing 组装全值）；⑤ ★★12 float rep movsd 矩阵输出
+   （48B 整块拷贝——本地矩阵到栈参3）；⑥ ★★对象+8 再 +0x388 子对象
+   （GetFacing 源偏移）；⑦ ★★ret 0xC 三栈参清理（目标对象/可选项/输
+   出矩阵）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「facing→旋转矩阵构建器」）、角度量化公式
+  （shr/inc/shr/and/sub 链）的精确语义（facing 值域/方向位推断）、
+  [0x7E4408] 常量语义（角度缩放系数）、可选项组合位（<<5 + or）业务
+  含义（facing 全值组装推断）、栈参1 对象+8/+0x388 子对象身份、
+  FUN_004aff60/FUN_0069f670 宿主内调用上下文（batch 899/900 矩阵装配
+  链）、FUN_00729b40 宿主业务（754B——0x729xxx 区）、4 间隙归属。
