@@ -1,0 +1,131 @@
+frontier batch 885 —— 0x0063E590 容器元素移除器（49B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=51 / body=49B）。
+TARGET = 0x0063E590（49B，0x63E590-0x63E5BE，thiscall 1 栈参 ret 4，
+0x63xxxx 区容器族——batch 467 Add 邻接 / batch 870 三注册表注销现场）。
+★★推断名：**容器元素移除器（DynamicVectorClass::Remove 标准实现——
+batch 467 文档点名「邻接 0x63E590 同构：计数先减→末项跳过移动→从
+idx+1 起左移覆盖→直到 i>=新计数」= 本批逐字节兑现；栈参1 索引 ≥
+计数返 0，成功前移覆盖返 1；被 batch 870 三注册表注销析构器及同
+族注销器集中消费）**。
+
+一、函数体全读（49B，disasm 0x63E590 0x50 全量）
+------------------------------------------------
+参数契约（thiscall 1 栈参 ret 4）：ecx = this（容器）、[esp+4] = 栈
+参1（待移除索引）。
+机器码（49B 全读，逐条要点）：
+  0063e590  mov edx,[ecx+0x10]（★★this+0x10 元素计数）→ mov eax,
+    [esp+4]（★栈参1=索引）→ cmp eax,edx → jge 0x63e5bc（★★索引
+    ≥ 计数 → 返 0 越界）
+  0063e59b  dec edx（★★计数-1）→ cmp eax,edx → mov [ecx+0x10],
+    edx（★★计数回写）→ jge 0x63e5b7（★索引 ≥ 新计数 → 末项移除
+    免移动返 1）
+  0063e5a3  push esi → mov edx,[ecx+4]（★★this+4 数组基址）→ inc
+    eax（★从 idx+1 起）→ 0063e5a4: mov esi,[edx+eax*4]（★取
+    [idx+1] 元素）→ mov [edx+eax*4-4],esi（★★左移覆盖 [idx]！）
+    → mov edx,[ecx+0x10]（★新计数）→ cmp eax,edx → jl 0x63e5a4
+    （★★前移循环直到 i>=新计数）→ pop esi
+  0063e5b7  mov al,1 → ret 4（★返 1 成功）
+  0063e5bc  xor al,al → ret 4（★返 0 越界失败）
+语义：**容器元素移除器（推断名）**——thiscall 1 栈参 ret 4：①
+  this+0x10 计数与栈参1 索引比较，索引 ≥ 计数返 0；② 计数-1 回
+  写；③ 索引 ≥ 新计数（末项）直接返 1 免移动；④ 否则从 idx+1 起
+  逐项左移覆盖 [idx]=[idx+1] 直到 i>=新计数；⑤ 返 1。★★与
+  batch 467 的 0x63E540 Add 邻接配对（同容器类：+4 数组/+0x10 计
+  数/虚表槽 8 扩容——Add 追加端 ↔ 本函数移除端）。
+
+二、调用点（6 处 E8，3 宿主全核验——统一「虚表槽 0x10 查索引 →
+   cmp eax,-1 → je 跳过 → push 索引 → call 0x63E590」注册表注销
+   形态）
+----------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x63E590）：**命中 6 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x633D5C → FUN_00633d30 [0x633D30-0x633E47] body=280 —— 未登记
+  2) 0x633D7F → FUN_00633d30 [0x633D30-0x633E47] body=280 —— 未登记
+  3) 0x6341F5 → FUN_006340b0 [0x6340B0-0x63428A] body=475 —— 未登记
+  4) 0x63D9EB → FUN_0063d9c0 [0x63D9C0-0x63DACA] body=267 —— ★★batch
+     870 已登记（三注册表注销+双成员释放析构器）
+  5) 0x63DA0E → FUN_0063d9c0（同上）
+  6) 0x63DA31 → FUN_0063d9c0（同上）
+现场 disasm 核验（六处全读）：
+  FUN_00633d30（0x633D5C/0x633D7F，280B 未登记——同构注销器）——
+    现场 0x633D40-0x633D84：lea eax,[esp+8]（★&入参缓冲）→ push
+    eax → mov ecx,0xac4c98（★容器1=[0xAC4C98]）→ mov [esp+0xc],
+    esi（★入参=this）→ call [edx+0x10]（★★虚表槽 0x10 查索引！）
+    → cmp eax,-1 → je 0x633d61（★未登记跳过）→ push eax（★索引）
+    → mov ecx,0xac4c98 → 0x633D5C: call 0x63e590（★★本函数——
+    容器1 移除！）→ 同款容器2：mov edx,[0xac4b30]（★容器2）→
+    lea eax,[esp+8] → push eax → mov ecx,0xac4b30 → call [edx+
+    0x10]（★查索引）→ cmp eax,-1 → je 0x633d84 → push eax → mov
+    ecx,0xac4b30 → 0x633D7F: call 0x63e590（★★本函数——容器2 移
+    除！）→ 容器3 [0xac4c18] 同款——**与 batch 870 的三注册表注
+    销完全同构的第二个注销器！**
+  FUN_006340b0（0x6341F5，475B 未登记）——现场 0x6341EF-0x634204：
+    push eax（★索引）→ mov ecx,0xac4c98（★容器1）→ 0x6341F5:
+    call 0x63e590（★★本函数——容器1 移除！）→ lea eax,[esp+0x18]
+    → mov ecx,0xac4b30（★容器2）→ push eax → 0x634204: call
+    0x63e5d0（★★紧邻 0x63E5D0——虚表槽 0x10 转发包装！push
+    esi/mov esi,ecx/mov ecx,[esp+8]/mov eax,[esi]/push ecx/mov
+    ecx,esi/call [eax+0x10]——容器2 查索引转发）
+  FUN_0063d9c0（0x63D9EB/0x63DA0E/0x63DA31，267B ★★batch 870 已登
+    记）——现场 0x63D9E0-0x63DA36：cmp eax,-1（★虚表槽 0x10 查索
+    引结果）→ je 0x63d9f0 → push eax（★索引）→ mov ecx,0xac4c98
+    （★容器1）→ 0x63D9EB: call 0x63e590（★★本函数——**batch 870
+    文档「命中调 0x63E590 Remove」点名现场！**）→ 同款容器2
+    [0xac4b30] → 0x63DA0E: call 0x63e590（★★容器2 移除）→ 同款
+    容器3 [0xac4c18] → 0x63DA31: call 0x63e590（★★容器3 移除）→
+    0x63DA36: mov eax,[esp+4] → 后续三全局槽条件复位
+★统一形态：六处调用点全「虚表槽 0x10 查索引 → cmp eax,-1 → je
+  跳过 → push 索引 → call 0x63E590」——本函数=容器注册表移除原语
+  （按索引删除），被多个注册表注销器（batch 870 三注册表注销析构
+  器 + FUN_00633d30 同构注销器 + FUN_006340b0 容器注销器）集中消
+  费。★★宿主 FUN_0063d9c0 已登记（batch 870，文档点名「0x63E590
+  Remove」「0x63E590 独立未登记留候选」= 本批兑现），FUN_00633d30/
+  FUN_006340b0 未登记（两新宿主——注册表注销同族）。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x63E540 —— ★★已登记（batch 467 DynamicVectorClass::Add——本批
+    目标=其邻接 Remove 配对，batch 467 文档点名「邻接 0x63E590 同
+    构：计数先减→末项跳过移动→从 idx+1 起左移覆盖→直到 i>=新计
+    数」逐字节吻合！）
+  0x63D9C0 —— ★★已登记（batch 870 三注册表注销+双成员释放析构器
+    ——本批调用点 0x63D9EB/0x63DA0E/0x63DA31 = 其「三注册表注销：
+    虚表槽 0x10 查索引，命中调 0x63E590 Remove」点名现场！）
+  FUN_00633d30/FUN_006340b0 —— ★未登记（两新宿主——同族注销器）
+  0x63E5D0 —— ★未登记（虚表槽 0x10 转发包装——新候选，宿主 3 现场）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 467（0x63E540 DynamicVectorClass::Add——**本批目标=其
+    邻接 Remove 配对：Add 追加端 ↔ Remove 移除端，batch 467 文档
+    点名「邻接 0x63E590 同构」逐字节兑现**）
+  ★★★batch 870（0x63D9C0 三注册表注销析构器——**本批调用点
+    0x63D9EB/0x63DA0E/0x63DA31 = 其「虚表槽 0x10 查索引，命中调
+    0x63E590 Remove」点名现场，batch 870 文档「0x63E590 独立未登
+    记留候选」= 本批兑现！**）
+  ★★batch 869（[0xAC4C98] 入队容器——本批三容器移除端同源）
+  ★★batch 215（0x635120 容器清理器——batch 870 入口委托同链）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★索引 ≥ 计数返 0 越界（cmp eax,edx / jge——不越界检查直接返
+   失败）；
+② ★★计数先减后写（dec edx → mov [ecx+0x10],edx——计数-1 在移动
+   前回写）；
+③ ★★末项免移动（cmp eax,edx / jge 0x63e5b7——移除最后一个元素
+   时跳过左移循环直接返 1）；
+④ ★★左移覆盖循环（mov esi,[edx+eax*4] → mov [edx+eax*4-4],esi
+   ——[idx]=[idx+1] 逐项前移直到 i>=新计数）；
+⑤ ★★无缩容（只移动不回写容量——动态数组长度减小不 realloc）；
+⑥ ★★返 1/0 布尔（mov al,1 / xor al,al——成功/越界两态）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「容器元素移除器」——DynamicVectorClass::
+  Remove 家族，YRpp DynamicVectorClass.h 参照未做）、+4/+0x10 字段
+  精确语义（数组/计数——batch 467 Add 同族确认）、FUN_00633d30/
+  FUN_006340b0 宿主精确业务（注册表注销同族推断）、0x63E5D0 转发
+  包装精确语义、三容器精确身份（batch 870 同口径推断）。
