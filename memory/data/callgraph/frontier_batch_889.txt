@@ -1,0 +1,127 @@
+frontier batch 889 —— 0x006B0CC0 惰性标志批量虚表通知器（65B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=48 / body=65B）。
+TARGET = 0x006B0CC0（65B，0x6B0CC0-0x6B0D00，thiscall 无栈参 ret，0x6B0xxx
+区——batch 886/887/888 后续邻区）。
+★★推断名：**惰性标志批量虚表通知器（+0x5C 惰性标志门控：未置时置 1
++ +0x60=0x7FFFFFFF 初值 → 从 +0x48 计数遍历 +0x3C 数组逐项 → 项
+非空且 +4 字段≠6 时经项**虚表槽 0x3D0**（大偏移槽）通知调用；紧邻
+0x6B0D10 同构孪生；被 FootClass::Mission_AreaGuard 等以 +0x2D8 子对
+象门控调用）**。
+
+一、函数体全读（65B，disasm 0x6B0CC0 0x60 全量）
+------------------------------------------------
+参数契约（thiscall 无栈参 ret）：ecx = this（容器/管理对象）。
+机器码（65B 全读，逐段要点）：
+  006b0cc0  push esi → mov esi,ecx（★this）→ push edi → mov eax,
+    [esi+0x5c]（★this+0x5C 惰性标志）→ test eax,eax → jne
+    0x6b0cfe（★已初始化跳过）
+  006b0ccb  mov [esi+0x5c],1（★置标志）→ mov [esi+0x60],0x7fffffff
+    （★+0x60=0x7FFFFFFF 初值——INT_MAX 哨兵）
+  006b0cd9  mov edi,[esi+0x48]（★+0x48 计数）→ dec edi → js
+    0x6b0cfe（★计数 0 跳过）
+  006b0cdf  mov eax,[esi+0x3c]（★+0x3C 数组基址）→ mov eax,
+    [eax+edi*4]（★取数组项）→ mov edx,[eax+4]（★项+4）→ mov
+    ecx,[eax]（★项+0 指针）→ cmp edx,6 → je 0x6b0cfb（★+4==6 跳
+    过）→ test ecx,ecx → je 0x6b0cfb（★项空跳过）→ mov edx,
+    [ecx] → call [edx+0x3d0]（★★虚表槽 0x3D0 大偏移槽通知调用！）
+  006b0cfb  dec edi → jns 0x6b0cdf（★循环遍历）→ 006b0cfe: pop
+    edi/esi → ret
+语义：**惰性标志批量虚表通知器（推断名）**——thiscall 无栈参：①
+  +0x5C 惰性标志未置时置 1、+0x60=0x7FFFFFFF（INT_MAX）初值；② 从
+  +0x48 计数倒序遍历 +0x3C 数组；③ 每项 +0 指针非空且 +4 字段≠6
+  时经项虚表槽 0x3D0（大偏移槽——对象尾部方法）通知调用；④ 循环
+  到尾。★★紧邻 0x6B0D10 是同构孪生（同一模板第二副本）；+0x3C/
+  +0x48 数组+计数布局与 batch 868（FUN_00589740 批量数组+36B 步进）
+  等容器族同思路。
+
+二、调用点（4 处 E8，3 宿主+1 间隙全核验——统一「mov ecx,[this+
+   0x2D8] → test → je 跳过 → call 0x6B0CC0」子对象门控通知形态）
+----------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x6B0CC0）：**命中 4 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x4D6D73 → FootClass::Mission_AreaGuard [0x4D6AA0-0x4D7163]
+     body=1732 ★★具名（functions.tsv 带名——FootClass 任务函数！）
+  2) 0x73A9D4 → 无归属（函数间隙——回退 0x73A9C0 重读定位）
+  3) 0x74084A → FUN_00740810 [0x740810-0x740A89] body=634 —— 未登记
+  4) 0x744138 → FUN_00744100 [0x744100-0x744174] body=117 —— 未登记
+现场 disasm 核验（四处全读）：
+  FootClass::Mission_AreaGuard（0x4D6D73，1732B ★★具名宿主）——现
+    场 0x4D6D69-0x4D6D89：mov ecx,[esi+0x2d8]（★this+0x2D8 子对
+    象）→ cmp ecx,ebx → je 0x4d6d78（★空跳过）→ 0x4D6D73: call
+    0x6b0cc0（★★本函数——+0x2D8 子对象门控通知！）→ cmp
+    [esi+0x218],ebx → jne → cmp [esi+0xb4],-1 → jne → lea edx,
+    [esi+0x9c]（★后续状态机继续）
+  间隙 0x73A9D4（回退 0x73A9C0 重读）——现场 0x73A9CA-0x73A9DE：
+    test cl,cl → jne 0x73aae6 → mov ecx,[ebp+0x2d8]（★this+0x2D8
+    子对象）→ test ecx,ecx → je 0x73a9de → 0x73A9D4: call
+    0x6b0cc0（★★本函数→ jmp 0x73ab6c → mov ecx,[ebp+0x21c] →
+    call 0x50b730（★后续路径）
+  FUN_00740810（0x74084A，634B 未登记）——现场 0x740830-0x740854：
+    mov eax,[0xa8ed84]（★★[0xA8ED84]=Unsorted::CurrentFrame 已登
+    记 batch 083/101/175/189/221！）→ add edx,edi → cmp edx,eax →
+    jge 0x740854 → call 0x6b1020（★前置检查——未登记）→ test al →
+    je 0x740854 → mov ecx,[esi+0x2d8] → 0x74084A: call 0x6b0cc0
+    （★★本函数→ jmp 0x740a1f
+  FUN_00744100（0x744138，117B 未登记）——现场 0x744120-0x744147：
+    mov eax,[0xa8ed84]（★★CurrentFrame 帧计数门控）→ cmp edx,eax
+    → jge 0x74416c → call 0x6b1020（★前置检查）→ test al → je →
+    mov ecx,[esi+0x2d8] → 0x744138: call 0x6b0cc0（★★本函数→
+    mov ecx,esi → call 0x5b3a00（★后续 MissionControl 表索引族——
+    batch 101 已登记！）→ fld [eax+0x10] → fmul [0x7e27f8]（★浮点
+    后续）
+★统一形态：四处调用点全「this+0x2D8 子对象非空门控（宿主 3/4 还
+  有 [0xA8ED84] 帧计数 + 0x6B1020 前置检查）→ call 0x6B0CC0」——
+  本函数=+0x2D8 子对象注册表批量通知器（+0x3C 数组虚表槽 0x3D0
+  批量通知）。★★宿主 FootClass::Mission_AreaGuard 具名（FootClass
+  任务函数——AreaGuard 区域守卫任务）；宿主 3/4 的 CurrentFrame
+  帧计数门控提示触发时机受帧推进限制。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  [0xA8ED84] —— ★★已登记（Unsorted::CurrentFrame——batch 083
+    None::CurrentFrame/batch 101 MissionControl/batch 175 Tactical
+    登记/batch 189 BuildingClass 构造/batch 221 EventClass 五批
+    实锤！本批宿主 3/4 帧计数门控语义吻合）
+  0x4D6AA0 —— ★functions.tsv 具名（FootClass::Mission_AreaGuard
+    ——frontier_status.tsv 未登记，本批调用点宿主）
+  0x6B1020 —— ★未登记（宿主 3/4 前置检查——新候选）
+  FUN_00740810/FUN_00744100 —— ★未登记（两新宿主）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 083/101/175/189/221（[0xA8ED84]=Unsorted::CurrentFrame
+    ——本批宿主 3/4 帧计数门控的语义来源，同全局五批复用再添两现
+    场）
+  ★★batch 101（0x5B3A00 MissionControl 表索引族——宿主 4 后续调
+    用，跨批现场）
+  ★★batch 868（0x58 区批量数组族——+0x3C/+0x48 数组+计数布局同思
+    路参照）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★+0x5C 惰性标志门控（mov [esi+0x5c],1——已初始化跳过主体，
+   首次置 1 才遍历通知）；
+② ★★+0x60=0x7FFFFFFF 初值（INT_MAX 哨兵——时间戳/位置初值推
+   断，与 batch 068 AnimClass +0xD0=-1 哨兵同思路）；
+③ ★★倒序遍历（mov edi,[esi+0x48] → dec edi → js——计数减到负
+   才停，从尾向头）；
+④ ★★项+4==6 跳过（cmp edx,6 / je——特殊索引值不通知）；
+⑤ ★★★虚表槽 0x3D0 大偏移调用（call [edx+0x3d0]——对象尾部大偏
+   移方法槽，0x3D0=976 偏移推断对象尾部扩展方法）；
+⑥ ★★+0x3C 数组 +4 步进（mov eax,[ecx+i*4]——索引 dword）；
+⑦ ★★紧邻孪生 0x6B0D10（同构第二副本——Westwood 复制粘贴惯用）；
+⑧ ★★调用点 +0x2D8 子对象门控（mov ecx,[esi+0x2d8]/test/je——
+   子对象不存在不通知，宿主 3/4 还叠加帧计数 + 0x6B1020 前置）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「惰性标志批量虚表通知器」——+0x2D8 子对
+  象注册表通知推断）、+0x5C/+0x60 字段精确语义（惰性标志/INT_MAX
+  初值推断）、+0x3C/+0x48 数组计数语义（注册表推断）、项+4 字段
+  语义（==6 特殊索引）、虚表槽 0x3D0 方法身份、0x6B1020 前置身份、
+  0x6B0D10 孪生宿主精确业务、FootClass::Mission_AreaGuard 任务语
+  义（FootClass 区域守卫——AreaGuard 触发时机推断）、FUN_00740810/
+  FUN_00744100 宿主业务。
