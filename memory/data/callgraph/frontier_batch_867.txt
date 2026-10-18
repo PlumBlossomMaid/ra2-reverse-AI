@@ -1,0 +1,160 @@
+frontier batch 867 —— 0x00555AC0 LightConvert 三元组规整器（194B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=70 / body=194B）。
+TARGET = 0x00555AC0（194B，0x555AC0-0x555B81，fastcall 双寄存器参 + 1
+栈参 ret 4）。
+★★推断名：**LightConvert 三元组规整器（clamp [0,1000] + 负值清零 + 按
+光照模式位域对齐——LightConvertClass +0x198/+0x19C/+0x1A0 坐标族消费
+端）**。
+
+一、函数体全读（194B，disasm 0x555AC0 0xC8）
+------------------------------------------------
+参数契约（fastcall 3 指针）：ecx = 指针1、edx = 指针2、[esp+4] = 栈参1
+= 指针3——三个 int* 各指向一个待规整数值，就地写回。ret 4。
+机器码（194B 全读，分段要点）：
+  00555ac0  push esi/edi → mov esi,ecx（★this=指针1）→ mov eax,[esi] →
+    cmp eax,0x3e8（★★clamp 上界 1000！）→ jl → mov eax,0x3e8（★>1000
+    截断为 1000）→ mov [esi],eax → 同款 clamp [edx]（★指针2）→ 同款
+    clamp [esp+0xc] 所指（★栈参1 指针3）——★★三指针各 clamp [0,1000]
+  00555af9  mov edi,[esi] → xor ecx,ecx → test edi,edi → setle cl（★≤0
+    置 1）→ dec ecx → and ecx,edi（★★负值清零惯用法：edi>0 时 setle=0
+    → dec=-1 → and=edi 原值；edi<=0 时 setle=1 → dec=0 → and=0）→
+    mov [esi],ecx → 同款清零 [edx]（★指针2）→ 同款清零 [eax]（★栈参1
+    指针3）——★★三指针负值/零清零
+  00555b23  mov ecx,[0xa8eb78]（★★[0xA8EB78] 光照模式全局——batch
+    163/450 已登记！）→ sub ecx,0 → je 0x555b68（★档 0）→ dec ecx →
+    je 0x555b4e（★档 1）→ dec ecx → jne 0x555b7d（★档 2 → 0x555b34；其
+    他 → 直接收尾不变）
+  档 2（0x555b34）: and [esi],0xffffffe0（★清低 5 位=32 对齐）→ and
+    [edx],0xffffffe0 → and [eax],0xffffffe0 → ret 4
+  档 1（0x555b4e）: and [esi],0xffffffc0（★清低 6 位=64 对齐）→ and
+    [edx],0xffffffc0 → and [eax],0xffffffc0 → ret 4
+  档 0（0x555b68）: and [esi],0xffffff80（★清低 7 位=128 对齐）→ and
+    [edx],0xffffff80 → and [eax],0xffffff80 → 0x555b7d: ret 4（★其他档
+    值 → 不变直接收尾）
+语义：**LightConvert 三元组规整器（推断名）**——① 三指针所指 int 各
+  clamp 到 [0,1000]（cmp 0x3E8 只钳上界）；② 各负值/零清零（setle/dec/
+  and 四指令惯用法——≤0 写 0，>0 保留）③ 按 [0xA8EB78] 光照模式全局
+  三档选掩码清低位：档 0 → 0xFFFFFF80（128 对齐）/档 1 → 0xFFFFFFC0
+  （64 对齐）/档 2 → 0xFFFFFFE0（32 对齐）；其他值 → 不变；④ 三指针就地
+  写回。★★语义统一：与 batch 853 LightConvertClass 构造器写的
+  +0x198/+0x19C/+0x1A0 坐标族逐调用点对应（见调用现场）——规整后的三
+  元组 = LightConvert 实例坐标/尺寸，位域对齐 = 光照映射降位对齐。
+
+二、调用点（3 处 E8，3 宿主全部核验）
+----------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x555AC0）：**命中 3 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x483F0B → **CellClass::InitLightConvert [0x483E30-0x484040]
+     body=529 —— ★★带名！**
+  2) 0x4840F5 → FUN_00484050 [0x484050-0x484173] body=292 —— 未登记
+  3) 0x544ECD → FUN_00544e70 [0x544E70-0x544FE0] body=369 —— 未登记
+     （★★batch 853 已点名「0x555AC0（未登记——FUN_00544e70 内调用，
+     候选）」——本批兑现！）
+现场 disasm 核验（三处全读——全链光照系统）：
+  CellClass::InitLightConvert（0x483E30，529B 带名）——现场 0x483A7A 前
+    段（字比较+分支）+ 0x483EB0-0x483F54：lea ecx,[esp+8]（★待规整值1）
+    → lea edx,[esp+4]（★待规整值2）→ push ecx（★指针3）→ lea eax,
+    [esp+0x20] → push edx（★指针2）→ lea ecx,[esp+0x38] → push eax
+    （★指针1）→ push 族（★前置 0x484180 大参量调用）→ call 0x484180 →
+    0x483EDF: mov eax,[esi+0x34]（★LightConvert 实例指针推断）→ test →
+    je → mov eax,[esp+0x1c] → mov ecx,[esp+4] → mov edx,[esp+8] → 三值
+    存栈 → lea eax,[esp+0x14] → push eax（★指针3）→ lea edx,[esp+0x14]
+    → lea ecx,[esp+0x10]（★指针1/2）→ 0x483F0B: call 0x555ac0（★★本函
+    数——规整三元组！）→ 0x483F10: mov eax,[esi+0x34]（★实例）→ mov
+    edx,[esp+0xc] → mov ecx,[eax+0x198]（★★LightConvert+0x198！batch
+    853 坐标族）→ cmp ecx,edx → jne 0x483f3d → mov edx,[eax+0x19c]
+    （★★+0x19C）→ mov ecx,[esp+0x10] → cmp → jne → mov ecx,[eax+0x1a0]
+    （★★+0x1A0）→ mov edx,[esp+0x14] → cmp → je 0x483f54（★三字段全
+    等 → 复用已有实例！）→ 0x483f3d:（不等 → 重建路径）——★★★规整后
+    三元组 vs 已有 LightConvert 实例 +0x198/+0x19C/+0x1A0 比对 = 查找/
+    复用判定！
+  FUN_00484050（0x484050，292B）——现场 0x4840B0-0x484135：push 族 →
+    call 0x484180（★同款前置）→ mov eax,[esi+0x34] → test → je → mov
+    eax,[esp+0x10] → mov ecx,[esp+0x2c] → mov edx,[esp+0x28] → 三值存栈
+    → lea eax,[esp+0x24] → push eax（★指针3）→ lea edx,[esp+0x24] →
+    lea ecx,[esp+0x20]（★指针1/2）→ 0x4840F5: call 0x555ac0（★★本函
+    数——同款规整）→ 0x4840FA: mov esi,[esi+0x34]（★实例）→ mov eax,
+    [esp+0x1c] → mov ecx,[esi+0x198]（★★同 +0x198）→ cmp → jne → mov
+    edx,[esi+0x19c]（★★+0x19C）→ cmp → jne → mov eax,[esi+0x1a0]
+    （★★+0x1A0）→ cmp → jne → mov ecx,[esp+0x18]（★输出指针）→ mov
+    [ecx],esi（★★命中 → 写回实例指针！）——★同构 LightConvert 查找，
+    命中写输出
+  FUN_00544e70（0x544E70，369B——★★batch 853 点名的「LightConvert 查
+    找或创建工厂」实锤）——现场 0x544E90-0x544F1C：cmp ecx,0x3e8 → jne
+    0x544ec0（★快路径：三值需==1000）→ cmp edx,ecx → jne → cmp [esp+
+    0x1c],ecx → jne → mov eax,[0x87f6a8]（★★[0x87F6A8] 计数全局——
+    batch 291 已登记多表通知广播表）→ test → je → mov eax,[0x87f69c]
+    （★★[0x87F69C] 表基址）→ mov eax,[eax]（★[0] 哨兵/默认实例）→ ret
+    4（★★快路径：三值全==1000 且表非空 → 直接返 [0x87F69C][0]！）→
+    0x544EC0: lea ecx,[esp+0x1c]（★指针3）→ lea edx,[esp+0x10]（★指针
+    2）→ push ecx → lea ecx,[esp+0x18]（★指针1）→ 0x544ECD: call
+    0x555ac0（★★本函数——规整三元组！）→ 0x544ED2: mov esi,[0x87f6a8]
+    （★计数）→ 三值取回 ebx/ebp/edi → mov ecx,1 → cmp esi,ecx → jle
+    0x544f1c（★计数≤1 → 跳过遍历）→ mov edx,[0x87f69c] → add edx,4 →
+    mov eax,[edx] → cmp [eax+0x198],edi（★★+0x198 遍历比较）→ jne →
+    cmp [eax+0x19c],ebp（★★+0x19C）→ jne → cmp [eax+0x1a0],ebx（★★
+    +0x1A0）→ je 0x544fd7（★命中已有实例）→ inc ecx → add edx,4 → cmp
+    ecx,esi → jl 循环 → 0x544f1c 未中 → 后续 new+9 参构造（batch 853
+    已录 0x544F74: call 0x555da0）——★★★完全闭环：batch 853 工厂的快
+    路径（三值==1000 返 [0][0]）+ 慢路径（本函数规整 → 遍历比较 +0x198/
+    +0x19C/+0x1A0 → 命中复用/未中 new+构造）
+★统一形态：三处调用点全「三指针待规整值装载 → call 0x555AC0（clamp+
+  清零+位域对齐）→ 结果与 LightConvertClass +0x198/+0x19C/+0x1A0 三字
+  段比较（相同复用/不同重建）/遍历比较」——本函数是 LightConvert 查找
+  前的三元组规范化原语。★★FUN_00544e70 调用点 = batch 853 partial
+  「0x555AC0 候选」的跨批兑现。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  [0xA8EB78] —— ★★已登记（batch 163 FlashbangWarheadAt 光照/闪光系统
+    状态 + batch 450 LightSourceClass 初始化消费——本批=档位掩码选择
+    第 3 消费点）
+  [0x87F69C]/[0x87F6A8] —— ★★已登记（batch 291 多表通知广播表 1——
+    本批工厂读表基址/计数）
+  LightConvertClass +0x198/+0x19C/+0x1A0 —— ★★batch 853 已实锤（构造
+    器写双份坐标族——本批=其查找比对端）
+  FUN_00544e70 —— ★★batch 853 已点名（「LightConvert 查找或创建工
+    厂」——partial 又点名「0x555AC0（候选）」=本批兑现）
+  CellClass::InitLightConvert —— ★★带名宿主（TSV 无独立登记条目——
+    相机/光照系统 CellClass 方法，本批现场实锤）
+  0x484180 —— ★未登记（两宿主共用前置大参量调用——新候选）
+  FUN_00484050 —— ★未登记（同构 LightConvert 查找——新候选宿主）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 853（LightConvertClass::LightConvertClass——本函数=其
+    +0x198/+0x19C/+0x1A0 坐标族的消费端；FUN_00544e70 工厂 partial
+    「0x555AC0 候选」兑现；构造器写端↔本批规整端双向闭合）
+  ★★batch 163/450（[0xA8EB78] 光照模式全局——本批=第 3 消费点，档位
+    0/1/2 = 128/64/32 对齐）
+  ★★batch 291（[0x87F69C]/[0x87F6A8] 广播表——工厂表基址/计数）
+  ★★batch 001（若无 new 则无——本批无堆分配调用，纯就地规整）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★clamp 只钳上界 1000（cmp/jl + mov 0x3E8 立即数——无下界钳制，负
+   值由第二段清零处理——两段式非对称）；
+② ★★负值清零 setle/dec/and 四指令惯用法（setle cl → dec ecx → and
+   ecx,edi——≤0 清零、>0 保留原值——与批量条件写等价的极简形态）；
+③ ★★[0xA8EB78] 三档位域对齐（档 0 → 0xFFFFFF80=128 对齐/档 1 →
+   0xFFFFFFC0=64 对齐/档 2 → 0xFFFFFFE0=32 对齐；其他值 → 不变直接收
+   尾——sub ecx,0/dec/dec 三连判档）；
+④ ★三指针就地写回（ecx/edx/栈参1 各指一个 int，全部改写——fastcall
+   3 指针非典型 call 形态）；
+⑤ ret 4 清 1 栈参但用满三个寄存器通道；
+⑥ 调后比较 +0x198/+0x19C/+0x1A0（三字段=规整后三元组——查找/复用判
+   定的比较端，与 batch 853 构造写端对应）；
+⑦ 快路径三值==1000 直接返 [0x87F69C][0]（默认实例短路——1000 是默认
+   坐标尺寸）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「LightConvert 三元组规整器」——clamp+清零+
+  光照位域对齐）、[0xA8EB78] 三档精确语义（128/64/32 对齐的用途——
+  光照映射降位推断）、规整后三元组的精确业务（坐标/尺寸/调色板槽推
+  断）、FUN_00484050 与 CellClass::InitLightConvert 精确关系（相机光照
+  初始化推断）、0x484180 身份（前置大参量调用）、+0x198/+0x19C/+0x1A0
+  三字段在查找成功后的使用（复用实例 vs 重建的选择条件全列实锤）。
