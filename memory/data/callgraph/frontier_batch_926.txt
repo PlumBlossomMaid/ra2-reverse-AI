@@ -1,0 +1,75 @@
+frontier batch 926 —— 0x005A1190 死代码复刻：atan2 象限归一化 + 角度抖动（210B）
+===================================================================================
+
+候选来源：用户指令「RMG 死代码全部复现对齐（挖坟考古）」——0x5A1190
+（210B，TSV:1028 已 semantics 登记，本批做 C++ 复刻落地 + 单测对拍）。
+TARGET = 0x005A1190（cdecl 3 栈参 ret 0x10，x87 返回 double）。
+C++ 模型：code/rewrite/rmg/dead_code_jitter.{h,cpp} 新增
+DeadCodeAngleJitter。单测：test_dead_code_jitter.cpp 新增
+DeadCodeAngleJitter.Golden（100 例对拍）。
+
+一、语义（210B 全读 + emu 黄金闭环）
+------------------------------------------------
+真义（黄金实证 + 机器码逐段确认）：
+  ① dx = p2.x-p1.x ; dy = p2.y-p1.y（movsx word 带符号读 int16）
+  ② 若 dx==0: a = π/2（[0x7E2820] 快速路径，跳过 Atan 调用）
+     否则:     a = Atan(-(double)dy/(double)dx)  // 0x4CADE0 4097 项 LUT
+               if (dx < 0) a += π                  // [0x7E44D0]
+  ③ r = |a - arg|（fsub qword [esp+0x18] + fabs）
+  ④ while (r >= 2π) r -= 2π                      // mod 2π（[0x7E3CC0]）
+  ⑤ if (r > π) r = 2π - r                        // 折叠到 [0,π]
+  ⑥ 返回 Random() * kInvUintMax * 2.0 + 1.5 * r
+     // [0x7ED898]=1/(2^32-1) × [0x7ED790]=2.0 + [0x7ED798]=1.5×r
+  全程 RC=chop（原版 x87 全局向零截断——MXCSR toward-zero 复刻）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+cdecl 3 栈参（p1/p2 坐标指针 + arg double 8B——小端拆 lo/hi 两 dword
+压栈：[esp+0xC]=低 4B、[esp+0x10]=高 4B；fsub qword [esp+0x18] 读它）。
+复用 _emu_deadcode_5A1190.py v5 骨架（STUB 独立地址 0x1F000800 +
+FSTP_RET 落盘 + MAGIC_RET 保持干净）；FPCW=0x0E7F。
+覆盖：5 种子 × 5 坐标对 × 4 arg 值（0.0/1.2/-1.0/π）= 100 例，
+落盘 memory/data/rmg/deadcode_angle_golden.txt（103 行含头注释）。
+★覆盖设计：坐标对含 dx=0 竖直（((0,0),(0,0))）、dx<0 左右象限
+（((-50,-60),(70,80))）、大坐标符号极值（((-30000,30000),(30000,-30000))）
+——象限归一化（dx==0 → π/2 快路 + dx<0 加 π）与 mod 2π 折叠分支
+全数触发。
+
+三、C++ 模型（code/rewrite/rmg/dead_code_jitter.{h,cpp}）
+------------------------------------------------
+签名：double DeadCodeAngleJitter(Randomizer& rng, int16 ax/ay/bx/by,
+  double arg)。
+实现链：dx/dy int32（p2-p1 方向）→ dx==0 快路 π/2 / Atan(-dy/dx)
+（fast_math 已有模型，0x4CADE0 4097 项 LUT）+ dx<0 加 π →
+|a-arg| → mod 2π 循环 → >π 折叠 → j = Random()*kInvUintMax*2.0
++ 1.5*r。
+★浮点环境坑：原版 x87 全局 RC=chop，C++ SSE 默认 round-to-nearest
+——与 batch 924/925 同修法（MXCSR _MM_ROUND_TOWARD_ZERO 全程包裹
++ volatile 防重排）；非 x86_64 降级同数学语义（主对拍平台为 x64）。
+
+四、单测（test_dead_code_jitter.cpp，45 项测试之一）
+------------------------------------------------
+DeadCodeAngleJitter.Golden：读 golden 原档（RA2_GOLDEN_DIR 宏），
+100 例 BitEq 逐位对拍（双精度位模式全等，非近似相等）。
+ctest 44/44 全绿（dead_code_jitter #41 含三族 Golden）。
+
+五、怪癖照抄（C++ 模型内已固化 + 单测锁定）
+------------------------------------------
+① dx==0 走 π/2 快路不调 Atan（省一次 LUT 查表，且 -dy/0 会是 inf）；
+② Atan 参数是 -(double)dy/(double)dx（先取负再除，非 atan2）；
+③ dx<0 加 π 修正象限（atan LUT 只覆盖 -π/2..π/2）；
+④ mod 2π 用 while 循环 fsub（非 fmod——逐次 chop 舍入）；
+⑤ r>π 折叠 2π-r 把角差归一到 [0,π]；
+⑥ 随机项 = Random()*kInvUintMax*2.0（幅度 2.0，非 1.0）；
+⑦ 权重 1.5*r（角度差线性放大 1.5 倍）；
+⑧ j 链全程 RC=chop（MXCSR toward-zero 复刻）；
+⑨ ret 0x10 三栈参（第三参 double 8B 占两个 dword 槽）。
+
+六、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：0x5A1190 业务用途（角度抖动——坐标/朝向扰动推断，
+batch 320 同族）、arg 来源（调用方第三参——零引用无从追）、
+dx==0 快路与 dx<0 修正的业务动因（标准 atan2 象限归一化惯用法）。
+依赖模型：Atan@0x4CADE0（fast_math，TSV:246 已登记）——
+LUT 查表逐位一致性由 fast_math 既有单测覆盖。

@@ -138,6 +138,58 @@ TEST(DeadCodeJitterF, Golden) {
   }
 }
 
+struct CaseA {
+  std::uint32_t seed;
+  std::int16_t ax, ay, bx, by;
+  double arg;
+  double want;
+};
+
+// 0x5A1190 golden：seed=%u p1=(a,b) p2=(c,d) arg=%lf => %.17g
+std::vector<CaseA> LoadGoldenA() {
+  const std::string path = RA2_GOLDEN_DIR "/deadcode_angle_golden.txt";
+  std::ifstream f(path);
+  EXPECT_TRUE(f.good()) << "cannot open golden: " << path;
+  std::vector<CaseA> cases;
+  std::string line;
+  while (std::getline(f, line)) {
+    if (line.empty() || line[0] == '#') continue;
+    CaseA c;
+    std::uint32_t s;
+    long ax, ay, bx, by;
+    double arg, v;
+    if (std::sscanf(line.c_str(),
+                    "seed=%u p1=(%ld,%ld) p2=(%ld,%ld) arg=%lf => %lf",
+                    &s, &ax, &ay, &bx, &by, &arg, &v) != 7) {
+      ADD_FAILURE() << "unparseable golden line: " << line;
+      continue;
+    }
+    c.seed = s;
+    c.ax = static_cast<std::int16_t>(ax);
+    c.ay = static_cast<std::int16_t>(ay);
+    c.bx = static_cast<std::int16_t>(bx);
+    c.by = static_cast<std::int16_t>(by);
+    c.arg = arg;
+    c.want = v;
+    cases.push_back(c);
+  }
+  return cases;
+}
+
+// 0x5A1190（atan2 象限归一化 + 角度抖动）：真义 = Atan(-dy/dx)(dx<0+π)，
+// r=|a-arg| mod 2π 折叠 [0,π]，返回 Random()*kInvUintMax*2.0 + 1.5*r
+TEST(DeadCodeAngleJitter, Golden) {
+  const auto cases = LoadGoldenA();
+  ASSERT_FALSE(cases.empty());
+  for (const auto& c : cases) {
+    Randomizer rng(c.seed);
+    const double got = DeadCodeAngleJitter(rng, c.ax, c.ay, c.bx, c.by, c.arg);
+    EXPECT_TRUE(BitEq(got, c.want))
+        << "seed=" << c.seed << " p1=(" << c.ax << "," << c.ay << ") p2=("
+        << c.bx << "," << c.by << ") arg=" << c.arg;
+  }
+}
+
 }  // namespace
 }  // namespace rmg
 }  // namespace ra2

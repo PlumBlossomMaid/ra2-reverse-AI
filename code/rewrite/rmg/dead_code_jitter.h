@@ -47,4 +47,19 @@ double DeadCodeDistanceJitter(Randomizer& rng, std::int16_t ax, std::int16_t ay,
 double DeadCodeDistanceJitterF(Randomizer& rng, std::int16_t ax, std::int16_t ay,
                                std::int16_t bx, std::int16_t by, std::int32_t arg3);
 
+// 0x5A1190：atan2 象限归一化 + 角度抖动（cdecl 3 栈参 ret 0x10——p1/p2 坐标
+// 指针 + arg double 8B，x87 返回 double）。TSV:1028 已 semantics 登记。
+// 真义（黄金实证 + 机器码逐段确认）：
+//   dx = p2.x-p1.x ; dy = p2.y-p1.y（movsx word 带符号读 int16）
+//   若 dx==0: a = π/2（[0x7E2820] 快速路径）
+//   否则:     a = Atan(-(double)dy/(double)dx)  // 0x4CADE0 查表 atan（fast_math 模型）
+//             if (dx < 0) a += π                // [0x7E44D0]
+//   r = |a - arg|（fsub qword + fabs）
+//   while (r >= 2π) r -= 2π                     // mod 2π（[0x7E3CC0]）
+//   if (r > π) r = 2π - r                       // 折叠到 [0,π]
+//   返回 Random() * kInvUintMax * 2.0 + 1.5 * r // [0x7ED898]×[0x7ED790]=2.0+[0x7ED798]=1.5
+// 取证：memory/data/rmg/deadcode_angle_golden.txt（emu 指令级模拟）。
+double DeadCodeAngleJitter(Randomizer& rng, std::int16_t ax, std::int16_t ay,
+                           std::int16_t bx, std::int16_t by, double arg);
+
 }  // namespace ra2::rmg

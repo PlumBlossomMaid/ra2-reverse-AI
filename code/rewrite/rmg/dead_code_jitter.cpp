@@ -108,4 +108,57 @@ double DeadCodeDistanceJitterF(Randomizer& rng, std::int16_t ax, std::int16_t ay
   return ChopJitterChainF(u, s32, arg3);
 }
 
+// 0x5A1190（210B，cdecl 3 栈参 ret 0x10——p1/p2 坐标指针 + arg double 8B，
+// x87 返回 double——atan2 象限归一化 + 角度抖动）：
+//   [esp+4]=p1 [esp+8]=p2 [esp+0xC]=arg（double 8B）
+//   dx = p2.x-p1.x ; dy = p2.y-p1.y（movsx word 带符号读 int16）
+//   若 dx==0: a = π/2（[0x7E2820] 快速路径）
+//   否则:     a = Atan(-(double)dy/(double)dx)  // 0x4CADE0 查表 atan
+//             if (dx < 0) a += π                // [0x7E44D0]
+//   r = |a - arg|（fsub qword + fabs）
+//   while (r >= 2π) r -= 2π                     // mod 2π（[0x7E3CC0]）
+//   if (r > π) r = 2π - r                       // 折叠到 [0,π]
+//   返回 Random() * kInvUintMax * 2.0 + 1.5 * r // [0x7ED898]×[0x7ED790]=2.0+[0x7ED798]=1.5
+// 全程 RC=chop（原版 x87 全局向零截断——MXCSR toward-zero 复刻）。
+double DeadCodeAngleJitter(Randomizer& rng, std::int16_t ax, std::int16_t ay,
+                           std::int16_t bx, std::int16_t by, double arg) {
+  const std::int32_t dx = static_cast<std::int32_t>(bx) - static_cast<std::int32_t>(ax);
+  const std::int32_t dy = static_cast<std::int32_t>(by) - static_cast<std::int32_t>(ay);
+
+#if defined(_M_X64) || defined(__x86_64__)
+  const unsigned csr = _mm_getcsr();
+  _mm_setcsr((csr & ~_MM_ROUND_MASK) | _MM_ROUND_TOWARD_ZERO);
+#endif
+
+  double a;
+  if (dx == 0) {
+    a = 1.5707963267948966;  // [0x7E2820] π/2
+  } else {
+    a = Atan(-static_cast<double>(dy) / static_cast<double>(dx));
+    if (dx < 0) {
+      a += 3.141592653589793;  // [0x7E44D0] π
+    }
+  }
+
+  volatile double r = std::fabs(a - arg);
+  while (r >= 6.283185307179586) {  // [0x7E3CC0] mod 2π
+    r -= 6.283185307179586;
+  }
+  if (r > 3.141592653589793) {  // [0x7E44D0] 折叠到 [0,π]
+    r = 6.283185307179586 - r;
+  }
+
+  const double u = static_cast<double>(static_cast<std::uint64_t>(rng.Random()));
+  volatile double j = u * kInvUintMax;   // [0x7ED898]
+  volatile double j2 = j * 2.0;          // [0x7ED790]
+  volatile double t = 1.5 * r;           // [0x7ED798]
+  volatile double res = j2 + t;
+
+#if defined(_M_X64) || defined(__x86_64__)
+  _mm_setcsr(csr);
+#endif
+
+  return res;
+}
+
 }  // namespace ra2::rmg
