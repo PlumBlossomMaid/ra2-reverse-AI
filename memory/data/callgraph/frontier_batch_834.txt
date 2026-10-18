@@ -1,0 +1,146 @@
+frontier batch 834 —— 0x005A0160 RMG 8-邻域迭代散布器（河湖扩散，ret 0x20 八栈参）
+==================================================================================
+
+候选来源：ranking.tsv（body=678B；0x5Axxxx = RMG 主流水线区，QWEN.md MapGen TU
+邻域）。TARGET = 0x005A0160（678B，0x5A0160-0x5A0403 + 3+ nop 垫，ret 0x20）。
+★★推断名：RMG 8-邻域迭代散布器（河湖扩散）——开头唯一一次调 0x5A0700
+（batch 530 已登记「RMG 菱形邻域收集器」）= 本函数取初始格集现场；主循环把
+**上一轮结果容器当下一轮收集器**反复 8 方向扩散（迭代传播语义）；五个调用点
+全在河湖调度链（FUN_0059c920 / River 0x59D510 ×3 / FUN_0059e740）。
+
+一、参数契约（8 栈参 ret 0x20，调用点现场 + 函数体读法双证）
+------------------------------------------------------------
+call 后 esp=E0：[E0]=ret、[E0+4]=p1..[E0+0x20]=p8；
+函数序言 sub esp,0x1c 后 [esp+0x20]=p1；push ebx/ebp/esi/edi 后偏移 +0x2c：
+  p1（[esp+0x20],sub 后）      = 目标值（= 宿主+0x308 字段，→ 0x5A0700）
+  p2（[esp+0x34],push 后 =E0+8）= 迭代轮数（调用点实测 1 / 6；jle 0x5A03C4 直接收尾）
+  p3（[esp+0x38]=E0+0xC）       = 扩散矩形 x 左界
+  p4（[esp+0x3c]=E0+0x10）      = 扩散矩形 y 左界
+  p5（[esp+0x40]=E0+0x14）      = 矩形宽（x < p3+p5 判定）
+  p6（[esp+0x44]=E0+0x18）      = 矩形高（y < p4+p6 判定）
+  p7（[esp+0x48]=E0+0x1C）      = 写 cell 高度字节标志（test al,al 双分支）
+  p8（[esp+0x4c]=E0+0x20）      = cell+0x11B 高度字节值
+调用点栈布局实测（0x59E299）：push 1（p2）→ sub esp,0x10 结构 = {0,0,0x200,0x200}
+  = p3..p6（全图矩形 0x200=512 哨兵）→ push [ebx+0x308]（p1 最后压）→ call；
+  0x59E3F2 同款（p2=6）；0x59D323 同款（p2=1，p3/p4 来自调用方现场 eax/ecx）；
+  0x59ECCE 同款（p2=2，矩形 {ecx,edx,上两参,+0xC}）。ecx=宿主（River 的 ebx）
+  ——但函数体不读 ecx（纯栈参函数，ecx 是宿主对象指针供 +0x308 读值用）。
+
+二、函数体全读（678B，0x5A0160-0x5A0403）
+--------------------------------------------
+0x5A0160  sub esp,0x1c / mov eax,[esp+0x20]（p1）/ push ebx/ebp/esi/edi
+  / push eax / call 0x5A0700        ; ★★一夜一次：取初始格集（batch 530 收集器）
+        → [esp+0x10] = 收集器容器
+0x5A0175  mov eax,[esp+0x34]（p2）/ cmp eax,edi / jle 0x5A03C4  ; ★轮数<=0 直接收尾
+0x5A0187  外层循环（轮数计数 [esp+0x28]）：
+  push 0x18 / call 0x7C8E17（★★operator new 24B batch 001）
+    → new 0x18 → push 0/push 0 / mov ecx,eax / call 0x42FCB0（★★容器构造 batch 092）
+    → mov [esi],0x7E3890（★虚表）/ mov [esi+0x14],0xA / mov [esi+0x10],0
+        → [esp+0x14] = 结果容器（分配失败 = 0）
+0x5A01BA  mov ecx,[esp+0x10]（收集器）/ mov eax,[ecx+0x10]（★Count）
+  / lea edx,[eax+eax*2]（Count×3）/ mov [esp+0x14]+0x14,edx  ; ★★结果容器容量预置
+        = Count×3（8 方向启发式）
+0x5A01CF  内层循环（遍历收集器 items，[esp+0x1c] 索引 < [ecx+0x10] Count）：
+  取 item = Items[i]（[ecx+4]+i×4）→ x=word+0 / y=word+2
+  方向循环（[esp+0x24] 0..7，and edx,7）：
+    邻格坐标：cx = x + [dirs[dir]+0]（word，[0x89F688]+dir×4）
+              dx = y + [dirs[dir]+2]（word）→ [esp+0x20] word 对 → [esp+0x18] dword
+    菱形四判定（movsx 扩展）：x+y<=[0xABED04](W) 跳 / x-y>=W 跳 / y-x>=W 跳
+      / x+y>[0xABED08](W+2H) 跳        ; ★★[0xABED04]/[0xABED08] batch 086
+    矩形判定：[esp+0x38]<=x<[esp+0x38]+[esp+0x40] 且 [esp+0x3C]<=y<[esp+0x3C]+[esp+0x44]
+      ; ★p3..p6 边界（任一超界跳 0x5A0371）
+    imul eax,[0x89C2DC]（★side QWEN.md）/ add eax,x / lea [eax+eax*4] / shl 4
+      / add [0xABED10]（★work 0x50B/格）→ esi = work[邻].+0x38   ; ★★邻格归属字段
+    test [esp+0x48]（p7）→ je skip / mov ecx,[esp+0x30]（p1）/ dec ecx
+      / cmp edi(work 值),ecx / jne skip / mov bl,1（★标记：work.+0x38==p1-1 → bl=1）
+    lea edx,[esp+0x18] / mov ecx,0x87F7E8（★★MapClass::Instance）/ call 0x5657A0
+        → ebp = 邻格 CellClass*（★★GetCellAt batch 广泛实锤）
+    追加判定链（★★核心条件）：
+      test edi(work 值),edi / je 0x5A02D5（==0 → 无主路径）
+      test bl / je 0x5A02EF（非 p1-1 标记 → 失败检查）
+      0x5A02D5: call 0x486380（★★无主谓词 batch 082——work 值==0xFFFF/0 返 1）
+        / jne 0x5A02FB（无主 → 追加）
+        test bl / je 0x5A02EF
+        call 0x4865D0（★★多区间归属 batch 216）→ jne 0x5A02FB（落区间 → 追加）
+      0x5A02EF: cmp work 值,[esp+0x30]（p1）/ jne 0x5A03DE（★非 p1 → 整体失败）
+        / jmp 0x5A0371（==p1 已处理 → 跳过追加）
+      0x5A02FB 追加：[esp+0x14] 结果容器 Count>=Capacity → 虚表槽 8 SetCapacity
+        （push 0/push 容量+步长/call [edx+8]——batch 467/469 同款）
+        → Items[Count++] = 邻格坐标（4B）
+    mov [esi+0x38],p1              ; ★★写 work[邻].+0x38 = 目标值（扩散归属）
+    test p7 / je 继续 / call 0x486380 / je 继续
+    lea eax,[esp+0x18] / mov ecx,0x87F7E8 / call 0x5657A0
+        / mov cl,[esp+0x4C]（p8）/ mov [eax+0x11B],cl   ; ★★★写 cell 高度字节（条件）
+  0x5A0371 方向++ / cmp 8 / jl 方向循环
+  0x5A0383 item 索引++ / cmp Count / jl 内层循环
+0x5A039B  ★★析构收集器：[esp+0x10] 虚表槽 0（push 1，call [edx]——DynamicVectorClass
+  dtor 惯用）→ 0x5A03A7 mov [esp+0x10],结果容器（★★本轮结果 = 下轮收集器！）
+  / 轮数++ / cmp p2 / jl 外层（重新分配结果容器）
+0x5A03C4  ★收尾：析构 [esp+0x10]（最后一轮结果）/ pop 族 / mov al,1 / ret 0x20
+0x5A03DE  ★失败路径：析构 [esp+0x10] + [esp+0x14] 双容器 / xor al,al / ret 0x20
+（0x5A0406-0x5A040F nop 垫 → 0x5A0410 下一函数）
+
+三、语义（推断名 + 调用现场双证）
+--------------------------------
+**RMG 8-邻域迭代散布器（河湖扩散）**——① 开头唯一一次调 0x5A0700（batch 530
+「收集 work[].+0x38==目标值 的格子」）取初始格集（迭代起点）；② 外层按 p2 迭代
+轮数循环：每轮从当前收集器逐格取 8 方向邻格（[0x89F688] 方向表 {dx,dy} word 对），
+过菱形四边界（[0xABED04]=W/[0xABED08]=W+2H——batch 086）与扩散矩形 p3..p6 后，
+按邻格 work[].+0x38 三态判定：==0（无主谓词 0x486380）或（p1-1 标记且落多区间
+0x4865D0）→ 邻格坐标追加进结果容器（虚表槽 8 SetCapacity 扩容——batch 467/469
+同款）并写 work[邻].+0x38 = p1（扩散归属）；==p1 → 跳过（已处理）；其他 → 整体
+失败 al=0；③ p7 非零时条件写 cell+0x11B 高度字节 = p8（GetCellAt 二次查格）；④
+每轮结束把本轮结果容器当下一轮收集器（迭代传播），最后一轮结果在收尾析构前
+保留——即「从初始格集出发，迭代 p2 轮 8 邻域生长」。
+
+四、调用点（五个，全在河湖调度链）
+--------------------------------
+  FUN_0059c920 [0x59C920-0x59D436]：0x59D323（p2=1；p1=[edi+0x308]——宿主 edi）
+  River 0x59D510 [0x59D510-0x59E631]：0x59E299（p2=1）/ 0x59E3F2（p2=6）/
+    0x59E4F7 —— QWEN.md 实锤「River 0x59D510 + 调度 0x59C580（AddRiversAndLakes）」
+  FUN_0059e740 [0x59E740-0x5A004C]：0x59ECCE（p2=2；0x59ECB0 段反汇编错位，
+    按纪律 0x59EC90 回退重读得真实现场 0x59EC9B push 0/push 0 → sub esp,0x10
+    结构 {ecx,edx,[esp+0x94],[esp+0x98]} → push 2 → push [宿主+0x308] → call）
+  ★五个调用点全部读宿主 +0x308 字段作 p1（河湖宿主对象），全部栈上构造 16B 扩散
+  矩形结构（含 0x200=512 全图哨兵——地图尺寸）——0x5A0160 是河湖系统的共用散布
+  工具，被 River/其前邻 0x59C920/其后邻 0x59E740 三函数复用。
+
+五、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x5A0700 —— ★★已登记（batch 530「RMG 菱形邻域收集器」——本函数 = 其调用现场
+    之一：作为初始格集来源，0x5A0700 的 unique_callers 点名本函数）
+  0x7C8E17 —— ★★已登记（batch 001 operator new——结果容器 24B）
+  0x42FCB0 —— ★★已登记（batch 092 容器构造——结果容器构造）
+  0x7E3890 —— ★★已登记（batch 209/530 容器虚表——DynamicVectorClass 系）
+  0x5657A0 —— ★★已登记（GetCellAt——[0x87F7E8] MapClass::Instance 查格）
+  0x486380 —— ★★已登记（batch 082「无主」谓词——work 值==0xFFFF/0 返 1）
+  0x4865D0 —— ★★已登记（batch 216 多区间归属判定）
+  虚表槽 8 SetCapacity —— batch 467/469 实锤（本函数 = 扩容调用现场）
+  [0xABED04]/[0xABED08] —— batch 086 实锤 W / W+2H
+  [0x89F688] —— batch 073/393 实锤 8 项 {dx,dy} word 方向表
+  [0x89C2DC] / [0xABED10] —— QWEN.md 实锤 side / work 数组 0x50B/格
+  [0x87F7E8] —— QWEN.md 实锤 MapClass::Instance
+
+六、原版怪癖（照抄）
+-------------------
+① 结果容器容量预置 = Count×3（8 方向最多 8 邻却预置 3 倍——启发式预分配，
+   与 batch 530 的「+0x14=side 面积」同属预置形态）；
+② p2 轮数循环每轮**重分配**结果容器（0x5A0187 new），上轮结果容器在
+   0x5A03A7 移交为下轮收集器后不复用分配（每次 new+构造）；
+③ work[邻].+0x38 == p1-1 的「标记」只由 p7 标志使能（[esp+0x48] 测试）
+   ——bl=1 时才允许 0x4865D0 多区间归属路径；
+④ 追加判定三态（0 走无主 / p1-1+标记走区间 / p1 跳过 / 其他整体失败 al=0）
+   ——失败路径 0x5A03DE 双容器析构；
+⑤ 方向表 [0x89F688] word dx/dy 对 + lea [edx*4+0x89F688]（8 项 ×4B）；
+⑥ p7 高度写入前二次 GetCellAt（0x5A035C）还需 0x486380 无主通过——写高度
+   有双门控；
+⑦ 收集器只在开头调 0x5A0700 一次，第 2+ 轮直接复用上轮结果（work.+0x38
+   已写 p1 → 0x5A0700 的「==目标值」谓词语义在本函数内被迭代替代）。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：宿主对象精确身份（河湖宿主——+0x308 字段语义：目标水域/地形值推断）、
+p1 目标值与 p8 高度字节的精确业务含义（河/湖高度推断）、FUN_0059c920 与
+FUN_0059e740 身份（River 前/后邻函数——河湖调度链推断）、矩形结构 p3/p4 在
+部分调用点来自调用方现场值（局部扩散范围推断，全图调用用 {0,0,0x200,0x200}）。
