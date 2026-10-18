@@ -1,0 +1,142 @@
+frontier batch 848 —— 0x005F7400 多虚表对象析构器（四虚表 + 数组反注册 + 四组数据区清理 + 36 子对象析构）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=88 / body=420B）。
+TARGET = 0x005F7400（420B，0x5F7400-0x5F75A3 + nop 垫，thiscall 无栈参 ret）。
+★★推断名：**多虚表对象析构器**——装四虚表（0x7EF2D8/0x7EF2BC/0x7EF2B4/
+0x7EF2AC 多重继承）→ [0xAC1418] 管理器虚表槽 0x10 查自身索引 → 数组前移压
+缩反注册（[0xAC141C] 基址/[0xAC1428] 计数）→ 四组数据区清理（每组 delete+
+3 dword 清零+byte 清零）→ 0x5F61A0 子对象析构 ×36 → 收尾调 **0x4109C0**
+（★batch 515 全局对象数组反注册器——unique_callers 已含 FUN_005f7400）。
+
+一、函数体全读（420B，disasm 0x5F7400 0x1B0）
+------------------------------------------------
+参数契约（thiscall 无栈参 ret c3）：
+  ecx = this（对象——0x5F7xxx 区 AbstractClass 系）
+机器码（420B 全读，分段要点）：
+  段1（四虚表 + 数组反注册）：
+  005f7400  push ecx/ebx/esi / mov esi,ecx（★this）→ lea eax,[esp+8]
+    / push edi / push eax（★参数=this）
+  005f740b  mov [esi],0x7EF2D8 / mov [esi+4],0x7EF2BC / mov [esi+8],0x7EF2B4
+    / mov [esi+0xC],0x7EF2AC（★★四虚表——多重继承四表 0x7EF2xx 系新登记）
+  005f7426  mov edx,[0xAC1418]（★★全局管理器对象）→ mov ecx,0xAC1418
+    → call [edx+0x10]（★虚表槽 0x10 查自身索引——batch 515 同形态）
+  005f7438  cmp eax,-1 / je 0x5F746A（★-1 未注册跳过）→ mov ecx,[0xAC1428]
+    （★计数）/ cmp eax,ecx / jge 0x5F746A → dec ecx / mov [0xAC1428],ecx
+    （★计数--）→ cmp eax,ecx / jge 0x5F746A
+  005f7452  前移压缩循环：mov ecx,[0xAC141C]（★数组基址）→ inc eax →
+    mov edx,[ecx+eax*4] / mov [ecx+eax*4-4],edx（★★arr[i]=arr[i+1]）→
+    mov ecx,[0xAC1428] / cmp eax,ecx / jl 0x5F7452（★循环压缩——O(n) 搬移）
+  段2（第一数据区清理——+0xA4/+0xA8 持有标志门控）：
+  005f746a  mov al,[esi+0xA8] / xor ebx / cmp al,bl / je 0x5F7495 → mov
+    eax,[esi+0xA4] / cmp eax,ebx / je 0x5F7495 → push eax → call 0x7C8B3D
+    （★★batch 001 delete）→ mov [esi+0xA4],ebx / mov byte[esi+0xA8],bl
+  段3（0x5F8080 + 四组数据区清理——每组同构）：
+  005f7495  mov ecx,esi → call 0x5F8080（★0x5F8xxx 邻区子对象方法）
+  005f749c  组1：mov eax,[esi+0x280] → push → call 0x7C8B3D（delete）→
+    mov [esi+0x280],ebx / [esi+0x284],ebx / [esi+0x288],ebx / byte
+    [esi+0x28C],bl / [esi+0x290],ebx（★★指针 delete + 3 dword + 1 byte
+    清零组）
+  005f74c6  组2（+0x26C/+0x270/+0x274/+0x278 byte/+0x27C 同构）→
+  005f74f0  组3（+0x258/+0x25C/+0x260/+0x264 byte/+0x268 同构）→
+  005f751a  组4（+0x244/+0x248/+0x24C/+0x250 byte/+0x254 同构）
+  段4（36 子对象析构 0x5F61A0）：
+  005f7544  add esp,0x10 → lea edi,[esi+0x1E8] / mov ebx,0x12（★18 个）
+  005f7552  循环：sub edi,8 → mov ecx,edi → call 0x5F61A0（★子对象析构——
+    递减步进 0x1E8/0x1E0/.../0x18 起 18 个）→ dec ebx / jne 循环
+  005f755f  lea edi,[esi+0x158] / mov ebx,0x12 → 同款 18 个子对象（0x158
+    起递减步进）
+  005f7577  lea ecx,[esi+0xC0] / call 0x5F61A0 → lea ecx,[esi+0xB8] / call
+    → lea ecx,[esi+0xB0] / call（★3 个单点子对象——共 18+18+3=39 处析构
+    调用）
+  段5（收尾）：
+  005f7598  mov ecx,esi → call 0x4109C0（★★★batch 515 全局对象数组反注册
+    器——四虚表 0x7E2000 系 + [0xA8E968] 管理器反注册！）→ pop 族 / ret
+语义：**多虚表对象析构器（推断名）**——① 装四虚表（0x7EF2D8/0x7EF2BC/
+0x7EF2B4/0x7EF2AC）后经 [0xAC1418] 管理器虚表槽 0x10 查自身索引，未注册
+（-1）或越界跳过，否则数组前移压缩反注册（[0xAC141C] 基址/[0xAC1428] 计数
+递减——batch 515 同款）；② +0xA4/+0xA8 持有标志门控 delete；③ 0x5F8080
+子对象方法 + 四组数据区清理（每组指针 delete+3 dword+1 byte 清零）；④
+0x5F61A0 子对象析构 39 处（[esi+0x1E8] 起 18 + [esi+0x158] 起 18 + 3 单点）
+；⑤ 收尾调 0x4109C0（batch 515）完成最终反注册——两段反注册（[0xAC14xx] +
+[0xA8E9xx] 双管理器）推断。
+
+二、调用点（19 处 E8，多宿主分布）
+------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x5F7400）：**命中 19 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) FUN_00544a70 [0x544A70-0x544BD8] body=361 —— 1 处（0x544BD0）
+  2) FUN_00711ae0 [0x711AE0-0x711E73] body=916 —— 1 处（0x711E6B）
+  3) 0x427933/0x428F53/0x46BECA/0x46C94A/0x5F9AE3/0x5FE461/0x5FEFA1/
+     0x6442C1/0x6449D1/0x644F3C/0x645A4C/0x6B5430/0x6B61F0/0x71DC90/
+     0x71E3F0/0x74B042/0x74BB02 —— ★17 处函数间隙（未收录宿主——析构器
+     被大量宿主共用）
+现场 disasm 核验：
+  FUN_00544a70（0x544BB0）：0x7C8B3D delete 前序 → mov [esi+0x2A8],ebx →
+    mov byte[esi+0x2B1],bl → mov [esi+0x2AC],ebx（★清邻近字段）→ mov
+    ecx,esi → call 0x5F7400（★本条——尾部调用）
+  FUN_00711ae0（0x711E40）：cmp eax,ebx/je → cmp byte[esi+0x321],bl/je →
+    push eax → 0x7C8B3D → mov [esi+0x318],ebx → mov byte[esi+0x321],bl →
+    mov [esi+0x31C],ebx（★清邻近字段）→ mov ecx,esi → call 0x5F7400
+  间隙 0x427933（0x427919）：mov ecx,[0x8B4154] → inc eax → 前移压缩循环
+    （[ecx+eax*4] 搬移——与函数体段 1 同构！）→ mov ecx,[0x8B4160] →
+    cmp / jl → mov ecx,esi → call 0x5F7400（★★宿主自身也在做数组压缩——
+    [0x8B4154]/[0x8B4160] 另一组全局数组）
+  间隙 0x46BECA（0x46BEB0）：mov ecx,[0xA83C84] → 前移压缩循环 → mov
+    [0xA83C90],ecx → cmp / jl → mov ecx,esi → call 0x5F7400（★★[0xA83C84]/
+    [0xA83C90] 又一组全局数组——宿主各自管理自己的注册数组）
+★要点：函数体自身做一段数组压缩（[0xAC14xx]），宿主调用前也各自做数组压
+缩（[0x8B41xx]/[0xA83Cxx] 等）——「宿主数组反注册 + 本条+内部计数管数组反
+注册 + 0x4109C0 最终反注册」三层反注册模式推断。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x4109C0 —— ★★已登记（batch 515 全局对象数组反注册器——本函数 = 其调用
+    方！batch 515 unique_callers 明确含 FUN_005f7400——两批交叉闭合）
+  0x7C8B3D —— ★★已登记（batch 001 operator delete——五处 delete 调用现场）
+  0x5F61A0 —— ★未登记（子对象析构——39 处调用，0x5F6xxx 邻区新候选）
+  0x5F8080 —— ★未登记（子对象方法——0x5F8xxx 邻区新候选）
+  虚表 0x7EF2D8/0x7EF2BC/0x7EF2B4/0x7EF2AC —— ★新虚表族（多重继承四表——
+    batch 515 的 0x7E1Fxx/0x7E20xx 同 AbstractClass 家系新组）
+  [0xAC1418]/[0xAC141C]/[0xAC1428] —— ★新全局（管理器/数组基址/计数——
+    与 batch 515 的 [0xA8E968]/[0xA8E96C]/[0xA8E978] 同型三元组）
+  宿主 FUN_00544a70/FUN_00711ae0 —— ★未登记（0x544xxx/0x711xxx 区）
+  间隙宿主数组 [0x8B4154]/[0x8B4160]、[0xA83C84]/[0xA83C90] —— ★新全局对
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 515（0x4109C0 全局对象数组反注册器——本函数 = 其调用方
+    unique_callers 实锤；本条段 1 的 [0xAC1418] 管理器虚表槽 0x10 查索引 +
+    数组前移压缩与 batch 515 的 [0xA8E968] 同款形态——「管理器+数组+计数」
+    三元组布局第二实例 + 反注册形态再证）
+  ★★batch 001（0x7C8B3D——五处 delete 调用现场）
+  ★★batch 159/076/123（四虚表族——0x7E1Fxx/0x7E20xx 与 0x410800；本条
+    0x7EF2xx 为同 AbstractClass 家系另一虚表组推断）
+  ★★batch 147（0x407530 链表重挂——batch 515 关联链）
+
+五、原版怪癖（照抄）
+-------------------
+① 四虚表换装（0x7EF2D8/0x7EF2BC/0x7EF2B4/0x7EF2AC——多重继承四表；
+   batch 515 的 0x4109C0 尾部也装四虚表——两段四虚表装）；
+② 数组反注册先查索引（[0xAC1418] 虚表槽 0x10 → -1 或越界跳过）再前移压
+   缩（[0xAC141C] 基址/[0xAC1428] 计数——O(n) 搬移保持顺序）；
+③ 计数先减后搬（dec ecx → mov [0xAC1428] 再压缩循环——中间态可见）；
+④ +0xA4/+0xA8 持有标志门控 delete（双字段同判）；
+⑤ 四组数据区清理同构（每组 指针 delete + 3 dword 清零 + 1 byte 清零——
+   复制粘贴段无循环抽象）；
+⑥ 0x5F61A0 子对象析构 39 处（[esi+0x1E8] 起 18 + [esi+0x158] 起 18 递减
+   步进 + 3 单点——子对象批量析构展开）；
+⑦ 收尾调 0x4109C0（batch 515）——双管理器反注册（[0xAC14xx] + [0xA8E9xx]）；
+⑧ 宿主调用前各做数组压缩（[0x8B41xx]/[0xA83Cxx]——宿主各自管理注册数
+   组）+ 清邻近字段（+0x2A8/+0x2AC/+0x2B1、+0x318/+0x31C/+0x321）——「清
+   字段后调析构」惯用。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「多虚表对象析构器」）、宿主类身份（0x5F7xxx 区
+AbstractClass 系——batch 515 同家系推断）、[0xAC1418] 管理器类（对象注册
+表——与 batch 515 的 [0xA8E968] 双管理器关系推断）、0x5F61A0/0x5F8080 身
+份（子对象析构/方法——新候选）、四组数据区字段语义（+0x244..+0x290 结构
+推断）、18+18+3 子对象布局（[esi+0xB0]/+0xB8/+0xC0 与 +0x158/+0x1E8 起数
+组——内部对象数组推断）、37 处函数间隙宿主身份（多域共用析构器推断）。
