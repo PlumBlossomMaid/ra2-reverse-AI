@@ -1,0 +1,120 @@
+frontier batch 849 —— 0x007CD790 字符集位掩码匹配计数器（strspn/strcspn 形态，62B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=87 / body=62B）。
+TARGET = 0x007CD790（62B，0x7CD790-0x7CD7CD，thiscall 2 栈参 ret）。
+★★推断名：**字符集位掩码匹配计数器（strspn/strcspn 形态）**——先遍历字符
+集串逐字节 `bts [esp],eax` 构建 256-bit 位图（7×push eax 预留栈位），再遍
+历目标串逐字节 `bt [esp],eax` 命中计数（ecx++），返回首个命中位置偏移。
+0x7C-0x7D = MSVC6 static CRT 区（项目记忆实锤）——CRT 位图加速字符集合成
+员判定惯用（strspn 返回 span 长度/strcspn 返回首个命中）。
+
+一、函数体全读（62B，disasm 0x7CD790 0x60）
+-----------------------------------------------
+参数契约（thiscall 2 栈参 ret）：
+  [ebp+8] = 栈参 1 = 目标串（esi）
+  [ebp+0xC] = 栈参 2 = 字符集串（edx）
+  返回 eax = 首个命中位置偏移（字符集内字符在目标串首次出现位置）
+机器码（62B 全读）：
+  007cd790  push ebp / mov ebp,esp / push esi / xor eax,eax
+    → 7×push eax（★★预留 32B 栈 = 256-bit 位图 8 dword）
+  007cd79e  mov edx,[ebp+0xC]（★字符集串）
+  007cd7a4  循环 1（构建位图）：mov al,[edx]（★字符集字符）/ or al,al
+    / je 0x7CD7B1（★串尾 → 位图完成）
+  007cd7aa  inc edx / bts dword[esp],eax（★★按 ASCII 码置位到栈位图——
+    bts = bit test and set）
+  007cd7af  jmp 0x7CD7A4（★循环）
+  007cd7b1  mov esi,[ebp+8]（★目标串）→ or ecx,0xFFFFFFFF / nop
+  007cd7b8  循环 2（匹配计数）：inc ecx（★计数++）→ mov al,[esi]
+    / or al,al / je 0x7CD7C6（★目标串尾 → 收尾）
+  007cd7bf  inc esi → bt dword[esp],eax（★★bit test——字符在位图中?）
+    / jae 0x7CD7B8（★不命中 → 继续计数）
+  007cd7c6  mov eax,ecx（★返回计数=首个命中位置偏移）
+  007cd7c8  add esp,0x20（★回收位图栈）→ pop esi / leave / ret
+语义：**字符集位掩码匹配计数器（strspn/strcspn 形态，推断名）**——① 遍历
+字符集串逐字节把 ASCII 码 bts 进栈上位图（32B=256 bit，8 个 dword 全 0 预
+留）；② 遍历目标串逐字节 bt 测试是否命中位图，未命中则 ecx++，命中（或串
+尾）即停；③ 返回 ecx = 首个命中位置偏移（strcspn 语义：目标串中第一个属
+于字符集的位置；若全部命中返回串长）。★核心：bts/bt 位图加速字符集合成
+员判定（O(len_set + len_target) 与字符集大小无关）——MSVC6 CRT strcspn 族
+实现形态。
+
+二、调用点（4 处 E8，三宿主+一间隙）
+--------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x7CD790）：**命中 4 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) FUN_007b6630 [0x7B6630-0x7B666A] body=59 —— 1 处（0x7B6651）
+  2) FUN_007cdb14 [0x7CDB14-0x7CDD59] body=582 —— 1 处（0x7CDC24）
+  3) FUN_007ce06e [0x7CE06E-0x7CE139] body=204 —— 1 处（0x7CE0BD）
+  4) 0x7B669E —— ★函数间隙（FUN_007b6630 后邻未收录宿主）
+现场 disasm 核验：
+  FUN_007b6630（0x7B6630）：mov ebx,[esp+8]（★参）→ test ebx/je 0x7B6665
+    → mov edx,[ecx]（★this+0 串指针）→ test/je → push esi/edi → mov
+    edi,edx → or ecx,0xFFFFFFFF → xor eax → push ebx → repne scasb
+    （★★CRT 串长扫描）→ not ecx / dec ecx（★长度-1）→ push edx（★字符集）
+    → mov esi,ecx → call 0x7CD790（★本条——目标=edx 字符集、参=this 串）
+    → add esp,8 → cmp eax,esi / sbb eax,eax / neg eax（★★布尔化：匹配偏移
+    < 长度 → 真/假）→ ret 4——「strcspn 结果 < 串长 → 包含判定」惯用
+  FUN_007ce06e（0x7CE0A0）：call 0x7D4BF0（★前序）→ pop ×2 → xor eax →
+    jmp 0x7CE135 → 0x7CE0B3: and [ebp+0xC],0 → push 0x7F97E8（★★常量串）→
+    push esi → call 0x7CD790（★本条）→ pop ecx → test eax / je 0x7CE132 →
+    cmp [ebp+0xC],0 → mov bl,[eax+esi]（★命中字符）→ lea edi,[eax+esi] →
+    cmp eax,0x40 / jge 0x7CE132（★偏移上限）→ cmp bl,0x2E（★'.' 判定）/
+    je 0x7CE132 → 后续处理——「常量串 0x7F97E8 中查目标串命中字符」惯用
+  FUN_007cdb14（0x7CDC10）：call 0x7CD790（★本条）→ mov edi,eax → pop ×2 →
+    test edi / jne 0x7CDC36 → cmp byte[esi],0x3B（★';' 判定）→ jne
+    0x7CDC91 → 0x7CDC36: cmp [ebp+0xC],5 / jg 0x7CDC6B → push edi →
+    lea eax,[ebp-0x88] → push esi → push eax → call 0x7C91D0（★★CRT 拷贝
+    ——0x7C91D0 batch ？未确认登记状态）——「strcspn 命中偏移 + 偏移上限 5
+    判定 + 0x7C91D0 拷贝」惯用
+★要点：三宿主调用点全为「strcspn 语义消费」——①偏移<长度布尔化（包含判
+定）；②命中字符提取 + 偏移上限/字符判定；③命中偏移 + 上限 5 + 拷贝。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  strspn/strcspn —— ★未登记（本批首次登记 0x7CD790——grep 0 命中）
+  0x7C-0x7D —— ★★已登记（MSVC6 static CRT 区——项目记忆 ra2_code_region_
+    layout_crt_provenance 实锤：本函数同区 strcspn 系推断）
+  0x7C91D0 —— ★已见（batch 310/386 字符串输出族提及同区——未直接登记，
+    现场调用）
+  0x7D4BF0 —— ★未登记（FUN_007ce06e 前序）
+  0x7F97E8 —— ★新常量串（FUN_007ce06e 调用点提交的字符集/目标串）
+  宿主 FUN_007b6630/FUN_007cdb14/FUN_007ce06e —— ★未登记（0x7B/0x7C 区字
+    符串处理宿主——0x7B 区宽窄串族邻域）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★0x7C-0x7D = MSVC6 static CRT（项目记忆实锤——本函数同区 strcspn 系：
+    与 batch 097/126 的 wcslen/wcscpy/wcscat、batch 825 的 0x7B4780
+    operator== 同属 CRT 字符串工具层）
+  ★★batch 823/825（窄字符串键哈希表——0x7B4780 operator== 链比较同区语
+    境；本函数 0x7B6630 宿主同 0x7B 区窄串族）
+  ★★batch 481/310/386（宽字符串格式化构造——0x7C91D0 同 0x7C CRT 串函数
+    区邻域）
+  ★★batch 001（0x7C8E17/0x7C8B3D——CRT 分配/释放同区锚点）
+
+五、原版怪癖（照抄）
+-------------------
+① 7×push eax 预留 32B 位图栈（256-bit 位图 8 dword——字符集逐字节 bts
+   置位）；
+② bts/bt 位图加速（字符集合成员判定 O(1)——与字符集大小无关）；
+③ 循环 2 的 ecx 计数从 -1 起（or ecx,0xFFFFFFFF → inc ecx——首字符位置
+   0 计数）；
+④ 返回计数 = 首个命中位置偏移（strcspn 语义——目标串中第一个属于字符集
+   的位置；全部命中则返回串长）；
+⑤ 位图栈用完 add esp,0x20 回收（非 leave 自动回收）；
+⑥ 调用点 1 用 sbb/neg 布尔化（cmp eax,esi → sbb eax,eax → neg——偏移<长
+   度 0/1）；
+⑦ 调用点 2 命中字符提取（mov bl,[eax+esi]）+ 偏移上限 0x40 + '.'(0x2E)
+   判定；
+⑧ 调用点 3 命中偏移 + 上限 5 + 0x7C91D0 拷贝（偏移 5 内的 strcspn 消费）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「字符集位掩码匹配计数器」——strcspn 语义确认、
+strspn 候选未排除——返回值语义按调用点现场判 strcspn 形态）、宿主类
+（0x7B/0x7C 区字符串处理——窄串族推断）、0x7F97E8 常量串内容（未读）、
+0x7C91D0/0x7D4BF0 身份（CRT 拷贝/前序——未登记）、0x7B669E 间隙宿主
+（FUN_007b6630 后邻推断）、strspn 候选调用点（未出现——返回值均为偏移
+消费）。
