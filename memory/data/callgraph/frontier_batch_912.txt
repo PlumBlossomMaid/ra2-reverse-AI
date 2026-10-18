@@ -1,0 +1,139 @@
+frontier batch 912 —— 0x006EC300 脚本行动触发检查器（98B）
+===================================================================================
+
+候选来源：picker（_filter_batch799.py unique_callers 降序榜首——
+callers=3 / deps=12 / body=98B，0x6E 区）。
+TARGET = 0x006EC300（98B，0x6EC300-0x006EC361，thiscall 无栈参
+ret）。
+★★推断名：**脚本行动触发检查器（ScriptAction 类型==3 时经 waypoint
+坐标 → IsWithinUsableArea 判定——脚本/触发链上的行动前置门控）**。
+
+一、函数体全读（98B，disasm 0x6EC300 0x70 全量）
+------------------------------------------------
+参数契约（thiscall 无栈参 ret）：ecx=this（esi——脚本触发器对象，
+宿主从 [..+0x5D4] 取）。
+机器码（98B 全读，逐段要点）：
+  标志门控: push esi → mov esi,ecx（★this）→ mov al,byte[esi+0x7f]
+    （★★this+0x7F 启用标志）→ test al,al → je 0x6ec35b（★标志 0 →
+    返 false）
+  脚本验证: mov ecx,[esi+0x28]（★★this+0x28 = ScriptClass 对象）→
+    call 0x6915d0（★ScriptClass 家族验证——未登记）→ test al,al →
+    je 0x6ec35b（★验证失败 → 返 false）
+  取当前动作: mov ecx,[esi+0x28] → lea eax,[esp+4] → push eax（★
+    buffer 输出）→ call 0x691500（★★★batch 138 ScriptClass::
+    GetCurrentAction 已登记——写 buffer {+0=动作节点, +4=第二字段}）
+    → mov ecx,eax → mov eax,[ecx]（★★buffer[0] = 动作节点值）→ cmp
+    eax,3（★★★动作类型判定：== 3）→ mov ecx,[ecx+4]（★★buffer[4]
+    = 第二字段——waypoint 索引推断）→ jne 0x6ec35b（★类型 != 3 →
+    返 false）
+  waypoint 坐标: push 1（★标志参）→ lea edx,[esp+8] → push ecx（★
+    第二字段=waypoint 索引）→ mov ecx,[0xa8b230]（★★[0xA8B230] =
+    ScenarioClass 实例全局推断）→ push edx（★dest 输出）→ call
+    0x68bcc0（★★★batch 087 ScenarioClass::GetWaypointCoords 已登
+    记——*dest = this->Waypoints[idx]）→ push eax（★dest 坐标）
+  区域校验: mov ecx,0x87f7e8（★★★MapClass::Instance）→ call
+    0x578460（★★★batch 065 MapClass::IsWithinUsableArea 已登记——
+    区域合法性校验，入参 {int16 x,y}+标志 arg）→ test al,al → jne
+    0x6ec35b（★不在可用区域 → 返 false）
+  成功: mov al,1 → pop esi → add esp,8 → ret / 失败: xor al,al → ret
+语义：**脚本行动触发检查器（推断名）**——thiscall 无栈参：① this+0x7F
+  标志门控 + this+0x28 ScriptClass 验证（0x6915D0）；② 经 0x691500
+  GetCurrentAction 取当前动作，动作类型 == 3 才继续；③ 动作第二字段
+  （waypoint 索引推断）经 0x68BCC0 GetWaypointCoords（this=[0xA8B230]
+  ）取坐标 → 0x578460 IsWithinUsableArea（MapClass::Instance）校验
+  → 可用则返 true。★★与 batch 138（GetCurrentAction）/batch 087
+  （GetWaypointCoords）/batch 065（IsWithinUsableArea）三锚点闭环——
+  脚本动作 → waypoint → 地图区域合法性的判定链。
+
+二、调用点（5 处 E8，3 宿主 + 2 间隙全核验）
+-------------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x6EC300）：**命中 5 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x00418E49 → FUN_00418e20 [0x00418E20-0x004190AA] body=651 — —
+    未登记
+  2) 0x004196C6 → 无归属（函数间隙——0x4196B0 起未登记小函数）
+  3) 0x0041B8E6 → FUN_0041b890 [0x0041B890-0x0041B8F6] body=103 — —
+    未登记
+  4) 0x004DA218 → FUN_004da1d0 [0x004DA1D0-0x004DA228] body=89 — —
+    未登记
+  5) 0x004DC7B1 → 无归属（函数间隙——0x4DC790 起未登记小函数）
+现场 disasm 核验（五处全读）：
+  FUN_00418e20（0x418E49，651B 未登记）——现场 0x418E30-0x418E6D:
+    mov ecx,[edi+0x5d4]（★★宿主 this+0x5D4 = 触发器对象）→ cmp
+    ecx,ebx → je 0x418e56（★判空跳过）→ call 0x6ec300 ★ → test
+    al,al → jne 0x419095（★成功跳走——宿主分支）→ 0x418e56: mov
+    eax,[edi] → push esi → mov ecx,edi → call [eax+0x550]（★虚表槽
+    0x550——宿主后续）
+  间隙 0x4196C6——现场 0x4196B0-0x4196DC（0x4196B0 起未登记小函
+    数）: sub esp,0xc → push ebx → push esi → mov ebx,[esp+0x18] →
+    push edi → mov edi,ecx（★this=edi）→ mov ecx,[edi+0x5d4]（★★
+    同取 +0x5D4）→ test ecx,ecx → je 0x4196e4 → call 0x6ec300 ★ →
+    test al,al → je 0x4196e4 → push 1 → push ebx → mov ecx,
+    0x87f7e8 → call 0x578540（★后续同样走 MapClass 方法）
+  FUN_0041b890（0x41B8E6，103B 未登记）——现场 0x41B8D0-0x41B8F6:
+    test ecx,ecx → jne 0x41b8e6 → mov al,byte[esi+0x3d4] → test
+    al,al → jne 0x41b8ef → test ecx,ecx → je 0x41b8f3 → 0x41b8e6:
+    call 0x6ec300 ★（★ecx 非空直调）→ test al,al → je 0x41b8f3 →
+    mov al,1 → ret / 0x41b8f3: xor al,al → ret（★小封装——内联判定
+    + 返回 bool）
+  间隙 0x4DC7B1——现场 0x4DC790-0x4DC7BF（0x4DC790 起未登记小函
+    数）: sub esp,0xc → push esi → mov esi,ecx → mov al,byte
+    [esi+0x3d5]（★this+0x3D5 标志）→ test → jne 0x4dc7a7 → xor
+    al,al → ret（★标志 0 早返）→ 0x4dc7a7: mov ecx,[esi+0x5d4]（★
+    同取 +0x5D4）→ test → je 0x4dc7bf → call 0x6ec300 ★ → test
+    al,al → jne 0x4dc7bf → ...ret
+★统一形态：宿主全「mov ecx,[this+0x5D4]（取触发器对象）→ test 判空 →
+  call 0x6EC300 → test al 判定」——本函数=脚本行动触发检查器，宿主
+  为 AI/脚本执行器（0x41 区 + 0x4D 区），this+0x5D4 = 触发器对象
+  槽。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x691500 —— ★★★已登记 batch 138（ScriptClass::GetCurrentAction——
+    本函数动作节点查询：写 buffer {+0=动作节点, +4=第二字段}，动作类
+    型 == 3 判定）
+  0x68BCC0 —— ★★★已登记 batch 087（ScenarioClass::GetWaypointCoords
+    ——本函数 waypoint 坐标查询：*dest = this->Waypoints[idx]，
+    this=[0xA8B230]）
+  0x578460 —— ★★★已登记 batch 065（MapClass::IsWithinUsableArea——
+    本函数区域校验：入参 {int16 x,y} + 标志 arg，this=0x87F7E8
+    MapClass::Instance；读 cell->[0x11B]/[0x11C]——与死代码 0x5A82E0
+    同字段）
+  0x6915D0 —— ★未登记（ScriptClass 家族验证——batch 138 紧邻）
+  [0xA8B230] —— ★未登记（ScenarioClass 实例全局推断——RW size）
+  0x87F7E8 —— ★★★已登记（MapClass::Instance——多项实锤）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 138（0x691500 ScriptClass::GetCurrentAction——脚本动作节
+    点查询，动作类型 == 3 判定 + 第二字段传 waypoint）
+  ★★★batch 087（0x68BCC0 ScenarioClass::GetWaypointCoords——waypoint
+    坐标访问器，this=[0xA8B230] ScenarioClass 推断）
+  ★★★batch 065（0x578460 MapClass::IsWithinUsableArea——区域合法性校
+    验，this=0x87F7E8；读 cell->[0x11B] 与死代码 0x5A82E0 同字段——
+    阶段①的交叉线索）
+  ★★ScriptClass 家族（0x6915D0 未登记——验证前置）
+  ★★0x41 区/0x4D 区宿主（AI/脚本执行器——FUN_00418e20/FUN_0041b890/
+    FUN_004da1d0 + 2 间隙小函数）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★this+0x7F 标志门控（标志 0 静默返 false）；② ★★动作类型 == 3 硬
+  编码判定（cmp eax,3——魔法值，其他类型直接 false）；③ ★★GetCurrent
+  Action 的 buffer 输出复用 ESP 槽（lea eax,[esp+4] 作输出——栈上
+  12B 结构）；④ ★★waypoint 索引 + 标志 1 + dest 三参压栈顺序（push 1
+  先压 = 最后参给 IsWithinUsableArea 的标志位）；⑤ ★★三锚点串联
+  （GetCurrentAction → GetWaypointCoords → IsWithinUsableArea——
+  脚本动作 → 地图坐标 → 区域合法性）；⑥ ★★宿主统一从 [this+0x5D4]
+  取触发器对象（判空后调用）；⑦ ★★thiscall 无栈参 ret + bool 返回
+  （test al,al 判定）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（脚本行动触发检查器推断）、动作类型 3 的语义（特
+  定行动类型推断——waypoint 移动类）、buffer[4] 第二字段语义（waypoint
+  索引推断）、[0xA8B230] 全局身份（ScenarioClass 实例推断）、
+  0x6915D0 身份（ScriptClass 家族验证）、三宿主业务（FUN_00418e20/
+  FUN_0041b890/FUN_004da1d0 + 2 间隙小函数）、this+0x5D4 槽语义（触发
+  器对象推断）、0x578540（间隙宿主后续 MapClass 方法）。
