@@ -1,0 +1,111 @@
+frontier batch 918 —— 0x00402600 标志位门控接口三段转发器（73B）
+===================================================================================
+
+候选来源：picker（_filter_batch799.py unique_callers 降序榜首——
+callers=3 / deps=7 / body=73B，0x40 区——紧邻孪生 0x402650 同簇）。
+TARGET = 0x00402600（73B，0x402600-0x00402648，thiscall 无栈参
+tail-call）。
+★★推断名：**标志位门控接口三段转发器（[esi+0xD4] 接口虚表三槽派发：
++0x28 前置 / +0x14 门控后主操作 / +0x2C 尾跳收尾；this+0xA4 bit0 门
+控清位+置位 bit2）**。
+
+一、函数体全读（73B，disasm 0x402600 0x50 全量）
+------------------------------------------------
+参数契约（thiscall 无栈参 ret——tail-call）：ecx=this（esi）、返
+回值=尾跳目标返回值。
+机器码（73B 全读）：
+  前置: push esi → mov esi,ecx（★this）→ mov eax,[esi+0xd4]（★★
+    this+0xD4 = 接口/父类虚表指针）→ call [eax+0x28]（★★虚表槽
+    0x28——前置操作，cdecl 清理已由调用方或 0x28 自身处理）
+  门控: test byte[esi+0xa4],1（★★this+0xA4 bit0 门控）→ je
+    0x40263d（★bit0=0 → 跳过主操作，直接尾跳）
+  主操作: mov ecx,[esi+0xa4] → and ecx,0xfffffffe（★★清 bit0）→
+    mov [esi+0xa4],ecx → mov edx,[esi+0xd4] → mov ecx,esi → call
+    [edx+0x14]（★★虚表槽 0x14——主操作）→ mov eax,[esi+0xa4] →
+    or al,4（★★置 bit2）→ mov [esi+0xa4],eax
+  尾跳: 0x40263d: mov edx,[esi+0xd4] → mov ecx,esi → pop esi →
+    jmp [edx+0x2c]（★★虚表槽 0x2C——tail-call 收尾，返回值即本函
+    数返回值）
+语义：**标志位门控接口三段转发器（推断名）**——thiscall 无栈参：①
+  this+0xD4 接口虚表槽 0x28 前置操作；② this+0xA4 bit0 门控——置位
+  时清 bit0 → 虚表槽 0x14 主操作 → 置 bit2；③ 虚表槽 0x2C 尾跳收
+  尾（tail-call——不额外 ret，直接透传返回）。★★典型「pending 标志
+  位驱动的一次性操作」模式：bit0=待处理、bit2=已处理/已调度。
+
+二、调用点（3 处 E8，3 宿主全核验）
+----------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x402600）：**命中 3 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x0040379A → FUN_00403770 [0x00403770-0x004037B2] body=67 —
+    — 未登记
+  2) 0x00407FD2 → FUN_00407fb0 [0x00407FB0-0x00407FFE] body=79 —
+    — 未登记
+  3) 0x004082B3 → FUN_00408270 [0x00408270-0x004082EA] body=123 —
+    — 未登记
+现场 disasm 核验（三处全读）：
+  FUN_00403770（0x40379A，67B 未登记）——全函数读 0x403770-
+    0x4037B2: push esi → push edi → mov edi,edx（★栈参1=匹配 ID）→
+    add ecx,0xf8（★★ecx+0xF8 = this 对象偏移——容器起始）→ call
+    0x4073c0（★取迭代器/首元素）→ mov esi,eax → test esi,esi → je
+    0x4037b0 → 循环 0x403785: test byte[esi+0xa4],1（★★同款
+    bit0 门控预检）→ je 0x40379f → cmp edi,-1 → je 0x403798（★ID==
+    -1 通配）→ cmp [esi+0xc],edi → jne 0x40379f（★★this+0xC=对象
+    ID 比对——匹配才调）→ 0x403798: mov ecx,esi → call 0x402600 ★
+    → 0x40379f: mov ecx,esi → call 0x4073e0（★迭代器下一个）→ test
+    eax,eax → jne 0x403785（★循环）
+  FUN_00407fb0（0x407FD2，79B 未登记）——现场 0x407FC0-0x407FFE:
+    test eax,eax → je 0x407ff0 → push 0x87e7f8 → call [0x7e11e8]
+    （★IAT 调用——EnterCriticalSection 推断，[0x87E7F8]=临界区）→
+    mov ecx,[esi+0x14]（★★this=esi+0x14）→ call 0x402600 ★ → mov
+    eax,[esi+0xc] → test al,1 → je 0x407fe5 → and al,0xfe → or
+    al,2 → mov [esi+0xc],eax（★★宿主侧同步清 bit0 置 bit1）→ push
+    0x87e7f8 → call [0x7e11ec]（★LeaveCriticalSection——进出成
+    对）→ 0x407ff0: mov eax,[esi+0x80] → inc eax → mov [esi+0x80],
+    eax（★★+0x80 计数器 ++）
+  FUN_00408270（0x4082B3，123B 未登记）——现场 0x408290-0x4082C6:
+    cmp eax,0x7e11e8 → mov eax,[esi+0x80] → test eax,eax → jne
+    0x4082cd（★+0x80 计数非 0 跳过）→ mov eax,[esi+0x14] → test
+    eax,eax → je 0x4082cd → push 0x87e7f8 → call edi（★临界区进
+    入——edi=IAT 函数指针）→ mov ecx,[esi+0x14]（★★this=esi+0x14）
+    → call 0x402600 ★ → mov eax,[esi+0xc] → test al,1 → je → and
+    al,0xfe → or al,2 → mov [esi+0xc],eax（★同款宿主侧同步清
+    bit0 置 bit1）
+★统一形态：宿主1=按 ID 查找循环（this+0xC ID 比对 + -1 通配）、宿主
+  2/3=临界区保护 + [esi+0x14] 单对象处理 + 宿主侧同步清 bit0 置
+  bit1 + [esi+0x80] 计数——三宿主全在「pending 标志 → 本函数 → 标
+  志位状态机推进」模式。
+
+三、体内被调/全局登记核验（grep frontier_status.tsv）
+----------------------------------------------------
+  本函数无 E8 被调（纯虚表槽派发——[eax+0x28]/[edx+0x14]/
+  [edx+0x2C] 三槽目标未静态确定）
+  0x4073C0/0x4073E0 —— ★宿主1 迭代器对（未登记——容器遍历 next/
+  begin）
+  0x7E11E8/0x7E11EC —— ★IAT 槽（临界区进出对推断——宿主2/3 现场）
+  0x87E7F8 —— ★全局临界区对象（宿主2/3 push 目标）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★0x402650（紧邻孪生——picker 同批候选，同簇 0x40 区小转发器族）
+  ★★0x40 区（主代码区小函数族——转发器/胶水代码带）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★接口虚表三槽派发（+0x28 前置 / +0x14 主 / +0x2C 收尾——同一
+  虚表三槽串用）；② ★★bit0 门控清位 + bit2 置位（this+0xA4——待
+  处理→已处理状态机）；③ ★★tail-call 收尾（jmp [edx+0x2C]——不
+  push 返回地址直接透传）；④ ★★门控 bit0=0 时跳过主操作但尾跳仍
+  执行（前置+收尾必经，仅主操作条件化）；⑤ ★★宿主侧同步清 bit0 置
+  bit1（[esi+0xC]——宿主与转发器双标志字段协同）；⑥ ★★宿主1 this
+  偏移 +0xF8（add ecx,0xf8——容器内嵌对象，非 this 直传）；⑦ ★★
+  ID 匹配 -1 通配（cmp edi,-1 → je 通配路径）；⑧ ★★宿主2/3 临界区
+  进出成对（[0x7E11E8]/[0x7E11EC] + [0x87E7F8]）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（标志位门控接口三段转发器推断）、+0xD4 虚表所
+属接口类型（父类/组合对象推断）、三槽（0x28/0x14/0x2C）方法名、+0xA4
+bit0/bit2 精确语义（待处理/已处理推断）、宿主1 0x4073C0/0x4073E0
+迭代器对身份、宿主2/3 临界区与计数器（+0x80）业务、0x87E7F8 全局
+临界区身份、紧邻孪生 0x402650 分工（未读）。
