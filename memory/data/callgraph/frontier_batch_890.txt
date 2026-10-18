@@ -1,0 +1,172 @@
+frontier batch 890 —— 0x007CB063 CRT::tolower 慢版字符转换内核（203B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=47 / body=203B）。
+TARGET = 0x007CB063（203B，0x7CB063-0x7CB12D，stdcall 1 栈参 ret，0x7CBxxx
+CRT 区——batch 001 strcmpi / batch 188 _stricmp / batch 244 tolower
+三宿主内部）。
+★★推断名：**CRT::tolower 慢版字符转换内核（[0xB782A0] locale 门双分
+支：0 走 ASCII 'A'-'Z'+0x20 直映射；非 0 走 [0x87C590] ctype 表 +
+0x7D1311（batch 024/044 _isctype）查表 → 0x7D10C2（batch 056
+LCMapString）多字节转换 → 高低字节拼装——**batch 244 partial
+「0x7CB090 起 locale 表查转换路径未读完」= 本批补全**）**。
+
+一、函数体全读（203B，disasm 0x7CB063 0xD0 全量）
+------------------------------------------------
+参数契约（stdcall 1 栈参 ret）：[esp+4] = 字符 c。
+机器码（203B 全读，逐段要点）：
+  007cb063  push ebp → mov ebp,esp → push ecx → cmp [0xb782a0],0
+    （★★[0xB782A0] locale 门——batch 244 文档点名「被判两次」！
+    ）→ push ebx/esi/edi → jne 0x7cb090（★locale 门非 0 → 慢路径）
+  007cb073  快路径：mov eax,[ebp+8]（★字符 c）→ cmp eax,0x41 →
+    jl 0x7cb129（★<'A' 原样返）→ cmp eax,0x5a → jg 0x7cb129（★>
+    'Z' 原样返）→ add eax,0x20（★★A-Z→a-z +0x20）→ jmp 0x7cb129
+    （★快路径与 0x7CAFF4 外层同构）
+  007cb090  慢路径（batch 244 partial 未读完段——本批全读）：mov
+    ebx,[ebp+8]（★字符 c）→ mov edi,0x100（★0x100 掩码）→ push 1
+    → pop esi（★esi=1）
+  007cb09a  cmp ebx,edi（★c < 0x100?）→ jge 0x7cb0c4（★≥0x100 直
+    接表查）
+  007cb09f  cmp [0x87c79c],esi（★★[0x87C79C] 计数守卫——batch
+    204/881 同全局）→ jle 0x7cb0b2（★≤1 查表）→ push esi → push
+    ebx → call 0x7d1311（★★★已登记 batch 024/044 字符分类查询
+    _isctype！）→ pop ecx×2 → jmp 0x7cb0bc
+  007cb0b2  mov eax,[0x87c590]（★★[0x87C590] ctype 表——batch
+    204/881 同表）→ mov al,[eax+ebx*2] → and eax,esi（★word 表项
+    &1）→ 007cb0bc: test eax,eax → jne 0x7cb0c4（★表位命中走转换）
+    → mov eax,ebx → jmp 0x7cb129（★未命中返原值）
+  007cb0c4  mov edx,[0x87c590]（★表）→ mov eax,ebx → sar eax,8 →
+    movzx ecx,al（★c>>8 高字节）→ test byte[edx+ecx*2+1],0x80（★
+    高字节表项 &0x80——lead-byte 判定！）→ je 0x7cb0e8（★非 lead
+    byte 直转）→ and byte[ebp+0xa],0（★清 +0xA 槽）→ push 2 → pop
+    eax → mov byte[ebp+8],al（★写入 2）→ mov byte[ebp+9],bl（★写
+    入低字节）→ jmp 0x7cb0f1
+  007cb0e8  非 lead byte：and byte[ebp+9],0 → mov byte[ebp+8],bl
+    （★低字节写入）→ mov eax,esi（★eax=1）
+  007cb0f1  多字节转换调用：push esi（★1）→ push 0 → lea ecx,
+    [ebp-4] → push 3 → push ecx（★&结果槽）→ push eax（★长度 1/2）
+    → lea eax,[ebp+8]（★&字符缓冲）→ push eax → push edi（★0x100）
+    → push [0xb782a0]（★★[0xB782A0] locale 指针作参）→ 007cb106:
+    call 0x7d10c2（★★★已登记 batch 056/025 LCMapString 分发包装！
+    8 参——locale/0x100/缓冲/3/结果/0/1）→ add esp,0x20
+  007cb10e  test eax,eax → je 0x7cb0c0（★转换失败返原值）→ cmp
+    eax,esi → jne 0x7cb11c → movzx eax,byte[ebp-4] → jmp 0x7cb129
+    （★结果 1 字节）→ 007cb11c: movzx eax,byte[ebp-3] → movzx ecx,
+    byte[ebp-4] → shl eax,8 → or eax,ecx（★★两字节拼装——高字节
+    <<8 | 低字节）→ 007cb129: pop 族 → leave → ret
+语义：**CRT::tolower 慢版字符转换内核（推断名）**——stdcall 1 栈参：
+  ① [0xB782A0] locale 门 0 → ASCII 快路径（A-Z+0x20）；② 非 0 →
+  ctype 表查（[0x87C79C]>1 走 0x7D1311 _isctype，否则直查 [0x87C590]
+  word 表 &1）；③ 表位命中后按 c>>8 高字节表项 &0x80 判 lead-byte
+  （多字节字符首字节）；④ 经 0x7D10C2（LCMapString 分发包装）8 参
+  转换；⑤ 结果 1/2 字节拼装返回。★★batch 244 文档「0x7CB090 起
+  locale 表查转换路径未读完」= 本批全读补全；batch 244 外层 0x7CAFF4
+  的快路径与本函数快路径同构（A-Z+0x20）。
+
+二、调用点（5 处 E8，3 宿主全核验——统一「push 字符 → call
+   0x7CB063」大小写不敏感比较/tolower 消费形态）
+----------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x7CB063）：**命中 5 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x7C8DB4 → FUN_007c8d20 [0x7C8D20-0x7C8DEF] body=208 —— ★★已登
+     记（batch 001 Case-insensitive byte-string comparison！）
+  2) 0x7C8DBE → FUN_007c8d20（同上）
+  3) 0x7CB040 → FUN_007caff4 [0x7CAFF4-0x7CB062] body=111 —— ★★已登
+     记（batch 244 CRT::tolower 双层实现！）
+  4) 0x7CD735 → FUN_007cd680 [0x7CD680-0x7CD780] body=257 —— ★★已登
+     记（batch 188 _stricmp 内联版！）
+  5) 0x7CD73F → FUN_007cd680（同上）
+现场 disasm 核验（三宿主全读）：
+  FUN_007c8d20（0x7C8DB4/0x7C8DBE，208B ★★batch 001 已登记 strcmpi）
+    ——现场 0x7C8D90-0x7C8DCC：call 0x7cd9f5（★CRT 临界区锁）→
+    mov [esp],1 → mov eax,0xff → xor ebx → 循环 0x7c8da4: or al,al
+    → je 0x7c8dcf → mov al,[esi] → inc esi → mov bl,[edi] → inc
+    edi → cmp al,bl → je 循环 → push eax → push ebx → 0x7C8DB4:
+    call 0x7cb063（★★本函数——字符 1 转换！）→ mov ebx,eax → add
+    esp,4 → 0x7C8DBE: call 0x7cb063（★★第二字符转换！）→ cmp
+    bl,al → je 循环 → sbb eax,eax → sbb eax,-1（★★逐字节大小写不
+    敏感比较循环——batch 001 strcmpi 消费本函数！）
+  FUN_007caff4（0x7CB040，111B ★★batch 244 已登记 CRT::tolower 双层）
+    ——现场 0x7CB030-0x7CB05B：xlatb → push 0x13 → call 0x7cd9f5
+    （★锁）→ pop ecx → push 1 → pop ebx → push [esp+0x10]（★字
+    符）→ 0x7CB040: call 0x7cb063（★★本函数——**batch 244 文档点
+    名「call 0x7CB063（★★tolower 内部慢版）」= 本批兑现！**）→
+    test ebx → mov [esp+0x10],eax → je 0x7cb058 → push 0x13 →
+    call 0x7cda56（★解锁）→ jmp → push esi → call edi（★回退调
+    用）
+  FUN_007cd680（0x7CD735/0x7CD73F，257B ★★batch 188 已登记
+    _stricmp 内联版）——现场 0x7CD720-0x7CD74D：xor ebx → mov
+    al,[esi] → or eax,eax → mov bl,[edi] → je 0x7cd74f → or ebx →
+    je 0x7cd74f → inc esi/inc edi → push ecx → push eax → push ebx
+    → 0x7CD735: call 0x7cb063（★★本函数——字符 1！）→ mov ebx,
+    eax → add esp,4 → 0x7CD73F: call 0x7cb063（★★字符 2！）→ add
+    esp,4 → pop ecx → cmp eax,ebx → jne 0x7cd755 → dec ecx → jne
+    循环（★★batch 188 _stricmp 长度限定逐字节比较循环）
+★统一形态：五处调用点全「push 字符 → call 0x7CB063」——本函数=CRT
+  大小写不敏感字符转换内核（tolower 语义），被 strcmpi（batch
+  001）/tolower 双层（batch 244）/_stricmp 内联版（batch 188）三
+  个已登记宿主在逐字节比较/转换循环中消费。★★三宿主全已登记
+  （batch 001/244/188——本批=三宿主共用字符转换内核的补全登记，
+  batch 244 partial 兑现）。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x7D1311 —— ★★已登记（batch 024/044 字符分类查询 _isctype——函
+    数体慢路径查表调用现场！）
+  0x7D10C2 —— ★★已登记（batch 056/025 LCMapString 分发包装——函
+    数体多字节转换调用现场！）
+  0x7C8D20 —— ★★已登记（batch 001 strcmpi——本批调用点 0x7C8DB4/
+    0x7C8DBE 宿主）
+  0x7CAFF4 —— ★★已登记（batch 244 CRT::tolower——本批调用点
+    0x7CB040 宿主，文档点名「call 0x7CB063 慢版」= 本批兑现）
+  0x7CD680 —— ★★已登记（batch 188 _stricmp 内联版——本批调用点
+    0x7CD735/0x7CD73F 宿主）
+  [0x87C590]/[0x87C79C] —— ★★已登记（batch 204/881 ctype 表/计数
+    守卫——函数体慢路径查表用）
+  [0xB782A0] —— ★★batch 093/135/244 文档已提（locale 门——batch
+    093 strcmpi 同门、batch 135 0x7B5B30 同门、batch 244 tolower 同
+    门——CRT locale 族共用）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 244（0x7CAFF4 CRT::tolower 双层——**本批目标=其文档点
+    名「call 0x7CB063（★★tolower 内部慢版）」+「0x7CB090 起 locale
+    表查转换路径未读完」partial 的当场补全：0x7CB040 调用点 + 慢路
+    径 0x7CB090-0x7CB12D 全读**）
+  ★★★batch 001（0x7C8D20 strcmpi——本批调用点 0x7C8DB4/0x7C8DBE =
+    其逐字节大小写不敏感比较循环内）
+  ★★★batch 188（0x7CD680 _stricmp 内联版——本批调用点 0x7CD735/
+    0x7CD73F = 其长度限定逐字节比较循环内）
+  ★★batch 024/044（0x7D1311 _isctype——函数体慢路径查表）
+  ★★batch 056/025（0x7D10C2 LCMapString——函数体多字节转换）
+  ★★batch 093/135/244（[0xB782A0] locale 门——CRT locale 族共用）
+  ★★batch 204/881（[0x87C590]/[0x87C79C] ctype 表/计数守卫）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★[0xB782A0] locale 门判两次（外层 0x7CAFF4 判 + 本函数再判——
+  双层冗余判定，batch 244 文档点名）；
+② ★★快路径 A-Z+0x20 与 0x7CAFF4 外层同构（mov eax,[ebp+8] → cmp
+  0x41/0x5A → add 0x20——两处同构硬展开）；
+③ ★★[0x87C79C]>1 才走 0x7D1311 _isctype（否则直查 [0x87C590] word
+  表 &1——计数守卫分派，batch 204/881 同款）；
+④ ★★c>>8 高字节表项 &0x80 判 lead-byte（movzx ecx,al → test
+  byte[edx+ecx*2+1],0x80——多字节字符首字节判定）；
+⑤ ★★0x7D10C2 8 参 LCMapString 转换（push locale/0x100/缓冲/3/结果
+  /0/1——参数面与 batch 056 同款）；
+⑥ ★★结果 1/2 字节拼装（cmp eax,1 → 单字节 movzx / 双字节 shl
+  eax,8|or——按转换结果字节数分装）；
+⑦ ★★0x100 掩码 + esi=1 寄存器接力（mov edi,0x100 → push 1 → pop
+  esi——常量常驻寄存器）；
+⑧ ★★失败返原值（test eax → je 0x7cb0c0 mov eax,ebx——转换失败
+  字符原样返回）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「CRT::tolower 慢版字符转换内核」——batch
+  244 外层 tolower 的内部慢版，具体 CRT 符号未定位）、0x7D10C2 8
+  参精确语义（LCMapString 参数面推断——batch 056 同款已登记）、
+  lead-byte 判定与多字节字符集语义、[0xB782A0] locale 指针精确身
+  份（batch 244 同口径）、三宿主 strcmpi/_stricmp 的精确返回值约
+  定（batch 001/188 同 partial）。
