@@ -1,0 +1,162 @@
+frontier batch 831 —— 0x005FED00 条件 3 字节结构读取器
+========================================================
+
+候选来源：ranking.tsv（callers=3 / deps=121 / body=221B）。
+TARGET = 0x005FED00（.text，221B，thiscall 2 栈参 ret 8）
+★★推断名：条件 3 字节结构读取器——虚表槽 0x9C 双门控 →
++0x294 值区间分支（[0x7F,0x8A] 与 [0x93,0x9E] 走 0x69E860
+转换，其余走第二转换）→ 3 字节结构（word+byte）写出；
+调用点 4 宿主 PreviewClass::GeneratePreviewImage（带名——
+batch 460 文档点名）
+
+一、函数体全读（221B，disasm 0x5FED00 221）
+---------------------------------------------
+参数契约（thiscall 2 栈参 ret 8）：
+  ecx = this（读取器宿主）
+  [esp+0x10] = 栈参 1（0x69E860 调用参数原样传）
+  [esp+0x14] = 栈参 2（输出结构指针——3 字节 word+byte）
+  返回无显式值（写输出结构）
+机器码（221B 全读，两分支 + 失败清零）：
+  005fed00  push ecx / push esi / mov esi,ecx
+  005fed04  mov eax,[esi] / call [eax+0x9C]   ; ★★虚表槽 0x9C
+                                        ;   （宿主门控判定）
+  005fed0c  test eax,eax / jne 0x5FED2E      ; ★非 0 直接走值
+                                        ;   分支
+  005fed10  mov ecx,[esi+0x29C] / test ecx / je 0x5FEDBB
+                                        ; ★+0x29C 子对象空 →
+                                        ;   失败清零
+  005fed1e  mov edx,[ecx] / call [edx+0x9C]  ; ★★子对象虚表槽
+                                        ;   0x9C 二次门控
+  005fed26  test eax,eax / je 0x5FEDBB      ; ★子对象判定失败 →
+                                        ;   清零
+  005fed2e  mov esi,[esi+0x294]             ; ★+0x294 = 判断值
+  005fed34  cmp esi,0x7F / jl 0x5FED41
+  005fed39  cmp esi,0x8A / jle 0x5FED51     ; ★★[0x7F,0x8A] →
+                                        ;   分支 1
+  005fed41  cmp esi,0x93 / jl 0x5FED91
+  005fed49  cmp esi,0x9E / jg 0x5FED91      ; ★[0x93,0x9E] →
+                                        ;   分支 1；其余 → 分支
+                                        ;   2
+  005fed51  分支 1：mov ecx,[esp+0x10]（栈参 1）/ lea edx,
+    [esp+0x10] / push ecx / push edx / mov ecx,eax / call
+    0x69E860                             ; ★★0x69E860 转换（未
+                                        ;   登记——0x69Exxx 区
+                                        ;   batch 493 0x69E9E0
+                                        ;   邻域）
+  005fed62  mov cx,[eax] / mov dl,cl / mov [esp+4],cx
+    / mov al,[eax+2] / mov cl,[esp+5] / mov [esp+0x11],al
+    / mov eax,[esp+0xC]（栈参 2 输出）/ mov [esp+0x10],dl
+    / mov si,[esp+0x10] / mov [edx],si      ; ★写出字低 16 位
+  005fed89  mov [edx+2],cl               ; ★写输出第 3 字节
+    / pop 族 / ret 8
+  005fed91  分支 2：同款 0x69E860 调用（0x5FEDA2 起）→
+    mov si,[ecx] / mov [edx],si / mov cl,[ecx+2] / mov
+    [edx+2],cl / pop 族 / ret 8           ; ★第二转换路径
+  005fedbb  失败清零：mov eax,[esp+0xC]（输出）/ mov
+    [esp+0x10],0 / [esp+0x11],0 / mov si,[esp+0x10] / mov
+    [edx],si / xor cl,cl / mov [edx+2],cl / pop 族 / ret 8
+                                        ; ★输出三字节全 0
+语义：**条件 3 字节结构读取器（推断名）**——①虚表槽 0x9C 门
+控：宿主判定非 0 直接走值分支；0 则查 +0x29C 子对象（非空 +
+虚表槽 0x9C == 非 0）才放行，否则失败清零（三字节输出 = 0）；
+②+0x294 值区间分支：∈[0x7F,0x8A] 与 ∈[0x93,0x9E] 走分支 1
+（0x69E860 + 3 字节写），其余走分支 2（0x69E860 第二转换 +
+3 字节写）；③输出结构 = 2 字节 word + 1 字节 byte（[edx]/
+[edx+2]）。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_816_calls.py（复用，TARGET=0x5FED00）：4 处调用点
+  0x47BEA8 / 0x47C0C9 / 0x47C182 / 0x6413E2
+_locate_816_callers.py：归属
+  0x47BEA8 → 0x0047BDB0 FUN_0047BDB0 [0x47BDB0-0x47C051]
+    body=674
+  0x47C0C9 / 0x47C182 → 0x0047C060 FUN_0047C060 [0x47C060-
+    0x47C3C8] body=873
+  0x6413E2 → 0x00641140 PreviewClass::GeneratePreviewImage
+    [0x641140-0x6418A5] body=1894（★★带名——batch 460 文档
+    点名「PreviewClass::DrawMap/GeneratePreviewImage（ranking
+    带名——RMG 预览图绘制）」）
+
+三、调用点现场（全部干净——★★调用点 1/2/3 统一 this）
+--------------------------------------------------------
+【调用点 1】0x47BEA8 in FUN_0047BDB0（674B）
+  0047be98  mov ecx,[0xA83D84]           ; ★★全局 → +0x60
+  0047be9e  lea eax,[esp+0x20]           ; 输出结构
+  0047bea2  push 0 / push eax
+  0047bea5  mov ecx,[ecx+0x60]           ; ★this = [0xA83D84]->
+                                        ;   +0x60
+  0047bea8  call 0x5FED00                ; ★本条
+  0047bead  mov dx,[eax]                 ; ★读取后取 word
+  形态：★★this = 全局 [0xA83D84] ->+0x60 子对象
+【调用点 2】0x47C0C9 in FUN_0047C060（873B）
+  0047c0b9  mov ecx,[0xA83D84] / lea eax,[esp+8] / push 0 /
+    push eax / mov ecx,[ecx+0x60]        ; ★this 同款全局子对象
+  0047c0c9  call 0x5FED00                ; ★本条
+【调用点 3】0x47C182 in FUN_0047C060（873B 第二处）
+  同款（0x47C182 处 push 0/push eax/mov ecx,[ecx+0x60]）
+【调用点 4】0x6413E2 in PreviewClass::GeneratePreviewImage（1894B）
+  006413d3  mov edi,[edx+eax*4]          ; ★表项取（×4 索引）
+  006413d8  mov al,[ebp+0x11E]           ; ★输入值
+  006413de  push eax / push ecx
+  006413e0  mov ecx,edi                  ; this = 表项
+  006413e2  call 0x5FED00                ; ★本条
+  006413e7  mov dx,[eax]                 ; ★读取后取 word
+  006413ea  mov [esp+0x30],dx
+  形态统一：★★调用点 1/2/3 this = 全局 [0xA83D84]->+0x60（同
+  一子对象多场景），调用点 4 this = 预览表项（GeneratePre
+  viewImage 内逐项读取）
+
+四、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x69E860 —— ★未登记（转换函数——0x69Exxx 区，batch 493
+    0x69E9E0 子对象方法转发器邻域，新候选）
+  0x69E9E0 —— ★★已登记（batch 493 子对象方法转发器——0x69E
+    860 邻域参考）
+  [0xA83D84] —— ★调用点 1/2/3 全局（→+0x60 子对象——未登记
+    新候选）
+  宿主 PreviewClass::GeneratePreviewImage —— ★★batch 460 文
+    档点名（等距坐标变换调用者域——RMG 预览图绘制），未登
+    记 frontier
+  宿主 FUN_0047BDB0 / FUN_0047C060 —— 未登记
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★batch 460（0x6D62E0 等距坐标变换——文档点名
+    PreviewClass::DrawMap/GeneratePreviewImage ranking 带名
+    ——本批调用点 4 宿主 GeneratePreviewImage 首次进
+    frontier，预览渲染链再添一环）
+  ★★batch 108/149/264/443/576/624（PreviewClass 家族多批已
+    登记——~PreviewClass/0x6406E0/ReadPCXPreview/DrawStart
+    Points/调色板 getter——本批 GeneratePreviewImage 同族补
+    全）
+  ★★batch 493（0x69E9E0 子对象方法转发器——0x69E860 邻域
+    参照）
+  ★★[0xA83D84] 全局（调用点 1/2/3——全局对象 +0x60 子对象
+    共享读取器实例）
+
+六、原版怪癖（照抄）
+-------------------
+① 虚表槽 0x9C 双门控（宿主判定 + 子对象判定——两级放行，
+   子对象空/判定 0 直接失败清零）；
+② 值区间分支不对称（[0x7F,0x8A] 与 [0x93,0x9E] 两正区间走
+   分支 1——[0x8B,0x92] 与 <0x7F/>0x9E 走分支 2——区间的
+   缺口 [0x8B,0x92] 正是分支分界，照抄）；
+③ 0x69E860 双路径调用（分支 1/分支 2 各自调用——同转换函
+   数两参调用形态）；
+④ 输出 3 字节结构 = word[+0] + byte[+2]（[edx]/[edx+2]——
+   2+1 字节紧凑结构）；
+⑤ 失败清零（三字节全 0——0x5FEDBB 路径）；
+⑥ 调用点 1/2/3 全局子对象共享（[0xA83D84]->+0x60——单实
+   例多场景复用）。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（条件 3 字节结构读取器推断——YRpp 未对
+齐）、虚表槽 0x9C 语义（可用性/有效性判定推断）、+0x294 值
+语义（索引/类型位推断）、0x69E860 精确身份（转换/查表——
+0x69Exxx 区）、[0xA83D84]->+0x60 子对象类型、输出 3 字节结
+构字段语义（word+byte 各是什么）、调用点 4 表项（×4 索引
+表）与预览图像素/颜色关系、FUN_0047BDB0/FUN_0047C060 宿主
+业务。
