@@ -1,0 +1,125 @@
+frontier batch 873 —— 0x00631D40 随机化结构填充器（205B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=63 / body=205B）。
+TARGET = 0x00631D40（205B，0x631D40-0x631D0C，thiscall 1 栈参 ret 4）。
+★★推断名：**随机化结构填充器（表驱动随机配置——[0x8367C8] 常量表按索
+引取 40B 配置项 + CRT _rand（0x7CB4AA）三次随机位段/区间填充 this 结
+构）**。
+
+一、函数体全读（205B，disasm 0x631D40 0xD0 全量）
+------------------------------------------------
+参数契约（thiscall 1 栈参 ret 4）：ecx = this（输出结构）、[esp+4] =
+栈参1（配置表索引）。
+机器码（205B 全读，分段要点）：
+  00631d40  mov eax,[esp+4]（★栈参1=索引）→ lea eax,[eax+eax*4]（★×5）
+    → lea edi,[eax*8+0x8367c8]（★★[0x8367C8] 常量表 + 索引×40——40B/
+    项配置表！）→ mov esi,ecx（★this）
+  00631d53  call 0x7cb4aa（★★CRT _rand——MSVC6 LCG（工作线记忆关联
+    batch 623-637 已读，TSV 未独立登记）！）→ mov ecx,eax → shr eax,5 →
+    and ecx,0x3f → and eax,0x1f → sub ecx,0x1f（★随机低 6 位-0x1F）→
+    sub eax,0xf（★随机>>5 &0x1F-0xF）→ mov [esi+0x30],ecx → mov
+    [esi+0x34],eax（★★随机偏移对：+0x30/+0x34 双随机值）
+  00631d6f  表 12B 复制：mov edx,[edi] → [esi+0x18] → mov eax,[edi+4] →
+    [esi+0x1c] → mov ecx,[edi+8] → [esi+0x20]（★表+0/+4/+8 → this
+    +0x18/+0x1C/+0x20）
+  00631d80  mov ecx,[edi+0x18]（★表+0x18=位宽计数）→ test → je 0x631dc0
+    → mov ebx,1 → shl ebx,cl → dec ebx（★★掩码 = (1<<位宽)-1！）→
+    call 0x7cb4aa（★rand 2）→ 三段随机减量：mov edx,ebx → and edx,eax
+    → sub [esi+0x18],edx（★★+0x18 -= rand&掩码）→ mov ecx,[edi+0x18]
+    → shr eax,cl → and eax,ebx → sub [esi+0x1c],eax（★★+0x1C -= 段2）
+    → shr eax,cl → and eax,ebx → sub [esi+0x20],eax（★★+0x20 -= 段3）
+    ——★★表驱动位宽随机减量三段
+  00631dc0  表三值复制：mov eax,[edi+0xc] → [esi+0x24] → [esi+4] →
+    mov eax,[edi+0x10] → [esi+0x28] → [esi+8] → mov eax,[edi+0x14] →
+    mov [esi+0x10],0 → [esi+0x2c] → [esi+0xc]（★表+0xC/+0x10/+0x14 →
+    this +0x24/+0x28/+0x2C 与 +4/+8/+0xC 双份）
+  00631de2  mov ebx,[edi+0x20] → mov ecx,[edi+0x24] → sub ebx,ecx → inc
+    ebx（★范围 = 表+0x20 - 表+0x24 + 1）→ call 0x7cb4aa（★rand 3）→
+    xor edx,edx → div ebx（★rand % 范围）→ add edx,[edi+0x24]（★+下限）
+    → mov [esi+0x14],edx（★★随机区间值 +0x14）
+  00631dfa  call 0x7cb4aa（★rand 4）→ mov ecx,[edi+0x1c]（★表+0x1C=掩
+    码）→ and eax,ecx → mov [esi+0x38],eax（★★随机掩码值 +0x38）→
+    ret 4
+语义：**随机化结构填充器（推断名）**——thiscall 1 栈参（配置表索引）：
+  ① 索引×40 定位 [0x8367C8] 配置表项；② rand 低 6 位-0x1F/+>>5 &0x1F
+  -0xF → this+0x30/+0x34（双随机偏移）；③ 表+0/+4/+8 → +0x18/+0x1C/
+  +0x20（基础值）；④ 表+0x18 位宽（非 0）时掩码 (1<<位宽)-1，rand 三
+  段位段随机减量（+0x18/+0x1C/+0x20）；⑤ 表+0xC/+0x10/+0x14 →
+  +0x24/+0x28/+0x2C（+4/+8/+0xC 双份）+ +0x10=0；⑥ rand % (表+0x20 -
+  表+0x24 + 1) + 表+0x24 → +0x14（随机区间）；⑦ rand & 表+0x1C →
+  +0x38（随机掩码）。★★语义统一：表驱动随机配置模板——一个配置项
+  （40B：基础值×3/位宽/三值/掩码/范围上下限）驱动一段随机初始化，四
+  次 _rand 消费（偏移/减量段/区间/掩码）。
+
+二、调用点（3 处 E8，2 紧邻构造器 + 1 大函数全核验）
+----------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x631D40）：**命中 3 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x631E1B → 无归属（函数间隙——回退 0x631DC0 重读=紧邻本函数尾部
+     构造器 A）
+  2) 0x631E3E → 无归属（函数间隙——紧邻构造器 B）
+  3) 0x6D7AE3 → FUN_006d7840 [0x6D7840-0x6D7BF9] body=954 —— 未登记
+现场 disasm 核验（三处全读）：
+  构造器 A（0x631E10 起，紧邻本函数尾）——现场 0x631E10-0x631E23：push
+    esi → mov esi,ecx（★this）→ push 0（★栈参1=索引 0）→ mov [esi],
+    0x7efda4（★★装虚表 0x7EFDA4——新虚表！）→ 0x631E1B: call 0x631d40
+    （★★本函数——索引 0 随机填充）→ mov eax,esi → ret（★返 this）——
+    ★★构造器包装（默认配置 0）
+  构造器 B（0x631E30 起）——现场 0x631E30-0x631E46：mov eax,[esp+4]（★
+    栈参1=索引）→ push esi → mov esi,ecx → push eax（★索引透传）→ mov
+    [esi],0x7efda4（★★同虚表 0x7EFDA4）→ 0x631E3E: call 0x631d40（★★
+    本函数）→ mov eax,esi → ret 4（★返 this）——★★构造器包装（索引参
+    数版）
+  FUN_006d7840（0x6D7840，954B 大函数）——现场 0x6D7AC0-0x6D7AE8：
+    0x6D7AC5 mov [esi+0xfc],ebp → 分支 → 0x6D7AD7: cmp [ebp+0x10],0x2000
+    → jl 0x6d7ae8（★门控 0x2000 跳过）→ push edi → mov ecx,ebp（★this=
+    ebp）→ 0x6D7AE3: call 0x631d40（★★本函数——索引未推栈参？现场
+    [esp+4] 应为前置残留——随机填充）→ 0x6D7AE8 汇合：test ebp → je
+    0x6d7bb8 → 后续 call 0x631ee0（★再填充）+ 0x47ff80（★矩形处理 batch
+    120）+ 坐标读取 cdq/sub——★★0x6D 区大函数（区域/矩形逻辑推断）
+★统一形态：构造器 A/B 为紧邻包装（装虚表 0x7EFDA4 + 调本函数随机填
+  充）；FUN_006d7840 为 0x2000 门控后的使用端（大函数内）。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  [0x8367C8] —— ★未登记（40B/项配置表——新登记全局）
+  0x7CB4AA —— ★未登记（CRT _rand——MSVC6 LCG；工作线记忆关联 batch
+    623-637 已读但 TSV 未独立登记，按未登记留候选）
+  0x7EFDA4 —— ★未登记（构造器虚表——新登记）
+  0x47FF80 —— ★★已登记（batch 120 矩形处理——FUN_006d7840 现场同调）
+  0x631EE0 —— ★未登记（FUN_006d7840 后置再填充——新候选）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★batch 120（0x47FF80 矩形处理——FUN_006d7840 宿主现场同调）
+  ★★batch 623-637 记忆关联（0x7CB4AA CRT _rand——工作线记忆「CRT _rand
+    （0x7CB4AA——MSVC6 LCG 214013/2531011）」已读，TSV 未独立登记，本
+    批四调用现场）
+  ★★batch 001（无直接 new/delete——本批纯填充无分配）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★表驱动随机配置（索引×40 定位 [0x8367C8]——lea eax,[eax+eax*4] ×5
+   + [eax*8+..] 两步合成 ×40）；
+② ★★四次 _rand 消费（偏移对/减量段/区间/掩码——同一 _rand 序列连续
+   取数）；
+③ ★★双随机偏移（rand 低 6 位-0x1F 与 >>5 &0x1F-0xF 不对称减量）；
+④ ★★表驱动位宽随机减量（掩码 (1<<[表+0x18])-1，rand 位段 shr 三段连
+   续减——+0x18/+0x1C/+0x20）；
+⑤ ★★随机区间（rand % (上限-下限+1) + 下限——div 无符号除法）；
+⑥ ★★随机掩码值（rand & [表+0x1C]——掩码字段）；
+⑦ ★★表三值双份（+0xC/+0x10/+0x14 → 主槽 +0x24/+0x28/+0x2C 与次槽
+   +4/+8/+0xC——同值写两份）；
+⑧ ★★构造器包装双实例（虚表 0x7EFDA4 + 索引 0 版/索引参数版——同模板
+   两个紧邻函数）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「随机化结构填充器」）、[0x8367C8] 配置表 40B
+  项精确语义（基础值/位宽/掩码/范围字段推断）、0x7CB4AA 精确身份（CRT
+  _rand 推断——MSVC6 LCG 记忆关联）、0x7EFDA4 虚表类归属、+0x18..+0x38
+  字段业务语义（随机化后的消费端）、紧邻构造器 A/B 宿主类名（配置对象
+  推断）、FUN_006d7840 宿主业务（0x6D 区区域/矩形逻辑推断）、0x631EE0
+  身份。
