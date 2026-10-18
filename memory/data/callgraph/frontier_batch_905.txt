@@ -1,0 +1,115 @@
+frontier batch 905 —— 0x007D7D49 浮点格式化辅助器（119B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=19 / body=119B）——E8 全局扫描
+实测命中 3 处（0x7CECxx/0x7CEDxx/0x7CEExx CRT 区——同簇）。
+TARGET = 0x007D7D49（119B，0x7D7D49-0x7D7DBF，cdecl 3 栈参，0x7D7xxx
+MSVC6 CRT 区——QWEN.md 实锤三层代码区第二层）。
+★★推断名：**浮点格式化辅助器（_ecvt/_fcvt 族格式化段——首字符 '0'
++ 按长度复制（源空补 '0'）+ 截断 + 0x35 四舍五入进位 + '1' 前导指数
+++ / 移位；紧邻 0x7D7DC0 更大函数成对消费**）**。
+
+一、函数体全读（119B，disasm 0x7D7D49 0x80 全量）
+------------------------------------------------
+参数契约（cdecl 3 栈参）：[ebp+8] = 栈参1（输出字符串指针 esi）、
+[ebp+0xC] = 栈参2（长度计数 ebx）、[ebp+0x10] = 栈参3（目标结构指针
+edx——+0xC 源串指针 / +4 指数字段）。
+机器码（119B 全读，逐段要点）：
+  序言: push ebp → mov ebp,esp → mov edx,[ebp+0x10]（★栈参3=目标结构）
+    → push ebx → mov ebx,[ebp+0xc]（★栈参2=长度）→ push esi → mov
+    esi,[ebp+8]（★栈参1=输出串）→ mov ecx,[edx+0xc]（★★目标结构+0xC
+    =源字符串指针）→ push edi → lea edi,[esi+1]（★edi=输出+1）→ mov
+    byte[esi],0x30（★★输出首字符写 '0'！）
+  复制循环: test ebx → jle 0x7D7D86（★长度<=0 跳过）→ mov [ebp+8],
+    ebx → xor ebx → mov dl,[ecx]（★源字符）→ test → je 0x7D7D78（★源
+    字符 0 → 补 '0'）→ movsx edx,dl → inc ecx → jmp → 0x7D7D78: push
+    0x30 → pop edx（★用 '0'）→ mov [eax],dl（★写输出）→ inc eax → dec
+    [ebp+8] → jne 循环（★★复制 min(长度,源串长) 个字符——源空时补
+    '0' 填满）
+  截断: 0x7D7D86: and byte[eax],0（★写 0 终止）→ test ebx → jl
+    0x7D7D9F（★跳过舍入）
+  四舍五入: cmp byte[ecx],0x35 → jl 0x7D7D9F（★★源串下一个字符 < '5'
+    不进位）→ 进位循环: dec eax → cmp byte[eax],0x39 → jne 0x7D7D9D →
+    mov byte[eax],0x30（★'9' → '0' 继续进位）→ jmp → 0x7D7D9D: inc
+    byte[eax]（★★非 '9' → +1 完成进位——字符串四舍五入！）
+  指数调整: 0x7D7D9F: cmp byte[esi],0x31 → jne 0x7D7DA9（★输出首字符
+    检查）→ inc dword[edx+4]（★★目标结构+4 = 指数字段++——首字符
+    '1' 时指数+1）→ jmp 0x7D7DBB → 0x7D7DA9: push edi → call 0x7d15a0
+    （★★batch 017 _strlen——输出串长）→ inc eax → push eax → push
+    edi → push esi → call 0x7ca090（★★batch 031 memmove——输出串左移
+    腾位！）→ add esp,0x10
+  收尾: pop 族 → ret（★cdecl 无清理）
+语义：**浮点格式化辅助器（推断名）**——cdecl 3 栈参：① 输出串首字符
+  写 '0'；② 按长度复制源串（源字符 0 时补 '0' 填满）；③ 截断写 0 终
+  止；④ 源串下一个字符 >= '5' 时对输出串四舍五入进位（'9'→'0' 连
+  进）；⑤ 输出首字符 '1' 时目标结构+4（指数字段）++，否则 strlen+1
+  经 0x7CA090 memmove 左移腾位（补前导 '1' 空间）——★MSVC6
+  _ecvt/_fcvt 族浮点转字符串格式化链的辅助段。★★紧邻 0x7D7DC0（更大
+  函数，宿主2/3 现场先调它再调本函数）成对——CRT 浮点格式化双段。
+
+二、调用点（3 处 E8，3 宿主全核验）
+----------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x7D7D49）：**命中 3 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x7CEC67 → FUN_007cec26 [0x7CEC26-0x7CEC86] body=97 —— 未登记
+  2) 0x7CED81 → FUN_007ced49 [0x7CED49-0x7CED9D] body=85 —— 未登记
+  3) 0x7CEE82 → FUN_007cee45 [0x7CEE45-0x7CEED7] body=147 —— 未登记
+现场 disasm 核验（三处全读）：
+  FUN_007cec26（0x7CEC67，97B 未登记）——现场 0x7CEC50-0x7CEC79：
+    test esi,esi → setg cl → add edx,eax → add ecx,edx → push ecx →
+    call 0x7d7d49 ★ → lea eax,[ebp-0x10] → push 0 → push eax → push
+    [ebp+0x14] → push esi → push [ebp+0xc] → call 0x7CEC87（★后续五参
+    调用——CRT 浮点输出链）
+  FUN_007ced49（0x7CED81，85B 未登记）——现场 0x7CED60-0x7CED81：
+    call 0x7d7dc0（★★紧邻前置函数！）→ mov esi,[ebp+0x10] → lea eax,
+    [ebp-0x10] → push eax → mov eax,[ebp-0xc] → add eax,esi → push eax
+    → xor eax → cmp [ebp-0x10],0x2d → sete al → add eax,[ebp+0xc] →
+    push eax → call 0x7d7d49 ★（★三参：&结构/计算值/长度）
+  FUN_007cee45（0x7CEE82，147B 未登记）——现场 0x7CEE60-0x7CEE82：
+    call 0x7d7dc0（★★同款前置）→ mov eax,[ebp-0xc] → mov ebx,[ebp+
+    0x10] → lea esi,[eax-1] → xor eax → cmp [ebp-0x10],0x2d → sete al
+    → add eax,[ebp+0xc] → mov edi,eax → lea eax,[ebp-0x10] → push eax
+    → push ebx → push edi → call 0x7d7d49 ★（★三参同款）
+★统一形态：三宿主全「0x7D7DC0（紧邻前置函数）→ 组装三参（&结构/计算
+  值/长度）→ call 0x7D7D49」——本函数=CRT 浮点格式化链辅助段，宿主2/3
+  先调 0x7D7DC0 再调本函数（同簇双段消费）。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x7D15A0 —— ★★★已登记 batch 017（_strlen——函数体输出串长调用，
+    cpp 模型 string_length_legacy 同批）
+  0x7CA090 —— ★★★已登记 batch 031（memmove 双端变体——函数体输出串
+    左移调用）
+  0x7D7DC0 —— ★未登记（紧邻前置函数——更大格式化函数，宿主2/3 先调
+    它）
+  FUN_007cec26/FUN_007ced49/FUN_007cee45 —— ★未登记（三宿主——CRT 浮
+    点输出链）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 017（0x7D15A0 _strlen——函数体 strlen 调用，cpp 模型已入
+    ctest）
+  ★★★batch 031（0x7CA090 memmove——函数体左移腾位调用）
+  ★★0x7D7xxx CRT 区（batch 083/092/093/096 同区——_ftol 等浮点家族）
+  ★★MSVC6 静态 CRT（QWEN.md 实锤三层代码区第二层——0x7C-0x7D 区）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★输出首字符固定写 '0'（前导零占位）；② ★★复制循环源空补 '0'
+  （push 0x30/pop edx 惯用——非默认 0）；③ ★★截断写 0 终止（and
+  byte[eax],0——非 mov 0）；④ ★★四舍五入条件 0x35（>= '5' 进位——
+  字符串级舍入而非数值级）；⑤ ★★进位循环 '9'→'0' 连进 + 非 '9' +1
+  （手写字符串进位）；⑥ ★★首字符 '1' 时指数字段++（目标结构+4），非
+  '1' 时 strlen+1 移位（腾前导位——'1' 前导不腾位）；⑦ ★★cdecl 3 栈
+  参无清理（ret 裸）；⑧ ★★紧邻 0x7D7DC0 成对消费（宿主2/3 先调它再
+  调本函数——CRT 格式化双段）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「浮点格式化辅助器」——_ecvt/_fcvt 族推断）、
+  目标结构 +0xC（源串指针）/+4（指数字段）精确语义（_ecvt 输出结构推
+  断）、长度参数业务含义（小数位数/有效位数推断）、0x7D7DC0 前置函数
+  身份（更大格式化函数——未登记）、三宿主业务（CRT 浮点输出链——
+  0x7CEC87 后续五参调用）、补 '0' 与截断的具体格式语义（定点/科学计
+  数推断）。
