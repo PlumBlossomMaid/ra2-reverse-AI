@@ -1,0 +1,178 @@
+frontier batch 902 —— 0x004FFB20 目标方位扇区评估器（547B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=24 / body=547B）——E8 全局扫描
+实测命中 5 处（0x4FDxxx/0x500xxx HouseClass 区）。
+TARGET = 0x004FFB20（547B，0x4FFB20-0x4FFD42，thiscall 1 栈参 ret 4，
+0x4Fxxxx HouseClass 区）。
+★★推断名：**目标方位扇区评估器（HouseClass 家族——给定目标坐标 vs
+鼠标 cell/自身缓存坐标，计算 3D 距离 + 方位角，按区间分类返回 1/2/3/4
+扇区值；同格返 -1、近距离返 0、超 4× 阈值返 -1；宿主
+HouseClass::FindBuildingOfType 带名）**。
+
+一、函数体全读（547B，disasm 0x4FFB20 0x240 全量）
+------------------------------------------------
+参数契约（thiscall 1 栈参 ret 4）：ecx = this（ebx，HouseClass 推断）、
+[esp+4] = 栈参1（目标坐标结构指针 esi——三宿主现场实锤 push 坐标指针）。
+机器码（547B 全读，逐段要点）：
+  同格判定: sub esp,0x1c → mov edx,[0xa8f000]（★坐标缓存全局）→ push 族
+    → mov esi,[esp+0x2c]（★栈参1=目标坐标）→ mov ebx,ecx（this）→ mov
+    ecx,[0xa8eff8]（★★A8EFxx 坐标缓存全局族——batch 247 文档点名）→
+    mov eax,[esi] → cmp eax,ecx → jne 0x4FFB5D → mov eax,[0xa8effc] →
+    mov edi,[esi+4] → cmp edi,eax → jne 0x4FFB5D → cmp [esi+8],edx →
+    jne 0x4FFB5D → 全等 → or eax,0xffffffff → ret 4（★★同格 → 返 -1）
+  鼠标 cell 比对（0x4FFB5D）: mov eax,[0xa8ef98]（★★鼠标 cell 全局——
+    batch 631/683/691/730 四批实锤）→ lea ebp,[ebx+0x5494]（★this+0x5494
+    坐标字段）→ cmp word[ebp],ax → jne 0x4FFB83 → mov di,[0xa8ef9a] →
+    cmp word[ebp+2],di → jne 0x4FFB83 → mov edi,[ebx+0x5490]（★this+
+    0x5490 缓存坐标）→ jmp 0x4FFB86 → 0x4FFB83: mov edi,[ebp] → 0x4FFB86:
+    cmp di,ax → mov [esp+0x30],edi → mov [esp+0x10],edi → jne 0x4FFBAA →
+    相等（this+0x5494 == 鼠标 cell）→ mov ax,[0xa8ef9a] → cmp word
+    [esp+0x32],ax → jne 0x4FFBAA → mov eax,ecx → mov ecx,[0xa8effc] →
+    jmp 0x4FFBCF（★鼠标 cell 路径直接取缓存全局）
+  GetCellAt 路径（0x4FFBAA）: lea ecx,[esp+0x10] → push ecx → mov ecx,
+    0x87f7e8（★★MapClass::Instance）→ call 0x5657a0（★★batch 241
+    GetCellAt——坐标→CellClass*）→ mov edx,[eax] → lea ecx,[esp+0x20]
+    → push ecx → mov ecx,eax → call [edx+0x48]（★虚表槽 0x48 取坐标三
+    字段）
+  距离判定（0x4FFBCF）: mov edi,[esi] → sub eax,edi（★目标 X - 格 X）
+    → mov edi,[esi+4] → sub ecx,edi（★Y 差）→ mov edi,[esi+8] → sub
+    edx,edi（★Z 差）→ mov [esp+0x18],ecx → lea ecx,[esp+0x14] → mov
+    [esp+0x14],eax → mov [esp+0x1c],edx → call 0x41c380（★★★batch 106
+    3D 距离 →(int)sqrt(x²+y²+z²)）→ mov ecx,[ebx+0x5498]（★this+0x5498
+    阈值）→ cmp eax,ecx → jg 0x4FFC08 → 收尾: xor eax → ret 4（★距离
+    <=阈值 → 返 0！）
+  阈值分支（0x4FFC08）: shl ecx,2 → cmp eax,ecx → jle 0x4FFC1C → or
+    eax,0xffffffff → ret 4（★距离 >4×阈值 → 返 -1）→ 0x4FFC1C: push
+    0xa8ef98 → mov ecx,ebp → call 0x50e470（★未登记函数——本字段判
+    定）→ test al → je 0x4FFC34 → mov ebx,[ebx+0x5490] → jmp 0x4FFC37
+    → 0x4FFC34: mov ebx,[ebp] → 0x4FFC37: cmp bx,[0xa8ef98] → mov
+    [esp+0x30],ebx → mov [esp+0x10],ebx → jne 0x4FFC71 → 相等: mov dx,
+    [esp+0x32] → cmp dx,[0xa8ef9a] → jne 0x4FFC71 → mov eax,[0xa8eff8]
+    → mov ecx,[0xa8effc] → mov edx,[0xa8f000] → mov [esp+0x14],eax →
+    mov [esp+0x18],ecx → jmp 0x4FFC9C（★缓存全局路径）→ 0x4FFC71: lea
+    eax,[esp+0x10] → mov ecx,0x87f7e8 → push eax → call 0x5657a0（★
+    GetCellAt）→ 虚表槽 0x48 取坐标三字段 → 0x4FFC9C
+  方位角计算（0x4FFC9C）: mov eax,[esi] → sub esp,8 → mov [esp+0x38],
+    eax → sub esp,8 → fild [esp+0x40]（★X 转 float）→ mov [esp+0x2c],
+    edx → fisub [esp+0x24]（★X 差）→ fstp qword[esp+8] → fild
+    [esp+0x28]（★Y）→ fisub [esi+4]（★Y 差）→ fstp qword[esp] → call
+    0x4cae30（★未登记浮点方位——atan 系推断）→ fsub qword[0x7e2820]
+    （★常量 1）→ add esp,0x10 → fmul qword[0x7e2818]（★常量 2）→ call
+    0x7c5f00（★_ftol 截断）→ mov word[esp+0x30],ax → mov eax,[esp+0x30]
+    → shr eax,7 → inc eax → shr eax,1 → and eax,0xff（★方位量化到
+    [0,255] 八方向扇区）
+  扇区分类: cmp eax,0x20 → jle 0x4FFD0A → cmp eax,0xe0 → jge 0x4FFD0A
+    → mov eax,1 → ret 4（★(0x20,0xE0) → 返 1）→ 0x4FFD0A: cmp eax,0xa0
+    → jle 0x4FFD25 → cmp eax,0x60 → jge 0x4FFD25 → mov eax,3 → ret 4
+    （★(0x60,0xA0) → 返 3——但 0x4FFD25 前的 jle 0xa0 会先截走 ≤0xA0，
+    实际 (0x60,0xA0) 都被 jle 0x4FFD25 接收——返 3 分支仅 eax>0xA0 且
+    eax<0x60 无符号区间命中——原版怪癖）→ 0x4FFD25: cmp eax,0x20 → jg
+    0x4FFD34 → cmp eax,0x60 → mov eax,2 → jl 0x4FFD39（★≤0x20 → 返 2）
+    → 0x4FFD34: mov eax,4 → ret 4（★其余 → 返 4）
+语义：**目标方位扇区评估器（推断名）**——thiscall 1 栈参（目标坐标）：
+  ① 目标 == A8EFxx 缓存全局（同格）→ 返 -1；② 鼠标 cell [0xA8EF98]/
+  [0xA8EF9A] 比对 this+0x5494/+0x5490 缓存坐标决定源坐标（鼠标 cell
+  或缓存/GetCellAt 虚表槽 0x48 取格坐标）；③ 0x41C380 3D 距离 vs
+  this+0x5498 阈值：≤阈值返 0、>4×阈值返 -1、中间继续；④ 0x50E470
+  字段判定 + 坐标选择（0x5490/0x5494 vs GetCellAt）；⑤ 方位角计算
+  （0x4CAE30 atan 系 + [0x7E2820]/[0x7E2818] 常量 + _ftol + shr7/inc/
+  shr1/and0xFF 量化）；⑥ 扇区分类返 1/2/3/4。★被 HouseClass::
+  FindBuildingOfType（建筑查找）等调用做方位/距离筛选。
+
+二、调用点（5 处 E8，3 宿主+2 间隙全核验）
+----------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x4FFB20）：**命中 5 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x4FD0E3 → HouseClass::FindBuildingOfType [0x4FD060-0x4FD112]
+     body=179 —— ★带名（functions.tsv——frontier TSV 未登记）
+  2) 0x4FD472 → FUN_004fd150 [0x4FD150-0x4FD4FF] body=944 —— 未登记
+  3) 0x4FFD75 → 无归属（函数间隙——紧邻本函数后）
+  4) 0x4FFDC4 → 无归属（函数间隙）
+  5) 0x50040C → FUN_00500300 [0x500300-0x5004D6] body=471 —— 未登记
+现场 disasm 核验（三处全读）：
+  HouseClass::FindBuildingOfType（0x4FD0E3，179B ★带名——建筑查找）——
+    现场 0x4FD0C0-0x4FD0E8：jl 0x4FD0B6（★查找循环）→ or eax,-1 →
+    cmp eax,[esp+0x24] → jne 0x4FD0F2 → mov edi,[esp+0x28] → cmp
+    edi,-1 → je 0x4FD107（★目标 -1 跳过）→ mov edx,[esi] → lea eax,
+    [esp+0x14] → push eax → mov ecx,esi → call [edx+0x48]（★虚表槽
+    0x48 取坐标）→ push eax → mov ecx,ebx（★this）→ 0x4FD0E3: call
+    0x4ffb20 ★（本函数）→ cmp eax,edi → je 0x4FD107（★返回==目标 →
+    跳过）→ mov edi,[0xa83c78]（★计数全局——batch 631 同款）
+  FUN_004fd150（0x4FD472，944B 未登记）——现场 0x4FD450-0x4FD489：
+    mov al,[esi+0x81] → test → jne 0x4FD4D5 → mov eax,[esi+0x6c] →
+    test → jle 0x4FD4D5 → mov edx,[esi] → lea eax,[esp+0x44] → push
+    eax → mov ecx,esi → call [edx+0x48]（★虚表槽 0x48 取坐标）→ push
+    eax → mov ecx,edi（★this）→ 0x4FD472: call 0x4ffb20 ★ → mov ebp,
+    eax → cmp ebp,-1 → je 0x4FD4D5（★==-1 跳过）→ mov edx,[esi] →
+    lea ecx,[ebp+ebp*2] → lea ebx,[edi+ecx*4]（★★返回值 ×3×4 = 12B
+    步进索引！）→ call [edx+0x2d8]（★虚表槽 0x2D8）
+  FUN_00500300（0x50040C，471B 未登记）——现场 0x5003F0-0x500414：
+    mov edi,[esi+0x21c]（★this+0x21C）→ lea ecx,[esp+0x34] → push ecx
+    → mov ecx,esi → call [eax+0x48]（★虚表槽 0x48 取坐标）→ push eax →
+    mov ecx,edi（★this）→ 0x50040C: call 0x4ffb20 ★ → cmp eax,-1 →
+    jne 0x5004AD（★★返回==-1 判定分支）
+★统一形态：三宿主全「虚表槽 0x48 取坐标 → push 坐标指针 → mov ecx,
+  this → call 0x4FFB20 → 返回值参与判定（==目标/==-1 跳过、×3×4 12B
+  步进索引）」——HouseClass 建筑/单位筛选链的方位距离评估。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x5657A0 —— ★★★已登记 batch 241（GetCellAt——坐标→CellClass*，函数
+    体两处调用 + 三宿主虚表槽 0x48 同款取坐标）
+  0x41C380 —— ★★★已登记 batch 106（3D 距离 →(int)sqrt(x²+y²+z²)——
+    距离判定核心）
+  0x87F7E8 —— ★★QWEN.md 实锤（MapClass::Instance——GetCellAt this）
+  [0xA8EF98]/[0xA8EF9A] —— ★★★已登记（batch 631/683/691/730 鼠标 cell
+    全局——本函数比对+缓存坐标选择）
+  [0xA8EFF8]/[0xA8EFFC]/[0xA8F000] —— ★★已登记（batch 247 A8EFxx 坐
+    标缓存全局族——同格判定）
+  [0xA83C78] —— ★★已登记（batch 631 计数全局——宿主1 循环计数）
+  0x7C5F00 —— ★★★已登记（_ftol 实锤——方位角截断）
+  0x4CAE30 —— ★未登记（浮点方位——atan 系推断）
+  0x50E470 —— ★未登记（this+0x5494 字段判定）
+  HouseClass::FindBuildingOfType —— ★带名（functions.tsv——frontier
+    TSV 未登记宿主）
+  FUN_004fd150/FUN_00500300 —— ★未登记（两宿主）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 631（HouseClass::SellWall——[0xA83C78]/[0xA83C6C] 表族+
+    [0xA8EF98] 鼠标 cell——本函数宿主1 循环用同计数全局）
+  ★★★batch 683（HouseClass::PickTargetByType——[0xA8EF98] 兜底写+坐
+    标 >>8 量化——HouseClass 目标选择家族同域）
+  ★★★batch 730（HouseClass::UpdateFlagCoords——[0xA8EF98] 同步源——
+    鼠标 cell 全局多消费点）
+  ★★★batch 106（0x41C380 3D 距离——函数体距离判定）
+  ★★batch 241（0x5657A0 GetCellAt——函数体两处 + 宿主同款）
+  ★★batch 247（A8EFxx 坐标缓存全局族——同格判定）
+  ★★batch 691（HouseClass::AdjustThreats——[0xA8EF98] 比对同族）
+  ★HouseClass 家族（FindBuildingOfType 带名——建筑查找链，本函数被
+    筛选调用）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★同格判定用 A8EFxx 缓存全局（[0xA8EFF8]/[0xA8EFFC]/[0xA8F000]
+   vs 栈参坐标三字段——全等返 -1）；② ★★鼠标 cell [0xA8EF98]/
+   [0xA8EF9A] 比对 this+0x5494 缓存坐标（相等→直接用缓存坐标免查
+   GetCellAt——双路径）；③ ★★距离阈值双段判定（≤this+0x5498 返 0 /
+   >4×阈值返 -1 / 中间继续——4 倍系数怪癖）；④ ★★方位角计算经
+   0x4CAE30（atan 系）+ [0x7E2820]/[0x7E2818] 常量 + _ftol + shr7/inc/
+   shr1/and0xFF 量化（八方向扇区）；⑤ ★★扇区分类返 1/2/3/4 区间判定
+   嵌套怪（0x4FFD0A 前 jle 0xA0 截走 ≤0xA0——返 3 分支实际仅无符号
+   >0xA0 且 <0x60 命中）；⑥ ★★this+0x5490/+0x5494 双缓存坐标字段
+   （鼠标 cell 命中选 +0x5490 否则 +0x5494）；⑦ ★★0x50E470 字段判定
+   后二次坐标选择（+0x5490/0x5494 分支）；⑧ ★★GetCellAt 虚表槽 0x48
+   取坐标三字段（宿主同款）；⑨ ★★返回值多语义（-1 同格/超远/远、0 近
+   距、1/2/3/4 方位扇区——调用方按 ==-1/==目标/×3×4 索引消费）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「目标方位扇区评估器」）、this+0x5490/
+  +0x5494/+0x5498 字段精确语义（缓存坐标/阈值推断）、0x4CAE30 精确
+  身份（atan/方位——未登记）、0x50E470 身份（字段判定）、扇区分类返
+  值 1/2/3/4 与宿主消费的精确业务（FindBuildingOfType 建筑查找筛选 /
+  FUN_004fd150 12B 索引 / FUN_00500300 判定）、[0x7E2820]/[0x7E2818]
+  常量语义、FUN_004fd150/FUN_00500300 宿主业务、2 间隙归属
+  （0x4FFD75/0x4FFDC4）。
