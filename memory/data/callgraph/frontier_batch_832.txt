@@ -1,0 +1,180 @@
+frontier batch 832 —— 0x00552490 LCWStraw::Get（带名——LCW 压缩流读取）
+===========================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=119 / body=346B）。
+TARGET = 0x00552490（.text，346B，thiscall 2 栈参 ret 8）
+★★带名候选：LCWStraw::Get（ranking 名——LCW 压缩流解码族，
+与 LCWStraw::Get 同族 0x552450/0x5523E0 双段池区相邻）——
+压缩流按请求量分块解码输出，底层搬运用 batch 031 memmove、
+数据读取经 batch 353 子对象转发
+
+一、函数体全读（346B，disasm 0x552490 346）
+---------------------------------------------
+参数契约（thiscall 2 栈参 ret 8）：
+  ecx = this（LCWStraw 解码器）
+  [esp+0x10] = 栈参 1 = 输出缓冲（ebp）
+  [esp+0x18] = 栈参 2 = 请求字节数（ebx）
+  返回 eax（成功输出推进后缓冲值/失败 0）
+机器码（346B 全读，主循环五段）：
+  00552490  push ecx / push ebx / push ebp / mov ebp,[esp+0x10]
+    / push esi / mov esi,ecx / mov [esp+0xC],0
+  005524a4  test ebp,ebp / je 0x5525E1     ; ★输出空 → 失败 0
+  005524aa  mov ebx,[esp+0x18] / cmp ebx,1 / jl 0x5525E1
+                                        ; ★请求量<1 → 失败 0
+  005524b7  test ebx,ebx / push edi / jle 0x5525D5
+  ——主循环（0x5524C0 起）：剩余量比较——
+  005524c0  mov eax,[esi+0x10]             ; ★+0x10 = 剩余计数
+  005524c3  test eax,eax / jle 0x55251C    ; 剩余<=0 → 补读
+  005524c7  cmp ebx,eax / mov edi,ebx / jl 0x5524CF
+  005524cd  mov edi,eax                    ; ★实际量 = min(请求,
+                                        ;   剩余)
+  005524cf  mov ecx,[esi+0xC]              ; ★+0xC 模式判定
+  005524d2  push edi / cmp ecx,1 / jne 0x5524E8
+  005524d8  模式 1：mov edx,[esi+0x14] / mov cx,[esi+0x26]
+    / add ecx,edx / sub ecx,eax / push ecx（★源 = +0x14+0x26-
+    剩余）
+  005524e8  模式其它：mov ecx,[esi+0x18] / mov dx,[esi+0x24]
+    / add edx,ecx / sub edx,eax / add edx,4 / push edx（★源 =
+    +0x18+0x24-剩余+4）
+  005524f9  push ebp / call 0x7CA090       ; ★★batch 031 memmove
+                                        ;   （重叠感知拷贝——
+                                        ;   数据搬运底层）
+  005524ff  mov ecx,[esi+0x10] / mov eax,[esp+0x1C] / add esp,
+    0xC
+  00552509  add ebp,edi / sub ebx,edi / sub ecx,edi / add eax,
+    edi
+  00552511  mov [esp+0x1C],ebx / mov [esi+0x10],ecx / mov
+    [esp+0x10],eax                        ; ★推进输出/请求/剩余
+  ——补读路径（0x55251C）——
+  0055251c  test ebx,ebx / je 0x5525D5
+  00552524  cmp [esi+0xC],1 / jne 0x552581
+  0055252a  模式 1：lea ebx,[esi+0x24] / push 4 / push ebx /
+    mov ecx,esi / call 0x6C98E0           ; ★★batch 353 子对象
+                                        ;   转发（读 4B 头）
+  00552537  cmp eax,4 / jne 0x5525D5
+  00552540  mov edi,[esi+0x20] / mov edx,[esi+0x1C] / mov ax,
+    [ebx] / add edi,edx / sub edi,eax / mov edx,[esi+0x14]
+    / push eax / add edi,edx / mov ecx,esi / push edi / call
+    0x6C98E0                              ; ★★子对象转发（读块）
+  0055255d  mov cx,[ebx] / cmp eax,ecx / jne 0x5525D5
+  00552566  push 0 / mov ecx,edi / call 0x551C60  ; ★解码块头（未
+                                        ;   登记）
+  00552572  mov dx,[esi+0x26] / mov [esi+0x10],edx
+  0055257f  jmp 0x5525CD
+  00552581  模式其它：mov eax,[esi+0x1C] / mov ecx,[esi+0x14]
+    / push eax / push ecx / mov ecx,esi / call 0x6C98E0
+                                        ; ★★子对象转发
+  00552590  test ax,ax / mov [esi+0x26],ax / je 0x5525D5
+  00552599  mov edx,[esi+0x18] / and eax,0xFFFF / add edx,4 /
+    push eax / call 0x551E50              ; ★解码（未登记）
+  005525b0  push 4 / push edi / push edx / mov [edi],ax /
+    call 0x7CA090                         ; ★★memmove（搬运）
+  005525bf  mov ax,[edi] / add eax,4 / mov [esi+0x10],eax
+                                        ; ★+0x10 = 块长+4
+  ——收尾——
+  005525cd  test ebx,ebx / jg 0x5524C0     ; ★循环直到请求耗尽
+  005525d5  mov eax,[esp+0x10] / pop 族 / ret 8
+  005525e1  pop 族 / xor eax,eax / ret 8   ; ★失败返 0
+语义：**LCWStraw::Get（带名——LCW 压缩流读取）**——thiscall
+(输出缓冲, 请求字节数)：①输出空或请求<1 → 返 0；②主循环：
++0x10 剩余计数 >0 时实际量 = min(请求, 剩余)，按 +0xC 模式
+计算源指针（模式 1：+0x14+0x26-剩余；其它：+0x18+0x24-剩余
++4）经 0x7CA090（batch 031 memmove）搬运，推进输出/请求/剩
+余；③补读路径：剩余耗尽的模式下经 0x6C98E0（batch 353 子
+对象转发）读块头/数据，0x551C60/0x551E50 解码块，0x7CA090
+搬运，+0x10 = 块长+4；④循环直到请求耗尽返输出缓冲值；⑤失
+败路径返 0。
+
+二、调用点扫描与归属（E8 扫描 + functions.tsv 区间反查）
+-----------------------------------------------------
+_read_816_calls.py（复用，TARGET=0x552490）：10 处调用点
+  0x56B62F / 0x56B64A / 0x56B6CA / 0x56B746 / 0x56B7B1 /
+  0x56B821 / 0x56B83C / 0x56B857 / 0x5FD415 / 0x5FD615
+_locate_816_callers.py：归属（★★3 宿主与 batch 826/827 完全重合）
+  0x56B62F / 0x56B64A / 0x56B6CA / 0x56B746 → 0x0056B5A0
+    FUN_0056B5A0 [0x56B5A0-0x56B775] body=470（★batch 826/827
+    宿主——双段池构造/析构器）
+  0x56B7B1 / 0x56B821 / 0x56B83C / 0x56B857 → 0x0056B780
+    FUN_0056B780 [0x56B780-0x56B893] body=276（★同上）
+  0x5FD415 / 0x5FD615 → 0x005FD2E0 PhobosHook_OverlayClass_
+    ReadINI [0x5FD2E0-0x5FD69A] body=955（★同上——Overlay
+    类 INI 读取钩子）
+
+三、调用点现场（全部干净——★★LCW 解压缩场景）
+------------------------------------------------
+【调用点 1】0x56B62F in FUN_0056B5A0（470B）
+  0056b625  lea ecx,[esp+0x14]           ; this = 栈上 Straw
+  0056b629  mov [esi],0xFFFF             ; ★初值 0xFFFF
+  0056b62f  call 0x552490                ; ★本条
+  0056b634  mov ecx,[esi]                ; 后续读回
+  形态：★★栈上 LCWStraw 构造后读取（FUN_0056B5A0——batch
+  826 双段池构造器宿主同场景）
+【调用点 2】0x56B7B1 in FUN_0056B780（276B）
+  0056b7a6  lea ecx,[esp+0xC]            ; 输出
+  0056b7aa  push 4                       ; ★请求 4B
+  0056b7ac  push ecx
+  0056b7ad  lea ecx,[esp+0x20]           ; this = Straw
+  0056b7b1  call 0x552490                ; ★本条——读 4B
+  0056b7b6  mov ecx,[esp+0xC] / mov ax,[esp+0xE]
+  形态：★★读 4B 块头（首要 4B 读取——LCW 流解码标准动作）
+【调用点 3】0x5FD415 in PhobosHook_OverlayClass_ReadINI（955B）
+  005fd403  mov [esp+0x20],si / mov [esp+0x22],di（★坐标 word）
+  005fd40d  mov [esp+0x1C],0xFFFFFFFF
+  005fd415  call 0x552490                ; ★本条
+  005fd41a  mov eax,[esp+0x14]
+  形态：★★Overlay INI 读取钩子内 LCW 解压（Overlay 数据 LCW
+  压缩——PhobosHook 场景）
+  形态统一：★★10 处调用点全「LCWStraw 解码读取」；宿主与
+  batch 826/827（双段池）完全重合——字节池 + LCWStraw 解压
+  成组（Overlay/配置数据 LCW 压缩存储）
+
+四、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x7CA090 —— ★★已登记（batch 031 重叠感知字节拷贝 memmove
+    双端变体——函数体主搬运底层，3 处调用）
+  0x6C98E0 —— ★★已登记（batch 353 子对象转发——this->+4 子
+    对象槽 8 双参转发，函数体补读路径 3 处调用）
+  0x551C60 / 0x551E50 —— ★未登记（解码块头/解码——0x55xxxx
+    区 LCW 解码族，新候选）
+  宿主 FUN_0056B5A0 / FUN_0056B780 / PhobosHook_OverlayClass_
+    ReadINI —— functions.tsv（PhobosHook 带名，未登记 frontier）
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★batch 031（0x7CA090 memmove——函数体主搬运底层，3 处调
+    用）
+  ★★batch 353（0x6C98E0 子对象转发——补读路径 3 处调用）
+  ★★batch 826/827（FUN_0056B5A0/FUN_0056B780 双段池构造/析
+    构器——10 调用点宿主完全重合：字节池 + LCWStraw 解压成
+    组，Overlay/配置数据 LCW 压缩存储场景）
+  ★★PhobosHook_OverlayClass_ReadINI（955B 带名——2 处 LCW
+    解压调用）
+  ★★0x551C60/0x551E50（未登记——0x55xxxx 区 LCW 解码族新候
+    选）
+
+六、原版怪癖（照抄）
+-------------------
+① 请求量<1（非≤0）才失败（最小合法值 1——batch 468
+   WriteUUBlock 同款判定）；
+② 实际量 = min(请求, 剩余)（jl/ mov 选择——剩余不足时只搬
+   剩余）；
+③ 模式分支源指针计算（+0xC==1：+0x14+0x26-剩余；其它：
+   +0x18+0x24-剩余+4——两模式源布局不同）；
+④ 补读路径 0x6C98E0 读块头成功后 +0x10 = 块长+4（解码后剩
+   余计数 = 块长+4——首 4B 头不入剩余）；
+⑤ 循环直到请求耗尽（0x5525CD jg 0x5524C0——请求量驱动）；
+⑥ 失败返 0（输出空/请求<1/读校验失败全走 0x5525E1）。
+⑦ +0x24/+0x26 word 块头字段（LCW 压缩块头部——batch 826 双
+   段池字段 +0x24/+0x26 复用为解码器块头）。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（LCWStraw::Get 带名——ranking 名，YRpp
+未覆盖）、0x551C60/0x551E50 解码块精确身份（LCW 解压算法内
+核——未登记新候选）、+0xC 模式语义（普通/特殊压缩模式推
+断）、+0x14/+0x18/+0x1C/+0x20/+0x24/+0x26 字段族语义（源/
+目标/块头缓冲推断）、补读路径 0x6C98E0 两参语义（读 4B 头/
+读数据）、PhobosHook_OverlayClass_ReadINI 的 LCW 数据来源
+（Overlay 压缩配置推断）、FUN_0056B5A0/FUN_0056B780 宿主业
+务（LCW 解压 + 双段池场景）。
