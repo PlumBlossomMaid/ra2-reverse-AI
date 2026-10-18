@@ -1,0 +1,128 @@
+frontier batch 896 —— 0x004047B0 位标志分派的随机出队/选槽器（251B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=32 / body=251B）——E8 全局扫描
+实测命中 2 处（0x404xxx 区——同一对象家族）。
+TARGET = 0x004047B0（251B，0x4047B0-0x4048AA，thiscall 无栈参纯 ret，
+0x404xxx 区——TechTree/建筑生产家族推断）。
+★★推断名：**位标志分派的随机出队/选槽器（edx 覆写为 [this+0x24]+0x10
+位标志三路：bit1 → RandomRanged(0,计数-1) 随机出队表 [this+0x160] +
+前移压缩 + [this+0x28] 索引尾跳；bit0 → this+0x1E4 计数递增尾跳；bit6
+→ 置 this+0x18 bit4 + [this+0x24] 表尾跳；三路尾跳 0x402030/0x404700**）**。
+
+一、函数体全读（251B，disasm 0x4047B0 0x120 全量）
+------------------------------------------------
+参数契约（thiscall 无栈参纯 ret）：ecx = this（esi）、edx 开头被覆写为
+[this+0x24]+0x10（★标志实际来自对象字段——非寄存器参数）。
+机器码（251B 全读，逐段要点）：
+  前段门控: mov ecx,[esi+0x24]（★★this+0x24=配置对象）→ mov eax,
+    [ecx+0x58] → mov edx,[ecx+0x10]（★★edx = [this+0x24]+0x10 位标志）
+    → cmp eax,0x21 → jb 0x4047CB（★[+0x58]<0x21 跳过 bit5 检查）→ test
+    byte[esi+0x18],0x20 → je 0x4048A7（★★[+0x58]>=0x21 且 this+0x18
+    bit5 未置 → 返 0）
+  主逻辑: mov eax,[esi+0x1e0]（★计数）→ test → je 0x40484C → test
+    byte[esi+0x18],0x20 → jne 0x40484C（★bit5 置位 → 走 0x40484C）→
+    test dl,2 → je 0x404829
+  路径 bit1（随机出队）: dec eax（★计数-1）→ push eax（★hi）→ push 0
+    （★lo）→ mov ecx,0x886b88（★★第二 RNG 实例——batch 426/428/579 实
+    锤！）→ call 0x65c7e0（★★已登记 Randomizer::RandomRanged——QWEN.md
+    实锤）→ mov edi,[esi+0x1e0] → mov ecx,[esi+eax*4+0x160]（★★表
+    [this+0x160+随机*4] 取随机项）→ lea edx,[esi+eax*4+0x160] → dec
+    edi → mov [esi+0xac],ecx（★★this+0xAC = 随机项）→ cmp eax,edi →
+    mov ecx,eax → jge 0x40482F → 前移压缩循环: mov eax,edx → mov edx,
+    [eax+4] → inc ecx → mov [eax],edx → add eax,4 → dec [esi+0x1e0] →
+    cmp ecx,edx → jl 循环（★★表 [this+0x160] 从随机索引起整体前移一格
+    ——出队压缩！）→ 0x40482F: mov eax,[esi+0x1e0] → dec → mov
+    [esi+0x1e0],eax（★计数-1）→ mov eax,[esi+0xac] → mov ecx,
+    [esi+eax*4+0x28]（★★表 [this+0x28+项*4] 索引）→ pop esi → jmp
+    0x402030（★★尾跳——未登记！）
+  路径 bit0: 0x404829: inc [esi+0xac]（★this+0xAC++）→ 同 0x40482F
+    收尾（尾跳 0x402030）
+  路径 0x40484C（计数==0 或 bit5 置位）: test dl,1 → je 0x40487E →
+    test byte[esi+0x18],0x20 → jne 0x40487E → mov ecx,[ecx+0x4c]（★★
+    [this+0x24]+0x4C=上限）→ test → je 0x404869 → mov eax,[esi+0x1e4]
+    → dec ecx → cmp eax,ecx → jge 0x40487E（★this+0x1E4>=上限-1 跳）→
+    inc [esi+0x1e4]（★this+0x1E4++）→ pop esi → jmp 0x404700（★★尾跳
+    ——未登记！）
+  路径 bit6: 0x40487E: test dl,0x40 → je 0x4048A7（返 0）→ test byte
+    [esi+0x18],0x10 → jne 0x4048A7 → mov eax,[esi+0xa8] → cmp eax,1 →
+    jl 0x4048A7 → mov ecx,[esi+0x18] → or ecx,0x10 → mov [esi+0x18],ecx
+    （★置 bit4）→ mov ecx,[esi+eax*4+0x24]（★表 [this+0x24+eax*4]）→
+    pop esi → jmp 0x402030（★尾跳）
+  收尾: 0x4048A7: xor eax → pop esi → ret（★返 0）
+语义：**位标志分派的随机出队/选槽器（推断名）**——thiscall：①
+  [this+0x24]+0x58>=0x21 且 this+0x18 bit5 未置 → 返 0（门控）；②
+  [this+0x24]+0x10 位标志三路：bit1 → RandomRanged(0,计数-1)（[0x886B88]
+  第二 RNG）随机选表 [this+0x160] 项 + 前移压缩出队 + 计数-1 → 项存
+  this+0xAC → 表 [this+0x28] 索引 → 尾跳 0x402030；bit0 → this+0x1E4
+  计数递增（上限 [this+0x24]+0x4C）→ 尾跳 0x404700；bit6 → this+0x18
+  |=0x10 → 表 [this+0x24]（索引 this+0xA8）→ 尾跳 0x402030；三路皆
+  非 → 返 0。★★生产/出队调度：bit1 随机取一个待出队项并压缩队列、
+  bit0 推进全局计数、bit6 置 busy 标志选槽——对象家族三态调度。
+
+二、调用点（2 处 E8，2 宿主全核验）
+----------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x4047B0）：**命中 2 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x4058E5 → FUN_004055c0 [0x4055C0-0x4059CD] body=1038 —— 未登记
+  2) 0x405ACD → FUN_00405ac0 [0x405AC0-0x405B43] body=132 —— 未登记
+现场 disasm 核验（两处全读）：
+  FUN_004055c0（0x4058E5，1038B 未登记——生产/调度大函数）——现场
+    0x4058D0-0x4058FA：je 0x40595B → test byte[esi+0x18],0x10 → jne
+    0x40595B → mov [esi+0x1c],1（★置 this+0x1C=1）→ mov ecx,esi → call
+    0x4047b0（★★本函数——ecx=this 无 push！）→ mov [esi+0x148],eax
+    （★返回值存 this+0x148）→ mov eax,[esi+0x158] → cmp eax,ebp → jne
+    0x40595B（★后续与 [esi+0x158] 比较）
+  FUN_00405ac0（0x405ACD，132B 未登记——消费端）——现场 0x405AC0-
+    0x405AFE：push 族 → mov edi,ecx → mov esi,[edi+0xc0]（★★this+0xC0
+    子对象）→ mov ecx,esi → call 0x4047b0（★this=子对象）→ mov ebx,
+    eax（★保存返回值）→ mov eax,[esi+0x24] → cmp [eax+0x5c],0x21 →
+    jae 0x405AEC → 分支1: mov edx,ebx → mov ecx,edi → call 0x402790
+    （★消费端——未登记！）→ xor eax → ret → 分支2: xor edx → mov ecx,
+    edi → call 0x402790 → mov eax,[esi+0x24] → test byte[eax+0x10],0x88
+    → je 0x405B0C → test ebx,ebx（★后续返回标志）
+★统一形态：两宿主全「mov ecx,this（宿主2 用 this+0xC0 子对象）→ call
+  0x4047B0（无 push 纯 thiscall）→ 消费返回值」——本函数=对象家族出队/
+  选槽调度器，宿主1 存 [esi+0x148] 宿主2 传 0x402790。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x65C7E0 —— ★★★已登记（TSV:244 Randomizer::RandomRanged——函数体
+    bit1 路径调用，QWEN.md RNG 里程碑实锤）
+  0x886B88 —— ★★★已登记（batch 426/428/579 三批实锤——第二 RNG 实例，
+    本批=三路消费点再加一）
+  0x402030 —— ★未登记（尾跳目标——生产/出队收尾函数）
+  0x404700 —— ★未登记（尾跳目标——计数推进收尾函数）
+  0x402790 —— ★未登记（宿主2 消费端）
+  0x404055C0/0x40405AC0 —— ★未登记（两宿主）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★TSV:244/QWEN.md（0x65C7E0 RandomRanged——bit1 随机出队核心调用）
+  ★★★batch 426/428/579（[0x886B88] 第二 RNG 实例——本批 bit1 路径
+    RandomRanged this 实锤，三批文档点名的消费点兑现）
+  ★0x404xxx 区家族（生产/出队调度推断——TechTree 类建筑生产队列候选）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★edx 非寄存器参数（开头被覆写为 [this+0x24]+0x10——标志字段来源）；
+② ★★[this+0x24]+0x58>=0x21 且 this+0x18 bit5 未置 → 返 0 门控；
+③ ★★三路位标志（bit1 随机出队 / bit0 计数递增 / bit6 置位选槽）不共
+   享收尾（各自独立尾跳）；④ ★★RandomRanged 用 [0x886B88]（第二 RNG
+   实例——非 QWEN.md 全局 [0xABE890]）；⑤ ★★前移压缩出队（表
+   [this+0x160] 从随机索引起整体前移一格——数组出队压缩手写循环）；
+⑥ ★★三处尾跳（jmp 0x402030×2 / jmp 0x404700×1——生产调度链）；⑦ ★★
+  计数-1 收尾（mov [esi+0x1e0],eax dec 后写）；⑧ ★★bit6 先置 this+0x18
+  bit4 再查表 [this+0x24]；⑨ ★★宿主2 从 this+0xC0 子对象调用（嵌套对
+   象调度）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「位标志分派的随机出队/选槽器」）、this+0x24
+  配置对象身份（生产队列配置推断）、[this+0x24]+0x10 位标志的精确语义
+  （bit0/bit1/bit6 业务含义）、[this+0x160]/[this+0x28]/[this+0x24] 三表
+  的宿主（出队队列/索引表/槽表推断）、尾跳目标 0x402030/0x404700 业务
+  （生产收尾/计数推进——未登记）、0x402790 消费端业务、this+0x1C/0xA8/
+  0xAC/0x148/0x158/0x1E0/0x1E4 字段语义、两宿主业务（FUN_004055c0 生产
+  调度/ FUN_00405ac0 消费端）、[this+0x24]+0x58/0x4C/0x5C 字段语义。
