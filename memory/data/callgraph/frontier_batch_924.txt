@@ -1,0 +1,69 @@
+frontier batch 924 —— 0x005A2ED0 族 C++ 复刻：两锚点距离+随机抖动（117B×3）
+===================================================================================
+
+候选来源：用户指令「RMG 死代码全部复现对齐（挖坟考古）」——三副本
+0x5A2ED0/0x5A4AE0/0x5A4FA0（batch 320 已 semantics 登记，本批做 C++
+复刻落地 + 单测对拍）。
+TARGET = 0x005A2ED0 / 0x005A4AE0 / 0x005A4FA0（同一源码编译副本三份，
+仅私有 5.0 常量地址不同：0x7ED7C0/0x7ED800/0x7ED808）。
+C++ 模型：code/rewrite/rmg/dead_code_jitter.{h,cpp}——单份模型覆盖三副本
+（语义完全相同）。单测：test_dead_code_jitter.cpp（golden 逐位对拍）。
+
+一、语义（117B×3 全读 + emu 指令级模拟黄金闭环）
+------------------------------------------------
+公式：**result = FastSqrt((double)(int32)d2) + (double)(uint64)Random() * 5.0
+  * kInvUintMax**（cdecl 2 栈参 ret 8，x87 ST0 返回 double）：
+① movsx word 带符号读入两坐标对（int16 ×4）；② dx/dy 落在 int32，
+   d2 = dx*dx + dy*dy **int32 imul 回绕**（大坐标可回绕成负值）；
+③ fild dword 有符号加载 d2 → FastSqrt @0x4CAC40（float32 位技巧 sqrt：
+   0 快捷路径 / 负数乘 -1.0 取绝对值 / 拆指数/尾数查 0x8650BC 2048 项表）；
+④ fild qword 无符号扩展 uint32(Random) → fmul 5.0 → fmul
+   0x7ED898 = **1/(2^32-1)**（kInvUintMax，fast_math.cpp 位形 3DF0000000100000
+   实锤——不是 1/2^32！）→ fadd sqrt 结果 → ret。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+取证：code/randmap/emu_oracle.py（Unicorn 按原 ImageBase 映射 gamemd.exe，
+FPCW=0x0E7F = RC=chop + PC=53）。黄金探针 _emu_deadcode_jitter.py v5：
+- cdecl 调用：栈从右往左压参 → STUB_ADDR(0x1F000800) 作返回地址（fstp
+  qword 落盘 + ret），MAGIC_RET 保持干净给 seed_global 用（★★v4 曾把
+  STUB 写进 MAGIC_RET → seed_global 构造器 ret 撞 STUB → 崩——root cause）。
+- 覆盖：5 种子（0/1/11584/60556/0xDEADBEEF）× 5 坐标对（常规/同点/跨零/
+  大坐标 int32 回绕/混合）= 25 例。
+- 结果：三副本逐位一致（归一化后同一函数），落盘 memory/data/rmg/
+  deadcode_jitter_golden.txt（28 行含头注释）。
+- ★关键实证：大坐标 (-30000,30000)-(30000,-30000) → d2 int32 回绕成负值
+  (-1389934592) → FastSqrt 取绝对值 → sqrt(1389934592) ≈ 37282.62——原版怪癖
+  「int32 回绕 + sqrt 负数幅值」照抄实锤。
+
+三、C++ 模型（code/rewrite/rmg/dead_code_jitter.{h,cpp}）
+------------------------------------------------
+签名：double DeadCodeDistanceJitter(Randomizer& rng, int16 ax/ay/bx/by)。
+实现链：dx/dy int32 → d2 int32 回绕 → FastSqrt((double)d2)（复用 fast_math.h
+  已有模型，0x4CAC40 复刻）→ (double)(uint64)rng.Random() 走 ChopJitterChain。
+★浮点环境坑（对拍 7/25 差 1 ULP → 修复）：原版 j 链在 x87 全局
+  RC=chop 下执行（(u*5.0)*kInv + s 两步向零截断），C++ SSE 默认
+  round-to-nearest → 边界值分岔。修法：MXCSR 临时切 _MM_ROUND_TOWARD_ZERO
+  （volatile 防重排/折叠），与 x87 0x0E7F 完全等价；非 x86_64 降级同数学
+  语义（主对拍平台为 x64）。
+
+四、单测（test_dead_code_jitter.cpp，45 项测试之一）
+------------------------------------------------
+读 goldon 原档（RA2_GOLDEN_DIR 宏），25 例 BitEq 逐位对拍（双精度位模式
+  全等，非近似相等）。ctest 44/44 全绿（新增 #41 dead_code_jitter）。
+
+五、怪癖照抄（C++ 模型内已固化 + 单测锁定）
+------------------------------------------
+① int32 imul 回绕（d2 可负）；② fild dword 有符号加载（负 d2 如实
+  传入 sqrt）；③ FastSqrt 对负数取绝对值（乘 -1.0）；④ fild qword 无符号
+  扩展 uint32 → 高位零（static_cast<uint64> 防符号扩展——r>=2^31 时
+  int64 会变负）；⑤ 比例常数 1/(2^32-1) 非 1/2^32；⑥ j 链 RC=chop 两步
+  舍入（MXCSR toward-zero 复刻）；⑦ 三副本同源码不同 5.0 常量副本地址
+  （编译器未合并字面量——模型一份即覆盖）。
+
+六、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：三副本调用方契约（两锚点用途——放置偏移推断，batch 320 同）、
+  0x8650BC 表导出 memory/data/rmg/deadcode_sqrt_table.bin（2048×4B，
+  FastSqrt 模型已内置同表）、0x7E4900=-1.0 负缩放实测。
