@@ -1,0 +1,136 @@
+frontier batch 878 —— 0x007D2F64 __CxxThrowException@8 CRT 异常抛出辅助（58B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=7 / deps=58 / body=58B）。
+TARGET = 0x007D2F64（58B，0x7D2F64-0x7D2F9C，2 栈参 ret 8，0x7D-0x7C MSVC6
+static CRT 区）。
+★★推断名：**__CxxThrowException@8 CRT 异常抛出辅助（MSVC6 静态 CRT
+throw 内核——[0x7F9928] 32B 异常记录模板拷栈 → 覆写参1 异常对象/参2
+throwinfo → 四参分发 call [0x7E12C0] 导入槽 → ret 8）**。
+
+一、函数体全读（58B，disasm 0x7D2F64 0x50 全量）
+------------------------------------------------
+参数契约（2 栈参 ret 8）：[esp+4] = 栈参1（异常对象指针）、[esp+8] =
+栈参2（throwinfo 描述符）。
+机器码（58B 全读，逐条要点）：
+  007d2f64  push ebp → mov ebp,esp → sub esp,0x20 → mov eax,[ebp+8]
+    （★栈参1=异常对象）→ push esi/edi
+  007d2f6f  push 8 → pop ecx → mov esi,0x7f9928（★★[0x7F9928] 异常记
+    录模板源）→ lea edi,[ebp-0x20] → rep movsd（★★拷 8 dword=32B 模板
+    到栈帧——标准异常记录头）
+  007d2f7c  mov [ebp-8],eax（★★栈参1 覆写模板槽——异常对象指针装入）
+  007d2f7f  mov eax,[ebp+0xc]（★栈参2=throwinfo）→ mov [ebp-4],eax
+    （★★栈参2 覆写模板槽——throwinfo 装入）
+  007d2f85  lea eax,[ebp-0xc] → push eax（★arg4=&模板尾）→ push
+    [ebp-0x10]（★arg3=模板成员）→ push [ebp-0x1c]（★arg2=模板成员）→
+    push [ebp-0x20]（★arg1=模板首 dword——cdecl 右向左，末 push 为首参）
+    → call [0x7e12c0]（★★导入槽——四参分发调用！）
+  007d2f98  pop edi → pop esi → leave → ret 8
+语义：**__CxxThrowException@8 CRT 异常抛出辅助（推断名）**——2 栈参显
+  式异常抛出内核：① 从 [0x7F9928] 拷 32B 异常记录模板到栈帧（8 dword
+  rep movsd）；② 栈参1（异常对象）/栈参2（throwinfo）覆写模板尾部两
+  槽；③ 四参 cdecl 转发 call [0x7E12C0]（导入槽——batch 871 FPE 转换
+  器同槽，四参分发形态一致）；④ ret 8（2 栈参）。★★MSVC6 CRT
+  `throw` 表达式的机器码落点——调用方先构造异常对象再 push throwinfo
+  + &对象调本函数。
+
+二、调用点（7 处 E8，4 宿主全核验——统一「构造异常对象 → push throwinfo
+   常量 → push &对象 → call 0x7D2F64」throw 形态）
+----------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x7D2F64）：**命中 7 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x7CA96C → FUN_007ca4b0 [0x7CA4B0-0x7CAF24] —— ★★batch 161 已登
+     记 CRT::strstr（区间跨多函数，本调用点在 strstr 0x84 段之后）
+  2) 0x7CAA48 → FUN_007caa05 [0x7CAA05-0x7CAA98] body=148 —— 未登记
+  3) 0x7CAA94 → FUN_007caa05 [0x7CAA05-0x7CAA98] body=148 —— 未登记
+  4) 0x7CAAC6 → FUN_007ca4b0 [0x7CA4B0-0x7CAF24] —— ★★batch 161 已登记
+  5) 0x7CABC4 → FUN_007caae4 [0x7CAAE4-0x7CABC8] body=229 —— ★★batch
+     111 已登记（CRT 异常帧安装/过滤器）
+  6) 0x7CABF6 → FUN_007ca4b0 [0x7CA4B0-0x7CAF24] —— ★★batch 161 已登记
+  7) 0x7DCDBB → 无归属（函数间隙——grep frontier_status.tsv 命中
+     **0x007DCD9C 已登记 batch 053**「无效参数异常抛出」！调用点
+     0x7DCDBB=0x7DCD9C+0x1F 在其体内——functions.tsv 缺该行故区间反查
+     落空，grep 补证）
+现场 disasm 核验（七处全读）：
+  ① FUN_007ca4b0 区（0x7CA956-0x7CA96C）：push 0x7f9598（★构造参
+    数）→ lea ecx,[ebp-0x24] → call 0x7ca971（★异常对象构造器——装虚
+    表 0x7F95D0 + 调 0x7D2E9B）→ push 0x80f038（★★throwinfo/_RTTI
+    常量——类型描述符）→ lea eax,[ebp-0x24] → push eax（★&异常对象）
+    → 0x7CA96C: call 0x7d2f64（★★本函数——throw！）
+  ② FUN_007caa05（0x7CAA32-0x7CAA48）：push 0x7f9608（★构造参数）→
+    lea ecx,[ebp-0x28] → call 0x7caacb（★第二构造器——装虚表 0x7F9608）
+    → push 0x80f058（★throwinfo 2）→ lea eax,[ebp-0x28] → push eax →
+    0x7CAA48: call 0x7d2f64（★★本函数）
+  ③ FUN_007caa05（0x7CAA7E-0x7CAA94）：push 0x7f95e4 → lea ecx,
+    [ebp-0x34] → call 0x7ca971（★同构造器 1）→ push 0x80f038（★
+    throwinfo 1 同款）→ lea eax,[ebp-0x34] → push eax → 0x7CAA94:
+    call 0x7d2f64（★★本函数——同区第二 throw）
+  ④ FUN_007ca4b0 区（0x7CAAB0-0x7CAAC6）：push 0x7f9598 → lea ecx,
+    [ebp-0x40] → call 0x7ca971（★同构造器 1）→ push 0x80f038 → lea
+    eax,[ebp-0x40] → push eax → 0x7CAAC6: call 0x7d2f64（★★本函数）
+  ⑤ FUN_007caae4（0x7CABA8-0x7CABC4）：mov [ebp-0x3c],0x7f963c（★内
+    联装虚表 0x7F963C）→ lea eax,[ebp-0x3c] → push eax → lea ecx,
+    [ebp-0x38] → call 0x7cabfb（★第三构造器）→ push 0x80f098（★
+    throwinfo 3）→ lea eax,[ebp-0x38] → push eax → 0x7CABC4: call
+    0x7d2f64（★★本函数）
+  ⑥ FUN_007ca4b0 区（0x7CABE0-0x7CABF6）：push 0x7f9598 → lea ecx,
+    [ebp-0x48] → call 0x7ca971（★同构造器 1）→ push 0x80f038 → lea
+    eax,[ebp-0x48] → push eax → 0x7CABF6: call 0x7d2f64（★★本函数）
+  ⑦ 0x7DCD9C（batch 053 已登记宿主，调用点 0x7DCDBB=+0x1F）：push 0
+    （★构造参数）→ lea ecx,[ebp-0x10] → push [ebp+0xc] → push [ebp+8]
+    → call 0x7dcdc0（★异常对象构造器）→ lea eax,[ebp-0x10] → push
+    0x80f0d0（★★throwinfo 4——batch 053 文档点名 __RTTI 0x80F0D0！）
+    → push eax → 0x7DCDBB: call 0x7d2f64（★★本函数）
+★统一形态：七处调用点全「构造异常对象（构造器装不同虚表 0x7F95D0/
+  0x7F9608/0x7F963C）→ push throwinfo 常量（0x80F038/0x80F058/
+  0x80F098/0x80F0D0——类型描述符）→ push &对象 → call 0x7D2F64」——
+  本函数=MSVC6 CRT 唯一 throw 汇合点，四个异常类型（三虚表 × 四
+  throwinfo）共享同一抛出内核。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  [0x7E12C0] —— ★★batch 871 文档已提（FPE 转换器四参分发导入槽——
+    未登记新候选，本批=第二现场，两批共用同槽同形态！（&dst/1/0/
+    NTSTATUS vs 模板四参））
+  0x7DCD9C —— ★★已登记（batch 053 无效参数异常抛出——**文档点名
+    「__CxxThrowException_8 + __RTTI 0x80F0D0」= 本批调用点 0x7DCDBB
+    现场逐字节互证**！）
+  0x7CA4B0 —— ★★已登记（batch 161 CRT::strstr——本批调用点 1/4/6
+    在其区间后段）
+  0x7CAAE4 —— ★★已登记（batch 111 CRT 异常帧安装/过滤器——本批调用
+    点 5 在其尾部）
+  FUN_007caa05 —— ★未登记（新宿主——本批调用点 2/3）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 053（0x7DCD9C 无效参数异常抛出——**文档原文「__CxxThrow
+    Exception_8 + __RTTI 0x80F0D0」：本批调用点 0x7DCDBB 现场 push
+    0x80f0d0 → call 0x7d2f64 与文档完全吻合——9 年前登记时点名 throw
+    目标，本批=其 throw 落点的补全实现**）
+  ★★★batch 871（[0x7E12C0] 导入槽——FPE 转换器同槽四参分发，本批
+    throw 内核同槽——**CRT 异常通路共用同一分发槽**）
+  ★★batch 161（0x7CA4B0 CRT::strstr——区间宿主 3 调用点）
+  ★★batch 111（0x7CAAE4 CRT 异常帧过滤器——尾部 throw 调用点）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★[0x7F9928] 32B 模板拷栈（push 8/pop ecx + rep movsd 8 dword——
+   异常记录头固定模板拷贝，非逐字段构造）；
+② ★★栈参1/栈参2 覆写模板尾两槽（mov [ebp-8]/[ebp-4]——异常对象+
+   throwinfo 装入固定槽位）；
+③ ★★四参 cdecl 转发 [0x7E12C0]（push 模板首 dword/成员/成员/&尾——
+   末 push 为首参，参数面与 batch 871 同形）；
+④ ★★ret 8（2 栈参清理——throwinfo+异常对象双参）；
+⑤ ★★调用方「构造器装虚表 + push throwinfo + push &对象」固定 throw
+   惯用（四异常类型共享抛掷点）；
+⑥ ★★throwinfo 常量族（0x80F038/0x80F058/0x80F098/0x80F0D0）位于
+   .rdata——类型描述符与虚表（0x7F95D0/0x7F9608/0x7F963C）分开存放。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（ranking 带名 __CxxThrowException@8，MSVC6 CRT 符号
+  推断）、[0x7E12C0] 导入槽精确 API（异常分发/RaiseException 族推
+  断）、[0x7F9928] 模板结构布局、四个异常类型精确身份（虚表/throwinfo
+  归属）、FUN_007caa05 宿主业务、构造器 0x7CA971/0x7CAACB/0x7CABFB
+  身份。
