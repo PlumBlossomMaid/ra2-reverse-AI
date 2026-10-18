@@ -1,0 +1,150 @@
+frontier batch 833 —— 0x0049EA70 容量设置器（SetCapacity 系，虚表槽 0x08）
+===========================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=112 / body=176B）。
+TARGET = 0x0049EA70（.text，176B，thiscall 2 栈参 ret 8）
+★★推断名：容量设置器（SetCapacity 系）——与 batch 469 的
+DynamicVectorClass::SetCapacity（0x50EA90）逐段同构（同模板
+第二实例）；**无 E8 调用点原因实锤：本函数是虚方法，经虚表
+槽间接调用**（.rdata VA 0x7E5BCC 槽 0 = 槽 0x08 SetCapacity
+位，邻槽-1 = 0x49EA30 operator== batch 150 实锤）
+
+一、函数体全读（176B，disasm 0x49EA70 176）
+---------------------------------------------
+参数契约（thiscall 2 栈参 ret 8）：
+  ecx = this（容器对象）
+  [esp+0xC] = 栈参 1 = 新容量（ebp）
+  [esp+0x18] = 栈参 2 = 外部数组 pMem（ebx，可 0）
+  返回 al（成功 1 / 数组空 0）
+机器码（176B 全读，与 batch 469 0x50EA90 逐段同构）：
+  0049ea70  push ebx/ebp / mov ebp,[esp+0xC]（★新容量）
+    / push esi / test ebp,ebp / push edi / mov esi,ecx
+  0049ea7c  je 0x49EAFA                   ; ★容量==0 → 走虚表槽
+                                        ;   0xC（Clear 委托）
+  0049ea7e  mov ebx,[esp+0x18]（★外部数组 pMem）
+  0049ea82  mov byte[esi+0xC],0           ; ★IsInitialized=false
+  0049ea86  test ebx,ebx / jne 0x49EA9E   ; ★pMem 非空 → 接管
+  0049ea8a  lea eax,[ebp*4] / push eax / call 0x7C8E17
+                                        ; ★★new(容量×4B)（batch
+                                        ;   001 operator new）
+  0049ea9a  mov edi,eax
+  0049ea9e  mov edi,ebx                   ; ★pMem 接管
+  0049eaa0  test edi,edi / mov byte[esi+0xC],1
+                                        ; ★IsInitialized=true（先
+                                        ;   置后验——batch 469 同
+                                        ;   款瑕疵）
+  0049eaa6  je 0x49EB17                   ; ★数组空 → 返 0
+  0049eaa8  mov eax,[esi+4] / test / je 0x49EAE8（★无旧 Items）
+  0049eaaf  mov ecx,[esi+8] / cmp ebp,ecx / jge 0x49EAB8
+    / mov ecx,ebp                         ; ★n=min(容量,旧容量)
+  0049eab8  xor eax,eax / test ecx,ecx / jle 0x49EACE
+  0049eabe  拷贝循环：mov edx,[esi+4] / inc eax / cmp eax,ecx
+    / mov edx,[edx+eax*4-4] / mov [edi+eax*4-4],edx / jl
+    0x49EABE                              ; ★逐项 4B 复制（i 从 1
+                                        ;   起 [..-4] 索引惯用——
+                                        ;   batch 469 同款）
+  0049eace  mov al,[esi+0xD] / test / je 0x49EAE8（★旧 IsAllocated
+                                        ;   才删）
+  0049ead5  mov eax,[esi+4] / push eax / call 0x7C8B3D
+                                        ; ★★delete 旧数组（batch
+                                        ;   001 operator delete）
+  0049eae1  mov [esi+4],0                 ; ★Items=NULL
+  0049eae8  mov [esi+4],edi               ; ★Items = 新数组
+  0049eaed  test ebx,ebx / sete al
+  0049eaf2  mov [esi+8],ebp               ; ★Capacity = 新容量
+  0049eaf5  mov byte[esi+0xD],al          ; ★IsAllocated =
+                                        ;   (pMem==nullptr)
+  0049eaf8  jmp 0x49EB01
+  0049eafa  mov edx,[esi] / mov ecx,esi / call [edx+0xC]
+                                        ; ★★容量==0 → 虚表槽 0xC
+                                        ;   Clear 委托
+  0049eb01  mov eax,[esi+8] / mov ecx,[esi+0x10]
+    / cmp eax,ecx / jge 0x49EB0E / mov [esi+0x10],eax
+                                        ; ★★Count 截断（if
+                                        ;   Capacity<Count then
+                                        ;   Count=Capacity）
+  0049eb0e  pop 族 / mov al,1 / ret 8     ; ★成功 1
+  0049eb17  pop 族 / xor al,al / ret 8     ; ★数组空返 0
+语义：**容量设置器（SetCapacity 系，推断名）**——与 batch
+469 的 DynamicVectorClass::SetCapacity（0x50EA90，YRpp
+ArrayClasses.h:231-237 逐行实锤）逐段同构：①容量==0 → 虚表
+槽 0xC（Clear）委托；②pMem 空 → new(容量×4B)、IsInitialized
+先置 1 再验数组空（先置后验瑕疵同款）；③旧 Items 存在时拷
+贝 min(容量,旧容量) 个元素（i 从 1 起 [..-4] 索引）；④旧
+IsAllocated 才 delete 旧数组；⑤Items=新/Capacity=容量/
+IsAllocated=(pMem==nullptr)；⑥Count 截断（Capacity<Count 时
+Count=Capacity）；⑦成功返 1/数组空返 0。
+
+二、无 E8 调用点实锤（虚方法——虚表槽间接调用）
+------------------------------------------------
+_read_816_calls.py（TARGET=0x49EA70）：**0 命中**（校准
+  0x4A3B40 命中 3 处——扫描正常）
+xref_abs.py（仅 .text）：0 处
+_scan_833_vtbl.py（全 PE 段扫描 dword 0x49EA70）：
+  **.rdata RVA 0x3E5BCC（VA 0x7E5BCC）= 1 处**——虚表槽！
+_dump_833_vtbl.py（虚表 0x7E5BCC 前后槽 dump）：
+  槽 -3 = 0x007FF560（虚表区 RTTI/数据）
+  槽 -2 = 0x49EE10
+  槽 -1 = 0x49EA30（★★batch 150 已登记「数组逐项相等比较」=
+    容器 operator== 槽 0x04）
+  槽 +0 = 0x49EA70（★★本条 = 槽 0x08 SetCapacity 位）
+  槽 +1 = 0x49E950 / 槽 +2 = 0x49EB20 / 槽 +3 = 0x49E980
+  槽 +4 = 0x49E9A0 / 槽 +5 = 0x007FF5C8（虚表区数据）
+  …同族 0x49xxxx 容器方法族
+★结论：★★本函数是虚方法（容器类 vtable 槽 0x08 =
+  SetCapacity），调用经虚表间接调用，无静态 E8 调用点——
+  调用点 = 虚表槽引用（0x7E5BCC）
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x7C8E17 —— ★★已登记（batch 001 operator new——自分配）
+  0x7C8B3D —— ★★已登记（batch 001 operator delete——删旧数
+    组）
+  0x49EA30 —— ★★已登记（batch 150 数组逐项相等比较——虚表
+    邻槽 operator==，本批虚表槽位交叉实锤）
+  0x50EA90 —— ★★已登记（batch 469 DynamicVectorClass::
+    SetCapacity——本批 0x49EA70 逐段同构参照，YRpp
+    ArrayClasses.h:231-237 实锤）
+  虚表 0x7E5BCC —— ★新虚表（容器类虚表——同族 0x49xxxx）
+  宿主类 —— 0x49xxxx 容器家族（VectorClass/DynamicVectorClass
+    系推断）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 469（DynamicVectorClass::SetCapacity 0x50EA90——
+    YRpp ArrayClasses.h:231-237 逐行实锤 + 虚表槽序实锤：槽
+    0x04 operator==/槽 0x08 SetCapacity/槽 0x0C Clear——本批
+    虚表槽位落位 + 机器码逐段同构 = 同模板第二编译实例）
+  ★★batch 150（0x49EA30 数组逐项相等比较——虚表邻槽 -1，
+    两函数同虚表同宿主交叉实锤）
+  ★★batch 472/474（VectorClass::Clear 系——容量==0 槽 0xC
+    Clear 委托链）
+  ★★batch 484（DynamicVectorClass 构造器——容器生命周期
+    ctor/SetCapacity/Clear 家族再实例）
+  ★★batch 001（0x7C8E17/0x7C8B3D——分配/释放）
+
+五、原版怪癖（照抄）
+-------------------
+① 容量==0 走虚表槽 0xC（Clear 委托）而非直接清字段（batch
+   469 同款——Clear 同为虚函数）；
+② IsInitialized 先置 1 再验数组空（operator new 失败返 0 但
+   标志已 true——标志与结果不同步瑕疵照抄）；
+③ 拷贝循环 i 从 1 起 [edi+eax*4-4] 索引（batch 466/467/469
+   同款惯用）；
+④ 旧 IsAllocated 才删旧数组（pMem 接管的旧外部数组不删——
+   所有权转移）；
+⑤ IsAllocated=(pMem==nullptr)（接管外部数组标记非自分配）；
+⑥ Count 截断仅 DynamicVectorClass 层（基类 VectorClass::
+   SetCapacity 无此逻辑）；
+⑦ 成功 1/数组空 0 返回语义。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（容量设置器 SetCapacity 系推断——与
+batch 469 同模板第二实例，T 确切类型推断）、虚表 0x7E5BCC
+宿主类（VectorClass/DynamicVectorClass 系——0x49xxxx 容器家
+族推断）、+0x10 Count 截断的存在（与 batch 469 同款——
+DynamicVectorClass 层标志）、邻槽 0x49E950/0x49EB20/0x49E980
+等（FindItemIndex/GetItem 系推断未逐一登记）、虚方法调用
+者（经虚表槽的动态分发无法静态枚举）。
