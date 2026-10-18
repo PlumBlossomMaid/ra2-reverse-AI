@@ -1,0 +1,145 @@
+frontier batch 869 —— 0x00635060 对象移除清理+全局注册表入队器（183B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=65 / body=183B）。
+TARGET = 0x00635060（183B，0x635060-0x635116，thiscall 1 栈参 ret 4）。
+★★推断名：**对象移除清理+全局注册表入队器（占用计数递减，计数归零后
+将 this 追加进 [0xAC4C98] 全局容器）**。
+
+一、函数体全读（183B，disasm 0x635060 0xC0）
+------------------------------------------------
+参数契约（thiscall 1 栈参 ret 4）：ecx = this（对象宿主）、[esp+4] =
+栈参1 = 移除请求对象（edi——含 +0xC 标志/+8 索引）。
+机器码（183B 全读，分段要点）：
+  00635060  push ebx/esi/edi → mov edi,[esp+0x10]（★栈参1=请求对象）→
+    or ebx,-1 → mov esi,ecx（★this=宿主）→ mov al,[edi+0xc]（★请求+0xC
+    标志）→ test al,al → je 0x63508c（★未置跳过）→ mov byte[edi+0xc],0
+    （★清标志）→ mov eax,[esi+0xa8]（★this+0xA8 占用计数）→ dec eax →
+    mov [esi+0xa8],eax → jne 0x63508c（★非 0 跳过）→ mov [esi+0xb0],ebx
+    （★★==0 时 this+0xB0=-1——归零处理）
+  0063508c  mov eax,[edi+8]（★请求+8=索引）→ cmp eax,ebx → je 0x63510e
+    （★-1 跳过）→ mov ecx,[esi+0x24]（★this+0x24 表）→ mov eax,
+    [ecx+eax*4]（★表取项）→ mov [eax+0x74],ebx（★项+0x74=-1）→ mov
+    [esi+0xb4],ebx（★this+0xB4=-1）→ mov ecx,[eax+0x70]（★项+0x70 计数）
+    → dec ecx → mov [eax+0x70],ecx → jne 0x63510e（★非 0 跳过）→
+  006350ab  test esi,esi → je 0x63510e → mov al,[esi+0x1c]（★this+0x1C
+    标志）→ test → jne 0x63510e（★已置跳过）→ mov byte[esi+0x1c],1（★
+    置标志）→ mov eax,[0xac4ca0]（★★[0xAC4CA0] 全局）→ cmp [0xac4ca8],
+    eax（★★[0xAC4CA8] 全局）→ jl 0x6350f6（★计数<门限 → 直接入队）→
+    mov cl,[0xac4ca5]（★★[0xAC4CA5] 标志字节）→ test → jne 0x6350d5 →
+    test eax,eax → jne 0x63510e（★跳过）→ 0x6350d5: mov ecx,[0xac4cac]
+    （★★[0xAC4CAC] 步长额）→ test → jle 0x63510e → mov edx,[0xac4c98]
+    （★★[0xAC4C98] 容器对象——虚表读取）→ add ecx,eax（★新容量=额+计
+    数）→ push 0 → push ecx → mov ecx,0xac4c98 → call [edx+8]（★★虚表
+    槽 8=扩容——batch 467/469 同款 SetCapacity！）→ test al → je
+    0x63510e → 0x6350f6: mov ecx,[0xac4ca8]（★计数）→ mov eax,ecx → inc
+    ecx → mov [0xac4ca8],ecx（★★计数++）→ mov ecx,[0xac4c9c]（★★
+    [0xAC4C9C] 元素数组基址）→ mov [ecx+eax*4],esi（★★数组[旧计数]=this
+    ——入队！）
+  0063510e  mov [edi+8],ebx（★请求+8 索引清 -1）→ pop 族 → ret 4
+语义：**对象移除清理+全局注册表入队器（推断名）**——① 请求对象 edi
+  +0xC 标志置位时：清标志 → this+0xA8 占用计数减 1 → ==0 时 this+0xB0=
+  -1（归零处理）；② 请求 edi+8 索引有效时：this+0x24 表取项 → 项+0x74=
+  -1、this+0xB4=-1、项+0x70 计数减 1；③ 计数归零且 this+0x1C 未置时：
+  置标志 → **把 this 追加进 [0xAC4C98] 全局容器**（[0xAC4CA0] 门限/
+  [0xAC4CA8] 计数/[0xAC4CAC] 步长，计数≥门限走虚表槽 8 扩容，最终入
+  [0xAC4C9C] 数组并计数++）；④ 请求 edi+8 清 -1。★★全局簇
+  [0xAC4C98..0xAC4CAC] 全未登记——新登记六全局（容器对象/元素数组/门
+  限/标志/计数/步长）。
+
+二、调用点（4 处 E8，3 宿主+1 间隙全核验）
+----------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x635060）：**命中 4 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x636022 → 无归属（函数间隙——回退 0x635FE0 重读宿主）
+  2) 0x636353 → FUN_00636310 [0x636310-0x636510] body=513 —— 未登记
+  3) 0x6366A0 → FUN_00636590 [0x636590-0x6367AA] body=539 —— 未登记
+  4) 0x63876C → FUN_006386e0 [0x6386E0-0x638830] body=337 —— 未登记
+现场 disasm 核验（四处全读——统一「0x634290 查找 → 取对象 → call
+  0x635060 → delete → 通知 → 收尾」移除模式）：
+  间隙 0x636022（回退 0x635FE0 起读——宿主编号循环）——0x635FE0-
+    0x63605D：mov byte[esp+ebp*4],cl（★字节槽）→ 循环体：mov ebx,
+    [edi+0x14]（★+0x14 计数）→ sete [esp+0x13] → 遍历 [edi+8] 数组 →
+    mov esi,[eax+ebp*4]（★取项）→ push [edi] → mov ecx,esi → call
+    0x634290（★★查找索引——返回 -1 未命中）→ cmp eax,-1 → jne →
+    mov eax,[esi+4]（★宿主+4 表）→ mov eax,[ecx+eax*4]（★取对象）→
+    test → je 0x636064 → push eax（★对象作栈参1）→ mov ecx,esi → 0x636022:
+    call 0x635060（★★本函数——移除清理+入队！）→ mov edx,[esp+0x14] →
+    mov eax,[edx+4] → push eax → call 0x7c8b3d（★★delete）→ lea ecx,
+    [esp+0x14] → push ecx → mov ecx,esi → call 0x63dfd0（★★通知/清理）
+    → mov edx,[esp+0x14] → push edx → call 0x7c8b3d（★再 delete）——
+    ★★移除并释放模式
+  FUN_00636310（0x636353，513B）——0x636330-0x63638B：call 0x634290 →
+    cmp eax,-1 → jne → mov ecx,[edi+4] → mov eax,[ecx+eax*4]（★取对象）
+    → test → je → push eax → mov ecx,edi → 0x636353: call 0x635060（★★
+    本函数）→ mov edx,[esp+0x14] → mov eax,[edx+4] → push eax → call
+    0x7c8b3d（★delete）→ mov edx,[edi]（★虚表）→ lea eax,[esp+0x14] →
+    push eax → call [edx+0x10]（★★虚表槽 0x10 通知）→ cmp eax,-1 → je
+    → push eax → call 0x63ef70 → mov ecx,[esp+0x14] → push ecx → call
+    0x7c8b3d（★再 delete）——移除+虚表槽 0x10 通知变体
+  FUN_00636590（0x6366A0，539B）——0x636680-0x6366DB：call 0x634290 →
+    cmp eax,-1 → jne → mov ecx,[ebx+4] → mov eax,[ecx+eax*4]（★取对象）
+    → test → je → push eax → mov ecx,ebx → 0x6366A0: call 0x635060（★★
+    本函数）→ mov edx,[esp+0x10] → mov eax,[edx+4] → push eax → call
+    0x7c8b3d（★delete）→ lea ecx,[esp+0x10] → push ecx → mov ecx,ebx →
+    call 0x63dfd0（★通知/清理）→ mov edx,[esp+0x10] → push edx → call
+    0x7c8b3d（★再 delete）→ mov eax,[ebx+0x10] → test → jne → test ebx
+    → je → push 1 → mov ecx,ebx → call 0x63d9c0（★收尾——delete 标志 1）
+    ——移除+双 delete+0x63D9C0 收尾变体
+  FUN_006386e0（0x63876C，337B）——0x638740-0x6387A9：与间隙点完全同构
+    ——mov ebx,[edi+0x14] → sete → 遍历 [edi+8] 数组 → mov esi,
+    [eax+ebp*4] → push [edi] → call 0x634290 → cmp -1 → jne → mov eax,
+    [esi+4] → mov eax,[ecx+eax*4] → test → je → push eax → mov ecx,esi
+    → 0x63876C: call 0x635060（★★本函数）→ mov edx,[esp+0x14] → mov
+    eax,[edx+4] → push eax → call 0x7c8b3d → lea ecx,[esp+0x14] → push
+    ecx → mov ecx,esi → call 0x63dfd0 → mov edx,[esp+0x14] → push edx →
+    call 0x7c8b3d（★★同款移除+双 delete）
+★统一形态：四处调用点全「0x634290 查找索引（-1 未命中跳过）→ [宿主+4]
+  表取对象 → 对象作栈参1 → call 0x635060（本函数——清理计数+全局入队）
+  → [对象+4] delete 释放 → 0x63DFD0 通知/虚表槽 0x10 → 0x63D9C0 收
+  尾」——本函数=宿主中的对象移除清理原语，移除后对象由调用方 delete。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  [0xAC4C98] —— ★未登记（全局容器对象——虚表槽 8 扩容，本批新登记簇）
+  [0xAC4C9C] —— ★未登记（元素数组基址——入队目标）
+  [0xAC4CA0] —— ★未登记（门限/容量全局）
+  [0xAC4CA5] —— ★未登记（标志字节全局）
+  [0xAC4CA8] —— ★未登记（元素计数全局）
+  [0xAC4CAC] —— ★未登记（步长额全局）
+  0x634290 —— ★未登记（四宿主共用查找——返回 -1 未命中，新候选）
+  0x63DFD0/0x63D9C0/0x63EF70 —— ★未登记（通知/收尾/再清理——新候选）
+  虚表槽 8 扩容 call [edx+8] —— ★★batch 467/469 同款（SetCapacity 现
+    场形态一致）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★batch 467/469（虚表槽 8=SetCapacity 扩容——本批 [0xAC4C98] 容器扩
+    容现场同款：push 0/push 容量+步长/call [vt+8]）
+  ★★batch 001（0x7C8B3D operator delete——四调用点释放）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★双计数递减（this+0xA8 占用计数 与 项+0x70 计数 各自减 1 且各自独
+   立判断归零——两处 -1 处理不同：+0xB0 与+0xB4/入队）；
+② ★★归零后入队全局 [0xAC4C98]（计数==0 且 this+0x1C 未置才入队——
+   +0x1C 一次性标志防重复入队）；
+③ [0xAC4CA0] 门限判定 → [0xAC4CA5] 标志字节 → [0xAC4CAC] 步长——三
+   全局容量判定链（计数≥门限且标志/额条件才扩容，否则跳过入队）；
+④ 扩容用虚表槽 8（call [edx+8]——[0xAC4C98] 容器对象虚表）；
+⑤ 请求对象 edi 双字段门控（+0xC 标志先清理计数、+8 索引后清理表项—
+   —两段独立门控）；
+⑥ 收尾统一清请求+8=-1（mov [edi+8],ebx）。
+⑦ 4 调用点统一「0x634290 查找-1 哨兵 → 取对象 → 移除 → delete ×2 →
+   通知」——移除对象由调用方释放（本函数只清理登记状态）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「对象移除清理+全局注册表入队器」）、
+  [0xAC4C98] 全局容器精确身份（注册表/通知表推断）、四宿主精确业务（
+  0x63xxxx 区调度/管理器推断）、0x634290 查找语义（对象查索引推断）、
+  this+0xA8/+0xB0/+0xB4/+0x1C 与项+0x70/+0x74 字段语义（占用计数/占位
+  清除/一次性标志推断）、0x63DFD0/0x63D9C0/0x63EF70 身份（通知/收尾/
+  再清理推断）、[0xAC4CA0]/[0xAC4CA5]/[0xAC4CAC] 三全局精确语义、入队
+  对象的消费端（谁遍历 [0xAC4C9C] 数组）。
