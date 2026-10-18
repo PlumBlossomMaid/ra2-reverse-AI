@@ -1,0 +1,126 @@
+frontier batch 910 —— 0x005A00C0 RMG 工作数组 +0x38 字段读取器（49B）
+===================================================================================
+
+候选来源：picker（_filter_batch799.py unique_callers 降序榜首——
+callers=3 / deps=17 / body=49B，0x5A 区 RMG 域）。batch 909（0x5A0090）
+紧邻孪生（0x5A00C0 = 0x5A0090 + 0x30，同一 0x5A00xx 小簇）。
+TARGET = 0x005A00C0（49B，0x5A00C0-0x005A00EE，cdecl 1 栈参 ret 4）。
+★★推断名：**RMG 工作数组 +0x38 字段读取器（与 batch 909 的 0x5A0090
+写入器成对——读端孪生：同 movsx word/×side/add/lea×5/shl 4/[0xABED10]
+索引公式，基址空返 -1，返回 work[(Y*side+X)*0x50+0x38]）**。
+
+一、函数体全读（49B，disasm 0x5A00C0 0x40 全量）
+------------------------------------------------
+参数契约（cdecl 1 栈参 ret 4）：[esp+4]=栈参1（坐标结构指针——+0=X
+坐标 word / +2=Y 坐标 word）。
+机器码（49B 全读）：
+  基址判空: mov edx,[0xabed10]（★★[0xABED10]=RMG 工作数组基址——
+    batch 196 实锤）→ test edx,edx → jne 0x5a00d0（★基址非空 → 继
+    续）→ or eax,0xffffffff（★★基址空 → eax = -1）→ ret 4（★返 -1
+    ——★与 0x5A0090 写入器「空则静默早返」不同：读取端返 -1 哨兵）
+  一维索引: mov ecx,[esp+4]（★栈参1=坐标结构）→ movsx eax,word[ecx+2]
+    （★★Y 带符号 16 位读）→ imul eax,[0x89c2dc]（★★×side——batch
+    196 实锤）→ movsx ecx,word[ecx]（★★X 带符号 16 位读）→ add
+    eax,ecx（★Y*side+X）→ lea eax,[eax+eax*4]（★×5）→ shl eax,4（★
+    ×16 → ×0x50 步进）
+  读取: mov eax,[eax+edx+0x38]（★★★读 work[(Y*side+X)*0x50+0x38] →
+    eax 返回）→ ret 4
+语义：**RMG 工作数组 +0x38 字段读取器（推断名）**——cdecl 1 栈参：①
+  [0xABED10] 基址空 → 返 -1 哨兵；② 坐标结构（+0 X / +2 Y 带符号
+  word）→ Y*side+X 一维索引 ×0x50 步进 → 返回 work[..]+0x38 字段值。
+  ★★与 batch 909 的 0x5A0090（写入器）成对：写入器写 +0x38 / 读取器
+  读 +0x38，索引公式逐字节全等（movsx word/×side/add/lea×5/shl 4/
+  [0xABED10]）——RMG 工作数组 +0x38 字段的读写双端。
+
+二、调用点（3 处 E8，3 宿主全核验）
+----------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x5A00C0）：**命中 3 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x005792A4 → FUN_00579010 [0x00579010-0x00579312] body=771 — —
+    未登记（★与 batch 909 写入调用点 0x5792E7 同宿主）
+  2) 0x0057A805 → FUN_0057a430 [0x0057A430-0x0057A8F3] body=1220 —
+    — 未登记（★与 batch 909 0x57A85F 同宿主）
+  3) 0x0057B571 → FUN_0057b440 [0x0057B440-0x0057B78F] body=848 — —
+    未登记（★与 batch 909 0x57B623/0x57B6CC 同宿主）
+∴ 三宿主与 batch 909 完全重叠——写入/读取成对消费实锤（同宿主先写后
+  读或读已写值）。
+现场 disasm 核验（三处全读）：
+  FUN_00579010（0x5792A4，771B 未登记）——现场 0x579280-0x5792BF：
+    mov byte[eax+edx-0x7d],dh → jecxz 0x5792a8 → cmp bl,0x22 → je
+    0x579293（★0x22 门控）→ mov al,byte[esp+0x13] → test al,al → je
+    0x579307 → 0x579293: mov eax,[ebp+0x24] → lea ecx,[esp+0x24] →
+    push ecx（★栈参1=坐标）→ mov ecx,0xabdfd8（★★★this=0xABDFD8）→
+    mov dword[esp+0x28],eax → call 0x5a00c0 ★ → mov edi,[esp+0x28]
+    （★期望值）→ test eax,eax → jle 0x5792c6（★读回 <=0 → 放弃）→
+    cmp eax,edi → je 0x5792c6（★读回 == 期望 → 放弃）→ cmp edi,-1 →
+    je 0x5792c6（★期望 -1 → 放弃）→ pop 族 → xor al,al（★失败路径）
+    ——★★读回三连拒（<=0 / 相等 / 期望 -1），成功路径 0x5792C6 后
+    「add esp,0x10 → ret 8」早返
+  FUN_0057a430（0x57A805，1220B 未登记）——现场 0x57A7E0-0x57A81E:
+    and ebx,0x22 → cmp bl,0x22 → je 0x57a7f4（★0x22 门控同款）→ mov
+    al,byte[esp+0x13] → test al,al → je 0x57a8e8 → 0x57a7f4: mov edx,
+    [ebp+0x24] → lea eax,[esp+0x2c] → push eax（★栈参1=坐标）→ mov
+    ecx,0xabdfd8（★★★同 this=0xABDFD8）→ mov dword[esp+0x30],edx →
+    call 0x5a00c0 ★ → mov edx,[esp+0x30]（★期望值）→ mov cl,
+    byte[esp+0x34]（★标志）→ test eax,eax → jle 0x57a82a（★<=0 放
+    弃）→ cmp eax,edx → je 0x57a82a（★相等 放弃）→ test cl,cl → jne
+    0x57a82a（★标志已置 → 放弃）→ pop 族（★失败路径）
+  FUN_0057b440（0x57B571，848B 未登记）——现场 0x57B550-0x57B58C:
+    mov [esp+0x40],esi → movsx eax,word[esp+0x46] → shl eax,3 → mov
+    eax,[0x8177c8] → add eax,ebx → ... → 前缀: mov eax,[esp+0x30] →
+    imul eax,[0x8177a0] → mov esi,[0x8177c0] → add eax,esi → mov
+    ebp,[eax+ebx*4+0x10]（★表索引取期望值）→ test ebp,ebp → je
+    0x57b678（★期望 0 → 放弃）→ lea ecx,[esp+0x18] → push ecx（★栈
+    参1=坐标）→ mov ecx,0xabdfd8（★★★同 this=0xABDFD8）→ call
+    0x5a00c0 ★ → mov cl,byte[esp+0x44] → test cl,cl → je 0x57b5de
+    （★标志门控）→ xor eax,eax → mov edi,[esp+0x3c] → cmp eax,edi →
+    jne 0x57b6b6（★后续）
+★统一形态：三宿主全「mov ecx,0xabdfd8（★★MapSeedClass::Instance）
+  → push 坐标结构 → call 0x5A00C0 → 读回值三连拒（<=0 / ==期望 / 标
+  志门控）→ 判失败」——本函数=RMG 工作数组 +0x38 字段读取器，宿主用
+  于验证已写入的工作记录（batch 909 写入器的读回端）。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  [0xABED10] —— ★★★已登记 batch 196（RMG 工作数组基址——每格 0x50B，
+    0x578E60 分配 side²×0x50，QWEN.md 实锤）
+  [0x89C2DC] —— ★★★已登记 batch 196（side——工作数组边长）
+  0x58C2A0 —— ★★★已登记 batch 196（RMG 工作数组索引——本函数公式
+    全等）
+  [0xABDFD8] —— ★MapSeedClass::Instance（生成器单例——三宿主统一
+    this，QWEN.md 实锤；batch 909 首引用，本批二次交叉）
+  [0x8177A0]/[0x8177C0]/[0x8177C8] —— ★宿主3 表基址族（未登记——
+    RMG 表族，batch 909 宿主1 亦见 [0x817710] 邻接）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 909（0x5A0090 RMG 工作数组 +0x38 字段写入器——本函数=其
+    读取端孪生：同索引公式（movsx word/×side/add/lea×5/shl 4/
+    [0xABED10]），写入器写 +0x38 / 本函数读 +0x38；三宿主完全重叠
+    （FUN_00579010/FUN_0057a430/FUN_0057b440），同宿主先写后读成对
+    消费）
+  ★★★batch 196（0x58C2A0 RMG 工作数组索引——公式全等；[0xABED10]/
+    [0x89C2DC] 全局交叉）
+  ★★MapSeedClass::Instance 0xABDFD8（三宿主统一 this——RMG 生成器单
+    例）
+  ★★0x8177xx 表族（宿主3 索引表——RMG 表区）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★基址空返 -1 哨兵（or eax,0xffffffff——与写入器 0x5A0090「空则
+  静默早返 ret」不同，读取端必须显式哨兵）；② ★★坐标带符号 16 位读
+  （movsx word——索引可为负）；③ ★★lea [eax+eax*4] + shl 4 惯用
+  （×0x50 步进不用 imul）；④ ★★读回三连拒惯用法（宿主侧：读回值
+  <=0 / ==期望 / 期望==-1 任一 → 判失败——相等也拒，只认「读回在
+  (0,期望) 开区间才有效」？）；⑤ ★★cdecl 1 栈参 ret 4；⑥ ★★三宿主
+  统一 this=0xABDFD8；⑦ ★★宿主侧 0x22 标志门控（cmp bl,0x22——宿主
+  1/2 同款前置）；⑧ ★★读取端与写入端成对（+0x38 字段读写双端分工）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：+0x38 字段精确语义（batch 196/909 同 partial）、三宿主业务
+  （FUN_00579010/FUN_0057a430/FUN_0057b440——RMG 阶段 5/6 域推断，
+  验证已写工作记录）、读回三连拒的精确业务判定（相等也拒的原因推断
+  ——防重复处理/防自引用）、宿主前缀 0x22 门控语义（0x22 常量）、
+  [0x8177A0]/[0x8177C0]/[0x8177C8] 表族身份（RMG 索引表）。
