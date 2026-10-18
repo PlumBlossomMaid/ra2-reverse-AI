@@ -1,0 +1,126 @@
+frontier batch 856 —— 0x0049FA00 HouseClass 按名字索引计数递增器（100B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=81 / body=100B）。
+TARGET = 0x0049FA00（100B，0x49FA00-0x49FA63，thiscall 1 栈参 ret 4）。
+★★推断名：**HouseClass 按名字索引计数递增器**——VectorClass 容器形态
+（+4 数组/+8 容量/+0x10 计数/虚表槽 8 扩容）：索引≥容量 → 槽 8 扩容到
+索引+0xA 并清零新槽；数组[索引]++；计数++；返数组[索引]。紧邻 0x49FA70
+同构第二实例（batch 335 点名「RemoveTracking 用 0x49FA70 递减」——递减配
+对）。✏batch 335 预告「0x49FA00 数组添加」当场兑现。
+
+一、函数体全读（100B，disasm 0x49FA00 0x80）
+------------------------------------------------
+参数契约（thiscall 1 栈参 ret 4）：ecx = this（VectorClass 形态容器——
+HouseClass 内嵌追踪数组）、[esp+8] = 栈参1（索引）。
+机器码（100B 全读，分段要点）：
+  段1（容量检查+扩容）：
+  0049fa00  push ebx/mov ebx,[esp+8]（★栈参1=索引）→ push esi/mov esi,
+    ecx（★this 容器）→ push edi/mov edi,[esi+8]（★容器容量 +8——batch
+    467/469 布局）→ cmp ebx,edi / jl 0x49fa3d（★索引<容量 → 跳过扩容）
+    → mov eax,[esi]（★容器虚表）→ lea ecx,[ebx+0xa]（★★新容量=索引+0xA
+    ——Increment=0xA 硬编码）→ push 0/push ecx → mov ecx,esi → call
+    [eax+8]（★虚表槽 8 扩容——batch 467/469 同款）→ test al/je 0x49fa5c
+    （★扩容失败 → 返 0）
+  段2（扩容后清零新槽）：
+  0049fa21  mov ecx,[esi+8]（★新容量）→ mov eax,edi（★旧容量）→ cmp
+    edi,ecx / jge 0x49fa3d → 0x49fa2a: mov edx,[esi+4]（★数组基址）→
+    inc eax → mov [edx+eax*4-4],0（★★扩容区新槽清零——从旧容量到新容量
+    ）→ cmp eax,[esi+8] / jl 循环（★批量清零）
+  段3（递增+返回）：
+  0049fa3d  mov eax,[esi+4]（★数组基址）→ pop edi/mov ecx,[eax+ebx*4]
+    （★读数组[索引]）→ lea eax,[eax+ebx*4] → inc ecx → mov [eax],ecx
+    （★★数组[索引]++）→ mov eax,[esi+0x10]（★容器计数 +0x10）→ mov
+    ecx,[esi+4] → inc eax → mov [esi+0x10],eax（★计数++）→ pop esi →
+    mov eax,[ecx+ebx*4]（★返数组[索引]）→ pop ebx/ret 4
+语义：**按索引递增计数器（VectorClass 容器形态）**——① 索引≥容量（+8）
+  时经虚表槽 8 扩容到 索引+0xA（Increment 硬编码 0xA），失败返 0；② 扩
+  容后从旧容量到新容量逐槽清零（数组[旧容量..新容量)=0）；③ 数组[索引]
+  ++；④ 容器计数（+0x10）++；⑤ 返回数组[索引]。★★核心：HouseClass 内
+  嵌追踪数组的按名字索引计数器递增（名字→虚表槽 0x40/0x84 取 → House
+  Class 统计数组槽 → 递增），与 batch 335 RemoveTracking 的 0x49FA70 递
+  减配对。
+
+二、调用点（12 处 E8，三带名宿主各 4 处）
+----------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x49FA00）：**命中 12 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x4FB71A / 0x4FB755 / 0x4FB78D / 0x4FB7B9 → HouseClass::
+     RegisterJustBuilt [0x4FB6B0-0x4FB814] body=357 —— ★★带名！
+  2) 0x4FF7B1 / 0x4FF7EF / 0x4FF848 / 0x4FF887 → HouseClass::
+     AddTracking [0x4FF700-0x4FF8CB] body=460 —— ★★带名（batch 335 已
+     登记！）
+  3) 0x502B0B / 0x502BE3 / 0x502C7A / 0x502CFF → HouseClass::
+     RegisterGain [0x502A80-0x502D0B] body=652 —— ★★带名！
+现场 disasm 核验（三宿主各读一处）：
+  RegisterJustBuilt（0x4FB6B0）——现场 0x4FB70C: mov eax,[esi] → mov
+    ecx,esi → call [eax+0x40]（★★虚表槽 0x40 取名字/索引——batch 335
+    同款）→ push eax（★名字入栈）→ lea ecx,[edi+0x55b4]（★HouseClass
+    +0x55B4 数组槽）→ call 0x49fa00（★★本函数——按名字递增）
+  AddTracking（0x4FF700，batch 335 已登记）——现场 0x4FF7AA: lea ecx,
+    [edi+0x5500]（★+0x5500 数组槽）→ push esi（★名字/索引）→ call
+    0x49fa00（★★本函数——★★batch 335 点名「0x49FA00 数组添加」的调用
+    现场兑现！）→ push esi → lea ecx,[edi+0x1b40] → call 0x749020（★
+    第二数组——batch 335 已登记）
+  RegisterGain（0x502A80）——现场 0x502AF7: call [eax+0x84]（★虚表槽
+    0x84 取类型）→ 0x502AFD: mov edx,[eax] → mov ecx,eax → call [edx
+    +0x40]（★★虚表槽 0x40 取名字）→ push eax（★名字入栈）→ lea ecx,
+    [edi+0x5550]（★+0x5550 数组槽）→ call 0x49fa00（★★本函数）
+★要点：三宿主全以「虚表槽 0x40/0x84 取名字 → push 名字 → lea ecx,
+  HouseClass+0x55xx/0x55b4 数组槽 → call 0x49FA00」模式调用——本函数是
+  HouseClass 追踪统计数组的按名字索引计数递增器。★AddTracking 的
+  0x4FF7B1 就是 batch 335 登记文档里点名「0x49FA00（数组添加）」的调用
+  点——跨批兑现。★0x49FA70 紧邻同构第二实例（batch 335 点名 Remove
+  Tracking 递减用）——增减配对。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  虚表槽 8 扩容 —— ★★已登记（batch 467/469 VectorClass SetCapacity 族
+    ——本函数扩容同款）
+  容器布局 +8 容量/+0x10 计数 —— ★★已登记（batch 467/469 容器族布局）
+  0x49FA70 —— ★★已见（batch 335 点名「RemoveTracking 用 0x49FA70 递减」
+    ——紧邻同构递减实例，配对）
+  0x749020 —— ★★已见（batch 335 AddTracking 第二数组调用——同宿主同模
+    式）
+  虚表槽 0x40 取名字 —— ★★已见（batch 335 AddTracking 同款——三宿主共
+    用）
+  HouseClass::AddTracking —— ★★已登记（batch 335——本函数=其调用现场，
+    点名兑现）
+  HouseClass::RegisterJustBuilt / RegisterGain —— ★未登记（带名宿主——
+    AI 生产/增益统计域）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 335（HouseClass::AddTracking 0x4FF700——**本函数=其「0x49FA00
+    数组添加」调用点的现场兑现**；batch 335 已点名「0x49FA00（数组添加
+    ——RemoveTracking 用 0x49FA70 递减，本条 0x49FA00 添加！）」——添加端
+    ↔递减端配对跨批闭合）
+  ★★batch 467/469（VectorClass 容器族——本函数扩容/布局同款：虚表槽 8
+    扩容 + +8 容量/+0x10 计数/+0x14=0xA 增量）
+  ★★batch 454（虚表槽 0x10 查索引——同款容器形态）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★扩容容量=索引+0xA（Increment 硬编码 0xA 不取 +0x14 字段——直写
+   lea ecx,[ebx+0xa]）；
+② ★★扩容后批量清零新槽（从旧容量到新容量 [edx+eax*4-4]=0——不信任
+   resize 清空，手动补零）；
+③ 扩容失败静默返 0（call 槽 8 后 test al/je 返 0）；
+④ 数组[索引]++ 与容器计数++ 双递增（每调用一次总计数也增——追踪总次
+   数推断）；
+⑤ 返回值=递增后的数组[索引]（调用方读回新值）；
+⑥ 三宿主模式统一（虚表槽 0x40/0x84 取名字 → HouseClass+0x55xx 数组槽
+   → 递增）——HouseClass 追踪统计数组的按名计数；
+⑦ 紧邻 0x49FA70 同构第二实例（batch 335 点名的递减配对——增减双份编
+   译实例）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：宿主精确类名（推断「HouseClass 内嵌追踪数组容器」——三带名宿
+  主 HouseClass 家族实锤，容器对象 = HouseClass+0x55xx 内嵌）、栈参 1 索
+  引精确语义（名字→索引映射推断——虚表槽 0x40 取名字后作索引）、+0x55xx
+  各数组槽业务（追踪统计类别推断——batch 335 的 +0x5500/+0x553C/+0x5528/
+  +0x5514 族）、0x49FA70 精确语义（递减实例——batch 335 点名未全读）、
+  RegisterJustBuilt/RegisterGain 主逻辑（带名未全读）、0x749020 第二数组
+  身份（batch 335 提及未登记）。
