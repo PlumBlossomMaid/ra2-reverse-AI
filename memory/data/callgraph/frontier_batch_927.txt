@@ -1,0 +1,99 @@
+frontier batch 927 —— 0x005A82E0 死代码复刻：随机布点放置器（1081B）
+=======================================================================
+
+候选来源：用户指令「RMG 死代码全部复现对齐（挖坟考古）」——0x5A82E0
+（1081B，TSV:1024 已 semantics 登记，本批做 C++ 复刻落地 + 单测对拍）。
+TARGET = 0x005A82E0（thiscall + 1 栈参 ret 4，坐标 CellStruct* 指针）。
+C++ 模型：code/rewrite/rmg/dead_code_placer.{h,cpp} 新增
+DeadCodeRandomPlacer。单测：test_dead_code_placer.cpp 新增
+DeadCodePlacer.MatchesOriginal（8 用例对拍）。
+
+一、语义（完整汇编 297 行 + 黄金 8 用例闭环）
+------------------------------------------------
+真义（黄金实证 + 机器码逐段确认）：
+  ① 选数量 n：拒绝采样 Random()*5/(2^32-1)+8.0 → _ftol → >12 重摇
+     （ja 无符号），n ∈ [0,12]
+  ② 基准地形 = GetCellAt(坐标) 的 cell+0x11B（movsx 有符号字节）
+  ③ 阈值：this+0x38==0 → lo=15；否则 lo=0；hi=35（[esp+0x18]=0x23 初始）
+  ④ 36 项表 [0x82B1B0..0x82B240)（ABAN01..ABAN15 + CA0001..CA0021
+     建筑类型名——倒排字符串表，项 i 指向 0x82B74C - i*8）经容器
+     （0x5AD6F0 构造 + 虚表槽 8 = SetCapacity 0x49EA70 扩容）收集：
+     收集循环每满 10 个扩容一次，全部表项（名字指针）入容器
+  ⑤ owner = 0x5117D0 FindIndexOfName("Neutral" 0x82BA08 字面量)
+     → 0x502D30 FindByCountryIndex（Neutral House，BuildingClass 构造
+     参数 2；与 0x5A95B0 分支 B 完全同构）
+  ⑥ 外层循环 attempt < 2n 且 placed < n：
+     - idx = 拒绝采样 Random()*(hi-lo+1)*kInvUintMax + lo → _ftol
+       → > hi（ja 无符号）重摇，idx ∈ [lo, hi]
+     - 候选 = 容器[idx]（名字指针）→ 0x45E7B0 全局名字表
+       （[0xA83C6C] 每项 +0x24 内联字符串，strcmpi）→ 类型索引 或 -1
+     - operator new(0x720) → 0x43B740 BuildingClass 构造
+       （参数1 = [0xA83C6C][type_idx] 类型对象、参数2 = owner）
+     - 内层 tries < 60：r1/r2 各拒绝采样 Random()*15/(2^32-1)
+       → _ftol → >14 重摇（ja 无符号），r ∈ [0,14]
+       x' = 坐标.x + (r2-7)、y' = 坐标.y + (r1-7)（int16 回绕）
+       类型虚表 +0x90(1) 占地表 → 逐格 (0x7FFF,0x7FFF) 收尾：
+         合成格 = 占地偏移 + (x', y')（int16 回绕，eax 32 位加只取低 16）
+         GetCellAt → 校验链：+0xE4 无占用 && 0x486380 IsPlain &&
+         地形 == 基准 && +0xEC != 3 && IsWithinUsableArea(1)（0x578540）
+       全过 → 像素 (x'<<8)+0x80、(y'<<8)+0x80 → 虚表 +0xD8(&coord,0)
+       落地 → 成功：placed++、容器前移压缩（删 idx）、dec [esp+0x18]
+       （hi-- 采样上界 35→34→…）
+     - tries >= 60 失败 → 虚表 +0x20(1) 销毁
+  ⑦ 收尾：容器缓冲 operator delete
+  ★常量：0x7EDAB0 = 5/(2^32-1)、0x7E48E0 = 8.0、0x7EDB18 = 15/(2^32-1)、
+    0x7ED898 = kInvUintMax（fast_math 已有模型）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+thiscall + 1 栈参（ecx=this、[esp+0xA4]=坐标指针），FPCW=0x0E7F。
+桩侧：0x5117D0→0、0x502D30→0x11110000（假 House）、0x7C8E17→bump、
+0x43B740→拼假对象（虚表 A +0x20 销毁 +0xD8 落地；+0x520=类型→虚表 B
++0x90 占地表）、虚表槽 0x90/0xD8/0x20。
+真身侧：Randomizer/GetCellAt/0x486380/0x578540/0x5AD6F0/0x49EA70/
+0x45E7B0（灌 [0xA83C6C] 名字表：name_count 个假类型对象，每项 +0x24
+内联名字串——strcmpi 比较语义实锤：0x45E7B0 汇编 `add ecx,0x24; push
+ecx; call strcmpi` push 的是 t+0x24 的【地址】不是指针！旧灌法在 t+0x24
+存指针值 → strcmpi 读到垃圾字节永不命中 → 返回 -1 → 外层死循环。
+修复：把名字串字节直接写入 t+0x24）。
+覆盖：8 用例（simple/all38/blocked/levels/veto/unplace/halfname/no40）
+× seed/占地/this38/name_count 组合，落盘
+memory/data/rmg/deadcode_placer_golden.txt（504 行）。
+★怪癖实锤（登记不采集）：name_count=1 时 0x45E7B0 必返回 -1，而
+0x5A8489 je 0x5A86E1 跳过 attempt++（0x5A86DC）→ 外层死循环——这正是
+0x5A82E0 零引用从未被启用的根因（原版怪癖，照抄不修；golden 8 用例的
+name_count 都足够大避开了此分支）。
+
+三、C++ 模型（code/rewrite/rmg/dead_code_placer.{h,cpp}）
+------------------------------------------------
+签名：void DeadCodeRandomPlacer(DeadPlacerContext& ctx)；ctx 携带
+Randomizer*/DeadPlacerWorld*/锚点坐标/this38/36 项名字表。
+DeadPlacerWorld 接口（桩语义与黄金侧完全同构）：Level/IsPlain/
+HasOccupier/Field0xEC/WithinUsableArea（格子五重校验链）、
+LookupTypeIndex（0x45E7B0 名字表）、AllocBuildingMemory（new 0x720）、
+CreateBuilding（0x43B740）、Foundation（虚表 +0x90 占地表）、
+Unlimbo（虚表 +0xD8）、Destroy（虚表 +0x20）、FindNeutralOwner。
+★死循环怪癖照抄：LookupTypeIndex 返回 -1 时 continue（= 原版
+je 0x5A86E1 跳过 attempt++）。
+★怪癖：成功放置后 --hi（原版 dec [esp+0x18]，采样上界递减）+ 容器
+前移压缩删除已用类型名。
+★怪癖：this38==0 → lo=15（只用 CA0001..CA0021）；否则 lo=0（全 36 项）。
+
+四、单测（test_dead_code_placer.cpp，46 项测试之一）
+------------------------------------------------
+DeadCodePlacer.MatchesOriginal：读 golden 原档（RA2_GOLDEN_DIR 宏），
+8 用例全量对拍：rng 消耗数（Randomizer::call_count）、destroyed 数、
+types 序列（0x43B740 收到类型索引）、places 落点序列、occ 占用格
+（网格 ForEachCell 收集后按基准 _diamond() 顺序排序比对）。
+ctest 45/45 全绿（dead_code_placer #42 通过，全量无回归）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：0x5A82E0 业务用途（随机布点放置建筑——ABAN/CA 系建筑类型
+名字推测为「废弃/民用建筑散布」，零引用无从追）、this 对象类型
+（+0x38 字段来源）、0x45E7B0 名字表在真实游戏中的内容（[0xA83C6C]
+运行时由 RulesClass 填充）。
+依赖模型：FastSqrt 未用（本函数无 sqrt）；Atan 未用；kInvUintMax
+（fast_math，TSV 已登记）；SetCapacity 0x49EA70（batch 833 已登记，
+容器虚表槽 8——收集循环实锤与 batch 150 operator== 同一虚表族）。
