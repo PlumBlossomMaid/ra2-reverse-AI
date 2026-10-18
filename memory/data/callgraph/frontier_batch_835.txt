@@ -1,0 +1,140 @@
+frontier batch 835 —— 0x00510550 可选外部缓冲数组容器构造器（HouseClass 家族，虚表 0x7E9E44）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=110 / body=74B）。
+TARGET = 0x00510550（74B，0x510550-0x510597 + 0x51059A-0x51059F nop 垫，
+thiscall 2 栈参 ret 8）。
+★★推断名：**可选外部缓冲数组容器构造器（DynamicVectorClass 系，虚表
+0x7E9E44）**——与 batch 092（0x42FCB0 装 0x7E38D0）/batch 136（0x477BE0 装
+0x7E4DB8）逐字段同构的第三编译实例；调用方（HouseClass::HouseClass 等）构造
+后**立即覆盖虚表 0x7E9E44→0x7E9E24**（dynamic_array 派生构造惯用）。
+
+一、函数体全读（74B，disasm 0x510550 0x60）
+---------------------------------------------
+参数契约（thiscall 2 栈参 ret 8）：
+  ecx = this（容器对象）
+  [esp+4]  = 栈参 1 = 容量（eax）
+  [esp+0xC] = 栈参 2 = 外部缓冲指针 pMem（可 0）
+机器码（74B 全读）：
+  00510550  mov eax,[esp+4]（★栈参 1 容量）
+  00510554  push esi / mov esi,ecx（★this）
+  00510557  xor edx,edx / cmp eax,edx
+  0051055b  mov [esi+4],edx             ; ★+4 数组指针 = NULL
+  0051055e  mov [esi+8],eax             ; ★+8 容量 = 栈参 1
+  00510561  mov byte[esi+0xC],1         ; ★+0xC 持有标志 = 1
+  00510565  mov byte[esi+0xD],dl        ; ★+0xD 第二标志 = 0
+  00510568  mov [esi],0x7E9E44          ; ★装虚表 0x7E9E44
+  0051056e  je 0x510594                 ; ★容量 0 → 收尾（不分配）
+  00510570  mov ecx,[esp+0xC]（★栈参 2 pMem）
+  00510574  cmp ecx,edx / je 0x510581   ; ★pMem 空 → 走分配
+  00510578  mov [esi+4],ecx             ; ★采用外部存储（不分配）
+  0051057b  mov eax,esi / pop esi / ret 8
+  00510581  shl eax,2 / push eax / call 0x7C8E17
+                                        ; ★★operator new(容量×4B)（batch 001）
+  00510585  add esp,4
+  0051058D  mov [esi+4],eax             ; ★+4 数组指针 = new 结果
+  00510590  mov byte[esi+0xD],1         ; ★+0xD 自分配标志 = 1
+  00510594  mov eax,esi / pop esi / ret 8
+语义：**「可选外部缓冲数组容器构造器」（DynamicVectorClass 系）**——+4 数组
+指针/+8 容量/+0xC 持有标志/+0xD 自分配标志，装虚表 0x7E9E44；栈参 2 给指针
+则直接采用外部存储（不分配），否则 operator new（0x7C8E17）分配容量×4B；
+容量 0 时跳过分配直接返回。与 batch 092 的 0x42FCB0（装 0x7E38D0）和 batch
+136 的 0x477BE0（装 0x7E4DB8）**逐字段同构**——同一容器模板第三编译实例。
+
+二、孪生兄弟 0x510640（Disasm 核证）
+-------------------------------------
+0x510640（74B，0x510640-0x510687 + nop 垫）逐字节同构，**仅虚表不同**：
+  0x51068（mov [esi],0x7EA5C4）——装虚表 0x7EA5C4（vs 0x510550 的 0x7E9E44）
+  其余指令逐条一致（容量/pMem/new/自分配标志/ret 8 全同）
+★关系：同一「可选外部缓冲数组容器」模板的两份编译实例，装入不同虚表
+（0x7E9E44 vs 0x7EA5C4）——宿主对象里两种容器族共存时的编译双份产物。
+
+三、调用点现场（23 处 E8，三宿主）
+------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x510550）：**命中 23 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) FUN_004f5190 [0x4F5190-0x4F5490] body=769 —— 11 处（0x4F51C8/1E1/1FD/
+     219/235/251/26D/289/2A5/2C1/2DD），宿主开头 call 0x4101C0 → +0x38 槽用
+     0x510640（装 0x7EA5C4）→ 从 +0x50 起一串用 0x510550（装 0x7E9E44）后
+     覆盖为 0x7E9E24——与 HouseClass::HouseClass 完全相同的构造序列（同属
+     HouseClass 家族初始化，推断）
+  2) HouseClass::HouseClass [0x4F54A0-0x4F6539] body=4250（★带名！YRpp 实锤
+     构造器）—— 11 处（0x4F54E2/4FA/515/530/54B/566/581/59C/5B7/5D2/5ED）
+  3) FUN_006ee800 [0x6EE800-0x6EEBC4] body=965 —— 1 处（0x6EE8A3）
+HouseClass::HouseClass 现场展开（0x4F54E2 起 0x130）：
+  sub esp,0x34 → call 0x410170（基类构造）→ mov [ebp+0x30],0xFFFFFFFF →
+  lea esi,[ebp+0x38] → push ebx(0)/push ebx(0) → mov ecx,esi → call 0x510640
+  （★+0x38 槽用孪生兄弟）→ 此后连续 11 次完全同款序列：
+    lea esi,[ebp+0x50] / push ebx(0) / push ebx(0) / mov ecx,esi
+    / call 0x510550                     ; ★★本函数（容量 0）
+    / mov [esi],0x7E9E24                ; ★★覆盖虚表 0x7E9E44→0x7E9E24
+    / mov [esi+0x14],edi(0xA)           ; ★+0x14 = 步长 0xA（batch 832 布局）
+    / mov [esi+0x10],ebx(0)             ; ★+0x10 = Count 0
+    目标槽：+0x50 / +0x68 / +0x80 / +0x98 / +0xB0 / +0xC8 / +0xE0 / +0xF8
+             / +0x110 / +0x128 / +0x140（★每 0x18B 一个成员容器）
+  +0x158/+0x15C 清零 → lea [ebp+0x16C] → …（后续继续更多槽）
+★要点：③ 全部调用以 容量=0 + pMem=0 构造（push ebx/push ebx——ebx=xor 后
+  的 0）——空容器占位，后续（ReadINI 等）再 SetCapacity 扩容；④ 调用方构造
+  后立即覆盖虚表 0x7E9E24 并补 +0x10/+0x14——本函数仅做基类字段，+0x10/+0x14
+  由派生层（调用方）补齐（batch 819/820/821/824 登记的四连构造器同款派生
+  模式）；⑤ vs 孪生 0x510640：+0x38 槽用 0x7EA5C4 虚表容器，+0x50 起用
+  0x7E9E44——同一宿主两种容器族（成员类型不同）。
+FUN_006ee800 现场（0x6EE890）：
+  mov edx,[esp+0x14] / mov [edx+0x30],ecx（★写宿主 +0x30）→ push 0/push 0
+  （容量 0/pMem 0）→ lea ecx,[esp+0x3C]（★栈上局部容器）→ call 0x510550
+  → mov [esp+0x34],0x7E9E24（★同样覆盖虚表 0x7E9E24）→ mov eax,[0xA8EB50]
+  ——栈上构造临时容器后按 [0xA8EB50] 全局继续（1 参 3 栈参 ret 0xC 推断）
+
+四、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x7C8E17 —— ★★已登记（batch 001 operator new——自分配容量×4）
+  虚表 0x7E9E44 —— ★新虚表（本次登记，容器类）
+  虚表 0x7E9E24 —— ★调用方覆盖虚表（构造后派生表——0x4F54A0 等现场见）
+  虚表 0x7EA5C4 —— ★孪生 0x510640 装入表（同容器模板另一实例）
+  0x42FCB0 —— ★★已登记（batch 092 同族容器构造器——装 0x7E38D0，字段同构）
+  0x477BE0 —— ★★已登记（batch 136 同族容器构造器——装 0x7E4DB8，字段同构）
+  0x510640 —— ★孪生未登记（本批文档带出，同模第二实例）
+  宿主 HouseClass::HouseClass —— ★带名（YRpp 覆盖，functions.tsv 名）
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★batch 092（0x42FCB0「可带外部缓冲的数组/向量构造器」——字段排布
+    +4/+8/+0xC/+0xD 逐字节一致、外部缓冲优先否则 _new(容量×4)，装虚表
+    0x7E38D0——本批 0x510550 同模板第三实例）
+  ★★batch 136（0x477BE0「数组容器构造器」——+4 NULL 先清/+8 容量/
+    +0xC=1/+0xD=0→自分配置 1、pMem 优先否则 _new，装虚表 0x7E4DB8——
+    与本文档逐段对照完全一致，确定同族）
+  ★★batch 819-821/824（VectorClass 带参构造器四连 0x5138F0/0x513940/
+    0x513990/0x67C3A0——虚表 0x7EAC28→0x7EAC48→0x7EAC68→0x7F0D7C：
+    本批 +0x10/+0x14 派生补齐模式同族）
+  ★★batch 832（容器布局 +4 Items/+8 Capacity/+0xC IsInitialized/+0xD
+    IsAllocated/+0x10 Count/+0x14 CapacityIncrement=0xA——本批调用方现场
+    [esi+0x14]=0xA / [esi+0x10]=0 逐字段吻合）
+  ★★batch 833（0x49EA70 容量设置器虚表槽 0x08——SetCapacity 系，batch 469
+    同构——本批空容器占位后由 ReadINI 系扩容的关联链）
+  ★★batch 001（0x7C8E17 operator new）
+
+六、原版怪癖（照抄）
+-------------------
+① 容量==0 且 pMem==0 时直接跳过分配（je 0x510594）——构造空容器占位，
+   后续 SetCapacity 扩容（HouseClass 11 个成员槽全部 0 容量构造）；
+② pMem 非空时**不再改 +0xD（保持 0）**——外部缓冲接管不计自分配；
+③ +0xD 仅在 _new 成功路径置 1（operator new 失败返 0 也不改标志——与
+   batch 833 的「先置 1 再验数组空」不同版本，本条是后置型）；
+④ 调用方（HouseClass::HouseClass）构造后立即覆盖虚表 0x7E9E24 + 补
+   +0x10/+0x14——本函数是基类层构造，派生字段由调用方补齐（编译产物形态）；
+⑤ 与孪生 0x510640 逐字节同构仅虚表不同（0x7E9E44 vs 0x7EA5C4）——同一
+   模板两份编译实例，+0x38 槽用 0x7EA5C4 表、+0x50 起用 0x7E9E44 表；
+⑥ 23 处调用点中 21 处集中在 HouseClass 家族（FUN_004f5190 11 + ctor 11），
+   构造序列完全一致（每 0x18B 一个成员容器）——HouseClass 成员容器批量
+   初始化惯用。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：虚表 0x7E9E44 宿主类精确身份（HouseClass 家族 0x7E9Exx 容器族推断）、
+与孪生 0x510640 的精确类关系（同一模板不同类型参数推断——0x7EA5C4 表对应
++0x38 槽成员类型）、FUN_004f5190 身份（HouseClass 家族初始化推断——与 ctor
+同构造序列）、FUN_006ee800 身份（3 栈参函数推断——栈上临时容器构造现场）、
++0x50..+0x140 各成员容器业务语义（HouseClass 各数组成员用途——RTTI/全局
+统计推断未逐一确认）。
