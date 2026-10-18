@@ -86,6 +86,58 @@ TEST(DeadCodeJitter, Golden) {
   }
 }
 
+struct CaseF {
+  std::uint32_t seed;
+  std::int16_t ax, ay, bx, by;
+  std::int32_t arg3;
+  double want;
+};
+
+// 0x59D480 golden：seed=%u p1=(a,b) p2=(c,d) arg3=%d => %.17g
+std::vector<CaseF> LoadGoldenF() {
+  const std::string path = RA2_GOLDEN_DIR "/deadcode_jitter59d480_golden.txt";
+  std::ifstream f(path);
+  EXPECT_TRUE(f.good()) << "cannot open golden: " << path;
+  std::vector<CaseF> cases;
+  std::string line;
+  while (std::getline(f, line)) {
+    if (line.empty() || line[0] == '#') continue;
+    CaseF c;
+    std::uint32_t s;
+    long ax, ay, bx, by, a3;
+    double v;
+    if (std::sscanf(line.c_str(),
+                    "seed=%u p1=(%ld,%ld) p2=(%ld,%ld) arg3=%ld => %lf",
+                    &s, &ax, &ay, &bx, &by, &a3, &v) != 7) {
+      ADD_FAILURE() << "unparseable golden line: " << line;
+      continue;
+    }
+    c.seed = s;
+    c.ax = static_cast<std::int16_t>(ax);
+    c.ay = static_cast<std::int16_t>(ay);
+    c.bx = static_cast<std::int16_t>(bx);
+    c.by = static_cast<std::int16_t>(by);
+    c.arg3 = static_cast<std::int32_t>(a3);
+    c.want = v;
+    cases.push_back(c);
+  }
+  return cases;
+}
+
+// 0x59D480（float 版）：黄金实证推翻 dead-code-functions.md:149——
+// 真义 = Random()*(1/(2^32-1))*10.0f + 0.5f*(float)sqrt(d2) - 0.02f*arg3
+TEST(DeadCodeJitterF, Golden) {
+  const auto cases = LoadGoldenF();
+  ASSERT_FALSE(cases.empty());
+  for (const auto& c : cases) {
+    Randomizer rng(c.seed);
+    const double got = DeadCodeDistanceJitterF(rng, c.ax, c.ay, c.bx, c.by, c.arg3);
+    EXPECT_TRUE(BitEq(got, c.want))
+        << "seed=" << c.seed << " p1=(" << c.ax << "," << c.ay << ") p2=("
+        << c.bx << "," << c.by << ") arg3=" << c.arg3;
+  }
+}
+
 }  // namespace
 }  // namespace rmg
 }  // namespace ra2

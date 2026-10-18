@@ -1,0 +1,70 @@
+frontier batch 925 —— 0x0059D480 死代码复刻：float 版两锚点距离+抖动（137B）
+===================================================================================
+
+候选来源：用户指令「RMG 死代码全部复现对齐（挖坟考古）」——0x59D480
+（137B，batch 320 已 semantics 登记，本批做 C++ 复刻落地 + 单测对拍）。
+TARGET = 0x0059D480（cdecl 3 栈参 ret 0xC，x87 返回 double）。
+C++ 模型：code/rewrite/rmg/dead_code_jitter.{h,cpp} 新增
+DeadCodeDistanceJitterF。单测：test_dead_code_jitter.cpp 新增
+DeadCodeJitterF.Golden（100 例对拍）。
+
+一、语义（137B 全读 + emu 黄金闭环）
+------------------------------------------------
+真义（黄金实证，★★推翻 docs/dead-code-functions.md:149「Random()*10.0/2³²
+  + 0.5*arg − 0.02*euclid」——逐字节追栈证明 [esp+0xC]（pop esi 后）= sqrt
+  结果 float32 槽、[esp+0x14]（pop esi 后）= 第三栈参 arg3；机器码是唯一
+  权威）：
+  ① dx/dy = p1-p2 坐标差（movsx word 带符号读 int16）
+  ② d2 = dx*dx + dy*dy（int32 imul 回绕——大坐标回绕成负值）
+  ③ s32 = ChopFloat(FastSqrt((double)(int32)d2))（★fstp dword 窄化 float32
+    ——与 0x5A2ED0 存 qword 不同！）
+  ④ u = (double)(uint64)Random()（fild qword 无符号扩展）
+  ⑤ 返回 u * kInvUintMax * 10.0f + 0.5f * (double)s32
+       - 0.02f * (double)(int32)arg3（全程 RC=chop）
+  权重常量（.rdata 实证）：0x7ED764=0.5f / 0x7ED768=10.0f / 0x7ED76C=0.02f。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+复用 _emu_deadcode_jitter.py v5 的调用骨架（STUB 独立地址 0x1F000800 +
+FSTP_RET 落盘 + MAGIC_RET 保持干净）；cdecl 3 栈参（p1/p2 坐标指针 +
+arg3 int32）。
+覆盖：5 种子 × 5 坐标对 × 4 arg3 值（0/100/-32768/12345）= 100 例，
+落盘 memory/data/rmg/deadcode_jitter59d480_golden.txt（104 行含头注释）。
+★arg3 敏感性验证：arg3=100 → 结果减 2.0（0.02×100）、arg3=-32768 → 结果
+  加 655.36（0.02×32768）——与机器码 `fild [esp+0x14] arg3 → fmul 0.02f →
+  fsubp` 完全吻合，黄金锁死「第三栈参参与权重减法」。
+
+三、C++ 模型（code/rewrite/rmg/dead_code_jitter.{h,cpp}）
+------------------------------------------------
+签名：double DeadCodeDistanceJitterF(Randomizer& rng, int16 ax/ay/bx/by,
+  int32 arg3)。
+实现链：dx/dy int32 → d2 int32 回绕 → FastSqrt → ChopFloat（fstp dword
+  窄化）→ (double)(uint64)Random() → ChopJitterChainF：
+  u*kInvUintMax（RC=chop 1 次）→ ×10.0f（精确）→ + 0.5f*s32（RC=chop 1
+  次）→ − 0.02f*arg3（RC=chop 1 次）。
+★浮点环境坑：原版 x87 全局 RC=chop，C++ SSE 默认 round-to-nearest——
+  与 batch 924 同修法（MXCSR _MM_ROUND_TOWARD_ZERO + volatile 防重排）；
+  非 x86_64 降级同数学语义（主对拍平台为 x64）。
+
+四、单测（test_dead_code_jitter.cpp，45 项测试之一）
+------------------------------------------------
+DeadCodeJitterF.Golden：读 golden 原档（RA2_GOLDEN_DIR 宏），100 例
+BitEq 逐位对拍（双精度位模式全等，非近似相等）。ctest 44/44 全绿
+（dead_code_jitter #41 含两族 Golden）。
+
+五、怪癖照抄（C++ 模型内已固化 + 单测锁定）
+------------------------------------------
+① int32 imul 回绕 d2；② FastSqrt 负数取绝对值；③ fstp dword 窄化
+  float32（异于 0x5A2ED0 的 qword）；④ fild qword 无符号扩展 uint32；
+  ⑤ 比例常数 1/(2^32-1) 非 1/2^32；⑥ 三权重 float 常量（10.0/0.5/0.02）
+  逐次参与乘法，0.02f 非精确值照抄；⑦ 第三栈参 arg3 权重减法；⑧ j 链
+  RC=chop 三步舍入（MXCSR toward-zero 复刻）；⑨ ret 0xC 三栈参。
+
+六、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：0x59D480 业务用途（float 版抖动——coordinate 扰动推断，
+  batch 320 同）、三权重常量组合的业务动因（10.0 随机抖动幅度 +
+  0.5 距离半权 + 0.02 参数惩罚推断）、arg3 来源（调用方第三参——零引用
+  无从追）、docs/dead-code-functions.md:149 错误语义已由本批黄金证伪
+  （待文档修正）。
