@@ -1,0 +1,182 @@
+frontier batch 893 —— 0x0057B210 8 邻域水判定位掩码收集器（549B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=35 / body=549B）——E8 全局扫描
+实测命中 13 处（全在 0x57Axxx RMG 区）。
+TARGET = 0x0057B210（549B，0x57B210-0x57B434，thiscall 2 栈参 ret 8，RMG
+region 区）。
+★★推断名：**8 邻域水判定位掩码收集器（中心格+8 邻域 Tile_Is_Water + 菱形
+坐标合法预检 + 模式 0/1/2 门控 + 返回 8 位掩码写 work+0x40；**batch 836
+（0x57B440）文档点名「两套菱形全局并存」中 [0xABED04]/[0xABED08] 一套的
+正式兑现**）**。
+
+一、函数体全读（549B，disasm 0x57B210 0x580 全量）
+------------------------------------------------
+参数契约（thiscall 2 栈参 ret 8）：ecx = this（+0x13C 指向 8 邻域表——
+宿主现场实锤）、[esp+4] = 栈参1（对象：+0x24 = 坐标 dword、+0x38 = 类型
+字段——宿主1 push ebp 现场实锤）、[esp+8] = 栈参2（模式 0/1/2——宿主
+push 2/push 0/push 1 三形态实锤）。返回 eax = 8 位掩码。
+机器码（549B 全读，逐段要点）：
+  序言: sub esp,0x10 → push ebx → mov ebx,[0xAA0738]（★★tile 表基址——
+    batch 325 实锤）→ push ebp → mov ebp,[esp+0x1c]（★栈参1=对象）→
+    push esi → mov [esp+0x18],ecx（★this 存局部）→ mov esi,[ebp+0x24]
+    （★坐标 dword）→ lea eax,[ebx+0xE]（★★tile 基址+0xE=水 tile 上界——
+    batch 325 同款区间 [0xAA0738, +0xE)）→ push edi → mov ecx,ebp → mov
+    [esp+0x10],0（★位掩码累加器初 0）→ mov [esp+0x14],esi（★坐标存局部）
+    → mov [esp+0x18],eax（★水上界存局部）→ call 0x485060（★★★batch 325
+    CellClass::Tile_Is_Water(this=栈参1)——中心格判水！）→ mov byte
+    [esp+0x24],al（★存中心格水判定结果 bl）
+  菱形合法预检（★batch 086 CoordinatesLegal 全局缓存版）: mov ecx,
+    [0xABED04]（★★W，batch 086/092 实锤）→ movsx edi,si（★坐标低 word=X）
+    → movsx esi,word[esp+0x16]（★坐标高 word=Y）→ lea eax,[esi+edi]（★X+Y）
+    → cmp eax,[0xABED04] → jle 返回 0（★X+Y<=W 非法）→ mov edx,edi →
+    sub edx,esi（★X-Y）→ cmp [0xABED04] → jge 返回 0（★X-Y>=W 非法）→
+    mov edx,esi → sub edx,edi（★Y-X）→ cmp → jge 返回 0（★Y-X>=W 非法）→
+    cmp eax,[0xABED08]（★★W+2H，batch 086 实锤）→ jle 0x57B27F（★X+Y<=W+2H
+    合法继续）→ 否则返回 0
+  模式门控（栈参2）: mov eax,[esp+0x28]（★栈参2=模式）→ test → jne
+    0x57B29E → 模式 0: mov ecx,ebp → call 0x486380（★★batch 082 无主谓词
+    ——+0x38∈{-1,0} → al=1）→ test al → jne 0x57B2BC（★无主才继续）→
+    返回 0 → 0x57B29E: cmp eax,1 → jne 0x57B2BC（★非 0/1 直通）→ 模式 1:
+    mov eax,[ebp+0x38]（★+0x38 字段）→ cmp eax,ebx（tile 基址）→ jl
+    0x57B2BC（★<基址非水继续）→ cmp eax,[esp+0x18]（水上界）→ jge
+    0x57B2BC（★≥上界非水继续）→ 落空 → 返回 0（★★+0x38∈[基址,+0xE)
+    水 tile 区间 → 拒绝返回 0）
+  work 检查 + 表扫: mov eax,[ebp+0x24]（★坐标）→ lea ecx,[esp+0x28] →
+    mov [esp+0x28],eax → call 0x58c2a0（★★batch 196 &work[Y*side+X]）→
+    mov cl,[eax+0x4A]（★work+0x4A 标志）→ test cl → je 返回 0（★标志清零
+    拒绝）→ mov eax,[eax+0x40]（★work+0x40 状态）→ test → jge 0x57B42B
+    （★≥0 早退返回 edi——原版怪癖：此时 edi=坐标 X！）→ mov ecx,
+    [esp+0x1C]（★this）→ shl esi,9（★Y<<9 512 列宽）→ mov edx,[ecx+0x13C]
+    （★★this+0x13C=邻域表基址）→ add esi,edi（★+X）→ mov ecx,[edx+esi*4-0x804]
+    （★表[Y*512+X-0x201]）→ lea esi,[edx+esi*4-0x804]（★esi=&表项）→
+    test → je 跳过 → call 0x485060（★邻域判水）→ test al → jne 0x57B328
+    → mov bl,[esp+0x24]（★中心格水判定）→ test → je → mov edi,0x40（★第
+    一槽位 bit6）→ 0x57B328: mov edi,0x40 → 后续 7 组同构块: mov ecx,
+    [esi+4]/[esi+8]/[esi+0x7F8]（★步进 4/8/0x7F8 交替）→ add esi,步进 →
+    test → je 跳过 → call 0x485060（★★每槽 Tile_Is_Water）→ test al →
+    jne → or edi,位（bit7/bit0/bit5/bit1/bit4/bit3/bit2 依次：
+    0x80/0x1/0x20/0x2/0x10/0x8/0x4）→ 0x57B42B: mov eax,edi（★返回位掩码）
+    → pop 族 → ret 8
+语义：**8 邻域水判定位掩码收集器（推断名）**——thiscall 2 栈参 ret 8：
+  ① 中心格经 0x485060（Tile_Is_Water batch 325）判水，结果存局部；
+  ② 菱形坐标合法预检用全局 [0xABED04]=W/[0xABED08]=W+2H（batch 086
+  CoordinatesLegal 同构——X+Y<=W / X-Y>=W / Y-X>=W / X+Y>W+2H 四条判定，
+  任一非法返回 0）；③ 模式门控：0=无主谓词 0x486380（batch 082）、1=+0x38
+  落在水 tile 区间 [tile基址, +0xE) 拒绝、2=直通；④ work 检查（0x58c2a0
+  索引 + work+0x4A 标志清零拒绝 + work+0x40 状态）；⑤ 中心格 8 邻域水判定
+  循环：this+0x13C 表按 Y<<9+X 索引（512 列宽 + 偏移 -0x804），遍历 8 槽
+  （步进 4/8/0x7F8 交替）每槽值判水（0x485060）或中心格水判定兜底，8 位
+  掩码（bit0-7 = 0x40|0x80|1|0x20|2|0x10|8|4 全用）；⑥ 返回 8 位掩码。
+
+二、调用点（13 处 E8，3 宿主全核验）
+------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x57B210）：**命中 13 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x57A349 → FUN_0057a320 [0x57A320-0x57A427] body=264 —— 未登记
+  2) 0x57A40E → FUN_0057a320（同上——第二处）
+  3-12) 0x57A45D-0x57A7BC（10 处）→ FUN_0057a430 [0x57A430-0x57A8F3]
+     body=1220 —— 未登记（紧邻宿主1，region 编排大函数）
+  13) 0x57AD26 → FUN_0057acf0 [0x57ACF0-0x57B207] body=1304 —— 未登记
+     （★★batch 836 具名「0x57B440 的宿主」「batch 347 处理器 3」）
+现场 disasm 核验（代表性全读）：
+  宿主1 FUN_0057a320（0x57A349/0x57A40E，264B ★8 格循环 ret 0xC）——
+    第一处 0x57A330-0x57A34E：mov eax,[ebp+0x38]（★对象+0x38）→ cmp edx
+    → jl → add edx,0xC → cmp → jge 0x57A423（★宿主侧先做 +0x38 区间预检）
+    → push 2（★栈参2=模式 2）→ push ebp（★栈参1=对象）→ 0x57A349: call
+    0x57b210（★★本函数）→ cmp eax,0xc7 → je 0x57A382 → cmp 0x7c → je →
+    cmp 0xf1 → je → cmp 0x1f → je → cmp 0xc6 → je → cmp 0x6c → je
+    （★★返回掩码与 6 个模板比较：0xC7/0x7C/0xF1/0x1F/0xC6/0x6C——岸线/
+    水域形态模板！）；第二处 0x57A3F9-0x57A413：call 0x58c2a0（★★work
+    索引）→ mov ecx,[esp+0x10]（★this）→ mov edi,eax（★&work 项）→
+    push 2 → push esi → mov [edi+0x40],0xffffffff（★★★预置 work+0x40=-1！
+    ——保证函数体 work+0x40 检查不早退）→ 0x57A40E: call 0x57b210 →
+    mov [edi+0x40],eax（★★★返回值写 work+0x40！）→ inc ebx → cmp ebx,8
+    → jl 0x57A3AB（★★8 格循环）
+  宿主2 FUN_0057a430（0x57A45D/0x57A46A，1220B region 编排）——现场
+    0x57A440-0x57A477：lea ecx,[esp+0x2c] → mov [esp+0x24],edi → mov byte
+    [esp+0x13],0 → mov [esp+0x2c],eax → call 0x58c2a0（★work 索引）→
+    push 2 → push ebp → mov ecx,edi（★this）→ mov esi,eax → 0x57A45D:
+    call 0x57b210（★第一调模式 2）→ push 0 → push ebp → mov ecx,edi →
+    mov [esi+0x40],eax（★★返回值写 work+0x40）→ 0x57A46A: call 0x57b210
+    （★第二调模式 0！）→ mov ebx,eax → test → jle 0x57A8E8 → cmp ebx,0xb
+    → je 0x57A487 → cmp ebx,0x1a → jne 0x57A48C（★返回掩码比较 0xB/0x1A）
+    → and ecx,0xa0 → cmp cl,0xa0 → test bl,0x11 ...（★模板匹配同族）
+  宿主3 FUN_0057acf0（0x57AD26，1304B ★★batch 836 具名「0x57B440 宿主」
+    「batch 347 处理器 3」）——现场 0x57ACF9-0x57AD35：mov edx,5 → xor
+    ecx,ecx → call 0x598030（★★batch 175 PickRange(0,5)——取随机模式！）
+    → mov ebp,eax → cmp edi,2 → jne 0x57AD1D → push 1（★随机==2 → 模式 1）
+    → push [esp+0x24] → jmp 0x57AD24 → push 0（★否则模式 0）→ push ecx →
+    0x57AD24: mov ecx,esi（★this）→ 0x57AD26: call 0x57b210（★★本函数）
+    → mov ebx,eax → test → je 0x57B1FC → cmp edi,2 → jne 0x57AE0F → and
+    edx,0xa0 → cmp dl,0xa0 → jne 0x57AD71 → and eax,0x11 → cmp al,0x11
+    （★★掩码模板 0xA0/0x11 组合检查——与 batch 791 0x579010 位组合判定链
+    同族！）
+★统一形态：三宿主全「模式选择（2 固定 / 0 固定 / PickRange 随机 0/1）→
+  push 模式 → push 对象 → mov ecx,this → call 0x57B210 → 返回掩码与模板
+  比较（0xC7/0x7C/0xF1/0x1F/0xC6/0x6C、0xB/0x1A、0xA0/0x11）」——本函数
+  = RMG region 编排的 8 邻域水形态判定器，三宿主全是 RMG 地图生成链
+  （FUN_0057a320 8 格循环/FUN_0057a430 region 编排/FUN_0057acf0 batch
+  347 处理器 3 同链）。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x485060 —— ★★★已登记 batch 325（CellClass::Tile_Is_Water ★★YRpp 带名
+    实锤——函数体 9 次调用：1 中心格 + 8 邻域槽）
+  0x486380 —— ★★已登记 batch 082（「无主」谓词：+0x38∈{-1,0} → 返 1——
+    模式 0 门控调用）
+  0x58C2A0 —— ★★已登记 batch 196（&work[Y*side+X] 索引——宿主1/2 也同
+    款调用，紧邻 0x58C2D0 遍历计数）
+  [0xABED04]/[0xABED08] —— ★★★已登记 batch 086/092（MapRect.W 与
+    W+2H 全局缓存——本函数菱形预检用这套，与 batch 836 的 0x57B440 用
+    [0x87F8DC]/[0x87F8E0] **互补分治：「两套菱形全局并存」实锤兑现**）
+  [0xAA0738] —— ★★已登记 batch 325（tile 表基址——[基址, +0xE) 水区间）
+  0x598030 —— ★★已登记 batch 175（PickRange——宿主3 入口取随机模式）
+  0x579010 —— ★★已登记 batch 791（位组合判定链 and 0xA0/test 0x11——与
+    宿主3 掩码模板检查同族）
+  0x5A00C0/0x5A0090 —— 未命中（batch 791/836 提及未登记候选——与本批
+    无关但继续留观）
+  FUN_0057a320/FUN_0057a430/FUN_0057acf0 —— ★未登记（三宿主——batch
+    836 文档具名 FUN_0057ACF0 为 0x57B440 的宿主）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 836（0x57B440 RMG 全局对象驱动格网处理器——**文档点名「菱形
+    判定用 [0x87F8DC]/[0x87F8E0] 而非 [0xABED04]/[0xABED08]（两套菱形全局
+    并存）」= 本批目标 0x57B210 正是 [0xABED04]/[0xABED08] 一套的兑现者！
+    且两函数共享宿主 FUN_0057acf0（0x57B1E3 调 0x57B440 / 0x57AD26 调
+    0x57B210）**）
+  ★★★batch 086（0x568300 MapClass::CoordinatesLegal——菱形判定四判据
+    逐指令同构：本函数用全局缓存版、0x568300 用 this+0xF4/+0xF8 字段版）
+  ★★★batch 325（0x485060 Tile_Is_Water——函数体 9 次调用 + [0xAA0738]
+    [基址,+0xE) 区间同款）
+  ★★batch 082（0x486380 无主谓词——模式 0 门控）
+  ★★batch 196（0x58C2A0 work 索引——函数体 + 宿主1/2 同款调用，返回值
+    写 work+0x40）
+  ★★batch 175（0x598030 PickRange——宿主3 随机模式选择）
+  ★★batch 791（0x579010 8 邻域格网递归检查器——神经元判定链 and 0xA0/
+    test 0x11 与宿主3 掩码模板同族同区）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★菱形合法预检用全局缓存 [0xABED04]=W/[0xABED08]=W+2H（batch 086 的
+   0x568300 用 this 字段版——同一判定两套实现在引擎/RMG 并存）；
+② ★★9 次 Tile_Is_Water（1 中心格 + 8 邻域槽——8 邻域逐格判水）；
+③ ★★work+0x40 ≥ 0 早退返回 edi（★此时 edi 未被扫描路径赋值=坐标 X——
+   返回坐标而非掩码的原版怪癖，宿主1 预置 work+0x40=-1 规避）；
+④ ★★this+0x13C 邻域表按 Y<<9+X 索引（512 列宽 + 偏移 -0x804=表[-0x201]）；
+⑤ ★★8 槽遍历步进 4/8/0x7F8 交替（非均匀步进——表布局怪癖）；
+⑥ ★★模式 0/1/2 门控（0=无主谓词、1=+0x38 水区间拒绝、非 0/1 直通）；
+⑦ ★★中心格水判定结果存局部兜底（槽值判水失败用中心格判定 or 位）；
+⑧ ★★返回 8 位掩码写 work+0x40（宿主1/2 都做 mov [work+0x40],eax）；
+⑨ ★★宿主1 预置 work+0x40=0xFFFFFFFF 再调用（-1 哨兵防早退）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「8 邻域水判定位掩码收集器」）、8 邻域表
+  （this+0x13C）的精确布局与步进规律（4/8/0x7F8 交替的业务含义）、
+  work+0x40/work+0x4A 字段精确语义（状态/标志推断）、模式 0/1/2 的精确
+  业务场景（三宿主各用其一）、六模板（0xC7/0x7C/0xF1/0x1F/0xC6/0x6C）
+  与 0xB/0x1A/0xA0/0x11 掩码组合的精确地形含义、三宿主业务（FUN_0057a320
+  8 格循环 / FUN_0057a430 region 编排 / FUN_0057acf0 batch 347 处理器 3）。
