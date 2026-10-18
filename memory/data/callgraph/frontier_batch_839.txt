@@ -1,0 +1,120 @@
+frontier batch 839 —— 0x007CC682 宽字符子串查找器（wcsstr 形态，A-B 偏移技巧）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=106 / body=65B）。
+TARGET = 0x007CC682（65B，0x7CC682-0x7CC2C2，cdecl 2 栈参 ret）。
+★★推断名：**宽字符子串查找器（wcsstr 形态）**——2 栈参（A=被查串、B=子串，
+均为宽字符指针），返回 B 在 A 中首次出现位置指针，未命中/被查串空返 0。
+0x7C-0x7D = MSVC6 static CRT 区（项目记忆实锤），与 batch 097/126 的
+0x7CA405(wcslen)/0x7CA489(wcscpy)/0x7CA45F(wcscat) 同区；本函数用
+`edx = A-B` 偏移技巧，是 MSVC6 CRT strstr/wcsstr 族的典型手写/库实现形态。
+
+一、函数体全读（65B，disasm 0x7CC682 0x60）
+-----------------------------------------------
+参数契约（cdecl 2 栈参）：
+  [esp+4] = 栈参 1 = A（被查宽字符串指针）
+  [esp+8] = 栈参 2 = B（子串宽字符串指针）
+  返回 eax = B 在 A 中首次出现位置指针 / 0（未命中或 A 空）
+机器码（65B 全读）：
+  007cc682  mov eax,[esp+4]（★栈参 1 A）
+  007cc686  push esi / push edi
+  007cc688  mov dx,word[eax]（★A[i]）/ test dx,dx / je 0x7CC6BE
+                                            ; ★A 空 → 返 0（xor eax,eax）
+  007cc690  mov ecx,[esp+0x10]（★栈参 2 B——push×2 后 +0x10 偏移）
+  007cc694  mov edx,eax / sub edx,ecx（★★edx = A - B 常量偏移）
+  007cc698  内层循环：mov si,word[ecx]（★B[j]）/ test si,si
+    / je 0x7CC6B4（★B[j]==0 → 跳到 B 终止检查）
+  007cc6a0  movzx edi,word[edx+ecx]（★★A[j] = [A-B+ecx]——偏移技巧取值）
+    / movzx esi,si / sub edi,esi（★A[j]-B[j] 比较）
+  007cc6a9  jne 0x7CC6B4（★不匹配 → 跳到 B 终止检查）
+  007cc6ab  inc ecx / inc ecx（★B += 1 wchar = 2B）
+    / cmp word[edx+ecx],0（★A[j+1] == 0?）/ jne 0x7CC698（★A 未完继续内层）
+  007cc6b4  cmp word[ecx],0（★B[j]==0?）/ je 0x7CC6C0
+                                            ; ★B 耗尽 → 返 eax（匹配命中！）
+  007cc6ba  inc eax / inc eax（★A += 1 wchar 推进）/ jmp 0x7CC688（★外层重试）
+  007cc6be  xor eax,eax（★A 空 → 返 0）
+  007cc6c0  pop edi / pop esi / ret
+语义：**宽字符子串查找器（wcsstr 形态，推断名）**——在 A 中查找子串 B：①
+A 为空 → 返 0；② 外层沿 A 逐宽字符推进（A+=2）；③ 内层用 `edx=A-B` 常量偏
+移技巧同步读 A[j]（[edx+ecx] = A-B+B_j = A_j）与 B[j] 逐宽字符比较；④ B 耗
+尽（B[j]==0，j 处 B 全程匹配）→ 返 eax（A 中命中位置）；⑤ A 提前耗尽（比较
+中 A[j]==0）或字符不匹配 → 外层 A+=2 重试；⑥ A 空 → 0。★核心技巧：edx=A-B
+在进入内层前算一次，内层每次读 A[j] 用 [edx+ecx]（ecx 沿 B 走）——避免内层
+重复计算 A[j] 地址（MSVC6 CRT strstr 族同款偏移优化）。
+
+二、调用点（25 处 E8，三宿主）
+--------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x7CC682）：**命中 25 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) FUN_00778f30 [0x778F30-0x77922B] body=764 —— 12 处（0x778F54/8F8F/8FCD/
+     900B/9049/9087/90C5/9103/9141/917F/91BD/91FB）
+  2) FUN_00779230 [0x779230-0x77964D] body=1054 —— 12 处（0x779272/92C4/9316/
+     9368/93BA/940C/945E/94B0/9502/9554/95A6/95F8）
+  3) FUN_007b73f0 [0x7B73F0-0x7B75F7] body=520 —— 1 处（0x7B7422）
+现场 disasm 核验：
+  FUN_00778f30（0x778F40）：mov esi,...（★前序获取被查串）→ push 0x84A0F8
+    （★★常量串/键——栈参槽位 2）→ mov ecx,esi → call 0x7B7100（★★batch 112
+    宽字符串 getter——取 A 内部指针）→ push eax（★结果=A 指针，栈参槽位 1）
+    → call 0x7CC682（★本函数）→ add esp,8（★★清理 2 栈参——实锤 cdecl
+    2 栈参）→ test eax / je 0x778F82（未命中分支）→ 命中: push 0x7F / push
+    0x84A0D0 / ...（★后续按命中处理——0x84A0D0 另一常量）
+  FUN_00779230（0x779260）：call 0x734E60（DebugLog 前序）→ lea ecx,[esp+8]
+    → push eax → call 0x7B7100（getter）→ push eax（★A 指针）→ call 0x7CC682
+    → add esp,8 / test eax / je 0x7792A3（→ 未命中分支 push 0x84A0F8/0xC0/
+    0x84A0D0 DebugLog 三连）
+  FUN_007b73f0（0x7B7410）：cmp dword[edi],0 / je 0x7B757E（★A 空门控）→
+    mov eax,[esp+0x20]（★B 指针）→ push eax（栈参 2）→ push edi（★栈参 1 A）
+    → call 0x7CC682 → add esp,8 → mov [esp+0x18],eax（★存结果）→ test eax
+    / je 0x7B751F（未命中分支）→ mov ebp,eax / sub ebp,edi（★★命中偏移 =
+    结果 - A——调用方求匹配位置偏移）→ je 0x7B749F（偏移 0 分支）→ lea
+    ecx,[ebp+1]（★偏移+1 后续处理）
+★要点：25 处调用点中 24 处集中在 0x778xxx/0x779xxx 区两个宿主（FUN_00778f30/
+FUN_00779230——相邻大函数，各 12 处同构调用：A=0x7B7100 getter 结果、B=常
+量串提交），1 处 FUN_007b73f0（A=edi、B=[esp+0x20]，命中求偏移 sub ebp,edi）
+——「常量键在串中查找/定位」惯用（字符串包含判断 + 偏移提取）。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x7B7100 —— ★★已登记（batch 112「宽字符串 getter/索引访问」——本函数=
+    其调用现场：A 指针来源；mov eax,[ecx] → 空兜底 [0x887734]）
+  0x734E60 —— ★★已登记（DebugLog——FUN_00779230 现场调用）
+  0x7CA405/0x7CA489/0x7CA45F —— ★★已登记（batch 097/126 wcslen/wcscpy/
+    wcscat——本函数不调用它们（自实现比较），但同 0x7C CRT 串函数区家族）
+  0x84A0F8 —— ★新常量（串/键——FUN_00778f30 现场栈参 2）
+  0x84A0D0 —— ★新常量（命中/未命中分支 DebugLog 串）
+  宿主 FUN_00778f30/FUN_00779230/FUN_007b73f0 —— ★未登记（0x77/0x7B 区
+    字符串处理宿主）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★batch 112（0x7B7100 宽字符串 getter——本函数 = 其消费现场：25 处调用
+    点中 24 处 A 源 = getter 结果）
+  ★★batch 097/126（0x7CA405 wcslen/0x7CA489 wcscpy/0x7CA45F wcscat——同
+    0x7C CRT 串函数区；本函数是手写比较版 wcsstr 与库函数并存）
+  ★★batch 062/061/090/085（窄串族）/097/134/143/156/125（宽串 operator= 族）
+    ——0x7Bxxxx 字符串类区域整体语境
+  ★★0x7C-0x7D 代码区 = MSVC6 static CRT（项目记忆 ra2_code_region_layout_
+    crt_provenance——本函数同区，strstr/wcsstr 系属 CRT 或 Westwood 手写
+    并存推断）
+
+五、原版怪癖（照抄）
+-------------------
+① `edx = A - B` 偏移技巧（内层 [edx+ecx] 读 A[j]——子串查找标准优化形态，
+   每次外层重算 edx 但内层不重算 A 地址）；
+② A 空直接返 0（不检查 B——空被查串恒败）；
+③ B 空则首次外层即命中并返 A 指针（B[j]==0 立即走终止检查 → 返 eax——
+   wcsstr("", x) 习惯语义）；
+④ cdecl 2 栈参 ret（调用方 add esp,8 清理——非 thiscall）；
+⑤ 未命中返 0（不区分「A 空」与「无匹配」——调用方统一按 0 处理）；
+⑥ 命中返回 A 内指针（非偏移量——调用方自行 sub 求偏移，如 FUN_007b73f0
+   现场 sub ebp,edi）；
+⑦ A+=2 用 inc eax/inc eax（非 add eax,2——编译器惯用）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「宽字符子串查找器 wcsstr」——MSVC6 CRT 或
+Westwood 手写推断，未与 CRT 源码逐条比对）、0x84A0F8 常量串内容（未读——
+FUN_00778f30 查找的键推断）、宿主 FUN_00778f30/FUN_00779230/FUN_007b73f0
+业务场景（字符串包含/键定位推断）、B 常量串提交流（调用点提交的串来源——
+代码区常量推断）。
