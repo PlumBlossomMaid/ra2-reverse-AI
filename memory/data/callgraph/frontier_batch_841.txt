@@ -1,0 +1,137 @@
+frontier batch 841 —— 0x007CB19C 流锁保护的流操作包装（flush 内核，Enter→内核→Leave）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=104 / body=47B）。
+TARGET = 0x007CB19C（47B，0x7CB19C-0x7CB1CA + nop 垫，cdecl 1 栈参 ret）。
+★★推断名：**流锁保护的流操作包装（flush 内核版）**——栈参 1=FILE* 流槽；
+空指针走 0x7CB25E（空指针处理路径）；非空则 流锁 Enter（0x7CB3F9，batch 046
+已登记）→ 内核操作（0x7CB1CB，内部调 0x7CB1F9 flushbuf 底层 batch 049 已登
+记）→ 流锁 Leave（0x7CB44B，batch 046 已登记）→ 返回内核结果。与 batch 226
+的 0x7CA75B（FILE 关闭 fclose 家族）同一「锁包裹」模式；batch 260 的
+0x53E770（会话模式消息泵）partial 已点名「call 0x7CB19C（释放未登记）」——
+本批兑现。
+
+一、函数体全读（47B，disasm 0x7CB19C 0x50）
+-----------------------------------------------
+参数契约（cdecl 1 栈参 ret）：
+  [esp+8]（push esi 后）= 栈参 1 = FILE* 流槽（esi）
+  返回 eax = 内核操作结果（0x7CB1CB 返回值透传）
+机器码（47B 全读）：
+  007cb19c  push esi / mov esi,[esp+8]（★栈参 1 流槽）
+  007cb1a1  test esi,esi / jne 0x7CB1AE（★非空 → 主路径）
+  007cb1a5  push esi（★空指针 → 0x7CB25E）→ call 0x7CB25E
+    / pop ecx / pop esi / ret              ; ★空流槽走空指针处理路径
+  007cb1ae  push edi / push esi（★传流槽）→ call 0x7CB3F9
+                                            ; ★★流锁 Enter（batch 046 已登记）
+  007cb1b5  push esi → call 0x7CB1CB        ; ★★内核操作（flush 内核，见下）
+  007cb1bb  push esi → mov edi,eax（★保存内核结果）→ call 0x7CB44B
+                                            ; ★★流锁 Leave（batch 046 已登记）
+  007cb1c3  add esp,0xC / mov eax,edi（★返内核结果）
+    / pop edi / pop esi / ret
+语义：**流锁保护的流操作包装（推断名）**——① 栈参 1=FILE* 流槽，空指针走
+0x7CB25E（空指针处理路径——另一出口）；② 非空则「流锁 Enter（0x7CB3F9）→
+内核操作（0x7CB1CB）→ 流锁 Leave（0x7CB44B）」三步，返回内核结果。★与
+batch 226 的 0x7CA75B（fclose 家族）同一「锁包裹」模式——差异：0x7CA75B
+检查流槽 +0xC _IOSTRG(0x40) 字符串流分支，本条检查 esi==0 空指针分支。
+
+二、内核 0x7CB1CB 核验（disasm 0x7CB1CB 0x40）
+------------------------------------------------
+0x7CB1CB（0x7CB1CB-0x7CB1F8，cdecl 1 栈参 ret）：
+  007cb1cb  push esi / mov esi,[esp+8]（★流槽）
+  007cb1d0  push esi → call 0x7CB1F9（★★flushbuf 底层——batch 049 已登记
+    「_flushbuf 底层」；0x7CA78C FILE 关闭内核同款被调！）
+  007cb1d6  test eax,eax / pop ecx / je 0x7CB1E0（★flush 结果==0 继续）
+    / or eax,0xFFFFFFFF（★flush 失败 → -1）/ pop esi / ret
+  007cb1e0  test byte[esi+0xD],0x40（★流槽+0xD 标志 0x40 检查）
+    / je 0x7CB1F5（★无 0x40 → 返 0）
+  007cb1e6  push [esi+0x10]（★流槽+0x10 = OS 句柄 fd——batch 226 流槽布局）
+    → call 0x7D30D1（★句柄操作——未登记）→ neg eax / pop ecx / pop esi
+    / sbb eax,eax / ret（★★neg/sbb 惯用——fd 操作结果 0/-1）
+  007cb1f5  xor eax,eax / pop esi / ret（★返 0）
+★内核语义：flushbuf（0x7CB1F9）失败返 -1；成功继续 → 流槽+0xD 带 0x40 时对
++0x10（fd）调 0x7D30D1 并 neg/sbb 得 0/-1——「flush + fd 操作」两段式内核。
+
+三、空指针路径 0x7CB25E（disasm 0x7CB25E 0x20 头段）
+-------------------------------------------------------
+0x7CB25E：push ebx/push esi/push edi → push 2 → call 0x7CD9F5（★未登记）→
+xor esi,esi → cmp [0xB79BE0],esi / jle ...（★全局计数判空循环）→ 继续
+[0xB78BC4] 表遍历——独立处理路径（空流槽清理推断），非本批重点。
+
+四、调用点（7 处 E8，三宿主+二间隙）
+--------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x7CB19C）：**命中 7 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x53E17C —— ★函数间隙（0x53E1D0 前邻未收录宿主）
+  2) FUN_0053e1d0 [0x53E1D0-0x53E3B7] body=488 —— 2 处（0x53E230/0x53E2A9）
+  3) 0x53E666 —— ★函数间隙（0x53E6B0 前邻）
+  4) FUN_0053e6b0 [0x53E6B0-0x53E71B] body=108 —— 1 处（0x53E708）
+  5) FUN_0053e770 [0x53E770-0x53EBF3] body=1156 —— 2 处（0x53E940/0x53EAC0；
+    ★★batch 260 已登记「会话模式消息泵」——partial 点名本函数！）
+现场 disasm 核验：
+  FUN_0053e6b0（0x53E6F0）：mov edx,[0xAA0468]（★会话区全局——batch 260
+    域）/mov ecx,[0xAA0464] → push eax → call 0x409030（★同区）→ mov eax,
+    [0xAA0468] → push eax → call 0x7CB19C（★本条——[0xAA0468] 流槽释放）→
+    add esp,4 → push 0xAA0418（★队列全局）→ call [0x7E11EC]（★导入槽——
+    batch 260 同款队列处理）——「[0xAA0468] 经本条释放 + [0xAA0418] 队列推
+    进」会话区释放链
+  FUN_0053e1d0（0x53E228）：jmp [ecx+0xAA0468] 头段 → 0x53E230 push eax →
+    call 0x7CB19C → add esp,4 → mov ebx,[0x7E11EC] → ... → 0x53E2A9 二次调用
+    → push 0xAA0418 → call ebx——同款双调用（0x53E230/0x53E2A9 各一次释放+
+    队列推进，与 batch 260 的 0x53E770 Esc 分支结构一致）
+  FUN_0053e770（0x53E940/0x53EAC0）：batch 260 已登记的 Esc/特殊分支释放链
+    「push [0xAA0468]/call 0x7CB19C（释放未登记）→ push 0xAA0418/call
+    [0x7E11EC]」——本批两处调用点正是该链成员
+★要点：五处实调用点全部在 0x53Exxx 会话/输入区，且全部以 [0xAA0468]（会话
+区流槽全局）为参数调本条做「锁保护释放」，随后 [0x7E11EC] 队列推进——与
+batch 260 的 0x53E770（会话模式消息泵）同域同链。
+
+五、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x7CB3F9 —— ★★已登记（batch 046 流锁 Enter——本函数 = 其调用现场）
+  0x7CB44B —— ★★已登记（batch 046 流锁 Leave——本函数 = 其调用现场）
+  0x7CB1F9 —— ★★已登记（batch 049 flushbuf 底层——内核 0x7CB1CB 内调用
+    现场；batch 226 的 0x7CA78C FILE 关闭内核同款被调）
+  0x53E770 —— ★★已登记（batch 260 会话模式消息泵——partial「call
+    0x7CB19C（释放未登记）」本批兑现：0x53E940/0x53EAC0 两处调用点正是其
+    Esc 分支释放链）
+  0x7CA75B/0x7CA78C —— ★★已登记（batch 226 FILE 关闭 fclose 家族——同
+    「锁包裹」模式参照：Enter→内核→Leave + 0x7CB1F9 flushbuf 共用）
+  0x7CB25E/0x7D30D1/0x7CD9F5 —— ★未登记（空指针路径/句柄操作/内部——
+    留新候选）
+  0x006E5820 不存在（本条 0x7CB19C）—— ★未登记（本批首次登记）
+
+六、跨批次闭合（全锚点）
+-----------------------
+  ★★batch 046（0x7CB3F9/0x7CB44B 流锁 Enter/Leave——本函数 = 两锚点调用
+    现场；「标准流走 [0x87BF50,0x87C1B0) 线性映射 key=(ptr-0x87BF50)>>5 +
+    0x1C，用户流走 ptr+0x20 临界区」——本函数锁保护的就是这个）
+  ★★batch 049（0x7CB1F9 flushbuf 底层——内核 0x7CB1CB 调用现场；与 batch
+    226 的 0x7CA78C FILE 关闭内核同款——flush 内核共享）
+  ★★batch 226（0x7CA75B/0x7CA78C FILE 关闭家族——同「锁包裹」模式；流槽
+    布局 +0xC 标志/+0x10 fd/+0x1C tmpname 本函数内核复用 +0xD/+0x10 字段）
+  ★★batch 260（0x53E770 会话模式消息泵——partial「call 0x7CB19C（释放未
+    登记）」本批兑现：Esc 分支释放链成员）
+  ★★0x7C-0x7D = MSVC6 static CRT（项目记忆实锤——本函数同区流锁/IO 家族）
+
+七、原版怪癖（照抄）
+-------------------
+① 空流槽走 0x7CB25E 独立路径（非直接返 0/非锁包裹——空指针有专门处理）；
+② 「流锁 Enter → 内核 → 流锁 Leave」三步无返回值合并（内核结果 edi 透传
+   ——Leave 返回值丢弃）；
+③ 内核 0x7CB1CB：flushbuf（0x7CB1F9）失败返 -1（or eax,0xFFFFFFFF）——
+   flush 失败直接短路；成功才检查 +0xD 0x40 并操作 fd（+0x10）；
+④ fd 操作用 neg/sbb 惯用（call 0x7D30D1 → neg eax → sbb eax,eax——结果
+   0/-1，非直接比较）；
+⑤ 流槽 +0xD 带 0x40 位才操作 fd（无 0x40 返 0——字符串流/无句柄跳过）；
+⑥ 调用点全以 [0xAA0468]（会话区流槽全局）为参 + [0x7E11EC] 队列推进成对
+   （释放+队列推进惯用——batch 260 的 0x53E770 Esc 分支同款）。
+
+八、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「流锁保护的流操作包装」——flush 内核版；与
+0x7CA75B fclose 家族的分工未实锤：本条是 fflush 内核还是 fclose 内层路径）、
+0x7CB25E 空指针路径完整语义（未读全——[0xB79BE0]/[0xB78BC4] 全局计数遍历
+推断）、0x7D30D1 身份（fd 操作——未登记新候选）、0x7CD9F5 身份（0x7CB25E
+内调用）、[0xAA0468] 流槽全局的精确身份（会话区——batch 260 同域推断）、
+0x53E1D0/0x53E6B0 宿主业务（会话区释放链成员推断）。
