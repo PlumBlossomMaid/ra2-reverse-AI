@@ -1,0 +1,209 @@
+frontier batch 836 —— 0x0057B440 RMG 全局对象驱动格网处理器（双计数菱形遍历 + cell 归属/高度写入）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=108 / body=848B）。
+TARGET = 0x0057B440（848B，0x57B440-0x57B78D，thiscall 6 栈参 ret 0x18）。
+★★推断名：**RMG 全局对象驱动格网处理器**——从 [0x880990] 全局对象（batch
+347 实锤的 RMG 工作数组管理尾部释放对象）经虚表槽 0x2C/0x9C 取数据，按
+[ebp+0x2E8]/[ebp+0x2E4] 双计数双重循环遍历菱形内格网，经 MapSeedClass::
+Instance [0xABDFD8]（batch 562 实锤）调 0x5A00C0/0x5A0090 处理，条件写
+cell 归属/高度。
+
+一、函数体全读（848B，disasm 0x57B440 0x350）
+------------------------------------------------
+参数契约（thiscall 6 栈参 ret 0x18）：
+  ecx = this（MapClass::Instance [0x87F7E8]——调用点 3 现场实锤）
+  [esp+0x30] = 栈参 1 = cell+0x38 归属下界（区间判定 jl 用）
+  [esp+0x34] = 栈参 2 = cell+0x38 归属上界（区间判定 jg 用）
+  [esp+0x38] = 栈参 3 = 高度字节（写 cell+0x11B 用：[ebp+0x28]+此值）
+  [esp+0x3C] = 栈参 4 = 数值参（0x57B5DE 判定/0x5A0090 传参）
+  [esp+0x40] = 栈参 5 = 输出字节（失败路径写 0：0x57B718/0x57B72B/0x57B781）
+  [esp+0x44] = 栈参 6 = 标志字节（test al,al 双分支）
+机器码（848B 全读）：
+  0057b440  mov ecx,[0x880990]（★★全局对象——batch 347 实锤）/sub esp,0x1c
+    /mov eax,[ecx] → call [eax+0x2C]（★虚表槽 0x2C 取类型）
+  0057b452  cmp eax,0x12 / jne 0x57B784      ; ★★类型必须 == 0x12(18)
+  0057b45b  mov al,[esp+0x44]（栈参 6）/ test / je 0x57B46B
+    / mov [esp+0x3C],0                      ; ★标志非零 → 栈参 4 清零
+  0057b46b  mov ebp,[0x880990] / mov edx,[ebp]
+    / call [edx+0x9C]（★★虚表槽 0x9C 取数据）
+  0057b480  test eax,eax / je 0x57B784      ; ★数据空 → 直接失败
+    / mov [esp+0x24],eax（★数据指针）
+  0057b48c  mov eax,[ebp+0x2E8]（★外层计数）/ jle 0x57B705（★<=0 → 成功早退）
+  0057b4a2  mov edi,[0x87F8DC]（★★MapRect.W batch 009 实锤）
+  0057b4a8  mov ecx,[ebp+0x2E4]（★内层计数）/ jle 0x57B693
+  外层循环（[esp+0x14] 0..+0x2E8）：
+    内层循环（[esp+0x1C] 0..+0x2E4）：
+  0057b4bc  mov ecx,[0x88095C]（★★新全局——X 基址）/ add ecx,eax（+外层索引）
+    / mov ax,word[esp+0x14] / add ax,word[0x88095E]（★Y 基址 +外层索引 word）
+      → 组装 CellStruct [esp+0x20]（x=word[+0]/y=word[+2]）
+  0057b4e8  菱形四判定：lea edx,[ecx+eax]（x+y）/ cmp edx,edi（W）
+    / jle 0x57B67C（★x+y<=W 跳过）/ sub esi,ecx-eax / cmp W / jge 跳过
+    / sub esi,eax-ecx / cmp W / jge 跳过（★x-y/y-x 两路）
+  0057b50b  mov esi,[0x87F8E0]（★★MapRect.H batch 009 邻域）/lea esi,[edi+esi*2]
+    （★W+2H）/ cmp edx,esi / jg 0x57B67C（★x+y>W+2H 跳过——菱形边界）
+  0057b51c  shl eax,9（★Y<<9 512 列宽——batch 229/235 同款）/ add eax,ecx
+    / js 0x57B537 / cmp 0x40000 / jge 0x57B537（★边界）
+  0057b52a  mov edx,[0x87F924]（★★cell 数组基址）/ mov esi,[edx+eax*4]
+    / test esi,esi / jne 0x57B542 → 越界: mov [0xABDC74],ebx（★坐标缓存）
+    / mov esi,0xABDC50（★★哑元 cell——batch 081/229/235 同款）
+  0057b542  mov ebx,[ebp+0x2E4] / mov ecx,[esp+0x1C] / imul ebx,[esp+0x14]
+    （★内层×外层）/ add ebx,ecx → mov eax,[esp+0x24]
+    / mov ebp,[eax+ebx*4+0x10]（★★数据项 = 数据 + (内×外+内)*4 + 0x10）
+    / test ebp / je 0x57B678（★数据项空 → 跳过）
+  0057b567  lea ecx,[esp+0x18]（★坐标）/ push / mov ecx,0xABDFD8
+    （★★MapSeedClass::Instance batch 562 实锤）/ call 0x5A00C0（★★batch 791
+    同款被调——MapSeedClass 方法）/ test → 分支
+  标志分支（栈参 6）：
+  0057b576  mov cl,[esp+0x44] / test / je 0x57B5DE（★零分支）
+  0057b58c  非零分支：mov eax,[esi+0x38]（cell 归属）/ mov edx,[0xABAD28]
+    （★★batch 216 区间基址）/ sub eax,edx / mov ecx,[宿主+0x294]（★数值）
+    / sub ecx,edx → 区间判定（[0,0x29] 内才继续）
+  0057b5b9  mov eax,[eax*4+0x82A89C]（★★新表）/ mov edx,[ecx*4+0x82A89C]
+    / sub / cdq / xor / sub（★abs 差）/ cmp 3 jl / cmp 5 jle 0x57B724
+    （★★差 ∈ [3,5] → 走 0x57B724 失败）
+  0057b5de  零分支：test eax,jle 0x57B580 / mov edi,[esp+0x3C]（栈参 4）
+    / cmp / je 0x57B58C / cmp edi,-1 / je 0x57B584
+  0057b5ef  mov edx,[esp+0x10]（宿主）/ mov edi,[esi+0x38]（cell 归属）
+    / mov eax,[0xABAD28] / mov ebp,[edx+0x294] / sub 两路（★同款区间换算）
+    / mov ecx,esi / call 0x486380（★★无主谓词 batch 082）
+  0057b60c  test al / je 0x57B6E1 → 通过: mov eax,[esp+0x3C]（栈参 4）
+    / lea ecx,[esp+0x18]（坐标）/ push eax / push ecx / mov ecx,0xABDFD8
+    / call 0x5A0090（★★batch 791 同款被调——MapSeedClass 方法）
+  0057b62c  mov ecx,esi / call 0x486380（二次无主谓词）/ jne 0x57B650
+  0057b637  mov eax,[esi+0x38] / mov ecx,[esp+0x30]（栈参 1）/ cmp jl 0x57B737
+    / cmp [esp+0x34]（栈参 2）jg 0x57B737（★归属区间判定）
+  0057b650  写入：mov eax,[esp+0x10]（宿主）/ mov ecx,[eax+0x294]（★数值）
+    / mov al,[esp+0x38]（栈参 3 高度字节）/ mov [esi+0x38],ecx（★★cell+0x38
+    归属 = 宿主+0x294）/ mov byte[esi+0x11A],bl（★★cell+0x11A 标志）
+    / mov dl,[ebp+0x28] / add dl,al / mov byte[esi+0x11B],dl（★★cell+0x11B
+    高度 = 数据项+0x28 + 栈参 3）
+  0057b678  内层++ / cmp +0x2E4 / jl 内层 → 外层++ / cmp +0x2E8 / jl 外层
+  0057b6aa  pop 族 / mov al,1 / ret 0x18（★成功 1）
+  0057b711  失败路径 1：mov ecx,[esp+0x40]（栈参 5）/ mov byte[ecx],0
+    / xor al,al / ret 0x18（★写 0 返失败）
+  0057b724  失败路径 2（差∈[3,5]）：mov edx,[esp+0x40] / mov byte[edx],0
+    / xor al,al / ret 0x18
+  0057b737  归属区间外：mov ecx,esi / call 0x4865B0（★★单区间谓词 batch 285）
+    / je 0x57B757 → call 0x578D80（★未登记）/ jne 0x57B77D
+  0057b757  区间判定：[宿主+0x294] vs [0xABAD28] 与 +0x2A（★★batch 216 区间 1）
+    / mov ecx,esi / call 0x4863D0（★★多区间谓词 batch 285）/ je 0x57B784
+  0057b77d  mov eax,[esp+0x40]（栈参 5）/ mov byte[eax],0（★失败写 0）
+  0057b784  pop 族 / xor al,al / ret 0x18（★失败 0）
+
+二、语义（推断名）
+-----------------
+**RMG 全局对象驱动格网处理器（推断名）**——① 从 [0x880990] 全局对象（batch
+347 的 0x57A0C0 尾部释放对象，batch 102 AnnounceExpiredPointer 清理槽）经
+虚表槽 0x2C 验证类型==0x12、虚表槽 0x9C 取数据（空则失败）；② 按数据
++0x2E8（外层）/ +0x2E4（内层）双计数双重循环遍历格网（batch 138 的
+0x5A6C10「[0xA8ED2C] 表项 +0x2E4/+0x2E8 双计数」同款）；③ 每格坐标 =
+[0x88095C] + 外层索引（X）/[0x88095E] + 外层索引 word（Y，新全局），过菱形
+四判定（[0x87F8DC]=W/[0x87F8E0]=H，batch 009/209 实锤）与 Y*512+X 查
+[0x87F924] cell 数组（越界回落哑元 0xABDC50 + [0xABDC74] 坐标缓存——batch
+229/235 同款）；④ 数据项 = 数据 + (内×外+内)*4 + 0x10（空跳过）；⑤ 经
+MapSeedClass::Instance [0xABDFD8]（batch 562 实锤）调 0x5A00C0（batch 791
+同款被调——坐标处理）判定；⑥ 按栈参 6 标志分两条分支：非零分支查表
+[0x82A89C] 两索引 abs 差 ∈ [3,5] → 失败路径 2；零分支经 0x486380 无主谓词
+（batch 082）通过后调 0x5A0090（MapSeedClass 方法）；⑦ 二次 0x486380 +
+归属区间判定（栈参 1/2 界）→ 写入 cell+0x38 = 宿主+0x294 数值 / cell+0x11A
+= bl / cell+0x11B = 数据项+0x28 + 栈参 3（高度）；⑧ 区间外走 0x4865B0/
+0x578D80/0x4863D0 谓词链（batch 285/288 同族）；⑨ 成功 al=1/失败 al=0，
+失败写栈参 5 输出字节 = 0。
+
+三、调用点（14 处 E8，三宿主）
+--------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x57B440）：**命中 14 处**
+归属反查（_locate_816_callers.py）：
+  1) FUN_00579620 [0x579620-0x579B67] body=1352 —— 1 处（0x579B3F）
+  2) FUN_0057ACF0 [0x57ACF0-0x57B207] body=1304 —— 1 处（0x57B1E3，
+    ★★batch 347 实锤「RMG 处理器 3 mode=1/2」——0x57A0C0 四轮遍历第 3/4 轮）
+  3) FUN_0059E740 [0x59E740-0x5A004C] body=6413 —— 12 处（0x59EF7C/EFF7/
+    F2B2/F362/F3DD/F76A/F80C/F88B/FB2D/FBD6/FC55/FFC7——★★batch 834 宿主！
+    河湖调度链大函数）
+现场 disasm 核验：
+  FUN_0059E740（0x59EF60）：push 0/lea ecx,[esp+0x17]（★坐标）/mov edx,
+    [edi+0x308]（★宿主+0x308）/mov ecx,0x87F7E8（★★this=MapClass::Instance
+    ——0x59EF6E 实锤！）/push edx/push ebx/push 0x10000/push 0 → call 0x57B440
+    → mov eax,[0xA8ED2C]（★★batch 222/322 全局对象表）/mov ecx,[0xAA073C]
+    /mov edx,[eax+ecx*4+0xC]/mov [0x880990],edx（★★★写 [0x880990] = 表项！
+    ——本函数读取的全局对象正是 [0xA8ED2C] 表项——batch 138 的 0x5A6C10
+    查的同一张表！）
+  FUN_00579620（0x579B20）：movsx edx,byte[ebp+0x11B]（★cell 高度）/mov ecx,
+    [esp+0x2C]/lea eax,[esp+0x28]/push 0/push eax/push ecx/push edx/push 0/
+    push 0 → mov ecx,edi → call 0x57B440 → test al / jne 0x579B5C
+  FUN_0057ACF0（0x57B1D0）：mov eax,[0xABAD28]（★★batch 216 区间基址）
+    /lea ecx,[eax+0x29]（★+0x29 上界）/push ecx/push eax → mov ecx,[esp+0x30]
+    → call 0x57B440 → mov al,[esp+0x24] → test → 收尾 —— 栈参 1/2 =
+    [0xABAD28] / [0xABAD28]+0x29（★区间直接作为归属上下界！）
+
+四、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  [0x880990] —— ★★已登记（batch 102 AnnounceExpiredPointer 清槽 + batch 347
+    0x57A0C0 尾部 mov [0x880990],0 + 释放 [0x88098C]——本函数 = 其读取现场）
+  [0x87F8DC]/[0x87F8E0] —— ★★已登记（batch 009/209 MapRect.W/H）
+  [0x87F924] —— ★★已登记（batch 229/235 cell 数组基址）
+  0xABDC50/0xABDC74 —— ★★已登记（batch 081/229/235 哑元 cell/坐标缓存）
+  [0xABDFD8] —— ★★已登记（batch 562 MapSeedClass::Instance）
+  0x486380 —— ★★已登记（batch 082 无主谓词）
+  0x4863D0 —— ★★已登记（batch 285 多区间判定）
+  0x4865B0 —— ★★已登记（batch 285 单区间简化版 [0xABAD28]+0x2A）
+  [0xABAD28] —— ★★已登记（batch 216 区间基址 [0xABAD28,+0x2A)）
+  [0xA8ED2C] —— ★★已登记（batch 138/222/322 全局对象表）
+  0x5A00C0 / 0x5A0090 —— ★batch 791 提及未登记（同族被调——MapSeedClass
+    方法推断；本批再证调用现场：this=0xABDFD8 + 坐标传参）
+  0x578D80 —— ★未登记（归属区间外谓词链——留新候选）
+  [0x88095C]/[0x88095E] —— ★新全局（格网坐标基址）
+  [0x82A89C] —— ★新表（区间差判定表——差 ∈ [3,5] 失败）
+
+五、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 347（0x57A0C0 RMG 工作数组管理——[0x88098C]/[0x880990] 全局对
+    象对 + 四轮 CellIterator 调处理器链——本条 = [0x880990] 读取现场 + 处理
+    器链一员 0x57ACF0 调用现场，且 0x57ACF0 正是 batch 347 预告的「处理器 3
+    mode=1/2」！）
+  ★★batch 138（0x5A6C10 [0xA8ED2C] 表查询——表项虚表槽 0x9C + +0x2E4/+0x2E8
+    双计数遍历——本函数同款双计数 + 同虚表槽 0x9C，且调用点现场实锤
+    [0x880990] = [0xA8ED2C] 表项：[eax+ecx*4+0xC]）
+  ★★batch 791（0x579010 8 邻域格网递归检查器——0x5A00C0/0x5A0090 this=
+    0xABDFD8 同款被调 + [0x87F924]/0xABDC50/[0xABDC74] 格网三件套 + Y<<9 512
+    列宽——本函数同族被调链，map 邻域处理家族）
+  ★★batch 082/285/288（0x486380/0x4863D0/0x4865B0 谓词族——本函数三连用）
+  ★★batch 216（[0xABAD28] 区间——本函数栈参 1/2 直接用区间 + 0x4863D0
+    同族判定）
+  ★★batch 009/209（[0x87F8DC]/[0x87F8E0] MapRect W/H——菱形边界判定）
+  ★★batch 562（[0xABDFD8] MapSeedClass::Instance——方法调用现场）
+  ★★batch 834（FUN_0059E740 宿主——本函数 12 调用点宿主，河湖调度链交叉）
+
+六、原版怪癖（照抄）
+-------------------
+① [0x880990] 虚表槽 0x2C 类型 == 0x12（18）才继续，否则直接失败——全局
+   对象类型门控；
+② 双重循环坐标组装：X = [0x88095C] + 外层索引、Y = [0x88095E] + 外层索引
+   （内层索引不参与坐标！只做数据项偏移）——★内外层不对称（外层=坐标
+   推进，内层=数据项扫描）；
+③ 数据项偏移 = (内×外+内)*4 + 0x10——数据块按外层行×内层列布局，0x10
+   头部偏移；
+④ 菱形四判定用 [0x87F8DC]/[0x87F8E0]（MapRect W/H）而非 [0xABED04]/
+   [0xABED08]（batch 086 菱形全局）——两套菱形边界全局并存；
+⑤ Y<<9 硬编码 512 列宽（非 [0x89C2DC] side）+ 0x40000 边界 + 越界回落哑元
+   0xABDC50（不返失败——batch 229/235 同款家族怪癖）；
+⑥ 栈参 6 标志双分支：非零分支查 [0x82A89C] 表 abs 差 ∈ [3,5] → 失败路径
+   2；零分支 0x486380 谓词 → 0x5A0090——两条处理路径不共享代码；
+⑦ 写 cell 归属（+0x38 = 宿主+0x294）+ 标志（+0x11A = bl）+ 高度（+0x11B
+   = 数据项+0x28 + 栈参 3）三字段一次写入；
+⑧ 失败写栈参 5 输出字节 = 0（调用方据 [esp+0x24]/[esp+0x28] 字节再判）——
+   失败信号经输出参数传递（FUN_00579620 现场 test al + mov al,[esp+0x28]
+   双检）；
+⑨ 成功路径两处（0x57B6AD 循环完 + 0x57B705 计数<=0 早退——空表也算成功
+   al=1）。
+
+七、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「RMG 全局对象驱动格网处理器」）、[0x880990] 全局
+对象精确身份（[0xA8ED2C] 表项类型——batch 138 未消解，+0x2E4/+0x2E8 计数
+对应结构）、0x5A00C0/0x5A0090 身份（MapSeedClass 方法推断——batch 791 同
+款）、0x578D80 身份（区间外谓词）、[0x82A89C] 表项语义（区间差表推断）、
+[0x88095C]/[0x88095E] 坐标基址写入点（未定位）、cell+0x11A 标志语义、
+[0xAA073C] 全局索引语义（[0xA8ED2C] 表下标推断）。
