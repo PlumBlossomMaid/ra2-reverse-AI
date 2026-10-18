@@ -1,0 +1,125 @@
+frontier batch 897 —— 0x00433270 居中定位坐标计算器（192B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=30 / body=192B）——E8 全局扫描
+实测命中 5 处（0x4xxxx 区——同一呈现/装配家族推断）。
+TARGET = 0x00433270（192B，0x433270-0x43332D，thiscall 1 栈参 ret 4，
+0x433xxx 区）。
+★★推断名：**居中定位坐标计算器（门控链 + 子对象虚表槽 0x78 取 16B
+参考结构 + abs(差)/2 半值居中 + this 偏移合成目标 x/y → 栈参1 对象
+虚表槽 8 五参调度（含 &坐标缓冲）；四调用点形态全「call [0x7E15B8]
+IAT → call 虚表槽 0x60 → push 对象 → mov ecx,宿主 → call」**）**。
+
+一、函数体全读（192B，disasm 0x433270 0xC0 全量）
+------------------------------------------------
+参数契约（thiscall 1 栈参 ret 4）：ecx = this（esi）、[esp+0x54] = 栈参1
+（最终虚表槽 8 调用的目标对象——4 宿主现场实锤 push 1 参）。
+机器码（192B 全读，逐段要点）：
+  门控链: sub esp,0x30 → push ebp/esi → mov esi,ecx（★this）→ mov
+    eax,[esi+0x20]（★★this+0x20=对象指针）→ test → je 0x433328（★空返 0）
+    → cmp [eax],0 → je 0x433328（★[obj]==0 返 0）→ mov ecx,[eax+0x1c]
+    → lea ebp,[eax+0x14]（★ebp=&obj+0x14 锚点结构）→ test → jle
+    0x433328（★obj+0x1C<=0 返 0）→ mov ecx,[ebp+0xc]（★obj+0x20）→
+    test → jle 0x433328（★obj+0x20<=0 返 0）
+  子对象取参考: push ebx/edi → mov edi,[eax+0x10]（★★obj+0x10=子对象）
+    → lea ecx,[esp+0x30]（★&缓冲）→ push ecx → mov ecx,edi → call
+    [edi+0x78]（★★虚表槽 0x78——thiscall 取 16B 参考写入缓冲）→ mov
+    edx,[eax] → push 1 ×2（★参数）→ mov ecx,[eax+4] → push ebp（★参
+    数 &obj+0x14）→ mov [esp+0x20],ecx → push edi（★参数 子对象）→
+    mov edx,[eax+8] → mov [esp+0x28],edx → mov edx,ebp → mov eax,
+    [eax+0xc] → mov ecx,[edx]（★obj+0x14[0]=锚 X）→ mov [esp+0x2c],
+    eax → mov ebx,[edx+4]（★obj+0x14[4]=锚 Y）→ mov eax,[edx+8] →
+    mov [esp+0x38],eax → mov eax,[esi+0x18]（★this+0x18）→ mov edx,
+    [edx+0xc] → mov [esp+0x3c],edx → mov edx,[esp+0x28] → sub eax,edx
+    （★this+0x18 - 参考[8]）→ cdq → sub eax,edx（★abs 惯用签名取正）
+    → mov edx,[esp+0x2c]（★参考[0xC]）→ sar eax,1（★abs(差)/2 半值）
+    → add ecx,eax（★锚X + 半值）→ mov eax,[esi+0x1c]（★this+0x1C）→
+    sub eax,edx（★this+0x1C - 参考[0xC]）→ mov edx,[esi+0x10]（★
+    this+0x10）→ add ecx,edx（★+this+0x10 → 目标 X）→ add ebx,eax
+    （★锚Y + 差 → 目标 Y）→ mov eax,[esi+0x14] → mov [esp+0x30],ecx
+    （★缓冲 X）→ add ebx,eax（★+this+0x14）→ mov ecx,[esp+0x54]（★★
+    栈参1=目标对象）→ mov [esp+0x34],ebx（★缓冲 Y）→ lea eax,[esp+0x30]
+    → mov edx,[ecx] → push eax（★&坐标缓冲）→ call [edx+8]（★★虚表
+    槽 8——五参调用：1/1/&obj+0x14/子对象/&坐标）→ pop edi/ebx/esi/ebp
+    → add esp,0x30 → ret 4
+  收尾: 0x433328 pop 族 → add esp,0x30 → ret 4（★门控失败返 0）
+语义：**居中定位坐标计算器（推断名）**——thiscall 1 栈参：① 门控链
+  （this+0x20 对象 → [obj] 非零 + obj+0x1C>0 + obj+0x20>0，任一失败返
+  0）；② obj+0x10 子对象经虚表槽 0x78 取 16B 参考写到缓冲；③ 居中计
+  算：目标 X = obj+0x14[锚X] + abs(this+0x18 - 参考[8])/2 + this+0x10、
+  目标 Y = obj+0x14[锚Y] + (this+0x1C - 参考[0xC]) + this+0x14；④ 组
+  装 8B 坐标缓冲 [esp+0x30]/[esp+0x34] → 虚表槽 8 五参调用（1/1/
+  &obj+0x14/子对象/&坐标）→ ret 4。★呈现/装配定位器：锚点 + 参考尺
+  寸差半值居中 + this 偏移 → 落地到栈参1 对象槽 8。
+
+二、调用点（5 处 E8，3 宿主+2 间隙全核验）
+----------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x433270）：**命中 5 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x432FEC → FUN_00432e40 [0x432E40-0x43301E] body=479 —— 未登记
+  2) 0x433165 → FUN_00433060 [0x433060-0x433171] body=274 —— 未登记
+  3) 0x4331E2 → 无归属（函数间隙——FUN_004331F0 前）
+  4) 0x433262 → FUN_004331f0 [0x4331F0-0x43326C] body=125 —— 未登记
+  5) 0x433553 → 无归属（函数间隙——0x433260 区尾）
+现场 disasm 核验（四读）：
+  宿主1 FUN_00432e40（0x432FEC，479B 未登记）——现场 0x432FD0-0x432FF1：
+    mov ecx,[esi+4] → push edx → push eax → mov eax,[esp+0x34] → push
+    ebp → push eax → push ecx → call [0x7e15b8]（★★IAT 调用——未登记
+    槽）→ mov edx,[edi] → mov ecx,edi → call [edx+0x60]（★虚表槽 0x60）
+    → push edi（★栈参）→ mov ecx,esi（★this）→ 0x432FEC: call 0x433270
+    ★（本函数）
+  宿主2 FUN_00433060（0x433165，274B 未登记）——现场 0x433150-0x43316A:
+    push ebx → mov ecx,[esi+4] → push ecx → call [0x7e15b8]（★IAT）→
+    mov edx,[edi] → mov ecx,edi → call [edx+0x60]（★槽 0x60）→ push edi
+    → mov ecx,esi → 0x433165: call 0x433270 ★
+  宿主3 FUN_004331f0（0x433262，125B 未登记）——现场 0x433240-0x433266:
+    push 族 → mov eax,[edi+4] → push ebp → push ebx → push eax → call
+    [0x7e15b8]（★IAT）→ mov edx,[esi] → mov ecx,esi → call [edx+0x60]
+    （★槽 0x60）→ pop ebp → push esi（★栈参）→ mov ecx,edi（★this）→
+    0x433262: call 0x433270 ★（★this/栈参与宿主1、2 互换！）
+  间隙1 0x4331E2（FUN_004331F0 前）——现场同款：call [0x7e15b8] → call
+    [eax+0x60] → pop ebp → push esi → mov ecx,edi → call 0x433270 →
+    ret 0xc
+★统一形态：四调用点全「call [0x7E15B8]（IAT）→ call 虚表槽 0x60 →
+  push 对象（edi/esi）→ mov ecx,宿主（esi/edi）→ call 0x433270」——
+  本函数=呈现/装配链的定位计算器，宿主1/2 传 this=esi/栈参=edi、宿主
+  3/间隙传 this=edi/栈参=esi（★对称调用）。
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  [0x7E15B8] —— ★未登记（IAT 槽——batch 251 同类 [0x7E15FC] 文件刷新
+    IAT 参照）
+  虚表槽 0x60/0x78/0x8 —— ★未登记（宿主虚表/子对象槽——方法名未取证）
+  FUN_00432e40/FUN_00433060/FUN_004331f0 —— ★未登记（三宿主）
+  batch 896 的 0x4047B0（0x404xxx 区）—— ★无直接关联（不同区）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★batch 251（0x431DD0 文件刷新——[0x7E15FC] IAT 槽同族参照：[0x7E15B8]
+    是同一 IAT 区另一槽——本批调用点形态「call [0x7E15B8]」记入 IAT 族）
+  ★0x433xxx 区家族（呈现/装配推断——三宿主+本函数同区互文）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★门控链三检（this+0x20 对象 → [obj]/+0x1C/+0x20——任一不满足静默返
+   0，无错误码）；② ★★abs 惯用（cdq → sub eax,edx → sar eax,1 = 绝对
+   值除 2 半值——batch 常见 MSVC 绝对值模板）；③ ★★居中公式不对称
+   （X 用 abs(差)/2 半值、Y 用 (this+0x1C-参考[0xC]) 全差——X/Y 居中
+   对称差照抄）；④ ★★子对象虚表槽 0x78 双用途（返回值 eax 又读
+   [eax]/[eax+4]/[eax+8]/[eax+0xC] 16B——同指针引用）；⑤ ★★虚表槽 8
+   五参调度（1/1/&obj+0x14/子对象/&坐标——参数含锚点指针+子对象实
+   锤）；⑥ ★★[esp+0x54] 栈参1 读取点位于 5 次 push 后（栈深偏移——
+   与 sub 0x30+4 push 配平）；⑦ ★★四调用点 IAT+槽 0x60 前置链统一
+   （呈现链每次调用前先 IAT/槽 0x60——固定装配前奏）；⑧ ★★宿主1/2
+   与宿主3/间隙 this/栈参互换（对称调用双形态）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「居中定位坐标计算器」）、this+0x10/+0x14/
+  +0x18/+0x1C 字段精确语义（中心偏移/尺寸推断）、obj+0x14 锚点结构与
+  +0x1C/+0x20 字段（计数/尺寸推断）、子对象 obj+0x10 身份（参考提供者
+  推断）、虚表槽 0x78 返回 16B 结构语义、栈参1 对象身份（目标装配对象
+  推断）、[0x7E15B8] IAT 槽函数名、虚表槽 0x60 前置调用业务、三宿主
+  业务（FUN_00432e40 479B/FUN_00433060 274B/FUN_004331f0 125B）、两间
+  隙归属（0x4331E2/0x433553）、居中公式 X/Y 不对称的成因。
