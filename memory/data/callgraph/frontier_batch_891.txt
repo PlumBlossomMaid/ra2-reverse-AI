@@ -1,0 +1,141 @@
+frontier batch 891 —— 0x0069E100 链表子节点递归销毁器（119B）
+===================================================================================
+
+候选来源：ranking.tsv（callers=3 / deps=46 / body=119B）。
+TARGET = 0x0069E100（119B，0x69E100-0x69E176，thiscall 无栈参 ret，0x69Exxx
+区——batch 107 SHPStruct / batch 347 链表析构同族）。
+★★推断名：**链表子节点递归销毁器（父级驱动版——递归销毁 +0xC 子链
++ 双向链摘除（+0x18/+0x1C）+ [0xB077B0] 链头更新 + 0x7C93E8（batch
+020 free）缓冲释放 + 0x7C8B3D（batch 001 delete）子节点 + 清父节
+点指针/标志；**batch 347 0x69E930 的父级调用面，同家族批量销毁
+循环内消费**）**。
+
+一、函数体全读（119B，disasm 0x69E100 0x90 全量）
+------------------------------------------------
+参数契约（thiscall 无栈参 ret）：ecx = this（父节点——待删子节点
+的持有者）。
+机器码（119B 全读，逐段要点）：
+  0069e100  push edi → mov edi,ecx（★父节点 this）→ cmp word[edi],
+    -1 → jne 0x69e175（★★word[edi]==-1 哨兵——未初始化跳过）
+  0069e109  mov al,[edi+0x10]（★+0x10 持有标志）→ test al,al → je
+    0x69e175（★标志未置跳过）→ push esi → mov esi,[edi+0xc]（★★
+    +0xC 子节点指针）→ test esi,esi → je 0x69e169（★无子跳过）
+  0069e118  cmp word[esi],-1 → jne 0x69e160（★子未初始化直接 delete）
+    → mov ecx,esi → 0069e120: call 0x69e100（★★递归——子节点同
+    法销毁！）
+  0069e125  拆链段：mov eax,[esi+0x18]（★子前向指针 +0x18）→ test
+    → je 0x69e132 → mov ecx,[esi+0x1c]（★子后向 +0x1C）→ mov
+    [eax+0x1c],ecx（★★前向->后向贯通）
+  0069e132  mov eax,[esi+0x1c] → test → je 0x69e141 → mov edx,
+    [esi+0x18] → mov [eax+0x18],edx（★★后向->前向贯通）→ jmp
+    0x69e149 → 0069e141: mov eax,[esi+0x18] → mov [0xb077b0],eax
+    （★★[0xB077B0] 全局链头更新！）
+  0069e149  mov eax,[esi+8]（★+0x8 数据缓冲）→ test → je 0x69e160
+    → push eax → call 0x7c93e8（★★已登记 batch 020 CRT 内部 free
+    ——缓冲释放！）→ add esp,4 → mov [esi+8],0（★清缓冲指针）
+  0069e160  push esi → call 0x7c8b3d（★★已登记 batch 001 delete
+    ——删子节点！）→ add esp,4
+  0069e169  mov [edi+0xc],0（★清父节点子指针）→ mov byte[edi+0x10],
+    0（★清父节点标志）→ pop esi → 0069e175: pop edi → ret
+语义：**链表子节点递归销毁器（推断名）**——thiscall 无栈参：① 父
+  节点 word[edi]==-1 哨兵或 +0x10 标志未置 → 直返；② +0xC 子节点
+  非空 → 递归 0x69E100 销毁子节点链；③ +0x18/+0x1C 双向链摘除四
+  步（前->后/后->前互写贯通，链尾落 [0xB077B0] 全局链头）；④
+  +0x8 缓冲经 0x7C93E8（batch 020 free）释放；⑤ 0x7C8B3D（batch
+  001 delete）删子节点；⑥ 清父节点 +0xC/+0x10。★★与 batch 347
+  的 0x69E930（链表析构自删标志）同族——0x69E100 由父级调用（删
+  子树+拆链+清父指针），0x69E930 由本体析构（含 delete this）；
+  两函数共享 +0xC 子对象/+0x18/+0x1C 双向链/[0xB077B0] 链头/
+  +0x8 缓冲/0x7C93E8/0x7C8B3D 全部结构。
+
+二、调用点（3 处 E8，2 宿主+1 递归全核验——统一「cmp word,-1 →
+   cmp byte 标志 → mov esi,[+0xC] → cmp word[esi],-1 → call
+   0x69E100」批量销毁循环形态）
+----------------------------------------
+E8 扫描（_read_816_calls.py TARGET=0x69E100）：**命中 3 处**
+归属反查（_locate_816_callers.py functions.tsv 区间）：
+  1) 0x69E120 → 0x69E100 自身（函数体递归调用！）
+  2) 0x69E239 → FUN_0069e210 [0x69E210-0x69E312] body=259 —— 未登记
+  3) 0x69E351 → FUN_0069e320 [0x69E320-0x69E429] body=266 —— 未登记
+现场 disasm 核验（两宿主全读）：
+  FUN_0069e210（0x69E239，259B 未登记）——现场 0x69E220-0x69E24E：
+    cmp word[edi],-1 → jne 0x69e284（★哨兵）→ cmp byte[edi+0x10],
+    bl → je 0x69e284（★标志）→ mov esi,[edi+0xc] → cmp esi,ebx →
+    je 0x69e27e（★无子）→ cmp word[esi],-1 → jne 0x69e275 → mov
+    ecx,esi → 0x69E239: call 0x69e100（★★本函数——与函数体内
+    递归 0x69E120 完全同构的门控序列！）→ 拆链四步同款（mov eax,
+    [esi+0x18]/test/[eax+0x1c]=[esi+0x1c] → [esi+0x1c] 判 → 后向
+    贯通）
+  FUN_0069e320（0x69E351，266B 未登记）——现场 0x69E340-0x69E36D：
+    cmp word[edi],-1 → jne 0x69e39c → mov byte[edi+0x10],bl → je
+    0x69e39c → mov esi,[edi+0xc] → cmp esi,ebx → je 0x69e396 → cmp
+    word[esi],-1 → jne 0x69e38d → mov ecx,esi → 0x69E351: call
+    0x69e100（★★本函数——同款门控序列！）→ 拆链四步同款（前向
+    贯通 + 后向贯通 + [0xB077B0] 链头更新）
+★统一形态：两处调用点全「cmp word[edi],-1（哨兵）→ cmp byte[edi+
+  0x10]（标志）→ mov esi,[edi+0xc]（子节点）→ cmp word[esi],-1 →
+  mov ecx,esi → call 0x69E100」——与函数体内递归 0x69E120 逐字节
+  同构，三种调用形态（递归/宿主1/宿主2）完全一致。★★两宿主
+  （FUN_0069e210/FUN_0069e320）为批量销毁循环（逐节点调本函数删
+  子链），与 batch 347 文档点名的家族（0x69E180/0x69E210/0x69E320/
+  0x69E580）同源！
+
+三、被调/全局登记核验（grep frontier_status.tsv）
+------------------------------------------------
+  0x69E930 —— ★★已登记（batch 347 链表析构自删标志——**同族：
+    文档点名「callers 含 FUN_0069E180/0069E210/0069E320/0069E580/
+    自身递归」「+0xC 子对象/+0x18/+0x1C 双向链/[0xB077B0] 链头/
+    +0x8 缓冲/0x7C93E8/0x7C8B3D」——本批目标=其父级调用面，结构
+    逐字节同族！**）
+  0x7C93E8 —— ★★已登记（batch 020 CRT 内部 free——函数体缓冲释
+    放现场！）
+  0x7C8B3D —— ★★已登记（batch 001 operator delete——函数体删子
+    节点现场！）
+  0x69E500 —— ★★已登记（batch 107 SHPStruct::~SHPStruct——文档点
+    名「+0x18/+0x1C 双向链表布局 + [0xB077B0] 链头」同族参照）
+  [0xB077B0] —— ★★已登记（batch 107/255/347 多次出现全局链头）
+  FUN_0069e210/FUN_0069e320 —— ★未登记（两新宿主——批量销毁循
+    环，batch 347 文档点名家族成员）
+
+四、跨批次闭合（全锚点）
+-----------------------
+  ★★★batch 347（0x69E930 链表析构自删标志——**本批目标=其父级调
+    用面：两函数共享 +0xC 子对象/+0x18/+0x1C 双向链/[0xB077B0] 链
+    头/+0x8 缓冲/0x7C93E8/0x7C8B3D 全部结构，batch 347 文档点名宿
+    主族（0x69E180/0x69E210/0x69E320/0x69E580）中 0x69E210/0x69E320
+    正是本批两调用点宿主！**）
+  ★★★batch 020（0x7C93E8 CRT free——函数体缓冲释放调用现场）
+  ★★★batch 001（0x7C8B3D delete——函数体删子节点调用现场）
+  ★★★batch 107（0x69E500 SHPStruct 析构——文档点名双向链布局
+    +[0xB077B0] 同族参照）
+  ★★batch 104/106（0x407450/0x6C9850 双向链表族——batch 107 文档
+    提同族，本批再添一实例）
+
+五、原版怪癖（照抄）
+-------------------
+① ★★word[edi]==-1 哨兵门控（cmp word[edi],-1 / jne——未初始化节
+   点直出，batch 347 0x69E930 同款）；
+② ★★+0x10 持有标志门控（test al,al / je——标志未置跳过整个销毁
+   体）；
+③ ★★递归销毁子节点（mov ecx,esi → call 自身 0x69E100——子链递
+   归，batch 347 0x69E930 同款）；
+④ ★★双向链摘除四步（前向判空→[前]+0x1C=后向 / 后向判空→[后]
+   +0x18=前向 / 链尾落 [0xB077B0] 全局链头——与前向贯通后向贯通
+   两分支 + 链头更新，batch 347/107 同款）；
+⑤ ★★+0x8 缓冲经 0x7C93E8 free（CRT free 非 delete——缓冲与节点
+   分开释放，batch 020 现场）；
+⑥ ★★0x7C8B3D delete 子节点（push esi → call——删子链整体）；
+⑦ ★★清父指针+标志成对（mov [edi+0xc],0 → mov byte[edi+0x10],0
+   ——删完清持有槽）；
+⑧ ★★调用点门控序列同构（cmp word,-1 → cmp 标志 → mov [+0xC] →
+   cmp word[esi],-1 → call——三处形态逐字节一致，批量销毁循环）。
+
+六、状态
+-------
+semantics_verified + assembly_verified_semantics_confirmed。
+partial：函数精确名（推断「链表子节点递归销毁器」——batch 347
+  0x69E930 链表的父级删除端）、+0xC/+0x18/+0x1C/+0x8/+0x10 字段精
+  确语义（子对象/前向/后向/缓冲/标志——batch 347 同族确认）、
+  [0xB077B0] 链表宿主精确身份、FUN_0069e210/FUN_0069e320 宿主精
+  确业务（批量销毁循环——batch 347 文档点名家族成员）、哨兵 -1
+  与未初始化判定的精确区分。
