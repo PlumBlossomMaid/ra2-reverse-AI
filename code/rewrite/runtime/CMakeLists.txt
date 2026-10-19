@@ -14,6 +14,7 @@ add_library(ra2_runtime
   crt_free.cpp
   crt_boolnorm.cpp
   crt_malloc.cpp
+  crt_thunk.cpp
   facing.cpp
   ra2_string.cpp
   map_legal.cpp)
@@ -116,4 +117,12 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_crt_malloc PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME crt_malloc COMMAND test_crt_malloc)
+
+  # 数字解析转发 thunk（0x7C9BFD，目标 0x7C9B72 已有 REIMPL），golden 由
+  # emu_oracle 指令级模拟取得（deadcode_7c9bfd_golden.txt，8 用例；桩注入）
+  add_executable(test_crt_thunk test/test_crt_thunk.cpp)
+  target_link_libraries(test_crt_thunk PRIVATE ra2_runtime gtest_main)
+  target_compile_definitions(test_crt_thunk PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME crt_thunk COMMAND test_crt_thunk)
 endif()

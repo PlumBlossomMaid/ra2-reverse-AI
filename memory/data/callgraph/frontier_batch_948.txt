@@ -1,0 +1,85 @@
+frontier batch 948 —— CRT 数字解析转发 thunk 0x7C9BFD
+=====================================================
+
+候选来源：用户指令「③ 继续 CRT/runtime frontier（batch 083+）按
+ranking.tsv unique_callers 列扇入度排」。0x7C9BFD 为 batch 947 之后
+ranking.tsv 中 **unique_callers 扇入度最高（29 uniq callers / 861
+transitive_dependents）的未复刻 CRT 项**（0x7C8B3D uc=1796 / 0x7C8E17
+operator_new uc=941 / 0x7C5F00 uc=460 已 crt_runtime_verified 属基础
+运行时不参与复刻轮次；锁家族 0x7CD9F5/0x7CDA56 属桩边界）。此前已有
+静态语义登记（frontier_status.tsv 0x007C9BFD，semantics_verified +
+assembly_verified_semantics_confirmed——"CRT 数字解析 thunk，11B 全
+函数完成：push [esp+4] → call 0x7c9b72 → pop ecx → ret"），无 C++
+真身复刻、无 golden。2026-10-19 指令级 golden 8 用例实证
+（_golden_7c9bfd.py，Unicorn 跑真身机器码——0x7C9B72 桩注入返回值）。
+TARGET = 0x007C9BFD。C++ 模型：code/rewrite/runtime/crt_thunk.{h,cpp}
+（函数名 parse_thunk_legacy + CrtThunkWorld 世界抽象）。单测：
+test_crt_thunk.cpp（8 用例对拍 + 2 结构断言）。TSV 新增
+0x007C9BFD_REIMPL 行。
+
+一、链语义（disasm 全段复核 + golden 8 用例实证）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7C9BFD = CRT 数字解析转发
+thunk——cdecl 1 栈参原样转发给 0x7C9B72（MSVCRT strtol/atoi 族
+十进制前缀解析，已有 REIMPL parse_decimal_legacy，lowlevel）、
+ret 由调用者清栈。
+  机器码（0x7C9BFD-0x7C9C07，11B）：
+    push [esp+4]      ; 第一参原样复制转发
+    call 0x7C9B72     ; eax = parse_decimal(arg)
+    pop ecx           ; 清转发参（cdecl 调用者清理）
+    ret
+
+★原版怪癖（golden 实证，照抄）：
+  ① 第一参原样复制转发（push [esp+4]），非原地使用——目标函数可安全
+     修改自己的栈参槽而不影响调用者栈；
+  ② 全路径必然调用一次目标（arg 任意——无 NULL 短路）；
+  ③ 返回值 eax 透传（包装本身不改）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7c9bfd.py（ThunkOracle；Unicorn 按原
+ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7C9BFD——0x7C9B72
+hook 于原地址注入返回值并记录转发实参，cdecl ret 只弹返回地址）。
+对拍点：返回 eax + 转发实参。
+8 用例落盘 memory/data/rmg/deadcode_7c9bfd_golden.txt（CASE 行格式
+`CASE arg=<hex> inj=<hex> -> ret <eax(hex)> forwarded=<hex>`）：
+  arg×inj 覆盖：0/1/0x2D('-')/0x2B('+')/0x30('0')/0x41('A')/
+  0x7FFFFFFF/0xFFFFFFFF × inj 0/0x41/0x12345678/0x7FFFFFFF/0xFFFFFFFF
+  全部 ret == inj（eax 透传）、forwarded == arg（原样转发，含 0 与
+  0xFFFFFFFF 边界）。
+★golden 采集零修复——首版即全过（cdecl 桩口径已固化）。
+
+三、C++ 模型（code/rewrite/runtime/crt_thunk.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。单函数 + CrtThunkWorld 世界抽象（1 桩
+target）：
+  parse_thunk_legacy(world, arg) —— 0x7C9BFD：
+    return world->target(arg);
+    严格按汇编语义：arg 原样转发、返回 eax 透传。
+无失败路径、无额外校验。结构 = 原版 11B 控制流照抄。
+
+四、单测（test_crt_thunk.cpp，全量 66 项之一）
+------------------------------------------------
+CrtThunkTest：读 golden 原档（RA2_GOLDEN_DIR 宏）8 CASE + 2 项断言：
+  GoldenReturnAndForwardMatch（逐用例：返回值透传 + target 实参 ==
+    arg 原样转发，含 0/0xFFFFFFFF 边界）、
+  ReturnPassthrough（inj 0/0x41/0xFFFFFFFF 透传）、
+  AlwaysCallsTargetOnce（arg∈{0,1,0x2D,0x30,0x41,0x7FFFFFFF,
+    0xFFFFFFFF} 每次恰好调一次 target 且实参 == arg）。
+解析：stoull→uint32_t（golden 全正 hex）。
+预期 8 用例全量对拍 + 2 结构断言，ctest 66/66 全绿（#15 通过）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：0x7C9B72（parse_decimal_legacy，lowlevel）已有 REIMPL——
+batch 948 单测以桩注入其对 thunk 的返回，thunk 本身 11B 纯转发结构
+cpp 逐条复刻。目标函数语义归 lowlevel 已登记项，不重复造轮。
+
+★本批实锤：CRT 扇入度最高未复刻项 = 数字解析转发 thunk——MSVCRT
+strtol/atoi 族的外层转发（push [esp+4] → call → pop ecx → ret 的
+标准 11B thunk 形态）；目标 0x7C9B72 已在 lowlevel 复刻，本批把
+thunk 连接点补齐。
+相邻待续：batch 949 按 ranking.tsv unique_callers 取下一未复刻 CRT 项。
+依赖模型：CrtThunkWorld（1 桩 target）。
+承前：batch 947 已完（CRT malloc 入口 0x7C9430，commit 9193695）；
