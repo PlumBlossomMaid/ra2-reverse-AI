@@ -1,0 +1,126 @@
+frontier batch 934 —— 0x005A7250 死代码复刻：菱形域矩形扫描校验（0x5A7250-0x5A7435，486B）
+=======================================================================
+
+候选来源：用户指令「0x5A7250 余段」。TSV:721 已 semantics 登记（batch
+222，「菱形域矩形校验」），2026-10-19 全段汇编复核 + golden 14 用例实证，
+本批做 C++ 真身复刻 + 单测对拍。
+TARGET = 0x005A7250。C++ 模型：code/rewrite/rmg/dead_code_7250.{h,cpp}
+新增 DeadCode7250World 接口 + DeadCode7250Context + DeadCode7250(ctx)。
+单测：test_dead_code_7250.cpp 新增 DeadCode7250.MatchesOriginal（14 用例
+对拍）。TSV 新增 0x005A7250_REIMPL 行。
+
+一、语义（完整汇编逐段核对 + 黄金 14 用例闭环）
+------------------------------------------------
+真义（黄金实证 + 机器码逐段确认）：
+  · 调用约定：thiscall 变体 + 1 栈参（ret 4）：
+    - ecx = 矩形结构指针 this（[this+0] 低16=x、[this+4] 低16=y、
+      [this+8]=w int32、[this+0xC]=h int32）
+    - dl = flagA（0x5A7257 存 [esp+0xb]，0x5A73BF 读 [esp+0x13]）
+    - 栈参 1 = flagB（0x5A73D4 读 [esp+0x24]，只用低字节）
+  · 四角菱形判定（0x5A7262-0x5A7377）：
+    角0=(x,y)、角1=(x+w-1,y)、角2=(x,y+h-1)、角3=(x+w-1,y+h-1)。
+    每角四判据（判据顺序固定，有符号）：
+      X+Y <= W → fail（[0xABED04]）；X-Y >= W → fail；
+      Y-X >= W → fail；X+Y > W+2H → fail（[0xABED08]）。
+    ★角坐标 16 位截断：角1/3 的 X、角2/3 的 Y 先 32 位 lea 求值再 movsx
+    截断回 16（0x5A72AD/0x5A72F5/0x5A733A——与 0x5A76E0 batch 932 同构）。
+  · 全矩形扫描（★对比 76E0 的 3×3+边带，这里是整个 w×h 矩形）：
+    外层 cy 从 raw_y 起、条件 cy < h+raw_y；内层 cx 从 raw_x 起、条件
+    cx < w+raw_x（0x5A7386/0x5A7392，jge 退出）。★h<=0 直接成功返 1
+    （0x5A738A jge 0x5A741E——golden h-zero gc=0 实证）；★w<=0 内层空
+    （0x5A7395 jge 0x5A740D——golden w-zero gc=0 实证，四角仍判）。
+  · 每格：GetCellAt(0x5657A0)（thiscall ecx=0x87F7E8）→ tile=[cell+0x38]
+    → 5 谓词链按序（0x5A73B6-0x5A73FD）：
+      a. 0x4866D0（tile ∈ [paved, +0xf)，[0xABBEC8]）：过 →
+         flagA!=0 → 继续（0x5A73C7 jmp）；flagA==0 → 整体 fail
+      b. 0x4866F0（tile ∈ [paved4, +4)，[0xABBEC4]）：过 →
+         flagB!=0 → 继续；==0 → 整体 fail
+      c. 0x486380（tile==0xFFFF || tile==0）：过 → 继续
+      d. 0x486650（tile ∈ [misc, +0xE)，[0xAA10A4]）：过 → 继续
+      e. 0x486670（tile ∈ [pavet, +0x10)，[0xABC2B0]）：过 → 继续；
+         全失败 → 整体 fail
+  · 返回 al：全过 1（0x5A7421）/任一判据或谓词链失败 0（0x5A742D）。
+    返回 EAX 低字节有实际语义（与 76E0/6C10 的"EAX 无意义"不同——本条
+    是判定函数，调用方 0x5A5B50/0x5A6D80/0x5A7070 用 al 分支）。
+
+★谓词窗口宽度（2026-10-19 dump 实锤，五谓词宽度各不相同）：
+  0x4866D0：mov ecx,[0xABBEC8]; cmp; jl 返0; add ecx,0xf; cmp; jge 返0
+    → [paved, paved+0xf)，★宽度 0xf 非 0x10
+  0x4866F0：mov ecx,[0xABBEC4]; jl 返0; add ecx,4; cmp; jge 返0
+    → [paved4, paved4+4)。[0xABBEC4] 新全局（PavedRoads-4，batch 934
+    首次登记）
+  0x486380：cmp eax,0xFFFF; je 返1; test eax,eax; je 返1; xor 返0
+    → tile==0xFFFF || tile==0
+  0x486650：同构 [misc, misc+0xE)，[0xAA10A4]
+  0x486670：同构 [pavet, pavet+0x10)，[0xABC2B0]
+
+★原版怪癖（golden 实证，C++ 侧逐条复刻）：
+  ① 双前置谓词门控：0x4866D0/0x4866F0 通过后还要检查 flagA/flagB，
+     flag 为 0 时**整体失败**（不是跳过该格）——flagA-zero/flagB-zero
+     gc=1 实证首格即 fail（其余 5 格未访问）。
+  ② 谓词链序与 76E0 边带（670→380→650）不同：7250 是
+     6D0 → 6F0 → 380 → 650 → 670，前两个带 flag 门控。
+  ③ 扫描范围是整矩形；h<=0 / w<=0 时四角仍判、扫描区空。
+  ④ 角 1/3、2/3 的加宽坐标先 32 位求值再 movsx 截断回 16 位。
+  ⑤ 谓词/GetCellAt 全是有符号比较（jl/jge），tile 按有符号 int32 读。
+  ⑥ [0xABBEC4] 与 [0xABBEC8]（PavedRoads）相邻，窗口 [11,15) 恰在
+     [15,30) 左侧——golden flagB 用例用 tile=12 精确定位该窗口。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7250.py（RectScanOracle，继承 TechOracle，
+W=12/H=8/side=21 由基类灌值，另灌 [0xABBEC8]=15/[0xABBEC4]=11/
+[0xAA10A4]=200/[0xABC2B0]=16 + 用例格 tile 表）。真身侧：GetCellAt
+0x5657A0 与五谓词全部跑真身（hook 只计数不劫持）。RNG 不参与（golden 零
+采样）。★对拍点八样：返回 al + gc/p6d0/p6f0/p380/p650/p670 六计数 +
+GetCellAt 坐标序列。14 用例落盘
+memory/data/rmg/deadcode_7250_golden.txt。
+
+★本批 golden 用例设计与修正过程（2026-10-19）：
+  ① p670-pass 初用 tile=20 → 20 ∈ [15,25) 被 6D0 命中 + flagA=0 →
+     ret=0 gc=1（修正为 tile=30 避开 6D0 窗口直达 670）
+  ② mixed-last 初用 flagA=0 → 首格 paved(15) 被 6D0 命中 + flagA=0 →
+     ret=0 gc=1（修正为 flagA=1 让前 5 格走 6D0、末格走 6F0/flagB）
+  ③ mk() 初版只输出 spec 覆盖格的 IN 行 → 全区域 tile 未落盘，C++ Fake
+     缺省 tile=0 与 golden 错位 → 改为扫描区 6 格全部输出 IN 行
+  14 用例数证（stderr 汇总）：all-pass ret=1 gc=6 p6d0=6；corner0/1-fail
+  gc=0；flagA-zero ret=0 gc=1 p6d0=1；flagB-zero ret=0 gc=1 p6d0=1
+  p6f0=1；flagB-ok ret=1 gc=6 p6d0=6 p6f0=6；p380-pass ret=1 gc=6 前四
+  计数全 6 p380=6；p650-pass 同理；p670-pass ret=1 全 6；all-fail ret=0
+  gc=1 全计数 1；h-zero/w-zero ret=1 gc=0；mixed-firstfail ret=0 gc=1
+  全计数 1；mixed-last ret=1 gc=6 p6d0=6 p6f0=1。
+
+三、C++ 模型（code/rewrite/rmg/dead_code_7250.{h,cpp}）
+------------------------------------------------
+签名：int DeadCode7250(const DeadCode7250Context& ctx)。ctx 携带
+world / raw_x,raw_y / w,h / flag_a,flag_b / w_bound,w2h_bound / paved,
+paved4,pavet,misc。world 抽象谓词语义（Fake 侧按窗口比较并计数）：
+CellTile（0x5657A0 → tile）、IsPaved0（0x4866D0）、IsPaved4（0x4866F0）、
+IsVoidTile（0x486380）、IsMiscPaveTile（0x486650）、IsPaveTile
+（0x486670）。实现要点：四角判定（角坐标 16 位截断）→ 双层循环（x 优先）
+→ 五谓词按序门控 → 全过返 1。
+
+四、单测（test_dead_code_7250.cpp，全量 52 项之一）
+------------------------------------------------
+DeadCode7250.MatchesOriginal：读 golden 原档（RA2_GOLDEN_DIR 宏），14
+用例全量对拍返回 al + 六计数 + GetCellAt 坐标序列。FakeDeadCode7250World
+按同一窗口语义并计数（tile 表来自 IN 行）。ctest 52/52 全绿（#49
+dead_code_7250 通过，无回归）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：0x4866F0 的 [0xABBEC4] 窗口业务含义（PavedRoads-4 的 4 格窗，
+golden 用 tile=12 实证边界但语义未确认）；flagA/flagB 的调用方传参契约
+（0x5A5B50/0x5A6D80/0x5A7070 的调用现场——死代码，无运行观测）。
+★本批修正（2026-10-19）：0x4866D0 窗口宽度 0x10 → **0xf**（golden
+p670-pass tile=30 直达 670 实证 30 ∉ [15,30)）；[0xABBEC4] 新全局登记。
+★延伸结论：0x5A7250 是 0x5A76E0 的「全矩形扫描版」兄弟（batch 932），
+五谓词窗口宽度各异（0xf/4/0xE/0x10/两点）——死代码菱形域谓词族第五
+实例（0x568300/0x5AC230/0x5A7250/0x5A76E0 + 全矩形扫描变体）。
+依赖模型：GetCellAt 0x5657A0（TechOracle cell 数组环境）、五谓词、
+[0xABBEC4]/[0xABBEC8]/[0xAA10A4]/[0xABC2B0] 窗口全局、[0xABED04]/
+[0xABED08]。待续死代码批次：0x5A7440（邻接 512B，未登记）、0x5A7640
+（149B）、0x5A6C10 的 vtable+0x27 归属、functions.tsv 11 条 body_bytes=1
+回修决策（2026-10-19 已取证：31 条中 30 条 = ret+NOP 对齐填充假象、1 条
+真实代码误标——决定不回修，详见批文档 935 前传说明）。
