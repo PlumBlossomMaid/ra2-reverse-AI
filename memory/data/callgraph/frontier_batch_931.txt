@@ -1,0 +1,113 @@
+frontier batch 931 —— 0x005A78D0 死代码复刻：随机抽样+小块批量放置（614B）
+=======================================================================
+
+候选来源：用户指令「RMG 死代码全部复现对齐（挖坟考古）」——0x5A78D0
+（614B），TSV:1022 已 semantics 登记（batch 322，2026-10-15 补取证
+修正为「随机抽样 + 小块批量放置」），本批做 C++ 真身复刻 + 单测对拍。
+TARGET = 0x005A78D0。C++ 模型：code/rewrite/rmg/dead_code_78d0.{h,cpp}
+新增 DeadCode78D0World 接口 + DeadCode78D0(ctx)。单测：
+test_dead_code_78d0.cpp 新增 DeadCode78D0.MatchesOriginal（5 用例对拍）。
+
+一、语义（完整汇编逐段核对 + 黄金 5 用例闭环）
+------------------------------------------------
+真义（黄金实证 + 机器码逐段确认）：
+  · 调用约定：thiscall 无 this + 1 栈参（宿主对象指针 edi = [esp+0xA8]）
+    ret 4。宿主对象 edi：+4 = 模板项数组（4B/项 dword，X=低16 有符号、
+    Y=高16 有符号）、+0x10 = 循环上限 limit。
+  · 外层循环双计数（0x5A7985-0x5A7B26）：
+    - [esp+0x10] 成功放置轮数，上限 ebp = limit/50
+      （0x51EB851F magic 配 sar edx,4——★标准 /100 是 sar 5，这里是
+      原版怪癖 /50，golden all-fail limit=100 → ebp=2 实锤）
+    - [esp+0x30] 总轮数，上限 esi = ebp*10（0x5A798B lea ebp*5 / shl 1）
+    - 两计数任一达上限退出
+  · 每轮（0x5A79B8-0x5A79FE）：拒绝采样 [0, limit-1]（fild qword 无符号
+    读 Random + fmul [0x7ED898]=2^-32×(1+2^-40) + ja 无符号重抽）→
+    [edi+4][采样] → 拆 X/Y 模板坐标。
+  · 模板循环（0x5A7A36-0x5A7A67）：edi=0..4 最多 5 项，栈上模板数组
+    [esp+0x60] 起 0x10 间隔（项 = {a=[ptr-4], b=[ptr]}，a 序列
+    {6,4,4,4,2}、b 序列 {4,6,4,2,4}——★push edi 前 [esp+0x58]=6 物理
+    落在 push 后 [esp+0x5C]（= 项 0 的 a），[esp+0x5C]=4 落在 [esp+0x60]
+    （= 项 0 的 b），即项 0 是 {6,4} 不是 {4,0}，golden ZN d2 首值 6
+    实锤）→ 组装 {X, Y, a, b} 调 0x5A7B40（菱形校验打桩，azn_seq 序列）
+    → 成功 bl=1 提前退出。
+  · bl=0 全失败 → 只 [esp+0x30]++ 跳过本轮（golden all-fail 用例：5 个
+    azn=0 耗尽后第 6 次起返 1 → 第 2 轮成功放置）。
+  · 成功（0x5A7A71-0x5A7B08）：0..5 拒绝采样（fmul [0x7EDA40]=
+    6/2^32×(1+ε)，ja 重抽）→ 宿主 = [0xAA10A4] + 采样 + 8 → 双重循环
+    （外层 Y 上限 = tmpl_b>>1 有符号 sar、内层 X 上限 = tmpl_a>>1）：
+    坐标 = {X+2*esi, Y+2*edi} → 0x5A6C10（放置打桩，记录 ecx=宿主、
+    edx=&坐标结构、栈参 -1/-1）。
+  · 返回 EAX 无意义（0x5A7B2C pop 后 EAX 未定义），C++ 返回 0 对拍。
+  · 常量（.rdata 取证）：[0x7ED898] = 2^-32×(1+2^-40)（拒绝采样缩放）、
+    [0x7EDA40] = 6/2^32×(1+2^-37+2^-41)（0..5 采样比例）、[0xAA10A4] =
+    宿主基址全局（.data 未初始化区，golden 按用例灌值）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 _golden_78D0.py（PickOracle，继承 TechOracle）：
+  桩侧：0x5A7B40 打桩 `_ret(uc,0)`（★裸 ret——无栈参清理，用 4 会错位
+  UC_ERR_READ_UNMAPPED，已实证修复）；0x5A6C10 打桩 `_ret(uc,8)`（两栈
+  参）。[0xAA10A4] 灌用例值；[0xABED04]=W、[0xABED08]=W+2H（0x5A7B40
+  菱形判据，本批打桩不直接读）。宿主对象 _bump(0x20) + [edi+4] 数组 +
+  [edi+0x10] 上限。
+  真身侧：Randomizer 0x65C780 真身（seed=42 灌 [0xABE890]，★基类
+  PlaceOracle 的 _h_rng 自动计数——本批继承未重复注册，rng 无双计）。
+  覆盖：5 用例（all-fail/first-hit/third-hit/mixed/zero-round，CASE 行
+  含 limit/arrcount/ab10a4/aznseq -> ret rng zn place，ZN 行含 0x5A7B40
+  调用 ecx 结构、PL 行含 0x5A6C10 调用 host）落盘 memory/data/rmg/
+  deadcode_78d0_golden.txt。
+  ★对拍点：Randomizer::call_count、0x5A7B40 调用次数（azn_seq 消耗
+  模式）、0x5A6C10 放置次数与 host 序列。CASE 行 ret 是 EAX 残渣
+  （3/2/2/20/1 各不同）不参与对拍。
+  5 用例数证：all-fail rng=5 zn=7 place=12（2 成功轮×项 0 {6,4} 各 6
+  格）；first-hit rng=4 zn=6 place=8（轮 1 项 0 中 6 格 + 轮 2 项 4 中
+  2 格）；third-hit rng=4 zn=6 place=8（两轮各中项 2 {4,4} 4 格）；
+  mixed rng=40 zn=22 place=120（limit=1000 → ebp=20，1+2+2+17×1 ZN，
+  20 轮×6 格）；zero-round rng=2 zn=1 place=6（limit=50 → ebp=1，项 0
+  中 6 格）。
+
+三、C++ 模型（code/rewrite/rmg/dead_code_78d0.{h,cpp}）
+------------------------------------------------
+签名：int DeadCode78D0(const DeadCode78D0Context& ctx)；ctx 携带
+Randomizer*/DeadCode78D0World*/host_limit/模板项数组/ab10a4。world 抽象
+桩语义：Rng（Randomizer 真身）/ProbeArea（0x5A7B40，azn_seq 耗尽返 1）/
+PlaceType（0x5A6C10，记录 host 序列）。实现要点：
+  · 模板数组 kTmplA={6,4,4,4,2}、kTmplB={4,6,4,2,4}（push edi 前后栈
+    基准差 4 字节，曾误读成 {4,4,4,4,2}/{0,6,4,2,4}）
+  · 成功轮上限 = Div50(limit)（0x51EB851F magic + sar edx,4 = /50 怪癖，
+    函数名 Div50 避免 /100 误导）
+  · 双计数循环：成功计数 < ebp 且 总轮计数 < esi 继续；全失败轮只
+    counter_round++ 跳过放置
+  · 成功路径 0..5 拒绝采样、host = ab10a4 + off + 8、双重循环
+    cy=tmpl_b/2、cx=tmpl_a/2 放置（sar 算术右移向零截断）
+  · 返回 0（EAX 无意义）
+
+四、单测（test_dead_code_78d0.cpp，全量 49 项之一）
+------------------------------------------------
+DeadCode78D0.MatchesOriginal：读 golden 原档（RA2_GOLDEN_DIR 宏），5
+用例全量对拍 rng/zn/place/places host 序列（ret 断言已删——EAX 残渣）。
+FakeDeadCode78D0World 按 golden 桩语义重建：ProbeArea 按 azn_seq 序列
+返回（耗尽返 1）、PlaceType 记录 (host, packed xy)、Randomizer seed=42
+真身对拍消耗。ctest 49/49 全绿（dead_code_78d0 #46 通过，无回归——
+较 930 后 48 项新增本批）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：0x5A7B40 菱形校验真身判定（本批打桩——azn_seq 序列模拟；
+真身复刻属后续批次课题，与 0x5A7250 同族）；0x5A6C10 放置真身（打桩
+记录 host；真身复刻属其自身批次）；成功路径双重循环内层 cx<=0 分支
+（golden 5 用例均 cx>0，0x5A7AC3 jle 0x5a7afc 为照抄汇编未采集）。
+★本批修正（2026-10-19）：
+  ① 模板数组项 0 是 {a=6,b=4} 非 {a=4,b=0}——push edi 前 [esp+0x58]/
+    [esp+0x5C] 物理落在 push 后 [esp+0x5C]/[esp+0x60]，即项 0 的 a/b
+    （golden ZN d2 首值 6 实锤）；初次实现误读成 {4,4,4,4,2}/{0,6,4,2,4}
+    导致 all-fail place=0 vs golden 12
+  ② 外层成功轮上限 = limit/50 非 limit/100——0x51EB851F 配 sar 4
+    （标准 /100 是 sar 5），golden all-fail（limit=100 → ebp=2 两轮）
+    与 mixed（limit=1000 → ebp=20 二十轮）双证
+  ③ golden CASE 行 ret 是 EAX 残渣，测试初版误断言 c.ret==got 失败
+    （3 vs 0），已删
+依赖模型：Randomizer、0x5A7B40/0x5A6C10 桩语义。待续死代码批次：
+0x5A76E0、0x5A6C10 的 [0xA8ED2C] 表与 vtable+0x27 归属、0x5A7250 余段、
+functions.tsv 11 条 body_bytes=1 回修。
