@@ -1,0 +1,113 @@
+frontier batch 954 —— CRT strchr 0x7CAF30
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序，batch 953 之后取下一未复刻 CRT 项 = 0x7CAF30（188B / 16
+unique callers / 未 REIMPL / 非锁家族非基础件；batch 126 已有
+semantics_verified 语义行——本批按惯例追加 _REIMPL 行不覆盖）。
+此后无 C++ 真身复刻、无 golden——本条为全新取证。2026-10-19 指令级
+golden 12 用例实证（_golden_7caf30.py，Unicorn 跑真身机器码——纯内
+存零子调用零桩零全局，全程真身模拟）。
+TARGET = 0x007CAF30。C++ 模型：code/rewrite/runtime/crt_strchr.{h,cpp}
+（函数名 strchr_legacy）。单测：test_crt_strchr.cpp（12 用例对拍 +
+2 边界 + 参照抽查）。TSV 新增 0x007CAF30_REIMPL 行。
+
+一、链语义（disasm 全段复核 + golden 12 用例实证）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7CAF30 = MSVCRT strchr（字节串
+查找）——cdecl 2 栈参 (s, ch)，返回指向 s 中首次出现 ch 的指针、
+未找到返回 0；★ch==0 时返回指向终止 NUL 的指针（标准 strchr 语义）。
+纯内存操作，无子调用无全局引用——全程可真身模拟。
+  机器码（0x7CAF30-0x7CAFEB，188B 含 magic 扫描段）：
+    al=ch（零扩展）；edx=s
+  对齐探测（0x7CAF40）：test edx,3；未对齐逐字节：
+    cl=[edx] / inc edx / cmp cl,bl（命中）→ je 0x7CAF20（返回
+    edx-1，lea eax,[edx-1] 实锤）；test cl,cl（NUL）→ je 0x7CAFA4
+    （返 0）直到对齐
+  四字节 pattern（0x7CAF5B）：or ebx,eax / shl ebx,0x10 / or ebx,eax
+    （ch 展开成 4 字节重复）
+  主循环（0x7CAF66 四字节批量扫描）：
+    ecx=*(u32*)edx；eax=ecx
+    esi=ecx+0x7EFEFEFF（NUL 检测 A）
+    edi=(ecx^pattern)+0x7EFEFEFF（命中检测）
+    ecx^=pattern；ecx^=-1 → ecx^=edi → and ecx,0x81010100（命中位）
+    eax^=-1 → eax^=esi → and eax,0x81010100（NUL 位）
+    edx+=4
+    ecx 非 0 → 0x7CAFA8 逐字节回验
+    eax 非 0 → 0x7CAF93：and eax,0x1010100 → 非 0 真 NUL → 返 0；
+      否则 and esi,0x80000000 → 非 0 假阳性 → 继续循环；==0 → 返 0
+  回验（0x7CAFA8）：eax=*(u32*)(edx-4) 逐字节
+    cmp al,bl → je 0x7CAFE5 返 edx-4 / test al,al → je 返 0
+    cmp ah,bl → je 0x7CADF0... （edx-3 / -2 / -1 各命中返）
+    全部不中 → jmp 0x7CAF66 继续
+  ★未对齐命中返回 0x7CAF20 = lea eax,[edx-1] / pop ebx / ret（独立
+    小段，0x7CAF20-0x7CAF2F，本批实锤）。
+
+★原版怪癖（golden 实证，照抄）：
+  ① ch 零扩展取低 8 位（al），与 cl/bl 8 位比较（ch>0xFF 时行为
+     等价 ch&0xFF）；
+  ② ch==0 时语义 = 找终止 NUL：s="abc" ch=0 → 返 &s[3]；空串
+     ch=0 → 返 &s[0]（golden 两用例实证）；
+  ③ 未对齐路径 NUL 检测与命中同为逐字节；四字节路径 0x81010100
+     位掩码 + 0x7EFEFEFF 加法 magic（假阳性经 0x7CAF93 二次过滤
+     and eax,0x1010100 / and esi,0x80000000 后继续扫描）；
+  ④ 返回未找到 = 0（非 NULL 语义差异仅在指针上）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7caf30.py（StrchrOracle；Unicorn 按原
+ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7CAF30 全段——无子
+调用无桩，s 区 0xCC 哨兵验证不越界读；cdecl ret 只弹返回地址）。
+对拍点：返回指针相对 s 的偏移（-1=未找到返 0）。12 用例落盘
+memory/data/rmg/deadcode_7caf30_golden.txt（CASE 行格式
+`CASE s=<hex> ch=<hex> -> ret=<off|-1>`）：
+  首/中/尾字符命中（'b'@1、'a'@0、'j'@9）、未找到、★ch==0 返终止
+  NUL（s="abc" → 3、空串 → 0）、恰好 4 字节边界命中（'d'@3 与
+  ch==0@4）、首段连续命中（'a'@0）、大写命中、长串 10 字符跨批量
+  扫描。
+
+三、C++ 模型（code/rewrite/runtime/crt_strchr.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。单函数：
+  strchr_legacy(s, ch) —— 0x7CAF30：
+    对齐探测：while (edx&3) 逐字节 {命中返指针；NUL 返 nullptr}
+    主循环：4 字节批量读取 v；esi=v+0x7EFEFEFF；x=v^pattern；
+      edi=x+0x7EFEFEFF；hit=(x^-1)^edi；nul=(v^-1)^esi；edx+=4；
+      hit&0x81010100 → 回验（取回 edx-4 逐字节 b0..b3 命中返
+      edx-4/-3/-2/-1，NUL 返 nullptr）；
+      nul&0x81010100 → nul&0x1010100 非 0 → nullptr；esi&0x80000000
+      ==0 → nullptr；否则 continue。
+  严格按汇编语义：零扩展 target、magic 常量、假阳性过滤路径、
+  命中/未命中返回方向。头注释含 188B 机器码全段 + 四怪癖。
+
+四、单测（test_crt_strchr.cpp，全量 70 项之一）
+------------------------------------------------
+CrtStrchrTest：读 golden 原档（RA2_GOLDEN_DIR 宏）12 CASE + 3 项：
+  GoldenMatches（逐用例：缓冲 s.size()+16 预填 0xCC 哨兵——四字节
+    magic 扫描可越过串尾至对齐边界与 golden 侧 0xCC 同口径；返回
+    偏移与 golden 一致）、
+  ZeroCharEdgeCases（ch==0 返终止 NUL / 空串两向 / 未找到返 nullptr
+    / 首字符命中）、
+  ReferenceCrossCheck（64 组伪随机长度 0-23、字符 0x01-0x7F 串 ×
+    ch∈0-0xFF，与独立参照实现——标准 strchr 语义——对拍）。
+解析：parse_hex 先 find_first_not_of(' ') 剥前导空格（944 深坑防复
+发）；golden 行固定 5 tok（CASE s=/ch=/->/ret=），字段恒非空。
+调试记录：初版缺 <cstring>（std::memset）编译 C3861——_patch_954_inc
+.py 补 include（patched: 1）。其余首版即过（纯内存零桩类）。
+预期 12 用例全量对拍 + 2 边界 + 参照交叉，ctest 69→70 全绿（#19
+通过）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：无——纯内存零子调用零桩零全局，0x7CAF30 全部 188B 真身模拟
+golden 对拍，无外部语义依赖。
+
+★本批实锤：CRT 扇入度最高未复刻项 = strchr——MSVC6 字节串查找
+（零扩展低 8 位 + 4 字节 0x7EFEFEFF/0x81010100 magic 批量扫描 +
+未对齐逐字节探测 + 回验命中返指针、NUL 返 0、ch==0 返终止 NUL）；
+188B 纯内存操作，全程可真身模拟，无桩无全局。
+相邻待续：batch 955 按 ranking.tsv unique_callers 取下一未复刻 CRT
+项（python .qwen\tmp\_pick_945.py）。
+依赖模型：无（纯内存零依赖）。
+承前：batch 953 已完（CRT vsprintf 0x7CA530 归档，commit dd840cb）。
