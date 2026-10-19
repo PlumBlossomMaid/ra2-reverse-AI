@@ -1,0 +1,117 @@
+---
+
+frontier batch 930 —— 0x005A6D80/0x005A7070 死代码复刻：定向步进（1223B）
+=======================================================================
+
+候选来源：用户指令「RMG 死代码全部复现对齐（挖坟考古）」——0x5A6D80
+（752B）/0x5A7070（471B）姊妹对，TSV:1026/1027 已 semantics 登记
+（batch 322，2026-10-15 补取证修正），本批做 C++ 真身复刻 + 单测对拍。
+两函数共同被调 0x5A7250（菱形域矩形校验）batch 222 已闭语义，本批打桩。
+TARGET = 0x005A6D80 + 0x005A7070。C++ 模型：code/rewrite/rmg/
+dead_code_stepdir.{h,cpp} 新增 DeadCodeStepDir6D80/DeadCodeStepDir7070
++ DeadStepDirWorld 接口。单测：test_dead_code_stepdir.cpp 新增
+DeadCodeStepDir.MatchesOriginal（5 用例对拍）。
+
+一、语义（完整汇编逐段核对 + 黄金 5 用例闭环）
+------------------------------------------------
+真义（黄金实证 + 机器码逐段确认）：
+  · 共用约定：thiscall 无 this，ret 0x10 四栈参——栈参1 = 输出坐标指针
+    （写最终坐标 dword：低 16 = X、高 16 = Y；出界写 0）、栈参2 =
+    参考坐标 CellStruct*（兼初始坐标源，[esp+0x10] 打包初值）、栈参3 =
+    区域 {x,y,w,h}（[esp+0x44]）、栈参4 = 方向参数（[esp+0x48]）。
+  · 0x5A6D80（定向步进 + 命中分支 + 距离采样 + 反向补步）：
+    ① 档位（0x5A6DB0-0x5A6DFF）：direction==2 → (edi,ebx)=(1,3)、
+       [esp+0x1c]=-3、[esp+0x18]=6、ebp=0、off14=0；
+       direction!=2 → (edi,ebx)=(3,1)、ebp=-3、off14=6。
+    ② 主循环（0x5A6E01）：movsx 判界 X>=w+x 或 Y>=h+y → 0x5A6E79
+       出界写 0；GetCellAt（0x5657A0，ecx=MapClass@0x87F7E8，栈参
+       &[esp+0x10]）→ cell+0x38 == [0xABC2B0] → je 0x5A6E99 命中分支；
+       否则 方向&7 查 [0x89F688] 方向表 → X+=dx、Y+=dy → 主循环。
+    ③ 命中分支（0x5A6E99）：重新判界出界写 0；矩形
+       {X+ebp, Y+off1c, edi+off14}（[esp+0x28]/[esp+0x2c]/[esp+0x30]）
+       → push [esp+0x20]（栈垃圾，golden 观察 0）→ lea ecx,[esp+0x2c]
+       → call 0x5A7250（打桩，azn/one_shot 序列）→ al 非零 → 成功路径。
+    ④ 成功路径（0x5A6F55）：esi = max(Y-refY, X-refX)（有符号比较
+       取大）；esi<=0 → 写当前坐标（hit-ok：起点=参考点距离 0 直写，
+       rng=0 实锤）；否则拒绝采样 n = ftol(rand * (esi+1) * 2^-32)，
+       n>esi 重抽（ja 无符号）；n<=0 → 写当前坐标；n>0 → 反向补步
+       （0x5A6FCE）：(direction-4)&7 方向逐格，每步矩形
+       {X+ebp, Y+i, edi+off14, ebx+off18} 调 0x5A7250，al==0 中止写
+       当前坐标，n 走完写最终坐标。
+    ⑤ ★命中失败路径（0x5A6EF6）：方向表步进后 jmp 0x5A6E9D **复用
+       命中分支判界**（不再 GetCellAt）——golden 6d80-hit-fail 实证
+       （首拒后第二格矩形 a=1 即步进到 (1,0) 继续命中分支）。
+  · 0x5A7070（正向步进 + 反向随机补步）：
+    ① 档位（0x5A70A4）：direction==2 → (esi,edi)=(1,3)、off14=-3、
+       off1c=6；!=2 → (3,1)、off10=-3、off18=6。
+    ② 主循环（0x5A70EE）：判界带 +1（X>=w+x+1 出界，区别于 6D80）；
+       矩形 {X+offxx, Y+offyy, esi+offxx, edi+offyy} 每步调 0x5A7250
+       （al==0 → 0x5A7192 补步；al!=0 → 方向表 (direction&7) 步进）。
+    ③ 补步分支（0x5A7192）：idx=(direction-4)&7，目标 = 当前+方向；
+       距离 = max(目标X-refX, 目标Y-refY)；<=6 → 直写目标（不吃 RNG，
+       golden 7070-walk-back/fail-close 均走此支）；>6 → 拒绝采样
+       n = ftol(rand * 4/2^32)（[0x7EDA38]），n>3 重抽；n<=0 直写；
+       n>0 → 沿 idx 逐格补 n 步写最终坐标。
+  · 常量（.rdata 取证）：[0x7ED898] = 2^-32×(1+2^-40)（采样缩放）、
+    [0x7EDA38] = 4/2^32×(1+2^-40)（0..3 拒绝采样比例）。
+  · 共表 [0x89F688] 方向表：.data 未初始化区（PE raw 范围外）= 真机全 0
+    ——★怪癖：两函数主循环靠它步进，真机被调用会死循环；golden 灌
+    DIR8 标准表（batch 928 只单次合成坐标不受影响，本批必须灌才能收敛）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 _golden_6D80.py（StepOracle，继承 TechOracle）：
+  桩侧：0x5A7250 打桩（hook 记录 1 栈参 + ecx 矩形前三 dword，返回按
+  azn/one_shot 策略：one_shot 首调后翻转）；[0x89F688] 灌 DIR8 标准表
+  （{0,-1}..{-1,-1} 八方向，int16 对）；全图 cell+0x38 清 0；
+  [0xABC2B0] 灌用例值（0=全图命中、0x1234=永不命中）。
+  真身侧：Randomizer 0x65C780（seed 灌 [0xABE890]，★基类 PlaceOracle
+  的 _h_rng 自动计数——本批脚本曾重复注册造成 rng 双计，诊断后删除，
+  与 batch 929 同款坑）；GetCellAt 0x5657A0 真身（TechOracle cell 数组）。
+  覆盖：5 用例（6d80-walk-out/6d80-hit-ok/6d80-hit-fail/7070-walk-back/
+  7070-fail-close，CASE 行含 func/ref/region/direction/abcb2b0/azn/
+  one_shot，ZN 行含 0x5A7250 调用参数）落盘 memory/data/rmg/
+  deadcode_stepdir_golden.txt。
+  ★对拍点：out 坐标 dword、ProbeArea 调用序列（golden ZN 行矩形三
+  dword）、Randomizer::call_count（hit-fail 距离采样 1 次实锤）。
+  5 用例数证：walk-out out=0（步进出界写 0）；hit-ok out=0（起点=
+  参考点距离 0 直写，rng=0）；hit-fail out=1（首拒后步进 (1,0) 再命中
+  成功路径采样 n=0 写当前）；walk-back out=5（每格 0x5A7250 通过走
+  到 X=5 出界，补步差 5<=6 直写，rng=0）；fail-close out=0x10000
+  （首拒即补步差 0<=6 直写 (0,1)，rng=0）。
+  ★io 定义：x0/y0 参数（my run_main 传了但 0x5A6D80/0x5A7070 不读——
+  初始坐标 = *cs 参考坐标打包，golden 与 C++ 侧一致）。
+
+三、C++ 模型（code/rewrite/rmg/dead_code_stepdir.{h,cpp}）
+------------------------------------------------
+签名：DeadCodeStepDir6D80/7070(ctx, refx, refy, begin, out_al) 返回
+坐标 dword；ctx 携带 Randomizer*/DeadStepDirWorld*/区域/方向/abc_b2b0/
+方向表。world 抽象桩语义：Rng/CellOwner（cell+0x38，6D80 命中检测用）/
+ProbeArea（0x5A7250 四参矩形 + azn/one_shot 序列）。实现要点：
+  · 6D80 命中失败路径：内部 for(;;) 复用判界（不再 GetCellAt）——
+    golden hit-fail 两条 ZN 实证（首拒后步进 (1,0) 的矩形 a=1）
+  · 距离采样 ja 无符号（uint32 转换，n>esi 重抽）
+  · 7070 补步差<=6 直写不采样（golden 两用例均命中该支，rng=0）
+  · 方向表 DIR8 复用 golden 灌装值（真机 0 死循环怪癖注释）
+
+四、单测（test_dead_code_stepdir.cpp，全量 48 项之一）
+------------------------------------------------
+DeadCodeStepDir.MatchesOriginal：读 golden 原档（RA2_GOLDEN_DIR 宏），
+5 用例全量对拍 out/ProbeArea 调用序列（ZN 行 arg a b c 四值）。
+FakeStepDirWorld 按 golden 配置行重建：CellOwner 恒 0（golden 全图
+cell+0x38=0）、ProbeArea 按 azn/one_shot 序列（首调后翻转）、
+Randomizer seed=42 真身对拍消耗。ctest 48/48 全绿（dead_code_stepdir
+#45 通过，无回归——较 929 后 47 项新增本批）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：0x5A7250 真身判定（菱形界 + cell 谓词链，batch 222 已登记
+语义但本批打桩——真身复刻属其自身批次课题）；[0x89F688] 真机内容
+（.data 未初始化=0 → 真机会死循环，golden 灌 DIR8 收敛）；成功路径
+反向补步 n>0 分支（golden 全用例 n 均<=0 或未及补步——hit-ok 距离 0、
+hit-fail n=0、7070 补步差<=6 直写；n>0 逐格补步为照抄汇编未采集）。
+依赖模型：Randomizer、GetCellAt/cell+0x38（CellOwner 抽象）、
+0x5A7250 桩语义。待续死代码批次：0x5A78D0、0x5A76E0、0x5A6C10 的
+[0xA8ED2C] 表与 vtable+0x27 归属、0x5A7250 余段、functions.tsv 11 条
+body_bytes=1 回修。

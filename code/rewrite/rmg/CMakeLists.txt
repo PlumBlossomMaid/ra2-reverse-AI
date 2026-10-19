@@ -36,7 +36,8 @@ add_library(ra2_rmg
   dead_code_jitter.cpp
   dead_code_placer.cpp
   batch_placer.cpp
-  dead_code_8f00.cpp)
+  dead_code_8f00.cpp
+  dead_code_stepdir.cpp)
 
 # x87 汇编模块：NormalDeviate 的 u/v/s 计算需要 80 位中间精度
 # （原版 MSVC 6.0 用 x87；MSVC 2022 SSE2 即使 /arch:IA32 也不生成 x87）
@@ -292,4 +293,12 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_dead_code_8f00 PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME dead_code_8f00 COMMAND test_dead_code_8f00)
+
+  # 死代码复现：0x5A6D80/0x5A7070 定向步进（判界+命中+距离采样+补步），
+  # 黄金由 emu_oracle 指令级模拟取得（0x5A7250 打桩，deadcode_stepdir_golden.txt）
+  add_executable(test_dead_code_stepdir test/test_dead_code_stepdir.cpp)
+  target_link_libraries(test_dead_code_stepdir PRIVATE ra2_rmg gtest_main)
+  target_compile_definitions(test_dead_code_stepdir PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME dead_code_stepdir COMMAND test_dead_code_stepdir)
 endif()
