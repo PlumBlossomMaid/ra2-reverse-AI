@@ -1,0 +1,130 @@
+frontier batch 943 —— CRT memmove 0x7CA090
+==========================================
+
+候选来源：用户指令「③ 继续 CRT/runtime frontier（batch 083+）按
+ranking.tsv unique_callers 列扇入度排」。0x7CA090 为 batch 942 之后
+ranking.tsv 中 **unique_callers 扇入度最高（74 uniq callers / 3211
+transitive_dependents）的未复刻 CRT 项**。此前已有静态语义登记
+（frontier_status.tsv 0x007CA090，semantics_verified），无 C++ 真身
+复刻、无 golden。2026-10-19 指令级 golden 13 用例实证
+（_golden_7ca090.py，Unicorn 跑真身机器码——纯内存复制零桩边界），
+本批做 C++ 复刻 + 单测对拍。
+TARGET = 0x007CA090。C++ 模型：code/rewrite/runtime/crt_memmove.{h,cpp}
+（函数名 **memmove_090_legacy**）。单测：test_crt_memmove.cpp
+（13 用例对拍 + 3 结构断言）。TSV 新增 0x007CA090_REIMPL 行。
+
+一、链语义（全段 disasm 复核 + golden 13 用例闭环）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7CA090 = MSVC6 静态 CRT 重叠感知
+字节拷贝 `memmove`——cdecl 3 栈参、ret 无栈清理、返回 dst：
+  · 入口：esi=[ebp+0xC]（src）、ecx=[ebp+0x10]（count）、
+    edi=[ebp+8]（dst）、eax=src+count
+  · 重叠判定：
+      cmp edi,esi / jbe 正向        ; dst <= src → 正向
+      cmp edi,eax / jb 反向(0x7CA228) ; src < dst < src+count → 反向
+      （否则 dst >= src+count → 正向）
+  · 正向路径（0x7CA0B0）：
+      test edi,3 / jne 0x7CA0CC     ; dst 未 4 对齐 → 先逐字节对齐
+      shr ecx,2 / and edx,3 / cmp ecx,8 / jb 跳转表
+      rep movsd / jmp [edx*4+0x7CA1D8] ; 对齐 dword 复制 + 尾部补齐
+      （非对齐：mov al,[esi]/mov [edi],al 逐字节补齐至对齐后同走）
+  · 反向路径（0x7CA228）：
+      lea esi,[src+count-4] / lea edi,[dst+count-4] ; 尾部指针
+      test edi,3 / jne 0x7CA25C     ; dst 未 4 对齐 → 先对齐
+      shr ecx,2 / and edx,3 / cmp ecx,8 / jb 跳转表
+      std / rep movsd / cld / jmp [edx*4+0x7CA370] ; 反向 dword + 补齐
+      （非对齐：反向逐字节对齐后同走）
+  · 收尾（各路径汇聚）：mov eax,[ebp+8]（返回 dst）/ pop esi/pop edi/
+    leave / ret
+
+★原版怪癖（golden 实证，C++ 侧逐条复刻）：
+  ① 返回 eax = dst（入口即存、永不修改）；
+  ② 重叠判定：dst<=src 或 dst>=src+count 走正向；src<dst<src+count
+     走反向（memmove 保序语义）——与 0x7D0A20（lowlevel.cpp 的
+     std::memmove 包装）同语义但独立实现；
+  ③ 正向/反向均按 dst 4 字节对齐优化（rep movsd + 尾部跳转表
+     0x7CA1D8/0x7CA370），对齐优化不改变最终字节内容（行为等价）；
+  ④ 无溢出防护，纯逐字节/dword 复制。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7ca090.py（MemmoveOracle；Unicorn 按原
+ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7CA090——零子调用零
+全局，纯内存复制全程可模拟）。对拍点：{eax(=dst), dst 前 64 字节}。
+13 用例落盘 memory/data/rmg/deadcode_7ca090_golden.txt
+（dst_rel 相对 src，负=src 前、正=src 后；src-hex 是 0x00..0xFF 递增
+模式，read 覆盖 max(count,0x40)）：
+
+  CASE -256  0   -> 底纹 0xCC 不动（count=0 空转）
+  CASE -256  1   -> 00 + 底纹
+  CASE -256  4   -> 00010203 + 底纹
+  CASE -256  5   -> 0001020304 + 底纹
+  CASE -256  7   -> 00010203040506 + 底纹
+  CASE -256  12  -> 000102..0a0b + 底纹
+  CASE -256  64  -> 00..3f（非对齐路径）
+  CASE -256  256 -> 00..ff（对齐 rep movsd 路径）
+  CASE    0  16  -> 自复制（dst==src，16B 数据原样）
+  CASE   -2  16  -> 正向重叠（dst=src-2），保序 16B 数据原样
+  CASE    2  16  -> 反向重叠（dst=src+2），保序 16B 数据原样
+  CASE    3  16  -> 反向重叠（dst=src+3），保序 16B 数据原样
+  CASE  512  32  -> 非重叠，底纹 0xCC 不动
+  全部 ret == dst 原址，dst 前 count 字节 == 源递增模式（保序），
+  断言在采集脚本内闭环。
+
+三、C++ 模型（code/rewrite/runtime/crt_memmove.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。单函数（纯内存复制，无世界抽象）：
+  memmove_090_legacy(dst, src, count) —— 0x7CA090：
+    dst<=src 或 dst>=src+count → 正向逐字节拷贝；
+    src<dst<src+count → 反向逐字节拷贝（保序）。
+  返回 dst。
+无失败路径、无额外校验。
+
+★命名决策（LNK4006 事件）：低层 lowlevel.cpp 已有 `memmove_legacy`
+（0x7D0A20，std::memmove 包装，lowlevel.h:83-84 声明），本批首版
+误用同名 → 链接器 `memmove_legacy 已在 lowlevel.cpp.obj 中定义；已
+忽略第二个定义`（0x7CA090 复刻被忽略）。经 grep 确认冲突后决定
+**改名 memmove_090_legacy**（补丁 .qwen/tmp/_patch_943_rename.py，
+三文件 7 处替换）——0x7CA090 与 0x7D0A20 是两个独立函数（对齐优化
++ 反向 rep movsd + 跳转表 vs std::memmove 薄包装），独立命名避免
+符号冲突与语义混淆。
+
+四、单测（test_crt_memmove.cpp，全量 61 项之一）
+------------------------------------------------
+CrtMemmoveTest：读 golden 原档（RA2_GOLDEN_DIR 宏）13 CASE 用例 + 3 项
+结构断言：
+  GoldenMemmoveMatches（逐用例：返回 dst 原址 + dst 前 count 字节 ==
+    源递增模式；非重叠且 count<0x40 时底纹 0xCC 不动）、
+  OverlapForwardAndBackwardPreserveOrder（正向/反向重叠各一次保序）、
+  ZeroCountIsNoop（count=0 空转不改字节）、
+  ReferenceCrossCheck（独立参照实现 reference_memmove 随机
+    rel∈{-0x100,-2,-1,0,1,2,3,0x100} × count∈{1,3,7,16,64} 交叉对拍）。
+解析统一 stoull→uint32_t→int32_t（rel 可为负）。golden 解析坑
+（batch 941/942 同型）：CASE 行 count=0 时 srchex 为空字段被分词器
+跳过，toks 只有 7 个元素，固定下标 toks[7] 越界触发 vector subscript
+out of range（0xc0000409）——已改为**定位 "ret" 标记**（eax=ret+1、
+dst=ret+2），补丁 _patch_943_test_parse.py。预期 13 用例全量对拍，
+ctest 61/61 全绿（#10 crt_memmove 通过，无回归）。
+
+★golden 采集三修记录（_patch_943_golden.py/_patch_943b_golden.py/
+_patch_943c_golden.py）：
+  ① `out` bytes 变量名覆盖文件句柄 → 改名 fout；
+  ② n=256 用例断言失败——run_memmove 只读 0x40 字节 → 改为
+     read max(count,0x40)；
+  ③ rel=0 自复制用例失败——dst 区预填 0xCC 盖掉 src 数据区 →
+     仅在不重叠时写底纹、重叠时跳过底纹断言。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：无。本批零桩边界——memmove 是纯内存复制，无外部全局/子调用，
+模型与 golden 均为完整真身语义。golden 断言在采集脚本内闭环（13 用例
+全等于源递增模式保序）。
+
+★本批实锤：CRT 扇入度第六高的未复刻项 = memmove——664B 的重叠感知
+字节拷贝，MSVC6 静态 CRT 惯用形态：dst 4 字节对齐 + rep movsd +
+尾部跳转表（0x7CA1D8/0x7CA370）补齐，正向/反向两路径共享跳转表
+模式；与 0x7D0A20（std::memmove 包装）并存于 exe，符号名必须区分。
+相邻待续：batch 944 按 ranking.tsv unique_callers 取下一未复刻 CRT 项。
+依赖模型：无（纯函数）。
+承前：batch 942 已完（CRT wcslen 0x7CA405，commit 3ffdff7）；

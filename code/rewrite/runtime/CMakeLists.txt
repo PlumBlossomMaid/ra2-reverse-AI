@@ -9,6 +9,7 @@ add_library(ra2_runtime
   crt_stricmp.cpp
   crt_wcscpy.cpp
   crt_wcslen.cpp
+  crt_memmove.cpp
   facing.cpp
   ra2_string.cpp
   map_legal.cpp)
@@ -70,4 +71,12 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_crt_wcslen PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME crt_wcslen COMMAND test_crt_wcslen)
+
+  # memmove（0x7CA090，重叠感知字节拷贝），golden 由 emu_oracle 指令级
+  # 模拟取得（deadcode_7ca090_golden.txt，13 用例；纯内存复制零桩）
+  add_executable(test_crt_memmove test/test_crt_memmove.cpp)
+  target_link_libraries(test_crt_memmove PRIVATE ra2_runtime gtest_main)
+  target_compile_definitions(test_crt_memmove PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME crt_memmove COMMAND test_crt_memmove)
 endif()
