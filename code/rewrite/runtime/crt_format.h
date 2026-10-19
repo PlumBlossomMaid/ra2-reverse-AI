@@ -69,6 +69,46 @@ class CrtFormatWorld {
 std::int32_t vsprintfw_legacy(CrtFormatWorld& world, std::uint8_t* dst,
                               std::uint32_t fmt, std::uint32_t args);
 
+// 0x7C8EF4（82B，114 unique_callers / 4150 transitive_dependents）：
+// vsprintf 薄封装——ANSI 窄字符配对变体。外壳与 0x7CA564 同构（槽=dst、
+// 死值 0x42、上限 0x7FFFFFFF、js 分支 0x7CE18D 不可达），但：
+//   ① 核心引擎是 0x7CE2A5（ANSI 格式化核心，0x248 栈帧大引擎，本批桩边界）
+//      而非 0x7D21BE（宽引擎）；
+//   ② 收尾只写**一个**单字节 NUL（窄字符串终止符）——0x7CA564 写双
+//      NUL（宽 L'\0'），两者成窄/宽配对；
+//   ③ 写 NUL 后槽不推进（0x7C8F2F and byte [eax],0 → jmp 收尾，无 inc）。
+// 原版机器码（2026-10-19 disasm 全段复核 + golden 6 用例实证，
+// memory/data/rmg/deadcode_7c8ef4_golden.txt）：
+//   007c8ef4 push ebp/mov ebp,esp/sub esp,0x20
+//   007c8efa mov eax,[ebp+8]          ; arg1 = dst
+//   007c8f01 mov [ebp-0x20],eax       ; 槽 = dst
+//   007c8f04 lea eax,[ebp+0x10]       ; &args（可变参起点）
+//   007c8f07 mov dword [ebp-0x14],0x42 ; 死值 'B'（从未被读取）
+//   007c8f0e push eax                 ; arg3 = &args
+//   007c8f0f lea eax,[ebp-0x20]
+//   007c8f12 push [ebp+0xC]           ; arg2 = fmt
+//   007c8f15 mov dword [ebp-0x1C],0x7FFFFFFF ; 上限
+//   007c8f1c push eax                 ; arg1 = &槽
+//   007c8f1d call 0x7CE2A5            ; ANSI 格式化核心（桩）
+//   007c8f22 add esp,0xC
+//   007c8f25 dec dword [ebp-0x1C]     ; 上限--
+//   007c8f28 mov esi,eax              ; 保存返回值
+//   007c8f2a js 0x7C8F34              ; 上限为负 → 走 0x7CE18D（不可达）
+//   007c8f2c mov eax,[ebp-0x20]
+//   007c8f2f and byte [eax],0         ; 写 NUL（★单字节）
+//   007c8f32 jmp 0x7C8F41
+// 0x7C8F34: lea eax,[ebp-0x20] / push eax / push 0 / call 0x7CE18D
+// 0x7C8F41: mov eax,esi / pop esi / leave / ret
+//
+// ★原版怪癖（照抄，与 0x7CA564 同款差异点）：
+//   ① [ebp-0x14]=0x42（'B'）死值，从未被读取；
+//   ② 上限 0x7FFFFFFF 减一次 js 永不成立——0x7CE18D 分支实际不可达
+//      （代码照抄，golden 断言 0 次调用）；
+//   ③ 只写一个 NUL 且槽不推进（ANSI 窄字符串终止符）；
+//   ④ 返回值原样透传核心结果（含负值）。
+std::int32_t vsprintf_legacy(CrtFormatWorld& world, std::uint8_t* dst,
+                             std::uint32_t fmt, std::uint32_t args);
+
 // 原版栈上初始化、从未参与计算的上限常量（golden 实证 js 永不成立）
 inline constexpr std::int32_t kVsprintfwLimit = 0x7FFFFFFF;
 

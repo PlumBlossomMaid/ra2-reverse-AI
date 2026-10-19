@@ -43,4 +43,13 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_crt_stricmp PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME crt_stricmp COMMAND test_crt_stricmp)
+
+  # vsprintf 薄封装（0x7C8EF4，ANSI 单 NUL 变体），golden 由
+  # emu_oracle 指令级模拟取得（deadcode_7c8ef4_golden.txt，6 用例；
+  # 0x7CE2A5 引擎与 0x7CE18D 终止符为本批桩边界，外壳语义真身实证）
+  add_executable(test_crt_vsprintf test/test_crt_vsprintf.cpp)
+  target_link_libraries(test_crt_vsprintf PRIVATE ra2_runtime gtest_main)
+  target_compile_definitions(test_crt_vsprintf PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME crt_vsprintf COMMAND test_crt_vsprintf)
 endif()
