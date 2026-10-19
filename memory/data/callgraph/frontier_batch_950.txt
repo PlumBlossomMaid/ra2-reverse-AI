@@ -1,0 +1,94 @@
+frontier batch 950 —— CRT wcscmp 0x7CA5D3
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序，batch 949 之后取下一未复刻 CRT 项 = 0x7CA5D3（53B / 23
+unique callers / 未复刻 / 非锁家族非 crt_runtime_verified 基础件）。
+此后无静态语义登记、无 C++ 真身复刻、无 golden——本条为全新取证。
+2026-10-19 指令级 golden 14 用例实证（_golden_7ca5d3.py，Unicorn 跑
+真身机器码——纯内存零子调用零桩零全局，全程真身模拟）。
+TARGET = 0x007CA5D3。C++ 模型：code/rewrite/runtime/crt_wcscmp.{h,cpp}
+（函数名 wcscmp_legacy）。单测：test_crt_wcscmp.cpp（14 用例对拍 +
+边界 + 参照抽查）。TSV 新增 0x007CA5D3_REIMPL 行。
+
+一、链语义（disasm 全段复核 + golden 14 用例实证）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7CA5D3 = MSVCRT wcscmp——
+cdecl 2 栈参 s1/s2（宽字符串），返回比较三态 {-1,0,+1}（调用者清
+栈）。纯内存操作，无子调用无全局引用——全程可真身模拟。
+  机器码（0x7CA5D3-0x7CA607，53B）：
+    edx = [esp+4] = s1（第1参）；push esi 后 esi = [esp+0xC] = s2
+    （第2参，注意 0x7CA5D8 在 push esi 之后取址）；push edi；
+    0x7CA5DD mov cx, word [esi]（*s2 预载入 cx）
+  循环 0x7CA5E0：
+    movzx eax, word [edx]  ; eax = *s1（零扩展）
+    movzx edi, cx          ; edi = *s2（零扩展）
+    sub eax, edi           ; eax = *s1 - *s2（32 位无符号减法）
+    jne 0x7CA5F8           ; 差值非 0 → 跳出比较
+    test cx, cx            ; *s2 == 0（仅在相等时检查，只看 s2 的 NUL）
+    je 0x7CA5F8
+    inc edx ×2 / inc esi ×2 ; 宽字符步进（+2 字节）
+    mov cx, [esi] / jmp 循环
+收尾 0x7CA5F8：pop edi / pop esi；
+    test eax, eax
+    jge 0x7CA602 →（eax>=0 分支内）jle 0x7CA607（==0 → ret eax=0）
+      否则 push 1 / pop eax → ret 1
+    eax<0 → or eax, 0xFFFFFFFF → ret -1
+
+★原版怪癖（golden 实证，照抄）：
+  ① NUL 检测只看 s2（cx）——s1 的 NUL 由差值体现：前缀相同但 s1 先
+     到 NUL → eax = 0 - c2 < 0 → -1；s2 先到 NUL → c1 - 0 > 0 → +1。
+     等价标准 strcmp/wcscmp 语义（先到 NUL 者小）；
+  ② 差值为 32 位无符号减法、符号由 test/jge 判——字符域 0-0xFFFF
+     不回绕，无碍（金标准用例 0xFFFF vs 0x100 → +1 实证零扩展）；
+  ③ 返回三态归一化 {-1,0,+1}，非原始差值（差值绝对值被丢弃）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7ca5d3.py（WcscmpOracle；Unicorn 按原
+ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7CA5D3 全段——无子
+调用无桩；双串区 0xCCCC 哨兵预填验证不越界读；cdecl ret 只弹返回
+地址）。对拍点：返回三态（eax==0xFFFFFFFF → -1）。14 用例落盘
+memory/data/rmg/deadcode_7ca5d3_golden.txt（CASE 行格式
+`CASE s1=<hex> s2=<hex> -> ret=<tri>`，s1/s2 为 u16 小端 hex 含尾
+NUL）：空串对空串/相等串/首差一位（正负两向）/s1 长与 s2 长（NUL
+收尾两向）/大小写零扩展/空 vs 单字符两向/长串相等（10 字符）/
+提前 NUL（s1 中途到 NUL 两向）/极值 0xFFFF vs 0x100（零扩展最强
+签证明）。
+
+三、C++ 模型（code/rewrite/runtime/crt_wcscmp.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。单函数：
+  wcscmp_legacy(s1, s2) —— 0x7CA5D3：
+    循环：c1=*s1（movzx 零扩展）/ c2=*s2；diff = (int32)(c1-c2)
+    （32 位无符号减）；diff!=0 或 c2==0 → 跳出（NUL 检测只看 s2）；
+    否则 ++s1/++s2 继续；
+    收尾：diff<0 → -1 / diff>0 → +1 / ==0 → 0（三态归一化）。
+  严格按汇编语义：零扩展、无符号减法、s2-only NUL 检测、三态归一。
+  头注释含 53B 机器码全段 + 三怪癖。
+
+四、单测（test_crt_wcscmp.cpp，全量 68 项之一）
+------------------------------------------------
+CrtWcscmpTest：读 golden 原档（RA2_GOLDEN_DIR 宏）14 CASE + 3 项：
+  GoldenMatches（逐用例三态一致；s1/s2 均含尾 NUL 可直 data()）、
+  EmptyEdgeCases（空/单字符四组合边界）、
+  ReferenceCrossCheck（32 组伪随机长度 0-16、全 0-0xFFFF 字符域的串
+    对，与独立参照实现——标准 wcscmp 语义逐字符差——对拍；含提前
+    NUL 随机命中）。
+解析：parse_hex 先 find_first_not_of(' ') 剥前导空格（944 深坑防复
+发）；golden 行固定 5 tok（s1=/s2=/->/ret=），字段恒非空。
+调试记录：本次零修复首版即过（与 946/948 同，纯内存零桩类函数）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：无——纯内存零子调用零桩零全局，0x7CA5D3 全部 53B 真身模拟
+golden 对拍，无外部语义依赖。
+
+★本批实锤：CRT 扇入度最高未复刻项 = wcscmp——MSVCRT 宽字符串比较
+（零扩展逐字符差 + s2-only NUL 检测 + 返回三态归一化）；53B 纯内存
+操作，全程可真身模拟，无桩无全局。
+相邻待续：batch 951 按 ranking.tsv unique_callers 取下一未复刻 CRT
+项（python .qwen\tmp\_pick_945.py）。
+依赖模型：无（纯内存零依赖）。
+承前：batch 949 已完（CRT wcsncpy 0x7CA422，commit df9bd60）。

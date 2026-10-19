@@ -16,6 +16,7 @@ add_library(ra2_runtime
   crt_malloc.cpp
   crt_thunk.cpp
   crt_wcsncpy.cpp
+  crt_wcscmp.cpp
   facing.cpp
   ra2_string.cpp
   map_legal.cpp)
@@ -134,4 +135,12 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_crt_wcsncpy PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME crt_wcsncpy COMMAND test_crt_wcsncpy)
+
+  # wcscmp（0x7CA5D3，宽字符比较三态返回），golden 由 emu_oracle 指令级
+  # 模拟取得（deadcode_7ca5d3_golden.txt，14 用例；纯内存操作零桩）
+  add_executable(test_crt_wcscmp test/test_crt_wcscmp.cpp)
+  target_link_libraries(test_crt_wcscmp PRIVATE ra2_runtime gtest_main)
+  target_compile_definitions(test_crt_wcscmp PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME crt_wcscmp COMMAND test_crt_wcscmp)
 endif()
