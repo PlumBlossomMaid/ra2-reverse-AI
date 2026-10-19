@@ -1,0 +1,118 @@
+frontier batch 938 —— CRT vsprintfW 薄封装 0x7CA564
+====================================================
+
+候选来源：用户指令「③ 继续 CRT/runtime frontier（batch 083+）按
+ranking.tsv unique_callers 列扇入度排」。0x7CA564 为 batch 937 之后
+ranking.tsv 中 **unique_callers 扇入度最高（68 uniq callers / 4536
+transitive_dependents）的未复刻 CRT 项**。此前已有静态语义登记
+（frontier_status.tsv 0x007CA564，semantics_verified），无 C++ 真身复刻、
+无 golden。2026-10-19 指令级 golden 6 用例实证（_golden_7ca564.py，
+Unicorn 跑真身外壳机器码、0x7D21BE/0x7CE18D 桩边界），本批做 C++ 复刻
++ 单测对拍。
+TARGET = 0x007CA564。C++ 模型：code/rewrite/runtime/crt_format.{h,cpp}。
+单测：test_crt_format.cpp（6 用例对拍 + 3 结构断言）。TSV 新增
+0x007CA564_REIMPL 行。
+
+一、链语义（全段 disasm 复核 + golden 6 用例闭环）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7CA564 = vsprintfW 薄封装——
+把 (dst, fmt, &args) 转发给宽字符格式化核心 0x7D21BE，然后以核心推进
+后的槽为起点写两个 NUL 字节，原样透传核心返回值。
+  · 入口（cdecl 3 栈参，ret）：
+      mov [ebp-0x20], eax       ; 槽 = dst
+      mov dword [ebp-0x14],0x42 ; 死值 'B'（从未被读取）
+      push &args / push fmt / push &槽
+      call 0x7D21BE             ; 宽字符格式化核心（桩边界）
+      add esp,0xC
+  · 收尾（核心返回后）：
+      dec [ebp-0x1C]            ; 上限 0x7FFFFFFF--
+      mov esi, eax              ; 保存返回值
+      js 0x7CA5A7               ; 上限为负 → 0x7CE18D（不可达）
+      mov eax,[ebp-0x20]
+      and byte [eax],0          ; 写 NUL #1
+      inc [ebp-0x20]            ; 槽++
+      dec [ebp-0x1C]            ; 上限--（0x7FFFFFFD）
+      js 0x7CA5C1               ; 不可达
+      mov eax,[ebp-0x20]
+      and byte [eax],0          ; 写 NUL #2（槽不推进）
+      mov eax, esi / ret        ; 返回核心返回值
+
+★原版怪癖（golden 实证，C++ 侧逐条复刻）：
+  ① [ebp-0x14]=0x42（'B'）写入后从未被读取——MSVC6 编译器遗留的死值，
+     无可观测行为，C++ 侧不保留（仅批文档与头注释记录）；
+  ② 上限 0x7FFFFFFF 连减两次 js 永不成立——0x7CE18D'（终止符写入器）
+     分支实际不可达（代码结构照抄，golden 语义断言 0 次调用）；
+  ③ 两个 NUL 是单字节 0（宽终止符 L'\0' 的字节布局），第一个写在核心
+     推进后的槽位置并把槽再 +1，第二个写在 +1 后位置、槽不动；
+  ④ 返回值原样透传核心结果（含负值），与写了多少字节无关——golden
+     WRITE 0 - r -1 用 uint32 打印 4294967295 实证透传语义。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7ca564.py（FwdOracle 继承 PaintOracle；
+Unicorn 按原 ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7CA564
+外壳）。★桩边界决策：0x7D21BE 是大型 CRT 宽字符格式化引擎（0x450
+栈帧），本批不模拟其内部（范围失控）——hook 劫持：记录 (槽值, fmt,
+args) → 按用例参数写 n 字节模拟输出 → 槽 += n → eax = 固定返回 R；
+0x7CE18D 同 hook 记录调用次数（推定为 0）。外壳指令（槽推进、双 NUL
+写入、返回值保存/透传、js 判定）全部真身执行。
+  ★压栈坑修复一（batch 937 同型）：原首版 `_call_setup([args, fmt,
+  dst])` 令 [esp+4]=args 而非 dst，槽被灌成 args 栈槽地址导致 slot0
+  断言失败——改为 `_call_setup([dst, fmt, args])`（维序压栈后
+  [esp+4]=第一参）；
+  ★压栈坑修复二（内部断言）：第三参推给 core 的是包装器 `lea eax,
+  [ebp+0x10]` 的**栈槽地址**（&[ebp+0x10]），不是 args 参数值本身——
+  断言从 `argsv == o.args` 改为 `argsv == o.args_slot`（= 压栈末 sp+0xC）。
+6 用例落盘 memory/data/rmg/deadcode_7ca564_golden.txt（十进制
+unsigned，vtbl 无——本项无对象）：
+
+  WRITE 0 - r 0    -> ret 0    dst 00 00 CC…
+  WRITE 1 58 r 1   -> ret 1    dst 58 00 00 CC…
+  WRITE 3 616263 r 3 -> ret 3  dst 61 62 63 00 00 CC…
+  WRITE 0 - r -1   -> ret 4294967295 dst 00 00 CC…   （负值透传实证）
+  WRITE 8 3132333435363738 r 8 -> ret 8  dst 31..38 00 00 CC…
+  WRITE 1 5a r 1000 -> ret 1000 dst 5a 00 00 CC…     （大值透传实证）
+  （全部 term 0——js 分支 0 次调用实证）
+
+三、C++ 模型（code/rewrite/runtime/crt_format.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。CrtFormatWorld 抽象对外两事：WideFormat
+（0x7D21BE，写输出并推进 *slot、返回引擎值）与 WriteTerminator
+（0x7CE18D，js 分支专用、本批不可达）。单函数：
+  vsprintfw_legacy(world, dst, fmt, args)  —— 0x7CA564：槽=dst →
+    WideFormat(&槽, fmt, args) → 上限 0x7FFFFFFF 连减两次，每次非负则
+    写单字节 NUL（第一次后槽+1、第二次槽不动）→ 返回引擎返回值。
+  kVsprintfwLimit=0x7FFFFFFF 常量暴露原版"上限"（golden 实证 js 永不
+  成立）。
+无失败路径、无额外校验（返回 void 透传 int）。
+
+四、单测（test_crt_format.cpp，全量 56 项之一）
+------------------------------------------------
+CrtFormatTest：读 golden 原档（RA2_GOLDEN_DIR 宏）6 WRITE 用例 + 3 项
+结构断言：
+  LimitMatchesHeader（常量 0x7FFFFFFF）、
+  GoldenVsprintfwShellMatches（逐用例：透传返回值/fmt/args、槽起点=
+  dst、term==0、缓存 payload+双 NUL 逐字节 == golden dst[0..n+1]）、
+  DoubleNulWrittenAtAdvancedSlot（NUL#1 在 payload 后、槽+1 后 NUL#2
+  写回 +3 位、再往后 0xCC 不动）、
+  EmptyOutputStillGetsDoubleNulAtStart（n=0 双 NUL 落在起点）。
+解析统一 stoull→uint32_t（golden 为 Python unsigned 打印，无
+INT_MAX 截断风险）。预期 6 用例全量对拍，ctest 56/56 全绿（#5
+crt_format 通过，无回归）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：无重大未确认项。0x7D21BE（宽字符格式化引擎）与 0x7CE18D
+（终止符写入）为本批**桩边界**——外壳形状已真身实证，引擎内部留待
+后续批次（引擎超大、0x450 栈帧，独立批次更稳妥）。C++ 侧 WriteTerminator
+调用路径在本批语义上不可达（上限 0x7FFFFFFF），保留接口以对齐原版结构。
+本批另产出通用坑记录：remainder 压栈顺序（第一参在 [esp+4]）与
+"&[ebp+0x10] 栈槽地址 ≠ args 值"两条已写进 _golden_7ca564.py 注释。
+
+★本批实锤：最高扇入 CRT 未复刻项之一 = vsprintfW 薄封装——14B 级别的
+外壳包装一个大型格式化引擎；引擎外衣的「双 NUL 收尾 + 返回值透传 +
+js 死分支」全部由本批 golden 实证。
+相邻待续：batch 939 按 ranking.tsv unique_callers 取下一未复刻 CRT 项。
+依赖模型：CrtFormatWorld 双回调（WideFormat/WriteTerminator）。
+承前：batch 937 已完（CRT 无效参数异常链 0x7DC720，commit 821fd26）；

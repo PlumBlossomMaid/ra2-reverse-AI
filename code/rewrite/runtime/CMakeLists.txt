@@ -5,6 +5,7 @@ add_library(ra2_runtime
   handles.cpp
   crt_init.cpp
   crt_error.cpp
+  crt_format.cpp
   facing.cpp
   ra2_string.cpp
   map_legal.cpp)
@@ -23,4 +24,13 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_crt_error PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME crt_error COMMAND test_crt_error)
+
+  # vsprintfW 薄封装（0x7CA564），golden 由 emu_oracle 指令级模拟取得
+  # （deadcode_7ca564_golden.txt，6 用例；0x7D21BE 引擎与 0x7CE18D 终止
+  # 符为本批桩边界，外壳语义真身实证）
+  add_executable(test_crt_format test/test_crt_format.cpp)
+  target_link_libraries(test_crt_format PRIVATE ra2_runtime gtest_main)
+  target_compile_definitions(test_crt_format PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME crt_format COMMAND test_crt_format)
 endif()
