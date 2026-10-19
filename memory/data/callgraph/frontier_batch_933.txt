@@ -1,0 +1,143 @@
+frontier batch 933 —— 0x005A6C10 死代码复刻：[0xA8ED2C] 表查询放置（0x5A6C10-0x5A6D73）
+=======================================================================
+
+候选来源：用户指令「RMG 死代码全部复现对齐（挖坟考古）——0x5A6C10 的
+[0xA8ED2C] 表与 vtable+0x27 归属」。TSV:470 已 semantics 登记（batch
+138，「表查询放置」），2026-10-19 全段汇编复核 + golden 10 用例实证，
+本批做 C++ 真身复刻 + 单测对拍。
+TARGET = 0x005A6C10。C++ 模型：code/rewrite/rmg/dead_code_6c10.{h,cpp}
+新增 DeadCode6C10World 接口 + DeadCode6C10TableItem/DataItem/Context +
+DeadCode6C10(ctx)。单测：test_dead_code_6c10.cpp 新增
+DeadCode6C10.MatchesOriginal（10 用例对拍）。
+
+一、语义（完整汇编逐段核对 + 黄金 10 用例闭环）
+------------------------------------------------
+真义（黄金实证 + 机器码逐段确认）：
+  · 调用约定：thiscall + 2 栈参（ret 8，0x5A6D6C）：
+    - ecx = 表索引、edx = &CellStruct{int16 X, int16 Y}（源坐标，只读）
+    - 栈参1 = [esp+4] work 写入值（0x5A6D30 mov edx,[esp+0x28]，push
+      esi/edi 后偏移 +8）
+    - 栈参2 = [esp+8] 层高调整量（0x5A6CF0 mov ecx,[esp+0x2C]，
+      == -1 跳过 cell+0x11B 写）
+  · 表项 = [0xA8ED2C][ecx*4]（dword 指针数组，0x5A6C1E mov ebp,
+    [eax+ecx*4]）。
+  · 表项虚表槽 0x9C（0x5A6C23 mov edx,[ebp]; 0x5A6C26 call [edx+0x9C]，
+    thiscall ecx=表项）→ 数据表基址；返回 0 → 0x5A6C32 je 直接返回。
+    数据表：+0x10 起 4B/项指针数组（golden 逐表项打桩返回各自数据表）。
+  · 表项 +0x2E8 = 外层计数（0x5A6C38/0x5A6D59）、+0x2E4 = 内层计数
+    （0x5A6C54/0x5A6D4A）。任一 <=0 → 0x5A6C46/0x5A6C5E jle 返回。
+  · 双层循环（0x5A6C54 内层 / 0x5A6D59 外层），x 优先（golden GC 序
+    (8,6)(9,6)(10,6)(8,7)... 实锤）：
+      X = (int16)(源X + 内层索引 edi)   ← 0x5A6C6B/0x5A6C72 ax=源X+di
+      Y = (int16)(源Y + 外层索引 ebx)   ← 0x5A6C68/0x5A6C6E cx=ebx+源Y
+    菱形四判定（0x5A6C8D-0x5A6CB4，W=[0xABED04]、W2H=[0xABED08]，有符号）：
+      X+Y <= W  → 跳过（jle）；X-Y >= W → 跳过（jge）
+      Y-X >= W  → 跳过（jge）；X+Y >  W2H → 跳过（jg）
+  · GetCellAt(0x5657A0)（thiscall ecx=0x87F7E8 MapClass::Instance，
+    栈参=&CellStruct）→ cell 指针。
+  · 索引串 = 外层索引 × 内层计数 + 内层索引（0x5A6CC9 ecx=内层计数、
+    0x5A6CCF ebx=外层索引、0x5A6CD7 imul ecx,ebx、0x5A6CDA add ecx,edi
+    ——★先 imul 用外层索引做乘数）；数据项 = 数据表[索引串*4 + 0x10]
+    （0x5A6CDC mov esi,[edx+ecx*4+0x10]，edx = 槽 0x9C 返回值）。
+  · 数据项非 0 才写入（0x5A6CE2 je 跳过写 cell 与 work，GetCellAt 照调）：
+    - cell+0x11A = 索引串低 8 位（cl，0x5A6CEA）
+    - cell+0x38  = 表项+0x294（0x5A6CE4/0x5A6CF4，dword）
+    - layer != -1：cell+0x11B = 数据项+0x28 + layer - 4
+      （0x5A6CFC-0x5A6D04，★sub dl,4）
+    - cell+0x11C = 数据项+0x2A（0x5A6D0A-0x5A6D0D）
+    - [0xABED10]（work）非 0：work[(Y*side+X)*0x50 + 0x38] = 栈参1
+      （0x5A6D13-0x5A6D3A：movsx Y×side + X → lea *5 → shl 4 = *80 =
+      WORK_SIZE）
+  · 返回 EAX 无意义（0x5A6D6C 弹栈后 ret 8），C++ 返回 0 对拍。
+
+★原版怪癖（golden 实证，C++ 侧逐条复刻）：
+  ① 索引串乘法方向：imul ecx,ebx 时 ecx=内层计数、ebx=外层索引 →
+     索引串 = 外层×内层 + 内层（非 内层×外层 + 外层）——c11a 序列
+     all-pass 0..5、partial-fail 0..9 / 16..26 实锤。
+  ② X-Y>=W 与 Y-X>=W 是两个独立判据（0x5A6C9A/0x5A6CA4），partial-fail
+     gc=21 实锤 j=0 行 X=18 即被 X-Y>=W 拦截（X+Y<=28 尚有余量）——注释
+     预估 28 有误，golden 机器码真值 21。
+  ③ 数据项 0 时 GetCellAt 照调（gc=6）但 cell 与 work 全部跳过——
+     data-zero 用例 gc=6 cell=5 work=5 实锤（0x5A6CE2 je 跳到
+     0x5A6D3E，work 块也在其路径上）。
+  ④ layer=-1 只跳过 cell+0x11B（0x5A6CF7 cmp ecx,-1 je 0x5A6D0A），
+     cell+0x11A/+0x38/+0x11C 照写——layer-m1 用例 CELL 8 6 4660 0 0 42
+     实锤。
+  ⑤ 每个表项独立虚表槽 0x9C（golden 逐表项打桩返回各自数据表——
+     index-1 用例查第二表项取自己的数据表与 c294=0x5678 实锤）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_6C10.py（TableQueryOracle，继承 TechOracle，
+W=12/H=8/side=21 由 PaintOracle 基类灌值）。真身侧：GetCellAt 0x5657A0
+跑真身（hook 只计数），表项虚表槽 0x9C 打桩。★逐表项独立 bump 桩
+（`self.wr32(vtb + 0x9C, stub)`——共用一处桩会让 index-1 用例查错数据
+表，已修）。覆盖：10 用例（CASE 行 `name index sx sy inner outer c294
+layer workv -> gc`；GC 行 GetCellAt 顺序坐标；CELL 行 `x y c38 c11a
+c11b c11c`；WORK 行 `x y v`）落盘 memory/data/rmg/deadcode_6c10_golden.txt。
+★对拍点四样：GetCellAt 次数 + 坐标序列 + CELL 字段写入序列 + WORK 写入
+序列。
+10 用例数证：all-pass gc=6 CELL/WORK 各 6（c11a 0..5 实锤索引串=外层×
+内层+内层）；outer0/inner0/slot9c-zero/corner-fail gc=0（计数<=0/槽
+0x9C=0/源坐标 X+Y<=W 各打一条提前返回）；partial-fail gc=21（j=0 行
+X 8..17、j=1 行 X 8..18 共 21 格，c11a 0..9 / 16..26）；data-zero gc=6
+CELL=5 WORK=5（索引串 1 数据项 0 → 格 (9,6) 跳过）；layer-m1 CELL
+8 6 4660 0 0 42（c11b=0 层高 -1 不写实锤）；work-zero gc=1 CELL=1
+WORK=0（[0xABED10]=0 work 整个跳过）；index-1 gc=2 c38=22136=0x5678
+（第二表项 c294 生效实锤）。
+
+★本批 golden 五修（2026-10-19）：
+  ① set_table 初版所有表项共用 STUB_9C 一处桩 → index-1 用例会查错
+     数据表 → 重构为每表项独立 bump 桩
+  ② SyntaxError（line 226）：dz = full_data(...) 被插进 cases 列表字面
+     量中间 → dz0 定义移到 cases 之前，data-zero 用例引用 dz0
+  ③ run() 恢复行 `self.wr32(G_WORK, 0xABED10 - 0xABED10)`（恒 0，错）→
+     `self.wr32(G_WORK, self.work)`（恢复 PaintOracle 灌的真实 work 指针）
+  ④ AttributeError（spec=None，line 171）→ `spec = spec or {}` 兜底
+  ⑤ 压缩前遗留的 read/edit 前置循环——最终靠完整 read 目标行段后 edit
+     成功（头文件 data 项类型从 std::pair<uint8,uint8> 改为
+     DeadCode6C10DataItem{present, b28, b2a}）
+
+三、C++ 模型（code/rewrite/rmg/dead_code_6c10.{h,cpp}）
+------------------------------------------------
+签名：int DeadCode6C10(const DeadCode6C10Context& ctx)；ctx 携带
+DeadCode6C10World* / table 向量指针 / index / src_x,src_y(int16) /
+workv / layer / w_bound,w2h_bound / side。world 抽象真身语义：
+GetCellAt（返回 cell 句柄，记录坐标序）、WriteCell（记录 {c38,c11a,
+c11b,c11c}）、WriteWork（记录 {x,y,v}）、WorkPresent（[0xABED10]）。
+DeadCode6C10DataItem{present, b28, b2a}（★present 表达「数据项 0=跳过
+写 cell/work 但 GetCellAt 照调」）；DeadCode6C10TableItem{inner_count
+(+0x2E4), outer_count(+0x2E8), c294(+0x294), slot9c_ok, data 向量}。
+实现要点：
+  · 表索引越界 / 槽 0x9C 缺 / 外/内计数 <=0 → 返回 0（jle/je 各分支）
+  · 双层循环 x 优先（外层 outer→Y、内层 inner→X，16 位截断）
+  · 菱形四判定顺序固定（X+Y<=W / X-Y>=W / Y-X>=W / X+Y>W2H，有符号）
+  · 索引串 = outer*inner_count + inner；数据项 present 才写 cell/work
+  · c11a = idx 低 8 位；c38 = item.c294；layer!=-1 时 c11b = b28+layer-4
+    （uint8 截断）；c11c = b2a
+  · WorkPresent() 才 WriteWork(x, y, workv)
+  · 返回 0（EAX 无意义）
+
+四、单测（test_dead_code_6c10.cpp，全量 51 项之一）
+------------------------------------------------
+DeadCode6C10.MatchesOriginal：读 golden 原档（RA2_GOLDEN_DIR 宏），10
+用例全量对拍 GetCellAt 次数 + 坐标序列 + CELL/WORK 写入序列。
+FakeDeadCode6C10World 按 golden 同一语义计数（workv==0 时 Work 不记录，
+与 golden 一致）；BuildTable 构造（index-1 用例双表项、第 0 项
+slot9c_ok=false 哑元；data-zero 时 i==1 项 present=false）。ctest
+51/51 全绿（dead_code_6c10 #48 通过，无回归——较 932 后 50 项新增本批）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：数据表/表项内容来源（表项+0x294、数据项+0x28/+0x2A、外/内层
+计数的写入者）——零引用死代码无调用方，golden 按用例直接灌值，写入侧
+未确认。vtable+0x27 归属与 0x5A7250 余段留待下批。
+★本批修正（2026-10-19）：
+  ① 索引串乘法方向照抄（外层×内层+内层）——golden c11a 序列实锤
+  ② partial-fail 真值 21（非注释预估 28）——机器码为真值
+  ③ 数据项 0=跳过但 GetCellAt 照调（data-zero gc=6/cell=5/work=5）
+依赖模型：GetCellAt 0x5657A0（TechOracle cell 数组环境）、[0xA8ED2C]
+表、[0xABED10] work、[0xABED04]/[0xABED08]、[0x89C2DC] side。
+待续死代码批次：0x5A6C10 的 vtable+0x27 归属、0x5A7250 余段、
+functions.tsv 11 条 body_bytes=1 回修决策。
