@@ -20,6 +20,7 @@ add_library(ra2_runtime
   crt_alloca_probe.cpp
   crt_strchr.cpp
   crt_wcscat.cpp
+  crt_strncmp.cpp
   facing.cpp
   ra2_string.cpp
   map_legal.cpp)
@@ -171,4 +172,13 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_crt_wcscat PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME crt_wcscat COMMAND test_crt_wcscat)
+
+  # strncmp（0x7CA610，定长字节串比较 scasb+cmpsb），golden 由
+  # emu_oracle 指令级模拟取得（deadcode_7ca610_golden.txt，16 用例；
+  # 纯内存操作零桩）
+  add_executable(test_crt_strncmp test/test_crt_strncmp.cpp)
+  target_link_libraries(test_crt_strncmp PRIVATE ra2_runtime gtest_main)
+  target_compile_definitions(test_crt_strncmp PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME crt_strncmp COMMAND test_crt_strncmp)
 endif()

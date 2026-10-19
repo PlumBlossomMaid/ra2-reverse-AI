@@ -1,0 +1,98 @@
+frontier batch 957 —— CRT strncmp 0x7CA610
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序，batch 956 之后取下一未复刻 CRT 项 = 0x7CA610（56B / 13
+unique callers / 未 REIMPL / 非锁家族非基础件；batch 141 已有
+semantics_verified 语义行——本批按惯例追加 _REIMPL 行不覆盖）。
+此后无 C++ 真身复刻、无 golden——本条为全新取证。2026-10-19 指令级
+golden 16 用例实证（_golden_7ca610.py，Unicorn 跑真身机器码——纯内
+存零子调用零桩零全局，全程真身模拟）。
+TARGET = 0x007CA610。C++ 模型：code/rewrite/runtime/crt_strncmp.{h,cpp}
+（函数名 strncmp_legacy）。单测：test_crt_strncmp.cpp（16 用例对拍 +
+1 边界 + 参照抽查）。TSV 新增 0x007CA610_REIMPL 行。
+
+一、链语义（disasm 全段复核 + golden 16 用例实证）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7CA610 = MSVCRT strncmp（定长
+字节串比较）——cdecl 3 栈参 (s1, s2, count)，返回比较三态 {-1,0,+1}
+（无符号逐字节）。纯内存操作，无子调用无全局引用——全程可真身模拟。
+  机器码（0x7CA610-0x7CA647，56B）：
+    push ebp/mov ebp,esp/push edi/push esi/push ebx
+    ecx=[ebp+0x10]=count → jecxz 0x7CA641（★count==0 → 返回 0）
+    ebx=count / edi=[ebp+8]=s1 / esi=edi / xor eax,eax
+    repne scasb（0x7CA624）：从 s1 扫 NUL，每字节 ecx--，找到
+      NUL 或 ecx 耗尽停
+    neg ecx → add ecx,ebx → ecx = min(count, len(s1)+1)
+      （★★比较长度 = s1 到首个 NUL 的长度+1，若在 count 内；
+      否则 = count——s1 被预扫、s2 不预扫）
+    mov edi,esi（s1 复位）/ esi=[ebp+0xC]=s2
+    repe cmpsb（0x7CA62F）：比较 ecx 个字节，停在不等或耗尽
+    （★s1 的 NUL 参与比较：s1 短时提前终止、NUL=0 判序）
+  收尾（0x7CA631）：al=[esi-1]（s2 最后字节）/ xor ecx,ecx /
+    cmp al,[edi-1]（s1 最后字节）
+    ja 0x7CA63F → not ecx(0) → eax=-1（s2>s1 → s1<s2 → 负）
+    je 0x7CA641 → eax=0（相等）
+    dec ecx ×2 → not ecx(-2) → eax=1（s2<s1 → s1>s2 → 正）
+
+★原版怪癖（golden 实证，照抄）：
+  ① count==0 直接返回 0（jecxz，不读任何内存）；
+  ② 比较长度 = min(count, len(s1)+1)——先 scasb 扫 s1 的 NUL
+     （≤count），s2 不预扫：s1 短时其 NUL 提前终止比较，NUL=0
+     参与无符号判序（s1 先到 NUL 且前缀相同 → s1<s2）；
+  ③ 收尾只取最后一对字节判三态（ja/je 无符号），不返回原始差值；
+  ④ eax 由 ecx 经 not 得到（-1/0/+1），非直接差值。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7ca610.py（StrncmpOracle；Unicorn 按原
+ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7CA610 全段——无子
+调用无桩；s1/s2 双区 0xCC 哨兵验证不越界读；cdecl ret 只弹返回地址）。
+对拍点：返回三态（eax==0xFFFFFFFF → -1）。16 用例落盘
+memory/data/rmg/deadcode_7ca610_golden.txt（CASE 行格式
+`CASE s1=<hex> s2=<hex> count=<n> -> ret=<tri>`）：
+  相等/首差两向/长度差两向（NUL vs 字符）/大小写（无符号 b>B）/
+  count==0/★count 截断（前 3 相等中段不同返 0）/count 超 s1
+  （NUL 终止）/★s1 中途 NUL（只比 'a',0）/双空/单空两向/16 字
+  符长相等/长尾差/长串 count 截断。
+
+三、C++ 模型（code/rewrite/runtime/crt_strncmp.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。单函数：
+  strncmp_legacy(s1, s2, count) —— 0x7CA610：
+    count==0 → 0；
+    扫 s1 到 NUL 或 count（n=首个 NUL 前长度）；
+    clen = n<count ? n+1 : count（含 NUL）；
+    逐字节比较 clen 个（无符号），不等时按 a>b → -1 / a<b → +1；
+    耗尽相等 → 0。
+  严格按汇编语义：预扫 s1、s2-only 无预扫、NUL 参与判序、无符号
+  比较、三态归一化。头注释含 56B 机器码全段 + 四怪癖。
+
+四、单测（test_crt_strncmp.cpp，全量 72 项之一）
+------------------------------------------------
+CrtStrncmpTest：读 golden 原档（RA2_GOLDEN_DIR 宏）16 CASE + 3 项：
+  GoldenMatches（逐用例三态一致；s1/s2 含尾 NUL 可直 data()）、
+  BoundaryCases（count==0 不读内存 / 自比 / 前缀相等 / 首差两向）、
+  ReferenceCrossCheck（64 组伪随机长度 0-11、字符非 NUL 串 × count
+    0-15，与独立参照实现——标准 strncmp 语义——对拍）。
+解析：parse_hex 先 find_first_not_of(' ') 剥前导空格（944 深坑防复
+发）；golden 行固定 7 tok（CASE s1=/s2=/count=/->/ret=），字段恒非空。
+调试记录：本次零修复首版即过（与 946/948 同，纯内存零桩类）。
+预期 16 用例全量对拍 + 边界 + 参照交叉，ctest 71→72 全绿（#21
+通过）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：无——纯内存零子调用零桩零全局，0x7CA610 全部 56B 真身模拟
+golden 对拍，无外部语义依赖。
+
+★本批实锤：CRT 扇入度最高未复刻项 = strncmp——MSVC6 定长字节串比较
+（count==0 早退 + repne scasb 预扫 s1 定长 + repe cmpsb 比较 +
+收尾单对字节三态归一化，NUL 参与无符号判序）；56B 纯内存操作，全程
+可真身模拟，无桩无全局。
+相邻待续：batch 958 按 ranking.tsv unique_callers 取下一未复刻 CRT
+项（python .qwen\tmp\_pick_945.py）。
+依赖模型：无（纯内存零依赖）。
+承前：batch 956 已完（CRT 系统时间/日期换算 0x7CA67F 归档，commit
+135e5b7）。
