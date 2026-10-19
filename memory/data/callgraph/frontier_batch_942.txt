@@ -1,0 +1,98 @@
+frontier batch 942 —— CRT wcslen 0x7CA405
+==========================================
+
+候选来源：用户指令「③ 继续 CRT/runtime frontier（batch 083+）按
+ranking.tsv unique_callers 列扇入度排」。0x7CA405 为 batch 941 之后
+ranking.tsv 中 **unique_callers 扇入度最高（94 uniq callers / 3414
+transitive_dependents）的未复刻 CRT 项**。此前已有静态语义登记
+（frontier_status.tsv 0x007CA405，semantics_verified，batch 045），
+无 C++ 真身复刻、无 golden。2026-10-19 指令级 golden 8 用例实证
+（_golden_7ca405.py，Unicorn 跑真身机器码——纯内存扫描零桩边界），
+本批做 C++ 复刻 + 单测对拍。
+TARGET = 0x007CA405。C++ 模型：code/rewrite/runtime/crt_wcslen.{h,cpp}。
+单测：test_crt_wcslen.cpp（8 用例对拍 + 2 结构断言）。TSV 新增
+0x007CA405_REIMPL 行。
+
+一、链语义（全段 disasm 复核 + golden 8 用例闭环）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7CA405 = MSVC6 静态 CRT 宽字符
+字符串长度 `wcslen`——cdecl 1 栈参、ret 无栈清理、返回长度：
+  · 入口：
+      mov ecx, [esp+4]   ; ecx = s（第一参）
+      cmp word [ecx], 0  ; s[0] == 0?
+      lea eax, [ecx+2]   ; eax = s+2（字节偏移）
+      je 收尾            ; s[0]==0 → 返回 0（空串特例）
+  · 循环（"读-推-测"）：
+      mov dx, [eax]      ; dx = *(uint16_t*)eax
+      inc eax / inc eax  ; eax += 2
+      test dx, dx        ; ★dx 载入后在 eax 推进之后才 test
+      jne 循环
+  · 收尾：sub eax, ecx / sar eax, 1 / dec eax / ret
+
+★batch 058 反编译歧义纠正：旧登记写 `while(s[i]==0)i++; return i-1`
+（Ghidra 反编译形式），逐条汇编复核实为 **找第一个 NUL 宽字符的索引
+并返回它**（= 字符串长度）：
+  · s[0]==0 → 返回 0（空串）；
+  · s[0]!=0 → 从 s[1] 起逐字找第一个 0，返回其索引（= 长度）。
+  实现用字节地址差 /2（sar 算术右移）再定位，正数等价除法。
+
+★原版怪癖（golden 实证，C++ 侧逐条复刻）：
+  ① s[0]==0 走独立分支返回 0（空串特例）；
+  ② 非空串从 s[1] 起找 NUL，返回 NUL 索引 = 字符串长度
+     （sar /2 + dec）；
+  ③ 无溢出防护，宽字符 16 位逐字扫描；
+  ④ 无任何外部全局/子调用——纯内存扫描，整函数可真身模拟
+     （本批零桩边界）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7ca405.py（WcslenOracle 继承 PaintOracle；
+Unicorn 按原 ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7CA405
+——无桩，零子调用）。★对拍点一样：{eax(=长度)}。
+8 用例落盘 memory/data/rmg/deadcode_7ca405_golden.txt（src 逐字 4
+位 hex + ret 十进制 unsigned）：
+
+  CASE 0000                     -> 0   （空串特例）
+  CASE 00610000                 -> 1   （"a"）
+  CASE 006100620000             -> 2   （"ab"）
+  CASE 0041004200430000         -> 3   （"ABC"）
+  CASE 4f60597d0000             -> 2   （"你好" 非 ASCII）
+  CASE ffff0000                 -> 1   （0xFFFF 单字符非 NUL）
+  CASE 0061ffff0000             -> 2   （'a'+0xFFFF）
+  CASE 006100620063006400650000 -> 5   （"abcde"）
+  全部 == NUL 索引（= 长度），断言在采集脚本内闭环。
+
+三、C++ 模型（code/rewrite/runtime/crt_wcslen.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。单函数（纯内存扫描，无世界抽象）：
+  wcslen_legacy(s) —— 0x7CA405：s[0]==0 → 0；否则从 s[1] 起逐字找
+    第一个 NUL，返回其索引（= 字符串长度）。
+无失败路径、无额外校验。
+
+四、单测（test_crt_wcslen.cpp，全量 60 项之一）
+------------------------------------------------
+CrtWcslenTest：读 golden 原档（RA2_GOLDEN_DIR 宏）8 CASE 用例 + 2 项
+结构断言：
+  GoldenWcslenMatches（逐用例：返回值 == golden ret）、
+  EmptyStringReturnsZero（空串特例：s[0]==0 独立分支返回 0）、
+  NulIndexIsLength（0xFFFF 不算终止，返回 NUL 索引=长度）。
+解析统一 stoull→uint32_t。golden 解析坑（batch 941 同型）：CASE 行
+toks[3]="ret" 字符串、toks[4]=数值——首版索引写错 stoull("ret") 抛
+invalid argument，补丁 _patch_942_test.py 修复为 toks[4]。预期 8 用例
+全量对拍，ctest 60/60 全绿（#9 crt_wcslen 通过，无回归）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：无。本批零桩边界——wcslen 是纯内存扫描，无外部全局/子调用，
+模型与 golden 均为完整真身语义。golden 断言在采集脚本内闭环（8 用例
+全等于 NUL 索引）。
+
+★本批实锤：CRT 扇入度第五高的未复刻项 = wcslen——29B 的纯内存扫描，
+"读-推-测"（dx 载入后 eax 推进才 test）+ s[0]==0 空串特例 + sar/dec
+收尾是该家族（wcslen/strlen 等）共享的 MSVC6 惯用形态；本批零桩验证
+完整语义，并纠正 batch 058 的反编译歧义登记（`while(s[i]==0)` 形式
+误读，实际是"找第一个 NUL 返回其索引"）。
+相邻待续：batch 943 按 ranking.tsv unique_callers 取下一未复刻 CRT 项。
+依赖模型：无（纯函数）。
+承前：batch 941 已完（CRT wcscpy 0x7CA489，commit 4bbb003）；
