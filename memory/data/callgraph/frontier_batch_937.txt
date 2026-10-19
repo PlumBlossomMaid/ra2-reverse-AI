@@ -1,0 +1,128 @@
+frontier batch 937 —— CRT 无效参数异常链 0x7DC720 → 0x7DCD9C → 0x7DCDC0
+=======================================================================
+
+候选来源：用户指令「③ 继续 CRT/runtime frontier（batch 083+）按 ranking.tsv
+unique_callers 列扇入度排」。0x7DC720 为 ranking.tsv 中 **unique_callers 扇
+入度最高（131 uniq callers / 4928 transitive_dependents）的未复刻 CRT 项**。
+三个函数此前已有静态语义登记（0x7DC720 batch 052、0x7DCD9C batch 053、
+0x7DCDC0 batch 054，均 semantics_verified），但无 C++ 真身复刻无 golden。
+2026-10-19 指令级 golden 12 用例实证（_golden_7dc720.py，Unicorn 跑真身
+机器码、__CxxThrowException hook 只计数不劫持），本批做 C++ 复刻 + 单测
+对拍。
+TARGET = 0x007DC720（+ 下游 0x7DCD9C/0x7DCDC0 一并复刻）。C++ 模型：
+code/rewrite/runtime/crt_error.{h,cpp}。单测：test_crt_error.cpp
+（12 用例对拍）。TSV 新增 0x007DC720_REIMPL 行。
+
+一、链语义（完整汇编逐段核对 + 黄金 12 用例闭环）
+------------------------------------------------
+真义（黄金实证 + 机器码逐段确认）：
+  · 0x7DC720（14B，ret 4——单栈参，wrapper）：
+      push 0                ; ctor arg2（b）= 0
+      push [esp+8]          ; = 调用方 [esp+4]（arg）
+      call 0x7DCD9C         ; Throw(arg, 0)
+      ret 4
+    ≡ invalid_parameter_forward(arg) = crt_throw_exception(arg, 0)。
+  · 0x7DCD9C（36B，noreturn——无 ret，尾部即 __CxxThrowException）：
+      push ebp/mov ebp,esp/sub esp,0x10
+      push 0                ; ctor arg2 = 0
+      lea ecx,[ebp-0x10]    ; ctor this = 栈上临时异常对象
+      push [ebp+0xc]        ; ctor arg1 = b
+      push [ebp+8]          ; ctor arg0 = a
+      call 0x7DCDC0         ; 构造异常对象
+      lea eax,[ebp-0x10]
+      push 0x80F0D0         ; ThrowInfo（RTTI）
+      push eax
+      call 0x7D2F64         ; __CxxThrowException（noreturn）
+  · 0x7DCDC0（48B，ret 0xc——__thiscall + 2 栈参，异常对象构造器）：
+      [this+0xC] = 0        ; 先清零（golden 恒 0）
+      [this+4] = a
+      [this]   = 0x7FA498   ; vtable（最后写）
+      [this+8] = b
+      b == 0 → 跳过引用计数
+      cmp byte [esp+0x10],0 ; c 低字节
+      c == 0 → 跳过
+      ecx = [b]（b 的 vtable）；push b；call [ecx+4]（vtable[1] 引用计数）
+      eax = this；ret 0xc
+  输出对象布局：{vtable=0x7FA498, +4=a, +8=b, +0xC=0}。
+
+★原版怪癖（golden 实证，C++ 侧逐条复刻）：
+  ① 先写 +0xC=0 再写其余字段——+0xC 恒 0；
+  ② 0x7DCD9C 无 ret（noreturn）——构造完直接进 __CxxThrowException；
+  ③ wrapper 单栈参 ret 4，第二字段写死 0（b=0 → 引用计数永不触发）；
+  ④ ctor 的引用计数分支由 b 非 0 **且** c 低字节非 0 共同门控（先 test b
+     再 cmp byte c），命中时调 b->vtbl[1](b)（golden CTOR 14 fake 1 →
+     rel=1 实证该虚调用路径真被走到）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7dc720.py（CrtOracle，继承 PaintOracle；
+堆栈参布局 _call_setup 逆序压栈：args 先压、返回地址最后压，[esp]=返回
+地址、[esp+4]=第 1 参——首版压栈顺序写反导致 f4=0x1F000000 假读数，已
+重写）。__CxxThrowException(0x7D2F64) hook 只在命中时记录 [esp+4] 对象
+四字段与 [esp+8] ThrowInfo；引用计数虚调用 [b]+4 处写真实 `C2 04 00`
+（ret 4）指令、hook 记录 ECX/EAX 不劫持（手动模拟 ret 会栈错位导致
+UC_ERR_FETCH_UNMAPPED，第 7 版修复为写真指令）。★对拍点七样：
+{vtbl, f4, f8, fC, throw_info, release}。12 用例落盘
+memory/data/rmg/deadcode_7dc720_golden.txt（十进制 unsigned：
+vtbl=8365208(0x7FA498)、throwinfo=8450256(0x80F0D0)）。
+
+12 用例数证（stderr 汇总）：
+  WRAP 0            -> 8365208 0 0 0 8450256 0
+  WRAP 1            -> 8365208 1 0 0 8450256 0
+  WRAP 256          -> 8365208 256 0 0 8450256 0
+  WRAP 4294967295   -> 8365208 4294967295 0 0 8450256 0   （0xFFFFFFFF）
+  WRAP 1077952576   -> 8365208 1077952576 0 0 8450256 0   （0x40404040）
+  THROWCALL 7 0             -> 8365208 7 0 0 8450256 0
+  THROWCALL 7 4660          -> 8365208 7 4660 0 8450256 0 （★b!=0 但 c=0
+    不触发引用计数）
+  THROWCALL 0 1610612736    -> 8365208 0 1610612736 0 8450256 0
+  CTOR 11 null 0  -> 8365208 11 0 0 0
+  CTOR 12 null 1  -> 8365208 12 0 0 0                     （b=0 门控拦下）
+  CTOR 13 fake 0  -> 8365208 13 1074896416 0 0            （c=0 门控拦下）
+  CTOR 14 fake 1  -> 8365208 14 1074896416 0 1  （★rel=1 引用计数实证）
+
+三、C++ 模型（code/rewrite/runtime/crt_error.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。CrtExceptionObject{vtable,field4,field8,field_c}
+四字段；CrtThrowWorld 抽象对外两件事：CxxThrow(obj, throw_info)（对应
+0x7D2F64）与 ReleaseRef(b)（对应 b->vtbl[1] 虚调用）——C++ 侧不模拟
+真正抛异常，回调计数即对拍点。三函数：
+  crt_exception_ctor(world, a, b, c)    —— 0x7DCDC0：按原版字段顺序构造
+    {+0xC=0, +4=a, +8=b, +0=vtable}，b!=0 && (c&0xFF)!=0 → world.ReleaseRef(b)
+  crt_throw_exception(world, a, b)      —— 0x7DCD9C：ctor(a,b,0) +
+    world.CxxThrow(obj, kCrtExceptionThrowInfo)；noreturn 语义由调用方
+    保证（C++ 侧函数自然返回，对拍点为 CxxThrow 回调）
+  invalid_parameter_forward(world, arg) —— 0x7DC720：throw_exception(arg, 0)
+常量 kCrtExceptionVtable=0x7FA498、kCrtExceptionThrowInfo=0x80F0D0。
+无失败路径（返回 void）。
+
+四、单测（test_crt_error.cpp，全量 55 项之一）
+------------------------------------------------
+CrtErrorTest：读 golden 原档（RA2_GOLDEN_DIR 宏），5 个用例组：
+GoldenConstantsMatchHeader（常量与 0x7FA498/0x80F0D0 相符）、
+InvalidParameterForwardThrowsWithZeroSecondField（5 WRAP，f8 恒 0）、
+ThrowExceptionPropagatesBothFields（3 THROWCALL）、
+CtorBuildsObjectAndGatesRefcountOnBAndCLowByte（4 CTOR，rel 计数对拍，
+rel>0 时校验 Released[0]==b）、CtorFieldCAwaysZero（独立怪癖①断言）。
+ParseI32 类的坑：golden 全为十进制 unsigned（Python rd32 打印），解析
+走 std::stoull 转 uint32_t（无 INT_MAX 截断风险）；CTOR 输入的 b 参数
+"null"/"fake" 词法映射（fake=1074896416u，golden 实证值）。
+预期 12 用例全量对拍，ctest 55/55 全绿（#52 crt_error 通过，无回归）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：无重大未确认项。0x7DCD9C/0x7DCDC0 为链内辅助函数（均由 batch
+053/054 静态登记 semantics_verified），本批一并复刻但**不单独新增 REIMPL
+行**——REIMPL 登记以用户点名入口 0x7DC720 为唯一条目，辅助函数语义在
+本批文档与头注释内说明。ThrowInfo 0x80F0D0 的 RTTI 身份（std::
+invalid_argument/invalid_parameter）沿用 batch 053 静态结论（未做堆遍历
+实证，标注沿用）。
+★本批实锤：ranking 扇入度最高的 CRT 未复刻项是一条完整的「无效参数 →
+构造异常对象（引用计数按 b/c 双门控）→ __CxxThrowException」链；14B 的
+wrapper 是链入口，本体在 0x7DCDC0 的引用计数怪癖（b!=0 AND c 低字节
+非 0 → b->vtbl[1]）。
+相邻待续：batch 938 按 ranking.tsv unique_callers 取下一未复刻 CRT 项。
+依赖模型：CrtExceptionObject 四字段 + CrtThrowWorld 双回调。
+承前：batch 934 已决——functions.tsv 11 条 body_bytes=1 不回修（见
+批文档 934 前传）；batch 936 已完成（bounding box 计算器 0x5A7640）。
