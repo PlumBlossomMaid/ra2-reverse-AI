@@ -1,0 +1,140 @@
+frontier batch 944 —— CRT qsort 0x7C8B48
+==========================================
+
+候选来源：用户指令「③ 继续 CRT/runtime frontier（batch 083+）按
+ranking.tsv unique_callers 列扇入度排」。0x7C8B48 为 batch 943 之后
+ranking.tsv 中 **unique_callers 扇入度最高（60 uniq callers / 2106
+transitive_dependents）的未复刻 CRT 项**（0x7C91D0 _strncpy uc=85 已
+REIMPL、0x7C9CC2 uc=56 已 REIMPL——按「未复刻」过滤后 0x7C8B48 居首；
+锁家族 0x7CD9F5/0x7CDA56 属桩边界留待后续）。此前已有静态语义登记
+（frontier_status.tsv 0x007C8B48），无 C++ 真身复刻、无 golden。
+2026-10-19 指令级 golden 14 用例实证（_golden_7c8b48.py，Unicorn 跑
+真身机器码——qsort 比较器为 cdecl 回调，用桩 hook 注入：真身跑全部
+结构指令，比较语义外部注入并逐次记录实参序列）。
+TARGET = 0x007C8B48。C++ 模型：code/rewrite/runtime/crt_qsort.{h,cpp}
+（函数名 qsort_legacy）。单测：test_crt_qsort.cpp（14 用例对拍 +
+边界 + 参照抽查）。TSV 新增 0x007C8B48_REIMPL 行。
+
+一、链语义（disasm 全段复核 + golden 14 用例逐位实证）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7C8B48 = MSVC6 静态 CRT 迭代式
+qsort——cdecl 4 栈参 base/count/size/cmp 函数指针、ret 由调用者清栈、
+返回 void（比较器语义由调用方注入，这里是 int32 升序）。零外部全局，
+子调用全在本段：0x7C8C9C 收缩排序、0x7C8CEA swap。
+  主流程（0x7C8B48-0x7C8C9B）：
+    count < 2 或 size == 0 → 直接返回（不调比较器）
+    first = base；last = base + (count-1)*size
+    显式区间栈（[ebp-0xF8] 存 first、[ebp-0x80] 存 last，深度 [ebp-4]）
+    主循环 0x7C8B87：
+      n = (last-first)/size + 1（无符号 div，eax=last-first、xor edx）
+      n <= 8 → 调 0x7C8C9C(first,last,size,cmp) 收缩排序 → 出栈
+               （depth<0 → 返回；否则弹 (first,last) 继续主循环）
+      n > 8  → 快排分区（0x7C8BC7）：
+        mid = first + (n/2)*size；swap(mid, first, size)
+        （中点元素交换到 first 作枢轴）
+        左扫 i（0x7C8BDE）：i 初值 first，循环 { i += size；
+          i > last（ja）→ 右扫；cmp(i, first) > 0（jle 继续）→ 右扫 }
+        右扫 j（0x7C8BF6）：j 初值 last + size，循环 { j -= size；
+          j <= first（jbe）→ 汇合；cmp(j, first) < 0（jge 继续）→ 汇合 }
+        汇合（0x7C8C08）：
+          j >= i → swap(i, j, size)；回左扫（jmp 0x7C8BDE）
+          j < i  → swap(first, j, size)（枢轴归位）→ 区间调度
+        区间调度（0x7C8C24）：
+          ecx = j - first - 1（字节）、edx = last - i（字节）
+          ecx < edx（jl）→ 左区间小：右区间 [i, last] 入栈
+            （i < last 时）；继续左区间 [first, j-size]
+            （first+size < j 时），否则出栈
+          ecx >= edx → 右区间小：左区间 [first, j-size] 入栈
+            （first+size < j 时）；继续右区间 [i, last]
+            （i < last 时），否则出栈
+  收缩排序（0x7C8C9C-0x7C8CE9）：
+    last <= first → 返回
+    每轮外层：rec = first；cur = first + size
+      内层 while cur <= last：cmp(cur, rec) > 0 → rec = cur；cur += size
+      内层结束：swap(rec, last, size)；last -= size；last > first 继续
+  swap（0x7C8CEA-0x7C8D15）：
+    a == b 或 n == 0 → 直接返回；否则逐字节交换 a/b 的 n 字节
+
+★原版怪癖（golden 实证，C++ 侧逐条复刻）：
+  ① 枢轴取「中点元素」并交换到 first，不做三数取中；
+  ② 左扫/右扫均先推进游标再判断边界与比较（i 先 +=size 判 i>last，
+     j 先 -=size 判 j<=first）——严格按序调用比较器；
+  ③ 左扫停在 cmp(i,first) > 0、右扫停在 cmp(j,first) < 0（等号继续
+     推进——不稳定排序的来源之一）；
+  ④ 区间调度比较 left=(j-first-1) 字节 vs right=(last-i) 字节，
+     按「小区间入栈、大区间继续迭代」控制显式栈；
+  ⑤ 收缩排序内层比较基准是**动态 rec**（0x7C8CC9 `mov ebx, esi`
+     更新后与 cur 比），不是固定 first——最初写成 cmp(cur, first)
+     导致 n=7 完全不动、n=9 从第 16 次比较分岔，golden 逐位对拍暴露；
+  ⑥ 显式栈无溢出检查（原版固定栈区约 30 项）——C++ 模型用动态栈，
+     正常输入（深度 O(log n)）行为等价；
+  ⑦ 比较器调用序列（次数/顺序/实参值对）是可观测行为——golden 逐位
+     记录，C++ 模型必须逐位复现。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7c8b48.py（QsortOracle；Unicorn 按原
+ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7C8B48——比较器回调
+hook 在桩地址 0x1E000000 注入 int32 升序语义并记录每次实参 (va,vb)
+与返回值 r）。对拍点：排序结果数组 + 完整比较器调用序列。
+14 用例落盘 memory/data/rmg/deadcode_7c8b48_golden.txt（CASE 行格式
+`CASE <n> <arr(hex)> -> sorted<hex> cmp=<k> seq=<va,vb,r;...>`，
+arr/sorted 均为 int32 数组的 hex，n=0 时两字段为空、seq 为空）：
+  n=0/1 → 不调比较器直接返回
+  n=5 全零 / n=2 / n=7 / n=8 / n=3 重复 → 收缩排序路径（n<=8）
+  n=9 / n=16×5（升序/降序/全等/负值/普通）/ n=33 / n=64 → 快排路径
+  全部用例：sorted == 输入升序排列；cmp 序列自检（桩返回值与实参
+  值一致）；负值用例 cmp=76 次、n=33 cmp=145 次、n=64 cmp=404 次。
+
+★golden 采集一修记录（_patch_944_cmp.py）：桩比较器最初用 rd32
+（无符号）取值，-8 → 0xFFFFFFF8 被当作大数，负数全部排到末尾
+（[0,1,2,...,-31,-21,-8,...]）；改为有符号 int32 比较
+（_s32(u) = u - 0x100000000 if u & 0x80000000 else u）后全部通过。
+
+三、C++ 模型（code/rewrite/runtime/crt_qsort.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。单函数 + 文件内私有辅助（无外部依赖）：
+  qsort_legacy(base, count, size, cmp) —— 0x7C8B48：
+    count < 2 || size == 0 → 直接返回
+    主循环 n<=8 走 shrink_sort（动态 rec 基准）、n>8 走快排分区
+    （mid 枢轴 + 双向扫描 + 显式栈区间调度）
+  shrink_sort / swap_bytes —— 0x7C8C9C / 0x7C8CEA 逐条照抄
+cmp 为 cdecl 函数指针 int (*)(const void*, const void*)——与调用点
+push 两参 + call 的 ABI 完全对应（cdecl 参数顺序 = 原版压栈顺序）。
+无失败路径、无额外校验。原版"区间栈约 30 项"限制未复刻（动态栈），
+正常输入行为等价。
+
+四、单测（test_crt_qsort.cpp，全量 62 项之一）
+------------------------------------------------
+CrtQsortTest：读 golden 原档（RA2_GOLDEN_DIR 宏）14 CASE + 3 项断言：
+  GoldenSortMatches（逐用例：排序结果与 golden sorted 逐字节一致）、
+  GoldenCompareSequenceMatches（最强约束：比较器调用次数/顺序/实参
+    值对/返回值逐位 == golden seq——任何分区/扫描偏差立即暴露）、
+  DegenerateInputs（count 0/1、size 0 → 不调比较器）、
+  ReferenceCrossCheck（固定种子伪随机 n∈{2,3,7,8,9,15,63} vs
+    std::sort 内容等价）。
+解析统一 stoull→uint32_t→int32_t、parse_hex 先剥离前导空格。
+★单测两轮调试记录：
+  ① 模型 bug：shrink_sort 基准误用 first（应 rec）→ 修复后
+     ReferenceCrossCheck 立过、n=9 探针 31 次与 golden 逐位一致；
+  ② 单测 bug（非模型）：read_golden 的 parse_hex 未去 hex 字段前导
+     空格（golden 行 `CASE %d %s` 的 %s 前有空格），stoul(" 1") 跳过
+     空白把 0x10(=16) 解析成 0x01 → 数组首元素 1 而非 16 → 排序路径
+     全变（66 vs 69 次比较）。修复 parse_hex 先
+     `find_first_not_of(' ')` 剥离后再解析 → 全部通过。
+  预期 14 用例全量对拍 + 3 结构断言，ctest 62/62 全绿（#11 通过）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：无。比较器回调是调用方注入的外部语义（golden 桩 hook 注入
+int32 升序），模型以 cdecl 函数指针承接——与 0x7D0A20 之前批次同样
+口径（外部语义注入、结构指令真身）。本批零桩边界（无外部全局）。
+
+★本批实锤：CRT 扇入度最高未复刻项 = 迭代式 qsort——MSVC6 静态 CRT
+惯用形态：mid 枢轴换首位 + 双向扫描（等号继续推进→不稳定）+ 显式
+区间栈（小区间入栈大区间迭代）+ n<=8 收缩排序（动态 rec 基准）；
+比较器调用序列是可观测行为，与排序结果同为对拍点。
+相邻待续：batch 945 按 ranking.tsv unique_callers 取下一未复刻 CRT 项。
+依赖模型：无（纯函数 + 回调）。
+承前：batch 943 已完（CRT memmove 0x7CA090，commit 433eae3）；
