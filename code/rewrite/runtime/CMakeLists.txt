@@ -17,6 +17,7 @@ add_library(ra2_runtime
   crt_thunk.cpp
   crt_wcsncpy.cpp
   crt_wcscmp.cpp
+  crt_alloca_probe.cpp
   facing.cpp
   ra2_string.cpp
   map_legal.cpp)
@@ -143,4 +144,12 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_crt_wcscmp PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME crt_wcscmp COMMAND test_crt_wcscmp)
+
+  # _alloca_probe（0x7CA650，栈探测分配），golden 由 emu_oracle 指令级
+  # 模拟取得（deadcode_7ca650_golden.txt，10 用例；纯内存操作零桩）
+  add_executable(test_crt_alloca_probe test/test_crt_alloca_probe.cpp)
+  target_link_libraries(test_crt_alloca_probe PRIVATE ra2_runtime gtest_main)
+  target_compile_definitions(test_crt_alloca_probe PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME crt_alloca_probe COMMAND test_crt_alloca_probe)
 endif()

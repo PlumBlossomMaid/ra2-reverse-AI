@@ -1,0 +1,104 @@
+frontier batch 951 —— CRT _alloca_probe 0x7CA650
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序，batch 950 之后取下一未复刻 CRT 项 = 0x7CA650（47B / 22
+unique callers / 未复刻 / 非锁家族非 crt_runtime_verified 基础件）。
+此后无静态语义登记、无 C++ 真身复刻、无 golden——本条为全新取证。
+2026-10-19 指令级 golden 10 用例实证（_golden_7ca650.py，Unicorn 跑
+真身机器码——纯内存零子调用零桩零全局，全程真身模拟）。
+TARGET = 0x007CA650。C++ 模型：code/rewrite/runtime/crt_alloca_probe.
+{h,cpp}（函数名 alloca_probe_legacy）。单测：test_crt_alloca_probe.cpp
+（10 用例对拍 + 2 边界）。TSV 新增 0x007CA650_REIMPL 行。
+
+一、链语义（disasm 全段复核 + golden 10 用例实证）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7CA650 = MSVCRT _alloca_probe
+（编译器生成 _alloca 大分配时 call 的栈探测例程）——eax 传分配的栈
+字节数（无栈参数、非普通 cdecl），返回后 esp 向下移动 size 字节，
+逐 4KB 页探测防栈底越界。纯内存操作，无子调用无全局引用。
+  机器码（0x7CA650-0x7CA67E，47B）：
+    push ecx                    ; 保存调用者 ecx
+    cmp eax, 0x1000
+    lea ecx, [esp+8]            ; ecx = 基点 = 进入前 esp + 4（调用者 esp）
+    jb 0x7CA670                 ; size < 4KB → 直接收尾
+  循环 0x7CA65C：
+    sub ecx, 0x1000 / sub eax, 0x1000 / test dword [ecx], eax（逐页探测）
+    cmp eax, 0x1000 / jae 0x7CA65C（剩余 ≥ 页 → 继续）
+  收尾 0x7CA670：
+    sub ecx, eax                ; ecx = 基点 - size（最后探测点）
+    mov eax, esp                ; eax = push 后 esp（= 进入前 esp-4）
+    test dword [ecx], eax       ; 最后探测
+    mov esp, ecx                ; 栈顶下移 size 字节
+    mov ecx, [eax]              ; 恢复调用者 ecx（[进入前esp-4]）
+    mov eax, [eax+4]            ; 返回地址（[进入前esp]）
+    push eax / ret              ; 压回返回地址再跳走
+
+★原版怪癖（golden 实证，照抄）：
+  ① 探测序列 = [基点-0x1000*i, i=1..k] + [基点-size]
+     （k = size/0x1000 向下取整；size 恰为页倍数时循环末次探测与收尾
+     探测同址、重复探测——PageBoundaryTail 用例实证）；
+  ② eax 语义 = 分配的栈字节数，无栈参数；返回后 esp = 调用者 esp -
+     size（mov esp,ecx → push 返回地址 → ret，净 -size）；
+  ③ 探测是 test 读（页提交副作用），C++ 模型省略真实读、仅记录
+     地址序列（golden 实证序列推导一致）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7ca650.py（AllocaProbeOracle；Unicorn 按
+原 ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7CA650 全段——无子
+调用无桩；[esp]=MAGIC_RET、ecx 预置哨兵 0x11223344 验证恢复；cdecl
+ret 只弹返回地址）。对拍点：esp_delta（调用者 esp - 返回后 esp，
+应 == size）+ ecx 恢复（== 哨兵）。10 用例落盘
+memory/data/rmg/deadcode_7ca650_golden.txt（CASE 行格式
+`CASE size=<hex> -> esp_delta=<hex> ecx_restored=1`）：
+  size 0x0/0x1/0xFFF（单页内）/0x1000/0x1001/0x2000/0x5000/0x10000/
+  0x12345/0x80000——跨 0 到 8 页覆盖（0x80000 = 512KB 栈分配）。
+★golden 采集两修（本批调试记录）：
+  ① esp 观测口径初版用 `sp0 - esp_f` 得 size-4（size=0 → -4）——call
+     已压返回地址，进入时 esp0 = 调用者esp-4，正确基线是调用者 esp
+     = esp0+4（_patch_951_esp.py）；
+  ② ecx 哨兵初版 `reg_write(ECX, 0)`——push ecx 保存的寄存器值就是
+     0，覆盖预写的 [esp0-4]=0x11223344，恢复得 0；改 reg_write(ECX,
+     ecx_in) 让 push 保存哨兵（_patch_951_ecx.py）。
+
+三、C++ 模型（code/rewrite/runtime/crt_alloca_probe.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。单函数：
+  alloca_probe_legacy(caller_esp, size, probe_out) —— 0x7CA650：
+    基点 = caller_esp；cur = 基点；remaining = size；
+    循环：while (remaining >= 0x1000) { cur -= 0x1000; remaining -=
+      0x1000; 记录 cur（探测）}
+    收尾：cur -= remaining；记录 cur（最后探测 [基点-size]）；
+    返回 base - size（= 返回后 esp = 调用者esp - size）。
+  严格按汇编语义：循环边界 eax>=0x1000 才进、残量收尾探测、探测序列
+  记录为可观测行为（probe_out 输出，测试对拍）。头注释含 47B 机器码
+  全段 + 三怪癖。
+
+四、单测（test_crt_alloca_probe.cpp，全量 69 项之一）
+------------------------------------------------
+CrtAllocaProbeTest：读 golden 原档（RA2_GOLDEN_DIR 宏）10 CASE + 3 项：
+  GoldenMatches（esp_delta 与 golden 一致 == size + 探测序列按汇编
+    推导逐项校验：k 次页探测 [base-0x1000*i] + 收尾 [base-size]）、
+  PageBoundaryTail（size=0x1000/0x3000 时循环末次与收尾同址重复探测）、
+  ZeroSizeProbe（size==0 只探测 [base]、esp 不动）。
+解析：golden 行固定 5 tok（CASE size=/->/esp_delta=/ecx_restored=）。
+调试记录：初版 `esp_delta=`.substr(11) 越界空串 → stoul 抛 invalid
+argument（SetUp 崩，3 测试全 FAIL）——前缀实为 10 字符，改 substr(10)
+（_patch_951_parse.py）。golden 采集中 2 修见二节。
+预期 10 用例全量对拍 + 2 边界，ctest 68→69 全绿（#18 通过）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：无——纯内存零子调用零桩零全局，0x7CA650 全部 47B 真身模拟
+golden 对拍，无外部语义依赖。
+
+★本批实锤：CRT 扇入度最高未复刻项 = _alloca_probe——MSVCRT 栈探测
+分配例程（eax 传栈字节数、逐 4KB 页 test 探测防栈底越界、收尾移动
+esp 恢复 ecx 压回返回地址）；47B 纯内存操作，全程可真身模拟，无桩
+无全局。
+相邻待续：batch 952 按 ranking.tsv unique_callers 取下一未复刻 CRT
+项（python .qwen\tmp\_pick_945.py）。
+依赖模型：无（纯内存零依赖）。
+承前：batch 950 已完（CRT wcscmp 0x7CA5D3，commit 12440e8）。
