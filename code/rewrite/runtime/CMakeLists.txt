@@ -12,6 +12,7 @@ add_library(ra2_runtime
   crt_memmove.cpp
   crt_qsort.cpp
   crt_free.cpp
+  crt_boolnorm.cpp
   facing.cpp
   ra2_string.cpp
   map_legal.cpp)
@@ -98,4 +99,12 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_crt_free PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME crt_free COMMAND test_crt_free)
+
+  # bool 规范化（0x7C978A，neg/sbb/neg/dec 包装），golden 由 emu_oracle
+  # 指令级模拟取得（deadcode_7c978a_golden.txt，8 用例；0x7C970C 桩注入）
+  add_executable(test_crt_boolnorm test/test_crt_boolnorm.cpp)
+  target_link_libraries(test_crt_boolnorm PRIVATE ra2_runtime gtest_main)
+  target_compile_definitions(test_crt_boolnorm PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME crt_boolnorm COMMAND test_crt_boolnorm)
 endif()

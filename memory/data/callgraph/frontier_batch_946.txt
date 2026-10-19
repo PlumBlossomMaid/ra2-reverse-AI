@@ -1,0 +1,92 @@
+frontier batch 946 —— CRT 布尔规范化包装 0x7C978A
+==================================================
+
+候选来源：用户指令「③ 继续 CRT/runtime frontier（batch 083+）按
+ranking.tsv unique_callers 列扇入度排」。0x7C978A 为 batch 945 之后
+ranking.tsv 中 **unique_callers 扇入度最高（37 uniq callers / 1156
+transitive_dependents）的未复刻 CRT 项**（0x7C8B3D uc=1796 / 0x7C8E17
+operator_new uc=941 / 0x7C5F00 uc=461 已 crt_runtime_verified 属基础
+运行时不参与复刻轮次；锁家族 0x7CD9F5/0x7CDA56 属桩边界）。此前已有
+静态语义登记（frontier_status.tsv 0x007C978A，semantics_verified_
+partial——"returns 0 when FUN_007c970c is nonzero, otherwise -1"），
+无 C++ 真身复刻、无 golden。2026-10-19 指令级 golden 8 用例实证
+（_golden_7c978a.py，Unicorn 跑真身机器码——桩注入 0x7C970C 各类
+返回值覆盖零/正/负/边界）。
+TARGET = 0x007C978A。C++ 模型：code/rewrite/runtime/crt_boolnorm.{h,cpp}
+（函数名 bool_normalize_legacy + CrtBoolNormWorld 世界抽象）。单测：
+test_crt_boolnorm.cpp（8 用例对拍 + 2 结构断言）。TSV 新增
+0x007C978A_REIMPL 行。
+
+一、链语义（disasm 全段复核 + golden 8 用例实证）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7C978A = MSVCRT 布尔规范化
+包装——cdecl 1 栈参 p、ret 由调用者清栈。依赖 0x7C970C（0x40+ 长，
+内部堆检查/realloc 链，batch 946 以桩注入返回值）。
+  机器码（0x7C978A-0x7C979B，18B）：
+    push [esp+4]        ; p 复制转发（push 原始参数槽内容）
+    call 0x7C970C       ; eax = inner(p)
+    neg eax             ; eax = -eax（NEG 置 CF=1 除非原 eax==0）
+    sbb eax, eax        ; eax = eax - eax - CF = -CF = (原≠0) ? -1 : 0
+    pop ecx             ; 清转发参数（cdecl 调用者清理）
+    neg eax             ; (原≠0) ? 1 : 0
+    dec eax             ; (原≠0) ? 0 : -1
+    ret
+
+★原版怪癖（golden 实证，照抄）：
+  ① 最终语义：inner(p) 非零 → 返回 0；inner(p) 为零 → 返回 -1
+     （neg/sbb/neg/dec 四步布尔规范化，非简单三元判断）；
+  ② p 被复制转发（push [esp+4]）而非原地使用——inner 可安全修改
+     自己的栈参槽而不影响调用者栈；
+  ③ 全路径必然调用一次 inner（p==0 或任意 p 都转发，无 NULL 短路）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7c978a.py（BoolNormOracle；Unicorn 按原
+ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7C978A——0x7C970C
+hook 于原地址注入返回值并记录 p 实参，cdecl ret 只弹返回地址）。
+对拍点：返回 eax + inner 实参 p。
+8 用例落盘 memory/data/rmg/deadcode_7c978a_golden.txt（CASE 行格式
+`CASE p=<hex> inj=<hex> -> ret <eax(hex)> p_arg=<hex>`）：
+  inj=0        → ret = 0xFFFFFFFF（-1）
+  inj=1        → ret = 0
+  inj=0xFFFFFFFF → ret = 0
+  inj=0x7FFFFFFF → ret = 0
+  inj=0x80000000 → ret = 0（NEG 对非零置 CF 的边界——0x80000000 取负
+    仍非零、CF 照设）
+  inj=0x80000001 → ret = 0
+  inj=0xFFFFFFFF → ret = 0（p=0x7FFFFFFF 组合）
+  inj=0        → ret = 0xFFFFFFFF（p=0 组合——无 NULL 短路，照调 inner）
+  全部 ret 断言与"非零→0、零→-1"一致，p_arg 恒 == p（原样转发）。
+
+三、C++ 模型（code/rewrite/runtime/crt_boolnorm.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。单函数 + CrtBoolNormWorld 世界抽象（1 桩
+inner）：bool_normalize_legacy(world, p) —— 0x7C978A：
+  最终语义 = (world->inner(p) != 0) ? 0 : -1
+（neg/sbb/neg/dec 四步序列在 C++ 中等价位运算直接落地，注释给全链）。
+无失败路径、无额外校验。结构 = 原版 18B 控制流照抄。
+
+四、单测（test_crt_boolnorm.cpp，全量 64 项之一）
+------------------------------------------------
+CrtBoolNormTest：读 golden 原档（RA2_GOLDEN_DIR 宏）8 CASE + 2 项断言：
+  GoldenReturnMatches（逐用例：返回值与 golden ret 一致 + inner 实参
+    == p，含 p==0 用例的转发断言）、
+  Semantics（inner 非零→0 / 为零→-1，含 0x80000000 边界）、
+  AlwaysCallsInnerOnce（p∈{0,1,0x7FFFFFFF,0x80000000,0xFFFFFFFF}
+    每次都恰好调一次 inner 且实参 == p）。
+解析：stoull→uint32_t（golden 全正 hex，无负数转换歧义）。
+预期 8 用例全量对拍 + 2 结构断言，ctest 64/64 全绿（#13 通过）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：0x7C970C（0x40+ 长，堆检查/realloc 链）为桩注入外部语义——
+与 937-945 批次口径一致：结构指令真身、外部语义注入、单测对拍。
+
+★本批实锤：CRT 扇入度最高未复刻项 = 布尔规范化包装——MSVCRT 经典
+neg/sbb/neg/dec 四步技巧（NEG 的 CF 置位约定 + SBB 借位传播），把
+任意非零值规范成 0、零规范成 -1；p 复制转发 + 无 NULL 短路为可观测
+怪癖。依赖 0x7C970C（堆检查）留桩，待后续批次按扇入度下潜。
+相邻待续：batch 947 按 ranking.tsv unique_callers 取下一未复刻 CRT 项。
+依赖模型：CrtBoolNormWorld（1 桩 inner）。
+承前：batch 945 已完（CRT free 调度 0x7C93E8，commit 0ed29de）；
