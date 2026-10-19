@@ -11,6 +11,7 @@ add_library(ra2_runtime
   crt_wcslen.cpp
   crt_memmove.cpp
   crt_qsort.cpp
+  crt_free.cpp
   facing.cpp
   ra2_string.cpp
   map_legal.cpp)
@@ -88,4 +89,13 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_crt_qsort PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME crt_qsort COMMAND test_crt_qsort)
+
+  # free（0x7C93E8，CRT free 调度入口），golden 由 emu_oracle 指令级
+  # 模拟取得（deadcode_7c93e8_golden.txt，5 用例；锁/查找/释放/HeapFree
+  # 均为桩注入的外部语义，结构指令真身）
+  add_executable(test_crt_free test/test_crt_free.cpp)
+  target_link_libraries(test_crt_free PRIVATE ra2_runtime gtest_main)
+  target_compile_definitions(test_crt_free PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME crt_free COMMAND test_crt_free)
 endif()

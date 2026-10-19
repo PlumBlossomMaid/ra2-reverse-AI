@@ -1,0 +1,117 @@
+frontier batch 945 —— CRT free 调度 0x7C93E8
+==========================================
+
+候选来源：用户指令「③ 继续 CRT/runtime frontier（batch 083+）按
+ranking.tsv unique_callers 列扇入度排」。0x7C93E8 为 batch 944 之后
+ranking.tsv 中 **unique_callers 扇入度最高（55 uniq callers / 1217
+transitive_dependents）的未复刻 CRT 项**（0x7C8B3D uc=1796 / 0x7C8E17
+operator_new uc=941 / 0x7C5F00 uc=461 已 crt_runtime_verified 属基础
+运行时不参与复刻轮次；锁家族 0x7CD9F5/0x7CDA56 属桩边界）。此前已有
+静态语义登记（frontier_status.tsv 0x007C93E8），无 C++ 真身复刻、无
+golden。2026-10-19 指令级 golden 5 用例实证（_golden_7c93e8.py，
+Unicorn 跑真身机器码——free 的锁/查找/释放/HeapFree 全部为外部依赖，
+用桩 hook 注入并逐次记录实参序列，结构指令真身）。
+TARGET = 0x007C93E8。C++ 模型：code/rewrite/runtime/crt_free.{h,cpp}
+（函数名 free_legacy + CrtFreeWorld 世界抽象）。单测：test_crt_free.cpp
+（5 用例对拍 + 3 结构断言）。TSV 新增 0x007C93E8_REIMPL 行。
+
+一、链语义（disasm 全段复核 + golden 5 用例实证）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7C93E8 = MSVCRT `free` 的调度
+入口——cdecl 1 栈参 p、ret 由调用者清栈、返回 void。零子调用零全局
+的纯调度结构不成立：锁家族 0x7CD9F5/0x7CDA56（CRT region lock）、
+0x7CF7BD FindHeapSegment（已有 REIMPL find_heap_segment_legacy）、
+0x7CF7E8 FreeSegment（811B 语义 partial）、[0xB78B9C] heap handle、
+[0x7E127C] IAT HeapFree——全部作为 CrtFreeWorld 桩注入，结构指令真身。
+  机器码（0x7C93E8-0x7C9430）：
+    push esi / mov esi,[esp+8]（p）/ test esi,esi / je 直接返回
+    push 9 / call 0x7CD9F5        ; EnterLock(9)
+    push esi / call 0x7CF7BD      ; seg = FindHeapSegment(p)
+    pop ecx / test eax,eax / pop ecx   ; 清 Find 参 + EnterLock 参
+    je 0x7C9417（未命中）
+    命中（0x7C9404）：
+      push esi(p) / push eax(seg) / call 0x7CF7E8  ; FreeSegment(seg,p)
+      push 9 / call 0x7CDA56      ; LeaveLock(9)
+      add esp,0xC / pop esi / ret  ; 清 FreeSeg 2 参 + Leave 1 参
+    未命中（0x7C9417）：
+      push 9 / call 0x7CDA56      ; LeaveLock(9)
+      pop ecx                     ; 清 Leave 参
+      push esi(p) / push 0 / push [0xB78B9C](heap) / call [0x7E127C]
+                                  ; HeapFree(heap, 0, p)（stdcall 3 参）
+      pop esi / ret
+
+★原版怪癖（golden 实证，照抄）：
+  ① p == NULL → 不碰锁/堆，直接返回（不调任何桩）；
+  ② 命中/未命中都在临界区内完成查找，未命中路径先 LeaveLock 再
+     HeapFree（释放系统堆段不持 CRT 锁）；
+  ③ EnterLock/LeaveLock 固定 key=9；
+  ④ HeapFree 参数 = ([0xB78B9C], 0, p)——flags 恒 0，heap 恒全局。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7c93e8.py（FreeOracle；Unicorn 按原
+ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7C93E8——四个子调用 +
+IAT HeapFree 全部 hook 于原地址注入桩语义并记录实参序列；桩地址
+0x1E000400 写入 [0x7E127C] IAT 槽模拟 HeapFree 目标）。对拍点：
+桩调用序列（标签+参数+顺序）。
+5 用例落盘 memory/data/rmg/deadcode_7c93e8_golden.txt（CASE 行格式
+`CASE <场景> [p=<hex>] [seg=<hex>] -> seq=<NAME,arg...;...>`）：
+  CASE NULL            → seq= 空（不碰锁/堆）
+  CASE HIT p=1000 seg=5678   → ENTER,9;FIND,4096;FREESEG,22136,4096;LEAVE,9
+  CASE MISS p=2000     → ENTER,9;FIND,8192;LEAVE,9;HEAPFREE,305419896,0,8192
+  CASE HIT p=41 seg=1  → ENTER,9;FIND,65;FREESEG,1,65;LEAVE,9
+  CASE MISS p=7fffffff→ ENTER,9;FIND,2147483647;LEAVE,9;HEAPFREE,305419896,0,2147483647
+  全部用例断言在采集脚本内闭环（NULL 零调用；HIT 命中段值入参；
+  MISS HeapFree 三参数 = heap_handle/0/p）。
+
+★golden 采集一修记录（_patch_945_golden.py）：首版报 UC_ERR_FETCH_
+UNMAPPED——①桩地址 0x1E000400 未 mem_map（call [0x7E127C] 跳过去取
+指失败）；②cdecl 被调函数 ret 只弹返回地址（ESP+=4），参数由调用者
+pop ecx / add esp 清理——原 _ret_cdecl 多清了参数导致栈错乱。stdcall
+（HeapFree）保持 ESP += 4 + 4*nargs（callee 清理）。
+
+三、C++ 模型（code/rewrite/runtime/crt_free.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。单函数 + CrtFreeWorld 世界抽象（5 桩 + 1 全局
+heap handle，参数与调用顺序按原版汇编固定）：
+  free_legacy(world, p) —— 0x7C93E8：
+    p == nullptr → 直接返回
+    world->enter_lock(9)
+    seg = world->find_segment(p)
+    seg != nullptr → world->free_segment(seg, p) + world->leave_lock(9)
+    seg == nullptr → world->leave_lock(9) + world->heap_free(heap, 0, p)
+无失败路径、无额外校验。结构 = 原版 72B 控制流逐条照抄。
+
+四、单测（test_crt_free.cpp，全量 63 项之一）
+------------------------------------------------
+CrtFreeTest：读 golden 原档（RA2_GOLDEN_DIR 宏）5 CASE + 3 项断言：
+  GoldenWorldCallSequenceMatches（逐用例：世界桩调用序列（标签+参数+
+    顺序）与 golden seq 逐位一致——任何分支/参数/顺序偏差立即暴露）、
+  NullNoCalls（NULL → 零调用，不碰锁/堆）、
+  HitOrder（命中分支：ENTER(9)→FIND(p)→FREESEG(seg,p)→LEAVE(9)）、
+  MissOrder（未命中分支：ENTER(9)→FIND(p)→LEAVE(9)→HEAPFREE(heap,0,p)）。
+解析：CASE 行标签/p/seg 十六进制、seq 逗号分号分隔；golden p/seg 为
+hex（0x41=65、0x7fffffff=2147483647），WorldCall 参数为十进制整数。
+★单测两轮修复记录：
+  ① GoldenWorldCallSequenceMatches 失败：StubFindSwitch 固定返回
+     0x5678，但 golden 第二个 HIT 用例 seg=1——改为按用例注入
+     g_find_seg（read_golden 解析 seg 字段）后通过；
+  ② HitOrder 失败：只设 g_find_hit 没设 g_find_seg（默认 nullptr），
+     StubFindSwitch 返回 null 走了 MISS 路径——补注入 0x5678 后通过。
+  预期 5 用例全量对拍 + 3 结构断言，ctest 63/63 全绿（#12 通过）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：锁家族（0x7CD9F5/0x7CDA56 54B/18B，含 CS 懒分配链）、
+0x7CF7BD（已 REIMPL）、0x7CF7E8（811B 语义 partial）、HeapFree
+（kernel32 stdcall）均为桩注入外部语义——与 937-944 批次口径一致：
+结构指令真身、外部语义注入、单测对拍桩调用序列。
+
+★本批实锤：CRT 扇入度最高未复刻项 = free 调度——MSVCRT 经典形态：
+NULL 短路 → 临界区内找段 → 命中段内释放 / 未命中退系统 HeapFree；
+未命中路径先解锁再堆释放。**注意区分**：0x7C93E8 只是调度骨架，实际
+释放语义在 0x7CF7BD/0x7CF7E8（后续批次按扇入度续推）。
+相邻待续：batch 946 按 ranking.tsv unique_callers 取下一未复刻 CRT 项。
+依赖模型：CrtFreeWorld（锁/查找/释放/HeapFree 五桩 + heap_handle）。
+承前：batch 944 已完（CRT 迭代式 qsort 0x7C8B48，commit c80705f）；
