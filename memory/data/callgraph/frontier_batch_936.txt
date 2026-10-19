@@ -1,0 +1,109 @@
+frontier batch 936 —— 0x005A7640 死代码复刻：点集 bounding box 计算器（0x5A7640-0x5A76D4，149B）
+=======================================================================
+
+候选来源：用户指令「0x5A7250 余段」。0x5A7640 与 batch 935（0x5A7440）
+同区相邻（0x7440 之后的下一个函数），TSV 未登记；2026-10-19 全段汇编
+复核 + golden 8 用例实证，本批做 C++ 真身复刻 + 单测对拍。
+TARGET = 0x005A7640。C++ 模型：code/rewrite/rmg/dead_code_7640.{h,cpp}
+新增 DeadCode7640World 接口 + DeadCode7640Context + DeadCode7640(ctx,
+out[4])。单测：test_dead_code_7640.cpp 新增 DeadCode7640.MatchesOriginal
+（8 用例对拍）。TSV 新增 0x005A7640_REIMPL 行。
+
+一、语义（完整汇编逐段核对 + 黄金 8 用例闭环）
+------------------------------------------------
+真义（黄金实证 + 机器码逐段确认）：
+  · 调用约定：ret 0（无栈参，0x5A76D4 c3），纯寄存器传参：
+    - ecx = 输出矩形指针（4×int32，写入 {minX, minY, w, h}）
+    - edx = 输入对象指针（[edx+4] = 元素数组 dword 首址、[edx+0x10]
+      = 元素个数 n）
+    元素布局：每元素 4B = {short X @+0, short Y @+2}（低 16 = X、高 16
+    = Y）。
+  · 主循环（0x5A7658-0x5A76AC，★从数组末尾往前遍历）：
+    16 位变量初值：di=minX=999(0x3E7)、bx=minY=999（0x5A7655 mov bx,di
+    拷贝初值）、ax=maxX=0（0x5A7643 xor ax,ax）、bp=maxY=0（0x5A7651
+    xor bp,bp）。
+    每元素（0x5A7669-0x5A7695）：
+      X = 元素 dword 低 16（0x5A766D mov edx,[edx]; cmp dx,di）
+      Y = 高 16（0x5A767B mov si,word ptr [esp+0x1A]）
+      cmp dx,di; jge 跳过 → minX = min(minX,X)（直接 16 位有符号比较）
+      cmp si,bx; jge 跳过 → minY = min(minY,Y)
+      cmp dx,ax; jle 跳过 → maxX = max(maxX,X)
+      cmp si,bp; jle 跳过 → maxY = max(maxY,Y)
+    指针 -= 4、计数--，jne 0x5A7669 循环（0x5A76A0-0x5A76AC）。
+  · 输出段（0x5A76AE-0x5A76CB）：
+      movsx 把 16 位 min/max 符号扩展成 32 位：
+      out[0] = (s32)minX
+      out[1] = (s32)minY
+      out[2] = (s32)maxX - (s32)minX + 1   （0x5A76B6 sub; 0x5A76BD inc）
+      out[3] = (s32)maxY - (s32)minY + 1
+      eax = ecx（输出矩形首址，0x5A76B4 mov eax,ecx）。
+  · RNG 不参与；无 GetCellAt / 谓词依赖——纯数组扫描。
+
+★原版怪癖（golden 实证，C++ 侧逐条复刻）：
+  ① min 初值 999、max 初值 0：空数组（n==0）→ 0x5A7658 js 直接跳输出
+     → {999, 999, 0-999+1=-998, 0-999+1=-998} 哨兵（golden empty）。
+  ② 全负坐标时 max 保持初值 0（-1 > 0 为假，jle 跳过更新）——max 不是
+     「真实最大值」：golden allneg {(-1,-1),(-2,-2)} → {-2,-2,3,3}
+     （maxX/maxY 恒 0）。
+  ③ X/Y 各自独立扫描：元素布局 {short X, short Y} 4B（低 16 X 高 16
+     Y），读取后各自参与 16 位有符号比较。
+  ④ 从数组末尾往前遍历（lea edx,[edx+esi*4] 指向 arr[n-1]），顺序不
+     影响 min/max。
+  ⑤ 输出 w/h = max-min+1（含端点），16→32 用 movsx 符号扩展——负坐标
+     参与 32 位差值。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7640.py（BboxOracle，继承 PaintOracle；
+golden 直接由脚本构造输入对象 {+4 数组、+0x10 n} 并经 bump 分配，输出
+矩形由 emu 读回）。纯数组扫描，无 hook 劫持、无 RNG。★对拍点四样：
+{minX, minY, w, h}。8 用例落盘
+memory/data/rmg/deadcode_7640_golden.txt。
+★□ ff 用例坐标修正（2026-10-19）：初版写 (0xFFFF, 0xFFFF) → struct
+pack（"<hh"）超出 short 范围报错；改为 (-1, -1)（字节同为 0xFFFF，
+低 16 读回 -1）。
+
+8 用例数证（stderr 汇总）：
+  empty      n=0  -> 999 999 -998 -998   （★哨兵，max-min+1 溢出负）
+  single     n=1  -> 5 7 1 1
+  multi      n=4  -> 0 1 9 9             （(2,3)(8,1)(5,9)(0,6)）
+  neg        n=2  -> -3 -2 8 8           （( -3,-2)(4,5)）
+  allneg     n=2  -> -2 -2 3 3           （★max 保持初值 0）
+  wide       n=2  -> -32768 -32768 65536 65536 （16 位界 ±0x8000）
+  ff         n=1  -> -1 -1 2 2           （0xFFFF 字节 = -1，max 保持 0）
+  mixed      n=4  -> -5 -7 9 14          （(3,4)(-5,6)(0,-7)(1,0)）
+
+三、C++ 模型（code/rewrite/rmg/dead_code_7640.{h,cpp}）
+------------------------------------------------
+签名：void DeadCode7640(const DeadCode7640Context& ctx, int32_t out[4])。
+ctx 携带 world / count。world 抽象输入数组读取（Element(i) 返回 dword：
+低 16 X、高 16 Y——与原版 mov edx,[edx] 读元素一致）。实现要点：
+16 位变量初值（min=999/max=0）→ 倒序遍历所有元素做四个 16 位有符号
+min/max 更新 → movsx 符号扩展输出 {minX, minY, max-min+1, max-min+1}。
+无失败路径（返回 void）。
+
+四、单测（test_dead_code_7640.cpp，全量 54 项之一）
+------------------------------------------------
+DeadCode7640.MatchesOriginal：读 golden 原档（RA2_GOLDEN_DIR 宏），
+8 用例全量对拍 out[4]。Fake 世界 Element(i) 按 golden PT 行还原输入
+（X 低 16、Y 高 16 拼 dword）。
+★□ 解析坑（2026-10-19 实测踩中）：golden 的 CASE 行是 Python rd32
+的无符号打印（-998 → 4294966298）；测试初版直接 is >> int32_t，超出
+INT32_MAX 的输入被 libstdc++（C++11）置成 INT_MAX → 8 用例全挂。改为
+先按 uint32_t 解析再转 int32_t 后 8/8 通过。
+ctest 54/54 全绿（#51 dead_code_7640 通过，无回归）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：无重大未确认项；输入对象字段语义（+4 数组 / +0x10 个数）由
+调用点 0x5A5360/0x5A5B50 类型推断（两个调用者均为废弃方案大函数的
+开场计算，见批文档 321——0x5A5B50 的 FUN_005A7640 开场已登记
+semantics_verified）。
+★本批实锤：0x5A7640 是点集 bounding box 计算器（遍历求 16 位
+min/max → {minX, minY, w, h}），与谓词族（568300/5AC230/5A7250/
+5A76E0/5A7440）无共享代码，属「几何工具」死代码。
+相邻待续：0x5A6D80 / 0x5A7070（用户点名后续批）。
+依赖模型：输入对象 {+4 数组、+0x10 个数}、movsx 符号扩展输出 4×int32。
+承前：batch 934 已决——functions.tsv 11 条 body_bytes=1 不回修（见
+批文档 934 前传）。
