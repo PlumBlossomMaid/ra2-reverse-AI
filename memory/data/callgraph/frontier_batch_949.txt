@@ -1,0 +1,112 @@
+frontier batch 949 —— CRT wcsncpy 0x7CA422
+============================================
+
+候选来源：用户指令「③ 继续 CRT/runtime frontier（batch 083+）按
+ranking.tsv unique_callers 列扇入度排」。0x7CA422 为 batch 948 之后
+ranking.tsv 中 **unique_callers 扇入度最高（28 uniq callers / 933
+transitive_dependents）的未复刻 CRT 项**（0x7C8B3D / 0x7C8E17 /
+0x7C5F00 已 crt_runtime_verified 属基础运行时不参与复刻轮次；锁家族
+0x7CD9F5/0x7CDA56 属桩边界）。此前无静态语义登记、无 C++ 真身复刻、
+无 golden——本条为全新取证。2026-10-19 指令级 golden 10 用例实证
+（_golden_7ca422.py，Unicorn 跑真身机器码——纯内存操作，零子调用
+零桩零全局，全程真身模拟）。
+TARGET = 0x007CA422。C++ 模型：code/rewrite/runtime/crt_wcsncpy.{h,cpp}
+（函数名 wcsncpy_legacy）。单测：test_crt_wcsncpy.cpp（10 用例对拍 +
+2 边界断言 + 参照抽查）。TSV 新增 0x007CA422_REIMPL 行。
+
+一、链语义（disasm 全段复核 + golden 10 用例实证）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7CA422 = MSVCRT wcsncpy 变体——
+cdecl 3 栈参 dst/src/count、ret 由调用者清栈、返回 dst。纯内存操作，
+无子调用无全局引用——全程可真身模拟。
+  机器码（0x7CA422-0x7CA45F，61B）：
+    ecx = count（第3参）；push esi/edi 后 edi = dst（第1参）、
+    edx = src（第2参）；esi = dst 保留返回
+  复制循环 0x7CA436：
+    ax = *(u16*)src → *(u16*)dst = ax → 指针各+2
+    test ax,ax → je 0x7CA448（NUL 已写入，停）
+    dec ecx → jne 循环（count 耗尽即停）
+  填充路径 0x7CA448（遇 NUL 或 count 未耗尽时进入）：
+    test ecx,ecx → je 返回（ecx==0：count 用完、无填充）
+    dec ecx → je 返回（原 ecx==1：NUL 是已被复制的最后字符、无填充）
+    xor eax；shr ecx,1 → rep stosd（填 (ecx-1)/2 个 dword 0）
+    adc ecx,ecx → rep stosw（填剩余 word 0）
+    —— 填充量 = (原 ecx-1) 个宽字符（NUL 已占 1 个位置）
+  收尾：eax = esi（原 dst）/ pop edi / pop esi / ret
+
+★原版怪癖（golden 实证，照抄）：
+  ① NUL 先写入再测试（ax==0 时该位置已被复制，NUL 必落位）；
+  ② count==0 → 不复制不填充直接返回（复制循环首测即退）；
+  ③ 遇 NUL 提前停止后填充 (剩余-1) 个 0（NUL 已占一位）——即标准
+     wcsncpy 语义：写 min(count, 首个 NUL 前长度+1) 个字符，剩余补 0；
+  ④ 返回 eax = 入口 dst（非终止位置）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7ca422.py（WcsncpyOracle；Unicorn 按原
+ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7CA422 全段——无子
+调用无桩，仅 0xCCCC 哨兵预填目标缓冲以便读回越界行为；cdecl ret
+只弹返回地址）。对拍点：目标缓冲内容 + 返回指针（== dst 原址）。
+10 用例落盘 memory/data/rmg/deadcode_7ca422_golden.txt（CASE 行格式
+`CASE count=<n> src=<hex> -> dst=<hex> ret_ptr=<1/0>`）：
+  count 0/1/3/5/8/16/10 覆盖：空源（count=0）、单字符、首 NUL
+  （count=1 src=0000）、中途 NUL（src=004100000043 → NUL 停止后填
+  零）、大 count 全复制、count>src 长度时尾部全零填充（count=16
+  src 仅 4 字符 → dst 填 12 个零；count=10 src=0000 → 1 个 NUL +
+  9 个零）。
+★golden 采集三修（本批调试记录）：
+  ① PaintOracle 基类不设寄存器属性——子类 __init__ 须自设 self.ESP
+     （_patch_949_esp.py）；
+  ② 仍缺 self.EAX + 误把 eax 当内存地址 rd32（eax 是 dst 指针值非
+     地址）——补 self.EAX 且断言 eax == dst 原址直接比
+     （_patch_949_regs.py）；
+  ③ 后续单测 SEH 见四节。
+
+三、C++ 模型（code/rewrite/runtime/crt_wcsncpy.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。单函数：
+  wcsncpy_legacy(dst, src, count) —— 0x7CA422：
+    复制循环：ax=*src → *dst=ax → 指针+2 → test ax,ax 遇 NUL 停
+    （NUL 已写入）→ dec count 耗尽停；
+    填充路径：count 未耗尽时填 (n-1) 个 0（NUL 已占一位，n==0/n==1
+    无填充）；
+    返回 dst。
+  严格按汇编语义：NUL 先写后测、count==0 直接返回、无字符串长度
+  预扫描。函数头注释含 61B 机器码全段 + 四怪癖。
+
+四、单测（test_crt_wcsncpy.cpp，全量 67 项之一）
+------------------------------------------------
+CrtWcsncpyTest：读 golden 原档（RA2_GOLDEN_DIR 宏）10 CASE + 3 项：
+  GoldenMatches（逐用例：dst 前 count 个宽字符与 golden 一致 + 返回
+    dst 原址；dst 缓冲 count+8 预填 0xCCCC 哨兵——count 之后必须保持
+    哨兵未动，含 count=16 大填充用例）、
+  ZeroCountNoop（count==0 不碰任何内存，4 哨兵原值）、
+  ReferenceCrossCheck（count∈{0,1,2,3,5,8,16} × srclen∈{0,1,3,7,10,16}
+    与独立参照实现——标准 wcsncpy 语义 min(count, 首个 NUL 前长度+1)
+    对拍）。
+解析：parse_hex 先 find_first_not_of(' ') 剥前导空格（944 深坑防复发）；
+golden count=0 行 src/dst 字段为空——定位 by 固定下标（toks[1]/[2]/
+[4] 恒在，空字段无碍）。
+调试记录：ReferenceCrossCheck 初版 srclen=0 时 `src.empty() ? nullptr
+: src.data()` 传 nullptr 且 count>0 → 复制循环读空指针 SEH 0xc0000005。
+修复：src 缓冲恒为 srclen+count+2 元素（全 0 初始化）+ 末尾补 NUL、
+恒传 src.data()——wcsncpy 按 NUL 提前停止，短源合法且恒可读 count
+个（_patch_949_src.py 因缩进 MISS → _patch_949_src2.py 修正后
+patched: 1）。
+预期 10 用例全量对拍 + 2 边界 + 参照交叉，ctest 67/67 全绿（#16
+通过）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：无——纯内存零子调用零桩零全局，0x7CA422 全部 61B 真身模拟
+golden 对拍，无外部语义依赖。
+
+★本批实锤：CRT 扇入度最高未复刻项 = wcsncpy——MSVCRT 宽字符计数
+复制（复制循环 NUL 先写后测 + 遇 NUL 填充剩余-1 个零 + 返回入口
+dst 的标准形态）；61B 纯内存操作，全程可真身模拟，无桩无全局。
+相邻待续：batch 950 按 ranking.tsv unique_callers 取下一未复刻 CRT 项
+（python .qwen\tmp\_pick_945.py）。
+依赖模型：无（纯内存零依赖）。
+承前：batch 948 已完（CRT 数字解析转发 thunk 0x7C9BFD，commit
+eada5fc）。

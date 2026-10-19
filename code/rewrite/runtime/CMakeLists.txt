@@ -15,6 +15,7 @@ add_library(ra2_runtime
   crt_boolnorm.cpp
   crt_malloc.cpp
   crt_thunk.cpp
+  crt_wcsncpy.cpp
   facing.cpp
   ra2_string.cpp
   map_legal.cpp)
@@ -125,4 +126,12 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_crt_thunk PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME crt_thunk COMMAND test_crt_thunk)
+
+  # wcsncpy（0x7CA422，宽字符计数复制），golden 由 emu_oracle 指令级
+  # 模拟取得（deadcode_7ca422_golden.txt，10 用例；纯内存操作零桩）
+  add_executable(test_crt_wcsncpy test/test_crt_wcsncpy.cpp)
+  target_link_libraries(test_crt_wcsncpy PRIVATE ra2_runtime gtest_main)
+  target_compile_definitions(test_crt_wcsncpy PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME crt_wcsncpy COMMAND test_crt_wcsncpy)
 endif()
