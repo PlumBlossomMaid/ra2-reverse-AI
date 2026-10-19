@@ -1,0 +1,115 @@
+frontier batch 953 —— CRT vsprintf 薄包装 0x7CA530（登记升级）
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序（0x7CA530 = 20 uc / 52B / 未 REIMPL）。batch 169 已登记
+语义（semantics_verified + assembly_verified_semantics_confirmed，
+partial：0x49/0x42 常量精确含义、0x7D 系核心身份、与 0x7CA564 差异
+语义）。本批 = 补全 0x7D 系核心身份（0x7D170D 窄内核 / 0x7D21BE 宽
+内核）+ 常量 'I'/'B' 含义推断 → **crt_runtime_verified 归档**。
+TARGET = 0x007CA530。C++ 模型：无（商业库层，重写用标准库——见
+「三态判定」节）。TSV：更新 0x007CA530 行。
+
+一、链语义（disasm 全段复核——本批补全 0x7D 系核心身份）
+------------------------------------------------
+0x7CA530(52B) = MSVC6 CRT vsprintf 薄包装（0x7C-0x7D 静态 CRT 区）：
+  push ebp/mov ebp,esp/sub esp,0x20（32B 栈帧）
+  mov eax,[ebp+8]                 ; ★ arg1 = 目标缓冲
+  mov dword[ebp-0x14],0x49        ; ★ 本地 +0x14 槽 = 0x49（'I'）
+  push eax / mov [ebp-0x18],eax / mov [ebp-0x20],eax
+  call 0x7D15A0                   ; ★ ★0x7D 系 = _strlen（TRS 017
+                                   ;   已登记 + string_length_legacy
+                                   ;   REIMPL，交叉实锤）→ eax=
+
+  mov [ebp-0x1C],eax              ; 本地 +0x1C 槽 = strlen(arg1)
+  lea eax,[ebp+0x10] / push eax   ; ★ 第三栈参 = &arg3（va_list 槽）
+  lea eax,[ebp-0x20] / push [ebp+0xC] / push eax
+  call 0x7D170D                   ; ★ ★0x7D170D = vsprintf 内核
+                                   ;   （cdecl 3 栈参：&本地结构, 格式
+                                   ;   串, va_list）
+  add esp,0x10 / leave / ret
+  ★本地结构 [ebp-0x20..0x14] = {arg1(dst), arg1, 0x49='I', strlen}
+  传给 0x7D170D 作为首参——MSVC6 _vsnprintf/_vsnprintf_s 内部
+  FILE/缓冲描述结构的简化形态（'I' 是字符/整数标志，见下）。
+
+★0x7D170D 内核开头（本批补全，0x7D170D-0x7D1752 已读）：
+  sub esp,0x1C4（452B 大栈帧）/ push ebx/esi/edi
+  mov esi,[ebp+0xC]               ; 格式串
+  mov al,[esi] / test al,al / je 0x7D2113（空串早退）
+  cmp dword[0x87C79C],1           ; ★★[0x87C79C] = locale 门控
+                                   ;  （MSVC6 per-thread locale
+                                   ;   flag）→ jle 走 [0x87C590]
+                                   ;   （locale 表）快速路径
+  movzx eax,al / push 8 / push eax / call 0x7D1311（char 转换/分类）
+  —— vsprintf/vsprintf_s 内核形态（格式串逐字符解析 + locale
+  敏感分类）实锤。
+
+★同族变体 0x7CA564（本批补全，0x7CA564-0x7CA595 已读）：
+  mov dword[ebp-0x14],0x42        ; ★ 常量 0x42（'B'）
+  mov dword[ebp-0x1C],0x7FFFFFFF  ; ★ 上限 = INT_MAX（缓冲上限）
+  call 0x7D21BE                   ; ★ ★0x7D21BE = **宽**内核
+                                    ;  （vswprintf 形态）
+  add esp,0xC / dec dword[ebp-0x1C]
+  ★0x7D21BE 内核开头（本批补全）：
+    sub esp,0x450（1104B 大栈帧）
+    mov eax,[ebp+0xC] / add dword[ebp+0xC],2  ; ★★宽字符步进（+2
+                                        ; 字节/字符——宽格式串）
+    mov bx,word ptr [eax]          ; ★★读 **word**（宽字符）
+  —— 与 0x7CA530（窄：0x7D170D 读 byte）形成 窄/宽 双包装对：
+  0x7CA530 = vsprintf（'I' + strlen 预存），0x7CA564 = vswprintf
+  （'B' + 0x7FFFFFFF 上限 = 无界模式）。'I'/'B' = MSVC6 内部缓冲
+  描述字符标志（'B' = buffer 模式带上限 / 'I' = 无限模式），
+  推断标注（未 golden 实证）。
+
+★可观测行为总结：3 参 cdecl 薄包装（dst, fmt, ...va）——本地填
+{缓冲区, 'I'/'B' 标志, 长度/上限} → 委托 0x7D 系 vsprintf/vswprintf
+内核；纯转发无自身逻辑。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：商业库层归档，不写 C++ 模型、
+不做对拍；语义已 batch 169 + 本批补全确认）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 代码区归属：0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance 实锤）——非 Westwood 手写逻辑。
+2. gamemd_replication_discipline：商业库只 dump 汇编、重写时用等价
+   C++ 运行时代替即可；vsprintf/vswprintf 是 MSVC 标准库组件，重写
+   gamemd 时由编译器运行库自然提供，逐字节复刻无意义。
+3. 复刻成本/收益：核心逻辑全在 0x7D170D/0x7D21BE（452B/1104B 大帧
+   printf 内核，依赖 locale 表 [0x87C590] + per-thread flag
+   [0x87C79C] + char 分类 0x7D1311），薄包装 52B 自身无算法——
+   golden 对拍需整套 locale/printf 状态，投入产出失衡；batch 169
+   已确认 semantics，本批补全核心身份与窄/宽确认，达归档级。
+→ 状态：crt_runtime_verified（汇编层语义 confirmed + 0x7D 系核心
+身份 = vsprintf/vswprintf 内核本批实锤；'I'/'B' 标志精确含义为推断
+标注、[0x87C79C]/[0x87C590] locale 数据未 golden 实证——文档标注）。
+
+四、跨批次闭合
+------------
+★batch 169：0x7CA530 首登记（CRT 格式化族，partial 三点）——本批
+补全 0x7D 系核心身份 + 窄/宽双包装确认。
+★batch 017：0x7D15A0 = _strlen（本批调用点实锤，且已有
+string_length_legacy REIMPL）。
+★ra2_code_region_layout_crt_provenance：0x7C-0x7D = MSVC6 静态 CRT
+（三层来源，非 Westwood 手写）。
+★同族后续候选：0x7CA564（vswprintf 宽包装，同批归档判据）、
+0x7D170D/0x7D21BE（printf 内核本体，依赖 locale——同属商业库层）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CA530：CRT vsprintf 薄包装归档；semantics
+batch 169 + 本批补全内核身份与窄/宽确认；不写 C++ 模型不做 golden
+——商业库层）。TSV 行 0x007CA530 更新。
+
+★本批实锤：CRT 扇入度 20 的 0x7CA530 = MSVC6 vsprintf 薄包装
+（本地结构 {'I' 标志 + strlen} → 委托 0x7D170D 窄内核），同族
+0x7CA564 = vswprintf 宽包装（'B' + INT_MAX 上限 → 0x7D21BE 宽内核读
+word 实锤）；0x7D15A0 = _strlen 调用点交叉；补全后按商业库纪律归档
+crt_runtime_verified。
+相邻待续：batch 954 按 ranking.tsv unique_callers 取下一未复刻 CRT
+项（python .qwen\tmp\_pick_945.py）。
+依赖模型：无（归档不落 C++）。
+承前：batch 952 已完（CRT C++ RTTI/异常运行时 0x7CAAE4，commit
+c021c84）。
