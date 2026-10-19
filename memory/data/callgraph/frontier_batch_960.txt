@@ -1,0 +1,97 @@
+frontier batch 960 —— CRT wcschr 0x7CA8C6
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序，batch 959 之后取下一未复刻 CRT 项 = 0x7CA8C6（41B / 11
+unique callers / 未 REIMPL / 非锁家族非基础件；batch 172 已有
+semantics_verified 语义行——本批按惯例追加 _REIMPL 行不覆盖）。
+此后无 C++ 真身复刻、无 golden——本条为全新取证。2026-10-19 指令级
+golden 12 用例实证（_golden_7ca8c6.py，Unicorn 跑真身机器码——纯内
+存零子调用零桩零全局，全程真身模拟）。
+TARGET = 0x007CA8C6。C++ 模型：code/rewrite/runtime/crt_wcschr.{h,cpp}
+（函数名 wcschr_legacy）。单测：test_crt_wcschr.cpp（12 用例对拍 +
+2 边界 + 参照抽查）。TSV 新增 0x007CA8C6_REIMPL 行。
+
+一、链语义（disasm 全段复核 + golden 12 用例实证）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7CA8C6 = MSVCRT wcschr（宽字符
+查找）——cdecl 2 栈参 (s, c)，返回 s 中首次出现宽字符 c 的指针、未
+找到返回 0；★c==0 时返回指向终止 NUL 的指针（标准 wcschr 语义）。
+纯内存操作，无子调用无全局引用——全程可真身模拟。
+  机器码（0x7CA8C6-0x7CA8EE，41B）：
+    mov eax,[esp+4]=s（串指针）
+  扫描循环（0x7CA8CA）：
+    cx=word[eax]（*s）→ test cx,cx → je 0x7CA8DD（★串到 NUL → 收尾）
+    cmp cx,word[esp+8]（★与目标宽字符 c 比较）→ je 0x7CA8DD（命中）
+    inc eax ×2（宽字符步进 +2）→ jmp 循环
+  收尾（0x7CA8DD）：
+    cx=word[eax] → sub cx,word[esp+8]（★cx = *位置 - c，16 位）
+    neg cx（★CF = (cx != 0)）→ sbb ecx,ecx（ecx = -CF）
+    → not ecx（★命中 CF=0 → ecx=-1；未命中 CF=1 → ecx=0）
+    → and eax,ecx（★命中保留指针 / 未命中清 0）
+  ret
+
+★原版怪癖（golden 实证，照抄）：
+  ① 逐 2 字节扫描（宽字符），步进 inc ×2；
+  ② 串到 NUL 即停，NUL 不参与与 c 的匹配（c==0 时例外）；
+  ③ ★c==0 时返回指向串尾 NUL 的指针（golden：s="abc" → &s[3]、
+     空串 → &s[0]——标准 wcschr 语义）；
+  ④ 未命中返回 0（sbb/not/and 归一化：CF 标志驱动掩码）；
+  ⑤ 收尾掩码是 32 位 `and eax,ecx`（x86 指针宽度——模型须用
+     ~uintptr_t{0} 保 64 位宿主完整指针，见四节调试记录）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7ca8c6.py（WcschrOracle；Unicorn 按原
+ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7CA8C6 全段——无子
+调用无桩；s 区 0xCC 哨兵验证不越界读；cdecl ret 只弹返回地址）。
+对拍点：返回指针相对 s 的**字节偏移**（-1=未找到返 0）。12 用例落盘
+memory/data/rmg/deadcode_7ca8c6_golden.txt（CASE 行格式
+`CASE s=<hex> c=<hex> -> ret=<off|-1>`，s 为 u16 内存小端 hex 含尾
+NUL）：中段/首/尾命中、未找到、★c==0 返终止 NUL（s="abc" → 6）、
+空串 c==0 → 0、空串未找到、高位值命中/未找到、极值 0xFFFF 命中、
+长串尾命中、★多次出现返首次（s="ababa" c='a' → 0）。
+
+三、C++ 模型（code/rewrite/runtime/crt_wcschr.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。单函数：
+  wcschr_legacy(s, c) —— 0x7CA8C6：
+    扫描循环：ch=*p；ch==0 或 ch==c → 收尾；否则 ++p；
+    收尾：d = *p - c（16 位）；mask = (d==0) ? ~uintptr_t{0} : 0；
+      return p & mask（命中保留指针 / 未命中清 0）。
+  严格按汇编语义：16 位宽字符步进、NUL 判停、c==0 语义、CF 掩码
+  归一化。头注释含 41B 机器码全段 + 五怪癖。
+
+四、单测（test_crt_wcschr.cpp，全量 74 项之一）
+------------------------------------------------
+CrtWcschrTest：读 golden 原档（RA2_GOLDEN_DIR 宏）12 CASE + 3 项：
+  GoldenMatches（逐用例返回偏移一致——golden 为字节偏移、单测
+    (ret-s)×2 换算）、
+  BoundaryCases（c==0 返终止 NUL / 空串两向 / 首尾 / 未找到）、
+  ReferenceCrossCheck（96 组伪随机 u16 串 × 随机 c（含 0）与独立
+    参照实现——标准 wcschr 语义——对拍）。
+解析：parse_hex 先 find_first_not_of(' ') 剥前导空格（944 深坑防复
+发）；golden 行固定 6 tok（CASE s=/c=/->/ret=），字段恒非空。
+调试记录（两修，均 64 位宿主特有）：
+  ① GoldenMatches 首跑 off 为负巨值——模型收尾 `uint32_t mask =
+     0xFFFFFFFFu`，`p & mask` 把 64 位指针高 32 位清零（x86 原版
+     `and eax,ecx` 只 32 位）→ 改 `~uintptr_t{0}`（_patch_960_mask.py）；
+  ② 掩码修复后 off=1/2/3 vs golden 2/4/6——golden 是**字节偏移**
+     （采集端 eax-s 字节差）、单测 (ret-c.s.data()) 是 u16 下标 →
+     换算 ×2（_patch_960_unit.py）。
+预期 12 用例全量对拍 + 2 边界 + 参照交叉，ctest 73→74 全绿（#23
+通过）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：无——纯内存零子调用零桩零全局，0x7CA8C6 全部 41B 真身模拟
+golden 对拍，无外部语义依赖。
+
+★本批实锤：CRT 扇入度最高未复刻项 = wcschr——MSVC6 宽字符查找
+（逐 2 字节扫描 + NUL 判停 + c==0 返终止 NUL + CF 掩码归一化）；
+41B 纯内存操作，全程可真身模拟，无桩无全局。
+相邻待续：batch 961 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_pick_945.py）。
+依赖模型：无（纯内存零依赖）。
+承前：batch 959 已完（CRT strstr 0x7CA4B0，commit a5db2cf）。

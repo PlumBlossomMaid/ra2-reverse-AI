@@ -22,6 +22,7 @@ add_library(ra2_runtime
   crt_wcscat.cpp
   crt_strncmp.cpp
   crt_strstr.cpp
+  crt_wcschr.cpp
   facing.cpp
   ra2_string.cpp
   map_legal.cpp)
@@ -191,4 +192,12 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_crt_strstr PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME crt_strstr COMMAND test_crt_strstr)
+
+  # wcschr（0x7CA8C6，宽字符查找），golden 由 emu_oracle 指令级
+  # 模拟取得（deadcode_7ca8c6_golden.txt，12 用例；纯内存操作零桩）
+  add_executable(test_crt_wcschr test/test_crt_wcschr.cpp)
+  target_link_libraries(test_crt_wcschr PRIVATE ra2_runtime gtest_main)
+  target_compile_definitions(test_crt_wcschr PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME crt_wcschr COMMAND test_crt_wcschr)
 endif()
