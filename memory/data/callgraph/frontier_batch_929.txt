@@ -1,0 +1,138 @@
+---
+
+frontier batch 929 —— 0x005A8F00 死代码复刻：正态抖动取数（374B）
+=======================================================================
+
+候选来源：用户指令「RMG 死代码全部复现对齐（挖坟考古）」——0x5A8F00
+（374B，batch 928 的取数被调族，TSV:1025 已 semantics 登记，本批做 C++
+真身复刻 + 单测对拍）。TARGET = 0x005A8F00（__fastcall ecx=A edx=B
+4 栈参 ret 0x10：栈参1 mode / 栈参2 out2 / 栈参3 out3 / 栈参4 out4）。
+C++ 模型：code/rewrite/rmg/dead_code_8f00.{h,cpp} 新增 DeadCode8F00
++ DeadCode8F00World 接口。单测：test_dead_code_8f00.cpp 新增
+DeadCode8F00.MatchesOriginal（8 用例对拍）。
+
+一、语义（完整汇编 281 行 + 黄金 8 用例闭环）
+------------------------------------------------
+真义（黄金实证 + 机器码逐段确认）：
+  ① mode <= 1 捷径（0x5A8F10 jle 0x5A8FBE）：edi = 1（采样值固定 1），
+     跳过正态段直落表选择——golden jump-easy 用例覆盖
+  ② 正态段（mode > 1，0x5A8F28）：fild 栈参1=mode →
+     fcomp [0x7E48F0]=1.5：mode < 1.5 用 mid = mode-2.0、span = mid*0.5；
+     否则默认 span=0.5、mid=2.0 → call 0x5980C0（NormalDeviate 桩）→
+     v = ND*span + mid
+  ③ 双向拒绝（0x5A8F62）：v < 2.0（test ah,1）或 v > mode（test ah,0x41
+     C0|C3 全 0）→ 重采样（0x5A8F81 fstp 弹栈回 0x5A8F83）→
+     _ftol（RC=chop）→ n（int）
+  ④ 表选择（0x5A8FBE）：eax = (n + 4*A) * 4 —— ★lea eax,[edi+eax*4]
+     edi=n、eax=A → n + 4*A（不是 A + 4*n）！→ [0x82B530] 表1 = P 指针
+     （idx 槽的 id 数组）、[0x82B5B0] 表2 = 条目数 ebp
+  ⑤ n == 2 分支（0x5A8FDD）：
+     - r0 = Random()，f0 = r0 * [0x7ED898]（2^-32）
+     - f0 < [0x7ED838]=0.7 → 特殊采样（0x5A9008）：
+       lea edx,[esi-6]（esi=ebp-1 → ebp-7）存 [esp+0x48]，高 32 位 0
+       → ★fild qword 按无符号读 (uint64)(int32)(ebp-7)（怪癖①）
+       → do { r1 = Random(); v = ftol(r1 * scale * 2^-32 + 7);
+              } while (v > ebp-1)    // cmp eax,esi / ja 重抽
+     - f0 >= 0.7 → 落 0x5A9051 通用采样
+  ⑥ 通用采样（0x5A9051，n != 2 直落 / n==2 且 f0>=0.7）：
+     scale = (uint64)ebp → do { r = Random();
+       v = ftol(r * scale * 2^-32); } while (v > ebp-1)
+  ⑦ 查找循环（0x5A9090）ebx = 0..ebp-1：
+     - edx = (ebx + 采样) % ebp → P[edx] = [0xABE370] 12B 项索引
+     - 12B 项：count / 子表指针 / 表族 id[+8]
+     - count <= 0 → esi = 0 直落（0x5A90C2 jle 0x5A90DA，golden
+       count-zero 用例：坐标差 = B - 子表[0]，golden 进料必须给
+       非空子表指针否则 0x5A90DA 读子表[0] 崩）
+     - count > 0：子表扫描（0x5A90C4-0x5A90D8）找 域 == A：
+       cmp [eax+4],A（esi 从 0 起，命中 index 停）→ esi
+       ★未命中 esi 增到 count（越界下标，0x5A90DA 读子表[count]
+       = 越界读，golden lookup-miss 用例：越界读=0 → 坐标差=B）
+     - 坐标差：coord = 子表[esi].dword0（x 低 16 / y 高 16）→
+       diff.x = (int16)(B.x - sub.x)、diff.y = (int16)(B.y - sub.y)
+       → dword = dy<<16 | dx
+     - call 0x5A7D00（ecx=表族 id、edx=&diff、push 1 1）判定：
+       ★怪癖② 表族对象 +0x2E8/+0x2E4 越界写被清零 → 计数 0 → 恒返 1
+  ⑧ 成功出口（0x5A9158）：*out2 = 表族 id、*out3 = diff dword、
+     *out4 = esi、ret 1；ax/dx 16 位运算 + 组合 dword
+  ⑨ 失败重试（0x5A90C8）：n' = (n+1) % (mode+1)（余 0 则 1）
+     n' == 初始 n → 失败出口（0x5A91A7）：*out2=0xFFFF、*out3=0、
+     *out4=-1、ret 0；否则回 0x5A8FBA 重新表选择（不再走正态段）
+  ★常量（.rdata 取证，byte 实读）：[0x7ED898] = 2^-32×(1+2^-40)
+     （0x3DF0000000001000，**不是**主流程 scaled_random 的 n/(2^32-1)！）、
+     [0x7ED838] = 0.7、[0x7E7FB0] = 7.0、[0x7E48F0] = 1.5、
+     [0x7E1708] = 2.0、[0x7E1738] = 0.5
+  ★怪癖（登记，golden 实证，C++ 已照抄）：
+     ① n==2 特殊采样 `lea edx,[esi-6]`（ebp-7）fild qword 无符号读——
+       条目数 <= 7 时 ebp-7 负数 → 无符号巨数 → 采样值恒 > esi →
+       拒绝采样死循环（原版死路径，不可采集；golden 用 ebp=16 规避）
+     ② 0x5A7D00 计数<=0 恒返 1：batch 929 golden 侧表族对象只分配
+       64B（_bump(0x40)），+0x2E8/+0x2E4 越界写被后续 _bump 清零 →
+       读回 0 → 快捷通过。verdict-fail 用例（期望 b2a=7 拒绝）实测
+       ret=1 —— 与 batch 928 golden 一致（fail-verdict/ok-verdict
+       均 ret=1），C++ ProbeFamily 恒 true 对拍，不作拒绝用例
+     ③ 表1/表2 双表 [0x82B530]/[0x82B5B0] 是 .data 全局——死代码
+       零引用无从考证真机写入者，golden 按用例直接覆写指定 idx
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 _golden_8F00.py（Pick8FOracle，继承 TechOracle）：
+  桩侧：NormalDeviate 0x5980C0 入口 patch 成 `E9 rel32 → ND_STUB`
+  （fld qword [ND_VAL]; ret，hook 注入 ndseq 序列、耗尽返 1.0）。
+  ★ND_STUB 地址选 SCRATCH+SIZE-0x500（=0x43FFFF00 是 TechOracle
+    V_FOUND 预设桩地址——先撞车被父类 _h_found 抢先模拟返回、桩永不
+    执行，v25 诊断后移开；同理避开 V_UNLIMBO/V_DESTROY）。
+  真身侧：Randomizer 0x65C780（seed 灌 [0xABE890]）、0x5A7D00 判定
+  （[0xA8ED2C] 表族 11 假对象：虚表槽 0x9C→mov eax,data;ret、
+  +0x2E8 外计数/+0x2E4 内计数、entries +0x10 起、+0x2A b2a 字节）、
+  [0xABE370] 16 段 × 12B、[0x82B530]/[0x82B5B0] 双表。
+  ★修正（2026-10-19）：Pick8FOracle 曾重复注册 _h_rng（基类 PlaceOracle
+  已注册同地址 0x65C780）→ rng 计数翻倍假象（jump-easy 计 2 真 1、
+  n2-sampling 计 4 真 2）——诊断脚本 hook 三个 call 指令
+  （0x5A8FE2/0x5A9023/0x5A906C）+ 0x65C780 入口双证后删除重复注册，
+  golden rng 恢复真值 1/1/1/2/1/1/1/1。
+  覆盖：8 用例（jump-easy/norm-ok/norm-reject/n2-sampling/lookup-miss/
+  count-zero/verdict-fail/domain7-hit，配置行 T12/ABE 进 golden）落盘
+  memory/data/rmg/deadcode_8f00_golden.txt。
+  ★对拍点：ret/nd_calls/rng/out2/out3/out4 六项全对拍（golden CASE 行
+  直给）。NormalDeviate 打桩序列 = ndseq；耗尽返 1.0。
+  8 用例数证：全 ret=1；nd_calls 0/1/2/1/1/1/1/1（jump-easy 捷径 0、
+  norm-reject 首采 v=4.5>4 拒 1 次）；rng 1/1/1/2/1/1/1/1（n2-sampling
+  n==2 分支 2 次：首采 r0 + 特殊采样 r1）；out4=esi 全 0 除 lookup-miss
+  =1（未命中子表域 → esi 越界到 count=1）。
+
+三、C++ 模型（code/rewrite/rmg/dead_code_8f00.{h,cpp}）
+------------------------------------------------
+签名：int DeadCode8F00(DeadCode8F00Context&, uint32* out2, uint32* out3,
+uint32* out4)；ctx 携带 Randomizer*/DeadCode8F00World*/基准坐标/A/mode/
+双表 std::map<int, DualTableRow>。world 抽象桩语义：Rng/NormalDeviate
+（桩序列，耗尽 1.0）/AbeEntry（[0xABE370] 12B 项改读）/ProbeFamily
+（0x5A7D00，恒 true——怪癖②）。实现要点：
+  · idx = n + 4*A（★非 A+4n，dump 实证 lea edi+eax*4）
+  · 拒绝判定 ja = 无符号比较（uint32 转换，否则 ebp=0 时死循环）
+  · 查找循环 esi 未命中走到 count（越界读=0，怪癖合并进 coord 回退）
+  · count<=0 直落 esi=0（count-zero 用例）
+  · 重试 n'=(n+1)%(mode+1)（余 0 则 1），n'==初始 n 失败出口
+
+四、单测（test_dead_code_8f00.cpp，47 项测试之一）
+------------------------------------------------
+DeadCode8F00.MatchesOriginal：读 golden 原档（RA2_GOLDEN_DIR 宏），
+8 用例全量对拍 ret/nd_calls/rng.call_count()/out2/out3/out4 六项。
+FakeDeadCode8F00World 按 golden 配置行重建：ndseq 序列注入（耗尽 1.0）、
+ABE 12B 项（★子表项数 = 行内 token 数，不等 count——count-zero 用例
+count=0 仍有 1 项子表）、双表 T12 行、ProbeFamily 恒 true。
+ctest 47/47 全绿（dead_code_8f00 #44 通过，全量无回归——较 928 后
+46 项新增本批）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：0x5A8F00 业务用途（与 0x5A82E0/0x5A89D0 同族，推测为废弃
+「批量建筑放置」流水线的取数器，零引用无从追）；n==2 特殊采样死路径
+（怪癖①——条目数<=7 不可达，C++ 同死循环为忠实复刻，未加保护）；
+[0x82B530]/[0x82B5B0] 双表真机内容（.data 死代码零引用）；0x5A7D00
+判定拒绝路径（表族计数>0 时真遍历——batch 928/929 golden 均未覆盖，
+计数<=0 快捷返 1 已实证）。依赖模型：Randomizer（randomizer.{h,cpp}）、
+NormalDeviate 桩语义（0x5980C0 Unicorn 不可信，C++ 侧序列注入——
+真身模型属 NormalDeviate 自身批次的课题）。待续死代码批次：0x5A6D80/
+0x5A7070、0x5A78D0、0x5A76E0、0x5A6C10 的 [0xA8ED2C] 表与 vtable+0x27
+归属、0x5A7250 余段、functions.tsv 11 条 body_bytes=1 回修。
