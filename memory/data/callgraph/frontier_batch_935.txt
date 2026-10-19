@@ -1,0 +1,151 @@
+frontier batch 935 —— 0x005A7440 死代码复刻：菱形域矩形高度一致性校验（0x5A7440-0x5A763F，512B）
+=======================================================================
+
+候选来源：用户指令「0x5A7250 余段」。0x5A7250（batch 934）的邻接变体
+（0x5A7440-0x5A763F），TSV 未登记；2026-10-19 全段汇编复核 + golden
+10 用例实证，本批做 C++ 真身复刻 + 单测对拍。
+TARGET = 0x005A7440。C++ 模型：code/rewrite/rmg/dead_code_7440.{h,cpp}
+新增 DeadCode7440World 接口 + DeadCode7440Context + DeadCode7440(ctx)。
+单测：test_dead_code_7440.cpp 新增 DeadCode7440.MatchesOriginal（10 用例
+对拍）。TSV 新增 0x005A7440_REIMPL 行。
+
+一、语义（完整汇编逐段核对 + 黄金 10 用例闭环）
+------------------------------------------------
+真义（黄金实证 + 机器码逐段确认）：
+  · 调用约定：thiscall 变体（ret 0，无栈参），仅寄存器传参：
+    - ecx = 矩形结构指针 this（[this+0] 低16=x、[this+4] 低16=y、
+      [this+8]=w int32、[this+0xC]=h int32）
+    - dl = flagA（0x5A744E mov [esp+0x13],dl，唯一标志，
+      0x5A7607 mov al,[esp+0x13] 读回）
+    ★与 7250 不同：7250 是 ret 4（flagA=dl + flagB=栈参 1）；
+    7440 无栈参，6D0/6F0 共用 dl 单标志。
+  · 四角菱形判定（0x5A7449-0x5A755F，与 0x5A7250 完全相同）：
+    角0=(x,y)、角1=(x+w-1,y)、角2=(x,y+h-1)、角3=(x+w-1,y+h-1)。
+    每角四判据（判据顺序固定，有符号 jle/jge/jg）：
+      X+Y <= W → fail（[0xABED04]）；X-Y >= W → fail；
+      Y-X >= W → fail；X+Y > W+2H → fail（[0xABED08]）。
+    ★角坐标 16 位截断：角1/3 的 X（0x5A7497 lea [w+raw_x-1] →
+    0x5A749F movsx edx,cx）、角2/3 的 Y（0x5A74DF lea [h+raw_y-1] →
+    0x5A74EA movsx ecx,cx），与 7250/76E0 同构。
+  · 起点格期望高度（★7440 独有，0x5A7565-0x5A758D）：
+    GetCellAt((x,y))（0x5A7579，无条件在扫描前调用）→
+    movsx ecx,[eax+0x11B]（cell+0x11B 有符号字节）→ 存 [esp+0x1C]。
+  · 全矩形扫描（★与 7250 同为整 w×h 矩形，非 76E0 的 3×3+边带）：
+    外层 cy 从 raw_y 起、条件 cy < h+raw_y（0x5A758B add/0x5A7593
+    jge 0x5A762C：h<=0 → 直接成功返 1，但★起点格已查——golden
+    h-zero gc=1 实证）；
+    内层 cx 从 raw_x 起、条件 cx < w+raw_x（0x5A759E add/0x5A75A2
+    jge 0x5A761B：w<=0 → 内层空——golden w-zero gc=1 实证，四角 +
+    起点格仍判）。
+    每格 (cx,cy)：
+      a. ★高度一致性比对（0x5A75B8 GetCellAt → 0x5A75C3 movsx
+         edx,[cell+0x11B]; 0x5A75CA cmp edx,[esp+0x1C]; 0x5A75CC
+         jne 0x5A7636 → 与起点格高度不等 → 整体 fail，★不查谓词）
+      b. tile=[cell+0x38] → 5 谓词链按序（0x5A75D0-0x5A7603）：
+         p. 0x4866D0（tile ∈ [paved, +0xf)，[0xABBEC8]）：过 →
+            flagA!=0 → 继续（0x5A7607 检查，0x5A760D je fail）
+         q. 0x4866F0（tile ∈ [paved4, +4)，[0xABBEC4]）：过 →
+            ★共用 flagA（0x5A7607）
+         r. 0x486380（tile==0xFFFF || tile==0）：过 → 直接继续
+            （0x5A760F，不查 flag）
+         s. 0x486650（tile ∈ [misc, +0xE)，[0xAA10A4]）：过 → 直接继续
+         t. 0x486670（tile ∈ [pavet, +0x10)，[0xABC2B0]）：过 → 直接
+            继续；全失败 → 整体 fail（0x5A7603 je 0x5A7636）
+  · 返回 al：全过 1（0x5A762F mov al,1）/任一失败 0（0x5A7639
+    xor al,al）。判定函数（调用方用 al 分支）。
+  RNG 不参与（golden 零采样，全段无随机取数）。
+
+★谓词窗口宽度（与 batch 934 同源，dump 实锤）：
+  0x4866D0：[paved, paved+0xf)，[0xABBEC8]，★宽度 0xf
+  0x4866F0：[paved4, paved4+4)，[0xABBEC4]
+  0x486380：==0xFFFF || ==0
+  0x486650：[misc, misc+0xE)，[0xAA10A4]
+  0x486670：[pavet, pavet+0x10)，[0xABC2B0]
+
+★原版怪癖（golden 实证，C++ 侧逐条复刻）：
+  ① 高度先于谓词：扫描格高度 != 起点格高度 → 立即 fail（不查谓词）。
+     golden height-mismatch 实证：gc=7（起点1+扫描6）但 p6d0=5——
+     末格 (10,7) 高度 9≠7 在谓词链前被拦下。
+  ② 双前置谓词门控共用 dl 单标志：6D0/6F0 通过后检查 flagA，为 0 时
+     **整体失败**——golden flagA-zero gc=2 实证首格即 fail（起点1+
+     首扫描格1，其余格未访问），与 7250 的 flagB 机制同构但无第二
+     标志。
+  ③ 起点格无条件先查：h-zero/w-zero gc=1（矩形空，但起点格 GetCellAt
+     照查、期望高度照存）。
+  ④ 谓词链序：6D0 → 6F0 → 380 → 650 → 670，前两个带 flag 门控、
+     后三个直接继续（与 7250 相同；与 76E0 边带 670→380→650 不同）。
+  ⑤ 角 1/3、2/3 的加宽坐标先 32 位求值再 movsx 截断回 16 位。
+  ⑥ 谓词/GetCellAt 全是有符号比较（jl/jge），tile 按有符号 int32 读；
+     cell+0x11B 高度按有符号字节（movsx）读。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7440.py（HeightRectOracle，继承
+TechOracle/PlaceOracle，W=12/H=8/side=21 由基类灌值，另灌
+[0xABBEC8]=15/[0xABBEC4]=11/[0xAA10A4]=200/[0xABC2B0]=16 + 用例格
+tile/height 表）。真身侧：GetCellAt 0x5657A0 与五谓词全部跑真身（hook
+只计数不劫持）。RNG 不参与（golden 零采样）。★对拍点九样：返回 al +
+gc/p6d0/p6f0/p380/p650/p670 六计数 + GetCellAt 坐标序列。10 用例落盘
+memory/data/rmg/deadcode_7440_golden.txt。
+★□ 写作范围修复（2026-10-19）：mk() 初版对 range(5,9)×range(7,12)
+灌值 → 含 X+Y<=12 的菱形失效格（如 (7,5)）→ UC_ERR_WRITE_UNMAPPED；
+改为只对基础扫描矩形 (8..10, 6..7) 六格灌值（X+Y=14..17
+∈ (12,28]、|X-Y|<=4<12 全部有效）。
+★□ 用例 tile 参数修复：初版 mk() 不灌 tile（全 0）→ 每格都命中
+0x486380（==0）「直接继续」，测不到 6D0/6F0/650/670 各路径；改为
+mk(name,x,y,w,h,fa,height,tile=0,spec_h=None) 按用例指定 tile（20/
+0xFFFF/205/30/500），并输出扫描六格各自的 IN 行（tile+height），C++
+Fake 从 IN 行还原输入。
+
+10 用例数证（stderr 汇总）：
+  all-pass      ret=1 gc=7 p6d0=6        （tile=20 ∈ [15,30) 全过）
+  corner0-fail  ret=0 gc=0               （x=3,y=6 → X+Y=9<=12）
+  flagA-zero    ret=0 gc=2 p6d0=1        （首格 6D0 过 + flagA=0 → fail）
+  p380-pass     ret=1 gc=7 p6d0=6 p6f0=6 p380=6   （0xFFFF 直达 380）
+  p650-pass     ret=1 gc=7 前四计数全 6 p650=6     （205 ∈ [200,214)）
+  p670-pass     ret=1 gc=7 全计数 6 p670=6         （30 ∈ [16,32) 且
+                                                     ∉ [15,30) 避开 6D0）
+  height-mismatch ret=0 gc=7 p6d0=5      （末格 (10,7) 高度 9≠7）
+  h-zero        ret=1 gc=1               （h=0，四角+起点格仍判）
+  w-zero        ret=1 gc=1               （w=0，四角+起点格仍判）
+  all-fail      ret=0 gc=2 五计数全 1    （500 五谓词全拒 → 首格 fail）
+
+三、C++ 模型（code/rewrite/rmg/dead_code_7440.{h,cpp}）
+------------------------------------------------
+签名：int DeadCode7440(const DeadCode7440Context& ctx)。ctx 携带
+world / raw_x,raw_y / w,h / flag_a / w_bound,w2h_bound / paved,paved4,
+pavet,misc。world 抽象谓词语义（Fake 侧按窗口比较并计数）：
+CellHeight（0x5657A0 → cell+0x11B movsx 有符号字节；Fake 计数 gc 并
+记录坐标——一次 GetCellAt 一次）、CellTile（同一 cell 的 +0x38 读，
+不产生新 GetCellAt、不计数）、IsPaved0（0x4866D0）、IsPaved4
+（0x4866F0）、IsVoidTile（0x486380）、IsMiscPaveTile（0x486650）、
+IsPaveTile（0x486670）。实现要点：四角判定（16 位截断）→ 起点格期望
+高度 → 双层循环（x 优先）→ 每格先高度比对再五谓词按序门控 → 全过
+返 1。
+
+四、单测（test_dead_code_7440.cpp，全量 53 项之一）
+------------------------------------------------
+DeadCode7440.MatchesOriginal：读 golden 原档（RA2_GOLDEN_DIR 宏），
+10 用例全量对拍返回 al + 六计数 + GetCellAt 坐标序列。Fake 世界：
+CellHeight 计 gc 并记录坐标（与 golden 的 GetCellAt hook 语义一致：
+起点格 + 每个扫描格各一次）、CellTile 不计数（同一 cell 内读取）、
+五谓词按窗口语义计数。ctest 53/53 全绿（#50 dead_code_7440 通过，
+无回归）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：0x4866F0 的 [0xABBEC4] 窗口业务含义（batch 934 起挂起）；
+flagA 调用方传参契约（死代码，无运行观测——TSV 记录 1 unique_caller，
+地址未取）。
+★本批实锤：0x5A7440 是 0x5A7250 的「高度一致性」孪生——同四角、同
+整矩形扫描、同五谓词链（6D0/6F0 flag 门控），但①无 flagB（ret 0）
+②多起点格期望高度 + 每格高度比对（高度不等在谓词前 fail）。死代码
+菱形域谓词族第六实例（0x568300/0x5AC230/0x5A7250/0x5A76E0/0x5A7440）。
+相邻待续：0x5A7640（149B bounding box 计算器，2 unique_callers）。
+依赖模型：GetCellAt 0x5657A0、五谓词、[0xABBEC4]/[0xABBEC8]/
+[0xAA10A4]/[0xABC2B0] 窗口全局、[0xABED04]/[0xABED08]、tile[cell+0x38]、
+height[cell+0x11B]。
+承前：batch 934 已决——functions.tsv 11 条 body_bytes=1 不回修（31 条
+中 30 条 = ret+NOP 对齐填充假象、1 条 0x4CA180 真实代码被误标，零
+引用影响为零，详见批文档 934 前传）。
