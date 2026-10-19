@@ -23,6 +23,7 @@ add_library(ra2_runtime
   crt_strncmp.cpp
   crt_strstr.cpp
   crt_wcschr.cpp
+  crt_strnicmp.cpp
   facing.cpp
   ra2_string.cpp
   map_legal.cpp)
@@ -200,4 +201,13 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_crt_wcschr PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME crt_wcschr COMMAND test_crt_wcschr)
+
+  # _strnicmp（0x7CD680，不区分大小写定长比较），golden 由 emu_oracle
+  # 指令级模拟取得（deadcode_7cd680_golden.txt，21 用例；C locale 快
+  # 路径全真身，慢路径锁家族留桩边界）
+  add_executable(test_crt_strnicmp test/test_crt_strnicmp.cpp)
+  target_link_libraries(test_crt_strnicmp PRIVATE ra2_runtime gtest_main)
+  target_compile_definitions(test_crt_strnicmp PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME crt_strnicmp COMMAND test_crt_strnicmp)
 endif()

@@ -1,0 +1,109 @@
+frontier batch 962 —— CRT _strnicmp 0x7CD680
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序，batch 961 之后取下一未复刻 CRT 项 = 0x7CD680（257B / 9
+unique callers / 未 REIMPL / 非锁家族非基础件）。2026-10-20 指令级
+golden 21 用例实证（_golden_7cd680.py，Unicorn 跑真身机器码——快
+路径纯内存零子调用零全局，全程真身模拟）。
+TARGET = 0x007CD680。C++ 模型：code/rewrite/runtime/crt_strnicmp.{h,cpp}
+（函数名 strnicmp_legacy）。单测：test_crt_strnicmp.cpp（21 用例对拍
++ 边界 + 参照抽查）。TSV 新增 0x007CD680_REIMPL 行。
+
+一、链语义（disasm 全段复核 + golden 21 用例实证）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7CD680 = MSVCRT _strnicmp（不
+区分大小写定长比较）——cdecl 3 栈参 (s1, s2, count)，返回比较三态
+{-1,0,+1}（逐字节，仅 'A'-'Z' 转小写后无符号比较）。
+  机器码（0x7CD680-0x7CD77E，257B 全段）：
+    push ebp/push edi/push esi/push ebx
+    ecx=[ebp+0x10]=count → or ecx,ecx → je 0x7CD77A（★count==0 → 返 0）
+    esi=[ebp+8]=s1 / edi=[ebp+0xC]=s2
+    lea eax,[0xB78298] / cmp [eax+8],0 → jne 0x7CD6F1（★慢路径 locale）
+    快路径（0x7CD6A3，C locale [0xB782A0]==0）：
+      bh=0x41('A') / bl=0x5A('Z') / dh=0x20
+      循环（0x7CD6AC）：
+        ah=[esi] → or ah,ah → mov al,[edi] → je 收尾（ah==0）
+        → or al,al → je 收尾（al==0）
+        inc esi / inc edi
+        cmp ah,bh / jb → cmp ah,bl / ja → add ah,dh
+          （★仅 [0x41,0x5A] 内字符 +0x20 转小写）
+        cmp al,bh / jb → cmp al,bl / ja → add al,dh（s2 同）
+        cmp ah,al → jne 0x7CD6DF（★ecx=-1 → jb 返回 -1 / neg → 1）
+        dec ecx → jne 循环（count 限制）
+      收尾（0x7CD6D5，任一 NUL 或 count 耗尽）：
+        xor ecx,ecx → cmp ah,al → je 0x7CD77A（相等返 0）
+        → mov ecx,-1 → jb 0x7CD77A（★ah<al → s1<s2 → -1）
+        → neg ecx → +1（s1>s2）
+    0x7CD77A: mov eax,ecx / pop 族 / leave / ret
+  慢路径（0x7CD6F1，[0xB782A0]!=0）：进临界区 [0xB78BA4] + 调锁家族
+  0x7CD9F5 + 逐字符调 tolower 内核 0x7CB063（batch 244/958 归档镜像）。
+
+★原版怪癖（golden 实证，照抄）：
+  ① count==0 直接返回 0（不读 s1/s2——空指针安全）；
+  ② 任一字符串到 NUL 即提前终止（不继续到 count 超限）；NUL 早退时
+     ah/al 未转小写（转小写在 inc 之后），但 NUL=0 与任何非 0 字节
+     比较结果不受是否转小写影响（0x00 恒小于一切，'A'-'Z' 恒大于 0）；
+  ③ 仅 'A'-'Z'（0x41-0x5A）内字符 +0x20 转小写参与比较——'@'(0x40)
+     下界不转、'`'(0x60) 与 'z'(0x7A) 上界不转（golden 针对性两用例
+     实证：@ vs ` → -1、z vs { → -1）、非 ASCII（0x80+）原样不转；
+  ④ 返回三态 {-1,0,+1} 非原始差值（jne 分支 mov ecx,-1 → jb -1 /
+     neg +1；收尾 xor ecx,ecx → je 0 / jb -1 / neg +1）；
+  ⑤ ★慢路径（[0xB782A0]!=0，locale 非 C）依赖锁家族 0x7CD9F5 +
+     tolower 内核 0x7CB063——本批只复刻 C locale 快路径。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7cd680.py（StrnicmpOracle；Unicorn 按原
+ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7CD680 快路径全段——
+无子调用无桩；s1/s2 区 0xCC 哨兵验证不越界；cdecl ret 只弹返回地址；
+[0xB782A0] 默认 0 = C locale）。21 用例落盘
+memory/data/rmg/deadcode_7cd680_golden.txt（CASE 行格式
+`CASE s1=<hex> s2=<hex> count=<n> -> ret=<tri>`，含尾 NUL）：
+相等/大小写不敏感 AbC vs aBc/全转小写 ABC vs abc/首差两向/长度差两向/
+count==0/截断 abcdef vs abcdeg c=3/混合大小写 aBc vs ABC/★下界 @ vs `
+-1/★上界 z vs { -1/大写下界边界 Z vs z 0/双空/单空两向/16 字符长相等
+大小写混合/长尾差。★两处编用例修正：@ vs `（期望 0 错，实 0x40<0x60
+→ -1——原版行为正确）与 A vs aX c=2（A→a==a 后 s1 到 NUL，0x00<'X'
+→ -1）均为采集端期望错误，非模型缺陷（_patch_962_goldencase.py）。
+
+三、C++ 模型（code/rewrite/runtime/crt_strnicmp.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。单函数：
+  strnicmp_legacy(s1, s2, count) —— 0x7CD680 快路径：
+    count==0 → 0；循环逐字节：ah_raw/s2 同 → 任一 NUL → 收尾
+    （相等 0 / ah<al -1 / +1）；++i 后仅 [0x41,0x5A] 内 +0x20 转
+    小写；不等 → 三态；--count==0 → 0（count 耗尽时 ah==al 循环
+    条件已保证，收尾 cmp/je → 0）。
+  头注释含 257B 机器码全段 + 五怪癖 + 慢路径留桩边界说明。
+
+四、单测（test_crt_strnicmp.cpp，全量 75 项之一）
+------------------------------------------------
+CrtStrnicmpTest：读 golden 原档（RA2_GOLDEN_DIR 宏）21 CASE + 3 项：
+  GoldenMatches（逐用例三态一致）、
+  BoundaryCases（count==0 空指针安全/双空/单空两向/大小写区间边界
+    @ vs ` / z vs { / Z vs z / @Z vs @z / 非 ASCII 无符号比较）、
+  ReferenceCrossCheck（64 组伪随机 0-127 字节串 × 随机 count vs 独立
+    参照实现——标准 C locale _strnicmp 语义）。
+解析：parse_hex 先 find_first_not_of(' ') 剥前导空格（944 深坑防复
+发）；golden 行固定 6 tok（CASE s1=/s2=/count=/->/ret=），字段恒非空。
+预期 21 用例全量对拍 + 边界 + 参照交叉，ctest 74→75 全绿（#24 通过）。
+
+五、状态
+-------
+cpp_reimplementation_partial + unit_test_verified。
+partial 原因：快路径（C locale）纯内存零子调用零桩零全局、21 用例
+golden 全真身对拍逐位一致；但慢路径（[0xB782A0]!=0）依赖锁家族
+0x7CD9F5 + tolower 内核 0x7CB063（batch 958 归档镜像）——锁家族为
+_pick_945 留桩边界项，单线程 C++ 模型不建模 CRITICAL_SECTION。
+→ 快路径完整复刻，慢路径留桩，按纪律标 partial 不越级。
+
+★本批实锤：CRT 扇入度 9 未复刻项 = _strnicmp——MSVC6 不区分大小写
+定长比较（三态返回 + 仅 'A'-'Z' 转小写 + NUL 提前终止 + count==0
+早退）；快路径纯内存 21 用例 golden 对拍全真身一致，慢路径锁家族
+留桩边界，三态 cpp_reimplementation_partial。
+相邻待续：batch 963 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_pick_945.py——候选 0x7C8EC0 __allmul
+52B / 0x7CDA90 _strcmp 129B 等）。
+依赖模型：无（快路径纯内存零依赖）。
+承前：batch 961 已完（CRT 流锁 Leave 0x7CB44B，commit 2860b4c）。
