@@ -1,0 +1,99 @@
+frontier batch 941 —— CRT wcscpy 0x7CA489
+==========================================
+
+候选来源：用户指令「③ 继续 CRT/runtime frontier（batch 083+）按
+ranking.tsv unique_callers 列扇入度排」。0x7CA489 为 batch 940 之后
+ranking.tsv 中 **unique_callers 扇入度最高（112 uniq callers / 3837
+transitive_dependents）的未复刻 CRT 项**。此前已有静态语义登记
+（frontier_status.tsv 0x007CA489，semantics_verified），无 C++ 真身
+复刻、无 golden。2026-10-19 指令级 golden 6 用例实证
+（_golden_7ca489.py，Unicorn 跑真身机器码——纯内存复制零桩边界），
+本批做 C++ 复刻 + 单测对拍。
+TARGET = 0x007CA489。C++ 模型：code/rewrite/runtime/crt_wcscpy.{h,cpp}。
+单测：test_crt_wcscpy.cpp（6 用例对拍 + 2 结构断言）。TSV 新增
+0x007CA489_REIMPL 行。
+
+一、链语义（全段 disasm 复核 + golden 6 用例闭环）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7CA489 = MSVC6 静态 CRT 宽字符
+字符串拷贝 `wcscpy`——逐 16 位宽字符复制直到 NUL（含 NUL 本身），
+返回 dst。cdecl 2 栈参、ret 无栈清理：
+  · 入口：
+      mov ecx, [esp+8]   ; ecx = src（第二参）
+      mov eax, [esp+4]   ; eax = dst（第一参）——★返回 eax = dst
+  · 流水线（"读-写-推进-测试"）：
+      mov dx, [ecx]      ; dx = src[0]
+      lea esi, [eax+2]   ; esi = dst+2（字节偏移，即 dst[1] 槽）
+      mov [eax], dx      ; dst[0] = dx
+      inc ecx / inc ecx  ; ecx → src[1]
+      test dx, dx        ; ★dx 载入后在 ecx 推进之后才 test
+      je 返回
+      mov dx, [ecx]      ; dx = 当前源字符
+      mov [esi], dx      ; 写目标
+      inc esi / inc esi  ; esi += 2
+      jmp 回 inc ecx×2 + test
+  · 收尾：pop esi / ret（返回 eax = dst）
+
+★原版怪癖（golden 实证，C++ 侧逐条复刻）：
+  ① 返回 eax = dst——入口即存、永不修改；
+  ② "读-写-推进-测试"流水线：dx 载入后在 ecx 推进之后才 test——
+     等效 `c=src[0]; dst[0]=c; while(c){c=*src++; *dst++=c;}`，
+     NUL 也会被写入 dst 后才返回（空串也写 NUL 到 dst[0]）；
+  ③ 纯 cdecl 2 参、无溢出防护、宽字符 16 位逐字复制；
+  ④ 无任何外部全局/子调用——纯内存复制，整函数可真身模拟（本批
+     唯一零桩边界批次）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7ca489.py（WcscpyOracle 继承 PaintOracle；
+Unicorn 按原 ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7C8D20
+——无桩，零子调用）。dst 缓冲预填 0xCC 底纹，src 灌宽字符序列。
+★对拍点三样：{eax(=dst 原址), dst 32 字节输出, 底纹不动}。
+6 用例落盘 memory/data/rmg/deadcode_7ca489_golden.txt（src 逐字 4 位
+hex + dst 32 字节 hex）：
+
+  CASE 00480065006c006c006f0000 -> Hello\0    复制含 NUL，余 0xCC
+  CASE 0000                     -> 空串：dst[0]=0，余 0xCC
+  CASE 00610000                 -> "a\0"
+  CASE ffff0000                 -> 0xFFFF 首字符（全 1 宽字符）
+  CASE 0041004200430000         -> "ABC\0"
+  CASE 4f60597d0000             -> "你好\0"（非 ASCII 宽字符）
+  全部 eax == dst 原址、dst 前段逐字 == src、后续 0xCC 底纹不动。
+
+三、C++ 模型（code/rewrite/runtime/crt_wcscpy.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。单函数（纯内存复制，无世界抽象）：
+  wcscpy_legacy(dst, src) —— 0x7CA489：按原版流水线逐 16 位宽字符
+    复制：`c=*src++; *dst++=c; while(c){c=*src++; *dst++=c;}`（NUL
+    也写入 dst），返回 dst 原址。
+无失败路径、无额外校验（不检查溢出/重叠）。
+
+四、单测（test_crt_wcscpy.cpp，全量 59 项之一）
+------------------------------------------------
+CrtWcscpyTest：读 golden 原档（RA2_GOLDEN_DIR 宏）6 CASE 用例 + 2 项
+结构断言：
+  GoldenWcscpyMatches（逐用例：返回 dst 原址 + 32 字节输出逐字节 ==
+  golden，含 NUL 写入与底纹不动）、
+  CopiesThroughNulIncludingNul（"读-写-推进-测试"流水线：NUL 本身也
+  被写入 dst 后才返回）、
+  EmptyStringCopiesNul（空串把 NUL 写到 dst[0]、其余不动）。
+解析统一 stoull→uint32_t（golden ret 为 bump 内存地址，测试不直接
+比对数值、改断言"返回 dst 原址"语义；src 逐字 4 位 hex）。预期 6 用例
+全量对拍，ctest 59/59 全绿（#8 crt_wcscpy 通过，无回归）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：无。本批零桩边界——wcscpy 是纯内存复制，无外部全局/子调用，
+模型与 golden 均为完整真身语义。golden 文件 src 全字面 hex 无歧义
+（唯一坑：CASE 行 toks[3]="ret"、toks[4]=数值——测试首版索引写错
+stoull("ret") 抛 invalid argument，补丁 _patch_941_test.py 修复为
+toks[4]/toks[5]）。
+
+★本批实锤：CRT 扇入度第四高的未复刻项 = wcscpy——37B 的纯内存复制
+流水线，"读-写-推进-测试"（dx 载入后 ecx 推进才 test）是该家族
+（wcscpy/wcscat/strcpy 等）共享的 MSVC6 惯用形态；本批零桩验证该形态
+完整语义。
+相邻待续：batch 942 按 ranking.tsv unique_callers 取下一未复刻 CRT 项。
+依赖模型：无（纯函数）。
+承前：batch 940 已完（CRT vsprintf 薄封装 0x7C8EF4，commit e0738ce）；
