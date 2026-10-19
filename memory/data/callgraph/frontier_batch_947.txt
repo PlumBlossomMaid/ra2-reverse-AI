@@ -1,0 +1,93 @@
+frontier batch 947 —— CRT malloc 入口 0x7C9430
+================================================
+
+候选来源：用户指令「③ 继续 CRT/runtime frontier（batch 083+）按
+ranking.tsv unique_callers 列扇入度排」。0x7C9430 为 batch 946 之后
+ranking.tsv 中 **unique_callers 扇入度最高（37 uniq callers / 1217
+transitive_dependents）的未复刻 CRT 项**（0x7C8B3D uc=1796 / 0x7C8E17
+operator_new uc=941 / 0x7C5F00 uc=460 已 crt_runtime_verified 属基础
+运行时不参与复刻轮次；锁家族 0x7CD9F5/0x7CDA56 属桩边界）。此前已有
+静态语义登记（frontier_status.tsv 0x007C9430，unclassified），无 C++
+真身复刻、无 golden。2026-10-19 指令级 golden 8 用例实证
+（_golden_7c9430.py，Unicorn 跑真身机器码——0x7C9442 核心桩注入
+返回值，结构指令真身）。
+TARGET = 0x007C9430。C++ 模型：code/rewrite/runtime/crt_malloc.{h,cpp}
+（函数名 malloc_legacy + CrtMallocWorld 世界抽象）。单测：
+test_crt_malloc.cpp（8 用例对拍 + 2 结构断言）。TSV 新增
+0x007C9430_REIMPL 行。
+
+一、链语义（disasm 全段复核 + golden 8 用例实证）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7C9430 = MSVCRT `malloc` 入口
+包装——cdecl 1 栈参 size、ret 由调用者清栈。依赖 [0xB782C4] 全局
+（堆标志/retry-hook）与 0x7C9442（malloc 核心入口：大小阈值
+cmp [esp+4],-0x20 + 常规分配 0x7C946E + 重试循环 0x7D06E8，含锁 9，
+batch 947 以桩注入返回值）。
+  机器码（0x7C9430-0x7C9441，18B）：
+    push [0xB782C4]      ; 压全局（堆标志/retry-hook）
+    push [esp+8]         ; 转发 size（push 后 size 从 [esp+4] 移到 [esp+8]）
+    call 0x7C9442        ; eax = core(size, 全局值)
+    pop ecx / pop ecx    ; 清 2 参（cdecl 调用者清理）
+    ret
+
+★原版怪癖（golden 实证，照抄）：
+  ① 参数顺序：core 收 (size, 全局值)——push 全局先压、push size 后压，
+     故 [esp+4]=size（最后 push）、[esp+8]=全局值；
+  ② 全路径必然调用一次 core（size 任意、全局任意——无 NULL 短路）；
+  ③ 返回值 = core 返回值（eax 透传，包装本身不改），包装不检查 core
+     是否返回 NULL——失败语义在 core 内部。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7c9430.py（MallocOracle；Unicorn 按原
+ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7C9430——0x7C9442
+hook 于原地址注入返回值并记录 (size, 全局值) 实参，全局 [0xB782C4]
+预写注入值，cdecl ret 只弹返回地址）。对拍点：返回 eax + core 实参。
+8 用例落盘 memory/data/rmg/deadcode_7c9430_golden.txt（CASE 行格式
+`CASE size=<hex> flag=<hex> inj=<hex> -> ret <eax(hex)> core_args=<s,a>`）：
+  size×flag×inj 覆盖：0/1/0x20/0xFFFFFFE0/-1 × flag 0/0x41/0xFFFFFFFF
+  × inj 0/0x12345678/0x41/0x10000000/1 等
+  全部 ret == inj（eax 透传）、core_args == (size, flag)（参数顺序逐位
+  一致，全局 [0xB782C4] 注入值如实转发）。
+★golden 采集零修复——首版即全过（cdecl 返回只弹返回地址的口径已在
+batch 945 修好，此处复用）。
+
+三、C++ 模型（code/rewrite/runtime/crt_malloc.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。单函数 + CrtMallocWorld 世界抽象（1 桩 core +
+1 全局 flag）：
+  malloc_legacy(world, size) —— 0x7C9430：
+    return world->core(size, world->flag);
+    严格按汇编参数顺序（push 全局先、push size 后 → core(size, flag)）。
+无失败路径、无额外校验。结构 = 原版 18B 控制流照抄。
+
+四、单测（test_crt_malloc.cpp，全量 65 项之一）
+------------------------------------------------
+CrtMallocTest：读 golden 原档（RA2_GOLDEN_DIR 宏）8 CASE + 2 项断言：
+  GoldenReturnAndArgsMatch（逐用例：返回值透传 core 返回值 + core 实参
+    == (size, flag) 逐位一致）、
+  ReturnPassthrough（core 返回 NULL / 非 NULL 均原样透传——包装不查）、
+  AlwaysCallsCoreOnce（size∈{0,1,0x20,0xFFFFFFE0,-1} 每次恰好调一次
+    core 且实参 == (size, flag)）。
+解析：stoull→uint32_t（golden 全正 hex）。core_args 逗号分隔两参。
+★单测一修记录（_patch_947_initlist.py）：AlwaysCallsCoreOnce 的
+initializer_list `{0u, ..., static_cast<std::size_t>(-1)}` 元素类型
+不一致（unsigned int vs size_t）触发 C3535/C2398 收缩转换错误——
+统一包 std::size_t{} 后通过。
+预期 8 用例全量对拍 + 2 结构断言，ctest 65/65 全绿（#14 通过）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：0x7C9442（malloc 核心入口：大小阈值 + 常规分配 0x7C946E +
+重试循环 0x7D06E8，含锁 9）为桩注入外部语义——与 937-946 批次口径
+一致：结构指令真身、外部语义注入、单测对拍。malloc 实际堆分配语义
+（0x7C946E/0x7D06E8）留待后续批次按扇入度下潜。
+
+★本批实锤：CRT 扇入度最高未复刻项 = malloc 入口包装——MSVCRT 经典
+形态：压全局堆标志 + 转发 size 给核心；核心入口 0x7C9442 含
+cmp [esp+4],-0x20 大小阈值（≥0xFFFFFFE0 直接拒绝）+ 常规分配 +
+0x7D06E8 重试循环，下次续推按扇入度取 0x7C946E/0x7D06E8。
+相邻待续：batch 948 按 ranking.tsv unique_callers 取下一未复刻 CRT 项。
+依赖模型：CrtMallocWorld（1 桩 core + 全局 flag）。
+承前：batch 946 已完（CRT 布尔规范化包装 0x7C978A，commit 47371ed）；

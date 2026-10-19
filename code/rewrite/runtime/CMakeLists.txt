@@ -13,6 +13,7 @@ add_library(ra2_runtime
   crt_qsort.cpp
   crt_free.cpp
   crt_boolnorm.cpp
+  crt_malloc.cpp
   facing.cpp
   ra2_string.cpp
   map_legal.cpp)
@@ -107,4 +108,12 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_crt_boolnorm PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME crt_boolnorm COMMAND test_crt_boolnorm)
+
+  # malloc 入口（0x7C9430，核心 0x7C9442 桩），golden 由 emu_oracle 指令级
+  # 模拟取得（deadcode_7c9430_golden.txt，8 用例；0x7C9442 注入返回值）
+  add_executable(test_crt_malloc test/test_crt_malloc.cpp)
+  target_link_libraries(test_crt_malloc PRIVATE ra2_runtime gtest_main)
+  target_compile_definitions(test_crt_malloc PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME crt_malloc COMMAND test_crt_malloc)
 endif()
