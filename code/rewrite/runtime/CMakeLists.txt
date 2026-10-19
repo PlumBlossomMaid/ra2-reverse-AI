@@ -25,6 +25,7 @@ add_library(ra2_runtime
   crt_wcschr.cpp
   crt_strnicmp.cpp
   crt_allmul.cpp
+  crt_strcmp.cpp
   facing.cpp
   ra2_string.cpp
   map_legal.cpp)
@@ -219,4 +220,13 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_crt_allmul PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME crt_allmul COMMAND test_crt_allmul)
+
+  # _strcmp（0x7CDA90，字节串比较），golden 由 emu_oracle 指令级模拟
+  # 取得（deadcode_7cda90_golden.txt，20 用例 × 4 对齐 = 80 组；纯内存
+  # 零子调用零全局，s1 对齐快路径 + 1/2 字节渐进慢路径全真身）
+  add_executable(test_crt_strcmp test/test_crt_strcmp.cpp)
+  target_link_libraries(test_crt_strcmp PRIVATE ra2_runtime gtest_main)
+  target_compile_definitions(test_crt_strcmp PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME crt_strcmp COMMAND test_crt_strcmp)
 endif()

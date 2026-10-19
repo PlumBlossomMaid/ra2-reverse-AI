@@ -1,0 +1,115 @@
+frontier batch 964 —— CRT _strcmp 0x7CDA90
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序，batch 963 之后取下一未复刻 CRT 项 = 0x7CDA90（129B / 9
+unique callers / 未 REIMPL / 非锁家族非基础件）。2026-10-20 指令级
+golden 80 组实证（_golden_7cda90.py，Unicorn 跑真身机器码——纯内存
+零子调用零全局，全程真身模拟）。
+TARGET = 0x007CDA90。C++ 模型：code/rewrite/runtime/crt_strcmp.{h,cpp}
+（函数名 strcmp_legacy）。单测：test_crt_strcmp.cpp（80 组对拍 +
+边界 + 参照抽查）。TSV 新增 0x007CDA90_REIMPL 行。
+
+一、链语义（disasm 全段复核 + golden 80 组实证）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7CDA90 = MSVCRT strcmp（字节串
+比较）——cdecl 2 栈参 (s1, s2)，返回三态 {-1,0,+1}（无符号逐字节比
+较，大小写敏感）。★s1 对齐 4 字节走快路径窗口比较；s1 未对齐走
+1→2 字节渐进慢路径对齐后并入快循环。s2 全程单字节访问（不检查对齐）。
+  机器码（0x7CDA90-0x7CDB13，129B+2B 尾部）：
+    mov edx,[esp+4]=s1 / mov ecx,[esp+8]=s2
+    test edx,3 → jne 0x7CDADC      ; ★只检查 s1 对齐
+    快路径（0x7CDAA0，s1 已 4 对齐）：
+      循环：mov eax,[edx]（★4 字节小端窗口：al=b0, ah=b1, hi16=b2,b3）
+        cmp al,[ecx]     → jne 0x7CDAD4（三态）
+        or al,al         → je 0x7CDAD0（b0==0 → 返 0）
+        cmp ah,[ecx+1]   → jne 0x7CDAD4
+        or ah,ah         → je 0x7CDAD0
+        shr eax,0x10     ; ★高 16 位移低：al=b2, ah=b3
+        cmp al,[ecx+2]   → jne 0x7CDAD4
+        or al,al         → je 0x7CDAD0
+        cmp ah,[ecx+3]   → jne 0x7CDAD4
+        add ecx,4 / add edx,4
+        or ah,ah         → jne 循环（b3!=0 继续）
+      （b3==0 → 落到 0x7CDAD0）
+    0x7CDAD0: xor eax,eax / ret（相等且 s1 到 NUL → 0）
+    0x7CDAD4: sbb eax,eax / shl eax,1 / inc eax / ret
+      ★三态出口：CF=1（s1<b2）→ -1；CF=0（s1>b2）→ +1
+    慢路径（0x7CDADC，s1 未 4 对齐）：
+      test edx,1 → je 0x7CDAF8（偶 → 2 字节路径）
+      1 字节路径（0x7CDAE4）：mov al,[edx] / inc edx /
+        cmp al,[ecx] → jne 三态 / inc ecx / or al,al → je 返 0 /
+        test edx,2 → je 0x7CDAA0（★已 4 对齐 → 进快循环）→ fallthrough
+      2 字节路径（0x7CDAF8）：mov ax,[edx] / add edx,2 /
+        cmp al,[ecx] → jne 三态 / or al,al → je 返 0 /
+        cmp ah,[ecx+1] → jne 三态 / or ah,ah → je 返 0 /
+        add ecx,2 → jmp 0x7CDAA0（进快循环）
+
+★原版怪癖（golden 实证，照抄）：
+  ① 只有 s1 参与对齐检查，s2 全单字节访问（不对齐）——s2 指针可以
+     任意 1/2/3 对齐，golden 80 组覆盖 a1=0/1/2/3 全部四态；
+  ② 窗口读 mov eax,[edx] 4 字节原子加载，NUL 之后仍越界读 1-3 字节
+     （安全窗口假设——MSVC CRT 假设字符串内存至少 4 字节可读窗口；
+     NUL 检查短路，越界字节永不参与比较；golden 缓冲 0xCC 哨兵实证
+     不越界读）；
+  ③ shr eax,0x10 后 al=b2/ah=b3（小端窗口 hi16 位移低）；
+  ④ 三态 sbb/shl/inc = {-1,0,+1}（非原始差值）；
+  ⑤ b3==0 检查在 add 指针之后（or ah,ah 在 add ecx,4/add edx,4 之后）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7cda90.py（StrcmpOracle；Unicorn 按原
+ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7CDA90 全段——无子调
+用无桩；a1 参数控制 s1 指针 %4 对齐覆盖快/慢全部路径；s1/s2 区
+0xCC 哨兵验证不越界读；cdecl ret 弹 8 字节）。80 组（20 用例 × 4 对
+齐）落盘 memory/data/rmg/deadcode_7cda90_golden.txt（CASE 行格式
+`CASE s1=<hex> s2=<hex> a1=<align0-3> -> ret=<tri>`，含尾 NUL）：
+相等/单字符/双空/中差两向/空 vs 非空两向/长短两向/大小写敏感两向/
+16 长相等跨 4 窗口/16 长含 NUL 窗口边界/长尾差/NUL 在窗口 b3/单字符
+vs 双/高字节 0xFF>0xFE 无符号（b0 与 b1 两位置）。
+期望三态逐组一致。
+
+三、C++ 模型（code/rewrite/runtime/crt_strcmp.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。单函数：
+  strcmp_legacy(s1, s2) —— 0x7CDA90：
+    addr=s1；if (addr&3)!=0：if (addr&1)!=0 → 1 字节路径（al=*p++;
+      al!=*q → 三态；++q；al==0 → 0；if (addr&2)==0 → goto fast4）
+      → 2 字节路径（al=p[0]/ah=p[1]; p+=2; al!=*q → 三态；al==0 → 0;
+      ah!=q[1] → 三态；ah==0 → 0；q+=2）→ fast4。
+    fast4：4 字节窗口 memcpy w；b0..b3 逐字节 cmp/NUL 检查；
+      b0!=q[0] → 三态；b0==0 → 0；b1 同；b2 同；b3!=q[3] → 三态；
+      p+=4/q+=4；b3==0 → 0；循环。
+  严格按汇编语义：只对齐 s1、s2 单字节访问、窗口越界读（memcpy 4
+  字节保证无 UB 且与原版行为一致）、三态返回。头注释含 129B 机器码
+  全段 + 五怪癖。
+
+四、单测（test_crt_strcmp.cpp，全量 77 项之一）
+------------------------------------------------
+CrtStrcmpTest：读 golden 原档（RA2_GOLDEN_DIR 宏）80 CASE + 3 项：
+  GoldenMatches（逐用例三态一致；aligned_buf 按 a1 构造 s1 对齐覆
+    盖快/慢路径）、
+  BoundaryCases（双空/单空两向/大小写敏感两向/前置相等长短两向/
+    高字节无符号两位置/16 长跨窗口/NUL 在窗口 b3）、
+  ReferenceCrossCheck（96 组伪随机 0-199 字节串 × 随机 shift 0-3 vs
+    独立参照实现——标准 C locale strcmp 三态语义）。
+解析：parse_hex 先 find_first_not_of(' ') 剥前导空格（944 深坑防复
+发）；golden 行固定 6 tok（CASE s1=/s2=/a1=/->/ret=），字段恒非空。
+调试记录（一修）：aligned_buf 首版用 ASSERT_GE 在返回 const char*
+的函数里展开 return;（void）→ C2440 编译错 → 改普通 if 检查
+（_patch_964_test.py）。预期 80 组全量对拍 + 边界 + 参照交叉，
+ctest 76→77 全绿（#26 通过）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：无——纯内存零子调用零桩零全局，0x7CDA90 全部 129B 真身模
+拟 golden 对拍（含慢路径对齐四态），无外部语义依赖。
+
+★本批实锤：CRT 扇入度 9 未复刻项 = strcmp——MSVC6 字节串比较（s1
+对齐 4 字节窗口快路径 + 1→2 字节渐进慢路径 + s2 全程单字节）；纯内
+存操作 129B，全程可真身模拟，无桩无全局。
+相邻待续：batch 965 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_pick_945.py）。
+依赖模型：无（纯内存零依赖）。
+承前：batch 963 已完（CRT __allmul 0x7C8EC0，commit 520c688）。
