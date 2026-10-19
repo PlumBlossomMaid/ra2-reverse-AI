@@ -6,6 +6,7 @@ add_library(ra2_runtime
   crt_init.cpp
   crt_error.cpp
   crt_format.cpp
+  crt_stricmp.cpp
   facing.cpp
   ra2_string.cpp
   map_legal.cpp)
@@ -33,4 +34,13 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_crt_format PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME crt_format COMMAND test_crt_format)
+
+  # _stricmp（0x7C8D20），golden 由 emu_oracle 指令级模拟取得
+  # （deadcode_7c8d20_golden.txt，15 用例；快路径真身 12 + 慢路径
+  # locale tolower 桩 3）
+  add_executable(test_crt_stricmp test/test_crt_stricmp.cpp)
+  target_link_libraries(test_crt_stricmp PRIVATE ra2_runtime gtest_main)
+  target_compile_definitions(test_crt_stricmp PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME crt_stricmp COMMAND test_crt_stricmp)
 endif()

@@ -1,0 +1,139 @@
+frontier batch 939 —— CRT _stricmp 0x7C8D20
+============================================
+
+候选来源：用户指令「③ 继续 CRT/runtime frontier（batch 083+）按
+ranking.tsv unique_callers 列扇入度排」。0x7C8D20 为 batch 938 之后
+ranking.tsv 中 **unique_callers 扇入度最高（205 uniq callers / 3932
+transitive_dependents）的未复刻 CRT 项**。此前已有静态语义登记
+（frontier_status.tsv 0x007C8D20，crt_runtime_semantics_verified，
+batch 001），无 C++ 真身复刻、无 golden。2026-10-19 指令级 golden 15
+用例实证（_golden_7c8d20.py，Unicorn 跑真身机器码、0x7CB063 tolower
+桩边界），本批做 C++ 复刻 + 单测对拍。
+TARGET = 0x007C8D20。C++ 模型：code/rewrite/runtime/crt_stricmp.{h,cpp}。
+单测：test_crt_stricmp.cpp（15 用例对拍 + 3 结构断言）。TSV 新增
+0x007C8D20_REIMPL 行。
+
+一、链语义（全段 disasm 复核 + golden 15 用例闭环）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7C8D20 = MSVC6 静态 CRT
+`_stricmp`（strcmpi）——大小写不敏感字节串比较，返回折叠 s1<折叠 s2
+→ -1 / 相等 → 0 / > → +1。分两路径，由 locale 全局 [0xB782A0] 门控：
+  · 快路径（[0xB782A0]==0，游戏默认 C locale 恒走此路）：
+      mov al,0xFF（哨兵：首轮 or al,al 非零保证进入循环）
+      循环顶 or al,al / je 返回：al 为上一轮读到的 s2 字符——s2 先到
+      NUL 且与 s1 全等 → 返回 0
+      mov al,[esi](s2++)；mov ah,[edi](s1++)；cmp ah,al / je 循环顶
+      （原始相等 → 继续）
+      折叠 s2 字符：sub al,0x41 / cmp al,0x1A / sbb cl,cl / and cl,0x20
+        / add al,cl / add al,0x41 —— 仅 'A'..'Z'（无符号 <26）加 0x20
+      xchg al,ah；折叠 s1 字符（同款）
+      cmp al,ah（折叠后比较）/ je 循环顶
+      sbb al,al / sbb al,0xFF → 折叠 s1<折叠 s2（无符号）→ -1 否则 +1
+      movsx eax,al / ret
+  · 慢路径（[0xB782A0]!=0，locale 激活）：
+      lock inc [0xB78BA4]（锁计数++）/ cmp [0xB78BA0],0 / jg 重入分支
+      重入分支：lock dec 回退 + push 0x13 / call 0x7CD9F5（报错，
+        golden 灌锁未持有不触发）/ mov [esp],1（锁状态 1）
+      正常：push 0（锁状态 0）
+      循环同快路径，但字符不等时：
+        push eax（存 s2 字符）/ push ebx（第一参 = s1 字符）
+        call 0x7CB063（tolower(s1)）→ eax → mov ebx,eax
+        call 0x7CB063（第二参复用栈上 s2 字符 → tolower(s2)）
+        cmp bl,al（tolower(s1) vs tolower(s2)）/ je 循环顶
+        sbb eax,eax / sbb eax,-1 → s1<s2 → -1 否则 +1
+      pop eax（锁状态）/ or / jne 0x7CDA56（异常解锁，不触发）
+      lock dec [0xB78BA4]（正常解锁）/ mov eax,ebx / ret
+
+★原版怪癖（golden 实证，C++ 侧逐条复刻）：
+  ① 循环顶 `or al,al` 判定的是**上一轮读到的 s2 字符**——首轮用哨兵
+     al=0xFF 保证进入；s2 先到 NUL 且与 s1 全等 → 返回 0；
+  ② 大小写折叠仅 'A'..'Z'（c-0x41 无符号 < 0x1A）加 0x20，sbb cl,cl/
+     and cl,0x20 惯用法；'@'(0x40) 减 0x41 回绕成 0xFF 后仍原样
+     （非字母不动，'Z'+0x20='z'、'a' 减 0x41=0x20 不小于 0x1A 原样）；
+  ③ 比较结果 = 折叠 s1 < 折叠 s2（无符号）→ -1，否则 +1（cmp 后
+     sbb al,al / sbb al,0xFF 惯用法，0 已被前面 je 短路）；
+  ④ 慢路径 tolower 调用序：**先 s1 后 s2**（push eax 存 s2 字符、
+     push ebx 作第一参 → call 0x7CB063 先 tolower(s1)，第二次调用复用
+     栈上 s2 字符 tolower(s2)）——与快路径的折叠顺序相反但比较方向
+     一致；golden tl 序列逐字符实证；
+  ⑤ 慢路径锁 [0xB78BA4] +1 后 -1 平衡（golden lockf=0 locka=0）；
+  ⑥ 重入分支（[0xB78BA0]>0）与 0x7CD9F5/0x7CDA56 在 golden 中 0 次
+     调用（灌 lock_held=0）——C++ 侧保留 AcquireLock/ReleaseLock 接口
+     对齐结构，重入路径留待锁家族独立批次。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7c8d20.py（StricmpOracle 继承 PaintOracle；
+Unicorn 按原 ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7C8D20
+全段）。★桩边界决策：0x7CB063（locale tolower）本批打桩——hook 劫持
+记录入参、返回 ASCII-tolower 模拟值（'A'..'Z'→+0x20，与 C++ 侧
+StubWorld 一致）；0x7CD9F5/0x7CDA56（重入报错/异常解锁）hook 记录
+调用次数（推定为 0）。快路径 12 用例零子调用全真身；慢路径 3 用例
+真身跑外壳 + tolower 桩。★对拍点六样：{ret, lockf, locka, tl 序列,
+err 调用, unl 调用}。
+  ★空串占位坑：首版空串 hex 写空字段，istringstream 分词后
+  `CASE 61  0`（s1 空）与 `CASE  61 0`（s2 空）无法区分——补丁改为
+  空串写 '-'（_patch_939_golden.py）。
+15 用例落盘 memory/data/rmg/deadcode_7c8d20_golden.txt（十六进制串
++ 十进制 unsigned）：
+
+  快路径（locale=0，12 用例）：
+    "Hello"/"hELLO" → 0（大小写折叠相等）
+    "abc"/"abc" → 0
+    "abc"/"abd" → -1（4294967295）
+    "abd"/"abc" → 1
+    ""/"" → 0；""/"a" → -1；"a"/"" → 1（空串 '-' 占位）
+    "@"/"A" → -1；"Z"/"[" → -1（'@'/ 非字母回绕原样）
+    "AbC"/"aBc" → 0；"123"/"124" → -1；"abcXYZ"/"abcxYz" → 0
+  慢路径（locale=1，3 用例，0x7CB063 桩 = ASCII tolower）：
+    "Hello"/"hELLO" → 0，tl=486865456c4c6c4c6f4f（先 s1 后 s2 实证）
+    "abc"/"abd" → -1，tl=6364
+    "ABC"/"abc" → 0，tl=416142624363
+  全部 lockf=0 locka=0（锁平衡实证）、err=0 unl=0（重入/异常 0 次）。
+
+三、C++ 模型（code/rewrite/runtime/crt_stricmp.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。CrtStricmpWorld 抽象四事：LocaleActive
+（[0xB782A0]!=0 快/慢路径门控）、LocaleToLower（0x7CB063，慢路径
+逐字符转换）、AcquireLock/ReleaseLock（慢路径锁 inc/dec）。单函数：
+  stricmp_legacy(world, s1, s2) —— 0x7C8D20：快路径纯 ASCII 折叠
+    逐字节比较（哨兵 al=0xFF、fold 只用 'A'..'Z'）；慢路径 AcquireLock
+    → 逐字节 tolower 比较（先 s1 后 s2）→ ReleaseLock → 返回 -1/0/+1。
+  stricmp_ascii_fold(c) —— 快路径折叠单元（sbb/and 惯用法等价、
+    无符号回绕语义保留）。
+  kStricmpLocaleGlobal=0xB782A0 常量暴露原版 locale 门控全局。
+无失败路径、无额外校验。
+
+四、单测（test_crt_stricmp.cpp，全量 57 项之一）
+------------------------------------------------
+CrtStricmpTest：读 golden 原档（RA2_GOLDEN_DIR 宏）15 CASE 用例 + 3 项
+结构断言：
+  LocaleGlobalAddressMatchesHeader（0xB782A0）、
+  GoldenStricmpMatches（逐用例：ret + 锁平衡 acquire/release + tolower
+  入参序列逐字符 == golden tl）、
+  AsciiFoldOnlyManglesUpperCase（fast fold：'A'→'a'/'Z'→'z'/'a' 原样/
+  '@' 原样/NUL 原样）、
+  SlowPathCallsTolowerInS1ThenS2Order（独立断言调用序先 s1 后 s2）。
+解析统一 stoull→uint32_t（golden 为 Python unsigned 打印，无
+INT_MAX 截断风险）；'-' 占位解析为空串。预期 15 用例全量对拍，
+ctest 57/57 全绿（#6 crt_stricmp 通过，无回归）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：无重大未确认项。0x7CB063（locale tolower）与 0x7CD9F5/
+0x7CDA56（锁家族）为本批**桩边界**——快路径（游戏实际路径）真身
+实证，慢路径外壳形状真身实证 + tolower 桩对拍；0x7CB063 本体与
+重入锁分支留待后续批次（0x7CB063 独立 tolower，0x7CD9F5 是 _lock
+家族入口，均可能成为 ranking 后续项）。Golden 断言放置：err/unl 0
+次调用在采集脚本内断言，C++ 侧通过 acquire/release 平衡 + tl 序列
+间接对齐。
+
+★本批实锤：最高扇入未复刻 CRT 项之一 = _stricmp——208B 含双路径
+（纯 ASCII 快路径 + locale 慢路径），快路径的「哨兵 + sbb 折叠 +
+sbb 比较」惯用法与慢路径的「锁 + 先 s1 后 s2 tolower 序」全部由
+golden 15 用例实证。
+相邻待续：batch 940 按 ranking.tsv unique_callers 取下一未复刻 CRT 项。
+依赖模型：CrtStricmpWorld 四回调（LocaleActive/LocaleToLower/
+AcquireLock/ReleaseLock）。
+承前：batch 938 已完（CRT vsprintfW 薄封装 0x7CA564，commit a981069）；
