@@ -21,6 +21,7 @@ add_library(ra2_runtime
   crt_strchr.cpp
   crt_wcscat.cpp
   crt_strncmp.cpp
+  crt_strstr.cpp
   facing.cpp
   ra2_string.cpp
   map_legal.cpp)
@@ -181,4 +182,13 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_crt_strncmp PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME crt_strncmp COMMAND test_crt_strncmp)
+
+  # strstr（0x7CA4B0，子串查找，单字符借 strchr 内核），golden 由
+  # emu_oracle 指令级模拟取得（deadcode_7ca4b0_golden.txt，17 用例；
+  # 纯内存操作零桩）
+  add_executable(test_crt_strstr test/test_crt_strstr.cpp)
+  target_link_libraries(test_crt_strstr PRIVATE ra2_runtime gtest_main)
+  target_compile_definitions(test_crt_strstr PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME crt_strstr COMMAND test_crt_strstr)
 endif()

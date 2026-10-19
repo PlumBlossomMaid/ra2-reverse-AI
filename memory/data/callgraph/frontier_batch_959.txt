@@ -1,0 +1,107 @@
+frontier batch 959 —— CRT strstr 0x7CA4B0
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序，batch 958 之后取下一未复刻 CRT 项 = 0x7CA4B0（133B / 11
+unique callers / 未 REIMPL / 非锁家族非基础件；batch 161 已有
+semantics_verified 语义行——本批按惯例追加 _REIMPL 行不覆盖）。
+此后无 C++ 真身复刻、无 golden——本条为全新取证。2026-10-19 指令级
+golden 17 用例实证（_golden_7ca4b0.py，Unicorn 跑真身机器码——纯内
+存零子调用零桩零全局，全程真身模拟）。
+TARGET = 0x007CA4B0。C++ 模型：code/rewrite/runtime/crt_strstr.{h,cpp}
+（函数名 strstr_legacy）。单测：test_crt_strstr.cpp（17 用例对拍 +
+2 边界 + 参照抽查）。TSV 新增 0x007CA4B0_REIMPL 行。
+
+一、链语义（disasm 全段复核 + golden 17 用例实证）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7CA4B0 = MSVCRT strstr（子串
+查找）——cdecl 2 栈参 (Str, SubStr)，返回 Str 中首次出现 SubStr 的
+位置指针、未找到返回 0；★SubStr 空 → 返回 Str 原址。纯内存操作，
+无子调用无全局引用——全程可真身模拟。
+  机器码（0x7CA4B0-0x7CA52F，133B）：
+    ecx=[esp+8]=SubStr / push edi/push ebx/push esi
+    dl=[SubStr]（首字符）/ mov edi,[esp+0x10]=Str
+    test dl,dl → je 0x7CA52A（★SubStr 空 → 返回 Str 原址）
+    dh=[SubStr+1] → test dh,dh → je 0x7CA517（★单字符路径）
+  主扫描（0x7CA4C8）：esi=Str / ecx=SubStr（重取）
+    al=[edi]（Str 游标）/ inc esi / cmp al,dl → je 0x7CA4EA（命中
+    SubStr[0]）/ test al,al → je 0x7CA4E4（Str 到 NUL → 返 0）
+    mov al,[esi]/inc esi/cmp al,dl → je 命中 / test al,al → jne 循环
+  命中比对（0x7CA4EA）：al=[esi]/inc esi/cmp al,dh → jne 回扫描
+    （SubStr[1] 不匹配 → 继续找 SubStr[0]）
+    lea edi,[esi-1]（★命中起点）/ ah=[SubStr+2] → test ah,ah → je
+    0x7CA523（★SubStr 长度 2 → 返命中 edi-1）
+  长串匹配（0x7CA4FB）：al=[esi]/add esi,2/cmp al,ah → jne 回扫描
+    al=[SubStr+3] → test al,al → je 0x7CA523（★长度 3 → 返）
+    ah=[esi-1]/add ecx,2/cmp al,ah → je 0x7CA4F4 继续 / jmp 回扫描
+  ★单字符路径（0x7CA517）：pop 族 → al=dl（SubStr[0]）→
+    jmp 0x7CAF36（★★直接跳进 strchr 内核 0x7CAF30——单字符 SubStr
+    退化为 strchr(Str, SubStr[0])，编译器级跨函数共享；strchr_legacy
+    batch 954 已复刻——C++ 模型复用同语义）
+  0x7CA523: lea eax,[edi-1]（返命中位置）/ pop 族 / ret
+  0x7CA52A: mov eax,edi（SubStr 空 → 返 Str）/ pop 族 / ret
+
+★原版怪癖（golden 实证，照抄）：
+  ① SubStr 空 → 返回 Str 原址（非 0；golden 双空/空子串用例实证）；
+  ② 单字符 SubStr → 直接 jmp 0x7CAF36 借 strchr 内核（跨函数共享
+     实锤——C++ 模型 strchr_legacy 复用一致）；
+  ③ 命中位置以 SubStr[0] 所在指针返回（edi-1，esi 已前移）；
+  ④ Str 到 NUL 未找到 → 0（返 uintptr 0，非 NUL 指针差异）；
+  ⑤ 长串匹配 SubStr[2..] 逐字符（esi+2/ecx+2 交错步进）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7ca4b0.py（StrstrOracle；Unicorn 按原
+ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7CA4B0 全段——无子
+调用无桩（strchr 内核 0x7CAF30 同程真身执行），str/sub 双区 0xCC
+哨兵验证不越界读；cdecl ret 只弹返回地址）。对拍点：返回指针相对
+Str 的偏移（-1=未找到返 0）。17 用例落盘
+memory/data/rmg/deadcode_7ca4b0_golden.txt（CASE 行格式
+`CASE str=<hex> sub=<hex> -> ret=<off|-1>`）：
+  双字符中段/单字符首/尾/未找到/全串/双字符首/未找到/三字符两向/
+  ★SubStr 空返原址/Str 空/连续字符（aaab 找 aa=0）/间隔模式
+  （ababa 找 ba=1）/长串中段 efg@4/长串尾单字符 h@7/长串未找到/
+  SubStr 比 Str 长。
+
+三、C++ 模型（code/rewrite/runtime/crt_strstr.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。单函数：
+  strstr_legacy(str, sub) —— 0x7CA4B0：
+    sub[0]==0 → 返回 str（空子串快路径）；
+    sub[1]==0 → 返回 strchr_legacy(str, sub[0])（★★单字符退化，
+      与 0x7CA517 jmp 0x7CAF36 语义一致——复用 batch 954 模型）；
+    主循环：逐字符找 sub[0]；命中后比对 sub[1]；
+      sub[2..] 长串逐字符比对（子串结束返命中、任一不等回扫描）；
+      *str==0 → nullptr。
+  严格按汇编语义：空子串返原址、单字符借 strchr、命中返 sub[0]
+  指针、NUL 终止返 0。头注释含 133B 机器码全段 + 五怪癖。
+
+四、单测（test_crt_strstr.cpp，全量 73 项之一）
+------------------------------------------------
+CrtStrstrTest：读 golden 原档（RA2_GOLDEN_DIR 宏）17 CASE + 3 项：
+  GoldenMatches（逐用例返回偏移一致；str/sub 含尾 NUL 可直 data()）、
+  BoundaryCases（空子串返 Str/单字符首尾/全串/未找到/超长子串）、
+  ReferenceCrossCheck（96 组伪随机 a-z 串 × 随机截取/独立随机/空
+    子串三模式，与独立参照实现——标准 strstr 语义——对拍）。
+解析：parse_hex 先 find_first_not_of(' ') 剥前导空格（944 深坑防复
+发）；golden 行固定 6 tok（CASE str=/sub=/->/ret=），字段恒非空。
+调试记录：本次零修复首版即过（与 946/948/957 同，纯内存零桩类；
+★本批模型选择——单字符路径直接复用 strchr_legacy（batch 954
+REIMPL），黄金实证 0x7CA517 jmp 0x7CAF36 跨函数共享）。
+预期 17 用例全量对拍 + 2 边界 + 参照交叉，ctest 72→73 全绿（#22
+通过）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：无——纯内存零子调用零桩零全局，0x7CA4B0 全部 133B 真身模拟
+golden 对拍，无外部语义依赖。
+
+★本批实锤：CRT 扇入度最高未复刻项 = strstr——MSVC6 子串查找
+（空子串返原址 + 单字符 jmp 借 strchr 内核（跨函数共享）+ 主扫
+描找首字符 + 长串逐字符比对 + 命中返 sub[0] 指针）；133B 纯内存
+操作，全程可真身模拟，无桩无全局。
+相邻待续：batch 960 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_pick_945.py）。
+依赖模型：strchr_legacy（batch 954，单字符退化路径复用）。
+承前：batch 958 已完（CRT toupper 0x7C97D3 归档，commit 9a3274a）。
