@@ -1,0 +1,101 @@
+frontier batch 963 —— CRT __allmul 0x7C8EC0
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序，batch 962 之后取下一未复刻 CRT 项 = 0x7C8EC0（52B / 9
+unique callers / 未 REIMPL / 非锁家族非基础件）。2026-10-20 指令级
+golden 15 用例实证（_golden_7c8ec0.py，Unicorn 跑真身机器码——纯算
+术零子调用零全局，全程真身模拟）。
+TARGET = 0x007C8EC0。C++ 模型：code/rewrite/runtime/crt_allmul.{h,cpp}
+（函数名 allmul_legacy）。单测：test_crt_allmul.cpp（15 用例对拍 +
+边界 + 参照抽查）。TSV 新增 0x007C8EC0_REIMPL 行。
+
+一、链语义（disasm 全段复核 + golden 15 用例实证）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7C8EC0 = MSVC6 CRT __allmul
+（64 位乘法辅助函数）——cdecl 4 dword 栈参 (a_lo, a_hi, b_lo, b_hi)，
+返回 edx:eax 64 位乘积 = (uint64)a * b（位级无符号乘法，符号由调用方
+解释），ret 0x10 弹 16 字节。
+  机器码（0x7C8EC0-0x7C8EF1，52B 全段）：
+    mov eax,[esp+8]=a_hi
+    mov ecx,[esp+0x10]=b_hi
+    or ecx,eax                  ; ★标志 = a_hi|b_hi（mov 不改标志）
+    mov ecx,[esp+0xC]=b_lo      ; ecx 覆写为 b_lo
+    jne 0x7C8ED9                ; ★a_hi|b_hi != 0 → 硬路径
+    快速路径（0x7C8ED0）：
+      mov eax,[esp+4]=a_lo
+      mul ecx                   ; edx:eax = a_lo*b_lo（64 位）
+      ret 0x10
+    硬路径（0x7C8ED9）：
+      push ebx
+      mul ecx                   ; edx:eax = a_hi*b_lo（eax 仍=a_hi）
+      mov ebx,eax               ; ebx = (a_hi*b_lo) 低32
+      mov eax,[esp+8]           ; ★push 后 esp-4：[esp+8]=a_lo
+      mul dword ptr [esp+0x14]  ; ★[esp+0x14]=b_hi：edx:eax = a_lo*b_hi
+      add ebx,eax               ; ebx += (a_lo*b_hi) 低32（32 位回绕）
+      mov eax,[esp+8]           ; eax = a_lo
+      mul ecx                   ; edx:eax = a_lo*b_lo（64 位）
+      add edx,ebx               ; edx += ebx（★32 位回绕，溢出丢弃）
+      pop ebx
+      ret 0x10
+
+★原版怪癖（golden 实证，照抄）：
+  ① a_hi*b_hi 项完全丢弃（64 位结果溢出回绕——与标准 64 位无符号
+     乘法 mod 2^64 等价，golden 0x100000000*0x100000000 → 0 实证）；
+  ② 两次 add 均 32 位回绕、进位不进结果高 32（交叉项进位链 golden
+     0xFFFFFFFF * 0xFFFFFFFF00000000 实证）；
+  ③ 快速/硬路径分岔只在 a_hi|b_hi（b_hi==0 且 a_hi==0 走快速——
+     32 位×32 位单 mul）；
+  ④ mul 前 edx 未初始化但 32 位 mul 总会写满 edx:eax（快速路径
+     edx=0）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7c8ec0.py（AllmulOracle；Unicorn 按原
+ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7C8EC0 全段——无子
+调用无桩；cdecl 4 dword 参 + ret 0x10 弹 16 字节）。15 用例落盘
+memory/data/rmg/deadcode_7c8ec0_golden.txt（CASE 行格式
+`CASE a=<hex64> b=<hex64> -> ret=<hex64>`，小端无符号）：0*0/1*1/
+快速路径 32 位满值 (2^32-1)^2/符号位 2^63×2/★硬路径 a_hi=1×b_lo=2/
+★2×b_hi=1/★高*高溢出→0/混合 64×32/★全 1×全 1→1/交叉项进位链/全硬
+路径随机/0×全 1/全 1×0/2^31×2^31/极值交叉。
+期望值 = (a*b) mod 2^64（Python 参照计算），15 用例逐位一致。
+
+三、C++ 模型（code/rewrite/runtime/crt_allmul.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。单函数：
+  allmul_legacy(a, b) —— 0x7C8EC0：
+    a_lo/a_hi/b_lo/b_hi 拆分；if (a_hi|b_hi)==0 → (uint64)a_lo*b_lo；
+    硬路径：ebx = (uint64)a_hi*b_lo 低32；ebx += (uint64)a_lo*b_hi
+    低32（32 位回绕）；t = (uint64)a_lo*b_lo；edx = t 高32 + ebx
+    （32 位回绕）；eax = t 低32；返 (edx<<32)|eax。
+  严格按汇编语义：a_hi*b_hi 丢弃 + 两次 32 位回绕逐条对应。头注释含
+  52B 机器码全段 + 四怪癖。
+
+四、单测（test_crt_allmul.cpp，全量 76 项之一）
+------------------------------------------------
+CrtAllmulTest：读 golden 原档（RA2_GOLDEN_DIR 宏）15 CASE + 3 项：
+  GoldenMatches（逐用例乘积一致）、
+  BoundaryCases（0×0/1×1/0×全1/全1×0/溢出回绕 (2^64-1)^2→1/
+    a_hi*b_hi 丢弃 2^32×2^32→0/快速路径 (2^32-1)^2=0xFFFFFFFE00000001/
+    符号位 2^63×2→0/常规交叉）、
+  ReferenceCrossCheck（128 组伪随机 uint64 对 vs 标准 64 位无符号
+    乘法 a*b——原生 mod 2^64 回绕，与原版硬路径数学等价：a_lo*b_lo
+    低64 + 交叉项低32×2^32，a_hi*b_hi 项 mod 2^64 自然消失）。
+解析：parse_hex64 先 find_first_not_of(' ') 剥前导空格（944 深坑防复
+发）；golden 行固定 5 tok（CASE a=/b=/->/ret=），字段恒非空。
+预期 15 用例全量对拍 + 边界 + 参照交叉，ctest 75→76 全绿（#25 通过）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：无——纯算术零子调用零桩零全局，0x7C8EC0 全部 52B 真身模拟
+golden 对拍，无外部语义依赖。
+
+★本批实锤：CRT 扇入度 9 未复刻项 = __allmul——MSVC6 64 位乘法辅助
+（4 dword cdecl + ret 0x10；a_hi*b_hi 丢弃 + 32 位回绕 = mod 2^64 语
+义）；52B 纯算术操作，全程可真身模拟，无桩无全局。
+相邻待续：batch 964 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_pick_945.py）。
+依赖模型：无（纯算术零依赖）。
+承前：batch 962 已完（CRT _strnicmp 0x7CD680，commit 8bf82f4）。

@@ -24,6 +24,7 @@ add_library(ra2_runtime
   crt_strstr.cpp
   crt_wcschr.cpp
   crt_strnicmp.cpp
+  crt_allmul.cpp
   facing.cpp
   ra2_string.cpp
   map_legal.cpp)
@@ -210,4 +211,12 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_crt_strnicmp PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME crt_strnicmp COMMAND test_crt_strnicmp)
+
+  # __allmul（0x7C8EC0，64 位乘法），golden 由 emu_oracle 指令级模拟
+  # 取得（deadcode_7c8ec0_golden.txt，15 用例；纯算术零依赖全真身）
+  add_executable(test_crt_allmul test/test_crt_allmul.cpp)
+  target_link_libraries(test_crt_allmul PRIVATE ra2_runtime gtest_main)
+  target_compile_definitions(test_crt_allmul PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME crt_allmul COMMAND test_crt_allmul)
 endif()
