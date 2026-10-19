@@ -1,0 +1,121 @@
+frontier batch 952 —— CRT C++ RTTI/异常运行时 0x7CAAE4（登记升级）
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序（0x7CAAE4 = 22 uc / 229B / 未 REIMPL / 非锁家族）。batch
+111 已登记语义（semantics_verified + assembly_verified_semantics_
+confirmed，partial：三内部处理器语义、0x7F9650 作用域表、确切 CRT
+名）。本批 = 补全三内部处理器（0x7CAC66/0x7CACC0/0x7CADB9）语义 +
+归类 MSVC6 C++ RTTI/异常运行时 → **crt_runtime_verified 归档**。
+TARGET = 0x007CAAE4。C++ 模型：无（商业库层，重写用编译器运行时——
+见「三态判定」节）。TSV：更新 0x007CAAE4 行。
+
+一、链语义（disasm 全段复核——本批补全内部处理器）
+------------------------------------------------
+0x7CAAE4(229B) = MSVC6 CRT C++ 异常/RTTI 运行时（__CxxFrameHandler
+家族形态）——SEH 帧安装 + 按类层次描述符三路遍历（单/多/虚继承）
++ 指针调整 + 尾部异常码过滤 + 失败路径 throw。
+
+主体（0x7CAAE4-0x7CABDC）：
+  SEH 帧安装（标准 C 异常帧头）：push -1 → push 0x7F9650（作用域表）
+    → push 0x7CC1D4（handler，_except_handler3 形态）→ mov eax,fs:[0]
+    → push eax → mov fs:[0],esp → sub esp,0x3C → push ebx/esi/edi →
+    mov [ebp-0x18],esp → esi=[ebp+8]（参1）→ test esi,esi → je 早退
+    （拆帧 fs:[0] 还原）→ and [ebp-4],0 → push esi → call 0x7CAC4C
+    （★★对象 meta 读取：edi=[esp 参]=esi 对象指针 → [edi] vtable →
+    [vtable-4] 前向元数据 → 返回调整后基址）
+  → eax=[esi] / eax=[eax-4]（vtable 前向元数据）→ esi -= [ebp+0xC]
+    （参2 偏移）→ esi -= edi（0x7CAC4C 结果）→ mov ecx,[eax+0x10]
+    （★★类层次描述符 CHD）→ mov ecx,[ecx+4]（CHD 头标志）→
+    test cl,1 → call 0x7CAC66（单继承路径）
+    test cl,2 → call 0x7CACC0（多继承路径）
+    否则     → call 0x7CADB9（虚继承路径）
+  → 结果非空 call 0x7CAEF1（指针调整）→ add eax,edi → [ebp-0x20]=eax
+  → or [ebp-4],-1 / jmp 拆帧返回
+  尾部异常码检查（0x7CABCE）：mov eax,[ebp-0x14] → [eax] → [eax] →
+    cmp 0xC0000005（STATUS_ACCESS_VIOLATION）→ sete cl → ret
+    （★★返回「异常码是否访问违例」布尔）
+  失败路径（0x7CABDD 起，异常展开）：mov esp,[ebp-0x18]（SEH 收栈）
+    → push 0x7F9598 → lea ecx,[ebp-0x48] → call 0x7CA971（构造器 A
+    装虚表 0x7F95D0）→ push 0x80F038 → call 0x7D2F64（★★batch 878
+    __CxxThrowException@8 throwinfo 1）→ 第二 throw：mov [ebp-0x3C],
+    0x7F963C → lea eax,[ebp-0x3C] → push eax → lea ecx,[ebp-0x38] →
+    call 0x7CABFB（构造器 C 装虚表 0x7F9660）→ push 0x80F098
+    （throwinfo 3）→ call 0x7D2F64
+
+★三内部处理器（本批补全语义，RTTI 类型表遍历）：
+  0x7CAC66（单继承路径，0x7CAC66-0x7CACBF）：
+    ebx=[ebp+0xC]（类描述符）→ eax=[ebx+0x10]（CHD/基类数组头）→
+    [eax+8]=数量 / esi=[eax+0xC]=数组指针 → 循环：edi=[esi]（基类项）
+    → eax=[edi]（type_info 指针）→ cmp eax,[ebp+0x18]（参5 目标类型）
+    → je 命中 / 否则 ecx+=8 & eax+=8 → call 0x7CDA90（strcmp 名字
+    比较）→ test eax → 命中 → test byte [edi+0x14],1（类型标识）
+    → je 返回 edi（命中项指针）→ 未中 esi+=4 继续 → 遍历完返 0
+  0x7CACC0（多继承路径，0x7CACC0-0x7CADB8）：
+    双层遍历：外层基类数组（同 0x7CAC66 结构）→ 命中项后再进内层
+    [esi+4]=二级数量 / [edi+4] 二级数组 → 内层项 ebx → eax=[ebx]
+    type_info → cmp [ebp+0x10]（参3）→ je / strcmp 名字比较 →
+    命中 → ebx+=8 → push ebx & push [ebp+8] → call 0x7CAEF1（指针
+    调整）→ cmp [ebp+0x14]（参4 目标偏移）→ je 命中返 → 内层遍历
+    完回外层 → 收尾第二段（0x7CAD69-0x7CADAE）：test byte
+    [esi+0x14],3（双类型标识）→ je 返 0 → 继续外层 → 返 0
+  0x7CADB9（虚继承路径，0x7CADB9-0x7CAEF0）：
+    同上双层结构（外层 [ebp+0x18] 匹配 / 内层 [ebp+0x10] 匹配 +
+    0x7CAEF1 调整 + [ebp+0x14] 校验）——三段处理器同构，差异在
+    标志位 1/2/3 与参映射。
+  0x7CAEF1（指针调整，0x7CAEF1-0x7CAF13）：eax=[esp+8] → edx=[eax+4]
+    → test edx,jl（符号）→ edx=[esp+4] → edx=[edx+ecx]（索引）→
+    ecx += [edx+esi]（esi=[eax+8] 表基）→ eax=[eax] → eax += ecx →
+    ret（★★RTTI 偏移表查找 + 指针叠加）
+  0x7CAC4C（对象 meta 读取）：edi 模式——[esp+4]=对象 → [obj] vtable
+    → [vtable-4] RTTI 定位器 → 返回调整后基址（batch 111 已述）
+
+★可观测行为总结：SEH 帧安装/拆除 + CHD 三路遍历（strcmp 名字匹配
+RTTI 类型表）+ 指针偏移调整 + 尾部异常码 0xC0000005 过滤布尔 +
+失败路径 throw（0x7D2F64 四 throwinfo 之一 0x80F098）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：商业库层归档，不写 C++ 模型、
+不做对拍；汇编语义已 batch 111 + 本批补全确认）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 代码区归属：0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance 实锤）——非 Westwood 手写逻辑。
+2. gamemd_replication_discipline：商业库只 dump 汇编、重写时用等价
+   C++ 运行时代替即可；0x7CAAE4 = C++ RTTI/异常处理运行时（C++ 编译
+   器自带 __CxxFrameHandler 家族 + type_info 系统），重写 gamemd 时
+   由 MSVC 编译器自然生成，逐字节复刻无意义。
+3. 复刻成本/收益：依赖 fs:[0] SEH 环境 + RTTI 元数据布局（vtable[-4]
+   / CHD / type_info 表）+ throw 导入槽 [0x7E12C0]——golden 对拍需
+   构造整套 MSVC6 RTTI 数据结构，投入产出失衡；batch 111 已确认
+   semantics，本批补全内部处理器语义，达归档级。
+→ 状态：crt_runtime_verified（汇编层语义 confirmed + 三内部处理器
+本批补全；内部 RTTI 数据结构字段身份（CHD+0x10/+0x8/+0xC、type_info
++0x14 标识）为反汇编推断未 golden 实证——文档标注不断言）。
+
+四、跨批次闭合
+------------
+★batch 878：0x7D2F64 = __CxxThrowException@8（throwinfo 0x80F098 =
+本批失败路径 throw 落点 5，逐字节互证）。
+★batch 111：0x7CAAE4 首登记（SEH 帧头 + 尾部 0xC0000005 过滤布尔）——
+本批补全三内部处理器 + 归类商业库层归档。
+★batch 871：导入槽 [0x7E12C0]（throw 内核共用分发槽）。
+★batch 053：无效参数异常抛出（throwinfo 0x80F0D0）同族。
+★0x7CC1D4 handler / 0x7F9650 作用域表：MSVC6 _except_handler3 形态
+（batch 083 定时器 / 092 虚表安装同模板）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CAAE4：CRT C++ RTTI/异常运行时归档；semantics
+batch 111 + 本批补全内部处理器；不写 C++ 模型不做 golden——商业库层）。
+TSV 行 0x007CAAE4 更新。
+
+★本批实锤：CRT 扇入度 22 的 0x7CAAE4 = MSVC6 C++ RTTI/异常运行时
+（SEH 帧 + CHD 三路遍历 + 指针调整 + 0xC0000005 过滤 + throw），
+补全三内部处理器语义后按商业库纪律归档 crt_runtime_verified。
+相邻待续：batch 953 按 ranking.tsv unique_callers 取下一未复刻 CRT
+项（python .qwen\tmp\_pick_945.py——0x7CA530 20 uc 或下一条纯内存项）。
+依赖模型：无（归档不落 C++）。
+承前：batch 951 已完（CRT _alloca_probe 0x7CA650，commit 923d036）。
