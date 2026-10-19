@@ -1,0 +1,107 @@
+frontier batch 955 —— CRT wcscat 0x7CA45F
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序，batch 954 之后取下一未复刻 CRT 项 = 0x7CA45F（42B / 16
+unique callers / 未 REIMPL / 非锁家族非基础件；batch 126 已有
+semantics_verified 语义行——本批按惯例追加 _REIMPL 行不覆盖）。
+此后无 C++ 真身复刻、无 golden——本条为全新取证。2026-10-19 指令级
+golden 10 用例实证（_golden_7ca45f.py，Unicorn 跑真身机器码——纯内
+存零子调用零桩零全局，全程真身模拟）。
+TARGET = 0x007CA45F。C++ 模型：code/rewrite/runtime/crt_wcscat.{h,cpp}
+（函数名 wcscat_legacy）。单测：test_crt_wcscat.cpp（10 用例对拍 +
+1 边界 + 参照抽查）。TSV 新增 0x007CA45F_REIMPL 行。
+
+一、链语义（disasm 全段复核 + golden 10 用例实证）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7CA45F = MSVCRT wcscat（宽字符
+串连接）——cdecl 2 栈参 (dst, src)，把 src 追加到 dst 的终止 NUL 处
+（覆盖 NUL、src 的 NUL 收尾），返回 dst。纯内存操作，无子调用无全局
+引用——全程可真身模拟。
+  机器码（0x7CA45F-0x7CA488，42B）：
+    eax=[esp+4]=dst / ecx=dst
+    cmp word [eax],0 → je 0x7CA473（dst 空串快路径，跳过扫描）
+  找 NUL 循环（0x7CA46B）：
+    inc ecx ×2 / cmp word [ecx],0 / jne——ecx 停在 dst 终止 NUL
+  复制循环（0x7CA478）：
+    si=*(u16*)edx（src）→ *(u16*)ecx=si（写 dst）
+    inc ecx ×2 / inc edx ×2 / test si,si / jne——src 到 NUL 即停
+    （NUL 已先写入再测停）
+  pop esi / ret（eax 恒为入口 dst 原值 → 返回 dst）
+
+★原版怪癖（golden 实证，照抄）：
+  ① 找 NUL 用 16 位比较（宽字符），指针步进 inc ×2；
+  ② dst[0]==0 快路径跳过扫描直接复制（语义等价，省一轮循环）；
+  ③ src 的 NUL 被复制进 dst（标准 wcscat 语义：dst 终止 NUL 被覆盖、
+     src 终止 NUL 收尾；src 空时只写一个 NUL）；
+  ④ 无 dst 容量检查（调用者保证空间）；
+  ⑤ 返回 eax = 入口 dst（非终止位置）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7ca45f.py（WcscatOracle；Unicorn 按原
+ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7CA45F 全段——无子
+调用无桩；dst 16 槽 0xCCCC 哨兵预填验证不越界写；cdecl ret 只弹返回
+地址）。对拍点：dst 缓冲 16 槽内容（含哨兵）+ 返回 dst 原址。10 用例
+落盘 memory/data/rmg/deadcode_7ca45f_golden.txt（CASE 行格式
+`CASE dst=<hex> src=<hex> -> out=<hex> ret_ptr=1`，u16 **内存小端**
+字节序（低字节在前）、dst/src 不含 NUL、out 为 16 槽含哨兵）：
+  空 dst + 非空 src / 常规连接 / 非空 dst + 空 src / 双空 / 单字符 /
+  2+3 / 高位值 dst（0x100/0x200/0x300）/ 5+5 / 极值 0xFFFF+0x1000 /
+  1+6。
+★golden 采集两修（本批调试记录）：
+  ① 初版 hx() 用 "%02x"（u16 值 0x100 输出 3 字符）→ CASE 行 hex
+     长度奇数、单测解析错位；改 "%04x" 后仍错——%04x 是**数字序**
+     （0x41→"0041"），单测按小端解析（41 00 → 0x4100）高低字节颠倒；
+     终版改 hx16() = "%02x%02x"（低字节在前，0x41→"4100"）并对 out
+     传 u16 序列 full（dst+src+[0]）而非 bytearray（_patch_955_golden.py，
+     patched blocks: 3）；
+  ② 单测 GoldenMatches 三连修：比较循环 i<buf.size()(16) 越界
+     c.out（4-7 个 u16）→ 改 i<c.out.size() 比 golden、否则期望
+     0xCCCC（_patch_955_bounds.py）；src 无尾 NUL 致 wcscat 越界复制
+     （堆垃圾 0xFDFD / SEH 0xc0000005）→ 构造 srcbuf = c.src+{0}
+     （_patch_955_srcbuf.py）——与 949 wcsncpy 的 nullptr 坑同型；
+  ③ EmptyEdgeCases 初版 src 指向 buf+4 的 0xCCCC（非 NUL）→ 改独立
+     空 src 向量（_patch_955_test.py）。
+
+三、C++ 模型（code/rewrite/runtime/crt_wcscat.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。单函数：
+  wcscat_legacy(dst, src) —— 0x7CA45F：
+    找 NUL：if (*d != 0) do ++d while (*d != 0)（dst 空串快路径）；
+    复制循环：for(;;){ ch=*s++; *d++=ch; if (ch==0) break; }（src 的
+      NUL 先写后测停）；
+    返回 dst（eax 恒为入口值）。
+  严格按汇编语义：16 位比较、指针步进、NUL 先写后测、快路径、无容量
+  检查。头注释含 42B 机器码全段 + 五怪癖。
+
+四、单测（test_crt_wcscat.cpp，全量 71 项之一）
+------------------------------------------------
+CrtWcscatTest：读 golden 原档（RA2_GOLDEN_DIR 宏）10 CASE + 3 项：
+  GoldenMatches（逐用例：buf 16 槽 0xCCCC、dst 本体 + 补 NUL、srcbuf
+    补 NUL；逐槽比 golden，超出 c.out 期望 0xCCCC 哨兵；返回 dst
+    原址）、
+  EmptyEdgeCases（空 dst + 空 src / 非空 dst + 空 src 只补 NUL）、
+  ReferenceCrossCheck（64 组伪随机 l1/l2∈0-8、字符非 NUL，与独立
+    参照实现——标准 wcscat 语义——对拍）。
+解析：parse_hex 先 find_first_not_of(' ') 剥前导空格（944 深坑防复
+发）；golden 行固定 6 tok（CASE dst=/src=/->/out=/ret_ptr=1）——空
+dst 时 "dst=" 独立成 token，固定下标仍稳定（toks[1]/[2]/[4]）。
+预期 10 用例全量对拍 + 边界 + 参照交叉，ctest 70→71 全绿（#20
+通过）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：无——纯内存零子调用零桩零全局，0x7CA45F 全部 42B 真身模拟
+golden 对拍，无外部语义依赖。
+
+★本批实锤：CRT 扇向度 16 的 0x7CA45F = wcscat——MSVCRT 宽字符串
+连接（dst 空串快路径 + 16 位找 NUL + src 逐宽字符复制含 NUL +
+返回入口 dst）；42B 纯内存操作，全程可真身模拟，无桩无全局。
+golden 采集三道坎（%02x→%04x→小端 hx16；比较越界 c.out；src 无
+尾 NUL）全部记录，与 949 wcsncpy 的 nullptr 坑同型。
+相邻待续：batch 956 按 ranking.tsv unique_callers 取下一未复刻 CRT
+项（python .qwen\tmp\_pick_945.py）。
+依赖模型：无（纯内存零依赖）。
+承前：batch 954 已完（CRT strchr 0x7CAF30，commit 1d43c8e）。
