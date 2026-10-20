@@ -1,0 +1,132 @@
+frontier batch 1038 —— CRT locale/code-page 解析器 0x7CDF2E（登记）
+============================================
+
+候选来源：python .qwen\tmp\_list_7c_pending.py —— 0x7CDF2E = 280B /
+2 uc（ranking 行 unique_callers 列 = FUN_007cdf58,FUN_007ccffc）/
+TSV 无既有行 / frontier_batch_*.txt 无匹配（仅候选列表提及）。
+本批 = 依赖链确认（4 被调全已登记：0x7CDA90 strcmp / 0x7D4BF0
+strcpy / 0x7D0A20 memmove / 0x7D6D2A locale 表装载）→ 按商业库
+层归档 **crt_runtime_verified**。
+TARGET = 0x007CDF2E。C++ 模型：无（见「三态判定」）。TSV：新增
+0x007CDF2E 行。
+
+一、链语义（disasm 全 280B 复核，0x7CDF2E-0x7CE045）
+------------------------------------------------
+007cdf2e  55 8bec          push ebp / mov ebp,esp / sub esp,0x88
+007cdf37  53 56            push ebx / push esi
+007cdf39  8b7508          mov esi, [ebp+8]                    ; 参数1 = 代码页名字符串
+007cdf3c  33d2            xor edx,edx / cmp esi,edx
+007cdf3f  0f848d000000    je 0x7cdfd4                       ; ★参1==0 → 失败路径
+007cdf47  803e43          cmp byte[esi], 0x43                 ; ★首字符 'C'
+007cdf4a  7532            jne 0x7cdf7e
+007cdf4c  385601          cmp byte[esi+1], dl                 ; ★次字节 0（"C" 串特判）
+007cdf4f  752d            jne 0x7cdf7e
+007cdf51  8b450c          mov eax, [ebp+0xC]                  ; 参数2（段 1 特判目标）
+007cdf57  205001          and byte[eax+1], dl                 ; [b+1]&=0
+007cdf5c  c60043          mov byte[eax], 0x43                 ; ★★写 'C'（"C" → 0x43）
+007cdf6c  8b4d14          mov ecx, [ebp+0x14]                 ; 参数4
+007cdf77  8911            mov dword[ecx], edx                 ; memset 0
+007cdf79  e9c3000000      jmp 0x7ce041
+007cdf7e  bff8c38700      mov edi, 0x87c3f8                   ; ★[0x87C3F8] 全局串 1
+007cdf85  e806fbffff      call 0x7cda90                       ; ★★strcmp（batch 192/964
+                                                        ;   已登记）
+007cdf90  bb74c38700      mov ebx, 0x87c374                   ; ★[0x87C374] 全局串 2
+007cdf97  call 0x7cda90                                       ; ★★strcmp 再比
+007cdfa2  lea eax,[ebp-0x88] / call 0x7ce06e                 ; ★0x7CE06E（未登记——解析）
+007cdfb5  lea eax,[ebp-0x88] / push 0xb782b8 / call 0x7d6d2a  ; ★★locale 表装载（batch
+                                                        ;   055/020 已登记）
+007cdfd8  movzx eax, word[0xb782bc] → mov [0xb782c0], eax     ; ★全局拷贝
+007cdfea  lea eax,[ebp-0x88] / push edi / call 0x7ce13a       ; ★0x7CE13A（未登记——设置）
+007cdffc  call 0x7d4bf0                                       ; ★★strcpy（batch 008）
+007ce004  cmp [ebp+0x10], 0 → push 6/push 0xb782b8/
+    push [ebp+0x10] / call 0x7d0a20                           ; ★★memmove（batch 032）
+                                                            ;   ——3 参 (目标,0xB782B8,6)
+007ce01c  cmp [ebp+0x14], 0 → push 4/push 0xb782c0/
+    push [ebp+0x14] / call 0x7d0a20                           ; ★★memmove 再（4）
+007ce038  push edi / push [ebp+0xC] / call 0x7d4bf0           ; ★★strcpy
+007ce041  5f 5e 5b c9 c3  pop 族 / leave / ret
+
+★语义：**MSVC6 CRT locale/code-page 名称解析器（推断名）**——
+cdecl 4 参（参1=代码页名字符串，参2/3/4=输出槽）：
+  ① 参1==0 → 失败路径（xor eax,jmp）；
+  ② 首字符 'C' 且次字节 0（字面 "C"）→ 特判：写 [参2]=0x43
+     ('C')、[参2+1]=0、[参4]=0（memset）；
+  ③ 否则：strcmp(参1,[0x87C3F8]) + strcmp(参1,[0x87C374])
+     双全局串比较 → 0x7CE06E 解析（未登记）→ 0x7D6D2A locale
+     表装载 → [0xB782B8]/[0xB782C0] 全局状态 → 0x7CE13A 设置
+     （未登记）→ 0x7D4BF0 strcpy → 0x7D0A20 memmove 双输出
+     （6=? / 4=? 两槽）。
+  ★形态：setlocale/_setmbcp 家族代码页名解析（"C" 字面特判 +
+   命名代码页转换 + 双槽输出）。
+
+★原版怪癖（照抄）：
+  ① "C" 字面特判（cmp 'C' + cmp [esi+1]==0）——小写 "c" 不命中
+     （仅大写 C）；
+  ② 特判路径写 [参2]=0x43 后 [参4] memset 0（双输出槽）；
+  ③ 全局串对 [0x87C3F8]/[0x87C374]（代码页名基准串）；
+  ④ 0x7D6D2A 表装载后 [0xB782BC]→[0xB782C0] 全局拷贝（response
+     槽缓存）；
+  ⑤ 输出用 0x7D0A20 memmove（数量参 6/4 两档——buffer 尺寸
+     语义推断）；
+  ⑥ 0x7D4BF0 strcpy 收尾（全局→输出）。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7CDA90 = batch 192/964 已登记（CRT strcmp 对齐优化版——
+     语义确认）——双调用现场；
+  ② 0x7D4BF0 = batch 008 已登记（strcpy 词级变体）——双调用；
+  ③ 0x7D0A20 = batch 032 已登记（memmove 双端变体）——双调用；
+  ④ 0x7D6D2A = batch 055/020 已登记（locale/code-page 表装载）
+     ——核心调用；
+  ⑤ 0x7CE06E/0x7CE13A = 未登记 CRT 内部（解析/设置）——新候选。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT locale 解析属商业库
+层，不写 C++ 模型；280B 全读 + 4 被调 TSV 交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CDF2E = MSVC6 CRT locale/code-page 名称解析器——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）。
+2. 依赖：0x7CDA90/0x7D4BF0/0x7D0A20/0x7D6D2A（batch 192/964/
+   008/032/055/020 全部已登记）+ [0x87C3F8]/[0x87C374]/
+   [0xB782B8]/[0xB782C0] 全局——重写 gamemd 时用等价
+   std::locale/代码页转换运行时。
+3. gamemd_replication_discipline：CRT 标准库函数，重写时用等价
+   运行时代替，逐字节复刻无意义——按商业库纪律归档，不写 C++
+   模型不做 golden。
+→ 状态：crt_runtime_verified（280B 全读 + 4 被调 TSV 交叉 + 双
+全局串语境；精确函数名与输出槽语义为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 192/964：0x7CDA90 strcmp 登记（语义确认）——本批双调用
+现场交叉。
+★batch 008：0x7D4BF0 strcpy 词级变体——本批双调用交叉。
+★batch 032：0x7D0A20 memmove 双端变体——本批双调用交叉。
+★batch 055/020：0x7D6D2A locale/code-page 表装载——本批核心调
+用交叉。
+★batch 965+990-994：isctype 掩码族（locale 守卫 [0x87C79C]）—
+—同 locale 设施族。
+★_pick_945：IAT/锁家族排除——0x7CDF2E 依赖方纳入同边界。
+
+五、状态
+-------
+crt_runtime_verified（0x7CDF2E：CRT locale/code-page 名称解析器
+归档；280B 全读 + 4 被调 TSV 交叉 + 双全局串语境；不写 C++ 模型
+不做 golden——CRT locale 解析商业库层；精确函数名与输出槽语义
+为推断交叉标注）。TSV 新增 0x007CDF2E 行。
+
+★本批实锤：0x7CDF2E = MSVC6 CRT locale/code-page 名称解析器
+（"C" 字面特判 + strcmp 双全局串 [0x87C3F8]/[0x87C374] + 0x7D6D2A
+表装载 + memmove/strcpy 双输出 [0xB782B8]/[0xB782C0]），4 被调
+（strcmp/strcpy/memmove/表装载）全部 batch 已登记 → 按商业库层
+纪律归档 crt_runtime_verified。
+相邻待续：batch 1039 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_list_7c_pending.py——候选 0x7CB1CB
+46B / 0x7CBEC1 9B 等；0x7CE06E/0x7CE13A/0x7D461E/0x7D45DF/
+0x7D571F/0x7C9FD9/0x7D473F/0x7D8C6B 新候选标注）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1037 已完（CRT _initterm 静态初始化表遍历器
+0x7CBED3，commit 15f1913）。
