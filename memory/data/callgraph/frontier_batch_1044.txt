@@ -1,0 +1,132 @@
+frontier batch 1044 —— CRT getenv 环境表构建器 0x7D461E（归档）
+============================================
+
+候选来源：batch 1043 预告「7D 区剩余 0x7D461E(110B)/0x7D45DF
+(63B)/0x7D571F(114B)/0x7C9FD9(23B)/0x7D8C6B(208B)」。ranking.tsv
+中 uc=2 并列最高（callers = FUN_007cbc32(getenv 查找器已登记)/
+FUN_007da9cd）。TSV 无既有行。本批 = 已登记 getenv 0x7CBC32 描
+述「→ 0x7D461E 构建」的兑现 + 商业库层归档。
+TARGET = 0x007D461E。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D461E 行。
+
+一、链语义（disasm 全 110B 复核，0x7D461E-0x7D468A）
+------------------------------------------------
+007d461e  51         push ecx
+007d461f  53         push ebx
+007d4620  55         push ebp
+007d4621  56         push esi
+007d4622  8b35ec81b700 mov esi, [0xb781ec]    ; ★环境表头全局
+007d4628  57         push edi
+007d4629  33ff       xor edi, edi
+007d462b  8b06       mov eax, [esi]           ; 首项索引 0
+007d462d  3bc7       cmp eax, edi / je 0x7d467f   ; 空表 → 返回 0
+007d4631  8b1d4c127e00 mov ebx, [0x7e124c]   ; ★IAT WideCharToMultiByte
+007d4637  57×4       push edi×4               ; 后四参 = 0 (usedDefaultChar/
+                                              ; defaultChar/NULL 目标/NULL 尾参)
+007d463b  6aff       push -1                  ; cchWideChar = -1（自动长度）
+007d463d  50         push eax                 ; lpWideCharStr = 当前项
+007d463e  57         push edi                 ; dwFlags = 0
+007d463f  6a01       push 1                   ; CodePage = 1（CP 常量）
+007d4641  ffd3       call ebx                 ; ★WCTMB(1,0,str,-1,NULL,0,0,0)→长度
+007d4643  8be8       mov ebp, eax             ; ebp = 所需缓冲长度
+007d4645  3bef       cmp ebp, edi / je 0x7d4687    ; 长度 0 → -1
+007d4649  55         push ebp
+007d464a  e8e14dffff call 0x7c9430           ; ★malloc(ebp)（batch 945 已 REIMPL
+                                              ;   malloc 入口包装）
+007d464f  3bc7       cmp eax, edi / pop ecx / mov [esp+0x10], eax
+007d4656  742f       je 0x7d4687              ; malloc 失败 → -1
+007d4658  57×2       push edi, edi            ; 后两参 0
+007d465a  55         push ebp                 ; cbMultiByte = 长度
+007d465b  50         push eax                 ; lpMultiByteStr = malloc 结果
+007d465c  6aff       push -1                  ; cchWideChar = -1
+007d465e  ff36       push [esi]               ; lpWideCharStr = 当前项
+007d4660  57         push edi                 ; dwFlags = 0
+007d4661  6a01       push 1                   ; CodePage = 1
+007d4663  ffd3       call ebx                 ; ★WCTMB 第二遍：实际转换
+007d4665  85c0       test eax,eax / je 0x7d4687    ; 转换失败 → -1
+007d4669  57         push edi
+007d466a  ff742414   push [esp+0x14]          ; 入参（调用者传入值）
+007d466e  e85a630000 call 0x7da9cd           ; ★互调 0x7DA9CD（邻近 CRT 子例程）
+007d4673  8b4604     mov eax, [esi+4]         ; 下一项
+007d4676  83c604     add esi, 4               ; ★指针数组步进 4
+007d4679  59         pop ecx / 3bc7 cmp eax, edi / pop ecx
+007d467d  75b8       jne 0x7d4637             ; 循环
+007d467f  33c0       xor eax, eax             ; 成功 → 0
+007d4681  5f5e5d5b59 c3 pop 5 + ret
+007d4687  83c8ff     or eax, 0xffffffff       ; 失败 → -1
+007d468a  ebf5       jmp 0x7d4681
+  函数边界确认：0x7D468C = push ebp（0x7D468C 为既有登记
+  _ultoa 变体？——neighbor 交叉见 batch 023）。
+
+★语义：**CRT getenv 环境表构建器（推断名——getenv 惰性初始化
+的 ANSI 物化步骤）**——遍历 [0xB781EC] 指向的宽字符串指针数组：
+  ① 空表（[esi]==0）→ 返回 0；
+  ② 逐项两遍 WideCharToMultiByte：
+      第一遍 (1,0,str,-1,NULL,0,0,0) 测所需长度 → malloc；
+      第二遍 (1,0,str,-1,buf,len,0,0) 实际转换；
+  ③ 每项转换成功后 call 0x7DA9CD（邻近子例程，传递转换后缓冲
+     与调用者入参 [esp+0x14]——推断为 env 条目挂入 _environ）；
+  ④ esi 步进 4（指针数组）直到 [esi]==0；
+  ⑤ 返回 0 成功 / -1 失败（长度 0 或 malloc/转换失败短路）。
+
+★原版怪癖（照抄）：
+  ① CodePage 恒 1（非 CP_ACP=0）——固定猜值，重写时保留即可；
+  ② WCTMB 两遍（先测长后转换）是 MSVC6 CRT 标准开销；
+  ③ malloc 失败/长度 0/转换失败全部走同一 -1 出口；
+  ④ 循环退出后 eax 残留 = 末项指针步进后的 0（成功路径幂等）。
+
+★依赖链实锤（本批 disasm + IAT 解析）：
+  ① [0x7E124C] = KERNEL32!WideCharToMultiByte（pefile 解析
+     gamemd.exe IAT 实证——0x7D463F push 1 / 0x7D463E push
+     0 / push -1 / …… 八参栈布局与 stdcall WCTMB 全吻合）；
+  ② 0x7C9430 = CRT 内部 malloc 入口包装（batch 945 已 REIMPL，
+     TSV 0x007C9430_REIMPL）；
+  ③ 0x7DA9CD = 邻近 CRT 子例程（互调；本批取证到首 40B：找
+     '='（0x3D=61）分隔 + call 0x7DC378）——待独立登记；
+  ④ [0xB781EC] 环境表头全局——与 getenv 0x7CBC32 共用。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 环境表构建属商业库
+层，不写 C++ 模型；110B 全读 + IAT 实锤 + getenv 交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D461E = MSVC6 CRT getenv 环境表构建器——0x7C-0x7D
+   = MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）。
+2. 依赖：IAT WideCharToMultiByte（KERNEL32 stdcall 八参）+ CRT
+   malloc（batch 945 已 REIMPL）+ 互调 0x7DA9CD + [0xB781EC]
+   全局——重写 gamemd 时用等价运行时（std::getenv/ANSI 转换）
+   代替。
+3. gamemd_replication_discipline：CRT 运行时环境设施，重写时用
+   等价运行时代替，逐字节复刻无意义——按商业库纪律归档，不写
+   C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（110B 全读 + IAT 实锤 + getenv
+0x7CBC32 交叉；精确函数名「环境表构建器」为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 0x7CBC32（getenv 查找器已登记）：描述「[0xB78BB4] 门控
++ [0xB781E4]/[0xB781EC] 链表惰性初始化 → 0x7D461E 构建 → 遍历
+key=val」——本批兑现「0x7D461E 构建」环节。
+★batch 945：0x7C9430 malloc 入口包装 REIMPL——本批调用现场交叉
+（push ebp / call 0x7c9430 = malloc(长度)）。
+★batch 023：0x7D468C _ultoa 变体——neighbor 交叉（0x7D461E
+末尾 0x7D468C push ebp 起为新函数，已登记）。
+
+五、状态
+-------
+crt_runtime_verified（0x7D461E：CRT getenv 环境表构建器归档；
+110B 全读 + IAT WCTMB 实锤 + malloc/getenv 交叉；不写 C++ 模型
+不做 golden——CRT 环境设施商业库层；函数名与 CodePage=1 语义
+为推断交叉标注）。TSV 新增 0x007D461E 行。
+
+★本批实锤：getenv 惰性链的三 段式——0x7CBC32 查找器（已登
+记）→ 0x7D461E 环境表构建器（本批）→ 0x7DA9CD 条目挂载（待
+登记）——0x7D461E 两遍 WCTMB + malloc 全链实锤。
+相邻待续：batch 1045 按 ranking.tsv unique_callers 取下一未登
+记 CRT 项（7D 区剩余：0x7DA9CD(uc=2 互调兄弟)/0x7D45DF(63B,
+__mbsnbicoll 已命名)/0x7D571F(114B)/0x7C9FD9(23B)/0x7D8C6B
+(208B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1043 已完（_itoa 家族 REIMPL，commit 1e59629）。
