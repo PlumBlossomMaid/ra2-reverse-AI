@@ -1,0 +1,123 @@
+frontier batch 1091 —— CRT _strftime 格式化核心 0x7CCFFC（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CCFFC（719B,
+uc=1, callers=2 池顶）。TSV 无既有行。
+TARGET = 0x007CCFFC。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CCFFC 行。
+
+一、链语义（disasm 头/中/尾复核，0x7CCFFC-0x7CD2CA）
+------------------------------------------------
+头部（0x7CCFFC-0x7CD090）：
+007ccffc  55                     push ebp
+007ccffd  8bec                   mov ebp, esp
+007ccfff  51                     push ecx
+007cd000  53                     push ebx
+007cd001  8b5d08                 mov ebx, [ebp+8]      ; ★param1 = 格式串
+007cd006  803b00                 cmp byte[ebx], 0      ; ★空串检查
+007cd009  0f84a0000000           je 0x7cd0af           ; → 直接退出
+007cd00f  8b7d14                 mov edi, [ebp+0x14]   ; ★param4 = tm 指针
+007cd012  8b7510                 mov esi, [ebp+0x10]   ; ★param3
+007cd015  33c9                   xor ecx, ecx
+007cd017  390f                   cmp [edi], ecx        ; ★tm 空检查
+007cd019  0f8490000000           je 0x7cd0af           ; → 退出
+007cd01f  890db08bb700           mov [0xb78bb0], ecx   ; ★[0xB78BB0] 全局清 0
+                                                        ;   （strftime 家族内部
+                                                        ;    状态——20 处引用全
+                                                        ;    在 0x7CCB7B-0x7CD2AA
+                                                        ;    同族）
+007cd025  8a03                   mov al, [ebx]         ; ★逐字符取
+007cd049  0fbec2                 movsx eax, dl
+007cd04c  83f864                 cmp eax, 0x64         ; ★'d' 日
+007cd055  0f8431010000           je 0x7cd18c
+007cd05b  83f827                 cmp eax, 0x27         ; ★'\'' 引号
+007cd05e  0f84d2000000           je 0x7cd136
+007cd064  83f841                 cmp eax, 0x41         ; ★'A' 星期全名
+007cd067  0f8493000000           je 0x7cd100
+007cd06d  83f848                 cmp eax, 0x48         ; ★'H' 时
+007cd070  7473                   je 0x7cd0e5
+007cd072  83f84d                 cmp eax, 0x4d         ; ★'M' 分
+007cd075  743d                   je 0x7cd0b4
+007cd077  83f861                 cmp eax, 0x61         ; ★'a' 星期缩写
+007cd07a  0f8480000000           je 0x7cd100
+007cd080  8b0d90c58700           mov ecx, [0x87c590]   ; ★分类表（locale 同款
+                                                        ;   batch 1082/1084）
+007cd086  0fb6c2                 movzx eax, dl         ; ★分类表查
+
+尾部（0x7CD0AF-0x7CD2CA）：
+007cd0af  5f                     pop edi                ; ★空串/空 tm 退出
+007cd0b0  5e                     pop esi
+007cd0b1  5b                     pop ebx
+007cd0b2  c9                     leave
+007cd0b3  c3                     ret
+007cd2c5  c705b08bb70001000000   mov [0xb78bb0], 1     ; ★全局置 1
+007cd2c9  e868f8ffff             call 0x7ccb5d         ; ★★回跳同族函数
+007cd2ca  …                    （循环收口）
+
+★语义：**CRT `_strftime` 格式化核心（推断名）**——cdecl
+4 参（param1=格式串、param3/param4=tm 字段）：MSVC6 CRT
+strftime 系列格式串解析核心——逐字符分派 'd'（日）/
+'A'（星期全名）/ 'a'（星期缩写）/ 'H'（时）/ 'M'（分）/
+'\''（引号字面）+ 分类表（[0x87C590]）兜底；家族全局
+[0xB78BB0]（20 处引用全在 0x7CCB7B-0x7CD2AA 同族——
+strftime 内部状态）。
+
+★callers = 2（E8 全 exe 扫描实锤）：
+  0x7CCDB6 / 0x7CCEB4 —— 全在同区 0x7CCB-0x7CD2 strftime
+  家族（内部互相调用）。
+
+★原版怪癖（照抄）：
+  ① 格式指令串行 cmp/je 链（'d'/'A'/'a'/'H'/'M'/'\'' 高
+     优先级 + 分类表兜底——编译器跳转表化）；
+  ② 空格式串/空 tm 双检查直接退出（返回未定义值）；
+  ③ 家族全局 [0xB78BB0] 跨函数读写（strftime 内部状态
+     共享）；
+  ④ 分类表 [0x87C590] 兜底（非指令字符走 locale 分类）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 格式化引擎属
+商业库层，不写 C++ 模型；头/尾 + 家族全局引用交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CCFFC = MSVC6 CRT `_strftime` 格式化核心——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；格式指令分派 + 分类表 + 家族全局为
+   CRT strftime 标准形态。
+2. 依赖：[0x87C590] 分类表（locale）+ [0xB78BB0] 家族全
+   局 + 同族函数（0x7CCB5D 等）——重写 gamemd 时用等价
+   运行时（std::strftime）代替。
+3. gamemd_replication_discipline：CRT 格式化引擎，重写时
+   用等价运行时代替，逐字节复刻无意义——按商业库纪律归
+   档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（头/尾 + 家族全局引用交叉；
+函数名「_strftime 格式化核心」为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1082/1084：0x7D3A6D `_woutput`/0x7D170D `_output`
+  格式化核心——同 CRT 格式化域（本批 strftime 为时间格
+  式化，格式指令分派同款编译器形态）。
+★batch 1083：0x7C7371 `_CVTBUF`——同 0x7C 区 CRT 对照
+  （_CVTBUF/strftime 均为 MSVC6 CRT 内部格式化引擎）。
+★batch 1086-1090：Westwood 混入样本——本批确认 0x7CCF
+  区为纯 CRT（分类表/家族全局/格式指令形态 vs 1086-1090
+  魔数+虚表槽对象方法形态区分）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CCFFC：CRT _strftime 格式化核心
+归档；头/尾 + 家族全局引用交叉；不写 C++ 模型不做
+golden——CRT 格式化引擎商业库层；函数名「_strftime 格
+式化核心」为推断交叉标注）。TSV 新增 0x007CCFFC 行。
+
+★本批实锤：strftime 格式串解析核心——'d'/'A'/'a'/'H'/
+'M'/'\'' 指令分派 + 分类表兜底 + 家族全局 [0xB78BB0]
+（20 处引用全在 0x7CCB-0x7CD2 区）。
+相邻待续：batch 1092 按 _scan_pending_7c.py 取池内下一
+未登记项（uc=1：0x7C1730(697B)/0x7DB207(659B)/0x7D4D24
+(647B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1090 已完（Westwood 像素格式转换器三孪生，
+commit 744ea3f）。
