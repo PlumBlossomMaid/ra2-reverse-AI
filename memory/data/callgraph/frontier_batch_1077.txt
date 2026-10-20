@@ -1,0 +1,92 @@
+frontier batch 1077 —— CRT 锁 0x0B 保护薄包装 0x7D4FAB（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D4FAB（33B,
+uc=2, callers=3 池顶）。TSV 无既有行。
+TARGET = 0x007D4FAB。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D4FAB 行。
+
+一、链语义（disasm 全 33B 复核，0x7D4FAB-0x7D4FCB）
+------------------------------------------------
+007d4fab  56              push esi
+007d4fac  6a0b            push 0xb                  ; ★锁编号 0x0B（11）
+007d4fae  e8428affff      call 0x7cd9f5             ; ★★EnterLock(0x0B)——batch
+                                                    ;   966 已登记流锁 Enter 内核
+007d4fb3  ff74240c        push [esp+0xc]            ; ★param1（入口 2 push 后
+                                                    ;   [esp+0xC]=原参1）
+007d4fb7  e810000000      call 0x7d4fcc             ; ★★0x7D4FCC（紧邻大函数——
+                                                    ;   首 40B 见 [0x87CA64] 门控 +
+                                                    ;   [0x87CAF8] 比较，未登记）
+007d4fbc  6a0b            push 0xb
+007d4fbe  8bf0            mov esi,eax               ; ★结果保存
+007d4fc0  e8918affff      call 0x7cda56             ; ★★LeaveLock(0x0B)——batch
+                                                    ;   961 已登记流锁 Leave 内核
+007d4fc5  83c40c          add esp,0xc               ; 清 3 参（2×锁 + 1×param）
+007d4fc8  8bc6            mov eax,esi               ; ★返回结果
+007d4fca  5e              pop esi
+007d4fcb  c3              ret
+
+★语义：**CRT 锁 0x0B 保护薄包装（推断名——锁族全景第 5 成员
+0x0B=11）**——cdecl 1 参（param1 透传给 0x7D4FCC）：
+  ① EnterLock(0x0B) 进入临界区（锁编号 0x0B——区别于 batch
+     1040 的 0x0D/0x13/0x19：本批为第 5 个独立锁族）；
+  ② 临界区内调 0x7D4FCC(param1)（紧邻大函数——返回结果）；
+  ③ LeaveLock(0x0B) 退出 + 返回结果。
+  锁家族全景：0x0D（atexit/初始化链，batch 1040）+ 0x13
+  （tolower，batch 244）+ 0x19（字符分类，batch 1036）+ 0x09
+  （堆，batch 945/1066）+ 0x0B（本批，待确认用途）。
+
+★原版怪癖（照抄，batch 966/961/1040 同款）：
+  ① 锁编号固定 0x0B（push 常量）——薄包装无参入；
+  ② 临界区内调用 0x7D4FCC（业务函数在锁内执行）；
+  ③ 结果经 esi 保存跨 LeaveLock（结果穿越临界区退出）；
+  ④ 无返回值约定（返回 0x7D4FCC 结果——调用方语义自解释）。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7CD9F5/0x7CDA56 = 流锁 Enter/Leave 内核（batch 966/961
+     已登记）——锁 0x0B 调用现场；
+  ② 0x7D4FCC = 紧邻大函数（未登记——[0x87CA64] 门控 + 与
+     [0x87CAF8] 比较的查表逻辑，待独立登记）；
+  ③ 锁族全景对照：0x0D（1040）/0x13（244）/0x19（1036）/
+     0x09（945/1066）/0x0B（本批）五族并列。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 流锁薄包装属商业
+库层，不写 C++ 模型；33B 全读 + 锁族交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D4FAB = MSVC6 CRT 锁保护薄包装——0x7C-0x7D =
+   MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）。
+2. 依赖：流锁 Enter/Leave 内核（batch 966/961）+ 0x7D4FCC
+   （未登记）——重写 gamemd 时用等价运行时（std::mutex）代替。
+3. gamemd_replication_discipline：CRT 流锁薄包装，重写时用等
+   价运行时代替，逐字节复刻无意义——按商业库纪律归档，不写
+   C++ 模型不做 golden（锁编号 0x0B 语义推断标注）。
+→ 状态：crt_runtime_verified（33B 全读 + 锁族交叉；函数名与
+「锁 0x0B」语义为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 966/961：0x7CD9F5/0x7CDA56 流锁内核——锁 0x0B 调用
+  现场交叉（五锁族全景：0x0D/0x13/0x19/0x09/0x0B）。
+★batch 1040：0x7CBEC1/0x7CBECA 锁 0x0D 薄包装对——同族形态
+  对照（本批 0x0B 单函数变体）。
+★batch 945/1066：堆锁 0x09——内存族锁编号对照。
+
+五、状态
+-------
+crt_runtime_verified（0x7D4FAB：CRT 锁 0x0B 保护薄包装归档；
+33B 全读 + 锁族交叉；不写 C++ 模型不做 golden——CRT 流锁商
+业库层；函数名与「0x7D4FCC 业务函数」语义为推断交叉标注）。
+TSV 新增 0x007D4FAB 行。
+
+★本批实锤：锁族全景第 5 成员（0x0B=11）——Enter/Leave 包
+0x7D4FCC 调用的薄包装登记；五锁族（0x0D/0x13/0x19/0x09/
+0x0B）并列。
+相邻待续：batch 1078 按 _scan_pending_7c.py 取池内下一未登记
+项（uc=2：0x7DE0F1(31B)/0x7D13F8(19B)/0x7D4596(11B,
+callers=16——高分发点）/0x7DBC57(3B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1076 已完（CRT __nh_malloc，commit c9af2fe）。
