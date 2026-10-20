@@ -1,0 +1,105 @@
+frontier batch 1076 —— CRT __nh_malloc 0x7C9442（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池预览——0x7C9442（44B,
+__nh_malloc 推断）。TSV 无既有行。
+TARGET = 0x007C9442。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007C9442 行。
+
+一、链语义（disasm 全 44B 复核，0x7C9442-0x7C946D）
+------------------------------------------------
+007c9442  837c2404e0        cmp dword[esp+4],-0x20   ; ★param1(size) 与 -0x20 比较
+007c9447  7722              ja 0x7c946b              ; ★无符号 > 0xFFFFFFE0
+                                                     ;   （超大/负）→ 返回 0
+007c9449  ff742404          push [esp+4]             ; ★压大小
+007c944d  e81c000000        call 0x7c946e            ; ★★0x7C946E（紧邻实际分配——
+                                                     ;   相邻函数 malloc 低层）
+007c9452  85c0              test eax,eax
+007c9454  59                pop ecx
+007c9455  7516              jne 0x7c946d             ; ★成功 → 返回指针
+007c9457  39442408          cmp [esp+8],eax          ; ★param2 与 0 比较（重试标志）
+007c945b  7410              je 0x7c946d              ; ★param2==0 → 返回 0（不重试）
+007c945d  ff742404          push [esp+4]             ; ★压大小
+007c9461  e882720000        call 0x7d06e8            ; ★★0x7D06E8（失败处理/重试钩子
+                                                     ;   ——batch 1066 calloc 失败路径
+                                                     ;   同一被调）
+007c9466  85c0              test eax,eax
+007c9468  59                pop ecx
+007c9469  75de              jne 0x7c9449             ; ★重试循环（回分配）
+007c946b  33c0              xor eax,eax              ; ★返回 0
+007c946d  c3                ret
+
+★语义：**CRT `__nh_malloc`（new handler 版 malloc——推断名）**
+——cdecl 2 参（param1=size，param2=重试标志 nhFlag）：
+  ① size 无符号与 -0x20（0xFFFFFFE0）比较：无符号大于（超
+     大/负数位型）→ 返回 0（溢出防护）；
+  ② 0x7C946E 实际分配（紧邻低层——相邻函数 malloc 后端）→
+     成功返回指针；
+  ③ 失败且 param2!=0（启用 new handler）→ 0x7D06E8（失败处
+     理/重试钩子）→ 返回非 0 则重试分配循环；
+  ④ 失败且 param2==0 → 返回 0（不重试）；
+  ⑤ 重试循环失败 → 返回 0。
+
+★原版怪癖（照抄）：
+  ① size 与 -0x20 比较（无符号 ja——0xFFFFFFE0 以上视为非法，
+     INT_MIN 位型大小走同分支）；
+  ② param2 语义 = 启用 new handler 标志（0 = 静默失败）；
+  ③ 重试循环（0x7D06E8 返回非 0 → 回 0x7C9449 重试——可无
+     限重试隐患照抄，batch 1066 calloc 同款）；
+  ④ 0x7C946E 紧邻实际分配（非跨段调用——相邻函数布局）；
+  ⑤ 无 debug 头/对齐标志（__nh_malloc 裸形态）。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7C946E = 紧邻实际分配器（未登记——相邻 malloc 后端，
+     待续）；
+  ② 0x7D06E8 = 失败处理/重试钩子（未登记——batch 1066
+     calloc 失败路径同一被调交叉，建议独立登记）；
+  ③ batch 1066：CRT calloc——同 0x7D06E8 失败处理（分配失败
+     重试语义互证）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 分配调度属商业库
+层，不写 C++ 模型；44B 全读 + calloc 失败处理交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7C9442 = MSVC6 CRT __nh_malloc——0x7C-0x7D =
+   MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）；
+   与 batch 945（free 调度）/1066（calloc）同内存管理族。
+2. 依赖：0x7C946E（紧邻实际分配）+ 0x7D06E8（失败处理——
+   与 calloc 共享）——重写 gamemd 时用等价运行时（operator
+   new/new handler）代替。
+3. gamemd_replication_discipline：CRT 内存分配设施，重写时用
+   等价运行时代替，逐字节复刻无意义——按商业库纪律归档，不
+   写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（44B 全读 + calloc 失败处理交
+叉；函数名「__nh_malloc」为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1066：0x7D3374 CRT calloc——0x7D06E8 失败处理同一被
+  调交叉（分配失败重试语义互证——calloc 大块 HeapAlloc 失
+  败级 + 本批 new handler 级）。
+★batch 945：0x7C93E8 free 调度——同内存管理族（分配/释放对
+  称端）。
+★_scan_pending_7c.py：0x7C9442 预览 __nh_malloc——兑现。
+
+五、状态
+-------
+crt_runtime_verified（0x7C9442：CRT __nh_malloc 归档；44B 全
+读 + calloc 失败处理交叉；不写 C++ 模型不做 golden——CRT 内
+存分配商业库层，重写 operator new 时用等价运行时；函数名与
+「param2=new handler 标志」语义为推断交叉标注）。TSV 新增
+0x007C9442 行。
+
+★本批实锤：CRT new handler 分配调度——size 溢出防护 +
+0x7C946E 实际分配 + 0x7D06E8 重试钩子（与 batch 1066 calloc
+共享失败处理）→ 内存管理族（free 945/calloc 1066/new 本批）
+三方闭环。
+相邻待续：batch 1077 按 _scan_pending_7c.py 取池内下一未登记
+项（uc=2：0x7D4FAB(33B, callers=3)/0x7D4A78(31B, callers=3)/
+0x7D2FA8(29B)；或 0x7C946E 实际分配 + 0x7D06E8 失败处理遗留
+独立登记）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1075 已完（CRT FPE 状态码映射器，commit dc4f8d8）。
