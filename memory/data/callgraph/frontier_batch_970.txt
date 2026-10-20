@@ -1,0 +1,116 @@
+frontier batch 970 —— CRT FILE 关闭 0x7CA75B（登记升级）
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序（0x7CA75B = 7 uc / 49B / 未 REIMPL；batch 226 已登记
+semantics_verified + assembly_verified_semantics_confirmed，名「FILE
+关闭（fclose 家族主入口）」，全 0x31=49B 读完）。本批 = 依赖链补全
+（0x7CB3F9/0x7CB44B 流锁对 batch 966/961 归档交叉 + 0x7CA78C 内核
++ 0x7CB1F9/0x7D2B54/0x7D2A74 FILE 设施）→ 按商业库层归档
+**crt_runtime_verified**。
+TARGET = 0x007CA75B。C++ 模型：无（锁家族 + FILE 设施留桩边界——
+见「三态判定」）。TSV：更新 0x007CA75B 行。
+
+一、链语义（disasm 全段复核）
+------------------------------------------------
+0x7CA75B(49B) = MSVC6 CRT FILE 关闭（0x7C-0x7D 静态 CRT 区）——
+cdecl 1 栈参（FILE* 流槽），_IOSTRG 分支短路 + 流锁三步骤：
+  push esi / mov esi,[esp+8]        ; ★参数=FILE* 流槽
+  push edi / or edi,0xFFFFFFFF      ; ★返回值预置 -1 EOF
+  test byte ptr [esi+0xC],0x40      ; ★★流槽+0xC 标志位测试 _IOSTRG
+  je 0x7CA770                       ; 未置位 → 标准关闭流程
+  and dword ptr [esi+0xC],0         ; ★字符串流分支：直接清标志字
+  jmp 0x7CA787                      ; ★★跳过全部解锁流程（未进锁）
+  0x7CA770: push esi / call 0x7CB3F9   ; ★★流锁 Enter（batch 966 归档）
+  push esi / call 0x7CA78C             ; ★★关闭内核（返回 edi）
+  push esi / call 0x7CB44B             ; ★★流锁 Leave（batch 961 归档）
+  add esp,0xC
+  0x7CA787: mov eax,edi / pop 族 / ret
+
+被调 0x7CA78C（关闭内核，前 40B 复核）：
+  push esi / mov esi,[esp+8] / push edi / or edi,0xFFFFFFFF
+  test byte ptr [esi+0xC],0x83       ; ★标志 0x83（_IOERR|_IOFLRTN|...）
+  je 0x7CA7CF / push esi
+  call 0x7CB1F9                      ; ★★FILE 缓冲 flush（batch 046 域）
+  push esi / mov edi,eax
+  call 0x7D2B54                      ; ★★FILE 底层 close 设施
+  push [esi+0x10]
+  call 0x7D2A74                      ; ★★FILE 缓冲释放设施
+  add esp,0xC ...
+  （后续未读——batch 226 partial 标注）
+
+★语义：**FILE 关闭（fclose 家族）**——`流槽+0xC` 带 `_IOSTRG`(0x40)
+位（内存/字符串流，无底层 OS 句柄）则**只清标志字、返回 -1、不进锁**；
+否则标准三步：流锁 Enter(0x7CB3F9) → 关闭内核(0x7CA78C，flush+close
++缓冲释放，返回值透传) → 流锁 Leave(0x7CB44B)。
+★原版怪癖（batch 226 已录，照抄）：`_IOSTRG` 分支**直接返回 -1（EOF）
+且完全不解锁**——不解锁安全（该分支没进临界区），但**返回值恒为失败**
+（即使字符串流语义上"关闭成功"）——易被"顺手修成正确"的怪癖。
+★调用方（batch 226 已录）：含 **0x5DC170（woldata.key 解密公式，
+QWEN.md 实锤 YR 正版校验全链）**——该链需临时打开数据文件，fclose
+出现吻合；0x53E770（1156B 候选 TOP）与 0x48E0B0 为文件/资源 I/O 侧。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7CB3F9/0x7CB44B = 流锁 Enter/Leave——batch 966/961 已归档
+     crt_runtime_verified（[0x87BF50,0x87C1B0] 锁数组 → 0x7CD9F5/
+     0x7CDA56；区间外 [0x7E11E8]/[0x7E11EC] IAT），0x7CA75B 三步骤
+     调用现场交叉；
+  ② 0x7CA78C = FILE 关闭内核——0x7CB1F9（缓冲 flush，batch 046 流
+     槽标志域）+ 0x7D2B54/0x7D2A74（FILE 底层 close/缓冲释放设施，
+     0x7D 段 CRT）；
+  ③ 流槽 +0xC 标志字：0x10 _IOFLRTN/0x20 _IOERROR/0x80 EOF/0x40
+     _IOSTRG/0x108 缓冲组合（batch 045/046/049 反复出现）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：商业库层归档，不写 C++ 模型
+不做对拍；batch 226 语义已登记，本批补依赖链交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 代码区归属：0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance 实锤）——非 Westwood 手写逻辑。
+2. 锁家族边界：0x7CA75B 直接调用 0x7CB3F9/0x7CB44B（batch 966/961
+   归档的流锁 Enter/Leave，_pick_945 留桩边界项）——线程同步语义在
+   单线程 C++ 模型下无可观测行为（structural_equivalence 锁例外合
+   法）。
+3. FILE 设施依赖：0x7CA78C → 0x7CB1F9/0x7D2B54/0x7D2A74（CRT 缓冲
+   flush/底层 close/缓冲释放）——FILE* 是 CRT 运行时设施，重写用
+   等价 std::fclose 代替。
+4. gamemd_replication_discipline：商业库只 dump 汇编、重写时用等价
+   运行时代替。
+→ 状态：crt_runtime_verified（batch 226 语义 + 本批流锁对/内核链
+交叉；0x7CA78C 后段失败路径细节、fclose-family 精确符号名仍为 batch
+226 partial 推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 226：0x7CA75B 首登记（FILE 关闭 fclose 家族，semantics_verified，
+全 0x31=49B 读完 + 调用方含 woldata.key 链）——本批升级归档。
+★batch 966/961：0x7CB3F9/0x7CB44B 流锁 Enter/Leave 归档 crt_
+runtime_verified——0x7CA75B 三步骤调用现场交叉（流锁身份实锤）。
+★batch 046：0x7CB3F9/0x7CB44B 流锁对首登记 + 0x7CB1F9 缓冲 flush
+域——0x7CA78C 内核交叉。
+★batch 045/049：流槽 +0xC 标志字（_IOFLRTN/_IOERROR/_IOSTRG 等）
+——0x7CA75B 的 _IOSTRG 分支交叉。
+★batch 048：0x7D7754/0x7D7710 句柄表后端——0x7D2B54/0x7D2A74
+FILE 设施同 0x7D 段交叉。
+★_pick_945：锁家族排除逻辑——0x7CA75B 依赖方纳入同边界。
+★ra2_code_region_layout_crt_provenance：0x7C-0x7D = MSVC6 静态 CRT。
+
+五、状态
+-------
+crt_runtime_verified（0x7CA75B：CRT FILE 关闭归档；batch 226 语义 +
+本批流锁对/内核链交叉；不写 C++ 模型不做 golden——锁家族 + FILE 设
+施商业库层）。TSV 行 0x007CA75B 更新。
+
+★本批实锤：CRT 扇入度 7 的 0x7CA75B = FILE 关闭（fclose 家族）——
+_IOSTRG(0x40) 字符串流分支短路返 -1（恒失败怪癖照抄）+ 标准三步
+流锁 Enter(0x7CB3F9) → 关闭内核 0x7CA78C（0x7CB1F9 flush + 0x7D2B54/
+0x7D2A74 close/释放）→ 流锁 Leave(0x7CB44B)；锁家族 + FILE 设施依
+赖链完整确认，按商业库层纪律归档 crt_runtime_verified。
+相邻待续：batch 971 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_pick_945.py——候选 0x7CE18D 280B / 0x7CD917
+__amsg_exit / 0x7CB4CC 等）。
+依赖模型：无（归档不落 C++）。
+承前：batch 969 已完（CRT 句柄表操作包装 0x7CA845，commit ded70af）。
