@@ -1,0 +1,145 @@
+frontier batch 1034 —— CRT getenv 环境查找器 0x7CBC32（登记）
+============================================
+
+候选来源：python .qwen\tmp\_list_7c_pending.py —— 0x7CBC32 = 125B /
+2 uc（ranking 行 unique_callers 列 = FUN_007cca34,FUN_007ccffc）/
+TSV 无既有行 / frontier_batch_*.txt 无匹配（仅候选列表提及）。
+本批 = 依赖链确认（0x7D15A0 _strlen batch 017 已登记 + [0xB781E4]
+链表全局 batch 058 已录 + 环境链表形态）→ 按商业库层归档
+**crt_runtime_verified**。
+TARGET = 0x007CBC32。C++ 模型：无（见「三态判定」）。TSV：新增
+0x007CBC32 行。
+
+一、链语义（disasm 全 125B 复核，0x7CBC32-0x7CBCAE）
+------------------------------------------------
+007cbc32  833db48bb70000  cmp dword ptr [0xb78bb4], 0      ; ★[0xB78BB4] 门控
+007cbc39  53              push ebx
+007cbc3a  56              push esi
+007cbc3b  8b35e481b700    mov esi, [0xb781e4]             ; ★★[0xB781E4] 链表头
+007cbc41  57              push edi
+007cbc42  7465            je 0x7cbca9                     ; 门控 0 → 返 0
+007cbc44  85f6            test esi, esi
+007cbc46  751b            jne 0x7cbc63                   ; 链表非空 → 直接遍历
+007cbc48  3935ec81b700    cmp [0xb781ec], esi            ; ★[0xB781EC] 链表尾
+007cbc4e  7459            je 0x7cbca9                     ; 尾==0 → 返 0
+007cbc50  e8c9890000      call 0x7d461e                   ; ★★0x7D461E 初始化
+                                                        ;   （未登记——环境链表构建）
+007cbc55  85c0            test eax, eax
+007cbc57  7550            jne 0x7cbca9                   ; 失败 → 返 0
+007cbc59  8b35e481b700    mov esi, [0xb781e4]            ; 重新取链表头
+007cbc5f  85f6            test esi, esi
+007cbc61  7446            je 0x7cbca9                     ; 仍空 → 返 0
+007cbc63  8b5c2410        mov ebx, [esp + 0x10]          ; ★参3 = key 指针
+007cbc67  85db            test ebx, ebx
+007cbc69  743e            je 0x7cbca9                     ; key 空 → 返 0
+007cbc6b  53              push ebx
+007cbc6c  e82f590000      call 0x7d15a0                   ; ★★_strlen（batch 017
+                                                        ;   已登记 crt_runtime_
+                                                        ;   verified）
+007cbc71  59              pop ecx
+007cbc72  8bf8            mov edi, eax                    ; edi = key 长度
+007cbc74  8b06            mov eax, [esi]                  ; ★链表节点
+007cbc76  85c0            test eax, eax
+007cbc78  742f            je 0x7cbca9                     ; 节点空 → 结束
+007cbc7a  50              push eax
+007cbc7b  e820590000      call 0x7d15a0                   ; strlen(节点串)
+007cbc80  3bc7            cmp eax, edi
+007cbc82  59              pop ecx
+007cbc83  7617            jbe 0x7cbc9c                   ; ★节点长 ≤ key 长 → 跳过
+007cbc85  8b06            mov eax, [esi]
+007cbc87  803c383d        cmp byte ptr [eax + edi], 0x3d ; ★★节点串[key长]=='='?
+007cbc8b  750f            jne 0x7cbc9c                   ; ≠ '=' → 跳过
+007cbc8d  57              push edi
+007cbc8e  53              push ebx
+007cbc8f  50              push eax
+007cbc90  e84a890000      call 0x7d45df                   ; ★★0x7D45DF 前缀比较
+                                                        ;   （未登记——memcmp 风格）
+007cbc95  83c40c          add esp, 0xc
+007cbc98  85c0            test eax, eax
+007cbc9a  7405            je 0x7cbca1                     ; ==0 → 命中
+007cbc9c  83c604          add esi, 4                      ; ★链表推进（dword 指针）
+007cbc9f  ebd3            jmp 0x7cbc74
+007cbca1  8b06            mov eax, [esi]
+007cbca3  8d443801        lea eax, [eax + edi + 1]        ; ★★返回 节点+key长+1
+                                                        ;   （跳过 "key=" → 值）
+007cbca7  eb02            jmp 0x7cbcab
+007cbca9  33c0            xor eax, eax                    ; 未命中 → 返 0
+007cbcab  5f 5e 5b c3     pop edi/pop esi/pop ebx/ret
+
+★语义：**CRT getenv 环境变量查找器（推断名）**——cdecl 3 参
+（参1/参2 推断为环境句柄对，[esp+0x10]=key 指针）：
+  ① [0xB78BB4] 门控 + [0xB781E4]/[0xB781EC] 链表头尾惰性初始
+     化（头空 → 0x7D461E 构建）；
+  ② 遍历链表：节点串以 "key=value" 形式存储——strlen(key) 后
+     字符 == '=' 且前缀比较 0x7D45DF 相等 → 命中；
+  ③ 返回 节点串 + key长 + 1（'=' 后值部分）；未命中返 0。
+
+★原版怪癖（照抄）：
+  ① ★链表存 "key=value" 裸串（无独立结构体）——节点为 char*
+     数组（esi 步进 4）；
+  ② 节点长 ≤ key 长先拒（jbe 跳过——不可能 '=' 在 key 长位）；
+  ③ 前缀比较在 strlen(key) 后再判 '='（cmp byte [eax+edi],0x3d）
+     ——两步验证（长度 + 分隔符）；
+  ④ 0x7D461E 初始化失败返 0（jne 早退）——惰性构建结果不确定
+     性；
+  ⑤ 返回 值指针 = 节点 + key长 + 1（lea eax,[eax+edi+1]）——
+     无独立 value 字段；
+  ⑥ [0xB781EC] 尾指针==0 判定（链表空判据）。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7D15A0 = batch 017 已登记（_strlen，crt_runtime_verified）
+     ——本批两处 strlen 调用现场；
+  ② 0x7D461E/0x7D45DF = 未登记 CRT 内部（环境链表构建 / 前缀
+     比较）——标注新候选；
+  ③ [0xB781E4] = batch 058 已录写侧现场（0x7D5B04 mov
+     [0xB781E4], esi——atexit 链表相邻全局段）——链表全局交叉；
+  ④ [0xB78BB4]/[0xB781EC] = 门控/尾指针全局（batch 058 语境）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 环境查找属商业库层，
+不写 C++ 模型；125B 全读 + 0x7D15A0 batch 017 + batch 058 全局交
+叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CBC32 = MSVC6 CRT getenv 环境变量查找器——0x7C-0x7D
+   = MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）。
+2. 依赖：0x7D461E（环境链表构建）+ 0x7D45DF（前缀比较）+ 全局
+   链表 [0xB781E4]/[0xB781EC]/[0xB78BB4]——重写 gamemd 时用等价
+   std::getenv 运行时。
+3. gamemd_replication_discipline：CRT 标准库函数，重写时用等价
+   运行时代替，逐字节复刻无意义——按商业库纪律归档，不写 C++
+   模型不做 golden。
+→ 状态：crt_runtime_verified（125B 全读 + 0x7D15A0 batch 017 +
+batch 058 全局交叉；精确函数名与 0x7D461E/0x7D45DF 身份为推断
+交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 017：0x7D15A0 _strlen 登记——本批两处调用现场交叉。
+★batch 058：0x7D5B04 mov [0xB781E4],esi 现场——[0xB781E4] 链表
+全局交叉（exit 家族相邻全局段）。
+★batch 1016：0x7CD2CB time_t 日期分解器——同 0x7CD5xx-0x7CBCxx
+区间 CRT 内部族（getenv 与日期共用全局段）。
+★_pick_945：IAT/锁家族排除——0x7CBC32 依赖方纳入同边界。
+
+五、状态
+-------
+crt_runtime_verified（0x7CBC32：CRT getenv 环境变量查找器归档；
+125B 全读 + 0x7D15A0 batch 017 + batch 058 全局交叉；不写 C++ 模
+型不做 golden——CRT 环境查找商业库层；精确函数名与 0x7D461E/
+0x7D45DF 身份为推断交叉标注）。TSV 新增 0x007CBC32 行。
+
+★本批实锤：0x7CBC32 = MSVC6 CRT getenv 环境变量查找器（[0xB78BB4]
+门控 + [0xB781E4]/[0xB781EC] 链表惰性初始化 → 0x7D461E 构建 → 遍
+历 "key=value" 裸串前缀匹配（0x7D45DF）→ 返 '=' 后值），依赖
+batch 017 _strlen + batch 058 链表全局 → 按商业库层纪律归档
+crt_runtime_verified。
+相邻待续：batch 1035 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_list_7c_pending.py——候选 0x7CAC4C
+26B / 0x7CBB8D 78B / 0x7CBED3 26B 等；0x7D461E/0x7D45DF/0x7D571F/
+0x7C9FD9/0x7D473F/0x7D8C6B 新候选标注）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1033 已完（CRT MMX/CMOV 特性探测 0x7C5FFF，commit
+13d1453）。
