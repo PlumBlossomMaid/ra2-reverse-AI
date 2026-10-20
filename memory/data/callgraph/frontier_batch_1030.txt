@@ -1,0 +1,120 @@
+frontier batch 1030 —— CRT _strncat 窄字符追加 0x7CB550（REIMPL）
+============================================
+
+候选来源：python .qwen\tmp\_list_7c_pending.py（扩展扫描新增 6 项）
+—— 0x7CB550 = 291B / 3 uc（ranking 行 unique_callers 列 =
+FUN_0077db90, FUN_007b57a0）/ TSV 无既有行 / frontier_batch_*.txt
+无匹配。本批 = 判纯内存（零子调用零全局引用）→ 完整 REIMPL：
+crt_strncat.{h,cpp} + golden 真身对拍 + gtest 3 项全绿。
+TARGET = 0x007CB550。C++ 模型：crt_strncat.{h,cpp}
+（strncat_legacy，batch 978 wcsncat 窄字符成对）。
+TSV：新增 0x007CB550 行（cpp_reimplementation_verified）。
+
+一、链语义（disasm 全 291B 复核，0x7CB550-0x7CB673）
+------------------------------------------------
+0x7CB550(291B) = MSVC6 CRT _strncat——cdecl 3 栈参 (dst, src, count)，
+返回 dst；语义 = 找 dst 尾 NUL → 从 NUL 处追加 src 最多 count 字符 →
+恒补 NUL（count 耗尽 or src NUL 都补）。全程零子调用零全局。
+
+指令序列（disasm 全段复核）：
+  0x7CB550: mov ecx,[esp+0xC]=count → test ecx,ecx → je 0x7CB604
+    （★★count==0 早退——直接返 dst，不写任何东西——与 wcsncat
+     count==0 写 NUL 不同，行为各自照抄）
+  mov edi,[esp+8]=dst → 逐字节扫尾（test edi,3 对齐检测）：
+    al=[edi]; inc edi; test al,al → je 0x7CB5AB(dec edi 收尾)
+    test edi,3 → jne 循环（未对齐逐字节到 4 边界）
+    对齐后 4 字节窗口（0x7CB57A）：eax=[edi]; edx=0x7EFEFEFF;
+    add edx,eax; xor eax,-1; xor eax,edx; add edi,4;
+    test eax,0x81010100 → je 窗口循环（无 NUL）
+    命中回读 [edi-4]：test al → sub edi,4（byte0）；test ah →
+    sub edi,3（byte1）；test 0xFF0000 → sub edi,2（byte2）；
+    test 0xFF000000 → jne 继续（byte3 非 NUL）；否则 dec edi
+  复制（0x7CB5BB）：esi=[esp+0x14]=src → 未对齐慢复制逐字节：
+    dl=[esi]; inc esi; test dl,dl → je 0x7CB60A（写 NUL 终止）
+    mov [edi],dl; inc edi; dec ecx → je 0x7CB600（写 NUL）
+    test esi,3 → jne 慢循环；对齐后 dword 复制（0x7CB614）：
+      mov [edi],edx; add edi,4; dec ecx → je 0x7CB5EC（尾字节）
+      0x7CB61C 窗口检 src NUL（0x7EFEFEFF 魔术）：命中 dl/dh/
+      0xFF0000/0xFF000000 判定 → 回退按字节写并提前终止
+    尾字节（0x7CB5EC）：and ecx,3 → je 0x7CB600；循环逐字节复制
+      直到 NUL（je 0x7CB602 自然终止）或 count 耗尽
+  0x7CB600: mov [edi],cl（★count 耗尽补 NUL——ecx 此时 0）
+  0x7CB602/0x7CB604: mov eax,[esp+8]=dst → pop → ret
+
+★语义：**MSVC6 CRT _strncat（窄字符追加）**——cdecl 3 参 (dst,
+src, count)：① count==0 → 直接返 dst（不写）；② 找 dst 尾 NUL；
+③ 从 NUL 处复制 src 最多 count 字符（src 遇 NUL 则提前终止并把
+NUL 复制进 dst）；④ count 耗尽补 NUL；⑤ 返回 dst。
+★★与 batch 978 已 REIMPL 的 wcsncat（0x7CB4E0 宽字符版）同族成
+对——同一模板窄/宽两次实例化，仅步进（char 1B vs wchar 2B）与
+count==0 行为不同（wcsncat 写 NUL、strncat 不写）。
+
+★原版怪癖（照抄）：
+  ① ★count==0 早退不写任何东西（0x7CB557 je → mov eax,[esp+8]
+     → ret）——wcsncat 则写 NUL；两者行为不同照抄各自；
+  ② 恒补 NUL：count 耗尽路径 0x7CB600 写 [edi]=cl（ecx 已 0）；
+     src NUL 路径把 NUL 复制进 dst（慢路径 0x7CB60A mov [edi],dl；
+     dword 路径按命中字节位回退写含 NUL 的 word/dword）；
+  ③ 扫尾/复制都用 0x7EFEFEFF 魔术做 4 字节窗口 NUL 检测
+     （big-endian 0x01010100 判定——batch 964 strcmp 同款 FAST
+     路径）；未对齐先逐字节到 4 边界；
+  ④ 返回 dst 从 [esp] 重读（mov eax,[esp+8]）——非保留寄存器；
+  ⑤ dword 复制中 src NUL 命中 → 回退按字节写（0x7CB658 word、
+     0x7CB668 word、0x7CB64E dword）——部分写含 NUL 提前终止。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 零子调用零全局引用（291B 全读实证）——纯内存判别成立；
+  ② 0x7CB4E0 = batch 978 已 REIMPL 的 wcsncat——同族模板互证
+     （count==0 行为差异 = 两函数怪癖清单关键对照）；
+  ③ 0x7CB673 = 后邻函数（strncpy？分界）——batch 763 已录
+     _splitpath 语境相邻，不影响本批边界。
+
+二、黄金基准
+----------
+deadcode_7cb550_golden.txt（batch 1030）——13 用例，Unicorn 真身
+模拟 0x7CB550 逐位采集（_golden_7cb550.py，emu_oracle 管线）：
+  覆盖：正常追加（count=5）、src NUL 先终止（count=100）、count
+  耗尽补 NUL（count=2）、dst 空、src 空、count==0 早退、dword 窗
+  口复制 + count 耗尽/先终止、dst 8 位对齐 + dword、dst 中间 NUL
+  （只扫到第一个 NUL）、10 字符 dst + 12 追加、count==src 长、
+  裸字节 src（无 NUL）+ count 终止——全部返回 off=0（dst 指针）、
+  DST 区 0x50 字节逐位与模型输出一致。
+
+三、三态判定（为何 cpp_reimplementation_verified 而非归档）
+------------------------------------------------
+1. 纯内存判据满足：零子调用、零全局引用（291B disasm 全读实
+   证）——完全符合本会话 REIMPL「无子调用无全局引用」判据。
+2. 语义可独立验证：strncat 是纯字符串操作——golden 真身对拍
+   13 用例逐位一致 + 标准库交叉抽查 + 边界用例，闭环成立。
+3. 无锁/无系统依赖：与 batch 978 wcsncat 同型，cdecl 3 栈参返
+   回 dst——测试独立性成立（不依赖环境状态）。
+→ 状态：cpp_reimplementation_verified（模型 3 项 gtest 全绿 +
+golden 13 用例逐位一致 + 标准库 strncat 交叉抽查；count==0 行为
+差异为两函数怪癖清单对照验证）。
+
+四、跨批次闭合
+------------
+★batch 978：0x7CB4E0 wcsncat REIMPL（宽字符版）——本批 strncat
+窄字符版成对登记，count==0 行为差异为关键对照。
+★batch 964：0x7C90E0 strcmp REIMPL——0x7EFEFEFF 魔术 FAST 路径
+同款交叉。
+★batch 973：wcsncmp REIMPL——Count 先减写法同族对照。
+★_pick_945：IAT/锁家族排除——0x7CB550 依赖方纳入同边界。
+
+五、状态
+-------
+cpp_reimplementation_verified（0x7CB550：_strncat 窄字符追加模
+型；crt_strncat.{h,cpp} + test_crt_strncat.cpp 3 项 + golden 13 用
+例逐位一致 + ctest 83/83 全绿；纯内存零桩完整复刻）。TSV 新增
+0x007CB550 行。
+
+★本批实锤：0x7CB550 = MSVC6 CRT _strncat（窄字符追加——count==0
+早退不写 + 恒补 NUL + 0x7EFEFEFF 魔术窗口检测），batch 978 wcsncat
+窄字符成对；纯内存零桩 REIMPL，ctest 从 82 升至 83 全绿。
+相邻待续：batch 1031 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_list_7c_pending.py——候选 0x7CCB2E
+1007B / 0x7C5F3D 194B 等；0x7D571F/0x7C9FD9/0x7D473F/0x7D8C6B
+新候选标注）。
+依赖模型：crt_strncat（ra2_runtime lib）。
+承前：batch 1029 已完（CRT isctype 掩码 0x103 变体 0x7C990E，
+commit a5d266e）。
