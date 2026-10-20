@@ -1,0 +1,108 @@
+frontier batch 1005 —— CRT RTTI/异常运行时指针调整器 0x7CAEF1（登记）
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序（0x7CAEF1 = 35B / 3 uc / 未 REIMPL / TSV 无既有行）。
+本批 = 归属判定：0x7CAEF1 是 batch 952 已归档宿主 0x7CAAE4（MSVC6
+CRT C++ RTTI/异常运行时 __CxxFrameHandler 家族）的内部「指针调整」
+处理器（batch 111 首登记 + batch 952 补全已述）→ 按同族商业库层
+归档 **crt_runtime_verified**。
+TARGET = 0x007CAEF1。C++ 模型：无（编译器生成运行时——见「三态判
+定」）。TSV：新增 0x007CAEF1 行。
+
+一、链语义（disasm 全 35B 复核，0x7CAEF1-0x7CAF14）
+------------------------------------------------
+007caef1  8b442408    mov eax, dword ptr [esp + 8]   ; eax = 参2（对象指针 obj）
+007caef5  33c9        xor ecx, ecx                   ; ecx = 0
+007caef7  8b5004      mov edx, dword ptr [eax + 4]   ; edx = obj->+4（索引）
+007caefa  85d2        test edx, edx
+007caefc  7c11        jl 0x7caf0f                    ; ★索引 < 0 → 跳过查表（ecx 保持 0）
+007caefe  8bca        mov ecx, edx                   ; ecx = 索引
+007caf00  8b542404    mov edx, dword ptr [esp + 4]   ; edx = 参1（表基指针）
+007caf04  56          push esi
+007caf05  8b7008      mov esi, dword ptr [eax + 8]   ; esi = obj->+8（附加偏移）
+007caf08  8b1411      mov edx, dword ptr [ecx + edx] ; edx = 表[索引]（dword 项）
+007caf0b  030c32      add ecx, dword ptr [edx + esi] ; ecx += *(表项 + 附加偏移)
+007caf0e  5e          pop esi
+007caf0f  8b00        mov eax, dword ptr [eax]       ; eax = obj->+0（基址）
+007caf11  03c1        add eax, ecx                   ; eax = 基址 + 累加值
+007caf13  c3          ret
+
+★语义：**RTTI 偏移表查找 + 指针叠加（MSVC6 C++ RTTI/异常运行时内部
+处理器）**——输入 obj 结构 {+0: 基址, +4: 索引, +8: 附加偏移} 与
+表基指针；索引 ≥ 0 时：查表 表[索引] 得 dword 项（作指针）→ 解引用
+(表项 + 附加偏移) 得累加值；索引 < 0 时累加值 = 0；返回 基址 + 累
+加值（调整后指针）。
+★原版怪癖（照抄，batch 952 已录）：
+  ① ★索引 < 0 走 jl 跳过整段查表（符号判定后 ecx 保持 0——不被
+     查表路径污染，仅基址返回）；
+  ② 表[索引] 读 dword 后**再解引用一次**（表项本身是指针，指向的
+     dword 才是要加的偏移）——两级间接；
+  ③ 附加偏移 [eax+8] 与索引并存于 obj 结构同一低位字段簇——RTTI
+     调整描述符布局（推断，未 golden 实证）；
+  ④ 返回前不恢复 esi 以外的寄存器（eax/ecx/edx 作为调用者保存——
+     cdecl 调用约定）。
+
+★宿主上下文（batch 952 已实锤）：0x7CAAE4 SEH 帧安装 → CHD 三路
+遍历（0x7CAC66 单继承 / 0x7CACC0 多继承 / 0x7CADB9 虚继承）→ 三
+路处理器均以「目标 type_info 匹配 + 0x7CAEF1 指针调整 + 目标偏移
+校验」为收尾——0x7CAEF1 是 RTTI 类型表命中后的指针偏移计算器。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① [esp+4] 表基 / [esp+8] obj 两栈参——cdecl 调用（调用点 push 序
+     反推：宿主 0x7CACC0 内「push ebx & push [ebp+8] → call 0x7CAEF1」
+     ——batch 952 disasm 实录）；
+  ② 3 个 unique caller 全落 0x7CAAE4 家族内部（0x7CAC66/0x7CACC0/
+     0x7CADB9）——同族内部互调，无独立外部语义。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：商业库层归档，不写 C++ 模型
+不做对拍；35B 全读 + 宿主 batch 111/952 双向交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CAEF1 是 MSVC6 C++ RTTI/异常运行时（__CxxFrameHandler
+   家族）的内部处理器——编译器为 C++ 异常/运行时类型识别生成的机
+   器码，与宿主 0x7CAAE4（batch 952 归档）、0x7CAC66/0x7CACC0/
+   0x7CADB9/0x7CAC4C（随宿主归档）同族。
+2. ra2_code_region_layout_crt_provenance：0x7C-0x7D = MSVC6 静态
+   CRT 非 Westwood 手写（另有 batch 111/952 同族记录）。
+3. gamemd_replication_discipline：C++ RTTI/异常运行时由编译器生
+   成、重写 gamemd 时用等价运行时代替，逐字节复刻无意义——按
+   商业库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（35B 全读 + 宿主 batch 111/952 交叉；
+obj 结构字段精确布局（+0/+4/+8 身份）与 3 caller 精确身份为推断
+交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 111：0x7CAAE4 首登记（SEH 帧头 + 0xC0000005 过滤 + 0x7CAEF1
+「指针调整」首次提及）。
+★batch 952：0x7CAAE4 升级归档 crt_runtime_verified——本批补全三
+内部处理器（0x7CAC66/0x7CACC0/0x7CADB9）语义，0x7CAEF1 调用现场
+「push ebx & push [ebp+8]」实录。
+★batch 878：0x7D2F64 __CxxThrowException throwinfo——同家族失败
+路径交叉。
+★batch 083/092：_except_handler3 模板同族。
+★_pick_945：IAT/锁家族排除逻辑——0x7CAEF1 依赖方（宿主家族）纳
+入同边界。
+
+五、状态
+-------
+crt_runtime_verified（0x7CAEF1：RTTI 偏移表查找 + 指针叠加器归档；
+35B 全读 + 宿主 batch 111/952 双向交叉；不写 C++ 模型不做 golden
+——编译器生成 RTTI/异常运行时内部处理器；obj 结构字段布局与 3
+caller 身份为推断交叉标注）。TSV 新增 0x007CAEF1 行。
+
+★本批实锤：CRT 扇入度 3 的 0x7CAEF1 = MSVC6 C++ RTTI/异常运行时
+家族内部「指针调整」处理器（RTTI 偏移表查找 + 指针叠加：obj 结构
+{+0 基址/+4 索引/+8 附加偏移} + 两级间接查表，索引 < 0 跳过查表仅
+返基址），宿主 0x7CAAE4 已 batch 952 归档，按同族纪律归档
+crt_runtime_verified。
+相邻待续：batch 1006 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_list_7c_pending.py——候选 0x7CBDED __exit
+17B / 0x7CC682 65B / 0x7CD790 62B / 0x7CE9E6 53B 等）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1004 已完（CRT ImmAssociateContext 跳板 0x7C8A1C，commit
+本批前一提交）。
