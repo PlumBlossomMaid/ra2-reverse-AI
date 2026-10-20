@@ -1,0 +1,139 @@
+frontier batch 1066 —— CRT calloc 0x7D3374（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D3374（141B,
+uc=2 池顶）。TSV 无既有行。
+TARGET = 0x007D3374。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D3374 行。
+
+一、链语义（disasm 全 141B 复核，0x7D3374-0x7D33FC）
+------------------------------------------------
+007d3374  53/56           push ebx,esi
+007d3376  8b74240c        mov esi,[esp+0xc]           ; ★参1 = num
+007d337a  57              push edi
+007d337b  0faf742414      imul esi,[esp+0x14]         ; ★★num × size = 总字节
+007d3380  83fee0          cmp esi,-0x20 / mov ebx,esi / ja 0x7d3394
+007d3387  85f6            test esi,esi / jne 0x7d338e
+007d338b  6a01            push 1 / pop esi            ; ★0 → 补 1
+007d338e  83c60f          add esi,0xf / and esi,0xfffffff0  ; ★16 字节对齐
+007d3394  33ff            xor edi,edi                 ; ★结果 = 0（初始）
+007d3396  83fee0          cmp esi,-0x20 / ja 0x7d33d5 ; ★负/溢出 → 错误出口
+007d339b  3b1d84c58700    cmp ebx,[0x87c584]          ; ★★小分配阈值
+007d33a1  771d            ja 0x7d33c0                 ; 大块 → 系统堆
+  ; ── 小块路径：CRT 小分配器 + 锁 9 ──
+007d33a3  6a09            push 9 / call 0x7cd9f5      ; ★★EnterLock(9)
+                                                      ;   （batch 966 流锁内核——
+                                                      ;   与 free 调度 batch 945 同锁）
+007d33aa  53              push ebx / call 0x7cfb13    ; ★小分配器（未登记——
+                                                      ;   0x7CF7E8 后邻函数）
+007d33b0  6a09            push 9 / mov edi,eax / call 0x7cda56
+                                                      ; ★★LeaveLock(9)
+007d33b9  83c40c          add esp,0xc / test edi,edi
+007d33be  752b            jne 0x7d33eb                ; 命中 → 清零路径
+  ; ── 大块路径：HeapAlloc ──
+007d33c0  56              push esi / push 8           ; ★flags=8（HEAP_ZERO_MEMORY）
+007d33c1  6a08            push 8
+007d33c3  ff359c8bb700    push [0xb78b9c]             ; ★★heap handle（batch 945/1042
+                                                      ;   已实锤）
+007d33c9  ff1578127e00    call [0x7e1278]             ; ★★IAT HeapAlloc（pefile 实证）
+007d33cf  8bf8            mov edi,eax / test edi,edi
+007d33d1  7522            jne 0x7d33f7                ; 成功 → 直接返回（HEAP_ZERO_MEMORY
+                                                      ;   已清零）
+  ; ── 失败路径：新失败处理 + 重试循环 ──
+007d33d5  833dc482b70000  cmp [0xb782c4],0 / je 0x7d33f7  ; ★失败处理全局
+007d33de  56              push esi / call 0x7d06e8    ; ★失败处理函数（未登记）
+007d33e4  85c0            test eax,eax / je 0x7d33fd  ; 处理无效 → 返 0
+007d33e9  eba9            jmp 0x7d3394                ; ★重试循环（再分配）
+  ; ── 小块命中：memset 清零 ──
+007d33eb  53              push ebx / push 0 / push edi
+007d33ee  e8ec410000      call 0x7d75e0               ; ★★memset_legacy(ptr,0,num×size)
+                                                      ;   （batch 015/028 已登记 REIMPL
+                                                      ;    Val&0xFF 展开+REP STOSD）
+007d33f4  83c40c          add esp,0xc
+007d33f7  8bc7            mov eax,edi / pop / ret     ; ★返回指针
+007d33fd  33c0            xor eax,eax / jmp 0x7d33f9  ; 失败 → 0
+
+★语义：**CRT `calloc`（推断名——num×size 分配 + 清零）**——
+cdecl 2 参（num, size）：
+  ① num×size（imul——calloc 决定特征）；
+  ② 0 → 补 1；16 字节对齐（+0xF & ~0xF）；
+  ③ 对齐后 <= [0x87C584] 小分配阈值 → 锁 9 临界区走 0x7CFB13
+     小分配器 → 命中后 memset(0) 清零（小块无 ZERO_MEMORY）；
+  ④ 大块 → HeapAlloc(heap, HEAP_ZERO_MEMORY=8, size)（大块自
+     带清零）；
+  ⑤ 失败 → [0xB782C4] 门控 0x7D06E8 失败处理 → 有效则重试循环
+     （jmp 0x7D3394）；无效 → 返回 0。
+
+★原版怪癖（照抄）：
+  ① imul 无溢出检查（num×size 回绕——乘法前无校验）；
+  ② 0 字节补 1（malloc 语义对齐）；
+  ③ 对齐用 add 0xF + and ~0xF（非 roundup 除法）；
+  ④ 小块走 CRT 小分配器 + 显式 memset（0x7D75E0）清零、大块
+     走 HeapAlloc HEAP_ZERO_MEMORY 隐式清零——**两条清零路径
+     语义不等价（小块 memset 在锁内、大块在堆内核）**；
+  ⑤ 锁 9（与 free 调度 batch 945 同一把堆锁——EnterLock/Leave
+     Lock 成对包小分配）；
+  ⑥ [0x87C584] 阈值 / [0xB782C4] 失败处理门控全局（0x7B-0x7F
+     区）；
+  ⑦ 失败重试循环（0x7D06E8 返回非 0 才重试——无限重试隐患照
+     抄）。
+
+★依赖链实锤（本批 disasm + IAT 解析 + TSV 交叉）：
+  ① [0x7E1278] = KERNEL32!HeapAlloc / [0x7E127C] =
+     KERNEL32!HeapFree（pefile 实证）——大块分配/释放对称；
+  ② [0xB78B9C] = heap handle（batch 945/1042 已实锤——free/
+     calloc 共用）；
+  ③ 0x7CD9F5/0x7CDA56 = 流锁 Enter/Leave 内核（batch 966/961
+     已登记）——锁 9 与 free 调度同锁；
+  ④ 0x7D75E0 = memset_legacy（batch 015/028 已登记 REIMPL）
+     ——小块清零；
+  ⑤ 0x7CFB13 = 小分配器（未登记——0x7CF7E8/0x7CF7BD 后邻，
+     小分配族待续）；
+  ⑥ 0x7D06E8 = 失败处理函数（未登记——new 失败钩子推断）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT calloc 属商业库
+层，不写 C++ 模型；141B 全读 + IAT HeapAlloc 实证 + 五交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D3374 = MSVC6 CRT calloc——0x7C-0x7D = MSVC6 静态
+   CRT（ra2_code_region_layout_crt_provenance）。
+2. 依赖：IAT HeapAlloc + 流锁 9（batch 966/961）+ memset（batch
+   015/028）+ 小分配器/失败处理（未登记）+ 阈值/门控全局——
+   重写 gamemd 时用等价运行时（operator new/calloc 或
+   std::allocator）代替。
+3. gamemd_replication_discipline：CRT 内存分配设施，重写时用
+   等价运行时代替，逐字节复刻无意义——按商业库纪律归档，不写
+   C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（141B 全读 + IAT HeapAlloc 实证 +
+五交叉；函数名「calloc」为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 945：0x7C93E8 free 调度——锁 9 同锁 + [0xB78B9C] 同
+  heap handle 交叉（分配/释放对称端）。
+★batch 015/028：0x7D75E0 memset_legacy REIMPL——小块清零调
+  用现场交叉。
+★batch 966/961：0x7CD9F5/0x7CDA56 流锁内核——锁 9 调用现场
+  交叉。
+★batch 1042：0x7CF7E8 FreeSegment——0x7CFB13 小分配器为其后
+  邻（小分配族域交叉）。
+
+五、状态
+-------
+crt_runtime_verified（0x7D3374：CRT calloc 归档；141B 全读 +
+IAT HeapAlloc 实证 + 五交叉；不写 C++ 模型不做 golden——CRT
+内存分配商业库层；函数名与「0x7CFB13 小分配器/0x7D06E8 失败处
+理」语义为推断交叉标注）。TSV 新增 0x007D3374 行。
+
+★本批实锤：CRT calloc 全链——imul num×size + 对齐 + 阈值分流
+（小块锁 9+0x7CFB13+memset 清零 / 大块 HeapAlloc ZERO_MEMORY）
++ 失败重试——与 free 调度（batch 945）共用锁 9/堆句柄对称端。
+相邻待续：batch 1067 按 _scan_pending_7c.py 取池内下一未登记
+项（uc=2：0x7D478B(134B)/0x7C1D90(124B)/0x7DC468(97B)——
+callers=3；或 0x7CFB13 小分配器 + 0x7D06E8 失败处理 + 0x7CEF29
+转换辅助）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1065 已完（CRT FPE 检查-转换包装器，commit 83217f5）。
