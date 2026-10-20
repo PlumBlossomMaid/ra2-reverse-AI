@@ -1,0 +1,148 @@
+frontier batch 1087 —— Westwood 表面/图像装载器 0x7C0C80（归档，0x7C 区混入样本 #2）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7C0C80（1196B,
+uc=1, callers=3 池顶）。TSV 无既有行。
+TARGET = 0x007C0C80。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007C0C80 行。
+
+⚠️ 延续 batch 1086 归属修正：0x7C-0x7D 并非全部 MSVC6
+CRT——0x7C0C80 实证为 Westwood 自有代码（表面/图像装载
+器对象方法），0x7C 区混入样本 #2（batch 1086 = VQA 解析
+器 #1）。
+
+一、链语义（disasm 头/中/尾复核，0x7C0C80-0x7C112B）
+------------------------------------------------
+头部（0x7C0C80-0x7C0D5C）：
+007c0c80  83ec10                sub esp, 0x10
+007c0c85  8be9                  mov ebp, ecx           ; ★thiscall：this = ecx
+007c0c8b  8b8570010000          mov eax, [ebp+0x170]   ; ★[this+0x170] 字段
+007c0c95  8d4201                lea eax, [edx+1]       ; ★param2 对齐（+1 & ~1）
+007c0cab  6a08                  push 8
+007c0cad  53                    push ebx               ; ★this+0x198 子结构
+007c0cae  6a05                  push 5
+007c0cb0  55                    push ebp
+007c0cb1  ff5540                call [ebp+0x40]        ; ★★虚表槽 0x40 回调
+                                                       ;   （5 参：this,5,子结构,8）
+007c0cc8  81e60000ff00          and esi, 0xff0000      ; ★RGB 通道字节重排
+007c0cce  c1e910                shr ecx, 0x10
+007c0cd1  c1e210                shl edx, 0x10
+007c0cd9  0bf1                  or esi, ecx
+007c0cdb  0bd0                  or edx, eax
+007c0ce0  c1e208                shl edx, 8
+007c0ce3  0bf2                  or esi, edx            ; ★0x00RRGGBB ↔ 0x00BBGGRR
+                                                       ;   通道交换
+魔数分派（0x7C0CF7-0x7C0D35，五 chunk 标签状态机）：
+007c0cf7  81fa5650445a          cmp edx, 0x5A445056    ; ★"VPDZ"（内存序
+                                                       ;   56 50 44 5A）
+007c0d09  81fa56505430          cmp edx, 0x30545056    ; ★"VPT0"（56 50 54 30）
+007c0d1b  81fa43424630          cmp edx, 0x30464243    ; ★"CBF0"（43 42 46 30）
+007c0d27  81fa43504c30          cmp edx, 0x304C5043    ; ★"CPL0"（43 50 4C 30）
+007c0d2f  81fa43425030          cmp edx, 0x30504243    ; ★"CBP0"（43 42 50 30）
+  —— 各分支 test byte[esp+0x24] 标志位（8/1/0x10）→
+   jne 0x7C10CD（失败）/ 调 0x7C1E10 / 写 [ebx+0x14]/
+   [ebx+0x24]/[ebx+0x28] 字段 / rep movsd 拷贝到
+   [ebp+0x1C4] 等——五格式分派装载路径
+
+E8 被调者（7 处 call，真实 4 个唯一目标）：
+  0x7C1D90 / 0x7C1E10 / 0x7C1F30 / 0x7C20B0
+  ——★全部已登记（batch 1053/1057/1058/1068 虚表对象方
+  法家族 + batch 917 Format80 宿主 0x7C20B0）！
+  3 个跨段伪目标（0x37C0FB3 等）= E8 字节在指令中间的
+  数据误读。
+
+尾部（0x7C1124-0x7C112B）：
+007c1124  5f                    pop edi
+007c1125  5e                    pop esi
+007c1126  5d                    pop ebp
+007c1127  83c8ff                or eax, -1             ; ★失败 -1
+007c1129  5b                    pop ebx
+007c112a  83c410                add esp, 0x10
+007c112d  c20400                ret 4                  ; ★thiscall 1 栈参
+  （错误码族 -1/-2/-4 对应多分支出口——探针尾部字节实
+  测 0x7C10F2-0x7C112C：b8feffffff = -2 / b8fcffffff =
+  -4 / 83c8ff = -1 三出口）
+
+★callers = 3（E8 全 exe 扫描实锤）：
+  0x7BFEAE / 0x7BFF17 / 0x7BFFAE —— 全在 0x7B 区
+  （Westwood 对象方法宿主，与 batch 1086 的 0x7BE5D0/
+  0x7BF240 默认虚表同区）。
+
+★语义：**Westwood 表面/图像装载器（推断名——RGB 通道
+重排 + 五格式魔数分派 + Format80 家族调用）**——thiscall
+2 参（ret 4）：
+  ① [this+0x40] 虚表槽回调（5 参：this/5/子结构/8）；
+  ② RGB 字节通道交换（0x00RRGGBB ↔ 0x00BBGGRR——
+  565/888 表面转换惯用）；
+  ③ 五魔数分派（VPDZ/VPT0/CBF0/CPL0/CBP0——图像/调色
+  板格式 chunk 标签）各走独立装载路径；
+  ④ 调用已登记 Format80 家族 0x7C20B0 与虚表对象方法
+  家族 0x7C1D90/0x7C1E10/0x7C1F30。
+
+★原版怪癖（照抄）：
+  ① 五魔数 cmp 常量 4 字节（编译器立即数比较——chunk
+     标签状态机）；
+  ② RGB 通道重排位运算链（and/shr/shl/or 四步交换——
+     表面格式转换惯用）；
+  ③ 虚表槽 [this+0x40] 回调 + 默认虚表 0x7B 区对象方法
+     宿主（Westwood 对象方法家族形态）；
+  ④ 错误码族 -1/-2/-4 多出口（各分支独立失败路径）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：Westwood 对象方
+法 + 多格式装载语义，重写时按对象方法语义等价实现，不
+做字节级 golden）。
+
+三、三态判定（为何 semantics_verified 而非 crt_runtime_verified）
+---------------------------------------------------------------
+1. 归属：0x7C0C80 = **Westwood 自有代码**——①callers
+   = 0x7BFEAE/0x7BFF17/0x7BFFAE（0x7B 区对象方法宿主，
+   与 batch 1086 VQA 族同区）；②魔数 VPDZ/VPT0/CBF0/
+   CPL0/CBP0 = 图像/调色板格式 chunk 标签；③thiscall +
+   虚表槽 [this+0x40] + RGB 通道重排 = Westwood 表面装
+   载器对象方法形态；④调用已登记 Westwood 家族
+   （0x7C1D90/0x7C1E10/0x7C1F30/0x7C20B0）。
+2. 依赖：Format80 家族 0x7C20B0（batch 917）+ 虚表对象
+   方法家族 0x7C1D90/0x7C1E10/0x7C1F30（batch 1053/
+   1057/1058/1068）——重写时按对象方法语义等价实现。
+3. 复刻纪律：Westwood 自有代码——不按商业库归档；表面
+   装载器非 RMG 管线依赖，保留 semantics_verified（对
+   象方法语义闭合，不越级）。
+→ 状态：semantics_verified（thiscall + 魔数实锤 +
+callers 交叉 + 已登记家族调用；函数名「表面/图像装载器」
+为推断交叉标注——VPDZ/VPT0/CBF0/CPL0/CBP0 魔数内存序
+实测）。
+
+四、跨批次闭合
+------------
+★batch 1086：0x7C2590 VQA 视频解析器——0x7C 区混入样
+  本 #1（本批 #2，同区 Westwood 对象方法家族对照）。
+★batch 917：0x7C20B0 Format80 宿主——本批被调者（表
+  面装载路径压缩解码）。
+★batch 1053/1057/1058/1068：0x7C1D90/0x7C1E10/
+  0x7C1F30 虚表对象方法家族——本批被调者（家族交叉闭
+  合）。
+★batch 1077/1078：CRT 薄包装——同 0x7C 区归属修正链
+  （地址段不决定归属，需按调用点/魔数/对象形态区分）。
+
+五、状态
+-------
+semantics_verified（0x7C0C80：Westwood 表面/图像装载器
+归档；thiscall + 魔数实锤 + callers 交叉 + 已登记家族
+调用；不写 C++ 模型不做 golden——表面装载器非 RMG 管
+线依赖；函数名「表面/图像装载器」为推断交叉标注——
+VPDZ/VPT0/CBF0/CPL0/CBP0 chunk 标签由代码区魔数内存序
+实测；⚠️ 0x7C-0x7D 全 CRT 断言修正样本 #2）。TSV 新增
+0x007C0C80 行。
+
+★本批实锤：0x7C 区混入样本 #2——thiscall 表面装载器
+（RGB 通道重排 + 五魔数分派 + Format80 家族调用），
+callers 全在 0x7B 区对象方法宿主。
+相邻待续：batch 1088 按 _scan_pending_7c.py 取池内下一
+未登记项（uc=1：0x7C12B0(1152B)/0x7DE200(725B,
+callers=1)/0x7CCFFC(719B, callers=2)/0x7D4FCC(428B——
+batch 1077 点名紧邻大函数)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1086 已完（Westwood VQA 视频解析器，commit
+001915d）。
