@@ -1,0 +1,101 @@
+frontier batch 1075 —— CRT FPE 状态码映射器 0x7DBC2A（归档）
+============================================
+
+候选来源：batch 1074 预告「0x7DBC2A(45B FPE 链遗留——batch 1065 点名状态检
+查）」。TSV 无既有行。追踪确认即 batch 1065（0x7DB5E6 FPE 检查-转换
+包装器）点名的「状态检查」被调——本批兑现。
+TARGET = 0x007DBC2A。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007DBC2A 行。
+
+一、链语义（disasm 全 45B 复核，0x7DBC2A-0x7DBC56）
+------------------------------------------------
+007dbc2a  8a442404        mov al,byte[esp+4]        ; ★param1 = 状态标志字节
+007dbc2e  a820            test al,0x20
+007dbc30  7404            je 0x7dbc36
+007dbc32  6a05/eb16       push 5 / jmp 0x7dbc4c    ; ★位5 → 状态码 5
+007dbc36  a808            test al,8
+007dbc38  7404            je 0x7dbc3e
+007dbc3a  6a01/eb0e       push 1 / jmp 0x7dbc4c    ; ★位3 → 状态码 1
+007dbc3e  a804            test al,4
+007dbc40  7404            je 0x7dbc46
+007dbc42  6a02/eb06       push 2 / jmp 0x7dbc4c    ; ★位2 → 状态码 2
+007dbc46  a801            test al,1
+007dbc48  7404            je 0x7dbc4e
+007dbc4a  6a03/eb0e       push 3 / jmp 0x7dbc4c    ; ★位0 → 状态码 3
+007dbc4c  58              pop eax                  ; ★返回状态码
+007dbc4d  c3              ret
+007dbc4e  0fb6c0          movzx eax,al             ; ★无匹配分支
+007dbc51  83e002          and eax,2
+007dbc54  d1e0            shl eax,1                ; ★(al & 2) << 1 → 0 或 4
+007dbc56  c3              ret
+
+★语义：**CRT FPE 状态码映射器（推断名——浮点异常标志 → 内
+部状态码）**——cdecl 1 参（param1=状态标志字节）返回状态码：
+  ① 位5(0x20) → 5
+  ② 位3(0x08) → 1
+  ③ 位2(0x04) → 2
+  ④ 位0(0x01) → 3
+  ⑤ 其余（位1 置位或其他组合）→ (al & 2) << 1 = 4（位1 置
+     位）或 0（位1 未置位）
+  优先级：位5 > 位3 > 位2 > 位0（串行 test，首个命中即返）。
+
+★原版怪癖（照抄）：
+  ① 串行优先级判定（test/je 链，首个命中即返回——高位优先）；
+  ② push 常量 + jmp 汇流 + pop eax 返回（编译器跳转表化
+     形态）；
+  ③ 兜底分支用 (al&2)<<1 而非常量（位1 → 4，其余 → 0——
+     位1 单独映射 4，与位 0/2/3/5 组合区分）；
+  ④ 无输入校验（任意字节直接查表）。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7DB5E6（batch 1065 已登记 FPE 检查-转换包装器）——调用
+     现场交叉（push [ebp+8]/call 0x7DBC2A——「状态检查」= 标志
+     字节 → 状态码映射，本批兑现其点名）；
+  ② [0x87D700] 门控 + 0x7DBB55/0x7DBC77 收尾——batch 1065/
+     1070 同族链；
+  ③ 零子调用零全局——纯位运算。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT FPE 状态码映射属商
+业库层，重写用等价位判定即可；45B 全读 + 状态码表取证）。
+
+三、三态判定（为何 crt_runtime_verified 而非 REIMPL/归档）
+------------------------------------------------
+1. 归属：0x7DBC2A = MSVC6 CRT FPE 状态码映射器——0x7C-0x7D =
+   MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）。
+2. 依赖：零子调用零全局（纯位运算）但状态码 1/2/3/4/5 的具体
+   语义依赖 CRT 浮点异常分类（除零/溢出/无效/精度）——独立
+   REIMPL 只能证明位运算、无法证明状态码语义；重写 gamemd 时
+   用等价 switch 代替。
+3. gamemd_replication_discipline：CRT FPE 设施，重写时用等价
+   运行时代替，逐字节复刻无意义——按商业库纪律归档，不写 C++
+   模型不做 golden。
+→ 状态：crt_runtime_verified（45B 全读 + 状态码表取证 +
+batch 1065 点名兑现；函数名与「状态码 1/2/3/4/5」语义为推断交
+叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1065：0x7DB5E6 FPE 检查-转换包装器——「0x7DBC2A 状态
+  检查」点名兑现（标志字节 → 状态码映射）。
+★batch 1070：0x7DB4EE 浮点和解析包装器——同 FPE 链姊妹
+  （[0x87D700] 门控 + 0x7DBB55/0x7DBC77 收尾）。
+★batch 1049：0x7D8C6B FPE 异常分发器——同族全景。
+
+五、状态
+-------
+crt_runtime_verified（0x7DBC2A：CRT FPE 状态码映射器归档；45B
+全读 + 状态码表取证 + batch 1065 点名兑现；不写 C++ 模型不做
+golden——CRT FPE 商业库层，纯位映射重写一 switch 等价；函数名
+与「状态码 1/2/3/4/5」语义为推断交叉标注）。TSV 新增
+0x007DBC2A 行。
+
+★本批实锤：FPE 链「状态检查」闭环——0x7DBC2A（标志字节 → 状
+态码 5/1/2/3/(位1→4)）登记，batch 1065 的 0x7DB5E6 链完整。
+相邻待续：batch 1076 按 _scan_pending_7c.py 取池内下一未登记
+项（uc=2：0x7C9442 __nh_malloc(44B)/0x7D4FAB(33B, callers=3)/
+0x7D4A78(31B, callers=3)；或 0x7CFB13 小分配器 + 0x7D06E8 失败
+处理遗留）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1074 已完（CRT 标志位重映射器，commit 5941885）。
