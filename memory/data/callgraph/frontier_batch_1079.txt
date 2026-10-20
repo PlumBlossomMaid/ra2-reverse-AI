@@ -1,0 +1,95 @@
+frontier batch 1079 —— CRT per-thread 数据初始化辅助 0x7D13F8（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D13F8（19B,
+uc=2, callers=2 池顶）。TSV 无既有行。
+TARGET = 0x007D13F8。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D13F8 行。
+
+一、链语义（disasm 全 19B 复核，0x7D13F8-0x7D140A）
+------------------------------------------------
+007d13f8  8b442404                mov eax, [esp+4]      ; ★param1（对象指针）
+007d13fc  c7405020cb8700          mov [eax+0x50], 0x87cb20 ; ★+0x50 ← 0x87CB20
+                                                          ;   （全局异常码表——
+                                                          ;   [0x87CB20]=0xC0000005
+                                                          ;   ACCESS_VIOLATION 实测）
+007d1403  c7401401000000          mov [eax+0x14], 1     ; ★+0x14 ← 1
+007d140a  c3                      ret
+
+★语义：**CRT per-thread data（_ptd）初始化辅助（推断名——
+MSVC6 CRT 的 _initptd 子函数）**——cdecl 1 参（param1=ptd
+对象）：
+  ① +0x50 ← 0x87CB20（异常码表指针——[0x87CB20]=0xC0000005
+     为 ACCESS_VIOLATION 码，0x87CB00 邻区还有 0xFFFFFFFF
+     /1/0x0000C005/0x0000C001/0x0000C008 等异常码族数据）；
+  ② +0x14 ← 1（初始化标志）。
+  宿主 0x7D140B（紧邻大函数）：GetLastError → TlsGetValue
+  ([0x87C7A8]=-1 槽号) → 空则 calloc(0x74,1)（batch 1066
+  已登记 CRT calloc）→ TlsSetValue → 成功后 call 0x7D13F8
+  初始化 → GetCurrentThreadId——**TLS per-thread data 分配
+  链**。
+
+★原版怪癖（照抄）：
+  ① 双常量直写（+0x50/+0x14 无中间计算——编译器常量折叠）；
+  ② 异常码表地址 0x87CB20 硬编码进 +0x50（ptd 挂表指针）；
+  ③ +0x14=1 标志位（初始化完成标记）；
+  ④ 宿主 calloc 后无条件调本函数（分配成功即初始化）。
+
+★依赖链实锤（本批反汇编 + IAT/全局解析交叉）：
+  ① [0x87CB20] = 0xC0000005（ACCESS_VIOLATION——PE .data
+     实测）；0x87CB00-0x87CB50 邻区为异常码族数据
+     （0xFFFFFFFF/1/0xC005/0xC001/0xC008……）；
+  ② 宿主 0x7D140B 用 IAT 0x7E12B8=TlsGetValue /
+     0x7E12AC=TlsSetValue / 0x7E1200=GetLastError /
+     0x7E11D0=GetCurrentThreadId（pefile IAT 解析实测）；
+  ③ 0x7D3374 = CRT calloc（batch 1066 已登记）；
+  ④ [0x87C7A8] = 0xFFFFFFFF（TLS 槽号哨兵——初值 -1 待
+     TlsAlloc 后回填）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT TLS 基础设施属
+商业库层，不写 C++ 模型；19B 全读 + IAT/全局解析交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D13F8 = MSVC6 CRT per-thread data 初始化辅助——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）；TLS 槽管理（TlsGetValue/TlsSetValue）直
+   接证据。
+2. 依赖：宿主 0x7D140B（TLS 分配链）+ 0x87CB20 异常码表
+   （全局数据）——重写 gamemd 时用等价运行时（thread_local
+   /_ptd 结构）代替。
+3. gamemd_replication_discipline：CRT TLS per-thread data
+   设施，重写时用等价运行时代替，逐字节复刻无意义——按商
+   业库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（19B 全读 + IAT/全局解析交
+叉；函数名与「_initptd 子函数」语义为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1066：0x7D3374 CRT calloc——宿主 0x7D140B 的 ptd
+  分配调用现场（TLS 槽空 → calloc(0x74,1)）。
+★batch 1077：0x7D4FAB 锁 0x0B 薄包装——同 CRT 基础设施层
+  薄包装模式（本批为 TLS 初始化辅助）。
+★batch 1078：0x7DE0F1 控制台句柄初始化——同 CRT 启动链
+  基础设施（控制台 I/O / TLS 同属 MSVC6 静态 CRT 启动系）。
+
+五、状态
+-------
+crt_runtime_verified（0x7D13F8：CRT per-thread data 初始化
+辅助归档；19B 全读 + IAT/全局解析交叉；不写 C++ 模型不做
+golden——CRT TLS 商业库层；函数名「_initptd 子函数」为推
+断交叉标注——[0x87CB20]=0xC0000005 异常码表由 PE .data 实
+测）。TSV 新增 0x007D13F8 行。
+
+★本批实锤：ptd 初始化双常量直写 + 异常码表挂载——宿主
+0x7D140B TLS 分配链（TlsGetValue/TlsSetValue/calloc）的
+子初始化端。
+相邻待续：batch 1080 按 _scan_pending_7c.py 取池内下一未登
+记项（uc=2：0x7D4596(11B, callers=16——高分发点）/0x7DBC57
+(3B)；0x7D140B TLS 分配链宿主 + 0x7D4FCC 紧邻大函数可独
+立登记）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1078 已完（CRT 控制台输入句柄初始化器，commit
+867c5bf）。
