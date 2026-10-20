@@ -1,0 +1,124 @@
+frontier batch 1059 —— CRT 流字符读取器 0x7DA512（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DA512（241B,
+uc=2 池内下一）。TSV 无既有行。
+TARGET = 0x007DA512。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007DA512 行。
+
+一、链语义（disasm 全 241B 复核，0x7DA512-0x7DA602）
+------------------------------------------------
+007da512  push ebp/mov ebp,esp/push ecx/push esi/mov esi,[ebp+8]
+          /push edi/test byte[esi+0xC],0x40
+007da51f  jne 0x7da5e6                 ; ★位 0x40 置位 → 宽字符路径
+  ; ── 窄字符路径 ──
+007da525  mov eax,[esi+0x10]/cmp eax,-1/je 0x7da544
+007da52d  mov ecx,eax/sar ecx,5/and eax,0x1f
+007da535  mov ecx,[ecx*4+0xb78a80]     ; ★表 [0xB78A80] 定位
+007da53c  lea eax,[eax+eax*8]/lea eax,[ecx+eax*4]  ; ★记录 eax
+007da544  mov eax,0x87c928             ; ★默认表 0x87C928
+007da549  test byte[eax+4],0x80/je 0x7da5e6  ; ★分类标志检查
+007da553  dec dword[esi+4]/push 1/pop edi
+007da559  js 0x7da565                 ; 计数 <0 → 取下一块
+007da55b  mov ecx,[esi]/movzx eax,byte[ecx]/inc ecx/mov [esi],ecx
+007da565  push esi/call 0x7d0703      ; ★★fgetc 单字节读取（batch 035/062
+                                      ;   已登记 semantics_verified）
+007da56c  cmp eax,-1/jne 0x7da57a/or ax,0xffff  ; ★EOF → 0xFFFF 返回
+007da57a  mov ecx,[0x87c590]          ; ★ctype 表
+007da580  mov [ebp-4],al/movzx eax,al
+007da586  test byte[ecx+eax*2+1],0x80 ; ★★掩码 0x80（lead/DBCS 判定）
+007da58b  je 0x7da5bd                 ; 非 DBCS → 单字节输出
+007da58d  dec dword[esi+4]/js 0x7da59c
+007da592  mov ecx,[esi]/movzx eax,byte[ecx]/inc ecx/mov [esi],ecx
+007da59c  push esi/call 0x7d0703      ; ★取次字节
+007da5a3  cmp eax,-1/jne 0x7da5b7/or ax,0xffff
+007da5a8  movsx eax,[ebp-4]/push esi/push eax/call 0x7d9ecf  ; ★未登记
+007da5ae  pop ecx×2/jmp 0x7da571      ; DBCS 尾字节 → 回写错误
+007da5b7  mov [ebp-3],al/push 2/pop edi   ; ★双字节 → 计数 2
+007da5bd  lea eax,[ebp-4]/push edi/push eax/lea eax,[ebp+0xA]/push eax
+007da5c6  call 0x7d9d7f              ; ★★加锁字节→宽字符转换包装（batch
+                                      ;   040 已登记 semantics_verified）
+007da5cb  cmp eax,-1/jne 0x7da5e0
+007da5d3  call 0x7d168e              ; ★★errno_slot_legacy（batch 018 REIMPL）
+007da5d8  mov [eax],0x2a             ; ★errno=0x2A（★EILSEQ=42——非法序列）
+007da5de  jmp 0x7da571
+007da5e0  mov ax,word[ebp+0xA]/jmp 0x7da5ff  ; ★输出转换宽字符
+  ; ── 宽字符路径 ──
+007da5e6  add dword[esi+4],-2/js 0x7da5f8
+007da5ec  mov ecx,[esi]/mov ax,word[ecx]/add ecx,2/mov [esi],ecx
+007da5f8  push esi/call 0x7dc291      ; ★未登记（宽字符取块）
+007da5ff  pop edi/esi/leave/ret
+
+★语义：**CRT 流字符读取器（推断名——fgetc/fgetwc 家族前端）**
+——cdecl 1 参（esi=[ebp+8] 流上下文）：[esi+0xC] 位 0x40 判
+宽窄分流：窄路径按 [0xB78A80]/[0x87C928] 表分类 + ctype 表掩码
+0x80 判 DBCS 双字节（lead+tail 两次 fgetc 0x7D0703）→
+0x7D9D7F 字节→宽字符转换（失败 errno=0x2A EILSEQ）；宽路径直
+读 word 两步进（+2），计数不足走 0x7DC291 取块。
+
+★原版怪癖（照抄）：
+  ① [esi+0xC] 位 0x40 宽窄分流（单函数双路径）；
+  ② DBCS lead 判定走 ctype 表掩码 0x80（[0x87C590] 表 +0x1
+     字节位 7）而非代码页直查；
+  ③ DBCS 转换失败写 errno=0x2A（EILSEQ=42——MSVC6 值）；
+  ④ EOF 一律 or ax,0xffff（-1 → 0xFFFF 宽语义）；
+  ⑤ 默认表 0x87C928 与 [0xB78A80] 两级表查（[esi+0x10]==-1
+     用默认）；
+  ⑥ 计数 [esi+4] 减到负 → 调取块函数（0x7D0703/0x7DC291 窄/
+     宽两版）。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7D0703 = fgetc 单字节读取（batch 035/062 已登记
+     semantics_verified）——窄路径两次调用（lead/tail）；
+  ② 0x7D9D7F = 加锁字节→宽字符转换包装（batch 040 已登记
+     semantics_verified）——窄路径收尾转换；
+  ③ 0x7D168E = errno_slot_legacy（batch 018 REIMPL）——写
+     0x2A（EILSEQ）；
+  ④ 0x7D9ECF / 0x7DC291 = 未登记（DBCS 尾字节回写 / 宽取
+     块——待续）；
+  ⑤ [0x87C590] ctype 表 + [0xB78A80]/[0x87C928] 分类表——
+     isctype 族/流表族交叉。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 流读取属商业库层，
+不写 C++ 模型；241B 全读 + 三已登记被调交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DA512 = MSVC6 CRT 流字符读取器——0x7C-0x7D =
+   MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）。
+2. 依赖：0x7D0703/0x7D9D7F/0x7D168E（batch 035/040/018 已登
+   记）+ 0x7D9ECF/0x7DC291（未登记）+ ctype/分类表——重写
+   gamemd 时用等价运行时（fgetc/fgetwc 或直接流 API）代替。
+3. gamemd_replication_discipline：CRT 流 I/O 设施，重写时用等
+   价运行时代替，逐字节复刻无意义——按商业库纪律归档，不写
+   C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（241B 全读 + 三已登记被调交叉；
+函数名「流字符读取器」为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 035/062：0x7D0703 fgetc 单字节读取——窄路径 lead/tail
+  两次调用现场交叉（本批为上游封装）。
+★batch 040：0x7D9D7F 字节→宽字符转换——窄路径收尾转换现场
+  交叉。
+★batch 018：0x7D168E errno_slot_legacy REIMPL——EILSEQ 0x2A
+  写现场交叉。
+★batch 056/044：iswctype 族——[0x87C590] 表掩码交叉。
+
+五、状态
+-------
+crt_runtime_verified（0x7DA512：CRT 流字符读取器归档；241B 全
+读 + fgetc/转换/errno 三交叉；不写 C++ 模型不做 golden——CRT
+流 I/O 商业库层；函数名与「位 0x40 宽窄分流」语义为推断交叉标
+注）。TSV 新增 0x007DA512 行。
+
+★本批实锤：CRT 流字符读取前端全链——位 0x40 宽窄分流 + DBCS
+掩码 0x80 双字节 + EILSEQ 0x2A 写 errno + 三已登记被调（fgetc/
+转换/errno）交叉，商业库层归档。
+相邻待续：batch 1060 按 _scan_pending_7c.py 取池内下一未登记
+项（0x7D9ECF/0x7DC291 本批遗留 + uc=2 其余项）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1058 已完（虚表对象方法双子 0x7C1E10，
+commit 91b3f7c）。
