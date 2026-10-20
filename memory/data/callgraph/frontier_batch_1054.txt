@@ -1,0 +1,107 @@
+frontier batch 1054 —— 矩形坐标槽位计算器 0x7C3270（登记）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7C3270（440B,
+uc=2 池内下一）。TSV 无既有行。
+TARGET = 0x007C3270。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007C3270 行。
+
+一、链语义（disasm 全 440B 复核，0x7C3270-0x7C3425，ret 0x10）
+------------------------------------------------
+入口：push ecx / mov eax,[ecx+0x80]（★this+0x80 标志位读）/
+push ebx,ebp,esi / mov esi,[esp+0x14]（★栈参1）/ push edi /
+mov edi,eax / mov [esp+0x10],edx（★寄存器参 edx 缓存）/
+and edi,0x30（★位 4/5 组合判定）→ test esi,esi / jne /
+mov si,word[ecx+0xEE]（★栈参1==0 → 读 this+0xEE word）→
+mov edx,[esp+0x1C] / test edx,edx / jne / mov dx,word[ecx+0xF0]
+（★栈参2==0 → 读 this+0xF0 word）→ mov ebx,[esp+0x20] /
+mov ebp,[esp+0x24]（栈参3/4）。
+
+分支矩阵（eax 低 3 位组合）：
+  A. test eax,8 == 0 且 (eax&0x40)==0（0x7C32BE→0x7C3304）：
+     [ecx+0x1B4] = (栈参1 - word[ecx+0xEE]) >> 1 /
+     [ecx+0x1B8] = (栈参2 - word[ecx+0xF0]) >> 1；
+     eax&0x40!=0 时先对 word 值 shr 1 再减（0x7C3308）；
+  B. test eax,8 != 0（0x7C32C2）：
+     eax&0x40 → [ecx+0x1B4] = word[ecx+0xFA]>>1 /
+     [ecx+0x1B8] = word[ecx+0xFC]>>1；无 0x40 → 不减半直写
+     （0x7C32E7）；
+  C. 栈参3/4 非负分支（0x7C3364）：
+     eax&0x40 → 参3/参4 各 >>1（cdq-sar 有符号半）→
+     edi(0x30/0x20 判定)：0x20 → [0x1B4]=参1-参3' /
+     [0x1B8]=参2-参4'；0x30 → [0x1B4]=参1-参3 /
+     [0x1B8]=参2-参4（0x7C3396-0x7C33A4）。
+
+收尾校验（0x7C33AA-0x7C3425）：
+  ① edi=[ecx+0x1B4] / eax=[ecx+0x1B8]：<0 或 >=栈参1/栈参2
+     （jae）→ 0x7C341B 返回 -24（0xFFFFFFE8）；
+  ② [ecx+0x108]==1 或 4 → edi/eax 各 *2（★缩格倍率）；
+  ③ eax = eax*栈参1 + edi → [ecx+0x1AC]=栈参1 /
+     [ecx+0x1BC]=eax（★线性索引 = y*width+x 公式）；
+  ④ 寄存器参 edx!=0 → [ecx+0x1A8]=edx / [ecx+8]=edx；
+     [ecx+0x1B0]=栈参2；
+  ⑤ [ecx+0x150] |= 0x10（★dirty 标志位）→ 返回 -1
+     （0xFFFFFFFF 成功哨兵）。
+
+★语义：**矩形坐标槽位计算器（推断名——thiscall 6 参 this/
+寄存器参 + 4 栈参）**：标志位 [ecx+0x80] 低 3 位驱动三族分支
+（半宽半高/不减半/外部参数取半），缺省参数回读 this+0xEE/
+0xF0 word；结果写入 this+0x1B4/0x1B8，越界/负值返回 -24；缩格
+倍率（0x108==1/4）×2；线性索引写 0x1AC/0x1BC；可选指针写
+0x1A8/0x8；置 0x150 位 4 dirty；成功返 -1。
+
+★原版怪癖（照抄）：
+  ① 标志位驱动三族矩形分支（eax&0x30/0x8/0x40 位组合——非跳
+     转表，串行 test/je 判定）；
+  ② 栈参缺省（==0）回读 this+0xEE/0xF0 word——调用方契约
+     （参数 0 = 使用对象自身尺寸）；
+  ③ 缩格倍率 [ecx+0x108]==1 或 4 时 ×2（双格索引）；
+  ④ 成功返回 -1 / 失败 -24（非 0/1 哨兵约定）；
+  ⑤ 半值计算用 cdq-sar（有符号算术右移）vs 无符号 shr 混用
+     （分支 A/C 不同）；
+  ⑥ 线性索引 = eax*width+edi 先乘后加（无溢出防护）。
+
+★依赖链实锤（本批 disasm）：零子调用零全局——纯算术 + 对象
+槽位契约（+0x80/+0xEE/+0xF0/+0xFA/+0xFC/+0x108/+0x1A8/
++0x1AC/+0x1B0/+0x1B4/+0x1B8/+0x1BC/+0x150/+0x8）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：thiscall 槽位计算器依
+赖宿主类布局语义，不做指令级 golden）。
+
+三、三态判定（为何 semantics_verified 而非 REIMPL/归档）
+------------------------------------------------
+1. 形态：thiscall 6 参（ret 0x10）+ 14 个对象槽位契约 + 标志
+   位驱动分支——Westwood 家族对象方法形态（与 0x7C30xx 家族
+   batch 0x7C30D0/0x7C3230/0x7C3690 同域），非 cdecl 独立算
+   法。
+2. 依赖：零子调用零全局（纯算术）但槽位语义 = 宿主类契约——
+   REIMPL 需承载完整对象布局，无对象级 golden 对拍 → 不越级
+   cpp_reimplementation。
+3. 证据：440B 全读 + 槽位矩阵逐分支复核。
+→ 状态：semantics_verified（440B 全读 + 槽位契约标注；函数名
+与「矩形坐标槽位计算器」语义为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 0x7C30xx 家族：0x7C30D0/0x7C3230/0x7C3690 等已登记
+  semantics_verified——本批 0x7C3270 同 0x7C32xx 邻域形态一致。
+★batch 1053：0x7C0740 宿主方法——同 thiscall 对象方法判态先
+  例。
+★_scan_pending_7c.py：池内 440B 项——大函数优先策略。
+
+五、状态
+-------
+semantics_verified（0x7C3270：矩形坐标槽位计算器登记；440B 全
+读 + 槽位契约标注；不写 C++ 模型不做 golden——thiscall 对象
+方法需承载宿主类布局；函数名与「成功返 -1/失败 -24」哨兵为推
+断交叉标注）。TSV 新增 0x007C3270 行。
+
+★本批实锤：0x7C32xx 邻域新增成员——标志位三族矩形分支 + 缺
+省参数回读 + 线性索引 + -1/-24 哨兵的完整槽位计算器语义登记。
+相邻待续：batch 1055 按 _scan_pending_7c.py 取池内下一未登记
+项（uc=2：0x7CB9CF(423B)/0x7C1F30(384B)/0x7C0530(377B)——
+batch 1008 检查链成员；或 0x7C19F0 预取器）。
+依赖模型：无（登记不落 C++）。
+承前：batch 1053 已完（回调式流状态机宿主方法，commit cecffa4）。
