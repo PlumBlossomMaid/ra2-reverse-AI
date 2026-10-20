@@ -1,0 +1,147 @@
+frontier batch 1098 —— CRT 多字节字符转换 0x7CC4A4（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CC4A4（431B,
+uc=1, callers=1 池顶）。TSV 无既有行。
+TARGET = 0x007CC4A4。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CC4A4 行。
+
+一、链语义（disasm 头/中/尾复核，0x7CC4A4-0x7CC652）
+------------------------------------------------
+头部（0x7CC4A4-0x7CC4DE）：
+007cc4a4  55                    push ebp
+007cc4a5  8bec                  mov ebp, esp
+007cc4a7  83ec0c                sub esp, 0xc
+007cc4ac  8b7508                mov esi, [ebp+8]      ; ★param1
+007cc4b0  33db                  xor ebx, ebx
+007cc4b2  33ff                  xor edi, edi
+007cc4b6  895df8                mov [ebp-8], ebx
+007cc4bf  8b5510                mov edx, [ebp+0x10]   ; ★param3 = 长度
+007cc4cd  391da082b700          cmp [0xb782a0], ebx   ; ★全局 [0xB782A0] 判空
+                                                      ;   （29 处引用 CRT 族——
+                                                      ;   locale/MB 表全局）
+007cc4d5  3bd3                  cmp edx, ebx
+007cc4d7  7622                  jbe 0x7cc4fb
+007cc4d9  8b4d0c                mov ecx, [ebp+0xc]    ; ★param2 = 输入缓冲
+007cc4dc  668139ff00            cmp word[ecx], 0xff   ; ★0xFF 前导字节检测
+                                                      ;   （MBCS 双字节字符）
+007cc4e1  0f8759010000          ja 0x7cc640           ; → 非法字节出口
+007cc4e7  8a01                  mov al, [ecx]
+007cc4e9  880437                mov [edi+esi], al     ; ★拷贝单字节
+007cc4ec  668b01                mov ax, [ecx]
+007cc4ef  41                    inc ecx
+007cc4f0  41                    inc ecx               ; ★双字节推进
+007cc4f1  6685c0                test ax, ax
+007cc4f4  7405                  je 0x7cc4fb           ; ★NUL 尾
+007cc4f6  47                    inc edi
+007cc4f7  3bfa                  cmp edi, edx
+007cc4f9  72e1                  jb 0x7cc4dc           ; ★循环
+
+locale 分支（0x7CC502-0x7CC55A）：
+007cc502  833d9cc7870001        cmp [0x87c79c], 1     ; ★locale 阈值（batch
+                                                      ;   1082/1084/1091 同款）
+007cc509  7550                  jne 0x7cc55b
+007cc50b  3bd3                  cmp edx, ebx
+007cc50d  7610                  jbe 0x7cc51f
+007cc50f  52                    push edx
+007cc510  ff750c                push [ebp+0xc]
+007cc513  e83b010000            call 0x7cc653        ; ★★紧邻子函数（转换
+                                                      ;   核心——[=+0] 头部
+                                                      ;   push ebp/mov ebp,esp/
+                                                      ;   mov ecx,[ebp+0xc]/
+                                                      ;   mov eax,[ebp+8]/
+                                                      ;   xor edx,edx）
+007cc518  59                    pop ecx
+007cc519  894510                mov [ebp+0x10], eax   ; ★长度回写
+007cc51c  59                    pop ecx
+007cc51d  8bd0                  mov edx, eax
+007cc51f  8d45f8                lea eax, [ebp-8]
+007cc522  50                    push eax
+007cc523  53                    push ebx
+  …
+
+尾部（0x7CC640-0x7CC652）：
+007cc640  33c0                  xor eax, eax          ; ★非法字节出口
+007cc642  e849500000            call 0x7d1690         ; errno 槽
+007cc647  c7002a000000          mov [eax], 0x2a       ; ★errno = 0x2A (42)
+                                                      ;   （EILSEQ——非法字节
+                                                      ;   序列标准错误码）
+007cc64d  83c8ff                or eax, -1            ; ★返回 -1
+007cc650  5f/5e/5b              pop edi/esi/ebx
+007cc652  c9                    leave
+007cc653  c3                    ret                   ; ★函数边界（0x7CC653
+                                                      ;   起紧邻子函数）
+
+★语义：**CRT 多字节字符转换（推断名——MBCS 宽窄转换
+族）**——cdecl 3 参（param1=输出缓冲、param2=输入缓冲、
+param3=长度）：
+  ① [0xB782A0] 全局判空（locale/MB 表全局——29 处引用
+     CRT 族）选路；
+  ② 0xFF 前导字节检测（MBCS 双字节字符）——单字节拷贝
+     或双字节推进循环；
+  ③ locale 阈值 [0x87C79C]>1 走 0x7CC653 紧邻子函数
+     （转换核心），≤1 走表直查路径；
+  ④ 非法字节出口：errno = 0x2A (EILSEQ) + 返回 -1——
+     mbtowc/_mbstowcs 标准行为。
+
+★E8 被调者：0x7CC653（紧邻子函数——转换核心）+ 0x7D1690
+  （errno 槽——batch 已登记 CRT errno 设施）。
+
+★原版怪癖（照抄）：
+  ① 0xFF 前导字节 cmp/ja 检测（无符号 0xFF 后即非法——
+     MBCS 双字节判定）；
+  ② errno 0x2A (EILSEQ) 硬编码（非法字节序列标准错误
+     码）；
+  ③ locale 双路径 [0x87C79C]>1 vs ≤1（同 batch 1082 完
+     全同款）；
+  ④ 双字节推进 inc ecx×2（编译器展开非循环）；
+  ⑤ 非法出口统一返回 -1（无部分转换计数）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 多字节转换
+属商业库层，不写 C++ 模型；头/尾 + 全局/errno 交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CC4A4 = MSVC6 CRT 多字节字符转换——0x7C-0x7D
+   = MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）；
+   0xFF 前导检测 + errno EILSEQ + locale 双路径为 CRT
+   MBCS 转换标准形态。
+2. 依赖：0x7CC653（紧邻转换核心）+ 0x7D1690（errno 槽）
+   + [0xB782A0]/[0x87C79C] 全局——重写 gamemd 时用等价
+   运行时（mbtowc/_mbstowcs）代替。
+3. gamemd_replication_discipline：CRT 多字节转换设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业
+   库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（头/尾 + 全局/errno 交叉；
+函数名「多字节字符转换」为推断交叉标注——0xFF 前导检
+测 + EILSEQ 由代码实测）。
+
+四、跨批次闭合
+------------
+★batch 1079：0x7D13F8 ptd 初始化——同 CRT 基础设施层。
+★batch 1082/1084：_woutput/_output 格式化核心——locale
+  阈值 [0x87C79C] 双路径完全同款。
+★batch 1091：0x7CCFFC _strftime——同 CRT 字符串/字符
+  处理域。
+★batch 1097：0x7D5C12 字符串字段解析器——同 CRT 字符
+  处理域对照。
+
+五、状态
+-------
+crt_runtime_verified（0x7CC4A4：CRT 多字节字符转换归档；
+头/尾 + 全局/errno 交叉；不写 C++ 模型不做 golden——
+CRT MBCS 转换商业库层；函数名「多字节字符转换」为推断
+交叉标注——0xFF 前导检测 + EILSEQ 由代码实测）。TSV 新
+增 0x007CC4A4 行。
+
+★本批实锤：0xFF 前导字节检测 + locale 双路径 + errno
+0x2A (EILSEQ) 非法字节出口——MSVC6 CRT MBCS 转换标准
+形态（29 处 [0xB782A0] 引用 CRT 族交叉）。
+相邻待续：batch 1099 按 _scan_pending_7c.py 取池内下一
+未登记项（uc=1：0x7D4FCC(428B——batch 1077 点名紧邻大
+函数)/0x7D36D5(389B, callers=1)/0x7D4A10(386B, callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1097 已完（CRT 字符串字段解析器，commit
+fffcd56）。
