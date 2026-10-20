@@ -1,0 +1,110 @@
+frontier batch 1071 —— CRT 每线程错误状态访问器 0x7DC1C2（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DC1C2（86B,
+uc=2, callers=3 池顶）。TSV 无既有行。
+TARGET = 0x007DC1C2。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007DC1C2 行。
+
+一、链语义（disasm 全 86B 复核，0x7DC1C2-0x7DC217，ret 平返）
+------------------------------------------------
+007dc1c2  55/8bec            push ebp/mov ebp,esp
+007dc1c5  6aff               push -1                  ; ★SEH 帧（-1 哨兵）
+007dc1c7  6848a47f00         push 0x7fa448            ; ★handler 表 0x7FA448
+007dc1cc  68d4c17c00         push 0x7cc1d4            ; ★0x7CC1D4
+007dc1d1  64a100000000       mov eax,fs:[0]           ; ★TEB 链
+007dc1d7  50/64892500000000  push eax/mov fs:[0],esp  ; 挂帧
+007dc1df  51/51/53/56/57     push ecx×2,ebx,esi,edi
+007dc1e4  8965e8             mov [ebp-0x18],esp       ; ★esp 存档
+007dc1e7  33f6               xor esi,esi
+007dc1e9  8975fc             mov [ebp-4],esi          ; ★标志 = 0
+007dc1ec  e81a52ffff         call 0x7d140b            ; ★★current_error_state
+                                                      ;   （batch 008/009 已登记
+                                                      ;   REIMPL——每线程错误状态
+                                                      ;   分配+TLS 初始化）
+007dc1f1  397060             cmp [eax+0x60],esi       ; ★ptd+0x60 槽位
+007dc1f4  741f               je 0x7dc215             ; 槽空 → 返回 0
+007dc1f6  c745fc01000000     mov [ebp-4],1            ; ★标志 = 1
+007dc1fd  e80952ffff         call 0x7d140b            ; 再取 ptd
+007dc202  ff5060             call [eax+0x60]          ; ★★槽位函数指针调用
+007dc205  8975fc             mov [ebp-4],esi          ; 标志复位
+007dc208  eb0b               jmp 0x7dc215            ; → 返回 1
+  ; ── SEH 收尾块 ──
+007dc20a  6a01/push 1/58 pop eax/c3                  ; ★handler 返回 1（异常分发）
+007dc20e  8b65e8             mov esp,[ebp-0x18]       ; ★esp 恢复
+007dc211  8365fc00           and [ebp-4],0            ; 标志清零
+007dc215  8b45fc             mov eax,[ebp-4]          ; ★返回标志（0/1）
+007dc218  5f/5e/5b/59/59/... pop 全 / leave / ret
+
+★语义：**CRT 每线程错误状态访问器（推断名——current_error_
+state 包装）**——cdecl 无参：
+  ① SEH 帧建立（handler 0x7FA448/0x7CC1D4——CRT 异常分发）；
+  ② call 0x7D140B（current_error_state）取每线程错误状态
+     ptd → [ptd+0x60] 槽位检查；
+  ③ 槽非空 → 标志置 1 → 再取 ptd → **调用槽位函数指针
+     [eax+0x60]**（推断为 errno/locale 初始化回调）→ 标志复
+     位 → 返回 1；
+  ④ 槽空 → 返回 0；
+  ⑤ SEH 收尾（handler 返 1 分发 + esp 恢复 + 标志清零）。
+
+★原版怪癖（照抄）：
+  ① SEH 帧 + esp 存档 [ebp-0x18]（CRT 标准异常保护）；
+  ② 槽位函数指针调用 [eax+0x60]（每线程错误状态内嵌回调——
+     推断为 CRT 初始化钩子）；
+  ③ 槽空/非空返回 0/1（布尔标志约定）；
+  ④ handler 返 1（异常已被处理分发语义）；
+  ⑤ 三次 0x7D140B 调用（首次取+判定、二次取+调用、隐式收
+     尾）——冗余取 ptd 照抄。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7D140B = current_error_state（batch 008 语义登记 +
+     batch 009 REIMPL current_error_state——每线程错误状态
+     分配 + TLS 初始化 + Win32 last-error 跨设置保留）——
+     唯一被调，三次调用现场交叉；
+  ② [ptd+0x60] 槽位 + handler 0x7FA448/0x7CC1D4——CRT 每
+     线程数据布局契约。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 每线程错误状态属
+商业库层，不写 C++ 模型；86B 全读 + current_error_state 交叉
+——核心状态模型已 REIMPL 覆盖）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DC1C2 = MSVC6 CRT 每线程错误状态访问器——0x7C-
+   0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）。
+2. 依赖：0x7D140B（batch 008/009 已登记 current_error_state
+   REIMPL）——唯一被调已有 C++ 真身实现；槽位函数指针调用
+   （对象级行为）——重写 gamemd 时用等价运行时（errno/TLS）
+   代替。
+3. gamemd_replication_discipline：CRT 每线程设施，重写时用等
+   价运行时代替，逐字节复刻无意义——按商业库纪律归档，不写
+   C++ 模型不做 golden（状态核心已 REIMPL 覆盖）。
+→ 状态：crt_runtime_verified（86B 全读 + current_error_state
+交叉；函数名「每线程错误状态访问器」为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 008/009：0x7D140B current_error_state——三次调用现场
+  交叉（本批为其包装层，SEH 保护 + 槽位回调）。
+★batch 1042：0x7CF7E8 HeapSegment——CRT 每线程数据布局契约
+  交叉（ptd 槽位域）。
+
+五、状态
+-------
+crt_runtime_verified（0x7DC1C2：CRT 每线程错误状态访问器归
+档；86B 全读 + current_error_state 交叉；不写 C++ 模型不做
+golden——CRT 每线程商业库层，状态核心已 REIMPL 覆盖；函数
+名与「[ptd+0x60] 槽位回调」语义为推断交叉标注）。TSV 新增
+0x007DC1C2 行。
+
+★本批实锤：CRT 每线程错误状态访问包装——SEH 帧 + ptd 槽位
+检查 + 槽位函数指针调用 + 0/1 返回——唯一被调 current_error_
+state 已 REIMPL（batch 008/009），壳层归档闭环。
+相邻待续：batch 1072 按 _scan_pending_7c.py 取池内下一未登记
+项（uc=2：0x7D5EF8(57B)/0x7D4E58(53B)/0x7D60CC(52B)——或
+0x7CEF29 转换辅助 + 0x7CFB13 小分配器 + 0x7D06E8 失败处理遗
+留）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1070 已完（CRT 浮点和解析包装器，commit 5a8dd51）。
