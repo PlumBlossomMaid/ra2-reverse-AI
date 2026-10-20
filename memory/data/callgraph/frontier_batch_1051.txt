@@ -1,0 +1,107 @@
+frontier batch 1051 —— CRT locale 表懒初始化 0x7D386A/0x7D3482（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池第二项——0x7D386A
+（28B, uc=3）。TSV 无既有行。追踪被调发现 worker **0x7D3482**
+（429B, uc=1）——懒初始化门控 + locale/ctype 表初始化器成对
+归档。
+TARGET = 0x007D386A（门控）+ 0x007D3482（worker）。
+C++ 模型：无（见「三态判定」）。TSV：新增两行。
+
+一、链语义（disasm 全段复核，0x7D386A 28B + 0x7D3482 429B）
+------------------------------------------------
+**0x7D386A（28B）懒初始化门控**：
+  007d386a 833db88bb70000   cmp dword[0xb78bb8],0      ; ★门控全局
+  007d3871 7512             jne 0x7d3885              ; 已初始化 → 直接返回
+  007d3873 6afd             push -3                    ; ★常量 -3
+  007d3875 e808fcffff       call 0x7d3482             ; ★★转调 worker
+  007d387a 59               pop ecx
+  007d387b c705b88bb70001000000 mov dword[0xb78bb8],1 ; 门控置 1
+  007d3885 c3               ret
+  ★怪癖：①门控 [0xB78BB8] 懒初始化（0→调 worker→置 1）——
+  单线程早期省略竞态处理；②参 -3 固定常量（worker 的
+  locale 索引信号）。
+
+**0x7D3482（429B，0x7D3482-0x7D362E）locale/ctype 表初始化 worker**：
+  ① push ebp/mov ebp,esp/sub esp,0x18/push ebx,esi,edi；
+  ② EnterLock(0x19)（0x7CD9F5，batch 966 内核）→ 参 -3 转调
+     0x7D362F（74B getter——取 locale 表指针）→
+     cmp [0xB78840]（★locale 指针全局）：
+     相等 → 直接收尾（已初始化）；
+  ③ 表扫描：0x87C958→0x87CA48 步长 0x30 找匹配项（edx 计数）；
+  ④ GetCPInfo（[0x7E12D4] IAT）取 CPINFO 到 [ebp-0x18]；
+  ⑤ 清 [0xB78960] 区（rep stosd 0x40+1）+ [0xB78840]=ebx +
+     按 CPINFO lead-byte 区间（[ebp-0x12] 起逐对）置
+     [0xB78961] 掩码 4（lead-byte 表）；
+  ⑥ 4 轮扫描 0x87C968 表（步长 8，[0x87C950] 掩码字节）
+     填充 [0xB78961] 各掩码；
+  ⑦ [0xB7885C]=1（DBCS 使能）+ 调 0x7D3679（51B locale 转
+     换器）+ 拷贝 3 dword 到 [0xB78850] + [0xB78A64]=eax；
+  ⑧ 尾部：cmp [0xB782D8],0 → 调 0x7D36AC/0x7D36D5（errno/
+     locale 补挂）→ or esi,-1 → LeaveLock(0x19) → 返回 esi。
+
+★原版怪癖（照抄）：
+  ① [0xB78BB8]/[0xB7885C]/[0xB78840]/[0xB78A64] 四全局联动
+     ——locale 指针/DBCS 使能/门控状态分层；
+  ② GetCPInfo 失败（!=1）→ or esi,-1 返回（错误路径）；
+  ③ lead-byte 掩码 4 与 isctype 表 [0xB78961]（batch 965+ 已
+     登记族）互写——与 0x7D571F 的掩码 4 判定同表；
+  ④ 掩码表 [0x87C950] 4 轮扫描（步长 8、每轮 4 掩码）；
+  ⑤ 锁 0x19 全程临界区（初始化 + 表填充一气呵成）。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① [0x7E12D4] = KERNEL32!GetCPInfo（pefile 实证）；
+  ② 0x7CD9F5/0x7CDA56 = 流锁 Enter/Leave 内核（batch 966/961
+     已登记）——锁 0x19 调用；
+  ③ 0x7D362F（74B getter）/0x7D3679（51B 转换器）/0x7D36AC/
+     0x7D36D5 = 四个邻居子例程（未登记，待续）；
+  ④ [0xB78961] isctype 表 + 掩码 4/8（batch 965+990-994 族）
+     ——lead-byte/空白掩码互写；
+  ⑤ 0x7D571F（batch 1047）读同一 [0xB78961] 掩码 4——初始化
+     表与消费端同族闭环。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT locale 初始化属商
+业库层，不写 C++ 模型；28B+429B 全读 + IAT/锁/isctype 交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D386A/0x7D3482 = MSVC6 CRT locale/ctype 表懒初始
+   化——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）。
+2. 依赖：IAT GetCPInfo + 流锁 0x19 + 四全局 + isctype 表——
+   重写 gamemd 时用等价运行时（std::locale 初始化）代替。
+3. gamemd_replication_discipline：CRT locale 设施，重写时用等
+   价运行时代替，逐字节复刻无意义——按商业库纪律归档，不写
+   C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（28B+429B 全读 + IAT/锁/isctype
+族交叉；worker 名「locale/ctype 表初始化器」为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 966/961：0x7CD9F5/0x7CDA56 流锁内核——锁 0x19 调用现
+场交叉。
+★batch 965+990-994：isctype 掩码族——[0xB78961] 表掩码 4/8
+互写交叉。
+★batch 1047：0x7D571F DBCS 查找——消费 [0xB78961] 掩码 4
+（本批初始化表）同族闭环。
+★batch 1044/1045：getenv/_putenv 链——locale 全局区
+  0xB78xxx 同区交叉。
+
+五、状态
+-------
+crt_runtime_verified（0x7D386A + 0x7D3482：CRT locale 表懒初
+始化门控+worker 归档；28B+429B 全读 + IAT/锁/isctype 族交叉；
+不写 C++ 模型不做 golden——CRT locale 设施商业库层；worker
+名为推断交叉标注）。TSV 新增 0x007D386A + 0x007D3482 两行。
+
+★本批实锤：MSVC6 CRT locale/ctype 表懒初始化双件套——门控
+[0xB78BB8] + worker 四全局联动/GetCPInfo/掩码 4 填充全链归
+档；isctype 表消费端（0x7D571F）与初始化端闭环。
+相邻待续：batch 1052 按 _scan_pending_7c.py 取池内下一未登记
+项（uc=3：0x7DDC32(26B)；uc=2 大函数 0x7C0740(1337B)——batch
+1008 检查链剩余成员；或 0x7D362F/0x7D3679/0x7D36AC/0x7D36D5
+四邻居）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1050 已完（字符串对象构造器，commit a73f35c）。
