@@ -1,0 +1,94 @@
+frontier batch 1001 —— CRT 宽字符数值解析包装 0x7CB9B8（登记）
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序（0x7CB9B8 = 23B / 3 uc / 未 REIMPL / TSV 无既有行——宽字
+符数值解析族）。本批 = 依赖链确认（0x7CB9CF 主体 + 0x7D3920 字符查
+表 + [ebp+0x14] flags）→ 按商业库层归档 **crt_runtime_verified**。
+TARGET = 0x007CB9B8。C++ 模型：无（0x7D 段查表 + 宽字符解析设施留桩
+边界——见「三态判定」）。TSV：新增 0x007CB9B8 行。
+
+一、链语义（disasm 全 23B 复核）
+------------------------------------------------
+0x7CB9B8(23B) = MSVC6 CRT 宽字符数值解析包装（_wtoi/_wcstol 族，
+0x7C-0x7D 静态 CRT 区）——cdecl 3 栈参，固定压 0 作 flags 转调主体：
+  push 0                         ; ★第 4 参 flags=0（最先压入 → 栈高址）
+  push [esp+0x10] ×3            ; ★第 1/2/3 参转发（arg1/arg2/arg3）
+  call 0x7CB9CF                 ; ★★主体：宽字符前缀扫描 + 符号/进制
+                                ;   状态解析
+  add esp,0x10                   ; cdecl 弹 16B（4 参）
+  ret
+  等价：return 0x7CB9CF(arg1, arg2, arg3, 0)
+
+被调 0x7CB9CF（前段 64B 复核）：
+  push ebp/mov ebp,esp/push ecx/and [ebp-4],0
+  push ebx/push esi/push edi
+  mov edi,[ebp+8]（★第 1 参=宽串指针）
+  mov si,word[edi]/add edi,2（★读 u16 前缀字符）
+  循环：push 8/push esi（si 零扩展 u16）/call 0x7D3920（★★字符分类查
+    表——batch 048/244 同 0x7D 段设施）/test eax/je 0x7CB9F8
+    （★命中）→ mov si,word[edi]/inc edi ×2（★跳过一宽字符）→ jmp
+  0x7CB9F8: cmp si,0x2d（'-'）/jne 0x7CBA04 → or [ebp+0x14],2（★★
+    flags 第 4 参 |=2 符号位）→ jmp 0x7CBA0A → cmp si,0x2b（'+'）/
+    jne 0x7CBA0F → mov si,word[edi]/inc edi ×2（★跳过符号）→ 后续进
+    制/数字/精度扫描（未读完）
+★语义：**宽字符数值解析包装**——0x7CB9B8 固定压 flags=0 调主体
+0x7CB9CF；主体 = _wtoi/_wcstol 家族宽版前缀解析：逐宽字符查
+0x7D3920（字符分类，8=digit 掩码推断）跳过前导分类字符、识别
+'-'/'+' 符号置 flags bit1、继续进制/数字/精度扫描（batch 489
+_wcstod 双字版同模板）。
+★原版怪癖（batch 489 已录同模板，照抄）：
+  ① flags 第 4 参由调用方初始化（本包装固定 0）；
+  ② 符号 '-' 置 flags|2（bit1）、'+' 不置但同样跳过；
+  ③ 宽字符 2B 步进（inc edi ×2）+ mov si 零扩展；
+  ④ 字符分类走 0x7D3920 查表（非手写 ASCII 比较——locale 感知）。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7CB9CF = 宽字符数值解析主体（紧邻后函数，本批入口交叉）——
+     batch 489 _wcstod 双字版同模板推断；
+  ② 0x7D3920 = 字符分类查表设施（batch 048/244 同 0x7D 段）；
+  ③ flags/符号位（bit1）——batch 489/244 数值解析族交叉。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：商业库层归档，不写 C++ 模型
+不做对拍；同模板 batch 489 语义已登记）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 代码区归属：0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance 实锤）——非 Westwood 手写逻辑。
+2. 依赖商业库层设施：主体 0x7CB9CF 全程调 0x7D3920 字符分类查表
+   （locale 感知）+ 数值解析状态机——_wtoi/_wcstol 是 MSVC CRT 设
+   施，重写用等价 std::wcstol 代替。
+3. gamemd_replication_discipline：商业库只 dump 汇编、重写时用等价
+   运行时代替。
+→ 状态：crt_runtime_verified（同模板 batch 489 语义 + 本批入口/依赖
+确认；0x7CB9CF 精确身份（_wtoi/_wcstol 族推断）、0x7D3920 精确掩
+码（8=digit 推断）为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 489：_wcstod 双字版同模板（宽字符数值解析前缀）——本批同族
+入口交叉。
+★batch 048/244：0x7D3920 字符分类查表 + 0x7D 段设施——本批调用现
+场交叉。
+★batch 961/966：流锁 Leave/Enter 归档——同 0x7C CRT 层同纪律。
+★_pick_945：FILE/解析设施排除逻辑——0x7CB9B8 依赖方纳入同边界。
+★ra2_code_region_layout_crt_provenance：0x7C-0x7D = MSVC6 静态 CRT。
+
+五、状态
+-------
+crt_runtime_verified（0x7CB9B8：CRT 宽字符数值解析包装归档；同模板
+batch 489 语义 + 本批入口/依赖确认；不写 C++ 模型不做 golden——宽
+字符解析设施商业库层）。TSV 新增 0x007CB9B8 行。
+
+★本批实锤：CRT 扇入度 3 的 0x7CB9B8 = 宽字符数值解析包装（固定压
+flags=0 调 0x7CB9CF：0x7D3920 字符查表跳过前缀 + '-'/'+' 符号位 +
+进制/数字扫描——_wtoi/_wcstol 族）；依赖链完整确认，按商业库层纪
+律归档 crt_runtime_verified。
+相邻待续：batch 1002 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_pick_945.py——候选 0x7CBDED __exit 17B /
+0x7CB19C 47B / 0x7CAEF1 35B 等）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1000 已完（CRT 流锁 Leave 变体 0x7CB47A，commit e4cd728）。
