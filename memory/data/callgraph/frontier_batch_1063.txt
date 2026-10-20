@@ -1,0 +1,118 @@
+frontier batch 1063 —— CRT 字符分类表查询器 0x7DD434（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DD434（192B,
+uc=2 池顶）。TSV 无既有行。
+TARGET = 0x007DD434。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007DD434 行。
+
+一、链语义（disasm 全 192B 复核，0x7DD434-0x7DD4F3）
+------------------------------------------------
+007dd434  8b542404       mov edx,[esp+4]             ; ★param1 = 结构指针
+007dd438  53/56          push ebx/esi
+007dd43a  8b5a0c         mov ebx,[edx+0xc]           ; ★结构+0xC 标志字节
+007dd43d  f6c701         test bh,1                   ; ★★bh bit0（高位字节位 8）
+007dd440  745f           je 0x7dd4a1                 ; 分支1
+  ; ── 分支1（bh bit8）：code 查表 ──
+007dd442  668b5208       mov dx,word[edx+8]          ; ★结构+8 code word
+007dd44a  be30da8700     mov esi,0x87da30            ; ★表基 0x87DA30
+007dd44f  663916         cmp word[esi],dx / je 0x7dd465  ; ★10B 步进查 13 项
+007dd454  83c60a         add esi,0xa / inc ecx / cmp esi,0x87daa8 / jl 0x7dd44f
+007dd460  e98c000000     jmp 0x7dd4f1                ; 未命中 → 返回 ecx
+007dd465  f6c303         test bl,3 / je 0x7dd476     ; ★按标志位选列
+007dd46a  lea eax,[ecx+ecx*4] / lea eax,[eax*2+0x87da38]  ; ★表+0x38（bl&3）
+007dd474  eb7b           jmp 0x7dd4f1
+007dd476  f6c30c         test bl,0xc / je 0x7dd487
+007dd47b  lea eax,[ecx+ecx*4] / lea eax,[eax*2+0x87da36]  ; ★表+0x36（bl&0xC）
+007dd485  eb6a           jmp 0x7dd4f1
+007dd487  f6c310         test bl,0x10 / je 0x7dd498
+007dd48f  lea eax,[ecx+ecx*4] / lea eax,[eax*2+0x87da34]  ; ★表+0x34（bl&0x10）
+007dd496  eb59           jmp 0x7dd4f1
+007dd498  lea eax,[ecx+ecx*4] / lea eax,[eax*2+0x87da32]  ; ★表+0x32（默认）
+007dd49f  eb50           jmp 0x7dd4f1
+  ; ── 分支2（无 bh bit8）：code*8 直索引 ──
+007dd4a1  f6c303         test bl,3 / je 0x7dd4b3     ; ★按标志位选表
+007dd4a6  0fb74208       movzx eax,word[edx+8]       ; code
+007dd4aa  8d04c5aeda8700 lea eax,[eax*8+0x87daae]   ; ★表+0xAE（bl&3，8B 步进）
+007dd4b1  eb2b           jmp 0x7dd4de
+007dd4b3  f6c30c         test bl,0xc / je 0x7dd4c5
+007dd4b8  lea eax,[eax*8+0x87daac]                   ; ★表+0xAC（bl&0xC）
+007dd4c3  eb19           jmp 0x7dd4de
+007dd4c5  0fb74208       movzx eax,word[edx+8]
+007dd4c9  f6c310         test bl,0x10 / je 0x7dd4d7
+007dd4ce  lea eax,[eax*8+0x87daaa]                   ; ★表+0xAA（bl&0x10）
+007dd4d5  eb07           jmp 0x7dd4de
+007dd4d7  lea eax,[eax*8+0x87daa8]                   ; ★表+0xA8（默认）
+007dd4de  8a08           mov cl,[eax]                ; ★读表项首字节
+007dd4e0  84c9           test cl,cl / je 0x7dd4ef    ; ★0 → 无效
+007dd4e4  80f9e0         cmp cl,0xe0 / jne 0x7dd4ef  ; ★0xE0 特判
+007dd4e9  80780100       cmp byte[eax+1],0 / jne 0x7dd4f1  ; ★次字节非 0 → 有效
+007dd4ef  33c0           xor eax,eax                 ; ★返回 0（无效）
+007dd4f1  5e/5b/c3       pop esi/ebx / ret           ; ★返回表项偏移
+
+★语义：**CRT 字符分类表查询器（推断名——isctype/locale 表查
+询族）**——cdecl 1 参（param1=结构：+8 code word、+0xC 标志字
+节）：①bh bit8 分支：code 10B 步进查表 0x87DA30（13 项）命中后
+按标志位（bl&3 → 0x38 / bl&0xC → 0x36 / bl&0x10 → 0x34 / 默认
+0x32）选列偏移（ecx*10+表基+列偏移）；②非 bh bit8 分支：code*8
+直索引（表 0x87DAA8/0xAA/0xAC/0xAE 按标志位选）读表项首字节 →
+无效判定（0 或 0xE0 且次字节 0）；③命中返回偏移、无效返回 0。
+
+★原版怪癖（照抄）：
+  ① bh bit8 双层表查（10B 步进 13 项 + 列偏移）vs 非 bit8 单
+     层 code*8 直索引——两套表并存（0x87DA30 区 vs 0x87DAA8
+     区）由高位字节位 8 分流；
+  ② 标志字节 bl&3/0xC/0x10 三组决定表列——标志位两两组均非
+     排他（先 3 后 0xC 后 0x10 串行判定，3 命中优先）；
+  ③ 表项首字节 0xE0 特判 + 次字节 0 判有效（字符区间编码）；
+  ④ 无效返回 0 / 命中返回偏移（非表项内容本身——由调用方解
+     释偏移语义）；
+  ⑤ 分支1 未命中（13 项无匹配）返回 ecx=13（计数）而非 0——
+     ★与分支2 语义不一致（busy 计数值怪癖）。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① [0x87DA30]/[0x87DAA8] 区数据表（10B/8B 步进双套——未登记
+     数据表，isctype 族 [0x87C590]/[0xB78961] 同数据区）；
+  ② [0x87DA32..0x87AEB] 表列偏移（列布局——调用方契约）。
+  ③ 零子调用零全局引用（纯查表——仅 [0x87DA..] 数据表）；
+  ④ batch 965+990-994 isctype 掩码族 / batch 056+044 iswctype
+     族——同字符分类数据区交叉。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 字符分类查表属商业
+库层，不写 C++ 模型；192B 全读 + 数据表契约标注）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DD434 = MSVC6 CRT 字符分类表查询器——0x7C-0x7D =
+   MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）。
+2. 依赖：[0x87DA30]/[0x87DAA8] 双套数据表（列偏移布局）——
+   重写 gamemd 时用等价运行时（std::ctype 或直接查表）代替。
+3. gamemd_replication_discipline：CRT 字符分类设施，重写时用
+   等价运行时代替，逐字节复刻无意义——按商业库纪律归档，不写
+   C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（192B 全读 + 数据表契约标注；函
+数名「字符分类表查询器」为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 965+990-994：isctype 掩码族——[0x87C590] 等字符分类
+  数据区交叉（本批 [0x87DA30] 同区）。
+★batch 056/044：iswctype 族——宽窄字符分类全景对照。
+★batch 1055：wcstol——isctype 消费端（本批查询器为表端）。
+
+五、状态
+-------
+crt_runtime_verified（0x7DD434：CRT 字符分类表查询器归档；192B
+全读 + 数据表契约标注；不写 C++ 模型不做 golden——CRT 字符分
+类商业库层；函数名与「0xE0 特判/列偏移」语义为推断交叉标注）。
+TSV 新增 0x007DD434 行。
+
+★本批实锤：CRT 字符分类双套表查询器——bh bit8 双层/layer 拆
+分 + 标志位三组选列 + 0xE0 次字节有效判定 + 未命中返回计数
+（非 0）怪癖全链归档。
+相邻待续：batch 1064 按 _scan_pending_7c.py 取池内下一未登记
+项（uc=2：0x7CED9E(167B)/0x7DB5E6(165B)/0x7D3374(141B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1062 已完（CRT 浮点指数格式化器，commit d304226）。
