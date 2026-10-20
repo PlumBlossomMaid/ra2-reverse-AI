@@ -1,0 +1,102 @@
+frontier batch 1052 —— CRT 控制台写出链 0x7DDC32/0x7DE17D/0x7DE110（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DDC32（26B,
+uc=3 池内高位）。TSV 无既有行。追踪被调发现 CRT 控制台写出
+链三件套（0x7DE17D 核心 + 0x7DE110 懒初始化）——成组归档。
+TARGET = 0x007DDC32 + 0x007DE17D + 0x007DE110。
+C++ 模型：无（见「三态判定」）。TSV：新增三行。
+
+一、链语义（disasm 全段复核 + IAT 三槽实锤）
+------------------------------------------------
+**0x7DDC32（26B，0x7DDC32-0x7DDC4B）计数/错误薄包装**：
+  007ddc32 ff742404       push [esp+4]            ; ★param1 转调参数
+  007ddc36 e842050000     call 0x7de17d          ; ★★转调核心
+  007ddc3b 83f8ff         cmp eax,-1
+  007ddc3e 8b44240c       mov eax,[esp+0xc]       ; ★eax = param2（计数指针）
+  007ddc42 59             pop ecx
+  007ddc43 7504           jne 0x7ddc49
+  007ddc45 8308ff         or dword[eax],-1        ; ★核心返 -1 → *param2 = -1
+  007ddc48 c3             ret
+  007ddc49 ff00           inc dword[eax]          ; ★否则 (*param2)++
+  007ddc4b c3             ret
+  ★怪癖：①转调失败（-1）置 *param2=-1、成功则 ++（计数/错误
+  双义薄包装）；②param2 在转调后才读（[esp+0xC]——不提前解
+  引用）；③返回 void（eax 残留 param2 指针，调用方不用）。
+
+**0x7DE17D（75B，0x7DE17D-0x7DE1C0）单字节控制台写出核心**：
+  ① push ebp/mov ebp,esp/sub esp,0x10/push ebx,esi,edi；
+  ② [0x87DD84] 门控 == -2（未初始化）→ call 0x7DE110 懒初始
+     化（CreateFileA 开 CONOUT$）→ 门控 = 句柄或 -1；
+  ③ 门控 == -1（开失败）→ or eax,-1 返回 -1；
+  ④ 成功路径：[ebp-4]=0 计数器、[ebp+0xB]=param1 单字节 →
+     五参 WriteConsoleA（[0x7E1344]：handle, &[ebp+0xB],
+     1, &[ebp-4], 0）→ 失败 → -1；
+  ⑤ 返回 [ebp+0xB]（写出字节）。
+  ★怪癖：①[0x87DD84] 句柄/门控双义（-2 未初始化/-1 失败/其余
+  句柄）；②WriteConsoleA 五参带 written 计数槽 [ebp-4]；
+  ③写出对象取 param1 低字节（mov [ebp+0xB],al——单字节语义）。
+
+**0x7DE110（31B，0x7DE110-0x7DE12E）懒初始化**：
+  007de110 xor eax,eax / push eax×2 / push 3 / push eax /
+           push 3 / push 0x40000000 / push 0x7fa4a4
+  007de123 call [0x7e11bc]          ; ★★CreateFileA(0x7FA4A4=
+                                        "CONOUT$", GENERIC_WRITE
+                                        (0x40000000), 3, NULL, 3
+                                        (OPEN_EXISTING), 0, NULL)
+  007de129 mov [0x87dd84],eax        ; ★门控 = 句柄（或 -1）
+  007de12e ret
+  ★怪癖：①CreateFileA 七参全常量（CONOUT$ + GENERIC_WRITE +
+  FILE_SHARE_RW + OPEN_EXISTING）——一次开句柄永不关闭；
+  ②失败时 eax=-1 直接进门控（调用方判 -1）。
+
+★依赖链实锤（本批 disasm + IAT 解析）：
+  ① [0x7E1344] = KERNEL32!WriteConsoleA（pefile 实证）——
+     五参句柄写出；
+  ② [0x7E11BC] = KERNEL32!CreateFileA（pefile 实证）——七参
+     开 CONOUT$；
+  ③ [0x87DD84] 句柄/门控全局——三函数共享；
+  ④ 0x7FA4A4 = "CONOUT$" 常量串（数据区）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 控制台输出属商业
+库层，不写 C++ 模型；132B 全读 + IAT 两槽实锤）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：三函数 = MSVC6 CRT 控制台输出链（_write/_putch 家族
+   后端）——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_
+   layout_crt_provenance）。
+2. 依赖：WriteConsoleA/CreateFileA 双 IAT + [0x87DD84] 门控句
+   柄——重写 gamemd 时用等价运行时（stdio/console API）代替。
+3. gamemd_replication_discipline：CRT 控制台设施，重写时用等
+   价运行时代替，逐字节复刻无意义——按商业库纪律归档，不写
+   C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（132B 全读 + IAT 双槽实锤 + 链
+路交叉；函数名「控制台写出链」为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 966/961：流锁内核——[0x87DD84] 门控全局同 0x7B-0x7F
+  全局区（与锁/error 全局共存）。
+★batch 1044/1045/1051：locale/环境链——同 0x7B-0x7F 全局区
+  交叉（0x87DD84 与 0xB781E4/0xB78BB8 同区）。
+★_scan_pending_7c.py：全量扫描池高位项——uc=3 薄包装形态。
+
+五、状态
+-------
+crt_runtime_verified（0x7DDC32 + 0x7DE17D + 0x7DE110：CRT 控
+制台写出链归档；132B 全读 + IAT WriteConsoleA/CreateFileA 双
+槽实锤；不写 C++ 模型不做 golden——CRT 控制台设施商业库层；
+函数名与「门控=句柄双义」为推断交叉标注）。TSV 新增三行。
+
+★本批实锤：CRT 控制台写出链三件套全链归档——0x7DE110
+CreateFileA 开 CONOUT$（门控 [0x87DD84]）→ 0x7DE17D
+WriteConsoleA 单字节写出 → 0x7DDC32 计数/错误薄包装（失败置
+-1/成功 ++）。
+相邻待续：batch 1053 按 _scan_pending_7c.py 取池内下一未登记
+项（uc=2 大函数 0x7C0740(1337B)——batch 1008 检查链剩余成员；
+或 0x7D362F/0x7D3679/0x7D36AC/0x7D36D5 四邻居）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1051 已完（CRT locale 表懒初始化，commit f058499）。
