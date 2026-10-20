@@ -1,0 +1,157 @@
+frontier batch 1097 —— CRT 字符串字段解析器 0x7D5C12（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D5C12（436B,
+uc=1, callers=2 池顶）。TSV 无既有行。
+TARGET = 0x007D5C12。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D5C12 行。
+
+一、链语义（disasm 头/中/尾复核，0x7D5C12-0x7D5DC5）
+------------------------------------------------
+头部（0x7D5C12-0x7D5C90）：
+007d5c12  55                    push ebp
+007d5c13  8bec                  mov ebp, esp
+007d5c15  8b4d18                mov ecx, [ebp+0x18]    ; ★param5 = 计数器指针
+007d5c18  8b4514                mov eax, [ebp+0x14]    ; ★param4
+007d5c1b  53/56/57              push ebx/esi/edi
+007d5c1d  832100                and [ecx], 0           ; ★计数器清零
+007d5c20  8b7510                mov esi, [ebp+0x10]    ; ★param3 = 输出缓冲
+007d5c24  8b7d0c                mov edi, [ebp+0xc]     ; ★param2
+007d5c27  c70001000000          mov [eax], 1           ; ★param4 置 1
+007d5c30  85ff                  test edi, edi          ; ★param2 判空
+007d5c32  7408                  je 0x7d5c3c
+007d5c34  8937                  mov [edi], esi         ; ★写回 param3 值
+007d5c36  83c704                add edi, 4
+007d5c39  897d0c                mov [ebp+0xc], edi
+007d5c3c  803822                cmp byte[eax], 0x22    ; ★'"' 引号检测（0x22）
+007d5c3f  7544                  jne 0x7d5c85           ; → 普通扫描路径
+007d5c41  8a5001                mov dl, [eax+1]        ; ★引号串模式逐字符
+007d5c45  80fa22                cmp dl, 0x22           ; ★结束引号
+007d5c48  7429                  je 0x7d5c73
+007d5c4a  84d2                  test dl, dl            ; ★串尾
+007d5c4c  7425                  je 0x7d5c73
+007d5c4e  0fb6d2                movzx edx, dl
+007d5c51  f6826189b70004        test byte[edx+0xb78961], 4  ; ★★字符分类表
+                                                       ;   [0xB78961] & 4
+                                                       ;   （MSVC6 _pctype 域
+                                                       ;   ——数字/可见字符位）
+007d5c58  740c                  je 0x7d5c66
+007d5c5a  ff01                  inc [ecx]              ; ★计数器++
+007d5c5c  85f6                  test esi, esi          ; ★输出拷贝
+007d5c5e  7406                  je 0x7d5c66
+007d5c60  8a10                  mov dl, [eax]
+007d5c62  8816                  mov [esi], dl
+007d5c64  46                    inc esi
+007d5c65  40                    inc eax
+007d5c66  ff01                  inc [ecx]              ; ★计数器++（跳过分隔）
+007d5c6c  8a10                  mov dl, [eax]
+007d5c6e  8816                  mov [esi], dl
+007d5c71  ebce                  jmp 0x7d5c41           ; ★循环
+007d5c73  ff01                  inc [ecx]
+007d5c79  802600                and byte[esi], 0       ; ★输出串终止 0
+007d5c7d  803822                cmp byte[eax], 0x22    ; ★结束引号确认
+007d5c80  7546                  jne 0x7d5cc8
+007d5c82  40                    inc eax
+007d5c83  eb43                  jmp 0x7d5cc8
+普通扫描路径（0x7D5C85-0x7D5DC5）：
+007d5c85  ff01                  inc [ecx]              ; ★计数器++
+007d5c87  85f6                  test esi, esi
+007d5c8b  8a10                  mov dl, [eax]          ; ★逐字符输出
+007d5c8d  8816                  mov [esi], dl
+007d5c8f  46                    inc esi
+007d5c90  8a10                  mov dl, [eax]          ; ★读当前字符
+  …（后续：分类表判定继续扫描直到分隔/串尾）
+尾部（0x7D5DA0-0x7D5DC5）：
+007d5da6  ff01                  inc [ecx]
+007d5da8  85f6                  test esi, esi
+007d5daa  7403                  je 0x7d5daf
+007d5dac  802600                and byte[esi], 0       ; ★输出串终止 0
+007d5daf  8b4514                mov eax, [ebp+0x14]
+007d5db2  5f/5e/5b              pop edi/esi/ebx
+007d5db6  ff00                  call [eax]             ; ★★param4 函数指针回调
+                                                       ;   （param4=1 时直接
+                                                       ;   返回——0x7D5C27 已
+                                                       ;   置 1）
+007d5db8  5d                    pop ebp
+007d5db9  c3                    ret
+
+★语义：**CRT 字符串字段解析器（推断名——引号字符串/
+普通字段扫描 + 分类表过滤）**——cdecl 5 参（param2/3/4/5
+指针组 + param4 回调/标志）：
+  ① 计数器清零 + param4 置 1（初始态）；
+  ② 引号 '"'（0x22）检测：引号串模式逐字符走分类表
+     [edx+0xB78961]&4 过滤（跳过非目标字符），遇结束
+     引号/串尾终止输出（and byte[esi],0）；
+  ③ 普通路径：逐字符输出直到分类表判定边界；
+  ④ 尾部 param4 函数指针回调（param4=1 时直接返回——
+     计数/标志语义）；
+  ⑤ 返回前 pop 恢复 + ret。
+
+★E8 被调者（0x7D5C12-0x7D5DC5 区间）：**零真实子调用**
+  （探针实测 E8 in range: 0）——纯扫描计算引擎。
+
+★callers = 2（E8 全 exe 扫描实锤）：
+  0x7D5BC0 / 0x7D5BF6 —— 全在同区 0x7D5B 大函数内部
+  （CRT 字符串解析链内部调用）。
+
+★字符分类表 [0xB78961] 语义：MSVC6 CRT `_pctype` 域
+  （0xB78961 = 分类表 +1 偏移——0x80 后 ASCII 表项）；
+  test 4 = 数字/可见字符位（_DIGIT 系）。
+
+★原版怪癖（照抄）：
+  ① 引号 '"' 0x22 双检测（进入/结束各一次——编译器优
+     化展开）；
+  ② 分类表 [edx+0xB78961]&4 过滤（非直 and 0x40——
+     编译器位测试形态）；
+  ③ 计数器 [ecx]++ 双计数（目标字符 + 分隔符各一次）；
+  ④ param4 置 1 后尾部 call [eax]（回调/标志二义——
+     param4=1 直接返回）；
+  ⑤ and byte[esi],0 串终止（无 NUL 越界保护）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 字符串解析
+属商业库层，不写 C++ 模型；头/尾 + 零子调用交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D5C12 = MSVC6 CRT 字符串字段解析器——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；分类表 [0xB78961]（_pctype 域）+
+   引号扫描为 CRT 字符串解析标准形态。
+2. 依赖：分类表 [0xB78961]（全局 _pctype）+ param4 回
+   调——重写 gamemd 时用等价运行时（strtok 语义）代替。
+3. gamemd_replication_discipline：CRT 字符串解析设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业
+   库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（头/尾 + 零子调用 + 分类
+表交叉；函数名「字符串字段解析器」为推断交叉标注——
+引号/分类表语义由代码实测）。
+
+四、跨批次闭合
+------------
+★batch 1091：0x7CCFFC `_strftime` 格式化核心——同 CRT
+  字符串解析域（分类表惯用对照）。
+★batch 1082/1084：`_woutput`/`_output` 格式化核心——
+  同 CRT 格式化/解析域。
+★batch 1085：0x7DD505 strtod——同 CRT 字符串扫描域
+  （字符分类扫描对照）。
+
+五、状态
+-------
+crt_runtime_verified（0x7D5C12：CRT 字符串字段解析器归
+档；头/尾 + 零子调用 + 分类表交叉；不写 C++ 模型不做
+golden——CRT 字符串解析商业库层；函数名「字符串字段
+解析器」为推断交叉标注——引号 0x22/[0xB78961] 分类表
+由代码实测）。TSV 新增 0x007D5C12 行。
+
+★本批实锤：引号字符串/普通字段双路径扫描——[0xB78961]
+分类表 &4 过滤 + 计数器双计数 + param4 回调收口；区间
+E8 扫描零真实子调用。
+相邻待续：batch 1098 按 _scan_pending_7c.py 取池内下一
+未登记项（uc=1：0x7CC4A4(431B, callers=1)/0x7D4FCC
+(428B——batch 1077 点名紧邻大函数)/0x7D36D5(389B,
+callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1096 已完（Westwood Format80 装载宿主，
+commit f290c85）。
