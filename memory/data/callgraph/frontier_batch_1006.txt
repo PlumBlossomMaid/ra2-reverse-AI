@@ -1,0 +1,92 @@
+frontier batch 1006 —— CRT exit 家族薄包装 0x7CBDED（登记）
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序（0x7CBDED = 17B / 3 uc / 未 REIMPL / TSV 无既有行；
+__exit 符号名来自 picker 列表）。本批 = 依赖链确认（0x7CBDED →
+0x7CBE1C batch 058 已登记内核）→ 按商业库层归档 **crt_runtime_
+verified**。
+TARGET = 0x007CBDED。C++ 模型：无（exit 家族商业库层——见「三态
+判定」）。TSV：新增 0x007CBDED 行。
+
+一、链语义（disasm 全 17B 复核，0x7CBDED-0x7CBDFD）
+------------------------------------------------
+007cbded  6a00         push 0                        ; 第3参 = 0
+007cbdef  6a01         push 1                        ; 第2参 = 1
+007cbdf1  ff74240c     push dword ptr [esp + 0xc]    ; 第1参 = 本函数入参（exit code）
+007cbdf5  e822000000   call 0x7cbe1c                 ; ★0x7CBE1C(exitcode, 1, 0)
+007cbdfa  83c40c       add esp, 0xc                  ; cdecl 清 3 参
+007cbdfd  c3           ret
+
+★语义：**exit() 家族薄包装（推断名 __exit）**——把唯一入参
+(exitcode) 转发给 0x7CBE1C（batch 058 已登记内核），追加两个常量
+参 (1, 0)。cdecl 栈参，右→左压栈 → 实际调用 = 0x7CBE1C(exitcode,
+1, 0)。
+
+★原版怪癖（照抄）：
+  ① ★参数序是 (exitcode, 1, 0)——第2参固定 1、第3参固定 0（对照
+     后邻 0x7CBDFE/0x7CBE0D 两变体：(0,0,1)/(0,1,1)——三包装共用
+     内核 0x7CBE1C、仅常量参组合不同）；
+  ② cdecl 3 参 add esp,0xC 清栈——薄转发自身不保留任何状态；
+  ③ 0x7CBE1C 内核（batch 058 已录）：[0xB78204]==1（首初始化判定）
+     时经 IAT 槽 [0x7E11A4]/[0x7E11B0] 注册处理器；置 [0xB78200]=1
+     退出标志、[0xB781FC]=第2参低字节；flag==0 分支遍历 [0xB78BC0]/
+     [0xB78BBC] 反向链表逐个 call 已注册收尾函数。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7CBE1C = batch 058 已登记（crt_runtime_verified_partial，
+     atexit 注册本体）——内核调用现场交叉；
+  ② 后邻 0x7CBDFE/0x7CBE0D = 同族变体（同 call 0x7CBE1C，参数
+     组合 (0,0,1)/(0,1,1)）——picker 未列入（uc=0），已并入本文档
+     登记交叉；
+  ③ 内核内 IAT 槽 [0x7E11A4]/[0x7E11B0]——批量 258/279/292
+     [0x7E11BC]/[0x7E11E8]/[0x7E11EC] 同 .rdata 槽区邻近段。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：商业库层归档，不写 C++ 模型
+不做对拍；17B 全读 + 内核 batch 058 交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CBDED 是 MSVC6 CRT exit() 家族薄包装——std 库运行时
+   设施（__exit 推断名），ra2_code_region_layout_crt_provenance
+   0x7C-0x7D = MSVC6 静态 CRT。
+2. 依赖链：转发目标 0x7CBE1C（batch 058 已归档 crt_runtime_verified
+   _partial）本身依赖 IAT 槽 [0x7E11A4]/[0x7E11B0] 系统调用 +
+   [0xB78BC0]/[0xB78BBC] atexit 链表——重写 gamemd 时 exit 语义由
+   等价运行时（std::exit/_Exit）承担。
+3. gamemd_replication_discipline：商业库只 dump 汇编、重写时用等价
+   运行时代替——17B 无算法无状态，逐字节复刻无意义。
+→ 状态：crt_runtime_verified（17B 全读 + 内核 batch 058 交叉 +
+后邻两变体并入登记；函数精确名（__exit vs exit vs _exit 分工）为
+推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 058：0x7CBE1C atexit 注册本体首登记（crt_runtime_verified_
+partial）——本批 0x7CBDED 内核调用现场交叉。
+★batch 258/279/292：[0x7E11BC]/[0x7E11E8]/[0x7E11EC] IAT 槽区
+——内核 [0x7E11A4]/[0x7E11B0] 同 .rdata 槽区邻近段。
+★batch 111/952/1005：0x7CAAE4 家族（异常运行时）→ exit 收尾链
+（atexit 链表 call）运行期交叉——异常退栈与正常退出汇聚于同一
+CRT 收尾机制。
+★_pick_945：IAT/锁家族排除——0x7CBDED 依赖方纳入同边界。
+
+五、状态
+-------
+crt_runtime_verified（0x7CBDED：exit() 家族薄包装归档；17B 全读 +
+内核 batch 058 交叉 + 后邻 0x7CBDFE/0x7CBE0D 两变体并入登记；不写
+C++ 模型不做 golden——MSVC6 CRT exit 家族商业库层；函数精确名与
+变体标识为推断交叉标注）。TSV 新增 0x007CBDED 行。
+
+★本批实锤：CRT 扇入度 3 的 0x7CBDED = exit() 家族薄包装
+（0x7CBE1C(exitcode, 1, 0) 三参转发，cdecl add esp,0xC），内核
+0x7CBE1C 已 batch 058 登记（atexit 注册本体 + 收尾链表调用），按
+商业库层纪律归档 crt_runtime_verified；后邻 0x7CBDFE/0x7CBE0D 同
+族变体并入登记。
+相邻待续：batch 1007 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_list_real_pending.py——候选 0x7C3960 36B
+/ 0x7C30D0 349B / 0x7CBF49 22B / 0x7C3230 58B / 0x7C3690 41B 等）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1005 已完（CRT RTTI 指针调整器 0x7CAEF1，commit ca808f9）。
