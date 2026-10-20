@@ -1,0 +1,134 @@
+frontier batch 971 —— CRT fputc 0x7CE18D（登记升级）
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序（0x7CE18D = 7 uc / 280B / 未 REIMPL；batch 003 首登记
+semantics_verified「Buffered stream write/flush state transition」+
+batch 052 补全语义「流写单字符（带缓冲 + 底层写 + 错误标志；窄写原子
+链全闭合）」）。本批 = 依赖链补全确认（0x7D0D55 缓冲写 + 0x7D7638
+底层写 + 0x7D7754/0x7D7710 句柄表 + 0xB78A80 句柄映射表 + 流槽标志
+族）→ 按商业库层归档 **crt_runtime_verified**（与 batch 970 FILE 关
+闭 0x7CA75B 同族同纪律）。
+TARGET = 0x007CE18D。C++ 模型：无（FILE 设施留桩边界——见「三态判
+定」）。TSV：更新 0x007CE18D 两既有行（batch 003 英文首登记 + batch
+052 中文语义补全）为 crt_runtime_verified。
+
+一、链语义（disasm 全 280B 复核）
+------------------------------------------------
+0x7CE18D(280B) = MSVC6 CRT fputc（0x7C-0x7D 静态 CRT 区）——cdecl 2
+栈参 (c, FILE*)，单字符写入带缓冲流：
+  push ebp / mov ebp,esp / push ebx / push esi
+  mov esi,[ebp+0xC]（FILE* 流槽）/ mov eax,[esi+0xC]（标志字）/
+  mov ebx,[esi+0x10]（缓冲指针）
+  test al,0x82（_IOERR|_IOEOF）→ je 0x7CE299（★无错 → 继续）
+    je 不跳 → 0x7CE299: or al,0x20（置 _IOERROR）/ mov [esi+0xC],eax
+      → or eax,-1（返 -1 EOF）
+  test al,0x40（_IOSTRG 字符串流）→ jne 0x7CE299（★字符串流同 EOF）
+  test al,1（_IOOPEN）→ je 0x7CE1C5（未打开 → 跳过复位）
+    and [esi+4],0（★清读写位置）
+    test al,0x10（_IOFLRTN）→ je 0x7CE299（★已 flush 标志 → EOF 分支？
+      实际为条件复位）
+    mov ecx,[esi+8] / and al,0xFE / mov [esi],ecx / mov [esi+0xC],eax
+      （★缓冲基址 → 游标，清 _IOOPEN 位）
+  0x7CE1C5（主路径）：
+    mov eax,[esi+0xC] / and [esi+4],0 / and dword [ebp+0xC],0
+    and al,0xEF（清 _IOFLRTN）/ or al,2（置 _IOOPEN）/ mov [esi+0xC],eax
+    test ax,0x10C（_IOFLRTN|_IOBINARY）→ jne 0x7CE1FF（★需 flush/二进制）
+    cmp esi,0x87BF70 → je 0x7CE1ED / cmp esi,0x87BF90 → jne 0x7CE1F8
+      （★★stdout/stderr 特槽？实际为 _iob 首两槽推断未确认）
+    0x7CE1ED: push ebx / call 0x7D7754（★★句柄表操作——batch 048
+      0x7D7754/0x7D7710 同层）/ pop ecx / jne 0x7CE1FF（成功跳过）
+    0x7CE1F8: push esi / call 0x7D7710（★★句柄表操作）/ pop ecx
+  0x7CE1FF（写路径核心）：
+    test word [esi+0xC],0x108（_IOFLRTN|_IOBINARY 宽判）→ je 0x7CE26F
+      （非缓冲/需 flush）
+    ★缓冲直写：eax=[esi+8]/edi=[esi]（游标-缓冲基）/sub/lea [eax+1]/
+      mov [esi],ecx（游标+1）/mov [esi+4],ecx（[esi+0x18] 减 1 余量）
+      test edi,edi → jle 0x7CE22F（★缓冲空 → 直接落字节）
+      push edi/push eax/push ebx → call 0x7D0D55（★★缓冲写设施——
+        batch 970 同 0x7D 段 FILE 层）/mov [ebp+0xC],eax
+      0x7CE22F: cmp ebx,-1 → je 0x7CE24D（★无底层 fd）
+        sar/and 索引 [ecx*4+0xB78A80]（★★句柄映射表）+ lea 组合 →
+        test byte [eax+4],0x20 → je 0x7CE265
+        push 2/push 0/push ebx → call 0x7D7638（★★底层写设施 fd）
+      0x7CE265: mov eax,[esi+8] / mov cl,[ebp+8] / mov [eax],cl
+        （★字符入缓冲）
+      0x7CE283: cmp [ebp+0xC],edi → je 0x7CE28F（成功）
+        or dword [esi+0xC],0x20（_IOERROR）→ or eax,-1（返 -1）
+      0x7CE28F: mov eax,[ebp+8] / and eax,0xFF（★返字符低 8 位）
+      0x7CE299: or al,0x20 / mov [esi+0xC],eax / or eax,-1
+  收尾：pop 族 / leave / ret（cdecl 2 参弹 8B）
+  0x7CE26F（非缓冲路径）：push 1/push [ebp+8]/push ebx → call 0x7D0D55
+    （★单字节缓冲写）/cmp [ebp+0xC],edi → 同错误处理
+
+★语义（batch 052 名准）：**流写单字符（fputc）**——标志字多种组合
+状态机：错误位/字符串流 → EOF；打开态复位 → 缓冲直写（满则 flush）
+或非缓冲单字节写 → 失败置 _IOERROR 返 -1 / 成功返字符低 8 位。
+★原版怪癖（照抄）：①错误位 _IOERR/_IOEOF/_IOSTRG 任一命中即 or
+0x20（_IOERROR）+ 返 -1——**错误位写回再清** 语义；②字符返回值为
+低 8 位（and eax,0xFF）——高位丢弃；③缓冲空（edi<=0）时不走
+0x7D0D55 而直接落字节 + 可选 0x7D7638 底层写；④句柄映射表 0xB78A80
+按 (fd>>5) 行 + (fd&0x1F) 列取槽。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7D0D55/0x7D7638/0x7D7754/0x7D7710 = FILE 缓冲写/底层写/句柄
+    表操作设施——batch 048/970 已交叉（0x7D 段 CRT FILE 层）；
+  ② 0xB78A80 = 句柄映射表（fd 索引）——0x7CE238-0x7CE248 实锤
+     (fd>>5)×4 + (fd&0x1F)×9×4 槽式计算；
+  ③ 流槽标志字：0x01 _IOOPEN/0x02 _IOFLRTN 变体/0x10 _IOFLRTN/
+     0x20 _IOERROR/0x40 _IOSTRG/0x80 _IOEOF/0x108 组合（batch 045/
+     046/049/970 反复出现）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：商业库层归档，不写 C++ 模型
+不做对拍；batch 003/052 语义已登记，本批补依赖链全段复核）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 代码区归属：0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance 实锤）——非 Westwood 手写逻辑。
+2. FILE 设施依赖：写路径核心全部下沉 0x7D0D55/0x7D7638/0x7D7754/
+   0x7D7710（缓冲写/底层写/句柄表操作）+ 0xB78A80 句柄映射表——FILE*
+   与 _iob 表是 CRT 运行时设施，重写用等价 std::fputc/fwrite 代替。
+3. 流锁隐含：写路径经句柄表（0x7D7754/0x7D7710，batch 048 与流锁对
+   关联）+ 底层写（0x7D7638 内部锁）——线程同步语义在单线程 C++
+   模型下无可观测行为。
+4. gamemd_replication_discipline：商业库只 dump 汇编、重写时用等价
+   运行时代替。
+→ 状态：crt_runtime_verified（batch 003/052 语义 + 本批 280B 全段依
+赖链复核；0x87BF70/0x87BF90 特槽精确身份（_iob 首槽推断）、0x7D0D55
+内部锁族行为未完全确认——推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 003：0x7CE18D 首登记（Buffered stream write/flush state
+transition，semantics_verified）——本批升级归档。
+★batch 052：0x7CE18D 语义补全（流写单字符，窄写原子链全闭合）——
+本批合并归档。
+★batch 048：0x7D7754/0x7D7710 句柄表后端——fputc 特槽/默认路径交叉。
+★batch 970：0x7CA75B FILE 关闭归档——同 FILE 设施族（0x7D0D55 与
+0x7CB1F9 flush 域交叉、0x7D2B54/0x7D2A74 与 0x7D7638/0x7D0D55 同
+0x7D 段 FILE 层）。
+★batch 045/046/049：流槽标志字域（_IOFLRTN/_IOERROR/_IOSTRG 等）——
+fputc 状态机交叉。
+★batch 048（0x7D 段句柄表后端）：0xB78A80 映射表交叉。
+★ra2_code_region_layout_crt_provenance：0x7C-0x7D = MSVC6 静态 CRT。
+
+五、状态
+-------
+crt_runtime_verified（0x7CE18D：CRT fputc 归档；batch 003/052 语义 +
+本批 280B 全段依赖链复核；不写 C++ 模型不做 golden——FILE 设施商业
+库层）。TSV 行 0x007CE18D 两既有行更新。
+
+★本批实锤：CRT 扇入度 7 的 0x7CE18D = fputc（单字符写 FILE 流）——
+标志状态机（错误/字符串流 → EOF，打开复位 → 缓冲直写/非缓冲单字节）
+全 280B 复核；依赖链（0x7D0D55 缓冲写 + 0x7D7638 底层写 + 0x7D7754/
+0x7D7710 句柄表 + 0xB78A80 句柄映射表 + 流槽标志族）完整确认，按商
+业库层纪律归档 crt_runtime_verified（与 batch 970 FILE 关闭同族）。
+相邻待续：batch 972 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_pick_945.py——候选 0x7CD917 __amsg_exit
+34B / 0x7CB4CC 56B / 0x7C897A WSAGetLastError 6B / 0x7C9380 __aulldiv
+104B 等）。
+依赖模型：无（归档不落 C++）。
+承前：batch 970 已完（CRT FILE 关闭 0x7CA75B，commit be26889）。
