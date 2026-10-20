@@ -1,0 +1,122 @@
+frontier batch 1043 —— _itoa 家族 0x7D46B9/0x7D473F/0x7D4715（REIMPL）
+============================================
+
+候选来源：batch 1041/1042 预告「7C 区候选清空，转入 7D 区扩扫」；
+ranking.tsv 7D 区未登记候选按 unique_callers 扇入度排 → 0x7D473F
+（27B, uc=3 最高）。本批 = 家族拓展开采：0x7D473F 是 `_ultoa` 薄
+包装，追踪被调发现共享核心 **0x7D46B9**（92B 纯内存零子调用零全
+局 _itoa 格式化器）与兄弟包装 **0x7D4715**（42B `_ltoa`）——三件
+套 + 已登记 0x7D468C（batch 023）构成完整 _itoa 家族。
+TARGET = 0x007D46B9（核心 REIMPL）+ 0x007D473F（`_ultoa`
+REIMPL）+ 0x007D4715（`_ltoa` REIMPL）。
+C++ 模型：code/rewrite/runtime/crt_itoa.{h,cpp}
+（itoa_core_legacy + ultoa_legacy + ltoa_legacy）。单测：
+test_crt_itoa.cpp（7 组：3 golden 对拍 + 3 怪癖显式 + 1 snprintf
+交叉参考）。TSV 新增 3 行。
+
+一、链语义（disasm 全段复核 + golden 32 用例实证）
+------------------------------------------------
+**0x7D46B9（92B）核心**，cdecl 4 栈参 (value, buffer, radix,
+sign)：
+  ① sign!=0 → `mov byte [ecx],0x2d`（'-'）/ `inc ecx` /
+     `neg esi`（★无条件无符号取负）；sign==0 → value 位型原样；
+  ② 0x7D46D6 `mov edi,ecx` = 数字区起点（负号之后）；循环：
+     `mov eax,esi / xor edx,edx / div radix`（div1 商 eax/余
+     edx）→ `mov eax,esi`（★eax 重置，div1 商丢弃）→
+     `mov ebx,edx`（★余数经 ebx 保留）→ `xor edx,edx / div
+     radix`（★div2 重算商，edx 同样重算但不用）→
+     `cmp ebx,9 / mov esi,eax`（★esi = div2 商）→
+     `jbe 0x7D46F4`：余>9 → `add bl,0x57`（★0x57+'9'+1 = 'a'，
+     小写 hex）/ 余<=9 → `add bl,0x30` →
+     `mov [ecx],bl / inc ecx` / `test esi,esi / ja`（商!=0 循环）；
+  ③ `and byte [ecx],0`（NUL）→ `dec ecx`（★ecx = 最后一个数字）；
+  ④ 反转循环（do-while 先执行一次）：`mov dl,[edi] /
+     mov al,[ecx]`（★al = 残留读取 — 与 edi 交换）→
+     `mov [ecx],dl / mov [edi],al / dec ecx / inc edi` /
+     `cmp edi,ecx / jb`（无符号 edi < ecx）；
+  ⑤ 返回 eax = 反转循环最后一次 `mov al,[ecx]` 的低字节
+     （高 24 位 = div 循环退出时商残值 0）——调用方自恢复
+     buffer 指针，核心返回约定不依赖。
+
+**0x7D473F（27B）`_ultoa(value, buffer, radix)`**：恒 sign=0 第
+4 参补 0 → 调核心 → 返回 buffer（`mov eax,[esp+0x18]` 重读参2）。
+**0x7D4715（42B）`_ltoa(value, buffer, radix)`**：
+`sign = (radix==10 && value<0) ? 1 : 0`（`cmp [ebp+0x10],0xa /
+jne` + `cmp [ebp+8],0 / jge` 判定）→ 调核心 → 返回 buffer。
+
+★原版怪癖（golden 32 用例实证，照抄）：
+  ① div 两遍冗余——div1 商被 `mov eax,esi` 丢弃、余数经 ebx 保
+     留，div2 重算商进 esi（edx 重算但不用）——数学等价、寄存器
+     节奏不同；
+  ② sign!=0 无条件 neg（**正数也翻转**——golden:
+     2147483647, radix=10, sign=1 → "-2147483649"）；
+  ③ sign==0（_ultoa 恒真）按无符号位型除——golden:
+     -12345, radix=10 → "4294954951"；
+  ④ 余数 >9 → +0x57 小写 hex——golden: 0xABCDEF → "abcdef"；
+  ⑤ 反转 do-while 先执行一次（与 0x7D468C batch 023 同构）；
+  ⑥ 核心 eax = 反转残留（调用方不用，返回 buffer 由包装重读）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7d46b9.py（ItoaCoreOracle，Unicorn
+按原 ImageBase 映射后真身跑 0x7D46B9）+ _golden_7d473f.py
+（WrapperOracle 跑 0x7D473F / 0x7D4715）。对拍点：写出的
+buffer 64 字节 + 核心 eax 残留（32 位低 8 位）。32 用例落盘：
+  deadcode_7d46b9_golden.txt（12 用例）——CASE value=..
+    radix=.. sign=.. -> eax=0x%08x BUF=<hex 64B>；含 INT_MIN/
+    INT_MAX/负值/hex/二进制/八进制/零；
+  deadcode_7d473f_golden.txt（10 用例）——_ultoa 无符号位型；
+  deadcode_7d4715_golden.txt（10 用例）——_ltoa 负号判定 +
+    radix!=10 无符号 hex（-12345,16 → "ffffcfc7"）。
+  全部用例断言在采集脚本内闭环（eax + buffer 逐字节）。
+
+三、C++ 模型（code/rewrite/runtime/crt_itoa.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。三函数：
+  itoa_core_legacy(int32 value, char* buffer, int32 radix,
+    int32 sign) -> uint32（eax 残留）——div 两遍（ebx 余 + esi
+    商分开步进）、neg 无条件、+0x57 小写 hex、do-while 反转全
+    照抄；
+  ultoa_legacy(uint32 value, ...) -> char*——恒 sign=0；
+  ltoa_legacy(int32 value, ...) -> char*——sign 判定 + buffer
+    返回。
+无失败路径、无额外校验。结构 = 原版 161B 控制流逐条照抄。
+★MSVC 坑实记：char*→uintptr_t 需 reinterpret_cast（MSVC 禁
+static_cast 指针→整型）。
+
+四、单测（test_crt_itoa.cpp，全量 84 项之一）
+------------------------------------------------
+7 组测试：
+  ItoaCore.GoldenMatches（12 用例 buffer 64B + eax 逐位对拍）、
+  ItoaCore.Quirks（6 怪癖显式断言：无条件取负/-ultoa 无符号/
+    小写 hex/INT_MIN 自反/零/2·8 进制）、
+  ItoaCore.ReferenceCrossCheck（snprintf %d/%x/%o 交叉）、
+  UltOa.GoldenMatches（10 用例 + 返回 buffer 断言）、
+  UltOa.Quirks、Ltoa.GoldenMatches、Ltoa.Quirks。
+★单测两轮修复记录：
+  ① 构建失败 3 处：static_cast 指针→uintptr_t（MSVC C2440，改
+     reinterpret_cast）；fopen 收 std::string（补 .c_str()）；
+     花括号初始化列表 in range-for（MSVC C3535/C2398，改显式
+     数组 + INT_MIN 用 -2147483647-1 防溢出字面量警告）；
+  ② golden 解析：CASE 行 p[1] 起 "value=" 前缀 6 字符、
+     p[5]+4 取 eax hex、p[6].substr(4) 取 BUF hex——与 batch
+     1027/1030 同构（windows text 模式 \r 由 TrimCr 剥）。
+  预期 3 golden 对拍 + 3 怪癖 + 1 参考，全量 ctest 84/84 全绿
+  （crt_itoa #85 新增）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified（3 函数）。
+golden 32 用例逐位一致（REIMPL 判据：纯内存零子调用零全局，
+三件套互调构成闭合家族——核心被两个包装引用、包装零外部依赖，
+完整 REIMPL 而非归档）。
+
+★本批实锤：7D 区首个 REIMPL——_itoa 家族共享核心 + 双薄包装，
+golden 32 用例实证怪癖 6 条（div 两遍冗余/无条件取负/无符号位
+型/小写 hex/do-while 反转/eax 残留）。
+相邻待续：batch 1044 按 ranking.tsv unique_callers 取下一未登
+记 CRT 项（7D 区剩余：0x7D461E(110B)/0x7D45DF(63B, __mbsnbicoll
+已命名)/0x7D571F(114B)/0x7C9FD9(23B)/0x7D8C6B(208B)）。
+依赖模型：无外部依赖（闭族）。
+承前：batch 1042 已完（HeapSegment 0x7CF7E8 全段补证升级，
+commit a24ba90）。

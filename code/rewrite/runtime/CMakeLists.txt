@@ -31,6 +31,7 @@ add_library(ra2_runtime
   crt_aulldiv.cpp
   crt_alldiv.cpp
   crt_strncat.cpp
+  crt_itoa.cpp
   crt_wcsncat.cpp
   facing.cpp
   ra2_string.cpp
@@ -290,4 +291,15 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_crt_wcsncat PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME crt_wcsncat COMMAND test_crt_wcsncat)
+
+  # _itoa 家族（0x7D46B9 核心 + 0x7D473F _ultoa + 0x7D4715 _ltoa），
+  # golden 由 Unicorn 指令级模拟取得（deadcode_7d46b9_golden.txt 12 用例
+  # + deadcode_7d473f_golden.txt 10 用例 + deadcode_7d4715_golden.txt 10
+  # 用例；纯内存零子调用零全局，div 两遍冗余 + 余>9 小写 hex + neg 无条
+  # 件取负全真身）
+  add_executable(test_crt_itoa test/test_crt_itoa.cpp)
+  target_link_libraries(test_crt_itoa PRIVATE ra2_runtime gtest_main)
+  target_compile_definitions(test_crt_itoa PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME crt_itoa COMMAND test_crt_itoa)
 endif()
