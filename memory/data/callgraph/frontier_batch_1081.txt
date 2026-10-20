@@ -1,0 +1,93 @@
+frontier batch 1081 —— CRT FPE 状态查询桩 0x7DBC57（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DBC57（3B,
+uc=2, callers=2 池顶）。TSV 无既有行。
+TARGET = 0x007DBC57。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007DBC57 行。
+
+一、链语义（disasm 全 3B 复核，0x7DBC57-0x7DBC59）
+------------------------------------------------
+007dbc57  33c0                     xor eax, eax
+007dbc59  c3                       ret
+
+★语义：**CRT FPE 状态查询桩（推断名——恒返回 0 的状态
+查询函数）**——cdecl 1 参（param1 忽略，恒返回 0）：
+
+★两个调用点现场（E8 rel32 全 exe 扫描实锤）：
+  ① 0x7D8D24（batch 1049 区——FPE 异常分发器 0x7D8C6B
+     尾段）：
+       cmp [esi],8 → je 0x7d8d2e
+       cmp [0x87d700],0 → jne 0x7d8d2e   ; ★FPE 门控
+       push esi; call 0x7dbc57           ; ★本批（param1=esi）
+       test eax,eax; pop ecx
+       jne 0x7d8d36                      ; ★返回非 0 → 跳过
+       push [esi]; call 0x7dbbdd         ; ★★返回 0 → 走 FPE
+                                         ;   分发尾 0x7DBBDD
+  ② 0x7DBBA7（batch 1070 区——浮点解析包装器尾段）：
+       call 0x7dbc77                     ; ★fnstcw/fldcw 控
+                                         ;   制字族
+       lea eax,[ebp-0x20]; push eax
+       call 0x7dbc57                     ; ★本批
+       add esp,0xc
+       test eax,eax; jne 0x7dbbba        ; ★返回非 0 → 跳过
+       push esi; call 0x7dbbdd           ; ★★返回 0 → 走分发尾
+
+★原版怪癖（照抄）：
+  ① 恒返回 0（xor eax,eax; ret 裸桩——状态查询恒报无异常）；
+  ② 忽略参数（cdecl 1 参压入但不读——编译器保留调用点
+     参数槽）；
+  ③ 两调用点都在 [0x87D700] FPE 门控链内，返回 0 决定是否
+     走 0x7DBBDD 分发尾（0x7DBBDD 非 0 分支恒死代码）。
+
+★依赖链实锤（本批 disasm + E8 扫描 + TSV 交叉）：
+  ① 0x7D8D24 = batch 1049 已登记 FPE 异常分发器区调用现场；
+  ② 0x7DBBA7 = batch 1070 已登记浮点解析包装器区调用现场；
+  ③ 0x7DBBDD = FPE 分发尾（batch 1065/1070 同链）——本批
+     返回 0 即进入；
+  ④ 0x7DBC77 = fnstcw/fldcw 控制字族（紧邻，未登记）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT FPE 状态桩属商
+业库层，不写 C++ 模型；3B 全读 + 双调用点交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DBC57 = MSVC6 CRT FPE 状态查询桩——0x7C-0x7D =
+   MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）。
+2. 依赖：FPE 链（[0x87D700] 门控 + 0x7DBBDD 分发尾）——
+   重写 gamemd 时用等价运行时（_statusfp/feclearexcept）
+   代替。
+3. gamemd_replication_discipline：CRT FPE 状态查询设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（3B 全读 + 双调用点交叉；函
+数名「FPE 状态查询桩」为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1049：0x7D8C6B FPE 异常分发器——调用点 0x7D8D24
+  本批调用现场（门控 [0x87D700] 后查询状态）。
+★batch 1065/1070：0x7DB5E6/0x7DB4EE FPE 检查-转换包装器
+  ——调用点 0x7DBBA7 本批调用现场 + 0x7DBBDD 分发尾同一链。
+★batch 1075：0x7DBC2A FPE 状态码映射器——紧邻（0x7DBC57
+  即其函数结束地址），同 FPE 状态族（映射器 45B + 本批
+  3B 桩）。
+
+五、状态
+-------
+crt_runtime_verified（0x7DBC57：CRT FPE 状态查询桩归档；3B
+全读 + 双调用点交叉；不写 C++ 模型不做 golden——CRT FPE
+商业库层；函数名「FPE 状态查询桩」为推断交叉标注）。TSV
+新增 0x007DBC57 行。
+
+★本批实锤：3B 恒返 0 状态桩——FPE 链内 [0x87D700] 门控后
+调用，返回 0 决定是否走 0x7DBBDD 分发尾（两调用点全在
+batch 1049/1070 已登记 FPE 族内）。
+相邻待续：batch 1082 按 _scan_pending_7c.py 取池内下一未登
+记项（uc=1：0x7D3A6D(2767B)/0x7C7371(2693B)/0x7D170D(2597B)
+大函数宿主；或 0x7D4FCC(428B)/0x7D140B TLS 宿主独立登记）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1080 已完（CRT 流字符读取器薄包装，commit
+1dd6cb5）。
