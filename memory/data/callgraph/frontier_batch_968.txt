@@ -1,0 +1,108 @@
+frontier batch 968 —— CRT tolower 0x7CAFF4（登记升级）
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序（0x7CAFF4 = 7 uc / 111B / 未 REIMPL；batch 244 已登记
+semantics_verified + assembly_verified_semantics_confirmed，名
+「CRT::tolower 双层实现」）。本批 = 依赖链补全（0x7CB063 tolower 内
+核 batch 958 归档交叉 + 锁家族/IAT 实锤）→ 按商业库层归档
+**crt_runtime_verified**。
+TARGET = 0x007CAFF4。C++ 模型：无（锁家族 + IAT 留桩边界——见「三态
+判定」）。TSV：更新 0x007CAFF4 行。
+
+一、链语义（disasm 全 111B 复核）
+------------------------------------------------
+0x7CAFF4(111B) = MSVC6 CRT tolower（0x7C-0x7D 静态 CRT 区）——
+cdecl 1 栈参（字符 c），双层实现：
+  快路径（[0xB782A0]==0，C locale）：
+    cmp [0xB782A0],ebx（xor ebx,ebx）→ jne 0x7CB012（★locale 门
+      非 0 → 慢路径）
+    mov eax,[esp+8]=c → cmp eax,0x41/jl 0x7CB061（<'A'→原样返）/
+    cmp eax,0x5A/jg 0x7CB061（>'Z'→原样返）/add eax,0x20（★A-Z→
+    a-z +0x20）→ pop ebx/ret
+  慢路径（0x7CB012，locale 激活）：
+    push esi/edi/mov esi,0xB78BA4（★CRT 临界区对象）
+    push esi/call [0x7E11C8]（★★IAT 导入槽——lock 回调，
+      batch 238 同 .rdata 槽区）
+    cmp [0xB78BA0],ebx（★锁计数）→ mov edi,[0x7E11CC]（★unlock
+      回调指针）
+    je 0x7CB03C → push esi/call edi（unlock）→ push 0x13/
+    call 0x7CD9F5（★★锁家族——batch 244 推断 CRT 临界区包装，
+      _pick_945 留桩边界项）
+    push 1/pop ebx（★已持锁标记）
+    0x7CB03C: push [esp+0x10]=c → call 0x7CB063（★★tolower 内核
+      ——batch 958 已归档 crt_runtime_verified）→ test ebx/pop ecx/
+      mov [esp+0x10],eax/je 0x7CB058 → push 0x13/call 0x7CDA56
+      （★unlock 配对）
+    0x7CB058: push esi/call edi → 0x7CB05B: mov eax,[esp+0x10]/
+    pop 族/ret
+★语义：**CRT::tolower 双层**——[0xB782A0] locale 门为 0 时 A-Z →
++0x20 直返（快路径）；非 0 时经 [0x7E11C8] 取锁 → 调 0x7CB063 慢版
+（batch 958 归档的 tolower 内核）→ 解锁返值。
+★原版怪癖（batch 244 已录，本批复核）：①双层同构（0x7CAFF4 与
+0x7CB063 各有一段 A-Z→+0x20）；②locale 门 [0xB782A0] 被判两次
+（外层 + 内核内）；③lock/unlock 用导入槽间接调用 [0x7E11C8]/
+[0x7E11CC] + 0x7CD9F5/0x7CDA56（CRT 临界区包装）；④返回值经
+mov [esp+0x10],eax 栈传递（锁内局部量）。
+
+★依赖链实锤（本批 disasm 复核）：
+  ① 0x7CB063 = tolower 内核——batch 958 已归档 crt_runtime_verified
+     （locale 表路径 [0xB78BA0] 未读完 partial，本批 0x7CAFF4 调用
+     现场交叉）；
+  ② [0x7E11C8]/[0x7E11CC] = IAT 导入槽成对锁槽（batch 238 同
+     .rdata 槽区 [0x7E11BC]/[0x7E11E0] 等）——lock/unlock 回调；
+  ③ 0x7CD9F5/0x7CDA56 = 锁家族（batch 244 推断，_pick_945 留桩
+     边界项）——慢路径 Enter/Leave 配对；
+  ④ [0xB78BA0]/[0xB78BA4] = locale 表/临界区对象（batch 244）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：商业库层归档，不写 C++ 模型
+不做对拍；batch 244 语义已登记，本批补依赖链交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 代码区归属：0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance 实锤）——非 Westwood 手写逻辑。
+2. 锁家族边界：慢路径直接依赖 0x7CD9F5/0x7CDA56（_pick_945 显式
+   排除的留桩边界项）+ IAT [0x7E11C8]/[0x7E11CC]——线程同步语义
+   在单线程 C++ 模型下无可观测行为（structural_equivalence 锁例
+   外合法：单线程不建模 CRITICAL_SECTION）。
+3. gamemd_replication_discipline：商业库只 dump 汇编、重写时用等价
+   运行时代替；tolower 由 MSVC CRT 提供（batch 958 内核已归档，
+   本批外层包装同纪律）。
+→ 状态：crt_runtime_verified（batch 244 语义 + 本批 0x7CB063 归档
+交叉；[0x7E11C8]/[0x7E11CC] 精确 API 名与 0x7CD9F5/0x7CDA56 身份
+batch 244/238 推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 244：0x7CAFF4 首登记（CRT::tolower 双层，semantics_verified
++ 0x7CB090 起 locale 表路径 partial）——本批升级归档。
+★batch 958：0x7CB063 tolower 内核归档 crt_runtime_verified——
+0x7CAFF4 慢路径调用现场交叉（内核身份实锤）。
+★batch 238：IAT 槽区 [0x7E11BC] CreateFileA/[0x7E11E0] CloseHandle
+等——本批 [0x7E11C8]/[0x7E11CC] lock/unlock 槽同区交叉。
+★batch 093/135：strcmpi 同 locale 门 [0xB782A0]、0x7B5B30 消费
+0x7CAFF4——locale 族共用。
+★batch 169：0x7C-0x7D 静态 CRT 层。
+★_pick_945：锁家族排除逻辑（0x7CD9F5/0x7CDA56 留桩边界）——
+0x7CAFF4 慢路径纳入同边界。
+★ra2_code_region_layout_crt_provenance：0x7C-0x7D = MSVC6 静态 CRT。
+
+五、状态
+-------
+crt_runtime_verified（0x7CAFF4：CRT tolower 双层归档；batch 244 语义
++ 本批 0x7CB063 内核归档交叉；不写 C++ 模型不做 golden——锁家族 +
+IAT 边界 + 商业库层）。TSV 行 0x007CAFF4 更新。
+
+★本批实锤：CRT 扇入度 7 的 0x7CAFF4 = tolower 双层（C locale 快路径
+A-Z→+0x20 纯内存 + locale 慢路径 [0x7E11C8]/[0x7E11CC] IAT 锁 →
+0x7CD9F5/0x7CDA56 锁家族 → 0x7CB063 内核）；与 batch 958 归档的
+0x7CB063 构成 外层包装+内核 双层结构；locale 门被判两次 + 锁在栈传
+参——全链依赖实锤，按商业库层纪律归档 crt_runtime_verified。
+相邻待续：batch 969 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_pick_945.py——候选 0x7CE18D 280B / 0x7CD917
+__amsg_exit / 0x7CB4CC / 0x7C9380 __aulldiv 等）。
+依赖模型：无（归档不落 C++）。
+承前：batch 967 已完（CRT _strrchr 0x7C8DF0，commit 476a6f6）。
