@@ -1,0 +1,145 @@
+frontier batch 1089 —— Westwood 像素格式转换器 0x7DE200（归档，0x7D 区混入样本）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DE200（725B,
+uc=1, callers=1 池顶）。TSV 无既有行。
+TARGET = 0x007DE200。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007DE200 行。
+
+⚠️ 归属说明：0x7DE200 位于 0x7D 区但实证为 **Westwood
+自有代码**（像素格式转换，被主代码区 blit 循环调用），
+非 MSVC6 CRT 商业库——延续 batch 1086/1087/1088 归属修
+正链（地址段不决定归属）。
+
+一、链语义（disasm 头/中/尾复核，0x7DE200-0x7DE4C8）
+------------------------------------------------
+调用现场（caller = 0x556344，Westwood 主代码区 blit
+循环）：
+00556331  mov ebp,[ebx+0x190]     ; ★源行指针
+00556337  push ebp
+00556338  push eax
+00556339  mov eax,[ebx+0x188]     ; ★目标行指针
+0055633f  push edx                ; ★乘数 R
+00556340  push ecx                ; ★乘数 G
+00556341  push esi                ; ★乘数 B
+00556342  push edi                ; ★宽度
+00556343  push eax
+00556344  call 0x7de200           ; ★★7 参调用（cdecl）
+00556349  add esp, 0x1c           ; ★清 7 参
+0055634c  add edi, 0x200          ; ★行步进 512 字节
+00556352  jmp 0x55649c            ; ★循环（逐行转换）
+  —— 孪生调用点 0x55636A 调 0x7DEBBA（同族变体）
+
+函数头部（0x7DE200-0x7DE2A0）：
+007de200  55                    push ebp
+007de201  8bec                  mov ebp, esp
+007de203  83ec08                sub esp, 8
+007de21a  cmp [0x84e862], 0     ; ★门控 1（MMX 可用标志）
+007de224  jne 0x7de2f0          ; → MMX 宽路径
+007de22c  cmp [0x84e860], 0     ; ★门控 2（SSE/增强标志）
+007de236  jne 0x7de3c0          ; → 标量 565 路径
+007de242  mov [ebp-8], 0xff     ; ★标量 555 路径初始化
+  …（三路分派：555 标量 / 565 标量 / MMX）
+
+标量 565 路径（0x7DE3C0-0x7DE437）：
+007de3c0  cmp byte[edx], 0
+007de3c3  movzx eax,[esi]       ; ★R 字节
+007de3c6  movzx ebx,[esi+1]     ; ★G 字节
+007de3ca  movzx ecx,[esi+2]     ; ★B 字节
+007de3d0  imul eax,[ebp+0x10]   ; ★每通道乘数
+007de3d4  imul ebx,[ebp+0x14]
+007de3d8  imul ecx,[ebp+0x18]
+007de3df  test eax,0xff000000
+007de3e4  cmovne eax,[ebp-4]    ; ★饱和钳制
+007de3fc  and eax,0xf80000      ; ★R→5 位
+007de401  shr eax,8
+007de404  and ebx,0xfc0000      ; ★G→6 位
+007de40a  shr ebx,0xd
+007de40d  and ecx,0xf80000      ; ★B→5 位
+007de415  shr ecx,0x13
+007de41b  stosw                 ; ★★写 16 位像素
+007de420  jne 0x7de3c0          ; ★循环
+007de429  ret
+
+MMX 路径（0x7DE2F0 起）：movq/mmx psrad 4（÷16 宽路
+径）——MMX 每轮 4 像素。
+
+★语义：**Westwood 像素格式转换器（推断名——RGB888 →
+RGB565/RGB555/16 位）**——cdecl 7 参（源指针/目标指
+针/宽度/R 乘数/G 乘数/B 乘数/行指针）：
+  ① 三路分派：门控 [0x84E862]（MMX）→ MMX 宽路径；
+     [0x84E860]（SSE/增强）→ 标量 565；全 0 → 标量 555；
+  ② 每通道独立乘数（imul [ebp+0x10]/[ebp+0x14]/
+     [ebp+0x18]）+ 饱和钳制（test/cmovne [ebp-4]）；
+  ③ RGB 位域打包（R 5 位 + G 6 位/5 位 + B 5 位 →
+     16 位 word 输出）；
+  ④ 被主代码区 blit 循环逐行调用（行步进 0x200）。
+
+★门控写入者实锤（E8 全 exe 扫描）：
+  [0x84E862] = 0x7C5FE7/0x7C5FF5（0x7C5FC0 区 CPUID 检
+  测——cpuid/test edx,0x800000 → MMX 标志）；
+  [0x84E860] = 0x7C6024/0x7C603A/0x7C6050（0x7C6000 区
+  CPUID 检测——cpuid/test edx,0x8000 → SSE 标志）；
+  四孪生读点：0x7DE20D/0x7DE547/0x7DE887/0x7DEBC7（本
+  批 + 0x7DE53A/0x7DE87A/0x7DEBBA 三个同族变体）。
+
+★原版怪癖（照抄）：
+  ① 三路分派由两个全局门控字节决定（CPU 特性检测写入
+     ——运行期 CPU 相关行为）；
+  ② 每通道独立乘数 + 饱和钳制（非标准 565 转换——带
+     调色板权重）；
+  ③ MMX psrad 4 宽路径（÷16——4 像素并行）；
+  ④ 编译器跳转表化（jne 循环 + 内联展开）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：Westwood 像素转
+换依赖 CPU 特性门控 + 乘数权重，重写时按语义等价实现，
+不做字节级 golden）。
+
+三、三态判定（为何 semantics_verified 而非 crt_runtime_verified）
+---------------------------------------------------------------
+1. 归属：0x7DE200 = **Westwood 自有代码**——①caller =
+   0x556344 主代码区 blit 循环（7 参 + 行步进 0x200 逐
+   行转换）；②RGB 位域打包 + 每通道乘数 = Westwood 调
+   色板/像素转换惯用；③三路 CPU 门控分派（MMX/SSE 特
+   化）——非 CRT 标准函数形态。
+2. 依赖：CPU 特性门控（[0x84E862]/[0x84E860]，写者 CRT
+   CPUID 检测 0x7C5FC0 区）——重写时按语义等价实现
+   （std::transform 或直写）。
+3. 复刻纪律：Westwood 自有代码——不按商业库归档；像素
+   转换非 RMG 管线依赖，保留 semantics_verified（调用
+   链语义闭合，不越级）。
+→ 状态：semantics_verified（caller 实锤 + 三路门控交叉；
+函数名「像素格式转换器」为推断交叉标注——565/555 位域
+打包由代码实测）。
+
+四、跨批次闭合
+------------
+★batch 1086/1087/1088：0x7C2590 VQA 解析器/0x7C0C80 表
+  面装载器/0x7C12B0 表面装载器——同 Westwood 像素/图像
+  域（本批转换器 + 装载器/解析器 = 渲染管线族）。
+★batch 1078：0x7DE0F1 CRT CreateFileA CONIN$——同 0x7D
+  区对照（0x7DE0F1 是 CRT 启动链 vs 本批 0x7DE200 是
+  Westwood 转换——同区混合，地址段不决定归属）。
+★batch 1075：0x7DBC2A FPE 状态码映射器——同 0x7D 区
+  CRT 对照。
+
+五、状态
+-------
+semantics_verified（0x7DE200：Westwood 像素格式转换器归
+档；caller 实锤 + 三路门控交叉；不写 C++ 模型不做
+golden——像素转换非 RMG 管线依赖；函数名「像素格式转
+换器」为推断交叉标注——565/555 位域打包由代码实测；
+⚠️ 0x7D 区混入 Westwood 代码样本，非全 CRT）。TSV 新
+增 0x007DE200 行。
+
+★本批实锤：0x7D 区混入 Westwood 像素转换（caller=主代
+码区 blit 循环 0x556344 + 三路 CPU 门控 + 565/555 位域
+打包），与 batch 1086-1088 渲染管线族同域。
+相邻待续：batch 1090 按 _scan_pending_7c.py 取池内下一
+未登记项（uc=1：0x7DE53A/0x7DE87A/0x7DEBBA 三孪生
+725B 同族——可并批登记/0x7CCFFC(719B, callers=2)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1088 已完（Westwood 表面装载器，commit
+a131d15）。
