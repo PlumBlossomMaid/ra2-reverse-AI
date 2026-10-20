@@ -29,6 +29,7 @@ add_library(ra2_runtime
   crt_strrchr.cpp
   crt_wcsncmp.cpp
   crt_aulldiv.cpp
+  crt_wcsncat.cpp
   facing.cpp
   ra2_string.cpp
   map_legal.cpp)
@@ -259,4 +260,13 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_crt_aulldiv PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME crt_aulldiv COMMAND test_crt_aulldiv)
+
+  # wcsncat（0x7CB504，宽串追加定长），golden 由 emu_oracle 指令级
+  # 模拟取得（deadcode_7cb504_golden.txt，10 用例；纯内存零子调用零
+  # 全局，扫 NUL + 复制 + Count 截断补 NUL 全真身）
+  add_executable(test_crt_wcsncat test/test_crt_wcsncat.cpp)
+  target_link_libraries(test_crt_wcsncat PRIVATE ra2_runtime gtest_main)
+  target_compile_definitions(test_crt_wcsncat PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME crt_wcsncat COMMAND test_crt_wcsncat)
 endif()

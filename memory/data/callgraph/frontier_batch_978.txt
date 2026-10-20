@@ -1,0 +1,100 @@
+frontier batch 978 —— CRT wcsncat 0x7CB504
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序，batch 977 之后取下一未复刻 CRT 项 = 0x7CB504（64B / 4
+unique callers / 未 REIMPL / 非锁家族非基础件）。2026-10-20 指令级
+golden 10 用例实证（_golden_7cb504.py，Unicorn 跑真身机器码——纯内
+存零子调用零全局，全程真身模拟）。
+TARGET = 0x007CB504。C++ 模型：code/rewrite/runtime/crt_wcsncat.{h,cpp}
+（函数名 wcsncat_legacy）。单测：test_crt_wcsncat.cpp（10 用例对拍 +
+边界 + 参照抽查）。TSV 新增 0x007CB504_REIMPL 行。
+
+一、链语义（disasm 全段复核 + golden 10 用例实证）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7CB504 = MSVCRT wcsncat（宽串
+追加定长）——cdecl 3 栈参 (dst, src, Count)，返回 dst（★eax 入口
+保存原始 dst 后全程不动即返回值）。
+  机器码（0x7CB504-0x7CB543，64B 全段）：
+    mov ecx,[esp+4]=dst / mov eax,ecx（★eax=原始 dst 备份=返回值）
+    扫 NUL 循环（0x7CB50A）：
+      mov dx,word[ecx]（★读 2 字节 u16）→ inc ecx ×2 → test dx,dx
+      → jne（★扫到 dst 尾 NUL，ecx 越过 NUL）
+    push ebx / mov ebx,[esp+0x10]=Count（★3 参 cdecl：dst/src/Count）
+    dec ecx ×2（★回退到 NUL 位置）
+    mov edx,ebx / dec ebx（★ebx=Count-1）
+    test edx,edx → je 0x7CB53D（★Count==0 → 直接 [ecx]=0 结尾）
+    复制循环（0x7CB527）：
+      mov dx,word[esi]（esi=src）→ mov word[ecx],dx（★写 dst 尾）
+      inc ecx ×2 / inc esi ×2（★双指针各 2B 步进）
+      test dx,dx → je 0x7CB541（★src 到 NUL → 自然终止，返回）
+      mov edx,ebx → dec ebx → test edx,edx → jne 循环（★Count 限制）
+    0x7CB53D: and word[ecx],0（★Count 耗尽 → 写 NUL 结尾）
+    0x7CB541: pop esi / pop ebx / ret（★eax=原始 dst 返回）
+
+★原版怪癖（golden 实证，照抄）：
+  ① eax 在入口保存原始 dst 后全程不动——返回 dst（标准
+     wcscat/wcsncat 语义；golden 逐用例 ret 校验实证）；
+  ② src NUL 时该 NUL 被复制进 dst（自然终止——golden src 提前 NUL
+     实证："ab"+src="c" count=5 → "abc"）；
+  ③ Count 耗尽时补写 NUL（即使 src 未完——golden Count 截断 "ab"+
+     "cdef" count=2 → "abcd" 实证）；
+  ④ Count==0 时仅写 NUL（[ecx]=0，原 dst 不变——golden 实证）；
+  ⑤ ebp 帧缺失（esp 直访——MSVC6 CRT 串函数惯用，与 batch 950/973
+     wcscmp/wcsncmp 同风格）；
+  ⑥ wcs 2B 步进（inc ×2 配对）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7cb504.py（WcsncatOracle；Unicorn 按原
+ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7CB504 全段——无子调
+用无桩；dst 区 0xCC 哨兵验证不越界写；cdecl ret 弹 12B 三参）。
+10 用例落盘 memory/data/rmg/deadcode_7cb504_golden.txt（CASE 行格式
+`CASE dst=<hex16> src=<hex16> count=<n> -> out=<hex16> ret=<hex32>`，
+dst/src 为 u16 序列含尾 0、hex16 每字符 2B 内存小端低位在前；out
+为 dst 区结果（含尾 NUL）；ret=原始 dst 指针低 32）：普通追加
+"ab"+"cd"/★Count 截断 "cd"→"ab"/★src 提前 NUL/★Count==0 dst 不变/
+空 dst/双空/长追加 Count 截断/大小写混合/高位值追加/Count=src 长。
+
+三、C++ 模型（code/rewrite/runtime/crt_wcsncat.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。单函数：
+  wcsncat_legacy(dst, src, count) —— 0x7CB504：
+    ret=dst（★eax 备份即返回值）；p=扫 dst 尾 NUL；
+    count==0 → *p=0 返回；复制循环：ch=*s；*p=ch；++p/++s；
+    ch==0 → 返回（★src NUL 自然终止）；--count==0 → break；
+    *p=0（★Count 耗尽补写 NUL）；返回 ret。
+  头注释含 64B 机器码全段 + 六怪癖。
+
+四、单测（test_crt_wcsncat.cpp，全量 81 项之一）
+------------------------------------------------
+CrtWcsncatTest：读 golden 原档（RA2_GOLDEN_DIR 宏）10 CASE + 3 项：
+  GoldenMatches（逐用例 dst 区结果一致 + ret==dst 校验）、
+  BoundaryCases（Count==0 dst 不变/空 dst/空 src/src NUL 提前/普通
+    追加 "ab"+"cd"→"abcd"）、
+  ReferenceCrossCheck（64 组伪随机 u16 串 × 随机 count vs 独立参照
+    实现——标准 wcsncat 语义）。
+解析：parse_hex16 先 find_first_not_of(' ') 剥前导空格（944 深坑防
+复发）；golden 行 tok 数 8（CASE dst=/src=/count=/->/out=/ret=0x），
+out 取 "->" 后一 tok（i+1）。预期 10 用例全量对拍 + 边界 + 参照交
+叉，ctest 80→81 全绿（#30 通过）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：无——纯内存零子调用零桩零全局，0x7CB504 全部 64B 真身模拟
+golden 对拍，无外部语义依赖。
+
+★本批实锤：CRT 扇入度 4 未复刻项 = wcsncat——MSVC6 宽串追加定长
+（扫 dst 尾 NUL + 复制最多 Count 字符 + Count 耗尽补 NUL/src NUL 自
+然终止 + eax 备份返 dst）；64B 纯内存操作，全程可真身模拟，无桩无
+全局。与 batch 949 wcsncpy / batch 950 wcscmp / batch 973 wcsncmp
+构成宽串家族第四成员（wcsncpy 拷贝、wcscat 追加、wcscmp 三态、
+wcsncmp 差值、wcsncat 定长追加——同 esp 直访 + 2B 步进 + NUL 判停
+惯用法）。
+相邻待续：batch 979 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_pick_945.py——候选 0x7CB1F9 92B FILE
+缓冲 / 0x7CBDDC 17B / 0x7CB673 _splitpath 327B 等）。
+依赖模型：无（纯内存零依赖）。
+承前：batch 977 已完（CRT printf 族带锁写模板 0x7CA7D8，commit
+495241c）。
