@@ -1,0 +1,118 @@
+frontier batch 1083 —— CRT _CVTBUF 浮点转 digit 核心引擎 0x7C7371（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7C7371（2693B,
+uc=1, callers=2 池顶）。TSV 无既有行。
+TARGET = 0x007C7371。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007C7371 行。
+
+一、链语义（disasm 头/中/尾复核，0x7C7371-0x7C7DF5）
+------------------------------------------------
+头部（0x7C7371-0x7C73E0）：
+007c7371  55                     push ebp
+007c7372  8bec                   mov ebp, esp
+                                          ; 6 寄存器保存（esi/edi/ebx/ecx/edx…）
+007c73d6  …                      mov ebx,[ebp+0x1c]    ; ★param4（ndigits?）
+                                          ; mov cx,[ebp+0x10]  ← 16 位 param2
+                                          ; mov dx,[ebp+0x14]  ← 16 位 param3
+007c73e8  …                      cmp cx,8              ; ★cx=8：十进制 double
+                                          ; cmp cx,0x10         ; ★cx=0x10：十进制
+                                          ;   long double —— 主路径
+                                          ; cmp dx,2 / cmp dx,1  ; ★dx=2 BINARY /
+                                          ;   dx=1 HEX 次进制
+007c73f8  …                      jmp dword[ebx*4+0x7c7778]  ; ★★跳转表 1
+                                          ;   （8 入口 0x7C73E2/0x7C73F8/0x7C7408/
+                                          ;     0x7C7418 + 4 个伪目标——表尾越界，
+                                          ;     对应 digit 分组 0/1/2/3 移位路径）
+中段：三个 `sub ebp,x; push ebp; shr ebp,4; inc ebp` 分支
+      ——digit 按 4 位分组（每轮 4 bit 查表）
+      `add eax,[edx*2+0x879b30]`（★表 3：word 元素
+      0,1,3,4,7,8,10,11…——平方 digit 偏移）
+      `mov [edi],ax` / `add edi,2`（写 word 输出）
+      `mov dx,[edx+0x87b170]`（★表 1：word 元素
+      0,64,128,192,256 重复——digit 周期）
+      `or dl,[ebx+0x87bc90]`（★表 2：byte 元素
+      0,2,4,…,30——digit×2 半字节位）
+      `cmp eax,0x7fff; jg` / `cmp eax,0xffff8000; jl`
+      （★16 位饱和钳制 -32768..32767）
+尾部（0x7C7DC0-0x7C7DF5）：一排 `mov eax,0x7fff / jmp`
+      / `mov eax,0xffff8000 / jmp` 展开块（钳制出口），
+      后接 `add edx,[eax*2+0x87b170]`（表 2 二段）
+
+★语义：**CRT `_CVTBUF`（浮点→digit 串转换核心——推断
+名）**——cdecl 变参（param1=输出缓冲、param2/param3=16
+位进制参数、param4=ndigits）：MSVC6 CRT _cvt 家族
+（_ecvt/_fcvt/_gcvt/sprintf %e%f%g 共用）的进制转换引
+擎——cx=8（__CVTFIRST_DECIMAL double）/cx=0x10（十进制
+long double）主路径，dx=1（HEX）/dx=2（BINARY）次进制
+分派；三张全局查表（0x879B30/0x87B170/0x87BC90）驱动
+digit 生成；16 位饱和钳制（0x7fff/0xffff8000）防溢出。
+
+★E8 被调者全扫（0x7C7371-0x7C7DF5 区间）：**零真实子调
+用**（唯一命中 0x8C7C7A19 = E8 字节在指令中间的数据误
+读伪目标）——纯跳转表/查表计算引擎，无 call 依赖。
+
+★原版怪癖（照抄）：
+  ① 16 位参数分派（cx/dx 各自 cmp 链——cvtype 打包在 16
+     位槽，编译器拆半字读取）；
+  ② 双跳转表（0x7C7758 首 4 入口有效 + 0x7C7778 首 4 入
+     口有效，后 4 个是越界伪目标——digit 分组 0..3 只有
+     4 路但表留 8 槽）；
+  ③ 三查表分工（0x879B30 digit 偏移 / 0x87B170 周期 /
+     0x87BC90 半字节位）；
+  ④ 16 位饱和钳制展开块（0x7C7DC0 起一排 mov eax,±0x7fff/
+     0xffff8000 + jmp 回钳制出口——编译器钳制展开）；
+  ⑤ `sub ebp,x; shr ebp,4; inc ebp` 分组（每轮 4 bit 进
+     位——digit 按 16 进制半字节推进）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 转换引擎属商
+业库层，不写 C++ 模型；头/中/尾 + 三查表/双跳转表/零子
+调用全扫交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7C7371 = MSVC6 CRT `_CVTBUF`——0x7C-0x7D =
+   MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）；
+   16 位 cvtype 分派 + _cvt 家族查表为 MSVC6 标准形态。
+2. 依赖：三全局查表（0x879B30/0x87B170/0x87BC90）+ 双跳
+   转表——重写 gamemd 时用等价运行时（_ecvt_s/自写进制
+   转换）代替。
+3. 零子调用纯计算 → 本可 REIMPL，但 `_CVTBUF` 的进制语
+   义 + 查表值域属商业库内部（非字节级可验证独立算法），
+   按商业库纪律归档，不写 C++ 模型不做 golden——与 batch
+   1043 _itoa 家族（REIMPL）的界线：_itoa 的 digit 算法
+   全在代码内零表依赖，_CVTBUF 依赖三张未语义化全局表。
+→ 状态：crt_runtime_verified（头/中/尾 + 零子调用全扫
+交叉；函数名「_CVTBUF 浮点转 digit 核心」为推断交叉标
+注）。
+
+四、跨批次闭合
+------------
+★batch 1043：0x7C9D7D _itoa 家族（REIMPL）——同 CRT
+  digit 生成域对照（_itoa 零表依赖 vs 本批三表依赖——
+  REIMPL/crt 分界实例）。
+★batch 1082：0x7D3A6D _woutput 宽字符格式化核心——
+  %e%f%g 指令的浮点转换下游即本批 _CVTBUF 族（格式化
+  引擎交叉）。
+★batch 1075：0x7DBC2A FPE 状态码映射器——同 0x7C-0x7D
+  浮点域（转换/状态族并列）。
+
+五、状态
+-------
+crt_runtime_verified（0x7C7371：CRT _CVTBUF 浮点转 digit
+核心引擎归档；头/中/尾 + 零子调用全扫交叉；不写 C++ 模
+型不做 golden——CRT 转换引擎商业库层；函数名「_CVTBUF
+浮点转 digit 核心」为推断交叉标注——三查表/双跳转表 PE
+实测）。TSV 新增 0x007C7371 行。
+
+★本批实锤：2693B 纯计算引擎——16 位 cvtype 分派 + 双跳
+转表 + 三查表驱动 digit 生成 + 16 位饱和钳制；区间 E8 扫
+描零真实子调用（唯一伪目标为数据误读）。
+相邻待续：batch 1084 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7D170D(2597B)/0x7D4FCC(428B——batch
+1077 点名紧邻大函数)/0x7D140B TLS 分配链宿主）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1082 已完（CRT _woutput 宽字符格式化核心，
+commit 83132af）。
