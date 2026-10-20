@@ -1,0 +1,138 @@
+frontier batch 1027 —— CRT __alldiv 64 位有符号除法 0x7C92D0（REIMPL）
+============================================
+
+候选来源：python .qwen\tmp\_list_7c_pending.py（扩展扫描新增 6 项）
+—— 0x7C92D0 = 170B / 2 uc（ranking 行 unique_callers 列 =
+FUN_007c8fd2,FUN_007cf479）/ TSV 无既有行 / frontier_batch_*.txt
+无匹配。本批 = 判纯内存（零子调用零全局引用）→ 完整 REIMPL：
+crt_alldiv.{h,cpp} + golden 真身对拍 + gtest 3 项全绿。
+TARGET = 0x007C92D0。C++ 模型：crt_alldiv.{h,cpp}
+（alldiv_legacy，与 batch 975 __aulldiv 相邻成对）。
+TSV：新增 0x007C92D0 行（cpp_reimplementation_verified）。
+
+一、链语义（disasm 全 170B 复核，0x7C92D0-0x7C9377）
+------------------------------------------------
+0x7C92D0(170B) = MSVC6 CRT __alldiv——cdecl 4 dword 栈参
+(a_lo, a_hi, b_lo, b_hi)，返回 edx:eax 64 位商 = (int64)a / (int64)b
+（有符号截断向零，余数丢弃），ret 0x10 弹 16 字节。
+
+指令序列（disasm 全段复核）：
+  push edi / push esi / push ebx
+  xor edi, edi                    ; edi = 符号计数
+  mov eax,[esp+0x14]=a_hi → or eax,eax → jge 0x7C92F1（★a_hi>=0 跳）
+    inc edi → mov edx,[esp+0x10]=a_lo
+    neg eax / neg edx / sbb eax,0（★★64 位取负 a = -a）
+    mov [esp+0x14],eax / mov [esp+0x10],edx
+  0x7C92F1: mov eax,[esp+0x1c]=b_hi → or eax,eax → jge 0x7C930D
+    inc edi → neg/neg/sbb（b = -b）→ 写回
+  0x7C930D: or eax,eax → jne 0x7C9329（★★b_hi!=0 → 硬路径）
+  快速路径（0x7C9311，b_hi==0）：
+    mov ecx,[esp+0x18]=b_lo
+    mov eax,[esp+0x14]=a_hi → xor edx,edx → div ecx
+      （edx:eax = 0:a_hi / b_lo → eax=高商，edx=余）
+    mov ebx,eax → mov eax,[esp+0x10]=a_lo → div ecx
+      （余:a_lo / b_lo → eax=低商）
+    mov edx,ebx → jmp 0x7C936A（edx:高商 + eax:低商）
+  硬路径（0x7C9329，b_hi!=0）：
+    mov ebx,eax（=b_hi）→ mov ecx,[esp+0x18]=b_lo
+    mov edx,[esp+0x14]=a_hi → mov eax,[esp+0x10]=a_lo
+    归一化循环（0x7C9337）：
+      shr ebx,1 / rcr ecx,1（b_hi:b_lo 联合右移）
+      shr edx,1 / rcr eax,1（a_hi:a_lo 联合右移）
+      or ebx,ebx → jne 循环（直到 b_hi==0）
+    div ecx（a 归一化 / b_lo' → eax=预商 esi）
+    mov esi,eax → mul dword[esp+0x1c]（esi*b_hi → edx:eax）
+    mov ecx,eax → mov eax,[esp+0x18]=b_lo → mul esi
+      （edx:eax = b_lo*esi）
+    add edx,ecx（联合：商*b 的 128 位积高 64 = edx + 前积低32）
+    jb 0x7C9365（CF=1 溢出 → 减商）
+    cmp edx,[esp+0x14]=a_hi → ja 0x7C9365 / jb 0x7C9366
+    cmp eax,[esp+0x10]=a_lo → jbe 0x7C9366（积 ≤ a → 收尾）
+    0x7C9365: dec esi（校准：商减 1）
+    0x7C9366: xor edx,edx → mov eax,esi（edx=0，eax=商——归一化后
+      商 < 2^32，高 32 恒 0，与 __aulldiv 同款）
+  0x7C936A: dec edi → jne 0x7C9374（★★符号还原：edi 原值==1 才取负）
+    neg edx / neg eax / sbb edx,0（64 位取负 商 = -商）
+  0x7C9374: pop ebx / pop esi / pop edi / ret 0x10
+
+★语义：**MSVC6 CRT __alldiv（64 位有符号除法）**——符号归一化
+（两操作数取绝对值，edi 计数负号）→ 快速路径（b_hi==0 两次
+div 分步）或硬路径（b_hi!=0 归一化 + 乘法校正）→ 符号还原
+（edi 原值==1 才取负）。
+★★与 batch 975 已 REIMPL 的 __aulldiv（0x7C9380 无符号版）相邻
+成对——同一模板两次实例化，__alldiv 仅多符号三段（入口取负 +
+收尾符号还原）。
+
+★原版怪癖（照抄）：
+  ① 符号归一化用 neg/neg/sbb 三段（neg 低 32 清 CF、neg 高 32、
+     sbb 借位——64 位取负惯用，等价 (~v)+1 补码回绕）；
+  ② ★符号还原判定 dec edi / jne——edi 累计负号数（0/1/2），
+     **原值 == 1 才取负**（一个负 → 商负；零个或两个负 → 商正）
+     ——奇偶符号约定（dec 后 0 才落入取负分支）；
+  ③ 快速/硬路径分岔在 b_hi（取绝对值后）——与无符号版同构；
+  ④ ★硬路径乘法校正用原 b（[esp] 栈上绝对值未移位，寄存器版本
+     才归一化）——比较对象是原始绝对值；
+  ⑤ 硬路径商高 32 恒 0（归一化后商 < 2^32）——商截断为 32 位
+     （照抄不扩展）；
+  ⑥ 除零（b==0）走 div #DE 异常——调用方契约保证（golden 不含）；
+  ⑦ INT64_MIN 取负自反（补码回绕）——照抄不额外处理；
+  ⑧ 截断向零（非 floor）——与 C/C++/x86 IDIV 一致（golden 含
+     -1/2^31 → 0 边界用例）。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 零子调用零全局引用（170B 全读实证）——纯内存判别成立；
+  ② 相邻 0x7C9380 = batch 975 已 REIMPL 的 __aulldiv——同模板
+     互证（模型结构对照）；
+  ③ branching：__allmul（batch 963）/__aulldiv（batch 975）/
+     __allshr 等 CRT 64 位算术家族全集交叉。
+
+二、黄金基准
+----------
+deadcode_7c92d0_golden.txt（batch 1027）——20 用例，Unicorn 真身
+模拟 0x7C92D0 逐位采集（_golden_7c92d0.py，emu_oracle 管线）：
+  覆盖：0/1、1/1、0xFFFFFFFF/0xFFFFFFFF（快速 1）、2^32/2（快速
+  a_hi 非零）、2^32/2^32（硬路径 b_hi=1）、大数>>16（硬路径）、
+  -1/2^31（截断向零 0）、-1/3（0）、-1/-1（1）、负/正（快速）、
+  负/正（硬路径）、INT64_MIN/2（-2^62）、1/-1（-1）、2^31/2^15、
+  正/正极值（快速）、小值、负/正混合、负/正混合（硬路径）、
+  0/-1（0）、5/-5（-1）——正/负/混合/边界全覆盖，全部与 Python
+  截断向零期望逐位一致。
+
+三、三态判定（为何 cpp_reimplementation_verified 而非归档）
+------------------------------------------------
+1. 纯内存判据满足：零子调用、零全局引用（170B disasm 全读实
+   证）——完全符合本会话 REIMPL「无子调用无全局引用」判据。
+2. 语义可独立验证：64 位除法是纯算术——golden 真身对拍 20 用例
+   逐位一致 + 标准库交叉抽查 + 边界用例，闭环成立。
+3. 无锁/无系统依赖：与 batch 975 __aulldiv 同型，cdecl 4 dword
+   寄存器返回——测试独立性成立（不依赖环境状态）。
+→ 状态：cpp_reimplementation_verified（模型 3 项 gtest 全绿 +
+golden 20 用例逐位一致；数据流与 __aulldiv 双模型交叉验证）。
+
+四、跨批次闭合
+------------
+★batch 975：0x7C9380 __aulldiv REIMPL（无符号版）——本批 __alldiv
+有符号版成对登记，模板互补。
+★batch 963：0x7C90D0 __allmul REIMPL（64 位乘法）——64 位算术家
+族第四成员交叉。
+★batch 962：0x7CA3C5 __aulldvrm 相关 64 位除家族——除法语义交叉。
+★_pick_945：IAT/锁家族排除——0x7C92D0 依赖方纳入同边界。
+
+五、状态
+-------
+cpp_reimplementation_verified（0x7C92D0：__alldiv 64 位有符号除法
+模型；crt_alldiv.{h,cpp} + test_crt_alldiv.cpp 3 项 + golden 20 用
+例逐位一致 + ctest 82/82 全绿；纯内存零桩完整复刻）。TSV 新增
+0x007C92D0 行。
+
+★本批实锤：0x7C92D0 = MSVC6 CRT __alldiv（64 位有符号除法）——
+符号归一化 neg/neg/sbb 三段 + 快速/硬双路径 + dec edi;jne 奇偶符
+号还原；纯内存零桩 REIMPL，ctest 从 81 升至 82 全绿。
+相邻待续：batch 1028 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_list_7c_pending.py——候选 0x7C9A8D 46B
+/ 0x7C990E 46B / 0x7CB550 _strncat 291B / 0x7CCB2E 1007B 等；其中
+_strncat 与 _strncmp 成对——batch 964 已 REIMPL strcmp，候选
+复核）。0x7D571F/0x7C9FD9/0x7D473F/0x7D8C6B 新候选标注。
+依赖模型：crt_alldiv（ra2_runtime lib）。
+承前：batch 1026 已完（CRT 浮点打包调用器 0x7CF330，commit
+f3b9bef）。

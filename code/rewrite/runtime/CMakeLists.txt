@@ -29,6 +29,7 @@ add_library(ra2_runtime
   crt_strrchr.cpp
   crt_wcsncmp.cpp
   crt_aulldiv.cpp
+  crt_alldiv.cpp
   crt_wcsncat.cpp
   facing.cpp
   ra2_string.cpp
@@ -260,6 +261,16 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_crt_aulldiv PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME crt_aulldiv COMMAND test_crt_aulldiv)
+
+  # __alldiv（0x7C92D0，64 位有符号除法），golden 由 emu_oracle 指令级
+  # 模拟取得（deadcode_7c92d0_golden.txt，20 用例；纯算术零依赖全真身，
+  # 符号归一化三段 + 快速路径两次 div + 硬路径归一化+乘法校正，与
+  # __aulldiv 相邻成对）
+  add_executable(test_crt_alldiv test/test_crt_alldiv.cpp)
+  target_link_libraries(test_crt_alldiv PRIVATE ra2_runtime gtest_main)
+  target_compile_definitions(test_crt_alldiv PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME crt_alldiv COMMAND test_crt_alldiv)
 
   # wcsncat（0x7CB504，宽串追加定长），golden 由 emu_oracle 指令级
   # 模拟取得（deadcode_7cb504_golden.txt，10 用例；纯内存零子调用零
