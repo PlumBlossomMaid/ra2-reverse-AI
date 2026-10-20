@@ -1,0 +1,112 @@
+frontier batch 1093 —— CRT 浮点转字符串（_cvt 族）0x7DB207（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DB207（659B,
+uc=1, callers=1 池顶）。TSV 无既有行。
+TARGET = 0x007DB207。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007DB207 行。
+
+一、链语义（disasm 头/尾复核，0x7DB207-0x7DB4E5）
+------------------------------------------------
+头部（0x7DB207-0x7DB2A0）：
+007db207  55                    push ebp
+007db208  8bec                  mov ebp, esp
+007db20a  83ec1c                sub esp, 0x1c
+007db20d  8b4510                mov eax, [ebp+0x10]    ; ★param2 = 指数/值高 16 位
+007db211  8b5d1c                mov ebx, [ebp+0x1c]    ; ★param4 = 输出缓冲
+007db217  beff7f0000            mov esi, 0x7fff        ; ★0x7FFF 掩码
+007db21c  81e100800000          and ecx, 0x8000        ; ★0x8000 符号位
+007db222  23c6                  and eax, esi           ; ★指数截 15 位
+007db224  6685c9                test cx, cx            ; ★符号判定
+007db22c  c645e4cc              mov byte[ebp-0x1c], 0xcc ; ★80 位 0.1 常量构造
+                                                        ;   （0x3FFB CCCCCCCCCCCC
+                                                        ;   扩展精度——_cvt 转换
+                                                        ;   基准）
+007db250  c645eefb              mov byte[ebp-0x12], 0xfb
+007db254  c645ef3f              mov byte[ebp-0x11], 0x3f
+007db258  c745fc01000000        mov [ebp-4], 1
+007db263  c643022d              mov byte[ebx+2], 0x2d  ; ★符号 '-'（负）
+007db269  c6430220              mov byte[ebx+2], 0x20  ; ★符号 ' '（正）
+007db28a  c6430430              mov byte[ebx+4], 0x30  ; ★'0' 数字起始
+007db293  663bd6                cmp dx, si             ; ★指数 vs 0x7FFF
+                                                        ;   （inf/nan 判定）
+
+尾部（0x7DB3E8-0x7DB4E5）：
+007db3e8  …                     digit 生成循环
+007db3f5  e8ebfcffff            call 0x7db0e5          ; ★★同族子函数
+007db40b  e877fcffff            call 0x7db087          ; ★★同族子函数
+007db426  0430                  add al, 0x30           ; ★'0' 数字化
+007db42e  8801                  mov byte[ecx], al      ; ★写 digit 字符
+007db43a  80f935                cmp cl, 0x35           ; ★0x35 = '5' 舍入判断
+                                                        ;   （round-half-away 边界）
+007db43d  8d4b04                lea ecx, [ebx+4]       ; ★缓冲推进
+
+★语义：**CRT 浮点转字符串（推断名——_cvt/_ecvt/_fcvt/
+sprintf %f 族 digit 生成）**——cdecl 多参（param2=指数
+位型、param4=输出缓冲）：
+  ① 0x7FFF/0x8000 掩码拆分指数/符号（80 位扩展精度表
+     示）；
+  ② 构造 80 位扩展 0.1 常量（0x3FFB CCCCCCCCCCCC）作
+     十进制转换基准；
+  ③ 符号字节输出（- / 空格）；
+  ④ digit 生成循环 + '0' 数字化 + 0x35 '5' 舍入判断
+     （round-half-away——原版舍入口味照抄）。
+
+★E8 被调者：0x7DB087/0x7DB0E5（紧邻同族子函数——浮点
+转换链内部）。
+
+★原版怪癖（照抄）：
+  ① 80 位扩展 0.1 常量硬编码（0x3FFB CCCCCCCCCCCC——
+     非编译器生成）；
+  ② 0x7FFF/0x8000 位掩码手工拆分指数/符号；
+  ③ 0x35 '5' 舍入判断（round-half-away——与 x87
+     ties-to-even 不同，此处为字面 0.5 比较）；
+  ④ 符号字节 ' ' 空格（正数留空格位——printf 宽度惯
+     用）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 转换引擎属
+商业库层，不写 C++ 模型；头/尾 + 同族子函数交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DB207 = MSVC6 CRT 浮点转字符串——0x7C-0x7D
+   = MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）；
+   80 位扩展 0.1 常量 + 0x7FFF 掩码 + 舍入判断为 CRT
+   _cvt 族标准形态。
+2. 依赖：同族子函数（0x7DB087/0x7DB0E5）——重写 gamemd
+   时用等价运行时（std::to_chars/snprintf）代替。
+3. gamemd_replication_discipline：CRT 转换引擎，重写时用
+   等价运行时代替，逐字节复刻无意义——按商业库纪律归
+   档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（头/尾 + 同族子函数交叉；
+函数名「浮点转字符串 _cvt 族」为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1083：0x7C7371 `_CVTBUF` 浮点转 digit 核心——
+  同 CRT 转换域（本批为 digit 生成端，1083 为进制转换
+  引擎）。
+★batch 1085：0x7DD505 strtod 字符串转浮点——同 CRT 转
+  换域镜像对（字符串↔浮点双向）。
+★batch 1075：0x7DBC2A FPE 状态码映射器——同 0x7D 区浮
+  点域对照。
+
+五、状态
+-------
+crt_runtime_verified（0x7DB207：CRT 浮点转字符串 _cvt 族
+归档；头/尾 + 同族子函数交叉；不写 C++ 模型不做
+golden——CRT 转换引擎商业库层；函数名「浮点转字符串
+_cvt 族」为推断交叉标注——0.1 常量/0x35 舍入由代码实
+测）。TSV 新增 0x007DB207 行。
+
+★本批实锤：80 位扩展 0.1 常量（0x3FFB CCCCCCCCCCCC）
++ 0x7FFF/0x8000 掩码 + 0x35 '5' round-half-away 舍入
+——CRT _cvt 族 digit 生成端。
+相邻待续：batch 1094 按 _scan_pending_7c.py 取池内下一
+未登记项（uc=1：0x7D4D24(647B)/0x7C7F20(466B,
+callers=2)/0x7C2250(443B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1092 已完（Westwood 表面装载器 MSCH/MSCT，
+commit 629f7bd）。
