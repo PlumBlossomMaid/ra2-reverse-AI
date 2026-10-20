@@ -1,0 +1,109 @@
+frontier batch 1085 —— CRT strtod 字符串转浮点核心 0x7DD505（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DD505（1805B,
+uc=1, callers=1 池顶）。TSV 无既有行。
+TARGET = 0x007DD505。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007DD505 行。
+
+一、链语义（disasm 头/中/尾复核，0x7DD505-0x7DDC11）
+------------------------------------------------
+头部（0x7DD505-0x7DD57C）：
+007dd505  55                   push ebp
+007dd506  8bec                 mov ebp, esp
+007dd508  81ec48020000         sub esp, 0x248          ; ★0x248 局部帧
+007dd50e  8b4508               mov eax, [ebp+8]        ; ★param1 = 字符串指针
+007dd514  8a18                 mov bl, [eax]           ; ★逐字符取
+007dd518  ff4508               inc [ebp+8]            ; ★指针推进
+007dd52c  be00080000           mov esi, 0x800         ; ★状态 0x800（初始状态
+                                                      ;   位——strtod 状态机）
+007dd54b  80fb20               cmp bl, 0x20           ; ★空格/空白处理
+007dd550  80fb78               cmp bl, 0x78           ; ★'x' 检测（十六进制
+                                                      ;   浮点 0x1.8p3 分支）
+007dd558  8a80cc977f00         mov al, [eax+0x7f97cc] ; ★字符分类表 0x7F97CC
+007dd55e  83e00f               and eax, 0xf
+007dd565  0fbe84c7ec977f00     movsx eax, [edi+eax*8+0x7f97ec]  ; ★状态转移表
+                                                      ;   0x7F97EC
+007dd56d  c1f804               sar eax, 4
+007dd570  83f807               cmp eax, 7
+007dd57c  ff248512dc7d00       jmp [eax*4+0x7ddc12]   ; ★★跳转表 0x7DDC12
+                                                      ;   （7 路状态分派）
+
+★语义：**CRT `strtod`（字符串→浮点转换核心——推断
+名）**——cdecl 2 参（param1=字符串、param2=结束指针或
+0）：
+  MSVC6 CRT _strtod（含 strtof/strtold 共用内核）的字
+  符分类状态机——字符表 0x7F97CC 分类（空格/数字/
+  'x'/十六进制/指数 E/e/正负号/NaN/Inf）+ 状态转移表
+  0x7F97EC + 跳转表 0x7DDC12 七路分派；支持十进制、
+  十六进制浮点（0x1.8p3）、指数、NaN/Inf、溢出掩码
+  （0x800 状态位）。
+
+★E8 被调者全扫（0x7DD505-0x7DDC11 区间 39 处 call，
+24 个唯一目标——真实目标全在 0x7C-0x7D CRT 域）：
+  0x7C9380（CRT）/ 0x7D15A0（strlen）/ 0x7D777D（CRT）/
+  0x7D7840（__aullrem）/ 0x7DDC32/0x7DDC4C/0x7DDC78/
+  0x7DDCAB/0x7DDCB8/0x7DDCC8（紧邻溢出/NaN/Inf 辅助
+  函数族——strtod 状态机出口）
+  ——13 个跨段伪目标（0x1E838/0x3E02E4BD/0x489D49B9
+  等）为 E8 字节在指令中间的数据误读。
+  ——无 Westwood 对象方法（无 thiscall/虚表槽/
+  0x40xxxx 目标）。
+
+★原版怪癖（照抄）：
+  ① 0x800 状态位（strtod 状态机初始掩码——输入前缀
+     阶段位组合）；
+  ② 字符分类双表（0x7F97CC 分类 + 0x7F97EC 状态转移
+     ——[edi+eax*8] 8 字节/项宽状态表）；
+  ③ 状态转移 sar eax,4 取高 4 位（分类结果压缩打包）；
+  ④ 跳转表 0x7DDC12 七路（<7 ja 越界走错误出口——
+     strtod 非法字符返回 0）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 转换引擎属
+商业库层，不写 C++ 模型；头/尾 + 39 处 E8 全扫交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DD505 = MSVC6 CRT `strtod`——0x7C-0x7D =
+   MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）；
+   字符分类状态机 + 双表 + 跳转表为 MSVC6 strtod 标准形
+   态。
+2. 依赖：0x7D15A0（strlen）+ 0x7D7840（__aullrem）+
+   紧邻辅助族（0x7DDC32..0x7DDCC8）+ 双状态表——重写
+   gamemd 时用等价运行时（std::strtod）代替。
+3. gamemd_replication_discipline：CRT 转换引擎，重写时
+   用等价运行时代替，逐字节复刻无意义——按商业库纪律归
+   档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（头/尾 + 39 处 E8 全扫交
+叉；函数名「strtod 字符串转浮点核心」为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1083：0x7C7371 `_CVTBUF` 浮点转 digit 核心——
+  转换域另一方向（本批 字符串→浮点 vs 1083 浮点→digit
+  串——转换族镜像对）。
+★batch 1082/1084：0x7D3A6D `_woutput`/0x7D170D
+  `_output` 格式化核心——%f/%g 指令的字符串解析上游即
+  本批 strtod 族（格式化输入交叉）。
+★batch 1079：0x7D13F8 ptd 初始化——同 CRT 基础设施层。
+
+五、状态
+-------
+crt_runtime_verified（0x7DD505：CRT strtod 字符串转浮点
+核心归档；头/尾 + 39 处 E8 全扫交叉；不写 C++ 模型不做
+golden——CRT 转换引擎商业库层；函数名「strtod 字符串转
+浮点核心」为推断交叉标注——双状态表 0x7F97CC/0x7F97EC
+跳转表 0x7DDC12 语义由 strtod 状态机结构交叉推断）。TSV
+新增 0x007DD505 行。
+
+★本批实锤：1805B 字符串→浮点状态机——0x800 状态位 +
+'x' 十六进制分支 + 双状态表 + 七路跳转表；39 处 E8 真实
+目标全在 CRT 域（strlen/__aullrem/紧邻辅助族）。
+相邻待续：batch 1086 按 _scan_pending_7c.py 取池内下一
+未登记项（uc=1：0x7C2590(1735B)/0x7C0C80(1196B,
+callers=3)/0x7C12B0(1152B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1084 已完（CRT _output 窄字符格式化核心，
+commit 4c81b85）。
