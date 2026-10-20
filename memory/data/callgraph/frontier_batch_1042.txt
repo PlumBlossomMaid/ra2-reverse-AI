@@ -1,0 +1,181 @@
+frontier batch 1042 —— CRT 堆段释放内核 0x7CF7E8（811B 全段补证升级）
+============================================
+
+候选来源：batch 1041 预告「下一未复刻 CRT 项」；batch 945（free
+调度 0x7C93E8 REIMPL）实锤 0x7CF7E8 = FreeSegment(seg,p) 桩注入
+（811B 语义 partial，TSV 既有行 semantics_verified_partial 引用
+batch_022/crt_behavior_contracts.md）。本批 = **全 811B 反汇编读
+齐**（入口 240B + 中段 560B + 尾段 200B，补 batch 945 未读的
+0x7CFA0E-0x7CFB13 尾段）→ 尾段 IAT/堆全局证据实锤 → 按商业库层
+纪律升级 **crt_runtime_verified**（升级而非新增行）。
+TARGET = 0x007CF7E8。C++ 模型：无（free_legacy 的世界桩调用端已
+REIMPL，见 batch 945）。TSV：**升级既有 0x007CF7E8 行**。
+
+一、链语义（disasm 全 811B，0x7CF7E8-0x7CFB12）
+------------------------------------------------
+调用现场（batch 945 实锤）：`push esi(p) / push eax(seg) / call
+0x7CF7E8` → cdecl 2 参：param_1 = seg（段记录指针，栈顶）、
+param_2 = p（释放指针）。入口 `shr esi,0xf` 把 seg>>15 作段序号。
+
+控制流全景（逐段）：
+  A. 入口段（0x7CF7E8 起，240B）：
+     prologue（push ebp/mov ebp,esp/push ebx,esi,edi；尾部
+     leave/ret 对应）+ seg>>15 段序号 → imul 0x204 表项步长 →
+     lea [ecx+eax+0x144] 元数据表定位（[0xB78B90]=堆结构基）。
+     空闲位图清位：mov edi,0x80000000 / shr edi,cl / not /
+     and [eax+esi*4+0x44] 与 and [+0xc4] 双端链。
+     链表维护：mov [ecx+4],edi / mov [ecx+8],edi（+4/+8 前向/
+     后向指针）。
+  B. 中段（560B，0x7CF8D8-0x7CFA0E）：前后邻空闲双向合并 →
+     尺寸类（bin）跨越槽位重挂（+0x44/+0xC4 双端链）→ 段内全
+     空判定准备。
+  C. ★尾段（本批新读，0x7CFA0E-0x7CFB13）：
+     007cfa0e jne 0x7cfb0e
+     007cfa14 8b 05 90 8b b7 00  mov eax, [0xb78b90]      ; 堆结构基
+     007cfa19 test eax,eax / je 0x7cfb00                  ; 空堆早退
+     007cfa21 8b 0d 88 8b b7 00  mov ecx, [0xb78b88]      ; ★段索引
+     007cfa27 8b 3d 90 12 7e 00  mov edi, [0x7e1290]      ; ★IAT（VirtualFree）
+     007cfa2d shl ecx, 0xf                                ; 段序号<<15
+     007cfa30 add ecx, [eax + 0xc]                        ; +堆结构+0xC = 段基址
+     007cfa33 mov ebx, 0x8000                             ; 常量 0x8000
+     007cfa38 push 0x4000                                 ; MEM_DECOMMIT(0x4000)
+     007cfa3d push ebx                                    ; dwSize=0x8000
+     007cfa3e push ecx                                    ; lpAddress=段基址
+     007cfa3f call edi        ; ★VirtualFree(段基址,0x8000,MEM_DECOMMIT)
+     007cfa41 mov ecx, [0xb78b88]
+     007cfa47 mov eax, [0xb78b90]
+     007cfa4c mov edx, 0x80000000
+     007cfa51 shr edx, cl
+     007cfa53 or  [eax + 8], edx                          ; ★恢复段可用位图 +8
+     007cfa56 mov eax, [0xb78b90]
+     007cfa5b mov ecx, [0xb78b88]
+     007cfa61 mov eax, [eax + 0x10]                       ; 页表基（堆结构+0x10）
+     007cfa64 and dword ptr [eax + ecx*4 + 0xc4], 0       ; ★清段内页位图 +0xC4
+     007cfa6c mov eax, [0xb78b90]
+     007cfa71 mov eax, [eax + 0x10]
+     007cfa74 dec byte ptr [eax + 0x43]                   ; ★页计数 +0x43 --
+     007cfa77 mov eax, [0xb78b90]
+     007cfa7c mov ecx, [eax + 0x10]
+     007cfa7f cmp byte ptr [ecx + 0x43], 0
+     007cfa83 jne 0x7cfa8e
+     007cfa85 and dword ptr [eax + 4], 0xfffffffe         ; ★清在用标志位
+     007cfa89 mov eax, [0xb78b90]
+     007cfa8e cmp dword ptr [eax + 8], -1                 ; ★段是否全空
+     007cfa92 jne 0x7cfb00                                ; 未全空 → 结束
+     007cfa94 push ebx        ; 0x8000 = MEM_RELEASE
+     007cfa95 push 0          ; dwSize=0（MEM_RELEASE 必须 0）
+     007cfa97 push [eax + 0xc]; lpAddress=段基址
+     007cfa9a call edi        ; ★VirtualFree(段基址,0,MEM_RELEASE) 整段归还
+     007cfa9c mov eax, [0xb78b90]
+     007cfaa1 push [eax + 0x10]
+     007cfaa4 push 0
+     007cfaa6 push [0xb78b9c] ; ★heap handle
+     007cfaac call [0x7e127c] ; ★HeapFree(heap,0,页表基) 释放页表
+     007cfab2 mov eax, [0xb78b94]                         ; 段记录数
+     007cfab7 mov edx, [0xb78b98]
+     007cfabd lea eax, [eax + eax*4] / shl eax, 2         ; ×20（记录大小）
+     007cfac3 mov ecx, eax / mov eax, [0xb78b90]
+     007cfaca sub ecx, eax / lea ecx, [ecx + edx - 0x14]  ; src 端
+     007cfad0 push ecx                                    ; (param2=src)
+     007cfad1 lea ecx, [eax + 0x14] / push ecx            ; (param3=n)
+     007cfad5 push eax                                    ; (param1=dst)
+     007cfad6 call 0x7ca090   ; ★★memmove（三参变体）——段数组紧凑搬迁
+     007cfadb mov eax, [ebp + 8]                          ; 恢复 param1=seg
+     007cfade add esp, 0xc
+     007cfae1 dec [0xb78b94]                              ; ★段计数 --
+     007cfae7 cmp eax, [0xb78b90] / jbe 0x7cfaf2
+     007cfaef sub eax, 0x14
+     007cfaf2 mov ecx, [0xb78b98]
+     007cfaf8 mov [0xb78b8c], ecx                         ; 尾部索引 → +0x8C
+     007cfafe jmp 0x7cfb03
+     007cfb00 mov eax, [ebp + 8]
+     007cfb03 mov [0xb78b90], eax                         ; ★seg 存回堆结构基
+     007cfb08 mov [0xb78b88], esi                         ; ★段序号 → 段索引全局
+     007cfb0e pop edi / pop esi / pop ebx / leave / ret
+  函数边界确认：0x7CFB13 = push ebp（新函数），811B = 0x7CF7E8
+  +0x32B 精确闭合。
+
+★语义：**CRT 堆段释放内核**——free 未命中段内小块时的段级回收：
+  ① param1=seg 记录、param2=释放指针；seg>>15 段序号查 0x204
+     表；
+  ② 空闲位图清位（+0x44/+0xC4 双端链 + shr edi,cl 位掩码）+
+     +4/+8 前向后向链表维护（中段空闲合并/槽位重挂）；
+  ③ 段内页全释放（+0x43 页计数递减至 0）→ 清在用标志 →
+     段全空（[+8]==-1）才整段回收：
+       VirtualFree(段基址,0x8000,MEM_DECOMMIT) 散页 →
+       位图恢复 or [eax+8],edx / and [eax+ecx*4+0xC4],0 →
+       VirtualFree(段基址,0,MEM_RELEASE) 整段归还 →
+       HeapFree(heap,[0xB78B9C],0,页表基) 释放页表 →
+       memmove 0x7CA090 段数组紧凑搬迁 → 段计数-- ；
+  ④ 非全空路径（[+8]!=-1）→ 恢复 [0xB78B90]=seg/
+     [0xB78B88]=段序号后直接返回。
+
+★原版怪癖（照抄）：
+  ① 逐页 DECOMMIT（0x8000 固定页块）后再整段 RELEASE——
+     两道 VirtualFree 而非一次 RELEASE 大块；
+  ② MEM_RELEASE 时 dwSize=0（Windows 契约）→ 两次调用参数
+     形态不同（DECOMMIT 带 size / RELEASE 带 0）；
+  ③ 段数组删项用 memmove 0x7CA090 覆盖搬迁（数组非链表），
+     段记录固定 0x14（20B）；
+  ④ [0xB78B94] 计数递减发生在搬迁之后；
+  ⑤ 空堆（[0xB78B90]==0）直接早退不碰 IAT。
+
+★依赖链实锤（本批 disasm）：
+  ① [0x7E1290] = IAT 槽（VirtualFree 形态：DECOMMIT/RELEASE 双
+     调用参数均吻合 win32 契约）；
+  ② [0x7E127C] = IAT HeapFree（batch 945 已确认）；
+  ③ 堆全局五件套 [0xB78B88](段索引)/[0xB78B90](堆结构基)/
+     [0xB78B8C](尾部索引)/[0xB78B94](段计数)/[0xB78B98]/
+     [0xB78B9C](heap handle)；
+  ④ 0x7CA090 = memmove 三参变体（prologue 读 [ebp+8]/[+0xC]/
+     [+0x10] + test edi,3 对齐 + 重叠判向 —— 与 batch 036
+     0x7D0A20 同族但独立地址，批内标注交叉）。
+
+二、黄金基准
+----------
+无（本批不建 golden——升级既有语义登记为商业库层归档，不写
+C++ 模型；811B 全读 + tail 段逐条记录 + IAT 双槽/堆全局证据）。
+
+三、三态判定（为何升级 crt_runtime_verified）
+------------------------------------------------
+1. 归属：0x7CF7E8 = MSVC6 CRT heap 段释放内核——0x7C-0x7D =
+   MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）；
+2. 依赖：IAT [0x7E1290](VirtualFree)/[0x7E127C](HeapFree) +
+   堆全局五件套——重写 gamemd 时由等价堆运行时代替；
+3. gamemd_replication_discipline：CRT 内存管理器商业库层——
+   batch 945 free_legacy 的 CrtFreeWorld 已把 FreeSegment 作桩
+   注入，语义契约（batch 022 / crt_behavior_contracts.md）与
+   本批全段证据一致；逐字节复刻无意义。
+→ 状态：升级 crt_runtime_verified（811B 全读 + IAT 双槽/堆全
+局证据实锤；既有 semantics_verified_partial 行升级，非新增）。
+
+四、跨批次闭合
+------------
+★batch 945：free 调度 0x7C93E8 REIMPL——本批调用现场（push
+p/push seg/call FreeSegment）与 CrtFreeWorld 桩端交叉。
+★batch 022 / crt_behavior_contracts.md：既有语义登记——本批
+补全 0x7CFA0E-0x7CFB13 尾段 200B（IAT 双调用 + 位图恢复 + 段
+数组搬迁），语义与契约一致无冲突。
+★batch 036：0x7D0A20 memmove——0x7CA090 同族兄弟（独立地
+址，三参形态 + 重叠判向一致）。
+★batch 021：0x7CF7BD FindHeapSegment——段记录指针来源（本
+批 param1=seg 直接来自 Find 返回，不交叉扩证）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CF7E8：CRT 堆段释放内核归档；811B 全
+读 + IAT 双槽/堆全局证据，TSV 既有行由 semantics_verified_
+partial 升级；不写 C++ 模型不做 golden——CRT 内存管理器商业库
+层；VirtualFree 推论基于参数形态与 win32 契约，未动态验证）。
+
+★本批实锤：0x7CF7E8 尾段 = 段级回收五步链（DECOMMIT 散页 →
+位图恢复 → 页计数耗尽判定 → RELEASE 整段 → HeapFree 页表 →
+memmove 段数组紧凑搬迁），与 batch 945 桩注入语义全一致 →
+既有登记升级 crt_runtime_verified。
+相邻待续：batch 1043 按 ranking.tsv unique_callers 取下一未复
+刻 CRT 项（python .qwen\tmp\_list_7c_pending.py——候选池 7C
+区接近清空；0x7D30D1/0x7D461E/0x7D45DF/0x7D571F/0x7C9FD9/
+0x7D473F/0x7D8C6B 等新候选标注，或转入 7D 区扩扫）。
+依赖模型：无（归档不落 C++；free_legacy 桩端见 batch 945）。
+承前：batch 1041 已完（CRT 字符串拼接循环器 0x7CE049，
+commit 待确认）。
