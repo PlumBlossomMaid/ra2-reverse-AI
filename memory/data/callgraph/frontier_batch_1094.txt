@@ -1,0 +1,145 @@
+frontier batch 1094 —— CRT _tzset 时区初始化核心 0x7D4D24（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D4D24（647B,
+uc=1, callers=2 池顶）。TSV 无既有行。
+TARGET = 0x007D4D24。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D4D24 行。
+
+一、链语义（disasm 头/中复核，0x7D4D24-0x7D4FA5）
+------------------------------------------------
+头部（0x7D4D24-0x7D4DAE）：
+007d4d24  55                    push ebp
+007d4d25  8bec                  mov ebp, esp
+007d4d27  51                    push ecx
+007d4d28  51                    push ecx
+007d4d29  53/56/57              push ebx/esi/edi
+007d4d2c  6a0c                  push 0xc              ; ★锁编号 0x0C（12）
+007d4d2e  5f                    pop edi
+007d4d2f  33db                  xor ebx, ebx
+007d4d31  57                    push edi
+007d4d35  e8bb8cffff            call 0x7cd9f5         ; ★★EnterLock(0x0C)——
+                                                      ;   batch 966 已登记流锁
+                                                      ;   Enter 内核（锁族第 6
+                                                      ;   成员 0x0C=12）
+007d4d3a  830d08cb8700ff        or dword[0x87cb08], -1  ; ★[0x87CB08] ← -1
+007d4d41  830df8ca8700ff        or dword[0x87caf8], -1  ; ★[0x87CAF8] ← -1
+007d4d48  891df082b700          mov [0xb782f0], ebx     ; ★[0xB782F0] ← 0
+007d4d4e  c7042488997f00        mov [esp], 0x7f9988     ; ★"TZ" 环境变量名
+                                                        ;   （PE .rdata 实测）
+007d4d55  e8d86effff            call 0x7cbc32          ; ★★getenv("TZ")
+007d4d5a  8bf0                  mov esi, eax
+007d4d5c  59                    pop ecx
+007d4d5d  3bf3                  cmp esi, ebx
+007d4d5f  0f85fd000000          jne 0x7d4e62          ; ★TZ 已设 → 解析路径
+007d4d65  57                    push edi
+007d4d66  e8eb8cffff            call 0x7cda56         ; ★★LeaveLock(0x0C)——
+                                                      ;   batch 961 已登记
+007d4d6b  c70424f882b700        mov [esp], 0xb782f8   ; ★TZ 结构基址
+                                                      ;   [0xB782F8]（GetTimeZone
+                                                      ;   Information 参数）
+007d4d72  ff1574127e00          call [0x7e1274]       ; ★★GetTimeZoneInformation
+                                                      ;   （pefile IAT 实测
+                                                      ;   KERNEL32.dll）
+007d4d78  83f8ff                cmp eax, -1           ; ★失败判定
+007d4d7b  0f8425020000          je 0x7d4fa6
+007d4d81  a1f882b700            mov eax, [0xb782f8]   ; ★TZ.Bias（偏移 0）
+007d4d86  8b0d4c83b700          mov ecx, [0xb7834c]   ; ★TZ.StandardBias（偏移
+                                                      ;   0x54 = TIME_ZONE_INFOR-
+                                                      ;   MATION.StandardBias）
+007d4d8c  6bc03c                imul eax, eax, 0x3c   ; ★Bias × 60（分→秒）
+007d4d8f  66391d3e83b700        cmp word[0xb7833e], bx ; ★TZ.StandardDate.wMonth
+                                                      ;   （偏移 0x46）== 0
+                                                      ;   （无标准时间定义）
+007d4d99  a360ca8700            mov [0x87ca60], eax   ; ★[0x87CA60] ← Bias×60
+                                                      ;   （_timezone 全局）
+007d4da4  740c                  je 0x7d4db2           ; ★wMonth==0 → 跳过
+007d4da6  8bf1                  mov esi, ecx
+007d4da8  6bf63c                imul esi, esi, 0x3c   ; ★StandardBias × 60
+007d4dab  03c6                  add eax, esi
+007d4dad  a360ca8700            mov [0x87ca60], eax   ; ★_timezone += SB×60
+
+★语义：**CRT `_tzset` 时区初始化核心（推断名）**——
+cdecl 0 参：
+  ① EnterLock(0x0C) 进入临界区（锁族第 6 成员 0x0C=12，
+     区别于 batch 1077 的 0x0B/1040 的 0x0D/244 的 0x13/
+     1036 的 0x19/945 的 0x09）；
+  ② 全局复位：[0x87CB08]/[0x87CAF8] ← -1、
+     [0xB782F0] ← 0（时区标志族）；
+  ③ getenv("TZ")——TZ 已设走 0x7D4E62 解析路径；
+  ④ 未设 TZ：GetTimeZoneInformation([0xB782F8]) →
+     成功则 _timezone [0x87CA60] = Bias×60（+ StandardBias×60
+     当 StandardDate.wMonth≠0）。
+
+★全局槽语义实锤（偏移结构）：
+  [0xB782F8] = TIME_ZONE_INFORMATION 基址；
+  [0xB7833E]-[0xB782F8] = 0x46 = StandardDate.wMonth；
+  [0xB7834C]-[0xB782F8] = 0x54 = StandardBias。
+  [0x87CA60]（_timezone）refs=11（0x7CD2F5/0x7CD362/
+  0x7D2A2A/0x7D4D9A/0x7D4DAE/0x7D4EF7/0x7D4F1E/0x7D4F26/
+  0x7D4F46/0x7D4F4E/0x7D4F69——CRT 时间族全局）；
+  [0x87CB08]/[0x87CAF8] refs=3（写 -1 + 读）；
+  [0xB782F0] refs=3（_daylight 标志族）。
+
+★原版怪癖（照抄）：
+  ① 锁编号 0x0C 常量（push 0xC——薄包装同款形态）；
+  ② or dword,-1 置 -1（编译器 or -1 惯用）；
+  ③ 0x46/0x54 偏移直接读写 TZ 结构（结构布局硬编码）；
+  ④ 无 TZ 环境变量时回退 GetTimeZoneInformation（CRT
+     标准行为——TZ 优先）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 时区初始化
+属商业库层，不写 C++ 模型；头/中 + IAT/字符串/全局槽
+交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D4D24 = MSVC6 CRT `_tzset`——0x7C-0x7D =
+   MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）；
+   "TZ" 环境变量 + GetTimeZoneInformation + 锁保护为 CRT
+   时区初始化标准形态。
+2. 依赖：getenv（0x7CBC32）+ EnterLock/LeaveLock（batch
+   966/961）+ GetTimeZoneInformation（IAT 0x7E1274）——
+   重写 gamemd 时用等价运行时（_tzset/_timezone 语义）
+   代替。
+3. gamemd_replication_discipline：CRT 时区设施，重写时用
+   等价运行时代替，逐字节复刻无意义——按商业库纪律归
+   档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（头/中 + IAT/字符串/全局槽
+交叉；函数名「_tzset 时区初始化核心」为推断交叉标注——
+TZ 结构偏移 0x46/0x54 由全局槽引用实测）。
+
+四、跨批次闭合
+------------
+★batch 1077：0x7D4FAB 锁 0x0B 保护薄包装——锁族全景第
+  5 成员；本批第 6 成员 0x0C=12（锁族 0x0D atexit/0x13
+  tolower/0x19 字符分类/0x09 堆/0x0B/0x0C 时区）。
+★batch 966/961：0x7CD9F5/0x7CDA56 流锁 Enter/Leave 内
+  核——本批 EnterLock(0x0C)/LeaveLock(0x0C) 调用现场。
+★batch 1091：0x7CCFFC `_strftime` 格式化核心——同 CRT
+  时间族（_strftime 消费 [0x87CA60] _timezone 的 11 处
+  引用交叉）。
+★batch 1082/1084：`_woutput`/`_output` 格式化核心——同
+  CRT 格式化/时间域对照。
+
+五、状态
+-------
+crt_runtime_verified（0x7D4D24：CRT _tzset 时区初始化核
+心归档；头/中 + IAT/字符串/全局槽交叉；不写 C++ 模型
+不做 golden——CRT 时区设施商业库层；函数名「_tzset 时
+区初始化核心」为推断交叉标注——"TZ" 字符串与
+GetTimeZoneInformation IAT 由 PE 实测）。TSV 新增
+0x007D4D24 行。
+
+★本批实锤：锁族全景第 6 成员（0x0C=12）——EnterLock
+(0x0C) 保护 + getenv("TZ") + GetTimeZoneInformation 回
+退 + _timezone [0x87CA60] = Bias×60（+StandardBias×60）
+计算。
+相邻待续：batch 1095 按 _scan_pending_7c.py 取池内下一
+未登记项（uc=1：0x7C7F20(466B, callers=2)/0x7C2250
+(443B)/0x7D5C12(436B, callers=2)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1093 已完（CRT 浮点转字符串 _cvt 族，commit
+1fa4a27）。
