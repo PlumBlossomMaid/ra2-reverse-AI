@@ -1,0 +1,122 @@
+frontier batch 1060 —— CRT 单例槽分配器 0x7D2DA6（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D2DA6（200B,
+uc=2 池内最高）。TSV 无既有行。
+TARGET = 0x007D2DA6。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D2DA6 行。
+
+一、链语义（disasm 全 200B 复核，0x7D2DA6-0x7D2E6D，ret 平返）
+------------------------------------------------
+007d2da6  push ebx,esi,edi / push 2 / xor ebx,ebx / xor edi,edi
+007d2daf  call 0x7cd9f5          ; ★★EnterLock(2)——batch 966 已登记
+007d2db6  cmp [0xb79be0],ebx     ; ★计数全局 [0xB79BE0]
+007d2dbd  jle 0x7d2e60           ; 计数<=0 → 收尾（返回 edi=0）
+007d2dc3  mov eax,[0xb78bc4]     ; ★数组表 [0xB78BC4]
+007d2dc8  mov eax,[eax+esi*4]    ; 取第 esi 项指针
+007d2dcb  cmp eax,ebx / je 0x7d2e06   ; 空槽 → 分配路径
+007d2dcf  test byte[eax+0xC],0x83     ; ★占用标志位 0x83
+007d2dd3  jne 0x7d2df6                ; 已占用 → 跳过
+007d2dd5  push eax / push esi / call 0x7cb428  ; ★★流锁 Enter 变体
+                                               ;   （batch 999 已登记编号分岔）
+007d2dde  mov ecx,[0xb78bc4] / mov eax,[ecx+esi*4]
+007d2de7  test byte[eax+0xC],0x83 / je 0x7d2e01  ; 再次检查占用
+007d2ded  push eax / push esi / call 0x7cb47a   ; ★★流锁 Leave 变体
+                                               ;   （batch 1000 已登记）
+007d2df6  inc esi / cmp esi,[0xb79be0] / jl 0x7d2dc3  ; 遍历循环
+007d2dff  jmp 0x7d2e60
+007d2e01  mov edi,[ecx+esi*4] / jmp 0x7d2e4a    ; ★找到可用项 → 收尾
+007d2e06  push 0x38             ; ★分配大小 0x38
+007d2e0b  shl esi,2 / call 0x7c9430   ; ★★malloc（batch 945 REIMPL）
+007d2e10  pop ecx / mov ecx,[0xb78bc4] / mov [esi+ecx],eax  ; ★新槽入表
+007d2e1a  mov eax,[0xb78bc4] / mov eax,[esi+eax] / cmp eax,ebx
+          / je 0x7d2e60         ; malloc 失败 → 收尾
+007d2e26  add eax,0x20 / push eax / call [0x7e11f4]
+                                ; ★★InitializeCriticalSection（IAT 实证）
+007d2e30  mov eax,[0xb78bc4] / mov eax,[esi+eax] / add eax,0x20
+007d2e3b  push eax / call [0x7e11e8]
+                                ; ★★EnterCriticalSection（IAT 实证）
+007d2e42  mov eax,[0xb78bc4] / mov edi,[esi+eax]   ; ★edi = 新槽
+007d2e4a  cmp edi,ebx / je 0x7d2e60
+007d2e4e  or [edi+0x10],-1      ; ★槽字段初始化：+0x10=-1
+007d2e52  mov [edi+4],ebx / mov [edi+0xC],ebx / mov [edi+8],ebx
+007d2e5b  mov [edi],ebx / mov [edi+0x1C],ebx      ; 全部清零
+007d2e60  push 2 / call 0x7cda56  ; ★★LeaveLock(2)——batch 961
+007d2e67  mov eax,edi / pop / ret  ; ★返回对象指针（或 0）
+
+★语义：**CRT 单例槽分配器（推断名）**——无参 cdecl：
+  ① EnterLock(2) 进入临界区；
+  ② 遍历 [0xB78BC4] 数组（[0xB79BE0] 计数）：空槽 → malloc
+     路径；占用（标志 0x83）→ 跳过；未占用（非 0x83 标志）→
+     0x7CB428 Enter 变体进入后再次检查，仍未占用 → 0x7CB47A
+     Leave 变体退出 + 取项；占用变化 → 0x7CB47A 退出；
+  ③ 空槽：malloc(0x38) → 入表 → InitializeCriticalSection
+     （[0x7E11F4]）+ EnterCriticalSection（[0x7E11E8]）初始
+     化 +0x20 处临界区 → 槽清零（+0/+4/+8/+0xC/+0x10=-1/
+     +0x1C）→ edi=新槽；
+  ④ LeaveLock(2) 收尾，返回槽指针（无可用则 0）。
+
+★原版怪癖（照抄）：
+  ① 全局锁 2 保护整表遍历（非每槽锁——单例分配临界区）；
+  ② 占用标志 0x83 位掩码（byte[eax+0xC] & 0x83——0x80+0x2
+     +0x1 三标志合成）；
+  ③ 每槽内嵌临界区（+0x20 处 Initialize+Enter 两次调用——
+     Enter 后无人 Leave 直接返回（槽归调用方，后续自行操作））；
+  ④ 空槽 malloc(0x38) 失败静默返回 0（不报错）；
+  ⑤ 槽字段初始化 +0x10=-1（哨兵）+ 其余清零；
+  ⑥ 数组 [0xB78BC4] 与计数 [0xB79BE0] 全局（0x7B-0x7F 全局
+     区——与 getenv/locale 同区）。
+
+★依赖链实锤（本批 disasm + IAT 解析 + TSV 交叉）：
+  ① 0x7CD9F5/0x7CDA56 = 流锁 Enter/Leave 内核（batch 966/961
+     已登记）——锁 2 调用；
+  ② 0x7CB428/0x7CB47A = 流锁 Enter/Leave 编号分岔变体（batch
+     999/1000 已登记）——槽占用二次检查调用；
+  ③ 0x7C9430 = CRT malloc 入口包装（batch 945 REIMPL）——
+     空槽分配；
+  ④ [0x7E11F4] = KERNEL32!InitializeCriticalSection /
+     [0x7E11E8] = KERNEL32!EnterCriticalSection（pefile 实证）
+     ——每槽临界区初始化。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 单例槽分配属商业
+库层，不写 C++ 模型；200B 全读 + 五已登记被调 + IAT 双槽实证）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D2DA6 = MSVC6 CRT 单例槽分配器——0x7C-0x7D =
+   MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）。
+2. 依赖：流锁（batch 966/961/999/1000 已登记）+ malloc（batch
+   945 REIMPL）+ 临界区双 IAT（Initialize/EnterCriticalSection）
+   ——重写 gamemd 时用等价运行时（std::mutex/静态单例）代替。
+3. gamemd_replication_discipline：CRT 全局单例设施，重写时用
+   等价运行时代替，逐字节复刻无意义——按商业库纪律归档，不写
+   C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（200B 全读 + 五已登记被调 + IAT
+双槽实证；函数名「单例槽分配器」为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 966/961：0x7CD9F5/0x7CDA56 流锁内核——锁 2 调用现场
+  交叉。
+★batch 999/1000：0x7CB428/0x7CB47A 流锁编号分岔变体——槽占
+  用二次检查调用现场交叉（本批为其调用方）。
+★batch 945：0x7C9430 malloc 入口 REIMPL——空槽分配现场交叉。
+★batch 1044/1045/1051：getenv/locale 链——[0xB78BC4]/
+  [0xB79BE0] 全局区（0x7B-0x7F）交叉。
+
+五、状态
+-------
+crt_runtime_verified（0x7D2DA6：CRT 单例槽分配器归档；200B 全
+读 + 五已登记被调 + IAT 双槽实证；不写 C++ 模型不做 golden——
+CRT 全局单例商业库层；函数名与「占用标志 0x83/每槽临界区」语
+义为推断交叉标注）。TSV 新增 0x007D2DA6 行。
+
+★本批实锤：CRT 单例槽分配全链——锁 2 全局保护 + 流锁变体二
+次检查 + malloc 空槽 + Initialize/EnterCriticalSection 每槽初
+始化 + 槽清零返回，五已登记被调一网打尽。
+相邻待续：batch 1061 按 _scan_pending_7c.py 取池内下一未登记
+项（uc=2：0x7C20B0(197B)/0x7CEC87(194B)/0x7DD434(192B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1059 已完（CRT 流字符读取器，commit f15ef1b）。
