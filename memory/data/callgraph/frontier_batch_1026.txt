@@ -1,0 +1,124 @@
+frontier batch 1026 —— CRT 浮点打包调用器 0x7CF330（登记）
+============================================
+
+候选来源：python .qwen\tmp\_list_7c_pending.py（扩展扫描新增 6 项）
+—— 0x7CF330 = 23B / 2 uc（ranking 行 unique_callers 列 =
+FUN_007c8fd2,FUN_007cf479）/ TSV 无既有行 / frontier_batch_*.txt
+仅候选列表提及。本批 = 依赖链确认（0x7D8C6B batch 871/872 已录
+CRT FPE 分发器）→ 按商业库层归档 **crt_runtime_verified**。
+TARGET = 0x007CF330。C++ 模型：无（见「三态判定」）。TSV：新增
+0x007CF330 行。
+
+一、链语义（disasm 全 23B 复核，双入口）
+------------------------------------------------
+0x7CF330（第一入口）：
+007cf330  55 8bec        push ebp / mov ebp,esp
+007cf333  83c4e0        add esp, -0x20                       ; 预留 0x20 栈
+007cf336  8945e0        mov [ebp-0x20], eax                  ; ★存 eax（fastcall 参）
+007cf339  8b4518        mov eax, [ebp+0x18]                  ; 栈参 5
+007cf33c  8945f0        mov [ebp-0x10], eax
+007cf33f  8b451c        mov eax, [ebp+0x1c]                  ; 栈参 6
+007cf342  8945f4        mov [ebp-0xc], eax
+007cf345  eb09          jmp 0x7cf350
+
+0x7CF347（第二入口，仅存 eax 差异）：
+007cf347  55 8bec        push ebp / mov ebp,esp
+007cf34a  83c4e0        add esp, -0x20
+007cf34d  8945e0        mov [ebp-0x20], eax                  ; ★存 eax
+
+0x7CF350（汇合）：
+007cf350  dd5df8        fstp qword ptr [ebp - 8]             ; ★★存 ST(0) double
+007cf353  894de4        mov [ebp-0x1c], ecx                  ; ★存 ecx（fastcall 参）
+007cf356  8b4510        mov eax, [ebp+0x10]                  ; 栈参 3
+007cf359  8b4d14        mov ecx, [ebp+0x14]                  ; 栈参 4
+007cf35c  8945e8        mov [ebp-0x18], eax
+007cf35f  894dec        mov [ebp-0x14], ecx
+007cf362  8d4508        lea eax, [ebp+8]                     ; &栈参 1
+007cf365  8d4de0        lea ecx, [ebp-0x20]                  ; &局部结构
+007cf368  50            push eax
+007cf369  51            push ecx
+007cf36a  52            push edx                             ; ★edx（fastcall 参）
+007cf36b  e8fb980000    call 0x7d8c6b                        ; ★★0x7D8C6B（batch
+                                                        ;   871/872 已录未登记：
+                                                        ;   CRT FPE 分发器
+                                                        ;   [0x7D8C6B-0x7D8D3A]
+                                                        ;   body=208；batch 552
+                                                        ;   第 4 调用者新候选）
+
+★语义：**CRT 浮点打包调用器（推断名）**——fastcall 混合约定
+（eax/ecx/edx 寄存器参 + 6 栈参）：
+  ① 入口 eax 存 [ebp-0x20]（栈参 5/6 读入 [ebp-0x10]/[ebp-0xC]）；
+  ② 汇合点 fstp 存 ST(0) double 到 [ebp-8]，ecx 存 [ebp-0x1C]；
+  ③ 栈参 3/4 读入 [ebp-0x18]/[ebp-0x14]——打包成 0x20 局部结构
+     （{eax 槽, ecx 槽, 栈参 3/4, ST0 double, 栈参 5/6}）；
+  ④ push edx / &局部 / &栈参 1 → call 0x7D8C6B（FPE 分发器）。
+  ★双入口差异：0x7CF330 预读栈参 5/6、0x7CF347 不读——调用方
+  按参数量选择入口（编译器生成的 fastcall thunk 惯用）。
+
+★原版怪癖（照抄）：
+  ① ★双入口共享汇合点（mov [ebp-0x20],eax 各自执行后 jmp 汇合）
+     ——fastcall thunk 模板；
+  ② ★fstp 存 ST(0)（x87 浮点栈顶转局部）——FP 参数经栈传递；
+  ③ 寄存器参（eax/ecx/edx）+ 6 栈参混合打包（非纯栈 cdecl）——
+     MSVC6 fastcall 变体；
+  ④ 局部结构 0x20 布局 = {参 eax, 参 ecx, 栈参 3, 栈参 4, ST0
+     double, 栈参 5, 栈参 6}（推断——偏移由 disasm 反推）；
+  ⑤ push 序 = edx 先压（cdecl 尾参）、&局部、&栈参 1（首参）
+     ——0x7D8C6B 收 3 参。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7D8C6B = batch 871/872 已录未登记（0x7D8CFE → FUN_007d8c6b
+     [0x7D8C6B-0x7D8D3A] body=208，CRT FPE 分发器；batch 552 提
+     「第 4 调用者——新候选入列」）——本批为其第 5 调用点（打包
+     调用器形态）交叉；
+  ② 双入口 fastcall 形态 = MSVC6 CRT 浮点调用 thunk 家族（对照
+     batch 552/871/872 FPE 分发链）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 浮点 thunk 属商业库
+层，不写 C++ 模型；23B 全读 + 0x7D8C6B batch 871/872 交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CF330 = MSVC6 CRT 浮点打包调用器（fastcall thunk）
+   ——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）。
+2. 依赖：0x7D8C6B（batch 871/872 已录 CRT FPE 分发器，body=208
+   未登记）+ fstp 硬件指令——重写 gamemd 时用等价运行时（直接
+   参数传递）代替，thunk 打包细节无需复刻。
+3. gamemd_replication_discipline：CRT 编译生成 thunk，重写时用等
+   价运行时代替，逐字节复刻无意义——按商业库纪律归档，不写 C++
+   模型不做 golden。
+→ 状态：crt_runtime_verified（23B 全读 + 0x7D8C6B batch 871/872
+交叉；局部结构布局与 0x7D8C6B 完整语义为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 871/872：0x7D8C6B 已录未登记（CRT FPE 分发器 body=208，
+0x7D8CFE/0x7D8CB9 两调用现场）——本批第 5 调用点（打包调用器）
+交叉。
+★batch 552：0x7D8C6B 第 4 调用者新候选入列——本批兑现其调用器
+形态。
+★batch 1005：0x7BE660 哨兵微函数——同 0x7C 区 CRT 内部函数家族
+交叉（微函数 vs thunk 形态对照）。
+★_pick_945：IAT/锁家族排除——0x7CF330 依赖方纳入同边界。
+
+五、状态
+-------
+crt_runtime_verified（0x7CF330：CRT 浮点打包调用器归档；23B 全读
++ 0x7D8C6B batch 871/872 交叉；不写 C++ 模型不做 golden——CRT
+fastcall thunk 商业库层；局部结构布局与 0x7D8C6B 完整语义为推断
+交叉标注）。TSV 新增 0x007CF330 行。
+
+★本批实锤：0x7CF330 = CRT 浮点打包调用器（fastcall 双入口
+0x7CF330/0x7CF347 汇合：eax/ecx/edx 寄存器参 + 6 栈参 + fstp
+ST(0) 打包成 0x20 局部 → call 0x7D8C6B（batch 871/872 已录 CRT
+FPE 分发器））→ 按商业库层纪律归档 crt_runtime_verified。
+相邻待续：batch 1027 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_list_7c_pending.py——扩展扫描 6 项全闭
+合；继续扩扫 0x7C/0x7D 区其余未登记项；0x7D8C6B/0x7D571F/
+0x7C9FD9/0x7D473F 新候选标注）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1025 已完（CRT bsearch 二分搜索 0x7C8E25，commit
+5633195）。
