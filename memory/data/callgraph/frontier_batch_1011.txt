@@ -1,0 +1,122 @@
+frontier batch 1011 —— CRT _control87 掩码变体 0x7CBF49（登记）
+============================================
+
+候选来源：python .qwen\tmp\_list_real_pending.py —— 0x7CBF49 = 22B /
+2 uc（ranking 行 unique_callers 列 = FUN_006bb9a0,FUN_007ceaaf）/
+TSV 无既有行 / frontier_batch_*.txt 无匹配。本批 = 依赖链确认
+（0x7CBF14 = _control87 核心 + QWEN.md WinMain 0x6BBFB7 调用点黄金
+交叉）→ 按商业库层归档 **crt_runtime_verified**。
+TARGET = 0x007CBF49。C++ 模型：无（见「三态判定」）。TSV：新增
+0x007CBF49 行。
+
+一、链语义（disasm 全 22B 复核 + 核心 0x7CBF14 全 53B 复核）
+------------------------------------------------
+0x7CBF49（22B，0x7CBF49-0x7CBF5E）：
+007cbf49  8b442408        mov eax, dword ptr [esp + 8]     ; 参2 = mask
+007cbf4d  25fffff7ff      and eax, 0xfff7ffff              ; ★★mask &= ~0x80000
+                                                        ;   （清 bit 19）
+007cbf52  50              push eax                         ; 压清后 mask
+007cbf53  ff742408        push dword ptr [esp + 8]         ; ★压参1 = newcw
+007cbf57  e8b8ffffff      call 0x7cbf14                    ; ★★_control87(newcw,
+                                                        ;   mask & ~0x80000)
+007cbf5c  59 59           pop ecx / pop ecx                ; cdecl 清 2 参
+007cbf5e  c3              ret
+
+0x7CBF14（53B 核心，0x7CBF14-0x7CBF48）：
+007cbf14  55 8bec         push ebp / mov ebp,esp / push ecx / push esi
+007cbf19  9b              wait
+007cbf1a  d97dfc          fnstcw word ptr [ebp - 4]        ; ★★读 FPU 控制字
+007cbf1d  ff75fc          push dword ptr [ebp - 4]
+007cbf20  e865000000      call 0x7cbf8a                    ; ★内部（控制字读取包装）
+007cbf25  8bf0            mov esi, eax                     ; esi = 当前控制字
+007cbf27  8b450c          mov eax, [ebp + 0xc]             ; 参2 = mask
+007cbf2a  f7d0            not eax                          ; ~mask
+007cbf2c  23f0            and esi, eax                     ; esi &= ~mask
+007cbf2e  8b4508          mov eax, [ebp + 8]               ; 参1 = newcw
+007cbf31  23450c          and eax, [ebp + 0xc]             ; newcw & mask
+007cbf34  0bf0            or esi, eax                      ; ★★(cur&~mask)|(newcw&mask)
+007cbf36  56              push esi                         ; 压新控制字
+007cbf37  e8e0000000      call 0x7cc01c                    ; ★内部（fldcw 写回包装）
+007cbf3c  59              pop ecx
+007cbf3d  89450c          mov [ebp + 0xc], eax
+007cbf40  59              pop ecx
+007cbf41  d96d0c          fldcw word ptr [ebp + 0xc]       ; ★★写回 FPU 控制字
+007cbf44  8bc6            mov eax, esi                     ; 返回新控制字
+007cbf46  5e              pop esi / leave / ret
+
+★语义：**0x7CBF49 = CRT _control87 掩码变体包装**——把参2 mask 的
+bit19（0x80000）清零后调用 0x7CBF14 = **标准 `_control87(newcw,
+mask)`**（fnstcw 读当前控制字 → `(cur & ~mask) | (newcw & mask)`
+合并 → fldcw 写回 → 返回新控制字）。
+★★黄金交叉（QWEN.md 已实锤）：WinMain 0x6BBFB7
+  `push 0x300 / push 0x300 / call 0x7CBF49`
+  = `_control87(_RC_CHOP, _MCW_RC)` → **全局舍入模式向零截断**——
+  正是 RMG 复刻的 FPU 环境设置链（FpuChopScope 依据）；caller
+  FUN_006bb9a0 = WinMain 0x6BB9A0 内部 0x6BBFB7 完全对上。
+
+★原版怪癖（照抄）：
+  ① mask 清 bit19（0x80000）用 `and eax,0xFFF7FFFF` 常量——非
+     `and eax,~0x80000`（汇编无 ~ 操作）；
+  ② 压参顺序：先压清后 mask 再压 newcw（cdecl 右→左）——
+     `_control87(newcw, mask)` 参数序正确；
+  ③ 核心 `(cur & ~mask) | (newcw & mask)` 用 not/and/or 三段指令
+     （无单条 bts/btr）——MSVC6 惯用；
+  ④ fnstcw/fldcw 成对（读/写控制字）；
+  ⑤ 0x7CBF8A/0x7CC01C 两个内部包装（控制字读/写间接化）——
+     未登记，标注新候选。
+
+★依赖链实锤（本批 disasm + TSV + QWEN.md 交叉）：
+  ① 0x7CBF14 = _control87 核心（53B 全读）——未登记，但 QWEN.md
+     「WinMain 0x6BBFB7 call 0x7CBF49 = _control87(_RC_CHOP,
+     _MCW_RC)」黄金交叉实锤语义；
+  ② caller FUN_006bb9a0 = WinMain 0x6BB9A0（QWEN.md 游戏运行流全
+     量逆向已登记）——0x6BBFB7 调用点；
+  ③ caller FUN_007ceaaf = 0x7CEAAF（后邻 0x7CBF5F 的调用目标——
+     独立函数，fninit 语境）——FPU 初始化链。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 浮点控制字操作属商业库
+层，不写 C++ 模型；22B + 核心 53B 全读 + QWEN.md WinMain 交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CBF49/0x7CBF14 = MSVC6 CRT `_control87` 家族（std 库
+   浮点环境控制函数）——0x7C-0x7D = MSVC6 静态 CRT
+   （ra2_code_region_layout_crt_provenance）。
+2. 依赖：内部调 0x7CBF8A/0x7CC01C（控制字读/写包装）+ fldcw 硬件
+   指令——重写 gamemd 时用等价 `_control87`/_controlfp 运行时。
+3. gamemd_replication_discipline：_control87 是 CRT 运行时设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库纪律归档，
+   不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（22B + 核心 53B 全读 + QWEN.md WinMain
+0x6BBFB7 黄金交叉 + caller 身份实锤；0x7CBF8A/0x7CC01C 内部身份为
+推断交叉标注）。
+
+四、跨批次闭合
+------------
+★QWEN.md：WinMain 0x6BBFB7 `call 0x7CBF49` = `_control87(_RC_CHOP,
+_MCW_RC)` → 全局 FPU 向零截断——本批兑现该调用点身份。
+★batch 1005：0x7BE660 哨兵微函数——同 0x7C 区 CRT 内部家族交叉。
+★batch 303：0x7D140B 浮点异常分发链——FPU 语境交叉。
+★_pick_945：IAT/锁家族排除——0x7CBF49 依赖方纳入同边界。
+
+五、状态
+-------
+crt_runtime_verified（0x7CBF49：CRT _control87 掩码变体包装归档；
+22B 全读 + 核心 0x7CBF14 53B 全读 + QWEN.md WinMain 0x6BBFB7 黄金
+交叉；不写 C++ 模型不做 golden——_control87 商业库层；0x7CBF8A/
+0x7CC01C 内部身份与 bit19 语义为推断交叉标注）。TSV 新增
+0x007CBF49 行。
+
+★本批实锤：0x7CBF49 = CRT _control87 掩码变体包装（清 mask
+bit19 后调核心 0x7CBF14 `(cur&~mask)|(newcw&mask)`），caller
+FUN_006bb9a0 = WinMain 0x6BB9A0（QWEN.md 0x6BBFB7 实锤 _RC_CHOP
+设置点）；按商业库层纪律归档 crt_runtime_verified。
+相邻待续：batch 1012 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_list_real_pending.py——候选 0x7C3230
+58B / 0x7C3690 41B / 0x7C3710 44B / 0x7C3990 40B 等；0x7CBF8A/
+0x7CC01C/0x7CBF14 标注新候选）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1010 已完（CRT locale 区域锁保护包装 0x7CC2AC，commit
+9aece5b）。
