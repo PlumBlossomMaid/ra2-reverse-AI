@@ -1,0 +1,133 @@
+frontier batch 1064 —— CRT 浮点尾数格式化器 0x7CED9E（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CED9E（167B,
+uc=2 池顶）。TSV 无既有行。batch 1062（0x7CEC87 浮点指数格
+式化器）紧邻——本批为其配套前段（尾数/指数符号处理）。
+TARGET = 0x007CED9E。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CED9E 行。
+
+一、链语义（disasm 全 167B 复核，0x7CED9E-0x7CEE44）
+------------------------------------------------
+007ced9e  55/8bec/53/56     push ebp/mov ebp,esp/push ebx,esi
+007ceda3  8b7510            mov esi,[ebp+0x10]      ; ★param3 = 源结构
+007ceda6  8b5d08            mov ebx,[ebp+8]         ; ★param1 = 目标缓冲
+007ceda9  57                push edi
+007cedaa  8b4604            mov eax,[esi+4]         ; ★源+4 长度
+007cedad  48                dec eax                 ; len-1
+007cedae  807d1400          cmp byte[ebp+0x14],0    ; ★param4 == 0?
+007cedb2  741a              je 0x7cedce
+007cedb4  3b450c            cmp eax,[ebp+0xc]       ; ★len-1 vs param2
+007cedb7  7515              jne 0x7cedce
+  ; ── param4!=0 且 len-1==参2：写 '0' 收尾 ──
+007cedb9  33c9/xor ecx,ecx / 833e2d cmp [esi],0x2d  ; 源首=='-'?
+007cedbe  0f94c1            sete cl / add ecx,eax / add ecx,ebx
+007cedc5  8bc1/mov eax,ecx
+007cedc7  c60030            mov byte[eax],0x30      ; ★写 '0'
+007cedca  80600100          and byte[eax+1],0       ; ★NUL
+007cedce  833e2d            cmp [esi],0x2d          ; ★源首=='-'?
+007cedd1  8bfb              mov edi,ebx / jne 0x7ceddb
+007cedd5  c6032d            mov byte[ebx],0x2d      ; ★写负号
+007cedd8  8d7b01            lea edi,[ebx+1]         ; ★越过负号
+007ceddb  8b4604            mov eax,[esi+4]         ; ★源+4 长度
+007cedde  85c0              test eax,eax / jg 0x7cedf2
+  ; ── 长度<=0：补 '0' ──
+007cede2  6a01/push 1 / 57 push edi / e83f010000 call 0x7cef29  ; ★0x7CEF29(edi,1)
+007cedea  c60730            mov byte[edi],0x30      ; 写 '0'
+007cedee  59/59             pop ecx×2 / inc edi
+007cedf2  03f8              add edi,eax             ; ★edi += 长度
+007cedf4  837d0c00          cmp [ebp+0xc],0 / jle 0x7cee3e  ; ★param2<=0 → 跳过填充
+007cedfa  6a01/push 1 / 57 push edi / call 0x7cef29 ; ★0x7CEF29(edi,1) 再调
+007cee02  a0a0c78700        mov al,[0x87c7a0]       ; ★★填充字符全局
+007cee07  59                pop ecx / 8807 mov [edi],al  ; ★写填充字符
+007cee0a  8b7604            mov esi,[esi+4] / inc edi / pop ecx
+007cee0f  85f6              test esi,esi / jge 0x7cee3e  ; ★源长度负 → 指数
+007cee13  807d1400          cmp byte[ebp+0x14],0 / je 0x7cee1d
+007cee19  f7de              neg esi / jmp 0x7cee24  ; ★param4!=0 → 取绝对值
+007cee1d  f7de              neg esi / 39750c cmp [ebp+0xc],esi / jl 0x7cee27
+007cee24  89750c            mov [ebp+0xc],esi       ; ★param2 = |len|
+007cee27  ff750c/push [ebp+0xc] / 57 push edi / call 0x7cef29  ; ★0x7CEF29(edi,len) 三调
+007cee30  ff750c/push [ebp+0xc] / 6a30 push 0x30 / 57 push edi / e8a5870000 call 0x7d75e0  ; ★★memset_legacy(edi,'0',len)——batch 015/028 已登记 REIMPL
+007cee3b  83c414            add esp,0x14 / pop /
+007cee3e  5f/8bc3           pop edi / mov eax,ebx    ; ★返回目标
+007cee41  5e/5b/5d/c3       pop esi,ebx,ebp / ret
+
+★语义：**CRT 浮点尾数格式化器（推断名——%e 家族配套前段）**
+——cdecl 4 参（参1=目标缓冲，参2=长度，参3=源结构(+0 '-' 标
+志/+4 长度/+0xC 尾数)，参4=附加标志）：
+  ① param4!=0 且 len-1==参2 → 目标+负号偏移写 '0' + NUL（空
+     尾数收尾）；
+  ② 源首 '-' → 写负号并越过（edi 起点移到 +1）；
+  ③ 源长度<=0 → 0x7CEF29 + 写 '0'（零尾数补位）；
+  ④ 参2>0 → 0x7CEF29 + 填充字符 [0x87C7A0]（对齐填充）；
+  ⑤ 源长度负（指数走负数分支）→ 取绝对值 + 参2 修正 →
+     0x7CEF29 + memset_legacy(edi,'0',len) 零填充尾段；
+  ⑥ 返回目标缓冲。
+
+★原版怪癖（照抄）：
+  ① 填充字符全局 [0x87C7A0]（与 batch 1062 同款——可配置
+     填充）；
+  ② 源长度负值双路径取绝（param4!=0 直接 neg / ==0 先比再
+     neg+参2 覆盖）；
+  ③ 0x7CEF29 三次调用（(edi,1)×2 + (edi,len)）——批 1062
+     已标未登记的转换辅助，本批调用现场补齐交叉；
+  ④ 空尾数收尾条件 param4!=0 且 len-1==参2（精确匹配才补
+     '0'）——边界怪癖照抄；
+  ⑤ '0'+NUL 与填充字符 [0x87C7A0] 双种填补（'0' vs 可配
+     置填充）语义分层。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7D75E0 = memset_legacy（batch 015 REIMPL + 028 已登记
+     cpp_reimplementation_verified——Val&0xFF 展开 4 字节模
+     式+REP STOSD）——尾段零填充调用；
+  ② 0x7CEF29 = 未登记（转换辅助——batch 1062 已标待续，本批
+     确认三次调用现场 (edi,1)/(edi,len) cdecl 2 参）；
+  ③ [0x87C7A0] = 填充字符全局（batch 1062 同款）；
+  ④ 源结构契约（+0 '-'/ +4 长度/ +0xC 尾数）——与 0x7CEC87
+     共用（batch 1062 交叉）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 浮点格式化属商业
+库层，不写 C++ 模型；167B 全读 + memset 交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CED9E = MSVC6 CRT 浮点尾数格式化器——0x7C-0x7D =
+   MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）。
+2. 依赖：0x7D75E0（batch 015/028 已登记 memset）+ 0x7CEF29
+   （未登记）+ [0x87C7A0] 填充全局——重写 gamemd 时用等价运
+   行时（snprintf %e 或 std::to_chars）代替。
+3. gamemd_replication_discipline：CRT 格式化设施，重写时用等
+   价运行时代替，逐字节复刻无意义——按商业库纪律归档，不写
+   C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（167B 全读 + memset 交叉 + 源结
+构契约与 batch 1062 互证；函数名「浮点尾数格式化器」为推断
+交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 015/028：0x7D75E0 memset_legacy REIMPL——尾段零填充
+  调用现场交叉。
+★batch 1062：0x7CEC87 浮点指数格式化器——本批配套前段（同
+  源结构契约 + 同填充字符 [0x87C7A0] + 0x7CEF29 三次调用互
+  证），%e 家族前/后段闭环。
+★batch 035/008：0x7D4BF0 strcpy——batch 1062 已交叉，本批无
+  直接 strcpy（纯尾数处理）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CED9E：CRT 浮点尾数格式化器归档；
+167B 全读 + memset 交叉 + 源结构契约与 batch 1062 互证；不写
+C++ 模型不做 golden——CRT 格式化商业库层；函数名与「0x7CEF29
+三次调用/空尾数补 '0'」语义为推断交叉标注）。TSV 新增
+0x007CED9E 行。
+
+★本批实锤：%e 家族配套前段——0x7CEC87（指数段，batch 1062）
++ 0x7CED9E（尾数段，本批）双件套闭环；0x7D75E0 memset 现场
+交叉 + 0x7CEF29 三次调用现场（待独立登记）。
+相邻待续：batch 1065 按 _scan_pending_7c.py 取池内下一未登记
+项（uc=2：0x7DB5E6(165B)/0x7D3374(141B)/0x7C0146 等；或
+0x7CEF29 转换辅助 + 0x7D9ECF/0x7DC291 流族遗留）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1063 已完（CRT 字符分类表查询器，commit 7fbbc48）。
