@@ -1,0 +1,134 @@
+frontier batch 1002 —— CRT 流锁保护的流操作包装 0x7CB19C（登记升级）
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序（0x7CB19C = 47B / 3 uc / 未 REIMPL；batch 841 已登记
+semantics_verified + assembly_verified_semantics_confirmed，名「流锁
+保护的流操作包装（推断名——flush 内核版）」，47B 全读 + 内核
+0x7CB1CB 0x40 全读 + 7 处调用点 + 依赖链交叉已完成）。本批 = 依赖链
+确认（0x7CB3F9/0x7CB44B 流锁对 batch 966/961 归档 + 0x7CB1F9
+flushbuf batch 049 + 0x7D30D1 fd 操作）→ 按商业库层归档
+**crt_runtime_verified**。
+TARGET = 0x007CB19C。C++ 模型：无（锁家族 + FILE 设施留桩边界——
+见「三态判定」）。TSV：更新 0x007CB19C 行。
+
+一、链语义（disasm 全段复核 + batch 841 交叉）
+------------------------------------------------
+0x7CB19C(47B) = MSVC6 CRT 流锁保护的流操作包装（flush 内核版，
+0x7C-0x7D 静态 CRT 区）——cdecl 1 栈参（FILE* 流槽）：
+  push esi / mov esi,[esp+8]       ; ★参数=FILE* 流槽
+  test esi,esi / jne 0x7CB1AE      ; ★空指针 → 独立路径
+  push esi / call 0x7CB25E         ; ★★空指针处理路径（[0xB79BE0]/
+                                   ;   [0xB78BC4] 全局遍历清理推断）
+  pop ecx / pop esi / ret
+  0x7CB1AE: push edi / push esi
+  call 0x7CB3F9                    ; ★★流锁 Enter（batch 966 归档）
+  push esi / call 0x7CB1CB         ; ★★内核操作（flush 内核）
+  push esi / mov edi,eax           ; ★edi=内核结果
+  call 0x7CB44B                    ; ★★流锁 Leave（batch 961 归档）
+  add esp,0xC / mov eax,edi / pop 族 / ret
+内核 0x7CB1CB（0x40 复核）：
+  push esi / mov esi,[esp+8]       ; ★流槽
+  push esi / call 0x7CB1F9         ; ★★flushbuf 底层（batch 049 已登
+                                   ;   记——batch 226 的 0x7CA78C FILE
+                                   ;   关闭内核同款被调）
+  test eax,eax / pop ecx / je 0x7CB1E0
+  or eax,0xFFFFFFFF                ; ★flush 失败 → -1
+  pop esi / ret
+  0x7CB1E0: test byte [esi+0xD],0x40（★流槽+0xD 标志 0x40）/ je
+  0x7CB1F5（★无 0x40 → 返 0）
+  push [esi+0x10]（★流槽+0x10=OS 句柄 fd——batch 226 流槽布局）/
+  call 0x7D30D1（★fd 操作未登记）→ neg eax / pop ecx / pop esi /
+  sbb eax,eax（★★neg/sbb 惯用——fd 操作结果 0/-1）
+  0x7CB1F5: xor eax,eax / pop esi / ret
+★语义（batch 841 名准）：**流锁保护的流操作包装（flush 内核版）**——
+①空流槽走 0x7CB25E 独立路径（非直接返 0/非锁包裹）；②非空则「流锁
+Enter（0x7CB3F9）→ 内核（0x7CB1CB）→ 流锁 Leave（0x7CB44B）」三步
+返回内核结果；③内核 = flushbuf（0x7CB1F9）失败返 -1，成功且流槽
++0xD 带 0x40 时对 +0x10（fd）调 0x7D30D1 并 neg/sbb 得 0/-1——
+「flush+fd 操作」两段式。
+★原版怪癖（batch 841 已录，照抄）：
+  ① 空流槽走 0x7CB25E 独立路径（空指针有专门处理——非直接返 0）；
+  ② 「流锁 Enter→内核→流锁 Leave」三步无返回值合并（内核结果 edi
+     透传、Leave 返回值丢弃）；
+  ③ 内核 flushbuf 失败返 -1（or eax,0xFFFFFFFF）短路；成功才检查
+     +0xD 0x40 并操作 fd（+0x10）；
+  ④ fd 操作用 neg/sbb 惯用（非直接比较）；
+  ⑤ 流槽 +0xD 带 0x40 位才操作 fd（字符串流/无句柄跳过 → 返 0）；
+  ⑥ 调用点全以 [0xAA0468]（会话区流槽全局）为参 + [0x7E11EC] 队列
+     推进成对（释放+队列推进惯用——batch 260 的 0x53E770 Esc 分支
+     同款）。
+★调用方（batch 841 已录）：7 处 E8——FUN_0053e1d0 2 处（
+0x53E230/0x53E2A9）/FUN_0053e6b0 1 处（0x53E708——[0xAA0468] 流槽
+释放+[0xAA0418] 队列推进，batch 260 会话区释放链）/FUN_0053e770 2
+处（0x53E940/0x53EAC0——batch 260 partial「call 0x7CB19C（释放未登
+记）」本批兑现）+2 间隙（0x53E17C/0x53E666）。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7CB3F9/0x7CB44B = 流锁 Enter/Leave——batch 966/961 已归档
+     crt_runtime_verified（[0x87BF50,0x87C1B0] 锁数组 → 0x7CD9F5/
+     0x7CDA56；区间外 [0x7E11E8]/[0x7E11EC] IAT），本批三步骤调用
+     现场交叉；
+  ② 0x7CB1F9 = flushbuf 底层——batch 049 已登记（batch 226 的
+     0x7CA78C FILE 关闭内核同款被调），本批内核调用现场交叉；
+  ③ 0x7CB25E/0x7D30D1 = 空指针路径/fd 操作——batch 841 新候选标
+     注（未登记，留后续）；
+  ④ [0xAA0468]/[0xAA0418] = 会话区流槽全局/队列全局——batch 260
+     同域推断。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：商业库层归档，不写 C++ 模型
+不做对拍；batch 841 语义已登记、全段读完）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 代码区归属：0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance 实锤）——非 Westwood 手写逻辑。
+2. 锁家族边界：0x7CB19C 主路径直接调 0x7CB3F9/0x7CB44B（batch
+   966/961 归档的流锁 Enter/Leave，_pick_945 留桩边界项）——线程
+   同步语义在单线程 C++ 模型下无可观测行为（structural_equivalence
+   锁例外合法）。
+3. FILE 设施依赖：内核 flushbuf（0x7CB1F9）+ fd 操作（0x7D30D1）+
+   流槽布局（+0xD/+0x10）——FILE* 与 _iob 表是 CRT 运行时设施，重
+   写用等价 std::fflush 代替。
+4. gamemd_replication_discipline：商业库只 dump 汇编、重写时用等价
+   运行时代替。
+→ 状态：crt_runtime_verified（batch 841 语义 + 本批流锁对/内核链交
+叉；函数精确名（flush 内核 vs fclose 内层路径分工）、0x7CB25E 空指
+针路径完整语义、0x7D30D1 身份、[0xAA0468] 精确身份维持 batch 841
+partial 标注）。
+
+四、跨批次闭合
+------------
+★batch 841：0x7CB19C 首登记（流锁保护的流操作包装，47B+内核 0x40
+全读 + 7 调用点 + 锚点闭合）——本批升级归档。
+★batch 966/961：0x7CB3F9/0x7CB44B 流锁 Enter/Leave 归档 crt_
+runtime_verified——本批三步骤调用现场交叉。
+★batch 049:0x7CB1F9 flushbuf——本批内核调用现场交叉。
+★batch 226：0x7CA75B/0x7CA78C FILE 关闭家族（同锁包裹模式 + 流槽
+布局 +0x10 fd）——本批同构参照。
+★batch 260：0x53E770 会话模式消息泵——本批 0x53E940/0x53EAC0 调
+用点兑现（Esc 分支释放链）。
+★batch 970：0x7CA75B FILE 关闭归档——同 FILE 设施族同纪律。
+★_pick_945：锁家族排除逻辑——0x7CB19C 依赖方纳入同边界。
+★ra2_code_region_layout_crt_provenance：0x7C-0x7D = MSVC6 静态 CRT。
+
+五、状态
+-------
+crt_runtime_verified（0x7CB19C：CRT 流锁保护的流操作包装（flush 内
+核版）归档；batch 841 语义 + 本批流锁对/内核链交叉；不写 C++ 模型
+不做 golden——锁家族 + FILE 设施商业库层）。TSV 行 0x007CB19C 更
+新。
+
+★本批实锤：CRT 扇入度 3 的 0x7CB19C = 流锁保护的流操作包装（flush
+内核版）——空流槽 0x7CB25E 独立路径 + 非空「流锁 Enter(0x7CB3F9)
+→ flush 内核(0x7CB1CB：0x7CB1F9 flushbuf → +0xD 0x40 时 0x7D30D1
+fd 操作 neg/sbb) → 流锁 Leave(0x7CB44B)」；依赖链（流锁对 + FILE 设
+施）完整确认，按商业库层纪律归档 crt_runtime_verified。
+相邻待续：batch 1003 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_pick_945.py——候选 0x7CBDED __exit 17B /
+0x7CAEF1 35B / 0x7CD790 62B 等）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1001 已完（CRT 宽字符数值解析包装 0x7CB9B8，commit
+f15ead2）。
