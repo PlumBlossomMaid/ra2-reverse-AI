@@ -1,0 +1,157 @@
+frontier batch 1100 —— CRT 字符表初始化器 0x7D36D5（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D36D5（389B,
+uc=1, callers=1 池顶）。TSV 无既有行。
+TARGET = 0x007D36D5。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D36D5 行。
+
+一、链语义（disasm 头/中/尾复核，0x7D36D5-0x7D385B）
+------------------------------------------------
+头部（0x7D36D5-0x7D3750）：
+007d36d5  55                    push ebp
+007d36d6  8bec                  mov ebp, esp
+007d36d8  81ec14050000          sub esp, 0x514         ; ★0x514 局部帧
+007d36de  8d45ec                lea eax, [ebp-0x14]   ; ★16 字节缓冲（CPINFO）
+007d36e1  56                    push esi
+007d36e2  50                    push eax
+007d36e3  ff354088b700          push [0xb78840]       ; ★CP 编号全局
+007d36e9  ff15d4127e00          call [0x7e12d4]       ; ★★GetCPInfo（pefile
+                                                      ;   IAT 实测 KERNEL32）
+007d36ef  83f801                cmp eax, 1            ; ★失败判定
+007d36f2  0f8516010000          jne 0x7d380e          ; → ASCII 回退路径
+007d36f8  33c0                  xor eax, eax
+007d36fa  be00010000            mov esi, 0x100        ; ★256 项
+007d36ff  888405ecfeffff        mov [ebp+eax-0x114], al ; ★清零 [ebp-0x114]
+007d3706  40                    inc eax
+007d3707  3bc6                  cmp eax, esi
+007d3709  72f4                  jb 0x7d36ff           ; ★0x100 清零循环
+007d370b  8a45f2                mov al, [ebp-0xe]     ; ★CPINFO.MaxCharSize
+007d370e  c685ecfeffff20        mov byte[ebp-0x114], 0x20 ; ★0x20 空格打底
+007d3715  84c0                  test al, al
+007d3717  7437                  je 0x7d3750           ; ★MaxCharSize==0 跳过
+  …（逐字节复制循环：movzx ecx,[edx] → cmp/mov → 空格
+    填充 0x20202020 rep stosd + rep stosb——从 CPINFO
+    码位表构造转换表）
+
+中段（0x7D37B0-0x7D380B）：
+007d37b0  6800020000            push 0x200            ; ★512
+007d37b5  ff35648ab700          push [0xb78a64]       ; ★全局 [0xB78A64]
+007d37bb  e802d9ffff            call 0x7d10c2         ; ★★0x7D10C2（紧邻复制
+                                                      ;   函数）
+007d37c0  83c45c                add esp, 0x5c         ; ★清 23 参
+007d37c3  33c0                  xor eax, eax
+007d37c5  8d8decfaffff          lea ecx, [ebp-0x514]  ; ★码位表
+007d37cb  668b11                mov dx, [ecx]         ; ★读 16 位码位
+007d37ce  f6c201                test dl, 1            ; ★低位标志
+007d37d1  7416                  je 0x7d37e9
+007d37d3  80886189b70010        or byte[eax+0xb78961], 0x10 ; ★分类表 [0xB78961]
+                                                      ;   |= 0x10（UPPER）
+007d37da  8a9405ecfdffff        mov dl, [ebp+eax-0x214] ; ★取转换字节
+007d37e1  88906088b700          mov [eax+0xb78860], dl ; ★转换表 [0xB78860] 写
+007d37e7  eb1c                  jmp 0x7d3805
+007d37e9  f6c202                test dl, 2            ; ★高位标志
+007d37ec  7410                  je 0x7d37fe
+007d37ee  80886189b70020        or byte[eax+0xb78961], 0x20 ; ★分类表 |= 0x20
+                                                      ;   （LOWER）
+007d37f5  8a9405ecfcffff        mov dl, [ebp+eax-0x314]
+007d37fc  ebe3                  jmp 0x7d37e1
+007d37fe  80a06088b70000        and byte[eax+0xb78860], 0 ; ★转换表清 0
+007d3805  40                    inc eax
+007d3806  41                    inc ecx
+007d3807  41                    inc ecx
+007d3808  3bc6                  cmp eax, esi
+007d380a  72bf                  jb 0x7d37cb           ; ★256 项循环
+007d380c  eb49                  jmp 0x7d3857
+
+ASCII 回退路径（0x7D380E-0x7D3857，GetCPInfo 失败）：
+007d380e  33c0                  xor eax, eax
+007d3810  be00010000            mov esi, 0x100
+007d3815  83f841                cmp eax, 0x41         ; ★'A'
+007d3818  7219                  jb 0x7d3833
+007d381a  83f85a                cmp eax, 0x5a         ; ★'Z'
+007d381d  7714                  ja 0x7d3833
+007d381f  80886189b70010        or byte[eax+0xb78961], 0x10 ; ★分类表 |= 0x10
+007d3826  8ac8                  mov cl, al
+007d3828  80c120                add cl, 0x20          ; ★+0x20 小写化
+007d382b  88886088b700          mov [eax+0xb78860], cl ; ★转换表写小写
+007d3831  eb1f                  jmp 0x7d3852
+007d3833  83f861                cmp eax, 0x61         ; ★'a'
+007d3836  7213                  jb 0x7d384b
+007d3838  83f87a                cmp eax, 0x7a         ; ★'z'
+007d383b  770e                  ja 0x7d384b
+  …（'a'-'z' 对称分支：分类表 |= 0x20 + 大写化）
+
+★语义：**CRT 字符表初始化器（推断名——_initctype 族/
+tolower 表上游）**——cdecl 0 参：
+  ① GetCPInfo([0xB78840] CP 编号 → [ebp-0x14])（IAT
+     0x7E12D4）——失败走 ASCII 回退；
+  ② 成功路径：256 项 [ebp-0x114] 清零 + 0x20 空格打
+     底 + 从 CPINFO 码位构造 [0xB78860] 转换表 /
+     [0xB78961] 分类表（位 0x10=UPPER/0x20=LOWER）；
+  ③ 失败回退：'A'-'Z' 大写分支（分类 |= 0x10 + 转换
+     写 +0x20 小写）+ 'a'-'z' 小写分支（对称大写化）
+     ——纯 ASCII 表。
+  ④ 与 batch 244 tolower 家族（锁 0x13）同域——本批
+     为表构造端。
+
+★E8 被调者：0x7D10C2（紧邻复制函数——[0xB78A64] 全
+  局参数）；0x7E12D4（IAT GetCPInfo）。
+
+★原版怪癖（照抄）：
+  ① GetCPInfo 失败无报错直接回退 ASCII（静默降级）；
+  ② 分类表位值 0x10=UPPER/0x20=LOWER（与 _ctype 标准
+     位 0x02/0x01 不同——Westwood/CRT 内部位约定）；
+  ③ 空格 0x20 打底 + 0x20202020 rep stosd 四字节填充
+     （编译器展开）；
+  ④ ASCII 回退 'A'-'Z'/'a'-'z' 双向对称分支。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 字符表初始
+化属商业库层，不写 C++ 模型；头/中/尾 + IAT/全局交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D36D5 = MSVC6 CRT 字符表初始化器——0x7C-0x7D
+   = MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）；
+   GetCPInfo + [0xB78860] 转换表/[0xB78961] 分类表构造
+   为 CRT 字符表标准形态。
+2. 依赖：GetCPInfo（IAT 0x7E12D4）+ 0x7D10C2（紧邻复
+   制）+ [0xB78840]/[0xB78A64] 全局——重写 gamemd 时用
+   等价运行时（setlocale/tolower 语义）代替。
+3. gamemd_replication_discipline：CRT 字符表设施，重写
+   时用等价运行时代替，逐字节复刻无意义——按商业库纪
+   律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（头/中/尾 + IAT/全局交叉；
+函数名「字符表初始化器」为推断交叉标注——[0xB78860]/
+[0xB78961] 双表构造由代码实测）。
+
+四、跨批次闭合
+------------
+★batch 244：tolower 家族（锁 0x13）——本批 [0xB78860]
+  转换表构造端（tolower 读表上游）。
+★batch 1082/1084：_woutput/_output——[0x87C590] 分类表
+  与本批 [0xB78961] 同 CRT 分类表域。
+★batch 1091：0x7CCFFC _strftime——分类表惯用对照。
+★batch 1097/1098：0x7D5C12/0x7CC4A4 字符串解析/多字节
+  转换——[0xB78961] 分类表读写同域交叉。
+
+五、状态
+-------
+crt_runtime_verified（0x7D36D5：CRT 字符表初始化器归档；
+头/中/尾 + IAT/全局交叉；不写 C++ 模型不做 golden——CRT
+字符表设施商业库层；函数名「字符表初始化器」为推断交
+叉标注——[0xB78860] 转换表/[0xB78961] 分类表双表构造
+由代码实测）。TSV 新增 0x007D36D5 行。
+
+★本批实锤：GetCPInfo 驱动双表构造（[0xB78860] 转换表
++ [0xB78961] 分类表位 0x10/0x20）+ ASCII 回退路径——
+CRT tolower/_initctype 族表构造端。
+相邻待续：batch 1101 按 _scan_pending_7c.py 取池内下一
+未登记项（uc=1：0x7D4A10(386B, callers=1)/0x7C2410
+(373B, callers=1)/0x7D2C36(368B, callers=1)——0x7D5178
+换算核心 callers=4 可优先）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1099 已完（CRT 时区换算函数，commit
+f388909）。
