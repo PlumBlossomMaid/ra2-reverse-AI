@@ -1,0 +1,114 @@
+frontier batch 981 —— CRT 底层流缓冲 flush 0x7CB1F9（登记升级）
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序（0x7CB1F9 = 4 uc / 92B / 未 REIMPL；batch 049 已登记
+semantics_verified + assembly_decompile_verified，名「底层流缓冲
+flush（文本模式 + 带缓冲 + 无错误才刷，EOF 标记位7 成功清失败保
+留）」）。本批 = 依赖链确认（0x7D0D55 缓冲写 batch 046/971 交叉 +
+标志位域 batch 045/049/971）→ 按商业库层归档 **crt_runtime_verified**。
+TARGET = 0x007CB1F9。C++ 模型：无（FILE 设施留桩边界——见「三态判
+定」）。TSV：更新 0x007CB1F9 行。
+
+一、链语义（disasm 全 92B 复核 + batch 049 交叉）
+------------------------------------------------
+0x7CB1F9(92B) = MSVC6 CRT 底层流缓冲 flush（_flush 内部，
+0x7C-0x7D 静态 CRT 区）——cdecl 1 栈参（FILE* 流槽）：
+  push ebx / push esi / push edi
+  mov esi,[esp+0xC]              ; ★参数=FILE* 流槽
+  xor ebx,ebx                    ; ★ebx=0（返回值预置 0 成功）
+  mov eax,[esi+0xC]              ; ★标志字
+  mov ecx,eax / and ecx,3 / cmp cl,2   ; ★低 2 位==2
+  jne 0x7CB246                   ; 非 2 → 跳过 flush
+  test ax,0x108                  ; ★0x108=_IOFLRTN(0x10)|_IOBINARY(0x8)
+  je 0x7CB246                    ; 无带缓冲+二进制组合 → 跳过
+  mov eax,[esi+8] / mov edi,[esi] / sub edi,eax   ; ★edi=游标-缓冲基址
+                                  ; =待写字节数
+  test edi,edi / jle 0x7CB246    ; ★无待写 → 跳过
+  push edi / push eax / push [esi+0x10]（★句柄）
+  call 0x7D0D55                  ; ★★缓冲写设施（batch 046/971 交叉）
+  add esp,0xC
+  cmp eax,edi / jne 0x7CB23F     ; ★写回数 != 待写数 → 失败
+  mov eax,[esi+0xC] / test al,0x80（★EOF 标记位7）/ je 0x7CB246
+  and al,0xFD                    ; ★成功清 _IOFLRTN（~0x02）
+  mov [esi+0xC],eax / jmp 0x7CB246
+  0x7CB23F: or dword [esi+0xC],0x20（★失败置 _IOERROR）/ or ebx,0xFFFFFFFF
+                                  ; ★返 -1
+  0x7CB246（复位）：
+  mov eax,[esi+8]                ; ★缓冲基址
+  and dword [esi+4],0            ; ★清 +0x4
+  mov [esi],eax                  ; ★游标=缓冲基址
+  pop edi / mov eax,ebx / pop esi / pop ebx / ret
+★语义（batch 049 名准）：**底层流缓冲 flush**——仅当流标志低 2 位
+==2 且 0x108（_IOFLRTN|_IOBINARY）置位且有待写数据（游标-基址>0）
+时调 0x7D0D55 缓冲写；写回数与请求数一致且 EOF 标记（0x80）置位时
+清 _IOFLRTN（0x02），失败置 _IOERROR（0x20）并返 -1；无论是否刷
+新，收尾复位游标=缓冲基址、清 +0x4、返 ebx（0 成功/-1 失败）。
+★原版怪癖（batch 049 已录，照抄）：
+  ① 三重条件门（低 2 位==2 + 0x108 + 待写>0）全满足才刷；
+  ② 成功清 _IOFLRTN（0xFD 掩码）但**保留 EOF 标记**（0x80 只读
+     不参与清除——位7 标记 EOF 状态独立于 flush）；
+  ③ 失败置 _IOERROR（0x20）+ 返 -1，但**仍执行复位**（游标=基址、
+     清 +0x4）——失败路径不停在中间态；
+  ④ 复位无条件执行（0x7CB246 三处汇合——跳过/成功/失败都复位）；
+  ⑤ 待写字节数 = 游标([esi]) - 缓冲基址([esi+8])——FILE 内部游标
+     前移形态。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7D0D55 = 缓冲写设施——batch 046/971 已交叉（fputc 0x7CE18D
+     写路径核心同调，batch 971 全段复核），本批调用现场交叉；
+  ② 流槽标志字：0x01 _IOOPEN/0x02 _IOFLRTN/0x04 _IOFLRTN 变体/
+     0x08 _IOBINARY/0x10 _IOFLRTN/0x20 _IOERROR/0x80 _IOEOF/
+     0x108 组合（batch 045/049/971 反复出现）；
+  ③ 流槽 +0x4/+0x8/+0x10 字段（计数/缓冲基址/句柄）——batch 045/
+     049 FILE 结构域。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：商业库层归档，不写 C++ 模型
+不做对拍；batch 049 语义已登记，本批补归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 代码区归属：0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance 实锤）——非 Westwood 手写逻辑。
+2. FILE 设施依赖：flush 核心全沉 0x7D0D55（缓冲写，batch 046/971
+   交叉）+ 流槽标志/字段域（batch 045/049）——FILE* 与 _iob 表是
+   CRT 运行时设施，重写用等价 std::fflush 代替。
+3. gamemd_replication_discipline：商业库只 dump 汇编、重写时用等价
+   运行时代替。
+→ 状态：crt_runtime_verified（batch 049 语义 + 本批 0x7D0D55 依赖
+交叉；0x7D0D55 内部锁族行为未完全确认——推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 049：0x7CB1F9 首登记（底层流缓冲 flush，三重条件门 + EOF
+保留 + 失败复位）——本批升级归档。
+★batch 046/971：0x7D0D55 缓冲写 + fputc 写路径——本批调用现场
+交叉。
+★batch 045/049：流槽标志字域（_IOFLRTN/_IOERROR/_IOEOF）——本批
+状态机交叉。
+★batch 971：0x7CE18D fputc 归档（同 FILE 设施族——0x7D0D55 下游
+共享）。
+★batch 970：0x7CA75B FILE 关闭归档（0x7CB1F9 flush 被其内核链调
+用——0x7CA78C 内 0x7CB1F9 调用现场）。
+★ra2_code_region_layout_crt_provenance：0x7C-0x7D = MSVC6 静态 CRT。
+
+五、状态
+-------
+crt_runtime_verified（0x7CB1F9：CRT 底层流缓冲 flush 归档；batch
+049 语义 + 本批 0x7D0D55 依赖交叉；不写 C++ 模型不做 golden——FILE
+设施商业库层）。TSV 行 0x007CB1F9 更新。
+
+★本批实锤：CRT 扇入度 4 的 0x7CB1F9 = 底层流缓冲 flush（_flush 内
+部）——三重条件门（低2位==2 + 0x108 + 待写>0）→ 0x7D0D55 缓冲写
+→ 成功清 _IOFLRTN 保留 EOF / 失败置 _IOERROR 返 -1 → 无条件复位
+游标；依赖链（0x7D0D55 + 标志域）完整确认，按商业库层纪律归档
+crt_runtime_verified。
+相邻待续：batch 982 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_pick_945.py——候选 0x7CB673 _splitpath
+327B / 0x7C998C isctype 掩码族 40B / 0x7C8980 gethostbyname IAT
+等）。
+依赖模型：无（归档不落 C++）。
+承前：batch 980 已完（CRT 宽字符串格式化薄封装 0x7CA858，commit
+4b69bb9）。
