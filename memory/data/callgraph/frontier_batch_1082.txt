@@ -1,0 +1,124 @@
+frontier batch 1082 —— CRT _woutput 宽字符格式化核心 0x7D3A6D（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D3A6D（2767B,
+uc=1, 池顶大函数）。TSV 无既有行。
+TARGET = 0x007D3A6D。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D3A6D 行。
+
+一、链语义（disasm 头/中/尾复核，0x7D3A6D-0x7D453B）
+------------------------------------------------
+头部（0x7D3A6D-0x7D3AE7）：
+007d3a6d  55                    push ebp
+007d3a6e  8bec                  mov ebp, esp
+007d3a70  b804230000            mov eax, 0x2304        ; ★SEH 栈帧 0x2304 字节
+007d3a75  e8d66bffff            call 0x7ca650          ; ★★CRT SEH 帧分配（batch
+                                                        ;   已登记栈帧分配器）
+007d3a89  668b07                mov ax, [edi]          ; ★宽字符取
+007d3a9f  6a08                  push 8
+007d3aa1  50                    push eax
+007d3aa2  e879feffff            call 0x7d3920          ; ★★字符分类表查询
+                                                        ;   （[0x87C594] 表，0xFFFF
+                                                        ;   特判，≥0x100 走 0x7DA0F1
+                                                        ;   宽转换）
+007d3ae7  66833f25              cmp word ptr [edi],0x25 ; ★'%' 格式化指令检测
+007d3af1  …                                              （'N'/'*'/'F'/'I'/'L' 等
+                                                        指令解析循环）
+尾部（0x7D4510-0x7D453B）：
+007d4520  0fb7c3                movzx eax, bx
+007d4523  5f                    pop edi
+007d4524  5e                    pop esi
+007d4525  83f8ff                cmp eax, -1
+007d452c  750c                  jne 0x7d453a
+007d4532  3845f2                cmp byte ptr [ebp-0xe], al
+007d4537  83c8ff                or eax, 0xffffffff     ; ★-1 哨兵返回
+007d453a  c9                    leave
+007d453b  c3                    ret                    ; ★函数边界（0x7D453C 起
+                                                        ;   下一函数：字符分类辅助
+                                                        ;   push esi 开头同 0x7D3B70
+                                                        ;   段同构）
+
+★语义：**CRT `_woutput`（宽字符格式化输出核心——推断
+名）**——cdecl 变参（param1=宽格式串）：完整实现
+wprintf 系列格式串解析（'%' 指令循环 + 宽度/精度/标志 +
+'N'/'*'/'F'/'I'/'L' 等指令），字符分类走 [0x87C590]/
+[0x87C594] 全局分类表（[0x87C79C] 阈值切换 0x7D1311
+locale 转换 vs 表直查），输出经 0x7D45BA（写串）/0x7D45A1
+（写字符）辅助函数，-1 哨兵指示输出失败/终止。
+
+★E8 被调者全扫（0x7D3A6D-0x7D453B 区间 56 处 call，
+24 个唯一目标——全在 0x7C-0x7D CRT 域）：
+  0x7CA650（SEH 帧分配）/ 0x7C93E8（free 调度）/
+  0x7C9430（分配器）/ 0x7CB8A8（tolower 族）/
+  0x7CC447（CRT）/ 0x7C8EC0（operator new）/
+  0x7D1311（locale 宽转换）/ 0x7D3920（分类表查询）/
+  0x7D453C/0x7D45A1/0x7D45BA（紧邻输出辅助）/
+  0x7D4596（★batch 1080 薄包装——本批输出路径调用）/
+  0x7D75E0（memset）/ 0x7D777D（CRT）/ 0x7D9D7F（字节
+  →宽字符）/ 0x7D9EB0（CRT）
+  ——无 Westwood 对象方法（无 thiscall/虚表槽/0x40xxxx
+  目标）。
+
+★原版怪癖（照抄）：
+  ① SEH 栈帧 0x2304 字节（_woutput 大局部缓冲——宽格
+     式化精度缓冲）；
+  ② 'N'/'*'/'F'/'I'/'L' 指令串行 cmp/je 链（编译器跳转
+     表化——同 batch 1075 FPE 映射器形态）；
+  ③ 分类表双路径：[0x87C79C]>1 走 0x7D1311 locale 转换，
+     ≤1 走 [0x87C590] 表直查 [ecx+eax*2]；
+  ④ -1 哨兵返回（输出失败/终止信号——[ebp-0xe] 标志协
+     同判断）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 格式化引擎属
+商业库层，不写 C++ 模型；头/中/尾 + 56 处 E8 全扫交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D3A6D = MSVC6 CRT `_woutput`——0x7C-0x7D =
+   MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）；
+   SEH 帧 + 分类表 + 格式串解析为 CRT printf 家族标准形
+   态。
+2. 依赖：SEH 帧分配（0x7CA650）+ 分类表（[0x87C590]/
+   [0x87C594]）+ locale（0x7D1311）+ 输出辅助（0x7D45A1/
+   0x7D45BA）+ 分配/free（0x7C9430/0x7C93E8）——重写
+   gamemd 时用等价运行时（std::vfwprintf/自写格式化器）
+   代替。
+3. gamemd_replication_discipline：CRT 格式化引擎，重写时
+   用等价运行时代替，逐字节复刻无意义——按商业库纪律归
+   档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（头/中/尾 + 56 处 E8 全扫
+交叉；函数名「_woutput 宽字符格式化核心」为推断交叉标
+注）。
+
+四、跨批次闭合
+------------
+★batch 1080：0x7D4596 流字符读取器薄包装——本批输出路径
+  调用点 0x7D3C4C/0x7D3CF7/0x7D3D67/0x7D3DA4/0x7D3E05/
+  0x7D3E44/0x7D3E73/0x7D3FE0/0x7D3FFB/0x7D4047/0x7D415D/
+  0x7D4230/0x7D4342/0x7D448B/0x7D44DA（15 处 0x7D4596
+  调用——正是 batch 1080 的 callers=16 高分发主源）。
+★batch 1066/945：0x7D3374 calloc/0x7C93E8 free——本批
+  0x7C9430 分配器 + 0x7C93E8 free 调用现场（内存管理族
+  交叉）。
+★batch 1079：0x7D13F8 ptd 初始化——同 CRT 基础设施层
+  （格式化引擎同属 MSVC6 静态 CRT 域）。
+
+五、状态
+-------
+crt_runtime_verified（0x7D3A6D：CRT _woutput 宽字符格式化
+核心归档；头/中/尾 + 56 处 E8 全扫交叉；不写 C++ 模型不
+做 golden——CRT 格式化引擎商业库层；函数名「_woutput
+宽字符格式化核心」为推断交叉标注）。TSV 新增 0x007D3A6D
+行。
+
+★本批实锤：2767B 大函数宽字符格式化引擎——SEH 0x2304
+帧 + '%' 指令循环 + 分类表双路径 + 15 处调用 batch 1080
+薄包装（0x7D4596 高分发主源定位）。
+相邻待续：batch 1083 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7C7371(2693B)/0x7D170D(2597B)/0x7D4FCC
+(428B——batch 1077 点名紧邻大函数)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1081 已完（CRT FPE 状态查询桩，commit
+ba0a5cb）。
