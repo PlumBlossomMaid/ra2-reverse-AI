@@ -1,0 +1,153 @@
+frontier batch 1010 —— CRT locale 区域锁保护包装 0x7CC2AC（登记）
+============================================
+
+候选来源：python .qwen\tmp\_list_real_pending.py —— 0x7CC2AC = 93B /
+3 uc（ranking 行 unique_callers 列 = FUN_006c9f10,FUN_00773600）/
+TSV 无既有行 / frontier_batch_*.txt 无匹配。本批 = 依赖链确认
+（0x7CD9F5/0x7CDA56 锁家族已登记 + [0x7E11C8]/[0x7E11CC] IAT 槽 +
+0x7CC309 locale 转换内核）→ 按商业库层归档 **crt_runtime_verified**。
+TARGET = 0x007CC2AC。C++ 模型：无（见「三态判定」）。TSV：新增
+0x007CC2AC 行。
+
+一、链语义（disasm 全 93B 复核，0x7CC2AC-0x7CC308）
+------------------------------------------------
+007cc2ac  55            push ebp / mov ebp,esp / push ebx / push esi
+007cc2b1  bea48bb700    mov esi, 0xb78ba4                ; ★[0xB78BA4] 全局
+007cc2b6  57            push edi
+007cc2b7  56            push esi                        ; 参1 = 0xB78BA4
+007cc2b8  ff15c8117e00  call dword ptr [0x7e11c8]       ; ★★IAT 槽 [0x7E11C8]
+                                                        ;   （locale 相关导入）
+007cc2be  8b3dcc117e00  mov edi, dword ptr [0x7e11cc]   ; ★★IAT 槽 [0x7E11CC] → edi
+007cc2c4  33db          xor ebx, ebx
+007cc2c6  391da08bb700  cmp dword ptr [0xb78ba0], ebx   ; ★★[0xB78BA0] 重入门控
+007cc2cc  740e          je 0x7cc2dc                     ;   ==0 → 无锁直通
+007cc2ce  56            push esi                        ; 参1 = 0xB78BA4
+007cc2cf  ffd7          call edi                        ; ★★call [0x7E11CC]（前置）
+007cc2d1  6a13          push 0x13                       ; ★★锁编号 0x13
+007cc2d3  e81d170000    call 0x7cd9f5                   ; ★★★CRT region lock Enter
+                                                        ;   （TSV 已登记 semantics_
+                                                        ;   verified + crt_behavior_
+                                                        ;   contracts.md；_pick_945
+                                                        ;   显式排除留桩边界）
+007cc2d8  59            pop ecx
+007cc2d9  6a01          push 1
+007cc2db  5b            pop ebx                         ; ebx = 1（已上锁标志）
+007cc2dc  ff7510        push dword ptr [ebp + 0x10]     ; 参3
+007cc2df  ff750c        push dword ptr [ebp + 0xc]      ; 参2
+007cc2e2  ff7508        push dword ptr [ebp + 8]        ; 参1
+007cc2e5  e81f000000    call 0x7cc309                   ; ★★★locale 转换内核
+                                                        ;   （本批 disasm 开头 200B：
+                                                        ;   调 [0x7E11C4]/[0x7E1200]
+                                                        ;   IAT、读 [0xB782A0] locale
+                                                        ;   标志、[0x87C590] ctype 表、
+                                                        ;   [0xB782B0] locale 数据、
+                                                        ;   0x7D168E __errno）
+007cc2ea  83c40c        add esp, 0xc
+007cc2ed  894510        mov dword ptr [ebp + 0x10], eax ; 存返回
+007cc2f0  85db          test ebx, ebx
+007cc2f2  740a          je 0x7cc2fe                     ; 无锁 → 跳过后置
+007cc2f4  6a13          push 0x13
+007cc2f6  e85b170000    call 0x7cda56                   ; ★★★CRT region lock Leave
+                                                        ;   （TSV 已登记）
+007cc2fb  59            pop ecx
+007cc2fc  eb03          jmp 0x7cc301
+007cc2fe  56            push esi
+007cc2ff  ffd7          call edi                        ; ★★call [0x7E11CC]（后置）
+007cc301  8b4510        mov eax, dword ptr [ebp + 0x10] ; 返回内核结果
+007cc304  5f 5e 5b 5d   pop edi/esi/ebx/ebp
+007cc308  c3            ret
+
+★语义：**CRT locale 区域操作锁保护包装**——cdecl 3 参转发：
+① 无条件 call [0x7E11C8]（IAT 槽——batch 153/244 语境 locale 导入
+   族），[0x7E11CC] 取进 edi 备用；
+② [0xB78BA0]（重入/区域状态，batch 939 语境）==0 → 无锁直通转发
+   3 参给 0x7CC309；!=0 → 前置 call [0x7E11CC] → 0x7CD9F5 Enter
+   （锁编号 0x13）→ 转发 → 0x7CDA56 Leave → 后置 call [0x7E11CC]；
+③ 返回 0x7CC309 内核结果。
+★与 batch 1002 的 0x7CB19C 完全同族（流锁保护的流操作包装）——
+同「锁 Enter → 内核 → 锁 Leave」三步骤模板，仅锁编号/内核不同。
+
+★原版怪癖（照抄）：
+  ① [0xB78BA0]==0 走无锁快路径（首个调用方直通）——双重检查；
+  ② 锁编号固定 0x13（与 batch 244 tolower 慢路径同编号）；
+  ③ 前后两次 call [0x7E11CC]（前置/后置成对，锁内不再调）——
+     锁外 IAT 对；
+  ④ ebx 记已上锁标志（1/0），收尾 test ebx,ebx 决定 Leave 还是
+     后置 call——两路径互斥收尾；
+  ⑤ 内核结果经 [ebp+0x10] 中转返回（非 eax 直通）。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7CD9F5/0x7CDA56 = CRT region lock Enter/Leave——TSV 已有登
+     记（semantics_verified + assembly_decompile_verified +
+     crt_behavior_contracts.md），_pick_945 显式排除的锁家族留桩
+     边界；batch 244/841/862/939/945/961/966/968/970/977/999/1000
+     等 12+ 批调用现场交叉；
+  ② 0x7CC309 = CRT locale 转换内核（本批 disasm 开头 200B：调
+     [0x7E11C4]/[0x7E1200] IAT、读 [0xB782A0] locale 标志（batch
+     962 慢路径语境）、[0x87C590] ctype 表（batch 965+990-994
+     isctype 掩码族）、[0xB782B0] locale 数据指针、0x7D168E
+     __errno）——未登记，标注新候选；
+  ③ [0x7E11C8]/[0x7E11CC] = IAT 导入槽（locale 族）——batch 153
+     （toupper locale 初始化「0x7E11CC 导入槽 + 0x7CD9F5 locale
+     初始化」）同语境；
+  ④ [0xB78BA0] = 重入/区域状态（batch 939 重入分支语境）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：依赖锁家族 + IAT + locale
+全局的商业库层包装，不写 C++ 模型；93B 全读 + 锁家族 12+ 批交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 锁家族依赖：主路径直接调 0x7CD9F5/0x7CDA56（TSV 已登记 CRT
+   region lock，_pick_945 显式排除留桩边界）——线程同步语义在单
+   线程 C++ 模型无可观测行为，structural_equivalence 锁例外合法
+   （batch 966/961 同判据）。
+2. IAT 依赖：前置/后置 call [0x7E11C8]/[0x7E11CC]（locale 导入族
+   ——batch 153/244 语境）——系统/CRT 导入，重写用等价运行时。
+3. locale 全局：内核 0x7CC309 读 [0xB782A0]/[0x87C590]/[0xB782B0]
+   + __errno——CRT locale 设施，重写时用等价 std locale 运行时。
+4. gamemd_replication_discipline：0x7C-0x7D = MSVC6 静态 CRT
+   （ra2_code_region_layout_crt_provenance），locale 区域操作属
+   商业库层——按商业库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（93B 全读 + 锁家族 12+ 批交叉 + IAT
+槽 batch 153 语境交叉；[0x7E11C8]/[0x7E11CC] 精确 API 名与 0x7CC309
+内核完整语义为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1002：0x7CB19C 流锁保护包装归档——本批完全同族（同模板
+三步骤 + 不同锁编号/内核）。
+★batch 961/966：0x7CB44B/0x7CB3F9 流锁 Enter/Leave 分发归档——
+锁编号 < 0x14 → 内核 0x7CDA56/0x7CD9F5；本批直接调内核（编号
+0x13）交叉。
+★batch 244：CRT::tolower 慢路径「push 0x13 → call 0x7CD9F5」——
+本批同锁编号 0x13 交叉。
+★batch 153：toupper locale 初始化「0x7E11CC 导入槽 + 0x7CD9F5
+locale 初始化」——本批 [0x7E11C8]/[0x7E11CC] 同语境交叉。
+★batch 939：0x7CB063 locale tolower 快路径「[0xB782A0] 门控」——
+本批内核 [0xB782A0] 同全局交叉；[0xB78BA0] 重入语境。
+★batch 890/958/962/968：locale 慢路径锁家族交叉。
+★batch 965+990-994：isctype 掩码族 [0x87C590] ctype 表——内核交叉。
+★_pick_945：锁家族排除逻辑——0x7CC2AC 依赖方纳入同边界。
+
+五、状态
+-------
+crt_runtime_verified（0x7CC2AC：CRT locale 区域操作锁保护包装归档；
+93B 全读 + 锁家族 12+ 批交叉 + IAT 槽 batch 153 语境交叉；不写 C++
+模型不做 golden——锁家族 + IAT + locale 全局商业库层；[0x7E11C8]/
+[0x7E11CC] 精确 API 名与 0x7CC309 内核完整语义为推断交叉标注）。
+TSV 新增 0x007CC2AC 行。
+
+★本批实锤：0x7CC2AC = CRT locale 区域操作锁保护包装（[0xB78BA0]
+重入门控 → 0x7CD9F5 Enter(0x13) → 0x7CC309 locale 转换内核 →
+0x7CDA56 Leave + [0x7E11C8]/[0x7E11CC] 前置/后置 IAT 对），与
+batch 1002 0x7CB19C 完全同族；按商业库层纪律归档
+crt_runtime_verified。
+相邻待续：batch 1011 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_list_real_pending.py——候选 0x7C35C0
+167B / 0x7CBF49 22B / 0x7C3230 58B / 0x7C3690 41B 等；0x7CC309
+locale 转换内核标注新候选）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1009 已完（CRT wcstok 宽字符分词器 0x7CB911，commit
+3052795）。
