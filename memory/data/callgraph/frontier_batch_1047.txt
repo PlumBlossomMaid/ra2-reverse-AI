@@ -1,0 +1,120 @@
+frontier batch 1047 —— CRT DBCS 字符串查找 0x7D571F（归档）
+============================================
+
+候选来源：batch 1046 预告「0x7D571F(114B)」。ranking uc=1
+（callers = FUN_007d571f，自/单调用者）。TSV 无既有行。本批 =
+CRT 多字节字符查找薄包装归档。
+TARGET = 0x007D571F。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D571F 行。
+
+一、链语义（disasm 全 114B 复核，0x7D571F-0x7D5790）
+------------------------------------------------
+007d571f  55/8bec        push ebp / mov ebp,esp / push esi / xor esi,esi
+007d5725  39355c88b700   cmp [0xb7885c], esi      ; ★门控全局
+007d572b  750f           jne 0x7d573c            ; 已初始化 → 锁+扫描路径
+007d572d  ff750c/ff7508  push [ebp+0xc] / push [ebp+8]
+007d5733  e8b836ffff     call 0x7c8df0           ; ★★未初始化快路径 → 直调
+                                                  ;   strrchr（batch 967 已 REIMPL
+                                                  ;   的 0x7C8DF0 strrchr_legacy）
+007d5738  59/59          pop ecx×2 / jmp 0x7d578e ; 返回
+007d573c  57/6a19        push edi / push 0x19     ; ★锁编号 0x19
+007d573f  e8b182ffff     call 0x7cd9f5           ; ★★EnterLock（batch 966 内核）
+007d5745  8b4d08         mov ecx,[ebp+8]          ; ★ecx = param1（源串）
+007d5748  8a11           mov dl,[ecx]             ; 循环：取字节
+007d574a  0fb6c2         movzx eax, dl
+007d574d  0fb6f8         movzx edi, al
+007d5750  f6876189b70004 test [edi + 0xb78961], 4 ; ★★isctype 表 [0xB78961] 掩码 4
+                                                  ;   （lead-byte 标志，batch 965+
+                                                  ;   990-994 isctype 掩码族）
+007d5757  741e           je 0x7d5777             ; 非 lead → 单字节比较
+007d5759  8a5101/41      mov dl,[ecx+1] / inc ecx ; ★lead → 取次字节
+007d575d  84d2/7412      test dl,dl / je 0x7d5773 ; 次字节 NUL 特殊
+007d5761  0fb6fa/c1e008  movzx edi,dl / shl eax,8
+007d5767  0bc7           or eax, edi             ; eax = (b0<<8)|b1 双字节值
+007d5769  39450c/7510    cmp [ebp+0xc],eax / jne 0x7d577e ; ★双字节比较
+007d576e  8d71ff/eb0b    lea esi,[ecx-1] / jmp 0x7d577e ; 命中 → 次字节指针
+007d5773  85f6/eb03      test esi,esi / jmp 0x7d577a
+007d5777  39450c         cmp [ebp+0xc],eax       ; ★单字节比较
+007d577a  7502/jne 0x7d577e / 8bf1 mov esi,ecx   ; 命中 → 字节指针
+007d577e  41/84d2/75c5   inc ecx / test dl,dl / jne 0x7d5748 ; 循环至 NUL
+007d5783  6a19           push 0x19
+007d5785  e8cc82ffff     call 0x7cda56           ; ★★LeaveLock（batch 961 内核）
+007d578a  59/8bc6        pop ecx / mov eax,esi   ; ★返回命中指针或 0
+007d578d  5f/5e/5d/c3    pop edi,esi,ebp / ret
+
+★语义：**CRT DBCS 感知字符串查找（推断名 _mbschr/_mbspbrk 类——
+多字节字符集下按 lead-byte 判定双字节匹配）**，cdecl 2 参
+（param1=源串，param2=查找值）：
+  ① [0xB7885C] 门控全局 == 0（单线程早期未建锁）→ 快路径直调
+     strrchr（0x7C8DF0，batch 967 REIMPL）后直接返回——等价简化；
+  ② 门控 != 0 → EnterLock(0x19) 进入临界区；
+  ③ 逐字节扫描：isctype 表 [0xB78961] 掩码 4 判 lead-byte——
+     非 lead → param2 单字节比较；lead → 次字节合并双字节值
+     (b0<<8)|b1 与 param2 比较（命中返回次字节处指针）；
+  ④ 未命中返回 0；LeaveLock(0x19) 收尾。
+
+★原版怪癖（照抄）：
+  ① 门控 [0xB7885C] 未初始化走 strrchr 快路径（与 DBCS 语义等
+     价简化——单线程早期无 lead-byte 需求）；
+  ② lead-byte 命中返回次字节指针（lea esi,[ecx-1]——双字节匹配
+     返回串中第二个字节位置）；
+  ③ isctype 掩码 4（[0xB78961] 表）——lead-byte 判定走字符分类
+     表而非代码页直查；
+  ④ 锁编号 0x19（字符分类锁族，batch 1036 对照）；
+  ⑤ 次字节 NUL（dl==0）分支用 test esi,esi 兜底（串尾 lead）。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7C8DF0 = strrchr（batch 967 已 REIMPL——TSV 双行：
+     0x007C8DF0 crt_runtime_verified + 0x007C8DF0_REIMPL
+     cpp_reimplementation_verified）——快路径直调目标；
+  ② 0x7CD9F5/0x7CDA56 = 流锁 Enter/Leave 内核（batch 966/961
+     已登记）——锁编号 0x19 调用现场；
+  ③ [0xB78961] isctype 表 + 掩码 4（batch 965+990-994 isctype
+     掩码族登记）——lead-byte 判定；
+  ④ [0xB7885C] 门控全局——与 getenv 三件套 [0xB781E4/EC] 同
+     0x7B-0x7F 全局区。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT DBCS 字符查找属商业
+库层，不写 C++ 模型；114B 全读 + strrchr 快路径交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D571F = MSVC6 CRT DBCS 字符查找包装——0x7C-0x7D =
+   MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）。
+2. 依赖：流锁 Enter/Leave 内核（batch 966/961）+ strrchr 快路径
+   （batch 967 REIMPL）+ isctype 表 [0xB78961] + 门控 [0xB7885C]
+   ——重写 gamemd 时用等价运行时（std::string find 或直接字节
+   扫描）代替。
+3. gamemd_replication_discipline：CRT 多字节字符串设施，重写时
+   用等价运行时代替，逐字节复刻无意义——按商业库纪律归档，不
+   写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（114B 全读 + strrchr 快路径交叉 +
+锁/isctype 族交叉；精确函数名「DBCS 字符串查找」为推断标注）。
+
+四、跨批次闭合
+------------
+★batch 967：0x7C8DF0 strrchr REIMPL——本批快路径直调目标交叉
+（门控未初始化时走简化路径）。
+★batch 966/961：0x7CD9F5/0x7CDA56 流锁内核——锁 0x19 调用现场
+交叉。
+★batch 965+990-994：isctype 掩码族——[0xB78961] 表掩码 4 交叉
+（lead-byte 判定）。
+★batch 1036：0x7CBB8D 字符分类扫描器（锁 0x19）——同锁族对照。
+
+五、状态
+-------
+crt_runtime_verified（0x7D571F：CRT DBCS 字符串查找归档；114B
+全读 + strrchr 快路径/锁/isctype 族交叉；不写 C++ 模型不做
+golden——CRT 多字节字符串商业库层；函数名与「DBCS 查找」语义
+为推断交叉标注）。TSV 新增 0x007D571F 行。
+
+★本批实锤：MSVC6 CRT DBCS 字符串查找薄包装——门控快路径
+（strrchr 简化）+ 锁内 lead-byte 感知双字节/单字节扫描双路径
+全链归档。
+相邻待续：batch 1048 按 ranking.tsv unique_callers 取下一未登
+记 CRT 项（7D 区剩余：0x7C9FD9(23B)/0x7D8C6B(208B)/0x7DC378
+('=' strchr 类邻居)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1046 已完（__mbsnbicoll 家族，commit 0b33c2c）。
