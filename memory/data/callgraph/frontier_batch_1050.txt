@@ -1,0 +1,99 @@
+frontier batch 1050 —— 字符串对象构造器 0x7D2E9B（登记）
+============================================
+
+候选来源：新扫描脚本 _scan_pending_7c.py 首次全量列出 0x7C-0x7E
+未登记项（311 个，按 unique_callers 扇入度降序）——0x7D2E9B
+（61B, uc=3）居首。TSV 无既有行。
+TARGET = 0x007D2E9B。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D2E9B 行。
+
+一、链语义（disasm 全 61B 复核，0x7D2E9B-0x7D2ED5）
+------------------------------------------------
+007d2e9b  56/57         push esi / push edi
+007d2e9d  8b7c240c      mov edi,[esp+0xc]        ; ★param1 = 源串指针
+007d2ea1  8bf1          mov esi,ecx              ; ★thiscall: ecx = this
+007d2ea3  c7060c997f00  mov dword[esi],0x7f990c  ; ★★写 vtable（0x7F990C）
+007d2ea9  ff37          push [edi]               ; push 源串（CString 内嵌指针）
+007d2eab  e8f0e6ffff    call 0x7d15a0           ; ★★string_length_legacy
+                                                  ;   （batch 017 REIMPL strlen）
+007d2eb0  40            inc eax                  ; len+1
+007d2eb1  50            push eax
+007d2eb2  e8605fffff    call 0x7c8e17           ; ★★operator_new（batch 001
+                                                  ;   已登记——CRT new 分配）
+007d2eb7  59            pop ecx
+007d2eb8  894604        mov [esi+4],eax          ; ★this+4 = 新缓冲
+007d2ebb  85c0/59/740a  test eax,eax / pop ecx / je 0x7d2eca  ; 分配失败跳过拷贝
+007d2ec0  ff37          push [edi]               ; push 源串
+007d2ec2  50            push eax                 ; push 目标缓冲
+007d2ec3  e8281d0000    call 0x7d4bf0           ; ★★string_copy_legacy
+                                                  ;   （batch 008 REIMPL strcpy）
+007d2ec8  59/59         pop ecx ×2
+007d2eca  c7460801000000 mov dword[esi+8],1      ; ★this+8 = 1（长度/标志）
+007d2ed1  8bc6          mov eax,esi              ; ★返回 this
+007d2ed3  5f/5e         pop edi / pop esi
+007d2ed5  c20400        ret 4                    ; ★thiscall 1 栈参，清 4B
+
+★语义：**字符串对象构造器（推断名——SmallString/StringClass
+构造）**，thiscall 1 参（param1=源串）：
+  ① *this = 0x7F990C（vtable 槽）；
+  ② string_length 测源串长 → +1 → operator_new 分配缓冲 →
+     this+4 = 缓冲（失败跳过拷贝）；
+  ③ string_copy(缓冲, 源串)；
+  ④ this+8 = 1；返回 this（eax=esi）；ret 4。
+
+★原版怪癖（照抄）：
+  ① 分配失败仅跳过拷贝，this+8 仍置 1（无错误返回约定）；
+  ② this+8=1 的槽位语义（长度计数 or 标志——本批不深究，
+     与 0x7F990C vtable 同属对象契约）；
+  ③ vtable 写入在分配前（0x7F990C 先落 this+0）；
+  ④ push [edi] 读源串内嵌指针（源串本身是对象，非裸 char*）。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7C8E17 = operator_new（batch 001 已登记
+     crt_runtime_verified——CRT new → __nh_malloc）；
+  ② 0x7D15A0 = string_length_legacy（batch 017 REIMPL）；
+  ③ 0x7D4BF0 = string_copy_legacy（batch 008 REIMPL）；
+  ④ 0x7F990C = vtable（数据区——对象契约，未登记）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：thiscall 对象方法依赖
+外部 vtable/对象槽位契约，不做指令级 golden）。
+
+三、三态判定（为何 semantics_verified 而非 REIMPL/归档）
+------------------------------------------------
+1. 形态：thiscall + vtable 写入（0x7F990C）+ 对象槽位契约
+   （this+4/+8）+ ret 4——Westwood 家族对象方法形态，非纯内存
+   算法（有子调用 operator_new/strlen/strcpy）。
+2. 依赖：三子调用均已在 CRT frontier 登记（REIMPL/verified）——
+   本批是对象层薄构造器，语义由调用序列 + 槽位契约定义。
+3. gamemd_replication_discipline：对象方法重写需承载对象布局
+   （vtable/槽位）——证据为本批调用序列 + 槽位写入，不越级为
+   cpp_reimplementation（无 golden 对拍对象级行为）。
+→ 状态：semantics_verified（61B 全读 + 三子调用交叉 + 对象契
+约标注；函数名与 vtable 槽语义为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 001：0x7C8E17 operator_new——分配现场交叉。
+★batch 008：0x7D4BF0 string_copy_legacy——拷贝现场交叉。
+★batch 017：0x7D15A0 string_length_legacy——测长现场交叉。
+★_scan_pending_7c.py：新全量扫描工具——0x7C-0x7E 未登记池
+  311 项（uc 降序）成为后续候选来源（本批为池首）。
+
+五、状态
+-------
+semantics_verified（0x7D2E9B：字符串对象构造器登记；61B 全读
++ 三子调用交叉；不写 C++ 模型不做 golden——thiscall 对象方法
+需承载 vtable/槽位契约；函数名与 this+8 槽语义为推断交叉标
+注）。TSV 新增 0x007D2E9B 行。
+
+★本批实锤：全量扫描池首项——thiscall 字符串对象构造器（vtable
+0x7F990C + operator_new/strlen/strcpy 三链）语义登记；0x7C-0x7E
+剩余 310 个未登记候选按扇入度续推。
+相邻待续：batch 1051 按 _scan_pending_7c.py 取池内下一未登记
+项（uc=3：0x7D386A(28B) / 0x7DDC32(26B) / 0x7D4596(11B, uc=2
+但 callers=16 高分发点)；或 uc=2 大函数 0x7C0740(1337B)——
+batch 1008 检查链剩余成员）。
+依赖模型：无（登记不落 C++）。
+承前：batch 1049 已完（CRT FPE 异常分发器，commit f84b3d9）。
