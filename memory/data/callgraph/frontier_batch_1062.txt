@@ -1,0 +1,132 @@
+frontier batch 1062 —— CRT 浮点指数格式化器 0x7CEC87（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CEC87（194B,
+uc=2 池顶）。TSV 无既有行。
+TARGET = 0x007CEC87。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CEC87 行。
+
+一、链语义（disasm 全 194B 复核，0x7CEC87-0x7CED48）
+------------------------------------------------
+007cec87  55/8bec        push ebp/mov ebp,esp / push ebx / xor ebx,ebx
+007cec8d  385d18         cmp byte[ebp+0x18],bl     ; ★参4 == 0?
+007cec90  56/8b7514      push esi/mov esi,[ebp+0x14]  ; ★参3 = 源结构
+007cec94  57/8b7d08      push edi/mov edi,[ebp+8]     ; ★参1 = 目标缓冲
+007cec98  741b           je 0x7cecb5
+  ; ── 参4!=0 分支：前缀处理 ──
+007cec9a  33c0/xor eax,eax / 395d0c cmp [ebp+0xc],ebx（参2）/
+          setg al（★参2>0 → 1）/ push eax
+007ceca2  33c0/833e2d     xor eax,eax/cmp [esi],0x2d（★源首=='-'）/
+          sete al / add eax,edi（★目标+负号偏移）/ push eax
+007cecae  e876020000     call 0x7cef29               ; ★未登记（转换辅助）
+007cecb3  59/59          pop ecx×2
+  ; ── 公共路径 ──
+007cecb5  833e2d         cmp [esi],0x2d             ; ★源首=='-'?
+007cecb8  8bc7           mov eax,edi
+007cecba  7506           jne 0x7cecc2
+007cecbc  c6072d         mov byte[edi],0x2d         ; ★写负号
+007cecbf  8d4701         lea eax,[edi+1]            ; ★越过负号
+007cecc2  395d0c         cmp [ebp+0xc],ebx / jle 0x7cecd9  ; ★参2<=0 → 无填充
+007cecc7  8a5001         mov dl,[eax+1] / lea ecx,[eax+1]
+007ceccd  8810           mov byte[eax],dl / mov eax,ecx
+007cecd1  8a0da0c78700   mov cl,byte[0x87c7a0]      ; ★★填充字符全局
+007cecd7  8808           mov byte[eax],cl
+007cecd9  33c9           xor ecx,ecx
+007cecdb  385d18         cmp byte[ebp+0x18],bl       ; ★参4==0?
+007cecde  6898987f00     push 0x7f9898              ; ★常量串 0x7F9898
+007cece3  0f94c1         sete cl / add ecx,eax / add ecx,[ebp+0xc]（★+参2）
+007cecec  51             push ecx / call 0x7d4bf0    ; ★★strcpy 词级变体
+                                                      ;   （batch 035 已登记）
+007cecf1  395d10         cmp [ebp+0x10],ebx / pop ecx×2 / mov ecx,eax
+007cecf8  7403           je 0x7cecfd
+007cecfa  c60145         mov byte[ecx],0x45          ; ★写 'E'（指数标记）
+007cecfd  8b460c         mov eax,[esi+0xc] / inc ecx
+007ced01  803830         cmp byte[eax],0x30          ; ★源+0xC 首字节=='0'
+007ced04  743c           je 0x7ced42                 ; ★零值 → 直接收尾
+007ced06  8b5e04         mov ebx,[esi+4]             ; ★源+4 指数值
+007ced09  4b             dec ebx / jns / neg ebx     ; ★指数-1 负→取负
+007ced0e  c6012d         mov byte[ecx],0x2d          ; ★负指数写 '-'
+007ced11  41             inc ecx
+007ced12  83fb64         cmp ebx,0x64 / jl 0x7ced28  ; ★<100 跳
+007ced17  8bc3/6a64      mov eax,ebx/push 0x64/cdq/pop esi/idiv esi  ; ★/100
+007ced1f  0001           add byte[ecx],al            ; ★百位字符
+007ced21  8bc3/99/f7fe   mov eax,ebx/cdq/idiv esi / mov ebx,edx  ; ★余数
+007ced28  41             inc ecx
+007ced29  83fb0a         cmp ebx,0xa / jl 0x7ced3f   ; ★<10 跳
+007ced2e  8bc3/6a0a      mov eax,ebx/push 0xa/cdq/pop esi/idiv esi  ; ★/10
+007ced36  0001           add byte[ecx],al            ; ★十位字符
+007ced38  8bc3/99/f7fe   mov ebx,edx                 ; ★余数
+007ced3f  005901         add byte[ecx+1],bl          ; ★个位字符
+007ced42  8bc7           mov eax,edi / pop edi,esi,ebx / pop ebp / ret  ; ★返回目标
+
+★语义：**CRT 浮点指数格式化器（推断名——%e 家族）**——cdecl 4
+参（参1=目标缓冲，参2=长度，参3=浮点源结构，参4=前缀标志）：
+  ① 参4!=0 → 0x7CEF29 转换辅助（参2>0 标志 + 负号偏移）；
+  ② 源首 '-' → 写负号并越过；参2>0 → 填充字符 [0x87C7A0]
+     （目标+1 后移一字节）；
+  ③ strcpy（0x7D4BF0）拼接常量串 0x7F9898（参4==0 时起点为
+     目标+参2）；参3参数不越界 → 写 'E' 指数标记；
+  ④ [源+0xC] 首字节=='0' → 零值直接返回；
+  ⑤ 指数 = [源+4]-1，负号处理 → 逐位手写：>=100 → idiv 100 百
+     位 + 余数、>=10 → idiv 10 十位 + 余数、个位 add 0x30；
+  ⑥ 返回目标缓冲。
+
+★原版怪癖（照抄）：
+  ① 填充字符走全局 [0x87C7A0]（可配置填充——默认 0x20 空格）；
+  ② 常量串 0x7F9898（数据区——推断 "0" 或 "." 类前缀串）；
+  ③ 'E' 指数标记只在参3参数引用非空时写（[ebp+0x10]==0 跳过
+     ——调用方可选无指数模式）；
+  ④ 零值判断读 [源+0xC] 首字节=='0'（非浮点比较——字符串特
+     定）；
+  ⑤ 指数逐位 idiv 100/10 手写（非 sprintf——三/两/一位分支）；
+  ⑥ 指数 -1 后负数补 '-'（dec 后 jns/neg）。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7D4BF0 = string_copy_legacy（batch 008/035 已登记
+     REIMPL strcpy 词级变体）——常量串拼接；
+  ② [0x87C7A0] = 填充字符全局（数据区——未登记）；
+  ③ 0x7F9898 = 常量串（数据区）；
+  ④ 0x7CEF29 = 未登记（转换辅助——参4 分支，待续）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 浮点格式化属商业库
+层，不写 C++ 模型；194B 全读 + strcpy 交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CEC87 = MSVC6 CRT 浮点指数格式化器——0x7C-0x7D =
+   MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）。
+2. 依赖：0x7D4BF0（batch 035 已登记 strcpy）+ 0x7CEF29（未登
+   记）+ [0x87C7A0]/0x7F9898 数据区——重写 gamemd 时用等价运
+   行时（snprintf %e 或 std::to_chars）代替。
+3. gamemd_replication_discipline：CRT 格式化设施，重写时用等价
+   运行时代替，逐字节复刻无意义——按商业库纪律归档，不写 C++
+   模型不做 golden。
+→ 状态：crt_runtime_verified（194B 全读 + strcpy 交叉 + 数据
+区常量取证；函数名「浮点指数格式化器」为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 035/008：0x7D4BF0 string_copy_legacy REIMPL——常量串
+  拼接调用现场交叉。
+★batch 1043：_itoa 家族——邻族（7D 区格式化器全景，十进制/
+  指数两族互照）。
+★batch 1044/1045/1051：getenv/locale 链——[0x87C7A0] 全局区
+  （0x7B-0x7F）交叉。
+
+五、状态
+-------
+crt_runtime_verified（0x7CEC87：CRT 浮点指数格式化器归档；194B
+全读 + strcpy 交叉 + 数据区常量取证；不写 C++ 模型不做 golden
+——CRT 格式化商业库层；函数名与「常量串 0x7F9898」语义为推断
+交叉标注）。TSV 新增 0x007CEC87 行。
+
+★本批实锤：CRT %e 指数格式化全链——负号/填充字符 [0x87C7A0]/
+常量串 strcpy/'E' 标记/零值判断/指数 idiv 逐位手写——商业库层
+归档（0x7CEF29 辅助待续）。
+相邻待续：batch 1063 按 _scan_pending_7c.py 取池内下一未登记
+项（uc=2：0x7DD434(192B)/0x7CED9E(167B)/0x7DB5E6(165B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1061 已完（Format80 宿主 3 + 虚表对象方法，
+commit d91b87f）。
