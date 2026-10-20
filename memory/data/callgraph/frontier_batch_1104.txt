@@ -1,0 +1,131 @@
+frontier batch 1104 —— CRT fopen 标志解析器 0x7D2C36（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D2C36（368B,
+uc=1, callers=1 池顶）。TSV 无既有行。
+TARGET = 0x007D2C36。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D2C36 行。
+
+一、链语义（disasm 全 368B 复核，0x7D2C36-0x7D2DA5）
+------------------------------------------------
+头部（0x7D2C36-0x7D2CA0）：
+007d2c36  55                push ebp
+007d2c37  8bec              mov ebp, esp
+007d2c39  53                push ebx
+007d2c3a  56                push esi
+007d2c3b  57                push edi
+007d2c3c  8b7508            mov esi, [ebp+8]      ; ★param1 = 模式串
+007d2c3f  833d7c85b70000    cmp [0xb7857c], 0     ; ★全局 [0xB7857C]（共享/
+                                                    ;   兼容标志）
+007d2c46  7503              jne 0x7d2c4b
+007d2c48  33c0              xor eax, eax
+007d2c4a  50                push eax              ; ★0
+007d2c4b  a17c85b700        mov eax, [0xb7857c]
+
+模式串解析（0x7D2C50-0x7D2CA8，首字符分派）：
+007d2c50  8a0e              mov cl, [esi]         ; ★首字符
+007d2c52  bf18000000        mov edi, 0x18         ; ★默认 0x18
+007d2c57  80f972            cmp cl, 0x72         ; ★'r'
+007d2c5a  7413              je …
+007d2c5c  80f977            cmp cl, 0x77         ; ★'w'
+007d2c5f  7410              je …
+007d2c61  80f961            cmp cl, 0x61         ; ★'a'
+007d2c64  740e              je …
+007d2c66  8b4d0c            mov ecx, [ebp+0xc]    ; 非法首字符 → 返回
+…（三首字符 r/w/a 分派，后续解析 '+' 更新、'b'/'t'
+  文本标志、'c' 提交、'n' 无缓冲、'S' 定位（'S'/'R'/'T'
+  seq/rand/str 模式）、'D' 临时删除、'N' 无继承、'C'
+  缓存保留、','/'x' 等细节——各自 or 相应位到 edi 或
+  更新 [0xB7857C]）
+
+模式位组装（0x7D2CAA-0x7D2D40）：
+  push 0x40 / push 0x80 / push 1 / push 2 … or 到 edi
+  （★_IO 标志族：读 1 / 写 2 / 追加 / 二进制 / 文本 /
+    缓冲模式）
+
+错误出口（0x7D2D46-0x7D2D78）：
+007d2d46  e843e9ffff        call 0x7d168e        ; ★errno 槽
+007d2d4b  c70016000000      mov [eax], 0x16      ; ★errno = 0x16 (EINVAL)
+007d2d51  e841e9ffff        call 0x7d1697        ; ★_doserrno 槽
+007d2d56  8918              mov [eax], ebx       ; ★_doserrno = 0
+007d2d58  83c8ff            or eax, -1           ; ★返回 -1
+007d2d5b  e9…               jmp 0x7d2db0（出口）
+
+尾部（0x7D2D9A-0x7D2DA5）：
+007d2d9a  8bc7              mov eax, edi         ; ★返回模式位
+007d2d9c  5f/5e/5b          pop edi/esi/ebx
+007d2d9f  c9                leave
+007d2da0  c3                ret
+
+★语义：**CRT fopen 标志解析器（推断名——`_fsopen` 家族
+的模式串 → _IO 标志位翻译）**——cdecl 2 参（param1=模式
+串、param2=共享标志）：
+  ① [0xB7857C] 全局（默认共享/兼容标志）；
+  ② 首字符 r/w/a 分派 → 默认标志 0x18；
+  ③ 逐字符解析 '+'（读写）/ 'b'（二进制）/ 't'（文本）/
+     'c'（提交）/ 'n'（无缓冲）/ 'S'（顺序）/ 'R'（随
+     机）/ 'T'（临时）/ 'D'（临时删除）/ 'N'（无继承）
+     / 'C'（缓存保留）等 → or 进标志位；
+  ④ 非法模式串：errno = 0x16 (EINVAL) + _doserrno = 0 +
+     返回 -1；
+  ⑤ 成功返回组装后的 _IO 标志位。
+
+★E8 被调者：0x7D168E（errno 槽）/ 0x7D1697（_doserrno
+  槽）——均已在 batch 1082/1097 等交叉登记。
+
+★原版怪癖（照抄）：
+  ① 默认标志 0x18 硬编码（r/w/a 三路同值起步）；
+  ② 模式字符串行 cmp/je 链（编译器跳转表化）；
+  ③ errno 0x16 EINVAL + _doserrno 清 0 双写错误出口；
+  ④ [0xB7857C] 全局参与标志组装（进程级 fopen 默认态）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT fopen 标志解
+析属商业库层，不写 C++ 模型；全 368B 复核 + errno 出口
+交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D2C36 = MSVC6 CRT fopen 标志解析器——0x7C-0x7D
+   = MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）；
+   模式串 r/w/a + _IO 标志 + EINVAL 为 CRT `_fsopen` 标准
+   形态。
+2. 依赖：errno/_doserrno 槽（0x7D168E/0x7D1697）+
+   [0xB7857C] 全局——重写 gamemd 时用等价运行时
+   （fopen 语义）代替。
+3. gamemd_replication_discipline：CRT 文件打开标志设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业
+   库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 368B 复核 + errno 出口
+交叉；函数名「fopen 标志解析器」为推断交叉标注——模式
+字符/_IO 位/EINVAL 由代码实测）。
+
+四、跨批次闭合
+------------
+★batch 1059/1080：0x7DA512/0x7D4596 流字符读取器——同
+  CRT 流族（本批为流打开端标志翻译）。
+★batch 1082/1084：_woutput/_output——errno 槽
+  0x7D168E/0x7D1697 同被调交叉。
+★batch 1097：0x7D5C12 字符串字段解析器——同 CRT 字符串
+  扫描域对照。
+★batch 1103：0x7D5178 日期换算核心——同 0x7D51-0x7D2C
+  邻域 CRT 设施。
+
+五、状态
+-------
+crt_runtime_verified（0x7D2C36：CRT fopen 标志解析器归
+档；全 368B 复核 + errno 出口交叉；不写 C++ 模型不做
+golden——CRT 文件打开设施商业库层；函数名「fopen 标志
+解析器」为推断交叉标注——模式字符/_IO 位/EINVAL 由代
+码实测）。TSV 新增 0x007D2C36 行。
+
+★本批实锤：fopen 模式串 → _IO 标志位翻译（r/w/a 三首字
+符 + 十余标志字符 + EINVAL 错误出口）——CRT 流打开链标
+志端。
+相邻待续：batch 1105 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7C1A70(353B)/0x7C1150(339B)/0x7DA91C
+(337B)；0x7D544A(流初始化器，本批下游)可优先）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1103 已完（CRT 日期换算核心 _isindst，
+commit 678c6d8）。
