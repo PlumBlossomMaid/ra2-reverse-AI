@@ -1,0 +1,100 @@
+frontier batch 1078 —— CRT 控制台输入句柄初始化器 0x7DE0F1（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DE0F1（31B,
+uc=2, callers=2 池顶）。TSV 无既有行。
+TARGET = 0x007DE0F1。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007DE0F1 行。
+
+一、链语义（disasm 全 31B 复核，0x7DE0F1-0x7DE10F）
+------------------------------------------------
+007de0f1  33c0                    xor eax, eax
+007de0f3  50                      push eax              ; NULL (hTemplateFile)
+007de0f4  50                      push eax              ; 0 (dwFlagsAndAttributes)
+007de0f5  6a03                    push 3                ; OPEN_EXISTING (3)
+007de0f7  50                      push eax              ; NULL (lpSecurityAttributes)
+007de0f8  6a03                    push 3                ; FILE_SHARE_READ|WRITE (3)
+007de0fa  68000000c0              push 0xc0000000       ; GENERIC_READ|GENERIC_WRITE
+007de0ff  689ca47f00              push 0x7fa49c         ; "CONIN$"（.rdata 实测）
+007de104  ff15bc117e00            call [0x7e11bc]       ; ★★CreateFileA（IAT 实测
+                                                        ;   KERNEL32.dll）
+007de10a  a380dd8700              mov [0x87dd80], eax   ; ★句柄存全局槽 [0x87DD80]
+007de10f  c3                      ret
+
+★语义：**CRT 控制台输入句柄初始化器（推断名——CONIN$ 是
+标准控制台输入设备名，MSVC6 CRT 起 _initcon 为 stdin 落控
+制台时开 CONIN$）**——cdecl 0 参：
+  CreateFileA("CONIN$", GENERIC_READ|GENERIC_WRITE,
+  FILE_SHARE_READ|FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
+  0, NULL) → 句柄存全局槽 [0x87DD80]（返回 CreateFileA
+  结果——-1 = 失败）。
+  cdecl 7 参顺压（最后一个 push = 第一参 lpFileName），
+  调用后无 add esp（CreateFileA 是 stdcall 自清参）。
+
+★紧邻孪生（同模板第二副本，跨批待续）：
+  ① 0x7DE110-0x7DE12E（31B）：同构开 "CONOUT$"（
+     [0x7FA4A4]），access=0x40000000（GENERIC_WRITE），
+     句柄存 [0x87DD84]——控制台输出句柄初始化器；
+  ② 0x7DE12F-0x7DE15B（45B）：关闭器——依次读
+     [0x87DD84]/[0x87DD80]，-1/-2 哨兵跳过，
+     call [0x7E11E0]（CloseHandle）——控制台句柄清理器。
+
+★依赖链实锤（本批反汇编 + IAT 解析交叉）：
+  ① [0x7E11BC] = KERNEL32.dll CreateFileA（pefile IAT
+     解析实测）；
+  ② [0x7E11E0] = KERNEL32.dll CloseHandle（关闭器用）；
+  ③ [0x87DD80]/[0x87DD84] = 全局控制台输入/输出句柄槽
+     ——[0x87DD80] 共 11 处引用：9 处在 0x7DD22D-0x7DD398
+     （主消费大函数），2 处在本函数写 + 0x7DE12F 关闭器读；
+  ④ 0x7DE15C-0x7DE17C（33B）= 锁 8 保护薄包装（batch
+     1040 同款形态——EnterLock/LeaveLock 包 0x7DE17D 调
+     用）——相邻待续。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 控制台句柄管理
+属商业库层，不写 C++ 模型；31B 全读 + IAT 解析 + 全局槽
+引用交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DE0F1 = MSVC6 CRT 控制台句柄初始化——0x7C-0x7D
+   = MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）；
+   IAT CreateFileA/CloseHandle 直接证据。
+2. 依赖：CreateFileA（IAT）+ [0x87DD80] 句柄槽（全局）——
+   重写 gamemd 时用等价运行时（stdin 控制台句柄）代替。
+3. gamemd_replication_discipline：CRT 控制台 I/O 设施，重写
+   时用等价运行时代替，逐字节复刻无意义——按商业库纪律归
+   档，不写 C++ 模型不做 golden（HAN 句柄槽属 CRT 内部）。
+→ 状态：crt_runtime_verified（31B 全读 + IAT 解析 + 全局槽
+引用交叉；函数名与「CONIN$ 控制台输入」语义为推断交叉标
+注——CONIN$/CONOUT$ 字符串由 PE .rdata 实测）。
+
+四、跨批次闭合
+------------
+★batch 1077：0x7D4FAB 锁 0x0B 薄包装——同 0x7DE0F1 均为纯
+  CRT 薄包装模式（本批 CreateFileA 直调 + 1077 锁包装）。
+★batch 1040：0x7CBEC1/0x7CBECA 锁 0x0D 薄包装——0x7DE15C
+  锁 8 薄包装同族形态（相邻待续项）。
+★batch 945/1066/1076：内存族——本批实则 IAT 直调族
+  （CreateFileA）非内部函数族，全局句柄槽管理同属 CRT
+  基础设施层。
+
+五、状态
+-------
+crt_runtime_verified（0x7DE0F1：CRT 控制台输入句柄初始化器
+归档；31B 全读 + IAT 解析 + 全局槽引用交叉；不写 C++ 模型
+不做 golden——CRT 控制台 I/O 商业库层；函数名「CONIN$ 控
+制台输入句柄初始化」为推断交叉标注——字符串 .rdata 实
+测）。TSV 新增 0x007DE0F1 行。
+
+★本批实锤：CreateFileA("CONIN$") 直接薄包装 + 全局句柄槽
+[0x87DD80]——CRT 控制台 I/O 初始化端（stdin 落到控制台）。
+孪生开 CONOUT$ + 关闭器两邻函数留待续。
+相邻待续：batch 1079 按 _scan_pending_7c.py 取池内下一未登
+记项（uc=2：0x7D13F8(19B)/0x7D4596(11B, callers=16——高分
+发点）/0x7DBC57(3B)；0x7DE110/0x7DE12F/0x7DE15C 三邻可并
+入同族批次）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1077 已完（CRT 锁 0x0B 保护薄包装，commit
+3627311）。
