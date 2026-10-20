@@ -1,0 +1,113 @@
+frontier batch 1072 —— CRT 字符串插入辅助 0x7CEF29（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CEF29（37B,
+callers=4 池顶最高分发点）。TSV 无既有行，但 batch 1062/1064
+两批均点名「0x7CEF29 转换辅助未登记待续」——本批兑现遗留。
+TARGET = 0x007CEF29。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CEF29 行。
+
+一、链语义（disasm 全 37B 复核，0x7CEF29-0x7CEF4D，ret 平返）
+------------------------------------------------
+007cef29  57              push edi
+007cef2a  8b7c240c        mov edi,[esp+0xc]        ; ★param2 = 插入偏移
+007cef2e  85ff            test edi,edi
+007cef30  741a            je 0x7cef4c             ; ★偏移 0 → 直接返回（不拷贝）
+007cef32  56              push esi
+007cef33  8b74240c        mov esi,[esp+0xc]        ; ★param1 = 源串
+007cef37  56              push esi
+007cef38  e863260000      call 0x7d15a0           ; ★★string_length_legacy
+                                                  ;   （batch 017 REIMPL strlen）
+007cef3d  40              inc eax                  ; ★len + 1（含 NUL）
+007cef3e  50              push eax                 ; 第 3 参 = len+1（count）
+007cef3f  56              push esi                 ; 第 2 参 = p1（src）
+007cef40  03f7            add esi,edi              ; ★esi = p1 + 偏移（dest）
+007cef42  56              push esi                 ; 第 1 参 = p1+偏移（dest）
+007cef43  e848b1ffff      call 0x7ca090           ; ★★0x7CA090（memmove 变体
+                                                  ;   ——batch 036/1042 已标注同族，
+                                                  ;   4 参 cdecl (dst,src,n,p1)）
+007cef48  83c410          add esp,0x10            ; 清 4 参（16B）
+007cef4b  5e              pop esi
+007cef4c  5f              pop edi
+007cef4d  c3              ret
+007cef4e  cc              int3                    ; ★函数边界（0x7CEF4F 起新）
+
+★语义：**CRT 字符串插入辅助（推断名——batch 1062/1064 点名转
+换辅助兑现）**——cdecl 2 参（param1=源串，param2=插入偏移）：
+  ① 偏移 == 0 → 直接返回（空操作短路）；
+  ② strlen(源) + 1（含 NUL）→ 4 参调 0x7CA090
+     (dst=源+偏移, src=源, count=len+1, 附加=源) 把源串完整
+     拷贝到偏移处——「插入」语义（就地复制源串到其内部偏移位
+     置）。
+  ③ 返回 void。
+
+★原版怪癖（照抄）：
+  ① 偏移 0 短路（je 空操作——不碰 strlen/拷贝）；
+  ② strlen+1 含 NUL（长度含终止符——insert 带 NUL 语义）；
+  ③ 4 参调 0x7CA090（末参 = 源串重复——memmove 变体多出的
+     冗余参数照抄）；
+  ④ "插入"实际是 memmove 就地拷贝（源与目标重叠——memmove
+     非 memcpy 的关键场景）；
+  ⑤ 无返回值约定（void——调用方自管结果）。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7D15A0 = string_length_legacy（batch 017 已登记 REIMPL
+     strlen——0x7EFEFEFF 魔术双窗口检测）——测长调用；
+  ② 0x7CA090 = memmove 变体（batch 036 0x7D0A20 同族标注 +
+     batch 1042「0x7CA090 memmove 段数组紧凑搬迁」交叉——同
+     一地址两处消费）——就地拷贝；
+  ③ batch 1062（0x7CEC87 浮点指数格式化器）三次调用 0x7CEF29
+     (edi,1)×2 + (edi,len)——格式化填充调现场；
+  ④ batch 1064（0x7CED9E 浮点尾数格式化器）三次调用 0x7CEF29
+     ——尾数补位调现场。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 字符串插入辅助属
+商业库层，不写 C++ 模型；37B 全读 + strlen/memmove 双 REIMPL
+交叉——两被调均有 C++ 真身实现）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CEF29 = MSVC6 CRT 字符串插入辅助——0x7C-0x7D =
+   MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）。
+2. 依赖：strlen（batch 017 REIMPL）+ 0x7CA090（memmove 类）—
+   —两被调均已有真身实现，本批仅 37B 壳层（测长+拷贝装配）；
+   重写 gamemd 时用等价运行时（std::string::insert/memmove）
+   代替。
+3. gamemd_replication_discipline：CRT 字符串设施，重写时用等
+   价运行时代替，逐字节复刻无意义——按商业库纪律归档，不写
+   C++ 模型不做 golden（核心 strlen/memmove 已 REIMPL 覆盖）。
+→ 状态：crt_runtime_verified（37B 全读 + strlen/memmove 双交
+叉 + 1062/1064 点名兑现；函数名「字符串插入辅助」为推断交叉
+标注）。
+
+四、跨批次闭合
+------------
+★batch 017：0x7D15A0 strlen REIMPL——测长调用现场交叉。
+★batch 036/1042：0x7CA090 memmove——就地拷贝调用现场交叉
+  （同地址三处消费：段数组搬迁/本批字符串插入）。
+★batch 1062：0x7CEC87 浮点指数格式化器——(edi,1)/(edi,len)
+  三次调用现场兑现（本批为格式化填充辅助）。
+★batch 1064：0x7CED9E 浮点尾数格式化器——三次调用现场兑现
+  （尾数补位辅助）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CEF29：CRT 字符串插入辅助归档；37B
+全读 + strlen/memmove 双交叉 + 1062/1064 点名兑现；不写 C++
+模型不做 golden——CRT 字符串商业库层，核心 strlen/memmove 已
+REIMPL 覆盖；函数名与「4 参 memmove 装配」语义为推断交叉标
+注）。TSV 新增 0x007CEF29 行。
+
+★本批实锤：batch 1062/1064 三批点名遗留闭环——0x7CEF29
+（37B 字符串插入辅助：偏移短路 + strlen+1 + memmove 就地拷
+贝）登记；浮点格式化填充链（0x7CEC87/0x7CED9E → 0x7CEF29 →
+0x7CA090）全链归档。
+相邻待续：batch 1073 按 _scan_pending_7c.py 取池内下一未登记
+项（uc=2：0x7CC0A5(53B)/0x7DBC2A(45B FPE 链遗留——batch
+1065 点名状态检查）/0x7C9442 __nh_malloc(44B)/或 0x7CFB13 小
+分配器 + 0x7D06E8 失败处理遗留）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1071 已完（CRT 每线程错误状态访问器，
+commit d71eca9）。
