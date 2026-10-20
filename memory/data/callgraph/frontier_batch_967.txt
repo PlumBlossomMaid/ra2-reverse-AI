@@ -1,0 +1,110 @@
+frontier batch 967 —— CRT _strrchr 0x7C8DF0
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序，batch 966 之后取下一未复刻 CRT 项 = 0x7C8DF0（39B / 7
+unique callers / 未 REIMPL / 非锁家族非基础件）。2026-10-20 指令级
+golden 17 用例实证（_golden_7c8df0.py，Unicorn 跑真身机器码——纯内
+存零子调用零全局，全程真身模拟）。
+TARGET = 0x007C8DF0。C++ 模型：code/rewrite/runtime/crt_strrchr.{h,cpp}
+（函数名 strrchr_legacy）。单测：test_crt_strrchr.cpp（17 用例对拍 +
+边界 + 参照抽查）。TSV 新增 0x007C8DF0_REIMPL 行。
+
+一、链语义（disasm 全段复核 + golden 17 用例实证）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7C8DF0 = MSVCRT strrchr（反向
+字符查找）——cdecl 2 栈参 (s, c)，返回 s 中**最后一次**出现字符 c
+的指针、未找到返 0；★c==0 返终止 NUL 指针（标准 strrchr 语义）。
+纯内存操作，无子调用无全局引用——全程可真身模拟。
+  机器码（0x7C8DF0-0x7C8E16，39B）：
+    push ebp / mov ebp,esp / push edi
+    mov edi,[ebp+8]=s
+    xor eax,eax（AL=0）→ or ecx,-1 → repne scasb（★正扫 NUL）
+    inc ecx → neg ecx（★ECX = 串长含 NUL = len+1——SCASB 相等命中
+      时也先执行后递减，故 inc/neg 得 len+1）
+    dec edi（★指向 NUL 处）
+    mov al,[ebp+0xC]=c（★只取低 8 位）
+    std（★方向标志=递减）
+    repne scasb（★反向从 NUL 处倒找 c，共 len+1 个位置）
+    inc edi（★校正：REPNE 停止时 EDI 已越位）
+    cmp [edi],al → je 0x7C8E11（命中返指针）
+    xor eax,eax（未命中返 0）
+    0x7C8E11: mov eax,edi
+    cld（★恢复 DF）→ pop edi → leave → ret
+
+★原版怪癖（golden 实证，照抄）：
+  ① 反向扫描覆盖 [len..0] 共 len+1 位置（含 NUL 与 s[0]）——ECX 正
+     扫 NUL 后 inc/neg 得 len+1，反扫恰好走完 NUL 到 s[0] 全程；
+  ② 收尾 cmp 在未命中（ECX 耗尽）时把 s[0] 再比一次——s[0]==c 仍返
+     &s[0]（反向最后检查位），反证返回指针确为 c（golden s="ba"
+     c='a' 未走此支但 s[0] 命中路径实证）；
+  ③ c 只取低 8 位（高位忽略——golden 0x1FF 与 0xFF 等价实证）；
+  ④ c==0 时 NUL 处即命中返终止 NUL 指针（含空串→&s[0]）；
+  ⑤ std/cld 配对（cdecl 约定 DF 返回时 clear）；
+  ⑥ or ecx,-1 编码（非 mov ecx,-1）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7c8df0.py（StrrchrOracle；Unicorn 按原
+ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7C8DF0 全段——无子
+调用无桩；s 区 0xCC 哨兵验证不越界读；cdecl ret 只弹返回地址；
+0xCC 填充验证反扫不越界）。对拍点：返回指针相对 s 的**字节偏移**
+（-1=未找到返 0）。17 用例落盘
+memory/data/rmg/deadcode_7c8df0_golden.txt（CASE 行格式
+`CASE s=<hex> c=<hex> -> ret=<off|-1>`，s 含尾 NUL、c 取低 8 位）：
+中/首/尾命中、未找到、★c==0 返终止 NUL（"abc" → 3）、空串 c==0 → 0、
+空串未找到、★多次出现返最后一次（"ababa" c='a' → 4）、单字符命中、
+★高位 0xFF 命中（b0/b1 两位置）、高位空串未找到、长串首尾命中、
+长串 c==0 → 16、重复串返最后、首命中。
+
+三、C++ 模型（code/rewrite/runtime/crt_strrchr.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。单函数：
+  strrchr_legacy(s, c) —— 0x7C8DF0：
+    len = 正扫 NUL；target = c 低 8 位；
+    反向 i 从 len 递减到 0：s[i]==target → 返 s+i；i==0 且不中 → 0。
+  严格按汇编语义：反扫覆盖 [len..0]、c 低 8 位、c==0 返终止 NUL
+  指针、未命中返 0。头注释含 39B 机器码全段 + 六怪癖。
+
+四、单测（test_crt_strrchr.cpp，全量 78 项之一）
+------------------------------------------------
+CrtStrrchrTest：读 golden 原档（RA2_GOLDEN_DIR 宏）17 CASE + 3 项：
+  GoldenMatches（逐用例偏移一致）、
+  BoundaryCases（★c==0 返终止 NUL/空串两向/首尾命中/未找到/高位
+    0x1FF≡0xFF/多次返最后——期望全部建立在同一个串指针上）、
+  ReferenceCrossCheck（96 组伪随机 0-199 字节串 × 随机 c（含高位）
+    vs 独立参照实现——标准 strrchr 语义）。
+解析：parse_hex 先 find_first_not_of(' ') 剥前导空格（944 深坑防复
+发）；golden 行固定 5 tok（CASE s=/c=/->/ret=），字段恒非空。
+调试记录（二修，均测试侧）：①BoundaryCases 首版用 ASSERT_GE 在返
+回 const char* 的函数里展开 return;（void）→ C2440 编译错 → 改普通
+if 检查；②★MSVC 不合并相同字符串字面量（每使用点独立存储）——期望
+值里另写字面量（std::strchr("abc",'b') 或 "abc"+3）指针地址天然不同
+→ 全部改为先把串存局部变量、期望建立在同一指针上（_patch_967_
+test2.py）。GoldenMatches 首跑即过（17/17），证明模型正确。
+预期 17 用例全量对拍 + 边界 + 参照交叉，ctest 77→78 全绿（#27 通过）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：无——纯内存零子调用零桩零全局，0x7C8DF0 全部 39B 真身模拟
+golden 对拍，无外部语义依赖。
+★跨批闭合（三态升级）：batch 227 曾按「标准 MSVC6 实现逐字节吻合」
+把 0x007C8DF0 归档 crt_runtime_verified（不写 C++ 模型不做 golden）。
+本批实锤 strrchr 是纯内存零子调用零全局——**归档判据不成立**（同
+strchr/wcschr/strstr 类——零依赖即 REIMPL 候选），且完成 golden 17
+用例全真身对拍 + C++ 模型 + 单测 3 项全绿，三态升级为
+cpp_reimplementation_verified（TSV 追加 0x007C8DF0_REIMPL 行，不覆
+盖 batch 227 行）。
+
+★本批实锤：CRT 扇入度 7 未复刻项 = strrchr——MSVC6 反向字符查找
+（repne scasb 正扫 NUL 得长 + std 反向扫描 + c==0 返终止 NUL + 未命
+中返 0）；39B 纯内存操作，全程可真身模拟，无桩无全局。与 batch 954
+strchr / batch 960 wcschr 构成查找族（strchr 正向单字节、strrchr 反
+向单字节、wcschr 正向宽字符）——跨函数共享模式：strrchr 的收尾
+inc edi + cmp 校验与 wcschr 收尾 CF 掩码归一化同为「REP 停止后校正
++ 验证」惯用法。
+相邻待续：batch 968 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_pick_945.py）。
+依赖模型：无（纯内存零依赖）。
+承前：batch 966 已完（CRT 流锁 Enter 0x7CB3F9，commit 6372837）。
