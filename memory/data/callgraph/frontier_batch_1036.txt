@@ -1,0 +1,136 @@
+frontier batch 1036 —— CRT 流锁字符分类扫描器 0x7CBB8D（登记）
+============================================
+
+候选来源：python .qwen\tmp\_list_7c_pending.py —— 0x7CBB8D = 78B /
+2 uc（ranking 行 unique_callers 列 = FUN_007d3a6d,FUN_007d45ba）/
+TSV 无既有行 / frontier_batch_*.txt 无匹配。本批 = 依赖链确认
+（0x7CD9F5/0x7CDA56 流锁对 batch 966/961 已登记 + [0xB78961]
+ctype 表）→ 按商业库层归档 **crt_runtime_verified**。
+TARGET = 0x007CBB8D。C++ 模型：无（见「三态判定」）。TSV：新增
+0x007CBB8D 行。
+
+一、链语义（disasm 全 78B 复核，0x7CBB8D-0x7CBBDA）
+------------------------------------------------
+007cbb8d  56              push esi
+007cbb8e  6a19            push 0x19                       ; ★锁编号 0x19
+007cbb90  e8601e0000      call 0x7cd9f5                    ; ★★流锁 Enter（batch
+                                                        ;   966 已登记 CRT region
+                                                        ;   lock Enter）
+007cbb95  8b542410        mov edx, dword ptr [esp + 0x10]  ; ★参3 = count
+007cbb99  33f6            xor esi, esi                      ; esi = 0（计数器）
+007cbb9b  8bc2            mov eax, edx
+007cbb9d  4a              dec edx                           ; ★Count 先减（dec 后
+                                                        ;   test 原值——batch 973
+                                                        ;   wcsncmp 同款写法）
+007cbb9e  85c0            test eax, eax
+007cbba0  59              pop ecx
+007cbba1  742c            je 0x7cbbcf                      ; count==0 → 跳
+007cbba3  8b442408        mov eax, dword ptr [esp + 8]      ; ★参2 = 字符串指针
+007cbba7  8a08            mov cl, byte ptr [eax]            ; cl = 字符
+007cbba9  84c9            test cl, cl
+007cbbab  7422            je 0x7cbbcf                       ; NUL → 跳
+007cbbad  0fb6c9          movzx ecx, cl
+007cbbb0  f6816189b70004  test byte ptr [ecx + 0xb78961], 4 ; ★★[0xB78961+字符]
+                                                        ;   ctype 表 & 4 位
+007cbbb7  740d            je 0x7cbbc6                      ; 无 4 位 → 跳过
+007cbbb9  8bca            mov ecx, edx
+007cbbbb  4a              dec edx                           ; ★命中后 count 再减
+007cbbbc  85c9            test ecx, ecx
+007cbbbe  740f            je 0x7cbbcf                       ; 耗尽 → 跳
+007cbbc0  40              inc eax
+007cbbc1  803800          cmp byte ptr [eax], 0             ; 下一字符 NUL?
+007cbbc4  7409            je 0x7cbbcf                       ; → 跳
+007cbbc6  46              inc esi                           ; ★★esi++（计数）
+007cbbc7  40              inc eax
+007cbbc8  8bca            mov ecx, edx
+007cbbca  4a              dec edx
+007cbbcb  85c9            test ecx, ecx
+007cbbcd  75d8            jne 0x7cbba7                      ; 循环
+007cbbcf  6a19            push 0x19
+007cbbd1  e8801e0000      call 0x7cda56                    ; ★★流锁 Leave（batch
+                                                        ;   961 已登记 CRT region
+                                                        ;   lock Leave）
+007cbbd6  59              pop ecx
+007cbbd7  8bc6            mov eax, esi                      ; ★返回 esi（计数）
+007cbbd9  5e              pop esi
+007cbbda  c3              ret
+
+★语义：**CRT 流锁保护的字符分类扫描器（推断名）**——cdecl 3 参
+（参2=字符串指针，参3=count，参1 推断为分类上下文）：
+  ① 0x7CD9F5 Enter（锁编号 0x19）——批 966 已登记流锁；
+  ② 遍历字符串 [0,B78961+字符]（字符索引 ctype 表）& 4 位命中
+     计数 → esi++；count 先减写法（dec 后 test 原值——batch
+     973 wcsncmp 同款）；
+  ③ 命中并 count 未耗尽时检查下一字符非 NUL（双字符对判定——
+     宽字符/多字节对推断）；
+  ④ 0x7CDA56 Leave（锁编号 0x19）→ 返回 esi 计数。
+
+★原版怪癖（照抄）：
+  ① ★锁编号 0x19（25）——区别于 batch 244 tolower 的 0x13：
+     CRT 不同锁族（字符分类 vs locale）；
+  ② Count 先减写法（mov eax,edx → dec edx → test eax）——
+     batch 973 wcsncmp / 1009 wcstok 同款；
+  ③ [0xB78961] 字符索引表（非 [0x87C590] 掩码族表——另一张
+     CRT 字符属性表，& 4 位 = 特定字符类推断）；
+  ④ 命中后二次 dec（命中字符消耗 count 后还要保证下一字符非
+     NUL 才计数——双字符对扫描语义）；
+  ⑤ 无全局引用（仅流锁 + 表）——非纯内存因依赖锁与表。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7CD9F5/0x7CDA56 = batch 966/961 已登记（CRT region lock
+     Enter/Leave，_pick_945 显式排除锁家族留桩边界）——本批
+     调用现场交叉；
+  ② [0xB78961] = 字符属性表全局（batch 789 已录邻近全局段）—
+     —ctype 表交叉；
+  ③ batch 244/939：tolower 慢路径锁编号 0x13——本批 0x19 同族
+     对照（字符分类锁族）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 字符分类扫描属商业库
+层，不写 C++ 模型；78B 全读 + 流锁对 batch 966/961 交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CBB8D = MSVC6 CRT 字符分类辅助（流锁保护 + ctype
+   表扫描）——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_
+   layout_crt_provenance）。
+2. 依赖：0x7CD9F5/0x7CDA56（batch 966/961 已登记流锁——线程同
+   步语义单线程模型无可观测行为，structural_equivalence 锁例外
+   合法）+ [0xB78961] 字符表——重写 gamemd 时用等价运行时
+   （std::is* 或字符串扫描）代替。
+3. gamemd_replication_discipline：CRT 运行时设施，重写时用等价
+   运行时代替，逐字节复刻无意义——按商业库纪律归档，不写 C++
+   模型不做 golden。
+→ 状态：crt_runtime_verified（78B 全读 + 流锁对 batch 966/961
+交叉 + [0xB78961] 表交叉；精确函数名与 &4 字符类语义为推断交叉
+标注）。
+
+四、跨批次闭合
+------------
+★batch 966/961：0x7CD9F5/0x7CDA56 流锁 Enter/Leave 登记——本批
+锁编号 0x19 调用现场交叉。
+★batch 244：tolower 慢路径锁编号 0x13——本批 0x19 同族对照（字
+符分类锁族全景）。
+★batch 973/1009：wcsncmp/wcstok Count 先减写法——本批同款交叉。
+★batch 789：邻近全局段——[0xB78961] 表语境交叉。
+★_pick_945：锁家族排除逻辑——0x7CBB8D 依赖方纳入同边界。
+
+五、状态
+-------
+crt_runtime_verified（0x7CBB8D：CRT 流锁字符分类扫描器归档；78B
+全读 + 流锁对 batch 966/961 交叉 + [0xB78961] 表交叉；不写 C++
+模型不做 golden——CRT 字符分类商业库层；精确函数名与 &4 字符类
+语义为推断交叉标注）。TSV 新增 0x007CBB8D 行。
+
+★本批实锤：0x7CBB8D = CRT 流锁保护的字符分类扫描器（锁编号 0x19
+Enter/Leave 对 + [0xB78961+字符] 表 & 4 位计数 + Count 先减双字
+符对判定），依赖 batch 966/961 已登记流锁 → 按商业库层纪律归档
+crt_runtime_verified。
+相邻待续：batch 1037 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_list_7c_pending.py——候选 0x7CBED3
+26B / 0x7CDF2E 280B / 0x7CB1CB 46B 等；0x7D461E/0x7D45DF/
+0x7D571F/0x7C9FD9/0x7D473F/0x7D8C6B 新候选标注）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1035 已完（CRT RTTI 对象 meta 读取器 0x7CAC4C，commit
+c2b6150）。
