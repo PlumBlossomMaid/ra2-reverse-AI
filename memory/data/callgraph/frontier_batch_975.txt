@@ -1,0 +1,123 @@
+frontier batch 975 —— CRT __aulldiv 0x7C9380
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序，batch 974 之后取下一未复刻 CRT 项 = 0x7C9380（104B / 6
+unique callers / 未 REIMPL / 非锁家族非基础件）。2026-10-20 指令级
+golden 16 用例实证（_golden_7c9380.py，Unicorn 跑真身机器码——纯算
+术零子调用零全局，全程真身模拟）。
+TARGET = 0x007C9380。C++ 模型：code/rewrite/runtime/crt_aulldiv.{h,cpp}
+（函数名 aulldiv_legacy）。单测：test_crt_aulldiv.cpp（16 用例对拍 +
+边界 + 参照抽查）。TSV 新增 0x007C9380_REIMPL 行。
+
+一、链语义（disasm 全段复核 + golden 16 用例实证）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7C9380 = MSVC6 CRT __aulldiv
+（64 位无符号除法）——cdecl 4 dword 栈参 (a_lo, a_hi, b_lo, b_hi)，
+返回 edx:eax 64 位商 = (uint64)a / (uint64)b（无符号截断，余数丢弃），
+ret 0x10 弹 16 字节。与 batch 963 __allmul（64 位乘法）构成除乘配对。
+  机器码（0x7C9380-0x7C93E5，104B 全段）：
+    push ebx / push esi
+    mov eax,[esp+0x18]=b_hi → or eax,eax → jne 0x7C93A2（★b_hi!=0 →
+      硬路径）
+    快速路径（0x7C938A，b_hi==0）：
+      mov ecx,[esp+0x14]=b_lo
+      mov eax,[esp+0x10]=a_hi → xor edx,edx → div ecx
+        （★edx:eax = 0:a_hi / b_lo → eax=高商，edx=余）
+      mov ebx,eax → mov eax,[esp+0xC]=a_lo → div ecx
+        （★edx:eax = 余:a_lo / b_lo → eax=低商）
+      mov edx,ebx → jmp 0x7C93E3（★edx:高商 + eax:低商）
+    硬路径（0x7C93A2，b_hi!=0）：
+      mov ecx,eax（=b_hi）→ mov ebx,[esp+0x14]=b_lo
+      mov edx,[esp+0x10]=a_hi → mov eax,[esp+0xC]=a_lo
+      归一化循环（0x7C93B0）：
+        shr ecx,1 / rcr ebx,1（★b_hi:b_lo 联合右移，CF 传位）
+        shr edx,1 / rcr eax,1（★a_hi:a_lo 联合右移）
+        or ecx,ecx → jne 循环（★直到 b_hi==0，b 归一化到 32 位）
+      div ebx（★edx:eax = a 归一化 / b_lo' → eax=预商 esi）
+      mov esi,eax → mul dword [esp+0x18]（★esi*b_hi → edx:eax=H）
+      mov ecx,eax（★H 低 32——★★H 高 32 被丢弃，原版不检查！）
+      mov eax,[esp+0x14]=b_lo → mul esi（★edx:eax = b_lo*esi=L）
+      add edx,ecx（★积低64 高32 = L_hi + H_lo，CF=进位）
+      jb 0x7C93DE（★CF=1 → 减商）
+      cmp edx,[esp+0x10]=a_hi → ja 0x7C93DE（★积高32 > a_hi → 减商）
+      jb 0x7C93DF → cmp eax,[esp+0xC]=a_lo → jbe 0x7C93DF（★积≤a → 收尾）
+      0x7C93DE: dec esi（★校正：商减 1）
+      0x7C93DF: xor edx,edx → mov eax,esi（★edx=0，eax=商）
+    0x7C93E3: pop esi / pop ebx / ret 0x10
+
+★原版怪癖（golden 实证，照抄）：
+  ① 快速/硬路径分岔在 b_hi；
+  ② 快速路径两次 div 分步：先 a_hi/b_lo 得高商（edx 余数接力），再
+     (余<<32|a_lo)/b_lo 得低商——★余<b_lo ⇒ 被除数 < b_lo*2^32 ⇒
+     低商永不溢出（原版契约，x86 div #DE 防护隐含）；
+  ③ 硬路径归一化循环联合右移（shr/rcr 配对——b 最高位被挪进 b_lo
+     高位 ⇒ b_lo' ≥ 2^31 使预商不溢出）；
+  ④ ★乘法校正只检查 CF（L_hi+H_lo 进位）+ 积低 64 vs a——**H 高 32
+     （esi*b_hi 溢出位）被丢弃不检查**（原版怪癖：归一化保证预商至
+     多偏大 1，CF 或 64 位比较足以校正；golden 全 1×全 1 等用例经
+     此路径实证）；
+  ⑤ 返回 edx:eax 64 位商、余数丢弃（收尾 xor edx,edx 高 32 恒 0）；
+  ⑥ 除零（b==0）走 div #DE 异常——调用方契约保证非零（golden 不
+     含除零用例）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7c9380.py（AulldivOracle；Unicorn 按原
+ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7C9380 全段——无子
+调用无桩；cdecl 4 dword 参 + ret 0x10 弹 16 字节）。16 用例落盘
+memory/data/rmg/deadcode_7c9380_golden.txt（CASE 行格式
+`CASE a=<hex64> b=<hex64> -> ret=<hex64>`，小端无符号）：0/1、1/1、
+快速路径 32 位满值、a_hi=1/2、★硬路径 b_hi=1 → 1、硬路径 >>16、
+快速满值/2^31、快速满值/3、★硬路径全 1×全 1 → 1、快速混合、
+★硬路径被除<除数 → 0、2^63/2=2^62、1/全 1 → 0、2^31/2^15=2^16、
+快速极值交叉、小值除法。
+期望值 = a // b（Python 整数除法），16 用例逐位一致。
+
+三、C++ 模型（code/rewrite/runtime/crt_aulldiv.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。单函数：
+  aulldiv_legacy(a, b) —— 0x7C9380：
+    a_lo/a_hi/b_lo/b_hi 拆分；if (b_hi==0)：hi_q = a_hi/b_lo；rem =
+    a_hi%b_lo；lo_q = ((rem<<32)|a_lo)/b_lo；返 (hi_q<<32)|lo_q。
+    硬路径：归一化循环（bh/bl/ah/al 联合右移直到 bh==0）；esi =
+    ((ah<<32)|al)/bl；H = esi*b_hi；L = esi*b_lo；mid = L_hi+H_lo
+    （32 位回绕）；cf = mid < L_hi；prod64 = (mid<<32)|L_lo；q =
+    (cf || prod64>a) ? esi-1 : esi；返 q。
+  严格按汇编语义：两次 div 分步 + 归一化 + 乘法校正（★含 H 高 32
+  丢弃怪癖——校正只看 CF 与积低 64）。头注释含 104B 机器码全段 +
+  六怪癖。
+
+四、单测（test_crt_aulldiv.cpp，全量 80 项之一）
+------------------------------------------------
+CrtAulldivTest：读 golden 原档（RA2_GOLDEN_DIR 宏）16 CASE + 3 项：
+  GoldenMatches（逐用例商一致）、
+  BoundaryCases（0×1/1×1/0×全1/快速路径 (2^32-1)^2/2^32/2=2^31/
+    硬路径全1×全1=1/被除<除数 两向→0/2^63/2=2^62/1/全1→0/常规交
+    叉）、
+  ReferenceCrossCheck（128 组伪随机 uint64 对 vs 标准无符号除法
+    a/b 截断；b==0 跳过——除零原版契约外）。
+解析：parse_hex64 先 find_first_not_of(' ') 剥前导空格（944 深坑防复
+发）；golden 行固定 5 tok（CASE a=/b=/->/ret=），字段恒非空。
+调试记录（一修，测试侧）：BoundaryCases 0xDEADBEEFCAFEBABE /
+0x123456789ABCDEF0 误标"被除<除数"期望 0——golden 实证商 = 12（
+0xD9.../0x12... ≈ 12.23 截断）→ 改期望 12 + 换真"被除<除数"用例
+0x1000/0x1000000000000000 → 0（_patch_975_test.py）。
+预期 16 用例全量对拍 + 边界 + 参照交叉，ctest 79→80 全绿（#29 通过）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：无——纯算术零子调用零桩零全局，0x7C9380 全部 104B 真身模
+拟 golden 对拍，无外部语义依赖。
+
+★本批实锤：CRT 扇入度 6 未复刻项 = __aulldiv——MSVC6 64 位无符号
+除法（4 dword cdecl + ret 0x10；快速两次 div 分步 + 硬路径归一化 +
+乘法校正，H 高 32 丢弃怪癖）；104B 纯算术操作，全程可真身模拟，无
+桩无全局。与 batch 963 __allmul / 963' 浮点族构成算术辅助家族。
+相邻待续：batch 976 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_pick_945.py——候选 0x7C896E ntohl 6B /
+0x7CD9F5 锁家族留桩等）。
+依赖模型：无（纯算术零依赖）。
+承前：batch 974 已完（CRT WSAGetLastError 跳板 0x7C897A，commit
+e3b704c）。

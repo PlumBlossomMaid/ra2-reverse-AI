@@ -28,6 +28,7 @@ add_library(ra2_runtime
   crt_strcmp.cpp
   crt_strrchr.cpp
   crt_wcsncmp.cpp
+  crt_aulldiv.cpp
   facing.cpp
   ra2_string.cpp
   map_legal.cpp)
@@ -249,4 +250,13 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_crt_wcsncmp PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME crt_wcsncmp COMMAND test_crt_wcsncmp)
+
+  # __aulldiv（0x7C9380，64 位无符号除法），golden 由 emu_oracle 指令级
+  # 模拟取得（deadcode_7c9380_golden.txt，16 用例；纯算术零依赖全真身，
+  # 快速路径两次 div + 硬路径归一化+乘法校正）
+  add_executable(test_crt_aulldiv test/test_crt_aulldiv.cpp)
+  target_link_libraries(test_crt_aulldiv PRIVATE ra2_runtime gtest_main)
+  target_compile_definitions(test_crt_aulldiv PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME crt_aulldiv COMMAND test_crt_aulldiv)
 endif()
