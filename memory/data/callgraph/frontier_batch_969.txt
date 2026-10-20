@@ -1,0 +1,99 @@
+frontier batch 969 —— CRT 句柄表操作包装 0x7CA845（登记升级）
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序（0x7CA845 = 7 uc / 19B / 未 REIMPL；batch 226 已登记
+semantics_verified + assembly_verified_semantics_confirmed，名「句柄
+表操作包装」）。本批 = 依赖链补全（0x7CA814 全段 + 0x7CB44B 流锁
+Leave batch 961 归档交叉 + 0x7D2DA6/0x7D2C36 Handles 层 batch 048
+交叉）→ 按商业库层归档 **crt_runtime_verified**。
+TARGET = 0x007CA845。C++ 模型：无（锁家族 + Handles 后端留桩边界——
+见「三态判定」）。TSV：更新 0x007CA845 行。
+
+一、链语义（disasm 全段复核）
+------------------------------------------------
+0x7CA845(19B) = MSVC6 CRT 句柄表操作包装（0x7C-0x7D 静态 CRT 区）——
+cdecl 2 栈参（参数1/参数2），固定压常量 0x40 转调 0x7CA814：
+  push 0x40                    ; ★常量 0x40 第三参数
+  push [esp+0xC] ×2            ; ★参数1 转发两次（压栈后 [esp+0xC]
+                               ; 先后指向参数2、参数1）
+  call 0x7CA814                ; ★句柄表操作主体
+  add esp,0xC / ret            ; cdecl 弹 12B（3 参）
+  等价：return 0x7CA814(p1, p2, 0x40)
+
+被调 0x7CA814(47B) 全段复核（batch 226 已录，本批交叉确认）：
+  push esi / call 0x7D2DA6    ; ★★取表项（句柄表查找，Handles 层）
+  mov esi,eax / test esi,esi
+  jne 0x7CA822 / pop esi / ret ; ★未命中返 NULL
+  0x7CA822: push edi / push esi / push [esp+0x18] ×3
+  call 0x7D2C36                ; ★★三参操作（首参=句柄）
+  push esi / mov edi,eax
+  call 0x7CB44B                ; ★★流锁 Leave（batch 961 归档）
+  add esp,0x14 / mov eax,edi / pop 族 / ret
+
+★语义：**句柄表操作包装**——0x7CA845 固定压 0x40（长度/模式/权限位
+推断）+ 参数转发 0x7CA814；后者 0x7D2DA6 取句柄（未命中返 NULL），
+命中则 0x7D2C36 三参操作并以 0x7CB44B 流锁 Leave 收尾，返回
+0x7D2C36 结果。
+★原版怪癖（batch 226 已录，本批复核）：①两参相同是否原版刻意未知
+（照抄机器码不改写）；②0x40 常量语义（长度/模式/权限位）未实锤；
+③0x7D2DA6 未命中返 NULL 即短路返回——不消费后续参数。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7CB44B = 流锁 Leave——batch 961 已归档 crt_runtime_verified
+     （[0x87BF50,0x87C1B0] 锁数组 → 0x7CDA56；区间外 [0x7E11EC]），
+     0x7CA814 收尾调用现场交叉；
+  ② 0x7D2DA6/0x7D2C36 = Handles 层句柄表后端——batch 226 推断与
+     batch 048 的 0x7D7754/0x7D7710 同属（handles.cpp 已建模）；
+  ③ 调用方与 0x7CA75B 高度重叠（含 woldata.key 解密 0x5DC170）——
+     batch 226 已录。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：商业库层归档，不写 C++ 模型
+不做对拍；batch 226 语义已登记，本批补依赖链交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 代码区归属：0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance 实锤）——非 Westwood 手写逻辑。
+2. 锁家族边界：0x7CA814 直接调用 0x7CB44B（batch 961 归档的流锁
+   Leave，_pick_945 留桩边界项）——线程同步语义在单线程 C++ 模型
+   下无可观测行为（structural_equivalence 锁例外合法）。
+3. Handles 后端依赖：0x7D2DA6/0x7D2C36 句柄表查找/操作（batch 048
+   0x7D7754/0x7D7710 同层）——CRT 句柄管理设施，重写用等价运行时
+   代替。
+4. gamemd_replication_discipline：商业库只 dump 汇编、重写时用等价
+   运行时代替。
+→ 状态：crt_runtime_verified（batch 226 语义 + 本批 0x7CB44B 归档
+交叉；0x40 常量语义、两参相同刻意性、0x7D2DA6/0x7D2C36 精确身份仍
+为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 226：0x7CA845 首登记（句柄表操作包装，semantics_verified，
+0x13=19B 全读 + 0x7CA814 47B 全读）——本批升级归档。
+★batch 961：0x7CB44B 流锁 Leave 归档 crt_runtime_verified——
+0x7CA814 收尾调用现场交叉（流锁收尾身份实锤）。
+★batch 048：0x7D7754/0x7D7710 句柄表后端——0x7D2DA6/0x7D2C36
+同层交叉。
+★batch 046：0x7CB3F9/0x7CB44B 流锁 Enter/Leave 首登记——本批
+0x7CA814 收尾交叉。
+★_pick_945：锁家族排除逻辑——0x7CA845 依赖方纳入同边界。
+★ra2_code_region_layout_crt_provenance：0x7C-0x7D = MSVC6 静态 CRT。
+
+五、状态
+-------
+crt_runtime_verified（0x7CA845：CRT 句柄表操作包装归档；batch 226
+语义 + 本批 0x7CB44B 流锁 Leave/Handles 后端交叉；不写 C++ 模型不
+做 golden——锁家族 + Handles 商业库层）。TSV 行 0x007CA845 更新。
+
+★本批实锤：CRT 扇入度 7 的 0x7CA845 = 句柄表操作包装（固定压 0x40
++ 参数转发 → 0x7CA814：0x7D2DA6 取句柄未命中返 NULL → 0x7D2C36
+三参操作 → 0x7CB44B 流锁 Leave 收尾）；锁家族 + Handles 后端依赖
+链完整确认，按商业库层纪律归档 crt_runtime_verified。
+相邻待续：batch 970 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_pick_945.py——候选 0x7CA75B 49B / 0x7CE18D
+280B / 0x7CD917 __amsg_exit 等）。
+依赖模型：无（归档不落 C++）。
+承前：batch 968 已完（CRT tolower 0x7CAFF4，commit 4663445）。
