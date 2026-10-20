@@ -1,0 +1,134 @@
+frontier batch 1067 —— CRT _i64toa 0x7D478B（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D478B（134B,
+uc=2 池顶）。TSV 无既有行。
+TARGET = 0x007D478B。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D478B 行。
+
+一、链语义（disasm 全 134B 复核，0x7D478B-0x7D480E，ret 0x14）
+------------------------------------------------
+007d478b  55/8bec/837d1800  push ebp/mov ebp,esp/cmp [ebp+0x18],0  ; ★参5=负号标志
+007d4792  53/56/8b7510      push ebx,esi/mov esi,[ebp+0x10]        ; ★param3=buffer
+007d4797  57/7413            push edi/je 0x7d47ad
+  ; ── 负号路径：写 '-' + 64 位取负 ──
+007d479a  8b5d08/8b7d0c      mov ebx,[ebp+8]（★值低）/mov edi,[ebp+0xc]（值高）
+007d47a0  c6062d/46          mov byte[esi],0x2d（★'-'）/inc esi
+007d47a4  f7db              neg ebx                ; ★neg 低字
+007d47a6  83d700            adc edi,0              ; ★借位传播
+007d47a9  f7df              neg edi                ; ★neg 高字（64 位取负）
+007d47ab  eb06              jmp 0x7d47b3
+  ; ── 无负号路径 ──
+007d47ad  8b7d0c/8b5d08      mov edi,[ebp+0xc]/mov ebx,[ebp+8]
+007d47b3  897510            mov [ebp+0x10],esi     ; ★buffer 保存
+007d47b6  33c0/50            xor eax,eax/push eax   ; ★b_hi=0
+007d47b8  ff7514             push [ebp+0x14]        ; ★b_lo=radix（参5）
+007d47bc  57/53              push edi（值高）/push ebx（值低）
+007d47be  e87d300000        call 0x7d7840          ; ★★__aullrem(值低,值高,radix,0)
+                                                    ;   （batch 006/961 REIMPL——
+                                                    ;   64 位无符号取余 edx:eax）
+007d47c3  894518            mov [ebp+0x18],eax     ; ★余数低字存 [ebp+0x18]
+007d47c6  33c0/50/ff7514/57/53  push eax/push radix/push edi/push ebx
+007d47ce  e8ad4bffff        call 0x7c9380          ; ★★__aulldiv（batch 050/975
+                                                    ;   REIMPL——64 位无符号除法）
+007d47d3  8bd8              mov ebx,eax             ; ★商低字
+007d47d5  8b4518            mov eax,[ebp+0x18]      ; ★余数低字（数字位）
+007d47d8  83f809            cmp eax,9
+007d47db  8bfa              mov edi,edx             ; ★商高字
+007d47dd  7604              jbe 0x7d47e3
+007d47df  0457              add al,0x57             ; ★余数>9 → 'a'-10（小写 hex）
+007d47e1  eb02              jmp 0x7d47e5
+007d47e3  0430              add al,0x30             ; ★<=9 → '0'+余
+007d47e5  8806/46           mov byte[esi],al/inc esi  ; 写数字字符
+007d47e8  85ff              test edi,edi            ; ★商高非零 → 继续
+007d47ea  77ca              ja 0x7d47b6
+007d47ec  7204              jb 0x7d47f2
+007d47ee  85db              test ebx,ebx            ; ★商低非零 → 继续
+007d47f0  77c4              ja 0x7d47b6
+007d47f2  802600            and byte[esi],0         ; ★NUL 终止
+007d47f5  4e                dec esi
+007d47f6  8b4510            mov eax,[ebp+0x10]      ; ★eax=数字区起点
+007d47f9  8a0e/8a10         mov cl,[esi]/mov dl,[eax]
+007d47fd  8816/8808         mov [esi],dl/mov [eax],cl  ; ★原地反转
+007d4801  4e/40             dec esi/inc eax
+007d4803  3bc6/894510       cmp eax,esi/mov [ebp+0x10],eax
+007d4808  72ec              jb 0x7d47f6             ; ★do-while 反转
+007d480a  5f/5e/5b/5d       pop edi,esi,ebx,ebp
+007d480e  c21400            ret 0x14                ; ★ret 0x14 = 5 栈参 cdecl
+
+★语义：**CRT `_i64toa`/`_ui64toa`（推断名——64 位整数转字符
+串）**——cdecl 5 栈参（param1=值低 dword，param2=值高 dword，
+param3=buffer，param4=负号标志，param5=radix），ret 0x14：
+  ① 负号标志非 0 → 写 '-' + 64 位取负（neg 低字 + adc 借位 + 
+     neg 高字——INT64_MIN 自反照抄）；
+  ② 循环：__aullrem(值低,值高,radix,0) 得余数 → 数字字符
+     （余>9 → +0x57 小写 hex / <=9 → +0x30）写 buffer →
+     __aulldiv 得商（edx:eax）→ 商非零继续；
+  ③ NUL 终止 + 原地反转（do-while 先执行一次）；
+  ④ 返回 void（调用方自收 buffer，与 _ultoa 族同款约定）。
+
+★原版怪癖（照抄）：
+  ① 64 位取负三指令（neg/adc/neg——carry 链，INT64_MIN 自
+     反）；
+  ② __aullrem/__aulldiv 双调同参（先余后商——每轮两次 64/32
+     除，数学冗余但寄存器节奏照抄）；
+  ③ 余数>9 → +0x57（小写 hex——同 _ultoa 族）；
+  ④ 反转 do-while 先执行一次（与 batch 1043 itoa 同构）；
+  ⑤ 商判断 ja/jb 双分支（商高/商低分开测——商高负时 jb 提前
+     停）；
+  ⑥ ret 0x14（5 栈参 cdecl——调用方清栈）。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7D7840 = __aullrem（batch 006 crt_runtime_verified +
+     batch 961 REIMPL unsigned_remainder——64 位无符号取余）
+     ——循环数字位获取；
+  ② 0x7C9380 = __aulldiv（batch 050 semantics + batch 975
+     REIMPL aulldiv_legacy——64 位无符号除法）——商计算；
+  ③ 与 batch 1043 _itoa 家族同构（数字先低后高写 + 反转）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 64 位整数格式化属
+商业库层，不写 C++ 模型；134B 全读 + __aullrem/__aulldiv 双
+REIMPL 交叉——重写时用 std::to_string/_i64toa 即可）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D478B = MSVC6 CRT _i64toa——0x7C-0x7D = MSVC6 静
+   态 CRT（ra2_code_region_layout_crt_provenance）。
+2. 依赖：__aullrem（batch 961 REIMPL）+ __aulldiv（batch 975
+   REIMPL）双算术助手——两被调均已有 C++ 真身实现，本批仅格
+   式化壳层；重写 gamemd 时用等价运行时（std::to_string/
+   _i64toa）代替。
+3. gamemd_replication_discipline：CRT 格式化设施，重写时用等
+   价运行时代替，逐字节复刻无意义——按商业库纪律归档，不写
+   C++ 模型不做 golden（两个核心算术助手已 REIMPL 覆盖）。
+→ 状态：crt_runtime_verified（134B 全读 + __aullrem/__aulldiv
+双 REIMPL 交叉；函数名「_i64toa/_ui64toa」为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 961：0x7D7840 __aullrem REIMPL——数字位取余调用现场
+  交叉（本批为其调用方）。
+★batch 975/050：0x7C9380 __aulldiv REIMPL——商计算调用现场
+  交叉。
+★batch 1043：_itoa 家族——同构（数字低位先行 + 反转 + 小写
+  hex）互证（32 位 vs 64 位格式化全景）。
+
+五、状态
+-------
+crt_runtime_verified（0x7D478B：CRT _i64toa/_ui64toa 归档；
+134B 全读 + __aullrem/__aulldiv 双 REIMPL 交叉；不写 C++ 模型
+不做 golden——CRT 64 位整数格式化商业库层，算术助手已 REIMPL
+覆盖；函数名与「64 位取负/商判断双分支」语义为推断交叉标
+注）。TSV 新增 0x007D478B 行。
+
+★本批实锤：CRT 64 位整数格式化壳层——5 栈参 ret 0x14 +
+neg/adc/neg 取负 + __aullrem/__aulldiv 双调（两被调 batch
+961/975 已 REIMPL）→ 全链归档，32/64 位格式化全景闭合。
+相邻待续：batch 1068 按 _scan_pending_7c.py 取池内下一未登记
+项（uc=2：0x7C1D90(124B)/0x7DC468(97B——callers=3)/0x7D4684
+(86B)；或 0x7CEF29 转换辅助 + 0x7CFB13 小分配器 + 0x7D06E8 失
+败处理遗留）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1066 已完（CRT calloc，commit a5062d6）。
