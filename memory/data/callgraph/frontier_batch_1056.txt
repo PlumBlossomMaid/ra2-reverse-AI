@@ -1,0 +1,117 @@
+frontier batch 1056 —— towupper 家族 + 虚表对象方法 0x7D3982/0x7D39F6/0x7C1F30（登记）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7C1F30（384B,
+uc=2）。追踪 batch 1055（wcstol）遗留被调 0x7D3982 发现 towupper
+家族——三函数成批登记（1 semantics + 2 crt_runtime_verified）。
+TARGET = 0x007C1F30 + 0x007D3982 + 0x007D39F6。
+C++ 模型：无（见「三态判定」）。TSV：新增三行。
+
+一、链语义（disasm 全段复核 + IAT 双槽实锤）
+------------------------------------------------
+**0x7C1F30（384B，0x7C1F30-0x7C20AF，ret 平返）虚表对象方法**：
+  入口 sub esp,0xC / push ebx,ebp,esi,edi / mov esi,ecx（★this）
+  / mov al,[esi+0xF5]（★参2 字节槽）/ mov ebx,[esi+0x164] /
+  lea edi,[edx+1]（★参2+1）/ mov eax,[esi+0x178] / and edi,-2 /
+  [esp+0x18]=edx（参2）/ [esp+0x10]=ebx / [esp+0x14]=ebp；
+  A. [esi+0x178]==0 且 [esi+0xF5]!=0 → ecx=ebp × edi + (ebp+1&-2)
+     → [esi+0x17C]=ecx（★双倍索引公式）；
+  B. [esi+0x178]==0 且 [esi+0xF5]==0 → 表扫描：[esi+0x754] 表 /
+     [esi+0x74C] word 计数逐项 6B 步进比较 [esi+0x180] 阈值 →
+     命中项 +2 偏移 dword → [esi+0x17C]=结果（未命中 0）；
+  C. [esi+0x154]&1 == 0 → [ebx+0x10] = [esi+0x768] - [esi+0x17C]
+     （★槽位差写入调用方缓冲 +0x10）；否则 [ebx+0x10]=0；
+  D. 虚表调度：eax=[ebx+0x10]+[ebx] + [esi+0x178] → push edi /
+     push eax / push 5（★★操作码 5）/ push esi → call [esi+0x40]
+     → 失败（!=0）→ 返回 0xFFFFFFFC(-4)；
+  E. 成功：edx=[esp+0x18]+[esi+0x178] → [esi+0x178]=edx；
+     [esi+0x174]++（计数）→ 收敛分支：计数==[esi+0xF5] → 清
+     0x174/0x178、[ebx+0xC]=0xA、[esi+0x168]=ebx、
+     [esi+0x164]=[ebx+4]、[esi+0xE8] word<3 → [edx+eax+1]=0x80
+     （★0x80 标记写入）→ 返回 0xFFFFFFFF(-1)；溢出 → -4。
+  ★原版怪癖：①虚表 [esi+0x40] 操作码 5 提交（batch 378/1053
+  家族同款）；②双倍索引公式 edi=(参2+1)&-2 + imul；③表扫描
+  6B 步进 word 计数；④0x80 标记（[esi+0xE8]<3 门控）；⑤返
+  -4/-1 哨兵族。
+
+**0x7D3982（116B，0x7D3982-0x7D39F5）CRT `_towupper` 包装**：
+  ① xor ebx,ebx / cmp [0xB782A0],ebx——★单线程门控全局==0 →
+     快路径：c>='a' && c<='z' → c-0x20（ASCII 转大写）→ 返回；
+  ② 门控!=0 → push esi,edi,esi / call [0x7E11C8]
+     （★★InterlockedIncrement——IAT 实证）/ cmp [0xB78BA0],0 /
+     mov edi,[0x7E11CC]（★★InterlockedDecrement）/ je 跳过 →
+     push esi / call edi（Decrement）/ push 0x13 / call 0x7CD9F5
+     （★★EnterLock 0x13——batch 244 tolower 同锁族）→ ebx=1；
+  ③ push [esp+0x10] / call 0x7D39F6（★★towupper 核心）；
+  ④ ebx!=0 → push esi / call edi（Decrement 收尾）；
+     mov ax,[esp+0x10] / 返回。
+  ★原版怪癖：①单线程门控 [0xB782A0]==0 走 ASCII 快路径（无
+  锁无 IAT）；②多线程 InterlockedInc/Dec 引用计数 + 锁 0x13
+  包核心调用；③快路径 -0x20 只处理 ASCII 'a'-'z'。
+
+**0x7D39F6（119B，0x7D39F6-0x7D3A6C）CRT `_towupper` 核心**：
+  ① eax=[ebp+8]（宽字符 c）/ cmp ax,0xFFFF（WEOF）→ 原样返回；
+  ② [0xB782A0]==0 → 快路径 ASCII 'a'-'z' → -0x20；
+  ③ c<0x100 → iswctype(2)（0x7D3920 掩码 2）→ 非命中原样返回；
+  ④ 七参 call 0x7DA2B6（★未登记——LCMapStringW 形态：locale
+     [0xB782A0], 0x200（★★LCMAP_UPPERCASE）, &c, 1, &[ebp-2],
+     1, 0）→ 成功取 [ebp-2] 转换结果，失败原样；
+  ⑤ 返回转换后宽字符。
+  ★原版怪癖：①WEOF（0xFFFF）原样返回；②c<0x100 先 iswctype
+  掩码 2（字母）筛——非字母直返；③0x200=LCMAP_UPPERCASE 常
+  量（与 batch 244 tolower 的 0x103 LCMAP_LOWERCASE 对偶）；
+  ④七参 0x7DA2B6 是 CRT 内部 LCMapStringW 封装（待独立登记）。
+
+★依赖链实锤（本批 disasm + IAT 解析 + TSV 交叉）：
+  ① [0x7E11C8] = KERNEL32!InterlockedIncrement /
+     [0x7E11CC] = KERNEL32!InterlockedDecrement（pefile 实证）
+     ——0x7D3982 多线程引用计数；
+  ② 0x7CD9F5 = 流锁 Enter 内核（batch 966 已登记）——锁 0x13
+     （batch 244 tolower 同锁族）；
+  ③ 0x7D3920 = _iswctype（batch 056/044 已登记）——掩码 2；
+  ④ 0x7DA2B6 = 未登记（LCMapStringW 封装——待续）；
+  ⑤ [0xB782A0] 单线程门控全局——与 0x7D3982/0x7D39F6 共享。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT towupper 属商业库
+层 + thiscall 虚表方法不做指令级 golden）。
+
+三、三态判定
+----------
+1. **0x7C1F30** = Westwood 家族对象方法（thiscall + [esi+0x40]
+   虚表调度 + 槽位簇与 batch 378/1053 同宿主类）→
+   **semantics_verified**（384B 全读 + 家族交叉；不越级——
+   无类布局完整实现/无对象级 golden）。
+2. **0x7D3982/0x7D39F6** = MSVC6 CRT towupper 包装+核心（0x7C-
+   0x7D = MSVC6 静态 CRT）——依赖 IAT Interlocked×2 + 流锁
+   0x13 + iswctype + 0x7DA2B6（未登记）→ **crt_runtime_
+   verified**（重写时用 std::towupper 代替，逐字节复刻无意义）。
+→ 状态：三函数两态；TSV 新增三行。
+
+四、跨批次闭合
+------------
+★batch 378/1053：0x7BF470/0x7C0740 回调式流状态机家族——
+  0x7C1F30 同虚表 [esi+0x40] 调度（操作码 5）+ 槽位簇交叉。
+★batch 244：tolower（锁 0x13 + LCMAP_LOWERCASE）——0x7D3982
+  锁 0x13 / 0x7D39F6 0x200 UPPERCASE 对偶互证。
+★batch 966：流锁 Enter 内核——锁 0x13 调用现场交叉。
+★batch 056/044：0x7D3920 _iswctype——掩码 2 调用现场交叉。
+★batch 1055：wcstol——0x7D3982 为 wcstol 字母分支被调
+  （batch 1055 遗留兑现）。
+
+五、状态
+-------
+semantics_verified（0x7C1F30：虚表对象方法）+ crt_runtime_
+verified（0x7D3982/0x7D39F6：CRT towupper 包装+核心）。TSV
+新增三行。
+
+★本批实锤：①towupper 家族完整登记（包装 Interlocked+锁 0x13
+快路径/核心 iswctype+LCMAP_UPPERCASE）——batch 244 tolower
+的对偶补全；②batch 378/1053 虚表家族新成员 0x7C1F30（操作码
+5 提交 + 0x80 标记写入）。
+相邻待续：batch 1057 按 _scan_pending_7c.py 取池内下一未登记
+项（uc=2：0x7C0530(377B)/0x7C1E10(279B)/0x7DA512(241B)——
+batch 1008 检查链成员；或 0x7DA2B6 LCMapStringW 封装）。
+依赖模型：无（登记不落 C++）。
+承前：batch 1055 已完（CRT wcstol，commit 62ce8c2）。
