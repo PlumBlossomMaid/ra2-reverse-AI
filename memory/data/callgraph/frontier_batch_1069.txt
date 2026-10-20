@@ -1,0 +1,111 @@
+frontier batch 1069 —— CRT 字符特性表位操作器 0x7DC468（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DC468（97B,
+uc=2, callers=3 池顶）。TSV 无既有行。
+TARGET = 0x007DC468。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007DC468 行。
+
+一、链语义（disasm 全 97B 复核，0x7DC468-0x7DC4C8）
+------------------------------------------------
+007dc468  8b442404        mov eax,[esp+4]          ; ★param1 = 值
+007dc46c  56              push esi
+007dc46d  8bc8            mov ecx,eax
+007dc46f  83e01f          and eax,0x1f            ; ★低 5 位
+007dc472  c1f905          sar ecx,5               ; ★>>5（表索引）
+007dc475  8d04c0          lea eax,[eax+eax*8]     ; ★低5位×9
+007dc478  be00800000      mov esi,0x8000
+007dc47d  8b0c8d808ab700  mov ecx,[ecx*4+0xb78a80]; ★★[0xB78A80] 表定位
+007dc484  8d548104        lea edx,[ecx+eax*4+4]   ; ★表项偏移
+007dc488  8a4c8104        mov cl,[ecx+eax*4+4]    ; ★读表项字节
+007dc48c  8ac1            mov al,cl
+007dc48e  2580000000      and eax,0x80            ; ★掩码 0x80
+007dc493  3974240c        cmp [esp+0xc],esi       ; ★参2 == 0x8000?
+007dc497  7505            jne 0x7dc49e
+007dc499  80e17f          and cl,0x7f             ; ★0x8000 → 清 0x7F
+007dc49c  eb0d            jmp 0x7dc4ab
+007dc49e  817c240c00400000 cmp [esp+0xc],0x4000   ; ★参2 == 0x4000?
+007dc4a6  7511            jne 0x7dc4b9
+007dc4a8  80c980          or cl,0x80              ; ★0x4000 → 置 0x80
+007dc4ab  f7d8            neg eax / sbb eax,eax   ; ★eax = 标志位抽取（0/-1）
+007dc4af  880a            mov [edx],cl            ; ★★写回表项字节
+007dc4b1  662500c0        and ax,0xc000           ; ★and 0xC000
+007dc4b5  03c6            add eax,esi             ; ★返回 = 0x8000 + (0 或 0xC000)
+007dc4b7  5e/c3           pop esi / ret
+007dc4b9  e8d051ffff      call 0x7d168e           ; ★★errno_slot_legacy
+                                                 ;   （batch 018 REIMPL）
+007dc4be  c70016000000    mov [eax],0x16          ; ★errno = 0x16（EINVAL=22）
+007dc4c4  83c8ff          or eax,-1               ; ★返回 -1
+007dc4c7  5e/c3           pop esi / ret
+
+★语义：**CRT 字符特性表位操作器（推断名——_pctype 类写侧）**
+——cdecl 2 参（param1=字符值，param2=操作标志）：
+  ① [0xB78A80] 表查（param>>5 表索引 ×4 + 低5位 ×9 → 项内偏
+     移 +4）读表项字节；
+  ② 参2 == 0x8000 → 清 0x7F 位（and cl,0x7F）；
+     参2 == 0x4000 → 置 0x80 位（or cl,0x80）；
+  ③ 写回表项字节 [edx]；返回 = 0x8000 + (原标志 and 0xC000)；
+  ④ 参2 非法（≠0x8000/0x4000）→ errno=0x16（EINVAL=22）+
+     返回 -1。
+
+★原版怪癖（照抄）：
+  ① 表布局 [0xB78A80]：[表索引×4] 基 + 低5位×9×4 + 4 偏移——
+     与 batch 1063（0x7DD434 查询器）同族但不同表（0xB78A80
+     vs 0x87DA30）——查询/写入分表；
+  ② 位操作双值（0x8000 清 / 0x4000 置）——非 0/1 语义；
+  ③ eax 标志抽取用 neg/sbb（(flag&0x80)?0:-1 + and 0xC000 +
+     0x8000）——返回值 = 特性位向量的压缩表示；
+  ④ 非法参数 EINVAL=0x16 返 -1（错误码与哨兵共用）；
+  ⑤ 写后返回旧标志特征值（非 void）。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7D168E = errno_slot_legacy（batch 018 已 REIMPL
+     cpp_reimplementation_verified）——非法参数写 0x16；
+  ② [0xB78A80] 数据表——与 batch 1063（0x7DD434 查询器 [0x87DA30]）
+     同族分类表区（[0x87C590]/[0xB78961] isctype 族同数据区）；
+  ③ 返回值 0x8000/0xC000 特征位——_pctype 字位向量约定。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 字符分类表操作属
+商业库层，不写 C++ 模型；97B 全读 + errno 交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DC468 = MSVC6 CRT 字符特性表位操作器——0x7C-0x7D
+   = MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）。
+2. 依赖：errno_slot（0x7D168E batch 018 REIMPL）+ [0xB78A80]
+   数据表——重写 gamemd 时用等价运行时（std::is* / ctype 表）
+   代替。
+3. gamemd_replication_discipline：CRT 字符分类设施，重写时用
+   等价运行时代替，逐字节复刻无意义——按商业库纪律归档，不写
+   C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（97B 全读 + errno 交叉 + 表布局取
+证；函数名「字符特性表位操作器」为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 018：0x7D168E errno_slot_legacy REIMPL——EINVAL 0x16
+  写现场交叉。
+★batch 1063：0x7DD434 字符分类表查询器——同族（[0xB78A80] vs
+  [0x87DA30] 双表并存，查询器读/本批写侧分表）+ 掩码 0x80/
+  3/0xC/0x10 交叉。
+★batch 056/044：iswctype 族——字符分类数据区全景。
+
+五、状态
+-------
+crt_runtime_verified（0x7DC468：CRT 字符特性表位操作器归档；
+97B 全读 + errno 交叉 + 表布局取证；不写 C++ 模型不做 golden
+——CRT 字符分类商业库层；函数名与「0x8000 清/0x4000 置」语义
+为推断交叉标注）。TSV 新增 0x007DC468 行。
+
+★本批实锤：CRT 字符特性表写侧——[0xB78A80] 表查 + 0x8000 清
+0x7F/0x4000 置 0x80 位操作 + EINVAL 回退 + 特征值返回全链归
+档（与 batch 1063 查询器读写分表闭环）。
+相邻待续：batch 1070 按 _scan_pending_7c.py 取池内下一未登记
+项（uc=2：0x7DB4EE(96B)/0x7DC1C2(86B, callers=3)/0x7D5EF8
+(57B)；或 0x7CEF29 转换辅助 + 0x7CFB13 小分配器 + 0x7D06E8 失
+败处理遗留）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1068 已完（虚表对象方法家族第 3 变体，
+commit 1cb3ab5）。
