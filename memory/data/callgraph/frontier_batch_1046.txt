@@ -1,0 +1,114 @@
+frontier batch 1046 —— __mbsnbicoll 家族 0x7D45DF/0x7DA725（归档）
+============================================
+
+候选来源：ranking 7D 区剩余 uc=2 最高——0x7D45DF（63B，排名已
+命名 __mbsnbicoll）。追踪被调发现核心 **0x7DA725**（597B，
+`__mbscoll` 工作器——msvcrt 多字节 collate 家族共享实现）。
+TARGET = 0x007D45DF（薄包装归档）+ 0x007DA725（核心归档）。
+C++ 模型：无（见「三态判定」）。TSV：新增两行。
+
+一、链语义（disasm 全段复核，0x7D45DF 63B + 0x7DA725 597B）
+------------------------------------------------
+**0x7D45DF（63B）__mbsnbicoll(str1, str2, count) 薄包装**：
+  007d45df push ebp / mov ebp,esp
+  007d45e2 cmp [ebp+0x10],0         ; ★count == 0?
+  007d45e6 jne 0x7d45ec / xor eax,eax / pop ebp / ret   ; ★0 短路返回 0
+  007d45ec push [0xb78840]          ; 第 7 参（locale DBCS 侧全局）
+  007d45f2 push [ebp+0x10]          ; count（第 6 参）
+  007d45f5 push [ebp+0xc]           ; str2（第 5 参）
+  007d45f8 push [ebp+0x10]          ; ★count 重复压栈（第 4 参）
+  007d45fb push [ebp+8]             ; str1（第 3 参）
+  007d45fe push 1                   ; 常量 1（第 2 参）
+  007d4600 push [0xb78a64]          ; ★locale 全局（第 1 参）
+  007d4606 call 0x7da725            ; ★★转调 __mbscoll 核心
+  007d460b add esp,0x1c             ; 清 7 参
+  007d460e test eax,eax / jne 0x7d4619
+  007d4612 mov eax,0x7fffffff       ; ★返回 0 → 0x7FFFFFFF
+  007d4619 add eax,-2               ; ★否则返回值 - 2
+  pop ebp / ret
+  ★怪癖：①count=0 短路返回 0（不碰核心）；②count 在 4/6 两处
+  重复压栈（核心收 7 参但只有 6 个独立值）；③返回码变换——
+  核心 0 → 0x7FFFFFFF、核心 n → n-2（调整比较语义）；④参 1/7
+  均为 locale 全局（[0xB78A64]/[0xB78840]——DBCS/lead-byte 侧
+  与纯 locale 侧分开传）。
+
+**0x7DA725（597B）__mbscoll 核心**（SEH 帧 + 双 IAT 探测）：
+  ① SEH 初始化（push -1/handler 0x7FA320/0x7CC1D4/fs:[0] 链/
+     sub esp,0x30/_alloca_probe 0x7CA650 两次）——栈缓冲保护；
+  ② [0xB78578] 门控：0 → 先试 CompareStringW 探测
+     （0x7E1328，(1,L"…"(0x7F98E8),1,·,0,0)），成功置 1；
+     失败再试 CompareStringA 探测（0x7E1324，(·,0x7F98E4,1,·)），
+     成功置 2；两探全败 → jmp 0x7DA98E 负一出口；
+  ③ 门控==2（宽字符可用）→ 六参直调 CompareStringW
+     （0x7E1328，含 DBCS 换算的 str1/str2/count×2）；
+  ④ 门控==1（仅窄字符）→ GetCPInfo（0x7E12D4，取代码页
+     CPINFO 到 [ebp-0x3C]）→ 按 DBCS lead-byte 区间逐字节
+     比较（[ebp-0x36] 表项）→ 首字节落入 lead 区再取次字节；
+  ⑤ 需要时 MultiByteToWideChar 转换（0x7E11C4，两段各一次
+     ——推测为 sort 键构造）→ 转换结果再 CompareString；
+  ⑥ 多出口收敛：成功 0 / 特殊 2 / 负一失败 / 分支 3——与
+     wrapper 的 -2/0x7FFFFFFF 变换呼应。
+  ★怪癖：①门控 [0xB78578] 双探测缓存（先 W 后 A，两常量表
+  0x7F98E8/0x7F98E4 分别为宽/窄探测串）；②_SEH 帧 + _alloca
+  动态栈缓冲（0x7CA650）——CRT 标准模式；③DBCS 逐字节比较
+  手写（非 strncmp——lead-byte 感知）；④GetCPInfo 结果缓存于
+  栈 [ebp-0x3C] 局部 CPINFO 结构；⑤宽窄两条路径由门控值 2/1
+  分发。
+
+★依赖链实锤（本批 disasm + IAT 解析四槽实证）：
+  ① [0x7E1328] = KERNEL32!CompareStringW（探测+主比较双用）；
+  ② [0x7E1324] = KERNEL32!CompareStringA（窄字符探测/兜底）；
+  ③ [0x7E12D4] = KERNEL32!GetCPInfo（lead-byte 表获取）；
+  ④ [0x7E11C4] = KERNEL32!MultiByteToWideChar（sort 键转换）；
+  ⑤ [0xB78578] 门控全局 + [0xB78A64]/[0xB78840] locale 全局
+     （与 getenv 三件套 [0xB781E4/EC] 同 0x7B-0x7F 全局区）；
+  ⑥ 0x7CA650 _alloca_probe（CRT 栈探测，batch 378 等已登记
+     族）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 多字节 collate 属
+商业库层，不写 C++ 模型；63B+597B 全读 + IAT 四槽实锤）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D45DF/0x7DA725 = MSVC6 CRT __mbsnbicoll/__mbscoll
+   家族——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）。
+2. 依赖：四 IAT（CompareStringW/A、GetCPInfo、MultiByteToWide
+   Char）+ SEH 帧 + _alloca + 三全局（门控 + locale×2）——重写
+   gamemd 时用等价运行时（std::locale 或 wcscoll 家族）代替。
+3. gamemd_replication_discipline：CRT 多字节 collate 设施，重
+   写时用等价运行时代替，逐字节复刻无意义——按商业库纪律归档，
+   不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（63B+597B 全读 + IAT 四槽实锤 +
+ranking 命名 __mbsnbicoll 交叉；核心「__mbscoll 工作器」名为
+推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1043：_itoa 家族——0x7D-46xx 邻近族，7D 区全景推进。
+★batch 1044/1045：getenv/_putenv 链——locale 全局区
+  0xB78xxx 同区交叉（[0xB78A64]/[0xB78840] vs [0xB781E4/EC]）。
+★batch 378/862/1005 等：_alloca_probe 0x7CA650 族——SEH+
+  _alloca 模式既有登记交叉。
+★ranking：0x7D45DF 名列 __mbsnbicoll（静态符号来源）——
+  归档名与符号表一致（区别于推断名惯例）。
+
+五、状态
+-------
+crt_runtime_verified（0x7D45DF + 0x7DA725：__mbsnbicoll 薄包
+装 + __mbscoll 核心归档；63B+597B 全读 + IAT 四槽实锤 + 三全
+局交叉；不写 C++ 模型不做 golden——CRT 多字节 collate 商业库
+层；核心名为推断交叉标注）。TSV 新增 0x007D45DF + 0x007DA725
+两行。
+
+★本批实锤：MSVC6 CRT 多字节 collate 家族双件套——wrapper 的
+count 重复压栈/返回码变换怪癖 + 核心的双 IAT 探测门控/DBCS
+手写逐字节比较——全链归档。
+相邻待续：batch 1047 按 ranking.tsv unique_callers 取下一未登
+记 CRT 项（7D 区剩余：0x7D571F(114B)/0x7C9FD9(23B)/0x7D8C6B
+(208B)/0x7DC378('=' strchr 类邻居)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1045 已完（_putenv 环境设置器 0x7DA9CD，
+commit 571916d）。
