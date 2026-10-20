@@ -1,0 +1,115 @@
+frontier batch 1070 —— CRT 浮点和解析包装器 0x7DB4EE（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DB4EE（96B,
+uc=2 池顶）。TSV 无既有行。取证确认与 batch 1065（0x7DB5E6
+FPE 检查-转换包装器）同族姊妹——本批登记精简变体。
+TARGET = 0x007DB4EE。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007DB4EE 行。
+
+一、链语义（disasm 全 96B 复核，0x7DB4EE-0x7DB54D）
+------------------------------------------------
+007db4ee  55/8bec/51/51     push ebp/mov ebp,esp/push ecx×2（局部 8B）
+007db4f3  dd450c            fld qword[ebp+0xc]        ; ★load double1（栈参1）
+007db4f6  dc4514            fadd qword[ebp+0x14]      ; ★+ double2（栈参3）
+007db4f9  833d00d7870000    cmp [0x87d700],0          ; ★★门控全局
+                                                      ;   （batch 1049/1065 同款）
+007db500  dd5df8            fstp qword[ebp-8]         ; ★和暂存 [ebp-8]
+007db503  752a              jne 0x7db52f              ; 门控 !=0 → errno 路径
+  ; ── 成功路径：六参调 0x7DBB55 浮点解析 ──
+007db505  ff751c            push [ebp+0x1c]           ; ★栈参4
+007db508  dd45f8            fld qword[ebp-8]（和）
+007db50b  51/51/dd1c24      push ecx×2/fstp qword[esp]  ; ★double 栈传（和）
+007db510  dd4514            fld qword[ebp+0x14]（double2）
+007db513  51/51/dd1c24      push ecx×2/fstp qword[esp]  ; ★double 栈传（double2）
+007db518  dd450c            fld qword[ebp+0xc]（double1）
+007db51b  51/51/dd1c24      push ecx×2/fstp qword[esp]  ; ★double 栈传（double1）
+007db520  ff7508            push [ebp+8]              ; ★栈参0
+007db523  6a01              push 1
+007db525  e82b060000        call 0x7dbb55            ; ★★0x7DBB55 宽字符浮点解析
+                                                      ;   （batch 531 已登记——
+                                                      ;   FPU 设置包裹，6 参 cdecl）
+007db52a  83c424            add esp,0x24 / leave / ret  ; ★清 6 参（0x24=36B）
+  ; ── 失败路径：errno + 控制字 ──
+007db52f  e85a61ffff        call 0x7d168e            ; ★★errno_slot_legacy
+                                                      ;   （batch 018 REIMPL）
+007db534  68ffff0000        push 0xffff
+007db539  c70021000000      mov [eax],0x21           ; ★errno=0x21（EDOM=33）
+007db53f  ff751c            push [ebp+0x1c]           ; ★栈参4
+007db542  e830070000        call 0x7dbc77            ; ★★0x7DBC77 FPU 控制字
+                                                      ;   （batch 192 已登记
+                                                      ;   _controlfp 形态）
+007db547  dd45f8            fld qword[ebp-8]         ; ★返回和（double 收尾）
+007db54a  59/59             pop ecx×2 / leave / ret
+
+★语义：**CRT 浮点和解析包装器（推断名——0x7DB5E6 姊妹精简变
+体）**——cdecl 4 栈参（参0/参1/参3=double 源、参4=栈参4，ret
+平返）：
+  ① double1 + double2（fld/fadd——x87 求双精度和）；
+  ② [0x87D700] 门控分流：==0 → 六参调 0x7DBB55（push 1/push
+     参0/三 double 栈传 和+double2+double1）返回解析结果；
+  ③ 门控 !=0 → errno=0x21（EDOM=33）+ 0x7DBC77 控制字设置 →
+     fld 返回和（x87 收尾）。
+
+★原版怪癖（照抄，与 batch 1065 同族）：
+  ① [0x87D700] 门控全局（batch 1049/1065 同款——FPE 链共享）；
+  ② 成功路径 0x7DBB55 三 double 栈传（fld/fstp 栈打包——batch
+     531 参数面吻合）；
+  ③ 失败路径 fld 返 double（[ebp-8] 直取——调用方 x87 收值）；
+  ④ errno=0x21（EDOM）vs batch 1065 的 0x22（ERANGE）——两
+     姊妹错误码不同（加法/转换语义区分）；
+  ⑤ 双 double 求和先行（fadd 在门控检查前——先算后判）。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7DBB55 = batch 531 已登记（宽字符浮点解析器 FPU 设置包
+     裹）——成功路径六参调用；
+  ② 0x7D168E = errno_slot_legacy（batch 018 REIMPL）——
+     EDOM 0x21 写；
+  ③ 0x7DBC77 = batch 192 已登记（FPU 控制字 _controlfp）——
+     失败收尾；
+  ④ [0x87D700] 门控全局（batch 1049/1065 已录——FPE 链共享）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 浮点和包装属商业
+库层，不写 C++ 模型；96B 全读 + 三已登记被调交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DB4EE = MSVC6 CRT 浮点和解析包装器——0x7C-0x7D =
+   MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）。
+2. 依赖：0x7DBB55（batch 531）+ 0x7D168E（batch 018 REIMPL）+
+   0x7DBC77（batch 192）三已登记被调 + [0x87D700] 门控——重写
+   gamemd 时用等价运行时（C++ 浮点运算 + FE 处理）代替。
+3. gamemd_replication_discipline：CRT FPE/浮点设施，重写时用
+   等价运行时代替，逐字节复刻无意义——按商业库纪律归档，不写
+   C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（96B 全读 + 三已登记被调交叉；
+函数名「浮点和解析包装器」为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1065：0x7DB5E6 FPE 检查-转换包装器——姊妹同族（同
+  [0x87D700] 门控 + 0x7DBB55 六参 + errno/控制字收尾；本批为
+  求和精简变体，错误码 0x21 vs 0x22 区分）。
+★batch 531：0x7DBB55 浮点解析——六参调用现场交叉。
+★batch 018：0x7D168E errno_slot_legacy REIMPL——EDOM 0x21
+  写现场交叉。
+★batch 192：0x7DBC77 FPU 控制字——失败收尾交叉。
+
+五、状态
+-------
+crt_runtime_verified（0x7DB4EE：CRT 浮点和解析包装器归档；96B
+全读 + 三已登记被调交叉 + batch 1065 姊妹互证；不写 C++ 模型
+不做 golden——CRT FPE/浮点商业库层；函数名与「EDOM 0x21 vs
+ERANGE 0x22」语义为推断交叉标注）。TSV 新增 0x007DB4EE 行。
+
+★本批实锤：FPE 链姊妹对闭环——0x7DB5E6（检查-转换两段式，
+batch 1065）+ 0x7DB4EE（浮点和+解析精简变体，本批）同门控
+[0x87D700]/同 0x7DBB55 六参/错误码 0x21/0x22 语义分层。
+相邻待续：batch 1071 按 _scan_pending_7c.py 取池内下一未登记
+项（uc=2：0x7DC1C2(86B, callers=3)/0x7D5EF8(57B)/0x7D4E58
+(53B)；或 0x7CEF29 转换辅助 + 0x7CFB13 小分配器 + 0x7D06E8 失
+败处理遗留）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1069 已完（CRT 字符特性表位操作器，commit e2fe71d）。
