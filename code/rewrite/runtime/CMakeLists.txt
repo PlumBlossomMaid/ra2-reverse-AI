@@ -27,6 +27,7 @@ add_library(ra2_runtime
   crt_allmul.cpp
   crt_strcmp.cpp
   crt_strrchr.cpp
+  crt_wcsncmp.cpp
   facing.cpp
   ra2_string.cpp
   map_legal.cpp)
@@ -239,4 +240,13 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_crt_strrchr PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME crt_strrchr COMMAND test_crt_strrchr)
+
+  # wcsncmp（0x7CB4CC，宽串受限比较），golden 由 emu_oracle 指令级
+  # 模拟取得（deadcode_7cb4cc_golden.txt，18 用例；纯内存零子调用零
+  # 全局，Count 先减 + NUL 提前终止返差全真身）
+  add_executable(test_crt_wcsncmp test/test_crt_wcsncmp.cpp)
+  target_link_libraries(test_crt_wcsncmp PRIVATE ra2_runtime gtest_main)
+  target_compile_definitions(test_crt_wcsncmp PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME crt_wcsncmp COMMAND test_crt_wcsncmp)
 endif()

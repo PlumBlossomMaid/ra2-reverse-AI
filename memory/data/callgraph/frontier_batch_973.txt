@@ -1,0 +1,103 @@
+frontier batch 973 —— CRT wcsncmp 0x7CB4CC
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序，batch 972 之后取下一未复刻 CRT 项 = 0x7CB4CC（56B / 6
+unique callers / 未 REIMPL / 非锁家族非基础件；batch 267 已有
+semantics_verified 推断行「CRT::wcsncmp（YRpp CRT.h 无声明、符号名为
+推断）」——本批按惯例追加 _REIMPL 行不覆盖）。2026-10-20 指令级
+golden 18 用例实证（_golden_7cb4cc.py，Unicorn 跑真身机器码——纯内
+存零子调用零全局，全程真身模拟）。
+TARGET = 0x007CB4CC。C++ 模型：code/rewrite/runtime/crt_wcsncmp.{h,cpp}
+（函数名 wcsncmp_legacy）。单测：test_crt_wcsncmp.cpp（18 用例对拍 +
+边界 + 参照抽查）。TSV 新增 0x007CB4CC_REIMPL 行。
+
+一、链语义（disasm 全段复核 + golden 18 用例实证）
+------------------------------------------------
+真义（黄金实证 + 机器码全段确认）：0x7CB4CC = MSVCRT wcsncmp（宽串
+受限比较）——cdecl 3 栈参 (s1, s2, Count)，返回当前两字符之差
+（★★零扩展无符号差值，**非三态**——与 strncmp 的三态不同）。
+  机器码（0x7CB4CC-0x7CB503，56B 全段）：
+    push ebp / mov ebp,esp            ; ★老式 ebp 帧（MSVC6 CRT __cdecl）
+    cmp dword ptr [ebp+0x10],0        ; ★Count
+    jne 0x7CB4D9 → xor eax,eax / pop ebp / ret   ; ★Count==0 → 返 0
+    0x7CB4D9: dec dword ptr [ebp+0x10]   ; ★Count 先减 1
+    mov edx,[ebp+0xC]=s2 / mov ecx,[ebp+8]=s1
+    je 0x7CB4FA                       ; ★dec 后 Count==0 → 直奔收尾
+    循环 0x7CB4E4:
+      mov ax,word ptr [ecx]           ; ★s1 当前宽字符（2B 小端）
+      test ax,ax → je 0x7CB4FA        ; ★s1 遇 NUL → 收尾
+      cmp ax,word ptr [edx] → jne 0x7CB4FA  ; ★不等 → 收尾
+      inc ecx ×2 / inc edx ×2         ; ★双指针各 2B 步进（wchar_t）
+      dec dword ptr [ebp+0x10] → jne 循环    ; ★Count 限制
+    0x7CB4FA 收尾:
+      movzx eax,word ptr [ecx]        ; ★零扩展 s1 当前字符
+      movzx ecx,word ptr [edx]        ; ★零扩展 s2 当前字符
+      sub eax,ecx                     ; ★★返回字符差（s1-s2）
+    pop ebp / ret
+
+★原版怪癖（golden 实证，照抄）：
+  ① Count==0 直接返 0 不比较（空指针安全）；
+  ② Count 先 dec 再循环（经典 CRT 少比一个写法——dec 后为 0 直奔
+     收尾比较首字符）；golden count=1 对 "abc"/"abd" → 0（★截断）
+     实证；
+  ③ s1 遇 NUL 提前退出但仍返差（0 - s2[当前]，负值）——golden
+     "ab"/"abc" → -99、双空 → 0 实证；
+  ④ movzx 零扩展 u16 后相减——返回原始差值非三态（'a'-'A'=32、
+     0x7FFF-0x8000=-1 golden 实证）；
+  ⑤ 老式 ebp 帧（MSVC6 CRT __cdecl 惯用，与 batch 949-971 同代 CRT
+     风格）。
+
+二、黄金基准（emu_oracle 指令级模拟原版机器码）
+------------------------------------------------
+采集脚本 .qwen/tmp/_golden_7cb4cc.py（WcsncmpOracle；Unicorn 按原
+ImageBase 0x400000 映射 gamemd.exe 后真身跑 0x7CB4CC 全段——无子调
+用无桩；s1/s2 区 0xCC 哨兵验证不越界读；cdecl ret 弹 12B 三参）。
+18 用例落盘 memory/data/rmg/deadcode_7cb4cc_golden.txt（CASE 行格式
+`CASE s1=<hex16> s2=<hex16> count=<n> -> ret=<diff>`，s1/s2 为 u16 序
+列含尾 0、hex16 每字符 2B 内存小端低位在前；ret 为 32 位无符号差值
+字符差）：相等/首差两向/★大小写差 32/★s1 长 'c'-0=99/★s2 长
+0-'c'=-99/★Count==0/Count 截断 1/2/双空/空 vs a/-97/a vs 空 97/高位
+值相等/高位值差/无符号边界 0x7FFF vs 0x8000/16 长大小写混合尾差
+32/长尾差 1。
+
+三、C++ 模型（code/rewrite/runtime/crt_wcsncmp.{h,cpp}）
+------------------------------------------------
+namespace ra2::runtime。单函数：
+  wcsncmp_legacy(s1, s2, count) —— 0x7CB4CC：
+    count==0 → 0；--count；count==0 → 收尾（比首字符）；
+    循环：a=*s1；a==0 → 收尾；a!=*s2 → 收尾；++s1/++s2；
+    --count!=0 继续；
+    收尾：返 (int)*s1 - (int)*s2（★无符号差值非三态）。
+  头注释含 56B 机器码全段 + 五怪癖。
+
+四、单测（test_crt_wcsncmp.cpp，全量 79 项之一）
+------------------------------------------------
+CrtWcsncmpTest：读 golden 原档（RA2_GOLDEN_DIR 宏）18 CASE + 3 项：
+  GoldenMatches（逐用例 32 位符号差值一致）、
+  BoundaryCases（Count==0/单字符/高位值/NUL 提前两向/16 长大小写混
+    合尾差 32）、
+  ReferenceCrossCheck（64 组伪随机 u16 串（0-0x100）× 随机 count vs
+    独立参照实现——保留原版怪癖的差值语义）。
+解析：parse_hex16 先 find_first_not_of(' ') 剥前导空格（944 深坑防
+复发）；golden 行固定 6 tok（CASE s1=/s2=/count=/->/ret=），字段恒非
+空。★调试记录（一修）：parse_hex16 首版步进 i += 2 但每 u16 占 4
+hex 字符，尾部 substr 越界读空串 → stoul invalid argument → 改
+i += 4（_patch_973_parse.py）。
+预期 18 用例全量对拍 + 边界 + 参照交叉，ctest 78→79 全绿（#28 通过）。
+
+五、状态
+-------
+cpp_reimplementation_verified + unit_test_verified。
+partial：无——纯内存零子调用零桩零全局，0x7CB4CC 全部 56B 真身模拟
+golden 对拍，无外部语义依赖。
+
+★本批实锤：CRT 扇入度 6 未复刻项 = wcsncmp——MSVC6 宽串受限比较
+（Count 先减 + NUL 提前终止 + 零扩展差值返）；56B 纯内存操作，全程
+可真身模拟，无桩无全局。与 batch 949 wcsncpy / batch 950 wcscmp
+构成宽串家族第三成员（wcsncpy 拷贝、wcscmp 三态、wcsncmp 差值——
+同 ebp 帧 + 2B 步进 + NUL 判停惯用法）。
+相邻待续：batch 974 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_pick_945.py）。
+依赖模型：无（纯内存零依赖）。
+承前：batch 972 已完（CRT __amsg_exit 0x7CD917，commit e2d7e5f）。
