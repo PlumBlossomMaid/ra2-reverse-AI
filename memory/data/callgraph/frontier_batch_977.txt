@@ -1,0 +1,109 @@
+frontier batch 977 —— CRT printf 族带锁写模板 0x7CA7D8（登记升级）
+============================================
+
+候选来源：python .qwen\tmp\_pick_945.py 按 ranking.tsv unique_callers
+扇入度排序（0x7CA7D8 = 4 uc / 60B / 未 REIMPL；batch 057 已登记
+semantics_verified + assembly_decompile_verified，名「printf 族完整
+模板（locale 锁 + 计数 + flush + 解锁，fan-in 293；五步下游 batch
+046 全闭合）」）。本批 = 依赖链补全（0x7CB3F9/0x7CB44B 流锁对
+batch 966/961 归档交叉 + 0x7CE2A5 fputc 后邻 batch 971 交叉 +
+0x7D2B7F/0x7D2C0C FILE 设施）→ 按商业库层归档 **crt_runtime_verified**。
+TARGET = 0x007CA7D8。C++ 模型：无（锁家族 + FILE 设施留桩边界——
+见「三态判定」）。TSV：更新 0x007CA7D8 行。
+
+一、链语义（disasm 全 60B 复核）
+------------------------------------------------
+0x7CA7D8(60B) = MSVC6 CRT printf 族带锁写模板（0x7C-0x7D 静态 CRT
+区）——cdecl 1 栈参（FILE* 流槽），流锁包裹单字符/串写：
+  push ebx / push esi
+  mov esi,[esp+0xC]                 ; ★参数=FILE* 流槽
+  push edi
+  push esi / call 0x7CB3F9          ; ★★流锁 Enter（batch 966 归档）
+  push esi / call 0x7D2B7F          ; ★★FILE 设施（定位/条件检查）
+  mov edi,eax
+  lea eax,[esp+0x20]                ; ★栈临时槽（宽/窄转换缓冲）
+  push eax
+  push [esp+0x20]                   ; ★再推参数
+  push esi
+  call 0x7CE2A5                     ; ★★FILE 写内核（fputc 0x7CE18D
+                                    ;  后邻——batch 971 交叉）
+  push esi / push edi
+  mov ebx,eax                       ; ★ebx=0x7CE2A5 返回值
+  call 0x7D2C0C                     ; ★★FILE 设施（flush/计数）
+  push esi / call 0x7CB44B          ; ★★流锁 Leave（batch 961 归档）
+  add esp,0x20                      ; cdecl 弹 8 参
+  mov eax,ebx / pop 族 / ret
+★语义：**printf 族带锁写模板**（batch 057 名准）——FILE* 流槽经
+0x7CB3F9 流锁 Enter → 0x7D2B7F 条件/定位 → 0x7CE2A5 写内核（fputc
+后邻，单字符/串写 + 宽窄转换缓冲）→ 0x7D2C0C flush/计数 → 0x7CB44B
+流锁 Leave → 返回写内核结果。
+★原版怪癖（batch 057 已录，照抄）：
+  ① 全路径锁包裹（Enter/Leave 严格配对——0x7CB3F9/0x7CB44B）；
+  ② 栈临时槽 [esp+0x20] 宽窄转换（lea eax 取槽 + 压参 ×2——转换
+     缓冲复用一个槽）；
+  ③ ebx 保存 0x7CE2A5 返回值跨 0x7D2C0C 调用透传（mov ebx,eax →
+     mov eax,ebx）；
+  ④ add esp,0x20 一次性弹 8 参（cdecl 栈清理）。
+★调用方（batch 057 已录）：fan-in 293（printf/fprintf/vfprintf 家
+族入口）——五步下游（0x7CE2A5 → 0x7D0D55 缓冲写 → 0x7D7638 底层
+写）batch 046/971 已闭合。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7CB3F9/0x7CB44B = 流锁 Enter/Leave——batch 966/961 已归档
+     crt_runtime_verified（[0x87BF50,0x87C1B0] 锁数组 → 0x7CD9F5/
+     0x7CDA56；区间外 [0x7E11E8]/[0x7E11EC] IAT），本批调用现场交叉；
+  ② 0x7CE2A5 = FILE 写内核——fputc 0x7CE18D 后邻（batch 971 已归
+     档 crt_runtime_verified），本批调用现场交叉；
+  ③ 0x7D2B7F/0x7D2C0C = FILE 设施（定位/条件检查 + flush/计数）——
+     0x7D 段 CRT FILE 层（batch 048/970/971 同段）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：商业库层归档，不写 C++ 模型
+不做对拍；batch 057 语义已登记，本批补依赖链交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 代码区归属：0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance 实锤）——非 Westwood 手写逻辑。
+2. 锁家族边界：0x7CA7D8 直接调用 0x7CB3F9/0x7CB44B（batch 966/961
+   归档的流锁 Enter/Leave，_pick_945 留桩边界项）——线程同步语义在
+   单线程 C++ 模型下无可观测行为（structural_equivalence 锁例外合
+   法）。
+3. FILE 设施依赖：0x7CE2A5（fputc 后邻写内核）+ 0x7D2B7F/0x7D2C0C
+   （定位/flush/计数）——FILE* 是 CRT 运行时设施，重写用等价
+   std::printf/fputc 代替。
+4. gamemd_replication_discipline：商业库只 dump 汇编、重写时用等价
+   运行时代替。
+→ 状态：crt_runtime_verified（batch 057 语义 + 本批流锁对/内核链
+交叉；0x7D2B7F/0x7D2C0C 精确身份、0x7CE2A5 内部宽窄转换细节为推断
+交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 057：0x7CA7D8 首登记（printf 族完整模板，fan-in 293，五步
+下游 batch 046 全闭合）——本批升级归档。
+★batch 966/961：0x7CB3F9/0x7CB44B 流锁 Enter/Leave 归档 crt_
+runtime_verified——本批调用现场交叉（锁包裹身份实锤）。
+★batch 971：0x7CE18D fputc 归档——本批 0x7CE2A5 后邻内核交叉。
+★batch 046：0x7CB1F9 缓冲 flush 域——0x7D0D55 下游链交叉。
+★batch 048：0x7D 段句柄表/FILE 设施——0x7D2B7F/0x7D2C0C 同段。
+★_pick_945：锁家族排除逻辑——0x7CA7D8 依赖方纳入同边界。
+★ra2_code_region_layout_crt_provenance：0x7C-0x7D = MSVC6 静态 CRT。
+
+五、状态
+-------
+crt_runtime_verified（0x7CA7D8：CRT printf 族带锁写模板归档；batch
+057 语义 + 本批流锁对/内核链交叉；不写 C++ 模型不做 golden——锁家
+族 + FILE 设施商业库层）。TSV 行 0x007CA7D8 更新。
+
+★本批实锤：CRT 扇入度 4 的 0x7CA7D8 = printf 族带锁写模板（FILE*
+流槽流锁包裹：0x7CB3F9 Enter → 0x7D2B7F 定位 → 0x7CE2A5 写内核（
+fputc 后邻，batch 971 交叉）→ 0x7D2C0C flush/计数 → 0x7CB44B
+Leave → 返回）；锁家族 + FILE 设施依赖链完整确认，按商业库层纪律
+归档 crt_runtime_verified。
+相邻待续：batch 978 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_pick_945.py——0x7C 段 317 项已 REIMPL 88，
+候选锁家族 0x7CD9F5/0x7CDA56 留桩边界后续等）。
+依赖模型：无（归档不落 C++）。
+承前：batch 976 已完（CRT ntohl 跳板 0x7C896E，commit 8f52db4）。
