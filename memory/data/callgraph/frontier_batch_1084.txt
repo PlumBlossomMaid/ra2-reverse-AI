@@ -1,0 +1,122 @@
+frontier batch 1084 —— CRT _output 窄字符格式化核心 0x7D170D（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D170D（2597B,
+uc=1, callers=1 池顶）。TSV 无既有行。
+TARGET = 0x007D170D。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D170D 行。
+
+一、链语义（disasm 头/尾复核，0x7D170D-0x7D2131）
+------------------------------------------------
+头部（0x7D170D-0x7D17F0）：
+007d170d  55                    push ebp
+007d170e  8bec                  mov ebp, esp
+007d1710  81ecc4010000          sub esp, 0x1c4          ; ★0x1C4 局部帧
+007d171c  8b750c                mov esi, [ebp+0xc]      ; ★param2 = 格式串
+007d1722  8a06                  mov al, [esi]           ; ★逐字符取
+007d173c  833d9cc7870001        cmp [0x87c79c], 1       ; ★locale 阈值（batch
+                                                        ;   1082 同款）
+007d1745  0fb6c0                movzx eax, al
+007d174b  e8c1fbffff            call 0x7d1311          ; ★★locale 宽转换
+                                                        ;   （batch 1082 同款）
+007d1754  8b0d90c58700          mov ecx, [0x87c590]     ; ★分类表直查
+                                                        ;   [ecx+eax*2] & 8
+007d179d  803e25                cmp byte[esi], 0x25     ; ★'%' 格式化指令
+                                                        ;   （'N'/'*'/'F'/'I'/
+                                                        ;   'L' 等解析循环）
+007d17cd  c645f301              mov byte[ebp-0xd], 1    ; ★标志初始化
+007d17d9  833d9cc7870001        cmp [0x87c79c], 1       ; ★locale 双路径
+                                                        ;   （>1 → 0x7D1311 /
+                                                        ;   ≤1 → 表直查）
+
+尾部（0x7D20F2-0x7D2131）：
+007d212d  5f                    pop edi
+007d212e  5e                    pop esi
+007d212f  5b                    pop ebx
+007d2130  c9                    leave
+007d2131  c3                    ret                    ; ★函数边界（0x7D2132
+                                                        ;   起下一函数：cmp
+                                                        ;   [0x87c79c],1 开头
+                                                        ;   locale 检查——紧邻
+                                                        ;   辅助函数族）
+
+★语义：**CRT `_output`（窄字符格式化输出核心——推断
+名）**——cdecl 变参（param1=输出流、param2=格式串）：
+完整实现 printf 系列格式串解析（'%' 指令循环 + 宽度/精
+度/标志 + 指令分派），locale 双路径（[0x87C79C]>1 走
+0x7D1311 宽转换 / ≤1 走 [0x87C590] 分类表直查），字符
+经 0x7C99E1 逐字符处理，-1 哨兵指示输出失败/终止——与
+batch 1082 0x7D3A6D `_woutput` 完全对称的**窄字符孪生**
+（wprintf vs printf 共用同一引擎族，宽/窄两版）。
+
+★E8 被调者全扫（0x7D170D-0x7D2131 区间 57 处 call，
+20 个唯一目标——真实目标全在 0x7C-0x7D CRT 域）：
+  0x7C8EC0（operator new）/ 0x7C99E1（逐字符处理）/
+  0x7D1311（locale 宽转换）/ 0x7D2132/0x7D2169/
+  0x7D2183/0x7D219A（紧邻辅助函数族——格式串解析
+  子步骤）/ 0x7D75E0（memset）/ 0x7D9D7F（字节→宽字
+  符）/ 0x7D9EB0（CRT）
+  ——10 个跨段伪目标（0xFA18F9C/0x8D9D877F/0x8E60EEE6
+  等）为 E8 字节在指令中间的数据误读。
+  ——无 Westwood 对象方法（无 thiscall/虚表槽/0x40xxxx
+  目标）。
+
+★原版怪癖（照抄）：
+  ① 0x1C4 局部帧 + SEH（格式解析大缓冲）；
+  ② locale 双路径（[0x87C79C]>1 vs ≤1——同 batch 1082
+     完全同款）；
+  ③ '%' 指令 cmp/je 串行链（编译器跳转表化）；
+  ④ -1 哨兵返回（[ebp-0x14] 计数与 [ebp-0x34] 标志协同
+     判断输出失败/终止）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 格式化引擎属
+商业库层，不写 C++ 模型；头/尾 + 57 处 E8 全扫交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D170D = MSVC6 CRT `_output`——0x7C-0x7D =
+   MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）；
+   locale 阈值 + 分类表 + 格式串解析为 CRT printf 家族标
+   准形态（与 batch 1082 `_woutput` 宽窄对称）。
+2. 依赖：locale（0x7D1311）+ 分类表（[0x87C590]）+
+   逐字符处理（0x7C99E1）+ 紧邻辅助族（0x7D2132/
+   0x7D2169/0x7D2183/0x7D219A）+ 分配/free——重写
+   gamemd 时用等价运行时（std::vprintf/自写格式化器）
+   代替。
+3. gamemd_replication_discipline：CRT 格式化引擎，重写时
+   用等价运行时代替，逐字节复刻无意义——按商业库纪律归
+   档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（头/尾 + 57 处 E8 全扫交
+叉；函数名「_output 窄字符格式化核心」为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1082：0x7D3A6D `_woutput` 宽字符格式化核心——
+  本批窄字符孪生（printf/wprintf 共用引擎族，locale 阈
+  值 [0x87C79C] + 分类表 [0x87C590] 完全同款）。
+★batch 1079：0x7D13F8 ptd 初始化——同 CRT 基础设施层
+  （格式化引擎同属 MSVC6 静态 CRT 域）。
+★batch 1043：0x7C9D7D _itoa 家族（REIMPL）——同 CRT
+  digit 生成域对照（_itoa 零表依赖 vs 本批 locale/分类
+  表依赖）。
+
+五、状态
+-------
+crt_runtime_verified（0x7D170D：CRT _output 窄字符格式化
+核心归档；头/尾 + 57 处 E8 全扫交叉；不写 C++ 模型不做
+golden——CRT 格式化引擎商业库层；函数名「_output 窄字
+符格式化核心」为推断交叉标注）。TSV 新增 0x007D170D 行。
+
+★本批实锤：2597B 窄字符 printf 核心——0x1C4 帧 + locale
+双路径 + '%' 指令循环 + 57 处 E8 全 CRT 域；与 batch
+1082 `_woutput` 宽窄孪生闭环（printf/wprintf 共用引擎
+族）。
+相邻待续：batch 1085 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7DD505(1805B)/0x7C2590(1735B)/0x7C0C80
+(1196B, callers=3)/0x7D4FCC(428B——batch 1077 点名紧邻
+大函数)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1083 已完（CRT _CVTBUF 浮点转 digit 核心引
+擎，commit 0ecf061）。
