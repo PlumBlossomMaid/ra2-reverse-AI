@@ -1,0 +1,116 @@
+frontier batch 1058 —— 虚表对象方法双子 0x7C1E10（登记）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7C1E10（279B,
+uc=2）。TSV 无既有行。取证确认与 batch 1056（0x7C1F30）为同
+一宿主类双子方法（表扫描 + 操作码 5 提交）——双子登记。
+TARGET = 0x007C1E10。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007C1E10 行。
+
+一、链语义（disasm 全 279B 复核，0x7C1E10-0x7C1F26，ret 平返）
+------------------------------------------------
+入口：push ecx / push ebx,ebp,esi / mov esi,ecx（★this）/
+mov ebx,edx（★参2）/ push edi / mov al,[esi+0xF5]（★参2 字节
+槽——batch 1056 同字段）/ mov edi,[esi+0x164]（★this+0x164
+缓冲）/ test al,al / [esp+0x10]=ebx。
+
+控制流全景（逐段）：
+  A. 表扫描分支（0x7C1E2D-0x7C1E78）——[esi+0xF5]==0 且
+     [esi+0x178]==0 时：
+     mov edx,[esi+0x754]（★表指针）/ mov ax,word[esi+0x74C]
+     （★word 计数）/ xor ecx,ecx 循环：
+     mov bp,word[edx] / cmp ebp,[esi+0x180]（★★entry word vs
+     阈值）/ jg 命中 → mov eax,[esi+0x754] /
+     lea ecx,[ecx+ecx*2] / mov eax,[eax+ecx*2+2]（★★命中项
+     +2 偏移 dword——batch 1056 同款）/ add edx,6（★6B 步进）
+     / cmp ecx,eax / jl 循环；未命中 → eax=0；
+     mov [esi+0x17C],eax（★结果写槽位）；
+  B. 虚表调度（0x7C1E7E-0x7C1EA7）：
+     eax=[edi(缓冲)]+[esi+0x178] / lea edx,[ebx+1] /
+     and edx,0xFFFFFFFE（★★(参2+1)&-2 双倍索引——batch 1056
+     同款）/ push edx / push eax / push 5（★★操作码 5）/
+     push esi / call [esi+0x40] → 失败（!=0）→ 返 0xFFFFFFFC(-4)；
+  C. 成功收尾（0x7C1EA8-0x7C1F26）：
+     ebp=[esi+0x178]+参2 / ebx=[esi+0x174]++ /
+     [esi+0x178]=ebp / [esi+0x174]=ebx（★计数同步推进）；
+     [esi+0xF5]!=0 → cmp [esi+0xF5],ebx（★计数==目标时）：
+     命中 → 清 [esi+0x174]/[esi+0x178]=0 / [edi+0x14]=eax /
+     [edi+0x10]=0 / [edi+0xC]=8（★缓冲槽 +0x14/+0x10/+0xC=8——
+     batch 1056 同款）/ [esi+0x168]=edi / [esi+0x164]=[edi+4]
+     → 返 -1（0xFFFFFFFF）；
+     [esi+0xF5]==0 → cmp eax,[esi+0x17C]：== → 同上收尾；
+     > → 返 -4；< → 返 -1。
+
+★语义：**虚表对象方法双子（推断名——batch 1056 的 0x7C1F30
+邻居/同宿主类方法）**——thiscall 2 参（this + 参2 索引/条件）：
+  ① [esi+0xF5]==0 且 [esi+0x178]==0 → 表扫描（[esi+0x754] 表
+     6B 步进 word 计数 vs [esi+0x180] 阈值）→ 命中项 +2 偏移
+     dword → [esi+0x17C]（双倍索引路径前表查）；
+  ② 虚表 [esi+0x40] 操作码 5 提交（(参2+1)&-2 双倍索引）→ 失
+     败 -4；
+  ③ 成功计数 [esi+0x174]/[esi+0x178] 同步推进——[esi+0xF5] 目
+     标达标或（[esi+0xF5]==0 时）结果==[esi+0x17C] → 缓冲槽
+     +0x14/+0x10/+0xC=8 复位 + [esi+0x168]/[esi+0x164] 回写 →
+     返 -1；溢出/大于 → -4。
+
+★原版怪癖（照抄，与 batch 1056 的 0x7C1F30 同款）：
+  ① 表扫描 6B 步进 word 计数 vs 阈值（[esi+0x754]/[esi+0x74C]/
+     [esi+0x180]）——命中项取 +2 偏移 dword；
+  ② 虚表 [esi+0x40] 操作码 5 + (参2+1)&-2 双倍索引；
+  ③ [esi+0xF5] 目标计数门控（实现「计数达标再收尾」）；
+  ④ 缓冲槽 +0x14/+0x10/+0xC=8 复位 + [esi+0x168]/[esi+0x164]
+     回写（双子与 0x7C1F30 完全同构）；
+  ⑤ 返回 -1 成功 / -4 失败哨兵族。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 虚表 [esi+0x40] 操作码 5——batch 1056（0x7C1F30 操作码 5）
+     直接同族互证；
+  ② [esi+0x754]/[esi+0x74C]/[esi+0x180]/[esi+0x17C]/[esi+0xF5]/
+     [esi+0x164]/[esi+0x168]/[esi+0x174]/[esi+0x178]——批 1056
+     槽位簇逐个重叠（双子宿主类置信）；
+  ③ 0x7C1F30（batch 1056）紧邻 0x7C1E10+0x120（同宿主类双子
+     布局）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：thiscall 虚表回调对象
+方法依赖宿主类布局，不做指令级 golden）。
+
+三、三态判定（为何 semantics_verified 而非 REIMPL/归档）
+------------------------------------------------
+1. 形态：thiscall 2 参（ret 平返）+ [esi+0x40] 虚表回调 + 槽位
+   簇与 batch 1056 的 0x7C1F30 逐个重叠——Westwood 家族对象
+   方法，非纯内存算法。
+2. 依赖：虚表调用 + 宿主类字段域（表指针/计数/缓冲槽）——本
+   批登记方法级语义，不越级为 cpp_reimplementation（无类布局
+   完整实现/无对象级 golden）。
+3. 证据：279B 全读 + 与 0x7C1F30 双子槽位/操作码/哨兵三重交叉
+   实锤同一宿主类。
+→ 状态：semantics_verified（279B 全读 + 双子交叉；函数名与
+「操作码 5/表扫描」语义为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1056：0x7C1F30 虚表对象方法——本批双子交叉（0x7C1E10
+  与 0x7C1F30 槽位簇逐个重叠 + 操作码 5 + (参2+1)&-2 + 缓冲槽
+  +0x14/+0x10/+0xC=8 全同构）。
+★batch 378/1053/1057：0x7BF470/0x7C0740/0x7C0530 家族——同
+  [esi+0x40] 虚表调度家族（操作码 5/7 变体 + 槽位簇交叉）。
+★batch 001：0x7C8E17 operator_new——对象槽位契约同家族。
+
+五、状态
+-------
+semantics_verified（0x7C1E10：虚表对象方法双子登记；279B 全读
++ batch 1056 双子三重交叉；不写 C++ 模型不做 golden——thiscall
+虚表回调对象方法需承载宿主类布局；函数名与「操作码 5/表扫描」
+语义为推断交叉标注）。TSV 新增 0x007C1E10 行。
+
+★本批实锤：batch 1056 双子闭环——0x7C1E10（表扫描 + 操作码 5
+提交 + 计数达标收尾）与 0x7C1F30（双倍索引 + 操作码 5 + 0x80
+标记）同一宿主类两方法全链登记。
+相邻待续：batch 1059 按 _scan_pending_7c.py 取池内下一未登记
+项（uc=2：0x7DA512(241B)/0x7D3AA0 等——或 0x7C06B0 家族辅助
++ 0x7DA2B6 LCMapStringW 封装/0x7D3982 已登记后邻）。
+依赖模型：无（登记不落 C++）。
+承前：batch 1057 已完（虚表对象方法家族第 3 成员 0x7C0530，
+commit d6ce421）。
