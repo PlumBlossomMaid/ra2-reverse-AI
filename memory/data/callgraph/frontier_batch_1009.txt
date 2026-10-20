@@ -1,0 +1,153 @@
+frontier batch 1009 —— CRT wcstok 宽字符分词器 0x7CB911（登记）
+============================================
+
+候选来源：python .qwen\tmp\_list_real_pending.py —— 0x7CB911 = 167B /
+4 uc（ranking 行 unique_callers 列 = FUN_005e8ea0,FUN_005fa620）/
+TSV 无既有行 / frontier_batch_*.txt 无匹配。本批 = 依赖链确认
+（0x7D140B __getptd batch 008 已登记 TLS 锚点）→ 按商业库层归档
+**crt_runtime_verified**。
+TARGET = 0x007CB911。C++ 模型：无（见「三态判定」）。TSV：新增
+0x007CB911 行。
+
+一、链语义（disasm 全 167B 复核，0x7CB911-0x7CB9B7）
+------------------------------------------------
+007cb911  55            push ebp / mov ebp,esp / push ecx
+007cb915  e8f15a0000    call 0x7d140b                  ; ★★_getptd（batch 008
+                                                        ;   已登记 per-thread
+                                                        ;   CRT 错误态/TLS）
+007cb91a  8b4d08        mov ecx, [ebp + 8]             ; 参1 = string
+007cb91d  8945fc        mov [ebp - 4], eax             ; 存 ptd
+007cb920  85c9          test ecx, ecx
+007cb922  7503          jne 0x7cb927
+007cb924  8b481c        mov ecx, [eax + 0x1c]          ; ★★参1==NULL → ptd->+0x1C
+                                                        ;   （per-thread token 指针）
+007cb927  668b11        mov dx, [ecx]                  ; dx = 首字符
+007cb92a  56            push esi / push edi
+007cb92f  742f          je 0x7cb960                    ; 空串 → 跳
+007cb931  8b450c        mov eax, [ebp + 0xc]           ; 参2 = control
+007cb934  668b00        mov ax, [eax]
+007cb937  8b750c        mov esi, [ebp + 0xc]
+007cb93a  6685c0        test ax, ax
+007cb93d  7411          je 0x7cb950                    ; control 空 → 跳出
+007cb93f  8bf8          mov edi, eax
+007cb941  663bfa        cmp di, dx                     ; ★宽字符比较
+007cb944  740a          je 0x7cb950                    ; 命中 → 跳出
+007cb946  46 46         inc esi / inc esi              ; ★+2 步进（宽字符）
+007cb948  668b3e        mov di, [esi]
+007cb94b  6685ff        test di, di
+007cb94e  75f1          jne 0x7cb941
+007cb950  66833e00      cmp word [esi], 0              ; ★control 到 NUL？
+007cb954  740a          je 0x7cb960                    ; 未命中 → 外层继续
+007cb956  41 41         inc ecx / inc ecx              ; ★+2 步进
+007cb958  668b11        mov dx, [ecx]
+007cb95b  6685d2        test dx, dx
+007cb95e  75d7          jne 0x7cb937                   ; 外层：string 推进
+007cb960  668b11        mov dx, [ecx]                  ; ★第二轮（清分隔符）
+007cb963  894d08        mov [ebp + 8], ecx             ; ★保存当前 token 起点
+007cb966  6685d2        test dx, dx
+007cb969  7437          je 0x7cb9a2                    ; 串尾 → 收尾
+007cb96b  8b450c        mov eax, [ebp + 0xc]
+007cb96e  668b00        mov ax, [eax]
+007cb971  8b750c        mov esi, [ebp + 0xc]
+007cb974  6685c0        test ax, ax
+007cb977  7411          je 0x7cb98a
+007cb979  8bf8          mov edi, eax
+007cb97b  663bfa        cmp di, dx                     ; ★再查 control
+007cb97e  740a          je 0x7cb98a
+007cb980  46 46         inc esi / inc esi
+007cb982  668b3e        mov di, [esi]
+007cb985  6685ff        test di, di
+007cb988  75f1          jne 0x7cb97b
+007cb98a  66833e00      cmp word [esi], 0
+007cb98e  750c          jne 0x7cb99c                    ; ★命中分隔符 → 清
+007cb990  41 41         inc ecx / inc ecx
+007cb992  668b11        mov dx, [ecx]
+007cb995  6685d2        test dx, dx
+007cb998  75d7          jne 0x7cb971
+007cb99a  eb06          jmp 0x7cb9a2
+007cb99c  66832100      and word [ecx], 0              ; ★★★命中分隔符 → 原地清 0
+007cb9a0  41 41         inc ecx / inc ecx
+007cb9a2  8b45fc        mov eax, [ebp - 4]             ; ptd
+007cb9a5  5f 5e         pop edi / pop esi
+007cb9a7  89481c        mov [eax + 0x1c], ecx          ; ★★ptd->+0x1C = 下次起点
+007cb9aa  8b4508        mov eax, [ebp + 8]             ; 保存的 token 起点 P
+007cb9ad  2bc1          sub eax, ecx                   ; P - 当前
+007cb9af  f7d8          neg eax
+007cb9b1  1bc0          sbb eax, eax                   ; ★★0 或 -1
+007cb9b3  234508        and eax, [ebp + 8]             ; ★★P != ecx ? P : 0
+007cb9b6  c9            leave
+007cb9b7  c3            ret
+
+★语义：**MSVC6 CRT wcstok（宽字符分词器）**——cdecl 2 参：
+① 入口取 _getptd()（batch 008 已登记）；参1 为 NULL 时用
+   ptd->+0x1C（per-thread 上次 token 指针）续扫；
+② 在 string 中找 control 里出现的字符（双循环：外层推进 string、
+   内层扫 control）；
+③ 命中后原地把该字符清 0（`and word [ecx],0`）；
+④ ptd->+0x1C 记下次起点（命中字符后一格）；
+⑤ 返回 `P != ecx ? P : 0`——有推进（找到 token）返 token 起点，
+   无推进返 0（NULL）。
+
+★原版怪癖（照抄）：
+  ① ★per-thread 状态在 ptd+0x1C（非静态全局）——多线程各自独立；
+  ② 返回判定用 `sub + neg + sbb + and` 惯用（不是 cmp/je）；
+  ③ 分隔符不是跳过而是**原地清 0**（破坏性分词，与 strtok 同）；
+  ④ 双循环结构（两个几乎同构的"扫 control"内层循环，第一轮找
+     token 边界、第二轮找分隔符清零点）——Westwood/MSVC 复制粘贴；
+  ⑤ 宽字符一律 +2 字节步进（inc ecx/inc ecx，不 lea）。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7D140B = **__getptd**——batch 008 已登记（per-thread CRT 错误
+     态分配/TLS），batch 303（浮点异常分发）/625（_rand 0x7CB4AA）/
+     871/872 四处交叉实锤；
+  ② ptd+0x1C = per-thread token 指针（wcstok 状态槽）——与 batch
+     625 _rand 用 ptd 同结构（不同字段）交叉。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：依赖 _getptd TLS 的商业库层
+函数，不写 C++ 模型；167B 全读 + __getptd 锚点交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 有子调用：入口 call 0x7D140B（__getptd）——不满足本会话 REIMPL
+   「无子调用、无全局引用」的零桩判据（对比 batch 962-978 七批纯
+   内存模型：strnicmp/allmul/strcmp/strrchr/wcsncmp/aulldiv/wcsncat
+   全部零子调用）。
+2. TLS 状态依赖：ptd+0x1C 跨调用持久化——单线程 C++ 模型无法在不
+   复刻 _getptd 的前提下等价；重写时用标准 wcstok 或等价实现代替。
+3. gamemd_replication_discipline：CRT 标准库函数（wcstok）属商业库
+   层，重写用等价运行时替代；0x7C-0x7D = MSVC6 静态 CRT
+   （ra2_code_region_layout_crt_provenance）。
+→ 状态：crt_runtime_verified（167B 全读 + __getptd batch 008 锚点
+交叉 + batch 303/625/871/872 四处 TLS 家族交叉；ptd+0x1C 字段身份
+为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 008：0x7D140B __getptd 登记（per-thread CRT 错误态/TLS）——
+本批唯一被调调用现场交叉。
+★batch 303：0x7D140B 浮点异常分发链——TLS 家族交叉。
+★batch 625：0x7CB4AA _rand（同宿 _getptd，ptd 状态槽不同字段）——
+同架构家族交叉：CRT 随机数/分词器共用 per-thread 数据。
+★batch 871/872：0x7D140B 链上游——TLS 家族再交叉。
+★_pick_945：IAT/锁家族排除——0x7CB911 依赖方纳入同边界。
+
+五、状态
+-------
+crt_runtime_verified（0x7CB911：wcstok 宽字符分词器归档；167B 全读
++ __getptd batch 008 锚点 + 4 批 TLS 家族交叉；不写 C++ 模型不做
+golden——依赖 _getptd TLS 状态，重写用标准 wcstok 代替；ptd+0x1C
+字段身份与精确函数名（wcstok vs _wcstok 细节）为推断交叉标注）。
+TSV 新增 0x007CB911 行。
+
+★本批实锤：0x7CB911 = MSVC6 CRT wcstok（宽字符分词器）——入口
+_getptd（batch 008）、ptd+0x1C per-thread token 指针、命中分隔符
+原地清 0、返回 P!=ecx?P:0；因依赖 TLS 子调用按商业库层归档
+crt_runtime_verified。
+相邻待续：batch 1010 按 ranking.tsv unique_callers 取下一未复刻
+CRT 项（python .qwen\tmp\_list_real_pending.py——候选 0x7CC2AC 93B
+（3 uc）/0x7CBF49 22B/0x7C3230 58B/0x7C3690 41B 等）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1008 已完（0x7C30D0 上层推进器 semantics_verified，commit
+e3fc03c）。
