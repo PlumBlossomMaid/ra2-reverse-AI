@@ -1,0 +1,112 @@
+frontier batch 1048 —— CRT strtol 家族 0x7C9FD9/0x7C9DD4（归档）
+============================================
+
+候选来源：batch 1047 预告「0x7C9FD9(23B)」。ranking uc=1，
+body=23。TSV 无既有行。追踪被调发现核心 **0x7C9DD4**（517B，
+uc=2，strtol 解析器）——薄包装+核心双归档。
+TARGET = 0x007C9FD9（薄包装归档）+ 0x007C9DD4（核心归档）。
+C++ 模型：无（见「三态判定」）。TSV：新增两行。
+
+一、链语义（disasm 全段复核，0x7C9FD9 23B + 0x7C9DD4 517B）
+------------------------------------------------
+**0x7C9FD9（23B）strtol 薄包装**：
+  007c9fd9 push 1                    ; ★第 4 参 = 常量 1（flags/locale 位）
+  007c9fdb push [esp+0x10]           ; base（第 3 参）
+  007c9fdf push [esp+0x10]           ; endptr（第 2 参）
+  007c9fe3 push [esp+0x10]           ; str（第 1 参）
+  007c9fe7 call 0x7c9dd4             ; ★★转调 strtol 核心
+  007c9fec add esp,0x10              ; 清 4 参
+  007c9fef ret
+  ★怪癖：①补常量 1 为第 4 参（核心的 flags 位——标准 strtol
+  3 参 + 内部标志 1 = 「默认 locale 走宽字符探测」位）。
+
+**0x7C9DD4（517B）strtol 核心**：
+  ① prologue（push ebp/mov ebp,esp/sub esp,0xC 三局部/push
+     ebx,esi,edi）；[ebp-8]=0 值累加器；[ebp-4]=游标；bl=首字
+     节，esi=str+1；
+  ② 跳空白循环：cmp [0x87c79c],1 / jle → [0x87c590] ctype 表
+     查掩码 8；否则 call 0x7D1311（_isctype 掩码 8）——★守卫
+     双路径（batch 965+ 已登记 [0x87C79C]/[0x87C590]/0x7D1311
+     isctype 族）；
+  ③ 符号：bl=='-' → or [ebp+0x14],2；bl=='+' 跳过；
+  ④ 基数判定 [ebp+0x10]（base）：<0 或 ==1 或 >0x24 → 错误出
+     口 0x7C9FC9（*endptr=str，返回 0）；base==0 → '0x'/'0X'
+     → 16、'0' → 8、否则 10；base==16 → 跳 '0x'/'0X' 前缀；
+  ⑤ 主循环：isctype 掩码 4（数字）→ c-'0'；否则 isctype 掩码
+     0x103（字母）→ call 0x7C97D3（toupper 双参，batch 153+958
+     已登记）→ -0x37（'A'-10）；digit >= base → 停止；
+  ⑥ 溢出检测：[ebp-0xC]=(-1)/base 预除商，值>商或==商且
+     digit>余 → or [ebp+0x14],4（溢出标志）；
+  ⑦ 收尾：位 8（有数字）/位 4（溢出）/位 2（负号）组合判定——
+     溢出 → call 0x7D168E（errno_slot_legacy，batch 018 已
+     REIMPL）→ *errno=0x22（ERANGE=34）→ 值钳制 INT_MIN/
+     INT_MAX（负号时 -0x80000000 或 0x7FFFFFFF）；
+  ⑧ endptr [ebp+0xC] 写游标（无数字时写 str）；负号 → neg 值；
+     返回 eax=值。
+
+★原版怪癖（照抄）：
+  ① [0x87C79C] 守卫双路径（jle 1 走 ctype 表 / 否则 _isctype）
+     ——与 toupper/tolower/isctype 族同款；
+  ② 基数 0 自动检测（0x 前缀 → 16、0 前缀 → 8、默认 10）——
+     C 标准 strtol 语义照抄；
+  ③ base==16 且首 '0' 再跳 'x' 前缀（双跳）；
+  ④ 字母分支走 toupper（0x7C97D3）而非 isalpha+手动大写——
+     CRT 内联调用复用；
+  ⑤ 溢出时 errno=0x22（ERANGE）+ 钳制（负号 -2147483648 /
+     正号 2147483647）——标准行为但钳制分支逐条照抄；
+  ⑥ 错误出口（base 非法）时 *endptr=str 且返回 0——与无数字
+     路径共享 0x7C9FC9。
+
+★依赖链实锤（本批 disasm + TSV 交叉）：
+  ① 0x7D1311 = _isctype（batch 024/044 已登记 semantics）——
+     掩码 8 空白/4 数字/0x103 字母三处调用；
+  ② [0x87C79C] 守卫全局 + [0x87C590] ctype 表（batch 965+
+     isctype 掩码族登记）——双路径分支；
+  ③ 0x7C97D3 = CRT toupper（batch 153+958 已登记
+     crt_runtime_verified）——字母分支调用；
+  ④ 0x7D168E = errno_slot_legacy（batch 018 已 REIMPL
+     cpp_reimplementation_verified）——溢出写 ERANGE。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT strtol 属商业库
+层，不写 C++ 模型；23B+517B 全读 + 四交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7C9FD9/0x7C9DD4 = MSVC6 CRT strtol 家族——0x7C-0x7D
+   = MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）。
+2. 依赖：isctype 族（0x7D1311 + [0x87C79C]/[0x87C590]）+ toupper
+   （0x7C97D3）+ errno_slot（0x7D168E）——重写 gamemd 时用等价
+   运行时（std::strtol / strtoi）代替。
+3. gamemd_replication_discipline：CRT 字符串转数值设施，重写时
+   用等价运行时代替，逐字节复刻无意义——按商业库纪律归档，不
+   写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（23B+517B 全读 + 四交叉；「strtol
+核心/薄包装」名为推断交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 965+990-994：isctype 掩码族——[0x87C79C] 守卫双路径 +
+[0x87C590] 表 + 0x7D1311 三处调用现场交叉。
+★batch 153+958：0x7C97D3 toupper——字母分支调用现场交叉。
+★batch 018：0x7D168E errno_slot_legacy REIMPL——溢出写
+  0x22（ERANGE）现场交叉。
+★batch 024/044：0x7D1311 _isctype——掩码语义交叉。
+
+五、状态
+-------
+crt_runtime_verified（0x7C9FD9 + 0x7C9DD4：CRT strtol 薄包装+
+核心归档；23B+517B 全读 + isctype/toupper/errno 四交叉；不写
+C++ 模型不做 golden——CRT 字符串转数值商业库层；函数名为推断
+交叉标注）。TSV 新增 0x007C9FD9 + 0x007C9DD4 两行。
+
+★本批实锤：MSVC6 CRT strtol 双件套——薄包装补常量 1 flags +
+核心 isctype 双路径解析/基数自动检测/溢出 ERANGE 钳制——全链
+归档。
+相邻待续：batch 1049 按 ranking.tsv unique_callers 取下一未登
+记 CRT 项（7D 区剩余：0x7D8C6B(208B)/0x7DC378('=' strchr 类邻
+居)；候选池 7C-7D 区接近清空，可能转入 0x7E 区/西木家族扩扫）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1047 已完（CRT DBCS 字符串查找 0x7D571F，
+commit 31fe469）。
