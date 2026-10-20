@@ -1,0 +1,196 @@
+frontier batch 1103 —— CRT 日期换算核心 _isindst 0x7D5178（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D5178（320B,
+uc=1, callers=4 高扇入池顶）。TSV 无既有行。
+TARGET = 0x007D5178。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D5178 行。
+
+一、链语义（disasm 全 320B 复核，0x7D5178-0x7D52B7）
+------------------------------------------------
+头部（0x7D5178-0x7D51AC）：
+007d5178  55                   push ebp
+007d5179  8bec                 mov ebp, esp
+007d517b  837d0c01             cmp [ebp+0xc], 1      ; ★param2 == 1 判定
+007d517f  53                   push ebx
+007d5180  8b5d10               mov ebx, [ebp+0x10]   ; ★param3 = 年
+007d5183  56                   push esi
+007d5184  0f8589000000         jne 0x7d5213          ; → 第二分支
+007d518a  8b4514               mov eax, [ebp+0x14]   ; ★param4 = 月
+007d518d  895d10               mov [ebp+0x10], ebx
+007d5190  83651003             and [ebp+0x10], 3     ; ★年 & 3（闰年低位）
+007d5196  750b                 jne 0x7d51a3
+007d5198  c1e602               shl esi, 2
+007d519b  8b867cd58700         mov eax, [esi+0x87d57c] ; ★★月起始日表
+                                                        ;   A 组（闰年）
+007d51a3  c1e602               shl esi, 2
+007d51a6  8b86b0d58700         mov eax, [esi+0x87d5b0] ; ★★月起始日表
+                                                        ;   B 组（平年）
+
+年积日计算（0x7D51AC-0x7D51EE，核心算式）：
+007d51ac  8bd3                 mov edx, ebx
+007d51ae  8d4801               lea ecx, [eax+1]      ; ★月内起始日 +1
+007d51b1  69d26d010000         imul edx, edx, 0x16d  ; ★年 × 365
+007d51b7  8d43ff               lea eax, [ebx-1]
+007d51ba  57                   push edi
+007d51bb  c1f802               sar eax, 2            ; ★(年-1) >> 2（算术右移
+                                                        ;   ——闰日累计，负年也
+                                                        ;   向 -∞ 取整！）
+007d51be  8bf9                 mov edi, ecx
+007d51c0  6a07                 push 7
+007d51c2  03f8                 add edi, eax          ; ★+ 闰日累计
+007d51c4  8d843a259cffff       lea eax, [edx+edi-0x63db] ; ★-0x63DB (25563)
+                                                        ;   纪元偏移
+007d51cb  5f                   pop edi
+007d51cc  99                   cdq
+007d51cd  f7ff                 idiv edi              ; ★÷(1+365+闰日) —— 求
+                                                        ;   星期余数
+007d51cf  8b4518               mov eax, [ebp+0x18]   ; ★param5 = 星期
+007d51d3  3b551c               cmp edx, [ebp+0x1c]   ; ★余数 vs param6
+007d51d6  7f0e                 jg 0x7d51e6           ; ★余数 > param6 → 分支
+007d51d8  6bc007               imul eax, eax, 7
+007d51db  2bc2                 sub eax, edx
+007d51dd  03451c               add eax, [ebp+0x1c]
+007d51e0  8d4c01f9             lea ecx, [ecx+eax-7]  ; ★-7 修正
+007d51e4  eb0a                 jmp 0x7d51f0
+007d51e6  6bc007               imul eax, eax, 7
+007d51e9  2bc2                 sub eax, edx
+007d51eb  03451c               add eax, [ebp+0x1c]
+007d51ee  03c8                 add ecx, eax          ; ★无 -7 修正
+
+月内天数越界修正（0x7D51F0-0x7D5211）：
+007d51f0  837d1805             cmp [ebp+0x18], 5     ; ★param5 == 5 判定
+007d51f4  7538                 jne 0x7d522e
+007d51f6  837d1000             cmp [ebp+0x10], 0     ; ★闰年标志
+007d51fa  7508                 jne 0x7d5204
+007d51fc  8bb680d58700         mov esi, [esi+0x87d580] ; ★★月末日表 A
+007d5204  8bb6b4d58700         mov esi, [esi+0x87d5b4] ; ★★月末日表 B
+007d520a  3bce                 cmp ecx, esi          ; ★日 > 月末
+007d520c  7e20                 jle 0x7d522e
+007d520e  83e907               sub ecx, 7            ; ★-7 回退一周
+
+第二分支（0x7D5213-0x7D522B，param2 != 1）：
+007d5213  8b4514               mov eax, [ebp+0x14]   ; ★param4 = 月
+007d5216  f6c303               test bl, 3            ; ★年 & 3
+007d5219  7509                 jne 0x7d5224
+007d521b  8b0c857cd58700       mov ecx, [eax*4+0x87d57c] ; ★月起始日表 A
+007d5222  eb07                 jmp 0x7d522b
+007d5224  8b0c85b0d58700       mov ecx, [eax*4+0x87d5b0] ; ★月起始日表 B
+007d522b  034d20               add ecx, [ebp+0x20]   ; ★+ param9
+
+时区全局写回（0x7D522E-0x7D52B7）：
+007d522e  837d0801             cmp [ebp+8], 1        ; ★param1 == 1 判定
+                                                        ;   （标准时间 vs 夏令时）
+007d5232  752b                 jne 0x7d525f
+007d5234  8b4524               mov eax, [ebp+0x24]   ; ★标准时间族
+007d5237  890dfcca8700         mov [0x87cafc], ecx   ; ★★标准时切换日
+007d523d  6bc03c               imul eax, eax, 0x3c
+007d5240  034528               add eax, [ebp+0x28]
+007d5243  891df8ca8700         mov [0x87caf8], ebx   ; ★★年写回
+007d5249  6bc03c               imul eax, eax, 0x3c   ; ★×60 ×60 = ×3600
+007d524c  03452c               add eax, [ebp+0x2c]
+007d524f  69c0e8030000         imul eax, eax, 0x3e8  ; ★×1000 → 毫秒
+007d5255  034530               add eax, [ebp+0x30]
+007d5258  a300cb8700           mov [0x87cb00], eax   ; ★★标准时切换偏移(ms)
+007d525d  eb55                 jmp 0x7d52b4
+007d525f  8b4524               mov eax, [ebp+0x24]   ; ★夏令时族
+007d5262  890d0ccb8700         mov [0x87cb0c], ecx   ; ★★夏令时切换日
+…
+007d5283  a310cb8700           mov [0x87cb10], eax   ; ★★夏令时偏移
+007d5288  790d                 jns 0x7d5297
+007d528a  05005c2605           add eax, 0x5265C00    ; ★+86400000（一天毫秒）
+007d528f  49                   dec ecx               ; ★日-1
+007d5297  ba005c2605           mov edx, 0x5265C00
+007d529c  3bc2                 cmp eax, edx
+007d529e  7c0e                 jl 0x7d52ae
+007d52a0  2bc2                 sub eax, edx          ; ★-86400000
+007d52a2  41                   inc ecx               ; ★日+1
+007d52ae  891d08cb8700           mov [0x87cb08], ebx   ; ★★夏令时年写回
+007d52b7  c3                   ret
+
+★语义：**CRT 日期换算核心（推断名——`_isindst` / DST
+起止日计算）**——cdecl 9 参（param1=标准/DST 选择、
+param2=模式、param3=年、param4=月、param5=星期、param6=
+月内周序、param7/8=时/分…、param9=日偏移）：
+  ① 模式 1：按 (年&3) 选月起始日表 A（0x87D57C）/B
+     （0x87D5B0）+ 年积日（年×365 + ((年-1)>>2) 闰日累
+     计 - 25563 纪元偏移）÷ 周天数取余 → 按 param5/6 求
+     目标星期日期；
+  ② 模式 2：只按月起始日 + param9 偏移；
+  ③ param5==5（月末周）时用月末日表 0x87D580/0x87D5B4
+     判定越界，超过则 -7 回退一周；
+  ④ param1==1 写标准时族（[0x87CAFC] 切换日 /
+     [0x87CAF8] 年 / [0x87CB00] 偏移毫秒 = (时×60+分)
+     ×60+秒)×1000）；否则写夏令时族（[0x87CB0C] /
+     [0x87CB08] / [0x87CB10] 偏移 + ±86400000 一天归一
+     化）。
+
+★E8 被调者：零真实子调用（全 320B 纯整数运算 + 查表）。
+
+★原版怪癖（照抄）：
+  ① 闰年判定只取 `年 & 3`（不判百年/四百年规则——1900/
+     2100 这类世纪年会被误判为闰年）；
+  ② 闰日累计用 `sar eax,2`（年-1 算术右移 2 位——负年向
+     -∞ 取整，与整数除向零截断不同）；
+  ③ 纪元常量 0x63DB = 25563 硬编码（未注释的历史偏移）；
+  ④ 月末周（param5==5）越界用 -7 而非按真实月末；
+  ⑤ 夏令时偏移 ±86400000 一步归一化（负则 +一天并日-1，
+     超一天则 -一天并日+1）——只处理一天，超两天不修正；
+  ⑥ 月起始日表分 A/B 两组四张（0x87D57C/0x87D580/
+     0x87D5B0/0x87D5B4——闰年/平年 × 起始/月末）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 日期运算属商
+业库层，不写 C++ 模型；320B 全读 + 全局写回交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D5178 = MSVC6 CRT 日期换算核心——0x7C-0x7D =
+   MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）；
+   月起始日表 + 闰日累计 + 时区全局写回为 CRT `_isindst`
+   标准形态。
+2. 依赖：月起始日表（0x87D57C/0x87D5B0/0x87D580/0x87D5B4）
+   + TZ 全局族（[0x87CAF8]/[0x87CAFC]/[0x87CB00]/
+   [0x87CB08]/[0x87CB0C]/[0x87CB10]）——重写 gamemd 时
+   用等价运行时（mktime/localtime 语义）代替。
+3. gamemd_replication_discipline：CRT 日期运算设施，重写
+   时用等价运行时代替，逐字节复刻无意义——按商业库纪律
+   归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（320B 全读 + 全局写回交叉；
+函数名「日期换算核心 _isindst」为推断交叉标注——四表 +
+时区全局族由代码实测）。
+
+四、跨批次闭合
+------------
+★batch 1094：0x7D4D24 `_tzset`——本批 [0x87CAF8]/
+  [0x87CB08] 年写回正是 `_tzset` 读的「时区标志」；
+  [0x87CB00]（标准时偏移毫秒）/`[0x87CB08]` 同族。
+★batch 1099：0x7D4FCC 时区换算函数——callers=1 之外本批
+  callers=4 高扇入（同一 TZ 全局族读写两端）；xref 实锤
+  [0x87CAFC] 仅 2 处引用（本批 0x7D5239 写 + batch 1099
+  0x7D5102 读）、[0x87CB00] 仅 2 处（本批 0x7D5259 写 +
+  batch 1099 0x7D5160 读）——两函数互为唯一读写对。
+★batch 1091：0x7CCFFC `_strftime`——同 CRT 时间族（消费
+  本批写回的时区偏移）。
+★batch 1100：0x7D36D5 字符表初始化器——同日历/时间基础
+  设施族对照。
+
+五、状态
+-------
+crt_runtime_verified（0x7D5178：CRT 日期换算核心 _isindst
+归档；320B 全读 + 全局写回交叉；不写 C++ 模型不做
+golden——CRT 日期运算商业库层；函数名「日期换算核心
+_isindst」为推断交叉标注——四表 + 时区全局族由代码实
+测；已知怪癖：闰年只判 &3、闰日用算术右移、纪元常量
+0x63DB、DST 偏移只归一化一天）。TSV 新增 0x007D5178 行。
+
+★本批实锤：DST 起止日计算核心 + 六个时区全局写回端——
+与 batch 1099（读端）/1094（_tzset 同族）闭环；xref 双
+向唯一读写对（[0x87CAFC]/[0x87CB00] 各 2 处引用零冗余）。
+相邻待续：batch 1104 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7D2C36(368B)/0x7C1A70(353B)/0x7C1150
+(339B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1102 已完（Westwood 表面版本升级器，
+commit a22d4c2）。
