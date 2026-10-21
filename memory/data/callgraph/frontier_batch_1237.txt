@@ -1,0 +1,119 @@
+frontier batch 1237 —— MSVC6 CRT/runtime IAT 导入跳板五件 + Imm 跳板二件 + 构造器 + ~exception 跳板三连
+=========================================================================================================
+
+候选来源：_rank_crt_frontier.py（602 个 CRT 段函数按 ranking.tsv
+unique_callers 扇入度排，剔除已闭合后取 td 前 11）——0x7C89E0/
+0x7C89E6/0x7C89EC（各 6B, td=88 三连）、0x7C89C2/0x7C89C8
+（各 6B, td=50）、0x7CAACB（25B, td=49）、0x7C8A34（6B, td=46）、
+0x7CA9AF/0x7CAA00/0x7CAC2F（各 5B, td=44 三连）、0x7C8A22（6B,
+td=18）。TSV 均无既有行。TARGET = 十一个地址。C++ 模型：无
+（见「三态判定」，商业库纪律归档）。TSV：新增十 一行。
+
+一、链语义（disasm 全机器码读完 + IAT 槽内容解引用 + 目标
+交叉，均 crt_runtime_verified）
+--------------------------------------------------------------
+★IAT 导入跳板五件 + Imm 二件（6B 各，`ff25 jmp [槽]`）：
+0x7C89E0  ff25 18157e00   jmp dword ptr [0x7E1518]  → version.dll!
+                            VerQueryValueA（槽内容解引用 hint 10 实锤）
+0x7C89E6  ff25 20157e00   jmp dword ptr [0x7E1520]  → version.dll!
+                            GetFileVersionInfoA（hint 0 实锤）
+0x7C89EC  ff25 1c157e00   jmp dword ptr [0x7E151C]  → version.dll!
+                            GetFileVersionInfoSizeA（hint 1 实锤）
+0x7C89C2  ff25 68157e00   jmp dword ptr [0x7E1568]  → 0x80000457
+                            = ordinal 0x457(1111)（ws2_32 按序号导入）
+0x7C89C8  ff25 64157e00   jmp dword ptr [0x7E1564]  → 0x80000073
+                            = ordinal 115（★★ws2_32!WSAStartup——
+                            ordinal 115 实锤，与 Ghidra 符号 WSAStartup
+                            互证）
+0x7C8A34  ff25 c4107e00   jmp dword ptr [0x7E10C4]  → imm32!
+                            ImmGetCompositionStringA（hint 27 实锤）
+0x7C8A22  ff25 b8107e00   jmp dword ptr [0x7E10B8]  → imm32!
+                            ImmGetContext（槽未单独解引用，同表跳板）
+★语义：**MSVC6 CRT 延迟绑定导入跳板**——`ff25 jmp [IAT槽]`
+  标准形态，加载后槽被 loader 填成真实 API 地址。IAT 槽区
+  0x7E10xx-0x7E15xx 位于 .rdata（VA 0x7E1000-0x811074），
+  磁盘内容 = hint/name RVA 或 ordinal（_iat_names_1237.py
+  全槽解引用实锤，含 ImageList_DragMove/DirectDrawCreate/
+  ImmSetOpenStatus 等邻槽）。
+
+★0x7CAACB（25B，thiscall 1 栈参 ret 4 = 构造器）：
+007caacb  lea eax, [esp + 4]      ; &参1
+007caacf  push esi
+007caad0  mov esi, ecx            ; this
+007caad2  push eax                ; 参1 = &参1
+007caad3  call 0x7d2e9b           ; ★构造辅助（semantics_verified：
+                                  ;   mov [esi],0x7F990C 虚表 + 深拷贝
+                                  ;   [edi] 字符串 → 0x7C8E17 分配）
+007caad8  mov dword ptr [esi], 0x7f95dc  ; ★本类虚表 0x7F95DC 覆盖
+007caade  mov eax, esi            ; 返 this
+007caae0  pop esi
+007caae1  ret 4
+★语义：**CRT 异常/字符串对象构造器（推断名——构造辅助 +
+  虚表 0x7F95DC）**——先调 0x7D2E9B（基类构造：写 0x7F990C
+  虚表 + 复制参1 字符串），再用本类虚表 0x7F95DC 覆盖。
+  挂靠目标 0x7D2E9B（semantics_verified）+ 0x7C8E17（batch
+  001 crt_runtime_verified 分配器）。
+
+★~exception 跳板三连（5B 各，`e9 jmp 0x7D2F41`）：
+0x7CA9AF  e9 8d850000   jmp 0x7D2F41
+0x7CAA00  e9 3c850000   jmp 0x7D2F41
+0x7CAC2F  e9 0d830000   jmp 0x7D2F41
+★目标 0x7D2F41（semantics_verified）：析构辅助——cmp
+  [ecx+8],0 → mov [ecx],0x7F990C → je 跳过 → push [ecx+4]
+  → call 0x7C8B3D（batch 001 crt_runtime_verified 释放器）
+  → ret。★三个跳板 = ~exception 家族析构入口别名（同一
+  析构序列的 3 个引用地址，Ghidra 名 ~exception 互证）。
+
+二、黄金基准
+----------
+无（商业库纪律归档——MSVC6 CRT 导入设施/异常对象基础，
+重写用等价导入声明与运行时异常代替）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：十一函数均在 0x7C-0x7D = MSVC6 静态 CRT
+   （ra2_code_region_layout_crt_provenance）；IAT 跳板 =
+   ff25 标准导入形态（IAT 槽磁盘内容解引用实锤）；构造器/
+   析构 = CRT 异常对象基础设施。
+2. 依赖：挂靠目标全部已登记（0x7D2E9B/0x7D2F41 semantics_
+   verified、0x7C8B3D/0x7C8E17 batch 001 crt_runtime_
+   verified）——重写 gamemd 时用等价导入声明（version.lib/
+   ws2_32/imm32）与运行时异常代替。
+3. gamemd_replication_discipline：MSVC6 CRT 标准设施，
+   按商业库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified ×11（全机器码读完 + IAT 槽
+内容解引用 + 目标交叉；跳板函数名来自 Ghidra 符号/ordinal）。
+
+四、跨批次闭合
+------------
+★batch 001 / TSV:0x7C8B3D + 0x7C8E17：CRT 释放/分配器——
+  ~exception 析构目标 0x7D2F41 的 call 目标 + 构造器
+  0x7CAACB 的分配调用。
+★TSV:0x7D2E9B + 0x7D2F41（semantics_verified）：构造辅助/
+  析构辅助——0x7CAACB 的挂靠 + ~exception 三跳板目标。
+★IAT 全槽解引用（_iat_names_1237.py）：0x7E1518=VerQuery
+  ValueA hint10、0x7E1520=GetFileVersionInfoA hint0、
+  0x7E151C=GetFileVersionInfoSizeA hint1、0x7E1564=
+  ordinal 115(WSAStartup)、0x7E1568=ordinal 1111、
+  0x7E10C4=ImmGetCompositionStringA hint27——七个跳板
+  逐一实锤（另解出邻槽 ImageList_* 五件/DirectDrawCreate/
+  ImmSetOpenStatus 等）。
+★调用者（ranking uc=1）：0x7C89E0/6/EC ← 版本查询用户、
+  0x7C89C2/8 ← ws2_32 用户、0x7CAACB/0x7C8A34/0x7C8A22 ←
+  CRT 异常/Imm 用户——均为后续批次候选。
+
+五、状态
+-------
+crt_runtime_verified ×11（VerQueryValueA/GetFileVersionInfoA/
+GetFileVersionInfoSizeA/WSAStartup ordinal115/EnumProtocolsA
+ordinal1111 五跳板 + ImmGetCompositionStringA/ImmGetContext
+二跳板 + 0x7CAACB 构造器 + ~exception 三跳板——均全机器码
+读完 + IAT 槽内容解引用 + 目标交叉）。TSV 新增十 一行。
+★本批实锤：①IAT 槽磁盘内容 = hint/name RVA 或 ordinal
+  （0x7E1564=115=WSAStartup 按序号导入）；②0x7CAACB =
+  构造辅助 + 本类虚表 0x7F95DC 覆盖的两段式构造；③~exception
+  三跳板 = 同一析构序列 0x7D2F41 的 3 个别名入口。
+相邻待续：ImageList_* 五跳板（0x7C89F2/F8/FE/0x7C8A04/0A）
+与 DirectDrawCreate（0x7C89D4）等 IAT 邻槽按池序推进。
+依赖模型：无（归档不落 C++）。
+承前：batch 1236 已完（CRT/runtime 十二连，commit db2f740）。
