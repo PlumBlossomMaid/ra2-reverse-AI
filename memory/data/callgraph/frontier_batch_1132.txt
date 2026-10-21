@@ -1,0 +1,156 @@
+frontier batch 1132 —— MSVC6 CRT 字符串按分隔符集拆分器 0x7CE06E（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CE06E（204B,
+uc=1, callers=1 探针实测 0x7CDFAA 唯一宿主）。TSV 无既有
+行。TARGET = 0x007CE06E。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CE06E 行。
+
+一、链语义（disasm 全 204B + 常量串取证 + 四依赖交叉，
+0x7CE06E-0x7CE139）
+--------------------------------------------------------------
+签名（实测）：cdecl 2 参（param1=目的缓冲 @[ebp+8]、
+param2=源串 @[ebp+0xC]），返回 0=成功 / -1=失败。
+
+★常量串（探针 PE 实锤）：[0x7F97E8] = "_.,"（0x5F 0x2E
+  0x2C 00）——分隔符集（下划线/点/逗号）。
+
+主体（0x7CE06E-0x7CE139）：
+007ce06e  push ebp/mov ebp,esp/push ebx,esi,edi
+007ce074  mov edi,[ebp+8]                        ; ★param1 目的缓冲
+007ce077  push 0x88/push 0/push edi
+007ce07f  call 0x7D75E0                          ; ★★_memset（batch 028）
+                                                  ;   清 0x88 字节
+007ce084  mov esi,[ebp+0xC]/add esp,0xC
+007ce08a  mov al,[esi]/test al,al/je 0x7CE0AC    ; ★源串空 → 返回 0
+; → 前导 '.' 特判（0x7CE090）：
+007ce090  cmp al,0x2E/jne 0x7CE0B3              ; ★首字节 0x2E('.')
+007ce092  cmp byte[esi+1],0/lea eax,[esi+1]/je 0x7CE0B3 ; ★第二字节 NUL?
+007ce09d  add edi,0x80/push eax/push edi
+007ce0a5  call 0x7D4BF0                          ; ★★字符串拷贝（batch
+                                                  ;   008）→ +0x80 槽
+007ce0ac  xor eax,eax/jmp 0x7CE135              ; ★返回 0
+; → 主循环（0x7CE0B3 计数 0 起始）：
+007ce0b3  and dword[ebp+0xC],0                  ; ★拆分计数=0
+007ce0b7  push 0x7F97E8/push esi
+007ce0bd  call 0x7CD790                          ; ★★字符集位掩码匹配
+                                                  ;   计数器（batch 849，
+                                                  ;   strcspn 语义——查
+                                                  ;   "_.," 首个命中位）
+007ce0c2  test eax,eax/je 0x7CE132              ; 查询失败 → -1
+007ce0c8  cmp [ebp+0xC],0/mov bl,[eax+esi]/lea edi,[eax+esi]
+; → 计数 0 → 槽 0（0x7CE0D2）：
+007ce0d2  mov bl,[eax+esi]/lea edi,[eax+esi]     ; ★命中字符+段尾指针
+007ce0d4  cmp eax,0x40/jge 0x7CE132             ; ★段长上限 0x40 → 失败
+007ce0d9  cmp bl,0x2E/je 0x7CE132               ; ★段尾是 '.' → 失败
+007ce0de  push eax/push esi/push [ebp+8]
+007ce0e3  jmp 0x7CE119                          ; → 拷入 +0x00 槽
+; → 计数 1 → 槽 1（0x7CE0E5）：
+007ce0e5  cmp [ebp+0xC],1/jne 0x7CE0FF
+007ce0eb  cmp eax,0x40/jge 0x7CE132             ; ★段长上限 0x40
+007ce0f0  cmp bl,0x5F/je 0x7CE132               ; ★段尾是 '_' → 失败
+007ce0f5  push eax/mov eax,[ebp+8]/push esi/add eax,0x40
+007ce0fd  jmp 0x7CE118                          ; → 拷入 +0x40 槽
+; → 计数 2 → 槽 2（0x7CE0FF）：
+007ce0ff  cmp [ebp+0xC],2/jne 0x7CE132
+007ce105  test bl,bl/je 0x7CE10E                ; 段尾 NUL → 允许
+007ce109  cmp bl,0x2C/jne 0x7CE132              ; ★段尾是 ',' → 允许
+007ce10e  push eax/mov eax,[ebp+8]/push esi/add eax,0x80
+007ce118  push eax
+007ce119  call 0x7C91D0                          ; ★★_strncpy（batch 003）
+                                                  ;   拷入对应槽
+007ce11e  add esp,0xC
+007ce121  cmp bl,0x2C/je 0x7CE0AC               ; 段尾 ',' → 完成返 0
+007ce126  test bl,bl/je 0x7CE0AC                ; 段尾 NUL → 完成返 0
+007ce12a  inc [ebp+0xC]/lea esi,[edi+1]         ; ★计数++ 段尾+1 续查
+007ce130  jmp 0x7CE0B7
+007ce132  or eax,-1                              ; ★失败返 -1
+007ce135  pop 族/leave/ret
+
+★语义：**MSVC6 CRT 字符串按分隔符集拆分器（推断名）**——
+cdecl 2 参（目的缓冲/源串）：
+  ① 目的缓冲先 _memset 清 0x88 字节（3 槽 × 0x40 + 边界）；
+  ② 前导 '.' 且第二字节非 NUL → 直接拷到 +0x80 槽；源串空
+     → 返回 0；
+  ③ 主循环：0x7CD790（strcspn 语义查 "_.," 分隔符集首个命
+     中位）→ 段长上限 0x40 → 计数 0/1/2 分派拷入 [param1+
+     0x00/+0x40/+0x80] 三槽（0x7C91D0 _strncpy）；
+  ④ 段尾判定：计数 0 拒绝 '.'、计数 1 拒绝 '_'、计数 2 允
+     许 NUL/','；命中 ',' 或 NUL → 完成返回 0；
+  ⑤ 段长超限/非法段尾 → 返回 -1。
+  = 逗号/点/下划线分隔的三字段解析器（拆 3 段定长槽）。
+
+★调用点（探针 E8 实测 1 处 0x7CDFAA）：前邻宿主 0x7CDFxx
+  区（batch 849 登记 0x7CD790 时已把本函数列为三宿主之一
+  ——0x7CE0BD 调用点细节交叉记录）。
+
+★E8 被调者：0x7D75E0（batch 028 _memset）+ 0x7C91D0
+  （batch 003 _strncpy）+ 0x7D4BF0（batch 008 字符串拷贝）+
+  0x7CD790（batch 849 字符集位掩码匹配计数器 strcspn 语义）
+  ——四个依赖全部已登记。
+
+★原版怪癖（照抄）：
+  ① 分隔符集 "_.," 常量串 [0x7F97E8]（下划线/点/逗号——
+     Windows 文件名风格三段式解析：作者/标题/扩展名类）；
+  ② 前导 '.' 特判只拷 +0x80 槽（第 3 槽）返回 0——「.name」
+     式的隐含扩展处理；
+  ③ 计数 0/1/2 三态各定段尾判定（'.'/'_'/ 任意+','）——
+     三槽段尾规则不对称（仅末槽允许任意字符段）；
+  ④ 段长上限硬编码 0x40（64）逐槽一致；
+  ⑤ 段尾命中字符经 [eax+esi] 读取（0x7CD790 返回值作偏移）
+     ——跨调用偏移语义；
+  ⑥ 失败区分：查询失败（0x7CE132 返 -1）vs 查询成功但段尾
+     非法（同出口）——无错误码细分；段尾 ','/NUL 与非法共
+     用 eax 判定链（test/je/cmp/jne）紧凑落法。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 字符串设施按商
+业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CE06E = MSVC6 静态 CRT 字符串拆分器——0x7C-0x7D
+   = MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）
+   ；四个 E8 被调者全部是已登记 CRT 函数（_memset/_strncpy/
+   字符串拷贝/strcspn 族）+ 分隔符集常量串 = CRT 字符串解析
+   标准形态。
+2. 依赖：4 个已登记函数——重写 gamemd 时用等价 std::strtok/
+   string_view 解析运行时代替。
+3. gamemd_replication_discipline：MSVC6 CRT 字符串设施，重
+   写时用等价运行时代替，逐字节复刻无意义——按商业库纪
+   律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 204B + 常量串取证 + 四依赖
+交叉；函数名「字符串按分隔符集拆分器」为推断交叉标注——
+三槽/段尾判定/段长上限由代码实测）。
+
+四、跨批次闭合
+------------
+★batch 028：0x7D75E0 _memset——本批 0x7CE07F 清缓冲交叉
+  （8 callers 之一）。
+★batch 003：0x7C91D0 _strncpy——本批 0x7CE119 三段拷入交叉
+  （161 callers 高扇入）。
+★batch 008：0x7D4BF0 字符串拷贝——本批 0x7CE0A5 前导 '.' 
+  拷入交叉。
+★batch 849：0x7CD790 字符集位掩码匹配计数器（strcspn 语
+  义）——本批 0x7CE0BD 调用交叉（本函数正是 batch 849 登记
+  时列出的三宿主之一，双向实锤）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CE06E：MSVC6 CRT 字符串按分隔符集
+拆分器归档；全 204B + 常量串取证 + 四依赖交叉；不写 C++
+模型不做 golden——CRT 字符串设施商业库层；函数名「字符串
+按分隔符集拆分器」为推断交叉标注——三槽/段尾判定/段长上
+限由代码实测）。TSV 新增 0x007CE06E 行。
+
+★本批实锤：分隔符集 "_.," 三字段拆分器——0x7CD790
+  （strcspn）定位段尾 + 0x7C91D0（_strncpy）拷入 0x40 三段
+  槽 + 段尾不对称判定（'.'/'_'/NUL+','）——CRT 字符串解析
+  标准形态，四依赖全部已登记（batch 849 宿主交叉双向实锤）。
+相邻待续：batch 1133 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7D57FE(202B)/0x7D29B2(194B)/0x7CDE75
+(185B, callers=2)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1131 已完（Westwood 缓冲分配器 0x7C2180，
+commit 2743a3e）。
