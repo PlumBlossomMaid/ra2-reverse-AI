@@ -1,0 +1,140 @@
+frontier batch 1158 —— Westwood 16 位像素查表色彩展开器 0x7E0170（归档，0x7E 区混入样本 #18）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7E0170（98B,
+uc=1, callers=3 探针实测 0x7E022A/0x7E0250/0x7E02B5，均在
+0x7E02xx 像素族宿主）。TSV 无既有行。TARGET = 0x007E0170。
+C++ 模型：无（见「三态判定」）。TSV：新增 0x007E0170 行。
+
+一、链语义（disasm 全 98B + 查表全局引用分布 + 三调用点，
+0x7E0170-0x7E01D1）
+--------------------------------------------------------------
+签名（推断）：cdecl 3 参（[ebp+8]=源像素流、[ebp+0xC]=
+目标缓冲、[ebp+0x10]=长度），16 位像素 → 32 位查表展开。
+
+主体（0x7E0170-0x7E01D1）：
+007e0170  push ebp/mov ebp,esp/pushal          ; ★★全寄存器保存（8 个）
+007e0174  mov ecx,[ebp+0x10]/sub ecx,2/shr ecx,1 ; 元素数=(长度-2)>>1
+007e017c  mov esi,[ebp+8]/mov edi,[ebp+0xc]    ; 源/目标
+; → 主循环（0x7E0182，每元素 2B→4B）：
+007e0182  mov eax,[esi]/lea esi,[esi+2]        ; ★读 16 位像素（esi 步进 2）
+007e0187  mov edx,eax/mov ebx,eax
+007e018b  and edx,0xffff                       ; ★低 8 位
+007e0191  ror ebx,8
+007e0194  mov bl,byte[edx+0xa8f91c]            ; ★★查表1（低字节 → 表值）
+007e019a  mov bh,ah                            ; ★高字节暂存 bh
+007e019c  and eax,0xffff00
+007e01a1  ror ebx,8
+007e01a4  shr eax,8
+007e01a7  mov bh,byte[eax+0xa8f91c]            ; ★★查表2（高字节 → 表值）
+007e01ad  ror ebx,0x10
+007e01b0  mov [edi],ebx/add edi,4              ; ★写 32 位（2B 输入 → 4B）
+007e01b5  dec ecx/jne 0x7e0182                ; 循环
+; → 尾部（0x7E01B8，最后一个 16 位）：
+007e01b8  xor eax,eax/mov ax,word[esi]         ; 读尾 16 位
+007e01bd  mov [edi],al/inc edi                 ; 写低字节
+007e01c0  mov al,byte[eax+0xa8f91c]/mov [edi],al/inc edi ; ★查表写
+007e01c9  mov [edi],ah/inc edi                 ; 写高字节
+007e01cc  mov byte[edi],0                      ; ★★NUL 终止
+007e01cf  popal/leave/ret
+
+★语义：**Westwood 16 位像素查表色彩展开器（推断名）**——
+cdecl 3 参：
+  ① 主循环逐 16 位像素：低字节查 [0xA8F91C] 表 → bl、
+     高字节查同表 → bh，组合后写 32 位（2B 输入 → 4B 输
+     出，1:2 展开）；
+  ② 尾部最后一个 16 位：写低字节 + 查表写 + 写高字节 +
+     NUL 终止（3 字节 + 0）。
+  = 调色板/索引色 → RGB 展开（[0xA8F91C] 为 256 项色彩转
+  换表，低/高字节各自索引）。
+
+★调用点（探针 E8 实测 3 处）：0x7E022A/0x7E0250/0x7E02B5
+  ——0x7E02xx 像素族宿主（0x7E0222 起：`jne 0x7e0238` 门控
+  + `push [ebp-0xc]/push [ebp+8]` 三参 → call 0x7E0170 →
+  `add esp,0xc/mov esi,[ebp+0x14]` 后续）——与 batch
+  1119-1128 MMX/标量像素合成四兄弟族（0x7DF280/0x7DF640
+  等）同 0x7DF-0x7E02 像素渲染域。
+
+★E8 被调者：**零子调用**（全 98B 纯查表 + 字节组合，无
+  call 无 CRT 依赖）。
+
+★查表全局 [0xA8F91C]（探针 PE 实锤，16 处引用）：
+  0x538C71/0x538CF1/0x538D50/0x538F80/0x538FFF（主代码区
+  0x538xxx 渲染域——Westwood 消费）+ 0x7E0054/0x7E0067/
+  0x7E0083/0x7E00F4/0x7E0107/0x7E012D/0x7E0196/0x7E01A9/
+  0x7E01C2/0x7E01EE/0x7E036B（0x7E 区同族）——**表由渲染
+  域共享，非 CRT 数据**。
+
+★原版怪癖（照抄）：
+  ① pushal/popal 全寄存器保存（8 个寄存器全压）——函数
+     无栈帧变量纯寄存器流；
+  ② 元素数 (长度-2)>>1——主循环处理 (len-2)/2 个 16 位，
+     尾部单列最后一个（长度奇偶不对称语义照抄）；
+  ③ esi 步进 2 但 mov eax,[esi] 读 4 字节（超读 2 字节到
+     下一元素区）——照抄；
+  ④ 低字节查表 + 高字节查表**分别索引**（bl/bh 独立查
+     [0xA8F91C]）——每 16 位像素查 2 次表；
+  ⑤ ror ebx,8/ror 0x10 三次旋转组装（低表值→bl、高表值
+     →bh 后 ror 归位）——旋转惯用；
+  ⑥ 尾部 3 字节 + NUL（低字节原样 + 查表值 + 高字节原样
+     + 0）——与主循环 4 字节格式不对称。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：Westwood 自有代码混
+入 0x7E 区样本，宿主域在像素渲染族，非 CRT 复刻目标）。
+
+三、三态判定（为何 semantics_verified 而非 crt_runtime_verified）
+----------------------------------------------------------------
+1. 归属：0x7E0170 = **Westwood 自有代码混入 0x7E 区样本
+   （混入样本链 #18）**，非 MSVC6 静态 CRT——证据：
+   a) 位置在 0x7E 区（0x7DF-0x7E02 像素渲染域——batch
+      1119-1128 MMX/标量像素合成四兄弟族同区）；
+   b) pushal/popal 全寄存器 + 无栈帧变量——Westwood 手写
+      汇编风格（batch westwood_handwritten_asm 27 样本族）；
+   c) 查表 [0xA8F91C] 16 处引用含主代码区 0x538xxx 5 处
+     （Westwood 渲染域消费）——表非 CRT 数据；
+   d) 零子调用 + 2B→4B 像素展开形态，MSVC6 CRT 无此类函
+     数（CRT 色彩处理都是查表 + 位运算但走 CRT 全局）。
+2. 方法论文档依据：batch 1116 修正后 0x7E1xxx 槽静态值不
+   作语义证据；本批判定不依赖槽表，靠反汇编主体 + 查表
+   引用分布 + 宿主域归属三重实锤（0x7E0170 是代码非槽表
+   静态值）。
+3. gamemd_replication_discipline：Westwood 自有代码混入
+   0x7E 区——重写时按宿主域语义（16 位像素查表色彩展开）
+   复刻；0x7E 区整体按运行时层归档，本函数属混入样本需
+   标注归属。
+→ 状态：semantics_verified（全 98B + 查表分布 + 三调用点；
+函数名「16 位像素查表色彩展开器」由 2B→4B 展开 + 双查表
++ 尾部 3 字节格式交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1119-1128：MMX/标量像素合成四兄弟族（0x7DF280/
+  0x7DF640/0x7DF3C2/0x7DF500 + 0x7DEEFA/0x7DEFD7/0x7DF0B4/
+  0x7DF191）——同 0x7DF-0x7E02 像素渲染域，本批 0x7E0170
+  紧随其后（渲染调度全景扩展）。
+★batch 1116：0x7E1xxx 槽静态值方法论修正——本批 0x7E0170
+  为可执行代码（pushal 开头 + E8 callers），非槽表数据，
+  判定不受修正影响。
+★0x7C/0x7E 区混入样本链：#10-#17（0x7C6620/0x7C3750/
+  0x7C2180/0x7C3860/0x7C61CF/0x7C06B0/0x7C19F0）→ 本批
+  #18 0x7E0170（0x7E 区首件混入样本）。
+
+五、状态
+-------
+semantics_verified（0x7E0170：Westwood 16 位像素查表色彩展
+开器归档；全 98B + 查表分布 + 三调用点；不写 C++ 模型不做
+golden——0x7E 区混入样本 #18，宿主域为像素渲染族；函数名
+由 2B→4B 展开 + 双查表 + 尾部 3 字节格式交叉标注）。TSV
+新增 0x007E0170 行。
+
+★本批实锤：0x7E 区首件混入样本——逐 16 位像素双查表
+  [0xA8F91C] 展开 2B→4B + 尾部 3 字节+NUL；pushal 手写汇
+  编风格 + 表由主代码区 0x538xxx 渲染域共享，非 CRT。
+相邻待续：batch 1159 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CEC26(97B)/0x7CC447(93B)/0x7D453C
+(90B, callers=2)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1157 已完（MSVC6 CRT x87 double 整数判定助手
+0x7CF64C，commit 8becfe7）。
