@@ -1,0 +1,154 @@
+frontier batch 1222 —— MSVC6 CRT _output 安全变体转发壳 0x7CCA19（归档，5 参哨兵透传）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CCA19（27B,
+uc=1, callers=4 探针实测 0x77A50A/0x77A528/0x77A6AD/
+0x77A6D8）。TSV 无既有行。TARGET = 0x007CCA19。
+C++ 模型：无（见「三态判定」）。TSV：新增 0x007CCA19 行。
+
+一、链语义（disasm 全 27B + 核心交叉 + 4 调用点现场交叉，
+0x7CCA19-0x7CCA33）
+--------------------------------------------------------------
+签名（确认）：cdecl 变参转发壳（调用方压 buf/cap/fmt 等 3
+参 + 自身栈上第 4 参），本批补 0 哨兵后 4 参透传核心
+0x7CCA34，返回值=核心返回值。
+
+主体（0x7CCA19-0x7CCA33）：
+007cca19  push 0                           ; ★★哨兵第 5 参 =
+                                           ;   0（核心
+                                           ;   [ebp+0x18] 为 0
+                                           ;   → 输出 NULL 回
+                                           ;   退 [0x87C1E0]
+                                           ;   默认缓冲）
+007cca1b  push dword[esp+0x14]             ; ①透传（esp 逐次
+                                           ;   回退读原参）
+007cca1f  push dword[esp+0x14]             ; ②透传
+007cca23  push dword[esp+0x14]             ; ③透传
+007cca27  push dword[esp+0x14]             ; ④透传
+007cca2b  call 0x7cca34                    ; ★★TSV:1961 batch
+                                           ;   1117 _output/
+                                           ;   sprintf 格式化
+                                           ;   引擎（250B）
+007cca30  add esp, 0x14                    ; ★清 5 栈参
+007cca33  ret
+
+★栈透传推演（调用方 0x77A50A 前压 3 参 buf/cap/fmt，进入
+  时 [E+4]=buf、[E+8]=cap、[E+0xC]=fmt）：
+  push 0 → esp=E-4；①push [esp+0x14]=[E+0x10]（调用方栈上
+  第 4 项，形式参）→ esp=E-8；②[esp+0x14]=[E+0xC]=fmt →
+  esp=E-0xC；③[esp+0x14]=[E+8]=cap → esp=E-0x10；④
+  [esp+0x14]=[E+4]=buf → esp=E-0x14 → call。
+  核心视角：param1=buf、param2=cap、param3=fmt、
+  param4=调用方第 4 项、param5=0 哨兵。
+
+★语义：**MSVC6 CRT _output 安全变体转发壳（推断名——
+_output_s/_snprintf_s 内部：补 0 哨兵的第 5 参 = 输出缓冲
+NULL 许可标志）**——cdecl 转发：
+  ① push 0 哨兵（核心 [ebp+0x18]==0 → 走「输出 NULL 回退
+     [0x87C1E0] 默认缓冲」路径，TSV:1961 描述实测吻合）；
+  ② 4 次 push [esp+0x14] 透传（buf/cap/fmt/调用方第 4 项）
+     ——MSVC6 变参转发惯用（不回读寄存器，纯栈复制）；
+  ③ call 0x7CCA34（_output 引擎核心）；
+  ④ add esp,0x14 清 5 参。
+  = _output 引擎的公开安全入口壳（格式串+容量受限+溢出
+  截断语义由核心保障）。
+
+★调用点（探针 E8 实测 4 处——**全在 Westwood 主代码区
+  0x77A4xx-0x77A6xx，非 CRT 内部**）：
+  ① 0x77A50A：宿主 0x77A4xx（'#' 日志装配域）：mov [esp+
+     0x14],eax/lea eax,[esp+0x14]/push eax/call 0x7CD2CB
+     （★★格式指令派发相关 batch 1117 子函数链）→ lea
+     esi,[ebp+0x40]/add esp,8 → call 0x7B7040（★★宽串操
+     作）→ push ebx/push 0x84A168（★格式串）/lea ecx,
+     [esp+0x1c]/push 0x10（★容量 16）/push ecx（buf）→
+     call 0x7CCA19（★本批 3 参 buf/cap/fmt）→ lea edx,
+     [esp+0x24]/push edx/call 0x7C9BFD（★★同域串方法）
+     → 同型第二处（0x84A168 → 0x817F6C 格式串）；
+  ② 0x77A528：宿主同函数第二格式化（格式串换 0x817F6C）；
+  ③ 0x77A6AD：宿主 0x77A6xx（DebugLog '#' 链）：call
+     0x734E60（★★DebugLog(file,line) 调试宏）→ call
+     0x7B7600/call 0x7B6970（★对象方法）→ push
+     0x82083C/push 0x84A164/push 0x10/lea ecx,[esp+0x1c]/
+     push ecx → call 0x7CCA19（★本批）→ …
+  ④ 0x77A6D8：宿主同函数第三格式化（格式串 0x84A164 换）。
+  ——游戏侧日志/状态装配以「_output(buf,0x10,fmt) + 4 参」
+  形式调用本批壳（容量 16 字节受限格式化）。
+
+★E8 被调者（1 个，已登记）：0x7CCA34（★★TSV:1961
+  crt_runtime_verified——batch 1117 _output/sprintf 格式化
+  引擎 250B，'%' 指令/'#' 交替标志/转换字符分派/region
+  lock 0x13 门控，依赖 TSV:238/239 lock 对 + 0x7CCB2E 派
+  发器 + [0x87C590] ctype 表）。
+
+★全局：核心经哨兵 0 走 [0x87C1E0] 默认缓冲路径；本批零
+  全局（纯栈转发）。
+
+★原版怪癖（照抄）：
+  ① **第 5 参 0 哨兵**不是常规 4 参调用——核心 [ebp+0x18]
+     判 0 决定「输出 NULL → 默认缓冲」分支（TSV:1961 描述
+     的该分支唯一来源就是本批壳的 push 0）；
+  ② 透传用 4 次 `push dword[esp+0x14]`（esp 逐次回退 4 读
+     原参）——MSVC6 宏展开变参转发的标准形态（无寄存器
+     中转）；
+  ③ add esp,0x14 一次清 5 栈参（哨兵 1 + 透传 4）——与锁
+     壳家族 add esp 合并同款编译风格；
+  ④ 调用方容量固定 0x10（16 字节）——游戏侧日志串受限
+     16B（短格式串场景）；
+  ⑤ 壳在引擎外（核心 0x7CCA34 另有内部入口 0x7CCA2B？
+     ——探针显示核心唯一 E8 caller=0x7CCA2B 即本批自身，
+     完整闭合：核心只有壳这一个入口）；
+  ⑥ 4 调用点两两成对（0x77A50A/0x77A528 同函数双格式串、
+     0x77A6AD/0x77A6D8 同函数双格式串）——游戏代码对同
+     一对象反复受限格式化（状态/日志装配）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 格式化设
+施按商业库纪律归档；核心 batch 1117 已实证）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CCA19 = MSVC6 静态 CRT _output 安全变体转发壳
+   ——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；栈透传 + 0 哨兵 = CRT 变参转发标准形
+   态（核心 batch 1117 _output 引擎公开入口）。
+2. 依赖：0x7CCA34 已登记（TSV:1961）——重写 gamemd 时用
+   等价运行时（std::snprintf 语义）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 格式化设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 27B + 核心交叉 + 4 调用
+点现场交叉；函数名「_output 安全变体转发壳」由 push 0 哨
+兵 + 4 栈透传 + 核心 param5 分支交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1117 / TSV:1961：0x7CCA34 _output/sprintf 格式化引
+  擎——本批核心（param5==0 → [0x87C1E0] 默认缓冲分支的
+  唯一来源 = 本批 push 0；核心唯一 caller = 本批）。
+★batch 1116：方法论（[0x7E11C8]/[0x7E11CC] 槽运行时改写）
+  / [0x87C590] ctype 表——核心依赖在本批经壳触发。
+★调用点宿主（Westwood 主代码区 0x77A4xx/0x77A6xx，未登记
+  scan 池候选）——本批 4 现场；后续批次按池顺序处理。
+★0x7CD2CB（格式指令派发相关，batch 1117 子函数链）——
+  调用点①前接，同 _output 族。
+
+五、状态
+-------
+crt_runtime_verified（0x7CCA19：MSVC6 CRT _output 安全变体
+转发壳归档；全 27B + 核心交叉 + 4 调用点现场交叉；不写
+C++ 模型不做 golden——CRT 格式化设施商业库层；函数名由
+push 0 哨兵 + 4 栈透传 + 核心 param5 分支交叉标注）。TSV
+新增 0x007CCA19 行。
+
+★本批实锤：push 0 哨兵（核心 param5==0 → 输出 NULL 回退
+  [0x87C1E0] 默认缓冲）+ 4 次 push [esp+0x14] 栈透传 →
+  0x7CCA34（TSV:1961）+ add esp,0x14；4 调用点全在
+  Westwood 主代码区（0x77A4xx/0x77A6xx '#' 日志域，容量
+  0x10 受限格式化）；核心唯一入口=本批壳。
+相邻待续：batch 1223 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7C8AD3(27B, callers=4)/0x7D4767(26B,
+callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1221 已完（MSVC6 CRT 控制台字符读取加锁包装
+壳 0x7DD1D7，commit 26339bb）。
