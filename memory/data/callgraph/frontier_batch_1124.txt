@@ -1,0 +1,148 @@
+frontier batch 1124 —— MSVC6 CRT getwc 宽字符读 0x7DC291（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DC291（231B,
+uc=1, callers=1 探针实测 0x7DA5F9 唯一宿主）。TSV 无既有
+行。TARGET = 0x007DC291。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007DC291 行。
+
+一、链语义（disasm 全 231B + 探针交叉，0x7DC291-0x7DC377）
+--------------------------------------------------------------
+签名（实测）：cdecl 1 参（param1=FILE* stream @[esp+4]），
+返回读取的 16 位宽字符 / 0xFFFF（WEOF）。
+
+主体（0x7DC291-0x7DC377）：
+007dc291  push esi/mov esi,[esp+8]                 ; ★stream
+007dc296  mov eax,[esi+0xC]/test al,0x83/je 0x7DC371 ; ★标志位组 0x83
+                                              ;   （_IOBINARY 0x2|0x1|
+                                              ;   0x80?）→ 特殊返回
+007dc2a1  test al,0x40/jne 0x7DC371              ; ★标志 0x40 → WEOF
+007dc2a9  test al,2/je 0x7DC2B7
+007dc2ad  or al,0x20/mov [esi+0xC],eax/jmp 0x7DC371 ; ★置 _IOERROR(0x20)
+007dc2b7  or al,1/test ax,0x10C/mov [esi+0xC],eax ; ★置位+检查
+007dc2c0  jne 0x7DC2CB
+007dc2c2  push esi/call 0x7D7710/pop ecx          ; ★★batch 039 流状态初
+                                              ;   始化（buffered/unbuffered
+                                              ;   fallback）
+007dc2cb  mov eax,[esi+8]/mov [esi],eax          ; ★缓冲指针更新
+007dc2d0  push [esi+0x18]/push [esi+8]/push [esi+0x10]
+007dc2d9  call 0x7D07DF                           ; ★★batch 039 流槽校验+
+                                              ;   读分发（三参）
+007dc2de  add esp,0xC/mov [esi+4],eax            ; ★存读入量
+007dc2e4  test eax,eax/je 0x7DC360               ; 0 → EOF 路径
+007dc2e8  cmp eax,1/je 0x7DC360                   ; 1 → EOF 路径
+007dc2ed  cmp eax,-1/je 0x7DC360                  ; -1 → 错误路径
+; → 正常读入（0x7DC2F2 osfile 表查）：
+007dc2f2  mov edx,[esi+0xC]/test dl,0x82/jne 0x7DC331
+007dc2fa  mov ecx,[esi+0x10]                      ; ★fd
+007dc2fd  push edi/cmp ecx,-1/je 0x7DC31A
+007dc303  mov edi,ecx/sar edi,5/and ecx,0x1F      ; ★fd>>5 组索引
+007dc30b  mov edi,[edi*4+0xB78A80]                ; ★★osfile 组表（38 refs）
+007dc312  lea ecx,[ecx+ecx*8]/lea edi,[edi+ecx*4] ; ★36B/项
+007dc31a  mov edi,0x87C928                        ; ★fd=-1 兜底项
+007dc31f  mov cl,[edi+4]/pop edi                   ; ★[项+4] 标志字节
+007dc323  and cl,0x82/cmp cl,0x82/jne 0x7DC331
+007dc32b  or dh,0x20/mov [esi+0xC],edx            ; ★置 0x20 标志
+; → 缓冲块大小调整（0x7DC331）：
+007dc331  cmp [esi+0x18],0x200/jne 0x7DC34E      ; ★块大小==0x200
+007dc33a  mov ecx,[esi+0xC]/test cl,8/je 0x7DC34E
+007dc342  test ch,4/jne 0x7DC34E
+007dc347  mov [esi+0x18],0x1000                   ; ★0x200 → 0x1000 升级
+; → 读宽字（0x7DC34E）：
+007dc34e  mov ecx,[esi]/add eax,-2/mov [esi+4],eax ; ★游标+读入量-2
+007dc356  movzx eax,word[ecx]/add ecx,2/mov [esi],ecx ; ★★读 16 位宽字
+                                              ;   前移 2 字节
+007dc35e  pop esi/ret                            ; ★返回宽字
+; → EOF/错误路径（0x7DC360）：
+007dc360  neg eax/sbb eax,eax/and eax,0x10/add eax,0x10
+007dc36a  or [esi+0xC],eax/and [esi+4],0          ; ★置 _IOEOF(0x10)
+007dc371  mov eax,0xFFFF                          ; ★★返回 WEOF(0xFFFF)
+007dc376  pop esi/ret
+
+★语义：**MSVC6 CRT getwc（宽字符读，推断名）**——cdecl 1
+参 FILE*：
+  ① 标志校验：0x83（含 0x2/0x1/0x80）组与 0x40 命中直接返
+     WEOF(0xFFFF)；0x2 命中置 _IOERROR(0x20) 返 WEOF；
+  ② 置位 + 0x10C 检查：未置缓冲 → 调 0x7D7710（流状态初始
+     化）→ [esi+8]→[esi] 缓冲指针更新；
+  ③ 调 0x7D07DF（流槽校验+读分发）补读 → 0/1/-1 走 EOF/错
+     误路径（置 _IOEOF 0x10）；
+  ④ 正常读入：osfile 组表查（[0xB78A80] fd>>5 组 × 36B/项
+     [+4] 标志字节 0x82 判定）→ 置 0x20；
+  ⑤ 块大小 0x200 → 0x1000 升级（条件 cl&8 && !(ch&4)）；
+  ⑥ 读 16 位宽字、游标前移 2 字节、读入量 -2，返回宽字；
+  ⑦ 失败统一返回 WEOF(0xFFFF)。
+  = 宽字符流读取标准形态（WEOF 哨兵 + osfile 表 + 缓冲块调
+  整）。
+
+★调用点（探针 E8 实测 1 处 0x7DA5F9）：宿主 0x7DA5xx 区
+  （CRT 宽字符/多字节转换域——batch 1116 mbstowcs 同邻）。
+
+★E8 被调者：0x7D7710（batch 039 流状态初始化——本批
+  0x7DC2C3 交叉，6 callers）+ 0x7D07DF（batch 039 流槽校验
+  +读分发——本批 0x7DC2D9 交叉，6 callers）——全部已登记。
+
+★原版怪癖（照抄）：
+  ① 失败统一返回 WEOF(0xFFFF) 而非 -1——getwc 宽字符哨兵
+     语义（0x7DC371 mov eax,0xFFFF）；
+  ② 标志位检查组合怪异：test al,0x83（0x2|0x1|0x80 任一位
+     命中即返 WEOF）+ test al,0x40 独立检查——两组标志语义
+     未完全解明照抄；
+  ③ 0x2 命中置 _IOERROR(0x20) 而非直接读——写模式误读错误
+     处理；
+  ④ osfile 组表 [0xB78A80] fd>>5 组 + 36B/项（[+4] 标志字节
+     0x82=文本模式判定）——fd=-1 兜底项 [0x87C928]；
+  ⑤ 块大小 0x200 → 0x1000 升级条件（cl&8 && !(ch&4)）——
+     缓冲块翻倍逻辑；
+  ⑥ 读入量 -2 后存 [esi+4]（读 16 位宽字消耗 2 字节）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 流设施按商业库
+纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DC291 = MSVC6 静态 CRT getwc（宽字符读）——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）；WEOF(0xFFFF) 哨兵 + osfile 组表 [0xB78A80]
+   （38 refs）+ _IOEOF/_IOERROR 标志 + 16 位宽字读取 = CRT
+   宽字符流标准形态。
+2. 依赖：0x7D7710（流状态初始化）+ 0x7D07DF（读分发）均已
+   登记——重写 gamemd 时用等价 std::getwc 运行时代替。
+3. gamemd_replication_discipline：MSVC6 CRT 流设施，重写时
+   用等价运行时代替，逐字节复刻无意义——按商业库纪律归
+   档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 231B + 双依赖交叉；函数名
+「getwc（宽字符读）」由 WEOF 哨兵/16 位宽字读取/osfile 表
+实测交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 039：0x7D7710 流状态初始化 + 0x7D07DF 流槽校验+读分
+  发——本批双依赖交叉（各 6 callers 之一）。
+★batch 1113：0x7C9602 fwrite / ★batch 1123：0x7C94EB
+  fread——本批 getwc 同 CRT FILE 读写链（宽字符读与 fread
+  共享读分发 0x7D07DF）。
+★batch 1116：0x7CC309 mbstowcs——宽字符域同族（[0xB782B0]
+  locale 全局/宽字处理）。
+
+五、状态
+-------
+crt_runtime_verified（0x7DC291：MSVC6 CRT getwc 宽字符读归
+档；全 231B + 双依赖交叉；不写 C++ 模型不做 golden——CRT
+流设施商业库层；函数名「getwc（宽字符读）」由 WEOF 哨兵/
+16 位宽字读取/osfile 表实测交叉标注）。TSV 新增
+0x007DC291 行。
+
+★本批实锤：getwc 宽字符读——WEOF(0xFFFF) 哨兵 + 标志位组
+  校验 + 0x7D7710 流初始化 + 0x7D07DF 读分发 + osfile 组表
+  （36B/项 0x82 判定）+ 0x200→0x1000 块升级——CRT 宽字符流
+  标准形态，双依赖全已登记。
+相邻待续：batch 1125 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7DEEFA(221B, callers=1)/0x7DEFD7(221B,
+callers=1)/0x7DF0B4(221B, callers=1)——宿主 0x5FFA 区 6 参
+变体族，batch 1122 预告）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1123 已完（MSVC6 CRT fread 0x7C94EB，commit
+3e8e3e0）。
