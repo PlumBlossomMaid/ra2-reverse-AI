@@ -1,0 +1,129 @@
+frontier batch 1217 —— MSVC6 CRT __copysign 浮点符号搬运器 0x7D8EF5（归档，符号位掩码合成）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D8EF5（33B,
+uc=1, callers=1 探针实测 0x7DBDF0）。TSV 无既有行。
+TARGET = 0x007D8EF5。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D8EF5 行。
+
+一、链语义（disasm 全 33B + 调用宿主交叉，0x7D8EF5-0x7D8F15）
+--------------------------------------------------------------
+签名（确认）：cdecl 4 参（拼接 double 值参 x=[ebp+8]/[ebp+0xC]
+、double 值参 y=[ebp+0x10]/[ebp+0x14]），结果经 x87 st(0)
+返回（double）。
+
+主体（0x7D8EF5-0x7D8F15）：
+007d8ef5  push ebp / mov ebp, esp
+007d8ef8  push ecx / push ecx              ; 8 字节局部槽
+007d8efa  mov eax, [ebp+8]                 ; x 低半
+007d8efd  mov [ebp-8], eax                 ; 局部 = x 低半
+007d8f00  mov eax, [ebp+0x14]              ; y 高半（★符号位
+                                           ;   在这）
+007d8f03  xor eax, [ebp+0xc]               ; ^= x 高半 → 差
+                                           ;   异位（符号不同
+                                           ;   → 结果 hi bit31
+                                           ;   =1）
+007d8f06  and eax, 0x7fffffff              ; ★只留绝对值域
+                                           ;   （清符号位）
+007d8f0b  xor eax, [ebp+0x14]              ; ★^= y 高半 → 还
+                                           ;   原y符号位 = y
+                                           ;   符号 + x 绝对值
+007d8f0e  mov [ebp-4], eax                 ; 局部高半
+007d8f11  dd45f8  fld qword[ebp-8]         ; ★载入合成 double
+007d8f14  c9      leave
+007d8f15  c3      ret
+
+★语义：**MSVC6 CRT __copysign 浮点符号搬运器（推断名——
+x 的绝对值 + y 的符号）**——cdecl 4 参（两个 double 各占两
+个栈槽）：
+  result = (x & 0x7FFFFFFFFFFFFFFF) | (y & 0x8000000000000000)
+  实现方式（三 xor/and 消去式）：
+    ① 取 x 低半原样存局部；
+    ② hi = (y.hi ^ x.hi) & 0x7FFFFFFF ^ y.hi
+       = (x.hi & 0x7FFFFFFF) | (y.hi & 0x80000000)
+    → 高半由「x 的指数/尾数高位」+「y 的符号位」合成；
+  ③ fld 合成 64 位 double 返回。
+  = CRT 标准 __copysign(x,y)（C99 copysign）：符号取 y、幅
+  值取 x，负数/NaN 全保（位运算级精确）。
+
+★调用点（探针 E8 实测 1 处 0x7DBDF0）：宿主 0x7DBD 区（CRT
+  数学函数，未登记）：cmp eax,0xa00/jle 0x7DBE19（★阈值
+  2560）/fld qword[ebp-0xC]/push edi/push ecx×2/fstp
+  qword[esp]（★栈传 x）/fld qword[0x87D550]（★第二参常
+  量）/fstp qword[esp] → call 0x7D8EF5（★本批）→ pop ecx×2
+  /fstp qword[esp]/fild dword[ebp+0x10]（★整数转 double）
+  /fstp qword[ebp-0xC]/fld qword[ebp-0xC]……——数学函数把常
+  量 [0x87D550] 的符号搬到中间结果上（保持结果符号与输入
+  一致，推断为 pow/exp 类的符号修正步骤——宿主未登记，
+  语义不臆断）。
+
+★E8 被调者：零 E8（纯位运算 + 一次 fld）。
+
+★全局：零（纯栈 + 位运算）。
+
+★原版怪癖（照抄）：
+  ① **三 xor/and 消去式**合成符号位（不是掩码 or）——
+     `((y^x)&0x7FFFFFFF)^y` 数学等价于 `(x&0x7FFFFFFF)|
+     (y&0x80000000)`，编译器/ CRT 作者用异或差分写法（省
+     一个常量寄存器）；
+  ② x 低半原样搬运（mov [ebp-8],eax）不参与符号运算——
+     浮点符号在 IEEE754 double 的 **高半 bits 31**，低半
+     全属幅值；
+  ③ 只建一个 8 字节局部对（push ecx×2 而不是 sub esp,8）
+     ——VC6 用两次 push 开槽惯用；
+  ④ 结果经 fld qword 走 x87 返回（非 eax/edx 对）——浮点
+     返回值 ABI；
+  ⑤ leave+ret（无栈参清理）——cdecl 由调用方 add esp，
+     宿主 pop ecx×2 只清 8 字节……（宿主传 2 个 double=
+     16 字节，实际清理由后续 add esp）；
+  ⑥ 常量 [0x87D550] 作为第二参（符号源）——CRT 数学库用
+     固定常量携带符号进入本函数（典型用法 ±1.0）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 浮点位运
+算设施按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D8EF5 = MSVC6 静态 CRT 数学库位运算辅助——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）；符号位掩码合成 + fld 返回 = CRT __copysign
+   标准形态（调用宿主在 CRT 数学函数区 0x7D8E/0x7DBD）。
+2. 依赖：零 E8 函数依赖（纯位运算）；宿主 0x7DBD 区未登记
+   （如实标注，按池顺序后续处理）——重写 gamemd 时用等
+   价运行时（std::copysign）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 数学设施，重
+   写时用等价运行时代替，逐字节复刻无意义——按商业库纪
+   律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 33B + 调用宿主交叉；函数
+名 __copysign 由「x 幅值 + y 符号」三 xor/and 合成语义交
+叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1210：0x7C91A5 x87 整数性+奇偶性分级器——同为 CRT
+  浮点位级辅助（本批为符号位搬运，彼批为整数性判定）。
+★batch 1214：0x7DBC05 matherr 函数名查表器 + 0x7FA350 区
+  math 错误字符串——同 CRT 数学库域（0x7D8E/0x7DBD/0x7FA3
+  三段）。
+★宿主 0x7DBD 区大函数（未登记 scan 池候选）——本批调用
+  现场；后续批次按池顺序处理。
+
+五、状态
+-------
+crt_runtime_verified（0x7D8EF5：MSVC6 CRT __copysign 浮点符
+号搬运器归档；全 33B + 调用宿主交叉；不写 C++ 模型不做
+golden——CRT 数学库商业库层；函数名由「x 幅值 + y 符号」
+三 xor/and 合成语义交叉标注）。TSV 新增 0x007D8EF5 行。
+
+★本批实锤：__copysign(x,y)——hi=(y^x)&0x7FFFFFFF^y 合成符
+  号位、x 低半原样搬运、fld qword 返回；唯一调用点
+  0x7DBDF0 在 CRT 数学函数内（常量 [0x87D550] 作符号源）；
+  零 E8 纯位运算 leaf。
+相邻待续：batch 1218 按 _scan_pending_7c.py 取池内下一未登
+记项（uc=1：0x7CBC11(33B, callers=1)/0x7C7350(33B,
+callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1216 已完（MSVC6 CRT 定长视图字符串构造器
+0x7CA971，commit 098937c）。
