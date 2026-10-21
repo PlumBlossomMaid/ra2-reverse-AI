@@ -1,0 +1,144 @@
+frontier batch 1141 —— MSVC6 CRT FPE 检查-转换包装器 0x7DB54E（归档，同族第四件）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DB54E（152B,
+uc=1, callers=1 探针实测 0x7D8FFD 唯一宿主）。TSV 无既有
+行。TARGET = 0x007DB54E。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007DB54E 行。
+
+一、链语义（disasm 全 152B + 六依赖交叉，0x7DB54E-0x7DB5E5）
+--------------------------------------------------------------
+签名（推断）：cdecl 5 参（[ebp+8]=目标缓冲、[ebp+0xC]=源
+指针、[ebp+0x10]/[ebp+0x18]=双 double 值、[ebp+0x20]=处
+理器/回调），返回经 FPU 栈传递的 double 结果 / -1 错误码。
+
+主体（0x7DB54E-0x7DB5E5）：
+007db54e  push ebp/mov ebp,esp/sub esp,0x58
+007db554  push [ebp+0x20]/lea eax,[ebp+0x18]/push eax/push [ebp+8]
+007db55e  call 0x7DB93E                        ; ★★batch 872 掩码清除+
+                                              ;   double 规范化器（检
+                                              ;   查前置）
+007db563  add esp,0xC/test eax,eax/jne 0x7DB58C ; ★返回 1（掩码已
+                                              ;   清）→ 跳过转换
+; → 检查失败（0x7DB56A，结构转换路径）：
+007db56a  lea eax,[ebp+0x18]/push eax/and [ebp-0x20],0xFFFFFFFE
+007db572  lea eax,[ebp+0x10]/push eax/lea eax,[ebp-0x20]/push eax
+007db579  push [ebp+0xC]/push [ebp+8]/lea eax,[ebp-0x58]/push eax
+007db584  call 0x7DB68B                        ; ★★batch 871 浮点异常
+                                              ;   状态结构转换器
+007db589  add esp,0x18
+; → 收尾分发（0x7DB58C）：
+007db58c  push [ebp+8]/call 0x7DBC2A           ; ★★batch 1065 FPE 状
+                                              ;   态码映射器
+007db594  cmp [0x87D700],0/pop ecx             ; ★★FPE 门控全局
+007db59c  jne 0x7DB5CA                          ; 门开 → 直转错误
+007db59e  test eax,eax/je 0x7DB5CA             ; 映射失败 → 错误
+; → 正常路径（0x7DB5A2）：
+007db5a2  push [ebp+0x20]/fld [ebp+0x18]/push ecx/push ecx/fstp [esp]
+007db5b4  fld [ebp+0x10]/push ecx/push ecx/fstp [esp]/push [ebp+0xC]/
+          push eax
+007db5c0  call 0x7DBB55                        ; ★★batch 531 宽字符浮
+                                              ;   点解析器（FPU 返
+                                              ;   double）
+007db5c5  add esp,0x24/leave/ret               ; ★返 double（x87 栈）
+; → 错误路径（0x7DB5CA）：
+007db5ca  push eax/call 0x7DBBDD               ; ★★batch 552 errno 设
+                                              ;   置器（EDOM/ERANGE）
+007db5d0  mov [esp],0xFFFF
+007db5d7  push [ebp+0x20]/call 0x7DBC77        ; ★★batch 192 _controlfp
+                                              ;   （FPU 控制字设置）
+007db5df  fld [ebp+0x18]/pop ecx/pop ecx/leave/ret ; ★返 double 兜底
+
+★语义：**MSVC6 CRT FPE 检查-转换包装器（推断名——同族第四
+件）**——cdecl 5 参：
+  ① 0x7DB93E（batch 872）检查前置：掩码清除 + double 规范
+     化，返回 1（已清）→ 跳过转换；
+  ② 检查失败 → 0x7DB68B（batch 871）结构转换：标志 → 
+     NTSTATUS + 位域组装；
+  ③ 0x7DBC2A（batch 1065）状态码映射：标志字节 → 状态码
+     1-5；
+  ④ [0x87D700] 门控 + 映射返回值双判：门开或映射失败 → 
+     错误路径；
+  ⑤ 正常路径：0x7DBB55（batch 531）宽字符浮点解析，FPU 返
+     double；
+  ⑥ 错误路径：0x7DBBDD（batch 552）设 errno + 0xFFFF 哨兵
+     + 0x7DBC77（batch 192）_controlfp 收尾，FPU 返 double
+     兜底。
+  = CRT FPE 包装链标准四段式（检查→转换→映射→解析/收尾）。
+
+★调用点（探针 E8 实测 1 处 0x7D8FFD）：宿主 0x7D8Fxx 区
+  （CRT __CI* 浮点包装域——batch 1049 FPE 分发器 0x7D8C6B
+  同链）。
+
+★E8 被调者：0x7DB93E（batch 872）+ 0x7DB68B（batch 871）+
+  0x7DBC2A（batch 1065/1075）+ 0x7DBB55（batch 531）+
+  0x7DBBDD（batch 552）+ 0x7DBC77（batch 192）——**六个依
+  赖全部已登记**。
+
+★原版怪癖（照抄）：
+  ① 检查-转换两段式：0x7DB93E 返回 1 跳过 0x7DB68B——同族
+     前三件（batch 1065/1070/872 宿主）统一模板；
+  ② [0x87D700] 门控 + 映射返回值双条件分派——门开直接跳
+     错误路径（不试解析）；
+  ③ 双 double（[ebp+0x18]/[ebp+0x10]）经 FPU 栈传参（fld/
+     fstp [esp] 压栈）——x87 栈返值约定；
+  ④ 错误路径 0xFFFF 硬编码哨兵（mov [esp],0xFFFF）+ errno 分
+     派 + _controlfp 收尾三件套；
+  ⑤ 栈帧 0x58 字节（结构转换目标缓冲）+ [ebp-0x20] 局部标
+     志初值 0xFFFFFFFE——0x7DB68B 六参中标志字节预置；
+  ⑥ 正常/错误两路径都经 FPU 返 double（fld [ebp+0x18] 兜底
+     值）——调用方 x87 取栈顶。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT FPE 设施按商业
+库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DB54E = MSVC6 静态 CRT FPE 检查-转换包装器——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）；六依赖全部已登记 CRT FPE 链（batch 192/531/
+   552/871/872/1065）+ 0xFFFF 哨兵 + [0x87D700] 门控 = CRT
+   浮点包装标准形态。
+2. 依赖：6 个已登记函数——重写 gamemd 时用等价 CRT FPE 包
+   装语义（fpieee 结构转换链）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 浮点库设施，重
+   写时用等价运行时代替，逐字节复刻无意义——按商业库纪
+   律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 152B + 六依赖交叉；函数名
+「FPE 检查-转换包装器（同族第四件）」由检查-转换-映射-解
+析四段链实测交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 872：0x7DB93E 掩码清除+double 规范化器——本批检
+  查前置交叉（同族链第一段）。
+★batch 871：0x7DB68B 浮点异常状态结构转换器——本批检查失
+  败转换交叉（第二段）。
+★batch 1065/1075：0x7DBC2A FPE 状态码映射器——本批状态映
+  射交叉（第三段）。
+★batch 531：0x7DBB55 宽字符浮点解析器——本批正常路径解
+  析交叉（第四段）。
+★batch 552：0x7DBBDD errno 设置器 + ★batch 192：0x7DBC77
+  _controlfp——本批错误路径收尾交叉。
+★batch 1065/1070：0x7DB5E6/0x7DB4EE 同族前三件——本批第
+  四件，FPE 包装族全景扩展。
+
+五、状态
+-------
+crt_runtime_verified（0x7DB54E：MSVC6 CRT FPE 检查-转换包
+装器归档；全 152B + 六依赖交叉；不写 C++ 模型不做 golden
+——CRT 浮点库商业库层；函数名「FPE 检查-转换包装器（同族
+第四件）」由检查-转换-映射-解析四段链实测交叉标注）。TSV
+新增 0x007DB54E 行。
+
+★本批实锤：FPE 包装链第四件——检查（872）→ 转换（871）→
+  映射（1065）→ 解析（531）/收尾（552+192）四段全链，六
+  依赖全部已登记，同族前三件 batch 1065/1070/872 闭环。
+相邻待续：batch 1142 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7DC378(151B)/0x7C61CF(148B)/0x7CAA05
+(148B, callers=4)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1140 已完（MSVC6 CRT x87 数学错误分派器
+0x7CF479，commit 66d2d78）。
