@@ -1,0 +1,148 @@
+frontier batch 1137 —— MSVC6 CRT double→80 位扩展精度浮点转换器 0x7D7E1C（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D7E1C（182B,
+uc=1, callers=1 探针实测 0x7D7DD0 唯一宿主）。TSV 无既有
+行。TARGET = 0x007D7E1C。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D7E1C 行。
+
+一、链语义（disasm 全 182B + 边界字节取证，0x7D7E1C-0x7D7ED1）
+--------------------------------------------------------------
+签名（实测）：cdecl 2 参（param1=输出 80 位扩展指针 @[ebp+8]、
+param2=输入 64 位 double 指针 @[ebp+0xC]），写入 10 字节扩展
+浮点，无返回值。
+
+主体（0x7D7E1C-0x7D7ED1）：
+007d7e1c  push ebp/mov ebp,esp/push ecx
+007d7e20  mov edx,[ebp+0xC]                    ; ★param2 = double 指针
+007d7e26  mov ax,word[edx+6]                   ; ★读高 16 位（符号+指数
+                                              ;   +尾数高 4 位）
+007d7e2a  mov edi,0x7FF
+007d7e2f  mov ecx,eax/and eax,0x8000           ; ★符号位（bit15）
+007d7e36  shr ecx,4/and ecx,edi                ; ★指数（11 位：bit14-4）
+007d7e3b  mov [ebp+0xC],eax                    ; ★保存符号
+007d7e3e  mov eax,[edx+4]/and eax,0xFFFFF      ; ★尾数高 20 位
+007d7e41  mov edx,[edx]                        ; ★尾数低 32 位
+007d7e43  movzx ebx,cx                         ; ★index = 指数
+007d7e46  mov esi,0x80000000
+007d7e50  test ebx,ebx/je 0x7D7E6A            ; ★指数 0 → 零/denormal
+007d7e57  cmp ebx,edi/je 0x7D7E63             ; ★指数 0x7FF → Inf/NaN
+007d7e5b  lea edi,[ecx+0x3C00]                 ; ★★正常：指数偏置
+                                              ;   +0x3C00=15360
+                                              ;   （16383-1023=15360
+                                              ;   ✓ 80 位/64 位偏置差）
+007d7e61  jmp 0x7D7E8B
+007d7e63  mov edi,0x7FFF                       ; ★Inf/NaN → 指数全 1
+007d7e68  jmp 0x7D7E8B
+007d7e6a  xor ebx,ebx/cmp eax,ebx/jne 0x7D7E82 ; 尾数高非 0 → denormal
+007d7e70  cmp edx,ebx/jne 0x7D7E82             ; 尾数低非 0 → denormal
+007d7e74  mov eax,[ebp+8]/mov [eax+4],ebx      ; ★零值：三字段全 0
+007d7e7a  mov [eax],ebx/mov word[eax+8],bx
+007d7e80  jmp 0x7D7ECD                         ; → 返回
+007d7e82  lea edi,[ecx+0x3C01]                 ; ★denormal → 指数 0x3C01
+007d7e88  mov [ebp-4],ebx
+; → 尾数组装（0x7D7E8B）：
+007d7e8b  mov ecx,edx/shr ecx,0x15             ; ★尾数低 >>21
+007d7e90  shl eax,0xB/or ecx,eax               ; ★尾数高 <<11 拼高 32
+007d7e95  mov eax,[ebp+8]/or ecx,[ebp-4]       ; ★| 符号位（0 或
+                                              ;   0x80000000）
+007d7e9b  shl edx,0xB                          ; ★尾数低 <<11
+007d7e9e  mov [eax+4],ecx/mov [eax],edx        ; ★写 64 位尾数
+; → 归一化左移循环（0x7D7EA3）：
+007d7ea3  test esi,ecx/jne 0x7D7EC4           ; ★高位最高位==1 → 归一化
+                                              ;   完成
+007d7ea7  mov edx,[eax]/add ecx,ecx/mov ebx,edx
+007d7ead  shr ebx,0x1F/or ebx,ecx              ; ★左移（低位进位搬移）
+007d7eb2  lea ecx,[edx+edx]/mov [eax],ecx
+007d7eb7  mov [eax+4],ebx
+007d7eba  add edi,0xFFFF                       ; ★指数 -1（denormal 归
+                                              ;   一化补偿）
+007d7ec0  mov ecx,ebx/jmp 0x7D7EA3
+; → 符号|指数写回（0x7D7EC4）：
+007d7ec4  mov ecx,[ebp+0xC]/or ecx,edi
+007d7ec9  mov word[eax+8],cx                   ; ★写 16 位符号+指数
+007d7ecd  pop edi/esi/ebx/leave/ret            ; （函数边界 0x7D7ED1）
+
+★语义：**MSVC6 CRT double→80 位扩展精度浮点转换器（推断名
+）**——cdecl 2 参：
+  ① 输入 double 高 16 位拆符号（and 0x8000）/指数（shr 4 &
+     0x7FF 共 11 位）/尾数（[edx+4]&0xFFFFF 高 20 + [edx] 低
+     32 = 52 位）；
+  ② 指数分派：0 → 全 0 尾数则零值三字段清零直返 / 尾数非
+     0 则 denormal（0x3C01）；0x7FF → Inf/NaN（0x7FFF）；正
+     常 → 偏置 +0x3C00（15360=16383-1023，80/64 位偏置差数
+     学实锤）；
+  ③ 尾数组装：高 32 = 尾数高<<11 | 尾数低>>21 | 符号；低
+     32 = 尾数低<<11（丢 11 位精度补零）；
+  ④ 归一化：高位最高位非 1 时左移（低位进位搬移）循环 + 
+     指数每步 -1（add 0xFFFF）——denormal 值还原；
+  ⑤ 符号|指数写回 [out+8]（16 位），完成 80 位扩展格式
+     {64 位尾数 + 16 位符号/指数}。
+  = double→x87 扩展精度标准转换（偏置换算 + 归一化）。
+
+★调用点（探针 E8 实测 1 处 0x7D7DD0）：前邻宿主 0x7D7DD0
+  区（CRT 浮点转换调用端——batch 1110 浮点辅助族同区）。
+
+★E8 被调者：零（纯位运算 + 分支，无子调用）。
+
+★原版怪癖（照抄）：
+  ① 指数偏置差 0x3C00（15360）直接硬编码（非减法推导）—
+     —16383-1023 数学差；
+  ② 零值路径三字段全 0 直返（[out]/[out+4]/[out+8]）——不
+     走归一化；
+  ③ denormal 路径指数 0x3C01 + 归一化循环左移补偿（指数每
+     步 add 0xFFFF = -1）——denormal 还原依赖循环次数；
+  ④ 尾数低 32 位 <<11 丢 11 位低位精度补零（double 52 位 →
+     80 位 64 位尾数无全精度扩展——低位为零填充非复制）；
+  ⑤ 归一化循环上限不设保护（若输入尾数全 0 且指数非 0 会
+     死循环——但 zero 路径已前置拦截，实际安全）；
+  ⑥ 符号位保存 [ebp+0xC]（复用参数槽）后经 [ebp-4] 传入
+     or 链——两级暂存惯用。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 浮点库按商业库
+纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D7E1C = MSVC6 静态 CRT 浮点库 double→80 位扩展
+   转换器——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_
+   layout_crt_provenance）；指数偏置差 0x3C00 + 归一化循环 +
+   denormal 处理 = CRT 浮点格式转换标准形态（batch 1110 浮
+   点辅助族同区）。
+2. 依赖：零子调用，纯位运算——重写 gamemd 时用等价 C 库
+   long double 转换（硬件指令）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 浮点库设施，重
+   写时用等价运行时代替，逐字节复刻无意义——按商业库纪
+   律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 182B + 偏置数学取证 + 边界
+字节；函数名「double→80 位扩展精度浮点转换器」由指数偏置
+差/归一化/denormal 路径实测交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1110：0x7D7EE0 CRT 80 位扩展精度浮点除法辅助器——
+  本批 double→扩展转换与其组成 x87 扩展精度运算链（转换 →
+  除法），同 0x7D7E 区浮点域。
+★batch 1108：0x7CF51C pow() ±Inf 边界处理器——同 CRT 浮
+  点库域（IEEE 掩码分派/扩展精度处理同源）。
+
+五、状态
+-------
+crt_runtime_verified（0x7D7E1C：MSVC6 CRT double→80 位扩展
+精度浮点转换器归档；全 182B + 偏置数学取证 + 边界字节；不
+写 C++ 模型不做 golden——CRT 浮点库商业库层；函数名
+「double→80 位扩展精度浮点转换器」由指数偏置差/归一化/
+denormal 路径实测交叉标注）。TSV 新增 0x007D7E1C 行。
+
+★本批实锤：double→扩展转换标准链——符号/指数/尾数拆解 +
+  0x3C00 偏置换算（15360=16383-1023）+ 归一化左移循环 +
+  denormal/Inf/NaN/零值四路径——CRT 浮点格式转换标准形态
+  （与 batch 1110 除法辅助同区）。
+相邻待续：batch 1138 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7C3860(169B)/0x7CB25E(164B)/0x7CF479
+(163B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1136 已完（MSVC6 CRT 配置表装载器 0x7CDE75，
+commit d96b5cc）。
