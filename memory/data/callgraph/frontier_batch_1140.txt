@@ -1,0 +1,143 @@
+frontier batch 1140 —— MSVC6 CRT x87 数学错误分派器 0x7CF479（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CF479（163B,
+uc=1, callers=1 池登记；探针 E8 实测 0 处——调用点 0x7C9045
+用 `jmp 0x7CF479` 尾跳而非 E8，池登记口径正确）。TSV 无既
+有行。TARGET = 0x007CF479。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CF479 行。
+
+一、链语义（disasm 全 163B + 常量取证 + 调用方式核实，
+0x7CF479-0x7CF51B）
+--------------------------------------------------------------
+签名（推断）：入口条件 = x87 栈顶有待检 double + edx 携选择
+码（0x1D=29 选 0x7CF330 / 其他选 0x7CF347），返回经错误处
+理入口后清理。
+
+★常量（探针 PE double 实锤）：
+  [0x7F98B4] = 1.7976931348623157e+308  DBL_MAX
+  [0x7F98BC] = 2.2250738585072014e-308  DBL_MIN
+  [0x7F98C4] = -1536
+  [0x7F98CC] = 1536
+  [0x7F98D4] = inf
+  [0x7F98DC] = 0
+  → 双缩放链（×2^1536 或 ×2^-1536）+ DBL 边界判定 + 归零/
+  归 inf 钳制。
+
+主体（0x7CF479-0x7CF51B）：
+007cf479  sub esp,8/fst qword[esp]              ; ★★ST0 存栈（8B）
+007cf47f  mov eax,[esp+4]/add esp,8             ; ★读高 32 位（指数域）
+007cf486  and eax,0x7FF00000/je 0x7CF4CA        ; ★★指数掩码——0 →
+                                                  ;   denormal/零路径
+007cf48d  cmp eax,0x7FF00000/je 0x7CF4F3        ; ★★全 1 → Inf/NaN 路径
+; → 正常路径（0x7CF494）：
+007cf494  mov ax,word[esp]/cmp ax,0x27F/je 0x7CF4C8 ; ★控制字检查
+007cf49e  and ax,0x20/jne 0x7CF4C5              ; ★精度位检查
+007cf4a4  wait/fnstsw ax/and ax,0x20/je 0x7CF4C5 ; ★★FPU 状态位 0x20
+007cf4ad  mov eax,8/cmp edx,0x1D/je 0x7CF4BE    ; ★★错误码 8
+                                                  ;   （_BADARG）→ 选入口
+007cf4b7  call 0x7CF347/…/ret                   ; ★★错误处理入口 2
+007cf4be  call 0x7CF330/…/ret                   ; ★★错误处理入口 1
+                                                  ;   （edx==0x1D 选此）
+007cf4c5  fldcw word[esp]/…/ret                 ; ★恢复控制字返回
+; → denormal/零路径（0x7CF4CA）：
+007cf4ca  fld [0x7F98CC]/fxch st(1)/fscale      ; ★★×2^1536 放大
+007cf4d2  fstp st(1)/fld st(0)/fabs
+007cf4da  fcomp [0x7F98BC]/wait/fnstsw/sahf     ; ★★|x| vs DBL_MIN
+007cf4e4  mov eax,4/jae 0x7CF4B2               ; ★错误码 4（_UNDERFLOW）
+                                                  ;   |x|≥DBL_MIN → 上报
+007cf4eb  fmul [0x7F98DC]/jmp 0x7CF4B2         ; ★否则归零后上报
+; → Inf/NaN 路径（0x7CF4F3）：
+007cf4f3  fld [0x7F98C4]/fxch st(1)/fscale      ; ★★×2^-1536 缩小
+007cf4fb  fstp st(1)/fld st(0)/fabs
+007cf503  fcomp [0x7F98B4]/wait/fnstsw/sahf     ; ★★|x| vs DBL_MAX
+007cf50d  mov eax,3/jbe 0x7CF4B2               ; ★错误码 3（_OVERFLOW）
+                                                  ;   |x|≤DBL_MAX → 上报
+007cf514  fmul [0x7F98D4]/jmp 0x7CF4B2         ; ★否则归 inf 后上报
+; → 公共出口（0x7CF4B2）：
+007cf4b2  cmp edx,0x1D/je 0x7CF4BE             ; ★edx 选择错误处理入口
+（0x7CF51C 起 = batch 1108 已归档 pow() ±Inf 边界处理器——
+  两函数紧邻同浮点域）
+
+★语义：**MSVC6 CRT x87 数学错误分派器（推断名——_matherr
+族）**：
+  ① ST0 存栈取指数域掩码分类：0 → denormal/零路径（×2^1536
+     放大后 vs DBL_MIN）；全 1 → Inf/NaN 路径（×2^-1536 缩
+     小后 vs DBL_MAX）；正常 → 控制字/FPU 状态位检查；
+  ② 错误码：3=_OVERFLOW（Inf 域超界归 inf）、4=_UNDERFLOW
+     （denormal 域超界归零）、8=_BADARG（正常路径 FPU 状态
+     异常）——与 MSVC fpieee.h _matherr 错误码族完全一致；
+  ③ edx==0x1D(29) 选错误处理入口 0x7CF330 / 其他选 0x7CF347；
+  ④ 恢复控制字/钳制后返回。
+  = x87 浮点运算异常检测 → _matherr 分派的标准 CRT 形态。
+
+★调用点（探针 E8 实测 0 + 尾跳核实 1 处 0x7C9045）：0x7C9040
+  区宿主（CRT __CI* 浮点包装域——batch 1108 调用点 0x7C90E5
+  同区）：`mov edx,0x1D; jmp 0x7CF479` 尾跳进入 + 0x7C905D
+  `mov edx,0x1D; call 0x7CF330` 直调入口 1。
+
+★E8 被调者：0x7CF330/0x7CF347（错误处理入口对，各自 2 处
+  调用——未登记，后续批次处理）+ 常量表 [0x7F98B4-BC-C4-CC-
+  D4-DC]。
+
+★原版怪癖（照抄）：
+  ① 调用方式为 `jmp 0x7CF479` 尾跳（非 E8）——扫描器 E8
+     扫不到，池登记 callers=1 靠其他口径，双向核实无误；
+  ② 双缩放链不对称：denormal ×2^1536 vs Inf ×2^-1536（放大
+     判下溢/缩小判上溢——物理直觉相反但汇编如此）；
+  ③ 错误码 3/4/8 与 MSVC fpieee.h 完全一致（_OVERFLOW/
+     _UNDERFLOW/_BADARG）——_matherr 族铁证；
+  ④ edx==0x1D(29) 选择入口——硬编码选择码（29 无符号化语义
+     ，照抄）；
+  ⑤ 正常路径双查（控制字 and 0x20 + fnstsw and 0x20）——FPU
+     状态位双重检测；
+  ⑥ 钳制用 [0x7F98DC]=0 / [0x7F98D4]=inf 乘法（非直接赋值
+     ）——x87 浮点钳制惯用。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 浮点库按商业库
+纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CF479 = MSVC6 静态 CRT 浮点库 x87 数学错误分派
+   器——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；_matherr 错误码族 3/4/8 + 双缩放边界判
+   定 + 错误处理入口对 = CRT 浮点异常处理标准形态（batch
+   1108 pow() ±Inf 边界处理器紧邻同域）。
+2. 依赖：0x7CF330/0x7CF347（入口对）+ 常量表——重写 gamemd
+   时用等价 C 库 matherr 语义（标准浮点异常处理）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 浮点库设施，重
+   写时用等价运行时代替，逐字节复刻无意义——按商业库纪
+   律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 163B + 常量取证 + 尾跳核实
+；函数名「x87 数学错误分派器」由错误码 3/4/8 + 双缩放 + 入
+口选择实测交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1108：0x7CF51C pow() ±Inf 边界处理器——紧邻下一函
+  数（0x7CF51C 起），同 0x7CF 浮点域 + 调用点 0x7C90xx 同
+  区（0x7C9045 尾跳 vs 0x7C90E5 E8）——CRT 浮点包装域全景。
+★0x7CF330/0x7CF347：错误处理入口对（edx==0x1D 选择）——
+  未登记新候选，后续批次处理。
+
+五、状态
+-------
+crt_runtime_verified（0x7CF479：MSVC6 CRT x87 数学错误分派
+器归档；全 163B + 常量取证 + 尾跳核实；不写 C++ 模型不做
+golden——CRT 浮点库商业库层；函数名「x87 数学错误分派器」
+由错误码 3/4/8 + 双缩放 + 入口选择实测交叉标注）。TSV 新增
+0x007CF479 行。
+
+★本批实锤：_matherr 族分派器——错误码 3/4/8（_OVERFLOW/
+  _UNDERFLOW/_BADARG）+ denormal/Inf 双缩放边界判定 + 钳制
+  归零/归 inf + edx==0x1D 入口选择——CRT 浮点异常处理标准
+  形态（与 batch 1108 紧邻同域）。
+相邻待续：batch 1141 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7DB54E(152B)/0x7DC378(151B)/0x7C61CF
+(148B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1139 已完（MSVC6 CRT FILE 流集合扫描器
+0x7CB25E，commit fb6f709）。
