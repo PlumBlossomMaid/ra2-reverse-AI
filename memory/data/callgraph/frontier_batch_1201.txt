@@ -1,0 +1,134 @@
+frontier batch 1201 —— MSVC6 CRT __freebuf FILE 缓冲释放器 0x7D2B54（归档，_IOMYBUF 位判定）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D2B54（43B,
+uc=1, callers=1 探针实测 0x7CA7A4）。TSV 无既有行。
+TARGET = 0x007D2B54。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D2B54 行。
+
+一、链语义（disasm 全 43B + 依赖交叉 + 调用点宿主 + 紧邻
+登记，0x7D2B54-0x7D2B7E）
+--------------------------------------------------------------
+签名（确认）：cdecl 1 参（[esp+8]=FILE* 流指针），释放自
+有缓冲并复位字段，返回 void。
+
+主体（0x7D2B54-0x7D2B7E）：
+007d2b54  push esi
+007d2b55  mov esi,dword[esp+8]                  ; esi = FILE*（参1）
+007d2b59  mov eax,dword[esi+0xc]                ; eax = _flag（FILE+0xC）
+007d2b5c  test al,0x83                          ; ★_flag & 0x83
+                                              ;   （_IOREAD|_IOWRT|_IORW
+                                              ;   流标志）
+007d2b5e  je 0x7d2b7d                          ; 无流标志 → 直接返回
+007d2b60  test al,8                             ; ★_flag & 8（_IOMYBUF
+                                              ;   自有缓冲标志）
+007d2b62  je 0x7d2b7d                          ; 非自有缓冲 → 返回
+007d2b64  push dword[esi+8]                     ; ★push _base（缓冲指针）
+007d2b67  call 0x7c93e8                         ; ★★TSV:234 CRT free（
+                                              ;   + TSV:1797 REIMPL
+                                              ;   free_legacy）
+007d2b6c  and word[esi+0xc],0xfbf7              ; ★★_flag &= ~0x0808
+                                              ;   （清 _IOMYBUF 0x8 +
+                                              ;   0x800 位）
+007d2b72  xor eax,eax
+007d2b74  pop ecx                               ; 清 free 1 参
+007d2b75  mov dword[esi],eax                    ; _ptr = 0（FILE+0）
+007d2b77  mov dword[esi+8],eax                  ; _base = 0（FILE+8）
+007d2b7a  mov dword[esi+4],eax                  ; _cnt = 0（FILE+4）
+007d2b7d  pop esi/ret
+
+★语义：**MSVC6 CRT __freebuf FILE 缓冲释放器（标准
+__freebuf）**——cdecl 1 参：
+  ① _flag 双检：先 `test al,0x83`（流标志 _IOREAD|
+     _IOWRT|_IORW——非流直接返回），再 `test al,8`
+     （_IOMYBUF 自有缓冲标志——非自有直接返回）；
+  ② 命中 → free(_base)（0x7C93E8）+ `and word,0xfbf7`
+     清 _IOMYBUF(0x8) 与 0x800 位；
+  ③ 复位 _ptr/_base/_cnt 三字段（FILE+0/+8/+4 = 0）。
+  = FILE 自有缓冲释放原语（fclose/fflush 尾部调用）。
+
+★调用点（探针 E8 实测 1 处 0x7CA7A4）：宿主 0x7CA7xx
+  （fclose 类流程）：push esi/call 0x7cb1f9（★flush——
+  batch 1113 fwrite 链同款 0x7CB1F9）/push esi/mov
+  edi,eax/call 0x7D2B54（★本批 __freebuf）→ push [esi+
+  0x10]/call 0x7d2a74（★后续 fd 关闭段）/add esp,0xc/
+  test eax,eax/jge 0x7ca7bd——flush 后释自有缓冲、再关
+  底层句柄的 fclose 展开链。
+
+★E8 被调者（1 个）：**0x7C93E8（★★TSV:234 semantics_
+  verified + TSV:1797 REIMPL free_legacy cpp_reimplementation_
+  verified——72B CRT free 调度入口：NULL 直返 → EnterLock
+  (9) → FindHeapSegment(0x7CF7BD) → FreeSegment(0x7CF7E8)
+  / MISS 解锁后 HeapFree([0xB78B9C],0,p)）**——唯一函数
+  依赖，已登记（且有 C++ 真身）。
+
+★全局：无（纯 FILE 结构操作）。
+
+★原版怪癖（照抄）：
+  ① _flag 双段检测（先 test al,0x83 流标志、再 test
+     al,8 _IOMYBUF）——标准 __freebuf 的 MSVC6 展开形态
+     （非 _IOMYBUF 即不释放——fclose 前 flush 仍可直关
+     fd）；
+  ② `and word[esi+0xc],0xfbf7` 清 0x0808 **两位**（
+     _IOMYBUF 0x8 + 0x800 未知位）——不只清 mybuf；
+  ③ 复位三字段用 xor eax,eax 后三次 mov [esi+N],eax
+     （同值复用）——编译器寄存器调度；
+  ④ pop ecx 清 free 1 参（cdecl）在复位**之前**——清理
+     与字段复位乱序（照抄）；
+  ⑤ 非自有缓冲路径零副作用（仅 push esi/pop esi 对称）
+     ——判定失败静默返回；
+  ⑥ 0x83 掩码 = _IOREAD(1)|_IOWRT(2)|_IORW(0x80) 的
+     流三标志合并——非流对象（如未初始化 FILE）直接跳过。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT FILE 缓冲
+管理按商业库纪律归档；free 依赖已有 C++ 真身）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D2B54 = MSVC6 静态 CRT FILE 缓冲释放器——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；_flag 位检测 + free(_base) + 字段复
+   位 = CRT FILE 缓冲管理标准形态；紧邻 0x7D2B7F（TSV:199
+   printf 前置缓冲初始化——batch 046）同 FILE 缓冲族。
+2. 依赖：0x7C93E8 已登记（TSV:234/1797）——重写 gamemd
+   时用等价运行时（FILE 生命周期管理语义）代替。
+3. gamemd_replication_discipline：MSVC6 CRT FILE 缓冲设
+   施，重写时用等价运行时代替，逐字节复刻无意义——按商
+   业库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 43B + 依赖交叉 + 调用点
+宿主；函数名「__freebuf FILE 缓冲释放器」由 _flag 双检 +
+free(_base) + 三字段复位交叉标注——符号名由扫描池直接给出）。
+
+四、跨批次闭合
+------------
+★batch 046：0x7D2B7F printf 前置缓冲初始化（TSV:199）——
+  紧邻同 FILE 缓冲族（本批为缓冲释放侧，彼批为 4K 共享
+  缓冲表装配侧）。
+★batch 063/945：0x7C93E8 CRT free（TSV:234 + TSV:1797
+  REIMPL free_legacy）——本批调用现场交叉（_base 释放）。
+★batch 1113：0x7CB1F9 flush——调用点宿主 flush+freebuf
+  连用（fclose 展开链交叉）。
+★batch 1197/1198：fread/fwrite 加锁壳——同 CRT FILE 设
+  施族（本批为生命周期管理侧）。
+
+五、状态
+-------
+crt_runtime_verified（0x7D2B54：MSVC6 CRT __freebuf FILE
+缓冲释放器归档；全 43B + 依赖交叉；不写 C++ 模型不做
+golden——CRT FILE 缓冲管理商业库层；函数名由 _flag 双检
++ free(_base) + 三字段复位交叉标注——符号名由扫描池直接
+给出）。TSV 新增 0x007D2B54 行。
+
+★本批实锤：标准 __freebuf——_flag 先 0x83 流标志后 0x8
+  _IOMYBUF 双检，命中 free(_base)（0x7C93E8 ✓TSV:234/
+  1797）+ 清 0x0808 + 复位 _ptr/_base/_cnt；唯一调用点
+  0x7CA7A4 在 fclose 展开链（flush → freebuf → fd 关闭）；
+  紧邻 0x7D2B7F（TSV:199）同 FILE 缓冲族。
+相邻待续：batch 1202 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7DA9A2(43B, callers=2)/0x7CD42B(42B,
+callers=1)/0x7D9ECF(41B, callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1200 已完（MSVC6 CRT 控制台填充字符重复写出
+循环 0x7DDC4C，commit 30228d9）。
