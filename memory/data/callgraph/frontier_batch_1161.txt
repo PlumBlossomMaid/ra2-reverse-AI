@@ -1,0 +1,138 @@
+frontier batch 1161 —— MSVC6 CRT MBCS 字符分类映射器 0x7D453C（归档，_ismbc 族）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D453C（90B,
+uc=1, callers=2 探针实测 0x7D42AF/0x7D4465）。TSV 无既有
+行。TARGET = 0x007D453C。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D453C 行。
+
+一、链语义（disasm 全 90B + 两依赖交叉 + locale 阈值重叠，
+0x7D453C-0x7D4595）
+--------------------------------------------------------------
+签名（推断）：cdecl 1 参（[esp+8]=16 位字符值），返回分类
+后值 / 索引换算值（esi-0x27 / esi-7）。
+
+主体（0x7D453C-0x7D4595）：
+007d453c  push esi/mov esi,[esp+8]            ; esi = 字符值
+007d4541  test si,0xff00/jne 0x7d4580         ; ★★高字节非 0（MB 范围）
+                                              ;   → 直接宽分类路径
+007d4548  cmp [0x87c79c],1/jle 0x7d4564       ; ★★locale 阈值 [0x87C79C]
+                                              ;   （batch 1082/1084/1091
+                                              ;   同款—双路径选路）
+; → locale>1 路径（0x7D4551，查表分类）：
+007d4551  mov eax,esi/push 4
+007d4553  and eax,0xff
+007d455a  push eax
+007d455b  call 0x7d1311                       ; ★★TSV:134 _isctype 字符
+                                              ;   分类查询（49 callers，
+                                              ;   & mask=4）
+007d4560  pop ecx/pop ecx/jmp 0x7d4577
+; → locale<=1 路径（0x7D4564，ctype 表直查）：
+007d4564  mov ecx,[0x87c590]                  ; ★★ctype 表指针 [0x87C590]
+007d456a  mov eax,esi/and eax,0xff
+007d4571  mov al,byte[ecx+eax*2]              ; 表项（2B/项）
+007d4574  and eax,4                           ; ★位 4 测试
+007d4577  test eax,eax/je 0x7d4580            ; 分类位未置 → 宽路径
+007d457b  mov ax,si/pop esi/ret               ; ★分类命中 → 返原值
+; → 宽分类路径（0x7D4580，MB/未命中）：
+007d4580  push 2/push esi
+007d4583  call 0x7d3920                       ; ★★TSV:141 _iswctype 宽字
+                                              ;   符分类（0xFFFF→0 等）
+007d4588  pop ecx/test eax,eax/pop ecx
+007d458c  lea eax,[esi-0x27]                  ; 命中 → esi-0x27（39）
+007d458f  jne 0x7d4594
+007d4591  lea eax,[esi-7]                     ; 未命中 → esi-7
+007d4594  pop esi/ret
+
+★语义：**MSVC6 CRT MBCS 字符分类映射器（推断名——_ismbc 族
+（_ismbclegal/_ismbcsymbol 类））**——cdecl 1 参：
+  ① `test si,0xff00`：高字节非 0（多字节范围）→ 直接宽分
+     类（0x7D3920）；
+  ② locale 阈值 [0x87C79C]>1 → 0x7D1311 _isctype（&mask=4）
+     查表分类；≤1 → [0x87C590] ctype 表直读（2B/项）按位
+     4 测试；
+  ③ 分类命中 → 返原值；未命中/越界 → 0x7D3920 _iswctype
+     宽分类后按结果返 esi-0x27（命中）或 esi-7（未命中）
+     ——索引换算映射。
+  = MBCS 字符分类的多路径选路标准形态（locale 阈值 + ctype
+  表 + 宽分类三级）。
+
+★调用点（探针 E8 实测 2 处）：0x7D42AF/0x7D4465——均 CRT
+  区（0x7D42xx/0x7D44xx 字符分类域），宿主调用点前后缀字
+  符/宽字符比较上下文。
+
+★E8 被调者：0x7D1311（★★TSV:134/186 _isctype 字符分类查
+  询 ✓已登记——49 callers，lead-byte 超界经 0x7D9729）+ 
+  0x7D3920（★★TSV:141/187 _iswctype 宽字符分类掩码 ✓已
+  登记——19 callers，0xFFFF→0/c<0x100 查 [0x87C594] 256
+  项表/c≥0x100 走 0x7DA0F1 GetStringTypeW）——**两个依赖
+  全部已登记**。常量：[0x87C79C]（locale 阈值，batch
+  1082/1084/1091 同款）+ [0x87C590]（ctype 表指针，batch
+  044/056 同款）。
+
+★原版怪癖（照抄）：
+  ① `test si,0xff00` 是 16 位测试但入参 si（mov esi,[esp+8]
+     截断 32 位）——高位测试用 test si 而非 test esi；
+  ② locale 阈值 [0x87C79C]<=1 走表直查（【≤1】含 0/1 两
+     态——batch 1082 系同款双路径）；>1 才走 _isctype 函
+     数查询；
+  ③ ctype 表 [0x87C590] 按 eax*2 索引（2B/项）但只取 al
+     低字节（mov al,byte[ecx+eax*2]）——表项高字节丢弃；
+  ④ 未命中/越界统一走 0x7D3920 宽分类——单字节入口也能
+     掉进宽分类路径（多级回退语义）；
+  ⑤ 返回换算：命中 esi-0x27（39）、未命中 esi-7——两个
+     魔术常量索引换算（符号/类别编号映射，照抄）；
+  ⑥ 分类位测试按 **bit4**（and eax,4）——MSVC6 ctype 表
+     位布局（_UPPER=1/_LOWER=2/_DIGIT=4…）具体到某一位
+     面，非全字面。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 多字节字
+符处理设施按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D453C = MSVC6 静态 CRT 多字节字符分类映射器—
+   —0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；locale 阈值 + ctype 表 + _isctype/
+   _iswctype 双依赖 = CRT MBCS 分类标准形态（batch
+   1082/1084/1091 locale 族同款）。
+2. 依赖：2 个已登记函数（0x7D1311 TSV:134 _isctype、
+   0x7D3920 TSV:141 _iswctype）——重写 gamemd 时用等价
+   C 库 is* / 标准分类语义代替。
+3. gamemd_replication_discipline：MSVC6 CRT 多字节字符处
+   理设施，重写时用等价运行时代替，逐字节复刻无意义——
+   按商业库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 90B + 两依赖交叉 + locale
+阈值重叠；函数名「MBCS 字符分类映射器」由三级选路 + 双依
+赖 + 索引换算交叉标注）。
+
+四、跨批次闭合
+------------
+★TSV:134/186：0x7D1311 _isctype——本批 locale>1 路径调用
+  现场交叉（& mask=4 参数）。
+★TSV:141/187：0x7D3920 _iswctype——本批宽分类回退路径调
+  用现场交叉。
+★batch 1082/1084/1091：locale 阈值 [0x87C79C] 双路径——本
+  批第三处消费（>1 走函数 / ≤1 走表直查同款选路）。
+★batch 044/056：ctype 表 [0x87C590]+[0x87C594]——本批
+  ≤1 路径表直读现场交叉。
+
+五、状态
+-------
+crt_runtime_verified（0x7D453C：MSVC6 CRT MBCS 字符分类映
+射器归档；全 90B + 两依赖交叉；不写 C++ 模型不做 golden
+——CRT 多字节字符库商业库层；函数名由三级选路 + 双依赖 +
+索引换算交叉标注）。TSV 新增 0x007D453C 行。
+
+★本批实锤：_ismbc 族分类映射——test si,0xff00 高位分流 +
+  locale 阈值双路径（_isctype 函数 / ctype 表直查）+ 未命
+  中回退 _iswctype + esi-0x27/esi-7 索引换算，两依赖全已
+  登记。
+相邻待续：batch 1162 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CAC66(90B)/0x7DAB54(88B)/0x7DBC9A(86B,
+callers=5)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1160 已完（MSVC6 CRT 多字节字符转换锁包装器
+0x7CC447，commit 278da7c）。
