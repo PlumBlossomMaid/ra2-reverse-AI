@@ -1,0 +1,148 @@
+frontier batch 1139 —— MSVC6 CRT FILE 流集合扫描器 0x7CB25E（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CB25E（164B,
+uc=1, callers=1 池登记；探针实测 E8 callers=2：0x7CB1A6/
+0x7CB257）。TSV 无既有行。TARGET = 0x007CB25E。C++ 模型：
+无（见「三态判定」）。TSV：新增 0x007CB25E 行。
+
+一、链语义（disasm 全 164B + 锁/数组交叉，0x7CB25E-0x7CB301）
+--------------------------------------------------------------
+签名（推断）：cdecl 1 参（param1=模式值 @[esp+0x10]），返
+回模式==1 → 计数 ebx / 否则 → 错误统计 edi。
+
+主体（0x7CB25E-0x7CB301）：
+007cb25e  push ebx/esi/edi/push 2
+007cb263  xor ebx,ebx/xor edi,edi                 ; ★计数/错误统计初 0
+007cb267  call 0x7CD9F5                           ; ★★region lock Enter
+                                              ;   0x13（TSV:238 已登
+                                              ;   记，55 callers）
+007cb26c  xor esi,esi/pop ecx                    ; ★遍历索引 0
+007cb26f  cmp [0xB79BE0],esi/jle 0x7CB2EB        ; ★★流计数（11 引
+                                              ;   用）≤0 → 退出
+; → 流遍历循环（0x7CB277）：
+007cb277  mov eax,[0xB78BC4]                     ; ★★流指针数组基址
+                                              ;   （19 引用）
+007cb27c  mov eax,[eax+esi*4]                    ; ★第 esi 个流指针
+007cb27f  test eax,eax/je 0x7CB2E2               ; ★空槽跳过
+007cb283  test byte[eax+0xC],0x83/je 0x7CB2E2    ; ★流标志 0x83 有效
+                                              ;   检查
+007cb289  push eax/push esi/call 0x7CB428        ; ★★0x7CB428（4
+                                              ;   callers：0x7CB142/
+                                              ;   0x7CB28B/0x7D2DD7/
+                                              ;   0x7D57B5——流状态
+                                              ;   检查，未登记新候选）
+007cb290  mov eax,[0xB78BC4]/pop ecx/pop ecx
+007cb297  mov eax,[eax+esi*4]/mov ecx,[eax+0xC]
+007cb29d  test cl,0x83/je 0x7CB2D2              ; ★★再查 0x83 标志
+007cb2a2  cmp [esp+0x10],1/jne 0x7CB2B8         ; ★模式==1 → 计数路径
+007cb2a9  push eax/call 0x7CB1CB                 ; ★★0x7CB1CB（3
+                                              ;   callers 全 0x7CB 区
+                                              ;   ——流操作，未登记）
+007cb2af  cmp eax,-1/je 0x7CB2D2                 ; 返回 -1 → 不计
+007cb2b5  inc ebx                                 ; ★★计数 ebx++
+007cb2b6  jmp 0x7CB2D2
+; → 模式≠1（0x7CB2B8）：
+007cb2b8  cmp [esp+0x10],0/jne 0x7CB2D2         ; 模式==0 才处理
+007cb2bf  test cl,2/je 0x7CB2D2                  ; ★标志 bit1 检查
+007cb2c4  push eax/call 0x7CB1CB                 ; ★★流操作
+007cb2ca  cmp eax,-1/je 0x7CB2D2                 ; 返回 -1 → 错误
+007cb2d0  or edi,eax                              ; ★★错误统计 edi |= eax
+; → 收尾（0x7CB2D2）：
+007cb2d2  mov eax,[0xB78BC4]/push [eax+esi*4]/push esi
+007cb2db  call 0x7CB47A                          ; ★★0x7CB47A（4
+                                              ;   callers：0x7CB18D/
+                                              ;   0x7CB2DB/0x7D2DEF/
+                                              ;   0x7D57E1——流收尾）
+007cb2e0  pop ecx/pop ecx
+007cb2e2  inc esi/cmp esi,[0xB79BE0]/jl 0x7CB277 ; ★★遍历循环
+; → 退出（0x7CB2EB）：
+007cb2eb  push 2/call 0x7CDA56                  ; ★★region lock Leave
+                                              ;   0x13（TSV:239）
+007cb2f2  cmp [esp+0x14],1/je 0x7CB2FE         ; ★模式==1 → 返计数
+007cb2f8  mov eax,ebx/jmp 0x7CB2FF              ; ★★返 ebx
+007cb2fe  mov eax,edi                            ; ★返 edi（错误统计）
+007cb301  pop edi/esi/ebx/ret
+
+★语义：**MSVC6 CRT FILE 流集合扫描器（推断名）**——cdecl 1
+参（模式）：
+  ① 0x7CD9F5 region lock Enter 0x13 锁保护整个遍历；
+  ② 遍历 [0xB78BC4] 流指针数组（[0xB79BE0] 计数）逐项：0x
+     7CB428 检查 + [eax+0xC]&0x83 有效标志双重判定；
+  ③ 模式==1 → 0x7CB1CB 操作流，返回非 -1 → ebx++ 计数；模
+     式==0 → 标志 bit1 检查 → 0x7CB1CB 返回 -1 → edi |= eax
+     错误统计；
+  ④ 每项 0x7CB47A 收尾；
+  ⑤ 0x7CDA56 Leave 0x13 → 返回模式==1 计数 / 错误统计。
+  = CRT 全流集合扫描（锁保护 + 标志判定 + 双模式统计）。
+
+★调用点（探针 E8 实测 2 处，池登记 callers=1 有出入）：
+  0x7CB1A6（前邻宿主——流集合操作入口）+ 0x7CB257（紧邻
+  前函数尾部调用）。
+
+★E8 被调者：0x7CD9F5/0x7CDA56（TSV:238/239 region lock
+  0x13——本批锁保护交叉）+ 0x7CB428/0x7CB47A/0x7CB1CB（0x7CB
+  区未登记流操作候选——0x7D2DD7/0x7D57B5 等区也引用，后续
+  批次视池内位置处理）。
+
+★原版怪癖（照抄）：
+  ① [eax+0xC]&0x83 有效标志双重判定（0x7CB283 前检 + 0x
+     7CB29D 后检）——0x7CB428 调用前后各查一次；
+  ② 模式==1 返回计数 ebx / 模式==0 返回错误统计 edi——双
+     模式返回值（调用方 [esp+0x10] 设定）；
+  ③ 空流槽跳过（test eax,eax）不计数；
+  ④ 模式==0 时标志 bit1 才进 0x7CB1CB（写模式判定）；
+  ⑤ 0x7CB1CB 返回 -1 语义：模式==1 时 -1 → 不计 ebx / 模式
+     ==0 时 -1 → edi |= eax（-1 全置）——同函数双语义；
+  ⑥ 锁包裹含数组遍历（Enter 0x13 → … → Leave 0x13）——整
+     个扫描原子。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT FILE 设施按商
+业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CB25E = MSVC6 静态 CRT FILE 流集合扫描器——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）；[0xB78BC4] 流指针数组 + [0xB79BE0] 计数 +
+   0x83 标志判定 + region lock 0x13 = CRT 流集合管理标准形
+   态（batch 1113/1123/1124 FILE 设施族同域）。
+2. 依赖：锁对已登记 + 3 个未登记流操作候选——重写 gamemd
+   时用等价运行时（std::fopen 集合遍历语义）代替。
+3. gamemd_replication_discipline：MSVC6 CRT FILE 设施，重写
+   时用等价运行时代替，逐字节复刻无意义——按商业库纪律
+   归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 164B + 锁/数组交叉；函数名
+「FILE 流集合扫描器」为推断交叉标注——遍历/标志判定/双模
+式统计由代码实测）。
+
+四、跨批次闭合
+------------
+★TSV:238/239：0x7CD9F5/0x7CDA56 region lock 0x13——本批
+  锁保护交叉（55/71 callers）。
+★batch 1113/1123：0x7C9602 fwrite / 0x7C94EB fread——同
+  CRT FILE 读写链（本批流集合扫描器为集合级操作）。
+★0x7CB428/0x7CB47A/0x7CB1CB：0x7CB 区未登记流操作候选
+  （4/4/3 callers，0x7D2DD7/0x7D57B5 等区也引用）——后续
+  批次视池内位置核登记。
+
+五、状态
+-------
+crt_runtime_verified（0x7CB25E：MSVC6 CRT FILE 流集合扫描
+器归档；全 164B + 锁/数组交叉；不写 C++ 模型不做 golden——
+CRT FILE 设施商业库层；函数名「FILE 流集合扫描器」为推断
+交叉标注——遍历/标志判定/双模式统计由代码实测）。TSV 新增
+0x007CB25E 行。
+
+★本批实锤：流集合扫描器——0x7CD9F5/0x7CDA56 锁 0x13 包裹
+  [0xB78BC4]/[0xB79BE0] 全流遍历 + 0x83 标志双重判定 + 双
+  模式统计（计数/错误）——CRT FILE 集合管理标准形态，锁
+  对已登记。
+相邻待续：batch 1140 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CF479(163B)/0x7DB54E(152B)/0x7DC378
+(151B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1138 已完（Westwood 表面域差值求值器 0x7C3860，
+commit 3d1a3b3）。
