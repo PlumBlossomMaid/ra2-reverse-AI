@@ -1,0 +1,121 @@
+frontier batch 1185 —— MSVC6 CRT 字符分类大写化映射器 0x7D2132（归档，_toupper 族变体）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D2132（55B,
+uc=1, callers=2）。TSV 无既有行。TARGET = 0x007D2132。
+C++ 模型：无（见「三态判定」）。TSV：新增 0x007D2132 行。
+
+一、链语义（disasm 全 55B + 两依赖交叉 + batch 1161 对照，
+0x7D2132-0x7D2168）
+--------------------------------------------------------------
+签名（推断）：cdecl 1 参（[esp+8]=16 位字符值），返回分
+类后值 / 大写化+索引换算值。
+
+主体（0x7D2132-0x7D2168）：
+007d2132  cmp dword[0x87c79c],1              ; ★★locale 阈值 [0x87C79C]
+                                              ;   （batch 1082/1084/1091/
+                                              ;   1161 同款双路径）
+007d2139  push esi
+007d213a  jle 0x7d214c                       ; ≤1 → ctype 表直查
+; → locale>1 路径（0x7D213C，查表分类）：
+007d213c  mov esi,dword[esp+8]               ; esi = 字符
+007d2140  push 4/push esi
+007d2143  call 0x7d1311                      ; ★★TSV:134 _isctype 字符
+                                              ;   分类查询（& mask=4）
+007d2148  pop ecx/pop ecx
+007d214a  jmp 0x7d215b
+; → locale<=1 路径（0x7D214C，ctype 表直查）：
+007d214c  mov esi,dword[esp+8]               ; esi = 字符
+007d2150  mov eax,dword[0x87c590]            ; ★★ctype 表指针 [0x87C590]
+007d2155  mov al,byte[eax+esi*2]             ; 表项（2B/项）
+007d2158  and eax,4                          ; ★位 4 测试
+; → 合流（0x7D215B）：
+007d215b  test eax,eax/jne 0x7d2165         ; 分类命中 → 保留字符
+007d215f  and esi,0xffffffdf                 ; ★★未命中 → 清 bit5
+                                              ;   （大写化）
+007d2162  sub esi,7                          ; ★★esi - 7 索引换算
+007d2165  mov eax,esi                         ; 返回
+007d2167  pop esi/ret
+
+★语义：**MSVC6 CRT 字符分类大写化映射器（推断名——_toupper
+族变体）**——cdecl 1 参：
+  ① locale 阈值 [0x87C79C]>1 → 0x7D1311 _isctype（&mask=4）
+     查表分类；≤1 → [0x87C590] ctype 表直读（2B/项）按
+     位 4 测试；
+  ② 分类命中 → 原值返回；
+  ③ 未命中 → `and esi,0xffffffdf`（清 bit5 = 强制大写）
+     + `sub esi,7` 索引换算后返回。
+  = MBCS 字符分类 + 大写化双重映射（batch 1161 0x7D453C
+  的分类映射同族变体——彼版 esi-0x27、本版清 bit5+esi-7
+  大写化）。
+
+★调用点（池登记 callers=2）：0x7D21xx 区字符处理域消费。
+
+★E8 被调者：0x7D1311（★★TSV:134 _isctype 字符分类查询
+  ✓已登记——49 callers）——**唯一函数依赖，已登记**。常
+  量：[0x87C79C]（locale 阈值 batch 1082/1084/1091/1161
+  同款）+ [0x87C590]（ctype 表指针 batch 044/056 同款）。
+
+★原版怪癖（照抄）：
+  ① `and esi,0xffffffdf`（清 bit5）做强制大写——ASCII
+     'a'-'z'(0x61-0x7A) 清 bit5 → 'A'-'Z'(0x41-0x5A)；
+  ② 大写化后 `sub esi,7`——索引换算（大写字符号归类映
+     射，7 为魔术常量照抄）；
+  ③ batch 1161 版（0x7D453C）未命中用 esi-0x27（39）而
+     本版用清 bit5+esi-7（7）——同族两变体换算不同（复
+     制粘贴不参数化）；
+  ④ locale 阈值双路径同款（>1 函数查询 / ≤1 表直查）；
+  ⑤ ctype 表 [0x87C590] 2B/项按 esi*2 索引只取 al——高
+     字节丢弃（同 batch 1161）；
+  ⑥ 分类位测试按 bit4（and eax,4）——MSVC6 ctype 表位
+     布局某一位面。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 多字节字
+符处理设施按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D2132 = MSVC6 静态 CRT 多字节字符分类大写化
+   映射器——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_
+   layout_crt_provenance）；locale 阈值 + ctype 表 +
+   _isctype 依赖 = CRT MBCS 分类标准形态（batch 1161
+   0x7D453C 同族）。
+2. 依赖：0x7D1311 已登记（TSV:134）——重写 gamemd 时用
+   等价 C 库 is*/toupper 语义代替。
+3. gamemd_replication_discipline：MSVC6 CRT 多字节字符处
+   理设施，重写时用等价运行时代替，逐字节复刻无意义——
+   按商业库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 55B + 两依赖交叉 + batch
+1161 对照；函数名「字符分类大写化映射器」由清 bit5 大写
+化 + 索引换算 + locale 双路径交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1161：0x7D453C MBCS 字符分类映射器——本批同族变
+  体对照（尺寸 eax 语义：分类点位测试同款双路径 + 未命中
+  换算不同——复制粘贴家族全景）。
+★TSV:134/186：0x7D1311 _isctype——本批 locale>1 路径调
+  用现场交叉（& mask=4 参数）。
+★batch 1082/1084/1091：locale 阈值 [0x87C79C] 双路径——
+  本批第四处消费。
+★batch 044/056：ctype 表 [0x87C590]——本批 ≤1 路径表直
+  读现场交叉。
+
+五、状态
+-------
+crt_runtime_verified（0x7D2132：MSVC6 CRT 字符分类大写化映
+射器归档；全 55B + 两依赖交叉；不写 C++ 模型不做 golden
+——CRT 多字节字符库商业库层；函数名由清 bit5 大写化 + 索
+引换算 + locale 双路径交叉标注）。TSV 新增 0x007D2132 行。
+
+★本批实锤：_toupper 族变体——locale 阈值双路径（_isctype
+  函数 / ctype 表直查）分类命中原值 / 未命中清 bit5 大写
+  化 + sub 7 索引换算，唯一依赖 _isctype 已登记。
+相邻待续：batch 1186 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7D6A1D(55B)/0x7CBBDB(54B)/0x7CBF14
+(53B，batch 1146 壳族)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1184 已完（MSVC6 CRT 浮点格式化函数指针表初始
+化器 0x7C8F5E，commit a2c34ef）。
