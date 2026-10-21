@@ -1,0 +1,85 @@
+frontier batch 1225 —— 0x0058BE20 死代码复刻：随机取「已占用」格子（126B）
+=======================================================================
+
+候选来源：用户指令三阶段①「RMG 死代码全部复现对齐」——batch 1224 补完
+0x5A5AE0 后剩余 14 个无 REIMPL。0x58BE20 是「四级递增严格度」第一级
+（同族 0x58C320/0x58C4A0/0x58C5A0 后续批次），最简单（126B 纯拒绝采样，
+无 GetCellAt/谓词依赖）。
+TARGET = 0x0058BE20。C++ 模型：code/rewrite/rmg/dead_code_58be20.{h,cpp}
+新增 DeadCode58BE20(ctx)。单测：test_dead_code_58be20.cpp 新增
+DeadCode58BE20.Golden（golden 40 行全对拍）。TSV 新增 0x0058BE20_REIMPL 行。
+
+一、语义（全段反汇编逐条核对 + golden 40 行闭环）
+------------------------------------------------
+真义（机器码全 126B 确认，disasm.py 0x58BE20 0x88）：
+  · 调用约定：thiscall 无栈参 ret 0，ecx = 输出指针（CellStruct
+    {int16 x; int16 y}）。
+  · side  = [0x89C2DC]（MapGen 边长，imul eax,eax → total = side*side）
+  · scale = (double)(uint64)total（fild qword [esp+0xC]：存 {eax=total,
+    edi=0} 高 32 显式 0 无符号读）
+  · loop（0x58BE48 起循环头）：
+      r = Random()（mov ecx,0xABE890 / call 0x65C780）
+      v = _ftol((double)(uint64)r * scale * kInvUintMax)
+        （mov {eax=r,edi=0} → fild qword 无符号 → fmul [esp+0x1C]=scale
+          → fmul [0x7ED898]=kInvUintMax → call 0x7C5F00 _ftol）
+      cmp eax,esi（esi=total-1）/ ja 0x58BE48 —— 拒绝采样（无符号）
+      p = [0xABED10] + v*0x50（lea ecx,[eax+eax*4]; shl ecx,4 = v*0x50）
+      if (p->x == 0 && p->y == 0) goto loop  （空格子重抽）
+      成功：*this = work[v] 首 dword（x | (y<<16)，mov edx,[ecx+edx];
+        mov [ebx],edx——ecx=this）
+  · 全程 x87 FPCW=0x0E7F（RC=chop + PC53），复刻用 MXCSR toward-zero
+    临时切换（同家族惯例）。
+
+公式（golden 40 行实证）：
+  loop: v = _ftol((double)(uint64)Random() * (double)(side*side)
+            * kInvUintMax)
+        若 (unsigned)v > side*side-1 或 work[v] 为空 (0,0) 则重抽
+        返回 work[v] 首 dword（x | (y<<16)）
+
+二、golden 采集（emu_oracle 指令级模拟）
+--------------------------------------
+探针 .qwen/tmp/_emu_deadcode_58be20.py：调 0x58BE20（ecx=OUT 指针），
+灌 side [0x89C2DC] 与 work [0xABED10]（HEAP 内 0x30004000，side²×0x50B，
+首 dword=x|(y<<16)），seed_global 播种。
+存档 memory/data/rmg/deadcode_58be20_golden.txt：5 种子 × 8 用例 = 40 行。
+用例矩阵：side ∈ {4,5,8,10,12} × empty ∈ {0,2,50,140}（empty=work 前
+N 项为 (0,0) 空格子，强制重抽路径）。★next 字段 = 调用后再对全局 RNG
+取一次的值——C++ 侧校验随机消耗次数（拒绝采样路径上每一步吃一个随机
+数，多抽/少抽都会错位）。
+★sanity 自洽：seed=0 side=4 全占用 out=0x50004（x=4,y=5 占用项），
+与 work 构造 (i,i+1) 一致；side=12 empty=140 时重抽到占用区（140..143
+四项），out=0x8F008E（i=142 → x=142,y=143）符合拒绝采样后均匀性
+（golden 40 行全部满足 work[v] 非空）。
+
+三、原版怪癖（照抄）
+--------------------
+① 拒绝采样双条件（v>total-1 无符号 ja + 空格子 (0,0) 均重抽，**无限
+   重抽**——区别于后两级的 100 次上限）；
+② fild qword 无符号读（scale 与 r 都高 32 显式写 0，non movzx）；
+③ work 每项 0x50B、v*0x50 索引（lea×5+shl×4 手写乘 80——与活代码
+   0x578E60 分配 side²×0x50 同套）；
+④ 返回值 = work[v] 首 dword（x|(y<<16)）——返回格子的 packed 坐标，
+   空格判定读的是 word x / word y 两字段；
+⑤ RC=chop 全链（fmul 两次 + _ftol 截断在 FPCW=0x0E7F 下，C++ 需
+   MXCSR toward-zero）；
+⑥ 开销：每轮只消耗 1 个随机数（Random→fild→_ftol 单链），重抽也
+   消耗——「抽样花掉的随机数个数不是定值」同族（QWEN.md 怪癖表）。
+
+四、跨批次连接
+--------------
+0x58C320/0x58C4A0/0x58C5A0（同族二/三/四级——batch 320 同批登记的
+「四级递增严格度」，待后续批次复刻）；[0x89C2DC]（MapGen 边长）、
+[0xABED10]（work 数组，每项 0x50B——活代码 0x578E60 分配同套）；
+Randomizer 0x65C780（batch 002）；[0x7ED898] kInvUintMax
+（scaled_random.h 同常量）；FPCW 0x0E7F（batch 001）；0x58BEA0
+（同构第二份，TSV:1008 标注）。
+
+五、状态
+--------
+0x58BE20：cpp_reimplementation_verified + unit_test_verified
+（out 40/40 Eq + next 40/40 Eq——随机消耗次数逐位对拍）。
+partial：函数精确名（「随机取已占用格子」推断——死代码无运行观测）、
+调用方传参契约（死代码零引用）、0x58BEA0 同构第二份差异点（batch 320
+标注，未单独登记）。
+本批产品代码新增 dead_code_58be20.{h,cpp} + 测试 + CMake 登记；
+ctest 85/85 全绿。
