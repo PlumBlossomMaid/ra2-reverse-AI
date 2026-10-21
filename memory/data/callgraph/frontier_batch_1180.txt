@@ -1,0 +1,136 @@
+frontier batch 1180 —— MSVC6 CRT 堆初始分配器 0x7CF77F（归档，SBH 段分配）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CF77F（62B,
+uc=1, callers=1 探针实测 0x7CF6D1）。TSV 无既有行。
+TARGET = 0x007CF77F。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CF77F 行。
+
+一、链语义（disasm 全 62B + 全局族分布 + 调用点宿主，
+0x7CF77F-0x7CF7BC）
+--------------------------------------------------------------
+签名（推断）：无参 cdecl（或 thiscall 单参），返回 eax：
+1（初始化成功）/ 0（HeapAlloc 失败）。
+
+主体（0x7CF77F-0x7CF7BC）：
+007cf77f  push 0x140                           ; ★★dwBytes = 0x140
+                                              ;   （320B 初始分配）
+007cf784  push 0                               ; dwFlags = 0
+007cf786  push dword[0xb78b9c]                 ; ★★[0xB78B9C] 堆句柄
+                                              ;   （_crtheap，batch
+                                              ;   1169/1174 同全局）
+007cf78c  call dword[0x7e1278]                 ; ★★IAT 槽 [0x7E1278]
+                                              ;   （HeapAlloc——batch
+                                              ;   1169 兜底路径同槽）
+007cf792  test eax,eax
+007cf794  mov dword[0xb78b98],eax             ; ★★[0xB78B98] = 块指针
+007cf799  jne 0x7cf79c                         ; 成功 → 收尾
+007cf79b  ret                                  ; ★失败 → 返 0（eax=0）
+; → 成功收尾（0x7CF79C）：
+007cf79c  and dword[0xb78b90],0               ; ★★清 [0xB78B90]
+007cf7a3  and dword[0xb78b94],0               ; ★★清 [0xB78B94]
+007cf7aa  push 1
+007cf7ac  mov dword[0xb78b8c],eax             ; ★★[0xB78B8C] = 块指针
+007cf7b1  mov dword[0xb78b84],0x10            ; ★★[0xB78B84] = 0x10
+                                              ;   （refcount 单元 16B）
+007cf7bb  pop eax                              ; ★返 1
+007cf7bc  ret
+
+★语义：**MSVC6 CRT 堆初始分配器（推断名——SBH 段分配/
+__sbh_alloc_new_region 起始段）**——无参：
+  ① HeapAlloc（[0x7E1278] IAT + [0xB78B9C] 堆句柄，
+     0x140=320B）分配初始块；
+  ② 失败 → [0xB78B98]=0 直接返 0；
+  ③ 成功 → 存 [0xB78B98]/[0xB78B8C] 块指针 + 清
+     [0xB78B90]/[0xB78B94]（段空闲位图/链）+ [0xB78B84]=
+     0x10（refcount 单元大小 16B）→ 返 1。
+  = CRT 小堆（SBH）启动时的首个段/块分配，[0xB78B84..
+  0xB78B98] 为段头控制表（refcount 表元 + 空闲链全局）。
+
+★调用点（探针 E8 实测 1 处 0x7CF6D1）：宿主 0x7CF6xx 区
+  （0x7CF6C0 起——batch 021 堆内核域 0x7CF7BD 前邻，堆
+  初始化链）。
+
+★E8 被调者：IAT 槽 [0x7E1278]（HeapAlloc——batch 1116
+  仅作调用点登记）+ 全局 [0xB78B9C]（堆句柄）+ [0xB78B84].
+  .[0xB78B98]（段头控制表）——**零 E8 函数调用**。
+
+★全局族分布（探针 PE 实锤）：
+  [0xB78B84]：3 处（0x7CF7B3 本函数 + 0x7CFE23/0x7CFE50
+  分配/释放域）
+  [0xB78B8C]：4 处（0x7CF7AD 本函数 + 0x7CFAFA/0x7CFB64/
+  0x7CFC0A——SBH 插入/删除域）
+  [0xB78B90]：21 处（0x7CF79E 本函数 + 0x7CFA15-0x7CFB04/
+  0x7CFDF7/0x7CFE0A/0x7D02BF-0x7D02FE——batch 021 堆内核
+  域：位图扫描/空闲链管理）
+  [0xB78B98]：13 处（0x7CF795 本函数 + 0x7CF700/0x7CF745
+  邻段 + 0x7CF7C6-0x7CFE61/0x7D035C-0x7D03C1）
+  → 段头表全局由 0x7CF6-0x7D03 堆内核域共享（block→seg
+  归属）。batch 021 0x7CF7BD 堆段包含扫描内核同域。
+
+★原版怪癖（照抄）：
+  ① 无参函数（0 栈参）+ 全全局副作用——SBH 段初始化单
+     调形态；
+  ② 失败路径只有 [0xB78B98]=0 不清其他 4 全局（成功才
+     清 [0xB78B90]/[0xB78B94]）——失败态部分初始化照
+     抄；
+  ③ [0xB78B84]=0x10（16B refcount 单元）——SBH refcount
+     表元大小（非 1B 非 4B）；
+  ④ HeapAlloc 0 标志（push 0）+ 0x140 固定大小——初始
+     段 320B（含段头 + 首批块）；
+  ⑤ 返回 1/0 用 push 1/pop eax + 天然 eax=0 两路径——
+     成功显式置 1；
+  ⑥ [0xB78B90]/[0xB78B94] 成对清零（and dword,0 非
+     mov）——双 32 位空闲标志对称清。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 堆设施按
+商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CF77F = MSVC6 静态 CRT 堆初始分配器（SBH 段
+   分配）——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_
+   layout_crt_provenance）；HeapAlloc + [0xB78B84..0xB78B98]
+   段头控制表 + refcount 0x10 = VC6 CRT 小堆标准形态
+   （batch 021 0x7CF7BD 同域前邻）。
+2. 依赖：零 E8 函数依赖（IAT [0x7E1278] + 全局族）——重
+   写 gamemd 时用等价 C 库 malloc/SBH 语义代替。
+3. gamemd_replication_discipline：MSVC6 CRT 堆设施，重写
+   时用等价运行时代替，逐字节复刻无意义——按商业库纪律
+   归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 62B + 全局族分布 + 调用点
+宿主；函数名「堆初始分配器」由 HeapAlloc 0x140 + 段头表
+三元初始化 + batch 021 同域交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 021：0x7CF7BD 堆段包含扫描内核——[0xB78B90]
+  21 处引用同域（本批为其段分配前邻）。
+★batch 1169：0x7C946E _nh_malloc 驱动——[0x7E1278] IAT
+  兜底路径同槽 + [0xB78B9C] 堆句柄同全局（分配/段分配配
+  对）。
+★batch 1174：0x7D107D _msize——[0xB78B9C]/[0x7E12A0] 同
+  堆查询域（本批 HeapAlloc 写侧 vs 彼 HeapSize 读侧）。
+★batch 1116：[0x7E1278] IAT 槽仅作调用点登记（方法论落
+  地）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CF77F：MSVC6 CRT 堆初始分配器归
+档；全 62B + 全局族分布；不写 C++ 模型不做 golden——CRT
+堆库商业库层；函数名由 HeapAlloc 0x140 + 段头表三元初始化
++ batch 021 同域交叉标注）。TSV 新增 0x007CF77F 行。
+
+★本批实锤：SBH 段分配——HeapAlloc（[0x7E1278]+0x140）
+  初始块 → 失败返 0 / 成功存 [0xB78B98]/[0xB78B8C] +
+  清 [0xB78B90]/[0xB78B94] + [0xB78B84]=0x10 返 1，段头
+  控制表 [0xB78B84..0xB78B98] 由 0x7CF6-0x7D03 堆内核域
+  共享。
+相邻待续：batch 1181 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CF347 __startOneArgErrorHandling(60B)/
+0x7D6CF0(58B, callers=2)/0x7D5A2E(58B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1179 已完（MSVC6 CRT x87 FDIV 精度自检器
+0x7CEAC1，commit 9677c11）。
