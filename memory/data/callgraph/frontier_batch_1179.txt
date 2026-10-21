@@ -1,0 +1,119 @@
+frontier batch 1179 —— MSVC6 CRT x87 FDIV 精度自检器 0x7CEAC1（归档，Pentium FDIV 测试向量）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CEAC1（62B,
+uc=1, callers=1 池登记—探针 E8 callsites=0，非 E8 引用口
+径）。TSV 无既有行。TARGET = 0x007CEAC1。C++ 模型：无
+（见「三态判定」）。TSV：新增 0x007CEAC1 行。
+
+一、链语义（disasm 全 62B + 常量取证 + 调用方式核实，
+0x7CEAC1-0x7CEAFE）
+--------------------------------------------------------------
+签名（推断）：无参 cdecl（cdecl 0 参），返回 eax：
+0（FDIV 精度正常）/ 1（精度异常）。
+
+主体（0x7CEAC1-0x7CEAFE）：
+007ceac1  push ebp/mov ebp,esp/sub esp,0x18
+007ceac7  fld qword[0x7f9868]                  ; ★★B = 3145727.0
+                                              ;   （[0x7F9868] 探针实锤）
+007ceacd  fstp qword[ebp-8]
+007cead0  fld qword[0x7f9860]                  ; ★★A = 4195835.0
+                                              ;   （[0x7F9860] 探针实锤）
+007cead6  fstp qword[ebp-0x10]
+007cead9  fld qword[ebp-0x10]                  ; st0 = A
+007ceadc  fdiv qword[ebp-8]                    ; ★★st0 = A/B
+007ceadf  fmul qword[ebp-8]                    ; st0 = (A/B)*B
+007ceae2  fsubr qword[ebp-0x10]                ; ★★st0 = A-(A/B)*B
+                                              ;   = FDIV 余数
+007ceae5  fstp qword[ebp-0x18]
+007ceae8  fld qword[ebp-0x18]
+007ceaeb  fcomp qword[0x7e1718]                ; ★★余数 vs 1.0
+                                              ;   （[0x7E1718]=1.0 batch
+                                              ;   1140 已实锤）
+007ceaf1  fnstsw ax/sahf
+007ceaf4  jbe 0x7ceafb                         ; ★余数 ≤ 1.0 → 返 0
+007ceaf6  push 1/pop eax/leave/ret             ; ★余数 > 1.0 → 返 1
+007ceafb  xor eax,eax/leave/ret                ; ★返 0
+
+★语义：**MSVC6 CRT x87 FDIV 精度自检器（推断名——Pentium
+FDIV bug 检测样板）**——无参：
+  ① 两个常量 [0x7F9860]=4195835.0 / [0x7F9868]=3145727.0
+     ——**Intel Pentium FDIV bug 的著名检测向量**（William
+     Kahan 发现的 4195835/3145727 用例）；
+  ② x87 执行 A/B × B - A（fdiv/fmul/fsubr）得 FDIV 余数；
+  ③ 余数与 1.0（[0x7E1718]）比较：≤ 1.0 → 返 0（除法单
+     元正常）/ > 1.0 → 返 1（精度异常——Pentium 缺陷可
+     被检出）。
+  = 启动自检/请在带缺陷 FPU 上运行的探测样板（90 年代
+  硬件检测惯用），零 E8 纯 x87。
+
+★调用点（探针 E8 实测 0 处——**非 E8 引用**）：池登记
+  callers=1 靠非 E8 口径（.rdata 初始化函数指针数组/静态
+  构造器表引用推断——batch 1140 jmp 尾跳同款教训：扫描
+  器 E8 扫不到不代表无调用）。常量 [0x7F9860]/[0x7F9868]
+  均为本函数唯一消费（探针 abs 引用各 1 处）。
+
+★E8 被调者：**零 E8 调用**（全 62B 纯 x87 fld/fdiv/fmul/
+  fsubr/fcomp + 常量比较）。
+
+★原版怪癖（照抄）：
+  ① 测试向量 4195835/3145727 为 Pentium FDIV bug 标准
+     用例（历史名场景固化——重写时不可改数值）；
+  ② 余数判定阈 1.0（jbe → 返 0）——正确 FPU 余数理论上
+     ≈0，阈值放宽到 1.0（鉴别 FDIV 缺陷的巨偏差）；
+  ③ fsubr（反向减）实现 A-(A/B)*B——x87 反向减惯用；
+  ④ 返 0/1 用 push 1/pop eax + xor eax,eax 双路径（回弹
+     交替）；
+  ⑤ 无参函数（0 栈参）——探测样板形态（静态初始化可
+     调）；
+  ⑥ 常数直读（fld [abs]）非压栈传参——编译期常量装配。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 浮点库
+启动设施按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CEAC1 = 0x7C-0x7D 区（MSVC6 静态 CRT，ra2_
+   code_region_layout_crt_provenance）内的 FDIV 自检样板
+   ——纯 x87 常量测试 + 无引入/无全局 = CRT 启动辅助标
+   准形态（近 0x7C 浮点初始化域）。
+2. 依赖：零函数依赖 + 常量 [0x7F9860]/[0x7F9868]（唯一消
+   费）——重写 gamemd 时用等价检测语义或直接忽略（现代
+   硬件 20+ 年无 FDIV 缺陷，且 gamemd 运行期未用返回值
+   的证据不足，按启动侧介照抄登记）。
+3. gamemd_replication_discipline：MSVC6 CRT 浮点启动设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 62B + 常量取证 + 调用方
+式核实；函数名「x87 FDIV 精度自检器」由 Pentium 测试向量
+4195835/3145727 + 阈值 1.0 交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1140：0x7CF479 matherr 分派器——探针 E8=0 靠非
+  E8 调用点（jmp 尾跳）的教训，本批同款核实（该函数也
+  是 E8=0 但池登记 callers=1）。
+★batch 1141/1164/1166：FPE/FPU 包装族——[0x7E1718]=1.0
+  常量的第四处消费（batch 1140 实锤常量族全景）。
+★[0x7F9860]/[0x7F9868]：本批新取证的数学常量对（FDIV
+  测试向量，历史名场景）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CEAC1：MSVC6 CRT x87 FDIV 精度自
+检器归档；全 62B + 常量取证；不写 C++ 模型不做 golden——
+CRT 浮点库商业库层；函数名由 Pentium 测试向量 4195835/
+3145727 + 阈值 1.0 交叉标注）。TSV 新增 0x007CEAC1 行。
+
+★本批实锤：Pentium FDIV bug 标准测试向量（4195835/
+  3145727）固化的自检样板——A/B×B-A 余数与 1.0 比较返
+  0/1；探针 E8=0 靠非 E8 引用口径（batch 1140 教训重
+  验）。
+相邻待续：batch 1180 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CF77F(62B)/0x7CF347 __startOneArgError
+Handling(60B)/0x7D6CF0(58B, callers=2)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1178 已完（MSVC6 CRT wcspbrk 宽字符串字符集
+查找器 0x7CC409，commit 34b0503）。
