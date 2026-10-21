@@ -1,0 +1,134 @@
+frontier batch 1218 —— MSVC6 CRT getenv 加锁包装壳 0x7CBC11（归档，锁壳家族第五件）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CBC11（33B,
+uc=1, callers=2 探针实测 0x697AFB/0x69A363）。TSV 无既有行。
+TARGET = 0x007CBC11。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CBC11 行。
+
+一、链语义（disasm 全 33B + 核心交叉 + 调用点交叉，
+0x7CBC11-0x7CBC31）
+--------------------------------------------------------------
+签名（确认）：cdecl 1 参（[esp+4]=key 环境变量名指针），
+返核心 0x7CBC32 结果（值指针或 0）。
+
+主体（0x7CBC11-0x7CBC31）：
+007cbc11  push esi
+007cbc12  push 0xc                         ; ★锁 key = 0xC(12)
+007cbc14  call 0x7cd9f5                    ; ★★TSV:238 流锁
+                                           ;   Enter（key 0xC）
+007cbc19  push dword[esp+0xc]              ; ★key 参（push 后
+                                           ;   偏移 +0xC = 原
+                                           ;   [esp+4]）
+007cbc1d  call 0x7cbc32                    ; ★★TSV:1868 batch
+                                           ;   1034 getenv 环境
+                                           ;   变量查找器
+                                           ;   （125B）
+007cbc22  push 0xc                         ; 锁 key = 0xC
+007cbc24  mov esi, eax                     ; ★esi = 核心结果
+007cbc26  call 0x7cda56                    ; ★★TSV:239 流锁
+                                           ;   Leave（key 0xC）
+007cbc2b  add esp, 0xc                     ; ★清 3 栈参（核心
+                                           ;   1 + 两锁各 1）
+007cbc2e  mov eax, esi                     ; ★返回核心结果
+007cbc30  pop esi
+007cbc31  ret
+
+★语义：**MSVC6 CRT getenv 加锁包装壳（推断名——getenv 公开
+入口的锁包装层）**——cdecl 1 参：
+  ① 流锁 Enter（0x7CD9F5，key 0xC）；
+  ② key 原样转发 0x7CBC32（getenv 环境变量查找器——门控
+     [0xB78BB4] + 链表 [0xB781E4]/[0xB781EC] 惰性构建 + 
+     key=value 前缀匹配）；
+  ③ 流锁 Leave（0x7CDA56，key 0xC）；
+  ④ 返回核心结果（esi 中转，eax 透传）。
+  = getenv 公开入口的锁包装（环境链表 [0xB781E4] 被锁保
+  护——惰性构建与遍历全程串行化）。
+
+★调用点（探针 E8 实测 2 处 0x697AFB/0x69A363——**均在宿主
+  主代码区 0x69xxxx，非 CRT 内部**）：为 Westwood 代码直接
+  调 getenv 公开入口（环境变量读取：如路径/调试开关），
+  经锁壳而非裸核心 0x7CBC32（核心另一调用点 0x7D4D55 为
+  CRT 内部 tzset 域 [0x7F9988 "TZ"] 直接调核心——内部不
+  重复加锁）。
+
+★E8 被调者（3 个，全已登记）：
+  ① 0x7CD9F5（★★TSV:238 crt_runtime_verified——CRT
+     region lock Enter 64B，batch 046 同族）；
+  ② 0x7CBC32（★★TSV:1868 crt_runtime_verified——batch
+     1034 getenv 环境变量查找器 125B，依赖 0x7D461E 构建
+     /0x7D15A0 _strlen/0x7D45DF 前缀比较）；
+  ③ 0x7CDA56（★★TSV:239 crt_runtime_verified——CRT
+     region lock Leave 18B）。
+  全部已登记，无未登记依赖。
+
+★全局：零（纯栈 + 参数透传；锁对象经 key 0xC 索引锁槽表
+  [0x87C2A8]）。
+
+★原版怪癖（照抄）：
+  ① 与 batch 1204（fputc 壳 0x7D9ECF）/1197（fread 壳
+     0x7C94BC）/1198（fwrite 壳 0x7C95D3）**同模板**——锁
+     Enter → 核心转发 → 锁 Leave → eax 透传；
+  ② 锁 key 0xC（12）硬编码（非 FILE* 锁——环境链表专用锁
+     槽，与 0x1B/0x19 等其它 CRT 锁 key 并列）；
+  ③ `add esp,0xc` 一次清 3 栈参（核心 1 + 两锁各 1）——
+     三 cdecl 调用清理合并；
+  ④ 返回值经 esi 中转（mov esi,eax → mov eax,esi）——两
+     次锁调用间保全（eax 会被 Leave 覆盖）；
+  ⑤ 锁在壳层、核心无锁——分层设计（0x7CBC32 自身不加锁，
+     CRT 内部调用点 0x7D4D55 直调核心不重复加锁，避免同
+     锁递归）；
+  ⑥ 33B 为锁壳家族**最短一档**（1 参转发；fputc 2 参 41B
+     / fread-fwrite 4 参 47B）——参数量与体长正相关。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 锁/环境
+设施按商业库纪律归档；核心 batch 1034 已实证）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CBC11 = MSVC6 静态 CRT getenv 加锁包装壳——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）；锁 + 环境查找核心 = CRT 环境变量公开入口
+   标准形态（batch 1204/1197/1198 锁壳家族同族）。
+2. 依赖：0x7CD9F5/0x7CBC32/0x7CDA56 全部已登记——重写
+   gamemd 时用等价运行时（std::getenv）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 环境/锁设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 33B + 核心交叉 + 调用点交
+叉；函数名「getenv 加锁包装壳」由锁+核心+锁三段 + 1 参转
+发交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1034 / TSV:1868：0x7CBC32 getenv 环境变量查找器——
+  本批核心（本批为其**公开加锁入口**；彼批 2 callers =
+  0x7CCA34/0x7CCFFC 直调核心 vs 本批 2 callers 0x697AFB/
+  0x69A363 走锁壳——核心/壳双入口并存实锤）。
+★batch 1204：0x7D9ECF fputc 加锁壳——同模板（锁壳家族）。
+★batch 1197/1198：0x7C94BC/0x7C95D3 fread/fwrite 加锁壳
+  ——同模板（家族 5 件：fread/fwrite/fputc/getenv + 锁对
+  0x7CD9F5/0x7CDA56）。
+★TSV:238/239：锁 Enter/Leave 对称对——本批 key 0xC 现场
+  （与 0x1B fputc 壳、0x19 等其它 key 并列）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CBC11：MSVC6 CRT getenv 加锁包装
+壳归档；全 33B + 核心交叉 + 调用点交叉；不写 C++ 模型不
+做 golden——CRT 环境/锁设施商业库层；函数名由锁+核心+锁
+三段 + 1 参转发交叉标注）。TSV 新增 0x007CBC11 行。
+
+★本批实锤：getenv 公开入口锁壳——Enter(0xC) → 0x7CBC32 核
+  心 → Leave(0xC) → 返回；2 调用点均宿主主代码区（游戏代
+  码读环境变量走公开壳）；核心另有 CRT 内部调用点
+  0x7D4D55（tzset "TZ"）直调不重复加锁；锁壳家族第 5 件
+  （最短 33B）。
+相邻待续：batch 1219 按 _scan_pending_7c.py 取池内下一未登
+记项（uc=1：0x7C7350(33B, callers=1)/0x7C1130(29B,
+callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1217 已完（MSVC6 CRT __copysign 浮点符号搬运
+器 0x7D8EF5，commit 115db81）。
