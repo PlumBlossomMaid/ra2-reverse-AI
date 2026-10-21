@@ -1,0 +1,152 @@
+frontier batch 1119 —— Westwood MMX 像素合成函数 0x7DF280（归档，0x7C-0x7D 区混入样本 #11，四兄弟族）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DF280（244B,
+uc=1, callers=1 探针实测 0x5FFAA7）。TSV 无既有行。TARGET
+= 0x007DF280。C++ 模型：无（见「三态判定」）。TSV：新增
+0x007DF280 行。
+
+⚠️ 归属：延续 batch 1086-1118 修正链——0x7C-0x7D 区混入
+Westwood 自有代码，本样本 #11（MMX 像素合成，四兄弟族）。
+
+一、链语义（disasm 全 244B + 宿主 0x5FFA 区交叉，0x7DF280-0x7DF3C1）
+--------------------------------------------------------------
+签名（推断）：cdecl 7 参（param1/param2=源与目标指针族、
+param3=0x100 常数、param4/param5=行指针、param6/param7=行
+步进），执行 MMX 像素混合无返回值（写回目标 word）。
+
+主体（0x7DF280-0x7DF3C1）：
+007df280  push ebp/mov ebp,esp/add esp,-0x24/push ebx,ecx,edx,esi,edi
+007df28b  xor eax,eax/mov [ebp-0x14],eax        ; ★局部清零
+007df290  mov eax,[ebp+0x1C]/mov [ebp-8],eax    ; ★外层行计数
+007df296  mov [ebp-0x1C],0/[ebp-0x18],0/[ebp-0x24],0/[ebp-0x20],0
+007df2b2  mov esi,[ebp+8]/mov [ebp-0xC],esi     ; ★字节源指针
+007df2b8  mov edi,[ebp+0xC]/mov [ebp-0x10],edi  ; ★字目标指针
+007df2be  mov edx,[ebp+0x20]                     ; ★查表基址
+007df2c1  mov eax,[ebp+0x18]/mov [ebp-4],eax    ; ★内层列计数
+007df2c7  xor eax,eax/xor ebx,ebx/jmp 0x7DF340
+; → 内层列推进（0x7DF300）：
+007df300  inc esi/lea edi,[edi+2]/dec [ebp-4]/jne 0x7DF340
+; → 行推进（0x7DF309）：
+007df309  mov esi,[ebp-0xC]/add esi,[ebp+0x10]/mov [ebp-0xC],esi
+007df312  mov edi,[ebp-0x10]/add edi,[ebp+0x14]/mov [ebp-0x10],edi
+007df31b  dec [ebp-8]/jne 0x7DF2C1/jmp 0x7DF3B9   ; ★外层循环
+; → 像素主循环（0x7DF340）：
+007df340  mov al,[esi]/test al,al/je 0x7DF300      ; ★源字节（0 → 跳过）
+007df346  mov [ebp-0x1C],al                         ; ★α = 源字节
+007df349  mov bx,[edi]                              ; ★目标 word → 表索引
+007df34c  mov [ebp-0x1A],al
+007df34f  mov [ebp-0x18],al
+007df352  punpcklbw mm0,[edx+ebx*4]                 ; ★★32 位调色板
+                                              ;   查表（颜色→8 位域）
+007df356  psrlw mm0,8
+007df35a  movq mm1,mm0
+007df35d  pmullw mm0,[ebp-0x1C]                     ; ★★×α 混合
+007df361  psrlw mm0,8
+007df365  paddusb mm0,mm1                           ; ★★饱和加回原色
+007df368  psrlw mm0,2
+007df36c  movq [ebp-0x24],mm0                       ; ★暂存结果
+007df370  xor ebx,ebx/xor eax,eax
+007df374  mov bl,[ebp-0x24]/mov al,[ebp-0x22]       ; ★RGB565 打包
+007df37a  shr bl,1
+007df37c  xor ecx,ecx/shl eax,5
+007df381  mov cl,[ebp-0x20]/shl ecx,0xA
+007df387  or ebx,eax/and ecx,0xF800/or ebx,ecx      ; ★5/6/5 位组合
+007df395  mov word[edi-2],bx                        ; ★写回目标 word
+007df399  dec [ebp-4]/jne 0x7DF340                  ; ★内层循环
+007df39e  …（行推进同上）jmp 0x7DF3B9
+（0x7DF3C2 起 = 兄弟函数 0x7DF3C2——四兄弟族成员）
+
+★语义：**Westwood MMX 像素合成函数（推断名）**——cdecl 7
+参（源字节指针/目标字指针/0x100 常数/行指针族/行步进）：
+  ① 双指针双循环：内层逐列（字节源 +1 / 字目标 +2），外层
+     行步进（+[ebp+0x10]/+[ebp+0x14]）；
+  ② 每像素：读源字节（0 → 跳过）作 α → 读目标 word 作表索
+     引 → [edx+ebx*4] 32 位调色板查表 → MMX punpcklbw 解包
+     → psrlw 8 归一 → pmullw ×α → psrlw 8 → paddusb 饱和加
+     回原色 → psrlw 2；
+  ③ 结果 RGB565 打包（shr bl,1 + shl eax,5 + shl ecx,0xA/
+     and 0xF800/or）写回目标 word；
+  ④ MMX 无 emms 收尾（0x7DF3B9 直接 ret？——混合函数惯例
+     或原版漏写，照抄）。
+  语义 = 源索引经调色板与目标按 α 合成的颜色混合写回。
+
+★调用点（探针 E8 实测 1 处 0x5FFAA7）+ 四兄弟族（宿主
+  0x5FFA00-0x5FFB10 调度区，cmp [0xAC1838],edx 分派）：
+  · 0x5FFA15 → call 0x7DF3C2（7 参含 push 0x100）
+  · 0x5FFA34 → call 0x7DF191（6 参）
+  · 0x5FFA5E → call 0x7DF500（7 参）
+  · 0x5FFA7D → call 0x7DF0B4（6 参）
+  · 0x5FFAA7 → call 0x7DF280（★本批，7 参：push eax/edi/
+    0x100/esi/edx/ecx/ecx）
+  · 0x5FFAC6 → call 0x7DEEFA（6 参）
+  · 0x5FFAF0 → call 0x7DF640（7 参）
+  → ★★四兄弟族实锤：0x7DF280/0x7DF3C2/0x7DF500/0x7DF640
+    （7 参变体）与 0x7DF191/0x7DF0B4/0x7DEEFA/0x7DF2C1?
+    （6 参变体）——同一渲染调度宿主按 [0xAC1838] 状态选
+    7/6 参形态。
+
+★E8 被调者：零（纯 MMX + 查表内联，无子调用）。
+
+★原版怪癖（照抄）：
+  ① MMX punpcklbw/psrlw/pmullw/paddusb 合成链 + 无 emms 收
+     尾（x87/MMX 混合态由调用方维护——渲染管线惯例）；
+  ② 目标 word 直接作 [edx+ebx*4] 表索引（bx 无符号 16 位，
+     表 32 位/项 → 64KB 表窗口）；
+  ③ 源字节 0 跳过（透明像素不写回——预乘 alpha 语义）；
+  ④ α 混合公式：查表色×α + 原色（psrlw 8 归一 + paddusb
+     饱和）→ psrlw 2 再衰减（半强度合成）；
+  ⑤ RGB565 打包与 batch 1087 系列 RGB 通道重排不同——这里
+     shr/shl/or 直接位拼（5/6/5），非 8 位通道重排链；
+  ⑥ 四兄弟族复制粘贴（0x7DF280/0x7DF3C2/0x7DF500/0x7DF640
+     同模板，宿主按状态选参形态）——Westwood 惯用。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：Westwood 渲染域，
+重写时按语义等价实现）。
+
+三、三态判定（为何 semantics_verified 而非 crt_runtime_verified）
+---------------------------------------------------------------
+1. 归属：0x7DF280 = **Westwood 自有代码**——①MMX 像素合成
+   （punpcklbw/pmullw/paddusb）非 MSVC6 CRT 形态（CRT 无
+   MMX 像素处理设施）；②32 位调色板查表 + RGB565 位拼为渲
+   染管线特征（batch 1087/1088/1092 RGB 通道域同族）；③宿
+   主 0x5FFA 区渲染调度（cmp [0xAC1838] 分派 7/6 参形态 +
+   0x100 常数 push）为主代码区 Westwood 代码；④四兄弟族复
+   制粘贴（Westwood 惯用，batch 1105/1106/1115 同判据）。
+2. 依赖：无子调用，纯 MMX + 表——重写时按像素合成语义等
+   价实现（std::blend 语义）。
+3. 复刻纪律：Westwood 自有代码——不按商业库归档；像素合
+   成非 RMG 管线依赖，保留 semantics_verified。
+→ 状态：semantics_verified（MMX 合成链 + 宿主调度 + 四兄弟
+族交叉；函数名「MMX 像素合成函数」为推断交叉标注——混合
+链/查表/RGB565 打包由代码实测，业务宿主语义未逐一定）。
+
+四、跨批次闭合
+------------
+★batch 1087/1088/1092：RGB 通道重排/表面装载器——本批
+  RGB565 位拼与 8 位通道重排同渲染域（配色/调色板处理）。
+★batch 1105/1106：调色板块装载器三兄弟——同复制粘贴族
+  惯用（本批四兄弟族新件）。
+★batch 1118/1107：CRT 双层命名键查找器孪生——复制粘贴族
+  惯用对照（Westwood/CRT 各自都有复制粘贴传统）。
+
+五、状态
+-------
+semantics_verified（0x7DF280：Westwood MMX 像素合成函数归
+档；全 244B + 宿主调度 + 四兄弟族交叉；不写 C++ 模型不做
+golden——像素合并非 RMG 管线依赖；函数名「MMX 像素合成函
+数」为推断交叉标注——混合链/查表/RGB565 打包由代码实测；
+⚠️ 0x7C-0x7D 区 Westwood 混入样本 #11）。TSV 新增
+0x007DF280 行。
+
+★本批实锤：0x7C-0x7D 区混入样本 #11——MMX 像素合成（调色
+  板查表 + ×α 混合 + RGB565 位拼）四兄弟族第一件，宿主
+  0x5FFA 区按 [0xAC1838] 状态选 7/6 参形态调度。
+相邻待续：batch 1120 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7DF640(243B)/0x7DF3C2(242B)/0x7DF500(240B)
+——四兄弟族剩余三件）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1118 已完（CRT 双层命名键查找器孪生 0x7CACC0，
+commit 47fbfb9）。
