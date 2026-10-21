@@ -1,0 +1,151 @@
+frontier batch 1118 —— CRT 双层命名键查找器孪生 0x7CACC0（归档，batch 1107 复制粘贴第一件）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CACC0（249B,
+uc=1, callers=1 探针实测 0x7CAB6E 唯一宿主）。TSV 无既有
+行。TARGET = 0x007CACC0。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CACC0 行。
+
+一、链语义（disasm 全 249B + 自检交叉，0x7CACC0-0x7CADB8）
+--------------------------------------------------------------
+签名（推断）：cdecl 5 参（param1=元素索引、param2=容器对象
+@[ebp+0xC]、param3=内层键、param4=期望值、param5=外层键），
+命中返回项指针 / 无命中 0。
+
+主体（0x7CACC0-0x7CADB8）：
+007cacc0  push ebp/mov ebp,esp/sub esp,0xC/and [ebp-4],0
+007cacca  push ebx,esi,edi/mov ebx,[ebp+0xC]    ; ★param2 容器
+007cacd0  mov eax,[ebx+0x10]                    ; ★★[obj+0x10] 外层数组
+007cacd3  cmp [eax+8],0/mov edi,[eax+0xC]       ; ★[数组+8] 元素数/
+                                              ;   [+0xC] 指针表
+007cacda  jbe 0x7CAD69                          ; 空 → 第二遍
+007cace0  mov esi,[edi]                          ; ★外层项
+007cace2  mov ecx,[ebp+0x18]                    ; ★param5 外层键
+007cace5  mov eax,[esi]/cmp eax,ecx             ; ★[项] 名字符串
+007cace9  je 0x7CACFE                           ; ★指针相等快速命中
+007caceb  add ecx,8/add eax,8
+007cacf3  call 0x7CDA90                          ; ★★strcmp（batch 192）
+007cacfc  jne 0x7CAD54                          ; 不等 → 外层下一项
+; → 外层键命中（0x7CACFE 内层查找）：
+007cacfe  and [ebp-0xC],0                       ; ★内层计数=0
+007cad02  cmp [esi+4],0/lea eax,[edi+4]
+007cad0c  jbe 0x7CAD54                          ; 内层空 → 外层下一项
+007cad0e  mov eax,[ebp-8]/mov ecx,[ebp+0x10]    ; ★param3 内层键
+007cad14  mov ebx,[eax]/mov eax,[ebx]
+007cad18  cmp eax,ecx/je 0x7CAD2F               ; ★指针相等快速命中
+007cad1c  add ecx,8/add eax,8
+007cad24  call 0x7CDA90                          ; ★★strcmp
+007cad2d  jne 0x7CAD42                          ; 不等 → 内层下一项
+007cad2f  add ebx,8/push ebx/push [ebp+8]/call 0x7CAEF1  ; ★★二维
+                                              ;   getter（基址[obj]+行
+                                              ;   指针表[obj+8] 索引+
+                                              ;   列索引）
+007cad3b  cmp eax,[ebp+0x14]                    ; ★结果 vs param4
+007cad40  je 0x7CADB5                           ; 命中 → 返回项指针
+007cad42  inc [ebp-0xC]/add [ebp-8],4/cmp [ebp-0xC],[esi+4]/jb
+; → 第二遍外层重扫（0x7CAD69）：
+007cad69  mov eax,[ebx+0x10]/and [ebp-4],0
+007cad70  cmp [eax+8],0/mov edi,[eax+0xC]/jbe 0x7CADAE
+007cad79  mov esi,[edi]/mov ecx,[ebp+0x18]/mov eax,[esi]
+007cad7e  cmp eax,ecx/je 0x7CAD97
+007cad84  add ecx,8/add eax,8
+007cad8c  call 0x7CDA90                          ; ★★strcmp 第三处
+007cad95  jne 0x7CAD9D
+007cad97  test byte[esi+0x14],3/je 0x7CADB5     ; ★★标志位 & 3 门控
+                                              ;   （==0 才返回命中）
+007cad9d  inc [ebp-4]/add edi,4/cmp [ebp-4],[eax+8]/jb
+007cadae  xor eax,eax/…/ret                     ; ★无命中返回 0
+007cadb5  mov eax,esi/jmp 0x7CADB0              ; ★返回命中项指针
+（0x7CADB9 起 = batch 1107 已归档孪生 0x7CADB9——两函数紧邻）
+
+★语义：**CRT 双层命名键查找器孪生（推断名——batch 1107
+0x7CADB9 同模板复制粘贴第一件）**——cdecl 5 参：
+  ① [obj+0x10] 外层数组（[+8] 元素数 / [+0xC] 指针表）按
+     param5 字符串键遍历匹配（指针相等快速命中 / strcmp
+     0x7CDA90 慢路径）；
+  ② 外层项 [esi+4] 内层数组按 param3 字符串键二次匹配；
+  ③ 双命中后调 0x7CAEF1（二维数组 getter：基址[obj]+行指针
+     表[obj+8] 索引+列索引）取元素与 param4 比较，相等返回
+     该项指针；
+  ④ 无命中走第二遍外层重扫：再按 param5 键遍历，命中项
+     [esi+0x14] 标志 & 3 == 0 才返回指针（★本件独有门控）；
+  ⑤ 均未命中返回 0。
+
+★调用点（探针 E8 实测 1 处）：0x7CAB6E（前邻宿主——双层
+  命名键族调用端，batch 1107 宿主 0x7CAB75 邻位）。
+
+★E8 被调者：0x7CDA90（batch 192 CRT strcmp 对齐优化版——
+  本批三处调用 0x7CACF3/0x7CAD24/0x7CAD8C）+ 0x7CAEF1（二维
+  getter，5 callers：0x7CAB89/0x7CAD36/0x7CAE36/0x7CAE50/
+  0x7CAE61——其中 0x7CAD36 在本函数、0x7CAE36/0x7CAE50/
+  0x7CAE61 在孪生 0x7CADB9 内，同族实锤）。
+
+★孪生差异（batch 1107 0x7CADB9 vs 本件 0x7CACC0）：
+  ① 本件第二遍重扫带 [esi+0x14]&3 标志门控（0x7CAD97），
+     0x7CADB9 无此检查（或归档时未记全——两件同函数族）；
+  ② 本件头部少 [ebp-0x10] 命中项保存变量（0x7CADB9 有），
+     直接以 esi 传递命中项；
+  ③ 两件均为「先外层后内层 + 双 strcmp + getter 取比」主
+     干，仅尾部兜底路径差异——复制粘贴模板。
+
+★原版怪癖（照抄）：
+  ① 指针相等快速命中 + strcmp 慢路径双轨（字符串实习化）；
+  ② 键比较加 8 偏移（[项] 名字符串指针 +8 才是串首——条目
+     前 8 字节元数据）；
+  ③ 外层/内层独立计数（[ebp-4] 外层 / [ebp-0xC] 内层）；
+  ④ 命中项直接经 esi 传递（0x7CACC0 无跨段保存变量——与
+     孪生 0x7CADB9 的 [ebp-0x10] 不同）；
+  ⑤ 无命中后第二遍外层重扫带 [esi+0x14]&3 标志门控（本件
+     独有怪癖：标志&3≠0 的键命中项被跳过）——重扫兜底再筛
+     一层；
+  ⑥ 返回 0 表示无命中（无 errno/哨兵）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 映射表查找属
+商业库层，不写 C++ 模型）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CACC0 = MSVC6 CRT 双层命名键查找器——0x7C-0x7D
+   = MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）
+   ；strcmp 0x7CDA90（batch 192 已登记 CRT 字符串比较族）+
+   键值数组遍历为 CRT 映射表标准形态；与 batch 1107 的
+   0x7CADB9 紧邻同模板（复制粘贴第一件）。
+2. 依赖：0x7CDA90（batch 192 strcmp）+ 0x7CAEF1（紧邻
+   getter 5 callers）——重写 gamemd 时用等价运行时（std::map/
+   unordered_map 语义）代替。
+3. gamemd_replication_discipline：CRT 映射表设施，重写时用
+   等价运行时代替，逐字节复刻无意义——按商业库纪律归档，
+   不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 249B + 孪生同模板 + getter
+交叉；函数名「双层命名键查找器孪生」为推断交叉标注——双
+数组遍历/键匹配由代码实测）。
+
+四、跨批次闭合
+------------
+★batch 192：0x7CDA90 CRT strcmp 对齐优化版——本批三处调
+  用（0x7CACF3/0x7CAD24/0x7CAD8C）实锤键匹配慢路径。
+★batch 1107：0x7CADB9 CRT 双层命名键查找器——本批紧邻孪
+  生（0x7CACC0-0x7CADB8 vs 0x7CADB9-0x7CAEF0，同模板复制
+  粘贴第一件/第二件；0x7CAEF1 五 callers 中 0x7CAD36 在本
+  件、0x7CAE36/0x7CAE50/0x7CAE61 在孪生内——同族实锤）。
+★batch 1059/1080：流字符读取器——同 CRT 字符串/表查找域。
+
+五、状态
+-------
+crt_runtime_verified（0x7CACC0：CRT 双层命名键查找器孪生
+归档；全 249B + 孪生同模板 + getter/strcmp 交叉；不写 C++
+模型不做 golden——CRT 映射表商业库层；函数名「双层命名键
+查找器孪生」为推断交叉标注——双数组遍历/键匹配由代码实
+测）。TSV 新增 0x007CACC0 行。
+
+★本批实锤：外层/内层双层字符串键匹配（strcmp 0x7CDA90 三
+  处调用）+ 0x7CAEF1 二维寻址 getter 取元素比较 + 第二遍重
+  扫带 [esi+0x14]&3 标志门控——CRT 映射表查找标准形态，与
+  batch 1107 孪生同族。
+相邻待续：batch 1119 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7DF280(244B)/0x7DF640(243B)/0x7DF3C2(242B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1117 已完（MSVC6 CRT _output/sprintf 格式化引
+擎 0x7CCA34，commit ce7ac83）。
