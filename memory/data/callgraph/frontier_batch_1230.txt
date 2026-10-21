@@ -1,0 +1,96 @@
+frontier batch 1230 —— 0x005A1E10 死代码复刻：MapType 3/4 门禁编排（56B，零取数点）
+=======================================================================
+
+候选来源：用户指令三阶段①「RMG 死代码全部复现对齐」——batch 1229 补完
+0x5A6BA0 后剩余 10 个无 REIMPL。0x5A1E10 是「MapType 3/4 门禁」——
+死代码区「另一套 MapType 3/4 方案」的总入口之一（与 0x5A5020 编排树
+同属 batch 319/320 登记的废弃编排体系）。
+TARGET = 0x005A1E10。C++ 模型：code/rewrite/rmg/dead_code_5a1e10.{h,cpp}
+新增 DeadCode5A1E10(ctx) + DeadCode5A1E10World（五个子回调）。
+单测：test_dead_code_5a1e10.cpp 新增 DeadCode5A1E10.Golden
+（golden 16 行全对拍）。TSV 新增 0x005A1E10_REIMPL 行。
+
+一、语义（全段反汇编逐条核对 + golden 16 行闭环）
+------------------------------------------------
+真义（机器码全 56B 确认，disasm.py 0x5A1E10 0x38）：
+  · 调用约定：**thiscall 无栈参 ret 0**——ecx=this（mov esi,ecx），
+    读 this->[0x3C]（dword，mov eax,[esi+0x3c]）。
+  · 门禁：cmp eax,4 / je 0x5A1E20；cmp eax,3 / jne 0x5A1E46
+    —— [this+0x3C] == 4 || == 3 才执行编排，否则零调用直接返回。
+  · 命中编排（0x5A1E20-0x5A1E41 五连调，固定顺序）：
+      ① call 0x58EBC0       （无参 ret 0——ecx 残留无契约）
+      ② call 0x58EF10       （无参 ret 0）
+      ③ mov ecx,esi; call 0x5A19E0（thiscall ecx=this，ret 0）
+      ④ push -1; push 0; mov ecx,0x87F7E8; call 0x578E60
+         —— RepaintAll(Instance, 0, -1)：thiscall+2 栈参 ret 8，
+         参数1=0（[esp+4]）、参数2=-1（[esp+8]）
+         （★★push -1 实锤形态——与活代码 0x598D73 同款 owner=-1）
+      ⑤ mov ecx,esi; call 0x5A17F0（thiscall ecx=this，ret 0）
+  · ★★零取数点：门禁本身不调 Randomizer；五个子调用本批全部打桩
+    （C3=ret / C2 08 00=ret 8）+ hook 各入口记录调用序列与实参。
+
+公式（golden 16 行实证）：
+  if (this->[0x3C] == 4 || this->[0x3C] == 3) {
+    Sub58EBC0(); Sub58EF10(); Sub5A19E0();
+    RepaintAll(0, -1);   // 实参形态 push -1; push 0
+    Sub5A17F0();
+  }
+
+★与 0x58C4A0 族的差异：
+  ① **编排门禁**——不是取数循环，是五个子调用的固定顺序编排；
+  ② **门禁双值判断**（==4||==3，0x58C4A0 族是类型字段比对）；
+  ③ **RepaintAll 实参**（参数1=0、参数2=-1——owner=-1 活代码同款）。
+
+二、golden 采集（emu_oracle 指令级模拟）
+--------------------------------------
+探针 .qwen/tmp/_emu_deadcode_5a1e10.py：调 0x5A1E10（ecx=THIS 结构
+0x30001000），灌 this->[0x3C]、五个子调用打桩（0x58EBC0/0x58EF10/
+0x5A19E0/0x578E60/0x5A17F0）、hook 各入口单指令边界 [addr,addr+1)
+记录调用序列与 ecx/实参，seed_global 播种。
+存档 memory/data/rmg/deadcode_5a1e10_golden.txt：3 种子 × 4 用例
+= 16 行。用例矩阵：type ∈ {3,4,2,0}（3/4 命中五连调、2/0 零调用）。
+★calls 字段 = 五连调序列（@ 后为 ecx；repaint(0,-1) 记两实参）
+或 none——校验门禁命中与固定顺序。
+★next 字段 = 调用后下一次 Random() 值（= 同种子首采值——零取数点
+实证：同种子 4 个用例 next 全部相同，函数不消耗 RNG）。
+
+(1) golden 实证（调用序列逐条对上）：
+  · type=3 → 0x58EBC0@this,0x58EF10@this,0x5A19E0@this,
+    repaint(0,-1)@0x87F7E8,0x5A17F0@this（五连调全跑）
+  · type=4 → 同上（==4 与 ==3 走同一编排）
+  · type=2 → calls=none（jne 直接返回）
+  · type=0 → calls=none
+  · RepaintAll 实参 (0,-1) 与 ecx=0x87F7E8 逐字段对上——
+    ★与活代码 0x598D73 的 push -1 实锤形态一致。
+
+三、原版怪癖（照抄）
+--------------------
+① [this+0x3C] == 4 || == 3 门禁（双值判断——不为 5/6 等扩展）；
+② 五连调固定顺序（0x58EBC0 → 0x58EF10 → 0x5A19E0 → RepaintAll →
+   0x5A17F0——编排形态照抄）；
+③ RepaintAll 实参形态 push -1; push 0（参数1=0、参数2=-1——
+   owner=-1 与活代码同款）；
+④ 门禁不命中时零调用直接返回（else 分支无任何副作用）。
+
+四、跨批次连接
+--------------
+0x5A5020（batch 319 登记——编排树根 A，尾部调 0x5A5360/0x5A5B50/
+0x5A6510/0x5A6920/0x5A78D0）；0x578E60 RepaintAll（活代码——batch
+1227 实锤 owner=-1；本条=死代码平行编排同款实参）；0x58EBC0/
+0x58EF10/0x5A19E0/0x5A17F0（死代码区内部成员——本批打桩，真身语义
+留后续批次）；[this+0x3C] = MapType 字段（与活代码 [0x5A23A0 族] 同
+语义推断——MapType 3/4 为河湖支路）。
+
+五、状态
+--------
+0x5A1E10：cpp_reimplementation_verified + unit_test_verified
+（calls 16/16 Eq——调用序列与实参逐位对拍 + next 16/16 Eq——零取数
+点实证：调用前后 RNG 状态不变）。
+partial：函数精确名（「MapType 3/4 门禁编排」推断——死代码无运行
+观测）、五个子函数本体语义（0x58EBC0/0x58EF10/0x5A19E0/0x5A17F0
+本批打桩，真身复刻留后续批次）、this->[0x3C] 字段精确语义（MapType
+推断——与活代码分支共用同一字段的交叉证据）、「保留了一版」结论
+（batch 319 已有推断——零引用只证明静态不可达）。
+本批产品代码新增 dead_code_5a1e10.{h,cpp} + 测试 + CMake 登记；
+ctest 90/90 全绿（含 0x58C5A0/0x5A6BA0 回归）。
+★hook 纪律延续：单指令边界 [addr,addr+1) 才准（本批五 hook 全单指令）。
