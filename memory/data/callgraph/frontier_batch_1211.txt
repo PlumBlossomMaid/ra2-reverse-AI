@@ -1,0 +1,142 @@
+frontier batch 1211 —— MSVC6 CRT strftime 家族受限长度字符串写入核心 0x7CCF1D（归档，词表串写输出缓冲）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CCF1D（39B,
+uc=1, callers=1 探针实测 0x7CCF10）。TSV 无既有行。
+TARGET = 0x007CCF1D。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CCF1D 行。
+
+一、链语义（disasm 全 39B + 调用宿主透传交叉 + 邻族登记
+交叉，0x7CCF1D-0x7CCF43）
+--------------------------------------------------------------
+签名（确认）：cdecl 3 参（[esp+4]=src 字符串指针、
+[esp+8]=char** dst 写入位置指针槽、[esp+0xC]=int* count
+剩余空间计数指针），无显式返回值（eax 不设——调用方不读
+返回值）。
+
+主体（0x7CCF1D-0x7CCF43）：
+007ccf1d  mov ecx, [esp+0xc]              ; ★ecx = 参3 count
+                                          ;   指针
+007ccf21  push esi
+007ccf22  push edi
+007ccf23  cmp dword [ecx], 0              ; ★*count == 0 ？
+007ccf26  je 0x7ccf41                     ; 是 → 退出（不写）
+007ccf28  mov eax, [esp+0x10]             ; ★eax = 参2 dst
+                                          ;   指针槽（push 后
+                                          ;   偏移 +8）
+007ccf2c  mov esi, [esp+0xc]              ; ★esi = 参1 src
+                                          ;   （push 后偏移 +4）
+; → 写循环（0x7CCF30）：
+007ccf30  mov dl, [esi]                   ; dl = *src
+007ccf32  test dl, dl
+007ccf34  je 0x7ccf41                     ; ★源 NUL → 退出
+007ccf36  mov edi, [eax]                  ; edi = *dst
+007ccf38  mov [edi], dl                   ; **dst = dl
+007ccf3a  inc dword [eax]                 ; (*dst)++
+007ccf3c  inc esi                         ; src++
+007ccf3d  dec dword [ecx]                 ; (*count)--
+007ccf3f  jne 0x7ccf30                    ; 循环
+007ccf41  pop edi
+007ccf42  pop esi
+007ccf43  ret
+
+★语义：**MSVC6 CRT strftime 家族受限长度字符串写入核心
+（推断名——词表串写入输出缓冲并递减剩余空间）**——cdecl
+3 参：
+  while (*count && *src) {
+      **dst = *src;   // 写当前字符
+      (*dst)++;       // 输出位置推进（经指针槽）
+      src++;          // 源推进
+      (*count)--;     // 剩余空间递减
+  }
+  = strftime 格式化引擎取词表串（星期/月名）写入输出缓冲
+  的受限拷贝核心（源 NUL 或空间耗尽即停，不补 NUL 终止符
+  的裸写循环——收尾由调用方管理）。
+
+★调用点（探针 E8 实测 1 处 0x7CCF10）：宿主 0x7CCEF0（29B
+  scan 池候选，strftime 家族词表串分派器）：mov eax,
+  [ebp+0xC]/push [ebp+0x14]（★count 指针透传）cmp [eax+8],
+  0xb（★[_+8]>0xb 判定）/push [ebp+0x10]（★dst 槽透传）
+  mov eax,[ebp+0x18]/jg 0x7CCF0A → push [eax+0x9c]（★词表
+  第二列 [obj+0x9c]）/jmp 0x7CCF10 → push [eax+0x98]（★词
+  表第一列 [obj+0x98]）→ call 0x7CCF1D（★本批写入核心）
+  → add esp,0xC → pop edi/esi/ebx/ebp/ret——宿主按 [_+8]
+  阈值选 [obj+0x98]/[obj+0x9c] 两张词表列之一作源串透传
+  3 参调本批（strftime %A/%a 类全/缩写表二选一写输出）。
+
+★E8 被调者：零 E8（全 39B 为纯内存写循环）。
+
+★全局：零（纯寄存器 + 调用方指针传参）。
+
+★原版怪癖（照抄）：
+  ① 循环出口双条件（*count==0 前置检查 + 源 NUL 内检查）
+     ——入口先判 count、循环内判 NUL（写前判）；
+  ② 写满/源尽均不写 NUL 终止符——受限裸写，终止由调用方
+     缓冲管理（strftime 引擎惯例）；
+  ③ **dst 指针经槽推进（inc dword [eax]）每次循环重读
+     （mov edi,[eax]）——非寄存器缓存，指针槽随时可被写
+     路径修改（拷贝写进缓冲后原位置即推进）；
+  ④ cmp dword [ecx],0 用 je 直出（count 首次为 0 直接跳过
+     整循环不读 src——与源 NUL 出口共用 0x7CCF41 汇合点）
+     ；
+  ⑤ 无栈帧（不 push ebp 仅 push esi/edi 保寄存器）——leaf
+     受限拷贝最小形态；
+  ⑥ 39B body 落在 strftime 家族区（0x7CCB-0x7CD2）——与
+     周边 0x7CCF44/0x7CCFB3/0x7CCFFC 同族夹层（编译器把
+     cdecl 小 helper 与使用方同 TU 排布）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT strftime
+格式化设施按商业库纪律归档；同族 batch 1153/1171 已实证）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CCF1D = MSVC6 静态 CRT strftime 家族写入核
+   心——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；受限拷贝写循环 + 词表串透传 = CRT 时
+   间格式化标准形态（同区 0x7CCF44/0x7CCFB3/0x7CCFFC 已
+   登记同族）。
+2. 依赖：零 E8 函数依赖（纯写循环）；宿主 0x7CCEF0 为
+   scan 池候选（未登记，如实标注）——重写 gamemd 时用等
+   价运行时（std::strftime 语义 / 受限字符串拷贝）代替。
+3. gamemd_replication_discipline：MSVC6 CRT strftime 设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 39B + 调用宿主透传交叉 +
+邻族登记交叉；函数名「strftime 家族受限长度字符串写入核
+心」由写循环形态 + 词表透传 + 同区邻族交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1153 / TSV:1997：0x7CCF44 strftime 十进制字段写入
+  器——紧邻 0x27 字节同族（本批在 0x7CCF44 之前，十进制
+  写器共用收尾 0x7CCC6A 与词表串写入双路径）。
+★batch 1171 / TSV:2015：0x7CCFB3 十进制 itoa 内联实现——
+  紧邻 0x70 字节同族（除 10 写字符 vs 本批受限拷贝两形态
+  同 strftime 数值/文本字段输出链）。
+★batch 1091 / TSV:1934：0x7CCFFC strftime 格式化核心——
+  同区同族（格式指令分派 + [0xB78BB0] 家族全局 20 引用全
+  在 0x7CCB7B-0x7CD2AA——本批落该区间内）。
+★新候选（后续批次按池顺序）：宿主 0x7CCEF0（29B 词表串
+  分派器）+ 0x7CCF44/0x7CCFB3 之间的未登记件。
+
+五、状态
+-------
+crt_runtime_verified（0x7CCF1D：MSVC6 CRT strftime 家族受
+限长度字符串写入核心归档；全 39B + 调用宿主透传交叉 + 邻
+族登记交叉；不写 C++ 模型不做 golden——CRT 时间格式化商
+业库层；函数名由写循环形态 + 词表透传 + 同区邻族交叉标
+注）。TSV 新增 0x007CCF1D 行。
+
+★本批实锤：strftime 词表串受限拷贝核心——while(*count &&
+  *src){**dst=*src;(*dst)++;src++;(*count)--;} 裸写不补
+  NUL；唯一调用点 0x7CCF10 宿主按 [obj+8]>0xb 选
+  [obj+0x9c]/[obj+0x98] 词表列透传 3 参；零 E8；落
+  0x7CCB-0x7CD2 strftime 家族区（邻族全已登记）。
+相邻待续：batch 1212 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7DCE3B(38B, callers=1)/0x7D45BA(37B,
+callers=2)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1210 已完（MSVC6 CRT x87 整数性+奇偶性分级器
+0x7C91A5，commit 2f4209a）。
