@@ -1,0 +1,118 @@
+frontier batch 1178 —— MSVC6 CRT wcspbrk 宽字符串字符集查找器 0x7CC409（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CC409（62B,
+uc=1, callers=1 池登记）。TSV 无既有行。TARGET = 0x007CC409。
+C++ 模型：无（见「三态判定」）。TSV：新增 0x007CC409 行。
+
+一、链语义（disasm 全 62B + batch 1142/1177 宽串族交叉，
+0x7CC409-0x7CC446）
+--------------------------------------------------------------
+签名（推断）：cdecl 2 参（[esp+4]=A 宽字符串、[esp+0x14]=
+B 字符集宽字符串），返回 A 中第一个属于 B 的字符指针 /
+NULL。
+
+外层扫描（0x7CC409-0x7CC43F，遍历 A）：
+007cc409  mov eax,dword[esp+4]                 ; eax = A 串
+007cc40d  push ebx/push esi/push edi
+007cc410  mov dx,word[eax]                     ; ★dx = *A（当前字符）
+007cc413  test dx,dx/je 0x7cc441              ; ★A 空 → 返 NULL
+007cc418  mov ebx,dword[esp+0x14]             ; ebx = B 字符集
+007cc41c  mov di,word[ebx]                    ; di = *B（首字符）
+007cc41f  test di,di/mov esi,ebx/je 0x7cc437  ; ★B 空 → 前进 A
+; → 内层循环（0x7CC426，遍历 B 找 == *A）：
+007cc426  mov ecx,edi                          ; ★★ecx 初值 = B 首字符
+007cc428  cmp cx,dx/je 0x7cc443               ; ★★*B == *A → 命中
+                                              ;   （返回 A 当前指针）
+007cc42d  inc esi/inc esi                      ; ★★B 步进 2 字节
+007cc42f  mov cx,word[esi]                     ; ★cx = 下一个 B 字符
+007cc432  test cx,cx/jne 0x7cc428             ; B 未到尾 → 继续内循环
+; → A 前进（0x7CC437）：
+007cc437  inc eax/inc eax                      ; ★★A 步进 2 字节
+007cc439  mov dx,word[eax]                     ; 下一个 A 字符
+007cc43c  test dx,dx/jne 0x7cc41f             ; A 未到尾 → 外层循环
+; → 未命中出口（0x7CC441）：
+007cc441  xor eax,eax                          ; ★返回 NULL
+007cc443  pop edi/pop esi/pop ebx/ret          ; ★命中出口共用（eax=A
+                                              ;   当前指针）
+
+★语义：**MSVC6 CRT wcspbrk 宽字符串字符集查找器（推断名
+——标准 C 库 `wcspbrk`）**——cdecl 2 参：
+  ① 外层遍历 A 串每宽字符（2 字节步进）；
+  ② 内层遍历 B 字符集（2 字节步进）逐字符比较：
+     `cmp cx,dx`（cx=B 当前、dx=A 当前）——命中返回 A
+     当前字符指针（eax 未推进）；
+  ③ B 集扫完未命中 → A 前进一字符，B 从头再扫；
+  ④ A 到尾仍无 → 返回 NULL（xor eax,eax）。
+  = wcspbrk 标准实现（宽字符 2 字节双循环 + 字符集逐字
+  符匹配），零 E8 纯扫描。
+
+★调用点（池登记 callers=1）：0x7CCxxx 宽字符串处理域
+  （batch 1177 wcsrchr 0x7CA3C5 同族——宽串查找链）。
+
+★E8 被调者：**零子调用**（全 62B 纯双循环字符比较）。
+
+★原版怪癖（照抄）：
+  ① B 空串与 A 空串判走不同出口：A 空 → 0x7CC441（返
+     NULL）；B 空 → 0x7CC437（前进 A——与 A 继续扫描等
+     价，最终 A 尾返 NULL）——两分支最终同果但路径不同；
+  ② 内循环 ecx 初值 = di（B 首字符）后 mov cx,[esi] 每轮
+     覆盖——首字符比较实际发生在 0x7CC428（ecx=edi）而
+     后续用 `mov cx,word[esi]` 的值，esi 在 0x7CC42D 已
+     inc 两次（首字符之后才开始 [esi] 指向 B[1]）——首
+     字符比较与循环体双轨微妙；
+  ③ 命中跳 0x7CC443（pop 序列入口），eax 仍为 A 当前字
+     符指针——无额外指针计算（返回语义值位置）；
+  ④ A 步进 inc eax 两次（2 字节/宽字符）与 B 步进 inc
+     esi 两次同款——宽字符粒度假定；
+  ⑤ dx（A 当前）外层每轮重读、cx（B 当前）内层每轮覆
+     写——两寄存器分工固定；
+  ⑥ 无栈帧（mov eax,[esp+4] 直取参 + [esp+0x14] 重读
+     B）——叶函数形态（3 个 push 后 esp 偏移 0xC）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 字符串处
+理设施按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CC409 = MSVC6 静态 CRT 宽字符串字符集查找器
+   （wcspbrk）——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_
+   region_layout_crt_provenance）；2 字节步进双循环 + 字
+   符集逐字符匹配 = CRT 宽串查找标准形态（batch 1177
+   wcsrchr 同族）。
+2. 依赖：零 E8 函数依赖——重写 gamemd 时用等价 C 库
+   wcspbrk/std::wstring::find_first_of 语义代替。
+3. gamemd_replication_discipline：MSVC6 CRT 字符串设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 62B + 宽串族交叉；函数名
+「wcspbrk 宽字符串字符集查找器」由双循环 + 字符集匹配 +
+命中/空串出口交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1177：0x7CA3C5 wcsrchr 宽串反向查找——同族宽串
+  扫描（本批字符集匹配 vs 彼单字符查找，宽串处理链）。
+★batch 1142：0x7DC378 _mbschr 窄串查找——宽窄串查找族
+  对照（wcspbrk/wcsrchr/mbschr 全景）。
+★batch 1150：0x7CD615 tmpnam 后缀递增器——找 '.' 用
+  batch 1047 查找器 + 宽串扫描链。
+
+五、状态
+-------
+crt_runtime_verified（0x7CC409：MSVC6 CRT wcspbrk 宽字符串
+字符集查找器归档；全 62B + 宽串族交叉；不写 C++ 模型不做
+golden——CRT 字符串库商业库层；函数名由双循环 + 字符集匹
+配 + 命中/空串出口交叉标注）。TSV 新增 0x007CC409 行。
+
+★本批实锤：wcspbrk——A 串外层步进 + B 字符集内层逐字符
+  匹配（cmp cx,dx），命中返 A 当前指针 / 空串双出口 /
+  xor 返 NULL，零 E8 纯双循环。
+相邻待续：batch 1179 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CEAC1(62B)/0x7CF77F(62B)/0x7CF347
+__startOneArgErrorHandling(60B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1177 已完（MSVC6 CRT wcsrchr 宽字符串反向查
+找器 0x7CA3C5，commit 94b5fc0）。
