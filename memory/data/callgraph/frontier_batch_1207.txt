@@ -1,0 +1,155 @@
+frontier batch 1207 —— MSVC6 CRT 锁保护对象析构体 0x7C8A8E（归档，vtable 0x7F9594 单槽析构族）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7C8A8E（41B,
+uc=1, callers=1 探针实测 0x7C8ABA）。TSV 无既有行。
+TARGET = 0x007C8A8E。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007C8A8E 行。
+
+一、链语义（disasm 全 41B + vtable 0x7F9594 原始字节 +
+构造器配对 + 标量删除析构入口，0x7C8A8E-0x7C8AB6）
+--------------------------------------------------------------
+签名（确认）：thiscall 0 参（ecx=this），无返回值（析构
+副作用）。对象布局：+0 = vtable 0x7F9594、+4 = 待释放指针。
+
+主体（0x7C8A8E-0x7C8AB6）：
+007c8a8e  push esi
+007c8a8f  mov esi, ecx                     ; esi = this
+007c8a91  push 0x1b                        ; ★锁 key = 0x1B(27)
+007c8a93  c7 06 94 95 7f 00  mov dword[esi],0x7f9594
+                                           ; ★★vtable 复位 =
+                                           ;   0x7F9594（探针
+                                           ;   原始字节实锤）
+007c8a99  call 0x7cd9f5                    ; ★★TSV:238 流锁
+                                           ;   Enter（key 0x1B）
+007c8a9e  mov esi, dword[esi+4]            ; esi = this->+4
+007c8aa1  pop ecx                          ; 清 key
+007c8aa2  test esi, esi
+007c8aa4  je 0x7c8aad                      ; +4 为 NULL → 跳过
+007c8aa6  push esi
+007c8aa7  call 0x7c93e8                    ; ★★TSV:234 CRT free
+007c8aac  pop ecx
+007c8aad  push 0x1b                        ; 锁 key = 0x1B
+007c8aaf  call 0x7cda56                    ; ★★TSV:239 流锁
+                                           ;   Leave（key 0x1B）
+007c8ab4  pop ecx
+007c8ab5  pop esi
+007c8ab6  ret
+
+★语义：**MSVC6 CRT 锁保护对象析构体（推断名——CRT 内部
+小对象析构，vtable 0x7F9594 单槽析构族）**——thiscall 0
+参析构：
+  ① vtable 复位 0x7F9594（对象 +0 写回——析构器常规步骤，
+     与构造器 0x7C8B2D 写同值配对）；
+  ② 流锁 Enter（0x7CD9F5，key 0x1B）；
+  ③ this->+4 非 NULL → CRT free（0x7C93E8）；
+  ④ 流锁 Leave（0x7CDA56，key 0x1B）。
+  = CRT 内部带锁保护的对象析构（成员指针 free 全程持锁，
+  锁 key 0x1B=27 与 batch 1203 宿主 push 0x19 的锁 key
+  相邻域）。
+
+★调用点（探针 E8 实测 1 处 0x7C8ABA）：标量删除析构
+  0x7C8AB7（**vtable 0x7F9594 首槽 = 0x7C8AB7，探针原始
+  字节 [0x7F9594]=0x007C8AB7 实锤**；disasm 从 0x7C8AB8
+  起 1 字节错位——0x7C8AB7 真实入口 `56 8b f1`=push esi/
+  mov esi,ecx）内：mov esi,ecx → call 0x7C8A8E（★本批析构
+  体）→ test byte[esp+8],1 / je 0x7C8ACD（★标量删除标志）
+  → push esi / call 0x7C8B3D（★★TSV:2 C++ delete/operator
+  delete 转发）→ pop ecx → mov eax,esi / pop esi / ret 4
+  ——标准 MSVC scalar-deleting-destructor 形态。
+
+★构造器配对（写 vtable 0x7F9594 第 2 处，探针 imm32 命中
+  0x7C8B31）：0x7C8B2D 起 11B：mov eax,ecx / mov
+  [eax],0x7F9594 / ret 4——构造器写 vtable 后 ret 4（
+  thiscall+1 栈参）。0x7C8B38 起 6B：mov eax,ecx / ret 4
+  （trivial 空实现）。0x7C8B3D = TSV:2 delete 转发。
+
+★vtable 0x7F9594 原始字节（探针 rva2off 实锤）：[0x7F9594]
+  = 0x007C8AB7（标量删除析构入口）、[0x7F9598] 起 = ASCII
+  "Access violation - no RTTI data!"（.rdata 紧邻字符串，
+  推断为同段相邻数据非 vtable 成员——MSVC6 RTTI 相关错误
+  消息）。
+
+★E8 被调者（2 个，全已登记）：
+  ① 0x7CD9F5（★★TSV:238 crt_runtime_verified——CRT
+     region lock Enter 64B，按 key*4 索引 [0x87C2A8] 锁槽
+     表）；
+  ② 0x7C93E8（★★TSV:234 semantics_verified——CRT 内部
+     free 72B，NULL 直返 + 锁 heap → 找段 → 释放/HeapFree；
+     batch 063 闭环）。
+  ③ 0x7CDA56（★★TSV:239 crt_runtime_verified——CRT
+     region lock Leave 18B）。
+  全部已登记，无未登记依赖。
+
+★全局：零（纯 this 操作 + 锁 + free）。
+
+★原版怪癖（照抄）：
+  ① 锁 key 0x1B 硬编码 push（析构持锁——free 全程在
+     Enter/Leave 之间，非仅 free 内部自锁）；
+  ② vtable 复位在 Enter **之前**（先写 vtable 再加锁——
+     析构器里 vtable 复位不受锁保护）；
+  ③ push 0x1B / mov [esi],vtable 交错排布（push 先于 vtable
+     写，编译器把锁参数入栈提前到指令序列中部）——
+     0x7C8A91 push 0x1b / 0x7C8A93 mov [esi] 的排布照抄；
+  ④ +4 判空用 test/je 单分支（NULL 跳过 free 直接 Leave）；
+  ⑤ 构造器 0x7C8B2D ret 4 而析构体 ret（无栈参）——构造/
+     析构栈参不对称（thiscall 构造 1 栈参 + 析构 0）；
+  ⑥ 标量删除析构 0x7C8AB7 = vtable 首槽（MSVC 惯用：虚析
+     构槽 = scalar deleting destructor，delete 标志 [esp+8]
+     &1 决定是否调 TSV:2 delete）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 对象生命
+周期设施按商业库纪律归档；锁/free/delete 均有 C++ 真身）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7C8A8E = MSVC6 静态 CRT 锁保护对象析构体——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）；锁 Enter/Leave + free + vtable 复位 = CRT
+   对象生命周期标准形态（TSV:238/239 锁族 + TSV:234 free
+   同链）。
+2. 依赖：0x7CD9F5/0x7C93E8/0x7CDA56 全部已登记（锁族 +
+   free 有 C++ 真身）——重写 gamemd 时用等价运行时（RAII
+   锁 + delete 语义）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 对象生命周期
+   设施，重写时用等价运行时代替，逐字节复刻无意义——按
+   商业库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 41B + vtable 原始字节 +
+构造器配对；函数名「锁保护对象析构体」由 vtable 复位 +
+锁 Enter/Leave + free 三段交叉标注）。
+
+四、跨批次闭合
+------------
+★TSV:238/239：0x7CD9F5 Enter / 0x7CDA56 Leave——本批包围
+  free 的锁现场交叉（key 0x1B，与 batch 1203 宿主 push
+  0x19 相邻锁 key 域）。
+★TSV:234：0x7C93E8 CRT free（batch 063）——本批调用现场
+  交叉（+4 判空后释放）。
+★TSV:2：0x7C8B3D delete 转发（batch 001）——标量删除析构
+  0x7C8AB7 的标志分支调用现场（[esp+8]&1）。
+★batch 1203：0x7CD42B 删除文件包裹器 + 0x7CDA56 锁 Leave
+  同链——同 0x7C 静态 CRT 基础设施层（本批为对象生命周期
+  件）。
+
+五、状态
+-------
+crt_runtime_verified（0x7C8A8E：MSVC6 CRT 锁保护对象析构
+体归档；全 41B + vtable 原始字节 + 构造器配对；不写 C++
+模型不做 golden——CRT 对象生命周期商业库层；函数名由
+vtable 复位 + 锁 Enter/Leave + free 三段交叉标注）。TSV
+新增 0x007C8A8E 行。
+
+★本批实锤：CRT 单槽析构族——析构体 0x7C8A8E（vtable 复
+  位 0x7F9594 → 锁 Enter(0x1B) → free(+4) → 锁 Leave）+
+  标量删除析构 0x7C8AB7（=vtable 首槽，delete 标志 [esp+8]
+  &1 → TSV:2）+ 构造器 0x7C8B2D（写同 vtable ret 4）三件
+  套闭合；vtable 0x7F9594 原始字节实锤首槽 0x7C8AB7、紧邻
+  "Access violation - no RTTI data!" 字符串。
+相邻待续：batch 1208 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CEAFF(41B, callers=1)/0x7E01D2(41B,
+callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1206 已完（MSVC6 CRT 锁槽表静态预初始化器
+0x7CD960，commit 7e2aa4e）。
