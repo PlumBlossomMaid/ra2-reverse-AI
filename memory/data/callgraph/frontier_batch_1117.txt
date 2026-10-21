@@ -1,0 +1,173 @@
+frontier batch 1117 —— MSVC6 CRT _output/sprintf 字符串格式化引擎 0x7CCA34（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CCA34（250B,
+uc=1, callers=1 探针实测 0x7CCA2B 唯一宿主）。TSV 无既有
+行。TARGET = 0x007CCA34。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CCA34 行。
+
+一、链语义（disasm 全 250B + 子函数 0x7CCB2E + lock 交叉，
+0x7CCA34-0x7CCB2D + 0x7CCB2E-0x7CCE4C+）
+--------------------------------------------------------------
+签名（推断）：cdecl 4 参（param1=输出缓冲 @[ebp+8]、param2=
+剩余容量 @[ebp+0xC]、param3=格式串 @[ebp+0x10]、param4=参数
+指针 @[ebp+0x14]），返回写入字符数（或 0）。
+
+★全局族（探针 abs 引用实锤）：
+  [0xB78BA0] = 锁门控（17 引用，多路 CRT 函数共用）
+  [0xB78BAC] = `#` 交替标志（19 引用，本函数+子函数区）
+  [0xB78BB0] = 交替标志传递（20 引用，子函数区）
+  [0xB78BA4] = wait 标志（20 引用，batch 1111 调用点 1 同款）
+  [0x87C1E0] = 默认输出缓冲（7 引用，输出 NULL 回退）
+  [0x87C590] = ctype 字符表（batch 1116 同表，DBCS lead-byte）
+
+主体（0x7CCA34-0x7CCB2D）：
+007cca34  push ebp/mov ebp,esp/push ecx×2/mov eax,[ebp+0xC]
+007cca3f  mov edi,0xB78BA4/push edi/call [0x7E11C8]   ; ★wait 标志+槽
+007cca4e  mov ebx,[0x7E11CC]                          ; ★槽（运行时改写）
+007cca54  xor esi,esi/cmp [0xB78BA0],esi/je 0x7CCA72  ; ★★锁门控
+007cca5e  push edi/call ebx/push 0x13/call 0x7CD9F5   ; ★★region lock
+                                                       ;   Enter 0x13
+007cca69  mov [ebp-8],1/jmp 0x7CCA75
+007cca72  mov [ebp-8],esi                             ; ★无锁路径
+007cca75  mov eax,[ebp+0x18]/cmp eax,esi/jne 0x7CCA81
+007cca7c  mov eax,[0x87C1E0]                          ; ★输出 NULL →
+                                                       ;   默认缓冲
+007cca81  cmp [ebp-4],esi/jbe 0x7CCB00                ; ★容量耗尽退出
+007cca89  mov esi,[ebp+0x10]/mov al,[esi]             ; ★格式串遍历
+007cca8e  test al,al/je 0x7CCB00                     ; NUL 终止
+007cca92  cmp al,0x25/je 0x7CCAC8                     ; ★★'%' 指令检测
+; → 普通字符拷贝（含 DBCS lead-byte）：
+007cca96  mov edx,[0x87C590]/movzx ecx,al
+007cca9f  test byte[edx+ecx*2+1],0x80/je 0x7CCAB8     ; ★★lead-byte
+007ccaa6  cmp [ebp-4],1/jbe 0x7CCAB8
+007ccaac  mov ecx,[ebp+8]/mov [ecx],al/inc [ebp+8]    ; ★写首字节
+007ccab8  mov ecx,[ebp+8]/mov al,[esi]/mov [ecx],al
+007ccabf  inc [ebp+8]/inc esi/dec [ebp-4]             ; ★拷贝推进
+; → '%' 指令处理（0x7CCAC8）：
+007ccac8  and [0xB78BAC],0/inc esi
+007ccad0  cmp byte[esi],0x23/jne 0x7CCAE0            ; ★'#' 交替标志
+007ccad5  mov [0xB78BAC],1/inc esi
+007ccae0  push [ebp+0x18]/lea eax,[ebp-4]/push eax
+007ccae7  lea eax,[ebp+8]/push eax/mov al,[esi]
+007ccaeb  push [ebp+0x14]/push eax
+007ccaf1  call 0x7CCB2E                               ; ★★格式指令派发器
+007ccaf6  add esp,0x14/inc esi
+007ccafa  cmp [ebp-4],0/ja 0x7CCA8C                  ; ★主循环
+; → 退出路径（0x7CCB00）：
+007ccb00  cmp [ebp-8],0/je 0x7CCB10
+007ccb06  push 0x13/call 0x7CDA56                     ; ★★region lock
+                                                       ;   Leave 0x13
+007ccb13  cmp [ebp-4],0/jbe 0x7CCB2A                 ; 未写满 →
+007ccb1c  mov eax,[ebp+8]/and byte[eax],0            ; ★NUL 终止
+007ccb22  mov eax,[ebp+0xC]/sub eax,[ebp-4]           ; ★返回写入字符数
+007ccb2a  xor eax,eax/leave/ret                       ; 容量耗尽 → 0
+
+子函数 0x7CCB2E（格式指令派发器，0x7CCB2E-0x7CCE4C+）：
+007ccb2e  push ebp/mov ebp,esp/movsx eax,byte[ebp+8]  ; ★转换字符
+007ccb37  cmp eax,0x5A('Z')/jg 0x7CCD10               ; ★★转换字符递减
+007ccb41  je 0x7CCE4C                                  ;   分派表（0x5A/
+007ccb47  cmp eax,0x4D('M')/jg 0x7CCC18/je 0x7CCBFE   ;   0x4D/0x25/0x41/
+007ccb56  sub eax,0x25/je 0x7CCBEA                    ;   0x42/0x48...）
+007ccb5f  sub eax,0x1C/je 0x7CCBD2
+007ccb64  dec eax/je 0x7CCBBA
+007ccb67  sub eax,6/je 0x7CCB9D
+007ccb6c  dec eax/jne 0x7CCF18
+007ccb73  mov eax,[0xB78BAC]/mov [0xB78BB0],eax       ; ★★交替标志传递
+007ccb78  push 0xC/pop ecx/mov eax,[ebp+0xC]
+007ccb83  mov eax,[eax+8]/cdq/idiv ecx                ; ★宽度/精度 idiv
+007ccb8f  push [ebp+0x14]/push [ebp+0x10]/push 2
+007ccb97  push edx/jmp 0x7CCC6A                       ; ★按转换字符分派
+  …（0x7CCC6A 起多分支：%d/%u/%x/%o/%f/%e/%g/%p/%s/%c
+    + [0xB78BB0] 交替标志分支——标准 MSVC6 _output 指令
+    处理器形态）
+
+★语义：**MSVC6 CRT _output/sprintf 字符串格式化引擎（推断
+名）**——cdecl 4 参（输出缓冲/剩余容量/格式串/参数指针）：
+  ① wait 标志 [0xB78BA4] + 槽 [0x7E11C8]（运行时改写）；锁
+     门控 [0xB78BA0]≠0 → region lock 0x13（0x7CD9F5）包裹，
+     退出时 unlock（0x7CDA56）；
+  ② 输出缓冲 NULL → [0x87C1E0] 默认缓冲；
+  ③ 格式串遍历：NUL 终止；普通字符拷贝（DBCS lead-byte
+     [0x87C590] 双字节消费）→ 剩余容量递减；
+  ④ '%'（0x25）指令：'#'（0x23）交替标志写 [0xB78BAC] →
+     调 0x7CCB2E 格式指令派发器（转换字符递减表 0x5A/0x4D/
+     0x25/0x41/0x42/0x48 + 宽度/精度 idiv + [0xB78BB0] 标志传
+     递 + 多分支 %d/%u/%x/%o/%f/%e/%g/%p/%s/%c）；
+  ⑤ 容量耗尽返回 0；写满 NUL 终止返回 (原容量−剩余) = 写入
+     字符数。
+  与 MSVC6 `_output`（sprintf 实现核心）语义吻合。
+
+★调用点（探针 E8 实测 1 处）：0x7CCA2B——前邻宿主（批量
+  CRT 格式化入口区，batch 1116 同邻）。
+
+★E8 被调者：0x7CD9F5（TSV:238 region lock Enter，55 callers
+  ——本批 0x7CCA63 交叉）+ 0x7CDA56（TSV:239 region lock
+  Leave，71 callers——本批 0x7CCB08 交叉）+ 0x7CCB2E（子函
+  数格式指令派发器，2 callers：0x7CCAF1 本函数 + 0x7CD2C1）。
+
+★原版怪癖（照抄）：
+  ① 锁门控 [0xB78BA0] 全局决定是否加锁（非参数化）——无锁
+     路径 [ebp-8]=0 完全跳过 lock Enter/Leave；
+  ② 输出 NULL 回退 [0x87C1E0] 默认缓冲（静态全局，非调用
+     者传入）；
+  ③ '%' 指令的 '#'（0x23）交替标志单独写 [0xB78BAC]，子函
+     数里再传递到 [0xB78BB0]——两层全局传递而非栈参；
+  ④ 转换字符递减表分派（0x5A 'Z' → 0x4D 'M' → 0x25 '%' →
+     0x41 'A' → 0x42 'B' → 0x48 'H'——递减逐步相减匹配）
+     ——MSVC6 switch 优化形态，非跳转表；
+  ⑤ DBCS lead-byte 处理与普通拷贝共用同一 [0x87C590] 表
+     （batch 1116 mbstowcs 同表）——CRT 字符域共享；
+  ⑥ 容量耗尽返回 0（不写 NUL），写满返回写入字符数——两
+     出口语义不同，调用方靠返回值区分。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 格式化引擎按商
+业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CCA34 = MSVC6 静态 CRT _output/sprintf 格式化引
+   擎——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；'%' 指令/'#' 交替标志/DBCS lead-byte/
+   转换字符分派/region lock 0x13 门控 = CRT 格式化标准形态。
+2. 依赖：0x7CD9F5/0x7CDA56（region lock 已登记）+ 0x7CCB2E
+   （子函数）+ [0x87C590] ctype 表——重写 gamemd 时用等价
+   std::sprintf/snprintf 运行时代替。
+3. gamemd_replication_discipline：MSVC6 CRT 格式化设施，重
+   写时用等价运行时代替，逐字节复刻无意义——按商业库纪
+   律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 250B + 子函数 + lock 交叉；
+函数名「_output/sprintf 格式化引擎」由 % 指令/'#' 标志/转换
+字符分派/返回字符数实测交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1116：0x7CC309 mbstowcs——[0x87C590] ctype 表同源
+  交叉（DBCS lead-byte 判定共用）。
+★TSV:238/239：0x7CD9F5/0x7CDA56 region lock 0x13——本批锁
+  门控 [0xB78BA0] 包裹交叉（55/71 callers）。
+★batch 1111：调用点 1 wait 标志 [0xB78BA4]——本批 0x7CCA3F
+  同款 wait 循环交叉。
+★batch 1116 方法论：槽 [0x7E11C8]/[0x7E11CC] 运行时改写——
+  本批不引用槽静态值作语义证据（仅记调用点存在）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CCA34：MSVC6 CRT _output/sprintf 格
+式化引擎归档；全 250B + 子函数 0x7CCB2E + lock 交叉；不写
+C++ 模型不做 golden——CRT 格式化商业库层；函数名
+「_output/sprintf 格式化引擎」由 % 指令/'#' 标志/转换字符分
+派/返回字符数实测交叉标注）。TSV 新增 0x007CCA34 行。
+
+★本批实锤：_output 格式化引擎——'%'(0x25) 指令 + '#'(0x23)
+  交替标志 [0xB78BAC] + 子函数转换字符递减表分派 + region
+  lock 0x13 门控 [0xB78BA0] + DBCS lead-byte [0x87C590]——
+  CRT sprintf 族核心形态。
+相邻待续：batch 1118 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CACC0(249B, callers=1)/0x7DF280(244B,
+callers=1)/0x7DF640(243B, callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1116 已完（MSVC6 CRT mbstowcs 0x7CC309，
+commit 8488e26）。
