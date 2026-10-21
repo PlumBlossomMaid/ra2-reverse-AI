@@ -1,0 +1,133 @@
+frontier batch 1157 —— MSVC6 CRT x87 double 整数判定助手 0x7CF64C（归档，classifier+frndint 链）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CF64C（101B,
+uc=1, callers=1 探针实测 0x7CF5EF）。TSV 无既有行。
+TARGET = 0x007CF64C。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CF64C 行。
+
+一、链语义（disasm 全 101B + 依赖交叉 + 宿主导航常量，
+0x7CF64C-0x7CF6B0）
+--------------------------------------------------------------
+签名（推断）：cdecl 1 参（[ebp+8]=double），返回 eax：
+2 = 整数且 ÷2 仍整数 / 1 = 整数且 ÷2 非整数 / 0 = 非整数
+或 NaN/Inf 域。
+
+主体（0x7CF64C-0x7CF6B0）：
+007cf64c  push ebp/mov ebp,esp
+007cf64f  push ecx/push ecx
+007cf651  fld qword[ebp+8]/push ecx/push ecx/fstp [esp]
+007cf659  call 0x7d930f                        ; ★★batch 012 IEEE-754
+                                              ;   double classifier（已
+                                              ;   登记，返分类码 al）
+007cf65e  pop ecx
+007cf65f  test al,0x90/pop ecx/jne 0x7cf6ad    ; ★★al&0x90 非零
+                                              ;   （NaN/Inf/denormal 域）
+                                              ;   → 返 0
+007cf664  fld qword[ebp+8]/push ecx/push ecx/fstp [esp]
+007cf66c  call 0x7d8ee3                        ; ★frndint 取整包装器
+                                              ;   （未登记：fld/frndint/
+                                              ;   fstp/ret——纯取整）
+007cf671  fstp qword[ebp-8]
+007cf674  fld qword[ebp-8]
+007cf677  fcomp qword[ebp+8]/pop ecx/pop ecx   ; ★x == frndint(x)?
+007cf67c  fnstsw ax/sahf
+007cf67f  jne 0x7cf6ad                         ; 不相等（有小数部分）
+                                              ;   → 返 0
+007cf681  fld qword[ebp+8]
+007cf684  fdiv qword[0x7e1708]                 ; ★★÷2.0（[0x7E1708]
+                                              ;   =2.0 batch 1140 常量）
+007cf68a  push ecx/push ecx/fstp [ebp+8]
+007cf68f  fld qword[ebp+8]/fstp [esp]
+007cf695  call 0x7d8ee3                        ; ★再取整（x/2）
+007cf69a  fcomp qword[ebp+8]/pop ecx/pop ecx
+007cf69f  fnstsw ax/sahf
+007cf6a2  jne 0x7cf6a8
+007cf6a4  push 2/pop eax                        ; x/2 仍整数 → 返 2
+007cf6a8  push 1/pop eax                        ; x/2 非整数 → 返 1
+007cf6ab  leave/ret
+007cf6ad  xor eax,eax/leave/ret                 ; 返 0
+
+★语义：**MSVC6 CRT x87 double 整数判定助手（推断名）**——
+cdecl 1 参：
+  ① classifier（0x7D930F batch 012）al&0x90 排除 NaN/Inf 域
+     → 返 0；
+  ② frndint 取整后比对（x 有小数部分）→ 返 0；
+  ③ x/2.0 再取整比对：x/2 仍整数 → 返 2（偶数），否则返
+     1（奇数）。
+  = x87 整数判定惯用（分类闸 + 两次 frndint 恒等检查），宿
+  主 0x7CF5EF 同浮点域（0x7CF5C0 区 fcomp [0x7E2800]=0.0、
+  fldz 空值路径——_ftol/浮点打印前导判定域）。
+
+★调用点（探针 E8 实测 1 处 0x7CF5EF）：宿主 0x7CF5C0-0x7CF647
+  （双分支：jbe 取 [0x87d550] / fcomp 0.0 判零 / cmp [ebp+0xC],
+  ecx = INT64 高半零判 → call 0x7CF64C → 结果回接）——大整
+  数/浮点转换域（INT64 双半比较 + classifier 前置）。
+
+★E8 被调者：0x7D930F（★★batch 012 IEEE-754 classifier——
+  ✓TSV:68 已登记）+ 0x7D8EE3（★frndint 取整包装器——未登
+  记新候选：0x7D8EE3-0x7D8EF4 fld/frndint/fstp/leave/ret
+  18B 纯取整；0x7D8EF5 起为邻接 copysign/QNaN 静默包装
+  0x7D8F16 起 not/and 0x7fffffff 另件）——E8 callers=2
+  （0x7CF66C/0x7CF695 本函数两处，frndint 专用）。
+
+★原版怪癖（照抄）：
+  ① classifier 返回 al 后 `test al,0x90`——0x90 = 0x10|0x80
+     仅测两比特（NaN/Inf 域掩码），非全码测试；
+  ② 两次 frndint 调用走同一入口（0x7D8EE3 两处 E8）——
+     取整包装器专用；
+  ③ x/2 恒等判定前先把 x÷2.0 存回 [ebp+8]（fstp [ebp+8]
+     覆写参数槽）再 fld 回读——参数槽复用；
+  ④ 返回三态 0/1/2 用 push/pop eax 载入（非 mov eax,imm）
+     ——短跳跨段时省字节惯用；
+  ⑤ 失败路径（0x7CF6AD）xor eax,eax 与成功路径 leave/ret
+     分离——两条收尾不合并。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 浮点库按
+商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CF64C = MSVC6 静态 CRT 浮点库整数判定辅助—
+   —0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；classifier 前置 + frndint 恒等 + ÷2.0
+   再判 = CRT 浮点转换域标准形态（宿主 0x7CF5C0 区含 INT64
+   半比较 + fcomp 0.0——_ftol/转换前导判定位）。
+2. 依赖：0x7D930F 已登记（batch 012）+ 0x7D8EE3 未登记
+   （frndint 新候选）——重写 gamemd 时用等价 C 库
+   （fmod/std::trunc 恒等判定）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 浮点库设施，重
+   写时用等价运行时代替，逐字节复刻无意义——按商业库纪律
+   归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 101B + 依赖交叉 + 宿主导航
+常量；函数名「x87 double 整数判定助手」由 classifier+两次
+frndint 恒等 + 三态返回交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 012：0x7D930F IEEE-754 classifier——本批测试
+  al&0x90 前置于段交叉（classifier 消费侧）。
+★batch 1140/1108：0x7CF479 matherr 分派器 / 0x7CF51C
+  pow ±Inf 边界器——同 0x7CF6 浮点家族域（0x7CF5C0 宿主
+  夹层）。
+★新候选：0x7D8EE3（frndint 取整 18B）+ 0x7D8EF5/0x7D8F16
+  （copysign/QNaN 静默邻件）——尾部登记待后续批次处理。
+
+五、状态
+-------
+crt_runtime_verified（0x7CF64C：MSVC6 CRT x87 double 整数判
+定助手归档；全 101B + 依赖交叉；不写 C++ 模型不做 golden
+——CRT 浮点库商业库层；函数名由 classifier+两次 frndint
+恒等 + 三态返回交叉标注）。TSV 新增 0x007CF64C 行。
+
+★本批实锤：classifier（batch 012）前置 + 两次 frndint 恒
+  等检查（x 有小数 → 0、x/2 整数 → 2、奇数 → 1）——浮点
+  转换前导判定域的整数测试惯用。
+相邻待续：batch 1158 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7E0170(98B, callers=3)/0x7CEC26(97B)/
+0x7CB430(96B)）；本批新候选 0x7D8EE3 入待检池。
+依赖模型：无（归档不落 C++）。
+承前：batch 1156 已完（MSVC6 CRT C++ EH 局部展开器
+0x7CC11E，commit 271687f）。
