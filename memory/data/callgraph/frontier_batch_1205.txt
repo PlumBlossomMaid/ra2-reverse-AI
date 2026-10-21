@@ -1,0 +1,152 @@
+frontier batch 1205 —— MSVC6 CRT locale/ctype 表清零子例程 0x7D36AC（归档，batch 1051 点名末件兑现）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D36AC（41B,
+uc=1, callers=1 探针实测 0x7D360E）。TSV 无既有行。
+TARGET = 0x007D36AC。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D36AC 行。
+
+一、链语义（disasm 全 41B + 宿主交叉 + 同域邻居对照，
+0x7D36AC-0x7D36D4）
+--------------------------------------------------------------
+签名（确认）：cdecl 0 参，无返回值（纯清内存副作用）。
+
+主体（0x7D36AC-0x7D36D4）：
+007d36ac  push edi
+007d36ad  push 0x40
+007d36af  pop ecx                          ; ecx = 64
+007d36b0  xor eax, eax
+007d36b2  mov edi, 0xb78960
+007d36b7  f3ab  rep stosd                  ; ★清 [0xB78960] 起
+                                           ;   64×4 = 256 字节
+007d36b9  aa    stosb                      ; ★再清 1 字节 → 共
+                                           ;   0x101 = 257 字节
+                                           ;   （ctype 表域）
+007d36ba  xor eax, eax
+007d36bc  mov edi, 0xb78850                ; stosd 目标 = 转换表
+                                           ;   区前段
+007d36c1  a3 4088b700  mov [0xb78840], eax ; ★清 [0xB78840] CP
+                                           ;   编号全局
+007d36c6  a3 5c88b700  mov [0xb7885c], eax ; ★清 [0xB7885C] DBCS
+                                           ;   使能标志
+007d36cb  a3 648ab700  mov [0xb78a64], eax ; ★清 [0xB78A64] LCID
+                                           ;   全局
+007d36d0  ab    stosd                      ; 清 [0xB78850]
+007d36d1  ab    stosd                      ; 清 [0xB78854]
+007d36d2  ab    stosd                      ; 清 [0xB78858]
+007d36d3  pop edi
+007d36d4  c3    ret
+
+★语义：**MSVC6 CRT locale/ctype 表清零子例程（推断名——
+locale 重初始化清表端）**——cdecl 0 参，纯清内存副作用：
+  ① [0xB78960] 起 0x101 字节整块清零（rep stosd 64×4 +
+     stosb 1 = 257 字节）——覆盖 batch 1195 记录的
+     [0xB78961] 1B 属性表（ctype 分类表域首字节 = 表哨兵）；
+  ② [0xB78840]（CP 编号全局——batch 1100/1190 写侧同全局）
+     清零；
+  ③ [0xB78850]/[0xB78854]/[0xB78858]（转换表区前段 3 dword
+     ——batch 1190 写 [0xB78850] 拷 [0x87C95C]）清零；
+  ④ [0xB7885C]（DBCS 使能标志——batch 1190 写 =1）清零；
+  ⑤ [0xB78A64]（LCID 全局——batch 1100 写 0x411..0x404、
+     batch 1190 写映射结果）清零。
+  = CRT locale 重初始化前的全量清表子例程（ctype 分类表 +
+  CP/LCID/转换表/DBCS 五件全局一次清 0）。
+
+★调用点（探针 E8 实测 1 处 0x7D360E）：宿主 = batch 1051
+  已登记 0x7D3482 CRT locale/ctype 表初始化 worker（429B）
+  尾部——彼文档点名「四邻居子例程（0x7D362F/0x7D3679/
+  0x7D36AC/0x7D36D5 未登记）」**本批为最后一件兑现**。宿主
+  尾部现场（0x7D3605-0x7D3618）：cmp dword[0xb782d8],0 /
+  je 0x7D361D（★[0xB782D8]==0 → 错误路径 or esi,-1 → push
+  0x19/call 0x7CDA56 LeaveLock → 返 -1）→ call 0x7D36AC
+  （★本批清表）→ call 0x7D36D5（★batch 1100 字符表初始化
+  器重建）→ jmp 0x7D34A9（xor esi,esi 成功）→ push 0x19/
+  call 0x7CDA56（★★TSV:239 LeaveLock）/mov eax,esi/ret。
+  ——[0xB782D8] 非 0 时先清表再重建（batch 1170 错误模式
+  分派器置 1 的同全局门控）。
+
+★E8 被调者（本批函数自身）：零 E8 调用（全 41B 为
+  rep stosd/stosb/mov 清内存）。
+
+★全局（写 6 处）：[0xB78960] 起 0x101B + [0xB78840] +
+  [0xB78850]/[0xB78854]/[0xB78858] + [0xB7885C] +
+  [0xB78A64]——全为 CRT locale 域（batch 1082/1084/1091/
+  1100/1161/1190 既有族同域）。
+
+★原版怪癖（照抄）：
+  ① 清表用 rep stosd 64 展开 + 单 stosb 补 1 字节（257 字
+     节整块）——编译器把 0x101 字节清零展开成 64 dword +
+     1 byte（非 3 段 rep stosb）；
+  ② stosd 目标 mov edi,0xB78850 与 3 个 mov 绝对寻址清
+     [0xB78840]/[0xB7885C]/[0xB78A64] **顺序交错**（先设
+     edi 再清远端 3 全局再回填 [0xB78850] 区）——编译器
+     排布照抄；
+  ③ 5 处全局清零分两种形态（rep stosd 块清 + 单 mov dword
+     清）——块内/块外全局的优化差异；
+  ④ 无栈帧（不 push ebp，仅 push edi 保寄存器）——leaf
+     清内存最小形态；
+  ⑤ 返回无值（不置 eax 语义）——纯副作用子例程，宿主
+     调用后不读 eax（0x7D3613 立即调 0x7D36D5）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT locale
+设施按商业库纪律归档；同域 batch 1100 已实证同族）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D36AC = MSVC6 静态 CRT locale/ctype 表清零子
+   例程——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_
+   layout_crt_provenance）；ctype 分类表 + CP/LCID/转换表
+   /DBCS 全局清零 = CRT locale 重初始化标准形态（宿主
+   batch 1051 点名现场 + 同域 batch 1082/1084/1091/1100/
+   1161/1190 族）。
+2. 依赖：零 E8 调用（纯清内存）；宿主 0x7D3482 已登记
+   （batch 1051）+ 同链 0x7D36D5 已登记（batch 1100）+
+   门控 [0xB782D8] 写侧已登记（batch 1170）——重写 gamemd
+   时用等价运行时（setlocale 重初始化语义）代替。
+3. gamemd_replication_discipline：MSVC6 CRT locale 设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 41B + 宿主交叉；函数名
+「locale/ctype 表清零子例程」由清表现场 + 宿主点名 + 同域
+邻居交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1051：0x7D3482 CRT locale/ctype 表初始化 worker
+  （TSV:1889）——**本批 = 彼文档点名「四邻居子例程
+  0x7D362F/0x7D3679/0x7D36AC/0x7D36D5」的最后一个兑现**
+  （0x7D362F→batch 1170、0x7D3679→batch 1190、0x7D36D5→
+  batch 1100、本批 0x7D36AC）——彼描述「尾部 cmp
+  [0xb782d8],0 → call 0x7D36AC/0x7D36D5（errno/locale 补
+  挂）」现场实测吻合。
+★batch 1100：0x7D36D5 字符表初始化器（TSV:1943）——本批
+  调用现场交叉（宿主清表后立即调重建，清/建配对）。
+★batch 1170：0x7D362F 错误模式设置分派器（TSV:2014）——
+  [0xB782D8] 标志写侧（模式 -2/-3/-4 置 1），本批宿主尾部
+  门控读取同全局。
+★batch 1190：0x7D3679 CJK 代码页→LCID（TSV:2034）——紧
+  邻 0x7 字节（0x7D3679-0x7D36AB 结束即本批起点）同 locale
+  域写侧（[0xB78840]/[0xB78850]/[0xB7885C]/[0xB78A64]）。
+★batch 1195：0x7DAE6E 双表字符分类——[0xB78961] 1B 属性
+  表（本批清 0xB78960 起 257B 即覆盖该表域）。
+
+五、状态
+-------
+crt_runtime_verified（0x7D36AC：MSVC6 CRT locale/ctype 表
+清零子例程归档；全 41B + 宿主交叉；不写 C++ 模型不做
+golden——CRT locale 设施商业库层；函数名由清表现场 + 宿
+主点名 + 同域邻居交叉标注）。TSV 新增 0x007D36AC 行。
+
+★本批实锤：batch 1051 点名「四邻居子例程」最后一件——
+  宿主 0x7D3482 尾部 [0xB782D8] 门控下先清 ctype 表
+  （0xB78960 起 257B）+ 五件 locale 全局（CP/转换表区/DBCS
+  使能/LCID）再调 0x7D36D5 重建；本批函数自身零 E8 调用纯
+  清内存。
+相邻待续：batch 1206 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CD960(41B, callers=1)/0x7C8A8E(41B,
+callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1204 已完（MSVC6 CRT fputc 加锁包装壳
+0x7D9ECF，commit d9d8b90）。
