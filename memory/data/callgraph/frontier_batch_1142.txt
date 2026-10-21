@@ -1,0 +1,164 @@
+frontier batch 1142 —— MSVC6 CRT DBCS 感知字符串查找器 0x7DC378（归档，_mbschr 族）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DC378（151B,
+uc=1, callers=1 探针实测 0x7DA9E1 唯一宿主）。TSV 无既有
+行。TARGET = 0x007DC378。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007DC378 行。
+
+一、链语义（disasm 全 151B + 三依赖交叉 + 门控/表写侧取证，
+0x7DC378-0x7DC40E）
+--------------------------------------------------------------
+签名（推断）：cdecl 2 参（[ebp+8]=源串、[ebp+0xC]=查找值，
+可 >255 承载 DBCS 双字节编码），返回命中指针 / 0 未命中。
+
+主体（0x7DC378-0x7DC40E）：
+007dc378  push ebp/mov ebp,esp
+007dc37b  cmp [0xb7885c],0               ; ★★门控全局 [0xB7885C]
+                                          ;   （locale/DBCS 使能标志
+                                          ;   ——batch 1051 写入点
+                                          ;   0x7D3596 `mov [0xB7885C],1`
+                                          ;   实锤）
+007dc384  jne 0x7dc395
+; → 未初始化快路径（0x7dc386）：
+007dc386  push [ebp+0xc]/push [ebp+8]/call 0x7caf30
+                                          ; ★★strchr（batch 126 已
+                                          ;   登记 CRT::strchr）
+007dc393  jmp 0x7dc40b                    ; 直接返回 strchr 结果
+; → 已初始化路径（0x7dc395）：
+007dc395  push 0x19/call 0x7cd9f5         ; ★★锁 Enter（key=0x19=25，
+                                          ;   batch 966/TSV:238 同族
+                                          ;   锁编号）
+007dc39c  mov esi,[ebp+8]                 ; esi = 源串游标
+; → 主循环（0x7dc3a0）：
+007dc3a0  movzx bx,byte[esi]              ; 当前字节
+007dc3a4  test bx,bx/je 0x7dc3f3          ; 0 终止 → 共用出口判定
+007dc3a9  movzx eax,bl
+007dc3ac  test byte[eax+0xb78961],4       ; ★★[0xB78961]&4 DBCS
+                                          ;   lead-byte 判定（batch
+                                          ;   040/1036/1047 同表同位）
+007dc3b3  je 0x7dc3cf                     ; 非 lead → 单字节路径
+; → lead 双字节路径（0x7dc3b5）：
+007dc3b5  mov al,[esi+1]/inc esi          ; 取次字节（esi 先 inc 前进）
+007dc3bb  test al,al/je 0x7dc3da          ; 次字节 NUL → 直接放弃
+007dc3bd  movzx ecx,bx/movzx eax,al
+007dc3c3  shl ecx,8/or ecx,eax            ; (lead<<8)|trail 组合
+007dc3c8  cmp [ebp+0xc],ecx/je 0x7dc3e6   ; 双字节比较命中
+007dc3cd  jmp 0x7dc3d7                    ; 未命中 → 前进 1 续扫
+; → 单字节路径（0x7dc3cf）：
+007dc3cf  movzx eax,bx
+007dc3d2  cmp [ebp+0xc],eax/je 0x7dc3f3   ; 单字节比较命中（esi 未
+                                          ;   inc，返当前位置）
+007dc3d7  inc esi/jmp 0x7dc3a0            ; 前进 1 → 循环
+; → 双字节失败出口（0x7dc3da）：
+007dc3da  push 0x19/call 0x7cda56/xor eax,eax
+                                          ; ★★Leave + 返 0
+; → 双字节命中出口（0x7dc3e6）：
+007dc3e6  push 0x19/call 0x7cda56/lea eax,[esi-1]
+                                          ; ★★Leave + 返前导字节位置
+                                          ;   （esi 已 inc 过）
+; → 单字节命中/终止共用出口（0x7dc3f3）：
+007dc3f3  push 0x19/call 0x7cda56         ; ★★Leave
+007dc3fa  mov eax,[ebp+0xc]/movzx ecx,bx
+007dc401  sub eax,ecx/neg eax/sbb eax,eax/not eax/and eax,esi
+                                          ; ★★无分支条件返回：
+                                          ;   target==current ? esi : 0
+; → 公共出口（0x7dc40b）：pop esi/ebx/ebp/ret
+
+★语义：**MSVC6 CRT DBCS 感知字符串查找器（推断名——_mbschr
+族，向前查找）**——cdecl 2 参：
+  ① 门控 [0xB7885C]==0（locale 未初始化）→ 快路径直调
+     strchr（batch 126），不加锁不感知 DBCS；
+  ② 门控!=0 → 锁 0x19 临界区逐字节扫描：`[0xB78961]&4`
+     判 lead-byte——非 lead → 单字节比较；lead → 次字节
+     组合 (lead<<8)|trail 双字节比较；
+  ③ 单字节命中返当前位置；双字节命中返前导字节位置
+     （esi 已 inc → lea esi-1）；次字节 NUL 直接放弃返 0；
+  ④ 单字节/终止共用出口用 sub/neg/sbb/not/and 无分支条件
+     返回（target==current 返 esi，否则 0——终止时
+     current=0：target==0 返终止符位置=strchr 语义、否则
+     返 0）。
+
+★调用点（探针 E8 实测 1 处 0x7DA9E1）：宿主 0x7DA9CD 起
+  函数——`push 0x3d`（'=' 0x3D）+ call 0x7DC378 找 '='，
+  未找到/'=' 在首位返，`cmp byte[esi+1],0` + 读 [0xB781E4]
+  全局——CRT 环境/ini 键值分割域（batch 1044/1045
+  getenv/_putenv 链同 0xB78xxx 全局区）。
+
+★E8 被调者：0x7CAF30（batch 126 strchr——快路径）+ 
+  0x7CD9F5（batch 966/TSV:238 锁 Enter）+ 0x7CDA56（batch
+  961/TSV:239 锁 Leave）——**三个依赖全部已登记**。
+
+★原版怪癖（照抄）：
+  ① 门控 [0xB7885C]==0 → 快路径 strchr：不感知 DBCS、不加
+     锁——与 batch 1047 0x7D571F 同款门控但彼用 strrchr
+     快路径（查找方向不同同族对照）；
+  ② 双字节命中返**前导字节**位置（esi 已 inc 过 → lea
+     esi-1）；单字节命中返当前位置（esi 未 inc）——两条
+     路径 esi 语义不一致靠补偿指令对齐；
+  ③ 次字节 NUL → 直接放弃返 0（不完整双字节字符无命中，
+     不继续扫描）；
+  ④ 单字节/终止共用出口 `sub/neg/sbb/not/and` 无分支条件
+     返回——target==0 终止时返终止符位置（strchr 语义正
+     确）、target!=0 终止时返 0；
+  ⑤ 锁编号 0x19（25）——字符分类锁族（batch 1036/1047
+     同，区别于 batch 244 tolower 的 0x13）；
+  ⑥ [0xB78961]&4 DBCS lead-byte 表（batch 1051 写侧置位/
+     batch 040/1036/1047 消费侧同表同位）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT DBCS 设施按商
+业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DC378 = MSVC6 静态 CRT DBCS 感知字符串查找器
+   （_mbschr 族）——0x7C-0x7D = MSVC6 静态 CRT
+   （ra2_code_region_layout_crt_provenance）；门控
+   [0xB7885C] + lead 表 [0xB78961]&4 + 锁 0x19 = CRT
+   多字节字符处理标准形态（batch 1047 0x7D571F 同族已
+   归档）。
+2. 依赖：3 个已登记函数（0x7CAF30 strchr batch 126 /
+   0x7CD9F5 锁 Enter / 0x7CDA56 锁 Leave）——重写 gamemd
+   时用等价运行时（std::string find / 直接字节扫描）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 多字节库设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 151B + 三依赖交叉 + 门控
+写侧取证；函数名「DBCS 感知字符串查找器」由 strchr 快路径
++ lead-byte 双字节组合比较 + 同族 0x7D571F 交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1047：0x7D571F CRT DBCS 查找（strrchr 快路径 + 同
+  门控同锁同表）——本批 strchr 快路径 vs 彼 strrchr 快路径
+  同族对照（本批为向前查找、彼为同族变体）。
+★batch 126：0x7CAF30 CRT::strchr——本批未初始化快路径依赖
+  交叉（唯一被调者 + 唯一不感知 DBCS 的降级路径）。
+★batch 966/961：0x7CD9F5/0x7CDA56 锁对——本批锁 0x19
+  Enter/Leave 调用现场交叉（TSV:238/239）。
+★batch 1051：0x7D3482 locale 初始化 worker——[0xB7885C]=1
+  写入点 0x7D3596 实锤 + [0xB78961] 掩码 4 写侧置位（本批
+  门控与表消费侧交叉）。
+★batch 040/1036：0x7D3886 _strncpy 加锁变体 / 0x7CBB8D 字
+  符分类扫描器——同门控同锁同表（[0xB78961]&4 lead-byte
+  语义族全景）。
+
+五、状态
+-------
+crt_runtime_verified（0x7DC378：MSVC6 CRT DBCS 感知字符串
+查找器归档；全 151B + 三依赖交叉；不写 C++ 模型不做
+golden——CRT 多字节库商业库层；函数名「DBCS 感知字符串查
+找器」由 strchr 快路径 + lead-byte 双字节组合比较 + 同族
+0x7D571F 交叉标注）。TSV 新增 0x007DC378 行。
+
+★本批实锤：_mbschr 族向前查找——门控 [0xB7885C] 未初始化
+  走 strchr（batch 126）降级、已初始化锁 0x19 内
+  [0xB78961]&4 lead-byte 双字节组合比较——batch 1047
+  同族第二件（彼 strrchr 快路径、本批 strchr 快路径）。
+相邻待续：batch 1143 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7C61CF(148B)/0x7CAA05(148B, callers=4)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1141 已完（MSVC6 CRT FPE 检查-转换包装器
+0x7DB54E，commit 8728b5a）。
