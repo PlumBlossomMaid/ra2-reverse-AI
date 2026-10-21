@@ -1,0 +1,144 @@
+frontier batch 1203 —— MSVC6 CRT Win32 删除文件调用包裹器 0x7CD42B（归档，DeleteFileA+errno 归一化）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CD42B（42B,
+uc=1, callers=1 探针实测 0x7CD459）。TSV 无既有行。
+TARGET = 0x007CD42B。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CD42B 行。
+
+一、链语义（disasm 全 42B + 双 IAT 槽身份实锤 + map_os_
+error 依赖交叉 + 调用点宿主，0x7CD42B-0x7CD454）
+--------------------------------------------------------------
+签名（推断）：cdecl 1 参（[esp+4]=文件名指针 lpFileName），
+返 0 成功 / -1 失败（errno 已置）。
+
+主体（0x7CD42B-0x7CD454）：
+007cd42b  push dword[esp+4]                    ; ★lpFileName（参1）
+007cd42f  call dword[0x7e10e0]                 ; ★★IAT [0x7E10E0] =
+                                              ;   KERNEL32!DeleteFileA
+                                              ;   （探针导入表 MATCH
+                                              ;   实锤）
+007cd435  test eax,eax
+007cd437  jne 0x7cd441                         ; 成功（非 0）→ 走成功
+                                              ;   路径
+007cd439  call dword[0x7e1200]                 ; ★★IAT [0x7E1200] =
+                                              ;   KERNEL32!GetLastError
+                                              ;   （失败取错误码）
+007cd43f  jmp 0x7cd443
+007cd441  xor eax,eax                          ; 成功 → eax=0
+; → 合流（0x7CD443，测试成功/失败）：
+007cd443  test eax,eax
+007cd445  je 0x7cd452                          ; ★成功（eax==0）→ 返 0
+007cd447  push eax                             ; push Win32 错误码
+007cd448  call 0x7d161b                        ; ★★TSV:45 map_os_error
+                                              ;   （Win32→CRT errno 映
+                                              ;   射——0x13..0x24→0x0D
+                                              ;   0xBC..0xCA→0x08 回退
+                                              ;   →0x16，TSV:46 REIMPL）
+007cd44d  pop ecx
+007cd44e  or eax,0xffffffff                   ; ★★返 -1
+007cd451  c3                                   ; ret
+007cd452  xor eax,eax/ret                      ; ★返 0
+
+★语义：**MSVC6 CRT Win32 删除文件调用包裹器（推断名——
+_remove/_unlink 族）**——cdecl 1 参：
+  ① DeleteFileA(lpFileName) 直接调用（IAT 槽）；
+  ② 成功（非 0）→ 返 0；
+  ③ 失败（0）→ GetLastError 取错误码 → 0x7D161B
+     map_os_error 映射进 errno → 返 -1。
+  = CRT 文件删除入口的标准 Win32 包裹形态（删除失败把
+  系统错误码翻译成 CRT errno + 统一 -1 返回）。
+
+★调用点（探针 E8 实测 1 处 0x7CD459）：紧邻宿主（本批函
+  数结束 0x7CD454 后 5 字节）——batch 1150 `_tmpnam`
+  （0x7CD460，TSV 已登记）**前方 0x7 字节**的独立小函数；
+  0x7CD459 调用点（push [ebp+0x18]→call）——tmpnam 族唯
+  一化重试中删除候选临时文件的调用（namebuf 冲突时删旧
+  文件）。
+
+★E8 被调者（1 个）：**0x7D161B（★★TSV:45 semantics_
+  verified_partial + TSV:46 REIMPL map_os_error cpp_
+  reimplementation_verified——Win32→CRT errno 映射：
+  0x13..0x24→0x0D(EACCES)、0xBC..0xCA→0x08(ENOEXEC?)、
+  回退→0x16(?) + DOS 错误字段，REIMPL 在
+  code/rewrite/runtime/lowlevel.cpp）**——唯一函数依赖，
+  已登记且有 C++ 真身。
+
+★IAT 依赖（2 个，导入表 MATCH 实锤）：[0x7E10E0] =
+  KERNEL32!DeleteFileA + [0x7E1200] = KERNEL32!GetLastError
+  （★batch 1150 已实锤 [0x7E1200]=GetLastError——本批双
+  槽身份互证）。
+
+★全局：零（纯 Win32 调用 + 错误映射）。
+
+★原版怪癖（照抄）：
+  ① 成功/失败双路径经 eax 合流（成功 xor eax,eax、失败
+     GetLastError 返回值）——test/je 统一判定；
+  ② 失败 → map_os_error 后 `or eax,0xffffffff` 强置 -1
+     （忽略映射器返回值直接 -1）——错误码只进 errno 不
+     回传；
+  ③ 无栈帧（不 push ebp 直接 [esp+4] 参读 + 单层 push）
+     ——leaf 包裹最小形态；
+  ④ push [esp+4] 后立即 call IAT（单参直转）——Win32
+     调用无任何预检；
+  ⑤ DeleteFileA 失败返回 0（Windows API 惯例 BOOL）——
+     CRT 把它当 0 判定，无 -1 特判；
+  ⑥ GetLastError 调用夹在失败路径中段（jmp 0x7cd443
+     跳过成功路径的 xor）——两条路径长度不齐的编译器排
+     布（照抄）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 文件设施
+按商业库纪律归档；map_os_error 已有 C++ 真身）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CD42B = MSVC6 静态 CRT 文件删除包裹器——0x7C-
+   0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）；DeleteFileA + GetLastError + map_os_error
+   三件套 = CRT Win32 文件操作标准形态（batch 1150 _tmpnam
+   同族——彼批点名「0x7D53C2 _access 存在检查族」同链）。
+2. 依赖：0x7D161B 已登记（TSV:45/46）+ 双 IAT 槽已实锤
+   ——重写 gamemd 时用等价运行时（std::filesystem::remove
+   / _unlink 语义）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 文件设施，重
+   写时用等价运行时代替，逐字节复刻无意义——按商业库纪
+   律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 42B + 双 IAT 槽实锤 + 依
+赖交叉；函数名「Win32 删除文件调用包裹器」由 DeleteFileA
+调用 + GetLastError + map_os_error 三件套交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1150：0x7CD460 _tmpnam（TSV:1994）——紧邻 0x7 字
+  节同族（本批为删除候选临时文件侧，彼批为主实现——彼
+  批点名「0x7D53C2 _access」未登记新候选与本批 DeleteFileA
+  包裹互为文件操作链件）。
+★batch 008：0x7D161B map_os_error（TSV:45/46 REIMPL）—
+  —本批调用现场交叉（错误码→errno→-1）。
+★batch 1173：0x7D53C2 _access（GetFileAttributesA+
+  EACCES）——同 Win32 文件操作三件套族（检查 vs 删除）。
+★batch 1116 槽表纪律：0x7E1xxx 槽仅作调用点登记——本批
+  [0x7E10E0]/[0x7E1200] 用导入目录反查实名（DeleteFileA/
+  GetLastError），补强纪律手段（同 batch 1191）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CD42B：MSVC6 CRT Win32 删除文件
+调用包裹器归档；全 42B + 双 IAT 槽实锤；不写 C++ 模型不
+做 golden——CRT 文件设施商业库层；函数名由 DeleteFileA
+调用 + GetLastError + map_os_error 三件套交叉标注）。TSV
+新增 0x007CD42B 行。
+
+★本批实锤：_remove/_unlink 族 Win32 包裹——DeleteFileA
+  （IAT [0x7E10E0] 实名）失败 → GetLastError（[0x7E1200]）
+  → 0x7D161B map_os_error（✓TSV:45/46 REIMPL）→ 返 -1；
+  成功返 0；唯一调用点 0x7CD459 紧邻 batch 1150 _tmpnam
+  （删候选临时文件侧）。
+相邻待续：batch 1204 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7D9ECF(41B, callers=1)/0x7D36AC(41B,
+callers=1)/0x7CD960(41B, callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1202 已完（MSVC6 CRT strnlen 受限字符串长度
+0x7DA9A2，commit e50f159）。
