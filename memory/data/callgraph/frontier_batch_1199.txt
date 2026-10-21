@@ -1,0 +1,136 @@
+frontier batch 1199 —— MSVC6 CRT 宽字符受限长度计数器 0x7CC653（归档，含终止符计数变体）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CC653（47B,
+uc=1, callers=1 探针实测 0x7CC513）。TSV 无既有行。
+TARGET = 0x007CC653。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CC653 行。
+
+一、链语义（disasm 全 47B + 调用点宿主 + locale 阈值交叉，
+0x7CC653-0x7CC681）
+--------------------------------------------------------------
+签名（推断）：cdecl 2 参（[ebp+8]=宽字符串指针 s、
+[ebp+0xC]=上限 n），返 含终止符的 wchar 计数 / 原 n。
+
+主体（0x7CC653-0x7CC681）：
+007cc653  push ebp/mov ebp,esp
+007cc656  mov ecx,dword[ebp+0xc]               ; ecx = n（参2）
+007cc659  mov eax,dword[ebp+8]                 ; eax = s（参1）
+007cc65c  xor edx,edx
+007cc65e  cmp ecx,edx
+007cc660  je 0x7cc67d                          ; ★n==0 → 返原 n(=0)
+; → 扫描循环（0x7CC662）：
+007cc662  cmp word[eax],dx                     ; *s == 0 ?
+007cc665  je 0x7cc66c                          ; 遇 NUL → 跳出
+007cc667  inc eax/inc eax                      ; s += 2（1 wchar）
+007cc669  dec ecx                              ; n--
+007cc66a  jne 0x7cc662                         ; n≠0 → 继续
+; → 跳出（0x7CC66C，n 耗尽或遇 NUL）：
+007cc66c  cmp ecx,edx
+007cc66e  je 0x7cc67d                          ; ★n 耗尽 → 返原 n
+007cc670  cmp word[eax],dx
+007cc673  jne 0x7cc67d                         ; ★*s≠0（冗余检查）→
+                                              ;   返原 n
+; → NUL 命中（0x7CC675）：
+007cc675  sub eax,dword[ebp+8]                 ; 偏移 = s - start
+007cc678  sar eax,1                            ; /2（字节→wchar）
+007cc67a  inc eax                              ; +1（含终止符）
+007cc67b  pop ebp/ret                          ; ★返 位置+1
+007cc67d  mov eax,dword[ebp+0xc]               ; ★返原 n（[ebp+0xC]
+                                              ;   非递减后 ecx）
+007cc680  pop ebp/ret
+
+★语义：**MSVC6 CRT 宽字符受限长度计数器（推断名——含终
+止符计数变体，wcsnlen+1 形态）**——cdecl 2 参：
+  ① 从 s 逐 wchar 扫描（s+=2、n--），n 个 wchar 内遇到
+     NUL → 跳出；
+  ② NUL 命中 → 返 (s-start)/2 + 1 = **含终止符的 wchar
+     总数**（标准 wcsnlen 返不含 NUL 的长度——本函数多
+     +1）；
+  ③ n 个 wchar 内无 NUL → 返**原 n**（非 0、非递减值）；
+  ④ n==0 → 返 0（原 n 即 0）。
+  = wcsnlen 变体（含 NUL 计数——「需拷贝/需缓冲的 wchar
+  总数」语义，用于宽字符串拼接/拷贝的边界预算）。
+
+★调用点（探针 E8 实测 1 处 0x7CC513）：宿主 0x7CC502 起
+  （宽字符处理函数——locale 阈值双路径形态）：cmp
+  dword[0x87c79c],1/jne 0x7cc55b（★★locale 阈值 >1 分支
+  才走宽路径——batch 1082/1084/1091/1161/1185 同款）→
+  cmp edx,ebx/jbe 0x7cc51f（★edx<=ebx 跳过本调用保持原
+  值）→ push edx（n）/push [ebp+0xc]（s）/call 0x7CC653
+  → pop ecx/mov [ebp+0x10],eax（★结果存局部）/pop ecx/
+  mov edx,eax → 后续 lea [ebp-8]/push 0x220 + 一串参（下
+  一调用）。宿主 = 宽字符串处理（格式化/转换类），0x7CC653
+  为其受限长度预算子调用。
+
+★E8 被调者：**零子调用**（全 47B 纯地址运算 + 词比较）。
+
+★全局：零（仅参数 + 栈）。
+
+★原版怪癖（照抄）：
+  ① 返回 **含 NUL 计数**（位置/2 + 1）而非标准 wcsnlen
+     的不含 NUL 长度——宽串拷贝/拼接边界预算语义；
+  ② n 耗尽 → 返**原 n**（[ebp+0xC] 读回，非递减后 ecx）
+     ——调用方按「需 n 个字符」处理未终止串；
+  ③ 0x7CC66C 双重检查（先 ecx==0 再 *s==0）——冗余但照
+     抄（编译器把循环出口两种途径合并检查）；
+  ④ n==0 快路径（je 0x7cc67d 返原 n=0）；
+  ⑤ 遇 NUL 检查用 `cmp word[eax],dx`（16 位词比较）——
+     宽字符终止符判定；
+  ⑥ 递增用 inc eax ×2（非 add eax,2）——MSVC 惯用；
+  ⑦ sar eax,1 算术右移除 2（字节差→wchar 数，符号安全
+     冗余）；
+  ⑧ 宿主仅在 locale>1 分支调本函数（阈值双路径——宽字
+     符路径才需要含 NUL 预算）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 宽字符
+串库按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CC653 = MSVC6 静态 CRT 宽字符串处理 helper
+   ——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；宽字符词比较 + locale 阈值双路径宿主
+   （0x7CC502 同款）= CRT 宽字符串标准形态；紧邻 0x7CC682
+   wcsstr（batch 839 已登记）同区。
+2. 依赖：零 E8 零全局——重写 gamemd 时用等价运行时
+   （std::char_traits / wcsnlen 变体语义）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 宽字符串库设
+   施，重写时用等价运行时代替，逐字节复刻无意义——按商
+   业库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 47B + 调用点宿主 + locale
+阈值交叉；函数名「宽字符受限长度计数器」由含 NUL 计数 +
+n 耗尽返原 n + 词比较循环交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1082/1084/1091/1161/1185：locale 阈值 [0x87C79C]
+  双路径——本批宿主 0x7CC502 第六处消费（>1 走宽路径）。
+★batch 839：0x7CC682 wcsstr（TSV 已登记）——紧邻同区宽
+  字符串函数（本批为其前驱 0x2F 字节）。
+★batch 1142/1177/1178/1182/1196：strchr/wcsrchr/wcspbrk/
+  strpbrk/strrev 串族——同 CRT 字符串库域（本批为宽串长
+  度计数成员）。
+★batch 1163/1155：_findenv/environ 深拷贝——环境串宽窄
+  转换域（宽路径分支语境）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CC653：MSVC6 CRT 宽字符受限长度
+计数器归档；全 47B + 调用点宿主；不写 C++ 模型不做 golden
+——CRT 宽字符串库商业库层；函数名由含 NUL 计数 + n 耗尽
+返原 n + 词比较循环交叉标注）。TSV 新增 0x007CC653 行。
+
+★本批实锤：wcsnlen 含 NUL 变体——逐 wchar 词比较扫描，
+  遇 NUL 返 位置+1（含终止符计数）、n 耗尽返原 n、n==0 返
+  0；零 E8 零全局；唯一调用点 0x7CC513 在 locale 阈值双路
+  径宿主（>1 分支），紧邻 wcsstr（batch 839）。
+相邻待续：batch 1200 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7DDC4C(44B, callers=3——batch 1189 同族
+填充写出循环)/0x7D2B54 __freebuf(43B, callers=1)/0x7DA9A2
+(43B, callers=2)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1198 已完（MSVC6 CRT fwrite 加锁包装壳
+0x7C95D3，commit 3f6f5ec）。
