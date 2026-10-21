@@ -1,0 +1,120 @@
+frontier batch 1170 —— MSVC6 CRT 错误模式设置分派器 0x7D362F（归档，batch 1051 点名兑现）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D362F（74B,
+uc=1, callers=1 探针实测 0x7D3495）。TSV 无既有行。
+TARGET = 0x007D362F。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D362F 行。
+补登记背景：**batch 1051 文档（0x7D3482 CRT locale/ctype
+表初始化 worker）已点名「push 参/call 0x7D362F（74B getter
+取 locale 表指针）…边界确认 0x7D362F = 新函数（next）」**
+——本批即该点名补登记。
+
+一、链语义（disasm 全 74B + 全局分布 + 调用点宿主，
+0x7D362F-0x7D3678）
+--------------------------------------------------------------
+签名（推断）：cdecl 1 参（[esp+4]=模式码，-2/-3/-4 特判），
+设置 [0xB782D8] 标志 + IAT 槽尾跳 / 返 locale 值。
+
+主体（0x7D362F-0x7D3678）：
+007d362f  mov eax,[esp+4]                    ; eax = 模式码（参1）
+007d3633  and dword[0xb782d8],0              ; ★★[0xB782D8] 标志全局清 0
+007d363a  cmp eax,-2/jne 0x7d364f
+007d363f  mov dword[0xb782d8],1              ; ★模式 -2 → 置标志 1
+007d3649  jmp dword[0x7e12dc]                ; ★★IAT 槽 [0x7E12DC] 尾跳
+                                              ;   （batch 1116 仅作调用点
+                                              ;   登记）
+007d364f  cmp eax,-3/jne 0x7d3664
+007d3654  mov dword[0xb782d8],1              ; ★模式 -3 → 置标志 1
+007d365e  jmp dword[0x7e12d8]                ; ★★IAT 槽 [0x7E12D8] 尾跳
+007d3664  cmp eax,-4/jne 0x7d3678
+007d3669  mov eax,[0xb782b0]                 ; ★★模式 -4 → 读 [0xB782B0]
+                                              ;   （locale 名称全局，batch
+                                              ;   1109 setlocale 写侧）
+007d366e  mov dword[0xb782d8],1              ; ★置标志 1
+007d3678  ret                                 ; 其他模式 → 返（eax=模式码）
+
+★语义：**MSVC6 CRT 错误模式设置分派器（推断名——batch
+1051 点名的 locale/错误模式 getter）**——cdecl 1 参：
+  ① 标志全局 [0xB782D8] 无条件清 0；
+  ② 模式 -2 → 置标志 1 + IAT 槽 0x7E12DC 尾跳（错误处
+     理钩子）；
+  ③ 模式 -3 → 置标志 1 + IAT 槽 0x7E12D8 尾跳；
+  ④ 模式 -4 → 读 [0xB782B0]（locale 名称全局）置标志 1
+     （返回 locale 指针值——batch 1051「getter 取 locale
+     表指针」）；
+  ⑤ 其他模式 → 直接 ret（eax = 原模式码）。
+  = CRT 错误模式/钩子设置器（模式码分派 + 全局标志 + IAT
+  尾跳），零 E8 调用纯分派。
+
+★调用点（探针 E8 实测 1 处 0x7D3495）：宿主 = batch 1051
+  已登记 0x7D3482 CRT locale/ctype 表初始化 worker（429B）
+  内部——彼文档点名「push 参/call 0x7D362F（74B getter）」现
+  场，本批即补登记兑现。
+
+★E8 被调者：**零 E8 调用**（全 74B 为全局读写 + IAT 尾跳）。
+  全局：[0xB782D8]（5 处引用全在本函数 0x7D3607-0x7D3670）
+  + [0xB782B0]（26 处引用——本函数 0x7D366A + 0x7CCxxx/
+  0x7D4E04/0x7D6ABF 等 CRT locale 域）+ IAT 槽 [0x7E12D8]/
+  [0x7E12DC]（batch 1116 修正后仅作调用点登记）。
+
+★原版怪癖（照抄）：
+  ① 模式码 -2/-3/-4 硬编码（无符号化语义）——错误模式/
+     钩子编号；
+  ② 标志 [0xB782D8] 无条件先清 0 再按模式置 1（清置成
+     对——幂等设置）；
+  ③ 两处 IAT 尾跳（jmp dword[槽]）非 call——钩子接管流
+     程不返回；
+  ④ 模式 -4 分支读 [0xB782B0] 后置标志但**不尾跳**（eax
+     返回值语义 vs -2/-3 的尾跳接管）——分派形态不对称；
+  ⑤ 其他模式（非 -2/-3/-4）直接 ret——默认直通路径；
+  ⑥ 无栈帧（mov eax,[esp+4] 直取参）——叶函数形态。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 错误处理
+设施按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D362F = MSVC6 静态 CRT 错误模式设置分派器—
+   —0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；[0xB782D8]/[0xB782B0] 全局 + IAT 尾跳
+   = CRT 错误处理标准形态（batch 1051 locale worker 点名
+   getter 现场）。
+2. 依赖：零 E8 函数依赖（纯全局 + IAT）——重写 gamemd
+   时用等价运行时（标准错误模式 API）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 错误处理设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 74B + 全局分布 + 调用点宿
+主；函数名「错误模式设置分派器」由模式码分派 + 标志清置
++ IAT 尾跳交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1051：0x7D3482 locale/ctype 表初始化 worker——本
+  批=彼文档点名「74B getter」补登记（调用现场 0x7D3495 与
+  彼描述吻合）。
+★batch 1109：0x7CDD5A setlocale 条目更新器——[0xB782B0]
+  全局（26 引用）与彼写侧（0x7CDE1C/0x7CDE26）交叉（读端
+  = 本批模式 -4）。
+★batch 1116：IAT 槽 [0x7E12D8]/[0x7E12DC]——本批仅作调用
+  点登记不作语义证据（方法论落地）。
+
+五、状态
+-------
+crt_runtime_verified（0x7D362F：MSVC6 CRT 错误模式设置分派
+器归档；全 74B + 全局分布；不写 C++ 模型不做 golden——CRT
+错误处理库商业库层；函数名由模式码分派 + 标志清置 + IAT
+尾跳交叉标注）。TSV 新增 0x007D362F 行。
+
+★本批实锤：batch 1051 点名 getter 补登记——模式码 -2/-3
+  （IAT 尾跳钩子）/ -4（读 locale 全局）分派 + [0xB782D8]
+  标志清置，零 E8 纯分派叶函数。
+相邻待续：batch 1171 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CCFB3(73B，batch 1153 新候选)/0x7C04E0
+(71B)/0x7D53C2(70B，batch 1150 新候选)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1169 已完（MSVC6 CRT 堆块分配入口 0x7C946E，
+commit 1a36b28）。
