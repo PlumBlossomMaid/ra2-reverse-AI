@@ -1,0 +1,137 @@
+frontier batch 1191 —— MSVC6 CRT 数值→宽字符串转换包装器 0x7CBCAF（归档，itoa+ACP→wide）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CBCAF（50B,
+uc=1, callers=4 探针实测 0x6AA302/0x6AA31C/0x6AA333/
+0x6AA34A）。TSV 无既有行。TARGET = 0x007CBCAF。C++ 模型：
+无（见「三态判定」）。TSV：新增 0x007CBCAF 行。
+
+一、链语义（disasm 全 50B + 依赖交叉 + IAT 槽身份实锤 +
+调用现场，0x7CBCAF-0x7CBCE0）
+--------------------------------------------------------------
+签名（确认）：cdecl 3 参（[ebp+8]=整数值、[ebp+0xC]=宽字
+符输出缓冲、[ebp+0x10]=进制），返回 arg2（输出缓冲）。
+
+主体（0x7CBCAF-0x7CBCE0）：
+007cbcaf  push ebp/mov ebp,esp
+007cbcb2  sub esp,0x14                       ; ★20B 栈上 ANSI 临时缓冲
+007cbcb5  push dword[ebp+0x10]                ; 参3 = 进制
+007cbcb8  lea eax,[ebp-0x14]                  ; &ANSI 临时缓冲
+007cbcbb  push eax
+007cbcbc  push dword[ebp+8]                   ; 参1 = 值
+007cbcbf  call 0x7d468c                       ; ★★TSV:127 batch 023
+                                              ;   数值格式化包装（itoa 族）
+007cbcc4  add esp,0xc
+007cbcc7  lea eax,[ebp-0x14]
+007cbcca  push 0x14                           ; ★★cchWideChar = 20
+007cbccc  push dword[ebp+0xc]                 ; lpWideCharStr = 参2
+007cbccf  push -1                             ; ★cbMultiByte = -1
+                                              ;   （null 终止串）
+007cbcd1  push eax                            ; lpMultiByteStr = &ANSI
+007cbcd2  push 1                              ; ★dwFlags = 1
+                                              ;   （MB_PRECOMPOSED）
+007cbcd4  push 0                              ; ★CodePage = 0（CP_ACP）
+007cbcd6  call dword[0x7e11c4]                ; ★★IAT 槽 = KERNEL32!
+                                              ;   MultiByteToWideChar
+                                              ;   （导入表 MATCH 实锤）
+007cbcdc  mov eax,dword[ebp+0xc]              ; ★返回 arg2 缓冲指针
+007cbcdf  leave/ret
+
+★语义：**MSVC6 CRT 数值→宽字符串转换包装器（推断名——
+_itow/_ltow 族）**——cdecl 3 参：
+  ① 0x7D468C 把整数值按指定进制 itoa 进 20B 栈上 ANSI
+     临时缓冲（[ebp-0x14]）；
+  ② MultiByteToWideChar(CP_ACP=0, MB_PRECOMPOSED=1,
+     tmp, -1, arg2, 20) 把 ANSI 串转成宽字符写进调用者
+     缓冲（容量硬编码 20 wchar）；
+  ③ 返回 arg2（输出缓冲指针，itoa 族返回值惯例）。
+  = 数值→宽字符串一步转换（ANSI 中转路线）。
+
+★调用点（探针 E8 实测 4 处，全在 Westwood 主区 0x6AA3xx）：
+  ① 0x6AA302：mov ecx,[ebp*4+0x884C34]（全局数组取值）/
+     lea eax,[esp+0x23c]（宽缓冲）/push 0xa（★十进制）/
+     push eax/push ecx/call；
+  ② 0x6AA31C：[ebp*4+0x884BB4] 同模式；
+  ③ 0x6AA333：[ebp*4+0x884BD4] 同模式；
+  ④ 0x6AA34A：[ebp*4+0x884BF4] 同模式。
+  四数组基址间隔 0x20（0x884BB4/B D4/F4/0x884C34）——多字
+  段统计结构（HUD/统计数值格式化时代码路径），进制恒
+  0xa 十进制。
+
+★E8 被调者（1 个）：**0x7D468C（★★TSV:127 已登记
+  semantics_verified + TSV:128 REIMPL forward_numeric_
+  format_legacy cpp_reimplementation_partial——batch 023
+  数值格式化包装：负数十进制先置无符号标志再转发）**。
+  IAT 依赖：**[0x7E11C4] = KERNEL32!MultiByteToWideChar**
+  （★本批导入表 MATCH 实锤；前批槽表纪律：0x7E1xxx 槽仅
+  作调用点登记——本批直接用导入目录解析确认名称）。
+
+★全局：无（[0x7E11C4] 为 IAT 槽非数据全局）。
+
+★原版怪癖（照抄）：
+  ① ANSI→wide 走 **MultiByteToWideChar(CP_ACP)** 而非直
+     接宽字符 itoa——两次转换（值→ANSI→wide）原版路线；
+  ② cchWideChar 硬编码 0x14=20（宽缓冲容量假定）——调
+     用者缓冲须 >=20 wchar，溢出走原版截图；
+  ③ cbMultiByte=-1（null 终止串，非长度）——依赖 itoa
+     的 NUL；
+  ④ sub esp,0x14 = 20 字节 ANSI 局部缓冲，与 cchWideChar
+     0x14 同数值不同含义（ANSI 字节 vs 宽字符数）——数
+     值巧合照抄；
+  ⑤ 返回 arg2（输出缓冲指针）而非转换长度——itoa 族返回
+     值惯例；
+  ⑥ 进制参数由调用者传（本族 4 处恒 0xa 十进制，但包装
+     器本身通用）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 数值/字符
+转换设施按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CBCAF = MSVC6 静态 CRT 数值→宽字符串包装——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；依赖 0x7D468C（batch 023 CRT 数值格
+   式化）+ KERNEL32 MultiByteToWideChar = CRT 数值/字符转
+   换标准形态（同域 batch 1187 0x7CBBDB 宽字符 sprintf 包
+   装紧邻）。
+2. 依赖：0x7D468C 已登记（TSV:127/128）——重写 gamemd 时
+   用等价运行时（std::to_wstring / swprintf）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 数值转换设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 50B + 依赖交叉 + IAT 槽
+身份实锤 + 调用现场；函数名「数值→宽字符串转换包装器」由
+itoa 中转 + ACP→wide 两次转换 + 返回缓冲指针交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 023：0x7D468C 数值格式化包装（TSV:127/128）——本
+  批调用现场交叉（值+ANSI 缓冲+进制 3 参）。
+★batch 1187：0x7CBBDB 宽字符格式化包装——同 0x7CBBxx-
+  0x7CBCxx 区紧邻（两者一为格式化一为数值转换，单元格
+  格式化族全景）。
+★batch 1163/1190：locale/代码页域——CP_ACP 语义交叉。
+★batch 1116 槽表纪律：0x7E1xxx 槽仅登记调用点——本批
+  [0x7E11C4] 用导入目录反查拿到真实名称（MultiByteToWide
+  Char），补强该纪律的可用手段。
+
+五、状态
+-------
+crt_runtime_verified（0x7CBCAF：MSVC6 CRT 数值→宽字符串转
+换包装器归档；全 50B + 依赖交叉 + IAT 实锤；不写 C++ 模
+型不做 golden——CRT 数值转换商业库层；函数名由 itoa 中转 +
+ACP→wide + 返回缓冲指针交叉标注）。TSV 新增 0x007CBCAF 行。
+
+★本批实锤：itoa+MultiByteToWideChar 两步转换——20B 栈
+  ANSI 中转、cchWideChar 硬编码 20、cbMultiByte=-1、返回
+  输出缓冲指针；IAT 槽 [0x7E11C4] 导入表 MATCH 实名
+  KERNEL32!MultiByteToWideChar；4 调用点全在主区 0x6AA3xx
+  统计字段格式化。
+相邻待续：batch 1192 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CB80B(49B, callers=2)/0x7D475A(49B,
+callers=1)/0x7CA814(49B, callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1190 已完（MSVC6 CRT 中日韩代码页→LCID 映射
+器 0x7D3679，commit 77764d3）。
