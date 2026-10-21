@@ -1,0 +1,132 @@
+frontier batch 1164 —— MSVC6 CRT FPU 控制字常量选择器 0x7DBC9A（归档，_controlfp 族邻件）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DBC9A（86B,
+uc=1, callers=5 探针实测 0x7DB95B/0x7DB975/0x7DB997/
+0x7DBB2A/0x7DBB41，全在 0x7DBxxx FPE 包装域）。TSV 无既
+有行。TARGET = 0x007DBC9A。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007DBC9A 行。
+
+一、链语义（disasm 全 86B + 全局分布 + 五调用点归属，
+0x7DBC9A-0x7DBCEF）
+--------------------------------------------------------------
+签名（推断）：cdecl 1 参（[ebp+8]=标志字节 cl），按位选
+择 FPU 常量/状态输出到 [ebp-8]（double 槽）或 [ebp+8]
+（int 槽）。
+
+主体（0x7DBC9A-0x7DBCEF）：
+007dbc9a  push ebp/mov ebp,esp/push ecx/push ecx   ; 局部 8B
+007dbc9f  mov cl,[ebp+8]                 ; ★cl = 标志字节
+; → bit0（0x7DBCA2）：fld [0x87D704] → fistp [ebp+8]
+007dbca2  test cl,1/je 0x7dbcb1          ; ★★bit0 → [0x87D704] 80 位
+                                          ;   控制字 → fistp 转 int
+                                          ;   存参槽
+007dbca7  fld [0x87d704]/fistp dword[ebp+8]/wait
+; → bit3（0x7DBCB1）：
+007dbcb1  test cl,8/je 0x7dbcc6          ; ★★bit3 → fnstsw ax 状态字
+                                          ;   + [0x87D704] → double 槽
+007dbcb6  wait/fnstsw ax
+007dbcb9  fld [0x87d704]/fstp qword[ebp-8]/wait
+; → bit4（0x7DBCC6）：
+007dbcc6  test cl,0x10/je 0x7dbcd5       ; ★★bit4 → [0x87D710] →
+                                          ;   double 槽
+007dbccb  fld [0x87d710]/fstp qword[ebp-8]/wait
+; → bit2（0x7DBCD5）：
+007dbcd5  test cl,4/je 0x7dbce3          ; ★★bit2 → fldz/fld1/fdivrp
+                                          ;   （1/0 = inf 怪异计算）
+007dbcda  fldz/fld1/fdivrp st(1)/fstp st(0)/wait
+; → bit5（0x7DBCE3）：
+007dbce3  test cl,0x20/je 0x7dbcee       ; ★★bit5 → fldpi → double 槽
+007dbce8  fldpi/fstp qword[ebp-8]/wait
+007dbcee  leave/ret
+
+★语义：**MSVC6 CRT FPU 控制字常量选择器（推断名——batch
+192 0x7DBC77 _controlfp 的邻件）**——cdecl 1 参：
+  ① cl 标志位逐位分派（互斥位测试链）：
+     bit0 → [0x87D704]（x87 控制字全局）fistp 转 int 存参
+     槽；
+     bit3 → fnstsw 状态字 + [0x87D704] → double 槽；
+     bit4 → [0x87D710]（另一 FPU 状态全局）→ double 槽；
+     bit2 → fldz/fld1/fdivrp（1/0 → inf 的怪异求值）；
+     bit5 → fldpi → double 槽；
+  ② 纯 x87 指令操作（fld/fistp/fnstsw/fldpi），零 E8 调
+     用。
+  = _controlfp/_statusfp 支持层——按调用者标志位提取对
+  应 FPU 控制字/状态常量（五个调用点全在 0x7DBxxx 域）。
+
+★调用点（探针 E8 实测 5 处）：0x7DB95B/0x7DB975/0x7DB997/
+0x7DBB2A/0x7DBB41——全在 0x7DBxxx（FPE 包装域——batch
+192 0x7DBC77 _controlfp、batch 1141 0x7DB54E FPE 检查包
+装器同区）——按各自标志位取值。
+
+★E8 被调者：**零子调用**（全 86B 纯 x87 fld/fistp/fnstsw/
+fldpi 操作）。全局：[0x87D704]（2 处引用 0x7DBCA9/0x7DBCBB
+本函数内）+ [0x87D710]（1 处 0x7DBC CD 本函数内）——x87
+控制字/状态字存储区，与 batch 1141 [0x87D700] FPE 门控全
+局同连续区（0x87D700-0x87D71C FPE 状态结构族）。
+
+★原版怪癖（照抄）：
+  ① cl 五位分派用独立 test/je 链（非查表非位扫描）——
+     互斥位测试逐条硬编码；
+  ② bit0 路径 fistp 存 [ebp+8]（int 参槽复用）而 bit3/4/5
+     存 [ebp-8]（double 局部）——两槽分用；
+  ③ bit2 路径 fldz/fld1/fdivrp st(1)（1÷0 → +inf 经 x87
+     +inf 语义）后 fstp st(0) 清理——怪异计算照抄（无实
+     际用途痕迹）；
+  ④ bit3 先 fnstsw ax 后 fld [0x87D704]——状态字 + 控制
+     字双读；
+  ⑤ 每分支后 wait 收尾（FPU 同步）——x87 序列化惯用；
+  ⑥ [0x87D704]/[0x87D710] 均为本函数内引用（唯一消费点
+     ——专用 FPU 状态全局）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 浮点库按
+商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DBC9A = MSVC6 静态 CRT 浮点库控制字常量选择
+   器——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_
+   layout_crt_provenance）；[0x87D704]/[0x87D710] x87 控
+   制/状态全局 + 纯 x87 位分派 = CRT FPU 支持层标准形态
+   （batch 192 _controlfp / batch 1141 FPE 包装器同域）。
+2. 依赖：零函数依赖（纯 x87 指令）；全局 [0x87D704]/
+   [0x87D710] 与 batch 1141 [0x87D700] 同 FPE 状态区——
+   重写 gamemd 时用等价 _controlfp/_statusfp 语义（标准
+   C 库）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 浮点库设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 86B + 全局分布 + 五调用点
+归属；函数名「FPU 控制字常量选择器」由 cl 位分派 + 纯 x87
++ _controlfp 邻件交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 192：0x7DBC77 _controlfp——本批紧邻其后（0x7DBC77
+  -0x7DBC99 区，本批 0x7DBC9A 起），同一 FPU 控制字支持
+  族。
+★batch 1141：0x7DB54E FPE 检查包装器——[0x87D700] 门控
+  全局与本批 [0x87D704]/[0x87D710] 同 FPE 状态连续区
+  （0x87D700-0x87D71C 族全景）。
+★batch 871/872/1065：FPE 链前三件——五调用点全在 0x7DBxxx
+  同域（FPE 包装族全景）。
+
+五、状态
+-------
+crt_runtime_verified（0x7DBC9A：MSVC6 CRT FPU 控制字常量选
+择器归档；全 86B + 全局分布；不写 C++ 模型不做 golden——
+CRT 浮点库商业库层；函数名由 cl 位分派 + 纯 x87 + _controlfp
+邻件交叉标注）。TSV 新增 0x007DBC9A 行。
+
+★本批实锤：_controlfp 邻件——cl 五标志位逐条分派对应
+  FPU 控制/状态常量（[0x87D704]/[0x87D710] + fnstsw +
+  fldpi + 怪异 1/0），纯 x87 零 E8，五调用点全在 0x7DBxxx
+  FPE 域。
+相邻待续：batch 1165 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CED49(85B)/0x7DB49A(84B)/0x7CE13A
+(83B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1163 已完（MSVC6 CRT _findenv 环境键查找器
+0x7DAB54，commit 733b14c）。
