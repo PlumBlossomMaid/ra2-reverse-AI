@@ -1,0 +1,139 @@
+frontier batch 1221 —— MSVC6 CRT 控制台字符读取加锁包装壳 0x7DD1D7（归档，锁壳家族第 6 件）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DD1D7（28B,
+uc=1, callers=1 探针实测 0x4C85C8）。TSV 无既有行。
+TARGET = 0x007DD1D7。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007DD1D7 行。
+
+一、链语义（disasm 全 28B + 核心交叉 + Westwood 调用点交
+叉，0x7DD1D7-0x7DD1F2）
+--------------------------------------------------------------
+签名（确认）：cdecl 0 参，返回核心 0x7DD20F 结果（字符或
+-1 EOF）。
+
+主体（0x7DD1D7-0x7DD1F2）：
+007dd1d7  push esi
+007dd1d8  push 8                           ; ★锁 key = 8
+007dd1da  call 0x7cd9f5                    ; ★★TSV:238 流锁
+                                           ;   Enter（key 8）
+007dd1df  call 0x7dd20f                    ; ★★TSV:1973 batch
+                                           ;   1129 CRT 控制台字
+                                           ;   符读取器（_getch
+                                           ;   类，209B）
+007dd1e4  push 8                           ; 锁 key = 8
+007dd1e6  mov esi, eax                     ; ★esi = 核心结果
+007dd1e8  call 0x7cda56                    ; ★★TSV:239 流锁
+                                           ;   Leave（key 8）
+007dd1ed  pop ecx                          ; 清 Enter 的 key
+007dd1ee  mov eax, esi                     ; ★返回核心结果
+007dd1f0  pop ecx                          ; 清 Leave 的 key
+007dd1f1  pop esi
+007dd1f2  ret
+
+★语义：**MSVC6 CRT 控制台字符读取加锁包装壳（推断名——
+_getch 公开入口锁包装层）**——cdecl 0 参：
+  ① 流锁 Enter（0x7CD9F5，key 8）；
+  ② 调 0x7DD20F（_getch 类控制台字符读取器——缓存槽
+     [0x87DD70] + CONIN$ 句柄槽 [0x87DD80] + -1/-2 双哨
+     兵，batch 1129 已全量登记）；
+  ③ 流锁 Leave（0x7CDA56，key 8）；
+  ④ 返回核心结果（esi 中转）。
+  = 控制台输入公开入口的锁包装（缓存槽 + CONIN$ 句柄全程
+  串行化——键缓冲不被并发读取撕裂）。
+
+★调用点（探针 E8 实测 1 处 0x4C85C8——**Westwood 主代码区
+  0x4C85xx，非 CRT 内部**）：宿主 0x4C859A 起（启动/等待域
+  ）：mov esi,[0x7E1218]/call esi（★IAT 槽，推断
+  GetTickCount/timeGetTime）→ mov edi,[0x7E1210]/test
+  eax,eax/jne 0x4C85B0 → call edi/call esi（★失败重试一
+  次）→ push 0x821CC0（★消息串）/call 0x7DD4F4（★scan 池
+  候选 printf 族）/add esp,4 → push 0xFA0（★4000ms 超时）
+  /call dword[0x7E11F0]（★IAT 槽）→ **call 0x7DD1D7（★本
+  批）** → call edi → pop edi/mov eax,0x481/pop esi/ret
+  ——宿主为「打印提示 + 等 4 秒 + 阻塞读一键」的交互等待
+  流程（Westwood 游戏启动/错误路径直接调 CRT 控制台读入
+  口，经锁壳）。
+
+★E8 被调者（3 个，全已登记）：
+  ① 0x7CD9F5（★★TSV:238 crt_runtime_verified——CRT
+     region lock Enter 64B）；
+  ② 0x7DD20F（★★TSV:1973 crt_runtime_verified——batch
+     1129 _getch 类控制台字符读取器 209B，依赖 0x7DE0F1
+     句柄初始化 batch 1078 / 0x7DD434 字符分类 batch 1063）；
+  ③ 0x7CDA56（★★TSV:239 crt_runtime_verified——CRT
+     region lock Leave 18B）。
+  全部已登记，无未登记依赖。
+
+★全局：零（纯栈；锁对象经 key 8 索引锁槽表 [0x87C2A8]）。
+
+★原版怪癖（照抄）：
+  ① 与 batch 1204（fputc 壳 0x7D9ECF）/1197（fread 壳）/
+     1198（fwrite 壳）/1218（getenv 壳 0x7CBC11）**同模板**
+     ——锁 Enter → 核心转发 → 锁 Leave → eax 透传；
+  ② 锁 key 0x8 硬编码（控制台输入专用锁槽，与 FILE 锁
+     0x1B / 环境锁 0xC 并列）；
+  ③ **无 add esp 合并清理**（0 参壳：Enter 的 key 与 Leave
+     的 key 各用 pop ecx 单独清，2 条 pop 分列前后）——
+     参数为 0 时 add esp,0 被优化成两条 pop（对比 1218 的
+     add esp,0xc 合并）；
+  ④ 返回值经 esi 中转（mov esi,eax → mov eax,esi）——两
+     次锁调用间保全；
+  ⑤ 锁在壳层、核心无锁——batch 1129 记录核心 0x7DD20F 内
+     部另有 0x7DE0F1 惰性句柄初始化（同 key 8 域不嵌套加
+     锁，避免自锁）；
+  ⑥ 28B 为锁壳家族**最短一档**（0 参转发；getenv 1 参 33B
+     / fputc 2 参 41B / fread-fwrite 4 参 47B）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 锁/控制台
+设施按商业库纪律归档；核心 batch 1129 已实证）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DD1D7 = MSVC6 静态 CRT 控制台读锁壳——0x7C-0x7D
+   = MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）
+   ；锁 + _getch 核心 = CRT 控制台输入公开入口标准形态
+   （锁壳家族同族）。
+2. 依赖：0x7CD9F5/0x7DD20F/0x7CDA56 全部已登记——重写
+   gamemd 时用等价运行时（_getch 语义）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 控制台/锁设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 28B + 核心交叉 + Westwood
+调用点交叉；函数名「控制台字符读取加锁包装壳」由锁+核心+
+锁三段 + 0 参转发交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1129 / TSV:1973：0x7DD20F _getch 类控制台字符读取
+  器——本批核心（本批为其**公开加锁入口**；核心另有 1 个
+  内部调用点 0x7DD2F7 直调不加锁）。
+★batch 1204/1197/1198/1218：fputc/fread/fwrite/getenv 加锁
+  壳——同模板（锁壳家族 6 件：fread/fwrite/fputc/getenv/
+  getch + 锁对 0x7CD9F5/0x7CDA56）。
+★Westwood 主代码区调用现场（0x4C85C8）：游戏启动交互等待
+  流程（提示串 0x821CC0 + 4000ms 超时 + 读一键）直接调
+  CRT 公开入口——游戏侧代码依赖 CRT 锁壳。
+★0x7DD4F4（printf 族，scan 池候选）——同宿主 0x4C85xx 内
+  调用，后续批次按池顺序处理。
+
+五、状态
+-------
+crt_runtime_verified（0x7DD1D7：MSVC6 CRT 控制台字符读取加
+锁包装壳归档；全 28B + 核心交叉 + Westwood 调用点交叉；不
+写 C++ 模型不做 golden——CRT 控制台/锁设施商业库层；函数
+名由锁+核心+锁三段 + 0 参转发交叉标注）。TSV 新增
+0x007DD1D7 行。
+
+★本批实锤：_getch 公开入口锁壳——Enter(8) → 0x7DD20F 核心
+  → Leave(8) → 返回；0 参壳用两条 pop ecx 代替 add esp；
+  唯一调用点 0x4C85C8 在 Westwood 启动交互等待流程（游戏
+  直调公开入口）；锁壳家族第 6 件（最短 28B）。
+相邻待续：batch 1222 按 _scan_pending_7c.py 取池内下一未登
+记项（uc=1：0x7CCA19(27B, callers=4)/0x7C8AD3(27B,
+callers=4)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1220 已完（MSVC6 CRT Winsock 协议枚举包装器
+0x7C1130，commit d435dad）。
