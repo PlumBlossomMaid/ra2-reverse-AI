@@ -1,0 +1,183 @@
+frontier batch 1110 —— MSVC6 CRT 80 位扩展精度浮点除法辅助器 0x7D7EE0（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D7EE0（279B,
+uc=1, callers=1 池顶登记；探针实测 E8 callers=46——调用点
+全在 CRT 数学库区间）。TSV 无既有行。TARGET = 0x007D7EE0。
+C++ 模型：无（见「三态判定」）。TSV：新增 0x007D7EE0 行。
+
+一、链语义（disasm 全 279B + 探针常量取证，0x7D7EE0-0x7D7FF6）
+--------------------------------------------------------------
+函数边界：0x7D7EDB-0x7D7EDF 五个 int3 对齐填充 → 0x7D7EE0
+入口（无 push ebp 序言——CRT 汇编级浮点辅助特征）→
+0x7D7FF6 ret → 0x7D7FF7 起下一函数（sub esp,0x2c）。
+
+★常量表（探针 PE 字节实锤）：
+  [0x87D400] float = 0.9375  = 15/16（denormal 缩小因子）
+  [0x87D404] float = 1.0625  = 17/16（denormal 放大因子）
+  [0x87D408] float = 2^63    （大数缩放因子）
+  [0x87D3F0] 16 项字节表（指数分类表，shr eax,0x1c 索引）
+
+主体（0x7D7EE0-0x7D7FF6）：
+007d7ee0  fld xword ptr [esp + 0x10]      ; ★★操作数 b（80 位）
+007d7ee4  fld xword ptr [esp + 4]         ; ★★操作数 a（80 位）
+007d7ee8  mov eax, dword ptr [esp + 8]    ; ★a 高位（符号+指数）
+007d7eec  add eax, eax                    ; ★符号位入 CF
+007d7eee  jae 0x7d7f7a                    ; ★a 非负 → 零/常规检查
+007d7ef4  xor eax, 0xe000000              ; ★指数位反转检查
+007d7ef9  test eax, 0xe000000
+007d7efe  je 0x7d7f03
+007d7f00  fdivp st(1)                     ; ★常规路径直接除
+007d7f02  c3                              ; ret
+007d7f03  shr eax, 0x1c
+007d7f06  cmp byte ptr [eax + 0x87d3f0], 0 ; ★★[0x87D3F0] 指数分类表
+007d7f0d  jne 0x7d7f12
+007d7f0f  fdivp st(1) / c3                ; 表项 0 → 直接除
+007d7f12  mov eax, dword ptr [esp + 0xc]  ; ★b 高位
+007d7f16  and eax, 0x7fff                 ; ★指数 15 位
+007d7f1b  je 0x7d7f84                     ; b 指数 0 → 特殊
+007d7f1d  cmp eax, 0x7fff
+007d7f22  je 0x7d7f84                     ; b 指数全 1 → 特殊
+007d7f24  fnstcw word ptr [esp + 0x1c]    ; ★★保存当前控制字
+007d7f28  mov eax, dword ptr [esp + 0x1c]
+007d7f2c  or eax, 0x33f                   ; ★★设扩展精度+清掩码
+007d7f31  and eax, 0xf3ff
+007d7f36  mov dword ptr [esp + 0x20], eax
+007d7f3a  fldcw word ptr [esp + 0x20]     ; ★★精度切换
+007d7f3e  mov eax, dword ptr [esp + 0x18] ; ★a 指数
+007d7f42  and eax, 0x7fff
+007d7f47  cmp eax, 1
+007d7f4a  je 0x7d7f63                     ; a 指数==1 → 17/16 分支
+007d7f4c  fmul dword ptr [0x87d400]       ; ★★a ×15/16（denormal 缩小）
+007d7f52  fxch st(1)
+007d7f54  fmul dword ptr [0x87d400]       ; ★★b ×15/16
+007d7f5a  fxch st(1)
+007d7f5c  fldcw word ptr [esp + 0x1c]     ; ★★恢复控制字
+007d7f60  fdivp st(1) / c3                ; 除后返回
+007d7f63  fmul dword ptr [0x87d404]       ; ★★a ×17/16（denormal 放大）
+007d7f69  fxch st(1)
+007d7f6b  fmul dword ptr [0x87d404]       ; ★★b ×17/16
+007d7f71  fxch st(1)
+007d7f73  fldcw word ptr [esp + 0x1c]     ; ★★恢复控制字
+007d7f77  fdivp st(1) / c3
+007d7f7a  mov eax, dword ptr [esp + 4]    ; ★零检查（a 低位）
+007d7f7e  or eax, dword ptr [esp + 8]
+007d7f82  jne 0x7d7f87
+007d7f84  fdivp st(1) / c3                ; a==0 → 直接除（0 处理）
+007d7f87  mov eax, dword ptr [esp + 0xc]  ; ★b 高位
+007d7f8b  and eax, 0x7fff
+007d7f90  jne 0x7d7f84                    ; b 常规 → 直接除
+007d7f92  fnstcw word ptr [esp + 0x1c]    ; ★★denormal 大数路径
+007d7f96  mov eax, dword ptr [esp + 0x1c]
+007d7f9a  or eax, 0x33f / and eax, 0xf3ff
+007d7fa4  mov dword ptr [esp + 0x20], eax
+007d7fa8  fldcw word ptr [esp + 0x20]
+007d7fac  mov eax, dword ptr [esp + 0x18] ; ★a 指数
+007d7fb0  and eax, 0x7fff
+007d7fb5  je 0x7d7fc8                     ; a 指数==0 → 分支
+007d7fb7  cmp eax, 0x7fff
+007d7fbc  je 0x7d7ff0                     ; a 指数全 1 → 恢复返回
+007d7fbe  mov eax, dword ptr [esp + 0x14] ; ★a 尾数高位
+007d7fc2  add eax, eax
+007d7fc4  jae 0x7d7ff0                    ; 常规 → 恢复返回
+007d7fc6  jmp 0x7d7fd0
+007d7fc8  mov eax, dword ptr [esp + 0x14]
+007d7fcc  add eax, eax
+007d7fce  jb 0x7d7ff0
+007d7fd0  fxch st(1)                      ; ★★denormal 大数缩放路径
+007d7fd2  fstp st(0)
+007d7fd4  fld st(0)
+007d7fd6  fmul dword ptr [0x87d408]       ; ★★a ×2^63
+007d7fdc  fstp xword ptr [esp + 4]        ; ★写回操作数 a
+007d7fe0  fld xword ptr [esp + 0x10]
+007d7fe4  fxch st(1)
+007d7fe6  wait
+007d7fe7  fldcw word ptr [esp + 0x1c]     ; ★★恢复控制字
+007d7feb  jmp 0x7d7ee8                    ; ★★跳回主循环重试
+007d7ff0  fldcw word ptr [esp + 0x1c]     ; ★★恢复控制字
+007d7ff4  fdivp st(1) / c3                ; 除后返回
+
+★语义：**MSVC6 CRT 80 位扩展精度浮点除法辅助器（推断名
+——denormal 安全 x87 除法 _fdiv 类）**：
+  ① 无栈帧序言，cdecl 栈传参：a @[esp+4]（10B xword）、
+     b @[esp+0x10]（10B xword），结果 st(0)；
+  ② 常规路径（指数分类表 [0x87D3F0] 表项 0）直接
+     fdivp 返回；特殊路径走 denormal 处理；
+  ③ b 指数 0 或全 1、a==0 → 直接除（交给 x87 异常语义）；
+  ④ denormal 处理：fnstcw 保存 → or 0x33F / and 0xF3FF
+     （设 64 位精度 + 清所有异常掩码）→ fldcw 切换 →
+     两操作数同乘 15/16（[0x87D400]）或 17/16（[0x87D404]，
+     a 指数==1 分支）→ 恢复控制字 → 除后返回；
+  ⑤ b denormal 且 a 非零：×2^63（[0x87D408]）写回操作数
+     a → 跳回 0x7D7EE8 主循环重试（防下溢/上溢）；
+  ⑥ 结果正确性依赖 x87 80 位内部精度 + 全局 RC=chop。
+
+★E8 被调者：零（纯 x87 内联 + 查表，无子调用）。
+
+★调用点（探针 E8 实测 46 处）：0x7D803F-0x7D86DC 全部在
+  CRT 数学库区间（0x7D7FF7 起下一函数区）——编译器把可能
+  denormal 的除法生成 call 本辅助器而非直接 fdiv 指令。
+
+★原版怪癖（照抄）：
+  ① 无 push ebp 序言（CRT 汇编级浮点辅助标准形态，直接
+     esp 相对寻址）；
+  ② 两操作数同乘缩放因子（15/16 或 17/16）保持比值——
+     除法的 denormal 归一化惯例；
+  ③ denormal 大数路径只缩 a 不缩 b，跳回重试（循环而非
+     尾递归）；
+  ④ fnstcw/fldcw 精度切换三处展开（0x7F24/0x7F92/两处恢
+     复），不抽公共 helper；
+  ⑤ a 指数==1 与 b 指数 0 的双分支结构不对称（15/16 vs
+     17/16 系数互换）；
+  ⑥ 0x7D7FC2/0x7D7FCC 的 add eax,eax + jae/jb 组合是符号
+     位提取（CF 判断）惯用，非算术。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 浮点库按商业
+库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D7EE0 = MSVC6 静态 CRT 浮点库 denormal 安全除
+   法辅助器——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_
+   layout_crt_provenance）；15/16、17/16、2^63 缩放常数族 +
+   [0x87D3F0] 16 项指数分类表 + fnstcw/fldcw 精度切换均为
+   MSVC CRT 浮点异常/denormal 处理标准形态；46 调用点全在
+   CRT 数学库区间。
+2. 依赖：零子调用，纯 x87 + 常量表——重写 gamemd 时用等
+   价 C 库浮点除法语义（std::divides / 硬件除法）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 浮点库设施，重
+   写时用等价运行时代替，逐字节复刻无意义——按商业库纪
+   律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 279B + 常量探针 + 指数表
+交叉；函数名「80 位扩展精度浮点除法辅助器」为推断交叉标
+注——denormal 缩放路径/精度切换由代码实测）。
+
+四、跨批次闭合
+------------
+★batch 1108（0x7CF51C CRT pow() ±Inf 边界处理器）——同
+  CRT 浮点库域：本批 fldcw 精度切换（or 0x33F/and 0xF3FF）
+  与 1108 的 NaN/Inf 掩码分派同源（MSVC CRT 浮点辅助家族）。
+★CRT 浮点辅助域：x87 80 位内部精度 + 全局 RC=chop 一致性
+  ——与 RMG 取数惯用法（fild qword/fdiv 比例）同一浮点环
+  境（docs/random-map/fpu-and-random-idioms.md）。
+
+五、状态
+-------
+crt_runtime_verified（0x7D7EE0：MSVC6 CRT 80 位扩展精度浮
+点除法辅助器归档；全 279B + 常量探针 + 指数表交叉；不写
+C++ 模型不做 golden——CRT 浮点库商业库层；函数名「80 位
+扩展精度浮点除法辅助器」为推断交叉标注——denormal 缩放
+路径/精度切换由代码实测）。TSV 新增 0x007D7EE0 行。
+
+★本批实锤：denormal 安全除法三路径（常规直除 / 15-16 缩
+放 / 2^63 重试循环）+ [0x87D3F0] 16 项指数分类表 + 三处
+fldcw 精度切换——MSVC CRT 浮点辅助标准形态，46 调用点全
+在数学库区间。
+相邻待续：batch 1111 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7DC5DC(275B, callers=3)/0x7D52B8(266B,
+callers=3)/0x7C9602(266B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1109 已完（MSVC6 CRT setlocale 条目更新器
+0x7CDD5A，commit 0bf6f60）。
