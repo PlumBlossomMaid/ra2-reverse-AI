@@ -1,0 +1,159 @@
+frontier batch 1108 —— CRT pow() ±Inf 边界处理器 0x7CF51C（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CF51C（304B,
+uc=1, callers=1 池顶登记；探针实测 E8 callers=2）。TSV 无
+既有行。TARGET = 0x007CF51C。C++ 模型：无（见「三态判
+定」）。TSV：新增 0x007CF51C 行。
+
+一、链语义（disasm 全 304B 复核+探针常量取证，0x7CF51C-0x7CF64B）
+---------------------------------------------------------------
+签名（推断）：cdecl 3 参 (double x @[ebp+8], double y
+@[ebp+0x10], double* out @[ebp+0x18])，返回 int（1 = 已
+写 NaN 特例 / 0 = 交回主流程）。
+
+★常量表（探针 PE 字节实锤）：
+  [0x7E2800] = 0.0            [0x7E1718] = 1.0
+  [0x7E1708] = 2.0            [0x87D550] = +inf
+  [0x87D558] = NaN(0xFFF8…)   [0x87D570] = -0.0
+
+头部（0x7CF51C-0x7CF57A）：
+007cf51c  push ebp / mov ebp,esp / push ecx×2
+007cf521  fld [ebp+8] / fcomp [0x7E2800]   ; ★x vs 0.0
+007cf52a  fld [ebp+8]                        ; ★fcomp 弹栈后重载
+007cf52d  push esi
+007cf52e  xor edx,edx                        ; ★edx=0（低 32 位期望）
+007cf530  xor esi,esi                        ; ★返回默认 0
+007cf532-5 fnstsw ax/sahf
+007cf535  jae 0x7CF539
+007cf537  fchs                               ; ★x<0 → 取绝对值
+007cf539  fstp [ebp-8]                       ; ★[ebp-8] = |x|
+007cf53c  mov eax,0x7FF00000                 ; ★+Inf 掩码高字
+007cf541  mov ecx,0xFFF00000                 ; ★-Inf/NaN 掩码高字
+007cf546  cmp [ebp+0x14],eax / jne 0x7CF57F  ; ★y 高字 vs +Inf
+007cf54b  cmp [ebp+0x10],edx / jne 0x7CF5A7  ; ★y 低字 vs 0（NaN 排除）
+; → y == +Inf：按 |x| vs 1.0 三分支
+007cf550  fld [ebp-8] / fcomp [0x7E1718]
+007cf55c  ja 0x7CF5C3                          ; |x|>1 → +inf
+007cf56a  jb 0x7CF5D9                          ; |x|<1 → 0.0
+007cf56c  fld [0x87D558]                       ; ★|x|==1 → NaN
+007cf572  mov eax,[ebp+0x18]
+007cf575  push 1 / pop esi                     ; ★★返回标志 = 1
+007cf578  fstp [eax] / jmp 0x7CF647            ; *out = NaN
+; → y == -Inf（0x7CF57F）
+007cf57f  cmp [ebp+0x14],ecx / jne 0x7CF5A7    ; ★y 高字 vs -Inf/NaN
+007cf584  cmp [ebp+0x10],edx / jne 0x7CF5A7
+007cf589-5  fld [ebp-8] / fcomp 1.0
+007cf595  ja 0x7CF5D9                          ; |x|>1 → 0.0
+007cf5a3  jae 0x7CF56C                         ; |x|==1 → NaN + 返回 1
+007cf5a5  jmp 0x7CF5C3                         ; |x|<1 → +inf
+; → y 非 ±Inf（0x7CF5A7）：检 x
+007cf5a7  cmp [ebp+0xC],eax / jne 0x7CF5DD     ; ★x 高字 vs +Inf
+007cf5ac  cmp [ebp+8],edx / jne 0x7CF647       ; ★x 低字≠0 → x=NaN 返回 0
+007cf5b5-41 fld y / fcomp 0.0                  ; ★x == +Inf：y 分三支
+007cf5c1  jbe 0x7CF5CB
+007cf5c3  fld [0x87D550] / jmp 写 out          ; y>0 → +inf
+007cf5cb-39 fld y / fcomp 0.0 / jae 0x7CF640   ; y==0 → 1.0
+007cf5d9  fldz / jmp 写 out                    ; y<0 → 0.0
+007cf5dd  cmp [ebp+0xC],ecx / jne 0x7CF647     ; ★x 高字 vs -Inf
+007cf5e2  cmp [ebp+8],edx / jne 0x7CF647       ; 普通 x → 返回 0 交主流程
+; → x == -Inf（0x7CF5E7）：
+007cf5e7-ef fld y → 压栈 → call 0x7CF64C       ; ★★y 奇偶性判定器
+007cf5f4-0d fcomp 0.0 → mov ecx,eax
+007cf604  jbe 0x7CF61B / fld [0x87D550] (+inf)
+007cf60c  cmp ecx,1 → jne 0x7CF613
+007cf611  fchs                               ; ★奇整 y → -inf
+007cf613  fstp [ebp+0x10] / jump 写 out       ; 偶整/非整 → +inf
+007cf61b-2d fcomp 0.0 / jae 0x7CF640          ; y==0 → 1.0
+007cf629  cmp ecx,1 → jne 0x7CF636
+007cf62e  fld [0x87D570] (-0.0)              ; ★奇整 y<0 → -0.0
+007cf636  fldz                               ; 偶整/非整 → +0.0
+007cf640  fld1                               ; ★y==0 → 1.0
+007cf642  mov eax,[ebp+0x18] / fstp [eax]    ; ★统一写 out
+007cf647  mov eax,esi / pop esi / leave / ret ; ★返回标志
+（0x7CF64B ret 后 0x7CF64C 起下一函数——两函数紧邻）
+
+★语义：**CRT pow() ±Inf 特殊值边界处理器（推断名——
+IEEE-754 pow 特殊值分派表）**：
+  ① y==+Inf：|x|>1 → +inf / |x|<1 → 0.0 / |x|==1 → NaN（返回 1）
+  ② y==-Inf：|x|>1 → 0.0 / |x|<1 → +inf / |x|==1 → NaN（返回 1）
+  ③ x==+Inf：y>0 → +inf / y==0 → 1.0 / y<0 → 0.0
+  ④ x==-Inf：y>0 且奇整 → -inf（偶整 → +inf）/ y<0 且奇整 →
+    -0.0（偶整 → +0.0）/ y==0 → 1.0
+  ⑤ 普通 x、x=NaN → 不写 out 返回 0（交回主流程）
+  与 IEEE-754 pow 特殊值语义完全吻合。
+
+★子函数 0x7CF64C（紧邻 304B/13B? 实 0x7CF64C-0x7CF6B3，
+68B）= **y 奇偶整数性判定器**：调 0x7D930F（★★batch 012
+已登记 IEEE-754 double 分类器 _fpclass）+ test al,0x90
+（NaN/Inf 位）→ 非数返回 0 → frndint(y)==y（★0x7D8EE3
+frndint 包装）判断整性 → 再 frndint(y/2)==y/2（★[0x7E1708]
+=2.0）判偶 → 返回 0=非整/1=奇整/2=偶整。
+
+★E8 被调者：0x7CF64C（紧邻奇偶判定器，1 caller=0x7CF5EF）
+  → 0x7D930F（batch 012 _fpclass）+ 0x7D8EE3（frndint 包装
+  ，2 callers 全在 0x7CF64C 内——未登记新候选）。
+
+★调用点（探针 E8 实测 2 处，与 pool callers=1 口径有出入）
+  ：0x7C90E5 + 0x7CF13C——两宿主均为 fnsave→call→frstor
+  FPU 环境环（CRT 数学函数标准形态，__CIpow 类入口）。
+
+★原版怪癖（照抄）：
+  ① 返回标志 1 仅在「y=±Inf 且 |x|==1」写 NaN 时置位；
+     其余边界输出返回 0，由调用方 test eax/eax 判定是否已
+     处理；
+  ② x 为 NaN 直接返回 0 不写 out（NaN 传播交主流程）；
+  ③ 奇偶判定走 frndint——原版全局 RC=chop（向零截断）下
+     frndint 即向零取整，与 ties-to-even 语义不同；
+  ④ fcomp 弹出操作数后必须重载 fld（0x7CF521/0x7CF52A 两
+     连）——MSVC 生成「先比后重载」惯用；
+  ⑤ 两个紧邻函数（0x7CF51C/0x7CF64C）无 0xCC 填充区隔，
+     边界即 0x7CF64B ret。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 数学库按商业
+库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CF51C = MSVC6 静态 CRT 数学库 pow() 的边界处
+   理段——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_
+   layout_crt_provenance）；IEEE 掩码分派 + _fpclass 依赖 +
+   fnsave/frstor 环均为 CRT 数学函数标准形态。
+2. 依赖：0x7D930F（batch 012 _fpclass）+ 0x7D8EE3（frndint
+   包装）+ 两宿主调用点——重写 gamemd 时用等价 C 库 pow
+   语义代替。
+3. gamemd_replication_discipline：MSVC6 CRT 数学库设施，
+   重写时用等价运行时（标准 C 库 pow）代替，逐字节复刻无
+   意义——按商业库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 304B 复核 + 探针常量取证
++ _fpclass 交叉；函数名「pow() ±Inf 边界处理器」为推断交
+叉标注——IEEE 掩码分派/特殊值输出由代码实测）。
+
+四、跨批次闭合
+------------
+★batch 012：0x7D930F IEEE-754 double 分类器（_fpclass）
+  ——本批 0x7CF64C 内 call 0x7D930F + test al,0x90（NaN/Inf
+  位）实锤调用。
+★0x7D8EE3：13B frndint 取整包装——本批两处调用（0x7CF66C/
+  0x7CF695），未登记新候选（后续批次处理）。
+★pow 域：0x7C90E5/0x7CF13C 两调用点宿主 fnsave/frstor 环
+  = __CIpow 类 CRT 数学函数入口形态（CRT 数学域族）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CF51C：MSVC6 CRT pow() ±Inf 边界
+处理器归档；全 304B 复核 + 6 常量探针实锤 + _fpclass 交叉
+；不写 C++ 模型不做 golden——CRT 数学库商业库层；函数名
+「pow() ±Inf 边界处理器」为推断交叉标注——IEEE 掩码分派
+/特殊值输出由代码实测）。TSV 新增 0x007CF51C 行。
+
+★本批实锤：pow 特殊值分派表（y/x 各 ±Inf 分支 + 奇偶判定
+器）——IEEE-754 pow 边界语义与 CRT 数学函数形态输出一致。
+相邻待续：batch 1109 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CDD5A(283B, callers=3)/0x7D7EE0(279B)/
+0x7D8EE3(13B 新候选)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1107 已完（0x7CADB9 CRT 双层命名键查找器，
+commit 3265b94）。
