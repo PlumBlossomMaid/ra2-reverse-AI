@@ -1,0 +1,113 @@
+frontier batch 1219 —— MSVC6 CRT 10 字节记录清零器 0x7C7350（归档，Hostent 域结构清零）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7C7350（33B,
+uc=1, callers=1 探针实测 0x7C2A74）。TSV 无既有行。
+TARGET = 0x007C7350。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007C7350 行。
+
+一、链语义（disasm 全 33B + 调用宿主交叉，0x7C7350-0x7C7370）
+--------------------------------------------------------------
+签名（确认）：cdecl 1 参（[ebp+8]=目标结构指针），无返回
+值（纯清零副作用）。
+
+主体（0x7C7350-0x7C7370）：
+007c7350  push ebp / mov ebp, esp
+007c7353  mov eax, [ebp+8]                 ; eax = 目标指针
+007c7356  66 c7 40 04 00 00   mov word[eax+4], 0
+007c735c  c7 00 00 00 00 00   mov dword[eax], 0
+007c7362  66 c7 40 0a 00 00   mov word[eax+0xA], 0
+007c7368  c7 40 06 00 00 00   mov dword[eax+6], 0
+007c736f  leave / ret
+
+★语义：**MSVC6 CRT 10 字节记录清零器（推断名——
+{HOSTENT 类} 结构字段清零：两 word + 两 dword 交错覆盖
++0..+0xB）**——cdecl 1 参：
+  ① [ptr+4] word = 0；
+  ② [ptr+0] dword = 0；
+  ③ [ptr+0xA] word = 0；
+  ④ [ptr+6] dword = 0。
+  覆盖字节区间 [+0,+0xC) 共 12 字节（dword@0 / word@4 +
+  dword@6 重叠 2 字节 / word@0xA——实际写 0 的字节：0..3、
+  4..5、6..9、0xA..0xB = 全 12 字节）。**交错顺序 = 编译器
+  把常量 0 字段清零按类型宽度分块展开**（不是 rep stosd）。
+
+★调用点（探针 E8 实测 1 处 0x7C2A74）：宿主 0x7C2A5x 区 CR
+T socket/Winsock 域：call 0x4125F0（★CRT 内部）→ mov
+edx,[ebx+0x7BC]/or edx,0x40000000/mov [ebx+0x7BC],edx（★
+置标志位 30）→ lea edx,[ebx+0x7D0]（★记录指针 = 宿主
++0x7D0）/push edx → call 0x7C7350（★本批清零）→ add
+esp,4 → jmp 0x7C2A92；另一分支 mov eax,[ebp+0x18] / test /
+je / push 0/push 0/push 1/push ebx / call dword[ebx+0x58]
+（★虚表槽 0x58 派发）——宿主为 Winsock 连接/主机解析对
+象（+0x7D0 处 12 字节记录 + +0x7BC 标志位），清零后走虚
+表槽建立连接。
+
+★E8 被调者：零 E8（纯常量写）。
+
+★全局：零（纯指针写）。
+
+★原版怪癖（照抄）：
+  ① **交错写序**（word@4 → dword@0 → word@0xA → dword@6）
+     ——不按地址升序，是编译器按源结构字段声明顺序展开的
+     结果（源字段顺序 = 两个 WORD 字段包夹两个 DWORD 字段
+     的原始声明序）；
+  ② word@4 与 dword@6 重叠（6..7 与 4..5 相邻不重叠；但
+     word@0xA 与 dword@6 覆盖 6..9 后 0xA 继续——总覆盖 12
+     字节无空洞）；
+  ③ 无 rep stosd/stosb（12 字节小结构用立即数 mov 展开，
+     MSVC6 对小尺寸 memset 常量的内联策略）；
+  ④ 全用立即数 0（c7 40 xx 00 00 00 00 / 66 c7 40 xx 00
+     00）——不用 xor eax,eax + mov [eax],reg（省寄存器）；
+  ⑤ 建帧但无局部（push ebp/mov ebp,esp 只为 [ebp+8] 参读）
+     ——非优化编译或该 TU 的帧策略；
+  ⑥ 字段+0x7D0 的 12 字节记录由调用方 lea 传入（宿主对象
+     内嵌记录）——清零为「复用前复位」语义。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 结构清零
+设施按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7C7350 = MSVC6 静态 CRT 结构清零辅助——0x7C-0x7D
+   = MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）
+   ；常量 mov 展开清零 + 建帧形态 = CRT 内部小结构初始化
+   标准形态（宿主 0x7C2A Winsock 域）。
+2. 依赖：零 E8 函数依赖（纯常量写）——重写 gamemd 时用等
+   价运行时（结构零初始化 / memset 语义）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 结构清零设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 33B + 调用宿主交叉；函数
+名「10 字节记录清零器」由交错写序 + 12 字节覆盖区间交叉标
+注）。
+
+四、跨批次闭合
+------------
+★batch 1205：0x7D36AC locale/ctype 表清零子例程——同为
+  CRT 清内存族（彼批 rep stosd 257B 大块，本批 mov 展开
+  12B 小块——MSVC6 按尺寸选策略）。
+★宿主 0x7C2A5x Winsock 域（含 0x4125F0 调用 + 虚表槽 0x58
+  派发）——未登记 scan 池候选，后续批次按池顺序处理。
+★路径：0x7C7350 落 0x7C7xxx（非 0x7C-0x7D 常规 CRT 段）但
+  调用方在 0x7C2A Winsock CRT 段——CRT TU 分散排布证据。
+
+五、状态
+-------
+crt_runtime_verified（0x7C7350：MSVC6 CRT 10 字节记录清零器
+归档；全 33B + 调用宿主交叉；不写 C++ 模型不做 golden——
+CRT 结构清零商业库层；函数名由交错写序 + 12 字节覆盖区间
+交叉标注）。TSV 新增 0x007C7350 行。
+
+★本批实锤：12 字节结构字段交错清零——word@4 / dword@0 /
+  word@0xA / dword@6（按源字段声明序展开），零 E8；唯一调
+  用点 0x7C2A74 在 Winsock 域宿主（lea [ebx+0x7D0] 内嵌记
+  录复用前复位），此前置标志位 or [ebx+0x7BC],0x40000000。
+相邻待续：batch 1220 按 _scan_pending_7c.py 取池内下一未登
+记项（uc=1：0x7C1130(29B, callers=1)/0x7DD1D7(28B,
+callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1218 已完（MSVC6 CRT getenv 加锁包装壳
+0x7CBC11，commit 438469a）。
