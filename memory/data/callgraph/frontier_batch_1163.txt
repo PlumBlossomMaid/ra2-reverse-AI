@@ -1,0 +1,146 @@
+frontier batch 1163 —— MSVC6 CRT _findenv 环境键查找器 0x7DAB54（归档，batch 1045 点名兑现）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DAB54（88B,
+uc=1, callers=1 探针实测 0x7DAACF）。TSV 无既有行。
+TARGET = 0x007DAB54。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007DAB54 行。
+补登记背景：**batch 1045 文档（0x7DA9CD _putenv 环境设置
+器）已点名「mov edi,[0xb781e4]/…/call 0x7DAB54（★查 key 索
+引）」**——本批即该点名补登记（_findenv 键查找段）。
+
+一、链语义（disasm 全 88B + 依赖交叉 + 表头全局复用，
+0x7DAB54-0x7DABAB）
+--------------------------------------------------------------
+签名（推断）：cdecl 2 参（key 指针 + 冗余），返回表索引
+（（命中项地址-表头）>>2）/ 负索引（未命中）。
+
+主体（0x7DAB54-0x7DABAB）：
+007dab54  push esi
+007dab55  mov esi,[0xb781e4]                  ; ★★[0xB781E4] 环境表
+                                              ;   HEAD 全局（batch
+                                              ;   1045/1142 同全局——
+                                              ;   putenv/getenv 共享表）
+007dab5b  push edi
+007dab5c  mov eax,[esi]
+007dab5e  test eax,eax/je 0x7dab8f           ; ★表项 NULL → 收尾
+; → 查找循环（0x7DAB62）：
+007dab62  mov edi,[esp+0x10]                  ; edi = key 指针
+007dab66  push edi/push eax
+007dab68  push dword[esp+0x14]                ; key 长（外层预存）
+007dab6c  call 0x7d45df                       ; ★★batch 1046 __mbsnbi
+                                              ;   coll 多字节大小写不
+                                              ;   敏感长度受限比较
+                                              ;   （7 参转调 __mbscoll
+                                              ;   核心，count==0 短路）
+007dab71  add esp,0xc/test eax,eax
+007dab76  jne 0x7dab85                        ; 不等 → 下一项
+; → 命中判定（0x7DAB78）：
+007dab78  mov eax,[esi]
+007dab7a  mov al,byte[eax+edi]                ; ★表项[key NUL]
+007dab7d  cmp al,0x3d/je 0x7dab9f            ; ★'='（key=value 分隔）
+                                              ;   → 命中出口
+007dab81  test al,al/je 0x7dab9f              ; ★NUL（key 后无值）
+                                              ;   → 命中出口
+; → 前进（0x7DAB85）：
+007dab85  mov eax,[esi+4]
+007dab88  add esi,4
+007dab8b  test eax,eax/jne 0x7dab66           ; 下一项
+; → 收尾（0x7DAB8F，未命中）：
+007dab8f  mov eax,esi
+007dab91  sub eax,[0xb781e4]                  ; ★偏移 = 项地址-表头
+007dab97  sar eax,2
+007dab9a  neg eax                             ; ★★未命中 → 负索引
+007dab9c  pop edi/pop esi/ret
+; → 命中出口（0x7DAB9F）：
+007dab9f  mov eax,esi
+007daba1  sub eax,[0xb781e4]
+007daba7  sar eax,2
+007dabaa  jmp 0x7dab9c                        ; ★命中 → 正索引
+
+★语义：**MSVC6 CRT _findenv 环境键查找器（推断名——batch
+1045 _putenv 内的查 key 索引段）**——cdecl 2 参：
+  ① [0xB781E4] 环境表 HEAD 迭代（char* 表，项 NULL 终止）；
+  ② 每项 __mbsnbicoll 比较（key_len 前缀，0x7D45DF batch
+     1046 多字节不敏感）；
+  ③ 相等后验 `[]= '='/NUL`（key=value 分隔）——两项判命中；
+  ④ 返回（项地址-表头）>>2 正索引 / 未命中负索引（neg）。
+  = _findenv 标准实现（偏移索引返回——vs getenv 指针返
+  回），_putenv 用索引定位槽位。
+
+★调用点（探针 E8 实测 1 处 0x7DAACF）：宿主 0x7DA9CD
+  _putenv 环境设置器（batch 1045 已登记 391B）——0x7DAA6F
+  起：sub esi,[ebp+8]_push esi,push [ebp+8]_call 0x7DAB54
+  → jl 0x7DAACF 未命中追加 → 正索引走命中（覆盖/删除式）
+  ——与本批文档点名段逐字吻合。
+
+★E8 被调者：0x7D45DF（★★batch 1046 __mbsnbicoll 多字节
+  比较 ✓TSV:1881，2 callers——0x7DAB6C 本批 + 0x7CBC8E
+  getenv）——**唯一函数依赖，已登记**。常量：[0xB781E4]
+  （环境表 HEAD，batch 1045/1142 同全局）。
+
+★原版怪癖（照抄）：
+  ① 命中判定两步：__mbsnbicoll 前缀比较 + 后续 '='/NUL
+     验证——与 batch 1034 getenv 的「节点长 ≤ key 长先拒
+     + 前缀比较」同一键值对验证模式；
+  ② 返回偏移索引（（地址-表头）>>2）而非值指针——与
+     getenv 的「lea 值指针」不同（本批服务于 _putenv 槽
+     位定位）；
+  ③ 未命中负索引（neg eax）——调用方 jl 判负走追加路径
+     （正/负双语义索引）；
+  ④ key 长在 [esp+0x14] 预存（调用前外层压入）——栈槽复
+     用传参；
+  ⑤ 表项 NULL 判在循环头（mov eax,[esi]/test）而前进在
+     尾（mov eax,[esi+4]/add）——头判尾进不对称；
+  ⑥ 命中判 '=' 用 0x3d 硬编码且同时测 NUL（cmp al,0x3d
+     + test al,al 两跳）——双条件连测。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 环境设施
+按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DAB54 = MSVC6 静态 CRT 环境键查找器（_findenv）
+   ——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；[0xB781E4] 表 HEAD + __mbsnbicoll 依
+   赖 + 偏移索引 = CRT 环境设施标准形态（batch 1034/1044/
+   1045 getenv/putenv 链同全局）。
+2. 依赖：0x7D45DF 已登记（batch 1046 __mbsnbicoll）——重
+   写 gamemd 时用等价运行时（std::getenv 语义）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 环境设施，重写
+   时用等价运行时代替，逐字节复刻无意义——按商业库纪律
+   归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 88B + 依赖交叉 + 表头全局
+复用；函数名「_findenv 环境键查找器」由偏移索引 + 双判命
+中 + batch 1045 点名交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1045：0x7DA9CD _putenv——本批=彼文档点名「call
+  0x7DAB54（★查 key 索引）」补登记；索引正负双语义服务
+  于 putenv 槽位定位（追加/覆盖/删除）。
+★batch 1046：0x7D45DF __mbsnbicoll——本批比较调用现场
+  （0x7DAB6C）交叉，2 callers 全集（getenv+findenv）。
+★batch 1034：0x7CBC32 getenv——同 [0xB781E4] 表/同键值验
+  证模式（本批索引返回 vs 彼值指针返回对照）。
+★batch 1044：0x7D461E getenv 构建器——[0xB781E4] 物化写
+  入点，本批为构建后消费侧。
+
+五、状态
+-------
+crt_runtime_verified（0x7DAB54：MSVC6 CRT _findenv 环境键查
+找器归档；全 88B + 依赖交叉；不写 C++ 模型不做 golden——
+CRT 环境库商业库层；函数名由偏移索引 + 双判命中 + batch
+1045 点名交叉标注）。TSV 新增 0x007DAB54 行。
+
+★本批实锤：batch 1045 点名的查 key 索引段补登记——环境表
+  HEAD 迭代 + __mbsnbicoll 前缀比较 + '='/NUL 双判命中 +
+  偏移索引正负双语义（putenv 槽位定位消费）。
+相邻待续：batch 1164 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7DBC9A(86B, callers=5)/0x7CED49(85B)/
+0x7DB49A(84B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1162 已完（MSVC6 CRT 双层命名键查找器第三件
+0x7CAC66，commit e7a6e6d）。
