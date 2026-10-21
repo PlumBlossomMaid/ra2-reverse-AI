@@ -1,0 +1,157 @@
+frontier batch 1232 —— 0x005A5020 死代码复刻：编排树根 A（827B）
+=======================================================================
+
+候选来源：用户指令三阶段①「RMG 死代码全部复现对齐」——batch 1231 后
+剩余 8 个无 REIMPL（0x5A5020/0x5A80B0/0x5A5360/0x5A5B50/0x5A6510/
+0x5A6920/0x5A8720/0x5A78D0 家族 + 0x5A6C10 表归属等）。0x5A5020 是
+「编排树根 A」——死代码树第一根，下游 8 个子调用全是后续批次目标。
+TARGET = 0x005A5020。C++ 模型：code/rewrite/rmg/dead_code_5a5020.{h,cpp}
+新增 DeadCode5A5020World（work/谓词/子函数打桩回调）+ DeadCode5A5020(ctx)。
+单测：test_dead_code_5a5020.cpp 新增 DeadCode5A5020.Golden
+（golden 12 行全对拍：arr1/arr2 数组初始化 + calls 序列 + next）。
+TSV 新增 0x005A5020_REIMPL 行。ctest 91→92/92 全绿。
+
+一、语义（全 0x33B=827B 四段反汇编逐条核对 + 诊断槽值实证 + golden 闭环）
+------------------------------------------------
+真义（disasm.py 0x5A5020 0x33B，thiscall ecx=this ret 0）：
+  · this->[0x60] = 有符号 int this60（fild dword 读）
+  · A. 数组初始化两循环（0x5A505B-0x5A508D）：
+       0xABE378 起 12B 步长写首 dword = [0xABC1D4]+i（101 项到 0xABE834）
+       0xABE834 起 12B 步长写首 dword = [0xABBEC0]+i（8 项到 0xABE894）
+  · B. [esp+0x40] = _ftol((double)this60+0.32)*3.0 ——内层完成数上限
+       （fild dword → fadd 0.32 → fmul 3.0 → _ftol 0x7C5F00）
+  · C. 外层循环（[esp+0x24] 轮次 <10 且 [esp+0x18] 内层完成数<上限）：
+       内层选点（0x5A50B1）：v=PickRange(0x598030, ecx=0, edx=side²-1)
+       → work[v].xy==(0,0) 判空重抽（0x42D470 构造 (0,0) 临时 +
+       0x50E470 判等：x==0 && y==0 返回 1 → jne 0x5A50BC 重抽）
+       → 成功点计数 [esp+0x20]++（上限 20）→ ebp>200 强制坐标 (0,0)
+       → GetCellAt(0x5657A0)→0x486380 谓词失败 → 重选（ebp 保留）
+       → [esp+0x20]<20 时 work[y*side+x].+0x45!=0 走 ±7 邻域扫描
+       （GetCellAt→0x4863D0 命中 → ebp=0 重抽）→ 概率判定（0x5A51C6）
+  · D. 概率判定（0x5A51C6）：r=Random()（0x65C780）→ fild qword 无符号
+       （高 32 位显式 0）→ *kInvUintMax（[0x7ED898]）→ fild dword this60
+       → fsubr 1.0（[0x7E1718]）→ fcompp（比较 1.0-this60 vs r·kInv）
+       → fnstsw ax; test ah,0x41（=C0|C3 实测：C0=AH bit0、C3=AH bit6）
+       → jne 0x5A5238（magic 路径）；ST0>ST1（C0=C3=0）→ 三连调路径
+       ★★整数 this60≥1 时 1-this60≤0 恒 ≤ r·kInv∈[0,1) → **三连调
+       分支不可达**（C++ 两分支照抄，golden 只覆盖 magic 路径——实锤）
+  · E. magic 路径（0x5A5238）：[esp+0x20]==20 → 跳过五连调；
+       magic 除法定标（0x5A5243-0x5A5273）：(int32)0x88888889 ×
+       (H*W*2) imul 高位 + 修正 → W=H=100 → magic=1916
+       → 双段选 scale/offset（0x5A5279-0x5A52CB）：
+         段 1 预置：scale=300.0（[esp+0x48..4C]={0,0x4072C000}）、
+         offset=magic（fild/fst 存回 double）
+         magic-300 > 2000 → 段 2（scale=0x408DB000 位模式=950.0、
+         offset=0x40906800 位模式=1050.0）
+         否则 magic+300 > 100 → 段 1（用预置）；否则段 2
+       → NormalDeviate(0x5980C0) 拒绝循环（0x5A52CF-0x5A52F9）：
+         do st0 = ND*scale+offset while (st0<100 || st0>2000)（接受 [100,2000]）
+       → _ftol → h → 0x5A5360(&coord, h)（2 栈参 ret 8；返回对象）
+       → 对象非 0 → 五连调 0x5A5B50/0x5A6510/0x5A6920/0x5A78D0 →
+       虚函数调用（0x5A5337 mov edx,[esi]; 0x5A5342 call [edx]，push 1）
+       ★★0x5A5333 mov ecx,[esp+0x18]; mov edx,[esi]; inc ecx; push 1;
+       mov [esp+0x1c],ecx——push 之后 [esp+0x1c]==push 前 [esp+0x18]！
+       "写错槽"实为内层完成数+1（golden 3/6/9 轮退出机制）
+  · F. 三连调路径（0x5A51F8，不可达但照抄）：al=0x5A89D0(&coord)；
+       al 非 0 → 0x5A82E0 → 0x5A8720 → inc [esp+0x18]（不动 [esp+0x24]）
+
+★随机消耗非定值：PickRange 空格重抽 + 概率判定 Random 每轮无条件 1 次
+  （NormalDeviate 打桩零消耗）；golden next 字段对拍消耗次数与路径。
+
+★诊断槽值实证（.qwen/tmp/_diag_5a5020c.py，this60=1/side=8）：
+  · [esp+0x18]（内层完成数）每轮五连调后 +1：0→1→2→3
+  · [esp+0x40]=3（上限）；+18=3 >= +40=3 → jge 退出（3 轮）
+  · RNG 消耗每轮 2 次（PickRange 1 + 概率判定 1），total=6 next=0xF4AE1A0E
+    ——与 golden 完全一致
+
+二、golden 采集（emu_oracle 指令级模拟）
+--------------------------------------
+探针 .qwen/tmp/_emu_deadcode_5a5020.py：调 0x5A5020（thiscall ecx=this），
+灌 this+0x60、side [0x89C2DC]、work [0xABED10]（side²×0x50B：x|y 首
+dword + 0x45=1）、[0xABC1D4]/[0xABBEC0] 数组源、W/H [0x87F8DC]/[0x87F8E0]、
+cell 表（tile=0 → 0x486380 通过）。打桩：
+  · 0x4863D0 → xor eax,eax; ret（恒 0=邻域无可用格——本批穿透到概率判定）
+  · 0x5980C0 → fld qword [0x30009008]; ret（桩值 0.2——接受窗口
+    [100,2000]：0.2×300+1916=1976 落窗一次通过；★2500.0 得 st0≈75 万
+    恒>2000 → 死循环，前一轮超时根因——本批修复方向：桩返回小值）
+  · 子函数打桩（ret 大小按现场栈参数）：三连调/五连调 ret 4、
+    0x5A5360 ret 8（现场 push eax; push ecx=2 栈参）→ 返回 VFN_OBJ 非 0
+  · ★虚函数调用三级指针：0x5A5337 mov edx,[esi] + 0x5A5342 call [edx]
+    = 二次解引用——esi=对象 → [esi]=vtable 指针 → [[esi]]=函数地址；
+    装配 VFN_OBJ 存 VFN_SLOT、VFN_SLOT 存 VFN_CODE、VFN_CODE 桩体
+    C2 04 00（ret 4——调用现场 0x5A533A push 1 = 1 栈参）
+    （初版两级把桩体字节 C2 04 00 当地址 0x404C2 → FETCH_UNMAPPED）
+seed_global 播种。存档 memory/data/rmg/deadcode_5a5020_golden.txt：
+3 种子 × 4 用例 = 12 行。用例矩阵：this60 ∈ {1,2,3} × side ∈ {8,16}。
+★this60=1/2/3 → 内层上限 _ftol((this60+0.32)*3.0) = 3/6/9 轮 → calls
+序列长度 3/6/9 组五连调+vfn，next 各不相同（区分度实证）。
+★side 8 vs 16：PickRange 上界不同但选点成功路径 RNG 消耗一致 → next 相同
+（同种子同 this60 下对照冗余；golden 12 行覆盖 3 种子全组合）。
+★golden 含 arr1/arr2 数组初始化首末（探针 dump [0xABE378]/[0xABE834] 区，
+测试直读同源防猜）。
+
+三、本批实锤（三条，均为调试关键）
+----------------------------------
+① **x87 状态字位布局**（.qwen/tmp/_verify_fcom_sw.py 实测）：
+   fcompp + fnstsw ax 后 **C0 = AH bit0（0x01）、C3 = AH bit6（0x40）**
+   ——test ah,0x41 = C0|C3。概率判定「1.0-this60 vs r·kInvUintMax」
+   的 fcompp 方向据此确定：jne 走 magic 当 ST0<=ST1（C0 或 C3 置位）。
+   （此前凭记忆推断 C0 在 AH bit3——实测推翻，全项目浮点判定统一口径）
+② **NormalDeviate 打桩值必须落拒绝循环接受窗口**：0x5A52E9
+   test ah,1 / jne 重取 拒 st0<100；0x5A52F9 test ah,0x41 / je 重取
+   拒 st0>2000 → 接受 [100,2000]。桩值 2500.0 → st0≈75 万恒>2000 →
+   死循环（探针 300s 超时仅打印 [seed 0]）；改 0.2 → 1976 落窗一次通过。
+   ★拒绝循环是"重取 ND"不是"重取 Random"——ND 打桩零 RNG 消耗，
+   golden next 不受拒绝循环影响；真身 ND 缓存串留给后续批次。
+③ **push-1 槽错位**：0x5A533A push 1（esp-4）之后 0x5A533C
+   mov [esp+0x1c],ecx 实际写入 **push 前的 [esp+0x18]**（内层完成数槽）
+   ——"写错槽"实为内层完成数+1。诊断日志 [0x5344 outer-inc] +18 从 0→1
+   逐轮递增实证；golden 3/6/9 轮退出机制的唯一解释。
+
+四、原版怪癖（照抄）
+--------------------
+① 数组初始化两循环 12B 步长（0xABE378 101 项 + 0xABE834 8 项）；
+② 内层上限 = _ftol((this60+0.32)*3.0)——fadd 0.32 在 fmul 3.0 **之前**
+   （加法先于乘法，浮点顺序敏感）；
+③ work[v].xy==(0,0) 判空重抽（0x50E470 两 u16 相等判定）；
+④ ebp>200 强制坐标 (0,0)（选点重试上限，200 次兜底）；
+⑤ [esp+0x20] 成功点计数上限 20（≥20 跳过邻域扫描、magic 路径跳过五连调）；
+⑥ magic 除法定标 (int32)0x88888889 有符号 imul（负乘数！）+ add mw +
+   sar 4 + 符号修正（W=H=100 → 1916）；段 2 常量是 double 高 32 位
+   位模式 {0,0x408DB000}=950.0 / {0,0x40906800}=1050.0；
+⑦ NormalDeviate 拒绝循环接受 [100,2000]（<100 或 >2000 重取 ND）；
+⑧ ★push-1 槽错位 = 内层完成数+1（"写错槽"实现计数）；
+⑨ 三连调路径不动 [esp+0x24]（outer）——golden 未覆盖（不可达），照抄；
+⑩ 虚函数调用二次解引用（mov edx,[esi]; call [edx]——vtable 槽存函数
+   地址，对象首字段是 vtable 指针）。
+
+五、跨批次连接
+--------------
+0x5A82E0（batch 1223 dead_code_placer？——batch 1227 已登记 REIMPL）、
+0x5A89D0（batch 1226 batch_placer 打桩源）、0x5A8720/0x5A5360/0x5A5B50/
+0x5A6510/0x5A6920/0x5A78D0（后续批次目标——本批只打桩记录序列）；
+0x598030 PickRange（scaled_random 已复刻——活代码批）、0x65C780 Random
+（randomizer 已复刻）、0x5980C0 NormalDeviate（真身依赖 [0xABDFB8] 缓存
+全局——后续批次；本批打桩 0.2）、0x5657A0 GetCellAt（batch 006 家族）、
+0x486380/0x4863D0 谓词（0x4863D0 真身 7 段阈值区间留后续批次——本批打桩
+恒 0）、0x578E60 RepaintAll（owner=-1 实锤——5a1e10 批次同款）。
+
+六、状态
+--------
+0x5A5020：cpp_reimplementation_verified + unit_test_verified
+（arr1/arr2 数组初始化 12/12 Eq + calls 序列 12/12 Eq + next 12/12 Eq；
+ctest 92/92 全绿，含 0x58C5A0/0x5A6BA0/0x5A1E10/0x5A3A60 回归）。
+partial：函数精确名（「编排树根 A」推断——死代码无运行观测）、
+三连调路径（整数 this60 下不可达——C++ 照抄未对拍）、段 2 定标
+（golden 全走段 1——段 2 逻辑照汇编抄、常量位模式实读，未对拍）、
+NormalDeviate 真身（打桩 0.2——拒绝循环重取行为与真身缓存语义未对拍）、
+0x5A5360 返回对象语义（打桩 VFN_OBJ 非 0——真身返回契约未确认）。
+★诚实记录：magic 除法带符号 imul 在 W=H=100 下 magic=1916，段 1
+offset=1916.0 使 st0=0.2×300+1916=1976 落窗——golden 只验证了这一条
+定标路径；段 2 分支（magic-300>2000 或 magic+300<=100）在 W=H=100
+下不可达，C++ 按汇编字面照抄。
+本批产品代码新增 dead_code_5a5020.{h,cpp} + 测试 + CMake 登记；
+ctest 91→92/92 全绿。探针 _emu_deadcode_5a5020.py 闭环不入库。
+★探针纪律补记：0x5A5330 段反汇编曾因从 call 指令中间起读产生
+「and eax,0x4c8b0000」假指令——disasm.py 需按指令边界起 dump，
+错位字节 0x8B4C2418 实际是下一指令 mov ecx,[esp+0x18] 的组成部分。
