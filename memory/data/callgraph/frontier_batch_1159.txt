@@ -1,0 +1,147 @@
+frontier batch 1159 —— MSVC6 CRT 浮点指数格式化入口 0x7CEC26（归档，%e 风格孪生，batch 1145 点名兑现）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CEC26（97B,
+uc=1, callers=1 探针实测 0x7CEF1F）。TSV 无既有行。
+TARGET = 0x007CEC26。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CEC26 行。
+补登记背景：**batch 1145 文档（0x7CEE45 浮点格式化链尾数/
+指数分派器）已点名「0x7CEF0C 宿主分派器同时调 0x7CEC26（★
+未登记同族宿主）」**——本批即该点名补登记（分派器第二分
+支 = %e 风格孪生）。
+
+一、链语义（disasm 全 97B + 三依赖交叉 + 分派器双分支核对，
+0x7CEC26-0x7CEC86）
+--------------------------------------------------------------
+签名（推断）：cdecl 4 参（[ebp+8]=double 指针、[ebp+0xC]=
+目标、[ebp+0x10]=宽度/精度、[ebp+0x14]=标志），返回目标。
+
+主体（0x7CEC26-0x7CEC86）：
+007cec26  push ebp/mov ebp,esp/sub esp,0x28
+007cec2c  lea eax,[ebp-0x28]/push esi/push eax
+007cec31  lea eax,[ebp-0x10]/push eax
+007cec35  mov eax,[ebp+8]/push ecx/push ecx
+007cec3a  fld qword[eax]/fstp [esp]
+007cec3f  call 0x7d7dc0                      ; ★★batch 906 浮点格式化
+                                              ;   前置组装器（同 batch
+                                              ;   1145 0x7CEE45 同一链）
+007cec44  mov esi,[ebp+0x10]                 ; esi = 宽度/精度
+007cec47  lea eax,[ebp-0x10]/push eax
+007cec4a  push [ebp+0xc]/... 修正：
+007cec4b  mov edx,[ebp+0xc]                  ; edx = 目标
+007cec4e  lea eax,[esi+1]
+007cec51  push eax
+007cec52  xor eax,eax
+007cec54  cmp dword[ebp-0x10],0x2d           ; ★'-' 判定（结构首字）
+007cec58  sete al
+007cec5b  xor ecx,ecx
+007cec5d  test esi,esi/setg cl               ; 宽/精度>0
+007cec62  add edx,eax
+007cec64  add ecx,edx
+007cec66  push ecx
+007cec67  call 0x7d7d49                      ; ★★batch 905 浮点格式化
+                                              ;   辅助器（同 batch 1145
+                                              ;   0x7CEE45 同一链）
+007cec6c  lea eax,[ebp-0x10]/push 0
+007cec71  push eax
+007cec72  push [ebp+0x14]                    ; 参4 = 标志
+007cec75  push esi                            ; 参3 = 宽/精度
+007cec76  push [ebp+0xc]                      ; 参2 = 目标
+007cec79  call 0x7cec87                      ; ★★batch 1062 浮点指数格
+                                              ;   式化器（5 参直调——★
+                                              ;   恒走指数路径，无尾数
+                                              ;   分派）
+007cec7e  mov eax,[ebp+0xc]
+007cec81  add esp,0x30/pop esi/leave/ret     ; 返回目标
+
+★语义：**MSVC6 CRT 浮点指数格式化入口（推断名——batch
+1145 0x7CEE45 的 %e 风格孪生）**——cdecl 4 参：
+  ① 压 double 调 0x7D7DC0（batch 906 前置组装器，与
+     0x7CEE45 同一链第一段）;
+  ② '-' 判定 + 宽/精度 setg 组合后调 0x7D7D49（batch 905
+     辅助器，同一链第二段）;
+  ③ **直接调 0x7CEC87 指数格式化器**（batch 1062，5 参：
+     目标/宽/结构/标志/NULL）——与本批孪生 0x7CEE45 不
+     同，0x7CEE45 有尾数/指数分派，本批恒走指数路径
+     （%e 风格强制）。
+  = _ecvt/_fcvt 族 %e 指数条目入口；分派器 0x7CEF00 双分
+  支（0x7CEE45 分派尾数/指数 / 0x7CEC26 直走指数）。
+
+★调用点（探针 E8 实测 1 处 0x7CEF1F）：宿主 = 0x7CEF00 区
+  分派器（batch 1145 已登记 0x7CEE45 的调用点 0x7CEF0C 在
+  同函数内）——双分支公共入口：条件分支各调一个入口，本
+  批 0x7CEF1F 为第二分支现场（0x7CEF0C+0x13 间距）。
+
+★E8 被调者：0x7D7DC0（★★batch 906 前置组装器）+ 0x7D7D49
+  （★★batch 905 辅助器）+ 0x7CEC87（★★batch 1062 指数格
+  式化器）——**三个依赖全部已登记**（与 batch 1145
+  0x7CEE45 完全同依赖集）。
+
+★原版怪癖（照抄）：
+  ① 与本批孪生 0x7CEE45 **依赖集完全相同**（0x7D7DC0 →
+     0x7D7D49 → 0x7CEC87）但控制流不同：0x7CEE45 有
+     `esp 0x58 帧 + 结构+4 分派`尾数/指数双路径，本批恒
+     直调 0x7CEC87（%e 专用）——同族双入口；
+  ② 参3（宽/精度）在 '-' 判定后 `setg cl` + `add ecx,edx`
+     参与组装（宽>0 才加——非零宽条件语义照抄）；
+  ③ lea eax,[esi+1] 宽度+1 传给 0x7D7D49（指数位预算）
+     ——与 0x7CEE45 的直传 [ebp+0xC] 不同；
+  ④ 调 0x7CEC87 时 push 顺序 = [ebp+0xc] 目标、esi 宽/
+     精度、&[ebp-0x10] 结构、[ebp+0x14] 标志、0（NULL 末
+     参）——5 参推进序与 0x7CEE45 指数路径一致（彼推
+     [ebp+0xc]/[ebp+0x14]/1）；
+  ⑤ 栈帧 0x28 字节（vs 0x7CEE45 的 0x28——同为 10B 结构
+     区 + 局部）；
+  ⑥ 返回 eax=[ebp+0xc]（目标指针）——与 0x7CEE45 返
+     double 不同（本批纯指针返回）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 浮点格式
+化链按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CEC26 = MSVC6 静态 CRT 浮点格式化链 %e 指数
+   入口——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_
+   layout_crt_provenance）；与 batch 1145 0x7CEE45 同依赖
+   集同链（组装→整形→指数格式化），孪生双入口。
+2. 依赖：3 个已登记函数（0x7D7DC0 batch 906 / 0x7D7D49
+   batch 905 / 0x7CEC87 batch 1062）——重写 gamemd 时用
+   等价运行时（snprintf %e / std::to_chars）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 浮点库设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 97B + 三依赖交叉 + 分派器
+双分支核对；函数名「浮点指数格式化入口」由同依赖集孪生 +
+恒走指数路径 + batch 1145 点名交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1145：0x7CEE45 浮点格式化链尾数/指数分派器——本
+  批=彼文档点名「0x7CEC26 未登记同族宿主」补登记；两函数
+  同依赖集（0x7D7DC0→0x7D7D49→0x7CEC87）同宿主分派器
+  （0x7CEF0C/0x7CEF1F 双分支），%e 专用孪生。
+★batch 906/905：0x7D7DC0 前置组装 / 0x7D7D49 辅助器——
+  本批调用现场（0x7CEC3F/0x7CEC67）与批次 1145 完全同链
+  交叉。
+★batch 1062：0x7CEC87 指数格式化器——本批 5 参直调现场
+  交叉（帧 [ebp-0x10] 结构 + 标志 + NULL 末参）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CEC26：MSVC6 CRT 浮点指数格式化入
+口归档；全 97B + 三依赖交叉；不写 C++ 模型不做 golden——
+CRT 浮点库商业库层；函数名由同依赖集孪生 + 恒走指数路径 +
+batch 1145 点名交叉标注）。TSV 新增 0x007CEC26 行。
+
+★本批实锤：batch 1145 点名的 %e 孪生补登记——同依赖集但
+  恒直调 0x7CEC87 指数格式化器（无尾数/指数分派），分派
+  器 0x7CEF00 双分支（0x7CEE45 分派 / 0x7CEC26 %e 专用）
+  闭环。
+相邻待续：batch 1160 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CC447(93B)/0x7D453C(90B, callers=2)/
+0x7CAC66(90B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1158 已完（Westwood 16 位像素查表色彩展开器
+0x7E0170，commit 2efc112）。
