@@ -1,0 +1,140 @@
+frontier batch 1206 —— MSVC6 CRT 锁槽表静态预初始化器 0x7CD960（归档，batch 304 点名兑现）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CD960（41B,
+uc=1, callers=1 探针实测 0x7D1387）。TSV 无既有行。
+TARGET = 0x007CD960。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CD960 行。
+
+一、链语义（disasm 全 41B + IAT 实名实锤 + 锁槽初值实测 +
+调用点宿主，0x7CD960-0x7CD988）
+--------------------------------------------------------------
+签名（确认）：cdecl 0 参，无返回值（纯副作用：静态预初始化
+4 个锁槽）。
+
+主体（0x7CD960-0x7CD988）：
+007cd960  push esi
+007cd961  mov esi, dword ptr [0x7e11f4]       ; ★esi = IAT
+                                              ;   [0x7E11F4] =
+                                              ;   KERNEL32!
+                                              ;   InitializeCritical
+                                              ;   Section（导入表
+                                              ;   反查实锤）
+007cd967  push dword ptr [0x87c2ec]           ; ② 槽 key17
+007cd96d  call esi                            ;   InitCS([0x87C2EC])
+007cd96f  push dword ptr [0x87c2dc]           ; ② 槽 key13
+007cd975  call esi                            ;   InitCS([0x87C2DC])
+007cd977  push dword ptr [0x87c2cc]           ; ② 槽 key9
+007cd97d  call esi                            ;   InitCS([0x87C2CC])
+007cd97f  push dword ptr [0x87c2ac]           ; ② 槽 key1
+007cd985  call esi                            ;   InitCS([0x87C2AC])
+007cd987  pop esi
+007cd988  ret
+
+★语义：**MSVC6 CRT 锁槽表静态预初始化器（推断名——
+__init_locks / _lock 静态槽初始化）**——对锁槽表
+[0x87C2A8]（按 key×4 索引的 CRITICAL_SECTION* 指针数组）
+中预置非 NULL 的 4 个槽逐一 InitializeCriticalSection：
+  ① [0x87C2AC]（key1）= 0x00B78238 → InitCS
+  ② [0x87C2CC]（key9）= 0x00B78268 → InitCS
+  ③ [0x87C2DC]（key13）= 0x00B78280 → InitCS
+  ④ [0x87C2EC]（key17）= 0x00B78250 → InitCS
+  顺序按地址**倒序**（0x87C2EC → 0x87C2AC）。
+  四个 CS 对象（0xB78238/0xB78250/0xB78268/0xB78280）
+  .data 初值实测（探针 rva2off 全 24B 区）：间距恒 0x18
+  （= sizeof(CRITICAL_SECTION)）——**连续排布的 4 个静态
+  CS 对象**，锁槽表 key 1/9/13/17 静态预置指针。
+  = CRT 启动期对静态分配锁的预初始化（与 TSV:238 Enter
+  的惰性分配互补：预置槽直接 Enter，空槽首次 _malloc+
+  InitCS）。
+
+★调用点（探针 E8 实测 1 处 0x7D1387）：宿主 0x7D1386（84B
+  ，TSV:956 batch 304 已登记「CRT 句柄装配」）**函数体第一
+  条指令**（push esi → call 0x7CD960 → call [0x7E1330] → …）
+  ——彼文档点名「call 0x7CD960（★未登记——CRT 内部）」，
+  **本批兑现**。（注：宿主 0x7D1386 在 0x7D1385 ret 之后紧
+  邻，是独立函数。）
+
+★E8 被调者：零 E8（4 次均 call esi 经 IAT 寄存器间接）。
+
+★IAT 依赖（1 个，导入表反查实锤）：[0x7E11F4] =
+  KERNEL32!InitializeCriticalSection。
+
+★全局：读 4 个锁槽指针 [0x87C2AC]/[0x87C2CC]/[0x87C2DC]/
+  [0x87C2EC]（全 .data 预置非 NULL）；锁槽表基址 [0x87C2A8]
+  初值 0（key0 空置）。
+
+★原版怪癖（照抄）：
+  ① 4 个锁槽按地址**倒序**处理（0x87C2EC/DC/CC/AC）——
+     编译器对静态初始化列表的排布（非 key 升序）；
+  ② 锁槽表 [0x87C2A8] 是 CRITICAL_SECTION* 指针数组（key
+     ×4 索引）——与 TSV:238/239「按 key*4 索引 [0x87C2A8]
+     锁槽表」同表族互证；
+  ③ 静态预初始化只覆盖 4 个预置槽（key 1/9/13/17），其余
+     key（0、2..8、10..12、14..16）保持 NULL 走惰性路径
+     ——预置/惰性双机制并存；
+  ④ 4 个静态 CS 对象连续排布（0xB78238..0xB78298 共 4×24B
+     ）key 顺序与地址顺序不一致（key1→0xB78238、key9→
+     0xB78268、key13→0xB78280、key17→0xB78250）——跨 key
+     映射无规律，照抄（编译期分配布局）；
+  ⑤ 经 esi 中转 IAT 函数指针（mov esi,[0x7E11F4] 一次取指
+     针 4 次 call）——编译器对同一 IAT 槽重复调用的优化；
+  ⑥ 无栈帧（不 push ebp 仅 push esi 保寄存器）——leaf 预
+     初始化最小形态。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 锁设施按
+商业库纪律归档；TSV:238/239 同族已实证）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CD960 = MSVC6 静态 CRT 锁槽表静态预初始化器
+   ——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；对 [0x87C2A8] 锁槽表静态 CS 预初始化
+   = CRT region lock 启动形态（TSV:238 Enter/TSV:239 Leave
+   同表族）。
+2. 依赖：IAT [0x7E11F4] InitializeCriticalSection（实名实
+   锤）+ 锁槽表 [0x87C2A8]（TSV:238/239 已登记同表）——
+   重写 gamemd 时用等价运行时（std::mutex/CRITICAL_SECTION
+   初始化语义）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 锁设施，重写时
+   用等价运行时代替，逐字节复刻无意义——按商业库纪律归
+   档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 41B + IAT 实名 + 锁槽初值
+实测；函数名「锁槽表静态预初始化器」由 InitCS 调用 + 锁槽
+表 key×4 索引 + 宿主点名交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 304：0x7D1386 CRT 句柄装配（TSV:956）——本批调用点
+  宿主（函数体第一条指令）+ 彼文档点名「call 0x7CD960（★
+  未登记——CRT 内部）」兑现。
+★TSV:238（0x7CD9F5 CRT region lock Enter）：锁槽表
+  [0x87C2A8] key×4 索引 + 惰性 _malloc(0x18)+InitCS——本批
+  静态预初始化互补（预置槽直入）+ 槽指针另 4 处引用
+  （0x7CD9D2/0x7CD9DA/0x7CD9E2/0x7CD9EA）全在 Enter 体内。
+★TSV:239（0x7CDA56 CRT region lock Leave）：同表 Leave 配
+  对（本批预初始化的锁由其释放）。
+★batch 1203：0x7CD42B Win32 删除文件包裹器 + 1100/1190/
+  1205 locale 族——同 0x7C-0x7D 静态 CRT 基础设施层（本批
+  为启动期锁预初始化件）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CD960：MSVC6 CRT 锁槽表静态预初始
+化器归档；全 41B + IAT 实名 + 锁槽初值实测；不写 C++ 模型
+不做 golden——CRT 锁设施商业库层；函数名由 InitCS 调用 +
+锁槽表 key×4 索引 + 宿主点名交叉标注）。TSV 新增
+0x007CD960 行。
+
+★本批实锤：batch 304/TSV:956 点名兑现——宿主 0x7D1386 首
+  指令对锁槽表 [0x87C2A8] 的 4 个预置槽（key 1/9/13/17 →
+  连续 CS 对象 0xB78238/0xB78268/0xB78280/0xB78250）逐一
+  InitializeCriticalSection（IAT [0x7E11F4] 实名）；零 E8，
+  与 TSV:238 Enter 惰性路径互补。
+相邻待续：batch 1207 按 _scan_pending_7c.py 取池内下一未登
+记项（uc=1：0x7C8A8E(41B, callers=1) 等）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1205 已完（MSVC6 CRT locale/ctype 表清零子例程
+0x7D36AC，commit 0f40899）。
