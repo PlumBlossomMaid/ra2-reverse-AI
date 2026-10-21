@@ -1,0 +1,158 @@
+frontier batch 1131 —— Westwood 缓冲分配器 0x7C2180（归档，0x7C 区混入样本 #13）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7C2180（205B,
+uc=1, callers=1 探针实测 0x7BFB87）。TSV 无既有行。TARGET
+= 0x007C2180。C++ 模型：无（见「三态判定」）。TSV：新增
+0x007C2180 行。
+
+⚠️ 归属：延续 batch 1086-1130 修正链——0x7C-0x7D 区混入
+Westwood 自有代码，本样本 #13（缓冲分配器，thiscall + 虚
+表槽 + 槽位字段族）。
+
+一、链语义（disasm 全 205B + 调用点宿主交叉，0x7C2180-0x7C224C）
+--------------------------------------------------------------
+签名（推断）：thiscall 2 参（this=ecx、param1=申请量 @edx
+寄存器传参），返回 0xFFFFFFFF 成功 / 0xFFFFFFFC(-4) 失败。
+
+主体（0x7C2180-0x7C224C）：
+007c2180  push esi/push edi/mov edi,edx            ; ★param1 = 申请量
+007c2184  mov esi,ecx                              ; ★thiscall this=ecx
+007c2186  mov cl,byte[esi+0x84]                    ; ★[this+0x84] 门控字节
+007c218c  lea eax,[edi+1]/and al,0xFE              ; ★申请量偶数化
+007c2191  test cl,1/je 0x7C2237                    ; ★门控 bit0 检查
+; → 门控置位（0x7C219A 主缓冲路径）：
+007c219a  mov ecx,[esi+0x78C]/test ecx,ecx/je 0x7C2237 ; ★[this+0x78C]
+                                                    ;   主缓冲指针（空 →
+                                                    ;   兜底路径）
+007c21a8  cmp eax,[esi+0x7B4]/jbe 0x7C220E        ; ★申请量 vs [this+0x7B4]
+                                                    ;   容量
+007c21b0  mov edx,[esi+0x790]/test edx,edx/jne 0x7C220E ; ★[this+0x790]
+                                                    ;   已用量（非 0 →
+                                                    ;   备缓冲路径）
+; → 空闲主缓冲扩展（0x7C21BA）：
+007c21ba  push eax/push ecx/push 5/push esi
+007c21bf  call [esi+0x40]                           ; ★★虚表槽 0x40 回调
+                                                    ;   （this/5/[this+0x78C]/
+                                                    ;   申请量）——扩展请求
+007c21c2  add esp,0x10/test eax,eax/je 0x7C21D1   ; 成功 → 记账
+007c21c9  mov eax,0xFFFFFFFC/pop edi/pop esi/ret   ; ★失败返 -4
+; → 记账（0x7C21D1）：
+007c21d1  mov eax,[esi+0x790]/xor edx,edx/add eax,edi
+007c21dd  mov [esi+0x790],eax                      ; ★[this+0x790] += 申请量
+007c21e3  mov eax,edi/div [esi+0x9C]               ; ★申请量 / [this+0x9C]
+                                                    ;   单元大小
+007c21eb  test eax,eax/jbe 0x7C2208
+; → 槽位位图置位循环（0x7C21EF）：
+007c21ef  mov eax,[esi+0x794]/xor edx,edx/mov byte[eax+ecx],1
+007c21fb  mov eax,edi/div [esi+0x9C]/inc ecx
+007c2206  cmp ecx,eax/jb 0x7C21EF                  ; ★[this+0x794] 位图
+                                                    ;   写 1（每单元 1 槽）
+007c2208  or eax,-1/pop edi/pop esi/ret            ; ★成功返 -1
+; → 备缓冲路径（0x7C220E，容量不够或已用量>0）：
+007c220e  mov ecx,[esi+0x7A8]/push eax/push ecx/push 5/push esi
+007c2219  call [esi+0x40]                           ; ★★虚表槽 0x40 回调
+                                                    ;   （this/5/[this+0x7A8]/
+                                                    ;   申请量）
+007c221c  add esp,0x10/test eax,eax/je 0x7C222B   ; 成功 → 落槽
+007c2223  mov eax,0xFFFFFFFC/pop edi/pop esi/ret   ; ★失败返 -4
+007c222b  mov [esi+0x7B0],edi/…/or eax,-1/ret      ; ★[this+0x7B0] = 申请量
+                                                    ;   成功返 -1
+; → 兜底路径（0x7C2237，门控 0/主缓冲空）：
+007c2237  push eax/push 1/push 7/push esi
+007c223d  call [esi+0x40]                           ; ★★虚表槽 0x40 回调
+                                                    ;   （this/7/1/申请量）
+007c2240  add esp,0x10/neg eax/sbb eax,eax
+007c2247  and al,0xFB/dec eax/ret                  ; ★返回值折叠
+                                                    ;   （neg/sbb/and 0xFB/
+                                                    ;   dec 惯用）
+
+★语义：**Westwood 缓冲分配器（推断名）**——thiscall 2 参
+（this=ecx、param1=申请量 edx）：
+  ① [this+0x84] 门控 bit0 置位 → 主缓冲路径：申请量超
+     [this+0x7B4] 容量且 [this+0x790] 已用量为 0 → 虚表槽
+     0x40 回调（事件码 5）扩展主缓冲 → 成功记账
+     [this+0x790]+=申请量 + [this+0x794] 位图按单元数写 1；
+  ② 容量不够或已用量>0 → 备缓冲路径：虚表槽 0x40 回调
+     （事件码 5）→ [this+0x7B0]=申请量；
+  ③ 门控 0 或主缓冲空 → 兜底路径：虚表槽 0x40 回调（事件
+     码 7）→ 返回值折叠（neg/sbb/and 0xFB/dec）；
+  ④ 成功返回 0xFFFFFFFF（-1），回调失败返回 0xFFFFFFFC
+     （-4）。
+  = 缓冲/槽位管理系统（主缓冲 + 备缓冲 + 位图记账 + 门控
+  兜底）。
+
+★调用点（探针 E8 实测 1 处 0x7BFB87）：宿主 0x7BFB60 区：
+  call 0x7BD2D0（状态检查）→ cmp eax,-0xB（0xFFFFFFF5）→
+  je 0x7C037E → mov edx,[ebp+0x150]/and edx,0xFFFFFFFE（清
+  bit0）→ mov edx,[0xB78198]（★全局缓冲管理器引用）→ call
+  0x7C2180 → cmp eax,-1 → jne 0x7C0399（失败）→ jmp
+  0x7BFA37（成功续）——宿主为 Westwood 缓冲管理农场（全局
+  [0xB78198] 管理对象 + [ebp+0x150] 状态位联动）。
+
+★E8 被调者：零（虚表槽 [this+0x40] 回调 + 纯整数记账）。
+
+★原版怪癖（照抄）：
+  ① 申请量偶数化 `lea eax,[edi+1]/and al,0xFE`（odd +1 处理
+     ——对齐怪癖）
+  ② 成功返回值 0xFFFFFFFF（-1）而非 0——「-1=成功/-4=失败」
+     逆向哨兵（调用方 cmp eax,-1 判成功）；
+  ③ 记账除法 div [this+0x9C]（单元大小）→ 位图按单元数写
+     1——申请量换算槽位数；
+  ④ 备缓冲路径复用事件码 5（与主缓冲扩展同码）——事件码
+     区分仅 7（兜底）不同；
+  ⑤ [this+0x84] 门控 bit0 + [this+0x790] 已用量双条件分流
+     三路径（主/备/兜底）——状态机式分配；
+  ⑥ 兜底返回 neg/sbb/and 0xFB/dec 折叠（eax=0 时 neg→0/
+     sbb→0/and→0/dec→-1；eax≠0 时 → -4）——批 1086 言旧
+     惯用同款。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：Westwood 对象方法
+重写时按语义等价实现）。
+
+三、三态判定（为何 semantics_verified 而非 crt_runtime_verified）
+---------------------------------------------------------------
+1. 归属：0x7C2180 = **Westwood 自有代码**——①thiscall + 虚
+   表槽 [this+0x40]（三参型回调 3 路径）= 对象方法契约形态
+   （batch 1087-1130 同判据）；②[this+0x78C]/[this+0x790]/
+   [this+0x794]/[this+0x7A8]/[this+0x7B0]/[this+0x7B4]/
+   [this+0x84]/[this+0x9C] 槽位字段族 = Westwood 缓冲管理
+   对象标准布局；③宿主 0x7BFB60 区（全局 [0xB78198] 管理
+   对象 + [ebp+0x150] 状态位）为主代码区 Westwood 代码。
+2. 依赖：虚表槽 [this+0x40] 回调（对象方法契约）——重写时
+   按对象方法语义等价实现。
+3. 复刻纪律：Westwood 自有代码——不按商业库归档；缓冲分
+   配非 RMG 管线依赖，保留 semantics_verified。
+→ 状态：semantics_verified（thiscall + 虚表槽 + 槽位字段族
++ 宿主交叉；函数名「缓冲分配器」为推断交叉标注——三路径/
+记账/位图/返回值哨兵由代码实测）。
+
+四、跨批次闭合
+------------
+★batch 1087-1130：0x7C-0x7D 区 Westwood 混入修正链——本
+  样本 #13（缓冲分配器，thiscall+虚表槽判据同源）。
+★batch 1119-1128：像素合成族（0x7DF280 族/0x7DEEFA 族)——
+  同 0x7C-0x7D 区 Westwood 自有代码全景扩展。
+★0x7BD2D0：宿主内状态检查调用（未在本批核）——后续批次
+  视池内位置处理。
+
+五、状态
+-------
+semantics_verified（0x7C2180：Westwood 缓冲分配器归档；全
+205B + 宿主调用点交叉；不写 C++ 模型不做 golden——对象方
+法非 RMG 管线依赖；函数名「缓冲分配器」为推断交叉标注——
+三路径/记账/位图/返回值哨兵由代码实测；⚠️ 0x7C 区 West
+wood 混入样本 #13）。TSV 新增 0x007C2180 行。
+
+★本批实锤：0x7C 区混入样本 #13——[this+0x40] 虚表槽三路
+  径缓冲分配（主缓冲扩展/备缓冲/门控兜底）+ [this+0x794]
+  位图记账 + [this+0x9C] 单元除法 + -1/-4 返回值哨兵——West
+  wood 缓冲管理对象标准形态。
+相邻待续：batch 1132 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CE06E(204B)/0x7C9842(204B)/0x7D57FE
+(202B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1130 已完（Westwood 对象标志分发器 0x7C3750，
+commit d0b6fe0）。
