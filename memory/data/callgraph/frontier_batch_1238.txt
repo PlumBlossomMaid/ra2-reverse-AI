@@ -1,0 +1,181 @@
+frontier batch 1238 —— MSVC6 CRT/runtime 十四连：GetCurrentProcessId/RtlUnwind/ImmNotifyIME 跳板 + FPU 控制壳 + __frnd + 状态字读取 + 构造器/累加器/异常登记
+================================================================================================================
+
+候选来源：_rank_crt_frontier.py（602 个 CRT 段函数按 ranking.tsv
+unique_callers 扇入度排，剔除已闭合后取 td≥1 前 14）——0x7CABFB
+（24B, td=9）、0x7C6064（14B, td=6）、0x7CEAAF（18B, td=6）、
+0x7D5719（6B, td=5）、0x7CBB76（23B, td=3）、0x7D8EE3（18B,
+td=3）、0x7DBC5A（14B, td=3）、0x7DBC68（15B, td=3）、0x7C3950
+（7B, td=2）、0x7C8F46（23B, td=2）、0x7D4811（27B, td=2）、
+0x7CC1B2（24B, td=1）、0x7DCE7A（6B, td=1）、0x7C8A28（6B,
+td=1）。TSV 均无既有行。TARGET = 十四个地址。C++ 模型：无
+（见「三态判定」，商业库纪律归档）。TSV：新增十四行。
+
+一、链语义（disasm 全机器码读完 + IAT 槽内容解引用 + 目标
+交叉，均 crt_runtime_verified）
+--------------------------------------------------------------
+★IAT 导入跳板三件（6B 各，`ff25 jmp [槽]`）：
+0x7D5719  ff25 e8127e00   jmp dword ptr [0x7E12E8]
+                          → 槽解引用（_iat_1238_deref.py）：
+                            GetCurrentProcessId（hint 248，KERNEL32）
+0x7DCE7A  ff25 68127e00   jmp dword ptr [0x7E1268]
+                          → RtlUnwind（hint 559，KERNEL32/NTDLL）
+0x7C8A28  ff25 bc107e00   jmp dword ptr [0x7E10BC]
+                          → ImmNotifyIME（hint 72，imm32）
+★语义：MSVC6 CRT 延迟绑定导入跳板标准形态（与 batch 1237
+  同族；0x7E10B8=ImmGetContext hint30 邻槽一并解出）。
+
+★0x7C6064（14B，__cdecl 1 参 = rdtsc 时间戳壳）：
+007c6064  push ebp / mov ebp, esp / push esi
+007c6068  rdtsc                  ; edx:eax = TSC
+007c606a  mov esi, [ebp + 8]     ; 输出指针
+007c606d  mov [esi], edx         ; ★只写高 32 位（TSC 高位）
+007c606f  pop esi / leave / ret
+★语义：**rdtsc 高 32 位读出壳（推断名——写参1 指向的 dword）**。
+  ★原版怪癖（照抄）：只写 edx（高 32 位）不写 eax——低 32 位
+  被丢弃，调用方拿到的不是完整 64 位 TSC。
+
+★0x7CEAAF（18B，__cdecl 2 参 = FPU 精度控制壳）：
+007ceaaf  push 0x30000           ; mask = MCW_PC（精度控制位）
+007ceab4  push 0x10000           ; new  = _PC_53（53 位双精度）
+007ceab9  call 0x7CBF49          ; ★_control87 内核（TSV
+                                  ;   crt_runtime_verified）
+007ceabe  pop ecx / pop ecx / ret
+★语义：**`_control87(_PC_53, MCW_PC)`（推断名——53 位精度
+  固定闰入）**。与 WinMain 的 _control87(_RC_CHOP, _MCW_RC)
+  （QWEN 记录 0x6BBFB7 push 0x300/push 0x300）同为 0x7CBF49
+  内核的不同调用封装。
+
+★0x7CBB76（23B，__cdecl 4 参转发壳）：
+007cbb76  push 1                 ; 常量 1 → 参1
+007cbb78  push [esp + 0x10] ×3   ; 原参2/3/4 → 参2/3/4
+007cbb84  call 0x7CB9CF          ; ★转发（TSV crt_runtime_verified）
+007cbb89  add esp, 0x10 / ret
+★语义：**插常量 1 作首参的 4 参转发壳（推断名）**——参数原样
+  透传 0x7CB9CF，仅头部插固定 1。
+
+★0x7D8EE3（18B，__cdecl 1 参 = x87 取整）：
+007d8ee3  push ebp/mov ebp,esp/sub esp,8
+007d8ee8  fld qword [ebp+8]      ; st0 = x
+007d8eeb  frndint                ; ★st0 = 按当前舍入模式取整
+007d8eed  fstp qword [ebp-8]     ; 存回
+007d8ef0  fld qword [ebp-8]      ; 重载（双精度规整）
+007d8ef3  leave / ret
+★语义：**`__frnd`（x87 取整，按当前 FPCW 舍入模式）**——函数
+  名在 functions.tsv 已标 __frnd。★★原版怪癖（照抄）：frndint
+  行为取决于全局 FPCW（RA2 运行时为 RC_CHOP 向零截断，见
+  FPCW=0x0E7F 取证）——重写取整须同模式。
+
+★x87 状态字读取二连（14/15B，__cdecl 无参）：
+0x7DBC5A  wait                   ; 等待待决异常完成
+          fnstsw word [ebp-2]    ; 状态字 → 栈上
+          movsx eax, word [ebp-2] ; 有符号扩展返回
+          leave / ret
+0x7DBC68  fnstsw word [ebp-2]    ; 状态字 → 栈上
+          fnclex                 ; ★清异常（不等待）
+          movsx eax, word [ebp-2] ; 返回
+          leave / ret
+★语义：**CRT `_statusfp`/`_clearfp` 内核（推断名——fnstsw
+  状态字读取；0x7DBC68 额外 fnclex 清异常）**。0x7DBC5A 带
+  wait（与 batch 中 wait+fnstsw 形态一致），0x7DBC68 不带。
+
+★0x7C3950（7B，thiscall 0 栈参 = 累加器）：
+007c3950  add dword ptr [ecx + 0x148], edx
+007c3956  ret
+★语义：**对象 +0x148 字段累加 edx（推断名——thiscall 单参
+  累加器）**。7B 极小函数，ecx=this、edx=增量。
+
+★0x7C8F46（23B，__cdecl 无参 = FPU 环境初始化序列）：
+007c8f46  call 0x7C8F5E         ; mov eax,0x7CEED8 /
+                                  ; mov [0x87C4D4],0x7CEB82（装
+                                  ;   FPU 异常处理指针）
+007c8f4b  call 0x7CEAFF         ; ★FPU 控制（TSV crt_runtime_
+                                  ;   verified）
+007c8f50  mov [0xB781A0], eax   ; 保存 eax（控制字返回？）
+007c8f55  call 0x7CEAAF         ; ★_control87(_PC_53,MCW_PC)（本
+                                  ;   批）
+007c8f5a  fnclex                 ; 清异常
+007c8f5c  ret
+★语义：**CRT FPU 环境初始化/复位序列（推断名——装 FPU 异常
+  指针 + 两次 FPU 控制 + fnclex）**——`_fpreset` 类初始化。
+
+★0x7D4811（27B，__cdecl 5 参转发壳）：
+007d4811  push ebp/mov ebp,esp
+007d4814  push 0                 ; 常量 0 → 参1
+007d4816  push [ebp+0x14]        ; 原参5 → 参2
+007d4819  push [ebp+0x10]        ; 原参4 → 参3
+007d481c  push [ebp+0xc]         ; 原参3 → 参4
+007d481f  push [ebp+8]           ; 原参2 → 参5
+007d4822  call 0x7D478B          ; ★转发（TSV crt_runtime_verified）
+007d4827  mov eax, [ebp+0x10]    ; 返原参4
+007d482a  pop ebp / ret
+★语义：**插常量 0 作首参的 5 参转发壳 + 返回原参4（推断名——
+  透传 0x7D478B 并取原参4 作返回值）**。
+
+★0x7CC1B2（24B，__cdecl 1 栈参 ret 4 = 异常登记写入）：
+007cc1b2  push ebx / push ecx
+007cc1b4  mov ebx, 0x87C1D0      ; 全局登记块
+007cc1b9  mov ecx, [ebp + 8]     ; ★读 caller 帧 [ebp+8]
+007cc1bc  mov [ebx + 8], ecx     ; 块+8 = 参1
+007cc1bf  mov [ebx + 4], eax     ; 块+4 = eax
+007cc1c2  mov [ebx + 0xc], ebp   ; 块+0xC = 当前 ebp
+007cc1c5  pop ecx / pop ebx / ret 4
+★语义：**异常/登记块写入（推断名——无独立 ebp 帧，读调用方
+  [ebp+8]；把 eax/ebp/参1 写进全局 0x87C1D0+4/8/C）**。
+  ⚠️partial：无标准序 （不 push ebp），[ebp+8] 语义依赖调用方
+  帧——推断为异常登记（SEH/__try 帧记录写入）；仅按机器码
+  实际行为归档，不强行断言 CRT 角色。
+
+二、黄金基准
+----------
+无（商业库纪律归档——MSVC6 CRT 标准设施，重写用等价
+运行时代替）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：十四函数均在 0x7C-0x7D = MSVC6 静态 CRT
+   （ra2_code_region_layout_crt_provenance）；IAT 跳板 =
+   ff25 标准导入形态；FPU 壳/状态字 = _control87/__frnd/
+   _statusfp 标准 CRT 内核；转发壳 = 常量插入透传。
+2. 依赖：挂靠目标全部已登记（0x7CBF49 _control87 内核、0x7CB9CF、
+   0x7D478B、0x7CEAFF 均 crt_runtime_verified；0x7D2E9B
+   semantics_verified）——重写用等价运行时（stdlib 控制/
+   取整/状态查询 + 导入声明）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 标准设施，
+   按商业库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified ×14（全机器码读完 + IAT 槽
+内容解引用 + 目标交叉；函数名推断标注）。
+
+四、跨批次闭合
+------------
+★TSV:0x7CBF49（crt_runtime_verified）：_control87 内核——
+  0x7CEAAF（_PC_53 精度壳）与 0x7C8F46（FPU 初始化序列）
+  的挂靠目标。
+★TSV:0x7CB9CF / 0x7D478B（crt_runtime_verified）：0x7CBB76 /
+  0x7D4811 的转发目标（常量插头透传）。
+★TSV:0x7CEAFF（crt_runtime_verified）+ 0x7D2E9B（semantics_
+  verified）：0x7C8F46 / 0x7CABFB 的目标。
+★IAT 槽解引用（_iat_1238_deref.py）：0x7E12E8=GetCurrent
+  ProcessId hint248、0x7E1268=RtlUnwind hint559、0x7E10BC=
+  ImmNotifyIME hint72、0x7E10B8=ImmGetContext hint30。
+★调用者（ranking uc=1）：0x7CABFB ← 异常对象族、0x7C6064 ←
+  计时、0x7CEAAF/0x7C8F46 ← FPU 控制、0x7D5719 ← PID 查询、
+  0x7C8A28/0x7DCE7A ← 输入法/展开——均为后续批次候选字段。
+
+五、状态
+-------
+crt_runtime_verified ×14（GetCurrentProcessId/RtlUnwind/
+ImmNotifyIME 三跳板 + rdtsc 壳 + _PC_53 精度壳 + 常量插头
+转发壳二 + __frnd + 状态字读取二 + 累加器 + FPU 初始化序列
++ 异常登记写入——均全机器码读完 + IAT 槽内容解引用/目标
+交叉）。TSV 新增十四行。
+★本批实锤：①0x7CEAAF = _control87(_PC_53, MCW_PC)（0x30000/
+  0x10000 与 MCW_PC/_PC_53 常量咬合）；②0x7D8EE3 __frnd 按
+  全局 FPCW 舍入（RA2 RC_CHOP 下向零截断）；③0x7CC1B2 无
+  独立 ebp 帧（读调用方 [ebp+8]）——异常登记写入推断；
+  ④0x7D5719/0x7DCE7A/0x7C8A28 三个 IAT 槽逐一解引用实锤。
+相邻待续：池内余下 uc=1 td=0 死代码项（0x7C3D60/0x7C4260/
+0x7C5BC0/0x7C5DB0 等）按 _rank_crt_frontier.py 池序批量推进。
+依赖模型：无（归档不落 C++）。
+承前：batch 1237 已完（IAT 导入跳板七件 + 构造器 + ~exception
+三连，commit 3f654f3）。
