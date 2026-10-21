@@ -1,0 +1,109 @@
+frontier batch 1229 —— 0x005A6BA0 死代码复刻：锚点邻域扫描器（110B，零取数点）
+=======================================================================
+
+候选来源：用户指令三阶段①「RMG 死代码全部复现对齐」——batch 1228 补完
+0x58C5A0 后剩余 11 个无 REIMPL。0x5A6BA0 是「锚点 ±7 邻域合法性扫描」
+（零取数点工具函数，与 0x5A5AE0 切比雪夫偏移配套——先取偏移再用
+扫描器验证落点）。
+TARGET = 0x005A6BA0。C++ 模型：code/rewrite/rmg/dead_code_5a6ba0.{h,cpp}
+新增 DeadCode5A6BA0(ctx) + DeadCode5A6BA0World（CellPass 回调）。
+单测：test_dead_code_5a6ba0.cpp 新增 DeadCode5A6BA0.Golden
+（golden 24 行全对拍）。TSV 新增 0x005A6BA0_REIMPL 行。
+
+一、语义（全段反汇编逐条核对 + golden 24 行闭环）
+------------------------------------------------
+真义（机器码全 110B 确认，disasm.py 0x5A6BA0 0x6E）：
+  · 调用约定：**thiscall 无栈参 ret 0**——ecx = 锚点 CellStruct
+    {int16 x, int16 y}（`movsx word [ecx]` / `movsx word [ecx+2]`
+    符号读；入口 `sub esp,8` + 栈上 CellStruct 局部）。
+  · 循环（0x5A6BAE 起）：
+      X = movsx word [ecx]；Y = movsx word [ecx+2]
+      loop: x ∈ [X-7, X+7) 外层（lea edi,[ecx-7] 起，cmp edi,edx
+            / jge 0x5A6BFA 退出返 1 —— ★X 边界先判）
+            y ∈ [Y-7, Y+7) 内层（lea ebp,[eax-7] 起，cmp ebp,ebx
+            / jge 0x5A6BF5 跳外层 —— ★Y 边界先判）
+            每格：{x,y} 写入栈上 CellStruct 结构（mov word
+            [esp+0x14],di / mov word [esp+0x16],si）→
+            ★GetCellAt(0x5657A0，thiscall ecx=0x87F7E8，1 栈参=
+            坐标指针 ret 4) → eax = cell 指针 → mov ecx,eax →
+            ★0x4863D0(cell) 谓词 → test al,al / jne 0x5A6C04
+            —— 谓词真 → 返 0（邻域内有可用格，提前退出）
+  · 全邻域无命中 → 返 1（mov al,1——邻域全不可用）
+  · ★★全程零取数点：不调 Randomizer（不消耗随机数——golden next
+    字段实证：同种子所有用例 next 相同 = 调用前后 RNG 状态不变）
+
+公式（golden 24 行实证）：
+  X=[ecx]（int16）；Y=[ecx+2]（int16）
+  for x in [X-7, X+7):
+    for y in [Y-7, Y+7):
+      if CellPass(GetCellAt(x,y)) return 0;   // 邻域内有可用格
+  return 1;                                    // 邻域全不可用
+
+★与其他死代码族的差异：
+  ① 零取数点（58BE20 系每轮消耗 1 个随机数，本函数全程不碰 RNG）；
+  ② 双层循环 ±7 邻域（不是拒绝采样）；
+  ③ al 返回值语义反转（0=邻域内有可用格 / 1=全不可用）。
+
+二、golden 采集（emu_oracle 指令级模拟）
+--------------------------------------
+探针 .qwen/tmp/_emu_deadcode_5a6ba0.py：调 0x5A6BA0（ecx=ANCHOR 锚点
+CellStruct），灌锚点 [0x30003000]、cell 表 [0x87F924]→CELL_TBL
+（0x40001000 独立映射 2MB，512×512 项 ×4B，默认全 FAIL_OBJ、命中格
+指针改 PASS_OBJ）、cell 对象（FAIL_OBJ +0x38=k^0x55 / PASS_OBJ
++0x38=k）、0x4863D0 打桩（`8B 41 38 3D <imm32> 0F 94 C0 C3` =
+mov eax,[ecx+0x38]; cmp eax,k; sete al; ret——cell+0x38==k 才返 1，
+与真身「多段阈值区间」语义同构），seed_global 播种。
+★hook 0x5657A0 入口单指令 [GCALL, GCALL+1) 计数 GetCellAt 调用次数
+——golden calls 字段校验「提前退出路径与扫描范围」。
+存档 memory/data/rmg/deadcode_5a6ba0_golden.txt：3 种子 × 8 用例
+= 24 行。用例矩阵：锚点 (50,50)/(200,150) × 命中模式 8 种
+（none/first/last/center/ex/ey/corner/mid2——邻域内偏移 0-based，
+ix 对应外层 X、iy 对应内层 Y）。
+★next 字段 = 调用后下一次 Random() 值（= 同种子首采值——零取数点
+实证：同种子 8 个用例 next 全部相同，函数不消耗 RNG）。
+
+(1) calling 计数实证（提前退出路径逐条对上）：
+  · none：196 calls（14×14 全扫）→ 返 1
+  · first (0,0)：1 call（第一格命中即退）→ 返 0
+  · last (13,13)：196 calls（最后一格才命中）→ 返 0
+  · center (7,7)：106 calls（7×14+8——外层前 7 列全扫 + 内层第 8 格）
+  · ex (13,0)：183 calls（13×14+1——外层前 13 列 + 内层第一格）
+  · ey (0,13)：14 calls（外层第一列内层第 14 格）
+  · corner (0,0)+(13,13)：1 call（第一格命中即退）
+  · mid2 (3,4)+(9,10) 锚点 (200,150)：47 calls（3×14+5——外层前 3
+    列 + 内层第 5 格命中第一个目标）
+
+三、原版怪癖（照抄）
+--------------------
+① 零取数点（全程不调 Randomizer——与同族最大差异，golden next 实证）；
+② ±7 邻域开区间 [X-7,X+7)×[Y-7,Y+7) 双层循环（外层 X 内层 Y）；
+③ GetCellAt → 0x4863D0 谓词链（邻域内有可用格 → 提前返 0）；
+④ 边界先判（X-7>=X+7 → 返 1；Y-7>=Y+7 → 跳外层——int16 锚点下
+   恒不触发，原版存在该分支，语义照抄）；
+⑤ movsx word 符号读锚点坐标。
+
+四、跨批次连接
+--------------
+0x5A5AE0（batch 1224——切比雪夫偏移，「配套」关系为读法推断：先
+取偏移再用本扫描器验证落点）；0x5657A0 GetCellAt（batch 065 同族
+实锤——idx=y*512+x、越界/NULL→哑元 0xABDC50 回落）；0x4863D0
+（★真身长谓词已读 4 段：cell+0x38 落入多段阈值区间
+[0xAA1020,+0x28) / [0xAA073C,+4) / [0xABB110,+4) / [0xAA1050,+4) /
+[0xAA10A0,+4) / [0xABBEBC,+0x14) / [0xABAD24,+4)…，含 cell+0x11A
+字节分支——本批打桩 cell+0x38==k 同构，真身完整复刻留后续批次）；
+0x58BE20 系（batch 1225-1228——同死代码区、同 GetCellAt 设施）。
+
+五、状态
+--------
+0x5A6BA0：cpp_reimplementation_verified + unit_test_verified
+（out 24/24 Eq + calls 24/24 Eq——提前退出路径逐位对拍 + next 24/24
+Eq——零取数点实证：调用前后 RNG 状态不变）。
+partial：函数精确名（「锚点邻域扫描器」推断——死代码无运行观测）、
+「与 0x5A5AE0 配套」关系（读法推断）、0x4863D0 真身完整语义（本批
+打桩 cell+0x38==k，真身多段阈值 + 0x11A 分支留后续批次）、GetCellAt
+哑元回落路径（golden 未覆盖越界坐标，探针全命中）。
+本批产品代码新增 dead_code_5a6ba0.{h,cpp} + 测试 + CMake 登记；
+ctest 89/89 全绿（含 0x58C5A0/0x58C4A0 回归）。
+★教训：探针 CELL_TBL 区域需显式 mem_map（0x40000000 2MB）——
+初版漏映射报 UC_ERR_WRITE_UNMAPPED。hook 计数纪律同前（单指令
+边界 [addr,addr+1)）。
