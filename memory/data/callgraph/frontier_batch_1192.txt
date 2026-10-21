@@ -1,0 +1,140 @@
+frontier batch 1192 —— MSVC6 CRT _fgetc 核心 0x7CB80B（归档，流缓冲单字符读取）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CB80B（49B,
+uc=1, callers=3 探针实测 0x7CB840/0x5DC2B2/0x5DC2FC）。
+TSV 无既有行。TARGET = 0x007CB80B。C++ 模型：无（见
+「三态判定」）。TSV：新增 0x007CB80B 行。
+
+一、链语义（disasm 全 49B + 三依赖交叉 + 调用点宿主，
+0x7CB80B-0x7CB83B）
+--------------------------------------------------------------
+签名（确认）：cdecl 1 参（[esp+4]=FILE* 流指针），返回读
+取字符（int，0xFF 扩展）/ -1（EOF/错误）。
+
+主体（0x7CB80B-0x7CB83B）：
+007cb80b  push esi
+007cb80c  mov esi,dword[esp+8]                 ; esi = FILE*（参1）
+007cb810  push edi
+007cb811  push esi
+007cb812  call 0x7cb3f9                        ; ★★TSV:197 batch 046/
+                                              ;   966 流锁 Enter
+007cb817  dec dword[esi+4]                     ; ★★_cnt--（FILE+4）
+007cb81a  pop ecx
+007cb81b  js 0x7cb827                          ; 负 → 慢路径（补缓冲）
+; → 快路径（0x7CB81D，缓冲有字符）：
+007cb81d  mov eax,dword[esi]                   ; _ptr（FILE+0）
+007cb81f  movzx edi,byte[eax]                  ; ★读一字符（零扩展）
+007cb822  inc eax
+007cb823  mov dword[esi],eax                   ; _ptr++
+007cb825  jmp 0x7cb830
+; → 慢路径（0x7CB827，_cnt<0 补缓冲）：
+007cb827  push esi
+007cb828  call 0x7d0703                        ; ★★TSV:160 batch 062/
+                                              ;   035 fgetc 单字节读取
+                                              ;   （流状态机底层读回调）
+007cb82d  pop ecx
+007cb82e  mov edi,eax                          ; ★字符/EOF = edi
+; → 合流（0x7CB830，解锁返回）：
+007cb830  push esi
+007cb831  call 0x7cb44b                        ; ★★TSV:198 batch 046/
+                                              ;   961 流锁 Leave
+007cb836  pop ecx
+007cb837  mov eax,edi
+007cb839  pop edi/pop esi/ret                  ; ★返回字符
+
+★语义：**MSVC6 CRT _fgetc 核心（推断名——流缓冲单字符读
+取）**——cdecl 1 参：
+  ① 流锁 Enter 后 `_cnt--`（FILE+4）；
+  ② _cnt 非负 → 快路径：读 `_ptr`（FILE+0）处一字符
+     （movzx 零扩展）、_ptr++；
+  ③ _cnt 为负 → 慢路径：0x7D0703 fgetc 单字节读取（流
+     状态机，底层读回调 0x7D07DF 补缓冲）拿字符；
+  ④ 流锁 Leave 后返回字符（int，0xFF 扩展）。
+  = FILE 流缓冲 getc 族核心（快/慢双路径 + 锁包围）。
+
+★调用点（探针 E8 实测 3 处）：
+  ① 0x7CB840：**紧邻 6B 转调壳**——call 0x7CB80B / pop
+     ecx / ret（无参直转核心——fgetc 公开入口形态，本批
+     函数即其实现体）；0x7CB847 起为新函数（[0x87C590]
+     ctype 表查询 0x8000 位——_isalpha 类）。
+  ② 0x5DC2B2：主区（5DC29B call 0x7CA845 打开文件后）
+     push ebp/call——读字符消费；
+  ③ 0x5DC2FC：同宿主后续读字符。
+
+★E8 被调者（3 个，全已登记）：
+  ① 0x7CB3F9（★★TSV:197 流锁 Enter——batch 046/966
+     crt_runtime_verified，47B 流锁获取分发）；
+  ② 0x7CB44B（★★TSV:198 流锁 Leave——batch 046/961
+     crt_runtime_verified，47B 流锁释放分发）；
+  ③ 0x7D0703（★★TSV:160 fgetc 单字节读取——batch 062/
+     035 semantics_verified，流状态机；0x7D07DF 底层读回
+     调 batch 056 已 verified）。
+  全部已登记，无未登记依赖。
+
+★全局：无（纯 FILE 结构 + 锁分发）。
+
+★原版怪癖（照抄）：
+  ① `dec [esi+4]`（_cnt--）在快路径判断**之前**——先减后
+     判，负则补缓冲（经典 getc 展开形态）；
+  ② 快路径读字符用 movzx（零扩展）——返回 0-255 非符号
+     扩展；
+  ③ 慢路径把 0x7D0703 返回值（字符/EOF）放 edi 与快路径
+     汇合——两条路径共用解锁出口；
+  ④ 锁 Enter 用 push esi/call/pop ecx（cdecl 1 参清理）
+     而 Leave 同形——锁调用无栈帧开销；
+  ⑤ 无返回前对 EOF/错误专门处理（0x7D0703 内部管 -1）—
+     _fgetc 上层透明；
+  ⑥ 入口 push esi 后从 [esp+8] 读参（先压栈再取）——MSVC
+     栈偏移惯用。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 流缓冲读
+取按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CB80B = MSVC6 静态 CRT 流缓冲单字符读取核心
+   ——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；FILE 结构（_ptr/_cnt）+ 流锁 + 慢路径
+   补缓冲 = CRT 流 I/O 标准形态（batch 046/961/966 锁族 +
+   batch 062/056 fgetc 族同链）。
+2. 依赖：0x7CB3F9/0x7CB44B/0x7D0703 全部已登记——重写
+   gamemd 时用等价运行时（stdio fgetc 语义）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 流 I/O 设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 49B + 三依赖交叉 + 调用
+点宿主；函数名「_fgetc 核心」由快/慢双路径 + 锁包围 + 紧邻
+6B 转调壳交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 046/961/966：0x7CB3F9/0x7CB44B 流锁 Enter/Leave
+  对称对——本批调用现场交叉（Enter 在 _cnt-- 前、Leave 在
+  返回前——锁包围读写全程）。
+★batch 062/035/056：0x7D0703/0x7D07DF fgetc 链——本批慢
+  路径调用现场交叉（_cnt<0 补缓冲）。
+★batch 1189：0x7DDC78 控制台写出循环——同 CRT 流 I/O 输
+  出侧对称（本批为输入侧 getc）。
+★batch 1187/1191：0x7CBBDB/0x7CBCAF 宽字符格式化——同
+  0x7CBxxx-0x7CBCxx 域邻函数（CRT 流/格式化族全景）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CB80B：MSVC6 CRT _fgetc 核心归档；
+全 49B + 三依赖交叉；不写 C++ 模型不做 golden——CRT 流 I/O
+商业库层；函数名由快/慢双路径 + 锁包围 + 紧邻 6B 转调壳交
+叉标注）。TSV 新增 0x007CB80B 行。
+
+★本批实锤：getc 族核心——流锁包围中 _cnt-- 判快/慢路径
+  （快读 _ptr/movzx 取字符，慢 0x7D0703 补缓冲），三依赖
+  流锁 Enter/Leave + fgetc 底层全已登记；紧邻 0x7CB840
+  为 6B 公开转调壳。
+相邻待续：batch 1193 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7D475A(49B, callers=1)/0x7CA814(49B,
+callers=1)/0x7DAE6E(49B, callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1191 已完（MSVC6 CRT 数值→宽字符串转换包装器
+0x7CBCAF，commit e0dd56f）。
