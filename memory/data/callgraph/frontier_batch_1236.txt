@@ -1,0 +1,215 @@
+frontier batch 1236 —— MSVC6 CRT/runtime 十二连：strtol 转发壳/exp2 内核/FPU 控制字/STL 元素消费/IAT 布尔包装/初始化序列
+========================================================================================================================
+
+候选来源：_rank_crt_frontier.py（602 个 CRT 段函数按 ranking.tsv
+unique_callers 扇入度排，剔除已闭合后取 td 前 12）——0x7DD4F4
+（17B, uc=1, caller=FUN_007bf240, td=108）、0x7CF390/0x7CF3A5/
+0x7CF42E（21/23/13B, td=77 三连）、0x7D5433（23B, caller=
+FUN_007bf240, td=70）、0x7DDCAB/0x7DDCB8/0x7DDCC8（13/16/14B,
+caller 全为 FUN_007dd505, td=70 三连）、0x7DAE25（17B,
+caller=FUN_007d5a68, td=61）、0x7CB8E6（17B, caller=
+FUN_005e2820, td=57）、0x7DC1AA（24B, caller=FUN_007d9f66,
+td=56）、0x7DC6FA（23B, caller=FUN_007dc1c2, td=52）。
+TSV 均无既有行。TARGET = 十二个地址。C++ 模型：无（见「三态
+判定」，商业库纪律归档）。TSV：新增十二行。
+
+一、链语义（disasm 全机器码读完 + 挂靠目标交叉，均
+crt_runtime_verified）
+--------------------------------------------------------------
+★0x7DD4F4（17B，__cdecl 2 参转发壳）：
+007dd4f4  lea eax, [esp + 8]     ; eax = &参2
+007dd4f8  push eax               ; 参2 = &参2
+007dd4f9  push [esp + 8]         ; 参1 = 参1（原样）
+007dd4fd  call 0x7dd505          ; ★转发到 0x7DD505
+007dd502  pop ecx
+007dd503  pop ecx
+007dd504  ret
+★语义：**strtol 族数字解析入口壳（推断——2 参直通
+  0x7DD505 并把参2 传指针）**。挂靠目标 0x7DD505 = CRT
+  数字解析主体（crt_runtime_verified，batch 1083/1084——
+  字符分类跳表 + 十进制累加 lea [eax+eax*4]/lea
+  [ecx+eax*2-0x30]，`0x7DDC12` 跳表 8 分支）。
+
+★0x7CF390（21B，x87 栈 1 参 = 2^x 内核）：
+007cf390  fld st(0)              ; st0 = x, st1 = x
+007cf392  frndint                ; st0 = round(x)
+007cf394  fsubr st(1), st(0)     ; st1 = x - round(x)（小数部分）
+007cf396  fxch st(1)
+007cf398  fchs                   ; st0 = -frac
+007cf39a  f2xm1                  ; st0 = 2^(-frac) - 1
+007cf39c  fld1
+007cf39e  faddp st(1)            ; st0 = 2^(-frac)
+007cf3a0  fscale                 ; st0 = 2^(-frac) * 2^int = 2^x
+007cf3a2  fstp st(1)
+007cf3a4  ret
+★语义：**CRT exp2 内核（2^x）**——f2xm1 只能接受
+  [-1,1] 输入，故先 frndint 分离整数部分、对小数部分
+  做 2^frac-1、+1、再 fscale 乘 2^int 还原。MSVC6 CRT
+  pow/exp2 的标准 x87 序列。
+
+★0x7CF3A5（23B，__cdecl 1 参 = FPU 控制字设置辅助）：
+007cf3a5  mov edx, [esp + 4]     ; 新控制字
+007cf3a9  and edx, 0x300         ; ★只保留舍入控制位 RC(8-9)
+007cf3af  or edx, 0x7f           ; 其余位 = 0x7F（异常掩码全开）
+007cf3b2  mov word ptr [esp + 6], dx
+007cf3b7  fldcw word ptr [esp + 6]
+007cf3bb  ret
+★语义：**`_controlfp(new, MCW_RC)` 内核（只改舍入模式，
+  其余保持 0x7F 默认）**——0x300 = MCW_RC。与 RA2 全局
+  FPCW=0x0E7F（RC_CHOP=0x300 | PC=0xC00 | EM=0x7F）同族
+  的写控制字辅助。
+
+★0x7CF42E（13B，stdcall 1 栈参 = fldcw 快路径）：
+007cf42e  cmp word ptr [esp], 0x27f  ; 若参1 已是默认 0x27F
+007cf434  je 0x7cf439                 ;   → 跳过 fldcw
+007cf436  fldcw word ptr [esp]        ; 否则加载
+007cf439  pop edx                     ; 弹栈参
+007cf43a  ret
+★语义：**CRT fldcw 守卫（控制字==0x27F 免写快路径）**。
+  0x27F = EM 全开 + RC=0（舍入最近）基础控制字；调用方
+  push 控制字后 call（[esp]=参1、[esp+4]=返回地址）。
+
+★0x7D5433（23B，__cdecl 4 参重组转发壳）：
+007d5433  push [esp + 0xc]      ; 参3 → 新参1
+007d5437  push 0x40             ; 常量 0x40 → 新参2
+007d5439  push [esp + 0x10]     ; 原参2 → 新参3
+007d543d  push [esp + 0x10]     ; 原参1 → 新参4
+007d5441  call 0x7d544a         ; ★转发到 0x7D544A
+007d5446  add esp, 0x10
+007d5449  ret
+★语义：**参数重组转发壳（推断——插常量 0x40 作第二参）**。
+  挂靠目标 0x7D544A = CRT 格式化/转换主体（semantics_
+  verified，batch 054/020——标志位 test cl,0x80/0x8000
+  分发）。
+
+★0x7DDCAB（13B，__cdecl 1 参 = 容器元素消费 int 版）：
+007ddcab  mov eax, [esp + 4]    ; 容器对象（首字段=头指针）
+007ddcaf  add dword ptr [eax], 4; 头指针 += 4
+007ddcb2  mov eax, [eax]        ; 新头指针
+007ddcb4  mov eax, [eax - 4]    ; 读 [旧头] = 首元素
+007ddcb7  ret
+★0x7DDCB8（16B，同上 8 字节元素版）：
+007ddcb8  ... add dword ptr [eax], 8
+007ddcc1  mov eax, [ecx - 8]    ; 低 4 字节
+007ddcc4  mov edx, [ecx - 4]    ; 高 4 字节（edx:eax 返回）
+★0x7DDCC8（14B，同上 word 元素版）：
+007ddcc8  ... add dword ptr [eax], 4
+007ddcd1  mov ax, word ptr [eax - 4]  ; 16 位元素
+★语义：**STL 容器头指针推进 + 取旧首元素（int/long long/
+  short 三模板实例）**——`front()` 消费式读取。三函数调用者
+  全为 0x7DD505（strtol 族解析主体，batch 1083/1084）——
+  其内部数字栈的取元素辅助。
+
+★0x7DAE25（17B，__cdecl 3 参常量转发壳）：
+007dae25  push 4                ; 常量 4 → 参3
+007dae27  push 0                ; 常量 0 → 参2
+007dae29  push [esp + 0xc]      ; 原参1 → 参1
+007dae2d  call 0x7dae6e         ; ★转发到 0x7DAE6E
+007dae32  add esp, 0xc
+007dae35  ret
+★语义：**字符分类掩码壳（推断——__isctype(c,0,4)）**。
+  挂靠目标 0x7DAE6E = CRT 字符分类内核（crt_runtime_
+  verified，batch 1036/029——test byte [eax+0xb78961],
+  cl + word [eax*2+0x87c59a] 双表查）。姊妹壳 0x7DAE36
+  = 同构 push 8 版（mask=8）。
+
+★0x7CB8E6（17B，__cdecl 2 参常量转发壳）：
+007cb8e6  push 0x117            ; 常量 0x117 → 参2
+007cb8eb  push [esp + 8]        ; 原参1 → 参1
+007cb8ef  call 0x7d3920         ; ★转发到 0x7D3920
+007cb8f4  pop ecx
+007cb8f5  pop ecx
+007cb8f6  ret
+★语义：**表查询常量壳（推断——查询类型 0x117）**。挂靠
+  目标 0x7D3920 = CRT 表查询主体（semantics_verified，
+  batch 056/044——cmp word [ebp+8],0xffff/0x100 + movzx
+  + mov ecx,[0x87c594] 表索引）。姊妹壳 0x7CB8F7 = 同构
+  push 0x20 版。
+
+★0x7DC1AA（24B，__cdecl 1 参 = IAT 函数指针取反包装）：
+007dc1aa  push esi
+007dc1ab  push 1 / pop esi      ; esi = 1
+007dc1ae  push [esp + 8]        ; 参数 = 原参1
+007dc1b2  call dword ptr [0x7e11b4]  ; ★调用函数指针槽
+007dc1b8  test eax, eax
+007dc1ba  je 0x7dc1be           ; eax==0 → esi 保持 1
+007dc1bc  xor esi, esi          ; eax!=0 → esi = 0
+007dc1be  mov eax, esi / pop esi / ret
+★语义：**调用 [0x7E11B4] 并返回 !result（1=被调返回 0）**。
+  [0x7E11B4] 静态内容 = 0x0040FB40（CRT 内部函数指针槽，
+  非 PE 导入表——已用 IAT 全表扫描排除，导入目录 off=
+  0x40F0E0 size=0x140 无此槽）。函数名「IAT 布尔包装」由
+  call 指针槽 + test/je/xor 取反交叉标注。
+
+★0x7DC6FA（23B，__cdecl 初始化序列）：
+007dc6fa  push 0xa
+007dc6fc  call 0x7d5f31         ; ①表扫描（0x87CBA8 起
+                                ;   stride 8 找匹配 key）
+007dc701  push 0x16
+007dc703  call 0x7d4a10         ; ②switch 分发（dec/dec/je）
+007dc708  pop ecx / pop ecx
+007dc70a  push 3
+007dc70c  call 0x7cbded         ; ③锁辅助（push 0/1 → 0x7CBE1C）
+007dc711  int3 ×15（对齐填充）
+★语义：**CRT 初始化加锁序列（推断——_mtinit/_ioinit 类
+  三连调用）**。三个挂靠目标均已闭合：0x7D5F31（semantics_
+  verified）、0x7D4A10（crt_runtime_verified）、0x7CBDED
+  （crt_runtime_verified，batch 058/1006）。
+
+二、黄金基准
+----------
+无（商业库纪律归档——MSVC6 CRT 标准设施，重写用等价
+运行时代替）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：十二函数均在 0x7C-0x7D = MSVC6 静态 CRT
+   （ra2_code_region_layout_crt_provenance）；exp2 内核 =
+   f2xm1/fscale 标准 x87 序列；控制字辅助 = MCW_RC 0x300
+   掩码（与 RA2 全局 FPCW 同族）；STL 元素消费 = 容器头
+   指针推进模板；其余为转发壳（参数重组/常量插入）。
+2. 依赖：挂靠目标全部已登记（0x7DD505 batch 1083/1084、
+   0x7D544A batch 054/020、0x7DAE6E batch 1036/029、
+   0x7D3920 batch 056/044、0x7D5F31/0x7D4A10/0x7CBDED）——
+   重写 gamemd 时用等价运行时（stdlib pow/strtol/容器）
+   代替，逐字节复刻无意义。
+3. gamemd_replication_discipline：MSVC6 CRT 标准设施，
+   按商业库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified ×12（全机器码读完 + 挂靠目标
+交叉；推断名均标注）。
+
+四、跨批次闭合
+------------
+★batch 1083/1084 / TSV:0x7DD505：CRT 数字解析主体——本批
+  0x7DD4F4（入口转发壳）+ 0x7DDCAB 三连（其内部容器元素
+  消费）的挂靠目标。
+★batch 054/020 / TSV:0x7D544A：CRT 格式化主体——0x7D5433
+  的转发目标。
+★batch 1036/029 / TSV:0x7DAE6E：CRT 字符分类内核——
+  0x7DAE25（mask=4）的转发目标。
+★batch 056/044 / TSV:0x7D3920：CRT 表查询主体——0x7CB8E6
+  （查询类型 0x117）的转发目标。
+★batch 058/1006 / TSV:0x7CBDED + TSV:0x7D5F31 + TSV:
+  0x7D4A10：CRT 初始化加锁三件——0x7DC6FA 的三连调用目标。
+★IAT 全表扫描（_iat_7E11B4.py，导入目录 off=0x40F0E0）：
+  [0x7E11B4] 非导入表槽（静态内容 0x0040FB40 = CRT 内部
+  函数指针）——0x7DC1AA 的间接调用目标按函数指针槽归档。
+
+五、状态
+-------
+crt_runtime_verified ×12（0x7DD4F4「strtol 入口壳」/0x7CF390
+「exp2 内核」/0x7CF3A5「控制字设置」/0x7CF42E「fldcw 守卫」/
+0x7D5433「参数重组壳」/0x7DDCAB 三连「STL 元素消费 int/ll/
+short」/0x7DAE25「字符分类掩码壳」/0x7CB8E6「表查询常量壳」/
+0x7DC1AA「IAT 布尔包装」/0x7DC6FA「初始化加锁序列」——均全
+机器码读完 + 挂靠目标交叉；函数名推断标注）。TSV 新增十二行。
+★本批实锤：①0x7CF390 = f2xm1+fscale 标准 2^x 内核（frndint
+  分离整数）；②0x7CF3A5 = MCW_RC(0x300) 控制字设置（与
+  FPCW 0xE7F 同族）；③0x7DDCAB 三连 = 容器头指针推进消费
+  （int/long long/short 模板）；④[0x7E11B4] 非 PE 导入表槽。
+相邻待续：0x7DAE36/0x7CB8F7（姊妹常量壳，functions.tsv 未
+单列）与 0x0040FB40（[0x7E11B4] 指向的 CRT 内部函数）按池
+序推进。
+依赖模型：无（归档不落 C++）。
+承前：batch 1235 已完（srand 写入端 0x7CB49D + 删除文件转发
+壳 0x7CD455，commit 95ce734）。
