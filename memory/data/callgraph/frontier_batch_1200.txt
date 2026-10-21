@@ -1,0 +1,132 @@
+frontier batch 1200 —— MSVC6 CRT 控制台填充字符重复写出循环 0x7DDC4C（归档，格式化引擎垫宽写出）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DDC4C（44B,
+uc=1, callers=3 探针实测 0x7DDB5F/0x7DDB8B/0x7DDBF2）。
+TSV 无既有行。TARGET = 0x007DDC4C。C++ 模型：无（见
+「三态判定」）。TSV：新增 0x007DDC4C 行。
+
+一、链语义（disasm 全 44B + 依赖交叉 + 同族对照，
+0x7DDC4C-0x7DDC77）
+--------------------------------------------------------------
+签名（推断）：cdecl 3 参（arg1=填充字符、arg2=重复次数、
+arg3=状态/计数指针），返回 void；出错（*arg3==-1）提前
+退出。
+
+主体（0x7DDC4C-0x7DDC77）：
+007ddc4c  push esi/push edi
+007ddc4e  mov edi,dword[esp+0x10]              ; edi = arg2（次数）
+007ddc52  mov eax,edi
+007ddc54  dec edi                              ; edi = 次数-1
+007ddc55  test eax,eax
+007ddc57  jle 0x7ddc75                         ; 次数<=0 → 直接退出
+007ddc59  mov esi,dword[esp+0x14]              ; esi = arg3（状态指针）
+; → 写出循环（0x7DDC5D）：
+007ddc5d  push esi                             ; 状态指针（参2）
+007ddc5e  push dword[esp+0x10]                 ; 填充字符（参1——
+                                              ;   从栈读 arg1）
+007ddc62  call 0x7ddc32                        ; ★★TSV:1890 0x7DDC32
+                                              ;   控制台写出计数薄包装
+                                              ;   （转调 0x7DE17D 核心；
+                                              ;   核心返 -1 → *arg3=-1
+                                              ;   否则 (*arg3)++）
+007ddc67  cmp dword[esi],-1                    ; ★*arg3 == -1（出错）?
+007ddc6a  pop ecx/pop ecx
+007ddc6c  je 0x7ddc75                          ; 出错 → 提前退出
+007ddc6e  mov eax,edi
+007ddc70  dec edi
+007ddc71  test eax,eax
+007ddc73  jg 0x7ddc5d                          ; 剩余>0 → 继续
+007ddc75  pop edi/pop esi/ret
+
+★语义：**MSVC6 CRT 控制台填充字符重复写出循环（推断名
+——格式化引擎垫宽写出）**——cdecl 3 参：
+  ① arg2 指定次数（先判 <=0 退出）；
+  ② 每轮把 arg1（填充字符）经 0x7DDC32 写出一次（计数
+     递增），arg3 为状态/计数指针；
+  ③ 每轮检查 *arg3：==-1（核心出错）→ 提前退出。
+  = 格式化引擎「填充字符重复写出」原语（与 batch 1189
+  0x7DDC78 串段写出**双兄弟**——彼逐字符推进串指针、本
+  批同一字符重复 arg2 次；宿主现场 `push 0x20`（空格）/
+  `push 0x30`（零）垫宽）。
+
+★调用点（探针 E8 实测 3 处，全在 0x7DDB 宿主区）：
+  ① 0x7DDB5F：test bl,0xc 分支后 push 0x20（★空格填充）
+     → lea eax,[ebp-0x14]（状态）/push esi（次数）/call；
+  ② 0x7DDB8B：push 0x30（★零填充）同模式；
+  ③ 0x7DDBF2：同宿主后续（第三次填充）。
+  宿主 = 0x7DDB 区大格式化函数（batch 1189 同宿主——与
+  0x7DDC78 串段写出 3 处共用同一格式化引擎）——宽度/精度
+  垫宽分支（空格与零两种填充字符）。
+
+★E8 被调者：**0x7DDC32（★★TSV:1890 已登记 crt_runtime_
+  verified——26B 控制台写出计数/错误薄包装，转调 0x7DE17D
+  核心，batch 1052 成组登记）**——唯一函数依赖，已登记。
+
+★全局：无（纯栈 + 参数透传）。
+
+★原版怪癖（照抄）：
+  ① 每轮从栈读填充字符（push dword[esp+0x10] 指向 arg1）
+     ——字符经栈参数传递而非寄存器常量；
+  ② 先判次数<=0（test/jle 在重载 esi 之前）——零次填充
+     不触指针；
+  ③ 与 0x7DDC78 双兄弟差异：本批 edi 保存次数、esi 保存
+     状态指针（彼批 esi=串指针、edi=状态指针）——寄存器
+     角色交换；
+  ④ 循环内 push/pop ecx 清 2 参（0x7DDC32 cdecl）——无
+     栈帧开销；
+  ⑤ 出错检测用 *arg3==-1（间接读）而非返回值——同 batch
+     1189 现场交叉；
+  ⑥ edi 递减从 次数-1 起（mov eax,edi/dec edi 双步）——
+     先判再减的 MSVC 模式（同 0x7DDC78）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 控制台输
+出链按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DDC4C = MSVC6 静态 CRT 控制台输出链填充原语
+   ——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；依赖 0x7DDC32（batch 1052 与 0x7DE17D
+   核心成组登记）+ 宿主 0x7DDB 区格式化引擎 = CRT 输出标
+   准形态（batch 1189 双兄弟同链）。
+2. 依赖：0x7DDC32 已登记——重写 gamemd 时用等价运行时
+   （stdio/console API）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 控制台输出设
+   施，重写时用等价运行时代替，逐字节复刻无意义——按商
+   业库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 44B + 依赖交叉 + 调用现
+场 + 同族对照；函数名「填充字符重复写出循环」由单字符重
+复经 0x7DDC32 + 次数计数 + 出错提前退出交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1052：0x7DDC32/0x7DE17D/0x7DE110 控制台链——本批
+  调用现场交叉（每字符一调 + 计数/错误双义 arg3）。
+★batch 1189：0x7DDC78 串段写出循环——**本批双兄弟对照**
+  （同宿主 0x7DDB40、同 0x7DDC32 依赖、同 *arg3==-1 提前
+  退出；差异=串推进 vs 字符重复 + 寄存器角色交换）——格
+  式化引擎写出双原语全景闭合。
+★batch 1044/1045/1051：locale/环境链——0x7B-0x7F 全局
+  区交叉。
+
+五、状态
+-------
+crt_runtime_verified（0x7DDC4C：MSVC6 CRT 控制台填充字符
+重复写出循环归档；全 44B + 依赖交叉；不写 C++ 模型不做
+golden——CRT 控制台输出链商业库层；函数名由单字符重复 +
+次数计数 + 出错提前退出交叉标注）。TSV 新增 0x007DDC4C
+行。
+
+★本批实锤：格式化引擎垫宽原语——arg1 填充字符经 0x7DDC32
+  重复写出 arg2 次、*arg3==-1 提前退出；与 batch 1189
+  0x7DDC78 串段写出同宿主双兄弟（空格 0x20/零 0x30 垫
+  宽现场），唯一依赖 0x7DDC32 已登记。
+相邻待续：batch 1201 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7D2B54 __freebuf(43B, callers=1)/0x7DA9A2
+(43B, callers=2)/0x7CD42B(42B, callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1199 已完（MSVC6 CRT 宽字符受限长度计数器
+0x7CC653，commit a23dc81）。
