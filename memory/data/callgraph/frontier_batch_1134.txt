@@ -1,0 +1,155 @@
+frontier batch 1134 —— MSVC6 CRT asctime 时间格式化器 0x7D57FE（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D57FE（202B,
+uc=1, callers=1 探针实测 0x7CD671 唯一宿主）。TSV 无既有
+行。TARGET = 0x007D57FE。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D57FE 行。
+
+一、链语义（disasm 全 202B + 星期/月表取证 + 双依赖交叉，
+0x7D57FE-0x7D57FD+ 0x7D57FE-0x7D58C7）
+--------------------------------------------------------------
+签名（实测）：cdecl 1 参（param1=const struct tm* @[esp+4]），
+返回静态/TLS 缓冲字符串指针（"Www Mmm dd hh:mm:ss yyyy\n"
+格式）。
+
+★星期/月名表（探针 PE 实锤，3 字节/项）：
+  [0x7F9948] = {Sun,Mon,Tue,Wed,Thu,Fri,Sat}   ★7 项星期表
+  [0x7F995F] = {Jan,Feb,Mar,Apr,May,Jun,Jul,Aug,Sep,Oct,Nov,
+  Dec}                                          ★12 项月表
+
+主体（0x7D57FE-0x7D58C7）：
+007d57fe  push ebx/ebp/esi/edi/call 0x7D140B   ; ★★batch 008 per-thread
+                                              ;   CRT TLS/错误态初始化
+007d5807  mov esi,eax/cmp [esi+0x38],0/jne 0x7D5823 ; ★TLS 缓冲懒分配
+007d580f  push 0x1A/call 0x7C9430              ; ★★malloc(0x1A=26B)
+                                              ;   ——asctime 标准缓冲长
+007d5816  mov [esi+0x38],eax/test eax,eax
+007d581c  mov eax,0xB783DC                     ; ★分配失败 → 静态回退
+007d5823  mov eax,[esi+0x38]                   ; ★缓冲指针
+007d5826  mov esi,[esp+0x14]                   ; ★param1 = struct tm*
+007d582a  mov ebx,eax                          ; ★ebx 保存缓冲基址
+007d582c  mov ecx,[esi+0x18]/lea edi,[ecx+ecx*2] ; ★★[esi+0x18] tm_wday
+                                              ;   ×3（字节/项）
+007d5832  mov ecx,[esi+0x10]/lea ebp,[ecx+ecx*2] ; ★★[esi+0x10] tm_mon
+                                              ;   ×3
+; → 星期/月名写入循环（3 字节，错位 4）：
+007d5838  xor ecx,ecx                          ; ★循环 i=0..2
+007d583a  mov dl,[edi+ecx+0x7F9948]            ; ★★星期表查 3 字节
+007d5841  inc ecx/mov [eax],dl
+007d5844  mov dl,[ecx+ebp+0x7F995F]            ; ★★月表查 3 字节
+007d584b  mov [eax+4],dl/inc eax/cmp ecx,3/jl 0x7D583A
+; → 定界符（0x7D5854）：
+007d5854  mov [eax],0x20/add eax,4/mov [eax],0x20 ; ★空格分隔
+; → 日/时/分/秒（0x7D585D-0x7D588D，逐字段 0x7D58C8）：
+007d585d  push [esi+0xC]                       ; ★[esi+0xC] tm_mday
+007d5862  call 0x7D58C8                        ; ★★数值转串（私有子
+                                              ;   格式化器）
+007d5867  mov [eax],0x20                       ; ★空格
+007d586a  push [esi+8]                         ; ★[esi+8] tm_hour
+007d586f  call 0x7D58C8
+007d5874  mov [eax],0x3A                       ; ★':'
+007d5877  push [esi+4]                         ; ★[esi+4] tm_min
+007d587c  call 0x7D58C8
+007d5881  mov [eax],0x3A                       ; ★':'
+007d5884  push [esi]                           ; ★[esi] tm_sec
+007d5888  call 0x7D58C8
+; → 年（0x7D588F，世纪/十位/个位）：
+007d588f  mov ecx,eax/mov [ecx],0x20           ; ★空格
+007d5895  mov eax,[esi+0x14]/cdq/idiv edi      ; ★★[esi+0x14] tm_year
+                                              ;   /100（idi=0x64）
+007d589b  add eax,0x13                         ; ★世纪 +19（1900 纪元
+                                              ;   换算：tm_year 自 1900
+                                              ;   → 世纪数字）
+007d589f  inc ecx/call 0x7D58C8                ; ★★世纪 2 位
+007d58a6  mov ecx,eax/mov eax,[esi+0x14]/idiv esi
+007d58b0  push edx/call 0x7D58C8               ; ★★年十位+个位
+007d58b7  add esp,0x30/mov [eax],0xA           ; ★'\n' 换行
+007d58ba  and byte[eax+1],0                    ; ★NUL 终止
+007d58c1  mov eax,ebx/pop 族/ret               ; ★返回缓冲基址
+
+★语义：**MSVC6 CRT asctime（推断名——tm 结构格式化为
+"Www Mmm dd hh:mm:ss yyyy\n"）**——cdecl 1 参 const tm*：
+  ① 0x7D140B 取 TLS 基址 → [esi+0x38] 缓冲懒分配（malloc
+     0x1A=26 字节，失败回退静态 0xB783DC）；
+  ② 星期表 [0x7F9948]（tm_wday×3）+ 月表 [0x7F995F]
+     （tm_mon×3）各写 3 字节（错位 4——第 3 字节空格槽）；
+  ③ 0x7D58C8 数值转串逐字段：tm_mday/tm_hour/tm_min/tm_sec
+     （冒号分隔）+ tm_year 世纪（idiv 100 + 19）+ 十位个位；
+  ④ 换行 + NUL 终止，返回缓冲基址。
+  = asctime 标准实现（TLS 缓冲 + 星期/月名表 + 逐字段格式化
+  ）。
+
+★调用点（探针 E8 实测 1 处 0x7CD671）：宿主 0x7CD671 区
+  （CRT 时间格式化调用端——asctime/ctime 分发宿主）。
+
+★E8 被调者：0x7D140B（batch 008 per-thread CRT TLS/错误态
+  初始化——本批 0x7D5802 交叉，18 callers）+ 0x7C9430
+  （batch 063 malloc——TLS 缓冲懒分配）+ 0x7D58C8（私有数
+  值转串子格式化器——6 callers 全在本函数内 0x7D5862/
+  0x7D586F/0x7D587C/0x7D5888/0x7D58A1/0x7D58B2，未登记新候
+  选）。
+
+★原版怪癖（照抄）：
+  ① 星期/月名写入错位 4（[eax] vs [eax+4]）——第 3 字节位
+     置留空格槽，3 字节名 + 1 空格紧凑布局；
+  ② 世纪换算 add eax,0x13（idiv 100 商 +19）——tm_year 自
+     1900 纪元 → "20xx" 世纪数字（如 2021 → 20）；
+  ③ 缓冲懒分配 TLS 槽 [esi+0x38] + 静态回退 0xB783DC（分
+     配失败不报错）——TLS/静态双轨；
+  ④ 数值转串子函数 0x7D58C8 未做对齐/性能优化（每字段单独
+     调用，无批量）——逐字段 idiv/格式化惯用；
+  ⑤ 返回缓冲基址非长度（调用方自取）——无长度返回值；
+  ⑥ 年月日时秒字段顺序 tm_mday→tm_hour→tm_min→tm_sec→
+     year——标准 asctime 布局逐段落位。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 时间格式化按商
+业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D57FE = MSVC6 静态 CRT asctime——0x7C-0x7D =
+   MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）；
+   星期/月名表 + tm 字段布局（wday/mon/mday/hour/min/sec/
+   year 自 1900）+ 0x1A 缓冲长 = asctime 标准实现形态。
+2. 依赖：0x7D140B（TLS 初始化）+ 0x7C9430（malloc）+ 表常
+   量——重写 gamemd 时用等价 std::asctime 运行时代替。
+3. gamemd_replication_discipline：MSVC6 CRT 时间设施，重写
+   时用等价运行时代替，逐字节复刻无意义——按商业库纪律
+   归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 202B + 星期/月表取证 + 双
+依赖交叉；函数名「asctime」由 tm 字段布局/缓冲长/表常量实
+测交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 008：0x7D140B per-thread CRT TLS/错误态初始化——本
+  批 0x7D5802 交叉（18 callers 之一）。
+★batch 063：0x7C9430 malloc——TLS 缓冲懒分配（0x1A=26B）
+  交叉。
+★batch 1112：0x7D52B8 32 位 time_t 分解器——同 CRT 时间域
+  （localtime 分解 → asctime 格式化配对链）。
+★0x7D58C8：私有数值转串子格式化器（6 callers 全在 0x7D57FE
+  内）——后续批次视池内位置核登记。
+
+五、状态
+-------
+crt_runtime_verified（0x7D57FE：MSVC6 CRT asctime 时间格式
+化器归档；全 202B + 星期/月表取证 + 双依赖交叉；不写 C++
+模型不做 golden——CRT 时间设施商业库层；函数名「asctime」
+由 tm 字段布局/缓冲长/表常量实测交叉标注）。TSV 新增
+0x007D57FE 行。
+
+★本批实锤：asctime 标准实现——星期表 [0x7F9948]
+  {Sun..Sat}/月表 [0x7F995F] {Jan..Dec} 3B/项查表 + tm_wday/
+  tm_mon 索引 + 0x7D58C8 逐字段数值格式化 + 0x1A 缓冲懒分配
+  + 世纪 idiv 100+19——与 batch 1112 time_t 分解配对（CRT
+  时间格式化链）。
+相邻待续：batch 1135 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7D29B2(194B)/0x7CDE75(185B, callers=2)/
+  0x7D7E1C(182B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1133 已完（MSVC6 CRT toupper 0x7C9842，commit
+2710ee9）。
