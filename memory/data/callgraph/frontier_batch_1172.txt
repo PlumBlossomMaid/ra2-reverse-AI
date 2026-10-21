@@ -1,0 +1,135 @@
+frontier batch 1172 —— Westwood 表面调色板 LIN 组表项包含查询 0x7C04E0（归档，0x7C 区混入样本 #19）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7C04E0（71B,
+uc=1, callers=1 探针实测 0x7C313A）。TSV 无既有行。
+TARGET = 0x007C04E0。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007C04E0 行。
+
+一、链语义（disasm 全 71B + 字段族跨批交叉 + 调用点宿主，
+0x7C04E0-0x7C0526）
+--------------------------------------------------------------
+签名（推断）：thiscall（ecx=this、edx=查询值），返回
+al：命中 1 / 未命中 0。字段族：this+0x714 = 16 位项数、
+this+0x716 = 标志字节（&3 门控）、this+0x71C = 表指针
+（4B/项，比较项内首 word）。
+
+主体（0x7C04E0-0x7C0526）：
+007c04e0  push esi/push edi
+007c04e2  test edx,edx/jne 0x7c04eb
+007c04e6  pop edi/mov al,1/pop esi/ret          ; ★edx==0 → 返 1（快速
+                                              ;   命中）
+; → 查询路径（0x7C04EB）：
+007c04eb  xor eax,eax
+007c04ed  mov ax,word[ecx+0x714]                ; ★★16 位项数（0x714）
+007c04f4  test eax,eax/jle 0x7c0522            ; 项数<=0 → 返 0
+007c04f8  push ebx/mov bl,byte[ecx+0x716]       ; ★★标志字节（0x716）
+007c04ff  test bl,3/pop ebx/je 0x7c0522         ; ★★标志&3==0 → 返 0
+007c0505  mov esi,dword[ecx+0x71c]              ; ★★表指针（0x71C）
+007c050b  xor ecx,ecx
+007c050d  test eax,eax/jle 0x7c0522
+; → 逐项比较循环（0x7C0511，4B/项）：
+007c0511  xor edi,edi/mov di,word[esi]          ; ★本次项首 word
+007c0513  cmp edx,edi/je 0x7c04e6              ; ★★edx == 项首 word →
+                                              ;   命中（返 1）
+007c0518  inc ecx/add esi,4                     ; ★★步进 4 字节/项
+007c051b  cmp ecx,eax/jl 0x7c0511              ; 循环
+007c0522  pop edi/xor al,al/pop esi/ret         ; ★未命中 → 返 0
+
+★语义：**Westwood 表面调色板 LIN 组表项包含查询（推断名
+——batch 1147/1152 同模板第三组）**——thiscall：
+  ① edx==0 快速返 1（空键视为命中）；
+  ② [ecx+0x714] 16 位项数 <=0 → 返 0；
+  ③ [ecx+0x716] 标志 &3 ==0 → 返 0（未启用门控）；
+  ④ 表 [ecx+0x71C] 逐项 4B 步进比较项内首 word == edx
+     → 命中返 1；遍历完返 0。
+  = LINH/LIND 组装载出的 4B/项 word 表的包含性查询（与
+  batch 1147 PIN 组区间查找 0x7C06B0、batch 1152 CIN 组
+  0x7C19F0 同族，本批为 LIN 组变体）。
+
+★调用点（探针 E8 实测 1 处 0x7C313A）：宿主 0x7C31xx 区
+  （0x7C313A 起调用——batch 1096 调色板块装载器 PINH/PIND/
+  LINH/LIND 域（0x7C1BE0）后邻同簇，表装载与消费同域）。
+
+★E8 被调者：**零子调用**（全 71B 纯表扫描 + 标志门控）。
+
+★字段族跨批交叉（★★本批最强证据）：this+0x714（16 位
+  项数）+ this+0x71C（表指针）与 **batch 1150 文档提及的
+  LINH/LIND 组字段 this+0x714/+0x71C 完全重合**——batch
+  1147 消费 PIN 组（this+0x758/0x760）、batch 1152 消费
+  CIN 组（this+0x74C/0x754）——本批是 LIN 组消费侧，三组
+  装载器字段族全景消费侧闭环（PIN/CIN/LIN）。
+
+★原版怪癖（照抄）：
+  ① edx==0 快速返 1（test edx,edx/jne 前置）——空键命中
+     语义特殊（不查表）；
+  ② 标志位 [ecx+0x716] &3 门控（test bl,3）——启用标志
+     低 2 位任意一位置位才查（与 batch 1147/1152 的型检
+     不同——本批是线性的包含查询非区间）；
+  ③ 表项 4B 步进（add esi,4）比较项首 word（mov
+     di,word[esi]）——4B/项布局且只比首字；
+  ④ 项数 mov ax,word[ecx+0x714]（16 位零扩展）——项数截
+     断 65535 上限；
+  ⑤ 命中跳 0x7C04E6（pop edi/mov al,1）——pop 与跳转交
+     织（al 置位前回弹 edi）；
+  ⑥ 循环 tri-count（ecx 计数 vs eax 项数）+ esi 4B 步进
+     双游标——项数重读 [ecx+0x714] 一次后局部使用。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：Westwood 自有代码混
+入 0x7C 区样本，宿主域在表面调色板对象方法族，非 CRT 复刻
+目标）。
+
+三、三态判定（为何 semantics_verified 而非 crt_runtime_verified）
+----------------------------------------------------------------
+1. 归属：0x7C04E0 = **Westwood 自有代码混入 0x7C 区样本
+   （混入样本链 #19）**，非 MSVC6 静态 CRT——证据：
+   a) thiscall（ecx=this）+ edx 隐式查询值 + 无栈参 ret
+     = Westwood 对象方法调用约定，MSVC6 CRT 无此形态；
+   b) 字段族 this+0x714/0x716/0x71C 与 batch 1150 文档
+     LINH/LIND 组字段完全重合（batch 1147 PIN/1152 CIN
+     同族第三件）；
+   c) 调用点 0x7C313A 在 0x7C31xx 区（batch 1096 调色板
+     块装载器同簇后邻）；
+   d) 零子调用、零 CRT 分类表/锁/locale 形态。
+2. 方法论文档依据：batch 1116 修正后 0x7E1xxx 槽静态值不
+   作语义证据；本批判定不依赖槽表，靠反汇编主体 + 字段族
+   跨批重合 + 宿主簇归属三重实锤。
+3. gamemd_replication_discipline：Westwood 自有代码混入
+   CRT 区——重写时按宿主域语义（调色板表包含查询）复刻；
+   0x7C 区整体按 CRT 层归档，本函数属混入样本需标注归属。
+→ 状态：semantics_verified（全 71B + 字段族跨批交叉 + 调用
+点宿主；函数名「表面调色板 LIN 组表项包含查询」由 4B/项
+扫描 + 标志门控 + LINH/LIND 字段重合交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1147：0x7C06B0 PIN 组区间查找——本批 LIN 组包含
+  查询同族（ret 8 区间查找 vs ret 包含布尔），字段族
+  0x758/0x760 vs 0x714/0x71C。
+★batch 1152：0x7C19F0 CIN 组区间查找——三组消费侧第二
+  件（CIN→LIN），同 4B/6B/2B 步进变体家族。
+★batch 1150：LINH/LIND 组字段 this+0x714/+0x71C 文档提
+  及——本批为该字段族消费侧兑现（三组装载器字段族全景
+  消费侧闭环：PIN/CIN/LIN）。
+★batch 1096：0x7C1BE0 调色板块装载器——本批调用点
+  0x7C31xx 同簇（0x7C1BE0 PINH/PIND 域后邻）。
+
+五、状态
+-------
+semantics_verified（0x7C04E0：Westwood 表面调色板 LIN 组表
+项包含查询归档；全 71B + 字段族跨批交叉；不写 C++ 模型不
+做 golden——0x7C 区混入样本 #19，宿主域为表面调色板对象
+方法族；函数名由 4B/项扫描 + 标志门控 + LINH/LIND 字段重
+合交叉标注）。TSV 新增 0x007C04E0 行。
+
+★本批实锤：batch 1147/1152 同族第三件——LIN 组包含查询
+  （this+0x714/+0x71C 字段族），3 组装载器消费侧闭环；
+  edx==0 快命 + 标志&3 门控 + 4B/项扫描，零子调用。
+相邻待续：batch 1173 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7D53C2(70B，batch 1150 新候选)/0x7D107D
+(69B，batch 1151 新候选)/0x7D3FDB(68B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1171 已完（MSVC6 CRT 十进制 itoa 内联实现
+0x7CCFB3，commit dbb9c59）。
