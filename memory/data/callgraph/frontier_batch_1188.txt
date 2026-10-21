@@ -1,0 +1,135 @@
+frontier batch 1188 —— MSVC6 CRT _control87 核心 0x7CBF14（归档，控制字读写+位合并壳）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CBF14（53B,
+uc=1, callers=1 探针实测 0x7CBF57）。TSV 无既有行。
+TARGET = 0x007CBF14。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CBF14 行。
+
+一、链语义（disasm 全 53B + 两依赖交叉 + 调用者宿主 +
+batch 1011 黄金交叉，0x7CBF14-0x7CBF48）
+--------------------------------------------------------------
+签名（确认）：cdecl 2 参（[ebp+8]=newcw 新控制字、
+[ebp+0xC]=mask 掩码），返回合并后掩码 esi。
+
+主体（0x7CBF14-0x7CBF48）：
+007cbf14  push ebp/mov ebp,esp
+007cbf17  push ecx                            ; ★sub esp,4 用 push ecx
+                                              ;   替代（省 1 字节）
+007cbf18  push esi
+007cbf19  wait
+007cbf1a  fnstcw word[ebp-4]                  ; ★★读当前 FPU 控制字
+007cbf1d  push dword[ebp-4]
+007cbf20  call 0x7cbf8a                       ; ★★TSV:1990 batch 1146
+                                              ;   控制字→掩码映射器
+007cbf25  mov esi,eax                         ; esi = 当前掩码
+007cbf27  mov eax,dword[ebp+0xc]             ; 参2 = mask
+007cbf2a  not eax
+007cbf2c  and esi,eax                         ; esi &= ~mask
+007cbf2e  mov eax,dword[ebp+8]               ; 参1 = newcw
+007cbf31  and eax,dword[ebp+0xc]             ; eax = newcw & mask
+007cbf34  or esi,eax                          ; ★★(cur&~mask)|(newcw&mask)
+007cbf36  push esi
+007cbf37  call 0x7cc01c                       ; ★★TSV:1993 batch 1149
+                                              ;   掩码→控制字反转器
+007cbf3c  pop ecx
+007cbf3d  mov dword[ebp+0xc],eax             ; ★新控制字暂存
+007cbf40  pop ecx
+007cbf41  fldcw word[ebp+0xc]                ; ★★写回 FPU 控制字
+007cbf44  mov eax,esi                         ; ★返回合并后掩码
+007cbf46  pop esi/leave/ret
+
+★语义：**标准 `_control87(newcw, mask)` 核心（MSVC6 CRT）**
+——cdecl 2 参：
+  ① fnstcw 读当前 x87 控制字 → 0x7CBF8A 映射成 _controlfp
+     掩码（esi = 当前掩码）；
+  ② 经典位合并 `(cur & ~mask) | (newcw & mask)`（not/
+     and/or 三段指令）；
+  ③ 0x7CC01C 把合并后掩码反转为 x87 控制字 → fldcw 写回
+     FPU；
+  ④ 返回合并后掩码 esi（非控制字 eax）。
+
+★调用点（探针 E8 实测 1 处 0x7CBF57）：宿主 0x7CBF49
+  （★★batch 1011 已登记 _control87 掩码变体包装——22B，
+  把参2 mask 的 bit19(0x80000) 清零后调本核心）。黄金交
+  叉（batch 1011 + QWEN.md 实锤）：WinMain 0x6BBFB7
+  `push 0x300/push 0x300/call 0x7CBF49` = _control87(
+  _RC_CHOP,_MCW_RC) → **全局舍入模式向零截断**——RMG 复
+  刻 FPU 环境设置链（FpuChopScope 依据），本批补核心本体
+  登记（彼批已登记 0x7CBF49 壳）。
+
+★E8 被调者（2 个，全已登记）：
+  ① 0x7CBF8A（★★TSV:1990 batch 1146 FPU 控制字掩码映
+     射器——146B 控制字→掩码，bl 位 0/2/3/4/5→_MCW_EM
+     族、0xC00→_MCW_PC、0x300→_MCW_RC、bit12→_MCW_IC）；
+  ② 0x7CC01C（★★TSV:1993 batch 1149 _controlfp 掩码反
+     转器——137B 掩码→控制字，batch 1146 逆映射对偶件）。
+  全部已登记，无未登记依赖。
+
+★全局：无（纯栈 + FPU 硬件指令）。
+
+★原版怪癖（照抄）：
+  ① `push ecx` 替代 `sub esp,4`（省 1 字节）——MSVC6 惯
+     用栈帧微优化；
+  ② wait + fnstcw 成对（wait 保证 FPU 空闲后读状态）；
+  ③ fnstcw/fldcw 成对（读/写控制字）——中间夹 0x7CBF8A/
+     0x7CC01C 两个包装把原始 x87 控制字与 _controlfp 掩码
+     互转，本壳在两者之间做位合并；
+  ④ 位合并 not/and/or 三段指令（无 bts/btr 单条）；
+  ⑤ 返回 esi（合并后掩码）而非 eax（0x7CC01C 反转出的控
+     制字被 mov [ebp+0xc] 暂存仅供 fldcw 用）——返回值与
+     写回值分离；
+  ⑥ 0x7CC01C 返回后 pop ecx ×2（cdecl 清 1 参 + 栈帧恢
+     复合一）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 浮点库按
+商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CBF14 = MSVC6 静态 CRT _control87 核心——0x7C-
+   0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）；fnstcw/fldcw + 掩码互转 + 位合并 = CRT 浮
+   点库控制字标准形态（batch 1146/1149 同簇）。
+2. 依赖：0x7CBF8A + 0x7CC01C 全部已登记——重写 gamemd 时
+   用等价 _control87 语义（标准 C 库）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 浮点库控制字
+   设施，重写时用等价运行时代替，逐字节复刻无意义——按
+   商业库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 53B + 两依赖交叉 + 调用
+者宿主 + 黄金交叉；函数名「_control87 核心」由 fnstcw 读
++ 位合并 + fldcw 写 + batch 1011 壳交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1011：0x7CBF49 _control87 掩码变体包装（TSV 已登
+  记）——本批为其体内核心补登记（彼批「0x7CBF14 = _control87
+  核心 53B 全读——未登记」之缺口现补），WinMain 0x6BBFB7
+  黄金交叉（_RC_CHOP 向零截断）沿用。
+★batch 1146：0x7CBF8A 控制字→掩码映射器——本批调用现场
+  交叉（fnstcw 后 1 参调用）。
+★batch 1149：0x7CC01C 掩码→控制字反转器——本批调用现场
+  交叉（位合并后 1 参调用 + 返回值 fldcw 写回）。
+★batch 192：0x7DBC77 _controlfp——同一浮点库掩码族全景。
+
+五、状态
+-------
+crt_runtime_verified（0x7CBF14：MSVC6 CRT _control87 核心
+归档；全 53B + 两依赖交叉；不写 C++ 模型不做 golden——CRT
+浮点库商业库层；函数名由 fnstcw 读 + 位合并 + fldcw 写 +
+batch 1011 壳交叉标注）。TSV 新增 0x007CBF14 行。
+
+★本批实锤：_control87 核心——fnstcw 读当前控制字 → 0x7CBF8A
+  转掩码 → (cur&~mask)|(newcw&mask) 位合并 → 0x7CC01C 反
+  转 → fldcw 写回，返回合并掩码，唯一调用者 0x7CBF57 在
+  batch 1011 已登记壳内（WinMain 黄金交叉沿用），两依赖全
+  已登记。
+相邻待续：batch 1189 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7DDC78(51B, callers=3)/0x7D3679(51B,
+callers=2)/0x7CBCAF(50B, callers=4——FILE 输出刷盘族，调
+0x7D468C + IAT [0x7E11C4])）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1187 已完（MSVC6 CRT 宽字符格式化字符串包装
+器 0x7CBBDB，commit 3422842）。
