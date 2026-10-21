@@ -1,0 +1,128 @@
+frontier batch 1156 —— MSVC6 CRT C++ EH 局部展开器 0x7CC11E（归档，__local_unwind2 族）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CC11E（104B,
+uc=1, callers=3 探针实测 0x7CC23B/0x7CC27B/0x7CC2A0，均在
+0x7CC2xx 家族宿主）。TSV 无既有行。TARGET = 0x007CC11E。
+C++ 模型：无（见「三态判定」）。TSV：新增 0x007CC11E 行。
+
+一、链语义（disasm 全 104B + 依赖定性 + 家族宿主反汇编，
+0x7CC11E-0x7CC185）
+--------------------------------------------------------------
+签名（推断）：内部约定（__local_unwind2 族）——[esp+0x10]=
+展开上下文指针（eax 重读）、[esp+0x24]=目标索引（收敛
+点）、返回 void。
+
+SEH 帧安装（0x7CC11E-0x7CC13A）：
+007cc11e  push ebx/esi/edi
+007cc121  mov eax,[esp+0x10]                  ; 展开上下文
+007cc125  push eax/push -2/push 0x7cc0fc      ; ★★SEH handler 0x7CC0FC
+                                          ;   （abs 引用 2 处：
+                                          ;   0x7CC129 本函数 +
+                                          ;   0x7CC192 邻函数共用）
+007cc12d  push fs:[0]/mov fs:[0],esp          ; ★★标准 MSVC6 C++ EH 帧
+
+展开循环（0x7CC13B-0x7CC176）：
+007cc13b  mov eax,[esp+0x20]                  ; 重读展开上下文
+007cc13f  mov ebx,[eax+8]                     ; ★★展开表指针（上下文+8）
+007cc142  mov esi,[eax+0xc]                   ; ★★当前索引（上下文+0xC）
+007cc145  cmp esi,-1/je 0x7cc178              ; ★完成（-1）→ 收尾
+007cc14a  cmp esi,[esp+0x24]/je 0x7cc178      ; ★★索引 == 目标 → 收敛
+007cc150  lea esi,[esi+esi*2]                 ; ★索引 ×3（12B/项）
+007cc153  mov ecx,[ebx+esi*4]                 ; 表项[0]：异常对象指针
+007cc156  mov [esp+8],ecx
+007cc15a  mov [eax+0xc],ecx                   ; ★更新上下文索引（前移）
+007cc15d  cmp [ebx+esi*4+4],0/jne 0x7cc176    ; 表项[1]：处理标志
+007cc164  push 0x101                          ; ★★状态标记 0x101
+007cc169  mov eax,[ebx+esi*4+8]               ; 表项[2]：析构/候选指针
+007cc16d  call 0x7cc1b2                       ; ★★展开状态记录器（未登
+                                          ;   记新候选——[0x87C1D0]
+                                          ;   写 +4=eax/+8=ecx/+0xC=
+                                          ;   ebp 三字段 ret 4）
+007cc172  call [ebx+esi*4+8]                  ; ★★间接调用析构/候选
+007cc176  jmp 0x7cc13b                        ; 循环
+; → 收尾（0x7CC178）：
+007cc178  pop fs:[0]/add esp,0xc/pop edi/esi/ebx/ret
+
+★语义：**MSVC6 CRT C++ EH 局部展开器（推断名——__local_
+unwind2 族）**：
+  ① 标准 SEH 帧安装（handler 0x7CC0FC）；
+  ② 展开表（上下文+8，12B/项：{对象指针, 处理标志, 析构
+     候选指针}）逐项前移（上下文+0xC 更新）；
+  ③ 收敛条件：索引 == -1（完成）或 == 目标（[esp+0x24]）；
+  ④ 处理标志 == 0 时 push 0x101 状态标记 + 状态记录器
+     （0x7CC1B2 写 [0x87C1D0]）+ 间接调用析构/候选。
+  = MSVC6 C++ EH 局部变量析构展开（__local_unwind2 模板）
+  标准形态，同 0x7CC2xx 家族宿主共享展开辅助。
+
+★调用点（探针 E8 实测 3 处）：0x7CC23B/0x7CC27B/0x7CC2A0
+  ——家族宿主（0x7CC207 起展开循环：lea [esi+esi*2] → mov
+  eax,[edi+ecx*4+8] → call 0x7CC1B2 → call [edi+ecx*4+8]，
+  与本函数共用 0x7CC1B2 状态记录器）——同族展开链多入口。
+
+★E8 被调者：0x7CC1B2（★未登记新候选——展开状态记录器：
+  `mov ebx,0x87c1d0/mov [ebx+8],ecx/mov [ebx+4],eax/mov
+  [ebx+0xc],ebp/ret 4`，E8 callers=2：0x7CC16D 本函数 +
+  0x7CC24C 家族宿主）——**唯一依赖，未登记**。
+
+★原版怪癖（照抄）：
+  ① 展开表 12B/项（对象指针/处理标志/候选指针）索引 ×3
+     缩放（lea [esi+esi*2] 后 ×4 = ×12B）；
+  ② 上下文索引先存 [esp+8] 再写回 [eax+0xc]（前移与暂存
+     双写）；
+  ③ 处理标志（表项[1]）== 0 才走状态标记+析构路径，非 0
+     直接循环（跳过析构）——标志语义照抄；
+  ④ push 0x101 硬编码状态标记（MSVC6 EH 展开状态常量）；
+  ⑤ SEH handler 0x7CC0FC 与邻函数 0x7CC192 引用点共用
+     （同一帧处理器，家族共享）；
+  ⑥ 收敛双条件（-1 完成 / == 目标索引）独立分支——两收
+     尾路径等价（pop fs:[0]）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT C++ EH
+运行时按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CC11E = MSVC6 静态 CRT C++ EH 局部展开器——0x7C-0x7D
+   = MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）；
+   SEH 帧 + 展开表 12B/项 + 状态标记 0x101 + 收敛索引 =
+   MSVC6 __local_unwind2 标准形态（batch 111/1002 异常帧安
+   装同域）。
+2. 依赖：0x7CC1B2 未登记（展开状态记录器，新候选）——重
+   写 gamemd 时用等价 C++ 异常语义（标准 RAII 析构）代替。
+3. gamemd_replication_discipline：MSVC6 CRT C++ 运行时（EH
+   支持代码），重写时用等价运行时（标准 C++ 异常）代替，
+   逐字节复刻无意义——按商业库纪律归档，不写 C++ 模型不
+   做 golden。
+→ 状态：crt_runtime_verified（全 104B + 依赖定性 + 家族宿主
+核实；函数名「C++ EH 局部展开器」由展开表 12B/项 + 状态标
+记 0x101 + 收敛索引交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 111/1002：CRT 异常帧安装/过滤器（0x7CAAE4 等）——
+  本批 SEH 帧 + 展开循环同 C++ EH 运行时域交叉。
+★batch 1144：0x7CAA05 RTTI 类型查询辅助——同 C++ EH/RTTI
+  运行时全景（SEH 帧 + scope 表 + 展开链）。
+★新候选：0x7CC1B2（展开状态记录器 [0x87C1D0] 三字段）——
+  尾部登记待后续批次处理。
+
+五、状态
+-------
+crt_runtime_verified（0x7CC11E：MSVC6 CRT C++ EH 局部展开器
+归档；全 104B + 依赖定性；不写 C++ 模型不做 golden——CRT
+C++ 运行时商业库层；函数名由展开表 12B/项 + 状态标记
+0x101 + 收敛索引交叉标注）。TSV 新增 0x007CC11E 行。
+
+★本批实锤：__local_unwind2 族——SEH 帧 + 展开表（上下文
+  +8）12B/项逐项前移 + 0x101 状态标记 + 0x7CC1B2 状态记录
+  器（[0x87C1D0]）+ 间接析构；3 调用点全在家族宿主
+  0x7CC2xx。
+相邻待续：batch 1157 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CF64C(101B)/0x7E0170(98B, callers=3)/
+0x7CEC26(97B)）；本批新候选 0x7CC1B2 入待检池。
+依赖模型：无（归档不落 C++）。
+承前：batch 1155 已完（MSVC6 CRT 0 终止字符串指针数组深拷
+贝器 0x7DABAC，commit 18b5cef）。
