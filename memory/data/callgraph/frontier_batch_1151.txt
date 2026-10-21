@@ -1,0 +1,155 @@
+frontier batch 1151 —— MSVC6 CRT 函数指针表插入器 0x7C970C（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7C970C（126B,
+uc=1, callers=1 探针实测 0x7C978E）。TSV 无既有行。
+TARGET = 0x007C970C。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007C970C 行。
+
+一、链语义（disasm 全 126B + 四依赖交叉 + 0x7D107D 定性，
+0x7C970C-0x7C9789）
+--------------------------------------------------------------
+签名（推断）：cdecl 1 参（[esp+8]=待入表元素指针，4 字节），
+返回入表元素 / 失败（0）。操作 CRT 全局双指针
+[0xB78BC0]（表起点）/ [0xB78BBC]（表终点=写入游标）。
+
+主体（0x7C970C-0x7C9789）：
+007c970c  push esi
+007c970d  call 0x7cbec1                      ; ★★batch 1040 流锁 Enter
+                                              ;   （0x0D=13——atexit/初
+                                              ;   始化链锁族）
+007c9712  push [0xb78bc0]/call 0x7d107d      ; ★锁 9 堆块大小查询（未
+                                              ;   登记新候选——0x7CF7BD
+                                              ;   batch 021 已登记内核：
+                                              ;   push 9→Enter→0x7CF7BD
+                                              ;   →mov esi,[esi-4] 读块
+                                              ;   头/sub esi,9→Leave→
+                                              ;   返用户可用大小）
+007c971d  mov edx,[0xb78bc0]/pop ecx
+007c9724  mov ecx,[0xb78bbc]/mov esi,ecx/sub esi,edx
+007c972e  add esi,4                          ; ★已用空间+4（预留）
+007c9731  cmp eax,esi/jae 0x7c9772           ; 块大小 >= 已用+4 →
+                                              ;   直接追加（够用）
+; → 扩容路径（0x7C9735）：
+007c9735  push edx/call 0x7d107d             ; ★再查当前块大小
+007c973a  add eax,0x10                       ; 新大小 = 块大小+0x10
+007c973d  push eax/push [0xb78bc0]
+007c9745  call 0x7d0f45                      ; ★★batch 056 realloc 入
+                                              ;   口（扩容）
+007c974a  add esp,0xc/test eax,eax/jne 0x7c9755
+007c9751  xor esi,esi/jmp 0x7c9781           ; 失败 → 返回 0
+; → 扩容成功（0x7C9755）：
+007c9755  mov ecx,[0xb78bbc]/sub ecx,[0xb78bc0]
+007c975f  mov [0xb78bc0],eax                 ; ★更新表起点
+007c9764  sar ecx,2                          ; 元素数（4 字节/项）
+007c9767  lea ecx,[eax+ecx*4]
+007c976a  mov [0xb78bbc],ecx                 ; ★更新表终点
+; → 追加（0x7C9772，够用/扩容后共用）：
+007c9772  mov eax,[esp+8]/mov [ecx],eax      ; ★写尾元素
+007c9775  add [0xb78bbc],4                   ; 终点 += 4
+007c9779  mov esi,eax                        ; 返回入表元素
+007c9781  call 0x7cbeca                      ; ★★batch 1040 流锁 Leave
+007c9786  mov eax,esi/pop esi/ret
+
+★语义：**MSVC6 CRT 函数指针表插入器（推断名）**——cdecl 1
+参：
+  ① 流锁 0x0D 临界区内追加元素到 CRT 全局指针表（[0xB78BC0]
+     起点 / [0xB78BBC] 终点）；
+  ② 空间不足 → 查块大小（0x7D107D 锁 9 内核 0x7CF7BD）+
+     realloc 扩容（0x7D0F45 batch 056，新大小=块大小+0x10）
+     → 更新双指针（sar 元素计数）；
+  ③ 追加元素、终点 += 4、返回元素指针；失败返 0。
+  = atexit/初始化链的函数指针表（atexit 注册内部批量入表），
+  [0xB78BC0] 表与 batch 058/1002 atexit 注册本体 0x7CBE1C
+  同锁族（0x0D）同一表。
+
+★调用点（探针 E8 实测 1 处 0x7C978E）：宿主 0x7C978E 起
+  短函数（cdecl：call 0x7C970C → neg/sbb/neg/dec 布尔化——
+  返回 eax!=0 ? 0 : -1 语义）；0x7C979C 起为配套初始分配
+  器（push 0x80=128B; call 0x7C9430 malloc; mov [0xB78BC0],
+  eax——表初值 128B=32 指针）。
+
+★E8 被调者：0x7CBEC1（★★batch 1040 流锁 0x0D Enter）+ 
+  0x7CBECA（★★batch 1040 流锁 0x0D Leave）+ 0x7D0F45
+  （★★batch 056 realloc 入口）+ 0x7D107D（★锁 9 堆块大小
+  查询——**未登记新候选**，内核 0x7CF7BD batch 021 已登记
+  semantics_verified_partial + REIMPL partial）——**三依赖已
+  登记，一新候选**。
+
+★0x7D107D 定性（disasm 实测）：锁 9 Enter（0x7CD9F5）→
+  push 参数 → call 0x7CF7BD（batch 021 堆段包含扫描内核，
+  eax 非 0 → 块有效）→ mov esi,[esi-4]（读块头大小字段）
+  /sub esi,9（减块头 9B）→ 锁 9 Leave → 返用户可用大小
+  （eax=0 则块无效返 0）——CRT 堆块用户大小查询（_msize
+  族，锁 9 堆锁）。
+
+★原版怪癖（照抄）：
+  ① 锁 0x0D（流锁/初始化链族）与 0x7D107D 锁 9（堆锁）**
+     双重嵌套**——表追加持 0x0D 锁内再查堆块持 9 锁（锁
+     序固定，无死锁）；
+  ② 空间判定 `cmp eax,esi/jae`：eax=块总可用 vs
+     esi=已用+4——预留 4B（要追加的元素）在比较前已加；
+  ③ 扩容量 = 块大小+0x10（16B 增量）——非倍增非精确
+     （realloc 语义：只保证新大小 >= 请求）；
+  ④ 扩容后 `sar ecx,2` 元素计数（有符号算术右移——旧表
+     大小/4）重建终点（新起点+旧元素数×4）；
+  ⑤ 追加用 `mov [ecx],eax`（ecx=扩容后的终点）——扩容
+     成功路径与够用路径共用追加段；
+  ⑥ 返回入表元素（非索引非计数）——调用者用 neg/sbb/
+     neg/dec 布尔化为 0/-1。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 初始化链
+设施按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7C970C = MSVC6 静态 CRT 初始化链函数指针表插
+   入器——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_
+   layout_crt_provenance）；流锁 0x0D + [0xB78BC0]/[0xB78BBC]
+   双指针表 + realloc 扩容 = VC6 CRT atexit/初始化链内部
+   形态；配套 0x7C979C（128B 初始分配）同域。
+2. 依赖：3 个已登记函数（0x7CBEC1/0x7CBECA batch 1040 锁
+   对、0x7D0F45 batch 056 realloc）+ 1 个未登记新候选
+   （0x7D107D 堆块大小查询，内核 batch 021 已登记）——重
+   写 gamemd 时用等价运行时（std::vector<std::function>/
+   标准 atexit）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 初始化设施，重
+   写时用等价运行时代替，逐字节复刻无意义——按商业库纪律
+   归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 126B + 四依赖交叉 + 0x7D107D
+定性；函数名由双指针表 + 0x0D 锁 + realloc 扩容交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1040：0x7CBEC1/0x7CBECA 流锁 0x0D 薄包装对——本批
+  Enter/Leave 调用现场（0x7C970D/0x7C9781）交叉，锁族同
+  batch 058 atexit 域。
+★batch 056/020：0x7D0F45 realloc 入口 / 0x7C9430 malloc—
+  —本批扩容调用现场 + 配套 0x7C979C 初始分配（0x7C9430）
+  交叉。
+★batch 021：0x7CF7BD 堆段包含扫描内核——0x7D107D（未登记
+  新候选）的锁 9 内核已登记，本批顺带定性外围包装。
+★batch 058/1002：0x7CBE1C atexit 注册本体——本批 [0xB78BC0]
+  表与彼 0x0D 锁同族同域（atexit 注册链全景）。
+★新候选：0x7D107D（堆块大小查询）——尾部登记待后续批次
+  处理。
+
+五、状态
+-------
+crt_runtime_verified（0x7C970C：MSVC6 CRT 函数指针表插入器
+归档；全 126B + 四依赖交叉 + 0x7D107D 定性；不写 C++ 模型
+不做 golden——CRT 初始化链商业库层；函数名由双指针表 +
+0x0D 锁 + realloc 扩容交叉标注）。TSV 新增 0x007C970C 行。
+
+★本批实锤：atexit/初始化链函数指针表插入——流锁 0x0D 内
+  [0xB78BC0]/[0xB78BBC] 双指针表追加 + realloc 扩容（新=
+  块+0x10）+ sar 重建终点；0x7D107D 锁 9 堆块大小查询顺
+  带定性完链（内核 batch 021 已登记）。
+相邻待续：batch 1152 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7C19F0(125B, callers=2)/0x7DE226(124B)/
+0x7D484E(123B)）；本批新候选 0x7D107D 入待检池。
+依赖模型：无（归档不落 C++）。
+承前：batch 1150 已完（MSVC6 CRT _tmpnam 主实现 0x7CD460，
+commit 9106f48）。
