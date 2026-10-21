@@ -1,0 +1,170 @@
+frontier batch 1114 —— Westwood 地形高度邻域平滑器 0x7C6620（归档，0x7C 区混入样本 #10）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7C6620（266B,
+uc=1, callers=1 探针实测唯一调用点 = 自身递归 0x7C66EE）。
+TSV 无既有行。TARGET = 0x007C6620。C++ 模型：无（见「三
+态判定」）。TSV：新增 0x007C6620 行。
+
+⚠️ 归属：延续 batch 1086-1111 修正链——0x7C 区混入
+Westwood 自有代码，本样本 #10（地形高度邻域平滑器）。
+
+一、链语义（disasm 全 266B + 全局引用分布取证，0x7C6620-0x7C6729）
+--------------------------------------------------------------
+签名（推断）：cdecl 4 参（param1=x 格列 @[ebp+8]、param2=y
+格行 @[ebp+0xC]、param3=平滑方向模式 @[ebp+0x10]、param4=
+检查标志 @[ebp+0x14]），返回 1=成功 / 0=邻域差异不可调和。
+
+★全局（探针 PE + 引用分布实锤）：
+  [0xB0B6EC] = 高度数组基址（PE 静态 0——运行时初始化）；
+              abs 引用 32 处，30 处集中在 0x6B2xxx-0x6B4xxx
+              Westwood 主代码区宿主
+  [0x8759A4] = 行步长（PE 静态 0——运行时初始化）；abs 引
+              用 18 处，16 处在 0x6B2xxx-0x6B4xxx
+  每项 8 字节：+0 高度值 dword / +4 标志 dword
+  0xC = 12 = 最大可接受高度差
+
+主体（0x7C6620-0x7C6729）：
+007c6620  push ebp/mov ebp,esp/add esp,-0xC/push esi,edi,ebx/ecx
+007c662a  mov eax,[ebp+0xC]/mov esi,[0xB0B6EC]   ; ★y 格行
+007c6633  imul eax,[0x8759A4]                    ; ★★y×行步长
+007c663a  add eax,[ebp+8]                        ; ★+x 格列
+007c663d  lea esi,[esi+eax*8]                    ; ★★项指针 = 基址
+                                                 ;   +(y×步长+x)×8
+007c6640  mov eax,[esi]/mov [ebp-4],eax          ; ★当前格高度值
+007c6645  mov edi,0xFFFFFFFF                     ; ★外层循环：dy=-1
+007c664a  mov ecx,0xFFFFFFFF                     ; ★内层循环：dx=-1
+007c664f  mov eax,edi/or eax,ecx/test eax,eax
+007c6655  je 0x7C670B                            ; dy&&dx 均 -1 → 跳过
+                                                 ;   （自身格）
+007c665b  mov eax,[ebp+8]/add eax,ecx            ; ★x+dx
+007c6660  mov [ebp-8],eax
+007c6663  mov ebx,[ebp+0xC]/add ebx,edi          ; ★y+dy
+007c6668  mov [ebp-0xC],ebx
+007c666b  imul ebx,[0x8759A4]                    ; ★(y+dy)×步长
+007c6672  mov esi,[0xB0B6EC]
+007c6678  add ebx,eax/lea esi,[esi+ebx*8]        ; ★★邻格指针
+007c667d  test dword[esi+4],1/je 0x7C66A3        ; ★邻格标志 bit0
+007c6686  cmp dword[ebp+0x14],0/jne 0x7C670B     ; ★param4≠0 → 跳过
+007c668c  mov eax,[esi]/sub eax,[ebp-4]/cdq/xor eax,edx/sub
+          eax,edx                                ; ★|邻值−当前值|
+007c6696  cmp eax,0xC/jbe 0x7C670B               ; ★差≤12 → 跳过
+007c669b  xor eax,eax/jmp 0x7C6724               ; ★★差>12 且标志
+                                                 ;   bit0 → 返回 0
+; → 邻格标志 bit0 清（0x7C66A3）：
+007c66a3  mov eax,[esi]/sub eax,[ebp-4]/cdq/xor/sub  ; ★|差|
+007c66ad  cmp eax,0xC/jbe 0x7C670B               ; ★差≤12 → 跳过
+007c66b2  cmp dword[ebp+0x10],1/jne 0x7C66CD     ; ★param3 模式分流
+; → param3==1（单向拉高）：
+007c66b8  mov eax,[esi]/cmp eax,[ebp-4]/jae 0x7C66E0 ; 邻≥当前
+007c66bf  mov eax,[ebp-4]/sub eax,0xC/mov [esi],eax   ; ★邻值低
+                                                 ;   → 拉近到当前−12
+007c66c7  or dword[esi+4],2                      ; ★★置标志 bit1
+007c66cb  jmp 0x7C66E0
+; → param3≠1（双向拉平，0x7C66CD）：
+007c66cd  mov eax,[esi]/cmp eax,[ebp-4]/jbe 0x7C66E0 ; 邻≤当前
+007c66d4  mov eax,[ebp-4]/add eax,0xC/mov [esi],eax   ; ★邻值高
+                                                 ;   → 拉近到当前+12
+007c66dc  or dword[esi+4],2                      ; ★★置标志 bit1
+007c66e0  push ecx/push edi/push [ebp+0x14]/push [ebp+0x10]
+007c66ee  push [ebp-0xC]/push [ebp-8]/call 0x7C6620 ; ★★递归自调
+          lea esp,[esp+0x10]/test eax,eax/jne 0x7C670B ; 递归成功
+007c66fd  cmp dword[ebp+0x14],0/jne 0x7C670B
+007c6703  xor eax,eax/…/ret                      ; ★★递归失败且
+                                                 ;   param4==0 → 返 0
+007c670b  inc ecx/cmp ecx,2/jl 0x7C664F          ; ★内层 dx++ 循环
+007c6715  inc edi/cmp edi,2/jl 0x7C664A          ; ★外层 dy++ 循环
+007c671f  mov eax,1/…/ret                        ; ★全邻域处理完 → 1
+（0x7C672A 起 int3 对齐填充——函数边界 0x7C6729）
+
+★语义：**Westwood 地形高度邻域平滑器（推断名——3×3 邻域
+高度差收敛）**——cdecl 4 参（x 格列/y 格行/方向模式/检查标
+志）：
+  ① 当前格 = [0xB0B6EC] + (y×[0x8759A4]+x)×8（8B/项：+0 高
+     度值/+4 标志），读当前高度；
+  ② 双循环 dx,dy ∈ [-1,1]（跳过 (0,0) 自身）遍历 3×3 邻域；
+  ③ 邻格 flag bit0 已置且 param4==0：|差|>12 → 返回 0（不
+     可调和）；param4≠0 → 跳过；
+  ④ 邻格 flag bit0 清且 |差|>12：param3==1 单向模式——邻
+     值低 → 拉近到 当前−12；param3≠1 双向模式——邻值高 →
+     拉近到 当前+12；拉近后置 flag bit1；
+  ⑤ 递归处理邻格（x+dx, y+dy, param3, param4），递归失败
+     且 param4==0 → 返回 0；
+  ⑥ 全邻域处理完返回 1。
+  语义 = 把相邻格高度差压到 ≤12（画悬崖/地形拉平工具）。
+
+★调用点（探针 E8 实测 1 处 = 自身递归 0x7C66EE）。★外部宿
+  主 = [0xB0B6EC]/[0x8759A4] 的 46 处引用点（0x6B2xxx-
+  0x6B4xxx Westwood 主代码区，含 0x6B4A50 SmudgeClass
+  构造器 batch 514 同区——地形/建筑区）。
+
+★E8 被调者：仅自身递归（0x7C66EE）——无真实子调用。
+
+★原版怪癖（照抄）：
+  ① (0,0) 自身格跳过判定用 `or eax,ecx`（dx||dy 任一非-1
+     即处理）——dx=dy=-1 时跳过；
+  ② flag bit0 的格：param4==0 时 |差|>12 直接返回 0（整个
+     平滑失败中止），param4≠0 时静默跳过——检查标志开关
+     双语义；
+  ③ 两种方向模式不对称：param3==1 只拉低侧（邻值低时拉
+     近），param3≠1 只拉高侧（邻值高时拉近）——单向不平
+     整；
+  ④ 拉近距离硬编码 0xC（12），差 >12 才动、拉近到恰好 12
+     （非拉到相等——保留 12 步长台阶）；
+  ⑤ 递归深度无上限（邻域链式传播）——高度差会逐格蔓延
+     收敛，无访问深度守卫；
+  ⑥ 递归返回 0 且 param4==0 时逐级上抛失败（非本地消化）
+     ——调用链任一格失败即整体失败语义。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：Westwood 对象方法
+重写时按语义等价实现）。
+
+三、三态判定（为何 semantics_verified 而非 crt_runtime_verified）
+---------------------------------------------------------------
+1. 归属：0x7C6620 = **Westwood 自有代码**——①全局 [0xB0B6EC]
+   （高度数组基址）/[0x8759A4]（行步长）46 处引用中 44 处
+   在 0x6B2xxx-0x6B4xxx Westwood 主代码区宿主（地形/Smudge
+   家族区，batch 514 同区）；②8B/项 {高度值+标志} + 3×3 邻
+   域 + 递归平滑 = 地形高度处理形态，非 CRT 惯用；③PE 静
+   态 0 的运行时初始化全局（CRT 无此设施）；④无 CRT 惯用
+   序列（无 fnsave/fldcw/setlocale/strcmp）。
+2. 依赖：全局数组 [0xB0B6EC]（宿主初始化）+ 行步长
+   [0x8759A4]——重写时按地形高度语义等价实现。
+3. 复刻纪律：Westwood 自有代码——不按商业库归档；地形高
+   度平滑非 RMG 管线依赖（RMG 高度场在 0x6B3xxx 独立实现）
+   ，保留 semantics_verified。
+→ 状态：semantics_verified（全局引用分布 + 邻域递归算法 +
+无子调用交叉；函数名「地形高度邻域平滑器」为推断交叉标
+注——邻域循环/拉近逻辑由代码实测，业务宿主未逐一读）。
+
+四、跨批次闭合
+------------
+★batch 1086-1111：0x7C 区 Westwood 混入修正链——本样本
+  #10（地形平滑，前 9 样本均为表面装载器/VQA/Format80/
+  调色板/像素转换域）。
+★batch 514：0x6B4A50 SmudgeClass 构造器——[0xB0B6EC]/
+  [0x8759A4] 引用宿主同区（0x6B4xxx 地形/建筑区）交叉。
+★0x6B2xxx：RMG 高度场域（CliffClass 类家族 0x6B2AC0 起）
+  ——平滑器引用点宿主与 RMG 造山阶段同区对照。
+
+五、状态
+-------
+semantics_verified（0x7C6620：Westwood 地形高度邻域平滑器
+归档；全 266B + 全局引用分布 + 递归算法交叉；不写 C++ 模
+型不做 golden——地形平滑非 RMG 管线依赖；函数名「地形高
+度邻域平滑器」为推断交叉标注——3×3 邻域/±12 拉近/标志位
+由代码实测；⚠️ 0x7C 区 Westwood 混入样本 #10）。TSV 新增
+0x007C6620 行。
+
+★本批实锤：0x7C 区混入样本 #10——[0xB0B6EC]/[0x8759A4]
+  运行时全局（宿主 0x6B2xxx-0x6B4xxx 主代码区）+ 3×3 邻域
+  递归平滑（±12 拉近 + flag bit0/bit1 双标志 + param4 检查
+  模式）——Westwood 地形工具域。
+相邻待续：batch 1115 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7DC4C9(264B, callers=1)/0x7CC309(256B,
+callers=1)/0x7CCA34(250B, callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1113 已完（MSVC6 CRT fwrite 0x7C9602，commit
+747e730）。
