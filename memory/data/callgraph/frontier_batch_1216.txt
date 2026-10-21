@@ -1,0 +1,142 @@
+frontier batch 1216 —— MSVC6 CRT 定长视图字符串构造器 0x7CA971（归档，vtable 0x7F95D0 家族）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CA971（34B,
+uc=1, callers=1 探针实测 0x7CA95E）。TSV 无既有行。
+TARGET = 0x007CA971。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CA971 行。
+
+一、链语义（disasm 全 34B + 调用宿主 + vtable 0x7F95D0 双
+写点 + 依赖 0x7D2E9B 交叉，0x7CA971-0x7CA992）
+--------------------------------------------------------------
+签名（确认）：thiscall + 1 栈参（ecx=this、[ebp+8]=
+源串指针），ret 4，返回 this（eax）。
+
+主体（0x7CA971-0x7CA992）：
+007ca971  push ebp / mov ebp, esp
+007ca974  mov eax, dword[ebp+8]            ; eax = 源串指针
+007ca977  push esi
+007ca978  mov dword[ebp+8], eax            ; 就地重存（转成
+                                           ;   地址参数槽）
+007ca97b  lea eax, [ebp+8]                 ; ★eax = &源串槽
+007ca97e  mov esi, ecx                     ; esi = this
+007ca980  push eax                         ; ★push &src
+007ca981  call 0x7d2e9b                    ; ★★TSV:1887 batch
+                                           ;   1050 字符串对象
+                                           ;   构造器（写
+                                           ;   vtable 0x7F990C
+                                           ;   + strlen/new/
+                                           ;   strcpy + this+8=1）
+007ca986  mov dword[esi], 0x7f95d0         ; ★★vtable 覆盖 =
+                                           ;   0x7F95D0（探针
+                                           ;   2 写点之一）
+007ca98c  mov eax, esi                     ; 返回 this
+007ca98e  pop esi / pop ebp / ret 4
+
+★语义：**MSVC6 CRT 定长视图字符串构造器（推断名——派生
+字串类构造：先委托基类构造，再覆盖为派生 vtable）**——
+thiscall 1 栈参：
+  ① 源串指针就地落栈（[ebp+8] 既是入参又作 &src 槽——省
+     一个局部）；
+  ② 委托 0x7D2E9B（基类字符串构造器：写 vtable 0x7F990C
+     + strlen(len+1) + operator_new + strcpy + this+8=1）；
+  ③ `mov dword[esi],0x7F95D0` **覆盖基类 vtable 为派生**
+     ——对象本质换型（构造期 vtable 二次写，C++ 派生类标
+     准形态）；
+  ④ 返回 this / ret 4。
+
+★vtable 0x7F95D0 双写点（探针 imm32 命中 0x7CA988/0x7CA9C2
+  ——全在 0x7CAA 族内）：
+  ① 0x7CA988（本批——委托构造后覆盖）；
+  ② 0x7CA9C2（另一构造器 0x7CA9B7 起：push [esp+8] / call
+     0x7D2ED8（★★同族构造器第二实例，batch 1050 文档邻
+     件）+ mov [esi],0x7F95D0 / mov eax,esi / pop esi /
+     ret 4）——同 vtable 另一入口。
+  紧邻 0x7CA9CC 起第三个构造器写 **0x7F95DC**（vtable 家
+  族下一成员，同模板 push [esp+8]/call 0x7D2ED8/mov
+  [esi],0x7F95DC/ret 4）。
+
+★调用点（探针 E8 实测 1 处 0x7CA95E）：宿主 = SEH 异常过滤
+  器域（0x7CA940 区）：mov esp,[ebp-0x18]（★栈回滚到 SEH
+  帧）/push 0x7F9598（★★"Access violation - no RTTI data!"
+  错误串——batch 1207 已登记同串）/lea ecx,[ebp-0x24]（★
+  栈上临时对象）/call 0x7CA971（★本批构造视图字符串）→
+  push 0x80F038（★第二参）/lea eax,[ebp-0x24]/push eax →
+  call 0x7D2F64（★同族串方法）——异常处理路径把 RTTI 缺失
+  消息构造成字符串对象再加工（[0x7F9598] 与 batch 1207
+  vtable 0x7F9594 紧邻 4 字节，"Access violation - no RTTI
+  data!" 双处引用实锤）。
+
+★E8 被调者（1 个，已登记）：0x7D2E9B（★★TSV:1887
+  semantics_verified + REIMPL 三件套——batch 1050 字符串对
+  象构造器 61B，内部调 0x7D15A0 _strlen REIMPL / 0x7C8E17
+  operator_new REIMPL / 0x7D4BF0 _strcpy REIMPL）。
+
+★全局：零（纯 this + 栈 + vtable 常量）。
+
+★原版怪癖（照抄）：
+  ① 就地重存入参（mov [ebp+8],eax 再 lea [ebp+8] 取址）—
+     —把值参槽直接当 &src 传送给委派构造（省局部变量）；
+  ② 构造期 vtable **二次写**（先基类 0x7F990C，后派生
+     0x7F95D0）——派生类构造标准形态（照抄）；
+  ③ ret 4（thiscall 1 栈参）而委派目标 ret 4——两跳栈参
+     一致（委派清自己那层）；
+  ④ 无局部变量仍建帧（push ebp/mov ebp,esp）——为 [ebp+8]
+     就地槽服务；
+  ⑤ vtable 家族 0x7F95D0/0x7F95DC 相邻 0xC 字节（同区两成
+     员——同族不同派生类）；
+  ⑥ 构造器不校验 operator_new 失败（委派目标内失败仅跳过
+     拷贝——batch 1050 怪癖①）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 字符串对
+象设施按商业库纪律归档；委派目标 batch 1050 已实证）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CA971 = MSVC6 静态 CRT 字符串派生构造器——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）；vtable 二次写 + 委派基类构造 = CRT/C++
+   字符串类派生构造标准形态（vtable 0x7F95D0 家族 0x7CAA
+   区）。
+2. 依赖：0x7D2E9B 已登记（TSV:1887 batch 1050，三件套
+   REIMPL）——重写 gamemd 时用等价运行时（std::string 语义
+   / 派生视图类）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 字符串设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 34B + vtable 双写点 + 依
+赖交叉 + SEH 宿主交叉；函数名「定长视图字符串构造器」由
+委派构造 + vtable 覆盖形态交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1050 / TSV:1887：0x7D2E9B 字符串对象构造器——本批
+  委派目标（本批为其**派生 vtable 覆盖层**，同族第二实例
+  0x7CA9B7 调 0x7D2ED8 构造后写同 vtable）。
+★batch 1207：vtable 0x7F9594 + 紧邻 "Access violation - no
+  RTTI data!"——本批宿主 push 0x7F9598（同串，相差 4 字节
+  即 vtable 槽后字符串起点）二次引用实锤。
+★vtable 0x7F95D0 家族剩余（未登记候选）：0x7CA9B7 第二
+  构造器 / 0x7CA9CC 0x7F95DC 构造器 / 0x7D2ED8 同族构造
+  器 / 0x7D2F64 同族串方法——后续批次按池顺序处理。
+
+五、状态
+-------
+crt_runtime_verified（0x7CA971：MSVC6 CRT 定长视图字符串构
+造器归档；全 34B + vtable 双写点 + 依赖交叉；不写 C++ 模
+型不做 golden——CRT 字符串设施商业库层；函数名由委派构造
++ vtable 覆盖形态交叉标注）。TSV 新增 0x007CA971 行。
+
+★本批实锤：派生字符串构造——就地 &src 槽 → 委派 0x7D2E9B
+  （基类构造 + 0x7F990C）→ 覆盖 vtable 0x7F95D0 → 返
+  this；唯一调用点在 SEH 异常过滤器（RTTI 缺失消息
+  0x7F9598 构造成字符串对象再加工）；vtable 0x7F95D0 双写
+  点（本批 + 0x7CA9C2）。
+相邻待续：batch 1217 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CBC11(33B, callers=1)/0x7C7350(33B,
+callers=1)/0x7D8EF5 __copysign(33B, callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1215 已完（MSVC6 CRT 窄字符前导空白跳过计数器
+0x7D219A，commit 86b8cf9）。
