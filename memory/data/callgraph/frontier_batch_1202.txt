@@ -1,0 +1,126 @@
+frontier batch 1202 —— MSVC6 CRT strnlen 受限字符串长度 0x7DA9A2（归档，环境链长度预算）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DA9A2（43B,
+uc=1, callers=2 探针实测 0x7DA7A3/0x7DA7BA）。TSV 无既有
+行。TARGET = 0x007DA9A2。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007DA9A2 行。
+
+一、链语义（disasm 全 43B + 调用点宿主 + 紧邻登记，
+0x7DA9A2-0x7DA9CC）
+--------------------------------------------------------------
+签名（确认）：cdecl 2 参（[esp+4]=字符串指针 s、[esp+8]=
+上限 n），返回字符串长度（最多 n）。
+
+主体（0x7DA9A2-0x7DA9CC）：
+007da9a2  mov edx,dword[esp+8]                  ; edx = n（参2）
+007da9a6  mov eax,dword[esp+4]                  ; eax = s（参1）
+007da9aa  test edx,edx
+007da9ac  push esi
+007da9ad  lea ecx,[edx-1]                       ; ecx = n-1（循环计
+                                              ;   数）
+007da9b0  je 0x7da9bf                           ; ★n==0 → 直接出口
+; → 扫描循环（0x7DA9B2）：
+007da9b2  cmp byte[eax],0                       ; *s == 0 ?
+007da9b5  je 0x7da9bf                           ; 遇 NUL → 出口
+007da9b7  inc eax                               ; s++
+007da9b8  mov esi,ecx                           ; esi = 当前余量
+007da9ba  dec ecx
+007da9bb  test esi,esi
+007da9bd  jne 0x7da9b2                          ; ★余量>0 → 继续
+; → 出口（0x7DA9BF，命中 NUL 或 n 耗尽）：
+007da9bf  cmp byte[eax],0                       ; ★再判 *s
+007da9c2  pop esi
+007da9c3  jne 0x7da9ca                          ; 非 NUL（n 耗尽）→
+                                              ;   返原 n
+007da9c5  sub eax,dword[esp+4]                  ; ★★返 s - start（长度）
+007da9c9  ret
+007da9ca  mov eax,edx                           ; ★返原 n
+007da9cc  ret
+
+★语义：**MSVC6 CRT strnlen 受限字符串长度（标准
+strnlen）**——cdecl 2 参：
+  ① 从 s 逐字节扫描，最多 n 个：遇 NUL 提前停；
+  ② 命中 NUL → 返 (s-start) = 字符串长度（< n）；
+  ③ n 个字节内无 NUL → 返**原 n**（长度预算封顶）；
+  ④ n==0 → 返 0（快路径出口）。
+  = strnlen 标准语义（C99 兼容，MSVC6 也提供 strnlen）。
+
+★调用点（探针 E8 实测 2 处）：0x7DA7A3 + 0x7DA7BA——同属
+  0x7DA7xx 宿主（环境链构建函数）：现场 0x7DA760 起调
+  [0x7E1328]/[0x7E1324]（IAT 槽）+ 0x7F98E4 常量 + 写
+  [0xB78578] 全局 + lea edx,[0x7f98e4]——getenv/_putenv
+  环境域（batch 1045 0x7DA9CD _putenv 紧邻 0x2B 字节同域）；
+  0x7DA79B-0x7DA7AC：cmp esi,ebx/jle 0x7da7af/push esi（n）/
+  push [ebp+0x10]（s）/call 0x7DA9A2/pop ecx×2/mov
+  esi,eax/mov [ebp+0x14],esi——key 长度预算消费（两处对
+  应两个不同键段）。
+
+★E8 被调者：**零子调用**（全 43B 纯指针推进 + 字节比较）。
+
+★全局：零。
+
+★原版怪癖（照抄）：
+  ① lea ecx,[edx-1] + 循环尾 test esi/jne（mov esi,ecx 后
+     dec ecx）——「先判余量再减」的 MSVC 循环展开形态
+     （边界 n==0 由入口 je 特判）；
+  ② 出口**再判一次 *s**（0x7DA9BF cmp byte[eax],0）——
+     区分「遇 NUL 停」与「n 耗尽停」（NUL → 返长度 / 非
+     NUL → 返 n）；
+  ③ n 耗尽返**原 n**（mov eax,edx——[esp+8] 拷贝件）而
+     非递减后计数——调用方按「需 n 字符」处理超长串；
+  ④ 无栈帧内 ebp（直接 [esp+N] 参读 + 单 push esi）——
+     leaf 最小形态；
+  ⑤ sub eax,[esp+4] 返长度（无 inc——长度即指针差，非
+     含 NUL 计数，与 batch 1163 _findenv 偏移语义对照）；
+  ⑥ 循环尾余量判定用 esi 暂存（mov esi,ecx 先存再减）
+     ——编译器双寄存器调度。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 字符串库
+按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DA9A2 = MSVC6 静态 CRT 受限字符串长度——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；逐字节扫 + 上限封顶 + 遇 NUL 提前停 =
+   CRT 字符串库标准形态（batch 1142/1177/1182/1196 串族
+   同链；strnlen 为标准 C 库函数）。
+2. 依赖：零 E8 零全局——重写 gamemd 时用等价运行时
+   （std::strnlen）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 字符串库设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 43B + 调用点宿主；函数名
+「strnlen 受限字符串长度」由上限扫描 + 遇 NUL 提前停 + n
+耗尽返原 n 交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1045：0x7DA9CD _putenv（TSV:1880）——紧邻同环境
+  链域（本批为 key 长度预算，彼批为条目挂载）。
+★batch 1044/1163：getenv/_findenv 环境链——0x7DA7xx 宿
+  主 IAT [0x7E1324]/[0x7E1328] + [0xB78578] 环境域交叉
+  （getenv/putenv 链长度消费侧）。
+★batch 1142/1177/1182/1196：strchr/wcsrchr/strpbrk/
+  strrev 串族——本批为标准长度成员（同 CRT 字符串库）。
+
+五、状态
+-------
+crt_runtime_verified（0x7DA9A2：MSVC6 CRT strnlen 受限字
+符串长度归档；全 43B + 调用点宿主；不写 C++ 模型不做
+golden——CRT 字符串库商业库层；函数名由上限扫描 + 遇 NUL
+提前停 + n 耗尽返原 n 交叉标注）。TSV 新增 0x007DA9A2 行。
+
+★本批实锤：标准 strnlen——lea ecx 循环计数 + 逐字节遇
+  NUL 提前停 + 出口再判（NUL→返长度 / 耗尽→返原 n）+ n==0
+  快路径；零 E8 零全局；两调用点 0x7DA7A3/0x7DA7BA 全在
+  getenv/_putenv 环境链宿主（紧邻 batch 1045 _putenv）。
+相邻待续：batch 1203 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CD42B(42B, callers=1)/0x7D9ECF(41B,
+callers=1)/0x7D36AC(41B, callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1201 已完（MSVC6 CRT __freebuf FILE 缓冲释放
+器 0x7D2B54，commit f11f93c）。
