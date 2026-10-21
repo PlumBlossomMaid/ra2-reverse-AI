@@ -1,0 +1,136 @@
+frontier batch 1234 —— 0x005A5360 死代码复刻：废弃方案最大函数（1913B）
+=======================================================================
+
+候选来源：用户指令三阶段①「RMG 死代码全部复现对齐」——TSV 1016 行
+「废弃方案最大函数」是 batch 1233（根 B 0x5A80B0）之后的下个未 REIMPL
+目标。TSV 无 REIMPL 行（semantics 已登记）。TARGET=0x005A5360。
+C++ 模型：code/rewrite/rmg/dead_code_5a5360.{h,cpp} 新增
+DeadCode5A5360World（work/cell/方向表/扩容/析构/放置回调）。
+单测：test_dead_code_5a5360.cpp 新增 DeadCode5A5360.Golden
+（golden 12 行全对拍：call 计数 + next + work visited/marked + cell38）。
+TSV 新增 0x005A5360_REIMPL 行。ctest 93→94/94 全绿。
+
+一、语义（两段反汇编 0x5A5360-0x5A5AD8 全 0x778 拼合 + 诊断槽值实证）
+----------------------------------------------------------------
+真义（thiscall ecx=this + 2 栈参 ret 8；this 未用）：
+  参数1 [esp+0x64] = 起始点结构 {u16 X, u16 Y}（打包 dword 低16=X 高16=Y）
+  参数2 [esp+0x68] = N 点数
+  ① edi = N*10（lea×5 + shl 1）
+  ② operator new(N*10*8) → 主 buffer（每安置点 8B = {u32 打包xy, float key}）
+    ★push 0x14 后 mov [esp+0x34],ebx 实写 push 前 [esp+0x30]（batch 1232
+    push-1 槽错位同族——原版用 push 调栈索引拼槽位）
+  ③ operator new(0x14) → 堆对象：+0=count +4=容量N*10 +8=指针数组
+    （operator new(N*10*4+4)，清 N*10+1 项 0）+0xC=max节点 +0x10=min节点
+  ④ CellIterator 双轮（0x578350 Reset + 0x578290 Next 循环）：清 work+0x3C
+    ——★探针打桩 Next 返 0 → 跳过（探针预灌挡墙等效）
+  ⑤ work[0]=*参数1（打包 xy）、work[0]+4=0；work[(startY*side+startX)*0x50
+    +0x3C]=1；[esp+0x1C]=1（安置计数）；堆插入起始点（key=0）
+  ⑥ 出堆：buffer[1] 取出 → ebp=节点；count--；call 0x5AD870（sift-down）
+  ⑦ operator new(0x18) → 向量；call 0x42FCB0(edi,0,0)（真身构造）→
+    [edi]=0x7E3890（覆盖虚表）+0x14=0xA +0x10=0 → [edi+0x14]=N+2
+  ⑧ 主循环（[esp+0x18]<N 且当前节点非空）：
+    GetCellAt(ebp)→cell+0x38=[0xABC2B0] → 向量扩容/追加（count>=容量且
+    [edi+0xD]==0 或 容量==0 → call 虚表槽 2 = 0x42F860 打桩）→
+    8 方向扩散（dir 0..7）：0x42D510 真身算邻居 → 菱形边界（A=W B=W+2H：
+    X+Y<=A 或 X-Y>=A 或 Y-X>=A 或 X+Y>B → skip）→ GetCellAt(打桩)→
+    0x486380(打桩返1)→ cell+0x44==-1 → work+0x3C==1 跳过 → +0x45!=0 跳过
+    → 成功：key = max(|startX-curX|,|startY-curY|) +
+      (uint32)Random()*3.0*kInvUintMax（fild qword 无符号+两次 fmul+
+      fild dist+faddp——★RNG#1 每成功一次消耗 1）→ work+0x3C=1 →
+      [esp+0x1C]++ → 堆插入
+    → 出堆下一节点；[esp+0x18]++（处理数）
+  ⑨ 清理：delete×3 → 0x5A7640 bbox（遍历向量算 min/max →
+    rect{minX,minY,W=maxX-minX+1,H=maxY-minY+1}）
+  ⑩ 双分支分界：处理数 cmp 100：jle 简单；>100 且 fcompp count*1.6 vs
+    W*H：test ah,0x41 jne 简单（★复杂路径条件 = count×1.6 > 面积）——
+    复杂：向量收缩(探针打桩 cell+0x38==哨兵恒等→不收缩) + 遍历标记
+    work+0x45=1 + count/3（magic 0x55555556）次放置循环：
+      RNG#2 = _ftol(Random()*count*kInv) 拒绝 ja > count-1（★PickBelow
+      count 形态）→ v=vec[v] → RNG#3 = _ftol(Random()*1.63e-9) 拒绝 ja
+      >6 → t∈[0,6] → t<=3 直接放置；t>3：2×2 邻域检查（work+0x45!=0 时
+      GetCellAt → cell+0x38==哨兵保留 flag）→ flag 通过 →
+      eax=[0xAA10A4]+t；push -1;-1; lea edx,[esp+0x50]; call 0x5A6C10
+      （★打桩 ret 8 记录）→ [esp+0x34]-- 循环 count/3 次
+    简单：遍历 vec：GetCellAt(&vec[i]) → cell+0x38=0xFFFF；edi!=0 →
+      call 虚表槽 0（0x42FBF0 打桩，push 1）→ 返回 eax=0
+  ★随机消耗：扩散每成功 1 次 RNG#1；复杂路径每放置 RNG#2+RNG#3（含重抽）。
+  简单路径零 RNG。
+
+二、★本批实锤（三条，均为调试关键）
+----------------------------------
+① **虚表槽位勘误**：state 旧记录「槽 8=0x42F970」是索引误解——虚表
+   0x7E3890 槽 8（偏移 0x20）是 0x42F970，但 0x5A55A2 `call [edx+8]`
+   是**槽 2（偏移 0x8）= 0x42F860**（aux 脚本 12 槽实测：槽0=0x42FBF0
+   槽1=0x42F620 槽2=0x42F860...）。诊断 v2 hook 0x5A55A2 读 edx=[edi]
+   → [edx+8] = 0x0042F860 实测跳转目标，初版探针在 0x42F970 打桩 →
+   slot8 计数 0（虚表跳去真身执行了）。修复 = 打桩 0x42F860。
+② **复杂路径条件实锤**：fcompp st0=count×1.6 vs st1=面积，test ah,0x41
+   jne → 简单。即复杂路径 = count×1.6 > 面积（**点密集小区域**）。全开放
+   扩散 bbox 大必走简单——复杂用例需预灌 work+0x3C=1 挡墙留紧凑矩形
+   （BFS 填满矩形 → count≈面积 → count×1.6>面积 ✓）。
+③ **work 越界 UB 确定化模拟**：菱形边界 A=side、B=3side 允许坐标到
+   ~2side，但 work 数组仅 side² 项 → 原版死代码扩散越界读堆（UB，从未
+   运行无观测）。探针把 work 区扩展覆盖坐标 [0,4side)、side² 外全部
+   +0x3C=1 挡墙（等价"堆非零"）→ 行为确定可对拍；C++ 模型用同尺寸
+   扩展数组。诚实记录：这是探针/模型侧确定化约定，非原版可观测语义。
+
+三、golden 采集（emu_oracle 指令级模拟）
+----------------------------------------
+探针 .qwen/tmp/_emu_deadcode_5a5360.py：调 0x5A5360（thiscall ecx=this
++ 2 栈参），灌 side/work 扩展区/菱形边界 A=side B=3side/[0xABC2B0]=
+0x12345678/方向表标准 8 方向，打桩 operator new（页对齐分配）、delete、
+CellIterator 空、GetCellAt（返 CELL_OBJ）、0x486380（返 1）、虚表槽 2
+（扩容）、槽 0（析构）、0x5A6C10（放置）。用例矩阵 4 组：
+  复杂(高填充矩形) side=24 start=(15,16) N=300 rect[12,31]² → 6c10≈90+
+  简单(N=50) side=16 start=(8,9) N=50 全开 → slot0=1 零 RNG
+  简单(堆空) side=8 start=(4,5) N=200 全开 → 菱形小堆提前空
+  复杂大矩形 side=24 start=(31,32) N=400 rect[24,47]² → 6c10≈120+
+存档 memory/data/rmg/deadcode_5a5360_golden.txt（12 行：call 计数 +
+next + visited/marked + cell38）。golden 与探针同源（consts/arr 直读）。
+★TB 缓存坑（batch 1233 教训）：每 call 前 ctl_remove_cache(TARGET,
+TARGET+0x778)，仅清桩字节区不够——本批主函数区也清。
+★探针踩坑三连（皆已修）：TARGET_LEN 写成 0x5AD8-0x5A5360=负值（函数尾
+0x5A5AD8，UC_ERR_ARG）；VEC_BUF 撞 Oracle HEAP 映射（REGION 移到
+0x31000000+0x200000）；operator new 桩 xor;ret+hook 覆写顺序错（纯 ret+
+hook 在 ret 前写 eax）。诊断 v3 漏 delete 桩 → 清理段崩（bbox 之前）。
+
+四、原版怪癖（照抄）
+--------------------
+① push 槽错位（0x5A5395 push 0x14 后写 [esp+0x34] = push 前 [esp+0x30]）；
+② work 越界 UB（死代码，确定化模拟见二③）；
+③ fcompp test ah,0x41（C0|C3）双分支判定（x87 状态字 C0=AHbit0/
+   C3=AHbit6——项目统一口径）；
+④ magic 除法 count/3（0x55555556 有符号 imul + sar 修正）；
+⑤ RNG#3 拒绝 >6 得 t∈[0,6]（1.63e-9 ≈ 7/2^32 的均匀分布，TIBTRE00
+   类怪癖系族）；
+⑥ 虚表槽 2 扩容 + 槽 0 析构调用现场（push 0/push newcap、push 1）；
+⑦ 起始点入堆 key=0（float 0.0）——首 pop 恒为起始点；
+⑧ [0xAA10A4] 表索引基 + t 拼接进 0x5A6C10（本批打桩，真身 batch 已
+   登记 0x5A6C10 dead_code 模块）。
+
+五、跨批次连接
+--------------
+0x5A5020（batch 1232 根 A）、0x5A80B0（batch 1233 根 B）——同族编排
+树；0x5AD870（sift-down 本批首次完整反汇编：min-heap 下沉 ret 4，
+fcompp 选较小 key 子节点——C++ 复刻 HeapSiftDown 对照）；0x42FCB0
+（向量构造器真身，与 0x42D540 析构配对）；0x42D510（坐标偏移表查询
+真身 ret 8）；0x5A7640（bbox——batch 中已复刻 dead_code_7640，本批
+复用语义）；0x42F860/0x42FBF0（虚表槽 2/0，★槽位勘误见二①）；
+0x65C780 Random（randomizer 已复刻）；[0xABED04]/[0xABED08] 菱形边界
+（0x5662FB 实锤 = MapRect.W / W+2H）；[0x89F688] 方向表（YRpp
+CellSpread.h:20 实锤 8 方向 CellStruct 表 + 本批首次完整确认）。
+
+六、状态
+--------
+0x5A5360：cpp_reimplementation_verified + unit_test_verified
+（call 计数 12/12 + next 12/12 + visited/marked 12/12 + cell38 12/12；
+ctest 94/94 全绿，含 0x5A5020/0x5A80B0 回归）。partial：函数精确名
+（「废弃方案最大函数」推断——死代码无运行观测）、复杂路径向量收缩
+实际发生路径（探针打桩 cell+0x38==哨兵恒等 → 不收缩，golden 未覆盖
+删除/前移）、0x5A6C10 真身（打桩记录，真身 batch 已登记 dead_code_6c10
+模块）、0x5AD870 精确触发次数（sift-down 真身跑、C++ HeapSiftDown
+对照——调用序列不 hook、next 隐式对拍）。★诚实记录：work 越界确定化
+模拟（见二③）是探针/模型侧约定，golden 对拍在此约定下逐位一致。
+本批产品代码新增 dead_code_5a5360.{h,cpp} + 测试 + CMake 登记；
+ctest 93→94/94 全绿。探针 _emu_deadcode_5a5360.py/_diag_*.py/
+_read/_find/_scan/_write_golden 闭环不入库。

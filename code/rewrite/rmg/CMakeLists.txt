@@ -52,7 +52,8 @@ add_library(ra2_rmg
   dead_code_5a1e10.cpp
   dead_code_5a3a60.cpp
   dead_code_5a5020.cpp
-  dead_code_5a80b0.cpp)
+  dead_code_5a80b0.cpp
+  dead_code_5a5360.cpp)
 
 # x87 汇编模块：NormalDeviate 的 u/v/s 计算需要 80 位中间精度
 # （原版 MSVC 6.0 用 x87；MSVC 2022 SSE2 即使 /arch:IA32 也不生成 x87）
@@ -472,4 +473,20 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_dead_code_5a80b0 PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME dead_code_5a80b0 COMMAND test_dead_code_5a80b0)
+
+  # 死代码复现：0x5A5360 废弃方案最大函数（thiscall + 2 栈参 ret 8：
+  # 参数1=起始点{u16 X,u16 Y}、参数2=N；三连 operator new + 最小堆 +
+  # 8 方向扩散[key=max切比雪夫+Random#1×3×kInv，RNG#1/成功] + 向量收集 +
+  # bbox 0x5A7640 + 双分支[处理数>100 且 count×1.6>面积 → 复杂路径：
+  # RNG#2 PickBelow(count)+RNG#3 [0,6]+2×2 邻域+0x5A6C10 打桩；否则简单
+  # 路径：cell+0x38=0xFFFF+虚表槽 0]），黄金由 emu_oracle 指令级模拟取得
+  # （deadcode_5a5360_golden.txt；call 计数 + next + work visited/marked +
+  # cell38 全对拍。★虚表槽实锤：call [edx]=槽0=0x42FBF0、call [edx+8]=
+  # 槽2=0x42F860；★复杂路径条件=count×1.6>面积；★work 越界 UB 确定化
+  # 模拟：side² 外 +0x3C=1 挡墙）
+  add_executable(test_dead_code_5a5360 test/test_dead_code_5a5360.cpp)
+  target_link_libraries(test_dead_code_5a5360 PRIVATE ra2_rmg gtest_main)
+  target_compile_definitions(test_dead_code_5a5360 PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME dead_code_5a5360 COMMAND test_dead_code_5a5360)
 endif()

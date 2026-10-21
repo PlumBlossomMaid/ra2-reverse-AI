@@ -1,0 +1,50 @@
+# 死代码废弃方案最大函数黄金基准
+# （emu_oracle 指令级模拟原版机器码 0x5A5360，1913B，thiscall + 2 栈参 ret 8）
+# 调用约定：ecx=this（未用）、[esp+0x64]=起始点结构 {u16 X,u16 Y}、
+# [esp+0x68]=N 点数
+# 相关原地址（gamemd.exe，ImageBase 0x400000）：
+#   [0x89C2DC] side、[0xABED10] work 指针（每项 0x50B）
+#   [0xABED04]/[0xABED08] 菱形边界 A=W / B=W+2H（方阵 A=side B=3side）
+#   [0xABC2B0] cell+0x38 哨兵源、[0x89F688] 8 方向表（探针注入标准值）
+#   [0x7ED818]=3.0、[0x7ED898]=kInvUintMax、[0x7EDAF8]=1.63e-9、
+#   [0x7EDB00]=1.6
+# 语义（全 0x778=1912B 反汇编拼合，dead_code_5a5360.h 头部有完整展开）：
+#   三连 operator new（主 buffer N*10 项 8B / 堆对象 20B / 指针数组）
+#   → CellIterator 清 work+0x3C（探针打桩跳过、预灌挡墙等效）→ 起始点入堆
+#   （key=0）→ 主循环弹节点 + 8 方向扩散（key=max切比雪夫距离+
+#   Random#1×3.0×kInv；菱形边界 A/B + cell+0x44==-1 + work+0x3C/0x45 检查）
+#   → 向量收集 + bbox 0x5A7640 → 双分支（处理数>100 且 count×1.6>面积 →
+#   复杂路径：向量收缩(探针打桩 cell+0x38==哨兵恒等→不收缩)+0x45 标记+
+#   count/3 次放置循环[RNG#2 PickBelow(count)+RNG#3 [0,6]+2×2 邻域检查+
+#   0x5A6C10 打桩]；否则简单路径[cell+0x38=0xFFFF+虚表槽 0]）
+# ★复杂路径条件实测：fcompp st0=count×1.6 vs st1=面积，test ah,0x41 jne →
+# 简单（面积>=count×1.6 走简单）——点密集小区域才走复杂。
+# 打桩面（golden 聚焦子调用计数 + next + work 统计 + cell38）：
+#   operator new → 页对齐分配（计数器）｜delete → ret 0
+#   CellIterator 0x578350/0x578290 → 空（跳过清 work）
+#   GetCellAt 0x5657A0 → 返固定 CELL_OBJ（+0x38 可写 +0x44=-1）ret 4
+#   0x486380 谓词 → 返 1；虚表槽2 0x42F860（扩容）→ 扩到栈参容量+固定buf；
+#   虚表槽0 0x42FBF0（析构）→ ret 4；0x5A6C10（放置）→ ret 8
+# ★虚表 0x7E3890 槽位在 aux 实测 12 槽：call [edx]=槽0=0x42FBF0、
+#   call [edx+8]=槽2=0x42F860（旧记录"槽8=0x42F970"是索引误解，已修正）
+# ★工作数组扩展：菱形边界允许坐标到 ~2side，原版 work 仅 side² 项 → 越界读
+#   堆=UB（死代码从未运行）；探针确定化模拟 side² 外 +0x3C=1 挡墙（等价
+#   "堆非零"），C++ 模型用同尺寸扩展数组。
+# 输出字段：
+#   call 计数 new/del/iterR/iterN/gcell/p486/slot8/slot0/6c10
+#   next：调用后对全局 RNG 再取一次的值（对拍随机消耗次数与路径）
+#   visited/marked：开放菱形区（side 坐标内）work+0x3C/+0x45 置位计数
+#   cell38：CELL_OBJ+0x38 终值（复杂=哨兵/简单=0xFFFF）
+# fpcw=0x0E7F（RC_CHOP + PC53）
+seed=0 start=(15,16) N=300 side=24 => new=4 del=3 iterR=1 iterN=1 gcell=5249 p486=2391 slot8=1 slot0=0 6c10=94 next=0xCA7369AC visited=240 marked=145 cell38=0x12345678
+seed=0 start=(8,9) N=50 side=16 => new=4 del=3 iterR=1 iterN=1 gcell=463 p486=363 slot8=1 slot0=1 6c10=0 next=0x834CD7E6 visited=85 marked=0 cell38=0x0000FFFF
+seed=0 start=(4,5) N=200 side=8 => new=4 del=3 iterR=1 iterN=1 gcell=837 p486=651 slot8=1 slot0=1 6c10=0 next=0x72EC45F4 visited=21 marked=0 cell38=0x0000FFFF
+seed=0 start=(31,32) N=400 side=24 => new=4 del=3 iterR=1 iterN=1 gcell=6850 p486=3115 slot8=1 slot0=0 6c10=131 next=0x7D55077D visited=253 marked=0 cell38=0x12345678
+seed=1 start=(15,16) N=300 side=24 => new=4 del=3 iterR=1 iterN=1 gcell=5254 p486=2391 slot8=1 slot0=0 6c10=89 next=0xC6D6571A visited=245 marked=149 cell38=0x12345678
+seed=1 start=(8,9) N=50 side=16 => new=4 del=3 iterR=1 iterN=1 gcell=462 p486=362 slot8=1 slot0=1 6c10=0 next=0x6512F285 visited=85 marked=0 cell38=0x0000FFFF
+seed=1 start=(4,5) N=200 side=8 => new=4 del=3 iterR=1 iterN=1 gcell=837 p486=651 slot8=1 slot0=1 6c10=0 next=0x647F00F2 visited=21 marked=0 cell38=0x0000FFFF
+seed=1 start=(31,32) N=400 side=24 => new=4 del=3 iterR=1 iterN=1 gcell=6839 p486=3110 slot8=1 slot0=0 6c10=123 next=0x56096258 visited=253 marked=0 cell38=0x12345678
+seed=60556 start=(15,16) N=300 side=24 => new=4 del=3 iterR=1 iterN=1 gcell=5233 p486=2391 slot8=1 slot0=0 6c10=92 next=0x29268E61 visited=247 marked=150 cell38=0x12345678
+seed=60556 start=(8,9) N=50 side=16 => new=4 del=3 iterR=1 iterN=1 gcell=464 p486=364 slot8=1 slot0=1 6c10=0 next=0xE60D1967 visited=85 marked=0 cell38=0x0000FFFF
+seed=60556 start=(4,5) N=200 side=8 => new=4 del=3 iterR=1 iterN=1 gcell=837 p486=651 slot8=1 slot0=1 6c10=0 next=0x93615F2C visited=21 marked=0 cell38=0x0000FFFF
+seed=60556 start=(31,32) N=400 side=24 => new=4 del=3 iterR=1 iterN=1 gcell=6863 p486=3120 slot8=1 slot0=0 6c10=129 next=0xFAD3137A visited=253 marked=0 cell38=0x12345678
