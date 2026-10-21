@@ -1,0 +1,120 @@
+frontier batch 1231 —— 0x005A3A60 死代码复刻：全图扫描 + Y*side+X 线性索引（125B，零取数点）
+=======================================================================
+
+候选来源：用户指令三阶段①「RMG 死代码全部复现对齐」——batch 1230 补完
+0x5A1E10 后剩余 9 个无 REIMPL。0x5A3A60 是「全图扫描 + RMG 工作数组
+线性索引」工具函数（零取数点；MapGen.cpp 断言区间 0x5956E7-0x59A63A
+内，与活代码共用 CellIterator 设施）。
+TARGET = 0x005A3A60。C++ 模型：code/rewrite/rmg/dead_code_5a3a60.{h,cpp}
+新增 DeadCode5A3A60(ctx) + DeadCode5A3A60World（NextCell 回调）。
+单测：test_dead_code_5a3a60.cpp 新增 DeadCode5A3A60.Golden
+（golden 12 行全对拍）。TSV 新增 0x005A3A60_REIMPL 行。
+
+一、语义（全段反汇编逐条核对 + golden 12 行闭环）
+------------------------------------------------
+真义（机器码全 125B 确认，disasm.py 0x5A3A60 0x7D）：
+  · 调用约定：**cdecl 无参 ret 0**（无 ecx/this 使用——纯工具函数，
+    与 0x5A6BA0/0x58C4A0 族的 thiscall 不同）。
+  · side  = [0x89C2DC]（MapGen 边长）
+  · CellIterator_Reset(0x578350，thiscall ecx=0x87F7E8)
+  · loop（0x5A3A78 起）：
+      cell = CellIterator_Next(0x578290，thiscall ecx=0x87F7E8)
+      test eax,eax / je 0x5A3AD9 —— NULL 终止
+      非 NULL：
+        ecx = [cell+0x24]（坐标打包 dword：低16=X、高16=Y）
+        Y = movsx word [esp+6]（高16 符号扩展）
+        idx = Y * side + X（imul [0x89C2DC] + movsx cx 低16）
+        p = [0xABED10] + idx*0x50（lea eax,[eax+eax*4]; shl eax,4）
+        p+0x20 = [0x7ED7F8]；p+0x24 = [0x7ED7FC]
+        p+0x28 = [0x7ED7F0]；p+0x2C = [0x7ED7F4]
+  · ★★全程零取数点：不调 Randomizer（golden next 字段实证：同种子
+    所有用例 next 相同 = 调用前后 RNG 状态不变）
+
+公式（golden 12 行实证）：
+  CellIterator_Reset()
+  while (NextCell(x, y)) {            // CellIterator_Next 打桩，NULL 终止
+    idx = y*side + x;                 // imul 边长 + movsx 低16
+    p = work + idx*0x50;              // [0xABED10] + idx*80
+    p+0x20 = c_f8; p+0x24 = c_fc;     // [0x7ED7F8]/[0x7ED7FC]
+    p+0x28 = c_f0; p+0x2C = c_f4;     // [0x7ED7F0]/[0x7ED7F4]
+  }
+
+★与同族差异：
+  ① 零取数点（同 0x5A6BA0——不消耗 RNG）；
+  ② **CellIterator_Reset/Next 双轮遍历**（0x578350/0x578290——活代码
+     batch 006 家族；本批打桩：指针表顺序取 cell，NULL 终止）；
+  ③ **idx = Y*side + X 线性索引**（imul 边长——RMG 工作数组寻址约定，
+     与活代码 [0xABED10] 索引同套）；
+  ④ 每格写 p+0x20..0x2C 四个 dword（.rdata 常量 [0x7ED7F0..FC]）。
+
+二、golden 采集（emu_oracle 指令级模拟）
+--------------------------------------
+探针 .qwen/tmp/_emu_deadcode_5a3a60.py：调 0x5A3A60（cdecl 无参），灌
+side [0x89C2DC]、work [0xABED10]（HEAP 0x30004000，256×0x50B）、
+.rdata 四常量 [0x7ED7F0..FC]、cell 对象数组（0x3000A000，+0x24 坐标
+dword）、CellIterator 打桩：
+  · Reset = mov dword [0x1F010000],0x1F01000C; ret（指针表重置回头）
+  · Next = mov eax,[0x1F010000]; mov eax,[eax]; add dword [..],4; ret
+    ——★★二次解引用：先取表当前项地址、再取 cell 指针，NULL 终止
+    （初版漏二次解引用，函数把「表地址」当 cell 用 → [eax+0x24] 读
+    垃圾 → 坐标越界 → UC_ERR_READ_UNMAPPED；探针纪律同 batch 1228
+    TB 缓存坑——修后全用例合理）。
+seed_global 播种。存档 memory/data/rmg/deadcode_5a3a60_golden.txt：
+3 种子 × 4 用例 = 12 行。用例矩阵：side ∈ {8,16} × cells ∈
+{[(1,2),(5,3)], [(0,0)], [], [(3,4),(15,15),(7,0)]} × consts ∈
+{0x11111111.., 0xAAAA0000.., 0xDEADBEEF.., (1,2,3,4)}。
+★golden 含 consts 字段（四常量直读——测试不再按用例特征猜常量）。
+★next 字段 = 调用后下一次 Random() 值（= 同种子首采值——零取数点
+实证）。
+
+(1) golden 写入规律（逐项核对）：
+  · (1,2)/(5,3) side=8 → idx=2*8+1=17、3*8+5=29 ✓
+  · (0,0) side=8 → idx=0 ✓
+  · [] → none（无写入）✓
+  · (3,4)/(15,15)/(7,0) side=16 → idx=4*16+3=67、15*16+15=255、
+    0*16+7=7 ✓
+  · 常量映射：p+0x20=c_f8、p+0x24=c_fc、p+0x28=c_f0、p+0x2C=c_f4
+    （golden 行 consts=(11111111,22222222,33333333,44444444) →
+    idx17=(33333333,44444444,11111111,22222222) ✓）
+
+(2) ★★本批实锤：CellIterator 打桩二次解引用
+  探针初版 Next 打桩 = mov eax,[0x1F010000]; add dword [..],4; ret
+  ——直接把「表内容地址」当 cell 指针返回，函数读 [eax+0x24] 得到
+  指针表垃圾 → 坐标 Y*side+X 越界 → UC_ERR_READ_UNMAPPED（emu
+  中断，后续写入缺失）。修复：mov eax,[0x1F010000]; mov eax,[eax]
+  （二次解引用取 cell 指针）；add dword [..],4; ret。教训：打桩的
+  返回值必须与函数调用约定一致（该函数要的是 cell 指针，不是地址）。
+
+三、原版怪癖（照抄）
+--------------------
+① 零取数点（不消耗 RNG——与 0x5A6BA0 同族）；
+② CellIterator_Reset/Next 双轮遍历全图（0x578350/0x578290）；
+③ idx = Y*side + X 线性索引（imul 边长 + movsx 低16=X 高16=Y
+   符号扩展）；
+④ 每格写 p+0x20..0x2C 四个 dword（.rdata 常量 [0x7ED7F0..FC]，
+   顺序照抄：+0x20=f8、+0x24=fc、+0x28=f0、+0x2C=f4）；
+⑤ 坐标解包 [cell+0x24]：低16=X、高16=Y，均 movsx 符号扩展。
+
+四、跨批次连接
+--------------
+0x578350/0x578290 CellIterator（活代码——batch 006 家族已登记；
+0x578350 Reset 惯用法、0x578290 Next 返回 cell 指针 NULL 终止）；
+[0x89C2DC]（MapGen 边长）、[0xABED10]（work 数组，每项 0x50B——
+活代码 0x578E60 分配同套）；[0x7ED7F0..FC]（.rdata 四常量，语义未
+确认——可能为某工作字段的初始值/阈值）；0x5A6BA0（batch 1229——
+同为零取数点工具函数）；0x58C4A0 族（batch 1225-1228——同 work
+索引 v*0x50 手写乘 80）。
+
+五、状态
+--------
+0x5A3A60：cpp_reimplementation_verified + unit_test_verified
+（write 字段 12/12 Eq——work 写入段逐字段对拍 + next 12/12 Eq——
+零取数点实证：调用前后 RNG 状态不变）。
+partial：函数精确名（「全图扫描 + Y*side+X 线性索引」推断——死代码
+无运行观测）、扫描体后段（循环体内除写 p+0x20..0x2C 外无其他——
+已全读）、[0x7ED7F0..FC] 四常量语义（未确认，batch 319 记录同）、
+CellIterator 打桩与真身差异（本批打桩指针表，真身走活代码遍历）。
+本批产品代码新增 dead_code_5a3a60.{h,cpp} + 测试 + CMake 登记；
+ctest 91/91 全绿（含 0x58C5A0/0x5A6BA0/0x5A1E10 回归）。
+★教训入档：CellIterator 打桩返回值必须与函数约定一致（cell 指针
+非表地址）；golden 格式探针与测试同源（consts 直读防猜常量）。
