@@ -1,0 +1,154 @@
+frontier batch 1107 —— CRT 双层命名键查找器 0x7CADB9（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CADB9（312B,
+uc=1, callers=1 池顶）。TSV 无既有行。
+TARGET = 0x007CADB9。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CADB9 行。
+
+一、链语义（disasm 头/中/尾复核，0x7CADB9-0x7CAEF0）
+------------------------------------------------
+头部（0x7CADB9-0x7CADF8）：
+007cadb9  55                push ebp
+007cadba  8bec              mov ebp, esp
+007cadbc  83ec10            sub esp, 0x10
+007cadbf  53/56/57          push ebx/esi/edi
+007cadc2  8b7d0c            mov edi, [ebp+0xc]      ; ★param2 = 容器对象
+007cadc5  33c9              xor ecx, ecx
+007cadc7  8b4710            mov eax, [edi+0x10]     ; ★[obj+0x10] = 外层数组
+007cadca  894df0            mov [ebp-0x10], ecx     ; ★命中项=0
+007cadcd  894dfc            mov [ebp-4], ecx        ; ★外层计数=0
+007cadd0  394808            cmp [eax+8], ecx        ; ★[数组+8] 元素数
+007cadd3  8b580c            mov ebx, [eax+0xc]      ; ★[数组+0xc] 指针表
+007cadd6  0f86c7000000      jbe 0x7caea3           ; 空 → 退出
+007caddc  8b33              mov esi, [ebx]          ; ★外层项
+007cadde  8b4d18            mov ecx, [ebp+0x18]     ; ★param5 = 外层键
+007cade1  8b06              mov eax, [esi]          ; ★[项] 名字符串
+007cade3  3bc1              cmp eax, ecx
+007cade5  7417              je 0x7cadfe           ; ★指针相等直接命中
+007cade7  83c108            add ecx, 8
+007cadea  83c008            add eax, 8
+007cadef  e89c2c0000        call 0x7cda90          ; ★★0x7CDA90（batch 192
+                                                     ;   已登记 CRT strcmp 对
+                                                     ;   齐优化版）
+007cadf4  59                pop ecx
+007cadf8  0f8587000000      jne 0x7cae85          ; 不等 → 外层下一项
+
+内层查找（0x7CADFE-0x7CAE41）：
+007cadfe  8365f400          and [ebp-0xc], 0       ; ★内层计数=0
+007cae02  837e0400          cmp [esi+4], 0
+007cae06  8d4304            lea eax, [ebx+4]
+007cae09  8945f8            mov [ebp-8], eax
+007cae0c  7677              jbe 0x7cae85           ; 内层空 → 外层下一项
+007cae0e  8b45f8            mov eax, [ebp-8]
+007cae11  8b4d10            mov ecx, [ebp+0x10]    ; ★param3 = 内层键
+007cae14  8b38              mov edi, [eax]
+007cae16  8b07              mov eax, [edi]
+007cae18  3bc1              cmp eax, ecx
+007cae1a  7413              je 0x7cae2f
+007cae1c  83c108            add ecx, 8
+007cae1f  83c008            add eax, 8
+007cae24  e8672c0000        call 0x7cda90          ; ★★strcmp（batch 192）
+007cae2d  7544              jne 0x7cae73          ; 不等 → 内层下一项
+007cae2f  83c708            add edi, 8
+007cae32  57                push edi
+007cae33  ff7508            push [ebp+8]          ; ★param1 = 元素索引
+007cae36  e8b6000000        call 0x7caef1         ; ★★0x7CAEF1（二维数组
+                                                    ;   getter——5 callers）
+007cae3b  3b4514            cmp eax, [ebp+0x14]   ; ★结果 vs param4
+007cae40  7531              jne 0x7cae73          ; 不等 → 继续找
+
+尾部（0x7CAE42-0x7CAEF0）：
+007cae42  8b7df0            mov edi, [ebp-0x10]   ; ★保存命中项
+007cae45  85ff              test edi, edi
+007cae47  7427              je 0x7cae70
+007cae49  …                 （命中项后续处理：调 [esi] 指针函数/返回）
+007caea3  8b4710            mov eax, [edi+0x10]   ; ★第二遍外层（重扫容器）
+007caeb1  8b33              mov esi, [ebx]        ; ★外层项重取
+007caeb6  8b06              mov eax, [esi]        ; ★重比 param5
+  …（外层循环 inc [ebp-4]/add ebx,4/cmp [eax+8] jb）
+007cae9a  8b45f0            mov eax, [ebp-0x10]   ; ★返回命中项指针
+007cae9f  33c9              xor ecx, ecx
+007caea1  7545              jne 0x7caee8
+007caeeb  33c0              xor eax, eax          ; ★无命中返回 0
+007caeed  5f/5e/5b          pop edi/esi/ebx
+007caef0  c3                ret
+
+★语义：**CRT 双层命名键查找器（推断名——两层 key 映
+射表查找）**——cdecl 5 参（param1=元素索引、param2=容
+器对象、param3=内层键、param4=期望值、param5=外层键）：
+  ① [obj+0x10] 外层数组（[+8] 元素数 / [+0xc] 指针表）
+     按 param5 字符串键遍历匹配（指针相等快速命中 /
+     strcmp 0x7CDA90 慢路径）；
+  ② 外层项 [esi+4] 内层数组按 param3 字符串键二次匹
+     配；
+  ③ 双命中后调 0x7CAEF1（二维数组 getter：基址[obj] +
+     行指针表[obj+8] 索引 + 列索引，5 callers）取元素与
+     param4 比较；
+  ④ 命中返回项指针 / 无命中 0（重扫第二遍外层兜底）。
+
+★E8 被调者：0x7CDA90（batch 192 CRT strcmp 对齐优化版
+  ——两处调用 0x7CADEF/0x7CAE24）+ 0x7CAEF1（紧邻二维
+  getter，5 callers：0x7CAB89/0x7CAD36/0x7CAE36/
+  0x7CAE50/0x7CAE61）。
+
+★原版怪癖（照抄）：
+  ① 指针相等快速命中 + strcmp 慢路径双轨（字符串实习
+     化优化）；
+  ② 键比较加 8 偏移（[项] 名字符串指针 +8 才是串首——
+     条目前 8 字节是元数据）；
+  ③ 双循环独立计数（[ebp-4] 外层 / [ebp-0xc] 内层）；
+  ④ 命中项经 [ebp-0x10] 跨段保存（内层循环不丢外层命
+     中态）；
+  ⑤ 无命中后重扫第二遍外层（兜底重试——疑似冗余但照
+     抄）；
+  ⑥ 返回 0 表示无命中（无 errno/哨兵）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 映射表查找
+属商业库层，不写 C++ 模型；头/尾 + strcmp 交叉）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CADB9 = MSVC6 CRT 双层命名键查找器——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；strcmp 0x7CDA90（batch 192 已登记
+   CRT 字符串比较族）+ 键值数组遍历为 CRT 映射表标准形
+   态。
+2. 依赖：0x7CDA90（batch 192 strcmp）+ 0x7CAEF1（紧邻
+   getter）——重写 gamemd 时用等价运行时（std::map/
+   unordered_map 语义）代替。
+3. gamemd_replication_discipline：CRT 映射表设施，重写时
+   用等价运行时代替，逐字节复刻无意义——按商业库纪律
+   归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（头/尾 + strcmp 交叉；函数
+名「双层命名键查找器」为推断交叉标注——双数组遍历/键
+匹配由代码实测）。
+
+四、跨批次闭合
+------------
+★batch 192：0x7CDA90 CRT strcmp 对齐优化版——本批两处
+  调用（0x7CADEF/0x7CAE24）实锤（键匹配慢路径）。
+★batch 1059/1080：流字符读取器——同 CRT 字符串/表查找
+  域对照。
+★batch 1097/1098：0x7D5C12/0x7CC4A4 字符串解析/多字节
+  转换——同 CRT 字符处理域。
+
+五、状态
+-------
+crt_runtime_verified（0x7CADB9：CRT 双层命名键查找器归
+档；头/尾 + strcmp 交叉；不写 C++ 模型不做 golden——CRT
+映射表商业库层；函数名「双层命名键查找器」为推断交叉
+标注——双数组遍历/键匹配由代码实测）。TSV 新增
+0x007CADB9 行。
+
+★本批实锤：外层/内层双层字符串键匹配（strcmp 0x7CDA90
+两处调用）+ 0x7CAEF1 二维寻址 getter 取元素比较——CRT
+映射表查找标准形态。
+相邻待续：batch 1108 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CF51C(304B)/0x7CDD5A(283B, callers=3)/
+0x7D7EE0(279B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1106 已完（Westwood 调色板块装载器 LINH/
+LIND 组，commit 9ed3d59）。
