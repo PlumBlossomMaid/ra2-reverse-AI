@@ -1,0 +1,127 @@
+frontier batch 1169 —— MSVC6 CRT 堆块分配入口 0x7C946E（归档，_nh_malloc 驱动）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7C946E（78B,
+uc=1, callers=1 探针实测 0x7C944D）。TSV 无既有行。
+TARGET = 0x007C946E。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007C946E 行。
+
+一、链语义（disasm 全 78B + 三依赖交叉 + 兜底路径取证，
+0x7C946E-0x7C94BB）
+--------------------------------------------------------------
+签名（推断）：cdecl 1 参（[esp+8]=请求字节数），返回堆块
+指针（经 0x7CFB13 内核或 [0x7E1278] 兜底）/ 0。
+
+主体（0x7C946E-0x7C94BB）：
+007c946e  push esi/mov esi,[esp+8]            ; esi = 请求大小
+007c9473  cmp esi,[0x87c584]                  ; ★★阈值检查 [0x87C584]
+                                              ;   （分配大小闸）
+007c9479  push edi
+007c947a  ja 0x7c949d                        ; ★超阈值 → 兜底路径
+; → 内核路径（0x7C947C，锁 9 内调 0x7CFB13）：
+007c947c  push 9/call 0x7cd9f5               ; ★★TSV:238 锁 Enter（key=9
+                                              ;   堆锁）
+007c9483  push esi
+007c9484  call 0x7cfb13                      ; ★★TSV:123 堆块分配/分裂
+                                              ;   器内核（batch 021——
+                                              ;   size-class 位图+空闲链
+                                              ;   表+边界标签+段增长）
+007c9489  push 9/mov edi,eax
+007c948d  call 0x7cda56                      ; ★★TSV:239 锁 Leave
+007c9492  add esp,0xc
+007c9495  test edi,edi/je 0x7c949d           ; ★内核失败 → 兜底
+007c9499  mov eax,edi/jmp 0x7c94b9           ; 成功 → 返 edi
+; → 兜底路径（0x7C949D，超阈值/内核失败）：
+007c949d  test esi,esi/jne 0x7c94a4
+007c94a1  push 1/pop esi                     ; ★大小 0 → 1（最小）
+007c94a4  add esi,0xf/and esi,0xfffffff0     ; ★★16 字节对齐（(n+15)&~15）
+007c94aa  push esi/push 0
+007c94ab  push [0xb78b9c]                    ; ★★堆句柄全局 [0xB78B9C]
+007c94b3  call dword[0x7e1278]               ; ★★IAT 槽调用（大块 OS 级
+                                              ;   分配——batch 1116 仅作
+                                              ;   调用点登记）
+007c94b9  pop edi/pop esi/ret
+
+★语义：**MSVC6 CRT 堆块分配入口（推断名——_nh_malloc/
+nh_malloc 驱动）**——cdecl 1 参：
+  ① 阈值 [0x87C584] 检查：超阈值 → 直接兜底（大块路径）；
+  ② 未超 → 锁 9（堆锁）内调 0x7CFB13（batch 021 CRT 小
+     堆分配/分裂器内核）；
+  ③ 内核失败 → 兜底：尺寸 (n+15)&~15 16 字节对齐 + 
+     [0xB78B9C] 堆句柄 + [0x7E1278] IAT 调 OS 级大块分配；
+  ④ 返回块指针 / 0。
+  = MSVC6 CRT 小堆/大堆双路分配驱动（小堆走 0x7CFB13 内
+  核、大堆走 OS 兜底），三依赖全已登记。
+
+★调用点（探针 E8 实测 1 处 0x7C944D）：宿主 0x7C9430 起
+  CRT 内部 malloc 入口区（batch 020/063 已登记 0x7C9430
+  malloc——0x7C944D 为其后邻分配分支），同一分配链。
+
+★E8 被调者：0x7CD9F5（★★TSV:238 锁 Enter——key=9 堆锁）
+  + 0x7CFB13（★★TSV:123 堆块分配/分裂器内核 ✓已登记
+  semantics_verified_partial + REIMPL partial——3 callers
+  0x7C9484/0x7D0FB6/0x7D33AB）+ 0x7CDA56（★★TSV:239 锁
+  Leave）——**三个依赖全部已登记**。
+
+★原版怪癖（照抄）：
+  ① 阈值 [0x87C584] 只测 `ja`（无符号大于）——等于阈值时
+     走内核路径（不含等号）；
+  ② 锁 9（堆锁）与 batch 1148 _filelength 的 0x0D（流锁）
+     区分——堆操作专用锁编号；
+  ③ 内核失败与超阈值**共用**兜底路径（je 0x7c949d 与
+     ja 0x7c949d 同落点）——两级失败合并；
+  ④ 兜底 16 字节对齐 (n+15)&~15（add esi,0xf + and
+     esi,0xfffffff0）——OS 级分配最小粒度；
+  ⑤ 大小 0 → 1（push 1/pop esi）——0 请求按 1 字节处理；
+  ⑥ [0x7E1278] IAT 槽 + [0xB78B9C] 堆句柄——OS 级调用
+     （batch 1116 后仅作调用点登记不作语义证据）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 堆设施按
+商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7C946E = MSVC6 静态 CRT 堆块分配入口——0x7C-0x7D
+   = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）；阈值 + 锁 9 + 内核/兜底双路 = CRT 堆分配
+   标准驱动形态（batch 020/063 malloc 链同簇）。
+2. 依赖：3 个已登记函数（0x7CD9F5/0x7CDA56 TSV:238/239
+   锁对、0x7CFB13 TSV:123 堆块内核）——重写 gamemd 时用
+   等价 C 库 malloc/_nh_malloc 语义代替。
+3. gamemd_replication_discipline：MSVC6 CRT 堆设施，重写
+   时用等价运行时代替，逐字节复刻无意义——按商业库纪律
+   归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 78B + 三依赖交叉 + 兜底路
+径取证；函数名「堆块分配入口」由阈值 + 锁 9 + 内核/兜底
+双路交叉标注）。
+
+四、跨批次闭合
+------------
+★TSV:123：0x7CFB13 堆块分配/分裂器内核——本批锁 9 内调
+  用现场（0x7C9484）交叉（3 callers 之一，_nh_malloc 专
+  用）。
+★TSV:238/239：0x7CD9F5/0x7CDA56 锁对——本批 key=9 堆锁
+  Enter/Leave 现场交叉。
+★batch 020/063：0x7C9430 CRT 内部 malloc——本批为其后邻
+  分配分支（0x7C944D 调用点同分配链）。
+★[0x7E1278]/[0xB78B9C]：OS 级大块路径——batch 1116 槽方
+  法论落地（仅调用点登记）。
+
+五、状态
+-------
+crt_runtime_verified（0x7C946E：MSVC6 CRT 堆块分配入口归档；
+全 78B + 三依赖交叉；不写 C++ 模型不做 golden——CRT 堆库
+商业库层；函数名由阈值 + 锁 9 + 内核/兜底双路交叉标注）。
+TSV 新增 0x007C946E 行。
+
+★本批实锤：_nh_malloc 驱动——[0x87C584] 阈值分流：内核
+  路径（锁 9 + 0x7CFB13 SBC 位图分配）+ 兜底路径（16 对
+  齐 + OS 级大块），三依赖全已登记。
+相邻待续：batch 1170 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7D362F(74B)/0x7CCFB3(73B，batch 1153
+新候选)/0x7C04E0(71B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1168 已完（MSVC6 CRT 格式化缓冲写入器
+0x7CB7BA，commit 0edadf1）。
