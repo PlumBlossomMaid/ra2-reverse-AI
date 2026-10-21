@@ -108,6 +108,44 @@ double DeadCodeDistanceJitterF(Randomizer& rng, std::int16_t ax, std::int16_t ay
   return ChopJitterChainF(u, s32, arg3);
 }
 
+// 0x5A5AE0（107B，cdecl 2 栈参 ret 8——两个 int16 坐标对指针，x87 返回
+// double——切比雪夫距离 + 随机抖动）：
+//   [esp+0xC]=p1 [esp+0x10]=p2（各 {int16 x; int16 y}，movsx word 有符号读）
+//   dx = p1.x-p2.x ; dy = p1.y-p2.y
+//   adx = |dx| ; ady = |dy|（cdq/xor/sub 无分支绝对值）
+//   base = max(adx, ady)                // 切比雪夫距离（非欧氏）
+//   u   = (double)(uint64)Random()      // fild qword：高 32 位显式写 0 = 无符号读
+//   j   = u * 3.0 * kInvUintMax        // [0x7ED818]=3.0、[0x7ED898]=kInvUintMax
+//   返回 j + base                       // fild dword 有符号 base + faddp st(1)
+// RC=chop 链（x87 全局向零截断——MXCSR toward-zero 复刻，同 ChopJitterChain）。
+// 与 0x5A2ED0 族同模板，距离度量换切比雪夫、抖动系数 3.0（彼 5.0）。
+double DeadCodeChebyshevJitter(Randomizer& rng, std::int16_t ax, std::int16_t ay,
+                               std::int16_t bx, std::int16_t by) {
+  const std::int32_t dx = static_cast<std::int32_t>(ax) - static_cast<std::int32_t>(bx);
+  const std::int32_t dy = static_cast<std::int32_t>(ay) - static_cast<std::int32_t>(by);
+  // 坐标差 ∈ [-65535, 65535]（int16 差），绝对值不会碰到 INT32_MIN，
+  // 用三目即可（原版 cdq/xor/sub 无分支惯用法在此区间内等价）。
+  const std::int32_t adx = dx < 0 ? -dx : dx;
+  const std::int32_t ady = dy < 0 ? -dy : dy;
+  const double base = static_cast<double>(adx > ady ? adx : ady);
+
+#if defined(_M_X64) || defined(__x86_64__)
+  const unsigned csr = _mm_getcsr();
+  _mm_setcsr((csr & ~_MM_ROUND_MASK) | _MM_ROUND_TOWARD_ZERO);
+#endif
+
+  const double u = static_cast<double>(static_cast<std::uint64_t>(rng.Random()));
+  volatile double t = u * 3.0;              // [0x7ED818]
+  volatile double t2 = t * kInvUintMax;     // [0x7ED898]
+  volatile double res = t2 + base;
+
+#if defined(_M_X64) || defined(__x86_64__)
+  _mm_setcsr(csr);
+#endif
+
+  return res;
+}
+
 // 0x5A1190（210B，cdecl 3 栈参 ret 0x10——p1/p2 坐标指针 + arg double 8B，
 // x87 返回 double——atan2 象限归一化 + 角度抖动）：
 //   [esp+4]=p1 [esp+8]=p2 [esp+0xC]=arg（double 8B）

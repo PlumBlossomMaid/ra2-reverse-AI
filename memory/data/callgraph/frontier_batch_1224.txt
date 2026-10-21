@@ -1,0 +1,86 @@
+frontier batch 1224 —— 0x005A5AE0 死代码复刻：切比雪夫距离 + 随机抖动（107B）
+=======================================================================
+
+候选来源：用户指令三阶段①「RMG 死代码全部复现对齐」——batch 927-936 已
+复刻 13 个，剩余 15 个仅 semantics_verified 无 REIMPL。0x5A5AE0 是最简
+（107B 纯浮点链，无 GetCellAt/谓词依赖），作为补复刻批第一件。
+TARGET = 0x005A5AE0。C++ 模型：code/rewrite/rmg/dead_code_jitter.{h,cpp}
+新增 DeadCodeChebyshevJitter（并入 0x5A2ED0 族家族文件——同模板
+base+Random()*k*inv，距离度量换切比雪夫、系数 3.0 vs 5.0）。
+单测：test_dead_code_jitter.cpp 新增 DeadCodeChebyshevJitter.Golden
+（golden 40 行全 BitEq 对拍）。TSV 新增 0x005A5AE0_REIMPL 行。
+
+一、语义（全段反汇编逐条核对 + golden 40 行闭环）
+------------------------------------------------
+真义（机器码全 107B 确认，disasm.py 0x5A5AE0 0x80）：
+  · 调用约定：cdecl 2 栈参 ret 8，x87 返回 double：
+    - [esp+0xC] = p1 坐标对指针（{int16 x; int16 y}）
+    - [esp+0x10] = p2 坐标对指针（同上）
+  · 坐标差（movsx word 有符号读 int16）：
+      dx = p1.x - p2.x ; dy = p1.y - p2.y
+      （0x5A5AEC-0x5A5AFC：movsx esi,[eax] / movsx edx,[ecx] /
+       movsx eax,[eax+2] / movsx ecx,[ecx+2] / sub eax,ecx(dy) /
+       sub esi,edx(dx)）
+  · 无分支绝对值（cdq/xor/sub 惯用法，0x5A5AFE-0x5A5B0B）：
+      adx = |dx| ; ady = |dy|（三份 cdq/xor/sub 对,中间 pop esi 恢复）
+  · 切比雪夫距离（0x5A5B0D-0x5A5B17）：
+      cmp eax,ecx（|dx| vs |dy|）→ jg 跳过 → [esp+0xC] = max 值
+      （eax 先存 |dx|，若 |dx|<=|dy| 则覆盖为 |dy|——max 语义）
+  · 随机抖动（0x5A5B19-0x5A5B43）：
+      mov ecx,0xABE890（全局 Randomizer @0xABE890，batch 002 实锤）
+      call 0x65C780（Randomizer::Random，__thiscall ret 0）
+      mov [esp],eax / mov [esp+4],0 → fild qword（uint32 无符号扩展）
+      fmul [0x7ED818]（=3.0，.rdata 字节实读 4008000000000000）
+      fmul [0x7ED898]（=kInvUintMax 2.3283064370807974e-10，
+        3df0000000100000——与 scaled_random.h:41 常量逐位一致）
+      fild dword [esp+0xC]（max 有符号 int32 读入）
+      faddp st(1)（j + base，x87 返回 ST0）
+  · 全程 x87 FPCW=0x0E7F（RC=chop + PC53——WinMain 0x6BBFB7 实锤），
+    复刻用 MXCSR toward-zero 临时切换（同 ChopJitterChain 修法）。
+
+公式（golden 40 行实证，BitEq 逐位一致）：
+  base = max(|p1.x-p2.x|, |p1.y-p2.y|)          // 切比雪夫
+  u    = (double)(uint64)Random()
+  j    = u * 3.0 * kInvUintMax                  // 两次 fmul + faddp，RC=chop 链
+  返回 j + base
+
+二、golden 采集（emu_oracle 指令级模拟）
+--------------------------------------
+探针 .qwen/tmp/_emu_deadcode_5ae0.py（复用 _emu_deadcode_jitter.py 的
+call_cdecl_st0 模式：STUB_ADDR=0x1F000800 独立 stub、FSTP_MEM=0x30003000
+HEAP 内、FSTP_RET=0x1F000100 停点；seed_global 播种 0xABE890）。
+存档 memory/data/rmg/deadcode_5ae0_golden.txt：5 种子 × 8 坐标对 = 40 行。
+坐标对覆盖：常规 (10,20)-(30,40) / 同点 (0,0)-(0,0) / 全负 (-50,-60)-
+(70,80) / int16 极值 (-30000,30000)-(30000,-30000) / |dy|>|dx| 分支
+(1,1)-(1,129) / |dx|>|dy| 分支 (129,1)-(1,1) / 双极值 (30000,30000)-
+(-30000,-30000)。
+★sanity 自洽验证：同点 (0,0)-(0,0) 距离 0 → 结果 = 纯抖动
+0.8586925775415013 ∈ [0,3)（seed=0 首随机数 ×3.0/(2^32-1) 手算吻合——
+0x5A2ED0 golden 同点 1.4311542959025023 = 同随机数 ×5.0 系数换算一致，
+跨批次交叉证实取数与抖动系数）。
+
+三、原版怪癖（照抄）
+--------------------
+① fild qword 无符号扩展（高 32 位显式写 0，non movzx——r 无符号读）；
+② fild dword 有符号读 base（max 非负，符号无关但照抄形态）；
+③ 双常量连乘抖动（u*3.0*kInvUintMax 两次 fmul——非预折叠单乘）；
+④ RC=chop 全链（乘法+加法各一次向零截断，C++ 需 MXCSR toward-zero）；
+⑤ 切比雪夫距离（max(|dx|,|dy|)，非欧氏 sqrt——与 0x5A2ED0 族区别要点）；
+⑥ 无分支绝对值（cdq/xor/sub，中间 pop esi 穿插——坐标差不溢出 int32，
+三目等价）。
+
+四、跨批次连接
+--------------
+0x5A2ED0/0x4AE0/0x4FA0 族（batch 924——同家族模板，系数 5.0 vs 3.0、
+欧氏 sqrt vs 切比雪夫）；0x5A6BA0 邻域扫描器（batch 319 登记配套——
+「先取偏移再用扫描器验证落点」）；[0x7ED898] kInvUintMax（scaled_random.h
+batch 002 同常量）；Randomizer 0x65C780（batch 002）；FPCW 0x0E7F
+（batch 001 fpu-and-random-idioms）。
+
+五、状态
+--------
+0x5A5AE0：cpp_reimplementation_verified + unit_test_verified（BitEq 40/40）。
+partial：函数精确名（「切比雪夫距离+随机抖动」推断——死代码无运行观测、
+无带名 YRpp 对应）、调用方传参契约（死代码零引用）、0x5A6BA0 互相配套
+关系为读法推断（batch 319 标注）。
+本批产品代码仅 dead_code_jitter.{h,cpp} 增量 + 测试；ctest 84/84 全绿。

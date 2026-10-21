@@ -47,6 +47,21 @@ double DeadCodeDistanceJitter(Randomizer& rng, std::int16_t ax, std::int16_t ay,
 double DeadCodeDistanceJitterF(Randomizer& rng, std::int16_t ax, std::int16_t ay,
                                std::int16_t bx, std::int16_t by, std::int32_t arg3);
 
+// 0x5A5AE0：切比雪夫距离 + 随机抖动（cdecl 2 栈参 ret 8——两个 int16 坐标对
+// 指针，x87 返回 double，107B）。同族模板（base + Random()*k*inv）但距离度量
+// 为切比雪夫 max(|dx|,|dy|)（非欧氏 sqrt），抖动系数 3.0（[0x7ED818]，0x5A2ED0
+// 族是 5.0）。
+//   dx = p1.x-p2.x ; dy = p1.y-p2.y（movsx word 有符号读 int16）
+//   adx = |dx| ; ady = |dy|（cdq/xor/sub 无分支绝对值——坐标差不溢出 int32）
+//   base = max(adx, ady)
+//   u   = (double)(uint64)Random()（fild qword 无符号扩展）
+//   j   = u * 3.0 * kInvUintMax（[0x7ED898]=kInvUintMax；RC=chop 链）
+//   返回 base + j（fild dword 有符号 base + faddp）
+// 取证：memory/data/rmg/deadcode_5ae0_golden.txt（emu_oracle 指令级模拟，
+// 5 种子 × 8 坐标对，40 行全对拍）。
+double DeadCodeChebyshevJitter(Randomizer& rng, std::int16_t ax, std::int16_t ay,
+                               std::int16_t bx, std::int16_t by);
+
 // 0x5A1190：atan2 象限归一化 + 角度抖动（cdecl 3 栈参 ret 0x10——p1/p2 坐标
 // 指针 + arg double 8B，x87 返回 double）。TSV:1028 已 semantics 登记。
 // 真义（黄金实证 + 机器码逐段确认）：

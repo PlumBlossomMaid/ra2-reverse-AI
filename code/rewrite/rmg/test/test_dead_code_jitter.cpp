@@ -190,6 +190,55 @@ TEST(DeadCodeAngleJitter, Golden) {
   }
 }
 
+struct CaseC {
+  std::uint32_t seed;
+  std::int16_t ax, ay, bx, by;
+  double want;
+};
+
+// 0x5A5AE0 golden：seed=%u p1=(a,b) p2=(c,d) => %.17g
+std::vector<CaseC> LoadGoldenC() {
+  const std::string path = RA2_GOLDEN_DIR "/deadcode_5ae0_golden.txt";
+  std::ifstream f(path);
+  EXPECT_TRUE(f.good()) << "cannot open golden: " << path;
+  std::vector<CaseC> cases;
+  std::string line;
+  while (std::getline(f, line)) {
+    if (line.empty() || line[0] == '#') continue;
+    CaseC c;
+    std::uint32_t s;
+    long ax, ay, bx, by;
+    double v;
+    if (std::sscanf(line.c_str(), "seed=%u p1=(%ld,%ld) p2=(%ld,%ld) => %lf",
+                    &s, &ax, &ay, &bx, &by, &v) != 6) {
+      ADD_FAILURE() << "unparseable golden line: " << line;
+      continue;
+    }
+    c.seed = s;
+    c.ax = static_cast<std::int16_t>(ax);
+    c.ay = static_cast<std::int16_t>(ay);
+    c.bx = static_cast<std::int16_t>(bx);
+    c.by = static_cast<std::int16_t>(by);
+    c.want = v;
+    cases.push_back(c);
+  }
+  return cases;
+}
+
+// 0x5A5AE0（切比雪夫距离 + 随机抖动）：base = max(|dx|,|dy|)，
+// 返回 (double)(uint64)Random() * 3.0 * kInvUintMax + base（RC=chop 链）
+TEST(DeadCodeChebyshevJitter, Golden) {
+  const auto cases = LoadGoldenC();
+  ASSERT_FALSE(cases.empty());
+  for (const auto& c : cases) {
+    Randomizer rng(c.seed);
+    const double got = DeadCodeChebyshevJitter(rng, c.ax, c.ay, c.bx, c.by);
+    EXPECT_TRUE(BitEq(got, c.want))
+        << "seed=" << c.seed << " p1=(" << c.ax << "," << c.ay << ") p2=("
+        << c.bx << "," << c.by << ")";
+  }
+}
+
 }  // namespace
 }  // namespace rmg
 }  // namespace ra2
