@@ -1,0 +1,132 @@
+frontier batch 1162 —— MSVC6 CRT 双层命名键查找器第三件 0x7CAC66（归档，三件套最短变体）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CAC66（90B,
+uc=1, callers=1 探针实测 0x7CAB59，分派宿主三向分支）。
+TSV 无既有行。TARGET = 0x007CAC66。C++ 模型：无（见「三态
+判定」）。TSV：新增 0x007CAC66 行。
+
+一、链语义（disasm 全 90B + 依赖交叉 + 分派宿主三向核对，
+0x7CAC66-0x7CACBF）
+--------------------------------------------------------------
+签名（推断）：cdecl 5 参（param1=元素索引 param2=容器对象
+param3=param4=未用 param5=外层键 [ebp+0x18]），返回命中项
+指针 / 0（无命中）。
+
+主体（0x7CAC66-0x7CACBF）：
+007cac66  push ebp/mov ebp,esp/push ecx/and dword[ebp-4],0
+007cac6e  push ebx/mov ebx,[ebp+0xc]          ; ebx = param2 容器对象
+007cac72  push esi/push edi
+007cac74  mov eax,[ebx+0x10]                  ; ★★[obj+0x10] 外层数组
+007cac77  cmp dword[eax+8],0                  ; [数组+8] 元素数
+007cac7b  mov esi,[eax+0xc]                   ; [数组+0xC] 指针表
+007cac7e  jbe 0x7cacb5                        ; ★空 → 返 0
+; → 外层循环（0x7CAC80）：
+007cac80  mov edi,[esi]                       ; edi = 外层项
+007cac82  mov ecx,[ebp+0x18]                  ; ecx = param5 外层键
+007cac85  mov eax,[edi]                       ; [项] 名字符串
+007cac87  cmp eax,ecx/je 0x7cac9e             ; ★指针相等快速命中
+007cac8b  add ecx,8/add eax,8                 ; ★键比较加 8 偏移
+                                              ;   （条目前 8B 元数据）
+007cac93  call 0x7cda90                       ; ★★TSV:632 CRT strcmp
+                                              ;   对齐优化版（batch
+                                              ;   192——dword 分块）
+007cac98  pop ecx/test eax,eax/pop ecx
+007cac9c  jne 0x7caca4                        ; 不等 → 下一项
+; → 命中（0x7CAC9E）：
+007cac9e  test byte[edi+0x14],1               ; ★★[项+0x14]&1 门控
+007caca2  je 0x7cacbc                         ; 标志 0 → 返回该项
+007caca4  inc dword[ebp-4]                    ; 计数++
+007caca7  mov eax,[ebx+0x10]
+007cacaa  mov ecx,[ebp-4]/add esi,4
+007cacb0  cmp ecx,[eax+8]/jb 0x7cac80         ; 外层循环
+007cacb5  xor eax,eax/pop edi/esi/ebx/leave/ret ; ★无命中返 0
+007cacbc  mov eax,edi/jmp 0x7cacb7            ; ★返回命中项指针
+
+★语义：**MSVC6 CRT 双层命名键查找器第三件（推断名——batch
+1107/1118 同模板最短变体）**——cdecl 5 参：
+  ① [obj+0x10] 外层数组按 param5 字符串键遍历匹配（[edi]
+     指针相等快速命中 / strcmp 0x7CDA90 慢路径加 8 跳前
+     缀）；
+  ② 命中项 [edi+0x14]&1 == 0 才返回该项指针（本件独有
+     &1 门控——单层外层查找，无内层二次匹配，90B 最短）；
+  ③ 无命中返回 0（无 errno/哨兵）。
+  = 双层命名键查找器三件套（0x7CADB9 312B / 0x7CACC0
+  249B / 0x7CAC66 90B）中的首个分派变体（单层版）。
+
+★调用点（探针 E8 实测 1 处 0x7CAB59）：宿主 0x7CAB40-0x7CAB7D
+  分派器（三向分支：`mov ecx,[obj+0x10]; mov ecx,[ecx+4];
+  test cl,1/jne → test cl,2 → 分别调 0x7CAC66 / 0x7CACC0 /
+  0x7CADB9`——三件套按容器标志位分派，0x7CAC66 为 cl&1==
+  0 且 cl&2==0 组合的默认/首件）。
+
+★E8 被调者：0x7CDA90（★★TSV:632 CRT strcmp 对齐优化版
+  ✓已登记——batch 192，dword 分块无 locale 快路径）——
+  **唯一函数依赖，已登记**。
+
+★原版怪癖（照抄）：
+  ① 三件套最短版：无内层查找无 [esi+4] 数组访问——与
+     0x7CADB9/0x7CACC0 的「外层+内层双 strcmp」不同，本
+     件仅外层单遍历；
+  ② [项+0x14]&1 门控（0x7CAC9E）vs 孪生 0x7CACC0 的
+     &3 门控（0x7CAD97）——位掩码不同（1 vs 3），三件
+     套各有差异；
+  ③ 键比较加 8 偏移（[项] 名字符串指针 +8 才是串首——
+     条目前 8B 元数据）与两孪生一致（模板共性）；
+  ④ 指针相等快速命中 + strcmp 慢路径双轨（字符串实习
+     化优化）与两孪生一致；
+  ⑤ push ecx 局部槽 [ebp-4] 作外层计数（and 清 0 初始
+     化）——最小栈帧无 [ebp-0xC] 内层计数（本件无内层）；
+  ⑥ 返回 0/项指针双出口：xor eax,eax 独立路径 + mov
+     eax,edi 跳转合并，带 ebx 恢复（三件套收尾一致）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 命名键查
+找设施按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CAC66 = MSVC6 静态 CRT 双层命名键查找器第三
+   件——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_
+   layout_crt_provenance）；strcmp 0x7CDA90（batch 192 已
+   登记 CRT 字符串比较族）+ 键值数组遍历 = CRT 映射表标
+   准形态（batch 1107/1118 同模板复制粘贴族）。
+2. 依赖：0x7CDA90 已登记（batch 192 strcmp）——重写
+   gamemd 时用等价运行时（std::map/unordered_map 语义）
+   代替。
+3. gamemd_replication_discipline：MSVC6 CRT 映射表设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 90B + 依赖交叉 + 分派宿主
+三向核对；函数名由单层外层查找 + [项+0x14]&1 门控 + 三件
+套模板交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1107：0x7CADB9 双层命名键查找器（312B 全量版）—
+  —本件同模板第三件，三向分派宿主共管（test cl 标志）。
+★batch 1118：0x7CACC0 孪生（249B）——与本件同为分派变
+  体，本件 90B 最短（无内层）。
+★batch 192：0x7CDA90 strcmp 对齐优化版——本件慢路径调
+  用现场交叉（三件套同一基础依赖）。
+★0x7CAB40 分派宿主：三件套共用分派器（test cl,1/2 三向
+  → 0x7CAC66/0x7CACC0/0x7CADB9）——三件套全程闭环。
+
+五、状态
+-------
+crt_runtime_verified（0x7CAC66：MSVC6 CRT 双层命名键查找
+器第三件归档；全 90B + 依赖交叉；不写 C++ 模型不做 golden
+——CRT 映射表商业库层；函数名由单层外层查找 + [项+0x14]&1
+门控 + 三件套模板交叉标注）。TSV 新增 0x007CAC66 行。
+
+★本批实锤：三件套闭环——双层命名键查找器第三件（90B 最
+  短单层版），分派宿主 0x7CAB40 三向分支（test cl,1/2）共
+  管 0x7CA C66/0x7CACC0/0x7CADB9，唯一依赖 strcmp
+  0x7CDA90 已登记。
+相邻待续：batch 1163 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7DAB54(88B)/0x7DBC9A(86B, callers=5)/
+0x7D453C 已登记排除）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1161 已完（MSVC6 CRT MBCS 字符分类映射器
+0x7D453C，commit 664d875）。
