@@ -1,0 +1,134 @@
+frontier batch 1154 —— MSVC6 CRT 宽字符串流输出器 0x7CB12E（归档，_putws 族）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CB12E（110B,
+uc=1, callers=6 探针实测 0x52FB58/0x52FB81/0x52FBA0/
+0x52FBBF/0x52FBDE/0x52FBFD，gameside 主代码区）。TSV 无既
+有行。TARGET = 0x007CB12E。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CB12E 行。
+
+一、链语义（disasm 全 110B + 五依赖登记交叉 + 六调用点宿主，
+0x7CB12E-0x7CB19B）
+--------------------------------------------------------------
+签名（推断）：cdecl 1 参（[ebp+8]=宽字符串指针），输出到
+[0x87BF70] 流对象（编号 1 锁）。
+
+主体（0x7CB12E-0x7CB19B）：
+007cb12e  push ebp/mov ebp,esp/push ecx/push ebx/push esi
+007cb134  mov esi,0x87bf70                    ; ★★[0x87BF70] 流对象全局
+007cb13a  push esi/push 1/call 0x7cb428       ; ★★batch 999 流锁 Enter
+                                              ;   （编号分岔变体，编号 1）
+007cb147  push esi/call 0x7d2b7f              ; ★★batch 046 printf 前置
+                                              ;   缓冲初始化（stdout/
+                                              ;   stderr 共享 4K 缓冲表）
+007cb14d  mov edi,[ebp+8]                     ; edi = 宽字符串指针
+007cb150  add esp,0xc
+007cb153  mov [ebp-4],eax                     ; ★存前置初始化返回值
+; → 逐字符循环（0x7CB156）：
+007cb156  mov ax,word[edi]                    ; 宽字符
+007cb159  test ax,ax/je 0x7cb170              ; ★NUL 终止 → 写换行收尾
+007cb15e  inc edi/push esi/push eax/inc edi
+007cb162  call 0x7d2fc8                       ; ★★batch 052 宽字符流写
+                                              ;   （宽引擎底层写原语）
+007cb167  pop ecx/cmp ax,0xffff/pop ecx
+007cb16c  je 0x7cb181                         ; ★WEOF 错误 → 直接收尾
+007cb16e  jmp 0x7cb156                        ; 循环
+; → 换行收尾（0x7CB170，NUL 终止后）：
+007cb170  push esi/push 0xa/call 0x7d2fc8     ; ★写换行 0xa
+007cb178  pop ecx/cmp ax,0xffff/pop ecx
+007cb17d  je 0x7cb181/xor ebx,ebx             ; ★成功 ebx=0
+; → 公共收尾（0x7CB181）：
+007cb181  push esi/push [ebp-4]/call 0x7d2c0c ; ★★batch 046 printf 后置
+                                              ;   flush（带缓冲流写完即
+                                              ;   刷）
+007cb18a  push esi/push 1/call 0x7cb47a       ; ★★batch 1000 流锁 Leave
+                                              ;   （编号 1）
+007cb192  add esp,0x10/mov eax,ebx/pop edi/
+          pop esi/ebx/leave/ret
+
+★语义：**MSVC6 CRT 宽字符串流输出器（推断名——_putws 族）
+**——cdecl 1 参：
+  ① 编号 1 流锁临界区 + printf 前置缓冲初始化（0x7D2B7F）；
+  ② 逐宽字符（16 位）经 0x7D2FC8 宽字符流写输出，NUL 终
+     止 → 写换行 0xa；
+  ③ WEOF（0xffff）错误中途退出；成功 ebx=0；
+  ④ printf 后置 flush（0x7D2C0C）+ 流锁 Leave。
+  = MSVC6 `_putws`/`fputws` 宽串输出标准实现，[0x87BF70] 为
+  目标流对象（编号 1 锁）。
+
+★调用点（探针 E8 实测 6 处，gameside 主代码区）：0x52FB58/
+0x52FB81/0x52FBA0/0x52FBBF/0x52FBDE/0x52FBFD——间距 0x1F
+（31）的同构六块（gameside 宽串输出站：push 串指针 → call
+0x7CB12E → 后续），宿主在 0x52FBxx 主代码区（游戏侧日志/
+文本输出包装链）。
+
+★E8 被调者：0x7CB428（★★batch 999 流锁 Enter 编号分岔变
+  体）+ 0x7CB47A（★★batch 1000 流锁 Leave 编号分岔变体）+
+  0x7D2B7F（★★batch 046 printf 前置缓冲初始化）+ 0x7D2C0C
+  （★★batch 046 printf 后置 flush）+ 0x7D2FC8（★★batch
+  052 宽字符流写）——**五个依赖全部已登记**。
+
+★原版怪癖（照抄）：
+  ① 锁编号 1（`push 1`）配合 0x7CB428 编号分岔（<0x14 走
+     内部锁 +0x1C → 0x7CD9F5）——流对象锁默认编号；
+  ② 前置初始化返回值（eax）存 [ebp-4] 后透传给后置
+     flush（0x7D2C0C 接收）——初始化/flush 成对传值；
+  ③ 逐字符循环内 `inc edi` 两次（宽字符 2 字节/次——
+     先 inc 后 inc 围绕两次 push 的压栈布局）；
+  ④ NUL 终止后写换行 0xa 经同一 0x7D2FC8 原语（宽字符换
+     行）；
+  ⑤ WEOF 检查 `cmp ax,0xffff`（0xffff = 宽 EOF 哨兵）——
+     错误即跳公共收尾不写换行；
+  ⑥ 成功 ebx=0 / 失败 ebx 未清（0x7CB16C je 路径 ebx 保持
+     初始值）——返回语义非对称（照抄）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 宽字符 IO
+设施按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CB12E = MSVC6 静态 CRT 宽字符流输出器（_putws
+   族）——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_
+   layout_crt_provenance）；编号锁 + 前置初始化 + 宽字符流
+   写 + 后置 flush 四段 = VC6 CRT 宽串输出标准形态。
+2. 依赖：5 个已登记函数（0x7CB428/0x7CB47A batch 999/1000
+   锁对、0x7D2B7F/0x7D2C0C batch 046 前后置、0x7D2FC8
+   batch 052 宽写原语）——重写 gamemd 时用等价 C 库
+   `putws`/`std::wcout` 语义代替。
+3. gamemd_replication_discipline：MSVC6 CRT 宽字符 IO 设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 110B + 五依赖交叉 + 六调用
+点宿主核实；函数名「宽字符串流输出器」由逐宽字符写 + 换行
+收尾 + 前后置初始化/flush 交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 999/1000：0x7CB428/0x7CB47A 流锁编号分岔变体——本
+  批编号 1 Enter/Leave 调用现场（0x7CB142/0x7CB18D）交叉。
+★batch 046：0x7D2B7F printf 前置缓冲初始化 / 0x7D2C0C
+  printf 后置 flush——本批成对消费（先 init 后 flush）+ 
+  [ebp-4] 返回值透传交叉。
+★batch 052：0x7D2FC8 宽字符流写原语——本批逐字符 + 换行
+  双调用现场交叉（宽引擎底层写全景）。
+★0x52FBxx 调用站：gameside 宽串输出包装链——六同构块全
+  在主代码区（游戏侧文本输出基础设施消费 CRT 宽写）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CB12E：MSVC6 CRT 宽字符串流输出器
+归档；全 110B + 五依赖交叉；不写 C++ 模型不做 golden——CRT
+宽字符 IO 商业库层；函数名「宽字符串流输出器」由逐宽字符
+写 + 换行收尾 + 前后置交叉标注）。TSV 新增 0x007CB12E 行。
+
+★本批实锤：_putws 族宽串输出——编号 1 锁 + 前置缓冲初始
+  化 + 逐宽字符 0x7D2FC8 写 + 换行 + 后置 flush，五依赖全
+  部已登记，六调用点全在 gameside 0x52FBxx 主代码区。
+相邻待续：batch 1155 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CC11E(104B __local_unwind2)/0x7DABAC
+(103B)/0x7CF64C(101B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1153 已完（MSVC6 CRT strftime 十进制字段写入
+器 0x7CCF44，commit c1eb088）。
