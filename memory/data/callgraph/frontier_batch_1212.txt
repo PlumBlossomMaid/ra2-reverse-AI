@@ -1,0 +1,158 @@
+frontier batch 1212 —— MSVC6 CRT LocalFree 析构体 0x7DCE3B（归档，vtable 0x7FA498 三件套族）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DCE3B（38B,
+uc=1, callers=1 探针实测 0x7DCDF5）。TSV 无既有行。
+TARGET = 0x007DCE3B。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007DCE3B 行。
+
+一、链语义（disasm 全 38B + IAT [0x7E1340] 实名实锤 +
+vtable 0x7FA498 三写点交叉 + 标量删除析构宿主，
+0x7DCE3B-0x7DCE60）
+--------------------------------------------------------------
+签名（确认）：thiscall 0 参（ecx=this），无返回值（析构
+副作用）。对象布局：+0 = vtable 0x7FA498、+4 = 句柄/指针
+字段、+8 = 子对象指针（带虚表）、+0xC = LocalFree 指针。
+
+主体（0x7DCE3B-0x7DCE60）：
+007dce3b  push esi
+007dce3c  mov esi, ecx                     ; esi = this
+007dce3e  mov eax, [esi+8]                 ; eax = this->+8
+007dce41  mov dword[esi], 0x7fa498         ; ★★vtable 复位 =
+                                           ;   0x7FA498（探针
+                                           ;   3 写点之一）
+007dce47  test eax, eax
+007dce49  je 0x7dce51                      ; +8 为 NULL → 跳过
+007dce4b  mov ecx, [eax]                   ; ecx = 子对象虚表
+007dce4d  push eax
+007dce4e  call dword[ecx+8]                ; ★调子对象虚表槽 8
+                                           ;   （释放子对象）
+007dce51  mov esi, [esi+0xc]               ; esi = this->+0xC
+007dce54  test esi, esi
+007dce56  je 0x7dce5f                      ; +0xC 为 NULL → 跳过
+007dce58  push esi
+007dce59  call dword[0x7e1340]             ; ★★IAT [0x7E1340] =
+                                           ;   KERNEL32!
+                                           ;   LocalFree（导入
+                                           ;   表反查实锤）
+007dce5f  pop esi
+007dce60  ret
+
+★语义：**MSVC6 CRT LocalFree 析构体（推断名——vtable
+0x7FA498 对象族析构）**——thiscall 0 参析构：
+  ① vtable 复位 0x7FA498（对象 +0 写回）；
+  ② this->+8 子对象非 NULL → 调其虚表槽 8（1 参 thiscall
+     释放子对象）；
+  ③ this->+0xC 非 NULL → LocalFree（IAT [0x7E1340]，释放
+     LocalAlloc 分配的指针）。
+  = CRT/C++ 对象析构的标准形态（写回 vtable + 虚表槽释放
+  子对象 + Win32 LocalFree 释放成员）。
+
+★vtable 0x7FA498 三写点（探针 imm32 命中 0x7DCDD4/
+  0x7DCE29/0x7DCE43——全在 0x7DCE 族内）：
+  ① 0x7DCDD4（构造器 0x7DCDC5 内，ret 0xC = thiscall 3
+     栈参）：and [esi+0xC],0 / mov [esi+4],eax / mov
+     [esi],0x7FA498 / mov [esi+8],eax / cmp byte[esp+0x10],
+     0 / je / mov ecx,[eax] / push eax / call dword[ecx+4]
+     （★构造路径调子对象虚表槽 4）→ mov eax,esi / pop esi
+     / ret 0xC；
+  ② 0x7DCE29（拷贝构造器 0x7DCE0E 内，ret 4 = thiscall 1
+     参）：mov [esi+4],ecx / mov [esi],0x7FA498 / mov
+     [esi+8],eax / test eax,eax / je / mov ecx,[eax] /
+     push eax / call dword[ecx+4]（★拷贝路径同样调虚表槽
+     4）→ pop esi / ret 4；
+  ③ 0x7DCE43（本批析构体——析构路径调**虚表槽 8**）。
+  → 构造/拷贝构造走槽 4、析构走槽 8（attach/detach 语义
+  双槽分派，推断为 AddRef/Release 类引用计数——未确认不
+  臆断）。
+
+★调用点（探针 E8 实测 1 处 0x7DCDF5）：宿主 = 标量删除析
+  构 0x7DCDF2（20B，vtable 0x7FA498 族）：push esi/mov
+  esi,ecx → call 0x7DCE3B（★本批析构体）→ test byte
+  [esp+8],1 / je → push esi / call 0x7C8B3D（★★TSV:2
+  delete/operator delete 转发）→ pop ecx → mov eax,esi /
+  pop esi / ret 4——标准 MSVC scalar-deleting-destructor
+  形态（delete 标志 [esp+8]&1）。
+
+★E8 被调者（2 个，全已登记）：
+  ① 0x7C8B3D（★★TSV:2 cpp_reimplementation_verified——
+     C++ delete/operator delete 转发，batch 001）；
+  ② 0x7CEAAF 区（无——本批不调）。
+  实际本批 E8 = 0（唯一函数调用经虚表槽 + IAT 槽间接）。
+  宿主 0x7DCDF2 的 0x7C8B3D 调用为宿主自身依赖。
+
+★IAT 依赖（1 个，导入表反查实锤）：[0x7E1340] =
+  KERNEL32!LocalFree。
+
+★全局：零（纯 this 操作 + 虚表槽 + IAT）。
+
+★原版怪癖（照抄）：
+  ① 析构调子对象**虚表槽 8**、构造/拷贝构造调**虚表槽 4**
+     ——同对象族双槽分派（attach 槽 4 / detach 槽 8，推断
+     引用计数语义未确认）；
+  ② vtable 复位在子对象释放**之前**（先写 +0 再加锁/释放
+     序列）——与 batch 1207 析构体同款排布；
+  ③ this+8 判空用 test/je、this+0xC 判空用 test/je 双独
+     立分支（两资源各自独立释放，无合并出口）；
+  ④ LocalFree 走 IAT 槽（call dword[0x7E1340]）——与
+     LocalAlloc 配对（本族仅有释放端，分配端未确认）；
+  ⑤ 构造器 0x7DCDC5 ret 0xC（3 栈参）/拷贝构造 0x7DCE0E
+     ret 4（1 栈参）/析构 0x7DCE3B ret（0 参）——同族三
+     函数栈参不对称（编译器按声明排布）；
+  ⑥ vtable 0x7FA498 三写点全在 0x7DCE 族（新对象装配/
+     拷贝装配/析构复位）——同 vtable 被三类路径共享。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 对象生
+命周期设施按商业库纪律归档；TSV:2 delete 有 C++ 真身）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DCE3B = MSVC6 静态 CRT LocalFree 析构体——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）；写回 vtable + 虚表槽释放 + Win32
+   LocalFree = CRT 对象生命周期标准形态（batch 1207 析构
+   体同款 + TSV:2 delete 同链）。
+2. 依赖：IAT [0x7E1340] 实名 LocalFree（实锤）+ 宿主链
+   TSV:2（delete 转发）——重写 gamemd 时用等价运行时
+   （RAII + LocalFree 语义）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 对象生命周期
+   设施，重写时用等价运行时代替，逐字节复刻无意义——按
+   商业库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 38B + IAT 实名 + vtable
+三写点交叉；函数名「LocalFree 析构体」由 vtable 复位 +
+虚表槽 8 + LocalFree 三段交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1207：0x7C8A8E 锁保护析构体——同款析构模板（写
+  vtable → 释放成员 → 收尾）；本批为 LocalFree 变体（无
+  锁、经 IAT 释放）。
+★TSV:2（batch 001）：0x7C8B3D delete 转发——本批标量删
+  除析构宿主 0x7DCDF2 的标志分支调用现场（[esp+8]&1）。
+★IAT 槽纪律（batch 1116/1191/1203 等手段）：[0x7E1340]
+  导入目录反查实名 LocalFree——同手段第四处兑现。
+★vtable 0x7FA498 三件套（未登记候选）：构造器 0x7DCDC5
+  + 拷贝构造 0x7DCE0E + 标量删除析构 0x7DCDF2——同族剩
+  余件按池顺序后续处理。
+
+五、状态
+-------
+crt_runtime_verified（0x7DCE3B：MSVC6 CRT LocalFree 析构
+体归档；全 38B + IAT 实名 + vtable 三写点交叉；不写 C++
+模型不做 golden——CRT 对象生命周期商业库层；函数名由
+vtable 复位 + 虚表槽 8 + LocalFree 三段交叉标注）。TSV
+新增 0x007DCE3B 行。
+
+★本批实锤：vtable 0x7FA498 族析构体——复位 + 子对象虚表
+  槽 8 释放 + LocalFree（IAT [0x7E1340] 实名）；唯一调用
+  点 0x7DCDF5 在标量删除析构 0x7DCDF2 内（TSV:2 标志分
+  支）；构造器 0x7DCDC5/拷贝构造 0x7DCE0E 写同 vtable 但
+  调虚表槽 4（attach 语义，未确认）。
+相邻待续：batch 1213 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7D45BA(37B, callers=2)/0x7DBC05(37B,
+callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1211 已完（MSVC6 CRT strftime 家族受限长度字
+符串写入核心 0x7CCF1D，commit 7434d3d）。
