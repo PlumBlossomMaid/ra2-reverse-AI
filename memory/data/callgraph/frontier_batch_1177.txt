@@ -1,0 +1,124 @@
+frontier batch 1177 —— MSVC6 CRT wcsrchr 宽字符串反向查找器 0x7CA3C5（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CA3C5（64B,
+uc=1, callers=3）。TSV 无既有行。TARGET = 0x007CA3C5。
+C++ 模型：无（见「三态判定」）。TSV：新增 0x007CA3C5 行。
+
+一、链语义（disasm 全 64B + batch 1142 收尾惯用交叉，
+0x7CA3C5-0x7CA404）
+--------------------------------------------------------------
+签名（推断）：cdecl 2 参（[esp+4]=宽字符串指针、[esp+0xC]=
+查询宽字符），返回命中指针 / 0（未命中）。
+
+前向扫描段（0x7CA3C5-0x7CA3DC，找宽终止符）：
+007ca3c5  mov eax,dword[esp+4]                 ; eax = 宽字符串
+007ca3c9  push esi
+007ca3ca  push 2
+007ca3cc  mov edx,eax                          ; ★edx = 串首（保存起点）
+007ca3ce  mov si,word[eax]                     ; si = 当前宽字符
+007ca3d1  pop ecx                              ; ecx = 2（步进量）
+007ca3d2  add eax,ecx                          ; ★★eax += 2（宽字符粒度）
+007ca3d4  test si,si/je 0x7ca3de              ; ★终止符 → 结束扫描
+007ca3d9  mov si,word[eax]                     ; 读下一宽字符
+007ca3dc  jmp 0x7ca3d2                         ; 继续
+; → 反向扫描段（0x7CA3DE，从尾部向前找查询字符）：
+007ca3de  mov si,word[esp+0xc]                 ; si = 查询宽字符（参2）
+007ca3e3  sub eax,ecx                          ; ★eax -= 2（回退到终止
+                                              ;   符前）
+007ca3e5  cmp eax,edx/je 0x7ca3f4             ; ★到达串首 → 出口
+007ca3e9  cmp word[eax],si/je 0x7ca3f4        ; ★★*eax == 查询字符 →
+                                              ;   出口
+007ca3ee  sub eax,ecx                          ; eax -= 2（继续向前）
+007ca3f0  cmp eax,edx
+007ca3f2  jne 0x7ca3e9                         ; 循环
+; → 无分支条件出口（0x7CA3F4）：
+007ca3f4  mov cx,word[eax]                     ; cx = 当前位置字符
+007ca3f7  sub cx,si                            ; cx = 当前 - 查询
+007ca3fa  pop esi
+007ca3fb  neg cx
+007ca3fe  sbb ecx,ecx
+007ca400  not ecx
+007ca402  and eax,ecx                          ; ★★命中才保留 eax
+007ca404  ret
+
+★语义：**MSVC6 CRT wcsrchr 宽字符串反向查找器（推断名——
+标准 C 库 `wcsrchr`）**——cdecl 2 参：
+  ① 前向扫描到宽终止符（2 字节/字符步进）；
+  ② 从终止符位置反向（向前）扫描查询宽字符；
+  ③ 命中出口（当前位置字符 == 查询）→ sub cx,si/neg/
+     sbb/not/and 无分支条件保留 eax（命中保留当前指针，
+     未命中 → eax 掩 0）；
+  ④ 串首兜底出口（未命中）→ 同无分支判定（终止符场景）。
+  = wcsrchr 标准实现（宽字符 2 字节步进 + 反向扫描 + 哨兵
+  条件返回），与 batch 1142 0x7DC378 strchr 的收尾惯用逐
+  字节同款（sub/neg/sbb/not/and 模板）。
+
+★调用点（池登记 callers=3）：0x7CAxxx 宽字符处理域（batch
+  1047 0x7D571F DBCS 查找、batch 1142 0x7DC378 _mbschr、
+  batch 1150 0x7CD615 后缀递增器等同域）——宽串解析消费。
+
+★E8 被调者：**零子调用**（全 64B 纯宽字符扫描 + 无分支条
+  件返回）。
+
+★原版怪癖（照抄）：
+  ① 步进量 2 用 push 2/pop ecx 载入（省字节惯用）——与
+     batch 1153/1157 的 push 0xa/pop ebx 同款；
+  ② 前向扫描先读后加（mov si,[eax] → add eax,2 → 再
+     mov si,[eax]）——预读 + 循环步进交错；
+  ③ 宽终止符判 test si,si（16 位）——宽串 NUL 语义；
+  ④ 反向扫描从终止符前一位（sub eax,ecx 先减）开始——
+     跳过终止符本身；
+  ⑤ 无分支条件返回 sub cx,si/neg/sbb/not/and——与 batch
+     1142 strchr 收尾模板完全一致（命中保指针/未命中掩
+     0），终止符场景也经此判定（cx=0 时对查询字符的减法
+     = -查询值 → 掩 0 返回 NULL）；
+  ⑥ 串首判 cmp eax,edx/je（含串首 → 走同一无分支出口）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 字符串处
+理设施按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CA3C5 = MSVC6 静态 CRT 宽字符串反向查找器
+   （wcsrchr）——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_
+   region_layout_crt_provenance）；2 字节步进 + 反向扫描 +
+   无分支条件返回 = CRT 宽串查找标准形态（batch 1142
+   strchr 同模板）。
+2. 依赖：零 E8 函数依赖——重写 gamemd 时用等价 C 库
+   wcsrchr/std::wstring::rfind 语义代替。
+3. gamemd_replication_discipline：MSVC6 CRT 字符串设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 64B + batch 1142 收尾惯用
+交叉；函数名「wcsrchr 宽字符串反向查找器」由 2B 步进 + 反
+向扫描 + 无分支返回交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1142：0x7DC378 strchr 窄串反向查找（_mbschr 族）
+  ——本批 wcsrchr 宽串反向，收尾 sub/neg/sbb/not/and 模板
+  逐字节同款（strchr/wcsrchr 配对全景）。
+★batch 1047：0x7D571F DBCS 查找——同 0x7CAxxx 宽字符处
+  理域交叉。
+★batch 1150：0x7CD615 tmpnam 后缀递增器——找 '.' 用
+  batch 1047 查找器 + 本批同扫描惯用（宽串解析链）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CA3C5：MSVC6 CRT wcsrchr 宽字符串
+反向查找器归档；全 64B + 模板交叉；不写 C++ 模型不做
+golden——CRT 字符串库商业库层；函数名由 2B 步进 + 反向扫
+描 + 无分支返回交叉标注）。TSV 新增 0x007CA3C5 行。
+
+★本批实锤：wcsrchr——宽字符前向找终止符 → 反向扫查询字
+  符 → sub/neg/sbb/not/and 无分支条件返回（与 batch 1142
+  strchr 模板逐字节同款），零 E8 纯扫描。
+相邻待续：batch 1178 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CC409(62B)/0x7CEAC1(62B)/0x7CF77F
+(62B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1176 已完（Westwood 虚表槽 0x40 分派双路径操
+作器 0x7C1D40，commit a3ef7bd）。
