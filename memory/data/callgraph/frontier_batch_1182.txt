@@ -1,0 +1,121 @@
+frontier batch 1182 —— MSVC6 CRT strpbrk 字符集查找器 0x7D6CF0（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D6CF0（58B,
+uc=1, callers=2 探针实测 0x7CDBB6/0x7CDC7E）。TSV 无既有
+行。TARGET = 0x007D6CF0。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D6CF0 行。
+
+一、链语义（disasm 全 58B + 调用现场核实，0x7D6CF0-0x7D6D29）
+--------------------------------------------------------------
+签名（推断）：cdecl 2 参（[ebp+8]=目标串、[ebp+0xC]=集合
+串），返回第一个命中集合字符的指针 / NULL。
+
+位图构建段（0x7D6CF0-0x7D6D11，集合串 → 32B 位图）：
+007d6cf0  push ebp/mov ebp,esp/push esi
+007d6cf4  xor eax,eax
+007d6cf6  8× push eax（0x20=32B 位图槽）        ; ★★32B 位图（256 位
+                                              ;   ——0-255 字符全覆盖）
+007d6cfe  mov edx,dword[ebp+0xc]              ; edx = 集合串
+007d6d01  lea ecx,[ecx]                        ; ★nop 对齐
+; → 置位循环（0x7D6D04）：
+007d6d04  mov al,byte[edx]                     ; 当前集合字符
+007d6d06  or al,al/je 0x7d6d11                ; NUL 终止
+007d6d0a  inc edx
+007d6d0b  bts dword[esp],eax                  ; ★★置位字符位图
+                                              ;   （bts 位测试+置位）
+007d6d0f  jmp 0x7d6d04                         ; 循环
+; → 目标扫描段（0x7D6D11）：
+007d6d11  mov esi,dword[ebp+8]                ; esi = 目标串
+007d6d14  mov al,byte[esi]                     ; 当前目标字符
+007d6d16  or al,al/je 0x7d6d24                ; NUL → 返 NULL
+007d6d1a  inc esi
+007d6d1b  bt dword[esp],eax                   ; ★★位测试（集合含该
+                                              ;   字符？）
+007d6d1f  jae 0x7d6d14                        ; ★位 0（不含）→ 继续
+007d6d21  lea eax,[esi-1]                     ; ★★命中 → 返指针（esi
+                                              ;   已 inc，回退 1）
+007d6d24  add esp,0x20/pop esi/leave/ret
+
+★语义：**MSVC6 CRT strpbrk 字符集查找器（推断名——标准 C
+库 `strpbrk`）**——cdecl 2 参：
+  ① 集合串各字符 bts 置位 32B 位图（256 位，char 全覆
+     盖）；
+  ② 目标串逐字符 bt 测试位图：位 1（集合含）→ 返该字符
+     指针（lea eax,[esi-1]）；位 0 → 继续；
+  ③ 目标串 NUL → 返 NULL。
+  = strpbrk 标准实现（位图加速 + 单遍扫描），零 E8 纯位
+  运算。
+
+★调用点（探针 E8 实测 2 处）：0x7CDBB6/0x7CDC7E——0x7CDBxx
+  区（batch 1117 已登记 0x7CCA34 _output 引擎域后段——
+  0x7CDBB6 现场：`push 0x7f97e4`（常量串作 strpbrk 集合）
+  + `push edi`（目标串）→ call 0x7D6CF0 → `mov esi,eax/
+  cmp esi,ebx/je /sub eax,edi`（指针差计算——字符串处理
+  段边界/字段终止定位）。
+
+★E8 被调者：**零子调用**（全 58B 纯 bts/bt 位图操作）。
+
+★原版怪癖（照抄）：
+  ① 32B 位图用 8×push eax 展开初始化（非 memset 非栈上
+     sub）——编译器栈初始化惯用；
+  ② bts/bt 用 [esp] 相对寻址（位图在栈顶）——省 push
+     次数；
+  ③ lea ecx,[ecx]（nop 对齐）插在函体——编译器对齐惯用；
+  ④ al 只取低 8 位（mov al,[edx]）——字符 0-255 位索引，
+     eax 高位残留被 bts/bt 掩码忽略（位索引只看 eax 低
+     5 位 + 偏移）——同 batch 1142 strchr 的 eax 用法
+     注意点；
+  ⑤ 命中返回 lea eax,[esi-1]（esi 已 inc 回退）——指针
+     语义精确；
+  ⑥ 目标 NUL 出口与命中出口共用 add esp,0x20（eax 命中
+     时已设 / NUL 时 eax=0）——双出口合并。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 字符串处
+理设施按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D6CF0 = MSVC6 静态 CRT 字符集查找器
+   （strpbrk）——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_
+   region_layout_crt_provenance）；bts/bt 位图 + 单遍扫描
+   = CRT 字符串查找标准形态（batch 1177/1178 wcsrchr/
+   wcspbrk 同族）。
+2. 依赖：零 E8 函数依赖——重写 gamemd 时用等价 C 库
+   strpbrk 语义代替。
+3. gamemd_replication_discipline：MSVC6 CRT 字符串设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 58B + 调用现场核实；函数
+名「strpbrk 字符集查找器」由位图构建 + bt 命中 + 指针返回
+交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1177/1178：0x7CA3C5 wcsrchr / 0x7CC409 wcspbrk—
+  —宽窄串查找族全景（strpbrk/wcsrchr/wcspbrk 都是位图或
+  双循环单遍扫描形态）。
+★batch 1117：0x7CCA34 _output 引擎——本批调用点
+  0x7CDBB6/0x7CDC7E 在其 0x7CDBxx 后段（字符串处理边界
+  定位消费）。
+★batch 1142：0x7DC378 _mbschr——eax 字符位索引用法同款
+  注意点（bts/bt 位索引低位掩码）。
+
+五、状态
+-------
+crt_runtime_verified（0x7D6CF0：MSVC6 CRT strpbrk 字符集查
+找器归档；全 58B + 调用现场核实；不写 C++ 模型不做 golden
+——CRT 字符串库商业库层；函数名由位图构建 + bt 命中 + 指
+针返回交叉标注）。TSV 新增 0x007D6CF0 行。
+
+★本批实锤：strpbrk——集合串 bts 置 32B 位图 → 目标串逐
+  字符 bt 测试 → 命中 lea eax,[esi-1] 返指针/NUL 返
+  NULL，零 E8 纯位运算。
+相邻待续：batch 1183 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7D5A2E(58B)/0x7C8F5E(56B)/0x7CE06E
+(56B) 已登记排除）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1181 已完（MSVC6 CRT __startOneArgErrorHandling
+单参错误处理入口 0x7CF347，commit 826a81b）。
