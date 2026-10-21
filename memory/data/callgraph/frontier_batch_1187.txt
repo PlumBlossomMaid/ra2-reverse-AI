@@ -1,0 +1,139 @@
+frontier batch 1187 —— MSVC6 CRT 宽字符格式化字符串包装器 0x7CBBDB（归档，swprintf 族 FILE 装配）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CBBDB（54B,
+uc=1, callers=1 探针实测 0x695D52）。TSV 无既有行。
+TARGET = 0x007CBBDB。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CBBDB 行。
+
+一、链语义（disasm 全 54B + 两依赖交叉 + 调用现场 + 格式
+串取证，0x7CBBDB-0x7CBC10）
+--------------------------------------------------------------
+签名（推断）：cdecl 变参 3 参（[ebp+8]=wchar 目标缓冲、
+[ebp+0xC]=wchar 格式串、[ebp+0x10] 起 vararg），返回
+_woutput 结果。
+
+主体（0x7CBBDB-0x7CBC10）：
+007cbbdb  push ebp/mov ebp,esp
+007cbbde  sub esp,0x20                      ; 0x20 局部（FILE 结构）
+007cbbe1  mov eax,dword[ebp+8]              ; eax = 目标缓冲（参1）
+007cbbe4  mov dword[ebp-0x14],0x49          ; ★★_flag = 0x49
+                                              ;   （非标准 _IOWRT|_IOSTRG
+                                              ;   0x42——0x40+0x08+0x01
+                                              ;   = _IOSTRG|_IOMYBUF|_IOREAD?）
+007cbbeb  push eax
+007cbbec  mov dword[ebp-0x18],eax           ; _base = 缓冲
+007cbbef  mov dword[ebp-0x20],eax           ; _ptr  = 缓冲
+007cbbf2  call 0x7ca405                      ; ★★TSV:1791 wcslen_legacy
+                                              ;   （宽字符长度）
+007cbbf7  shl eax,1                         ; ★长度×2（宽字符双字节）
+007cbbf9  mov dword[ebp-0x1c],eax           ; ★★_cnt = wcslen(buf)*2
+                                              ;   （非 INT_MAX——容量语义
+                                              ;   特殊）
+007cbbfc  lea eax,[ebp+0x10]
+007cbbff  push eax                          ; ★vararg 起点地址（参3）
+007cbc00  lea eax,[ebp-0x20]                ; ★FILE 结构地址
+007cbc03  push dword[ebp+0xc]               ; 格式串（参2）
+007cbc06  push eax                          ; FILE*（参1）
+007cbc07  call 0x7d3a6d                     ; ★★TSV:1923 _woutput 宽字符
+                                              ;   格式化输出核心
+007cbc0c  add esp,0x10
+007cbc0f  leave/ret                         ; ★eax 透传 _woutput 结果
+
+★语义：**MSVC6 CRT 宽字符格式化字符串包装器（推断名——
+swprintf 族变体）**——cdecl 变参：
+  ① 栈上手工装配 FILE 结构（sub esp,0x20）：_ptr=_base=目
+     标缓冲、_cnt=wcslen(buf)*2（宽字符双字节计数）、
+     _flag=0x49；
+  ② 3 参委派 _woutput(FILE*, 格式串, vararg 起点地址)；
+  ③ 返回 _woutput 结果（eax 透传）。
+  = 宽 sprintf 包装（swprintf 变体），把格式串输出写进目
+  标缓冲。
+
+★调用点（探针 E8 实测 1 处 0x695D52）：Westwood 主代码
+  区（0x69xxxx）。现场 0x695D45-0x695D52：lea ecx,[ebp+
+  0x90]（vararg 缓冲）/push 0x81b3d0（★★格式串常量 = .data
+  区 L"%d" 宽字符——0x81B3D0 字节 25 00 64 00 00 00 =
+  UTF-16LE "%d\0"；紧邻其后是独立 ASCII 串 "%s: %s\n
+  Scheme: %d\n Lost = %d\n Kills = %d" 属另一常量）/push
+  edx（[eax*4+0x83EB58] 表取值=目标缓冲）/call——主区把整
+  数格式化进宽字符缓冲（L"%d"）。
+
+★E8 被调者（2 个）：
+  ① 0x7CA405（★★TSV:1791 wcslen_legacy ✓已登记 cpp_
+     reimplementation_verified——29B cdecl 1 参宽字符长
+     度）；
+  ② 0x7D3A6D（★★TSV:1923 _woutput ✓已登记 crt_runtime_
+     verified——2767B 宽字符格式化输出核心）。
+  全部已登记，无未登记依赖。
+
+★全局：无（纯栈 FILE + 参数透传）。
+
+★原版怪癖（照抄）：
+  ① FILE 结构**栈上手工装配**（mov 逐字段写 [ebp-0x14]/
+     [ebp-0x18]/[ebp-0x1C]/[ebp-0x20]）而非 CRT 标准宏初始
+     化；
+  ② _cnt = wcslen(buf)*2（宽字符双字节计数）而非标准
+     INT_MAX——容量语义特殊（调用者目标缓冲按现长×2 设
+     定，溢出风险原版照抄）；
+  ③ _flag = 0x49（0x40|0x08|0x01 = _IOSTRG|_IOMYBUF|
+     _IOREAD 组合）非标准 _IOWRT|_IOSTRG(0x42)——flag 布
+     局怪癖；
+  ④ lea [ebp+0x10] 传 vararg **起点地址**（MSVC 传统
+     va_list 实参传递）；
+  ⑤ eax 重复使用（mov eax,[ebp+8] → push eax → 两次 mov
+     存 _base/_ptr）——编译器寄存器调度；
+  ⑥ 空缓冲也走 wcslen——无空指针保护；
+  ⑦ eax 透传 _woutput 结果（无额外处理直接 leave/ret）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 宽字符格
+式化设施按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CBBDB = MSVC6 静态 CRT 宽字符格式化包装器——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；依赖 wcslen + _woutput 全 CRT 域；
+   _woutput 已按 batch 1082 归档（同 _vfwprintf 族）。
+2. 依赖：0x7CA405 + 0x7D3A6D 全部已登记——重写 gamemd 时
+   用等价运行时（std::swprintf/vswprintf）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 宽字符格式化
+   设施，重写时用等价运行时代替，逐字节复刻无意义——按
+   商业库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 54B + 两依赖交叉 + 调用
+现场 + 格式串取证；函数名「宽字符格式化字符串包装器」由
+FILE 装配 + _woutput 委派 + 调用现场 L"%d" 交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 058/942：0x7CA405 wcslen（TSV:193/1791）——本批
+  长度计算调用现场交叉（shl eax,1 双字节化）。
+★batch 1082/1923：0x7D3A6D _woutput（TSV:1923）——本批
+  FILE 结构装配 + 3 参委派现场交叉（FILE*+格式串+vararg）。
+★batch 1034：0x7CBC32 getenv——同 0x7CBBxx-0x7CBCxx 区邻
+  函数（0x7CBC11 也是该区薄包装，见下）。
+★batch 1082 族：浮点/字符格式化链全景——本批为宽字符格
+  式化入口侧薄包装。
+
+五、状态
+-------
+crt_runtime_verified（0x7CBBDB：MSVC6 CRT 宽字符格式化字
+符串包装器归档；全 54B + 两依赖交叉；不写 C++ 模型不做
+golden——CRT 宽字符格式化商业库层；函数名由 FILE 装配 +
+_woutput 委派 + 调用现场 L"%d" 交叉标注）。TSV 新增
+0x007CBBDB 行。
+
+★本批实锤：swprintf 族薄包装——栈上手工装配 FILE（_ptr=
+  _base=缓冲、_cnt=wcslen×2、_flag=0x49）后 3 参委派
+  _woutput，唯一调用点 0x695D52 传 L"%d" 格式化整数，两
+  依赖全已登记。
+相邻待续：batch 1188 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CBF14(53B，batch 1146 壳族)/0x7CBC11
+(33B, callers=2 探针 0x697AFB/0x69A363——getenv 区薄包
+装)/0x7CBCAF(50B, callers=4 探针全 0x6AA3xx——FILE 输出
+刷盘族，调 0x7D468C + IAT [0x7E11C4])）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1186 已完（MSVC6 CRT 数字列表字符串→数值字节
+数组变换器 0x7D6A1D，commit c093296）。
