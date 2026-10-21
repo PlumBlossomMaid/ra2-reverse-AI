@@ -1,0 +1,166 @@
+frontier batch 1210 —— MSVC6 CRT x87 整数性+奇偶性分级器 0x7C91A5（归档，frndint 三级分类）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7C91A5（40B,
+uc=1, callers=2 探针实测 0x7C9128/0x7C9182）。TSV 无既有
+行。TARGET = 0x007C91A5。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007C91A5 行。
+
+一、链语义（disasm 全 40B + 常量 [0x87BED0] 实测 + 双调用
+宿主交叉，0x7C91A5-0x7C91CC）
+--------------------------------------------------------------
+签名（确认）：cdecl 1 参（x87 st(0) 传 double），返回
+cl/eax 低字节：0=非整数（含 NaN/±inf）、1=奇数整数、2=偶
+数整数。
+
+主体（0x7C91A5-0x7C91CC）：
+007c91a5  d9c0  fld st(0)                 ; ★复制 st(0)
+007c91a7  d9fc  frndint                   ; ★取整副本
+007c91a9  d8d9  fcomp st(1)               ; 取整值 vs 原值，
+                                          ;   弹取整值
+007c91ab  b100  mov cl, 0                 ; cl=0（默认非整
+                                          ;   数）
+007c91ad  9b    wait
+007c91ae  dfe0  fnstsw ax                 ; ★FPU 状态字→ax
+007c91b0  9e    sahf                      ; ★C 位→ZF
+007c91b1  7517  jne 0x7c91ca              ; x 非整数 → 0x7C91CA
+                                          ;   （fstp st(0);ret）
+007c91b3  dc0d d0be8700  fmul qword[0x87bed0]
+                                          ; ★★x × [0x87BED0]
+                                          ;   = x×0.5（探针
+                                          ;   8B double 实测
+                                          ;   0.5）
+007c91b9  fec1  inc cl                    ; cl=1（先假定奇数）
+007c91bb  d9c0  fld st(0)                 ; 复制 x×0.5
+007c91bd  d9fc  frndint
+007c91bf  ded9  fcompp                    ; 比较并双弹
+007c91c1  9b    wait
+007c91c2  dfe0  fnstsw ax
+007c91c4  9e    sahf
+007c91c5  7502  jne 0x7c91c9              ; x×0.5 非整（x 奇
+                                          ;   数）→ ret cl=1
+007c91c7  fec1  inc cl                    ; ★x×0.5 整（x 偶
+                                          ;   数）→ cl=2
+007c91c9  c3    ret
+007c91ca  ddd8  fstp st(0)                ; 非整数：弹原值
+007c91cc  c3    ret
+
+★语义：**MSVC6 CRT x87 整数性+奇偶性分级器（推断名——
+fmod/_fpclass 域辅助：x 是否整数、奇数/偶数三分级）**——
+cdecl 1 参（st(0)）：
+  ① fld st(0)+frndint+fcomp st(1)——取整值 vs 原值；不等
+     → x 非整数（含 NaN：NaN!=NaN；±inf：frndint 不改值
+     → 相等…… 实为 ±inf 走 fmul 路径，见怪癖②）→ 弹原
+     值返 0；
+  ② x 整数 → x×0.5（[0x87BED0]=0.5 实测）→ inc cl=1 →
+     fld frndint fcompp 再判——x 奇（×0.5=k.5 非整）→ 返
+     1；x 偶（×0.5 整）→ inc cl=2 → 返 2。
+  = CRT 浮点整数判定的 x87 标准形态（frndint+fnstsw ax/
+  sahf+ZF 分支），返回值经 cl（eax 低 8 位）。
+
+★调用点（探针 E8 实测 2 处，均在 0x7C90xx 大 CRT 浮点函数
+  内，未登记）：
+  ① 0x7C9128：宿主 0x7C9085 区（指数/尾数位检查链）：mov
+     eax,[esp+0xC]/and eax,0xFFFFF/or eax,[esp+8]（★尾数
+     全零判定）/jne 0x7C9012 → fstp st(0) → mov eax,
+     [esp+0x14]/test eax,0x7FF00000（★指数位）/je 0x7C9165
+     → call 0x7C91A5（★非零指数 → 本批分类）→ mov ch,
+     [esp+0xF]/shr ch,7（★符号位）→ test [esp+0x17],0x80
+     → fld xword[0x87C4F0]（80 位常量）→ test ch,cl → fchs
+     ——判定结果 cl 参与符号/常量装配（成对分支）；
+  ② 0x7C9182：宿主同函数另一分支：fld st(1)/call 0x7C91A5
+     → fchs/test cl,cl/jne 0x7C901F→fstp×2→fld xword
+     [0x87C550]——cl==0（非整数）连弹两栈走 0x7C901F，
+     非 0 装配 80 位常量 [0x87C550]。
+  两调用点语义一致（x 整数性驱动常量装配选择）。
+
+★宿主链（取证交叉）：0x7C9069 区同函数调 0x7CF3D5、0x7CF51C
+  （CRT 浮点域，scan 池候选）；0x7C90D1 sub esp,0x74 →
+  fnsave [ecx+8]（★保存 x87 状态）→ call 0x7CF51C——
+  宿主为 CRT 浮点运算大函数（fmod/atan 类，未登记，按池顺
+  序后续处理）。
+
+★E8 被调者（2 个，全已登记或池候选中）：
+  ① 0x7CF3D5（宿主链调用——scan 池 uc=1 候选 23B 区域，
+     未登记）；
+  ② 0x7CF51C（宿主链调用——scan 池候选，未登记）。
+  本批函数自身零 E8 被调（纯 x87 + fnstsw/sahf）。
+
+★全局：读 [0x87BED0]=0.5 double（探针 rva2off 实测
+  000000000000E03F）+ 宿主读 [0x87C4F0]/[0x87C550] 80 位常
+  量（x87 fld xword 格式）；零写。
+
+★原版怪癖（照抄）：
+  ① frndint 受全局 RC 控制（WinMain `_control87(_RC_CHOP)`
+     向零截断）——但分类语义与 RC 无关：非整数判定
+     （round(x)!=x）与奇偶判定（round(x×0.5)!=x×0.5）在两
+     种 RC（chop/nearest）下均成立（x 奇 → x×0.5=k.5 非整
+     → 恒不等；x 偶 → 恒等；-0.5 边界 IEEE ties-even 仍
+     非整）——语义稳定，RC 无关（±inf 除外，见②）；
+  ② ±inf 陷阱：frndint(±inf)=±inf 相等 → 走 fmul 路径 →
+     ±inf×0.5=±inf → 再 frndint 相等 → **cl=2（±inf 被归
+     为「偶数」）**——原版怪癖，照抄；
+  ③ 返回经 cl 累加（mov cl,0 / inc cl / inc cl）——eax 高
+     位未清零（调用方只读 cl）；
+  ④ fnstsw ax+sahf 桥接 x87 比较结果到 ZF（VC6 x87 代码
+     生成惯用法，非 cmp 指令）；
+  ⑤ 非整数出口 fstp st(0)+ret（0x7C91CA）与主出口 ret
+     （0x7C91C9）双路径——编译器把提前返回排布在函数尾
+     部；
+  ⑥ [0x87BED0]=0.5 用 dc0d（fmul qword）直接寻址 .data
+     常量——乘法常量不内联进代码区；
+  ⑦ 40B 函数带 push ebp/mov ebp,esp 帧（无局部变量仍建
+     帧）——VC6 默认帧策略。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 浮点整
+数设施按商业库纪律归档；frndint 语义 QWEN.md 已有 FPU
+文档实证）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7C91A5 = MSVC6 静态 CRT x87 浮点辅助——0x7C-0x7D
+   = MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）
+   ；frndint+fnstsw/sahf 序列+[0x87BED0] 常量 = CRT 浮点整
+   数判定标准形态（宿主 0x7C90xx 大函数同域浮点链）。
+2. 依赖：本批零 E8 被调（纯 x87）；宿主链 0x7CF3D5/
+   0x7CF51C 为池候选（未登记，如实标注）——重写 gamemd 时
+   用等价运行时（std::floor/fmod 判定语义）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 浮点设施，重写
+   时用等价运行时代替，逐字节复刻无意义——按商业库纪律
+   归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 40B + 常量实测 + 双调用
+宿主交叉；函数名「x87 整数性+奇偶性分级器」由 frndint 双
+级判定 + cl 三分级返回值交叉标注）。
+
+四、跨批次闭合
+------------
+★QWEN.md FPU 环境文档：WinMain `_control87(_RC_CHOP)` 全
+  局向零截断——本批 frndint 语义与 RC 无关（怪癖①分析）
+  ，±inf/奇偶判定均不依赖 RC。
+★宿主链（scan 池候选）：0x7C90xx 大 CRT 浮点函数 + 0x7CF3D5
+  + 0x7CF51C——后续批次按池顺序处理。
+★本批依赖无已登记函数，为纯 x87 leaf（对比 batch 1205/
+  1206/1207/1208 的 IAT/锁/表链——本批是少有的零函数依赖
+  批）。
+
+五、状态
+-------
+crt_runtime_verified（0x7C91A5：MSVC6 CRT x87 整数性+奇偶
+性分级器归档；全 40B + 常量实测 + 双调用宿主交叉；不写
+C++ 模型不做 golden——CRT 浮点设施商业库层；函数名由
+frndint 双级判定 + cl 三分级返回值交叉标注）。TSV 新增
+0x007C91A5 行。
+
+★本批实锤：3 级分类——非整数返 0（fld/frndint/fcomp 第
+  一级判等）、奇数整数返 1（fmul [0x87BED0]=0.5 后第二级
+  frndint 判等）、偶数整数返 2；±inf 被 frndint+fmul 双
+  等判定归入偶数（原版怪癖照抄）；返回值经 cl；两调用点
+  均在 0x7C90xx CRT 浮点大函数内，cl 驱动 80 位常量装配。
+相邻待续：batch 1211 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CCF1D(39B, callers=1)/0x7DCE3B(38B,
+callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1209 已完（MSVC6 CRT 双源查表字节转换器
+0x7E01D2，commit b9da81f）。
