@@ -1,0 +1,74 @@
+frontier batch 1235 —— MSVC6 CRT rand 写入端 0x7CB49D + 删除文件转发壳 0x7CD455
+=======================================================================
+
+候选来源：_rank_crt_frontier.py（602 个 CRT 段函数按 ranking.tsv
+unique_callers 扇入度排，剔除已闭合后取 td 最大两项）——
+0x7CB49D（7B, uc=1, caller=0x5B82F0, td=2598）与 0x7CD455
+（7B, uc=1, caller=0x77DC90, td=2676）。TSV 均无既有行。
+TARGET = 0x007CB49D + 0x007CD455。C++ 模型：无（见「三态判定」，
+商业库纪律归档）。TSV：新增 0x007CB49D + 0x007CD455 两行。
+
+一、链语义（disasm 全 7B + 挂靠目标交叉，均 crt_runtime_verified）
+--------------------------------------------------------------
+0x7CB49D（7B，__cdecl 1 参）：
+007cb49d  call 0x7d140b         ; ★_getptd（batch 008 实锤）→ eax =
+                                ;   ptd 线程局部数据指针
+007cb4a2  mov ecx, [esp+4]      ; ecx = 参1
+007cb4a6  mov [eax+0x14], ecx   ; ★ptd->holdrand = 参1
+007cb4a9  ret
+★语义：**CRT `srand` 状态写入端（推断——_rand 的姊妹写入）**——
+相当于 `srand(seed)` 的内核：把种子写进线程局部 ptd->holdrand。
+与 batch 625 已登记 0x7CB4AA（_rand：读 holdrand → ×214013+2531011
+LCG → 返 (>>16)&0x7FFF）**前后紧邻**（0x7CB49D 结束于 0x7CB4A9，
+0x7CB4AA 紧随）。挂靠目标 0x7D140B = _getptd（batch 008）。
+
+0x7CD455（7B，__cdecl 1 参）：
+007cd455  push [esp+4]         ; 参1 转发
+007cd459  call 0x7cd42b        ; ★_remove/_unlink 族（batch 1150:
+                                ;   DeleteFileA 包裹器）→ eax=返回值
+007cd45e  pop ecx              ; cdecl 清栈
+007cd45f  ret
+★语义：**CRT 删除文件调用转发壳（推断——_unlink 别名/薄包装）**——
+参数原样透传给 0x7CD42B（DeleteFileA→GetLastError→map_os_error→-1/
+0 标准形态），返回值直透。挂靠目标 0x7CD42B = _remove/_unlink 族
+（batch 1150 crt_runtime_verified）。
+
+二、黄金基准
+----------
+无（商业库纪律归档——MSVC6 CRT 标准函数，重写用等价运行时代替）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：两函数均在 0x7C-0x7D = MSVC6 静态 CRT
+   （ra2_code_region_layout_crt_provenance）；rand/srand 内核对 =
+   MSVC6 CRT 标准实现逐项吻合（0x343FD/0x269EC3 = 214013/2531011）；
+   删除文件包裹器批次 1150 同族。
+2. 依赖：挂靠目标全部已登记（0x7D140B batch 008、0x7CB4AA batch 625、
+   0x7CD42B batch 1150）——重写 gamemd 时用等价运行时（rand/srand
+   stdlib、std::filesystem::remove）代替，逐字节复刻无意义。
+3. gamemd_replication_discipline：MSVC6 CRT 标准设施，按商业库纪律
+   归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified ×2（全 7B 机器码读完 + 挂靠目标交叉）。
+
+四、跨批次闭合
+------------
+★batch 008 / TSV:0x7D140B：_getptd（0x7CB49D 的核心依赖——取
+  线程局部数据写 holdrand）。
+★batch 625 / TSV:0x7CB4AA：CRT::_rand（0x7CB49D 的姊妹消费端——
+  读同一 ptd->holdrand 做 LCG；两函数前后紧邻 0x7CB4A9/0x7CB4AA）。
+★batch 1150 / TSV:0x7CD42B：_remove/_unlink 族 DeleteFileA 包裹器
+  （0x7CD455 的转发目标——参数/返回值直透）。
+★调用者：0x7CB49D ← 0x5B82F0（batch 624 同 caller 区，未登记）；
+  0x7CD455 ← 0x77DC90（未登记）。两个调用者宿主均为后续批次候选。
+
+五、状态
+-------
+crt_runtime_verified ×2（0x7CB49D：「srand 状态写入端」推断名——
+_getptd+写 holdrand 前后紧邻 _rand；0x7CD455：「删除文件转发壳」
+推断名——参数透传 0x7CD42B。均全 7B 机器码读完 + 挂靠目标交叉）。
+TSV 新增 0x007CB49D、0x007CD455 两行。函数名推断标注（死代码/
+CRT 无运行观测原版名称需 Ghidra 符号交叉，保持 USER_DEFINED 纪律）。
+★本批实锤：0x7CB49D = rand 家族写入端（与 batch 625 _rand 构成
+  完整 srand/rand 对）；0x7CD455 = 删除文件薄转发壳（batch 1150 的
+  别名入口）。相邻待续：0x7DD4F4（uc=1 td=108）/0x7CB8E6/0x7DC1AA
+  等按 _rank_crt_frontier.py 池序推进。
