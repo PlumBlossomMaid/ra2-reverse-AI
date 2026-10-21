@@ -1,0 +1,148 @@
+frontier batch 1120 —— Westwood MMX 像素合成函数 0x7DF640（归档，四兄弟族第二件）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DF640（243B
+池登记，实测函数延伸至 0x7DF780 ret，uc=1, callers=1 探针
+实测 0x5FFAF0）。TSV 无既有行。TARGET = 0x007DF640。C++
+模型：无（见「三态判定」）。TSV：新增 0x007DF640 行。
+
+⚠️ 归属：延续 batch 1119——四兄弟族（0x7DF280/0x7DF640/
+0x7DF3C2/0x7DF500）第二件，同模板复制粘贴变体。
+
+一、链语义（disasm 全 0x7DF640-0x7DF780 + 逐字节 diff，
+batch 1119 0x7DF280 对照）
+--------------------------------------------------------------
+签名（推断）：cdecl 7 参（同 batch 1119 布局：源字节指针/
+目标字指针/行步进族/0x100 常数族[宿主 push]），MMX 像素混
+合写回目标 word，无返回值。
+
+主体（0x7DF640-0x7DF780）：
+007df640  push ebp/mov ebp,esp/add esp,-0x24/push ebx,ecx,edx,esi,edi
+007df64d  xor eax,eax/mov [ebp-0x14],eax        ; ★局部清零
+007df650  mov eax,[ebp+0x1C]/mov [ebp-8],eax    ; ★外层行计数
+007df656-6b mov [ebp-0x1C]/[ebp-0x18]/[ebp-0x24]/[ebp-0x20],0
+007df672  mov esi,[ebp+8]/mov [ebp-0xC],esi     ; ★字节源指针
+007df678  mov edi,[ebp+0xC]/mov [ebp-0x10],edi  ; ★字目标指针
+007df67e  mov edx,[ebp+0x20]                     ; ★查表基址
+007df681  mov eax,[ebp+0x18]/mov [ebp-4],eax    ; ★内层列计数
+007df687  xor eax,eax/xor ebx,ebx/jmp 0x7DF700
+; ★★布局差异#1：列推进段前置（0x7DF6C0，0x7DF280 在尾部）
+007df6c0  inc esi/lea edi,[edi+2]/dec [ebp-4]/jne 0x7DF700
+; ★行推进（0x7DF6C9-0x7DF6DE，同 0x7DF280 语义）
+007df6d2  mov esi,[ebp-0xC]/add esi,[ebp+0x10]/mov [ebp-0xC],esi
+007df6d8  mov edi,[ebp-0x10]/add edi,[ebp+0x14]/mov [ebp-0x10],edi
+007df6db  dec [ebp-8]/jne 0x7DF681/jmp 0x7DF778  ; ★外层循环
+; → 像素主循环（0x7DF700）：
+007df700  mov al,[esi]/test al,al/je 0x7DF6C0    ; ★源字节 0 → 跳过
+007df706  mov [ebp-0x1C],al                       ; ★α = 源字节
+007df709  mov bx,[edi]/mov [ebp-0x1A],al/mov [ebp-0x18],al
+007df712  punpcklbw mm0,[edx+ebx*4]               ; ★★查表
+007df716  psrlw mm0,8/movq mm1,mm0
+007df71d  pmullw mm0,[ebp-0x1C]/psrlw mm0,8      ; ★★×α 混合
+007df725  paddusb mm0,mm1/psrlw mm0,2/movq [ebp-0x24],mm0
+; → RGB565 打包（0x7DF734）——★★布局差异#2：打包变体：
+007df734  mov bl,[ebp-0x24]/mov al,[ebp-0x22]/shr bl,1
+007df73e  shl eax,4/and eax,0x423a0a60           ; ★★vs 0x7DF280 的
+                                                  ;   shl eax,5+and
+                                                  ;   ecx,0xF800——移位
+                                                  ;   /掩码变体
+007df74c  or ebx,eax/inc esi/or ebx,ecx（[ebp-0x20]
+007df754  小写 cl<<0xA）/lea edi,[edi+2]/mov word[edi-2],bx
+007df758  dec [ebp-4]/jne 0x7DF700                ; ★内层循环
+007df75d  行推进（同上）/jne 0x7DF681
+007df778  emms                                     ; ★★布局差异#3：
+                                                  ;   MMX 收尾存在！
+007df77a  pop edi/esi/edx/ecx/ebx/leave/ret      ; （0x7DF280 无
+                                                  ;   emms——batch 1119
+                                                  ;   怪癖①交叉验证：
+                                                  ;   本件有 emms，族
+                                                  ;   件间不一致）
+（0x7DF781-0x7DF788 int3 对齐填充——函数边界 0x7DF780 ret）
+
+★语义：**Westwood MMX 像素合成函数（四兄弟族第二件，推断
+名）**——与 batch 1119 0x7DF280 逐语义同构：
+  ① 双指针双循环（内层逐列字节源 +1/字目标 +2，外层行步
+     进 +[ebp+0x10]/+[ebp+0x14]）；
+  ② 每像素：源字节（0 → 跳过）作 α → 目标 word 作表索引
+     → [edx+ebx*4] 32 位调色板查表 → MMX punpcklbw/psrlw 8/
+     pmullw ×α/psrlw 8/paddusb 饱和/psrlw 2；
+  ③ RGB565 打包写回目标 word（本件移位/掩码变体）；
+  ④ ★本件有 emms 收尾（0x7DF778）。
+
+★调用点（探针 E8 实测 1 处 0x5FFAF0）：宿主 0x5FFA 区调度
+  （batch 1119 已证）：cmp [0xAC1838],edx → je 选 6 参变体
+  （0x7DEEFA）/jne 选 7 参变体（本件）；7 参 push 顺序
+  eax/edi/0x100/esi/edx/ecx/ecx，add esp,0x1C 清理。
+
+★E8 被调者：零（纯 MMX + 查表内联）。
+
+★逐字节 diff（_probe_7df640_diff.py）结果：头对齐 1 处
+  （0x7DF321 vs 0x7DF6E1 len=1）；尾对齐 17 处全部落在布局
+  /NOP 填充区（0x7DF2xx vs 0x7DF6xx，len 3-37）——即同模板
+  仅对齐填充分布 + 打包尾段 + 布局位置不同，**核心 MMX 链
+  逐字节一致**。
+
+★原版怪癖（照抄，含族间差异）：
+  ① 本件有 emms（0x7DF778）——batch 1119 的 0x7DF280 无
+     emms：★族件间 MMX 收尾不一致（编译器实例差异），重写
+     时逐件照抄；
+  ② RGB565 打包本件用 shl eax,4 + and eax,0x423a0a60（0x280
+     用 shl eax,5 + and ecx,0xF800）——★族件间打包移位/掩
+     码变体，逐件照抄；
+  ③ 列推进段位置不同（本件前置 0x7DF6C0 / 0x280 尾部
+     0x7DF300）——布局重排但语义相同；
+  ④ 对齐填充分布不同（lea esp,[esp]/lea ebx,[ebx] NOP 组）
+     ——编译器对齐随机性照抄；
+  ⑤ 族通用怪癖（同 0x7DF280）：目标 word 无符号 16 位作
+     64KB 表窗口索引；源字节 0 跳过透明像素；α 合成公式
+     （查表色×α+原色饱和→psrlw 2 半强度）；paddusb 饱和加。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：Westwood 渲染域，
+重写时按语义等价实现）。
+
+三、三态判定（为何 semantics_verified 而非 crt_runtime_verified）
+---------------------------------------------------------------
+1. 归属：0x7DF640 = **Westwood 自有代码**——①MMX 像素合成
+   （punpcklbw/pmullw/paddusb）非 MSVC6 CRT 形态；②32 位调
+   色板查表 + RGB565 位拼为渲染管线特征；③宿主 0x5FFA 区渲
+   染调度（cmp [0xAC1838] 分派 7/6 参形态）；④与 batch 1119
+   0x7DF280 四兄弟族同模板（核心 MMX 链逐字节一致，布局/
+   打包/emms 差异由 diff 实锤）。
+2. 依赖：无子调用，纯 MMX + 表——重写时按像素合成语义等
+   价实现。
+3. 复刻纪律：Westwood 自有代码——不按商业库归档；像素合
+   成非 RMG 管线依赖，保留 semantics_verified。
+→ 状态：semantics_verified（MMX 链逐字节 diff + 宿主调度 +
+族件差异交叉；函数名「MMX 像素合成函数（四兄弟族第二件）」
+为推断交叉标注——混合链/查表/打包由代码+diff 实测）。
+
+四、跨批次闭合
+------------
+★batch 1119：0x7DF280 MMX 像素合成（四兄弟族第一件）——
+  本件第二件，逐字节 diff 核心链一致，差异=对齐填充分布+
+  打包尾段变体+emms 存在；★交叉修改 batch 1119 怪癖①
+  （0x7DF280 无 emms）为族件缺陷而非通用模式——本件有
+  emms。
+★batch 1087/1088/1092：RGB/表面装载器——渲染域同族。
+★batch 1097/1105：复制粘贴族惯用——族件差异逐件登记先例。
+
+五、状态
+-------
+semantics_verified（0x7DF640：Westwood MMX 像素合成函数四
+兄弟族第二件归档；全 0x7DF640-0x7DF780 + 逐字节 diff + 宿
+主调度交叉；不写 C++ 模型不做 golden——像素合并非 RMG 管
+线依赖；函数名「MMX 像素合成函数（四兄弟族第二件）」为推
+断交叉标注——混合链/查表/打包/emms 由代码+diff 实测）。
+TSV 新增 0x007DF640 行。
+
+★本批实锤：四兄弟族第二件——核心 MMX 混合链与 0x7DF280
+  逐字节一致；差异=对齐填充分布/打包尾段变体/emms 存在
+  （0x7DF778）——族件间 MMX 收尾不一致实锤。
+相邻待续：batch 1121 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7DF3C2(242B)/0x7DF500(240B)——四兄弟族剩
+余两件）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1119 已完（0x7DF280 MMX 像素合成，commit
+24d81b4）。
