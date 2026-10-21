@@ -1,0 +1,151 @@
+frontier batch 1152 —— Westwood 表面调色板 CIN 组 word 表区间查找器 0x7C19F0（归档，0x7C 区混入样本 #17）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7C19F0（125B,
+uc=1, callers=2 探针实测 0x7C07E3/0x7C07F8，均在宿主
+FUN_007c07d5 体内）。TSV 无既有行。TARGET = 0x007C19F0。
+C++ 模型：无（见「三态判定」）。TSV：新增 0x007C19F0 行。
+
+一、链语义（disasm 全 125B + 双调用现场 + 字段族跨批交叉，
+0x7C19F0-0x7C1A6A）
+--------------------------------------------------------------
+签名（推断）：thiscall + edx 隐式查找键 + 2 栈参 ret 8——
+ecx=this、edx=key、[esp+0x14]=参1（输出 word）、[esp+0x18]=
+参2（输出 word，值-1）。字段族：this+0x74C = 16 位项数、
+this+0x754 = word 表指针（步进 6 字节/项，比较首 word）。
+
+主体（0x7C19F0-0x7C1A6A）：
+007c19f0  push ebx/mov ebx,[ecx+0x754]       ; ★★word 表指针
+007c19f7  push ebp/push esi/xor esi,esi/xor eax,eax
+007c19fd  mov si,word[ecx+0x74c]             ; ★★16 位项数
+007c1a04  mov ecx,1
+007c1a09  cmp esi,ecx/push edi/jle 0x7c1a2d  ; ★项数<=1 → 直出 esi-1
+; → 区间扫描顶（0x7C1A11，步进 6B/项）：
+007c1a0e  lea edi,[ebx+6]
+007c1a11  xor ebp,ebp/mov bp,word[edi-6]     ; 前一项首 word
+007c1a17  cmp edx,ebp/jl 0x7c1a24            ; ★key < 前项 → 前进
+007c1a1b  xor ebp,ebp/mov bp,word[edi]       ; 当前项首 word
+007c1a20  cmp edx,ebp/jl 0x7c1a30            ; ★★key < 当前项 → 命中
+007c1a24  inc eax/inc ecx/add edi,6          ; ★★步进 6 字节/项
+007c1a29  cmp ecx,esi/jl 0x7c1a11            ; 循环
+007c1a2d  lea eax,[esi-1]                    ; ★未命中 → 末索引
+; → 输出段（0x7C1A30）：
+007c1a30  test eax,eax/jne 0x7c1a3a
+007c1a34  xor ecx,ecx/xor edx,edx            ; ★eax==0 → ecx=0/edx=0
+007c1a38  jmp 0x7c1a3f
+007c1a3a  lea ecx,[eax-1]/mov edx,eax        ; ecx=eax-1/edx=eax
+007c1a3f  mov esi,[esp+0x14]/test esi,esi/je 0x7c1a52
+007c1a47  lea ecx,[ecx+ecx*2]                ; ★参1 索引 ×3
+007c1a4a  xor edi,edi/mov di,word[ebx+ecx*2] ; 表[ecx*6B] 首 word
+007c1a50  mov [esi],edi                      ; 参1 ← 表值
+007c1a52  mov ecx,[esp+0x18]/test ecx,ecx/je 0x7c1a66
+007c1a5a  lea edx,[edx+edx*2]                ; ★参2 索引 ×3
+007c1a5d  xor esi,esi/mov si,word[ebx+edx*2] ; 表[edx*6B] 首 word
+007c1a63  dec esi                            ; ★★值-1
+007c1a64  mov [ecx],esi                      ; 参2 ← 表值-1
+007c1a66  pop edi/esi/ebp/ebx/ret 8
+
+★语义：**Westwood 表面调色板 CIN 组 word 表区间查找器（推
+断名）**——在 this+0x754 的 6 字节/项表中按 key（edx）定位
+所在区间索引 eax（表[eax-1] 首 word <= key < 表[eax] 首
+word）；输出：
+  ① 参1 ← 表[ecx]（ecx = eax==0 ? 0 : eax-1，即前一档）
+     首 word；
+  ② 参2 ← 表[eax] 首 word - 1（命中档上界-1）。
+  = batch 1147（0x7C06B0 PIN 组）的同族模板——本批 CIN 组
+  消费侧（步进 6B/项 + 项内偏移 0 首 word 比较）。
+
+★调用点（探针 E8 实测 2 处，均在 0x7C07D5 体内）：
+  0x7C07E3（第一段：`mov edx,ebx` 键 + push 双输出指针）
+  与 0x7C07F8（第二段：`mov edx,[esi+0x184]` 换键 + push 0×2
+  输出 NULL）——与 batch 1147 宿主 0x7C0530 内 0x7C0578/
+  0x7C0595 双调用模式同构（两次查找 + 比较）。
+
+★E8 被调者：**零子调用**（全 125B 纯 word 表扫描 + 输出）。
+
+★字段族跨批交叉（★★本批最强证据）：this+0x74C（16 位项
+  数）+ this+0x754（表指针）与 **batch 1105 调色板块装载器
+  CINH/CIND 组装载现场逐字段重合**——batch 1147 的 0x7C06B0
+  消费 PIN 组（this+0x758/0x760）、batch 1150 提及 LINH/LIND
+  组（this+0x714/+0x71C）——本批是 CIN 组消费侧，三组装载
+  器字段族全景消费侧第二件（PIN→CIN）。
+
+★原版怪癖（照抄）：
+  ① 步进 **6 字节/项**（`add edi,6`）而 batch 1147 是 2 字
+     节/项——CIN 组表项 6B 布局（首 word 参与比较，余 4B
+     未用）；
+  ② 输出索引换算用 `lea ecx,[ecx+ecx*2]`（×3）后 `[ebx+
+     ecx*2]`（=×6B 偏移）——×3×2 复合缩放；
+  ③ eax==0 特判 `xor ecx,ecx/xor edx,edx`（参1 索引 0/参2
+     索引 0）而 eax>0 时 ecx=eax-1/edx=eax——参1 索引比
+     命中索引少 1（前一档）而参2 用命中索引（上界）；
+  ④ 参2 恒 `dec esi`（值-1）——上界-1 语义；
+  ⑤ 两输出指针独立 test/NULL 跳过（0x7C07F8 段传 NULL×2
+     只取参1 返回值 eax）；
+  ⑥ 项数<=1 直接返 eax=esi-1 不查表。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：Westwood 自有代码混
+入 0x7C 区样本，宿主域在表面调色板对象方法族，非 CRT 复刻
+目标）。
+
+三、三态判定（为何 semantics_verified 而非 crt_runtime_verified）
+----------------------------------------------------------------
+1. 归属：0x7C19F0 = **Westwood 自有代码混入 0x7C 区样本
+   （混入样本链 #17）**，非 MSVC6 静态 CRT——证据：
+   a) thiscall + edx 隐式键 + ret 8 栈参 = Westwood 对象方
+      法调用约定，MSVC6 CRT 无此形态；
+   b) 字段族 this+0x74C/0x754 与 batch 1105 CINH/CIND 组装
+      载器逐字段重合（同对象邻近方法），且与 batch 1147
+      PIN 组消费侧 0x7C06B0 同族模板（CIN 变体）；
+   c) 两个调用点全在 0x7C07D5 宿主（batch 1147 宿主
+      0x7C0530 同 0x7C07xx 对象方法域）体内，双调用模式
+      同构；
+   d) 零子调用、零 CRT 分类表/锁/locale 形态。
+2. 方法论文档依据：batch 1116 修正后 0x7E1xxx 槽静态值不
+   作语义证据；本批判定不依赖槽表，靠反汇编主体 + 字段族
+   跨批重合 + 宿主家族归属三重实锤。
+3. gamemd_replication_discipline：Westwood 自有代码混入
+   CRT 区——重写时按宿主域语义（调色板 word 表区间查找）
+   复刻；0x7C 区整体按 CRT 层归档，本函数属混入样本需标
+   注归属。
+→ 状态：semantics_verified（全 125B + 双调用现场 + 字段族
+跨批重合；函数名「表面调色板 CIN 组 word 表区间查找器」由
+区间扫描不变量 + CINH/CIND 字段重合 + batch 1147 同族交叉
+标注）。
+
+四、跨批次闭合
+------------
+★batch 1105：CINH/CIND 组装载器——本批字段族 this+0x74C
+  （项数）/this+0x754（表指针）/×6B 每项与彼装载现场逐字
+  段重合（同对象邻近方法：装载 → 查询）。
+★batch 1147：0x7C06B0 PIN 组消费侧——本批 CIN 组消费侧
+  同族模板（0x7C06B0 步进 2B/项 vs 本批 6B/项、字段族
+  0x758/0x760 vs 0x74C/0x754），宿主域同 0x7C07xx 对象方
+  法区。
+★batch 1150：LINH/LIND 组 this+0x714/+0x71C——三组装载
+  器字段族全景（CIN/PIN/LIN），本批消费 CIN 组字段。
+★batch 1116：方法论修正——本批不依赖槽静态值，靠三重反
+  汇编实锤。
+★0x7C 区混入样本链：#10-#16 已归档 → 本批 #17 0x7C19F0。
+
+五、状态
+-------
+semantics_verified（0x7C19F0：Westwood 表面调色板 CIN 组
+word 表区间查找器归档；全 125B + 双调用现场 + 字段族跨批
+重合；不写 C++ 模型不做 golden——0x7C 区混入样本 #17，宿
+主域为表面调色板对象方法族；函数名由区间扫描不变量 +
+CINH/CIND 字段重合 + batch 1147 同族交叉标注）。TSV 新增
+0x007C19F0 行。
+
+★本批实锤：batch 1147 同族第二件——CIN 组消费侧（步进
+  6B/项 + 项内偏移 0 首 word 比较 + 参2 上界-1 输出），
+  字段族 this+0x74C/0x754 与 batch 1105 CINH/CIND 组装载
+  器逐字段重合 = 装载→查询配对闭环。
+相邻待续：batch 1153 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7DE226(124B)/0x7D484E(123B)/0x7C970C
+(126B) 已登记排除）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1151 已完（MSVC6 CRT 函数指针表插入器
+0x7C970C，commit 7a8f633）。
