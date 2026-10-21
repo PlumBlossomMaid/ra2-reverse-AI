@@ -1,0 +1,144 @@
+frontier batch 1130 —— Westwood 对象标志分发器 0x7C3750（归档，0x7C 区混入样本 #12）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7C3750（208B,
+uc=1, callers=2 探针实测 0x7C2F32/0x7C302B）。TSV 无既有
+行。TARGET = 0x007C3750。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007C3750 行。
+
+⚠️ 归属：延续 batch 1086-1129 修正链——0x7C-0x7D 区混入
+Westwood 自有代码，本样本 #12（对象标志分发器，thiscall +
+虚表槽 + 子对象标志轮询）。
+
+一、链语义（disasm 全 208B + 宿主调用点交叉，0x7C3750-0x7C381F）
+--------------------------------------------------------------
+签名（推断）：thiscall 0 栈参（this=ecx），依赖 [this+0x6DC]
+子对象 + [this+0x48] 回调，无返回值。
+
+主体（0x7C3750-0x7C381F）：
+007c3750  push esi/mov esi,ecx                      ; ★thiscall this=ecx
+007c3753  push edi/mov eax,[esi+0x48]               ; ★★[this+0x48] 回调
+007c3757  mov edi,[esi+0x6DC]                       ; ★★[this+0x6DC] 子对象
+007c375d  test eax,eax/je 0x7C37C5                  ; ★回调空 → 跳过轮询
+; → 标志位轮询（[edi+0x14]）：
+007c3761  mov ecx,[edi+0x14]/test ch,1/je 0x7C3785  ; ★bit8 检查
+007c3769  mov ecx,[esi+0x120]/mov edx,[edi+0x1C]
+007c3772  push ecx/push edx/push 4/push esi
+007c3777  call eax                                  ; ★★[esi+0x48] 4 参回调
+                                                  ;   （this/4/[edi+0x1C]/
+                                                  ;   [esi+0x120]）
+007c3779  mov eax,[edi+0x14]/add esp,0x10/and ah,0xFE
+007c3782  mov [edi+0x14],eax                        ; ★清 bit8
+007c3785  mov eax,[edi+0x14]/test ah,2/je 0x7C37AA  ; ★bit9 检查
+007c378d  mov eax,[esi+0x120]/mov ecx,[edi+0x1C]
+007c3796  push eax/push ecx/push 5/push esi
+007c379b  call [esi+0x48]                           ; ★★[esi+0x48] 5 参回调
+007c379e  mov eax,[edi+0x14]/add esp,0x10/and ah,0xFD
+007c37a7  mov [edi+0x14],eax                        ; ★清 bit9
+007c37aa  mov eax,[edi+0x14]/test ah,4/je 0x7C37C5  ; ★bit10 检查
+007c37b2  mov edx,[edi+0x1C]/mov ecx,esi
+007c37b7  call 0x7BE830                             ; ★★辅助（未登记新候选，
+                                                  ;   2 callers：0x7BED61/
+                                                  ;   0x7C37B7）
+007c37bc  mov eax,[edi+0x14]/and ah,0xFB
+007c37c2  mov [edi+0x14],eax                        ; ★清 bit10
+; → 虚表调用 + 状态转移（0x7C37C5）：
+007c37c5  mov ecx,esi/call [esi+0x780]              ; ★★[this+0x780] 虚表槽
+007c37cd  mov edx,[edi+0x1C]/mov [esi+0x6E0],edx    ; ★[this+0x6E0]=[edi+0x1C]
+007c37d6  mov ecx,[esi+0x1A4]/test cl,8/jne 0x7C37F1 ; ★[this+0x1A4] bit3 门控
+007c37e1  mov ecx,[edi+0x14]/mov [edi+0x14],0
+007c37eb  mov [edi+0x18],ecx                        ; ★子对象标志→[edi+0x18]
+007c37f0  ret
+007c37f1  test cl,0x10/je 0x7C380E                  ; ★bit4 检查
+007c37f6  mov edx,[edi+0x14]/or dh,8
+007c37fc  mov [edi+0x14],edx                        ; ★子对象置 bit11
+007c37ff  mov ecx,[esi+0x1A4]/and ecx,0xFFFFFFEF
+007c3808  mov [esi+0x1A4],ecx                       ; ★[this+0x1A4] 清 bit4
+007c380e  mov ecx,[esi+0x1A4]/and ecx,0xFFFFFFF7
+007c3818  mov [esi+0x1A4],ecx                       ; ★[this+0x1A4] 清 bit3
+007c381e  ret
+
+★语义：**Westwood 对象标志分发器（推断名）**——thiscall 0
+栈参：
+  ① [this+0x6DC] 子对象 +0x14 标志位轮询分发（[this+0x48]
+     回调非空时）：bit8 → 4 参回调（this/4/[edi+0x1C]/
+     [esi+0x120]）→ 清 bit8；bit9 → 5 参回调（this/5/…）→
+     清 bit9；bit10 → 0x7BE830 辅助 → 清 bit10；
+  ② [this+0x780] 虚表槽调用（结果忽略）；
+  ③ [this+0x6E0] = [edi+0x1C]（值落槽）；
+  ④ [this+0x1A4] bit3 门控：未置 → 子对象 [edi+0x14]=0 +
+     [edi+0x18]=旧标志（存档转移）；置位 → 子对象或 bit11 +
+     [this+0x1A4] 清 bit4 + 清 bit3（双向状态转移链）。
+  = 对象收尾/状态转移方法（按子对象标志位分发回调 + 自身
+  标志位联动）。
+
+★调用点（探针 E8 实测 2 处）：0x7C2F32 + 0x7C302B——宿主
+  0x7C2F10 区：先 call [esi+0x77C]（虚表槽）→ cmp eax,-1
+  → test [esi+0x1A4],8 → jne 调 0x7C3750 → 返回值 -1 判定
+  → [esi+0x150] or 6 分支 / 二次调用分支。
+
+★E8 被调者：0x7BE830（未登记新候选——2 callers 0x7BED61/
+  0x7C37B7，后续批次处理）。
+
+★原版怪癖（照抄）：
+  ① [this+0x48] 回调 4/5 参两形态（事件码 4/5 不同回调形
+     式）——同一槽两参型分派；
+  ② 子对象标志位轮询串行逐位（bit8→bit9→bit10 顺序判定，
+     非 switch）；
+  ③ 回调空（[this+0x48]==0）时跳过全部轮询直接走虚表
+     [this+0x780]（无回调退化路径）；
+  ④ 标志位清位用 and ah,0xFE/0xFD/0xFB（高位字节位操作——
+     标志在字节 1）；
+  ⑤ [this+0x1A4] bit3 门控双路径：未置 → 子对象标志清零转
+     移 [edi+0x18]；置位 → 子对象 or bit11 + 自身清 bit4/bit3
+     ——双向联动不对称；
+  ⑥ 虚表 [esi+0x780] 调用结果忽略（fire-and-forget）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：Westwood 对象方法
+重写时按语义等价实现）。
+
+三、三态判定（为何 semantics_verified 而非 crt_runtime_verified）
+---------------------------------------------------------------
+1. 归属：0x7C3750 = **Westwood 自有代码**——①thiscall + 虚
+   表槽 [this+0x48]/[this+0x780] = 对象方法契约形态（batch
+   1087-1129 同判据）；②[this+0x6DC] 子对象 + 标志位轮询分
+   发为 Westwood 对象家族惯用；③宿主 0x7C2F10 区（[esi+
+   0x77C] 虚表调用 + [esi+0x1A4] 门控）同区 Westwood 对象。
+2. 依赖：0x7BE830（未登记辅助）+ 虚表槽回调——重写时按对
+   象方法语义等价实现。
+3. 复刻纪律：Westwood 自有代码——不按商业库归档；对象标
+   志分发非 RMG 管线依赖，保留 semantics_verified。
+→ 状态：semantics_verified（thiscall + 虚表槽 + 子对象标志
+轮询 + 宿主调用点交叉；函数名「对象标志分发器」为推断交叉
+标注——标志轮询/回调分派/状态转移由代码实测，业务宿主语
+义未逐一定）。
+
+四、跨批次闭合
+------------
+★batch 1087-1129：0x7C-0x7D 区 Westwood 混入修正链——本
+  样本 #12（对象标志分发器，thiscall+虚表槽判据同源）。
+★batch 1119-1128：像素合成族（0x7DF280 族/0x7DEEFA 族）—
+  —同 0x7C-0x7D 区 Westwood 自有代码全景扩展。
+★0x7BE830：未登记新候选——本批 bit10 辅助交叉，后续批次
+  处理。
+
+五、状态
+-------
+semantics_verified（0x7C3750：Westwood 对象标志分发器归档；
+全 208B + 宿主调用点交叉；不写 C++ 模型不做 golden——对象
+方法非 RMG 管线依赖；函数名「对象标志分发器」为推断交叉
+标注——标志轮询/回调分派/状态转移由代码实测；⚠️ 0x7C 区
+Westwood 混入样本 #12）。TSV 新增 0x007C3750 行。
+
+★本批实锤：0x7C 区混入样本 #12——[this+0x6DC] 子对象标志
+  位轮询分发（bit8/9/10 → [esi+0x48] 4/5 参回调 + 0x7BE830）
+  + [this+0x780] 虚表 + [this+0x1A4] 双向状态转移链——West
+  wood 对象收尾/状态转移方法标准形态。
+相邻待续：batch 1131 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7C2180(205B)/0x7CE06E(204B)/0x7C9842
+(204B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1129 已完（MSVC6 CRT 控制台字符读取器
+0x7DD20F，commit 89b67d4）。
