@@ -1,0 +1,147 @@
+frontier batch 1123 —— MSVC6 CRT fread 0x7C94EB（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7C94EB（232B,
+uc=1, callers=1 探针实测 0x7C94D4 唯一宿主）。TSV 无既有
+行。TARGET = 0x007C94EB。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007C94EB 行。
+
+一、链语义（disasm 全 232B + helper 交叉，0x7C94EB-0x7C95D1）
+--------------------------------------------------------------
+签名（实测）：cdecl 4 参（param1=buffer @[ebp+8]、param2=
+element_size @[ebp+0xC]、param3=count @[ebp+0x10]、param4=
+FILE* stream @[ebp+0x14]），返回读入项数（成功=count，部分
+读=(total−remaining)/size，EOF/错误=0 或部分值）。
+
+主体（0x7C94EB-0x7C95D1）：
+007c94eb  push ebp/mov ebp,esp/push ecx/push ebx,esi,edi
+007c94f2  mov edi,[ebp+0xC]/imul edi,[ebp+0x10]   ; ★total = size×count
+007c94f9  mov ebx,[ebp+8]/mov ecx,edi             ; ★buffer / total
+007c94fe  test edi,edi/mov [ebp-4],edi            ; ★保存 total
+007c9506  jne 0x7C950F/xor eax,eax/jmp 0x7C95B8   ; ★total==0 → 返回 0
+007c950f  mov esi,[ebp+0x14]                      ; ★stream
+007c9512  test word[esi+0xC],0x10C/je 0x7C9522    ; ★标志 0x10C 分流
+007c951a  mov eax,[esi+0x18]/mov [ebp+0x14],eax   ; ★[esi+0x18] 块大小
+007c9522  mov dword[ebp+0x14],0x1000              ; ★否则默认 0x1000
+; → 主循环（0x7C952B-0x7C95AB）：
+007c952b  mov ecx,[ebp+8]                         ; ★剩余计数
+007c952e  test word[esi+0xC],0x10C/je 0x7C9560    ; ★0x10C 再判
+007c9536  mov eax,[esi+4]/test eax,eax/je 0x7C9560 ; ★[esi+4] 流剩余
+007c953d  cmp ecx,eax/jb 0x7C9545/mov edi,ecx
+007c9545  mov edi,eax                             ; ★edi = min(rem,剩余)
+007c9549  push edi/push [esi]/push ebx/call 0x7D0A20 ; ★★memmove 直读
+007c954e  sub [ebp+8],edi/sub [esi+4],edi/add [esi],edi ; ★游标推进
+007c9559  add ebx,edi/mov edi,[ebp-4]/jmp 0x7C95AB ; ★剩余更新
+; → 大块路径（0x7C9560 rem ≥ 块大小）：
+007c9560  cmp ecx,[ebp+0x14]/jb 0x7C9593          ; ★rem < 块大小
+007c9565  cmp [ebp+0x14],0/je 0x7C9576
+007c956d  xor edx,edx/div [ebp+0x14]/sub eax,edx  ; ★对齐块数
+007c9576  push eax/push ebx/push [esi+0x10]        ; ★[esi+0x10] 句柄
+007c957b  call 0x7D07DF                           ; ★★读分发（batch 039）
+007c9580  add esp,0xC/test eax,eax/je 0x7C95BD     ; eax==0 → EOF→置 0x10
+007c9587  cmp eax,-1/je 0x7C95C3                  ; eax==-1 → 错误→置 0x20
+007c958c  sub [ebp+8],eax/add ebx,eax/jmp 0x7C95AB ; ★推进剩余
+; → 小块路径（0x7C9593 rem < 块大小）：
+007c9593  push esi/call 0x7D0703                  ; ★★fgetc（batch 035）
+007c9599  cmp eax,-1/je 0x7C95C7                  ; 失败
+007c959f  mov [ebx],al/inc ebx/dec [ebp+8]         ; ★逐字节写缓冲
+007c95a8  mov eax,[esi+0x18]/mov [ebp+0x14],eax    ; ★块大小更新
+; → 循环/退出（0x7C95AB）：
+007c95ab  cmp [ebp+8],0/jne 0x7C952B             ; ★主循环
+007c95b5  mov eax,[ebp+0x10]                      ; ★返 count
+007c95b8  pop 族/leave/ret
+; → EOF/错误尾（0x7C95BD/0x7C95C3）：
+007c95bd  or dword[esi+0xC],0x10                  ; ★置 _IOEOF(0x10)
+007c95c1  jmp 0x7C95C7
+007c95c3  or dword[esi+0xC],0x20                  ; ★置 _IOERROR(0x20)
+007c95c7  mov eax,edi/xor edx,edx/sub eax,[ebp+8] ; ★(total−rem)/size
+007c95ce  div [ebp+0xC]/jmp 0x7C95B8              ; 部分读项数
+
+★语义：**MSVC6 CRT fread**——cdecl 4 参：
+  ① total = size×count；total==0 直接返回 0；
+  ② stream 标志 0x10C（_IOSTRG 字符串流域）命中块大小取
+     [esi+0x18]，否则默认 0x1000；
+  ③ 主循环：标志 0x10C 且 [esi+4]（流剩余）>0 → memmove
+     （0x7D0A20）直读路径 → 游标推进；
+  ④ rem ≥ 块大小 → 大块路径：按块对齐 → 读分发（0x7D07DF，
+     句柄 [esi+0x10]）——返回值 0=EOF 置 _IOEOF(0x10)、-1=错
+     误置 _IOERROR(0x20)、正=读入量推进；
+  ⑤ rem < 块大小 → 小块路径：逐字节 fgetc（0x7D0703）；
+  ⑥ 成功返回 count（[ebp+0x10]），EOF/错误返回
+     (total−remaining)/size 部分读项数。
+  与 MSVC6 fread 语义完全吻合（4 参返回项数 + 部分读除法回
+  值 + EOF/ERROR 标志位）。
+
+★E8 被调者：0x7D07DF（batch 039 流槽校验+读分发——本批
+  0x7C957B 大块路径交叉，6 callers）+ 0x7D0703（batch 035
+  CRT fgetc——本批 0x7C9594 小块逐字节交叉，5 callers）+
+  0x7D0A20（batch 032 memmove——直读路径）——全部已登记。
+
+★原版怪癖（照抄）：
+  ① 标志 0x10C 判断出现两次（0x7C9512 设块大小 + 0x7C952E
+     主循环入口）——fread 首轮与循环内重复判定；
+  ② EOF（0x10）与错误（0x20）标志位分离（0x7C95BD vs
+     0x7C95C3）——读分发返回值 0/-1 双出口；
+  ③ 部分读回值 (total−remaining)/size（0x7C95CB 减法后除）
+     ——读成功项数，EOF/错误都走此除法路径；
+  ④ 大块/小块分界 = [ebp+0x14]（字符串流取 [esi+0x18] 否
+     则 0x1000）；
+  ⑤ 循环内小块路径更新 [ebp+0x14] = [esi+0x18]（0x7C95A8
+     ——读流大块大小动态跟进）；
+  ⑥ 直读 min(rem, 流剩余) 无符号 jb/ja 分支选择读入量（与
+     fwrite 对称同模板）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT FILE 设施按商
+业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7C94EB = MSVC6 静态 CRT fread——0x7C-0x7D =
+   MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）；
+   FILE* 流槽（[esi] 游标/[+4] 剩余/[+0xC] 标志/[+0x10] 句柄/
+   [+0x18] 块大小）+ _IOEOF/_IOERROR 标志 + 大块读分发/小块
+   fgetc 分流为 CRT FILE 读设施标准形态（与 batch 1113
+   fwrite 对称孪生）。
+2. 依赖：0x7D07DF（读分发）+ 0x7D0703（fgetc）+ 0x7D0A20
+   （memmove）全部已登记——重写 gamemd 时用等价 std::fread
+   运行时代替。
+3. gamemd_replication_discipline：MSVC6 CRT FILE 设施，重写
+   时用等价运行时代替，逐字节复刻无意义——按商业库纪律
+   归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 232B + 三 helper 交叉；函
+数名「fread」由 4 参签名/部分读回值/块大小默认/EOF 错误标
+志实测交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 039：0x7D07DF 流槽校验+读分发——本批 0x7C957B 大
+  块路径调用交叉（6 callers 之一）。
+★batch 035：0x7D0703 CRT fgetc——本批 0x7C9594 小块逐字节
+  调用交叉（5 callers 之一）。
+★batch 032：0x7D0A20 memmove——直读路径交叉。
+★batch 1113：0x7C9602 fwrite——本批 fread 对称孪生（同
+  total=size×count / 0x10C 分流 / 大块小块分界 / 部分回值
+  除法 / _IOERROR 0x20——读侧多 EOF 0x10 与 min(rem,剩余)
+  直读路径）。★FILE 设施读写全链闭合（fread/fwrite/fputc/
+  flush/写读分发）。
+
+五、状态
+-------
+crt_runtime_verified（0x7C94EB：MSVC6 CRT fread 归档；全
+232B + 三 helper 交叉；不写 C++ 模型不做 golden——CRT
+FILE 设施商业库层；函数名「fread」由 4 参签名/部分读回
+值/块大小默认/EOF 错误标志实测交叉标注）。TSV 新增
+0x007C94EB 行。
+
+★本批实锤：fread 全链——memmove 直读 + 大块读分发
+  (0x7D07DF) + 小块 fgetc (0x7D0703) + EOF(0x10)/ERROR(0x20)
+  标志 + 部分读回值除法——CRT FILE 读设施标准形态，三个下
+  游全部已登记，与 fwrite 读写对称闭合。
+相邻待续：batch 1124 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7DC291(231B)/0x7DEEFA(221B)/0x7DEFD7(221B)
+——宿主 0x5FFA 区 6 参变体族）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1122 已完（0x7DF500 MMX 像素合成，commit
+45c1e6e）。
