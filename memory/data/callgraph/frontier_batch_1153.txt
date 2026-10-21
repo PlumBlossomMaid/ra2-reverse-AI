@@ -1,0 +1,156 @@
+frontier batch 1153 —— MSVC6 CRT strftime 十进制字段写入器 0x7CCF44（归档，分派器共用收尾兑现）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CCF44（111B,
+uc=1, callers=1 探针实测 0x7CCC6A）。TSV 无既有行。
+TARGET = 0x007CCF44。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CCF44 行。
+补登记背景：**batch 1031/TSV:1865 已登记 0x7CCB2E strftime
+内部分派器（1007B/0x7CCB2E-0x7CCF1C）文档「共用收尾
+0x7CCC6A」段点名**——本批即该点名兑现（分派器共用收尾的
+数值字段写入实体）。
+
+一、链语义（disasm 全 111B + 家族全局交叉 + 调用点宿主，
+0x7CCF44-0x7CCFB2）
+--------------------------------------------------------------
+签名（推断）：内部约定（分派器共用收尾专用）——[ebp+8]=
+数值、[ebp+0xC]=写入位置（从尾部倒数）、[ebp+0x10]=双重
+缓冲指针（*ptr=缓冲基）、[ebp+0x14]=剩余空间计数指针，
+返回写入位数。
+
+主体（0x7CCF44-0x7CCFB2）：
+007ccf44  push ebp/mov ebp,esp/push ecx        ; [ebp-4]=0（位数计数）
+007ccf48  xor eax,eax/push edi
+007ccf4b  cmp [0xb78bb0],eax                    ; ★★家族全局 [0xB78BB0]
+                                          ;   （batch 1091/1117 strftime/
+                                          ;   _output 状态位，20 引用全
+                                          ;   在 0x7CCB7B-0x7CD2AA 同族）
+007ccf51  mov [ebp-4],eax
+007ccf54  je 0x7ccf69                          ; 0 → 内联路径
+; → 备用路径（[0xB78BB0]!=0）：
+007ccf56  push [ebp+0x14]/[ebp+0x10]/[ebp+8]
+007ccf5f  call 0x7ccfb3                        ; ★未登记新候选——备用实现
+                                          ;   （3 参透传）
+007ccf64  add esp,0xc/jmp 0x7ccfb0             ; → 直接返回
+; → 内联路径（0x7CCF69，[0xB78BB0]==0）：
+007ccf69  mov edi,[ebp+0x14]                    ; edi = 剩余空间指针
+007ccf6c  mov ecx,[ebp+0xc]                     ; ecx = 写入位置（尾端）
+007ccf6f  cmp ecx,[edi]/jae 0x7ccfae            ; ★位置 >= 剩余 → 写满退出
+007ccf73  dec ecx/push esi
+007ccf75  mov esi,[ebp+0x10]                    ; esi = 双重缓冲指针
+007ccf78  lea eax,[ecx+1]/test eax,eax/je 0x7ccfa4 ; 位置为 -1 → 跳过
+007ccf7f  push ebx
+; → 除 10 写字符循环（0x7CCF80，右→左）：
+007ccf80  mov eax,[ebp+8]/push 0xa/pop ebx/cdq/idiv ebx
+                                          ; ★★除 10 取商余
+007ccf89  mov eax,[esi]
+007ccf8b  add dl,0x30
+007ccf8e  mov [eax+ecx],dl                     ; ★★余数+0x30 写字符（右对齐）
+007ccf91  mov eax,[ebp+8]/cdq/idiv ebx         ; 商继续
+007ccf97  inc [ebp-4]                          ; 位数++
+007ccf9a  dec ecx/cmp ecx,-1/jne 0x7ccf80      ; 循环到 -1
+007ccfa3  pop ebx
+007ccfa4  mov eax,[ebp-4]                      ; ★返回写入位数
+007ccfa7  add [esi],eax                        ; ★缓冲基推进（*ptr += 位数）
+007ccfa9  sub [edi],eax                        ; ★剩余空间递减
+007ccfab  pop esi/jmp 0x7ccfb0
+007ccfae  mov [edi],eax                        ; ★写满：剩余空间清零
+007ccfb0  pop edi/leave/ret
+
+★语义：**MSVC6 CRT strftime 十进制字段写入器（推断名——
+分派器共用收尾的数值字段写入实体）**——cdecl 3 栈参 + 1 回
+传结构（双重指针）：
+  ① [0xB78BB0] 家族全局 0 → 内联实现：按位置从右往左逐
+     位 idiv 0xa + dl+0x30 写十进制字符，位置递减至 -1；
+     非 0 → 透传 3 参调 0x7CCFB3 备用实现；
+  ② 写满（位置 >= 剩余空间）→ 剩余空间清零直接返回 0；
+  ③ 收尾推进双重缓冲基（*ptr += 位数）+ 剩余空间递减；
+     返回写入位数。
+  = strftime `%d`/`%M` 等数值字段的输出写入器，被 0x7CCC6A
+  共用收尾调用（TSV:1865 点名段兑现）。
+
+★调用点（探针 E8 实测 1 处 0x7CCC6A）：宿主 = 已登记
+  0x7CCB2E strftime 内部分派器（1007B）的共用收尾——各分
+  支（Z/M/S/% 等）准备参数后 `jmp 0x7CCC6A` 统一落点，
+  0x7CCC6A 处 `mov eax,[ebp+0x18]...` 字段查表后 call
+  0x7CCF44 写数值——与 TSV:1865「共用收尾（日期字段表查
+  + 输出）」描述逐字吻合。
+
+★E8 被调者：0x7CCFB3（★未登记新候选——[0xB78BB0]!=0 备
+  用路径，3 参透传的另类十进制实现，仅 1 个 E8 调用者
+  0x7CCF5F）。
+
+★原版怪癖（照抄）：
+  ① [0xB78BB0] 家族全局双路径分派——batch 1091 实锤该全
+     局在 0x7CD2C5 处 `mov [0xB78BB0],1`、0x7CD01F 处清 0
+     （strftime 内部状态跨函数共享），本批为第三处消费
+     （第三态：清 0 走内联、置 1 走备用）；
+  ② 内联循环用 `push 0xa/pop ebx` 载入除数（省 3 字节惯
+     用）——idiv 有符号除（cdq 扩展，负地址域可写负字
+     宽）；
+  ③ 双重缓冲指针（mov eax,[esi] 每轮重读 + 收尾 add
+     [esi],eax）——缓冲基作为指针存储，写后推进；
+  ④ 写满判定 `cmp ecx,[edi]/jae` 在 dec ecx **之前**——
+     边界语义照抄（位置从 [ebp+0xC] 起，先判后减）；
+  ⑤ 返回位数计数 [ebp-4] 与位置递减同步（位数即写入字
+     符数，位置 -1 终止）；
+  ⑥ 剩余空间双来源：写满路径 mov [edi],0 / 正常收尾
+     sub [edi],eax——统一由 [ebp+0x14] 管理。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 时间格式
+化设施按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CCF44 = MSVC6 静态 CRT strftime 族十进制字段
+   写入器——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_
+   layout_crt_provenance）；[0xB78BB0] 家族全局（batch
+   1091/1117 已实锤 strftime/_output 状态位）+ 除 10 写
+   字符右对齐循环 = CRT 时间格式化标准形态；邻接 0x7CCB2E
+   （TSV:1865）/0x7CCFFC（TSV:1934 strftime 格式化核心）
+   夹层同族。
+2. 依赖：0 个已登记函数（唯一 E8 被调 0x7CCFB3 未登记）+
+   [0xB78BB0] 家族全局（已登记语义）——重写 gamemd 时用
+   等价 std::strftime 运行时代替。
+3. gamemd_replication_discipline：MSVC6 CRT 时间库设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 111B + 家族全局交叉 + 调
+用点宿主核实；函数名「strftime 十进制字段写入器」由除 10
+右对齐循环 + 共用收尾 0x7CCC6A + [0xB78BB0] 双路径交叉标
+注）。
+
+四、跨批次闭合
+------------
+★batch 1031/TSV:1865：0x7CCB2E strftime 内部分派器——本
+  批是其「共用收尾 0x7CCC6A」点名段兑现（各分支 jmp 共用
+  收尾 → 字段参数 → call 本批函数写数值）。
+★batch 1091/TSV:1934：0x7CCFFC strftime 格式化核心——本
+  批 [0xB78BB0] 家族全局第三处消费（清 0 内联/置 1 备用）
+  与彼 0x7CD2C5 置 1/0x7CD01F 清 0 现场交叉；本批函数恰在
+  0x7CCFFC（0x7CCFFC 起）之前紧邻夹层。
+★batch 1117/TSV:1961：0x7CCA34 sprintf 引擎——同 [0xB78BB0]
+  交替标志族全景（%d/%u/%x 数值字段同为除基数写字符形态）。
+★新候选：0x7CCFB3（[0xB78BB0]!=0 备用十进制实现）——尾
+  部登记待后续批次处理。
+
+五、状态
+-------
+crt_runtime_verified（0x7CCF44：MSVC6 CRT strftime 十进制
+字段写入器归档；全 111B + 家族全局交叉；不写 C++ 模型不做
+golden——CRT 时间库商业库层；函数名由除 10 右对齐循环 +
+共用收尾 0x7CCC6A + [0xB78BB0] 双路径交叉标注）。TSV 新增
+0x007CCF44 行。
+
+★本批实锤：batch 1031 点名段（strftime 分派器共用收尾
+  0x7CCC6A）兑现——[0xB78BB0] 状态位双路径：0 走内联除
+  10 右对齐写字符、1 走 0x7CCFB3 备用实现；写满/正常收
+  尾双出口。
+相邻待续：batch 1154 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7DABAC(103B)/0x7D484E(123B)/0x7CCFB3
+(本批新候选入池)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1152 已完（Westwood 表面调色板 CIN 组 word
+表区间查找器 0x7C19F0，commit 0a7f09d）。
