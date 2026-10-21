@@ -1,0 +1,134 @@
+frontier batch 1198 —— MSVC6 CRT fwrite 加锁包装壳 0x7C95D3（归档，锁+核心+锁三段）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7C95D3（47B,
+uc=1, callers=1 探针实测 0x40907A）。TSV 无既有行。
+TARGET = 0x007C95D3。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007C95D3 行。
+
+一、链语义（disasm 全 47B + 三依赖交叉 + 调用点宿主，
+0x7C95D3-0x7C9601）
+--------------------------------------------------------------
+签名（确认）：cdecl 4 参（[ebp+8]=缓冲、[ebp+0xC]=元素大小、
+[ebp+0x10]=元素个数、[ebp+0x14]=FILE* 流），返回写入项数。
+
+主体（0x7C95D3-0x7C9601）：
+007c95d3  push ebp/mov ebp,esp/push esi
+007c95d7  push dword[ebp+0x14]                 ; ★FILE*
+007c95da  call 0x7cb3f9                        ; ★★TSV:197 流锁 Enter
+                                              ;   （batch 046/966）
+007c95df  push dword[ebp+0x14]                 ; ④参 FILE*
+007c95e2  push dword[ebp+0x10]                 ; ③参 元素个数
+007c95e5  push dword[ebp+0xc]                  ; ②参 元素大小
+007c95e8  push dword[ebp+8]                    ; ①参 缓冲
+007c95eb  call 0x7c9602                        ; ★★TSV:1957 batch
+                                              ;   1113 CRT fwrite 核心
+007c95f0  push dword[ebp+0x14]                 ; FILE*（解锁用）
+007c95f3  mov esi,eax                          ; esi = fwrite 结果
+007c95f5  call 0x7cb44b                        ; ★★TSV:198 流锁 Leave
+                                              ;   （batch 046/961）
+007c95fa  add esp,0x18                         ; ★清 6 栈参
+007c95fd  mov eax,esi                          ; ★返回写入项数
+007c95ff  pop esi/pop ebp/ret
+
+★语义：**MSVC6 CRT fwrite 加锁包装壳（推断名——_fwrite
+加锁版）**——cdecl 4 参：
+  ① 流锁 Enter（0x7CB3F9，对象=FILE*）；
+  ② 4 参原样转发 0x7C9602（fwrite 核心：total=size×count、
+     0x10C 字符串流/大块 flush/小块 fputc 分流、_IOERROR
+     0x20、部分写 (total-rem)/size 回值——batch 1113 已
+     全量登记）；
+  ③ 流锁 Leave（0x7CB44B）；
+  ④ 返回写入项数（eax 透传核心结果）。
+  = fwrite 公开入口的锁包装层（核心 + 加解锁 = CRT FILE
+  写侧公开形态），与 batch 1197 fread 壳**严格同构**（仅
+  核心地址 0x7C9602 vs 0x7C94EB 不同）。
+
+★调用点（探针 E8 实测 1 处 0x40907A）：Westwood 主代码区
+  0x409xxx 宿主。现场 0x409070-0x409095：leave/push eax/
+  push 1/je 0x40908A（★分支：标志位判读写方向）——非分支
+  侧 0x409076：`mov edx,[edi+4]/push edx/call 0x7C95D3`
+  （本批 fwrite 壳）→ mov esi,eax/add esp,0x10；分支侧
+  0x40908A：`mov eax,[edi+4]/push eax/call 0x7C94BC`
+  （batch 1197 fread 壳）。**同一宿主按同一流对象 [edi+4]
+  二选一走读/写——读写孪生对在调用侧完全闭合。**
+
+★E8 被调者（3 个，全已登记）：
+  ① 0x7CB3F9（★★TSV:197 crt_runtime_verified——batch
+     046/966 流锁 Enter 47B）；
+  ② 0x7C9602（★★TSV:1957 crt_runtime_verified——batch
+     1113 CRT fwrite 核心 266B：total=size×count、0x10C
+     分块、memmove 直写 / 0x7CB1F9 flush / 0x7D0D55 大块
+     写分发 / 0x7CE18D 小块 fputc、_IOERROR 0x20、部分写
+     (total-rem)/size）；
+  ③ 0x7CB44B（★★TSV:198 crt_runtime_verified——batch
+     046/961 流锁 Leave 47B）。
+  全部已登记，无未登记依赖。
+
+★全局：无（纯栈 + 参数透传）。
+
+★原版怪癖（照抄）：
+  ① 与 batch 1197 fread 壳**逐字节同构**（47B/47B，唯一差
+     异 = 核心地址 0x7C9602）——CRT 读/写公开壳同一模板
+     复制；
+  ② 锁 Enter/Leave 各用 push [ebp+0x14] 单独压 FILE*
+     （cdecl 1 参）——锁对象显式重传（同 fread 壳）；
+  ③ 4 参转发顺序 buffer/size/count/FILE*（标准 fwrite 序）
+     ——核心 0x7C9602 现场互证；
+  ④ add esp,0x18 **一次清 6 栈参**（核心 4 + 两次锁调用
+     各 1）——三个 cdecl 调用清理合并成一条 add（同 fread
+     壳）；
+  ⑤ 返回值经 esi 中转（mov esi,eax → mov eax,esi）——为
+     在两次锁调用间保全核心返回值（同 fread 壳）；
+  ⑥ 锁在壳层、核心无锁——分层设计照抄（核心 0x7C9602
+     自身不加锁，避免同流递归死锁）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 流写入
+按商业库纪律归档；核心 0x7C9602 已归 batch 1113）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7C95D3 = MSVC6 静态 CRT fwrite 加锁包装壳——0x7C-
+   0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）；锁+核心+锁三段 = CRT FILE 写侧公开形态
+   （batch 1113 核心 / 046 锁族同链，与 batch 1197 对称）。
+2. 依赖：0x7CB3F9/0x7C9602/0x7CB44B 全部已登记——重写
+   gamemd 时用等价运行时（std::fwrite）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 流设施，重写
+   时用等价运行时代替，逐字节复刻无意义——按商业库纪律
+   归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 47B + 三依赖交叉 + 调用
+点宿主 + fread 壳同构对照；函数名「fwrite 加锁包装壳」由
+锁+核心+锁 三段 + 4 参转发 + 孪生壳对照交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1113：0x7C9602 fwrite 核心（TSV:1957）——本批调
+  用现场交叉（4 参转发 + 返回值透传）。
+★batch 1197：0x7C94BC fread 加锁壳——**本批孪生对照**
+  （47B/47B 逐字节同构、同一宿主 0x40907A/0x40908E 二选一
+  读写分支、流对象 [edi+4] 共用）——CRT FILE 读/写公开壳
+  读写全链闭合。
+★batch 046/961/966：0x7CB3F9/0x7CB44B 流锁 Enter/Leave
+  对称对——本批包围核心的锁现场交叉（同 fread 壳）。
+
+五、状态
+-------
+crt_runtime_verified（0x7C95D3：MSVC6 CRT fwrite 加锁包装
+壳归档；全 47B + 三依赖交叉；不写 C++ 模型不做 golden
+——CRT 流设施商业库层；函数名由 锁+核心+锁 三段 + 4 参
+转发 + 孪生壳对照交叉标注）。TSV 新增 0x007C95D3 行。
+
+★本批实锤：fwrite 公开入口锁层——流锁 Enter → 0x7C9602
+  核心（4 参）→ 流锁 Leave → 返回写入项数（esi 中转保
+  存 eax），与 batch 1197 fread 壳逐字节同构；唯一调用点
+  0x40907A 与 fread 壳 0x40908E 同宿主读写二选一——CRT
+  FILE 读写公开壳对完全闭合，三依赖全已登记。
+相邻待续：batch 1199 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CC653(47B, callers=1)/0x7C9AE0(46B,
+callers=1)/0x7D3988(46B, callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1197 已完（MSVC6 CRT fread 加锁包装壳 0x7C94BC，
+commit 7cc0901）。
