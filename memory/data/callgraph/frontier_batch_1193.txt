@@ -1,0 +1,132 @@
+frontier batch 1193 —— MSVC6 CRT _i64toa 壳层负数标志包装 0x7D475A（归档，64 位十进制格式化器）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D475A（49B,
+uc=1, callers=1 探针实测 0x7CBD58）。TSV 无既有行。
+TARGET = 0x007D475A。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D475A 行。
+
+一、链语义（disasm 全 49B + 核心依赖交叉 + 调用点宿主，
+0x7D475A-0x7D478A）
+--------------------------------------------------------------
+签名（确认）：cdecl 4 参（[ebp+8]=64 位值低半、[ebp+0xC]=
+64 位值高半、[ebp+0x10]=目标字符缓冲、[ebp+0x14]=进位制），
+返回 [ebp+0x10]（缓冲指针）。
+
+主体（0x7D475A-0x7D478A）：
+007d475a  push ebp/mov ebp,esp
+007d475d  xor eax,eax                          ; eax=0（负号标志关）
+007d475f  cmp dword[ebp+0x14],0xa              ; radix == 10 ?
+007d4763  jne 0x7d4774                         ; ★非十进制 → 无负号
+007d4765  cmp dword[ebp+0xc],eax               ; 高半 vs 0
+007d4768  jg 0x7d4774                          ; 高 > 0 → 无负号
+007d476a  jl 0x7d4771                          ; 高 < 0 → 置标志
+007d476c  cmp dword[ebp+8],eax                 ; 低半 vs 0
+007d476f  jae 0x7d4774                         ; ★低 >= 0（无符号）→ 无
+007d4771  push 1/pop eax                       ; ★★flag = 1（负号）
+007d4774  push eax                             ; ⑤参 flag
+007d4775  push dword[ebp+0x14]                 ; ④参 radix
+007d4778  push dword[ebp+0x10]                 ; ③参 buffer
+007d477b  push dword[ebp+0xc]                  ; ②参 高半
+007d477e  push dword[ebp+8]                    ; ①参 低半
+007d4781  call 0x7d478b                        ; ★★TSV:1908 batch
+                                              ;   1067 _i64toa/_ui64toa
+                                              ;   （64 位转字符串核心）
+007d4786  mov eax,dword[ebp+0x10]              ; ★返回 buffer 指针
+007d4789  pop ebp/ret
+
+★语义：**MSVC6 CRT _i64toa 壳层负数标志包装（推断名——
+64 位有符号十进制格式化入口）**——cdecl 4 参：
+  ① 仅当 radix==10 时才判负（十六/八进制无符号语义）；
+  ② 负号判定：高半 < 0（有符号）或（高半 == 0 且低半
+     <0 无符号）→ 置 flag=1；
+  ③ 5 参转发 0x7D478B（参序 低半/高半/buffer/radix/
+     flag——0x7D478B 内 cmp [ebp+0x18] 读 flag、mov esi,
+     [ebp+0x10] 读 buffer 现场交叉）；
+  ④ 返回 buffer（itoa 族惯例）。
+  = _i64toa 有符号入口（_i64toa 核心的负号前置计算层）。
+
+★调用点（探针 E8 实测 1 处 0x7CBD58）：宿主 0x7CBD45（
+  64 位数值→宽字符串包装器——batch 1191 0x7CBCAF 的 64
+  位孪生）：push [ebp+0x14]（radix）/lea eax,[ebp-0x50]（
+  栈上 ANSI 缓冲）/push eax/push [ebp+0xc]（高半）/push
+  [ebp+8]（低半）/call 0x7D475A → add esp,0x10 → 六参
+  push 0/1/[ebp-0x50]/-1/[ebp+0x10]/0x50/call
+  dword[0x7E11C4]（★★MultiByteToWideChar ACP→wide——
+  batch 1191 同款 IAT 槽实锤）。紧邻 0x7CBD7A = 同构兄弟
+  （调 0x7D4811 无符号 64 位壳，本批未及）。
+
+★E8 被调者（1 个）：**0x7D478B（★★TSV:1908 已登记
+  crt_runtime_verified——batch 1067 _i64toa/_ui64toa 134B
+  64 位整数转字符串核心；依赖 __aullrem 0x7D7840（batch
+  961 REIMPL）+ __aulldiv 0x7C9380（batch 975 REIMPL）双
+  算术助手已有 C++ 真身）**——唯一函数依赖，已登记。
+
+★全局：无（纯栈 + 参数透传）。
+
+★原版怪癖（照抄）：
+  ① **仅 radix==10 判负**（cmp [ebp+0x14],0xa/jne 跳过）
+     ——十六/八进制输出无负号语义；
+  ② 负号判定双段：高半有符号比较（jl/jg）+ 低半无符号
+     比较（jae）——`lo<0` 用无符号 jae 拒掉（低半 >=0x8000
+     0000 才可能负）判负条件与原版 _i64toa 一致；
+  ③ push 1/pop eax 置 flag（省 1 字节，MSVC6 惯用）；
+  ④ 转发参序 低半/高半/buffer/radix/flag（5 栈参 cdecl）
+     ——与 0x7D478B 内部 [ebp+0x10]=buffer、[ebp+0x18]=
+     flag 现场互证；
+  ⑤ 返回 buffer 指针（[ebp+0x10] 读回）——itoa 族返回值
+     惯例；
+  ⑥ 无栈帧外的缓冲管理——目标缓冲由调用者提供
+     （[ebp+0x10]）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 整数转字
+符串设施按商业库纪律归档；核心 0x7D478B 已归 batch 1067）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D475A = MSVC6 静态 CRT _i64toa 壳层——0x7C-
+   0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）；radix==10 判负 + 5 参转发核心 = CRT 整数
+   格式化标准形态（batch 1067 同链）。
+2. 依赖：0x7D478B 已登记（TSV:1908）——重写 gamemd 时用
+   等价运行时（std::to_string / _i64toa）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 整数转换设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden（核心 0x7D478B 及
+   其算术助手已归档）。
+→ 状态：crt_runtime_verified（全 49B + 核心依赖交叉 + 调
+用点宿主；函数名「_i64toa 壳层负数标志包装」由 radix==10
+判负 + 5 参转发 + 返回 buffer 交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1067：0x7D478B _i64toa 核心（TSV:1908）——本批调
+  用现场交叉（5 参转发 + [ebp+0x18] flag 读取互证）。
+★batch 1191：0x7CBCAF 32 位数值→宽字符串包装——宿主
+  0x7CBD45 为其 64 位孪生（同 MultiByteToWideChar ACP→
+  wide + 0x7E11C4 IAT 槽）。
+★batch 961/975：__aullrem/__aulldiv REIMPL——_i64toa 链
+  算术助手已有 C++ 真身（间接关联）。
+★batch 023：0x7D468C 数值格式化包装——32 位版负数预处
+  理（本批为 64 位版同构——32/64 位格式化全景）。
+
+五、状态
+-------
+crt_runtime_verified（0x7D475A：MSVC6 CRT _i64toa 壳层负
+数标志包装归档；全 49B + 核心依赖交叉；不写 C++ 模型不做
+golden——CRT 整数转换商业库层；函数名由 radix==10 判负 +
+5 参转发 + 返回 buffer 交叉标注）。TSV 新增 0x007D475A 行。
+
+★本批实锤：_i64toa 有符号入口——仅 radix==10 判负（高半
+  有符号 + 低半无符号双段）、push 1/pop eax 置 flag、5 参
+  转发 0x7D478B（✓TSV:1908）返 buffer；唯一调用点
+  0x7CBD58 宿主为 batch 1191 0x7CBCAF 的 64 位孪生（64
+  位数值→宽字符串，MultiByteToWideChar 收尾）。
+相邻待续：batch 1194 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CA814(49B, callers=1)/0x7DAE6E(49B,
+callers=1)/0x7DDE50 __strrev(48B, callers=2)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1192 已完（MSVC6 CRT _fgetc 核心 0x7CB80B，
+commit aba2877）。
