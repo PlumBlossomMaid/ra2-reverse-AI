@@ -1,0 +1,165 @@
+frontier batch 1144 —— MSVC6 CRT RTTI 类型查询辅助 0x7CAA05（归档，_RTDynamicCast 族）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CAA05（148B,
+uc=1, callers=4 探针实测 0x725CF8/0x725D14/0x725D30/
+0x725D4C，主代码区）。TSV 无既有行。TARGET = 0x007CAA05。
+C++ 模型：无（见「三态判定」）。TSV：新增 0x007CAA05 行。
+补登记背景：**batch 878 文档（0x7D2F64 __CxxThrowException@8）
+调用点核验段已点名「FUN_007caa05 未登记新宿主×2（0x7CAA48/
+0x7CAA94）」**——本批即该点名补登记。
+
+一、链语义（disasm 全 148B + 尾部过滤/处理 30B + 依赖交叉 +
+调用者宿主，0x7CAA05-0x7CAAAC + 0x7CAAAD-0x7CC8A5）
+--------------------------------------------------------------
+签名（推断）：入参 [ebp+8]=对象指针，返回经导入槽分发的
+类型描述符指针 / throw。
+
+SEH 帧安装（0x7CAA05-0x7CAA28）：
+007caa05  push ebp/mov ebp,esp/push -1/push 0x7f9630
+          push 0x7cc1d4/mov eax,fs:[0]/push eax/mov fs:[0],esp
+                                          ; ★★标准 MSVC6 C++ EH 安装
+                                          ;   0x7CC1D4=_except_handler3
+                                          ;   （探针确认 test [eax+4],6
+                                          ;   标准 SEH 处理器）+
+                                          ;   scope 表 0x7F9630
+007caa22  sub esp,0x34/push ebx/esi/edi
+007caa28  mov [ebp-0x18],esp               ; ★保存帧恢复点（handler 用）
+
+空指针检查（0x7CAA2B-0x7CAA48）：
+007caa2b  mov eax,[ebp+8]/test eax,eax/jne 0x7caa4d
+; → 空 → 构造异常对象 + throw：
+007caa32  push 0x7f9608/lea ecx,[ebp-0x28]/call 0x7caacb
+                                          ; ★异常对象构造器 1（装虚表）
+007caa3f  push 0x80f058/lea eax,[ebp-0x28]/push eax
+007caa48  call 0x7d2f64                    ; ★★batch 878 throw 内核
+                                          ;   （throwinfo 常量 0x80F058）
+
+RTTI 定位器读取（0x7CAA4D-0x7CAA7D）：
+007caa4d  and [ebp-4],0
+007caa51  mov eax,[eax]                    ; vtable
+007caa53  mov esi,[eax-4]                  ; ★★vtable[-4] = RTTI complete
+                                          ;   object locator（MSVC 布局）
+007caa56  mov [ebp-0x1c],esi
+007caa59  push 8
+007caa5b  push [esi+0xc]                   ; ★★locator[+0xC] = 类型描述符
+007caa5e  call [0x7e115c]                  ; ★★导入槽分发（batch 871 同型
+                                          ;   槽族；batch 1116 槽静态值
+                                          ;   不作语义证据——仅作分发点）
+007caa64  test eax,eax/jne 0x7caa7e
+; → 槽调用返 0 → 返回类型描述符：
+007caa68  mov eax,[esi+0xc]/or [ebp-4],-1/mov ecx,[ebp-0x10]/
+          mov fs:[0],ecx/pop edi/esi/ebx/leave/ret
+; → 槽调用非 0 → 构造 + throw：
+007caa7e  push 0x7f95e4/lea ecx,[ebp-0x34]/call 0x7ca971
+                                          ; ★异常对象构造器 2（装虚表）
+007caa8b  push 0x80f038/lea eax,[ebp-0x34]/push eax
+007caa94  call 0x7d2f64                    ; ★★batch 878 throw 内核
+                                          ;   （第二个 throw）
+
+AV 过滤器（0x7CAA99-0x7CAAAC，SEH 异常过滤）：
+007caa99  mov eax,[ebp-0x14]/mov eax,[eax]/mov eax,[eax]
+007caaa2  xor ecx,ecx/cmp eax,0xc0000005
+007caaa7  sete cl/mov eax,ecx/ret          ; ★★过滤器：异常码 ==
+                                          ;   EXCEPTION_ACCESS_VIOLATION
+                                          ;   → 1，否则 0
+
+handler（0x7CAAAD-0x7CC8A5，捕获 AV 后转 C++ 异常）：
+007caaad  mov esp,[ebp-0x18]/push 0x7f9598/lea ecx,[ebp-0x40]
+007caab8  call 0x7ca971/ push 0x80f038/lea eax,[ebp-0x40]/
+          push eax/call 0x7d2f64           ; ★★第三 throw（AV 转异常）
+
+★语义：**MSVC6 CRT RTTI 类型查询辅助（推断名——_RTDynamicCast
+族）**：
+  ① SEH 帧（_except_handler3 + scope 0x7F9630）；
+  ② 空指针 → 构造 0x80F058 异常并 throw；
+  ③ 非空 → vtable[-4] 取 RTTI complete object locator →
+     [+0xC] 取类型描述符 → call [0x7E115C] 导入槽分发；
+  ④ 槽调用返 0 → 返回类型描述符（GET 语义）；
+  ⑤ 槽调用非 0 → 构造 0x80F038 异常并 throw；
+  ⑥ AV 过滤器捕获 0xC0000005 → handler 转 0x80F038 异常。
+  = RTTI 类型查询/动态转换标准支持代码（MSVC6 C++ EH + RTTI
+  运行时形态）。
+
+★调用点（探针 E8 实测 4 处，全主代码区）：0x725CF8/0x725D14/
+0x725D30/0x725D4C——间距 0x1C 的四段同构块（gameside 类型
+分发 switch）：`call 0x7CAA05 → mov ecx,0x818D60 → push eax
+→ call 0x7C8AD3`（名字比较——0x818D60=类型名常量；0x7C8AD3=
+跳过 9 前缀后 strcmp 布尔化）。
+
+★E8 被调者：0x7D2F64（★★batch 878 __CxxThrowException@8——
+已登记，本批调用点 0x7CAA48/0x7CAA94 正是彼文档点名现场）+ 
+0x7CAACB（构造器 1）/0x7CA971（构造器 2，4 处调用）/0x7CC1D4
+（_except_handler3，E8 callers=0——经 SEH push 引用）——
+**后三件未登记，新候选**。
+
+★原版怪癖（照抄）：
+  ① vtable[-4] 取 RTTI locator——对象首字段即 vtable 指针、
+     描述符在 vtable 前 4 字节的 MSVC 布局；
+  ② 空指针与查询失败分别 throw 不同异常（0x80F058 空态 /
+     0x80F038 失败态）——两套构造器（0x7CAACB/0x7CA971）
+     装不同虚表；
+  ③ AV 异常（0xC0000005）经过滤器转 0x80F038 再抛——SEH
+     层异常 → C++ 异常跨界转换；
+  ④ 槽调用返回值双分派：0 → 返描述符、非 0 → throw（与
+     直觉相反的分支语义，照抄）；
+  ⑤ handler 用 [ebp-0x18] 帧恢复点重铺栈后继续构造——标
+     准 MSVC6 EH handler 模板；
+  ⑥ 三个 throw 共用同一内核 0x7D2F64（batch 878），仅
+     throwinfo 常量（0x80F058/0x80F038）与构造器区分。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT C++ RTTI/
+EH 运行时按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CAA05 = MSVC6 静态 CRT C++ RTTI/EH 运行时——0x7C-0x7D
+   = MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）；
+   vtable[-4]→locator[+0xC] 是 MSVC RTTI 标准布局、SEH 帧 +
+   scope 表 + _except_handler3 是 MSVC6 C++ EH 标准形态、三个
+   throw 全走 batch 878 已登记单点内核。同簇 0x7CA4B0（batch
+   161 CRT::strstr）/0x7CAAE4（batch 111 CRT 异常帧过滤器）已
+   登记 CRT。
+2. 依赖：0x7D2F64 已登记（batch 878）；0x7CA971/0x7CAACB/
+   0x7CC1D4 未登记——尾部登记新候选后续批次处理。
+3. gamemd_replication_discipline：MSVC6 CRT C++ 运行时（RTTI/
+   EH 支持代码），重写时用等价运行时（标准 C++ RTTI/异常）
+   代替，逐字节复刻无意义——按商业库纪律归档，不写 C++ 模
+   型不做 golden。
+→ 状态：crt_runtime_verified（全 148B + 尾部 30B + 依赖交叉 +
+调用者宿主核实；函数名「RTTI 类型查询辅助」由 vtable[-4]
+locator 布局 + 双 throwinfo 常量 + batch 878 点名现场交叉标
+注）。
+
+四、跨批次闭合
+------------
+★batch 878：0x7D2F64 throw 内核——本批三个 throw 调用点
+  （0x7CAA48/0x7CAA94 + handler）正是彼文档点名「FUN_007caa05
+  未登记新宿主×2」的补登记兑现。
+★batch 871：FPE 转换器四参分发导入槽——本批 [0x7E115C] 同槽
+  族（CRT 导入槽分发全景）。
+★batch 1116：0x7E1xxx 槽静态值方法论修正——本批 [0x7E115C]
+  引用不依赖静态值判语义，仅作分发点登记。
+★batch 161/111：0x7CA4B0 CRT::strstr / 0x7CAAE4 CRT 异常帧
+  过滤器——同簇 CRT C++ EH/RTTI 域。
+
+五、状态
+-------
+crt_runtime_verified（0x7CAA05：MSVC6 CRT RTTI 类型查询辅助
+归档；全 148B + 尾部 30B + 依赖交叉；不写 C++ 模型不做
+golden——CRT C++ 运行时商业库层；函数名「RTTI 类型查询辅
+助」由 vtable[-4] locator 布局 + 双 throwinfo + batch 878 点
+名现场交叉标注）。TSV 新增 0x007CAA05 行。
+
+★本批实锤：batch 878 点名的第二宿主补登记——MSVC6 CRT RTTI
+  类型查询：vtable[-4]→locator→[+0xC] 描述符 + 导入槽分发 +
+  空/失败双 throw + AV 过滤器转抛，三个 throw 全走单一内核
+  0x7D2F64。
+相邻待续：batch 1145 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1 优先；本批新候选 0x7CA971(构造器 2)/0x7CAACB
+(构造器 1)/0x7CC1D4(_except_handler3) 入待检池）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1143 已完（Westwood 表面字符映射表构建器
+0x7C61CF，commit df81f52）。
