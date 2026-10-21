@@ -1,0 +1,158 @@
+frontier batch 1135 —— MSVC6 CRT mktime 类时间构建器 0x7D29B2（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D29B2（194B,
+uc=1, callers=1 探针实测 0x7CA748 唯一宿主）。TSV 无既有
+行。TARGET = 0x007D29B2。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D29B2 行。
+
+一、链语义（disasm 全 194B + 时区族/月表取证，0x7D29B2-0x7D2A73）
+--------------------------------------------------------------
+签名（推断）：cdecl 7 参（param1=年（自 1900）@[ebp+8]、
+param2=月 @[ebp+0xC]、param3=日 @[ebp+0x10]、param4=时
+@[ebp+0x14]、param5=分 @[ebp+0x18]、param6=秒 @[ebp+0x1C]、
+param7=DST 标志 @[ebp+0x20]），返回 time_t 秒数 / -1 非法。
+
+★月表（探针 PE dword 实锤）：[0x87D5B0] = {365, -1, 30,
+  58, 89, 119, 150, 180, 211, 242, 272, 303}——年天数+哨兵+
+  月份累计天数（batch 1112 的 0x87D580/0x87D5B4 变体）。
+★时区三全局（batch 1112 同族）：[0x87CA60]=时区偏移 1（11
+  引用）、[0x87CA64]=DST 门控（6 引用）、[0x87CA68]=时区偏
+  移 2（6 引用）。
+
+主体（0x7D29B2-0x7D2A73）：
+007d29b2  push ebp/mov ebp,esp/sub esp,0x24/push ebx
+007d29b9  mov ebx,[ebp+8]/sub ebx,0x76C            ; ★★param1 - 1900
+007d29c2  cmp ebx,0x46/jl 0x7D2A6E                ; ★年 < 1970 → -1
+007d29cb  cmp ebx,0x8A/jg 0x7D2A6E                ; ★年 > 2038 → -1
+007d29d7  push esi/edi/mov edi,[ebp+0xC]          ; ★param2 月
+007d29dc  mov esi,[edi*4+0x87D5B0]                ; ★★月表查（年天数/
+                                                    ;   月份累计）
+007d29e3  add esi,[ebp+0x10]                      ; ★+param3 日
+007d29e6  test bl,3/jne 0x7D29F1                  ; ★闰年检查（年%4）
+007d29eb  cmp edi,2/jle 0x7D29F1                  ; ★月 ≤ 2 → 不调整
+007d29f0  inc esi                                 ; ★闰年 3 月起 +1
+007d29f1  call 0x7D4CE0                            ; ★★辅助（3 callers：
+                                                    ;   0x7CCE4C/0x7CD2DE/
+                                                    ;   本批 0x7D29F1）
+007d29f6  mov eax,ebx/lea ecx,[ebx-1]             ; ★年 / 年-1
+007d29fb  imul eax,eax,0x16D                      ; ★年×365
+007d2a01  sar ecx,2                                ; ★(年-1)/4 闰计数
+007d2a04  mov edx,esi/mov [ebp-8],esi
+007d2a09  add edx,ecx                              ; ★月日 + 闰计数
+007d2a0b  mov [ebp-0x10],ebx
+007d2a0e  add eax,edx                              ; ★年×365 + 月日
+007d2a10  mov edx,[ebp+0x1C]                      ; ★param6 秒
+007d2a13  lea ecx,[eax+eax*2]                     ; ★×3
+007d2a16  mov eax,[ebp+0x14]                      ; ★param4 时
+007d2a19  mov [ebp-0x1C],eax
+007d2a1c  lea ecx,[eax+ecx*8]                     ; ★时 + (天×3)×8 = 天×24
+                                                    ;   +时 → 小时
+007d2a1f  imul ecx,ecx,0x3C                        ; ★×60 → 分
+007d2a22  add ecx,[ebp+0x18]                      ; ★+param5 分
+007d2a25  imul ecx,ecx,0x3C                        ; ★×60 → 秒
+007d2a28  add ecx,[0x87CA60]                      ; ★★时区偏移 1
+007d2a2e  dec edi/mov [ebp-0x14],edi
+007d2a2f  cmp [ebp+0x20],1/mov [ebp-0x14],edi
+007d2a38  lea ecx,[ecx+edx+0x7C558180]            ; ★★+param6 秒 + 纪元基
+                                                    ;   准 0x7C558180
+007d2a42  je 0x7D2A64                             ; ★param7==1 → 跳过 DST
+007d2a44  cmp [ebp+0x20],-1/jne 0x7D2A6A         ; ★param7==-1 → 检查
+007d2a4a  cmp [0x87CA64],0/je 0x7D2A6A           ; ★★DST 门控
+007d2a53  lea eax,[ebp-0x24]/push eax
+007d2a57  call 0x7D4FAB                            ; ★★时区换算（batch
+                                                    ;   1112 宿主同款，3
+                                                    ;   callers）
+007d2a5d  mov ecx,[ebp+8]/test eax,eax/je 0x7D2A6A
+007d2a64  add ecx,[0x87CA68]                      ; ★★时区偏移 2
+007d2a6a  mov eax,ecx/jmp 0x7D2A71                ; ★返回 time_t
+007d2a6e  or eax,-1                                ; ★非法年 → -1
+007d2a71  pop ebx/leave/ret
+
+★语义：**MSVC6 CRT mktime 类时间构建器（推断名——tm 字段
+→ time_t）**——cdecl 7 参：
+  ① param1 年自 1900（-0x76C）范围校验 [1970,2038]（[0x46,
+     0x8A]）非法返回 -1；
+  ② 月表 [0x87D5B0] 查月份累计天数 + 日 + 闰年调整（年%4
+     且月>2 → +1）→ 年内日数；
+  ③ 年×365 + (年-1)/4 闰计数 + 月日 = 总天数；
+  ④ 天×24+时 → ×60+分 → ×60+秒 → +[0x87CA60] 时区偏移 1 →
+     +param6 秒 + 0x7C558180 纪元基准 = time_t；
+  ⑤ param7 DST 标志：==1 跳过 / ==-1 查 [0x87CA64] 门控 →
+     0x7D4FAB 时区换算 → +[0x87CA68] 时区偏移 2；
+  ⑥ 返回 time_t 秒数。
+  = mktime 标准实现（年范围校验 + 月表 + 闰年 + 时区/DST
+  修正）。
+
+★调用点（探针 E8 实测 1 处 0x7CA748）：前邻宿主 0x7CA7xx
+  区（CRT 时间构建调用端）。
+
+★E8 被调者：0x7D4FAB（时区换算——batch 1112 宿主 0x7CD316/
+  0x7CD34D 同款，本批 0x7D2A57 交叉，3 callers）+ 0x7D4CE0
+  （辅助，3 callers：0x7CCE4C/0x7CD2DE/本批）。
+
+★原版怪癖（照抄）：
+  ① 年范围硬编码 [1970,2038]（32 位 time_t 边界）非法返 -1
+     ——mktime 范围检查；
+  ② 月表 [0x87D5B0] 首项 365（年天数）+ 哨兵 -1 + 月份累计
+     ——表布局与 batch 1112 的 0x87D580/0x87D5B4 变体（含闰
+     年两套表在此合一？）；
+  ③ 闰年调整 test bl,3 + 月≤2 双重条件（年%4 且 3 月起 +1）
+     ——仅 4 年周期无世纪修正（1900/2100 错误照抄）；
+  ④ 纪元基准 0x7C558180（≈2085978496 秒——绝对秒基）；
+  ⑤ DST 标志三态：1 跳过 / -1 查门控 / 其他默认不加——调
+     用方驱动 DST 语义；
+  ⑥ 时区双偏移 [0x87CA60]（构建时）+ [0x87CA68]（DST 后）
+     ——两步修正链与 batch 1112 分解器镜像对称。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 时间设施按商业
+库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D29B2 = MSVC6 静态 CRT mktime 类时间构建器—
+   —0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）；年范围校验 + 月表 + 闰年 + 时区/DST 修正 =
+   CRT mktime 标准实现形态（与 batch 1112 time_t 分解器成
+   读写配对）。
+2. 依赖：0x7D4FAB（时区换算）+ 0x7D4CE0（辅助）+ 月表 +
+   时区三全局——重写 gamemd 时用等价 std::mktime 运行时代
+   替。
+3. gamemd_replication_discipline：MSVC6 CRT 时间设施，重写
+   时用等价运行时代替，逐字节复刻无意义——按商业库纪律
+   归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 194B + 时区族/月表取证 + 双
+依赖交叉；函数名「mktime 类时间构建器」由 7 参签名/年范围/
+月表/时区链实测交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1112：0x7D52B8 time_t 分解器——本批 mktime 构建器
+  与分解器成读写配对（localtime↔mktime）：[0x87CA60]/
+  [0x87CA64]/[0x87CA68] 时区三全局 + 0x7D4FAB 时区换算同
+  族（batch 1112 宿主 0x7CD316/0x7CD34D 同款调用）双向实锤。
+★batch 1112 月表：0x87D580/0x87D5B4——本批 [0x87D5B0] 变
+  体（首项 365 年天数 + 哨兵 + 月份累计）对照。
+★0x7D4CE0：辅助（3 callers：0x7CCE4C/0x7CD2DE/本批）——后
+  续批次视池内位置核登记。
+
+五、状态
+-------
+crt_runtime_verified（0x7D29B2：MSVC6 CRT mktime 类时间构建
+器归档；全 194B + 时区族/月表取证 + 双依赖交叉；不写 C++
+模型不做 golden——CRT 时间设施商业库层；函数名「mktime 类
+时间构建器」由 7 参签名/年范围/月表/时区链实测交叉标注）。
+TSV 新增 0x007D29B2 行。
+
+★本批实锤：mktime 类构建器——年自 1900 范围校验
+  [1970,2038] + 月表 [0x87D5B0] + 闰年（%4 无世纪修正）+
+  时区双偏移 + 0x7D4FAB DST 换算 + 纪元基准 0x7C558180——
+  与 batch 1112 time_t 分解器读写配对闭合（CRT 时间全链）。
+相邻待续：batch 1136 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CDE75(185B, callers=2)/0x7D7E1C(182B)/
+  0x7C3860(169B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1134 已完（MSVC6 CRT asctime 0x7D57FE，commit
+ca8d073）。
