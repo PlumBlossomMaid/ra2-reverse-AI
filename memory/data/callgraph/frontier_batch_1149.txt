@@ -1,0 +1,143 @@
+frontier batch 1149 —— MSVC6 CRT _controlfp 掩码反转器 0x7CC01C（归档，_control87 内联辅助对偶件）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CC01C（137B,
+uc=1, callers=1 探针实测 0x7CBF9D）。TSV 无既有行。
+TARGET = 0x007CC01C。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CC01C 行。
+
+一、链语义（disasm 全 137B，0x7CC01C-0x7CC0A4）
+--------------------------------------------------------------
+签名（推断）：cdecl 1 参（[esp+8]=`_controlfp` 风格掩码），
+返回 x87 控制字（eax，字面量位重排）。
+
+主体（0x7CC01C-0x7CC0A4）：
+007cc01c  push ebx/mov ebx,[esp+8]/xor eax,eax/push esi
+007cc024  test bl,0x10/je 0x7cc02c/push 1/pop eax
+                                          ; ★掩码 0x10 → eax 0x01
+                                          ;   （控制字 bit0）
+007cc02c  test bl,8/je 0x7cc033/or al,4   ; ★0x08 → 0x04
+007cc033  test bl,4/je 0x7cc03a/or al,8   ; ★0x04 → 0x08
+007cc03a  test bl,2/je 0x7cc041/or al,0x10 ; ★0x02 → 0x10
+007cc041  test bl,1/je 0x7cc048/or al,0x20 ; ★0x01 → 0x20
+                                          ;   （掩码低 6 位 0x3F →
+                                          ;   控制字低 6 位，EM 族）
+007cc048  test ebx,0x80000/je 0x7cc052/or al,2
+                                          ; ★0x80000 → 0x02（异常状
+                                          ;   态位——单列映射）
+007cc052  mov ecx,ebx/and ecx,0x300        ; ★PC 段（掩码 0x100/
+                                          ;   0x200/0x300）
+007cc05b  mov esi,0x200
+007cc060  je 0x7cc07f                      ; 0 → 跳过
+007cc062  cmp ecx,0x100/je 0x7cc07c        ; 0x100 → or ah,4
+007cc06a  cmp ecx,esi/je 0x7cc077          ; 0x200 → or ah,8
+007cc06e  cmp ecx,0x300/jne 0x7cc07f       ; 0x300 → or ah,0xc
+007cc072  or ah,0xc
+                                          ;   （控制字 bit8/9 ——
+                                          ;   精度控制）
+007cc07f  mov ecx,ebx/and ecx,0x30000      ; ★RC 段（掩码 0x10000/
+                                          ;   0x20000）
+007cc087  je 0x7cc095                      ; 0 → or eax,0x300
+007cc089  cmp ecx,0x10000/jne 0x7cc097     ; 0x10000 → or eax,0x200
+007cc091  or eax,esi                       ; 0x20000（或默认）→ 0x300
+                                          ;   （控制字 bit10/11 ——
+                                          ;   舍入控制）
+007cc095  or eax,edx                       ; 0x300
+007cc097  pop esi
+007cc098  test ebx,0x40000/je 0x7cc0a4/or ah,0x10
+                                          ; ★0x40000 → 0x1000（控制
+                                          ;   字 bit12 —— 无穷大控制）
+007cc0a4  ret
+
+★语义：**MSVC6 CRT _controlfp 掩码反转器（推断名——_control87
+内联辅助对偶件）**——cdecl 1 参：
+  ① 掩码低 6 位（_MCW_EM 异常屏蔽族）→ 控制字低 6 位
+     （0x3F 域）——EM 位直接反序映射；
+  ② 掩码 0x80000（异常状态位）→ 控制字 bit1（单列）；
+  ③ 掩码 PC 段 0x100/0x200/0x300 → 控制字 bit8/9
+     （or ah,4/8/c）——精度控制；
+  ④ 掩码 RC 段 0x10000/0x20000 → 控制字 bit10/11
+     （0x200/0x300）——舍入控制；
+  ⑤ 掩码 0x40000（_MCW_IC）→ 控制字 bit12（or ah,0x10）—
+     —无穷大控制。
+  = batch 1146（0x7CBF8A 控制字→掩码）的**逆映射**：掩码
+  各位 → x87 控制字各位，与 float.h `_MCW_*` 常量体系逐
+  位对应（0x10↔0x01、0x08↔0x04、0x04↔0x08、0x02↔0x10、
+  0x01↔0x20、0x80000↔0x02、0x100/0x200/0x300↔0x100/0x200/
+  0x300、0x10000/0x20000↔0x200/0x300、0x40000↔0x1000）。
+
+★调用点（探针 E8 实测 1 处 0x7CBF9D）：宿主 0x7CBF90 起
+  （0x7CBF90：mov [esp+8],edx/lea edi,[eax-0x10]/mov edx,
+  edi/push 1/call 0x7CC01C/... ——同 `_control87` 壳内
+  部，把目标掩码经本函数转控制字后调 `fldcw` 写入 FPU）——
+  与 batch 1146 宿主（0x7CBF14 `_control87` fnstcw 壳）紧
+  邻同壳域（fnstcw 读入/反转写出一对）。
+
+★E8 被调者：**零子调用**（全 137B 纯位运算 test/or/and/
+cmp）。
+
+★原版怪癖（照抄）：
+  ① 掩码低 6 位映射方向与 PC/RC 段**相反**：EM 族是掩码
+     高位→控制字低位（0x10→0x01、0x01→0x20），而 PC/RC
+     段是掩码低位→控制字高位（0x100→0x100、0x40000→
+     0x1000）——两侧不对称；
+  ② 0x80000 → 0x02 单列映射（EM 族 0x3F 域外的独立位）—
+     —与 batch 1146 的 0x80000 单列完全对称；
+  ③ PC 段三分支用 `or ah,4/or ah,8/or ah,0xc`（写高字节
+     位）而 EM 族用 `or al,xx`（写低字节位）——混合字节位
+     写惯用；
+  ④ RC 段默认分支（0 或 0x20000）→ 0x300，仅 0x10000 特
+     判 → 0x200——与 batch 1146 的默认 0x20000 对称；
+  ⑤ `pop esi` 位置在 RC 段分支之后、IC 检查之前——
+     寄存器出栈与位写交织（非成对 push/pop）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 浮点库按
+商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CC01C = MSVC6 静态 CRT 浮点库控制字反转辅助——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）；输入/输出位组合与 float.h `_MCW_EM/_MCW_PC/
+   _MCW_RC/_MCW_IC` 逐位对应、宿主 `_control87` 壳（fldcw
+   写入）同簇标准形态，batch 1146 对偶件。
+2. 依赖：零子调用——无函数依赖；重写 gamemd 时用等价
+   `_controlfp/_control87` 语义（标准 C 库）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 浮点库设施，重
+   写时用等价运行时代替，逐字节复刻无意义——按商业库纪律
+   归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 137B + 宿主反汇编 + 掩码
+体系对应 + batch 1146 对偶交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1146：0x7CBF8A FPU 控制字掩码映射器（fnstcw 壳）—
+  —本批为**逆映射对偶件**（fldcw 壳 0x7CBF90）：前者
+  控制字→掩码（读路径）、本批掩码→控制字（写路径），
+  同一 `_control87` 壳内 fnstcw/fldcw 读写配对闭环。
+★batch 192：0x7DBC77 _controlfp——本批宿主壳正是其内联
+  展开体，同一浮点库掩码族。
+★batch 872/1141：0x7DB93E 掩码清除+double 规范化 / FPE
+  包装链——同浮点库控制字族全景。
+★0x7CC0A5：SW（状态字）→ 掩码映射器（batch 1146 相邻）
+  ——同域三件套（fnstcw 读/掩码反转写/SW 映射）全景。
+
+五、状态
+-------
+crt_runtime_verified（0x7CC01C：MSVC6 CRT _controlfp 掩码反
+转器归档；全 137B + 宿主反汇编；不写 C++ 模型不做 golden
+——CRT 浮点库商业库层；与 batch 1146 构成 fnstcw/fldcw 读
+写配对）。TSV 新增 0x007CC01C 行。
+
+★本批实锤：`_control87` 内联辅助对偶件——`_controlfp` 掩
+  码各位 → x87 控制字各位（_MCW_EM/_MCW_PC/_MCW_RC/
+  _MCW_IC 位对应），零子调用纯位运算；batch 1146（控制字
+  →掩码）与本批（掩码→控制字）读写配对闭环。
+相邻待续：batch 1150 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CD460(126B)/0x7C970C(126B)/0x7C19F0
+(125B, callers=2)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1148 已完（MSVC6 CRT _filelength 文件长度获
+取器 0x7DDF78，commit f60a8ff）。
