@@ -1,0 +1,135 @@
+frontier batch 1181 —— MSVC6 CRT __startOneArgErrorHandling 单参错误处理入口 0x7CF347（归档，batch 1026 第二入口兑现）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CF347（60B,
+uc=1, callers=2 探针实测 0x7CF459/0x7CF4B7，均在 0x7CF479
+matherr 分派器域）。TSV 无既有行。TARGET = 0x007CF347。
+C++ 模型：无（见「三态判定」）。TSV：新增 0x007CF347 行。
+补登记背景：**batch 1026 文档（0x7CF330 浮点打包调用器）已
+描述「fastcall 双入口 0x7CF330/0x7CF347 汇合：…0x7CF347 仅
+存 eax—调用方按参数量选择入口」但只登记了 0x7CF330 行**；
+**batch 1140 文档（0x7CF479）点名「0x7CF347（★错误处理入口
+对，未登记）」**——本批即补登记第二入口本体。
+
+一、链语义（disasm 全 60B + batch 1026/1140 交叉 + 依赖登记，
+0x7CF347-0x7CF382）
+--------------------------------------------------------------
+签名（推断）：fastcall 混合约定（eax=单参值、ecx/edx 寄存
+器参 + 3 栈参 + ST(0) double），ret 后经 0x7D8C6B 分派。
+
+主体（0x7CF347-0x7CF382）：
+007cf347  push ebp/mov ebp,esp/add esp,-0x20        ; ★预留 0x20 栈
+007cf34d  mov dword[ebp-0x20],eax                   ; ★★存 eax（fastcall
+                                                    ;   单参——本入口不读
+                                                    ;   栈参 5/6，与
+                                                    ;   0x7CF330 的区别点）
+007cf350  fstp qword[ebp-8]                         ; ★★汇合点：存 ST(0)
+                                                    ;   double（0x7CF330
+                                                    ;   jmp 至此）
+007cf353  mov dword[ebp-0x1c],ecx                   ; ★存 ecx fastcall 参
+007cf356  mov eax,[ebp+0x10]/mov [ebp-0x18],eax     ; 栈参 3 → 槽
+007cf359  mov ecx,[ebp+0x14]/mov [ebp-0x14],ecx     ; 栈参 4 → 槽
+007cf362  lea eax,[ebp+8]                           ; &栈参 1
+007cf365  lea ecx,[ebp-0x20]                        ; &局部结构（0x20）
+007cf368  push eax/push ecx/push edx                ; ★edx fastcall 参
+007cf36b  call 0x7d8c6b                             ; ★★CRT FPE 分发器
+                                                    ;   （0x7D8C6B body=208
+                                                    ;   未登记——batch
+                                                    ;   871/872 已录、batch
+                                                    ;   552 第 4 调用者、本批
+                                                    ;   第 5/6 调用点）
+007cf370  add esp,0xc
+007cf373  fld qword[ebp-8]                          ; ★★回读 ST(0) double
+007cf376  cmp word[ebp+8],0x27f                     ; ★控制字特判（batch
+                                                    ;   1140 0x7CF494 同款）
+007cf37c  je 0x7cf381                               ; 相等 → 不恢复
+007cf37e  fldcw word[ebp+8]                         ; ★★恢复 FPU 控制字
+007cf381  leave/ret
+
+★语义：**MSVC6 CRT __startOneArgErrorHandling 单参错误处
+理入口（推断名——fpieee 族单参数学函数错误分派）**：
+  ① eax 单参存局部 + ST(0) double 存栈 + ecx/edx 寄存器
+     参 + 栈参 3/4 装配成 0x20 局部结构；
+  ② push edx/&局部/&栈参 1 → call 0x7D8C6B（CRT FPE 分
+     发器/matherr 前端）3 参分派；
+  ③ 回读 ST(0) + 控制字 0x27F 特判恢复（0x27F = 全部默
+     认掩码的控制字——若已默认则跳过 fldcw）。
+  = 单参数学函数（sqrt/exp 等）错误处理的入口模板（与
+  0x7CF330 双参版孪生），batch 1140 便笺确认的「错误处
+  理入口对」之一。
+
+★调用点（探针 E8 实测 2 处）：0x7CF459（0x7CF458 区——
+  单参函数错误处理链）+ 0x7CF4B7（★★batch 1140 文档「
+  错误处理入口 2」call 现场——0x7CF479 matherr 分派器内
+  ：错误码 8=_BADARG 时 call 0x7CF347 入口 2 / edx==0x1D
+  call 0x7CF330 入口 1）。
+
+★E8 被调者：0x7D8C6B（★★CRT FPE 分发器——batch 871/872
+  已录未登记、body=208、batch 552 第 4 调用者候选；本批
+  为第 5/6 调用点交叉）——**唯一函数依赖，未登记（新候
+  选长期挂账，待 FPE 分发器批处理）**。
+
+★原版怪癖（照抄）：
+  ① 双入口共享 0x7CF350 汇合点（0x7CF330 预读栈参 5/6
+     + jmp；本入口仅存 eax 自然落入）——编译器按参数面
+     生成的 thunk 模板（batch 1026 已全描述）；
+  ② fstp ST(0) 先于 ecx 存储（0x7CF350 fstp → 0x7CF353
+     mov [ebp-0x1C],ecx）——x87 栈处理优先；
+  ③ 回读 ST(0)（fld [ebp-8]）——0x7D8C6B 可能破坏 x87
+     栈，回读恢复调用方期望；
+  ④ 控制字 0x27F 特判（cmp word[ebp+8],0x27f / je 跳过
+     fldcw）——0x27F 为默认全掩码控制字，等于默认则不
+     重写；
+  ⑤ 3 参调 0x7D8C6B（push edx/&局部/&栈参 1）——混合
+     寄存器+栈传递（batch 1026 已述）；
+  ⑥ 无寄存器保存（未 push ebx/esi/edi）——叶包装形态。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT FPE 设施
+按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CF347 = MSVC6 静态 CRT FPE 单参错误处理入口
+   （__startOneArgErrorHandling）——0x7C-0x7D = MSVC6 静态
+   CRT（ra2_code_region_layout_crt_provenance）；batch
+   1026/1140 已登记双入口 thunk + 0x7D8C6B 分发器 = CRT
+   matherr 前端标准形态。
+2. 依赖：0x7D8C6B 未登记（CRM FPE 分发器——长期新候选，
+   待专批处理）——重写 gamemd 时用等价 CRT 错误处理语义
+   （标准 fpieee/matherr）代替。
+3. gamemd_replication_discipline：MSVC6 CRT FPE 设施，重
+   写时用等价运行时代替，逐字节复刻无意义——按商业库纪
+   律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 60B + batch 1026/1140 交
+叉；函数名「单参错误处理入口」由双入口 thunk + 0x7D8C6B
+分派 + 0x27F 特判交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1026：0x7CF330 浮点打包调用器——本批=第二入口
+  0x7CF347 本体补登记（彼文档双入口描述兑现）。
+★batch 1140：0x7CF479 matherr 分派器——0x7CF4B7 call 现
+  场即彼「错误处理入口 2」点名兑现。
+★batch 871/872/552：0x7D8C6B FPE 分发器——本批第 5/6 调
+  用点交叉（长期挂账新候选）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CF347：MSVC6 CRT __startOneArgError
+Handling 单参错误处理入口归档；全 60B + batch 1026/1140 交
+叉；不写 C++ 模型不做 golden——CRT FPE 商业库层；函数名
+由双入口 thunk + 0x7D8C6B 分派 + 0x27F 特判交叉标注）。TSV
+新增 0x007CF347 行。
+
+★本批实锤：batch 1026 双入口描述的第二入口兑现——eax 单
+  参 + ST(0) double + 寄存器/栈混合打包 → 0x7D8C6B 分派
+  → ST(0) 回读 + 控制字 0x27F 特判恢复；0x7CF4B7 为 batch
+  1140 点名「错误处理入口 2」。
+相邻待续：batch 1182 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7D6CF0(58B, callers=2)/0x7D5A2E(58B)/
+0x7C8F5E(56B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1180 已完（MSVC6 CRT 堆初始分配器 0x7CF77F，
+commit eff2cb3）。
