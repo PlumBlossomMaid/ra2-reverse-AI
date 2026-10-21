@@ -1,0 +1,145 @@
+frontier batch 1125 —— Westwood 标量 RGB565 α 混合函数 0x7DEEFA（归档，6 参变体族第一件）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DEEFA（221B,
+uc=1, callers=1 探针实测 0x5FFAC6）。TSV 无既有行。TARGET
+= 0x007DEEFA。C++ 模型：无（见「三态判定」）。TSV：新增
+0x007DEEFA 行。
+
+⚠️ 归属：延续 batch 1119-1122 修正链——0x7C-0x7D 区混入
+Westwood 自有代码；本件 = MMX 像素合成族的**标量（无 MMX）
+变体族第一件**（宿主 0x5FFA 区按 [0xAC1838] 状态选 6 参/7
+参两形态）。
+
+一、链语义（disasm 全 221B + 宿主分派交叉，0x7DEEFA-0x7DEFD6）
+--------------------------------------------------------------
+签名（推断）：cdecl 6 参（param1=字节源指针 @[ebp+8]、
+param2=字目标指针 @[ebp+0xC]、param3=源行步进 @[ebp+0x10]、
+param4=目标行步进 @[ebp+0x14]、param5=内层列计数 @[ebp+0x18]、
+param6=外层行计数 @[ebp+0x1C]），执行 RGB565 混合写回目标
+word，无返回值。
+
+主体（0x7DEEFA-0x7DEFD6）：
+007deefa  push ebp/mov ebp,esp/add esp,-0x18/push ebx,ecx,edx,esi,edi
+007def05  xor eax,eax/mov [ebp-0x14],eax        ; ★局部清零
+007def0a  mov eax,[ebp+0x1C]/mov [ebp-8],eax    ; ★外层行计数
+007def10  mov [ebp-0x18],0                      ; ★α 局部
+007def17  mov esi,[ebp+8]/mov [ebp-0xC],esi     ; ★字节源指针
+007def1d  mov edi,[ebp+0xC]/mov [ebp-0x10],edi  ; ★字目标指针
+007def23  mov eax,[ebp+0x18]/mov [ebp-4],eax    ; ★内层列计数
+007def29  xor eax,eax/xor ebx,ebx/jmp 0x7DEF2D
+; → 像素主循环（0x7DEF2D）：
+007def2d  mov al,[esi]/test al,al/je 0x7DEFA8    ; ★源字节 0 → 跳过
+007def33  mov bx,word[edi]                       ; ★目标 word（RGB565）
+007def36  mov [ebp-0x18],al                      ; ★α = 源字节
+007def39  mov [ebp-0x14],ebx                     ; ★dst 暂存
+007def3c  shr ebx,8/and ebx,0xF8                 ; ★B 通道提取（高位段）
+007def3f  mov eax,[ebp-0x14]/shr eax,3/and eax,0xFC ; ★R 通道（shr 3 段）
+007def50  mov edx,ebx/mov ecx,eax                ; ★通道值保存
+007def54  imul ebx,[ebp-0x18]/imul eax,[ebp-0x18] ; ★★各通道 ×α
+007def5c  shr ebx,8/shr eax,8                    ; ★÷256 归一
+007def62  add bl,dl/setae dl/dec dl/or bl,dl     ; ★★饱和加回原通道
+007def67  add al,cl/setae cl/dec cl/or al,cl     ;   （add+setae+dec+or
+                                                  ;    惯用 = 饱和加法）
+007def74  shr ebx,3/shl ebx,0xB                  ; ★B 通道回位（bit11）
+007def77  shr eax,2/shl eax,5                    ; ★R 通道回位（bit5）
+007def80  mov ecx,[ebp-0x14]/shl ecx,3/and ecx,0xFF ; ★G 通道提取
+007def90  imul ecx,[ebp-0x18]/shr ecx,8          ; ★G ×α 归一
+007def97  add cl,dl/…（饱和惯用）
+007defa3  or eax,ecx                             ; ★三通道合并
+007defa5  mov word[edi],ax                       ; ★写回目标 word
+; → 内层/外层推进（0x7DEFA8）：
+007defa8  inc esi/add edi,2/dec [ebp-4]/jne 0x7DEF2D ; ★内层列循环
+007defb5  mov esi,[ebp-0xC]/add esi,[ebp+0x10]/mov [ebp-0xC],esi ; ★源
+                                                    ;   行步进
+007defbe  mov edi,[ebp-0x10]/add edi,[ebp+0x14]/mov [ebp-0x10],edi ; ★
+                                                    ;   目标行步进
+007defc7  dec [ebp-8]/jne 0x7DEF23/jmp 0x7DEFD0 ; ★外层行循环
+（0x7DEFD7 起 = 6 参变体族第二件——紧邻）
+
+★语义：**Westwood 标量 RGB565 α 混合函数（推断名——6 参变
+体族第一件）**——cdecl 6 参：
+  ① 双指针双循环（内层逐列字节源 +1/字目标 +2，外层行步
+     进 +[ebp+0x10]/+[ebp+0x14]）；
+  ② 每像素：源字节（0 → 跳过）作 α → 目标 word 分解 R（
+     shr 3 & 0xFC）/G（shl 3 & 0xFF）/B（shr 8 & 0xF8）三通
+     道 → 各 ×α → shr 8 归一 → add+setae+dec+or 饱和加回
+     原通道 → 回位（R bit5/G 中段/B bit11）合并 → RGB565
+     写回目标 word；
+  ③ 纯整数标量实现（无 MMX、无查表——与 7 参 MMX 族「查表
+     色×α」不同：本件直混 dst 颜色，6 参无调色板参数）。
+  语义 = dst RGB565 颜色按 α 向源字节亮度方向饱和混合写回。
+
+★调用点（探针 E8 实测 1 处 0x5FFAC6）+ 6 参变体族（宿主
+  0x5FFA 区调度，batch 1119 已证 cmp [0xAC1838],edx 分派
+  6/7 参形态）：
+  · 0x5FFA34 → call 0x7DF191（6 参）
+  · 0x5FFA7D → call 0x7DF0B4（6 参）
+  · 0x5FFAC6 → call 0x7DEEFA（★本批，6 参）
+  · 0x5FFB0F → call 0x7DEFD7（6 参）
+  → ★★6 参变体族四件实锤：0x7DEEFA/0x7DEFD7/0x7DF0B4/
+    0x7DF191，与 7 参 MMX 四兄弟（0x7DF280/0x7DF640/0x7DF3C2/
+    0x7DF500）同宿主同分派——MMX 与标量两套实现并存。
+
+★E8 被调者：零（纯整数内联，无子调用）。
+
+★原版怪癖（照抄）：
+  ① 与 MMX 族同宿主双形态：cmp [0xAC1838],edx 分派 6 参（标
+     量）/7 参（MMX 查表）——同一渲染操作两套实现运行时选
+     择（MMX 不可用/慢 CPU 时标量回退）；
+  ② 通道饱和加法惯用 `add+setae+dec+or`（进位检测→减 1→
+     or 折叠——饱和加法无分支实现），三通道重复展开；
+  ③ 通道提取偏移怪（R=shr 3&0xFC/G=shl 3&0xFF/B=shr 8&0xF8
+     ——RGB565 位域切分非对称，照抄）；
+  ④ 源字节 0 跳过（透明像素不写回）；
+  ⑤ 无 MMX 收尾问题（标量实现无 emms 需求）；
+  ⑥ 行步进独立参数（[ebp+0x10]/[ebp+0x14]）——双指针任意
+     布局支持。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：Westwood 渲染域，重
+写时按语义等价实现）。
+
+三、三态判定（为何 semantics_verified 而非 crt_runtime_verified）
+---------------------------------------------------------------
+1. 归属：0x7DEEFA = **Westwood 自有代码**——①RGB565 通道饱
+   和混合为渲染管线特征（batch 1119-1122 MMX 族的标量孪
+   生）；②与 7 参 MMX 四兄弟同宿主 0x5FFA 区分派（cmp
+   [0xAC1838] 选 6/7 参形态）——Westwood 双实现并存惯用；
+   ③6 参布局无 CRT 惯用（无 fnsave/fldcw/setlocale/strcmp）。
+2. 依赖：无子调用，纯整数——重写时按像素混合语义等价实
+   现（逐件照抄通道切分/饱和惯用）。
+3. 复刻纪律：Westwood 自有代码——不按商业库归档；像素混
+   合非 RMG 管线依赖，保留 semantics_verified。
+→ 状态：semantics_verified（宿主分派 + 标量/MMX 双形态 +
+通道饱和惯用交叉；函数名「标量 RGB565 α 混合函数」为推断
+交叉标注——通道切分/饱和惯用由代码实测）。
+
+四、跨批次闭合
+------------
+★batch 1119-1122：MMX 像素合成四兄弟（0x7DF280/0x7DF640/
+  0x7DF3C2/0x7DF500）——本件为同宿主 6 参标量变体族第一
+  件（cmp [0xAC1838] 分派 6/7 参形态双实现并存）。
+★batch 1087/1088/1092：RGB/表面装载器——渲染域同族。
+★batch 1097/1105：复制粘贴族惯用——6 参族剩余三件
+  （0x7DEFD7/0x7DF0B4/0x7DF191）后续批次登记。
+
+五、状态
+-------
+semantics_verified（0x7DEEFA：Westwood 标量 RGB565 α 混合
+函数 6 参变体族第一件归档；全 221B + 宿主分派 + 标量/MMX
+双形态交叉；不写 C++ 模型不做 golden——像素合并非 RMG 管
+线依赖；函数名「标量 RGB565 α 混合函数」为推断交叉标注—
+—通道切分/饱和惯用由代码实测；⚠️ 0x7C-0x7D 区 Westwood
+混入样本族）。TSV 新增 0x007DEEFA 行。
+
+★本批实锤：6 参标量变体族第一件——RGB565 三通道 ×α 饱和
+  混合（add+setae+dec+or 惯用），与 MMX 四兄弟同宿主双形
+  态并存（cmp [0xAC1838] 分派），四件调用点全实锤。
+相邻待续：batch 1126 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7DEFD7(221B)/0x7DF0B4(221B)/0x7DF191
+(221B)——6 参变体族剩余三件）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1124 已完（MSVC6 CRT getwc 宽字符读 0x7DC291，
+commit 7e594b6）。
