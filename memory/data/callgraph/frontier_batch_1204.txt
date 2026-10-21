@@ -1,0 +1,137 @@
+frontier batch 1204 —— MSVC6 CRT fputc 加锁包装壳 0x7D9ECF（归档，锁+核心+锁三段单字节写）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D9ECF（41B,
+uc=1, callers=1 探针实测 0x7DA5AE）。TSV 无既有行。
+TARGET = 0x007D9ECF。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D9ECF 行。
+
+一、链语义（disasm 全 41B + 三依赖交叉 + 调用点宿主，
+0x7D9ECF-0x7D9EF7）
+--------------------------------------------------------------
+签名（确认）：cdecl 2 参（[esp+4]=待写字符、[esp+8]=FILE*
+流指针），返回 0x7D9EF8 核心结果。
+
+主体（0x7D9ECF-0x7D9EF7）：
+007d9ecf  push esi
+007d9ed0  push dword[esp+0xc]                 ; ★FILE*（参2）
+007d9ed4  call 0x7cb3f9                       ; ★★TSV:197 流锁 Enter
+                                              ;   （batch 046/966）
+007d9ed9  push dword[esp+0x10]                ; ②参 FILE*
+007d9edd  push dword[esp+0x10]                ; ①参 字符
+007d9ee1  call 0x7d9ef8                       ; ★★TSV:88 batch 017
+                                              ;   buffered_put_byte_
+                                              ;   legacy（fputc 核心）
+007d9ee6  push dword[esp+0x18]                ; FILE*（解锁用）
+007d9eea  mov esi,eax                         ; esi = 核心结果
+007d9eec  call 0x7cb44b                       ; ★★TSV:198 流锁 Leave
+                                              ;   （batch 046/961）
+007d9ef1  add esp,0x10                        ; ★清 4 栈参
+007d9ef4  mov eax,esi                         ; ★返回核心结果
+007d9ef6  pop esi/ret
+
+★语义：**MSVC6 CRT fputc 加锁包装壳（推断名——_fputc 加
+锁版）**——cdecl 2 参：
+  ① 流锁 Enter（0x7CB3F9，对象=FILE*）；
+  ② 2 参（字符/FILE*）原样转发 0x7D9EF8（fputc 核心：
+     缓冲初始化 + 0x40 标志校验模式 + 读写状态转换——
+     batch 017 已全量登记 + REIMPL buffered_put_byte_
+     legacy）；
+  ③ 流锁 Leave（0x7CB44B）；
+  ④ 返回核心结果（eax 透传）。
+  = fputc 公开入口的锁包装层（单字节写侧），与 batch
+  1197/1198 fread/fwrite 加锁壳**同构**（批量读/批量写/
+  单字节写三件套）。
+
+★调用点（探针 E8 实测 1 处 0x7DA5AE）：宿主 0x7DA590 起
+  （逐字符复制循环）：js 0x7da59c（★慢路径分支）→ 快路径
+  mov ecx,[esi]/movzx eax,[ecx]/inc ecx/mov [esi],ecx（
+  getc 快读）→ 慢路径 push esi/call 0x7D0703（★getc 慢读
+  fgetc）→ 合流 cmp eax,-1（EOF 检查）/jne 0x7da5b7 →
+  EOF → movsx eax,[ebp-4]/push esi（FILE*）/push eax（字
+  符）/call 0x7D9ECF（★本批 fputc 壳——EOF 时把最后字符
+  回写）/pop ecx×2/jmp 0x7da571——宿主为字符复制循环
+  （读侧 getc 双路径 + 写侧 fputc 壳）。
+
+★E8 被调者（3 个，全已登记）：
+  ① 0x7CB3F9（★★TSV:197 crt_runtime_verified——batch
+     046/966 流锁 Enter 47B）；
+  ② 0x7D9EF8（★★TSV:88 semantics_verified_partial +
+     TSV:89 REIMPL buffered_put_byte_legacy cpp_
+     reimplementation_partial——batch 017 fputc 核心 187B
+     ：缓冲初始化 + 0x40 标志校验模式 + 读写状态转换，C++
+     模型在 code/rewrite/runtime/handles.{h,cpp}）；
+  ③ 0x7CB44B（★★TSV:198 crt_runtime_verified——batch
+     046/961 流锁 Leave 47B）。
+  全部已登记，无未登记依赖。
+
+★全局：无（纯栈 + 参数透传）。
+
+★原版怪癖（照抄）：
+  ① 与 batch 1197/1198 fread/fwrite 锁壳**同模板**（41B
+     略短于 47B——2 参 vs 4 参转发）——CRT FILE 读写公开
+     壳同一生成器家族（锁 Enter → 核心转发 → 锁 Leave →
+     eax 透传）；
+  ② 锁 Enter/Leave 各 push FILE* 单独传参（cdecl 1 参）
+     ——锁对象显式重传；
+  ③ 2 参转发顺序 字符/FILE*（标准 fputc 序）——核心
+     0x7D9EF8 现场互证；
+  ④ add esp,0x10 一次清 4 栈参（核心 2 + 两次锁调用各 1）
+     ——三个 cdecl 调用清理合并一条 add；
+  ⑤ 返回值经 esi 中转（mov esi,eax → mov eax,esi）——
+     在两次锁调用间保全核心返回值（eax 会被锁调用覆盖）；
+  ⑥ 锁在壳层、核心无锁——分层设计照抄（核心 0x7D9EF8
+     自身不加锁，避免同流递归死锁）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 流写入
+按商业库纪律归档；核心 0x7D9EF8 已归 batch 017）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D9ECF = MSVC6 静态 CRT fputc 加锁包装壳——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；锁+核心+锁三段 = CRT FILE 写侧公开
+   形态（batch 017 核心 / 046 锁族同链，与 batch 1197/
+   1198 批量读/写壳同模板）。
+2. 依赖：0x7CB3F9/0x7D9EF8/0x7CB44B 全部已登记（核心且
+   有 C++ 真身）——重写 gamemd 时用等价运行时（stdio
+   fputc 语义）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 流设施，重写
+   时用等价运行时代替，逐字节复刻无意义——按商业库纪律
+   归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 41B + 三依赖交叉 + 调用
+点宿主；函数名「fputc 加锁包装壳」由 锁+核心+锁 三段 + 2
+参转发交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 017：0x7D9EF8 fputc 核心（TSV:88/89 REIMPL）——
+  本批调用现场交叉（2 参转发 + 返回值透传）。
+★batch 046/961/966：0x7CB3F9/0x7CB44B 流锁 Enter/Leave
+  对称对——本批包围核心的锁现场交叉（锁对象=FILE*）。
+★batch 1197/1198：fread/fwrite 加锁壳——**本批单字节写
+  侧同模板对照**（批量读/批量写/单字节写三件套——CRT
+  FILE 读写公开壳家族全景闭合）。
+★batch 1192：0x7CB80B _fgetc 核心——单字节读侧核心（本
+  批为单字节写侧壳）。
+
+五、状态
+-------
+crt_runtime_verified（0x7D9ECF：MSVC6 CRT fputc 加锁包装
+壳归档；全 41B + 三依赖交叉；不写 C++ 模型不做 golden
+——CRT 流设施商业库层；函数名由 锁+核心+锁 三段 + 2 参
+转发交叉标注）。TSV 新增 0x007D9ECF 行。
+
+★本批实锤：fputc 公开入口锁层——流锁 Enter → 0x7D9EF8
+  核心（2 参）→ 流锁 Leave → 返回（esi 中转保存 eax），
+  与 batch 1197/1198 fread/fwrite 锁壳同模板；唯一调用点
+  0x7DA5AE 在逐字符复制循环（getc 快慢双路径 + EOF 回写
+  fputc）；三依赖全已登记。
+相邻待续：batch 1205 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7D36AC(41B, callers=1)/0x7CD960(41B,
+callers=1)/0x7C8A8E(41B, callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1203 已完（MSVC6 CRT Win32 删除文件调用包裹
+器 0x7CD42B，commit 99ff425）。
