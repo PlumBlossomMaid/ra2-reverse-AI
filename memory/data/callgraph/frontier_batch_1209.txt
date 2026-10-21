@@ -1,0 +1,142 @@
+frontier batch 1209 —— MSVC6 CRT 双源查表字节转换器 0x7E01D2（归档，[0xA8F91C] 64KB BSS 查表族）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7E01D2（41B,
+uc=1, callers=1 探针实测 0x7E0266）。TSV 无既有行。
+TARGET = 0x007E01D2。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007E01D2 行。
+
+一、链语义（disasm 全 41B + 调用宿主 + 同表前驱交叉 +
+表身份，0x7E01D2-0x7E01FA）
+--------------------------------------------------------------
+签名（确认）：cdecl 4 参（[esp+4]=src1、[esp+8]=src2、
+[esp+0xC]=dst、[esp+0x10]=count），无返回值（查表写 dst）。
+
+主体（0x7E01D2-0x7E01FA）：
+007e01d2  push ebp / mov ebp, esp
+007e01d5  pushal                          ; ★★保存全寄存器
+007e01d6  mov esi, [ebp+8]                ; esi = src1
+007e01d9  mov edi, [ebp+0x10]             ; edi = dst
+007e01dc  mov ebx, [ebp+0xC]              ; ebx = src2
+007e01df  xor eax, eax
+007e01e1  mov ecx, [ebp+0x14]             ; ecx = count
+007e01e4  add ecx, ecx                    ; ★循环 2×count 次
+; → 查表循环（0x7E01E6）：
+007e01e6  mov al, [esi]                   ; al = *src1
+007e01e8  mov ah, [ebx]                   ; ★ah = *src2
+007e01ea  inc esi
+007e01eb  inc ebx
+007e01ec  mov dl, [eax+0xA8F91C]          ; ★★dl = table[
+                                          ;   ((uint16)src2<<8)
+                                          ;   |src1]，表基址
+                                          ;   0xA8F91C
+007e01f2  mov [edi], dl                   ; *dst = dl
+007e01f4  inc edi
+007e01f5  dec ecx
+007e01f6  jne 0x7E01E6
+007e01f8  popal / leave / ret
+
+★语义：**MSVC6 CRT 双源查表字节转换器（推断名——每 2 输
+入字节合成 1 输出字节的 [0xA8F91C] 查表 helper）**——cdecl
+4 参：
+  ① src1 字节 → al、src2 字节 → ah（各自递增指针）；
+  ② 16 位索引 ((uint16)src2<<8)|src1 查表 [0xA8F91C]；
+  ③ 表值写 dst（递增）；
+  ④ 循环 2×count 次（add ecx,ecx 翻倍）。
+  = CRT DBCS/宽字符转换族的手写查表 helper（pushal 全寄存
+  器保存 = MSVC6 CRT 手写/内联汇编惯用，同 0x7E0182 前驱
+  32 位查表变体同族）。
+
+★调用点（探针 E8 实测 1 处 0x7E0266）：宿主 0x7E0250 起
+  （CRT 转换大函数，未登记）——0x7E0250 call 0x7E0170
+  （同表 32 位查表函数，0x7E0170-0x7E01D1 前驱）→ add
+  esp,0xC → push [ebp+0x14]/push 0x879124（★输出缓冲地址
+  常量）/push [ebp-0xC]/push [ebp-0x10] → call 0x7E01D2
+  （★本批 4 参：src1=[ebp-0x10]、src2=[ebp-0xC]、dst=
+  0x879124、count=[ebp+0x14]）→ add esp,0x10 → rep movsd
+  ×2（拷 0x879124 缓冲两次到 [ebp-4] 与 [ebp-4]+[ebp+0x18]
+  ）——宿主为 CRT 宽字符/多字节缓冲转换（查表 + 双份缓冲
+  装配）。
+
+★同表前驱（0x7E0182 循环，0x7E0170 函数内）：mov eax,
+  [esi] / lea esi,[esi+2] / mov edx,eax / mov ebx,eax / and
+  edx,0xFFFF / mov bh,[eax+0xA8F91C] / ror ebx,0x10 / mov
+  [edi],ebx / add edi,4 / dec ecx / jne——**同表 [0xA8F91C]
+  的 32 位查表变体**（每 4 输入字节查两次合成 4 输出字节）
+  ——本批为 16 位变体（每 2 输入字节查 1 次），族内多成员
+  同表共享。
+
+★E8 被调者：零 E8（纯 pushal 查表循环）。
+
+★全局：读查表 [0xA8F91C]——探针 rva2off dump 为空 =
+  **.data 内 BSS 运行时零初始化区（64KB 查表，运行时由其
+  他代码填充；填充方未确认）**；与 QWEN.md 记录的 0xA8ED2C
+  （0x5A6C10 的 [0xA8ED2C] 表）同 0xA8Exxx-0xA8Fxxx 域但
+  不同表；宿主写输出缓冲 0x879124（.data 常量地址）。
+
+★原版怪癖（照抄）：
+  ① pushal/popal 保存全 8 寄存器（MSVC6 CRT 手写/内联汇编
+     惯用，非编译器标准序）——本批与 0x7E0170 前驱同款；
+  ② al/ah 双字节合成 16 位索引（eax 仅用低 16 位，xor
+     eax,eax 预清零后只喂 al/ah）——查表粒度 64KB；
+  ③ add ecx,ecx 循环次数翻倍（count 语义 = 输出字节数/2，
+     或输入对数量）——两字节映射一字节的计数折算；
+  ④ 双源各自独立递增（esi/ebx 两指针同步推进）——输入
+     由两个独立流喂入（推断为高低字节分流的 DBCS 转换）；
+  ⑤ 表 [0xA8F91C] 为 BSS（文件内无初始字节，运行时填充
+     ——填充方未确认，登记为「未确认」不臆测）；
+  ⑥ 调用点宿主输出缓冲 0x879124 经 rep movsd 双份拷贝
+     （查表结果写一处再复制两处）——宿主装配语义。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 查表转换
+设施按商业库纪律归档；表 BSS 未填充无 golden 依据）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7E01D2 = MSVC6 静态 CRT 双源查表转换 helper——
+   0x7E0xxx 代码区与 0x7C-0x7D 同源 CRT 延续（0x7E1xxx 为
+   IAT 槽区，batch 1116 纪律）；pushal 手写查表 + [0xA8F91C]
+   大表 + 调用宿主同域（0x7E0170/0x7E0182 同表族）= CRT
+   DBCS/宽字符转换标准形态。
+2. 依赖：零 E8 函数依赖（纯查表循环）；表 [0xA8F91C] 为
+   BSS（运行时填充，填充方未确认——如实登记）——重写
+   gamemd 时用等价运行时（查表转换语义）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 查表转换设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 41B + 调用宿主 + 同表前
+驱交叉；函数名「双源查表字节转换器」由 al/ah 合成索引 +
+查表 + pushal 形态交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1116 槽表纪律：0x7E1xxx 为 IAT 槽区（仅作调用点
+  登记）——本批 0x7E01D2 位于 0x7E0xxx 代码区（非槽区），
+  归属 CRT 代码延续。
+★同表族（未登记候选）：0x7E0170-0x7E01D1（32 位查表变
+  体，0x7E0182 循环同表）+ 宿主 0x7E0250 起大函数——后续
+  批次按池顺序处理（scan 池 uc=1 候选）。
+★表 [0xA8F91C]：BSS 64KB 查表，与 QWEN.md 0xA8ED2C 同域
+  ——两表填充方均未确认，登记为「未确认」。
+
+五、状态
+-------
+crt_runtime_verified（0x7E01D2：MSVC6 CRT 双源查表字节转
+换器归档；全 41B + 调用宿主 + 同表前驱交叉；不写 C++ 模
+型不做 golden——CRT 查表转换商业库层；函数名由 al/ah 合
+成索引 + 查表 + pushal 形态交叉标注）。TSV 新增 0x007E01D2
+行。
+
+★本批实锤：CRT 手写查表 helper——al=*src1/ah=*src2 合成
+  16 位索引查 [0xA8F91C]（BSS 64KB，运行时填充，填充方未
+  确认）写 dst，循环 2×count 次，pushal 全寄存器保存；唯
+  一调用点 0x7E0266 宿主输出缓冲 0x879124 + rep movsd 双
+  份拷贝；前驱 0x7E0182 同表 32 位变体同族。
+相邻待续：batch 1210 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7C91A5(40B, callers=2)/0x7CCF1D(39B,
+callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1208 已完（MSVC6 CRT 浮点特性探测延迟绑定器
+0x7CEAFF，commit e126a2b）。
