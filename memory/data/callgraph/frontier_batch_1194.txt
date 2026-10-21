@@ -1,0 +1,136 @@
+frontier batch 1194 —— MSVC6 CRT fopen/fdopen 家族薄包装 0x7CA814（归档，槽分配+模式解析三段链）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CA814（49B,
+uc=1, callers=1 探针实测 0x7CA84F）。TSV 无既有行。
+TARGET = 0x007CA814。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CA814 行。
+
+一、链语义（disasm 全 49B + 三依赖交叉 + 调用点壳体，
+0x7CA814-0x7CA844）
+--------------------------------------------------------------
+签名（推断）：cdecl 3 参（[esp+4]=模式串、[esp+8]=共享标
+志、[esp+0xC]=?——壳固定传 0x40），返回 0x7D2C36 解析结
+果（_IO 标志位 / -1 / 槽空时 0）。
+
+主体（0x7CA814-0x7CA844）：
+007ca814  push esi
+007ca815  call 0x7d2da6                       ; ★★TSV:1901 batch
+                                              ;   1060 CRT 单例槽分配器
+                                              ;   （无参 → FILE 槽/0）
+007ca81a  mov esi,eax                         ; esi = 槽
+007ca81c  test esi,esi
+007ca81e  jne 0x7ca822
+007ca820  pop esi/ret                         ; ★槽空 → 返 0
+; → 非空（0x7CA822，模式解析+解锁）：
+007ca822  push edi
+007ca823  push esi                            ; ④参 = 槽（最右）
+007ca824  push dword[esp+0x18]                ; ③参 = 原参3
+007ca828  push dword[esp+0x18]                ; ②参 = 原参2
+007ca82c  push dword[esp+0x18]                ; ①参 = 原参1
+007ca830  call 0x7d2c36                       ; ★★TSV:1947 batch
+                                              ;   1104 CRT fopen 标志解
+                                              ;   析器（模式串→_IO 位）
+007ca835  push esi
+007ca836  mov edi,eax                         ; edi = 解析结果
+007ca838  call 0x7cb44b                       ; ★★TSV:198 流锁 Leave
+                                              ;   （batch 046/961）
+007ca83d  add esp,0x14                        ; ★清 4+1 参
+007ca840  mov eax,edi
+007ca842  pop edi/pop esi/ret                 ; ★返回解析结果
+
+★语义：**MSVC6 CRT fopen/fdopen 家族薄包装（推断名——
+_fsopen 路径三段链）**——cdecl 3 参：
+  ① 0x7D2DA6 单例槽分配器拿 FILE 槽（空 → 静默返 0）；
+  ② 原 3 参 + 槽共 4 参转发 0x7D2C36（fopen 标志解析器，
+     模式串→_IO 标志位，实际只用前两栈参 [ebp+8]/
+     [ebp+0xC]，多余参忽略——cdecl 允许）；
+  ③ 0x7CB44B 对流槽做流锁 Leave 后返回解析结果。
+  = fopen 展开链（壳 0x7CA845 固定传 _SH_DENYNO=0x40）中
+  的「取槽+解析+解锁」中段。
+
+★调用点（探针 E8 实测 1 处 0x7CA84F）：紧邻三参壳
+  0x7CA845：push 0x40/push [esp+0xc]/push [esp+0xc]/call
+  0x7CA814/add esp,0xc/ret——**0x40 = _SH_DENYNO**（MSVC6
+  默认共享标志）→ 本壳 = fopen（宏展开 _fsopen(path,
+  mode, _SH_DENYNO)）形态；0x7CA858 起为新函数（sprintf
+  族：FILE 局部 + _cnt=0x7fffffff + call 0x7D21BE）。
+
+★E8 被调者（3 个，全已登记）：
+  ① 0x7D2DA6（★★TSV:1901 crt_runtime_verified——batch
+     1060 CRT 单例槽分配器：锁 2 保护遍历 [0xB78BC4] 数
+     组 + malloc 空槽 + 每槽临界区 +0x20，200B）；
+  ② 0x7D2C36（★★TSV:1947 crt_runtime_verified——batch
+     1104 CRT fopen 标志解析器：模式串 r/w/a 分派 + '+'
+     'b' 't' 'c' 'n' 'S' 'R' 'T' 'D' 'N' 'C' 等 _IO 标志
+     组装 + EINVAL 错误出口，368B）；
+  ③ 0x7CB44B（★★TSV:198 crt_runtime_verified——batch
+     046/961 流锁 Leave 47B）。
+  全部已登记，无未登记依赖。
+
+★全局：无（纯栈 + 槽透传）。
+
+★原版怪癖（照抄）：
+  ① 四段重读 [esp+0x18]（push 各自前栈深度固定）——MSVC
+     编译器「重复 push [esp+N]」惯用（每压一参栈顶前移但
+     N 固定仍指向原参）；
+  ② 槽作为**第 4 参**传给 0x7D2C36 而彼方只用前两参——
+     cdecl 多余参静默丢弃（_fsopen 签名本来 3 参，槽为
+     内部实参传递）；
+  ③ 槽空静默返 0（不置 errno）——取槽失败透明化；
+  ④ add esp,0x14 一次清 4+1 参（0x7D2C36 4 参 + 0x7CB44B
+     1 参）——两个 cdecl 调用的清理合并；
+  ⑤ 返回 edi（0x7D2C36 解析结果）而非槽——本函数对调用
+     方暴露的是标志位；
+  ⑥ 0x7CB44B 解锁对象是 esi（槽）——流锁 Leave 语义复用
+     （batch 046/961 已归档其分发）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 流打开链
+按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CA814 = MSVC6 静态 CRT fopen 家族薄包装——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；取槽+模式解析+解锁三段链 = CRT 流打
+   开标准形态（batch 1060/1104/046 全同链）。
+2. 依赖：0x7D2DA6/0x7D2C36/0x7CB44B 全部已登记——重写
+   gamemd 时用等价运行时（fopen/freopen 语义）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 流打开设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 49B + 三依赖交叉 + 调用
+点壳体；函数名「fopen/fdopen 家族薄包装」由取槽+解析+解锁
+三段链 + 壳 0x40=_SH_DENYNO 交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1060：0x7D2DA6 单例槽分配器——本批调用现场交叉
+  （无参取槽 + 槽空返 0）。
+★batch 1104：0x7D2C36 fopen 标志解析器——本批 4 参转发
+  现场交叉（前两参生效、后两参忽略）。
+★batch 046/961：0x7CB44B 流锁 Leave——本批解锁现场交叉
+  （槽对象 + 结果返前）。
+★batch 1189/1192：0x7DDC78 写出/0x7CB80B 读取——同 CRT
+  流 I/O 族（本批为流打开端，读写对为本批后续消费）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CA814：MSVC6 CRT fopen/fdopen 家
+族薄包装归档；全 49B + 三依赖交叉；不写 C++ 模型不做
+golden——CRT 流打开链商业库层；函数名由取槽+解析+解锁三段
+链 + 壳 0x40=_SH_DENYNO 交叉标注）。TSV 新增 0x007CA814
+行。
+
+★本批实锤：fopen 展开链中段——0x7D2DA6 取槽（空返 0）→
+  0x7D2C36 解析模式（4 参转发只用前两）→ 0x7CB44B 流锁
+  Leave → 返解析结果；唯一调用点 0x7CA84F 壳固定传
+  0x40（_SH_DENYNO）即 fopen 宏形态；三依赖全已登记。
+相邻待续：batch 1195 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7DAE6E(49B, callers=1)/0x7DDE50 __strrev
+(48B, callers=2)/0x7CB49A(48B, callers=?))。
+依赖模型：无（归档不落 C++）。
+承前：batch 1193 已完（MSVC6 CRT _i64toa 壳层负数标志包装
+0x7D475A，commit b974432）。
