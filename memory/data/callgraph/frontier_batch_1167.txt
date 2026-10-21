@@ -1,0 +1,130 @@
+frontier batch 1167 —— MSVC6 CRT 双字段宽串输出写入器 0x7CE13A（归档，batch 1041 邻族消费）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CE13A（83B,
+uc=1, callers=1 探针实测 0x7CDFEC）。TSV 无既有行。
+TARGET = 0x007CE13A。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CE13A 行。
+
+一、链语义（disasm 全 83B + 两依赖交叉 + 常量串分布，
+0x7CE13A-0x7CE18C）
+--------------------------------------------------------------
+签名（推断）：cdecl 2 参（[esp+8]=目标宽串缓冲、[esp+0xC]=
+对象指针），无返回值；对象字段族：+0x40/+0x80 字节标志
+（各对应一段待输出内容）。
+
+主体（0x7CE13A-0x7CE18C）：
+007ce13a  push esi
+007ce13b  mov esi,[esp+0xc]                    ; esi = 对象指针
+007ce13f  push esi/push [esp+0xc]
+007ce144  call 0x7d4bf0                        ; ★★batch 008 strcpy 词
+                                              ;   级变体（源=对象，目标
+                                              ;   =参1 宽串缓冲）
+007ce149  cmp byte[esi+0x40],0                 ; ★★字段 0x40 标志
+007ce14d  lea eax,[esi+0x40]
+007ce152  je 0x7ce168                          ; 标志 0 → 跳过
+007ce154  push eax                              ; 源 A（&字段 0x40）
+007ce155  push 0x818d7c                        ; ★★源 B（常量串）
+007ce15a  push 2                                ; count=2
+007ce15c  push [esp+0x14]                       ; 目标（原参1）
+007ce160  call 0x7ce049                        ; ★★batch 1041 CRT 字符
+                                              ;   串拼接循环器
+007ce165  add esp,0x10
+007ce168  cmp byte[esi+0x80],0                 ; ★★字段 0x80 标志
+007ce16f  lea eax,[esi+0x80]
+007ce176  je 0x7ce18c                          ; 标志 0 → 跳过
+007ce178  push eax                              ; 源 A（&字段 0x80）
+007ce179  push 0x826598                        ; ★★源 B（常量串）
+007ce17e  push 2                                ; count=2
+007ce180  push [esp+0x10]                       ; 目标（原参1）
+007ce184  call 0x7ce049                        ; ★★batch 1041 拼接循环器
+007ce189  add esp,0x10
+007ce18c  ret
+
+★语义：**MSVC6 CRT 双字段宽串输出写入器（推断名——batch
+1041 邻族消费点）**——cdecl 2 参：
+  ① 0x7D4BF0（batch 008 strcpy 词级）把对象本体拷入
+     目标宽串缓冲（对象首串 = 基础内容）；
+  ② 字段 [esi+0x40] 字节标志非 0 → 经 0x7CE049（batch
+     1041）count=2 双源拼接（源 A=&字段 0x40、源 B=常量
+     串 0x818D7C）追加到目标；
+  ③ 字段 [esi+0x80] 字节标志非 0 → 同款双源拼接（源 A=
+     &字段 0x80、源 B=常量串 0x826598）追加。
+  = 对象化宽串/格式串输出（两可选字段按标志位拼常量后
+  缀）——CRT 字符串拼接链（batch 008 词级 strcpy + batch
+  1041 count 循环器）的组合消费。
+
+★调用点（探针 E8 实测 1 处 0x7CDFEC）：宿主 0x7CDFxx 区
+  （batch 1038 locale/code-page 解析器 0x7CDF2E 同域
+  ——0x7CDFEC 在其尾段后邻，同 CRT 字符串输出链）。
+
+★E8 被调者：0x7D4BF0（★★batch 008 strcpy 词级变体
+  ✓TSV:48——36+ 调用者大家族）+ 0x7CE049（★★batch 1041
+  CRT 字符串拼接循环器 ✓TSV:1875——彼文档 2 callers 之外
+  补登的第三家，实际 4 callers 中的 2 处 0x7CE160/0x7CE184
+  即本批）——**两个依赖全部已登记**。
+
+★原版怪癖（照抄）：
+  ① 双字段串行结构（[esi+0x40] / [esi+0x80]）间距 0x40
+     ——对象内两段可选内容对称布局；
+  ② 两字段拼接均 count=2（源 A=&字段 / 源 B=常量串）——
+     batch 1041 的 count 参数固定 2（双源拼接）而非 1；
+  ③ 常量串 0x818D7C/0x826598 作源 B——拼接后缀为编译
+     期常量（分隔符/格式标记推断）；
+  ④ 标志判 byte 而非 dword（cmp byte[esi+0x40],0）——
+     单字节开关语义；
+  ⑤ 目标指针经 [esp+0x14]/[esp+0x10] 两次间接取（push
+     后 esp 已变）——栈参重定位照抄；
+  ⑥ 无返回值（ret 平返）——纯输出副作用函数。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 字符串设
+施按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CE13A = MSVC6 静态 CRT 字符串输出设施——0x7C-0x7D
+   = MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）；
+   strcpy 词级（batch 008）+ count 循环拼接（batch 1041）
+   = CRT 字符串拼接链标准组合消费形态。
+2. 依赖：2 个已登记函数（0x7D4BF0 batch 008、0x7CE049
+   batch 1041）——重写 gamemd 时用等价运行时
+   （std::string 拼接）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 字符串设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 83B + 两依赖交叉 + 常量串
+分布；函数名「双字段宽串输出写入器」由双标志位 + 双源拼
+接 + 词级 strcpy 交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1041：0x7CE049 CRT 字符串拼接循环器——本批两处调
+  用现场（0x7CE160/0x7CE184）即彼文档 4 callers 中的
+  2 处（彼时已列未核验宿主，本批补登）。
+★batch 008：0x7D4BF0 strcpy 词级变体——本批首段拷贝调用
+  现场交叉（TSV:48 大家族第 N 家）。
+★batch 1038：0x7CDF2E locale/code-page 解析器——本批调
+  用点 0x7CDFEC 在其同域后邻（CRT 字符串输出链）。
+★batch 1064：0x7CED9E 浮点尾数格式化器——同样经 0x7CE049
+  三次调用（(edi,1)×2+(edi,len)）——batch 1041 多宿主
+  消费全景。
+
+五、状态
+-------
+crt_runtime_verified（0x7CE13A：MSVC6 CRT 双字段宽串输出写
+入器归档；全 83B + 两依赖交叉；不写 C++ 模型不做 golden
+——CRT 字符串库商业库层；函数名由双标志位 + 双源拼接 +
+词级 strcpy 交叉标注）。TSV 新增 0x007CE13A 行。
+
+★本批实锤：batch 1041 邻族消费点——strcpy 词级（batch
+  008）拷对象本体 + 双字段 [esi+0x40]/[esi+0x80] 标志位
+  各触发 count=2 双源拼接（源 A=字段/源 B=常量串
+  0x818D7C/0x826598），两依赖全已登记。
+相邻待续：batch 1168 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CB7BA(81B)/0x7C946E(78B)/0x7D362F
+(74B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1166 已完（MSVC6 CRT FPE 门控解析包装器
+0x7DB49A，commit d1a7612）。
