@@ -1,0 +1,126 @@
+frontier batch 1196 —— MSVC6 CRT __strrev 字符串反转器 0x7DDE50（归档，双指针原地反转）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DDE50（48B,
+uc=1, callers=2 探针实测 0x5F9F83/0x5F9FAF）。TSV 无既有
+行。TARGET = 0x007DDE50。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007DDE50 行。
+
+一、链语义（disasm 全 48B + 调用点宿主，0x7DDE50-0x7DDE7F）
+--------------------------------------------------------------
+签名（确认）：cdecl 1 参（[ebp+8]=字符串指针），原地反转
+后返回原串指针。
+
+主体（0x7DDE50-0x7DDE7F）：
+007dde50  push ebp/mov ebp,esp
+007dde53  push edi/push esi
+007dde55  mov edi,dword[ebp+8]                 ; edi = 串指针（参1）
+007dde58  mov edx,edi                          ; ★edx 保存原串指针
+007dde5a  mov esi,edi                          ; esi = 左指针
+007dde5c  xor eax,eax
+007dde5e  or ecx,0xffffffff
+007dde61  repne scasb al,byte es:[edi]         ; ★★repne scasb 扫串尾
+                                              ;   （strlen 惯用展开）
+007dde63  cmp ecx,-2
+007dde66  je 0x7dde7a                          ; ★空串（ecx==-2）→
+                                              ;   直接返回
+007dde68  dec edi                              ; 右指针 = 串尾前
+007dde69  dec edi
+; → 交换循环（0x7DDE6A）：
+007dde6a  cmp esi,edi
+007dde6c  jae 0x7dde7a                          ; ★★左 >= 右 → 完成
+007dde6e  mov ah,byte[esi]                     ; ah = *左
+007dde70  mov al,byte[edi]                     ; al = *右
+007dde72  mov byte[esi],al                     ; *左 = *右
+007dde74  mov byte[edi],ah                     ; *右 = *左
+007dde76  inc esi
+007dde77  dec edi
+007dde78  jmp 0x7dde6a
+; → 出口（0x7DDE7A）：
+007dde7a  mov eax,edx                          ; ★返回原串指针
+007dde7c  pop esi/pop edi/leave/ret
+
+★语义：**MSVC6 CRT __strrev 字符串反转器（标准 strrev）**
+——cdecl 1 参：
+  ① repne scasb 找串尾（ecx 余值判空串：-2 → 直接返回）；
+  ② 双指针（esi 左 / edi 右）从两端向中间交换字符，
+     jae（左 >= 右）为终止边界；
+  ③ 返回 edx 保存的原串指针（itoa/strrev 族惯例）。
+  = 标准原地字符串反转（strlen 内联 + 交换循环）。
+
+★调用点（探针 E8 实测 2 处，全在 Westwood 主区 0x5F9Fxx）：
+  ① 0x5F9F83：call 0x4A1DE0 后 lea ecx,[esp+0x2c]/push
+     ecx/call 0x7DDE50/add esp,4——对栈上 [esp+0x2c] 缓冲
+     反转；
+  ② 0x5F9FAF：同宿主后续同模式反转。
+  宿主 0x5F9F70 区（lea edx,[esp+0x2c]/lea ecx,[esp+0x18]
+  + 多寄存器保存 ebp/ebx——字符串处理工具函数，反转后
+  继续消费）。
+
+★E8 被调者：**零子调用**（全 48B 纯内联 strlen+交换）。
+
+★全局：无。
+
+★原版怪癖（照抄）：
+  ① **repne scasb 内联 strlen**（or ecx,0xffffffff →
+     repne scasb → 从 ecx 余值倒推长度）——非 call strlen
+     库函数，编译器 -O1 展开；
+  ② 空串特判 `cmp ecx,-2/je`（strlen==0 → ecx==-2）——
+     反转循环跳过直接返回；
+  ③ 终止边界用 **jae（无符号 >=）**——左指针越过右指针
+     即停（奇偶长度统一）；
+  ④ 交换用 **ah/al 双寄存器中转**（mov ah,[esi]/mov al,
+     [edi]/写回）——非 XCHG 单条（编译器强度削减）；
+  ⑤ 返回 edx 保存的原串指针（edx 在入段即拷贝）——标准
+     strrev 返回约定；
+  ⑥ 右指针起始 = 串尾前 2 个位置（dec edi ×2——scasb
+     停在后一个 NUL 位置再退 1 到 NUL、再退 1 到末字符）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 字符串库
+按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DDE50 = MSVC6 静态 CRT 字符串反转器——0x7C-
+   0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）；repne scasb 找尾 + 双指针交换 = CRT 字符
+   串库标准形态（batch 1142/1177/1178/1182 串族同链）。
+2. 依赖：零 E8 零全局——重写 gamemd 时用等价运行时
+   （std::reverse）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 字符串库设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 48B + 调用点宿主；函数名
+「__strrev 字符串反转器」由 repne scasb 找尾 + 双指针交换
++ 返回原串指针交叉标注——符号名由扫描池直接给出）。
+
+四、跨批次闭合
+------------
+★batch 1142/1177/1178/1182：strchr/wcsrchr/wcspbrk/
+  strpbrk 串查找族——本批为串变换族成员（反转），同 CRT
+  字符串库域。
+★batch 1183：0x7D5A2E 结构表查找——同 0x7D5xxx 串/表
+  处理域。
+★batch 1192/1194：0x7CB80B _fgetc/0x7CA814 fopen——同
+  CRT 流/串域邻函数（I/O 与字符串工具全景）。
+
+五、状态
+-------
+crt_runtime_verified（0x7DDE50：MSVC6 CRT __strrev 字符串
+反转器归档；全 48B + 调用点宿主；不写 C++ 模型不做 golden
+——CRT 字符串库商业库层；函数名「字符串反转器」由 repne
+scasb 找尾 + 双指针交换 + 返回原串指针交叉标注——符号名由
+扫描池直接给出）。TSV 新增 0x007DDE50 行。
+
+★本批实锤：标准 strrev——repne scasb 内联 strlen（空串
+  ecx==-2 特判）+ 双指针 ah/al 中转交换至 jae 边界 + 返回
+  edx 原串指针，零 E8 零全局；2 调用点 0x5F9F83/0x5F9FAF
+  全在 Westwood 主区 0x5F9Fxx 字符串处理宿主。
+相邻待续：batch 1197 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7C94BC(47B, callers=1)/0x7C95D3(47B,
+callers=1)/0x7CC653(47B, callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1195 已完（MSVC6 CRT 双表字符分类判定器
+0x7DAE6E，commit 66a6f14）。
