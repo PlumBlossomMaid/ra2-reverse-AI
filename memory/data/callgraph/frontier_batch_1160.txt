@@ -1,0 +1,132 @@
+frontier batch 1160 —— MSVC6 CRT 多字节字符转换锁包装器 0x7CC447（归档，0x7CC4A4 出口包装）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CC447（93B,
+uc=1, callers=3 探针实测 0x773D55/0x773D69（主代码区）+
+0x7D3F0F（CRT 区））。TSV 无既有行。TARGET = 0x007CC447。
+C++ 模型：无（见「三态判定」）。TSV：新增 0x007CC447 行。
+
+一、链语义（disasm 全 93B + 三依赖交叉 + 调用点分布，
+0x7CC447-0x7CC4A3）
+--------------------------------------------------------------
+签名（推断）：cdecl 3 参（[ebp+8]/[ebp+0xC]/[ebp+0x10]），
+转发给 0x7CC4A4（batch 1098 多字节字符转换），返回其结
+果；[0xB78BA0] 门控决定是否走锁路径。
+
+主体（0x7CC447-0x7CC4A3）：
+007cc447  push ebp/mov ebp,esp/push ebx/push esi
+007cc44c  mov esi,0xb78ba4                    ; ★★[0xB78BA4] 全局（传参）
+007cc451  push edi/push esi
+007cc453  call dword[0x7e11c8]                ; ★★IAT 槽 [0x7E11C8] 调用
+                                              ;   （batch 1116 修正：槽
+                                              ;   静态值不作语义证据，
+                                              ;   仅作调用点登记）
+007cc459  mov edi,dword[0x7e11cc]             ; ★★IAT 槽 [0x7E11CC] 读
+                                              ;   取（函数指针）
+007cc45f  xor ebx,ebx
+007cc461  cmp dword[0xb78ba0],ebx             ; ★★[0xB78BA0] 门控全局
+007cc467  je 0x7cc477                         ; ==0 → 直接转换（无锁）
+; → 锁路径（0x7CC469）：
+007cc469  push esi/call edi                    ; ★★[0x7E11CC] 槽目标调用
+007cc46c  push 0x13/call 0x7cd9f5             ; ★★锁 Enter（key=0x13=19）
+007cc473  pop ecx/push 1/pop ebx              ; ebx=1（锁已持）
+; → 统一转换（0x7CC477）：
+007cc477  push [ebp+0x10]/push [ebp+0xc]/push [ebp+8]
+007cc480  call 0x7cc4a4                        ; ★★batch 1098 CRT 多字
+                                              ;   节字符转换（431B 已登
+                                              ;   记——MBCS 宽窄转换族）
+007cc485  add esp,0xc
+007cc488  mov [ebp+0x10],eax                  ; 结果存参槽
+007cc48b  test ebx,ebx/je 0x7cc499
+; → 锁收尾（0x7CC48F，ebx!=0）：
+007cc48f  push 0x13/call 0x7cda56             ; ★★锁 Leave（key=0x13）
+007cc496  pop ecx/jmp 0x7cc49c
+; → 槽收尾（0x7CC499，ebx==0）：
+007cc499  push esi/call edi                    ; ★★[0x7E11CC] 槽收尾调用
+007cc49c  mov eax,[ebp+0x10]/pop edi/esi/ebx/pop ebp/ret
+
+★语义：**MSVC6 CRT 多字节字符转换锁包装器（推断名——
+0x7CC4A4 的带锁出口包装）**——cdecl 3 参：
+  ① [0xB78BA0] 门控：非 0 → [0x7E11CC] 槽调用 + 锁 0x13
+     Enter（区域锁族）后转换；==0 → 直接转换（无锁快路
+     径）；
+  ② 统一转发 0x7CC4A4（batch 1098 多字节字符转换）3 参；
+  ③ 结果存参槽；锁路径 → 锁 Leave + 槽收尾调用 / 无锁路
+     径 → 仅槽收尾调用；
+  ④ 返回 [ebp+0x10]（转换结果）。
+  = 多字节转换入口的「门控+锁+转发」包装——batch 1098
+  0x7CC4A4 内部实现的对外出口（调用者按状态决定是否互
+  斥）。
+
+★调用点（探针 E8 实测 3 处）：0x773D55/0x773D69（主代码区
+  ——gameside 多字节转换消费）+ 0x7D3F0F（CRT 区 0x7D3Fxx
+  ——CRT 内部消费）——转换入口多端复用。
+
+★E8 被调者：0x7CC4A4（★★batch 1098 CRT 多字节字符转换
+  ✓已登记——本批为其出口包装补登记）+ 0x7CD9F5/0x7CDA56
+  （★★TSV:238/239 锁对 key=0x13）+ IAT 槽 [0x7E11C8]/
+  [0x7E11CC]（batch 1116 修正后仅作调用点登记，不作语义
+  证据）——**三个函数依赖全部已登记**。
+
+★原版怪癖（照抄）：
+  ① [0xB78BA0] 门控双路径：非 0 走锁（区域锁 0x13）、==0
+     快路径无锁——并发安全由调用方状态保证；
+  ② IAT 槽 [0x7E11CC] 被调用**两次**（锁路径 Enter 前 +
+     收尾）而 [0x7E11C8] 仅一次（开头）——不对称槽消费；
+  ③ 锁 key=0x13（19）与 batch 244 tolower 同编号（区域锁
+     族通用键）非多字节专用键；
+  ④ 结果经 [ebp+0x10] 参槽回写再读回（mov [ebp+0x10],eax
+     → mov eax,[ebp+0x10]）——参数槽复用传递；
+  ⑤ ebx 作锁持有标志（push 1/pop ebx 置位 vs xor 清零）
+     ——无锁路径 ebx 恒 0；
+  ⑥ 两条收尾路径不等长：锁路径 = 锁 Leave + 跳转合并、
+     无锁路径 = 槽调用直接落点——收尾形态不对称（照抄）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 多字节转
+换设施按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CC447 = MSVC6 静态 CRT 多字节字符转换入口包
+   装——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_
+   layout_crt_provenance）；[0xB78BA0] 门控 + 锁 0x13 + 转
+   发 batch 1098 已登记内核 = CRT MBCS 转换标准出口形态。
+2. 依赖：3 个已登记函数（0x7CC4A4 batch 1098、0x7CD9F5/
+   0x7CDA56 TSV:238/239 锁对）——重写 gamemd 时用等价运
+   行时（mbtowc/_mbstowcs）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 多字节转换设
+   施，重写时用等价运行时代替，逐字节复刻无意义——按商
+   业库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 93B + 三依赖交叉 + 调用点
+分布；函数名「多字节字符转换锁包装器」由门控+锁+转发
+0x7CC4A4 交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1098：0x7CC4A4 CRT 多字节字符转换（431B）——本批
+  为其带锁出口包装补登记（调用现场 0x7CC480 三参转发）。
+★batch 244：锁 key=0x13 同编号（区域锁族通用键）——本批
+  Enter/Leave 现场交叉。
+★TSV:238/239：0x7CD9F5/0x7CDA56 锁对——本批 key=0x13 调
+  用现场交叉。
+★batch 1116：IAT 槽 [0x7E11C8]/[0x7E11CC]——本批仅作调用
+  点登记不作语义证据（方法论落地）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CC447：MSVC6 CRT 多字节字符转换锁
+包装器归档；全 93B + 三依赖交叉；不写 C++ 模型不做 golden
+——CRT 多字节库商业库层；函数名由门控+锁+转发 0x7CC4A4
+交叉标注）。TSV 新增 0x007CC447 行。
+
+★本批实锤：batch 1098 内核的出口包装——[0xB78BA0] 门控
+  双路径（锁 0x13/快路径）+ [0x7E11C8]/[0x7E11CC] 槽调用
+  + 三参转发 0x7CC4A4，三函数依赖全已登记。
+相邻待续：batch 1161 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7D453C(90B, callers=2)/0x7CAC66(90B)/
+0x7DAB54(88B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1159 已完（MSVC6 CRT 浮点指数格式化入口
+0x7CEC26，commit 4c3b2aa）。
