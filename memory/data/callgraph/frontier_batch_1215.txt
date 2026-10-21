@@ -1,0 +1,161 @@
+frontier batch 1215 —— MSVC6 CRT 前导空白跳过计数器（isctype 掩码 8 版）0x7D219A（归档，0x7D45BA 孪生）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D219A（36B,
+uc=1, callers=2 探针实测 0x7D1770/0x7D18E0）。TSV 无既有
+行。TARGET = 0x007D219A。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D219A 行。
+
+一、链语义（disasm 全 36B + 双调用宿主交叉 + 双依赖登记
+交叉，0x7D219A-0x7D21BD）
+--------------------------------------------------------------
+签名（确认）：cdecl 2 参（[esp+4]=int* count 计数器指针、
+[esp+8]=stream 流上下文），返回最后一个非空白字符（eax）。
+
+主体（0x7D219A-0x7D21BD）：
+007d219a  push esi
+007d219b  mov esi, dword[esp+8]            ; ★esi = 参1 &count
+                                           ;   （push 后
+                                           ;   [esp+8]=原[esp+4]）
+007d219f  push edi
+007d21a0  push dword[esp+0x10]             ; ★push 参2 stream
+                                           ;   （两次 push 后
+                                           ;   [esp+0x10]=原
+                                           ;   [esp+8]）
+007d21a4  inc dword[esi]                   ; ★(*count)++
+007d21a6  call 0x7d2169                    ; ★★TSV:99 batch 018
+                                           ;   流单字节读取器
+                                           ;   （缓冲耗尽经流
+                                           ;   helper 补充）
+007d21ab  mov edi, eax                     ; edi = ch
+007d21ad  push edi
+007d21ae  call 0x7c99e1                    ; ★★TSV:1827 batch
+                                           ;   992 CRT isctype
+                                           ;   掩码 8（空白/分隔
+                                           ;   类）
+007d21b3  pop ecx
+007d21b4  test eax, eax
+007d21b6  pop ecx                          ; 清 stream 参
+007d21b7  jne 0x7d21a0                     ; ★命中掩码 → 循环
+007d21b9  mov eax, edi                     ; 返回最后非命中
+                                           ;   字符
+007d21bb  pop edi
+007d21bc  pop esi
+007d21bd  ret
+
+★语义：**MSVC6 CRT 前导空白跳过计数器（isctype 掩码 8 版
+——0x7D45BA 的窄字符孪生）**——cdecl 2 参：
+  do {
+      (*count)++;
+      ch = 0x7D2169(stream);   // 窄字符流读取
+  } while (0x7C99E1(ch));      // isctype 掩码 8 命中继续
+  return ch;
+  与 batch 1213 的 0x7D45BA **逐指令同模板**（36B vs 37B
+  ——差异仅在空白分类函数与读取函数：本批 0x7D2169 窄读取
+  + 0x7C99E1 isctype 掩码 8；1213 为 0x7D4596 宽读取薄包
+  装 + 0x7CB8A8 宽字符空白掩码 8）。
+
+★调用点（探针 E8 实测 2 处，均在 atof/strtod 窄字符解析大
+  函数内，未登记）：
+  ① 0x7D1770（窄字符数值解析宿主）：cmp [0x87C79C],1/jle
+     → mov ecx,[0x87C590]/movzx eax,al/mov al,[ecx+eax*2]/
+     and eax,8（★内联 isctype 掩码 8 查表路径）→ cmp eax,
+     ebx/je 0x7D179D → **dec [ebp-4]**（★count--）/push
+     edi/lea eax,[ebp-4]/push edi/push eax → call 0x7D219A
+     （★本批）→ pop ecx×2 → push eax → call 0x7D2183（★★
+     TSV 既有 _atof 族辅助，scan 邻件）→ movzx eax,[esi+1]/
+     inc esi/push eax/call 0x7C99E1 → add esp,0xC/test eax,
+     eax/je——解析链：掩码判定 → 计数回退 → 本批跳过空白 →
+     数字前缀辅助 → 再判；
+  ② 0x7D18E0（同族另一分支）：mov ebx,[ebp+0xC]/movzx
+     esi,[ebx]/or esi,0x20/cmp esi,0x6e（'n'）/0x63（'c'）/
+     0x7b（'{'）（★inf/nan/hex 十六进制前缀判定）/mov
+     [ebp-0x3C],esi/je 0x7D18F7（'n' → 跳过空白路径）→
+     cmp 0x63/je 0x7D18E8 → cmp 0x7B/je 0x7D18E8（brace 也
+     走 0x7D18E8 的 inc [ebp-4]+call 0x7D2169 单读）→ 默认
+     路径：push [ebp+8]/lea eax,[ebp-4]/push eax → call
+     0x7D219A（★本批）→ pop ecx/jmp 0x7D18F3 → mov
+     [ebp-0x14],eax——前缀分支与 1213 宿主结构同款（同族
+     两套：宽 wcstod 走 1213 宿主，窄 strtod 走本批宿主）。
+
+★E8 被调者（2 个，全已登记）：
+  ① 0x7D2169（★★TSV:99 semantics_verified_partial——batch
+     018 流单字节读取器，缓冲耗尽经流 helper 补充，40B 区）；
+  ② 0x7C99E1（★★TSV:1827 crt_runtime_verified——batch 992
+     isctype 掩码族查表第 3 成员，[0x87C79C]>1 走 0x7D1311
+     _isctype fallback、≤1 直查 [0x87C590] ctype 表 word 低
+     字节 & 8）。
+  全部已登记，无未登记依赖。
+
+★全局：读 [0x87C79C]/[0x87C590]（经 0x7C99E1 间接）；零写。
+
+★原版怪癖（照抄）：
+  ① 与 0x7D45BA **逐指令同模板编译展开**（push esi / mov
+     esi,[esp+8] / push edi / push [esp+0x10] / inc [esi] /
+     call 读 / mov edi,eax / push edi / call 分类 / pop ecx
+     / test / pop ecx / jne / mov eax,edi / pop edi / pop
+     esi / ret）——CRT 为宽/窄两套字符域各展开一份（Westwood
+     无关，MSVC CRT 源码宏展开）；
+  ② 本批 36B 比 1213 的 37B 少 1 字节——分类调用 0x7C99E1
+     （isctype 掩码）比 0x7CB8A8 少 1 字节编码差异外无结构
+     差异；
+  ③ do-while 先读后判（至少读一字符）；
+  ④ 计数器每轮 +1（含被跳过字符）——消费长度含空白；
+  ⑤ 分类走 isctype 掩码 8（非 isspace 布尔）——返回值是
+     掩码值非 0/1（test eax,eax 判非零）；
+  ⑥ 返回经 mov eax,edi（edi 全 32 位，对比 1213 用 mov
+     ax,di 只取低 16 位）——窄字符域保完整 32 位。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 流解析
+设施按商业库纪律归档；孪生 batch 1213 同纪律）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D219A = MSVC6 静态 CRT 窄字符空白跳过计数器
+   ——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；窄流读取 + isctype 掩码 + 计数 = CRT
+   数值解析标准形态（宿主 atof/strtod 窄解析链）。
+2. 依赖：0x7D2169（TSV:99）+ 0x7C99E1（TSV:1827）全部已
+   登记——重写 gamemd 时用等价运行时（std::strtod 语义）
+   代替。
+3. gamemd_replication_discipline：MSVC6 CRT 流解析设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 36B + 双调用宿主交叉 + 双
+依赖登记交叉；函数名由与 0x7D45BA 逐指令同模板 + 窄字符
+域依赖交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1213：0x7D45BA 宽字符版空白跳过计数器——**本批为
+  其窄字符孪生**（逐指令同模板；宽 wcstod 宿主 0x7D3ABA/
+  0x7D3C3E vs 本批窄 strtod 宿主 0x7D1770/0x7D18E0）。
+★TSV:99（batch 018）：0x7D2169 流单字节读取器——本批循环
+  读取现场交叉。
+★TSV:1827（batch 992）：0x7C99E1 isctype 掩码 8 查表——
+  本批循环判定现场交叉（掩码族 6 连第 3 成员）。
+★batch 789/965/990/991：掩码族其余成员（0x7C998C/0x7C9A31/
+  0x7C9964）——本批拉入的第 4 个使用现场（宿主 0x7D1770
+  还内联了一份掩码 8 查表，[0x87C79C]/[0x87C590] 同表）。
+
+五、状态
+-------
+crt_runtime_verified（0x7D219A：MSVC6 CRT 窄字符前导空白跳
+过计数器归档；全 36B + 双调用宿主交叉 + 双依赖登记交叉；
+不写 C++ 模型不做 golden——CRT 流解析商业库层；函数名由
+与 0x7D45BA 逐指令同模板 + 窄字符域依赖交叉标注）。TSV 新
+增 0x007D219A 行。
+
+★本批实锤：do{(*count)++;ch=0x7D2169(stream);}while(
+  0x7C99E1(ch))——窄字符域空白跳过（isctype 掩码 8），与
+  batch 1213 宽字符域版逐指令同模板；两调用点（0x7D1770/
+  0x7D18E0）均在窄 strtod/atof 解析链，共享 [ebp-4] 计数
+  器；双依赖全已登记。
+相邻待续：batch 1216 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CA971(34B, callers=1)/0x7CE66D(34B,
+callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1214 已完（MSVC6 CRT matherr 函数名查表器
+0x7DBC05，commit 507dc40）。
