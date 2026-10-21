@@ -1,0 +1,134 @@
+frontier batch 1189 —— MSVC6 CRT 控制台串段写出循环 0x7DDC78（归档，格式化引擎写出双兄弟之一）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DDC78（51B,
+uc=1, callers=3 探针实测 0x7DDB72/0x7DDBBC2/0x7DDBDD）。
+TSV 无既有行。TARGET = 0x007DDC78。C++ 模型：无（见
+「三态判定」）。TSV：新增 0x007DDC78 行。
+
+一、链语义（disasm 全 51B + 依赖交叉 + 调用现场 + 同族对
+照，0x7DDC78-0x7DDCAA）
+--------------------------------------------------------------
+签名（推断）：cdecl 3 参（arg1=字符串指针、arg2=写出长度
+、arg3=状态/计数指针），返回 void；写出失败（*arg3==-1）
+提前退出。
+
+主体（0x7DDC78-0x7DDCAA）：
+007ddc78  push ebx
+007ddc79  mov ebx,dword[esp+0xc]              ; ebx = arg2（长度）
+007ddc7d  mov eax,ebx
+007ddc7f  dec ebx                             ; ebx = 长度-1
+007ddc80  push esi/push edi
+007ddc82  test eax,eax
+007ddc84  jle 0x7ddca7                        ; 长度<=0 → 直接退出
+007ddc86  mov edi,dword[esp+0x18]             ; edi = arg3（状态指针）
+007ddc8a  mov esi,dword[esp+0x10]             ; esi = arg1（串指针）
+; → 写出循环（0x7DDC8E）：
+007ddc8e  movsx eax,byte[esi]                 ; ★eax = (signed char)*esi
+007ddc91  push edi                            ; 状态指针
+007ddc92  push eax                            ; 字符值
+007ddc93  inc esi                             ; esi++（串前进）
+007ddc94  call 0x7ddc32                       ; ★★TSV:1890 0x7DDC32
+                                              ;   控制台写出计数薄包装
+                                              ;   （转调 0x7DE17D 核心；
+                                              ;   核心返 -1 → *arg3=-1
+                                              ;   否则 (*arg3)++）
+007ddc99  cmp dword[edi],-1                   ; ★*arg3 == -1（出错）?
+007ddc9c  pop ecx/pop ecx
+007ddc9e  je 0x7ddca7                         ; 出错 → 提前退出
+007ddca0  mov eax,ebx
+007ddca2  dec ebx
+007ddca3  test eax,eax
+007ddca5  jg 0x7ddc8e                         ; 剩余>0 → 继续
+007ddca7  pop edi/pop esi/pop ebx/ret
+
+★语义：**MSVC6 CRT 控制台串段写出循环（推断名——格式化
+引擎字符串段写出）**——cdecl 3 参：
+  ① 从 arg1 串逐字符（signed char 符号扩展）经 0x7DDC32
+     写出（每字符一次，计数递增）；
+  ② arg2 指定写出字符数（先判 <=0 退出）；
+  ③ 每轮检查 *arg3：==-1（核心出错）→ 提前退出循环。
+  = 格式化引擎的「字符串段写出」原语（配合同族 0x7DDC4C
+  的「填充字符重复写出」——宿主 0x7DDB40 现场 `push 0x20
+  /push 0x30` 空格/零填充垫宽 + 本批串段写出的双兄弟）。
+
+★调用点（探针 E8 实测 3 处，全在 0x7DDB 宿主区）：
+  ① 0x7DDB72：lea eax,[ebp-0x14]（状态指针）/lea eax,
+     [ebp-0x16]（串指针）/push [ebp-0x1c]（长度）/push
+     eax/call——字符串段写出；
+  ② 0x7DDBBC2/0x7DDBDD：同宿主后续（重复串段写出现场）。
+  宿主 = 0x7DDB 区大格式化函数（0x7DDB40 起：test bl,0xc
+  标志分支 + push 0x20/0x30 填充 + 调 0x7DDC4C 3 处 +
+  调 0x7DDC78 3 处）——MSVC6 CRT 格式化输出引擎本体（宽/
+  窄字符输出共用写出族）。
+
+★E8 被调者：**0x7DDC32（★★TSV:1890 已登记 crt_runtime_
+  verified——26B 控制台写出计数/错误薄包装，转调 0x7DE17D
+  核心，batch 1052 成组登记）**——唯一函数依赖，已登记。
+
+★全局：无（纯栈 + 参数透传）。
+
+★原版怪癖（照抄）：
+  ① 每轮从栈重载 esi（mov esi,[esp+0x10]）只做一次，循环
+     内 inc esi 前进——长度与指针分离（不检查串尾 NUL，
+     纯按 arg2 计数）；
+  ② movsx **符号扩展**读字符（非 movzx）——高位字节为负
+     值字符照传；
+  ③ 错误检测用 *arg3==-1（状态指针间接读）而非返回值
+     ——0x7DDC32 返 void，错误经 arg3 回传；
+  ④ 退出前弹 edi/esi/ebx 三寄存器（先 push ebx 后 push
+     esi/edi——弹栈逆序）；
+  ⑤ 长度<=0 快路径（test/jle 在重载 edi/esi 之前）——空
+     段不触指针；
+  ⑥ ebx 递减从 长度-1 起（mov eax,ebx/dec ebx 双步）——
+     循环计数与退出判定错位一拍（先判再减的 MSVC 模式）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 控制台输
+出链按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DDC78 = MSVC6 静态 CRT 控制台输出链写出原语
+   ——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；依赖 0x7DDC32（batch 1052 与
+   0x7DE17D 核心成组登记）+ 宿主 0x7DDB 区格式化引擎 =
+   CRT 输出标准形态。
+2. 依赖：0x7DDC32 已登记——重写 gamemd 时用等价运行时
+   （stdio/console API）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 控制台输出设
+   施，重写时用等价运行时代替，逐字节复刻无意义——按商
+   业库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 51B + 依赖交叉 + 调用现
+场 + 同族对照；函数名「控制台串段写出循环」由逐字符经
+0x7DDC32 写出 + 长度计数 + 出错提前退出交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1052：0x7DDC32/0x7DE17D/0x7DE110 控制台链——本批
+  调用现场交叉（每字符一调 + 计数/错误双义 arg3）。
+★batch 1044/1045/1051：locale/环境链——0x7B-0x7F 全局
+  区交叉（batch 1052 已述）。
+★本批同族：0x7DDC4C（44B, callers=3——填充字符重复写出
+  循环，宿主 push 0x20/0x30 空格/零垫宽现场）——写出双兄
+  弟，未登记（后续候选）。
+
+五、状态
+-------
+crt_runtime_verified（0x7DDC78：MSVC6 CRT 控制台串段写出
+循环归档；全 51B + 依赖交叉；不写 C++ 模型不做 golden——
+CRT 控制台输出链商业库层；函数名由逐字符写出 + 长度计数
++ 出错提前退出交叉标注）。TSV 新增 0x007DDC78 行。
+
+★本批实锤：格式化引擎串段写出原语——逐字符（movsx 符号
+  扩展）经 0x7DDC32 写出、按 arg2 计数、*arg3==-1 提前退
+  出；唯一依赖 0x7DDC32 已登记；3 调用点全在 0x7DDB 宿主
+  格式化引擎内（与 0x7DDC4C 填充双兄弟）。
+相邻待续：batch 1190 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7D3679(51B, callers=2)/0x7CBCAF(50B,
+callers=4——FILE 输出刷盘族，调 0x7D468C + IAT
+[0x7E11C4])/0x7DDC4C(44B, callers=3——本批同族填充)。
+依赖模型：无（归档不落 C++）。
+承前：batch 1188 已完（MSVC6 CRT _control87 核心 0x7CBF14，
+commit f460d91）。
