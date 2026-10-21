@@ -1,0 +1,143 @@
+frontier batch 1138 —— Westwood 表面域差值求值器 0x7C3860（归档，0x7C 区混入样本 #14）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7C3860（169B,
+uc=1, callers=1 探针实测 0x7C2AD6 唯一宿主）。TSV 无既有
+行。TARGET = 0x007C3860。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007C3860 行。
+
+⚠️ 归属：延续 batch 1086-1137 修正链——0x7C-0x7D 区混入
+Westwood 自有代码，本样本 #14（表面域差值求值器，thiscall
++ batch 1110 字段族重合）。
+
+一、链语义（disasm 全 169B + 字段族/宿主交叉，0x7C3860-0x7C3908）
+--------------------------------------------------------------
+签名（推断）：thiscall 2 参（this=ecx、param2=edx 寄存器传
+参——特殊分支参数），返回遍历表求得的差值最大值 / 0。
+
+主体（0x7C3860-0x7C3908）：
+007c3860  sub esp,8/push esi
+007c3863  xor esi,esi
+007c3866  mov si,word[ecx+0x714]                   ; ★★[this+0x714] 16
+                                              ;   位项数（batch 1110
+                                              ;   LINH/LIND 装载器同
+                                              ;   字段族！）
+007c386d  xor eax,eax/test esi,esi
+007c3871  mov [esp+4],eax                         ; ★结果初值 0
+007c3875  jle 0x7C3904                            ; ★项数≤0 → 返回 0
+007c387b  push ebx/ebp
+007c387d  mov ebp,[ecx+0x71C]                     ; ★★[this+0x71C] 表指
+                                              ;   针（LINH 装载器写
+                                              ;   入端同字段！）
+007c3883  push edi/mov edi,[ecx+0x10]             ; ★[this+0x10] 尺寸
+007c3887  mov [esp+0x14],esi                      ; ★外层计数=项数
+007c388b  lea eax,[edi-1]
+007c388e  xor esi,esi/xor edi,edi                 ; ★内层循环初值
+007c3892  mov si,word[ebp+2]                      ; ★表项 +2（x 坐标）
+007c3896  mov di,word[ebp]                        ; ★表项 +0（y 坐标）
+007c389a  cmp esi,eax/je 0x7C38AA                 ; ★x==[this+0x10]-1 →
+                                              ;   特殊分支
+007c389e  mov ebx,[ecx+0x764]                     ; ★★[this+0x764] 辅助表
+007c38a4  mov esi,[ebx+esi*4+4]                   ; 表查（+4 偏移）
+007c38a8  jmp 0x7C38CE
+; → 特殊分支（0x7C38AA，param2 参与）：
+007c38aa  test edx,edx/jle 0x7C38C5               ; ★param2≤0 → 普通查
+007c38ae  mov esi,[ecx+0x764]                     ; ★★辅助表
+007c38b4  mov esi,[esi+edi*4]                     ; 表查（y 索引）
+007c38b7  and esi,0xFFFFFFF                       ; ★28 位截断
+007c38bd  shl esi,1                               ; ×2
+007c38bf  mov edi,esi/mov esi,edx                 ; ★param2 作主值
+007c38c3  jmp 0x7C38E1
+; → 普通查（0x7C38C5）：
+007c38c5  mov ebx,[ecx+0x764]                     ; ★★辅助表
+007c38cb  mov esi,[ebx+esi*4]                     ; 表查（x 索引）
+007c38ce  mov edi,[ebx+edi*4]                     ; 表查（y 索引）
+007c38d1  and esi,0xFFFFFFF/and edi,0xFFFFFFF     ; ★28 位截断
+007c38dd  shl esi,1/shl edi,1                     ; ★×2
+; → 差值汇总（0x7C38E1）：
+007c38e1  sub esi,edi                             ; ★★两查值差
+007c38e3  mov edi,[esp+0x10]                      ; ★结果槽
+007c38e7  cmp esi,edi/jle 0x7C38EF                ; ★取最大值
+007c38eb  mov [esp+0x10],esi
+007c38ef  mov esi,[esp+0x14]/add ebp,4/dec esi     ; ★表项步进 4（2 字）
+007c38fb  jne 0x7C388E                            ; ★内层循环（项数遍）
+007c38fd  mov eax,[esp+0x10]/pop 族/leave/ret     ; ★返回最大值
+
+★语义：**Westwood 表面域差值求值器（推断名）**——thiscall
+2 参（this=ecx、param2=edx）：
+  ① [this+0x714] 16 位项数 + [this+0x71C] 表指针（LINH 装载
+     器字段族重合）+ [this+0x764] 辅助表 + [this+0x10] 尺寸；
+  ② 遍历 [this+0x71C] 表项（每项 4 字节 = 16 位 x/y 坐标
+     对）：普通路径查 [this+0x764] 两表值（28 位截断 ×2）求
+     差；x==尺寸-1 特殊分支（param2>0 时用 param2 作主值）；
+  ③ 全程取差值最大值（初值 0）返回。
+  = 表面/调色板域的坐标差值度量（两表数值差的最大值）。
+
+★调用点（探针 E8 实测 1 处 0x7C2AD6）：宿主 0x7C2xxx 区
+  （batch 1110 LINH/LIND 装载器宿主 0x7C28AB 同区——表面
+  域对象方法农场）。
+
+★E8 被调者：零（纯查表内联，无子调用）。
+
+★原版怪癖（照抄）：
+  ① 字段族 [this+0x714]/[this+0x71C] 与 batch 1110 LINH/
+     LIND 装载器完全重合——同一表面对象的两方法（装载写表
+     /求值读表）；
+  ② 表项 4 字节 = 2×16 位坐标（mov si,[ebp+2]/mov di,[ebp]，
+     步进 add ebp,4）——紧凑坐标表；
+  ③ 查值 28 位截断（and 0xFFFFFFF）后 ×2（shl 1）——位数
+     变换怪（半精度放大语义）；
+  ④ 特殊分支（x==尺寸-1）param2>0 时以 param2 为主值替代
+     表查——边界缝补路径；
+  ⑤ 结果初值 0 逐项取最大（jle 跳过负差）——非负最大值语
+     义；
+  ⑥ 项数≤0 直接返回 0（无错误码）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：Westwood 对象方法
+重写时按语义等价实现）。
+
+三、三态判定（为何 semantics_verified 而非 crt_runtime_verified）
+---------------------------------------------------------------
+1. 归属：0x7C3860 = **Westwood 自有代码**——①thiscall + 字段
+   族 [this+0x714]/[this+0x71C]（batch 1110 LINH/LIND 装载
+   器重合）= 对象方法契约形态（batch 1086-1137 同判据）；
+   ②[this+0x764] 辅助表 + 16 位坐标表为 Westwood 表面域惯
+   用；③宿主 0x7C2xxx 区（batch 1110 宿主同区）。
+2. 依赖：无子调用，纯查表——重写时按对象方法语义等价实
+   现。
+3. 复刻纪律：Westwood 自有代码——不按商业库归档；表面域
+   求值非 RMG 管线依赖，保留 semantics_verified。
+→ 状态：semantics_verified（thiscall + 字段族重合 + 宿主交叉
+；函数名「差值求值器」为推断交叉标注——遍历/截断/取最大由
+代码实测，业务语义未逐一定）。
+
+四、跨批次闭合
+------------
+★batch 1110：0x7C1150 LINH/LIND 调色板块装载器——本批
+  [this+0x714]/[this+0x71C] 字段族重合（装载写表/求值读表
+  同对象双方法）+ 宿主 0x7C2xxx 同区交叉。
+★batch 1130：0x7C3750 对象标志分发器——同 0x7C 区 West
+  wood 混入样本链（#14）。
+★batch 1119-1128：像素合成族——同 0x7C-0x7D 区 Westwood
+  自有代码全景扩展。
+
+五、状态
+-------
+semantics_verified（0x7C3860：Westwood 表面域差值求值器归
+档；全 169B + 字段族重合 + 宿主交叉；不写 C++ 模型不做
+golden——对象方法非 RMG 管线依赖；函数名「差值求值器」为
+推断交叉标注——遍历/截断/取最大由代码实测；⚠️ 0x7C 区
+Westwood 混入样本 #14）。TSV 新增 0x007C3860 行。
+
+★本批实锤：0x7C 区混入样本 #14——[this+0x714]/[this+0x71C]
+  字段族与 batch 1110 LINH/LIND 装载器重合（同表面对象装
+  载/求值双方法）+ [this+0x764] 辅助表 28 位截断查值取差最
+  大——Westwood 表面域对象方法标准形态。
+相邻待续：batch 1139 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CB25E(164B)/0x7CF479(163B)/0x7DB54E
+(152B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1137 已完（MSVC6 CRT double→80 位扩展转换器
+0x7D7E1C，commit 938853a）。
