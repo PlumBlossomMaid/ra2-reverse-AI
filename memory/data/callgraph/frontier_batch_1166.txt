@@ -1,0 +1,134 @@
+frontier batch 1166 —— MSVC6 CRT FPE 门控解析包装器 0x7DB49A（归档，同族第五件）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DB49A（84B,
+uc=1, callers=1 探针实测 0x7D8FA0，0x7D8Fxx CRT __CI* 浮点
+包装域）。TSV 无既有行。TARGET = 0x007DB49A。C++ 模型：
+无（见「三态判定」）。TSV：新增 0x007DB49A 行。
+补登记背景：**batch 531 文档（0x7DBB55 宽字符浮点解析器）
+已点名「ranking unique_callers = FUN_007db49a/FUN_007db4ee/
+FUN_007db54e/FUN_007db5e6」**——本批即该点名第一家兑现
+（FPE 门控解析入口）。
+
+一、链语义（disasm 全 84B + 三依赖交叉 + 调用点宿主，
+0x7DB49A-0x7DB4ED）
+--------------------------------------------------------------
+签名（推断）：cdecl 5 参（[ebp+8]=目标缓冲、[ebp+0xC]=
+double 值、[ebp+0x14]=处理器/回调），返回经 FPU 栈传递的
+double / 错误码路径。
+
+主体（0x7DB49A-0x7DB4ED）：
+007db49a  push ebp/mov ebp,esp
+007db49d  cmp [0x87d700],0                     ; ★★FPE 门控全局（batch
+                                              ;   1141 0x7DB54E 同款）
+007db4a4  jne 0x7db4cf                        ; 门开 → 错误路径
+; → 正常路径（0x7DB4A6，门关）：
+007db4a6  push [ebp+0x14]                      ; 参5
+007db4a9  fld qword[ebp+0xC]/push ecx/push ecx/fstp [esp]  ; 压 double
+007db4b1  push ecx/push ecx/fldz/fstp [esp]    ; 压 0.0
+007db4b8  fld qword[ebp+0xC]/push ecx/push ecx/fstp [esp]  ; 再压 double
+007db4c0  push [ebp+8]                         ; 参1
+007db4c3  push 1                               ; ★固定参 1
+007db4c5  call 0x7dbb55                        ; ★★batch 531 宽字符浮点
+                                              ;   解析器（FPU 返 double）
+007db4ca  add esp,0x24/pop ebp/ret
+; → 错误路径（0x7DB4CF，门开）：
+007db4cf  call 0x7d168e                        ; ★★batch 034 per-thread
+                                              ;   errno +8
+007db4d4  push 0xffff
+007db4d9  mov dword[eax],0x21                  ; ★errno=0x21（EDOM）
+007db4df  push [ebp+0x14]
+007db4e2  call 0x7dbc77                        ; ★★batch 192 _controlfp
+                                              ;   （FPU 控制字设置）
+007db4e7  fld qword[ebp+0xC]/pop ecx/pop ecx/pop ebp/ret
+                                              ; ★返 double 兜底
+
+★语义：**MSVC6 CRT FPE 门控解析包装器（推断名——batch
+1141 0x7DB54E 同族第五件）**——cdecl 5 参：
+  ① [0x87D700] 门控：门关 → 压 5 参（1/目标/double/0.0/
+     double 再份/回调）调 0x7DBB55（batch 531 宽字符浮点
+     解析器）FPU 返 double；
+  ② 门开 → 0x7D168E 取 errno 区 + errno=0x21（EDOM）+
+     push 0xFFFF + 0x7DBC77（batch 192 _controlfp）收尾，
+     FPU 返 double 兜底。
+  = CRT FPE 包装链门控段（检查门 → 解析/收尾），与 batch
+  1141 0x7DB54E（检查-转换）/batch 1065（映射）/batch
+  531（解析）同族全景扩展。
+
+★调用点（探针 E8 实测 1 处 0x7D8FA0）：宿主 0x7D8Fxx 区
+  （CRT __CI* 浮点包装域——batch 1049 FPE 分发器 0x7D8C6B、
+  batch 1141 调用点 0x7D8FFD 同链）。
+
+★E8 被调者：0x7DBB55（★★batch 531 宽字符浮点解析器
+  ✓TSV:1363——彼文档点名四宿主之首兑现）+ 0x7D168E（★★
+  batch 034 per-thread errno ✓TSV:95）+ 0x7DBC77（★★
+  batch 192 _controlfp ✓TSV:631）——**三个依赖全部已登记**。
+
+★原版怪癖（照抄）：
+  ① [0x87D700] 门控双路径——同 batch 1141 0x7DB54E 完全
+     同款（门开直走错误路径不试解析）；
+  ② 正常路径压 5 参（1/目标/double/0.0/double 再份/回调）
+     ——double 值压两遍（fld [ebp+0xC] 两次）+ 0.0 夹在
+     中间（x87 栈传参惯用）；
+  ③ 错误路径 errno=0x21（33=EDOM）硬编码——与 batch
+     1141 的错误路径形态同款（errno + 0xFFFF 哨兵 + 
+     _controlfp 收尾三件套）；
+  ④ 错误路径 fld [ebp+0xC] 兜底值经 FPU 返（与 batch
+     1141 的 fld [ebp+0x18] 同款约定）；
+  ⑤ 固定参 1（push 1）作为 0x7DBB55 的开关参数（宽/窄
+     解析选择）；
+  ⑥ 正常/错误两路径都经 FPU 返 double——调用方 x87 取
+     栈顶。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 静态 CRT 浮点
+库按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DB49A = MSVC6 静态 CRT FPE 门控解析包装器——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）；[0x87D700] 门控 + 0x7DBB55 解析 + errno/
+   _controlfp 收尾 = CRT 浮点包装标准形态（batch 1141
+   0x7DB54E 同款模板第五件）。
+2. 依赖：3 个已登记函数（0x7DBB55 batch 531、0x7D168E
+   batch 034、0x7DBC77 batch 192）——重写 gamemd 时用等
+   价 CRT 浮点解析语义（标准 C 库 strtod/FE 门控）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 浮点库设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 84B + 三依赖交叉 + 调用点
+宿主核实；函数名「FPE 门控解析包装器」由门控双路径 + 解析
+/收尾分派 + batch 531 点名交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 531：0x7DBB55 宽字符浮点解析器——本批=彼文档点名
+  「unique_callers FUN_007db49a」第一家兑现；调用现场
+  （0x7DB4C5 五参压栈）与彼文档参数契约吻合。
+★batch 1141：0x7DB54E FPE 检查-转换包装器——本批同款
+  [0x87D700] 门控 + errno/0xFFFF/_controlfp 收尾三件套
+  （同族第五件，模板全景扩展）。
+★batch 871/872/1065：FPE 链（转换/检查/映射）——门控+
+  解析+收尾五段全链闭环（本批为门控解析段）。
+★batch 034/192：0x7D168E per-thread errno / 0x7DBC77
+  _controlfp——本批错误路径调用现场交叉。
+
+五、状态
+-------
+crt_runtime_verified（0x7DB49A：MSVC6 CRT FPE 门控解析包装
+器归档；全 84B + 三依赖交叉；不写 C++ 模型不做 golden——
+CRT 浮点库商业库层；函数名由门控双路径 + 解析/收尾分派 +
+batch 531 点名交叉标注）。TSV 新增 0x007DB49A 行。
+
+★本批实锤：batch 531 点名的四宿主之首兑现——[0x87D700]
+  门控：门关调 0x7DBB55 解析（五参 x87 压栈）/门开 errno=
+  0x21+0xFFFF+_controlfp 收尾，三依赖全已登记；同族第五
+  件（batch 1141 同款模板）。
+相邻待续：batch 1167 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CE13A(83B)/0x7CB7BA(81B)/0x7C946E
+(78B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1165 已完（MSVC6 CRT 浮点尾数格式化入口
+0x7CED49，commit 101d07f）。
