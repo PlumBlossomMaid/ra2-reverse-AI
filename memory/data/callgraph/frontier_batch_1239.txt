@@ -1,0 +1,235 @@
+frontier batch 1239 —— MSVC6 CRT/runtime 二十一连：网络/声音 IAT 跳板四件 + __fassign/__cfltcvt/__global_unwind2/__seh_longjmp_unwind@4/___free_lc_time/entry + 构造/析构/转发壳家族
+========================================================================================================================
+
+候选来源：_rank_crt_frontier.py 池序（已闭合 515/602，余下 87 项
+全为 uc=0/td=0 死代码/未闭合项）取 td 排序头部 + 有名字 CRT
+函数——0x7C89AA/0x7C89B0/0x7C89CE/0x7C89DA（各 6B 网络/声音
+IAT 跳板）、0x7CEBE8 __fassign（62B）、0x7CEED8 __cfltcvt
+（81B）、0x7CC0DC __global_unwind2（32B）、0x7CC291
+__seh_longjmp_unwind@4（27B）、0x7D6494 ___free_lc_time
+（400B）、0x7CD80F entry（253B）、0x7D2F22 operator=（31B）、
+0x7CEB28（90B）、0x7C8AB7（28B）、0x7CA8EF（80B）、0x7CA993
+（28B）、0x7CA9B4（24B）、0x7CA9CC（24B）、0x7CA9E4（28B）、
+0x7CAC13（28B）、0x7CAC34（24B）、0x7C9DBD（23B）。
+TSV 均无既有行。TARGET = 二十一个地址。C++ 模型：无（见
+「三态判定」，商业库纪律归档）。TSV：新增二十一行。
+
+一、链语义（disasm 全机器码读完 + IAT 槽内容解引用 + 目标
+交叉，均 crt_runtime_verified）
+--------------------------------------------------------------
+★网络/声音 IAT 跳板四件（6B 各，`ff25 jmp [槽]`）：
+0x7C89AA  ff25 4c157e00   jmp dword ptr [0x7E154C]  → ordinal 17
+                            （ws2_32 按序号导入）
+0x7C89B0  ff25 58157e00   jmp dword ptr [0x7E1558]  → ordinal 20
+0x7C89CE  ff25 60157e00   jmp dword ptr [0x7E1560]  → ordinal 57
+0x7C89DA  ff25 50107e00   jmp dword ptr [0x7E1050]  → ordinal 1
+★语义：MSVC6 CRT 延迟绑定导入跳板标准形态（与 batch 1237/
+  1238 同族）。四个槽逐一解引用（_iat_1239_deref.py）——
+  均为 ordinal 导入（ws2_32 recvfrom=17/sendto=20/
+  gethostname=57、dsound DirectSoundCreate=1）。
+
+★0x7CEBE8（62B，__cdecl 3 参 = 浮点赋值）：
+007cebe8  push ebp/mov ebp,esp/sub esp,8
+007cebed  cmp dword ptr [ebp+8], 0
+007cebf1  push [ebp+0x10]
+007cebf4  je 0x7cec11             ; 参1==0 → 分支2
+007cebf6  lea eax,[ebp-8] / push eax
+007cebfa  call 0x7d7cc1           ; ①取参1 长双精度
+007cebff  mov eax,[ebp+0xc]
+007cec04  mov ecx,[ebp-8] / mov [eax],ecx
+007cec09  mov ecx,[ebp-4] / mov [eax+4],ecx  ; 写 8 字节
+007cec0f  leave / ret
+007cec11  lea eax,[ebp+0x10] / push eax
+007cec15  call 0x7d7d1c           ; ②分支2：直接取参3
+007cec1a  mov eax,[ebp+0xc]
+007cec1f  mov ecx,[ebp+0x10] / mov [eax],ecx  ; 写 4 字节
+007cec24  leave / ret
+★语义：**`__fassign`（浮点赋值，参1==0 分支两态）**——函数名
+  在 functions.tsv 已标 __fassign。★原版怪癖（照抄）：
+  参1==0 时只写 4 字节（mov [eax],ecx 无 +4），非 0 时写 8
+  字节——赋值宽度不一致。
+
+★0x7CEED8（81B，__cdecl 浮点格式化分派）：
+007ceed8  push ebp/mov ebp,esp
+007ceedb  cmp [ebp+0x10], 0x65/0x45/0x66  ; 'e'/'E'/'f' 三态
+007ceee5  je 0x7cef13            ; 'e'/'E' → 0x7CEC26
+007ceeeb  jne 0x7cef00           ; 'f' → 0x7CED49
+007ceef6  call 0x7ced49 / 0x7cee45 / 0x7cec26  ; 三分派
+★语义：**`__cfltcvt`（浮点转字符串格式分派）**——函数名已在
+  functions.tsv 标 __cfltcvt。按格式字符 'e'/'E'/'f' 三分派
+  到三个转换子例程。
+
+★SEH 展开二件（32/27B）：
+0x7CC0DC __global_unwind2：
+007cc0dc  push ebp/mov ebp,esp/push ebx/push esi/push edi
+007cc0e2  push ebp / push 0 / push 0
+007cc0e7  push 0x7CC0F4          ; 回调地址
+007cc0ec  push [ebp+8]           ; 参数
+007cc0ef  call 0x7dce7a          ; ★RtlUnwind（batch 1238 跳板）
+007cc0f4  pop ebp ×4 / mov esp,ebp / pop ebp / ret
+★语义：**SEH 全局展开（RtlUnwind 包装，函数名已标
+  __global_unwind2）**——push 4 参调 RtlUnwind，回调
+  0x7CC0F4 为展开后恢复点。
+
+0x7CC291 __seh_longjmp_unwind@4：
+007cc291  push ebp
+007cc292  mov ecx,[esp+8]        ; 参1 = SEH 帧
+007cc296  mov ebp,[ecx]          ; 帧头 → ebp
+007cc298  push [ecx+0x1c] / push [ecx+0x18]
+007cc2a0  call 0x7cc11e          ; ★SEH 展开辅助
+007cc2a8  pop ebp / ret 4
+★语义：**SEH longjmp 展开（函数名已标 __seh_longjmp_unwind@4）**
+  ——读帧 +0x18/0x1C 两字段调 0x7CC11E（crt_runtime_verified）。
+
+★0x7D6494（400B，__cdecl 1 参 = locale 时间字段释放）：
+007d6494  push esi / mov esi,[esp+8]
+007d6499  test esi,esi / je 0x7d6622
+007d64a1  push [esi+4] → call 0x7c93e8   ; free 字段 +4
+007d64a9  push [esi+8] → call 0x7c93e8   ; +8
+007d64b1  push [esi+0xc] → call 0x7c93e8 ; +C
+007d64b9  push [esi+0x10] → call 0x7c93e8; +10
+007d64c1  push [esi+0x14] → call 0x7c93e8; +14
+007d64c9  push [esi+0x18] → call 0x7c93e8; +18
+007d64d1  push [esi] → call 0x7c93e8      ; +0
+★语义：**`___free_lc_time`（释放 locale 时间字段表，函数名
+  已标）**——逐字段调 0x7C93E8（free）释放 7 个指针字段。
+
+★0x7CD80F（253B，entry = CRT 入口）：
+007cd80f  push ebp/mov ebp,esp
+007cd812  push -1 / push 0x7f9798 / push 0x7cc1d4
+007cd81e  mov eax,fs:[0] / push eax / mov fs:[0],esp  ; SEH 帧
+007cd82c  sub esp,0x58 / push ebx/push esi/push edi
+007cd832  mov [ebp-0x18],esp
+007cd835  call dword ptr [0x7e1288]   ; ★GetVersion（IAT 解引用
+                                        ;   hint 372 实锤）
+★语义：**CRT 入口（SEH 帧建立 + GetVersion 查 OS 版本）**——
+  函数名已在 functions.tsv 标 entry。★★挂靠实锤：调用槽
+  [0x7E1288] 解引用 = KERNEL32!GetVersion（hint 372，
+  _iat_7E1288_and_9DD4.py）。
+
+★0x7D2F22（31B，thiscall 1 栈参 ret 4 = 拷贝赋值）：
+007d2f22  push esi / mov esi,ecx
+007d2f25  cmp esi,[esp+8]        ; this==参1？
+007d2f29  je 0x7d2f3b            ; 自赋值跳过
+007d2f2b  call 0x7d2f41          ; ★析构辅助（~exception 目标）
+007d2f30  push [esp+8] / mov ecx,esi
+007d2f36  call 0x7d2ed8          ; ★拷贝构造辅助
+007d2f3b  mov eax,esi / pop esi / ret 4
+★语义：**`operator=`（异常对象拷贝赋值，函数名已标）**——
+  自赋值检查 + 析构 + 拷贝构造两段式。
+
+★构造/析构家族六件（thiscall，24-28B）：
+0x7CA9B4  24B：call 0x7D2ED8 → mov [esi],0x7F95D0 → ret 4
+          （构造器，虚表 0x7F95D0）
+0x7CA9CC  24B：call 0x7D2ED8 → mov [esi],0x7F95DC → ret 4
+          （构造器，虚表 0x7F95DC）
+0x7CAC34  24B：call 0x7D2ED8 → mov [esi],0x7F9660 → ret 4
+          （构造器，虚表 0x7F9660）
+0x7CA993  28B：call 0x7CA9AF（~exception）→ test [esp+8],1
+          → call 0x7C8B3D（释放）→ ret 4（标量删除析构）
+0x7CA9E4  28B：call 0x7CAA00（~exception）→ test [esp+8],1
+          → call 0x7C8B3D → ret 4（标量删除析构）
+0x7CAC13  28B：call 0x7CAC2F（~exception）→ test [esp+8],1
+          → call 0x7C8B3D → ret 4（标量删除析构）
+0x7C8AB7  28B：call 0x7C8A8E → test [esp+8],1
+          → call 0x7C8B3D → ret 4（标量删除析构变体）
+★语义：**CRT 异常对象构造器三件 + 标量删除析构四件**——构造
+  器两段式（0x7D2ED8 拷贝 + 虚表覆盖 0x7F95D0/DC/0x7F9660）；
+  析构 test [esp+8]&1 → 释放与否。挂靠：0x7D2ED8/0x7D2F41/
+  0x7CA9AF/0x7CAA00/0x7CAC2F（均 semantics_verified 或本批
+  前已登记）+ 0x7C8B3D（batch 001）。
+
+★0x7CEB28（90B，__cdecl 1 参 = 字符分类扫描）：
+007ceb28  push esi / mov esi,[esp+8]
+007ceb2d  movsx eax,byte[esi] / push eax
+007ceb31  call 0x7caff4           ; 字符分类
+007ceb36  cmp eax,0x65            ; 'e'?
+007ceb3a  je 0x7ceb68
+007ceb3c  inc esi
+007ceb3d  cmp [0x87c79c],1        ; 分类表模式判断
+007ceb44  jle 0x7ceb55 → 查表 [0x87c590] 分类
+007ceb46  调 0x7d1311（宽字符表）
+007ceb68  字节交换循环（mov cl,[esi]/mov [esi],al...）
+★语义：**CRT 字符分类 + 大小写转换扫描（推断名——movsx +
+  分类表 0x87C590/0x87C79C 双路径 + 字节交换循环）**。
+  与 batch 1223 字符分类族同源。
+
+★0x7CA8EF（80B，__cdecl 1 参 = SEH 帧函数）：
+007ca8ef  push ebp/mov ebp,esp
+007ca8f2  push -1 / push 0x7f95c0 / push 0x7cc1d4
+007ca8fe  mov eax,fs:[0] / push eax / mov fs:[0],esp  ; SEH 帧
+007ca90c  sub esp,0x18 / push ebx/push esi/push edi
+007ca915  cmp [ebp+8],0           ; 参1==0？
+007ca919  jne 0x7ca92c → call 0x7cac4c（处理）
+007ca91b  xor eax,eax / 恢复 fs:[0] / leave / ret
+★语义：**SEH 帧包裹的处理函数（推断名——参1 非 0 才处理
+  0x7CAC4C）**。0x7CC1D4 = 已见多次的 CRT 异常处理登记。
+
+★0x7C9DBD（23B，__cdecl 5 参转发壳）：
+007c9dbd  push 0                 ; 常量 0 → 参1
+007c9dbf  push [esp+0x10] ×3     ; 原参2/3/4 → 参2/3/4
+007c9dcb  call 0x7c9dd4          ; ★转发（TSV crt_runtime_
+                                    verified——字符分类表扫描
+                                    主体，[0x87c79c] 模式 +
+                                    [0x87c590] 表）
+007c9dd0  add esp,0x10 / ret
+★语义：**插常量 0 作首参的转发壳（推断名）**——与 batch 1238
+  0x7D4811 同型（常量插头 + 透传）。
+
+二、黄金基准
+----------
+无（商业库纪律归档——MSVC6 CRT 标准设施，重写用等价
+运行时代替）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：二十一函数均在 0x7C-0x7D = MSVC6 静态 CRT
+   （ra2_code_region_layout_crt_provenance）；IAT 跳板 =
+   ff25 标准导入形态（槽解引用实锤 ordinal）；__fassign/
+   __cfltcvt/__global_unwind2/__seh_longjmp_unwind@4/
+   ___free_lc_time/entry/operator= 均为 functions.tsv 已命名
+   CRT 函数；构造/析构 = CRT 异常对象基础设施；其余为
+   SEH/分类/转发壳。
+2. 依赖：挂靠目标全部已登记（0x7C9DD4 crt_runtime_verified、
+   0x7DCE7A batch 1238 RtlUnwind 跳板、0x7D2ED8/0x7D2F41
+   semantics_verified、0x7C8B3D/0x7C8E17 batch 001、0x7C8A8E
+   等）——重写用等价运行时（stdlib 浮点/SEH/异常 + 导入
+   声明）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 标准设施，
+   按商业库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified ×21（全机器码读完 + IAT 槽
+内容解引用 + 目标交叉；函数名推断标注）。
+
+四、跨批次闭合
+------------
+★batch 1238 / TSV:0x7DCE7A：RtlUnwind 跳板——本批 0x7CC0DC
+  __global_unwind2 的调用目标（push 4 参 + 回调 0x7CC0F4）。
+★TSV:0x7C9DD4（crt_runtime_verified）：字符分类表扫描主体——
+  0x7C9DBD 的转发目标。
+★TSV:0x7D2ED8 + 0x7D2F41（semantics_verified）：构造/析构
+  辅助——本批构造器三件与 operator= 的挂靠。
+★batch 001 / TSV:0x7C8B3D：释放器——本批四个标量删除析构
+  的释放调用。
+★IAT 槽解引用（_iat_1239_deref.py + _iat_7E1288_and_9DD4.py）：
+  0x7E154C=ordinal17、0x7E1558=ordinal20、0x7E1560=ordinal57、
+  0x7E1050=ordinal1、0x7E1288=GetVersion hint372。
+★调用者：本批全为 uc=0（死代码/未登记项）——CRT 段内由
+  数据引用/虚表间接到达，无直接调用者。
+
+五、状态
+-------
+crt_runtime_verified ×21（网络/声音 IAT 四跳板 + __fassign +
+__cfltcvt + SEH 展开二 + ___free_lc_time + entry(GetVersion) +
+operator= + 构造三件 + 标量删除析构四件 + 字符分类扫描 +
+SEH 帧函数 + 常量插头转发壳——均全机器码读完 + IAT 槽内容
+解引用/目标交叉）。TSV 新增二十一行。
+★本批实锤：①0x7CD80F entry 的 [0x7E1288] = GetVersion（hint
+  372 解引用）；②0x7CEBE8 __fassign 参1==0 分支只写 4 字节
+  （宽度不一致怪癖）；③四个 IAT 槽全为 ordinal 导入；
+  ④0x7CEED8 __cfltcvt 'e'/'E'/'f' 三分派；⑤构造器两段式 +
+  标量删除析构 test [esp+8]&1 标准形态。
+相邻待续：池内余下 uc=0/td=0 死代码项（0x7C3D60/0x7C4260/
+0x7C5BC0/0x7C5DB0/0x7C5E7E/0x7C60C0 等 60+ 项）按
+_list_pending_7c.py 池序批量推进。
+依赖模型：无（归档不落 C++）。
+承前：batch 1238 已完（CRT/runtime 十四连，commit cf744f7）。
