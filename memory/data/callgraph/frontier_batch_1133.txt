@@ -1,0 +1,156 @@
+frontier batch 1133 —— MSVC6 CRT toupper 大小写转换器 0x7C9842（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7C9842（204B,
+uc=1, callers=1 探针实测 0x7C981F 唯一宿主）。TSV 无既有
+行。TARGET = 0x007C9842。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007C9842 行。
+
+一、链语义（disasm 全 204B + 双依赖交叉，0x7C9842-0x7C990D）
+--------------------------------------------------------------
+签名（实测）：cdecl 1 参（param1=字符码 @[ebp+8]），返回
+转换后字符码（窄模式大写化/宽模式 DBCS 转换或原值）。
+
+主体（0x7C9842-0x7C990D）：
+007c9842  push ebp/mov ebp,esp/push ecx
+007c9846  cmp dword[0xB782A0],0                ; ★★[0xB782A0] 窄/宽模式
+                                              ;   全局（batch 1116
+                                              ;   mbstowcs 同款）——0=
+                                              ;   窄（单字节代码页）
+007c984e  jne 0x7C986D                          ; ★宽模式 → 0x7C986D
+; → 窄模式（0x7C9850，单字节 ASCII 大小写）：
+007c9850  mov eax,[ebp+8]/cmp eax,0x61/jl 0x7C990B  ; ★< 'a'(0x61)
+007c985c  cmp eax,0x7A/jg 0x7C990B              ; ★> 'z'(0x7A)
+007c9865  sub eax,0x20/jmp 0x7C990B            ; ★小写转大写 -0x20
+                                              ;   → 返回大写
+; → 宽模式（0x7C986D，DBCS/mbctoupper）：
+007c986d  mov ebx,[ebp+8]/cmp ebx,0x100/jge 0x7C98A0 ; ★字符码 < 0x100
+                                                  ;   （单字节范围内）
+; → <0x100 路径（0x7C9878）：
+007c9878  cmp dword[0x87C79C],1/jle 0x7C988D   ; ★★[0x87C79C] 门控
+                                              ;   （batch 1115 宿主同
+                                              ;   款——1 以下走表）
+007c9881  push 2/push ebx/call 0x7D1311        ; ★★batch 字符分类
+                                              ;   （49 callers 已登记）
+007c988d  mov eax,[0x87C590]/mov al,[eax+ebx*2]/and eax,2
+                                              ; ★★[0x87C590] ctype 表
+                                              ;   (2B/项) and 2 判定
+007c9898  test eax,eax/jne 0x7C98A0            ; ★命中（大写类）→ 转
+                                              ;   换路径
+007c989c  mov eax,ebx/jmp 0x7C990B              ; ★未命中 → 返回原值
+; → ≥0x100 / 命中路径（0x7C98A0，DBCS lead-byte）：
+007c98a0  mov edx,[0x87C590]/mov eax,ebx/sar eax,8
+007c98ab  movzx ecx,al/test byte[edx+ecx*2+1],0x80 ; ★★[0x87C590] 表
+                                                  ;   【edx+ecx*2+1】&0x80
+                                                  ;   lead-byte 判定
+007c98b3  je 0x7C98C3                            ; 非 lead-byte → 单字节
+; → lead-byte（0x7C98B5，双字节组码）：
+007c98b5  and byte[ebp+0xA],0/mov byte[ebp+8],al
+007c98bc  mov byte[ebp+9],bl/push 2             ; ★组 2 字节 [ebp+8..9]
+007c98c1  jmp 0x7C98CC
+; → 单字节（0x7C98C3）：
+007c98c3  and byte[ebp+9],0/mov byte[ebp+8],bl/push 1  ; ★单字节
+007c98cc  pop eax/lea ecx,[ebp-4]/push 1/push 0/push 3
+007c98d6  push ecx/push eax/lea eax,[ebp+8]/push eax
+007c98dc  push 0x200/push [0xB782A0]/call 0x7D10C2 ; ★★0x7D10C2 大调用
+                                              ;   （8 参：模式全局/
+                                              ;   0x200/源/字节数/
+                                              ;   目标/3/0/1）——6
+                                              ;   callers 已登记邻域
+007c98e7  add esp,0x20/test eax,eax/je 0x7C989C ; 失败 → 原值
+007c98f3  cmp eax,1/jne 0x7C98FE                ; ★返回 1 → 单字节结果
+007c98f8  movzx eax,byte[ebp-4]/jmp 0x7C990B    ; ★低字节
+007c98fe  movzx eax,byte[ebp-3]/movzx ecx,byte[ebp-4]
+007c9906  shl eax,8/or eax,ecx                  ; ★返回 2 → 组字
+007c990b  pop ebx/leave/ret                     ; ★返回字符码
+
+★语义：**MSVC6 CRT toupper/大小写转换器（推断名——_toupper/
+mbctoupper 族）**——cdecl 1 参：
+  ① 窄模式（[0xB782A0]==0）：ASCII 小写 0x61-0x7A 直接 -0x20
+     转大写返回（fast path，无表）；
+  ② 宽模式（[0xB782A0]!=0）：字符码 <0x100 → [0x87C79C] 门控
+     （>1 走 0x7D1311 字符分类 / else [0x87C590] ctype 表
+     and 2）判定大写类——未命中返回原值；
+  ③ 命中/≥0x100 → [0x87C590] 表 lead-byte 判定（
+     [edx+ecx*2+1]&0x80）：lead-byte 组 2 字节 / 否则单字节
+     → 调 0x7D10C2（8 参：模式全局/0x200/源/字节数/目标/3/0/1）
+     转换 → 返回 1 取低字节 / 返回 2 组字；
+  ④ 转换失败返回原值。
+  = CRT toupper 窄/宽双路径标准形态（ASCII fast path + DBCS
+  转换 + ctype 表判定）。
+
+★调用点（探针 E8 实测 1 处 0x7C981F）：前邻宿主 0x7C98xx
+  区（字符转换调用端——与 0x7D1311 其他调用点 0x7C9920-
+  0x7C9DFB 同区，toupper/tolower 分发宿主）。
+
+★E8 被调者：0x7D1311（batch 字符分类——本批 0x7C9884 交
+  叉，49 callers）+ 0x7D10C2（6 callers：0x7C98E7 本函数/
+  0x7CB106/0x7D3793/0x7D37BB/0x7DD089/0x7DD0B7——字符转换
+  大调用邻域，未逐一核登记）。
+
+★原版怪癖（照抄）：
+  ① 窄模式 fast path 直 -0x20（无 tolower 镜像——本函数只
+     做 toupper 不做 tolower）；
+  ② 宽模式 <0x100 先查 [0x87C79C] 门控（>1 走 0x7D1311 函
+     数调用 / ≤1 走 [0x87C590] 表直读）——两套判定路径共
+     存（门控值语义与 batch 1115 宿主同款）；
+  ③ ctype 表 and 2（大写类位）判定后未命中直接返回原值
+     （非转换）——只有大写类字符才进转换路径；
+  ④ DBCS lead-byte 判定费解：[0x87C590] 表 edx+ecx*2+1（
+     偏移 +1）&0x80——第二字节高位判 lead-byte（batch 1116
+     mbstowcs 同款奇偏移）；
+  ⑤ 8 参大调用 0x7D10C2（模式全局/0x200/…/3/0/1）参数组
+     固定——转换实现集中在一处，本函数只做分派+组装；
+  ⑥ 返回语义：1 → 单字节结果（[ebp-4] 低字节）/ 2 → 双字
+     节组字（shl 8 | 低字节）——结果宽度随消息返回。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 字符转换设施
+按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7C9842 = MSVC6 静态 CRT toupper/大小写转换器
+   （_toupper/mbctoupper 族）——0x7C-0x7D = MSVC6 静态 CRT
+   （ra2_code_region_layout_crt_provenance）；窄模式 ASCII
+   fast path + 宽模式 [0x87C590] ctype 表 + lead-byte 判定 +
+   0x7D10C2 转换 = CRT 字符大小写转换标准形态（batch 1115/
+   1116 同款全局族）。
+2. 依赖：0x7D1311（字符分类）+ 0x7D10C2（转换大调用）——
+   重写 gamemd 时用等价 std::toupper/towupper 运行时代替。
+3. gamemd_replication_discipline：MSVC6 CRT 字符转换设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 204B + 双依赖交叉；函数名
+「toupper/大小写转换器」由窄 fast path/宽 DBCS/表判定实测
+交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1116：0x7CC309 mbstowcs——[0xB782A0] 窄/宽模式全
+  局 + [0x87C590] lead-byte 判定同款交叉（本批三处复用）。
+★batch 1115：0x7DC4C9 孪生——[0x87C79C] 门控同款（宿主
+  判定值语义一致）。
+★0x7D10C2：6 callers 转换大调用（本批 0x7C98E7 + 0x7CB106/
+  0x7D3793/0x7D37BB/0x7DD089/0x7DD0B7）——字符转换域邻近代
+  码，后续批次视池内位置核登记。
+
+五、状态
+-------
+crt_runtime_verified（0x7C9842：MSVC6 CRT toupper/大小写转
+换器归档；全 204B + 双依赖交叉；不写 C++ 模型不做 golden
+——CRT 字符转换设施商业库层；函数名「toupper/大小写转换
+器」由窄 fast path/宽 DBCS/表判定实测交叉标注）。TSV 新增
+0x007C9842 行。
+
+★本批实锤：toupper 窄/宽双路径——ASCII fast path（-0x20）
+  + [0x87C79C] 门控 + [0x87C590] ctype 表（and 2 大写判定 +
+  lead-byte 奇偏移）+ 0x7D10C2 8 参转换——CRT 字符大小写
+  转换标准形态，与 batch 1115/1116 全局族闭合。
+相邻待续：batch 1134 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7D57FE(202B)/0x7D29B2(194B)/0x7CDE75
+(185B, callers=2)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1132 已完（MSVC6 CRT 字符串拆分器 0x7CE06E，
+commit ffa4367）。
