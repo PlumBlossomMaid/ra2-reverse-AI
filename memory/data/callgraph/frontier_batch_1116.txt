@@ -1,0 +1,177 @@
+frontier batch 1116 —— MSVC6 CRT mbstowcs 多字节转宽字符 0x7CC309（归档 + 槽表方法论修正）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CC309（256B,
+uc=1, callers=1 探针实测 0x7CC2E5 唯一宿主）。TSV 无既有
+行。TARGET = 0x007CC309。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CC309 行。
+
+⚠️ 本批附带方法论修正：0x7E1xxx 槽表 PE 静态值不可作调用
+目标语义证据（运行时被改写）——batch 1111/1115 用槽静态
+值判「Westwood thiscall」的方法存疑，详见第六节。
+
+一、链语义（disasm 全 256B + 宿主锁交叉，0x7CC309-0x7CC408）
+--------------------------------------------------------------
+签名（实测）：cdecl 3 参（param1=dst 宽字符缓冲 @[ebp+8]、
+param2=src 多字节串 @[ebp+0xC]、param3=limit @[ebp+0x10]），
+返回转换宽字符数 / 长度查询 / -1 失败。
+
+★调用点宿主锁（探针交叉）：0x7CC2E5 宿主 0x7CC2xx 区调
+  0x7CD9F5（CRT region lock Enter，TSV:238 已登记）+ 0x7CDA56
+  （CRT region lock Leave，TSV:239 已登记）——★★铁证：本函
+  数是 CRT 线程安全流/串设施的一部分。
+
+主体（0x7CC309-0x7CC408）：
+007cc309  push ebp/mov ebp,esp/mov edx,[ebp+8]   ; ★dst
+007cc30f  push ebx/push esi/xor esi,esi/xor eax,eax
+007cc315  cmp edx,esi/je 0x7CC3D7                 ; ★dst==NULL → 长度查询
+007cc31e  mov edi,[ebp+0x10]/cmp edi,esi/je 0x7CC404 ; ★limit==0 → 返 0
+; → [0xB782A0]==0 窄模式（单字节代码页）：
+007cc329  cmp [0xB782A0],esi/jne 0x7CC35A        ; ★★模式全局分流
+007cc331  cmp edi,esi/jbe 0x7CC404
+007cc339  mov ecx,[ebp+0xC]/add ecx,eax/movzx si,byte[ecx]  ; ★字节
+007cc342  mov [edx],si                            ; ★→ 宽字直译
+007cc345  cmp byte[ecx],0/je 0x7CC404            ; NUL 终止
+007cc34e  inc eax/inc edx/inc edx
+007cc351  cmp eax,edi/jb 0x7CC339
+007cc355  jmp 0x7CC404                            ; ★窄模式字节扩字循环
+; → [0xB782A0]!=0 宽模式（DBCS 代码页）：
+007cc35a  mov ebx,[ebp+0xC]/mov esi,[0x7E11C4]   ; ★★槽（运行时改写）
+007cc363  push edi/push edx/push -1/push ebx/push 9
+007cc36a  push [0xB782B0]                         ; ★★locale 全局
+007cc370  call esi                                ; ★★6 参槽调用
+007cc372  test eax,eax/jne 0x7CC403              ; 成功 → eax-1 返回
+007cc37a  call [0x7E1200]/cmp eax,0x7A/je 0x7CC395 ; ★★'z' 边界判定
+007cc385  call 0x7D168E/mov [eax],0x2A            ; ★★errno=0x2A EILSEQ
+007cc38a  or eax,-1/jmp 0x7CC404                 ; ★失败返回 -1
+; → 'z' 判定命中：DBCS lead-byte 扫描（0x7CC395）：
+007cc395  lea ecx,[edi-1]/mov eax,ebx/mov [ebp+0xC],ecx
+007cc39d  mov cl,[eax]/test cl,cl/je 0x7CC3BF
+007cc3a3  mov edx,[0x87C590]/movzx ecx,cl
+007cc3ac  test byte[edx+ecx*2+1],0x80/je 0x7CC3B4  ; ★★lead-byte 判定
+                                              ;   （[0x87C590] ctype 表）
+007cc3b3  inc eax                                ; 双字节消费
+007cc3b4  inc eax/dec [ebp+0xC]/test ecx,ecx/jne 0x7CC39D
+007cc3bf  push edi/sub eax,ebx/push [ebp+8]/push eax
+007cc3c6  push ebx/push 1/push [0xB782B0]/call esi  ; ★★6 参槽二次调用
+007cc3d1  test eax,eax/jne 0x7CC404
+007cc3d5  jmp 0x7CC385                          ; 失败 → EILSEQ
+; → dst==NULL 长度查询（0x7CC3D7）：
+007cc3d7  cmp [0xB782A0],esi/jne 0x7CC3EA
+007cc3df  push [ebp+0xC]/call 0x7D15A0（★★_strlen batch 017）/返
+; → 宽模式长度查询：6 参槽调用（含 -1/9/locale）→ 失败 EILSEQ
+007cc403  dec eax                                ; ★成功返回 n-1?
+007cc404  pop 族/leave/ret
+
+★语义：**MSVC6 CRT mbstowcs（多字节串→宽字符）**——cdecl
+3 参：
+  ① dst==NULL → 长度查询：窄模式 _strlen（0x7D15A0），宽
+     模式槽调用查长；失败 errno=0x2A（42=EILSEQ）返回 -1；
+  ② dst!=NULL 且 limit>0：[0xB782A0]==0 窄模式 → 逐字节
+     movzx 扩为宽字直译（单字节代码页 1:1 映射）直到 NUL/
+     limit；[0xB782A0]!=0 宽模式 → 槽调用（6 参：locale/
+     9/-1/src/dst/limit）→ 失败经 [0x7E1200] 'z'（0x7A）边
+     界判定决定回退 DBCS 扫描（[0x87C590] ctype 表 2B/项
+     0x80 lead-byte 位）→ 槽二次调用 → 仍失败 EILSEQ -1；
+  ③ 成功返回宽字符数（槽返回值 -1 修正）。
+  mbstowcs 标准行为完备（EILSEQ/-1/长度查询/NUL 终止）。
+
+★E8 被调者：0x7D15A0（batch 017 _strlen，0x7CC3E2 交叉）+
+  0x7D168E（batch 034 per-thread CRT 状态+8 偏移包装 ≈ errno
+  setter，0x7CC385 交叉，42 callers）。
+
+★宿主（0x7CC2E5）：0x7CD9F5 CRT region lock Enter + 0x7CDA56
+  Leave（TSV:238/239）包裹本调用——线程安全包装宿主。
+
+★原版怪癖（照抄）：
+  ① [0xB782A0] 模式全局分双路径：窄模式（单字节代码页）纯
+     movzx 扩字直译；宽模式（DBCS）走槽调用——同一函数两套
+     语义，模式由全局静态决定；[0xB782A0] 29 处引用全 CRT
+     区（0x7C9xxx/0x7CCxxx/0x7D3xxx/0x7D6xxx）；
+  ② 宽模式失败经 [0x7E1200] 'z'(0x7A) 判定决定回退 lead-byte
+     扫描——'z' 是单字节 ASCII 边界（≤0x7A 全单字节）；
+  ③ DBCS 扫描用 [0x87C590] ctype 表 2B/项 +1 偏移 0x80 位判
+     lead-byte（68 处引用全 CRT 区）；
+  ④ 成功返回值槽调用结果 -1（0x7CC403 dec eax）——槽语义
+     与 CRT 返回约定差 1，照抄；
+  ⑤ dst==NULL 长度查询窄/宽两路径并存（0x7CC3D7 分流）；
+  ⑥ errno 0x2A=42=EILSEQ 写 [eax]（0x7D168E 结果指针）——
+     无 _set_errno 抽象，直接写 TLS 槽。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 多字节转换按商
+业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CC309 = MSVC6 静态 CRT mbstowcs——0x7C-0x7D =
+   MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）；
+   mbstowcs 标准三参形态（dst/src/limit）+ EILSEQ(eax=0x2A)
+   失败语义 + dst==NULL 长度查询 + NUL 终止 + 窄/宽模式全局
+   [0xB782A0] + [0x87C590] ctype 表 = CRT 多字节转换设施标准
+   形态。
+2. 依赖：0x7D15A0（_strlen）/+ 0x7D168E（errno 槽）均已登记；
+   宿主锁 0x7CD9F5/0x7CDA56（TSV:238/239）已登记——全链 CRT。
+3. gamemd_replication_discipline：MSVC6 CRT 多字节转换设施，
+   重写用等价 std::mbstowcs 运行时代替，逐字节复刻无意义——
+   按商业库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 256B + 锁/errno/_strlen 交
+叉；函数名「mbstowcs（多字节转宽字符）」由三参签名/EILSEQ/
+长度查询/NUL 终止实测交叉标注）。
+
+四、关键方法论修正：0x7E1xxx 槽表静态值不可作调用目标语义证据
+----------------------------------------------------------------
+★反汇编 [0x7E11C4] 槽目标 0x40F9A8（本批取证）：
+  0040f9a8  nop×8（对齐填充）
+  0040f9b0  fld qword[0x7E1EC8] / fmul qword[0x7E1720] /
+            fstp qword[0x887548] / ret
+  0040f9d0  fld qword[0x7E1EC8] / fmul qword[0x7E1728] /
+            fstp qword[0x887520] / ret
+  0040f9f0  fld qword[0x7E1EC8] / ...（同模式继续）
+  = **MSVC6 CRT 浮点常量初始化器族**（每函数把常量×系数→
+  全局，0.4KB 内同模式函数集群）——不是 Westwood thiscall
+  对象方法！
+★矛盾点：batch 1115 记录 0x7DC5DC/0x7DC4C9 用 **8 参**调用
+  [0x7E11C4]；本批 0x7CC309 用 **6 参**调用 [0x7E11C4]；而
+  槽静态值 0x40F9A8 是 0 参浮点常量初始化器——调用约定互
+  相矛盾 → ★★[0x7E1xxx] 槽表 PE 静态值不是真实调用目标，
+  槽表运行时被改写（CRT 启动/引擎初始化时填入真函数指针）。
+★影响：batch 1111/1115 以槽静态值（0x7E1338→0x410FCE 等）
+  判定「Westwood thiscall 对象方法分派」推断存疑——0x410FCE
+  处字节 `ff ff 00 00` 非有效指令头，后续反汇编可能 misalign
+  （数据被误当代码）。判据应改为：①对象方法形态须看调用
+  点现场的 push 约定/返回处理，②槽静态值只作参考不作证据。
+★处置：本批登记此修正；batch 1111/1115 已归档行暂不改写
+  （保留原文并交后续复核批统一修正），但后续批次不得引用
+  槽静态值断言调用目标语义。
+
+五、跨批次闭合
+------------
+★batch 017：0x7D15A0 _strlen——本批 0x7CC3E2 长度查询交叉。
+★batch 034：0x7D168E per-thread CRT 状态+8 ≈ errno setter
+  ——本批 0x7CC385 写 EILSEQ 交叉（42 callers 之一）。
+★TSV:238/239：0x7CD9F5/0x7CDA56 CRT region lock——宿主
+  0x7CC2E5 锁包裹交叉（线程安全流/串设施）。
+★batch 1111/1115：0x7DC5DC/0x7DC4C9——同调 [0x7E11C4]/
+  [0x7E1338]/[0x7E130C] 槽族；本批修正槽静态值语义（第六节）。
+
+六、状态
+-------
+crt_runtime_verified（0x7CC309：MSVC6 CRT mbstowcs 多字节转
+宽字符归档；全 256B + 锁/errno/_strlen 交叉；不写 C++ 模型
+不做 golden——CRT 多字节转换商业库层；函数名「mbstowcs
+（多字节转宽字符）」由三参签名/EILSEQ/长度查询/NUL 终止实
+测交叉标注）。TSV 新增 0x007CC309 行。
+
+★本批实锤：mbstowcs 标准形态 + [0xB782A0] 窄/宽模式全局 +
+  [0x87C590] lead-byte ctype 表 + EILSEQ 失败语义 + 宿主
+  region lock——CRT 多字节转换设施；附带方法论修正：[0x7E11C4]
+  槽静态值 0x40F9A8 = CRT 浮点常量初始化器（运行时槽被改写
+  ，batch 1111/1115 Westwood 判据存疑）。
+相邻待续：batch 1117 按 _scan_pending_7c.py 取池内下一未登
+记项（uc=1：0x7CCA34(250B, callers=1)/0x7CACC0(249B,
+callers=1)/0x7DF280(244B, callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1115 已完（代码页转换包装器孪生 0x7DC4C9，
+commit 18d7411）。
