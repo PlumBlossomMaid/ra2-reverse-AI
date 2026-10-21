@@ -1,0 +1,142 @@
+frontier batch 1155 —— MSVC6 CRT 0 终止字符串指针数组深拷贝器 0x7DABAC（归档，environ 复制形态）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DABAC（103B,
+uc=1, callers=1 探针实测 0x7DAA0C）。TSV 无既有行。
+TARGET = 0x007DABAC。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007DABAC 行。
+
+一、链语义（disasm 全 103B + 三依赖登记交叉 + 调用点宿主，
+0x7DABAC-0x7DAC12）
+--------------------------------------------------------------
+签名（推断）：cdecl 1 参（[esp+8]=0 终止指针数组源），返
+回深拷贝新数组（含尾 0 哨兵）/ NULL（源 NULL）。
+
+主体（0x7DABAC-0x7DAC12）：
+007dabac  push edi/mov edi,[esp+8]           ; edi = 源数组
+007dabb1  xor ecx,ecx
+007dabb3  test edi,edi/jne 0x7dabbb
+007dabb7  xor eax,eax/pop edi/ret            ; ★NULL 源 → 返 NULL
+; → 计数循环（0x7DABBB，统计 0 终止元素数）：
+007dabbb  cmp [edi],0/lea eax,[edi+4]/je 0x7dabcd
+007dabc3  mov edx,[eax]/inc ecx/add eax,4
+007dabc9  test edx,edx/jne 0x7dabc3          ; ★★逐元素计数（非 0 即
+                                              ;   计，0 终止）
+; → 分配（0x7DABCD）：lea eax,[ecx*4+4]
+007dabcd  push ebx/ebp
+007dabcf  lea eax,[ecx*4+4]                  ; ★(元素数+1)×4（含尾 0 槽）
+007dabd6  push esi/push eax
+007dabd8  call 0x7c9430                      ; ★★batch 020/063 CRT 内部
+                                              ;   malloc 入口
+007dabdd  mov esi,eax/pop ecx
+007dabe0  test esi,esi/mov ebp,esi/jne 0x7dabee
+; → 分配失败（0x7DABE6）：
+007dabe6  push 9/call 0x7cd917              ; ★★batch 252/972 __amsg_exit
+                                              ;   （错误码 9=_RT_HEAPALLOC
+                                              ;   堆分配错误 → 报错+退出
+                                              ;   255——标准 CRT 堆失败惯
+                                              ;   用；之后 pop ecx 等为死
+                                              ;   代码——__amsg_exit 非返
+                                              ;   回函数，编译器未标
+                                              ;   noreturn，照抄）
+; → 复制循环（0x7DABEE，逐元素 _strdup）：
+007dabee  mov eax,[edi]/mov ebx,edi/test eax,eax
+007dabf4  je 0x7dac09                        ; 0 元素 → 转尾哨兵
+007dabf6  push eax/add ebx,4
+007dabfa  call 0x7d5408                      ; ★★TSV:137 _strdup（NUL 字
+                                              ;   符串堆拷贝）
+007dabff  mov [esi],eax                       ; 存新槽
+007dac01  mov eax,[ebx]/pop ecx/add esi,4/jmp 0x7dabf2
+; → 尾哨兵（0x7DAC09）：
+007dac09  and [esi],0                        ; ★尾槽写 0
+007dac0c  mov eax,ebp/pop esi/ebp/ebx/edi/ret ; 返新数组
+
+★语义：**MSVC6 CRT 0 终止字符串指针数组深拷贝器（推断名
+——environ 数组复制形态）**——cdecl 1 参：
+  ① NULL 源返 NULL；
+  ② 计数 0 终止元素（指针元素非 0 即计）；
+  ③ malloc (元素数+1)×4（+1 = 尾 0 哨兵槽）；
+  ④ 分配失败 → push 9 + __amsg_exit（_RT_HEAPALLOC 报错退
+     出）；
+  ⑤ 逐元素 _strdup（0x7D5408 TSV:137）深拷贝字符串 → 存新
+     槽；
+  ⑥ 尾槽写 0 → 返回新数组。
+  = MSVC6 CRT 环境块/字符串表深拷贝（_environ 复制或其他 0
+  终止指针表复制）标准实现，三依赖全已登记。
+
+★调用点（探针 E8 实测 1 处 0x7DAA0C）：宿主 0x7DAAxx 区
+  调用者（CRT 环境变量域——batch 1044/1045 getenv/_putenv
+  链同 0x7DAAxx 全局区），深拷贝消费侧。
+
+★E8 被调者：0x7C9430（★★batch 020/063 CRT 内部 malloc
+  ✓TSV:233）+ 0x7D5408（★★batch 024 _strdup ——NUL 字符串
+  堆拷贝 34 callers ✓TSV:137）+ 0x7CD917（★★batch 252/972
+  __amsg_exit 报错后退出 ✓TSV:795）——**三个依赖全部已登
+  记**。
+
+★原版怪癖（照抄）：
+  ① NULL 源提前返回（test edi,edi/jne）——空表语义；
+  ② 计数循环从 [edi] 首元素起（lea eax,[edi+4] 预置第二
+     槽指针）——首元素判定先于循环；
+  ③ 分配大小 (n+1)×4 含尾哨兵槽（lea [ecx*4+4]）；
+  ④ 分配失败 push 9 → __amsg_exit（_RT_HEAPALLOC=9 硬编
+     码）——标准 CRT 堆错误报错退出通道（非返回函数后的
+     pop ecx/test/je 为编译器保守生成死代码，照抄）；
+  ⑤ 复制循环用双游标（ebx 源 + esi 目标）+ 每轮重读
+     [ebx]（mov eax,[ebx] 在循环体——首元素 [edi] 预取后
+     add ebx,4 对齐）；
+  ⑥ 尾哨兵 and [esi],0（写 0 而非 mov dword[esi],0——同
+     f8 字节节省惯用）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 环境/字符
+串表设施按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DABAC = MSVC6 静态 CRT 环境/字符串表深拷贝器—
+   —0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；0 终止计数 + (n+1)×4 分配 + _strdup 逐
+   元素 + __amsg_exit 堆失败 = VC6 CRT 环境表复制标准形态；
+   宿主 0x7DAAxx（getenv/_putenv 链 batch 1044/1045 同区）
+   环境域。
+2. 依赖：3 个已登记函数（0x7C9430 batch 020/063、0x7D5408
+   batch 024 _strdup、0x7CD917 batch 252/972 __amsg_exit）
+   ——重写 gamemd 时用等价运行时（std::vector<std::string>
+   深拷贝）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 环境设施，重写
+   时用等价运行时代替，逐字节复刻无意义——按商业库纪律
+   归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 103B + 三依赖交叉 + 调用点
+宿主核实；函数名「0 终止字符串指针数组深拷贝器」由计数+
+分配+逐 _strdup+尾哨兵交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 020/063：0x7C9430 CRT 内部 malloc——本批分配调用
+  现场交叉（(n+1)×4 大小）。
+★batch 024：0x7D5408 _strdup——本批逐元素复制内核交叉
+  （TSV:137 语义直配）。
+★batch 252/972：0x7CD917 __amsg_exit——本批 malloc 失败
+  错误码 9（_RT_HEAPALLOC）现场交叉（报告+退出 255 标准
+  通道）。
+★batch 1044/1045：getenv/_putenv 链——本批调用点 0x7DAA0C
+  宿主同 0x7DAAxx 环境域交叉（environ 复制消费侧）。
+
+五、状态
+-------
+crt_runtime_verified（0x7DABAC：MSVC6 CRT 0 终止字符串指针
+数组深拷贝器归档；全 103B + 三依赖交叉；不写 C++ 模型不做
+golden——CRT 环境库商业库层；函数名由计数+分配+逐 _strdup
++尾哨兵交叉标注）。TSV 新增 0x007DABAC 行。
+
+★本批实锤：environ 数组复制形态——0 终止元素计数 →
+  (n+1)×4 malloc → 逐元素 _strdup 深拷贝 → 尾 0 哨兵；
+  分配失败 _RT_HEAPALLOC=9 报错退出（三依赖全已登记）。
+相邻待续：batch 1156 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CF64C(101B)/0x7C33C6(100B)/0x7CE086
+(99B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1154 已完（MSVC6 CRT 宽字符串流输出器
+0x7CB12E，commit 5c31c2a）。
