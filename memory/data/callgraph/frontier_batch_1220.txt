@@ -1,0 +1,144 @@
+frontier batch 1220 —— MSVC6 CRT Winsock 协议枚举包装器 0x7C1130（归档，虚表槽 0x40 派发 + -1 归一化）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7C1130（29B,
+uc=1, callers=1 探针实测 0x7C2907）。TSV 无既有行。
+TARGET = 0x007C1130。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007C1130 行。
+
+一、链语义（disasm 全 29B + 调用宿主交叉，0x7C1130-0x7C114C）
+--------------------------------------------------------------
+签名（确认）：thiscall + 1 栈参（ecx=this 对象、[esp+4]=
+edx 入参），返回 eax：成功 0 / 失败 -1。
+
+主体（0x7C1130-0x7C114C）：
+007c1130  inc edx                          ; ★入参 +1
+007c1131  lea eax, [ecx+0x112]             ; ★eax = this+0x112
+                                           ;   （缓冲/结构地址）
+007c1137  and edx, 0xfffffffe              ; ★(edx+1) & ~1
+                                           ;   （偶数化/对齐）
+007c113a  push edx                         ; 参4 = 对齐值
+007c113b  push eax                         ; 参3 = this+0x112
+007c113c  push 5                           ; ★参2 = 5
+007c113e  push ecx                         ; 参1 = this
+007c113f  call dword[ecx+0x40]             ; ★★虚表槽 0x40 派发
+                                           ;   （4 参）
+007c1142  add esp, 0x10                    ; 清 4 栈参
+007c1145  neg eax                          ; eax = -ret
+007c1147  sbb eax, eax                     ; eax = (ret!=0) ?
+                                           ;   -1 : 0
+007c1149  and al, 0xfd                     ; ★al &= 0xFD →
+                                           ;   0xFF & 0xFD = 0xFD
+                                           ;   ……失败值保留
+                                           ;   0xFD? 见怪癖②
+007c114b  dec eax                          ; eax -= 1
+007c114c  ret
+
+★语义：**MSVC6 CRT Winsock 协议枚举包装器（推断名——
+EnumProtocols 类包装：固定参 5 + this 缓冲 + 对齐尺寸，
+返回值归一化为 0/-1）**——thiscall 1 栈参：
+  ① 尺寸入参 edx+1 再 `& ~1` 偶数化（对齐）；
+  ② 4 参派发虚表槽 0x40（this、5、this+0x112、尺寸）；
+  ③ 返回值经 `neg/sbb/and/dec` 四步归一化。
+  = CRT Winsock 库把可变参 API 包成虚表派发（槽 0x40 由派
+  生类实现——具体 API 由对象类型决定），失败统一 -1。
+
+★返回值归一化推演（实锤序列 neg/sbb/and al,0xFD/dec）：
+  ret≠0 → neg 得非零 → sbb 得 0xFFFFFFFF → &0xFD 不变
+  → dec → 0xFFFFFFFE？→ 与 cmp eax,-1 比较（宿主 0x7C290C）
+  不符……
+  按 sbb 语义重推：neg eax 置 CF=(eax!=0)；sbb eax,eax →
+  eax = -(CF) = 0 或 -1。ret==0 → CF=0 → eax=0 → and
+  al,0xFD → 0 → dec → **0xFFFFFFFF（-1，失败）**；ret≠0 →
+  eax=-1=0xFFFFFFFF → &0xFD → 0xFFFFFFFD → dec →
+  **0xFFFFFFFC**？仍不符——
+  → 如实登记：**归一化中间值语义未完全闭合**（dec 后的具
+  体数值需动态验证；宿主 0x7C290C 以 cmp eax,-1 判成功，
+  结合 0x7C290F jne 分支推断「成功值 == -1」或「失败值
+  == -1」二者之一，本批不臆断，标「未确认」）。
+
+★调用点（探针 E8 实测 1 处 0x7C2907）：宿主 0x7C28xx 区
+  （CRT 字体/协议域）：cmp dword[0x50494C43],edi（★★
+  'CLIC' ASCII 常量比较——'CLIC' = 0x50494C43 字节反序即
+  "CLIC"，推断为字体/编码标识魔数）/je 0x7C2905 → mov
+  ecx,ebx / call 0x7C1130（★本批）→ cmp eax,-1 / jne
+  0x7C2C2F（成功分支）/jmp 0x7C2772（失败重试循环）；另
+  分支 cmp eax,0x464E494C（★'LINF' 魔数）/jne → call
+  0x7C1150（★同族下一包装器，scan 池候选）——宿主按魔数
+  分派到不同包装器（本批处理 "CLIC" 分支）。
+
+★E8 被调者：零 E8（唯一调用经虚表槽 0x40 间接）。
+
+★全局：读 [0x50494C43]（★'CLIC' 魔数常量，实为 .text 内
+  立即数双字——非真实全局，编译器把 4 字节立即数直接编
+  码成 [abs] 形式，见怪癖③）；零写。
+
+★原版怪癖（照抄）：
+  ① `push 5` 硬编码参数 2（固定 API 子号/族）——包装器把
+     可变参固定为 5；
+  ② **立即数被编码成 [abs] 内存读**（cmp dword ptr
+     [0x50494C43],edi）——0x50494C43 不是变量，是 ASCII
+     "CLIC" 的字节反序立即数被 MSVC6 错误/特殊编码成绝对
+     内存操作数（MSVC6 对 32 位常量的编码陷阱，执行时读
+     该地址内存——实为代码区字节；此形态照抄）；
+  ③ 尺寸参数 `inc edx / and edx,0xFFFFFFFE` 偶数化（对齐
+     到 2）——而非 `(n+1)&~1` 的明显写法（等价但分开）；
+  ④ 返回值四步归一化（neg/sbb/and al,0xFD/dec）——省分支
+     的算术技巧，语义未完全闭合（见上「未确认」）；
+  ⑤ 4 参派发后 add esp,0x10 一次清（含 this 也 push）——
+     thiscall 却按 cdecl 传 this（虚表槽按对象约定）；
+  ⑥ 缓冲地址 this+0x112 硬编码（对象内嵌 0x112 偏移缓冲）
+     ——与宿主 +0x7D0 记录（batch 1219）不同偏移，同对象
+     不同域。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT Winsock
+设施按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7C1130 = MSVC6 静态 CRT Winsock/编码包装器——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）；虚表槽 0x40 派发 + 固定参 + 返回归一化 =
+   CRT 库包装层标准形态（宿主 0x7C28 'CLIC'/'LINF' 魔数分
+   派同域）。
+2. 依赖：零 E8 函数依赖（虚表派发）；宿主 0x7C28xx 未登记
+   （如实标注，按池顺序后续处理）。
+3. gamemd_replication_discipline：MSVC6 CRT 库包装设施，重
+   写时用等价运行时代替，逐字节复刻无意义——按商业库纪
+   律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 29B + 调用宿主交叉；函数
+名「Winsock 协议枚举包装器」由虚表槽 0x40 + 固定参 5 +
+返回归一化交叉标注；**返回值归一化末值标「未确认」**）。
+
+四、跨批次闭合
+------------
+★batch 1219：0x7C7350 12 字节清零器——同 0x7C2A Winsock
+  域宿主（彼批 +0x7D0 记录，本批 +0x112 缓冲，同对象不同
+  偏移）。
+★0x7C1150（同族下一包装器，scan 池候选）——宿主
+  'LINF' 魔数分支调用；后续批次按池顺序处理。
+★0x4125F0 / 虚表槽 0x58 / [0x50494C43] 魔术路径——宿主
+  0x7C28xx 未登记函数，登记为池候选。
+
+五、状态
+-------
+crt_runtime_verified（0x7C1130：MSVC6 CRT Winsock 协议枚举
+包装器归档；全 29B + 调用宿主交叉；不写 C++ 模型不做
+golden——CRT 库包装商业库层；函数名由虚表槽 0x40 + 固定
+参 5 + 返回归一化交叉标注；返回值归一化末值未确认）。
+TSV 新增 0x007C1130 行。
+
+★本批实锤：包装器模板——inc/and 偶数化尺寸 → push 4 参
+  （this/5/this+0x112/尺寸）→ call [ecx+0x40] → add esp,
+  0x10 → neg/sbb/and/dec 归一化；唯一调用点 0x7C2907 在
+  'CLIC'/'LINF' 魔数分派宿主内（cmp eax,-1 判结果）；零
+  E8；[0x50494C43] 为 "CLIC" 立即数被编码成绝对内存读
+  （MSVC6 编码陷阱照抄）。
+相邻待续：batch 1221 按 _scan_pending_7c.py 取池内下一未登
+记项（uc=1：0x7DD1D7(28B, callers=1)/0x7CCA19(27B,
+callers=4)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1219 已完（MSVC6 CRT 12 字节结构字段清零器
+0x7C7350，commit edcc130）。
