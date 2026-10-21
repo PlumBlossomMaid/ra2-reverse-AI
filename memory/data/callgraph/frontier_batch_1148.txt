@@ -1,0 +1,149 @@
+frontier batch 1148 —— MSVC6 CRT _filelength 文件长度获取器 0x7DDF78（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DDF78（138B,
+uc=1, callers=1 探针实测 0x7BF351）。TSV 无既有行。
+TARGET = 0x007DDF78。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007DDF78 行。
+
+一、链语义（disasm 全 138B + 五依赖登记交叉 + 调用点宿主，
+0x7DDF78-0x7DE001）
+--------------------------------------------------------------
+签名（推断）：cdecl 1 参（[esp+8]=文件句柄 fd），返回文件
+长度 long / -1（errno=EBADF）。
+
+主体（0x7DDF78-0x7DE001）：
+007ddf78  push esi/mov esi,[esp+8]             ; esi = fd
+007ddf7d  cmp esi,[0xb78b80]/jae 0x7ddfea      ; ★★边界检查：fd vs
+                                              ;   _nhandle（[0xB78B80]）
+                                              ;   越界 → 错误路径
+007ddf85  mov ecx,esi/mov eax,esi
+007ddf89  sar ecx,5/and eax,0x1f              ; ★★fd>>5 选组 / fd&0x1F
+                                              ;   选槽
+007ddf8f  mov ecx,[ecx*4+0xb78a80]            ; ★★组表指针（[0xB78A80]
+                                              ;   __pioinfo 分流表）
+007ddf96  lea eax,[eax+eax*8]                 ; ×9 槽步进
+007ddf99  test byte[ecx+eax*4+4],1/je 0x7ddfea ; ★★osfile 位 1 检查
+                                              ;   （FOPEN 标志）未开 →
+                                              ;   错误路径
+007ddfa0  push ebx/push edi
+007ddfa2  push esi/call 0x7d96a8              ; ★★batch 034 临界区槽
+                                              ;   获取（EnterCS）
+007ddfa8  push 1/push 0/push esi/call 0x7d769d ; ★★batch 049 _lseek 族
+                                              ;   (fd,0,1)=SEEK_CUR 取
+                                              ;   当前位置 → edi
+007ddfb2  mov edi,eax/or ebx,-1/add esp,0x10
+007ddfba  cmp edi,ebx/je 0x7ddfdd             ; edi==-1 → 跳过
+007ddfbe  push 2/push 0/push esi/call 0x7d769d ; ★(fd,0,2)=SEEK_END 取
+                                              ;   文件长度 → ebx
+007ddfc8  mov ebx,eax/add esp,0xc
+007ddfcd  cmp edi,ebx/je 0x7ddfdd             ; 长度==当前 → 跳过恢复
+007ddfd1  push 0/push edi/push esi/call 0x7d769d ; ★(fd,当前位置,0)=
+                                              ;   SEEK_SET 恢复位置
+007ddfda  add esp,0xc
+007ddfdd  push esi/call 0x7d9707/pop ecx      ; ★★batch 034 临界区槽
+                                              ;   释放（LeaveCS）
+007ddfe4  mov eax,ebx/pop edi/ebx/esi/ret     ; ★返回长度（ebx）
+; → 错误路径（0x7DDFEA，越界/fd 未打开）：
+007ddfea  call 0x7d168e                       ; ★★batch 034 per-thread
+                                              ;   CRT 状态 +8（errno 区）
+007ddfef  mov [eax],9                         ; ★★errno=9=EBADF
+007ddff5  call 0x7d1697                       ; ★★batch 018 per-thread
+                                              ;   状态 +0xC（状态区）
+007ddffa  and [eax],0                         ; 清状态
+007ddffd  or eax,-1/pop esi/ret               ; ★返回 -1
+
+★语义：**MSVC6 CRT _filelength 文件长度获取器（推断名——
+标准 C 库 `_filelength`）**——cdecl 1 参：
+  ① fd 边界检查（[0xB78B80] _nhandle）+ 槽位位检（
+     [0xB78A80] 组表 & osfile 位 1=FOPEN）——无效 fd → 
+     errno=9(EBADF) + 返回 -1；
+  ② 有效 → 临界区（0x7D96A8/0x7D9707）内三连 _lseek：
+     SEEK_CUR 存当前位置 → SEEK_END 取长度 → 若位置/长度
+     不同则 SEEK_SET 恢复原位；
+  ③ 返回长度（ebx），-1 哨兵全路径。
+  = MSVC6 `_filelength` 标准实现（存位→取尾长→复位），与
+  VC6 CRT 源码行为逐行吻合。
+
+★调用点（探针 E8 实测 1 处 0x7BF351）：宿主 0x7BF350 起
+  短函数（文件 API thunk 链：前段 0x7BF330-0x7BF34F 调
+  0x7D7638 检查、本段 0x7BF350-0x7BF363 调 0x7DDF78 后
+  `mov [edx],eax` 写长度到输出参 + `xor eax,eax` 返 0 成功、
+  后段 0x7BF364 起调 0x7D2A74）——0x7BF3xx CRT 文件 API
+  封装域。
+
+★E8 被调者：0x7D96A8（★★batch 034 临界区槽获取）+ 
+  0x7D769D（★★batch 049/019 _lseek 族句柄校验+SetFilePointer
+  包装——调用 3 次）+ 0x7D9707（★★batch 034 临界区槽释放）
+  + 0x7D168E（★★batch 034 per-thread errno +8）+ 0x7D1697
+  （★★batch 018 per-thread 状态 +0xC）——**五个依赖全部已
+  登记**。
+
+★原版怪癖（照抄）：
+  ① 边界检查单独一路（[0xB78B80] jae）与槽位位检（组表位
+     1）**分两处检查**——第一条是 _nhandle 上界、第二条是
+     osfile FOPEN 位，任一不过都走同一错误路径；
+  ② 槽步进 `lea eax,[eax+eax*8]`（×9）后 `[ecx+eax*4+4]`
+     ——组表 36B/项、位字节在第 4 偏移（batch 034 同款布
+     局）；
+  ③ 三连 _lseek 顺序为先存位再取尾长再恢复——位置/长度
+     相等时跳过恢复（edi==ebx je）——两分支独立处理；
+  ④ 错误路径返回 -1 且 eax 直接 or eax,-1（非 xor+dec）
+     ——同 batch 049 族风格；
+  ⑤ errno=9（EBADF 无效句柄）硬编码 + 清 per-thread 状态
+     位（and [eax],0）——错误报告+状态复位成对。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT FILE 设施
+按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DDF78 = MSVC6 静态 CRT FILE 设施（_filelength）——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）；存位→取尾长→复位三步 + errno=EBADF + 
+   SEEK_CUR/END/SET 常量 = VC6 CRT `_filelength` 源码逐行
+   对应形态。
+2. 依赖：5 个已登记函数（0x7D96A8/0x7D9707 batch 034 临界
+   区对、0x7D769D batch 049 _lseek 族、0x7D168E/0x7D1697
+   batch 034/018 per-thread 状态）+ [0xB78A80]（batch 034
+   组表）/ [0xB78B80]——重写 gamemd 时用等价 C 库
+   `_filelength`/std::filesystem 语义代替。
+3. gamemd_replication_discipline：MSVC6 CRT 文件库设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 138B + 五依赖交叉 + 调用点
+宿主核实；函数名「文件长度获取器（_filelength）」由三步
+lseek 序列 + errno=9 + 边界/位检双闸交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 034：0x7D96A8/0x7D9707 临界区槽对 + 0x7D168E
+  per-thread errno——本批 EnterCS/LeaveCS/错误路径调用现
+  场交叉（同 [0xB78A80] 组表布局）。
+★batch 049/019：0x7D769D _lseek 族——本批三连调用
+  （SEEK_CUR/SEEK_END/SEEK_SET 常量 1/2/0 硬编码）交叉，
+  文件定位链全景。
+★batch 018：0x7D1697 per-thread 状态 +0xC——本批错误路径
+  清状态调用现场交叉。
+★batch 1139：0x7CB25E 流集合扫描器（锁 0x13 + [0xB78BC4]/
+  [0xB79BE0] 数组）——同 CRT FILE 设施域，本批 [0xB78A80]
+  组表另一文件句柄核心表。
+
+五、状态
+-------
+crt_runtime_verified（0x7DDF78：MSVC6 CRT _filelength 文件
+长度获取器归档；全 138B + 五依赖交叉；不写 C++ 模型不做
+golden——CRT 文件库商业库层；函数名由三步 lseek 序列 +
+errno=9 + 边界/位检双闸交叉标注）。TSV 新增 0x007DDF78 行。
+
+★本批实锤：MSVC6 `_filelength`——边界+osfile 双闸校验 → 
+  临界区内 SEEK_CUR 存位/SEEK_END 取长/SEEK_SET 复位三连
+  lseek → 返回长度；无效 fd errno=9(EBADF)+-1。
+相邻待续：batch 1149 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CC01C(137B)/0x7CD460(126B)/0x7C970C
+(126B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1147 已完（Westwood 表面调色板 word 表区间查
+找器 0x7C06B0，commit 302d0a2）。
