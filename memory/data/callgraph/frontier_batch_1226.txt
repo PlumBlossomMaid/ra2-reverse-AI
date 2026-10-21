@@ -1,0 +1,96 @@
+frontier batch 1226 —— 0x0058C320 死代码复刻：随机取「已占用且类型匹配」格子（142B）
+=======================================================================
+
+候选来源：用户指令三阶段①「RMG 死代码全部复现对齐」——batch 1225 补完
+0x58BE20 后剩余 13 个无 REIMPL。0x58C320 是「四级递增严格度」第二级，
+与 0x58BE20 同骨架、多一道类型判定。
+TARGET = 0x0058C320。C++ 模型：code/rewrite/rmg/dead_code_58c320.{h,cpp}
+新增 DeadCode58C320(ctx)。单测：test_dead_code_58c320.cpp 新增
+DeadCode58C320.Golden（golden 45 行全对拍）。TSV 新增 0x0058C320_REIMPL 行。
+
+一、语义（全段反汇编逐条核对 + golden 45 行闭环）
+------------------------------------------------
+真义（机器码全 142B 确认，disasm.py 0x58C320 0x95）：
+  · 调用约定：**thiscall +1 栈参 ret 4**（★与 0x58BE20 的 ret 0 不同）：
+    - ecx = this（比较基准，读 [this+8] dword）
+    - [esp+4] = 输出指针（CellStruct {int16 x; int16 y}；成功出口
+      `mov eax,[esp+0x20]` 在 pop 基址变换后 = 原栈参1）
+  · side  = [0x89C2DC]；total = side*side（imul ebx,eax）
+  · scale = (double)(uint64)total（fild qword [esp+0x10]：存 {eax=total,
+    edi=0} 高 32 显式 0 无符号读）
+  · loop（0x58C34B 起循环头）：
+      r = Random()（mov ecx,0xABE890 / call 0x65C780）
+      v = _ftol((double)(uint64)r * scale * kInvUintMax)
+        （mov {eax=r,edi=0} → fild qword 无符号 → fmul [esp+0x20]=scale
+          → fmul [0x7ED898]=kInvUintMax → call 0x7C5F00 _ftol）
+      cmp eax,esi（esi=total-1）/ ja 0x58C34B —— 拒绝采样（无符号）
+      p = [0xABED10] + v*0x50（lea ecx,[eax+eax*4]; shl ecx,4 = v*0x50）
+      **if (p->[0x38] != this->[8]) goto loop**  ← ★新增（0x58C382-
+        0x58C388：mov esi,[ecx+0x38]; cmp esi,[ebp+8]; jne 0x58C335）
+      if (p->x == 0 && p->y == 0) goto loop   （空格子重抽，0x58C38A-
+        0x58C393：cmp word [ecx],di / cmp word [ecx+2],di）
+      成功：*out = work[v] 首 dword（x | (y<<16)，mov ecx,[eax+edx];
+        mov eax,[esp+0x20](原栈参1); mov [eax],ecx）→ ret 4
+  · 全程 x87 FPCW=0x0E7F（RC=chop + PC53），复刻用 MXCSR toward-zero。
+
+公式（golden 45 行实证）：
+  loop: v = _ftol((double)(uint64)Random() * (double)(side*side)
+            * kInvUintMax)
+        若 (unsigned)v > side*side-1 或 p->[0x38] != this->[8]
+            或 work[v] 为空 (0,0) 则重抽
+        返回 work[v] 首 dword（x | (y<<16)）
+
+★与 0x58BE20 的差异（仅两条，其余逐指令同形）：
+  ① **多一道 `p->[0x38] == this->[8]` 类型判定**（0x58C382-0x58C388），
+     且**先于空格判定**（0x58C38A 起）——次序照抄；
+  ② **thiscall+1 栈参 ret 4**（0x58BE20 是 ret 0 无栈参）：ecx=this 读
+     [this+8]、[esp+4]=输出指针。
+
+二、golden 采集（emu_oracle 指令级模拟）
+--------------------------------------
+探针 .qwen/tmp/_emu_deadcode_58c320.py：调 0x58C320（ecx=THIS 结构、
+栈参1=OUT），灌 side [0x89C2DC]、work [0xABED10]（HEAP 0x30004000，
+side²×0x50B，首 dword=x|(y<<16)、[+0x38]=field38），this 结构
+[0x30001000]（+8=比较基准），seed_global 播种。
+存档 memory/data/rmg/deadcode_58c320_golden.txt：5 种子 × 9 用例 = 45 行。
+用例矩阵：side ∈ {4,8,10} × this8 ∈ {7,42} × empty ∈ {0,2,20} ×
+mism ∈ {0,4,30}（empty=空格子前缀、mism=类型不匹配前缀）。
+★next 字段 = 调用后下一次 Random() 值——C++ 侧校验随机消耗次数。
+★sanity 自洽：seed=0 side=4 this8=7 全匹配 out=0x50004（x=4,y=5 占用项），
+与 0x58BE20 同种子同采样序列一致（两函数共享采样骨架）；seed=0 side=4
+this8=42 empty=2 mism=4 时 next=0x9089E025 ≠ 全匹配的 0x6A2B5556
+（多消耗了随机数——类型不匹配重抽路径触发实证）；mism=4 但 this8=7
+时 next 与全匹配相同（首采即命中匹配区，未触发重抽——拒绝采样路径
+正确性由 empty/mism 混合用例保证）。
+
+三、原版怪癖（照抄）
+--------------------
+① 三重拒绝（v>total-1 无符号 ja + [0x38] 类型不匹配 + 空格子 (0,0)，
+   **无限重抽**——区别于后两级的 100 次上限）；
+② **[0x38] 判定先于空格判定**（0x58C382 vs 0x58C38A——次序照抄，
+   类型不匹配的格子即使是 (0,0) 也先按类型判）；
+③ fild qword 无符号读（scale 与 r 都高 32 显式写 0，non movzx）；
+④ work 每项 0x50B、v*0x50 索引（手写乘 80——与活代码 0x578E60 同套）；
+⑤ 返回值 = work[v] 首 dword（x|(y<<16)）；
+⑥ RC=chop 全链（fmul 两次 + _ftol 截断在 FPCW=0x0E7F 下，C++ 需
+   MXCSR toward-zero）；
+⑦ 每轮只消耗 1 个随机数，重抽也消耗（同族怪癖表）。
+
+四、跨批次连接
+--------------
+0x58BE20（batch 1225——同采样骨架，本条 = 严格度第二级）+0x58C4A0/
+0x58C5A0（同族三/四级——batch 320 同批登记的「四级递增严格度」，待后续
+批次复刻）；[0x89C2DC]（MapGen 边长）、[0xABED10]（work 数组，每项
+0x50B——活代码 0x578E60 分配同套）；Randomizer 0x65C780（batch 002）；
+[0x7ED898] kInvUintMax（scaled_random.h 同常量）；FPCW 0x0E7F（batch 001）。
+
+五、状态
+--------
+0x58C320：cpp_reimplementation_verified + unit_test_verified
+（out 45/45 Eq + next 45/45 Eq——随机消耗次数逐位对拍，含类型不匹配
+重抽路径多消耗的用例）。
+partial：函数精确名（「随机取已占用且类型匹配格子」推断——死代码无
+运行观测）、this->[8] 字段语义（类型/归属字段推断）、调用方传参契约
+（死代码零引用）。
+本批产品代码新增 dead_code_58c320.{h,cpp} + 测试 + CMake 登记；
+ctest 86/86 全绿。

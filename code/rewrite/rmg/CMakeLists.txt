@@ -44,7 +44,8 @@ add_library(ra2_rmg
   dead_code_7250.cpp
   dead_code_7440.cpp
   dead_code_7640.cpp
-  dead_code_58be20.cpp)
+  dead_code_58be20.cpp
+  dead_code_58c320.cpp)
 
 # x87 汇编模块：NormalDeviate 的 u/v/s 计算需要 80 位中间精度
 # （原版 MSVC 6.0 用 x87；MSVC 2022 SSE2 即使 /arch:IA32 也不生成 x87）
@@ -372,4 +373,14 @@ if(RA2_BUILD_TESTS)
   target_compile_definitions(test_dead_code_58be20 PRIVATE
     RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
   add_test(NAME dead_code_58be20 COMMAND test_dead_code_58be20)
+
+  # 死代码复现：0x58C320 随机取「已占用且类型匹配」格子（thiscall+1 栈参
+  # ret 4：ecx=this 读 [this+8]、[esp+4]=输出指针；★p->[0x38]==this->[8]
+  # 类型判定先于空格判定），黄金由 emu_oracle 指令级模拟取得
+  # （deadcode_58c320_golden.txt；next 字段校验随机消耗次数）
+  add_executable(test_dead_code_58c320 test/test_dead_code_58c320.cpp)
+  target_link_libraries(test_dead_code_58c320 PRIVATE ra2_rmg gtest_main)
+  target_compile_definitions(test_dead_code_58c320 PRIVATE
+    RA2_GOLDEN_DIR="${RA2_ROOT_DIR}/memory/data/rmg")
+  add_test(NAME dead_code_58c320 COMMAND test_dead_code_58c320)
 endif()
