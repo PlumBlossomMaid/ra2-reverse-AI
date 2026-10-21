@@ -1,0 +1,155 @@
+frontier batch 1213 —— MSVC6 CRT wcstod/strtod 族前导空白跳过计数器 0x7D45BA（归档，带计数读取循环）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D45BA（37B,
+uc=1, callers=2 探针实测 0x7D3ABA/0x7D3C3E）。TSV 无既有
+行。TARGET = 0x007D45BA。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D45BA 行。
+
+一、链语义（disasm 全 37B + 双调用宿主交叉 + 双依赖登记
+交叉，0x7D45BA-0x7D45DE）
+--------------------------------------------------------------
+签名（确认）：cdecl 2 参（[esp+4]=int* count 计数器指针、
+[esp+8]=stream 流上下文），返回最后一个非空白字符（ax/di
+低 16 位）。
+
+主体（0x7D45BA-0x7D45DE）：
+007d45ba  push esi
+007d45bb  mov esi, [esp+8]                 ; ★esi = 参1
+                                           ;   &count（push 后
+                                           ;   [esp+8]=原[esp+4]）
+007d45bf  push edi
+007d45c0  push [esp+0x10]                  ; ★push 参2 stream
+                                           ;   （两次 push 后
+                                           ;   [esp+0x10]=原
+                                           ;   [esp+8]）
+007d45c4  inc dword[esi]                   ; ★(*count)++
+007d45c6  call 0x7d4596                    ; ★★TSV:1921 CRT 流
+                                           ;   字符读取器薄包
+                                           ;   装（0x7DA512 直
+                                           ;   通——读一个字符）
+007d45cb  mov edi, eax                     ; edi = ch
+007d45cd  push edi
+007d45ce  call 0x7cb8a8                    ; ★★TSV:1857 宽字
+                                           ;   符空白分类（掩
+                                           ;   码 8 _iswctype）
+007d45d3  pop ecx
+007d45d4  test eax, eax
+007d45d6  pop ecx                          ; 清 stream 参
+007d45d7  jne 0x7d45c0                     ; ★空白 → 循环
+                                           ;   （再 inc/再读）
+007d45d9  mov ax, di                       ; 返回最后非空白
+                                           ;   字符
+007d45dc  pop edi
+007d45dd  pop esi
+007d45de  ret
+
+★语义：**MSVC6 CRT wcstod/strtod 族前导空白跳过计数器
+（推断名——跳过流前导空白并累计消费字符数）**——cdecl
+2 参：
+  do {
+      (*count)++;                  // 每读一字符计数 +1
+      ch = 0x7D4596(stream);       // 流字符读取
+  } while (0x7CB8A8(ch));          // 空白（掩码 8）继续
+  return ch;                       // 返回第一个非空白字符
+  = strtod/wcstod 解析的空白跳过前置（计数供解析后偏移量
+  结算——消费长度 = count 值），最后非空白字符作为首解析
+  字符交给下游。
+
+★调用点（探针 E8 实测 2 处）：
+  ① 0x7D3ABA（wcstod/strtod 族主解析宿主，未登记）：前
+     缀链 push 8/push eax/call 0x7D3920（★★TSV:141
+     _iswctype 掩码 8 空白检查）→ dec [ebp-4]（★count--）/
+     lea eax,[ebp-4]/push [ebp+8]（stream）/push eax（&count）
+     → call 0x7D45BA（★本批）→ pop ecx×2 → push eax →
+     call 0x7D45A1（★★TSV:165 十进制两位数格式化守卫 -1
+     直通）→ inc edi×2 → mov ax,[edi]……（继续数值解析
+     ）——计数流共用（[ebp-4] 计数器先 dec 再交本批循环）
+     ；
+  ② 0x7D3C3E（同族另一分支）：movzx esi,[edi]/or esi,0x20
+     /cmp esi,0x6e（'n'）/0x63（'c'）/0x7b（'{'）（★
+     inf/nan/hex 前缀判定）→ push [ebp+8]/lea eax,[ebp-4]
+     /push eax → call 0x7D45BA（★本批）→ pop ecx → jmp
+     0x7D3C51——前缀分支也走空白跳过（计数同 [ebp-4]）。
+  两调用点均传 &count=[ebp-4]（宿主局部计数器）+ stream=
+  [ebp+8]（宿主参）。
+
+★E8 被调者（2 个，全已登记）：
+  ① 0x7D4596（★★TSV:1921 crt_runtime_verified——CRT 流
+     字符读取器薄包装 11B，0x7DA512 直通 fgetc/fgetwc 前
+     端，batch 1080）；
+  ② 0x7CB8A8（★★TSV:1857 crt_runtime_verified——宽字符
+     空白分类掩码 8，_iswctype(0x7D3920) 转发，batch 1023）。
+  全部已登记，无未登记依赖。
+
+★全局：零（纯栈 + 调用方指针传参）。
+
+★原版怪癖（照抄）：
+  ① do-while 先读后判（无条件先 inc/读一字符再判空白）—
+     —与标准 while 前导跳过不同，流至少读一个字符；
+  ② 计数器每轮 +1（含被跳过空白）——消费长度统计含空白
+     （strtod 偏移量语义）；
+  ③ 空白判定走宽字符 _iswctype（掩码 8）而非窄字符
+     isspace——wcstod 侧读宽流（[esi+0xC] 位 0x40 宽窄分
+     流见 batch 1059 0x7DA512）；
+  ④ 返回最后一个非空白字符经 ax=di（edi 仅低 16 位有效）
+     ——高 16 位不清理（调用方按字符用）；
+  ⑤ stream 参数经两次 push 后 [esp+0x10] 读取（esi/edi 各
+     push 后偏移 +8 的栈读法）——编译器栈偏移惯用；
+  ⑥ 两调用点共享 [ebp-4] 计数器（先 dec 再交循环再传
+     &count）——计数回退语义在调用方（本批只增不减）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 流解析
+设施按商业库纪律归档；依赖 TSV:1921/1857 已实证）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D45BA = MSVC6 静态 CRT wcstod/strtod 族空白
+   跳过计数器——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_
+   region_layout_crt_provenance）；流读取 + 空白分类 + 计数
+   = CRT 数值解析标准形态（调用点 strtod/wcstod 主解析链
+   同域）。
+2. 依赖：0x7D4596（TSV:1921）+ 0x7CB8A8（TSV:1857）全部
+   已登记——重写 gamemd 时用等价运行时（std::strtod 语义
+   / 手动空白跳过）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 流解析设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 37B + 双调用宿主交叉 +
+双依赖登记交叉；函数名「wcstod/strtod 族前导空白跳过计
+数器」由流读取循环 + 空白分类 + 计数语义交叉标注）。
+
+四、跨批次闭合
+------------
+★TSV:1921（batch 1080）：0x7D4596 流字符读取器薄包装——
+  本批循环读取现场交叉（每轮一读）。
+★TSV:1857（batch 1023）：0x7CB8A8 宽字符空白分类掩码 8—
+  —本批循环判定现场交叉（空白继续）。
+★TSV:165（batch 037/043）：0x7D45A1 十进制两位数格式化
+  守卫——调用点 0x7D3ABA 后接链（本批返回字符交其处理）。
+★TSV:141（batch 044/056）：0x7D3920 _iswctype——调用点
+  ①前接空白检查（宿主自身依赖）。
+★调用宿主（未登记候选）：0x7D3Axx/0x7D3Cxx wcstod/strtod
+  主解析函数——后续批次按池顺序处理。
+
+五、状态
+-------
+crt_runtime_verified（0x7D45BA：MSVC6 CRT wcstod/strtod 族
+前导空白跳过计数器归档；全 37B + 双调用宿主交叉 + 双依赖
+登记交叉；不写 C++ 模型不做 golden——CRT 流解析商业库
+层；函数名由流读取循环 + 空白分类 + 计数语义交叉标注）。
+TSV 新增 0x007D45BA 行。
+
+★本批实锤：do{(*count)++; ch=0x7D4596(stream);}while(
+  0x7CB8A8(ch))——流前导空白跳过 + 消费计数，返回最后非
+  空白字符；唯一两调用点（0x7D3ABA/0x7D3C3E）均在
+  wcstod/strtod 族主解析链，共享 [ebp-4] 计数器；双依赖
+  全已登记。
+相邻待续：batch 1214 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7DBC05(37B, callers=1)/0x7D219A(36B,
+callers=2)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1212 已完（MSVC6 CRT LocalFree 析构体
+0x7DCE3B，commit 79f9f6e）。
