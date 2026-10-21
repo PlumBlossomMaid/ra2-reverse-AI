@@ -1,0 +1,151 @@
+frontier batch 1208 —— MSVC6 CRT 浮点特性探测延迟绑定器 0x7CEAFF（归档，IsProcessorFeaturePresent 动态解析）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CEAFF（41B,
+uc=1, callers=1 探针实测 0x7C8F4B）。TSV 无既有行。
+TARGET = 0x007CEAFF。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CEAFF 行。
+
+一、链语义（disasm 全 41B + 双 IAT 槽实名实锤 + 回退目标
+交叉 + 调用宿主，0x7CEAFF-0x7CEB23）
+--------------------------------------------------------------
+签名（确认）：cdecl 0 参，返 eax（BOOL——IsProcessor
+FeaturePresent(0) 结果或 FDIV 自检 0/1）。
+
+主体（0x7CEAFF-0x7CEB23）：
+007ceaff  push 0x7f988c                   ; ★★"KERNEL32"
+                                          ;   （探针 dump 8B
+                                          ;   实锤）
+007ceb04  call dword[0x7e1240]            ; ★★IAT [0x7E1240] =
+                                          ;   KERNEL32!
+                                          ;   GetModuleHandleA
+                                          ;   （导入表反查实锤）
+007ceb0a  test eax, eax
+007ceb0c  je 0x7ceb23                     ; 模块句柄失败 → 回退
+007ceb0e  push 0x7f9870                   ; ★★"IsProcessor
+                                          ;   FeaturePresent"
+                                          ;   （探针 dump 25B
+                                          ;   实锤）
+007ceb13  push eax                        ; hModule
+007ceb14  call dword[0x7e1250]            ; ★★IAT [0x7E1250] =
+                                          ;   KERNEL32!
+                                          ;   GetProcAddress
+007ceb1a  test eax, eax
+007ceb1c  je 0x7ceb23                     ; 函数指针失败 → 回退
+007ceb1e  push 0                          ; ★PF_ 特性号 0
+007ceb20  call eax                        ; ★IsProcessorFeature
+                                          ;   Present(0)
+007ceb22  ret                             ; 返 BOOL
+; → 回退路径（0x7CEB23）：
+007ceb23  jmp 0x7ceac1                    ; ★★jmp batch 1179
+                                          ;   已登记 0x7CEAC1
+                                          ;   x87 FDIV 精度自检
+                                          ;   器（TSV:2023）
+
+★语义：**MSVC6 CRT 浮点特性探测延迟绑定器（推断名——
+IsProcessorFeaturePresent 动态解析包装）**——cdecl 0 参：
+  ① GetModuleHandleA("KERNEL32")（IAT [0x7E1240]）；
+  ② GetProcAddress(hModule,"IsProcessorFeaturePresent")
+     （IAT [0x7E1250]）；
+  ③ 成功 → push 0（★PF_FLOATING_POINT_PRECISION_ERRATA
+     特性号 0）call 函数指针 → ret 返 BOOL；
+  ④ 任一步失败 → jmp 0x7CEAC1 回退 x87 FDIV 精度自检
+     （batch 1179 已登记——4195835/3145727 Pentium FDIV
+     bug 检测样板）。
+  = CRT 启动期浮点单元特性探测：Win2000+ 走系统 API，老
+  系统/缺 API 时回退硬件自检（两路探测同一语义——浮点精
+  度勘误存在性）。
+
+★调用点（探针 E8 实测 1 处 0x7C8F4B）：宿主 0x7C8F46（23B
+  CRT 浮点初始化序列，scan 池候选）：call 0x7C8F5E（★★
+  TSV:2028 batch 1184 浮点格式化函数指针表初始化器）→
+  call 0x7CEAFF（★本批探测）→ mov [0xB781A0],eax（★探测
+  结果存全局）→ call 0x7CEAAF（★scan 池候选 18B）→
+  fnclex（★清 x87 异常标志）→ ret——浮点子系统装配序
+  列：格式化表 → 特性探测 → 结果落全局 → 尾件 → 清 FPU
+  状态。
+
+★E8 被调者（0 个）：无 E8——两处 API 调用均经 IAT 槽
+  （call dword[abs]），回退经 jmp（非 call）。
+
+★IAT 依赖（2 个，导入表反查实锤）：[0x7E1240] =
+  KERNEL32!GetModuleHandleA + [0x7E1250] =
+  KERNEL32!GetProcAddress。
+
+★全局：写 0 处（探测结果由调用方 0x7C8F46 存 [0xB781A0]）；
+  读 .rdata 两字符串 [0x7F988C]="KERNEL32"、[0x7F9870]=
+  "IsProcessorFeaturePresent"。
+
+★原版怪癖（照抄）：
+  ① 双 IAT 槽分离调用（GetModuleHandleA 经 [0x7E1240]、
+     GetProcAddress 经 [0x7E1250]）——同一 DLL 两 API 不
+     合并取指；
+  ② GetProcAddress 失败同样走 jmp 0x7CEAC1（两失败点共用
+     一个回退出口）——双 test/je 汇合到同 jmp；
+  ③ 特性号 0 硬编码 push 0（PF_FLOATING_POINT_PRECISION_
+     ERRATA）——只探测浮点精度勘误一项，不探测 SSE 等；
+  ④ 回退用 jmp（尾跳）非 call——0x7CEAC1 的 eax 约定（返
+     0/1）与 IsProcessorFeaturePresent 的 BOOL 语义天然兼
+     容（两路返回值同为 0/1 判定）；
+  ⑤ 调用点宿主 0x7C8F46 夹 fnclex（探测后清 x87 异常）—
+     —FDIV 自检若置 FPU 异常位在此清掉；
+  ⑥ 探测结果落 [0xB781A0] 全局（CRT 启动期一次性写）——
+     后续浮点路径按此全局分派（语义推断，消费点未确认）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 启动探测
+设施按商业库纪律归档；回退目标 batch 1179 已实证）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CEAFF = MSVC6 静态 CRT 浮点特性探测延迟绑定
+   器——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_
+   layout_crt_provenance）；GetModuleHandleA+GetProcAddress
+   动态解析 + 回退硬件自检 = CRT 启动期浮点探测标准形态
+   （回退目标 batch 1179 FDIV 自检同域）。
+2. 依赖：双 IAT 槽已实名实锤 + 回退目标 0x7CEAC1 已登记
+   （TSV:2023）+ 宿主前件 0x7C8F5E 已登记（TSV:2028）——
+   重写 gamemd 时用等价运行时（std:: 特性检测 / 直接调用
+   Win32 API 语义）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 启动探测设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 41B + 双 IAT 槽实名 + 回
+退目标交叉；函数名「浮点特性探测延迟绑定器」由双 IAT 调
+用 + 特性号 0 + 回退 jmp 交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1179：0x7CEAC1 x87 FDIV 精度自检器（TSV:2023）——
+  本批回退 jmp 目标（彼批 62B 全登记，4195835/3145727
+  Pentium FDIV bug 检测样板）——两路探测同一浮点精度语
+  义闭合。
+★batch 1184：0x7C8F5E 浮点格式化函数指针表初始化器
+  （TSV:2028）——本批宿主前件（0x7C8F46 先调彼再调本批）。
+★IAT 槽纪律（batch 1116 + 1191/1203 实名手段）：[0x7E1240]/
+  [0x7E1250] 导入目录反查实名 GetModuleHandleA/GetProcAddress
+  ——同 batch 1203 [0x7E10E0]/[0x7E1200] 手段。
+★宿主 0x7C8F46 + 0x7CEAAF：scan 池未登记候选——后续批次
+  按池顺序处理。
+
+五、状态
+-------
+crt_runtime_verified（0x7CEAFF：MSVC6 CRT 浮点特性探测延迟
+绑定器归档；全 41B + 双 IAT 槽实名 + 回退目标交叉；不写
+C++ 模型不做 golden——CRT 启动探测商业库层；函数名由双
+IAT 调用 + 特性号 0 + 回退 jmp 交叉标注）。TSV 新增
+0x007CEAFF 行。
+
+★本批实锤：IsProcessorFeaturePresent 动态解析——双 IAT
+  实名（GetModuleHandleA/GetProcAddress）+ "KERNEL32"/
+  "IsProcessorFeaturePresent" 字符串 dump + push 0（PF_浮
+  点精度勘误）+ 失败 jmp 0x7CEAC1 回退 FDIV 自检（batch
+  1179 已登记）；唯一调用点 0x7C8F4B 在 CRT 浮点装配序列
+  宿主（0x7C8F46）中，结果落 [0xB781A0]。
+相邻待续：batch 1209 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7E01D2(41B, callers=1)/0x7C91A5(40B,
+callers=2)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1207 已完（MSVC6 CRT 锁保护对象析构体
+0x7C8A8E，commit d47118e）。
