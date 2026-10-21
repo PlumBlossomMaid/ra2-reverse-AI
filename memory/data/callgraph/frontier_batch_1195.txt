@@ -1,0 +1,125 @@
+frontier batch 1195 —— MSVC6 CRT 双表字符分类判定器 0x7DAE6E（归档，_isctype 双表变体）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DAE6E（49B,
+uc=1, callers=1 池登记；探针实测 E8 callers=11 全在
+0x7DAD99-0x7DAE3E）。TSV 无既有行。TARGET = 0x007DAE6E。
+C++ 模型：无（见「三态判定」）。TSV：新增 0x007DAE6E 行。
+
+一、链语义（disasm 全 49B + 双表引用分布 + 调用点宿主，
+0x7DAE6E-0x7DAE9E）
+--------------------------------------------------------------
+签名（推断）：cdecl 3 参（[esp+4]=字符值、[esp+8]=词表掩
+码、[esp+0xC]=单字节表测试位），返 1 命中 / 0 未命中。
+
+主体（0x7DAE6E-0x7DAE9E）：
+007dae6e  movzx eax,byte[esp+4]                ; eax = 字符（参1）
+007dae73  mov cl,byte[esp+0xc]                 ; cl = 测试位（参3）
+007dae77  test byte[eax+0xb78961],cl           ; ★★[0xB78961] 单字节属
+                                              ;   性表 & 参3
+007dae7d  jne 0x7dae9b                         ; 命中 → 返 1
+007dae7f  cmp dword[esp+8],0
+007dae84  je 0x7dae94                          ; ★参2==0 → 直返 0
+007dae86  movzx eax,word[eax*2+0x87c59a]       ; ★★[0x87C59A] 词表 2B/
+                                              ;   项 & 参2
+007dae8e  and eax,dword[esp+8]
+007dae92  jmp 0x7dae96
+007dae94  xor eax,eax                          ; 未命中 → 0
+007dae96  test eax,eax
+007dae98  jne 0x7dae9b                         ; 词表命中 → 返 1
+007dae9a  ret                                  ; ★返 0
+007dae9b  push 1/pop eax/ret                   ; ★★返 1（push 1/pop
+                                              ;   eax 省字节惯用）
+
+★语义：**MSVC6 CRT 双表字符分类判定器（推断名——_isctype
+双表变体）**——cdecl 3 参：
+  ① 先查 [0xB78961] 单字节属性表（字符索引，batch
+     1036/1047/1051/1097/1100 大批量消费的 isctype 族
+     表）& 参3（单字节测试位）——命中直接返 1；
+  ② 未命中且参2 != 0 → 查 [0x87C59A] 词表（2B/项，char
+     *2 索引，batch 029/048 的 0x7D6CB5 `MOV EAX,0x87c59a`
+     同表）& 参2（词掩码）——命中返 1；
+  ③ 参2==0 或双表皆未命中 → 返 0。
+  = isctype 判定双表合查（属性表快查 + 词表慢查两层）。
+
+★调用点（探针 E8 实测 11 处，全在 0x7DAD99-0x7DAE3E）：
+  宿主 0x7DADxx 大函数（格式化引擎）内部 11 次调用——
+  字符分类判定逐字符消费（0x7dad99/0x7dadaa/0x7dadbb/
+  0x7dadcf/0x7dade3/0x7dadf7/0x7dae0b/0x7dae1c/0x7dae2d/
+  0x7dae3e 等）。池登记 callers=1 与探针 11 处差异 = 池口
+  径只算外层调用（宿主内多调用点合一）。
+
+★E8 被调者：**零子调用**（全 49B 纯表查+位测试）。
+
+★全局：双表引用全 exe 分布——[0xB78961] 19 处（0x7cb6d2/
+  0x7cbbb2/0x7d16cf/0x7d16ef/0x7d352f/0x7d3577/0x7d35d1/
+  0x7d37d5/0x7d37f0/0x7d3821/0x7d383f/0x7d38c5/0x7d5752/
+  0x7d5c53/0x7d5c98/0x7d5d7b/0x7d5d94 + 本批 0x7dae77）+
+  [0x87C59A] 2 处（0x7d6cb6 = batch 029/048 已登记语境 +
+  本批 0x7dae86）——两表均已登记语境。
+
+★原版怪癖（照抄）：
+  ① 双表串行合查（先单字节表 & 参3 快查，未中再词表 &
+     参2）——MSVC6 判定层叠形态（快表短路）；
+  ② 参2==0 特判（je 0x7dae94 直返 0 跳过词表）——掩码 0
+     语义调用方可关词表；
+  ③ [0x87C59A] 2B/项按 char*2 索引——batch 029/048 同表
+     只取低字（movzx word）；
+  ④ 命中统一返 1（push 1/pop eax 省字节惯用）——无命中
+     返回区分（0/1 布尔）；
+  ⑤ 无栈帧（不 push ebp 直接 [esp+N] 参读）——leaf 最小
+     形态；
+  ⑥ 表测试用 test byte（单字节表）/and eax（词表）两种
+     位测形态并存。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 字符分类
+设施按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DAE6E = MSVC6 静态 CRT 字符分类判定——0x7C-
+   0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）；[0xB78961] 属性表 + [0x87C59A] 词表双查 =
+   CRT isctype 族标准形态（batch 1036/1047/1051/1097/1100
+   + 029/048 全同链）。
+2. 依赖：零 E8 + 双表已登记语境——重写 gamemd 时用等价运
+   行时（std::is* / ctype 表查询）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 字符分类设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 49B + 双表引用分布 + 调
+用点宿主；函数名「双表字符分类判定器」由单字节表快查 + 词
+表慢查 + 0/1 布尔返回交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1036/1047/1051/1097/1100：isctype 族 [0xB78961]
+  大批量消费（掩码 4/0x10/0x20 位测试 + DBCS lead-byte 判
+  定）——本批为同表双表合查变体。
+★batch 029/048：0x7D6CB5 `MOV EAX,0x87c59a`（_setmbcp
+  ctype 表装载）——[0x87C59A] 词表写侧，本批读侧消费。
+★batch 1161/1185：0x7D453C/0x7D2132 字符分类映射器——同
+  族分类判定（locale 阈值双路径对照——本批无 locale 阈值
+  直查双表）。
+★batch 1190：0x7D3679 CJK 代码页→LCID——同 CRT locale/
+  字符域。
+
+五、状态
+-------
+crt_runtime_verified（0x7DAE6E：MSVC6 CRT 双表字符分类判定
+器归档；全 49B + 双表引用分布；不写 C++ 模型不做 golden
+——CRT 字符分类商业库层；函数名由单字节表快查 + 词表慢查
++ 0/1 布尔返回交叉标注）。TSV 新增 0x007DAE6E 行。
+
+★本批实锤：_isctype 双表合查——[0xB78961] 单字节属性表
+  & 参3 快查短路，未中再 [0x87C59A] 词表 2B/项 & 参2（参2
+  ==0 跳过），命中返 1 / 未中返 0；零 E8 纯查表，11 调用
+  点全在 0x7DADxx 格式化引擎宿主内。
+相邻待续：batch 1196 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7DDE50 __strrev(48B, callers=2)/0x7C94BC
+(47B, callers=1)/0x7C95D3(47B, callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1194 已完（MSVC6 CRT fopen/fdopen 家族薄包装
+0x7CA814，commit 21f989e）。
