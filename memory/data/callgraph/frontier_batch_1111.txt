@@ -1,0 +1,173 @@
+frontier batch 1111 —— 代码页转换包装器（查大小→分配→填充）0x7DC5DC（归档，0x7D 区 Westwood/CRT 交界样本）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DC5DC（275B,
+uc=1, callers=3 探针实测；TSV 无既有行）。TARGET =
+0x007DC5DC。C++ 模型：无（见「三态判定」）。TSV：新增
+0x007DC5DC 行。
+
+⚠️ 归属：0x7D 区混入样本延续 batch 1086-1106 修正链——本
+函数跨 CRT 设施（malloc/alloca/SEH）与 Westwood 对象方法
+（分派槽目标 thiscall 虚表形态），判 semantics_verified。
+
+一、链语义（disasm 全 275B + 槽目标交叉，0x7DC5DC-0x7DC6EE）
+--------------------------------------------------------------
+签名（推断）：cdecl 5 参（param1/param2=转换源相关、param3
+=输出缓冲、param4=缓冲大小、param5=locale 名，0 则取全局
+[0xB782B0]），返回转换结果字节数/0。
+
+头部 SEH + 全局门（0x7DC5DC-0x7DC63E）：
+007dc5dc  push ebp/mov ebp,esp/push -1
+007dc5e0  push 0x7FA488                    ; ★SEH handler
+007dc5e5  push 0x7CC1D4 / mov eax,fs:[0]   ; ★scopetable/fs:[0] 链
+007dc5f2  push eax/mov fs:[0],esp/sub esp,0x30
+007dc5ff  push ebx/esi/edi
+007dc603  mov eax,[0xB7859C]               ; ★★全局门（三态）
+007dc60d  cmp eax,0/jne 0x7DC63B
+; → 门==0：首次初始化
+007dc60f  push 0/push 0/push 1/push 0
+007dc61b  call [0x7E1338]                  ; ★★槽：西文 4 参初始化
+007dc621  test eax,eax/je 0x7DC62C
+007dc623  push 1/pop eax/jmp 0x7DC639
+007dc62c  push 0/push 0/push 1/push 0
+007dc638  call [0x7E130C]                  ; ★★槽：备选初始化
+007dc63e  test eax,eax/je 0x7DC6EE         ; 都失败 → 返 0
+007dc640  push 2/pop eax
+007dc645  mov [0xB7859C],eax               ; ★门 = 1 或 2
+; → 门==2（0x7DC64C cmp eax,2 jne 0x7DC657）
+007dc652  push [ebp+0x14]/push [ebp+0x10]/push [ebp+0xC]/push [ebp+8]
+007dc654  call [0x7E130C]                  ; ★★直接转发 4 参
+007dc659  jmp 0x7DC6E8
+; → 门==1（0x7DC657 起）：
+007dc65f  mov eax,[ebp+0x18]/or eax,eax/jne 0x7DC668
+007dc665  push eax/pop [ebp+0x18]  ; ★param5==0
+007dc668  mov eax,[0xB782B0]               ; ★★默认为 setlocale 全局
+007dc66d  test eax,eax/cmovne [ebp+0x18],eax ; ★[0xB782B0] 兜底
+007dc671  push 0/push 0/push [ebp+0xC]/push [ebp+8]
+007dc677  call [0x7E1338]                  ; ★★查所需大小
+007dc67c  mov [ebp-0x1C],eax
+007dc67f  add eax,eax/add eax,3/and al,0xFC ; ★对齐
+007dc688  call 0x7CA650                     ; ★★_alloca_probe（batch 已登记）
+007dc68d  mov edi,esp
+007dc68f  test edi,edi/je 0x7DC6EE
+007dc695  push [ebp-0x1C]/push edi/push [ebp+0xC]/push [ebp+8]
+007dc69b  call [0x7E1338]                  ; ★★填充缓冲
+007dc6a0  push [ebp+0x14]/push [ebp+0x10]/push 0/push -1
+007dc6a8  push edi/push 0x220/push [ebp+0x18]
+007dc6b2  call [0x7E124C]                  ; ★★8 参收尾转换
+007dc6b7  …（SEH 尾：恢复 fs:[0]/栈清理）
+007dc6e8  …（清 SEH 链/leave/ret）
+
+★语义：**代码页转换包装器（推断名——查大小→分配→填充三
+阶段）**——cdecl 5 参（param1/param2=转换源、param3=输出缓
+冲、param4=缓冲大小、param5=locale 名）：
+  ① 全局门 [0xB7859C] 三态惰性初始化：0 → 槽 [0x7E1338]
+     初始化，失败试 [0x7E130C]，成功置门=1/2；
+  ② 门==2 → 4 参转发 [0x7E130C];
+  ③ 门==1 → param5 为 0 时取 [0xB782B0]（batch 1109
+     setlocale 全局名称槽）兜底 → 调 [0x7E1338] 查所需大小
+     → 对齐（add eax,eax+3/and al,0xFC）→ _alloca_probe 栈
+     分配 → 调 [0x7E1338] 填充 → 调 [0x7E124C] 8 参收尾
+     （含 0x220/edi/-1 参数）；
+  ④ 失败统一返回 0。
+  调用点宿主（0x7DAF40 区）三连调用 = 经典「buf=0 查大小 →
+  malloc(0x7C9430) → 带 buf 填充」CRT 转换模式。
+
+★槽目标交叉（探针 PE 字节 + 反汇编）：
+  [0x7E1338]→0x410FCE（0x410FD2 起 = mov edx,[ecx]/lea
+    eax,[esp+0x18]/call [edx+0x14]——★★thiscall 虚表槽分派）
+  [0x7E130C]→0x410F0E（lea eax,[eax+ecx*2]/add edi,ecx/esi+
+    0x10/+0x18 字段——★★宽字符步长推进循环）
+  [0x7E124C]→0x40FA00（mov byte[eax],al; ret——★★3B 字节写
+    stub）
+  [0x7E1200]→0x40F868（xor al,al/pop 族/ret 8——★★false 返
+    回 stub + 0x40F870 mov edx,[ecx+0x10] 容器线性查找：逐项
+    cmp [ecx],esi）
+  → 0x410xxx 密集小函数区（0x410CD2-0x411064）为分派目标
+    族，多含 thiscall 虚表分派形态。
+
+★调用点（探针 E8 实测 3 处，同宿主 0x7DAF40 内）：0x7DAF56/
+  0x7DAF78/0x7DAFA3。宿主语义：
+  · 0x7DAF44 push 0x80/push eax(buf)/push [ebp+0x10]/push
+    [ebp+0xC]/call 0x7DC5DC —— 5 参（128B 栈缓冲）
+  · 失败后 call [0x7E1200]/cmp eax,0x7A（★'z' 字符判定）→
+    重试查大小（三参 0）
+  · 成功 → call 0x7C9430（★★malloc batch 063）分配 esi 字
+    节 → 第三次带 malloc 缓冲调用
+  · 0x7DAFBD mov [ecx],eax —— 结果写 [ebp+0x14] 输出指针
+
+★原版怪癖（照抄）：
+  ① 全局门 [0xB7859C] 三态（0 未初始化/1 主槽可用/2 备槽可
+     用）——主槽 [0x7E1338] 失败自动降级备槽 [0x7E130C]；
+  ② param5（locale 名）为 0 时从 [0xB782B0]（setlocale 全
+     局名称槽，batch 1109 实锤写入端）兜底——转换默认跟随
+     当前 locale；
+  ③ 查大小与填充复用同一槽 [0x7E1338]（首调 buf=0 返回大
+     小，次调带栈缓冲填充）——两步走无独立大小 API 包装；
+  ④ 大小对齐 add eax,eax+3/and al,0xFC（×2 后 4 对齐——宽
+     字符 2 字节 ×2 语义）；
+  ⑤ 栈分配走 0x7CA650（_alloca_probe）而非 malloc（门==1
+     路径），而宿主用 malloc（0x7C9430）——两条分配路径并
+     存；
+  ⑥ SEH 包裹整个转换流程（__try/__except 语义，handler
+     0x7FA488）——CRT 转换函数标准防异常结构；
+  ⑦ 调用点 1 失败后经 [0x7E1200]（false stub + 0x7A 'z' 判
+     定）决定是否重试——多级降级路径。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：Westwood 对象方法
+分派目标，重写时按语义等价实现）。
+
+三、三态判定（为何 semantics_verified 而非 crt_runtime_verified）
+---------------------------------------------------------------
+1. 归属：0x7DC5DC = **Westwood/CRT 交界转换包装器**——①主
+   分派槽 [0x7E1338]/[0x7E130C]/[0x7E124C] 目标（0x410FD2
+   thiscall 虚表槽 0x14 分派、0x410F0E 宽字符推进、0x40FA00
+   3B 字节写 stub）为 Westwood 对象方法/表驱动形态（batch
+   1086-1106 修正链同判据）；②但函数自身复用 CRT 设施
+   （malloc 0x7C9430/_alloca_probe 0x7CA650/SEH/fs:[0] + 全局
+   [0xB782B0] batch 1109 setlocale 交叉）——0x7D 区 Westwood
+   与 CRT 交界样本。
+2. 依赖：槽表 0x7E1xxx（分派目标 0x410xxx）+ 0x7C9430
+   （malloc）+ 0x7CA650（_alloca_probe）+ [0xB7859C] 门 +
+   [0xB782B0] locale 全局——重写时按代码页转换语义等价实
+   现（西文/宽字符转换 + locale 默认值）。
+3. 复刻纪律：Westwood 对象方法分派 + CRT 混合——不按纯商
+   业库归档；代码页转换非 RMG 管线依赖，保留 semantics_
+   verified。
+→ 状态：semantics_verified（槽目标 thiscall 形态 + 三阶段
+转换模式 + setlocale 全局交叉；函数名「代码页转换包装器」
+为推断交叉标注——查大小→分配→填充由代码实测）。
+
+四、跨批次闭合
+------------
+★batch 1109：0x7CDD5A setlocale 条目更新器——本函数
+  [0xB782B0] 全局名称槽读取端交叉（1109 实锤写入端：
+  0x7CDE1C/0x7CDE26），转换默认 locale 同域。
+★batch 063：0x7C9430 malloc——宿主 0x7DAF87/0x7DAFB1 分配
+  转换结果缓冲交叉。
+★0x7CA650：_alloca_probe（batch 已登记）——本函数栈分配
+  交叉。
+★batch 1086-1106：0x7C 区 Westwood 混入修正链——本批 0x7D
+  区交界样本同判据（分派目标 thiscall 虚表形态）。
+
+五、状态
+-------
+semantics_verified（0x7DC5DC：代码页转换包装器归档；全
+275B + 槽目标反汇编 + 宿主三连调用交叉；不写 C++ 模型不做
+golden——代码页转换非 RMG 管线依赖；函数名「代码页转换包
+装器」为推断交叉标注——查大小→分配→填充/setlocale 全局
+兜底由代码实测；⚠️ 0x7D 区 Westwood/CRT 交界样本）。TSV
+新增 0x007DC5DC 行。
+
+★本批实锤：0x7D 区 Westwood 混入样本——分派槽目标族
+  0x410xxx（thiscall 虚表分派/push ecx-ecx 字节写 stub/宽字
+  符推进/容器线性查找）+ [0xB7859C] 三态门 + [0xB782B0]
+  setlocale 全局兜底——代码页转换三阶段包装器。
+相邻待续：batch 1112 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7D52B8(266B, callers=3)/0x7C9602(266B,
+callers=1)/0x7D9860(260B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1110 已完（MSVC6 CRT 浮点除法辅助器 0x7D7EE0，
+commit 5a9affe）。
