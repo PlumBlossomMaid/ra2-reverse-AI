@@ -1,0 +1,139 @@
+frontier batch 1227 —— 0x0058C4A0 死代码复刻：随机取「已占用且类型匹配且谓词通过」格子（231B）
+=======================================================================
+
+候选来源：用户指令三阶段①「RMG 死代码全部复现对齐」——batch 1226 补完
+0x58C320 后剩余 12 个无 REIMPL。0x58C4A0 是「四级递增严格度」第三级
+（+[0x44] 谓词 + 100 次上限），与 0x58C320 同骨架、多两道机制。
+TARGET = 0x0058C4A0。C++ 模型：code/rewrite/rmg/dead_code_58c4a0.{h,cpp}
+新增 DeadCode58C4A0(ctx) + DeadCode58C4A0World（CellPass 回调）。
+单测：test_dead_code_58c4a0.cpp 新增 DeadCode58C4A0.Golden
+（golden 55 行全对拍）。TSV 新增 0x0058C4A0_REIMPL 行。
+
+一、语义（全段反汇编逐条核对 + golden 55 行闭环）
+------------------------------------------------
+真义（机器码全 231B 确认，disasm.py 0x58C4A0 0xF0 + 0x58C58F 0x30）：
+  · 调用约定：**thiscall +1 栈参 ret 4**：
+    - ecx = this（读 [this+8] dword 比较基准；入口 `mov [esp+4],ecx`
+      存局部槽，push 4 寄存器后 [esp+0x14] 读回）
+    - [esp+4] = 输出指针（CellStruct {int16 x, int16 y}；成功出口
+      `mov eax,[esp+0x34]` / 失败出口 `mov eax,[esp+0x30]` = 原栈参1）
+  · side  = [0x89C2DC]；total = side*side（imul ecx,eax）
+  · scale = (double)(uint64)total（fild qword [esp+0x18]：存 {eax=total,
+    edi=0} 高 32 显式 0 无符号读）
+  · loop（0x58C4C7 起循环头）：
+      r = Random()（mov ecx,0xABE890 / call 0x65C780）
+      v = _ftol((double)(uint64)r * scale * kInvUintMax)
+        （mov {eax=r,edi=0} → fild qword 无符号 → fmul [esp+0x28]=scale
+          → fmul [0x7ED898]=kInvUintMax → call 0x7C5F00 _ftol）
+      cmp eax,esi（esi=total-1）/ ja 0x58C4E1 —— 拒绝采样（无符号，
+        ★回循环头只重取随机数，不消耗尝试计数）
+      p = [0xABED10] + v*0x50（lea esi,[eax+eax*4]; shl esi,4 = v*0x50）
+      ★rep movsd 0x14 dword（80B）把 work[v] 复制到 work[0]
+        （edi=ebp=[0xABED10] work 基址）——「当前格」= 复制后 work[0]
+      ★inc ebx（0x58C518）→ cmp ebx,0x64 / jge 0x58C567
+        —— **100 次尝试上限**（详见二、(1) 计数器语义）
+      if (work[0].[0x38] != this->[8]) goto loop    （类型不匹配重抽）
+      if (work[0].x == 0 && work[0].y == 0) goto loop（空格子重抽）
+      if (work[0].[0x44] byte == 0) goto loop        （★第三重前置判定）
+      ★cell = GetCellAt(0x5657A0, &work[0])（thiscall ecx=0x87F7E8，
+        1 栈参=坐标指针 ret 4）
+      ★if (0x486380(cell) == 0) goto loop           （谓词判定：
+        cell+0x38 == 0xFFFF || == 0 → al=1 通过）
+      *out = work[0] 首 dword（x | (y<<16)）；ret 4
+  · fail（0x58C567）：xor eax,eax → *out = (0,0)；ret 4
+    （★不额外采样——已消耗的 Random 不退）
+  · 全程 x87 FPCW=0x0E7F（RC=chop + PC53），复刻用 MXCSR toward-zero。
+
+公式（golden 55 行实证）：
+  loop: v = _ftol((double)(uint64)Random() * (double)(side*side)
+            * kInvUintMax)
+        若 (unsigned)v > side*side-1 → 重取随机数（不计数）
+        rep movsd 复制 work[v] 80B → work[0]；attempts++
+        若 attempts >= 100 → 失败返回 (0,0)
+        若 work[0].[0x38] != this->[8] → 重抽
+        若 work[0] 为 (0,0) → 重抽
+        若 work[0].[0x44] == 0 → 重抽
+        若 !CellPass(work[0]) → 重抽
+        返回 work[0] 首 dword（x | (y<<16)）
+
+★与 0x58C320 的差异（四条）：
+  ① **100 次尝试上限**（0x58C518 inc ebx + 0x58C520 cmp/jge）——前两
+     级是无限重抽；
+  ② **rep movsd 复制 work[v]→work[0] 工作区**（判定与输出都读复制后
+     work[0]，非直接 work[v]）；
+  ③ **第三重前置判定 [+0x44] byte != 0**（0x58C541-0x58C546）；
+  ④ **GetCellAt(0x5657A0) → 0x486380 谓词**（0x58C54C-0x58C560）——
+     谓词链第一次进入本族（前两级只查 work 内字段）。
+
+二、golden 采集（emu_oracle 指令级模拟）
+--------------------------------------
+探针 .qwen/tmp/_emu_deadcode_58c4a0.py：调 0x58C4A0（ecx=THIS 结构、
+栈参1=OUT），灌 side [0x89C2DC]、work [0xABED10]（HEAP 0x30004000，
+side²×0x50B，首 dword=x|(y<<16)、[+0x38]=field38、[+0x44]=field44）、
+this 结构 [0x30001000]（+8=比较基准）、GetCellAt 装配（cell 表
+0x40001000 独立映射 2MB、cell 对象 0x30006000 tile@+0x38，[0x87F924]
+表指针改写），seed_global 播种。
+存档 memory/data/rmg/deadcode_58c4a0_golden.txt：5 种子 × 11 用例 = 55 行。
+用例矩阵：side ∈ {4,8,10} × this8 ∈ {7,42} × tile ∈ {0,64} ×
+empty ∈ {0,2,20} × mism ∈ {0,4,30} × f44z ∈ {0,3,5}（tile=64 → 谓词
+全拦截 → 100 次失败出口 (0,0)；tile=0 → 谓词通过）。
+★next 字段 = 调用后下一次 Random() 值——校验随机消耗次数。
+
+(1) ★★本批实锤：100 次上限的计数器语义
+  C++ 初版把 `attempt >= 100` 检查放在下一轮循环开头，导致全拦截用例
+  多消耗 1 次 Random（next 校验 10/55 行失败）。反汇编逐指令核对：
+  0x58C518 `inc ebx`（紧接 rep movsd）→ 0x58C520 `cmp ebx,0x64` →
+  0x58C525 `jge 0x58C567`——**计数与检查在「被接受采样」的同一轮内
+  连续执行**（拒绝采样 ja 分支回 0x58C4E1 不经此路径）。故：
+  · 第 100 次被接受的采样即触发失败出口，共消耗 100 次 Random；
+  · 拒绝采样（ja 无符号）不消耗计数，只重取随机数；
+  · 失败出口 (0,0) 不额外采样。
+  hook 实证（.qwen/tmp/_diag_58c4a0.py）：单指令 hook 0x65C780 入口
+  计数 tile=64 用例 = 100 次（★hook 范围取 [addr, addr+8) 会虚高到
+  300——含函数体内指令的误触发，单指令边界才准）。
+
+(2) ★golden 修正：2 行旧探针产物
+  单测失败行 seed=3735928559 side∈{4,8} tile=64 的 next=0xD11DFC07
+  与当前探针重采 0xD928D779 不符——根因：golden 存档时探针的
+  CELL_OBJ tile 偏移还是旧版 0x40（写 0x40 处、谓词读 0x38 处 → tile
+  实际为 0 → 谓词本该通过却记录成失败路径）。修正探针 tile@0x38 后
+  重采，该 2 行 next 更正为 0xD928D779（C++ 侧实现本身一直正确——
+  单测失败显示的 nxt=3643332473=0xD928D779 恰为正确值，误报源自
+  golden 旧行）。教训：golden 存档必须与最终探针版本同源，探针改
+  偏移后要全量重采。
+
+三、原版怪癖（照抄）
+--------------------
+① 100 次尝试上限（前两级无限重抽，第三级开始有上限——四级递增的
+   核心差异之一；失败写 (0,0) 且随机数不回退）；
+② rep movsd 复制 work[v] 80B → work[0] 工作区（判定与输出都读复制
+   后的 work[0]）；
+③ 三重前置判定顺序：类型不匹配 → 空格 (0,0) → field44==0 → GetCellAt
+   谓词（次序照抄）；
+④ fild qword 无符号读（scale 与 r 都高 32 显式 0，non movzx）；
+⑤ v*0x50 手写乘 80（lea×5+shl×4——与活代码 0x578E60 分配同套）；
+⑥ RC=chop 全链（fmul 两次 + _ftol 截断，FPCW=0x0E7F）；
+⑦ 每轮只消耗 1 个随机数，拒绝/重抽/上限失败都消耗（同族怪癖表）。
+
+四、跨批次连接
+--------------
+0x58BE20（batch 1225——严格度第一级，同采样骨架）+0x58C320
+（batch 1226——第二级）+0x58C5A0（第四级，batch 320 同批登记的
+「四级递增严格度」，待后续批次复刻）；0x5657A0 GetCellAt（batch 065
+同族实锤——idx=y*512+x、越界/NULL→哑元 0xABDC50 回落）；0x486380
+（CellClass 谓词「无主」——TSV:314 已登记 cell+0x38==0xFFFF||==0）；
+[0x89C2DC]（MapGen 边长）、[0xABED10]（work 数组，每项 0x50B）；
+Randomizer 0x65C780（batch 002）；[0x7ED898] kInvUintMax
+（scaled_random.h 同常量）；FPCW 0x0E7F（batch 001）。
+
+五、状态
+--------
+0x58C4A0：cpp_reimplementation_verified + unit_test_verified
+（out 55/55 Eq + next 55/55 Eq——随机消耗次数逐位对拍，含 100 次上限
+不额外采样的失败出口与计数器 inc-before-cmp 语义）。
+partial：函数精确名（「随机取已占用且类型匹配且谓词通过格子」推断——
+死代码无运行观测）、this->[8]/[+0x44] 字段语义（类型/归属字段推断）、
+调用方传参契约（死代码零引用）、GetCellAt 哑元回落路径（golden 未覆盖
+越界坐标，探针装配全命中）。
+本批产品代码新增 dead_code_58c4a0.{h,cpp} + 测试 + CMake 登记；
+ctest 87/87 全绿。
