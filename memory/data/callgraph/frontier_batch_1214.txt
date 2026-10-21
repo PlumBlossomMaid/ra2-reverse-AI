@@ -1,0 +1,153 @@
+frontier batch 1214 —— MSVC6 CRT matherr 函数名查表器 0x7DBC05（归档，27 项线性 key→函数名）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7DBC05（37B,
+uc=1, callers=1 探针实测 0x7DBB5E）。TSV 无既有行。
+TARGET = 0x007DBC05。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007DBC05 行。
+
+一、链语义（disasm 全 37B + 表初值 dump + 字符串区 dump +
+调用宿主，0x7DBC05-0x7DBC29）
+--------------------------------------------------------------
+签名（确认）：cdecl 1 参（[esp+4]=key 错误码），命中返 val
+指针（char* 数学函数名），未命中返 0（eax）。
+
+主体（0x7DBC05-0x7DBC29）：
+007dbc05  xor ecx, ecx                     ; ecx = 索引 0
+007dbc07  mov eax, 0x87d628                ; eax = 表基址
+                                           ;   [0x87D628]
+; → 线性查表循环（0x7DBC0C）：
+007dbc0c  mov edx, dword[eax]              ; edx = key[i]
+007dbc0e  cmp edx, dword[esp+4]            ; key[i] == 参1？
+007dbc12  je 0x7dbc22                      ; 命中 → 取 val
+007dbc14  add eax, 8                       ; 下一项（步长 8）
+007dbc17  inc ecx                          ; 索引 +1
+007dbc18  cmp eax, 0x87d700                ; 表尾 [0x87D700)
+007dbc1d  jl 0x7dbc0c                      ; 未到表尾 → 循环
+007dbc1f  xor eax, eax / ret               ; ★未命中 → 返 0
+007dbc22  mov eax, dword[ecx*8+0x87d62c]   ; ★★命中 → val[i]
+                                           ;   = [0x87D62C+
+                                           ;   idx*8]（每项
+                                           ;   key@+0、val@+4）
+007dbc29  ret
+
+★表初值（探针 rva2off 全 27 项 dump，[0x87D628..0x87D700)
+  步长 8，key 升序排列）：
+  key=0x14 val=0x7FA444 "exp"   key=0x1D val=0x7FA440 "pow"
+  key=0x1A val=0x7FA43C "log"   key=0x1B val=0x7FA434 "log10"
+  key=0x1F val=0x7FA42C "sinh"  key=0x13 val=0x7FA424 "cosh"
+  key=0x21 val=0x7FA41C "tanh"  key=0x0E val=0x7FA414 "asin"
+  key=0x0D val=0x7FA40C "acos"  key=0x0F val=0x7FA404 "atan"
+  key=0x10 val=0x7FA3FC "atan2" key=0x05 val=0x7FA3F4 "sqrt"
+  key=0x1E val=0x7FA3F0 "sin"   key=0x12 val=0x7FA3EC "cos"
+  key=0x20 val=0x7FA3E8 "tan"   key=0x0C val=0x7FA3E0 "ceil"
+  key=0x0B val=0x7FA3D8 "floor" key=0x15 val=0x7FA3D0 "fabs"
+  key=0x1C val=0x7FA3C8 "modf"  key=0x19 val=0x7FA3C0 "ldexp"
+  key=0x11 val=0x7FA3B8 "_cabs" key=0x18 val=0x7FA3B0 "_hypot"
+  key=0x16 val=0x7FA3A8 "fmod"  key=0x17 val=0x7FA3A0 "frexp"
+  key=0x22 val=0x7FA39C "_y0"   key=0x23 val=0x7FA398 "_y1"
+  key=0x24 val=0x7FA394 "_yn"
+  ——全部为 math 函数名（Bessel/三角函数/指数对数/整型
+  取整等），key=0x0B..0x24（11..36）。
+
+★字符串区交叉（探针 dump 0x7FA350..0x7FA470）：0x7FA374 起
+  "1#QNAN"/"1#INF"/"1#IND"/"1#SNAN"（★float 打印错误值字
+  符串）、0x7FA354 起 "MessageBoxA\0user32.dll"（★延迟加
+  载 Win32 弹窗字符串）——MSVC6 CRT math 错误报告字符串
+  区（matherr 默认处理器域）。
+
+★语义：**MSVC6 CRT matherr 函数名查表器（推断名——错误
+  码 key → 数学函数名 val 指针）**——cdecl 1 参：
+  ① 线性遍历 [0x87D628..0x87D700) 27 项 {key@+0, val@+4}；
+  ② key[i]==参1 → 返 val[i]（math 函数名字符串指针）；
+  ③ 未命中 → 返 0（NULL）。
+  = matherr 默认处理器把错误码映射为函数名（报告消息用）
+  的查表端；宿主 0x7DBB55（matherr 默认处理器）传 [ebp+0xC]
+  查询后按返回值装配错误消息。
+
+★调用点（探针 E8 实测 1 处 0x7DBB5E）：宿主 0x7DBB55 起
+  （matherr 默认处理器，未登记，scan 池候选）：push ebp/
+  mov ebp,esp/sub esp,0x20/push [ebp+0xC]（★错误码）→ call
+  0x7DBC05（★本批查表）→ test eax,eax/pop ecx/mov
+  [ebp-0x1C],eax/je 0x7DBBC0（★未命中分支）→ mov
+  eax,[ebp+0x10]/mov [ebp-0x18],eax → mov eax,[ebp+0x14]/
+  mov [ebp-0x14],eax → mov eax,[ebp+0x18]/mov esi,[ebp+8]
+  ……（5 参处理器：函数名 + 参数数组装配消息）。
+
+★E8 被调者：零 E8（纯线性查表）。
+
+★全局：读表 [0x87D628..0x87D700)（.data 27 项静态初值）；
+  零写。
+
+★原版怪癖（照抄）：
+  ① 线性查表（非二分）——27 项顺序扫描，key 升序但无
+     排序利用（编译器生成朴素扫描）；
+  ② 每项步长 8（key dword + val dword 紧凑对）——val 指
+     针与 key 同条目；
+  ③ 命中索引用 ecx*8 回算（mov eax,[ecx*8+0x87D62C]）——
+     ecx 兼作计数与偏移（add eax,8 推进 + inc ecx 计数双
+     路）；
+  ④ 表尾比较用 cmp eax,0x87D700（基址+0xD8 硬编码边界）
+     ——27 项 × 8B = 0xD8 精确封顶；
+  ⑤ 未命中返 0（xor eax,eax）——NULL 语义（宿主 0x7DBBC0
+     走缺省分支）；
+  ⑥ key 0x0B..0x24 为 matherr 错误函数 ID（11..36）——非
+     0 起连续（0x00..0x0A 空置）→ 表只登记可报告函数（推
+     断，ID 语义未逐一确认）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT math 错
+误报告设施按商业库纪律归档；表初值已 dump 留档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7DBC05 = MSVC6 静态 CRT matherr 函数名查表器
+   ——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；{错误码→math 函数名} 线性查表 + 宿主
+   matherr 默认处理器（0x7DBB55）同域 = CRT math 错误报告
+   标准形态（0x7FA354 区 MessageBoxA/user32.dll 延迟加载
+   字符串同区佐证）。
+2. 依赖：零 E8 函数依赖（纯查表）；表 [0x87D628] 27 项初
+   值已 dump 留档——重写 gamemd 时用等价运行时（matherr
+   报告语义 / 函数名映射）代替。
+3. gamemd_replication_discipline：MSVC6 CRT math 错误报告
+   设施，重写时用等价运行时代替，逐字节复刻无意义——按
+   商业库纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 37B + 表初值 dump + 字符
+串区交叉；函数名「matherr 函数名查表器」由 key→val 查表
+形态 + math 函数名内容 + 宿主交叉标注）。
+
+四、跨批次闭合
+------------
+★宿主 0x7DBB55（matherr 默认处理器，未登记 scan 池候选）
+  ——本批调用现场（5 参 + [ebp-0x1C] 存查表结果 + 0x7DBBC0
+  未命中分支）；后续批次按池顺序处理。
+★0x7FA354 区 "MessageBoxA\0user32.dll"——与 batch 1208
+  （0x7CEAFF GetModuleHandleA/GetProcAddress 延迟绑定器）
+  同延迟加载域（matherr 弹窗经 user32 延迟加载，推断未
+  确认）。
+★表 [0x87D628] 27 项 math 函数名——与 batch 1190 CJK 代
+  码页→LCID 四常量表（0x7D3679）同为 CRT 静态映射表族
+  （本批 27 项规模最大）。
+
+五、状态
+-------
+crt_runtime_verified（0x7DBC05：MSVC6 CRT matherr 函数名查
+表器归档；全 37B + 表初值 dump + 字符串区交叉；不写 C++
+模型不做 golden——CRT math 错误报告商业库层；函数名由
+key→val 查表形态 + math 函数名内容 + 宿主交叉标注）。TSV
+新增 0x007DBC05 行。
+
+★本批实锤：matherr 错误码→函数名线性查表——[0x87D628..
+  0x87D700) 27 项 {key, val}，key=0x0B..0x24 全映射 math
+  函数名（exp/pow/log/sin/atan2/floor/…/_yn），命中返 val
+  未命中返 0；唯一调用点 0x7DBB5E 在 matherr 默认处理器
+  0x7DBB55 内（错误消息装配）；0x7FA354 区 MessageBoxA/
+  user32.dll 字符串同区佐证报告形态。
+相邻待续：batch 1215 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7D219A(36B, callers=2)/0x7CA971(34B,
+callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1213 已完（MSVC6 CRT wcstod/strtod 族前导空白
+跳过计数器 0x7D45BA，commit 1fa06a7）。
