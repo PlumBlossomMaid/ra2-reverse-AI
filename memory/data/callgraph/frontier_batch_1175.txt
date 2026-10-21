@@ -1,0 +1,118 @@
+frontier batch 1175 —— MSVC6 CRT __fload_withFB 80 位浮点加载器 0x7CF3D5（归档，math 库加载辅助）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CF3D5（67B,
+uc=1, callers=3）。TSV 无既有行。TARGET = 0x007CF3D5。
+C++ 模型：无（见「三态判定」）。TSV：新增 0x007CF3D5 行。
+带名函数：__fload_withFB（MSVC6 CRT math 库符号——PE
+导出/调试符号可查，uniquely 命名）。
+
+一、链语义（disasm 全 67B，0x7CF3D5-0x7CF417）
+--------------------------------------------------------------
+签名（推断）：edx 传 double 指针（单参，fastcall 风格），
+返回 x87 栈顶 80 位扩展精度值。无 E8 调用。
+
+主体（0x7CF3D5-0x7CF417）：
+007cf3d5  mov eax,dword[edx+4]                 ; ★★高 32 位（指数域）
+007cf3d8  and eax,0x7ff00000                   ; ★★指数掩码
+007cf3dd  cmp eax,0x7ff00000                   ; ★全 1 = NaN/Inf？
+007cf3e2  je 0x7cf3e7                          ; 是 → 特殊路径
+007cf3e4  fld qword[edx]                       ; ★★否 → 正常 64 位加载
+007cf3e6  ret
+; → 特殊路径（0x7CF3E7，NaN/Inf 构造 80 位）：
+007cf3e7  mov eax,dword[edx+4]
+007cf3ea  sub esp,0xa                          ; ★★80 位栈槽
+007cf3ed  or eax,0x7fff0000                    ; ★★指数全 1 置位
+007cf3f2  mov [esp+6],eax
+007cf3f6  mov eax,dword[edx+4]
+007cf3f9  mov ecx,dword[edx]                   ; 低 32 位
+007cf3fb  shld eax,ecx,0xb                     ; ★★高 32 位移位对齐
+                                              ;   80 位尾数
+007cf3ff  shl ecx,0xb
+007cf402  mov [esp+4],eax
+007cf406  mov [esp],ecx
+007cf409  fld xword[esp]                       ; ★★80 位加载
+007cf40c  add esp,0xa
+007cf40f  test eax,0                           ; ★恒真指令（后续衔接）
+007cf414  mov eax,dword[edx+4]
+007cf417  ret
+
+★语义：**MSVC6 CRT __fload_withFB 80 位浮点加载器（推断名
+——math 库 double → 80 位扩展精度加载辅助）**：
+  ① 指数掩码快速判 NaN/Inf（and 0x7ff00000 == 全 1）；
+  ② 正常值 → fld qword[edx] 直接 64 位加载（x87 栈自升
+     80 位）；
+  ③ NaN/Inf → 手组 80 位：指数 or 0x7fff0000 全 1 + 尾
+     数 shld/shl 0xb 对齐（64 位尾数 → 80 位布局）+ fld
+     xword（保障 quiet NaN 标记 FB 位——withFB 命名的由
+     来）。
+  = x87 扩展精度加载的 NaN/Inf 安全路径（math 内部库三
+  处调用：乘除/超越函数前置），零 E8 纯 x87 操作。
+
+★调用点（池登记 callers=3）：math 库内部（0x7CF3 区相邻
+  浮点函数）——MSVC6 CRT 浮点库域（batch 1108/1140
+  0x7CF4/0x7CF5 同 0x7CF 浮点区）。
+
+★E8 被调者：**零子调用**（全 67B 纯 x87 fld/xword + 位运
+  算）。
+
+★原版怪癖（照抄）：
+  ① 命名带 FB（fill bit）——NaN 尾数静默位（quiet
+     bit）置位语义写进函数名；
+  ② 正常路径 fld qword（64 位）与特殊路径 fld xword
+     （80 位）**两条加载指令**——值域分派不同宽度；
+  ③ shld+shl 0xb 双指令组装 80 位尾数（64 位尾数左移
+     11 位 = 80 位布局中尾数起始位 63→52 的偏移）；
+  ④ sub esp,0xa/add esp,0xa 栈槽对（80 位 = 10 字节）—
+     —无栈帧临时槽；
+  ⑤ test eax,0 恒真（后续衔接占位/优化残留）；
+  ⑥ edx 传参（非 ecx 非栈）——MSVC6 math 内部 fp 辅助的
+     专用寄存器约定。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 浮点库按
+商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CF3D5 = MSVC6 静态 CRT 浮点库加载辅助（__flo
+   ad_withFB）——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_
+   region_layout_crt_provenance）；带名符号 + 纯 x87 +
+   0x7CF 区浮点域（batch 1108/1140 同区）标准形态。
+2. 依赖：零函数依赖——重写 gamemd 时用等价运行时（C 语
+   言 double 提升到 long double 语义）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 浮点库设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 67B + 带名符号 + 值域宽度
+分派；函数名「80 位浮点加载器」由 NaN/Inf 手组 80 位 +
+FB 静默位 + 双 fld 分派交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1140：0x7CF479 matherr 分派器——同 0x7CF 浮点区
+  （math 错误域全景）。
+★batch 1108：0x7CF51C pow() ±Inf 边界处理器——紧邻同
+  0x7CF 浮点域（加载/边界处理配套）。
+★batch 1164：FPU 控制字族——同 x87 操作全景（fld/
+  fstp/fnstsw/fldcw 族）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CF3D5：MSVC6 CRT __fload_withFB 80
+位浮点加载器归档；全 67B + 带名符号；不写 C++ 模型不做
+golden——CRT 浮点库商业库层；函数名由 NaN/Inf 手组 80 位
++ FB 静默位 + 双 fld 分派交叉标注）。TSV 新增
+0x007CF3D5 行。
+
+★本批实锤：__fload_withFB——double → 80 位扩展精度加载：
+  指数掩码判 NaN/Inf → 正常 fld qword / 特殊手组 80 位
+  （指数全 1 + shld/shl 0xb 尾数对齐）fld xword，零 E8
+  纯 x87。
+相邻待续：batch 1176 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7C1D40(65B)/0x7CA3C5(64B, callers=3)/
+0x7CC409(62B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1174 已完（MSVC6 CRT 堆块大小查询 0x7D107D，
+commit a356e10）。
