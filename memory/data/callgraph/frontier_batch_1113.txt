@@ -1,0 +1,149 @@
+frontier batch 1113 —— MSVC6 CRT fwrite 0x7C9602（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7C9602（266B,
+uc=1, callers=1 探针实测 0x7C95EB 唯一宿主）。TSV 无既有
+行。TARGET = 0x007C9602。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007C9602 行。
+
+一、链语义（disasm 全 266B + helper 交叉，0x7C9602-0x7C970B）
+--------------------------------------------------------------
+签名（实测）：cdecl 4 参（param1=buffer @[ebp+8]、param2=
+element_size @[ebp+0xC]、param3=count @[ebp+0x10]、param4=
+FILE* stream @[ebp+0x14]），返回写入项数（成功=count，部
+分写=(total−remaining)/size，失败=0）。
+
+主体（0x7C9602-0x7C970B）：
+007c9602  push ebp/mov ebp,esp/push ecx/push ebx,esi,edi
+007c9609  mov edi,[ebp+0xC]/imul edi,[ebp+0x10]   ; ★total = size×count
+007c9610  mov eax,[ebp+8]/mov [ebp-4],edi         ; ★保存 total
+007c9616  test edi,edi/jne 0x7C9626
+007c961f  xor eax,eax/jmp 0x7C96F3               ; ★total==0 → 返回 0
+007c9626  mov esi,[ebp+0x14]                      ; ★stream
+007c9629  test word[esi+0xC],0x10C/je 0x7C9639   ; ★标志 0x10C 分流
+007c9631  mov eax,[esi+0x18]/mov [ebp+0x14],eax  ; ★[esi+0x18] 缓冲大小
+007c9639  mov dword[ebp+0x14],0x1000             ; ★否则块大小 4096
+007c9640  mov ecx,[esi+0xC]/and ecx,0x108/je 0x7C9674 ; ★标志 0x108
+007c964b  mov eax,[esi+4]/test eax,eax/je 0x7C9674 ; ★[esi+4] 剩余空间
+007c9652  cmp ebx,eax/ja 0x7C9658/mov edi,ebx
+007c9658  mov edi,eax                              ; ★edi = min(rem, 剩余)
+007c965a  push edi/push [ebp+8]/push [esi]/call 0x7D0A20 ; ★★memmove
+                                              ;   （直写流缓冲）
+007c9665  sub [esi+4],edi/add [esi],edi            ; ★游标推进
+007c966d  sub ebx,edi/add [ebp+8],edi/jmp 0x7C96BA ; ★剩余更新
+007c9674  cmp ebx,[ebp+0x14]/jb 0x7C96BF          ; ★rem < 块大小
+007c9679  test ecx,ecx/je 0x7C9688
+007c967d  push esi/call 0x7CB1F9                   ; ★★_flush（batch 049）
+007c9683  test eax,eax/jne 0x7C9701               ; flush 失败
+007c9688  cmp [ebp+0x14],0/je 0x7C969B
+007c968e  mov eax,ebx/xor edx,edx/div [ebp+0x14]   ; ★对齐块数
+007c9695  mov edi,ebx/sub edi,edx
+007c969b  mov edi,ebx
+007c969d  push edi/push [ebp+8]/push [esi+0x10]    ; ★[esi+0x10] 句柄
+007c96a4  call 0x7D0D55                           ; ★★写分发（batch 039）
+007c96a9  add esp,0xC/cmp eax,-1/je 0x7C96F8      ; 失败 → 错误标志
+007c96b1  add [ebp+8],eax/sub ebx,eax
+007c96b6  cmp eax,edi/jb 0x7C96F8                 ; 部分写 → 退出
+007c96ba  mov edi,[ebp-4]/jmp 0x7C96E8
+007c96bf  mov eax,[ebp+8]/push esi/movsx eax,byte[eax]
+007c96c7  push eax/call 0x7CE18D                  ; ★★fputc（batch 003/052）
+007c96cc  cmp eax,-1/je 0x7C9701                  ; 逐字符失败
+007c96d3  inc [ebp+8]/mov eax,[esi+0x18]/dec ebx
+007c96da  mov [ebp+0x14],eax/test eax,eax/jg 0x7C96E8
+007c96e1  mov dword[ebp+0x14],1                   ; ★块大小下限 1
+007c96e8  test ebx,ebx/jne 0x7C9640              ; ★主循环
+007c96f0  mov eax,[ebp+0x10]                      ; ★返回 count
+007c96f3  pop 族/leave/ret
+007c96f8  or dword[esi+0xC],0x20                  ; ★置 _IOERROR(0x20)
+007c96fc  mov eax,[ebp-4]/jmp 0x7C9703
+007c9701  mov eax,edi
+007c9703  sub eax,ebx/xor edx,edx/div [ebp+0xC]   ; ★(total−rem)/size
+007c970a  jmp 0x7C96F3                            ; 部分写项数
+
+★语义：**MSVC6 CRT fwrite**——cdecl 4 参：
+  ① total = size×count；total==0 直接返回 0；
+  ② stream 标志 0x10C（_IOSTRG 字符串流域）命中时块大小
+     取 [esi+0x18]（流缓冲大小），否则默认 0x1000（4096）；
+  ③ 主循环：标志 0x108 且 [esi+4]（流剩余空间）>0 → 直写
+     路径 memmove（0x7D0A20）到 [esi] 流缓冲 + 游标推进；
+  ④ rem ≥ 块大小 → 大块路径：flush（0x7CB1F9）→ 按块对齐
+     → 写分发（0x7D0D55，句柄 [esi+0x10]）；
+  ⑤ rem < 块大小 → 小块路径：逐字符 fputc（0x7CE18D）；
+  ⑥ 成功返回 count（[ebp+0x10]），失败/部分写置 _IOERROR
+     (0x20) 返回 (total−remaining)/size 项数。
+  与 MSVC6 fwrite 语义完全吻合（4 参返回项数 + 部分写除法
+  回值）。
+
+★E8 被调者：0x7CB1F9（batch 049 CRT 底层流缓冲 flush——
+  本批 0x7C967E 调用交叉，4 callers）+ 0x7D0D55（batch 039
+  流槽校验+写分发——本批 0x7C96A4 调用交叉，6 callers）+
+  0x7CE18D（batch 003/052 CRT fputc——本批 0x7C96C7 调用
+  交叉，10 callers）+ 0x7D0A20（batch 032 memmove——直写
+  路径）。
+
+★原版怪癖（照抄）：
+  ① 直写路径条件：标志 0x108（非 _IOFLRTN 门控组合）且流
+     剩余 [esi+4] > 0——memmove 到流缓冲 [esi] 后游标推进
+     （[esi]+= 写、[esi+4]-= 写）；
+  ② 大块/小块分界 = [ebp+0x14]（字符串流取 [esi+0x18] 否
+     则 0x1000），块大小下限 1（0x7C96E1 保护）；
+  ③ 部分写回值 (total−remaining)/size（0x7C9703 减法后除
+     ——写成功项数），失败路径 0x7C96F8 先置 _IOERROR 再算
+     部分值；
+  ④ 两个失败出口：flush 失败（0x7C9701 返 edi 已写量）vs
+     写分发失败（0x7C96F8 返 total−rem——口径不同照抄）；
+  ⑤ total 保存 [ebp-4] 供部分写回值用（初始值非更新值）；
+  ⑥ min(rem, 流剩余) 无符号 jb/ja 分支选择写入量。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT FILE 设施按商
+业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7C9602 = MSVC6 静态 CRT fwrite——0x7C-0x7D =
+   MSVC6 静态 CRT（ra2_code_region_layout_crt_provenance）；
+   FILE* 流槽（[esi] 游标/[+4] 剩余/[+0xC] 标志/[+0x10] 句柄/
+   [+0x18] 缓冲大小）+ _IOERROR 标志 + 大块 flush/小块 fputc
+   分流为 CRT FILE 写设施标准形态。
+2. 依赖：0x7CB1F9（_flush）+ 0x7D0D55（写分发）+ 0x7CE18D
+   （fputc）+ 0x7D0A20（memmove）全部已登记——重写 gamemd
+   时用等价 std::fwrite 运行时代替。
+3. gamemd_replication_discipline：MSVC6 CRT FILE 设施，重写
+   时用等价运行时代替，逐字节复刻无意义——按商业库纪律
+   归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 266B + 三 helper 交叉；函
+数名「fwrite」由 4 参签名/部分写回值/块大小 0x1000 默认实
+测交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 049：0x7CB1F9 CRT 底层流缓冲 flush——本批 0x7C967E
+  大块路径调用交叉（4 callers 之一）。
+★batch 039：0x7D0D55 流槽校验+写分发——本批 0x7C96A4 大块
+  写调用交叉（6 callers 之一）。
+★batch 003/052：0x7CE18D CRT fputc——本批 0x7C96C7 小块逐
+  字符调用交叉（10 callers 之一）。
+★batch 032：0x7D0A20 memmove——直写路径交叉。
+★FILE 设施族：batch 970（0x7CA75B FILE 关闭）+ batch 971
+  （0x7CE18D fputc）——本批 fwrite 与 fputc/flush/写分发构
+  成 CRT 文件写全链（fwrite → flush/write → 底层）。
+
+五、状态
+-------
+crt_runtime_verified（0x7C9602：MSVC6 CRT fwrite 归档；全
+266B + 三 helper 交叉；不写 C++ 模型不做 golden——CRT
+FILE 设施商业库层；函数名「fwrite」由 4 参签名/部分写回
+值/块大小默认实测交叉标注）。TSV 新增 0x007C9602 行。
+
+★本批实锤：fwrite 全链——直写 memmove 路径 + 大块
+  flush(0x7CB1F9)→写分发(0x7D0D55) + 小块逐字符
+  fputc(0x7CE18D) + 部分写回值 (total−rem)/size——CRT
+  FILE 写设施标准形态，三个下游全部已登记。
+相邻待续：batch 1114 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7C6620(266B, callers=1)/0x7DC4C9(264B,
+callers=1)/0x7CC309(256B, callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1112 已完（MSVC6 CRT 32 位 time_t 分解器
+0x7D52B8，commit 500a8a8）。
