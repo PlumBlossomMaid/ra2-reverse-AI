@@ -1,0 +1,175 @@
+frontier batch 1150 —— MSVC6 CRT _tmpnam 主实现 0x7CD460（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CD460（126B,
+uc=1, callers=1 探针实测 0x77DCA3）。TSV 无既有行。
+TARGET = 0x007CD460。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CD460 行。
+
+一、链语义（disasm 全 126B + 七依赖交叉 + 两未登记依赖定性，
+0x7CD460-0x7CD4DD）
+--------------------------------------------------------------
+签名（推断）：cdecl 1 参（[esp+0x10]=输出缓冲 string 或
+NULL），返回 char* 临时文件名 / NULL。per-thread 槽
+[ptd+0x28] 惰性分配 0xE 字节缓冲。
+
+主体（0x7CD460-0x7CD4DD）：
+007cd460  push ebx/esi/edi
+007cd463  push 3/call 0x7cd9f5               ; ★★锁 Enter（key=3——
+                                              ;   tmpnam 族锁编号）
+007cd46a  xor ebx,ebx/pop ecx
+007cd46d  cmp byte[0xb78208],bl              ; ★★namebuf 初始化标志
+                                              ;   [0xB78208]
+007cd473  mov esi,0xb78208
+007cd478  jne 0x7cd48e                       ; 已初始化 → 跳过
+007cd47a  push ebx/call 0x7cd5b4             ; ★★batch 1022 _init_
+                                              ;   namebuf(0)——懒初始化
+007cd480  pop ecx/push ebx/push esi
+007cd483  call 0x7d53c2                      ; ★_access(namebuf,0) 唯一
+                                              ;   性检查（IAT [0x7E12E4]
+                                              ;   =GetFileAttributesA + 失
+                                              ;   败 errno=0xD=EACCES）
+007cd488  pop ecx
+007cd489  test eax,eax/pop ecx/jne 0x7cd49d ; 存在 → 跳出重试
+007cd48e  push esi
+007cd48f  call 0x7cd615                      ; ★后缀递增器（找 '.'→
+                                              ;   strtol 解析递增 → 0x7FFF
+                                              ;   上限 → 写回）——唯一化
+007cd494  test eax,eax/pop ecx/je 0x7cd481   ; 递增失败 → 重试
+007cd499  xor edi,edi/jmp 0x7cd4d0           ; 失败 → edi=NULL
+; → 唯一名就绪（0x7CD49D）：
+007cd49d  mov edi,[esp+0x10]                 ; edi = 输出缓冲（string）
+007cd4a1  cmp edi,ebx/jne 0x7cd4c7           ; 非 NULL → 直接用
+007cd4a5  call 0x7d140b                       ; ★★batch 008 per-thread
+                                              ;   CRT 状态（TLS prep）
+007cd4aa  mov edi,eax/cmp [edi+0x28],ebx     ; ptd->tmpnam 槽
+007cd4af  jne 0x7cd4c4                       ; 已有 → 复用
+007cd4b1  push 0xe/call 0x7c9430             ; ★★batch 020 内部 malloc
+                                              ;   （0xE=14B 缓冲）
+007cd4b8  mov [edi+0x28],eax/jne 0x7cd4c4    ; 存入槽
+007cd4c0  mov edi,esi                        ; 分配失败 → 返回 NULL
+007cd4c2  jmp 0x7cd4d0
+007cd4c4  mov edi,[edi+0x28]
+007cd4c7  push esi/push edi
+007cd4c9  call 0x7d4bf0                      ; ★★batch 008 strcpy 词级
+                                              ;   变体（拷贝 namebuf 到
+                                              ;   输出/槽缓冲）
+007cd4ce  pop ecx/pop ecx
+007cd4d0  push 3/call 0x7cda56/pop ecx       ; ★★锁 Leave（key=3）
+007cd4d8  mov eax,edi/pop edi/esi/ebx/ret    ; 返回缓冲指针
+
+★语义：**MSVC6 CRT _tmpnam 主实现（标准 C 库 tmpnam 族，推
+断名）**——cdecl 1 参（string 可空）：
+  ① 锁 key=3 保护 namebuf 全局 [0xB78208]；
+  ② 懒初始化 namebuf（0x7CD5B4 batch 1022 _init_namebuf）；
+  ③ 唯一化重试循环：_access 存在检查（0x7D53C2 未登记）
+     + 后缀递增（0x7CD615 未登记）——已存在则递增重试；
+  ④ 唯一名就绪：输出缓冲为 NULL → per-thread 槽 [ptd+
+     0x28] 惰性 malloc 0xE 字节（0x7C9430）→ 复用之；
+  ⑤ strcpy 词级变体（0x7D4BF0 batch 008）拷 namebuf 入
+     缓冲 → 返回缓冲指针。
+  = MSVC6 `_tmpnam` 标准实现（namebuf 初始化 → 唯一化 →
+  返回），与 VC6 CRT 源码行为逐行吻合。
+
+★调用点（探针 E8 实测 1 处 0x77DCA3）：宿主 0x77DCxx 区
+  调用者（cdecl 1 参，返指针后接线）。
+
+★E8 被调者：0x7CD9F5（★★TSV:238 锁 Enter）+ 0x7CDA56
+  （★★TSV:239 锁 Leave）+ 0x7CD5B4（★★batch 1022 _init_
+  namebuf——彼文档已点名「2 callers = FUN_007cd460/FUN_
+  007cd4de」本批即点名兑现）+ 0x7D53C2（★_access 存在检查
+  族——**未登记新候选**）+ 0x7CD615（★后缀递增/唯一化器
+  ——**未登记新候选**）+ 0x7D140B（★★batch 008 per-thread
+  TLS）+ 0x7C9430（★★batch 020 内部 malloc）+ 0x7D4BF0
+  （★★batch 008 strcpy 词级变体）——**五依赖已登记，两新
+  候选**。
+
+★两未登记依赖定性（disasm 实测）：
+  ① 0x7D53C2 = CRT `_access` 存在检查族：`push [esp+4];
+     call [0x7E12E4]`（IAT=GetFileAttributesA）→ eax==-1
+     失败 → call [0x7E1200]（GetLastError）+ errno=0xD
+     （EACCES）+ or eax,-1；成功 → `test al,1` + 次参位 2
+     组合判定（存在性+写权限双检）——callers=1 0x7CD483；
+  ② 0x7CD615 = tmpnam 后缀递增/唯一化器：`push 0x2e('.');`
+     call 0x7D571F（batch 1047 DBCS 查找——strrchr 快路径）
+     找 '.' → 0x7C9FD9（batch 1048 strtol 薄包装）解析后缀
+     数字 → inc → 0x7FFF 上限（cmp eax,0x7fff）→ 0x7D473F
+     （batch 1043 _ultoa）数字转串 → 0x7D4BF0（batch 008）
+     写回——**与 batch 1022 0x7CD5B4 调用链完全同族**
+     （0x7D5719/0x7D473F/0x7D571F/0x7D4BF0 复用）。
+
+★原版怪癖（照抄）：
+  ① 锁 key=3 与 batch 1036/1047 的 0x19（字符分类）区分
+     ——tmpnam 族独立锁编号；
+  ② namebuf 初始化标志是 [0xB78208] 首字节（`cmp byte`）
+     而 batch 1022 是 mov esi+双缓冲 [0xB78208]/[0xB78218]
+     二选一——初始化检查只看主槽；
+  ③ 唯一化重试循环：_access 返回非 0（文件已存在/错误）
+     → 出循环直接用；返回 0（不存在）→ 还要再过 0x7CD615
+     递增器判定——存在检查+递增双条件顺序微妙（照抄）；
+  ④ per-thread 槽 [ptd+0x28] 只 malloc **0xE 字节**（tmp
+     名最长 13 字符+NUL）——固定 14 字节；分配失败 edi=
+     namebuf（esi）回退语义；
+  ⑤ 输出缓冲 NULL 判定用 `cmp edi,ebx/jne`（ebx 恒 0）——
+     string==NULL 才走 ptd 槽，非 NULL 直接 strcpy；
+  ⑥ strcpy 用 0x7D4BF0 词级变体（batch 008 四字节 NUL 检
+     测）而非 CRT strcpy 本体。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 临时文件
+设施按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CD460 = MSVC6 静态 CRT 临时文件设施（_tmpnam）——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_crt_
+   provenance）；锁+懒初始化+per-thread 槽+固定 14B 缓冲 =
+   VC6 CRT `_tmpnam` 源码逐行对应形态。
+2. 依赖：5 个已登记函数（0x7CD9F5/0x7CDA56 TSV:238/239 锁
+   对、0x7CD5B4 batch 1022、0x7D140B/0x7D4BF0 batch 008、
+   0x7C9430 batch 020）+ 2 个未登记新候选（0x7D53C2 _access
+   /0x7CD615 后缀递增器）——重写 gamemd 时用等价 C 库
+   `tmpnam`/现代安全替代（std::filesystem 临时名）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 文件库设施，重
+   写时用等价运行时代替，逐字节复刻无意义——按商业库纪律
+   归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 126B + 七依赖交叉 + 两未登
+记依赖定性；函数名由 namebuf 初始化→唯一化→返回三步 + 锁
+key=3 + per-thread 槽交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1022：0x7CD5B4 _init_namebuf——本批懒初始化调用现
+  场（0x7CD47B）+ 彼文档点名「FUN_007cd460」补登记兑现；
+  同 [0xB78208] 全局 + [0x815E74] tmp 前缀 + 0x7D4BF0 拷贝
+  链共享。
+★batch 008：0x7D140B per-thread TLS / 0x7D4BF0 strcpy 词级
+  变体——本批 TLS prep + 拷贝调用现场交叉。
+★batch 020：0x7C9430 内部 malloc——本批 0xE 字节分配现场
+  交叉。
+★batch 1047/1048/1043：0x7D571F DBCS 查找 / 0x7C9FD9
+  strtol / 0x7D473F _ultoa——0x7CD615 后缀递增器内部链全
+  已登记（同 batch 1022 调用链）。
+★新候选：0x7D53C2（_access 族）/0x7CD615（后缀递增器）—
+  —尾部登记待后续批次处理。
+
+五、状态
+-------
+crt_runtime_verified（0x7CD460：MSVC6 CRT _tmpnam 主实现归
+档；全 126B + 七依赖交叉 + 两未登记依赖定性；不写 C++ 模
+型不做 golden——CRT 临时文件库商业库层；函数名由 namebuf
+初始化→唯一化→返回三步 + 锁 key=3 + per-thread 槽交叉标
+注）。TSV 新增 0x007CD460 行。
+
+★本批实锤：MSVC6 `_tmpnam`——锁 key=3 → 懒初始化 namebuf
+  （batch 1022）→ _access+后缀递增唯一化重试循环 → per-
+  thread 槽 [ptd+0x28] 惰性 malloc 14B → strcpy 词级变体
+  返回；两未登记依赖（0x7D53C2 _access / 0x7CD615 递增器）
+  顺带定性完链。
+相邻待续：batch 1151 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7C970C(126B)/0x7C19F0(125B, callers=2)/
+0x7DE226(124B)）；本批新候选 0x7D53C2/0x7CD615 入待检池。
+依赖模型：无（归档不落 C++）。
+承前：batch 1149 已完（MSVC6 CRT _controlfp 掩码反转器
+0x7CC01C，commit c791ddf）。
