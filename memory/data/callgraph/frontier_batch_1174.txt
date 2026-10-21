@@ -1,0 +1,147 @@
+frontier batch 1174 —— MSVC6 CRT 堆块大小查询 0x7D107D（归档，_msize 族，batch 1151 点名兑现）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D107D（69B,
+uc=1, callers=2 探针实测 0x7C9718/0x7C9736）。TSV 无既有
+行。TARGET = 0x007D107D。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D107D 行。
+补登记背景：**batch 1151 文档（0x7C970C 函数指针表插入
+器）已点名「0x7D107D（★锁 9 堆块大小查询——未登记新候
+选，内核 0x7CF7BD batch 021 已登记）」并给出初步定性**—
+—本批即该点名补登记（_msize 完整实现）。
+
+一、链语义（disasm 全 69B + 三依赖交叉 + 调用点宿主，
+0x7D107D-0x7D10C1）
+--------------------------------------------------------------
+签名（推断）：cdecl 1 参（[esp+8]=堆块指针），返回用户
+可用大小（long）。锁 9（堆锁）临界区。
+
+主体（0x7D107D-0x7D10C1）：
+007d107d  push esi
+007d107e  push 9/call 0x7cd9f5                 ; ★★TSV:238 锁 Enter
+                                              ;   （key=9 堆锁）
+007d1085  mov esi,dword[esp+0xc]               ; esi = 堆块指针
+007d1089  push esi
+007d108a  call 0x7cf7bd                        ; ★★TSV:121 堆段包含扫
+                                              ;   描内核（batch 021——
+                                              ;   块是否在某 1MB 段内）
+007d108f  pop ecx
+007d1090  test eax,eax/pop ecx
+007d1093  je 0x7d10a5                          ; ★块无效 → 兜底路径
+; → 有效路径（0x7D1095）：
+007d1095  mov esi,dword[esi-4]                 ; ★★读块头大小字段
+                                              ;   （[esi-4]）
+007d1098  push 9
+007d109a  sub esi,9                            ; ★★减块头 9 字节 →
+                                              ;   用户可用大小
+007d109d  call 0x7cda56                        ; ★★TSV:239 锁 Leave
+007d10a2  pop ecx
+007d10a3  jmp 0x7d10be
+; → 兜底路径（0x7D10A5，块无效）：
+007d10a5  push 9
+007d10a7  call 0x7cda56                        ; ★★锁 Leave
+007d10ac  pop ecx
+007d10ad  push esi
+007d10ae  push 0
+007d10b0  push dword[0xb78b9c]                 ; ★★堆句柄全局 [0xB78B9C]
+                                              ;   （batch 1169 同款）
+007d10b6  call dword[0x7e12a0]                 ; ★★IAT 槽 [0x7E12A0]
+                                              ;   （HeapSize——OS 级
+                                              ;   查询，batch 1116 仅作
+                                              ;   调用点登记）
+007d10bc  mov esi,eax
+007d10be  mov eax,esi
+007d10c0  pop esi/ret                          ; ★返回大小
+
+★语义：**MSVC6 CRT 堆块大小查询（推断名——标准 C 库
+`_msize`）**——cdecl 1 参：
+  ① 锁 9（堆锁）临界区内 0x7CF7BD（batch 021）验证块属
+     于某堆段；
+  ② 有效 → [esi-4] 读块头大小字段 - 9（块头 9B）→ 返回
+     用户可用大小；
+  ③ 无效 → 兜底 HeapSize（[0x7E12A0] IAT + [0xB78B9C]
+     堆句柄）查 OS 级大小。
+  = MSVC6 `_msize` 标准实现（内部块头查询 + OS 兜底），
+  与 batch 1169 0x7C946E（_nh_malloc 驱动）共享 [0xB78B9C]
+  堆句柄。
+
+★调用点（探针 E8 实测 2 处）：0x7C9718/0x7C9736——宿主
+  = batch 1151 已登记 0x7C970C 函数指针表插入器体内两处
+  （0x7C9712 push [0xb78bc0]; call 0x7D107D 查表起点块大
+  小 / 0x7C9735 push edx; call 0x7D107D 扩容前再查）——
+  彼文档点名「★锁 9 堆块大小查询（0x7D107D）内核 0x7CF7BD
+  batch 021 已登记」现场，本批即补登记兑现。
+
+★E8 被调者：0x7CD9F5（★★TSV:238 锁 Enter）+ 0x7CF7BD
+  （★★TSV:121 batch 021 堆段包含扫描内核——2 处调用者含
+  0x7D0FB6/0x7D33AB 堆域）+ 0x7CDA56（★★TSV:239 锁
+  Leave）——**三个依赖全部已登记**。IAT：[0x7E12A0]
+  （HeapSize）+ 全局 [0xB78B9C]（堆句柄，batch 1169 同
+  款）。
+
+★原版怪癖（照抄）：
+  ① 锁 9（堆锁）包裹——与 batch 1169 _nh_malloc 驱动
+     同锁编号（堆操作专用）；
+  ② 块头大小 [esi-4] 读 4 字节 + 减 9（块头 9B——块
+     头含 4B 大小 + 其他 5B 字段）；
+  ③ 无效块兜底 HeapSize（[0x7E12A0] + [0xB78B9C]）——
+     内部块头查不到才走 OS 级（两级查询）；
+  ④ 锁 Enter/Leave 成对（含兜底路径内再次 Leave——正常
+     路径先 Leave 再 jmp 收尾 / 兜底路径先 Leave 再
+     HeapSize）；
+  ⑤ push 9/pop ecx 后 [esp+0xC] 读参——无栈帧叶函数
+     （push esi 后 esp 已移 4）；
+  ⑥ 返回 eax=esi 单寄存器传递（有效/兜底两路径汇合）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 堆设施按
+商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D107D = MSVC6 静态 CRT 堆块大小查询（_msize）
+   ——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；锁 9 + 0x7CF7BD 内核 + [esi-4] 块头-
+   9 + HeapSize 兜底 = VC6 CRT `_msize` 标准形态（batch
+   1169 同 [0xB78B9C] 堆句柄域）。
+2. 依赖：3 个已登记函数（0x7CD9F5/0x7CDA56 TSV:238/239
+   锁对、0x7CF7BD TSV:121 内核）——重写 gamemd 时用等价
+   C 库 `_msize`/operator new 语义代替。
+3. gamemd_replication_discipline：MSVC6 CRT 堆设施，重写
+   时用等价运行时代替，逐字节复刻无意义——按商业库纪律
+   归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 69B + 三依赖交叉 + 调用点
+宿主核实；函数名「堆块大小查询」由块头-9 + 兜底 HeapSize
++ batch 1151 点名交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1151：0x7C970C 函数指针表插入器——本批=彼文档点
+  名「0x7D107D（★锁 9 堆块大小查询——未登记新候选）」补
+  登记；两处调用现场（0x7C9718/0x7C9736）即彼表插入前
+  的空间预算查询。
+★batch 021：0x7CF7BD 堆段包含扫描内核——本批验证调用现
+  场（0x7D108A）交叉。
+★batch 1169：0x7C946E _nh_malloc 驱动——[0xB78B9C] 堆句
+  柄全局共享 + 同锁 9 堆域（分配/查询配对）。
+★TSV:238/239：锁对 key=9——本批 Enter/Leave（含兜底内
+  二次 Leave）现场交叉。
+
+五、状态
+-------
+crt_runtime_verified（0x7D107D：MSVC6 CRT 堆块大小查询归
+档；全 69B + 三依赖交叉；不写 C++ 模型不做 golden——CRT
+堆库商业库层；函数名由块头-9 + 兜底 HeapSize + batch
+1151 点名交叉标注）。TSV 新增 0x007D107D 行。
+
+★本批实锤：batch 1151 点名的 _msize 补登记——锁 9 内
+  0x7CF7BD 验证 → [esi-4] 块头大小-9 返回用户可用大小 /
+  无效兜底 HeapSize（[0x7E12A0]+[0xB78B9C]），三依赖全
+  已登记。
+相邻待续：batch 1175 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CF3D5 __fload_withFB(67B, callers=3)/
+0x7C1D40(65B)/0x7CA3C5(64B, callers=3)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1173 已完（MSVC6 CRT _access 文件存在性检查
+0x7D53C2，commit e971729）。
