@@ -1,0 +1,133 @@
+frontier batch 1168 —— MSVC6 CRT 格式化缓冲写入器 0x7CB7BA（归档，_output 引擎薄包装）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7CB7BA（81B,
+uc=1, callers=1 探针实测 0x5BD214 主代码区）。TSV 无既有
+行。TARGET = 0x007CB7BA。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007CB7BA 行。
+
+一、链语义（disasm 全 81B + 两依赖交叉 + 常量布局，
+0x7CB7BA-0x7CB80A）
+--------------------------------------------------------------
+签名（推断）：cdecl 3 参（[ebp+8]=值/目标、[ebp+0xC]=格式、
+[ebp+0x10]=附加），返回 0x7CE2A5 结果 / fputc 路径布尔。
+
+主体（0x7CB7BA-0x7CB80A）：
+007cb7ba  push ebp/mov ebp,esp/sub esp,0x20
+007cb7c0  mov eax,[ebp+8]                        ; eax = 参1 值
+007cb7c3  push esi
+007cb7c4  push [ebp+0x10]                        ; 参3 附加
+007cb7c7  mov [ebp-0x18],eax                     ; ★值双槽存储
+007cb7ca  mov [ebp-0x20],eax
+007cb7cd  lea eax,[ebp-0x20]
+007cb7d0  push [ebp+0xc]                         ; 参2 格式
+007cb7d3  mov [ebp-0x14],0x42                    ; ★常量 0x42（'B'）
+007cb7da  mov [ebp-0x1c],0x7fffffff              ; ★★上限 0x7FFFFFFF
+007cb7e1  push eax                                ; &值槽
+007cb7e2  call 0x7ce2a5                          ; ★★TSV:196 格式化转换
+                                                  ;   核心（_output/vfprintf
+                                                  ;   引擎，fan-in 293/200
+                                                  ;   汇聚点，1825B）
+007cb7e7  add esp,0xc
+007cb7ea  dec dword[ebp-0x1c]                    ; ★上限-1 → 0x7FFFFFFE
+007cb7ed  mov esi,eax
+007cb7ef  js 0x7cb7f9                            ; ★负（超限）→ fputc 路
+                                                  ;   径
+007cb7f1  mov eax,[ebp-0x20]
+007cb7f4  and byte[eax],0                        ; ★★非负 → 清值槽首字
+                                                  ;   节（NUL 终止）
+007cb7f7  jmp 0x7cb806
+; → 超限路径（0x7CB7F9）：
+007cb7f9  lea eax,[ebp-0x20]
+007cb7fc  push eax
+007cb7fd  push 0
+007cb7ff  call 0x7ce18d                          ; ★★TSV:14 CRT fputc 单
+                                                  ;   字符写（280B，带缓
+                                                  ;   冲+底层写+错误标志）
+007cb804  pop ecx/pop ecx
+007cb806  mov eax,esi
+007cb808  pop esi/leave/ret                      ; 返回 esi（0x7CE2A5 结果
+                                                  ;   / 布尔）
+
+★语义：**MSVC6 CRT 格式化缓冲写入器（推断名——_output 引
+擎的薄包装壳）**——cdecl 3 参：
+  ① 值双槽存储（[ebp-0x18]/[ebp-0x20]）+ 常量 0x42/上限
+     0x7FFFFFFF 装配；
+  ② 调 0x7CE2A5（batch 0x7CE2A5 格式化转换核心）输出到
+     值槽缓冲；
+  ③ 上限-1 → 0x7FFFFFFE：非负 → 清值槽首字节（NUL 终
+     止）返回引擎结果；负（超限）→ 0x7CE18D（fputc 单
+     字符写）逐字符落流。
+  = sprintf 引擎薄包装（缓冲写 + 超限回退单字符写），两
+  依赖（格式化核心 + fputc）全已登记。
+
+★调用点（探针 E8 实测 1 处 0x5BD214）：宿主主代码区
+  0x5BD214（gameside 格式化输出消费——游戏侧日志/调试
+  文本经 CRT 引擎）。
+
+★E8 被调者：0x7CE2A5（★★TSV:196 格式化转换核心 ✓已登记
+  ——_output/vfprintf 引擎，fan-in 293/200 汇聚点，1825B
+  semantics_verified）+ 0x7CE18D（★★TSV:14 CRT fputc 单
+  字符写 ✓已登记——batch 003/052/971 合并归档，280B 带缓
+  冲+底层写+错误标志）——**两个依赖全部已登记**。
+
+★原版怪癖（照抄）：
+  ① 值双槽存储（mov [ebp-0x18],eax + mov [ebp-0x20],eax）
+     ——同值两槽（引擎写一槽、清另一槽）；
+  ② 常量 0x42（'B'）装配在 [ebp-0x14]——附加格式参数推
+     断（'B' 二进制标志/固定槽）；
+  ③ 上限 0x7FFFFFFF 存槽后 call 引擎**再** dec → 0x7FFFFF
+     FE——上限使用发生在调用后（先量后减语义）；
+  ④ 超限判定 js（有符号负）——0x7FFFFFFE 边界外的负返回
+     值语义；
+  ⑤ 超限路径 fputc（0x7CE18D）传 0 + &值槽两参——单字
+     符落流 + NUL 处理；
+  ⑥ 返回 esi（引擎 eax 结果）——非负路径清首字节后仍返
+     引擎结果（不返 0）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 格式化设
+施按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7CB7BA = MSVC6 静态 CRT 格式化缓冲写入器——
+   0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_layout_
+   crt_provenance）；0x7CE2A5 格式化核心 + 0x7CE18D fputc
+   双依赖 = CRT 格式化输出链标准薄包装形态。
+2. 依赖：2 个已登记函数（0x7CE2A5 TSV:196、0x7CE18D
+   TSV:14）——重写 gamemd 时用等价运行时（std::format/
+   snprintf）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 格式化设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 81B + 两依赖交叉 + 常量布
+局；函数名「格式化缓冲写入器」由双槽 + 上限回退 + 引擎薄
+包装交叉标注）。
+
+四、跨批次闭合
+------------
+★TSV:196：0x7CE2A5 格式化转换核心——本批为其薄包装补登
+  记（调用现场 0x7CB7E2 三参 + 上限装配）。
+★TSV:14：0x7CE18D CRT fputc——本批超限回退路径调用现场
+  （0x7CB7FF）交叉（格式化链 + 字符写链合流）。
+★0x5BD214 调用点：gameside 格式化输出消费（游戏侧文本
+  输出经 CRT 引擎全景）。
+
+五、状态
+-------
+crt_runtime_verified（0x7CB7BA：MSVC6 CRT 格式化缓冲写入器
+归档；全 81B + 两依赖交叉；不写 C++ 模型不做 golden——CRT
+格式化库商业库层；函数名由双槽 + 上限回退 + 引擎薄包装交
+叉标注）。TSV 新增 0x007CB7BA 行。
+
+★本批实锤：_output 引擎薄包装——值双槽 + 0x42/0x7FFFFFFF
+  常量装配 → 0x7CE2A5 格式化核心 → 上限-1 非负清 NUL/超
+  限回退 0x7CE18D fputc，两依赖全已登记。
+相邻待续：batch 1169 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7C946E(78B)/0x7D362F(74B)/0x7CCFB3
+(73B，batch 1153 新候选入池)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1167 已完（MSVC6 CRT 双字段宽串输出写入器
+0x7CE13A，commit e27b669）。
