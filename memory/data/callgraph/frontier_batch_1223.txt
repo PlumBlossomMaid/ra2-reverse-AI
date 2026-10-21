@@ -1,0 +1,140 @@
+frontier batch 1223 —— MSVC6 CRT 偏移字符串相等判定器 0x7C8AD3（归档，strcmp(+9) 归一化）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7C8AD3（27B,
+uc=1, callers=4 探针实测 0x725D06/0x725D22/0x725D3E/
+0x725D5A）。TSV 无既有行。TARGET = 0x007C8AD3。
+C++ 模型：无（见「三态判定」）。TSV：新增 0x007C8AD3 行。
+
+一、链语义（disasm 全 27B + 核心交叉 + 4 调用点级联现场
+交叉，0x7C8AD3-0x7C8AEB）
+--------------------------------------------------------------
+签名（确认）：thiscall + 1 栈参（ecx=this、[esp+4]=待比串
+指针），ret 4，返回 eax：相等 1 / 不等 0。
+
+主体（0x7C8AD3-0x7C8AEB）：
+007c8ad3  mov eax, dword[esp+4]            ; eax = 待比串
+007c8ad7  add ecx, 9                       ; ★this+9（对象内
+                                           ;   嵌 9 字节偏移串）
+007c8ada  add eax, 9                       ; ★待比串 +9
+                                           ;   （宽串跳过 9 字
+                                           ;   节表头？）
+007c8add  push ecx                         ; 参2 = this+9
+007c8ade  push eax                         ; 参1 = 待比串+9
+007c8adf  call 0x7cda90                    ; ★★TSV:632 batch
+                                           ;   192 CRT strcmp
+                                           ;   对齐优化版
+007c8ae4  neg eax                          ; eax = -ret, CF =
+                                           ;   (ret != 0)
+007c8ae6  pop ecx
+007c8ae7  sbb eax, eax                     ; ★eax = -CF
+007c8ae9  pop ecx
+007c8aea  inc eax                          ; ★eax = 1 - CF =
+                                           ;   (ret==0) ? 1 : 0
+007c8aeb  ret 4
+
+★语义：**MSVC6 CRT 偏移字符串相等判定器（推断名——
+(strcmp(待比+9, this+9) == 0) 判定：宽串表头 9 字节跳过
+后比较）**——thiscall 1 栈参：
+  ① 待比串与 this 各 +9（跳过固定 9 字节表头——宽字符串
+     对象/表结构前缀，推断为 length/引用计数等元数据头）；
+  ② 调 0x7CDA90（strcmp 对齐优化版——4 字节对齐 dword 分
+     块快速比较）；
+  ③ `neg/sbb/inc` 归一化：核心返 0（相等）→ 返 1；核心非
+     0 → 返 0（布尔取反语义）。
+  = 字符串相等性判定的 thrift 包装（+9 偏移两参 + 布化）。
+
+★调用点（探针 E8 实测 4 处——同一宿主 0x725D00 起级联比
+  较现场，Westwood 主代码区 0x725Cxx-0x725Dxx，未登记）：
+  ★宿主 0x725D00：mov ecx,0x818D60（★常量串 1）→ push
+  eax → call 0x7C8AD3 → test eax,eax / jne 0x725D63（★命中
+  跳装配）→ 同级二：mov eax,[esp+4]/push eax/call 0x7CAA05
+  （★转宽串方法）/add esp,4 → mov ecx,0x842D80（★常量串
+  2）→ push eax → call 0x7C8AD3 / jne 0x725D63 → 同级三：
+  mov ecx,[esp+4]…… mov ecx,0x825508（常量串 3）→ call
+  0x7C8AD3 / jne 0x725D63 → 同级四：mov edx,[esp+4]……
+  mov ecx,0x817B90（常量串 4）→ call 0x7C8AD3 → test /
+  **je 0x725D6E**（四级全不等 → 跳过装配）→ 0x725D63：
+  mov eax,[esp+4]/mov byte[eax+0x90],1（★★任一命中 → 对象
+  +0x90 置 1 标记）→ 0x725D6E 后续——宿主 = 对象名匹配分
+  派器（四级常量串白名单，命中置 +0x90=1）。调用点前段
+  0x725CE0：mov ecx,0x424448B/mov ecx,[eax]/call [ecx+8]
+  （★虚表槽 8）→ test eax,eax/je 0x725D80——宿主前置校验
+  后进入级联比较。
+
+★E8 被调者（1 个，已登记）：0x7CDA90（★★TSV:632
+  semantics_verified_partial——batch 192 CRT strcmp 对齐优
+  化版，dword 分块；17 callers 含本批 0x7C8ADF）。
+
+★全局：零（纯寄存器 + 栈）。
+
+★原版怪癖（照抄）：
+  ① **双 +9 偏移**（this+9 与 待比+9）——两串同跳过 9 字节
+     表头（宽串对象元数据前缀，推断 9 字节含长度/指针域，
+     未确认）；
+  ② `neg/sbb/inc` 三分支算术布化（不等 → 0、相等 → 1）——
+     与 batch 1220 的 neg/sbb/and/dec 同族但这里四指令收敛
+     为布尔（sbb 前 pop ecx 清栈再减）；
+  ③ ret 4（thiscall 1 栈参）而调用方 push eax 传待比串后
+     `call 0x7CAA05` 转宽（调用链约定）——本批直接吃宽串
+     指针（+9 后即内容）；
+  ④ 调用点 four-in-a-row 级联（0x725D06/22/3E/5A 步长
+     0x1C/0x16/0x1C）——编译器对 if-else if 链的线性排布
+     （非跳表）；
+  ⑤ 常量串地址逐一 mov ecx 立即数（0x818D60/0x842D80/
+     0x825508/0x817B90——.data/.rdata 字符串常量）——白名
+     单四级硬编码；
+  ⑥ 命中置位 [eax+0x90]=1（字节）后继续向下位分支（不
+     break 则连过）——但 jne 0x725D63 其实已跳出链（级联
+     语义照抄）。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT 字符串
+设施按商业库纪律归档；核心 batch 192 已实证）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7C8AD3 = MSVC6 静态 CRT 字符串判定辅助（+9 偏
+   移 + strcmp + 布化）——0x7C-0x7D = MSVC6 静态 CRT
+   （ra2_code_region_layout_crt_provenance）；strcmp 对齐
+   版 + neg/sbb/inc = CRT 字符串比较包装标准形态（核心
+   batch 192 同族）。
+2. 依赖：0x7CDA90 已登记（TSV:632 batch 192）——重写
+   gamemd 时用等价运行时（字符串比较语义）代替。
+3. gamemd_replication_discipline：MSVC6 CRT 字符串设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 27B + 核心交叉 + 4 调用
+点级联交叉；函数名「偏移字符串相等判定器」由双 +9 + strcmp
++ neg/sbb/inc 布化交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 192 / TSV:632：0x7CDA90 strcmp 对齐优化版——本批
+  核心（17 callers 之一；无 locale 快速路径）。
+★batch 1220：0x7C1130 返回归一化——负/sbb 族对照（彼批
+  neg/sbb/and/dec，本批 neg/sbb/inc 布尔化）。
+★调用点宿主 0x725Cxx-0x725Dxx（Westwood 对象名匹配分派
+  器，未登记 scan 池候选）——4 现场 + [eax+0x90]=1 置位
+  语义；后续批次按池顺序处理。
+★0x7CAA05（转宽串方法，scan 池候选）——调用点链上辅件。
+
+五、状态
+-------
+crt_runtime_verified（0x7C8AD3：MSVC6 CRT 偏移字符串相等判
+定器归档；全 27B + 核心交叉 + 4 调用点级联交叉；不写 C++
+模型不做 golden——CRT 字符串设施商业库层；函数名由双 +9
++ strcmp + neg/sbb/inc 布化交叉标注）。TSV 新增
+0x007C8AD3 行。
+
+★本批实锤：strcmp(待比+9, this+9) + neg/sbb/inc 布化——
+  相等返 1 / 不等返 0；4 调用点同一宿主 0x725D00 四级常量
+  串白名单级联（命中置 [eax+0x90]=1）；核心 0x7CDA90
+  TSV:632 已登记；ret 4 thiscall 1 栈参。
+相邻待续：batch 1224 按 _scan_pending_7c.py 取池内下一未登
+记项（uc=1：0x7D4811(27B, callers=1)/0x7CAACB(25B,
+callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1222 已完（MSVC6 CRT _output 安全变体转发壳
+0x7CCA19，commit 1156645）。
