@@ -1,0 +1,166 @@
+frontier batch 1112 —— MSVC6 CRT 32 位 time_t 分解器 0x7D52B8（归档）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D52B8（266B,
+uc=1, callers=3 池顶；探针实测 E8 callers=3 全吻合）。TSV
+无既有行。TARGET = 0x007D52B8。C++ 模型：无（见「三态判
+定」）。TSV：新增 0x007D52B8 行。
+
+一、链语义（disasm 全 266B + 月份表取证，0x7D52B8-0x7D53C1）
+--------------------------------------------------------------
+签名（实测）：cdecl 1 参（param1 = time_t* @[esp+4]），
+返回分解结构指针（TLS 缓冲 [edi+0x40] 或默认 [0xB783B0]）。
+
+★常量（代码内联 + PE 取证）：
+  0x7861F80 = 126230400 = 1461 天（4 年含闰）秒数
+  0x1E13380 = 31536000  = 365 天秒数
+  0x1E28500 = 31622400  = 366 天秒数（闰年）
+  0x15180   = 86400     = 1 天秒数
+  0xE10     = 3600      = 1 小时秒数
+  0x3C      = 60        = 1 分钟秒数
+  [0x87D580] = 平年累计月天数表 {−1,30,59,90,120,151,181,
+               212,243,273,304,334}（PE dword 实锤）
+  [0x87D5B4] = 闰年累计月天数表 {−1,30,58,89,119,150,180,
+               211,242,272,303,333}（PE dword 实锤）
+
+主体（0x7D52B8-0x7D53C1）：
+007d52b8  mov eax,[esp+4]                   ; ★param1 = time_t*
+007d52bf  mov esi,[eax]                     ; ★时间戳（有符号 32 位）
+007d52c3  call 0x7D140B                     ; ★★batch 008 per-thread
+                                              ;   CRT TLS/错误态初始化
+007d52c8  test esi,esi/jge 0x7D52D5
+007d52ce  xor eax,eax/jmp 0x7D53BE          ; ★负时间戳 → 返回 0
+007d52d5  cmp [edi+0x40],0/jne 0x7D52EF     ; ★TLS 缓冲懒分配
+007d52db  push 0x24/call 0x7C9430/pop ecx   ; ★★malloc(0x24)
+007d52e3  mov [edi+0x40],eax                ; ★存 TLS 缓冲
+007d52e8  mov ecx,0xB783B0                  ; ★默认目标 [0xB783B0]
+007d52ef  mov ecx,[edi+0x40]                ; ★已分配则用 TLS 缓冲
+007d52f2  mov eax,esi/cdq/idiv 0x7861F80    ; ★★÷1461 天（4 年周期）
+007d52fe  imul edx,edx,0xF879E080/add esi,edx ; ★余数修正
+007d5306  lea edx,[eax*4+0x46]              ; ★年 = 周期×4 + 70(1900)
+007d530d  mov eax,0x1E13380/cmp esi,eax
+007d5314  jl 0x7D5331/sub esi,0x1E13380/inc edx ; ★365 天年调整
+007d531b  cmp esi,0x1E13380/jl 0x7D5331/sub esi,0x1E13380
+007d531f  mov eax,0x1E28500/inc edx
+007d5325  cmp esi,eax/jl 0x7D532E/inc edx/sub esi,0x1E28500
+007d532e  push 1/pop ebx                    ; ★闰年标记
+007d5331  mov [ecx+0x14],edx                ; ★[+0x14] = 年
+007d5336  mov eax,esi/cdq/idiv 0x15180      ; ★÷86400 → 年内日数
+007d5343  mov [ecx+0x1C],eax                ; ★[+0x1C] = 年内日
+007d5346  imul eax,eax,0xFFFEAE80/add esi,eax ; ★余数修正
+007d534e  test ebx,ebx/jne 0x7D5357
+007d5352  mov edi,0x87D5B4                  ; ★非闰 → 闰年表？
+007d5357  mov edx,[ecx+0x1C]/push 1/pop eax
+007d535d  lea ebx,[edi+4]/cmp [ebx],edx/jge 0x7D536A
+007d5364  inc eax/add ebx,4/jmp 0x7D535D    ; ★★月表扫描定位月份
+007d536a  dec eax/mov [ecx+0x10],eax        ; ★[+0x10] = 月
+007d5371  push 7/sub edx,[edi+eax*4]
+007d537f  mov [ecx+0xC],edx                 ; ★[+0xC] = 月内日
+007d5382  mov eax,[esp+0x14]/cdq/idiv 0x15180 ; ★？重算日
+007d538a  add eax,4/cdq/idiv 0x15180
+007d5397  mov [ecx+0x18],edx                ; ★[+0x18] = 日余
+007d539a  mov eax,esi/cdq/idiv 0xE10        ; ★÷3600 → 时
+007d539e  mov [ecx+8],eax                   ; ★[+8] = 时
+007d53a1  imul eax,eax,0xFFFFF1F0/add esi,eax ; ★余数修正
+007d53a9  mov eax,esi/cdq/idiv 0xE10
+007d53ae  mov [ecx+4],eax                   ; ★[+4] = 分
+007d53b1  imul eax,eax,0x3C/sub esi,eax
+007d53b6  and [ecx+0x20],0                  ; ★[+0x20] = 0
+007d53ba  mov [ecx],esi                     ; ★[+0] = 秒
+007d53bc  mov eax,ecx/pop 族/ret            ; ★返回结构指针
+（0x7D53C2 起下一函数——两函数紧邻）
+
+★语义：**MSVC6 CRT 32 位 time_t 分解器（推断名——localtime/
+gmtime 类）**——cdecl 1 参 time_t*：
+  ① 调 0x7D140B（batch 008 per-thread CRT TLS/错误态初始化
+     ）取 TLS 基址；负时间戳直接返回 0；
+  ② TLS 缓冲 [edi+0x40] 懒分配（malloc 0x24），未分配时用
+     默认目标 [0xB783B0]；
+  ③ 公历分解：÷1461 天（4 年周期含闰）得年 → 逐级减 365/
+     366 天年调整 → ÷86400 得年内日 → 月表扫描定位月（
+     [0x87D580] 平年/[0x87D5B4] 闰年累计表）→ ÷3600 得时
+     → ÷60 得分 → 余秒；
+  ④ 输出结构字段：+0 秒 / +4 分 / +8 时 / +0xC 月内日 /
+     +0x10 月 / +0x14 年(+1900) / +0x18 日余 / +0x1C 年内日
+     / +0x20 0；
+  ⑤ 返回结构指针（TLS 缓冲或 [0xB783B0]）。
+
+★调用点（探针 E8 实测 3 处）：0x7CD300/0x7CD330/0x7CD345
+  同宿主 0x7CD2E0 区：①[0x87CA60] 时区偏移修正 → call →
+  0x7D4FAB 二次转换（[0x87CA64] 门控）→ [0x87CA68] 偏移再
+  修正 → 二次 call → [esi+0x20]=1（★夏令时/本地标记）；
+  ②溢出路径（时间戳超 0x7FFC0B7F）→ 直接 call → 0x7D4FAB
+  → [0x87CA68] 修正。宿主语义 = CRT localtime 包装（UTC
+  修正 + 本地时区 + DST 标记）。
+
+★E8 被调者：0x7D140B（batch 008 per-thread CRT TLS/错误态
+  初始化，18 callers——本批 0x7D52C3 交叉）+ 0x7C9430
+  （batch 063 malloc，TLS 缓冲懒分配）。
+
+★原版怪癖（照抄）：
+  ① 负时间戳直接返回 0 且不写任何字段（无错误码）；
+  ② TLS 缓冲 [edi+0x40] 懒分配（首次 malloc 0x24），未分
+     配时用默认 [0xB783B0] 兜底——两目标并存；
+  ③ 年计算 lea edx,[eax*4+0x46]：4 年周期×4 + 70（1900
+     纪元偏移）——非闰年分支直接减两遍 365 天；
+  ④ 闰年标记 ebx=1 时用 [0x87D580] 平年表？反汇编显示非
+     闰走 0x87D5B4——★表选择与直觉相反需注意（0x7D5352
+     mov edi,0x87D5B4 在 test ebx,ebx jne 之后 = 非闰走闰
+     年表——疑似原版表名/语义交叉，照抄）；
+  ⑤ 月表扫描 lea ebx,[edi+4] 从第 2 项起逐项比对（首项
+     −1 哨兵），eax 从 1 起计数；
+  ⑥ 输出结构 +0x18（日余）与 +0x1C（年内日）双字段冗余
+     存储（第二次 idiv 0x15180 重算）；
+  ⑦ [esi+0x20]=1 由宿主（0x7CD338）在二次调用后置位——
+     DST/本地标记由调用方写，非本函数。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：CRT 时间设施按商
+业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D52B8 = MSVC6 静态 CRT 32 位 time_t 分解器
+   （localtime/gmtime 类）——0x7C-0x7D = MSVC6 静态 CRT
+   （ra2_code_region_layout_crt_provenance）；公历 1461 天
+   周期 + 365/366 年调整 + 累计月天数表 + 逐级整除为 CRT
+   时间分解标准算法形态。
+2. 依赖：0x7D140B（batch 008 TLS 初始化）+ 0x7C9430
+   （batch 063 malloc）+ [0x87D580]/[0x87D5B4] 月表 +
+   [0xB783B0] 默认目标——重写 gamemd 时用等价 std::localtime/
+   gmtime 运行时代替。
+3. gamemd_replication_discipline：MSVC6 CRT 时间设施，重写
+   时用等价运行时代替，逐字节复刻无意义——按商业库纪律
+   归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 266B + 月份表 PE 取证 +
+TLS 交叉；函数名「32 位 time_t 分解器」为推断交叉标注——
+公历分解/月表扫描由代码实测）。
+
+四、跨批次闭合
+------------
+★batch 008：0x7D140B per-thread CRT TLS/错误态初始化——本
+  函数 0x7D52C3 调用交叉（18 callers 之一）。
+★batch 063：0x7C9430 malloc——TLS 缓冲懒分配交叉。
+★CRT 时间族：batch 1099（0x7D4FCC 时区换算）+ batch 1094
+  （0x0C 锁）——本批 32 位 time_t 分解与 batch 1099 时区换
+  算同域（宿主 [0x87CA60]/[0x87CA68] 偏移 = 时区修正链）。
+
+五、状态
+-------
+crt_runtime_verified（0x7D52B8：MSVC6 CRT 32 位 time_t 分
+解器归档；全 266B + 月份表 PE 取证 + TLS/时区族交叉；不写
+C++ 模型不做 golden——CRT 时间设施商业库层；函数名「32
+位 time_t 分解器」为推断交叉标注——公历分解/月表扫描/两
+套月表由代码+PE 字节实测）。TSV 新增 0x007D52B8 行。
+
+★本批实锤：公历 1461 天周期分解 + 平闰两套累计月天数表
+  （[0x87D580]/[0x87D5B4]）+ TLS 懒分配 + 宿主 localtime
+  包装（时区偏移/二次转换/DST 标记）——CRT 时间分解标准
+  形态。
+相邻待续：batch 1113 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7C9602(266B, callers=1)/0x7C6620(266B,
+callers=1)/0x7DC4C9(264B)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1111 已完（代码页转换包装器 0x7DC5DC，commit
+8411c02）。
