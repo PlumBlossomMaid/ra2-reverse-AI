@@ -1,0 +1,113 @@
+frontier batch 1190 —— MSVC6 CRT 中日韩代码页→LCID 映射器 0x7D3679（归档，locale 初始化链）
+============================================
+
+候选来源：_scan_pending_7c.py 全量扫描池——0x7D3679（51B,
+uc=1, callers=2 探针实测 0x7D35A6/0x7D35DF）。TSV 无既有
+行。TARGET = 0x007D3679。C++ 模型：无（见「三态判定」）。
+TSV：新增 0x007D3679 行。
+
+一、链语义（disasm 全 51B + 调用点宿主 + 同族对照，
+0x7D3679-0x7D36AB）
+--------------------------------------------------------------
+签名（确认）：cdecl 1 参（[esp+4]=代码页），返回对应
+LCID / 0（未识别）。
+
+主体（0x7D3679-0x7D36AB）：
+007d3679  mov eax,dword[esp+4]                 ; eax = 代码页（参1）
+007d367d  sub eax,0x3a4                        ; -= 932
+007d3682  je 0x7d36a6                          ; ==932 → 0x411
+007d3684  sub eax,4                            ; -= 4（=936）
+007d3687  je 0x7d36a0                          ; ==936 → 0x804
+007d3689  sub eax,0xd                          ; -= 13（=949）
+007d368c  je 0x7d369a                          ; ==949 → 0x412
+007d368e  dec eax                              ; -= 1（=950）
+007d368f  je 0x7d3694                          ; ==950 → 0x404
+007d3691  xor eax,eax/ret                      ; ★未识别 → 返 0
+007d3694  mov eax,0x404/ret                    ; ★950 → LCID 0x404
+007d369a  mov eax,0x412/ret                    ; ★949 → LCID 0x412
+007d36a0  mov eax,0x804/ret                    ; ★936 → LCID 0x804
+007d36a6  mov eax,0x411/ret                    ; ★932 → LCID 0x411
+
+★语义：**MSVC6 CRT 中日韩代码页→LCID 映射器（推断名——
+locale 初始化 CJK 分支）**——cdecl 1 参映射：
+  932（Shift-JIS 日文）→ 0x411 = 1041（ja-JP）
+  936（GBK 简体中文）→ 0x804 = 2052（zh-CN）
+  949（谚文 韩文）   → 0x412 = 1042（ko-KR）
+  950（Big5 繁体中文）→ 0x404 = 1028（zh-TW）
+  其他 → 0（不识别）
+  = CRT locale 初始化时把 CJK 代码页映射到对应系统
+  LCID 的查表分支（_setmbcp/__initmbctable 域），leaf 纯
+  常数映射。
+
+★调用点（探针 E8 实测 2 处）：0x7D35A6 + 0x7D35DF——同属
+  0x7D35xx 宿主（locale 初始化函数）：写 [0xB7885C]=1、
+  [0xB78840]=参1 后调本批取 LCID，结果存 [0xB78A64] 并
+  拷 [0x87C95C]→[0xB78850]。全局 0xB78840/0xB78850/
+  0xB7885C/0xB78A64 = CRT locale 域（同类族既有登记
+  batch 1082/1084/1091/1161 域）。
+
+★E8 被调者：**零子调用**（全 51B 纯常数映射）。
+
+★全局：零读零写（仅 [esp+4] 参读——纯 leaf）。
+
+★原版怪癖（照抄）：
+  ① 用 sub 链做多值比较（-=932 → -=4 → -=13 → -=1）——
+     编译器把 4 个 case 展开成差值递减链（非跳转表）；
+  ② 4 个出口各自 mov eax,const/ret（无合并返回路径）——
+     -O1 直出；
+  ③ 未识别分支 xor eax,eax（0 语义——调用方据此判断
+     非 CJK 代码页）；
+  ④ 无栈帧（不 push ebp 直接 [esp+4] 参读）——leaf 函数
+     最小形态；
+  ⑤ 常量 0x411/0x804/0x412/0x404 是 ja-JP/zh-CN/ko-KR/
+     zh-TW 的标准 LCID（非代码页本身）——映射方向确认。
+
+二、黄金基准
+----------
+无（本批不建 golden——见「三态判定」：MSVC6 CRT locale 设
+施按商业库纪律归档）。
+
+三、三态判定（为何 crt_runtime_verified 而非 cpp_reimplementation）
+----------------------------------------------------------------
+1. 归属：0x7D3679 = MSVC6 静态 CRT locale 初始化链 CJK 分
+   支——0x7C-0x7D = MSVC6 静态 CRT（ra2_code_region_
+   layout_crt_provenance）；代码页→LCID 映射 = CRT locale
+   标准形态（宿主 0x7D35xx 写 locale 全局 + 同域 batch
+   1082/1084/1091 既有族）。
+2. 依赖：零 E8 零全局——重写 gamemd 时用等价运行时（标
+   准 C locale / GetLocaleInfo 语义）代替。
+3. gamemd_replication_discipline：MSVC6 CRT locale 设施，
+   重写时用等价运行时代替，逐字节复刻无意义——按商业库
+   纪律归档，不写 C++ 模型不做 golden。
+→ 状态：crt_runtime_verified（全 51B + 调用点宿主 + LCID
+常量交叉；函数名「中日韩代码页→LCID 映射器」由 932/936/
+949/950 代码页 → 0x411/0x804/0x412/0x404 LCID 交叉标注）。
+
+四、跨批次闭合
+------------
+★batch 1082/1084/1091：locale 阈值双路径族——本批宿主
+  同 0x7D3x locale 域 + [0x87C79C] 域交叉。
+★batch 1161/1185：MBCS 字符分类映射族——同 CRT 多字节
+  locale 链。
+★batch 1146/1148/1149：locale/浮点全局域既有登记——本批
+  宿主写 [0xB78840]/[0xB7885C]/[0xB78A64] locale 全局域
+  交叉。
+
+五、状态
+-------
+crt_runtime_verified（0x7D3679：MSVC6 CRT 中日韩代码页→
+LCID 映射器归档；全 51B + 调用点宿主；不写 C++ 模型不做
+golden——CRT locale 设施商业库层；函数名由 4 个 CJK 代码
+页 → 4 个 LCID 常量交叉标注）。TSV 新增 0x007D3679 行。
+
+★本批实锤：CJK 代码页→LCID 查表 leaf——932→0x411(ja-JP)
+  /936→0x804(zh-CN)/949→0x412(ko-KR)/950→0x404(zh-TW)/其
+  他→0，sub 链多值比较零 E8 零全局，两调用点 0x7D35A6/
+  0x7D35DF 全在 locale 初始化宿主。
+相邻待续：batch 1191 按 _scan_pending_7c.py 取池内下一未
+登记项（uc=1：0x7CBCAF(50B, callers=4——FILE 输出刷盘族，
+调 0x7D468C + IAT [0x7E11C4])/0x7CB80B(49B, callers=2)/
+0x7D475A(49B, callers=1)）。
+依赖模型：无（归档不落 C++）。
+承前：batch 1189 已完（MSVC6 CRT 控制台串段写出循环
+0x7DDC78，commit a2c5fc5）。
