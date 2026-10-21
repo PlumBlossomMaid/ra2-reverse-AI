@@ -1,0 +1,142 @@
+frontier batch 1233 —— 0x005A80B0 死代码复刻：编排树根 B（546B）
+=======================================================================
+
+候选来源：用户指令三阶段①「RMG 死代码全部复现对齐」——batch 1232
+（根 A 0x5A5020）后同棵树的第二根。TSV:1003 已 semantics 登记（batch
+319，6 callers）；无 REIMPL。0x5A80B0 与 0x5A5020「同构但互不相调、
+各串一棵子树 = 同一方案纵向切分」。
+TARGET = 0x005A80B0。C++ 模型：code/rewrite/rmg/dead_code_5a80b0.{h,cpp}
+新增 DeadCode5A80B0World（work/谓词/菱形/可用区/三连调回调）。
+单测：test_dead_code_5a80b0.cpp 新增 DeadCode5A80B0.Golden
+（golden 12 行全对拍：arr1/arr2 数组初始化 + calls 序列 + next）。
+TSV 新增 0x005A80B0_REIMPL 行。ctest 92→93/93 全绿。
+
+一、语义（全 0x222=546B 反汇编逐条核对 + 诊断槽值实证 + golden 闭环）
+------------------------------------------------
+真义（disasm.py 0x5A80B0 0x222，thiscall ecx=this ret 0）：
+  · this->[0x60] = 有符号 int this60（fild dword 读）
+  · A. 数组初始化两循环（与根 A 完全相同）：
+       0xABE378 起 12B 步长写首 dword = [0xABC1D4]+i（101 项）
+       0xABE834 起 12B 步长写首 dword = [0xABBEC0]+i（8 项）
+  · B. [esp+0x30] = _ftol((double)this60 + [0x7EDB10]=0.49) * 2
+       （fild dword → fadd 0.49 → fadd st0,st0（=×2）→ _ftol 0x7C5F00
+       ——★与根 A 的 (this60+0.32)*3.0 不同！）
+  · C. 外层循环（[esp+0x2C]<10 且 [esp+0x18]<上限）：
+       内层选点（0x5A8133 起）：
+         v = _ftol((double)(uint32)Random() * (double)side² * kInvUintMax)
+         ——★PickBelowMul(side²) 形态：先 fild qword [esp+0x44]（无符号
+         高 32 显式 0）→ fmul [esp+0x24]（side² double）→ fmul
+         [0x7ED898]（kInvUintMax）→ _ftol；拒绝条件 ja 无符号
+         v > side²-1。★与根 A 的 PickRange(0, side²-1) 不同！
+       work[v].xy==(0,0) 判空重抽（0x42D470 构造 (0,0) + 0x50E470 判等）
+       → 成功点计数 [esp+0x14]++（上限 20）→ ebp>200 强制 (0,0) →
+       GetCellAt(0x5657A0)→0x486380 谓词失败 → 重选（ebp 保留）→
+       [esp+0x14]<20 时：
+         work[y*side+x].+0x45 != 0 → jne 0x5A8139 重选（ebp 清零）
+         == 0 → 菱形校验 0x5A7250(x-4, y-4, w=8, h=8, flagA=dl=0,
+         flagB=栈参 0) → 失败重选（ebp 清零）
+         → 通过 → 0x578460 IsWithinUsableArea(&coord, push 1)
+         （thiscall ecx=0x87F7E8 + 2 栈参 ret 8）→ 失败重选
+  · D. 成功点==20 → 跳过三连调；否则**无条件三连调**（★无概率判定！
+       ——根 A 有 Random 概率门 1.0-this60 vs r·kInv 分叉三连调/magic，
+       根 B 没有，选点成功直接三连调）：
+       al = 0x5A89D0(&coord)（al!=0 继续）→ 0x5A82E0 → 0x5A8720 →
+       inc [esp+0x18]（内层完成数）→ 0x5A82B8 inc [esp+0x2C]（外层计数）
+
+★与根 A 的差异清单（本批核心取证）：
+  ① 数组初始化相同（101 项 + 8 项 12B 步长）；
+  ② 内层上限换算不同：(this60+0.49)*2（根 A：(this60+0.32)*3.0）；
+  ③ 取数惯用法不同：PickBelowMul(side²)（根 A：PickRange(0, side²-1)）；
+  ④ ★无概率判定：选点成功直接三连调（根 A 有 Random 概率门 +
+     magic 五连调/虚函数调用/push-1 槽错位）；
+  ⑤ 邻域检查不同：+0x45 != 0 → 直接重选（根 A 走 ±7 邻域扫描
+     0x4863D0）；== 0 → 菱形校验 0x5A7250 + 0x578460 可用区
+     （根 A 无菱形/可用区）；
+  ⑥ 三连调后 inc [esp+0x18] 是**直接指令**（0x5A82B4），无 push-1
+     槽错位（根 A 的怪癖来自虚函数调用段）。
+
+★随机消耗非定值：PickBelowMul 每次 1 Random + 空格/谓词失败重抽
+  （golden next 对拍消耗次数与路径；NormalDeviate 不参与——根 B 无 ND）。
+
+二、golden 采集（emu_oracle 指令级模拟）
+--------------------------------------
+探针 .qwen/tmp/_emu_deadcode_5a80b0.py：调 0x5A80B0（thiscall ecx=this），
+灌 this+0x60、side [0x89C2DC]、work [0xABED10]（side²×0x50B：x|y 首
+dword + 0x45=0——★f45=0 让每轮走菱形校验+可用区判定+三连调全链）、
+[0xABC1D4]/[0xABBEC0] 数组源、cell 表（tile=0 → 0x486380 真身通过）。
+打桩：
+  · 0x5A7250 → xor eax,eax; inc eax; ret 4（返 1=菱形通过；现场 1 栈参）
+  · 0x578460 → 返 1（可用区通过；现场 2 栈参 ret 8）
+  · 0x5A89D0 → 返 1（al!=0 继续三连调）；0x5A82E0/0x5A8720 → ret 4
+seed_global 播种。存档 memory/data/rmg/deadcode_5a80b0_golden.txt：
+3 种子 × 4 用例 = 12 行。用例矩阵：this60 ∈ {1,2,3} × side ∈ {8,16}。
+★this60=1/2/3 → 内层上限 _ftol((this60+0.49)*2) = 2/4/6 轮 → calls
+序列长度 2/4/6 组（每组 = 7250,78460,89D0,82E0,8720 五连调）。
+★side 8 vs 16：PickBelowMul 上界不同但选点成功路径 RNG 消耗一致 →
+next 相同（同种子同 this60 下对照冗余）。
+
+三、★本批实锤（两条，均为调试关键）
+----------------------------------
+① **Unicorn TB 翻译块缓存坑复现 + 修复**：探针初版 seed=1/60556 的
+   this60=2 用例多记一组五连调（5 组 vs 真值 4 组）——同进程复用
+   Oracle（3 种子 × 4 用例连续跑）时旧翻译块假执行，调用序列被多记
+   一次而 RNG 状态（next）不受影响。诊断脚本（_diag_5a80b0.py hook
+   槽值）证实真值：+18=4 >= +30=4（上限 _ftol((2+0.49)*2)=4）退出，
+   每轮 PickBelowMul 1 RNG 共 4 次，next=0xE74254D1 与探针一致——
+   **next 相同但 calls 多一组 = TB 假执行的特征信号**（已往批次
+   1228-1232 的 ctl_remove_cache 只清桩字节区，本次发现主函数区
+   也要清：探针每 call 前 ctl_remove_cache(TARGET, TARGET+0x222)）。
+② **菱形校验 0x5A7250 的 push ebx 位移实锤**：0x5A824C push ebx 之后
+   lea ecx,[esp+0x50] 实际指向 push 前 [esp+0x4C]——rect{+0=X-4/
+   +4=Y-4/+8=8/+0xC=8} 恰好对位（x-4 写 [esp+0x4C]、y-4 写
+   [esp+0x50]、w/h=8 写 push 后 [esp+0x58]/[esp+0x5C] = push 前
+   +0x54/+0x58）。与根 A 的 push-1 槽错位同族：原版用 push 调整
+   栈索引来拼结构体。
+
+四、原版怪癖（照抄）
+--------------------
+① 数组初始化两循环 12B 步长（0xABE378 101 项 + 0xABE834 8 项）；
+② 内层上限 = _ftol((this60+0.49)*2)——fadd 0.49 先于 fadd st0,st0（×2）
+   （浮点顺序敏感）；
+③ PickBelowMul(side²) 取数（fild qword 无符号 + 两次 fmul + _ftol；
+   拒绝条件 ja 无符号 v > side²-1）；
+④ work[v].xy==(0,0) 判空重抽（0x50E470 两 u16 相等判定）；
+⑤ ebp>200 强制坐标 (0,0)（选点重试上限，200 次兜底）；
+⑥ [esp+0x14] 成功点计数上限 20（==20 跳过三连调）；
+⑦ +0x45 != 0 → 重选（ebp 清零）；== 0 → 菱形校验 0x5A7250(x-4,y-4,
+   8,8,0,0) + 0x578460 IsWithinUsableArea(&coord,1)（thiscall + 2
+   栈参 ret 8）；
+⑧ ★push ebx 位移拼 rect 结构（与根 A push-1 槽错位同族）；
+⑨ ★无概率判定：选点成功直接三连调（根 A 有 Random 概率门）——
+   0x5A89D0 返回 al==0 时跳过后续两调但仍 inc 外层计数；
+⑩ 外层循环退出双条件：内层完成数 >= 上限 或 外层计数 >= 10。
+
+五、跨批次连接
+--------------
+0x5A5020（batch 1232 根 A——同树不同根、互不相调）、0x5A7250（batch
+222/934 已复刻菱形校验——本批打桩 1 且调用现场 push 位移实锤）、
+0x578460（活代码 IsWithinUsableArea——USER_DEFINED 推断名，TSV:1003
+记录；本批打桩 1，真身留活代码域）、0x5A89D0/0x5A82E0/0x5A8720
+（batch 320 登记子树——本批打桩序列）、0x598030 PickRange（根 A
+用，本批不用——差异点 ③）、0x65C780 Random（randomizer 已复刻）、
+[0x7EDB10]=0.49（本批首次实读取证）。
+
+六、状态
+--------
+0x5A80B0：cpp_reimplementation_verified + unit_test_verified
+（arr1/arr2 数组初始化 12/12 Eq + calls 序列 12/12 Eq + next 12/12 Eq；
+ctest 93/93 全绿，含 0x58C5A0/0x5A6BA0/0x5A1E10/0x5A3A60/0x5A5020
+回归）。partial：函数精确名（「编排树根 B」推断——死代码无运行观测）、
+三连调 al==0 中止路径（golden 打桩返 1 未覆盖）、菱形校验失败/可用区
+失败重选路径（golden 打桩全通过）、0x578460 真身语义（打桩 1——
+活代码域后续批次）、work +0x45!=0 重选路径（golden f45=0 全链通过
+未覆盖）。
+★诚实记录：TB 缓存坑使初版 golden 的 seed=1/60556 this60=2 为 5 组
+（污染值），经诊断脚本槽值实证 + 探针加 ctl_remove_cache 修复后重采
+为 4 组（next 不变 0xE74254D1/0xBADF9A5——RNG 状态未被污染，仅调用
+序列多记）。golden 文件已按修复后输出重写。
+本批产品代码新增 dead_code_5a80b0.{h,cpp} + 测试 + CMake 登记；
+ctest 92→93/93 全绿。探针 _emu_deadcode_5a80b0.py/_diag_5a80b0.py
+闭环不入库。
+★探针纪律补记：同进程多用例连跑时主函数区 TB 缓存必须每 call 前清
+（ctl_remove_cache(TARGET, TARGET+len)），仅清桩字节区不够。
