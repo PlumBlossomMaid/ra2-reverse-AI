@@ -1,0 +1,138 @@
+frontier batch 1317 — 0x6D4DB0 双字段写入器 / 0x6CF230 Swizzle 转发器 / 0x6C89E0 序列化写入器流（2026-10-23）
+
+口径：承接 batch 1316 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=2 三个未登记函数：
+0x6D4DB0（66B）、0x6CF230（14B）、0x6C89E0（304B）。取证手段：disasm.py
+直反汇编全程读完（0x6D4DB0 0x60 / 0x6CF230 0x40 / 0x6C89E0 0x140 覆盖）+
+TSV 查重（三候选全部未登记）+ 跨批次对比（0x6CF230 ↔ 用户记忆存档
+系统 SwizzleManager::Process 点名）。
+
+================================================================================
+0x6D4DB0 —— 双字段写入器（66B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 2 栈参（[esp+4]=串指针、[esp+0xC]=值）
+ret 8。
+机器码（全文 0x6D4DB0-0x6D4DF1）：
+    mov eax, [esp+4]                 ; ★串指针参
+    push esi; mov esi, ecx
+    test eax, eax
+    jne 0x6D4DD7                     ; ★串非空 → 拷贝路径
+    mov word [esi+0x24], ax          ; ★串空 → +0x24 word 清零
+    mov eax, [esp+0xC]               ; ★值参
+    mov [esi+0xA4], 0xFFFFFFFF       ; ★先写 -1
+    mov [esi+0xA4], eax              ; ★再覆写值
+    ret 8
+    0x6D4DD7:                        ; ★拷贝路径
+    lea ecx, [esi+0x24]
+    push eax; push ecx
+    call 0x7CA489                    ; ★wcscpy（+0x24 目标 = 源串）
+    mov edx, [esp+0x14]
+    mov [esi+0xA4], edx              ; +0xA4 = 值参
+    ret 8
+
+语义：**双字段写入器**——写 +0x24 串字段（空 → word 清零；非空 →
+0x7CA489 wcscpy 拷贝）+ +0xA4 dword 字段（★先写 -1 再覆写——两段
+写形态）。ret 8 双参。后邻 0x6D4E00 为清除器（+0xA4=-1 + +0x24=0——
+同族配对）。2 unique caller（8 callsite）。
+
+★怪癖：①★+0x24 串字段（word 清零 vs wcscpy 双路径）；②★+0xA4
+先写 -1 再覆写（两段写——非原子赋值）；③★wcscpy 0x7CA489（batch
+记忆宽串家族 anchor）；④★后邻 0x6D4E00 清除器配对。
+
+⚠️ partial：+0x24/+0xA4 字段语义（串+索引/句柄配对推断）、宿主类
+（0x6D4DBx 区——0x6Dxxxx 相机/坐标域邻近）、后邻 0x6D4E00（同族
+候选）、2 unique caller 身份。
+
+================================================================================
+0x6CF230 —— Swizzle 转发器（14B 全程读完，★存档系统点名命中）
+================================================================================
+签名：thiscall（ecx=参数指针）+ 1 栈参（[esp+4] 透传）ret eax。
+机器码（全文 14 字节）：
+    mov ecx, [esp+4]                 ; ★栈参 → ecx
+    call 0x6CF350                    ; ★0x6CF350（SwizzleManager::Process）
+    xor eax, eax                     ; ★恒返 0
+    ret 4
+
+语义：**Swizzle 转发器**——栈参装入 ecx 后直调 0x6CF350（★Swizzle
+Manager::Process——用户记忆存档系统"待验证"点名函数，存档对象引用
+修复的核心调度），返回恒 0（★忽略 Process 返回值）。2 unique caller
+（8 callsite）。
+
+★怪癖：①★thunk 直调 0x6CF350（SwizzleManager::Process——存档
+序列化/反序列化的引用修复调度）；②★恒返 0（返回值被丢弃——调用方
+只要副作用）；③★14B 极简（无栈帧）。
+
+⚠️ partial：0x6CF350 内部语义（SwizzleManager::Process——用户记忆
+"待验证：SwizzleManager::Process(0x6CF350) 对无条目地址的处理"——
+本批为其转发入口实锤）、消息类型（ecx 参数表）、宿主类（0x6CF23x
+区——0x6CFxxx 存档域）、2 unique caller 身份。
+
+================================================================================
+0x6C89E0 —— 序列化写入器流（304B 全程读完）
+================================================================================
+签名：thiscall（ecx=流状态结构）+ 2 栈参（[esp+0x28]=数据源、
+[esp+0x24]=目标对象）ret 8。
+机器码骨架（0x6C89E0-0x6C8B0F）：
+    sub esp, 0x10; push 全; mov ebp, ecx
+    mov edi, [ebp+8]                 ; ★目标指针
+    mov ecx, [ebp]; mov esi, [ebp+4] ; 起始 + 长度
+    lea eax, [edi+0xC]; add ecx, esi
+    cmp eax, ecx; ja 0x6C8A06        ; ★越界 → 失败返 0
+    test edi, edi
+    mov [ebp+8], eax                 ; ★推进目标指针 +0xC
+    jne 0x6C8A12
+    0x6C8A06: xor eax, eax; ret 8    ; 失败
+    0x6C8A12:
+    mov ebx, [esp+0x28]              ; ★数据源结构
+    16B 结构头写入:
+    mov dx, [ebx]; mov [edi], dx     ; ★word 复制 ×4（+0/+2/+4/+6）
+    mov ax, [ebx+4]; mov [edi+2], ax
+    mov cx, [ebx+0x10]; mov [edi+4], cx
+    mov dx, [ebx+0x14]; mov [edi+6], dx
+    mov eax, [ebp+8]; mov [edi+8], eax  ; ★+8 = 推进后指针
+    lea ecx, [ebx+8]
+    call 0x437F30                    ; ★0x437F30（串构造）
+    拷贝其双字 → 栈
+    call dword ptr [edx+0x5C]        ; ★虚表槽 0x5C（取长度）
+    mov eax, [ebx+0x14]; test eax, eax
+    jle 0x6C8AFD                     ; 计数 ≤ 0 → 跳过数据
+    mov eax, [ebx+0x10]
+    push eax; push 0xB0BDD0
+    call 0x661590                    ; ★0x661590（数据装载）
+    目标推进 + 数据拷贝:
+    mov ecx, [ebp+8]; ... lea ecx, [edi+eax]
+    rep movsd + rep movsb            ; ★数据拷贝（4B + 余数）
+    call dword ptr [edx+0x74]        ; ★虚表槽 0x74（逐项长度）
+    ...循环（计数逐项）
+    收尾:
+    call dword ptr [eax+0x60]        ; ★虚表槽 0x60
+    mov eax, edi; ret 8
+
+语义：**序列化写入器流**——流状态（+0/+4/+8）推进目标指针：16B 结构
+头写入（4× word + dword 推进指针）；0x437F30 串构造 + 虚表槽 0x5C 取
+值；0x661590 数据装载（[0xB0BDD0] 缓冲区）；rep movsd/movsb 数据拷贝
+（4B + 余数字节）；虚表槽 0x74 逐项长度循环；虚表槽 0x60 收尾。
+★二进制流序列化写入（数据段写入——存档/网络流格式族，与
+0x6C8B10 后邻读取器配对）。2 unique caller（8 callsite）。
+
+★怪癖：①★流指针推进（+0xC 步进 + 越界检查 ja）；②★16B 结构头
+（4× word + dword 推进指针）；③★rep movsd/movsb 双段数据拷贝
+（4B 对齐 + 余数字节）；④★[0xB0BDD0] 数据缓冲 + 0x661590 装载；
+⑤★虚表槽 0x5C/0x60/0x74 三槽回调（取长度/收尾/逐项）。
+
+⚠️ partial：流状态结构（+0/+4/+8）语义、16B 头字段含义（word 族）、
+0x437F30/0x661590 身份、[0xB0BDD0] 缓冲、虚表槽 0x5C/0x60/0x74
+宿主、宿主类（0x6C89Ex 区——0x6C8xxx 流/序列化域）、后邻 0x6C8B10
+（读取器配对）、2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- 用户记忆（存档系统——SwizzleManager::Process(0x6CF350) 待验证）：
+  ★0x6CF230 是 0x6CF350 的转发入口——存档系统 Swizzle 调度链
+  前级实锤（本批兑现"待验证"点名）。
+- batch 记忆（宽串家族 0x7CA489 wcscpy）：0x6D4DB0 串拷贝共用。
+- 0x6C8xxx 区（序列化/流域）：0x6C89E0 与后邻 0x6C8B10 读写配对
+  ——存档/网络格式族（后续批次闭合）。
+- [0xB0BDD0] 缓冲：0x6C89E0 数据装载目标（0xB0 全局区族——batch
+  1312/1315 资源系统同区）。
