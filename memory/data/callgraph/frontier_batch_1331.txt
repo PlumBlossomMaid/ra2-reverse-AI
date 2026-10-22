@@ -1,0 +1,169 @@
+frontier batch 1331 — 0x5F5DD0 ObjectClass::GetHealthStatus / 0x4A95A0 DisplayClass::MarkFoundation / 0x4137A0 AircraftTrackerClass::Get（2026-10-23）
+
+口径：承接 batch 1330 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个 YRpp 命名符号函数（语义锚点明确、体量小、deps 高）：
+0x5F5DD0 ObjectClass::GetHealthStatus（169B，callees=0 deps=1895）、
+0x4A95A0 DisplayClass::MarkFoundation（166B，callees=2 deps=70）、
+0x4137A0 AircraftTrackerClass::Get（91B，callees=0 deps=1888）。
+取证手段：disasm.py 双参直反汇编全程读完（0x5F5DD0 0xB0 尾 0x5F5E78 /
+0x4A95A0 0xB0 尾 0x4A9645 / 0x4137A0 0x70 尾 0x4137FA，函数边界与
+functions.tsv 完全吻合——0x4137A0 后紧跟 0x413800 下一函数）+ TSV 查重
+（三候选全部未登记）+ functions.tsv 符号核对（三候选均为 USER_DEFINED
+Global 命名符号）+ 跨批次对比（虚表槽 0x88 取值 ↔ batch 1279 虚表槽
+0x88 回调链；0x5657A0 取格链 ↔ batch 1300s 系；[0x8871E0] 全局规则
+↔ batch 1329/1330 同锚点）。
+
+================================================================================
+0x5F5DD0 —— ObjectClass::GetHealthStatus（169B 全程读完）
+================================================================================
+签名：thiscall（ecx=宿主，ObjectClass），无栈参，返回 eax∈{0,1,2}，
+ret（0x5F5DD0-0x5F5E78，8B 栈）。
+机器码（0x5F5DD0-0x5F5E78）：
+    sub esp, 8; push esi; mov esi, ecx
+    fild dword ptr [esi+0x6C]              ; ★fild Strength（+0x6C int）
+    fstp qword ptr [esp+4]
+    mov eax, [esi]; call [eax+0x88]         ; ★虚表槽 0x88（取 Max/上限）
+    fild dword ptr [eax+0xA0]               ; ★fild MaxStrength（+0xA0）
+    mov ecx, [0x8871E0]
+    fdivr qword ptr [esp+4]                 ; ★fdivr = 上限/强度
+    fcomp qword ptr [ecx+0x1708]            ; ★fcomp [Rules+0x1708]
+    fnstsw ax; test ah, 0x41                ; ★浮点比较惯用法
+    je 0x5F5E10
+    mov eax, [esi+0x6C]; test eax, eax; jle 0x5F5E10
+    xor eax, eax; ...ret                    ; ★返回 0（强度>0 且比例≥阈值?）
+    0x5F5E10（第二段同构）：
+    fild [esi+0x6C]; ...call [edx+0x88]（虚表槽 0x88）
+    fild [eax+0xA0]; fdivr; fcomp [0x8871E0+0x1708]
+    fnstsw ax; test ah, 0x41; jne 0x5F5E6F
+    ...第三段：fcomp [0x8871E0+0x1700]      ; ★第二阈值 +0x1700
+    mov eax, 1; jne 0x5F5E74                ; ★返回 1
+    0x5F5E6F: mov eax, 2; ...ret            ; ★返回 2
+    0x5F5E74: mov eax, 1; ...ret            ; ★返回 1（fcomp 第二阈值成立）
+语义：**ObjectClass::GetHealthStatus**——宿主（this，ObjectClass）+
+无栈参：`fild Strength(+0x6C)` → 虚表槽 0x88 取对偶对象 → `fild
+Max(+0xA0)` → `fdivr`（上限÷强度）→ `fcomp [0x8871E0+0x1708]` 与
+规则阈值比较 → 三档返回值 0/1/2（健康状态等级：0=差、1=中、2=好；
+第一段 je 成立且强度>0 返 0，否则第二段同构比较 +0x1708 不成返 2、
+成则再比 +0x1700 返 1/2）。★健康状态查询器（0x5F5DDx 区——
+0x5Fxxxx 对象属性域，callees=0 纯叶函数，deps=1895 高解锁）。
+2 unique caller（4 callsite）。
+★怪癖：①★fild Strength(+0x6C) 与 fild Max(+0xA0) 比值用 fdivr
+（上限÷强度——比值方向与直觉相反）；②★[0x8871E0+0x1708]/[0x8871E0+
+0x1700] 双规则阈值（RulesClass 健康阈值常量，0x1700/0x1708 邻接）；
+③★虚表槽 0x88 取对偶对象（Max 来源）+ 返回值三档 0/1/2；
+④★test ah, 0x41 浮点比较惯用法 ×3（fcomp/fnstsw/je|jne 组合）。
+⚠️ partial：[0x8871E0+0x1708]/[0x8871E0+0x1700] 阈值常量语义（规则
+字段名）、虚表槽 0x88 宿主身份、返回三档枚举含义（0/1/2 对应颜色/
+等级）、2 unique caller 身份。
+
+================================================================================
+0x4A95A0 —— DisplayClass::MarkFoundation（166B 全程读完）
+================================================================================
+签名：thiscall（ecx=宿主，DisplayClass）+ 2 栈参（[esp+0xC]=坐标结构
+指针、[esp+0x18]=标记标志字节 bl），ret 8（0x4A95A0-0x4A9645）。
+机器码（0x4A95A0-0x4A9645）：
+    push ebx/ebp/esi/edi; mov ebp, [esp+0xC]; mov edi, ecx
+    mov ax, word [ebp]; cmp ax, [0x8A03F8]   ; ★坐标 vs [0x8A03F8]
+    jne 0x4A95C4
+    mov cx, word [ebp+2]; cmp cx, [0x8A03FA] ; ★[0x8A03FA]（禁标坐标?）
+    je 0x4A963F                               ; ★相等 → 直接返
+    0x4A95C4（主循环）：
+    mov esi, [edi+0x117C]                     ; ★foundation 数组（+0x117C）
+    mov bl, byte [esp+0x18]                   ; ★标记标志字节
+    0x4A95CE（逐格循环）：
+    cmp word [esi], 0x7FFF; jne 0x4A95DD      ; ★0x7FFF 结束哨兵
+    cmp word [esi+2], 0x7FFF; je 0x4A963F     ; ★双字哨兵 → 结束
+    0x4A95DD（取格）：
+    mov eax, esi; add esi, 4
+    mov dx, word [eax]; mov ax, word [eax+2]
+    add dx, word [ebp]; add ax, word [ebp+2]  ; ★偏移 + 基坐标
+    mov word [esp+0x18], dx; mov word [esp+0x1A], ax
+    mov ecx, [esp+0x18]; lea edx, [esp+0x14]
+    mov [esp+0x14], ecx; push edx
+    mov ecx, edi; call 0x568300               ; ★0x568300（格判定）
+    test al, al; je 0x4A95CE                  ; ★失败 → 下一格
+    lea eax, [esp+0x14]; push eax
+    mov ecx, edi; call 0x5657A0               ; ★0x5657A0 取格
+    mov ecx, [eax+0x12C]                      ; ★cell +0x12C 标志
+    test bl, bl; je 0x4A9634
+    or ecx, 2; mov [eax+0x12C], ecx           ; ★置 bit1
+    jmp 0x4A95CE
+    0x4A9634: and ecx, 0xFFFFFFFD
+    mov [eax+0x12C], ecx                      ; ★清 bit1
+    jmp 0x4A95CE
+    0x4A963F: ...ret 8                         ; ★双栈参
+语义：**DisplayClass::MarkFoundation**——宿主（this，DisplayClass）+
+2 栈参（坐标结构 + 标记标志字节）：坐标与 [0x8A03F8]/[0x8A03FA]
+全局（禁标坐标/当前标记源?）相等 → 直接返；否则遍历 foundation 数组
+（+0x117C，0x7FFF 双字结束哨兵）：每格偏移+基坐标合成新坐标 →
+0x568300 格判定（成功才继续）→ 0x5657A0 取格（[0x87F7E8] MapClass）
+→ 置/清 cell +0x12C 标志 bit1（or 2 / and ~2，依 bl 字节分支）。
+★地基标记器（0x4A95Ax 区——0x4A9xxx DisplayClass 显示/地基域）。
+2 unique caller（4 callsite）。
+★怪癖：①★foundation 数组 +0x117C 以 word 0x7FFF 双哨兵结束（[esi]/
+[esi+2] 双字都 0x7FFF 才停）；②★[0x8A03F8]/[0x8A03FA] 全局坐标
+（相等跳过标记）；③★cell +0x12C 标志 bit1 置/清（or 2 / and ~2——
+0x12C 是 CellClass 单元标志字）；④★0x568300 格判定（失败跳过）+
+0x5657A0 取格链；⑤★坐标合成 word 加法（offset + base，16 位回绕）。
+⚠️ partial：[0x8A03F8]/[0x8A03FA] 全局坐标语义（禁标/当前标记）、
+foundation 数组 +0x117C 结构（0x7FFF 哨兵含义）、0x568300 判定语义、
+cell +0x12C bit1 含义、2 unique caller 身份。
+
+================================================================================
+0x4137A0 —— AircraftTrackerClass::Get（91B 全程读完）
+================================================================================
+签名：thiscall（ecx=宿主，AircraftTrackerClass），无栈参，返回
+eax=取出的元素（或 0），ret（0x4137A0-0x4137FA，8B 栈）。
+机器码（0x4137A0-0x4137FA）：
+    push ecx; mov eax, [ecx+0x2590]           ; ★计数/容量（+0x2590）
+    test eax, eax; jne 0x4137AF
+    xor eax, eax; pop ecx; ret                ; ★空 → 返 0
+    0x4137AF:
+    mov eax, [ecx+0x2584]                     ; ★数组指针（+0x2584）
+    push esi; lea esi, [ecx+0x2580]           ; ★数组基址（+0x2580）
+    lea ecx, [esp+4]; mov edx, [eax]
+    push ecx; mov eax, [esi]; mov ecx, esi
+    mov [esp+8], edx
+    call [eax+0x10]                           ; ★虚表槽 0x10（VectorClass::ID）
+    cmp eax, -1; je 0x4137F4                  ; ★-1 → 返 0
+    mov ecx, [esi+0x10]; cmp eax, ecx; jge 0x4137F4  ; ★越界 → 返 0
+    0x4137DA（数组左移删除）：
+    dec ecx; cmp eax, ecx; mov [esi+0x10], ecx ; ★ActiveCount-1
+    jge 0x4137F4
+    0x4137E2（左移循环）：
+    mov ecx, [esi+4]; inc eax
+    mov edx, [ecx+eax*4]; mov [ecx+eax*4-4], edx  ; ★元素前移
+    mov ecx, [esi+0x10]; cmp eax, ecx; jl 0x4137E2
+    0x4137F4: mov eax, [esp+4]; pop esi; pop ecx; ret  ; ★返取出元素
+语义：**AircraftTrackerClass::Get**——宿主（this，AircraftTrackerClass）+
+无栈参：+0x2590 计数空 → 返 0；否则经虚表槽 0x10（VectorClass::ID/
+Get_Index）取索引（-1 或越界 → 返 0），**数组左移删除**（+0x2580 基址
++0x2584 数组指针 +0x10 ActiveCount-1，从索引起逐元素前移 [ecx+eax*4]）
+→ 返回取出的元素。★追踪列表取出器（0x4137Ax 区——0x413xxx 追踪/
+容器域，callees=0 纯叶函数，deps=1888 高解锁）。2 unique caller
+（4 callsite）。
+★怪癖：①★+0x2590 计数前置检查（空返 0）+ 虚表槽 0x10 取索引；
+②★数组左移删除（取走后剩余元素整体前移一位——[ecx+eax*4] →
+[ecx+eax*4-4] 循环）；③★+0x2580/+0x2584/+0x10 三字段（基址/数组/
+ActiveCount——VectorClass 布局）；④★-1 与越界双失败路径返 0；
+⑤★返回值即被取元素（出队语义）。
+⚠️ partial：宿主 AircraftTrackerClass 语义（追踪对象列表）、虚表槽
+0x10 宿主身份、[ecx+0x2590] 计数与 +0x2580 系字段精确含义、2 unique
+caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1279（虚表槽 0x88 回调链）：0x5F5DD0 用虚表槽 0x88 取对偶
+  对象（Max 来源）——虚表槽 0x88 家族再验证。
+- batch 1329/1330（[0x8871E0] 全局规则）：0x5F5DD0 用 [0x8871E0+
+  0x1700]/[0x8871E0+0x1708] 双阈值——RulesClass 常量区 0x1700 系
+  持续闭合。
+- batch 1300s 取格链（0x5657A0 + [0x87F7E8] MapClass）：0x4A95A0 用
+  0x5657A0 + 0x568300 格判定——取格家族持续闭合。
+- VectorClass 布局（基址/数组指针/ActiveCount + 虚表槽 0x10）：
+  0x4137A0 数组左移删除与既有 VectorClass 增长知识（batch 1329
+  虚表槽 8 增长）互补——容器家族持续闭合。
+- YRpp 命名符号（ObjectClass::GetHealthStatus / DisplayClass::
+  MarkFoundation / AircraftTrackerClass::Get）：本批三函数全部有官方
+  符号锚点，与 YRpp 交叉验证。
