@@ -1,0 +1,162 @@
+frontier batch 1306 — 0x56FC80 地形传播扩散器② / 0x56EF50 地形传播扩散器③ / 0x5132F0 数组增长追加器（2026-10-23）
+
+口径：承接 batch 1305 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=2 三个未登记函数：
+0x56FC80（964B）、0x56EF50（917B）、0x5132F0（80B）。取证手段：
+disasm.py 直反汇编全程读完（三函数 658 行反汇编分页读完）+ TSV 查重
+（三候选全部未登记）+ 跨批次对比（0x56FC80/0x56EF50 ↔ batch 1305
+0x56F8B0 同族扩散器变体实锤）。
+
+================================================================================
+0x56FC80 —— 地形传播扩散器②（964B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 2 栈参（[esp+0x1C]=方向/坐标、[esp+0x20]）
+ret 8。
+机器码骨架（0x56FC80-0x570043，与 batch 1305 0x56F8B0 同族变体）：
+    sub esp, 8; push 全
+    mov edi, [esp+0x1C]; mov eax, edi; mov ebx, ecx
+    and eax, 7                       ; ★方向 & 7
+    lea edx, [esp+0x1C]; lea ecx, [eax*4+0x89F688]   ; ★八方向增量表
+    push ecx; mov ecx, [esp+0x1C]; push edx
+    call 0x42D510                    ; ★坐标计算
+    mov ecx, [eax]; mov [esp+0x1C], ecx; mov [esp+0xC], ecx
+    movsx eax, word [esp+0x1E]; movsx edx, cx
+    shl eax, 9; add eax, edx         ; ★一维索引 y<<9+x
+    js / cmp 0x40000 / jge           ; ★512² 边界
+    mov edx, [0x87F924]; mov eax, [edx+eax*4]
+    test eax, eax; je → 0xABDC50 哑元（含 [0xABDC74] 坐标存）
+    0x56FCE3:
+    test byte [esi+0x140], 0x80; je 0x56FD3B   ; ★占用标志
+    mov al, [esi+0x11E]
+    cmp al, 9; jb 0x56FD3B
+    cmp al, 0xF; jbe 0x56FD34
+    cmp al, 0x11; jne 0x56FD3B       ; ★类型分支用 0x11（vs batch 1305 的 0x10）
+    类型 0x11 分支:
+    push edi; push 栈; mov ecx, ebx
+    call 0x56FC80                    ; ★递归本函数
+    push 0; push 6; mov ecx, esi
+    call 0x47E470                    ; ★处理（与 0x56F8B0 同）
+    lea ecx, [esi+0x24]; mov byte [esi+0x11E], 0
+    push ecx; mov ecx, 0x87F7E8
+    mov dword [esi+0x44], 0xFFFFFFFF
+    call 0x6551C0                    ; ★挂载/同步
+    jmp 0x56FD3B
+    0x56FD34: mov byte [esi+0x11E], 0x10
+    0x56FD3B:
+    mov eax, [esi+0x38]; mov edx, [0xABAD1C]
+    mov ecx, [0xAA1548]              ; ★全局族（vs 0x56F8B0 的 [0xABC1D0]）
+    sub eax, edx; inc eax
+    cmp eax, ecx; je ...
+    cmp eax, [0xAA0740]; je ...      ; ★全局族（vs [0xAA1540]）
+    mov ecx, [0xAA1028]; cmp eax, ecx; je ...
+    lea ebp, [ecx+1]; cmp eax, ebp; je ...   ; ★+1（vs +2）
+    add ecx, 3; cmp eax, ecx; jne ...
+    特殊分支:                          ; ★邻格扩散链（0x47DD70 检查四方向格）
+    ...0x56EB80 递归 + 0x56E990 收尾
+    ret 8
+
+语义：**地形传播扩散器②（batch 1305 0x56F8B0 同族变体）**——与
+0x56F8B0 整体同构（方向&7 + 0x89F688 + 0x42D510 + 0x87F924 + 哑元 +
++0x140/+0x11E 分支 + 递归 + +0x38 全局比较 + 0x47DD70 链 + 0x56EB80/
+0x56E990 收尾），★差异：+0x11E 类型分支比较量用 0x11（非 0x10）且
+9/0xF 区间写 0x10；地面类型全局族 [0xAA1548]/[0xAA0740]（非 [0xABC1D0]/
+[0xAA1540]）、+1 分支（非 +2）——★不同地形族/扩散规则第三实例。
+2 unique caller（8 callsite）。
+
+★怪癖：①★0x56F8B0 同族第三实例（扩散器模板多实例化持续累积）；
+②★+0x11E 类型分支量不同（0x10 vs 0x11——不同扩散类型）；③★地面
+类型全局族不同（[0xAA1548]/[0xAA0740] vs [0xABC1D0]/[0xAA1540]）；
+④★+1 vs +2 分支偏移（族内增量差异）；⑤★其余链全同（递归/处理/
+挂载/收尾）。
+
+⚠️ partial：宿主类（0x56FC8x 区——0x56xxxx 地形/寻路段）、+0x11E
+类型枚举（0x11=另一扩散型推断）、[0xAA1548]/[0xAA0740] 地面类型族
+全局、0x47E470/0x47DD70/0x56EB80/0x56E990 身份、2 unique caller 身份。
+
+================================================================================
+0x56EF50 —— 地形传播扩散器③（917B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 2 栈参（[esp+0x1C]=方向/坐标、[esp+0x20]）
+ret 8。
+机器码骨架（0x56EF50-0x56F2E4）：与 0x56FC80 同族（方向&7 + 0x89F688
++ 0x42D510 + 0x87F924（0x40000 边界）+ 哑元 0xABDC50 → +0x140 占用 +
++0x11E 类型分支（9/0xF/0x11 三档）→ 递归 + 0x47E470 处理 + 0x6551C0
+挂载 → +0x38 地面类型全局族（[0xABAD1C]/[0xAA1548]/[0xAA0740]/
+[0xAA1028] 多档）→ 0x56EB80 邻格递归 + 0x56E990 收尾）。917B 略短于
+964B——分支细节差异（个别族偏移/处理调用不同，按同族推断未逐字节
+比）。
+
+语义：**地形传播扩散器③（扩散器模板第四实例）**——与 0x56FC80 同族
+（917B vs 964B 略短——分支差异）。★地形/地面传播家族多实例化延续。
+2 unique caller（8 callsite）。
+
+★怪癖：①★同族第四实例（0x56F8B0/0x56FC80/0x56EF50——模板多实例
+化继续）；②★917B 略短（分支细节差异——未逐字节比对）；③★核心链
+全同（取格/哑元/类型分支/递归/挂载/全局族/邻格递归/收尾）。
+
+⚠️ partial：与 0x56FC80 精确差异（未逐字节归一化比对）、宿主类
+（0x56EF5x 区）、+0x11E 类型枚举、地面类型全局族、2 unique caller
+身份。
+
+================================================================================
+0x5132F0 —— 数组增长追加器（80B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（[esp+8]=条目指针）ret al。
+机器码（全文 80 字节）：
+    push esi; mov esi, ecx
+    mov ecx, [esi+8]                 ; ★容量（+8）
+    mov eax, [esi+0x10]              ; ★长度（+0x10）
+    cmp eax, ecx
+    jl 0x513325                      ; 长度 < 容量 → 直接追加
+    mov al, [esi+0xD]                ; ★owns 标志
+    test al, al; jne 0x513308
+    test ecx, ecx; jne 0x51331F      ; 容量非 0 又非 owns → 空间满失败
+    0x513308:
+    mov eax, [esi+0x14]              ; ★增长量（+0x14）
+    test eax, eax; jle 0x51331F      ; 增长量 ≤ 0 → 失败
+    mov edx, [esi]; add eax, ecx     ; ★新容量 = 旧容量 + 增长量
+    push 0; push eax; mov ecx, esi
+    call dword ptr [edx+8]           ; ★虚表槽 8（Grow）
+    test al, al; jne 0x513325        ; 扩容成功 → 写入
+    0x51331F: xor al, al; ret 4      ; failure → 0
+    0x513325:
+    mov eax, [esi+0x10]
+    mov edx, [esi+4]
+    lea ecx, [eax+1]
+    mov [esi+0x10], ecx              ; ★长度 +1
+    mov ecx, [esp+8]
+    mov ecx, [ecx]                   ; ★栈参解引（条目值）
+    mov [edx+eax*4], ecx             ; ★array[length] = 条目值
+    mov al, 1; ret 4
+
+语义：**数组增长追加器**——长度 < 容量直接追加；否则 owns 或容量为 0
+时经虚表槽 8（Grow）按 +0x14 增长量扩容（失败返 0）；成功写
+array[length] = 栈参解引值、长度 +1、返 1。★VectorClass 家族追加
+成员（batch 1296 构造器/1301 扩容器的家族互补——Add/Append 形态）。
+2 unique caller（8 callsite）。后邻 0x513340 为数组索引查找器
+（+0x10 长度遍历 +4 数组找等于 [栈参] 解引值首项 → 返索引，未中
+or eax,-1——FindItemIndex 又一副本，同族候选未登记）。
+
+★怪癖：①★长度 < 容量直接追加（快速路径无增长）；②★增长量在 +0x14
+（非 2×——显式增长量字段）；③★owns==0 且容量>0 时空间满直接失败
+（借用缓冲不可扩容）；④★栈参解引再写（[esp+8] 指针 → 值）；
+⑤★虚表槽 8 Grow（与 batch 1301 0x7AF000 扩容家族同）。
+
+⚠️ partial：宿主类（0x5132Fx 区——VectorClass 派生）、+0x14 增长量
+语义、+0x10 长度字段、后邻 0x513340（FindItemIndex 又一副本同族
+候选）、2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1305（0x56F8B0/0x572DA0 地形传播扩散器孪生）：0x56FC80/
+  0x56EF50 是同族第三/四实例——地形传播模板多实例化持续累积（复刻
+  时同一模板需逐份还原）。
+- batch 396（0x57BAA0 地形传播 + 0x87F924 + 哑元 0xABDC50）：本批
+  同款取格链与哑元兜底——RMG/地形系统共享惯用法。
+- batch 1301（0x7AF000 VectorClass 扩容器）+ batch 1296（0x512DC0
+  构造器）：0x5132F0 是家族追加成员——构造/扩容/追加三件套互补。
+- 0x89F688 八方向增量表 / 0x5657A0 GetCell / 0x87F7E8 MapClass::
+  Instance：全批共用（地形与单位系统共享取格链）。
+- 0x47E470/0x47DD70/0x56EB80/0x56E990（扩散链成员）：形传播家族
+  待闭合（后续批次候选）。
