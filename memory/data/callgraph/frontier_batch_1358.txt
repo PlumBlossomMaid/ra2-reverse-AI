@@ -1,0 +1,123 @@
+frontier batch 1358 — 0x746DB0 双字节 OR 判定器 / 0x724FC0 惰性排序二分查找器 / 0x70E240 双非空判定器（2026-10-23）
+
+口径：承接 batch 1357 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x746DB0（29B，callees=0 deps=210 纯叶）、
+0x724FC0（121B，callees=1 deps=52）、0x70E240（26B，callees=0 deps=15
+纯叶）。
+取证手段：disasm.py 双参直反汇编全程读完（0x746DB0 0x40 尾 0x746DCC（含
+相邻 0x746DD0 常量返回开头）/ 0x724FC0 0x90 尾 0x725036（含相邻 0x725040
+比较回调）/ 0x70E240 0x40 尾 0x70E257（含相邻 0x70E260 孪生），函数边界
+与 functions.tsv 完全吻合）+ TSV 查重（三候选全部未登记）+ 跨批次对比
+（0x7C8B48 qsort ↔ MSVC6 排序锚点；0x7C8E17 分配/0x7C8B3D 释放 ↔ 既有
+锚点；batch 1277/1352/1356 双子模式 ↔ 0x70E240/0x70E260；batch 1356
+0x7C8D20 串比较 ↔ 本批 0x7C8B48 排序同 CRT 族）。
+
+================================================================================
+0x746DB0 —— 双字节 OR 判定器（29B 全程读完）
+================================================================================
+签名：thiscall（ecx=宿主），无栈参，返回 al 0/1，ret 0（0x746DB0-
+0x746DCC，callees=0 纯叶 deps=210 高解锁）。
+机器码（0x746DB0-0x746DCC）：
+    入口：mov al, [ecx+0x6E1]                       ; ★字节 1（+0x6E1）
+    test al, al; jne 0x746DC7                        ; 非 0 → 返 1
+    mov al, [ecx+0x6E2]                              ; ★字节 2（+0x6E2）
+    test al, al; jne 0x746DC7                         ; 非 0 → 返 1
+    xor eax, eax; ret                                 ; ★双零 → 返 0
+    0x746DC7: mov eax, 1; ret                          ; ★任一非 0 → 返 1
+    （相邻 0x746DD0: mov eax, 0x8E8; ret——常量返回 2278）
+语义：**双字节 OR 判定器**（0x746DBx 区——0x746xxx 判定/状态域，
+callees=0 纯叶 deps=210 高解锁）：thiscall：**+0x6E1 与 +0x6E2 双字节
+OR 判定**——任一非零返 1、双零返 0。2 unique caller（3 callsite）。
+★怪癖：①★双字节 OR（mov al,[+0x6E1]/[+0x6E2] + test/jne×2——任一
+非零即返 1）；②★命中路径直接 mov eax,1（不合并到公共出口）；
+③★ret 0 无栈参 + callees=0 纯叶 + deps=210 高解锁；④★相邻
+0x746DD0 常量返回器（mov eax,0x8E8=2278——同域常量表）。
+⚠️ partial：宿主 +0x6E1/+0x6E2 字段语义（双状态标志？）、
+0x746DD0 常量身份、2 unique caller 身份。
+
+================================================================================
+0x724FC0 —— 惰性排序二分查找器（121B 全程读完）
+================================================================================
+签名：thiscall（ecx=this 数组容器）+ 1 栈参（[esp+8]=目标项指针，
+mov ecx 后 mov ebx,[ecx] 取 [0] 比较），返回索引/0，ret 4
+（0x724FC0-0x725036，callees=1 deps=52）。
+机器码结构（0x724FC0-0x725036，全程读完）：
+    入口：push esi; mov esi, ecx
+    mov eax, [esi+4]                                ; ★元素数
+    test eax, eax; jne 0x724FCE
+    pop esi; ret 4                                   ; ★空数组早退（ret 4）
+    0x724FCE: mov cl, [esi+0xC]                       ; ★排序标志（+0xC）
+    test cl, cl; jne 0x724FF3（已排序 → 跳过）
+    0x724FD5（★惰性排序段）：
+    push 0x725040（比较回调）; push 8（元素大小）
+    push eax（元素数）; mov eax, [esi]; push eax（基址）
+    call 0x7C8B48                                    ; ★0x7C8B48（qsort）
+    add esp, 0x10
+    mov dword [esi+0x10], 0; mov byte [esi+0xC], 1    ; ★置已排序标志
+    0x724FF3（★二分查找段）：
+    mov ecx, [esp+8]; push ebx; push edi
+    mov edi, [esi]（基址）; mov ebx, [ecx]（★目标 [0]）
+    mov ecx, [esi+4]（元素数）; test ecx; jle 0x725029
+    0x725004 循环：mov eax, ecx
+    cdq; sub eax, edx; sar eax, 1（★二分中点 n>>1）
+    mov esi, [edi+eax*8]（中点元素 [0]）; lea edx, [edi+eax*8]
+    cmp esi, ebx; jbe 0x725019（中点 ≤ 目标 → 右半）
+    mov ecx, eax; jmp 0x725025
+    0x725019: je 0x725031（★== → 返索引）
+    lea edi, [edx+8]; or edx, -1; sub edx, eax; add ecx, edx（左移）
+    0x725025: test ecx; jg 0x725004（循环）
+    0x725029: pop edi; pop ebx; xor eax, eax; pop esi; ret 4（未找到 → 0）
+    0x725031: pop edi; pop ebx; mov eax, edx; pop esi; ret 4（★命中 → 索引）
+    （相邻 0x725040 比较回调：mov eax,[esp+4]; mov ecx,[esp+8];
+    mov eax,[eax]; mov ecx,[ecx]; cmp eax,ecx——两元素 [0] 比较）
+语义：**惰性排序二分查找器**（0x724FCx 区——0x724xxx 查找/排序域，
+callees=1 deps=52）：thiscall 数组容器 + 目标项栈参：元素数空早退 →
+**惰性排序**（标志 +0xC 未置才 0x7C8B48 qsort：0x725040 比较回调 +
+8B 元素 + 置标志）→ **二分查找**（cdq/sar 中点 + 8B 步进逐项比对
+[0] 字段）→ 命中返索引/未命中返 0。★惰性排序二分查找器（0x724FCx
+区——0x7C8B48 qsort + 0x725040 回调 + 二分查找）。2 unique caller
+（3 callsite）。
+★怪癖：①★**惰性排序**（标志 +0xC 门控 qsort——首次查找才排）；
+②★0x7C8B48 qsort + 0x725040 比较回调（8B 元素、比较 [0] 字段）；
+③★二分中点 cdq/sar 惯用法（n>>1 向下取整）+ 8B 步进（lea
+[edi+eax*8]）；④★命中返索引/未命中返 0（xor eax）+ ret 4 单栈参；
+⑤★空数组早退（[+4]==0 → 直接返）+ 置 +0x10 清零。
+⚠️ partial：数组容器类型（+0x0 基址/+0x4 数/+0xC 标志/+0x10 计数）、
+0x7C8B48 精确身份（MSVC6 qsort？）、0x725040 回调身份、2 unique
+caller 身份。
+
+================================================================================
+0x70E240 —— 双非空判定器（26B 全程读完）
+================================================================================
+签名：栈参调用（[esp+4]=目标指针），返回 al 0/1，ret 4（0x70E240-
+0x70E257，callees=0 deps=15 纯叶）。
+机器码（0x70E240-0x70E257）：
+    入口：mov eax, [esp+4]                           ; ★目标指针
+    test eax, eax; je 0x70E255                       ; NULL → 返 0
+    cmp dword [eax], 0; je 0x70E255                   ; ★[目标] == 0 → 返 0
+    mov eax, 1; ret 4                                  ; ★双非空 → 返 1
+    0x70E255: xor eax, eax; ret 4                       ; ★返 0
+    （相邻 0x70E260 孪生：thiscall 版——虚表槽 +0x3F4 调用取目标再判）
+语义：**双非空判定器**（0x70E24x 区——0x70Exxx 判定/指针域，
+callees=0 deps=15 纯叶）：目标指针非 NULL **且** [目标] 非 0 → 返 1；
+任一为空返 0。★双非空判定器（0x70E24x 区——双非空 AND 判定）。
+2 unique caller（3 callsite）。
+★怪癖：①★双非空 AND（指针非 NULL + [指针] 非 0——两级解引用
+有效性判定）；②★相邻 0x70E260 孪生（thiscall 版：虚表槽 +0x3F4
+取目标——batch 1277/1352/1356 双子模式再现）；③★ret 4 单栈参 +
+callees=0 纯叶。
+⚠️ partial：目标指针类型（对象句柄？）、0x70E260 孪生关系、
+2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- MSVC6 CRT 排序族（0x7C8B48 qsort 类）：0x724FC0 用 0x7C8B48 +
+  0x725040 比较回调——排序锚点（batch 1356 0x7C8D20 串比较同 CRT 族）。
+- batch 1277/1352/1356（双子模式 0x759F70/0x759F80、0x542310/0x542330、
+  0x76F070/0x76F080）：0x70E240/0x70E260 邻接孪生（栈参版 + thiscall
+  版）——Westwood 复制粘贴惯用再验证。
+- batch 1343/1344 等（callees=0 纯叶）：0x746DB0（deps=210）+ 0x70E240
+  （deps=15）——纯叶家族持续闭合。
+- 二分查找惯用法（cdq/sar 中点 + 步进比较）：0x724FC0——既有查找
+  知识再验证。
