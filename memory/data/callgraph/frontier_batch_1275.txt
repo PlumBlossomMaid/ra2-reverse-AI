@@ -1,0 +1,94 @@
+frontier batch 1275 — 0x7BCAE0 ZBuffer::ReleaseSurface / 0x777B30 串格式化初始化器 / 0x777B60 串拷贝到全局（2026-10-22）
+
+口径：承接 batch 1274 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=3 三个未登记函数：
+0x7BCAE0（14B，functions.tsv 符号名 ZBuffer::ReleaseSurface，
+USER_DEFINED=YRpp）、0x777B30（27B）、0x777B60（23B）。取证手段：
+disasm.py 直反汇编全文（三个均全程读完）+ YRpp 符号核对 + TSV 查重
+（三候选全部未登记）。
+
+================================================================================
+0x7BCAE0 —— ZBuffer::ReleaseSurface（14B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）无栈参 ret 空。
+机器码（全文 14 字节）：
+    mov ecx, [ecx+0x14]       ; ecx = this->+0x14（★表面指针）
+    test ecx, ecx
+    je 0x7bcaed               ; 空 → 直接返回
+    mov eax, [ecx]            ; eax = 表面 vtable
+    push 1                    ; ★参数 = 1（delete 标志）
+    call [eax]                ; ★虚表槽 0（scalar deleting destructor）
+    ret
+
+语义：**ZBuffer::ReleaseSurface**（YRpp 符号名实锤）——this+0x14 表面指针
+非空时调其虚表槽 0（参数 1=scalar deleting destructor 惯用法）释放；空
+则直接返回。7 unique caller（14 callsite）。
+
+★怪癖：①★表面指针存 this+0x14（非首字段——ZBuffer 对象 +0x14 槽位）；
+②★尾调虚表槽 0 带 1 参（scalar deleting destructor——delete 惯用法）；
+③★空指针守卫提前返回（无释放）。
+
+⚠️ partial：+0x14 表面指针语义（ZBuffer 后端 surface）、虚表槽 0 目标
+（类标量删除器）、宿主类（ZBuffer 深度缓冲——0x7BCxxx 渲染域）。
+
+================================================================================
+0x777B30 —— 串格式化初始化器（27B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）无栈参 ret eax=this。
+机器码（全文 27 字节）：
+    mov eax, [0x822d1c]       ; eax = ★全局 [0x822D1C]
+    push esi; mov esi, ecx    ; esi = this
+    push eax                  ; 第三参 = [0x822D1C]（★格式化值）
+    push 0x817f6c             ; 第二参 = ★格式串 [0x817F6C]
+    push esi                  ; 第一参 = this（★目标缓冲）
+    call 0x7c8ef4             ; ★sprintf（batch 057 同目标）
+    add esp, 0xc              ; cdecl 清 3 参
+    mov eax, esi; pop esi     ; 返回 this
+    ret
+
+语义：**串格式化初始化器**——this 作目标缓冲，格式串 0x817F6C 配全局值
+[0x822D1C] 经 sprintf（0x7C8EF4）填入（sprintf(this, fmt, [0x822D1C])），
+返回 this（链式）。8 unique caller（31 callsite）。
+
+★怪癖：①★this 直接当 sprintf 目标缓冲（对象首部即串缓冲——字符对象
+形态）；②★格式串 0x817F6C + 全局 [0x822D1C] 作格式化值（调用前由别人
+设置——格式化上下文依赖）；③★返回 this（链式调用形态）。
+
+⚠️ partial：格式串 0x817F6C 内容（.data rva 0x417F6C）、[0x822D1C] 全局
+语义（格式化值来源）、宿主类（0x777xxx 字符/串对象域——0x777B60 邻接
+同族）。
+
+================================================================================
+0x777B60 —— 串拷贝到全局（23B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）无栈参 ret eax=this。
+机器码（全文 23 字节）：
+    push esi; mov esi, ecx    ; esi = this
+    push 0x20                 ; 第三参 = ★长度 0x20（32 字节）
+    push 0x822d20             ; 第二参 = ★目标全局 [0x822D20]
+    push esi                  ; 第一参 = this（★源）
+    call 0x7c91d0             ; ★拷贝/转换例程（batch 记忆 0x7C91D0 族）
+    add esp, 0xc              ; cdecl 清 3 参
+    mov eax, esi; pop esi     ; 返回 this
+    ret
+
+语义：**串拷贝到全局**——把 this 源数据拷贝到全局 [0x822D20]（长度
+0x20=32 字节），经 0x7C91D0 例程，返回 this。8 unique caller（23
+callsite）。
+
+★怪癖：①★源 this 拷贝到全局 [0x822D20]（与 0x777B30 的 [0x822D1C]
+邻接——★同全局串区家族三窗口 [0x822D1C]/[0x822D20]）；②★固定长度
+0x20=32（不 strlen——定长拷贝或"最大 32"语义）；③★返回 this（链式）。
+
+⚠️ partial：0x7C91D0 精确身份（拷贝/转换——batch 记忆 0x7C91D0 未登记）、
+[0x822D20] 全局语义（与 [0x822D1C] 的关系）、长度 0x20 含义、宿主类
+（0x777xxx 字符/串对象域）。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 057（0x7C8EF4 sprintf）：0x777B30 格式化目标。
+- batch 记忆 0x7C91D0（未登记 CRT/工具例程）：0x777B60 拷贝依赖。
+- [0x822D1C]/[0x822D20] 全局串区家族：0x777B30/0x777B60 邻接窗口——
+  同 .data rva 0x422D1C/0x422D20，字符对象格式化/同步用。
+- 0x7BCxxx 渲染域（ZBuffer）：0x7BCAE0 同区——batch 渲染缓冲家族。
