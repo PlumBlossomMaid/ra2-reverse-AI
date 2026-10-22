@@ -1,0 +1,133 @@
+frontier batch 1304 — 0x586780 MapClass::IsAreaFree / 0x6241C0 字节字段 getter / 0x778170 空操作桩（2026-10-23）
+
+口径：承接 batch 1303 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=2 三个未登记函数：
+0x586780（278B，MapClass::IsAreaFree 带名）、0x6241C0（4B）、0x778170
+（1B）。取证手段：disasm.py 直反汇编全程读完 + TSV 查重（三候选全部
+未登记）+ 跨批次对比（0x778170 ↔ batch 1286 空操作桩同型；0x586780
+0x87F924 取格 ↔ batch 396 地形传播同款）。
+
+================================================================================
+0x586780 —— MapClass::IsAreaFree（278B 全程读完，带名）
+================================================================================
+签名：thiscall（ecx=MapClass）+ 2 栈参（[esp+0x10]=检查值、
+[esp+0x14]=矩形结构）ret al。
+机器码骨架（0x586780-0x586895）：
+    sub esp, 8
+    mov [esp+4], ecx
+    mov ecx, [esp+0x10]              ; ★检查值参
+    cmp ecx, -1
+    je 0x58679D
+    mov eax, 1; shl eax, cl
+    mov [esp], eax                   ; ★位掩码 = 1<<检查值
+    jmp 0x5867A5
+    0x58679D: mov [esp], 0           ; -1 → 掩码 0
+    0x5867A5:
+    push 全
+    mov ebx, [esp+0x10]              ; ★矩形结构 {+0/+4/+8/+0xC}
+    mov eax, [ebx]; mov esi, [ebx+8]
+    ...外循环（x 方向）: cmp eax, ecx; jge 0x586874
+    mov edi, [ebx+4]; mov esi, [ebx+0xC]
+    ...内循环（y 方向）: cmp edi, edx; jge 0x586860
+    坐标换算: movsx ebp, ax; movsx eax, di
+    shl eax, 9; add eax, ebp         ; ★一维索引 = y<<9 + x
+    js 0x586803
+    cmp eax, 0x40000; jge 0x586803   ; ★超出 512² 地图 → 哑元
+    mov ecx, [0x87F924]
+    mov eax, [ecx+eax*4]
+    test eax, eax; je 0x586803        ; ★cell 表取格（batch 396 同款）
+    mov esi, eax; jmp 0x586812
+    0x586803:                         ; ★哑元兜底
+    mov esi, 0xABDC50
+    mov [0xABDC74], edx              ; 哑元坐标
+    0x586812:
+    push 0; mov ecx, esi
+    call 0x47C550                    ; ★cell 检查 1
+    test eax, eax; jne 0x58688A       ; 命中 → 返 0（不可用）
+    mov eax, [esp+0x10]
+    mov ecx, [esi+0xDC]
+    test eax, ecx; jne 0x58688A       ; +0xDC & 检查值 → 占用
+    cmp dword [esi+0x44], -1; jne 0x58688A
+    mov eax, [esi+0x4C]; test eax, eax; jne 0x58688A
+    mov al, [esi+0x11C]; test al, al; jne 0x58688A
+    mov ecx, esi
+    call 0x47C520                    ; ★cell 检查 2
+    test eax, eax; jne 0x58688A
+    inc edi; cmp edi, ecx; jl 内循环   ; y 步进
+    inc eax; cmp eax, edx; jl 外循环   ; x 步进
+    0x586874:                        ; ★全区域空闲
+    mov ecx, [esp+0x14]; push 1; push ebx
+    call 0x578390                    ; ★标记区域
+    mov al, 1; ret 8
+    0x58688A: mov al, 0; ret 8       ; 任一占用 → 返 0
+
+语义：**MapClass::IsAreaFree（矩形区域空闲检查）**——给定检查值（-1
+→ 掩码 0 否则 1<<值）与矩形结构（+0/+4/+8/+0xC 范围），双重循环遍历
+区域内每格：坐标 y<<9+x 一维索引（超出 512² 用哑元 0xABDC50），
+[0x87F924] cell 表取格 → 0x47C550 检查 → 逐字段检查（+0xDC 占用、
++0x44==-1、+0x4C、+0x11C）→ 0x47C520 再检查——任一失败返 0；全部
+空闲调 0x578390 标记区域并返 1。★带名符号（USER_DEFINED）——寻路/
+部署/建设可用区域检查。2 unique caller（8 callsite）。
+
+★怪癖：①★一维索引 y<<9+x（512 宽地图常量 0x40000=512² 边界）；
+②★哑元 0xABDC50 兜底（越界/空 cell——RMG 全阶段共享哑元实锤）；
+③★双重循环矩形扫描（外 x 内 y 逐格）；④★逐字段占用判定（+0xDC
+位掩码 & 检查值、+0x44==-1、+0x4C 指针、+0x11C 标志 + 0x47C520/
+0x47C550 两检查）；⑤★全空闲才 0x578390 标记（检查通过后统一标记）。
+
+⚠️ partial：检查值语义（0x47C520/0x47C550 精确身份——cell 状态族）、
+矩形结构来源、+0xDC/+0x44/+0x4C/+0x11C 字段族语义、0x578390 标记、
+宿主 MapClass（0x5867xx 区——batch 记忆 0x586990 寻路域邻近）、
+2 unique caller 身份。
+
+================================================================================
+0x6241C0 —— 字节字段 getter（4B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）无栈参 ret al。
+机器码（全文 4 字节）：
+    mov al, [ecx+8]              ; ★返回 this->+8 字节
+    ret
+
+语义：**字节字段 getter**——返回 this+8 的字节字段。4B 极简（无栈帧）。
+2 unique caller（8 callsite）。后邻 0x6241D0 为 dword 字段 getter
+（mov eax,[ecx+4]; ret——同族），0x6241E0 为常返 0（xor al,al; ret——
+占位形态）。
+
+★怪癖：①★4B 极简（mov al + ret——无分支无栈帧）；②★后邻 0x6241D0
+dword getter + 0x6241E0 常 0（getter 家族三连）；③★+8 字节字段
+（标志/状态位推断）。
+
+⚠️ partial：+8 字段语义、宿主类（0x6241Cx 区——0x62xxxx 区）、后邻
+0x6241D0/0x6241E0（同族候选）、2 unique caller 身份。
+
+================================================================================
+0x778170 —— 空操作桩（1B 全程读完）
+================================================================================
+签名：无参 ret 空。
+机器码（全文 1 字节）：
+    ret
+
+语义：**空操作桩**——直接返回，不读写任何状态。★纯 ret 函数
+（c3 单字节——batch 1286 0x6B8B10/0x408530 同型空桩）。2 unique
+caller（8 callsite）。后邻 0x778180 为全局对象释放器（[0xB7355C]
+非空 → push [0xB73550]/[0xB7355C] → call 0x7C8A1C——★双全局释放，
+同族候选未登记）。
+
+★怪癖：①★1 字节纯 ret（无操作桩——占位/禁用 stub）；②★后邻
+0x778180 双全局释放器（[0xB73550]/[0xB7355C] → 0x7C8A1C——同族
+候选）；③★复刻照抄 1B（不"实现"）。
+
+⚠️ partial：桩的调用意图、2 unique caller 身份、后邻 0x778180
+（双全局释放——同族候选）。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 396（地形传播 0x57BAA0 [0x87F924] 表 + 哑元 0xABDC50 回落）：
+  0x586780 同款取格链 + 哑元兜底——MapClass cell 访问惯用法再实例。
+- batch 1286（0x6B8B10/0x408530 空操作桩）：0x778170 同型 1B 纯 ret
+  ——原版占位/禁用 stub 家族。
+- batch 记忆（0x586990 寻路段）：0x586780 同 0x5867xx 区——寻路/
+  部署域（IsAreaFree 是寻路前置检查典型）。
+- 0x7C8A1C（释放包装）：0x778180 后邻共用（batch 记忆 CRT 运行时
+  三件套族）。
