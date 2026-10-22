@@ -1,0 +1,106 @@
+frontier batch 1250 — 0x4CB830 FieldClass 构造重载 / 0x683060 门控虚调用 / 0x749100 ToNetworkFormat（2026-10-22）
+
+口径：承接 batch 1249 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=15/14/14 三个未登记函数：0x4CB830（90B，FieldClass 构造 3 栈参
+重载，functions.tsv 符号名 USER_DEFINED=YRpp）、0x683060（13B，空指针门控
+虚调用释放）、0x749100（80B，UnitTrackerClass::ToNetworkFormat，USER_DEFINED）。
+取证手段：disasm.py 直反汇编全文（三个均全程读完）。
+
+================================================================================
+0x4CB830 —— FieldClass::FieldClass 构造重载（3 栈参，90B 全程读完）
+================================================================================
+签名：thiscall + 3 栈参 ret 0xC。
+机器码（0x4CB830-0x4CB887）：
+    eax=[esp+4]（栈参 1）
+    push ebx/esi/edi; ebx=ecx（this）
+    push 4; push eax; push ebx
+    call 0x7C91D0       ; ★3 栈参（同 batch 1247 0x4CB760 疑点——无 add esp
+                         清栈，约定待复核）
+    eax=[esp+0x24]      ; ★栈参 3（push 3 寄存器+3 参数后偏移）
+    word[ebx+4]=0x14    ; +4 = 20（固定）
+    word[ebx+6]=ax      ; +6 = 栈参 3 低 16 位（★尺寸参数化）
+    and eax,0xFFFF; push eax
+    call 0x7C8E17       ; operator new(栈参3 & 0xFFFF)
+    esi=[esp+0x24]      ; ★栈参 1 数据指针
+    ecx=0; cx=word[ebx+6]（=尺寸）
+    edi=eax; [ebx+8]=eax（堆对象）
+    shr ecx,2; rep movsd + and ecx,3; rep movsb
+      ★拷贝 栈参 3 字节 从栈参 1 数据 → 堆对象
+    [ebx+0xC]=0
+    eax=this; ret 0xC
+
+语义：**FieldClass 构造 3 栈参重载**——与 batch 1247 的 0x4CB760（2 栈参版）
+同族，差异：①★+4=20 固定（0x4CB760 为 6）；②★+6=栈参 3 低 16（尺寸参数化，
+0x4CB760 为固定 4）；③★拷贝字节数 = 栈参 3（0x4CB760 用 +6 字段）；④ret 0xC
+（3 栈参 vs 0x4CB760 的 ret 8）。{+4=20、+6=尺寸、+8=operator new 拷贝、
++0xC=0}。
+
+★怪癖：①栈参 3 兼做尺寸（先存 +6 低 16 位、再 and 0xFFFF 作 new 大小数据源）；
+②拷贝量 = +6 字段（word 读取、dword 拷贝 + 余数 movsb 补）；③0x7C91D0 调用
+约定疑点同 batch 1247（3 栈参无 add esp）；④无 new 失败检查。
+
+⚠️ partial：0x7C91D0 约定（承接 batch 1247 待复核）、+4=20 语义、栈参 1/2
+身份、FieldClass 宿主。
+
+================================================================================
+0x683060 —— 空指针门控虚调用释放（13B 全程读完）
+================================================================================
+签名：thiscall 无栈参 ret 空。1 unique caller（uc=14 但调用点 13）。
+机器码（0x683060-0x68306C）：
+    eax=[ecx]（this 首字段 = 对象指针）
+    test eax,eax; je 0x68306C    ; ★空指针 → 跳过
+    ecx=[eax]（对象虚表）
+    push eax（this=对象）
+    call [ecx+8]（★虚表槽 8）
+0x68306C:
+    ret
+
+语义：**空指针门控的虚函数调用（释放/删除惯用）**——this 首字段非空则经其
+虚表槽 8 调用（Release/Delete 推断），空则静默跳过。
+
+★怪癖：①★空指针短路（无访问直接 ret）；②虚表槽 8（常见 Release/Dispose
+槽位）；③push 对象作 this（thiscall 经虚表）。
+
+⚠️ partial：宿主类、虚表槽 8 语义（Release 推断）、[ecx] 字段身份。
+
+================================================================================
+0x749100 —— UnitTrackerClass::ToNetworkFormat（htonl 批转换，80B 全程读完）
+================================================================================
+签名：thiscall 无栈参 ret 空。functions.tsv 符号名 USER_DEFINED=YRpp。
+机器码（0x749100-0x74914F）：
+    edi=ecx（this）
+    eax=[edi+0x804]（★完成标志）
+    test eax,eax; jne 0x749143     ; 已转 → 直接置 1 返回（幂等短路）
+    eax=[edi+0x800]（★计数）
+    test eax,eax; jle 0x749143     ; 0 项 → 直接返回
+    push esi; esi=edi
+循环（0x74911D-0x749133，eax 次）:
+    eax=[esi]（当前项）
+    push eax; call 0x7C8962       ; ★htonl（batch 453/979，WSOCK32 ord#8）
+    [esi]=eax                      ; 写回网络序
+    eax=[edi+0x800]; inc ebx; esi+=4
+    cmp ebx,eax; jl 循环
+    [edi+0x804]=1                  ; ★完成标志置 1
+    ret
+0x749143:
+    [edi+0x804]=1; ret             ; ★幂等：已转换直接置 1
+
+语义：**ToNetworkFormat——数组逐项主机序转网络字节序**——this{+0x800 项数、
++0x804 完成标志}，[edi] 起每项 4 字节经 htonl 转换写回，完成后 +0x804=1。
+依赖 0x7C8962 htonl（batch 453/979 已登记 IAT 跳板）。
+
+★怪癖：①★幂等短路：+0x804==1 时只置 1 立即返回（不重转）；②0 项直接返回
+（但同样置 +0x804=1）；③逐项 push+call+写回（无批量转换优化）；④+0x800 计数
+每次循环重读（源计数变化则循环动态漂移——编译器产物）。
+
+⚠️ partial：+0x800/+0x804 字段语义、[edi] 数组基址（项 4B 推断）、宿主业务
+（网络同步序列化推断——batch 453 现场 FieldClass::HostToNet 同款）。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1247（0x4CB760 FieldClass 构造）：0x4CB830 是同族 3 栈参重载（同虚表
+  区域 0x4CBxxx、同 0x7C91D0 调用、同 {+4/+6/+8/+0xC} 布局）。
+- batch 453/979（0x7C8962 htonl）：0x749100 是其调用现场（batch 453 点名
+  UnitTrackerClass::ToNetworkFormat）——本批兑现。
+- batch 003（0x7C91D0 _strncpy）：0x4CB830 调用约定疑点待复核。
