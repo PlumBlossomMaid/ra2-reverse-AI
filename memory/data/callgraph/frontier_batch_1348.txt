@@ -1,0 +1,151 @@
+frontier batch 1348 — 0x6646C0 名称匹配清理器 / 0x664240 名称查找装载器 / 0x69BC60 串表匹配索引器（2026-10-23）
+
+口径：承接 batch 1347 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x6646C0（135B，callees=3 deps=2550）、
+0x664240（90B，callees=1 deps=2550）、0x69BC60（83B，callees=2
+deps=780）。
+取证手段：disasm.py 双参直反汇编全程读完（0x6646C0 0x90 尾 0x664746 /
+0x664240 0x70 尾 0x664299 / 0x69BC60 0x60 尾 0x69BCB2，函数边界与
+functions.tsv 完全吻合）+ TSV 查重（三候选全部未登记）+ 跨批次对比
+（0x4068E0 日志 ↔ 既有锚点；0x7C8D20 串比较 ↔ batch 1329/1336/
+1340/1343 同款；0x7350C0 格式化 ↔ batch 1337 同款；0x541410 多参
+调用 ↔ batch 1333 0x5410F0 同族；[0xA8DA78] 全局数组 ↔ batch 1333
+同锚点）。
+
+================================================================================
+0x6646C0 —— 名称匹配清理器（135B 全程读完）
+================================================================================
+签名：thiscall（ecx=宿主）+ 1 栈参（[esp+0x164]=匹配名 ecx），ret 4
+（0x6646C0-0x664746，0x154 栈，callees=3 deps=2550 高解锁）。
+机器码（0x6646C0-0x664746）：
+    入口：sub esp, 0x154; push ebx/esi; mov edx, ecx
+    push edi; xor ebx, ebx; mov ecx, 0x54
+    xor eax, eax; lea edi, [esp+0xD]
+    mov byte [esp+0xC], bl; xor esi, esi
+    rep stosd dword ptr [edi], eax                    ; ★清 0x54×4 = 0x150 字节
+    mov ecx, [esp+0x164]; stosb byte ptr [edi], al    ; ★+ 1 字节清
+    cmp [edx+0x10], ebx; jle 0x664708                 ; ★+0x10 计数
+    0x6646ED（数组遍历）：
+    mov eax, [edx+4]; mov eax, [eax+esi*4]            ; ★[edx+4] 数组 + 索引*4
+    movsx edi, byte [eax]                              ; ★首字节 movsx
+    cmp edi, ecx; jne 0x664700                        ; ★vs 匹配名首字节
+    mov byte [eax+0x29], bl                           ; ★命中 → 清 +0x29
+    mov byte [eax+0x27], bl                           ; ★清 +0x27
+    0x664700: mov eax, [edx+0x10]; inc esi
+    cmp esi, eax; jl 0x6646ED                         ; ★计数循环
+    0x664708（+0x18 字节 → 日志）：
+    mov al, byte [edx+0x18]; pop edi/esi
+    cmp al, bl; pop ebx; je 0x66473E
+    push 0x839CC4; mov byte [esp+4], 2                ; ★[0x839CC4] 串 + 2
+    mov byte [esp+5], cl; call 0x4068E0               ; ★日志（匹配名参数）
+    lea ecx, [esp]; push 1; push 0x152
+    push ecx; mov ecx, 0xA8E9C0
+    call 0x541410                                     ; ★0x541410（3 参 0x152/1）
+    0x66473E: add esp, 0x154; ret 4                     ; ★收尾
+语义：**名称匹配清理器**（0x6646Cx 区——0x664xxx 名称/清理域，
+deps=2550 高解锁）：宿主（this）+ 1 栈参（匹配名）：清 0x150+1 字节
+栈帧 → +0x10 计数遍历 [edx+4] 数组：每项首字节 movsx vs 匹配名首字节
+→ 命中 → 清 +0x29/+0x27 标志（项标记）→ +0x18 字节非空 → 0x4068E0
+日志（[0x839CC4] 串 + 匹配名）+ 0x541410（[0xA8E9C0] 宿主，3 参
+0x152/1/[esp]）→ ret 4。★名称匹配清理器（0x6646Cx 区）。2 unique
+caller（3 callsite）。
+★怪癖：①★rep stosd 清 0x54×4 + stosb 1 字节（0x150+1 栈帧清零）；
+②★+0x10 计数遍历 [edx+4] 数组（movsx 首字节 vs 匹配名——**只比首
+字节**）；③★命中 → 清 +0x29/+0x27 双标志（项标记族）；④★+0x18
+字节非空 → 0x4068E0 日志（[0x839CC4] 串 + 2/cl 字节参数）+ 0x541410
+（[0xA8E9C0] 宿主，3 参 0x152/1）；⑤★ret 4 单栈参 + deps=2550。
+⚠️ partial：宿主类（0x664xxx 区）、匹配名参数语义、+0x10/+0x18/
++0x27/+0x29 字段、[0x839CC4] 串内容、0x541410/0x4068E0 身份、
+0x152 常量、2 unique caller 身份。
+
+================================================================================
+0x664240 —— 名称查找装载器（90B 全程读完）
+================================================================================
+签名：thiscall（ecx=宿主）+ 2 栈参（[esp+0x1C]=参数、[esp+0x18]=
+匹配字节 edi、[esp+0xC]=装载值），ret 8（0x664240-0x664299，
+callees=1 deps=2550 高解锁）。
+机器码（0x664240-0x664299）：
+    入口：sub esp, 8; lea eax, [esp]
+    push ebx/esi; mov esi, ecx; push edi
+    lea ecx, [esp+0x1C]; push eax; push ecx
+    mov ecx, [esp+0x24]; call 0x53EDA0              ; ★0x53EDA0（判定）
+    mov edx, [esi+0x10]; xor eax, eax
+    test edx, edx; jle 0x664291                     ; ★+0x10 计数
+    0x664264（数组遍历）：
+    mov esi, [esi+4]; mov edi, [esp+0x18]
+    mov ecx, esi; mov ebx, [ecx]                    ; ★[esi+4] 数组
+    movsx ebx, byte [ebx]                            ; ★首字节 movsx
+    cmp ebx, edi; je 0x664287                       ; ★vs 匹配字节
+    0x664276: inc eax; add ecx, 4; cmp eax, edx
+    jl 0x66426D                                     ; ★计数循环
+    0x66427E: pop edi/esi; add esp, 8; ret 8          ; ★未命中 → 收尾
+    0x664287（命中 → 装载）：
+    mov edx, [esi+eax*4]; mov eax, [esp+0xC]
+    mov [edx+0x21], eax                             ; ★[项+0x21] = 装载值
+    0x664291: pop edi/esi; add esp, 8; ret 8           ; ★收尾
+语义：**名称查找装载器**（0x66424x 区——0x664xxx 名称/装载域，
+deps=2550 高解锁）：宿主（this）+ 2 栈参：0x53EDA0 判定 + 0x150 栈帧
+→ +0x10 计数遍历 [esi+4] 数组：每项首字节 movsx vs 匹配字节 → 命中
+→ [项+0x21] = 装载值；未命中 → 收尾。★名称查找装载器（0x66424x 区，
+与 batch 1348 0x6646C0 同域双胞胎——查 vs 查+清）。2 unique caller
+（3 callsite）。
+★怪癖：①★0x53EDA0 判定 + 0x150 栈帧（与 0x6646C0 同款开头）；
+②★+0x10 计数遍历 [esi+4] 数组（movsx 首字节 vs 匹配字节——**只比
+首字节**）；③★命中 → [项+0x21] = 装载值（写回装载）；④★未命中 →
+直接收尾（无日志/无清——纯装载）；⑤★ret 8 双栈参 + deps=2550。
+⚠️ partial：宿主类（0x664xxx 区）、匹配字节/装载值参数语义、+0x10/
++0x21 字段、0x53EDA0 身份、2 unique caller 身份。
+
+================================================================================
+0x69BC60 —— 串表匹配索引器（83B 全程读完）
+================================================================================
+签名：thiscall（ecx=宿主，未用）+ 1 栈参（[esp+0x14]=索引），返回
+eax 匹配索引（未命中 0），ret 4（0x69BC60-0x69BCB2，callees=2
+deps=780）。
+机器码（0x69BC60-0x69BCB2）：
+    入口：push ebx/ebp/esi; xor ebp, ebp
+    mov esi, 0xA8DA90; mov eax, [0xA8DA78]          ; ★[0xA8DA90] 起循环 + [0xA8DA78]
+    mov ecx, [esp+0x14]; mov edi, [esi]
+    mov ecx, [eax+ecx*4]                            ; ★[0xA8DA78]+索引*4 项
+    0x69BC79（0x7350C0 格式化 ×2）：
+    call 0x7350C0                                   ; ★0x7350C0（[0xA8DA78] 项格式化）
+    mov ecx, edi; mov ebx, eax
+    call 0x7350C0                                   ; ★0x7350C0（[0xA8DA90] 项格式化）
+    push eax; push ebx; call 0x7C8D20               ; ★0x7C8D20 串比较
+    test eax, eax; je 0x69BCAA                     ; ★匹配 → 返 ebp
+    0x69BC95（推进）：
+    add esi, 4; inc ebp; cmp esi, 0xA8DAB0
+    jl 0x69BC6B                                     ; ★循环至 [0xA8DAB0] 边界
+    0x69BCA1: pop edi/esi; xor eax, eax; ret 4        ; ★未命中 → 返 0
+    0x69BCAA: pop edi; mov eax, ebp; ret 4            ; ★命中 → 返索引
+语义：**串表匹配索引器**（0x69BC6x 区——0x69BCxx 串/表域）：[0xA8DA90]
+起循环（esi += 4 至 [0xA8DAB0] 边界）：[0xA8DA78]+索引*4 项与
+[esi] 项分别 0x7350C0 格式化 → 0x7C8D20 串比较 → 匹配 → 返 ebp 索引；
+未命中 → 推进循环；全不匹配 → 返 0。★串表匹配索引器（0x69BC6x 区，
+0x7350C0 格式化 ×2 + 0x7C8D20 比较 + 索引返回）。2 unique caller
+（3 callsite）。
+★怪癖：①★[0xA8DA78]+索引*4 项 vs [0xA8DA90]~[0xA8DAB0] 串表循环
+（esi += 4 步进——0xA8DA90/0xA8DAB0 边界）；②★0x7350C0 格式化 ×2
+（双项格式化——batch 1337 0x49B7E0 同款）；③★0x7C8D20 串比较
+（匹配 → 返索引 / 未命中 → 循环推进）；④★未命中返 0（xor eax）
++ 命中返 ebp（**索引从 0 起，首个匹配返 0——与未命中返 0 混淆**）；
+⑤★ret 4 单栈参 + this 未使用（ecx 忽略）。
+⚠️ partial：[0xA8DA78]/[0xA8DA90]/[0xA8DAB0] 全局串表语义、索引参数
+含义、0x7350C0/0x7C8D20 身份、命中/未命中返 0 混淆、2 unique caller
+身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1329/1336/1340/1343（0x7C8D20 串比较惯用法）：0x69BC60 用
+  0x7C8D20 串比较——串比较家族持续闭合。
+- batch 1337（0x7350C0 格式化）：0x69BC60 用 0x7350C0 格式化 ×2
+  ——格式化家族持续闭合。
+- batch 1333（0x541410/0x5410F0 多参调用 + [0xA8E9C0] 宿主 +
+  [0xA8DA78] 全局数组）：0x6646C0 用 0x541410（[0xA8E9C0]，3 参
+  0x152/1）+ [0xA8DA78] 系；0x69BC60 用 [0xA8DA78]——多参调用/全局
+  数组家族持续闭合。
+- batch 1330/1333/1334（0x4068E0 日志族）：0x6646C0 用 0x4068E0
+  日志（[0x839CC4] 串）——日志家族持续闭合。
+- callees=0/1 纯叶高 deps（0x6646C0/0x664240 deps=2550）：与 batch
+  1341/1342/1345 高 deps 家族持续闭合——依赖拓扑解锁价值高。
