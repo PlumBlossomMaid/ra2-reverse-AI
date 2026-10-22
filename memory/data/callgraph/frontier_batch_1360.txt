@@ -1,0 +1,143 @@
+frontier batch 1360 — 0x67C310 数组容器构造器 / 0x67AA80 数组容器拷贝赋值器 / 0x661190 三字节钳位缩放器（2026-10-23）
+
+口径：承接 batch 1359 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x67C310（74B，callees=1 deps=102）、
+0x67AA80（108B，callees=1 deps=404）、0x661190（290B，callees=1 deps=107）。
+取证手段：disasm.py 双参直反汇编全程读完（0x67C310 0x60 尾 0x67C357（含
+相邻 0x67C360 开头）/ 0x67AA80 0x90 尾 0x67AAE9（含相邻 0x67AAF0 开头）/
+0x661190 0x140 尾 0x6612AF（含相邻 0x6612C0 开头），函数边界与
+functions.tsv 完全吻合）+ TSV 查重（三候选全部未登记）+ 跨批次对比
+（0x7C8E17 分配/0x7C5F00 _ftol ↔ 既有锚点；vftable 0x7F0D5C ↔ 数组容器
+族；fcomp + test ah,1/0x41 双界钳位 ↔ batch 1300s 浮点四元查找器
+0x6C9820 同款判定）。
+
+================================================================================
+0x67C310 —— 数组容器构造器（74B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 2 栈参（[esp+4]=数量 eax、[esp+0xC]=外部
+指针 ecx），返回 this，ret 8（0x67C310-0x67C357，callees=1 deps=102）。
+机器码结构（0x67C310-0x67C357，全程读完）：
+    入口：mov eax, [esp+4]                            ; ★数量
+    push esi; mov esi, ecx; xor edx, edx
+    cmp eax, edx
+    mov [esi+4], edx（+0x4 初值 0）; mov [esi+8], eax（+0x8=数量）
+    mov byte [esi+0xC], 1（+0xC=1）; mov byte [esi+0xD], dl（+0xD=0）
+    mov dword [esi], 0x7F0D5C                          ; ★vftable 0x7F0D5C
+    je 0x67C354（数量 0 → 跳过分配路径）
+    0x67C330：mov ecx, [esp+0xC]                        ; ★外部指针（栈参 2）
+    cmp ecx, edx; je 0x67C341                          ; 空 → 走分配
+    0x67C338：mov [esi+4], ecx（+0x4=外部指针）; mov eax, esi
+    pop esi; ret 8（★直接返 this）
+    0x67C341：shl eax, 2（数量×4）; push eax
+    call 0x7C8E17（★分配数量×4）; add esp, 4
+    mov [esi+4], eax（+0x4=分配缓冲）
+    mov byte [esi+0xD], 1（+0xD=1 持有标志）; ret 8（混合路径）
+    0x67C354：mov eax, esi; pop esi; ret 8（数量 0 路径）
+语义：**数组容器构造器**（0x67C31x 区——0x67Cxxx 容器/构造域，
+callees=1 deps=102）：thiscall + 数量/外部指针双栈参：**vftable
+0x7F0D5C** 容器 +0x4 初 0、+0x8=数量、+0xC=1、+0xD=0；数量非 0 时
+外部指针非空 → +0x4 取外部指针（不持有）；外部指针空 → 0x7C8E17
+分配数量×4 → +0x4 为分配缓冲、+0xD=1 持有标志 → 返 this。
+★数组容器构造器（0x67C31x 区——vftable 0x7F0D5C + 外部指针/自分配
+双路径 + ret 8 双栈参）。2 unique caller（3 callsite）。
+★怪癖：①★vftable 0x7F0D5C（mov dword [esi],0x7F0D5C——数组容器
+族）；②★**外部指针/自分配双路径**（栈参 2 非空 → 引用外部缓冲不持
+有；空 → 0x7C8E17 数量×4 自分配 + 持有标志 +0xD=1）；③★+0xC 恒 1
+（有效标志？）、+0x8 数量、+0x4 缓冲指针；④★数量 0 早退（跳过分配
+路径）+ ret 8 双栈参 + callees=1。
+⚠️ partial：vftable 0x7F0D5C 类型（数组容器？）、+0xC/+0xD 标志
+语义、外部指针路径持有约定、2 unique caller 身份。
+
+================================================================================
+0x67AA80 —— 数组容器拷贝赋值器（108B 全程读完）
+================================================================================
+签名：thiscall（ecx=this，mov esi）+ 1 栈参（[esp+0xC]=源对象 edi），
+返回 this，ret 4（0x67AA80-0x67AAE9，callees=1 deps=404）。
+机器码结构（0x67AA80-0x67AAE9，全程读完）：
+    入口：push esi; push edi; mov edi, [esp+0xC]; mov esi, ecx
+    cmp esi, edi; je 0x67AAE5（★this==源 → 直接返）
+    mov eax, [esi]; call [eax+0xC]（★虚表槽 0xC——原 vftable 0x7F0D5C）
+    mov eax, [edi+8]; test eax, eax
+    mov [esi+8], eax（+0x8=源数量）
+    je 0x67AADA（源数量 0 → +0x4=0、+0xD=0）
+    0x67AA9B：lea ecx, [eax*4]; push ecx
+    call 0x7C8E17（★分配源数量×4）; add esp, 4
+    mov [esi+4], eax（+0x4=分配缓冲）; test eax
+    je 0x67AAE5（分配失败 → 返 this）
+    mov byte [esi+0xD], 1（+0xD=1 持有标志）
+    0x67AAB2（★逐项拷贝）：
+    mov ecx, [esi+8]; xor eax, eax; test ecx; jle 0x67AAE5
+    mov edx, [edi+4]; mov ecx, [esi+4]
+    mov edx, [edx+eax*4]; mov [ecx+eax*4], edx（★4B 逐项）
+    inc eax; cmp eax, ecx; jl 0x67AABF
+    mov eax, esi; pop edi; pop esi; ret 4（★返 this）
+    0x67AADA：mov [esi+4], 0; mov byte [esi+0xD], 0（空源清零）
+    0x67AAE5：mov eax, esi; ret 4
+语义：**数组容器拷贝赋值器**（0x67AA8x 区——0x67AAxx 容器/赋值域，
+callees=1 deps=404）：thiscall + 源对象栈参：**operator=（拷贝赋值）
+语义**——this==源早退；虚表槽 0xC 前置处理；+0x8 取源数量、0x7C8E17
+分配源数量×4 → +0x4 为分配缓冲、+0xD=1 → **逐项 4B 拷贝**（源
+[edi+4] → 目标 [esi+4]）→ 返 this；源数量 0 → 清零 +0x4/+0xD。
+★数组容器拷贝赋值器（0x67AA8x 区——vftable 0x7F0D5C 族 operator=
++ 分配 + 逐项 4B 拷贝）。2 unique caller（3 callsite）。
+★怪癖：①★this==源自赋值早退（cmp esi,edi; je——标准 operator=）；
+②★虚表槽 0xC 前置（原 vftable 0x7F0D5C 方法）；③★0x7C8E17 分配
+源数量×4 + 持有标志 +0xD=1；④★逐项 4B 拷贝循环（mov edx,
+[edx+eax*4]; mov [ecx+eax*4],edx——不给 rep movsd 手写）；
+⑤★源数量 0 → 清零 +0x4/+0xD（空源语义）+ ret 4 单栈参。
+⚠️ partial：vftable 0x7F0D5C 类型（与 0x67C310 同族确认）、源对象
+字段（+0x4/+0x8）语义、虚表槽 0xC 身份、2 unique caller 身份。
+
+================================================================================
+0x661190 —— 三字节钳位缩放器（290B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 2 栈参（[esp+0xC]=源字节指针 edi、
+[esp+0x10]=浮点缩放参数），返回 this，ret 8（0x661190-0x6612AF，
+callees=1 deps=107）。
+机器码结构（0x661190-0x6612AF，全程读完，三字节同构 ×3）：
+    入口：push esi; push edi; mov edi, [esp+0xC]; xor eax, eax
+    mov esi, ecx
+    字节 0（0x66119A）：mov al, [edi]; mov [esp+0xC], eax
+    fild dword [esp+0xC]; fmul dword [esp+0x10]（★× 缩放参数）
+    fld [0x7E2220]; fcomp st(1); fnstsw ax; test ah, 1
+    jne 0x6611D0（★值 < [0x7E2220] → 钳位路径）
+    fld [0x7E1748]; fcomp st(1); fnstsw ax; test ah, 0x41
+    jne 0x6611D0（★值 > [0x7E1748] → 钳位路径）
+    fstp st(0); fld [0x7E1748]; jmp 0x6611E7（★上界 [0x7E1748]）
+    0x6611D0：fld [0x7E2220]; fcomp st(1); fnstsw ax; test ah, 1
+    je 0x6611E7（不 < 下界 → 保持）
+    fstp st(0); fld [0x7E2220]（★钳到 [0x7E2220]）
+    0x6611E7：call 0x7C5F00（★_ftol）; mov byte [esi], al（★写 this[0]）
+    （字节 1 0x6611F0：mov cl, [edi+1] → 同构 → mov [esi+1], al）
+    （字节 2 0x661248：mov dl, [edi+2] → 同构 → mov [esi+2], al）
+    mov eax, esi; pop edi; pop esi; ret 8
+语义：**三字节钳位缩放器**（0x66119x 区——0x661xxx 颜色/缩放域，
+callees=1 deps=107）：thiscall + 源字节指针/缩放参数双栈参：源 3 字节
+（[edi]/[edi+1]/[edi+2]）逐一 fild 转浮点 × 缩放参数 → **双界钳位**
+（fcomp st(1) + test ah,1 判 `< 下界 [0x7E2220]`、test ah,0x41 判
+`> 上界 [0x7E1748]`——越界钳到对应界）→ 0x7C5F00 _ftol 截断 → 写
+回 this 3 字节 → 返 this。★三字节钳位缩放器（0x66119x 区——RGB
+三字节 × 缩放 + [0x7E2220]/[0x7E1748] 双界钳位 + _ftol）。
+2 unique caller（3 callsite）。
+★怪癖：①★**三字节同构 ×3**（mov al,cl,dl → fild → 缩放 → 钳位 →
+_ftol → mov [esi+n]——逐字节手写不循环）；②★[0x7E2220] 下界 +
+[0x7E1748] 上界（fcomp st(1) + test ah,1/0x41——batch 1300s
+0x6C9820 浮点四元查找器同款 fcomp 组合）；③★钳位路径双段
+（先判越上界 → 钳上界；再判低下界 → 钳下界——顺序固定）；
+④★_ftol 截断 + ret 8 双栈参 + callees=1。
+⚠️ partial：源/目标类型（RGB 颜色？）、[0x7E2220]/[0x7E1748] 常量
+值、缩放参数语义、2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1300s（0x6C9820 浮点四元查找器：fcomp [0x7E1748] + test
+  ah,0x41 组合测）：0x661190 用 [0x7E1748] + test ah,0x41 同款 +
+  [0x7E2220] 下界 test ah,1——浮点双界钳位惯用再验证。
+- 0x7C8E17 分配 / 0x7C5F00 _ftol（既有锚点）：0x67C310/0x67AA80
+  分配 + 0x661190 截断——分配/截断家族兑现。
+- vftable 0x7F0D5C 数组容器族（0x67C310/0x67AA80 同 vftable）：
+  batch 1300s 容器族（VectorClass 虚表槽 8 增长等）同主题——数组
+  容器家族持续闭合（构造器 + 拷贝赋值器成对）。
+- 逐项手写拷贝（不给 rep movsd）：0x67AA80——Westwood 手写风格
+  （memory 既有：Westwood 手写汇编传统——RA1 源码实锤）。
