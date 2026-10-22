@@ -1,0 +1,135 @@
+frontier batch 1301 — 0x7AF000 VectorClass 扩容器 / 0x765700 上限越界比较器 / 0x763610 Waypoint 编号转字符串（2026-10-23）
+
+口径：承接 batch 1300 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=2 三个未登记函数：
+0x7AF000（143B）、0x765700（14B）、0x763610（113B，PhobosHook_
+Waypoint_To_String 带名）。取证手段：disasm.py 直反汇编全程读完 +
+TSV 查重（三候选全部未登记）+ YRpp/Phobos 命名交叉验证（0x763610）。
+
+================================================================================
+0x7AF000 —— VectorClass 扩容器（143B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（[esp+8]）ret al。
+机器码骨架（0x7AF000-0x7AF08E）：
+    mov ebx, ecx
+    mov eax, [ebx]               ; ★+0 旧容量
+    mov ecx, [ebx+4]             ; +4 当前容量
+    cmp eax, ecx; jge 0x7AF012
+    xor al, al; ret              ; ★旧容量 < 当前 → 返 0 不扩容
+    0x7AF012:
+    lea esi, [eax+eax]           ; ★新容量 = 2×旧容量
+    cmp esi, 0xA; jge 0x7AF02D
+    mov [esp+0x10], 0xA          ; ★最小 10
+    0x7AF02D:
+    lea edi, [esi*4]; push edi
+    call 0x7C8E17                ; ★new 容量×4 字节
+    mov ebp, eax
+    rep stosd + rep stosb        ; ★新内存清零
+    mov eax, [ebx+8]             ; +8 旧数组指针
+    test eax, eax; je 0x7AF075
+    mov ecx, [ebx]; shl ecx, 2
+    rep movsd + rep movsb        ; ★拷贝旧数据（旧容量×4）
+    0x7AF075:
+    mov ecx, [ebx+8]; push ecx
+    call 0x7C8B3D                ; ★delete 旧数组
+    mov [ebx+4], esi             ; 新容量
+    mov [ebx+8], ebp             ; 新数组
+    mov al, 1; ret
+
+语义：**VectorClass 扩容器（Grow）**——旧容量 < 当前容量时返 0 不扩容；
+否则新容量 = max(2×旧容量, 10)，new（0x7C8E17）容量×4 字节、清零、
+拷贝旧数据（旧容量×4）、delete 旧数组（0x7C8B3D），更新 +4/+8，
+返 1。★VectorClass 家族标准扩容（倍增 + 最小 10 下限）。2 unique
+caller（8 callsite）。
+
+★怪癖：①★新容量 2×旧 + 最小 10（lea eax+eax 倍增 + cmp 0xA 下限）；
+②★rep stosd/movsd 双阶段（4 字节 + 余数字节拷贝）；③★先清零新内存
+再拷旧数据（顺序敏感）；④★旧容量 < 当前容量快速返 0（不重复扩容
+判定）；⑤★delete 旧数组在收尾（新数组就绪才释放）。
+
+⚠️ partial：宿主类（0x7AF0xx 区——VectorClass 派生）、+0/+4/+8 布局
+（容量/容量/数组）、栈参语义、2 unique caller 身份。
+
+================================================================================
+0x765700 —— 上限越界比较器（14B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）无栈参 ret al。
+机器码（全文 14 字节）：
+    mov eax, [ecx+4]             ; ★this->+4（对象指针）
+    mov ecx, [ecx+8]             ; this->+8（比较值）
+    cmp ecx, [eax+0x10]          ; ★比较 +8 vs (+4 对象)->+0x10
+    sbb eax, eax                 ; ★eax = CF ? -1 : 0
+    neg eax                      ; ★取反：CF ? 1 : 0
+    ret
+
+语义：**上限越界比较器**——比较 this+8 与 this+4 指向对象的 +0x10
+（上限）：+8 > (+4)->+0x10 → 返 1，否则返 0（★sbb/neg 布尔归一——
+CF 标志直接布尔化）。2 unique caller（8 callsite）。后邻 0x765710
+为标量删除析构器（vtable 0x7F6F6C + 0x65D460 析构 + flag&1 → delete——
+同族候选未登记）。
+
+★怪癖：①★sbb eax,eax 后 neg（CF 布尔归一——无分支比较结果）；
+②★一级间接取上限（+4 对象 -> +0x10）；③★14B 极简（无栈帧）。
+
+⚠️ partial：+4 对象类型、+0x10 上限语义、+8 比较值含义、宿主类
+（0x7657xx 区）、后邻 0x765710（同族候选）、2 unique caller 身份。
+
+================================================================================
+0x763610 —— Waypoint 编号转字符串（113B 全程读完，Phobos 带名）
+================================================================================
+签名：fastcall（ecx=编号）ret eax（★全局缓冲 [0xB72654] 指针）。
+机器码（全文 0x763610-0x763680）：
+    cmp ecx, -1
+    jne 0x763622
+    mov byte [0xB72654], 0        ; ★-1 → 空串
+    mov eax, 0xB72654; ret        ; 返回全局缓冲
+    0x763622:
+    cmp ecx, 0x1A
+    jge 0x763644
+    add ecx, 0x41                 ; ★< 26 → 单字母（+'A'）
+    push ecx; push 0x847F44       ; ★格式串 %c（推断）
+    push 0xB72654
+    call dword ptr [0x7E14B0]     ; ★IAT sprintf 形态
+    add esp, 0xC
+    mov eax, 0xB72654; ret
+    0x763644:
+    mov eax, ecx; cdq
+    mov esi, 0x1A; idiv esi       ; ★÷26 商余
+    mov eax, 0x4EC4EC4F
+    add edx, 0x41                 ; 余数 + 'A'
+    push edx
+    imul ecx; sar edx, 3          ; ★商（magic ÷26 除法的商段）
+    ...lea ecx, [edx+eax+0x40]    ; 商 + 0x40（推断 商+'@' 或偏移）
+    push ecx; push 0x847F3C       ; ★格式串 %s%c（推断）
+    push 0xB72654
+    call dword ptr [0x7E14B0]     ; ★sprintf
+    add esp, 0x10
+    mov eax, 0xB72654; ret
+
+语义：**Waypoint 编号转字符串（PhobosHook_Waypoint_To_String）**——
+[0xB72654] 全局缓冲；编号 -1 → 空串；< 26 → 单字母（+'A'）；≥ 26 →
+两段（商段 + 余数+'A'）经 sprintf（[0x7E14B0] IAT，格式串 0x847F44/
+0x847F3C）格式化，返回全局缓冲指针。★Phobos 命名带名函数——waypoint
+索引 → "A"/"B"/"AA" 编号串（红警 waypoint 命名 A-Z 后 AA/AB 惯例）。
+2 unique caller（8 callsite）。
+
+★怪癖：①★全局缓冲 [0xB72654]（静态串缓冲——每次调用覆盖）；
+②★-1 空串分支（哨兵值）；③★<26 单字母 +'A'（0x41）；④★≥26 两段
+（÷26 magic 0x4EC4EC4F imul 除法 + 余数 +'A' + 商段 +0x40）；⑤★
+IAT [0x7E14B0] sprintf（格式化输出静态缓冲）。
+
+⚠️ partial：格式串 0x847F44/0x847F3C 内容（%c/%s%c 推断）、商段
++0x40 偏移语义、[0xB72654] 缓冲大小、2 unique caller 身份、Phobos
+hook 用途（waypoint 显示）。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1296（0x512DC0 VectorClass 构造器 + 0x67C1F0 拷贝构造器）：
+  0x7AF000 是 VectorClass 家族扩容器——构造/拷贝/扩容三件套补齐
+  （VectorClass 生命周期完整）。
+- 0x7C8E17/0x7C8B3D（new/delete 包装对）：0x7AF000 分配/释放共用。
+- batch 记忆（Phobos 克隆 E:\code\Phobos）：0x763610 的 PhobosHook_
+  Waypoint_To_String 命名来源（Ghidra 侧 hook 标注）。
+- sbb/neg 布尔归一：0x765700 与 batch 1264 0x69DEB0/batch 1285
+  0x54A950 同款惯用法（CF 布尔化）。
