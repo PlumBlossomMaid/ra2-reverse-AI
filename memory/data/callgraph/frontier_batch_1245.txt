@@ -1,0 +1,166 @@
+frontier batch 1245 — 0x679F70 容器析构器 / 0x67A520 数组批量读取器 / 0x420140 全局对象池（2026-10-22）
+
+口径：承接 batch 1244 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=42/40/34 三个未登记函数：0x679F70（45B，容器析构）、0x67A520
+（75B，批量读取）、0x420140（293B，全局对象池）。取证手段：disasm.py
+直反汇编全文（三个均全程读完）。
+
+================================================================================
+0x679F70 —— 容器析构器（owns 门控 delete，45B 全程读完）
+================================================================================
+机器码（0x679F70-0x679F9C）：
+    push ebx/esi; esi = ecx（this）
+    ebx = 0
+    eax = [esi+4]           ; 数组指针
+    [esi] = 0x7E4DB8        ; ★装虚表 A
+    test eax, eax; je 0x679F94     ; 指针空 → 跳过
+    cmp byte [esi+0xD], bl  ; owns 标志
+    je 0x679F94             ; 不拥有 → 跳过
+    push eax; call 0x7C8B3D ; operator delete（batch 001）
+    add esp, 4
+    [esi+4] = ebx           ; 清数组指针
+0x679F94:
+    byte[esi+0xD] = bl      ; owns 清 0
+    [esi+8] = ebx           ; 容量清 0
+    ret
+
+语义：**VectorClass 家族容器析构器**——虚表装回 0x7E4DB8 + owns(+0xD) 门控
+delete 数组指针(+4) + 清零 owns/容量(+8)。与 batch 1244 的 0x4777B0 拷贝构造
+配对（同一虚表 0x7E4DB8、同一 {+4,+8,+0xD} 布局）。紧邻 0x679FA0 是同构孪生
+（虚表 0x7EAA08——另一容器类）。
+
+★怪癖：①owns 门控——非 owns（浅拷贝所有者）不 delete（与拷贝构造 owns=1
+对应）；②delete 后 +4 清零、+D/+8 无条件清（无论是否 delete）；③虚表装回
+A 0x7E4DB8（回收后对象可复用）。
+
+⚠️ partial：宿主类名（VectorClass 家族）、0x7E4DB8 虚表归属、0x679FA0 孪生
+关系（未逐地址核查 0x7EAA08 类）。
+
+================================================================================
+0x67A520 —— 数组批量读取器（虚表槽 0x10 逐元素 4 字节，75B 全程读完）
+================================================================================
+机器码（0x67A520-0x67A568）：
+    push ecx/ebx/esi/edi
+    edi = [esp+0x14]        ; 外部对象（栈参 1）
+    ebx = ecx               ; this（目标数组容器）
+    push 0
+    ecx = [edi]             ; 外部对象虚表
+    lea edx, [esp+0x10]
+    eax = [ebx+0x10]        ; this->+0x10
+    push 4; push edx; push edi
+    [esp+0x1C] = eax
+    call [ecx+0x10]         ; ★虚表槽 0x10（首调用，拿计数）
+    eax = [esp+0xC]         ; 返回计数
+    esi = 0
+    test eax, eax; jle 0x67A564  ; count<=0 → 直接结束
+0x67A54A:                   ; 循环（esi=0..count-1）
+    ecx = [ebx+4]           ; this->+4（数组基址）
+    eax = [edi]             ; 外部对象虚表
+    push 0
+    push 4
+    lea edx, [ecx+esi*4]    ; &数组[i]
+    push edx; push edi
+    call [eax+0x10]         ; ★虚表槽 0x10（逐元素读 4 字节）
+    eax = [esp+0xC]         ; 重新读计数（每次循环都读——怪癖）
+    inc esi
+    cmp esi, eax; jl 0x67A54A
+0x67A564:
+    ret 4
+
+语义：**数组批量读取器**——先经外部对象虚表槽 0x10 拿元素计数，再循环经同
+槽逐元素读 4 字节写入 this.+4 数组（每次循环重读计数——原版怪癖）。
+
+★怪癖：①★循环每次迭代都从 [esp+0xC] 重读计数（源计数可能变化则循环长度
+动态漂移）；②首调用传 push 0 / 第二参 = &[esp+0x10]（哨兵地址），后续调用
+preaddress = &数组[i]；③返回值计数值存 [esp+0x1C] 但读回 [esp+0xC]
+（栈位错位——编译器产物，调用约定一致的 4 字节 arg）。
+
+⚠️ partial：外部对象类型、虚表槽 0x10 语义（Read/GetLength?）、this.+0x10
+字段与返回计数的关系。
+
+================================================================================
+0x420140 —— 全局共享对象池 Get/Create（[0x88A080] 区，293B 全程读完）
+================================================================================
+机器码（0x420140-0x420262）：
+    池布局：[0x88A080]=池虚表、[0x88A084]=对象数组、[0x88A088]=容量、
+      [0x88A08D]=标志byte、[0x88A090]=计数、[0x88A094]=增长量
+    edx = [0x88A090]（计数）；edi = 参数1（key）
+    test edx, edx; jle 0x42016E（池空 → 创建）
+    查找循环（0x42015A-0x42016C）:
+      ecx = [0x88A084]; ebx = [ecx]（池[i] 对象）
+      cmp [ebx+0x20000], edi; je 0x4201D7（★key 命中）
+      inc eax; cmp eax, edx; jl 循环
+0x42016E:                ; 未命中 → 创建
+    push 0x20008; call 0x7C8E17   ; operator new(0x20008)
+    ebp = eax; test; je 0x4201F7
+    [ebp+0x20000] = edi           ; ★存 key
+    [ebp+0x20004] = 0             ; 计数清 0
+    edi--（key-1）
+    ebx = ebp
+    表填充循环（0x420196-0x4201D3，esi=0..0xFFFF）:
+      ecx = esi & 0xFF            ; (低 8 位)
+      edx = esi >> 8              ; (高 8 位，sar 算术)
+      ecx *= edx; ecx *= edi（key-1）
+      imul ecx                    ; ★edx:eax = ecx*eax（32 位带符号）
+      edx += ecx                  ; ★低 32 位 + 高 32 位（折叠）
+      sar edx, 0xE                ; ÷16384
+      eax = edx; shr eax, 0x1F; edx += eax   ; ★负数修正（向零取整）
+      cmp edx, edi; jle 0x4201C2
+      edx = edi                   ; 上限钳制 key-1
+0x4201C2:
+      ch = dl; cx = {0, dl}; [ebx] = cx      ; ★写 16 位 {0, 计算值}
+      ebx += 2; cmp esi, 0xFFFF; jle 循环
+    jmp 0x4201F9
+0x4201D7:                ; 命中路径
+    ecx = 池[i] 对象
+    [ecx+0x20004]++      ; 计数++
+    eax = 池[i]; ret 4   ; 返回命中对象
+0x4201F7:
+    ebp = 0
+0x4201F9:                ; 入池路径
+    eax = [0x88A088]（容量）; ecx = [0x88A090]（计数）
+    cmp ecx, eax; jl 0x420237      ; count < cap → 直接入池
+    cl = [0x88A08D]; test; jne 0x420216
+    test eax, eax; jne 0x42024F    ; cap != 0 → 失败不扩
+0x420216:
+    ecx = [0x88A094]（增长量）; test; jle 0x42024F
+    edx = [0x88A080]（虚表）
+    ecx += eax（新容量 = cap+grow）
+    push 0; push ecx; ecx = 0x88A080
+    call [edx+8]         ; ★虚表槽 8 = Reserve（同 batch 1243 0x538780 模式）
+    test al, al; je 0x42024F
+0x420237:
+    ecx = [0x88A090]; eax = ecx; ecx++
+    [0x88A090] = ecx     ; 计数++
+    [池[旧count]] = ebp  ; 入池
+0x42024F:
+    eax = [ebp+0x20004]; eax++; [ebp+0x20004] = eax  ; 新对象计数=1
+    eax = ebp; ret 4
+
+语义：**全局共享对象池 Get/Create**——按 key（对象 +0x20000 字段，参数 1）
+在 [0x88A084] 数组（池 [0x88A080]）中查找：命中 → 计数 ++ 并返回；未命中 →
+operator new 0x20008（对象体 0x20000 字节 + key + 计数）、初始化 0x10000 项
+16 位表（★哈希/置换表：按 (低8位×高8位×key-1) 折叠乘法 + sar 0xE 取整 + 上限
+钳制生成 0x10000 个 16 位值）、容量不足经虚表槽 8 预扩（cap+grow，同 batch
+1243 0x538780 模式）入池、返回新对象。
+
+★怪癖：①★对象 +0x20000 字段 = key（幂等 Get：同 key 返回同对象、引用计数
++0x20004）；②表填充公式：`(((i&0xFF)*(i>>8)*(key-1)) 高32+低32) >> 14` 向零
+取整、超 key-1 钳制——疑似 0x10000 项置换/哈希表（key 为模数）；③imul 单操作
+数是 32 位带符号乘法（edx:eax=64 位结果），折叠加法后 sar 0xE 近似除法；
+④shr eax,0x1F + add = 负数向零取整修正（与 trunc 语义一致）；⑤容量扩容条件
+与 batch 1243 0x538780 完全同构（+0x8D 标志 / cap!=0 拒扩 / grow<=0 拒扩）。
+
+⚠️ partial：池宿主类（Slots/共享资源池推断）、0x10000 项表语义（哈希 vs 置换）、
++0x20000 key 的来源、表填充公式的精确用途、[0x88A08D] 标志语义。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1244（0x4777B0 拷贝构造）：0x679F70 是同一 VectorClass 家族的析构器
+  （同虚表 0x7E4DB8、同 {+4,+8,+0xD} 布局），拷贝构造 owns=1 ↔ 析构 owns 门控
+  delete 配对。
+- batch 001（0x7C8B3D operator delete）：0x679F70 的释放被调。
+- batch 1243（0x538780 容器尾插+扩容）：0x420140 的容量扩容段与它同构
+  （+8D 标志/cap!=0 拒扩/grow<=0 拒扩/虚表槽 8 Reserve）。
+- batch 597/7AE5D0（VectorClass 家族）：三者同容器族。
