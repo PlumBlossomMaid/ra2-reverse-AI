@@ -1,0 +1,219 @@
+frontier batch 1361 — 0x661020 三字节双源混合缩放器 / 0x658D60 8B 数组容器构造器 / 0x655C50 地图坐标格拾取器（2026-10-23）
+
+口径：承接 batch 1360 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x661020（355B，callees=1 deps=74）、
+0x658D60（114B，callees=1 deps=62）、0x655C50（1266B，callees=7 deps=175
+大函数）。
+取证手段：disasm.py 双参直反汇编全程读完（0x661020 0x170 尾 0x661180 /
+0x658D60 0x90 尾 0x658DCF（含相邻 0x658DE0 开头）/ 0x655C50 0x500 尾
+0x65613F，函数边界与 functions.tsv 完全吻合）+ TSV 查重（三候选全部
+未登记）+ 跨批次对比（batch 1360 0x661190 三字节钳位缩放器 ↔ 本批
+0x661020 同族双源版；batch 1360 0x67C310 数组容器构造器 ↔ 本批 0x658D60
+同模板 8B 版；0x578080/0x565730 取格链 + [0x87F7E8] ↔ 既有锚点；
+[0x8871E0] 全局规则/[0xA8ED84] 帧戳 ↔ 既有惯用法）。
+
+================================================================================
+0x661020 —— 三字节双源混合缩放器（355B 全程读完）
+================================================================================
+签名：thiscall（ecx=this，mov esi）+ 3 栈参（[esp+0xC]=源1 字节指针
+ebx、[esp+0x14]=源2 字节指针 edi、[esp+0x18]=浮点缩放参数），返回 this，
+ret 0xC（0x661020-0x661180，callees=1 deps=74）。
+机器码结构（0x661020-0x661180，全程读完，三字节同构 ×3）：
+    入口：fld [0x7E2AC8]（★初始浮点常量）; push ebx; push esi
+    fsub [esp+0x14]; mov ebx, [esp+0xC]; push edi
+    mov edi, [esp+0x14]; xor eax, eax; mov esi, ecx
+    字节 0（0x661039）：mov al, [edi]（源2 字节）; xor ecx, ecx
+    mov cl, [ebx]（源1 字节）
+    mov [esp+0x14], eax; fild（源2→浮点）
+    mov [esp+0x14], ecx; fmul [esp+0x18]（★× 缩放参数）
+    fild（源1→浮点）; fmul st(2); faddp st(1)（★双源混合相加）
+    fld [0x7E2220]; fcomp st(1); fnstsw ax; test ah, 1
+    jne 0x66107F（★值 < 下界 → 钳位路径）
+    fld [0x7E1748]; fcomp st(1); fnstsw ax; test ah, 0x41
+    jne 0x66107F（★值 > 上界 → 钳位路径）
+    fstp st(0); fld [0x7E1748]; jmp 0x661096（★钳到上界）
+    0x66107F：fld [0x7E2220]; fcomp st(1); test ah, 1
+    je 0x661096（不 < 下界 → 保持）
+    fstp st(0); fld [0x7E2220]（★钳到下界）
+    0x661096：call 0x7C5F00（★_ftol）; mov byte [esi], al（★写 this[0]）
+    （字节 1 0x66109F：mov dl,[ebx+1]/mov al,[edi+1] → 同构 → mov [esi+1]）
+    （字节 2 0x661108：mov cl,[ebx+2]/mov dl,[edi+2] → 同构 fimul/fmul
+    → mov [esi+2]）
+    mov eax, esi; pop ×3; ret 0xC
+语义：**三字节双源混合缩放器**（0x66102x 区——0x661xxx 颜色/缩放域，
+callees=1 deps=74）：thiscall + 双源字节指针/缩放参数三栈参：源1
+（[ebx]）与源2（[edi]）各 3 字节 fild 转浮点 × 缩放参数后**混合相加**
+（faddp——alpha/权重混合）→ **双界钳位**（fcomp st(1) + test ah,1 判
+`< 下界 [0x7E2220]`、test ah,0x41 判 `> 上界 [0x7E1748]`——越界钳到
+对应界）→ 0x7C5F00 _ftol 截断 → 写回 this 3 字节 → 返 this。
+★三字节双源混合缩放器（0x66102x 区——双源 fild 混合 + [0x7E2220]/
+[0x7E1748] 双界钳位 + _ftol——batch 1360 0x661190 的单源版同族）。
+2 unique caller（3 callsite）。
+★怪癖：①★**双源混合**（源1/源2 各自 fild × 缩放 + faddp 相加——
+batch 1360 0x661190 单源版的混合扩展，同 [0x7E2220]/[0x7E1748] 钳位
+对）；②★fld [0x7E2AC8] 初始常量 + fsub 参数（入口浮点前置）；
+③★三字节同构 ×3（逐字节手写不循环）；④★钳位路径双段（先判越上界
+→ 钳上界；再判低下界 → 钳下界——顺序固定）；⑤★_ftol 截断 + ret 0xC
+三栈参 + callees=1。
+⚠️ partial：源/目标类型（RGB 颜色混合？）、[0x7E2AC8]/[0x7E2220]/
+[0x7E1748] 常量值、缩放参数/双源权重语义、2 unique caller 身份。
+
+================================================================================
+0x658D60 —— 8B 数组容器构造器（114B 全程读完）
+================================================================================
+签名：thiscall（ecx=this，mov esi）+ 2 栈参（[esp+0xC]=数量 edi、
+[esp+0x10]=外部指针 eax），返回 this，ret 8（0x658D60-0x658DCF，
+callees=1 deps=62）。
+机器码结构（0x658D60-0x658DCF，全程读完）：
+    入口：push esi; push edi; mov edi, [esp+0xC]; mov esi, ecx
+    test edi, edi
+    mov [esi+4], 0（+0x4 初 0）; mov [esi+8], edi（+0x8=数量）
+    mov byte [esi+0xC], 1（+0xC=1）; mov byte [esi+0xD], 0（+0xD=0）
+    mov dword [esi], 0x7EEB74                          ; ★vftable 0x7EEB74
+    je 0x658DCB（数量 0 → 直接返 this）
+    0x658D84：mov eax, [esp+0x10]                        ; ★外部指针（栈参 2）
+    test eax; je 0x658D9B（空 → 走分配）
+    0x658D8C：dec edi; mov [esi+4], eax（+0x4=外部指针）
+    mov [esp+0xC], edi（★存数量-1）; mov eax, esi; pop ×2; ret 8
+    0x658D9B：lea eax, [edi*8]; push eax
+    call 0x7C8E17（★分配数量×8）; add esp, 4
+    test eax; je 0x658DC2
+    0x658DAF：dec edi; mov [esi+4], eax（+0x4=分配缓冲）
+    mov [esp+0xC], edi（★存数量-1）
+    mov byte [esi+0xD], 1（+0xD=1 持有标志）; ret 8
+    0x658DC2：xor eax; mov byte [esi+0xD], 1; mov [esi+4], eax; ret 8
+    （分配失败 → +0x4=0、持有标志仍 1）
+    0x658DCB：mov eax, esi; pop ×2; ret 8
+语义：**8B 数组容器构造器**（0x658D6x 区——0x658Dxx 容器/构造域，
+callees=1 deps=62）：thiscall + 数量/外部指针双栈参：**vftable
+0x7EEB74** 容器 +0x4 初 0、+0x8=数量、+0xC=1、+0xD=0；数量非 0 时外部
+指针非空 → +0x4 取外部指针（不持有）；空 → 0x7C8E17 分配数量×8
+（8B/项）→ +0x4 为分配缓冲、+0xD=1 持有标志 → 返 this。
+★8B 数组容器构造器（0x658D6x 区——vftable 0x7EEB74 + 数量×8 分配 +
+外部/自分配双路径——batch 1360 0x67C310 同模板 8B 版）。2 unique
+caller（3 callsite）。
+★怪癖：①★vftable 0x7EEB74（mov dword [esi],0x7EEB74——数组容器族
+第二实例）；②★**数量×8 分配**（lea eax,[edi*8]——8B/项 vs batch
+1360 0x67C310 的数量×4 4B/项）；③★外部指针/自分配双路径（栈参 2
+非空 → 引用外部不持有；空 → 自分配 + 持有标志 +0xD=1）；④★**数量
+减 1 存储**（dec edi + mov [esp+0xC],edi——存最大索引语义）；
+⑤★分配失败 → +0x4=0 但持有标志仍 1（失败路径）+ ret 8 双栈参。
+⚠️ partial：vftable 0x7EEB74 类型（8B/项容器？）、+0xC/+0xD 标志
+语义、数量-1 存储含义、2 unique caller 身份。
+
+================================================================================
+0x655C50 —— 地图坐标格拾取器（1266B 全程读完）
+================================================================================
+签名：thiscall（ecx=this，mov esi）+ 1 栈参（[esp+0x44]=坐标点 edi，
+X/Y 双 dword），返回 eax，ret 4（0x655C50-0x65613F，callees=7 deps=175
+大函数）。
+机器码结构（0x655C50-0x65613F，全程读完，关键锚点）：
+    入口：mov eax, [0xA83D4C]（★全局宿主）; sub esp,0x30; 4 push
+    xor ebp, ebp; mov esi, ecx
+    cmp eax, ebp; je 0x656138（[0xA83D4C]==0 → 直接返）
+    0x655C68：mov ecx, [esi+0x121C]; lea edx, [esp+0x30]; push edx
+    call [eax+0x78]（★虚表槽 0x78 取范围）
+    mov edi, [esp+0x44]（坐标点）
+    X 区间判定（0x655C7C）：mov edx, [eax]; mov ecx, [edi]
+    cmp ecx, edx; jl 0x656138（X < 下界 → 返）
+    mov ebx, [eax+8]; add ebx, edx（下界+宽）
+    cmp ecx, ebx; jge 0x656138（X >= 上界 → 返）
+    Y 区间判定（0x655C99）：mov ecx, [edi+4]; mov edx, [eax+4]
+    cmp ecx, edx; jl 0x656138（Y < 下界 → 返）
+    mov eax, [eax+0xC]; add eax, edx（下界+高）
+    cmp ecx, eax; jge 0x656138（Y >= 上界 → 返）
+    0x655CB8（★等距→世界坐标）：
+    fild [esp+0x44]; fdiv [esi+0x1488] - fisub [esi+0x1490]
+    fild [esp+0x14]; fdiv [esi+0x1488] + fiadd [esi+0x1498]
+    fld st(0); fadd st(2); fmul [0x7E5168] + fadd [0x7E1738]
+    call 0x7C5F00 ×2（★_ftol 双坐标）
+    movsx ecx, bx; shl ecx, 8; add ecx, 0x80（★×256+0x80 量化）
+    → 0x578080（★取格链 [0x87F7E8]）
+    [0xB73550] 判定 → 0x586360/0x5864A0（取格属性判定）
+    0x655D87（★候选遍历）：mov eax, [edi+4]; lea eax, [eax+eax*4]
+    mov ecx, [edi]; sub eax, ecx; and eax, 0xFF
+    lea edx, [eax+eax*2]; mov eax, [esi+0x1258]（候选表）
+    mov ecx, [eax]; lea eax, [ecx+edx*8]（8B/项）
+    mov ecx, [ecx+edx*8+0x10]（项数）; jle 0x655E7E
+    0x655DBD 循环：mov edx, [ebx]; mov eax, [edi]
+    cmp edx, eax; jne 0x655E6A（坐标不匹配 → 跳过）
+    mov eax, [ebx+4]; mov edx, [edi+4]; cmp eax, edx; jne 0x655E6A
+    （★X/Y 坐标匹配才继续）
+    mov al, [esp+0x44]; test al; je 0x655DF4
+    mov ecx, [ebp+0x21C]; call 0x50B6F0（★0x50B6F0 判定）
+    test al; je 0x655E66
+    0x655DF4：call [edx+0x84]（★虚表槽 0x84）→ +0x22F 字节判定
+    → [0xA83D4C] + 0x4F9A90（★0x4F9A90 判定）→ +0x232 字节判定
+    → +0xC9B 字节判定 → +0x21C+0x34+0x1A6 字节判定（多层条件链）
+    0x655E66：inc eax（计数）; cmp eax, ecx; jl 0x655DBD（循环）
+    0x655E7E（★命中处理）：mov al, [esp+0x13]; test al
+    je 0x656058（另一路径）
+    mov ecx, [esi+0x1220]; push edi; call [eax+0x28]（★虚表槽 0x28）
+    [0x8A0DD0]/[0x8A0DD4]/[0x8A0DD8]/[0x8A0DDC]/[0x8A0DE0]/[0x8A0DE4]
+    （★位宽表——shr/shl 拼接 RGB 通道）
+    mov ecx, [esi+0x121C]; mov eax, [ecx]
+    push ebp; push edi; call [eax+0x24]（★虚表槽 0x24 写回）
+    0x655F48（★替代路径）：mov ebx, [ebp+0x21C]
+    call [edx+0xC4]（虚表槽 0xC4）→ 0x65F7C 分支 0xD0（虚表槽 0xD0）
+    → +0x56FB/+0x56FA/+0x56F9 位提取（[0x8A0DD0] 系列位宽表拼接）
+    → [0x836ECC] + 0x68CA50（★对象表取型）
+    → +0x174/+0x17C 帧戳 [0xA8ED84] + [0x8871E0]+0x88 idiv（★延迟判定
+    and 0x80000001 ==1）
+    → [ebp+0x21C]==[0xA83D4C] → not ebx → 虚表槽 0x24
+    0x656058：mov al, [esp+0x44] 分支 → 虚表槽 0x28/0x24
+    0x65608F（★矩形收缩）：mov edx, [esi+0x149C]; mov ebx, [esi+0x14A0]
+    mov eax, [edi]; mov edi, [edi+4]; add esi, 0x120C
+    add eax, edx; lea ecx, [edi+ebx]（坐标累加）
+    mov edx, [esi+8]; jle 0x656125（无项 → 直接存）
+    mov edx, [esi+0xC]; jle 0x656125
+    0x6560C0 循环：mov edx, [ebp]; cmp edx, eax
+    jle 0x6560E4; sub edx, eax; add ebx, edx; mov edx, eax（★X 边界收缩）
+    mov edi, [ebp+4]; cmp edi, ecx
+    jle 0x6560F6; sub edi, ecx; add ebp, edi; mov edi, ecx（★Y 边界收缩）
+    ...（lea ebp,[eax+1] 区间外扩判定）
+    0x65612D：mov [esi], edx; mov [esi+4], edi; mov [esi+8], eax
+    mov [esi+0xC], ecx（★写回四值矩形）
+    0x656138：pop ×4; add esp, 0x30; ret 4
+语义：**地图坐标格拾取器**（0x655C5x 区——0x655xxx 地图/拾取域，
+callees=7 deps=175 大函数）：thiscall + 坐标点栈参：[0xA83D4C] 全局
+宿主门控 → 虚表槽 0x78 取范围矩形 + X/Y 双区间判定（越界即返）→
+**等距→世界坐标**（fild/fdiv [+0x1488] ± [+0x1490]/[+0x1498] + [0x7E5168]/
+[0x7E1738] 常量 + _ftol + ×256+0x80 量化）→ 0x578080 取格 + [0xB73550]
+判定（0x586360/0x5864A0）→ **候选表 [esi+0x1258] 遍历**（8B/项，X/Y
+坐标匹配 + 0x50B6F0 + 虚表槽 0x84 多层字节条件链 0x22F/0x232/0xC9B/
+0x21C+0x34+0x1A6）→ 命中后虚表槽 0x28/[0x8A0DD0] 位宽表 RGB 拼接 →
+虚表槽 0x24 写回 → **矩形收缩**（+0x149C/+0x14A0 累加 + 边界调整写回
++0x120C 四值）→ ret 4。★地图坐标格拾取器（0x655C5x 区——虚表槽 0x78
+范围 + 等距坐标转换 + 候选遍历 + [0x8A0DD0] 位宽表 + 矩形收缩）。
+2 unique caller（3 callsite）。
+★怪癖：①★[0xA83D4C] 全局宿主门控（==0 直接返——全局对象族）；
+②★X/Y 双区间判定（虚表槽 0x78 取范围 + jl/jge 左闭右开）；
+③★等距→世界坐标（fild/fdiv [+0x1488] ± [+0x1490]/[+0x1498] + _ftol
+×2 + shl 8 + 0x80 量化——batch 既有坐标 >>8 家族）；④★候选表
+[esi+0x1258] 遍历（8B/项 + and 0xFF 索引 wrap）；⑤★[0x8A0DD0]/
+[0x8A0DD4]/[0x8A0DD8]/[0x8A0DDC]/[0x8A0DE0]/[0x8A0DE4] **位宽表**
+（shr/shl 可变位宽拼接 RGB 通道——位打包惯用）；⑥★[0x836ECC] +
+0x68CA50 对象表取型 + [+0x174]/[+0x17C] 帧戳延迟判定（[0xA8ED84] -
+idiv [0x8871E0]+0x88 and 0x80000001==1）；⑦★矩形收缩写回（+0x149C/
++0x14A0 累加 + 边界调整 + 写 +0x120C 四值）。
+⚠️ partial：宿主类型（+0x121C/+0x1220/+0x1258/+0x1488/+0x1490/
++0x1498/+0x149C/+0x14A0/+0x120C 字段语义）、[0xA83D4C] 全局身份、
+虚表槽 0x78/0x24/0x28/0x84/0xC4/0xD0 语义、[0x8A0DD0] 位宽表含义、
+0x586360/0x5864A0/0x50B6F0/0x4F9A90/0x68CA50 身份、2 unique caller
+身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1360（0x661190 三字节钳位缩放器）：0x661020 用**同款
+  [0x7E2220]/[0x7E1748] 钳位对**——0x661xxx 颜色/缩放域持续闭合
+  （单源 0x661190 / 双源 0x661020 成对）。
+- batch 1360（0x67C310 数组容器构造器 vftable 0x7F0D5C）：0x658D60
+  用**同模板 vftable 0x7EEB74**（数量×8 8B/项 vs 0x67C310 数量×4）——
+  数组容器构造器家族再验证。
+- 0x578080/0x565730 取格链 + [0x87F7E8]（batch 1300s 既有锚点）：
+  0x655C50 使用——取格家族持续闭合。
+- [0x8871E0] 全局规则 / [0xA8ED84] 帧戳 / [0x836ECC] 对象表（既有
+  惯用法）：0x655C50 全部使用——全局对象族兑现。
+- batch 1351/1354/1359（0x4CAC40 数学链/坐标转换）：0x655C50 等距
+  坐标转换 fild/fdiv 链——数学家族持续闭合。
