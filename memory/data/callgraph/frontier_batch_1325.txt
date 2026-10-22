@@ -1,0 +1,505 @@
+frontier batch 1325 — 0x59BBC0 RMG 起始点格扩展器 / 0x5981F0 MapSeedClass 配置装载器 / 0x58C800 RMG 格扩散处理（2026-10-23）
+
+口径：承接 batch 1324 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=3 三个未登记函数（**本批
+三函数全部命中 RMG 域**——0x5981F0 位于 MapGen.cpp TU 0x5956E7-0x59A63A
+内，直接关联地图生成器复刻主线）：0x59BBC0（2415B）、0x5981F0（1889B）、
+0x58C800（1678B）。取证手段：disasm.py 直反汇编全程读完（0x59BBC0
+0x970 / 0x5981F0 0x760 / 0x58C800 0x690 覆盖，函数边界与 functions.tsv
+吻合）+ TSV 查重（三候选全部未登记）+ 跨批次对比（Randomizer [0xABE890]
+↔ RNG 里程碑；[0x89F688] ↔ 用户记忆方向表；[0xABED10] work 数组 ↔
+QWEN.md 实锤）。
+
+================================================================================
+0x59BBC0 —— RMG 起始点格扩展器（2415B 全程读完）
+================================================================================
+签名：thiscall（ecx=宿主 MapSeed）+ 5 栈参（[ebp+8]=上限、[ebp+0xC]=
+范围、[ebp+0x10]=宿主、[ebp+0x14]=目标、[ebp+0x18]=系数、[ebp+0x1C]=
+浮点系数、[ebp+0x24]=标志）ret 0x20。
+机器码（0x59BBC0-0x59C52C，ebp 帧 + 0x84 栈）：
+    push ebp; mov ebp, esp; and esp, -8; sub esp, 0x84; push 全
+    mov eax, [ebp+8]; cmp eax, 0x190; jg 0x59BBE5
+    mov eax, 0x190                                  ; ★上限 <0x190 钳位到 0x190
+    0x59BBE5:
+    lea edi, [eax*8+2]; cmp edi, 0x64; jg 0x59BBF6
+    mov edi, 0x64                                    ; ★步数下限 0x64
+    lea eax, [edi*8]; push eax; call 0x7C8E17        ; ★分配 8×N（结果表）
+    mov [esp+0x28], eax
+    push 0x14; call 0x7C8E17                          ; ★分配 0x14（堆结构）
+    mov esi, eax
+    lea edx, [edi*4+4]; push edx; call 0x7C8E17       ; ★分配 4×N+4（堆数组）
+    mov [esi+0xC], 0; mov [esi+0x10], -1
+    mov [esi], 0; mov [esi+4], edi; mov [esi+8], eax   ; ★堆结构（计数/容量/数组）
+    填充循环（[esi+8] 清零）：
+    ...mov [ecx+eax*4-4], 0; inc eax; cmp eax, [esi+4]; jle 0x59BC5C  ; ★清零
+    0x59BC6F（宿主 +0/+4 空 → 随机初始）：
+    mov ecx, [ebp+0x10]; cmp [ecx], ebx; jne 0x59BDEC
+    cmp [ecx+4], ebx; jne 0x59BDEC
+    0x59BC85（随机取点）：
+    mov edx, [0x87F8DC]; lea ebx, [edx-1]; lea eax, [ebx+1]
+    fild qword [esp+0x70]; fstp qword [esp+0x88]
+    mov ecx, 0xABE890; call 0x65C780 Randomizer::Random  ; ★RNG 一（[0x87F8DC] 尺寸）
+    fild qword [esp+0x68]; fmul qword [esp+0x88]
+    fmul qword [0x7ED898]; call 0x7C5F00
+    cmp edi, ebx; ja 0x59BCAC                        ; ★拒绝采样
+    mov ecx, [0x87F8E0]; lea ebx, [ecx-1]; lea edx, [ebx+1]
+    fild qword [esp+0x48]; fstp qword [esp+0x88]
+    mov ecx, 0xABE890; call 0x65C780 Randomizer::Random  ; ★RNG 二（[0x87F8E0] 尺寸）
+    fild qword [esp+0x40]; fmul qword [esp+0x88]
+    fmul qword [0x7ED898]; call 0x7C5F00
+    cmp eax, ebx; ja 0x59BD01                        ; ★拒绝采样
+    ...word 坐标组合（[0x87F8DC]/[0x87F8E0] → 坐标对）
+    0x59BD7D（重试循环 0xC8 上限）：
+    inc [esp+0x24]; cmp edx, 0xC8; jge 0x59BDE1      ; ★上限 200
+    mov edx, [0xABED10]; test edx, edx; je 0x59BC89
+    ...work 索引（Y×[0x89C2DC]+X → ×5 <<4）
+    mov ecx, [eax+edx+0x38]; test ecx, ecx; jne 0x59BC89  ; ★work+0x38 占用检查
+    push ecx; mov ecx, 0x87F7E8; call 0x5657A0        ; ★取格链
+    mov ecx, eax; call 0x4865D0; je 0x59BC89          ; ★格判定
+    0x59BDE1: ...xor eax, eax; ret 0x20               ; ★失败返 0
+    0x59BDEC（宿主 +0/+4 非空 → 直接坐标）：
+    mov dx, word [ecx+4]; mov word [esp+0x34], ax; mov word [esp+0x36], dx
+    mov eax, [esp+0x34]; mov [esp+0x14], eax          ; ★宿主坐标直用
+    0x59BE02（范围浮点比例）：
+    mov eax, [ebp+0xC]; mov edx, [0xABE2F0]; ...四值比较
+    cmp [eax], edx; jne 0x59BE48
+    ...cmp [eax+4], [0xABE2F4]; cmp [eax+8], [0xABE2F8]; cmp [eax+0xC], [0xABE2FC]
+    je 0x59BE90                                       ; ★[0xABE2F0] 系四值匹配
+    0x59BE48（比例计算）：
+    mov ecx, [eax+8]; mov eax, [eax+0xC]; cmp ecx, eax
+    jle 0x59BE76; fild [esp+0x24]; fidiv [esp+0x34]
+    fmul qword [0x7E5190]; fstp [esp+0x2C]            ; ★fild 比例 × [0x7E5190]
+    ...同构第二支（fild [esp+0x34] / [esp+0x24]）       ; ★双支比例
+    0x59BE90（坐标写 + 堆插入）：
+    ...fild 坐标对 → fstp qword 栈
+    0x59BEC0（堆插入（优先队列））：
+    ...cmp [esi+8], eax; jle 0x59BECE
+    ...fcomp [esp+0x48]; jne 0x59BF4E
+    堆调整循环（0x59BF2B）：
+    fld [eax+4]; fcomp [esp+0x48]; fnstsw ax; test ah, 0x41; jne 0x59BF4E
+    mov eax, [ebx+edx*4]; mov [ebx+ecx*4], eax        ; ★堆上浮
+    shr edx, 1; cmp ecx, 1; ja 0x59BF2B               ; ★堆调整
+    0x59BF4E（堆写入 + 收尾）：
+    mov edx, [esi+8]; mov [edx+ecx*4], edi
+    inc [esi]; cmp edi, [esi+0xC]; jbe; mov [esi+0xC], edi  ; ★堆计数/最大值
+    cmp edi, [esi+0x10]; jae; mov [esi+0x10], edi     ; ★最小值
+    0x59BF6B（弹出堆顶）：
+    ...mov edi, [eax+ecx*4]; mov [eax+4], ecx; mov [eax+edx*4], 0
+    dec [esi]; mov ecx, esi; call 0x5AD870            ; ★0x5AD870（堆删除）
+    0x59BF9B（距离比例浮点）：
+    mov eax, [ebp+0xC]; fild [eax+8]; fmul qword [0x7E1738]
+    ...fmul st(1); fdivr qword [0x7E1718]; fstp [esp+0x80]  ; ★fild 距离比例
+    ...同构第二支（[eax+0xC]）→ [esp+0x78]
+    0x59BFDC（[ebp+8]>0 && edi 非空）：
+    jle 0x59C332; test edi, edi; je 0x59C332
+    mov ecx, [0xABED10]; ...work+0x38 写（+0x308 字段）   ; ★work 标记
+    push edi; mov ecx, 0x87F7E8; call 0x5657A0        ; ★取格链
+    mov [eax+0x38], 0
+    8 方向扩散循环（0x59C047-0x59C2B6）：
+    mov ebx, [0xABED04]; mov esi, [0xABED08]
+    0x59C04B:
+    and eax, 7; lea ecx, [eax*4+0x89F688]             ; ★[0x89F688] 方向表 &7
+    mov ax, word [eax*4+0x89F688]; mov cx, word [ecx+2]
+    add ax, word [edi]; add cx, word [edi+2]          ; ★方向偏移
+    ...边界检查（X+Y vs [0xABED04]/[0xABED08]）
+    imul eax, [0x89C2DC]; mov ecx, [0xABED10]
+    add eax, edx; lea edi, [eax+eax*4]; shl edi, 4; add edi, ecx  ; ★work 索引
+    mov eax, [edi+0x38]; test eax, eax; jne 0x59C2A8  ; ★work+0x38 占用
+    mov eax, [edi+0x3C]; cmp eax, [ecx+0x308]; je 0x59C2A8  ; ★+0x3C 归属检查
+    push edx; mov ecx, 0x87F7E8; call 0x5657A0        ; ★取格链
+    mov ecx, eax; call 0x4865D0; je 0x59C2A2          ; ★格判定
+    ...0x59BAB0 递归（[ebp+0x14] 目标）                 ; ★0x59BAB0 递归调用
+    test al, al; je 0x59C2A2
+    fld qword [esp+0x68]; fadd qword [0x7E1738]; call 0x7C5F00  ; ★坐标推进
+    ...fld qword [esp+0x70]; fadd qword [0x7E1738]    ; ★Y 推进
+    mov cl, [ebp+0x24]; test cl, cl; je 0x59C1B2
+    ...0x59B940 递归（[ebp+0x18] 系数）                 ; ★0x59B940 递归调用
+    0x59C1B2（距离平方分支）：
+    movsx edx, word [esp+0x34]; movsx ecx, word [esp+0x18]
+    sub ecx, edx; ...imul 距离平方
+    fild [esp+0x48]; fstp [esp]; call 0x4CAC40        ; ★距离平方（0x4CAC40）
+    mov ecx, 0xABE890; call 0x65C780 Randomizer::Random  ; ★RNG 三
+    fild [esp+0x88]; fmul qword [0x7ED808]
+    fmul qword [0x7ED898]; fadd qword [esp+0x60]      ; ★距离随机扰动
+    堆插入（同构 0x59C236-0x59C29F）：
+    ...fld [ebx+4]; fcomp; 堆上浮循环; mov [edx+ecx*4], eax  ; ★堆插入
+    inc [esi]; ...mov [esi+0xC]/[esi+0x10]            ; ★堆统计
+    0x59C2BC（[0xABDFB8] 对象浮点推进）：
+    mov ecx, 0xABDFB8; call 0x5980C0                  ; ★0x5980C0（NormalDeviate）
+    fmul qword [ebp+0x1C]; fadd qword [esp+0x68]; fstp [esp+0x68]  ; ★偏差×系数
+    mov ecx, 0xABDFB8; call 0x5980C0; fmul qword [ebp+0x1C]
+    fadd qword [esp+0x70]; fstp [esp+0x70]            ; ★Y 偏差推进
+    0x59C2EB（弹出堆顶循环）：
+    ...mov edi, [eax+4]; dec [esi]; call 0x5AD870      ; ★堆删除
+    0x59C31F（主循环推进）：
+    inc [esp+0x1C]; cmp ecx, [ebp+8]; jl 0x59BFE2     ; ★上限循环
+    0x59C332（收尾遍历）：
+    ...弹出堆顶 → mov edi, [eax+4]; dec [esi]; call 0x5AD870
+    test edi, edi; je 0x59C3FC
+    push edi; mov ecx, 0x87F7E8; call 0x5657A0        ; ★取格链
+    ...work+0x38 == 0 → 0x4865D0 判定 → work+0x38 写
+    0x59C3FC（释放 + CellIterator 清理）：
+    push [esp+0x28]; call 0x7C8B3D                    ; ★释放结果表
+    ...push [esi+8]; call 0x7C8B3D; push esi; call 0x7C8B3D  ; ★释放堆
+    mov ecx, [ebx+0x308]; push 1; push ecx; mov ecx, 0x87F7E8
+    call 0x57A0C0                                   ; ★0x57A0C0
+    mov ecx, 0x87F7E8; call 0x578350 MapClass::CellIterator_Reset  ; ★遍历复位
+    mov ecx, 0x87F7E8; call 0x578290 MapClass::CellIterator_Next   ; ★遍历
+    ...mov ecx, [eax+0x38]; mov edx, [0xABAD28]
+    cmp ecx, edx; jl; add edx, 0x2A; cmp ecx, edx; jge
+    mov [eax+0x38], 0; mov byte [eax+0x11A], 0       ; ★[0xABAD28] 高度带清理
+    0x59C480（[0xAA0738] 遍历二）：
+    mov al, [esp+0xF]; test al, al; jne 0x59C515
+    mov esi, [0xAA0738]; mov edi, [ebx+0x308]
+    ...CellIterator 遍历 → work+0x38 == edi → 写 0
+    mov [ecx+0x38], 0; mov byte [ecx+0x4B], 0
+    mov [eax+0x38], esi; mov byte [eax+0x11A], 0
+    mov ecx, [ebx+0x30C]; mov byte [eax+0x11B], cl   ; ★+0x11B 高度写
+    ...xor eax, eax; ret 0x20
+    0x59C515（[+0x308] 递增返回）：
+    mov ecx, [ebx+0x308]; inc ecx; mov [ebx+0x308], ecx
+    ...ret 0x20
+
+语义：**RMG 起始点格扩展器**——宿主 MapSeed（[ebp+0x10]）+ 5 栈参：上限
+<0x190 钳位 + 步数下限 0x64；分配结果表（8×N）+ 堆结构（0x14 + 4×N，
+计数/容量/数组三字段）；宿主 +0/+4 空 → **Randomizer::Random ×2**（[0x87F8DC]/
+[0x87F8E0] 地图尺寸 + [0x7ED898] 常数 + 拒绝采样）取起始坐标，重试上限
+0xC8（200）；work 数组（[0xABED10] 每格 0x50 字节 + [0x89C2DC] side 索引）
++0x38 占用检查 + 0x5657A0 取格链 + 0x4865D0 格判定；范围四值（[0xABE2F0]~
+[0xABE2FC]）匹配 → fild 比例（× [0x7E5190]）双支；**堆式优先队列**
+（fcomp 排序 + 上浮调整 + 0x5AD870 删除 + 弹出堆顶）+ 堆统计（+0xC/+0x10）；
+距离比例浮点（[0x7E1738]/[0x7E1718]）；**8 方向扩散循环**（[0x89F688]
+方向表 &7 + work 索引 + 0x59BAB0/0x59B940 递归 + 0x4CAC40 距离平方 +
+Randomizer::Random ×1（[0x7ED808] 扰动））；[0xABDFB8] 对象 **0x5980C0
+NormalDeviate** ×2 偏差推进（×[ebp+0x1C] 系数）；主循环上限推进；收尾
+释放 + 0x57A0C0 + CellIterator（0x578350/0x578290）×2 + [0xABAD28] 高度带
+清理 + [0xAA0738] 遍历 + +0x11B 高度写；成功/失败返 0。★RMG 起始点格
+扩展器（0x59BBCx 区——MapGen 主域，用户目标 RMG 复刻直接相关）。
+2 unique caller（8 callsite）。
+
+★怪癖：①★Randomizer::Random ×3（[0xABE890] 全局 RNG + [0x87F8DC]/
+[0x87F8E0] 尺寸 + [0x7ED898]/[0x7ED808] 常数 + 拒绝采样——RNG 里程碑
+同源）；②★堆式优先队列（fcomp 排序 + 上浮 + 0x5AD870 删除 + 弹出）；
+③★8 方向扩散（[0x89F688] 方向表 &7 + work 索引 [Y×side+X]×5<<4）；
+④★0x59BAB0/0x59B940 递归调用（格扩展深递归）；⑤★0x5980C0 NormalDeviate
+偏差推进 ×2（[0xABDFB8] 对象 × [ebp+0x1C] 系数——用户记忆 NormalDeviate
+缓存标志跨阶段串同函数）；⑥★0x4CAC40 距离平方 + 距离随机扰动；
+⑦★work+0x38/+0x3C/+0x4B 字段（占用/归属/标志）+ [0xABAD28] 高度带清理
++ [0xAA0738] 遍历；⑧★CellIterator（0x578350/0x578290）×2 + 0x57A0C0；
+⑨★上限 0x190 钳位 + 0x64 步数下限 + 0xC8 重试上限 + 0x7C8B3D 释放。
+
+⚠️ partial：宿主类（MapSeed +0x308/+0x30C 字段）、[ebp+0xC] 范围结构
+（+8/+0xC 距离）、[ebp+0x14]/[ebp+0x18] 目标/系数语义、[0xABE2F0] 系
+四值含义、[0xABDFB8] 对象身份（NormalDeviate 宿主）、[0xABAD28]/
+[0xAA0738] 全局、0x59BAB0/0x59B940/0x5AD870/0x57A0C0 身份、堆结构
+（+0xC/+0x10 统计）语义、2 unique caller 身份。
+
+================================================================================
+0x5981F0 —— MapSeedClass 配置装载器（1889B 全程读完）
+================================================================================
+签名：thiscall（ecx=宿主 MapSeed）+ 0 栈参，ret eax（0x5981F0-0x598948，
+0x130 栈）。
+机器码（0x5981F0-0x598948）：
+    sub esp, 0x130; push 全; mov esi, ecx
+    push 0x82BDCC; lea ecx, [esp+0x58]; call 0x4739F0   ; ★串构造（0x82BDCC）
+    push 0x58; call 0x7C8E17                             ; ★分配 0x58
+    mov edi, eax; je 0x59822D
+    mov ecx, edi; call 0x535AA0                          ; ★0x535AA0（构造）
+    mov byte [edi+0x40], 0; mov [edi], 0x7E1AF4          ; ★vtable 0x7E1AF4
+    0x59822F:
+    mov ecx, edi; call 0x526B00                          ; ★0x526B00
+    push 0; lea eax, [esp+0x58]; push 0; push eax
+    mov ecx, edi; call 0x4741F0                          ; ★0x4741F0（填充）
+    析构 ×7（+0x188/+0x284/+0x2A0/+0x2C4/+0x2E0/+0x1A4/+0x1C0）：
+    mov edx, [esi+0x188]; lea ebx, [esi+0x188]; mov ecx, ebx
+    call [edx+0xC]                                       ; ★虚表槽 0xC 析构 ×7
+    mov eax, [esi+0x284]; lea ebp, [esi+0x284]; ...call [eax+0xC]
+    ...同构 ×7（+0x2A0/+0x2C4/+0x2E0/+0x1A4/+0x1C0）
+    0x5982BB（0x5276D0 INI 读取 ×2）：
+    mov eax, [esi+0x2BC]; mov ecx, [0x82B134]
+    push eax; push 0x82BDB8; push ecx; mov ecx, edi
+    call 0x5276D0; mov [esi+0x2BC], eax                 ; ★INI 读（[0x82B134] 全局）
+    mov edx, [esi+0x2C0]; mov eax, [0x82B134]
+    push edx; push 0x82BDA4; push eax; mov ecx, edi
+    call 0x5276D0; mov [esi+0x2C0], eax                 ; ★INI 读二
+    子对象构造族（0x7E4DD8/0x7E4DB8 vtable）：
+    0x5982F4（+0x188 段）：
+    sub esp, 0x1C; mov ecx, esp; push ebx
+    call 0x4779E0; mov ecx, [esp+0x2C]
+    push 0x82BD8C; lea eax, [esp+0x34]; mov [ecx], 0x7E4DD8  ; ★vtable 0x7E4DD8
+    mov edx, [0x82B134]; push edx; push eax; mov ecx, edi
+    call 0x475D70; push eax; mov ecx, ebx
+    call 0x478720; mov eax, [esp+0x10]
+    mov ecx, [eax+0x10]; mov [ebx+0x10], ecx; ...三字段拷贝  ; ★+0x10/+0x14/+0x18
+    mov ebx, 0x7E4DB8; mov [esp+0x14], ebx
+    call 0x477D20                                      ; ★0x477D20（构造收尾）
+    ...同构 ×11（+0x284/+0x2A0/+0x1A4/+0x1C0/+0x1DC/+0x1F8/+0x214/
+    +0x230/+0x24C/+0x268——每段 0x4779E0 + 0x475D70 + 0x478720 +
+    0x477D20 + vtable 0x7E4DD8/0x7E4DB8 + [0x82B134] 全局 + 常量串
+    0x82BD8C/0x82BD74/0x82BD5C/0x82BD44/0x82BD30/0x82BD1C/0x82BD04/
+    0x82BCEC/0x82BCD C/0x82BCC8/0x82BCB8）
+    0x598765（+0x2FC INI 读 + 0x528A10 串读 ×2）：
+    mov ecx, [esi+0x2FC]; mov edx, [0x82B134]
+    push ecx; push 0x82BCAC; push edx; mov ecx, edi
+    call 0x5276D0; mov [esi+0x2FC], eax                 ; ★INI 读三
+    mov ecx, [0x82B134]; lea eax, [esp+0xC0]
+    push 0x80; push eax; push 0x889F64; push 0x82BC94
+    push ecx; mov ecx, edi
+    call 0x528A10                                     ; ★0x528A10（[0x889F64] 串）
+    test eax, eax; mov ebx, 0x7EAA08; je 0x59882B
+    0x5987B3（0x5AC400 + 0x7C9CC2 + 0x4653C0 解析）：
+    lea ecx, [esp+0x14]; call 0x5AC400                  ; ★0x5AC400（构造）
+    lea edx, [esp+0xC0]; push 0x817F70; push edx; call 0x7C9CC2  ; ★0x7C9CC2 键读
+    test eax, eax; je 0x59880A
+    cmp byte [eax], 0; je 0x59880A
+    mov ecx, eax; call 0x4653C0                         ; ★0x4653C0（解析）
+    ...lea eax, [esp+0x10]; lea ecx, [esp+0x14]; push eax
+    call 0x5AD7D0                                      ; ★0x5AD7D0
+    push 0x817F70; push 0; call 0x7C9CC2; jne 0x5987D5  ; ★循环解析
+    0x59880A:
+    lea edx, [esp+0x14]; push edx; lea ecx, [esp+0x3C]
+    call 0x5AD660; mov [esp+0x14], ebx(0x7EAA08)        ; ★0x5AD660 + vtable
+    call 0x50EA00                                      ; ★0x50EA00（析构）
+    0x59882B:
+    mov esi, [esp+0x34]; lea ecx, [esp+0x38]; push esi
+    call 0x5AD660; lea edx, [esp+0x38]; mov ecx, esi
+    push edx; call 0x5AC430                            ; ★0x5AC430（装载）
+    mov eax, [esp+0x50]; mov [esi+0x18], eax; mov [esp+0x38], ebx
+    call 0x50EA00                                      ; ★0x50EA00
+    ...同构第二段（[0x82BC80] 串 + 0x528A10 + 0x5AC400/0x7C9CC2/
+    0x4653C0/0x5AD7D0/0x5AD660/0x5AC430）                ; ★[0x82BC80] 串读
+    0x598928（收尾析构）：
+    test edi, edi; je 0x598934
+    mov edx, [edi]; push 1; mov ecx, edi; call [edx]    ; ★虚表槽 0 释放
+    0x598934:
+    lea ecx, [esp+0x54]; call 0x473CE0; lea ecx, [esp+0x54]
+    call 0x535A70                                      ; ★0x473CE0/0x535A70 析构
+    pop 全; add esp, 0x130; ret
+
+语义：**MapSeedClass 配置装载器**——宿主 MapSeed（this）+ 0x82BDCC 串
+构造 + 0x7C8E17 分配 0x58 + 0x535AA0 构造（vtable 0x7E1AF4 + +0x40=0）+
+0x526B00 + 0x4741F0 填充；虚表槽 0xC 析构 ×7（+0x188/+0x284/+0x2A0/
++0x2C4/+0x2E0/+0x1A4/+0x1C0 子对象）；0x5276D0 INI 读取 ×3（[0x82B134]
+全局 INI + 0x82BDB8/0x82BDA4/0x82BCAC 常量串 → +0x2BC/+0x2C0/+0x2FC
+字段）；**子对象构造族 ×11**（0x4779E0 + vtable 0x7E4DD8/0x7E4DB8 +
+0x475D70 + 0x478720 + 0x477D20 + [0x82B134] 全局 + 0x82BD8C 起常量串族，
+每段 +0x10/+0x14/+0x18 三字段拷贝）；0x528A10 串读 ×2（[0x889F64] 串 +
+0x82BC94/0x82BC80 键名）→ 0x5AC400/0x7C9CC2/0x4653C0 解析循环 +
+0x5AD7D0/0x5AD660/0x5AC430 装载 + vtable 0x7EAA08 + 0x50EA00 析构；
+收尾虚表槽 0 释放 + 0x473CE0/0x535A70 析构。★MapSeedClass 配置装载器
+（0x5981Fx 区——**MapGen.cpp TU 0x5956E7-0x59A63A 内**，RMG 生成器配置
+装载直接相关）。2 unique caller（8 callsite）。
+
+★怪癖：①★vtable 0x7E1AF4 构造（0x535AA0 + +0x40=0——batch 1324
+0x60F9A0 0x208 构造族同 vtable 区）；②★虚表槽 0xC 析构 ×7（+0x188 起
+子对象族）；③★0x5276D0 INI 读取 ×3（[0x82B134] 全局 + 0x82BDB8 起
+常量串 → +0x2BC/+0x2C0/+0x2FC——batch 1297/1320 INI 装载同工具）；
+④★子对象构造族 ×11（0x4779E0 + vtable 0x7E4DD8/0x7E4DB8 + 0x475D70 +
+0x478720 + 0x477D20 + 0x82BD8C 起常量串——每段三字段拷贝）；
+⑤★0x528A10 串读 ×2（[0x889F64] 串 + 0x82BC94/0x82BC80——batch 1297
+同串锚点）；⑥★0x7C9CC2/0x4653C0 解析循环 + 0x5AC400/0x5AD7D0/0x5AD660/
+0x5AC430/0x50EA00 串族 + vtable 0x7EAA08；⑦★0x817F70 常量串；
+⑧★收尾虚表槽 0 释放 + 0x473CE0/0x535A70 析构。
+
+⚠️ partial：宿主类（MapSeed +0x2BC/+0x2C0/+0x2FC 字段）、[0x82B134] 全局
+INI 对象、[0x82BDB8]/[0x82BC94] 常量串内容、0x535AA0/0x526B00/0x4741F0/
+0x475D70/0x478720/0x4779E0/0x477D20/0x5AC400/0x5AC430/0x5AD660/0x5AD7D0/
+0x50EA00/0x4653C0 身份、vtable 0x7E4DD8/0x7E4DB8/0x7EAA08 宿主、+0x10/
++0x14/+0x18 字段语义、2 unique caller 身份。
+
+================================================================================
+0x58C800 —— RMG 格扩散处理（1678B 全程读完）
+================================================================================
+签名：thiscall（ecx=宿主）+ 1 栈参（[esp+0x28]=源指针）ret eax（0x58C800-
+0x58CE8D，0x44 栈）。
+机器码（0x58C800-0x58CE8D）：
+    sub esp, 0x44; mov eax, [0xABED14]; push 全; xor ebx, ebx
+    mov edi, ecx
+    push ebx; push ebx; lea ecx, [esp+0x44]; mov [esp+0x2C], edi
+    mov [esp+0x20], eax
+    call 0x42FCB0                                    ; ★0x42FCB0（坐标换算）
+    mov esi, [edi+0x24]; mov [esp+0x3C], 0x7E3890
+    mov eax, [esp+0x44]; mov [esp+0x4C], 0; mov [esp+0x50], 0xC350
+    cmp eax, ebx; jg 0x58C863
+    mov cl, [esp+0x49]; test cl, cl; jne 0x58C84E
+    cmp eax, ebx; jne 0x58C875
+    0x58C84E（+0xC350 增长）：
+    add eax, 0xC350; push ebx; push eax; lea ecx, [esp+0x44]
+    call [0x7E3898]                                  ; ★0x7E3898（虚表槽）
+    test al, al; je 0x58C875
+    0x58C863（槽写）：
+    mov ecx, [esp+0x4C]; mov eax, ecx; inc ecx; mov [esp+0x4C], ecx
+    mov ecx, [esp+0x40]; mov [ecx+eax*4], esi         ; ★目标槽写
+    0x58C875（0x4865D0/0x4867B0 判定）：
+    mov ecx, edi; call 0x4865D0; jne 0x58C890
+    mov ecx, edi; call 0x4867B0; mov byte [esp+0x1C], 0; je 0x58C895
+    0x58C890: mov byte [esp+0x1C], 1                   ; ★格判定标志
+    0x58C895:
+    movsx edx, byte [edi+0x11B]; mov [esp+0x28], edx   ; ★+0x11B 高度
+    mov edx, [esp+0x4C]; cmp edx, ebx; mov [esp+0x20], ebx
+    je 0x58CAAF
+    0x58C8B0（槽数组遍历）：
+    mov ecx, [esp+0x40]; mov eax, [ecx+edx*4-4]; mov [esp+0x10], eax
+    lea eax, [edx-1]; cmp eax, edx; jge 0x58C8E3
+    0x58C8CF（前移）：
+    mov edx, [ecx+eax*4+4]; mov [ecx+eax*4], edx
+    inc eax; cmp eax, ecx; jl 0x58C8CF                ; ★槽前移（删头）
+    0x58C8E3（work 写 +0x3C）：
+    movsx eax, word [esp+0x12]; imul eax, [0x89C2DC]
+    movsx ecx, word [esp+0x10]; mov edx, [esp+0x18]
+    add eax, ecx; mov ecx, [0xABED10]
+    lea eax, [eax+eax*4]; shl eax, 4
+    mov [eax+ecx+0x3C], edx                           ; ★work+0x3C 写
+    ...同构（+0x38 写）                                  ; ★work+0x38 写
+    0x58C931（8 方向循环）：
+    xor ebx, ebx; mov ecx, ebx; lea eax, [esp+0x34]
+    and ecx, 7; lea edx, [ecx*4+0x89F688]             ; ★[0x89F688] 方向表 &7
+    lea ecx, [esp+0x10]; push edx; push eax; call 0x42D510  ; ★0x42D510（方向偏移）
+    mov eax, [eax]; mov esi, [0xABED10]; mov [esp+0x2C], eax
+    mov [esp+0x14], eax
+    ...work 索引（movsx [esp+0x2E] × [0x89C2DC] + movsx ax → ×5 <<4）
+    mov edi, [0xABED04]; lea esi, [ecx+edx]
+    cmp esi, edi; jle 0x58CA83; ...三边界检查（[0xABED04]/[0xABED08]）  ; ★菱形边界
+    cmp [eax+0x38], -1; jne 0x58CA83
+    mov ecx, [esp+0x18]; mov edx, [eax+0x3C]; cmp edx, ecx; je 0x58CA83
+    mov [eax+0x3C], ecx                                 ; ★work+0x3C 归属写
+    push ecx; mov ecx, 0x87F7E8; call 0x5657A0         ; ★取格链
+    movsx edx, byte [eax+0x11B]; cmp edx, [esp+0x28]; jne 0x58CA7D  ; ★高度检查
+    ...0x5657A0 → 0x4865D0/0x4867B0 判定
+    ...xor eax, eax; test; ...0x58CA33 检查（+0xC350 增长）
+    ...0x58CA67: mov [ecx+eax*4], edx                  ; ★槽写二
+    0x58CA7D: mov edi, [0xABED04]
+    0x58CA83: inc ebx; cmp ebx, 8; jl 0x58C933         ; ★8 方向循环
+    0x58CA8D（外层循环）：
+    inc [esp+0x20]; mov edx, [esp+0x4C]; test edx, edx
+    mov [esp+0x20], ecx; jne 0x58C8B0                 ; ★槽遍历循环
+    ...cmp eax, 0x4B; jge 0x58CDF6                     ; ★上限 0x4B（75）
+    0x58CAAF（[esp+0x1C] 标志分支）：
+    mov al, [esp+0x1C]; test al, al; jne 0x58CDF6
+    mov eax, [esp+0x18]; xor bl, bl; test eax, eax; jne 0x58CCA0
+    0x58CACF（[0xABDFD8] 随机取点）：
+    xor edi, edi; mov ecx, 0xABDFD8; push edi
+    call 0x5A0700                                    ; ★0x5A0700（[0xABDFD8] 对象）
+    mov ebp, eax; mov [esp+0x38], edi; mov [esp+0x14], ebp
+    mov esi, [ebp+0x10]; dec esi; lea eax, [esi+1]
+    fild [esp+0x34]; fstp [esp+0x2C]
+    mov ecx, 0xABE890; call 0x65C780 Randomizer::Random  ; ★RNG（[0xABE890]）
+    fild [esp+0x34]; fmul [esp+0x2C]; fmul [0x7ED898]
+    call 0x7C5F00; cmp eax, esi; ja 0x58CAF9          ; ★拒绝采样
+    mov ecx, [ebp+4]; mov edx, [ecx+eax*4]; mov [esp+0x18], edx  ; ★随机取项
+    8 方向循环（0x58CB2E-0x58CBD0）：
+    ...and eax, 7; lea ecx, [eax*4+0x89F688]; push ecx
+    lea edx, [esp+0x34]; push edx; lea ecx, [esp+0x20]
+    call 0x42D510; mov eax, [eax]                     ; ★方向偏移二
+    ...work 索引 + 边界检查（[0xABED04]/[0xABED08]）
+    push eax; mov ecx, 0x87F7E8; call 0x5657A0 ×2      ; ★取格链 ×2
+    ...+0x11B 高度比较 + 0x4865D0 判定
+    0x58CBDB（高度匹配 → CellIterator 清理）：
+    lea ecx, [esp+0x20]; push ecx; mov ecx, 0x87F7E8
+    call 0x5657A0; movsx esi, byte [eax+0x11B]
+    mov ecx, 0x87F7E8; call 0x578350 MapClass::CellIterator_Reset  ; ★遍历复位
+    mov ecx, 0x87F7E8; call 0x578290 MapClass::CellIterator_Next   ; ★遍历
+    ...work+0x38 == 0 → mov [ecx+0x38], -1; byte [ecx+0x4B]=0
+    mov [eax+0x38], 0; byte [eax+0x11A]=0
+    mov ecx, [0xABE2E4]; cmp esi, -1; je; mov ecx, esi
+    mov byte [eax+0x11B], cl                          ; ★[0xABE2E4] 高度写
+    0x58CC6A:
+    mov ebp, [esp+0x14]; mov bl, 1
+    0x58CC70:
+    test ebp, ebp; je 0x58CC7D
+    mov eax, [ebp]; push 1; mov ecx, ebp; call [eax]   ; ★虚表槽 0 释放
+    0x58CC7D:
+    test bl, bl; je 0x58CDF6
+    ...mov [esp+0x3C], 0x7E38D0; call 0x42F7C0         ; ★0x42F7C0（析构）
+    ...xor eax, eax; ret
+    0x58CCA0（[esp+0x24] 源指针分支）：
+    mov ecx, [esp+0x24]; mov edx, [ecx+0x24]; mov eax, edx
+    mov [esp+0x2C], eax; mov si, word [esp+0x2E]; dec eax
+    ...坐标调整（+0x24 源 → 减一坐标）
+    ...菱形边界检查 + work 索引 → work+0x38 读
+    0x58CD3A（work+0x38 读 + 高度 CellIterator 清理二）：
+    ...mov edx, [0xABED10]; ...imul [0x89C2DC]; add;
+    lea eax, [eax+eax*4]; shl eax, 4; mov edi, [eax+edx+0x38]  ; ★work+0x38 读
+    ...0x5657A0 → movsx esi, byte [eax+0x11B]
+    ...CellIterator 遍历 → work+0x38 == [esp+0x18] → 写 0
+    mov [ecx+0x38], 0; byte [ecx+0x4B]=0; mov [eax+0x38], 0
+    byte [eax+0x11A]=0; mov byte [eax+0x11B], cl      ; ★高度写
+    jmp 0x58CC85
+    0x58CDF6（分配 0x50 构造）：
+    push 0x50; call 0x7C8E17; je 0x58CE17             ; ★分配 0x50
+    mov ecx, [esp+0x24]; mov ecx, [ecx+0x24]; push ecx
+    mov ecx, eax; call 0x58BF70                       ; ★0x58BF70（构造）
+    mov esi, eax
+    0x58CE19:
+    mov edx, [esp+0x28]; mov al, [esp+0x1C]
+    mov [esi+0x10], edx; mov byte [esi+0x14], al; mov [esi+0xC], 0  ; ★+0x10/+0x14/+0xC
+    mov eax, [0x89C2DC]; imul eax, eax; test eax, eax; jle 0x58CE73
+    0x58CE40 循环（side² work 全扫）：
+    mov ecx, [0xABED10]; mov eax, [esi+8]
+    add ecx, edi; mov edx, [ecx+0x38]; cmp edx, eax; jne 0x58CE6D  ; ★work+0x38 匹配
+    lea eax, [esp+0x28]; mov word [esp+0x28], bx; push eax
+    mov word [esp+0x2E], bx; call 0x5AC370           ; ★0x5AC370（判定）
+    test al, al; je; inc [esi+0xC]                    ; ★+0xC 计数
+    add edi, 0x50; dec ebp; jne 0x58CE40              ; ★0x50 步进全扫
+    0x58CE73（析构收尾）：
+    mov [esp+0x3C], 0x7E38D0; call 0x42F7C0           ; ★0x42F7C0
+    mov eax, esi; pop 全; add esp, 0x44; ret
+
+语义：**RMG 格扩散处理**——[0xABED14] 全局 + 0x42FCB0 坐标换算 + 目标
+槽写（+0xC350 增长 + 0x7E3898 虚表槽）；0x4865D0/0x4867B0 格判定 →
+标志（+0x11B 高度）；槽数组遍历 + 前移删头 → work 写（[0xABED10] 每格
+0x50 字节 + [0x89C2DC] side 索引，+0x3C/+0x38 字段）；**8 方向循环**
+（[0x89F688] 方向表 &7 + 0x42D510 方向偏移 + 菱形边界 [0xABED04]/
+[0xABED08] + work+0x38==-1 检查 + work+0x3C 归属写 + 0x5657A0 取格链 +
++0x11B 高度检查 + 0x4865D0/0x4867B0 判定 + 槽写二）；外层循环上限 0x4B
+（75）；[esp+0x1C] 标志分支：**Randomizer::Random**（[0xABE890] +
+[0x7ED898] 常数 + 拒绝采样 + [0xABDFD8] 对象 0x5A0700 取项）→ 8 方向
+扩散 → 高度匹配则 **CellIterator（0x578350/0x578290）清理**（work+0x38
+写 -1/0 + 0x4B=0 + 0x11A=0 + [0xABE2E4] 高度写）；[esp+0x24] 源指针
+分支（+0x24 源坐标调整 + work+0x38 读 + CellIterator 清理二）；
+分配 0x50 + 0x58BF70 构造（+0x10/+0x14/+0xC 字段）+ **side² work 全扫**
+（0x50 步进 + work+0x38 匹配 + 0x5AC370 判定 + 计数）；0x42F7C0 析构
+收尾。★RMG 格扩散处理（0x58C8xx 区——0x58xxxx MakingRegions 区，用户
+目标 RMG 复刻直接相关）。2 unique caller（8 callsite）。
+
+★怪癖：①★[0x89F688] 方向表 &7 ×2（0x42D510 方向偏移——用户记忆地形
+传播方向表同锚点）；②★Randomizer::Random（[0xABE890] + [0x7ED898] +
+拒绝采样 + [0xABDFD8] 对象 0x5A0700——RNG 里程碑同源）；③★work 数组
+（[0xABED10] 每格 0x50 字节 + [0x89C2DC] side + 索引 ×5<<4 + +0x38/
++0x3C/+0x4B 字段——QWEN.md 实锤工作记录数组）；④★CellIterator
+（0x578350/0x578290）×2 + 0x578350 高度带清理（0x11A=0 + 0x11B 高度写
+[0xABE2E4]）；⑤★菱形边界检查（[0xABED04]/[0xABED08] 三条件）；
+⑥★0x4865D0/0x4867B0 格判定 + 0x5AC370 判定；⑦★0x58BF70 构造（0x50
+分配 + +0x10/+0x14/+0xC 字段）+ side² 全扫（0x50 步进 + 计数）；
+⑧★0x42FCB0/0x42F7C0 坐标换算/析构 + 0x7E3890/0x7E3898/0x7E38D0
+vtable 族；⑨★0x5657A0 取格链 ×3（0x87F7E8）+ 上限 0x4B（75）。
+
+⚠️ partial：宿主类（+0x24/+0x11B 字段）、[esp+0x28] 源指针语义、
+[0xABED14]/[0xABDFD8]/[0xABE2E4] 全局对象、0x42FCB0/0x42F7C0/0x42D510/
+0x5A0700/0x5AC370/0x58BF70/0x4865D0/0x4867B0 身份、0x7E3890 系 vtable
+宿主、+0xC/+0x10/+0x14 字段语义、2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- RNG 里程碑（Randomizer 0x65C780/0x65C7E0 + [0xABE890] 全局）：0x59BBC0
+  ×3（[0x87F8DC]/[0x87F8E0] 尺寸 + [0x7ED898]/[0x7ED808] 常数 + 拒绝采样）
+  + 0x58C800 ×1（[0xABDFD8] 取项）——RMG 阶段烧 RNG 序列（构造期全局
+  RNG 与 RMG 共享，阶段序 = 种子兼容性直接相关）。
+- 用户记忆（[0x89F688] 方向增量表——地形传播扩散器家族 7 实例）：
+  0x59BBC0/0x58C800 都用 &7 索引（word 双坐标偏移）——方向表族再扩展。
+- QWEN.md（[0xABED10] 每格 0x50 字节工作记录数组 + [0x89C2DC] 边长）：
+  0x59BBC0/0x58C800 复用 work 数组（索引 Y×side+X ×5<<4 + +0x38/+0x3C/
+  +0x4B 字段）——RMG 工作数组家族实锤闭合。
+- batch 1305/1321/1322（0x5657A0/0x578350/0x578290 取格链 + 0x87F7E8）：
+  0x59BBC0（0x5657A0 ×3 + CellIterator ×2 + 0x57A0C0）+ 0x58C800（0x5657A0
+  ×3 + CellIterator ×2）——取格链持续闭合。
+- batch 1297/1320/1323（0x5276D0/0x528A10 INI 装载 + [0x889F64] 串）：
+  0x5981F0 复用双工具（[0x82B134] 全局 INI + [0x889F64] 串 + 0x82BDB8 起
+  常量串）——INI 装载家族持续闭合（MapSeed 配置装载）。
+- 用户记忆（NormalDeviate 0x5980C0——缓存标志跨阶段串）：0x59BBC0 调
+  0x5980C0 ×2（[0xABDFB8] 对象 + ×[ebp+0x1C] 系数）——0x5980C0 为已登记
+  候选的调用方实锤（RMG 造山/散布阶段 NormalDeviate 用法）。
+- batch 1324（0x7E3890 系 vtable + 0x42FCB0 坐标族）：0x58C800 用
+  0x7E3890/0x7E3898/0x7E38D0 vtable 族 + 0x42FCB0/0x42F7C0——batch 1324
+  0x6ABD30 同工具族（0x42F7C0/0x42D510）。
