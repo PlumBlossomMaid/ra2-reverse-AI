@@ -1,0 +1,90 @@
+frontier batch 1274 — 0x4A1D30 CRCEngine 16位算子 / 0x4E1450 GadgetClass::Enable / 0x4E1460 GadgetClass::Disable（2026-10-22）
+
+口径：承接 batch 1273 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=3 三个未登记小函数：
+0x4A1D30（25B，functions.tsv 符号名 CRCEngine::operator，USER_DEFINED=
+YRpp）、0x4E1450（13B，符号名 GadgetClass::Enable）、0x4E1460（13B，
+符号名 GadgetClass::Disable，均 USER_DEFINED=YRpp）。取证手段：disasm.py
+直反汇编全文（三个均全程读完）+ YRpp 符号核对 + TSV 查重（三候选全部
+未登记）。
+
+================================================================================
+0x4A1D30 —— CRCEngine::operator 16 位算子（25B 全程读完）
+================================================================================
+签名：thiscall + 1 栈参（16 位，仅低 16 位被读）ret 4。
+机器码（全文 25 字节）：
+    mov ax, [esp+4]           ; ax = 栈参低 16 位
+    lea edx, [esp+4]          ; edx = &栈参
+    push 2                    ; ★长度 = 2（字节）
+    push edx                  ; 缓冲区指针 = &栈参
+    mov [esp+0xc], ax         ; 栈参低 16 位写回原槽（确保高 16 位无关）
+    call 0x4A1DE0             ; ★CRC 核心（batch 1271 0x4A1D70 同目标）
+    ret 4
+
+语义：**CRCEngine::operator 16 位版**——把栈参当作 2 字节缓冲区（低 16 位
+是数据，长度=2）交给 0x4A1DE0（CRC 核心，与 batch 1271 登记的 32 位版
+0x4A1D70 同一目标）。3 unique caller（25 callsite）。★与 batch 1271 的
+0x4A1D70（push 4 长度=4）配对——本批是 16 位宽值算子。
+
+★怪癖：①★长度常量 push 2（2 字节/16 位——与 32 位版 push 4 配对）；
+②★栈参低 16 位回写自槽（mov [esp+0xC],ax——确保缓冲区前 2 字节是值）；
+③★lea &栈参 作缓冲（in-place 计算）；④★CRC 核心 0x4A1DE0 未登记
+（batch 1271 依赖同目标——double-check 单车同一核心）。
+
+⚠️ partial：0x4A1DE0 精确身份（CRC 核心算法 16/32 位公共路径）、本算子
+业务语义（CRC 单值更新）、宿主类（CRCEngine 家族——batch 1271 同族）。
+
+================================================================================
+0x4E1450 —— GadgetClass::Enable（13B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）无栈参，★尾跳（无 ret——jmp 转调）。
+机器码（全文 13 字节）：
+    mov eax, [ecx]            ; eax = this->vtable
+    mov byte [ecx+0x1e], 0    ; ★+0x1E 清零（禁用标志）
+    mov byte [ecx+0x1c], 1    ; ★+0x1C 置 1（启用标志）
+    jmp [eax+0x54]            ; ★尾跳虚表槽 0x54（通知/刷新）
+
+语义：**GadgetClass::Enable**（YRpp 符号名实锤）——置 +0x1C=1（启用）、
+清 +0x1E=0（禁用），尾跳虚表槽 0x54（刷新/通知方法）。3 unique caller
+（63 callsite）。
+
+★怪癖：①★双标志不对称：+0x1C=1 置位 + +0x1E=0 清位（启用语义双字节）；
+②★尾跳虚表槽 0x54（thunk 形态——无返回路径）；③★与 Disable（0x4E1460）
+成对但字节不同（★Enable 清 0x1E、Disable 置 0x1E——本函数是唯一写
+0x1E=0 的一方）。
+
+⚠️ partial：+0x1C/+0x1E 字段语义（启用/禁用状态族）、虚表槽 0x54 目标
+（刷新/通知方法）、宿主类（GadgetClass UI 控件基类——batch 4Exxxx 对话框
+域）。
+
+================================================================================
+0x4E1460 —— GadgetClass::Disable（13B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）无栈参，★尾跳（无 ret——jmp 转调）。
+机器码（全文 13 字节）：
+    mov al, 1
+    mov byte [ecx+0x1e], al   ; ★+0x1E 置 1（禁用标志）
+    mov byte [ecx+0x1c], al   ; ★+0x1C 置 1（★启用标志也置 1！）
+    mov eax, [ecx]            ; eax = this->vtable
+    jmp [eax+0x54]            ; ★尾跳虚表槽 0x54（同 Enable）
+
+语义：**GadgetClass::Disable**（YRpp 符号名实锤）——置 +0x1C=1 与 +0x1E=1
+（双置位），尾跳虚表槽 0x54。3 unique caller（63 callsite）。
+
+★怪癖：①★与 Enable 不对称：Disable 置 +0x1C=1 **且** +0x1E=1，而 Enable
+置 +0x1C=1 清 +0x1E=0——★禁用后 +0x1C 仍为 1（原版逻辑：0x1C 不是简单
+启用标志，更像"已初始化/活动"位）；②★尾跳虚表槽 0x54（同 Enable 目标）；
+③★al=1 复用（双字节同值写）。
+
+⚠️ partial：+0x1C/+0x1E 字段语义（+0x1C 疑似"活动/已初始化"位——Disable
+不清它）、虚表槽 0x54 目标、宿主类（GadgetClass UI 控件基类）。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1271（0x4A1D70 CRCEngine::operator 32 位）：0x4A1D30 同族 16 位版
+  ——同一 CRC 核心 0x4A1DE0，长度 push 2 vs push 4。
+- batch 1265（对话框/UI 域）：GadgetClass::Enable/Disable 同 0x4Exxxx
+  对话框控件域（虚表槽 0x54 通知惯用法）。
+- 0x4A1DE0（CRC 核心，未登记）：batch 1271 + 本批共同依赖——后续候选。
+- batch 1263（0x4A1D60 相邻 CRC 家族）：CRCEngine 家族持续闭合。
