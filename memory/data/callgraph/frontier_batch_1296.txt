@@ -1,0 +1,153 @@
+frontier batch 1296 — 0x5F3320 全局单例虚表转发器 / 0x512DC0 VectorClass 构造器 / 0x67C1F0 VectorClass 拷贝构造器（2026-10-23）
+
+口径：承接 batch 1295 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=2 三个未登记函数：
+0x5F3320（19B）、0x512DC0（93B）、0x67C1F0（136B）。取证手段：disasm.py
+直反汇编全程读完 + TSV 查重（三候选全部未登记）+ 跨批次对比
+（0x67C1F0 final vtable 0x7F0D3C ↔ batch 1288 0x67A390 同族实锤）。
+
+================================================================================
+0x5F3320 —— 全局单例虚表转发器（19B 全程读完）
+================================================================================
+签名：thiscall（ecx 忽略）+ 1 栈参（[esp+4]）ret 4。
+机器码（全文 19 字节）：
+    mov ecx, [0xB72D20]          ; ★全局单例指针
+    mov edx, [esp+4]             ; 栈参
+    push edx
+    mov eax, [ecx]               ; 取虚表
+    call dword ptr [eax+0x20]    ; ★虚表槽 0x20 转发
+    ret 4
+
+语义：**全局单例虚表转发器**——取全局 [0xB72D20] 单例对象，把栈参
+原样转发到其虚表槽 0x20（★thunk 形态——调用点不持有对象只认全局）。
+6 unique caller（20 callsite）。后邻 0x5F3340 为纯 ret（1B 空函数桩——
+batch 1286 空操作桩同型）。
+
+★怪癖：①★全局单例 [0xB72D20]（不传 this——对象从全局取）；②★虚表
+槽 0x20 转发（4 字节栈参原样透传）；③★后邻 0x5F3340 纯 ret（相邻
+空函数桩）。
+
+⚠️ partial：[0xB72D20] 单例身份（管理器/服务）、虚表槽 0x20 语义、
+宿主类（0x5F33xx 区——0x5Fxxxx 域）、后邻 0x5F3340（空桩同族）、
+6 unique caller 身份。
+
+================================================================================
+0x512DC0 —— VectorClass 构造器（93B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 2 栈参（[esp+4]=容量、[esp+8]=外部缓冲）
+ret 8。
+机器码（全文 93 字节）：
+    mov eax, [esp+4]             ; ★容量
+    mov esi, ecx; test eax, eax
+    mov [esi+4], 0               ; +4 数组指针 = 0
+    mov [esi+8], eax             ; +8 容量 = 参
+    mov byte [esi+0xC], 1        ; ★+0xC = 1（恒置）
+    mov byte [esi+0xD], 0        ; +0xD owns = 0
+    mov [esi], 0x7EAC28          ; ★vtable① = 0x7EAC28
+    je 0x512E03                  ; ★容量 0 → 跳过分配
+    mov ecx, [esp+0xC]           ; ★外部缓冲参
+    test ecx, ecx
+    je 0x512DF0
+    mov [esi+4], ecx             ; ★用外部缓冲（不 owns）
+    jmp 0x512E03
+    0x512DF0:
+    shl eax, 2; push eax
+    call 0x7C8E17                ; ★new 容量×4 字节
+    mov [esi+4], eax             ; 自分配
+    mov byte [esi+0xD], 1        ; ★owns = 1
+    0x512E03:
+    mov [esi], 0x7EAC88          ; ★vtable② = 0x7EAC88（改写）
+    mov [esi+0x14], 0xA          ; ★+0x14 = 10（默认容量）
+    mov [esi+0x10], 0            ; +0x10 = 0
+    mov eax, esi; pop esi
+    ret 8
+
+语义：**VectorClass 构造器（外部缓冲/自分配双路径）**——vtable 先
+0x7EAC28 后改写 0x7EAC88（★两阶段构造——基类子对象先装 vtable 再
+收尾换派生 vtable）；+8=容量、+0xC=1 恒置、+4=数组指针；有外部缓冲
+参则直接借用（owns=0），否则 new（0x7C8E17）容量×4 字节并 owns=1；
++0x14=10 恒置、+0x10=0。7 unique caller（21 callsite）。后邻 0x512E20
+为析构器（vtable 0x7EAC28 + owns 门控 delete——同族配对）。
+
+★怪癖：①★双 vtable 写入（0x7EAC28 → 0x7EAC88 两阶段构造）；
+②★外部缓冲 vs 自分配双路径（第二参非空 → 不 owns 借用）；
+③★ret 8 两栈参（容量 + 外部缓冲）；④★+0x14=10 恒置默认容量；
+⑤★后邻 0x512E20 析构器配对（同族候选未登记）。
+
+⚠️ partial：宿主类（0x512DCx 区——VectorClass 派生）、vtable
+0x7EAC28/0x7EAC88 类族、+0x14 容量语义、后邻 0x512E20（同族候选）、
+7 unique caller 身份。
+
+================================================================================
+0x67C1F0 —— VectorClass 拷贝构造器（136B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（[esp+4]=源对象）ret 4。
+机器码（全文 136 字节）：
+    mov edi, [esp+0x10]          ; ★源对象
+    mov esi, ecx; xor ebx, ebx
+    cmp esi, edi
+    mov [esi+4], ebx             ; +4 数组 = 0
+    mov [esi+8], ebx             ; +8 容量 = 0
+    mov byte [esi+0xC], 1        ; ★+0xC = 1（恒置）
+    mov byte [esi+0xD], bl       ; +0xD owns = 0
+    mov [esi], 0x7F0D5C          ; ★vtable① = 0x7F0D5C
+    je 0x67C25E                  ; ★this == 源 → 跳过拷贝
+    call dword ptr [0x7F0D68]    ; ★虚表槽函数（基类构造）
+    mov eax, [edi+8]
+    cmp eax, ebx
+    mov [esi+8], eax             ; 目标容量 = 源容量
+    je 0x67C258                  ; 源容量 0 → 跳过
+    shl eax, 2; push eax
+    call 0x7C8E17                ; ★new 容量×4
+    cmp eax, ebx
+    mov [esi+4], eax             ; 目标数组 = new
+    je 0x67C25E                  ; 分配失败 → 跳过
+    mov ecx, [esi+8]; xor eax, eax
+    cmp ecx, ebx
+    mov byte [esi+0xD], 1        ; ★owns = 1
+    jle 0x67C25E
+    0x67C242:                    ; ★逐项拷贝循环
+    mov ecx, [edi+4]; mov edx, [esi+4]
+    mov ecx, [ecx+eax*4]
+    mov [edx+eax*4], ecx         ; 源[i] → 目标[i]
+    mov ecx, [esi+8]; inc eax
+    cmp eax, ecx; jl 0x67C242
+    jmp 0x67C25E
+    0x67C258:
+    mov [esi+4], ebx
+    mov byte [esi+0xD], bl       ; 源容量 0 → 不 owns
+    0x67C25E:
+    mov edx, [edi+0x10]
+    mov [esi+0x10], edx          ; +0x10 = 源+0x10
+    mov eax, [edi+0x14]
+    mov [esi+0x14], eax          ; +0x14 = 源+0x14
+    mov [esi], 0x7F0D3C          ; ★vtable② = 0x7F0D3C（改写）
+    mov eax, esi; pop 全
+    ret 4
+
+语义：**VectorClass 拷贝构造器**——vtable 先 0x7F0D5C 后改写 0x7F0D3C
+（★两阶段——与 0x512DC0 同构）；this==源跳过自拷贝；调 [0x7F0D68]
+基类构造；从源拷贝 +8 容量/+0x10/+0x14；容量>0 时 new（0x7C8E17）
+并逐项拷数组（每项 4B）、owns=1；容量 0 不 owns。6 unique caller
+（22 callsite）。★final vtable 0x7F0D3C 与 batch 1288 已登记 0x67A390
+（构造器写 0x7F0D3C）同一宿主类实锤。
+
+★怪癖：①★双 vtable 写入（0x7F0D5C → 0x7F0D3C 两阶段构造）；
+②★this==源自拷贝跳过；③★[0x7F0D68] 虚表槽函数调用（基类构造）；
+④★逐项拷贝循环（每项 4B）；⑤★final vtable 0x7F0D3C（与 0x67A390
+同宿主——VectorClass 派生族）。
+
+⚠️ partial：宿主类（0x67C1Fx 区——与 0x67A390 同 0x67xxxx 域）、
+[0x7F0D68] 虚表槽、+0x10/+0x14 字段语义、6 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1288（0x67A390 结构初始化器 vtable 0x7F0D3C）：0x67C1F0 final
+  vtable 同为 0x7F0D3C——★同一宿主类构造/拷贝构造配对实锤。
+- batch 1286（0x6B8B10/0x408530 空操作桩）：0x5F3340 后邻纯 ret
+  同型（空函数桩家族）。
+- 0x7C8E17（new 包装）：0x512DC0/0x67C1F0 分配路径共用（batch 1271/
+  1275/1291 同——new/delete 包装对）。
+- 0x512E20（后邻析构器）：VectorClass 家族析构模板又一实例
+  （batch 1285/1287/1290/1295 同模板族）。
