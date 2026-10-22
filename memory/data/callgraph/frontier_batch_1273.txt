@@ -1,0 +1,189 @@
+frontier batch 1273 — 0x6D6590 TacticalClass::CoordsToCell / 0x7493B0 VoxelAnimClass 构造器 / 0x4AA440 MapClass::PickCellOnEdge（2026-10-22）
+
+口径：承接 batch 1272 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=5/4/4 三个未登记函数：
+0x6D6590（1265B，functions.tsv 符号名 TacticalClass::CoordsToCell，
+USER_DEFINED=YRpp）、0x7493B0（1310B，符号名 VoxelAnimClass::WhatAmI——
+★函数体实为构造器形态，符号名与体不符，按机器码标注）、0x4AA440
+（1771B，符号名 MapClass::PickCellOnEdge，USER_DEFINED=YRpp）。取证手段：
+disasm.py 直反汇编全程读完（0x6D6590 一段 0x520；0x7493B0 一段 0x520；
+0x4AA440 一段 0x6F0 存档读完）+ TSV 查重（三候选全部未登记）。
+
+================================================================================
+0x6D6590 —— TacticalClass::CoordsToCell（1265B 全程读完）
+================================================================================
+签名：thiscall + 2 栈参（[esp+0x78]=输入坐标结构指针、[esp+0x80]=输出
+cell 指针）ret 8。
+机器码（0x6D6590-0x6D6A80）主结构：
+  段1（0x6D6590-0x6D666C）屏幕坐标→世界变换:
+    edx=[0x886FA0]（★相机 X 基准）/esi=[0x886FA4]（★相机 Y 基准）
+    eax=[ebx]（输入 x）+ this+0xB0（★视口原点 X）− [0x886FA0]
+    ebp=[ebx+4]（输入 y）+ this+0xB4（原点 Y）− [0x886FA4]
+    fild 双 int → fstp 存 float（[esp+0x50]/[esp+0x54]）
+    lea edx,[edi+0xDE4]（★变换矩阵 this+0xDE4）; call 0x5AFB80（★等距投影
+    坐标变换）→ 返回 3 float（[esp+0x4C..0x54]）
+  段2（0x6D660E-0x6D6753）_ftol 转 int + 舍入:
+    两次 call 0x7C5F00（★_ftol 向零截断）
+    cdq/and 0xFF/add/sar 8（★÷256 带符号舍入——8.8 定点 cell 坐标）
+    结果存 word [esp+0x28]/[esp+0x2C]（cell 坐标对）
+    0x6D1F10 中间坐标变换 → 0x5657A0（★MapClass::GetCellAt，this=0x87F7E8）
+  段3（0x6D6753-0x6D6A7E）高度差判定 + 扫描修正:
+    esi=cell; movsx eax,[esi+0x11B]（★cell level）→ lea 组合 ×15（斜率表）
+    [esi+0x140] flags & 0x100 判定 → 0x481810（★CellClass 标志查询
+    batch 283 同域）多次：flags 2/4/8/6 分派
+    cell+0x11B 高度差 |Δ|≤1 判定（abs 公式 xor/sub）
+    cell+0x24/+0x26 坐标 <<8 + 0x80（★8.8 定点格心）
+    0x6D1F10 再变换 → 区域收敛
+    [esp+0x18] 扫描计数 vs [esp+0x40]：jle 退出、否则 dec/inc 循环
+    （★最多 0xB4=180 次扫描——相机区域收敛）
+    收尾多出口：写输出 cell 指针（[esp+0x80]）= 结果 word 对; ret 8
+
+语义：**TacticalClass::CoordsToCell**（YRpp 符号名实锤）——屏幕坐标转
+cell 坐标：输入坐标 + 视口原点（this+0xB0/+0xB4）− 相机基准（[0x886FA0]/
+[0x886FA4]）→ fild 浮点化 → 0x5AFB80 等距投影变换（3 float）→ 两次
+_ftol 截断 + (v+sign)/256 舍入得 8.8 定点 cell 坐标 → 0x6D1F10 + 0x5657A0
+取格 → cell+0x11B 高度/0x140 flags 判定（0x481810 查标志）→ 最多 180 次
+扫描修正收敛 → 写输出。5 unique caller（6 callsite）。
+
+★怪癖：①★[0x886FA0]/[0x886FA4] 相机双基准全局（batch 相机域同区）；
+②★0x5AFB80 等距投影变换返回 3 float（z 用于高度后续）；③★÷256 舍入
+是 cdq/and 0xFF/add/sar 8 带符号修正（非朴素 >>8——负坐标正确）；④★
+0x481810 标志查询分派链（flags 2/4/6/8——cell 属性族）；⑤★8.8 定点
+cell 坐标（word 对存 [esp+0x28]/[esp+0x2C]）；⑥★最多 0xB4=180 次扫描
+收敛（相机移动时区域追赶）。
+
+⚠️ partial：0x5AFB80/0x6D1F10/0x5657A0/0x481810 精确身份（坐标变换/
+取格/标志查询族）、[0x886FA0]/[0x886FA4] 相机语义、this+0xB0/+0xB4/+0xDE4
+字段、+0x11B level 语义、flags 0x100 位、180 次扫描业务含义、输出 cell
+结构（word x/y）。
+
+================================================================================
+0x7493B0 —— VoxelAnimClass 构造器（1310B 全程读完）
+================================================================================
+签名：thiscall + 3 栈参（[ebp+8]=类型指针、[ebp+0xC]=坐标指针、
+[ebp+0x10]=??）ret 0xC。★符号名 VoxelAnimClass::WhatAmI 与函数体不符——
+函数体是构造器形态（虚表链+字段初始化+全局登记+随机位置），按机器码标注。
+机器码（0x7493B0-0x7498CD）主结构：
+  段1（0x7493B0-0x749434）基类与虚表链:
+    and esp,0xFFFFFFF8 对齐; call 0x5F3900（★基类构造）
+    lea edi,[esi+0xB0]; 清 [edi+0..0x14]（★Matrix3D 六字段零）
+    push 0x3F800000(1.0f)/0/0/0 → 0x645C30（★Matrix3D 构造——batch 1264
+    同族，两处 +0x30/+0x40）
+    [esi+0x104]=[ebp+8]（★类型指针）; [esi+0x10C]=[ebp+0x10]
+    [esi+0x100]=0xFFFFFFFF; 清 +0x108/+0x110/+0x13C/+0x140
+    虚表链：+0=0x7F6318、+4=0x7F62FC、+8=0x7F62F4、+0xC=0x7F62EC
+    （★四虚表——多重继承链）
+  段2（0x749434-0x7494CE）成员构造 + 全局登记:
+    call 0x410230; 0x405BE0 ×2（+0x114/+0x128 子对象构造）
+    [esi+0x140]=[type+0x29C]（★从类型拷 flags）
+    [0x887390]/[0x887398]（★全局登记表）检查 → [0x887388] 数组入队
+    （[0x88739C] 计数 ++; array[count]=esi——★注册表模板 batch 记忆同域）
+  段3（0x7494CE-0x7494DC）分支:
+    al=[type+0x2D0]; jne 0x749668（★随机位置分支）
+    否则坐标固定路径
+  段4（0x7494DC-0x74965F）固定位置路径:
+    0x5F4EC0 设置坐标 → 0x5F65A0（★坐标结构拷贝 batch 记忆同族）
+    [0xA8B230]（ScenarioClass）+0x218 Randomizer（0x65C780）4 次
+    ★随机三分量：fild/fadd（[type+0x2C8]×2）/idiv 取模/_ftol 循环
+    fsub [type+0x2B8]/[type+0x2C8] 等 float 域运算（+0x7E1718 常量）
+    → 0x4397E0（★Status::Initialize batch 记忆已登记——9 栈参大调用）
+  段5（0x749668-0x7498CB）随机位置分支:
+    Randomizer 2 次; fld [type+0x2B8]/[type+0x2C8]×2 → 取模链
+    fchs 符号修正（[esp+0x10]/[esp+0x1C] 交换）
+    Randomizer + idiv 0x14（★20 取模）→ [esi+0x140] 修正
+    fild 坐标 + fmul 缩放 + _ftol（★位置插值）
+    0x5F4EC0 设置 → 0x4397E0 收尾
+    若 [type+0x2DC]!=-1：0x7509E0（★序列播放）→ 0x405FD0 收尾
+    若 [type+0x2FC] 非 0：malloc 0x100（0x7C8E17）→ 0x62DC50（★帧数据
+    加载）→ [esi+0x108]=结果
+    ret 0xC
+
+语义：**VoxelAnimClass 构造器**（符号 WhatAmI 误标，按机器码）——基类
+构造（0x5F3900）+ 四虚表链（0x7F6318 主）+ Matrix3D 双构造（0x645C30）+
+类型指针/坐标字段初始化 + 全局登记表 [0x887388] 入队 + 按 [type+0x2D0]
+分固定/随机两路径（Randomizer 4 次三分量随机位置、取模 20 修正）+ 0x4397E0
+Status::Initialize + 帧数据加载（0x62DC50）。4 unique caller（1310
+callsite 计数——实际疏）。
+
+★怪癖：①★符号名 WhatAmI 与函数体不符（WhatAmI 应为返回 type ID 的小
+函数——本函数 1310B 构造器，USER_DEFINED 符号错位，按机器码标注）；
+②★四虚表链 +0/+4/+8/+0xC（多重继承）；③★[0x887388] 全局登记表入队
+（batch 记忆注册表模板同域）；④★Randomizer 4 次（0x65C780）三分量
+随机位置 + idiv 0x14(20) 取模修正；⑤★fchs 符号修正（fcomp 交换分支）；
+⑥★0x4397E0 Status::Initialize（batch 已登记）9 栈参大调用；⑦★[type+
+0x2FC] 帧数据加载 malloc 0x100 + 0x62DC50。
+
+⚠️ partial：0x5F3900/0x410230/0x405BE0/0x405FD0/0x5F4EC0/0x5F65A0/
+0x645C30/0x7509E0/0x62DC50 精确身份、[0x887388]/[0x887390]/[0x887398]/
+[0x88739C] 登记表语义、四虚表宿主类名（VoxelAnimClass 多重继承链）、
+[type+0x29C]/[type+0x2A8..0x2C8]/[type+0x2D0]/[type+0x2DC]/[type+0x2FC]
+字段语义、0x7E1718 常量、两路径业务含义（固定/随机出生）。
+
+================================================================================
+0x4AA440 —— MapClass::PickCellOnEdge（1771B 全程读完）
+================================================================================
+签名：thiscall + 7 栈参 ret 0x1C。
+机器码（0x4AA440-0x4AAB28，存档 560 行读完）主结构：
+  段1（0x4AA440-0x4AA4DC）输入边界校正:
+    [0x8A03F8]/[0x8A03FA]（★地图尺寸宽/高全局）——输入坐标越界校正
+    [esp+0x14]/[esp+0x16] 当前候选 cell 坐标
+    ebx=[esp+0x68]（★预选索引，-1→0）; byte[esp+0x78] 标志
+    0x56D230（★cell 校正——cell 判定 flags）
+  段2（0x4AA4DC-0x4AA5FA）方向选择:
+    movsx 候选 x/y → 0x565520（★取格）
+    cmp 候选 vs [0x8A03F8]/[0x8A03FA] 边界 → je 0x4AA616（★边界命中）
+    this+0xFC/+0x104/+0x100/+0x108（★MapClass 尺寸族）收敛计算
+    [esp+0x78] vs [esp+0x70] 大小比较 → 方向标志 [esp+0x12]/[esp+0x13]
+    ★四方向判定（上下左右）+ 偏移量 [esp+0x6C]（-1/0/1）
+  段3（0x4AA616-0x4AA6A9）RandomRanged 取偏移:
+    ebx 分支（4 路）: push 宽/高 → 0x65C7E0（★Randomizer::RandomRanged
+    batch RNG 同域）→ edi=eax-1（★±偏移）
+  段4（0x4AA6AA-0x4AA7F8）候选扫描循环:
+    [esi+0x104]（★地图宽）→ sar 1（中心）→ 0x5654A0（★cell 迭代）
+    word 存候选坐标 [esp+0x70]/[esp+0x72]
+    标志 [esp+0x12] 分派：偏移链（[esi+0x108] 高 ×2）+ idiv 取模
+    → 0x5654A0 迭代 → 0x578460（★合法判定）→ 0x4AAB30（★边缘判定
+    内部辅助——5 参）→ 命中返 [esp+0x78] / 未命中循环
+    收尾 0x7C8B3D（★delete）多出口写结果
+  段5（0x4AA803-0x4AAA32）次优路径:
+    ebx==2 分支：0x42FCB0（★矩阵构造）→ 0x7E3890 虚表（+0x48 存储）
+    循环 0x4AA848-0x4AA913：0x5654A0 迭代 + 0x578460 + 0x4AAB30
+    （★收集候选 cell 列表）→ [esp+0x4C] 数组 + 0xA 增长
+    收尾 RandomRanged（★从收集列表随机选）或 0x4CAC40（★距离排序——
+    sqrt 距离选最近）→ 0x7C8B3D 释放
+  收尾（0x4AAA32-0x4AAB28）:
+    [esi+0x104] 循环 → 0x5654A0/0x578460/0x4AAB30 三链扫描
+    多出口写 [esp+0x64]=结果; ret 0x1C
+
+语义：**MapClass::PickCellOnEdge**（YRpp 符号名实锤）——在地图边缘选一个
+合法 cell：输入坐标经 [0x8A03F8]/[0x8A03FA] 边界校正 → 四方向判定 →
+RandomRanged（0x65C7E0）取随机偏移 → 0x5654A0 迭代 + 0x578460 合法 +
+0x4AAB30 边缘判定扫描候选 → 命中返回；次优路径收集候选列表（0x7E3890
+VectorClass 模板）→ RandomRanged 随机选 / 0x4CAC40 距离排序选最近。
+4 unique caller（1771 callsite 计数）。
+
+★怪癖：①★[0x8A03F8]/[0x8A03FA] 地图尺寸双全局（word 宽/高——边界判定
+基准）；②★四方向判定产物 [esp+0x12]/[esp+0x13] 双标志 + [esp+0x6C]
+偏移量三件套；③★RandomRanged（0x65C7E0）多调用点（batch RNG 同域——
+原版随机地图同 generator）；④★候选收集数组 VectorClass 模板 0x7E3890
+虚表 + 增长 0xA（batch 记忆 VectorClass 族同域）；⑤★双出口（边缘命中直
+接返 vs 收集列表随机/最近）；⑥★0x4AAB30 边缘判定内部辅助（5 参——未
+登记，紧跟本函数，后续候选）。
+
+⚠️ partial：0x56D230/0x565520/0x5654A0/0x578460/0x4AAB30/0x42FCB0/
+0x4CAC40 精确身份（cell 校正/迭代/合法/边缘/距离族）、[0x8A03F8]/
+[0x8A03FA] 语义、this+0xFC/+0x100/+0x104/+0x108 MapClass 尺寸族字段、
+7 栈参精确语义（坐标/索引/标志）、0x7E3890 虚表宿主、收集列表业务
+（随机选 vs 最近选）。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch RNG 域（0x65C7E0 Randomizer::RandomRanged）：0x4AA440 多调用点
+  同 generator（随机地图同 RNG——原版全局 Randomizer）。
+- batch 1264（0x645C50 结构构造）：0x7493B0 的 0x645C30 Matrix3D 构造同族。
+- batch 记忆 Status::Initialize 0x4397E0：0x7493B0 两路径收尾大调用。
+- batch 283（0x481810 标志查询域）：0x6D6590 段 3 多次依赖。
+- VectorClass 族（batch 记忆 0x538780 等）：0x4AA440 候选收集数组模板
+  0x7E3890 同域。
+- 相机基准 [0x886FA0]/[0x886FA4]：0x6D6590 依赖（batch 相机域同区）。
