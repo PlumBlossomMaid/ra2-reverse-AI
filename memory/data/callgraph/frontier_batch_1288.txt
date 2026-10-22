@@ -1,0 +1,121 @@
+frontier batch 1288 — 0x47CA80 CellClass::SetupLAT / 0x67A390 结构初始化器 / 0x4DC760 条件浮点 getter（2026-10-23）
+
+口径：承接 batch 1287 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=4/3/3 三个未登记函数：
+0x47CA80（1930B——★RMG 阶段 10 LAT 核心）、0x67A390（34B）、0x4DC760
+（37B）。取证手段：disasm.py 直反汇编全程读完（SetupLAT 两段 0x800 字节
+覆盖 0x47CA80-0x47D209）+ TSV 查重（三候选全部未登记）+ CLI 交叉验证
+（cliworld.cpp:645 SetupLAT 实现 ↔ 反汇编逐段对应）+ theater.h 全局
+地址映射实锤。
+
+================================================================================
+0x47CA80 —— CellClass::SetupLAT（1930B 全程读完）
+================================================================================
+签名：thiscall（ecx=this CellClass*）无栈参 ret al（返回"是否变化"）。
+机器码骨架（0x47CA80-0x47D209，两段 0x800 读完）：
+    0x47CA80: 读 [0xAA1090]/[0xABAD28]/[0xAA1134]/[0xAA0E24]/[0xAA0748]/
+              [0xAA10A8]/[0xAA10A4]/[0xABBEC8]/[0xAA0E20]/[0xAA1058]/
+              [0xABC1D8] 等全局到栈槽，每个 cmp -1（★入口 -1 检查组）
+    0x47CBC4 循环（组 1 默认 [0xABC2B8]）: edi 步进 2（方向 0/2/4/6 =
+              四正方向 N/E/S/W），[esi+0x24] 坐标 + 0x89F688 邻域表 →
+              call 0x5657A0（GetCell 取邻格）→ 检查邻格 +0x38 是否
+              越界 → 越界则 ebp |= 1<<ebx（★四方向位掩码）
+    ...组 2（0x47CC46，默认 [0xABB104]）组 3（0x47CD0F，默认
+              [0xAA0E18]）组 4（0x47CDF0，默认 [0xABC2B0]）同构重复
+    0x47CF02: al = [esi+0x11C]（★LAT 类型标志）cmp 1/2/3/4 分支——
+              每分支取 0x89F688/0x89F690/0x89F698/0x89F6A0 邻域表
+              两方向 → GetCell → 邻格 +0x11C==0 → edi |= 1/2 →
+              [esi+0x38] = 组起始 + (edi+偏移)（+ebx-1/+2/+5/+8）
+    0x47D1CF 收尾: eax=[esi+0x38]; 与旧值 [esp+0x70] 比较 → 不等则
+              [0xA8ED2C] 查表项 → 虚表槽 0x9C call → 非 0 调 0x544C80
+              → setne al（返回是否变化）
+
+语义：**CellClass::SetupLAT**——把涂出来的 LAT 块按邻接关系换成正确的
+过渡片。多组（至少 5 组）线性序列：每组读一个组起始全局（-1 入口检查），
+按四正方向（0x89F688 偶数项）取邻格判越界，组合位掩码写 cell+0x38；
+再按 cell+0x11C 的 LAT 类型（1/2/3/4）分支选两方向组合过渡片。无随机数
+消耗。★与 CLI 实现（cliworld.cpp:645-720）逐段对应：组 1=ClearToRoughLat
+（[0xAA1134]，theater.h:83 实锤）、组 2=ClearToSandLat（[0xAA0E24]，
+theater.h:58 实锤）等。★0x89F688 八方向增量表（RMG 全阶段共用——
+blob_paint/cliff_work/start_points 同源）。4 unique caller（94 callsite）。
+
+★怪癖：①★多组线性过渡判定（每组独立组起始全局 + -1 入口检查 + 四正
+方向掩码——Rough/Sand/Green/Pave 四族 + Ramp 段）；②★邻格取用
+0x5657A0 GetCell + 0x89F688 邻域表偶数项（对角一概不看）；③★0x11C
+LAT 类型分支（1/2/3/4 → 组起始 + edi+偏移 组合公式不同：-1/+2/+5/+8）；
+④★返回"是否变化"（setne al——旧值比较驱动 0x544C80 回调）；⑤★组
+起始全局在 .bss 区（0xAAxxxx 族——运行期 Theater 初始化写入）。
+
+⚠️ partial：五组起始全局的完整字段名（[0xAA0748]/[0xAA10A8]/[0xAA10A4]/
+[0xABBEC8]/[0xAA0E20]/[0xAA1058]/[0xABC1D8] 未全部映射 rules.ini 字段）、
+0x11C 标志精确枚举、0x544C80 回调（虚表槽 0x9C 配套）、4 unique caller
+身份（0x47D7FB/0x47D818 等 RecalcAttributes 区内调用点）。
+
+================================================================================
+0x67A390 —— 结构初始化器（34B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）无栈参 ret 空。
+机器码（全文 34 字节）：
+    mov eax, ecx; xor ecx, ecx
+    mov [eax+4], ecx                  ; +4 = 0
+    mov [eax+8], ecx                  ; +8 = 0
+    mov byte [eax+0xC], 1             ; ★+0xC = 1（恒置标志）
+    mov byte [eax+0xD], cl            ; +0xD = 0
+    mov dword [eax+0x14], 0xA         ; ★+0x14 = 10（默认容量推断）
+    mov [eax+0x10], ecx               ; +0x10 = 0
+    mov dword [eax], 0x7F0D3C         ; ★vtable = 0x7F0D3C（.rdata）
+    ret
+
+语义：**结构初始化器（构造器形态）**——写 vtable 0x7F0D3C、+4/+8 清零、
++0xC=1（★恒置活动位）、+0xD=0、+0x10=0、+0x14=10（★默认容量/长度）。
+3 unique caller（30 callsite）。后邻 0x67A3C0 为配套遍历器（虚表槽 0x10
+读 +4 数组逐项——VectorClass 族形态）。
+
+★怪癖：①★vtable 0x7F0D3C（.rdata 宿主类虚表）；②★+0xC 恒置 1（活动位
+——batch 1285 0x4F3A50 同款双标志族）；③★+0x14=10（默认容量——非零
+非 -1，VectorClass 容量字段推断）；④★xor ecx 复用清零。
+
+⚠️ partial：vtable 0x7F0D3C 宿主类名、+0x14 容量语义、宿主类（0x67A3xx
+区——0x67xxxx 域）、后邻 0x67A3C0 遍历器（同族候选）。
+
+================================================================================
+0x4DC760 —— 条件浮点 getter（37B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）无栈参 ret st(0)（double）。
+机器码（全文 37 字节）：
+    mov eax, [ecx+0x5D4]              ; eax = this->+0x5D4（指针）
+    test eax, eax; je 0x4DC77E        ; 空 → 默认路径
+    mov eax, [eax+0x24]               ; eax = (+0x5D4 对象)->+0x24
+    mov dl, [eax+0xF2]                ; dl = (→+0x24)->+0xF2（标志）
+    test dl, dl; je 0x4DC77E          ; 标志 0 → 默认路径
+    fld qword [0x7E1718]              ; ★返回常量 [0x7E1718]
+    ret
+    0x4DC77E:
+    fld qword [ecx+0x530]             ; ★默认返回 this->+0x530（double 字段）
+    ret
+
+语义：**条件浮点 getter（双路径选择器）**——this->+0x5D4 指针非空 &&
+其对象 +0x24 的 +0xF2 标志非零 → 返回常量 [0x7E1718]（.rdata double）；
+否则返回 this->+0x530 字段。3 unique caller（30 callsite）。
+
+★怪癖：①★两级门控（+0x5D4 非空 && +0xF2 标志——对象存在且启用才走
+常量路径）；②★常量 [0x7E1718] 与字段 +0x530 双路分流（特殊值覆盖/
+禁用回落形态）；③★ret 前无栈调整（无栈参——纯 getter）。
+
+⚠️ partial：[0x7E1718] 常量值语义、+0x530 字段含义、+0x5D4 对象类型
+（+0x24/+0xF2 布局）、宿主类（0x4DC7xx 区——0x4Dxxxx 生产/单位域）、
+3 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- RMG 阶段 10 LAT（QWEN.md 阶段 9/10 文档 + memory setuplat_fallback_
+  root_cause 2026-10-04）：0x47CA80 正是 CLI SetupLAT 的机器码真身——
+  登记后 setuplat 的 CLI 实现（cliworld.cpp:645）获得完整汇编级对拍依据。
+- 0x89F688 八方向增量表：RMG 全阶段共用（blob_paint.cpp:17 / cliff_work.
+  cpp:20 / start_points.cpp:14 / making_regions.cpp:28 同源实锤）。
+- 0x5657A0（GetCell）：RMG 取格链核心（batch 396 地形传播同用）。
+- batch 1285（0x4F3A50 结构初始化器 +8=0/+9=1 双标志族）：0x67A390
+  同款 vtable+标志族初始化形态。
+- [0xAA1134]/[0xAA0E24]（clear_to_rough_lat/clear_to_sand_lat）：
+  theater.h:58/83 已映射（Theater 初始化写入——0xAAxxxx 族 LAT 组起始）。
