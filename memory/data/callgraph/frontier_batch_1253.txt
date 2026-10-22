@@ -1,0 +1,94 @@
+frontier batch 1253 — 0x67A4A0 数组批量读取器三连 / 0x49F9D0 容器析构配对 / 0x5D5890 timeGetTime IAT（2026-10-22）
+
+口径：承接 batch 1252 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=12/12/12 三个未登记函数：0x67A4A0（75B）、0x49F9D0（45B）、
+0x5D5890（6B，WINMM timeGetTime，functions.tsv 标注 __stdcall WINMM.DLL）。
+取证手段：disasm.py 直反汇编全文（三个均全程读完）。
+
+================================================================================
+0x67A4A0 —— 数组批量读取器第三实例（75B 全程读完）
+================================================================================
+签名：thiscall + 1 栈参（外部对象）ret 4。
+机器码（0x67A4A0-0x67A4E8）：
+    edi=[esp+0x14]（外部对象）; ebx=ecx（this）
+    push 0
+    ecx=[edi]（外部虚表）
+    lea edx,[esp+0x10]
+    eax=[ebx+0x10]
+    push 4; push edx; push edi
+    [esp+0x1C]=eax
+    call [ecx+0x10]         ; ★虚表槽 0x10 首调用拿计数
+    eax=[esp+0xC]（计数）
+    esi=0; test eax,eax; jle 0x67A4E4
+循环（0x67A4CA-0x67A4E2）:
+    ecx=[ebx+4]（数组基址）
+    eax=[edi]（外部虚表）
+    push 0; push 4
+    lea edx,[ecx+esi*4]（&数组[i]）
+    push edx; push edi
+    call [eax+0x10]         ; ★每元素读 4 字节
+    eax=[esp+0xC]（每次重读计数）
+    inc esi; cmp esi,eax; jl 循环
+    ret 4
+
+语义：**数组批量读取器**——与 batch 1245 的 0x67A520 / batch 1248 的 0x67A6E0
+**完全同构**（同虚表槽 0x10 首调用拿计数 + 循环逐元素读 4 字节写 this.+4 数组
++ 每次循环重读计数）。0x67A4A0/0x67A520/0x67A6E0 为同一模板三实例（0x67A4xx
+与 0x67A5xx/0x67A6xx 区相隔 0xA0/0x220——编译器重复展开）。
+
+★怪癖：同 0x67A520/0x67A6E0：①★每次迭代重读计数；②首调用传 push 0 +
+&[esp+0x10] 哨兵地址、后续传 &数组[i]；③计数值存 [esp+0x1C] 读回 [esp+0xC]。
+
+⚠️ partial：外部对象类型、虚表槽 0x10 语义、与 0x67A520/0x67A6E0 宿主关系。
+
+================================================================================
+0x49F9D0 —— VectorClass 族容器析构器（45B 全程读完）
+================================================================================
+签名：thiscall 无栈参 ret 空。
+机器码（0x49F9D0-0x49F9FC）：
+    esi=ecx（this）
+    eax=[esi+4]（数组指针）
+    [esi]=0x7E4DB8（★装虚表 A）
+    cmp eax,ebx（ebx=0）; je 0x49F9F4
+    cmp byte[esi+0xD],bl  ; owns 标志
+    je 0x49F9F4
+    push eax; call 0x7C8B3D（operator delete batch 001）
+    [esi+4]=ebx（清数组指针）
+0x49F9F4:
+    byte[esi+0xD]=bl      ; owns 清 0
+    [esi+8]=ebx           ; 容量清 0
+    ret
+
+语义：**VectorClass 家族容器析构器**——与 batch 1245 的 0x679F70 / batch
+1251 的 0x49F9B0 构造（虚表 0x7E5C54）配对：虚表装回 0x7E4DB8 + owns(+0xD)
+门控 delete 数组指针(+4) + 清零 owns/容量(+8)。
+
+★怪癖：①owns 门控——非 owns 不 delete（与拷贝构造 owns=1 对应）；②delete
+后 +4 清零、+D/+8 无条件清；③虚表装回 A 0x7E4DB8（回收后可复用）。
+
+⚠️ partial：宿主类名（与 0x49F9B0 构造配对——同一容器类）、0x7E4DB8 虚表归属。
+
+================================================================================
+0x5D5890 —— timeGetTime IAT 尾跳（6B 全程读完）
+================================================================================
+签名：WINMM.DLL __stdcall（functions.tsv 标注），无栈参 ret 由被调负责。
+机器码（全文 6 字节）：
+    jmp dword [0x7E1530]   ; ★纯 IAT 尾跳转发（WINMM timeGetTime）
+    （后 10B nop 垫）
+
+语义：**timeGetTime 纯导入转发 thunk**——jmp [0x7E1530]（WINMM.dll IAT 槽）。
+与 batch 060 的 0x6C8C40（timeGetTime>>4 封装）同源：0x5D5890 是裸 IAT 跳板、
+0x6C8C40 是带 >>4 的封装。按商业库纪律归档（crt_runtime_verified——语义由
+WINMM.dll 决定，重写用等价运行时代替，不写 C++ 模型不做 golden）。
+
+★怪癖：①jmp 转发无 prologue（ff 25 绝对地址间接跳——IAT 跳板惯用）；②ret
+由被调函数负责（跳板不参与栈）；③后 10B nop 垫（对齐）。
+
+⚠️ partial：无（IAT 槽 [0x7E1530] 语义由 batch 060 已实锤 timeGetTime）。
+
+================================================================================
+登记口径
+================================================================================
+0x67A4A0/0x49F9D0 为 semantics_verified（反汇编全文读完、行为确定——容器族
+第三/析构实例）；0x5D5890 按商业库纪律归档 crt_runtime_verified（纯 IAT 跳板
+不写 C++ 模型不做 golden，等价运行时代替）。
