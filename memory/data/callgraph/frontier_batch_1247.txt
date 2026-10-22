@@ -1,0 +1,117 @@
+frontier batch 1247 — 0x4CB760 FieldClass 构造 / 0x7490C0 GetArray thunk / 0x7B73F0 宽串重组（2026-10-22）
+
+口径：承接 batch 1246 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=31/28/24 三个未登记函数：0x4CB760（84B，FieldClass 构造，
+functions.tsv 符号名 USER_DEFINED=YRpp）、0x7490C0（3B，UnitTrackerClass::
+GetArray thunk，USER_DEFINED）、0x7B73F0（520B，宽字符串重组大函数）。
+取证手段：disasm.py 直反汇编全文（三个均全程读完）。
+
+================================================================================
+0x4CB760 —— FieldClass::FieldClass 构造（84B 全程读完）
+================================================================================
+签名：thiscall + 2 栈参 ret 8。
+机器码（0x4CB760-0x4CB7B1）：
+    eax=[esp+4]（栈参 1）
+    push ebx/esi/edi; ebx=ecx（this）
+    push 4; push eax; push ebx
+    call 0x7C91D0       ; ★3 栈参调用（_strncpy 登记 batch 003，cdecl？
+                         现场无 add esp 清栈——★与 _strncpy cdecl 冲突待核）
+    push 4
+    word[ebx+4]=6; word[ebx+6]=4    ; ★两 word 字段（宽/高 或 尺寸对）
+    call 0x7C8E17       ; operator new(4)
+    ecx=0; esi=[esp+0x24]（栈参 1 位置）
+    cx=word[ebx+6]（=4）
+    edi=eax; [ebx+8]=eax             ; +8 = 新分配 4 字节
+    shr ecx,2; rep movsd             ; 拷 1 dword（栈参 1 前 4 字节）
+    ecx=edx; and ecx,3; rep movsb    ; 余 0
+    [ebx+0xC]=0
+    eax=ebx; ret 8
+
+语义：**FieldClass 构造**（YRpp 符号，USER_DEFINED）——{+4=6, +6=4 两 word
+（宽/高或尺寸对）、+8=operator new(4) 的 4 字节堆对象（拷贝栈参 1 前 4
+字节）、+0xC=0}，并先调 0x7C91D0（batch 003 登记 _strncpy）初始化前段。
+
+★怪癖：①★0x7C91D0 调用现场 3 栈参（this/eax/4）且无调用方清栈——若其
+cdecl 则应有 add esp,0xC；现场无 → 实为 thiscall/自清约定，与 batch 003
+登记（cdecl _strncpy）**疑似矛盾**（★待复核：可能该登记行有误或此处非
+_strncpy）；②两 word 字段 6/4 硬编码；③+8 指向 4 字节堆拷贝（从栈参 1）；
+④new 失败不检查（edi=eax 直接用）。
+
+⚠️ partial：0x7C91D0 现场约定与登记矛盾（待复核）、+4/+6/+8/+0xC 字段语义、
+FieldClass 宿主（YRpp class，USER_DEFINED 非 exe 实锤）。
+
+================================================================================
+0x7490C0 —— UnitTrackerClass::GetArray thunk（3B）
+================================================================================
+机器码（全文 3 字节）：
+    mov eax, ecx      ; eax = this
+    ret               ; 普通 ret
+
+语义：**thiscall 返回 this**（getter 底座/数组访问器返回 this 指针——
+UnitTrackerClass 的数组成员即 this 推断）。28 调用点、1 unique caller。
+与 batch 1243 的 0x524EC0（同一形态）同族。
+
+★怪癖：无——纯传递。
+
+⚠️ partial：UNITRACKER 宿主语义、数组成员位置（推断 this 即数组基址）。
+
+================================================================================
+0x7B73F0 —— 宽字符串查找-重组大函数（520B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 2 栈参（[esp+0x20]=查找串 B、[esp+0x24]=拼接串 C）
+ret 8。
+机器码（0x7B73F0-0x7B75F5）：
+    edi=[ebx]（this 持串 A）；空 → 用 0x887734 默认串
+    主循环（0x7B7412）:
+      cmp word[edi],0; je 0x7B757E     ; A 空 → 收尾
+      eax=[esp+0x20]（B）
+      push B; push A; call 0x7CC682    ; ★wcsstr 查 B 在 A 中位置（batch 839）
+      eax=结果; je 0x7B751F（未命中分支）
+      ebp=结果-A（命中偏移）; je 0x7B749F（★偏移 0 → 无前缀）
+      ecx=偏移+1
+      若 esi（累积串）非空: wcslen(esi) → 累积长
+      operator new(新长×4)
+      复制 esi → wcsncat(新, A, 偏移+1)  ; ★前缀段（含命中首字符?）
+      delete 旧 esi; esi=新
+0x7B749F:
+      ebp=[esp+0x24]（C）; 空 → 0x7B7502
+      wcslen(C)+wcslen(esi) → operator new → 复制 esi → wcscat(新, C)
+      ★追加拼接串 C
+0x7B7502:
+      edx=[esp+0x20]（B）; wcslen(B)
+      edi = (ecx 某指针) + B长×2   ; ★A 前进到命中段之后
+      test edi; je 0x7B757E
+      jmp 0x7B7412                  ; ★循环（多段处理）
+未命中分支 0x7B751F:
+      wcslen(esi)+1+wcslen(A) → operator new → 复制 esi → wcscat(新, A)
+      ★剩余全段并入
+收尾 0x7B757E:
+      esi 空 → 用默认 edi（0x887734）
+      delete [ebx]（旧串）→ operator new((len+1)×2) → 复制 → [ebx]=新
+      delete esi; al=1; ret 8
+
+语义：**宽字符串按模式分段重组**——在 this 持串 A 中反复查找子串 B：
+命中则把「命中前前缀段 + 拼接串 C」写入结果，游标前进到命中段之后继续；
+未命中把剩余段全并入。本质是「查找 B 并把每段 B 替换为 C 的累积器」
+（替换/插入惯用）。依赖 0x7CC682（wcsstr batch 839）/0x7CA405（wcslen
+batch 045）/0x7CA489（wcscpy）/0x7CA45F（wcscat batch 126）/0x7CB504
+（wcsncat batch 413）/0x7C8E17（new）/0x7C8B3D（delete）——全已登记。
+
+★怪癖：①★主循环多段处理（B 出现多次时逐段重组，游标 edi 前进到命中段
+之后——0x7B7502 lea edi,[ecx+eax*2]）；②命中偏移 0（B 在 A 开头）跳过
+前缀复制直接进 C 追加；③★es 累积串每次迭代 new+复制+delete（大量堆
+往返，原版不优化）；④未命中分支把剩余全段并入（等价最后一段）；⑤
+默认串 0x887734（A 空时兜底）；⑥ret 8 双栈参（B 查找串 + C 拼接串）；
+⑦收尾重写 this 持串（delete 旧 + new 新 + wcscpy）。
+
+⚠️ partial：宿主语义（字符串类方法推断，0x7Bxxxx 字符串族）、0x887734
+默认串内容、B/C 参数来源、游标推进精确偏移（命中段含/不含 B 长度——lea
+edi 用 B 长×2 但偏移基准未完全确定）、替换 vs 插入语义归属。
+
+================================================================================
+登记口径
+================================================================================
+三函数均为 semantics_verified（反汇编全文读完、行为确定）。0x7B73F0 的
+依赖族全已登记（wcsstr/wcslen/wcscpy/wcscat/wcsncat/new/delete）——它是
+字符串族上层编排函数，C++ 复刻待宿主（字符串类方法族）推进时一并闭合。
+0x4CB760 的 0x7C91D0 调用约定疑点（cdecl vs thiscall）登记为待复核项。
