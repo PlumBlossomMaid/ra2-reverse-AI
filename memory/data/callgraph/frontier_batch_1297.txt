@@ -1,0 +1,166 @@
+frontier batch 1297 — 0x5E9850 类型注册表清理器 / 0x67B050 VectorClass::Resize / 0x67B550 派生类构造器（2026-10-23）
+
+口径：承接 batch 1296 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=2 三个未登记函数：
+0x5E9850（156B）、0x67B050（176B）、0x67B550（464B）。取证手段：
+disasm.py 直反汇编全程读完（0x5E9850 0x100 / 0x67B050 0xB0 / 0x67B550
+0x1E0 覆盖）+ TSV 查重（三候选全部未登记）+ 跨批次对比（0x67B550 拷贝
+路径 ↔ batch 1296 0x67C1F0 逐字节同构实锤）。
+
+================================================================================
+0x5E9850 —— 类型注册表清理器（156B 全程读完）
+================================================================================
+签名：无参（ecx 未用）ret 空。
+机器码骨架（0x5E9850-0x5E98EB）：
+    call 0x775B20; cmp eax, 0xBC; je 0x5E98A5    ; ★类型==0xBC → 免检
+    mov ecx, 0xC2; call 0x775940; test eax, eax; jne 0x5E9890
+    mov ecx, 0xC9; call 0x775940; test eax, eax; jne 0x5E9890
+    mov ecx, 0xBC; call 0x775940; test eax, eax; jne 0x5E9890
+    mov ecx, 0xBD; call 0x775940; test eax, eax; jne 0x5E9890
+    0x5E9890:                                  ; ★类型命中 → 日志+上报
+    push 1; push 0x59F; push eax
+    call dword ptr [0x7E14A8]                   ; ★DebugLog 形态（0x59F=1439 行号）
+    push eax; call dword ptr [0x7E14A0]         ; ★IAT 槽上报
+    0x5E98A5:                                  ; ★主体：注册表清理
+    mov edi, [0xA8DA84]                         ; 计数
+    xor esi, esi; test edi, edi; jle 0x5E98E9
+    循环: mov eax, [0xA8DA78]; mov ecx, [eax+esi*4]
+    push 0xA8D610; push ecx
+    call 0x7CA5D3                               ; ★0x7CA5D3（串比较/查找）
+    test eax, eax; je 0x5E98E4
+    mov edx, [0xA8DA78]; mov eax, [edx+esi*4]
+    mov ecx, [eax+0x77]; test ecx, ecx; je 0x5E98E4
+    mov [eax+0x77], 0                           ; ★清 +0x77 字段
+    inc esi; cmp esi, edi; jl 循环
+    ret
+
+语义：**类型注册表清理器**——先做类型合法性检查（0x775B20 取当前类型、
+0x775940 按 0xBC/0xBD/0xC2/0xC9 查询——非法组合形走 DebugLog 0x59F
++ IAT 上报）；主体遍历 [0xA8DA78] 注册表数组（计数 [0xA8DA84]），每项
+经 0x7CA5D3 与 [0xA8D610] 比较命中后清其 +0x77 字段。2 unique caller
+（8 callsite）。
+
+★怪癖：①★类型白名单检查（0xBC/0xBD/0xC2/0xC9 四类型——0x775B20
+取型 vs 0x775940 查询双工具）；②★DebugLog 0x59F（=1439 行号）+ IAT
+0x7E14A0 双级上报；③★[0xA8DA78]/[0xA8DA84] 注册表数组（项 +0x77 清理
+——容量/状态字段推断）；④★0x7CA5D3 与 [0xA8D610] 比较（外部表）。
+
+⚠️ partial：0x775B20/0x775940 类型查询语义、0xBC/0xC2/0xC9/0xBD 类型
+枚举、[0xA8DA78] 注册表与 +0x77 字段、0x7CA5D3 精确身份、宿主（0x5E98xx
+区——0x5Exxxx 网络/会话域）。
+
+================================================================================
+0x67B050 —— VectorClass::Resize（176B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 2 栈参（[esp+0xC]=新容量、[esp+0x18]=外部
+缓冲）ret al。
+机器码骨架（0x67B050-0x67B0FD）：
+    mov ebp, [esp+0xC]               ; ★新容量
+    mov esi, ecx
+    test ebp, ebp; je 0x67B0DA        ; ★容量 0 → 走虚表槽 0xC 清空
+    mov ebx, [esp+0x18]               ; ★外部缓冲参
+    mov byte [esi+0xC], 0
+    test ebx, ebx
+    jne 0x67B07E                      ; 有外部缓冲 → 直接借用
+    lea eax, [ebp*4]; push eax
+    call 0x7C8E17; mov edi, eax       ; ★无 → new 容量×4
+    jmp 0x67B080
+    0x67B07E: mov edi, ebx            ; 用外部缓冲
+    0x67B080:
+    test edi, edi; je 0x67B0F7        ; new 失败 → 返 0
+    mov byte [esi+0xC], 1
+    mov eax, [esi+4]; test eax, eax; je 0x67B0C8
+    mov ecx, [esi+8]; cmp ebp, ecx; cmovl ecx, ebp  ; ★min(容量, 旧容量)
+    xor eax, eax; test ecx, ecx; jle 0x67B0AE
+    循环: mov edx, [esi+4]; mov edx, [edx+eax*4-4]
+    mov [edi+eax*4-4], edx; inc eax; cmp eax, ecx; jl 循环  ; ★旧数据拷贝
+    0x67B0AE:
+    mov al, [esi+0xD]; test al, al; je 0x67B0C8
+    mov eax, [esi+4]; push eax
+    call 0x7C8B3D                    ; ★owns → delete 旧数组
+    mov [esi+4], 0
+    0x67B0C8:
+    mov [esi+4], edi                 ; 新数组
+    xor eax, eax; test ebx, ebx; sete al   ; ★owns = (无外部缓冲)
+    mov [esi+8], ebp                 ; 容量
+    mov byte [esi+0xD], al
+    mov eax, [esi+8]; mov ecx, [esi+0x10]
+    cmp eax, ecx; cmovl ecx, eax     ; ★收敛 +0x10 = min(容量, 旧+0x10)
+    mov [esi+0x10], ecx
+    mov al, 1; ret 8
+    0x67B0DA:                        ; 容量 0 路径
+    call dword ptr [edx+0xC]         ; ★虚表槽 0xC（清空自身）
+    ...同收敛尾
+    0x67B0F7: xor al, al; ret 8      ; new 失败返 0
+
+语义：**VectorClass::Resize（重分配器）**——设置新容量：无外部缓冲则
+new（0x7C8E17）容量×4 字节、有则借用外部缓冲（owns=0）；旧数组存在时
+拷贝 min(容量, 旧容量) 项到新数组，owns 置位则 delete 旧数组
+（0x7C8B3D）；写 +4 数组/+8 容量/+0xD owns；收敛 +0x10 =
+min(容量, 旧+0x10)。容量 0 走虚表槽 0xC 清空自身。返回成功标志。
+2 unique caller（8 callsite）。★与 batch 1296 0x512DC0 构造器同族
+（VectorClass 家族 resize/构造成员）。
+
+★怪癖：①★外部缓冲/自分配双路径（＋owns=sete 派生）；②★cmovl 条件
+移动求 min（无分支）；③★旧数据拷贝后按 owns 释放旧数组（先拷后删）；
+④★+0x10 收敛（容量收缩时同步）；⑤★容量 0 → 虚表槽 0xC 清空分支。
+
+⚠️ partial：宿主类（VectorClass 派生）、虚表槽 0xC 身份、+0x10 字段
+语义、2 unique caller 身份。
+
+================================================================================
+0x67B550 —— VectorClass 派生类构造器（464B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 3 栈参（[esp+0xB0]/[esp+0xB4]/[esp+0xB8]）
+ret 0xC。
+机器码骨架（0x67B550-0x67B71F）：
+    sub esp, 0x9C
+    lea ecx, [esp+0x1C]; push 0x80
+    lea eax, [esp+0x1C]; push 0x889F64
+    push 0x889F64; push [esp+0xB0]; push [esp+0xB4]
+    mov ecx, edx; call 0x528A10       ; ★0x528A10（INI 读取，5 参）
+    test eax, eax; je 0x67B68E        ; ★失败 → 拷贝构造路径
+    主路径:
+    mov [esp+0x20], 0xA; mov [esp+0x14], 0x7ED90C
+    ...call 0x5105A0 / 0x7C9CC2（串类构造）→ 循环：
+    push 0x817F70; push 0
+    call 0x7C9CC2                     ; ★0x7C9CC2（串分割/取段）
+    ...逐项 call 0x4653C0 解析 → 数组收集 → 0x7C9CC2 循环
+    0x67B626: 装配 esi+4/8、+0xC=1、+0xD=0、vtable① 0x7EAA08
+    call 0x67B180; mov [esi], 0x7ED90C ; ★vtable② = 0x7ED90C
+    mov [esi+0x10], ...; mov [esi+0x14], ...
+    ...+0x10 比较收敛 → delete 临时 → ret 0xC
+    0x67B68E（拷贝构造路径）:
+    cmp esi, edi; mov [esi], 0x7EAA08  ; vtable①
+    ...call [0x7EAA14]（基类构造）→ 拷贝 +8→new(×4) 或借空 →
+    逐项拷贝循环 → +0x10/+0x14 拷贝 → mov [esi], 0x7ED90C ; vtable②
+
+语义：**VectorClass 派生类构造器（INI/串解析 + 拷贝构造双路径）**——
+经 0x528A10（INI 段落读取）5 参装载失败则走与 batch 1296 0x67C1F0
+逐字节同构的拷贝构造（源对象拷贝 + 双 vtable 0x7EAA08→0x7ED90C）；
+成功则主路径用 0x7C9CC2 + 0x817F70 分隔符循环解析串段、0x4653C0 逐项
+转换收集进数组，装配 VectorClass 布局（+4/+8/+0xC=1/+0xD/+0x10/+0x14）
+并回调 0x67B180。2 unique caller（12 callsite）。
+
+★怪癖：①★双 vtable 赋值（0x7EAA08 → 0x7ED90C 两阶段构造——与
+0x67C1F0/0x512DC0 同构）；②★INI 失败走拷贝构造（双路径合一函数）；
+③★0x817F70 串分隔符 + 0x7C9CC2 分割循环（逐段解析）；④★0x4653C0
+段→对象转换（每项收集进数组）；⑤★回调 0x67B180（装配辅助）。
+
+⚠️ partial：宿主类（0x67B5xx 区——0x67xxxx 工具域 vtable 0x7ED90C）、
+0x528A10 参数语义、0x7C9CC2/0x817F70/0x4653C0 精确身份、0x67B180
+回调、2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1296（0x512DC0 VectorClass 构造器 双 vtable + 外部缓冲/自分配
+  ；0x67C1F0 拷贝构造器）：0x67B050 是同族 Resize（cmovl min + owns
+  sete + 先拷后删）；0x67B550 拷贝路径与 0x67C1F0 逐字节同构
+  （仅 final vtable 0x7ED90C vs 0x7F0D3C——不同派生类）。
+- batch 1296（0x5F3320 [0xB72D20] 全局单例）：0x5E9850 的 [0xA8DA78]/
+  [0xA8DA84] 是另一批全局注册表（0xA8xxxx 全局区家族）。
+- 0x7C8E17/0x7C8B3D（new/delete 包装对）：0x67B050/0x67B550 分配/
+  释放共用（batch 1271/1275/1291/1296 同）。
+- DebugLog 形态（push 行号 → call IAT 槽）：0x5E9850 的 0x59F 行号
+  （=1439）——batch 记忆 DebugLog 0x734E60 同款调用形态。
