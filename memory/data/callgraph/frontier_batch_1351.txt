@@ -1,0 +1,179 @@
+frontier batch 1351 — 0x5B4080 树节点递归析构器 / 0x5B01C0 多状态分派更新器 / 0x598960 RMG 主流程调度器（2026-10-23）
+
+口径：承接 batch 1350 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x5B4080（41B，callees=2 deps=44）、
+0x5B01C0（5602B，callees=26 deps=1 大函数）、0x598960（3018B，
+callees=50 deps=3304——全池最高 deps 之一，即 QWEN.md 已实锤的
+RMG 主流程 FUN_00598960）。
+取证手段：disasm.py 双参直反汇编全程读完（0x5B4080 0x40 尾 0x5B40A8 /
+0x5B01C0 0x1600 尾 0x5B17A1 / 0x598960 0xC00 尾 0x599527，函数边界与
+functions.tsv 完全吻合）+ TSV 查重（三候选全部未登记）+ 跨批次对比
+（0x7C8B3D 释放 ↔ batch 既有锚点；[0x87F7E8] MapClass 取格链 ↔
+batch 1300s 系；[0x8871E0] 全局规则 / [0xA8ED84] 帧戳 / 0x89F688 方向
+表 ↔ 既有惯用法；0x598960 ↔ QWEN.md RMG 全链实锤证据）。
+
+================================================================================
+0x5B4080 —— 树节点递归析构器（41B 全程读完）
+================================================================================
+签名：thiscall（ecx=this 节点），无栈参，ret 0（0x5B4080-0x5B40A8，
+callees=2 deps=44）。
+机器码（0x5B4080-0x5B40A8）：
+    入口：push esi; mov esi, ecx
+    test esi, esi; je 0x5B40A7                        ; ★this==NULL 早退
+    mov ecx, [esi]; test ecx, ecx; je 0x5B4092
+    call 0x5B4080                                     ; ★递归析构子指针 0
+    0x5B4092: mov ecx, [esi+4]; test ecx, ecx; je 0x5B409E
+    call 0x5B4080                                     ; ★递归析构子指针 4
+    0x5B409E: push esi; call 0x7C8B3D; add esp, 4      ; ★0x7C8B3D 释放自身
+    0x5B40A7: pop esi; ret
+语义：**树节点递归析构器**（0x5B40Ax 区——0x5B4xxx 析构/树域，
+callees=2 deps=44）：thiscall 节点：**后序析构**——先递归析构两个子
+指针（[esi] 和 [esi+4]，非空才递归），最后 0x7C8B3D 释放自身；
+this==NULL 早退。2 unique caller（4 callsite）。
+★怪癖：①★this==NULL 早退（test/je——直接返）；②★**后序**：孩子
+先于自身（先递归 [esi]/[esi+4] 再释放）；③★两个子指针槽
+（[esi] 与 [esi+4]——二叉/双链节点）；④★0x7C8B3D 释放自身
+（既有锚点：0x7C8E17 分配/0x7C8B3D 释放）+ ret 0 无栈参。
+⚠️ partial：节点类型（两子指针槽语义）、0x7C8B3D 后对象状态、
+2 unique caller 身份。
+
+================================================================================
+0x5B01C0 —— 多状态分派更新器（5602B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（[ebp+8]=force 布尔 al），ret 4
+（0x5B01C0-0x5B17A1，callees=26 deps=1——本批唯一大函数）。
+机器码结构（全程读完，关键锚点）：
+    入口：push ebp/mov ebp,esp/and esp,0xFFFFFFF8/sub esp,0x5C
+    mov ebx, ecx
+    [ebx+0xC] 主对象（大量字段：+0x5E0 状态 / +0x640/+0x648 帧戳三元
+    组 / +0x64C / +0x684~+0x68B / +0x6B5~+0x6B7 字节标志）
+    call 0x4C9480（+0x388 容量检查）
+    [ebx+0x24/0x28/0x2C] 与 [0xABEE10/0xABEE14/0xABEE18] 全局坐标比较
+    （0x5B01E4-0x5B0228——不等 → 0x5B118D 分支）
+    [0xA8ED84] 帧戳 / [0x8871E0] 全局规则 / [0x7E27F8]/[0x7E2818]/
+    [0x7E2820]/[0x7E2800] 浮点常量
+    [0x87F7E8] MapClass + 0x5657A0/0x565730/0x578080/0x578AD0/
+    0x578460 取格链；0x89F688 方向表（and 7 + word 偏移）；[0xA83D84]
+    表；+0x11B/+0x140 高度/属性
+    0x5B09C2 起：esi = 虚表 [eax+0x1AC] 返回值 → **状态分派**
+    cmp esi,5/4（0x5B0981/0x5B0986）→ 0x5B098B 分支
+    cmp esi,6（0x5B09C2）→ 0x5B0BC7 分支（+0x6B7 标志）
+    cmp esi,2（0x5B0BBE）→ 0x5B0BC7
+    cmp esi,3（0x5B0D8F）→ 0x5B0D94（0x578AD0）
+    cmp esi,1/7（0x5B0DBD/0x5B0DC6）→ 0x5B0F2F/0x5B0F45
+    cmp esi,5/4（0x5B0DD2/0x5B0DD7）→ 0x5B0DDD
+    **递归自调用 ×3**（0x5B0A29/0x5B0E59/0x5B0F96）：同模式——先写
+    [obj+0x640]=帧戳/[+4]=[esp+0x60]/[+8]=0（三元组），再 push 0 +
+    call 0x5B01C0（force=0 递归）
+    0x5B10D2 起：浮点距离链（fild/fisub/0x4CAE30/×[0x7E2818]-
+    [0x7E2820]/_ftol → [ebx+4] 虚表 +0x4C 写回）
+    0x5B175A-0x5B179F：+0x74 字节备份/还原包裹（mov cl,[+0x74]→置 0→
+    调 +0x1B4/+0x1CC→还原）→ 0x5B179F ret 4
+    多个早退出口（0x5B05DA/0x5B083E/0x5B0888/0x5B0A34/...）
+语义：**多状态分派更新器**（0x5B01Cx 区——0x5Bxxxx 更新/状态域，
+callees=26 deps=1 大函数）：thiscall + 1 栈参（force 布尔）：主对象
+[ebx+0xC] 的**状态字段 +0x5E0 分派**（esi∈{1..7} 各分支做不同的
+坐标/放置/标志处理），[ebx+0x24/28/2C] 与 [0xABEE10/14/18] 全局
+坐标不等时走 0x5B118D 重置分支；多处写 +0x640 帧戳三元组后
+**force=0 递归自调用**；尾部 +0x74 字节备份/还原包裹。★多状态分派
+更新器（0x5B01Cx 区，+0x5E0 状态分派 + 递归自调用 + 全局坐标比较）。
+2 unique caller（4 callsite）。
+★怪癖：①★+0x5E0 状态字段分派（esi∈{1..7} 多分支——6/2 共享
+0x5B0BC7、5/4 共享 0x5B0DDD）；②★[0xABEE10/14/18] 全局坐标三值
+比较（不等 → 0x5B118D 重置）；③★递归自调用 ×3（force=0 模式：
+先写 +0x640 帧戳三元组再递归）；④★[ebp+8] force 布尔（多处
+test/je 分支）；⑤★+0x74 字节备份/还原包裹（0x5B175A 起）；
+⑥★0x5B1751 公共出口（清 +0x68A 后 ret 4——多处 jne 汇聚）。
+⚠️ partial：宿主类身份（Techno/Foot 系？[ebx+4] 虚表对象）、+0x5E0
+状态语义（1..7 各分支含义）、[0xABEE10/14/18] 全局坐标身份、
+0x5B17B0 相邻函数身份、虚表槽 +0x1AC/+0x1B4/+0x1B8/+0x1CC 语义、
+2 unique caller 身份。
+
+================================================================================
+0x598960 —— RMG 主流程调度器（3018B 全程读完，QWEN.md 已实锤）
+================================================================================
+签名：thiscall（ecx=this=MapSeedClass*）+ 2 栈参（[esp+0x430]=参数1、
+[esp+0x42C]=参数2 字节 flag），ret 8（0x598960-0x599527，
+callees=50 deps=3304——全池最高 deps 之一）。
+机器码结构（全程读完，与 QWEN.md 实锤全景逐项吻合）：
+    入口：sub esp,0x418; [0x82AF14] 钩子函数指针（**多处** cmp/je +
+    call——几乎每阶段前后调用）
+    0x598980: push [ebp+0x74]（Seed）→ call 0x65C6D0
+    （Randomizer::Seed 4 轮 Feistel）→ rep movsd 0xFD 拷到
+    [0xABE890] 全局 Randomizer                       ; ★整图只播种一次
+    0x59899D: 0xABDFB8 写 6 dword（含 0x598000 函数指针）
+    0x642A60/0x642C20/0x642C80/0x643AE0/0x643C50/0x643E70 大量
+    [0xAC4F58] 调用 + 0x69AE90 push 行号 + 0x4068E0 push 字符串
+    VA（阶段日志/调试输出——原版自带阶段日志）
+    0x598A74: call 0x599650  Init random map（引擎侧初始化）
+    [0xA8E7AC] 计数器 ++（0x598A97）/ --（0x599347）
+    0x598AFF: call 0x59A6C0  Seeding water
+    [ebp+0x3C]（MapType）==3/4 → 0x598B0D call 0x59C580
+    AddRiversAndLakes + 0x598B14 call 0x59C630
+    0x598C8F: call 0x58CF90 / 0x58E740 / 0x58E9B0 / 0x58D010
+    （MakingRegions 家族）
+    0x598D62: call 0x58EBC0 / 0x58EF10 / 0x5A19E0 / 0x578E60
+    RepaintAll(owner=-1——QWEN.md 实锤) / 0x5A17F0
+    0x598E18: call 0x59B740  Recalculating cell attributes
+    0x578350/0x578290 CellIterator + 0x47D2B0
+    CellClass::RecalcAttributes(-1)（多段全图循环）
+    0x598EAB 重试循环: call 0x594B50 Creating starting points +
+    call 0x5A1FB0 MarkStartInfluence（0x598EB4/0x598EBB 双测试，
+    je 重试——QWEN.md：外层重试循环）
+    0x598ED5: call 0x5A95B0  Adding tech buildings
+    0x598EF4: call 0x5A23A0  Creating tiberium
+    [0xABED10] 每格 0x50B 工作数组 +0x38/+0x3C=-1 清理（side² 循环
+    两处）；[0xABDFA0]/[0xABDF94] 区域列表清理（0x5AC290/虚表槽 0/
+    0x7C8B3D/0x5AD790）
+    0x599184: call 0x5A35F0  Creating hills
+    [edi+0x38]==0 → 0x5A38C0/0x5A3AE0 否则 0x5A4280（LATs/rocks）
+    0x59939B: call 0x722D00 / 0x722240
+    0x59944C: call 0x568BB0 / 0x654490 / 0x654650
+    [0xABE154] + 0x641140 PreviewClass::GeneratePreviewImage
+    （RandMap.img 预览图）+ [0x7E14A4] 函数指针（0xF 参数）
+    [0xA8B238]==4 && [0xA8B244]==3 → 0x5E7EB0
+    0x5994C5: [esp+0x428] + 0x638 → [0x7E14A8] 分配调用 +
+    [0x7E1498] 释放
+    0x59951F: pop ebp/ebx; add esp,0x418; ret 8
+语义：**RMG 主流程调度器**（0x5989xx 区——0x598xxx RMG 域，
+callees=50 deps=3304 全池最高 deps 之一；**QWEN.md 已实锤**：主流程
+FUN_00598960 原版自带阶段日志，Init random map(0x599650) →
+Seeding water(0x59A6C0/0x59C580/0x59C630) → MakingRegions 家族 →
+RecalcAttributes(0x59B740+0x47D2B0) → Creating starting points
+(0x594B50/0x5A1FB0 重试循环) → Adding tech buildings(0x5A95B0) →
+Creating tiberium(0x5A23A0) → Creating hills(0x5A35F0) →
+LATs/rocks(0x5A38C0/0x5A3AE0/0x5A4280) → 清理 → Preview →
+Done）：thiscall + 2 栈参，**入口 0x65C6D0 按 [ebp+0x74] Seed 播种、
+rep movsd 0xFD 拷进 [0xABE890] 全局 Randomizer（整图只播种一次，
+各阶段共用一条序列）**，随后按固定顺序调度上述全部阶段，阶段间
+用 0x69AE90/0x4068E0 打日志、[0x82AF14] 钩子可插桩。★RMG 主流程
+调度器（0x5989xx 区，0x65C6D0 播种 + 12 阶段调度 + 阶段日志）。
+2 unique caller（4 callsite）。
+★怪癖：①★0x65C6D0 播种 + rep movsd 0xFD 拷全局（整图一条序列——
+阶段顺序即种子兼容性，QWEN.md 实锤）；②★[0x82AF14] 钩子函数指针
+（几乎每阶段前后 cmp/je + call——调试插桩点）；③★0x69AE90 push
+行号 + 0x4068E0 push 字符串 VA（原版自带阶段日志）；④★[ebp+0x3C]
+MapType==3/4 → 0x59C580/0x59C630 河湖支路（否则 0x59A6C0）；
+⑤★[0xA8B238]==4 && [0xA8B244]==3 → 0x5E7EB0（Theater 判定）；
+⑥★[0xA8E7AC] 生成计数器 ++/--；⑦★[0xABED10] 工作数组
++0x38/+0x3C=-1 清理两处（side²×0x50 步进）；⑧★0x594B50+0x5A1FB0
+双测试重试循环（失败一轮随机数不退回——QWEN.md 实锤）；⑨★ret 8
+双栈参 + callees=50 deps=3304 全池最高。
+⚠️ partial：[esp+0x430]/[esp+0x42C] 两栈参语义、[0x82AF14] 钩子身份、
+0x5E7EB0/0x722D00/0x722240/0x568BB0/0x654490/0x654650 身份、
+2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- QWEN.md RMG 全链实锤（0x65C6D0/0xABE890/0x599650/0x59A6C0/
+  0x59C580/0x59C630/0x59B740/0x594B50/0x5A1FB0/0x5A95B0/0x5A23A0/
+  0x5A35F0/0x5A38C0/0x5A3AE0/0x5A4280/0x47D2B0/0x578350/0x578290/
+  0x578E60/0x641140）：0x598960 全部对上——RMG 主流程调度器持续闭合。
+- 0x7C8B3D 释放（既有锚点：0x7C8E17 分配/0x7C8B3D 释放）：0x5B4080
+  用其释放自身——析构家族锚点兑现。
+- batch 1300s（[0x87F7E8] MapClass 取格链 0x5657A0/0x565730/
+  0x578080/0x578460/0x578AD0）：0x5B01C0 大量使用——取格家族再验证。
+- 既有惯用法：[0x8871E0] 全局规则 / [0xA8ED84] 帧戳 / 0x89F688 方向
+  表（and 7 + word 偏移）/ 坐标 >>8（cdq/and 0xFF/add/sar）/ _ftol
+  0x7C5F00 / 虚表槽 0 析构 push 1——0x5B01C0 与 0x598960 全部使用。
