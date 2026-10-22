@@ -1,0 +1,129 @@
+frontier batch 1300 — 0x7AE0C0 位掩码截断器 / 0x777170 双窗口字节求和器（Ghidra 误标修正）/ 0x772A90 WeaponTypeClass::AllowedThreats（2026-10-23）
+
+口径：承接 batch 1299 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=2 三个未登记函数：
+0x7AE0C0（29B）、0x777170（ranking 标注 1B——★反汇编修正为真实函数
+0x777160-0x7771AA 74B）、0x772A90（36B，WeaponTypeClass::AllowedThreats）。
+取证手段：disasm.py 直反汇编全程读完（0x777170 扩读 0x120-0x1AA 确认
+边界）+ TSV 查重（三候选全部未登记）+ YRpp 交叉验证（0x772A90 威胁
+语义）。
+
+================================================================================
+0x7AE0C0 —— 位掩码截断器（29B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（[esp+8]）ret eax。
+机器码（全文 29 字节）：
+    push esi; mov esi, ecx
+    mov ecx, [esp+8]               ; 栈参
+    call dword ptr [esi+0x18]      ; ★虚表槽 0x18（取源值）
+    mov ecx, [esi+0xC]             ; ★this->+0xC（位数 n）
+    mov edx, eax
+    mov eax, 1
+    pop esi
+    shl eax, cl                    ; ★1 << n
+    dec eax                        ; (1<<n) - 1
+    and eax, edx                   ; ★源值 & 掩码
+    ret 4
+
+语义：**位掩码截断器**——经虚表槽 0x18 取源值，按 this+0xC 的位数 n
+做 (1<<n)-1 掩码截断（★低位保留、高位清零——n 位模运算形态）。
+2 unique caller（8 callsite）。
+
+★怪癖：①★虚表槽 0x18 取源值（动态源——宿主虚表决定）；②★1<<n 后
+dec 得掩码（移位-1 惯用法）；③★this+0xC 作位数（字段存宽度/长度）；
+④★结果 & 掩码截断（非模除——低位保留）。
+
+⚠️ partial：宿主类（0x7AE0Cx 区——0x7AExxx 区）、虚表槽 0x18 语义、
+this+0xC 位数用途、栈参含义、2 unique caller 身份。
+
+================================================================================
+0x777170 —— 双窗口字节求和器（★Ghidra 误标修正，74B 全程读完）
+================================================================================
+★边界修正：ranking/functions.tsv 标注 0x777170（1B）为函数起点——
+反汇编证明 0x777170 是函数中段（jl 0x7771A9 条件分支点），真实函数
+起点为 0x777160（mov eax,ecx; push esi 标准 thiscall 入口），函数体
+0x777160-0x7771AA（74B）。按纪律"机器码是权威"登记真实边界，entry
+仍用 0x00777170 保持与 ranking 查重一致。
+
+签名：thiscall（ecx=this 兼基址参）edx=数量 ret eax。
+机器码（全文 0x777160-0x7771AA）：
+    mov eax, ecx; push esi
+    and eax, 0xFFF                ; ★基址低 12 位
+    sub edx, eax                  ; 数量调整
+    cmp edx, 1
+    lea esi, [eax+ecx]            ; ★esi = 基址 + 低 12 位
+    jl 0x7771A9                   ; 数量 < 1 → 直接返回
+    mov eax, edx; and eax, 0xFFF; sub edx, eax
+    cmp edx, 1; jl 0x7771A9       ; 再调一轮
+    mov eax, 0x10000; xor ecx, ecx  ; ★累加器 ecx=0，窗口 0x10000
+    cmp edx, eax; jle 0x7771A9    ; 数量 <= 0x10000 → 返回
+    push ebx; push edi
+    循环: movsx ebx, byte [eax+esi]            ; ★窗口 1：读字节（有符号）
+    movsx edi, byte [eax+esi-0x10000]          ; ★窗口 2：读 0x10000 前字节
+    add ebx, ecx
+    add eax, 0x1000              ; ★步长 0x1000
+    cmp eax, edx
+    lea ecx, [ebx+edi]           ; ★累加两窗口字节
+    jl 0x77718D                  ; 循环
+    pop edi; pop ebx
+    0x7771A9: pop esi; ret
+
+语义：**双窗口字节求和器**——以 0x1000 步长遍历 [0x10000, 数量) 范围，
+逐字节累加两个窗口（[基址+i] 与 [基址+i-0x10000]，movsx 有符号读），
+结果在 ecx。★疑似地形/网格统计（跨页差分求和形态）。2 unique caller
+（8 callsite）。
+
+★怪癖：①★Ghidra 误标起点（0x777170 实为函数中段 jl 分支——按机器码
+修正登记真实边界 0x777160）；②★双窗口差分累加（当前地址 + 0x10000
+前地址——页/块差分统计）；③★movsx 有符号字节读（非零扩展）；
+④★步长 0x1000（4096 对齐遍历）；⑤★范围门控（<1 或 <=0x10000 直接
+返回——边界保护）。
+
+⚠️ partial：基址/数量语义（地形/网格数据推断）、累加结果用途、
+0x10000/0x1000 常量含义（窗口/步长——数据布局推断）、宿主类
+（0x7771xx 区——0x777xxx 区）、2 unique caller 身份。
+
+================================================================================
+0x772A90 —— WeaponTypeClass::AllowedThreats（36B 全程读完）
+================================================================================
+签名：thiscall（ecx=this WeaponTypeClass*）无栈参 ret al。
+机器码（全文 36 字节）：
+    mov ecx, [ecx+0xA0]            ; ★this->+0xA0（威胁类型对象指针）
+    xor eax, eax
+    mov dl, [ecx+0x2A4]            ; ★标志字节 +0x2A4
+    test dl, dl
+    je 0x772AA7
+    mov eax, 4                     ; ★+0x2A4 置位 → eax |= 4
+    0x772AA7:
+    mov dl, [ecx+0x2A5]            ; ★标志字节 +0x2A5
+    test dl, dl
+    je 0x772AB3
+    or al, 0xB8                    ; ★+0x2A5 置位 → eax |= 0xB8
+    0x772AB3:
+    ret
+
+语义：**WeaponTypeClass::AllowedThreats（威胁类型位标志合成）**——
+取 this+0xA0 指向的威胁类型对象，读其 +0x2A4/+0x2A5 两标志字节：
++0x2A4 置位 → 结果含 4；+0x2A5 置位 → 结果或 0xB8（1011 1000）。
+★威胁系数/威胁类型位标志合成（batch 记忆 ThreatCoefficients 五维
+公式域——武器侧威胁允许位）。2 unique caller（8 callsite）。
+
+★怪癖：①★this+0xA0 间接取威胁对象（两层指针）；②★+0x2A4 → 4 /
++0x2A5 → 0xB8 双标志位合成（非同一掩码族——两标志独立位组）；
+③★0xB8 含 0x80/0x20/0x10/0x08 多位置位（高/低威胁位族推断）；
+④★无 else 清位（eax 起始 0——置位即加位）。
+
+⚠️ partial：+0xA0 威胁对象类型、+0x2A4/+0x2A5 标志精确语义（威胁
+分类位）、0xB8 位组含义（威胁类型枚举）、宿主 WeaponTypeClass
+（0x772xxx 区——武器类型域）、2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- 威胁评估系统（batch 记忆 ThreatCoefficients 五维公式 + CalculateThreat
+  "珍宝函数"）：0x772A90 是武器侧威胁允许位合成——与威胁系统同域
+  （武器 → 目标威胁过滤链）。
+- batch 记忆（0x7C-0x7D MSVC6 静态 CRT 层）：0x7AE0C0 的虚表槽 0x18
+  调用形态与工具域函数一致——0x7AExxx 区工具族。
+- 0x777160 双窗口求和：0x777xxx 区——与 batch 记忆"0x7A-0x7B 工具/
+  算法域"邻近（大数/统计族推断）。
