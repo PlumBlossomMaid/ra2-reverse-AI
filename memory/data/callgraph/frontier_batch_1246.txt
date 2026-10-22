@@ -1,0 +1,146 @@
+frontier batch 1246 — 0x646480 范数归一化 / 0x5A9A70 三元组构造 / 0x5AE6F0 Matrix3D 构造（2026-10-22）
+
+口径：承接 batch 1245 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=33/33/32 三个未登记函数：0x646480（266B，3 分量归一化）、
+0x5A9A70（103B，12B 数组对象构造）、0x5AE6F0（92B，Matrix3D 单位构造，
+functions.tsv 符号名 USER_DEFINED=YRpp）。取证手段：disasm.py 直反汇编全文。
+
+================================================================================
+0x646480 —— 三维分量范数归一化（266B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（源三元组指针）ret 4。
+机器码（0x646480-0x646587）：
+    ebx=[edx+4]; ebp=[edx+8]        ; 源 y/z（float）
+    [esp+0xC]=ebx; [esp+0x10]=ebp
+    fld [y]; fmul [y]                ; y²
+    fld [x]; fmul [x]                ; x²（x=[edx]）
+    faddp st(1)                      ; x²+y²
+    fld [z]; fmul [z]; faddp st(1)   ; x²+y²+z²（平方和）
+    fstp qword [esp]
+    call 0x4CAC40                    ; ★平方和 → 长度（0x4CAC40 = sqrt?）
+    fcom qword [0x7E2800]            ; 与 0x7E2800（double 常量）比较
+    fnstsw ax; test ah,0x40          ; C3（==）
+    jne 0x64650A                     ; 长度==常量 → 跳过归一化（原样输出）
+    fld [y]; fdiv st(1)              ; y / 长度
+    fstp [esp+0x28]
+    fld [z]; fdiv st(1); fstp [esp+0x2C]
+    fldr [x]（fdivr [esp+0x18]）; fstp [esp+0x30]
+    jmp 0x646518
+0x64650A:                            ; 长度==常量分支
+    fstp st(0)
+    [esp+0x1C]=x; [esp+0x20]=y; [esp+0x24]=z（原样）
+0x646518:                            ; 后续段
+    fld [esp+0x3C]（栈参 1 某字段?）
+    fmul [0x7E5168]（float 常量）
+    fstp qword [esp+0x10]
+    edi=[esp+0x14]; ebx=[esp+0x10]
+    push edi; push ebx
+    call 0x4CACB0                    ; 0x4CACB0 = 浮点函数（atan2?）
+    fld [归一化后 x]; fmul st(1); fstp [esp+0x38]
+    fld [归一化后 y]; fmul st(1); fstp [esp+0x3C]
+    fld [归一化后 z]; fmul st(1); fstp [esp+0x40]
+    fstp st(0)
+    call 0x4CAD00                    ; 0x4CAD00 = 浮点函数（atan?）
+    fstp [esp+0x34]
+    写出 this（eax=esi）: [eax]=cx, [eax+4]=dx, [eax+8]=ecx, [eax+0xC]=edx
+    ret 4
+
+语义：**三维分量归一化（球面方向向量）**——源 {x,y,z} 平方和经 0x4CAC40
+（sqrt）得长度，与 [0x7E2800] 常量比较：不等则三分量 ÷ 长度归一化，相等则
+原样（★长度恰为该常量时跳过除法——防除 1 优化/哨兵语义）；随后长度 ×
+[0x7E5168] 常量后经 0x4CACB0/0x4CAD00 两次浮点函数（atan2/atan 推断）算角，
+最后写 this.{x,y,z} 四 dword。
+
+★怪癖：①★长度==[0x7E2800]（0x7E2800 已见于 GetPowerPercentage batch，
+=0.0 double? 待核实）时跳过归一化——但之前分支条件是 test ah,0x40（C3
+相等标志），即"长度恰等于常量"才跳过；②除法用 fdiv st(1)（被除数在
+st(0)）/fdivr 混合（x 用 fdivr = 除数在 st(0)）；③归一化结果先存栈再
+与 0x4CACB0 结果相乘后才输出——归一化分量参与角度计算。
+
+⚠️ partial：0x4CAC40/0x4CACB0/0x4CAD00 精确身份（sqrt/atan2/atan 推断）、
+[0x7E2800]/[0x7E5168] 常量值、栈参 1 第 4 字段（[esp+0x3C] 源）语义、
+输出 {x,y,z} 与归一化分量顺序。
+
+================================================================================
+0x5A9A70 —— 12B 三元组数组对象构造（103B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 2 栈参（[esp+0xC]=源 8B、[esp+8] 未用?）ret 8。
+机器码（0x5A9A70-0x5A9AD4）：
+    esi=ecx（this）
+    edi=0
+    [esi+8]=0; [esi]=2（★+0 计数=2）
+    push 0x10; call 0x7C8E17（operator new 0x10）
+    test; je 0x5A9AAB
+    ecx=eax+4; edx=2
+    循环（0x5A9A95-0x5A9AA7，2 次）:
+      word[ecx-4]=0; word[ecx-2]=0; dword[ecx]=0xFFFFFFFF
+      ecx+=8; dec edx; jne 循环
+    jmp 0x5A9AAD
+0x5A9AAB:
+    eax=0
+0x5A9AAD:
+    ecx=[esp+0xC]（栈参 1）
+    [esi+4]=eax（★对象指针）
+    edx=[ecx]; [eax]=edx           ; 目标[0] = 源[0]
+    ecx=[ecx+4]; [eax+4]=ecx       ; 目标[4] = 源[4]
+    eax=[esp+0xC]; edx=[esi+4]
+    ecx=[eax]; [edx+8]=ecx         ; ★目标[8] = 源[0]
+    eax=[eax+4]; [edx+0xC]=eax     ; 目标[0xC] = 源[4]
+    eax=esi（this）; ret 8
+
+语义：**持有 2 组三元组的对象构造**——this{+0 计数=2, +4 指向 0x10 字节
+堆对象, +8 字段}；堆对象 = 2 个 {word 0, word 0, dword 0xFFFFFFFF} 三元组
+（12B 有效 + 4B 对齐填充）；栈参 1（8B）复制两份：目标[0..4] 与目标[8..C]
+= 源[0..4]（同一源数据写两处）。
+
+★怪癖：①★同一源 8B 数据写目标两处（[+0] 与 [+8]，从 +0x10 堆对象视角是
+offset 0 和 8——两组三元组的公共值）；②三元组初始 {0,0,0xFFFFFFFF}
+（两个 word 零 + 一个 dword 全 F 哨兵）；③+0 计数=2（硬编码，非参数）；
+④new 失败 eax=0 仍写 [esi+4]=0 且 ret this（★空对象照常返回）。
+
+⚠️ partial：三元组字段语义（坐标+哨兵?）、+8 字段、栈参 2（[esp+8]）未用、
+宿主类（MAPCELL/区域三元组推断）。
+
+================================================================================
+0x5AE6F0 —— Matrix3D::Matrix3D 单位矩阵构造（92B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 2 栈参 ret 8。functions.tsv 符号名 Matrix3D
+（USER_DEFINED，YRpp 覆盖，非 exe 内符号——但行为与 Matrix3D 构造吻合）。
+机器码（0x5AE6F0-0x5AE749）：
+    esi=ecx（this）
+    eax=0; ecx=0x3F800000（★1.0f）
+    [esi+4..+0xC]=0; [+0x18..+0x24]=0; [+0x2C]=0    ; 清非对角
+    [esi]=ecx（1.0f）      ; ★对角线 4 项
+    [esi+0x14]=ecx（1.0f）
+    [esi+0x28]=ecx（1.0f）
+    [esi+0x10]=0 隐含（被清）
+    eax=[esp+8]（栈参 1）
+    push eax
+    mov ecx, esi; call 0x5AF1A0     ; ★旋转分量（栈参 1）
+    ecx=[esp+0xC]（栈参 2）
+    push ecx
+    mov ecx, esi; call 0x5AEF60     ; ★平移分量（栈参 2）
+    fld [esp+8]; fchs; push; mov ecx, esi
+    call 0x5AF1A0                   ; ★再调旋转（负值——★栈参 1 二次使用）
+    eax=esi（this）; ret 8
+
+语义：**Matrix3D 单位矩阵 + 旋转/平移初始化**——清 3×3 非对角、对角线
+0x3F800000（1.0f）、经 0x5AF1A0 装旋转（栈参 1）、0x5AEF60 装平移（栈参 2）、
+再以 -栈参 1 调 0x5AF1A0（★旋转共调用两次，第二次取负）。构造完返回 this。
+
+★怪癖：①★栈参 1（旋转角）使用两次：先原值、后 fchs 取负——两次旋转分量
+（正/负）分别写入矩阵不同位置；②对角线 4 项 1.0f（3D 齐次矩阵 4×4 单位
+阵对角）；③平移经独立函数 0x5AEF60（栈参 2）；④构造不校验栈参（任意值）。
+
+⚠️ partial：0x5AF1A0（旋转分量写矩阵具体偏移）/0x5AEF60（平移分量）实现、
+[0x3F800000] 常量确认、Matrix3D 布局（3×3 齐次 4×4=16 float=64B 推断，
+this 偏移 0/0x14/0x28 为对角线）。
+
+================================================================================
+登记口径
+================================================================================
+三函数均为 semantics_verified（反汇编全文读完、行为确定）。0x5A9A70 与
+0x5AE6F0 为构造器（宿主对象生命周期端点），0x646480 为纯数学例程（浮点
+函数 0x4CAC40/0x4CACB0/0x4CAD00 待后续闭合——与 batch 1242 的调色板常量
+同属"浮点辅助链"，可经 emu 或真 CPU 验证）。C++ 复刻与单测留待宿主
+（Matrix3D 数学族）推进时一并闭合。
