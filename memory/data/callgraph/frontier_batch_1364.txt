@@ -1,0 +1,133 @@
+frontier batch 1364 — 0x63D070 位打包前置处理器 / 0x639F80 表项递减保护器 / 0x625AB0 单链表销毁器（2026-10-23）
+
+口径：承接 batch 1363 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x63D070（120B，callees=1 deps=164）、
+0x639F80（36B，callees=0 deps=63 纯叶）、0x625AB0（41B，callees=1
+deps=287）。
+取证手段：disasm.py 双参直反汇编全程读完（0x63D070 0x90 尾 0x63D0E5（含
+相邻 0x63D0F0 开头）/ 0x639F80 0x40 尾 0x639FA3（含相邻 0x639FB0 开头）/
+0x625AB0 0x50 尾 0x625AD8（含相邻 0x625AE0 链表头插入器），函数边界与
+functions.tsv 完全吻合）+ TSV 查重（三候选全部未登记）+ 跨批次对比
+（[0x8A0DD0..0x8A0DE4] 位宽表 ↔ batch 1361 0x655C50/1363 0x63DAD0 同锚点；
+0x6612C0 ↔ batch 1360 0x661190 相邻；0x7C8B3D 释放 ↔ 既有锚点；
+0x4CB890 ↔ 析构家族）。
+
+================================================================================
+0x63D070 —— 位打包前置处理器（120B 全程读完）
+================================================================================
+签名：thiscall（ecx=this 三字节源）+ 1 栈参（[esp+0x10]=参数 edx），
+返回 eax 打包值，ret 4（0x63D070-0x63D0E5，callees=1 deps=164）。
+机器码结构（0x63D070-0x63D0E5，全程读完）：
+    入口：sub esp, 8
+    mov ax, [ecx]                                 ; ★this+0 的 word（字节 0/1）
+    mov cl, [ecx+2]                               ; ★this+2 的 byte（字节 2）
+    push edx
+    mov edx, [esp+0x10]（栈参）; mov [esp+6], cl
+    push edx
+    lea ecx, [esp+8]; mov word [esp+8], ax        ; ★组装 3 字节结构
+    call 0x6612C0                                  ; ★0x6612C0（0x661190 相邻）
+    0x63D091（★位宽表打包段）：
+    mov cl, [0x8A0DDC]; mov eax, [esp+2]; mov edx, [esp+1]
+    and eax, 0xFF; and edx, 0xFF
+    shr eax, cl; mov ecx, [0x8A0DD8]; shl eax, cl  ; ★字节 2 处理
+    mov cl, [0x8A0DE4]; shr edx, cl
+    mov ecx, [0x8A0DE0]; shl edx, cl               ; ★字节 1 处理
+    mov cl, [0x8A0DD4]; or eax, edx
+    mov edx, [esp]; and edx, 0xFF; shr edx, cl
+    mov ecx, [0x8A0DD0]; shl edx, cl
+    or eax, edx                                    ; ★三份 OR 合并
+    add esp, 8; ret 4
+语义：**位打包前置处理器**（0x63D07x 区——0x63D0xx 位/打包域，
+callees=1 deps=164）：thiscall 三字节源 + 1 栈参：把 this 的三字节
+（word [ecx] + byte [ecx+2]）组装到栈上 + 栈参 → **0x6612C0 前置处理**
+（batch 1360 0x661190 三字节钳位缩放器相邻）→ 结果三字节按
+**[0x8A0DD0..0x8A0DE4] 六位宽表** shr/shl 可变位宽打包 → OR 合并成
+dword 返回值。★位打包前置处理器（0x63D07x 区——0x6612C0 前置 +
+[0x8A0DD0..0x8A0DE4] 位宽表 + OR 合并——batch 1361 0x655C50/1363
+0x63DAD0 同锚点家族）。2 unique caller（3 callsite）。
+★怪癖：①★0x6612C0 前置处理（组装 3 字节结构 + 栈参——batch 1360
+0x661190 相邻函数）；②★[0x8A0DD0..0x8A0DE4] 六位宽表（shr cl +
+shl cl——每字节可变位宽裁剪后归位，与 batch 1363 0x63DAD0 同款）；
+③★三字节 OR 合并（or eax,edx ×2——位打包惯用）；④★word+byte 拆分
+组装（mov ax,[ecx] + mov cl,[ecx+2]——三字节源两种读法）+ ret 4。
+⚠️ partial：0x6612C0 身份（0x661190 相邻前置）、源三字节字段语义、
+[0x8A0DD0..0x8A0DE4] 位宽表含义、栈参语义、2 unique caller 身份。
+
+================================================================================
+0x639F80 —— 表项递减保护器（36B 全程读完）
+================================================================================
+签名：thiscall（ecx=表索引），无栈参，ret 0（0x639F80-0x639FA3，
+callees=0 纯叶 deps=63）。
+机器码（0x639F80-0x639FA3）：
+    入口：test ecx, ecx; jl 0x639FA3（★负索引 → 直接返）
+    cmp ecx, 0x18; jge 0x639FA3（★索引 ≥ 0x18=24 → 直接返）
+    mov eax, [ecx*4 + 0xAC4B84]                    ; ★表 [0xAC4B84] 取项
+    mov edx, 0
+    dec eax                                         ; 项值 - 1
+    sets dl                                         ; ★dl = (eax 有符号<0)?1:0
+    dec edx                                         ; dl→ 0 或 -1
+    and edx, eax                                    ; ★归零保护（负 → 0）
+    mov [ecx*4 + 0xAC4B84], edx                     ; ★写回表项
+    0x639FA3：ret
+    （相邻 0x639FB0 孪生判定器：索引 ∈ [0,0x18) → dl=1 范围检查）
+语义：**表项递减保护器**（0x639F8x 区——0x639Fxx 表/递减域，
+callees=0 纯叶 deps=63）：thiscall 表索引：索引 ∈ [0, 0x18) 时从
+[0xAC4B84] 表取项 → **减 1 但归零保护**（dec eax + sets dl +
+dec edx + and edx,eax——减后不为负，负则归 0）→ 写回；索引越界
+直接返。★表项递减保护器（0x639F8x 区——[0xAC4B84] 表 +
+sets/dec/and 归零保护 + 边界 [0,0x18)）。2 unique caller（3 callsite）。
+★怪癖：①★sets/dec/and 归零保护惯用法（dec eax → sets dl（SF 判
+负）→ dec edx（dl: 1→0 或 0→-1）→ and edx,eax——减后负值钳到 0）；
+②★表 [0xAC4B84] 索引项（ecx*4——4B/项 dword 表）；③★边界
+[0, 0x18=24)（jl/jge 越界早退）；④★相邻 0x639FB0 孪生判定器
+（[0,0x18) 范围返 dl=1）+ ret 0 无栈参 + callees=0 纯叶。
+⚠️ partial：表 [0xAC4B84] 类型（24 项计数表？）、项值语义、
+2 unique caller 身份。
+
+================================================================================
+0x625AB0 —— 单链表销毁器（41B 全程读完）
+================================================================================
+签名：thiscall（ecx=this 链表容器），无栈参，ret 0（0x625AB0-
+0x625AD8，callees=1 deps=287）。
+机器码（0x625AB0-0x625AD8）：
+    入口：push esi; mov esi, [ecx+4]                 ; ★链表头（[this+4]）
+    test esi, esi; je 0x625AD7（空 → 直接返）
+    0x625AB8：push edi
+    0x625AB9 循环：mov edi, [esi+0xC]                 ; ★+0xC 下一节点指针
+    test esi, esi; je 0x625AD0
+    mov ecx, esi
+    call 0x4CB890                                    ; ★0x4CB890（节点析构）
+    push esi
+    call 0x7C8B3D; add esp, 4                        ; ★0x7C8B3D 释放节点
+    0x625AD0：test edi, edi; mov esi, edi
+    jne 0x625AB9（★移到下一节点循环）
+    pop edi
+    0x625AD7：pop esi; ret
+    （相邻 0x625AE0 链表头插入器：mov [eax+0xC],[ecx+4];
+    mov [ecx+4],eax——新节点插到表头，+0xC 为 next）
+语义：**单链表销毁器**（0x625ABx 区——0x625Axx 链表/销毁域，
+callees=1 deps=287）：thiscall 链表容器：**单链表遍历销毁**——
+从头 [this+4] 起，每节点先 0x4CB890 析构、再 0x7C8B3D 释放，
+**+0xC 为 next 指针**，循环到空 → 返。★单链表销毁器（0x625ABx
+区——[this+4] 链表头 + +0xC next 遍历 + 0x4CB890+0x7C8B3D 每节点）。
+2 unique caller（3 callsite）。
+★怪癖：①★+0xC 为 next 指针（mov edi,[esi+0xC]——单链单向遍历，
+相邻 0x625AE0 插入器同 +0xC 布局交叉确认）；②★每节点先 0x4CB890
+析构再 0x7C8B3D 释放（析构+释放对——既有锚点 0x7C8E17 分配/
+0x7C8B3D 释放）；③★空链表早退（[this+4]==0 → 直接返）；
+④★相邻 0x625AE0 链表头插入器（表头插 + 布局交叉验证）+ ret 0。
+⚠️ partial：链表节点类型（0x4CB890 析构身份）、+0xC next 布局
+确认、2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1363（0x63DAD0 三字节位打包器）+ batch 1361（0x655C50）：
+  0x63D070 用**同 [0x8A0DD0..0x8A0DE4] 位宽表**——位打包家族持续
+  闭合（本批为前置处理版）。
+- batch 1360（0x661190 三字节钳位缩放器）：0x63D070 调其相邻
+  0x6612C0——0x661xxx 颜色/缩放域交叉连接。
+- 0x7C8B3D 释放（既有锚点）：0x625AB0 每节点释放——释放家族兑现。
+- 0x4CB890（析构家族）：0x625AB0 节点析构——析构家族新锚点。
+- batch 1363（0x639FB0 孪生判定器）：0x639F80 与 0x639FB0 相邻
+  孪生（递减器 + 范围判定器成对）——Westwood 复制粘贴惯用再验证。
