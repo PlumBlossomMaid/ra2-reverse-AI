@@ -1,0 +1,101 @@
+frontier batch 1285 — 0x4F3A50 结构初始化器 / 0x63E140 持有释放器 / 0x54A950 位索引 bit 测试器（2026-10-22）
+
+口径：承接 batch 1284 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=3 三个未登记函数：
+0x4F3A50（30B）、0x63E140（39B）、0x54A950（50B）。取证手段：disasm.py
+直反汇编全程读完 + TSV 查重（三候选全部未登记）。
+
+================================================================================
+0x4F3A50 —— 结构初始化器（30B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（[esp+4]=初始化值）ret 4。
+机器码（全文 30 字节）：
+    mov eax, ecx; mov ecx, [esp+4]    ; eax = this, ecx = 栈参
+    mov [eax+4], ecx                  ; this->+4 = 栈参
+    xor ecx, ecx
+    mov byte [eax+8], cl              ; this->+8 = 0（字节标志）
+    mov byte [eax+9], 1               ; ★this->+9 = 1（恒置）
+    mov [eax+0xc], ecx                ; this->+0xC = 0
+    mov [eax], 0x7ea690               ; ★this->vtable = 0x7EA690
+    ret 4
+
+语义：**结构初始化器（构造器形态）**——写 vtable 0x7EA690（★.rdata
+虚表——宿主类）、+4=栈参（初始化指针）、+8=0/+9=1（双字节标志族——
+★+9 恒置 1 活动位推断）、+0xC=0。4 unique caller（30 callsite）。
+
+★怪癖：①★vtable 0x7EA690（.rdata——宿主类虚表需后续读槽闭合）；②★+9
+恒置 1（活动/启用位——与 +8=0 不对称，batch 1274 Enable/Disable 双标志
+族同款）；③★+4 栈参透传（初始化指针/句柄）；④★xor ecx 复用三处清零。
+
+⚠️ partial：vtable 0x7EA690 宿主类名、+4 栈参语义、+8/+9 双标志含义、
++0xC 字段、宿主类（0x4F3Axx 区——HouseClass 域 batch 记忆 0x4Fxxxx
+同区）。
+
+================================================================================
+0x63E140 —— 持有释放器（39B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）无栈参 ret 空。
+机器码（全文 39 字节）：
+    push ebx; push esi; mov esi, ecx; xor ebx, ebx
+    mov eax, [esi+4]; cmp eax, ebx; je 0x63e15e   ; ★+4 持有为空 → 跳过
+    cmp byte [esi+0xd], bl; je 0x63e15e           ; ★+0xD owns 标志 0 → 跳过
+    push eax; call 0x7c8b3d; add esp, 4           ; ★0x7C8B3D（delete）
+    mov [esi+4], ebx                              ; 置空持有
+    0x63e15e:
+    mov byte [esi+0xd], bl                        ; ★清 owns 标志
+    mov [esi+8], ebx                              ; 清 +8
+    pop esi; pop ebx; ret
+
+语义：**持有释放器**——持有指针（+4）非空且 owns（+0xD）置位时 delete
+（0x7C8B3D——batch 1271/1275 同目标）并置空；收尾清 +0xD/+8（★owns+
+计数复位）。4 unique caller（39 callsite）。
+
+★怪癖：①★双重门控（+4 非空 && +0xD owns 才释放——与 batch 记忆
+"缓冲持有类析构器 0x5CEE60 三层持有标志门控"同形态）；②★清 +0xD/+8
+收尾（owns 与计数成对复位——VectorClass 家族布局 {+4 持有,+8,+0xD owns}）；③★与 batch 1280 0x6351E0（计数递减器）同 0x63xxxx 区。
+
+⚠️ partial：+4 持有类型、+0xD owns 语义（与 VectorClass 家族同构推断）、
++8 计数、宿主类（0x63Exxx 区——0x63xxxx 工具域）。
+
+================================================================================
+0x54A950 —— 位索引 bit 测试器（50B 全程读完）
+================================================================================
+签名：thiscall（ecx=位图基址）+ 1 栈参（edx=位索引）ret al。
+机器码（全文 50 字节）：
+    push ebx; push esi
+    mov eax, edx; mov esi, ecx; mov ecx, eax     ; ecx = 位索引
+    and ecx, 0x80000007; jns 0x54a965            ; ★byte 索引回绕准备
+    dec ecx; or ecx, 0xfffffff8; inc ecx          ; ★带符号 mod 8
+    0x54a965:
+    cdq; and edx, 7; mov bl, 1                   ; bl = 1（位掩码基）
+    add eax, edx; shl bl, cl                     ; ★bit 位 = 1<<(idx mod 8)
+    sar eax, 3                                   ; 字节索引 = idx/8（有符号）
+    mov dl, [eax+esi]                            ; ★读位图字节
+    pop esi
+    and bl, dl; neg bl; sbb ebx, ebx; neg ebx    ; ★!=0 → 1（布尔归一）
+    mov eax, ebx; pop ebx; ret
+
+语义：**位索引 bit 测试器**——位索引 edx：字节索引 = idx/8（sar 3 有符号
+除）、位掩码 = 1 << (idx mod 8)（★and 0x80000007 + 符号扩展回绕），读
+位图字节并测试该位，结果归一为 0/1（★neg/sbb/neg 布尔化——batch 1264
+0x69DEB0 同款惯用法）。4 unique caller（50 callsite）。
+
+★怪癖：①★带符号 mod 8（and 0x80000007 + dec/or/inc——负索引安全）；
+②★sar 3 有符号字节索引（负索引向下除）；③★neg/sbb/neg 布尔归一
+（非零→1——与 batch 1264 0x69DEB0 的 0x800 标志合成同款）；④★位图
+基址 this 直接作字节数组（内存密集位图——flags 位图推断）。
+
+⚠️ partial：位图语义（flags 集合）、宿主类（0x54Axxx 区——网络/会话
+域 batch 1266 0x54F1C0 邻域）、4 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1264（0x69DEB0 neg/sbb/and 标志合成）：0x54A950 同款 neg/sbb/neg
+  布尔归一惯用法。
+- batch 1274（GadgetClass Enable/Disable 双标志）：0x4F3A50 的 +8=0/+9=1
+  双字节标志族同构。
+- batch 记忆（0x5CEE60 缓冲持有类析构器三层持有标志门控）：0x63E140
+  同形态（+4 非空 && owns 才释放）。
+- 0x7C8B3D（delete 包装）：0x63E140 释放目标（batch 1271/1275 同）。
+- [0x7EA690] vtable：0x4F3A50 宿主类虚表（.rdata——后续读槽闭合）。
