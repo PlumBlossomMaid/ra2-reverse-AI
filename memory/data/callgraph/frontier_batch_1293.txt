@@ -1,0 +1,106 @@
+frontier batch 1293 — 0x410320 COM 样式读取器 / 0x40A7A0 全局读取器 / 0x408080 字段初始化器（2026-10-23）
+
+口径：承接 batch 1292 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=3 三个未登记函数：
+0x410320（87B）、0x40A7A0（6B）、0x408080（30B）。取证手段：disasm.py
+直反汇编全程读完 + TSV 查重（三候选全部未登记）。
+
+================================================================================
+0x410320 —— COM 样式读取器（87B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 3 栈参（[esp+4]=对象指针、[esp+8]、
+[esp+0xC]=目标缓冲）ret 0xC（HRESULT）。
+机器码骨架（0x410320-0x410376）：
+    mov esi, [esp+0xC]; test esi,esi; jne 0x410334
+    mov eax, 0x80004003; ret 0xC                ; ★对象为空 → E_POINTER
+    0x410334:
+    mov edi, [esp+0xC]                          ; edi = 目标缓冲
+    mov eax, [esi]; push 0; lea ecx,[esp+0x14]
+    push 4; push ecx; push esi
+    call dword ptr [eax+0x10]                   ; ★虚表槽 0x10 读（4 字节）
+    jl 0x410372                                 ; ★HRESULT < 0 → 返回
+    mov edx, [edi]; mov ebx, [esi]
+    push 0; mov ecx, edi
+    call dword ptr [edx+0x30]                   ; ★虚表槽 0x30 获取
+    push eax; push edi; push esi
+    call dword ptr [ebx+0x10]                   ; ★虚表槽 0x10 二次读
+    jl 0x410372
+    mov ecx, [esp+0x14]; test ecx,ecx; je 0x410372
+    mov byte [edi+0x20], 0                      ; ★成功 → 清目标 +0x20
+    0x410372: ret 0xC
+
+语义：**COM 样式读取器**——对象空检（返 E_POINTER 0x80004003）→ 经
+宿主虚表槽 0x10 读 4 字节（HRESULT 门控，负值即返）→ 目标虚表槽
+0x30 获取派生值 → 二次虚表槽 0x10 读 → 成功清目标 +0x20 标志字节。
+★IStream/ISerializable 形态（Read 虚表族）。3 unique caller（30 callsite）。
+
+★怪癖：①★HRESULT 0x80004003（E_POINTER）空参哨兵（COM 惯例）；
+②★两级虚表槽链（宿主 0x10 → 目标 0x30 → 宿主 0x10——双层对象
+协作读）；③★HRESULT 用 jl 判负（<0 即失败——COM 成功 S_OK=0）；
+④★成功只清 +0x20 标志字节（标志位复位非数据填充）。
+
+⚠️ partial：宿主/目标对象类型（ISomething 接口）、+0x20 标志语义、
+读出的 4 字节用途、3 unique caller 身份（0x4103xx 区——COM 接口域）。
+
+================================================================================
+0x40A7A0 —— 全局读取器（6B 全程读完）
+================================================================================
+签名：无参（ecx 未用）ret eax。
+机器码（全文 6 字节）：
+    mov eax, [0x87E89C]          ; ★eax = [0x87E89C]（全局）
+    ret
+
+语义：**全局读取器（纯 getter）**——直接返回全局 [0x87E89C] 值。
+6 字节极简（无栈帧无分支）。后邻 0x40A7B0 为同款变体（mov eax,
+[0x87E8A0]——★相邻全局第二 getter）。3 unique caller（30 callsite）。
+
+★怪癖：①★mov eax,[绝对地址] 直读（纯全局 getter——batch 1279
+0x637AA0 同款）；②★后邻 0x40A7B0 读 [0x87E8A0]（相邻双 getter——
+同一全局区两个槽）；③★6B 极简（无 this 依赖）。
+
+⚠️ partial：[0x87E89C]/[0x87E8A0] 全局语义（与 0x40A7C0 后邻宿主
+使用 [0x87E8A0]——对象管理器指针族推断）、宿主类、3 unique caller
+身份、后邻 0x40A7B0（同族候选）。
+
+================================================================================
+0x408080 —— 字段初始化器（30B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（[esp+4]=数据指针）ret 空。
+机器码（全文 30 字节）：
+    push esi; mov esi, ecx
+    push 0x50                    ; ★长度 0x50（80 字节）
+    push edx                     ; 数据源
+    lea eax, [esi+0xA4]          ; ★目标 = this+0xA4
+    push eax
+    call 0x7C91D0                ; ★0x7C91D0（memcpy 形态）
+    add esp, 0xC
+    mov byte [esi+0xF3], 0       ; ★目标 +0xF3 = 0（标志清）
+    pop esi; ret
+
+语义：**字段初始化器**——把数据指针（edx+栈参）的 0x50 字节拷到
+this+0xA4（★0x7C91D0 memcpy 包装——batch 记忆 0x7C91D0 未登记但
+形态为 CRT memcpy），随后清 +0xF3 标志字节。后邻 0x4080A0 为配套
+getter（lea eax,[ecx+0xA4] 返回数据区指针——★get/set 配对）。
+3 unique caller（31 callsite）。
+
+★怪癖：①★固定 0x50 字节拷贝（80B 固定数据区）；②★0x7C91D0 三参
+（目标/源/长度——memcpy 经典调用形态）；③★拷贝后清 +0xF3 标志
+（数据区有效标志复位）；④★后邻 0x4080A0 getter 配对（lea 返回
++0xA4 指针）。
+
+⚠️ partial：+0xA4 数据区语义（0x50=80B 结构）、+0xF3 标志含义、
+0x7C91D0 精确身份（memcpy/自实现）、宿主类（0x4080xx 区）、
+后邻 0x4080A0（同族候选）、3 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1279（全局字节读取器 0x637AA0 mov al,[0xAC4CF4]）：0x40A7A0
+  同款"纯全局 getter"形态（mov eax,[绝对地址]）——原版极简 getter
+  惯用法双实例。
+- COM/HRESULT 族：0x410320 的 0x80004003 E_POINTER + jl 判负——
+  与 batch 记忆"WinMain COM 类清单"同域（COM 接口读取形态）。
+- 0x7C91D0（memcpy 形态调用）：batch 记忆 CRT 运行时三件套
+  （0x7C-0x7D 是 MSVC6 静态 CRT）——0x408080 引用 CRT memcpy。
+- 字段指针 getter（lea eax,[this+off]）：batch 1277 0x759F70/0x759F80
+  同款极简字段 getter 家族——0x4080A0 后邻配对。
