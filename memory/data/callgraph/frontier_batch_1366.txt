@@ -1,0 +1,158 @@
+frontier batch 1366 — 0x60C540 哈希表类型白名单判定器 / 0x60C4A0 双路注册器 / 0x5FA4A0 浮点阈值缩放器（2026-10-23）
+
+口径：承接 batch 1365 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x60C540（648B，callees=0 deps=846 纯叶大）、
+0x60C4A0（54B，callees=2 deps=941 高解锁）、0x5FA4A0（110B，callees=2
+deps=581）。
+取证手段：disasm.py 双参直反汇编全程读完（0x60C540 0x290 尾 0x60C7C7 /
+0x60C4A0 0x50 尾 0x60C4D5（含相邻 0x60C4E0 开头）/ 0x5FA4A0 0x90 尾
+0x5FA50B（含相邻 0x5FA510 孪生），函数边界与 functions.tsv 完全吻合）+
+TSV 查重（三候选全部未登记）+ 跨批次对比（batch 1365 0x60CF00 哈希表
+族 ↔ 本批 0x60C540 同锚点判定版；batch 1355 0x775BA0 [0x7E14E4] ↔ 本批
+0x60C4A0；batch 1354 0x407100 计时器 ↔ 本批 0x407150；batch 1280
+0x721290 钳位写入器 ↔ 本批 0x721290；0x7C5F00 _ftol ↔ 既有锚点）。
+
+================================================================================
+0x60C540 —— 哈希表类型白名单判定器（648B 全程读完）
+================================================================================
+签名：thiscall（ecx=查询值，mov [esp+4]），无栈参（[esp+0xC]=入口
+参数），命中返 dl/al=1 或 0，ret 0（0x60C540-0x60C7C7，callees=0 纯叶
+deps=846 高解锁）。
+机器码结构（0x60C540-0x60C7C7，全程读完，关键锚点）：
+    入口：push ecx; mov eax, [0xAC1B04]（★全局门控）; push esi
+    test eax; je 0x60C599（门控 0 → 返 0）
+    lea ecx, [esp+4]; call [0xAC1B18]（★哈希函数指针——取索引）
+    mov ecx, [0xAC1B0C]（位宽）; mov edx, 1; shl esi, cl; dec esi
+    and esi, eax（★(1<<位宽)-1 掩码）
+    mov eax, [0xAC1B00]（★表基址）; mov eax, [eax+esi*4]（索引项）
+    test eax; je 0x60C599
+    0x60C577（★链遍历）：mov ecx, [esp+4]
+    cmp [eax], ecx; je 0x60C58E（★首字段 == 查询值 → 命中）
+    mov eax, [eax+0x204]（★+0x204 下一项）; test; jne 0x60C577
+    0x60C589：xor al; ret（未找到 → 返 0）
+    0x60C58E：test eax; je 0x60C599; lea ecx, [eax+4]
+    test ecx; jne 0x60C59E; xor al; ret（命中但项空 → 返 0）
+    0x60C59E（★类型白名单判定）：mov eax, [ecx+0x6C]（★+0x6C 类型值）
+    cmp eax, 0x10C/0x94/0xB6/0xA3/0x73/0xD8/0xBBB/0xF5/0x105/0xD5/
+    0xE2/0x2B5/0xB7/0x2B4/0x101/0x129/0xBC6/0xBC7/0x10B/0xD7/0x108/
+    0xBC/0xBD/0xBB/0xB5/0xBBA/0xFF/0xEA/0x6B/0x100/0x102/0xB8/0xD6/
+    0x103/0xD4/0x125/0x122/0x112/0xE7/0x116/0xC2/0xC9/0x113/0xFE/
+    0x10F/0x11D/0x11C/0x117/0x114/0xE6/0xF3/0xF4/0x2BC/0x10E/0xFB
+    ——**56 个 cmp/je 全跳 0x60C7B7**（★白名单集合）
+    0x60C7B2：xor al; ret（类型不在白名单 → 返 0）
+    0x60C7B7：mov al, dl; mov [ecx+0xB0], edx
+    mov byte [ecx+0xBD], dl（★写 +0xB0/+0xBD 标志 = dl）; ret
+语义：**哈希表类型白名单判定器**（0x60C54x 区——0x60Cxxx 哈希/判定域，
+callees=0 纯叶 deps=846 高解锁）：thiscall 查询值：[0xAC1B04] 全局门控
+→ [0xAC1B18] 函数指针哈希 → **(1<<[0xAC1B0C] 位宽)-1 掩码** → 表
+[0xAC1B00] 索引项 → **+0x204 链遍历**（首字段 == 查询值命中）→ 命中项
++4 后按 **[+0x6C] 类型值 56 项白名单判定**（0x10C/0x94/0xB6/.../0xFB
+——每个 cmp/je 跳 0x60C7B7）→ 命中写 +0xB0/+0xBD 标志返 dl、未命中
+返 0。★哈希表类型白名单判定器（0x60C54x 区——batch 1365 0x60CF00
+哈希表族**判定版**：[0xAC1B18] 哈希 + [0xAC1B00] 表 + +0x204 链 +
++0x6C 类型 56 项白名单——callees=0 不调构造器）。2 unique caller
+（3 callsite）。
+★怪癖：①★[0xAC1B04] 全局门控 + [0xAC1B18] 函数指针哈希
+（[0xAC1B0C] 位宽掩码 1<<n-1——与 batch 1365 0x60CF00 完全同锚点）；
+②★表 [0xAC1B00] + +0x204 链遍历（首字段匹配——哈希桶冲突链）；
+③★**+0x6C 类型 56 项白名单**（0x10C/0x94/0xB6/0xA3/0x73/0xD8/
+0xBBB/0xF5/0x105/0xD5/0xE2/0x2B5/0xB7/0x2B4/0x101/0x129/0xBC6/
+0xBC7/0x10B/0xD7/0x108/0xBC/0xBD/0xBB/0xB5/0xBBA/0xFF/0xEA/0x6B/
+0x100/0x102/0xB8/0xD6/0x103/0xD4/0x125/0x122/0x112/0xE7/0x116/
+0xC2/0xC9/0x113/0xFE/0x10F/0x11D/0x11C/0x117/0x114/0xE6/0xF3/
+0xF4/0x2BC/0x10E/0xFB——与 0x60CF00 的 26 构造分支大量重叠）；
+④★命中写 +0xB0/+0xBD = dl（标志写回）+ callees=0 纯叶（判定版
+不调 0x72xxxx 构造器——与 0x60CF00 构造版形成判定/构造对）。
+⚠️ partial：表项类型（首字段/0x204/0x6C/0xB0/0xBD 字段语义）、
+[0xAC1B00..0xAC1B18] 全局身份、56 类型值含义（白名单？）、dl 参数
+来源、2 unique caller 身份。
+
+================================================================================
+0x60C4A0 —— 双路注册器（54B 全程读完）
+================================================================================
+签名：thiscall（ecx=this，mov esi）+ 1 栈参（[esp+0x10]=参数 edi），
+ret 0（0x60C4A0-0x60C4D5，callees=2 deps=941 高解锁）。
+机器码（0x60C4A0-0x60C4D5）：
+    入口：mov eax, [0x8A00A8]; push esi; mov esi, ecx; push edi
+    mov ecx, [0x8A00A4]; push 0; push eax; push ecx
+    push 0; push 0; mov edi, edx; push esi
+    call [0x7E1398]（★[0x7E1398] 函数指针——7 参调用）
+    mov [0xAC48A8], esi（★存全局 [0xAC48A8] = this）
+    push edi; push 0x60C0C0（★回调函数地址）; push esi
+    call [0x7E14E4]（★[0x7E14E4] 函数指针——回调注册）
+    pop edi; pop esi; ret
+语义：**双路注册器**（0x60C4Ax 区——0x60C4xx 注册/回调域，
+callees=2 deps=941 高解锁）：thiscall + 1 栈参：**先 [0x7E1398] 函数
+指针 7 参调用**（[0x8A00A4]/[0x8A00A8] 全局参数 + this + 0/0）→ 存
+[0xAC48A8] 全局 = this → **再 [0x7E14E4] 函数指针调用**（0x60C0C0
+回调地址 + this + 参数——注册回调）→ ret。★双路注册器（0x60C4Ax
+区——[0x7E1398] 查询/注册 + [0x7E14E4] 回调注册 + [0xAC48A8] 全局
+存 this）。2 unique caller（3 callsite）。
+★怪癖：①★[0x7E1398] 函数指针 7 参调用（[0x8A00A4]/[0x8A00A8]
+全局参数 + push 0/0 常量 + this——注册前查询/登记）；
+②★[0x7E14E4] 函数指针调用（**0x60C0C0 回调地址** + this + 参数——
+batch 1355 0x775BA0 同锚点 [0x7E14E4] 回调注册）；③★[0xAC48A8]
+全局存 this（mov [0xAC48A8],esi——注册结果存档）；④★ret 0 无栈参
++ callees=2 纯链 + deps=941 高解锁。
+⚠️ partial：[0x7E1398]/[0x7E14E4] 精确身份、0x60C0C0 回调语义、
+[0x8A00A4]/[0x8A00A8]/[0xAC48A8] 全局含义、参数语义、2 unique
+caller 身份。
+
+================================================================================
+0x5FA4A0 —— 浮点阈值缩放器（110B 全程读完）
+================================================================================
+签名：thiscall（ecx=this，mov esi）+ 2 栈参（[esp+4]=参数1、
+[esp+8]=参数2），ret 8（0x5FA4A0-0x5FA50B，callees=2 deps=581）。
+机器码结构（0x5FA4A0-0x5FA50B，全程读完，关键锚点）：
+    入口：fld [esp+4]; fcomp [0x7E1718]（★阈值常量）
+    push esi; mov esi, ecx; fnstsw ax; test ah, 1; je 0x5FA4BA
+    0x5FA4B4：fld [esp+8]; jmp 0x5FA4C0（★参数1 < 阈值 → 用参数2）
+    0x5FA4BA：fld [0x7E1718]（★否则用阈值常量）
+    0x5FA4C0：fst [esi+0x40]（★存 +0x40）
+    fmul [0x7EF38C]; call 0x7C5F00（★×[0x7EF38C] → _ftol）
+    mov ecx, [0x87E744]（★全局宿主）; mov edx, eax
+    call 0x407150（★0x407150——batch 1354 0x407100 计时器构造相邻）
+    fld [esi+0x40]; fmul [0x7EAA50]; call 0x7C5F00（★×[0x7EAA50] → _ftol）
+    push eax; mov ecx, 0xA83D10
+    call 0x721290（★0x721290 钳位写入器——batch 1280 记忆锚点：
+    min(值,0xFF) 存 +0xC）
+    fld [esi+0x40]; sub esp, 8; fstp [esp]; push 0x832F9C
+    call 0x4068E0（★日志——双精度参数）
+    pop esi; ret 8
+    （相邻 0x5FA510 完全同构孪生——同一模板第二副本）
+语义：**浮点阈值缩放器**（0x5FA4Ax 区——0x5FAxxx 浮点/缩放域，
+callees=2 deps=581）：thiscall + 双栈参：参数1 fcomp **阈值
+[0x7E1718]** 门控双源（参数1 < 阈值 → 用参数2；否则用阈值常量）→
+存 +0x40 → **×[0x7EF38C] → _ftol → [0x87E744] 全局宿主 + 0x407150
+计时器** → 再 **×[0x7EAA50] → _ftol → 0xA83D10 + 0x721290 钳位写** →
+0x4068E0 日志 → ret 8。★浮点阈值缩放器（0x5FA4Ax 区——阈值门控双源
++ 双缩放常量对 + 计时器 + 钳位写 + 日志——相邻 0x5FA510 完全同构
+孪生）。2 unique caller（3 callsite）。
+★怪癖：①★fcomp [0x7E1718] 阈值门控（参数1 < 阈值 → 参数2；否则
+阈值常量——fcomp st(1) + test ah,1）；②★**双缩放常量对**
+（[0x7EF38C] 与 [0x7EAA50]——两段独立缩放 → _ftol 各一次）；
+③★[0x87E744] 全局宿主 + 0x407150（batch 1354 0x407100 计时器
+构造相邻——计时器家族）；④★0x721290 钳位写入器（0xA83D10 宿主 +
+min(值,0xFF) 存 +0xC——batch 1280 记忆锚点兑现）；⑤★0x4068E0 日志
+（0x832F9C 格式串 + 双精度参数）+ ret 8 双栈参 + 相邻 0x5FA510
+完全同构孪生。
+⚠️ partial：+0x40 字段语义、[0x7E1718]/[0x7EF38C]/[0x7EAA50] 常量
+值、[0x87E744]/0xA83D10 宿主身份、0x407150/0x721290 身份、双栈参
+含义、2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1365（0x60CF00 哈希表类型分派器）：0x60C540 用**同哈希表
+  锚点**（[0xAC1B04]/[0xAC1B18]/[0xAC1B0C]/[0xAC1B00] + +0x204 链 +
+  +0x6C 类型值）——哈希表家族持续闭合（0x60CF00 构造版 vs 0x60C540
+  判定版成对）。
+- batch 1355（0x775BA0 [0x7E14E4] 回调注册）：0x60C4A0 用
+  [0x7E14E4] + 0x60C0C0 回调——COM 回调注册族持续闭合。
+- batch 1354（0x407100 计时器构造器）：0x5FA4A0 调相邻 0x407150
+  ——计时器家族交叉连接。
+- batch 1280（0x721290 钳位写入器记忆锚点：min(值,0xFF) 存 +0xC）：
+  0x5FA4A0 用 0x721290——记忆锚点兑现。
+- 0x7C5F00 _ftol（既有锚点）：0x5FA4A0 用 ×2——截断家族兑现。
+- 双子模式（batch 1277/1352/1356/1363/1364）：0x5FA4A0/0x5FA510
+  完全同构——Westwood 复制粘贴惯用再验证。
