@@ -1,0 +1,173 @@
+frontier batch 1303 — 0x5CE640 场景加载构造器 / 0x63D630 距离坐标调整器 / 0x606740 哈希表键查找标志写入器（2026-10-23）
+
+口径：承接 batch 1302 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=2 三个未登记函数：
+0x5CE640（357B）、0x63D630（474B）、0x606740（96B）。取证手段：
+disasm.py 直反汇编全程读完（0x5CE640 0x180 / 0x63D630 0x1F0 / 0x606740
+0x80 覆盖）+ TSV 查重（三候选全部未登记）+ 跨批次对比（0x606740 哈希
+形态 ↔ batch 记忆文件缓存哈希表同族）。
+
+================================================================================
+0x5CE640 —— 场景加载构造器（357B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 4 栈参（[esp+0x98]/[esp+0x9C]/[esp+0xA0]/
+[esp+0xA4]）ret 0x10。
+机器码骨架（0x5CE640-0x5CE7A4）：
+    sub esp, 0x84; push 全; mov esi, ecx; xor ebx, ebx
+    lea ecx, [esi+0x14]; mov [esi+4], ebx; mov [esi+8], ebx
+    mov byte [esi+0xC], bl
+    call 0x6C8C40                     ; ★时钟/时间取值
+    mov ecx, [esp+0x9C]; mov dl, [esp+0xA4]; mov ebp, [esp+0x98]
+    mov [esi+0x10], eax
+    mov [esi+0x18], ebx
+    mov [esi], 0x7EE8E8               ; ★vtable①
+    mov eax, [0x887310]
+    lea edi, [esi+0x2C]; mov [esi+0x1C], eax
+    mov [esi+0x20], ecx; mov [esi+0x24], ebx
+    mov byte [esi+0x28], dl; mov byte [esi+0x29], bl
+    mov [edi], ebx; mov [edi+4], ebx; mov [edi+8], ebx; mov [edi+0xC], ebx  ; +0x2C 四 dword 清零
+    push ebx; mov ecx, ebp
+    mov [esi], 0x7EEA2C               ; ★vtable②
+    mov byte [esi+0xC], 1
+    call 0x7B47F0                     ; ★宽串构造（源）
+    test al, al; je 0x5CE796
+    路径拼接:
+    lea ecx, [esp+0x10]; call 0x7B4620（串类构造）
+    push eax; push 0x826598; push ebx
+    call 0x7B5F10（★宽串格式化/路径组装）
+    ...call 0x7B4DA0（串处理）
+    call 0x473A30（★CCFileClass 构造）; call 0x7B46F0（串析构）
+    push ebx; lea ecx, [esp+0x2C]; call 0x473C50（★Exists/查找）
+    test al, al; je 0x5CE761
+    call 0x630310（★文件装载）; mov [esi+0x24], eax
+    test eax, eax; je 0x5CE761
+    call dword ptr [edx+0x78]（虚表槽 0x78 读数据）
+    拷贝 16 字节到 [esi+0x2C]（四 dword）
+    ...收尾: 栈对象析构（0x43AE50/0x431B80 vtable 0x7E16B0/0x7E1668）
+    mov eax, esi; ret 0x10
+
+语义：**场景加载构造器**——多参构造（ret 0x10 = 4 栈参）：vtable 两
+阶段（0x7EE8E8 → 0x7EEA2C）+ 字段族初始化（+0x10 时间戳、+0x1C/+0x20/
++0x24/+0x28 参透传）+ 宽串路径组装（0x826598 串 + 0x7B5F10 格式化）+
+CCFileClass 构造（0x473A30）+ 查找（0x473C50）+ 文件装载（0x630310）+
+虚表槽 0x78 读数据写 +0x2C。★场景/地图文件加载形态（0x5CExxx 区——
+batch 记忆 0x5CEE60 缓冲持有类析构器同区）。6 unique caller（211
+callsite）。
+
+★怪癖：①★双 vtable 赋值（0x7EE8E8 → 0x7EEA2C 两阶段构造）；
+②★ret 0x10（4 栈参——文件路径/标志/句柄族）；③★路径拼接链
+（0x826598 常量串 + 0x7B5F10 格式化 + CCFileClass）；④★+0x2C 四
+dword 清零后虚表槽 0x78 填充（数据区）；⑤★[0x887310] 全局引用。
+
+⚠️ partial：宿主类（0x5CE6xx 区——资源/文件加载域）、4 栈参语义、
+0x826598 串内容、0x630310 装载、虚表槽 0x78 宿主、+0x2C 数据区格式、
+6 unique caller 身份。
+
+================================================================================
+0x63D630 —— 距离坐标调整器（474B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 4 栈参（[esp+0x54]/[esp+0x58]/[esp+0x60]/
+[esp+0x64] 两坐标点）ret 0x14。
+机器码骨架（0x63D630-0x63D809）：
+    sub esp, 0x48; push 全
+    mov ebx, [esp+0x54]; mov ebp, [esp+0x60]
+    mov esi, [esp+0x58]; mov edi, [esp+0x64]
+    mov [esp+0x10], ecx
+    mov eax, esi; sub eax, edi        ; ★dx = x1 - x2
+    mov ecx, ebx; mov [esp+0x18], eax
+    sub ecx, ebp                      ; ★dy = y1 - y2
+    fild dword [esp+0x18]（浮点化）
+    mov [esp+0x1C], ecx
+    sub esp, 8
+    fild dword [esp+0x24]; mov [esp+0x1C], edx
+    fld st(0); fmul st(1); fld st(2); fmul st(3); faddp st(1)   ; ★dx² + dy²
+    fstp qword [esp]; fstp st(0); fstp st(0)
+    call 0x4CAC40                     ; ★sqrt（距离）
+    add esp, 8
+    call 0x7C5F00                     ; ★_ftol（截断）
+    cmp eax, 0x25; jl 0x63D800        ; ★距离 < 37 → 跳过
+    lea eax, [edi+esi]; cdq; sub eax, edx; mov esi, eax
+    lea eax, [ebx+ebp]; cdq; sub eax, edx; mov edi, eax
+    sar esi, 1; sar edi, 1            ; ★坐标÷2 取中
+    lea ebx, [esi-0xA]; lea ebp, [edi-0xA]  ; ★再 -0xA 偏移
+    call 0x72AD20                     ; ★取格/对象
+    拷贝 16 字节坐标 → [esp+0x28]
+    mov ecx, [0x88731C]
+    push ...; call dword ptr [eax+0x54]（虚表槽 0x54）
+    边界检查（[esp+0x20] vs 0xFFFFFFFE——越界清零）
+    ...call dword ptr [eax+0x10]（虚表槽 0x10）
+    mov ecx, [0xABF294]
+    movsx eax, word [ecx+2]; movsx ebx, word [ecx+4]  ; ★读地图尺寸
+    ...sar eax,1（÷2）→ 调整坐标
+    大量 push（10+ 参）; call 0x4AED70（★大函数——落位/绘制推断）
+    ret 0x14
+
+语义：**距离坐标调整器**——两坐标点（4 参）求欧氏距离（dx²+dy² →
+0x4CAC40 sqrt → _ftol 截断），距离 ≥ 0x25=37 才继续；坐标÷2 取中再
+-0xA 偏移，0x72AD20 取格，[0x88731C] 虚表槽 0x54/0x10 调用，[0xABF294]
+读地图尺寸，最后 10+ 参大调用 0x4AED70。★相机/部署距离逻辑（0x63D6xx
+区——batch 记忆 0x6351E0 计数递减器同 0x63xxxx 工具域）。6 unique
+caller（24 callsite）。
+
+★怪癖：①★欧氏距离（dx²+dy² → 0x4CAC40 sqrt → _ftol——浮点距离
+计算）；②★0x25=37 距离阈值（<37 跳过后续）；③★坐标÷2 取中再 -0xA
+偏移（目标点计算）；④★[0xABF294] 地图尺寸读（÷2 调整）；⑤★10+ 参
+0x4AED70 大调用（落位/绘制推断）。
+
+⚠️ partial：宿主类（0x63D6xx 工具域）、4 坐标参语义、0x72AD20 取格、
+虚表槽 0x54/0x10 宿主、0x4AED70 大调用身份、6 unique caller 身份。
+
+================================================================================
+0x606740 —— 哈希表键查找标志写入器（96B 全程读完）
+================================================================================
+签名：thiscall（ecx=键）+ dl（标志值）ret 空。
+机器码（全文 0x606740-0x60679F）：
+    push ecx; mov eax, [0xAC1B04]
+    push ebx; test eax, eax
+    mov bl, dl; mov [esp+4], ecx
+    je 0x60679D                       ; ★表不存在 → 静默返回
+    lea ecx, [esp+4]
+    call dword ptr [0xAC1B18]         ; ★哈希函数（IAT 形态）
+    mov ecx, [0xAC1B0C]
+    mov edx, 1; shl edx, cl; dec edx; and edx, eax   ; ★(1<<n)-1 掩码
+    mov eax, [0xAC1B00]
+    mov eax, [eax+edx*4]              ; ★哈希桶取头
+    test eax, eax; je 0x60679D
+    循环:
+    mov ecx, [esp+4]; cmp [eax], ecx; je 0x60678C    ; ★键匹配
+    mov eax, [eax+0x204]; test eax, eax; jne 循环    ; ★+0x204 链式
+    ...未命中 → 返
+    0x60678C:
+    test eax, eax; je 0x60679D
+    add eax, 4; test eax, eax; je 0x60679D
+    mov byte [eax+0xBC], bl           ; ★写标志字节
+    ret
+
+语义：**哈希表键查找标志写入器**——[0xAC1B04] 表存在时：经 [0xAC1B18]
+哈希 + [0xAC1B0C] 位宽掩码（(1<<n)-1）定位桶，[0xAC1B00] 桶数组沿
++0x204 链式查找键，命中后写 [eax+4+0xBC] 标志字节。★规则/类型表键值
+访问器（batch 记忆文件缓存哈希表同族形态）。5 unique caller（20
+callsite）。后邻 0x6067A0 为同类读侧查找（不写标志）。
+
+★怪癖：①★哈希桶 + 0x204 链式（冲突链——桶头 + 链表）；②★(1<<n)-1
+位宽掩码（shl/dec/and——2^n 桶数）；③★键匹配后写 [eax+4+0xBC]
+标志（+4 跳过键字段）；④★[0xAC1B18] 哈希函数经绝对地址调用；
+⑤★表不存在静默返回（[0xAC1B04] 门控）。
+
+⚠️ partial：[0xAC1B00]/[0xAC1B04]/[0xAC1B0C]/[0xAC1B18] 哈希表族、
++0x204 链节点格式、+0xBC 标志语义、宿主类（0x6067xx 区）、后邻
+0x6067A0（读侧同族）、5 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 记忆（0x5CEE60 缓冲持有类析构器）：0x5CE640 同 0x5CExxx 区——
+  资源/文件加载域家族。
+- batch 记忆（文件缓存哈希表 [0xABF00C] 8B/项）：0x606740 同哈希表
+  形态（本批 [0xAC1B00] 族——键值访问器另一实例）。
+- 0x4CAC40（sqrt）：0x63D630 距离计算核心（batch 记忆 X87SpreadKey/
+  FastSqrt 浮点域同函数族）。
+- 0x7C5F00（_ftol）：WinMain 全局 FPCW=chop 环境下截断转换
+  （batch 记忆浮点环境三证据）。
+- 0x7B5F10/0x7B4620/0x7B4DA0/0x7B47F0（宽串家族）：0x5CE640 路径
+  拼接链共用——0x7Bxxxx 宽串工具域。
