@@ -1,0 +1,106 @@
+frontier batch 1295 — 0x4A1D70 CRC 4 字节包装孪生 / 0x67AF60 持有释放器副本⑤ / 0x49FA70 数组递减弹出器（2026-10-23）
+
+口径：承接 batch 1294 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=2 三个未登记函数：
+0x4A1D70（23B）、0x67AF60（39B）、0x49FA70（100B）。取证手段：disasm.py
+直反汇编全程读完 + TSV 查重（三候选全部未登记）+ 跨批次对比
+（0x4A1D70 ↔ batch 082/134 已登记 CRC 家族同构实锤）。
+
+================================================================================
+0x4A1D70 —— CRC 4 字节包装孪生（23B 全程读完）
+================================================================================
+签名：thiscall（ecx=CRC 引擎）+ 1 栈参（[esp+4]=4 字节值）ret 4。
+机器码（全文 23 字节）：
+    mov eax, [esp+4]              ; eax = 4 字节值
+    lea edx, [esp+4]              ; ★edx = &值（作缓冲）
+    push 4; push edx              ; len=4 buf=&值
+    mov [esp+0xC], eax
+    call 0x4A1DE0                 ; ★CRC 字节处理器（batch 082 已登记）
+    ret 4
+
+语义：**CRC 4 字节包装（batch 134 已登记 0x4A1D50 的逐字节孪生）**——
+把单个 4 字节值当 4 字节缓冲喂 0x4A1DE0（batch 082 CRC 引擎）求校验和。
+★batch 134 文档已预告"紧邻 0x4A1D70 是同构副本——batch 085 孪生现象"，
+本批兑现。后邻 0x4A1D90 为 8 字节版本（push 8，两 dword 喂入）。
+2 unique caller（7 callsite）。
+
+★怪癖：①★与 0x4A1D50 逐字节同构（同源码两份编译副本——batch 085
+孪生现象再实例）；②★后邻 0x4A1D90 8 字节版（同族多宽度变体）；
+③★值走 eax/缓冲走 edx 双寄存器路径（lea [esp+4] 取地址）。
+
+⚠️ partial：CRC 引擎内部（batch 082 partial 同）；2 unique caller 身份；
+0x4A1D90 8 字节变体（同族候选）。
+
+================================================================================
+0x67AF60 —— 持有释放器副本⑤（39B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）无栈参 ret 空。
+机器码（全文 39 字节）：
+    push ebx; push esi; mov esi, ecx; xor ebx, ebx
+    mov eax, [esi+4]; cmp eax, ebx; je 0x67af7e   ; ★+4 持有为空 → 跳过
+    cmp byte [esi+0xd], bl; je 0x67af7e           ; ★+0xD owns 标志 0 → 跳过
+    push eax; call 0x7c8b3d; add esp, 4           ; ★0x7C8B3D（delete）
+    mov [esi+4], ebx                              ; 置空持有
+    0x67af7e:
+    mov byte [esi+0xd], bl                        ; ★清 owns 标志
+    mov [esi+8], ebx                              ; 清 +8
+    pop esi; pop ebx; ret
+
+语义：**持有释放器（batch 1285 0x63E140 模板第 5 副本）**——与
+0x63E140/0x45A270/0x4ED950/0x4B9BE0 逐字节一致（同一模板第五份实例化
+拷贝）。2 unique caller（6 callsite）。后邻 0x67AF90 为数组索引查找器
+（+0xC 门控 → 遍历 +4 数组找等于 [栈参] 解引值首项 → 返索引，未中
+or eax,-1——FindItemIndex 第三副本同族候选）。
+
+★怪癖：①★五重孪生（0x63E140/0x45A270/0x4ED950/0x4B9BE0/0x67AF60 五
+地址同一模板——VectorClass 家族析构模板多实例化持续累积）；②★双重
+门控同前（+4 非空 && +0xD owns）；③★清 +0xD/+8 收尾。
+
+⚠️ partial：+4 持有类型、宿主类（0x67AFxx 区——0x67xxxx 工具域）、
+后邻 0x67AF90 查找器（同族候选）、2 unique caller 身份。
+
+================================================================================
+0x49FA70 —— 数组递减弹出器（100B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（[esp+8]=索引）ret 4（递减后值）。
+机器码骨架（0x49FA70-0x49FAD3）：
+    mov ebx, [esp+8]               ; ★索引
+    mov edi, [esi+8]               ; ★当前长度
+    cmp ebx, edi; jl 0x49faad       ; 索引 < 长度 → 直接递减
+    mov eax, [esi]; lea ecx, [ebx+0xA]
+    push 0; push ecx; mov ecx, esi
+    call dword ptr [eax+8]         ; ★虚表槽 8（Grow 扩展至 idx+0xA）
+    test al, al; je 0x49facc        ; ★扩展失败 → 返 0
+    ...新扩展区清零循环（[esi+4][i]=0 for i in 旧长度..新长度）
+    0x49faad:
+    mov eax, [esi+4]
+    mov ecx, [eax+ebx*4]; dec ecx; mov [eax+ebx*4], ecx  ; ★array[idx] -= 1
+    mov eax, [esi+0x10]; dec eax; mov [esi+0x10], eax    ; ★计数 +0x10 -= 1
+    ...返回 array[idx]（递减后）
+    0x49facc: xor eax, eax; ret 4   ; 失败返 0
+
+语义：**数组递减弹出器**——给定索引：越界则经虚表槽 8（Grow）扩展至
+idx+0xA 并清零新扩展区；随后 array[idx] 递减 1、计数（+0x10）递减 1、
+返回递减后值。★引用计数递减/占用标记清除形态。后邻 0x49FAE0 为同构
+第二副本（同族候选未登记）。2 unique caller（8 callsite）。
+
+★怪癖：①★越界自动 Grow（虚表槽 8 扩展到 idx+0xA——按需扩容）；
+②★新扩展区清零循环；③★array[idx]-1 与计数-1 成对；④★失败返 0
+（Grow 失败静默）；⑤★返回递减后值（读回 array[idx]）。
+
+⚠️ partial：数组族语义（引用计数/占用标记）、虚表槽 8 的 Grow 宿主、
++0x10 计数用途、后邻 0x49FAE0（同族候选）、2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 082（0x4A1DE0 CRC 字节处理器）+ batch 134（0x4A1D50 CRC 4 字节
+  包装）：0x4A1D70 是同一 CRC 家族第三入口——batch 134 预告"紧邻
+  0x4A1D70 是同构副本"兑现。
+- batch 1285/1287/1290（0x63E140/0x45A270/0x4ED950/0x4B9BE0 持有释放器
+  四副本）：0x67AF60 为第五副本——VectorClass 家族析构模板实例化
+  数量持续累积（复刻时同一模板需逐份还原）。
+- batch 1287（0x45A2A0/0x4ED980 数组索引查找器）：0x67AF90 后邻为
+  FindItemIndex 第三副本——释放器/查找器成对编译布局再实例。
+- 0x7C8B3D（delete 包装）：所有持有释放器副本共用（batch 1271/1275
+  同）。
