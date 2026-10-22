@@ -1,0 +1,199 @@
+frontier batch 1332 — 0x434120 BitFont::Blit / 0x434990 BitFont::UnLock / 0x431E80 BufferIOFileClass::SetFileName（2026-10-23）
+
+口径：承接 batch 1331 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个 YRpp 命名符号函数（0x434120 BitFont::Blit 989B
+callees=2 deps=11 / 0x434990 BitFont::UnLock 24B callees=0 deps=13 /
+0x431E80 BufferIOFileClass::SetFileName 131B callees=2 deps=16）。
+取证手段：disasm.py 双参直反汇编全程读完（0x434120 0x3E0 尾 0x4344FC /
+0x434990 0x20 尾 0x4349A7 / 0x431E80 0x90 尾 0x431F02，函数边界与
+functions.tsv 完全吻合）+ TSV 查重（三候选全部未登记）+ functions.tsv
+符号核对（三候选均为 USER_DEFINED Global 命名符号）+ 跨批次对比
+（0x65CAC0 RawFileClass 构造 ↔ QWEN.md 记忆锚点；0x7E14B4 全局函数
+指针 ↔ batch 1270s 全局虚表族；虚表槽 0x60/0x4 ↔ 既有虚表知识）。
+
+================================================================================
+0x434120 —— BitFont::Blit（989B 全程读完）
+================================================================================
+签名：thiscall（ecx=宿主，BitFont）+ 4 栈参（[esp+0x44]=字符码 di word、
+[esp+0x48]=x 坐标、[esp+0x4C]=y 坐标、[esp+0x50]=长度/模式 eax），
+返回 eax=结束 X 位置，ret 0x10（0x434120-0x4344FC，0x30 栈）。
+机器码（0x434120-0x4344FC）：
+    入口：sub esp, 0x30; push ebx/ebp/esi/edi
+    mov edi, [esp+0x44]; mov esi, ecx
+    cmp di, 9; jne 0x434158                       ; ★字符码 9（tab）特殊路径
+    0x434137（tab 路径）：
+    mov ecx, [esi+0x28]; mov edi, [esp+0x48]
+    mov edx, [esi+0x20]; add edi, ecx
+    mov eax, edi; sub eax, edx; cdq; idiv ecx      ; ★(x+宽度) 环绕求模
+    mov eax, edi; sub eax, edx; ...ret 0x10        ; ★返回环绕位置
+    0x434158（常规路径）：
+    mov ax, word [esi+0x24]; mov word [esp+0x44], ax  ; ★字符高 +0x24
+    mov eax, [esp+0x50]; cmp eax, -1; je 0x43416E
+    mov [esp+0x44], eax                            ; ★长度参非 -1 覆盖
+    0x43416E（字宽表索引）：
+    mov ecx, [esi+4]; xor eax, eax; test ecx, ecx; je 0x434194
+    mov ebx, [ecx+0x18]; and edi, 0xFFFF
+    xor edx, edx; mov dx, word [ebx+edi*2]         ; ★字宽表 [font+0x18][码*2]
+    test edx, edx; je 0x434194
+    mov eax, [ecx+0x14]; dec edx; imul eax, edx
+    add eax, [ecx+0x1C]                            ; ★位图偏移 font+0x14×(宽-1)+0x1C
+    0x434194（eax==0 分支）：
+    test eax, eax; jne 0x4341BD
+    lea edx, [esp+0x44]; test edx, edx; je 0x4341A8
+    xor dword [esp+0x44], 0x5555                   ; ★xor 0x5555 背景翻转
+    0x4341A8: mov eax, [esi+8]; test eax, eax; jne 0x4341BD
+    mov eax, [esp+0x48]; ...ret 0x10               ; ★无图/无缓冲早退
+    0x4341BD（主绘制）：
+    mov edx, [esi+0xC]; test edx, edx; je 0x4341CF（ret 0x10）
+    lea edx, [eax+1]; mov edi, [ecx+8]             ; ★位图数据 [font+8]
+    mov [esp+0x14], edx; xor edx, edx
+    mov dl, byte [eax]                             ; ★取当前字符字节
+    mov al, byte [esi+0x41]                        ; ★标志字节 +0x41
+    mov esi, [esp+0x4C]; mov [esp+0x50], edx
+    test al, al; je 0x4343F8                        ; ★有标志 → 裁剪路径
+    0x4341F3（裁剪路径）：
+    mov ebx, [esp+0x48]; mov ecx, edx
+    lea eax, [edi+esi-1]; lea edx, [ecx+ebx-1]
+    push eax; push edx; push esi; lea eax, [esp+0x2C]
+    push ebx; push eax
+    call dword ptr [0x7E14B4]                       ; ★0x7E14B4 全局函数指针（裁剪）
+    mov ebp, [esp+0x10]; lea edx, [esp+0x20]
+    lea eax, [esp+0x30]; lea ecx, [ebp+0x30]
+    push ecx; push edx; push eax; mov ecx, ebp
+    call 0x434840                                   ; ★0x434840 内部裁剪计算
+    test al, al; jne 0x434242
+    mov eax, [ebp+0x2C]; mov edx, [esp+0x50]
+    add eax, edx; add eax, ebx; ...ret 0x10         ; ★返回结束 X（未裁剪）
+    0x434242（8 位逐像素绘制主循环）：
+    ...（8 段同构：test dl, 0x80/0x40/0x20/0x10/0x8/
+    0x4/0x2/0x1 → je 跳过 → mov word [esi], bp 写前景色 → add esi, 2）
+    ; ★8 位字模逐位写 word 色值
+    ...（0x4342C5-0x4343BD 外层循环：字符字节推进 + 边界
+    检查 cmp eax, ebx/edi——X 越界跳过）
+    0x4343C5（行推进）：
+    mov edx, [esp+0x10]; mov ebp, [esp+0x14]
+    mov eax, [esp+0x18]; mov ecx, [edx+0x18]
+    add ebp, ecx; mov ecx, [edx+0x10]
+    mov [esp+0x14], ebp; lea esi, [eax+ecx*2]      ; ★y 步进 + 缓冲行宽×2
+    mov eax, [esp+0x1C]; dec eax; mov [esp+0x18], esi
+    mov [esp+0x1C], eax; jne 0x4342B9              ; ★行循环
+    0x4343F8（快速路径——无标志）：
+    mov eax, [esp+0x10]; mov ecx, [eax+0x10]
+    mov edx, [eax+0xC]; imul ecx, esi
+    mov esi, [esp+0x48]; mov eax, edi; add ecx, esi
+    dec edi; test eax, eax; lea ebp, [edx+ecx*2]   ; ★缓冲基址+行×2
+    ...（同构 8 位逐像素循环 0x434426-0x4344DA）
+    0x4344E0（收尾）：
+    mov edx, [esp+0x10]; mov eax, [edx+0x2C]
+    mov edx, [esp+0x50]; mov ecx, [esp+0x48]
+    add eax, edx; add eax, ecx; ...ret 0x10         ; ★返回结束 X = 起X+宽
+语义：**BitFont::Blit**——字体位图绘制（bitmap font blit）：字符码 9
+（tab）走环绕路径（(x+宽度) 对 +0x28 求模返回）；常规路径取字符高
++0x24、长度参（-1 则保留）→ 字宽表 [font+0x18] 按码索引（2B/项）→
+位图偏移 [font+0x14]×(宽-1)+[font+0x1C] → eax==0 时 xor 0x5555 背景
+翻转 + 无图早退 → 主绘制：标志字节 +0x41 非零走裁剪路径（0x7E14B4
+全局函数指针 + 0x434840 内部计算，裁剪失败返结束 X），否则/裁剪后
+进入 **8 位逐像素绘制循环**（字符字节 dl 的 8 个位 0x80→0x1 逐位
+test，命中写 word 前景色 bp 到缓冲 [esi]（2B/像素），未命中跳过；
+X 越界检查 cmp eax, ebx/edi；行推进 = y 步进 [font+0x18] + 缓冲行宽
+[font+0x10]×2）→ 收尾返回结束 X（起X + 字符宽 + 长度）。★字体
+位图绘制器（0x43412x 区——0x434xxx BitFont 字体域，YRpp 命名符号）。
+2 unique caller（4 callsite）。
+★怪癖：①★字符码 9（tab）特殊路径（(x+宽度) 求模环绕返回——0x434137-
+0x434155）；②★字宽表 [font+0x18] 2B/项按码索引 + 位图偏移 [font+0x14]
+×(宽-1)+[font+0x1C]；③★eax==0 时 xor [esp+0x44], 0x5555 背景翻转
+（0x4341A0——0x5555 掩码）；④★标志字节 +0x41 决定裁剪/快速双路径；
+⑤★0x7E14B4 全局函数指针调用（5 参裁剪——非虚表槽、直接间接调用）；
+⑥★8 位逐像素绘制（dl 八位 0x80→0x1 逐位 test + mov word [esi], bp
+2B/像素 + add esi, 2；X 越界 cmp eax, ebx/edi 跳过）；⑦★行推进
+（y 步进 +0x18 + 缓冲行宽 +0x10×2）+ 收尾返回结束 X = 起X+宽+长度；
+⑧★ret 0x10 四栈参（字符码/x/y/长度，长度 -1 保留默认）。
+⚠️ partial：宿主 BitFont 字段布局（+0x4 字库/+0x8/+0xC/+0x10/+0x20/
++0x24/+0x28/+0x2C/+0x30/+0x41）、[font+0x14]/[font+0x18]/[font+0x1C]
+字模表结构、0x7E14B4 全局函数指针身份（疑似表面裁剪 API）、0x434840
+内部裁剪语义、xor 0x5555 背景翻转含义、2 unique caller 身份。
+
+================================================================================
+0x434990 —— BitFont::UnLock（24B 全程读完）
+================================================================================
+签名：thiscall（ecx=宿主，BitFont）+ 1 栈参（[esp+8]=表面对象指针），
+ret 4（0x434990-0x4349A7）。
+机器码（0x434990-0x4349A7）：
+    push esi; mov esi, ecx
+    mov ecx, [esp+8]; mov eax, [ecx]
+    call [eax+0x60]                                ; ★虚表槽 0x60（unlock 表面）
+    xor eax, eax; mov [esi+0xC], eax; mov [esi+0x10], eax  ; ★清 +0xC/+0x10
+    pop esi; ret 4
+语义：**BitFont::UnLock**——解锁表面（虚表槽 0x60 调用栈参对象）+
+清零宿主 +0xC/+0x10 字段（缓冲指针/锁定计数）。★字体解锁器
+（0x43499x 区——0x434xxx BitFont 字体域，callees=0 纯叶 deps=13，
+YRpp 命名符号）。2 unique caller（4 callsite）。
+★怪癖：①★虚表槽 0x60 调用栈参对象（unlock 表面——非宿主自身）；
+②★+0xC/+0x10 双字段清零（xor eax, eax 复用）；③★ret 4 单栈参 +
+callees=0（纯叶函数）。
+⚠️ partial：+0xC/+0x10 字段语义（缓冲/锁定）、虚表槽 0x60 宿主身份、
+2 unique caller 身份。
+
+================================================================================
+0x431E80 —— BufferIOFileClass::SetFileName（131B 全程读完）
+================================================================================
+签名：thiscall（ecx=宿主，BufferIOFileClass）+ 1 栈参（[esp+0xC]=
+新文件名指针 ebp），ret 4（0x431E80-0x431F02）。
+机器码（0x431E80-0x431F02）：
+    push ebp/edi; mov edi, ecx
+    mov eax, [edi]; call [eax+4]                   ; ★虚表槽 4（IsOpen?）
+    mov ebp, [esp+0xC]                             ; ★新文件名
+    test eax, eax; je 0x431EEF                     ; ★未打开 → 直接重建
+    mov al, byte [edi+0x29]; test al, al; je 0x431EEF  ; ★+0x29 标志
+    0x431E98（取当前文件名 + strcmp 比较）：
+    mov edx, [edi]; push ebx/esi; mov ecx, edi
+    call [edx+4]; mov esi, eax                      ; ★虚表槽 4 再取当前名
+    mov ecx, ebp; mov dl, byte [ecx]
+    mov bl, byte [esi]; mov al, dl
+    cmp dl, bl; jne 0x431ECD                        ; ★首字节比较
+    test al, al; je 0x431EC9                        ; ★都 \0 → 相等
+    0x431EB3（逐字节循环）：mov dl, byte [ecx+1]; mov bl, byte [esi+1]
+    mov al, dl; cmp dl, bl; jne 0x431ECD
+    add ecx, 2; add esi, 2; test al, al; jne 0x431EA5  ; ★strcmp 循环
+    0x431EC9: xor eax, eax; jmp 0x431ED2
+    0x431ECD: sbb eax, eax; sbb eax, -1             ; ★sbb/neg 类型判定
+    0x431ED2: pop esi/ebx; test eax, eax; jne 0x431EE4  ; ★相同 → 直接 ret
+    0x431ED8: mov eax, [edi]; mov ecx, edi
+    call [eax+4]; ...ret 4                          ; ★虚表槽 4（重新打开?）
+    0x431EE4（不同 → 内部设置）：
+    mov ecx, edi; call 0x431DD0                     ; ★0x431DD0（内部设置）
+    mov byte [edi+0x27], 0                          ; ★清 +0x27
+    0x431EEF（未打开路径）：
+    push ebp; mov ecx, edi; call 0x65CAC0           ; ★0x65CAC0 RawFileClass 构造
+    mov edx, [edi]; mov ecx, edi; call [edx+4]
+    pop edi/ebp; ret 4
+语义：**BufferIOFileClass::SetFileName**——设置文件名：虚表槽 4 取
+当前打开状态（未打开或 +0x29 标志空 → 0x65CAC0 RawFileClass 构造
+重建文件名）；打开状态 → 虚表槽 4 再取当前文件名与新名 **strcmp
+逐字节比较**（cmp dl, bl + sbb eax, eax; sbb eax, -1 判定惯用法）：
+相同 → 虚表槽 4 后直接 ret；不同 → 0x431DD0 内部设置 + 清 +0x27。
+★文件名设置器（0x431E8x 区——0x431xxx BufferIOFileClass 文件域，
+YRpp 命名符号）。2 unique caller（4 callsite）。
+★怪癖：①★虚表槽 4 双调用（开状态检查 + 再取当前文件名——取两次
+同槽）；②★strcmp 逐字节比较（cmp dl, bl + sbb eax, eax; sbb eax, -1
+判定惯用法——batch 1300s sbb/neg 类型判定族）；③★0x65CAC0
+RawFileClass 构造（未打开时重建——QWEN.md 记忆锚点：RawFileClass
+构造 0x65CAC0）；④★0x431DD0 内部设置 + 清 +0x27 标志；⑤★ret 4
+单栈参 + 相同名直接返回（幂等）。
+⚠️ partial：虚表槽 4 宿主身份（IsOpen?/GetFileName）、+0x29/+0x27
+标志语义、0x431DD0 内部设置语义、0x65CAC0 构造参数流、2 unique
+caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- QWEN.md 记忆锚点（RawFileClass 构造 0x65CAC0）：0x431E80 在未打开
+  路径调用 0x65CAC0（以 ebp=新文件名重建）——文件类家族持续闭合。
+- batch 1270s（全局函数指针/虚表族）：0x434120 用 0x7E14B4 全局函数
+  指针（5 参裁剪调用）——全局指针表族再扩展。
+- batch 1300s（sbb/neg 类型判定惯用法）：0x431E80 strcmp 比较用
+  sbb eax, eax; sbb eax, -1——判定惯用法再验证。
+- 虚表槽 0x60（unlock 表面）/0x4（打开状态）：0x434990/0x431E80 共用
+  ——文件/表面虚表族持续闭合。
+- YRpp 命名符号（BitFont::Blit / BitFont::UnLock / BufferIOFileClass::
+  SetFileName）：本批三函数全部有官方符号锚点，与 YRpp 交叉验证。
