@@ -1,0 +1,160 @@
+frontier batch 1355 — 0x7B6E20 宽串字符删除器 / 0x775BA0 双路初始化调用器 / 0x778710 全局配置初始化器（2026-10-23）
+
+口径：承接 batch 1354 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x7B6E20（157B，callees=6 deps=61）、
+0x775BA0（27B，callees=1 deps=845 高解锁）、0x778710（781B，callees=27
+deps=285 大函数）。
+取证手段：disasm.py 双参直反汇编全程读完（0x7B6E20 0xC0 尾 0x7B6EBC（含
+相邻 0x7B6EC0 去空白调用器）/ 0x778710 0x320 尾 0x778A1C（含相邻 0x778A20
+开头）/ 0x775BA0 0x40 尾 0x775BBB（含相邻 0x775BC0 开头），函数边界与
+functions.tsv 完全吻合）+ TSV 查重（三候选全部未登记）+ 跨批次对比
+（0x7C8E17 分配/0x7C8B3D 释放 ↔ 既有锚点；0x7CA405/0x7CA489/0x7CA8C6/
+0x7CA090 ↔ batch 1354 0x7CA422/0x7CA489 字符串容器族；0x4068E0 日志 ↔
+既有锚点）。
+
+================================================================================
+0x7B6E20 —— 宽串字符删除器（157B 全程读完）
+================================================================================
+签名：thiscall（ecx=this 宽字符串容器）+ 1 栈参（[esp+0x18]=待删字符
+ebp），返 al 0/1，ret 4（0x7B6E20-0x7B6EBC，callees=6 deps=61）。
+机器码（0x7B6E20-0x7B6EBC）：
+    入口：push ebx; push esi; mov esi, ecx; xor bl, bl
+    mov eax, [esi]; test eax, eax
+    je 0x7B6E2C（空缓冲 → pop/xor al/ret 4 返 0）   ; ★空缓冲早退
+    0x7B6E33: push ebp; push edi
+    push eax; call 0x7CA405（原长）；mov ebp, [esp+0x18]（待删字符）
+    mov edi, eax（原长）
+    mov eax, [esi]; push ebp; push eax
+    call 0x7CA8C6（★查找待删字符，返指针/0）；add esp, 0xC
+    test eax, eax; je 0x7B6EB4（未找到 → 返 0）     ; ★查找失败早退
+    0x7B6E51: mov bl, 1; add edi, edi（长×2）
+    0x7B6E55 循环：
+    mov edx, [esi]; mov ecx, eax; sub ecx, edx（命中偏移）
+    mov edx, edi; sar ecx, 1（÷2 宽字符索引）
+    sub edx, ecx; lea ecx, [eax+2]; sub edx, 2
+    push edx; push ecx; push eax
+    call 0x7CA090（★移除命中——批量删除）; add esp, 0xC
+    mov edx, [esi]; sub edi, 2; push ebp
+    mov word [edi+edx], 0（★尾写 0 终止）
+    mov eax, [esi]; push eax
+    call 0x7CA8C6（★循环再查下一个）; add esp, 0x14
+    test eax, eax; jne 0x7B6E55（循环）
+    0x7B6E8A: mov ecx, [esi]; push ecx
+    call 0x7CA405（新长）; lea edx, [eax+eax+2]（×2+2）
+    push edx; call 0x7C8E17（★分配新缓冲）; mov edi, eax
+    mov eax, [esi]; push eax; push edi
+    call 0x7CA489（★复制入新缓冲）; push [esi]
+    call 0x7C8B3D（★释放旧缓冲）; add esp, 0x14
+    mov [esi], edi（换新缓冲）
+    0x7B6EB4: pop edi; pop ebp; mov al, bl; pop esi; pop ebx; ret 4
+语义：**宽串字符删除器**（0x7B6E2x 区——0x7B6xxx 字符串/容器域，
+callees=6 deps=61）：thiscall 宽字符串容器 + 待删字符栈参：0x7CA8C6
+循环查找目标字符 → 每命中一次 0x7CA090 移除并写 0 终止 → 直到找不到
+→ 0x7CA405 求新长 + 0x7C8E17 重新分配 + 0x7CA489 复制 + 0x7C8B3D
+释放旧缓冲 → 返 bl=1/0。★宽串字符删除器（0x7B6E2x 区——0x7CA8C6
+查找循环 + 0x7CA090 移除 + 重建缓冲）。2 unique caller（4 callsite）。
+★怪癖：①★0x7CA8C6 查找循环（每一命中写 0 终止再续查——直到
+找不到）；②★0x7CA090 移除（sar ecx,1 宽字符索引 + edx 步进）；
+③★新长 ×2+2 分配（eax+eax+2——宽字符 + 终止）；④★重建缓冲
+（分配+复制+释放旧）；⑤★空缓冲早退（返 0）+ 未找到早退（返 0）
++ 命中才 bl=1；⑥★相邻 0x7B6EC0 连调两次删 0x20(' ') 和 9(\t)
+——**去空白字符调用器**。
+⚠️ partial：0x7CA8C6/0x7CA090/0x7CA405/0x7CA489 精确身份、宽字符
+容器类型、2 unique caller 身份。
+
+================================================================================
+0x775BA0 —— 双路初始化调用器（27B 全程读完）
+================================================================================
+签名：thiscall（ecx=宿主）+ 无栈参，ret 0（0x775BA0-0x775BBB，
+callees=1 deps=845 高解锁）。
+机器码（0x775BA0-0x775BBB）：
+    入口：push esi; mov esi, ecx
+    push 1; push 0x775BC0; push esi
+    call dword [0x7E14E4]                            ; ★[0x7E14E4]（COM/注册）
+    push 0; push esi
+    call 0x775BC0                                    ; ★0x775BC0（大初始化器）
+    pop esi; ret
+    （相邻 0x775BC0：sub esp,0xA0 大函数，内部 [0x7E13BC] 函数指针
+    ffd5 call ebp——0x7E13x 家族）
+语义：**双路初始化调用器**（0x775BAx 区——0x775xxx 初始化/调用域，
+callees=1 deps=845 高解锁）：thiscall 宿主：[0x7E14E4]（COM 函数指针
+族）注册式调用（push 1 + 0x775BC0 + this）→ 相邻 0x775BC0 大初始化器
+（push 0 + this）→ 返。★双路初始化调用器（0x775BAx 区——[0x7E14E4]
+注册 + 0x775BC0 初始化两段式）。2 unique caller（4 callsite）。
+★怪癖：①★[0x7E14E4] 函数指针调用（push 1 + 0x775BC0 地址 + this
+——注册/登记语义）；②★尾调相邻 0x775BC0（push 0 + this——初始化
+两段式：先注册后初始化）；③★0x775BC0 内部 [0x7E13BC]（0x7E13x
+家族——ffd5 call ebp）+ ret 0 无栈参 + callees=1 纯链。
+⚠️ partial：[0x7E14E4]/[0x7E13BC] 身份（注册表/接口表）、0x775BC0
+初始化语义、宿主类型、2 unique caller 身份。
+
+================================================================================
+0x778710 —— 全局配置初始化器（781B 全程读完）
+================================================================================
+签名：thiscall（ecx=this，存 [esp+0x1c]）+ 无栈参（返 eax=新建对象
+edi，ret 0——0x778710-0x778A1C，callees=27 deps=285）。
+机器码结构（全程读完，关键锚点）：
+    入口：sub esp,0xB0; 4 push
+    call 0x7B4620（构造）×2（[esp+0x18]/[esp+0x14]）
+    call 0x7B66C0（清理/构造）×2
+    push 0x849F8C; call 0x47A9D0（★构造 [esp+0x68] 配置对象）
+    push ebx; call 0x431F10（★INI/配置读取，返 al）
+    test al, al; jne 0x77878B
+    0x778769（失败）：0x65D150 + 0x4325C0（清理）+ 0x47AF10
+    （重构造 0x849F8C）
+    0x77878B: push ebx; call 0x431F10; je 0x778987（★二次读取判定）
+    0x77879D: call 0x40E320（构造）×2 + 0x40E340（连接）
+    [esp+0x38]=0x7E1B04 / [esp+0x34]=0x7E1AFC / [esp+0x30]=0x7EA5F4
+    （vftable 写入）
+    push ebx; push ecx; call 0x525A10（★调用）
+    call 0x4325C0（析构）; mov ecx, 0xB73590; call 0x7B5440
+    ★[0xB73590 全局配置]
+    push eax; lea ecx, [esp+0x28]; call 0x526810; test eax; je 0x77897E
+    0x778829 主段（多次 0x7B4630 字符串构造 + 0x7B46F0 析构对）：
+    push 0x849F84/0x849F7C/0x824D4C/0x81B138/0x849F70/0x849F64
+    （多次读 [0xB73590] 的 0x528C00/0x5278F0——★INI 节读取）
+    call 0x778F30; call 0x7B5340; call 0x7B5440; call 0x735120;
+    push eax; call 0x7B7600
+    call 0x5256F0（析构）
+    0x778987: push 0x44; call 0x7C8E17（★分配 0x44 主对象）
+    空 → 0x7789C0（esi=0）
+    0x778995: 12 参 push（esi/edx/.../ebp/edi/ebx×2）→ call 0x779690
+    （★主对象构造函数）; mov esi, eax
+    0x7789C2: mov edi, [esp+0x24]; mov ecx, edi
+    call 0x65D430; mov dword [edi], 0x7F3F44（★vftable）
+    push esi; call 0x65D480
+    0x7789DB 尾清理：0x431B80（析构）×1 + 0x7B6760（析构）×2 +
+    0x7B46F0（析构）×2
+    mov eax, edi; 5 pop; add esp, 0xB0; ret          ; ★返新建对象
+语义：**全局配置初始化器**（0x7787xx 区——0x778xxx 配置/INI 域，
+callees=27 deps=285 大函数）：thiscall：构造栈上配置对象 → 0x431F10
+读取/判定 INI（失败清理後重构造再试）→ 0x40E320/0x525A10 中间态 →
+**反复读 [0xB73590] 全局配置**（0x528C00/0x5278F0 多节读取 + 多组
+0x7B4630/0x7B46F0 字符串构造析构对）→ 0x7C8E17 分配 0x44 → **12 参
+调 0x779690 主对象构造** → 写 vftable 0x7F3F44 + 0x65D480 → 尾清理
+→ 返新建对象。★全局配置初始化器（0x7787xx 区——[0xB73590] 全局配
+置读取 + 0x431F10 INI 判定 + 0x779690 主对象构造）。2 unique caller
+（4 callsite）。
+★怪癖：①★[0xB73590] 全局配置对象（0x528C00/0x5278F0 反复读取——
+INI 节读取族）；②★0x431F10 二次 INI 判定（失败重构造 0x47AF10 再
+试——重试语义）；③★0x7C8E17 分配 0x44 + **12 参** 0x779690 主对象
+构造（长参数表——大对象）；④★vftable 0x7F3F44 写入 + 0x65D430/
+0x65D480 前处理对；⑤★多组 0x7B4630/0x7B46F0 字符串构造析构对 +
+0x7B66C0/0x7B6760 清理对（栈对象全生命周期管理）；⑥★0x40E320/
+0x40E340/0x525A10 中间态链 + vftable 0x7E1B04/0x7E1AFC/0x7EA5F4 写入。
+⚠️ partial：[0xB73590] 全局配置类型、0x431F10/0x528C00/0x5278F0/
+0x779690/0x525A10/0x7B5440 身份、vftable 表身份、INI 节名称、
+2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1354（0x7B78D0 宽串容器 0x7CA422/0x7CA489）：0x7B6E20 用
+  0x7CA8C6/0x7CA090/0x7CA405/0x7CA489——**宽字符串容器家族持续
+  闭合**（0x7B6Exx/0x7B78Dx 同域）。
+- 0x7C8E17 分配 / 0x7C8B3D 释放（既有锚点）：0x7B6E20 重建缓冲 +
+  0x778710 分配 0x44 主对象——分配家族兑现。
+- 0x7E13xx/0x7E14xx COM 函数指针族（batch 1300s 系列）：0x775BA0
+  用 [0x7E14E4] + 0x775BC0 内 [0x7E13BC]——COM 接口族持续闭合。
+- INI 读取族（0x431F10/0x528C00/0x5278F0 + [0xB73590]）：0x778710——
+  INI 装载家族再验证（与 batch 1300s 0x528A10/0x7C9CC2 同主题）。
