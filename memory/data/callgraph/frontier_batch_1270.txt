@@ -1,0 +1,149 @@
+frontier batch 1270 — 0x750030 浮点双阈值分级 / 0x732580 条件标志查询 / 0x7B6CB0 宽字符串构建器（2026-10-22）
+
+口径：承接 batch 1269 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=6 三个未登记函数：0x750030（44B）、0x732580（61B）、0x7B6CB0
+（211B）。取证手段：disasm.py 直反汇编全文（三个均全程读完）+ CRT 依赖
+反汇编（0x7CA405/0x7C8E17/0x7CA489/0x7CA45F/0x7C8B3D/0x50B6F0）+ 常量表
+PE 读取（[0x7E37B4]=2.0f、[0x7E2AC8]=1.0f）+ TSV 查重（三个候选及依赖
+全部未登记）。
+
+================================================================================
+0x750030 —— 浮点双阈值分级器（44B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 0 栈参 ret eax。
+机器码（0x750030-0x75005B）：
+    fld dword [ecx]               ; ST0 = this->+0（float）
+    fcomp dword [0x7e37b4]        ; 与 2.0 比较（pop）
+    fnstsw ax; test ah,1          ; 测 C0（ST0 < 2.0 → C0=1）
+    jne 0x750042                  ; C0=0（ST0 >= 2.0）→ 第二段
+    xor eax,eax; ret              ; ST0 < 2.0 → 返 0
+    0x750042:
+    fld dword [ecx]; fcomp dword [0x7e2ac8]   ; 与 1.0 比较
+    fnstsw ax; test ah,1
+    mov eax,1; je 0x75005b        ; C0=0（ST0 >= 1.0）→ 返 1
+    mov eax,2; ret                ; C0=1（ST0 < 1.0）→ 返 2
+
+语义：**浮点双阈值分级器**——this+0 的 float 经两级 fcomp 分级：
+val < 2.0 → 0；val >= 2.0 再与 1.0 比较：val >= 1.0 → 1、val < 1.0 → 2。
+★第二级比较在第一级门控（val>=2.0）后恒成立（val>=2.0 ⇒ val>=1.0），
+返 2 分支不可达——原版死分支照抄。6 unique caller（44 callsite）。
+常量表实锤：0x7E37B4=2.0f、0x7E2AC8=1.0f（PE 读 .rdata）。
+
+★怪癖：①★双 fcomp + fnstsw/test ah,1（C0）模式——未用 fcomip（x87
+传统写法）；②★第二阈值 1.0 在门控后恒真——返 2 是不可达死代码（原版
+未优化，照抄）；③★[ecx] 重新 fld 两次（每次比较前重载）；④常量为
+2.0/1.0 浮点字面（.rdata 0x7E37B4/0x7E2AC8）。
+
+⚠️ partial：this+0 float 字段语义（倍率/速度/系数）、三级返回值业务含义、
+宿主类（0x750xxx 区）。
+
+================================================================================
+0x732580 —— 条件标志查询器（61B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）无栈参 ret al。
+机器码（0x732580-0x7325BC）：
+    test ecx,ecx; je 0x7325ba      ; this 空 → 返 0
+    mov al,[ecx+0x90]; test; je 0x7325ba   ; +0x90 标志 0 → 返 0
+    mov eax,[0xa8b238]             ; ★全局 GameMode（batch 1265 同全局）
+    test eax,eax; jne 0x7325a5
+    ; GameMode==0 路径:
+    mov eax,[ecx+0x21c]; mov al,[eax+0x1ed]   ; 对象->+0x1ED 标志
+    jmp 0x7325b0
+    0x7325a5:
+    ; GameMode!=0 路径:
+    mov ecx,[ecx+0x21c]; call 0x50b6f0        ; ★查询函数
+    0x7325b0:
+    test al,al; je 0x7325ba
+    mov eax,1; ret                ; 标志非 0 → 返 1
+    0x7325ba: xor eax,eax; ret    ; 返 0
+
+语义：**条件标志查询器**——this 非空 && this+0x90 标志非 0 才继续；取
+this+0x21C 对象指针，GameMode（[0xA8B238]）==0 时直读对象+0x1ED 字节，
+非 0 时经 0x50B6F0 查询；结果非 0 返 1。0x50B6F0 开头（0x50B6F0-
+0x50B701）：mov eax,[0xa8b238]; test; jne 0x50B716 → mov al,[ecx+0x1EC]
+——内部同样按 GameMode 分路，读 +0x1EC/+0x1ED 邻接字段。6 unique caller
+（61 callsite）。
+
+★怪癖：①★[0xA8B238] GameMode 全局（batch 1265 0x5E7EB0 聊天域同全局，
+cmp 4 判定——本函数只用 0/非0）；②★+0x90 门控标志先于 GameMode 判定；
+③★GameMode==0 直读对象 +0x1ED、非 0 走 0x50B6F0（内部读 +0x1EC——
+两字段邻接，GameMode 分路访问）；④★this 空提前返（无访问）。
+
+⚠️ partial：宿主类（0x732xxx 区——+0x90/+0x21C 布局）、+0x1EC/+0x1ED
+标志语义、0x50B6F0 完整身份、GameMode 分路原因。
+
+================================================================================
+0x7B6CB0 —— 宽字符串构建器（211B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 2 栈参（[esp+0x10]=输出结构指针、[esp+0x14]=
+第二串指针）ret eax=输出指针。
+机器码（0x7B6CB0-0x7B6D7F）：
+    段1（0x7B6CB0-0x7B6CD9）拷贝 this+0 串:
+      push esi; push edi; edi=ecx; xor esi,esi
+      mov eax,[edi]; test; je 0x7B6CDA        ; this+0 串非空才处理
+      push eax; call 0x7CA405（★宽串 strlen——cmp word [ecx],0 循环 inc 2）
+      lea eax,[eax+eax+2]; push eax
+      call 0x7C8E17（★malloc 包装：push 1 → 0x7C9442 内部）; mov esi,eax
+      push [edi]; push esi
+      call 0x7CA489（★宽串拷贝——逐 2B 项复制到 0）; add esp,0x10
+    段2（0x7B6CDA-0x7B6D49）拼接第二串:
+      mov edx,[esp+0x10]; push ebx; push ebp
+      mov ebp,[edx]                          ; 输出结构->+0
+      test ebp,ebp; jne 0x7B6CEF
+      mov ebp,0x887734                       ; ★默认全局串 [0x887734]
+      0x7B6CEF: push ebp; mov ebx,esi
+      call 0x7CA405（strlen 第二串）; mov edi,eax; inc edi
+      test esi,esi; je 0x7B6D0C              ; 第一段串存在则再加其长
+      push esi; call 0x7CA405; add edi,eax
+      0x7B6D0C: lea eax,[edi*4]; push eax
+      call 0x7C8E17（malloc）; mov esi,eax
+      test ebx,ebx; je 0x7B6D2E
+      push ebx; push esi; call 0x7CA489（拷贝第一段）; jmp 0x7B6D33
+      0x7B6D2E: mov word [esi],0              ; 空串置 0
+      0x7B6D33: push ebp; push esi
+      call 0x7CA45F（★追加——strlen+拷贝到尾部）
+      test ebx,ebx; je 0x7B6D4A
+      push ebx; call 0x7C8B3D（★free 包装：→ 0x7C93E8）; add esp,4
+    段3（0x7B6D4A-0x7B6D7F）结果收尾:
+      mov edi,[esp+0x14]; pop ebp
+      test esi,esi; mov dword [edi],0        ; 输出结构->+0 = 0（默认）
+      pop ebx; je 0x7B6D7C
+      push esi; call 0x7CA405（strlen 结果）; lea ecx,[eax+eax+2]
+      push ecx; call 0x7C8E17（malloc 终版）
+      push esi; push eax; mov [edi],eax      ; 输出结构->+0 = 新指针
+      call 0x7CA489（拷贝终版）; push esi; call 0x7C8B3D（free 中间）
+      add esp,0x14
+      0x7B6D7C: mov eax,edi; pop edi; pop esi; ret
+
+语义：**宽字符串构建器**——把 this+0 串（若非空，先拷一份）与第二串
+（[esp+0x10] 输出结构->+0，空则用默认全局 [0x887734]）拼接：strlen 双计
+长（两段各加终止空间）→ malloc（0x7C8E17）→ 拷贝第一段（0x7CA489）→
+追加第二段（0x7CA45F）→ free 中间件（0x7C8B3D）→ 再按 strlen 新开终版
+缓冲拷贝 → 输出结构->+0 写新指针；全程宽字符（2B/项）运算。6 unique
+caller（211 callsite）。CRT 依赖族全部宽字符实现：
+0x7CA405（strlen——cmp word 0 循环 2B 步进）、0x7CA489（拷贝——逐 2B
+项复制）、0x7CA45F（尾部追加——strlen 定位 + 复制）、0x7C8E17（malloc
+包装 push 1）、0x7C8B3D（free 包装 → 0x7C93E8）。
+
+★怪癖：①★默认全局串 [0x887734] 兜底（输出结构->+0 为 0 时用全局默认串）；
+②★malloc 尺寸 = (len1+len2+1)*4 的 4 倍放大（lea eax,[edi*4]——★为每个
+宽字符预留 4 字节而非 2，宽字符拼接器常见安全冗余，照抄）；③★三阶段
+malloc（第一段暂存 → 拼接缓冲 → 终版）中间体 free 两次；④★输出结构
+->+0 先置 0 再覆盖（失败/空时留 0）；⑤CRT 族全部宽字符版（strlen/copy/
+append 三件套）。
+
+⚠️ partial：宿主类（0x7BExxx 区）、this+0 串与第二串语义（路径/消息）、
+[0x887734] 全局默认串内容、输出结构类型（+0 槽指针）、4 倍放大 malloc
+的业务原因。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1265（[0xA8B238] GameMode）：0x732580 依赖同全局（cmp 4 判定 →
+  本函数 0/非0 分路）。
+- batch 1268（0x7C8E17 malloc 包装 / 0x7C93E8 free 族）：0x7B6CB0 依赖
+  0x7C8E17/0x7C8B3D（→0x7C93E8）同族；0x7CA405/0x7CA489/0x7CA45F 宽字符
+  strlen/copy/append 三件套（未登记，后续 CRT 批次候选）。
+- 0x50B6F0（未登记）：0x732580 的 GameMode 分路查询函数。
+- batch 1264（0x69DEB0 [0x887300] 全局族）：0x7B6CB0 的 [0x887734]
+  默认串同 .data 区（rva 0x487734）。
