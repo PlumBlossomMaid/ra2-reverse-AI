@@ -1,0 +1,476 @@
+frontier batch 1319 — 0x783C80 巨型全局注册器 / 0x694760 加载推进器 / 0x693B70 加载推进器双胞胎（2026-10-23）
+
+口径：承接 batch 1318 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=5 三个未登记函数：
+0x783C80（5806B）、0x694760（2691B）、0x693B70（1584B）。取证手段：
+disasm.py 直反汇编（0x783C80 0x1700 / 0x694760 0xAA0 / 0x693B70 0x640 覆盖）+
+TSV 查重（三候选全部未登记）+ 锚点 grep（0x783C80 内 174 处 0x7E14xx
+族调用分布统计）+ 跨批次对比（0x694760/0x693B70 ↔ batch 1297 INI 装载
+工具族、batch 1318 0x6B0300 取格链无关——本批为加载/注册域）。
+
+================================================================================
+0x783C80 —— 巨型全局注册器（5806B 骨架级取证）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（[esp+0x20]=状态字）ret（函数尾
+0x78532D c3，栈帧 0x634 + 4 寄存器压栈）。
+取证覆盖：开头 0x783C80-0x7843B6（约 500 行）+ 中段 0x784452-0x784620
+（哈希表六枚举）+ 尾部 0x7852D3-0x78533A（哈希链插入收尾）+ 锚点 grep
+（0x7E14xx 族 174 处调用全分布）。5806B 巨型函数按骨架+锚点取证，
+未逐行通读（诚实记录）。
+机器码骨架（开头）：
+    sub esp, 0x634; push 全; mov bl, dl        ; ★第二参 bool 存 bl
+    call 0x5E26C0; test eax, eax; je 0x783CB0
+    mov dl, bl; mov ecx, eax; call 0x5EA3E0    ; ★前置检查通过 → 直接处理返回
+    ...ret
+    0x783CB0:
+    mov ecx, 0x6B; call 0x775940               ; ★全局对象获取（0x6B/0x116/0x113 ID）
+    mov ecx, 0x116; call 0x775940
+    mov esi, eax; test esi, esi; je 返 0
+    push 0x53E; push esi; call [0x7E14A8]       ; ★0x7E14A8 消息调用（0x53E 常量）
+    ...浮点常量 0x9999999A/0x3FC99999/0x3FE99999（0.2/0.4/0.8 概率族）
+    push eax; push 0x53E; call ebp=[0x7E1490]   ; ★0x7E1490 消息调用（0x53E/0x18E/0x49D/0x184 组）
+    lea ecx, [esp+0x10]; call 0x7B4620          ; ★串构造
+    ...[0xB77900] 全局计数 → rep movsd 0x1B 拷贝
+    lea ecx, [esp+0x120]; push 0x835874; call 0x7CA564  ; ★串格式化（常量串 0x835874）
+    call 0x734E60 DebugLog（0x84A430 文件 + 0x104A 行）  ; ★DebugLog 密集
+    ...[0xA8B238]/[0xA8B244] 全局比较
+哈希表族（至少 6 组全局哈希，同构查找模式）：
+    [0xB76698]/[0xB7668C]/[0xB76680]   → call [0xB76698]; shl edx,cl; dec edx; and;
+                                         mov esi,[eax+edx*4]; 0x7B4780 比较; +8 链
+    [0xB76548]/[0xB7653C]/[0xB76530]   → 同构（0x7B4780 + [esi+8] 链）
+    [0xB77E0C]                          → [esi+0x18] 回调 + [esi+0xC] 位移 + [esi] 桶 + 0x70 链
+    [0xB76658]/[0xB7664C]/[0xB76640]   → 同构（0x7B4780 + [esi+0x48] 链）
+    尾部 0x7852CD-0x7852F5：            → 哈希链插入循环（mov [eax+edx*4],esi +
+                                         [esi+8]=旧头 + 0x7C8B3D 释放旧链）
+常量串族：0x835874/0x84A794/0x84A788/0x84A77C/0x84A690/0x84A764/0x84A770/
+0x82083C/0x887734/0x8360EC/0x8360B4/0x83DA30（0x84A430 为 DebugLog 文件常量）。
+中段锚点：0x783A90（浮点换算 0x51EB851F×→shr5 ≈ /100）、0x7CA564 格式化
+（0x84A794 → 0xB77840 全局缓冲）、0x7B71D0 串、[0xAC4848]/[0xAC4F58]/
+[0xAC116C]/[0xAC1170] 全局对象、0x780A00、0x7B5400/0x735120、[0x8316A8]
+表索引、0x7B46F0/0x7B5A40/0x7B5B30/0x7B66D0/0x7B6760/0x7B68E0/0x7B7100
+（串方法族——batch 记忆宽串 operator+= 家族同域）。
+
+语义：**巨型全局注册器**——前置检查（0x5E26C0/0x5EA3E0）通过则直接处理
+返回；否则按 ID（0x6B/0x116/0x113）获取全局对象，经 0x7E14xx 消息族
+（0x53E/0x4A8/0x18E/0x49D/0x184/0x4B3/0x19A 等常量 ID）注册/上报；枚举
+至少 6 组全局哈希表（查找 + 0x7B4780 比较 + 链式遍历），尾部做哈希链
+插入 + 释放。浮点概率常量（0.2/0.4/0.8 族）+ 0x783A90 换算 + DebugLog
+密集（0x104A/0x1083/0x10B7/0x10BD/0x10D4 行）。★全局对象注册/枚举器
+（0x783Cxx 区——0x783xxx 全局初始化/注册域）。2 unique caller（8 callsite）。
+
+★怪癖：①★6+ 组全局哈希表同构查找（0xB76680 系/0xB76530 系/0xB77E0C
+系/0xB76640 系——shl/and 位掩码 + 0x7B4780 比较 + 链遍历）；②★0x7E14xx
+消息族调用（174 处，0x53E/0x4A8 常量 ID——.rdata 函数指针表）；
+③★0x775940 全局对象获取（0x6B/0x116/0x113 ID）；④★浮点概率常量
+0x3FC99999/0x3FE99999（0.2/0.4/0.8 族）+ 0x783A90 换算；⑤★DebugLog
+密集（0x84A430 文件常量 + 0x104A 起多行）；⑥★尾部哈希链插入 + 0x7C8B3D
+释放；⑦★前置检查 0x5E26C0/0x5EA3E0 双路径。
+
+⚠️ partial：宿主（0x783Cxx 区——全局注册/初始化域）、0x7E14xx 表精确
+身份（消息/IAT 族）、6+ 组哈希表键语义、0x53E/0x4A8 常量 ID 含义、
+浮点概率族用途、0x775940 对象 ID 映射、[0xAC4848]/[0xAC4F58] 全局对象、
+2 unique caller 身份。5806B 未逐行通读（骨架级取证，见上）。
+
+================================================================================
+0x694760 —— 加载推进器（2691B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 2 栈参（[esp+0x14]=首项指针、[esp+0x18]=
+期望计数）ret 8。机器码 0x694760-0x6951E0（0x710 栈帧）。
+机器码骨架：
+    sub esp, 0x710; push 全; mov edi, ecx; mov ebp, edx
+    lea ecx, [esp+0x14]; call 0x6C8C40         ; ★计数取（this 首项）
+    push edi; push 0x83EB28; call 0x4068E0     ; ★日志（0x83EB28 串）
+    lea ecx, [esp+0x44]; push edi; call 0x4739F0  ; ★对象构造
+    lea ecx, [esp+0x44]; push 0; call 0x473C50    ; ★检查
+    test al, al; jne 0x6947EB
+    失败路径（0x6947B0）：                     ; ★析构 + 返 0
+    lea ecx, [esp+0x9C]; mov [esp+0x44],0x7E16B0; call 0x43AE50
+    lea ecx, [esp+0x44]; mov [esp+0x44],0x7E1668; call 0x431B80
+    xor al, al; ...ret 8                        ; ★双 vtable 两段析构
+    0x6947EB:
+    lea ecx, [esp+0x44]; call 0x473C00         ; ★取对象 → ebx
+    lea ecx, [esp+0x34]; call 0x6C8C40         ; 计数
+    push 0x83EB08; call 0x4068E0               ; 日志
+    cmp ebp, 1; je 0x694A05; cmp ebp, 2; je 0x694A05  ; ★edx==1/2 分支
+    repne scasb + rep movsd/movsb               ; ★串拷贝（[0xA8DA78] 表）
+    mov ecx, [0xA8DA78]; call 0x7350C0          ; ★表取串
+    [0xA8DA84] 计数循环（edi=1..）：
+    call 0x48D080                               ; ★推进
+    mov edx, [ecx+edi*4]; push edx; push 1; push 0x1C7; push eax
+    mov ecx, 0xA8E9C0; call 0x541260           ; ★0xA8E9C0 上报（0x1C7 行）
+    test eax, eax; jne 0x69490F                ; 失败 → 计数重试
+    ...0x6C8C40 剩余检查 + 0x48D080 推进循环
+    [0xA8BB18] 计数循环（movsx byte [edi+0xA8BB10]）：
+    call 0x48D080; movsx ecx, byte [edi+0xA8BB10]
+    mov edx,[0xA8DA78]; mov eax,[edx+ecx*4]    ; ★字节表索引 → 上报
+    push eax; push 0x83EAE0; call 0x4068E0     ; 日志
+    ...0x541260 上报 + 0x48D080 推进
+    0x694A05（ebp==1/2 分支）：
+    repne scasb + 串拷贝; mov [esp+0x198],0x6F
+    mov ecx, 0xA8EA70; push 0xFA; push eax; call 0x5F1BF0  ; ★0xA8EA70 表
+    call 0x5F1EA0; test eax, eax; jle 0x694A99   ; ★计数检查
+    ...0x6C8C40 剩余 + 0x48D080 推进循环
+    0x694A99:
+    ...0x6C8C40 剩余检查; je 0x694ABD → 失败析构返 0
+    0x694B09:
+    lea ecx, [esp+0xB0]; call 0x53ECB0         ; ★构造
+    mov al, [esp+0x724]; test al, al
+    mov edx, [0xA8DA84]; lea ebx, [edx-1]      ; ★分支选表长
+    mov ebx, [0xA8BB18]（另一路径）
+    lea ecx, [esp+0x34]; call 0x6C8C40
+    cmp ebp, 1; je 0x694BC9; cmp ebp, 2; je 0x694BC9
+    0x694B60 循环：
+    call 0x48D080
+    lea ecx, [esp+0x560]; lea eax, [esp+0x24]; push 0xA8E9C0...
+    call 0x541370                               ; ★0xA8E9C0 多参上报
+    cmp [esp+0x558], 0x15; jne; inc edi
+    ...0x6C8C40 剩余 + 计数重试
+    0x694BC9（ebp==1/2）：
+    mov edi, 0x71; call 0x48D080
+    lea edx, [esp+0x40]; lea eax, [esp+0x45C]
+    mov ecx, 0xA8EA70; call 0x5F1C30           ; ★0xA8EA70 取
+    cmp [esp+0x45C], 0x71; je 0x694C21
+    ...0x6C8C40 剩余 + 0x48D080 重试
+    0x694C21: push 0x83EA9C; call 0x4068E0     ; 日志
+    0x694C2E:
+    mov ecx, [esp+0x24]; add ecx, 0xBF          ; ★(len+191)/192 换算
+    mov eax, 0x2AAAAAAB; imul; sar edx, 5; shr; add → ebx
+    lea ecx, [esp+0x48]; push 1; call 0x473D10  ; ★构造
+    mov al, [esp+0x728]; test al, al; je 0x694CE7
+    进度条族（[0xAC4F58] 全局）：
+    push 0; push 1; push 0x40590000; push 0
+    mov ecx, 0xAC4F58; call 0x642A60           ; ★进度条（0x40590000 浮点）
+    push 0; push 0; push 0x83DA30; call 0x642C20
+    call 0x734E60 DebugLog（0x83E9C8 文件 + 0x292 行）
+    push eax; push -1; push -1; call 0x642C80
+    mov dl, 1; xor ecx, ecx; call 0x52FEC0     ; ★0x52FEC0
+    push -1; push -1; mov ecx, 0xAC4F58; call 0x643AE0
+    push -1; push -1; push 0; push 0; push 0; call 0x643C50  ; ★进度条推进
+    0x694CE7:
+    ...[0xA8B238]==4 → mov ecx, 0xA8E9C0; call 0x540D40; push 0x4B0;
+    push -1; push 0xF0; call 0x540D10
+    主循环（0x694D77-0x694F4E）：
+    cmp eax, 1; je 0x694FBB; cmp eax, 2; je 0x694FBB
+    call 0x5D4D50; call 0x48D080                ; ★推进二连
+    mov ecx, 0xA8E9C0; call 0x5422D0; cmp eax, 0xA; jge 0x694D77  ; ★计数 ≥10 重试
+    cmp edi, 0xC0; ...mov [esp+0xBC],0x12      ; ★上限 0xC0
+    mov eax, [0xA8DA78]; call 0x7350C0          ; 表取串
+    repne scasb + rep movsd/movsb               ; 串拷贝
+    and eax, 0xFFFF; push eax; lea ecx, [esp+0xD8]; call 0x473B10  ; ★串比较
+    cmp eax, edx; jne 0x694F4E
+    ...0x6C8C40 剩余; push esi; push ebx; push ebp;
+    push 0x83EA74; call 0x4068E0                ; 日志（进度/计数）
+    [0xA8DA84] 循环 → 0x541260 上报（0xDC 行）+ 0x48D080
+    [0xA8BB18] 循环 → movsx 字节表 → 0x541260（0xDC 行）+ 0x48D080
+    0x694F4E:
+    inc ebp; add ecx, 0x64                      ; ★进度 +0x64 步进
+    ...进度百分比：idiv ebx; fild [esp+0x38]; fstp qword [esp]
+    push 0; mov ecx, 0xAC4F58; call 0x643C50    ; ★fild 百分比 → 进度条
+    0x694FBB（ebp==1/2 分支）：
+    call 0x5D4D50; call 0x48D080
+    mov ecx, 0xA8EA70; call 0x5F1EA0; cmp eax, 2; jge 0x694D77
+    cmp edi, 0xC0; ...mov [esp+0xBC],0x70       ; ★上限 0xC0/类型 0x70
+    ...串比较 0x473B10 → 0x5F1BF0 上报（0xDC 行）
+    0x6950EA:
+    push esi; push 0x83EA40; call 0x4068E0      ; 失败日志
+    0x695175:
+    cmp [0xA8B238], 4; jne; mov ecx, 0xA8E9C0; call 0x540D60
+    test bl, bl; mov eax, 0x83EA38/0x83EA30     ; ★成败串二选
+    push eax; push 0x83EA14; call 0x4068E0      ; 日志
+    析构收尾：
+    lea ecx, [esp+0x9C]; mov [esp+0x44],0x7E16B0; call 0x43AE50
+    lea ecx, [esp+0x44]; mov [esp+0x44],0x7E1668; call 0x431B80
+    mov al, bl; ...ret 8                        ; ★返回 bl 标志
+
+语义：**加载推进器**——对象构造（0x4739F0）+ 检查（0x473C50）失败则
+双 vtable 两段析构（0x7E16B0/0x7E1668 → 0x43AE50/0x431B80）返 0；成功
+后遍历全局任务表（[0xA8DA78] 计数 [0xA8DA84] + 字节表 [0xA8BB10]/
+[0xA8BB18]）逐项上报 0xA8E9C0 调度器（0x541260/0x541370，行号 0x1C7/
+0xDC），每项 0x48D080 推进 + 0x6C8C40 剩余检查重试；ebp==1/2 走
+0xA8EA70 第二表（0x5F1BF0/0x5F1C30/0x5F1EA0）；进度条族 [0xAC4F58]
+（0x642A60/0x642C20/0x642C80/0x643AE0/0x643C50 + 0x40590000 浮点 +
+0x52FEC0 随机）+ 进度百分比（inc ebp +0x64 步进 + idiv + fild → 0x643C50）；
+上限 0xC0、类型 0x12/0x70 检查；成功 bl=1，失败析构返 0。★加载进度
+推进器（0x694xxx 区——0x693B70 双胞胎，加载流程 UI 驱动）。2 unique
+caller（8 callsite）。
+
+★怪癖：①★双 vtable 两段析构（0x7E16B0/0x7E1668 → 0x43AE50/0x431B80）；
+②★[0xA8DA78] 任务表 + [0xA8DA84] 计数 + [0xA8BB10] 字节表双重枚举；
+③★0x48D080 推进 + 0x6C8C40 剩余检查重试循环；④★进度百分比 fild/idiv
+→ 0x643C50（0x64 步进）；⑤★进度条 [0xAC4F58] 族（0x642A60/0x642C20/
+0x642C80/0x643AE0/0x643C50）；⑥★0x40590000 浮点常量 + 0x52FEC0 随机；
+⑦★0xA8E9C0 调度器上报（0x541260/0x541370）+ 0xA8EA70 表（0x5F1BF0/
+0x5F1C30/0x5F1EA0）；⑧★上限 0xC0 + 类型 0x12/0x70 检查；⑨★(len+191)/192
+换算（0x2AAAAAAB 魔数）。
+
+⚠️ partial：宿主类（0x694xxx 区——加载/进度域）、[0xA8DA78]/[0xA8DA84]/
+[0xA8BB10]/[0xA8BB18] 表身份、0x48D080/0x6C8C40 精确身份、0xA8E9C0/
+0xA8EA70 调度器对象、[0xAC4F58] 进度条对象、0x52FEC0、0x40590000 常量、
+2 unique caller 身份。
+
+================================================================================
+0x693B70 —— 加载推进器（1584B 全程读完，0x694760 双胞胎）
+================================================================================
+签名：thiscall（ecx=this）+ 2 栈参（[esp+0x14]=首项指针、[esp+0x18]=
+期望计数）ret 4。机器码 0x693B70-0x69419D（0x5C0 栈帧）。
+机器码骨架：
+    sub esp, 0x5C0; push 全; mov [esp+0x14], ecx; mov ebp, edx
+    lea ecx, [esp+0x38]; call 0x53ECB0          ; ★构造
+    push 0x83E8F8; call 0x4068E0                ; ★日志
+    lea ecx, [esp+0x14]; call 0x6C8C40          ; 计数
+    push 0x83E8DC; call 0x4068E0                ; 日志
+    cmp ebp, 1; je 0x693CC7; cmp ebp, 2; je 0x693CC7  ; ★edx==1/2 分支
+    主路径（0x693BEA）：
+    mov ecx, 0x71; rep stosd 清 [esp+0x144] 区   ; ★0x71 dword 清零
+    mov ecx, [0xA8DA78]; call 0x735090           ; ★表取串
+    cmp [0xA8B238], 3; jne 0x693C49
+    push 0; push 0; push 0xA8BB1C; push 1
+    lea edx, [esp+0x154]; push 0x1C7; push edx
+    mov ecx, 0xA8E9C0; call 0x5410F0            ; ★0xA8E9C0 上报（0x1C7 行）
+    jmp 0x693C74
+    0x693C49:
+    call 0x7931A0; test eax, eax; je 0x693C74   ; ★取对象
+    lea ecx, [eax+0x24]; call 0x735120          ; ★+0x24 串
+    push eax; push 1; lea eax, [esp+0x14C]; push 0x1C7; push eax
+    mov ecx, 0xA8E9C0; call 0x541260            ; ★0xA8E9C0 上报
+    0x693C74:
+    mov ecx, 0xA8E9C0; call 0x5422D0; test eax, eax; jle 0x693D39  ; ★计数
+    0x693C86 循环：
+    ...0x6C8C40 剩余检查（-1/期望）; je 0x693D39
+    call 0x48D080                                ; ★推进
+    mov ecx, 0xA8E9C0; call 0x5422D0; test; jle 0x693D39
+    jmp 0x693C86                                 ; ★重试循环
+    0x693CC7（ebp==1/2）：
+    mov ecx, 0x3E; rep stosd 清 [esp+0x48] 区
+    mov ecx, 0xA8EA70; push 0xFA; push eax; call 0x5F1BF0  ; ★0xA8EA70 表
+    mov ecx, 0xA8EA70; call 0x5F1EA0; test; jle 0x693D39
+    ...0x48D080 推进 + 0x6C8C40 剩余 + 重试
+    0x693D39:
+    ...0x6C8C40 剩余检查; jne 0x693D79
+    0x693D5D:
+    push 0x83E8AC; call 0x4068E0                 ; ★失败日志
+    xor al, al; ...ret 4                         ; ★返 0
+    0x693D79:
+    lea ecx, [esp+0x30]; call 0x6C8C40
+    mov ebx, 4
+    cmp ebp, 1; je 0x693E92; cmp ebp, 2; je 0x693E92
+    主上报（0x693DAE）：
+    mov edi, 0x11; call 0x48D080                 ; ★推进
+    lea eax, [esp+0x410]; lea edx, [esp+0x28]; lea ecx, [esp+0x38]
+    push eax; push edx; push ecx; push [esp+0x2A]
+    mov ecx, 0xA8E9C0; mov [esp+0x34], 0x1C7
+    call 0x541370                                ; ★0xA8E9C0 多参上报
+    test eax, eax; je 0x693E2F
+    push 0xA8BB1C; lea ecx, [esp+0x3C]; call 0x53EF30  ; ★串构造
+    cmp [0xA8B238], ebx(4); jne 0x693E22
+    call 0x7931A0; je 0x693E20
+    lea ecx, [esp+0x40C]; add eax, 0x24; push ecx; push eax
+    call 0x7C8D20                                 ; ★串比较
+    test eax, eax; jne 0x693E20
+    mov al, 1                                     ; ★匹配 → 置 1
+    0x693E22:
+    cmp [esp+0x408], edi(0x11); jne 0x693E2F     ; ★类型 0x11 检查
+    test al, al; jne 0x693E60
+    0x693E2F:
+    ...0x6C8C40 剩余; je 0x693F33; jmp 0x693DB3  ; ★重试
+    0x693E60:
+    repne scasb + rep movsd/movsb                 ; ★串拷贝（ebp+0x1C → 目标）
+    jmp 0x693F13
+    0x693E92（ebp==1/2）：
+    mov edi, 0x6F; call 0x48D080
+    lea edx, [esp+0x44]; lea eax, [esp+0x30C]
+    mov ecx, 0xA8EA70; call 0x5F1C30             ; ★0xA8EA70 取
+    cmp [esp+0x30C], 0x6F; je 0x693EE6           ; ★类型 0x6F 检查
+    ...0x6C8C40 剩余 + 0x48D080 重试
+    0x693EE6: 串拷贝（rep movsd/movsb）→ 0x693F13
+    0x693F13:
+    push 0x83E88C; mov [esp+0x24], eax; call 0x4068E0  ; 日志
+    push ecx; push 0x83E878; call 0x4068E0        ; 日志
+    0x693F33:
+    ...0x6C8C40 剩余; jne 0x693F73
+    0x693F57:
+    push 0x83E83C; call 0x4068E0                  ; ★失败日志
+    xor al, al; ...ret 4
+    0x693F73:
+    push 0x83E81C; call 0x4068E0
+    lea ecx, [esp+0x30]; call 0x6C8C40
+    ...ebp==1/2 → 0x6940AB
+    0x693FB0:
+    mov ecx, 0x71; rep stosd 清区
+    mov eax, [0xA8DA78]; mov [esp+0x144], 0x15
+    mov ecx, [eax]; call 0x7350C0                 ; ★表取串
+    repne scasb + rep movsd/movsb                 ; 串拷贝
+    cmp [0xA8B238], 4; jne 0x694036
+    call 0x7931A0; je 0x694058
+    lea ecx, [eax+0x24]; call 0x735120
+    push eax; push 1; push 0x1C7; push [esp+0x144]
+    mov ecx, 0xA8E9C0; call 0x541260             ; ★上报（0x1C7 行）
+    0x694036:
+    push 0; push 0; push 0xA8BB1C; push 1
+    lea edx, [esp+0x154]; push 0x1C7; push edx
+    mov ecx, 0xA8E9C0; call 0x5410F0             ; ★上报（0x1C7 行）
+    0x694058:
+    mov ecx, 0xA8E9C0; call 0x5422D0; test; jle 0x69411D
+    0x69406A 循环：0x48D080 推进 + 0x6C8C40 剩余 + 重试
+    0x6940AB（ebp==1/2）：
+    mov ecx, 0x3E; rep stosd 清区
+    push 0xFA; lea eax, [esp+0x4C]; mov ecx, 0xA8EA70
+    mov [esp+0x54], 0x71; call 0x5F1BF0          ; ★0xA8EA70 表
+    call 0x5F1EA0; test; jle 0x69411D
+    ...0x48D080 推进 + 0x6C8C40 剩余 + 重试
+    0x69411D:
+    ...0x6C8C40 剩余; jne 0x69415D
+    0x694141:
+    push 0x83E7F4; call 0x4068E0                  ; ★失败日志
+    xor al, al; ...ret 4
+    0x69415D:
+    mov ecx, [esp+0x5D4]; mov edx, [esp+0x20]
+    push ecx; mov ecx, [esp+0x20]; push ebp
+    call 0x6941A0                                 ; ★内嵌子函数（进度条辅助）
+    mov bl, al; test bl, bl
+    mov eax, 0x81C5F0; jne; mov eax, 0x81C5E8    ; ★成败串二选
+    push eax; push 0x83E7D0; call 0x4068E0
+    mov al, bl; ...ret 4                          ; ★返回 bl
+    内嵌子函数 0x6941A0（0x78 栈帧，ret 8）：
+    mov esi, ecx; mov ebx, edx
+    lea ecx, [esp+0x34]; call 0x6C8C40
+    lea ecx, [esp+0x54]; call 0x53ECB0
+    push 0x1E7; call 0x7C8E17                     ; ★分配 0x1E7
+    push esi; push 0x83E9F4; call 0x4068E0
+    lea ecx, [esp+0x60]; push esi; call 0x65CBF0  ; ★检查
+    test al, al; je; lea ecx, [esp+0x60]; call 0x65D190
+    push 2; lea ecx, [esp+0x64]; call 0x65CB50
+    ...0xAAAAAAAB mul + div 0xC0 → esi（/192 换算）
+    push edi; push esi; call 0x7C8E17             ; ★分配
+    ...mov [esp+0x98], al
+    进度条族（[0xAC4F58]）：
+    push 0; push 1; push 0x40590000; push 0
+    mov ecx, 0xAC4F58; call 0x642A60
+    push 0; push 0; push 0x83DA30; call 0x642C20
+    call 0x734E60 DebugLog（0x83E9C4/0x83E9C8 + 0x163 行）
+    push eax; push -1; push -1; call 0x642C80
+    mov dl, 1; xor ecx, ecx; call 0x52FEC0
+    push -1; push -1; mov ecx, 0xAC4F58; call 0x643AE0
+    push -1; push -1; push 0; push 0; push 0; call 0x643C50
+    0x694307:
+    mov edi, [esp+0x8C]; ...类型 0x12/0x11 → esi=0x2A30/0xE10
+    lea ecx, [esp+0x50]; call 0x6C8C40
+    cmp [0xA8B238], 4; jne
+    mov ecx, 0xA8E9C0; call 0x540D40
+    push 0x4B0; push -1; push 0x78; call 0x540D10
+    0x69438F 主循环：
+    cmp edi, 1; je 0x69452F; cmp edi, 2; je 0x69452F
+    call 0x5D4D50; call 0x48D080                  ; ★推进二连
+    lea edx, [esp+0x12]; lea eax, [esp+0x58]; lea ecx, [esp+0x28]
+    push edx; push eax; push ecx; push ebp
+    mov ecx, 0xA8E9C0; mov [esp+0x34], 0x1E7
+    call 0x541370                                 ; ★0xA8E9C0 多参上报
+    test eax, eax; je 0x694629
+    push 0xA8BB1C; lea ecx, [esp+0x5C]; call 0x53EF30
+    cmp [0xA8B238], 4; jne 0x694411
+    call 0x7931A0; je 0x69440F
+    lea edx, [ebp+4]; add eax, 0x24; push edx; push eax
+    call 0x7C8D20                                 ; ★串比较
+    test eax, eax; jne 0x69440F; mov al, 1
+    0x694411:
+    cmp [ebp], 0x12; jne 0x694629                 ; ★类型 0x12 检查
+    test al, al; je 0x694629
+    mov ax, [ebp+0x18]; add eax, [esp+0x20]
+    cmp byte [eax], 0; jne 0x694629               ; ★占用检查
+    mov byte [eax], 1; inc esi; add ebx, 0x64     ; ★标记 + 进度 +0x64
+    ...0x6C8C40 剩余; sar (esi-1)/2 → [esp+0x48]
+    0x6944A3:
+    mov ax, [ebp+0x18]; push esi; push eax; push 0x83E998; call 0x4068E0  ; 日志
+    ...mov ax, [ebp+0x18]; mov cx, [ebp+0x1A]
+    lea esi, [ebp+0x1C]; shl edi, 6; add edi, edx  ; ★拷贝目标（×0x40 步进）
+    rep movsd + rep movsb                          ; 串/数据拷贝
+    ...idiv + fild + 0x643C50                      ; ★进度百分比
+    0x69451A:
+    ...cmp 计数; je 0x694652; jmp 0x694622
+    0x69452F（ebp==1/2）：
+    call 0x5D4D50; call 0x48D080
+    lea ecx, [esp+0x30]; push ecx; push ebp
+    mov ecx, 0xA8EA70; call 0x5F1C30             ; ★0xA8EA70 取
+    test eax, eax; jle 0x694629
+    cmp [ebp], 0x70; jne 0x694629                 ; ★类型 0x70 检查
+    ...占用检查; mov byte [eax], 1; inc esi; add ebx, 0x64
+    lea ecx, [esp+0x50]; call 0x6C8C40
+    mov [esp+0x3C], 0x708                         ; ★上限 0x708
+    ...mov ax, [ebp+0x18]; push eax; push 0x83E980; call 0x4068E0  ; 日志
+    ...拷贝（rep movsd/movsb，×0x40 步进）
+    ...idiv + fild + 0x643C50
+    0x694616:
+    ...cmp 计数; je 0x69467C; jmp 0x694622
+    0x694622:
+    mov edi, [esp+0x8C]
+    0x694629:
+    ...0x6C8C40 剩余; je 0x6946A7; jmp 0x694391  ; ★重试
+    0x694652/0x69467C:
+    mov al, [esp+0x90]; mov bl, 1; test al, al
+    push -1; push -1; push 0x40590000; push 0; push 0
+    mov ecx, 0xAC4F58; call 0x643C50             ; ★收尾进度
+    0x6946A7:
+    mov bl, [esp+0x11]
+    cmp [0xA8B238], 4; jne; mov ecx, 0xA8E9C0; call 0x540D60
+    lea ecx, [esp+0x68]; push ecx; push edx; call 0x65CDD0
+    push eax; call 0x7C8B3D; push ecx; call 0x7C8B3D  ; ★释放
+    test bl, bl; mov eax, 0x83E964/0x83E940       ; ★成败串二选
+    push eax; call 0x4068E0
+    lea ecx, [esp+0x60]; call 0x65CCA0
+    push 0x83E928; call 0x4068E0
+    test bl, bl; jne 0x694741
+    push 0; lea ecx, [esp+0x64]; call 0x65CBF0
+    test al, al; je 0x694741
+    lea ecx, [esp+0x60]; call 0x65D190
+    push 0x83E910; call 0x4068E0
+    0x694741:
+    push ebp; call 0x7C8B3D                       ; ★释放
+    lea ecx, [esp+0x60]; call 0x65CA00
+    mov al, bl; ...ret 8
+
+语义：**加载推进器**（0x694760 双胞胎）——构造（0x53ECB0）+ 0x6C8C40
+计数 + 日志（0x4068E0，0x83E8F8/0x83E8DC 起一串常量串）；遍历全局任务
+表（[0xA8DA78]/[0xA8DA84] + [0xA8BB10]/[0xA8BB18]）逐项上报 0xA8E9C0
+调度器（0x5410F0/0x541260/0x541370，行号 0x1C7/0x1E7），每项 0x48D080
+推进 + 0x6C8C40 剩余检查重试；ebp==1/2 走 0xA8EA70 第二表（0x5F1BF0/
+0x5F1C30/0x5F1EA0）；类型 0x11/0x12/0x6F/0x70 检查 + 占用标记（byte
+[目标]=1）+ 数据拷贝（×0x40 步进，rep movsd/movsb）+ 进度百分比（idiv/
+fild → 0x643C50，+0x64 步进）；进度条族 [0xAC4F58]（0x642A60/0x642C20/
+0x642C80/0x643AE0/0x643C50 + 0x40590000 + 0x52FEC0）；内嵌子函数
+0x6941A0（进度条辅助：0x65CBF0/0x65CB50 检查 + 分配 0x7C8E17 + 0x642A60
+族 + 0x541370 上报 0x1E7 行）；上限 0x708/0xC0；成功 bl=1，失败返 0。
+★加载进度推进器（0x693Bxx 区——0x694760 双胞胎，加载流程 UI 驱动）。
+2 unique caller（8 callsite）。
+
+★怪癖：①★内嵌子函数 0x6941A0（0x78 栈帧 ret 8——进度条辅助，非独立
+登记函数）；②★[0xA8DA78]/[0xA8DA84] + [0xA8BB10]/[0xA8BB18] 双重枚举；
+③★0x48D080 推进 + 0x6C8C40 剩余检查重试循环；④★类型 0x11/0x12/0x6F/
+0x70 检查 + 占用标记 byte=1；⑤★数据拷贝 ×0x40 步进（shl 6 + rep movsd/
+movsb）；⑥★进度百分比 idiv/fild → 0x643C50（+0x64 步进）；⑦★进度条
+[0xAC4F58] 族 + 0x40590000 + 0x52FEC0；⑧★0xA8E9C0 调度器（0x5410F0/
+0x541260/0x541370）+ 0xA8EA70 表（0x5F1BF0/0x5F1C30/0x5F1EA0）；
+⑨★上限 0x708/0xC0 + 0x7C8B3D 释放 + 0x65CBF0/0x65D190/0x65CCA0/
+0x65CA00 清理族。
+
+⚠️ partial：宿主类（0x693Bxx 区——加载/进度域）、[0xA8DA78] 等表身份、
+0x48D080/0x6C8C40 精确身份、0xA8E9C0/0xA8EA70 调度器对象、[0xAC4F58]
+进度条对象、0x52FEC0、0x40590000 常量、内嵌 0x6941A0 的宿主关系、
+2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1297（0x67B550 VectorClass 派生构造器——0x528A10 INI 装载）：
+  0x694760/0x693B70 与 0x67B550 共享 0x4068E0 日志族 + 0x734E60 DebugLog
+  （0x83E9C8 文件常量）——配置/加载域工具家族。
+- batch 记忆（宽串 operator+= 家族 0x7B6B60/0x7B6AE0/0x7B6970）：
+  0x783C80 的 0x7B4620/0x7B5A40/0x7B66D0/0x7B6760/0x7B68E0/0x7B7100/
+  0x7B71D0/0x7B46F0/0x7B5400/0x7B4780 串方法族同域（0x7Bxxxx 串类）。
+- 0x4068E0/0x734E60（日志双工具）：0x694760/0x693B70/0x783C80 三函数
+  共用——日志域 anchor（0x84A430 文件常量 + 0x83E9C8/0x83E9C4 行串）。
+- [0xAC4F58]/[0xAC4848] 全局对象（进度条/动画域）：0x694760/0x693B70
+  进度条族（0x642A60/0x642C20/0x642C80/0x643AE0/0x643C50）+ 0x783C80
+  全局引用——0xAC 全局区共享（batch 1312/1315 资源系统同区）。
+- 0xA8E9C0/0xA8EA70（调度器对象）：0x694760/0x693B70 上报目标 + 
+  0x5410F0/0x541260/0x541370/0x5422D0/0x540D10/0x540D40/0x540D60 +
+  0x5F1BF0/0x5F1C30/0x5F1EA0——0xA8 全局区加载调度家族（后续批次闭合）。
