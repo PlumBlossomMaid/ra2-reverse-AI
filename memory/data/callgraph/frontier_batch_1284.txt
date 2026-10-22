@@ -1,0 +1,107 @@
+frontier batch 1284 — 0x5C6370 字节流解码展开器 / 0x5AC370 双 word 比较器 / 0x4C91C0 结构初始化器（2026-10-22）
+
+口径：承接 batch 1283 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=3 三个未登记函数：
+0x5C6370（126B）、0x5AC370（35B）、0x4C91C0（28B）。取证手段：disasm.py
+直反汇编全程读完 + TSV 查重（三候选全部未登记）。
+
+================================================================================
+0x5C6370 —— 字节流解码展开器（126B 全程读完）
+================================================================================
+签名：thiscall（ecx=目标缓冲起始）+ 1 栈参（[esp+0x14]=上限长度）ret 4。
+机器码（0x5C6370-0x5C63ED）：
+    0x5C6370:
+    mov al, [edx]             ; al = 字节流当前字节
+    inc edx                   ; 游标前进
+    cmp al, 2; jne 0x5C63E7   ; 非 2 → 跳过
+    mov al, [edx]; test al, 0x80; jne 0x5C638C   ; ★bit7 置位 → 长形式
+    ; 短形式（1 字节值）:
+    and eax, 0xFF; mov edi, eax; jmp 0x5C63AA
+    0x5C638C:                  ; ★长形式（2-3 字节）:
+    and eax, 0x7F; inc edx
+    cmp eax, 2; jg 0x5C63E7   ; ★前缀>2 → 跳过（格式错误）
+    mov cl, [edx]; inc edx
+    cmp eax, 1; mov edi, ecx; jle 0x5C63AB   ; 前缀 1 → 1 字节值
+    mov al, [edx]; shl edi, 8; or edi, eax   ; 前缀 2 → ★2 字节值（大端）
+    0x5C63AA: inc edx
+    0x5C63AB:
+    mov ecx, [esp+0x14]; lea esi, [ecx*4]    ; esi = 上限×4
+    cmp edi, esi; ja 0x5C63E7                ; ★长度>上限 → 跳过
+    mov al, [edx]; mov ebx, edx; and al, 0x80
+    neg al; sbb al, al; and eax, 0xFF         ; ★填充字节 = bit7 ? 0xFF : 0
+    mov edx, esi; sub edx, edi                ; 填充数量 = 上限-长度
+    lea ecx, [esi+ebp]                        ; ecx = 目标+上限（尾部）
+    test edx, edx; jle 0x5C63DA
+    0x5C63D4: dec ecx; dec edx; mov [ecx], al; jne 0x5C63D4  ; ★反向填充
+    0x5C63DA:
+    test edi, edi; jle 0x5C63E7
+    0x5C63DE: mov dl, [ebx]; dec ecx; inc ebx; dec edi; mov [ecx], dl; jne 0x5C63DE  ; ★反向拷贝数据
+    0x5C63E7: pop 全; ret 4
+
+语义：**字节流解码展开器**——从 edx 字节流读"2 前缀"记录：短形式（后随
+1 字节直接作长度）+ 长形式（前缀 bit7 置位：1/2 字节值），长度超上限
+跳过；否则从目标缓冲尾部反向先填 (上限-长度) 个填充字节（bit7→0xFF/
+0x00），再反向拷贝数据字节。★与原版 LCW/RLE 类解码写形态一致（倒序
+展开——目标缓冲尾部对齐）。3 unique caller（30 callsite）。
+
+★怪癖：①★字节流语法：字节==2 是记录前缀（短/长两形式）；②★长形式
+前缀 bit7（0x80）标记 + 值 1/2 字节大端拼；③★反向展开（目标尾部倒序
+写——LCW 压缩惯用法）；④★填充字节由数据首字节 bit7 决定（0xFF/0x00）；
+⑤★长度超上限静默跳过（格式错误容错）。
+
+⚠️ partial：字节流来源（压缩数据/资源）、[esp+0x14] 上限语义（目标缓冲
+容量）、宿主类（0x5C637x 区——batch 1265 聊天/网络域附近）、调用方。
+
+================================================================================
+0x5AC370 —— 双 word 比较器（35B 全程读完）
+================================================================================
+签名：thiscall（ecx=左结构）+ 1 栈参（[esp+4]=右结构）ret 4。
+机器码（全文 35 字节）：
+    mov eax, [esp+4]          ; eax = 右结构
+    mov dx, [ecx]; cmp dx, [eax]      ; ★word[0] 比较
+    jne 0x5AC38B
+    mov cx, [ecx+2]; cmp cx, [eax+2]  ; ★word[2] 比较
+    jne 0x5AC38B
+    xor eax, eax; ret 4       ; 相等 → 返 0
+    0x5AC38B: mov eax, 1; ret 4       ; 不等 → 返 1
+
+语义：**双 word 比较器**——逐 word 比较两结构的 +0/+2 两字段（各 16 位），
+全等返 0，任一不等返 1。4 unique caller（35 callsite）。
+
+★怪癖：①★两字段 16 位逐比较（cmp dx/cx——4 字节结构比较）；②★返回
+0/1 反转（相等=0、不等=1——strcmp 语义！）；③★无长度参（固定 4B）。
+
+⚠️ partial：结构语义（两 word 坐标/ID）、调用方（4 unique caller 35
+callsite）、宿主类（0x5ACxxx 区）。
+
+================================================================================
+0x4C91C0 —— 结构初始化器（28B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）无栈参 ret 空。
+机器码（全文 28 字节）：
+    mov eax, ecx; xor ecx, ecx
+    mov word [eax], cx; mov word [eax+4], cx    ; ★+0/+4 word 清零
+    mov edx, [0xa8ed84]; mov [eax+0x10], ecx    ; ★+0x10 dword 清零
+    mov [eax+8], edx                            ; ★+8 = [0xA8ED84] 全局
+    mov word [eax+0x14], cx                     ; ★+0x14 word 清零
+    ret
+
+语义：**结构初始化器**——清 +0/+4/+0x10/+0x14 并置 +8 = 全局 [0xA8ED84]
+（★从全局拷初值）。4 unique caller（28 callsite）。
+
+★怪癖：①★+8 从全局 [0xA8ED84] 取初值（非清零——全局共享句柄推断）；
+②★word 与 dword 混合清零（+0/+4/+0x14 word、+0x10 dword——结构字段
+布局）；③★xor ecx 复用（三处清零同寄存器）。
+
+⚠️ partial：[0xA8ED84] 全局语义（句柄/配置/共享指针）、结构字段含义、
+宿主类（0x4C9xxx 区——CRC/校验域 batch 1271 CRCEngine 同区？0x4C91C0
+在 0x4C9xxx）、调用方。
+
+================================================================================
+跨批次连接
+================================================================================
+- LCW/RLE 类压缩解码：0x5C6370 反向展开与原版地图压缩/资源解码同形态
+  （batch 记忆 IsoMapPack5/encode80 等 map 编码同域——RMG mapwriter 参考）。
+- batch 1265（0x5Cxxxx 聊天/网络区）：0x5C6370 同区字节流处理。
+- [0xA8ED84]（.data rva 0x68ED84）：0x4C91C0 全局依赖——与 [0xA8EC28]/
+  [0xA8EC1C]（batch 1271 注册表）同 0xA8xxxx 全局区家族。
