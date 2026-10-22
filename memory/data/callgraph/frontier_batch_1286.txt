@@ -1,0 +1,87 @@
+frontier batch 1286 — 0x6B8B10 空操作桩 / 0x408530 空操作桩 / 0x691590 ScriptClass::Reset（2026-10-23）
+
+口径：承接 batch 1285 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=5/6/3 三个未登记函数：
+0x6B8B10（1B）、0x408530（1B）、0x691590（10B）。取证手段：disasm.py
+直反汇编全程读完 + TSV 查重（三候选全部未登记）+ YRpp ScriptClass.h
+交叉验证（0x691590）。
+
+================================================================================
+0x6B8B10 —— 空操作桩（1B 全程读完）
+================================================================================
+签名：无参（thiscall 形态但忽略 ecx）ret 空。
+机器码（全文 1 字节）：
+    0x6B8B10: ret
+    0x6B8B11-0x6B8B1F: nop × 15（函数间对齐填充）
+    0x6B8B20: ret（★下一函数起点，同为 1B 桩——本批不登记）
+
+语义：**空操作桩**——直接返回，不读写任何状态。★纯 ret 函数
+（c3 单字节，无栈帧无 prologue/epilogue）。5 unique caller（50 callsite）。
+
+★怪癖：①★1 字节纯 ret（无操作桩——被调用方引用但行为为空）；②★函数
+间 15 字节 nop 对齐填充（编译器对齐到 0x10 边界）；③★后邻 0x6B8B20
+同为 1B ret 桩（两桩相邻——占位族）。
+
+⚠️ partial：桩的调用意图（虚表占位/禁用功能 stub）、5 unique caller
+身份、后邻 0x6B8B20 桩（同族候选）。
+
+================================================================================
+0x408530 —— 空操作桩（1B 全程读完）
+================================================================================
+签名：无参（thiscall 形态但忽略 ecx）ret 空。
+机器码（全文 1 字节）：
+    0x408530: ret
+    0x408531-0x40853F: nop × 15（函数间对齐填充）
+    0x408540: mov ecx, [ecx+0x14]（★下一函数起点——0x10624DD3 ÷1000
+              双移位惯用法，与 batch 记忆 PreviewClass::DrawStartPoints
+              同常量）
+
+语义：**空操作桩**——直接返回，不读写任何状态。★纯 ret 函数
+（c3 单字节）。6 unique caller（40 callsite）。
+
+★怪癖：①★1 字节纯 ret（无操作桩）；②★函数间 15 字节 nop 对齐填充；
+③★后邻 0x408540 是真实函数（乘 0x10624DD3 右移 ÷1000——DrawStartPoints
+同款惯用法，后续批次候选）。
+
+⚠️ partial：桩的调用意图、6 unique caller 身份、后邻 0x408540 宿主
+（0x4085xx 区——batch 记忆"绘图/换算域"附近）。
+
+================================================================================
+0x691590 —— ScriptClass::Reset（10B 全程读完 + YRpp 交叉验证）
+================================================================================
+签名：thiscall（ecx=this）无栈参 ret al（返回 1）。
+机器码（全文 10 字节）：
+    0x691590: mov dword ptr [ecx + 0x2C], 0xFFFFFFFF   ; ★idxCurrentLine = -1
+    0x691597: mov al, 1                                  ; 返回 true
+    0x691599: ret
+    0x69159A-0x69159F: nop × 6（对齐填充）
+    0x6915A0: mov eax, [esp+4]（★下一函数 SetCurrentLine——
+              [ecx+0x2C]=栈参; al=1; ret 4，与 Reset 配对写同一字段）
+
+语义：**ScriptClass::Reset**——置 this->idxCurrentLine（+0x2C）=-1 并返回
+true（重置脚本当前执行行索引）。★YRpp ScriptClass.h:28 交叉验证实锤：
+`bool Reset() { this->idxCurrentLine = -1; return true; }` 与机器码逐字段
+吻合（idxCurrentLine 偏移 +0x2C 实锤）。3 unique caller（50 callsite）。
+
+★怪癖：①★+0x2C = idxCurrentLine（ScriptClass 布局 Type 0x24 /
+field_28 0x28 / idxCurrentLine 0x2C——YRpp 头文件实锤）；②★Ghidra 符号
+名 ClearMission 与机器码不符——实为 Reset（按纪律以机器码 + YRpp 为准
+标注）；③★返回恒 1（al=1 无分支——Reset 永不失败）；④★后邻 0x6915A0
+= SetCurrentLine（[ecx+0x2C]=栈参 配对写——同一字段的 getter/setter 族）。
+
+⚠️ partial：3 unique caller 身份（TeamClass/脚本调度域调用）、
+0x691540 GetNextAction / 0x691500 GetCurrentAction 邻居（同族候选、
+batch 后续可闭合）、Type 字段（+0x24）语义。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 记忆（PreviewClass::DrawStartPoints 0x10624DD3 双移位 ÷1000）：
+  0x408530 后邻 0x408540 同款乘数惯用法——0x4085xx 区绘图/换算域。
+- YRpp ScriptClass.h（E:\code\YRpp\ScriptClass.h）：0x691590 布局/语义
+  权威来源（Reset/SetCurrentLine/GetCurrentAction 0x691500/
+  GetNextAction 0x691540 同族）。
+- TeamClass.h:58 CurrentScript 指针（ScriptClass 使用者——0x691590
+  调用方候选身份线索）。
+- 空操作桩族（0x6B8B10/0x408530）：原版保留的禁用/占位 stub——
+  复刻时同样保留纯 ret 行为（不"顺手实现"）。
