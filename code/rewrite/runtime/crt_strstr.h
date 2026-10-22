@@ -1,6 +1,6 @@
 #pragma once
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7CA4B0 MSVCRT strstr（子串查找，cdecl 2 栈参，返回命中位置指针）。
 // 机器码 133B（0x7CA4B0-0x7CA52F）：
@@ -33,4 +33,4 @@ namespace ra2::runtime {
 //   deadcode_7ca4b0_golden.txt）。
 const char* strstr_legacy(const char* str, const char* sub);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

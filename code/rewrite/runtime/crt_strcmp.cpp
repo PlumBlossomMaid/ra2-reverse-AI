@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <cstring>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 int strcmp_legacy(const char* s1, const char* s2) {
     const std::uint8_t* p = reinterpret_cast<const std::uint8_t*>(s1);
@@ -64,4 +64,4 @@ fast4:
     }
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

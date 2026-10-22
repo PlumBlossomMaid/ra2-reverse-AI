@@ -88,7 +88,7 @@ class CrtStrrchrTest : public ::testing::Test {
 TEST_F(CrtStrrchrTest, GoldenMatches) {
     for (const GCase& c : cases_) {
         const char* s = reinterpret_cast<const char*>(c.s.data());
-        const char* got = ra2::runtime::strrchr_legacy(s, c.c);
+        const char* got = ra2::crt::strrchr_legacy(s, c.c);
         if (c.ret < 0) {
             EXPECT_EQ(got, nullptr) << "c=0x" << std::hex << (c.c & 0xFF)
                                     << " s=" << c.s.size() << "B";
@@ -105,28 +105,28 @@ TEST_F(CrtStrrchrTest, GoldenMatches) {
 //   建立在同一个串指针上，否则地址天然不同。
 TEST_F(CrtStrrchrTest, BoundaryCases) {
     const char* abc = "abc";
-    EXPECT_EQ(ra2::runtime::strrchr_legacy(abc, 'b'),
+    EXPECT_EQ(ra2::crt::strrchr_legacy(abc, 'b'),
               std::strchr(abc, 'b'));
-    EXPECT_EQ(ra2::runtime::strrchr_legacy(abc, 0), abc + 3);  // 终止 NUL
-    EXPECT_EQ(ra2::runtime::strrchr_legacy(abc, 'a'), abc);    // 首命中
-    EXPECT_EQ(ra2::runtime::strrchr_legacy(abc, 'c'), abc + 2);  // 尾命中
-    EXPECT_EQ(ra2::runtime::strrchr_legacy(abc, 'x'), nullptr);  // 未找到
+    EXPECT_EQ(ra2::crt::strrchr_legacy(abc, 0), abc + 3);  // 终止 NUL
+    EXPECT_EQ(ra2::crt::strrchr_legacy(abc, 'a'), abc);    // 首命中
+    EXPECT_EQ(ra2::crt::strrchr_legacy(abc, 'c'), abc + 2);  // 尾命中
+    EXPECT_EQ(ra2::crt::strrchr_legacy(abc, 'x'), nullptr);  // 未找到
 
     const char* empty = "";
-    EXPECT_EQ(ra2::runtime::strrchr_legacy(empty, 0), empty);  // 空串 c==0
-    EXPECT_EQ(ra2::runtime::strrchr_legacy(empty, 'a'), nullptr);
+    EXPECT_EQ(ra2::crt::strrchr_legacy(empty, 0), empty);  // 空串 c==0
+    EXPECT_EQ(ra2::crt::strrchr_legacy(empty, 'a'), nullptr);
 
     const char* single = "a";
-    EXPECT_EQ(ra2::runtime::strrchr_legacy(single, 'a'), single);
-    EXPECT_EQ(ra2::runtime::strrchr_legacy(single, 'a'),
+    EXPECT_EQ(ra2::crt::strrchr_legacy(single, 'a'), single);
+    EXPECT_EQ(ra2::crt::strrchr_legacy(single, 'a'),
               std::strchr(single, 'a'));
 
     const char* aba = "ababa";
-    EXPECT_EQ(ra2::runtime::strrchr_legacy(aba, 'a'), aba + 4);  // 多次返最后
+    EXPECT_EQ(ra2::crt::strrchr_legacy(aba, 'a'), aba + 4);  // 多次返最后
 
     // ★c 只取低 8 位：0x1FF 与 0xFF 等价
     const char* hi = "abc\xff";
-    EXPECT_EQ(ra2::runtime::strrchr_legacy(hi, 0x1FF), hi + 3);
+    EXPECT_EQ(ra2::crt::strrchr_legacy(hi, 0x1FF), hi + 3);
 }
 
 // 参照抽查：伪随机字节串 × 随机 c（含 0/高位）vs 独立参照实现
@@ -147,7 +147,7 @@ TEST_F(CrtStrrchrTest, ReferenceCrossCheck) {
         buf[len] = 0;
         buf[len + 1] = 0;
         const int c = static_cast<int>(rnd() % 512);  // 含高位忽略路径
-        const char* got = ra2::runtime::strrchr_legacy(buf, c);
+        const char* got = ra2::crt::strrchr_legacy(buf, c);
         const char* ref = ref_strrchr(buf, c);
         EXPECT_EQ(got, ref) << "pair " << t << " len=" << len
                             << " c=0x" << std::hex << (c & 0xFF);

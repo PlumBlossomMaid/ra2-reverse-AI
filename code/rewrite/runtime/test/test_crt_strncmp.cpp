@@ -85,7 +85,7 @@ class CrtStrncmpTest : public ::testing::Test {
 // 逐用例：三态与 golden 一致（s1/s2 含尾 NUL，可直接 data()）
 TEST_F(CrtStrncmpTest, GoldenMatches) {
     for (const GCase& c : cases_) {
-        const int got = ra2::runtime::strncmp_legacy(
+        const int got = ra2::crt::strncmp_legacy(
             reinterpret_cast<const char*>(c.s1.data()),
             reinterpret_cast<const char*>(c.s2.data()), c.count);
         EXPECT_EQ(got, c.ret) << "count=" << c.count
@@ -97,11 +97,11 @@ TEST_F(CrtStrncmpTest, GoldenMatches) {
 TEST_F(CrtStrncmpTest, BoundaryCases) {
     const char a[] = "abc";
     const char b[] = "abd";
-    EXPECT_EQ(ra2::runtime::strncmp_legacy(a, b, 0), 0);
-    EXPECT_EQ(ra2::runtime::strncmp_legacy(a, a, 3), 0);
-    EXPECT_EQ(ra2::runtime::strncmp_legacy(a, b, 2), 0);
-    EXPECT_EQ(ra2::runtime::strncmp_legacy(a, b, 3), -1);
-    EXPECT_EQ(ra2::runtime::strncmp_legacy(b, a, 3), 1);
+    EXPECT_EQ(ra2::crt::strncmp_legacy(a, b, 0), 0);
+    EXPECT_EQ(ra2::crt::strncmp_legacy(a, a, 3), 0);
+    EXPECT_EQ(ra2::crt::strncmp_legacy(a, b, 2), 0);
+    EXPECT_EQ(ra2::crt::strncmp_legacy(a, b, 3), -1);
+    EXPECT_EQ(ra2::crt::strncmp_legacy(b, a, 3), 1);
 }
 
 // 参照抽查：随机串对 × 随机 count 与独立参照实现交叉对拍
@@ -129,7 +129,7 @@ TEST_F(CrtStrncmpTest, ReferenceCrossCheck) {
         a[l1] = 0;
         b[l2] = 0;
         const std::size_t n = static_cast<std::size_t>(rnd() % 16);
-        const int got = ra2::runtime::strncmp_legacy(a.data(), b.data(), n);
+        const int got = ra2::crt::strncmp_legacy(a.data(), b.data(), n);
         const int ref = ref_strncmp(a.data(), b.data(), n);
         EXPECT_EQ(got, ref) << "pair " << t << " l1=" << l1
                             << " l2=" << l2 << " n=" << n;

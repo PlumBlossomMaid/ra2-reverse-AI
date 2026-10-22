@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 std::int64_t alldiv_legacy(std::int64_t a, std::int64_t b) {
     // 栈参布局（cdecl 右→左压栈）：(a_lo, a_hi, b_lo, b_hi)
@@ -103,4 +103,4 @@ std::int64_t alldiv_legacy(std::int64_t a, std::int64_t b) {
     return static_cast<std::int64_t>(q);
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

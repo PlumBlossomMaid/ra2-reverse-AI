@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7C978A（18B，ranking.tsv uc=37 / transitive_dependents=1156，
 // 按 unique_callers 扇入度取的下一个未复刻 CRT 项）：MSVCRT 布尔
@@ -37,4 +37,4 @@ struct CrtBoolNormWorld {
 std::int32_t bool_normalize_legacy(CrtBoolNormWorld* world,
                                    std::uintptr_t p);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

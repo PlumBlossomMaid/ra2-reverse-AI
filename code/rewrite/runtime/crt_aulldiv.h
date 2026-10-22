@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7C9380 MSVC6 CRT __aulldiv（64 位无符号除法，cdecl 4 dword 栈参
 // (a_lo, a_hi, b_lo, b_hi)，返回 edx:eax 64 位商 = (uint64)a/(uint64)b，
@@ -48,4 +48,4 @@ namespace ra2::runtime {
 // 16 用例）。
 std::uint64_t aulldiv_legacy(std::uint64_t a, std::uint64_t b);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 std::uint64_t aulldiv_legacy(std::uint64_t a, std::uint64_t b) {
     const std::uint32_t a_lo = static_cast<std::uint32_t>(a);
@@ -77,4 +77,4 @@ std::uint64_t aulldiv_legacy(std::uint64_t a, std::uint64_t b) {
     return q;
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

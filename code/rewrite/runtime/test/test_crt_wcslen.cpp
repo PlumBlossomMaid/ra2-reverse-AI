@@ -67,7 +67,7 @@ class CrtWcslenTest : public ::testing::Test {
 
 TEST_F(CrtWcslenTest, GoldenWcslenMatches) {
     for (const Case& c : cases_) {
-        std::uint32_t ret = ra2::runtime::wcslen_legacy(c.src.data());
+        std::uint32_t ret = ra2::crt::wcslen_legacy(c.src.data());
         EXPECT_EQ(ret, c.exp_ret) << "src 首字 0x" << std::hex
                                   << (c.src.empty() ? 0 : c.src[0]);
     }
@@ -76,15 +76,15 @@ TEST_F(CrtWcslenTest, GoldenWcslenMatches) {
 TEST_F(CrtWcslenTest, EmptyStringReturnsZero) {
     // 原版 s[0]==0 走独立分支返回 0（空串特例）
     const std::uint16_t s[] = {0};
-    EXPECT_EQ(ra2::runtime::wcslen_legacy(s), 0u);
+    EXPECT_EQ(ra2::crt::wcslen_legacy(s), 0u);
 }
 
 TEST_F(CrtWcslenTest, NulIndexIsLength) {
     // "读-推-测"语义：返回第一个 NUL 的索引（= 字符串长度），
     // 0xFFFF 字符不算终止（非 0）
     const std::uint16_t s1[] = {'a', 0xFFFF, 0};
-    EXPECT_EQ(ra2::runtime::wcslen_legacy(s1), 2u);
+    EXPECT_EQ(ra2::crt::wcslen_legacy(s1), 2u);
 
     const std::uint16_t s2[] = {0xFFFF, 0};
-    EXPECT_EQ(ra2::runtime::wcslen_legacy(s2), 1u);
+    EXPECT_EQ(ra2::crt::wcslen_legacy(s2), 1u);
 }

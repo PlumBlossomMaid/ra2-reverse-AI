@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7CA489（37B，112 unique_callers / 3837 transitive_dependents，
 // ranking.tsv 扇入度最高的未复刻 CRT 项之一）：MSVC6 静态 CRT 宽字符
@@ -41,4 +41,4 @@ namespace ra2::runtime {
 // 0x7CA489：wcscpy。src/dst 为 16 位宽字符缓冲（NUL 结尾）。返回 dst。
 std::uint16_t* wcscpy_legacy(std::uint16_t* dst, const std::uint16_t* src);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

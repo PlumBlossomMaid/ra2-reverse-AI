@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7CA5D3 MSVCRT wcscmp（宽字符串比较，cdecl 2 栈参，返回三态 -1/0/+1）。
 // 机器码 53B（0x7CA5D3-0x7CA607）：
@@ -18,4 +18,4 @@ namespace ra2::runtime {
 // 纯内存零子调用零全局（golden 全真身模拟，deadcode_7ca5d3_golden.txt）。
 int wcscmp_legacy(const std::uint16_t* s1, const std::uint16_t* s2);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

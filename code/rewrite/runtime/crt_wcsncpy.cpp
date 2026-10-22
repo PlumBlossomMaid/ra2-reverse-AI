@@ -1,6 +1,6 @@
 #include "crt_wcsncpy.h"
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 std::uint16_t* wcsncpy_legacy(std::uint16_t* dst, const std::uint16_t* src,
                               std::size_t count) {
@@ -22,4 +22,4 @@ std::uint16_t* wcsncpy_legacy(std::uint16_t* dst, const std::uint16_t* src,
     return dst;  // eax = esi（入口 dst）
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

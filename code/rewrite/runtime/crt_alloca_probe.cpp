@@ -1,6 +1,6 @@
 #include "crt_alloca_probe.h"
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 std::uint32_t alloca_probe_legacy(std::uint32_t caller_esp,
                                   std::uint32_t size,
@@ -24,4 +24,4 @@ std::uint32_t alloca_probe_legacy(std::uint32_t caller_esp,
     return base - size;
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

@@ -67,47 +67,47 @@ class CrtAulldivTest : public ::testing::Test {
 // 逐用例：商与 golden 一致（64 位无符号截断除法）
 TEST_F(CrtAulldivTest, GoldenMatches) {
     for (const GCase& c : cases_) {
-        const std::uint64_t got = ra2::runtime::aulldiv_legacy(c.a, c.b);
+        const std::uint64_t got = ra2::crt::aulldiv_legacy(c.a, c.b);
         EXPECT_EQ(got, c.ret) << "a=" << c.a << " b=" << c.b;
     }
 }
 
 // 边界：0/1/快速路径/硬路径/溢出归零/被除 < 除数
 TEST_F(CrtAulldivTest, BoundaryCases) {
-    EXPECT_EQ(ra2::runtime::aulldiv_legacy(0, 1), 0);
-    EXPECT_EQ(ra2::runtime::aulldiv_legacy(1, 1), 1);
-    EXPECT_EQ(ra2::runtime::aulldiv_legacy(0, 0xFFFFFFFFFFFFFFFFull), 0);
+    EXPECT_EQ(ra2::crt::aulldiv_legacy(0, 1), 0);
+    EXPECT_EQ(ra2::crt::aulldiv_legacy(1, 1), 1);
+    EXPECT_EQ(ra2::crt::aulldiv_legacy(0, 0xFFFFFFFFFFFFFFFFull), 0);
     // 快速路径（b_hi==0）：32 位满值
-    EXPECT_EQ(ra2::runtime::aulldiv_legacy(0xFFFFFFFFull, 0xFFFFFFFFull), 1);
+    EXPECT_EQ(ra2::crt::aulldiv_legacy(0xFFFFFFFFull, 0xFFFFFFFFull), 1);
     // 快速路径：a_hi 参与（0x100000000 / 2）
-    EXPECT_EQ(ra2::runtime::aulldiv_legacy(0x100000000ull, 2),
+    EXPECT_EQ(ra2::crt::aulldiv_legacy(0x100000000ull, 2),
               0x80000000ull);
     // 硬路径（b_hi!=0）：全 1 / 全 1 = 1
-    EXPECT_EQ(ra2::runtime::aulldiv_legacy(0xFFFFFFFFFFFFFFFFull,
+    EXPECT_EQ(ra2::crt::aulldiv_legacy(0xFFFFFFFFFFFFFFFFull,
                                            0xFFFFFFFFFFFFFFFFull),
               1);
     // 硬路径：混合交叉（golden 实证商 = 12，非"被除<除数"）
-    EXPECT_EQ(ra2::runtime::aulldiv_legacy(0xDEADBEEFCAFEBABEull,
+    EXPECT_EQ(ra2::crt::aulldiv_legacy(0xDEADBEEFCAFEBABEull,
                                            0x123456789ABCDEF0ull),
               12);
     // 硬路径：被除 < 除数 → 0（0x1000 / 0x1000000000000000）
-    EXPECT_EQ(ra2::runtime::aulldiv_legacy(0x1000ull,
+    EXPECT_EQ(ra2::crt::aulldiv_legacy(0x1000ull,
                                            0x1000000000000000ull),
               0);
     // 硬路径：2^63 / 2 = 2^62
-    EXPECT_EQ(ra2::runtime::aulldiv_legacy(0x8000000000000000ull, 2),
+    EXPECT_EQ(ra2::crt::aulldiv_legacy(0x8000000000000000ull, 2),
               0x4000000000000000ull);
     // 硬路径：b_hi 非零但值小（0x100000000 / 0x100000000 = 1）
-    EXPECT_EQ(ra2::runtime::aulldiv_legacy(0x100000000ull,
+    EXPECT_EQ(ra2::crt::aulldiv_legacy(0x100000000ull,
                                            0x100000000ull),
               1);
     // 1 / 全 1 = 0（硬路径被除 < 除数）
-    EXPECT_EQ(ra2::runtime::aulldiv_legacy(1, 0xFFFFFFFFFFFFFFFFull), 0);
+    EXPECT_EQ(ra2::crt::aulldiv_legacy(1, 0xFFFFFFFFFFFFFFFFull), 0);
     // 快速路径：满值 / 3 = 0x5555555555555555
-    EXPECT_EQ(ra2::runtime::aulldiv_legacy(0xFFFFFFFFFFFFFFFFull, 3),
+    EXPECT_EQ(ra2::crt::aulldiv_legacy(0xFFFFFFFFFFFFFFFFull, 3),
               0x5555555555555555ull);
     // 常规交叉
-    EXPECT_EQ(ra2::runtime::aulldiv_legacy(0x123456789ull, 0xABCDEF01ull),
+    EXPECT_EQ(ra2::crt::aulldiv_legacy(0x123456789ull, 0xABCDEF01ull),
               (0x123456789ull / 0xABCDEF01ull));
 }
 
@@ -124,7 +124,7 @@ TEST_F(CrtAulldivTest, ReferenceCrossCheck) {
         std::uint64_t b =
             (static_cast<std::uint64_t>(rnd()) << 32) | rnd();
         if (b == 0) b = 1;  // 除零原版契约外（div #DE）
-        const std::uint64_t got = ra2::runtime::aulldiv_legacy(a, b);
+        const std::uint64_t got = ra2::crt::aulldiv_legacy(a, b);
         const std::uint64_t ref = a / b;  // 无符号截断
         EXPECT_EQ(got, ref) << "pair " << t << " a=" << a << " b=" << b;
     }

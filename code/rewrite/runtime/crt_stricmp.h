@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7C8D20（208B，205 unique_callers / 3932 transitive_dependents，
 // ranking.tsv 扇入度最高的未复刻 CRT 项）：MSVC6 静态 CRT 大小写不敏感
@@ -87,4 +87,4 @@ std::uint8_t stricmp_ascii_fold(std::uint8_t c);
 // 原版栈上初始化、从未参与计算的上限常量（golden 实证 js 永不成立）
 inline constexpr std::uint32_t kStricmpLocaleGlobal = 0xB782A0;
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

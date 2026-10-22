@@ -47,7 +47,7 @@
 
 #include <cstddef>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // _strncat 逐字节复刻：把 src 最多 count 个字符追加到 dst 尾部 NUL
 // 处并恒补 NUL；count==0 时 dst 完全不动；返回 dst。
@@ -56,6 +56,6 @@ namespace ra2::runtime {
 // 与终止位置一致），模型按语义等价实现、怪癖注释照抄。
 char* strncat_legacy(char* dst, const char* src, std::size_t count);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt
 
 #endif  // RA2_RUNTIME_CRT_STRNCAT_H_

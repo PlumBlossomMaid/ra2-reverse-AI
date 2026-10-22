@@ -2,7 +2,7 @@
 
 #include <vector>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 namespace {
 
 std::uint8_t* as_u8(void* p) { return static_cast<std::uint8_t*>(p); }
@@ -125,4 +125,4 @@ void qsort_legacy(void* base, std::size_t count, std::size_t size,
     }
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

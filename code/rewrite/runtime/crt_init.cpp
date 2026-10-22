@@ -2,7 +2,7 @@
 
 #include <cstring>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 void initterm_legacy(const InitEntry* begin, const InitEntry* end) {
     // 0x7CBED3: esi = begin; while (esi < end) { if (*esi) (*esi)(); esi += 4; }
@@ -39,4 +39,4 @@ std::size_t env_pointer_array_bytes(std::size_t segment_count) {
     return segment_count * 4 + 4;
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

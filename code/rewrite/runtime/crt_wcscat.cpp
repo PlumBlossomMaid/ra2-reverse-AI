@@ -1,6 +1,6 @@
 #include "crt_wcscat.h"
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 std::uint16_t* wcscat_legacy(std::uint16_t* dst, const std::uint16_t* src) {
     std::uint16_t* d = dst;
@@ -22,4 +22,4 @@ std::uint16_t* wcscat_legacy(std::uint16_t* dst, const std::uint16_t* src) {
     return dst;  // eax 恒为入口 dst
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

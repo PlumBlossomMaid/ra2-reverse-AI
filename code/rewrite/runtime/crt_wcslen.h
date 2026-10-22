@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7CA405（29B，94 unique_callers / 3414 transitive_dependents，
 // ranking.tsv 扇入度最高的未复刻 CRT 项之一）：MSVC6 静态 CRT 宽字符
@@ -38,4 +38,4 @@ namespace ra2::runtime {
 // 0x7CA405：wcslen。s 为 16 位宽字符缓冲（NUL 结尾）。返回字符串长度。
 std::uint32_t wcslen_legacy(const std::uint16_t* s);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

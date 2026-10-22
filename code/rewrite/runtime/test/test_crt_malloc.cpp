@@ -86,13 +86,13 @@ class CrtMallocTest : public ::testing::Test {
 // 逐用例：返回值透传 core + core 实参 == (size, 全局 flag)
 TEST_F(CrtMallocTest, GoldenReturnAndArgsMatch) {
     for (const GCase& c : cases_) {
-        ra2::runtime::CrtMallocWorld w{};
+        ra2::crt::CrtMallocWorld w{};
         w.core = StubCore;
         w.flag = c.flag;  // [0xB782C4] 注入值
         std::vector<std::pair<std::size_t, std::uintptr_t>> args;
         g_args = &args;
         g_inject = c.inj;
-        const void* got = ra2::runtime::malloc_legacy(&w, c.size);
+        const void* got = ra2::crt::malloc_legacy(&w, c.size);
         g_args = nullptr;
         EXPECT_EQ(static_cast<std::uint32_t>(
                       reinterpret_cast<std::uintptr_t>(got)),
@@ -108,19 +108,19 @@ TEST_F(CrtMallocTest, GoldenReturnAndArgsMatch) {
 
 // 语义核心：返回值 = core 返回值透传（包装不改）
 TEST_F(CrtMallocTest, ReturnPassthrough) {
-    ra2::runtime::CrtMallocWorld w{};
+    ra2::crt::CrtMallocWorld w{};
     w.core = StubCore;
     w.flag = 0x41;
     g_inject = 0x1234;
-    EXPECT_EQ(ra2::runtime::malloc_legacy(&w, 0x100),
+    EXPECT_EQ(ra2::crt::malloc_legacy(&w, 0x100),
               reinterpret_cast<void*>(0x1234));
     g_inject = 0;  // core 返回 NULL 也原样透传（包装不查）
-    EXPECT_EQ(ra2::runtime::malloc_legacy(&w, 0x100), nullptr);
+    EXPECT_EQ(ra2::crt::malloc_legacy(&w, 0x100), nullptr);
 }
 
 // 全路径必然调用一次 core（size 任意——无 NULL 短路）
 TEST_F(CrtMallocTest, AlwaysCallsCoreOnce) {
-    ra2::runtime::CrtMallocWorld w{};
+    ra2::crt::CrtMallocWorld w{};
     w.core = StubCore;
     w.flag = 0x41;
     for (std::size_t sz : {std::size_t{0}, std::size_t{1}, std::size_t{0x20},
@@ -129,7 +129,7 @@ TEST_F(CrtMallocTest, AlwaysCallsCoreOnce) {
         std::vector<std::pair<std::size_t, std::uintptr_t>> args;
         g_args = &args;
         g_inject = 0x41;
-        (void)ra2::runtime::malloc_legacy(&w, sz);
+        (void)ra2::crt::malloc_legacy(&w, sz);
         g_args = nullptr;
         ASSERT_EQ(args.size(), 1u) << "size=" << std::hex << sz;
         EXPECT_EQ(args[0].first, sz);

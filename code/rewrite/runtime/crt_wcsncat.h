@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7CB504 MSVCRT wcsncat（宽串追加定长，cdecl 3 栈参 (dst, src, Count)，
 // 返回 dst——★eax 入口保存原始 dst 后全程不动即返回值）。机器码 64B
@@ -34,4 +34,4 @@ namespace ra2::runtime {
 std::uint16_t* wcsncat_legacy(std::uint16_t* dst, const std::uint16_t* src,
                               std::size_t count);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

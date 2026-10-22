@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 std::uint8_t stricmp_ascii_fold(std::uint8_t c) {
     // 原版：sub al,0x41 / cmp al,0x1A / sbb cl,cl / and cl,0x20 /
@@ -65,4 +65,4 @@ int stricmp_legacy(CrtStricmpWorld& world, const char* s1, const char* s2) {
     return result;
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

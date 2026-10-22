@@ -1,6 +1,6 @@
 #include "crt_format.h"
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 std::int32_t vsprintfw_legacy(CrtFormatWorld& world, std::uint8_t* dst,
                               std::uint32_t fmt, std::uint32_t args) {
@@ -43,4 +43,4 @@ std::int32_t vsprintf_legacy(CrtFormatWorld& world, std::uint8_t* dst,
     return result;
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

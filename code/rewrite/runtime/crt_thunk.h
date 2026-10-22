@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7C9BFD（11B，ranking.tsv uc=29 / transitive_dependents=861，
 // 按 unique_callers 扇入度取的下一个未复刻 CRT 项）：CRT 数字解析
@@ -33,4 +33,4 @@ struct CrtThunkWorld {
 // 0x7C9BFD：数字解析转发 thunk。arg 为任意 32 位值（原样转发）。
 std::uint32_t parse_thunk_legacy(CrtThunkWorld* world, std::uint32_t arg);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

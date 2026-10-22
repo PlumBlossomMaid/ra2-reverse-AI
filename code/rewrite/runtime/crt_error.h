@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7DC720 → 0x7DCD9C → 0x7DCDC0：MSVC6 CRT 无效参数异常链。
 //
@@ -88,4 +88,4 @@ void invalid_parameter_forward(CrtThrowWorld& world, std::uint32_t arg);
 inline constexpr std::uint32_t kCrtExceptionVtable = 0x7FA498;
 inline constexpr std::uint32_t kCrtExceptionThrowInfo = 0x80F0D0;
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

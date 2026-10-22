@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7C8EC0 MSVC6 CRT __allmul（64 位乘法，cdecl 4 dword 栈参
 // (a_lo, a_hi, b_lo, b_hi)，返回 edx:eax 64 位乘积，ret 0x10）。
@@ -36,4 +36,4 @@ namespace ra2::runtime {
 // 15 用例）。
 uint64_t allmul_legacy(std::uint64_t a, std::uint64_t b);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

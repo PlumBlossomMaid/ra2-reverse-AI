@@ -83,7 +83,7 @@ class CrtWcschrTest : public ::testing::Test {
 TEST_F(CrtWcschrTest, GoldenMatches) {
     for (const GCase& c : cases_) {
         const std::uint16_t* ret =
-            ra2::runtime::wcschr_legacy(c.s.data(), c.c);
+            ra2::crt::wcschr_legacy(c.s.data(), c.c);
         // golden ret 为字节偏移（采集端 eax-s 字节差）；u16 下标 ×2 换算
         const int off = (ret == nullptr)
                             ? -1
@@ -96,13 +96,13 @@ TEST_F(CrtWcschrTest, GoldenMatches) {
 // 边界：c==0 返终止 NUL / 空串 / 首尾 / 未找到
 TEST_F(CrtWcschrTest, BoundaryCases) {
     const std::uint16_t s[] = {0x41, 0x42, 0x43, 0x44, 0x45, 0};
-    EXPECT_EQ(ra2::runtime::wcschr_legacy(s, 0), s + 5);   // c==0 → NUL
-    EXPECT_EQ(ra2::runtime::wcschr_legacy(s, 0x41), s);    // 首
-    EXPECT_EQ(ra2::runtime::wcschr_legacy(s, 0x45), s + 4);  // 尾
-    EXPECT_EQ(ra2::runtime::wcschr_legacy(s, 0x46), nullptr);  // 未找到
+    EXPECT_EQ(ra2::crt::wcschr_legacy(s, 0), s + 5);   // c==0 → NUL
+    EXPECT_EQ(ra2::crt::wcschr_legacy(s, 0x41), s);    // 首
+    EXPECT_EQ(ra2::crt::wcschr_legacy(s, 0x45), s + 4);  // 尾
+    EXPECT_EQ(ra2::crt::wcschr_legacy(s, 0x46), nullptr);  // 未找到
     const std::uint16_t empty[] = {0};
-    EXPECT_EQ(ra2::runtime::wcschr_legacy(empty, 0), empty);
-    EXPECT_EQ(ra2::runtime::wcschr_legacy(empty, 0x41), nullptr);
+    EXPECT_EQ(ra2::crt::wcschr_legacy(empty, 0), empty);
+    EXPECT_EQ(ra2::crt::wcschr_legacy(empty, 0x41), nullptr);
 }
 
 // 参照抽查：随机 u16 串 × 随机 c 与独立参照实现交叉对拍
@@ -123,7 +123,7 @@ TEST_F(CrtWcschrTest, ReferenceCrossCheck) {
         s[len] = 0;
         const std::uint16_t c = static_cast<std::uint16_t>(rnd() & 0xFFFF);
         const std::uint16_t* got =
-            ra2::runtime::wcschr_legacy(s.data(), c);
+            ra2::crt::wcschr_legacy(s.data(), c);
         const std::uint16_t* ref = nullptr;
         for (int i = 0; i <= len; ++i) {
             if (s[i] == c) {

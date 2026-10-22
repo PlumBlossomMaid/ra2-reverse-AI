@@ -39,7 +39,7 @@ std::vector<std::string> tokens_of(const std::string& line) {
 }
 
 // 与 golden 采集桩一致：ASCII tolower（'A'..'Z' → +0x20）
-class StubWorld : public ra2::runtime::CrtStricmpWorld {
+class StubWorld : public ra2::crt::CrtStricmpWorld {
  public:
     bool locale = false;
     std::vector<std::uint32_t> tolower_inputs;  // LocaleToLower 入参序列
@@ -120,7 +120,7 @@ class CrtStricmpTest : public ::testing::Test {
 
 TEST_F(CrtStricmpTest, LocaleGlobalAddressMatchesHeader) {
     // 原版 locale 全局（==0 快路径 / !=0 慢路径）
-    EXPECT_EQ(ra2::runtime::kStricmpLocaleGlobal, 0xB782A0u);
+    EXPECT_EQ(ra2::crt::kStricmpLocaleGlobal, 0xB782A0u);
 }
 
 TEST_F(CrtStricmpTest, GoldenStricmpMatches) {
@@ -131,7 +131,7 @@ TEST_F(CrtStricmpTest, GoldenStricmpMatches) {
         std::string s2 = bytes_to_str(c.s2);
 
         std::int32_t ret =
-            ra2::runtime::stricmp_legacy(w, s1.c_str(), s2.c_str());
+            ra2::crt::stricmp_legacy(w, s1.c_str(), s2.c_str());
 
         EXPECT_EQ(ret, c.exp_ret) << "s1=" << s1 << " s2=" << s2;
         // 锁平衡：慢路径 acquire/release 各一次（快路径均为 0）
@@ -148,11 +148,11 @@ TEST_F(CrtStricmpTest, GoldenStricmpMatches) {
 
 TEST_F(CrtStricmpTest, AsciiFoldOnlyManglesUpperCase) {
     // 快路径折叠：仅 'A'..'Z' +0x20；'@' 0x40 减 0x41 回绕仍原样
-    EXPECT_EQ(ra2::runtime::stricmp_ascii_fold(0x41), 0x61);  // 'A'→'a'
-    EXPECT_EQ(ra2::runtime::stricmp_ascii_fold(0x5A), 0x7A);  // 'Z'→'z'
-    EXPECT_EQ(ra2::runtime::stricmp_ascii_fold(0x61), 0x61);  // 'a' 原样
-    EXPECT_EQ(ra2::runtime::stricmp_ascii_fold(0x40), 0x40);  // '@' 原样
-    EXPECT_EQ(ra2::runtime::stricmp_ascii_fold(0x00), 0x00);  // NUL 原样
+    EXPECT_EQ(ra2::crt::stricmp_ascii_fold(0x41), 0x61);  // 'A'→'a'
+    EXPECT_EQ(ra2::crt::stricmp_ascii_fold(0x5A), 0x7A);  // 'Z'→'z'
+    EXPECT_EQ(ra2::crt::stricmp_ascii_fold(0x61), 0x61);  // 'a' 原样
+    EXPECT_EQ(ra2::crt::stricmp_ascii_fold(0x40), 0x40);  // '@' 原样
+    EXPECT_EQ(ra2::crt::stricmp_ascii_fold(0x00), 0x00);  // NUL 原样
 }
 
 TEST_F(CrtStricmpTest, SlowPathCallsTolowerInS1ThenS2Order) {
@@ -161,7 +161,7 @@ TEST_F(CrtStricmpTest, SlowPathCallsTolowerInS1ThenS2Order) {
     w.locale = true;
     const char* s1 = "abc";
     const char* s2 = "abD";
-    ra2::runtime::stricmp_legacy(w, s1, s2);
+    ra2::crt::stricmp_legacy(w, s1, s2);
     // 字符对：(c,c)、(c,D) 中 D 是首处不等 → 调用 (s1='D', s2='c'→ 等等，
     // 实为 s1[2]='c'、s2[2]='D' 不等 → tolower('c') 先、tolower('D') 后）
     ASSERT_EQ(w.tolower_inputs.size(), 2u);

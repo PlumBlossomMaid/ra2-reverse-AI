@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7CA45F MSVCRT wcscat（宽字符串连接，cdecl 2 栈参，返回 dst）。
 // 机器码 42B（0x7CA45F-0x7CA488）：
@@ -21,4 +21,4 @@ namespace ra2::runtime {
 //   零全局（golden 全真身模拟，deadcode_7ca45f_golden.txt）。
 std::uint16_t* wcscat_legacy(std::uint16_t* dst, const std::uint16_t* src);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

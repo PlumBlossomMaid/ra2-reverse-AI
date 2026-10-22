@@ -105,7 +105,7 @@ TEST(CrtStrncat, GoldenMatches) {
         std::memset(src_buf, 0, sizeof(src_buf));
         std::memcpy(src_buf, c.src.data(), c.src.size());
 
-        char* ret = ra2::runtime::strncat_legacy(buf, src_buf, c.count);
+        char* ret = ra2::crt::strncat_legacy(buf, src_buf, c.count);
         EXPECT_EQ(ret, buf) << "返回值必须为 dst 指针";
         // 0x50 字节全量比对（golden 采集时读 0x50）
         EXPECT_EQ(std::memcmp(buf, c.dst_after.data(), 0x50), 0)
@@ -121,7 +121,7 @@ TEST(CrtStrncat, GoldenMatches) {
 
 // 边界用例（golden 之外的补充——标准语义与行为约束）
 TEST(CrtStrncat, BoundaryCases) {
-    using ra2::runtime::strncat_legacy;
+    using ra2::crt::strncat_legacy;
     char buf[0x40];
 
     // count==0：dst 完全不动（原版早退，与 wcsncat 不同）
@@ -162,7 +162,7 @@ TEST(CrtStrncat, BoundaryCases) {
 // 与标准库 strncat 交叉抽查（行为语义等价，除 count==0 的边界差
 // 异——标准库 count==0 也是 no-op，一致）
 TEST(CrtStrncat, ReferenceCrossCheck) {
-    using ra2::runtime::strncat_legacy;
+    using ra2::crt::strncat_legacy;
     struct Case {
         const char* dst;
         const char* src;
@@ -192,7 +192,7 @@ TEST(CrtStrncat, ReferenceCrossCheck) {
         std::memset(b, 0xCC, sizeof(b));
         std::strcpy(a, c.dst);
         std::strcpy(b, c.dst);
-        ra2::runtime::strncat_legacy(a, c.src, c.count);
+        ra2::crt::strncat_legacy(a, c.src, c.count);
         std::strncat(b, c.src, c.count);
         EXPECT_EQ(std::strcmp(a, b), 0)
             << "dst=" << c.dst << " src=" << c.src << " count=" << c.count

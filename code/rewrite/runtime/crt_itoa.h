@@ -32,7 +32,7 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7D46B9《_itoa 核心》：无符号位型 value 按 radix 格式化到 buffer，
 // sign != 0 时写 '-' 并取负。返回 eax 残留（低 8 位 = 反转循环最后
@@ -46,6 +46,6 @@ char* ultoa_legacy(std::uint32_t value, char* buffer, std::int32_t radix);
 // 0x7D4715 `_ltoa`：十进制负数带负号（sign 判定），其余同核心，返回 buffer。
 char* ltoa_legacy(std::int32_t value, char* buffer, std::int32_t radix);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt
 
 #endif  // RA2_RUNTIME_CRT_ITOA_H_

@@ -98,7 +98,7 @@ class CrtWcsncmpTest : public ::testing::Test {
 TEST_F(CrtWcsncmpTest, GoldenMatches) {
     for (const GCase& c : cases_) {
         const std::int32_t got =
-            ra2::runtime::wcsncmp_legacy(c.s1.data(), c.s2.data(), c.count);
+            ra2::crt::wcsncmp_legacy(c.s1.data(), c.s2.data(), c.count);
         EXPECT_EQ(got, c.ret) << "count=" << c.count
                               << " s1.size=" << c.s1.size();
     }
@@ -108,29 +108,29 @@ TEST_F(CrtWcsncmpTest, GoldenMatches) {
 TEST_F(CrtWcsncmpTest, BoundaryCases) {
     const std::uint16_t s_abc[] = {'a', 'b', 'c', 0};
     const std::uint16_t s_abd[] = {'a', 'b', 'd', 0};
-    EXPECT_EQ(ra2::runtime::wcsncmp_legacy(s_abc, s_abc, 3), 0);
-    EXPECT_EQ(ra2::runtime::wcsncmp_legacy(s_abc, s_abd, 3), -1);
-    EXPECT_EQ(ra2::runtime::wcsncmp_legacy(s_abd, s_abc, 3), 1);
-    EXPECT_EQ(ra2::runtime::wcsncmp_legacy(s_abc, s_abc, 0), 0);  // Count==0
+    EXPECT_EQ(ra2::crt::wcsncmp_legacy(s_abc, s_abc, 3), 0);
+    EXPECT_EQ(ra2::crt::wcsncmp_legacy(s_abc, s_abd, 3), -1);
+    EXPECT_EQ(ra2::crt::wcsncmp_legacy(s_abd, s_abc, 3), 1);
+    EXPECT_EQ(ra2::crt::wcsncmp_legacy(s_abc, s_abc, 0), 0);  // Count==0
     // 大小写差：'a'-'A'=32（非三态！）
     const std::uint16_t s_a[] = {'a', 0};
     const std::uint16_t s_A[] = {'A', 0};
-    EXPECT_EQ(ra2::runtime::wcsncmp_legacy(s_a, s_A, 1), 32);
+    EXPECT_EQ(ra2::crt::wcsncmp_legacy(s_a, s_A, 1), 32);
     // NUL 提前：'c'-0=99 / 0-'c'=-99
     const std::uint16_t s_ab[] = {'a', 'b', 0};
     const std::uint16_t s_abc2[] = {'a', 'b', 'c', 0};
-    EXPECT_EQ(ra2::runtime::wcsncmp_legacy(s_abc2, s_ab, 3), 99);
-    EXPECT_EQ(ra2::runtime::wcsncmp_legacy(s_ab, s_abc2, 3), -99);
+    EXPECT_EQ(ra2::crt::wcsncmp_legacy(s_abc2, s_ab, 3), 99);
+    EXPECT_EQ(ra2::crt::wcsncmp_legacy(s_ab, s_abc2, 3), -99);
     // 高位值（u16 全宽）
     const std::uint16_t s_hi1[] = {0x7FFF, 0};
     const std::uint16_t s_hi2[] = {0x8000, 0};
-    EXPECT_EQ(ra2::runtime::wcsncmp_legacy(s_hi1, s_hi2, 1), -1);
+    EXPECT_EQ(ra2::crt::wcsncmp_legacy(s_hi1, s_hi2, 1), -1);
     // 16 字符长大小写混合（尾字符差 32）
     const std::uint16_t s_l1[] = {'0','1','2','3','4','5','6','7','8','9',
                                   'a','b','c','d','e','f',0};
     const std::uint16_t s_l2[] = {'0','1','2','3','4','5','6','7','8','9',
                                   'A','B','C','D','E','F',0};
-    EXPECT_EQ(ra2::runtime::wcsncmp_legacy(s_l1, s_l2, 16), 32);
+    EXPECT_EQ(ra2::crt::wcsncmp_legacy(s_l1, s_l2, 16), 32);
 }
 
 // 参照抽查：随机 u16 串 × 随机 count vs 独立参照（标准差值语义）
@@ -161,7 +161,7 @@ TEST_F(CrtWcsncmpTest, ReferenceCrossCheck) {
         b[l2] = 0;
         const std::size_t n = static_cast<std::size_t>(rnd() % 12);
         const std::int32_t got =
-            ra2::runtime::wcsncmp_legacy(a.data(), b.data(), n);
+            ra2::crt::wcsncmp_legacy(a.data(), b.data(), n);
         const std::int32_t ref = ref_wcsncmp(a.data(), b.data(), n);
         EXPECT_EQ(got, ref) << "pair " << t << " l1=" << l1
                             << " l2=" << l2 << " n=" << n;

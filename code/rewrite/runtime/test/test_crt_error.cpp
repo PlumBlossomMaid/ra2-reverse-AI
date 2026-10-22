@@ -32,13 +32,13 @@ std::vector<std::string> tokens_of(const std::string& line) {
     return toks;
 }
 
-class RecorderWorld : public ra2::runtime::CrtThrowWorld {
+class RecorderWorld : public ra2::crt::CrtThrowWorld {
  public:
-    std::vector<ra2::runtime::CrtExceptionObject> thrown;
+    std::vector<ra2::crt::CrtExceptionObject> thrown;
     std::vector<std::uint32_t> throw_infos;
     std::vector<std::uint32_t> released;
 
-    void CxxThrow(const ra2::runtime::CrtExceptionObject& obj,
+    void CxxThrow(const ra2::crt::CrtExceptionObject& obj,
                   std::uint32_t throw_info) override {
         thrown.push_back(obj);
         throw_infos.push_back(throw_info);
@@ -134,7 +134,7 @@ class CrtErrorTest : public ::testing::Test {
 
     // 校验一次构造：返回对象四字段 + 引用计数次数/对象
     void ExpectCtor(const RecorderWorld& w, const Case& c,
-                    const ra2::runtime::CrtExceptionObject& obj) const {
+                    const ra2::crt::CrtExceptionObject& obj) const {
         EXPECT_EQ(obj.vtable, c.exp_vtbl);
         EXPECT_EQ(obj.field4, c.exp_f4);
         EXPECT_EQ(obj.field8, c.exp_f8);
@@ -148,8 +148,8 @@ class CrtErrorTest : public ::testing::Test {
 
 TEST_F(CrtErrorTest, GoldenConstantsMatchHeader) {
     // 审读金标准：期望值必须与头文件常量一致（0x7FA498 / 0x80F0D0）
-    EXPECT_EQ(ra2::runtime::kCrtExceptionVtable, 0x7FA498u);
-    EXPECT_EQ(ra2::runtime::kCrtExceptionThrowInfo, 0x80F0D0u);
+    EXPECT_EQ(ra2::crt::kCrtExceptionVtable, 0x7FA498u);
+    EXPECT_EQ(ra2::crt::kCrtExceptionThrowInfo, 0x80F0D0u);
 }
 
 TEST_F(CrtErrorTest, InvalidParameterForwardThrowsWithZeroSecondField) {
@@ -157,7 +157,7 @@ TEST_F(CrtErrorTest, InvalidParameterForwardThrowsWithZeroSecondField) {
     for (const Case& c : cases_) {
         if (c.kind != "WRAP") continue;
         RecorderWorld w;
-        ra2::runtime::invalid_parameter_forward(w, c.a);
+        ra2::crt::invalid_parameter_forward(w, c.a);
         ExpectThrown(w, c);
         // wrapper 路径第二字段写死 0（原版 push 0）
         EXPECT_EQ(w.thrown[0].field8, 0u);
@@ -169,7 +169,7 @@ TEST_F(CrtErrorTest, ThrowExceptionPropagatesBothFields) {
     for (const Case& c : cases_) {
         if (c.kind != "THROWCALL") continue;
         RecorderWorld w;
-        ra2::runtime::crt_throw_exception(w, c.a, c.b);
+        ra2::crt::crt_throw_exception(w, c.a, c.b);
         ExpectThrown(w, c);
     }
 }
@@ -179,8 +179,8 @@ TEST_F(CrtErrorTest, CtorBuildsObjectAndGatesRefcountOnBAndCLowByte) {
     for (const Case& c : cases_) {
         if (c.kind != "CTOR") continue;
         RecorderWorld w;
-        ra2::runtime::CrtExceptionObject obj =
-            ra2::runtime::crt_exception_ctor(w, c.a, c.b, c.c);
+        ra2::crt::CrtExceptionObject obj =
+            ra2::crt::crt_exception_ctor(w, c.a, c.b, c.c);
         ExpectCtor(w, c, obj);
         EXPECT_TRUE(w.thrown.empty());  // ctor 本身不抛
     }
@@ -189,8 +189,8 @@ TEST_F(CrtErrorTest, CtorBuildsObjectAndGatesRefcountOnBAndCLowByte) {
 TEST_F(CrtErrorTest, CtorFieldCAwaysZero) {
     // 原版怪癖①：先写 +0xC=0 —— 恒 0
     RecorderWorld w;
-    ra2::runtime::CrtExceptionObject obj =
-        ra2::runtime::crt_exception_ctor(w, 1, 2, 0xFF);
+    ra2::crt::CrtExceptionObject obj =
+        ra2::crt::crt_exception_ctor(w, 1, 2, 0xFF);
     EXPECT_EQ(obj.field_c, 0u);
     EXPECT_EQ(w.released.size(), 1u);  // c 低字节非 0 且 b 非 0
 }

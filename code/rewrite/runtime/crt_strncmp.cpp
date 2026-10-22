@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 int strncmp_legacy(const char* s1, const char* s2, std::size_t count) {
     if (count == 0) return 0;  // jecxz 0x7CA641
@@ -28,4 +28,4 @@ int strncmp_legacy(const char* s1, const char* s2, std::size_t count) {
     return 0;  // 耗尽相等 → eax=0
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

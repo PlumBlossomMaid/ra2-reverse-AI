@@ -65,7 +65,7 @@ TEST_F(CrtAllocaProbeTest, GoldenMatches) {
     const std::uint32_t caller_esp = 0x20000000u + 0x100000u - 0x3000u + 4u;
     for (const GCase& c : cases_) {
         std::vector<std::uint32_t> probes;
-        const std::uint32_t new_esp = ra2::runtime::alloca_probe_legacy(
+        const std::uint32_t new_esp = ra2::crt::alloca_probe_legacy(
             caller_esp, c.size, &probes);
         EXPECT_EQ(caller_esp - new_esp, c.esp_delta)
             << "size=0x" << std::hex << c.size;
@@ -87,11 +87,11 @@ TEST_F(CrtAllocaProbeTest, GoldenMatches) {
 // 边界：size 恰为页倍数时循环末次与收尾同址（重复探测）
 TEST_F(CrtAllocaProbeTest, PageBoundaryTail) {
     std::vector<std::uint32_t> probes;
-    ra2::runtime::alloca_probe_legacy(0x1000u, 0x1000u, &probes);
+    ra2::crt::alloca_probe_legacy(0x1000u, 0x1000u, &probes);
     ASSERT_EQ(probes.size(), 2u);
     EXPECT_EQ(probes[0], 0x0u);   // 循环末次 [base-0x1000]
     EXPECT_EQ(probes[1], 0x0u);   // 收尾 [base-size] 同址
-    ra2::runtime::alloca_probe_legacy(0x3000u, 0x3000u, &probes);
+    ra2::crt::alloca_probe_legacy(0x3000u, 0x3000u, &probes);
     ASSERT_EQ(probes.size(), 4u);
     EXPECT_EQ(probes[0], 0x2000u);
     EXPECT_EQ(probes[1], 0x1000u);
@@ -103,7 +103,7 @@ TEST_F(CrtAllocaProbeTest, PageBoundaryTail) {
 TEST_F(CrtAllocaProbeTest, ZeroSizeProbe) {
     std::vector<std::uint32_t> probes;
     const std::uint32_t new_esp =
-        ra2::runtime::alloca_probe_legacy(0x1000u, 0u, &probes);
+        ra2::crt::alloca_probe_legacy(0x1000u, 0u, &probes);
     EXPECT_EQ(new_esp, 0x1000u);
     ASSERT_EQ(probes.size(), 1u);
     EXPECT_EQ(probes[0], 0x1000u);

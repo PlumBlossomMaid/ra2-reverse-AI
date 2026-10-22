@@ -1,6 +1,6 @@
 #include "crt_free.h"
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 void free_legacy(CrtFreeWorld* world, void* p) {
     if (p == nullptr) return;  // 0x7C93ED test esi,esi / je 直接返回
@@ -17,4 +17,4 @@ void free_legacy(CrtFreeWorld* world, void* p) {
     }
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

@@ -1,6 +1,6 @@
 #pragma once
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7CDA90 MSVCRT strcmp（字节串比较，cdecl 2 栈参 (s1, s2)，三态返回
 // {-1,0,+1}，无符号逐字节比较，大小写敏感）。机器码 129B+2B 尾部
@@ -40,4 +40,4 @@ namespace ra2::runtime {
 // 20 用例 × 4 对齐 = 80 组）。
 int strcmp_legacy(const char* s1, const char* s2);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

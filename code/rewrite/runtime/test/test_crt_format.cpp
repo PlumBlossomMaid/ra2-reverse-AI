@@ -41,7 +41,7 @@ std::vector<std::string> tokens_of(const std::string& line) {
 
 // 桩世界：按 golden 输入写 n 字节 payload 并推进槽、返回 R，同时记录
 // 外壳透传给引擎的全部参数（透传语义是对拍点之一）。
-class StubWorld : public ra2::runtime::CrtFormatWorld {
+class StubWorld : public ra2::crt::CrtFormatWorld {
  public:
     std::size_t n = 0;
     std::vector<std::uint8_t> payload;
@@ -126,7 +126,7 @@ class CrtFormatTest : public ::testing::Test {
 
 TEST_F(CrtFormatTest, LimitMatchesHeader) {
     // 原版栈上初始化、从未参与计算的上限（js 分支恒不成立）
-    EXPECT_EQ(ra2::runtime::kVsprintfwLimit, 0x7FFFFFFF);
+    EXPECT_EQ(ra2::crt::kVsprintfwLimit, 0x7FFFFFFF);
 }
 
 TEST_F(CrtFormatTest, GoldenVsprintfwShellMatches) {
@@ -140,7 +140,7 @@ TEST_F(CrtFormatTest, GoldenVsprintfwShellMatches) {
         const std::uint32_t fmt = 0x401234;
         const std::uint32_t args = 0x402468;
 
-        std::int32_t ret = ra2::runtime::vsprintfw_legacy(
+        std::int32_t ret = ra2::crt::vsprintfw_legacy(
             w, dst.data(), fmt, args);
 
         // 返回值原样透传（含负值）
@@ -170,7 +170,7 @@ TEST_F(CrtFormatTest, DoubleNulWrittenAtAdvancedSlot) {
     w.payload = {'a', 'b', 'c'};
     w.r = 3;
     std::vector<std::uint8_t> dst(16, 0xCC);
-    ra2::runtime::vsprintfw_legacy(w, dst.data(), 0, 0);
+    ra2::crt::vsprintfw_legacy(w, dst.data(), 0, 0);
     EXPECT_EQ(dst[0], 'a');
     EXPECT_EQ(dst[1], 'b');
     EXPECT_EQ(dst[2], 'c');
@@ -185,7 +185,7 @@ TEST_F(CrtFormatTest, EmptyOutputStillGetsDoubleNulAtStart) {
     w.n = 0;
     w.r = 0;
     std::vector<std::uint8_t> dst(16, 0xCC);
-    ra2::runtime::vsprintfw_legacy(w, dst.data(), 0, 0);
+    ra2::crt::vsprintfw_legacy(w, dst.data(), 0, 0);
     EXPECT_EQ(dst[0], 0);
     EXPECT_EQ(dst[1], 0);
     EXPECT_EQ(dst[2], 0xCC);

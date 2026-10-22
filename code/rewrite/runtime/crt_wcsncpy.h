@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7CA422（61B，ranking.tsv uc=28 / transitive_dependents=933，
 // 按 unique_callers 扇入度取的下一个未复刻 CRT 项）：MSVCRT wcsncpy
@@ -37,4 +37,4 @@ namespace ra2::runtime {
 std::uint16_t* wcsncpy_legacy(std::uint16_t* dst, const std::uint16_t* src,
                               std::size_t count);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

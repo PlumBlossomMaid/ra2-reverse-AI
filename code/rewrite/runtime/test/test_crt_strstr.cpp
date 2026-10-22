@@ -91,7 +91,7 @@ TEST_F(CrtStrstrTest, GoldenMatches) {
             reinterpret_cast<const char*>(c.str.data());
         const char* sub =
             reinterpret_cast<const char*>(c.sub.data());
-        const char* ret = ra2::runtime::strstr_legacy(str, sub);
+        const char* ret = ra2::crt::strstr_legacy(str, sub);
         const int off = (ret == nullptr)
                             ? -1
                             : static_cast<int>(ret - str);
@@ -103,12 +103,12 @@ TEST_F(CrtStrstrTest, GoldenMatches) {
 // 边界：空子串返 Str / 单字符首尾 / 全串 / 未找到
 TEST_F(CrtStrstrTest, BoundaryCases) {
     const char s[] = "abcdef";
-    EXPECT_EQ(ra2::runtime::strstr_legacy(s, ""), s);
-    EXPECT_EQ(ra2::runtime::strstr_legacy(s, "a"), s);
-    EXPECT_EQ(ra2::runtime::strstr_legacy(s, "f"), s + 5);
-    EXPECT_EQ(ra2::runtime::strstr_legacy(s, "cde"), s + 2);
-    EXPECT_EQ(ra2::runtime::strstr_legacy(s, "xyz"), nullptr);
-    EXPECT_EQ(ra2::runtime::strstr_legacy(s, "defgh"), nullptr);
+    EXPECT_EQ(ra2::crt::strstr_legacy(s, ""), s);
+    EXPECT_EQ(ra2::crt::strstr_legacy(s, "a"), s);
+    EXPECT_EQ(ra2::crt::strstr_legacy(s, "f"), s + 5);
+    EXPECT_EQ(ra2::crt::strstr_legacy(s, "cde"), s + 2);
+    EXPECT_EQ(ra2::crt::strstr_legacy(s, "xyz"), nullptr);
+    EXPECT_EQ(ra2::crt::strstr_legacy(s, "defgh"), nullptr);
 }
 
 // 参照抽查：随机串对 × 随机子串与独立参照实现交叉对拍
@@ -140,7 +140,7 @@ TEST_F(CrtStrstrTest, ReferenceCrossCheck) {
             }
         }
         sub.push_back(0);
-        const char* got = ra2::runtime::strstr_legacy(str.data(), sub.data());
+        const char* got = ra2::crt::strstr_legacy(str.data(), sub.data());
         const char* ref = ref_strstr(str.data(), sub.data());
         EXPECT_EQ(got, ref) << "pair " << t << " len=" << len
                             << " sub.size=" << sub.size();

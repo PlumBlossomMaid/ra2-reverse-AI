@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7CA8C6 MSVCRT wcschr（宽字符查找，cdecl 2 栈参，返回命中指针）。
 // 机器码 41B（0x7CA8C6-0x7CA8EE）：
@@ -24,4 +24,4 @@ namespace ra2::runtime {
 // 纯内存零子调用零全局（golden 全真身模拟，deadcode_7ca8c6_golden.txt）。
 const std::uint16_t* wcschr_legacy(const std::uint16_t* s, std::uint16_t c);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

@@ -1,6 +1,6 @@
 #include "crt_malloc.h"
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 void* malloc_legacy(CrtMallocWorld* world, std::size_t size) {
     // 0x7C9430：push [0xB782C4]（全局）→ push [esp+8]（size 转发）
@@ -10,4 +10,4 @@ void* malloc_legacy(CrtMallocWorld* world, std::size_t size) {
     return world->core(size, world->flag);
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

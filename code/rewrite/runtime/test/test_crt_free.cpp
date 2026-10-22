@@ -44,8 +44,8 @@ void* StubFindSwitch(void* p) {
     return *g_find_hit ? g_find_seg : nullptr;
 }
 
-ra2::runtime::CrtFreeWorld MakeWorld(bool* find_hit) {
-    ra2::runtime::CrtFreeWorld w{};
+ra2::crt::CrtFreeWorld MakeWorld(bool* find_hit) {
+    ra2::crt::CrtFreeWorld w{};
     w.enter_lock = StubEnter;
     w.leave_lock = StubLeave;
     if (find_hit) {
@@ -147,8 +147,8 @@ TEST_F(CrtFreeTest, GoldenWorldCallSequenceMatches) {
         bool find_hit = (c.tag != "MISS");
         g_find_hit = &find_hit;
         g_find_seg = (void*)(intptr_t)c.seg;
-        ra2::runtime::CrtFreeWorld w = MakeWorld(&find_hit);
-        ra2::runtime::free_legacy(&w, (void*)(intptr_t)c.p);
+        ra2::crt::CrtFreeWorld w = MakeWorld(&find_hit);
+        ra2::crt::free_legacy(&w, (void*)(intptr_t)c.p);
         g_calls = nullptr;
 
         ASSERT_EQ(calls.size(), c.seq.size()) << "case " << c.tag;
@@ -167,8 +167,8 @@ TEST_F(CrtFreeTest, NullNoCalls) {
     g_calls = &calls;
     bool hit = true;
     g_find_hit = &hit;
-    ra2::runtime::CrtFreeWorld w = MakeWorld(&hit);
-    ra2::runtime::free_legacy(&w, nullptr);
+    ra2::crt::CrtFreeWorld w = MakeWorld(&hit);
+    ra2::crt::free_legacy(&w, nullptr);
     g_calls = nullptr;
     EXPECT_TRUE(calls.empty());
 }
@@ -180,8 +180,8 @@ TEST_F(CrtFreeTest, HitOrder) {
     bool hit = true;
     g_find_hit = &hit;
     g_find_seg = (void*)0x5678;  // 命中段注入（golden HIT 用例同值）
-    ra2::runtime::CrtFreeWorld w = MakeWorld(&hit);
-    ra2::runtime::free_legacy(&w, (void*)0x1000);
+    ra2::crt::CrtFreeWorld w = MakeWorld(&hit);
+    ra2::crt::free_legacy(&w, (void*)0x1000);
     g_calls = nullptr;
     ASSERT_EQ(calls.size(), 4u);
     EXPECT_EQ(calls[0].tag, "ENTER");  EXPECT_EQ(calls[0].a, 9);
@@ -197,8 +197,8 @@ TEST_F(CrtFreeTest, MissOrder) {
     g_calls = &calls;
     bool hit = false;
     g_find_hit = &hit;
-    ra2::runtime::CrtFreeWorld w = MakeWorld(&hit);
-    ra2::runtime::free_legacy(&w, (void*)0x2000);
+    ra2::crt::CrtFreeWorld w = MakeWorld(&hit);
+    ra2::crt::free_legacy(&w, (void*)0x2000);
     g_calls = nullptr;
     ASSERT_EQ(calls.size(), 4u);
     EXPECT_EQ(calls[0].tag, "ENTER");  EXPECT_EQ(calls[0].a, 9);

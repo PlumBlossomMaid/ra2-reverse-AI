@@ -41,7 +41,7 @@ std::vector<std::string> tokens_of(const std::string& line) {
 
 // 桩世界：按 golden 输入写 n 字节 payload 并推进槽、返回 R，同时记录
 // 外壳透传给引擎的全部参数（透传语义是对拍点之一）。
-class StubWorld : public ra2::runtime::CrtFormatWorld {
+class StubWorld : public ra2::crt::CrtFormatWorld {
  public:
     std::size_t n = 0;
     std::vector<std::uint8_t> payload;
@@ -135,7 +135,7 @@ TEST_F(CrtVsprintfTest, GoldenVsprintfShellMatches) {
         const std::uint32_t fmt = 0x401234;
         const std::uint32_t args = 0x402468;
 
-        std::int32_t ret = ra2::runtime::vsprintf_legacy(
+        std::int32_t ret = ra2::crt::vsprintf_legacy(
             w, dst.data(), fmt, args);
 
         // 返回值原样透传（含负值）
@@ -165,7 +165,7 @@ TEST_F(CrtVsprintfTest, SingleNulWrittenAndSlotNotAdvanced) {
     w.payload = {'a', 'b', 'c'};
     w.r = 3;
     std::vector<std::uint8_t> dst(16, 0xCC);
-    ra2::runtime::vsprintf_legacy(w, dst.data(), 0, 0);
+    ra2::crt::vsprintf_legacy(w, dst.data(), 0, 0);
     EXPECT_EQ(dst[0], 'a');
     EXPECT_EQ(dst[1], 'b');
     EXPECT_EQ(dst[2], 'c');
@@ -179,7 +179,7 @@ TEST_F(CrtVsprintfTest, EmptyOutputGetsSingleNulAtStart) {
     w.n = 0;
     w.r = 0;
     std::vector<std::uint8_t> dst(16, 0xCC);
-    ra2::runtime::vsprintf_legacy(w, dst.data(), 0, 0);
+    ra2::crt::vsprintf_legacy(w, dst.data(), 0, 0);
     EXPECT_EQ(dst[0], 0);
     EXPECT_EQ(dst[1], 0xCC);
 }
@@ -191,13 +191,13 @@ TEST_F(CrtVsprintfTest, PairsWithVsprintfwByNulCount) {
     w.payload = {'X'};
     w.r = 1;
     std::vector<std::uint8_t> dst(16, 0xCC);
-    ra2::runtime::vsprintf_legacy(w, dst.data(), 0, 0);
+    ra2::crt::vsprintf_legacy(w, dst.data(), 0, 0);
     EXPECT_EQ(dst[0], 'X');
     EXPECT_EQ(dst[1], 0);
     EXPECT_EQ(dst[2], 0xCC);
 
     std::vector<std::uint8_t> dst2(16, 0xCC);
-    ra2::runtime::vsprintfw_legacy(w, dst2.data(), 0, 0);
+    ra2::crt::vsprintfw_legacy(w, dst2.data(), 0, 0);
     EXPECT_EQ(dst2[0], 'X');
     EXPECT_EQ(dst2[1], 0);
     EXPECT_EQ(dst2[2], 0);

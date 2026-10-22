@@ -84,7 +84,7 @@ TEST_F(CrtWcsncpyTest, GoldenMatches) {
     for (const GCase& c : cases_) {
         std::vector<std::uint16_t> dst(static_cast<std::size_t>(c.count) + 8,
                                        0xCCCC);
-        const std::uint16_t* ret = ra2::runtime::wcsncpy_legacy(
+        const std::uint16_t* ret = ra2::crt::wcsncpy_legacy(
             dst.data(), c.src.empty() ? nullptr : c.src.data(),
             static_cast<std::size_t>(c.count));
         EXPECT_EQ(ret, dst.data()) << "case count=" << c.count;
@@ -101,7 +101,7 @@ TEST_F(CrtWcsncpyTest, GoldenMatches) {
 TEST_F(CrtWcsncpyTest, ZeroCountNoop) {
     std::uint16_t dst[4] = {0x1111, 0x2222, 0x3333, 0x4444};
     const std::uint16_t* ret =
-        ra2::runtime::wcsncpy_legacy(dst, dst, 0);
+        ra2::crt::wcsncpy_legacy(dst, dst, 0);
     EXPECT_EQ(ret, dst);
     EXPECT_EQ(dst[0], 0x1111);
     EXPECT_EQ(dst[3], 0x4444);
@@ -128,7 +128,7 @@ TEST_F(CrtWcsncpyTest, ReferenceCrossCheck) {
                                            0xCCCC);
             std::vector<std::uint16_t> ref(static_cast<std::size_t>(count) + 4,
                                            0xCCCC);
-            ra2::runtime::wcsncpy_legacy(
+            ra2::crt::wcsncpy_legacy(
                 got.data(), src.data(),
                 static_cast<std::size_t>(count));
             // 参照实现

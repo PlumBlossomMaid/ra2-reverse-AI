@@ -84,7 +84,7 @@ class CrtWcscpyTest : public ::testing::Test {
 TEST_F(CrtWcscpyTest, GoldenWcscpyMatches) {
     for (const Case& c : cases_) {
         std::vector<std::uint16_t> dst(16, 0xCCCC);
-        std::uint16_t* ret = ra2::runtime::wcscpy_legacy(
+        std::uint16_t* ret = ra2::crt::wcscpy_legacy(
             dst.data(), c.src.data());
 
         // 返回 dst 原址（原版 eax 入口即存、永不修改）
@@ -104,7 +104,7 @@ TEST_F(CrtWcscpyTest, CopiesThroughNulIncludingNul) {
     // "读-写-推进-测试"流水线：NUL 本身也被写入 dst 后才返回
     std::uint16_t src[] = {'a', 'b', 0};
     std::uint16_t dst[8] = {};
-    ra2::runtime::wcscpy_legacy(dst, src);
+    ra2::crt::wcscpy_legacy(dst, src);
     EXPECT_EQ(dst[0], 'a');
     EXPECT_EQ(dst[1], 'b');
     EXPECT_EQ(dst[2], 0);
@@ -113,7 +113,7 @@ TEST_F(CrtWcscpyTest, CopiesThroughNulIncludingNul) {
 TEST_F(CrtWcscpyTest, EmptyStringCopiesNul) {
     std::uint16_t src[] = {0};
     std::uint16_t dst[4] = {1, 2, 3, 4};
-    ra2::runtime::wcscpy_legacy(dst, src);
+    ra2::crt::wcscpy_legacy(dst, src);
     EXPECT_EQ(dst[0], 0);
     EXPECT_EQ(dst[1], 2);  // 其余不动
 }

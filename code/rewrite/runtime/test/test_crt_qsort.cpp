@@ -129,7 +129,7 @@ TEST_F(CrtQsortTest, GoldenSortMatches) {
         }
         std::vector<int32_t> arr(c.n);
         std::memcpy(arr.data(), c.arr.data(), c.arr.size());
-        ra2::runtime::qsort_legacy(arr.data(), arr.size(), sizeof(int32_t),
+        ra2::crt::qsort_legacy(arr.data(), arr.size(), sizeof(int32_t),
                                    PlainCmp);
         const auto* got = reinterpret_cast<const std::uint8_t*>(arr.data());
         for (std::size_t i = 0; i < c.sorted.size(); ++i) {
@@ -152,7 +152,7 @@ TEST_F(CrtQsortTest, GoldenCompareSequenceMatches) {
         std::memcpy(arr.data(), c.arr.data(), c.arr.size());
         std::vector<Rec> recs;
         g_recs = &recs;
-        ra2::runtime::qsort_legacy(arr.data(), arr.size(), sizeof(int32_t),
+        ra2::crt::qsort_legacy(arr.data(), arr.size(), sizeof(int32_t),
                                    LoggedCmp);
         g_recs = nullptr;
 
@@ -174,9 +174,9 @@ TEST_F(CrtQsortTest, DegenerateInputs) {
     int32_t one = 42;
     std::vector<Rec> recs;
     g_recs = &recs;
-    ra2::runtime::qsort_legacy(&one, 1, sizeof(int32_t), LoggedCmp);
-    ra2::runtime::qsort_legacy(&one, 0, sizeof(int32_t), LoggedCmp);
-    ra2::runtime::qsort_legacy(&one, 5, 0, LoggedCmp);
+    ra2::crt::qsort_legacy(&one, 1, sizeof(int32_t), LoggedCmp);
+    ra2::crt::qsort_legacy(&one, 0, sizeof(int32_t), LoggedCmp);
+    ra2::crt::qsort_legacy(&one, 5, 0, LoggedCmp);
     g_recs = nullptr;
     EXPECT_TRUE(recs.empty());
     EXPECT_EQ(one, 42);
@@ -196,7 +196,7 @@ TEST_F(CrtQsortTest, ReferenceCrossCheck) {
             ref[i] = arr[i];
         }
         std::sort(ref.begin(), ref.end());
-        ra2::runtime::qsort_legacy(arr.data(), arr.size(), sizeof(int32_t),
+        ra2::crt::qsort_legacy(arr.data(), arr.size(), sizeof(int32_t),
                                    PlainCmp);
         EXPECT_EQ(arr, ref) << "n=" << n;
     }

@@ -4,7 +4,7 @@
 #include <cstdint>
 #include <functional>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7CBED3: walk a [begin, end) table of function pointers, calling every
 // non-NULL entry. Mirrors _initterm. The original compares the cursor against
@@ -34,4 +34,4 @@ std::size_t scan_env_segments_legacy(const char* environment);
 // 0x7D5AF2: lea eax, [edi*4+4] — the pointer array always carries one extra dword.
 std::size_t env_pointer_array_bytes(std::size_t segment_count);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

@@ -1,6 +1,6 @@
 #include "crt_thunk.h"
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 std::uint32_t parse_thunk_legacy(CrtThunkWorld* world, std::uint32_t arg) {
     // 0x7C9BFD：push [esp+4]（arg 原样转发）→ call 0x7C9B72
@@ -8,4 +8,4 @@ std::uint32_t parse_thunk_legacy(CrtThunkWorld* world, std::uint32_t arg) {
     return world->target(arg);
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

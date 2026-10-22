@@ -67,31 +67,31 @@ class CrtAllmulTest : public ::testing::Test {
 // 逐用例：乘积与 golden 一致（64 位无符号乘法，溢出按 mod 2^64 回绕）
 TEST_F(CrtAllmulTest, GoldenMatches) {
     for (const GCase& c : cases_) {
-        const std::uint64_t got = ra2::runtime::allmul_legacy(c.a, c.b);
+        const std::uint64_t got = ra2::crt::allmul_legacy(c.a, c.b);
         EXPECT_EQ(got, c.ret) << "a=" << c.a << " b=" << c.b;
     }
 }
 
 // 边界：0/1/溢出回绕/a_hi*b_hi 丢弃/符号位
 TEST_F(CrtAllmulTest, BoundaryCases) {
-    EXPECT_EQ(ra2::runtime::allmul_legacy(0, 0), 0);
-    EXPECT_EQ(ra2::runtime::allmul_legacy(1, 1), 1);
-    EXPECT_EQ(ra2::runtime::allmul_legacy(0, 0xFFFFFFFFFFFFFFFFull), 0);
-    EXPECT_EQ(ra2::runtime::allmul_legacy(0xFFFFFFFFFFFFFFFFull, 0), 0);
+    EXPECT_EQ(ra2::crt::allmul_legacy(0, 0), 0);
+    EXPECT_EQ(ra2::crt::allmul_legacy(1, 1), 1);
+    EXPECT_EQ(ra2::crt::allmul_legacy(0, 0xFFFFFFFFFFFFFFFFull), 0);
+    EXPECT_EQ(ra2::crt::allmul_legacy(0xFFFFFFFFFFFFFFFFull, 0), 0);
     // 溢出回绕：(2^64-1)^2 mod 2^64 = 1
-    EXPECT_EQ(ra2::runtime::allmul_legacy(0xFFFFFFFFFFFFFFFFull,
+    EXPECT_EQ(ra2::crt::allmul_legacy(0xFFFFFFFFFFFFFFFFull,
                                           0xFFFFFFFFFFFFFFFFull),
               1);
     // a_hi*b_hi 丢弃：0x100000000 * 0x100000000 = 2^64 ≡ 0
-    EXPECT_EQ(ra2::runtime::allmul_legacy(0x100000000ull, 0x100000000ull),
+    EXPECT_EQ(ra2::crt::allmul_legacy(0x100000000ull, 0x100000000ull),
               0);
     // 快速路径 32 位满值：(2^32-1)^2 = 0xFFFFFFFE00000001
-    EXPECT_EQ(ra2::runtime::allmul_legacy(0xFFFFFFFFull, 0xFFFFFFFFull),
+    EXPECT_EQ(ra2::crt::allmul_legacy(0xFFFFFFFFull, 0xFFFFFFFFull),
               0xFFFFFFFE00000001ull);
     // 符号位：2^63 * 2 = 2^64 ≡ 0
-    EXPECT_EQ(ra2::runtime::allmul_legacy(0x8000000000000000ull, 2), 0);
+    EXPECT_EQ(ra2::crt::allmul_legacy(0x8000000000000000ull, 2), 0);
     // 常规交叉：0x123456789 * 0xABCDEF01
-    EXPECT_EQ(ra2::runtime::allmul_legacy(0x123456789ull, 0xABCDEF01ull),
+    EXPECT_EQ(ra2::crt::allmul_legacy(0x123456789ull, 0xABCDEF01ull),
               (0x123456789ull * 0xABCDEF01ull) & 0xFFFFFFFFFFFFFFFFull);
 }
 
@@ -107,7 +107,7 @@ TEST_F(CrtAllmulTest, ReferenceCrossCheck) {
             (static_cast<std::uint64_t>(rnd()) << 32) | rnd();
         const std::uint64_t b =
             (static_cast<std::uint64_t>(rnd()) << 32) | rnd();
-        const std::uint64_t got = ra2::runtime::allmul_legacy(a, b);
+        const std::uint64_t got = ra2::crt::allmul_legacy(a, b);
         const std::uint64_t ref = a * b;  // 无符号乘法天然 mod 2^64
         EXPECT_EQ(got, ref) << "pair " << t << " a=" << a << " b=" << b;
     }

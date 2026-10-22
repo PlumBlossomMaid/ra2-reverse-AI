@@ -67,12 +67,12 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // __alldiv 逐字节复刻：有符号 64 位除法（截断向零）。除零未定义
 // （原版 div #DE）。
 std::int64_t alldiv_legacy(std::int64_t a, std::int64_t b);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt
 
 #endif  // RA2_RUNTIME_CRT_ALLDIV_H_

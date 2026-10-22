@@ -78,12 +78,12 @@ class CrtThunkTest : public ::testing::Test {
 // 逐用例：返回值透传 + target 实参 == arg（原样转发）
 TEST_F(CrtThunkTest, GoldenReturnAndForwardMatch) {
     for (const GCase& c : cases_) {
-        ra2::runtime::CrtThunkWorld w{};
+        ra2::crt::CrtThunkWorld w{};
         w.target = StubTarget;
         std::vector<std::uint32_t> args;
         g_args = &args;
         g_inject = c.inj;
-        const std::uint32_t got = ra2::runtime::parse_thunk_legacy(&w, c.arg);
+        const std::uint32_t got = ra2::crt::parse_thunk_legacy(&w, c.arg);
         g_args = nullptr;
         EXPECT_EQ(got, c.ret) << "case arg=" << std::hex << c.arg
                               << " inj=" << c.inj;
@@ -94,26 +94,26 @@ TEST_F(CrtThunkTest, GoldenReturnAndForwardMatch) {
 
 // 语义核心：返回值 = target 返回值透传（包装不改）
 TEST_F(CrtThunkTest, ReturnPassthrough) {
-    ra2::runtime::CrtThunkWorld w{};
+    ra2::crt::CrtThunkWorld w{};
     w.target = StubTarget;
     g_inject = 0x41;
-    EXPECT_EQ(ra2::runtime::parse_thunk_legacy(&w, 0x30), 0x41u);
+    EXPECT_EQ(ra2::crt::parse_thunk_legacy(&w, 0x30), 0x41u);
     g_inject = 0xFFFFFFFF;
-    EXPECT_EQ(ra2::runtime::parse_thunk_legacy(&w, 0x30), 0xFFFFFFFFu);
+    EXPECT_EQ(ra2::crt::parse_thunk_legacy(&w, 0x30), 0xFFFFFFFFu);
     g_inject = 0;
-    EXPECT_EQ(ra2::runtime::parse_thunk_legacy(&w, 0x30), 0u);
+    EXPECT_EQ(ra2::crt::parse_thunk_legacy(&w, 0x30), 0u);
 }
 
 // 全路径必然调用一次 target（arg 任意——无 NULL 短路）
 TEST_F(CrtThunkTest, AlwaysCallsTargetOnce) {
-    ra2::runtime::CrtThunkWorld w{};
+    ra2::crt::CrtThunkWorld w{};
     w.target = StubTarget;
     for (std::uint32_t arg : {0u, 1u, 0x2Du, 0x30u, 0x41u,
                               0x7FFFFFFFu, 0xFFFFFFFFu}) {
         std::vector<std::uint32_t> args;
         g_args = &args;
         g_inject = 0x41;
-        (void)ra2::runtime::parse_thunk_legacy(&w, arg);
+        (void)ra2::crt::parse_thunk_legacy(&w, arg);
         g_args = nullptr;
         ASSERT_EQ(args.size(), 1u) << "arg=" << std::hex << arg;
         EXPECT_EQ(args[0], arg);

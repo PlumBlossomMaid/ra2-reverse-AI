@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7CA090（664B，74 unique_callers / 3211 transitive_dependents，
 // ranking.tsv 扇入度最高的未复刻 CRT 项之一）：MSVC6 静态 CRT 重叠感知
@@ -44,4 +44,4 @@ namespace ra2::runtime {
 // 返回 dst。重叠时保证保序（dst>src 且重叠走反向）。
 void* memmove_090_legacy(void* dst, const void* src, std::size_t count);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

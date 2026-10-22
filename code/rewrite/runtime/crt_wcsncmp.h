@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7CB4CC MSVCRT wcsncmp（宽串受限比较，cdecl 3 栈参 (s1, s2, Count)，
 // 返回当前两字符之差——★零扩展无符号差值，非三态）。机器码 56B
@@ -34,4 +34,4 @@ namespace ra2::runtime {
 int wcsncmp_legacy(const std::uint16_t* s1, const std::uint16_t* s2,
                    std::size_t count);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

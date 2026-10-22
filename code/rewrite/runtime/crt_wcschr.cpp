@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 const std::uint16_t* wcschr_legacy(const std::uint16_t* s, std::uint16_t c) {
     const std::uint16_t* p = s;
@@ -23,4 +23,4 @@ const std::uint16_t* wcschr_legacy(const std::uint16_t* s, std::uint16_t c) {
         reinterpret_cast<std::uintptr_t>(p) & mask);
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

@@ -112,7 +112,7 @@ TEST_F(CrtStrcmpTest, GoldenMatches) {
         std::memset(store2, 0x22, 16);  // s2 任意对齐
         for (std::size_t i = 0; i < c.s2.size(); ++i)
             store2[i] = static_cast<char>(c.s2[i]);
-        const int got = ra2::runtime::strcmp_legacy(s1, store2);
+        const int got = ra2::crt::strcmp_legacy(s1, store2);
         EXPECT_EQ(got, c.ret) << "a1=" << c.a1
                               << " s1.size=" << c.s1.size()
                               << " s2.size=" << c.s2.size();
@@ -121,30 +121,30 @@ TEST_F(CrtStrcmpTest, GoldenMatches) {
 
 // 边界：双空/单空两向/大小写敏感/高字节无符号/NUL 在窗口不同位置
 TEST_F(CrtStrcmpTest, BoundaryCases) {
-    EXPECT_EQ(ra2::runtime::strcmp_legacy("", ""), 0);
-    EXPECT_EQ(ra2::runtime::strcmp_legacy("", "a"), -1);
-    EXPECT_EQ(ra2::runtime::strcmp_legacy("a", ""), 1);
-    EXPECT_EQ(ra2::runtime::strcmp_legacy("abc", "abd"), -1);
-    EXPECT_EQ(ra2::runtime::strcmp_legacy("abc", "abc"), 0);
+    EXPECT_EQ(ra2::crt::strcmp_legacy("", ""), 0);
+    EXPECT_EQ(ra2::crt::strcmp_legacy("", "a"), -1);
+    EXPECT_EQ(ra2::crt::strcmp_legacy("a", ""), 1);
+    EXPECT_EQ(ra2::crt::strcmp_legacy("abc", "abd"), -1);
+    EXPECT_EQ(ra2::crt::strcmp_legacy("abc", "abc"), 0);
     // 大小写敏感（对照 strnicmp 的 0）
-    EXPECT_EQ(ra2::runtime::strcmp_legacy("AbC", "aBc"), -1);
-    EXPECT_EQ(ra2::runtime::strcmp_legacy("aBc", "AbC"), 1);
+    EXPECT_EQ(ra2::crt::strcmp_legacy("AbC", "aBc"), -1);
+    EXPECT_EQ(ra2::crt::strcmp_legacy("aBc", "AbC"), 1);
     // 前置相等、尾部 s1 到 NUL vs s2 更长
-    EXPECT_EQ(ra2::runtime::strcmp_legacy("ab", "abc"), -1);
-    EXPECT_EQ(ra2::runtime::strcmp_legacy("abc", "ab"), 1);
+    EXPECT_EQ(ra2::crt::strcmp_legacy("ab", "abc"), -1);
+    EXPECT_EQ(ra2::crt::strcmp_legacy("abc", "ab"), 1);
     // 高字节无符号：0xFF > 0xFE
     const char hi1[] = {(char)0xFF, (char)0x01, 0};
     const char hi2[] = {(char)0xFE, (char)0x01, 0};
-    EXPECT_EQ(ra2::runtime::strcmp_legacy(hi1, hi2), 1);
+    EXPECT_EQ(ra2::crt::strcmp_legacy(hi1, hi2), 1);
     const char hi3[] = {(char)0x01, (char)0xFF, 0};
     const char hi4[] = {(char)0x01, (char)0xFE, 0};
-    EXPECT_EQ(ra2::runtime::strcmp_legacy(hi3, hi4), 1);
+    EXPECT_EQ(ra2::crt::strcmp_legacy(hi3, hi4), 1);
     // 16 字符长相等（跨 4 窗口）
-    EXPECT_EQ(ra2::runtime::strcmp_legacy("0123456789abcdef",
+    EXPECT_EQ(ra2::crt::strcmp_legacy("0123456789abcdef",
                                           "0123456789abcdef"),
               0);
     // NUL 在窗口 b3：abcd
-    EXPECT_EQ(ra2::runtime::strcmp_legacy("abcd", "abcd"), 0);
+    EXPECT_EQ(ra2::crt::strcmp_legacy("abcd", "abcd"), 0);
 }
 
 // 参照抽查：随机字节串（0-127+少量高位）× 随机位移 vs 独立参照实现
@@ -179,7 +179,7 @@ TEST_F(CrtStrcmpTest, ReferenceCrossCheck) {
         std::memset(as, 0xCC, sizeof(as));
         std::memcpy(as + shift, a, 16);
         const int got =
-            ra2::runtime::strcmp_legacy(as + shift, b);
+            ra2::crt::strcmp_legacy(as + shift, b);
         const int ref = ref_strcmp(as + shift, b);
         EXPECT_EQ(got, ref) << "pair " << t << " l1=" << l1
                             << " l2=" << l2 << " shift=" << shift;

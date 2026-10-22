@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7CA564（111B，68 unique_callers / 4536 transitive_dependents，ranking.tsv
 // 扇入度最高的未复刻 CRT 项）：vsprintfW 薄封装——转发宽字符格式化引擎后
@@ -112,4 +112,4 @@ std::int32_t vsprintf_legacy(CrtFormatWorld& world, std::uint8_t* dst,
 // 原版栈上初始化、从未参与计算的上限常量（golden 实证 js 永不成立）
 inline constexpr std::int32_t kVsprintfwLimit = 0x7FFFFFFF;
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

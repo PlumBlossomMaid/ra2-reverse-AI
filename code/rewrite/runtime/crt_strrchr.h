@@ -1,6 +1,6 @@
 #pragma once
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7C8DF0 MSVCRT strrchr（反向字符查找，cdecl 2 栈参 (s, c)，返回 s 中
 // **最后一次**出现字符 c 的指针、未找到返 0；★c==0 返终止 NUL 指针——
@@ -28,4 +28,4 @@ namespace ra2::runtime {
 // 17 用例）。
 const char* strrchr_legacy(const char* s, int c);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

@@ -2,7 +2,7 @@
 
 #include <cstddef>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7CAF30 MSVCRT strchr（字节串查找，cdecl 2 栈参，返回首次命中指针）。
 // 机器码（0x7CAF30-0x7CAFEB，含 0x7EFEFEFF magic 扫描段）：
@@ -26,4 +26,4 @@ namespace ra2::runtime {
 //   （假阳性经 0x7CAF93 二次过滤后继续扫描）。纯内存零子调用零全局。
 const char* strchr_legacy(const char* s, int ch);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

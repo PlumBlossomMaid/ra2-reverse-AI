@@ -2,7 +2,7 @@
 
 #include <cstddef>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 char* strncat_legacy(char* dst, const char* src, std::size_t count) {
     // 0x7CB550: mov ecx,[esp+0xC]=count → test ecx,ecx → je 0x7CB604
@@ -44,4 +44,4 @@ char* strncat_legacy(char* dst, const char* src, std::size_t count) {
     return dst;
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

@@ -92,7 +92,7 @@ class CrtWcscmpTest : public ::testing::Test {
 // 逐用例：与 golden 三态一致（s1/s2 均含尾 NUL，可直接 data()）
 TEST_F(CrtWcscmpTest, GoldenMatches) {
     for (const GCase& c : cases_) {
-        const int got = ra2::runtime::wcscmp_legacy(c.s1.data(), c.s2.data());
+        const int got = ra2::crt::wcscmp_legacy(c.s1.data(), c.s2.data());
         EXPECT_EQ(got, c.ret)
             << "s1=" << c.s1.size() << "w s2=" << c.s2.size() << "w";
     }
@@ -102,10 +102,10 @@ TEST_F(CrtWcscmpTest, GoldenMatches) {
 TEST_F(CrtWcscmpTest, EmptyEdgeCases) {
     const std::uint16_t nul[1] = {0};
     const std::uint16_t x[2] = {0x58, 0};
-    EXPECT_EQ(ra2::runtime::wcscmp_legacy(nul, nul), 0);
-    EXPECT_EQ(ra2::runtime::wcscmp_legacy(nul, x), -1);
-    EXPECT_EQ(ra2::runtime::wcscmp_legacy(x, nul), 1);
-    EXPECT_EQ(ra2::runtime::wcscmp_legacy(x, x), 0);
+    EXPECT_EQ(ra2::crt::wcscmp_legacy(nul, nul), 0);
+    EXPECT_EQ(ra2::crt::wcscmp_legacy(nul, x), -1);
+    EXPECT_EQ(ra2::crt::wcscmp_legacy(x, nul), 1);
+    EXPECT_EQ(ra2::crt::wcscmp_legacy(x, x), 0);
 }
 
 // 参照抽查：与独立参照实现（标准 wcscmp 语义）随机串交叉对拍
@@ -126,7 +126,7 @@ TEST_F(CrtWcscmpTest, ReferenceCrossCheck) {
         for (int i = 0; i < lb; ++i) b.push_back(rnd());
         a.push_back(0);
         b.push_back(0);
-        const int got = ra2::runtime::wcscmp_legacy(a.data(), b.data());
+        const int got = ra2::crt::wcscmp_legacy(a.data(), b.data());
         const int ref = ref_wcscmp(a.data(), b.data());
         EXPECT_EQ(got, ref)
             << "pair " << t << " la=" << la << " lb=" << lb;

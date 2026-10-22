@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 const char* strchr_legacy(const char* s, int ch) {
     // al = ch 零扩展低 8 位
@@ -55,4 +55,4 @@ const char* strchr_legacy(const char* s, int ch) {
     }
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

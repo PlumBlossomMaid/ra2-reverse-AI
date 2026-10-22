@@ -1,6 +1,6 @@
 #include "crt_error.h"
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7DCDC0：字段写入顺序按原版（+0xC 先清零，最后写 vtable），
 // 引用计数分支在字段全部落定之后。
@@ -32,4 +32,4 @@ void invalid_parameter_forward(CrtThrowWorld& world, std::uint32_t arg) {
     crt_throw_exception(world, arg, 0);
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

@@ -126,7 +126,7 @@ TEST(ItoaCore, GoldenMatches) {
     for (const Case& c : cases) {
         char buf[64];
         std::memset(buf, 0, sizeof buf);
-        unsigned eax = ra2::runtime::itoa_core_legacy(c.value, buf, c.radix,
+        unsigned eax = ra2::crt::itoa_core_legacy(c.value, buf, c.radix,
                                                        c.sign);
         std::vector<char> want = HexToBytes(c.buf);
         ASSERT_EQ(want.size(), sizeof buf);
@@ -147,7 +147,7 @@ TEST(UltOa, GoldenMatches) {
     for (const Case& c : cases) {
         char buf[64];
         std::memset(buf, 0, sizeof buf);
-        char* ret = ra2::runtime::ultoa_legacy(
+        char* ret = ra2::crt::ultoa_legacy(
             static_cast<unsigned>(c.value), buf, c.radix);
         std::vector<char> want = HexToBytes(c.buf);
         EXPECT_EQ(std::memcmp(buf, want.data(), sizeof buf), 0)
@@ -164,7 +164,7 @@ TEST(Ltoa, GoldenMatches) {
     for (const Case& c : cases) {
         char buf[64];
         std::memset(buf, 0, sizeof buf);
-        char* ret = ra2::runtime::ltoa_legacy(c.value, buf, c.radix);
+        char* ret = ra2::crt::ltoa_legacy(c.value, buf, c.radix);
         std::vector<char> want = HexToBytes(c.buf);
         EXPECT_EQ(std::memcmp(buf, want.data(), sizeof buf), 0)
             << "ltoa value=" << c.value << " radix=" << c.radix;
@@ -179,30 +179,30 @@ TEST(ItoaCore, Quirks) {
     // ① sign=1 无条件取负——正数也会翻转（golden 实证 2147483647 →
     //    "-2147483649"）
     std::memset(buf, 0, sizeof buf);
-    ra2::runtime::itoa_core_legacy(2147483647, buf, 10, 1);
+    ra2::crt::itoa_core_legacy(2147483647, buf, 10, 1);
     EXPECT_STREQ(buf, "-2147483649");
     // ② sign=0 时负值按无符号位型除（_ultoa 语义）
     std::memset(buf, 0, sizeof buf);
-    ra2::runtime::itoa_core_legacy(-12345, buf, 10, 0);
+    ra2::crt::itoa_core_legacy(-12345, buf, 10, 0);
     EXPECT_STREQ(buf, "4294954951");
     // ③ 余数 >9 小写 hex
     std::memset(buf, 0, sizeof buf);
-    ra2::runtime::itoa_core_legacy(0xABCDEF, buf, 16, 0);
+    ra2::crt::itoa_core_legacy(0xABCDEF, buf, 16, 0);
     EXPECT_STREQ(buf, "abcdef");
     // ④ INT_MIN 取负自反 → 2147483648
     std::memset(buf, 0, sizeof buf);
-    ra2::runtime::itoa_core_legacy(-2147483648, buf, 10, 1);
+    ra2::crt::itoa_core_legacy(-2147483648, buf, 10, 1);
     EXPECT_STREQ(buf, "-2147483648");
     // ⑤ 零 → 单字符 "0"
     std::memset(buf, 0, sizeof buf);
-    ra2::runtime::itoa_core_legacy(0, buf, 10, 0);
+    ra2::crt::itoa_core_legacy(0, buf, 10, 0);
     EXPECT_STREQ(buf, "0");
     // ⑥ 二进制/八进制
     std::memset(buf, 0, sizeof buf);
-    ra2::runtime::itoa_core_legacy(8, buf, 2, 0);
+    ra2::crt::itoa_core_legacy(8, buf, 2, 0);
     EXPECT_STREQ(buf, "1000");
     std::memset(buf, 0, sizeof buf);
-    ra2::runtime::itoa_core_legacy(777, buf, 8, 0);
+    ra2::crt::itoa_core_legacy(777, buf, 8, 0);
     EXPECT_STREQ(buf, "1411");
 }
 
@@ -210,10 +210,10 @@ TEST(UltOa, Quirks) {
     char buf[64];
     // _ultoa 恒无符号（sign=0）
     std::memset(buf, 0, sizeof buf);
-    ra2::runtime::ultoa_legacy(0xFFFFFF00u, buf, 16);
+    ra2::crt::ultoa_legacy(0xFFFFFF00u, buf, 16);
     EXPECT_STREQ(buf, "ffffff00");
     std::memset(buf, 0, sizeof buf);
-    ra2::runtime::ultoa_legacy(4294954951u, buf, 10);
+    ra2::crt::ultoa_legacy(4294954951u, buf, 10);
     EXPECT_STREQ(buf, "4294954951");
 }
 
@@ -221,11 +221,11 @@ TEST(Ltoa, Quirks) {
     char buf[64];
     // 十进制负号判定
     std::memset(buf, 0, sizeof buf);
-    ra2::runtime::ltoa_legacy(-12345, buf, 10);
+    ra2::crt::ltoa_legacy(-12345, buf, 10);
     EXPECT_STREQ(buf, "-12345");
     // radix != 10 → 无负号无符号 hex
     std::memset(buf, 0, sizeof buf);
-    ra2::runtime::ltoa_legacy(-12345, buf, 16);
+    ra2::crt::ltoa_legacy(-12345, buf, 16);
     EXPECT_STREQ(buf, "ffffcfc7");
 }
 
@@ -237,7 +237,7 @@ TEST(ItoaCore, ReferenceCrossCheck) {
                             -2147483647 - 1};  // INT_MIN 字面量防溢出
     for (int v : dec_vals) {
         std::memset(buf, 0, sizeof buf);
-        ra2::runtime::ltoa_legacy(v, buf, 10);
+        ra2::crt::ltoa_legacy(v, buf, 10);
         char want[64];
         std::snprintf(want, sizeof want, "%d", v);
         EXPECT_STREQ(buf, want) << "decimal v=" << v;
@@ -246,12 +246,12 @@ TEST(ItoaCore, ReferenceCrossCheck) {
                                   12345u};
     for (unsigned v : hex_vals) {
         std::memset(buf, 0, sizeof buf);
-        ra2::runtime::ultoa_legacy(v, buf, 16);
+        ra2::crt::ultoa_legacy(v, buf, 16);
         char want[64];
         std::snprintf(want, sizeof want, "%x", v);
         EXPECT_STREQ(buf, want) << "hex v=" << v;
         std::memset(buf, 0, sizeof buf);
-        ra2::runtime::ultoa_legacy(v, buf, 8);
+        ra2::crt::ultoa_legacy(v, buf, 8);
         std::snprintf(want, sizeof want, "%o", v);
         EXPECT_STREQ(buf, want) << "oct v=" << v;
     }

@@ -88,7 +88,7 @@ class CrtStrnicmpTest : public ::testing::Test {
 // 逐用例：三态与 golden 一致（s1/s2 含尾 NUL，可直接 data()）
 TEST_F(CrtStrnicmpTest, GoldenMatches) {
     for (const GCase& c : cases_) {
-        const int got = ra2::runtime::strnicmp_legacy(
+        const int got = ra2::crt::strnicmp_legacy(
             reinterpret_cast<const char*>(c.s1.data()),
             reinterpret_cast<const char*>(c.s2.data()), c.count);
         EXPECT_EQ(got, c.ret) << "count=" << c.count
@@ -100,21 +100,21 @@ TEST_F(CrtStrnicmpTest, GoldenMatches) {
 TEST_F(CrtStrnicmpTest, BoundaryCases) {
     const char a[] = "AbC";
     const char b[] = "aBc";
-    EXPECT_EQ(ra2::runtime::strnicmp_legacy(a, b, 0), 0);
-    EXPECT_EQ(ra2::runtime::strnicmp_legacy(a, b, 3), 0);
-    EXPECT_EQ(ra2::runtime::strnicmp_legacy("", "", 5), 0);
-    EXPECT_EQ(ra2::runtime::strnicmp_legacy("", "a", 5), -1);
-    EXPECT_EQ(ra2::runtime::strnicmp_legacy("a", "", 5), 1);
-    EXPECT_EQ(ra2::runtime::strnicmp_legacy("abc", "abd", 3), -1);
+    EXPECT_EQ(ra2::crt::strnicmp_legacy(a, b, 0), 0);
+    EXPECT_EQ(ra2::crt::strnicmp_legacy(a, b, 3), 0);
+    EXPECT_EQ(ra2::crt::strnicmp_legacy("", "", 5), 0);
+    EXPECT_EQ(ra2::crt::strnicmp_legacy("", "a", 5), -1);
+    EXPECT_EQ(ra2::crt::strnicmp_legacy("a", "", 5), 1);
+    EXPECT_EQ(ra2::crt::strnicmp_legacy("abc", "abd", 3), -1);
     // 转小写区间边界：'@'(0x40) 不转、'Z'(0x5A) 转、'`'(0x60) 不转、'z'(0x7A) 不转
-    EXPECT_EQ(ra2::runtime::strnicmp_legacy("@", "`", 1), -1);
-    EXPECT_EQ(ra2::runtime::strnicmp_legacy("z", "{", 1), -1);
-    EXPECT_EQ(ra2::runtime::strnicmp_legacy("Z", "z", 1), 0);
-    EXPECT_EQ(ra2::runtime::strnicmp_legacy("@Z", "@z", 2), 0);
+    EXPECT_EQ(ra2::crt::strnicmp_legacy("@", "`", 1), -1);
+    EXPECT_EQ(ra2::crt::strnicmp_legacy("z", "{", 1), -1);
+    EXPECT_EQ(ra2::crt::strnicmp_legacy("Z", "z", 1), 0);
+    EXPECT_EQ(ra2::crt::strnicmp_legacy("@Z", "@z", 2), 0);
     // 非 ASCII 字节（0x80+）原样参与无符号比较
     const char hi1[] = {(char)0xC3, 0};
     const char hi2[] = {(char)0xC4, 0};
-    EXPECT_EQ(ra2::runtime::strnicmp_legacy(hi1, hi2, 1), -1);
+    EXPECT_EQ(ra2::crt::strnicmp_legacy(hi1, hi2, 1), -1);
 }
 
 // 参照抽查：随机串对 × 随机 count 与独立参照实现交叉对拍
@@ -142,7 +142,7 @@ TEST_F(CrtStrnicmpTest, ReferenceCrossCheck) {
         a[l1] = 0;
         b[l2] = 0;
         const std::size_t n = static_cast<std::size_t>(rnd() % 16);
-        const int got = ra2::runtime::strnicmp_legacy(a.data(), b.data(), n);
+        const int got = ra2::crt::strnicmp_legacy(a.data(), b.data(), n);
         const int ref = ref_strnicmp(a.data(), b.data(), n);
         EXPECT_EQ(got, ref) << "pair " << t << " l1=" << l1
                             << " l2=" << l2 << " n=" << n;

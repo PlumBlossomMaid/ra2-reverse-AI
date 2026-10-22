@@ -107,7 +107,7 @@ TEST_F(CrtWcscatTest, GoldenMatches) {
             srcbuf[j] = c.src[j];
         }
         const std::uint16_t* ret =
-            ra2::runtime::wcscat_legacy(buf.data(), srcbuf.data());
+            ra2::crt::wcscat_legacy(buf.data(), srcbuf.data());
         EXPECT_EQ(ret, buf.data()) << "dst=" << c.dst.size()
                                    << " src=" << c.src.size();
         for (std::size_t i = 0; i < buf.size(); ++i) {
@@ -124,14 +124,14 @@ TEST_F(CrtWcscatTest, EmptyEdgeCases) {
     std::vector<std::uint16_t> src(1, 0);  // 空 src（仅 NUL）
     buf[0] = 0;                            // 空 dst
     const std::uint16_t* ret =
-        ra2::runtime::wcscat_legacy(buf.data(), src.data());
+        ra2::crt::wcscat_legacy(buf.data(), src.data());
     EXPECT_EQ(ret, buf.data());
     EXPECT_EQ(buf[0], 0);       // dst 保持空
     EXPECT_EQ(buf[1], 0xCCCC);  // 哨兵未动
     // dst 非空 + src 空：只补 NUL
     buf[0] = 0x41;
     buf[1] = 0;
-    ra2::runtime::wcscat_legacy(buf.data(), src.data());
+    ra2::crt::wcscat_legacy(buf.data(), src.data());
     EXPECT_EQ(buf[0], 0x41);
     EXPECT_EQ(buf[1], 0);
     EXPECT_EQ(buf[2], 0xCCCC);
@@ -158,7 +158,7 @@ TEST_F(CrtWcscatTest, ReferenceCrossCheck) {
         }
         src[l2] = 0;
         const std::uint16_t* ret =
-            ra2::runtime::wcscat_legacy(buf.data(), src.data());
+            ra2::crt::wcscat_legacy(buf.data(), src.data());
         EXPECT_EQ(ret, buf.data());
         std::vector<std::uint16_t> ref_buf(24, 0xCCCC);
         for (int i = 0; i < l1; ++i) ref_buf[i] = buf[i];

@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 void* memmove_090_legacy(void* dst, const void* src, std::size_t count) {
     std::uint8_t* d = static_cast<std::uint8_t*>(dst);
@@ -17,4 +17,4 @@ void* memmove_090_legacy(void* dst, const void* src, std::size_t count) {
     return dst;
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

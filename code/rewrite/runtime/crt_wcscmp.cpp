@@ -1,6 +1,6 @@
 #include "crt_wcscmp.h"
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 int wcscmp_legacy(const std::uint16_t* s1, const std::uint16_t* s2) {
     std::int32_t diff = 0;
@@ -19,4 +19,4 @@ int wcscmp_legacy(const std::uint16_t* s1, const std::uint16_t* s2) {
     return 0;
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

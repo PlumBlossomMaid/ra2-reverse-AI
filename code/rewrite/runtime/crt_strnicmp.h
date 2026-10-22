@@ -2,7 +2,7 @@
 
 #include <cstddef>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7CD680 MSVCRT _strnicmp（不区分大小写定长比较，cdecl 3 栈参，三态
 // 返回）。机器码 257B（0x7CD680-0x7CD77E）：
@@ -37,4 +37,4 @@ namespace ra2::runtime {
 // deadcode_7cd680_golden.txt，21 用例）。
 int strnicmp_legacy(const char* s1, const char* s2, std::size_t count);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

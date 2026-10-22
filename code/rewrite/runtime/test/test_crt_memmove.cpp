@@ -114,7 +114,7 @@ TEST_F(CrtMemmoveTest, GoldenMemmoveMatches) {
             static_cast<std::size_t>(c.count));
         std::memcpy(src, data.data(), data.size());
 
-        void* ret = ra2::runtime::memmove_090_legacy(dst, src, data.size());
+        void* ret = ra2::crt::memmove_090_legacy(dst, src, data.size());
 
         // 返回 dst 原址
         EXPECT_EQ(ret, static_cast<void*>(dst));
@@ -141,7 +141,7 @@ TEST_F(CrtMemmoveTest, OverlapForwardAndBackwardPreserveOrder) {
     std::memcpy(buf.data(), data, sizeof(data));
     std::uint8_t* src = buf.data();
     std::uint8_t* dst = src + 2;
-    ra2::runtime::memmove_090_legacy(dst, src, sizeof(data));
+    ra2::crt::memmove_090_legacy(dst, src, sizeof(data));
     for (std::size_t i = 0; i < sizeof(data); ++i) {
         EXPECT_EQ(dst[i], data[i]);
     }
@@ -150,7 +150,7 @@ TEST_F(CrtMemmoveTest, OverlapForwardAndBackwardPreserveOrder) {
     std::memcpy(buf.data() + 2, data, sizeof(data));
     src = buf.data() + 2;
     dst = src - 2;
-    ra2::runtime::memmove_090_legacy(dst, src, sizeof(data));
+    ra2::crt::memmove_090_legacy(dst, src, sizeof(data));
     for (std::size_t i = 0; i < sizeof(data); ++i) {
         EXPECT_EQ(dst[i], data[i]);
     }
@@ -158,7 +158,7 @@ TEST_F(CrtMemmoveTest, OverlapForwardAndBackwardPreserveOrder) {
 
 TEST_F(CrtMemmoveTest, ZeroCountIsNoop) {
     std::uint8_t buf[8] = {0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x11, 0x22};
-    EXPECT_EQ(ra2::runtime::memmove_090_legacy(buf, buf + 3, 0), buf);
+    EXPECT_EQ(ra2::crt::memmove_090_legacy(buf, buf + 3, 0), buf);
     EXPECT_EQ(buf[0], 0xAA);
     EXPECT_EQ(buf[7], 0x22);
 }
@@ -173,7 +173,7 @@ TEST_F(CrtMemmoveTest, ReferenceCrossCheck) {
             const std::vector<std::uint8_t> data = pattern(count);
             std::memcpy(src, data.data(), data.size());
 
-            ra2::runtime::memmove_090_legacy(dst, src, data.size());
+            ra2::crt::memmove_090_legacy(dst, src, data.size());
 
             // 用参照重放在干净缓冲上
             std::vector<std::uint8_t> ref(0x400, 0xCC);

@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 int wcsncmp_legacy(const std::uint16_t* s1, const std::uint16_t* s2,
                    std::size_t count) {
@@ -24,4 +24,4 @@ done:
     return static_cast<int>(*s1) - static_cast<int>(*s2);
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

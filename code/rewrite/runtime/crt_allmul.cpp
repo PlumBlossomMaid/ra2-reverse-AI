@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 uint64_t allmul_legacy(std::uint64_t a, std::uint64_t b) {
     const std::uint32_t a_lo = static_cast<std::uint32_t>(a);
@@ -40,4 +40,4 @@ uint64_t allmul_legacy(std::uint64_t a, std::uint64_t b) {
     return (static_cast<std::uint64_t>(edx) << 32) | eax;
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7C93E8（72B，ranking.tsv uc=55 / transitive_dependents=1217，
 // 按 unique_callers 扇入度取的下一个未复刻 CRT 项）：MSVCRT `free`
@@ -55,4 +55,4 @@ struct CrtFreeWorld {
 // 0x7C93E8：free。p 为要释放的指针（可为 NULL）。
 void free_legacy(CrtFreeWorld* world, void* p);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

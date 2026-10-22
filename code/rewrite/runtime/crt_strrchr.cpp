@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 const char* strrchr_legacy(const char* s, int c) {
     // 正扫 NUL（xor eax,eax/or ecx,-1/repne scasb；inc ecx/neg ecx）：
@@ -23,4 +23,4 @@ const char* strrchr_legacy(const char* s, int c) {
     }
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7C9430（18B，ranking.tsv uc=37 / transitive_dependents=1156，
 // 按 unique_callers 扇入度取的下一个未复刻 CRT 项）：MSVCRT `malloc`
@@ -37,4 +37,4 @@ struct CrtMallocWorld {
 // 0x7C9430：malloc 入口。size 为请求字节数（可为 0）。
 void* malloc_legacy(CrtMallocWorld* world, std::size_t size);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

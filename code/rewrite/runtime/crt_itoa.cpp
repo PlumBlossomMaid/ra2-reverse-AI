@@ -47,7 +47,7 @@
 
 #include "crt_itoa.h"
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 std::uint32_t itoa_core_legacy(std::int32_t value, char* buffer,
                                std::int32_t radix, std::int32_t sign) {
@@ -100,4 +100,4 @@ char* ltoa_legacy(std::int32_t value, char* buffer, std::int32_t radix) {
     return buffer;
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

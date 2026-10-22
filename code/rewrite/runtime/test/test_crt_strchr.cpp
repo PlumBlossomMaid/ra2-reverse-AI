@@ -91,7 +91,7 @@ TEST_F(CrtStrchrTest, GoldenMatches) {
             buf[i] = static_cast<char>(c.s[i]);
         }
         const char* s = buf.data();
-        const char* ret = ra2::runtime::strchr_legacy(s, c.ch);
+        const char* ret = ra2::crt::strchr_legacy(s, c.ch);
         const int off = (ret == nullptr)
                             ? -1
                             : static_cast<int>(ret - s);
@@ -108,15 +108,15 @@ TEST_F(CrtStrchrTest, ZeroCharEdgeCases) {
     buf[1] = 'b';
     buf[2] = 'c';
     buf[3] = 0;
-    EXPECT_EQ(ra2::runtime::strchr_legacy(buf, 0), buf + 3);
-    EXPECT_EQ(ra2::runtime::strchr_legacy(buf, 'c'), buf + 2);
-    EXPECT_EQ(ra2::runtime::strchr_legacy(buf, 'z'), nullptr);
-    EXPECT_EQ(ra2::runtime::strchr_legacy(buf, 'a'), buf);
+    EXPECT_EQ(ra2::crt::strchr_legacy(buf, 0), buf + 3);
+    EXPECT_EQ(ra2::crt::strchr_legacy(buf, 'c'), buf + 2);
+    EXPECT_EQ(ra2::crt::strchr_legacy(buf, 'z'), nullptr);
+    EXPECT_EQ(ra2::crt::strchr_legacy(buf, 'a'), buf);
     char empty[8];
     std::memset(empty, 0xCC, sizeof(empty));
     empty[0] = 0;
-    EXPECT_EQ(ra2::runtime::strchr_legacy(empty, 0), empty);
-    EXPECT_EQ(ra2::runtime::strchr_legacy(empty, 'a'), nullptr);
+    EXPECT_EQ(ra2::crt::strchr_legacy(empty, 0), empty);
+    EXPECT_EQ(ra2::crt::strchr_legacy(empty, 'a'), nullptr);
 }
 
 // 参照抽查：随机串对 × 随机 ch 与独立参照实现交叉对拍
@@ -138,7 +138,7 @@ TEST_F(CrtStrchrTest, ReferenceCrossCheck) {
         buf[len] = 0;
         const int ch = static_cast<int>(rnd() & 0xFF);
         const char* s = buf.data();
-        const char* got = ra2::runtime::strchr_legacy(s, ch);
+        const char* got = ra2::crt::strchr_legacy(s, ch);
         const char* ref = ref_strchr(s, ch);
         EXPECT_EQ(got, ref) << "pair " << t << " len=" << len
                             << " ch=0x" << std::hex << ch;

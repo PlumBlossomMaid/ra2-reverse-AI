@@ -2,7 +2,7 @@
 
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 int strnicmp_legacy(const char* s1, const char* s2, std::size_t count) {
     if (count == 0) return 0;  // or ecx,ecx → je 0x7CD77A
@@ -43,4 +43,4 @@ int strnicmp_legacy(const char* s1, const char* s2, std::size_t count) {
     }
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

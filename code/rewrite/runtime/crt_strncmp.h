@@ -2,7 +2,7 @@
 
 #include <cstddef>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7CA610 MSVCRT _strncmp（定长字节串比较，cdecl 3 栈参，三态返回）。
 // 机器码 56B（0x7CA610-0x7CA647）：
@@ -28,4 +28,4 @@ namespace ra2::runtime {
 //   真身模拟，deadcode_7ca610_golden.txt）。
 int strncmp_legacy(const char* s1, const char* s2, std::size_t count);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

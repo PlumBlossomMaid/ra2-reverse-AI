@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <vector>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7CA650 MSVCRT _alloca_probe（栈探测分配，编译器生成 _alloca 时 call）。
 // 机器码 47B（0x7CA650-0x7CA67E）：
@@ -23,4 +23,4 @@ std::uint32_t alloca_probe_legacy(std::uint32_t caller_esp,
                                   std::uint32_t size,
                                   std::vector<std::uint32_t>* probe_out);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

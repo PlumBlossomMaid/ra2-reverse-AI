@@ -97,7 +97,7 @@ TEST_F(CrtWcsncatTest, GoldenMatches) {
     for (const GCase& c : cases_) {
         std::vector<std::uint16_t> buf(c.dst.size() + c.count + 4, 0xCCCC);
         for (std::size_t i = 0; i < c.dst.size(); ++i) buf[i] = c.dst[i];
-        std::uint16_t* got = ra2::runtime::wcsncat_legacy(
+        std::uint16_t* got = ra2::crt::wcsncat_legacy(
             buf.data(), c.src.data(), c.count);
         EXPECT_EQ(got, buf.data());  // ★返回 dst
         // 比较到 golden out 的长度
@@ -118,7 +118,7 @@ TEST_F(CrtWcsncatTest, BoundaryCases) {
     buf[2] = 0;
     const std::uint16_t src1[] = {'c', 'd', 0};
     std::uint16_t* r =
-        ra2::runtime::wcsncat_legacy(buf.data(), src1, 3);
+        ra2::crt::wcsncat_legacy(buf.data(), src1, 3);
     EXPECT_EQ(r, buf.data());
     EXPECT_EQ(buf[0], 'a');
     EXPECT_EQ(buf[1], 'b');
@@ -129,13 +129,13 @@ TEST_F(CrtWcsncatTest, BoundaryCases) {
     // Count==0：dst 不变（尾补 NUL）
     buf[0] = 'a';
     buf[1] = 0;
-    ra2::runtime::wcsncat_legacy(buf.data(), src1, 0);
+    ra2::crt::wcsncat_legacy(buf.data(), src1, 0);
     EXPECT_EQ(buf[0], 'a');
     EXPECT_EQ(buf[1], 0);
 
     // 空 dst
     buf[0] = 0;
-    ra2::runtime::wcsncat_legacy(buf.data(), src1, 2);
+    ra2::crt::wcsncat_legacy(buf.data(), src1, 2);
     EXPECT_EQ(buf[0], 'c');
     EXPECT_EQ(buf[1], 'd');
     EXPECT_EQ(buf[2], 0);
@@ -144,7 +144,7 @@ TEST_F(CrtWcsncatTest, BoundaryCases) {
     buf[0] = 'x';
     buf[1] = 0;
     const std::uint16_t src_empty[] = {0};
-    ra2::runtime::wcsncat_legacy(buf.data(), src_empty, 5);
+    ra2::crt::wcsncat_legacy(buf.data(), src_empty, 5);
     EXPECT_EQ(buf[0], 'x');
     EXPECT_EQ(buf[1], 0);
 
@@ -152,7 +152,7 @@ TEST_F(CrtWcsncatTest, BoundaryCases) {
     const std::uint16_t src_short[] = {'y', 0};
     buf[0] = 'z';
     buf[1] = 0;
-    ra2::runtime::wcsncat_legacy(buf.data(), src_short, 8);
+    ra2::crt::wcsncat_legacy(buf.data(), src_short, 8);
     EXPECT_EQ(buf[0], 'z');
     EXPECT_EQ(buf[1], 'y');
     EXPECT_EQ(buf[2], 0);
@@ -198,7 +198,7 @@ TEST_F(CrtWcsncatTest, ReferenceCrossCheck) {
         ref[i] = 0;
 
         std::uint16_t* got =
-            ra2::runtime::wcsncat_legacy(buf.data(), src.data(), n);
+            ra2::crt::wcsncat_legacy(buf.data(), src.data(), n);
         EXPECT_EQ(got, buf.data());
         for (std::size_t j = 0; j < ref.size(); ++j) {
             if (ref[j] == 0) {

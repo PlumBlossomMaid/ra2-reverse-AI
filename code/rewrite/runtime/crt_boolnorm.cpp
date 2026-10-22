@@ -1,6 +1,6 @@
 #include "crt_boolnorm.h"
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 std::int32_t bool_normalize_legacy(CrtBoolNormWorld* world,
                                    std::uintptr_t p) {
@@ -13,4 +13,4 @@ std::int32_t bool_normalize_legacy(CrtBoolNormWorld* world,
     return (r != 0) ? 0 : -1;
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

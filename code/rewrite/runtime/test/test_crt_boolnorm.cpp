@@ -79,13 +79,13 @@ class CrtBoolNormTest : public ::testing::Test {
 // 逐用例：返回值与 golden ret 一致 + inner 实参==p（p 被原样转发）
 TEST_F(CrtBoolNormTest, GoldenReturnMatches) {
     for (const GCase& c : cases_) {
-        ra2::runtime::CrtBoolNormWorld w{};
+        ra2::crt::CrtBoolNormWorld w{};
         w.inner = StubInner;
         std::vector<std::uint32_t> args;
         g_args = &args;
         g_inject = c.inj;
         const std::int32_t got =
-            ra2::runtime::bool_normalize_legacy(&w, c.p);
+            ra2::crt::bool_normalize_legacy(&w, c.p);
         g_args = nullptr;
         EXPECT_EQ(static_cast<std::uint32_t>(got), c.ret)
             << "case p=" << std::hex << c.p << " inj=" << c.inj;
@@ -96,27 +96,27 @@ TEST_F(CrtBoolNormTest, GoldenReturnMatches) {
 
 // 语义核心：inner 非零 → 0；inner 为零 → -1
 TEST_F(CrtBoolNormTest, Semantics) {
-    ra2::runtime::CrtBoolNormWorld w{};
+    ra2::crt::CrtBoolNormWorld w{};
     w.inner = StubInner;
     g_inject = 1;
-    EXPECT_EQ(ra2::runtime::bool_normalize_legacy(&w, 0x1000), 0);
+    EXPECT_EQ(ra2::crt::bool_normalize_legacy(&w, 0x1000), 0);
     g_inject = 0xFFFFFFFF;
-    EXPECT_EQ(ra2::runtime::bool_normalize_legacy(&w, 0x1000), 0);
+    EXPECT_EQ(ra2::crt::bool_normalize_legacy(&w, 0x1000), 0);
     g_inject = 0;
-    EXPECT_EQ(ra2::runtime::bool_normalize_legacy(&w, 0x1000), -1);
+    EXPECT_EQ(ra2::crt::bool_normalize_legacy(&w, 0x1000), -1);
     g_inject = 0x80000000;  // 边界：CF 由 NEG 对非零置位
-    EXPECT_EQ(ra2::runtime::bool_normalize_legacy(&w, 0x1000), 0);
+    EXPECT_EQ(ra2::crt::bool_normalize_legacy(&w, 0x1000), 0);
 }
 
 // 全路径必然调用一次 inner（含 p==0——没有 NULL 短路）
 TEST_F(CrtBoolNormTest, AlwaysCallsInnerOnce) {
-    ra2::runtime::CrtBoolNormWorld w{};
+    ra2::crt::CrtBoolNormWorld w{};
     w.inner = StubInner;
     for (std::uint32_t p : {0u, 1u, 0x7FFFFFFFu, 0x80000000u, 0xFFFFFFFFu}) {
         std::vector<std::uint32_t> args;
         g_args = &args;
         g_inject = 0x41;
-        (void)ra2::runtime::bool_normalize_legacy(&w, p);
+        (void)ra2::crt::bool_normalize_legacy(&w, p);
         g_args = nullptr;
         ASSERT_EQ(args.size(), 1u) << "p=" << std::hex << p;
         EXPECT_EQ(args[0], p);

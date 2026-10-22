@@ -3,7 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 // 0x7C8B48（0x154 字节，ranking.tsv uc=60 / transitive_dependents=2106，
 // 按 unique_callers 扇入度取的下一个未复刻 CRT 项）：MSVC6 静态 CRT
@@ -53,4 +53,4 @@ using QsortCompare = int (*)(const void*, const void*);
 void qsort_legacy(void* base, std::size_t count, std::size_t size,
                   QsortCompare cmp);
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

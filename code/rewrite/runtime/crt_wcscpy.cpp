@@ -1,6 +1,6 @@
 #include "crt_wcscpy.h"
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 std::uint16_t* wcscpy_legacy(std::uint16_t* dst, const std::uint16_t* src) {
     std::uint16_t* out = dst;
@@ -15,4 +15,4 @@ std::uint16_t* wcscpy_legacy(std::uint16_t* dst, const std::uint16_t* src) {
     return out;
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt

@@ -46,7 +46,7 @@ TEST(CrtAlldiv, GoldenMatches) {
     const std::vector<GoldenCase> cases = LoadGolden();
     ASSERT_FALSE(cases.empty());
     for (const GoldenCase& c : cases) {
-        const std::int64_t got = ra2::runtime::alldiv_legacy(c.a, c.b);
+        const std::int64_t got = ra2::crt::alldiv_legacy(c.a, c.b);
         EXPECT_EQ(got, c.ret)
             << "a=0x" << std::hex << static_cast<std::uint64_t>(c.a)
             << " b=0x" << static_cast<std::uint64_t>(c.b)
@@ -57,7 +57,7 @@ TEST(CrtAlldiv, GoldenMatches) {
 
 // 边界用例（golden 之外的补充）
 TEST(CrtAlldiv, BoundaryCases) {
-    using ra2::runtime::alldiv_legacy;
+    using ra2::crt::alldiv_legacy;
     // 除零在 golden 外不测（原版 div #DE）
     EXPECT_EQ(alldiv_legacy(0, 7), 0);
     EXPECT_EQ(alldiv_legacy(7, 7), 1);
@@ -79,7 +79,7 @@ TEST(CrtAlldiv, BoundaryCases) {
 
 // 与标准库除法交叉抽查（截断向零语义一致）
 TEST(CrtAlldiv, ReferenceCrossCheck) {
-    using ra2::runtime::alldiv_legacy;
+    using ra2::crt::alldiv_legacy;
     const std::int64_t pairs[][2] = {
         {123456789, 4567},
         {-123456789, 4567},

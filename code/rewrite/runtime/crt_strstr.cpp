@@ -2,7 +2,7 @@
 
 #include "crt_strchr.h"
 
-namespace ra2::runtime {
+namespace ra2::crt {
 
 const char* strstr_legacy(const char* str, const char* sub) {
     const char* s = str;
@@ -31,4 +31,4 @@ const char* strstr_legacy(const char* str, const char* sub) {
     }
 }
 
-}  // namespace ra2::runtime
+}  // namespace ra2::crt
