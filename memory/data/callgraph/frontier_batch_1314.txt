@@ -1,0 +1,183 @@
+frontier batch 1314 — 0x727010 TriggerTypeClass::HasGlobalSetOrClearedEvent（★修正）/ 0x717CD0 VectorClass::AddItem ③ / 0x71ADE0 TemporalClass::Detach（2026-10-23）
+
+口径：承接 batch 1313 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=2 三个未登记函数：
+0x727010（52B）、0x717CD0（80B）、0x71ADE0（106B，带名）。取证手段：
+disasm.py 直反汇编全程读完 + TSV 查重（三候选全部未登记）+ 跨批次
+对比（0x717CD0 ↔ batch 1306 0x5132F0 逐字节同构；0x71ADE0 ↔ batch
+记忆崩溃排查三个候选点；0x727010 ↔ batch 1313 0x7270B0 语义修正）。
+
+================================================================================
+0x727010 —— TriggerTypeClass::HasGlobalSetOrClearedEvent（★修正版，52B）
+================================================================================
+★batch 1313 修正注：batch 1313 登记 0x7270B0（标"真实入口 0x727010"）
+但语义推断有误——完整反汇编证明：真实函数体就是 0x727010-0x727043
+（52B，ranking 独立条目），带 1 栈参（ret 4），类型比较 0x1B/0x1C
+（非 0x10），并加 +0x34 字段 == 栈参的第二重匹配。0x7270B0 处 00 00
+属数据，batch 1313 的"类型 0x10 遍历"推断作废，以此文档为准。
+
+签名：thiscall（ecx=this TriggerTypeClass*）+ 1 栈参（[esp+8]=匹配值）
+ret al。
+机器码（全文 0x727010-0x727043）：
+    mov ecx, [ecx+0xAC]              ; ★链表头 +0xAC
+    xor al, al
+    test ecx, ecx
+    push esi
+    je 0x727040                      ; ★空链 → 返 0
+    mov esi, [esp+8]                 ; ★栈参（匹配值）
+    循环:
+    mov edx, [ecx+0x2C]              ; ★类型字段 +0x2C
+    cmp edx, 0x1B                    ; ★类型 0x1B（27）
+    je 0x72702E
+    cmp edx, 0x1C                    ; ★类型 0x1C（28）
+    jne 0x727033
+    0x72702E:
+    cmp dword [ecx+0x34], esi        ; ★★类型命中且 +0x34 == 栈参（二级匹配）
+    je 0x72703E                      ; → 返 1
+    0x727033:
+    mov ecx, [ecx+0x28]              ; ★下一条
+    test ecx, ecx
+    jne 循环
+    pop esi; ret 4                   ; 遍历完 → 返 0
+    0x72703E: mov al, 1
+    0x727040: pop esi; ret 4
+
+语义：**TriggerTypeClass::HasGlobalSetOrClearedEvent（带名符号
+USER_DEFINED，修正版）**——遍历 this+0xAC 事件链表（每项 +0x28 下一
+条），查找类型字段 +0x2C ∈ {0x1B=27, 0x1C=28} 且其 +0x34 字段 ==
+栈参匹配值的事件项，命中返 1 否则返 0。★带参判定（Global Set/
+Cleared 事件与目标对象的二级匹配）。2 unique caller（8 callsite）。
+0x727050 起为下一函数（类型 0x24/0x25=36/37 同模板——同族候选）。
+
+★怪癖：①★双类型匹配（0x1B/0x1C 两档——GlobalSet/Cleared 事件对）；
+②★二级匹配（类型命中后 +0x34 字段 == 栈参——(事件,对象) 双键）；
+③★带 1 栈参（ret 4——与 0x726FB0/0x726FE0 无参版不同）；
+④★空链返 0 / 遍历完返 0（两出口）；
+⑤★0x727050 下一函数同模板（0x24/0x25——Trigger 类型族枚举扩展）。
+
+⚠️ partial：+0xAC 链表节点类型（EventClass）、+0x2C 类型枚举完整
+表（0x1B/0x1C/0x24/0x25 族）、+0x34 字段语义（目标对象/ID）、
+宿主 TriggerTypeClass、2 unique caller 身份。
+
+================================================================================
+0x717CD0 —— VectorClass::AddItem ③（80B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（[esp+8]=条目指针）ret al。
+机器码（全文 0x717CD0-0x717D1D，与 batch 1306 0x5132F0 逐字节同构）：
+    push esi; mov esi, ecx
+    mov ecx, [esi+8]                 ; ★容量 +8
+    mov eax, [esi+0x10]              ; ★长度 +0x10
+    cmp eax, ecx
+    jl 0x717D05                      ; 长度 < 容量 → 直接追加
+    mov al, [esi+0xD]                ; ★owns
+    test al, al; jne 0x717CE8
+    test ecx, ecx; jne 0x717CFF      ; 非 owns 且容量非 0 → 失败
+    0x717CE8:
+    mov eax, [esi+0x14]              ; ★增长量
+    test eax, eax; jle 0x717CFF
+    mov edx, [esi]; add eax, ecx
+    push 0; push eax; mov ecx, esi
+    call dword ptr [edx+8]           ; ★虚表槽 8（Grow）
+    test al, al; jne 0x717D05
+    0x717CFF: xor al, al; ret 4      ; 失败返 0
+    0x717D05:
+    mov eax, [esi+0x10]
+    mov edx, [esi+4]
+    lea ecx, [eax+1]
+    mov [esi+0x10], ecx              ; 长度 +1
+    mov ecx, [esp+8]; mov ecx, [ecx] ; ★栈参解引（条目值）
+    mov [edx+eax*4], ecx             ; ★array[length] = 条目值
+    mov al, 1; ret 4
+
+语义：**VectorClass::AddItem（batch 1306 0x5132F0 逐字节孪生③）**——
+长度 < 容量直接追加；否则 owns 或容量 0 时经虚表槽 8（Grow）按 +0x14
+增长量扩容（失败返 0）；成功写 array[length] = 栈参解引值、长度 +1、
+返 1。★VectorClass 家族追加成员第三副本（template 实例化）。2 unique
+caller（8 callsite）。后邻 0x717D20 为拷贝构造器（vtable 0x7E4424 +
+[0x7E4430] 基类构造 + 容量拷贝——同族）。
+
+★怪癖：①★与 0x5132F0 逐字节同构（80B 完全一致——同一模板第三份
+实例化）；②★长度 < 容量快速路径；③★增长量 +0x14 显式字段；
+④★owns==0 且容量>0 直接失败（借用缓冲不可扩容）；⑤★虚表槽 8 Grow。
+
+⚠️ partial：宿主类（0x717CDx 区——VectorClass 派生）、+0x14 增长量、
+后邻 0x717D20 拷贝构造器（同族）、2 unique caller 身份。
+
+================================================================================
+0x71ADE0 —— TemporalClass::Detach（106B 全程读完，★崩溃排查候选点）
+================================================================================
+签名：thiscall（ecx=this TemporalClass*）无栈参 ret 空。
+机器码（全文 0x71ADE0-0x71AE49）：
+    push ebx; push esi; mov esi, ecx; xor ebx, ebx
+    mov eax, [esi+0x28]              ; ★挂接对象 +0x28
+    mov byte [eax+0x270], bl         ; ★其 +0x270 标志清 0
+    mov ecx, [esi+0x28]
+    mov dword [ecx+0x278], ebx       ; ★其 +0x278 清 0
+    mov eax, [esi+0x44]              ; ★右链 +0x44
+    cmp eax, ebx
+    mov dword [esi+0x28], ebx        ; 清自身 +0x28
+    je 0x71AE12
+    cmp dword [eax+0x40], esi
+    jne 0x71AE0A
+    mov dword [eax+0x40], ebx        ; ★右链对象->+0x40 解链
+    0x71AE0A:
+    mov ecx, [esi+0x44]
+    call 0x71ADE0                    ; ★递归 Detach（右链）
+    0x71AE12:
+    mov eax, [esi+0x40]              ; ★左链 +0x40
+    cmp eax, ebx
+    je 0x71AE29
+    cmp dword [eax+0x44], esi
+    jne 0x71AE21
+    mov dword [eax+0x44], ebx        ; ★左链对象->+0x44 解链
+    0x71AE21:
+    mov ecx, [esi+0x40]
+    call 0x71ADE0                    ; ★递归 Detach（左链）
+    0x71AE29:
+    mov ecx, [esi+0x24]              ; ★宿主 +0x24
+    mov dword [esi+0x44], ebx
+    cmp ecx, ebx
+    mov dword [esi+0x40], ebx
+    mov dword [esi+0x3C], ebx
+    mov dword [esi+0x38], ebx        ; ★清自身四字段
+    je 0x71AE47
+    mov edx, [ecx]; push 1; push ebx
+    call dword ptr [edx+0x484]       ; ★虚表槽 0x484（宿主通知）
+    0x71AE47: pop esi; pop ebx; ret
+
+语义：**TemporalClass::Detach（带名符号 USER_DEFINED——★batch 记忆
+崩溃排查三个候选点之一 0x71ADE0）**——从超时空（TemporalClass）解链
+挂接对象：清 +0x28 对象的标志（+0x270/+0x278）；右链（+0x44）对象
+的 +0x40 反向指针解链后递归 Detach；左链（+0x40）对象的 +0x44 反向
+指针解链后递归 Detach；清自身四字段（+0x38/+0x3C/+0x40/+0x44 与
++0x28）；最后经虚表槽 0x484 通知宿主（+0x24 对象，含 2 参）。
+★超时空移除/释放时的双向链表解链逻辑——★正是"超时空移除可驻军建筑
+崩溃"排查点（若解链对象已释放则递归/通知即崩）。2 unique caller
+（8 callsite）。
+
+★怪癖：①★双向链表互解（+0x40/+0x44 反向指针对称清——左右两条链
+分别解 + 递归 Detach）；②★+0x28 挂接对象标志清（+0x270/+0x278 双
+字段——occupied/标记族）；③★递归 Detach（左右链递归——链表深度
+释放）；④★清自身四字段收尾（+0x38/+0x3C/+0x40/+0x44）；⑤★虚表槽
+0x484 通知宿主（push 1/push 0——2 参带标志）。
+
+⚠️ partial：+0x24/+0x28/+0x38..+0x44 字段族完整语义（TemporalClass
+链接布局）、+0x270/+0x278 标志含义、虚表槽 0x484 宿主类、崩溃场景
+精确路径（对象已释放时递归/通知行为——batch 记忆 0x71A760 Update
+汇编还原三崩溃点上下文）、2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 记忆（崩溃排查——TemporalClass::Update 0x71A760 汇编还原 +
+  Phobos 交叉验证 3 崩溃点 0x51BB7A/0x71ADE0/0x71B151）：★0x71ADE0
+  正是三崩溃点之一——本批登记后崩溃排查获得解链函数真身（复现
+  "超时空移除可驻军建筑"崩溃的候选断点）。
+- batch 1306（0x5132F0 VectorClass::AddItem）：0x717CD0 逐字节孪生
+  第三副本——Add 模板多实例化继续累积。
+- batch 1313（0x726FB0/0x726FE0 无参版判定 + 0x7270B0）：本批
+  0x727010 修正 0x7270B0 语义并补齐带参判定形态——Trigger 类型族
+  （0x1B/0x1C 双档 + +0x34 二级匹配）。
+- 0x726FB0 类型 0x18、0x726FE0 类型 0xF、0x727010 类型 0x1B/0x1C、
+  0x727050 类型 0x24/0x25：TriggerTypeClass 类型枚举族逐步闭合
+  （后续可建枚举表）。
