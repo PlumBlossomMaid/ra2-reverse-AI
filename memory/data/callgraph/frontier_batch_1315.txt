@@ -1,0 +1,163 @@
+frontier batch 1315 — 0x70D150 全局三字段初始化器 / 0x717C70 VectorClass 构造器② / 0x70F120 全局引用对象装配器（2026-10-23）
+
+口径：承接 batch 1314 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=2 三个未登记函数：
+0x70D150（37B）、0x717C70（93B）、0x70F120（173B）。取证手段：disasm.py
+直反汇编全程读完（0x70D150 0x60 / 0x717C70 0x80 / 0x70F120 0xB0 覆盖）+
+TSV 查重（三候选全部未登记）+ 跨批次对比（0x717C70 ↔ batch 1296
+0x512DC0 同款构造器；后邻 ↔ batch 1314 0x717CD0 同宿主实锤）。
+
+================================================================================
+0x70D150 —— 全局三字段初始化器（37B 全程读完）
+================================================================================
+签名：无参（ecx 未用）ret 空。
+机器码（全文 0x70D150-0x70D174）：
+    mov eax, [0xA8ED84]              ; ★全局 [0xA8ED84]
+    mov ecx, 0x19                    ; ★常量 0x19=25
+    mov [0xB0EA80], eax              ; ★[0xB0EA80] = [0xA8ED84]
+    mov eax, [esp-8]                 ; ★取调用方栈槽（[esp-8]）
+    sub esp, 0xC
+    mov [0xB0EA84], eax              ; ★[0xB0EA84] = 栈槽值
+    mov [0xB0EA88], ecx              ; ★[0xB0EA88] = 0x19
+    add esp, 0xC
+    ret
+
+语义：**全局三字段初始化器**——一次性装配三全局槽：[0xB0EA80] =
+[0xA8ED84]（★共享句柄复制——batch 1284 0x4C91C0 同款全局依赖）、
+[0xB0EA84] = 调用方栈槽值、[0xB0EA88] = 0x19（★恒置 25）。
+★全局状态区装配（[0xB0EAxx] 族——batch 1312 资源系统 [0xB0FBE0]/
+[0xB0FC10] 同 0xB0 区）。2 unique caller（8 callsite）。
+
+★怪癖：①★[0xB0EA80] = [0xA8ED84]（全局句柄复制——batch 1284
+同款 [0xA8ED84] 依赖）；②★[0xB0EA88] 恒置 0x19（常量 25——容量/
+数量推断）；③★取调用方栈槽 [esp-8]（未 prologue 的栈直读——
+特殊调用约定）；④★三槽一次性装配（无分支无循环）。
+
+⚠️ partial：[0xA8ED84]/[0xB0EA80]/[0xB0EA84]/[0xB0EA88] 全局语义、
+0x19 常量含义、调用方栈槽来源、宿主类（0x70D15x 区）、2 unique
+caller 身份。
+
+================================================================================
+0x717C70 —— VectorClass 构造器②（93B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 2 栈参（[esp+4]=容量、[esp+0xC]=外部缓冲）
+ret 8。
+机器码（全文 0x717C70-0x717CCC，与 batch 1296 0x512DC0 同款）：
+    mov eax, [esp+4]                 ; ★容量
+    push esi; mov esi, ecx
+    test eax, eax
+    mov [esi+4], 0                   ; +4 数组 = 0
+    mov [esi+8], eax                 ; +8 容量 = 参
+    mov byte [esi+0xC], 1            ; ★+0xC = 1（恒置）
+    mov byte [esi+0xD], 0            ; +0xD owns = 0
+    mov [esi], 0x7E4424              ; ★vtable① = 0x7E4424
+    je 0x717CB3                      ; 容量 0 → 跳过分配
+    mov ecx, [esp+0xC]               ; ★外部缓冲参
+    test ecx, ecx
+    je 0x717CA0
+    mov [esi+4], ecx                 ; ★用外部缓冲（不 owns）
+    jmp 0x717CB3
+    0x717CA0:
+    shl eax, 2; push eax
+    call 0x7C8E17                    ; ★new 容量×4
+    add esp, 4
+    mov [esi+4], eax                 ; 自分配
+    mov byte [esi+0xD], 1            ; ★owns = 1
+    0x717CB3:
+    mov [esi], 0x7E4444              ; ★vtable② = 0x7E4444（改写）
+    mov [esi+0x14], 0xA              ; ★+0x14 = 10（默认容量）
+    mov [esi+0x10], 0                ; +0x10 = 0
+    mov eax, esi; pop esi
+    ret 8
+
+语义：**VectorClass 构造器②（batch 1296 0x512DC0 逐段同构）**——
+vtable 先 0x7E4424 后改写 0x7E4444（两阶段构造）；+8=容量、+0xC=1
+恒置、+4=数组；外部缓冲参借用（owns=0）否则 new（0x7C8E17）容量×4
+并 owns=1；+0x14=10 恒置、+0x10=0。★后邻 0x717CD0 正是 batch 1314
+登记的 AddItem ③、0x717D20 拷贝构造器 vtable 0x7E4424——★同一宿主
+类构造/追加/拷贝三件套闭合。2 unique caller（8 callsite）。
+
+★怪癖：①★与 batch 1296 0x512DC0 同款（vtable 对不同：0x7E4424→
+0x7E4444 vs 0x7EAC28→0x7EAC88——不同派生类实例化）；②★外部缓冲/
+自分配双路径（owns 门控）；③★+0x14=10 恒置默认容量；④★ret 8
+（两栈参）；⑤★后邻 AddItem ③ + 拷贝构造器同宿主（三件套）。
+
+⚠️ partial：宿主类（0x717C7x 区——vtable 0x7E4424/0x7E4444 族）、
++0x10/+0x14 字段语义、2 unique caller 身份。
+
+================================================================================
+0x70F120 —— 全局引用对象装配器（173B 全程读完）
+================================================================================
+签名：thiscall（ecx=目标对象）+ edx + 无栈参 ret 空。
+机器码骨架（0x70F120-0x70F1CC）：
+    sub esp, 0xC; push esi; mov esi, ecx
+    test esi, esi; je 0x70F194       ; ★目标空 → 走清零路径
+    test edx, edx; je 0x70F194       ; ★源空 → 走清零路径
+    mov eax, [0x8871E0]              ; ★全局配置对象
+    push edi
+    mov [0xB0EB3C], edx              ; ★全局槽 = 源
+    mov [0xB0EB38], esi              ; ★全局槽 = 目标
+    mov edi, [eax+0x1800]            ; ★配置 +0x1800
+    lea ecx, [esp+0xC]
+    call 0x6C8C40                    ; ★时钟/时间取值
+    mov ecx, [esp+0xC]
+    mov edx, [0xA83D4C]              ; ★全局 [0xA83D4C]
+    push 1; push 1; push 0; push 0
+    mov [0xB0EA74], ecx              ; ★全局槽 = 时间
+    push 0; push edx
+    lea ecx, [esp+0x20]
+    mov [0xB0EA70], eax              ; ★全局槽 = 时钟值
+    mov [0xB0EA78], edi              ; ★全局槽 = 配置值
+    mov eax, [esi]
+    push 2; push ecx
+    mov ecx, esi
+    call dword ptr [eax+0x48]        ; ★虚表槽 0x48（多参调用）
+    mov ecx, 0x87F7E8                ; ★MapClass::Instance
+    push eax
+    call 0x5673A0                    ; ★0x5673A0（地图相关挂载）
+    pop 全; add esp, 0xC; ret
+    0x70F194:                        ; ★清零路径
+    lea ecx, [esp+8]
+    mov [0xB0EB3C], 0
+    mov [0xB0EB38], 0
+    call 0x6C8C40
+    mov edx, [esp+8]
+    xor ecx, ecx
+    mov [0xB0EA70], eax              ; ★时钟值
+    mov [0xB0EA74], edx              ; ★时间
+    mov [0xB0EA78], ecx              ; ★0
+    pop esi; add esp, 0xC; ret
+
+语义：**全局引用对象装配器**——目标（esi）与源（edx）均非空时：
+存全局槽（[0xB0EB38]/[0xB0EB3C]）→ 取 [0x8871E0] 配置 +0x1800 值 →
+0x6C8C40 时钟 → 装配 [0xB0EA70]/[0xB0EA74]/[0xB0EA78] 三槽（时钟/
+时间/配置）→ 虚表槽 0x48 多参调用（push 1/1/0/0/0/全局）→ 0x5673A0
+（[0x87F7E8] MapClass::Instance 挂载）；任一空走清零路径（三槽清 +
+时钟）。★全局引用装配 + 事件提交形态（[0xB0EAxx]/[0xB0EBxx] 全局
+族——batch 1312 资源系统同 0xB0 区）。2 unique caller（8 callsite）。
+
+★怪癖：①★双参非空门控（目标/源任一空 → 清零路径）；②★[0xB0EB38]/
+[0xB0EB3C] 目标/源全局槽（装配暂存）；③★[0xB0EA70]/[0xB0EA74]/
+[0xB0EA78] 三槽（时钟/时间/配置 [0x8871E0]+0x1800）；④★虚表槽 0x48
+多参调用（6 参 push 族）；⑤★0x5673A0 经 [0x87F7E8] MapClass 挂载
+（RMG 取格链同源）。
+
+⚠️ partial：[0x8871E0]/[0xA83D4C]/[0xB0EAxx]/[0xB0EBxx] 全局语义、
++0x1800 配置字段、虚表槽 0x48 宿主、0x5673A0 身份、宿主类（0x70F12x
+区）、2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1296（0x512DC0 VectorClass 构造器双 vtable + 外部缓冲/自分配）：
+  0x717C70 同款第二实例（vtable 0x7E4424→0x7E4444——不同派生类）。
+- batch 1314（0x717CD0 AddItem ③ + 0x717D20 拷贝构造器 vtable
+  0x7E4424）：0x717C70 后邻同宿主——★VectorClass 派生构造/追加/拷贝
+  三件套同址闭合。
+- batch 1284（0x4C91C0 [0xA8ED84] 全局依赖）：0x70D150 同款
+  [0xA8ED84] → 全局槽复制（batch 1284 结构初始化器同依赖）。
+- batch 1312（资源系统 0xB0FBE0/[0xB0FC10]）：0x70D150/0x70F120
+  同 0xB0 全局区族——资源/装配状态区。
+- 0x6C8C40（时钟取值）：0x70F120 与 batch 1303 0x5CE640 共用。
+- 0x7C8E17（new 包装）：0x717C70 分配共用（batch 1271/1275/1291/
+  1296/1297 同）。
