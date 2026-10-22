@@ -1,0 +1,158 @@
+frontier batch 1298 — 0x513740 VectorClass 拷贝构造器③ / 0x56DAE0 索引扫描处理器 / 0x5D9220 协议包匹配器（2026-10-23）
+
+口径：承接 batch 1297 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=2 三个未登记函数：
+0x513740（136B）、0x56DAE0（139B）、0x5D9220（307B）。取证手段：
+disasm.py 直反汇编全程读完（0x513740 0x90 / 0x56DAE0 0x90 / 0x5D9220
+0x140 覆盖）+ TSV 查重（三候选全部未登记）+ 跨批次对比
+（0x513740 ↔ batch 1296 0x67C1F0 逐字节同构实锤）。
+
+================================================================================
+0x513740 —— VectorClass 拷贝构造器③（136B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（[esp+0x10]=源对象）ret 4。
+机器码（全文 136 字节，与 batch 1296 0x67C1F0 逐字节同构）：
+    mov edi, [esp+0x10]          ; ★源对象
+    mov esi, ecx; xor ebx, ebx
+    cmp esi, edi
+    mov [esi+4], ebx             ; +4 数组 = 0
+    mov [esi+8], ebx             ; +8 容量 = 0
+    mov byte [esi+0xC], 1        ; ★+0xC = 1（恒置）
+    mov byte [esi+0xD], bl       ; +0xD owns = 0
+    mov [esi], 0x7EAC48          ; ★vtable① = 0x7EAC48
+    je 0x5137AE                  ; ★this == 源 → 跳过
+    call dword ptr [0x7EAC54]    ; ★基类构造虚表槽
+    mov eax, [edi+8]; cmp eax, ebx
+    mov [esi+8], eax             ; 目标容量 = 源容量
+    je 0x5137A8                  ; 源容量 0 → 跳过
+    shl eax, 2; push eax
+    call 0x7C8E17                ; ★new 容量×4
+    mov [esi+4], eax             ; 目标数组 = new
+    je 0x5137AE                  ; 分配失败 → 跳过
+    mov byte [esi+0xD], 1        ; ★owns = 1
+    循环: mov ecx, [edi+4]; mov edx, [esi+4]
+    mov ecx, [ecx+eax*4]; mov [edx+eax*4], ecx   ; 逐项拷贝
+    inc eax; cmp eax, [esi+8]; jl 循环
+    ...
+    0x5137A8: mov [esi+4], ebx; mov byte [esi+0xD], bl
+    0x5137AE:
+    mov edx, [edi+0x10]; mov [esi+0x10], edx     ; +0x10 = 源
+    mov eax, [edi+0x14]; mov [esi+0x14], eax     ; +0x14 = 源
+    mov [esi], 0x7EABE8          ; ★vtable② = 0x7EABE8（改写）
+    mov eax, esi; pop 全; ret 4
+
+语义：**VectorClass 拷贝构造器③**——与 batch 1296 0x67C1F0 逐字节同构
+（同一模板第三份实例化拷贝，仅 vtable 对不同：0x7EAC48→0x7EABE8）。
+双 vtable 两阶段 + this==源跳过 + 基类构造槽 + 逐项拷贝 + +0x10/+0x14
+拷贝。2 unique caller（8 callsite）。
+
+★怪癖：①★三副本模式（0x67C1F0/0x513740 + 0x512DC0 构造器——VectorClass
+家族多实例化持续累积）；②★双 vtable（0x7EAC48→0x7EABE8）；③★vtable
+对与 0x512DC0（0x7EAC28→0x7EAC88）不同——★不同派生类实例化；
+④★基类构造槽 [0x7EAC54]。
+
+⚠️ partial：宿主类（0x5137xx 区——VectorClass 第三派生）、vtable
+0x7EAC48/0x7EABE8 类族、2 unique caller 身份。
+
+================================================================================
+0x56DAE0 —— 索引扫描处理器（139B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（[esp+8]）ret al。
+机器码骨架（0x56DAE0-0x56DB6A）：
+    mov ebx, [esp+8]; push 0; push 3; push ebx
+    mov esi, ecx
+    call 0x56DA10                ; ★查找函数（3 参：0/3/输入）
+    mov edi, eax
+    cmp edi, -1; jne 0x56DB1C     ; 命中 → 处理
+    mov ecx, esi; call 0x56D6E0   ; ★未中 → 重置再查
+    push 0; push 3; push ebx; call 0x56DA10
+    cmp edi, -1; jne 0x56DB1C
+    xor al, al; ret 4             ; ★两次未中 → 返 0
+    0x56DB1C:                    ; ★处理循环
+    mov eax, [esi+0x54]          ; 表基址
+    mov ebp, edi; shl ebp, 4      ; ★索引 ×16（16 字节/项）
+    add eax, ebp
+    mov cl, [eax+8]; test cl, cl; je 0x56DB4D   ; 项标志 +8 为 0 → 跳过
+    push eax; mov ecx, esi
+    call 0x584E50                ; ★处理函数（项指针）
+    mov ecx, [esi+0x54]
+    mov byte [ecx+ebp+8], 0      ; ★清项标志 +8
+    0x56DB4D:
+    inc edi; push edi; push 3; push ebx
+    call 0x56DA10                ; 查下一索引
+    cmp edi, -1; jne 0x56DB27     ; 循环直到未中
+    ...
+    mov al, [esp+0x10]; ret 4     ; 返成功标志
+
+语义：**索引扫描处理器**——经 0x56DA10（3 参查找：类型/值组）扫描
+待处理索引，[esi+0x54] 表（★16 字节/项）中项标志 +8 置位者调 0x584E50
+处理并清标志；首查未中先 0x56D6E0 重置再查，两次未中返 0。★事件/待办
+队列批量消费形态（寻路/网格域）。2 unique caller（8 callsite）。
+
+★怪癖：①★16 字节/项表（shl ebp,4 索引换算）；②★项标志 +8 门控
+（0 跳过）；③★0x56DA10 3 参查找（0/3 常量组——类型参推断）；
+④★首查未中重置再查（0x56D6E0——二次机会）；⑤★清标志后循环消费
+直到未中。
+
+⚠️ partial：0x56DA10 查找语义、0x584E50 处理函数、[esi+0x54] 表类型、
+0/3 常量含义、宿主类（0x56DAEx 区——batch 记忆 0x56C510/0x586990
+寻路段邻近）、2 unique caller 身份。
+
+================================================================================
+0x5D9220 —— 协议包匹配器（307B 全程读完）
+================================================================================
+签名：thiscall（ecx 未用）ret 8（两栈参）。
+机器码骨架（0x5D9220-0x5D9352）：
+    sub esp, 0x1F8
+    lea ecx, [esp+0x30]; call 0x53ECB0   ; ★构造栈对象
+    lea ecx, [esp+0x14]; call 0x6C8C40   ; ★时钟/值转换
+    mov edi, [esp+0x20C]; mov esi, 0x3C  ; ★超时 60
+    ...比较 [esp+0x10] == -1 判空
+    循环:
+    mov ecx, 0xA8E9C0; call 0x541820     ; ★[0xA8E9C0] 会话对象
+    call 0x48D080                        ; 取数/状态
+    mov ecx, 0xA8E9C0; call 0x5422F0     ; 取队列
+    mov ecx, 0xA8E9C0; ...push 6 参
+    call 0x5413B0                        ; ★6 参包读取
+    test eax, eax; je 0x5D9306
+    cmp word [esp+0xE], 0xAA04           ; ★包标记 0xAA04
+    jne 0x5D9306
+    cmp dword [esp+0x3C], 0x2C           ; ★长度/类型 44
+    jne 0x5D9306
+    mov ecx, [esp+0x71]; and ecx, 0xFFFF
+    cmp edi, eax; je 0x5D9310            ; ★匹配命中
+    0x5D9306: inc ebx; jmp 循环
+    0x5D9310:                            ; ★命中处理
+    mov eax, [esp+0x6B]; mov esi, eax; and eax, 0xFFFF
+    push eax; push ecx; push 0x830CF4
+    call 0x4068E0                        ; ★[0x830CF4] 表处理
+    mov ecx, 0xA8E9C0; push ebx
+    call 0x5413F0                        ; 会话登记
+    mov ax, si; ret 8
+
+语义：**协议包匹配器**——[0xA8E9C0]（会话/游戏状态单例）经 0x5413B0
+（6 参包读取）循环取包；检查包标记 0xAA04 + 字段 == 0x2C（44）双条件
+匹配后经 0x4068E0（[0x830CF4] 处理表）处理，0x5413F0 登记，返回
+处理结果（ax）。超时 0x3C 门控。★网络/会话协议域（batch 记忆
+0x5DA720 网络管理器区邻近）。2 unique caller（8 callsite）。
+
+★怪癖：①★[0xA8E9C0] 会话单例（0x541820/0x5422F0/0x5413B0/0x5413F0
+四入口共用）；②★包标记 0xAA04 + 类型/长度 0x2C=44 双条件匹配；
+③★[0x830CF4] 处理表（0x4068E0 查表）；④★超时 0x3C 门控 + 循环
+inc ebx 重试；⑤★命中字段 & 0xFFFF 截断（16 位协议字段）。
+
+⚠️ partial：包格式（0xAA04 标记语义）、0x5413B0 6 参读取、0x4068E0/
+[0x830CF4] 表、0x5413F0 登记、0x48D080/0x6C8C40 身份、宿主类
+（0x5D92xx 网络/会话域）、2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1296（0x67C1F0 VectorClass 拷贝构造器）：0x513740 逐字节同构
+  第三副本（仅 vtable 对不同——不同派生类实例化）。
+- batch 记忆（0x56C510/0x586990 寻路段）：0x56DAE0 同 0x56xxxx 区——
+  寻路/网格索引扫描家族候选。
+- batch 记忆（0x5DA720 网络管理器释放）：0x5D9220 同 0x5D9xxx 区——
+  网络/会话协议域。
+- 0x7C8E17（new 包装）：0x513740 分配路径共用（batch 1271/1275/
+  1291/1296/1297 同）。
