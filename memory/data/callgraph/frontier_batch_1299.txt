@@ -1,0 +1,159 @@
+frontier batch 1299 — 0x7B6970 宽串 operator+= 变体③ / 0x7BAE60 结构字段读取选择器 / 0x7BB920 区域运算器（2026-10-23）
+
+口径：承接 batch 1298 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=2 三个未登记函数：
+0x7B6970（123B）、0x7BAE60（80B）、0x7BB920（393B）。取证手段：
+disasm.py 直反汇编全程读完（0x7B6970 0x80 / 0x7BAE60 0x60 / 0x7BB920
+0x1A0 覆盖）+ TSV 查重（三候选全部未登记）+ 跨批次对比（0x7B6970 ↔
+batch 735/738 宽串 operator+= 家族逐段同构实锤）。
+
+================================================================================
+0x7B6970 —— 宽串 operator+= 变体③（布尔返回版，123B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（[esp+0xC]=源 wchar_t*）ret al。
+机器码（全文 123 字节）：
+    mov ebp, [esp+0xC]           ; ★源指针
+    mov ebx, ecx; test ebp, ebp
+    jne 0x7B6983
+    mov al, 1; ret 4             ; ★源空 → 返 1（成功标志）
+    0x7B6983:
+    mov esi, [ebx]               ; ★this->[0] 旧串指针
+    push ebp; call 0x7CA405      ; ★wcslen(源)
+    mov edi, eax; add esp, 4; inc edi      ; +1 给 '\0'
+    test esi, esi; je 0x7B69A2
+    push esi; call 0x7CA405      ; ★wcslen(旧串)
+    add esp, 4; add edi, eax     ; ★总长 = 源长 + 1 + 旧长
+    0x7B69A2:
+    lea eax, [edi*4]; push eax
+    call 0x7C8E17; add esp, 4    ; ★new 总长×4
+    mov [ebx], eax               ; this->[0] = 新缓冲
+    test esi, esi; je 0x7B69C4
+    push esi; push eax
+    call 0x7CA489; add esp, 8    ; ★wcscpy 旧串 → 新缓冲
+    jmp 0x7B69C9
+    0x7B69C4:
+    mov word [eax], 0            ; ★旧串空 → 写宽 NUL
+    0x7B69C9:
+    mov ecx, [ebx]; push ebp; push ecx
+    call 0x7CA45F; add esp, 8    ; ★wcscat 追加源串
+    test esi, esi; je 0x7B69E2
+    push esi; call 0x7C8B3D      ; ★delete 旧缓冲
+    add esp, 4
+    0x7B69E2:
+    mov al, 1; ret 4             ; ★返回 1（成功标志）
+
+语义：**宽串 operator+= 变体③（布尔返回版，推断名）**——与 batch 735
+（0x7B6B60 对象指针版）/batch 738（0x7B6AE0 裸指针版）逐段同构：
+wcslen×2（源 + 旧）→ 总长×4 new → wcscpy 旧串（空则写宽 NUL）→
+wcscat 追加源 → delete 旧缓冲。★差异：返回 al=1（布尔成功标志）而非
+this——家族第三变体；源空直接返 1（无 [0x887734] 兜底——调用方保证
+非空或静默忽略）。2 unique caller（8 callsite）。
+
+★怪癖：①★家族第三变体（返回布尔非 this——batch 735/738 同模板
+第三实例）；②★源空直接返 1（无兜底——行为不对称）；③★wcslen×2
+分步累加（源先算+1，旧串存在才加）；④★旧串空写宽 NUL 分支（mov
+word[eax],0）；⑤★delete 旧缓冲放最后（新缓冲就绪才释放）。
+
+⚠️ partial：与 0x7B6B60/0x7B6AE0 的精确关系（同一成员函数第三重载
+推断）、宿主类（0x7B69xx 区——宽串 WStringClass 家族）、调用方业务、
+2 unique caller 身份。
+
+================================================================================
+0x7BAE60 —— 结构字段读取选择器（80B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（[esp+4]=结构指针）ret eax。
+机器码（全文 80 字节）：
+    mov eax, [esp+4]             ; ★结构指针
+    mov ecx, [eax+4]
+    mov eax, [eax]               ; 结构 {+0, +4} 两字段
+    mov edx, [esi]               ; 虚表
+    push ecx; push eax
+    mov ecx, esi; xor ebx, ebx
+    call dword ptr [edx+0x5C]    ; ★虚表槽 0x5C（两参）
+    mov edi, eax
+    test edi, edi; je 0x7BAEA8   ; ★空 → 返 0
+    mov edx, [esi]
+    call dword ptr [edx+0x70]    ; ★虚表槽 0x70（取类型）
+    cmp eax, 2
+    jne 0x7BAE9D
+    mov bx, word [edi]           ; ★类型 2 → 读 word
+    jmp 0x7BAE96
+    0x7BAE9D:
+    mov bl, byte [edi]           ; ★其他 → 读 byte
+    0x7BAE96:
+    mov edx, [esi]
+    call dword ptr [edx+0x60]    ; ★虚表槽 0x60
+    mov eax, ebx
+    pop 全; ret 4
+
+语义：**结构字段读取选择器**——从结构指针 {+0/+4} 取两字段作参经
+虚表槽 0x5C 取对象；空返 0；经虚表槽 0x70 判类型：2 → 读 word、
+其他 → 读 byte，最后经虚表槽 0x60 后返回读取值。★按类型宽度选择
+读取（2 → 16 位 / 其他 → 8 位）。2 unique caller（8 callsite）。
+
+★怪癖：①★虚表槽链（0x5C 取对象 → 0x70 判类型 → 0x60 收尾——
+三槽协作）；②★类型 2 判定读 word 其他读 byte（宽度选择器）；
+③★空对象返 0（静默）；④★结构 {+0/+4} 双字段作参透传。
+
+⚠️ partial：宿主类（0x7BAExx 区——0x7Bxxxx 工具域）、虚表槽 0x5C/
+0x70/0x60 语义、结构类型（{+0/+4} 字段族）、2 unique caller 身份。
+
+================================================================================
+0x7BB920 —— 区域运算器（393B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 8 栈参 ret 0x20（32B）。
+机器码骨架（0x7BB920-0x7BBAA8）：
+    sub esp, 0x48
+    mov eax, [esp+0x54]          ; 参
+    mov ebp, [esp+0x5C]
+    lea ecx, [eax+eax]           ; 2×参
+    mov ebx, [esp+0x58]
+    mov edx, ecx; mov ecx, 3
+    sub ecx, edx                 ; ★3 - 2×参
+    mov edx, eax; xor edi, edi
+    neg edx
+    add eax, ebp
+    mov [esp+0x64], edx
+    mov [esp+0x10], eax
+    ...循环（0x7BB95F-0x7BBA99）:
+    lea eax, [edi+ebp]; add ecx, ebx
+    lea ecx, [edx+ebx]
+    mov eax, [esp+0x78]          ; ★参（每轮传）
+    push eax; push 栈槽
+    lea ecx, [esp+...]
+    call dword ptr [edx+0x2C]    ; ★虚表槽 0x2C（多次调用）
+    ...坐标/边界运算（lea eax,[eax+edx*4+6] / dec / inc / cmp）
+    边界调整（esp+0x14/+0x18/+0x10/+0x64 更新）
+    cmp ecx, eax; jge 循环
+    ...
+    ret 0x20
+
+语义：**区域运算器**——8 栈参（ret 0x20），循环经虚表槽 0x2C 多次
+调用（每轮传 [esp+0x78] 参 + 栈槽），内部做坐标/边界运算（lea 组合、
+neg、×4、+6/+0xA 补偿、dec/inc 步进）——★矩形/坐标区域枚举或遍历
+运算形态（0x7BB9xx 区——batch 记忆 GDI/网格绘制域邻近）。2 unique
+caller（8 callsite）。
+
+★怪癖：①★8 栈参（ret 0x20——多参数区域运算）；②★虚表槽 0x2C
+循环调用（每轮 4 栈槽装配）；③★lea 组合坐标运算（[eax+edx*4+6]/
++0xA 补偿常量——区域边界对齐）；④★边界步进（dec/inc + cmp jge
+循环控制）。
+
+⚠️ partial：宿主类（0x7BB9xx 区——GDI/网格绘制域推断）、虚表槽 0x2C
+语义、8 参含义（矩形坐标/区域范围推断）、补偿常量 6/0xA 语义、
+2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 735（0x7B6B60 宽串 operator+= 对象指针版）+ batch 738（0x7B6AE0
+  裸指针版）：0x7B6970 是家族第三变体（布尔返回版）——wcslen×2 →
+  ×4 new → wcscpy → wcscat → delete 逐段同构，宽串家族多实例化继续
+  累积。
+- batch 记忆（0x7B4C20/0x7B4CD0 C 串追加器）：0x7B6970 同 0x7Bxxxx
+  串家族——宽串追加变体补全。
+- 0x7CA405/0x7CA489/0x7CA45F（wcslen/wcscpy/wcscat——batch 097/126
+  已登记）：0x7B6970 三个锚点全部命中。
+- 0x7C8E17/0x7C8B3D（new/delete 包装对）：0x7B6970 分配/释放共用。
+- batch 记忆（GDI 网格文本绘制器 0x7Bxxxx 区）：0x7BB920 同区区域
+  运算候选。
