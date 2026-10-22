@@ -1,0 +1,157 @@
+frontier batch 1311 — 0x755A40 双表结构拷贝器 / 0x756590 表面插值渲染器 / 0x7518C0 全局字节写入器（2026-10-23）
+
+口径：承接 batch 1310 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=2 三个未登记函数：
+0x755A40（116B）、0x756590（711B）、0x7518C0（7B）。取证手段：disasm.py
+直反汇编全程读完（0x755A40 0x80 / 0x756590 0x2D0 / 0x7518C0 0x30 覆盖）
++ TSV 查重（三候选全部未登记）+ 跨批次对比（0x7518D0 后邻 ↔ batch
+1285/1287 持有释放器模板）。
+
+================================================================================
+0x755A40 —— 双表结构拷贝器（116B 全程读完）
+================================================================================
+签名：thiscall（ecx=目标缓冲）+ edx + 1 栈参（[esp+4]=索引）ret 0xC。
+机器码（全文 0x755A40-0x755AB3）：
+    mov eax, [esp+4]               ; ★索引
+    sub esp, 0x40; push 全; mov ebx, ecx
+    cmp edx, eax
+    je 0x755A94                    ; ★edx == 索引 → 直接表拷贝
+    0x755A50:                      ; ★浮点参路径
+    fld qword [esp+0x54]           ; double 参
+    push ecx; lea ecx, [esp+0x10]
+    shl eax, 4                     ; ★索引 ×16
+    fstp dword [esp]               ; double → float
+    add eax, 0xB43188              ; ★表①基址（16B/项）
+    shl edx, 4; push eax
+    add edx, 0xB43188
+    call 0x646590                  ; ★构造/查找①
+    mov edx, eax; lea ecx, [esp+0x1C]
+    call 0x646980                  ; ★构造/查找②
+    mov ecx, 0xC                   ; ★12 dword = 48 字节
+    mov esi, eax; mov edi, ebx
+    rep movsd                      ; ★拷贝到目标
+    mov eax, ebx; pop 全; add esp, 0x40; ret 0xC
+    0x755A94:                      ; ★直接表路径
+    lea esi, [eax+eax*2]           ; 索引 ×3
+    mov ecx, 0xC
+    shl esi, 4                     ; ×16 = ×48（48B/项）
+    add esi, 0xB45188              ; ★表②基址（48B/项）
+    mov edi, ebx
+    rep movsd                      ; ★拷贝 12 dword
+    mov eax, ebx; pop 全; add esp, 0x40; ret 0xC
+
+语义：**双表结构拷贝器**——edx == 索引时直接从 [0xB45188 + idx×48]
+拷贝 12 dword（48B 结构）到目标；否则经浮点参 + [0xB43188 + idx×16]
+表（16B 结构）两次构造/查找（0x646590/0x646980）后同样拷贝 12 dword。
+★双表 + 双路径结构拷贝（48B/16B 两表按条件切换——参数化查表）。
+2 unique caller（8 callsite）。
+
+★怪癖：①★双表（[0xB45188] 48B/项 vs [0xB43188] 16B/项——按
+edx==索引 切换）；②★12 dword rep movsd（48B 固定结构宽）；
+③★浮点参路径经 0x646590/0x646980 两次查表（构造后拷贝）；
+④★double → float 转换（fld qword + fstp dword——精度收缩）；
+⑤★ret 0xC（3 栈参）。
+
+⚠️ partial：两表语义（B45188 直接索引/B43188 参化）、结构布局
+（12 dword）、0x646590/0x646980 身份、索引与 edx 关系、宿主类
+（0x755A4x 区——0x75xxxx 工具域）、2 unique caller 身份。
+
+================================================================================
+0x756590 —— 表面插值渲染器（711B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 栈参（[esp+0x48] 结构指针等）ret 8。
+机器码骨架（0x756590-0x756856）：
+    sub esp, 0x44; push 全
+    mov eax, [esp+0x48]            ; ★输入结构
+    mov edx, [eax+4]; mov esi, [ecx+0x10]; mov ecx, [ecx+0x14]
+    lea edx, [edx+edx*2]; mov edx, [esi+edx*4]   ; ★索引×12 取查表项
+    mov esi, [eax+8]; add edx, esi
+    lea esi, [edx+edx*4]; lea edx, [edx+esi*8]   ; ★×12 展开（格子索引）
+    ...
+    mov dl, [ebx+0xA0]; mov cl, [ebx+0xA1]; mov dl, [ebx+0xA2]  ; ★三维权重字节
+    ...字段拷贝到 [esp+0x20] 栈结构（12+ dword）
+    插值链:
+    mov ecx, [esi+0x8468C4]        ; ★插值表①
+    ...lea [eax+ecx*4+0x28]（表项地址）
+    fld dword [edi]                ; ★fadd [0x7F695C]（+0.5 四舍五入）
+    fadd dword [0x7F695C]
+    fsub dword [edx]               ; ★(v + 0.5) - base
+    fmul dword [0x7E2224]          ; ×缩放
+    call 0x7C5F00                  ; ★_ftol 截断
+    mov word [esp+0x38], ax        ; ★word 结果
+    ...重复（+4/+8 三坐标）
+    权重插值:
+    fild dword [esp+0x18]          ; ★三维权重浮点化
+    fld dword [ebp]; fsub dword [edi]
+    fdiv st(1)                     ; ★(B - A) / w
+    fmul dword [0x7E2224]
+    call 0x7C5F00
+    mov word [esp+0x3E], ax        ; ★word 结果
+    ...多次（不同表 +0x8468C8/0x8468CC/0x8468D0/0x8468D4/0x8468D8/
+    0x8468DC/0x8468E0 各自插值）
+    标志合成:
+    mov eax, [0xB43180]; test eax, eax
+    je 0x756811
+    or esi, 2                      ; ★标志位
+    mov eax, [0xB43184]; test eax, eax
+    je 0x756831
+    or esi, 4
+    mov al, [ebx+0xA3]; test al, al
+    jne 0x75683E
+    or esi, 8                      ; ★标志组合
+    收尾:
+    lea eax, [esp+0x20]; push eax
+    call [esi*4+0x846840]          ; ★函数指针表回调
+    add esp, 4; pop 全; add esp, 0x44; ret 8
+
+语义：**表面插值渲染器**——从输入结构取索引（×12 展开）查 0x8468xx
+插值表族，读三维权重字节（+0xA0/+0xA1/+0xA2）与标志（+0xA3），对
+三个坐标做 (v + 0.5 - base) × 缩放 的浮点插值（0x7F695C = 0.5、
+0x7E2224 = 缩放常量）→ _ftol 截断 → word 结果写栈缓冲；经
+[0xB43180]/[0xB43184]/+0xA3 合成标志位（2/4/8），最后调
+[0x846840] 函数指针表回调。★地形/表面插值渲染（高度场/地面细节域
+——v+0.5 舍入惯用法 + 多表插值）。2 unique caller（8 callsite）。
+
+★怪癖：①★(v + 0.5 - base) × 缩放 插值（fld/fadd/fsub/fmul 链 +
+_ftol 截断——round-half-up 形态）；②★0x8468xx 插值表族（7+ 表：
+0x8468C4/0x8468C8/0x8468CC/0x8468D0/0x8468D4/0x8468D8/0x8468DC/
+0x8468E0——三维逐步插值）；③★索引 ×12 展开（lea 组合——格子索引）；
+④★标志合成（[0xB43180]/[0xB43184]/+0xA3 → 位 2/4/8）；⑤★
+[0x846840] 函数指针表最终回调。
+
+⚠️ partial：宿主类（0x75659x 区——地形/表面域）、0x8468xx 插值表
+布局、[0x7F695C]=0.5/[0x7E2224] 缩放语义、+0xA0..+0xA3 权重字节、
+[0x846840] 回调表、输入结构布局、2 unique caller 身份。
+
+================================================================================
+0x7518C0 —— 全局字节写入器（7B 全程读完）
+================================================================================
+签名：无 this 依赖（cl=值）ret 空。
+机器码（全文 7 字节）：
+    mov byte [0x8464AC], cl        ; ★全局字节 [0x8464AC] = cl
+    ret
+
+语义：**全局字节写入器**——把 cl 写入全局标志字节 [0x8464AC]（★纯
+全局 setter——batch 1279 全局 getter 的写入向配对）。2 unique caller
+（8 callsite）。后邻 0x7518D0 为持有释放器（+4 非空 && +0xD owns →
+0x7C8B3D delete + 清 +0x10——VectorClass 家族又一副本，同族候选未
+登记）。
+
+★怪癖：①★mov byte [绝对地址], cl（纯全局 setter——7B 极简）；
+②★后邻 0x7518D0 持有释放器（与 batch 1285 0x63E140 同模板变体）；
+③★[0x8464AC] 全局标志（开关/状态位推断）。
+
+⚠️ partial：[0x8464AC] 全局语义、宿主类（0x7518Cx 区）、后邻
+0x7518D0（同族候选）、2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1279（0x637AA0 全局字节读取器 mov al,[0xAC4CF4]）：0x7518C0
+  是写入向配对（mov byte [0x8464AC],cl——纯全局 setter）。
+- batch 1285/1287（持有释放器模板 0x63E140 多副本）：0x7518D0 后邻
+  为同模板变体（+0x10 收尾）——VectorClass 家族继续累积。
+- _ftol（0x7C5F00）+ FPCW=chop：0x756590 插值截断依赖（batch 记忆
+  浮点环境三证据）。
+- 0x7F695C（0.5 常量）：0x756590 round-half-up（v+0.5）——与 trunc
+  截断区分（QQWEN 硬性规范第 4 条逐点确认的插值形态）。
