@@ -1,0 +1,236 @@
+frontier batch 1362 — 0x64C380 UI 事件系统更新器 / 0x64B240 事件批量标记器 / 0x63E900 索引删除器（2026-10-23）
+
+口径：承接 batch 1361 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x64C380（2474B，callees=18 deps=2425 大函数）、
+0x64B240（461B，callees=6 deps=2550 高解锁）、0x63E900（65B，callees=1
+deps=63）。
+取证手段：disasm.py 双参直反汇编全程读完（0x64C380 0x9B0 尾 0x64CD27 /
+0x64B240 0x1E0 尾 0x64B40A（含相邻 0x64B410 开头）/ 0x63E900 0x50 尾
+0x63E93E，函数边界与 functions.tsv 完全吻合）+ TSV 查重（三候选全部
+未登记）+ 跨批次对比（[0xA8022C] 单元表 + 0x5E2BE0 ↔ batch 1362 前后
+同域交叉；0x4068E0 日志/0x7E1530 tick 函数指针/0x734E60 DebugLog ↔ 既有
+锚点；前移压缩移除惯用 ↔ memory 既有容器族）。
+
+================================================================================
+0x64C380 —— UI 事件系统更新器（2474B 全程读完）
+================================================================================
+签名：thiscall（ecx=this，mov esi）+ 3 栈参（[esp+0x54]=目标、
+[esp+0x58]=帧戳三元组指针、[esp+0x5C]=候选表），返 al 0/1，ret 0xC
+（0x64C380-0x64CD27，callees=18 deps=2425 大函数）。
+机器码结构（0x64C380-0x64CD27，全程读完，关键锚点）：
+    入口：sub esp,0x40; 4 push; mov ebx, [0xA80238]（单元数）
+    mov edi, [0x8B41F8]（★事件环计数）
+    xor ebp, ebp; xor esi, esi
+    段 1（0x64C3A1，★过期事件清理）：
+    mov ecx, [0xA8B1DC]; mov eax, [0x8B41FC]（事件环起点）
+    lea [eax+eax*4]×2 + 0x8B4204（★事件结构）
+    cmp byte [+0x8B4204], 0x1C; je 跳过
+    mov eax, [+0x8B4207]（帧）; cmp [0xA8B1F8]; jle 跳过; cmp [0xA8B1DC]; jge 跳过
+    push ×3 + 0x837F78 → 0x4068E0（★日志）
+    mov [+0x8B4207], [0xA8B1DC]（★帧校正写回）
+    inc esi; cmp esi, edi; jl 循环（事件环遍历）
+    段 2（0x64C40D，★全局三元组过期）：
+    [0xA8E2D8]/[0xA8E2DC]/[0xA8E2E0] 全非空 → 遍历事件环：
+    类型 ==0x13 && [+0x8B4206] 字节 == [0xA8E2E0] && [+0x8B4207] 帧在
+    ([0xA8E2D8], [0xA8E2DC]] → 日志 0x837F40 + 帧校正
+    [0xA8ED84] > [0xA8E2DC] → 重置三元组（[0xA8E2D8]=0、
+    [0xA8E2DC]=0、[0xA8E2E0]=0xFFFFFFFF）
+    段 3（0x64C4D0，★主循环按单元表）：
+    [0xA80238] 逐单元（[0xA8022C][i]）：跳过 [eax]==0、
+    [+0x1EC]/[+0x1ED] 双 0；否则嵌套遍历事件环：
+    movsx edx, [+0x8B4206]（玩家 ID）; cmp [esi+0x30]; jne 跳过
+    mov edx, [+0x8B4207]; cmp [0xA8ED84], edx; jl 跳过（帧未到）
+    test byte [+0x8B4205], 1; jne 跳过（★已处理标志）
+    → [0xA8ED84] > [+0x8B4207] 分支（0x64C581）：类型分派 +0x8B4204：
+    0x1C/0x13/0x0C/0x22/0x04/0x1B（★多类型消息处理）：
+    0x64C5AF（Theater 0 或 5 跳过）；0x4068E0 连环日志（0x837F24/
+    0x837EF8/0x837EE8/0x837ED8/0x837EC8/0x837EB8/0x837EAC/0x837E98）+
+    [0x82091C] 表查类型名 + 虚表槽 0x10
+    0x64C63D（0x1C 分支）：[esp+0x58] 帧戳三元组过期检查
+    （[eax]==-1 或 [0xA8ED84]-[eax] < [eax+8]）→ [+0x8B4207]==
+    [0xA8ED84] && [+0x8B4211] < 0x100 → [esi*4+0xB04474] 表查
+    +0x8B420B 值匹配判定（0x64C6E2）
+    0x64C6FD（其他类型）：mov esi, [eax*4+0xA70204]; call [0x7E1530]
+    （★tick 函数指针） − esi → [0x8373A0]（★耗时统计）
+    类型==0x04（0x64C739）：[0xA83ED0] < 0x100 → rep movsd 0x1B
+    dwords + movsw + movsb 拷贝到 [0xA83EDC+idx*0x20] + [0xA8ADDC]
+    存 tick + [0xA83ED8]++（★事件入槽表）
+    类型==0x13（0x64C7BF）：遍历 [0xA8022C] 找 [esi+0x30]==
+    [+0x8B4206] → [edi+0x248]=1 → 0x5E2BE0 判定 ==1 → Theater==4
+    && [0xA8F900]==0 → [0xA8B8C1]=1 + 0x6C8820 + 0x6C6F50 →
+    0x5E2BA0/0x4FC980（★单元处理）→ [0xA8ED74]=1 分支 → 日志
+    0x837E20 + [0xA8B54C] 计数递减（0x64CA95）
+    0x64C9C3（★收尾段）：[0xA8D5F8] bit1 → [esi+0x1EC]=0 +
+    [esi+0x24C]=[0x8871E0]+0x1434 + 0x501640 + 0x7C91D0（快照）+
+    rep movsd 5 dwords + movsb 拷贝到 +0x15FF4 → 0x734E60 DebugLog
+    0x1628/0x162A + 0x4068E0 0x837E04
+    0x64CAA8（★标记已处理）：or byte [+0x8B4205], 1（置位）
+    段 4（0x64CAE8，★槽位表遍历）：
+    [0xA83ED0] 逐项 [0xA83EE8+idx*0x1C 结构]（类型/ID/帧/值四段
+    比较 +0xA83EE8/+0xA83EEA/+0xA83EEE/+0xA83EEF/+0xA83EF3）→
+    不匹配 → 0x64CDA0 清空（0x64CBB1 调用）
+    段 5（0x64CBF4）：0x4C6CB0 逐项 + [0xA83ED4] 索引 +1 wrap 0xFF +
+    [0xA83ED0] 递减
+    尾段（0x64CC3D）：外层 [esp+0x10] 递增循环 [0xA80238] 项 →
+    完成 mov eax,1 ret 0xC
+    失败段（0x64CC61）：[0xB04880]=1 → 0x6516F0 ×256（0x100 循环）
+    否则 0x64DEA0 + 0x734E60 DebugLog 0x165B/0x165A + 0x5D3490 →
+    xor eax ret 0xC
+语义：**UI 事件系统更新器**（0x64C38x 区——0x64Cxxx 事件/UI 域，
+callees=18 deps=2425 大函数）：thiscall + 三栈参：**事件环
+[0x8B4204 区] 过期清理**（帧 [0x8B4207] 越界校正 + 0x4068E0 日志）→
+**全局三元组 [0xA8E2D8..0xA8E2E0] 过期重置** → **逐单元主循环**
+（[0xA8022C] 单元表 × 事件环嵌套，玩家 ID [0x8B4206]==[unit+0x30]
+匹配 + 帧到点 + 未处理标志 [0x8B4205] bit0）：按事件类型 0x1C/
+0x13/0x0C/0x22/0x04/0x1B 分派（0x1C 走 [0xB04474] 表查值、0x04
+rep movsd 入槽表 [0xA83EDC]、0x13 走单元处理 0x5E2BE0/0x5E2BA0/
+0x4FC980/Tick tick 统计 [0x8373A0]）→ 收尾段 [0xA8D5F8] bit1
+标记快照 → **槽位表 [0xA83EE8 区] 四段比较遍历 + 清理** → 完成
+返 1。★UI 事件系统更新器（0x64C38x 区——事件环 + 单元表 + 槽位表
+三表联动 + 类型分派 + 日志族）。2 unique caller（3 callsite）。
+★怪癖：①★**三个全局事件表联动**（事件环 [0x8B4204 区] + 单元表
+[0xA8022C] + 槽位表 [0xA83EE8 区]——[0x8B41FC] 环形索引 and 0x3FFF）；
+②★事件结构固定布局（+0x4204 类型字节/0x4205 标志/0x4206 玩家 ID
+字节/0x4207 帧 dword/0x4208..0x4211 区）；③★[0x8B4205] bit0 已处理
+标志（or cl,1 置位——幂等）；④★0x4068E0 连环日志（0x837F78/
+0x837F40/0x837F24/0x837EF8/0x837EE8/0x837ED8/0x837EC8/0x837EB8/
+0x837EAC/0x837E98/0x837E04/0x837E58 十二串——事件系统调试）；
+⑤★[0x7E1530] tick 函数指针（eax−[eax*4+0xA70204] 最薄弱耗时
+[0x8373A0]——每事件耗时统计）；⑥★[0x82091C] 类型名查表 +
+[0xA83ED0]<0x100 槽位上限；⑦★0x734E60 DebugLog（0x1628/0x162A/
+0x165B/0x165A 行号）；⑧★[0xA8B54C] 事件计数 + [0xA8D5F8] bit1
+快照门控。
+⚠️ partial：事件类型 0x1C/0x13/0x0C/0x22/0x04/0x1B 语义（消息/
+游戏内通知？）、[0xA8022C] 单元表类型、[0xA83ED0] 槽位表类型、
+0x5E2BE0/0x5E2BA0/0x4FC980/0x501640/0x6C8820/0x6C6F50/0x4C6CB0/
+0x6516F0/0x64DEA0/0x5D3490 身份、2 unique caller 身份。
+
+================================================================================
+0x64B240 —— 事件批量标记器（461B 全程读完）
+================================================================================
+签名：thiscall（ecx=this，mov ebp）+ 2 栈参（[esp+0x10]=索引 edi、
+[esp+0x14]=容器），返 al==1（[esp+0x13]=bl），ret 8（0x64B240-
+0x64B40A，callees=6 deps=2550 高解锁）。
+机器码结构（0x64B240-0x64B40A，全程读完，关键锚点）：
+    入口：sub esp,0x10; 4 push; mov ebp, ecx; mov esi, edx
+    push 0; call 0x7CA67F（★取 tick）; mov edx, [0xB0489C]（上次 tick）
+    sub eax, edx; mov ebx, 1
+    cmp eax, 0x3C; jge 0x64B274（★距上次 ≥ 60 tick 才标记）
+    mov [esp+0x13], bl（<60 → 标记抑制）
+    0x64B274：push 0; call 0x7CA67F; mov [0xB0489C], eax（★更新上次 tick）
+    mov eax, [ebp]; mov ecx, ebp; push esi
+    call [eax+0x14]（★虚表槽 0x14）
+    mov ecx, [0xA8ED84]; mov edi, eax
+    push ecx; push edi; push 0x837AA8 → 0x4068E0（★日志 帧+返回值）
+    cmp edi, -1; jne 0x64B2C3
+    push 0x837A80 → 0x4068E0（★-1 日志）; ret 8（含 [esp+0x13]）
+    0x64B2C3：mov edx, [0xA8022C]; mov eax, [edx+edi*4]
+    mov byte [eax+0x208], bl（★标记 +0x208）
+    mov ecx, [0xA8022C]; mov ecx, [ecx+edi*4]
+    call 0x5E2BE0; cmp eax, ebx
+    jne 0x64B352
+    0x64B2E4（★Theater 门控）：cmp [0xA8B238], 4; jne 0x64B352
+    mov al, [0xA8F900]; test al; jne 0x64B352
+    call 0x6C8820; mov al, [esp+0x13]
+    mov byte [0xB0BD78], bl（★全局标记）
+    test al, al; jne 0x64B30F
+    mov byte [0xA8B8C1], bl（★抑制时仍全局标记）
+    0x64B30F（★批量标记循环）：[0xA80238] 逐项：
+    mov edx, [0xA8022C]; mov eax, [edx+ecx*4]
+    je 跳过（空）; mov dl, [eax+0x1F5]; test dl; jne 跳过（已置）
+    mov dl, [eax+0x1EC]; test dl; je 跳过（必备前提）
+    mov byte [eax+0x208], bl（★+0x208 批量标记）
+    0x64B34B：xor cl, cl; call 0x6C6F50
+    0x64B352：mov eax, [0xA8022C]; mov ecx, [eax+edi*4]
+    call 0x5E2BE0; cmp eax, ebx; jle 0x64B37A
+    mov al, [esp+0x13]; test al; jne 0x64B37A
+    mov edx, [0xA8022C]; mov edx, [edx+edi*4]
+    mov [edx+0x247], bl（★+0x247 标记——二级）
+    0x64B37A（★主循环）：mov eax, [ebp]; mov ecx, ebp
+    call [eax+0x10]（★虚表槽 0x10 取计数）; dec eax
+    cmp esi, eax; jge 0x64B3F2（越界跳过）
+    lea ecx, [esi+esi*2]; lea eax, [esi*4+0xA8BB40]
+    shl ebx, 5; add ebx, 0xA8BB60（★目标槽）
+    lea ebp, [edx+ecx*8]（★源 24B/项）
+    0x64B3AD 循环：lea esi, [ebp+0x18]; mov ecx, 6
+    mov edi, ebp; add eax, 4; rep movsd（★6 dwords=24B 拷贝）
+    mov ecx, [eax]; mov [eax-4], ecx; lea esi, [ebx+0x20]
+    mov ecx, 8; mov edi, ebx; add ebp, 0x18
+    rep movsd（★8 dwords=32B 拷贝）→ 虚表槽 0x10 再取计数
+    cmp esi(索引), eax; jl 循环（★[0xA8BB40]/[0xA8BB60] 双槽打包）
+    0x64B3F2：mov ecx, ebp（this）
+    and edx, 0xFF; call 0x5DA750（★尾调用——索引+8 位）
+    ret 8
+语义：**事件批量标记器**（0x64B24x 区——0x64Bxxx 事件/批量域，
+callees=6 deps=2550 高解锁）：thiscall + 索引/容器双栈参：**60-tick
+节流**（0x7CA67F 取 tick − [0xB0489C] 上次 < 0x3C 抑制标记）→ 虚表槽
+0x14 取目标 → [0xA8022C] 表 [index] 置 +0x208 → Theater 门控
+（[0xA8B238]==4 && [0xA8F900]==0 → 0x6C8820 + 全局 [0xB0BD78]/
+[0xA8B8C1] 标记）→ **批量标记循环**（[0xA8022C] 全表：[+0x1F5]
+未置 && [+0x1EC] 已置 → +0x208）→ 0x5E2BE0 多级 → +0x247 标记 →
+**双槽打包循环**（源 24B/项 → [0xA8BB60] 槽 rep movsd 6+8 dwords、
+索引桶 [0xA8BB40]）→ 0x5DA750 尾调 → ret 8。★事件批量标记器
+（0x64B24x 区——60-tick 节流 + [0xA8022C] 批量标记 + Theater 门控 +
+双槽打包）。2 unique caller（3 callsite）。
+★怪癖：①★**60-tick 节流**（0x7CA67F − [0xB0489C] cmp 0x3C——距
+上次 <60 抑制但全局标记仍置 [0xB0BD78]/[0xA8B8C1]）；②★[0xA8022C]
+批量标记循环（+0x1F5 未置 && +0x1EC 已置 → +0x208——三级标志）；
+③★Theater==4 && [0xA8F900]==0 门控（0x6C8820/0x6C6F50 调用对）；
+④★**双槽打包**（[0xA8BB60] 24B/项 rep movsd 6+8 + [0xA8BB40] 索引
+桶——虚拟槽数据族）；⑤★0x5E2BE0 两次判定（==1 走 Theater 门控、
+>1 走 +0x247）；⑥★[0x4068E0] 日志 0x837AA8/0x837A80 + 0x5DA750
+尾调 + ret 8 双栈参。
+⚠️ partial：事件/容器类型（虚表槽 0x10/0x14 语义）、[0xA8022C] 表
+类型（与 0x64C380 同表确认）、60-tick 节流含义、三级标志
++0x208/+0x247/+0x1F5/+0x1EC 语义、[0xA8BB40]/[0xA8BB60] 槽身份、
+0x5E2BE0/0x6C8820/0x6C6F50/0x5DA750 身份、2 unique caller 身份。
+
+================================================================================
+0x63E900 —— 索引删除器（65B 全程读完）
+================================================================================
+签名：thiscall（ecx=this 数组容器）+ 1 栈参（[esp+8]=删除索引 eax），
+返 al 0/1，ret 4（0x63E900-0x63E93E，callees=1 deps=63）。
+机器码（0x63E900-0x63E93E）：
+    入口：push esi; mov esi, ecx; mov ecx, [esp+8]
+    mov eax, [esi]; push ecx; mov ecx, esi
+    call [eax+0x10]（★虚表槽 0x10 取计数）
+    cmp eax, -1; je 0x63E93B（−1 → 返 0）
+    mov ecx, [esi+0x10]（当前数）; cmp eax, ecx
+    jge 0x63E93B（★越界 → 返 0）
+    dec ecx; cmp eax, ecx; mov [esi+0x10], ecx（计数−1）
+    jge 0x63E935（删除末位 → 直接返 1）
+    0x63E923（★前移压缩）：
+    mov ecx, [esi+4]; inc eax
+    mov edx, [ecx+eax*4]; mov [ecx+eax*4-4], edx（★逐项左移一位）
+    mov ecx, [esi+0x10]; cmp eax, ecx; jl 0x63E923
+    0x63E935：mov al, 1; pop esi; ret 4（★成功返 1）
+    0x63E93B：xor al, al; pop esi; ret 4（★失败返 0）
+语义：**索引删除器**（0x63E9xx 区——0x63Exxx 容器/删除域，
+callees=1 deps=63）：thiscall 数组容器 + 删除索引栈参：虚表槽 0x10
+取计数 → 校验（−1 或 ≥ 当前数 → 返 0 失败）→ **计数−1 + 前移压缩**
+（从索引+1 到末尾逐项左移一位——VectorClass erase 语义）→ 成功
+返 1。★索引删除器（0x63E9xx 区——虚表槽 0x10 计数 + 前移压缩 +
+计数−1——memory 既有前移压缩移除族）。2 unique caller（3 callsite）。
+★怪癖：①★虚表槽 0x10 取计数 + 边界校验（−1/越界 → 返 0）；
+②★**前移压缩**（mov [ecx+eax*4-4], [ecx+eax*4] 逐项左移——不给
+rep movsd 手写循环）；③★计数−1（mov [esi+0x10], ecx——删除末位
+直接返 1 免压缩）；④★ret 4 单栈参 + callees=1 纯链。
+⚠️ partial：数组容器类型（虚表槽 0x10）、元素大小（4B？）、
+2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1362 前后（[0xA8022C] 单元表 + 0x5E2BE0）：0x64C380 与
+  0x64B240 **同域交叉**（同 [0xA8022C] 表 + 0x5E2BE0 判定）——
+  单元表/事件族成对闭合。
+- 0x4068E0 日志 / 0x734E60 DebugLog（既有锚点）：0x64C380 用了
+  十二串日志 + 四行 DebugLog——日志/调试家族兑现。
+- [0x7E1530] tick 函数指针（batch 1300s 既有锚点：quin tick÷16）：
+  0x64C380 使用（eax−[eax*4+0xA70204] 耗时）——tick 家族再验证。
+- [0x8871E0] 全局规则 / [0xA8B238] Theater（既有惯用法）：0x64C380
+  ([0x8871E0]+0x1434) + 0x64B240 (Theater==4)——规则/Theater 家族。
+- memory 既有（前移压缩移除家族/容器 eraser）：0x63E900——容器族
+  持续闭合（与 batch 既有容器清理器同主题）。
+- 全局对象头表族（[0xB0BD78]/[0xA8B8C1]/[0xA8BB40]/[0xA8BB60]）：
+  0x64B240——全局槽族再验证。
