@@ -1,0 +1,133 @@
+frontier batch 1310 — 0x76DAD0 窗口状态刷新器 / 0x76F060 析构器 thunk / 0x777EA0 文件读取加载器（2026-10-23）
+
+口径：承接 batch 1309 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=2 三个未登记函数：
+0x76DAD0（1012B）、0x76F060（11B）、0x777EA0（232B）。取证手段：
+disasm.py 直反汇编全程读完（0x76DAD0 0x400 / 0x76F060 0x30 / 0x777EA0
+0xF0 覆盖 0x76DAD0-0x76DEC3 全程）+ TSV 查重（三候选全部未登记）+
+跨批次对比（0x76DAD0 ↔ batch 735 文档预告 FUN_0076dad0 UI 域宿主
+兑现；0x76F060 ↔ batch 记忆析构 thunk 同族）。
+
+================================================================================
+0x76DAD0 —— 窗口状态刷新器（1012B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（[esp+0x2C]=配置结构指针）ret al。
+机器码骨架（0x76DAD0-0x76DEC3）：
+    sub esp, 0x28; push 全; mov esi, ecx
+    mov edi, [edx+4]                 ; ★配置结构 +4
+    mov ecx, [esi+0x54]; mov eax, [esi+0x468]
+    setne bl                         ; ★+0x54 非空标志
+    cmp edi, eax; je 0x76DEB8        ; ★配置值 == 当前值 → 直接返回
+    test eax, eax; je 0x76DB44       ; 当前为空 → 跳过释放
+    (释放路径) [esi+0x50] 0x65D480 + [esi+0x468] 0x76FEB0 释放 + 表项释放
+    0x76DB44:
+    设置路径: 0x65D480 写 + 0x468 检查
+    ...非空分支（0x76DBCA）: 0x7B66C0 双串 + 0x76F600 取 → edi 判定
+    mov eax, 2; cmp edi, 1; je; test edi, edi; je
+    → 0x7712C0（限时轮询等待器，push 3/0/0/eax/0/0x1E）
+    dec edi ×3 分支（0/1/2/3 → 四个 DebugLog 0x2AD/0x2B1/0x2B5/0x2B9
+    不同串 0x8490A8/0x8490C0/0x84908C/0x848F24）→ 0x7B66D0 宽串组装
+    → 0x76EAF0 提交 → 0x7B6760 析构
+    0x76DCF9: 0x76FEB0 再调 + 0x76BFE0 取 + 比较 [esi+0x450]
+    0x76DD46: 表遍历（0x766060/0x7665D0 比较）→ bl=1 → 0x65D480 写
+    → 0x7B68E0 宽串追加 → 提交
+    0x76DE20: 收尾: 0x5CB860/0x5CB840/0x5CB790 表清理 + DebugLog
+    0x2D7（0x849078/0x849064 双串）→ 0x7B8090/0x7B6BE0 串处理
+    → 0x7B71B0 长度判定 → 0x7B6B60（★宽串 operator+= 对象指针版）
+    → 0x76EA20 后处理 → 0x7B6760 析构 ×3 → mov al, bl; ret 4
+
+语义：**窗口状态刷新器（batch 735 文档预告 FUN_0076dad0 UI 域宿主
+兑现）**——配置结构指针（+4 值）与当前 +0x468 比较：相同直接返回；
+不同则释放旧资源 + 按 edi 值（1/2/3/其他）四分支（各带 DebugLog
+0x2AD/0x2B1/0x2B5/0x2B9 与不同串）→ 0x7B66D0/0x7B68E0 宽串组装 +
+0x76EAF0 提交 + 0x7712C0/0x7714B0 限时轮询等待器 + 0x76EA20 后处理
++ 表清理（0x5CB860/0x5CB840/0x5CB790）。★UI/控件配置刷新形态
+（0x76xxxx 区——batch 735 现场 1 宿主，0x76DE8A 调 0x7B6B60
+宽串 += 与 0x76EA20 后处理现场全中）。2 unique caller（8 callsite）。
+
+★怪癖：①★配置值比较短路（值相同直接返——无状态刷新）；②★edi
+四分支（dec-eq 链——1/2/3 各带独立 DebugLog 串 0x8490A8/0x8490C0/
+0x84908C/0x848F24 与行号 0x2AD/0x2B1/0x2B5/0x2B9）；③★宽串双类
+组装（0x7B66D0 operator= + 0x7B68E0 operator= 变体 + 0x7B6B60
++= ——batch 735/738 同族锚点）；④★限时轮询等待器双调（0x7712C0
++ 0x7714B0——UI 计时器）；⑤★0x76EAF0 提交 + 0x76EA20 后处理成对。
+
+⚠️ partial：宿主类（0x76DADx 区——UI/控件域）、配置结构类型、
++0x468/+0x450/+0x54/+0x50 字段族、0x76EAF0/0x76EA20/0x76FEB0/
+0x76BFE0 身份、0x5CB860/0x5CB840/0x5CB790 表处理、2 unique caller
+身份。
+
+================================================================================
+0x76F060 —— 析构器 thunk（11B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（[esp+8]=释放标志）ret 4。
+机器码（全文 11 字节）：
+    mov dword [ecx], 0x7F71C4      ; ★写 vtable 0x7F71C4
+    jmp 0x65D460                   ; ★尾跳析构体（batch 记忆同族）
+    ...（nop 对齐至 0x76F070 getter）
+
+语义：**析构器 thunk（scalar deleting destructor 头）**——写 vtable
+0x7F71C4 后尾跳 0x65D460 析构体（★scalar deleting destructor 标准
+形态——回收标志在 [esp+8]）。2 unique caller（8 callsite）。后邻
+0x76F070/0x76F080 为 dword 字段 getter 双子（mov eax,[ecx+4]——同族）。
+
+★怪癖：①★vtable 写 + 尾跳（scalar deleting destructor 头——析构
+thunk 标准形态）；②★后邻 0x76F070/0x76F080 dword getter 双子
+（batch 记忆 0x76F020/0x76F080 同族）；③★0x65D460 析构体共用
+（batch 记忆 0x765710 等 scalar 析构同目标）。
+
+⚠️ partial：宿主类（0x76F06x 区——0x76xxxx UI 域）、vtable 0x7F71C4
+类族、后邻 getter 双子（同族）、2 unique caller 身份。
+
+================================================================================
+0x777EA0 —— 文件读取加载器（232B 全程读完）
+================================================================================
+签名：无明确 this（[0xB7355C] 全局句柄）无栈参 ret 空。
+机器码（全文 0x777EA0-0x777F87）：
+    mov eax, [0xB7355C]              ; ★全局文件句柄
+    sub esp, 0x204; push 全; xor ebx, ebx
+    cmp eax, ebx; je 0x777F7F        ; ★句柄空 → 直接返回
+    mov [0xB73318], bx               ; ★宽串缓冲 [0xB73318] 清
+    mov [0xB73564], ebx; mov [0xB73568], ebx  ; ★全局计数/长度清
+    lea ecx, [esp+8]; push 0x200; push ecx
+    push 8; push eax                 ; ★0x7C8A34（Read 包装 4 参）
+    call 0x7C8A34
+    test eax, eax; jle 0x777F7F      ; ★读取 ≤ 0 → 返回
+    push 0x100; push 0xB73318
+    push -1; push 栈; push ebx; push ebx
+    mov byte [esp+eax+0x20], bl      ; ★缓冲终止
+    call [0x7E11C4]                  ; ★API（转码/转换形态）
+    mov [0xB73518], bx
+    ...wcslen（0x7CA405）→ [0xB73568] 长度
+    call 0x7CBB8D                    ; ★长度换算
+    mov [0xB73568], eax; mov [0xB73564], esi
+    ...写 [0xB73518] word + ret
+
+语义：**文件读取加载器**——[0xB7355C] 全局句柄非空时：0x7C8A34
+（★ReadFile 系 4 参包装）读 0x200 字节到栈缓冲 → [0x7E11C4] API
+转换 → 结果写 [0xB73318] 宽串缓冲 + [0xB73564]/[0xB73568] 计数/长度
+全局。★文件内容读取 + 宽串化装载（[0xB735xx] 全局文件区族——batch
+1304 后邻 0x778180 双全局释放器同区）。2 unique caller（8 callsite）。
+
+★怪癖：①★全局句柄 [0xB7355C] 门控（空直接返回）；②★0x7C8A34
+4 参 Read 包装（句柄/缓冲/长度/偏移）；③★[0x7E11C4] IAT 转换 API；
+④★结果写 [0xB73318] 宽串缓冲 + 双全局长度（[0xB73564]/[0xB73568]）；
+⑤★缓冲终止字节（[esp+eax+0x20]）。
+
+⚠️ partial：[0xB7355C] 句柄来源、0x7C8A34/0x7CBB8D/0x7CA405 精确
+身份（Read 系/长度系）、[0xB73518]/[0xB73318]/[0xB73564]/[0xB73568]
+全局语义、2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 735（0x7B6B60 宽串 operator+= 对象指针版——现场 1
+  FUN_0076dad0 0x76DE8A 调 0x7B6B60 + 0x76EA20）：★0x76DAD0 正是该
+  宿主——batch 735 预告兑现（宽串拼接 + 后处理现场全中）。
+- batch 738（0x7B6AE0 宽串 operator+= 裸指针版）：0x76DAD0 同族
+  宽串组装（0x7B66D0/0x7B68E0/0x7B6B60 三锚点）。
+- batch 记忆（scalar deleting destructor 0x65D460）：0x76F060 尾跳
+  析构体共用——析构 thunk 家族。
+- batch 1304（0x778170 空桩 + 0x778180 双全局释放 [0xB73550]/[0xB7355C]）：
+  0x777EA0 同 [0xB735xx] 全局文件区（同区家族）。
+- 0x7CA405（wcslen——batch 097）：0x777EA0 长度计算共用。
