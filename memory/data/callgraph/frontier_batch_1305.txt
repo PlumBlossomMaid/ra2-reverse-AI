@@ -1,0 +1,183 @@
+frontier batch 1305 — 0x56F8B0 地形传播扩散器 / 0x572DA0 地形传播扩散器孪生 / 0x663030 生产建造创建器（2026-10-23）
+
+口径：承接 batch 1304 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+已修正为第 5 列真 unique_callers）。本批取 uc=2 三个未登记函数：
+0x56F8B0（964B）、0x572DA0（964B）、0x663030（688B）。取证手段：
+disasm.py 直反汇编全程读完（三函数共 819 行反汇编分页读完）+ TSV 查重
+（三候选全部未登记）+ 跨批次对比（0x56F8B0 ↔ 0x572DA0 逐字节孪生
+实锤）。
+
+================================================================================
+0x56F8B0 —— 地形传播扩散器（964B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 2 栈参（[esp+0x1C]=方向/坐标、[esp+0x20]）
+ret 8。
+机器码骨架（0x56F8B0-0x56FC73）：
+    sub esp, 8; push 全
+    mov edi, [esp+0x1C]              ; ★方向参
+    mov eax, edi; mov ebx, ecx
+    and eax, 7                       ; ★方向 & 7
+    lea edx, [esp+0x1C]; lea ecx, [eax*4+0x89F688]   ; ★八方向增量表
+    push ecx; mov ecx, [esp+0x1C]; push edx
+    call 0x42D510                    ; ★坐标计算（+方向偏移）
+    mov ecx, [eax]; mov [esp+0x1C], ecx; mov [esp+0xC], ecx
+    movsx eax, word [esp+0x1E]; movsx edx, cx
+    shl eax, 9; add eax, edx         ; ★一维索引 y<<9+x
+    js 0x56F908
+    cmp eax, 0x40000; jge 0x56F908   ; ★512² 边界
+    mov edx, [0x87F924]; mov eax, [edx+eax*4]
+    test eax, eax; je 0x56F908       ; cell 表取格
+    mov esi, eax; jmp 0x56F913
+    0x56F908: mov [0xABDC74], ecx; mov esi, 0xABDC50   ; ★哑元兜底
+    0x56F913:
+    test byte [esi+0x140], 0x80; je 0x56F96B   ; ★占用标志检查
+    mov al, [esi+0x11E]              ; ★类型字段
+    cmp al, 9; jb 0x56F96B
+    cmp al, 0xF; jbe 0x56F964
+    cmp al, 0x10; jne 0x56F96B
+    类型 0x10 分支:                  ; ★递归扩散
+    push edi; push 栈; mov ecx, ebx
+    call 0x56F8B0                    ; ★递归（本函数）
+    push 0; push 6; mov ecx, esi
+    call 0x47E470                    ; ★处理调用
+    lea ecx, [esi+0x24]; mov byte [esi+0x11E], 0
+    push ecx; mov ecx, 0x87F7E8      ; ★MapClass::Instance
+    mov dword [esi+0x44], 0xFFFFFFFF
+    call 0x6551C0                    ; ★挂载/同步
+    jmp 0x56F96B
+    0x56F964: mov byte [esi+0x11E], 0x11
+    0x56F96B:
+    mov eax, [esi+0x38]; mov edx, [0xABAD1C]     ; ★地面类型比较
+    mov ecx, [0xABC1D0]; sub eax, edx; inc eax
+    cmp eax, ecx; je 0x56FC5B
+    cmp eax, [0xAA1540]; je 0x56FC5B
+    mov ecx, [0xAA1028]; cmp eax, ecx; je 0x56FC3B
+    lea ebp, [ecx+2]; cmp eax, ebp; je 0x56FC3B
+    add ecx, 3; cmp eax, ecx; jne 0x56FC6B
+    特殊类型分支:                     ; ★邻格扩散链
+    ...多次坐标计算 + 0x47DD70 邻格检查（四个方向格）
+    ...[0xAA1028]+[0xABAD1C]+3 组合 → 0x56EB80 递归扩散
+    ...0x56E990 收尾
+    0x56FC3B: ...0x56EB80（+2 分支）
+    0x56FC5B: push 0; lea ecx, [esp+0x10]; push 1; push ecx
+    mov ecx, ebx; call 0x56E990      ; ★收尾处理
+    ret 8
+
+语义：**地形传播扩散器**——方向参（&7 八方向）经 0x89F688 增量表 +
+0x42D510 坐标计算取目标格（0x87F924 cell 表 + 哑元 0xABDC50 兜底）；
++0x140 占用标志与 +0x11E 类型（9/0xF/0x10）分支：0x10 → 递归本函数 +
+0x47E470 处理 + 清类型 + 0x6551C0 挂载；随后 +0x38 地面类型与
+[0xABAD1C]/[0xAA1540]/[0xAA1028] 全局族比较，特殊类型走邻格扩散链
+（0x47DD70 检查 + 0x56EB80 递归），常规收尾 0x56E990。★地形/地面
+传播惯用法（RMG 阶段 9 造山/阶段 5 Rebuild 同族——batch 396 地形
+传播同构形态）。2 unique caller（8 callsite）。
+
+★怪癖：①★方向 & 7 + 0x89F688 增量表（八方向寻址）；②★y<<9+x 一维
+索引 + 0x40000=512² 边界（越界哑元）；③★+0x140 bit0x80 占用 + +0x11E
+类型三档分支（9/0xF/0x10）；④★类型 0x10 递归扩散（本函数递归 +
+0x47E470 处理 + 0x6551C0 挂载 + 清 +0x44=-1）；⑤★+0x38 地面类型全局
+族比较（[0xABAD1C]+[0xAA1028]+[0xAA1540] 多档判定）+ 0x56EB80 邻格
+递归扩散。
+
+⚠️ partial：宿主类（0x56F8Bx 区——0x56xxxx 地形/寻路段）、方向参
+精确语义、+0x11E 类型枚举（0x10=扩散型推断）、0x47E470/0x47DD70/
+0x56EB80/0x56E990 身份、[0xABAD1C]/[0xAA1540]/[0xAA1028] 地面类型族
+全局、2 unique caller 身份。
+
+================================================================================
+0x572DA0 —— 地形传播扩散器孪生（964B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 2 栈参（[esp+0x1C]=方向/坐标、[esp+0x20]）
+ret 8。
+机器码：与 0x56F8B0 逐字节同构（0x572DA0-0x573163，约 963B），★仅两处
+差异：
+    ① 全局 [0xABAD1C] → [0xAA0E28]（地面类型族基准全局不同）
+    ② 处理调用 0x47E470 → 0x47E040（孪生处理函数）
+其余全部一致（方向&7 + 0x89F688 + 0x42D510 + 0x87F924 + 哑元 +
++0x140/+0x11E 分支 + 递归 + +0x38 全局比较 + 0x47DD70 邻格链 +
+0x56EB80/0x56E990 收尾）。
+
+语义：**地形传播扩散器（batch 同批 0x56F8B0 逐字节孪生）**——同一
+模板第二实例（仅地面类型族基准与处理函数不同——对应不同地形族/
+扩散规则）。2 unique caller（8 callsite）。
+
+★怪癖：①★逐字节孪生（0x56F8B0 ↔ 0x572DA0——两副本仅 2 处字节
+差异，template 双实例化实锤）；②★地面类型基准不同（[0xABAD1C] vs
+[0xAA0E28]——两地形族分支）；③★处理函数孪生（0x47E470 vs 0x47E040）。
+
+⚠️ partial：两地形族精确语义（[0xABAD1C] vs [0xAA0E28] 对应族）、
+宿主类（0x572Dxx 区）、0x47E040 身份、2 unique caller 身份。
+
+================================================================================
+0x663030 —— 生产建造创建器（688B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（[esp+0x6C]）ret 空。
+机器码骨架（0x663030-0x632DF）：
+    push ebp; mov ebp, esp; and esp, 0xFFFFFFF8; sub esp, 0x54
+    push 全; mov esi, ecx
+    mov ecx, 0x887888; mov eax, [esi+0xC]
+    push eax; call 0x4135D0          ; ★构造/初始化
+    mov edx, [esi+0xC]; mov eax, [0x8871E0]
+    mov ecx, [edx+0x6C4]; mov edi, [eax+0x4E0]
+    cmp ecx, edi; jne 0x663089       ; ★类型 1 分支（0x4E0）
+    lea ecx, [eax+0x4B0]; mov [esp+0x14], ecx
+    mov cl, [esi+0x51]; test cl, cl
+    je 0x663081
+    mov eax, [eax+0xFB8]; mov [esp+0x10], eax
+    jmp 0x6630DD
+    0x663081: mov ecx, [eax+0xFB0]; jmp 0x6630D9
+    0x663089:
+    cmp ecx, [eax+0x548]; jne 0x6630B6   ; ★类型 2 分支（0x548）
+    lea ecx, [eax+0x518]; ...
+    0x6630B6:                            ; ★默认类型分支（0x4E4）
+    lea ecx, [eax+0x4E4]; ...
+    0x6630DD:
+    坐标换算链:                          ; ★浮点坐标 → int
+    fild/0x4CAD00 浮点变换 + 0x7C5F00 _ftol + >>8 量化
+    ...0x4C93D0 取坐标 → -0x3FFF 校正 → ×[0x7E2810]
+    ...0x4CACB0/0x4CAD00 浮点运算 → 坐标修正
+    0x663218:
+    push 0x1C8; call 0x7C8E17        ; ★new 0x1C8（对象分配）
+    mov [esp+0x20], eax; test eax, eax; je 0x66328C
+    lea eax, [esp+0x28]; mov ecx, 0x87F7E8
+    push eax; call 0x5657A0          ; ★取格
+    mov ebx, [eax+0xEC]              ; ★格对象
+    建造链:
+    ...0x48ACE0/0x48A4F0（push 0x2600）/0x421EA0
+    ...0x48A620/0x489280（多参建造）
+    mov ecx, [esi+0xC]; call dword ptr [eax+0xF8]   ; ★虚表槽 0xF8 收尾
+    mov esp, ebp; pop ebp; ret
+
+语义：**生产建造创建器**——[0x8871E0] 全局配置对象按 +0x6C4 与
+0x4E0/0x548/0x4E4 三档类型分支选择基地地址（+0x4B0/+0x518/+0x4E4）
+与标志（0xFB8/0xFC4/0xFBC 等），[esi+0x51] 再分路径；浮点坐标换算
+（fild/0x4CAD00/_ftol/>>8）→ new 0x1C8 对象 → 0x5657A0 取格 →
++0xEC 格对象 → 0x48xxxx 建造成员链（0x48ACE0/0x48A4F0/0x421EA0/
+0x48A620/0x489280）→ 虚表槽 0xF8 收尾。★生产/建造设施创建
+（0x48xxxx 区——batch 记忆生产系统 FactoryClass 同族）。2 unique
+caller（8 callsite）。
+
+★怪癖：①★三档类型分支（+0x6C4 vs 0x4E0/0x548/0x4E4——基地类型
+选择）；②★[esi+0x51] 标志再分路径（0xFB8/0xFC4/0xFBC 族）；
+③★浮点坐标换算链（fild/0x4CAD00/0x4CACB0/0x4C93D0 + _ftol + >>8
+量化）；④★new 0x1C8 固定大小对象 + 0x5657A0 取格 + +0xEC 格对象；
+⑤★0x48xxxx 建造链 + 虚表槽 0xF8 收尾。
+
+⚠️ partial：宿主类（0x66303x 区——0x66xxxx 域）、[0x8871E0] 配置
+对象语义、+0x6C4/0x4E0/0x548/0x4E4 类型枚举、0x48xxxx 链成员身份、
+虚表槽 0xF8 宿主、2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 396（地形传播 0x57BAA0/0x57CCF0 孪生 + 0x87F924 + 哑元
+  0xABDC50）：0x56F8B0/0x572DA0 同款取格链 + 哑元兜底 + 孪生模板
+  ——地形传播家族再添双实例。
+- 0x5657A0（GetCell）+ 0x87F7E8（MapClass::Instance）：三函数共用
+  取格链（RMG 与生产系统共享）。
+- batch 记忆（生产系统 FactoryClass + TimeToBuild 45 测试）：0x663030
+  同 0x48xxxx 生产域——建造创建链家族候选。
+- 0x7C8E17/0x7C8B3D（new/delete 包装对）：0x663030 new 0x1C8 分配
+  共用。
+- 0x89F688 八方向增量表：0x56F8B0/0x572DA0 核心寻址（RMG 全阶段
+  共用——batch 1288 SetupLAT 同源实锤）。
