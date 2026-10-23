@@ -1,0 +1,157 @@
+frontier batch 1488 — 0x628110 散列桶宽字符串查找器 / 0x627590 调色板装载+配色方案表构建器 / 0x626FF0 全局单例释放器（2026-10-24）
+
+口径：承接 batch 1487 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x628110（96B，callees=1 deps=139——
+**散列桶宽字符串查找器**，推断名）、0x627590（815B，callees=6 deps=72——
+**调色板装载+配色方案表构建器**，推断名）、0x626FF0（39B，callees=2
+deps=4449——**全局单例释放器**，推断名）。
+取证手段：disasm.py 双参直反汇编三路全程读完（0x628110 0x60 尾 0x62816D
+ret 4 / 0x627590 0x330=816B 全量 0x627590-0x628BC 读完——85 行 / 0x626FF0
+0x27 尾 0x627016 ret——三文件 31/85/9 行全读）+ TSV 查重（三候选全部未登
+记）+ callee 登记核验（grep TSV：0x4F4CE0 已登记 batch 343 宽字符相等比
+较、0x7DCFC4 已登记 batch 057 _strupr 原地转大写、0x5B40B0 已登记 batch
+091 FileSystem::LoadFile、0x4B9BD0 已登记 batch 1290 三字节清零器、
+0x68C710 已登记 batch 1346 ColorScheme::ColorScheme、0x7C8B3D/0x7C8E17
+已登记 batch 001——6 项已登记；0x6272A0 未登记→新候选）。
+
+================================================================================
+0x628110 —— 散列桶宽字符串查找器（96B 全程读完）
+================================================================================
+签名：thiscall + 1 栈参 ret 4（ecx=this、栈参 1=[esp+0x10]=查找值、
+栈参 2=[esp+0x14]=目标串；0x628110-0x62816D）。
+机器码结构（0x628110-0x62816D，全程读完，关键锚点）：
+    push 族 → mov esi,ecx（★this）→ mov ecx,[esp+0x10]（★查找值）→
+    push edi → call [esi+4]（★★this+4 函数指针——取哈希/值）→ cdq
+    → idiv dword[esi+8]（★★除以 this+8——取余数 edx=哈希取模）→
+    mov ecx,[esi]（★表基址）→ lea eax,[edx+edx*2]（★余数×3）→ mov
+    edi,[ecx+eax*8+0x10]（★★[表 + 余数×24 + 0x10]——桶计数）→ lea
+    ebp,[ecx+eax*8]（★桶基址）→ dec edi → js 0x62815A（★空桶 → 返 0）
+    循环 0x62813A：mov ebx,edi → shl ebx,6 → add ebx,edi → shl ebx,2
+    （★★edi×260——shl6+add+shl2 手写乘法 = ×65×4）→ mov esi,[ebp+4]
+    （★桶内数组基址）→ mov edx,[esp+0x14] → add esi,ebx（★目标=数组
+    + 索引×260）→ push edx → mov ecx,esi → call 0x4F4CE0（★★已登记
+    batch 343 宽字符相等比较——this=桶项、栈参=目标串）→ test al →
+    jne 0x628163（★命中 → 返目标+0x100）→ dec edi → sub ebx,0x104
+    （★★ebx-0x104=260——回退一轮）→ test edi → jge 0x62813A（★循环）
+    → 0x62815A: xor eax → ret 4（★未命中 → 返 0）→ 0x628163: lea
+    eax,[esi+0x100] → ret 4（★★命中 → 返 [目标+0x100]）
+语义：**散列桶宽字符串查找器（推断名——96B「哈希取模 + 260B/项桶内
+扫描 + 宽字符比较」）**——① 调 [this+4] 函数取哈希 → idiv [this+8]
+取余（桶索引）；② 桶 [表+余数×24]（+0x10 计数、+4 数组）；③ 从计数
+-1 递减扫 260B/项（68 宽字符串推断）；④ 0x4F4CE0 宽字符相等比较
+（batch 343）；⑤ 命中返 目标+0x100（跳过项前 0x100 字节字段）。
+★怪癖：①★★260B/项步进（shl 6 + add edi + shl 2 手写乘法）；②★
+[表+余数×24] 三级间接（表→桶→数组→项）；③★[this+4] 函数指针 +
+idiv [this+8]（哈希取模）；④★★命中返目标+0x100（跳过前 0x100 字节
+——宽字符串在项内偏移 0x100 推断）；⑤★计数-1 递减（从尾向前扫——
+MSVC 循环形态）；⑥★find 失败返 0（无哨兵区分）。
+⚠️ partial：宿主类（[this+4] 哈希函数、表/桶布局推断）、项内 +0x100
+偏移语义（宽字符串字段推断）、桶大小 0x24/项 260B 业务、查找值语义、
+2 unique caller。
+
+================================================================================
+0x627590 —— 调色板装载+配色方案表构建器（815B 全程读完）
+================================================================================
+签名：thiscall + 1 栈参 ret 4（ecx=this、栈参 1=[esp+0x428]=源串；
+0x627590-0x628BC）。
+机器码结构（0x627590-0x628BC 全量 0x330 读完，关键锚点）：
+    段1 哨兵检查：sub esp,0x414（★大栈帧）→ push 族 → mov ebp,ecx →
+    mov edx,[ebp]（★this+0）→ cmp -1 → jne 0x6275B7 → 返 0（★★-1
+    哨兵）
+    段2 四段字符串拼装：mov edi,[esp+0x428]（★源串）→ repne scasb
+    （★strlen 段1）→ not ecx → sub edi,ecx → 拷贝到 [esp+0x24] 局部
+    → lea edi,[edx*8] → sub edi,edx → shl edi,4 → add edi,0x7E1BC6
+    （★★[edx×112 + 0x7E1BC6]——this+0 索引常量串表）→ strlen →
+    strcat 追加（scasb 找尾 + movsd/movsb 拷入）→ 0x826598 常量串 →
+    strcat 追加 → [0x836464] 全局串 → strcat 追加 → lea eax,[esp+0x24]
+    → push eax → call 0x7DCFC4（★★已登记 batch 057 _strupr 原地转大
+    写——拼好的路径/文件名串转大写）
+    段3 三字节清零：lea esi,[esp+0x124] → mov edi,0x100 → mov ecx,esi
+    → call 0x4B9BD0（★★已登记 batch 1290 三字节清零器——3B 头部清
+    零）→ add esi,3 → dec edi → jne（★★0x100 次 × 3B——[esp+0x124]
+    起 0x300 字节区）
+    段4 文件装载：xor dl → lea ecx,[esp+0x24] → call 0x5B40B0（★★已
+    登记 batch 091 FileSystem::LoadFile——dl=0 非 SHP）→ cmp eax,ebx
+    → je 返 0（★失败）→ mov ecx,0xC0 → mov esi,eax → lea edi,
+    [esp+0x124] → rep movsd（★拷 0xC0 dword=0x300 字节）
+    段5 位扩展循环：xor esi → 0x6276CB: mov eax,esi → and eax,
+    0x800000FF → jns 0x6276DB（★★带符号模 8 惯用——and 0x800000FF +
+    jns/dec/or -8/inc，batch 1466/1467 同款）→ dec/or/inc → lea ecx,
+    [esp+eax+0x124] → lea eax,[ecx+eax*2]（★目标=[esp+0x124 + idx×3]）
+    → mov cx,[edx] → mov cl,[edx+2] → shl dl,2（★★每字节 shl 2——低
+    4 位抬高推断）→ 写 [eax]/[eax+1]/[eax+2] → inc esi → cmp esi,0x100
+    → jl（★0x100 个三字节处理）
+    段6 持有容器构造：mov eax,[ebp+8] → push 0x18 → mov edi,[eax+0x10]
+    （★★计数）→ mov [esp+0x24],edi → call 0x7C8E17（★new 0x18）→
+    mov esi,eax → je 0x627769（★失败）→ mov [esi+4],0 → mov [esi+8],
+    0x14 → mov byte[esi+0xC],1 → mov byte[esi+0xD],0 → mov [esi],
+    0x7EF7B0（★虚表 0x7EF7B0）→ call 0x7C8E17（★new 再次）→ mov
+    [esi+4],eax → mov byte[esi+0xD],1 → mov [esi],0x7EF790（★★虚表
+    切换 0x7EF790——batch 1487 0x628240 字节数组构造器完全同族）→
+    mov [esi+0x14],0xA → mov [esi+0x10],0（★VectorClass 形态）
+    段7 配色方案循环装载：mov ecx,[ebp+4]（★源表）→ mov edx,[ecx+4]
+    → mov ecx,[eax+8] → mov ebp,[edx+ebx*4]（★源项）→ push 0x33C
+    （★★new 0x33C=828）→ 取 [esp+0x18] word+byte → call 0x7C8E17 →
+    call 0x68C710（★★已登记 batch 1346 ColorScheme::ColorScheme——
+    6 栈参构造）→ mov edi,eax → mov [edi],ebx（★+0=序号——add ebx,ebx
+    在 0x6277E2）→ 入队 VectorClass（esi——虚表槽 8 扩容 batch 1479
+    同款）→ 第二配色方案（0x35 push）同构 → +3 步进 → 循环 → 返 esi
+语义：**调色板装载+配色方案表构建器（推断名——815B「路径拼装 + 调色
+板坐标装载 + 配色方案表构建」）**——① this+0 哨兵检查；② 四段字符串
+拼装（源串 + [this+0×112+0x7E1BC6] 索引串 + 0x826598 常量串 +
+[0x836464] 全局串）→ _strupr 转大写（batch 057）；③ 0x100×3 字节区
+三字节清零（0x4B9BD0 batch 1290）；④ FileSystem::LoadFile（0x5B40B0
+batch 091，dl=0 非 SHP）装载 → 拷 0x300 字节；⑤ 每 3 字节 shl 2 位扩
+展（低 4 位抬高推断）；⑥ 持有容器构造（虚表 0x7EF7B0→0x7EF790——
+batch 1487 同族）；⑦ 循环逐配色方案 ColorScheme::ColorScheme 构造
+（0x68C710 batch 1346——0x33C=828B + 6 栈参）入队。
+★怪癖：①★★四段字符串 strcat 拼装 + _strupr 转大写（文件路径推断）
+；②★★0x100×3 字节逐 3B 清零（0x4B9BD0 循环调用——batch 1290 应用
+点）；③★★3 字节 shl 2 位扩展循环（带符号模 8 惯用——and 0x800000FF
++ jns/dec/or/inc，batch 1466/1467 同款）；④★虚表双切换（0x7EF7B0 初
+装 → 0x7EF790 收尾——batch 1487 完全同族）；⑤★★0x68C710
+ColorScheme::ColorScheme 逐项构造（batch 1346）；⑥★0xC0 dword=0x300
+字节 rep movsd 拷入；⑦★[this+0]×112 索引常量串表（lea edx*8 - edx
+再 shl 4 = ×112）；⑧★new 0x33C=828B 配色方案实体。
+⚠️ partial：this+0 哨兵索引语义、四常量串（0x7E1BC6 表/0x826598/
+[0x836464]）内容、位扩展目的（分辨率/色深转换推断）、0x33C 大小、调
+色板坐标来源、2 unique caller。
+
+================================================================================
+0x626FF0 —— 全局单例释放器（39B 全程读完）
+================================================================================
+签名：无参 ret（0x626FF0-0x627016）。
+机器码结构（0x626FF0-0x627016，全程读完，关键锚点）：
+    push esi → mov esi,[0xAC48F0]（★★全局单例 [0xAC48F0]）→ test →
+    je 0x627015（★空跳过）→ mov ecx,esi → call 0x6272A0（★未登记——
+    嵌套清理器，新候选）→ push esi → call 0x7C8B3D（★★已登记 batch
+    001 delete）→ add esp,4 → mov [0xAC48F0],0（★清全局指针）→
+    0x627015: pop esi → ret
+语义：**全局单例释放器（推断名——39B「[0xAC48F0] 非空 → 嵌套清理 →
+delete → 清指针」）**——[0xAC48F0] 持有一个全局对象；非空时先调
+0x6272A0（未登记——对象内部清理推断）再 delete 本体，最后清全局指针。
+★怪癖：①★四步释放链（嵌套清理 + delete + 清指针 + 空跳过）；②★
+[0xAC48F0] 单例持有（无引用计数——直接 delete 推断）；③ret 无栈参。
+⚠️ partial：宿主类型、0x6272A0（新候选——嵌套清理器）、[0xAC48F0]
+全局身份、2 unique caller。
+
+================================================================================
+跨批次连接（6 个已登记 callee + 1 新候选——调色板域大汇聚）
+================================================================================
+- **batch 343（0x4F4CE0 宽字符相等比较）**：0x628110 的桶内项匹配调用
+  （260B/项内 0x100 偏移宽字符串）。
+- **batch 057（0x7DCFC4 _strupr）**：0x627590 四段拼装串的转大写调用
+  ——batch 091 LoadFile 的文件名正规化同款路径。
+- **batch 091（0x5B40B0 FileSystem::LoadFile）**：0x627590 的调色板坐标
+  装载调用（dl=0 非 SHP）——文件名→大写→CRC→缓存的 LoadFile 语义与
+  本函数拼装串衔接。
+- **batch 1290（0x4B9BD0 三字节清零器）**：0x627590 的 0x100×3 字节区
+  清零循环调用（batch 1290 应用点）。
+- **batch 1346（0x68C710 ColorScheme::ColorScheme）**：0x627590 的逐配
+  色方案构造调用（0x33C=828B + 6 栈参）——调色板域核心消费点。
+- **batch 1487（0x628240 字节数组构造器）**：0x627590 段6 持有容器构造
+  （虚表 0x7EF7B0→0x7EF790 + +0xD=1 自分配）与 0x628240 完全同族——
+  0x7EFxxx 虚表族另行对齐。
+- **batch 001（0x7C8B3D/0x7C8E17）**：0x627590/0x626FF0 的 new/delete。
+- 新候选：0x6272A0（未登记——0x626FF0 的嵌套清理器）、[0xAC48F0] 全
+  局单例身份、0x7EF790/0x7EF7B0 虚表。
