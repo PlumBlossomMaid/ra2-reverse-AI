@@ -1,0 +1,202 @@
+frontier batch 1449 — 0x6B5F80 区域可用性检查器 / 0x6B59A0 污渍创建器 / 0x6B3A80 递归蔓延填充器（2026-10-23）
+
+口径：承接 batch 1448 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x6B5F80（248B，callees=3 deps=118——
+**区域可用性检查器**，推断名）、0x6B59A0（740B，callees=7 deps=1907——
+**污渍创建器**，推断名，SmudgeClass 家族）、0x6B3A80（587B，callees=1
+deps=44——**递归蔓延填充器**，推断名）。
+取证手段：disasm.py 双参直反汇编全程读完（0x6B5F80 0xF8 尾 0x6B6075 /
+0x6B59A0 0x2E4 尾 0x6B5C82 / 0x6B3A80 0x24B 尾 0x6B3CC8，全程读完）+
+TSV 查重（三候选全部未登记）+ callee 登记核验（grep TSV：batch 086
+0x568300 CoordinatesLegal、batch 066 0x47C520 GetBuilding、batch 514
+0x6B4A50 SmudgeClass::SmudgeClass（原文档点名 FUN_006b59a0 为 caller——本批兑现）、batch 824 0x67C3A0 VectorClass 构造器孪生·四（原文档点名 FUN_006B59A0 ×2 现场——本批兑现）、batch 001 0x7C8E17/0x7C8B3D、0x5657A0 GetCellAt、0x65C7E0 RandomRanged——已登记；无未登记 callee，★★批内互连：0x6B59A0 调用本批候选一 0x6B5F80）。
+
+================================================================================
+0x6B5F80 —— 区域可用性检查器（248B 全程读完）
+================================================================================
+签名：thiscall + 2 栈参 ret 8（ecx=this 存 [esp+0x10]、栈参 1=[esp+0x1C]
+坐标结构指针、栈参 2=[esp+0x20] 字节标志；0x6B5F80-0x6B6075）。
+机器码结构（0x6B5F80-0x6B6075，全程读完，关键锚点）：
+    双环门控 0x6B5F83：mov eax,[ecx+0x29C]（★外环计数）→ test →
+    jle 0x6B6060（★空返 1）→ mov edi,[esp+0x1C]（★坐标结构）→
+    mov eax,[ecx+0x298]（★内环计数）→ test → jle 0x6B6051
+    双环遍历 0x6B5FAF（ebp=内环偏移、ebx=外环偏移）：mov ax,
+    word[edi]（★X）→ mov cx,word[edi+2]（★Y）→ add ax,bp →
+    add cx,bx（★★偏移累加）→ 写回 [esp+0x1C] → GetCellAt:
+    lea eax,[esp+0x14] → push eax → mov ecx,0x87F7E8 → call
+    0x5657A0（★取得邻格）→ mov esi,eax
+    格合法性 0x6B5FDD：push edi → mov ecx,0x87F7E8 → call 0x568300
+    （★batch 086 CoordinatesLegal——菱形边界判定）→ test → je
+    0x6B606C（★非法返 0）→ mov al,[esi+0x11C]（★格 +0x11C 字节）
+    → test → jne 0x6B606C → cmp [esi+0x48],-1 → jne 0x6B606C →
+    cmp [esi+0x44],-1 → jne 0x6B606C（★★+0x48/+0x44 == -1 才可用
+    ——格未占用/未指派推断）
+    建筑排除 0x6B6007：mov al,[esp+0x20]（★栈参 2 字节）→ test →
+    jne 0x6B601A（★置位跳过建筑检查）→ mov ecx,esi → call 0x47C520
+    （★batch 066 GetBuilding——查格上建筑）→ test → jne 0x6B606C
+    （★有建筑返 0）
+    地形门控 0x6B601A：mov esi,[esi+0x38]（★格 +0x38 地形索引）→
+    cmp <0 → xor → cmp <[0xA8ED38]（★钳制）→ mov ecx,[0xA8ED2C]
+    → mov edx,[ecx+esi*4]（★地形表项）→ mov al,[edx+0x2E0]（★
+    地形 +0x2E0 字节）→ test → je 0x6B606C（★地形禁用返 0）
+    环递增 0x6B603E：inc ebp → cmp [eax+0x298] → jl 内环 → 0x6B6051:
+    inc ebx → cmp [ecx+0x29C] → jl 外环 → 0x6B6060: mov al,1 →
+    ret 8（★全格合法返 1）→ 0x6B606C: xor al → ret 8（★任一失败
+    返 0）
+语义：**区域可用性检查器（推断名——248B「双环偏移遍历 + 格多重门控」）**
+——① 内外双环（[ecx+0x298]/[ecx+0x29C] 计数）绕坐标结构做 ±偏移
+遍历，每格 GetCellAt 取格；② 格三层门控：CoordinatesLegal（0x568300
+菱形边界）+ 格 +0x11C 字节 + +0x48/+0x44 均 == -1（未占用/未指派）；
+③ 栈参 2 字节未置位时查建筑排除（0x47C520 GetBuilding）；④ 地形
++0x2E0 字节门控（[0xA8ED2C] 地表 [格+0x38] 钳制索引）；⑤ 全格合法
+返 1、任一失败返 0。
+★怪癖：①★★双环偏移遍历（内外环计数 + 坐标 ±偏移累加——矩形区
+域全查）；②格四重门控链（边界/占用 ×2/建筑/地形——放置可用性多
+准则）；③栈参 2 字节跳过建筑检查（可选门控——置位放行有建筑格）；
+④+0x48/+0x44 == -1 双字段（格未占用/未指派推断）；⑤地形 +0x2E0
+表格禁用（[0xA8ED2C] 挂地形表）。
+⚠️ partial：宿主类（0x6B5xxx Smudge 域推断——0x6B59A0 内被调）、
++0x11C/+0x48/+0x44 格字段语义、[0xA8ED2C]/[0xA8ED38] 地表表身份、
+栈参 1 坐标结构语义、2 unique caller 身份。
+
+================================================================================
+0x6B59A0 —— 污渍创建器（740B 全程读完）
+================================================================================
+签名：thiscall + edx 寄存器参 + 3 栈参 ret 8（ecx=this 坐标结构存 ebp、
+edx 存 [esp+0xC]、栈参 1=[esp+0x38]/栈参 2/栈参 3 区域参数；0x6B59A0-
+0x6B5C82）。
+机器码结构（0x6B59A0-0x6B5C82，全程读完，关键锚点）：
+    单例坐标短路 0x6B59AE：mov eax,[ebp]（★坐标 X）→ cdq/and 0xFF/
+    add/sar 8（★带符号 >>8 量化）→ 同 [ebp+4] Y → cmp [0xB0B788]/
+    [0xB0B78A] → 相等返 0（★★与全局坐标相同 → 不创建——哨兵坐标）
+    容器构造 0x6B59F4：lea ecx,[esp+0x40] → call 0x67C3A0（★batch
+    824 VectorClass 孪生·四——栈上容器，虚表 0x7F0DEC 容量 0xA）
+    全表扫描 0x6B59F9：[0xA8EC28]（★全局计数）→ 循环：mov esi,
+    [0xA8EC1C]（★全局对象表）→ mov esi,[eax+edi*4]（★表项）→ cmp
+    byte[esi+0x2A1],bl → je 跳过（★+0x2A1 字节门控）→ 坐标量化
+    → lea eax,[esp+0x14] → push [esp+0x58]（★栈参 3）→ push eax →
+    mov ecx,esi → call 0x6B5F80（★★本批候选一——区域可用性检查！
+    批内互连）→ test → je 跳过 → 扩容槽 8 → 容器 Add（[esp+0x40]
+    追加表项——一级候选）
+    二级筛选 0x6B5AF4（[esp+0x28] 容器）：遍历一级候选：mov esi,
+    [candidates+edi*4] → mov dl,[esp+0x58]（★栈参 3 字节）→ cmp
+    bl → jne 0x6B5B55 → cmp [esi+0x298],1 → jne 0x6B5B1E → cmp
+    [esi+0x29C],1 → je 0x6B5B2C（★+0x298==1 且 +0x29C==1 放行）
+    → 0x6B5B1E: cmp [esp+0x18],0x3C → jle 跳过 → cmp [esp+0x54],
+    0x32 → jle 跳过（★区域尺寸双门控）→ 0x6B5B55: cmp [esi+0x298],
+    1 → jle 跳过 → cmp [esi+0x29C],1 → jle 跳过（★另一分支双计数
+    门控）→ 容器 Add（二级候选）
+    随机选择一 0x6B5BB3（二级候选非空）：push 0xB0 → call 0x7C8E17
+    （★new 0xB0=176B）→ mov eax,[0xA8B230] → lea ecx,[eax+0x218]
+    → mov edx,[esp+0x30] 计数 → dec → push edx → push 0 → call
+    0x65C7E0（★★RandomRanged(0,n-1)——随机选二级候选）→ mov edx,
+    [容器] → mov edx,[edx+eax*4]（★选中候选）→ push -1 → 装配 →
+    mov ecx,esi（新对象）→ call 0x6B4A50（★★batch 514 SmudgeClass
+    ctor——Smudge 创建！）
+    随机选择二 0x6B5BF0（一级候选非空，同构）：push 0xB0 → new →
+    RandomRanged(0,一级计数-1) → 选中候选 → push -1 → call
+    0x6B4A50
+    容器清理 0x6B5C31：es[M] 两容器虚表 0x7F0D7C 换 0x7F0D7C...：
+    cmp [esp+0x24],ebx → je → cmp byte[esp+0x2D] → je → push →
+    call 0x7C8B3D（★delete 一级容器）→ xor al → ret 0
+语义：**污渍创建器（推断名——740B「全表扫描 + 双级筛选 + 随机创建
+Smudge」）**——① 坐标与 [0xB0B788]/[0xB0B78A] 全局相同 → 短路返 0
+（哨兵坐标——创建点已占推断）；② 栈上容器构造（0x67C3A0）；③ 全
+表扫描 [0xA8EC1C]/[0xA8EC28] 全局对象表（+0x2A1 字节门控）→ 逐项
+0x6B5F80 区域检查 → 命中入一级候选容器；④ 二级筛选（+0x298/+0x29C
+计数门控 + 区域尺寸 0x3C/0x32 双门控——分两分支）；⑤ new 0xB0 +
+Randomizer::RandomRanged(0,计数-1) 随机选定（RNG 消耗点！）→
+0x6B4A50 SmudgeClass 构造（push -1 哨兵）→ 创建污渍；⑥ 容器清理。
+★怪癖：①★★双级候选筛选（一级区域可用 + 二级计数/尺寸门控——
+两级漏斗随机选点）；②RandomRanged 随机选格（RNG 消耗点——QWEN.md
+RNG 里程碑延续，Smudge 放置概率）；③全表扫描 [0xA8EC1C]（全局对象
+表推断）+ 0x6B5F80 批内互连（本批候选一作区域检查器）；④new 0xB0
+=176B 对象（Smudge 包装推断）+ 0x6B4A50 构造（batch 514 点名 caller
+兑现）；⑤哨兵坐标短路（[0xB0B788..8A] 全局比较——创建点已占）；
+⑥+0x298/+0x29C 双计数门控（尺寸筛选推断）。
+⚠️ partial：宿主类/函数名（Smudge 创建器推断——0x6B5xxx 家族）、
+[0xA8EC1C]/[0xA8EC28] 对象表身份、二级门控 [esp+0x18]/[esp+0x54]
+区域尺寸语义、栈参 3 字节含义（0x6B5F80 建筑排除传递）、0xB0 对象
+布局（Smudge 包装推断）、2 unique caller 身份。
+
+================================================================================
+0x6B3A80 —— 递归蔓延填充器（587B 全程读完）
+================================================================================
+签名：thiscall + edx 寄存器参 + 2 栈参 ret 8（ecx=this 存 [esp+0xC]、
+edx=字节标志存 [esp+0x13]、栈参 1=[esp+0x28] X、栈参 2=[esp+0x2C] Y
+起点 + 增量 [esp+0x30]/[esp+0x34]；0x6B3A80-0x6B3CC8）。
+机器码结构（0x6B3A80-0x6B3CC8，全程读完，关键锚点）：
+    起点取格 0x6B3A83：mov eax,[0x8759A4]（★地图宽）→ imul
+    [esp+0x28]（★X）→ add [esp+0x2C]（★Y）→ esi=[0xB0B6EC]（★
+    格数组）→ mov ecx,[esi+ecx*8]（★起点格高度 [格+0]）→ 存
+    [esp+0x14] → ebp=-1/edi=-1（★双偏移初值 -1）
+    偏移遍历 0x6B3AE5（edi=偏移、外层循环）：test edi → jne →
+    test ebp → je 0x6B3C8F（★双偏移 0 跳过）→ 0x6B3AF1: add
+    edi,[esp+0x30]（★X 增量）→ add ebp,[esp+0x34]（★Y 增量）→
+    存 [esp+0x24]/[esp+0x28] → 边界四查（<0/>=[0x8759A4]/[0x8759A0]
+    非法跳出）→ imul eax,ebp → add edi → lea esi,[esi+eax*8]（★
+    目标格）→ mov al,[esi+4]（★格 +4 重算标志）→ test → je 0x6B3B60
+    → test dl（★edx 标志）→ je → mov al,[esi+6] → test → jne
+    0x6B3B60 → 0x6B3B49: mov eax,[esi]（★格高度）→ sub ecx
+    （★-起点高）→ cdq/xor/sub（★abs 差值）→ cmp 0xF → jg
+    0x6B3CBF（★差值 >15 返 0——蔓延长度上限）
+    蔓延登记 0x6B3B60（无重算标记分支）：mov ebx,[esi] → abs(起点
+    高差) → cmp 0xF → jle 0x6B3C8F（★差值 <=15 跳过——同高度不
+    蔓延）→ cmp [esp+0x1C],1（★高度方向标志）→ jne 0x6B3BEE → cmp
+    ebx,ecx → jge 0x6B3C61（★方向一：目标 > 起点高才蔓延）→
+    0x6B3B83: 容器登记 [0xB0B658]/[0xB0B660]（★满→槽 8 扩容）→
+    写 [0xB0B654] 表（三 dword：X/Y/高度——lea eax,[eax+eax*2]×4B
+    索引）→ 0x6B3BE5: mov eax,[esp+0x14] → add -0xF → mov [esi],
+    eax（★目标格高度改 = 起点-15）→ byte[esi+5]=1（★重算标记）
+    → 0x6B3BEE: cmp ebx,ecx → jle 0x6B3C61（★方向二：目标 < 起点
+    高）→ 0x6B3BF2: 容器登记（同构）→ mov eax,[esp+0x14] → add
+    +0xF → mov [esi],eax（★目标格高度改 = 起点+15）→ byte[esi+5]
+    =1
+    递归蔓延 0x6B3C61：mov al,[esi+4]（★重算标记）→ test → jne
+    0x6B3C8F（★已重算跳过）→ push [esp+0x28] → push [esp+0x28]
+    → mov dl,bl → mov ecx,[esp+0x1C] → call 0x6B3A80（★★递归调用
+    自身！）→ test al → jne 0x6B3C8F → test bl → je 0x6B3CBF
+    （★递归失败返 0）
+    偏移推进 0x6B3C8F：inc edi → cmp 2 → jl 0x6B3AD4（★edi -1→1
+    遍历）→ 0x6B3CA1: inc ebp → cmp 2 → jl 0x6B3ABE（★ebp -1→1
+    遍历）→ 0x6B3CB3: mov al,1 → ret 8（★全胜返 1）→ 0x6B3CBF:
+    xor al → ret 8（★失败返 0）
+语义：**递归蔓延填充器（推断名——587B「四邻递归 + 高度差门槛蔓延」）**
+——① 起点 [0xB0B6EC] 格数组取高度（[格+0]）与位置（[0x8759A4] 宽 ×
+X + Y——地图格索引）；② 双偏移双环遍历（edi/ebp 自 -1 步进 +1，四
+邻探索，跳过自身）；③ 边界四查（X/Y <0 或 >= 宽/高[0x8759A0] 跳出）；
+④ 蔓延长度门槛：目标格 [0] 与起点高差 abs > 0xF 才蔓延（同高度/近
+高度跳过）；⑤ 高度方向二分支（[esp+0x1C]==1：目标 > 起点 → 目标高
+改 = 起点-15；否则目标 < 起点 → 目标高改 = 起点+15——±0xF 高度写
+格）；⑥ 蔓延格登记 [0xB0B654] 三 dword 表（X/Y/高度——满→槽 8 扩
+容）；⑦ 递归自身蔓延未重算邻格（[格+4] 重算标记跳过）。
+★怪癖：①★★递归四邻蔓延（+ 高度差门槛 ±15——地形起伏蔓延）；
+②格高度改写 ±0xF（[格]=起点高±15 + [格+5]=1 重算标记）；③蔓延表
+登记三 dword（[0xB0B654]——X/Y/高度）；④双偏移 -1→+1 双环（四邻
++ 自身跳过）；⑤边界四查提前跳出（无效格返 0）；⑥递归失败传播
+（test bl → 返 0——标志位蔓延失败）。
+⚠️ partial：宿主类/函数名（蔓延算法——0x6B3A7x 区推断用途待验）、
+[0xB0B6EC] 格数组身份（地图格 8B/项推断）、[0x8759A4]/[0x8759A0]
+宽高全局、[格+4]/[格+5] 重算标记、蔓延表消费方（0x6Bxxxx 区推断）、
+2 unique caller 身份。
+
+================================================================================
+跨批次连接（本批三连 = Smudge 创建链 + 蔓延填充）
+================================================================================
+- **batch 086（0x568300 CoordinatesLegal）**：0x6B5F80 格边界判定
+  （菱形合法性——batch 086 消费点）。
+- **batch 066（0x47C520 GetBuilding）**：0x6B5F80 建筑排除（可选——
+  栈参 2 字节放行）。
+- **batch 514（0x6B4A50 SmudgeClass::SmudgeClass）**：0x6B59A0 随机
+  选择后创建（原文档点名 FUN_006b59a0 为 caller——本批兑现）。
+- **batch 824（0x67C3A0 VectorClass 构造器孪生·四）**：0x6B59A0
+  双容器构造（原文档点名 FUN_006B59A0 ×2 现场——本批兑现；
+  虚表 0x7F0DEC/0x7F0D7C 同段）。
+- **0x65C7E0（Randomizer::RandomRanged）**：0x6B59A0 随机选格
+  （RNG 消耗点——QWEN.md RNG 里程碑延续）。
+- **[0xA8ED2C]/[0xA8ED38]（地表表）**：0x6B5F80 地形门控读表。
+- **batch 001（0x7C8E17/0x7C8B3D）**：0x6B59A0 new 0xB0 + 容器清理
+  双消费。
+- 新候选：[0xA8EC1C]/[0xA8EC28] 全局对象表、[0xB0B6EC] 格数组、
+  [0x8759A4]/[0x8759A0] 宽高全局、[0xB0B788..8A] 哨兵坐标、
+  [0xB0B654] 表消费方、+0x298/+0x29C 双计数宿主。
