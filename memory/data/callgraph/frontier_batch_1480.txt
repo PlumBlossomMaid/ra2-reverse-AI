@@ -1,0 +1,138 @@
+frontier batch 1480 — 0x63D960 分段循环调度器 / 0x63D540 类型分派器 / 0x63D0F0 玩家位域打包器（2026-10-24）
+
+口径：承接 batch 1479 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x63D960（86B，callees=1 deps=176——
+**分段循环调度器**，推断名）、0x63D540（28B，callees=2 deps=170——
+**类型分派器**，推断名）、0x63D0F0（288B，callees=0 deps=168——
+**玩家位域打包器**，推断名）。
+取证手段：disasm.py 双参直反汇编三路全程读完（0x63D960 0x56 尾 0x63D9B3
+ret 0x10 / 0x63D540 0x1C 尾 0x63D55B ret / 0x63D0F0 0x120 尾 0x63D20F
+ret——三文件 43/9/107 行全读）+ TSV 查重（三候选全部未登记）+ callee 登记
+核验（grep TSV：0x63D810 已登记 batch 285 坐标换算分发、0x731CE0/0x731CD0
+已登记 batch 357 MapClass 表查表包装 0x4C/0x4D——三者均为已登记函数，本批
+三函数构成对它们的调用/跳转点，闭环兑现）。
+
+================================================================================
+0x63D960 —— 分段循环调度器（86B 全程读完）
+================================================================================
+签名：非 thiscall（ecx=长度+2 计数、edx=第二参寄存器透传）+ 4 栈参 ret
+0x10（0x63D960-0x63D9B3）。
+机器码结构（0x63D960-0x63D9B3，全程读完，关键锚点）：
+    push ecx → add ecx,-2（★n=ecx-2）→ push esi → test ecx,ecx → push
+    edi → mov [esp+8],edx（★★edx 第二参存栈——借用 this 保存槽，this
+    已用完）→ jg 0x63D974（★n>0 正常路径）→ 空路径：xor esi/xor edi →
+    jmp 0x63D982（★esi=edi=0——见怪癖①）
+    正常路径 0x63D974：mov eax,ecx → cdq → sub eax,edx（★ceil 修正）→
+    mov edi,eax → sar edi,1（★★edi=ceil(n/2)——后半段起点）→ mov
+    esi,edi → sub esi,ecx → inc esi（★esi=edi-n+1——前半段起点，可负）
+    循环 0x63D982：cmp esi,edi → jg 0x63D9B0（★esi>edi 退出）→ 循环体
+    0x63D986：push ebx → mov ebx,[esp+0x20]（★调用者参4）→ push ebp →
+    mov ebp,[esp+0x20]（★调用者参3）→ mov eax,[esp+0x1C]（★调用者参2）
+    → mov edx,[esp+0x10]（★★读回 edx 第二参保存槽）→ push 1（★常量
+    1=最末参）→ push ebx → push ebp → push eax → mov eax,[esp+0x28]
+    （★调用者参1）→ mov ecx,esi（★★this=esi 索引）→ push eax → call
+    0x63D810（★★已登记 batch 285 坐标换算分发——5 栈参+ecx 签名吻合
+    ret 0x14）→ inc esi → cmp esi,edi → jle 0x63D990（★循环）→ pop
+    ebp/pop ebx → 0x63D9B0: pop edi/pop esi/pop ecx → ret 0x10
+语义：**分段循环调度器（推断名——86B「n=ecx-2 分段 + 逐索引调 0x63D810」
+）**——以 ecx-2 为段长 n，计算索引段 [esi..edi]（edi=ceil(n/2)、
+esi=edi-n+1，段长恰为 n；n≤2 时 esi 可为负），从 esi 到 edi 逐索引为
+this 调用 0x63D810（已登记坐标换算分发），每轮透传：edx 第二参（寄存器）
++ 调用者 4 栈参 + 常量 1（5 栈参——与 0x63D810 ret 0x14 签名完全吻合）。
+★怪癖：①★★空路径（n≤0）不跳过——esi=edi=0 时 cmp jg 不跳，仍执行
+一次循环体（this=0 调 0x63D810）——MSVC do-while 形态边缘行为，照抄；
+②★段起点可负（n=1 时 esi=1、n=2 时 esi=0、n=4 时 esi=-1）——索引
+从负数起调 0x63D810，调用者约定；③★edx 第二参借 this 保存槽透传
+（[esp+8] 覆盖 push ecx 槽——寄存器参数透传惯用）；④常量 1 恒为最末栈参。
+⚠️ partial：宿主语义（索引含义/0x63D810 在此上下文的业务角色）、调用者
+4 参语义、2 unique caller。
+
+================================================================================
+0x63D540 —— 类型分派器（28B 全程读完）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this，读 [ecx+0xC] 类型字段；0x63D540-
+0x63D55B）。
+机器码结构（0x63D540-0x63D55B，全程读完，关键锚点）：
+    movsx eax,byte[ecx+0xC]（★符号扩展读类型字节）→ cmp eax,0xB → jne
+    0x63D54E → jmp 0x731CE0（★★tail call——已登记 batch 357 MapClass
+    表查表包装 0x4C）→ 0x63D54E: cmp eax,0x1D → jne 0x63D558 → jmp
+    0x731CD0（★★tail call——已登记 batch 357 MapClass 表查表包装
+    0x4D）→ 0x63D558: or eax,-1（★返 -1）→ ret
+语义：**类型分派器（推断名——28B「[ecx+0xC] 类型字节双路 tail call」
+）**——读对象 +0xC 类型字节（符号扩展）：==0xB（11）→ 尾调用 0x731CE0
+（表查表固定索引 0x4C=76）；==0x1D（29）→ 尾调用 0x731CD0（表查表固定
+索引 0x4D=77）；否则返 -1。tail call 不建新帧，0x731CE0/0x731CD0 的返回
+值即本函数返回值。
+★怪癖：①★★双 tail call（jmp 而非 call+ret——零帧跳转）；②★movsx 符
+号扩展（类型字节为负值时比较语义不同）；③★类型 11→索引 76、类型
+29→索引 77 的硬编码映射（与 batch 357 成对索引 76/77 完全呼应）；
+④默认返 -1（未知类型哨兵）。
+⚠️ partial：宿主类（+0xC 类型字段枚举含义）、0xB/0x1D 类型名、2 unique
+caller。
+
+================================================================================
+0x63D0F0 —— 玩家位域打包器（288B 全程读完）
+================================================================================
+签名：cdecl 3 栈参 ret（无 ret N——调用者清理；参1=[esp+0x10]=目标值、
+参2=[esp+0x14]=bl 移位量、参3=[esp+0x18]=组2 al 移位量；0x63D0F0-
+0x63D20F）。
+机器码结构（0x63D0F0-0x63D20F，全程读完，关键锚点）：
+    入口 sub esp,0xC → mov [esp],ecx（★死存储①）→ mov eax,[0x8a0de4]
+    → and 0xff → mov [esp+4],eax（★死存储②）→ mov ecx,[0x8a0dd4] →
+    and 0xff → mov [esp+0x18]（★参3槽——保存移位量）→ mov al,
+    byte[0xa83cd9]（★玩家字节1）→ mov bx,word[0xa83cda]（★玩家
+    word）→ mov edi,[0x8a0dd0] → mov ebp,[0x8a0de0] → mov edx,
+    [0x8a0ddc] → and 0xff
+    组1 装配：shr eax,cl([0x8a0dd4]) → shl eax,cl(edi=[0x8a0dd0]) →
+    esi=bl → shr esi,[esp+0x14]（参2）→ shl esi,ebp([0x8a0de0]) →
+    or eax,esi → esi=bh → shr esi,dl([0x8a0ddc]) → shl esi,
+    [0x8a0dd8] → or eax,esi（★★eax=组1 位域）
+    test [esp+0x10]（参1 目标）→ je 0x63D208（★★目标空 → 直接返 eax）
+    组2 装配 0x63D177：mov bx,word[0xa80221] → mov cl,byte[0xa80220]
+    （★组2 玩家字段）→ esi=cl → shr esi,[esp+0x18]（参3）→ shl esi,
+    edi([0x8a0dd0]) → edi=bl → shr edi,[esp+0x14]（参2）→ shl edi,ebp
+    → or esi,edi → edi=bh → shr edi,dl → shl edi,[0x8a0dd8] → or
+    esi,edi（★★esi=组2 位域）
+    表查询 0x63D1AC：mov edx,[0xac4bf0]（★表指针）→ test edx → je
+    0x63D1F8（★表空路径）→ mov edi,[edx+0x10]（★计数）→ test edi →
+    jle 0x63D208（★空表 → 返 eax）→ mov edx,[edx+4]（★数组）→ mov
+    ebx,[esp+0x10]（参1 目标）→ 循环 0x63D1D2: mov ebp,[edx]（★表项）
+    → cmp [ebp],ebx（★★表项首字段 vs 目标）→ je 0x63D1E9（命中）→
+    inc ecx → add edx,4 → cmp ecx,edi → jl 0x63D1D2 → 未命中：pop 族
+    → ret（★返 eax 组1）
+    命中 0x63D1E9：cmp ecx,-1 → je 0x63D208（★冗余检查）→ mov eax,esi
+    （★返 esi 组2）→ pop 族 → ret
+    表空 0x63D1F8：mov edx,[esp+0x10] → mov cl,byte[edx+0x83]（★★目标
+    +0x83 字节门控）→ test → je 0x63D208（返 eax）→ mov eax,esi（返
+    esi）→ 0x63D208: pop 族 → add esp,0xC → ret
+语义：**玩家位域打包器（推断名——288B「两字段组移位表装配 + 目标表查询
+分叉」）**——① 以移位表 [0x8a0dd0..0x8a0de4] + 参2/参3 移位量为参数，
+把两组玩家字段（组1=[0xa83cd9] 字节+[0xa83cda] word；组2=[0xa80220]
+字节+[0xa80221] word）各按「shr 源位 + shl 目标位」装配成位域（组1→
+eax、组2→esi）；② 参1 目标为空 → 返组1；③ 目标非空 → 查 [0xac4bf0]
+表（[+0x10] 计数、[+4] 数组、表项首字段 [+0] vs 目标）→ 命中返组2、
+未命中返组1；④ 表空时改查目标对象 +0x83 字节 → 非零返组2、零返组1。
+★怪癖：①★★三处死存储（[esp] 的 ecx、[esp+4] 的 [0x8a0de4] 值、[esp+8]
+第三局部槽——编译器冗余，照抄）；②★★命中/未命中/表空三分支返回值
+分叉（组2 vs 组1——命中返回"目标相关"位域、否则返回"当前玩家"位域）；
+③★[0xac4bf0] 表扫描（表项是 [edx] 间接指针 + 首字段比较——两级间接）；
+④★目标 +0x83 字节门控（表空时）；⑤★移位表 [0x8a0dd0..0x8a0de4]
+第三次消费（batch 1477/1478 同族——见跨批次连接）。
+⚠️ partial：位域业务含义（打包给谁的参数）、[0xac4bf0] 表语义、[0xa83cd9]/
+[0xa80220] 两组字段身份、+0x83 字节含义、3 unique caller。
+
+================================================================================
+跨批次连接（三函数全部命中已登记 callee——闭环兑现）
+================================================================================
+- **batch 285（0x63D810 坐标换算分发）**：0x63D960 的循环调用目标——
+  5 栈参+ecx 签名吻合（ret 0x14）、edx 寄存器参透传吻合（已登记描述中
+  「mov [esp+0x10],edx」证实）；0x63D960 是它的批调度器（索引段逐个调）。
+- **batch 357（0x731CE0/0x731CD0 MapClass 表查表包装 0x4C/0x4D）**：
+  0x63D540 的双 tail call 目标——batch 357 记录的 callers 列表本就含
+  FUN_0063d540，本批正式兑现；类型 11→索引 76、类型 29→索引 77 的
+  硬编码映射与成对索引完全呼应。
+- **batch 1477（0x643400/0x6425F0）与 batch 1478（0x642130）**：
+  [0x8a0dd0..0x8a0de4] 移位表第三次消费——0x63D0F0 与其共享同表装配
+  位域；[0xa83cd9]/[0xa83cda] 玩家字段新登记。
+- 新候选：[0xac4bf0] 表（计数+数组两级间接——容器推断）、0x63D810 的
+  调用者 4 参语义。
