@@ -1,0 +1,175 @@
+frontier batch 1457 — 0x68BDC0 PhobosHook_ScenarioClass_ReadWaypoints / 0x689D30 ScenarioClass::ReadStartPoints / 0x688380 出生点收集器（2026-10-23）
+
+口径：承接 batch 1456 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x68BDC0（207B，callees=3 deps=2535——
+**PhobosHook_ScenarioClass_ReadWaypoints**，ranking 带符号）、0x689D30
+（348B，callees=3 deps=2535——**ScenarioClass::ReadStartPoints**，ranking
+带符号）、0x688380（813B，callees=7 deps=139——**出生点收集器**，推断
+名，RNG 消耗点）。
+取证手段：disasm.py 双参直反汇编全程读完（0x68BDC0 0xCF 尾 0x68BE8C /
+0x689D30 0x15C 尾 0x689E89 / 0x688380 0x32D 尾 0x886AC，全程读完）+
+TSV 查重（三候选全部未登记）+ callee 登记核验（grep TSV：batch 004
+0x5276D0 INISection::ReadInteger、batch 057 0x7C8EF4 printf 族带计数
+包装、batch 079 0x56DC20 MapClass::NearByLocation、batch 092 0x42FCB0
+可选外部缓冲数组构造器、0x5657A0 GetCellAt、0x65C7E0 Randomizer::
+RandomRanged（QWEN.md RNG 里程碑）、batch 001 0x4068E0 日志桩——全部已
+登记，无未登记 callee）。
+
+================================================================================
+0x68BDC0 —— PhobosHook_ScenarioClass_ReadWaypoints（207B 全程读完）
+================================================================================
+签名：thiscall + 1 栈参 ret 4（ecx=this、栈参 1=[esp+0x1C] INI 段落
+对象存 ebx；0x68BDC0-0x68BE8C）。
+机器码结构（0x68BDC0-0x68BE8C，全程读完，关键锚点）：
+    段落读取 0x68BDCD：lea edi,[ecx+0x632]（★this+0x632 waypoint 数组
+    起点存 edi——每 4B 一项 X|Y 打包坐标推断）→ push 0 → lea eax,
+    [esp+0x14] → push 0x817F6C（★键串）→ push eax → call [0x7E14B0]
+    （★IAT——GetINIValue 推断）→ lea ecx,[esp+0x10] → push 0 → push
+    ecx → push 0x82DB0C（★键串二）→ mov ecx,ebx → call 0x5276D0（★
+    batch 004 INISection::ReadInteger——INI 整数读取）
+    1000 进制解码 0x68BDFA：mov ecx,eax（★读入值）→ test → jne
+    0x68BE0A → mov edx,[0xB05458]（★全局哨兵坐标 A）→ mov [edi],edx
+    → jmp 0x68BE35（★空值用哨兵）→ 0x68BE0A: mov eax,ecx → mov
+    ebp,0x3E8（★1000）→ cdq → idiv ebp（★eax=value/1000 取商——
+    坐标 X 推断）→ mov eax,0x10624DD3 → mov word[esp+0x28],dx（★余
+    数 = Y 推断）→ imul ecx → sar edx,6 → shr eax,0x1F → add
+    edx,eax → mov word[esp+0x2A],dx（★魔数乘除再取商——同批 1440
+    0x6E7C20 双除法！）→ mov ecx,[esp+0x28] → mov [edi],ecx（★写
+    waypoint 项 {商, 余数}——X=商/Y=余数打包）
+    格标志 0x68BE35（esi=索引 0..0x2BD）：cmp esi,0x2BE → jge
+    0x68BE75 → test esi → jl 0x68BE75（★0x2BE=702 项循环）→ mov
+    dx,word[edi] → cmp [0xB05458],dx → jne 0x68BE5A → mov ax,
+    word[edi+2] → cmp [0xB0545A],ax → je 0x68BE75（★值==哨兵跳过）
+    → 0x68BE5A: push edi → mov ecx,0x87F7E8 → call 0x5657A0（★
+    GetCellAt——坐标取格）→ mov ecx,[eax+0x140] → add eax,0x140 →
+    or ecx,4 → mov [eax],ecx（★★格 +0x140 标志 |= 4——标记占用！
+    waypoint 特殊标记推断）→ 0x68BE75: inc esi → add edi,4 → cmp
+    0x2BE → jl 循环 → ret 4
+语义：**PhobosHook_ScenarioClass_ReadWaypoints（带名——207B「1000 进
+制坐标 waypoint 表扫描」）**——① INI 段落经 0x5276D0 ReadInteger 读
+入（键 0x82DB0C）+ [0x7E14B0] IAT 读段；② 1000 进制解码：value/1000
+idiv 取商（X）→ 魔数 0x10624DD3 乘除再取商（同值双路径——batch
+1440 0x6E7C20 同款）+ 余数（Y）打包写 this+0x632 waypoint 数组（4B/
+项）；③ 空值用 [0xB05458] 全局哨兵坐标；④ 逐项对比 [0xB05458..5A]
+哨兵：非哨兵项 GetCellAt 取格 → 格 +0x140 标志 |= 4（占用标记）。
+★怪癖：①★★1000 进制坐标解码（idiv 1000 + 0x10624DD3 魔数双路径
+取商——batch 1440 0x6E7C20 完全同构，waypoint 打包格式实锤）；②
+0x2BE=702 项循环（满表扫描——超出地图范围也扫）；③格 +0x140 标志
+|= 4（waypoint 格占用标记——[0xB05458..5A] 哨兵跳过）；④空值哨兵
+回退（ReadInteger 空 → [0xB05458]）；⑤EDI 起点 this+0x632（waypoint
+数组基址）。
+⚠️ partial：0x82DB0C/0x817F6C 键串内容、+0x632 数组身份（waypoint
+表推断）、[0xB05458..5A] 全局哨兵语义（无效/空位推断）、+0x140 标志
+bit2 含义、2 unique caller 身份。
+
+================================================================================
+0x689D30 —— ScenarioClass::ReadStartPoints（348B 全程读完）
+================================================================================
+签名：thiscall + 1 栈参 ret 4（ecx=this 存 esi、栈参 1=[esp+0x28]
+INI 段落对象存 ebp；0x689D30-0x689E89）。
+机器码结构（0x689D30-0x689E89，全程读完，关键锚点）：
+    初置 0x689D33：or eax,-1 → 写 +0x112C/+0x1130/+0x1134/+0x1138/
+    +0x113C 五字段 = -1（★数量字段族）→ lea edi,[esi+0x1140] →
+    8 次写 [edi] = 0/+4=0（★+0x1140 起 8 组坐标缓冲清零）
+    段落读法一 0x689D76（ebp=INI 段）：mov eax,[esi+0x112C]（★键值）
+    → push eax → push 0x83DE70（★键串 A）→ push 0x83DE68（★段名
+    A）→ mov ecx,ebp → call 0x5276D0（★batch 004 ReadInteger——
+    出生点数推断）→ 依次 0x83DE60/0x82BBE4/0x81A7A8/0x83DE48/
+    0x83DE30（★五键连环）→ 写 +0x112C..+0x113C 与 +0x11E4
+    起点读取 0x689E34（eax=0、ecx=[esi+0x113C]=数量）：test → jle
+    0x689E80（★0 个跳过）→ 循环（ebx=1..数量）：lea ebx,[eax+1] →
+    lea eax,[esp+0x18] → push ebx → push 0x83DE24（★键串——%d 格
+    式推断）→ push eax → call 0x7C8EF4（★batch 057 printf 族带计
+    数包装——格式化 [Number] 键）→ lea ecx,[esp+0x18] → lea edx,
+    [esp+0x10] → push edi（★目标位）→ push ecx → push 0x83DE68 →
+    push edx → mov ecx,ebp → call 0x529880（★未登记——ReadCoord 推
+    断）→ mov ecx,[eax] → mov eax,[eax+4] → mov [edi],ecx → mov
+    [edi+4],eax（★坐标对写缓冲）→ 循环 +0x1140 步进 8B
+    收尾 0x689E80：mov al,1 → ret 4（★恒返 true）
+语义：**ScenarioClass::ReadStartPoints（带名——348B「五键段落读取 +
+多起点坐标收集」）**——① 五字段 -1 初置 + +0x1140 8 组坐标缓冲清
+零；② 五键连环（0x83DE70/0x83DE60/0x82BBE4/0x81A7A8/0x83DE48/
+0x83DE30）经 0x5276D0 ReadInteger 读入写 +0x112C..+0x113C/+0x11E4
+（数量/配置字段推断）；③ 按数量循环：0x7C8EF4 格式化编号键（%d）
+→ 0x529880（未登记——坐标读取推断）→ 坐标对写 +0x1140 缓冲（8B/
+项）；④ 恒返 1。
+★怪癖：①★★多键段落读取（六键连环——配置批量装载推断）；②编号
+键格式化（0x7C8EF4 printf——起点编号 [1..n] 查询）；③0x529880 坐
+标读取（未登记——ReadCoord 推断）；④五字段 -1 初置（`or eax,-1`
+写 5 处——数量哨兵）；⑤+0x1140 8 组 8B 坐标缓冲（8 起点上限推断）。
+⚠️ partial：0x529880 精确语义（未登记——坐标读取推断）、六键串
+内容、+0x112C..+0x113C 字段语义（数量/配置推断）、+0x11E4 字段、
++0x1140 缓冲身份（起点坐标数组推断）、2 unique caller 身份。
+
+================================================================================
+0x688380 —— 出生点收集器（813B 全程读完）
+================================================================================
+签名：thiscall 无栈参（ecx=this 存 edi；0x688380-0x6886AC）。
+机器码结构（0x688380-0x6886AC，全程读完，关键锚点）：
+    容器构造 0x688395：push 0×2 → lea ecx,[esp+0x30] → call
+    0x42FCB0（★batch 092 可选外部缓冲数组构造器——栈上容器，虚表
+    0x7E38D0）→ mov ebx,0xA → mov [esp+0x28],0x7E3890（★虚表）
+    已有数统计 0x6883B5：mov eax,[0xA8B230]（★ScenarioClass）→ lea
+    ecx,[edx+0x632]（★waypoint 数组）→ 0x2BE 循环：cmp 坐标 =
+    [0xB05458..5A] → 不相等 → inc esi → 8 上限 → 0x6883EB: mov eax,
+    [0xA8DA84]（★玩家计数）→ 遍历 [0xA8DA78]（★玩家数组）→ [ebx+
+    0x6B] == -1 → inc ebp（★空玩家计数）→ 0x688415: +0x632 信号基
+    准：eax(玩家数) - ebp(空玩家) + [0xA8B274]（★差量） vs esi（已
+    有数）→ 取大者
+    主循环 0x688431（esi=0..count）：0x2BE 边界 → 坐标 == [0xB05458]
+    哨兵跳过 → 容器扩容判定（[esp+0x38] vs [esp+0x30] 满 + 标志）→
+    写容器 [esp+0x2C][idx]（★坐标收集队）→ 0x6884BF: movsx 日志
+    （0x83DD20 格式串 → 0x4068E0 日志桩——坐标报告）
+    补足 0x688508（count 不足时）：push 0x83DCD4（★格式串）→ call
+    0x4068E0 → RandomRanged ×2（★[0x87F918]-0xA / [0x87F914]-0xA
+    范围 → 0x65C7E0 两次——随机坐标生成！）→ [0x87F90C]/[0x87F910]
+    偏移累加 → 装配坐标结构 → push 多参（-1/1/0…）→ mov ecx,
+    0x87F7E8 → call 0x56DC20（★batch 079 NearByLocation——就近查
+    找替代坐标）→ 核对结果 vs [0xB05458] → 入容器（扩充判定同款）
+    → 0x68C2B0（★未登记——容器 clear 推断）→ 数不够循环
+    收尾 0x68864D：容器字段复位（+4=0/+8=0/+0xD=0/+0xC=1 + 虚表
+    0x7E38D0 → call 0x68C2B0 → 虚表 0x7E3890 → +0x10/+0x14 写
+    count（★返回容器——出生点列表）→ owns 释放（0x7C8B3D）→
+    mov eax,edi → ret
+语义：**出生点收集器（推断名——813B「已有 waypoint 统计 + 随机补
+足 + 容器返回」）**——① 栈上容器构造（0x42FCB0 虚表 0x7E38D0）；
+② 统计 [0xA8B230]+0x632 waypoint 表已有非哨兵数（esi）+ 玩家表
+[0xA8DA78] 空玩家数（ebp）→ 基准 = 玩家数-空玩家+[0xA8B274]；
+③ 主循环收集[+0x632] 非哨兵坐标入容器 + 日志（0x83DD20）；④ 不足
+时 RandomRanged ×2 随机坐标（[0x87F918]/[0x87F914]-0xA 范围）+
+[0x87F90C]/[0x87F910] 偏移 → 0x56DC20 NearByLocation 就近修正 →
+入容器后 0x68C2B0 清 → 循环补足（数不够继续）；⑤ 收尾容器字段复
+位返回（出生点列表）。
+★怪癖：①★★出生点数动态基准（玩家数-空玩家+[0xA8B274]——出生点
+配额推断）；②RandomRanged ×2 随机坐标（RNG 消耗点——QWEN.md RNG
+里程碑延续，出生点位置随机化）；③0x56DC20 NearByLocation 就近修正
+（随机点 → 合法点回退）；④容器扩容判定复用（[esp+0x38] vs
+[esp+0x30]——batch 092 容器族扩容门控）；⑤双虚表切换（0x7E38D0
+构造期 → 0x7E3890 收尾——batch 1456 0x68C200 同款双虚表形态）；
+⑥坐标日志（0x83DD20/0x83DCD4 格式串 → 0x4068E0）。
+⚠️ partial：0x529980/0x68C2B0 精确语义（未登记——容器操作推断）、
+[0xA8B274] 差量全局、随机范围 [0x87F918]/[0x87F914] 与偏移
+[0x87F90C]/[0x87F910] 身份、+0x6B 玩家字段、0x83DD20/0x83DCD4 格式
+串、2 unique caller 身份。
+
+================================================================================
+跨批次连接（本批三连 = waypoint 读取 + 出生点配置 + 出生点收集）
+================================================================================
+- **batch 004（0x5276D0 INISection::ReadInteger）**：0x689D30 六键连
+  环 + 0x68BDC0 单键读取（INI 消费现场）。
+- **batch 057（0x7C8EF4 printf 族带计数包装）**：0x689D30 编号键格
+  式化（%d 起点编号）。
+- **batch 079（0x56DC20 NearByLocation）**：0x688380 随机坐标就近修
+  正（GetCellAt 家族第五兄弟）。
+- **batch 092（0x42FCB0 可选外部缓冲数组构造器）**：0x688380 栈上
+  容器构造（虚表 0x7E38D0——batch 092 34 callers 再添）。
+- **0x65C7E0（Randomizer::RandomRanged）**：0x688380 ×2 消耗（出生点
+  随机——QWEN.md RNG 里程碑延续）。
+- **batch 1440（0x6E7C20 打包坐标解码器）**：0x68BDC0 1000 进制双除
+  法同构（idiv + 0x10624DD3 魔数——waypoint 打包格式共享）。
+- **0x5657A0（GetCellAt）**：0x68BDC0 格标志标记（+0x140 |= 4）。
+- **[0xB05458..5A] 哨兵坐标**：0x68BDC0/0x688380 双消费（无效/空位
+  哨兵推断）。
+- 新候选：0x529880（0x689D30 坐标读取）、0x68C2B0（0x688380 容器清）、
+  [0xA8B274] 差量、[0x87F918]/[0x87F914]/[0x87F90C]/[0x87F910] 随机系
+  全局、六键串内容。
