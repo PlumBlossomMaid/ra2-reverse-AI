@@ -1,0 +1,218 @@
+frontier batch 1370 — 0x5AD010 数组容器容量重设器 / 0x589C50 数组容器入队器 / 0x581140 MapClass::DestroyCliff（2026-10-23）
+
+口径：承接 batch 1369 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x5AD010（176B，callees=2 deps=1888 高解锁）、
+0x589C50（80B，callees=0 deps=64 纯叶）、0x581140（3587B，callees=14
+deps=1883 大函数——**带符号名 MapClass::DestroyCliff**）。
+取证手段：disasm.py 双参直反汇编全程读完（0x5AD010 0xC0 尾 0x5AD0BD / 
+0x589C50 0x80 尾 0x589C9D（含相邻 0x589CA0 开头）/ 0x581140 0xE00 尾
+0x581F3D 1017 行全程读完，函数边界与 functions.tsv 完全吻合）+ TSV 查重
+（三候选全部未登记）+ 跨批次对比（虚表槽 8 VectorClass 增长 ↔ batch
+1300s 既有锚点；0x578460 取格链 + [0x87F7E8] ↔ 既有锚点；0x47D2B0
+CellClass::RecalcAttributes + 0xABDC50 哑元 + [0x87F924] 表 ↔ RMG 全链
+锚点；Randomizer 0x65C7E0 RandomRanged + [0xA8B230] ↔ QWEN.md 实锤；
+[0x887324] + 0x6D2140 CoordsToClient ↔ batch 1363 同款）。
+
+================================================================================
+0x5AD010 —— 数组容器容量重设器（176B 全程读完）
+================================================================================
+签名：thiscall（ecx=this 数组容器，mov esi）+ 2 栈参（[esp+0xC]=新容量
+ebp、[esp+0x18]=外部缓冲 ebx），返 al 0/1，ret 8（0x5AD010-0x5AD0BD，
+callees=2 deps=1888 高解锁）。
+机器码结构（0x5AD010-0x5AD0BD，全程读完，关键锚点）：
+    入口：push ebx; push ebp; mov ebp, [esp+0xC]（★新容量）
+    push esi; test ebp; push edi; mov esi, ecx
+    je 0x5AD09A（★容量 0 → 走虚表槽 0xC 清空）
+    mov ebx, [esp+0x18]（★外部缓冲）
+    mov [esi+0xC], 0（★标志清）; test ebx; jne 0x5AD03E
+    lea eax, [ebp*4]; push eax; call 0x7C8E17（★分配容量×4）
+    mov edi, eax; jmp 0x5AD040
+    0x5AD03E：mov edi, ebx（★外部缓冲路径）
+    0x5AD040：test edi; mov [esi+0xC], 1（★置标志）
+    je 0x5AD0B7（分配失败 → 返 0）
+    0x5AD048（★逐项拷贝）：mov eax, [esi+4]（旧缓冲）
+    test eax; je 0x5AD088
+    mov ecx, [esi+8]（旧容量）; cmp ebp, ecx; jge 0x5AD058
+    mov ecx, ebp（★min(旧容量, 新容量)）
+    0x5AD05E 循环：mov edx, [esi+4]; inc eax
+    mov edx, [edx+eax*4-4]; mov [edi+eax*4-4], edx（★逐项 4B 拷贝）
+    cmp eax, ecx; jl 0x5AD05E
+    0x5AD06E（★释放旧缓冲）：mov al, [esi+0xD]（持有标志）
+    test al; je 0x5AD088
+    mov eax, [esi+4]; push eax; call 0x7C8B3D（★释放）
+    mov [esi+4], 0
+    0x5AD088：xor eax; mov [esi+4], edi（★新缓冲）
+    test ebx; sete al（★外部缓冲 → 持有=0，自分配 → 持有=1）
+    mov [esi+8], ebp（★新容量）; mov [esi+0xD], al（★持有标志）
+    jmp 0x5AD0A1
+    0x5AD09A（★容量 0）：mov edx, [esi]; mov ecx, esi
+    call [edx+0xC]（★虚表槽 0xC——清空方法）
+    0x5AD0A1：mov eax, [esi+8]; mov ecx, [esi+0x10]
+    cmp eax, ecx; jge 0x5AD0AE
+    mov [esi+0x10], eax（★+0x10 = min(新容量, 旧计数)）
+    0x5AD0AE：mov al, 1; ret 8（★成功返 1）
+    0x5AD0B7：xor al, al; ret 8（★失败返 0）
+语义：**数组容器容量重设器**（0x5AD01x 区——0x5AD0xx 容器/容量域，
+callees=2 deps=1888 高解锁）：thiscall + 新容量/外部缓冲双栈参：
+**VectorClass Resize 语义**——新容量 0 → 虚表槽 0xC 清空；0x7C8E17
+分配容量×4 或取外部缓冲（双路径）→ 置标志 +0xC → **逐项 4B 拷贝
+min(旧容量, 新容量)** → 持有标志 +0xD 门控释放旧缓冲 → +0x8 新容量、
++0xD 持有标志（外部缓冲→不持有/自分配→持有）→ +0x10 = min(新容量,
+旧计数) → 返 1。★数组容器容量重设器（0x5AD01x 区——分配/外部双
+路径 + 逐项拷贝 + 持有标志管理 + ret 8 双栈参）。2 unique caller
+（3 callsite）。
+★怪癖：①★**分配/外部缓冲双路径**（外部缓冲非空 → 直接引用不持有；
+空 → 0x7C8E17 容量×4 自分配 + 持有标志 +0xD=1）；②★逐项 4B 拷贝
+（mov [edi+eax*4-4],[edx+eax*4-4]——手写循环 min(旧,新)）；
+③★持有标志 +0xD 门控释放（旧缓冲释放仅自分配路径）；
+④★新容量 0 → 虚表槽 0xC 清空（特殊路径）；⑤★+0x10 = min(新容量,
+旧计数)（容量收缩截断）+ 置标志 +0xC=1 + ret 8 双栈参。
+⚠️ partial：数组容器类型（+0x4 缓冲/+0x8 容量/+0xC 标志/+0xD 持有/
++0x10 计数）、外部缓冲语义、虚表槽 0xC 身份、2 unique caller 身份。
+
+================================================================================
+0x589C50 —— 数组容器入队器（80B 全程读完）
+================================================================================
+签名：thiscall（ecx=this 数组容器，mov esi）+ 1 栈参（[esp+8]=入队项
+指针 ecx），返 al 0/1，ret 4（0x589C50-0x589C9D，callees=0 纯叶
+deps=64）。
+机器码结构（0x589C50-0x589C9D，全程读完）：
+    入口：push esi; mov esi, ecx
+    mov ecx, [esi+8]（★容量）; mov eax, [esi+0x10]（★计数）
+    cmp eax, ecx; jl 0x589C85（★计数 < 容量 → 直接入队）
+    0x589C5D（★满容量 → 增长判定）：mov al, [esi+0xD]（持有标志）
+    test al; jne 0x589C68
+    test ecx（容量==0）; jne 0x589C7F（返 0）
+    0x589C68：mov eax, [esi+0x14]（★增长量）
+    test eax; jle 0x589C7F（增长量 ≤0 → 返 0）
+    mov edx, [esi]; add eax, ecx（★新容量 = 容量 + 增长量）
+    push 0; push eax; mov ecx, esi
+    call [edx+8]（★虚表槽 8——VectorClass 增长）
+    test al; jne 0x589C85（成功 → 入队）
+    0x589C7F：xor al; ret 4（★返 0）
+    0x589C85（★入队）：mov eax, [esi+0x10]（计数）
+    mov edx, [esi+4]（缓冲）; lea ecx, [eax+1]
+    mov [esi+0x10], ecx（★计数 +1）
+    mov ecx, [esp+8]; mov ecx, [ecx]（★入队项）; mov [edx+eax*4], ecx
+    mov al, 1; ret 4（★成功返 1）
+语义：**数组容器入队器**（0x589C5x 区——0x589Cxx 容器/入队域，
+callees=0 纯叶 deps=64）：thiscall + 入队项指针栈参：**VectorClass
+Add/Insert 语义**——计数 < 容量直接入队；满容量时虚表槽 8 增长
+（**+0x14 增长量 + 容量**——增长量门控）→ 成功则入队 → 计数+1 →
+返 1。★数组容器入队器（0x589C5x 区——容量检查 + **虚表槽 8 增长**
++ 计数+1——batch 1300s「虚表槽 8 VectorClass 增长」锚点兑现）。
+2 unique caller（3 callsite）。
+★怪癖：①★**虚表槽 8 增长**（push 0 + 新容量 + this——batch 1300s
+既有锚点「虚表槽 8 VectorClass 增长」直接兑现）；②★+0x14 增长量
+门控（≤0 → 返 0 失败——不增长不追加）；③★计数 < 容量直接入队
+（jl 0x589C85 捷径）；④★容量==0 且未持有 → 返 0（无增长基准）；
+⑤★计数+1 + 4B 存入 + ret 4 单栈参 + callees=0 纯叶。
+⚠️ partial：数组容器类型（+0x4 缓冲/+0x8 容量/+0xD 持有/+0x10 计数/
++0x14 增长量）、入队项语义（指针取值）、虚表槽 8 身份、2 unique
+caller 身份。
+
+================================================================================
+0x581140 —— MapClass::DestroyCliff（3587B 全程读完）
+================================================================================
+签名：thiscall（ecx=MapClass，mov [esp+0xC]）+ 1 栈参（[esp+0x4C]=
+CellClass* 目标格），ret 4（0x581140-0x581F3D，callees=14 deps=1883
+大函数——**functions.tsv 带符号名 MapClass::DestroyCliff**）。
+机器码结构（0x581140-0x581F3D，1017 行全程读完，关键锚点）：
+    入口：sub esp, 0x44; mov [esp+0xC], ecx
+    mov ecx, [esp+0x4C]（★目标格）; mov ebp, [0xABC2C8]（★当前格索引）
+    mov eax, [ecx+0x38]（★目标格地面类型）
+    cmp eax, ebp; jne 0x58183D（★不匹配 → 邻格分支）
+    主段（0x581160，★清除指定格悬崖）：
+    mov al, [ecx+0x11A]（★格高度字节）; mov bx, [ecx+0x26]（★X）
+    idiv 6; imul 0xD5555555（★÷3 魔数）; mov di, [ecx+0x24]（★Y）
+    mov ecx, [0xA8ED2C]（★地形表）; mov ecx, [ecx+ebp*4]（当前格对象）
+    add bx, dx; neg esi; add di, si（★坐标偏移——对角取格）
+    → [0xA8ED2C] 表对象 → 虚表槽 0x8C（★取格）
+    0x5811B0（★坐标组装）：movsx + shl 8 + 0x80 + [esp+0x24]/[0x28]/
+    [0x4C]/[0x50] 组装（★坐标 >>8 家族）
+    → 虚表槽 0x1B4（★取单元）→ [esi+0x81]=0、[esi+0x74]=1
+    （★清除占用标记）→ 虚表槽 0x124 + 0x20（push 1——★标记）
+    [0xABC1F8]（★邻格索引）→ [0xA8ED2C] 表 → 虚表槽 0x8C ×2 +
+    虚表槽 0xD8 ×2（★设置两格）
+    0x5812A6：[0x87F7E8] MapClass + 0x56C510（★寻路/更新）
+    → [0xABC2C8] 格 → 虚表槽 0x9C（★取地形数组）
+    → [ebx+0x2E4]/[ebx+0x2E8]（★地形数组宽/高）
+    0x5812DB（★第一遍清阵列）：双层遍历 [0x2E4]×[0x2E8]
+    → 组装坐标 [esp+0x58] → [+0x10] 项非空
+    → 0x578460（★取格链 [0x87F7E8]）→ 0x56D3F0（★格索引）
+    → [edi+0x70] 槽 word 0（★清斜坡槽）
+    → shl 9 + add 坐标索引 → [0x87F924] 表查
+    → 空则 0xABDC50 哑元 + [0xABDC74]=坐标
+    → 0x47D2B0 CellClass::RecalcAttributes（★清格属性）
+    0x58138F（★第二遍）：同遍历 + 0x584550（★附加处理）
+    0x58143E（★第三遍）：同遍历 + 0x70D4A0 + 0x6551C0（★更新链）
+    0x581506（★中心坐标 + 相邻对象）：
+    [0x87F924] 表查中心 → 哑元 → [eax+0x11B] 高度
+    imul [0xABDE88]（★高度×斜坡常量）
+    → [0x887324] 全局宿主 + 0x6D2140（★CoordsToClient——batch 1363
+    同款）→ 0x6D2790（★相机）
+    → [0x8B4154] 表 + 0x427CB0 ×3（★取三相邻地形对象
+    [0x82ADC0]/[0x82ADB4]/[0x82ADA8]）
+    0x5816A6（★重建斜坡循环）：
+    双层遍历坐标范围 → [0xA8B230] 全局 + Randomizer 0x65C7E0
+    RandomRanged ×3（★随机斜坡形状 0..2 + 偏移 ±8/±0xC——
+    QWEN.md 实锤 Randomizer [0xABE890] 族）
+    → 0x7C8E17 分配 0x1C8 + 0x421EA0（★构造新 CellClass/地形）
+    0x58183D（★邻格分支）：mov esi, [ebp+1]（方向偏移）
+    → [ecx+0x11A] 高度 mod 4（and 0x80000003）
+    → +0x24/+0x26 坐标调整 → 同构处理（虚表槽 0x8C/0x1B4/0x124/
+    0x20 + 清两格 + 三遍清阵列 + 重建）
+    0x581F39：pop ×4; add esp, 0x44; ret 4
+语义：**MapClass::DestroyCliff**（摧毁悬崖，0x5811xx 区——0x581xxx
+地形/悬崖域，callees=14 deps=1883 大函数——带符号名）：thiscall +
+目标格栈参：目标格地面类型 == [0xABC2C8] 当前格时走主段——**坐标
+转换**（movsx + shl 8 + 0x80 + idiv 6/imul ÷3 魔数 + 对角偏移）→
+虚表槽 0x8C 取格 + 0x1B4 取单元 → **[esi+0x81]=0/[esi+0x74]=1 清
+占用标记** → 虚表槽 0x124/0x20 → **[0xABC1F8] 邻格 ×2 清** →
+0x56C510 更新 → **三遍清地形数组**（[ebx+0x2E4]×[0x2E8]：0x578460
+取格 + 0x56D3F0 索引 + [edi+0x70] 槽清 + [0x87F924] 表查 + 0xABDC50
+哑元 + **0x47D2B0 RecalcAttributes**）→ 中心坐标 + [0x887324]
+0x6D2140 → [0x8B4154] 表 + 0x427CB0 取三相邻对象 → **重建斜坡循环**
+（Randomizer 0x65C7E0 RandomRanged ×3 随机形状/偏移 + 0x7C8E17
+分配 0x1C8 + 0x421EA0 构造新悬崖）→ 返；不匹配 → 邻格分支
+（方向偏移 + 高度 mod 4 同构处理）。★MapClass::DestroyCliff（摧毁
+悬崖——坐标转换 + 清占用 + 三遍阵列清除 + RecalcAttributes +
+RandomRanged 斜坡重建 + 0x421EA0 构造）。2 unique caller（3 callsite）。
+★怪癖：①★目标格地面类型 == [0xABC2C8] 判定（cmp [ecx+0x38],ebp
+——匹配主段/不匹配邻格分支双路由）；②★**坐标转换惯用**
+（movsx + shl 8 + 0x80 + idiv 6/imul 0xD5555555 ÷3 魔数 + neg 偏移
+——取对角/邻格）；③★[esi+0x81]=0/[esi+0x74]=1 清占用标记 + 虚表
+0x124/0x20 标记对；④★**三遍清地形阵列**（[ebx+0x2E4]×[0x2E8]
+遍历 ×3 遍——0x578460 取格 + [edi+0x70] 槽清 + [0x87F924] 表查 +
+0xABDC50 哑元 + **0x47D2B0 RecalcAttributes** 每格）；⑤★**Randomizer
+0x65C7E0 RandomRanged ×3**（[0xA8B230]+0x218——斜坡形状 0..2 +
+偏移 ±8/±0xC——QWEN.md 实锤 Randomizer 族）；⑥★0x7C8E17 分配
+0x1C8 + 0x421EA0 构造新悬崖 + [0x8B4154] 表 + 0x427CB0 ×3 相邻对象；
+⑦★[0x887324] + 0x6D2140（CoordsToClient）+ 0x6D2790（相机）+
+0x56C510（寻路更新）。
+⚠️ partial：目标格类型（CellClass——[+0x38] 地面/[+0x11A] 高度/
+[+0x24]/[+0x26] 坐标）、[0xABC2C8]/[0xABC1F8] 全局格索引身份、
+[0xA8ED2C] 地形表身份、虚表槽 0x8C/0x1B4/0x124/0x20/0x9C/0xD8
+语义、[0x8B4154] 表 + [0x82ADC0]/[0x82ADB4]/[0x82ADA8] 对象身份、
+0x421EA0/0x427CB0/0x584550/0x70D4A0/0x6551C0/0x56D3F0/0x56C510
+身份、2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1300s（虚表槽 8 VectorClass 增长锚点）：0x589C50 直接兑现
+  ——数组容器家族持续闭合（本批入队器 + 0x5AD010 容量重设器成对）。
+- 0x578460 取格链 + [0x87F7E8] MapClass（batch 1300s 既有锚点）：
+  0x581140 大量使用——取格家族兑现。
+- **0x47D2B0 CellClass::RecalcAttributes + 0xABDC50 哑元 +
+  [0x87F924] 表 + 0xABDC74**（QWEN.md RMG 全链实锤锚点）：
+  0x581140 三遍使用——RMG 锚点兑现（DestroyCliff 是悬崖清除链）。
+- **Randomizer 0x65C7E0 RandomRanged + [0xA8B230]+0x218**
+  （QWEN.md 实锤 RNG 锚点）：0x581140 重建斜坡随机 ×3——RNG 家族
+  持续闭合（batch 1345 记忆锚点兑现）。
+- [0x887324] 全局宿主 + 0x6D2140（batch 1363 0x63D560 同款）：
+  0x581140 使用——全局对象族 + CoordsToClient 家族再验证。
+- 0x7C8E17 分配 / 0x7C8B3D 释放（既有锚点）：0x5AD010 分配/释放 +
+  0x581140 分配 0x1C8——分配家族兑现。
+- 双子模式（batch 1277/1352/1356/1364/1366/1368）：0x581140 邻格
+  分支与主段同构——Westwood 复制粘贴惯用再验证。
