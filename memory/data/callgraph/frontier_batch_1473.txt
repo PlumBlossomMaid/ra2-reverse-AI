@@ -1,0 +1,151 @@
+frontier batch 1473 — 0x6516F0 配置装载日志器 / 0x64DEA0 超大宿主加载器（采样）/ 0x64DAB0 全局统计累加器（RNG 消耗点）（2026-10-23）
+
+口径：承接 batch 1472 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x6516F0（2417B，callees=15 deps=2550——
+**配置装载日志器**，推断名）、0x64DEA0（11242B，callees=26 deps=2549——
+**超大宿主加载器**，推断名，采样取证）、0x64DAB0（973B，callees=3
+deps=2549——**全局统计累加器**，推断名，★★含 RNG 消耗点）。
+取证手段：disasm.py 双参直反汇编三路读完（0x6516F0 前 0x100B 尾 0x6517E6
+——71 行采样，2417B 宿主 / 0x64DEA0 前 0x100B 尾 0x64DF99——75 行采样，
+11242B 超大宿主 / 0x64DAB0 全 0x3CD 尾 0x64DE7C ret——301 行全读）+
+TSV 查重（三候选全部未登记）+ callee 登记核验（grep TSV：0x7C8EF4
+printf（batch 057）、0x4068E0 日志桩（batch 001）、0x7CA845/0x7CA7D8
+串族、0x74FDC0/0x74FAE0、0x777AC0/0x777B60 宽串拷贝、0x7C5F00 _ftol
+（batch 001）、0x65C780 Randomizer::Random（QWEN.md RNG 里程碑）、
+0x4C93D0——已登记 + 未登记混合，见各函数）。
+
+================================================================================
+0x6516F0 —— 配置装载日志器（2417B 采样取证）
+================================================================================
+签名：thiscall + 1 栈参 ret（ecx=[A83D4C] 玩家号相关、栈参 1=[esp+0x2C]
+计数器推断；0x6516F0-0x6519xx 约 2417B）。
+机器码结构（采样：前 0x100B 0x6516F0-0x6517E6，关键锚点）：
+    mov ecx,[0xA83D4C]（★当前玩家）→ mov edx,[ecx+0x30]（★玩家号）
+    → mov eax,edi（★本函数参数/索引）→ lea [edi+edi*2] → shl 3 →
+    sub edi → lea ×8 → lea [eax*4+0xAC6660]（★★×100 表项计算——
+    0xAC6660 大表）→ push 玩家号 → push 0x839194（★格式串）→ lea
+    [esp+0x1C] → push → call 0x7C8EF4（★batch 057 printf——格式化）
+    日志 0x651736：lea ecx,[esp+0x1C] → push → push 0x838E90 → call
+    0x4068E0（★batch 001 日志桩）
+    字符串读取 0x651748：lea edx,[esp+0x1C] → push 0x81D988（★键串）
+    → push edx → call 0x7CA845（★串族读取）→ 失败：push eax → call
+    [0x7E1200] → push → push 0x838E4C → call 0x4068E0（★失败日志）
+    → ret
+    成功 0x651782：push 0x838E40 → push esi → call 0x7CA7D8（★串追
+    加）→ call 0x74FDC0 → push eax → push 0x838E30 → push esi →
+    call 0x7CA7D8 → mov ecx,0xA8ECE0 → call 0x74FAE0 → push eax →
+    push 0x838E18 → push esi → call 0x7CA7D8（★★三组串拼接：串 +
+    0x74FDC0 + 串 + 0x74FAE0 + 串）→ mov edx,0x80 → lea ecx,
+    [esp+0x30] → mov byte[esp+0x30],0 → call 0x777AC0（★宽串清零拷
+    贝 0x80）→ lea eax,[esp+0x30] → mov edx,0x80 → push eax → lea
+    ecx,[esp+0xBC] → call 0x777B60（★宽串拷贝二）
+语义：**配置装载日志器（推断名——2417B「玩家号格式化 + 串读取 +
+三组拼接 + 宽串拷贝」）**——① [0xA83D4C] 玩家号 ×100 表项（0xAC6660
+表）→ 0x7C8EF4 printf 格式化 + 日志；② 0x7CA845 读取键串
+（0x81D988——配置查询推断）；③ 失败路径日志返 0；④ 成功三组串
+拼接（0x7CA7D8 + 0x74FDC0/0x74FAE0 取数 + 格式串族 0x838E40/
+0x838E30/0x838E18）；⑤ 0x777AC0/0x777B60 宽串 0x80 长度拷贝 ×2
+（[0xA8ECE0] 全局目标）。
+★怪癖：①★×100 表项计算（lea 组合 [edi+edi*2]→shl→sub→lea×8→×4
++0xAC6660——三显式乘组合）；②三组串拼接（0x7CA7D8 + 0x74FDC0/
+0x74FAE0 双取数）；③0x81D988 键串 + 双格式串族；④0x80 固定长度
+宽串拷贝（0x777AC0/0x777B60 双子）。
+⚠️ partial：★主体未全读（2417B 采样前 0x100B）、0x7CA845/0x7CA7D8
+精确身份（未登记）、0x74FDC0/0x74FAE0 取数语义、0xAC6660 表宿主、
+格式串内容、[0xA8ECE0] 全局、2 unique caller。
+
+================================================================================
+0x64DEA0 —— 超大宿主加载器（11242B 采样取证）
+================================================================================
+签名：thiscall 无栈参 ret（ecx 存 [esp+0x60]；0x64DEA0-0x650A40 约
+11242B，deps=2549）。
+机器码结构（采样：前 0x100B 0x64DEA0-0x64DF99，关键锚点）：
+    mov eax,[0xA83D4C]（★当前玩家）→ mov ecx,[eax+0x30]（★玩家号）
+    → push → lea edx,[esp+0x244] → push 0x838EB0（★格式串）→ push
+    edx → call 0x7C8EF4（★batch 057 printf）→ lea eax,[esp+0x24C]
+    → push → push 0x838E90 → call 0x4068E0（★batch 001 日志）
+    构造链 0x64DEE4：mov ecx,4 → call 0x5BC450（★构造器——4 参数）
+    → call 0x5BCC90 → push 0/0 → call 0x5BCC40（★双子初始化）
+    字符串 0x64DF06：lea ecx,[esp+0x240] → push 0x81D988 → push →
+    call 0x7CA845（★串族读取）→ 失败日志（0x838E4C）→ ret → 成功：
+    push 0x838E40 → push esi → call 0x7CA7D8 → call 0x74FDC0 →
+    push 0x838E30 → call 0x7CA7D8 → mov ecx,0xA8ECE0 → call
+    0x74FAE0 → push 0x838E18 → call 0x7CA7D8（★★三组串拼接——与
+    0x6516F0 完全同款）→ mov edx,0x80 → lea ecx,[esp+0xC0] → call
+    0x777AC0 → lea edx,[esp+0xC0] → lea ecx,[esp+0x140] → call
+    0x777B60（★宽串拷贝 ×2）
+语义：**超大宿主加载器（推断名——11242B「玩家号格式化 + 构造链 +
+串读取拼接 + 宽串拷贝 + 后续 25 callees」）**——① 开头与 0x6516F0
+完全同款（玩家号 printf + 日志 + 0x7CA845 读串 + 三组 0x7CA7D8 拼
+接 + 宽串拷贝）；② 多了 0x5BC450/0x5BCC90/0x5BCC40 构造初始化链；
+③ ★★11242B 超大宿主（26 callees——后续主体未采样）。
+★怪癖：①★★与 0x6516F0 同款模板开头（玩家号/读串/拼接/拷贝——
+同编译器展开或直接复制）；②0x5BC450 构造（mov ecx,4）；③0x80 宽
+串拷贝 ×2。
+⚠️ partial：★主体未全读（11242B 采样前 0x100B——0x64DF9A-0x650A40
+未读，26 callees 剩余链未穷尽）、0x5BC450/0x5BCC90/0x5BCC40 身份、
+2 unique caller。
+
+================================================================================
+0x64DAB0 —— 全局统计累加器（973B 全程读完，★★RNG 消耗点）
+================================================================================
+签名：thiscall 无栈参 ret（ecx 未用；0x64DAB0-0x64DE7C）。
+机器码结构（0x64DAB0-0x64DE7C，全程读完，关键锚点）：
+    循环一 0x64DAB0（[0xA83DF8] 计数 → [0xA83DEC] 数组）：mov esi=0
+    → 逐项：mov edi,[eax+0x9C]（★+0x9C 字段 A）→ mov ebx,[ecx+4]
+    （★字段 B）→ mov edx,[ecx+8]（★字段 C）→ lea ecx,[eax+0x388]
+    → call 0x4C93D0（★取数）→ mov ebp,[eax] → shr ebp,7 → inc →
+    shr 1 → and 0xFF（★★/256 ×2 再 0xFF 钳制）
+    ★0x66666667 ÷10 双路 0x64DAFE：mov eax,0x66666667 → imul ebx →
+    sar edx,2 → shr 符号 → add → shl edx,0x10（★★×65536 打包）→
+    mov eax,0x66666667 → imul edi → 同款 ÷10 → add edx,ebp → 符号
+    修正 → [0xAC51FC] 累加（lea [eax+edx*2]——★÷3 修正—accumulate）
+    循环二 0x64DB57（[0x8B4118] → [0x8B410C]——★同款两字段分组）
+    循环三 0x64DC19（[0xA8EB50] → [0xA8EB44]——★★batch 1459
+    0x684C30 对象数组同区）
+    循环四 0x64DCB3（[0xA80238] → [0xA8022C] 玩家表）：mov bl,
+    byte[ecx+0x241]（★玩家 +0x241 字节）→ 累加
+    循环五 0x64DCE4（[0x8A0370] 结构数组 0x18 步进 → 0x8A03E8）：
+    虚表槽 0x2C → cmp 4 → je → 虚表槽 0x10 → cmp -2 → je 跳过 →
+    同款 +0x9C 三字段累加（★建筑/单位列表）
+    循环六 0x64DD98（[0x87F788] → [0x87F77C]——★同款）
+    ★★RNG 收尾 0x64DE33：mov edx,[0xA8B230] → lea ecx,[edx+0x218]
+    → call 0x65C780（★★★Randomizer::Random——RNG 消耗点！QWEN.md
+    RNG 里程碑：0xA8B230+0x218 = SessionClass 内嵌 Randomizer）→
+    [0xAC51FC] += Random()（lea ÷3 修正）→ mov ecx,[0xA8ED84] →
+    and 0x800000FF（★低 8 位带符号模 256）→ call 0x650A90（★收尾）
+    → ret
+语义：**全局统计累加器（推断名——973B「六表扫描 ×2 系数累加 +
+RNG 扰动 + 低 8 位模收尾」）**——① 六组全局表扫描（[0xA83DEC]/
+[0x8B410C]/[0xA8EB44]/[0xA8022C] 玩家 +0x241/[0x8A0370] 结构数组/
+[0x87F77C]——对象/建筑/单位列表族）；② 每组 +0x9C 三字段（+0x9C/
++4/+8——批次计数器推断）× 0x66666667÷10 魔数双路 + /256 钳制 →
+×65536 打包累加 [0xAC51FC]；③ ★★RNG 扰动：0x65C780
+Randomizer::Random（0xA8B230+0x218 SessionClass 内嵌随机器——消耗
+点）累加；④ [0xA8ED84] 低 8 位模 256 → 0x650A90 收尾。
+★怪癖：①★★六表统一累加模板（同款 +0x9C 三字段/÷10 魔数/打包
+——逐表内联展开）；②0x66666667÷10 双路（imul+sar2+符号修正——
+÷10 魔数乘法惯用）；③/256 钳制（shr 7+1+shr 1+and 0xFF——量纲/
+2⁸ 换算）；④×65536 打包（shl 0x10——高半字权重）；⑤RNG 收尾
+（0x65C780 消耗——随机扰动统计值）；⑥÷3 修正累加（lea [eax+edx*2]
+= *3——每轮三字段和）；⑦低 8 位模（and 0x800000FF + 符号修正）。
+⚠️ partial：六表宿主身份（对象/建筑/单位列表推断）、+0x9C/+4/+8
+字段语义（批次计数推断）、[0xAC51FC] 统计全局语义、+0x241 玩家字
+节、虚表槽 0x2C/0x10 方法、0x650A90 收尾身份、2 unique caller。
+
+================================================================================
+跨批次连接（本批三连 = 配置装载 + 超大加载器 + 统计累加）
+================================================================================
+- **★★0x65C780（Randomizer::Random——QWEN.md RNG 里程碑）**：
+  0x64DAB0 尾部消耗点（0xA8B230+0x218 SessionClass 内嵌随机器——
+  RNG 总账延续）。
+- **batch 1459（0x684C30 游戏主循环更新器）**：0x64DAB0 循环三
+  [0xA8EB50]/[0xA8EB44] 对象数组同区（对象表族交叉）。
+- **batch 057/001（0x7C8EF4/0x4068E0）**：0x6516F0/0x64DEA0 printf/
+  日志现场。
+- **batch 075（0x473C50 CCFileClass::Exists）**：0x6516F0 串读取族
+  相邻。
+- 新候选：0x7CA845/0x7CA7D8（串族）、0x74FDC0/0x74FAE0（取数）、
+  0x777AC0/0x777B60（宽串拷贝）、0x5BC450/0x5BCC90/0x5BCC40（构造
+  链）、0x4C93D0（取数）、0x650A90（收尾）、[0xAC51FC] 统计全局、
+  [0x8A0370] 结构数组族。
