@@ -1,0 +1,188 @@
+frontier batch 1474 — 0x64D9E0 去重登记器 / 0x64AD10 槽位登记器 / 0x64A630 施放分派器（2026-10-23）
+
+口径：承接 batch 1473 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x64D9E0（205B，callees=1 deps=2550——
+**去重登记器**，推断名）、0x64AD10（285B，callees=8 deps=2551——
+**槽位登记器**，推断名）、0x64A630（381B，callees=10 deps=2550——
+**施放分派器**，推断名）。
+取证手段：disasm.py 双参直反汇编三路全程读完（0x64D9E0 0xCD 尾 0x64DAAC
+ret / 0x64AD10 0x11D 尾 0x64AE2C ret / 0x64A630 0x17D 尾 0x64A7AC ret——
+三文件 67/93/133 行全读）+ TSV 查重（三候选全部未登记）+ callee 登记核验
+（grep TSV，见下）。
+
+callee 登记核验结果（grep frontier_status.tsv）：
+* 已登记：0x473AE0 CCFileClass::WriteBytes（batch 1267）、0x540FC0 线性
+  扫表返回命中项+0x68（batch 324）、0x7CA564 vsprintfW 薄封装（batch
+  054/938）、0x775B10 全局 getter（batch 078）、0x5E2820 控件文本组装
+  （batch 141）、0x5F0180 未命中（见新候选）、0x735120 窄→宽字符转换
+  （batch 071）、0x5D3BA0 MessageListClass::PrintMessage（batch 100——
+  7 参 YRpp 实锤，[0xA8BC60] Instance）、0x5D3FC0 未命中（新候选）、
+  0x750920 句柄→对象查表（batch 068）、0x7CA405 wcslen（batch 045/
+  942）、0x752B70 音乐命令分发器（batch 1418）、0x7C5F00 _ftol（batch
+  001）、0x7CA489 wcscpy（batch 001）、0x4F42F0 RedrawSidebar（batch
+  067）、0x734E60 DebugLog（batch 001）、0x7E27F8（batch 常见常量）、
+  0x7E14A8/0x7E14A4（IAT——SendMessageA 族）。
+* 未登记（新候选）：0x5F0180（0x64A630 状态方法调用）、0x5D3FC0
+  （0x64A630 消息打印二号）、[0xA8BB40]/[0xA8BB60] 槽位表全局族、
+  [0x8B41F8] 系表（0x64D9E0 登记表）。
+
+================================================================================
+0x64D9E0 —— 去重登记器（205B 全程读完）
+================================================================================
+签名：thiscall 无栈参 ret（0x64D9E0-0x64DAAC；[0xA8ED84]/[0xA8B238]
+门控）。
+机器码结构（0x64D9E0-0x64DAAC，全程读完，关键锚点）：
+    门控 0x64D9E1：mov edx,[0xA8ED84]（★帧戳）→ test → jne
+    0x64D9FA → mov eax,[0xA8B238] → test → jne 0x64DAA9（★★帧戳
+    或 GameMode 非 0 才继续——双门控）
+    表扫描一 0x64D9FA（[0x8B41F8] 计数 → [0x8B41FC] 表）：mov
+    eax,[0x8B41F8] → xor edi → mov bl,1 → jle 0x64DA3E → 循环
+    （ecx=[0x8B41FC]+esi）：and eax,0x3FFF（★模 0x4000）→ lea ×9
+    → lea ×4 → lea ×2 → cmp [eax+eax*2+0x8B4207],edx（★★帧戳表
+    项比较）→ jne 0x64DA35 → test byte[eax+eax*2+0x8B4205],bl →
+    jne 0x64DA35 → inc edi（★★帧戳匹配且标志空 → 计数++）→
+    0x64DA35: inc ecx → dec esi → jne 循环 → [esp+0x10]=edi（★已
+    登记数）
+    写记录 0x64DA3E：lea eax,[esp+0xC] → push 4 → push eax → mov
+    ecx,0xA8D58C → call 0x473AE0（★★batch 1267 CCFileClass::
+    WriteBytes——写入 [esp+0xC] 4 字节）
+    表扫描二 0x64DA4F（第二遍去重登记）：mov eax,[0x8B41F8] → jle
+    0x64DAA9 → 循环：lea eax,[ecx+esi] → and 0x3FFF → 表项同款定
+    位 → cmp [eax+eax*2+0x8B4207],ecx（★帧戳）→ jne 跳过 → test
+    byte[+0x8B4205],bl → jne 跳过 → lea edx,[eax+eax*2+0x8B4204]
+    → push 0x6F → push edx → mov ecx,0xA8D58C → call 0x473AE0（★
+    ★再次 WriteBytes——去重写入 +0x6F）→ dec [esp+8] → 循环 → ret
+语义：**去重登记器（推断名——205B「帧戳表扫描 + WriteBytes 记录 +
+去重写入」）**——① [0xA8ED84] 帧戳或 [0xA8B238] GameMode 双门控；
+② [0x8B41F8] 计数遍历 [0x8B41FC] 表（+0x3FFF 模索引、+0x8B4205/
++0x8B4207 表项字段）：帧戳匹配且标志空 → 计数；③ 0x473AE0
+WriteBytes 写 4 字节（[0xA8D58C] 目标）；④ 第二遍去重登记：命中
+帧戳 → WriteBytes +0x6F 再写。
+★怪癖：①★★帧戳去重（表项帧戳匹配 + 标志空双条件——同帧不重复
+登记）；②+0x3FFF 模索引（表项索引 = [0x8B41FC]+esi 与 0x3FFF——
+表大小 0x4000 推断）；③lea ×9×4×2 三显式乘（表项定位——编译器
+组合）；④WriteBytes ×2（首写计数 + 命中再写 0x6F）；⑤[0xA8D58C]
+目标全局（登记文件/流推断）。
+⚠️ partial：表宿主（[0x8B41F8] 系——登记表推断）、+0x8B4204/
++0x8B4205/+0x8B4207 表项字段、[0xA8D58C] 目标身份、帧戳语义、2
+unique caller。
+
+================================================================================
+0x64AD10 —— 槽位登记器（285B 全程读完）
+================================================================================
+签名：thiscall + 2 栈参 ret（ecx=this/登记值、edx=esi 槽号；
+0x64AD10-0x64AE2C）。
+机器码结构（0x64AD10-0x64AE2C，全程读完，关键锚点）：
+    槽表扫描 0x64AD18（[0xA8BB40] 计数 → [0xA8BB60] 槽表）：mov
+    edi,[esi*4+0xA8BB40]（★槽计数）→ jle 0x64AD41 → shl edx,5 →
+    add edx,0xA8BB60（★32B 槽步进？不——+0x20×4=0x80 项）→ 循环：
+    cmp [edx],ecx → je 0x64AE23（★命中跳过）→ inc edi → add
+    edx,4 → jl 循环
+    追加 0x64AD41：lea eax,[eax+esi*8] → mov [eax*4+0xA8BB60],ecx
+    （★写槽）→ [esi*4+0xA8BB40]++（★计数++）
+    联机门控 0x64AD5A：mov eax,[0xA8B238] → cmp 3 → je 0x64AD6D →
+    cmp 4 → jne 0x64AE23（★★GameMode 3/4 才继续——联机门控）
+    玩家链 0x64AD6D：push ecx → mov ecx,0xA8E9C0 → call 0x540FC0
+    （★batch 324 线性扫表返回命中项+0x68——[0xA8E9C0] 会话查玩家）
+    → 空 → mov ecx,[0xA8DA78] → mov edi,[ecx]（★首玩家）→ push
+    esi → call 0x540FC0 → push → push edi → push 0x837A4C → call
+    0x4068E0（★日志）→ push esi → call 0x540FC0 → push eax → push
+    edi → push 0xD9D → push 0x8374A0 → call 0x734E60（★★batch 001
+    DebugLog——file 行 0xD9D）→ 0x7CA564 vsprintfW → 0x775B10 全局
+    getter → push 0x651 → call [0x7E14A8]（★IAT——句柄取）→
+    0x5E2820（★batch 141 控件文本组装）→ [0x7E14A4]（★SendMessageA）
+    ×3（0x18B/0x182/0x197 消息号）→ ret
+语义：**槽位登记器（推断名——285B「槽表去重登记 + 联机玩家链 +
+SendMessage 刷新」）**——① [0xA8BB40] 槽计数遍历 [0xA8BB60] 槽表
+（命中跳过/未命中追加 + 计数++）；② [0xA8B238]==3/4 联机门控；
+③ 0x540FC0 会话查玩家（[0xA8E9C0]）+ 空回退首玩家 [0xA8DA78]；
+④ DebugLog 日志（0x8374A0 file 行 0xD9D）+ vsprintfW 格式化；
+⑤ 0x775B10 getter + [0x7E14A8] IAT 取句柄 → 0x5E2820 控件文本组
+装 → [0x7E14A4] SendMessageA ×3（0x18B/0x182/0x197——UI 消息）。
+★怪癖：①★★槽表去重（[0xA8BB60] 线性扫 + 命中跳过——同一值不重
+复登记）；②32B 槽步进（shl edx,5——槽块大小 0x20 推断）；③联机
+门控（GameMode 3/4——仅联机路径刷新 UI）；④双玩家取（0x540FC0
+会话查 + [0xA8DA78] 首玩家回退）；⑤SendMessageA ×3（0x18B/0x182/
+0x197——控件刷新三连）。
+⚠️ partial：槽表宿主（[0xA8BB40]/[0xA8BB60]——UI 槽表推断）、
+0x18B/0x182/0x197 消息号语义、0x837A4C/0x8374A0 串、[0x7E14A8] 句
+柄语义、2 unique caller。
+
+================================================================================
+0x64A630 —— 施放分派器（381B 全程读完）
+================================================================================
+签名：thiscall + 1 栈参 ret 4（ecx=this 存 esi、edx 推断——本函数
+返回 int；0x64A630-0x64A7AC）。
+机器码结构（0x64A630-0x64A7AC，全程读完，关键锚点）：
+    类型分派一 0x64A630：mov eax,[esi]（★类型值）→ test edx →
+    je 0x64A641 → cmp eax,0x66 → jne 0x64A663 → jmp 0x64A650（★
+    edx 非空路径）→ 0x64A641: cmp eax,0x66 → je 0x64A650 → cmp
+    0x69 → je → cmp 0x6A → jne 0x64A663（★0x66/0x69/0x6A 分支）
+    分支 0x64A650：movsx ecx,byte[esi+0x1D] → xor edx → call
+    0x5F0180（★未登记——状态方法调用）→ mov eax,5 → ret（★返 5）
+    类型 0x68 0x64A663：lea ebx,[esi+4] → call 0x735120（★batch
+    071 窄→宽转换——名字）→ ebp=宽串 → mov eax,[0x8871E0] → fld
+    qword[eax+0x14C0]（★全局浮点字段）→ fmul qword[0x7E27F8] →
+    call 0x7C5F00（★batch 001 _ftol）→ push eax → mov cl,byte[esi
+    +0x18] → push [esi+0x19]（★名字）→ push ecx → push ebp →
+    mov ecx,0xA8BC60（★MessageListClass Instance）→ call 0x5D3FC0
+    （★未登记——消息打印二号）→ test → jne 0x64A703 → 重试路径：
+    call 0x735120 → fld/fmul → _ftol → push 0x4046 → push → push
+    → push [esi+0x19] → push → mov ecx,0xA8BC60 → call 0x5D3BA0
+    （★★batch 100 MessageListClass::PrintMessage——7 参实锤！）→
+    mov edx,0x2000 → push 0 → push 0x3F800000 → mov ecx,[0x8871E0]
+    +0x6AC → call 0x750920（★batch 068 句柄→对象查表）→
+    0x64A703: push [esi+0x19] → call 0x7CA405（★batch 045/942
+    wcslen）→ jne → push → push 0xA8D112 → call 0x7CA489（★
+    wcscpy——名字拷入全局）→ push 2 → mov ecx,0x87F7E8 → call
+    0x4F42F0（★batch 067 RedrawSidebar）→ mov eax,4 → ret（★返 4）
+    类型 0x78 0x64A734：mov al,[0xA8D110] → test → [0xA8B238] →
+    cmp 3 → je 0x64A75B → [0xA8D111] → test → je 0x64A72C → cmp 4
+    → jne → 0x64A75B: mov cl,byte[esi+0x19] → call 0x752B70（★
+    batch 1418 音乐命令分发器——[esi+0x19] 音乐命令）→ mov eax,4
+    → ret
+    类型范围 0x64A76B（0x64-0x6D / 0x6E-0x74 / 其他）：[0xA8B54C]
+    ==1 → 跳过 → mov al,byte[esi] → test → jbe 跳过 → cmp 0x2F →
+    jae 跳过（★0x2F 边界）→ mov edx,[0xA83D4C] → movsx eax,byte
+    [esi+2] → mov edi,[edx+0x30]（★玩家号）→ sub eax,edi → neg →
+    sbb → and 0xFA → add eax,6（★★玩家号差 → 6 或 -4？——范围收
+    敛）→ ret
+语义：**施放分派器（推断名——381B「类型值分派 + 消息打印 + 音乐/
+范围分支」）**——① [esi] 类型值分派：0x66/0x69/0x6A → 0x5F0180
+状态方法 → 返 5；0x68 → 名字 0x735120 窄→宽 → fld/fmul/_ftol →
+0x5D3FC0 消息二号 → 失败重试 0x5D3BA0 PrintMessage 7 参（[0xA8BC60]
+Instance，batch 100 实锤）→ 0x750920 查表 → wcslen/wcscpy 名字拷入
+[0xA8D112] → RedrawSidebar → 返 4；0x78 → 双门控（[0xA8D110]/
+[0xA8D111] + GameMode 3/4）→ 0x752B70 音乐命令 → 返 4；0x64-0x74
+范围 → [0xA8B54C]/[esi] 0x2F 边界 → 玩家号差收敛（and 0xFA + 6）
+→ 返。
+★怪癖：①★★类型值分派四路（0x66/0x69/0x6A 返 5、0x68 消息链返 4、
+0x78 音乐返 4、0x64-0x74 范围收敛）；②0x68 消息双路径（0x5D3FC0
+→ 失败 0x5D3BA0 7 参重试——两个打印函数）；③名字拷贝（0x735120
+窄→宽 → wcscpy [0xA8D112]）；④玩家号差收敛（sub/neg/sbb/and 0xFA/
+add 6——返回 6 或 -4 推断）；⑤音乐分发（0x752B70 [esi+0x19] 命
+令）；⑥[0x8871E0]+0x14C0 × [0x7E27F8] 浮点系数 → _ftol。
+⚠️ partial：0x5F0180/0x5D3FC0 精确身份（未登记）、[esi] 类型值枚举
+（0x64-0x78——建筑/单位状态推断）、[0x8871E0]+0x14C0/+0x6AC 字段、
+[0xA8D110]/[0xA8D111] 标志、玩家号差收敛语义、2 unique caller。
+
+================================================================================
+跨批次连接（本批三连 = 去重登记 + 槽位登记 + 施放分派）
+================================================================================
+- **batch 1267（0x473AE0 CCFileClass::WriteBytes）**：0x64D9E0 写记
+  录 ×2（[0xA8D58C] 目标——登记文件/流）。
+- **batch 324（0x540FC0 线性扫表）**：0x64AD10 会话查玩家现场
+  （[0xA8E9C0] + [0xA8DA78] 回退）。
+- **batch 100（0x5D3BA0 MessageListClass::PrintMessage）**：0x64A630
+  7 参现场（[0xA8BC60] Instance——YRpp 实锤）。
+- **batch 071/045/942（0x735120/0x7CA405 窄宽转换/宽串长度）**：
+  0x64A630 名字链。
+- **batch 068（0x750920 句柄→对象查表）**：0x64A630 查表现场。
+- **batch 1418（0x752B70 音乐命令分发器）**：0x64A630 0x78 分支现
+  场（batch 1418 文档点名 FUN_00752b70 调用点——跨批互证）。
+- **batch 141（0x5E2820 控件文本组装）+ 099（SendMessageA）**：
+  0x64AD10 UI 刷新链。
+- **batch 067（0x4F42F0 RedrawSidebar）**：0x64A630 收尾重绘。
+- 新候选：0x5F0180/0x5D3FC0（消息/状态方法）、[0xA8BB40]/[0xA8BB60]
+  槽位表族、[0x8B41F8] 系登记表族、[0xA8D58C] 登记目标、0x18B/0x182/
+  0x197 消息号。
