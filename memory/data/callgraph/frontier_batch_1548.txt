@@ -1,0 +1,137 @@
+frontier batch 1548 —— 0x510860 VectorClass 扩容器（Dynamic 布局） / 0x510780 VectorClass 带参构造器（8B/项） / 0x5106E0 VectorClass 带参构造器·孪生（2026-10-24）
+
+口径：承接 batch 1547 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x510860（134B，callees=2 deps=118——
+**VectorClass 扩容器**，推断名——Dynamic 布局 +0=数组/+4=计数/+8=容量）、
+0x510780（147B，callees=1 deps=75——**VectorClass 带参构造器**，推断名
+——虚表 0x7EA9A4 8B/项）、0x5106E0（147B，callees=1 deps=75——
+**VectorClass 带参构造器·孪生**，推断名——虚表 0x7EA984 清全 8B）。
+取证手段：disasm.py 三路直反汇编落盘读取（0x510860 0x90 覆盖尾 nop /
+0x510780 0xA0 覆盖尾 nop / 0x5106E0 0xA0 覆盖尾 nop——三文件 10+10+10
+行全读）+ TSV 查重（三候选全部未登记）+ callee 核验（0x7C8E17/0x7C8B3D
+均为 batch 001 已登记锚点——无需 grep，无新候选）。
+
+================================================================================
+0x510860 —— VectorClass 扩容器（134B 全程读完，Dynamic 布局）
+================================================================================
+签名：thiscall + 1 栈参 ret 4（ecx=this；[esp+0xC]=第 1 参增量 ebp；
+0x510860-0x5108E3 ret 4）。
+机器码结构（0x510860-0x5108E3，全程读完，关键锚点）：
+    段1 门控（0x510860-0x51086C）：mov ebp,[esp+0xC]（增量）→ test ebp →
+    jl 0x5108DD（★★增量 < 0 → 返 0）
+    段2 分配（0x51086E-0x510887）：mov ebx,[esi+8]（★+8 旧容量）→ add
+    ebx,ebp（新容量=旧+增量）→ lea eax,[ebx*8]（★★×8——8B/项!）→ push
+    → call 0x7C8E17（★new 8×新容量）→ mov edi,eax → test → je 0x5108DD
+    （★失败返 0）
+    段3 拷贝（0x510889-0x5108B6）：mov eax,[esi+4]（★+4 旧计数）→ dec
+    ebx → xor ecx → mov [esp+0x14],ebx（★存 新容量-1——但循环没用它!
+    冗余）→ test eax → jle 0x5108B8（旧计数 ≤ 0 → 跳过）→ 循环：mov
+    ebx,[esi]（★+0 旧数组）→ lea eax,[ecx*8] → mov edx,eax → add edx,
+    ebx → inc ecx → mov ebx,[edx] → mov [eax+edi],ebx → mov edx,[edx+4]
+    → mov [eax+edi+4],edx（★逐 8B 项拷贝）→ mov eax,[esi+4] → cmp ecx,
+    eax → jl 循环（★循环上限用旧计数——非 [esp+0x14]）
+    段4 释放+收尾（0x5108B8-0x5108E3）：mov eax,[esi] → push → call
+    0x7C8B3D（★★delete 旧数组）→ mov eax,[esi+8] → add esp,4 → add eax,
+    ebp（新容量）→ mov [esi],edi（★+0=新数组）→ mov [esi+8],eax（★+8=
+    新容量）→ mov [esi+0x10],0（★+0x10=0）→ mov al,1 → ret 4 →
+    0x5108DD：xor al → ret 4（★失败返 0）
+语义：**VectorClass 扩容器（推断名——134B「容量+增量 → new(8×) + 拷旧
++ delete 旧」）**——thiscall 1 栈参（增量）ret 4：① 增量 < 0 → 返 0；
+② 新容量=旧+增量 → new(8×新容量)（★8B/项）；③ 拷贝旧数组 min(旧计数,
+…) 个 8B 项（循环上限=旧计数）；④ delete 旧数组（0x7C8B3D）；⑤ +0=新
+数组、+8=新容量、+0x10=0；⑥ 成功 al=1 / 分配失败 al=0。
+★原版怪癖（照抄）：① ★★布局 +0=数组/+4=计数/+8=容量/+0x10（Dynamic
+VectorClass 家族——与 batch 1545/1546 的 VectorClass 版 +4=数组/+8=容量
+不同!+0=虚表无——无虚表操作纯数据）；② ★★×8 容量（8B/项——批量对/
+双字段项推断，非标准 4B VectorClass）；③ ★★增量 < 0 直接返 0（负数
+拒绝——不扩容不报错）；④ ★★[esp+0x14] 冗余存值（存了新容量-1 但循环
+用 [esi+4] 旧计数——★未用局部/编译冗余照抄）；⑤ ★★delete 旧数组前
+不移除旧指针（拷贝完成后直接删——元素 8B 整拷无残留）；⑥ ★★成功/失败
+两出口（al=1/al=0——bool 返回）。
+★跨批次连接：batch 001（0x7C8E17 new/0x7C8B3D delete 双锚点）+◆batch
+1545/1546（0x513610/0x513240 重分配器——同扩容语义家族，本批为 Dynamic
+布局变体：+0=数组 vs +4=数组）+◆batch 341（0x5AC900 DynamicVectorClass
+双虚表版——+0x10/+0x14 布局同域推断）。
+新候选：无（2 callee 全已登记）。
+⚠️ partial：宿主类（DynamicVectorClass 家族推断）、8B/项结构（批量对/
+双字段项推断）、[esp+0x14] 未用局部意图、+0x10 状态槽语义、2 unique
+caller 身份。
+
+================================================================================
+0x510780 —— VectorClass 带参构造器（147B 全程读完，虚表 0x7EA9A4）
+================================================================================
+签名：thiscall + 2 栈参 ret 8（ecx=this；[esp+0xC]=第 1 参容量 esi；
+[esp+0x14]=第 2 参外部缓冲 edx；0x510780-0x510810 ret 8）。
+机器码结构（0x510780-0x510810，全程读完，关键锚点）：
+    段1 字段初始化（0x510780-0x51079F）：mov esi,[esp+0xC]（容量）→ mov
+    edi,ecx → xor ebx → cmp esi,ebx → mov [edi+4],ebx（+4=NULL）→ mov
+    [edi+8],esi（+8=容量）→ mov byte[edi+0xC],1（+0xC=1）→ mov
+    byte[edi+0xD],bl（+0xD=0）→ mov [edi],0x7EA9A4（★★虚表 0x7EA9A4）→
+    je 0x51080B（★容量 0 → 收尾）
+    段2 外部缓冲路径（0x5107A2-0x5107C7）：mov edx,[esp+0x14]（外部缓冲）
+    → cmp edx,ebx → je 0x5107CA（★无外部 → 自分配）→ lea ecx,[esi-1] →
+    mov eax,edx → cmp ecx,ebx → jl 0x5107BF → 清循环：inc ecx → mov
+    [eax],ebx → mov byte[eax+4],bl（★★只清 dword + 1 字节——非 8B 整！）
+    → add eax,8 → dec ecx → jne → 0x5107BF：mov [edi+4],edx（★+4=外部
+    缓冲）→ mov eax,edi → ret 8（★IsAllocated 保持 0）
+    段3 自分配（0x5107CA-0x510810）：lea eax,[esi*8]（★8×容量）→ push →
+    call 0x7C8E17（★new 8×容量）→ cmp eax,ebx → je 0x510802（★失败 →
+    +4=0 +0xD=1）→ 清循环（同款 mov [ecx],ebx + mov byte[ecx+4],bl）→
+    0x510804：mov [edi+4],eax（★+4=新数组）→ mov byte[edi+0xD],1（★
+    IsAllocated=1）→ ret 8 → 0x510802：xor eax → 0x510804 汇合：mov
+    [edi+4],eax（★eax=0 也写）→ mov byte[edi+0xD],1（★★失败也置 1）→
+    0x51080B：mov eax,edi → ret 8
+语义：**VectorClass 带参构造器（推断名——147B「8B/项 + 清循环」）**——
+thiscall 2 栈参（容量/外部缓冲）ret 8：① +4=NULL、+8=容量、+0xC=1、
++0xD=0、虚表 0x7EA9A4；② 容量 0 → 收尾；③ 外部缓冲 → 逐项清
+（dword+byte）+ 复用 + IsAllocated 保持 0；④ 自分配 → new(8×容量) +
+逐项清 + IsAllocated=1（new 失败也置 1）。
+★原版怪癖（照抄）：① ★★虚表 0x7EA9A4（8B/项 双字段容器类——与 batch
+1545 0x7EAC28 族不同虚表区 0x7EA9xx）；② ★★清循环只清 dword + 1 字节
+（mov [eax],ebx + mov byte[eax+4],bl——★★单字节写，6-8 字节未清——项
+布局 {dword, byte, pad×3} 推断，或清宽写窄=潜在未初始化怪癖照抄）；
+③ ★★new 失败仍置 +0xD=1（eax=0 写回 +4=0 +0xD=1——失败态仍标记自有，
+异常但照抄）；④ ★★外部缓冲路径 IsAllocated 保持 0（不自拥有）；⑤ ★★
+容量 0 直接收尾（空容器合法态——不 new 不清循环）；⑥ ★★容量×8B 元素
+大小硬编码（lea eax,[esi*8]）。
+★跨批次连接：batch 001（0x7C8E17 new 锚点）+◆batch 1547（0x510920 构造
+器变体——0x7EAA5C 同 0x7EAAxx 区邻域，容器构造器家族）+◆batch 1545/1546
+（VectorClass 家族 +4=数组/+8=容量/+0xC/+0xD 布局同族）+◆◆0x5106E0
+（本批孪生——逐字节同构除虚表立即数+清宽）。
+新候选：无（callees=1 = 0x7C8E17 已登记）。
+⚠️ partial：宿主类（VectorClass 派生推断）、项结构 {dword+byte+pad}
+vs {dword+dword}（与孪生 0x5106E0 清宽差异推断）、0x7EA9A4 类归属、
+new 失败置 1 的实际触发路径、2 unique caller 身份。
+
+================================================================================
+0x5106E0 —— VectorClass 带参构造器·孪生（147B 全程读完，◆0x510780
+同模板，虚表 0x7EA984 清全 8B）
+================================================================================
+签名：thiscall + 2 栈参 ret 8（ecx=this；[esp+0xC]=容量 esi；[esp+0x14]=
+外部缓冲 edx；0x5106E0-0x510770 ret 8）。
+机器码结构（0x5106E0-0x510770，全程读完）：
+    ◆◆与 0x510780（本批孪生源）逐字节比对：除两处差异外全部相同——
+    ① 虚表立即数 0x7EA984（vs 0x510780 的 0x7EA9A4——相邻 0x20 字节同
+    虚表区）② 清循环第二写 mov [eax+4],ebx（vs 0x510780 的 mov
+    byte[eax+4],bl——★★dword 宽 vs 字节宽，本副本清全 8B）。其余段
+    全同（+4=NULL/+8=容量/+0xC=1/+0xD=0/容量 0 收尾/外部缓冲优先复用/
+    new(8×容量)+IsAllocated=1/失败也置 1/ret 8）。
+语义：**VectorClass 带参构造器·孪生（推断名——◆0x510780 同模板）**——
+thiscall 2 栈参（容量/外部缓冲）ret 8：① +4=NULL、+8=容量、+0xC=1、
++0xD=0、虚表 0x7EA984；② 容量 0 → 收尾；③ 外部缓冲 → 逐项清全 8B
+（dword+dword）+ 复用 + IsAllocated 保持 0；④ 自分配 → new(8×容量) +
+逐项清全 8B + IsAllocated=1（new 失败也置 1）。
+★原版怪癖（照抄）：① ◆◆逐字节孪生（与 0x510780 仅虚表+清宽差异——
+同模板两编译副本 Westwood twin 模式第 N 例）；② ★★虚表双副本 0x7EA984/
+0x7EA9A4（相邻 0x20 字节——同容器模板两实例各装各的虚表）；③ ★★清宽
+差异（dword+dword 全 8B vs dword+byte 5B——两项类型推断：{dword+dword}
+vs {dword+byte+pad}，同模板两实例项类型不同——推断来自不同调用方分化）;
+④ new 失败仍置 +0xD=1（同孪生源照抄）；⑤ 外部缓冲路径 IsAllocated 保持
+0；⑥ 容量 0 直接收尾；⑦ 容量×8B 元素大小硬编码。
+★跨批次连接：◆◆0x510780（本批孪生源——逐字节同构配对）+batch 001
+（0x7C8E17 new 锚点）+◆batch 1547（0x510920 构造器变体 0x7EAA5C 同区）+
+◆batch 1545/1546（VectorClass 家族布局同族）。
+新候选：无（callees=1 = 0x7C8E17 已登记）。
+⚠️ partial：宿主类（VectorClass 派生推断）、项结构确证（dword+dword
+vs dword+byte 推断）、0x7EA984 类归属、两孪生调用方分工、2 unique
+caller 身份。
