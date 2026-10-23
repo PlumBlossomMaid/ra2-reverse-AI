@@ -1,0 +1,121 @@
+frontier batch 1388 — 0x40E4A0 scalar deleting destructor / 0x408270 全局链表惰性释放处理器 / 0x408200 链表计数器遍历器（2026-10-23）
+
+口径：承接 batch 1387 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x40E4A0（30B，callees=2 deps=258）、
+0x408270（123B，callees=5 deps=400）、0x408200（48B，callees=2
+deps=400）。
+取证手段：disasm.py 双参直反汇编全程读完（0x40E4A0 0x40 尾 0x40E4BB /
+0x408270 0x80 尾 0x4082EA / 0x408200 0x50 尾 0x40822F，函数边界与
+functions.tsv 完全吻合）+ TSV 查重（三候选全部未登记）+ 跨批次对比
+（0x7C8B3D operator delete ↔ batch 既有 CRT 锚点；虚表析构 flag 惯用
+↔ batch 1380 0x4BA6B0 双虚表析构器同族）。
+
+================================================================================
+0x40E4A0 —— scalar deleting destructor（30B 全程读完）
+================================================================================
+签名：thiscall（ecx=this，mov esi）+ 1 栈参（[esp+8]=删除标志字节），
+返回 eax=this，ret 4（0x40E4A0-0x40E4BB，callees=2 deps=258）。
+机器码（0x40E4A0-0x40E4BB）：
+    入口：push esi; mov esi, ecx（this）
+    call 0x5256F0（★基类析构——对象清理）
+    test byte [esp+8], 1（★栈参标志位 0——delete 标志）
+    je 0x40E4B8（★未置位 → 跳过释放）
+    push esi; call 0x7C8B3D（★operator delete——batch 既有 CRT 锚点）
+    add esp, 4
+    0x40E4B8：mov eax, esi（★返 this）; pop esi; ret 4
+语义：**scalar deleting destructor**（0x40E4Ax 区——0x40E4xx 析构/对象
+域，callees=2 deps=258）：thiscall + 1 栈参（删除标志）：**0x5256F0
+基类析构** → **标志位 0 置位 → 0x7C8B3D operator delete** → 返回 this。
+★scalar deleting destructor（MSVC 惯用——析构 + 条件 delete +
+返 this，`vector deleting destructor` 的标量版）。2 unique caller
+（3 callsite）。
+★怪癖：①★**删除标志字节门控**（test byte [esp+8],1——MSVC
+`scalar deleting destructor` 标准约定：flags&1 决定是否释放本体）；
+②★**0x5256F0 基类析构**（先清理后条件释放）；③★**返 this**
+（mov eax,esi——析构后仍返 this，调用方 `(this->*vtable)(1)` 惯用
+链路）；④★后邻 0x40E4C0 是设虚表 0x7E1B04 的构造器（同一对象
+生命周期两端）。
+⚠️ partial：对象类型、0x5256F0 基类析构身份、虚表 0x7E1B04 对应类、
+2 unique caller 身份。
+
+================================================================================
+0x408270 —— 全局链表惰性释放处理器（123B 全程读完）
+================================================================================
+签名：无参（不读 ecx），ret 0（0x408270-0x4082EA，callees=5 deps=400）。
+机器码结构（0x408270-0x4082EA，全程读完，关键锚点）：
+    入口：mov eax, [0x87E81C]（★全局链表计数）; test eax
+    je 0x4082E9（★空链表 → 直接返）
+    mov ecx, 0x87E810（★链表宿主）; call 0x4073C0（★迭代器取首节点）
+    mov esi, eax; test esi; je 0x4082E9（★空 → 返）
+    push ebx; mov ebx, [0x7E11EC]（★IAT 槽 B）; push edi
+    mov edi, [0x7E11E8]（★IAT 槽 A——进出对）
+    0x408298（★遍历循环）：mov eax, [esi+0x80]（★节点引用计数）
+    test eax; jne 0x4082CD（★计数非 0 → 仅递增）
+    mov eax, [esi+0x14]（★待释成员指针）; test eax
+    je 0x4082CD（★空 → 仅递增）
+    push 0x87E7F8（★全局锁/临界区）; call edi（★IAT A——进入）
+    mov ecx, [esi+0x14]; call 0x402600（★释放成员 +0x14）
+    mov eax, [esi+0xC]; test al, 1
+    je 0x4082C6; and al, 0xFE; or al, 2
+    mov [esi+0xC], eax（★+0xC 标志：清位 0 置位 1）
+    0x4082C6：push 0x87E7F8; call ebx（★IAT B——退出）
+    0x4082CD：mov eax, [esi+0x80]; inc eax
+    mov [esi+0x80], eax（★计数 ++——已处理标记）
+    mov ecx, esi; call 0x4073E0（★迭代器取下一节点）
+    mov esi, eax; test esi; jne 0x408298（★循环）
+    pop ×3; ret
+语义：**全局链表惰性释放处理器**（0x40827x 区——0x4082xx 链表/资源域，
+callees=5 deps=400）：无参：**[0x87E810]/[0x87E81C] 全局链表遍历**
+（0x4073C0 取首 / 0x4073E0 取下一——迭代器对）：每节点 **[+0x80]
+计数==0 且 [+0x14] 待释非空** → **[0x87E7F8] 全局锁进出**（IAT 对
+[0x7E11E8]/[0x7E11EC]）→ **0x402600 释放 [+0x14]** → **[+0xC] 清位 0
+置位 1** → 计数 ++（处理标记）。★全局链表惰性释放处理器（引用计数
+门控 + 锁保护释放 + 计数防重 + 标志改写）。2 unique caller（3 callsite）。
+★怪癖：①★**引用计数门控**（[+0x80]==0 才释放——惰性回收语义）；
+②★**IAT 对进出**（[0x7E11E8]/[0x7E11EC] + [0x87E7F8]——临界区/
+锁惯用，成对包住释放段）；③★**0x402600 成员释放**（thiscall ecx=
+[esi+0x14]——成员级析构）；④★**计数 ++ 防重**（处理后 [esi+0x80] 非 0，
+下轮跳过——每节点只释放一次）；⑤★**[+0xC] 清位 0 置位 1**
+（and 0xFE + or 2——双位状态翻转）。
+⚠️ partial：[0x87E7F8] 锁身份、IAT 对 [0x7E11E8]/[0x7E11EC] 函数语义
+（Enter/LeaveCriticalSection 推测）、0x402600 身份、[+0x14]/[+0x80]/
+[+0xC] 字段语义、链表节点类型、2 unique caller 身份。
+
+================================================================================
+0x408200 —— 链表计数器遍历器（48B 全程读完）
+================================================================================
+签名：无参（不读 ecx），ret 0（0x408200-0x40822F，callees=2 deps=400
+——与 0x408270 同链表模块）。
+机器码（0x408200-0x40822F）：
+    入口：mov eax, [0x87E81C]（★全局链表计数——同 0x408270 锚点）
+    test eax; je 0x40822F（★空 → 返）
+    mov ecx, 0x87E810; call 0x4073C0（★迭代器取首节点）
+    test eax; je 0x40822F（★空 → 返）
+    0x408217（★循环）：mov ecx, [eax+0x88]（★节点 +0x88 字段）
+    inc ecx; mov [eax+0x88], ecx（★+0x88 ++）
+    mov ecx, eax; call 0x4073E0（★取下一节点）
+    test eax; jne 0x408217（★循环）
+    ret
+    0x408230（★后邻孪生——非本批候选）：同结构但 dec [eax+0x88]
+    （test ecx; jle 保护——递减变体）
+语义：**链表计数器遍历器**（0x40820x 区——0x4082xx 链表/计数域，
+callees=2 deps=400）：无参：**[0x87E810]/[0x87E81C] 全局链表遍历**
+（0x4073C0/0x4073E0 迭代器对）→ **逐节点 [+0x88] 字段 ++**。★链表
+计数器遍历器（全链表单字段递增——后邻 0x408230 是递减孪生）。
+2 unique caller（3 callsite）。
+★怪癖：①★**同链表模块**（[0x87E810]/[0x87E81C] + 0x4073C0/0x4073E0
+——与 0x408270 完全同锚点）；②★**单字段全遍历 ++**（[+0x88]——
+无门控无条件递增）；③★**后邻 0x408230 递减孪生**（dec + test
+jle 保护——增减对）；④★deps=400 与 0x408270 相同（同依赖簇）。
+⚠️ partial：+0x88 计数语义、链表节点类型、增减对调用方场景、
+2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 既有 CRT 锚点（0x7C8B3D operator delete）：0x40E4A0 使用——
+  分配器家族持续闭合。
+- batch 1380（0x4BA6B0 双虚表析构器）：0x40E4A0 是 MSVC 标准
+  scalar deleting destructor 惯用——析构家族再验证。
+- batch 1388 内部（[0x87E810]/[0x87E81C] 链表 + 0x4073C0/0x4073E0
+  迭代器对）：0x408270/0x408200 共用同链表模块——链表家族同批闭合。
