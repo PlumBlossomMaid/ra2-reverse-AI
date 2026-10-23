@@ -1,0 +1,156 @@
+frontier batch 1525 — 0x5835D0 走廊方向选择器 / 0x580B70 +0x44 区间判定器 / 0x580B20 +0x44 区间判定器·孪生（2026-10-24）
+
+口径：承接 batch 1524 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x5835D0（581B，callees=6 deps=9——**走
+廊方向选择器**，推断名）、0x580B70（72B，callees=0 deps=1879——**cell
++0x44 区间判定器**，推断名）、0x580B20（68B，callees=0 deps=1879——
+**cell +0x44 区间判定器·孪生**，推断名）。
+取证手段：disasm.py 双参直反汇编三路读取（0x5835D0 0x245 覆盖尾 0x583812
+ret 0xC / 0x580B70 0x48 覆盖尾 0x580BB7 ret / 0x580B20 0x44 覆盖尾 0x580B63
+ret——三文件 61+18+17 行全读）+ TSV 查重（三候选全部未登记）+ callee
+核验（0x5835D0 六 callee 全部已登记：0x481810 batch 073（GetNeighbourCell）、
+0x486750 batch 193（区间判定 [0xAA0E28]+0x10）、0x486770 batch 200（区间
+判定 [0xABAD1C]+0x10）、0x578460 batch 065（IsWithinUsableArea CellStruct
+版）、0x4CAC40 batch 244（MSVC6 sqrt——280 callers 家族）、0x7C5F00
+（_ftol 锚点库）；0x580B70/0x580B20 callees=0 无需核验——无新候选）。
+
+================================================================================
+0x5835D0 —— 走廊方向选择器（581B 全程读完）
+================================================================================
+签名：thiscall + 3 栈参 ret 0xC（ecx=this=MapClass 推断；[esp+8]=起点
+坐标结构指针（word[0]=X、word[2]=Y）；[esp+0x10]=输出坐标结构指针；
+[esp+0x14]=参考点结构指针推断；0x5835D0-0x583812）。
+机器码结构（0x5835D0-0x583812，全程读完，关键锚点）：
+    段1 起点查表：mov ecx,[esp+8] → movsx eax,word[ecx+2]（Y）→ movsx
+    edx,word[ecx]（X）→ shl eax,9 → add eax,edx（★★Y<<9+X——512 列宽）
+    → js 0x5835FD（★负越界）→ cmp eax,0x40000 → jge 0x5835FD（★上界）
+    → mov edx,[0x87F924] → mov eax,[edx+eax*4]（★cell 数组查表）→ test
+    eax → je 0x5835FD（★空回落）→ mov ecx,eax → jmp 0x583609 → 越界/
+    空：mov eax,[ecx]（★坐标 dword）→ mov ecx,0xABDC50（★★哑元 cell）
+    → mov [0xABDC74],eax（★★存坐标——batch 065/791 同款回落）
+    段2 快路径：mov eax,[ecx+0x140]（★cell +0x140 标志）→ lea edx,[ecx
+    +0x140] → test ah,1 → jne 0x583629（★★ah bit0 置位 → 慢路径）→
+    快路径：mov eax,[esp+0x10]（★输出）→ mov ecx,[ecx+0x24]（★cell 坐
+    标）→ mov [eax],ecx（★输出=cell 坐标）→ ret 0xC（★★标志位 0 直接
+    返回——快路径）
+    段3 慢路径方向计算：and eax,0x800 → neg → sbb eax,eax → and al,0xFE
+    → add eax,4（★★方向数 = (flag&0x800)?4:6?——neg/sbb 惯用法 → 基
+    4 偏移：al=0xFE 掩码 + 4 → 4 或 6）→ mov [esp+0x14],eax → lea esi,
+    [eax-4] → and esi,7（★★方向表索引 &7——batch 073 方向表）→ mov
+    ebx,edx（★+0x140 指针）→ mov esi,ecx（this cell）→ mov ecx,[0xABD480]
+    （★★全局参考点——推断目标/终点坐标）
+    段4 八方向扩散循环（双向）：mov ecx,[ebp]（[ebp]=+0x140 标志 dword）
+    → test ch,1 → je 0x5836AE（★★标志位 ch bit0=0 → 跳过方向）→ push
+    方向 → mov ecx,edi → call 0x481810（★★batch 073 GetNeighbourCell）
+    → mov edi,eax（★邻居 cell）→ mov eax,[edi+0x140] → test ah,1 → lea
+    ebp,[edi+0x140] → jne 0x5836AE（★★邻居标志置位 → 跳过）→ mov ecx,
+    edi → call 0x486750（★★batch 193 区间判定）→ test al → jne 0x58369E
+    → mov ecx,edi → call 0x486770（★★batch 200 区间判定）→ test al →
+    je 0x5836AE（★★两个区间判定都失败 → 跳过）→ cmp [edi+0xEC],3 → je
+    0x5836AE（★+0xEC==3 跳过）→ mov edx,[edi+0x24]（★邻居坐标）→ mov
+    [esp+0x24],edx（★候选1=邻居坐标）
+    段5 第二方向同款（ebx/esi 对称块）：mov eax,[ebx] → test ah,1 → je
+    0x583705 → mov eax,[esp+0x18]（★方向2）→ mov ecx,esi → call 0x481810
+    → mov esi,eax → 同款检查链（0x486750/0x486770/+0xEC==3）→ mov
+    [esp+0x10],ecx（★候选2）→ 循环回 0x583661（★扩散继续）
+    段6 合法性检查 ×2：mov ebx,[0xABD480]（★参考点）→ lea edx,[esp+0x24]
+    → push 1 → push edx → mov ecx,0x87F7E8 → call 0x578460（★★batch 065
+    IsWithinUsableArea checkLevel=1——候选1）→ test al → je 0x583738 →
+    mov [esp+0x14],ebx（★候选1 采纳暂存）→ lea eax,[esp+0x10] → push 1
+    → push eax → call 0x578460（★候选2）→ test al → je 0x583805（★★两
+    方向都失败 → 输出保持 [esp+0x20]）
+    段7 参考点比较：cmp bx,word[0xABD480] → jne 0x58376C（★候选1 的 X
+    vs 参考点 X）→ mov cx,word[esp+0x16] → cmp cx,word[0xABD482] → je
+    0x583801（★★候选1 == 全局参考点 → 直接采用候选1）
+    段8 距离比较：mov esi,[esp+0x28]（★参考点指针）→ 候选1 坐标差：
+    mov cx,word[esp+0x12] → sub cx,word[esi+2]（★Y 差）→ mov ax,word[esp
+    +0x10] → sub ax,word[esi]（★X 差）→ fild/fild → fmul 交叉 → faddp
+    （★★距离平方）→ fstp → call 0x4CAC40（★★batch 244 MSVC6 sqrt）→
+    call 0x7C5F00（_ftol）→ mov edi,eax（★距离1）→ 候选2 同款 → call
+    0x4CAC40 → call 0x7C5F00 → cmp di,ax → jge 0x583805（★★距离1 >=
+    距离2 → 采用候选2）→ 0x583801: mov ebx,[esp+0x10]（★候选2 坐标）→
+    0x583805: mov eax,[esp+0x20]（★输出指针）→ mov [eax],ebx（★★输出=
+    选定方向坐标）→ ret 0xC
+语义：**走廊方向选择器（推断名——581B「起点标志分派 + 双向扩散 + 合
+法性检查 + 最近选择」）**——thiscall 3 栈参 ret 0xC（起点坐标/输出/
+参考点）：① 起点 Y<<9+X 查表（越界/空回落哑元 0xABDC50）；② cell
++0x140 标志 ah bit0=0 → 快路径直接返回 cell 坐标；③ 标志置位 → 方向
+计算（flag&0x800 → 基 4 偏移 4/6）+ 双向八方向扩散（0x481810 取邻 +
+0x486750/0x486770 区间判定 + +0xEC!=3 + 邻居标志检查）；④ 两个方向候
+选分别过 0x578460 IsWithinUsableArea（checkLevel=1）；⑤ 候选与全局
+[0xABD480] 参考点相等 → 直接采用；⑥ 否则浮点距离（0x4CAC40 sqrt +
+_ftol）比较选近者 → 输出 dword 写回。
+★★怪癖：①★★+0x140 标志双检（ah bit0 快路径短路 + 扩散时 ch bit0 跳
+过——同一 dword 的 bit8 与 bit24 位测试）；②★★方向数 neg/sbb 惯用法
+（(flag&0x800)?6:4——仅两方向而非全八方向）；③★★双向对称块（ebx/
+esi 各持 +0x140 指针——编译器循环展开成两块，非统一循环）；④★★候
+选==全局参考点直接采用（相等短路，跳过距离比较）；⑤★★浮点距离平方
++ MSVC6 sqrt + _ftol（0x4CAC40 batch 244——280 callers 家族新消费点）；
+⑥★★两个区间判定都失败才跳过（0x486750 或 0x486770 任一命中即可）；
+⑦★★两方向都非法 → 输出保持原值（[esp+0x20] 未写——静默失败）；
+⑧★[0xABD480] 全局参考点（word 对比较）。
+⚠️ partial：宿主类（MapClass 方法推断——0x87F7E8 + 0x578460 同族）、
+[0xABD480] 全局语义、+0x140 标志 bit 语义、方向 4/6 几何含义（走廊/
+路径）、0x486750/0x486770 区间业务含义、2 unique caller。
+
+================================================================================
+0x580B70 —— cell +0x44 区间判定器（72B 全程读完）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=坐标结构指针；0x580B70-0x580BB7）。
+机器码结构（0x580B70-0x580BB7，全程读完，关键锚点）：
+    段1 查表：movsx eax,word[ecx+2]（Y）→ movsx edx,word[ecx]（X）→
+    shl eax,9 → add eax,edx（Y<<9+X）→ js 0x580B92（★负越界）→ cmp
+    0x40000 → jge 0x580B92（★上界）→ mov edx,[0x87F924] → mov eax,[edx
+    +eax*4] → test eax → jne 0x580B9E → 越界/空：mov eax,[ecx] → mov
+    [0xABDC74],eax → mov eax,0xABDC50（★★哑元回落——batch 065/791 同款）
+    段2 区间判定：mov eax,[eax+0x44]（★★cell +0x44 字段）→ cmp eax,
+    0xCD（205）→ jl 0x580BB5（★<下界 → 0）→ cmp eax,0xE8（232）→ jg
+    0x580BB5（★>上界 → 0）→ mov eax,1 → ret → 0x580BB5: xor eax → ret
+语义：**cell +0x44 区间判定器（推断名——72B「坐标查表 + +0x44 ∈
+[0xCD,0xE8]」）**——thiscall 坐标结构入参：Y<<9+X → [0x87F924] cell 查
+表（越界/空回落哑元 0xABDC50 + [0xABDC74] 存坐标）→ cell +0x44 ∈
+[205,232] → 返 1，否则 0。
+★★怪癖：①★★闭区间 [0xCD=205, 0xE8=232]（jl/jg 双界——与 batch 193/
+200 的 [下界,+0x10) 半开区间不同，这是闭区间）；②★★+0x44 字段（cell
+高度/类型推断——与 batch 1525 0x5835D0 的 +0x140 标志不同区）；③★★
+哑元回落恒走区间判定（0xABDC50+0x44 也参与比较）；④★Y<<9+X 512 列宽
+（batch 791/229/235 同款）。
+⚠️ partial：宿主类（0x580Bxx 区推断）、cell +0x44 字段语义（高度/类
+型/LAT 推断）、区间 [0xCD,0xE8] 业务含义、2 unique caller。
+
+================================================================================
+0x580B20 —— cell +0x44 区间判定器·孪生（68B 全程读完）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=坐标结构指针；0x580B20-0x580B63）。
+机器码结构（0x580B20-0x580B63，全程读完，关键锚点）：
+    段1 查表：同构（Y<<9+X → [0x87F924] → 越界/空回落哑元 0xABDC50 +
+    [0xABDC74] 存坐标）
+    段2 区间判定：mov eax,[eax+0x44] → cmp eax,0x4A（74）→ jl 0x580B61
+    → cmp eax,0x65（101）→ jg 0x580B61 → mov eax,1 → ret → 0x580B61:
+    xor eax → ret
+语义：**cell +0x44 区间判定器·孪生（推断名——68B「坐标查表 + +0x44 ∈
+[0x4A,0x65]」）**——与 0x580B70 完全同构，仅区间不同：cell +0x44 ∈
+[74,101] → 返 1，否则 0。
+★★怪癖：①★★闭区间 [0x4A=74, 0x65=101]（与孪生 0x580B70 的 [0xCD,
+0xE8] 不重叠——两区间分治 cell +0x44 不同取值带）；②★★逐条同构（除
+区间常量外指令完全相同——编译器对模板的两次展开，batch 193 同构对
+同款模式）；③★★哑元回落恒走判定；④★deps=1879（两函数同依赖——被
+大宿主调用）。
+⚠️ partial：宿主类（0x580Bxx 区推断）、cell +0x44 字段语义、区间
+[0x4A,0x65] 业务含义、2 unique caller。
+
+================================================================================
+跨批次连接（6 callee 全部已登记 + 区间判定族闭合）
+================================================================================
+- **batch 244（0x4CAC40 MSVC6 sqrt——280 callers）**：0x5835D0 段8 距离
+  比较的平方根——家族新消费点。
+- **batch 193/200（0x486750/0x486770 区间判定同构对）**：0x5835D0 段4/
+  段5 扩散的谓词检查——「任一命中即可」（非两者都需）。
+- **batch 065（0x578460 IsWithinUsableArea CellStruct 版）**：0x5835D0
+  段6 双向合法性检查（checkLevel=1）。
+- **batch 073（0x481810 GetNeighbourCell）**：0x5835D0 段4/段5 取邻。
+- **batch 791/229/235（Y<<9 512 列宽 + 0x40000 + 哑元回落）**：三函数查
+  表段全命中——[0x87F924]/0xABDC50/[0xABDC74] 格网三件套。
+- **batch 193 同构对模式（编译器模板两次展开）**：0x580B70/0x580B20 逐
+  条同构仅区间常量不同——同款展开模式。
+- 新候选：无（三函数 callees 全部已登记/为零）。
