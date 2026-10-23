@@ -1,0 +1,161 @@
+frontier batch 1397 — 0x7ADB00 Vector 插入 / 0x7ACF70 哈希表清空重建 / 0x7ACB90 数组元素拷贝 getter（2026-10-23）
+
+口径：承接 batch 1396 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x7ADB00（346B，callees=3 deps=2842——
+**Vector 插入函数，memmove 消费**）、0x7ACF70（276B，callees=3 deps=2852
+——**哈希表清空+紧缩重建，batch 1396 的 0x7AEC00 同构配对**）、
+0x7ACB90（50B，callees=0 deps=2658——**数组元素拷贝 getter，108B/项**）。
+取证手段：disasm.py 双参直反汇编全程读完（0x7ADB00 0x160 尾 0x7ADC59 /
+0x7ACF70 0x120 尾 0x7ACF8F / 0x7ACB90 0x40 尾 0x7ACBBF，函数边界与
+functions.tsv 完全吻合）+ TSV 查重（三候选全部未登记）+ 跨批次锚点
+（0x7CA090=memmove batch 031、0x7B46F0=窄串析构 batch 059、0x7C8E17/
+0x7C8B3D= new/delete batch 001、0x7AEC00 哈希紧缩重建 batch 1396）。
+
+================================================================================
+0x7ADB00 —— Vector 插入函数（346B 全程读完）
+================================================================================
+签名：thiscall（ecx=this=Vector 容器）+ 2 栈参 ret 8（参数 1=
+[esp+8]=索引位置、参数 2=指向待插元素值指针；0x7ADB00-0x7ADC59）。
+机器码结构（0x7ADB00-0x7ADC59，全程读完，关键锚点）：
+    入口：push ecx（栈槽）/push ebx → mov ebx,ecx（this）→ push esi
+    → mov esi,[esp+0x14]（★参数 1=索引）→ mov ecx,[ebx]（★+0=计数）
+    → cmp esi,ecx → jle 0x7ADB15 → mov [esp+0x14],ecx → mov esi,ecx
+    （★★索引 > 计数 → 截断到计数——尾部追加模式）
+    → mov eax,[ebx+4]（★+4=容量）→ push ebp/edi → cmp esi,eax →
+    jl 0x7ADB96（★索引<容量跳过扩容 A）→ cmp ecx,eax → jl 0x7ADB96
+    （★计数<容量跳过扩容 A）
+    扩容 A：lea eax,[ecx+ecx]（★新容量=计数×2）→ cmp eax,0xA → jge →
+    mov eax,0xA（★下限 10）→ lea esi,[eax*4]（★字节=容量×4）→
+    push esi/call 0x7C8E17（★★operator_new batch 001）→ rep stosd/
+    stosb 清零（惯用）→ mov esi,[ebx+8]（★旧缓冲）→ test → je 跳过
+    → 拷旧（rep movsd/movsb，按旧计数×4）→ push [ebx+8]/call
+    0x7C8B3D（★delete 旧缓冲 batch 001）→ mov [ebx+8],ebp（★新缓冲）
+    → mov [ebx+4],edx（★新容量）
+    扩容 B（0x7ADB96）：mov eax,[ebx]（计数）→ mov ecx,[ebx+4]（容量）
+    → cmp eax,ecx → jl 0x7ADC12（★计数<容量跳过扩容 B——A/B 双段
+    独立判定）→ 同款扩容（lea [eax+eax] 上限 0xA → new → 清零 →
+    拷旧 → delete → 更新）
+    插入点（0x7ADC12）：mov ecx,[ebx]（计数）→ cmp esi,ecx → jge
+    0x7ADC3B（★索引>=计数 跳过移位——纯追加）→ mov eax,[ebx+8]
+    （★缓冲）→ mov edx,esi（索引）→ shl edx,0x1E/sub edx,esi/add
+    edx,ecx（★移位量=(计数-索引)×4 相关算式）→ lea ecx,[eax+esi*4]
+    （★目标槽）→ shl edx,2 → push 移位量/lea edx,[eax+esi*4+4]（★源）
+    → push ecx/push edx → call 0x7CA090（★★★memmove batch 031——
+    重叠感知后移腾位！）→ add esp,0xC
+    写入（0x7ADC3B）：mov eax,[ebx+8] → lea eax,[eax+esi*4]（★目标
+    槽）→ mov ecx,[esp+0x10]（★参数 2=值指针）→ mov edx,[ecx] →
+    mov [eax],edx（★写入新元素值）→ mov eax,[ebx]（计数）→ inc eax
+    → mov [ebx],eax（★计数++）→ mov al,1 → ret 8
+语义：**Vector 插入函数（推断名——Insert，batch 092/102 Vector 系）**——
+thiscall + 2 栈参：① 索引>计数 → 截断到计数（尾部追加）；② 容量不足
+（索引或计数 ≥ 容量）→ **新容量=计数×2（下限 0xA）** → new(容量×4)
+清零 + 旧缓冲拷入 + delete 旧；③ 插入点：索引<计数时 **memmove
+（0x7CA090）后移腾位**（移位量=(计数-索引)×4）；④ 写入参数 2 指向的
+值到槽位；⑤ 计数++。★语义统一：DynamicVectorClass 系 Insert
+（扩容+腾位+写入三连——batch 092 ctor/102 resize 同族）。
+★怪癖：①★★**A/B 双段扩容判定**（0x7ADB15 后与 0x7ADB96 各判一次
+索引<容量/计数<容量——两段独立判扩容，编译器展开）；②★新容量=
+计数×2 且下限 0xA（lea [eax+eax] + cmp 0xA 钳位）；③★memmove 移位
+量算式（shl edx,0x1E/sub/add 后 ×4——(计数-索引)×4 的展开形式）；
+④★索引截断到计数（clamp 语义——超界插入变追加）；⑤★参数 2 是
+值指针非值（mov edx,[ecx] 解引用一次）；⑥★ret 8 返 1 恒真。
+⚠️ partial：宿主类名（DynamicVectorClass 系推断——batch 092/102
+同 +0/+4/+8 布局）、参数 2 元素类型（4 字节推断）、2 unique caller
+身份。
+
+================================================================================
+0x7ACF70 —— 哈希表清空+紧缩重建（276B 全程读完，batch 1396 同构配对）
+================================================================================
+签名：thiscall（ecx=this=链式哈希表）+ 无参 ret 0（0x7ACF70-0x7ACF8F）。
+机器码结构（0x7ACF70-0x7ACF8F，全程读完，关键锚点）：
+    清空段：push ecx/push ebx → mov ebx,ecx → push ebp → xor ebp,ebp
+    → mov eax,[ebx+8]（★+8=桶数/计数）→ test eax,eax → jbe 0x7ACFBB
+    （★空跳过）→ 0x7ACF80: mov eax,[ebx]（★桶数组）→ mov esi,
+    [eax+ebp*4]（★桶项）→ test esi,esi → je 0x7ACFA9（★NULL 跳过）
+    → mov edi,esi → mov esi,[esi+0x110]（★item+0x110=链式 next）→
+    test edi → je 0x7ACFA5 → mov ecx,edi → call 0x7B46F0（★★batch 059
+    窄串析构——item 首成员是窄串！）→ push edi/call 0x7C8B3D（★★
+    delete batch 001——析构后释放 item）→ 0x7ACFA5: test esi,esi →
+    jne 0x7ACF89（★沿链继续）→ 0x7ACFA9: mov ecx,[ebx] → inc ebp →
+    mov [ecx+ebp*4-4],0（★清槽）→ cmp ebp,[ebx+8] → jb 0x7ACF80
+    （★遍历所有桶）→ 0x7ACFBB: mov [ebx+4],0（★+4 计数清零）
+    紧缩重建段（0x7ACFC3 起——与 batch 1396 的 0x7AEC00 同构）：
+    mov eax,[ebx+0x30]（★+0x30=cap）→ mov esi,[ebx+8]（★count）→
+    cmp esi,eax → jbe 0x7AD07E（★count<=cap 跳过）→ mov cl,[ebx+0x14]
+    → test cl,cl → jne 0x7AD07E（★+0x14 非 0 → 跳过——持有标志）→
+    mov ecx,[ebx+0xC]（★+0xC=shift）→ mov ebp,[ebx]（★旧桶数组）→
+    mov eax,esi → shr eax,1（★count/2 减半）→ dec ecx → mov [ebx+8],
+    eax（★新 count）→ lea edx,[eax*4] → mov [ebx+0xC],ecx → push
+    edx/call 0x7C8E17（★new）→ mov edi,eax → mov [ebx],edi（★新桶
+    数组）→ rep stosd/stosb 清零 → test esi → jle 0x7AD067 →
+    0x7AD029: mov esi,[edi]（★旧桶项）→ test → je 跳过 → mov ecx,esi
+    → call [ebx+0x18]（★★虚表槽 0x18——哈希函数）→ mov ecx,[ebx+0xC]
+    → mov edx,1 → shl edx,cl（★1<<shift）→ dec edx → and edx,eax
+    （★哈希 & 掩码 → 桶索引）→ mov eax,[ebx] → mov ecx,[eax+edx*4]
+    （★桶头）→ mov [edx],esi（★头插）→ mov eax,[esi+0x110] → mov
+    [esi+0x110],ecx（★item->next=旧桶头）→ mov esi,eax → test → jne
+    链循环 → 0x7AD05D: add edi,4（★下一旧桶）→ dec ebp → jne →
+    收尾：push [esp+0x10]（旧桶数组）/call 0x7C8B3D（★delete）→
+    pop 族 → ret
+语义：**哈希表清空+紧缩重建（推断名——Clear+Shrink 二合一）**——
+thiscall 无参：① **清空段**：遍历所有桶，逐链式项经 0x7B46F0（窄串
+析构）析构 item 首成员 + delete 释放 item + 清槽 + 计数清零；
+② **紧缩重建段**：与 batch 1396 的 0x7AEC00 完全同构（count>cap
+且 +0x14==0 → count shr 1 → new 清零 → 槽 0x18 哈希 → 1<<shift-1
+掩码 → item+0x110 头插 → delete 旧）。
+★跨批闭环：**batch 1396（0x7AEC00 哈希表紧缩重建）——本函数后半
+完全同构（同 count/cap/shift/槽 0x18/item+0x110 五要素），前半
+清空段为新增差异（0x7AEC00 无清空直接重建）——Clear+Shrink
+复合 vs 纯 Shrink 同族配对**。
+★怪癖：①★★**清空+重建二合一**（前半逐项析构清空、后半同构重建
+——0x7AEC00 纯重建是"保留项重挂"，本函数是"全清再重挂"，语义
+差异关键）；②★item 首成员经 0x7B46F0 窄串析构（item 是含窄串的
+记录对象——链表节点类型推断）；③★+0x14 持有标志判定（test cl,cl/
+jne——与 0x7AEC00 的 cmp [ebx+0x14],1/je 同字段两写法）；④★清槽
+用 [ecx+ebp*4-4]=0（inc ebp 后回退一格——编译器位移）；⑤★count
+shr 1 减半重建（同 0x7AEC00 反向 resize）。
+⚠️ partial：宿主类名（链式哈希表推断——与 0x7AEC00/0x7ACB90 同对象
+族）、item 结构（+0x110 next、首成员窄串）、+0x14 持有标志精确语义、
+2 unique caller 身份。
+
+================================================================================
+0x7ACB90 —— 数组元素拷贝 getter（50B 全程读完）
+================================================================================
+签名：thiscall（ecx=this=容器）+ 2 栈参 ret 8（参数 1=[esp+8]=索引、
+参数 2=输出缓冲指针；0x7ACB90-0x7ACBBF）。
+机器码结构（0x7ACB90-0x7ACBBF，全程读完，关键锚点）：
+    入口：mov eax,[esp+8]（★参数 1=索引）→ push esi → test eax,eax
+    → jl 0x7ACBBC（★负 → 返 0）→ cmp eax,[ecx]（★+0=计数）→ jge
+    0x7ACBBC（★越界 → 返 0）→ mov ecx,[ecx+8]（★+8=元素数组）→
+    lea eax,[eax+eax*2]（★索引×3）→ push edi → lea eax,[eax+eax*8]
+    （★×9 → 索引×27）→ lea esi,[ecx+eax*4]（★数组 + 索引×27×4 =
+    **108 字节/项**！）→ mov ecx,0x1B（★27 dword = 108 字节）→
+    rep movsd 拷到 [edi]（★参数 2=输出缓冲）→ pop edi → mov al,1 →
+    ret 8 → 0x7ACBBC: xor al,al → ret 8
+语义：**数组元素拷贝 getter（推断名——CopyItem/GetItem）**——thiscall
++ 2 栈参布尔：① 索引合法（≥0 且 < 计数）时把 **108 字节**元素
+（27 dword）拷到输出缓冲返 1；② 负/越界返 0。
+★语义统一：与 0x7ACF70/0x7AEC00 同对象族的元素访问器（+0 计数/
++8 数组——108 字节/项的链式哈希表节点记录？）。
+★怪癖：①★★**108 字节/项**（lea ×3 ×9 ×4 = ×27×4——27 dword 的
+记录对象）；②★索引边界检查双分支（jl/jge → 返 0）；③★ret 8 双栈
+参（索引 + 输出缓冲）；④★callees=0（无子调用——纯拷贝）。
+⚠️ partial：宿主类名（链式哈希表/记录数组推断）、108 字节项结构
+（与 0x7ACF70 item 的关系）、输出缓冲契约、2 unique caller 身份。
+
+================================================================================
+跨批次连接（本批三连实锤）
+================================================================================
+- **batch 031（0x7CA090 memmove）**：0x7ADB00 插入点腾位消费（重叠
+  感知后移——Vector 插入关键）。
+- **batch 1396（0x7AEC00 哈希表紧缩重建）**：0x7ACF70 后半完全同构
+  （count/cap/shift/槽 0x18/item+0x110 五要素一致）——Clear+Shrink
+  复合 vs 纯 Shrink 同族配对；0x7ACB90 同 +0/+8 字段族。
+- **batch 059（0x7B46F0 窄串析构）**：0x7ACF70 清空段逐项消费（item
+  首成员窄串——链式哈希表节点类型实锤）。
+- **batch 001（0x7C8E17 new / 0x7C8B3D delete）**：三函数各用（扩容/
+  重建/清空）。
+- **batch 092/102（Vector ctor/resize——DynamicVectorClass 系）**：
+  0x7ADB00 同 +0/+4/+8 布局同族（Insert 第三成员）。
+- 新候选：0x7ADB00 宿主 Vector 类精确名、item 108 字节结构、哈希表
+  槽 0x18 身份、+0x14 持有标志语义。
