@@ -1,0 +1,337 @@
+frontier batch 1385 — 0x42EB50 表项查找器 / 0x42E780 格位判定器 / 0x42C290 地形单元放置主逻辑（2026-10-23）
+
+口径：承接 batch 1384 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x42EB50（142B，callees=2 deps=1914）、
+0x42E780（123B，callees=2 deps=1916——**0x42EB50 的嵌套判定函数**）、
+0x42C290（1640B，callees=5 deps=96 大函数）。
+取证手段：disasm.py 双参直反汇编全程读完（0x42EB50 0x90 尾 0x42EBDB /
+0x42E780 0x80 尾 0x42E7F8 / 0x42C290 0x680 尾 0x42C8F5——531 行分段
+读完，函数边界与 functions.tsv 完全吻合）+ TSV 查重（三候选全部未登记）
++ 跨批次对比（0x5657A0 取格/MapClass 0x87F7E8 ↔ batch 既有 RMG 锚点；
+[0x87F858]/[0x87F878] 全局表 ↔ batch 既有表族；0x7C5F00 _ftol ↔ 既有
+锚点；VectorClass 浮点堆 ↔ batch 1365/1366 哈希表族关联）。
+
+================================================================================
+0x42EB50 —— 表项查找器（142B 全程读完）
+================================================================================
+签名：thiscall（ecx=this，mov esi）+ 1 栈参（[esp+0x14]=待查值），返回
+eax=索引（未命中 -1），ret 4（0x42EB50-0x42EBDB，callees=2 deps=1914）。
+机器码结构（0x42EB50-0x42EBDB，全程读完，关键锚点）：
+    入口：push ebx; push ebp; push esi; mov esi, ecx（this）
+    push edi; xor edi（★索引）; mov eax, [esi+0x14]（★+0x14 计数）
+    test eax; jle 0x42EBB9（★空 → 返 -1）
+    mov ebp, [esp+0x14]（★栈参——待查值）; xor ebx
+    cmp ebp, -1; jne 0x42EB9A（★-1 → 通配路径）
+    0x42EB6A（★通配路径）：push edi; mov ecx, esi
+    call 0x42E780（★判定函数——本批候选二嵌套）
+    test al; jne 0x42EBAE（★命中）
+    mov eax, [0xA8B238]（★Theater）; test; je 0x42EBD5
+    mov eax, [esi+8]; add eax, ebx; mov cl, [eax+8]（★项 +8 字节）
+    test; je 0x42EBD5
+    mov ecx, [esi+0x74]; push eax; call 0x50CAD0（★二级判定）
+    test al; jne 0x42EBC3（★命中写回）
+    jmp 0x42EBAE
+    0x42EB9A（★精确路径）：mov ecx, [esi+8]
+    cmp [ecx+ebx], ebp（★项 == 待查值）; jne 0x42EBAE
+    push edi; mov ecx, esi; call 0x42E780; test al
+    je 0x42EBD5（★0x42E780 判定 → 命中返索引）
+    0x42EBAE：mov eax, [esi+0x14]; inc edi; add ebx, 0x10
+    （★16B/项步进）; cmp edi, eax; jl 0x42EB65（★循环）
+    0x42EBB9：pop ×4; or eax, 0xFFFFFFFF（★未命中返 -1）; ret 4
+    0x42EBC3（★命中写回）：mov eax, [esi+8]; mov ecx, [0x89C310]
+    mov edx, edi; shl edx, 4（★×16）; mov [edx+eax+4], ecx
+    （★项 +4 = 全局——写回）
+    0x42EBD5：mov eax, edi（★返索引）; pop ×4; ret 4
+语义：**表项查找器**（0x42EB5x 区——0x42EBxx 表/查找域，callees=2
+deps=1914）：thiscall + 1 栈参（待查值）：**+0x8 表 [0x10=16B/项 +
+0x14 计数] 遍历**：待查值 == -1 → **通配路径**（0x42E780 判定 +
+Theater 分支 + [+8] 字节 + 0x50CAD0 二级判定）；否则**精确路径**
+（项 == 待查值 + 0x42E780 判定）；**命中 → 项+4 = [0x89C310] 全局
+写回 + 返回索引**；未命中 -1。★表项查找器（16B 步进 + 双路径
+查找 + 嵌套判定 + 命中写回）。2 unique caller（3 callsite）。
+★怪癖：①★**16B/项步进**（add ebx,0x10——表项固定 16B）；②★
+**双路径查找**（-1 通配 / 精确匹配——通配走 Theater+二级判定）；
+③★**0x42E780 判定函数嵌套**（两路径共用——本批候选二）；④★
+**命中写回**（项+4 = [0x89C310] 全局——查找副作用）；⑤★
+**0x50CAD0 二级判定** + Theater [0xA8B238] 分支 + 未命中 -1。
+⚠️ partial：+0x8 表身份（16B 项族）、+0x14 计数语义、[0x89C310]
+全局、0x50CAD0/0x42E780 身份、通配/精确路径语义、2 unique caller
+身份。
+
+================================================================================
+0x42E780 —— 格位判定器（123B 全程读完）
+================================================================================
+签名：thiscall（ecx=this，mov edi）+ 1 栈参（[esp+8]=索引），返回 al=bool，
+ret 4（0x42E780-0x42E7F8，callees=2 deps=1916——**0x42EB50 的嵌套判定
+函数**）。
+机器码结构（0x42E780-0x42E7F8，全程读完，关键锚点）：
+    入口：push esi; mov esi, [esp+8]（★栈参——索引）; push edi
+    mov edi, ecx（this）; push esi; call 0x42E820（★前置判定）
+    test eax; je 0x42E799; pop ×2; mov al, 1; ret 4（★前置命中）
+    0x42E799：mov eax, [edi+8]; shl esi, 4（★索引 ×16）
+    lea ecx, [esi+eax]; mov eax, [esi+eax]（★表项）
+    test eax; jl 0x42E7F4（★负 → 返 0）
+    mov edx, [0xA83C6C]（★全局表）; mov esi, [edx+eax*4]
+    （★表 [项]）; mov al, [esi+0x1571]（★+0x1571 标志）; test
+    je 0x42E7F4
+    add ecx, 4; push ecx; mov ecx, 0x87F7E8（★MapClass）
+    call 0x5657A0（★取格）
+    mov ecx, [esi+0xE54]; mov edx, [eax+0x44]（★cell+0x44 地形）
+    cmp edx, [ecx+0x294]（★对象 [+0xE54] [+0x294] 地形）; jne 0x42E7E2
+    pop ×2; mov al, 1; ret 4（★地形匹配）
+    0x42E7E2：mov ecx, eax; call 0x47C520（★二级判定）
+    test eax; je 0x42E7F4; pop ×2; mov al, 1; ret 4（★判定命中）
+    0x42E7F4：pop ×2; xor al（★返 0）; ret 4
+语义：**格位判定器**（0x42E78x 区——0x42E7xx 判定/格域，callees=2
+deps=1916）：thiscall + 1 栈参（索引）：**0x42E820 前置判定**（命中
+→ 1）→ **索引 ×16 → +0x8 表项**（负 → 0）→ **[0xA83C6C] 表 [项] +
+[+0x1571] 标志** → **0x5657A0 取格** → **cell+0x44 地形 vs 对象
+[+0xE54] [+0x294]**（匹配 → 1）→ **0x47C520 二级判定**（命中 → 1）
+→ 否则 0。★格位判定器（前置 + 表查标志 + 地形比较 + 二级判定——
+0x42EB50 嵌套依赖）。2 unique caller（3 callsite）。
+★怪癖：①★**索引 ×16 步进**（shl esi,4——与 0x42EB50 同 16B 表）；
+②★**[0xA83C6C] 表查 + [+0x1571] 标志**（表项对象类型判定）；
+③★**0x5657A0 取格 + cell+0x44 vs [+0x294] 地形比较**（batch 既有
+取格锚点 + 地形匹配）；④★**0x47C520 二级判定**（0x42E820 前置 +
+二级双级判定链）；⑤★0x42EB50 嵌套依赖（本批两函数互链）。
+⚠️ partial：+0x8 表身份、[0xA83C6C] 表、+0x1571 标志、cell+0x44/
+[+0xE54]/[+0x294] 地形语义、0x42E820/0x47C520 身份、2 unique
+caller 身份。
+
+================================================================================
+0x42C290 —— 地形单元放置主逻辑（1640B 全程读完）
+================================================================================
+签名：thiscall（ecx=this，mov edi）+ 4 栈参（[ebp+8]=坐标 1、[ebp+0xC]=
+坐标 2、[ebp+0x10]=表索引、[ebp+0x14]=对象指针），返回 al=bool，ret 0x10
+（0x42C290-0x42C8F5，callees=5 deps=96 大函数，531 行分段读完）。
+机器码结构（0x42C290-0x42C8F5，全程读完，关键锚点）：
+    入口：push ebp; mov ebp, esp; and esp, 0xFFFFFFF8; sub esp, 0x5C
+    （★帧对齐）; mov eax, [ebp+0x10]（★参数 3——表索引）
+    push ebx; push esi; push edi; mov esi, [ebp+0x14]（★参数 4）
+    shl eax, 5（★×32）; mov edi, ecx（this）; add eax, 0x82A594
+    （★全局表 + 索引×32）
+    test esi, esi; je 0x42C2CF（★对象空 → 0 填充）
+    mov ecx, esi; call 0x4DC760（★对象处理）; mov eax, [esi+0x21C]
+    fst qword [esp+0x60]（★浮点存栈）
+    0x42C2E9：fcomp qword [0x7E3810]（★浮点比较）; mov byte
+    [esp+0x10], 1; fnstsw ax; test ah, 0x41; je 0x42C300
+    mov byte [esp+0x10], 0（★标志）
+    0x42C300：mov esi, 2（★三格两轮循环起点 esi=2→1→0）
+    mov [esp+0x38], esi
+    0x42C309（★外层循环）：mov eax, [edi+0x68]（★+0x68 容器）
+    xor ecx; cmp [eax], 0; jl 0x42C325
+    0x42C313（★清容器循环）：mov edx, [eax+8]; inc ecx
+    mov [edx+ecx*4-4], 0; mov edx, [eax]; cmp ecx, edx
+    jle 0x42C313（★前移清空）; mov [eax], 0（★计数归零）
+    0x42C32B：mov eax, [ebp+8]（★坐标 1）; push eax
+    mov ecx, 0x87F7E8（★MapClass）; call 0x56D3F0（★取格）
+    mov edx, [0x87F858]（★全局表基址）; lea ecx, [eax+eax*4]
+    lea eax, [edx+ecx*2]（★×10 步进）; mov ecx, 0x87F7E8
+    movsx ebx, word [eax+esi*2]（★word 索引）
+    mov eax, [ebp+0xC]（★坐标 2）; push eax; call 0x56D3F0
+    mov edx, [0x87F858]; lea ecx, [eax+eax*4]; cmp esi, 2
+    lea eax, [edx+ecx*2]; movsx eax, word [eax+esi*2]
+    mov [esp+0x3C], eax（★第二坐标）; sete al
+    mov [esp+0x12], al（★esi==2 标志）
+    0x42C37D：mov ecx, [edi+esi*4+0x44]; mov [esp+0x44], ecx
+    （★+0x44 字段族——esi×4）
+    0x42C38F：mov edx, [edi+esi*4+0x4C]; mov eax, [edi+esi*4+0x40]
+    mov ecx, [edi+esi*4+0x58]; mov [esp+0x24], edx; mov edx, [edi+0x28]
+    mov [esp+0x28], ecx; mov ecx, [esp+0x3C]; mov [eax+ebx*4], edx
+    mov edx, [edi+0x28]; cmp ebx, ecx; mov [esp+0x5C], eax
+    mov [eax+ecx*4], edx（★两坐标写表）
+    jne 0x42C3E9（★坐标不同 → 复杂路径）
+    0x42C3BB（★坐标相同快速路径）：test esi, esi; jne 0x42C3C8
+    mov eax, [edi+0x64]; mov [eax+0xC], esi; mov [eax+4], ebx
+    （★+0x64 对象写）
+    0x42C3C8：lea eax, [esi+esi*4]; lea eax, [eax+eax*4]
+    lea eax, [eax+eax*4]（★×125）; mov word [edi+eax*8+0xBC], bx
+    （★×1000 步进 + 0xBC 表 word 写）
+    mov [edi+esi*4+0xC74], 1（★+0xC74 = 1）; jmp 0x42C8D6
+    0x42C3E9（★坐标不同路径）：mov eax, [edi+0x64]
+    mov [esp+0x4C], eax; mov [eax], 0xFFFFFFFF; mov [eax+4], ebx
+    mov [eax+8], 0; mov [eax+0xC], 0（★+0x64 初始化 -1 哨兵）
+    0x42C401：mov eax, [edi+0x68]; mov [esp+0x20], eax
+    mov ecx, [eax]; inc ecx; mov edx, ecx; shr edx, 1
+    cmp ecx, [eax+4]; jae 0x42C477（★VectorClass 堆插入）
+    ...（堆排序插入——fcomp [0x7E1748] 浮点比较 + 前移）
+    0x42C477：mov edx, [esp+0x24]; mov ecx, [edi+0x28]
+    mov eax, [esp+0x28]; mov [esp+0x2C], 1; mov [edx+ebx*4], ecx
+    mov [eax+ebx*4], 0（★写表）
+    0x42C494：mov ecx, [edi+0x68]; mov edx, [ecx]; test
+    jne 0x42C4A1; xor eax; jmp 0x42C4C7
+    0x42C4A1（★堆顶弹出）：mov eax, [ecx+8]; push 1
+    mov edx, [eax+edx*4]; mov ebx, [eax+4]; mov [eax+4], edx
+    mov eax, [ecx]; mov edx, [ecx+8]; mov [edx+eax*4], 0
+    mov edx, [ecx]; dec edx; mov [ecx], edx
+    call 0x42DCA0（★弹出后处理）; mov eax, ebx（★返回旧顶）
+    0x42C4C7：lea edx, [esi+esi*2]; mov [esp+0x14], eax
+    shl edx, 3（★×24）; mov [esp+0x20], edx
+    mov ebx, [edx+edi+0x84]（★+0x84 字段族——edx×24 步进）
+    test ebx; sete byte [esp+0x13]（★空标志）
+    0x42C4E3：test eax; je 0x42C8E2（★返 0）
+    0x42C4EB：mov ecx, [eax+4]; mov ebx, [esp+0x3C]; cmp ecx, ebx
+    mov [esp+0x48], ecx; je 0x42C852（★== 写回路径）
+    0x42C4FE：lea eax, [ecx+ecx*8]; mov ecx, [edx+0x87F878]
+    mov edx, [ecx+eax*4+4]; lea eax, [ecx+eax*4]; mov ecx, [eax+0x10]
+    test ecx; jle 0x42C740（★+0x10 计数）
+    0x42C519：mov eax, [esp+0x2C]; mov [esp+0x34], edx; shl eax, 4
+    mov [esp+0x30], eax; mov [esp+0x50], ecx; mov eax, [esp+0x34]
+    mov ecx, [esp+0x20]; xor esi; mov [esp+0x18], 0
+    0x42C53E（★内层循环）：mov ebx, [eax]; mov dl, [eax+4]
+    mov [esp+0x11], dl; mov edx, [ecx+0x87F878]
+    lea eax, [ebx+ebx*8]; mov [esp+0x4C], ebx
+    mov si, word [edx+eax*4+0x18]; lea eax, [edx+eax*4]
+    mov edx, [eax+0x1C]; mov al, [esp+0x10]; test
+    mov [esp+0x54], edx; je 0x42C59E
+    0x42C56B（★大参调用）：mov eax, [esp+0x48]; mov ecx, [esp+0x38]
+    mov edx, [esp+0x40]; push ebx; push eax; push ecx; push edx
+    mov ecx, 0x87F7E8; call 0x585F40（★4 参调用）
+    mov [esp+0x18], eax; fild; fmul qword [esp+0x60]
+    call 0x7C5F00（★_ftol）; mov [esp+0x18], eax（★浮点换算）
+    0x42C59E：mov al, [esp+0x11]; test; je 0x42C5AE
+    fld qword [0x7E3818]; jmp 0x42C5B4; fld qword [0x7E2800]
+    （★双精度常量族）
+    0x42C5B4：mov eax, [esp+0x14]; mov ecx, [edi+0x28]
+    fld dword [edx*4+0x7E3794]（★常量表）; fadd dword [eax+8]
+    mov eax, [esp+0x24]; fiadd dword [esp+0x18]; cmp [eax+ebx*4], ecx
+    fadd st(1); fstp dword [esp+0x18]; fstp st(0); jne 0x42C5F0
+    0x42C5DA：mov eax, [esp+0x28]; fld dword [eax+ebx*4]
+    fcomp dword [esp+0x18]; fnstsw ax; test ah, 0x41; jne 0x42C726
+    （★浮点比较）
+    0x42C5F0：mov al, [esp+0x12]; test; jne 0x42C60A
+    mov eax, [esp+0x44]; cmp [eax+esi*4], ecx; je 0x42C60A
+    cmp edx, 1; jne 0x42C726
+    0x42C60A：mov ecx, [esp+0x58]; cmp [ecx+edx*4], 1; jne 0x42C726
+    0x42C618：mov al, [esp+0x13]; test; jne 0x42C666
+    0x42C620（★坐标打包去重）：mov edx, [esp+0x48]; mov ecx, ebx
+    cmp bx, dx; mov eax, edx; jae 0x42C631; mov eax, ebx; mov ecx, edx
+    0x42C631：mov edx, [esp+0x20]; and eax, 0xFFFF; shl eax, 0x10
+    and ecx, 0xFFFF; or eax, ecx（★16 位两分量合一 dword）
+    mov ecx, [edx+edi+0x84]; dec ecx; js 0x42C666
+    0x42C64F（★线性去重扫描）：mov edx, [edx+edi+0x78]
+    lea edx, [edx+ecx*4]; cmp [edx], eax; je 0x42C726
+    dec ecx; sub edx, 4; test ecx; jge 0x42C656
+    0x42C666（★写项）：mov edx, [esp+0x1C]; mov ecx, [esp+0x30]
+    mov eax, [edx+0x64]; mov [eax+ecx+4], ebx; lea esi, [eax+ecx]
+    mov ecx, [esp+0x14]; mov edi, ecx; sub edi, eax; mov eax, [esp+0x18]
+    sar edi, 4; mov [esi], edi（★坐标差 ÷16 索引）
+    mov [esi+8], eax; mov ecx, [ecx+0xC]; inc ecx; mov [esi+0xC], ecx
+    （★+0x64 对象 16B 项写）
+    0x42C693：mov edi, [edx+0x68]; mov ecx, [edi]; mov eax, [edi+4]
+    inc ecx; mov edx, ecx; shr edx, 1; cmp ecx, eax; jae 0x42C6F5
+    0x42C6A4（★堆排序插入）：cmp ecx, 1; jbe 0x42C6D8
+    mov eax, [edi+8]; mov eax, [eax+edx*4]; mov [esp+0x54], eax
+    fld dword [eax+8]; fcomp dword [esp+0x18]; fnstsw ax
+    test ah, 0x41; jne 0x42C6D8（★浮点比较）
+    mov eax, [edi+8]; mov ebx, [esp+0x54]; mov [eax+ecx*4], ebx
+    mov ebx, [esp+0x4C]; mov ecx, edx; shr edx, 1; cmp ecx, 1
+    ja 0x42C6A9（★浮点堆上浮）
+    0x42C6D8：mov edx, [edi+8]; mov [edx+ecx*4], esi
+    mov ecx, [edi]; mov eax, [edi+0xC]; inc ecx; cmp esi, eax
+    mov [edi], ecx; jbe 0x42C6ED; mov [edi+0xC], esi
+    cmp esi, [edi+0x10]; jae 0x42C6F5; mov [edi+0x10], esi
+    （★容器容量更新）
+    0x42C6F5：mov eax, [esp+0x1C]; mov edx, [esp+0x24]
+    fld dword [esp+0x18]; mov ecx, [eax+0x28]; mov eax, [esp+0x28]
+    mov edi, [esp+0x1C]; mov [edx+ebx*4], ecx
+    fstp dword [eax+ebx*4]（★写表——浮点值）
+    0x42C712：mov ecx, [esp+0x2C]; mov eax, [esp+0x30]
+    inc ecx; add eax, 0x10（★16B 步进）; mov [esp+0x2C], ecx
+    mov [esp+0x30], eax（★迭代推进）
+    0x42C726：mov ecx, [esp+0x34]; mov eax, [esp+0x50]
+    add ecx, 8; dec eax; mov [esp+0x34], ecx; mov [esp+0x50], eax
+    jne 0x42C52C（★内层循环）
+    0x42C740：mov ecx, [edi+0x68]; mov edx, [ecx]; test
+    je 0x42C8E2; mov eax, [ecx+8]; mov ebx, 1
+    mov edx, [eax+edx*4]; mov esi, [eax+4]; mov [eax+4], edx
+    mov eax, [ecx]; mov edx, [ecx+8]; mov [esp+0x54], esi
+    mov [edx+eax*4], 0; mov edx, [ecx]; dec edx; mov esi, edx
+    mov [ecx], edx; cmp esi, 2; jl 0x42C797（★堆顶弹出）
+    0x42C77A（★浮点比较选路）：mov eax, [ecx+8]; mov edx, [eax+8]
+    mov eax, [eax+4]; fld dword [edx+8]; fld dword [eax+8]
+    fcompp; mov edx, 2; fnstsw ax; test ah, 0x41; je 0x42C79C
+    0x42C797：mov edx, 1
+    0x42C79C：cmp esi, 3; jl 0x42C7C0; mov eax, [ecx+8]
+    mov esi, [eax+0xC]; mov eax, [eax+edx*4]; fld dword [esi+8]
+    fld dword [eax+8]; fcompp; fnstsw ax; test ah, 0x41
+    jne 0x42C7C0; mov edx, 3
+    0x42C7C0：cmp edx, 1; je 0x42C835
+    0x42C7C5（★堆下沉调整）：mov eax, [ecx+8]; mov edi, [eax+edx*4]
+    mov esi, [eax+ebx*4]; mov [eax+ebx*4], edi; mov eax, [ecx+8]
+    mov ebx, edx; mov [eax+edx*4], esi; mov edi, [ecx]
+    lea esi, [edx+edx]; lea eax, [edx+edx+1]; cmp esi, edi
+    mov [esp+0x34], eax; jg 0x42C807（★浮点堆下沉）
+    0x42C831：mov edi, [esp+0x1C]
+    0x42C835：mov eax, [esp+0x54]; test; mov [esp+0x14], eax
+    je 0x42C8E2; mov esi, [esp+0x38]; mov edx, [esp+0x20]
+    jmp 0x42C4EB（★回到内层）
+    0x42C852（★写回路径）：test eax; je 0x42C8E2; mov edx, [eax]
+    mov ecx, eax; cmp edx, -1; mov [esp+0x54], ecx; je 0x42C887
+    0x42C867（★写回循环）：mov ecx, [eax+4]; mov ebx, [esp+0x5C]
+    mov edx, [edi+0x28]; mov [ebx+ecx*4], edx; mov eax, [eax]
+    mov edx, [edi+0x64]; shl eax, 4; add eax, edx
+    cmp [eax], -1; jne 0x42C867
+    0x42C887：mov eax, [ecx+0xC]; inc eax
+    mov [edi+esi*4+0xC74], eax（★+0xC74 = 计数+1）
+    0x42C892：dec eax; test; jle 0x42C8C1
+    0x42C897（★写回循环）：lea edx, [esi+esi*4]; lea edx, [edx+edx*4]
+    lea edx, [edx+edx*4]; lea edx, [eax+edx*4]
+    lea edx, [edi+edx*2+0xBC]; mov bx, word [ecx+4]
+    mov [edx], bx; mov ecx, [ecx]; mov ebx, [edi+0x64]
+    sub edx, 2; shl ecx, 4; add ecx, ebx; dec eax; jne 0x42C8AA
+    （★0xBC 表 word 链写回）
+    0x42C8C1：mov cx, word [ecx+4]; lea eax, [esi+esi*4]
+    lea eax, [eax+eax*4]; lea eax, [eax+eax*4]
+    mov word [edi+eax*8+0xBC], cx（★最终写）
+    0x42C8D6：dec esi; mov [esp+0x38], esi; js 0x42C8ED
+    jmp 0x42C309（★外层循环——esi 2→1→0）
+    0x42C8E2：xor al（★失败返 0）; pop ×3; mov esp, ebp; pop ebp
+    ret 0x10
+    0x42C8ED：mov al, 1（★成功返 1）; pop ×3; mov esp, ebp; pop ebp
+    ret 0x10
+语义：**地形单元放置主逻辑**（0x42C29x 区——0x42C2xx 放置/地形域，
+callees=5 deps=96 大函数）：thiscall + 4 栈参（坐标 1/坐标 2/表索引/
+对象指针）：**三格两轮循环**（esi=2→1→0——[+0x44+esi*4] 字段族）：
+每轮清 +0x68 容器 → 0x56D3F0 取格 ×2（[0x87F858] 全局表 ×10 步进 +
+word 索引）→ 字段族写表 → **坐标相同快速路径**（+0x64 写 + 0xBC 表
+×1000 步进 + +0xC74=1）/ **坐标不同复杂路径**（+0x64 初始化 -1 哨兵 +
+**VectorClass 浮点堆插入** + 堆顶弹出 0x42DCA0）→ **+0x84/+0x78 字段族**
+（×24 步进）→ **内层循环**（0x87F878 全局表 ×9 步进 + 0x585F40 4 参
+调用 + [0x7E3818]/[0x7E2800] 双精度 + [0x7E3794] 表 + _ftol）→ **坐标
+打包去重**（16 位两分量 shl 0x10/or + 线性扫描）→ **+0x64 16B 项写**
+（坐标差 ÷16）→ **浮点堆排序插入/弹出/下沉**（fcompp + test ah,0x41）
+→ 写表 → 内层迭代 → **写回路径**（+0xC74 计数 + 0xBC word 链）→ 外层
+循环 → 返 1/0。★地形单元放置主逻辑（0x42C2xx 区——三格两轮 +
+VectorClass 浮点堆 + 坐标打包去重 + 多全局表 + 深参调用）。
+2 unique caller（3 callsite）。
+★怪癖：①★**三格两轮循环**（esi=2→1→0——[+0x44+esi*4] 字段族
+三轮处理）；②★**VectorClass 浮点堆**（[+0x68] 容器——fcomp 排序
+插入/弹出/下沉全链 + 0x42DCA0 弹出后处理）；③★**坐标打包去重**
+（16 位两分量 and 0xFFFF + shl 0x10 + or 合一 dword + 线性扫描
+[+0x78] 表——防重语义）；④★**多全局表**（[0x87F858] ×10 步进 /
+[0x87F878] ×9 步进 word 索引——batch 既有表族）；⑤★**0x585F40
+4 参调用 + [0x7E3818]/[0x7E2800]/[0x7E3794] 常量族 + _ftol**；
+⑥★**+0x64 16B 项**（坐标差 sar ÷16 索引 + [+0xC] 计数）；
+⑦★**0xBC 表 ×1000 步进 word 写 + +0xC74 计数**；⑧★**+0x84/+0x78
+去重表 ×24 步进** + 4 栈参 ret 0x10 + 帧对齐。
+⚠️ partial：放置对象身份、+0x28/+0x40/+0x44/+0x4C/+0x58/+0x64/
++0x68/+0x74/+0x78/+0x84/+0xBC/+0xC74 字段族、[0x87F858]/[0x87F878]/
+[0x82A594] 表、0x56D3F0/0x4DC760/0x585F40/0x42DCA0/0x47C520 身份、
+[0x7E3810]/[0x7E3818]/[0x7E2800]/[0x7E3794] 常量、2 unique caller
+身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 既有 RMG 锚点（0x5657A0 取格/MapClass 0x87F7E8/0x56D3F0）：
+  0x42E780/0x42C290 使用——取格家族持续闭合。
+- batch 既有全局表族（[0x87F858]/[0x87F878] ×N 步进 word 索引）：
+  0x42C290 使用——表族再验证。
+- batch 1365/1366（哈希表族 [0xAC1B00]）：0x42C290 VectorClass
+  浮点堆插入/弹出——容器家族再验证。
+- batch 既有 _ftol 锚点（0x7C5F00）：0x42C290 使用（chop 语义）——
+  数学家族再验证。
+- batch 既有浮点比较惯用（fnstsw ax + test ah,0x41/0x40）：0x42C290
+  堆排序/常量比较使用——同惯用族。
+- 0x42EB50/0x42E780 互链：表查找 + 格位判定嵌套——同模块配对。
