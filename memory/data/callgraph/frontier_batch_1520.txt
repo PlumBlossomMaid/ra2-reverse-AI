@@ -1,0 +1,136 @@
+frontier batch 1520 — 0x5A17F0 RMG 地形高度调整器 / 0x5A08D0 尺寸归一化分配器 / 0x59D510 River 主流程（2026-10-24）
+
+口径：承接 batch 1519 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x5A17F0（483B，callees=5 deps=2723——
+**RMG 地形高度调整器**，推断名）、0x5A08D0（2230B，callees=14 deps=109
+——**尺寸归一化分配器**，推断名——超大宿主采样前段）、0x59D510
+（4386B，callees=15 deps=106——**River 主流程**，QWEN.md 已实锤——
+超大宿主采样前段）。
+取证手段：disasm.py 双参直反汇编三路读取（0x5A17F0 0x1E3 全量尾
+0x5A19D2 ret / 0x5A08D0 前 0x100B 采样覆盖 0x5A08D0-0x5A09D7 / 0x59D510
+前 0x100B 采样覆盖 0x59D510-0x59D60C——三文件 29+17+20 行全读）+ TSV
+查重（三候选全部未登记）+ callee 登记核验（grep TSV：5 callee 已登记
+——0x578350/0x578290 batch ⑨（CellIterator）、0x481810 batch 073
+（GetNeighbourCell）、0x5A6C10 batch 138（★★[0xA8ED2C] 表查询——虚
+表槽 0x9C + 表项 +0x2E4/+0x2E8 双计数，QWEN.md 待确认项已闭合）、
+0x65C780（Randomizer::Random）、0x7C5F00（_ftol 锚点库）、0x7C8E17
+batch 001；**1 个新候选留池：0x5A1350（0x5A17F0 的高度调整调用）**）。
+
+================================================================================
+0x5A17F0 —— RMG 地形高度调整器（483B 全程读完）
+================================================================================
+签名：thiscall + 1 栈参 ret（ecx=this、[esp+0x14]=参数；0x5A17F0-
+0x5A19D2）。
+机器码结构（0x5A17F0-0x5A19D2，全程读完，关键锚点）：
+    段1 CellIterator 遍历：sub esp,0x1C → mov [esp+4],ecx → push edi →
+    mov ecx,0x87F7E8（MapClass::Instance）→ call 0x578350（batch ⑨
+    CellIterator_Reset）→ call 0x578290（CellIterator_Next）→ mov edi,
+    eax → test → je 0x5A19CE → 循环
+    段2 区间门控：mov eax,[edi+0x38]（cell 类型）→ mov ecx,[0xAA1020]
+    （★区间下限）→ cmp → jl 跳过 → add ecx,0x28（★宽 0x28=40）→ cmp →
+    jge 跳过（★★类型 ∈ [0xAA1020, +0x28) 才处理——batch 082 0x486380
+    区间族）
+    段3 邻域 + 高度差：push 4 → call 0x481810（batch 073 方向 4）→
+    push 2 → call（方向 2）→ 比较两邻格类型 [esi+0x38] vs [edi+0x38] →
+    jne 跳过 → 比较高度 byte[edi+0x11A] vs byte[esi+0x11A] → jbe 跳过
+    （★★高度差判定）→ mov ecx,[esp+0x14] → push eax → call 0x5A1350
+    （★★未登记新候选——高度调整）→ 返回 eax → 与 [edi+0x38] 比较 → je
+    跳过 → mov edx,[0xA8ED2C]（★★batch 138 表）→ mov eax,[edx+ecx*4]
+    → mov ecx,[eax+0x2E4]（★表项 +0x2E4 除数）→ 高度 idiv → 坐标换算
+    （esi+0x24/+0x26 word）→ [0xABED10] 工作数组 → (Y×[0x89C2DC]+X)×
+    0x50 → +0x38 读 → push -1 → push ecx → call 0x5A6C10（★★batch 138
+    [0xA8ED2C] 表查询——应用点）
+    段4 第二分支（[ebp+0x38] 邻格类型）→ 同款（0x5A1350 + 0x5A6C10）→
+    循环 0x5A19B7 → ret
+语义：**RMG 地形高度调整器（推断名——483B「CellIterator + 区间类型门
+控 + 邻域高度差 + 高度重算」）**——① CellIterator 遍历全图；② cell
+类型 ∈ [0xAA1020, +0x28) 门控（batch 082 区间族）；③ 邻域方向 4/2 取
+格（batch 073），类型相等 + 高度差（[+0x11A]）判定；④ 0x5A1350（新
+候选）高度调整 → [0xA8ED2C] 表项 +0x2E4 除数 idiv 高度重算 → 坐标换算
+→ 工作数组 [0xABED10] ×0x50 → 0x5A6C10（batch 138 表查询）回写。
+★怪癖：①★★CellIterator 全图遍历（RMG 惯用模式——batch 1519 0x5A19E0
+同款）；②★★[0xAA1020] 区间门控（+0x28 宽——batch 082 0x486380 区间
+族应用点）；③★★高度差判定（byte[+0x11A] jbe——只处理严格更大）；
+④★★[0xA8ED2C] 表项 +0x2E4 除数（idiv 高度——batch 138 表结构应用
+点）；⑤★★工作数组 ×0x50 布局回写；⑥★★0x5A1350（新候选）调整函数。
+⚠️ partial：宿主类（0x5A17xx 区——RMG 域推断）、0x5A1350（新候选）、
+[0xAA1020] 区间语义、+0x11A 高度字段、2 unique caller。
+
+================================================================================
+0x5A08D0 —— 尺寸归一化分配器（2230B 采样前段 partial）
+================================================================================
+签名：thiscall + 2 栈参 ret（[ebp+0xC]/[ebp+0x10]=参数；0x5A08D0-
+0x5A08D0+0x8B6 总长）。
+机器码结构（采样覆盖 0x5A08D0-0x5A09D7，关键锚点）：
+    段1 分配：push ebp → and esp,0xFFFFFFF8 → sub esp,0x4C → mov ebx,
+    ecx → mov eax,[ebx+0x180] → imul [ebx+0x184]（★尺寸乘积）→ shl 1
+    （★×2）→ cmp 0x64 → jg 0x5A08FD → mov esi,0x64（★★下限 100）→
+    lea eax,[esi*8] → call 0x7C8E17（new(×8)）→ mov [esp+0x20],eax
+    段2 结构构造：push 0x14 → call 0x7C8E17（new(0x14=20B)）→ mov esi=
+    eax → mov eax,[ebx+0x180] → imul [ebx+0x184] → shl 1 → cmp 0x64 →
+    jg → mov eax,0x64 → lea ecx,[eax*4+4] → mov [esi+0xC],edi → push
+    ecx → mov [esi+0x10],-1 → mov [esi],edi → mov [esi+4],eax → call
+    0x7C8E17（new(×4+4)）→ mov [esi+8],eax → 清零循环
+    段3 初始化：mov ebx,[ebp+0x10] → mov [esp+0xF],1 → mov ecx,[ebx] →
+    cmp edi → je → ... 浮点常数 0x54442D18（★float 常量——64.68 系推
+    断）→ ...
+语义：**尺寸归一化分配器（推断名——2230B 超大宿主「尺寸乘积×2 下限
+100 + new 链 + 初始化」）**——① [+0x180]×[+0x184]×2 计算尺寸，下限
+0x64=100；② new(×8) 主缓冲 + new(0x14)+new(×4+4) 结构构造（batch
+1519 0x5A4B60 模板）；③ 参数初始化 + 浮点常数族（0x54442D18）。
+★怪癖：①★★尺寸乘积×2 + 下限 100（cmp 0x64 → mov esi,0x64 钳制）；
+②★★new 三连（×8 + 0x14 + ×4+4——batch 1519 0x5A4B60 同款模板）；
+③★★[+0x180]/[+0x184] 尺寸字段（宿主大对象）；④★浮点常数 0x54442D18
+（参数族推断）。
+⚠️ partial：宿主类（0x5A08xx 区——RMG/尺寸族推断）、尾部 0x5A09D7
+之后未读（0x8B6-0x107≈0x7AF）、浮点常数语义、参数语义、2 unique
+caller。
+
+================================================================================
+0x59D510 —— River 主流程（4386B 采样前段 partial，QWEN.md 已实锤）
+================================================================================
+签名：thiscall + 4 栈参 ret（[ebp+8]=参数 1、[ebp+0xC]、[ebp+0x10]、
+[ebp+0x14]=字节参数；0x59D510-0x59D510+0x1122 总长）。
+机器码结构（采样覆盖 0x59D510-0x59D60C，关键锚点）：
+    段1 参数检查：push ebp → and esp,0xFFFFFFF8 → sub esp,0x124 → mov
+    al,[ebp+0x14] → mov [esp+0x1F],al → mov eax,[ebp+8] → cmp word[eax],
+    bx → jne 0x59D7EB → cmp word[eax+2],bx → jne（★★首两 word 参数为 0
+    才继续）
+    段2 MapRect 坐标：mov eax,[0x87F8DC]（★★MapRect.W——batch ⑨ 实
+    锤）→ mov ecx,[0x87F8E0]（★★MapRect.H）→ word 拼接 + 坐标换算
+    （[esp+0x28]/[esp+0x2A] 等——菱形范围坐标）
+    段3 Random 拒绝采样：mov ecx,0xABE890 → call 0x65C780（★★
+    Randomizer::Random——RMG 全局）→ fild qword [esp+0x18] → fmul
+    qword[0x7EDA38]（★★比例常数——QWEN.md 取数惯用法常数区）→ call
+    0x7C5F00（★★_ftol）→ cmp eax,3 → ja 重试（★★拒绝采样 v>3——
+    do-while）→ mov eax,[0x87F8DC] → lea edi,[eax-1] → fild → fstp
+    [esp+0x90] → mov ecx,0xABE890 → call 0x65C780（★第二次 Random）→
+    ...
+语义：**River 主流程（QWEN.md 实锤 0x59D510——River 0x59D510 + 调度
+0x59C580 已闭合；支流递归起点 = 画格横截面末端 (Ftol(xL),Ftol(yL))
+（0x59DF6E-0x59DF80））**——① 首两 word 参数为 0 门控；② [0x87F8DC]/
+[0x87F8E0] MapRect 尺寸坐标换算（菱形范围）；③ Randomizer ×
+[0x7EDA38] 比例 → _ftol → 拒绝采样（v>3 重试）——River 的随机参数选
+择。
+★怪癖：①★★MapRect W/H 读取（[0x87F8DC]/[0x87F8E0]——batch ⑨ 实锤
+的全局）；②★★Randomizer + 0x7EDA38 比例 + _ftol 拒绝采样（QWEN.md
+取数惯用法——River 参数抽取）；③★★cmp eax,3 → ja 重试（v>3 上界）；
+④★首两 word 参数为 0 门控；⑤★第二次 Random 已起（连续抽取）。
+⚠️ partial：宿主类（0x59Dxxx 区——RMG River 域已知）、尾部 0x59D60C
+之后未读（0x1122-0x100≈0x1022）、0x7EDA38 精确比例值、River 参数语
+义、2 unique caller。
+
+================================================================================
+跨批次连接（5 callee 已登记 + 1 新候选 + River 主线闭合）
+================================================================================
+- **batch 138（0x5A6C10 [0xA8ED2C] 表查询）**：0x5A17F0 的回写调用——
+  QWEN.md 待确认项（写入点）已闭合，表项 +0x2E4/+0x2E8 双计数应用点。
+- **QWEN.md River 主线（0x59D510 + 0x59C580 调度）**：0x59D510 采样前
+  段与 QWEN.md 实锤完全吻合——MapRect + Random 拒绝采样，支流递归起
+  点实锤的宿主函数。
+- **batch ⑨（0x578350/0x578290 CellIterator + [0x87F8DC]/[0x87F8E0]）**
+  ：0x5A17F0/0x59D510 的遍历 + MapRect 全局。
+- **batch 082（0x486380 区间族 [0xAA1020]）**：0x5A17F0 的类型门控区间。
+- **batch 1519（0x5A4B60 结构构造模板）**：0x5A08D0 的 new 三连模板同
+  款——RMG 分配族。
+- 新候选：0x5A1350（0x5A17F0 的高度调整——留池后续）。
