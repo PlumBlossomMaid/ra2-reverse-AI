@@ -1,0 +1,145 @@
+frontier batch 1394 — 0x7B6BE0 宽串拼接 / 0x7B67C0 宽串相等 / 0x7B6630 字符集包含判定（2026-10-23）
+
+口径：承接 batch 1393 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x7B6BE0（200B，callees=5 deps=603——
+**宽串拼接/合并**）、0x7B67C0（53B，callees=1 deps=84——**宽串相等
+比较 operator==**）、0x7B6630（59B，callees=1 deps=858——**窄串字符
+集包含判定，batch 849 的 0x7CD790 登记文点名宿主兑现**）。
+取证手段：disasm.py 双参直反汇编全程读完（0x7B6BE0 0xC8 尾 0x7B6CA4 /
+0x7B67C0 0x40 尾 0x7B67F3 / 0x7B6630 0x40 尾 0x7B6669，函数边界与
+functions.tsv 完全吻合）+ TSV 查重（三候选全部未登记）+ 跨批次锚点
+比对（wcslen 0x7CA405/wcscpy 0x7CA489/wcscat 0x7CA45F/wcscmp 0x7CA5D3/
+new 0x7C8E17/delete 0x7C8B3D 全 batch 既有实锤 + 0x7CD790 strcspn 系
+batch 849 实锤登记）。
+
+================================================================================
+0x7B6BE0 —— 宽串拼接/合并（200B 全程读完）
+================================================================================
+签名：thiscall（ecx=this=串对象）+ 2 栈参 ret 8（参数 1=[esp+4]=
+out 指针、参数 2=[esp+8]=拼接源串指针；0x7B6BE0-0x7B6CA4）。
+机器码结构（0x7B6BE0-0x7B6CA4，全程读完，关键锚点）：
+    第一段（this 拷贝）：push esi/edi → mov edi,ecx（this）→
+    xor esi,esi → mov eax,[edi]（★this->[0]）→ test eax,eax →
+    je 0x7B6C0A（★NULL 跳过）→ push eax/call 0x7CA405
+    （★★wcslen batch 097）→ lea eax,[eax+eax+2]（★2len+2 字节）
+    → push eax/call 0x7C8E17（★★operator_new batch 001）→
+    mov ecx,[edi] → mov esi,eax（★esi=新缓冲）→ push ecx/push esi/
+    call 0x7CA489（★★wcscpy batch 097——this 串拷贝到 esi）
+    拼接段：push ebx/ebp → mov ebp,[esp+0x18]（★参数 2=拼接源）
+    → test ebp,ebp → je 0x7B6C6F（★NULL 跳过）→ push ebp →
+    mov ebx,esi（★ebx=this 副本保存）→ call 0x7CA405（★wcslen 源）
+    → mov edi,eax → inc edi（★len+1）→ test esi,esi → je 0x7B6C31
+    → push esi/call 0x7CA405（★wcslen this 副本）→ add edi,eax
+    （★总长 = 源len+1+副本len）→ 0x7B6C31: lea edx,[edi*4]
+    （★★×4 字节分配！宽字符只需 ×2——原版怪癖）→ push edx/call
+    0x7C8E17 → mov esi,eax（★esi=拼接新缓冲）→ test ebx,ebx →
+    je 0x7B6C53 → push ebx/push esi/call 0x7CA489（★wcscpy this
+    副本→新缓冲）→ jmp 0x7B6C58 → 0x7B6C53: mov word[esi],0
+    （★ebx NULL→空串占位）→ 0x7B6C58: push ebp/push esi/call
+    0x7CA45F（★★wcscat batch 126——拼接源追加）→ test ebx,ebx →
+    je 0x7B6C6F → push ebx/call 0x7C8B3D（★★delete batch 001——
+    释放 this 副本）
+    收尾（写 out）：mov edi,[esp+0x14]（★参数 1=out 指针）→
+    test esi,esi → mov dword[edi],0（★*out 先置 NULL）→ je 0x7B6CA1
+    → push esi/call 0x7CA405（★wcslen 结果）→ lea eax,[eax+eax+2]
+    → push eax/call 0x7C8E17 → push esi/push eax → mov [edi],eax
+    （★*out=新缓冲）→ call 0x7CA489（★wcscpy 结果→out）→ push esi/
+    call 0x7C8B3D（★delete 中间缓冲）→ mov eax,edi（★返 out）→
+    pop 族 → ret 8
+语义：**宽串拼接/合并（推断名——StringClass 族）**——thiscall + 2
+栈参：① this->[0] 非空则 wcslen 定长、new(2len+2)、wcscpy 拷贝到
+临时 esi；② 参数 2 非空则与临时串拼接：wcslen 双长+1 定总长 →
+**×4 分配**（原版怪癖——宽字符实际只需 ×2）→ wcscpy this 部分 +
+wcscat 源部分 → delete this 旧副本；③ 结果再 wcslen 定长、new、
+wcscpy 写到 *out（先置 NULL）；④ 返回 out。
+★语义统一：this 串 + 参数 2 串 → 拼接 → 输出到参数 1。
+★怪癖：①★★**拼接段 ×4 分配**（lea [edi*4]——宽字符 2 字节却按
+4 字节/字符分配，多一倍；中间缓冲再按 ×2 收尾分配——两段分配
+尺度不一致，照抄）；②★wcscpy+wcscat 两段式拼接（非一次拷贝）；
+③★ebx 保存 this 副本再 delete（中间生命周期管理）；④★*out 先
+置 NULL 再写（NULL→空）；⑤★5 次 CRT 调用（wcslen×3/wcscpy×2/
+wcscat×1/new×2/delete×2——计算 5 callees）。
+⚠️ partial：宿主类名（WStringClass 系推断）、参数 2 语义（拼接源
+推断）、2 unique caller 身份、×4 分配的确切来源（编译器常量
+推断）。
+
+================================================================================
+0x7B67C0 —— 宽串相等比较 operator==（53B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（参数=[esp+4]=另一串对象指针）
+ret 4 布尔（0x7B67C0-0x7B67F3）。
+机器码结构（0x7B67C0-0x7B67F3，全程读完，关键锚点）：
+    入口：mov eax,[ecx]（★this->[0]）→ mov ecx,[esp+4]
+    （★参数=另一串对象）→ test eax,eax → jne 0x7B67D4 →
+    cmp dword[ecx],0（★参数->[0]）→ jne 0x7B67D4 → mov al,1
+    （★★双 NULL → 相等返 1）→ ret 4 → 0x7B67D4: test eax,eax →
+    je 0x7B67F0（★this NULL 参数非 NULL → 不等）→ mov ecx,[ecx]
+    （★参数->[0]）→ test ecx,ecx → je 0x7B67F0（★参数 NULL this
+    非 NULL → 不等）→ push ecx/push eax/call 0x7CA5D3
+    （★★wcscmp batch 110——宽字符字典序比较）→ add esp,8 →
+    test eax,eax → sete al（★★==0 → 相等 1）→ ret 4 →
+    0x7B67F0: xor al,al → ret 4
+语义：**宽串相等比较 operator==（推断名——StringClass 族）**——
+thiscall + 1 栈参布尔：① 双 NULL → 相等（1）；② 任一 NULL → 不等
+（0）；③ 都非 NULL → wcscmp(this, 参数) == 0 → 相等。
+★语义统一：NULL 安全三态相等判定——与 batch 097 宽串族
+（operator= 先清后写、NULL≡空串）同设计族。
+★怪癖：①★★**双 NULL 判相等**（两空串视为相等——C 语义 vs
+NULL 指针比较差异，照抄）；②★一 NULL 一非 NULL 直判不等（无
+wcscmp）；③★sete al 布尔化（wcscmp==0 → 1）；④★ret 4 单栈参
+（参数是串对象指针非裸串）。
+⚠️ partial：宿主类名（WStringClass 系推断）、参数对象布局（[0]
+指针字段与 this 同构推断）、2 unique caller 身份。
+
+================================================================================
+0x7B6630 —— 窄串字符集包含判定（59B 全程读完，batch 849 宿主兑现）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（参数=[esp+8]=字符集串指针）
+ret 4 布尔（0x7B6630-0x7B6669）。
+机器码结构（0x7B6630-0x7B6669，全程读完，关键锚点）：
+    入口：push ebx → mov ebx,[esp+8]（★参数=字符集串）→ test ebx,
+    ebx → je 0x7B6665（★NULL → 返 0）→ mov edx,[ecx]（★this->[0]）
+    → test edx,edx → je 0x7B6665（★this NULL → 返 0）→ push esi/
+    edi → mov edi,edx → or ecx,-1/xor eax,eax/push ebx（★压参数）
+    → repne scasb（★★字节扫描求 this 长度——窄串 strlen 惯用）
+    → not ecx → dec ecx → mov esi,ecx（★esi=len）→ push edx/
+    call 0x7CD790（★★★strcspn 系——batch 849 实锤登记：字符集
+    位掩码匹配计数器，返回首个命中位置偏移！）→ add esp,8 →
+    cmp eax,esi → sbb eax,eax → neg eax（★★偏移<长度 → 1——
+    「含字符集字符」判定布尔化）→ pop 族 → ret 4 → 0x7B6665:
+    xor al,al → ret 4
+语义：**窄串字符集包含判定（推断名——StringClass 族）**——
+thiscall + 1 栈参布尔：① this/参数 NULL → 0；② strlen 求 this
+长度（repne scasb 字节扫描）；③ 0x7CD790(strcspn 系) 求 this 中
+首个命中字符集字符的位置偏移；④ **偏移 < this 长度 → 1（含字符
+集字符），否则 0**。
+★语义统一：this 串是否含参数字符集内任一字符的判定器——
+batch 849 登记 0x7CD790 时明确点名的调用现场（「FUN_007b6630
+0x7B6651——repne scasb 串长前序 + sbb/neg 布尔化『偏移<长度→
+包含判定』」），本批兑现宿主。
+★怪癖：①★★**strcspn 偏移<长度判包含**（0x7CD790 返回首个命中
+偏移，cmp/sbb/neg 布尔化——非「有无命中」直判而是偏移比较）；
+②★repne scasb 求长（字节扫描窄串——非 wcslen 宽串路径，同
+batch 849 记录）；③★双 NULL 检查前置（this/字符集任一 NULL →
+0）；④★参数在 [esp+8]（push ebx 后偏移——入口压栈惯用）。
+⚠️ partial：宿主类名（StringClass 窄串族推断——0x7B6xxx 区但用
+字节扫描）、字符集参数语义（字符集串推断——0x7CD790 第二参）、
+2 unique caller 身份。
+
+================================================================================
+跨批次连接（本批三连实锤）
+================================================================================
+- **batch 849（0x7CD790 strcspn 系——字符集位掩码匹配计数器）**：
+  0x7B6630 = 登记文明确点名的三宿主之一（FUN_007b6630），本批
+  兑现调用现场（strlen 前序 + 偏移<长度布尔化）——跨批宿主兑现。
+- **batch 097（wcslen 0x7CA405/wcscpy 0x7CA489）/ batch 126
+  （wcscat 0x7CA45F）/ batch 110（wcscmp 0x7CA5D3）**：0x7B6BE0
+  用 wcslen×3+wcscpy×2+wcscat×1、0x7B67C0 用 wcscmp——宽串 CRT
+  四件套在本批两个消费端再验证。
+- **batch 001（new 0x7C8E17/delete 0x7C8B3D）**：0x7B6BE0 双分配
+  双释放（this 副本+中间缓冲+out 三态）。
+- **宽串族（batch 097/112/125/134/143/156/362/364——0x7B6xxx
+  WStringClass 系）**：0x7B6BE0（拼接）/0x7B67C0（相等）为宽串族
+  新成员；0x7B6630 用字节扫描窄串路径（同区混合）。
+- 新候选：0x7B6BE0/0x7B67C0 宿主类、0x7B6630 字符集参数来源、
+  2 unique caller 身份。
