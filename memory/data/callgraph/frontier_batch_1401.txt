@@ -1,0 +1,218 @@
+frontier batch 1401 — 0x793BB0 keepalive NET_PING 发送器 / 0x792F10 用户列表→会话玩家转换器 / 0x789B60 WOL 创建频道大函数（2026-10-23）
+
+口径：承接 batch 1400 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x793BB0（279B，callees=5 deps=2657——
+**keepalive NET_PING 发送器**）、0x792F10（398B，callees=9 deps=781——
+**用户列表→会话玩家转换器**）、0x789B60（2312B，callees=60 deps=2693
+——**WOL 创建/加入频道大函数**）。
+取证手段：disasm.py 双参直反汇编全程读完（0x793BB0 0x117 尾 0x793CC6 /
+0x792F10 0x18E 尾 0x79309D / 0x789B60 0x908 尾 0x78A467，函数边界与
+functions.tsv 完全吻合）+ TSV 查重（三候选全部未登记）+ **字符串实锤
+（_read_str1401.py：0x84BED8='Sending keepalive NET_PING packet to %s\n'、
+0x83D9DC='Adding broadcast address %s\n'、
+0x84BC04='User_List_To_Session_Players: Session.HostAddress = %s\n'、
+0x84B8E0="%s's_game"、0x84B8D0='TXT_BAD_CHANKEY'、
+0x84B8BC='TXT_CANTCREATE_CHAN'、0x84B8A8='GUI:CreatingChannel'）**
++ 跨批次锚点（batch 1398 WOL 用户列表 108B 记录、batch 1399 WOL
+匹配主循环/状态机、batch 1400 WOL 事件表/登录、batch 976 0x7C896E
+ntohl、batch 097 0x7CA489 wcscpy、batch 1030 0x7B57A0 strncat、
+batch 110 0x5E8BF0、batch 001/059/078/134 锚点族）。
+
+================================================================================
+0x793BB0 —— keepalive NET_PING 发送器（279B 全程读完，字符串实锤）
+================================================================================
+签名：cdecl 无参返 void（sub esp,0x1D8 大栈帧；0x793BB0-0x793CC6）。
+机器码结构（0x793BB0-0x793CC6，全程读完，关键锚点）：
+    入口：sub esp,0x1D8 → [esp]=0 → mov eax,[0xA8E224]（★连接表
+    计数）→ test → jle 0x793CC0（空返回）→ push ebx/ebp/esi/edi
+    遍历（0x793BD9）：mov ebp,0xA8E1C4（★连接记录表基址，每项
+    0xC）→ mov ebx,0xA8E1A4（★索引表基址，每项 4）→ mov eax,
+    [ebp]（★记录+0=上次发送时间）→ mov esi,[ebp+8]（★记录+8=
+    阈值 0x4B0=1200）→ cmp eax,-1 → je 0x793BF5（★未初始化跳过）
+    → call 0x6C8C40（★当前时间获取）→ sub eax,[ebp]（★已过时间）
+    → cmp eax,esi → jge 0x793BFD（★超时 → 发送）→ sub esi,eax
+    （★未超时 → 递减阈值余量）→ 0x793BF5: test esi → jne
+    0x793C9F（★余量非 0 → 跳过本轮）
+    发送段 0x793BFD：清 [esp+0x20] 0x71 dword+word+byte（★285B
+    包缓冲）→ mov [esp+0x20],0xD（★包类型 0xD）→ mov ecx,0xB73E40
+    → call 0x7B5400（★batch 085 c_str——本地用户名）→ strlen →
+    复制到 [esp+0x24] → mov ecx,[ebx]（★索引）→ mov ecx,
+    [ecx*4+0xA8DA90]（★★网络地址表 [0xA8DA90]——batch 1400 日志
+    同表）→ call 0x7350C0（★窄→宽转换）→ push → DebugLog
+    0x84BED8（★"Sending keepalive NET_PING packet to %s\n"）→
+    mov edx,[ebx] → mov eax,[edx*4+0xA8DA90] → push eax/push 0/
+    push 0x2F（★NET_PING=0x2F?）→ lea ecx,[esp+0x20]（★包缓冲）→
+    push ecx → mov ecx,0xA8E9C0（★网络管理器全局）→ call 0x541260
+    （★6 参发包函数）→ 更新记录：call 0x6C8C40（★当前时间）→
+    mov [ebp],eax（★+0=发送时间）→ mov [ebp+4],eax（★+4 同值）→
+    mov [ebp+8],0x4B0（★★+8=1200 阈值重置）→ 0x793C9F: inc 计数
+    → add ebx,4 → add ebp,0xC → 循环 → 收尾 pop 族 → ret
+语义：**keepalive NET_PING 发送器（字符串实锤——Sending keepalive
+NET_PING packet）**——遍历连接记录表 [0xA8E1C4]（每项 0xC：+0 上次
+时间/+4 时间/+8 阈值 1200ms），超时（当前时间-上次 >= 1200ms）后
+组装 0xD 型包（含本地用户名）+ 经 0x541260 6 参发包（0x2F 标记 +
+目标地址 [0xA8DA90] 表）→ 重置计时器。
+★怪癖：①★超时阈值 0x4B0=1200ms 硬编码（+8 写死）；②未超时递减
+余量而非跳过重置（sub esi,eax——余量语义）；③记录 +0/+4 双同值
+写（时间戳写两次）；④包类型 0xD + 标记 0x2F（NET_PING 推断）；
+⑤[0xA8DA90] 地址表与 batch 1400 日志同表；⑥0x541260 6 参
+（thiscall 网络管理器 0xA8E9C0）。
+⚠️ partial：连接记录表宿主类、0x541260 精确发包语义（0x2F 包
+类型推断）、[0xA8E1A4]/[0xA8A8E1C4] 表精确关系、-1 哨兵语义。
+
+================================================================================
+0x792F10 —— 用户列表→会话玩家转换器（398B 全程读完，字符串实锤）
+================================================================================
+签名：cdecl 无参返 void（sub esp,0x7C；0x792F10-0x79309D）。
+机器码结构（0x792F10-0x79309D，全程读完，关键锚点）：
+    入口：mov eax,[0xB77900]（★batch 1398 WOL 用户列表计数）→
+    sub esp,0x7C → mov [0xA8B54C],1（★登记索引=1——跳过 0 号）→
+    遍历（0x792F32）：xor ebx（★步进基准）→ 拷贝 108B 记录到
+    [esp+0x20]（rep movsd 0x1B——★batch 1398/1400 同族）→ lea
+    ecx,[esp+0x44]（★名字字段）→ call 0x735120（★窄串访问器）→
+    call 0x5E8BF0（★batch 110 七全局宽串比较选择器）→ mov esi,
+    eax → test → je 跳过 → call 0x5E93F0（★判定）→ test al →
+    je 跳过 → mov ecx,[esp+0x34] → mov [esi+0x7B],ecx（★写记录）
+    → mov ecx,0xB73E40 → call 0x7B5400（★本地用户名 c_str）→
+    0x7C8D20（★batch 001 比较）→ test → je 0x79300F（★本地用户
+    跳过登记）
+    → test [esp+0x20],1（★bit0——batch 1400 记录标志）→ je
+    0x792FD0 → lea ecx,[esp+0x44] → 0x735120 → 0x5E8BF0 → lea
+    ecx,[eax+0x28]（★+0x28 IP 字段）→ call 0x53EDA0（★三输出
+    getter）→ push 0/push 两输出 → mov ecx,0xA8BB1C（★会话玩家
+    表）→ call 0x53ED20（★三参设置）→ 0x792FD0: mov eax,
+    [0xAC1170]（★WOL 全局）→ 虚表槽 0x20（★3 参：this,参数,
+    [esp+0x3C]）→ test 结果 → jge → 存 [0xB7790C + 计数*4] →
+    [0xA8B54C]++（★登记索引递增）→ 0x79300F: inc 计数 → add
+    ebx,0x6C（★108B 步进）→ 循环
+    收尾：mov ecx,[0x887628]（★网络管理器）→ 虚表槽 0x30（★
+    通知）→ mov esi,1 → [0xA8DA84] 计数循环：mov eax,[0xA8DA78]
+    → mov ecx,[eax+esi*4] → add ecx,0x28 → call 0x53F0E0（★取
+    串）→ DebugLog 0x83D9DC（★"Adding broadcast address %s\n"）→
+    [0x887628] 虚表槽 0x2C（★广播地址登记）→ 0x79307E: push 0 →
+    mov ecx,0xA8BB1C → call 0x53F0E0 → DebugLog 0x84BC04（★
+    "User_List_To_Session_Players: Session.HostAddress = %s\n"）→
+    收尾 pop 族 → ret
+语义：**用户列表→会话玩家转换器（字符串实锤——User_List_To_Session_
+Players）**——遍历 WOL 用户列表 [0xB77900]（108B/项）：① 经
+0x735120+0x5E8BF0 提取玩家身份（判定 0x5E93F0 通过才登记）；②
+本地用户（[0xB73E40] 匹配）跳过；③ bit0 玩家 → IP 字段 +0x28 经
+0x53EDA0/0x53ED20 写入会话玩家表 [0xA8BB1C]；④ 每玩家经
+[0xAC1170] 虚表槽 0x20 登记 → 结果存 [0xB7790C]；⑤ 收尾广播
+地址表（[0xA8DA78] 循环 DebugLog Adding broadcast address + 
+[0x887628] 槽 0x2C）+ 会话 HostAddress 日志。
+★怪癖：①★登记索引 [0xA8B54C] 从 1 起（0 号保留）；②108B 整块
+拷贝（batch 1398 同族）；③本地用户跳过（[0xB73E40] 匹配）——
+与 batch 1400 的 0x7A0430 通道 operator 过滤同模式；④bit0 记录
+标志门控 IP 登记（batch 1400 同族）；⑤虚表槽 0x20 三参调用 +
+[0x887628] 槽 0x30/0x2C 双通知；⑥三档 DebugLog（include
+User_List_To_Session_Players 函数名——经典 Westwood 调试日志）。
+⚠️ partial：0x735120/0x5E93F0/0x53EDA0/0x53ED20/0x53F0E0 身份、
+[0xB7790C] 登记表语义、[0xAC1170] 槽 0x20/[0x887628] 槽 0x30/0x2C。
+
+================================================================================
+0x789B60 —— WOL 创建/加入频道大函数（2312B 全程读完，字符串实锤）
+================================================================================
+签名：thiscall 无参返 al（sub esp,0x1AC 大栈帧；0x789B60-0x78A467）。
+机器码结构（0x789B60-0x78A467，全程读完，关键锚点）：
+    入口：sub esp,0x1AC → lea ecx,[esp] → 0x7B4620（★batch 062
+    ctor）→ cmp [0xA8EB84],0x400 → jl 跳过 → [0xA8B540]=0（★
+    门槛 0x400）→ mov edx,[0xAC10C8] → mov al,[0xA8B540] →
+    [esp+0x37]=0x94C3 sete（★判定）→ lea ecx,[esp+0x24] → call
+    0x7AC610（★虚表对象构造）→ mov eax,[0xA8B244]（★GameMode）
+    → 3/1/2 → [0xB77DC4]=2（★状态机）→ jmp 0x789C5F → 否则 call
+    0x52FEC0（★双参状态调用）→ 虚表 0x7F788C 构造（0x6241F0，
+    0xC3 消息）→ cmp eax,2 → 0x789C0E: 析构 → 0x77D1F0（★判定）
+    → 返回 al=0 ≠2 → 0x789C3E: 0x7B4940 串拷贝 + 0x7B57A0（★
+    batch 1030 strncat——频道名组装）
+    0x789C5F：[0xAC116C] 虚表槽 0x24（★batch 1399 WOL 全局）→
+    mov edx,[0xB73E40]（★本地用户名）→ 清 [esp+0x60] 0x43 dword
+    （★268B）→ push edx/lea eax,[esp+0x98] → push 0x84B8E0（★
+    "%s's_game"——房间名格式！）→ push eax → call 0x7C8EF4（★
+    格式化）→ [esp+0x60]=0x29（★包类型）→ [esp+0x64]=1 →
+    [0xB77DC4] 判定（<2 → =6）→ 0x7B5400 c_str → 复制到
+    [esp+0x137] → [esp+0x68]=[0xB77DC4] → 清 [esp+0x16C] 0x14
+    dword → call 0x77E7A0（★构造）→ strlen → 复制 → GameMode
+    判定 [0xA8B238]==4/[0xA8B244] 分支（3/1/2 → 0x789EC4/0x789EC9）
+    → [esp+0x74]/[esp+0x80] 组装（ah 位操作 or 0x10/0x08）→ add
+    [0xB77DD4] → 0x789DD3：[0xB77DD0] 判定（★离开频道等待——
+    batch 1399 同款：DebugLog 0x84B658 Leave_Channel + [0xAC116C]
+    槽 0x24 + Sleep 100ms×150 0x7E11F0 + 0x77F900 消息泵）→
+    0x792EC0（★消息 0x40 处理）
+    → 0x5D5E10 → [0xA8B23C]=eax（★网络会话全局）→ [0xA8B250]=
+    [eax+0x28] → 虚表槽 0x20 → 0x5E7BF0（★清理）→ 0x5C6120
+    （[0xA8DA74] 容器）→ 0x5E8B40/0x5E8B60 → new 0x85（0x7C8E17
+    batch 001）→ 0x53ECB0 构造（+0x28）→ ebp=新对象 → 清 0x21
+    dword → 0x7B7ED0/0x7B7100（★取串）→ 0x7CA489（★batch 097
+    wcscpy）→ [0x5175F0] 判定 → 0x65D430/0x65D460/0x65D480（★
+    串类）→ 0x5176B0 → 0x778A20（★[0xB73E40] 用户查找）→
+    [0xB75E4C] → 0x69B760/0x69B7E0（★[0xA8B238] 两参设置——
+    网络参数）→ 0x69B700/0x69B720（★[0xA8B238] getter）→
+    0x696F90/0x696FC0/0x696FF0/0x697020（★[ebp] 网络对象设置
+    ——IP/端口族）→ [ebp+0x77]=1（★持有）→ [ebp+0x6B]=0 →
+    [0x8316A4]=7 → [0xAC10C8]=[esp+0x37] → 0x5EE350（★batch 636
+    三控件清理）→ [0xAC10C8]!=0 → [0x8316A4]=0 → 0x696F90(-3)
+    → 0x78A044：[0xA8DA7C]/[0xA8DA84] 判定 → 加入 [0xA8DA78]
+    数组（★会话数组插入）→ 0x5E8DA0
+    → 0x7B7100 → 0x7CA489（★wcscpy）→ [0xA8D610] → [0xAC116C]
+    虚表槽 0x1C（★创建频道）→ cmp 0x800401F8（★HRESULT——batch
+    1400 同族）→ 0x78A0CD: DebugLog 0x84B8D0（★TXT_BAD_CHANKEY
+    行 0x2E0D）+ 0x5E2CD0 → 0x775940(0xC4)/[0xB77DC8] and ~0x80/
+    0x7757E0 → 0x775B10（★batch 078）→ GetDlgItem 0x540 →
+    SetFocus（★batch 1398 实锤）→ 0x78A142: 非 0 → DebugLog
+    0x84B8BC（★TXT_CANTCREATE_CHAN 行 0x2E13）+ 同清理 → 0x78A1BB:
+    DebugLog 0x84B8A8（★"GUI:CreatingChannel" 行 0x2E1B）+
+    0x7B66D0/0x792BE0(4,0) → 0x775940 清理 → 0x792BE0(4,1) →
+    用户列表遍历（[0xB77900]/[0xB77908] 108B）：0x7B5440 （★
+    GetString +0x24）+ 0x7C8D20 匹配 [0xB73E40] → 找到 → 0x7C896E
+    （★★batch 976 ntohl）+ 字节序组装（shr 8/16/24——IP 地址）→
+    0x53ECE0（★+0x28 IP 写入）→ ebp+0x28 拷贝 3 dword →
+    GameMode 判定（3/1/2 → 收尾）→ 0x775B10 + 0x6071E0/0x52FEC0
+    （★窗口显示）→ 0x72CF40 → 0x622650（0xC2, 0x78F7F0 窗口
+    消息）→ [0xA8B23C] 虚表槽 0x9C/0x20/0x18/0x7C（★网络会话
+    四调）→ [0x7E1498] ShowWindow ×2（★新窗口/旧窗口）→ 收尾
+    析构族（0x65D460/0x7B6760/0x7B46F0/0x624130）→ ret al=1
+语义：**WOL 创建/加入频道大函数（字符串实锤——GUI:CreatingChannel）**——
+① GameMode 判定选择状态机 [0xB77DC4]；② 房间名组装（0x7C8EF4
+"%s's_game"——本地用户名+'_s_game'`）；③ 离开原频道等待（batch
+1399 同款 Sleep 循环）；④ 新建会话对象（new 0x85B）+ 网络参数
+装配（0x69B7xx/0x696Fxx 族——IP/端口/HostAddress）；⑤ 会话入
+数组 [0xA8DA78]；⑥ [0xAC116C] 虚表槽 0x1C 创建频道 → HRESULT
+判定（0x800401F8 特判 → TXT_BAD_CHANKEY；非 0 → TXT_CANTCREATE_
+CHAN）；⑦ 本地用户 IP 提取（ntohl + 字节序）写入玩家表；⑧
+窗口显示（ShowWindow）+ 网络会话四虚表调用；⑨ 返回 al=1 成功。
+★怪癖：①★房间名格式 "%s's_game" 硬编码（0x84B8E0）；②GameMode
+三分支（[0xA8B238]==4 特判 + [0xA8B244] 3/1/2）；③HRESULT
+0x800401F8 与 batch 1400 0x8004006x 同域（WOL 自定义）；④离开
+频道等待循环（Sleep 100ms×150——batch 1399 逐字节同款）；⑤
+IP 提取 0x7C896E ntohl + shr 8/16/24 字节序（batch 976 实锤）；
+⑥new 0x85 大写对象 + +0x77/=1 持有标志；⑦[0x8316A4]/[0xAC10C8]
+状态对；⑧ShowWindow ×2（新窗开/旧窗收）；⑨20+ 虚表/间接调用
+大栈帧函数（callees=60 印证）。
+⚠️ partial：0x53ECB0/0x53EDA0/0x53ED20/0x53F0E0/0x53ECE0 身份、
+[0xAC116C] 槽 0x1C 创建频道方法名、0x69B7xx/0x696Fxx 精确参数
+语义、0x800401F8 含义、会话对象 0x85B 布局。
+
+================================================================================
+跨批次连接（本批三连 = WOL 会话管理家族）
+================================================================================
+- **batch 1398-1400（WOL 家族三连批）**：0x793BB0/0x792F10/
+  0x789B60 同属 wonline.cpp 网络对战模块——[0xB73E40] 本地用户名/
+  [0xB77900] 用户列表 108B 记录/[0xAC116C] WOL 全局/[0xA8B244]
+  GameMode/[0xB77DC4] 状态机全部复用前批已登记全局。
+- **batch 976（0x7C896E ntohl）**：0x789B60 IP 提取消费（+字节序
+  组装——batch 976 实锤现场）。
+- **batch 097（0x7CA489 wcscpy）/ batch 1030（0x7B57A0 strncat）**：
+  0x789B60 串拷贝/频道名拼接。
+- **batch 110（0x5E8BF0 七全局宽串比较）**：0x792F10 玩家身份提取。
+- **batch 001（0x7C8E17 new/0x7C8B3D delete/0x734E60/0x4068E0）/
+  batch 059（0x7B46F0）/ batch 078（0x775B10）**：三函数锚点族。
+- **batch 1399（0x7E11F0 Sleep/0x7E1498 ShowWindow 导入槽）**：
+  0x789B60 离开频道等待/窗口显示复用。
+- **batch 1398（0x7E14A8 GetDlgItem/0x7E13CC SetFocus）**：0x789B60
+  错误出口焦点链。
+- **batch 636（0x5EE350 三控件清理）**：0x789B60 会话前清理。
+- 新候选：0x6C8C40（时间 getter）、0x541260（6 参发包）、
+  0x53EDA0/0x53ED20/0x53F0E0/0x53ECE0/0x53ECB0（53xxxx 区网络
+  对象方法族）、0x69B700/0x69B720/0x69B760/0x69B7E0/0x696F90/
+  0x696FC0/0x696FF0/0x697020（网络参数装配族）、0x735120/0x5E93F0。
