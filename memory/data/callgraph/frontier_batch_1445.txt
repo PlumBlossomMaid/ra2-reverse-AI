@@ -1,0 +1,114 @@
+frontier batch 1445 — 0x6D0270 全局指针表清理器 / 0x6CF350 双表排序整理器 / 0x6CEEB0 对象数组查找器（2026-10-23）
+
+口径：承接 batch 1444 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x6D0270（63B，callees=2 deps=4449——
+**全局指针表清理器**，推断名）、0x6CF350（177B，callees=1 deps=45——
+**双表排序整理器**，推断名）、0x6CEEB0（54B，callees=0 deps=1934——
+**对象数组查找器**，推断名）。
+取证手段：disasm.py 双参直反汇编全程读完（0x6D0270 0x3F 尾 0x6D02AE /
+0x6CF350 0xB1 尾 0x6CF400 / 0x6CEEB0 0x36 尾 0x6CEEE5，全程读完）+
+TSV 查重（三候选全部未登记）+ callee 登记核验（grep TSV：batch 049
+0x7C8B48 qsort、batch 001 0x7C8B3D delete——已登记；0x6A5BF0/0x6CF320
+未登记标注新候选）。
+
+================================================================================
+0x6D0270 —— 全局指针表清理器（63B 全程读完）
+================================================================================
+签名：thiscall 无栈参（ecx 未用——纯全局清理；0x6D0270-0x6D02AE）。
+机器码结构（0x6D0270-0x6D02AE，全程读完，关键锚点）：
+    前置 0x6D0272：call 0x6A5BF0（★未登记——前置处理推断）
+    循环清理 0x6D027E（esi=0xB0C148 指针表起点、edi=0 标志索引）：
+    mov al,[edi+0xB0CBCC]（★★标志数组 [0xB0CBCC] 逐字节）→ test →
+    je 0x6D029A（★标志 0 跳过）→ mov eax,[esi]（★指针表项）→
+    push eax → call 0x7C8B3D（★batch 001 delete）→ add esp,4 →
+    mov byte[edi+0xB0CBCC],0（★清标志）→ 0x6D029A: mov [esi],0
+    （★清指针）→ add esi,4 → inc edi → cmp esi,0xB0C1AC（★终点）
+    → jl 0x6D027E（循环）→ ret
+语义：**全局指针表清理器（推断名——63B「标志驱动 delete 全表」）**——
+沿 [0xB0C148..0xB0C1AC] 指针表（25 项 ×4B）逐项：标志数组 [0xB0CBCC]
+对应字节非 0 → 0x7C8B3D delete 该项指针 → 清标志；随后无条件清指针
+为 0，步进下一项。
+★怪癖：①★★标志数组驱动删除（[0xB0CBCC] 逐字节标志——非 0 才
+delete，条件清理）；②25 项指针表（0xB0C148→0xB0C1AC 差 0x64B=
+100B÷4=25 项——全局对象指针数组推断）；③清标志与清指针两段式
+（先 [edi+0xB0CBCC]=0 后 [esi]=0——标志/指针分离）；④0x6A5BF0
+前置（未登记）。
+⚠️ partial：0x6A5BF0 精确语义（未登记）、[0xB0C148]/[0xB0CBCC]
+表身份（全局对象/标志对推断）、25 项宿主、2 unique caller 身份。
+
+================================================================================
+0x6CF350 —— 双表排序整理器（177B 全程读完）
+================================================================================
+签名：thiscall 无栈参（ecx=this 存 esi；0x6CF350-0x6CF400）。
+机器码结构（0x6CF350-0x6CF400，全程读完，关键锚点）：
+    前置门控 0x6CF354：mov eax,[esi+0x14]（★计数）→ test → je
+    0x6CF3FE（★空跳过全部）→ mov eax,[esi+0x2C]（★第二计数）→
+    test → jle 0x6CF37A
+    表一排序 0x6CF366：push 0x6CF320（★比较器——未登记）→ push 8
+    （★8B/项）→ push 计数 → mov eax,[esi+0x20]（★表一基址）→
+    push eax → call 0x7C8B48（★★batch 049 qsort——8B/项排序！）
+    表二排序 0x6CF37A：mov eax,[esi+0x14]（★第一计数）→ test →
+    jle 0x6CF395 → mov ecx,[esi+8]（★表二基址）→ push 0x6CF320 →
+    push 8 → push 计数 → push ecx → call 0x7C8B48（★第二 qsort）
+    双指针合并 0x6CF395：mov ecx,[esi+0x20]（★表一）→ mov ebx,
+    [esi+0x2C]（★表二计数）→ mov ebp,[esi+0x14]（★表一计数）→
+    mov edi,[esi+8]（★表二）→ test ebp → jle 0x6CF3E9 → 循环：
+    mov eax,[edi] → mov edx,[ecx] → cmp eax,edx → jne 0x6CF3BE →
+    mov edx,[edi+4] → mov eax,[ecx+4] → add edi,8 → dec ebp →
+    mov [edx],eax（★★键相等 → 写 [表二项+4]=[表一项+4]——值同步！
+    8B/项 {键,值} 结构）→ jmp 0x6CF3E5 → 0x6CF3BE: jle 0x6CF3CB
+    → 0x6CF3C0: mov edx,[ecx+8] → add ecx,8 → dec ebx → cmp eax,
+    edx → jg 0x6CF3C0（★表一前移直到 ≥ 键）→ 0x6CF3CB: cmp eax,
+    [ecx] → je 0x6CF3E5（★相等同步）→ 0x6CF3CF: mov [esp+0x10],0
+    → mov eax,1 → cdq → idiv dword[esp+0x10]（★★★idiv 0 死代码！
+    除数恒 0——永不执行路径）→ mov [esp+0x10],eax
+    收尾 0x6CF3E9：lea ecx,[esi+4] → call [edx+0xC]（★虚表槽 0xC
+    清理）→ lea ecx,[esi+0x1C] → call [eax+0xC]（★第二虚表槽 0xC）
+    → ret
+语义：**双表排序整理器（推断名——177B「双 qsort + 键值同步」）**——
+① 门控 [esi+0x14] 非空；② 表一（[esi+0x20]，计数 [esi+0x2C]）与
+表二（[esi+8]，计数 [esi+0x14]）各自 8B/项 qsort（比较器 0x6CF320）；
+③ 双指针合并：两表 8B/项 {键,值} 结构，键相等时写 [表二项+4]=
+[表一项+4]（值同步）；④ 收尾虚表槽 0xC 清理（+4/+0x1C 两对象）。
+★怪癖：①★★双 qsort 同比较器（0x6CF320 未登记——8B/项键排序，
+batch 049 qsort 双消费）；②键值同步合并（键相等 → 值拷贝——表二
+继承表一值）；③★★idiv 0 死代码（0x6CF3CF: [esp+0x10]=0 → idiv
+除数恒 0——永不执行的除零路径，原版编译残留）；④虚表槽 0xC 清理
+收尾（+4/+0x1C 双对象）；⑤门控计数 [esi+0x14]（第一计数双用）。
+⚠️ partial：0x6CF320 比较器精确语义（未登记）、8B/项 {键,值} 结构
+语义、+0x14/+0x2C 计数与 +8/+0x20 基址身份、虚表槽 0xC 宿主、
+idiv 0 死代码存在性（编译残留 vs 调用约定推断）、2 unique caller。
+
+================================================================================
+0x6CEEB0 —— 对象数组查找器（54B 全程读完）
+================================================================================
+签名：thiscall 无栈参（ecx=查找键；0x6CEEB0-0x6CEEE5）。
+机器码结构（0x6CEEB0-0x6CEEE5，全程读完，关键锚点）：
+    遍历 0x6CEEB2：mov esi,[0xA8E340]（★全局计数）→ xor eax →
+    test esi → jle 0x6CEED9（★空表返 0）→ 循环：mov edi,
+    [0xA8E334]（★全局数组基址）→ mov edx,edi → mov ebx,[edx]（★
+    取项）→ cmp [ebx+0xBC],ecx（★★项 +0xBC 字段 vs 查找键）→ je
+    0x6CEEDF（★命中）→ inc eax → add edx,4 → cmp eax,esi → jl
+    循环 → 0x6CEED9: xor eax → ret（★未命中返 0）→ 0x6CEEDF:
+    mov eax,[edi+eax*4]（★命中返项指针）→ ret
+语义：**对象数组查找器（推断名——54B「按 +0xBC 键找对象」）**——
+遍历全局表 [0xA8E334]/[0xA8E340]（数组/计数），逐项取 [项] → 比对
+项 +0xBC 字段 == 查找键（ecx）→ 命中返项指针，否则返 0。
+★怪癖：①★[项+0xBC] 键匹配（对象身份字段推断）；②命中返项指针
+（[edi+eax*4]——数组元素即指针）；③遍历计数 [0xA8E340] 重读；
+④xor eax 双用（遍历索引 + 未命中返 0）。
+⚠️ partial：[0xA8E334]/[0xA8E340] 表身份（对象表推断）、+0xBC
+字段语义（类型 ID/序列号推断）、2 unique caller 身份。
+
+================================================================================
+跨批次连接（本批三连 = 全局清理 + 双表整理 + 对象查找）
+================================================================================
+- **batch 049（0x7C8B48 qsort）**：0x6CF350 双消费（比较器
+  0x6CF320 注入，8B/项——qsort ABI 双调用现场）。
+- **batch 001（0x7C8B3D delete）**：0x6D0270 消费（标志驱动清理）。
+- **batch 1439（0x6F06E0 等构造器容器登记）**：0x6CEEB0 表
+  [0xA8E334] 与 batch 1439 [0xA8E328] 邻域（0xA8E3xx 全局表族——
+  按名工厂表 [0xA8E34C]/[0xA8E358] batch 338 已登记，邻区关联）。
+- 新候选：0x6A5BF0（0x6D0270 前置）、0x6CF320（0x6CF350 比较器）、
+  [0xB0C148]/[0xB0CBCC] 指针表/标志对、[0xA8E334]/[0xA8E340] 表、
+  +0xBC 键字段宿主。
