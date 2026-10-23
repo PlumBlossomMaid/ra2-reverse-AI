@@ -1,0 +1,139 @@
+frontier batch 1374 — 0x54F450 按键标志处理器 / 0x5471B0 表除法索引取值器 / 0x541480 双字节门控转发器（2026-10-23）
+
+口径：承接 batch 1373 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x54F450（210B，callees=2 deps=241）、
+0x5471B0（49B，callees=0 deps=1877 纯叶高解锁）、0x541480（50B，callees=1
+deps=537 纯叶）。
+取证手段：disasm.py 双参直反汇编全程读完（0x54F450 0xE0 尾 0x54F51F /
+0x5471B0 0x50 尾 0x5471DE（含相邻 0x5471F0 开头）/ 0x541480 0x50 尾
+0x5414AF，函数边界与 functions.tsv 完全吻合）+ TSV 查重（三候选全部
+未登记）+ 跨批次对比（[0x7E13E4]/[0x7E13E8] COM/函数指针族 ↔ batch
+1355/1360 同族；虚表槽调用惯用 ↔ batch 1362/1370 同款；idiv 除法惯用 ↔
+既有知识）。
+
+================================================================================
+0x54F450 —— 按键标志处理器（210B 全程读完）
+================================================================================
+签名：thiscall（ecx=this，mov ebp）+ 1 栈参（[esp+0x18]=标志 esi），
+返回 al，ret 4（0x54F450-0x54F51F，callees=2 deps=241）。
+机器码结构（0x54F450-0x54F51F，全程读完，关键锚点）：
+    入口：sub esp, 0xC; push ebp; push esi
+    mov esi, [esp+0x18]（★标志参数）; mov ebp, ecx
+    test esi, 0x800; je 0x54F46D（★bit11 门控）
+    0x54F463：xor al; ret 4（★bit11 置位 → 拒绝返 0）
+    0x54F46D：mov eax, esi; and eax, 0xFF
+    cmp ax, 0x24; jne 0x54F484
+    mov al, 8; ret 4（★值==0x24 → 返 8——映射）
+    cmp ax, 0x23; jne 0x54F494
+    mov al, 0x5C; ret 4（★值==0x23 → 返 0x5C——映射）
+    0x54F494：push ebx; push edi; mov edi, esi
+    and edi, 0x100; test di; je 0x54F4A8
+    mov byte [ebp+0x24], 0x80（★bit8 → +0x24=0x80）
+    mov eax, esi; and eax, 0x200; test ax; je 0x54F4BB
+    mov byte [ebp+0x25], 0x80（★bit9 → +0x25=0x80）
+    mov ebx, esi; and ebx, 0x400; test bx; je 0x54F4CB
+    mov byte [ebp+0x26], 0x80（★bit10 → +0x26=0x80）
+    0x54F4CB：and esi, 0xFFFF; push 0; push esi
+    call [0x7E13E8]（★[0x7E13E8] 函数指针——查询）
+    0x54F4DA：lea ecx, [esp+0x10]; push 0; lea edx, [ebp+0x14]
+    push ecx; push edx; push eax; push esi
+    call [0x7E13E4]（★[0x7E13E4] 函数指针——写入）
+    0x54F4ED 尾段：test di/ax/bx → 清 +0x24/+0x25/+0x26
+    0x54F50D：mov ecx, [esp+8]; cmp eax, 1; setne al; dec eax
+    and eax, ecx（★结果 !=1 → 返参数，==1 → 返 0）; ret 4
+语义：**按键标志处理器**（0x54F45x 区——0x54Fxxx 按键/输入域，
+callees=2 deps=241）：thiscall + 标志栈参：**bit11 拒绝门控**（置位
+返 0）→ 低位 0x24/0x23 **特殊值映射**（返 8/0x5C——转义序列）→
+**bit8/9/10 → +0x24/+0x25/+0x26 标志字节 0x80** → [0x7E13E8] 查询
++ [0x7E13E4] **双函数指针写入**（低位 0xFFFF 参数 + this+0x14 目标）
+→ 结果 !=1 返原参数、==1 返 0（幂等判定）。★按键标志处理器
+（0x54F45x 区——bit11 拒绝 + 0x24/0x23 映射 + 三 bit 标志字 +
+[0x7E13E4]/[0x7E13E8] 双指针）。2 unique caller（3 callsite）。
+★怪癖：①★**bit11 拒绝门控**（test esi,0x800 → xor al 返 0——
+保留位拒绝）；②★**0x24/0x23 特殊值映射**（cmp ax,0x24 → mov al,8、
+cmp ax,0x23 → mov al,0x5C——两值映射成常量返回值）；③★**bit8/9/10
+→ +0x24/+0x25/+0x26 标志字节 0x80**（and edi,0x100/0x200/0x400 +
+test + mov byte——三独立标志位）；④★[0x7E13E8]/[0x7E13E4] 双函数
+指针（查询+写入——batch 1355/1360 [0x7E13xx]/[0x7E14xx] COM 族）；
+⑤★幂等判定（setne al + dec + and——结果 !=1 返参数、==1 返 0）+
+ret 4 单栈参。
+⚠️ partial：宿主 +0x14/+0x24/+0x25/+0x26 字段语义、标志值含义
+（0x24/0x23/0x800/0x100/0x200/0x400）、[0x7E13E4]/[0x7E13E8] 身份、
+2 unique caller 身份。
+
+================================================================================
+0x5471B0 —— 表除法索引取值器（49B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（[esp+8]=索引 eax），返回 eax，
+ret 4（0x5471B0-0x5471DE，callees=0 纯叶 deps=1877 高解锁）。
+机器码（0x5471B0-0x5471DE）：
+    入口：mov eax, [ecx]; call [eax+0x9C]（★虚表槽 0x9C——取表）
+    mov ecx, eax; test ecx; je 0x5471DC（★空表 → 返 0）
+    push esi
+    mov esi, [ecx+4]; imul esi, [ecx]（★宽 × 高）
+    mov eax, [esp+8]（★索引）
+    cdq; idiv esi（★索引 ÷ 宽×高）
+    mov ecx, [ecx+edx*4+0x10]（★余数索引表项 [edx*4+0x10]）
+    test ecx; je 0x5471DC（空 → 返 0）
+    movsx eax, byte [ecx+0x2A]（★读 [+0x2A] 字节——有符号扩展）
+    ret 4
+    0x5471DC：xor eax; ret 4
+语义：**表除法索引取值器**（0x5471Bx 区——0x5471xx 查表/取值域，
+callees=0 纯叶 deps=1877 高解锁）：thiscall + 索引栈参：**虚表槽
+0x9C 取表** → 表 [0]×[4] 宽高积 → **idiv 索引 ÷ 宽×高**（余数 edx）
+→ **[edx*4+0x10] 余数索引表项** → 非空读 **[+0x2A] 字节**（movsx
+有符号扩展）返回；空表/空项返 0。★表除法索引取值器（0x5471Bx 区——
+虚表槽 0x9C + idiv 宽高积 + 余数表项 + movsx [+0x2A]）。2 unique
+caller（3 callsite）。
+★怪癖：①★虚表槽 0x9C 取表（mov eax,[ecx]; call [eax+0x9C]——
+表对象获取）；②★**idiv 宽×高积**（imul esi,[ecx]+[ecx+4] + idiv——
+二维索引 ÷ 面积取余）；③★[edx*4+0x10] 余数索引表项（4B/项——
+余数→项映射）；④★movsx 读 [+0x2A] 字节（有符号扩展——字节值
+语义）+ ret 4 单栈参 + callees=0 纯叶 + deps=1877 高解锁。
+⚠️ partial：表对象类型（虚表槽 0x9C）、[0]×[4] 宽高积语义、
+[+0x2A] 字节含义、索引参数语义、2 unique caller 身份。
+
+================================================================================
+0x541480 —— 双字节门控转发器（50B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 4 栈参（[esp+0x10]=参数 edx 族），ret 0x10
+（0x541480-0x5414AF，callees=1 deps=537 纯叶）。
+机器码（0x541480-0x5414AF）：
+    入口：mov al, [ecx+4]; test al; je 0x5414AD（★字节 1 为 0 → 返 0）
+    mov al, [ecx+5]; test al; je 0x5414AD（★字节 2 为 0 → 返 0）
+    mov edx, [esp+0x10]（★参数 1）
+    mov ecx, [ecx+0x4C]（★内部指针）
+    push edx; mov edx, [esp+0x10]; mov eax, [ecx]
+    push edx; mov edx, [esp+0x10]; push edx
+    mov edx, [esp+0x10]; push edx（★四参数透传）
+    call [eax+0x34]（★虚表槽 0x34 调用——4 栈参）
+    ret 0x10（★成功路径）
+    0x5414AD：xor eax; ret 0x10（★门控失败返 0）
+语义：**双字节门控转发器**（0x54148x 区——0x5414xx 门控/转发域，
+callees=1 deps=537 纯叶）：thiscall + 4 栈参：**+0x4/+0x5 双字节
+非零门控**（任一 0 → 返 0）→ [ecx+0x4C] 内部指针 **虚表槽 0x34
+调用**（4 栈参透传）→ ret 0x10。★双字节门控转发器（0x54148x 区——
++0x4/+0x5 双门 + 虚表槽 0x34 + 4 参透传）。2 unique caller
+（3 callsite）。
+★怪癖：①★**双字节门控**（mov al,[+0x4]/[+0x5] + test ×2——两字节
+都非零才转发——batch 1352 0x542310 同款双布尔门）；②★[ecx+0x4C]
+内部指针间接（虚表槽 0x34——目标对象方法）；③★**四参数透传**
+（push edx ×4——[esp+0x10] 栈参族原样转发）；④★ret 0x10 四栈参 +
+callees=1 纯链。
+⚠️ partial：宿主 +0x4/+0x5/+0x4C 字段语义（双门标志+内部指针）、
+虚表槽 0x34 身份、四栈参含义、2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1355/1360（[0x7E13E4]/[0x7E14E4] COM/函数指针族）：
+  0x54F450 用 [0x7E13E4]/[0x7E13E8]——COM 接口族持续闭合
+  （0x7E13xx 域）。
+- batch 1352（0x542310 双布尔门 +0x4/+0x5）：0x541480 用同款
+  +0x4/+0x5 双字节门——双门惯用再验证。
+- 虚表槽调用惯用（batch 1362 0x63E900 虚表槽 0x10、batch 1370
+  0x589C50 虚表槽 8）：0x5471B0 虚表槽 0x9C + 0x541480 虚表槽
+  0x34——虚表调用家族再验证。
+- idiv 除法惯用（cdq + idiv）：0x5471B0——既有除法知识再验证。
+- callees=0 纯叶高 deps（batch 1343/1344 家族）：0x5471B0
+  deps=1877——纯叶家族持续闭合。
