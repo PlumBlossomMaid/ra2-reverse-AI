@@ -1,0 +1,132 @@
+frontier batch 1481 — 0x63CA80 坐标查询包装器 / 0x63BE10 状态可用性检查器 / 0x63A120 限次告警打印器（2026-10-24）
+
+口径：承接 batch 1480 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x63CA80（87B，callees=1 deps=168——
+**坐标查询包装器**，推断名）、0x63BE10（66B，callees=0 deps=170——
+**状态可用性检查器**，推断名）、0x63A120（132B，callees=2 deps=75——
+**限次告警打印器**，推断名）。
+取证手段：disasm.py 双参直反汇编三路全程读完（0x63CA80 0x57 尾 0x63CAD4
+ret 4 / 0x63BE10 0x42 尾 0x63BE51 ret / 0x63A120 0x84 尾 0x63A1A3 ret——
+三文件 41/32/36 行全读）+ TSV 查重（三候选全部未登记）+ callee 登记核验
+（grep TSV：0x633BC0 已登记 batch 130 网络抽象解包→坐标、0x734E60 已登记
+batch 001 DebugLog、0x730A90 已登记 batch 159 MessageListClass::PrintMessage
+包装——三者均为已登记函数，本批构成对它们的调用点闭环兑现）。
+
+================================================================================
+0x63CA80 —— 坐标查询包装器（87B 全程读完）
+================================================================================
+签名：thiscall + 1 栈参 ret 4（ecx=this=输出结构指针 12B、栈参 1=
+[esp+0x18]=回退对象指针；0x63CA80-0x63CAD4）。
+机器码结构（0x63CA80-0x63CAD4，全程读完，关键锚点）：
+    sub esp,0xC → push esi/edi → mov edi,ecx（★this 存 edi）→ lea
+    ecx,[esp+8]（★局部结构指针）→ call 0x633BC0（★★已登记 batch 130
+    网络抽象解包→坐标——输出 3 dword 到局部结构）→ mov ecx,eax →
+    mov eax,[ecx]（★[0]）→ cmp eax,-1 → mov edx,[ecx+4]（★[4]）→
+    mov esi,[ecx+8]（★[8]）→ jne 0x63CAC3（★[0]!=-1 跳过回退）→
+    cmp edx,eax → jne 0x63CAC3（★[4]!=-1 跳过）→ cmp esi,eax → jne
+    0x63CAC3（★[8]!=-1 跳过——三字段全 -1 才是失败哨兵）→ mov
+    ecx,[esp+0x18]（★栈参）→ test ecx → je 0x63CAC3（★栈参空跳过）
+    → mov edx,[ecx]（★虚表）→ lea eax,[esp+8] → push eax（★&局部
+    结构）→ call [edx+0x58]（★★回退虚表槽 0x58——thiscall 取坐标）
+    → mov ecx,eax（★返回结构指针）→ mov eax,[ecx] → mov edx,[ecx+4]
+    → mov esi,[ecx+8]（★重取 3 dword）→ 0x63CAC3: mov ecx,edi →
+    mov [ecx],eax → mov [ecx+4],edx → mov [ecx+8],esi（★拷入 this
+    输出结构）→ mov eax,edi（★返 this）→ pop 族 → add esp,0xC →
+    ret 4
+语义：**坐标查询包装器（推断名——87B「0x633BC0 解包 + 失败哨兵回退
+虚表槽 0x58」）**——① 调已登记 0x633BC0（网络抽象解包→坐标）填局部
+12B 结构；② 三字段全 -1（失败哨兵）且栈参（回退对象）非空 → 调
+[回退对象虚表+0x58] 重取坐标（参数 = &局部结构）；③ 3 dword 拷入
+this 输出结构 → 返 this。MSVC 大结构返回惯用（隐藏指针在 ecx）。
+★怪癖：①★失败哨兵 (-1,-1,-1) 三重比较（cmp edx,eax/cmp esi,eax 均
+与 eax 比，eax 已证 ==-1）；②★回退虚表槽 0x58（thiscall 单参 &局部
+结构，返回值也是结构指针再取 3 dword）；③★虚表槽 0x58 调用后不重检
+失败哨兵（直接采用）；④ret 4 单栈参；⑤12B 结构返回（this 即输出）。
+⚠️ partial：宿主类（网络抽象包装器推断）、回退对象虚表槽 0x58 方法名、
+栈参语义、2 unique caller。
+
+================================================================================
+0x63BE10 —— 状态可用性检查器（66B 全程读完）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this；0x63BE10-0x63BE51）。
+机器码结构（0x63BE10-0x63BE51，全程读完，关键锚点）：
+    push ecx → push esi → mov esi,ecx（★this）→ mov eax,[esi]（★虚
+    表）→ call [eax+0x184]（★★虚表槽 0x184 无参调用）→ cmp eax,0xb
+    → jne 0x63BE4D（★返回值 !=0xB → 返 0）→ test esi,esi → je
+    0x63BE48（★this==0 → 返 1）→ mov cl,byte[esi+0x14]（★[this+0x14]
+    字节）→ shr cl,2 → and cl,1（★★bit2 位测试）→ mov [esp+7],cl →
+    je 0x63BE48（★bit2==0 → 返 1）→ mov eax,[esi+0x5A4]（★[this+0x5A4]
+    ）→ test → jne 0x63BE4D（★非零 → 返 0）→ mov eax,[esi+0x2B4]
+    （★[this+0x2B4]）→ test → jne 0x63BE4D（★非零 → 返 0）→
+    0x63BE48: mov al,1 → ret（★返 1）→ 0x63BE4D: xor al,al → ret
+    （★返 0）
+语义：**状态可用性检查器（推断名——66B「虚表槽 0x184 类型判定 +
+bit2 + 双字段门控」）**——① 调虚表槽 0x184()，返回须 == 0xB（11）
+否则返 0；② 返 1 条件：虚表槽返回 0xB AND (this==0 OR [this+0x14]
+bit2==0 OR ([this+0x5A4]==0 AND [this+0x2B4]==0))。
+★怪癖：①★类型码 0xB（11）——与 batch 1480 0x63D540 的 cmp 0xB 同
+类型码家族（0x63D540 是 [ecx+0xC] 类型字节==0xB → 表查表 0x4C；此处
+虚表槽 0x184 返回 0xB——同一枚举值 11 的两种取法）；②★[this+0x14]
+bit2 位测试（shr 2, and 1——字节内位标志）；③★双字段 [this+0x5A4]/
+[this+0x2B4] 空检查（都 ==0 才过）；④★this==0 时直接返 1（空对象视
+为可用——反直觉快路径）；⑤无栈参 ret。
+⚠️ partial：宿主类（[this+0x5A4]/[this+0x2B4] 字段语义、0x184 虚表槽
+方法名）、0xB 类型码业务含义、2 unique caller。
+
+================================================================================
+0x63A120 —— 限次告警打印器（132B 全程读完）
+================================================================================
+签名：寄存器字节参（cl=参1 bool、dl=参2 bool）无栈参 ret（0x63A120-
+0x63A1A3）。
+机器码结构（0x63A120-0x63A1A3，全程读完，关键锚点）：
+    test dl,dl → je 0x63A130（★dl==0 → index=2）→ xor eax → test
+    cl,cl → sete al（★★al=(cl==0)）→ mov esi,eax（★index=cl==0?1:0）
+    → jmp 0x63A135 → 0x63A130: mov esi,2（★index=2）→ 0x63A135: test
+    cl,cl → je 0x63A143（★cl==0 → 阈值=1）→ mov eax,[esi*4+0xAC4BF4]
+    → inc eax（★★阈值=计数器+1——恒打）→ jmp 0x63A148 → 0x63A143:
+    mov eax,1（★阈值=1——至多一次）→ 0x63A148: push edi → mov
+    edi,[esi*4+0xAC4BF4]（★★计数器[esi]——[0xAC4BF4] 三档数组）→
+    cmp edi,eax → pop edi → jge 0x63A1A2（★计数器>=阈值 → 跳过不打）
+    → test dl,dl → je 0x63A179 → test cl,cl → push 0xCA1（★行号
+    3233）→ push 0x836BD4（★文件串）→ je 0x63A170 → xor edx → mov
+    ecx,0x836CD0（★消息串 A——dl&&cl）→ jmp 0x63A18A → 0x63A170:
+    mov ecx,0x836CB4（★消息串 B——dl&&!cl）→ jmp 0x63A18A → 0x63A179:
+    push 0xCA1 → push 0x836BD4 → mov ecx,0x836C9C（★消息串 C——
+    !dl）→ 0x63A18A: call 0x734E60（★★已登记 batch 001 DebugLog——
+    文件/行号）→ mov edx,0x1E0（★480 常量）→ mov ecx,eax（★DebugLog
+    返回值）→ call 0x730A90（★★已登记 batch 159 MessageListClass::
+    PrintMessage 包装）→ inc [esi*4+0xAC4BF4]（★计数器++）→ pop esi
+    → ret
+语义：**限次告警打印器（推断名——132B「三档计数器限流 + DebugLog +
+PrintMessage」）**——按 cl/dl 选 [0xAC4BF4] 三档计数器（dl==0→2、
+dl!=0→cl==0?1:0），cl==0 时阈值 1（至多打一次）、cl!=0 时阈值=计数
+器+1（恒打）；计数器 < 阈值 → DebugLog（文件 0x836BD4 行 0xCA1=3233）
++ 消息串三选一（0x836CD0/0x836CB4/0x836C9C）→ 0x730A90（PrintMessage
+包装，edx=0x1E0=480）→ 计数器++。
+★怪癖：①★★三档计数器索引（dl/cl 双布尔 → 0/1/2，0x0F94C0 sete
+惯用）；②★★限流语义反转（cl==0 至多一次 vs cl!=0 恒打——"恒打"分支
+阈值=计数器+1 恒真）；③★[0xAC4BF4] 计数器数组——与 batch 1480
+0x63D0F0 的 [0xAC4BF0] 表指针相邻（AC4BF0/AC4BF4 同簇全局）；④★消息
+串三选一（0x836CD0/0x836CB4/0x836C9C——语义未确认）；⑤★DebugLog 返
+回值直传 0x730A90 当 ecx（PrintMessage 包装的 this/参数复用惯用）；
+⑥edx=0x1E0=480 常量（PrintMessage 时长/配色参数推断）。
+⚠️ partial：消息串三选一业务含义、0x1E0 常量语义、[0xAC4BF4] 计数器
+归属、2 unique caller。
+
+================================================================================
+跨批次连接（三函数全部命中已登记 callee——闭环兑现）
+================================================================================
+- **batch 130（0x633BC0 网络抽象解包→坐标）**：0x63CA80 的主查询调用
+  ——签名吻合（ecx=输出指针、3 dword 坐标对、失败哨兵 -1）；0x63CA80
+  是它的外层包装（带回退虚表槽 0x58）。
+- **batch 001（0x734E60 DebugLog）与 batch 159（0x730A90 PrintMessage
+  包装）**：0x63A120 的日志打印链——DebugLog 返回直传 PrintMessage 包
+  装；batch 159 描述「0x5D3BA0 PrintMessage 7 参正身的外层包装」本批
+  新增一个调用点。
+- **batch 1480（0x63D540 类型分派器）**：0x63BE10 虚表槽 0x184 返回
+  0xB 与 0x63D540 [ecx+0xC]==0xB 同类型码家族——0xB 枚举值（11）在
+  0x63 区的两种取法。
+- **batch 1480（0x63D0F0 玩家位域打包器）**：[0xAC4BF0] 表指针与
+  [0xAC4BF4] 计数器数组同簇全局（相邻 dword）。
+- 新候选：[0xAC4BF4] 计数器数组归属、0x63D0F0/0x63A120 共享的
+  [0xAC4BF0..] 全局簇。
