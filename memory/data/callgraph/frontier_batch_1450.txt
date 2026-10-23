@@ -1,0 +1,166 @@
+frontier batch 1450 — 0x6B1020 SlaveManagerClass::ShouldWakeUpNow / 0x6ADDF0 网格区间索引操作器 / 0x6A8710 建筑队列插入器（2026-10-23）
+
+口径：承接 batch 1449 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x6B1020（171B，callees=0 deps=48——
+**SlaveManagerClass::ShouldWakeUpNow**，ranking 带符号）、0x6ADDF0
+（263B，callees=6 deps=2662——**网格区间索引操作器**，推断名）、
+0x6A8710（218B，callees=2 deps=139——**建筑队列插入器**，推断名）。
+取证手段：disasm.py 双参直反汇编全程读完（0x6B1020 0xAB 尾 0x6B10CA /
+0x6ADDF0 0x107 尾 0x6ADEF4 / 0x6A8710 0xDA 尾 0x6A87E7，全程读完）+
+TSV 查重（三候选全部未登记）+ callee 登记核验（grep TSV：batch 151
+0x5E6520 数组按索引取串、batch 227 0x69ADF0 RandMap.Sed 文件名谓词、
+batch 108 0x4E5940 索引→值正向查表、batch 153 0x4E5ED0 UI 控件消息链、
+batch 249 0x5004E0 ObjectTypeClass::IsBuildCat5——已登记；0x6AE080/
+0x6ADF00/0x6A8420 未登记标注新候选）。
+
+================================================================================
+0x6B1020 —— SlaveManagerClass::ShouldWakeUpNow（171B 全程读完）
+================================================================================
+签名：thiscall 无栈参返 bool（ecx=this 存 esi；0x6B1020-0x6B10CA）。
+机器码结构（0x6B1020-0x6B10CA，全程读完，关键锚点）：
+    宿主门控 0x6B1024：mov ecx,[esi+0x24]（★+0x24 宿主对象）→ test
+    → je 0x6B10C6（★空返 0）→ mov eax,[esi+0x5C]（★+0x5C 标志）→
+    test → jne 0x6B10C6（★置位返 0——已挂起推断）
+    House 门控 0x6B103A：mov eax,[ecx+0x21C]（★宿主 House）→ mov
+    dl,[eax+0x1EC]（★House +0x1EC 字节）→ test → jne 0x6B104F →
+    mov al,1 → ret（★+0x1EC==0 → 唤醒）
+    宿主判定 0x6B104F：mov edx,[ecx] → call [edx+0x1BC]（★宿主虚
+    表槽 0x1BC 取对象）→ cmp [eax+0xEC],5 → jne 0x6B1065 → mov
+    al,1 → ret（★对象 +0xEC 状态==5 → 唤醒）
+    帧门控 0x6B1065：mov eax,[0x8871E0]（★全局配置）→ mov edx,
+    [esi+0x60]（★+0x60 计数）→ mov ecx,[eax+0x1790]（★配置 +0x1790）
+    → add ecx,edx → cmp [0xA8ED84]（★帧计数）→ jge 0x6B10C6（★未
+    到期返 0——延迟唤醒）
+    坐标门控 0x6B107F：mov eax,[eax+0x1780]（★配置 +0x1780）→ mov
+    ecx,[esi+0x24] → cdq/and 0xFF/add/sar 8（★坐标量化）→ push 0 →
+    push eax → lea edx,[esp+8] → push edx → call [esi+0x338]（★虚
+    表槽 0x338 取格）→ mov eax,[eax] → cmp ax,word[0xB0B5B8] →
+    jne 0x6B10C1（★x 不等 → 唤醒）→ cmp ax,word[0xB0B5BA] → je
+    0x6B10C6（★xy 全等 → 返 0——目标格=当前位置推断）→ 0x6B10C1:
+    mov al,1 → ret → 0x6B10C6: xor al → ret
+语义：**SlaveManagerClass::ShouldWakeUpNow（带名——171B「四重门控
+唤醒判定」）**——① 宿主对象空或 +0x5C 标志置位 → 不唤醒；② House
++0x1EC 字节 0 → 唤醒；③ 宿主虚表槽 0x1BC 取对象 +0xEC 状态==5 →
+唤醒；④ 帧门控：[0x8871E0]+0x1790 + [esi+0x60] >= 当前帧 [0xA8ED84]
+→ 不唤醒（延迟）；⑤ 坐标门控：虚表槽 0x338 取格 vs [0xB0B5B8..BA]
+全局坐标（全等 → 不唤醒）。
+★怪癖：①★★四重门控链（宿主/标志 → House 字节 → 状态 5 → 帧延迟
+→ 坐标全等——Slave 唤醒多准则）；②坐标全等拒绝（[0xB0B5B8..BA]
+全局——目标格==当前位置不唤醒推断）；③帧延迟公式（配置 +0x1790
++ 计数 vs [0xA8ED84]）；④短路径提前返回（三个早退出口）。
+⚠️ partial：+0x24/+0x5C/+0x60 字段语义（宿主/挂起标志/计数推断）、
+[0xB0B5B8..BA] 全局坐标身份、配置 +0x1780/+0x1790 语义、槽 0x338
+方法名、2 unique caller 身份。
+
+================================================================================
+0x6ADDF0 —— 网格区间索引操作器（263B 全程读完）
+================================================================================
+签名：thiscall + edx 寄存器参 + 1 栈参 ret 4（ecx=this 存 [esp+0x10]、
+edx=索引一存 edi、栈参 1=[esp+0x1C] 索引二存 ebp；0x6ADDF0-0x6ADEF4）。
+机器码结构（0x6ADDF0-0x6ADEF4，全程读完，关键锚点）：
+    索引解析 0x6ADDF7：mov edi,edx（★索引一）→ cmp -1 → jne
+    0x6ADE0C → mov [esp+0x14],8（★-1 → 8 哨兵）→ jmp 0x6ADE17 →
+    0x6ADE0C: mov ecx,edi → call 0x5E6520（★batch 151 数组按索引
+    取串——索引 → 值）→ mov [esp+0x14],eax → 0x6ADE17: mov ebp,
+    [esp+0x1C]（★索引二）→ mov ecx,ebp → call 0x5E6520 → mov
+    ebx,eax → mov esi,ebx → sub esi,[esp+0x14]（★差值 = 索引二值
+    - 索引一值）
+    边界判定 0x6ADE2C：test edi → jl 0x6ADE8E（★索引一负 → 跳过）
+    → test ebp → jl 0x6ADE8E → mov eax,[0xA8B8D8]（★全局计数）→
+    cmp edi → jge 跳过 → cmp ebp → jge 跳过（★双索引越界检查）
+    双条目标记 0x6ADE41：mov ecx,[0xA8B8CC] → mov ecx,[ecx+edi*4]
+    （★表项一）→ call 0x69ADF0（★batch 227 RandMap.Sed 文件名谓词
+    ——表项 +0x58=="RandMap.Sed" 判定！）→ 写 [esp+0x1C] → mov
+    ecx,[0xA8B8CC] → mov ecx,[ecx+ebp*4]（★表项二）→ call 0x69ADF0
+    → 两结果均非 0（★★双表项都 ==RandMap.Sed）→ 0x6ADE6C: 调用
+    链：mov ecx,this → mov edx,1 → call 0x6AE080（★未登记——区间
+    操作 A）→ lea edx,[ebx-1] → push → mov edx,1 → call 0x6ADF00
+    （★未登记——区间操作 B）
+    差值分支 0x6ADE92：test esi → jle 0x6ADEA4 → push esi → call
+    0x6ADF00（★差值 >0 → 区间操作 B）→ jmp 0x6ADEAF → 0x6ADEA4:
+    jge 0x6ADEAF → mov edx,ebx → call 0x6AE080（★差值 <0 → 区间
+    操作 A）
+    八向循环 0x6ADEAF：test edi → je 0x6ADEED（★无索引跳过）→
+    mov eax,[0xA8B23C]（★全局——[batch 153 同区]）→ test → je
+    0x6ADEED → 循环 esi=1..7（8 次）：mov ecx,esi → call 0x4E5940
+    （★batch 108 索引→值查表）→ mov edx,eax → mov eax,[0xA8B23C]
+    → test → je → mov cl,[eax+0x3C]（★全局 +0x3C 字节）→ test →
+    je → push 3 → jmp 0x6ADEE0 → push -2 → 0x6ADEE0: mov ecx,edi
+    → call 0x4E5ED0（★batch 153 UI 控件消息链——push 3/-2 分派）
+    → inc esi → cmp 8 → jl 循环 → ret 4
+语义：**网格区间索引操作器（推断名——263B「双索引解析 + RandMap.Sed
+判定 + 差值区间操作」）**——① 双索引经 0x5E6520 解析（-1 → 8 哨兵）；
+② 边界四查（负/超 [0xA8B8D8] 计数）跳过；③ 双表项（[0xA8B8CC]
+表）经 0x69ADF0 判定 ==RandMap.Sed → 都命中走 0x6AE080+0x6ADF00
+区间操作（★★RMG 存档语义！）；④ 差值分支（>0 → 0x6ADF00、<0 →
+0x6AE080）；⑤ 八向循环：0x4E5940 查表 → [0xA8B23C] 全局 +0x3C 字
+节门控 → 0x4E5ED0 UI 消息链（push 3/-2）。
+★怪癖：①★★双索引区间操作（0x69ADF0 RandMap.Sed 双表项判定 +
+0x6AE080/0x6ADF00 差值调度——RMG 存档文件区间处理推断）；②八向
+UI 消息循环（0x4E5940 → [0xA8B23C] 门控 → 0x4E5ED0——8 方向消息
+分派推断）；③-1 哨兵 → 8（无索引默认 8）；④边界四查跳过路径；
+⑤差值正负分派（>0 走 B、<0 走 A——区间方向推断）。
+⚠️ partial：0x6AE080/0x6ADF00 精确语义（未登记——区间操作推断）、
+[0xA8B23C] 全局身份、+0x3C 字节含义、0x4E5940 查表业务、宿主类
+（网格/存档区间操作推断）、2 unique caller 身份。
+
+================================================================================
+0x6A8710 —— 建筑队列插入器（218B 全程读完）
+================================================================================
+签名：thiscall + 1 栈参 ret 8（ecx=this 存 ebx、栈参 1=[esp+0x24]
+建筑类型、栈参 2=[esp+0x20] 序号；0x6A8710-0x6A87E7）。
+机器码结构（0x6A8710-0x6A87E7，全程读完，关键锚点）：
+    计数递增 0x6A8719：mov edx,[ebx+0x54]（★队列计数）→ inc →
+    mov [ebx+0x54],edx（★++）→ test → jle 0x6A87E0
+    队列扫描 0x6A872C（esi=[ebx+0x58] 表基址、ebp 循环、0x34B/项）：
+    mov ecx,[esi]（★表项一）→ mov eax,[esi+4] → mov edi,[esp+0x20]
+    （★栈参 2）→ push ecx → push eax → push [esp+0x2C]（★栈参 1）
+    → push edi → mov ecx,ebx → call 0x6A8420（★未登记——槽位判定
+    推断）→ test al → jne 0x6A8760（★命中 → 插入）→ inc ebp →
+    add esi,0x34 → cmp ebp,[ebx+0x54] → jl 扫描 → ret 8（★全扫未
+    中）
+    右移腾位 0x6A8760：mov eax,[ebx+0x54] → dec → cmp eax,ebp →
+    jle 0x6A8789 → lea ecx,[eax+eax*2] → lea edx,[eax+ecx*4] →
+    sub eax,ebp → lea edi,[ebx+edx*4+0x58]（★末项）→ lea edx,
+    [edi-0x34] → mov ecx,0xD → rep movsd（★★右移一项 0x34B=13 dword
+    ——腾出槽位）→ dec eax → jne 循环（★★从尾向头逐项右移）
+    写槽位 0x6A8789：lea eax,[ebp+ebp*2] → lea ecx,[ebp+eax*4] →
+    lea esi,[ebx+ecx*4]（★目标槽）→ mov [esi+0x5C],edi（★栈参 2）
+    → mov [esi+0x58],edx（★栈参 1）→ cmp edi,7 → jne 0x6A87AD →
+    mov ecx,edi → call 0x5004E0（★batch 249 IsBuildCat5——建筑类
+    别 7 判定）→ mov [esi+0x60],eax（★类别 7 → 写 IsBuildCat5 值）
+    → 0x6A87AD: 多字段清 0/写：+0x64=0 → +0x6C=0 → +0x80=0 →
+    +0x74=[0xA8ED84]（★帧计数）→ +0x78=[esp+0x14]（★栈参）→
+    +0x7C=0 → +0x88=0 → ret 8
+语义：**建筑队列插入器（推断名——218B「队列扫描 + 右移腾位 + 槽位
+写入」）**——① 队列计数 [ebx+0x54]++；② 扫描 [ebx+0x58] 表（0x34B/
+项）逐槽调 0x6A8420 判定（未登记——空槽/匹配推断），命中 → 插入；
+③ 未命中路径右移腾位：从末项向头逐项 rep movsd 0xD（0x34B=13
+dword）右移，腾出目标槽；④ 写槽位：+0x58/+0x5C=栈参、序号==7 →
+0x5004E0 IsBuildCat5 写 +0x60；⑤ 多字段清 0（+0x64/+0x6C/+0x80/
++0x7C/+0x88）+ 帧戳（+0x74=[0xA8ED84]）+ 栈参（+0x78）。
+★怪癖：①★★右移腾位插入（末项向头 rep movsd 0x34B——数组插入器
+惯用，batch 141 有序插入同族）；②序号 7 特殊处理（0x5004E0
+IsBuildCat5——建筑类别判定写 +0x60）；③0x34B=13 dword 项宽（队
+列槽结构）；④帧戳 +0x74=[0xA8ED84]（排队时间戳推断）；⑤槽位判定
+0x6A8420 委托（未登记）。
+⚠️ partial：0x6A8420 精确语义（未登记——槽位判定推断）、+0x54/
++0x58 队列字段身份、0x34B 槽位结构、栈参 1/2 语义（建筑类型/序号推
+断）、+0x60/+0x64/+0x6C/+0x74..+0x88 字段族、2 unique caller 身份。
+
+================================================================================
+跨批次连接（本批三连 = Slave 唤醒 + RMG 存档区间 + 建筑队列）
+================================================================================
+- **batch 227（0x69ADF0 RandMap.Sed 文件名谓词）**：0x6ADDF0 双表项
+  判定（★RMG 存档语义——双索引均 ==RandMap.Sed 才走区间操作）。
+- **batch 151（0x5E6520 数组按索引取串）**：0x6ADDF0 双索引解析。
+- **batch 249（0x5004E0 IsBuildCat5）**：0x6A8710 序号 7 特殊处理。
+- **batch 153（0x4E5ED0 UI 控件消息链）**：0x6ADDF0 八向循环消息
+  分派（push 3/-2）。
+- **batch 108（0x4E5940 索引→值查表）**：0x6ADDF0 八向查表。
+- **batch 141（0x4072E0 有序插入）**：0x6A8710 右移腾位同族（数组
+  插入操作）。
+- **batch 392（[0xA8ED84] 帧计数）**：0x6A8710 排队时间戳写。
+- 新候选：0x6AE080/0x6ADF00（0x6ADDF0 区间操作）、0x6A8420
+  （0x6A8710 槽位判定）、[0xA8B23C] 全局、[0xB0B5B8..BA] 全局坐标、
+  配置 +0x1780/+0x1790 语义。
