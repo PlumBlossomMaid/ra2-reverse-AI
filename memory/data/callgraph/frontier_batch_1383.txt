@@ -1,0 +1,157 @@
+frontier batch 1383 — 0x45A050 空指针检查 getter / 0x43EF90 BuildingClass::GetCurrentFrame / 0x438030 COM 接口转发器（2026-10-23）
+
+口径：承接 batch 1382 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x45A050（22B，callees=1 deps=190）、
+0x43EF90（484B，callees=1 deps=1887——**ranking 标 BuildingClass::
+GetCurrentFrame**）、0x438030（47B，callees=1 deps=11）。
+取证手段：disasm.py 双参直反汇编全程读完（0x45A050 0x30 尾 0x45A065 /
+0x43EF90 0x1F0 尾 0x43F173 / 0x438030 0x50 尾 0x43805C，函数边界与
+functions.tsv 完全吻合）+ TSV 查重（三候选全部未登记）+ 跨批次对比
+（0x80004003 E_POINTER + 0x7DC720 ↔ 0x45A050/0x438030 同族；
+[0x8871E0] 规则 ↔ batch 既有锚点；0x5F5C60 时间函数 ↔ batch 既有）。
+
+================================================================================
+0x45A050 —— 空指针检查 getter（22B 全程读完）
+================================================================================
+签名：thiscall（ecx=this，mov esi），无栈参，返回 eax=[esi]，ret 0
+（0x45A050-0x45A065，callees=1 deps=190）。
+机器码（0x45A050-0x45A065）：
+    入口：push esi; mov esi, ecx（this）
+    cmp [esi], 0; jne 0x45A062（★+0 非空 → 跳过检查）
+    push 0x80004003（★E_POINTER）; call 0x7DC720（★错误处理——抛出）
+    0x45A062：mov eax, [esi]（★返回 +0 值）; pop esi; ret
+语义：**空指针检查 getter**（0x45A05x 区——0x45A0xx 接口/访问域，
+callees=1 deps=190）：thiscall：**+0 指针空 → 0x80004003（E_POINTER）
+错误处理**（0x7DC720）；否则**返回 [esi]**。★空指针检查 getter
+（+0 空 → E_POINTER + 返回 +0——22B 极简 COM 风格检查）。
+2 unique caller（3 callsite）。
+★怪癖：①★**+0 空检查**（cmp [esi],0 + jne——空指针守卫）；
+②★**0x80004003 E_POINTER**（push 0x80004003 + 0x7DC720 错误处理——
+COM 标准错误码）；③★**返回 +0 值**（mov eax,[esi]——getter 语义）。
+⚠️ partial：对象类型（COM 接口？）、0x7DC720 错误处理身份、
+2 unique caller 身份。
+
+================================================================================
+0x43EF90 —— BuildingClass::GetCurrentFrame（484B 全程读完）
+================================================================================
+签名：thiscall（ecx=BuildingClass，mov esi），无栈参，返回 eax=帧值，
+ret 0（0x43EF90-0x43F173，callees=1 deps=1887——**ranking.tsv 标
+BuildingClass::GetCurrentFrame**）。
+机器码结构（0x43EF90-0x43F173，全程读完，关键锚点）：
+    入口：push esi; mov esi, ecx（this=BuildingClass）; push edi
+    mov eax, [esi+0x520]（★+0x520 对象指针）; mov edi, [esi+0xF8]
+    （★+0xF8 值）
+    mov cl, [eax+0x16BF]（★对象 +0x16BF 标志）; test; je 0x43EFB3
+    mov eax, [esi+0x618]（★+0x618 帧值）; 返回（★路径 1）
+    0x43EFB3：mov cl, [eax+0x16C0]（★对象 +0x16C0 标志）; test
+    je 0x43EFC6; mov eax, [esi+0x61C]（★+0x61C 帧值）; 返回（★路径 2）
+    0x43EFC6：mov ecx, [esi+0x534]（★+0x534 判定）; test; jne 0x43F02C
+    mov cl, [eax+0x16B7]（★对象 +0x16B7 标志）; test; je 0x43EFED
+    mov ecx, [eax+0xF08]; mov edx, [eax+0xF04]; add ecx, edx
+    sub ecx, edi; dec ecx; mov edi, ecx（★帧计算：(F08+F04)-edi-1）
+    0x43EFED：mov edx, [esi]; mov ecx, esi
+    call [edx+0x184]（★虚表槽 0x184——取类型）
+    cmp eax, 0x13; jne 0x43F16F（★== 0x13 才继续）
+    mov eax, [esi+0x534]; mov ecx, [esi+0x520]; lea eax, [eax+eax*2]
+    mov edx, [ecx+eax*4+0xF08]; mov esi, [ecx+eax*4+0xF04]
+    lea eax, [ecx+eax*4]; add edx, esi; sub edx, edi; dec edx
+    mov edi, edx（★帧计算 ×3：3*+0x534 索引帧段）
+    mov eax, edi; 返回
+    0x43F02C：mov cl, [eax+0x157B]（★对象 +0x157B 标志）; test
+    je 0x43F0BD
+    mov eax, [esi]; mov ecx, esi; xor edi
+    call [eax+0x408]（★虚表槽 0x408）; test eax; jle 0x43F04F
+    mov edi, 2（★帧值 ≤0 → 2）
+    0x43F04F：call 0x5F5C60（★时间函数——batch 既有锚点）
+    mov ecx, [0x8871E0]（★规则）; fcomp qword [ecx+0x1708]
+    （★规则 +0x1708 双精度比较）; fnstsw ax; test ah, 0x41
+    jne 0x43F096（★浮点比较标志）
+    call [edx+0x84]（虚表槽 0x84）; mov ecx, [eax+0x634]
+    test ecx; jle 0x43F097
+    call 0x5F5C60; mov eax, [0x8871E0]; fcomp qword [eax+0x1700]
+    （★规则 +0x1700 比较）; fnstsw ax; test ah, 0x41; je 0x43F097
+    0x43F096：inc edi
+    0x43F097：mov ecx, [esi+0x520]; cmp [ecx+0x634], -1
+    jne 0x43F16F（★对象 +0x634 == -1 才继续）
+    cmp edi, 3; jne 0x43F16F; mov edi, 1; 返回（★edi==3 → 1）
+    0x43F0BD：mov cl, [eax+0x16B7]; test; mov ecx, esi
+    je 0x43F0F6
+    call 0x5F5C60; mov edx, [0x8871E0]; fcomp qword [edx+0x1700]
+    test ah, 0x41; je 0x43F0F1（★规则比较）
+    mov eax, [esi+0x520]; mov eax, [eax+0x16F8]; inc eax; 返回
+    （★+0x16F8+1）
+    0x43F0F1：xor eax; 返回（★0）
+    0x43F0F6：call 0x5F5C60; mov ecx, [0x8871E0]
+    fcomp qword [ecx+0x1700]; test ah, 0x41; je 0x43F16F
+    cmp [esi+0x534], 1; jne 0x43F11D; inc edi; 返回（★+0x534==1 →
+    edi+1）
+    0x43F11D（★三组 max 累加）：mov esi, [esi+0x520]
+    mov eax, [esi+0xF14]; mov ecx, [esi+0xF10]; mov edx, [esi+0xF1C]
+    add eax, ecx; mov ecx, [esi+0xF20]; add ecx, edx
+    cmp eax, ecx; jg 0x43F145; mov eax, ecx（★max 第一组）
+    0x43F145：mov ecx, [esi+0xF38]; mov edx, [esi+0xF34]
+    add ecx, edx; cmp eax, ecx; jg 0x43F159; mov eax, ecx（★max 第二组）
+    0x43F159：mov ecx, [esi+0xF44]; mov edx, [esi+0xF40]
+    add ecx, edx; cmp eax, ecx; jg 0x43F16D; mov eax, ecx（★max 第三组）
+    0x43F16D：add edi, eax; mov eax, edi; 返回（★edi+max）
+语义：**BuildingClass::GetCurrentFrame**（获取当前动画帧，0x43EF9x 区
+——0x43EFxx 建筑/动画域，callees=1 deps=1887——ranking 标带符号名）：
+thiscall 无参：**+0x520 对象 [+0x16BF]/[+0x16C0] 标志 → 直接返回
++0x618/+0x61C 帧值**；**+0x534 判定**（虚表槽 0x184 取类型 == 0x13 →
+帧计算 (F08+F04)-edi-1 / 3×索引帧段）；**[+0x157B] 标志** → 虚表槽
+0x408 取帧 + 规则 [0x8871E0]+0x1708/+0x1700 双精度浮点比较
+（0x5F5C60 时间函数 + fnstsw ah,0x41）+ 对象 [+0x634]==-1 判定 →
+edi 累加（==3 → 1）；**+0x16B7 标志** → [+0x16F8]+1 / 0；
+**+0x534==1 → edi+1**；否则 **+0xF04..+0xF44 三组 max 累加**。
+★BuildingClass::GetCurrentFrame（多路径帧计算——标志族驱动 + 虚表槽
+0x184/0x408 + 规则双精度比较 + 三组 max）。2 unique caller（3 callsite）。
+★怪癖：①★**多路径帧计算**（+0x16BF/+0x16C0/+0x16B7/+0x157B 标志族
+四路分流——动画帧缓存/计算混合）；②★**虚表槽 0x184 取类型 == 0x13**
+（建筑类型判定）；③★**规则 [0x8871E0]+0x1708/+0x1700 双精度浮点
+比较**（fcomp qword + fnstsw ax + test ah,0x41——batch 既有规则锚点 +
+浮点比较惯用）；④★**0x5F5C60 时间函数**（batch 既有锚点——当前时间
+取用）；⑤★**三组 max 累加**（+0xF04/+0xF10、+0xF34/+0xF38、
++0xF40/+0xF44——帧段最大累加）+ **+0x16F8+1 / edi==3→1** 特殊路径。
+⚠️ partial：+0x520 对象身份、+0x16BF/+0x16C0/+0x16B7/+0x157B 标志
+语义、虚表槽 0x184/0x408 身份、[0x8871E0]+0x1700/+0x1708 常量语义、
++0xF04..+0xF44 帧段表、0x5F5C60 身份、+0x534/+0x618/+0x61C/+0x634
+字段族、2 unique caller 身份。
+
+================================================================================
+0x438030 —— COM 接口转发器（47B 全程读完）
+================================================================================
+签名：thiscall（ecx=this，mov esi）+ 3 栈参（[esp+0xC]=参数 1 +
+等），返回 eax=参数 1，ret 0xC（0x438030-0x43805C，callees=1 deps=11）。
+机器码结构（0x438030-0x43805C，全程读完，关键锚点）：
+    入口：push esi; mov esi, ecx（this）
+    cmp [esi], 0; jne 0x438042（★+0 空检查）
+    push 0x80004003（★E_POINTER）; call 0x7DC720（★错误处理）
+    0x438042：mov edx, [esp+0x10]（★参数 3）; mov eax, [esi]
+    mov esi, [esp+0xC]（★参数 1——覆盖 this）; push edx
+    mov edx, [esp+0xC]; mov ecx, [eax]; push edx; push esi; push eax
+    call [ecx+0x1C]（★虚表槽 0x1C——转发调用：参数 1/2/3 + +0）
+    mov eax, esi（★返回参数 1）; pop esi; ret 0xC
+语义：**COM 接口转发器**（0x43803x 区——0x4380xx 接口/转发域，
+callees=1 deps=11）：thiscall + 3 栈参：**+0 空 → 0x80004003
+（E_POINTER）错误处理**（0x7DC720——与 0x45A050 同族）；否则**虚表槽
+0x1C 转发调用**（+0 接口指针 + 参数 1/2/3）→ **返回参数 1**。
+★COM 接口转发器（E_POINTER 检查 + 虚表槽 0x1C 三参转发 + 返参 1）。
+2 unique caller（3 callsite）。
+★怪癖：①★**+0 空检查 → E_POINTER**（push 0x80004003 + 0x7DC720——
+batch 0x45A050 同族检查）；②★**虚表槽 0x1C 转发**（call [ecx+0x1C]
+——三栈参 + +0 传递）；③★**返回参数 1**（mov eax,esi——转发后回传
+首参）+ ret 0xC 三栈参。
+⚠️ partial：接口类型（COM 派生）、虚表槽 0x1C 被调身份、参数语义、
+0x7DC720 错误处理身份、2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1383 内部（0x80004003 E_POINTER + 0x7DC720）：0x45A050 与
+  0x438030 **同族空指针检查**——COM 风格守卫双子。
+- batch 既有规则锚点（[0x8871E0]）：0x43EF90 用 +0x1700/+0x1708
+  双精度常量——规则家族再验证。
+- batch 既有时间函数锚点（0x5F5C60）：0x43EF90 使用——时间家族
+  再验证。
+- batch 既有浮点比较惯用（fnstsw ax + test ah,0x41）：0x43EF90
+  使用——batch 1342 威胁评估同惯用。
