@@ -1,0 +1,161 @@
+frontier batch 1519 — 0x5A19E0 RMG 地形清理器 / 0x5A4B60 RMG 工作数组初始化器 / 0x5A45E0 RMG 工作数组初始化器·二（2026-10-24）
+
+口径：承接 batch 1518 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x5A19E0（645B，callees=6 deps=2724——
+**RMG 地形清理器**，推断名）、0x5A4B60（1073B，callees=11 deps=1890——
+**RMG 工作数组初始化器**，推断名——超大宿主分段采样）、0x5A45E0
+（1267B，callees=12 deps=1888——**RMG 工作数组初始化器·二**，推断名
+——超大宿主采样前段）。
+取证手段：disasm.py 双参直反汇编四路读取（0x5A19E0 0x285 全量尾
+0x5A1C64 ret / 0x5A4B60 前 0x100B 采样 + 中段复采样 0x5A4CBE 起 0x100B
+覆盖 0x5A4B60-0x5A4DBB（0x25C/0x431）/ 0x5A45E0 前 0x100B 采样覆盖
+0x5A45E0-0x5A46DF（0x100/0x4F3）——四文件 30+19+17 行全读）+ TSV 查重
+（三候选全部未登记）+ callee 登记核验（grep TSV：**10 callee 全部已
+登记，零新候选**——0x578350/0x578290 batch ⑨（CellIterator）、
+0x481810 batch 073（CellClass::GetNeighbourCell）、0x579B70 batch 1248
+（【地形 8 方向可达性评估】——0x5A19E0 的分派谓词）、0x486380 batch
+082（无主谓词）、0x65C780（Randomizer::Random——RMG 唯一随机源）、
+0x5657A0 batch 073（坐标→CellClass 查表）、0x42D510 batch 070（二维点
+加法）、0x486670 batch 288（单段区间判定）、0x5AD870 batch 146（浮点
+键最小选择——堆下沉）、0x7C8E17 batch 001）。
+
+================================================================================
+0x5A19E0 —— RMG 地形清理器（645B 全程读完）
+================================================================================
+签名：thiscall 无栈参 ret（0x5A19E0-0x5A1C64）。
+机器码结构（0x5A19E0-0x5A1C64，全程读完，关键锚点）：
+    段1 CellIterator 遍历：sub esp,0x18 → mov ecx,0x87F7E8（★★
+    MapClass::Instance）→ call 0x578350（★★batch ⑨ CellIterator_Reset
+    ——起点 (1,W)）→ mov ecx,0x87F7E8 → call 0x578290（★★batch ⑨
+    CellIterator_Next——空槽 NULL 终止）→ mov esi,eax → test → je
+    0x5A1C60（★收尾）→ 循环 0x5A1A05
+    段2 五参数读取：push 5 → mov ecx,esi → call 0x481810（★★batch 073
+    CellClass::GetNeighbourCell——方向 5）→ 保存 → push 1 → call（方向
+    1）→ push 3 → call → push 2 → call → push 6 → call（★★五方向取邻
+    格，edi/ebp/ebx 等保存）
+    段3 分派 + 掩码判定：push esi → mov ecx,0x87F7E8 → call 0x579B70
+    （★★batch 1248 地形 8 方向可达性评估——返回方向掩码）→ cmp
+    eax,0x83（★★131 = 0x80|0x2|0x1 三方向组合）→ jne 0x5A1B00 → 再查
+    → 0x486380（★★batch 082 无主谓词）检查 → call 0x65C780（★★
+    Randomizer::Random——[0xABE890] 全局）→ fild qword [esp+0x18] →
+    fmul qword[0x7ED8B0]（★★比例常数——QWEN.md 取数惯用法常数区
+    0x7ED9xx 邻）→ call 0x7C5F00（★★_ftol 锚点库）→ cmp eax,1 → ja
+    重试（★★拒绝采样 do-while）→ test eax → jne 0x5A1C49（★跳过——
+    概率门）→ mov cl,[ebp+0x11B] → add cl,0xFC（★★cell +0x11B 高度 -4）
+    → mov [ebp+0x11B],cl → 工作数组写：[0xABED10]+(Y×[0x89C2DC]+X)×
+    0x50 → +0x38 字段（★★QWEN.md 实锤工作数组布局）
+    段4 分支 B：0x5A1B00: cmp 0x38（56）→ 同款（+0x11B-4）→ 分支 C：
+    0x5A1BB1: cmp 0xE0（224）→ 同款（[esi+0x11B] +4）
+    段5 循环：mov ecx,0x87F7E8 → call 0x578290 → mov esi,eax → test →
+    jne 0x5A1A05（★循环）→ pop 族 → ret
+语义：**RMG 地形清理器（推断名——645B「CellIterator 遍历 + 方向掩码
+分派 + 随机清理」）**——① MapClass::Instance CellIterator 遍历全图；
+② 五方向（1/2/3/5/6）GetNeighbourCell 取邻格；③ 0x579B70（batch 1248
+可达性评估）返回方向掩码，∈ {0x83, 0x38, 0xE0}（三方向组合）且
+0x486380 无主时进入概率门；④ Randomizer::Random × [0x7ED8B0] 比例 →
+_ftol → 拒绝采样（v>1 重试）→ v==0 才处理（概率 1/n）；⑤ 命中：
+cell +0x11B 高度 ±4（0x83/0x38 减 4、0xE0 加 4）+ 工作数组 +0x38 回写。
+★怪癖：①★★CellIterator 全图遍历（0x578350/0x578290 batch ⑨——RMG
+格的清格/调整惯用模式）；②★★方向掩码分派（0x83=0x80|0x2|0x1 /
+0x38=0x20|0x10|0x8 / 0xE0=0x80|0x40|0x20——batch 1248 掩码组合值）；
+③★★Randomizer + 0x7ED8B0 比例 + _ftol 拒绝采样（cmp eax,1 → ja 重
+试——QWEN.md 取数惯用法同款）；④★★test eax → jne 跳过（v==0 才处
+理——1/n 概率触发）；⑤★★cell +0x11B 高度 ±4（0x83/0x38 减、0xE0
+加——方向组合对应加减）；⑥★★[0xABED10]+(Y×side+X)×0x50 工作数组
++0x38 回写（QWEN.md 实锤布局）。
+⚠️ partial：宿主类（0x5A19xx 区——RMG 域推断）、0x7ED8B0 精确比例值、
++0x11B 高度语义（batch 1248 同字段）、清理业务含义、0x83/0x38/0xE0
+方向组合的语义、2 unique caller。
+
+================================================================================
+0x5A4B60 —— RMG 工作数组初始化器（1073B 分段采样 partial）
+================================================================================
+签名：thiscall + 4 栈参 ret（[ebp+8]/[ebp+0xC]/[ebp+0x10]=规模/
+[ebp+0x14]=值；0x5A4B60-0x5A4F6F+（总长 0x431））。
+机器码结构（分段采样覆盖 0x5A4B60-0x5A4DBB，关键锚点）：
+    段1 分配：push ebp → mov ebp,esp → and esp,0xFFFFFFF8 → sub esp,
+    0x34 → push 族 → mov edi,[ebp+0x10]（规模）→ lea edi,[edi+edi*4]
+    → shl edi,1（★×10）→ lea eax,[edi*8]（★×8 = 规模×80）→ call
+    0x7C8E17（new）→ mov ebx=eax（★主缓冲）
+    段2 结构构造：push 0x14 → call 0x7C8E17（new(0x14=20B)）→ mov esi=
+    eax → mov [esi+0xC],0 → mov [esi],0 → lea edx,[edi*4+4] → mov
+    [esi+0x10],-1 → push edx → mov [esi+4],edi → call 0x7C8E17（new(×4+
+    4)）→ mov [esi+8],eax → 清零循环（[ecx+eax*4-4]=0）
+    段3 参数写入：mov eax,[ebp+8] → mov [esi],0 → mov [esp+0x18],1 →
+    mov ecx,[eax+0x24] → mov [ebx],ecx → mov [ebx+4],0 → movsx eax,
+    word[esp+0x22] → imul eax,[0x89C2DC]（★★map 边长——QWEN.md 实锤）
+    → movsx edx,cx → mov ecx,[0xABED10]（★★工作数组——QWEN.md 每格
+    0x50B）→ add eax,edx → mov edx,[ebp+0x14] → lea eax,[eax+eax*4] →
+    shl eax,4（★×0x50）→ mov [eax+ecx+0x3C],edx（★★写 [工作数组 +
+    idx×0x50 + 0x3C] = 参数4）
+    段4 中段（0x5A4CBE 复采样）：堆 pop（[eax+4]=[eax+ecx*4] 末替换根
+    + 计数--）→ call 0x5AD870（★★batch 146 浮点键最小选择——堆下沉）
+    → 循环：[esp+0x10] 当前项 → test → je 收尾 → push eax → mov ecx,
+    0x87F7E8 → call 0x5657A0（★★batch 073 坐标→CellClass 查表）→
+    mov [eax+0x38],ecx（★写格类型 +0x38）→ 8 方向循环：lea eax,[eax*4+
+    0x89F688]（★★batch 073 方向偏移表）→ push eax → lea ecx → call
+    0x42D510（★★batch 070 Point2D 加）→ 菱形边界判定（[0xABED04]/
+    [0xABED08] 全局 + cmp——batch 1248 0x579B70 同款菱形三判据 +
+    [0x87f8dc]/[0x87f8e0] 上界）→ call 0x5657A0 → mov ebx,eax → call
+    0x486380（无主谓词）→ 通过 → 0x486670（★★batch 288 单段区间判定）
+    → ...
+语义：**RMG 工作数组初始化器（推断名——1073B 超大宿主「规模×80 分配
++ 结构构造 + 工作数组写入 + 堆排序 + 邻域写入」）**——① new(规模×80)
+主缓冲 + new(0x14)+new(×4+4) 结构；② [0x89C2DC] 边长 + [0xABED10]
+工作数组，索引 (Y×side+X)×0x50 写入参数（+0x3C 字段）；③ 堆 pop +
+0x5AD870（batch 146 下沉）排序；④ 逐项 0x5657A0 查格 → 8 方向（
+[0x89F688] 表 + 0x42D510）→ 菱形边界（[0xABED04]/[0xABED08]）→
+0x486380/0x486670 判定 → 写格。
+★怪癖：①★★new(规模×80) 主缓冲（规模×10×8 链）；②★★[0x89C2DC] +
+[0xABED10] 工作数组 ×0x50 索引（QWEN.md 实锤布局应用点）；③★★堆
+pop + 0x5AD870 下沉（batch 146 应用点——浮点键最小堆）；④★★8 方向
+偏移表 [0x89F688]（batch 073 实锤）⑤★★菱形边界判定（[0xABED04]/
+[0xABED08]——batch 1248 同款三判据）。
+⚠️ partial：宿主类（0x5A4Bxx 区——RMG 域推断）、尾部 0x5A4DBB 之后
+未读（0x431-0x25C≈0x1D5）、参数语义、堆业务含义、0x7ED8B0 无关（本
+函数无随机）、2 unique caller。
+
+================================================================================
+0x5A45E0 —— RMG 工作数组初始化器·二（1267B 采样前段 partial）
+================================================================================
+签名：thiscall + 3 栈参 ret（[ebp+8]/[ebp+0xC]=规模/[ebp+0x10]；
+0x5A45E0-0x5A49D2+（总长 0x4F3））。
+机器码结构（采样覆盖 0x5A45E0-0x5A46DF，关键锚点）：
+    段1 分配：与 0x5A4B60 同构开头——and esp,0xFFFFFFF8 → sub esp,
+    0x5C → mov eax,[ebp+0xC] → lea eax,[eax+eax*4] ×2（★×25）→ lea
+    edi,[eax*8]（★×200——规模×200）→ call 0x7C8E17（new）→ mov ebx=
+    eax
+    段2 结构构造：同 0x5A4B60（new(0x14) + new(×4+4) + 清零 + [esi+4]=
+    edi/[esi+8]=eax/[esi+0x10]=-1）
+    段3 参数写入：同 0x5A4B60（[eax+0x24] → [ebx] → movsx imul
+    [0x89C2DC] → [0xABED10] → ×0x50 → +0x3C 写参数）
+语义：**RMG 工作数组初始化器·二（推断名——1267B 超大宿主「与
+0x5A4B60 同族——规模×200 分配 + 工作数组写入」）**——同 0x5A4B60 模
+板，差异：规模换算 ×25×8=×200（vs 0x5A4B60 的 ×80）、[ebp+0xC] 作规
+模源——RMG 工作数组族第二份（不同规模域）。
+★怪癖：①★★规模×200 分配（lea×5 ×2 + ×8 链——与 0x5A4B60 ×80 不同
+规模）；②★★[0x89C2DC]+[0xABED10] ×0x50 工作数组写 +0x3C（同
+0x5A4B60）；③★★与 0x5A4B60 前段逐指令同构（new(0x14)+new(×4+4) 结
+构构造）。
+⚠️ partial：宿主类（0x5A45xx 区——RMG 域推断）、尾部未读（0x4F3-
+0x100≈0x3F3）、与 0x5A4B60 精确关系（规模域差异推断）、2 unique
+caller。
+
+================================================================================
+跨批次连接（10 callee 全已登记 + RMG 域大汇聚）
+================================================================================
+- **batch ⑨（0x578350/0x578290 CellIterator）+ batch 1248（0x579B70 地
+  形 8 方向可达性评估）+ batch 073（0x481810/0x5657A0/0x89F688）+ batch
+  070（0x42D510）+ batch 082/288（0x486380/0x486670）**：0x5A19E0/
+  0x5A4B60 的 RMG 格处理全链——CellIterator 遍历 + 邻域取格 + 方向表
+  + 可达性 + 区间判定，batch ⑨-1248 的 RMG 工具函数在此汇聚。
+- **Randomizer::Random（0x65C780 [0xABE890]）+ 比例常数 0x7ED8B0 +
+  _ftol（0x7C5F00）**：0x5A19E0 的拒绝采样——QWEN.md 取数惯用法
+  （fild qword + fmul 常数 + _ftol + do-while 拒绝）在 RMG 地形阶段的
+  应用点。
+- **[0x89C2DC] 边长 + [0xABED10] 工作数组 ×0x50（QWEN.md 实锤）**：
+  0x5A4B60/0x5A45E0 的索引写入——(Y×side+X)×0x50 布局的第三/四个应
+  用点（batch ⑨ 造山/⑬ 防重后）。
+- **batch 146（0x5AD870 浮点键最小选择）**：0x5A4B60 的堆下沉调用——
+  寻路/优先级队列堆族应用点。
+- 新候选：无（10 callee 全已登记，零新候选）。
