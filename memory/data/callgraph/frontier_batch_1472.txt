@@ -1,0 +1,148 @@
+frontier batch 1472 — 0x655560 雷达标记入队器 / 0x6547C0 地图网格初始化器（超大宿主采样）/ 0x653830 三参转发判定器（2026-10-23）
+
+口径：承接 batch 1471 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x655560（475B，callees=2 deps=3——
+**雷达标记入队器**，推断名）、0x6547C0（1746B，callees=7 deps=115——
+**地图网格初始化器**，推断名，超大宿主采样）、0x653830（28B，callees=1
+deps=22——**三参转发判定器**，推断名）。
+取证手段：disasm.py 双参直反汇编三路读完（0x655560 0x1DB 尾 0x655738
+ret 0xC——172 行全读 / 0x6547C0 前 0x100B 尾 0x6548BD——85 行采样，
+1746B 超大宿主 / 0x653830 0x1C 尾 0x653849 ret 0xC——10 行全读）+
+TSV 查重（三候选全部未登记）+ callee 登记核验（grep TSV：0x6562D0
+RadarClass::RefreshCrd（batch 339——★尾调现场，雷达刷新链）、0x7CA090
+memmove（batch 031）、0x7C8E17 operator new（batch 001）、0x7C5F00
+_ftol（batch 001）——0x4A9CA0/0x654EA0 未登记留候选）。
+
+================================================================================
+0x655560 —— 雷达标记入队器（475B 全程读完）
+================================================================================
+签名：thiscall + 3 栈参 ret 0xC（ecx=this 存 [esp]、栈参 1=[esp+0x28]
+玩家实例、栈参 2/3=[esp+0x2C]/[esp+0x30]=X/Y 坐标；
+0x655560-0x655738）。
+机器码结构（0x655560-0x655738，全程读完，关键锚点）：
+    边界装载 0x655560：mov ecx,[ecx+0x121C]（★子对象——Radar 推断）
+    → mov eax,[ecx] → lea edx,[esp+0x10] → push → call [eax+0x78]
+    （★虚表槽 0x78——取边界矩形）→ esi=[esp+0x10]（★X0）→ edi=
+    [esp+0x14]（★Y0）→ ebx=[esp+0x18]（★W）→ ebp=[esp+0x1C]（★H）
+    范围检查 0x65558C：mov edx,[esp+0x2C]（★X）→ cmp edx,esi → jl
+    跳过 → lea eax,[ebx+esi]（★X0+W）→ cmp edx,eax → jge 跳过 →
+    mov ecx,[esp+0x30]（★Y）→ cmp ecx,edi → jl 跳过 → lea eax,
+    [edi+ebp]（★Y0+H）→ cmp ecx,eax → jl 0x6555FD（★范围内命中）
+    ——四边界检查
+    状态检查 0x6555A4：mov ecx,[esp+0x28]（★玩家实例）→ 虚表槽 0x2C
+    → cmp eax,6 → je 0x655731（★==6 直接收尾）
+    clamp 坐标 0x6555B6：mov edx,[esp+0x2C] → cmp esi → jge → mov
+    edx,esi（★下限）→ cmp edx,esi+ebx → jl → mov edx,esi+ebx-1（★
+    上限-1）→ Y 同款（+0x30 vs edi/edi+ebp——★双端 clamp）→ 写
+    [esp+0x28]+0x208=X → +0x20C=Y（★玩家实例字段）
+    表定位 0x6555FD：[0x1258] 区 + lea 组合（×4→×5→×8→表项）→
+    mov esi,[esi+0x1258]→[0] 表 → mov edi,[esi+eax*8+4]（★项 A）→
+    lea esi,[esi+eax*8]（★项基）→ mov eax,[esi+0x10]（★项计数）
+    去重扫描 0x655630-0x655659（ebx=0..count）：mov ebp,[esp+0x28]
+    （★玩家）→ mov edi,[edi+4]？→ cmp [edi-4],ebp（★项0==玩家）→
+    jne 下项 → cmp [edi],edx（★项1==X）→ jne 下项 → cmp [edi+4],
+    ecx（★项2==Y）→ je 0x655731（★★三项全等 → 去重跳过）→ inc
+    ebx/add edi,0x10（★16B/项步进）→ jl 循环
+    玩家归属 0x655659：mov edx,[0xA83D4C]（★当前玩家）→ mov ecx,
+    [edi+0x21C]（★玩家+0x21C）→ cmp ecx,edx → jne 0x6556D4（★双
+    路径——==当前玩家/≠）
+    路径 A 0x65566E（==当前玩家）：cmp eax,[esi+8]（★容量）→ jl
+    0x65569E → byte[esi+0xD] 非空 → jne → mov eax,[esi+0x14]（★
+    增量）→ test → jle → 虚表槽 8 扩容（push 0/计数+增量）→
+    memmove 0x6556B1（★batch 031——数据前移腾位）→ mov eax,[esi+4]
+    → [eax]=edi/[+4]=ebp/[+8]=ecx/[+0xC]=edi（★★16B 项写：{玩家,
+    X,Y,玩家}）→ [esi+0x10]++（★计数++）→ 0x65571A
+    路径 B 0x6556D4（≠当前玩家）：同型扩容判定 → mov eax,[esi+4]
+    → shl eax,4 → add eax,ecx（★项指针）→ [eax]=edi/[+4]=ebp/
+    [+8]=edx/[+0xC]=edi（★尾插）
+    收尾 0x65571A：mov esi,[esp+0x10] → lea eax,[esp+0x2C] → push
+    → mov ecx,esi → call 0x6562D0（★★batch 339 RadarClass::
+    RefreshCrd——雷达刷新！）→ mov byte[esi+0x14D9],1（★脏标志）→
+    ret 0xC
+语义：**雷达标记入队器（推断名——475B「四边界检查 + clamp + 去重
+扫描 + 双路径入队 + RefreshCrd 刷新」）**——① 子对象虚表槽 0x78 取
+边界矩形（X0/Y0/W/H）；② 目标 X/Y 四边界检查（范围内才处理）；③
+玩家实例虚表槽 0x2C 状态检查（==6 跳过）；④ clamp 坐标写玩家实例
++0x208/+0x20C；⑤ 表定位（[0x1258] 区 + lea ×100 表项）→ 去重扫描
+（16B/项：{玩家,X,Y} 三项全等跳过）；⑥ 双路径入队（==当前玩家
+[0xA83D4C] 走扩容+memmove 前移、≠ 走尾插——{玩家,X,Y,玩家} 16B
+项）；⑦ ★★收尾 0x6562D0 RefreshCrd 刷新 + [esi+0x14D9]=1 脏标志。
+★怪癖：①★★去重扫描三项全等（{玩家,X,Y} 16B/项——同一标记不重
+复入队）；②双路径入队（==当前玩家扩容前移 / ≠ 尾插——读取者/写
+者双角色）；③16B 项 {玩家,X,Y,玩家}（首尾同字段）；④memmove 腾位
+（batch 031——扩容后数据前移）；⑤clamp 双端（X/Y 各自下限+上限
+-1）；⑥虚表槽 0x2C==6 状态跳过；⑦RefreshCrd + 脏标志收尾。
+⚠️ partial：子对象 [esp+0x10] 身份（RadarClass 推断）、[0x1258] 区
+表宿主、+0x21C/+0x208/+0x20C 字段语义、虚表槽 0x78/0x2C 方法、3
+unique caller。
+
+================================================================================
+0x6547C0 —— 地图网格初始化器（1746B 超大宿主，采样取证）
+================================================================================
+签名：thiscall + 4 栈参 ret（ecx=this 存 ebx、栈参 1=[esp+0x7C]=ebp
+源结构、栈参 2=[esp+0x84]=esi 目标、栈参 3/4 标志；0x6547C0-0x654EF9
+约 1746B）。
+机器码结构（采样：前 0x100B 0x6547C0-0x6548BD，关键锚点）：
+    标志分支 0x6547C3：mov al,[esp+0x7C]（★栈参 1 字节）→ mov ebp,
+    [esp+0x7C] → mov esi,[esp+0x84]（★栈参 2）→ test al → je
+    0x654808（★标志关直接跳过拷贝）→ mov eax,[esi+8] → test → 
+    jle 0x6547EE → mov eax,[esi+0xC] → test → jg 0x654808（★目标
+    W/H 校验）→ 0x6547EE: 16B 结构拷贝（mov edx,[eax] 系 4 dword
+    [ebp+0..0xC] → [esi+0..0xC]——★★源结构装载）
+    缓冲分配 0x654808：mov eax,[ebx+0x123C]（★已有缓冲）→ test →
+    jne 0x65487D（★复用跳过）→ mov edi,[ebp+8]（★W）→ imul edi,
+    [ebp+0xC]（★×H）→ lea ecx,[edi+edi*2]（★×3——3 字节/格）→
+    push → call 0x7C8E17（★batch 001 new W×H×3）→ 3 字节步进清
+    零循环（mov byte [ecx-2]/[ecx-1]/[ecx]=0——每组 3 字节）→
+    rep stosd + rep stosb 清零（★整块清零）→ [ebx+0x123C]=edi →
+    [ebx+0x1240]=W → [ebx+0x1244]=H
+    转发 0x65487D：mov al,[esp+0x8C]（★栈参 3 标志）→ test → je
+    → push esi → push ebp → mov ecx,ebx → call 0x654EA0（★未登记
+    ——双参转发）
+    浮点链 0x654891：mov ecx,[ebx+0x1220] → mov edx,[ebp+8] → mov
+    eax,[ebx+0x1488]（★+0x1488 字段）→ [esp+0x28]=edx → test ecx →
+    jne 0x65499D（★+0x1220 非空分派）→ fild [esp+0x28] → fld
+    [0x7F0420]（★常量）→ fdiv（★浮点除法链——比例换算）
+语义：**地图网格初始化器（推断名——1746B 超大宿主「源结构装载 +
+W×H×3 缓冲分配清零 + 转发 + 浮点比例链」）**——① 标志门控 16B 结构
+拷贝（[ebp] → [esi] 4 dword——源尺寸/参数装载）；② +0x123C 缓冲
+复用判定 → new W×H×3（3 字节/格）+ 三字节步进清零 + rep stosd 整
+块清零 + [ebx+0x123C/+0x1240/+0x1244] 三字段写；③ 0x654EA0 双参转
+发（[esp+0x8C] 标志门控）；④ 浮点链（fild W + fld [0x7F0420] +
+fdiv——[ebx+0x1488] 比例换算，+0x1220 分派）。
+★怪癖：①★★W×H×3 缓冲（3 字节/格——每格 3 字段网格推断）；
+②16B 结构装载标志门控（[esp+0x7C] 字节）；③三字节步进清零循环
+（非 rep 单一——每组 3 字节对齐）；④+0x123C 三字段缓冲记录
+（buf/W/H）；⑤+0x1488 浮点比例 + [0x7F0420] 常量 + fdiv。
+⚠️ partial：★主体未全读（1746B 采样前 0x100B——0x6548BE-0x654EF9
+未读，7 callees 剩余链未穷尽）、0x654EA0 精确身份（未登记）、
++0x123C/+0x1240/+0x1244/+0x1220/+0x1488 字段语义（网格缓冲推断）、
+[esi+8]/[esi+0xC] W/H 校验、[0x7F0420] 常量、4 unique caller。
+
+================================================================================
+0x653830 —— 三参转发判定器（28B 全程读完）
+================================================================================
+签名：cdecl 3 栈参 ret 0xC（栈参 1/2/3；0x653830-0x653849）。
+机器码结构（0x653830-0x653849，全程读完，关键锚点）：
+    mov eax,[esp+0xC]（★栈参 3）→ mov edx,[esp+8]（★栈参 2）→
+    push eax → mov eax,[esp+8]（★栈参 1）→ push edx → push eax →
+    call 0x4A9CA0（★未登记——三参调用）→ setne al（★结果取反布尔
+    化）→ ret 0xC
+语义：**三参转发判定器（推断名——28B「0x4A9CA0 三参转发 + setne」）**
+——三栈参原样转发 0x4A9CA0，返回 setne 布尔化（内部非零 → 0？）。
+★怪癖：①★三栈参转发（push 顺序 3/2/1——cdecl 逆序）；②setne
+（0x4A9CA0 返回 ≠ 0 → 1）；③28B 极简（纯转发+取反）。
+⚠️ partial：0x4A9CA0 精确身份（未登记——三参函数推断）、返回语义、
+2 unique caller。
+
+================================================================================
+跨批次连接（本批三连 = 雷达标记 + 网格初始化 + 参转发）
+================================================================================
+- **batch 339（0x6562D0 RadarClass::RefreshCrd）**：0x655560 尾调现
+  场（雷达刷新链——标记入队后刷新 + 脏标志 [esi+0x14D9]=1 与 batch
+  339 文档同字段）。
+- **batch 031（0x7CA090 memmove）**：0x655560 扩容后数据前移。
+- **batch 001（0x7C8E17/0x7C5F00）**：0x6547C0 new、0x655560 无直调
+  但 _ftol 域关联。
+- 新候选：0x4A9CA0（0x653830 转发目标）、0x654EA0（0x6547C0 转发）、
+  [0x7F0420] 常量、[ebx+0x123C] 系网格缓冲字段族。
