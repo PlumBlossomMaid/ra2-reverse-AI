@@ -1,0 +1,139 @@
+frontier batch 1381 — 0x4A8D50 坐标框缩放更新器 / 0x49F7A0 恒真返回器 / 0x49B720 指针数组释放器（2026-10-23）
+
+口径：承接 batch 1380 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x4A8D50（321B，callees=3 deps=351）、
+0x49F7A0（3B，callees=0 deps=3497——**极小高扇出**）、0x49B720（62B，
+callees=1 deps=222）。
+取证手段：disasm.py 双参直反汇编全程读完（0x4A8D50 0x150 尾 0x4A8E8E /
+0x49F7A0 0x30 尾 0x49F7C8 / 0x49B720 0x50 尾 0x49B75D，函数边界与
+functions.tsv 完全吻合，0x49F7A0 极短于 ranking 3B 记录——mov al,1; ret
+即函数体）+ TSV 查重（三候选全部未登记）+ 跨批次对比（0x7C8B3D 释放 ↔
+batch 既有 CRT 锚点；0x7C978A atexit ↔ batch 既有 atexit 锚点；分区舍入
+惯用 ↔ batch 1344 0x54F6B0 族）。
+
+================================================================================
+0x4A8D50 —— 坐标框缩放更新器（321B 全程读完）
+================================================================================
+签名：thiscall（ecx=this，mov ebx）+ 1 栈参（[esp+0x14]=对象指针），
+ret 4（0x4A8D50-0x4A8E8E，callees=3 deps=351）。
+机器码结构（0x4A8D50-0x4A8E8E，全程读完，关键锚点）：
+    入口：sub esp, 8; push ebx; mov ebx, ecx（this）; push esi
+    mov eax, [ebx+0x118C]（★+0x118C 指针）; test eax; je 0x4A8D9D
+    0x4A8D61：mov ax, [ebx+0x1186]; mov cx, [ebx+0x1188]
+    add ax, [ebx+0x1182]; add cx, [ebx+0x1184]
+    （★四坐标字段两对相加——+0x1182/+0x1184 与 +0x1186/+0x1188）
+    push 0; mov [esp+0xC], ax; mov [esp+0xE], cx（★组装坐标对）
+    mov edx, [esp+0xC]; lea eax, [esp+0xC]; push eax
+    mov ecx, ebx; mov [esp+0x10], edx
+    call 0x4A9650（★坐标调用——栈参坐标指针）
+    0x4A8D9D：mov esi, [esp+0x14]（★栈参——对象指针）
+    mov ecx, [0x8A03F8]（★全局宿主）; test esi, esi
+    mov [ebx+0x1186], ecx（★+0x1186 = 全局 [0x8A03F8]）
+    je 0x4A8E7F（★空 → 清 +0x118C）
+    mov al, [0x8A0619]（★全局标志字节）; test al, 1
+    jne 0x4A8DD6（★首次初始化门控）
+    push 0x4A8EA0; or dl, 1; mov [0x8A0619], dl
+    call 0x7C978A（★atexit 注册——0x4A8EA0 清理器 + 标志置位）
+    add esp, 4
+    0x4A8DD6：push edi; mov ecx, 0x32; mov edi, 0x8A0298
+    （★全局目标缓冲）; lea edx, [esp+0x18]
+    rep movsd（★0x32 dwords = 200B 拷贝 esi → [0x8A0298]）
+    push 0x8A0298; push edx; mov ecx, ebx
+    mov [ebx+0x118C], 0x8A0298（★+0x118C = 全局缓冲地址）
+    call 0x4A94F0（★全局缓冲处理）
+    0x4A8DFE：mov eax, [eax]; push 1
+    mov [esp+0x10], eax; dec word [esp+0x10]; dec word [esp+0x12]
+    （★结果 -1 修正）
+    0x4A8E10（★÷2 舍入链）：mov eax, [esp+0x10]; neg eax
+    mov ecx, [esp+0x12]; movsx eax, ax; cdq; sub eax, edx; sar eax, 1
+    （★(x-1) 修正 + movsx + cdq + sar——半坐标向下取整）
+    neg ecx; mov [esp+0x1C], ax; movsx eax, cx; cdq; sub; sar eax, 1
+    mov [esp+0x1E], ax（★双坐标 ÷2）
+    0x4A8E36：mov ecx, [esp+0x1C]; mov [ebx+0x1186], ecx
+    （★+0x1186 = 新坐标对）
+    mov ax, [ebx+0x1184]; mov dx, [ebx+0x1182]
+    add ax, [ebx+0x1188]; add dx, cx（★再次两对相加）
+    mov [esp+0x1C], dx; mov [esp+0x1E], ax; mov ecx, [esp+0x1C]
+    lea edx, [esp+0x1C]; mov [esp+0x1C], ecx; push edx
+    mov ecx, ebx; call 0x4A9650（★再次坐标调用）
+    pop edi; pop esi; pop ebx; add esp, 8; ret 4
+    0x4A8E7F（★空路径）：mov [ebx+0x118C], 0; pop esi
+    pop ebx; add esp, 8; ret 4
+语义：**坐标框缩放更新器**（0x4A8D5x 区——0x4A8Dxx 坐标/框域，
+callees=3 deps=351）：thiscall + 1 栈参（对象指针）：+0x118C 非空 →
+**四坐标字段两对相加**（+0x1182/+0x1184 与 +0x1186/+0x1188 → 0x4A9650
+坐标调用）；栈参非空 → **200B rep movsd 到全局 [0x8A0298]**（首次
+atexit 注册 0x7C978A + 0x4A8EA0 清理器 + [0x8A0619] 标志）+ +0x118C 指向
+全局 + 0x4A94F0 处理 → **结果 ÷2 舍入**（neg/movsx/cdq/sub/sar——半坐标
+向下）→ +0x1186 写新坐标 → **再次两对相加 + 再次 0x4A9650**。★坐标框
+缩放更新器（四坐标字段族 + 200B 全局缓冲 + atexit 生命周期 + ÷2 半坐标
+舍入 + 双坐标调用）。2 unique caller（3 callsite）。
+★怪癖：①★**四坐标字段族**（+0x1182/+0x1184/+0x1186/+0x1188 两对相加
+——两坐标框复合）；②★**全局静态缓冲 [0x8A0298]**（0x32 dwords=200B
+rep movsd——大对象拷贝到全局重用）；③★**atexit 生命周期**（0x7C978A
+注册 0x4A8EA0 清理器 + [0x8A0619] 标志——batch 既有 atexit 锚点）；
+④★**半坐标 ÷2 舍入**（neg + movsx + cdq + sub + sar——负数向零取整
+链）；⑤★**双坐标调用 0x4A9650**（前后两次——缩放前后各一次）；
+⑥★+0x118C 指向全局缓冲 + 空路径清 0 + ret 4 单栈参。
+⚠️ partial：+0x1182..+0x1188 坐标字段语义、[0x8A0298] 全局缓冲对象
+类型、[0x8A03F8] 宿主身份、0x4A94F0/0x4A9650 身份、0x4A8EA0 清理器
+内容、2 unique caller 身份。
+
+================================================================================
+0x49F7A0 —— 恒真返回器（3B 全程读完）
+================================================================================
+签名：无参无 this 使用，al=1 恒真返回，ret 0（0x49F7A0-0x49F7A2，
+callees=0 deps=3497——**3B 极小函数**）。
+机器码（0x49F7A0-0x49F7A2）：
+    mov al, 1
+    ret
+语义：**恒真返回器**（0x49F7Ax 区——0x49F7xx 占位/门控域，callees=0
+deps=3497——极小高扇出）：**mov al,1; ret——恒返 1（true）**。
+★恒真返回器（3B thunk——deps=3497 高扇出占位/空实现）。
+★怪癖：①★**3B 函数体**（mov al,1 + ret——极简实现）；②★**恒返 1**
+（无条件 true——可能是占位/测试桩/常量门控）；③★**deps=3497 极高**
+（大量调用依赖此函数——高扇出常量供给）。
+⚠️ partial：调用者语义（3497 调用点身份）、恒真动机（占位/空实现/
+硬编码门控）、0x49F7A3 后的 0x81F598 日志串关联（后邻函数开头）。
+
+================================================================================
+0x49B720 —— 指针数组释放器（62B 全程读完）
+================================================================================
+签名：thiscall（ecx=this，mov esi），无栈参，ret 0（0x49B720-0x49B75D，
+callees=1 deps=222）。
+机器码结构（0x49B720-0x49B75D，全程读完，关键锚点）：
+    入口：push esi; mov esi, ecx（this）; mov eax, [esi+0x3C]
+    （★+0x3C 数组指针）; test eax; je 0x49B75C（★空 → 直接返）
+    mov eax, [esi+0x40]（★+0x40 计数）; push edi; xor edi
+    test eax; jle 0x49B74F（★计数 ≤0 → 跳到本体释放）
+    0x49B734 循环：mov eax, [esi+0x3C]; mov eax, [eax+edi*4]
+    （★逐项取）; test eax; je 0x49B747（★空项跳过）
+    push eax; call 0x7C8B3D（★delete 项）; add esp, 4
+    0x49B747：mov eax, [esi+0x40]; inc edi; cmp edi, eax
+    jl 0x49B734（★[+0x40] 次循环）
+    0x49B74F：mov ecx, [esi+0x3C]; push ecx
+    call 0x7C8B3D（★delete 数组本体）; add esp, 4
+    pop edi; pop esi; ret
+语义：**指针数组释放器**（0x49B72x 区——0x49B7xx 容器/资源域，
+callees=1 deps=222）：thiscall 析构：**+0x3C 指针数组 [+0x40 计数]
+逐项 delete**（非空项 0x7C8B3D）+ **数组本体 delete**；+0x3C 空
+直接返。★指针数组释放器（+0x3C 数组 + +0x40 计数——逐项 + 本体
+双 delete + 0x7C8B3D）。2 unique caller（3 callsite）。
+★怪癖：①★**指针数组容器**（+0x3C 数组指针 + +0x40 计数——batch
+既有数组容器族）；②★**逐项 delete 非空项**（test eax; je 跳过——
+NULL 项安全）；③★**数组本体 delete**（+0x3C 自身——两段释放）；
+④★**0x7C8B3D**（batch 既有 CRT 释放锚点）+ 0x3C 空提前返。
+⚠️ partial：容器类型（指针数组持有者身份）、+0x3C/+0x40 字段语义、
+项类型（被 delete 对象身份）、2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 既有 CRT 锚点（0x7C8B3D 释放）：0x49B720 逐项 + 本体双
+  delete 使用——分配器家族持续闭合。
+- batch 既有 atexit 锚点（0x7C978A）：0x4A8D50 首次注册 0x4A8EA0
+  清理器 + [0x8A0619] 标志——生命周期家族再验证。
+- batch 1344（0x54F6B0 分区舍入/归零惯用）：0x4A8D50 半坐标 ÷2
+  （neg/movsx/cdq/sub/sar）同族——舍入惯用再验证。
+- batch 既有指针数组容器族（多成员容器类析构器等）：0x49B720
+  逐项 + 本体释放——容器析构家族持续闭合。
