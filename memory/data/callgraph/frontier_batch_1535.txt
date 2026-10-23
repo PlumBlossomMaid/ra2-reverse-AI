@@ -1,0 +1,148 @@
+frontier batch 1535 — 0x549E90 调色板重打包器 / 0x547CF0 全局表族搬运器 / 0x547150 区域数据查询器（2026-10-24）
+
+口径：承接 batch 1534 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x549E90（644B，callees=4 deps=645——**调
+色板重打包器**，推断名）、0x547CF0（6967B 超大宿主，callees=5 deps=75
+——**全局表族搬运器**，推断名——前段+中段采样 partial）、0x547150
+（85B，callees=1 deps=1877——**区域数据查询器**，推断名）。
+取证手段：disasm.py 双参直反汇编三路读取（0x549E90 0x284 覆盖尾 0x54A113
+ret / 0x547CF0 前段 0x100 采样 0x547CF0-0x547DEE + ★中段复采样 0x547DF0
+起 0x101（batch 1510 教训：前段尾 xor ebp 2B 指令，边界 0x547DF0）覆盖
+到 0x547EEE / 0x547150 0x55 覆盖尾 0x5471A2 ret 0xC——四文件 56+19+26+
+17 行全读）+ TSV 查重（三候选全部未登记）+ callee 登记核验（grep TSV：
+**3/3 全部已登记，无新候选**——0x420140 batch 1245（★★全局共享对象池
+Get/Create [0x88A080] 区——0x547CF0 前段调用）、0x661190 batch 1360
+（三字节钳位缩放器——0x549E90 双调用）、0x661020 batch 1361（★★三字
+节双源混合缩放器——batch 1360 单源版同族——0x549E90 双调用））。
+
+================================================================================
+0x549E90 —— 调色板重打包器（644B 全程读完）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this；0x549E90-0x54A113）。
+机器码结构（0x549E90-0x54A113，全程读完，关键锚点）：
+    段1 表项删除：sub esp,0x2C → push 族 → mov edi,ecx（this）→ xor esi
+    → mov eax,[edi+0x2B4]（★计数）→ mov ebx,[edi+0xA4]（★源对象）→
+    test → jle 0x549ECF → 循环：mov eax,[edi+0x2A8]（★数组）→ mov eax,
+    [eax+esi*4]（表项）→ test → je → push eax → call 0x7C8B3D（delete）
+    → inc → cmp 计数 → jl 循环（★删除 [edi+0x2A8] 表项）
+    段2 子对象清空 + 面积循环：mov edx,[edi+0x2A4]（★子对象虚表）→ add
+    edi,0x2A4 → mov ecx,edi → call [edx+0xC]（★虚表槽 0xC 清空）→ mov
+    eax,[ebx+4] → imul eax,[ebx]（★width×height 面积）→ test → jle
+    0x54A10D → lea esi,[ebx+0x10]（★表基址）→ 外层循环：cmp [esi],0 →
+    je 0x54A0AF（★空项 → 插 0 到 this 子对象）→ push 0x34 → call
+    0x7C8E17（new(0x34)）→ Vector 扩容插入（+8 容量/+0x10 计数/+0xD 标
+    志/+0x14 增量 + 虚表槽 8——batch 1533 同款模板）
+    段3 字节重打包：mov al,[esi+0x2B]（★六字节 [0x2B..0x30]）→ 存局部 →
+    mov eax,[0x7ECBD4]（★常量）→ push → lea ecx,[esp+0x1C] → call
+    0x661190（★★batch 1360 三字节钳位缩放器）→ 同款第二组 → call
+    0x661190 → fild 0 → fmul [0x7ECD28]（★浮点常量）→ fstp → 0x661020
+    （★★batch 1361 双源混合缩放器）→ 位域打包：mov cx,word[eax] → xor
+    dx → 循环 [0x8A0DD0..0x8A0DE4] 位偏移表（shr al,cl + shl edx,cl 组合
+    ——★★6 组位偏移位域打包）→ or edx → mov word[esi],dx（★写回 word）
+    → 循环 0xC=12 次（★★12 word 打包——每 word 由 6 字节位域组合）
+    段4 收尾：ebx/esi 恢复 → Vector 空项插入（0x54A0AF 分支：+8/+0x10/
+    +0xD/+0x14 + 虚表槽 8 → 数组[计数]=0）→ 面积循环推进（esi+=4）→
+    ret
+语义：**调色板重打包器（推断名——644B「表项删除 + 0x34B 结构重建 +
+六字节位域打包」）**——thiscall：① 删 [edi+0x2A8] 表项 + 子对象虚表槽
+0xC 清空；② [ebx]×[ebx+4] 面积循环：[ebx+0x10] 表项 → new(0x34) +
+Vector 扩容插入；③ 六字节（[0x2B..0x30]）→ 0x661190 钳位缩放 ×2 →
+0x661020 双源混合 → [0x8A0DD0..0x8A0DE4] 位偏移 shr/shl 打包 → 写
+word ×12；④ 空项插 0。
+★★怪癖：①★★[0x8A0DD0..0x8A0DE4] 位偏移表（6 组 shr/shl——调色板
+属性位域打包推断）；②★★0x661190 双调用 + 0x661020（钳位缩放 + 双源
+混合——batch 1360/1361 家族复用）；③★★0xC=12 word 打包循环 + fild
+×[0x7ECD28] 浮点；④★★Vector 扩容模板（batch 1533 同款）；⑤★★
+new(0x34)=52B 结构 + 空项插 0；⑥★★[0x7ECBD4] 常量（缩放参数推断）。
+⚠️ partial：宿主类（0x549Exx 区推断）、[ebx+0xA4] 源对象、[0x2B..0x30]
+六字节语义（调色板 RGB+属性推断）、[0x8A0DD0..0x8A0DE4]/[0x7ECBD4]/
+[0x7ECD28] 常量值、2 unique caller。
+
+================================================================================
+0x547CF0 —— 全局表族搬运器（6967B 超大宿主，前段+中段采样 partial）
+================================================================================
+签名：thiscall + 多栈参（ecx=this；[esp+0x20]/[esp+0x44]/[esp+0x48]/
+[esp+0x4C]/[esp+0x50]/[esp+0x58]/[esp+0x60] 等 6+ 栈参；0x547CF0-
+0x549818 总长 6967B）。
+机器码结构（前段 0x547CF0-0x547DEE + 中段 0x547DF0-0x547EEE，关键锚
+点）：
+    段1 多参门控：sub esp,0x1C → mov eax,[esp+0x20]（★参数1）→ push 族
+    → mov esi,ecx（this）→ test → je 0x54981D（★参数 0 → 跳尾 0x1B14
+    处）→ 多参数读取（[esp+0x60]/[esp+0x50]/[esp+0x44]）→ mov cx,word
+    [0x8A0DE8] → mov word[0xAA1120],cx（★全局拷贝）
+    段2 对象池调用 + 全局写：mov eax,[esp+0x30] → mov eax,[eax+0x16C]
+    → push eax → mov ecx,0x87E8A8 → call 0x420140（★★batch 1245 全局
+    共享对象池 Get/Create [0x88A080] 区）→ mov edi,eax（★返回对象）→
+    数值变换（setle/dec/and + shl 6/add/shl 0xB → sar 0xB → cmp 0xFE
+    钳制）→ shl 9 → add edi → mov [0xAA10D0],eax（★★全局 [0xAA10D0]）
+    → mov eax,[esp+0x30] → mov ecx,[eax+0x170] → mov [0xAA10C0],ecx
+    （★★全局 [0xAA10C0]）→ mov al,[0xABC55D] → test → jne 0x547F33
+    （★字节分支）
+    段3 中段表族搬运（0x547DF0 起）：mov [esp+0x14],0x7EC450（★常量表
+    ）→ [0x7EC4C8] 空格扫描循环（cmp byte[ecx+edi+0x7EC4C8],0x20——
+    0x3C=60 上限）→ 连续段计数（[0x7EC4C9] 后扫非空格——edx 计数）→
+    lea ebp,[ebp+0xABB120]（★目标表）→ 循环 0x3C 次：mov ebx,[edx]
+    （[0x7EC450] 表项）→ mov byte[esi+ecx+0xAA074C],al（★★[0xAA074C]
+    字节表写）→ word[ebp-2]=eax 计算（[0xABB120] word 表）→ 第二循环：
+    [0xABA650] 字节表写（sets 惯用法三连）→ sub ebx,0x6CC → 推进
+语义：**全局表族搬运器（推断名——6967B 超大宿主「多参门控 + 对象池
+获取 + 全局写 + 表族搬运」）**——thiscall 多栈参：① 参数 0 → 跳尾；②
+[0x8A0DE8]→[0xAA1120] 全局拷贝；③ [esp+0x30]+0x16C → 0x420140 对象池
+Get/Create → 数值变换钳制 → [0xAA10D0]/[0xAA10C0] 全局写 → [0xABC55D]
+字节分支；④ [0x7EC4C8] 空格扫描 + 连续段计数 → [0x7EC450] 表项搬运
+至 [0xABB120]/[0xAA074C]/[0xABA650] 三表（0x3C=60 上限）。
+★★怪癖：①★★[0x7EC4C8..0x7EC450] 常量表解析（空格 0x20 扫描 + 连续
+段计数——字符/调色板表推断）；②★★0x420140 对象池 Get/Create（batch
+1245 同款 [0x88A080] 区）；③★★[0xAA10D0]/[0xAA10C0] 全局写 + [0xABC55D]
+字节分支；④★★三表搬运（[0xABB120] word 表 + [0xAA074C]/[0xABA650]
+字节表——0x3C=60 上限）；⑤★★sets 惯用法三连（负数钳 0）；⑥★数值
+变换（shl 6/add×4/sar 0xB → cmp 0xFE 钳制）。
+⚠️ partial：宿主类（0x547Cxx 区推断）、多栈参语义、尾部 0x547EEE 之后
+未读（约 0x1A2B——剩余 4 callee 在其中）、[0x7EC4C8..0x7EC450]/
+[0xABB120]/[0xAA074C]/[0xABA650]/[0xAA10D0]/[0xAA10C0]/[0xABC55D] 表
+语义、2 unique caller。
+
+================================================================================
+0x547150 —— 区域数据查询器（85B 全程读完）
+================================================================================
+签名：thiscall + 3 栈参 ret 0xC（ecx=this；[esp+0xC]=参数1（区域索引）
+；[esp+0x10]=输出1；[esp+0x14]=输出2；0x547150-0x5471A2）。
+机器码结构（0x547150-0x5471A2，全程读完，关键锚点）：
+    段1 单例获取：mov eax,[ecx]（★this 首字段）→ call [eax+0x9C]（★★
+    虚表槽 0x9C——全局单例获取推断）→ mov ecx,eax → test → je 0x5471A0
+    （★空 → 返 0）
+    段2 维度索引：mov esi,[ecx+4]（★Y 维度）→ mov eax,[esp+0xC]（★参
+    数1）→ imul esi,[ecx]（★X×Y 面积）→ cdq → idiv esi（★★参数1 / 面
+    积——区域索引换算）→ mov esi,[esp+0x10]（★输出1）→ mov eax,[ecx
+    +8]（★+8）→ mov edx,[ecx+edx*4+0x10]（★★表项 [ecx+idx*4+0x10]——
+    定长 4B 表）→ mov [esi],eax（★输出1=+8）→ mov eax,[esp+0x14]（★输
+    出2）→ mov ecx,[ecx+0xC]（★+0xC）→ test edx → mov [eax],ecx（★输
+    出2=+0xC）→ je 0x547199（★表项空跳过）
+    段3 偏移修正：test byte[edx+0x24],1（★表项 +0x24 bit0 门控）→ je →
+    mov esi,[edx+4] → mov ebx,[edx+0x18] → sub esi,ebx → add esi,ecx →
+    mov [eax],esi（★★输出2=表项+4-(+0x18)+原 +0xC——偏移修正）→
+    0x547199: mov al,1 → ret 0xC → 0x5471A0: xor al → ret 0xC
+语义：**区域数据查询器（推断名——85B「面积索引换算 + 表项查 + 三输出
+」）**——thiscall 3 栈参 ret 0xC：① 虚表槽 0x9C 取单例（空返 0）；②
+参数1 / ([ecx]×[ecx+4])（区域索引换算——idiv）；③ [ecx+8]/[ecx+0xC]
+输出1/输出2；④ 表项 [ecx+idx*4+0x10] 非空且 +0x24 bit0 → 输出2=表项
++4-(+0x18)+原值（偏移修正）；⑤ 返 1。
+★★怪癖：①★★idiv 维度乘积索引（参数/面积——区域 ID 换算）；②★★
+表项 [ecx+idx*4+0x10]（定长 4B 表 + 区域数据）；③★★偏移修正（表项
++4-(+0x18)+原 +0xC——差值+基值）；④★★三输出三栈参 ret 0xC；⑤★★
+byte[edx+0x24] bit0 门控；⑥★虚表槽 0x9C 单例获取。
+⚠️ partial：宿主类（0x5471xx 区推断）、单例身份、[ecx+8]/[ecx+0xC]/
+[ecx+0x10] 表字段语义、偏移修正业务含义、2 unique caller。
+
+================================================================================
+跨批次连接（3 callee 全部已登记，无新候选）
+================================================================================
+- **batch 1245（0x420140 全局共享对象池 Get/Create）**：0x547CF0 段2 调
+  用——[0x88A080] 区对象池（key 幂等 + 0x10000 项表填充）。
+- **batch 1360/1361（0x661190 三字节钳位缩放器 / 0x661020 双源混合缩放
+  器）**：0x549E90 段3 重打包调用——[0x7E2220]/[0x7E1748] 双界钳位 +
+  _ftol 同款（RGB 调色板域）。
+- **batch 1533（Vector 扩容模板）**：0x549E90 两处插入同款（+8/+0x10/
+  +0xD/+0x14 + 虚表槽 8）。
+- **batch 001（0x7C8E17/0x7C8B3D）**：0x549E90 分配/删除。
+- 新候选：无（三函数 callees 全部已登记）。
