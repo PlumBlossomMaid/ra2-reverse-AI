@@ -1,0 +1,157 @@
+frontier batch 1375 — 0x53EDC0 结构拷贝双子 / 0x53A140 随机地形生成器 / 0x522510 类型白名单判定器（2026-10-23）
+
+口径：承接 batch 1374 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x53EDC0（22B，callees=0 deps=111 纯叶极简）、
+0x53A140（436B，callees=5 deps=1889 高解锁）、0x522510（35B，callees=0
+deps=72 纯叶）。
+取证手段：disasm.py 双参直反汇编全程读完（0x53EDC0 0x40 尾 0x53EDD3（含
+相邻 0x53EDE0 反向双子）/ 0x53A140 0x1C0 尾 0x53A2F1 / 0x522510 0x50 尾
+0x522532（含相邻 0x522540 getter），函数边界与 functions.tsv 完全吻合）+
+TSV 查重（三候选全部未登记）+ 跨批次对比（0x5657A0 取格链 + [0x87F7E8]
+↔ batch 1300s 锚点；Randomizer 0x65C780 Random + [0xA8B230]+0x218 ↔
+QWEN.md RNG 锚点；0x7C8E17 分配/0x421EA0 构造 ↔ batch 1370 0x581140
+同款；虚表槽 8 增长 ↔ batch 1300s/1370 锚点；双子模式 ↔ 0x53EDC0/
+0x53EDE0 读/写对）。
+
+================================================================================
+0x53EDC0 —— 结构拷贝双子（22B 全程读完）
+================================================================================
+签名：thiscall（ecx=源对象）+ 1 栈参（[esp+4]=目标指针 eax），ret 4
+（0x53EDC0-0x53EDD3，callees=0 deps=111 纯叶极简）。
+机器码（0x53EDC0-0x53EDD3）：
+    入口：mov eax, [esp+4]（★目标指针）; add ecx, 4（★源 +4）
+    mov edx, [ecx]; mov [eax], edx（★dword 拷贝 [ecx] → [eax]）
+    mov cx, [ecx+4]; mov [eax+4], cx（★word 拷贝 [ecx+4] → [eax+4]）
+    ret 4
+    （相邻 0x53EDE0 完全同构反向双子：mov edx,[eax]; mov [ecx+4],edx +
+    mov ax,[eax+4]; mov [ecx+4],ax——目标→源反方向）
+语义：**结构拷贝双子**（0x53EDCx 区——0x53EDxx 拷贝/结构域，
+callees=0 deps=111 纯叶极简）：thiscall 源对象 + 目标指针栈参：
+**6B 结构拷贝**（dword + word——源 +4 处拷到目标）→ ret 4。
+**相邻 0x53EDE0 完全同构反向双子**（读/写方向相反——拷贝/读出
+成对）。★结构拷贝双子（0x53EDCx 区——dword+word 6B 拷贝 +
+0x53EDE0 反向对——batch 1277/1352/1356 双子模式再现）。2 unique
+caller（3 callsite）。
+★怪癖：①★6B 结构拷贝（mov edx,[ecx] + mov [eax],edx dword +
+mov cx,[ecx+4] + mov [eax+4],cx word——源 +4 起始）；②★add ecx,4
+前置（结构体跳过前 4B）；③★**反向双子 0x53EDE0**（mov edx,[eax]
+→ [ecx+4]——读/写方向相反成对——Westwood 复制粘贴双子）；
+④★ret 4 单栈参 + callees=0 纯叶 + deps=111。
+⚠️ partial：6B 结构语义（dword+word）、与 0x53EDE0 反向关系、
+2 unique caller 身份。
+
+================================================================================
+0x53A140 —— 随机地形生成器（436B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（[esp+0x5C]=计数参数），ret 4
+（0x53A140-0x53A2F1，callees=5 deps=1889 高解锁）。
+机器码结构（0x53A140-0x53A2F1，全程读完，关键锚点）：
+    入口：sub esp, 0xC; lea eax, [esp+0x10]
+    push eax; mov ecx, 0x87F7E8（★MapClass）
+    call 0x5657A0（★取格链——batch 1300s 锚点）
+    0x53A153：mov ecx, [0x8871E0]（★全局规则）
+    mov esi, eax; mov edx, [ecx+0x2DC]（★规则表）
+    mov ecx, [edx]; mov eax, [ecx]; call [eax+0x9C]（★虚表槽 0x9C）
+    movsx eax, word [eax+4]; cdq; sub eax, edx
+    sar eax, 1（★>>1 半值）; mov ecx, eax; call 0x6D2120（★换算）
+    0x53A17B：mov edx, [esi+0x140]（★格属性）
+    mov ecx, [0xA9FA84]; and edx, 0x100
+    neg edx; sbb edx, edx; and edx, ecx（★bit8 门控取全局）
+    movsx ecx, byte [esi+0x11B]; imul ecx, [0xA9FA90]（★高度×常量）
+    add eax, edx（★累加）
+    mov esi, [0xA9FA30]; 坐标组装 [esp+0x4..0xC]
+    cmp [esp+4], esi; jne 0x53A1EA（★坐标缓存比较）
+    cmp [esp+8], [0xA9FA34]; jne 0x53A1EA
+    cmp [esp+0xC], [0xA9FA38]; je 0x53A2ED（★三值缓存全等 → 返）
+    0x53A1EA（★随机生成）：mov eax, [0xA8B230]
+    lea ecx, [eax+0x218]
+    call 0x65C780（★Randomizer::Random——QWEN.md RNG 锚点）
+    mov ecx, [0x8871E0]; xor edx, edx
+    push 0x1C8; div dword [ecx+0x2CC]（★随机数 ÷ 规则数）
+    mov ecx, [ecx+0x2C0]; mov esi, [ecx+edx*4]（★类型查表）
+    call 0x7C8E17（★分配 0x1C8）
+    0x53A222：push 0; push 0; push 0x600; push 1
+    lea edx, [esp+0x14]; push 0; push edx; push esi
+    call 0x421EA0（★构造——batch 1370 0x581140 同款）
+    mov esi, eax
+    0x53A242（★双容器入队）：
+    mov eax, [0xA9FA68]; mov ecx, [0xA9FA70]
+    cmp ecx, eax; jl 0x53A27F（★计数 < 容量直接入队）
+    mov cl, [0xA9FA6D]; test; jne 0x53A25F
+    test eax; jne 0x53A297（★持有标志判定）
+    mov ecx, [0xA9FA74]; test; jle 0x53A297（★增长量门控）
+    add ecx, eax; mov eax, [0xA9FA60]; push 0; push ecx
+    mov ecx, 0xA9FA60; call [eax+8]（★虚表槽 8 增长）
+    0x53A27F：mov ecx, [0xA9FA70]; mov eax, ecx; inc ecx
+    mov [0xA9FA70], ecx（★计数+1）
+    mov ecx, [0xA9FA64]; mov [ecx+eax*4], esi（★入队）
+    0x53A297（★第二容器 [0xA9F9D0]）：同构入队（[0xA9F9E0] 计数 +
+    [0xA9F9E4] 增长量 + 虚表槽 8 + [0xA9F9D4] 缓冲）
+    0x53A2ED：pop esi; add esp, 0xC; ret 4
+语义：**随机地形生成器**（0x53A14x 区——0x53A1xx 地形/生成域，
+callees=5 deps=1889 高解锁）：thiscall + 计数栈参：0x5657A0 取格 →
+[0x8871E0]+0x2DC 规则表虚表槽 0x9C 取地形 + 0x6D2120 换算 → **bit8
+门控**（[esi+0x140] and 0x100 → neg/sbb 取 [0xA9FA84]）+ 高度 ×
+[0xA9FA90] → **三值缓存比较**（[esp+0x4..0xC] vs [0xA9FA30]/
+[0xA9FA34]/[0xA9FA38]——全等直接返）→ **Randomizer 0x65C780
+Random**（[0xA8B230]+0x218）÷ [0x8871E0]+0x2CC → [0x2C0] 类型查表
+→ **0x7C8E17 分配 0x1C8 + 0x421EA0 构造**（batch 1370 同款）→
+**[0xA9FA60]/[0xA9F9D0] 双容器入队**（虚表槽 8 增长 + 计数+1）→
+ret 4。★随机地形生成器（0x53A14x 区——Randomizer 0x65C780 随机
+选型 + 0x421EA0 构造 + 双容器入队——QWEN.md RNG 锚点兑现）。
+2 unique caller（3 callsite）。
+★怪癖：①★**三值缓存比较**（[esp+0x4..0xC] vs [0xA9FA30]/
+[0xA9FA34]/[0xA9FA38]——三值全等直接返，缓存命中跳过生成）；
+②★Randomizer 0x65C780 Random（[0xA8B230]+0x218——QWEN.md RNG
+锚点）÷ [0x8871E0]+0x2CC 取模 → [0x2C0] 表选型；③★bit8 门控
+惯用（and 0x100 + neg/sbb/and——条件取 [0xA9FA84]）；
+④★0x7C8E17 分配 0x1C8 + 0x421EA0 构造（batch 1370 0x581140
+DestroyCliff 同款构造链）；⑤★**双容器入队**（[0xA9FA60] 与
+[0xA9F9D0]——两容器同构：计数/增长量 + 虚表槽 8 增长 + 4B 入队）
+——batch 1300s/1370 虚表槽 8 锚点兑现。
+⚠️ partial：宿主类型（+0x140 属性/[+0x11B] 高度）、[0x8871E0]+
+0x2DC/+0x2C0/+0x2CC 规则字段、[0xA9FA30]/[0xA9FA34]/[0xA9FA38]/
+[0xA9FA60..0xA9FA74]/[0xA9F9D0..0xA9F9E4] 全局身份（双容器族）、
+0x421EA0/0x6D2120 身份、2 unique caller 身份。
+
+================================================================================
+0x522510 —— 类型白名单判定器（35B 全程读完）
+================================================================================
+签名：thiscall（ecx=this），无栈参，返回 al 0/1，ret 0（0x522510-
+0x522532，callees=0 deps=72 纯叶）。
+机器码（0x522510-0x522532）：
+    入口：mov eax, [ecx+0x6C4]（★+0x6C4 类型值）
+    cmp eax, 0x1B; je 0x52252D
+    cmp eax, 0x1C; je 0x52252D
+    cmp eax, 0x1D; je 0x52252D
+    cmp eax, 0x1E; je 0x52252D（★四值白名单）
+    xor eax; ret（★不在白名单 → 返 0）
+    0x52252D：mov eax, 1; ret（★命中 → 返 1）
+    （相邻 0x522540 getter：mov eax,[ecx+0x6C0]; mov al,[eax+0x6AC];
+    ret——+0x6C0 指针 → +0x6AC 字节取值）
+语义：**类型白名单判定器**（0x52251x 区——0x522xxx 类型/判定域，
+callees=0 deps=72 纯叶）：thiscall：**[+0x6C4] 类型值 ∈
+{0x1B,0x1C,0x1D,0x1E}**（四值白名单——每个 cmp/je）→ 命中返 1、
+否则返 0。★类型白名单判定器（0x52251x 区——四值白名单 +
+相邻 0x522540 getter 成对）。2 unique caller（3 callsite）。
+★怪癖：①★+0x6C4 类型值四值白名单（cmp 0x1B/0x1C/0x1D/0x1E +
+je——连续四值区间判定）；②★命中返 1 / 未命中 xor 返 0（无公共
+出口合并）；③★相邻 0x522540 getter（+0x6C0 指针 → +0x6AC 字节——
+同宿主字段族）+ ret 0 无栈参 + callees=0 纯叶。
+⚠️ partial：宿主 +0x6C4 类型值语义（四值区间含义）、
+0x522540 getter 关系、2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1300s（0x5657A0 取格链 + [0x87F7E8] + 虚表槽 8 增长）：
+  0x53A140 使用——取格/容器家族持续闭合。
+- **QWEN.md RNG 锚点（Randomizer 0x65C780 Random + [0xA8B230]+
+  0x218）**：0x53A140 直接兑现——RNG 家族持续闭合（batch 1345
+  记忆锚点同族）。
+- batch 1370（0x581140 DestroyCliff：0x7C8E17 分配 0x1C8 +
+  0x421EA0 构造）：0x53A140 同款构造链——地形构造家族兑现。
+- 双子模式（batch 1277/1352/1356/1364/1366/1368/1371/1372）：
+  0x53EDC0/0x53EDE0 读/写方向成对——Westwood 复制粘贴惯用再验证。
+- [0x8871E0] 全局规则（既有锚点）：0x53A140 使用（+0x2DC/+0x2C0/
+  +0x2CC）——规则家族兑现。
