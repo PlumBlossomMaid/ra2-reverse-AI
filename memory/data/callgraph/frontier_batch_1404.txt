@@ -1,0 +1,190 @@
+frontier batch 1404 — 0x77DC90 WOL 浏览器启动器 / 0x77DB90 网络地址表拼接上报器 / 0x77DA50 用户哈希表查找器（2026-10-23）
+
+口径：承接 batch 1403 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x77DC90（569B，callees=18 deps=2672——
+**WOL 浏览器启动器**）、0x77DB90（253B，callees=10 deps=2780——
+**网络地址表拼接上报器**）、0x77DA50（307B，callees=6 deps=153——
+**用户哈希表查找器**）。
+取证手段：disasm.py 双参直反汇编全程读完（0x77DC90 0x239 尾 0x77DEC8 /
+0x77DB90 0xFD 尾 0x77DC8C / 0x77DA50 0x133 尾 0x77DB82，函数边界与
+functions.tsv 完全吻合）+ TSV 查重（三候选全部未登记）+ **字符串实锤
+（_read_str1404.py：0x82976C='.html'、0x82AF10='w'、0x829748='[open]
+%s'、0x84A494='TXT_LAUNCHBROWSER'、0x84A484='TXT_NOBROWSER'、
+0x84A4A8='<title>Hi there.</title>'、0x84A480='L'、0x817F70=','）**
++ **PE 导入槽实锤（_pe_imports1404.py：0x7E138C=SHELL32!FindExecutableA、
+0x7E10DC=KERNEL32!CreateProcessA、0x7E1418=USER32!WaitForInputIdle、
+0x7E1188=KERNEL32!GetExitCodeProcess、0x7E141C=USER32!GetTopWindow、
+0x7E1420=USER32!GetForegroundWindow、0x7E14D0=USER32!SetForegroundWindow、
+0x7E1498=USER32!ShowWindow）** + 跨批次锚点（batch 1400 [0xA8DA90]
+网络地址表/[0xAC116C]、batch 1398 用户列表 108B 记录、batch 1403
+0x7B4780 串比较、batch 1399 0x7E11F0 Sleep、batch 1030 0x7CB550
+_strncat、batch 126 0x77F900 消息泵、batch 001 0x734E60 等）。
+
+================================================================================
+0x77DC90 —— WOL 浏览器启动器（569B 全程读完，字符串+导入槽双实锤）
+================================================================================
+签名：cdecl 无参返 void（sub esp,0x310 大栈帧；0x77DC90-0x77DEC8）。
+机器码结构（0x77DC90-0x77DEC8，全程读完，关键锚点）：
+    入口：sub esp,0x310 → lea eax,[esp+0x58] → push eax → call
+    0x7CD460（★字符串构造/清理）→ mov edi,0x82976C（★'.html'）→
+    strlen → 拷到 [esp+0x6C] → push 0x82AF10（★'w'——文件写模式）
+    → call 0x7CA845（★CRT fopen 推断——*.html 文件创建）→
+    push 0x84A4A8（★'<title>Hi there.</title>' 网页内容！）→ call
+    0x7CA7D8（★CRT 写函数）→ call 0x7CA75B（★CRT fclose 推断——
+    写临时 HTML 文件三连）
+    FindExecutableA：lea ecx,[esp+0x108]（★结果缓冲）→ push ecx →
+    push 0（lpDirectory=NULL）→ lea edx,[esp+0x68]（★文件名/
+    路径——'.html' 相关）→ push edx → call 0x7E138C（★★SHELL32
+    FindExecutableA——查默认浏览器）→ mov esi,eax → cmp esi,0x20
+    → jle 0x77DE98（★返回值 >32 才是成功——SE_ERR_* 判定）→
+    test ebx（this 参数）→ jne 0x77DD5D → DebugLog 0x84A494（★
+    "TXT_LAUNCHBROWSER" 行 0x576）+ 0x5E2CD0(4, eax) → cmp 6 →
+    jne 0x77DEBE（★选 6 分支）
+    启动段 0x77DD5D：push ebp（★URL/参数）→ lea ecx,[esp+0x214] →
+    push 0x829748（★"[open] %s" 命令模板）→ push ecx → call
+    0x7C8EF4（★sprintf——拼 '[open] <URL>'）→ 清 [esp+0x30] 0x11
+    dword（★STARTUPINFO 68B）→ 压 8 参 → lea ecx,[esp+0x22C]/
+    lea edx,[esp+0x128] → call 0x7E10DC（★★KERNEL32 CreateProcessA
+    ——启动浏览器！）→ test eax → je 0x77DEBE（失败）→ mov ebx,
+    [esp+0x14]（★hProcess）→ 0x77F900（★消息泵 batch 126）→
+    push 0x1388(5000ms)/push ebx → call 0x7E1418（★★WaitForInputIdle
+    ——浏览器就绪等待）→ edi=[0x7E11F0]（★Sleep）→ ebp=
+    [0x7E1188]（★★GetExitCodeProcess）
+    等待循环 0x77DDE9：0x77F900 → push 0x1F4(500ms)→Sleep → push
+    [esp+0x10]（★退出码缓冲）→ push ebx → GetExitCodeProcess →
+    cmp 0x103（★STILL_ACTIVE=259）→ je 0x77DE0C（★仍在运行设定
+    esi=1）→ [0xA8ED80] 标志 → jne → GetTopWindow(0)（0x7E141C）
+    → cmp [0xB73550]（★浏览器窗口句柄）→ je → GetForegroundWindow
+    （0x7E1420）→ cmp [0xB73550] → jne → 循环 0x77DDE9（★等前台）
+    → 0x77DE41：GetTopWindow → cmp [0xB73550] → je → 0x77F900 →
+    push [0xB73550] → SetForegroundWindow（0x7E14D0）→ push 9 →
+    ShowWindow([0xB73550], 9)（★★SW_RESTORE——前台+还原）→
+    收尾：esi=0xA 循环（0x77DE81：Sleep 100ms ×10——★1 秒缓冲）→
+    pop 族 → ret
+语义：**WOL 浏览器启动器（字符串+导入槽双实锤——TXT_LAUNCHBROWSER/
+TXT_NOBROWSER + '.html' + '[open] %s' + CreateProcessA/FrontWindow
+族）**——① 写临时 HTML 文件（'.html' + 'w' + '<title>Hi there.
+</title>'——CRT fopen/写/fclose 三连）；② FindExecutableA 查默认
+浏览器（>32 成功判定）；③ CreateProcessA 启动 '[open] <URL>'；
+④ WaitForInputIdle 等待浏览器就绪 + GetExitCodeProcess STILL_ACTIVE
+轮询 + GetTopWindow/GetForegroundWindow 前台检测；⑤
+SetForegroundWindow + ShowWindow 9 强制前台；⑥ Sleep 100ms×10
+缓冲后返回。
+★怪癖：①tmp HTML 三连写（'.html' 文件 + '<title>Hi there.</title>'
+固定内容）；②FindExecutableA 返回 >32 成功（SE_ERR_SUCCESS=32
+以上）；③GetExitCodeProcess 0x103=STILL_ACTIVE 判定；④窗口句柄
+全局 [0xB73550]（浏览器 hWnd）；⑤前台三连（GetTopWindow/
+GetForegroundWindow/SetForegroundWindow）；⑥ShowWindow 9
+SW_RESTORE；⑦结尾 1 秒 buffer 循环。
+⚠️ partial：0x7CD460/0x7CA845/0x7CA7D8/0x7CA75B 精确 CRT 身份
+（fopen/write/fclose 推断）、URL 来源（this 参数）、[0xB73550]
+浏览器窗口句柄精确语义。
+
+================================================================================
+0x77DB90 —— 网络地址表拼接上报器（253B 全程读完）
+================================================================================
+签名：thiscall 无栈参返 al（0x77DB90-0x77DC8C）。
+机器码结构（0x77DB90-0x77DC8C，全程读完，关键锚点）：
+    入口：sub esp,0x110 → 拷 0x84A480（★'L' 前缀串）到 [esp+0x10]
+    → mov esi,0xA8DA90（★★batch 1400 网络地址表基址！）→ 遍历
+    [0xA8DA90..0xA8DAB0)（8 项×4B）：
+    0x77DBC3：mov edi,[esi]（★表项指针）→ lea ecx,[esp+8] →
+    0x7B4620（★batch 062 ctor）→ mov ecx,edi → call 0x5E93F0
+    （★batch 1403 判定——地址有效性）→ test al → je 0x77DC0E →
+    有效路径：push edi（★项串）→ lea ecx,[esp+0x10] → 0x7B66D0
+    （宽串装载）→ 0x7B7F90 → 0x7B4940（batch 077）→ 0x7B46F0 →
+    jmp 0x77DC2C → 无效路径 0x77DC0E：mov edx,edi → lea ecx,
+    [esp+0x14] → call 0x5EDEF0（★数字→文本转换推断）→ 0x7B4940
+    → 0x7B46F0
+    0x77DC2C：push 0x100（★长度）→ lea ecx,[esp+0xC] → 0x7B5400
+    （★batch 085 c_str）→ push eax → lea ecx,[esp+0x1C] → call
+    0x7CB550（★★batch 1030 _strncat——追加到汇总串）→ push 0x100/
+    push 0x817F70（★',' 分隔符）→ lea edx,[esp+0x28] → push edx →
+    0x7CB550（★再追加 ','）→ add esi,4 → cmp 0xA8DAB0 → jl 循环
+    （★8 项全拼）
+    上报：mov eax,[0xAC116C]（★WOL 全局）→ lea edx,[esp+0x18]
+    （★汇总串）→ push edx/push eax → call [ecx+0x3C]（★虚表槽
+    0x3C——批次上报）→ pop 族 → ret
+语义：**网络地址表拼接上报器（推断名——[0xA8DA90] 表拼接上报）**——
+① 遍历网络地址表 [0xA8DA90..0xA8DAB0)（8 项）逐项 0x5E93F0 判定
+有效性：有效 → 宽串直取，无效 → 0x5EDEF0 数字转换；② 逐项
+0x7CB550（_strncat）追加到汇总串 + ',' 分隔符；③ 汇总串经
+[0xAC116C] 虚表槽 0x3C 上报。★语义统一：batch 1400 0x793BB0 发包
+用 [0xA8DA90] 地址表——本函数是同一表的汇总上报端。
+★怪癖：①'L' 前缀 + ',' 分隔符拼接格式（"L,a,b,c..."）；②有效/
+无效双路径（0x5E93F0 判定 + 0x5EDEF0 数字转换）；③8 项固定
+（0xA8DA90-0xA8DAB0）；④0x7CB550 长度 0x100（batch 1030 实锤
+_strncat）；⑤槽 0x3C 上报（void 组 [0xAC116C] 新槽位）。
+⚠️ partial：0x5E93F0/0x5EDEF0 精确语义（地址有效性/数字转换推断）、
+汇总串用途（上报接收方）、8 项精确含义。
+
+================================================================================
+0x77DA50 —— 用户哈希表查找器（307B 全程读完）
+================================================================================
+签名：cdecl 无参返指针（new 0x6C=108B 记录；0x77DA50-0x77DB82）。
+机器码结构（0x77DA50-0x77DB82，全程读完，关键锚点）：
+    入口：push ecx/push ebx → call 0x7350C0（★窄→宽转换——batch
+    1400 0x793BB0 同款）→ lea ecx,[esp+4] → push eax → 0x7B4630
+    （★batch 062）→ 0x7B5B30（★串处理）→ push 0x6C → call
+    0x7C8E17（★batch 001 new(108B)）→ mov ebx,eax → test → je
+    析构返 0（★分配失败）→ 清 0x1B dword（108B 记录清零）→
+    cmp [0xB779C4],2 → je 0x77DB09（★双哈希表分支）
+    分支 A（[0xB77D80] 系）：mov eax,[0xB77D84]（★计数）→ test →
+    je 0x77DB73 → lea ecx,[esp+0xC]（★this 串）→ call dword
+    [0xB77D98]（★★哈希函数指针——batch 1396/1397 哈希表同构）→
+    mov ecx,[0xB77D8C]（★shift）→ mov edx,1 → shl edx,cl → dec
+    → and edx,eax（★★1<<shift-1 掩码——batch 1396 同款！）→
+    mov eax,[0xB77D80]（★桶数组）→ mov esi,[eax+edx*4]（★桶头）
+    → test esi → je 0x77DB73 → 链式循环 0x77DAD5：lea ecx,
+    [esp+0xC] → push → mov ecx,esi → call 0x7B4780（★batch 1403
+    串比较——名字比对）→ test al → jne 0x77DAFC（★命中）→ mov
+    esi,[esi+0x70]（★★item+0x70 链式 next！）→ test → jne 循环
+    → 析构 → mov eax,ebx → ret（★未找到返新 0 记录）
+    命中 0x77DAFC：test esi → je 0x77DB73 → add esi,4（★跳过类型/
+    +4 数据偏移）→ test esi → je → jmp 0x77DB6A → 0x77DB6A：
+    mov ecx,0x1B → rep movsd（★108B 拷贝到 ebx）→ 0x77DB73：
+    析构栈串 → mov eax,ebx → ret（★返 ebx——命中拷贝/未找返 0 记录）
+    分支 B（[0xB768C0] 系）：je 0x77DB09 → mov eax,[0xB768C4] → test
+    → je 0x77DB73 → call dword [0xB768D8]（★哈希函数 B）→ mov
+    ecx,[0xB768CC]（★shift B）→ 同掩码 → mov eax,[0xB768C0]（★
+    桶数组 B）→ 链式循环 [esi+0x70] + 0x7B4780 → 同拷贝 → 返
+语义：**用户哈希表查找器（推断名——按名字查用户记录）**——① 串
+窄→宽转换（0x7350C0）+ 栈串构造；② new 108B 记录清零；③ 双哈希
+表分支（[0xB77D80] 系 / [0xB768C0] 系——[0xB779C4]==2 选 B）：掩码
+=1<<shift-1 取桶 → 链式 0x7B4780 名字比较（item+0x70 next）→ 命中
+108B 拷贝到新记录；④ 未命中返清零记录。★语义统一：batch 1396/
+1397 哈希表同构（count/shift/hash 指针/链式 next + 掩码公式）——
+本条是用户记录版查找器（item+0x70 链）。
+★怪癖：①★★双哈希表分支（[0xB779C4]==2 判 B 系——WOL 用户/
+会话两套表）；②掩码 1<<shift-1（batch 1396 逐字节同款）；③哈希
+函数用表内指针间接调用（[0xB77D98]/[0xB768D8]）；④item+0x70
+链式 next（batch 1397 +0x110 不同——记录表链偏移 0x70）；⑤命中
+从 item+4 拷贝（跳过类型域）；⑥未命中返全新清零记录（非 NULL）。
+⚠️ partial：双哈希表精确语义（用户/会话推断）、[0xB779C4] 判定
+源、哈希函数指针身份、item+0x70 链布局、0x7350C0 宽/窄向。
+
+================================================================================
+跨批次连接（本批三连 = WOL 网络/用户数据源族）
+================================================================================
+- **batch 1400（[0xA8DA90] 网络地址表 + [0xAC116C] WOL 全局）**：
+  0x77DC90 拼 '[open] URL' + 0x77DB90 汇总地址表上报 [0xAC116C]
+  槽 0x3C——地址表双消费端。
+- **batch 1396/1397（哈希表 count/shift/hash 指针/掩码公式）**：
+  0x77DA50 双哈希表查找完全同构（掩码 1<<shift-1 + 表内 hash
+  指针 + 链式 next）——记录版查找器（next 偏移 0x70 非 0x110）。
+- **batch 1403（0x7B4780 串比较 / 0x5E93F0 判定）**：0x77DA50
+  名字比对、0x77DB90 地址有效性判定复用。
+- **batch 1399（0x7E11F0 Sleep）**：0x77DC90 等待循环。
+- **batch 1030（0x7CB550 _strncat）**：0x77DB90 逐项拼接（batch
+  1030 实锤现场第 N 处）。
+- **batch 126（0x77F900 消息泵）**：0x77DC90 等待循环泵。
+- **batch 001（0x7C8E17 new/0x734E60 DebugLog）/ batch 059/062/
+  085（窄串族）/ batch 097（0x7B66D0 宽串）**：三函数锚点族。
+- 本批新增导入槽实锤：0x7E138C=FindExecutableA、0x7E10DC=
+  CreateProcessA、0x7E1188=GetExitCodeProcess（KERNEL32/SHELL32）、
+  0x7E1418=WaitForInputIdle、0x7E141C=GetTopWindow、0x7E1420=
+  GetForegroundWindow、0x7E14D0=SetForegroundWindow、0x7E1498=
+  ShowWindow（USER32 前台族——batch 1399 POST 三件套扩展）。
+- 新候选：0x7CA845/0x7CA7D8/0x7CA75B/0x7CD460（CRT 文件三连推断）、
+  0x5EDEF0/0x5E93F0、[0xB77D80]/[0xB768C0] 双哈希表宿主、[0xB73550]
+  浏览器窗口句柄、宽串族 0x7B5B30。
