@@ -1,0 +1,199 @@
+frontier batch 1502 — 0x5E68A0 会话窗口注册器 / 0x5E6230 哈希列表查询器 / 0x5E5F10 哈希列表插入器（2026-10-24）
+
+口径：承接 batch 1501 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x5E68A0（127B，callees=8 deps=2646——
+**会话窗口注册器**，推断名）、0x5E6230（516B，callees=12 deps=356——
+**哈希列表查询器**，推断名）、0x5E5F10（793B，callees=10 deps=357——
+**哈希列表插入器**，推断名）。
+取证手段：disasm.py 双参直反汇编三路全程读完（0x5E68A0 0x7F 全量尾
+0x5E691E ret / 0x5E6230 0x204 全量尾 0x5E6433 ret / 0x5E5F10 0x319 全量
+尾 0x5E6228 ret——三文件 21/94/140 行全读）+ TSV 查重（三候选全部未登记）
++ callee 登记核验（grep TSV：9 callee 已登记——0x7B7100 batch 112、
+0x735060 batch 137、0x7B6880 batch 143、0x7B68E0 batch 156、0x52FEC0
+batch 168、0x622820 batch 194、0x775700 batch 196、0x7759E0 batch 302、
+0x7B67C0 batch 1394；**4 个新候选留池：0x72D120/0x72D170（0x5E68A0 前
+置/收尾）+ 0x5EEF60/0x5EF010（哈希表扩容孪生）**）。
+
+================================================================================
+0x5E68A0 —— 会话窗口注册器（127B 全程读完）
+================================================================================
+签名：thiscall 无栈参 ret（0x5E68A0-0x5E691E）。
+机器码结构（0x5E68A0-0x5E691E，全程读完，关键锚点）：
+    段1 前置：push esi → mov esi,ecx（this）→ mov dl,1 → xor ecx →
+    call 0x52FEC0（★★batch 168 界面初始化前置——mov dl,1/xor ecx,cx/
+    call 同款调用形态实锤）→ call 0x72D120（★未登记前置）
+    段2 回调注册一：mov ecx,[0xB732F0]（★全局宿主）→ mov edx,0x6B →
+    push 0 → push 0x5E6920（★★回调函数指针——本函数邻域）→ push esi
+    → call 0x775700（★★batch 196 全局表分配——[0xB72D28] 8B/项表注册）
+    → mov ecx,eax → mov [0xAC0D40],eax（★★全局句柄缓存）→ call
+    0x622820（★★batch 194 回调注册管理——[0xAC48A8] 全局）
+    段3 控件操作：mov eax,[0xAC0D40] → push 1/0/0x4A9 → push eax →
+    call [0x7E14A4]（★★batch 099 SendMessageA——消息 0x4A9=1193，batch
+    302 0x7759E0 同款；参数 wParam=0 lParam=1）→ mov ecx,[0xAC0D40] →
+    push 1 → push ecx → call [0x7E1498]（★★batch 094 ShowWindow——
+    参数 1 显示）
+    段4 回调注册二 + 收尾：mov ecx,[0xAC0D40] → mov edx,0x5E66F0（★★
+    第二个回调函数指针）→ push 1/1/0 → call 0x7759E0（★★batch 302 对
+    话框栈回调循环——0x7759E0 为 this 注册 0x5E66F0 回调）→ mov esi,
+    eax → call 0x72D170（★未登记收尾）→ mov eax,esi → ret
+语义：**会话窗口注册器（推断名——127B「双回调注册 + SendMessageA/
+ShowWindow + 全局句柄缓存」）**——① 0x52FEC0（batch 168）前置 + 0x72D120
+（未登记）；② [0xB732F0] 全局宿主经 0x775700（batch 196 全局表分配）
+注册回调 0x5E6920（0x6B 参数），返回句柄存全局 [0xAC0D40] + 0x622820
+（batch 194 回调注册管理）；③ SendMessageA（[0x7E14A4]）消息 0x4A9 +
+ShowWindow（[0x7E1498]）参数 1 显示窗口；④ 0x7759E0（batch 302）注册
+第二个回调 0x5E66F0 + 0x72D170 收尾，返回第二注册的返回值。
+★怪癖：①★★双回调注册（0x775700 注册 0x5E6920 + 0x7759E0 注册
+0x5E66F0——两个邻域回调函数指针）；②★★[0xAC0D40] 全局句柄缓存
+（第一次注册的返回值存全局供后续使用）；③★★SendMessageA 0x4A9 +
+ShowWindow 1（消息 + 显隐链——batch 302 0x7759E0 同款 0x4A9 消息）；
+④★★返回 esi = 0x7759E0 的返回值（第二注册的返回值作为本函数返回）；
+⑤★0x52FEC0 前置（mov dl,1/xor ecx 调用形态与 batch 168 完全同款）。
+⚠️ partial：宿主类（0x5E68xx 区——会话/UI 族推断）、0x5E6920/0x5E66F0
+回调函数语义、[0xB732F0] 全局宿主、[0xAC0D40] 句柄语义、0x6B 参数含
+义、0x72D120/0x72D170（未登记）、2 unique caller。
+
+================================================================================
+0x5E6230 —— 哈希列表查询器（516B 全程读完）
+================================================================================
+签名：thiscall + 1 栈参 ret 4（ecx=this=对话框、edx=[esp+0xC]=ebx 宿主
+哈希表对象；0x5E6230-0x5E6433）。
+机器码结构（0x5E6230-0x5E6433，全程读完，关键锚点）：
+    段1 计数获取：sub esp,0xC10 → push 族 → mov esi,[0x7E14A4]
+    （SendMessageA）→ push 0/0/0x18B → push ebp（this）→ call esi
+    （★★SendMessageA(this, 0x18B=395, 0, 0)——取计数）→ mov edi,eax
+    → lea ecx,[esp+0x10] → mov [esp+0x14],edi → call 0x7B66C0（★★batch
+    069 宽字符串类赋值 operator=——局部串初始化）→ test edi → je
+    0x5E6420（收尾）
+    段2 窗口样式分支：push -0x10 → push ebp → call [0x7E1474]（★导入
+    槽 [0x7E1474]——GetWindowLongA 系，state 锚点 [0x7E1470] 邻槽）→
+    test al,8 → je 0x5E6335（★★bit3 → 分支 A 遍历；否则分支 B）
+    段3 分支 A（al&8，逐项读）：mov eax,[esp+0x14] → xor edi → test →
+    jle 收尾 → 循环：push 0/edi/0x4CF（★1231）/ebp → call esi → test
+    eax → je 0x5E62AD → push buf/edi/0x4B6（★1206）/ebp → call esi（
+    ★★SendMessageA 读文本——0x4B6 消息）→ jmp 0x5E62D0 → 0x5E62AD:
+    push buf2/edi/0x4B7（★1207）/ebp → call esi → lea edx,[esp+0x820] →
+    lea ecx,[esp+0x20] → push -1 → call 0x735060（★★batch 137 窄串→宽
+    串转换——0x4B7 文本转宽）→ 0x5E62D0: lea edx,[esp+0x20] → lea ecx,
+    [esp+0x10] → push edx → call 0x7B6880（★★batch 143 宽串 operator=
+    释放旧值）
+    段4 哈希查找：call [ebx+0x18]（★★宿主虚表槽 0x18——哈希函数）→
+    mov ecx,[ebx+0xC] → mov edx,1 → shl edx,cl → dec edx → and edx,eax
+    （★★掩码 (1<<[+0xC])-1 取桶索引）→ mov eax,[ebx] → mov esi,
+    [eax+edx*4]（★桶头）→ test → je 0x5E6323 → 链表遍历：lea ecx,
+    [esp+0x10] → push → mov ecx,esi → call 0x7B67C0（★★batch 1394 宽串
+    相等比较 operator==）→ test → jne 0x5E6314（★命中）→ mov esi,
+    [esi+8]（★+8 链步进）→ jne 循环 → 0x5E6314: push edi/1/0x185
+    （★389）/ebp → call [0x7E14A4]（★★命中 → SendMessageA(this, 0x185,
+    1, edi) 通知）
+    段5 循环收尾：mov eax,[esp+0x14] → inc edi → cmp edi,eax → jl
+    循环 → 收尾
+    段6 分支 B（0x5E6335，ah&0x40 → jne 收尾）：mov ecx,[ebx+4]（★计
+    数）→ xor esi → cmp → je 收尾 → mov eax,[ebx+8]（★容量）→ dec →
+    fild qword [esp+0x18] → fidiv [esp+0x18]（★★比例 计数/容量 浮点——
+    [esp+0x18]=eax 容量、[esp+0x1C]=0）→ fstp → test eax → jle 收尾 →
+    空槽扫描：[ebx] 数组 [ecx]==0 → 命中 → 0x7B68E0（★★batch 156 宽串
+    operator= 先比较版——[esp+0x10] 构造）→ mov edi,[ebx 数组项] →
+    test → 0x7B6760（★★batch 061 析构）→ delete 0x7C8B3D → 写新项 →
+    fld [esp+0x18] → fcomp [ebx+0x20]（★比例 vs 阈值）+ fnstsw → test
+    ah,0x41 → je 0x5E63E4 → call 0x5EEF60（★未登记——哈希表扩容）
+    → 0x5E63E4: call 0x7B7100（★★batch 112 宽串 getter）→ lea ecx,
+    [esp+0x20] → push eax → call 0x7CA489（★batch 045 串拷贝）→ push
+    buf/-1/0x4CA（★1226）/ebp → call esi（SendMessageA 0x4CA 查询）→
+    cmp -1 → je 收尾 → push 0/eax/0x186（★390）/ebp → call esi（
+    SendMessageA 0x186 通知）
+语义：**哈希列表查询器（推断名——516B「SendMessageA 计数 + 逐项读文
+本 + 哈希链表查找 + 比例扩容」）**——① SendMessageA 0x18B 取项数；②
+[0x7E1474] 窗口样式 bit3 分支：置位 → 逐项 SendMessageA 0x4CF 查询 +
+0x4B6/0x4B7 读文本（0x735060 窄转宽）→ 哈希查找（宿主虚表槽 0x18 哈
+希 + (1<<[+0xC])-1 掩码 + [ebx] 数组 + [+8] 链表步进 + 0x7B67C0 宽串比
+较）→ 命中 SendMessageA 0x185 通知；③ 未置位 bit14 → 比例路径：
+fild/fidiv 计数/容量 → 扫描空槽 → 0x7B68E0 构造 → 写新项 → fcomp
+[+0x20] 阈值 → 0x5EEF60 扩容 → 0x4CA 查询 + 0x186 通知。
+★怪癖：①★★SendMessageA 0x18B 取计数（395——消息号家族）；②★★
+[0x7E1474] 窗口样式 bit3 分支（al&8 → 遍历读项 / ah&0x40 → 比例路径
+双测试）；③★★哈希查找模板（虚表槽 0x18 哈希 + (1<<[+0xC])-1 掩码 +
+链表 +8 步进 + 0x7B67C0 比较——0x603D30 batch 193 同族哈希表）；④★★
+0x4B6/0x4B7 双消息读文本（1206/1207——依 0x4CF 结果选择）+ 0x735060
+窄转宽；⑤★★fild qword/fidiv 比例（[esp+0x18]=容量、[esp+0x1C]=0——
+计数/容量浮点比例）+ fcomp [ebx+0x20] 阈值扩容判定；⑥★★命中
+SendMessageA 0x185 通知（389）；⑦★★0x5EEF60 扩容（未登记——按比例
+超阈值触发）。
+⚠️ partial：宿主类（0x5E62xx 区——哈希表宿主推断）、0x18B/0x4CF/
+0x4B6/0x4B7/0x185/0x4CA/0x186 消息语义、[0x7E1474] 精确函数、虚表槽
+0x18 哈希函数、[+0x20] 阈值、0x5EEF60（未登记扩容）、2 unique caller。
+
+================================================================================
+0x5E5F10 —— 哈希列表插入器（793B 全程读完）
+================================================================================
+签名：thiscall + 1 栈参 ret 4（ecx=this=对话框、edx=[esp+0xC]=esi 宿主
+哈希表对象；0x5E5F10-0x5E6228）。
+机器码结构（0x5E5F10-0x5E6228，全程读完，关键锚点）：
+    段1 计数获取：与 0x5E6230 同构——SendMessageA(this, 0x18B, 0, 0)
+    → 0x7B66C0（batch 069）→ test → je 收尾 → [0x7E1474] 样式检查
+    段2 分支 A（al&8，逐项插入）：循环：SendMessageA(this, 0x187, edi,
+    0)（★391——项存在查询）→ test → je 0x5E605F（★不存在跳过）→
+    SendMessageA(this, 0x4CF, edi, 0) → test → je 0x5E5F9F → 0x4B6 读
+    文本 jmp → 0x5E5F9F: 0x4B7 + 0x735060 窄转宽 → 0x7B6880 → new(0xC)
+    （★0x7C8E17）→ 0x7B66C0 构造 → 0x7B68E0 → mov byte[+4],1 → mov
+    [+8],0（★新项 +4=1、+8=0）→ call [esi+0x18]（哈希虚表槽）→ 掩码 →
+    lea eax,[ecx+edx*4] → 链表头插：mov [eax],edi（★新头）+ [edi+8]=
+    旧头 → 计数++（[esi+4]）→ fild qword 计数 → fidiv [esi+8] 容量 →
+    fcomp [esi+0x28]（★比例 vs 阈值）→ fnstsw → test ah,1 → jne
+    0x5E605B → call 0x5EF010（★★未登记——哈希表扩容孪生）→ 循环收尾
+    段3 分支 B（0x5E6075，ah&0x40 → jne 收尾）：SendMessageA(this,
+    0x188, 0, 0)（★★392——取指定索引）→ mov edi,eax → test → jl 收尾
+    → SendMessageA(this, 0x4CF, edi, 0) → 0x4B6/0x4B7 + 0x735060 → 
+    0x7B6880 → new(0xC) → 0x7B66C0 → 0x7B68E0 → mov [+4],1 → mov
+    [+8],0 → mov word[esp+0x43C],0（★局部置 0）→ call [esi+0x18] 哈希
+    → 掩码 → 链表头插 → 计数++（[esi+4]）→ fild 计数（[esp+0x1C]=eax）
+    → fidiv [esp+0x1C]=ebx=[esi+8] 容量 → fcomp [esi+0x28] → test ah,1
+    → jne 0x5E6215（★不必扩容）→ cmp byte[esi+0x14],1 → je 0x5E6215
+    （★★[+0x14]==1 跳过分派）→ 扩容段（0x5E617F）：[esi] 旧表 + lea
+    [ebx+ebx]（★容量×2）→ new(×2*4) → 新表 → rep stosd 清零 → 旧表 8
+    项复活循环：逐项取旧头 → 重算哈希（虚表槽 0x18 + 新掩码）→ 链到
+    新表 → 旧项 +8=新头 → 收尾 delete 旧表（0x7C8B3D）
+    段4 收尾：0x7B6760 析构 → pop 族 → add esp,0xC1C → ret
+语义：**哈希列表插入器（推断名——793B「与 0x5E6230 同族孪生：逐项查
+询 + 哈希头插 + 计数/容量比例扩容 + 旧表复活」）**——① 同 0x5E6230
+骨架（0x18B 计数 + [0x7E1474] 样式分支）；② 分支 A 逐项：0x187 查询 +
+0x4CF/0x4B6/0x4B7 读文本 + 0x735060 转宽 → new(0xC) + 0x7B66C0/
+0x7B68E0 构造（+4=1、+8=0）→ 哈希（虚表槽 0x18 + 掩码）链表头插 →
+计数++ → fild/fidiv 比例 fcomp [esi+0x28] → 0x5EF010 扩容；③ 分支 B
+取指定索引（0x188）同构插入；④ 扩容：容量×2 + new 新表 + 清零 + 旧表
+逐项重哈希复活 + delete 旧表——**扩容与 0x5E6230 的 0x5EEF60 构成扩容
+孪生对**。
+★怪癖：①★★与 0x5E6230 同族孪生（同 0x18B/0x4CF/0x4B6/0x4B7 消息族
++ 同哈希模板 + 同比例扩容判定——一个查询一个插入）；②★★哈希头插
+（mov [eax] 新头 + 旧头挂 [+8]——单向链表头插）；③★★计数/容量比例
+（fild qword 计数 + fidiv 容量 + fcomp [esi+0x28] 阈值——浮点扩容判
+定）；④★★[esi+0x14]==1 跳过分派（字节标志——扩容前二次门控）；⑤★★
+扩容段容量×2（lea [ebx+ebx]）+ new(×2*4) + rep stosd 清零 + 逐项重哈
+希复活（旧表项按新容量重新桶定位——链完整性重建）；⑥★★delete 旧表
+（0x7C8B3D 收尾）；⑦★0x187/0x188/0x185/0x186 消息族（391/392/389/390
+——0x5E6230 同族查询通知消息）。
+⚠️ partial：宿主类（0x5E5Fxx 区——哈希表宿主推断）、0x187/0x188 消息
+语义、虚表槽 0x18 哈希函数、[esi+0x28] 阈值、[esi+0x14] 标志语义、
+0x5EF010（未登记扩容孪生）、2 unique caller。
+
+================================================================================
+跨批次连接（9 callee 已登记 + 4 新候选）
+================================================================================
+- **batch 302（0x7759E0 对话框栈回调循环）**：0x5E68A0 的第二次回调注
+  册调用——0x7759E0 的 this 注册端（0x5E66F0 回调），0x4A9 消息同款。
+- **batch 196（0x775700 全局表分配 [0xB72D28]）/ batch 194（0x622820
+  回调注册管理 [0xAC48A8]）/ batch 168（0x52FEC0 界面初始化前置）**：
+  0x5E68A0 的三段前置链。
+- **batch 1394（0x7B67C0 宽串相等比较）/ batch 143（0x7B6880 operator=
+  释放旧值）/ batch 156（0x7B68E0 operator= 先比较版）/ batch 112
+  （0x7B7100 宽串 getter）/ batch 069（0x7B66C0 赋值）**：0x5E6230/
+  0x5E5F10 的宽串操作链（比较 → 构造 → getter——宽串族大应用点）。
+- **batch 137（0x735060 窄串→宽串转换）**：0x5E6230/0x5E5F10 的 0x4B7
+  文本转宽调用。
+- **batch 193（0x603D30 哈希表查询）**：0x5E6230/0x5E5F10 的哈希模板
+  （虚表槽 0x18 + (1<<[+0xC])-1 掩码 + 链表）同族——第三、四个实例。
+- **0x5E6230 ↔ 0x5E5F10 孪生对（本批新登记家族）**：查询器（0x4B6/0x4B7
+  读 + 0x185 通知 + 0x5EEF60 扩容）vs 插入器（0x187/0x188 查询 + 头插 +
+  0x5EF010 扩容）——同一哈希表宿主的读/写两侧。
+- 新候选：0x72D120/0x72D170（0x5E68A0 前置/收尾）、0x5EEF60/0x5EF010
+  （哈希表扩容孪生——四函数留池后续。
