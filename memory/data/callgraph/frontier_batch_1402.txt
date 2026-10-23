@@ -1,0 +1,203 @@
+frontier batch 1402 — 0x789960 WOL 分辨率限制检查器 / 0x787010 WOL 登录会话驱动 / 0x786390 WOL 初始化器（2026-10-23）
+
+口径：承接 batch 1401 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x789960（507B，callees=16 deps=2709——
+**WOL 分辨率限制检查器**）、0x787010（1882B，callees=55 deps=3021——
+**WOL 登录/会话建立驱动**）、0x786390（300B，callees=9 deps=2744——
+**WOL 初始化器**）。
+取证手段：disasm.py 双参直反汇编全程读完（0x789960 0x1FB 尾 0x789B5A /
+0x787010 0x75A 尾 0x787769 / 0x786390 0x12C 尾 0x7864BB，函数边界与
+functions.tsv 完全吻合）+ TSV 查重（三候选全部未登记）+ **字符串实锤
+（_read_str1402.py：0x84B860='WOL:ResolutionLimited800'、
+0x84B844='WOL:ResolutionLimited640'、0x84B5E8='TXT_JOINLOB'、
+0x84B5D0='TXT_FETCHING_SERVLIST'、0x84B5BC='Creating login dlg\n'、
+0x84A940='SKU'——注册表键名）** + **PE 导入槽实锤（_pe_imports1402.py：
+0x7E100C=RegOpenKeyExA/0x7E1008=RegQueryValueExA/0x7E1004=RegCloseKey
+（ADVAPI32 注册表三连）、0x7E1168=CreateEventA）** + 跨批次锚点（batch
+1400 0x79BA60/0x797640、batch 1399 0x7E11F0/0x7E1498 导入槽、
+batch 1398 0x7E14A8/0x7E13CC、batch 001/059/062/078/126 锚点族、
+0x788800 对话框配置更新器、0x84A234 全局）。
+
+================================================================================
+0x789960 —— WOL 分辨率限制检查器（507B 全程读完，字符串实锤）
+================================================================================
+签名：thiscall（ecx=this 存 edi）+ 返回值 al（0x789960-0x789B5A）。
+机器码结构（0x789960-0x789B5A，全程读完，关键锚点）：
+    入口：sub esp,0x18 → push ebx/esi/edi → push edx（★保存参数 2）
+    → mov edi,ecx（this）→ mov dl,1 → call 0x79BA60（★★batch 1400
+    WOL 加入房间校验器）→ test al → je 返 0（★校验失败直接拒）
+    分辨率阈值：mov eax,[edi+0x20] → mov ecx,eax/and ecx,0x400 → je
+    0x78998F → mov esi,0x320（★bit10 → 800）→ jmp 0x7899A4 →
+    and eax,0x200 → neg/sbb/and 0xFFFFFE80/add 0x400（★bit9 运算式
+    ——batch 1399 同款 sbb 惯用法）→ mov esi,eax（★bit9 → 0x280
+    =640；双清 → 0x400=1024）
+    超限判定：cmp [0xA8EB84],esi（★当前分辨率全局）→ jle 0x789A58
+    （★未超限 → 续行）→ DebugLog 0x84B860/0x84B844（★
+    WOL:ResolutionLimited800/640 行 0x2CE3/0x2CE4——按 bit10 二选一）
+    → 0x7B66D0（★宽串赋值）→ 0x7B7100 → 0x5E2CD0(4, eax) →
+    cmp eax,6 → je 0x789A08 → 更新 [0xA8EB84]/[0xA8EB88]（★分辨率
+    上下限换算——0x320/0x258 系）→ call 0x5FAD10（★？？）→
+    0x789A3E：0x7B6760 析构 → cmp [0xA8EB84],esi → jle 0x789A58 →
+    xor al/al → ret（★仍超限 → 返 0）
+    0x789A58：0x7B4620（★串 ctor）→ test [edi+0x1C],ah,1 → je 跳过
+    → 0x52FEC0（★窗口消息族）→ 0x624110 构造 → cmp eax,2 → je 析构
+    返 0 → 0x7B4940 拷贝 + 0x7B57A0（★batch 1030 strncat 拼接）→
+    0x789B1A：DebugLog 0x84B5E8（★"TXT_JOINLOB" 行 0x2D1B）→
+    0x7B66D0 → call 0x788800（★★对话框配置更新器——batch 工作线
+    已登记 12 锚点函数）→ sete bl（★结果取反）→ 0x7B46F0 析构 →
+    mov al,bl → ret
+语义：**WOL 分辨率限制检查器（字符串实锤——WOL:ResolutionLimited800/
+640 + TXT_JOINLOB）**——① 先经 batch 1400 校验器 0x79BA60（房间
+校验失败返 0）；② 按 this+0x20 标志位选分辨率阈值（bit10=800/
+bit9=640/双清=1024）；③ 当前分辨率 [0xA8EB84] 超限 → DebugLog
+限制错误 + 可选调整（0x5E2CD0==6 分支更新上下限）+ 0x5FAD10；
+④ 未超限 → TXT_JOINLOB 日志 + 0x788800 对话框配置更新器 →
+返回其取反结果。
+★怪癖：①★★分辨率阈值位分派（bit10=800/bit9=640——双独立分支）；
+②sbb 运算法（neg/sbb/and 0xFFFFFE80/add 0x400——batch 1399
+同款编译器惯用）；③超限二段检测（初始 + 调整后再查一次）；④
+TXT_JOINLOB 后 0x788800 取反（sete）；⑤0x5E2CD0==6 分支更新
+分辨率上下限（0x320/0x258）。
+⚠️ partial：0x5FAD10/0x788800 精确语义（对话框配置更新器推断）、
+分辨率上下限 [0xA8EB84]/[0xA8EB88] 精确含义、0x5E2CD0 参数 4 含义。
+
+================================================================================
+0x787010 —— WOL 登录/会话建立驱动（1882B 全程读完，字符串实锤）
+================================================================================
+签名：thiscall 无参返 al（sub esp,0x38 + 大量内部构造；
+0x787010-0x787769）。
+机器码结构（0x787010-0x787769，全程读完，关键锚点）：
+    入口：sub esp,0x38 → [esp+0x13]=0/set [0xB77DF8],0 → call
+    0x786390（★★本批第三——WOL 初始化器）→ cmp eax,1 → jne
+    0x787762（★初始化失败 → 跳收尾）
+    清理全局：清 [0xB76B10] 0x43 dword + [0xB73BE8] 0x43 dword
+    （★两块 268B 缓冲清零）→ DebugLog 0x84B5D0（★"TXT_FETCHING_
+    SERVLIST" 行 0x5EEC）→ mov [0xB73E10],0/[0xB76AE0],0/
+    [0xB77900],0/[0xB77DD0],0（★四全局清零）→ 0x7B66D0 宽串 →
+    0x792BE0(0x10, 0)（★消息处理）→ 0x7B6760
+    GameMode 分派：mov eax,[0xA8B244] → cmp 3 → ecx=0x2300/je
+    0x7870B4 → mov ecx,0x2900 → call 0x797640（★★batch 1400 WOL
+    连接建立器——参数 ecx=0x2300/0x2900）→ 结果判定：sub eax,0 →
+    je 0x7870D7；sub eax,2 → [esp+0x13]=1/set [esp+0x20]=
+    0xFFFFFFFE → jne 0x7870D7（★返回 2 → 特殊处理）→ mov
+    [esp+0x20],0xFFFFFFFF
+    用户列表区 0x7870F5：0x5175F0 构造 → [esp+0x13] 判定 →
+
+    jne 0x787711 → 0x5176A0 → test → je 0x787362 → 0x779B50（★
+    用户名取用）→ 0x7B54B0 长度 → jbe 跳过 → 0x7B5340 释放
+    [0xB7778C]（★目标串）→ mov esi,1 → 0x7C8D20 循环（★批量
+    匹配玩家名——上限 0x20=32 次：[0xAC116C] 虚表槽 0x90 三参
+    调用取候选 → 0x7B5440 GetString + 比较）→ 命中 → 0x7B48D0
+    存 [0xB73E40]+[0xB7778C] → [0x84A238]=0
+    → GameMode 3/1/2 → 0x778A20 → [esp+0x30]+0xC 串长度 →
+    [0xB778D8] 计数循环（0x7AC9D0 取项 + 0x7CAF30 ':' 分隔符查找
+    + 0x7B4710 比较——★"名字:密码"格式推断）→ 匹配 → esi 索引
+    → mov [0xB76468],esi（★当前玩家索引）
+    → 0x65D460 → cmp esi,-1 → je 0x787359（★未找到）→ cmp esi,1
+    → jl 0x787350 → [0xB778D8] 范围检查 → 0x7AC9D0 取项 →
+    0x7864C0（★项校验）→ 通过 → 0x7B46F0 析构 → 返 1 → 失败 →
+    0x786EF0（★备用路径）
+    0x787362：0x7B54B0 [0xB73E40] → jne → 0x5176B0 → 0x779DD0 →
+    0x7B4940 存 → 0x789B1A 段（TXT_JOINLOB 式）→ 0x779C90（★
+    用户名校验）→ 0x84A238 标志 → 0x789500（★查用户名）→
+    0x6990A0（[0xA8B238] 虚表）
+    0x7873CC：DebugLog 0x84B5BC（★"Creating login dlg\n"）→
+    0x624110 构造 → 0x5176B0/0x779730 判定 → 0x52FEC0 → 窗口
+    生命周期（0x622650 创建/0x622800 初始化/0x622720 销毁——
+    0x79 区窗口族）→ GetDlgItem(0x72C 或 0x628)（★0x7E14A8）→
+    SetFocus（★0x7E13CC）→ 0x6241C0 消息循环 + 0x77F900/0x623120/
+    0x532100 泵 → 0x6241D0 判定 → ==2 → [esp+0x13]=1
+    0x7874B6：0x77F900 → 0x5175F0 → 0x65D430 → 0x778A20 →
+    [0xB75E4C] → [esp+0x30]+0xC → 0x7B54B0 → [0xB778E0] 数组循环
+    （0x7CAF30 ':' 分隔 + 0x7B4710——★二级名字:密码表）→
+    [0xB76468] 索引维护（含 -1 哨兵/重置 1）→ 0x7864C0（★项
+    校验）→ 0x5176B0/0x779730 → 0x72BCA0/0x72BCF0（★清理对）→
+    0x624110/0x6241F0（0x112 消息 0x79AE00）→ 0x624130
+    收尾 0x7876D7：0x65D460/0x624130 析构 → 0x775940(0xC4)/
+    [0xB77DC8]=0/0x7757E0（★清理链）→ 0x775B10（★batch 078）→
+    GetDlgItem(0x540)（★0x7E14A8）→ SetFocus（★0x7E13CC）→
+    [esp+0x13] 判定 → 0x786EF0 → [0xB77DC0]=1（★持有标志）→ 返 1
+语义：**WOL 登录/会话建立驱动（字符串实锤——TXT_FETCHING_SERVLIST +
+Creating login dlg）**——① 先 WOL 初始化（0x786390）；② 清四全局
++ DebugLog 获取服务器列表；③ GameMode 分派调 0x797640（连接建立，
+参数 0x2300/0x2900——分辨率系）；④ 用户列表匹配（[0xAC116C] 槽
+0x90 三参 + 0x7C8D20 比较 + [0xB778D8] "名字:密码" 表解析
+0x7CAF30 ':' 分隔）；⑤ 登录对话框生命周期（Creating login dlg +
+窗口创建/消息泵/销毁西 GetDlgItem+SetFocus）；⑥ 收尾焦点链 +
+[b0xB77DC0] 持有标志 → 返 1/0。
+★怪癖：①★"名字:密码"表用 ':'（0x3A）分隔（0x7CAF30 查找——
+二级表 [+0x18] 偏移）；②两级相同结构循环（[0xB778D8] 与
+[0xB778E0]——玩家/密码表）；③[0xB76468] 当前玩家索引（-1 哨兵/
+重置 1/越界钳制）；④GameMode 3 → 0x2300 vs 默认 0x2900（分辨率
+参数分派）；⑤窗口生命周期 3 函数族（0x622650/0x622800/0x622720）；
+⑥0x7864C0 项校验复用（两处）；⑦持有标志 [0xB77DC0] 收尾置位。
+⚠️ partial：0x7864C0/0x786EF0/[0xB778D8]/[0xB778E0] 表精确语义、
+0x789500/0x6990A0 身份、窗口族 3 函数、'名字:密码' 格式推断。
+
+================================================================================
+0x786390 —— WOL 初始化器（300B 全程读完，字符串+导入槽实锤）
+================================================================================
+签名：无参返 eax（[0xB77E75] 门控幂等；0x786390-0x7864BB）。
+机器码结构（0x786390-0x7864BB，全程读完，关键锚点）：
+    入口：mov al,[0xB77E75]（★幂等门控）→ test → 非 0 → mov
+    eax,1/ret（★已初始化直接返 1）→ [0xB77E75]=1（★置门控）→
+    call 0x5E87A0/0x5E8B40/0x5E8B60（★三清理）
+    SKU 注册表读：mov eax,0x8313B0（★注册表路径串——Preset=
+    "SOFTWARE\..." 推断）→ strlen → dec → je 0x78645E（★空跳过）
+    → 复制到 [esp+0x18] → push 0x8313B0 串 → 构造 5 参：
+    push [esp+0xC]（hKey 输出）/push 0x20019（KEY_QUERY_VALUE 系）
+    /push 0/push 0x80000002（★HKEY_LOCAL_MACHINE）→ call
+    0x7E100C（★★RegOpenKeyExA 实锤）→ 成功 → push [esp+0x10]（
+    类型输出）/push [esp+0x18]（缓冲——SKU 串）→ push
+    0x84A940（★"SKU" 值名实锤）→ push 0 填入 hKey（[esp+0xC]
+    经 [esp+0x10] 修正）→ call 0x7E1008（★★RegQueryValueExA 实锤）
+    → push hKey → call 0x7E1004（★★RegCloseKey 实锤）
+    → 收尾：mov eax,[esp+8]/and eax,0xFF → [0xB77E50]=eax（★SKU
+    → 目标）→ add eax,0x2900 → [0x84A234]=eax（★★batch 1400 的
+    [0x84A234] 读端——SKU 值+0x2900 实锤！）→ call 0x780110（★
+    清理——batch 1398 已见）→ mov edi,[0x7E1168]（★★CreateEventA
+    实锤）→ [0xB77DC0]=1（★持有标志）→ 循环 push 0×4 → call
+    CreateEventA → 存 [0xB73684+esi*4]（★★★12 事件表 [0xB73684]
+    创建端！）→ 满 0xB736CC → call 0x785370（★[0xB732F0] 虚表）→
+    收尾 pop → ret
+语义：**WOL 初始化器（字符串+导入槽实锤——'SKU' 注册表键 +
+CreateEventA×12）**——① [0xB77E75] 幂等门控；② 三清零；③
+**注册表三连读 SKU**（RegOpenKeyExA(HKLM\0x8313B0 路径) →
+RegQueryValueExA('SKU') → RegCloseKey——ADVAPI32 导入槽实锤）；
+④ SKU 值 → [0xB77E50] + 0x2900 → **[0x84A234]（batch 1400 的
+0x797640 虚表槽 0x8C 参数读端——本批实锤写端 = SKU+0x2900）**；
+⑤ 0x780110 清理；⑥ ★★**CreateEventA×12 创建批次 1399/1400 使用
+的 12 事件表 [0xB73684]**（0x7E1168）；⑦ [0xB77DC0]=1；⑧
+0x785370 收尾。
+★怪癖：①★★[0xB77E75] 幂等门控（二次调用直接返 1）；②注册表
+五参标准调用（HKLM + KEY_QUERY_VALUE + 'SKU'）；③SKU 值 & 0xFF
+截断 + 0x2900 偏移（batch 1400 读数端闭合）；④12 事件表创建配
+[0xB77DC0]=1；⑤0x8313B0 路径串硬编码。
+⚠️ partial：0x8313B0 完整注册表路径内容、SKU 值精确语义（&0xFF）、
+0x780110/0x785370 身份、0x2900 偏移含义。
+
+================================================================================
+跨批次连接（本批三连 = WOL 事件表生命周期闭环）
+================================================================================
+- **batch 1399（0x79FC40 WOL 主循环——WaitForMultipleObjects 消费
+  12 事件表）/ batch 1400（0x798340 ResetEvent 重置事件表）**：
+  本批 0x786390 = **12 事件表 [0xB73684] 的创建端**（CreateEventA×12
+  [0x7E1168]）——★★事件表创建→重置→等待消费三端闭环实锤。
+- **batch 1400（0x797640 WOL 连接建立器/0x79BA60 房间校验器）**：
+  0x787010 GameMode 分派调 0x797640（0x2300/0x2900）；0x789960 前置
+  调 0x79BA60。0x786390 写 [0x84A234] = batch 1400 0x797640 虚表槽
+  0x8C 读端——写读两端闭合。
+- **batch 1399/1398（0x7E14A8 GetDlgItem/0x7E13CC SetFocus/0x7E11F0
+  Sleep/0x7E1498 ShowWindow 导入槽）**：0x787010 收尾 UI 链 + 窗口
+  生命周期复用。
+- **batch 001（0x734E60/0x4068E0）/ batch 059（0x7B46F0）/ batch 062
+  （0x7B4620）/ batch 078（0x775B10）**：三函数锚点族。
+- **batch 1030（0x7B57A0 strncat）**：0x789960 TXT_JOINLOB 拼接。
+- **0x788800（对话框配置更新器，batch 工作线已登记）**：0x789960
+  尾段消费。
+- 本批新增导入槽实锤：0x7E100C=RegOpenKeyExA/0x7E1008=
+  RegQueryValueExA/0x7E1004=RegCloseKey（ADVAPI32 注册表三连——
+  _pe_imports1402.py）、0x7E1168=CreateEventA。
+- 新候选：0x7864C0/0x786EF0/0x788800 精确名、0x789500/0x6990A0/
+  0x779B50/0x779C90/0x779DD0/0x779730（用户名族）、0x785370/
+  0x780110、[0xB778D8]/[0xB778E0] 表（名字:密码）、0x8313B0 路径串。
