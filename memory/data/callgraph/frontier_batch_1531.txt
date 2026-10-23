@@ -1,0 +1,152 @@
+frontier batch 1531 — 0x5566A0 LinkClass::Add / 0x556640 LinkClass::HeadOfList / 0x554D50 全局放置坐标表处理器（2026-10-24）
+
+口径：承接 batch 1530 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x5566A0（42B，callees=0 deps=2——**LinkClass::
+Add**，ranking 带名——batch 1530 家族第三件）、0x556640（33B，callees=0
+deps=4——**LinkClass::HeadOfList**，ranking 带名——家族第四件）、
+0x554D50（793B，callees=8 deps=1922——**全局放置坐标表处理器**，推断名）。
+取证手段：disasm.py 双参直反汇编三路读取（0x5566A0 0x2A 覆盖尾 0x5566C7
+ret 4 / 0x556640 0x21 覆盖尾 0x556660 ret / 0x554D50 0x319 覆盖尾 0x555068
+ret——三文件 11+9+38 行全读）+ TSV 查重（三候选全部未登记）+ callee
+登记核验（grep TSV：0x554D50 八 callee 中已登记 4 个——0x5657A0 batch
+241（GetCellAt）、0x483E30 batch 175（★★LightConvert 引用计数 setter）、
+0x7C8B3D batch 001、0x4F42F0 batch 067（RedrawSidebar）、0x7C5F00（_ftol
+锚点）；**3 个新候选留池：0x5B1E40（[0x884D88] 浮点 getter——三处调用
++ 时间差）、0x484050（表项 cell 操作）、0x544FF0（浮点收尾后调用）**；
+0x5566A0/0x556640 callees=0 纯虚调用/遍历无需核验）。
+
+================================================================================
+0x5566A0 —— LinkClass::Add（42B 全程读完，ranking 带名）
+================================================================================
+签名：thiscall + 1 栈参 ret 4（ecx=this=LinkClass 链表；[esp+8]=新节点；
+0x5566A0-0x5566C7）。
+机器码结构（0x5566A0-0x5566C7，全程读完，关键锚点）：
+    段1：push esi → mov esi,ecx（this）→ mov eax,[esi]（★虚表）→ call
+    [eax+0x24]（★★虚表槽 0x24 取头——★返回值被丢弃，副作用调用推断）
+    → mov ecx,[esp+8]（★新节点）→ mov eax,[ecx+4]（★新节点 +4 prev）
+    → mov [ecx+4],esi（★★新节点 +4=this）→ test eax → mov [esi+8],ecx
+    （★★this +8=新节点）→ mov [esi+4],eax（★this +4=旧 prev）→ je
+    0x5566BF（★旧 prev 空跳过）→ mov [eax+8],esi（★★旧 prev +8=this）
+    → 0x5566BF: mov edx,[esi] → mov ecx,esi → call [edx+0x18]（★★虚表
+    槽 0x18——收尾更新头）→ ret 4
+语义：**LinkClass::Add（ranking 带名——42B「链中插入」）**——thiscall
+1 栈参 ret 4（新节点）：① 虚表槽 0x24 取头（返回值丢弃——副作用调用
+推断）；② 双向链四写插入：新节点 +4=this、this +8=新节点、this +4=旧
+prev、旧 prev +8=this（★把 this 插在 [esp+8] 新节点之前）；③ 虚表槽
+0x18 收尾（更新链头）。
+★★怪癖：①★★双向链插入（+4/+8 四写——this 插在指定节点之前）；
+②★★虚表槽 0x24 取头返回值被丢弃（副作用调用）；③★★虚表槽 0x18
+收尾（与 batch 1530 Remove/AddHead 同族——虚表槽 0x18/0x1C/0x24 家族）；
+④★★与 0x556730 Remove/0x5566D0 AddHead 同族三件套续（LinkClass 家族
+第三件）；⑤★ranking 带名（YRpp 可交叉验证）。
+⚠️ partial：宿主类（LinkClass 确认）、虚表槽 0x24/0x18 精确方法名、
++4/+8 字段精确语义（prev/next 推断）、插入位置业务含义、2 unique
+caller。
+
+================================================================================
+0x556640 —— LinkClass::HeadOfList（33B 全程读完，ranking 带名）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this=LinkClass；0x556640-0x556660）。
+机器码结构（0x556640-0x556660，全程读完，关键锚点）：
+    段1：mov eax,[ecx+8]（★+8 next）→ lea edx,[ecx+8] → test eax →
+    push esi → je 0x55665D（★空链 → 返 this）→ 循环：mov eax,[edx] →
+    cmp eax,ecx → je 0x55665F（★★回到 this 终止——环检测）→ mov esi,
+    [eax+8]（★next）→ lea edx,[eax+8] → test esi → jne 循环（★沿 next
+    遍历）→ 0x55665B: pop esi → ret（★链表尾返回尾节点）→ 0x55665D:
+    mov eax,ecx（★空链返 this）→ 0x55665F: pop esi → ret
+语义：**LinkClass::HeadOfList（ranking 带名——33B「沿链遍历找尾」）**
+——thiscall 无栈参：沿 +8 next 单向遍历直到空或回到 this：空链 → 返
+this；环（回到 this）→ 返 this；否则返回链表尾节点。
+★★怪癖：①★★沿 +8 单向遍历（+4 prev 不用）；②★★环检测（cmp
+eax,ecx 回到 this 终止）；③★★空链返 this（非 NULL——无哨兵推断）；
+④★★返回链尾（函数名 HeadOfList 与行为"找尾"不符推断——返尾部节点
+而非头）；⑤★ranking 带名（YRpp 可交叉验证）。
+⚠️ partial：宿主类（LinkClass 确认）、+8 字段精确语义（next 推断）、
+遍历终止语义（环 vs 尾）、2 unique caller。
+
+================================================================================
+0x554D50 —— 全局放置坐标表处理器（793B 全程读完）
+================================================================================
+签名：thiscall + 1 栈参 + dl 参数（ecx=this 推断未用局部 [esp+0xC]；
+dl=参数2 推断 `mov bl,dl`；0x554D50-0x555068）。
+机器码结构（0x554D50-0x555068，全程读完，关键锚点）：
+    段1 前置：sub esp,0x28 → push 族 → mov esi,ecx（this→[esp+0xC]）→
+    mov bl,dl（★参数2）→ mov ecx,0x884D88 → call 0x5B1E40（★★新候选
+    浮点 getter）→ fstp qword[esp+0x2C]（★存浮点基线）→ inc [0xABCA74]
+    （★全局计数++）→ mov ecx,[0xABCA50]（★表计数）→ test → je 0x554EE6
+    → mov al,[0xABCA84]（★字节标志）→ test → jne 0x554EE6 → mov eax,
+    [0xABCA7C]（★索引）→ test → jg 0x554DB2 → mov [0xABCA80],[0xABCA50]
+    → dec → [0xABCA7C]=eax → jl 0x554ED6
+    段2 门控与取项：0x554DB2: test bl → jne 0x554DE4 → mov ecx,eax →
+    and 0xF → cmp 0xF → jne 0x554DE4 → mov ecx,0x884D88 → call 0x5B1E40
+    → fsub qword[esp+0x2C]（★浮点差）→ fild [esp+0xC] → fcompp →
+    fnstsw → test ah,0x41 → jne 0x554ED6（★★&0xF==0xF 浮点比较门控）
+    → 0x554DE4: mov ecx,[0xABCA44]（★表基址）→ mov edx,[ecx+eax*4]（★
+    表项）→ cmp [edx],0 → je 0x554DFD（★空项处理）→ dec [0xABCA80] →
+    jmp 0x554ECA → 0x554DFD: 组装六参（[esp+0x28]/[esp+0x24]×5 + eax
+    +0x10 数据）→ mov ecx,0x87F7E8 → call 0x5657A0（★★batch 241 GetCellAt）
+    → mov ecx,eax → call 0x484050（★★新候选 cell 操作）→ 表项六字段写
+    回：[0xABCA44][idx]+0/+4/+8word/+0xAword/+0xCword/+0xEword（★★坐标
+    + 4 word 结构）→ dec [0xABCA80] → dec [0xABCA7C] → jns 0x554DB2（
+    循环）→ 0x554ED6: [0xABCA80] > 0 → jg → mov byte[0xABCA84],1
+    段3 浮点比较：fild [esp+0xC] → fstp [esp+0x20] → mov ecx,0x884D88 →
+    call 0x5B1E40 → fsub [esp+0x2C] → [0xABCA84] → test → fsubr [esp
+    +0x20] → je 0x554FE2 → test bl → jne 0x554F2B → dec esi → fild →
+    fxch → fcompp → fnstsw → test ah,1 → jne 0x554FE4 → jmp 0x554F2D →
+    fstp st0（0x554F2B）→ 0x554F2D: [0xABCA50] 循环清理：mov ecx,[0xABCA44]
+    → mov esi,[ecx+edi*4] → 组装六参（表项结构）→ mov ecx,0x87F7E8 →
+    call 0x5657A0 → mov ecx,eax → call 0x483E30（★★batch 175 LightConvert
+    引用计数 setter）→ push esi → call 0x7C8B3D（delete 表项）→ 循环 →
+    [0xABCA50]=0 → [0xABCA44] 表 → test → [0xABCA4D] 字节 → test →
+    push eax → call 0x7C8B3D（delete 表）→ [0xABCA44]=0 → push 1 → mov
+    ecx,0x87F7E8 → [0xABCA4D]=0 → [0xABCA48]=0 → [0xABCA84]=0 → call
+    0x4F42F0（★★batch 067 RedrawSidebar）→ 0x554FE4: 浮点收尾：mov ecx,
+    0x884D88 → call 0x5B1E40 → fsub [esp+0x2C] → pop 族 → fsubr [esp
+    +0x14] → fcom qword[0x7E2800]（★常数）→ fnstsw → test ah,0x41 →
+    jne 0x555063（★浮点收尾比较）→ [0xABCA78] → add [0x829AE8] → [0xABCA74]
+    → cmp → jbe 0x555063 → fmul qword[0x7E1738]（★★比例常数——batch
+    1521 0x59BAB0 同常数！）→ fcom qword[0x7E1718]（★★阈值——batch
+    1521 同常数！）→ fnstsw → test ah,1 → jne 0x555037 → fstp st0 → fld
+    qword[0x7E1718] → 0x555037: call 0x7C5F00（_ftol）→ mov ecx,eax →
+    xor dl → call 0x544FF0（★★新候选）→ neg al → sbb eax,eax → mov
+    [0xABCA78],[0xABCA74] → and al,0xCF → add eax,0x32 → mov [0x829AE8],
+    eax → ret → 0x555063: fstp st0 → ret
+语义：**全局放置坐标表处理器（推断名——793B「表项六字段写 + 浮点门控
++ GetCellAt 放置 + 清理重建」）**——thiscall 1 栈参 + dl 参数：① 0x5B1E40
+（[0x884D88]）浮点基线 + [0xABCA74]/[0xABCA50]/[0xABCA7C]/[0xABCA80]/
+[0xABCA84] 全局计数族；② 循环：&0xF==0xF 浮点比较门控 + [0xABCA44] 表
+项空检 → GetCellAt（0x5657A0）+ 0x484050 → 表项六字段写（坐标 + 4
+word）；③ 浮点比较 + 清理循环（0x483E30 LightConvert + delete 表项/
+表）→ RedrawSidebar（0x4F42F0）→ [0xABCA48]/[0xABCA4D]/[0xABCA84] 复位；
+④ 浮点收尾：0x5B1E40 时间差 vs [0x7E2800] → [0xABCA74] vs [0x829AE8]+
+[0xABCA78] → fmul [0x7E1738] + fcom [0x7E1718]（★★batch 1521 0x59BAB0
+同比例/阈值常数！）→ _ftol → 0x544FF0 → 写 [0x829AE8]+0x32 判定。
+★★怪癖：①★★[0x7E1738]/[0x7E1718] 比例/阈值常数（batch 1521 0x59BAB0
+矩形区域判定器同常数——浮点判定族复用）；②★★&0xF==0xF 浮点比较门控
+（fsub 差值 vs fild 坐标——hex 门控）；③★★表项六字段写（+0 坐标 +4
+dword + 4×word——16B 结构）；④★★浮点 getter 0x5B1E40 三处调用（基线/
+差/收尾——[0x884D88] 对象）；⑤★★清理段 0x483E30 引用计数 + delete 表
+项/表成对；⑥★★[0x829AE8] 全局阈值表（+0x32 增量 + &0xCF 掩码判定）；
+⑦★★[0xABCA74]/[0xABCA78] 计数追踪（++ 与差值写入）。
+⚠️ partial：宿主类（0x554Dxx 区推断）、[0xABCA44] 表结构语义（16B 项
+六字段）、[0x884D88]/0x5B1E40（新候选浮点 getter）、0x484050（新候选
+cell 操作）、0x544FF0（新候选）、[0xABCA48]/[0xABCA4D]/[0xABCA74..84]
+全局族语义、[0x7E2800]/[0x7E1738]/[0x7E1718] 常数含义、dl 参数语义、
+2 unique caller。
+
+================================================================================
+跨批次连接（5 callee 已登记 + 3 新候选）
+================================================================================
+- **batch 175（0x483E30 LightConvert 引用计数 setter）**：0x554D50 清理
+  段每表项调用——[0xA8E9A0] 全局开关同款。
+- **batch 241（0x5657A0 GetCellAt）**：0x554D50 两处（放置/清理）。
+- **batch 067（0x4F42F0 RedrawSidebar）**：0x554D50 清理收尾重绘。
+- **batch 1521（0x59BAB0 矩形区域判定器 [0x7E1738]/[0x7E1718] 常数）**
+  ：0x554D50 浮点收尾同常数复用——浮点判定族。
+- **batch 1530（LinkClass::Remove/AddHead）**：0x5566A0/0x556640 家族第
+  三/四件——虚表槽 0x18/0x24 + 双向链 +4/+8 模式续写（Add 四写插入 +
+  HeadOfList 环检测遍历）。
+- **README 取数惯用法（_ftol 0x7C5F00）**：0x554D50 浮点收尾。
+- 新候选：0x5B1E40（[0x884D88] 浮点 getter——三处调用）/0x484050（表
+  项 cell 操作）/0x544FF0（浮点收尾后调用——0x544xxx 区，batch 1528
+  0x544FF0？不——同地址族，留池后续）3 个。
