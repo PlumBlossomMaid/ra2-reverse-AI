@@ -1,0 +1,105 @@
+frontier batch 1542 — 0x53D8E0 象限划分器 / 0x53CB10 IonBlastClass::IonBlastClass / 0x53BAE0 全局非空判定器（2026-10-24）
+
+口径：承接 batch 1541 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x53D8E0（113B，callees=0 deps=1877——
+**象限划分器**，推断名）、0x53CB10（120B，callees=1 deps=1877——
+**IonBlastClass::IonBlastClass**，ranking 带名）、0x53BAE0（14B，
+callees=0 deps=564——**全局非空判定器**，推断名）。
+取证手段：disasm.py 双参直反汇编三路读取（0x53D8E0 0x71 覆盖尾 0x53D950
+ret / 0x53CB10 0x78 覆盖尾 0x53CB85 ret 0xC / 0x53BAE0 0x0E 全量尾
+0x53BAED ret——三文件 21+22+4 行全读）+ TSV 查重（三候选全部未登记）
++ callee 核验（三函数全部 callees=0 或虚调用——0x53CB10 唯一调用为虚
+表槽 8（非独立函数）；0x53D8E0/0x53BAE0 callees=0 纯指令——无需
+grep，无新候选）。
+
+================================================================================
+0x53D8E0 —— 象限划分器（113B 全程读完）
+================================================================================
+签名：thiscall + 2 参（ecx=输出结构指针推断；edx=输入值；0x53D8E0-
+0x53D950）。
+机器码结构（0x53D8E0-0x53D950，全程读完，关键锚点）：
+    段1 手写除法求商：dec edx（★输入-1）→ cmp edx,8 → mov eax,ecx（★
+    输出指针）→ mov esi,1 → jl 0x53D8FD → 循环：mov ecx,8 → sub edx,
+    ecx → add ecx,8 → inc esi → cmp edx,ecx → jge 循环（★★edx 递增 8
+    减直到 < 界——商 esi）
+    段2 象限 1：lea ecx,[esi+esi+1]（★2esi+1）→ cmp edx,ecx → jge
+    0x53D90E → sub edx,esi → mov [eax],esi → mov [eax+4],edx → ret（★
+    输出 (esi, edx-esi)）
+    段3 象限 2：0x53D90E: lea ecx,[esi*4+1]（★4esi+1）→ cmp edx,ecx →
+    lea ecx,[esi+esi*2]（★3esi）→ jge 0x53D925 → sub ecx,edx → mov
+    [eax],ecx → mov [eax+4],esi → ret（★输出 (3esi-edx, esi)）
+    段4 象限 3：0x53D925: lea ecx,[ecx+ecx+1]（★6esi+1）→ cmp edx,ecx
+    → jge 0x53D93D → mov ecx,esi → lea esi,[esi+esi*4]（★5esi）→ neg
+    ecx → sub esi,edx → mov [eax],ecx → mov [eax+4],esi → ret（★输出
+    (-esi, 5esi-edx)）
+    段5 象限 4：0x53D93D: lea ecx,[esi*8] → sub ecx,esi（★7esi）→ sub
+    edx,ecx → neg esi → mov [eax],edx → mov [eax+4],esi → ret（★输出
+    (edx-7esi, -esi)）
+语义：**象限划分器（推断名——113B「输入值分五段 → 双输出坐标」）**——
+thiscall 2 参（edx=值、ecx=输出结构）：① 递增 8 手写除法求商 esi；
+② 按 edx 相对五段阈值（2esi+1 / 4esi+1 / 6esi+1 / 7esi）分派输出
+(a,b) 对——★螺旋/六边形坐标换算推断（菱形域坐标化）。
+★★怪癖：①★★递增 8 求商（cmp edx,8 → jl + 循环 add/sub——手写除法
+非 div/idiv）；②★★五段阈值分派（lea [esi+esi+1]/[esi*4+1]/[ecx+ecx+1]
+/[esi*8]——quadrant 边界表达式）；③★★双输出 dword（[eax]/[eax+4]）；
+④★★dec edx 前置（输入含 -1 偏移）；⑤★★neg 惯用法（象限 3/4 负
+坐标）。
+⚠️ partial：宿主类（0x53D8xx 区推断）、edx 输入语义、五段阈值几何含
+义（螺旋/六边形）、双输出字段语义、2 unique caller。
+
+================================================================================
+0x53CB10 —— IonBlastClass::IonBlastClass（120B 全程读完，ranking 带名）
+================================================================================
+签名：thiscall + 3 栈参 ret 0xC（ecx=this；[esp+8]=参数1；[esp+0x10]=
+参数2；第三参未用推断；0x53CB10-0x53CB85）。
+机器码结构（0x53CB10-0x53CB85，全程读完，关键锚点）：
+    段1 字段初始化：mov edx,[esp+8]（★参数1）→ push esi → mov esi,ecx
+    （this）→ mov ecx,[esp+8] → mov eax,esi → mov [eax],ecx（★+0=参数
+    1）→ mov ecx,[esp+0x10]（★参数2）→ mov [eax+4],edx（★★+4=参数1
+    副本）→ xor edx → mov [esi+0xC],0 → mov [esi+0x10],0 → mov [eax+8],
+    ecx（★★+8=参数2）
+    段2 全局登记：mov eax,[0xAA0120]（★[0xAA0118] 区全局——容量推断）
+    → cmp [0xAA0128],eax（★计数 vs 容量）→ jl 0x53CB6A → 扩容检查
+    （[0xAA0125] 标志 + test + [0xAA012C] 增量 + 虚表槽 8）→ 0x53CB6A:
+    mov ecx,[0xAA0128] → mov eax,ecx → inc → mov [0xAA0128],ecx → mov
+    ecx,[0xAA011C] → mov [ecx+eax*4],esi（★★[0xAA011C] 数组[计数]=this
+    ——全局登记）→ mov eax,esi → ret 0xC
+语义：**IonBlastClass::IonBlastClass（ranking 带名——120B「字段初始
+化 + 全局登记」）**——thiscall 3 栈参 ret 0xC（参数1/参数2/第三参未
+用）：① +0=参数1、+4=参数1 副本、+8=参数2、+0xC/+0x10 清 0；②
+[0xAA0118] Vector 登记（[0xAA011C] 数组 + [0xAA0128] 计数 + [0xAA0120]
+容量 + [0xAA0125] 标志 + [0xAA012C] 增量 + 虚表槽 8 扩容模板）；③ 返
+回 this。
+★★怪癖：①★★ret 0xC 三栈参（只用两参——第三参未读）；②★★+0=参
+数1 与 +4=参数1 副本（同一值两存——原版冗余照抄）；③★★[0xAA0118]
+区全局 Vector 登记（batch 1541 0x53E3C0 的 [0xAA044C] 同 0xAA0xxx 全
+局区不同表）；④★★Vector 扩容模板（batch 1533 同款 +0xAA0125 标志）；
+⑤★ranking 带名（IonBlastClass 构造器——YRpp 可交叉验证）。
+⚠️ partial：宿主类（IonBlastClass 确认）、参数1/参数2 语义（坐标/对
+象推断）、[0xAA0118..0xAA012C] 全局族语义、第三参来源、2 unique
+caller。
+
+================================================================================
+0x53BAE0 —— 全局非空判定器（14B 全程读完）
+================================================================================
+签名：thiscall 无栈参 ret（ecx 未用；0x53BAE0-0x53BAED）。
+机器码结构（0x53BAE0-0x53BAED，全程读完）：
+    mov ecx,[0xA9FAB0]（★全局）→ xor eax → test → setne al（★非空 →
+    1）→ ret
+语义：**全局非空判定器（推断名——14B「[0xA9FAB0] 非空判定」）**——
+返回 [0xA9FAB0] != 0。
+★★怪癖：①★14B 微判定（mov+setne——内联点）；②★[0xA9FAB0] 全局（
+0xA9FAxx 区推断——与 batch 1541 的 0xAA0xxx 区邻近段不同）。
+⚠️ partial：宿主类（0x53BAxx 区推断）、[0xA9FAB0] 全局身份、2 unique
+caller。
+
+================================================================================
+跨批次连接（无 callee 需核验，无新候选）
+================================================================================
+- **batch 1533（Vector 扩容模板）**：0x53CB10 段2 全局登记同款（容量/
+  计数/标志/增量 + 虚表槽 8）。
+- **batch 1541（0xAA0xxx 全局区）**：0x53CB10 的 [0xAA0118..0xAA012C]
+  与 0x53E3C0 的 [0xAA044C]/[0xAA0450] 同全局区不同表。
+- **batch 193（同构对/手写算法模式）**：0x53D8E0 五段阈值分派手写——
+  非编译器惯用模板。
+- 新候选：无（三函数 callees 全部为零/虚调用）。
