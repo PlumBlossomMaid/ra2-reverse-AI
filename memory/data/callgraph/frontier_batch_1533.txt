@@ -1,0 +1,137 @@
+frontier batch 1533 — 0x551B90 LayerClass::Load / 0x551B20 LayerClass::Save / 0x5519B0 LayerClass::AddObject（2026-10-24）
+
+口径：承接 batch 1532 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x551B90（199B，callees=2 deps=2149——
+**LayerClass::Load**，ranking 带名）、0x551B20（98B，callees=0 deps=132
+——**LayerClass::Save**，ranking 带名）、0x5519B0（124B，callees=1
+deps=3——**LayerClass::AddObject**，ranking 带名）。
+取证手段：disasm.py 双参直反汇编三路读取（0x551B90 0xC7 覆盖尾 0x551C54
+ret 4 / 0x551B20 0x62 覆盖尾 0x551B7F ret 4 / 0x5519B0 0x7C 覆盖尾
+0x551A29 ret 8——三文件 28+15+19 行全读）+ TSV 查重（三候选全部未登记）
++ callee 登记核验（grep TSV：0x551B90 唯一独立 callee=0x6CF240——★★
+batch 167 已登记【SwizzleManagerClass::Swizzle——19 callers，0x80004003
+E_POINTER 错误码 + Vector 扩容 + 8B 条目 (*pointer,pointer) + 注册后
+*pointer 置空——Load 收尾对数组每项注册对象指针，存档加载场景完全吻
+合】；0x551B20 callees=0 纯虚调用；0x5519B0 唯一 callee=0x551A90
+（★新候选——[esp+8] 低字节标志分流的委派）——**1 个新候选留池**）。
+
+================================================================================
+0x551B90 —— LayerClass::Load（199B 全程读完，ranking 带名）
+================================================================================
+签名：thiscall + 1 栈参 ret 4（ecx=this=LayerClass；[esp+0x14]=计数；
+0x551B90-0x551C54）。
+机器码结构（0x551B90-0x551C54，全程读完，关键锚点）：
+    段1 参数门控：push 族 → mov edi,[esp+0x14]（★计数）→ test → mov
+    esi,ecx（this）→ jne 0x551BAA → 计数 0 → mov eax,0x80004003（★★
+    HRESULT E_POINTER 风格错误码）→ ret 4
+    段2 首值读：mov eax,[edi]（★参数对象虚表）→ push 0 → lea ecx,[esp
+    +0x18]（★缓冲）→ push 4 → push ecx → push edi → call [eax+0xC]
+    （★★虚表槽 0xC——读 dword / 序列化读）→ test → jl 0x551C50（★失败
+    返）→ mov eax,[esp+0x14]（★计数）→ xor ebx → test → jle 0x551C2E
+    段3 逐项读循环：mov edx,[edi] → push 0 → lea eax,[esp+0x10] →
+    push 4 → push eax → push edi → call [edx+0xC]（★★虚表槽 0xC 逐项
+    读）→ test → jl → mov ecx,[esi+8]（★容量）→ mov eax,[esi+0x10]
+    （★计数）→ cmp eax,ecx → jl 0x551C12（★容量够跳过扩容）→ mov al,
+    byte[esi+0xD]（★标志）→ test → jne → test ecx → jne → mov eax,[esi
+    +0x14]（★增量）→ test → jle → mov edx,[esi] → add eax,ecx → push 0
+    → push eax → call [edx+8]（★★虚表槽 8——扩容 Resize）→ test al →
+    je → 0x551C12: mov eax,[esi+0x10] → mov edx,[esi+4]（★数组）→ lea
+    ecx,[eax+1] → mov [esi+0x10],ecx → mov ecx,[esp+0xC] → mov [edx+eax
+    *4],ecx（★★数组[计数]=读值）→ inc ebx → cmp ebx,计数 → jl 循环
+    段4 收尾 Swizzle：mov edx,[esi+4] → 循环：lea eax,[edx+edi*4] →
+    push eax → push 0xB0C110（★常量）→ call 0x6CF240（★★batch 167
+    SwizzleManagerClass::Swizzle——数组每项注册 (*pointer,pointer) 8B
+    对）→ inc edi → cmp → jl → xor eax → ret 4
+语义：**LayerClass::Load（ranking 带名——199B「虚表槽 0xC 逐项读 + Vec
+tor 扩容 + Swizzle 注册收尾」）**——thiscall 1 栈参 ret 4（计数）：①
+计数 0 → 返 0x80004003（E_POINTER 风格错误码）；② 虚表槽 0xC 读首
+dword；③ 循环逐项读 → Vector 扩容检查（+8 容量/+0x10 计数/+0xD 标志/
++0x14 增量 + 虚表槽 8 扩容）→ 数组[计数]=读值；④ 收尾 0x6CF240 Swizzle
+注册（每个数组项指针进 Swizzler——存档加载对象指针登记）。
+★★怪癖：①★★0x80004003 HRESULT（计数空错误码）；②★★Vector 扩容模
+板（batch 1453/1523/1524 同款：+8/+0x10/+0xD/+0x14 + 虚表槽 8）；③★★
+虚表槽 0xC 双调用（首值 + 逐项——序列化读推断）；④★★0x6CF240 Swizzle
+收尾（[0xB0C110] 常量 + 数组项——存档/网络加载对象指针登记）；⑤★
+0xB0C110 常量（Swizzle Vector 结构推断——batch 167 的 Swizzles_New 8B
+元素对接）。
+⚠️ partial：宿主类（LayerClass 确认）、参数对象虚表槽 0xC 方法名（序
+列化读）、+8/+0x10/+0xD/+0x14 字段名（容量/计数/标志/增量推断）、
+[0xB0C110] 常量语义、2 unique caller。
+
+================================================================================
+0x551B20 —— LayerClass::Save（98B 全程读完，ranking 带名）
+================================================================================
+签名：thiscall + 1 栈参 ret 4（ecx=this=LayerClass；[esp+0xC]=保存目标
+对象；0x551B20-0x551B7F）。
+机器码结构（0x551B20-0x551B7F，全程读完，关键锚点）：
+    段1 参数门控：push 族 → mov esi,[esp+0xC]（★目标）→ mov ebx,ecx
+    （this）→ test → jne 0x551B38 → 目标空 → mov eax,0x80004003（★★
+    E_POINTER 风格）→ ret 4
+    段2 计数写：mov eax,[ebx+0x10]（★计数）→ mov ecx,[esi]（★目标虚
+    表）→ push 0 → lea edx,[esp+0x14] → push 4 → push edx → push esi →
+    call [ecx+0x10]（★★虚表槽 0x10——写 dword / 序列化写）→ test →
+    jl 0x551B7C → mov eax,[esp+0x10]（★计数）→ xor edi → test → jle
+    0x551B7A（★0 项跳过）
+    段3 逐项写循环：mov ecx,[ebx+4]（★数组）→ mov eax,[esi] → push 0
+    → push 4 → lea edx,[ecx+edi*4] → push edx → push esi → call [eax
+    +0x10]（★★虚表槽 0x10 逐项写）→ test → jl → inc edi → cmp → jl
+    循环 → xor eax → ret 4
+语义：**LayerClass::Save（ranking 带名——98B「虚表槽 0x10 写计数 + 逐
+项写」）**——thiscall 1 栈参 ret 4（保存目标）：① 目标空 → 返
+0x80004003；② 虚表槽 0x10 写计数 dword；③ 循环虚表槽 0x10 逐项写数
+组；④ 返回 0。
+★★怪癖：①★★0x80004003 空目标错误码；②★★虚表槽 0x10 双调用（计
+数 + 逐项——序列化写推断）；③★★与 0x551B90 Load 完全对称（槽 0xC
+读 vs 槽 0x10 写——Load/Save 配对）；④★98B 精简（无扩容只写）；
+⑤★无 Swizzle 收尾（写侧不做对象登记）。
+⚠️ partial：宿主类（LayerClass 确认）、目标虚表槽 0x10 方法名（序列
+化写）、+0x10/+4 字段名（计数/数组推断）、2 unique caller。
+
+================================================================================
+0x5519B0 —— LayerClass::AddObject（124B 全程读完，ranking 带名）
+================================================================================
+签名：thiscall + 2 栈参 ret 8（ecx=this=LayerClass；[esp+8]=对象/标志
+推断；0x5519B0-0x551A29）。
+机器码结构（0x5519B0-0x551A29，全程读完，关键锚点）：
+    段1 标志分流：mov al,byte[esp+8]（★[esp+8] 低字节）→ mov esi,ecx
+    （this）→ test → je 0x5519CF（★低字节 0 → 普通路径）→ mov eax,[esp
+    +8] → push eax → call 0x551A90（★★新候选——委派）→ neg → sbb →
+    neg（★★布尔惯用法）→ ret 8（★★[esp+8] 低字节非 0 走委派）
+    段2 普通路径（扩容插入）：0x5519CF: mov ecx,[esi+8]（★容量）→ mov
+    eax,[esi+0x10]（★计数）→ cmp eax,ecx → jl 0x551A0A（★容量够）→
+    mov al,byte[esi+0xD] → test → jne → test ecx → jne → mov eax,[esi
+    +0x14] → test → jle → 返 0（★★容量不足且无法扩容 → 返 0）→ mov
+    edx,[esi] → add eax,ecx → push 0 → push eax → call [edx+8]（★★虚表
+    槽 8 扩容）→ test al → je 返 0 → 0x551A0A: mov eax,[esi+0x10] →
+    mov edx,[esi+4] → lea ecx,[eax+1] → mov [esi+0x10],ecx → mov ecx,
+    [esp+8] → mov [edx+eax*4],ecx（★★数组[计数]=对象）→ mov al,1 → 返
+    1 → ret 8
+语义：**LayerClass::AddObject（ranking 带名——124B「扩容插入 + 标志分
+流」）**——thiscall 2 栈参 ret 8（[esp+8]=对象/标志推断）：① [esp+8]
+低字节非 0 → 0x551A90 委派（布尔返回）；② 普通路径：Vector 扩容检查
+（+8/+0x10/+0xD/+0x14 + 虚表槽 8）→ 数组[计数]=对象 → 返 1；③ 容量
+不足无法扩容 → 返 0。
+★★怪癖：①★★[esp+8] 低字节作标志（对象指针低字节非 0 走委派——
+语义怪，指针值依赖）；②★★Vector 扩容模板（同 0x551B90 Load 完全同
+构——+8/+0x10/+0xD/+0x14 + 虚表槽 8）；③★★ret 8 两栈参（实际只用
+[esp+8]——第二参未用）；④★★返 0/1 布尔 + neg/sbb 惯用法；⑤★★与
+0x551B90/0x551B20 同族（LayerClass Vector 操作三件套）。
+⚠️ partial：宿主类（LayerClass 确认）、[esp+8] 语义（对象/标志推断）、
+0x551A90（新候选——委派目标）、+8/+0x10/+0xD/+0x14 字段名、2 unique
+caller。
+
+================================================================================
+跨批次连接（1 callee 已登记 + 1 新候选）
+================================================================================
+- **batch 167（0x6CF240 SwizzleManagerClass::Swizzle）**：0x551B90 收尾
+  对数组每项注册——[0xB0C110] Vector 结构 + 8B 条目 (*pointer,pointer)
+  + 注册后置空完整对接——存档/网络加载的 Layer 数据对象登记场景。
+- **Vector 扩容模板（batch 1453/1523/1524 + 本批三函数）**：+8 容量/
+  +0x10 计数/+0xD 标志/+0x14 增量 + 虚表槽 8 扩容——Load/AddObject 两
+  处使用同款（Save 只写不扩）。
+- **0x80004003 HRESULT 家族**：batch 167（0x6CF240 Swizzle 同款 E_POINTER
+  门控）——Load/Save 双函数同款参数门控。
+- **batch 1464/1529（微函数/成对孪生模式）**：Load/Save 完全对称配对
+  （槽 0xC 读 vs 槽 0x10 写）——序列化读写对模板。
+- 新候选：0x551A90（0x5519B0 的 [esp+8] 低字节标志分流委派——0x551Axx
+  区，留池后续）1 个。
