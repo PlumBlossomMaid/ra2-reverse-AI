@@ -1,0 +1,158 @@
+frontier batch 1378 — 0x4E5E20 索引→1901-1908 映射器 / 0x4E04A0 数组赋值器 / 0x4CB1A0 常量缩放查表器（2026-10-23）
+
+口径：承接 batch 1377 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x4E5E20（161B，callees=1 deps=2766）、
+0x4E04A0（176B，callees=2 deps=59）、0x4CB1A0（84B，callees=1 deps=5）。
+取证手段：disasm.py 双参直反汇编全程读完（0x4E5E20 0x50 尾 0x4E5EC0 /
+0x4E04A0 0x60 尾 0x4E0500 / 0x4CB1A0 0x50 尾 0x4CB1F1，函数边界与
+functions.tsv 完全吻合）+ TSV 查重（三候选全部未登记，无符号名）+
+跨批次对比（0x7C8E17 分配/0x7C8B3D 释放 ↔ batch 既有 VectorClass 锚点；
+虚表槽 0xC 空路径 ↔ 虚表槽 8 增长锚点；_ftol ↔ 0x7C5F00 既有锚点）。
+
+================================================================================
+0x4E5E20 —— 索引→1901-1908 映射器（161B 全程读完）
+================================================================================
+签名：fastcall 风格（ecx 未用，edx=索引参数），无栈参，ret 0（0x4E5E20-
+0x4E5EC0，callees=1 deps=2766）。
+机器码结构（0x4E5E20-0x4E5EC0，全程读完，关键锚点）：
+    入口：push esi; push edi; or edi, 0xFFFFFFFF（★edi=-1 哨兵）
+    test edx, edx; jne 0x4E5E30; mov eax, 0x76D（★edx==0 → 1901）
+    cmp edx, 1; jne; mov eax, 0x76E（★→ 1902）
+    cmp edx, 2; jne; mov eax, 0x76F（★→ 1903）
+    cmp edx, 3; jne; mov eax, 0x770（★→ 1904）
+    cmp edx, 4; jne; mov eax, 0x771（★→ 1905）
+    cmp edx, 5; jne; mov eax, 0x772（★→ 1906）
+    cmp edx, 6; jne; mov eax, 0x773（★→ 1907）
+    0x4E5E78（★≥7 数学）：mov eax, edx; sub eax, 7
+    neg eax; sbb eax, eax; and eax, 0xFFFFF88B
+    add eax, 0x774（★edx==7 → 0x774=1908；edx>7 → -1——
+    ★sbb 掩码数学：neg 置 CF（edx≠7）→ sbb eax,eax 出 -1 掩码 →
+    and 0xFFFFF88B → add 0x774 恰回 -1）
+    0x4E5E8B：mov esi, [0xA8B238]（★Theater）; cmp esi, 3; je 0x4E5E9B
+    cmp esi, 4; jne 0x4E5EB6（★仅 Theater 3/4 走分支）
+    0x4E5E9B：mov edx, [edx*4+0xA8DA90]（★表 [索引] 项）
+    mov esi, [0xAC11B4]; cmp edx, esi; jne 0x4E5EB6
+    cmp [edx+0x6B], edi（★+0x6B 字段 == -1）; jne 0x4E5EB6
+    mov edi, 4（★edi=4）
+    0x4E5EB6：push edi; mov edx, eax; call 0x4E5ED0（★尾调——edx=结果）
+    pop edi; pop esi; ret
+语义：**索引→1901-1908 映射器**（0x4E5E2x 区——0x4E5Exx 索引/表域，
+callees=1 deps=2766）：edx 索引 → 硬编码表（0→0x76D/1→0x76E/2→0x76F/
+3→0x770/4→0x771/5→0x772/6→0x773/7→0x774——1901-1908 连续映射），
+**>7 → -1**（sbb 掩码数学）；Theater 3/4 分支：**[0xA8DA90] 表 [索引]
+项 == [0xAC11B4]** 且 **[+0x6B]==-1** → edi=4（★特殊标记）；尾调
+0x4E5ED0（edx=映射结果 + edi=标记）。★索引→1901-1908 映射器
+（硬编码表 + sbb 掩码 -1 + Theater 3/4 表项判定）。2 unique caller
+（3 callsite）。
+★怪癖：①★**0-7 硬编码映射 1901-1908**（mov eax 常数——Westwood
+表抄写风格）；②★**sbb 掩码数学**（sub eax,7 → neg eax → sbb eax,eax
+→ and 0xFFFFF88B → add 0x774——edx>7 时精确回 -1，edx==7 时 0x774）；
+③★Theater 3/4 分支（[0xA8B238]——仅 3/4 查表）；④★[0xA8DA90]
+表 [索引] 项 + [0xAC11B4] 宿主比较 + [+0x6B]==-1（edi 哨兵）；
+⑤★edi=4 特殊标记 + 尾调 0x4E5ED0（两参）。
+⚠️ partial：0x76D-0x774（1901-1908）ID 语义（动画/地形/音效槽？）、
+[0xA8DA90] 表身份、[0xAC11B4] 宿主、+0x6B 字段、0x4E5ED0 尾调身份、
+2 unique caller 身份。
+
+================================================================================
+0x4E04A0 —— 数组赋值器（176B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 2 栈参（[esp+0xC]=数量、[esp+0x18]=外部缓冲
+可 NULL），ret 8（0x4E04A0-0x4E0500，callees=2 deps=59）。
+机器码结构（0x4E04A0-0x4E0500，全程读完，关键锚点）：
+    入口：push ebx; push ebp; mov ebp, [esp+0xC]（★数量）
+    push esi; test ebp; push edi; mov esi, ecx（this）
+    je 0x4E052A（★数量 0 → 虚表槽 0xC 路径）
+    mov ebx, [esp+0x18]（★外部缓冲）; mov byte [esi+0xC], 0
+    test ebx; jne 0x4E04CE（★有外部缓冲 → 直接用）
+    lea eax, [ebp*4]; push eax; call 0x7C8E17（★分配 ebp*4 字节）
+    add esp, 4; mov edi, eax（★新指针）
+    0x4E04D0：test edi; mov byte [esi+0xC], 1（★+0xC=有效标志）
+    je 0x4E0547（★分配失败 → 返 0）
+    0x4E04D8：mov eax, [esi+4]（★现有指针）; test; je 0x4E0518
+    mov ecx, [esi+8]（★现有计数）; cmp ebp, ecx; jge 0x4E04E8
+    mov ecx, ebp（★min(新,旧)）
+    0x4E04E8：xor eax; test ecx; jle 0x4E04FE
+    0x4E04EE 循环：mov edx, [esi+4]; mov edx, [edx+eax*4-4]
+    mov [edi+eax*4-4], edx（★逐项拷贝 min 项）
+    inc eax; cmp eax, ecx; jl 0x4E04EE
+    0x4E04FE：mov al, [esi+0xD]（★+0xD=外部缓冲标志）; test; je 0x4E0518
+    mov eax, [esi+4]; push eax; call 0x7C8B3D（★释放旧指针）
+    add esp, 4; mov [esi+4], 0
+    0x4E0518：xor eax; mov [esi+4], edi（★新指针）
+    test ebx; sete al; mov [esi+8], ebp（★新计数）; mov [esi+0xD], al
+    jmp 0x4E0531
+    0x4E052A（★空路径）：mov edx, [esi]; mov ecx, esi
+    call [edx+0xC]（★虚表槽 0xC）
+    0x4E0531：mov eax, [esi+8]; mov ecx, [esi+0x10]（★+0x10=容量上限）
+    cmp eax, ecx; jge 0x4E053E; mov [esi+0x10], eax（★上限 min 更新）
+    0x4E053E：pop ×4; mov al, 1（★成功返 1）; ret 8
+    0x4E0547（★失败路径）：pop ×4; xor al（★返 0）; ret 8
+语义：**数组赋值器**（0x4E04Ax 区——0x4E04xx 容器/Vector 域，callees=2
+deps=59）：thiscall + 2 栈参（数量 + 外部缓冲可 NULL）：数量==0 → 虚表
+槽 0xC 清理路径；外部缓冲非 NULL → 直接用（+0xD 置 0），否则 **0x7C8E17
+分配 ebp*4 字节**（失败 → +0xC 有效标志清 + 返 0）；**拷贝 min(现有,新)
+项**（[esi+4] → [edi]）；旧指针 +0xD 标志 → **0x7C8B3D 释放**；写回
+（+0x4=新指针 +0x8=新计数 +0xD=外部缓冲标志）；**+0x10 容量上限 min
+更新**（[esi+8] < [esi+0x10] 时写）。★数组赋值器（VectorClass 风格——
+分配/拷贝/释放 + +0xC/+0xD 双标志 + 容量上限 min）。2 unique caller
+（3 callsite）。
+★怪癖：①★**双栈参赋值**（数量 + 外部缓冲可 NULL——外缓冲直用
++0xD=0 标志）；②★**0x7C8E17 分配/0x7C8B3D 释放**（batch 既有 CRT/
+堆锚点——释放仅当 +0xD 标志）；③★**拷贝只取 min(现有,新) 项**
+（旧数据截断/保持——超量部分不拷）；④★**+0xC/+0xD 双标志**
+（有效/外部缓冲独立）；⑤★**+0x10 容量上限 min 更新**（只降不升——
+单调非增）；⑥★虚表槽 0xC 空路径（数量 0 时走虚表清理）+ ret 8。
+⚠️ partial：this 容器类型（VectorClass 派生？）、+0xC/+0xD/+0x10
+字段族语义、虚表槽 0xC 身份、0x7C8E17/0x7C8B3D 分配器家族关联、
+2 unique caller 身份。
+
+================================================================================
+0x4CB1A0 —— 常量缩放查表器（84B 全程读完）
+================================================================================
+签名：stdcall（1 栈参 [esp+4]=输入），返回 x87 ST0（float），ret 4
+（0x4CB1A0-0x4CB1F1，callees=1 deps=5）。
+机器码结构（0x4CB1A0-0x4CB1F1，全程读完，关键锚点）：
+    入口：fld [0x8223B4]（★全局常量）; fmul [esp+4]（★输入）
+    call 0x7C5F00（★_ftol）
+    mov cl, al（★低字节）; cdq; sub eax, edx
+    and cl, 1（★奇偶位）
+    sar eax, 1（★>>1 算术——÷2）
+    and eax, 0x80001FFF; jns 0x4CB1D0
+    dec eax; or eax, 0xFFFFE000; inc eax（★负数 13 位扩展）
+    jns 0x4CB1D0; add eax, 0x2800（★负数 +0x2800）
+    jmp 0x4CB1D5
+    0x4CB1D0（★正数）：add eax, 0x800
+    0x4CB1D5：test cl, cl; je 0x4CB1EA
+    cmp eax, 0x27FF; jge 0x4CB1EA（★奇数 + 范围判定）
+    fld [eax*4+0x84F088]（★查表 A）; ret 4
+    0x4CB1EA：fld [eax*4+0x84F084]（★查表 B）; ret 4
+语义：**常量缩放查表器**（0x4CB1Ax 区——0x4CB1xx 浮点/表域，callees=1
+deps=5）：输入 × **[0x8223B4] 常量** → _ftol → **奇偶位分离**（cl=奇偶）
+→ **sar 1 ÷2**（cdq 负修正）→ 0x800/0x2800 偏移（★象限/扇区跳表）→
+**奇数且 <0x27FF → 表 [0x84F088] 查表**，否则 **[0x84F084] 查表**，
+返回 float。★常量缩放查表器（×[0x8223B4] → ÷2 → 奇偶分表——
+[0x84F088]/[0x84F084] 双表）。2 unique caller（3 callsite）。
+★怪癖：①★**[0x8223B4] 常量缩放**（fld × fmul——输入无量纲缩放）；
+②★**_ftol + cdq 修正 + sar 1**（÷2 向下取整——负数 13 位扩展
+0xFFFFE000 掩码）；③★**奇偶分表**（cl=al & 1——两表 [0x84F088]/
+[0x84F084] 差 4 字节即相邻项）；④★**0x800/0x2800 偏移**（正/负
+象限跳表——角度/扇区索引）；⑤★cmp 0x27FF 范围判定（奇数且越界 →
+回落表 B）；⑥★返回 x87 ST0 float（ret 4 单栈参——无 eax 整数返）。
+⚠️ partial：[0x8223B4] 常量语义、0x84F088/0x84F084 表（象限表？
+角度表？）、0x800/0x2800 偏移含义、奇偶分表动机、2 unique caller
+身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 既有 VectorClass 锚点（虚表槽 8 增长）：0x4E04A0 用 0x7C8E17
+  分配/0x7C8B3D 释放 + 虚表槽 0xC 空路径——容器家族再验证。
+- batch 既有 CRT/堆锚点（0x7C8E17/0x7C8B3D）：0x4E04A0 使用——
+  分配器家族兑现。
+- batch 既有 _ftol 锚点（0x7C5F00）：0x4CB1A0 使用（chop 语义）——
+  数学家族再验证。
+- batch 1340s 表查族（[0x87F924] 等）：0x4CB1A0 双表查——
+  表查惯用持续闭合。
+- 0x4E5E20 sbb 掩码数学 ↔ batch 1344（0x54F6B0 setle/dec/and
+  归零）：同属条件掩码惯用族。
