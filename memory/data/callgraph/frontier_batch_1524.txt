@@ -1,0 +1,192 @@
+frontier batch 1524 — 0x58AE60 带子对象动态数组构造器 / 0x58ADB0 带缓冲动态数组构造器·孪生二 / 0x586E50 坐标规范化越界校正器（2026-10-24）
+
+口径：承接 batch 1523 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x58AE60（274B，callees=2 deps=50——**带
+子对象动态数组构造器**，推断名）、0x58ADB0（174B，callees=1 deps=51——
+**带缓冲动态数组构造器·孪生二**，推断名）、0x586E50（361B，callees=1
+deps=65——**坐标规范化越界校正器**，推断名）。
+取证手段：disasm.py 双参直反汇编三路读取（0x58AE60 0x112 覆盖尾 0x58AF6F
+ret 8 / 0x58ADB0 0xAE 覆盖尾 0x58AE5B ret 8 / 0x586E50 0x169 覆盖尾
+0x586FB6 ret 8——三文件 44+23+56 行全读）+ TSV 查重（三候选全部未登记）
++ callee 核验（0x58AE60/0x58ADB0 唯一外调=0x7C8E17 batch 001 new；0x586E50
+唯一外调=0x578460——★★batch 065 已登记 MapClass::IsWithinUsableArea
+CellStruct 版（GetCellAt 家族第四兄弟）——全部已登记，无新候选）。
+
+================================================================================
+0x58AE60 —— 带子对象动态数组构造器（274B 全程读完）
+================================================================================
+签名：thiscall + 2 栈参 ret 8（ecx=this；[esp+0x18]=容量 n；[esp+0x1C]=
+外部缓冲指针可空；0x58AE60-0x58AF6F）。
+机器码结构（0x58AE60-0x58AF6F，全程读完，关键锚点）：
+    段1 头部初始化：push ecx/ebx/ebp/esi/edi → mov edi,[esp+0x18]（★n）
+    → mov ebp,ecx（this）→ xor ebx → mov [ebp+4],ebx（★计数=0）→ mov
+    [ebp+8],edi（★容量=n）→ mov byte[ebp+0xC],1（★+0xC 标志=1）→ mov
+    byte[ebp+0xD],bl（★+0xD 分配标志=0）→ mov [ebp],0x7ED500（★★虚表
+    0x7ED500）→ cmp edi,0 → je 0x58AF68（★n==0 直接返）
+    段2 外部缓冲路径（[esp+0x1C] 非空）：mov eax,[esp+0x1C] → cmp eax,0
+    → je 0x58AEF4（★无外部缓冲 → new）→ mov [eax],edi（★★头槽=容量——
+    4B 计数头）→ dec edi → lea esi,[eax+4] → 循环子对象初始化：inc edi
+    → mov ebp,0xA（★★+0x14 初值 10）→ 每个子对象（0x24=36 字节步进）：
+    mov [esi+4],0 → [esi+8],0 → byte[esi+0xC],1 → byte[esi+0xD],0 →
+    mov [esi],0x7E177C → mov [esi],0x7ED5A0（★★★虚表双写——0x7E177C
+    被 0x7ED5A0 覆盖，前一条是死写/编译器冗余）→ mov [esi+0x14],ebp（★
+    +0x14=10）→ mov [esi+0x10],0 → mov eax,[esi] → mov ecx,esi → call
+    [eax+0xC]（★★虚表槽 0xC——子对象初始化回调）→ mov word[esi+0x18],0
+    → mov [esi+0x1C],0 → mov [esi+0x20],0 → add esi,0x24 → dec → jne
+    （★★循环）→ 恢复 ebp/esi → mov [ebp+4],esi（★计数槽=外部缓冲尾）
+    → ret 8
+    段3 new 路径 0x58AEF4：lea ecx,[edi+edi*8] → lea edx,[ecx*4+4]（★★
+    n×9×4+4=36n+4 字节——4B 头槽 + 36n 子对象）→ push edx → call
+    0x7C8E17（★★batch 001 new）→ cmp eax,0 → je 0x58AF61（★分配失败）
+    → 同款初始化（mov [eax],edi 头槽=容量 → add eax,4 → 循环）→ mov
+    [ebp+4],ebx（★缓冲）→ mov byte[ebp+0xD],1（★★分配标志=1）→ ret 8
+    段4 失败路径 0x58AF61：xor eax → mov [ebp+4],eax(0) → mov byte[ebp
+    +0xD],1 → ret 8
+语义：**带子对象动态数组构造器（推断名——274B「外部缓冲或 new(36n+4)
++ 子对象逐槽构造」）**——thiscall 2 栈参 ret 8（n + 外部缓冲可空）：
+this+4=计数=0、this+8=容量=n、+0xC 标志=1、+0xD=分配标志、虚表
+0x7ED500；n==0 直接返回；外部缓冲非空直接挂上，否则 new(36n+4)；每个
+子对象 0x24=36 字节：+4/+8 清 0、+0xC=1、+0xD=0、虚表 0x7ED5A0、+0x10
+=0、+0x14=10、+0x18..+0x20 清 0，构造后调虚表槽 0xC 初始化回调。
+★★怪癖：①★★虚表双写 0x7E177C→0x7ED5A0（前一条完全被覆盖——MSVC
+链接期虚表重定位冗余或编译器异常，照抄）；②★★子对象虚表槽 0xC 构造
+回调（每槽构造后必调——子对象自身初始化）；③★★+0x14=10 初值（容量
+无关常量）；④★★头槽=容量 dword（4B 计数头——batch 1453 0x69CBC0
+「容量×4+4 计数头」同模板）；⑤★★外部缓冲 vs new 双路径（外部优先）
+；⑥★★分配失败静默（[ebp+4]=0 + 分配标志仍置 1）；⑦★★n==0 快捷
+（跳过循环直接返 this）；⑧★虚表 0x7ED500（宿主）+ 0x7ED5A0（子对象）
+双表。
+⚠️ partial：宿主类（0x58AExx 区 RMG 域推断）、虚表 0x7ED500/0x7ED5A0
+方法集、子对象 0x24 结构字段语义、虚表槽 0xC 回调内容、2 unique caller。
+
+================================================================================
+0x58ADB0 —— 带缓冲动态数组构造器·孪生二（174B 全程读完）
+================================================================================
+签名：thiscall + 2 栈参 ret 8（ecx=this；[esp+0xC]=容量 n；[esp+0x14]=
+外部缓冲指针可空；0x58ADB0-0x58AE5B）。
+机器码结构（0x58ADB0-0x58AE5B，全程读完，关键锚点）：
+    段1 头部初始化：push 族 → mov esi,[esp+0xC]（★n）→ mov edi,ecx（this）
+    → xor ebx → mov [edi+4],ebx（★计数=0）→ mov [edi+8],esi（★容量=n）
+    → mov byte[edi+0xC],1（★+0xC 标志=1）→ mov byte[edi+0xD],bl（★+0xD
+    分配标志=0）→ mov [edi],0x7ED4E0（★★虚表 0x7ED4E0）→ cmp esi,0 →
+    je 0x58AE56（★n==0 直接返）
+    段2 外部缓冲路径（[esp+0x14] 非空）：mov edx,[esp+0x14] → cmp edx,0
+    → je 0x58AE12（★无外部缓冲 → new）→ lea ecx,[esi-1] → jl 0x58AE07
+    → 循环每槽（0x10=16 字节步进）：inc ecx → lea eax,[edx+2] → or esi,
+    0xFFFFFFFF（-1）→ mov word[eax-2],0（★word0=0）→ word[eax],0 →
+    word[eax+2],0 → word[eax+4],0（★4 word 清 0）→ byte[eax+6],0（★字
+    节清 0）→ mov [eax+0xA],esi（★★槽 +0xA=-1 哨兵！）→ add eax,0x10
+    → dec → jne → mov [edi+4],edx（★计数槽=外部缓冲）→ ret 8
+    段3 new 路径 0x58AE12：mov eax,esi → shl 4（★★n×16 字节）→ push →
+    call 0x7C8E17（batch 001 new）→ cmp eax,0 → je 0x58AE4F（★分配失败）
+    → 同款初始化（0x10 步进 + 槽 +0xA=-1）→ mov [edi+4],eax → mov byte
+    [edi+0xD],1（★分配标志=1）→ ret 8
+    段4 失败路径 0x58AE4F：xor eax → mov [edi+4],eax(0) → mov byte[edi
+    +0xD],1 → ret 8
+语义：**带缓冲动态数组构造器·孪生二（推断名——174B「外部缓冲或
+new(16n) + 每槽 0x10 字节清零 + +0xA 哨兵」）**——thiscall 2 栈参 ret 8
+（n + 外部缓冲可空）：this+4=计数=0、this+8=容量=n、+0xC 标志=1、+0xD
+分配标志、虚表 0x7ED4E0；n==0 直接返回；外部缓冲非空直接挂上，否则
+new(16n)；每槽 0x10=16 字节：4 word（0/+2/+4/+6? 实际 word[eax-2..+4]
+=0×4）+ byte[+6]=0 + [+0xA]=-1。
+★★怪癖：①★★槽 +0xA=-1 哨兵（8 word 结构中第 5 word 置 -1——索引/
+句柄哨兵推断）；②★★每槽 0x10=16 字节（4 word + 字节 + dword 哨兵 +
+填充）；③★★外部缓冲 vs new 双路径（外部优先）；④★★分配失败静默
+（[edi+4]=0 + 分配标志仍置 1）；⑤★★n==0 快捷；⑥★★+0xD=分配标志；
+⑦★虚表 0x7ED4E0（与 batch 1523 0x58B070 的 0x7ED5E0、0x58AE60 的
+0x7ED500/0x7ED5A0——虚表族 0x7ED4Ex-0x7ED5Ex 邻居）。
+⚠️ partial：宿主类（0x58ADxx 区 RMG 域推断）、虚表 0x7ED4E0 方法集、
+槽 0x10 结构字段语义、+0xA=-1 哨兵含义、2 unique caller。
+
+================================================================================
+0x586E50 —— 坐标规范化越界校正器（361B 全程读完）
+================================================================================
+签名：thiscall + 2 栈参 ret 8（ecx=this=MapClass 推断；[esp+8]=输入坐
+标结构指针（word[0]=X、word[2]=Y）；[esp+0x14]=输出坐标结构指针；
+0x586E50-0x586FB6）。
+机器码结构（0x586E50-0x586FB6，全程读完，关键锚点）：
+    段1 输入与边界读取：mov eax,[esp+8] → movsx esi,word[eax]（★X）→
+    mov ebx,ecx（this）→ movsx edi,word[eax+2]（★Y）→ mov edx,[ebx+
+    0x104] → mov eax,[ebx+0xFC] → mov ecx,[ebx+0xF4] → add edx,eax →
+    shl edx,1（★(0xFC+0x104)×2）→ sub edx,ecx（-0xF4）→ mov ebp,esi →
+    sub ebp,edi（X-Y）→ cmp ebp,edx → jl 0x586EA5（★X-Y < 边界 → 分支2）
+    段2 分支1（X-Y >= 边界）：mov edx,1 → sub edx,eax（1-0xFC）→ sub
+    edx,[ebx+0x104] → shl edx,1（★(1-0xFC-0x104)×2）→ mov eax,edx →
+    sub eax,edi → add eax,ecx（+0xF4）→ add eax,esi（+X）→ cdq → sub
+    eax,edx → sar eax,1（★(…)/2 算术右移向零）→ sub esi,eax（★X-=t）→
+    add edi,eax（★Y+=t）→ jmp 0x586EC7（★★对角线平移——菱形外左上方
+    校正）
+    段3 分支2（X-Y < 边界）：lea edx,[eax+eax]（0xFC×2）→ mov ebp,ecx →
+    sub ebp,edx（0xF4-2×0xFC）→ mov edx,edi → sub edx,esi（Y-X）→ cmp
+    edx,ebp → jl 0x586EC7（★Y-X < 0xF4-2×0xFC → 跳过）→ lea eax,[eax+
+    eax+2]（2×0xFC+2）→ sub eax,ecx（-0xF4）→ sub eax,esi（-X）→ add
+    eax,edi（+Y）→ cdq → sub eax,edx → sar eax,1（★(2×0xFC+2-0xF4-X+Y)
+    /2）→ sub edi,eax（★Y-=t）→ add esi,eax（★X+=t）（★★菱形外右下
+    方校正）
+    段4 查表与回落：movsx eax,di → movsx ecx,si → shl eax,9 → add eax,
+    ecx（★★Y<<9+X——512 列宽，batch 791/229/235 同款）→ mov word[esp
+    +0x18],si → word[esp+0x1A],di → js 0x586EF6（★负越界）→ cmp eax,
+    0x40000 → jge 0x586EF6（★上界）→ mov edx,[0x87F924] → mov eax,[edx+
+    eax*4]（★cell 数组查表）→ test eax → je 0x586EF6（★空回落）→ mov
+    ecx,eax → jmp 0x586F04 → 越界/空：mov eax,[esp+0x18] → mov ecx,
+    0xABDC50（★★哑元 cell）→ mov [0xABDC74],eax（★★存坐标——batch
+    791/065 同款回落）
+    段5 高度补偿：mov dl,byte[ecx+0x11C]（★cell 层标志）→ movsx eax,
+    byte[ecx+0x11B]（★cell 高度）→ test dl → je 0x586F2F → mov ecx,[ebx
+    +0x100] → mov edx,[ebx+0xF4] → lea ecx,[edx+ecx*2+4]（★0xF4+2×0x100
+    +4）→ lea edx,[edi+esi]（X+Y）→ add ecx,eax（+高度）→ cmp edx,ecx →
+    jge 0x586F2F → inc eax（★★层标志非 0 且 X+Y+高度 超下界 → 高度+1）
+    段6 越界校正循环 A（下界内）：mov ecx,[ebx+0x100] → mov ebp,[ebx+
+    0xF4] → lea edx,[edi+esi] → lea ebp,[ebp+ecx*2]（0xF4+2×0x100）→ add
+    ebp,eax（+高度）→ cmp edx,ebp → jg 0x586F68（★X+Y > 上界 → 分支B）
+    → 循环 A：inc esi（★X+1）→ inc edi（★Y+1）→ push 1 → push &坐标 →
+    mov ecx,ebx → 存 word → call 0x578460（★★batch 065 IsWithinUsableArea
+    CellStruct 版 checkLevel=1）→ test al → je 0x586F48（★失败重试 X+1/
+    Y+1）→ jmp 0x586F9E（成功）
+    段7 越界校正循环 B（上界外）：mov ebp,[ebx+0x108] → add ebp,ecx（+
+    0x100）→ mov ecx,[ebx+0xF4] → lea ecx,[ecx+ebp*2+2]（★0xF4+2×(0x108
+    +0x100)+2）→ add ecx,eax（+高度）→ cmp edx,ecx → jle 0x586F9E（★不
+    越界跳过）→ 循环 B：dec esi（★X-1）→ dec edi（★Y-1）→ push 1 →
+    push &坐标 → call 0x578460 → test al → je 0x586F80（★失败重试 X-1/
+    Y-1）
+    段8 收尾：mov eax,[esp+0x14]（★输出指针）→ mov word[esp+0x1A],di →
+    word[esp+0x18],si → mov ecx,[esp+0x18] → mov [eax],ecx（★输出结构
+    写回 dword=两 word 打包）→ ret 8
+语义：**坐标规范化越界校正器（推断名——361B「菱形边界代数校正 + 查表
+回落 + 高度补偿 + 对角逼近」）**——thiscall 2 栈参 ret 8（[esp+8]=输入
+坐标、[esp+0x14]=输出指针，this=MapClass）：① 边界字段 [ebx+0xF4]/
+[0xFC]/[0x100]/[0x104]/[0x108]；② X-Y >= 边界 → 对角线平移（X-=t, Y+=t）
+；Y-X >= 0xF4-2×0xFC → 反向平移（Y-=t, X+=t）——把坐标拉回菱形合法
+域；③ Y<<9+X → [0x87F924] 查表（越界/空回落哑元 0xABDC50 + [0xABDC74]
+存坐标）；④ 层标志 [0x11C] 非 0 → 高度 [0x11B] 超下界补偿 +1；⑤ X+Y
+与上界比较：下界内 X+1/Y+1、上界外 X-1/Y-1 逐步逼近直到 0x578460
+（IsWithinUsableArea checkLevel=1）返回 true；⑥ 输出写回 dword。
+★★怪癖：①★★菱形边界代数校正（两分支对角平移——纯整数表达式 + cdq
+/sar 向零除法）；②★★Y<<9+X 512 列宽 + 0x40000 上界（batch 791/229/
+235 同款硬编码）；③★★越界/空回落哑元 0xABDC50 + [0xABDC74] 存坐标
+（batch 065/791 同款）；④★★高度补偿 +1（层标志 [0x11C] 门控——batch
+185 的 +0x11B 层补偿同语义）；⑤★★逐步逼近循环 ×2（下界 X+1/Y+1 vs
+上界 X-1/Y-1——0x578460 每步一次）；⑥★★输出 dword 写回（两 word 打
+包 mov [eax],ecx）；⑦★0x578460 checkLevel=1。
+⚠️ partial：宿主类（MapClass 方法推断——[ebx+0xF4..0x108] 边界字段
+与 batch 185/065 同族）、边界字段精确语义、代数校正公式业务含义（菱
+形域几何）、0x578460 调用链、2 unique caller。
+
+================================================================================
+跨批次连接（3 callee 全部已登记 + 虚表族闭合）
+================================================================================
+- **batch 001（0x7C8E17 new）**：0x58AE60 段3 new(36n+4)、0x58ADB0 段3
+  new(16n)。
+- **batch 065（0x578460 MapClass::IsWithinUsableArea CellStruct 版）**：
+  0x586E50 段6/段7 逐步逼近循环的合法性检查（checkLevel=1）——66
+  callers 家族新消费点。
+- **batch 1453（0x69CBC0 容量×4+4 计数头模板）**：0x58AE60 头槽=容量
+  dword + 36n 子对象同款布局。
+- **batch 791/229/235（Y<<9 512 列宽 + 0x40000 + 哑元回落）**：0x586E50
+  段4 查表同款——[0x87F924]/0xABDC50/[0xABDC74]/[0xABDC50] 格网三件套
+  全命中。
+- **batch 185（0x578540 IsWithinUsableArea CellClass 版 + 层补偿）**：
+  0x586E50 段5 高度补偿 +1 同语义。
+- **batch 1523（虚表族 0x7ED5E0）**：本批 0x7ED4E0/0x7ED500/0x7ED5A0/
+  0x7E177C——0x7ED4Ex-0x7ED5Ex 连续虚表族（RMG 容器族）闭合一角。
+- 新候选：无（三函数 callees 全部已登记）。
