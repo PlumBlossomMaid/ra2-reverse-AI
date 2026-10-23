@@ -1,0 +1,152 @@
+frontier batch 1393 — 0x7B8960 Calc_Confining_Rect / 0x7B82E0 宽串转窄串克隆 / 0x7B7D90 全 ASCII 判定（2026-10-23）
+
+口径：承接 batch 1392 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x7B8960（139B，callees=3 deps=271——
+**WinMouseClass::Calc_Confining_Rect，DebugLog 格式串+导入槽逐名实锤带名**）、
+0x7B82E0（251B，callees=4 deps=114——宽串→窄串转换+输出克隆）、
+0x7B7D90（49B，callees=1 deps=67——宽串全 ASCII 判定器）。
+取证手段：disasm.py 双参直反汇编全程读完（0x7B8960 0x90 尾 0x7B89E9 /
+0x7B82E0 0x100 尾 0x7B83D9 / 0x7B7D90 0x40 尾 0x7B7DBF，函数边界与
+functions.tsv 完全吻合）+ TSV 查重（三候选全部未登记）+ PE 导入表
+逐名实锤（_[read]_str1393.py：[0x7E14C4]=GetClientRect、[0x7E14B8]=
+ClientToScreen）+ .rdata 字符串实测（0x84E66C='Calc_Confining_Rect(
+%d,%d,%d,%d)\n'）+ CRT 常数量（0x7CA405=wcslen batch 097、0x7C8E17=
+operator_new/0x7C8B3D=delete batch 001、0x92492493 ÷7 魔数公式）。
+
+================================================================================
+0x7B8960 —— WinMouseClass::Calc_Confining_Rect（139B 全程读完，实锤带名）
+================================================================================
+签名：thiscall（ecx=this=WinMouseClass），无参 ret 0（0x7B8960-0x7B89E9）。
+机器码结构（0x7B8960-0x7B89E9，全程读完，关键锚点）：
+    入口：sub esp,0x20; push esi; mov esi,ecx → lea eax,[esp+0x14]
+    → push edi → mov ecx,[esi+0x28]（★+0x28 = hWnd）→ push eax
+    （★&rc）→ push ecx → call [0x7E14C4]
+    （★★KERNEL——USER32!GetClientRect 导入槽实锤！）
+    → mov edx,[esp+0x18]（★rc.left）/mov eax,[esp+0x1C]（★rc.top）
+    → mov edi,[0x7E14B8]（★★USER32!ClientToScreen 导入槽实锤）
+    → mov [esp+8],edx/mov edx,[esi+0x28]（★hWnd）→ lea ecx,[esp+8]
+    （★&pt）→ push ecx/push edx → mov [esp+0x14],eax → call edi
+    （★★ClientToScreen(hWnd,&(left,top))——客户区左上角转屏幕）
+    → 第二角：mov eax,[esp+0x20]（★rc.right）/mov ecx,[esp+0x24]
+    （★rc.bottom）→ mov [esp+0x10],eax/mov eax,[esi+0x28] → lea edx,
+    [esp+0x10]（★&pt2）→ mov [esp+0x14],ecx → push edx/push eax →
+    call edi（★★ClientToScreen(hWnd,&(right,bottom))——右下角转屏幕）
+    组装：mov edx,[esp+8]（★pt.x）/mov edi,[esp+0xC]（★pt.y）→
+    mov ecx,[esp+0x14]（★pt2.y）/mov eax,[esp+0x10]（★pt2.x）→
+    add esi,0x2C → sub ecx,edi（★高 = y2-y1）/sub eax,edx（★宽 = x2-x1）
+    → push ecx/push eax/push edi/push edx → mov [esi],edx/mov [esi+4],edi
+    （★矩形 [+0]x/[+4]y）→ push 0x84E66C（★'Calc_Confining_Rect(
+    %d,%d,%d,%d)\n' 字符串实测）→ mov [esi+8],eax/mov [esi+0xC],ecx
+    （★矩形 [+8]宽/[+0xC]高）→ call 0x4068E0（★★batch 001 DebugLog）
+    → add esp,0x14 → pop edi/pop esi → add esp,0x20 → ret
+语义：**WinMouseClass::Calc_Confining_Rect（字符串+导入槽双实锤带名）**——
+thiscall 无参：① GetClientRect(hWnd,[+0x28]) 取客户区；② 左上角
+(left,top) ClientToScreen 转屏幕坐标；③ 右下角 (right,bottom) 第二
+次 ClientToScreen；④ 屏幕坐标差 = 宽高，组装 16B 矩形存 [this+0x2C]
+（+0 x/+4 y/+8 宽/+0xC 高）；⑤ DebugLog('Calc_Confining_Rect(%d,%d,
+%d,%d)\n')。★鼠标约束矩形计算——客户区两角换算到屏幕后定宽高。
+★跨批闭环：**wwmous.cpp 鼠标系统三件套补全**——batch 307 0x7B84F0
+（线程创建）、batch 1392 0x7BA090（坐标节流更新器）、本条（约束
+矩形计算）同为 WW 鼠标子系统成员；[0x7E14C4]/[0x7E14B8] 两个导入槽
+新实锤（GetClientRect/ClientToScreen）。
+★怪癖：①★★**两次 ClientToScreen 而非 GetWindowRect**（客户区左上
+右下两角转屏幕后相减得宽高——矩形含窗口边框偏移的屏幕绝对坐标）；
+②★DebugLog 四参打印（x/y/w/h——调试期日志，非玩家可见）；③★栈上
+双 pt 结构 + rc 复用 [esp+0x14] 区；④★[+0x2C] 16B 矩形直接裸写
+（无裁剪无校验）。
+⚠️ partial：[+0x28] hWnd 字段源（WinMouseClass 布局推断）、2 unique
+caller 身份、约束矩形消费端（0x7BA090 是否读取 [+0x2C] 未实锤）。
+
+================================================================================
+0x7B82E0 —— 宽串转窄串克隆（251B 全程读完）
+================================================================================
+签名：thiscall（ecx=this=串对象）+ edx=源对象 + 1 栈参 out 指针，
+ret 0（0x7B82E0-0x7B83D9）。
+机器码结构（0x7B82E0-0x7B83D9，全程读完，关键锚点）：
+    入口：push ecx（栈槽）/push ebx/push ebp/push esi/push edi →
+    mov edi,edx（★源对象）→ mov [esp+0x10],ecx（★存 this）
+    → mov eax,[edi]（★源内部指针）→ test eax,eax → je 0x7B82FA
+    → push eax/call 0x7CA405（★★CRT::wcslen batch 097——**宽**串长）
+    → 定长：lea esi,[eax+1]（★len+1）→ shl esi,4（★×16）→ lea ecx,
+    [esi+6]（★+6）→ imul ecx（★★0x92492493 = ⌈2^34/7⌉ ÷7 魔数！
+    edx:eax=ecx×魔数）→ add edx,ecx → sar edx,2（★ /7 精确商）→
+    shr eax,0x1F→add（★负数修正——标准 MSVC ÷7 序列）→ push edx/
+    call 0x7C8E17（★★operator_new batch 001）→ mov ebp,eax（★窄串
+    缓冲）→ mov eax,[edi] → test eax,eax → jne → mov eax,0x887734
+    （★★空宽串哨兵兜底 batch 112 同款）→ push esi/mov edx,ebp/
+    mov ecx,eax → call 0x4335E0（★转换/拷贝——3 参：ecx=源宽、
+    edx=目标、栈参=(len+1)*16）→ test ebp,ebp → je → strlen 段：
+    mov edi,ebp/or ecx,-1/xor eax,eax/repne scasb/not ecx（★窄串长）
+    → push ecx/call 0x7C8E17 → mov ebx,eax（★第二次分配）→ test ebp
+    → mov byte[ebx],0 → je → strcpy 段（rep movsd+movsb 拷贝 ebp→ebx）
+    → push ebp/call 0x7C8B3D（★★delete batch 001——释放中间缓冲）
+    → mov ebp,[esp+0x14]（★out 指针）→ test ebx,ebx → mov dword
+    [ebp],0（★out 先置 NULL）→ je → 第二 strlen 段（ebx 长）→ push
+    ecx/call 0x7C8E17 → mov [ebp],edx（★*out = 新分配）→ 第二 strcpy
+    （ebx→*out）→ push ebx/call 0x7C8B3D（★释放 ebx）→ pop 族 → 
+    mov eax,ebp（★返 out）→ ret
+语义：**宽串转窄串克隆（推断名——WStringClass/StringClass 桥接）**——
+thiscall + edx 源 + out 指针：① wcslen 源宽串定长；② 分配
+((len+1)*16+6)/7 字节窄串缓冲（÷7 魔数公式——**编译器对转换上界
+表达式的优化**）；③ 0x4335E0 宽→窄转换（源空用 0x887734 空宽串
+兜底）；④ 结果按窄串 strlen→分配→strcpy 拷贝到 *out（out 先 NULL）；
+⑤ 中间缓冲 delete 清理。★语义统一：宽串取窄串副本（Unicode→ANSI
+流），输出到调用方指针——与 batch 097/110/112/115/125/128/134 宽串
+族的跨类型桥接成员。
+★怪癖：①★★**分配公式 ((len+1)*16+6)/7**（0x92492493 ÷7 魔数 +
+shl 4 + lea +6——非直观上界，照抄）；②★**0x4335E0 三参转换**（ecx
+源宽串/edx 目标窄串/栈参 (len+1)*16——待登记候选）；③★空源走
+0x887734 空宽串哨兵（batch 112 兜底同款）；④★out 先置 NULL 再写
+（空结果留 NULL）；⑤★双重中间缓冲（ebp 转换缓冲 + ebx 拷贝缓冲）
+——转换与拷贝各分配一次；⑥★10 寄存器压栈（ebx/ebp/esi/edi 全
+保存——大局部函数）。
+⚠️ partial：0x4335E0 精确身份（宽→窄转换函数推断——未登记）、
+(this,edx) 双寄存器签名宿主类、分配公式语义来源（转换上界推断）、
+2 unique caller 身份。
+
+================================================================================
+0x7B7D90 —— 宽串全 ASCII 判定器（49B 全程读完）
+================================================================================
+签名：thiscall（ecx=this=串对象），无参 ret 0 布尔（0x7B7D90-0x7B7DBF）。
+机器码结构（0x7B7D90-0x7B7DBF，全程读完，关键锚点）：
+    入口：push esi; mov esi,ecx → mov eax,[esi]（★源宽串指针）→
+    test eax,eax → je 0x7B7DB9（★NULL → 返 1）→ push eax/call
+    0x7CA405（★★CRT::wcslen batch 097）→ add esp,4 → xor ecx,ecx
+    （★计数=0）→ test eax,eax → jle 0x7B7DB9（★len<=0 → 返 1）
+    循环：mov edx,[esi]（★重取源指针——循环头前初始化）→ 0x7B7DAA:
+    cmp word[edx],0x100（★★逐 wchar < 0x100 检查！）→ jae 0x7B7DBD
+    （★≥0x100 → 返 0）→ inc ecx → add edx,2（★步进 2B/wchar）→
+    cmp ecx,eax → jl 0x7B7DAA（★回环不重取 edx——循环体 mov edx
+    只执行一次，add edx,2 是真实推进）→ 0x7B7DB9: mov al,1 → ret
+    → 0x7B7DBD: xor al,al → ret
+语义：**宽串全 ASCII 判定器（推断名——WStringClass::Is_ASCII 族）**——
+thiscall 无参布尔：① 源 NULL/空 → 返 1（∀ 语义）；② 逐 wchar 检查
+< 0x100（ASCII 可表示）；③ 全通过 → 1，遇 ≥0x100 → 0。
+★与 0x7B82E0（宽转窄）天然配对：**转窄前先判 ASCII 安全性**——
+同一 WStringClass 族的判定+转换两件套。
+★怪癖：①★★**循环头 mov edx,[esi] 单次初始化**（0x7B7DA8 只执行
+一次，回环目标 0x7B7DAA 在 cmp 处——add edx,2 真实推进，**不是**每
+轮重取的死代码）；②★word < 0x100 判定（wchar 按 16 位读——混入
+代理项/高位字节 ≥0x100 即拒）；③★NULL/空串返 1（无元素全称命题）；
+④★极小函数（49B）不建帧。
+⚠️ partial：宿主类名（WStringClass 推断——batch 097 族预设）、
+0x7B82E0 配对关系（推断）、2 unique caller 身份。
+
+================================================================================
+跨批次连接（本批三连实锤）
+================================================================================
+- **batch 1392（0x7BA090 wwmous 鼠标更新器）+ batch 307（0x7B84F0
+  鼠标线程创建）**：0x7B8960 = **wwmous.cpp 鼠标系统第三件套**
+  （Calc_Confining_Rect——[+0x28] hWnd 客户区转屏幕约束矩形）——
+  WW 鼠标子系统全景（线程/更新器/约束矩形）闭合。
+- **导入槽新实锤 2 个**：[0x7E14C4]=USER32!GetClientRect、[0x7E14B8]=
+  USER32!ClientToScreen（PE 导入表逐名——_read_str1393.py）。
+- **batch 097（CRT::wcslen 0x7CA405）**：0x7B82E0/0x7B7D90 各用一次
+  （宽串定长/判定）。
+- **batch 112（0x887734 空宽串哨兵）**：0x7B82E0 空源兜底同款。
+- **batch 001（0x4068E0 DebugLog / 0x7C8E17 new / 0x7C8B3D delete）**：
+  0x7B8960 日志、0x7B82E0 双分配双释放。
+- **0x92492493 ÷7 魔数**：本批 0x7B82E0 第三处（shl 4 + lea +6 组合）
+  确认 MSVC 常量除法族。
+- 新候选：0x4335E0（宽→窄转换）、0x7B82E0 宿主类（StringClass 桥
+  接）、0x7B7D90 宿主类、[+0x28] hWnd 与 [+0x2C] 矩形消费端。
