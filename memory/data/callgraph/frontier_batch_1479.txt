@@ -1,0 +1,99 @@
+frontier batch 1479 — 0x63EB80 VectorClass 入队器 / 0x63DFD0 数组前移删除器·二 / 0x63DE30 容器析构器·三（2026-10-23）
+
+口径：承接 batch 1478 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x63EB80（80B，callees=0 deps=202——
+**VectorClass 入队器**，推断名）、0x63DFD0（65B，callees=0 deps=56——
+**数组前移删除器·二**，推断名）、0x63DE30（39B，callees=1 deps=54——
+**容器析构器·三**，推断名）。
+取证手段：disasm.py 双参直反汇编三路全程读完（0x63EB80 0x50 尾 0x63EBCD
+ret 4 / 0x63DFD0 0x41 尾 0x63E00E ret 4 / 0x63DE30 0x27 尾 0x63DE56 ret——
+三文件 35/29/18 行全读）+ TSV 查重（三候选全部未登记）+ callee 登记核验
+（grep TSV：0x7C8B3D C++ delete（batch 001）——其余无外部 callee）。
+
+================================================================================
+0x63EB80 —— VectorClass 入队器（80B 全程读完）
+================================================================================
+签名：thiscall + 1 栈参 ret 4（ecx=this 存 esi、栈参 1=[esp+8]=值指针；
+0x63EB80-0x63EBCD）。
+机器码结构（0x63EB80-0x63EBCD，全程读完，关键锚点）：
+    容量检查 0x63EB83：mov ecx,[esi+8]（★容量）→ mov eax,[esi+0x10]
+    （★计数）→ cmp eax,ecx → jl 0x63EBB5（★未满直入）→ mov al,
+    byte[esi+0xD]（★标志）→ test → jne 0x63EB98 → test ecx → jne
+    0x63EBAF（★失败返 0）→ 0x63EB98: mov eax,[esi+0x14]（★增量）→
+    test → jle 0x63EBAF → mov edx,[esi]（★虚表）→ add eax,ecx →
+    push 0 → push eax → mov ecx,esi → call [edx+8]（★★虚表槽 8 扩
+    容）→ test → jne 0x63EBB5 → 0x63EBAF: xor al → ret 4（★失败
+    返 0）
+    入队 0x63EBB5：mov eax,[esi+0x10]（★计数）→ mov edx,[esi+4]（★
+    数组基址）→ lea ecx,[eax+1] → mov [esi+0x10],ecx（★计数++）→
+    mov ecx,[esp+8] → mov ecx,[ecx]（★值）→ mov [edx+eax*4],ecx
+    （★写槽——按值拷贝）→ mov al,1 → ret 4
+语义：**VectorClass 入队器（推断名——80B「容量检查 + 扩容 + 写槽
++ 计数++」）**——① 计数 vs 容量（未满直入）；② 满则 +0xD 标志/增
+量/虚表槽 8 扩容（+0x14 增量 + 虚表槽 8——batch 092 容器族同款拓
+容形态）；③ 扩容失败返 0；④ 写槽（[esi+4] 数组 [计数]=值）+ 计数
+++ 返 1。
+★怪癖：①★虚拟槽 8 扩容（push 0 + 计数+增量——batch 460 同族惯
+用）；②+0xD 标志门控（=0 且容量 =0 → 跳过扩容直返 0）；③按值拷
+贝（mov ecx,[ecx]——值非指针）；④ret 4 单栈参。
+⚠️ partial：宿主类（VectorClass 容器推断）、+0xD/+0x14 字段、值语
+义、2 unique caller。
+
+================================================================================
+0x63DFD0 —— 数组前移删除器·二（65B 全程读完）
+================================================================================
+签名：thiscall + 1 栈参 ret 4（ecx=this 存 esi、栈参 1=[esp+8]=目标
+值；0x63DFD0-0x63E00E）。
+机器码结构（0x63DFD0-0x63E00E，全程读完，关键锚点）：
+    mov ecx,[esp+8]（★目标值）→ mov eax,[esi] → push ecx → mov
+    ecx,esi → call [eax+0x10]（★虚表槽 0x10——找索引）→ cmp -1 →
+    je 0x63E00B（★★未找到 → 返 0 失败）→ mov ecx,[esi+0x10]（★
+    计数）→ cmp eax,ecx → jge 0x63E00B（★索引越界 → 失败）→ dec
+    ecx → cmp eax,ecx → mov [esi+0x10],ecx（★计数-1）→ jge
+    0x63E005（★索引 == 计数-1 → 尾删直返 1）→ 前移循环：mov ecx,
+    [esi+4]（★数组基址）→ inc eax → mov edx,[ecx+eax*4] → mov
+    [ecx+eax*4-4],edx（★★后项前移覆盖——batch 068 ColorScheme 同
+    款压缩）→ 循环 → mov al,1 → ret 4
+语义：**数组前移删除器·二（推断名——65B「虚表槽 0x10 找索引 +
+计数-1 + 后项前移」）**——① 虚表槽 0x10 查找目标索引（-1 失败）；
+② 计数-1 + 索引越界双检；③ 尾删快路径（索引 == 计数-1）；④ 后
+项前移压缩（[esi+4] 数组——batch 068 同款惯用）→ 返 1。
+★怪癖：①★虚表槽 0x10 查找（非直接参数——batch 1478 0x63F000
+同族但查法不同）；②-1/越界双失败路径；③尾删快路径；④后项前移
+单步（mov [ecx+eax*4-4],edx）。
+⚠️ partial：宿主类、虚表槽 0x10 方法（FindItemIndex 推断——batch
+068 同款）、+0x10/+4 布局、2 unique caller。
+
+================================================================================
+0x63DE30 —— 容器析构器·三（39B 全程读完）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this 存 esi；0x63DE30-0x63DE56）。
+机器码结构（0x63DE30-0x63DE56，全程读完，关键锚点）：
+    mov esi,ecx → xor ebx → mov eax,[esi+4]（★数组指针）→ test →
+    je 0x63DE4E（★空跳过）→ cmp byte[esi+0xD],bl → je 0x63DE4E（★
+    ★+0xD 标志门控——外部缓冲不 delete）→ push eax → call 0x7C8B3D
+    （★batch 001 C++ delete）→ mov [esi+4],ebx（★清指针）→
+    0x63DE4E: mov byte[esi+0xD],bl（★清标志）→ mov [esi+8],ebx（★
+    清容量）→ ret
+语义：**容器析构器·三（推断名——39B「+0xD 标志门控 delete + 三字
+段复位」）**——与 batch 1461 0x67B2E0/0x67A410 完全同族：+4 非空
+且 +0xD（已分配标志）才 delete（外部缓冲不释放）；收尾 +4/+0xD/
++8 三字段复位。
+★怪癖：①★+0xD 标志门控（外部缓冲 vs 自分配——batch 1461 同款）；
+②三字段复位（+4/+0xD/+8）；③空指针快路径；④39B 极简（无栈帧
+单 push）。
+⚠️ partial：宿主类（与 batch 1461 同 0x63xxxx 容器族推断——本批
+0x63DFD0/0x63EB80 同区）、+0xC 字段语义、2 unique caller。
+
+================================================================================
+跨批次连接（本批三连 = 容器三件套补齐）
+================================================================================
+- **batch 1478（0x63F000 数组前移删除器）**：0x63DFD0 同族第二份
+  （虚表槽 0x10 查找 vs 直接参数——同一容器族不同删除查法）。
+- **batch 1461（0x67B2E0/0x67A410 容器析构器）**：0x63DE30 同族第
+  三份（+0xD 门控 delete 三字段复位——0x63xxxx 区 vs 0x67xxxx 区
+  同模板）。
+- **batch 068（ColorScheme 前移压缩）**：0x63DFD0 后项前移同款惯用
+  （batch 1478 已记同族）。
+- **batch 001（0x7C8B3D delete）**：0x63DE30 调用现场。
+- 新候选：[0x63xxxx] 区容器族剩余成员（+0xC 字段语义推断）。
