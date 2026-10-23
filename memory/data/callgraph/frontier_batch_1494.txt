@@ -1,0 +1,152 @@
+frontier batch 1494 — 0x5FB050 文件 ID 解析器 / 0x5F99E0 数组批量字段释放器 / 0x5F9070 状态更新+文件名装载器（2026-10-24）
+
+口径：承接 batch 1493 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x5FB050（271B，callees=5 deps=217——
+**文件 ID 解析器**，推断名）、0x5F99E0（242B，callees=1 deps=96——
+**数组批量字段释放器**，推断名）、0x5F9070（596B，callees=5 deps=188——
+**状态更新+文件名装载器**，推断名）。
+取证手段：disasm.py 双参直反汇编三路全程读完（0x5FB050 0x10F 尾 0x5FB15E
+ret / 0x5F99E0 0xF2 尾 0x5F9AD1 ret / 0x5F9070 0x254 尾 0x5F92C3 ret——
+三文件 42/38/58 行全读）+ TSV 查重（三候选全部未登记）+ callee 登记核验
+（grep TSV：0x542430 已登记 batch 005 Stores byte-swapped 16-bit、0x53ECE0
+已登记 batch 005 Coordinate/position field constructor、0x7C9CC2 已登记
+batch 023 strtok 族、0x7CA530 已登记 batch 169 CRT vsprintf、0x7C8EF4 已
+登记 batch 057 printf 族、0x7C9FF0 已登记 batch 004 path assembler、
+0x5B40B0 已登记 batch 091 FileSystem::LoadFile、0x7C8B3D/0x7C8E17 已登记
+batch 001——全部 callee 均已登记，零新候选）。
+
+================================================================================
+0x5FB050 —— 文件 ID 解析器（271B 全程读完）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this；0x5FB050-0x5FB15E）。
+机器码结构（0x5FB050-0x5FB15E，全程读完，关键锚点）：
+    段1 ID 转换：sub esp,0x1C → push esi/edi → mov esi,ecx → mov ax,
+    [esi+0x4A]（★word ID 字段）→ cmp ax,0xFFFF → jne 0x5FB068 → push
+    0x8813（★★=0xFFFF → 用 0x8813 常量）→ jmp 0x5FB074 → 0x5FB068:
+    cmp ax,0x4000 → jae 0x5FB07E（★>=0x4000 → 用原值）→ add eax,0x4000
+    （★★<0x4000 → +0x4000 表索引转换）→ push eax → 0x5FB074: mov
+    ecx,0xA8E9C0（★全局）→ call 0x542430（★★已登记 batch 005 Stores
+    byte-swapped 16-bit value at +0x22——写全局 +0x22）
+    段2 文件名字符串解析：add esi,0x58（★+0x58 串）→ repne scasb
+    （★strlen）→ je 0x5FB159（★空串跳过）→ push [strlen+1] → call
+    0x7C8E17（★new）→ 拷贝 → push 0x826598（★★分隔符串）→ call
+    0x7C9CC2（★★已登记 batch 023 In-place token scanner——strtok 分
+    词）→ 循环 0x5FB0D3：push &[esp+8] → push 0x825BD4 → push eax →
+    call 0x7CA530（★★已登记 batch 169 CRT vsprintf——格式化）→ 逐字
+    节拷贝到 [esp+esi+0xC]（esi 计数，>=4 时固定用 al）→ push
+    0x826598 → push 0 → call 0x7C9CC2（★再分词）→ jne 循环（★esi<4
+    且词非空）
+    段3 打包输出：cmp esi,4 → jl 0x5FB159（★不足 4 字节跳过）→ 装配
+    [esp+0x14] word → push → push &[esp+0x10] → lea ecx,[esp+0x24] →
+    mov [0xA8D5FC],1（★★全局标志=1）→ call 0x53ECE0（★★已登记 batch
+    005 Coordinate/position field constructor——打包坐标/字段）→ 拷
+    3 dword 到 [0xA8D600]/[0xA8D604]/[0xA8D608]（★★全局输出）→ ret
+语义：**文件 ID 解析器（推断名——271B「ID 转换 + 串分词 + 坐标打包」）
+**——① [esi+0x4A] word ID：0xFFFF → 0x8813 常量、<0x4000 → +0x4000
+（表索引转换）、>=0x4000 原值 → 0x542430 写全局 +0x22（batch 005）；
+② +0x58 文件名字符串经 strtok（0x7C9CC2 batch 023）+ vsprintf
+（0x7CA530 batch 169）逐 token 拼 4 字节（不足 4 跳过）；③ 0x53ECE0
+打包（batch 005）→ [0xA8D5FC]=1 → 3 dword 写 [0xA8D600..608]。
+★怪癖：①★★ID 三路转换（0xFFFF→0x8813、<0x4000→+0x4000、>=0x4000
+原值——表格化 ID 空间推断）；②★[0xA8D5FC]=1 全局标志前置（打包前置
+态）；③★★strtok 循环 + vsprintf 逐 token（0x7C9CC2/0x7CA530——
+batch 023/169 应用点）；④★esi 计数 >=4 固定用 al（缓冲 4 字节上限）；
+⑤★[0xA8D600..608] 三 dword 全局输出（坐标/字段推断）。
+⚠️ partial：宿主类（0x5FBxxx 区——batch 1493 0x5FBEF0 同区）、ID 转换
+业务含义、[0xA8D600..608] 输出语义、0x826598/0x825BD4 串内容、2 unique
+caller。
+
+================================================================================
+0x5F99E0 —— 数组批量字段释放器（242B 全程读完）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this 未用——纯全局操作；0x5F99E0-
+0x5F9AD1）。
+机器码结构（0x5F99E0-0x5F9AD1，全程读完，关键锚点）：
+    空路径：push ebx/edi → xor ebx/edi → mov eax,[0xAC1428]（★全局计
+    数）→ cmp eax,ebx → jle 0x5F9AC5（★空 → [0x887468]=[0x887464]）
+    释放循环：push esi → mov eax,[0xAC141C]（★数组基址）→ mov esi,
+    [eax+edi*4]（★项）→ 组1：push [esi+0x244] → call 0x7C8B3D（★
+    delete）→ [esi+0x244]=0 → [0x248]=0 → [0x24C]=0 → byte[0x250]=0
+    → [0x254]=0 → 组2：push [esi+0x258] → delete → [0x258]=0 →
+    [0x25C]=0 → [0x260]=0 → byte[0x264]=0 → [0x268]=0 → 组3：push
+    [esi+0x26C] → delete → [0x26C]=0 → [0x270]=0 → [0x274]=0 →
+    byte[0x278]=0 → [0x27C]=0 → 组4：push [esi+0x280] → delete →
+    [0x280]=0 → [0x284]=0 → [0x288]=0 → byte[0x28C]=0 → [0x290]=0 →
+    循环（edi++ < 计数）
+    收尾：mov edx,[0x887464] → mov [0x887468],edx（★★快照复制）→ ret
+    → 0x5F9AC5: mov eax,[0x887464] → mov [0x887468],eax → ret（★空路
+    径同收尾）
+语义：**数组批量字段释放器（推断名——242B「四组指针释放清零 + 快照」
+）**——遍历 [0xAC141C] 数组（计数 [0xAC1428]）每项释放 4 个指针字段
+（+0x244/+0x258/+0x26C/+0x280）并清零，每组配套 5 字段（{指针+dword+
+dword+byte+dword}）全清；收尾 [0x887468]=[0x887464]（全局快照复制——
+空数组同走）。
+★怪癖：①★★四组 5 字段清零点状展开（复制粘贴惯用——每组形态完全一
+致）；②★delete 后无条件清零（防二次释放——batch 061/488 同族）；
+③★★[0x887468]=[0x887464] 快照复制（全局对——空路径也执行）；④★
+thiscall 形态但 ecx 未用（纯全局操作）；⑤★byte 字段（+0x250/+0x264/
++0x278/+0x28C）与 dword 字段混清。
+⚠️ partial：宿主类（[0xAC141C] 数组项类型）、四组字段语义（+0x244 系
+5 字段结构）、[0x887464]/[0x887468] 快照语义、2 unique caller。
+
+================================================================================
+0x5F9070 —— 状态更新+文件名装载器（596B 全程读完）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this；0x5F9070-0x5F92C3）。
+机器码结构（0x5F9070-0x5F92C3，全程读完，关键锚点）：
+    门控链：sub esp,0x220 → push ebp/esi → mov ebp,ecx → mov al,
+    [ebp+0x211]（★门控1）→ je 0x5F9112（★清 0x212）→ mov eax,[0xA8B230]
+    → cmp [eax+0x1258],1 → jne 0x5F9112（★配置门控）→ mov al,[ebp+0xA8]
+    → jne 0x5F9112 → mov al,[ebp+0x212]（★完成标志）→ jne 0x5F9119
+    主路径 0x5F90AA：lea edi,[ebp+0x1F8] → push 0x832AE8（★格式串）→
+    call 0x7C8EF4（★★已登记 batch 057 printf 族——拼名）→ 拷贝 6
+    dword+byte 到 [ebp+0x1F8] → mov byte[ebp+0x212],1（★完成标志）
+    0x5F9119：push 0x81834C（★前置串）→ push esi → push 0 → lea eax,
+    [esp+0x30] → push 0 → push eax → call 0x7C9FF0（★★已登记 batch
+    004 Windows path/filename assembler——拼路径）→ mov al,[ebp+0x22C]
+    → je 0x5F9173 → [0xA8B230]+0x1258 索引 → lea edx,[eax*8] → sub
+    edx,eax → shl edx,4 → add edx,0x7E1BC6（★★×112 表——batch 1488
+    同款）→ 再 0x7C9FF0 → 0x5F9173: mov al,[ebp+0x237] → 小写转换
+    （A-Z→a-z 两处）+ 首字符 'g'/'n'/'c'/'y' 判定 + 次字符 'a'/'t' 判
+    定 → 0x7E1BCE 表字节覆写 [esp+0x25]
+    装载段 0x5F91E1：mov al,[ebp+0xA8] → je 跳过 → push [ebp+0xA4] →
+    call 0x7C8B3D（★delete 旧对象）→ [ebp+0xA4]=0 → [ebp+0xA8]=0 →
+    虚表槽 0x2C 判定（cmp 0x15 → je 0x5F9261 → cmp 5 → je → cmp 0x1E
+    → je 0x5F928C → cmp 0x25 → je 0x5F928C）→ 默认 dl=0 → call
+    0x5B40B0（★★已登记 batch 091 FileSystem::LoadFile——dl=0 非 SHP）
+    → 失败置 byte[esp+0x25]=0x47（'G' 回退）→ 重试 → 0x5F9261: dl=1 →
+    0x5F928C: mov eax,[ebp+0xA4] → word[+2] vs word[+4] 取大 → >8 用 →
+    mov [ebp+0x1EC],eax（★字号/尺寸字段更新）→ ret
+语义：**状态更新+文件名装载器（推断名——596B「门控 + 拼名 + LoadFile +
+字号」）**——① 门控链（[ebp+0x211]/[0xA8]/[0x212] + [0xA8B230]+0x1258
+配置）决定是否拼名；② printf（0x7C8EF4 batch 057）+ path assembler
+（0x7C9FF0 batch 004）×2 拼文件路径（[0xA8B230] 索引 ×112 表 0x7E1BC6
+取前缀）；③ 小写转换 + 'g'/'n'/'c'/'y'+'a'/'t' 字母判定 → 0x7E1BCE 表
+覆写；④ 虚表槽 0x2C 类型（0x15/5/0x1E/0x25）分派 → 0x5B40B0 LoadFile
+装载（dl 选 0/1，失败回退 'G'）；⑤ 清旧对象 + 字号 [ebp+0x1EC] 更新
+（word+2 vs word+4 取大，下限 8）。
+★怪癖：①★★多门控状态机（[ebp+0x211]/[0x212]/[0xA8] 三标志——防重复
+拼名）；②★★0x7E1BC6 索引 ×112 表（lea ×8 - ×1 再 shl 4——batch 1488
+0x627590 同款表）；③★★'G' 回退（装载失败置 0x47 字节重试——回退文
+件名字母）；④★字母判定族（'g'/'n'/'c'/'y' 首字符 + 'a'/'t' 次字符——
+文件类型代号推断）；⑤★字号更新（word+2 vs word+4 取大、下限 8）；
+⑥★dl 虚表槽 0x2C 类型分派（0x15/5/0x1E/0x25 四型选 LoadFile 参数）。
+⚠️ partial：宿主类（[ebp+0x211]/[0x1F8]/[0x22C]/[0x237] 字段语义）、
+0x832AE8/0x81834C 串内容、字母判定业务含义、[ebp+0x1EC] 字号语义、2
+unique caller。
+
+================================================================================
+跨批次连接（全部 callee 均已登记——文件装载族大汇聚）
+================================================================================
+- **batch 005（0x542430/0x53ECE0）**：0x5FB050 的 ID 写入与坐标打包双调
+  用（0x5FB050 段1/段3——batch 005 应用点）。
+- **batch 023（0x7C9CC2 strtok）/ batch 169（0x7CA530 vsprintf）**：
+  0x5FB050 的逐 token 分词+格式化（0x826598 分隔符）。
+- **batch 057（0x7C8EF4 printf）/ batch 004（0x7C9FF0 path assembler）
+  / batch 091（0x5B40B0 LoadFile）**：0x5F9070 的拼名+装载三链
+  （printf → path assembler → LoadFile——文件路径生命周期）。
+- **batch 1488（0x627590 同款 ×112 表）**：0x5F9070 的 [0x7E1BC6]
+  [eax×8-eax]×16 = ×112 索引表与 batch 1488 完全同款。
+- **batch 001（0x7C8B3D/0x7C8E17）**：0x5F99E0 批量 delete + 0x5FB050
+  串分配。
+- 新候选：无（8 callee 全已登记）。
