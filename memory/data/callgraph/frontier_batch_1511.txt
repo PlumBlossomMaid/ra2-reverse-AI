@@ -1,0 +1,121 @@
+frontier batch 1511 — 0x5CEDD0 三子对象构造器 / 0x5CC760 复合构造器 / 0x5CB6C0 虚表桩（2026-10-24）
+
+口径：承接 batch 1510 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x5CEDD0（134B，callees=4 deps=2607——
+**三子对象构造器**，推断名）、0x5CC760（185B，callees=6 deps=395——
+**复合构造器**，推断名）、0x5CB6C0（7B，callees=0 deps=45——
+**虚表桩**，推断名）。
+取证手段：disasm.py 双参直反汇编三路全程读完（0x5CEDD0 0x86 全量尾
+0x5CEE55 ret / 0x5CC760 0xB9 全量尾 0x5CC816 ret 0x14 / 0x5CB6C0 0x7
+全量尾 0x5CB6C6 ret——三文件 21/34/2 行全读）+ TSV 查重（三候选全部未
+登记）+ callee 登记核验（grep TSV：2 callee 已登记——0x7B54B0 batch
+088（窄字符串类 GetLength）、0x7B5340 batch 121（窄串释放）；0x7B4620
+batch 062、0x7B5440 batch 072、0x6C8C40 batch 399、0x7C8E17 batch 001
+已知；**2 个新候选留池：0x4326C0/0x432AB0（0x5CC760 段2 的构造/链接调
+用）**）。
+
+================================================================================
+0x5CEDD0 —— 三子对象构造器（134B 全程读完）
+================================================================================
+签名：thiscall 无栈参 ret（0x5CEDD0-0x5CEE55）。
+机器码结构（0x5CEDD0-0x5CEE55，全程读完，关键锚点）：
+    段1 主对象：push ebx/ebp/esi → mov esi,ecx → xor ebx → push edi →
+    lea ebp,[esi+0x28] → mov [esi+4],ebx ×2 → mov byte[esi+0xC],1（+0xC
+    =1）→ mov byte[esi+0xD],bl（+0xD=0）→ mov [esi],0x7EEA94（★★虚表
+    A 0x7EEA94）→ mov [esi+0x14],0xA（★+0x14=0xA 容量）→ mov [esi+0x10],
+    ebx → call 0x7B4620（★★batch 062 串默认构造——[esi+0x28] 串成员）
+    段2 子对象一：lea edi,[esi+0x2C] → mov eax,0xA → mov [edi+4],ebx
+    ×2 → mov byte[edi+0xC],1 → mov byte[edi+0xD],bl → mov [edi],
+    0x7EEA74（★★虚表 B 0x7EEA74）→ mov [edi+0x14],eax（+0x14=0xA）→
+    mov [edi+0x10],ebx
+    段3 子对象二：mov [esi+0x48],ebx ×2 → mov byte[esi+0x50],1（+0x50
+    =1）→ mov byte[esi+0x51],bl → mov [esi+0x44],0x7EEA54（★★虚表 C
+    0x7EEA54）→ mov [esi+0x58],eax（+0x58=0xA）→ mov [esi+0x54],ebx
+    段4 收尾：mov eax,[esi] → call [eax+0xC]（★虚表槽 0xC——主对象收尾
+    ）→ mov ecx,ebp → call 0x7B5340（★★batch 121 窄串释放——[esi+0x28]
+    串释放）→ mov edx,[edi] → mov ecx,edi → call [edx+0xC]（★子对象虚
+    表槽 0xC）→ mov eax,esi → ret
+语义：**三子对象构造器（推断名——134B「虚表 0x7EEA94/0x7EEA74/
+0x7EEA54 三嵌套」）**——① 主对象（+0）虚表 0x7EEA94 + +0xC=1/+0xD=0 标
+志 + +0x14=0xA 容量 + [esi+0x28] 串默认构造（batch 062）；② 子对象一
+（+0x2C）虚表 0x7EEA74 同构（+0x14=0xA）；③ 子对象二（+0x44）虚表
+0x7EEA54（+0x58=0xA）；④ 收尾：主虚表槽 0xC + 0x7B5340（batch 121
+窄串释放 [esi+0x28]）+ 子对象虚表槽 0xC。
+★怪癖：①★★三虚表嵌套（0x7EEA94/0x7EEA74/0x7EEA54——主 + 两子对象
+各装独立虚表）；②★★+0x14/+0x58 = 0xA 容量族（与 batch 1507 0x5D67B0
+的 +0x14 初始值 0xA 同款——容量预置）；③★★+0xC=1/+0xD=0 标志（batch
+1506-1509 缓冲族三字段布局同款）；④★★收尾双虚表槽 0xC + 0x7B5340
+（释放 [esi+0x28] 串——主对象含串成员）。
+⚠️ partial：宿主类（0x5CEDxx 区——缓冲/列表族推断）、三虚表类归属、
++0x10/+0x14 容量字段、0x7B5340 释放对象、2 unique caller。
+
+================================================================================
+0x5CC760 —— 复合构造器（185B 全程读完）
+================================================================================
+签名：thiscall + 5 栈参 ret 0x14（ecx=this=esi、[esp+0x14]=ebp、
+[esp+0x18]=ebx、[esp+0x1C]、[esp+0x20]=edi 源对象、[esp+0x24]=dl 字
+节；0x5CC760-0x5CC816）。
+机器码结构（0x5CC760-0x5CC816，全程读完，关键锚点）：
+    段1 源复制 + 时间戳：push 族 → mov edi,[esp+0x20]（源对象指针）→
+    mov esi,ecx → mov ecx,[edi] → mov eax,[edi+4] → mov [esi+4],ecx →
+    mov [esi+8],eax（★★源 [edi] 两字段复制到 +4/+8）→ lea ecx,
+    [esi+0x14] → mov byte[esi+0xC],1 → call 0x6C8C40（★★batch 399 时
+    间戳 tick÷16——[0x7E1530] IAT → shr eax,4）→ mov ebx,[esp+0x18]
+    → mov [esi+0x10],eax（★+0x10=时间戳）→ xor eax → mov [esi+0x18],eax
+    ×2 → mov eax,edi → mov [esi],0x7EE8E8（★★虚表 A 0x7EE8E8）→ mov
+    [esi+0x20],ebx → mov ebp,[esp+0x14] → [edi..+0xC] 16B 复制到
+    [esi+0x24..+0x30]（mov ecx,[eax]→[edx] ×4 dword）→ mov ecx,
+    [esp+0x1C] → mov eax,[eax+0xC] → mov [esi+0x34],ecx → mov
+    [edx+0xC],eax → mov dl,[esp+0x24] → mov ecx,ebp → mov byte[esi+0x38],
+    dl（+0x38=dl 字节）→ mov [esi],0x7EE988（★★虚表 B 0x7EE988 切换）
+    → call 0x7B54B0（★★batch 088 GetLength——ebp 串长度）→ test eax
+    → jbe 0x5CC810（★长度 0 跳过）
+    段2 子对象构造：push 0x34（★52B）→ call 0x7C8E17（★★batch 001
+    new）→ mov [esp+0x24],eax → test → je 0x5CC7FD → push ebx → mov
+    ecx,ebp → call 0x7B5440（★★batch 072 GetString/c_str）→ push eax
+    → mov ecx,[esp+0x28] → call 0x4326C0（★★未登记新候选——构造/初始
+    化）→ jmp 0x5CC7FF → 0x5CC7FD: xor eax → 0x5CC7FF: mov [esi+0x1C],
+    eax → mov ecx,[edi+4] → mov edx,[edi] → push ecx → push edx → mov
+    ecx,eax → call 0x432AB0（★★未登记新候选——链接/注册）→ 0x5CC810:
+    mov eax,esi → ret 0x14
+语义：**复合构造器（推断名——185B ret 0x14=5 栈参「源复制 + 时间戳 +
+子对象链」）**——① 源对象 [edi] 首两字段复制到 +4/+8；② 0x6C8C40
+（batch 399）取 tick÷16 时间戳 → +0x10；③ [edi..+0xC] 16B 复制到
++0x24；④ 虚表 0x7EE8E8 → 0x7EE988 切换；⑤ 0x7B54B0（batch 088）量
+ebp 串长 > 0 时 new(0x34) + 0x7B5440（batch 072）+ 0x4326C0（新候选）
+构造 → [esi+0x1C] → 0x432AB0（新候选）以 [edi]/[edi+4] 链接。
+★怪癖：①★★源对象复制（[edi] 两字段 + 16B 段——构造期从源拷贝）；
+②★★0x6C8C40 时间戳（tick÷16 62.5ms——+0x10 时间戳字段）；③★★虚表
+两次装载（0x7EE8E8 → 0x7EE988——多态基类逐步覆盖）；④★★0x7B54B0
+GetLength 门控（ebp 串长度 0 才跳过子对象构造）；⑤★★new(0x34=52B)
+子对象 + 0x4326C0/0x432AB0（新候选）构造链；⑥★ret 0x14 = 5 栈参。
+⚠️ partial：宿主类（0x5CC7xx 区——复合对象族推断）、源 [edi] 对象类
+型、0x4326C0/0x432AB0（新候选）、+0x38 字节语义、虚表 0x7EE8E8/
+0x7EE988 类归属、2 unique caller。
+
+================================================================================
+0x5CB6C0 —— 虚表桩（7B 全程读完）
+================================================================================
+签名：thiscall 无栈参 ret（0x5CB6C0-0x5CB6C6）。
+机器码结构（0x5CB6C0-0x5CB6C6，全程读完）：
+    段1：mov [ecx],0x7EE8E8（★★虚表 0x7EE8E8 装载）→ ret
+语义：**虚表桩（推断名——7B 纯装虚表）**——把 this 虚表设为 0x7EE8E8
+后直接返回——与 0x5CC760 同一虚表（0x5CC760 的基类构造端）。
+★怪癖：①★★虚表 0x7EE8E8 与 0x5CC760 段1 同款（同宿主类的构造桩）；
+②★★7B 微型（mov 立即数 + ret——纯虚表装载）。
+⚠️ partial：宿主类（虚表 0x7EE8E8 推断）、调用方用途、2 unique caller。
+
+================================================================================
+跨批次连接（2 callee 已登记 + 2 新候选）
+================================================================================
+- **batch 088（0x7B54B0 GetLength）/ batch 072（0x7B5440 GetString/
+  c_str）/ batch 121（0x7B5340 窄串释放）**：0x5CC760 的长度门控 + 取
+  串链 + 0x5CEDD0 的释放链——窄串族三应用点。
+- **batch 399（0x6C8C40 时间戳 tick÷16）**：0x5CC760 的 +0x10 时间戳。
+- **batch 062（0x7B4620 串默认构造）**：0x5CEDD0 的 [esi+0x28] 串成员。
+- **虚表 0x7EE8E8（0x5CB6C0 ↔ 0x5CC760 共享）**：虚表桩与复合构造器
+  同宿主——构造桩应用点。
+- **+0xC=1/+0xD=0 标志 + +0x14 容量 0xA（batch 1506-1509 缓冲族）**：
+  0x5CEDD0 的三字段布局与 0x5D89A0/0x5D8950/0x5D09C0 同族延续。
+- 新候选：0x4326C0/0x432AB0（0x5CC760 段2 的构造/链接——0x43xxxx 构
+  造族，留池后续）。
