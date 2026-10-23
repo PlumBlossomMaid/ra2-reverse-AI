@@ -1,0 +1,163 @@
+frontier batch 1400 — 0x798340 12 事件全重置 / 0x79BA60 WOL 房间校验 / 0x797640 WOL 连接建立（2026-10-23）
+
+口径：承接 batch 1399 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x798340（32B，callees=1 deps=2741——
+**12 事件全重置器**）、0x79BA60（539B，callees=6 deps=2677——
+**WOL 加入房间校验器**）、0x797640（433B，callees=10 deps=2785——
+**WOL 连接建立器**）。
+取证手段：disasm.py 双参直反汇编全程读完（0x798340 0x20 尾 0x79835F /
+0x79BA60 0x21B 尾 0x79BC78 / 0x797640 0x1B1 尾 0x7977F0，函数边界与
+functions.tsv 完全吻合）+ TSV 查重（三候选全部未登记）+ **字符串实锤
+（_read_str1400.py：0x84CE18='TXT_NO_CLAN'、0x84CE08='WOL:GameFull'、
+0x8315FC='TXT_OBSERVER_FULL'、0x82C6D4='TXT_MISMATCH'、
+0x84A5BC='TXT_CANT_CONNECT'、0x84B7AC='TibSun'、0x84B7B4='TibPass99'、
+0x84A234=''）** + 跨批次锚点（batch 1399 0x7E113C=WaitForMultipleObjects/
+0x7E1178=ResetEvent 导入槽实锤、batch 001 0x734E60 DebugLog、
+batch 110 0x5E2700、batch 059 0x7B46F0、batch 062 0x7B4620、
+batch 078 0x775B10、batch 126 0x77F900、batch 1398 0x7E14A8=GetDlgItem/
+0x7E13CC=SetFocus）。
+
+================================================================================
+0x798340 —— 12 事件全重置器（32B 全程读完）
+================================================================================
+签名：无参 ret 0（无 this 无栈参；0x798340-0x79835F）。
+机器码结构（0x798340-0x79835F，全程读完，关键锚点）：
+    push esi/push edi → mov edi,[0x7E1178]（★★ResetEvent 导入槽——
+    batch 1399 实锤）→ mov esi,0xB73684（★事件表基址）
+    循环 0x79834D：mov eax,[esi]（★事件句柄）→ push → call edi
+    （★ResetEvent(handle)）→ add esi,4 → cmp esi,0xB736CC
+    （★终点=基址+0x48=12 项×4）→ jl 0x79834D → pop 族 → ret
+语义：**12 事件全重置器（推断名——WOL 事件表重置）**——遍历全局
+事件表 [0xB73684..0xB736CC)（12 个 HANDLE）逐项 ResetEvent 全部
+重置为非信号态。★与 batch 1399 的 0x79FC40/0x79CE70 内联循环
+完全同构（同表同终点同调用）——独立入口版本。
+★怪癖：①事件表 [0xB73684] 12 项固定（终点 0xB736CC）；②纯
+间接调用（callees=1 仅 ResetEvent）；③无返回值。
+⚠️ partial：宿主（WOL 连接事件表——batch 1399 的 0x79FC40 主循环
+WaitForMultipleObjects 用同一张表）。
+
+================================================================================
+0x79BA60 —— WOL 加入房间校验器（539B 全程读完，字符串实锤）
+================================================================================
+签名：thiscall + 1 栈参 ret 4（① 入口 dl=[esp+0xE]=参数标志、ecx=this
+存 ebp、[0xA8B238] GameMode 变体；0x79BA60-0x79BC78）。
+机器码结构（0x79BA60-0x79BC78，全程读完，关键锚点）：
+    入口：sub esp,0xA0 → push ebx/ebp/esi → mov esi,[0xA8B238]
+    （★GameMode 相关字段）→ mov byte[esp+0xE],dl（★参数标志）→
+    mov ebp,ecx（this）→ cmp esi,4 → jne 0x79BA98
+    特判段（GameMode==4）：mov eax,[ebp+0x20] → shr ecx,0xB → and
+    cl,1 → jne 0x79BA9C（bit11 → cl=1）→ shr eax,0xC → and al,1
+    → jne 0x79BA9C（bit12 → cl=1）→ xor cl,cl
+    0x79BA9E：mov eax,[0xA8B244]（★GameMode 主字段）→ cmp 3/1/2
+    → je 0x79BAB6（∈{1,2,3} → al=1）→ xor eax,eax
+    → cmp cl,al → jne 0x79BC6D（★判定不一致 → 失败返回 0）
+    GameMode==4 次级判定：mov eax,[ebp+0x20] → shr eax,8 → and
+    al,1 → [esp+0xF]=al → je 0x79BB16（bit8 不置位）→ cmp
+    [0xB77DE4],1 → jge 0x79BB16 → cmp dl,bl → je 0x79BC6D（★参数
+    标志为 0 → 失败）→ DebugLog 0x84CE18（★"TXT_NO_CLAN" 行
+    0x686D）+ 0x5E2700(-1, eax) → ret 0（★无战队 → 拒绝）
+    主校验段 0x79BB16：push edi → lea edi,[ebp+0xE0]（★this+0xE0
+    字符串）→ strlen（repne scasb）→ 拷到 [esp+0x2C]（128B 缓冲）
+    → lea ecx,[esp+0x14] → 0x7B4620（★batch 062 窄串 ctor）→
+    压 5 参 → call 0x77E820（★未登记——多参拼接/格式化推断）→
+    call 0x777B50（★未登记——返回比较）→ cmp eax,[esp+0x28]
+    → jne 0x79BC3D（FAIL1）
+    哈希校验：mov eax,[0xB77E04]/esi,[0xB77E08]/edx,[0xB77E00]
+    → xor 组合 vs [esp+0x1C] → jne 0x79BC3D（FAIL1）
+    数字校验：cmp byte[esp+0xB0],0 → jne 0x79BC01 → mov eax,
+    [ebp+0xC]-[esp+0x14]+[esp+0x20] vs [ebp+8]（★人数/序号算式）
+    → jl 0x79BC0D（FAIL2）→ cmp byte[esp+0xE],0 → je 0x79BC64
+    失败分支：0x79BC3D（FAIL1）→ DebugLog 0x82C6D4（★"TXT_MISMATCH"
+    行 0x6891）+ 0x5E2700；0x79BC24 → DebugLog 0x8315FC（★
+    "TXT_OBSERVER_FULL" 行 0x68A4）+ 0x5E2700；0x79BBEE → DebugLog
+    0x84CE08（★"WOL:GameFull" 行 0x689C）+ 0x5E2700 → ret 0
+    成功：0x79BC0D → 0x7B46F0（★batch 059 窄串析构）[esp+0x10]
+    → mov al,1 → ret 4
+语义：**WOL 加入房间校验器（字符串实锤——TXT_NO_CLAN/OBSERVER_FULL/
+MISMATCH/GameFull 四错误出口）**——① GameMode（[0xA8B238]/
+[0xA8B244]）判定 + this 内标志位（+0x20 bit8/11/12）组合门控；
+② 无战队拒绝（TXT_NO_CLAN）；③ 序列号/哈希校验（[0xB77E00..0xB77E08]
+xor 组 vs 栈值）与字符串比较（0x77E820/0x777B50，[ebp+0xE0] 串）；
+④ 房间容量校验（[ebp+0xC] 人数算式 vs [ebp+8]）；⑤ 四档错误
+DebugLog（GameFull/Observer_Full/Mismatch/No_Clan）+ 0x5E2700；
+成功返 1 失败返 0（ret 4 带 1 栈参标志 dl）。
+★怪癖：①★★四档错误出口各配独立 DebugLog 串（TXT_NO_CLAN/
+OBSERVER_FULL/MISMATCH/GameFull——诊断分级）；②GameMode==4 特判
+嵌套（bit11/12 次级位）；③[0xB77E00]/[0xB77E04]/[0xB77E08] 三
+全局 XOR 校验（握手哈希推断）；④人数算式（[ebp+0xC]-串长+补正
+vs [ebp+8]）；⑤ret 4 单栈参 + 返回 0/1。
+⚠️ partial：0x77E820/0x777B50 身份（拼接/比较推断未登记）、
+[0xB77E00..0xB77E08] 校验语义、[ebp+0x8/0xC/0x20/0xE0] 字段语义、
+GameMode==4 特判含义、this 宿主类。
+
+================================================================================
+0x797640 —— WOL 连接建立器（433B 全程读完，字符串实锤）
+================================================================================
+签名：thiscall + 1 栈参 ret 4（① 入口 ecx=参数存 esi、[0xB77DC0]
+持有标志存 [esp+0x13]；0x797640-0x7977F0）。
+机器码结构（0x797640-0x7977F0，全程读完，关键锚点）：
+    入口：push ecx → mov al,[0xB77DC0]（★持有标志前值）→ push
+    ebx/ebp/esi → mov esi,[0xB77E50] → or esi,ecx（★参数并入）→
+    mov eax,[0xAC116C]（★全局 WOL 对象）→ push 0x1E(30)/push
+    0x84B7B4（★"TibPass99"）→ push 0x84B7AC（★"TibSun" 用户名）
+    → mov [0xB77DC0],1（★置持有标志）→ [0xB778D8]=0/[0xB76468]=0/
+    [0xB779CC]=0（★三清零）→ mov edx,[eax] → push 0x10001/push
+    esi/push eax → call [edx+0x10]（★★虚表槽 0x10——WOL 登录
+    (this, 参数, 0x10001 标志, 30 超时)）
+    → mov eax,[0xAC116C] → mov edx,[0x84A234]（★'' 空串）→ push
+    edx/push eax → call [ecx+0x8C]（★虚表槽 0x8C——WOL 配置/设置）
+    事件泵：mov edi,[0x7E113C]（★★WaitForMultipleObjects 导入槽
+    batch 1399 实锤）→ mov ebp,[0x7E1178]（★★ResetEvent 实锤）→
+    [esp+0x12]=0/[esp+0x11]=0（★双标志）
+    循环 0x7976B7：push 0x32(50ms)/push 0/push 0xB73684（★12 事件
+    表）/push 0x12 → call edi（★等待 12 事件 50ms）→ esi=结果 →
+    0x102 超时 → 0x77F900（★batch 126 消息泵）→ 重查 → 事件索引：
+    mov eax,[esi*4+0xB73684] → push → call ebp（★ResetEvent 确认）→
+    esi==0 → 0x797784（★收尾 1）；esi==8 → 0x79778B（★收尾 2）；
+    esi==1 → [esp+0x11] 标志推进 → 循环；esi==9 → mov eax,
+    [0xB77DE8]（★结果码）→ HRESULT 窗口判定：0x80040067..0x8004006D
+    区间 → 0x8004006C/0x8004006D → 0x79775F（★失败路径）；0x4012F
+    → [esp+0x11]=1 → 循环；其余 → 循环
+    失败路径 0x79775F：DebugLog 0x84A5BC（★"TXT_CANT_CONNECT" 行
+    0x5F45）+ 0x5E2CD0 → 0x797784 收尾
+    收尾：0x775940(0xC4)/[0xB77DC8]=0/0x7757E0（★清理链）→
+    0x775B10（★batch 078 当前对话框）→ GetDlgItem(0x540)
+    （★★0x7E14A8 实锤）→ 非空 → SetFocus（★★0x7E13CC 实锤）→
+    恢复 [0xB77DC0]=前值 → mov eax,esi（★状态 1/2/0）→ ret 4
+语义：**WOL 连接建立器（字符串实锤——TibSun/TibPass99 用户口令 +
+TXT_CANT_CONNECT 连接失败诊断）**——① [0xAC116C] 全局 WOL 对象
+虚表槽 0x10 登录（用户名 'TibSun'/口令 'TibPass99'，0x10001 标志，
+30 超时）+ 槽 0x8C 配置（空串）；② 置持有标志 [0xB77DC0] + 三
+全局清零；③ 12 事件 WaitForMultipleObjects 事件泵等待握手结果
+（50ms 超时循环 + 0x77F900 消息泵，[0xB77DE8] 结果码 HRESULT
+窗口 0x80040067-0x8004006D 失败判定 + 0x4012F 成功推进标志）；
+④ 失败 → TXT_CANT_CONNECT 诊断；⑤ 收尾焦点恢复（GetDlgItem
+0x540 + SetFocus）；⑥ 返回状态 1/2/0（事件 0/8 分支）。
+★怪癖：①★★TibSun/TibPass99 硬编码用户名口令（登录 WOL 后
+后续内容可被其他代码以 'TXT_' 串覆盖的推断——实际走 Ares 通道
+未深究）；②虚表槽 0x10（登录 4 参）+ 槽 0x8C（配置 2 参）双
+调用；③HRESULT 错误码窗口（0x8004xxxx 区——在线对战自定义
+HResult）；④0x4012F 成功码推进 [esp+0x11] 再循环；⑤事件 0/8
+双收尾 → 状态 1/2；⑥持有标志 [0xB77DC0] 保存/恢复配对。
+⚠️ partial：[0xAC116C] 虚表槽 0x10/0x8C 精确方法名、0x10001
+标志语义、0x4012F/0x8004006x 错误码含义、[0x84A234] 空串用途、
+事件 0/1/8/9 精确含义。
+
+================================================================================
+跨批次连接（本批三连 = WOL 事件表家族）
+================================================================================
+- **batch 1399（0x79FC40 WOL 主循环/0x798340 同构/0x7E113C
+  WaitForMultipleObjects/0x7E1178 ResetEvent 导入槽实锤）**：
+  0x798340 = 同事件表独立重置入口；0x797640 与 0x79FC40 共用
+  12 事件表 + 双导入槽事件泵（0x102 超时同判定）。
+- **batch 1398（0x7E14A8=GetDlgItem/0x7E13CC=SetFocus 导入槽实锤）**：
+  0x797640 收尾焦点链复用。
+- **batch 001（0x734E60 DebugLog）/ batch 110（0x5E2700）**：
+  0x79BA60/0x797640 错误出口。
+- **batch 059（0x7B46F0）/ batch 062（0x7B4620）**：0x79BA60
+  栈串构造/析构。
+- **batch 126（0x77F900 消息泵）/ batch 078（0x775B10）**：
+  0x797640 事件泵超时 + 收尾对话框链。
+- 新候选：0x77E820/0x777B50（0x79BA60 拼接/比较）、[0xAC116C]
+  虚表槽 0x10/0x8C、[0xB77E00..0xB77E08] XOR 校验组、0x4012F/
+  0x8004006x 错误码。
