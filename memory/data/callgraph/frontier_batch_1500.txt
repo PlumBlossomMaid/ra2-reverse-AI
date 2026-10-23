@@ -1,0 +1,176 @@
+frontier batch 1500 — 0x5E9560 玩家表包含检查器 / 0x5E9510 玩家表槽位检查器 / 0x5E8EA0 玩家表刷新调度器（2026-10-24）
+
+口径：承接 batch 1499 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x5E9560（31B，callees=0 deps=2800——
+**玩家表包含检查器**，推断名）、0x5E9510（78B，callees=0 deps=2872——
+**玩家表槽位检查器**，推断名）、0x5E8EA0（920B，callees=19 deps=2796——
+**玩家表刷新调度器**，推断名）。
+取证手段：disasm.py 双参直反汇编三路全程读完（0x5E9560 0x1F 全量尾
+0x5E957E ret / 0x5E9510 0x4E 全量尾 0x5E955D ret / 0x5E8EA0 0x398 全量
+尾 0x5E9237 ret——三文件 11/26/76 行全读）+ TSV 查重（三候选全部未登记）
++ callee 登记核验（grep TSV：**19 callee 全部已登记，零新候选**——0x7CA489
+batch 045、0x7B66D0 batch 069、0x775940 batch 071、0x4E37D0 batch 108、
+0x4E41D0/0x77D970 batch 113、0x77D940 batch 118、0x4E49A0 batch 144、
+0x4E4770 batch 190、[0x7E14A8]/[0x7E14A4] batch 204/099、0x4E4170 batch
+223、0x4E45A0 batch 224、0x4E3B00 batch 263、0x4E3A00 batch 264、
+0x5E8BF0 batch 607（★★点名 caller FUN_005E8EA0——本批兑现）、0x7CB911
+batch 1009（★★点名 caller FUN_005e8ea0——本批兑现）、0x5EDFC0 batch
+1498（★★串→ID 查表器——上一批刚登记，本批应用点兑现））。
+
+================================================================================
+0x5E9560 —— 玩家表包含检查器（31B 全程读完）
+================================================================================
+签名：无参 ret（返回 al 布尔；0x5E9560-0x5E957E）。
+机器码结构（0x5E9560-0x5E957E，全程读完，关键锚点）：
+    段1 表扫描：mov ecx,[0xAC11B4]（★★全局 ID——batch 1498/1499 分派族）
+    → mov eax,0xA8DA90（★玩家表基址）→ 循环 0x5E956B：cmp [eax],ecx →
+    je 0x5E957C（★★命中返 0）→ add eax,4 → cmp eax,0xA8DAB0 → jl
+    0x5E956B（★8 项表上限硬编码）
+    段2 收尾：mov al,1 → ret（★未命中返 1）→ 0x5E957C: xor al → ret
+语义：**玩家表包含检查器（推断名——31B「8 项表扫描 vs 全局 ID」）**——
+扫描 [0xA8DA90..0xA8DAB0] 8 项玩家表，若某项 == [0xAC11B4] 返 0（★
+「包含」返 false），全部不匹配返 1。
+★怪癖：①★★[0xAC11B4] 全局 ID 比对（batch 1498/1499 同分派族第七个）
+；②★★[0xA8DA90] 8 项表上限 0xA8DAB0 硬编码（无计数全局，纯地址比
+较）；③★★命中返 0、未命中返 1（反逻辑——「表包含目标」用 false 表
+示，调用方按 0/1 反向理解）。
+⚠️ partial：宿主类（0x5E95xx 区——会话族推断）、[0xAC11B4] ID 语义、
+[0xA8DA90] 表项结构、调用方意图（包含检查用途）、2 unique caller。
+
+================================================================================
+0x5E9510 —— 玩家表槽位检查器（78B 全程读完）
+================================================================================
+签名：无参 ret（返回 al 布尔；0x5E9510-0x5E955D）。
+机器码结构（0x5E9510-0x5E955D，全程读完，关键锚点）：
+    段1 上限取值：mov eax,[0xA8B548] → mov ecx,[0xA8BB0C] → cmp → jge
+    0x5E9521 → mov ecx,eax（★★上限 = min([0xA8B548], [0xA8BB0C])——双
+    全局取小）
+    段2 前 N 项扫描：xor eax → mov esi,[0xAC119C]（★全局 ID）→ test
+    ecx → jle 0x5E953F → mov edx,0xA8DA90 → 循环：cmp [edx],esi → je
+    0x5E9556（★★命中返 0）→ inc eax → add edx,4 → cmp eax,ecx → jl
+    （★扫前 N 项）
+    段3 尾部检查：mov eax,[0x8316A4]（★★全局标志——batch 1498 0x5EC880
+    同全局的参数+1 修正）→ test → jne 0x5E955A（★标志置位返 1）→ cmp
+    ecx,8 → jge 0x5E955A（★N≥8 返 1）→ cmp [ecx*4+0xA8DA90],esi → jne
+    0x5E955A → 0x5E9556: xor al → ret（★★第 N 项也命中返 0）
+    段4 收尾：0x5E955A: mov al,1 → ret
+语义：**玩家表槽位检查器（推断名——78B「双全局取小上限 + 前 N 项扫描
++ 第 N 项尾查」）**——① 上限 N = min([0xA8B548],[0xA8BB0C])；② 扫描
+[0xA8DA90] 前 N 项与 [0xAC119C] 比对，命中返 0；③ 未命中且
+[0x8316A4]==0 且 N<8 时额外检查第 N 项，命中返 0；④ 其余返 1。
+★怪癖：①★★[0xA8B548]/[0xA8BB0C] 双全局取小作上限（min 语义）；
+②★★[0xA8DA90] 表 vs [0xAC119C] 比对（batch 1498 串→ID 映射族第一
+个 ID）；③★★[0x8316A4] 全局标志门控（batch 1498 0x5EC880 的参数+1
+修正同全局——第三消费者）；④★★第 N 项尾部额外检查（[ecx*4+0xA8DA90]
+——上限本身也是候选槽）；⑤★命中返 0 反逻辑（同 0x5E9560）。
+⚠️ partial：宿主类（0x5E95xx 区——会话族推断）、[0xA8B548]/[0xA8BB0C]
+计数全局语义、[0x8316A4] 标志含义、调用方意图、2 unique caller。
+
+================================================================================
+0x5E8EA0 —— 玩家表刷新调度器（920B 全程读完）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this=会话对象、[ecx]=word 门控；
+0x5E8EA0-0x5E9237）。
+机器码结构（0x5E8EA0-0x5E9237，全程读完，关键锚点）：
+    段1 word 门控 + 标志数组：sub esp,0x160 → cmp word [ecx],0 → je
+    0x5E922D（★★[ecx] word 非 0 才继续）→ lea eax,[esp+0x1C] → push
+    ecx → call 0x7CA489（★batch 045 串族）→ mov esi,[0xAC11B4]/edi,
+    [0xAC11B0]/ebx,[0xAC119C]/ebp,[0xAC11A0]（★★四全局 ID 一次载入）→
+    循环 8 项 [0xA8DA90]：cmp [eax],esi → je 0x5E8F01（★==[0xAC11B4]
+    →标志 1）→ test → je 0x5E8EFD → cmp ebx/ebp/edi（★==[0xAC119C]/
+    [0xAC11A0]/[0xAC11B0] →标志 0）→ cmp [eax+0x6B],-1 → je 0x5E8F01
+    （★★[+0x6B]==-1 →标志 1）→ 写 [esp+edx+0x14] 逐槽 1 字节标志
+    段2 GameMode 门禁 + 表初始化：cmp [0xA8B238],4 → jne 0x5E8F3F →
+    call 0x77D940（★★batch 118 GameMode 门禁变体——[0xB76B24] 早退
+    ）→ test → je → call 0x77D970（★★batch 113 门禁）→ test → jne
+    0x5E8F38 → mov edx,2（★★门禁链 2）→ 0x5E8F38: mov edx,6 → 0x5E8F3F:
+    mov edx,8（★★模式数 edx ∈ {2,6,8}）→ rep stosd 填 [0xA8DA90] 前
+    edx 项 [0xAC119C] + 后 8-edx 项 [0xAC11A0]（★★玩家表初始化——两段
+    rep stosd）
+    段3 串解析链：lea ecx,[esp+0x1C] → push 0x8304FC（★格式串）→ call
+    0x7CB911（★★batch 1009 CRT wcstok 宽字符分词器——**点名 caller 兑现**）
+    → push edi → call 0x7B66D0（★★batch 069 宽串赋值 operator=）→ call
+    0x5EDFC0（★★batch 1498 串→ID 查表器——**应用点兑现**）→ mov ebp,
+    eax → call 0x7B6760（★batch 061 带空指针置位析构）→ test ebp → jne
+    0x5E8FC3 → mov ecx,edi → call 0x5E8BF0（★★batch 607 七全局宽串比较
+    选择器——**点名 caller 兑现**）→ mov ebp,eax → test → jne 0x5E8FC3
+    → mov ebp,[0xAC11B0]（★★双级兜底：0x5EDFC0 → 0x5E8BF0 → [0xAC11B0]）
+    段4 ID 匹配分派：cmp ebp,[0xAC11B4] → je 0x5E9112 → test → je
+    0x5E900D → cmp [0xAC119C]/[0xAC11A0]/[0xAC11B0]/[0xAC11A4]/[0xAC11A8]/
+    [0xAC11AC] 六比较 → je 0x5E900D → cmp [ebp+0x6B],-1 → je 0x5E9112
+    （★★七 ID 比较 + [+0x6B]==-1——分派到两条链）
+    段5 链 A（0x5E900D，标志 1）：0x775940 四 ID（0xC2/0xC9/0xBC/0xBD——
+    ★★batch 071 8B 表项 key→value，同 batch 1498 0x5EE510）→ mov al,
+    [esp+esi+0x14]（标志数组）→ test → je 0x5E920C → 0x4E37D0（batch
+    108）→ push -1 → 0x4E4170（★★batch 223 GDlgSupp 消息派发——0x147/
+    0x150 族）→ cmp -3 → jne 0x5E920C → 0x4E3A00（★★batch 264 对话框
+    控件初始化变体——0x151 -2 哨兵）→ 8 槽消息族：0x411-0x418 =
+    0x411+esi cmp 链 + tail 公式 sub eax,7/neg/sbb/and 0xfffffbe7/add
+    0x418（★★batch 1498 0x5EC880 同款 tail）→ push 0/0/0x4F1 → GetDlgItem
+    [0x7E14A8]（batch 204）→ [0x7E14A4]（★★batch 099 SendMessageA 实锤）
+    → 0x4E41D0（batch 113）→ 0x4E45A0（★★batch 224 GDlgSupp 命令路由
+    第三变体——0x151 族）→ push -2 → 0x4E49A0（batch 144）
+    段6 链 B（0x5E9112，标志 0）：0x775940 四 ID 同 → mov al,[esp+esi+
+    0x14] → test → jne 0x5E920C → mov [esi*4+0xA8DA90],ebp（★★写玩家表
+    ——槽位登记）→ 0x4E37D0 → 0x4E3B00（★★batch 263 对话框控件初始化
+    链——0x14B 门控）→ 8 槽消息族同款 → push 1/0/0x4F1 → GetDlgItem →
+    [0x7E14A4] → 0x4E41D0 → 0x4E4770（★★batch 190 导入表调试日志——
+    0x14B/0x4DD/0x4DE 常量族）→ push 8 → 0x4E49A0（batch 144）
+    段7 循环收尾：push 0x8304FC → mov [esi*4+0xA8DA90],ebp（★写玩家表）
+    → push 0 → inc esi → call 0x7CB911（★wcstok 续分）→ test → jne
+    0x5E8F8E（★循环续 token）→ 收尾 pop 族 → ret
+语义：**玩家表刷新调度器（推断名——920B「wcstok 分词 → 串→ID 查表 →
+标志数组分派 → 双链控件刷新 + 玩家表初始化」）**——① [ecx] word 非 0
+门控；② 8 项玩家表 [0xA8DA90] 与四全局 ID 匹配生成逐槽标志数组
+（[+0x6B]==-1 判空）；③ [0xA8B238]==4 时经 0x77D940/0x77D970 门禁链取
+模式数 edx ∈ {2,6,8}，rep stosd 用 [0xAC119C]/[0xAC11A0] 初始化玩家表；
+④ 0x7CB911（wcstok batch 1009）分词 [0x8304FC] 串逐 token → 0x5EDFC0
+（batch 1498 串→ID）→ 0x5E8BF0（batch 607 七全局比较）→ [0xAC11B0]
+三级兜底解析玩家名 → 七 ID 匹配分派两条链；⑤ 链 A（标志 1）：四 ID
+查对象 → 0x4E4170 → 0x4E3A00 → 8 槽消息族 0x411-0x418 + 0x4F1 参数 →
+GetDlgItem+SendMessageA → 0x4E45A0 → 0x4E49A0；⑥ 链 B（标志 0）：四
+ID 查对象 → 写玩家表 [esi*4+0xA8DA90] → 0x4E3B00 → 8 槽消息族 → 0x4E4770
+→ 0x4E49A0；⑦ 循环续 token。
+★怪癖：①★★[ecx] word 门控（首 2 字节非 0 才继续）；②★★8 项标志数
+组逐槽 1 字节（[esp+edx+0x14]——每槽独立标志）；③★★[0xA8B238]==4 →
+0x77D940 → 0x77D970 双门禁链取模式数（2/6/8——GameMode 门禁家族 batch
+113/118 组合应用）；④★★rep stosd 两段填玩家表（前 edx 项 [0xAC119C]
++ 后 8-edx 项 [0xAC11A0]——表初始化双值）；⑤★★wcstok 分词循环（
+[0x8304FC] 串逐 token 续分——batch 1009 应用点）；⑥★★三级名称解析
+（0x5EDFC0 → 0x5E8BF0 → [0xAC11B0] 兜底）；⑦★★双链分派（标志 1 走
+0x4E3A00+0x4E45A0 / 标志 0 走 0x4E3B00+0x4E4770——batch 263/264 两变体
+各用一条链）；⑧★★8 槽消息族 tail 公式（sub/neg/sbb/and 0xfffffbe7/
+add 0x418——batch 1498 0x5EC880 逐字节同款）；⑨★消息参数 0x4F1
+（1265——batch 1499 0x5EB7B0 的 0x6D2 族不同参数）。
+⚠️ partial：宿主类（0x5E8Exx 区——会话族推断）、[0x8304FC] 格式串内容、
+wcstok 分词对象、双链业务语义（标志 0/1 分派含义）、[+0x6B] 字段语义、
+模式数 2/6/8 含义、2 unique caller。
+
+================================================================================
+跨批次连接（19 callee 全已登记 + 3 点名兑现 + 1 应用点兑现）
+================================================================================
+- **batch 1009 点名兑现（0x7CB911 CRT wcstok）**：batch 1009 登记行明确
+  写「2 callers = FUN_005e8ea0/FUN_005fa620」——本批 0x5E8EA0 正是点名
+  caller 之首，wcstok 分词应用点闭合。
+- **batch 607 点名兑现（0x5E8BF0 七全局宽串比较选择器）**：batch 607 登记
+  行明确写「unique_callers FUN_005E3D10/FUN_005E8EA0/FUN_00792F10」——
+  本批 0x5E8EA0 兑现（0x5EDFC0 未中后的第二级名称解析）。
+- **batch 1498 应用点兑现（0x5EDFC0 串→ID 查表器）**：上一批刚登记的
+  0x5EDFC0 由本批 0x5E8EA0 直接调用——七对映射（[0x831704] 族 ↔
+  [0xAC119C] 族）的首个已知调用方。
+- **batch 263/264 双变体各用一条链（0x4E3B00 / 0x4E3A00）**：0x5E8EA0
+  的链 B 走 0x4E3B00（0x14B 门控 ShowWindow(5)）、链 A 走 0x4E3A00
+  （0x151 -2 哨兵 + 会话数组三条件过滤）——两变体在同一函数里分派。
+- **batch 118/113 双门禁组合（0x77D940 / 0x77D970）**：0x5E8EA0 的
+  [0xA8B238]==4 → 0x77D940 → 0x77D970 链——GameMode 门禁家族（batch
+  113/118）组合应用新现场。
+- **batch 099/204/190/223/224（[0x7E14A4]/[0x7E14A8] SendMessageA/
+  GetDlgItem + 0x4E4770/0x4E4170/0x4E45A0 GDlgSupp 族）**：0x5E8EA0
+  双链的控件操作 + 命令路由尾。
+- **batch 108/113/144（0x4E37D0/0x4E41D0/0x4E49A0 查表族）**：双链的
+  取 ID + 收尾链。
+- **[0x8316A4] 全局标志（batch 1498 0x5EC880 同全局）**：0x5E9510 的
+  尾部门控——第三消费者。
+- **8 槽消息族 0x411-0x418（batch 1498 0x5EC880 / batch 1499 0x5EB7B0）**
+  ：0x5E8EA0 双链各一套（tail 公式与 0x5EC880 逐字节同款）。
+- 新候选：无（19 callee 全已登记，零新候选）。
