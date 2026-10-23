@@ -1,0 +1,151 @@
+frontier batch 1510 — 0x5CF760 窄串列表查找器 / 0x5CF6B0 窄串列表查找器·二 / 0x5CEEF0 INI 配置装载器（2026-10-24）
+
+口径：承接 batch 1509 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x5CF760（165B，callees=5 deps=313——
+**窄串列表查找器**，推断名）、0x5CF6B0（162B，callees=5 deps=314——
+**窄串列表查找器·二**，推断名）、0x5CEEF0（1788B，callees=27 deps=150——
+**INI 配置装载器**，推断名——超大宿主分段采样）。
+取证手段：disasm.py 双参直反汇编四路读取（0x5CF760 0xA5 全量尾 0x5CF802
+ret 4 / 0x5CF6B0 0xA2 全量尾 0x5CF74F ret 4 / 0x5CEEF0 前 0x100B 采样 +
+中段复采样 0x100B 错位 1 字节解码异常（0x5CEFED push 0x6c 2B 指令边界）
+→ 修正 0x5CEFEF 起 0x101B 重采成功，覆盖 0x5CEEF0-0x5CF0EB（0x1FC/
+0x6FC——前段 33 行 + 中段 40 行，尾部未读）+ TSV 查重（三候选全部未
+登记）+ callee 登记核验（grep TSV：11 callee 已登记——0x7B4780 batch
+086、0x7B4690 batch 090、0x7B47F0 batch 118、0x7B5B30 batch 135、
+0x525A10 batch 107、0x52ACE0 batch 131、0x528C00 batch 169、0x473A80
+batch 197、0x7B6290 batch 199、0x7B4620/0x7B4630 batch 062、0x5256F0
+batch 004、0x5CF5F0 batch 337；**1 个新候选留池：0x5CF8E0（0x5CEEF0
+中段 0x5CF007 的调用）**）。
+
+================================================================================
+0x5CF760 —— 窄串列表查找器（165B 全程读完）
+================================================================================
+签名：thiscall + 1 栈参 ret 4（ecx=this=[edi+4] 数组 + [edi+0x10] 计数、
+[esp+0xC]=ebx=目标串；0x5CF760-0x5CF802）。
+机器码结构（0x5CF760-0x5CF802，全程读完，关键锚点）：
+    段1 门控：push ecx/ebx → mov ebx,[esp+0xC] → push esi/edi → mov
+    edi,ecx → push 0 → mov ecx,ebx → call 0x7B47F0（★★batch 118 窄串比
+    较——目标串判空）→ test al → je 0x5CF7DB（★返 0）→ mov eax,
+    [edi+0x10]（★计数）→ xor esi → test → jle 0x5CF7DB（★计数 0 返 0）
+    段2 循环：push ebx → lea ecx,[esp+0x10] → call 0x7B4690（★★batch
+    090 窄串 operator= 变体——局部串=目标）→ lea ecx,[esp+0xC] → call
+    0x7B5B30（★★batch 135 窄串转小写）→ mov eax,[edi+4] → mov ecx,
+    [eax+esi*4]（★第 esi 项）→ add ecx,4（★★+4 偏移——比较项 +4 子字
+    段）→ push ecx → lea ecx,[esp+0x18] → call 0x7B4690 → lea ecx,
+    [esp+0x14] → call 0x7B5B30 → lea edx,[esp+0x14] → lea ecx,[esp+0xC]
+    → push edx → call 0x7B4780（★★batch 086 窄串 operator==——比较）
+    → test al → jne 0x5CF7E4（命中）→ 0x7B46F0（batch 059 析构）×2 →
+    步进 esi → cmp esi,[edi+0x10] → jl 循环
+    段3 收尾：xor eax → ret 4（★未命中返 0）→ 0x5CF7E4: mov eax,[edi+4]
+    → mov esi,[eax+esi*4]（★命中取表项）→ 0x7B46F0 ×2（析构局部串）→
+    mov eax,esi → ret 4（★★命中返表项指针）
+语义：**窄串列表查找器（推断名——165B「计数遍历 + 小写化 + 表项 +4
+子段比较」）**——[edi+0x10] 计数遍历 [edi+4] 数组：局部串 = 目标串拷
+贝 + 0x7B5B30 转小写；每项取 +4 偏移子段（add ecx,4）同样拷贝 + 转小
+写后 0x7B4780（batch 086）比较，命中返表项指针，未命中返 0。
+★怪癖：①★★表项 +4 偏移比较（add ecx,4——比较对象是表项 +4 处的子
+字段而非表项本身）；②★★双层小写化（目标 + 表项各经 0x7B5B30 转小
+写——大小写不敏感查找）；③★★循环重取计数（cmp esi,[edi+0x10] 每轮
+重读）；④★★每轮析构两局部串（0x7B46F0 ×2——RAII 手动展开）；⑤★
+命中返表项指针（caller 直接消费项对象）。
+⚠️ partial：宿主类（0x5CF7xx 区——串列表族推断）、+4 子字段语义（串
+对象内名字段推断）、0x7B47F0 判空门控含义、2 unique caller。
+
+================================================================================
+0x5CF6B0 —— 窄串列表查找器·二（162B 全程读完）
+================================================================================
+签名：thiscall + 1 栈参 ret 4（同 0x5CF760；0x5CF6B0-0x5CF74F）。
+机器码结构（0x5CF6B0-0x5CF74F，全程读完，关键锚点）：
+    段1 门控：与 0x5CF760 相同（0x7B47F0 判空 + [edi+0x10] 计数检查）
+    段2 循环：与 0x5CF760 几乎逐指令同构——唯一差异：
+    0x5CF6E6: mov ecx,[eax+esi*4]（★★直接 push 表项——无 add ecx,4！）
+    vs 0x5CF760 0x5CF796: mov ecx,[eax+esi*4] → add ecx,4（★+4 偏移）
+    段3 收尾：同 0x5CF760（未命中返 0 / 命中返表项）
+语义：**窄串列表查找器·二（推断名——162B「与 0x5CF760 同构孪生」）**
+——同模板：计数遍历 + 双层小写化 + 0x7B4780 比较；**唯一差异：直接比
+较表项本身（无 +4 偏移）**——0x5CF760 比表项 +4 子字段、0x5CF6B0 比
+表项首字段。
+★怪癖：①★★与 0x5CF760 逐指令同构仅差 add ecx,4（孪生对——同源码
+两变体/两 TU）；②★★直接比较表项（mov ecx,[eax+esi*4] 无偏移——两函
+数查找目标字段不同）；③★★其余全部相同（双层小写 + 循环重取计数 +
+双析构）。
+⚠️ partial：宿主类（0x5CF6xx 区——串列表族推断）、两函数查找字段差
+异语义、与 0x5CF760 精确关系（未归一化比对不写「已证副本」）、
+2 unique caller。
+
+================================================================================
+0x5CEEF0 —— INI 配置装载器（1788B 超大宿主，分段采样 partial）
+================================================================================
+签名：thiscall + 1 栈参 ret 4（0x5CEEF0-0x5CF0D8 ret 4 失败路径已读；
+全长为 0x6FC）。
+机器码结构（分段采样覆盖 0x5CEEF0-0x5CF0EB = 0x1FC/0x6FC，关键锚点）：
+    段1 初始化：sub esp,0xC4 → push 族 → mov ebp,ecx → lea ecx,
+    [esp+0x68] → call 0x473A80（★★batch 197 CCFileClass 构造器——+0x58
+    缓冲包装 + 虚表 0x7E16B0）→ xor esi → lea ecx,[esp+0x34] → call
+    0x52ACE0（★★batch 131 GenericList 构造器——双虚表 0x7E1B04/
+    0x7E1B0C 链表）→ mov [esp+0x34],0x7E1AFC（★虚表）→ [esp+0x50]×3=0
+    + byte[esp+0x5C],0 + [esp+0x60]×2=0 → mov [esp+0x28],0x7EA5F4（★
+    虚表 0x7EA5F4）→ call 0x7B4620（★batch 062 串默认构造）×2 → mov
+    ecx,ebp → call 0x5CF5F0（★★batch 337 对象析构/重置——三数组释放
+    + 640×400 尺寸重置）
+    段2 读取链：mov eax,[esp+0x68] → push 0x830370 → lea ecx → call
+    [eax+8]（★虚表槽 8——格式化/设名）→ push 1 → call [edx+0x1C]（★
+    虚表槽 0x1C——打开）→ lea eax → push esi → push eax → lea ecx,
+    [esp+0x30] → call 0x525A10（★★batch 107 INI 读取包装——清 INISection
+    链表头 + 虚表 0x7E4D90 + 0x525A60 主解析）→ test eax → jne 0x5CEF98
+    → push 0x830350 → jmp 0x5CF07D（★失败路径日志）
+    段3 成功路径（0x5CEF98）：mov edi,1 → push esi → lea ecx → call
+    0x7B4630（★batch 062 串赋值）→ lea edx → lea ecx → push ecx/edx →
+    mov edx,edi → lea ecx → call 0x7B6290（★★batch 199 字符串持有器赋
+    值——"%d" 格式化）→ push eax → mov eax,[esp+0xE4] → push eax → lea
+    ecx → call 0x528C00（★★batch 169 INI 查找/注册大函数——CRC 0x4A1DE0
+    + 注册器族 + trim）→ test eax → sete bl → 0x7B46F0 析构 ×2 → test
+    bl → jne 0x5CF073
+    段4 中段（0x5CEFEF 修正采样）：call 0x7C8E17（new）→ 0x5CF007: call
+    0x5CF8E0（★★未登记新候选——0x5CF8E0 构造/转换）→ test → je
+    0x5CF05B → 动态数组插值：[ebp+8] 容量 / [ebp+0x10] 计数 / [ebp+0xD]
+    标志 / [ebp+0x14] 增量 → 虚表槽 8 扩容（同 0x5D1C90 动态数组模式，
+    +0xD/+0x14 双门控）→ mov [edx+eax*4],esi（★插入 [ebp+4][计数]）→
+    循环 edi 0..0x64（★★上限 100 次）→ 失败日志：push 0x830328 /
+    0x830304 → call 0x4068E0 → 收尾：0x7B46F0 析构 ×2 + 0x5256F0（★★
+    batch 004 INISection::~INIClass——INI 对象析构）+ [esp+0xC0] 处
+    0x43AE50（batch 059 析构）+ [esp+0x68] 装着 0x7E16B0 虚表的对象
+    0x431B80（batch 060 BufferIOFileClass dtor）→ xor al → ret 4（★失败
+    返 0）
+    段5 成功续（0x5CF0DB）：push esi → 0x7B4630 → push 0x8302FC → ...（
+    尾部未读——0x5CF0EB 处截断）
+语义：**INI 配置装载器（推断名——1788B 超大宿主「CCFileClass + 链表 +
+INI 解析 + 动态数组装载」）**——① CCFileClass 构造（batch 197）+ GenericList
+构造（batch 131）+ 0x5CF5F0 重置（batch 337）→ 虚表槽 8/0x1C 设名打开
+→ 0x525A10（batch 107 INI 读取）→ 失败日志（0x830350/0x830328/0x830304
+→ 0x4068E0 桩）；② 成功路径：串族处理（0x7B4630/0x7B6290）→ 0x528C00
+（batch 169 INI 查找注册）→ 0x5CF8E0（新候选）转换 → 动态数组插入
+（虚表槽 8 扩容 + 插入 [ebp+4][计数]，edi 0..0x64 上限）→ 收尾多析构
+（0x7B46F0 ×2 + 0x5256F0 INISection + 0x43AE50 + 0x431B80）。
+★怪癖：①★★超大宿主（1788B callees=27——INI 装载全家桶）；②★★
+0x525A10（batch 107 INI 读取包装）作主读取入口；③★★动态数组插入
+（虚表槽 8 扩容 + 0x64=100 次上限循环——条目数上限）；④★★失败多路
+日志（0x830350/0x830328/0x830304 三格式串 → 0x4068E0）；⑤★★收尾四
+个析构（0x7B46F0×2 + 0x5256F0 INISection + 0x43AE50 + 0x431B80——INI/
+文件/缓冲多对象清理）；⑥★★虚表嵌套（0x7E1AFC/0x7EA5F4/0x7E16B0——
+链表 + 配置 + 文件三类）；⑦★★0x5CF8E0（未登记）插入前转换。
+⚠️ partial：宿主类（0x5CEEF0 区——INI 配置族推断）、尾部 0x5CF0EB
+之后未读（0x6FC-0x1FC≈0x500B）、0x830350/0x830328/0x830304/0x830370/
+0x8302FC 格式串内容、0x5CF8E0（新候选）、虚表语义、2 unique caller。
+
+================================================================================
+跨批次连接（11 callee 已登记 + 1 新候选）
+================================================================================
+- **batch 107/169/004（0x525A10 INI 读取包装 + 0x528C00 INI 查找注册 +
+  0x5256F0 INISection dtor）**：0x5CEEF0 的 INI 装载三件套——INI 全链
+  路应用点（读取 → 查找注册 → 析构收尾）。
+- **batch 197/131/337（0x473A80 CCFileClass + 0x52ACE0 GenericList +
+  0x5CF5F0 对象析构/重置）**：0x5CEEF0 的初始化三连。
+- **batch 086/090/118/135/062/199（窄串比较/赋值/转小写/构造/持有器）**
+  ：0x5CF760/0x5CF6B0 的窄串操作链（双层小写化 + 比较）+ 0x5CEEF0 的
+  串处理。
+- **0x5CF760 ↔ 0x5CF6B0 同构孪生（本批新登记家族）**：仅差 add ecx,4
+  （表项 +4 子段 vs 表项本身）——查找目标字段不同的双份实现。
+- **0x5D1C90 动态数组模式（batch 1508）**：0x5CEEF0 中段的虚表槽 8 扩
+  容 + 插入 [ebp+4][计数] 同款。
+- 新候选：0x5CF8E0（0x5CEEF0 中段插入前转换——留池后续）。
