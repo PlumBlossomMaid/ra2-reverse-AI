@@ -1,0 +1,96 @@
+frontier batch 1391 — 0x7BE660 字段置 -1 setter / 0x7BD2B0 状态清理器 / 0x7BCF50 ZBuffer::Fill（2026-10-23）
+
+口径：承接 batch 1390 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x7BE660（10B，callees=0 deps=31）、
+0x7BD2B0（32B，callees=0 deps=31）、0x7BCF50（57B，callees=1 deps=815
+——**ranking.tsv 标 ZBuffer::Fill**）。
+取证手段：disasm.py 双参直反汇编全程读完（0x7BE660 0x30 尾 0x7BE669 /
+0x7BD2B0 0x40 尾 0x7BD2CF / 0x7BCF50 0x50 尾 0x7BCF88，函数边界与
+functions.tsv 完全吻合）+ TSV 查重（三候选全部未登记）+ 跨批次对比
+（函数指针槽 [esi+0x58] ↔ batch 1390 [esi+0x48]/[+0x784]/[+0x788]
+同族；虚表槽 0x14 ↔ batch 既有；0x7BE660 后邻 0x7BE670 的 +0x6C4 写
+↔ batch 1389/1390 缓冲对象族）。
+
+================================================================================
+0x7BE660 —— 字段置 -1 setter（10B 全程读完）
+================================================================================
+签名：thiscall（ecx=this），无栈参，ret 0（0x7BE660-0x7BE669，
+callees=0 deps=31——**10B 极小函数**）。
+机器码（0x7BE660-0x7BE669）：
+    or eax, 0xFFFFFFFF（★eax = -1）
+    mov [ecx+0x6D0], eax（★+0x6D0 = -1 写）
+    ret
+语义：**字段置 -1 setter**（0x7BE66x 区——0x7BE66x setter 域，
+callees=0 deps=31）：thiscall：**+0x6D0 = -1**（哨兵置位）。
+★字段置 -1 setter（10B——or/mov/ret 三指令 + +0x6D0 失效哨兵）。
+2 unique caller（3 callsite）。
+★怪癖：①★**10B 极简**（or eax,0xFFFFFFFF + mov + ret——三指令）；
+②★**+0x6D0 = -1**（失效哨兵置位——调用此函数即标记 +0x6D0 无效）；
+③★后邻 0x7BE670 写 +0x6C4（word [+0xEE] idiv byte [+0xF2]——
+同对象族相邻 setter）。
+⚠️ partial：+0x6D0 字段语义（失效标记？）、后邻 0x7BE670 关联、
+2 unique caller 身份。
+
+================================================================================
+0x7BD2B0 —— 状态清理器（32B 全程读完）
+================================================================================
+签名：thiscall（ecx=this，mov esi），无栈参，ret 0（0x7BD2B0-
+0x7BD2CF，callees=0 deps=31）。
+机器码结构（0x7BD2B0-0x7BD2CF，全程读完，关键锚点）：
+    入口：push esi; push 0; mov esi, ecx（this）
+    push 0; push 7; push esi
+    call [esi+0x58]（★函数指针槽 [esi+0x58]——4 参调用：
+    esi/7/0/0 参数码——batch 1390 [esi+0x48] 同族）
+    add esp, 0x10
+    mov eax, [esi+0x7BC]（★+0x7BC 状态字节）; and al, 0xBF
+    （★清位 6）; mov [esi+0x7BC], eax（★写回）
+    pop esi; ret
+语义：**状态清理器**（0x7BD2Bx 区——0x7BD2xx 状态/清理域，
+callees=0 deps=31）：thiscall：**函数指针 [esi+0x58] 4 参调用**
+（esi/7/0/0——参数码 7）→ **+0x7BC 清位 6**（and 0xBF 写回）。
+★状态清理器（函数指针槽 + 参数码 7 + +0x7BC 位清）。
+2 unique caller（3 callsite）。
+★怪癖：①★**函数指针槽 [esi+0x58]**（4 参——esi/7/0/0 参数码，
+batch 1390 [esi+0x48] 同族回调）；②★**+0x7BC 清位 6**（and al,0xBF
+——状态位清理）；③★参数码 7（[+0x58] 调用参数约定）。
+⚠️ partial：+0x58 函数指针语义、+0x7BC 状态字段、参数码 7 含义、
+2 unique caller 身份。
+
+================================================================================
+0x7BCF50 —— ZBuffer::Fill（57B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（[esp+0x14]=填充值，& 0xFFFF），
+ret 4（0x7BCF50-0x7BCF88，callees=1 deps=815——**ranking.tsv 标
+ZBuffer::Fill**）。
+机器码结构（0x7BCF50-0x7BCF88，全程读完，关键锚点）：
+    入口：sub esp, 0x10; mov edx, [ecx+0x2C]（★+0x2C 值）
+    xor eax; mov [esp+0xC], edx; mov edx, [esp+0x14]（★栈参）
+    mov [esp], 0; mov [esp+4], 0（★栈清零）
+    mov eax, [ecx+0x28]（★+0x28 值）; mov ecx, [ecx+0x14]
+    （★+0x14 对象）; and edx, 0xFFFF（★栈参 & 0xFFFF——16 位掩码）
+    mov [esp+8], eax; mov eax, [ecx]
+    push edx; lea edx, [esp+4]; push edx
+    call [eax+0x14]（★虚表槽 0x14——ZBuffer 填充调用）
+    add esp, 0x10; ret 4
+语义：**ZBuffer::Fill**（Z-Buffer 填充，0x7BCF5x 区——0x7BCFxx
+缓冲/渲染域，callees=1 deps=815——ranking 标带符号名）：thiscall +
+1 栈参（填充值）：**栈上构建三字段结构**（+0x2C/+0x28/0 清零）→
+**+0x14 对象虚表槽 0x14 调用**（+ 栈坐标/值指针 + 栈参 & 0xFFFF）。
+★ZBuffer::Fill（Z-Buffer 填充——三字段栈构建 + 虚表槽 0x14 +
+16 位掩码参数）。2 unique caller（3 callsite）。
+★怪癖：①★**虚表槽 0x14**（ZBuffer 填充虚表调用——+0x14 对象）；
+②★**栈构三字段**（[esp]=0/[esp+4]=0/[esp+8]=+0x28/[esp+0xC]=
++0x2C——栈上组装填充结构）；③★**栈参 & 0xFFFF**（16 位掩码——
+填充值截断）；④★ret 4 单栈参 + callees=1（虚表间接算 1）。
+⚠️ partial：+0x2C/+0x28/+0x14 字段语义、虚表槽 0x14 被调身份、
+ZBuffer 对象类型、2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1390（函数指针槽族 [esi+0x48]/[+0x784]/[+0x788]）：0x7BD2B0
+  用 **[esi+0x58]** 同族回调——函数指针槽家族再验证。
+- batch 1390（+0x6C4 写——0x7BEA80/0x7BE940 同族）：0x7BE660 后邻
+  0x7BE670 写 +0x6C4——缓冲对象族相邻 setter。
+- batch 既有虚表槽锚点（槽 0x14）：0x7BCF50 使用——虚表槽家族
+  再验证。
