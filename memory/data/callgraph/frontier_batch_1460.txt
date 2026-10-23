@@ -1,0 +1,114 @@
+frontier batch 1460 — 0x680F70 COM 接口装载器 / 0x67FDE0 COM Release 包装器 / 0x67C430 可选外部缓冲数组构造器·二（2026-10-23）
+
+口径：承接 batch 1459 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x680F70（117B，callees=0 deps=2276——
+**COM 接口装载器**，推断名）、0x67FDE0（13B，callees=0 deps=2276——
+**COM Release 包装器**，推断名）、0x67C430（74B，callees=1 deps=127——
+**可选外部缓冲数组构造器·二**，推断名）。
+取证手段：disasm.py 双参直反汇编三路全程读完（0x680F70 0x75 尾 0x680FE2
+ret 4 / 0x67FDE0 0xD 尾 0x67FDEC ret / 0x67C430 0x4A 尾 0x67C477 ret 8——
+三文件 53/7/27 行全读）+ TSV 查重（三候选全部未登记）+ callee 登记核验
+（grep TSV：0x7C8E17 operator new（batch 001 已登记）、0x42FCB0 可选外部
+缓冲数组构造器（batch 092 已登记——本批 0x67C430 同族第二份）、0x683060
+空指针门控虚调用释放（batch 1250 已登记——本批 0x67FDE0 同构 13B）。
+
+================================================================================
+0x680F70 —— COM 接口装载器（117B 全程读完）
+================================================================================
+签名：thiscall + 1 栈参 ret 4（ecx=this 存 esi、栈参 1=[esp+0x4] =
+流/接口对象；0x680F70-0x680FE2）。
+机器码结构（0x680F70-0x680FE2，全程读完，关键锚点）：
+    入口 0x680F70：mov eax,[esp+4]（★参数 1=新接口对象）→ test
+    eax → je 0x680FC7（★空参数分支）→ mov ecx,[eax] → lea edx,
+    [esp+0xC] → push edx → push 0x81FC50（★IID 常量）→ push eax
+    → call [ecx]（★★虚表槽 0 QueryInterface——IID 0x81FC50 接口
+    查询）→ mov edi,eax（★HRESULT）→ test edi → jl 0x680F8D（★
+    失败分支）
+    失败分支 0x680F8D：mov eax,[esi]（★旧接口）→ test → je
+    0x680F9F → call [ecx+8]（★虚表槽 8 Release——释放旧接口）→
+    0x680F9F: mov [esi],0（★清 this）→ mov eax,edi → ret 4（★返
+    HRESULT 错误）
+    成功分支 0x680FAC：mov eax,[esi] → test → je 0x680FBD → call
+    [edx+8]（★虚表槽 8 Release——先释放旧）→ 0x680FBD: mov
+    ebx,[esp+0x10]（★参数 1 还原）→ mov [esi],ebx（★装新接口）→
+    mov eax,edi → ret 4（★返 QueryInterface 结果）
+    空参分支 0x680FC7：mov eax,[esi] → test → je 0x680FD9 → mov
+    [esi],0 → call [ecx+8]（★释放旧 + 清 this）→ 0x680FD9: mov
+    edi,0x80004002（★★E_NOINTERFACE——空参拒绝）→ mov eax,edi
+    → ret 4
+语义：**COM 接口装载器（推断名——117B「QueryInterface + 释放旧接
+口 + 装载新接口 + 空参 E_NOINTERFACE」）**——① 参数 1 非空：经虚表
+槽 0 QueryInterface（IID 0x81FC50）查询接口 → 成功：释放旧 this
+接口（虚表槽 8）→ 装新接口 → 返 HRESULT；失败：释放旧 + 清 this
+→ 返错误；② 参数 1 空：释放旧 + 清 this → 返 0x80004002
+（E_NOINTERFACE）。
+★怪癖：①★IID 0x81FC50 常量（QueryInterface 目标接口——存读取
+流推断）；②★空参 E_NOINTERFACE（0x80004002 特异 HRESULT）；③
+释放旧接口总在装载前（先 Release 再装——COM 所有权转移惯用）；
+④失败/成功/空三分支同型收尾（返 HRESULT）。
+⚠️ partial：IID 0x81FC50 接口身份（IStream/保存流推断）、宿主类
+（与 0x680FF0 SavegameInformation 同区——0x681xxx 邻域推断）、
+虚表槽 8 Release 精确语义、2 unique caller。
+
+================================================================================
+0x67FDE0 —— COM Release 包装器（13B 全程读完）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this；0x67FDE0-0x67FDEC）。
+机器码结构（0x67FDE0-0x67FDEC，全程读完，关键锚点）：
+    mov eax,[ecx]（★this 首字段=接口指针）→ test eax → je
+    0x67FDEC（★空指针短路）→ mov ecx,[eax]（★对象虚表）→ push
+    eax → call [ecx+8]（★★虚表槽 8 Release）→ ret
+语义：**COM Release 包装器（推断名——13B「this 首字段非空则虚表
+槽 8 Release」）**——与 batch 1250 的 0x683060（空指针门控虚调用
+释放）完全同构（13B，同一惯用：空指针短路 + 虚表槽 8 Release）。
+★怪癖：①★空指针短路（无访问直接 ret）；②虚表槽 8（Release/
+Dispose 惯用槽位）；③与 0x683060 机器码同构（编译器重复展开推
+断——0x67FDE0 与 0x683060 相隔 0x31B4）。
+⚠️ partial：宿主类、接口身份、为何与 0x683060 双份存在（不同类
+各自内联展开推断）、2 unique caller。
+
+================================================================================
+0x67C430 —— 可选外部缓冲数组构造器·二（74B 全程读完）
+================================================================================
+签名：thiscall + 1 栈参 ret 8（ecx=this 存 esi、栈参 1=[esp+0x4]=
+容量、栈参 2=[esp+0xC]=外部缓冲指针；0x67C430-0x67C477）。
+机器码结构（0x67C430-0x67C477，全程读完，关键锚点）：
+    mov eax,[esp+4]（★参数 1=容量）→ mov [esi+4],edx（★数组指针
+    先 0）→ mov [esi+8],eax（★容量存 +8）→ mov byte[esi+0xC],1
+    （★持有/已分配标志=1）→ mov byte[esi+0xD],0（★第二标志=0）
+    → mov [esi],0x7F0D9C（★虚表 0x7F0D9C——新登记）→ test eax
+    → je 0x67C474（★容量 0 跳过分配）→ mov ecx,[esp+0xC]（★参
+    数 2=外部缓冲）→ test ecx → je 0x67C461（★空则自分配）→
+    mov [esi+4],ecx（★采用外部缓冲）→ mov eax,esi → ret 8
+    自分配 0x67C461：shl eax,2（★容量×4 字节）→ push eax → call
+    0x7C8E17（★★batch 001 operator new）→ mov [esi+4],eax（★装
+    分配指针）→ mov byte[esi+0xD],1（★已分配标志=1）→ 0x67C474:
+    mov eax,esi → ret 8
+语义：**可选外部缓冲数组构造器·二（推断名——74B「虚表 0x7F0D9C
+容器构造 + 外部缓冲直用或 new 自分配」）**——① +8=容量、+4=数组
+指针、+0xC=1、+0xD=0、虚表 0x7F0D9C；② 参数 2 外部缓冲非空直接
+采用（+4=外部指针）；③ 参数 2 空则 new 容量×4（0x7C8E17）+ 置
++0xD=1（已分配标志）；④ 容量 0 跳过分配。
+★怪癖：①★★与 batch 092 的 0x42FCB0 同族（可选外部缓冲数组构
+造器——虚表 0x7F0D9C vs 0x7E38D0、字段布局 +4/+8/+0xC/+0xD 全
+同、参数形态同——第二份展开）；②+0xD 标志区分外部/自分配
+（外部=0、new=1）；③容量 0 快路径（不 new）；④ret 8 两栈参。
+⚠️ partial：虚表 0x7F0D9C 类归属（DynamicVectorClass 变体推断）、
+宿主类身份（0x67xxxx 区——deps=127 低扇出）、2 unique caller。
+
+================================================================================
+跨批次连接（本批三连 = COM 接口装载 + COM Release + 容器构造器）
+================================================================================
+- **batch 092（0x42FCB0 可选外部缓冲数组构造器）**：0x67C430 同族第
+  二份（字段布局/参数形态/逻辑完全同型，虚表 0x7F0D9C vs 0x7E38D0
+  ——VectorClass 容器族再添实例）。
+- **batch 1250（0x683060 空指针门控虚调用释放）**：0x67FDE0 同构 13B
+  （空指针短路 + 虚表槽 8 Release——惯用展开第二份）。
+- **batch 001（0x7C8E17 operator new）**：0x67C430 自分配调用现场。
+- **batch 1459（0x680FF0 SavegameInformation 构造器）**：0x680F70 与
+  其同 0x681xxx 区（SavegameInformation 家族邻域——COM 流装载推
+  断）。
+- 新候选：虚表 0x7F0D9C（容器类归属）、IID 0x81FC50（接口身份）。
+
+注：本批三函数均 callees≤1、deps 中高（2276/127），为小型基础设施
+（COM 惯用 + 容器构造），无 RNG 消耗点、无 RMG 联动。
