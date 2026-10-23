@@ -1,0 +1,182 @@
+frontier batch 1384 — 0x438000 COM 接口转发器孪生 / 0x4349B0 索引查表字节读取器 / 0x432E40 图形状态更新器（2026-10-23）
+
+口径：承接 batch 1383 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x438000（47B，callees=1 deps=11——**batch
+1383 0x438030 的同构孪生**）、0x4349B0（60B，callees=0 deps=82）、
+0x432E40（479B，callees=14 deps=150 大函数）。
+取证手段：disasm.py 双参直反汇编全程读完（0x438000 0x50 尾 0x43802C /
+0x4349B0 0x50 尾 0x4349E9 / 0x432E40 0x200 尾 0x43301C，函数边界与
+functions.tsv 完全吻合）+ TSV 查重（三候选全部未登记）+ 跨批次对比
+（0x80004003 E_POINTER + 0x7DC720 ↔ batch 1383 0x45A050/0x438030 同族；
+虚表槽 0x1C ↔ batch 1383 0x438030 锚点；[0x7E15A0..0x7E15C0] IAT 族 ↔
+batch 既有 IAT 锚点）。
+
+================================================================================
+0x438000 —— COM 接口转发器孪生（47B 全程读完）
+================================================================================
+签名：thiscall（ecx=this，mov esi）+ 3 栈参，返回 eax=参数 1，ret 0xC
+（0x438000-0x43802C，callees=1 deps=11——**与 batch 1383 0x438030 同构
+孪生**）。
+机器码结构（0x438000-0x43802C，全程读完，与 0x438030 对比）：
+    入口：push esi; mov esi, ecx（this）
+    cmp [esi], 0; jne 0x438012（★+0 空检查）
+    push 0x80004003（★E_POINTER）; call 0x7DC720（★错误处理）
+    0x438012：mov edx, [esp+0x10]（★参数 3）; mov eax, [esi]
+    mov esi, [esp+0xC]（★参数 1——覆盖 this）; push edx
+    mov edx, [esp+0xC]; mov ecx, [eax]; push edx; push esi; push eax
+    call [ecx+0x18]（★虚表槽 0x18——**0x438030 用槽 0x1C，唯一差异**）
+    mov eax, esi（★返回参数 1）; pop esi; ret 0xC
+语义：**COM 接口转发器孪生**（0x4380xx 区——0x4380xx 接口/转发域，
+callees=1 deps=11）：**与 0x438030 逐字节同构**——thiscall + 3 栈参：
+**+0 空 → 0x80004003（E_POINTER）错误处理**（0x7DC720）；否则**虚表槽
+0x18 转发调用**（+0 接口指针 + 参数 1/2/3）→ **返回参数 1**。
+★COM 接口转发器孪生（E_POINTER 检查 + 虚表槽 0x18 转发——0x438030
+槽 0x1C 的相邻副本）。2 unique caller（3 callsite）。
+★怪癖：①★**与 0x438030 逐字节同构仅虚表槽差**（0x18 vs 0x1C——
+Westwood 复制粘贴惯用，接口方法族）；②★**+0 空检查 → E_POINTER**
+（push 0x80004003 + 0x7DC720——batch 1383 同族三连）；③★**虚表槽
+0x18 转发**（三栈参 + +0 传递）+ **返回参数 1** + ret 0xC。
+⚠️ partial：接口类型（COM 派生）、虚表槽 0x18 被调身份、与 0x438030
+的宿主差异、0x7DC720 错误处理身份、2 unique caller 身份。
+
+================================================================================
+0x4349B0 —— 索引查表字节读取器（60B 全程读完）
+================================================================================
+签名：thiscall（ecx=this）+ 1 栈参（[esp+4]=索引），返回 eax=字节值，
+ret 4（0x4349B0-0x4349E9，callees=0 deps=82）。
+机器码结构（0x4349B0-0x4349E9，全程读完，关键锚点）：
+    入口：mov ecx, [ecx+4]（★this+4 对象指针）; test ecx
+    je 0x4349E7（★空 → 返 0）
+    mov edx, [esp+4]（★栈参——索引）; push esi
+    mov esi, [ecx+0x18]（★对象 +0x18 数组）; and edx, 0xFFFF
+    （★索引 & 0xFFFF——16 位掩码）; xor eax
+    mov ax, [esi+edx*2]（★数组 [索引] word 项）
+    pop esi; test eax; je 0x4349E7（★项空 → 返 0）
+    lea edx, [eax-1]（★项-1）; mov eax, [ecx+0x14]（★对象 +0x14 系数）
+    imul eax, edx（★(项-1)×系数）; add eax, [ecx+0x1C]
+    （★+ 对象 +0x1C 基址——自定义偏移计算）
+    je 0x4349E7（★结果 0 → 返 0）; xor ecx
+    mov cl, [eax]（★读字节）; mov eax, ecx; ret 4（★返回字节值）
+    0x4349E7：xor eax; ret 4（★返 0）
+语义：**索引查表字节读取器**（0x4349Bx 区——0x4349xx 表/查询域，
+callees=0 deps=82）：thiscall + 1 栈参（索引）：**this+4 对象 [+0x18]
+word 数组 [索引 & 0xFFFF] 项** → **(项-1) × [+0x14] 系数 + [+0x1C]
+基址**（自定义步进偏移）→ **读字节返回**。★索引查表字节读取器
+（word 查表 + imul 自定义偏移 + 多空检查——超压缩表查询）。
+2 unique caller（3 callsite）。
+★怪癖：①★**索引 & 0xFFFF**（16 位掩码——word 表索引）；②★**word
+数组查表**（mov ax,[esi+edx*2]——项为 word）；③★**(项-1) × [+0x14]
+系数 + [+0x1C] 基址**（自定义行步进——0 号哨兵语义项-1）；④★**多空
+检查**（+4 空 / 项空 / 结果 0 → 返 0——三层守卫）；⑤★callees=0 纯
+逻辑 + ret 4 单栈参。
+⚠️ partial：+4 对象身份、+0x14 系数/+0x1C 基址/+0x18 数组语义、
+表内容（压缩规则表？）、项-1 哨兵语义、2 unique caller 身份。
+
+================================================================================
+0x432E40 —— 图形状态更新器（479B 全程读完）
+================================================================================
+签名：thiscall（ecx=this，mov esi）+ 3 栈参，返回 al=bool，ret 0xC
+（0x432E40-0x43301C，callees=14 deps=150 大函数）。
+机器码结构（0x432E40-0x43301C，全程读完，关键锚点）：
+    入口：fld [0x89C490]; fcomp [0xA8EB9C]（★全局浮点比较）
+    sub esp, 0x10; push ebx; push esi; fnstsw ax; mov esi, ecx
+    test ah, 0x40（★浮点比较标志——cache 判定）; jne 0x432E80
+    0x432E5A：mov eax, [0xA8EB9C]; mov [0x89C490], eax
+    （★缓存更新）; fld [0x89C490]; fmul [0x7E3A70]（★×常量）
+    call 0x7C5F00（★_ftol）; mov ecx, [esi+4]; push eax; push ecx
+    call [0x7E15A0]（★IAT——图形 API 槽 1）
+    0x432E80：mov al, [0xA8ED80]（★全局字节）; test al
+    mov al, [esi+0x2C]（★+0x2C 状态字节）; jne 0x432EB6
+    cmp al, 1; jne 0x432F36
+    0x432E94：push 0x818B50（★日志串 A）; call 0x4068E0（★DebugLog）
+    mov edx, [esi+4]; mov byte [esi+0x2C], 0（★+0x2C=0）
+    push 1; push edx; call [0x7E15B0]（★IAT——状态设置槽 2）
+    jmp 0x432F36
+    0x432EB6：test al; jne 0x432F36
+    0x432EBA：push 0x818B3C（★日志串 B）; call 0x4068E0
+    mov eax, [esi+4]; mov byte [esi+0x2C], 1（★+0x2C=1）
+    push 0; push eax; call [0x7E15B0]
+    0x432ED7：mov eax, [esi+0xC]; mov ecx, [0x887308]（★全局）
+    cmp eax, ecx; jne 0x432F24
+    0x432EE4：mov edx, [0xB73550]（★全局对象）; lea ecx, [esp+8]
+    push ecx; push edx; call [0x7E14C4]（★IAT——槽 3）
+    mov ecx, [0xB73550]; lea eax, [esp+8]; push eax; push ecx
+    call [0x7E14B8]（★IAT——槽 4）
+    mov edx, [esi+0x14]; mov ebx, [esp+0xC]; mov eax, [esi+0x10]
+    mov ecx, [esi+0xC]; add edx, ebx; push 1; push edx
+    mov edx, [esp+0x10]; add eax, edx; push eax; push ecx
+    jmp 0x432F2F（★坐标四参 + 1 标志）
+    0x432F24：mov edx, [esi+0x14]; mov ecx, [esi+0x10]
+    push 1; push edx; push ecx; push eax（★另一坐标路径）
+    0x432F2F：mov ecx, esi; call 0x4331F0（★尾调——坐标更新）
+    0x432F36：mov al, [esi+0x2D]（★+0x2D 状态字节）; test
+    jne 0x432F58
+    mov edx, [esi+4]; push edx; call [0x7E15C0]（★IAT——查询槽 5）
+    test eax; sete al; test al; jne 0x432F58
+    pop ×2; add esp, 0x10; ret 0xC（★提前返）
+    0x432F58：push ebp; push edi; mov edi, [esp+0x24]（★参数对象）
+    mov eax, [esi+4]; push eax; call [0x7E15BC]（★IAT——槽 6）
+    mov ecx, [esi+0x20]; xor bl; test ecx
+    mov byte [esi+0x2D], 0; je 0x432F93
+    mov edx, [esi+4]; mov eax, [edx+0xC]; imul eax, [esi+0x24]
+    （★[+0xC]×[+0x24] 乘积）; push eax; call 0x6C9C60（★判定）
+    mov bl, al; test bl; je 0x432F93
+    push edi; mov ecx, esi; call 0x433330（★尾调）
+    0x432F93：mov edx, [edi]; xor eax; push eax; push eax
+    mov ecx, edi; call [edx+0x5C]（★虚表槽 0x5C——参数对象）
+    test eax; mov [esp+0x24], eax; je 0x432FE9
+    mov eax, [edi]; mov ecx, edi; call [eax+0x74]（★虚表槽 0x74）
+    mov edx, [edi]; mov ecx, edi; mov ebp, eax
+    call [edx+0x80]（★虚表槽 0x80）
+    mov ecx, [esi+8]; test bl; je 0x432FC6
+    or ecx, 0x80000000（★bl 标志 → 高位置位）
+    0x432FC6：mov edx, [esp+0x28]; push ecx; mov ecx, [esp+0x30]
+    push ecx; mov ecx, [esi+4]; push edx; push eax
+    mov eax, [esp+0x34]; push ebp; push eax; push ecx
+    call [0x7E15B8]（★IAT——7 参大调用槽 7）
+    mov edx, [edi]; mov ecx, edi; call [edx+0x60]（★虚表槽 0x60）
+    0x432FE9：push edi; mov ecx, esi; call 0x433270（★尾调）
+    mov eax, [esi+4]; push eax; mov ecx, [eax+0xC]
+    mov [esi+0x30], ecx（★+0x30 = 对象 [+0xC]）; call [0x7E15B4]
+    （★IAT——槽 8）
+    mov edx, [esi+4]; push edx; call [0x7E15C0]（★IAT——槽 5 再询）
+    test eax; je 0x432F5E（★循环——重检测）
+    pop ×4; mov al, 1（★成功返 1）; add esp, 0x10; ret 0xC
+语义：**图形状态更新器**（0x432E4x 区——0x432Exx 图形/渲染域，
+callees=14 deps=150 大函数）：thiscall + 3 栈参：**全局浮点缓存**
+（[0x89C490] vs [0xA8EB9C] 比较 → 更新 → ×[0x7E3A70] → _ftol →
+[0x7E15A0] IAT）；**+0x2C 状态机**（DebugLog 0x818B50/0x818B3C +
+[0x7E15B0] IAT 置位）；**[0x887308]/[0xB73550] 全局分支**（[0x7E14C4]/
+[0x7E14B8] IAT + 坐标四参）；**+0x2D 门控**（[0x7E15C0] 查询 →
+提前返）；**+0x20/[+0xC]×[+0x24] → 0x6C9C60 判定 → 0x433330**；
+**参数对象虚表槽 0x5C/0x74/0x80/0x60** → **[0x7E15B8] 7 参大调用**
+（bl → |0x80000000 标志）；0x433270 尾调 + [+0xC] → +0x30 →
+[0x7E15B4] + [0x7E15C0] 循环查询 → 返 1。★图形状态更新器（0x432Exx
+区——[0x7E15A0..0x7E15C0] IAT 族 8 槽 + 状态机 + 虚表槽调用 +
+全局缓存）。2 unique caller（3 callsite）。
+★怪癖：①★**[0x7E15A0..0x7E15C0] IAT 族**（8 个相邻槽——图形 API
+族，batch 既有 IAT 锚点）；②★**全局浮点缓存**（[0x89C490] vs
+[0xA8EB9C] fcomp + fnstsw test ah,0x40——缓存失效判定 + ×[0x7E3A70]
+→ _ftol）；③★**+0x2C/+0x2D 状态机**（DebugLog 0x818B50/0x818B3C
+双串 + IAT 置位/查询——双字节状态）；④★**参数对象虚表槽族**
+（0x5C/0x74/0x80/0x60——四槽调用链）；⑤★**bl → |0x80000000**
+（判定结果高位置位——标志打包）；⑥★**[0x887308]/[0xB73550] 全局** +
+三尾调（0x4331F0/0x433270/0x433330）+ **循环重检测**（0x432F5E）。
+⚠️ partial：对象身份（SD 图形类？）、[0x7E15A0..0x7E15C0] IAT 函数
+身份、0x818B50/0x818B3C 串内容、+0x2C/+0x2D 状态语义、[0x887308]/
+[0xB73550] 全局、0x6C9C60/0x4331F0/0x433270/0x433330 身份、虚表槽
+0x5C/0x74/0x80/0x60 语义、2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1383（0x438030 COM 接口转发器）：0x438000 是**逐字节同构孪生
+  仅虚表槽差**（0x18 vs 0x1C）——COM 转发家族持续闭合。
+- batch 1383（0x45A050/0x438030 E_POINTER 检查）：0x438000 同族
+  ——0x80004003 + 0x7DC720 三连兑现。
+- batch 既有 IAT 锚点（[0x7E15xx] 族）：0x432E40 用 8 相邻槽——
+  IAT 家族再验证。
+- batch 既有 _ftol 锚点（0x7C5F00）：0x432E40 使用（chop 语义）——
+  数学家族再验证。
+- batch 既有浮点比较惯用（fnstsw ax + test ah,0x40/0x41）：0x432E40
+  缓存判定 + 0x43EF90（batch 1383）规则比较——同惯用族。
