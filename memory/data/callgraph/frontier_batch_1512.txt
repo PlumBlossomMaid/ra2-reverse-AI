@@ -1,0 +1,135 @@
+frontier batch 1512 — 0x5CAFC0 计时校准循环器 / 0x5CAF70 双值读取器 / 0x5C9720 会话初始化器（2026-10-24）
+
+口径：承接 batch 1511 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x5CAFC0（450B，callees=2 deps=283——
+**计时校准循环器**，推断名）、0x5CAF70（49B，callees=1 deps=9——
+**双值读取器**，推断名）、0x5C9720（141B，callees=5 deps=3485——
+**会话初始化器**，推断名）。
+取证手段：disasm.py 双参直反汇编三路全程读完（0x5CAFC0 0x1C2 全量尾
+0x5CB181 ret / 0x5CAF70 0x31 全量尾 0x5CAFA0 ret / 0x5C9720 0x8D 全量
+尾 0x5C97AC ret——三文件 38/10/15 行全读）+ TSV 查重（三候选全部未登记）
++ callee 登记核验（grep TSV：2 callee 已登记——0x4F4780 batch 130（全
+局门铃回调）、0x60D380 batch 571（模态对话框主循环——★★点名 caller
+FUN_005c9720 正是本批 0x5C9720，跨批兑现）；[0x7E11D8]/[0x7E11D4] 导入
+槽（0x7E1xxx IAT 槽区——batch 365/399 同机制）；**3 个新候选留池：
+0x72D730/0x72EAD0/0x72D780（0x5C9720 的调用——0x72xxxx 区 helper 族，
+batch 168 的 0x72E820 同区）**）。
+
+================================================================================
+0x5CAFC0 —— 计时校准循环器（450B 全程读完）
+================================================================================
+签名：cdecl 无栈参 ret（ebp 帧；0x5CAFC0-0x5CB181）。
+机器码结构（0x5CAFC0-0x5CB181，全程读完，关键锚点）：
+    段1 前置：push ebp → mov ebp,esp → sub esp,0x34 → push ebx/esi →
+    lea eax,[ebp-0x34] → xor esi → push eax → xor ebx → mov [ebp-4],esi
+    ×3 → call [0x7E11D8]（★导入槽 A——时间/计数器函数）→ test eax →
+    jne 0x5CAFE9 → 收尾 ret（★★失败直接返回，无返回值）
+    段2 忙等一：push edi → 循环 0x5CAFEF：mov edi,[ebp-4] → lea ecx,
+    [ebp-0x2C] → inc edi → mov esi,[0x7E11D4]（★导入槽 B）→ push ecx →
+    mov [ebp-4],edi → mov [ebp-8],ebx → call esi → 读 [ebp-0x2C]/
+    [ebp-0x28] → mov cl,0 → cmp cl,0x32 → 循环 0x5CB01B：lea edx →
+    push edx → call esi → 读 [ebp-0x24]/[ebp-0x2C] → sub → cmp 0x32
+    （50）→ jb 循环（★★忙等直到差值 >= 0x32=50）
+    段3 rdtsc + 忙等二：0x5CB02E: rdtsc（★★读 CPU 周期计数）→ mov
+    [ebp-0x1C],eax → 循环：xor eax → cmp 0x3E8 → 循环 0x5CB048：lea
+    ecx → push ecx → call esi → sub → cmp 0x3E8（1000）→ jb 循环（★★
+    忙等直到差值 >= 0x3E8=1000）→ 0x5CB05E: rdtsc → mov [ebp-0x18],eax
+    段4 算术统计：lea eax,[eax+eax*4] ×6 + shl 5（★★×32 倍增链——
+    换算）→ lea ecx,[ecx+ecx*4] ×5 + shl 5 → mov eax,0xCCCCCCCD → mul
+    → shr ebx,3（★×10^9 除）→ div → 多轮 div + 舍入（shr 1 + jbe +
+    inc——★★round-half-away）→ 累加 [ebp-0x10]/[ebp-0xC]
+    段5 收敛判定：mov eax,[ebp-4]（循环次数）→ cmp 3 → jl 0x5CAFEC（
+    循环）→ cmp 0x14 → jge 0x5CB13D（★≥20 退出）→ lea eax,[ebx+ebx*2]
+    → sub ecx → cdq → xor → sub（★★ abs 值）→ cmp 3 → jg 0x5CAFEC（
+    ★偏差 > 3 继续）→ 三组同理 → 0x5CB13D 收尾：lea esi+esi*4 + shl 1
+    → div → 舍入修正 → ret
+语义：**计时校准循环器（推断名——450B「双导入槽忙等 + rdtsc + 除法统
+计」）**——① [0x7E11D8] 前置（失败直接返回）；② 循环内 [0x7E11D4]
+忙等 50/1000 区间 → rdtsc 记周期 → 统计累加；③ lea×32 倍增链 + div +
+round-half-away 舍入换算；④ [ebp-4] 次数 3..20 循环 + 三组偏差 > 3
+继续——校准/测量（CPU 周期 → 时间换算推断）。
+★怪癖：①★★[0x7E11D8]/[0x7E11D4] 双导入槽忙等（0x7E1xxx IAT 槽区）
+；②★★rdtsc 双读（忙等前后各一次——周期差）；③★★lea+lea*4 ×6 +
+shl 5 = ×32（编译器展开倍增链——乘法优化）；④★★0xCCCCCCCD mul +
+shr 3（除 10 惯用法——数值换算）；⑤★★round-half-away 舍入（shr 1 +
+jbe + inc——QE 三处；QWEN.md 阶段 9 §2.5 同款）；⑥★★0x32=50/0x3E8=
+1000 双阈值忙等；⑦★★[ebp-4] 次数 3..20 + 偏差 > 3 收敛循环。
+⚠️ partial：宿主类/调用方（计时校准用途推断）、[0x7E11D8]/[0x7E11D4]
+精确 API、rdtsc 换算公式、2 unique caller。
+
+================================================================================
+0x5CAF70 —— 双值读取器（49B 全程读完）
+================================================================================
+签名：thiscall + 2 栈参 ret（ecx=this=[esi]、[esp+4]/[esp+8]=输出；
+0x5CAF70-0x5CAFA0）。
+机器码结构（0x5CAF70-0x5CAFA0，全程读完，关键锚点）：
+    段1 读取：sub esp,8 → lea eax,[esp] → push esi → mov esi,ecx →
+    push eax → call [0x7E11D8]（★★导入槽 A——同 0x5CAFC0 的前置导入
+    槽）→ test eax → je 0x5CAF94 → mov ecx,[esp+8] → mov eax,[esp+4]
+    → mov [esi],ecx（★[esi]=[esp+8]）→ ret
+    段2 失败：mov [esi],0 → xor eax → ret（★失败 [esi]=0）
+语义：**双值读取器（推断名——49B「导入槽取单值」）**——[0x7E11D8]
+成功则 [esi]=[esp+8]（第二栈参值）；失败则 [esi]=0 并返 0——单值读
+取包装。
+★怪癖：①★★[0x7E11D8] 导入槽（与 0x5CAFC0 同槽——计时/计数读取）；
+②★★失败置 0（无错误码——0 哨兵）；③★★[esi]=[esp+8]（第二栈参而
+非第一——cdecl/thiscall 混合参数布局）。
+⚠️ partial：宿主类、[0x7E11D8] 精确 API、两栈参布局语义、2 unique
+caller。
+
+================================================================================
+0x5C9720 —— 会话初始化器（141B 全程读完）
+================================================================================
+签名：thiscall 无栈参 ret（0x5C9720-0x5C97AC）。
+机器码结构（0x5C9720-0x5C97AC，全程读完，关键锚点）：
+    段1 前置：sub esp,0x10 → mov eax,[0xA8B230]（★★Randomizer 宿主——
+    batch 297 0x69B760 的 [0xA8B230]+0x218 内嵌 Randomizer 同全局）→
+    mov ecx,[eax+0x34B8]（★+0x34B8 字段——内嵌对象）→ call 0x72D730
+    （★★未登记新候选）
+    段2 状态保存：mov ecx,[0x8A00A4] → mov edx,[0x8A00A8] → mov
+    [esp+8],ecx → mov [esp+0xC],edx（★★[0x8A00A4]/[0x8A00A8] 全局保存
+    ——batch 1508 0x5D1E70 的 [0x8A00A0] 同区）
+    段3 全局对象双调：mov ecx,[0x88730C]（★★全局对象——batch 168
+    0x52FEC0 的 this==0 兜底同全局）→ lea edx,[esp] → mov [esp],0 →
+    mov [esp+4],0 → call 0x72EAD0（★★未登记新候选）→ mov edx,
+    [0x88730C] → push 0 → mov cl,1 → call 0x4F4780（★★batch 130 全局
+    门铃回调——cl=1 参数）→ push 0 → mov edx,0x5C9B10（★回调指针）→
+    mov ecx,0x108 → call 0x60D380（★★batch 571 模态对话框主循环——
+    **点名 caller 兑现**，BeginDialog→消息泵→MainLoop→EndDialog 模板）
+    → mov ecx,[0x88730C] → lea edx,[esp] → call 0x72EAD0（★再调）→
+    mov edx,[0x88730C] → push 0 → mov cl,1 → call 0x4F4780（★再调）→
+    call 0x72D780（★★未登记新候选——0x72D730 邻）→ ret
+语义：**会话初始化器（推断名——141B「[0x88730C] 全局对象双调 + 门铃
+回调 + 模态对话框」）**——① [0xA8B230]+0x34B8 内嵌对象 → 0x72D730
+（新候选）；② [0x8A00A4]/[0x8A00A8] 全局保存；③ [0x88730C] 全局对象
+→ 0x72EAD0 ×2（新候选）+ 0x4F4780 ×2（batch 130，cl=1）；④ 0x60D380
+（batch 571 模态对话框主循环）注册回调 0x5C9B10（0x108 参数）；⑤
+0x72D780（新候选）收尾。
+★怪癖：①★★[0x88730C] 全局对象双调用（0x72EAD0 + 0x4F4780 各两次
+——前后状态同步）；②★★0x60D380 模态对话框主循环（batch 571 点名
+caller 兑现——0x108=264 消息/对话框 ID 参数 + 回调 0x5C9B10）；③★★
+[0xA8B230]+0x34B8（Randomizer 宿主全局的 0x34B8 偏移——内嵌对象）；
+④★★[0x8A00A4]/[0x8A00A8] 全局保存（batch 1508 [0x8A00A0] 同区）；
+⑤★★0x72D730/0x72EAD0/0x72D780（新候选三连——0x72xxxx 区 helper 族）。
+⚠️ partial：宿主类（0x5C97xx 区——会话族推断）、0x72D730/0x72EAD0/
+0x72D780（新候选）、[0xA8B230]+0x34B8 字段、[0x8A00A4] 族全局语义、
+0x5C9B10 回调身份、2 unique caller。
+
+================================================================================
+跨批次连接（2 callee 已登记 + 1 点名兑现 + 3 新候选）
+================================================================================
+- **batch 571 点名兑现（0x60D380 模态对话框主循环）**：batch 571 登记行
+  明确写「unique_callers FUN_0052d9a0（选关）/FUN_005c9720/FUN_006c8e80
+  ——均未登记」与「⚠️ partial：... FUN_005c9720/FUN_006c8e80（调用者
+  新候选）」——本批 0x5C9720 正是点名未登记调用者，BeginDialog→消息
+  泵→MainLoop→EndDialog 模板应用点兑现。
+- **batch 130（0x4F4780 全局门铃回调）**：0x5C9720 的双调用（cl=1）——
+  batch 107 0x532100 门铃目标的应用点。
+- **batch 297（[0xA8B230] Randomizer 宿主）+ batch 168（[0x88730C] 全局
+  对象）**：0x5C9720 的双全局锚点。
+- **[0x7E11D8]/[0x7E11D4] 导入槽（batch 365/399 IAT 槽区同机制）**：
+  0x5CAFC0/0x5CAF70 的忙等/读取槽——0x7E1xxx 同槽族。
+- **round-half-away 舍入（QWEN.md 阶段 9 §2.5 / docs/random-map）**：
+  0x5CAFC0 的三处 shr 1 + jbe + inc——原版惯用法在计时换算的应用。
+- 新候选：0x72D730/0x72EAD0/0x72D780（0x72xxxx 区 helper 族——batch
+  168 的 0x72E820 同区，留池后续）。
