@@ -1,0 +1,143 @@
+frontier batch 1421 — 0x74E880 全局指针释放器 / 0x74E6B0 VeinholeMonsterClass::RecalculateSpread / 0x74CD60 表项反向查找器（2026-10-23）
+
+口径：承接 batch 1420 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x74E880（29B，callees=1 deps=49——
+**全局指针释放器**）、0x74E6B0（451B，callees=6 deps=1887——
+**VeinholeMonsterClass::RecalculateSpread**，ranking 带符号——
+藤蔓怪物扩散重算）、0x74CD60（72B，callees=0 deps=1888——
+**表项反向查找器**）。
+取证手段：disasm.py 双参直反汇编全程读完（0x74E880 0x1D 尾 0x74E89C /
+0x74E6B0 0x1C3 尾 0x74E872 / 0x74CD60 0x48 尾 0x74CDA7，函数边界与
+functions.tsv 完全吻合）+ TSV 查重（三候选全部未登记）+ callee
+登记核验（grep TSV：0x578350 CellIterator_Reset、0x578290
+CellIterator_Next、0x42B1C0 坐标→菱形线性换算、0x42B1F0 地图尺寸
+getter、0x4CAC40 MSVC6 sqrt、0x7C8B3D delete——全部已登记；
+[0x87F7E8] = MapClass::Instance（QWEN.md 实锤））。
+
+================================================================================
+0x74E880 —— 全局指针释放器（29B 全程读完）
+================================================================================
+签名：thiscall 无栈参返 void（0x74E880-0x74E89C）。
+机器码结构（0x74E880-0x74E89C，全程读完）：
+    mov eax,[0xB1D2F0]（★全局指针）→ test eax,eax → je 0x74E89C
+    （★空 → 直接返）→ push eax → call 0x7C8B3D（★★batch 001
+    operator delete——释放）→ add esp,4 → mov [0xB1D2F0],0（★
+    清全局）→ ret
+语义：**全局指针释放器（推断名）**——[0xB1D2F0] 全局对象非空则
+delete 释放并清 0，空则直接返回。
+★怪癖：①判空门控 delete（非空才释放）；②释放后显式清 0（防
+悬垂）；③29B 极简基元（callees=1）。
+⚠️ partial：[0xB1D2F0] 全局对象身份、2 unique caller 身份。
+
+================================================================================
+0x74E6B0 —— VeinholeMonsterClass::RecalculateSpread（451B 全程读完）
+================================================================================
+签名：thiscall 无栈参返 void（ecx=this 存 esi；0x74E6B0-0x74E872）。
+机器码结构（0x74E6B0-0x74E872，全程读完，关键锚点）：
+    数组清零段 0x74E6C1：xor edi,edi → mov eax,[esi+0xB0]（★
+    +0xB0 堆/数组对象）→ mov [esi+0xAC],edi（★+0xAC 计数=0）→
+    xor ecx,ecx → cmp [eax],edi → jl 0x74E6E1（★计数<0 → 跳过）
+    → 循环 0x74E6D3：mov edx,[eax+8] → inc ecx → mov
+    [edx+ecx*4-4],edi（★数组项清零）→ mov edx,[eax] → cmp
+    ecx,edx → jle 循环 → mov [eax],edi（★计数=0）
+    遍历初始化 0x74E6E3：mov ecx,0x87F7E8（★★MapClass::Instance
+    ——QWEN.md 实锤）→ mov [esi+0x104],edi（★+0x104 计数=0）→
+    call 0x578350（★★CellIterator_Reset——格子迭代器重置）
+    主循环 0x74E6F3：call 0x578290（★★CellIterator_Next——前进）
+    → mov ebx,eax → test → je 0x74E86B（★遍历完 → 收尾）→
+    cmp [ebx+0x44],0x7E（★格子类型判定 0x7E）→ jne 0x74E857 →
+    cmp byte [ebx+0x11E],0x30（★+0x11E 高度/类型 >= 0x30）→ jb
+    0x74E857 → lea edi,[ebx+0x24]（★格子坐标结构）→ mov ecx,edi
+    → call 0x42B1C0（★★坐标→菱形线性换算——格子线性索引）→
+    mov ebp,eax → test ebp,ebp → jl 0x74E857 → call 0x42B1F0（★
+    地图尺寸 getter——总尺寸）→ cmp ebp,eax → jge 0x74E857（★
+    越界 → 跳过）→ mov eax,[esi+0xC4]（★+0xC4 字节地图）→ cmp
+    byte [eax+ebp],0 → je 0x74E857（★未置位 → 跳过）→ mov ecx,
+    [0x8871E0]（★全局对象）→ cmp [esi+0xAC],[ecx+0xDC] → jge
+    0x74E857（★计数达上限 → 跳过）
+    条目写入 0x74E767：mov edx,[esi+0xB4]（★+0xB4 8B/条目数组）→
+    mov ecx,[edi]（★格子 X）→ mov [edx+eax*8],ecx（★写 X）→
+    距离计算：movsx ebp,word[esi+0xFA]；movsx ecx,word[ebx+0x26]；
+    movsx edx,word[esi+0xF8]；movsx eax,word[edi]（★四坐标）→
+    sub ecx,ebp → sub eax,edx（★差值）→ fild 两差值 → fld st(0)
+    fmul st(1) + fld st(2) fmul st(3) → faddp（★平方和）→
+    fstp qword [esp] → call 0x4CAC40（★★MSVC6 sqrt——距离）→
+    call 0x7C5F00（★_ftol）→ mov ecx,[esi+0xB4] → mov edx,0x3E8
+    （★★1000）→ sub edx,eax（★1000-距离）→ mov eax,[esi+0xAC]
+    → fild → fstp dword [ecx+eax*8+4]（★条目 +4 = 距离浮点）
+    计数推进 0x74E7DB：mov eax,[esi+0xAC] → mov edx,[esi+0xB4] →
+    mov edi,[esi+0xB0]（★堆对象）→ lea ebp,[edx+eax*8]（★新
+    条目指针）→ inc eax → mov [esi+0xAC],eax（★计数++）
+    最小堆插入 0x74E7F7：mov ecx,[edi]（★堆计数）→ mov eax,
+    [ebp+4]（★条目距离）→ inc ecx → mov edx,ecx → shr edx,1
+    （★父节点）→ cmp ecx,[edi+4] → jae 0x74E851（★容量满）→
+    上滤循环 0x74E80C：cmp ecx,1 → jbe 0x74E834 → mov ebx,
+    [edi+8]（★堆数组）→ mov eax,[ebx+edx*4] → fld [eax+4] →
+    fcomp [esp+0x14] → fnstsw ax → test ah,0x41 → jne 0x74E834
+    （★父距离 >= 新距离 → 停）→ mov eax,[ebx+edx*4] → mov
+    [ebx+ecx*4],eax（★父下移）→ mov ecx,edx → shr edx,1 →
+    cmp ecx,1 → ja 循环 → 0x74E834: mov edx,[edi+8] → mov
+    [edx+ecx*4],ebp（★写新条目）→ mov ecx,[edi] → inc → cmp
+    ebp,[edi+0xC] → jbe 0x74E849 → mov [edi+0xC],ebp（★max 更新）
+    → cmp ebp,[edi+0x10] → jae 0x74E851 → mov [edi+0x10],ebp
+    （★min 更新）→ inc [esi+0x104]
+    循环 0x74E857：mov ecx,0x87F7E8 → call 0x578290（★Next）→
+    mov ebx,eax → test → jne 主循环 → 收尾 ret
+语义：**VeinholeMonsterClass::RecalculateSpread（藤蔓怪物扩散
+重算——带符号确认）**——① 清零 +0xB0 堆对象与 +0xAC 计数；②
+MapClass::Instance（[0x87F7E8]）CellIterator 全图遍历；③ 筛选
+格子（+0x44==0x7E、+0x11E>=0x30、0x42B1C0 线性索引 + 0x42B1F0
+尺寸界内、+0xC4 字节图置位、[0x8871E0]+0xDC 上限）；④ 计算
+格子与基准（+0xF8/+0xFA）的欧氏距离（fild 差值平方和 + 0x4CAC40
+sqrt + _ftol）→ 1000-距离 浮点；⑤ 8B/条目（X + 距离）写 +0xB4
+数组、+0xAC 计数++；⑥ +0xB0 堆最小堆上滤插入（父距离比较 +
+max/min 边界维护）；⑦ +0x104 计数++ 直到遍历完。
+★怪癖：①★★全图 CellIterator 遍历（MapClass::Instance——
+生产地图遍历惯用）；②+0x44==0x7E + +0x11E>=0x30 双重类型筛
+选（藤蔓格判定）；③距离=1000-sqrt（1000 上限刻度——评分/排序
+推断）；④最小堆上滤（shr 1 父节点——标准二叉堆）；⑤8B/条目
+（X int + 距离 float 混合）；⑥+0xC4 字节图门控（已占用格
+判定）；⑦[0x8871E0]+0xDC 数量上限。
+⚠️ partial：+0xB0 堆对象精确语义（TopN 排序推断）、+0xC4 字节
+图身份、[0x8871E0]+0xDC 上限语义、0x3E8=1000 刻度含义、2 unique
+caller 身份。
+
+================================================================================
+0x74CD60 —— 表项反向查找器（72B 全程读完）
+================================================================================
+签名：thiscall + 1 栈参 ret 4（ecx=参数（word 对：+0/+2）返 eax；
+0x74CD60-0x74CDA7）。
+机器码结构（0x74CD60-0x74CDA7，全程读完，关键锚点）：
+    mov eax,[0xB1D2A0]（★计数）→ push 三寄存器 → lea edx,
+    [eax-1]（★末索引）→ test edx,edx → jl 0x74CDA2（★空 → 返
+    0）→ mov ebx,[0xB1D294]（★数组基址）→ mov di,word[ecx]（★
+    参数 word 1）→ lea esi,[ebx+edx*4] → 循环 0x74CD7B：mov
+    eax,[esi]（★数组项指针）→ add eax,0xF8（★项+0xF8）→ cmp
+    word[eax],di → jne 0x74CD91（★+0xF8 != 参数 word 1 → 下移）
+    → mov ax,word[eax+2] → cmp ax,word[ecx+2] → je 0x74CD9B（★
+    +0xFA == 参数 word 2 → 命中）→ 0x74CD91: dec edx → sub
+    esi,4 → test edx,edx → jl 0x74CDA2（★到尾 → 返 0）→ jmp
+    循环 → 0x74CD9B: mov eax,[ebx+edx*4]（★返回命中项）→ ret →
+    0x74CDA2: xor eax,eax → ret（★未命中 0）
+语义：**表项反向查找器（推断名——word 双键逆查）**——[0xB1D2A0]
+计数驱动的 [0xB1D294] 指针数组从尾向前查找：项指针 +0xF8/+0xFA
+两 word 与参数 +0/+2 完全匹配则返回该数组项指针，否则返 0。
+★怪癖：①★★反向遍历（lea [eax-1] 起倒序——末项优先命中）；
+②双 word 键（+0xF8/+0xFA 与参数 +0/+2 全等判定）；③项指针
++0xF8 偏移（项对象内嵌键字段）；④未命中返 0（NULL 哨兵）。
+⚠️ partial：[0xB1D2A0]/[0xB1D294] 表宿主（全局表推断）、+0xF8/
++0xFA 键字段语义、2 unique caller 身份。
+
+================================================================================
+跨批次连接（本批三连 = Veinhole 全图遍历 + 全局表族）
+================================================================================
+- **0x578350/0x578290（CellIterator_Reset/Next）**：0x74E6B0 全图
+  遍历驱动（MapClass::Instance [0x87F7E8]——QWEN.md 实锤）。
+- **0x42B1C0（坐标→菱形线性换算）/ 0x42B1F0（地图尺寸 getter）**：
+  0x74E6B0 格子索引与尺寸界判定。
+- **0x4CAC40（MSVC6 sqrt）**：0x74E6B0 距离计算（batch 1413/
+  1416/1417 同款数学基元延续）。
+- **0x7C8B3D（operator delete）**：0x74E880 全局释放。
+- **batch 114/129（0x42B1F0/0x42B1C0 同族）**：MapRect 语义链。
+- 新候选：[0xB1D2F0]/[0xB1D2A0]/[0xB1D294] 全局宿主、0x74E6B0
+  的 +0xB0 堆对象身份、[0x8871E0]+0xDC 上限语义、+0xC4 字节图。
