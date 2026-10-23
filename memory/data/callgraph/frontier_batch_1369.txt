@@ -1,0 +1,149 @@
+frontier batch 1369 — 0x5CB790 16B 坐标比较器 / 0x5AE890 矩阵平移器 / 0x5AD790 索引删除器（2026-10-23）
+
+口径：承接 batch 1368 的剩余函数推进（ranking.tsv unique_callers 扇入序）。
+本批取 uc=2 三个未登记函数：0x5CB790（164B，callees=0 deps=629 纯叶）、
+0x5AE890（95B，callees=0 deps=15 纯叶——**带符号名 Matrix3D::Translate**）、
+0x5AD790（49B，callees=0 deps=2723 纯叶高解锁）。
+取证手段：disasm.py 双参直反汇编全程读完（0x5CB790 0xB0 尾 0x5CB831 / 
+0x5AE890 0x80 尾 0x5AE8EC（含相邻 0x5AE8F0 开头）/ 0x5AD790 0x60 尾
+0x5AD7BE，函数边界与 functions.tsv 完全吻合）+ TSV 查重（三候选全部
+未登记）+ 跨批次对比（batch 1368 0x5CB840/0x5CB860 同域 ↔ 本批
+0x5CB790 +0x1C 表上限钳位；batch 1362 0x63E900 索引删除器 ↔ 本批
+0x5AD790 同款；[0x88730C]/[0x887310] ↔ 全局宿主族；虚表槽 0x18
+双调用 ↔ batch 1362 0x63E900 同款虚表槽 0x10 计数）。
+
+================================================================================
+0x5CB790 —— 16B 坐标比较器（164B 全程读完）
+================================================================================
+签名：thiscall（ecx=this，mov esi）+ 1 栈参（[esp+0x28]=候选指针
+ecx），ret 4（0x5CB790-0x5CB831，callees=0 纯叶 deps=629 高解锁）。
+机器码结构（0x5CB790-0x5CB831，全程读完，关键锚点）：
+    入口：sub esp, 0x20; push esi; mov esi, ecx
+    首调（★虚表槽 0x18 取 16B 组）：
+    lea ecx, [esp+0x14]; mov eax, [esi]; push ecx; mov ecx, esi
+    call [eax+0x18]（★虚表槽 0x18）
+    mov edx, [eax]; mov [esp+4], edx; mov ecx, [eax+4]; mov [esp+8], ecx
+    mov ecx, [esp+0x28]（候选指针）
+    mov edx, [eax+8]; mov [esp+0xC], edx; mov eax, [eax+0xC]; mov [esp+0x10], eax
+    mov [esi+0x28], ecx（★+0x28 = 候选指针）
+    次调（★虚表槽 0x18 再取——取候选的 16B）：
+    lea eax, [esp+0x14]; push eax; mov ecx, esi
+    call [edx+0x18]（★虚表槽 0x18 二调）
+    0x5CB7D0（★16B 逐 dword 比较）：
+    mov ecx, [esp+4]; mov edx, [eax]; cmp ecx, edx; jne 0x5CB7FB（不匹配）
+    mov edx, [esp+8]; mov ecx, [eax+4]; cmp edx, ecx; jne 0x5CB7FB
+    mov ecx, [esp+0xC]; mov edx, [eax+8]; cmp ecx, edx; jne 0x5CB7FB
+    mov edx, [esp+0x10]; mov ecx, [eax+0xC]; cmp edx, ecx
+    je 0x5CB81B（★16B 全匹配 → 跳过上报）
+    0x5CB7FB（★不匹配上报）：mov ecx, [0x88730C]（★全局宿主）
+    push 1; lea edx, [esp+8]; push 0; mov eax, [ecx]
+    push edx; mov edx, [0x887310]（★全局宿主 2）; push edx
+    lea edx, [esp+0x14]; push edx
+    call [eax+8]（★虚表槽 0x8——[0x88730C] 宿主方法）
+    0x5CB81B（★尾钳位）：mov eax, [esi+0x1C]; mov ecx, [esi+0x28]
+    movsx eax, word [eax+6]; cmp ecx, eax; jb 0x5CB82D
+    dec eax; mov [esi+0x28], eax（★+0x28 钳到上限-1——batch 1368
+    0x5CB840/0x5CB860 同款 [+0x1C] 表上限）
+    0x5CB82D：pop esi; add esp, 0x20; ret 4
+语义：**16B 坐标比较器**（0x5CB79x 区——0x5CBxxx 比较/坐标域，
+callees=0 纯叶 deps=629 高解锁）：thiscall + 候选指针栈参：**虚表槽
+0x18 双调用**（首调取 this 16B 组、次调取候选 16B 组）→ **16B 逐
+dword 比较**（4 组 cmp/jne——全等才跳过）→ 不等时 **[0x88730C]/
+[0x887310] 全局宿主虚表槽 0x8 上报**（坐标变化通知）→ 尾段
+**+0x28 = 候选指针 + 表上限钳位**（[+0x1C] 表 [+6] word——batch
+1368 0x5CB840/0x5CB860 同域）。★16B 坐标比较器（0x5CB79x 区——
+虚表槽 0x18 双调 + 16B 逐 dword 比较 + [0x88730C]/[0x887310] 上报 +
+表上限钳位——batch 1368 0x5CB840/0x5CB860 同域第三件）。2 unique
+caller（3 callsite）。
+★怪癖：①★虚表槽 0x18 **双调用**（首调 this 16B、次调候选 16B——
+两次调用取两组 16B 比较）；②★16B 逐 dword 比较（4 组 cmp/jne——
+全等才 je 跳过）；③★不等 → [0x88730C]/[0x887310] **双全局宿主**
+虚表槽 0x8（push 1/0/两个栈参 + 16B 指针——坐标变化上报）；
+④★+0x28 = 候选指针（先写后钳）+ [+0x1C] 表上限钳位（movsx word
+[+6] + dec——与 batch 1368 0x5CB840/0x5CB860 同款钳位）；
+⑤★ret 4 单栈参 + callees=0 纯叶 + deps=629。
+⚠️ partial：16B 组语义（坐标+？）、[0x88730C]/[0x887310] 全局宿主
+身份（虚表槽 0x8 上报语义）、+0x1C/+0x28 字段语义、2 unique caller
+身份。
+
+================================================================================
+0x5AE890 —— 矩阵平移器（Matrix3D::Translate，95B 全程读完）
+================================================================================
+签名：thiscall（ecx=this 矩阵）+ 3 栈参（[esp+4]=x、[esp+8]=y、
+[esp+0xC]=z 浮点），ret 0xC（0x5AE890-0x5AE8EC，callees=0 纯叶
+deps=15——**functions.tsv 带符号名 Matrix3D::Translate**）。
+机器码（0x5AE890-0x5AE8EC，三行同构 ×3）：
+    入口：fld [esp+8]（y）; fmul [ecx+4]（★m[0][1]）
+    fld [esp+0xC]（z）; fmul [ecx+8]（★m[0][2]）
+    faddp st(1)
+    fld [esp+4]（x）; fmul [ecx]（★m[0][0]）
+    faddp st(1); fadd [ecx+0xC]（★平移列 m[0][3]）
+    fstp [ecx+0xC]（★写回 m[0][3]）
+    （第二行：fld x; fmul [ecx+0x10]; fld y; fmul [ecx+0x14]; faddp;
+    fld z; fmul [ecx+0x18]; faddp; fadd [ecx+0x1C]; fstp [ecx+0x1C]）
+    （第三行：fld x; fmul [ecx+0x20]; fld y; fmul [ecx+0x24]; faddp;
+    fld z; fmul [ecx+0x28]; faddp; fadd [ecx+0x2C]; fstp [ecx+0x2C]）
+    ret 0xC
+语义：**矩阵平移器**（Matrix3D::Translate，0x5AE89x 区——0x5AE8xx
+矩阵域，callees=0 纯叶 deps=15——带符号名）：thiscall 4×4 矩阵 +
+平移向量三栈参：**每行点积累加平移**（x×m[i][0] + y×m[i][1] +
+z×m[i][2] + 平移列 m[i][3] → 写回 m[i][3]）——三行同构 ×3。
+★矩阵平移器（Matrix3D::Translate——3 行 ×3 项点积 + 平移列累加
+写回）。2 unique caller（3 callsite）。
+★怪癖：①★三行同构 ×3（fld/fmul/faddp 点积 + fadd 平移列 +
+fstp 写回——每行 [ecx+0xC]/[0x1C]/[0x2C] 平移列）；②★栈参顺序
+y×[+4]+z×[+8] 先、x×[+0] 后（faddp 次序——x 最后加入）；
+③★4×4 矩阵布局（[0x00..0x0C] 行 0、[0x10..0x1C] 行 1、
+[0x20..0x2C] 行 2——平移列在各行末）；④★ret 0xC 三栈参 +
+callees=0 纯叶。
+⚠️ partial：矩阵维度（4×4？3×3+平移列？）、[ecx+0x30..0x3C] 行 3
+未更新（第 4 行不参与）、2 unique caller 身份。
+
+================================================================================
+0x5AD790 —— 索引删除器（49B 全程读完）
+================================================================================
+签名：thiscall（ecx=this 数组容器）+ 1 栈参（[esp+4]=删除索引 eax），
+返 al 0/1，ret 4（0x5AD790-0x5AD7BE，callees=0 纯叶 deps=2723 高解锁）。
+机器码（0x5AD790-0x5AD7BE）：
+    入口：mov edx, [ecx+0x10]（★计数）; mov eax, [esp+4]
+    cmp eax, edx; jge 0x5AD7BC（★越界 → 返 0）
+    dec edx; cmp eax, edx; mov [ecx+0x10], edx（计数−1）
+    jge 0x5AD7B7（删除末位 → 返 1）
+    0x5AD7A3（★前移压缩）：push esi
+    mov edx, [ecx+4]; inc eax
+    mov esi, [edx+eax*4]; mov [edx+eax*4-4], esi（★逐项左移一位）
+    mov edx, [ecx+0x10]; cmp eax, edx; jl 0x5AD7A4
+    pop esi
+    0x5AD7B7：mov al, 1; ret 4（★成功返 1）
+    0x5AD7BC：xor al, al; ret 4（★失败返 0）
+    （相邻 0x5AD7D0：增长器——计数==上限 判定 +0xD 标志门控分配）
+语义：**索引删除器**（0x5AD79x 区——0x5AD7xx 容器/删除域，
+callees=0 纯叶 deps=2723 高解锁）：thiscall 数组容器 + 删除索引栈参：
+计数 [ecx+0x10] 校验（≥ 计数 → 返 0 失败）→ **计数−1 + 前移压缩**
+（从索引+1 到末尾逐项左移一位——与 batch 1362 0x63E900 同款 erase
+语义）→ 成功返 1。★索引删除器（0x5AD79x 区——计数 [ecx+0x10] +
+前移压缩 + 计数−1——batch 1362 0x63E900 同款 VectorClass erase）。
+2 unique caller（3 callsite）。
+★怪癖：①★计数 [ecx+0x10] 校验（cmp/jge 越界 → 返 0——与 batch
+1362 0x63E900 的 [esi+0x10] 同款）；②★前移压缩（mov
+[edx+eax*4-4],[edx+eax*4] 逐项左移——手写循环不给 rep movsd）；
+③★删除末位直接返 1 免压缩（jge 0x5AD7B7）；④★相邻 0x5AD7D0
+增长器（计数==上限 判定 +0xD 标志——同容器族）+ ret 4 单栈参 +
+callees=0 纯叶 + deps=2723 高解锁。
+⚠️ partial：数组容器类型（+0x4 基址/+0x10 计数）、元素大小（4B？）、
+2 unique caller 身份。
+
+================================================================================
+跨批次连接
+================================================================================
+- batch 1368（0x5CB840/0x5CB860 上限钳位存储器）：0x5CB790 用
+  **同 [+0x1C] 表 [+6] word 上限钳位**（movsx + dec）——0x5CBxxx
+  域持续闭合（三件套：0x5CB790 比较器 + 0x5CB840/0x5CB860 钳位器）。
+- batch 1362（0x63E900 索引删除器）：0x5AD790 **同款 erase 语义**
+  （计数校验 + 前移压缩 + 计数−1）——索引删除家族再验证。
+- [0x88730C]/[0x887310] 全局宿主（虚表槽调用）：0x5CB790 双宿主
+  上报——全局对象族持续闭合（[0x887324] 族扩展）。
+- Matrix3D 数学家族（0x5AE890 带符号名）：batch 1300s 数学矩阵域
+  交叉连接——矩阵平移器登记。
+- 虚表槽 0x18 双调用惯用（batch 1362 0x63E900 虚表槽 0x10）：
+  0x5CB790 双调取 16B——虚表调用家族再验证。
