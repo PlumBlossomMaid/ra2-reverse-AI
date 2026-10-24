@@ -1,0 +1,175 @@
+frontier batch 1619 —— 0x6BB2E0 临时文件写入器 / 0x67BB10 逗号分隔串解析组装器 / 0x67A850 数组逐项导出器（2026-10-24）
+
+口径：承接 batch 1618 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+uc=1 callsite=6 top3）。本批取：0x6BB2E0（164B，callees=6 deps=11——
+**临时文件写入器**，推断名——临时路径 + 文件名拼接 + 创建 + 写入 + 关
+闭——全 IAT 调用）、0x67BB10（464B，callees=9 deps=237——**逗号分隔
+串解析组装器**，推断名——INI 读串 + 逐 token 解析 + 指针数组 + 双虚表
+阶段——★batch 819/473 点名调用者兑现）、0x67A850（75B，callees=0
+deps=10——**数组逐项导出器**，推断名——虚表槽 0x10 读写循环——全虚表
+调用）。
+取证手段：disasm.py 三路全读——0x6BB2E0 0xB0 覆盖尾 0x6BB381 ret 4 +
+后邻 0x6BB390（nop 填充——0x6BB2E0 是独立小函数）;0x67BB10 0x1D0 覆盖
+尾 0x67BCDD ret 0xC + 后邻 0x67BCE0;0x67A850 0x50 覆盖尾 0x67A898 ret
+4——均读到函数尾。+ TSV 查重（三候选全部未登记）+ callee 核验（全部被
+调已登记/归档——0x528A10（batch 002 INISection::ReadString）、0x5138F0
+（batch 819 VectorClass 带参构造器）、0x524CB0（batch 473 InfantryTypeClass
+按名工厂）、0x512BD0（batch 1546 VectorClass 拷贝赋值孪生二）、0x7C9CC2
+（0x7C CRT 归档判定）、0x7C8B3D/0x7C8E17（batch 001）——**本批无新候
+选**;IAT 槽 [0x7E1140]/[0x7E1160]/[0x7E1018]/[0x7E1014]/[0x7E1004]/
+[0x7EAC34]（WinAPI/虚表——不登记）。
+★★★跨批次重大兑现：★★◆0x67BB10 = batch 819（0x5138F0 VectorClass
+带参构造器）记载的调用点 3「FUN_0067BB10（0x67BB10-0x67BCDF body=464
+——batch 472/473 已见 RulesClass 读族/析构区;现场 0x67BB50 push ebx
+（param2=0）→ 0x67BB51 call 0x5138F0」——本次采样 0x67BB51 call
+0x5138F0 逐字节吻合——本批兑现;★★◆0x67BB10 = batch 473（0x524CB0
+InfantryTypeClass 按名工厂）记载的 unique_callers「FUN_0067bac0/
+FUN_0067bb10/RulesClass::Read_InfantryTypes」——0x524CB0 转换调用现场
+（0x67BB86 call 0x524CB0）逐字节吻合——本批兑现;★★◆0x67BB10 的虚表
+0x7EAC28/0x7EAC08 = batch 819 记载的 VectorClass 虚表（0x7EAC28 构造
+时装入）——双虚表阶段切换与 VectorClass 家族同域。
+
+================================================================================
+0x6BB2E0 —— 临时文件写入器（164B 全读）
+================================================================================
+签名：thiscall 一栈参 ret 4（ecx=this、[esp+4]=可选名字串 esi; 0x6BB2E0-
+0x6BB381，返回 al bool）。
+机器码结构（0x6BB2E0-0x6BB381，全程读完）:
+    段1 取临时路径（0x6BB2E0-0x6BB2F7）：sub esp,0x108 → lea eax,[esp+4]
+    （★路径缓冲）→ push 族 → push eax → xor bl,bl → call [0x7E1140]
+    （★IAT——GetTempPath 推断——WinAPI 临时路径）。
+    段2 拼名字串（0x6BB2F8-0x6BB317）：test esi → je 0x6BB318（★无名字
+    串跳过）→ mov edi,[0x7E1160]（★IAT——PathAppend 推断）→ lea ecx,
+    [esp+0x10] → push 0x815E74（★分隔串）→ call edi → push esi（★名字
+    串）→ call edi（★两次拼接——路径 + 分隔 + 名字）。
+    段3 创建文件（0x6BB318-0x6BB33C）：lea eax,[esp+8]（★最终路径）→
+    多参 push（0 / 0xF003F 权限组合 / 0x80000000 属性——CreateFileA 推
+    断）→ call [0x7E1018]（★IAT——CreateFile 推断）→ test eax → jne
+    0x6BB377（★失败/成功反跳）。
+    段4 写入（0x6BB340-0x6BB36A）：mov esi,[esp+0x114]（★名字串）→ test
+    → je 0x6BB36A → push esi → call [0x7E11AC]（★IAT——strlen 推断）→
+    inc eax（★+1 含 NUL）→ 多参 push（长度/源/1/0/0/目标）→ call
+    [0x7E1014]（★IAT——WriteFile 推断）→ test → jne 0x6BB36C → mov
+    bl,1（★成功标志）。
+    段5 关闭收尾（0x6BB36C-0x6BB381）：push 句柄 → call [0x7E1004]（★
+    IAT——CloseHandle 推断）→ mov al,bl → pop 族 → add esp,0x108 →
+    ret 4。
+语义：**临时文件写入器（推断名）**——① [0x7E1140] 取临时路径;② 可选
+名字串拼接（[0x7E1160] + 0x815E74 分隔——二次 PathAppend）;③ [0x7E1018]
+创建文件;④ [0x7E11AC] strlen + [0x7E1014] 写入名字串;⑤ [0x7E1004] 关
+闭;⑥ 返回 bool（写入成功/无串默认成功）。
+★原版怪癖（照抄）：① ★★全 IAT 调用（五个 WinAPI 槽——无 E8——工具
+函数）;② ★★临时路径 + 分隔串 + 名字双拼（0x815E74 分隔常量——路径
+组装）;③ ★★strlen+1 长度写入（含 NUL 的完整串）;④ ★★bl 成功标志
+（写失败才置 1——反逻辑——无串时默认成功）;⑤ ★★sub esp,0x108 大栈
+帧（路径缓冲 264B——MAX_PATH 推断）;⑥ ★★0xF003F 权限组合（文件共享/
+访问标志推断）。
+★跨批次连接：◆◆WinAPI IAT 家族（batch 001 锚点库——0x7E 区导入槽）。
+新候选：无（callees 全 IAT——WinAPI 不登记）。
+⚠️ partial：函数精确名（「临时文件写入器」推断）、五个 IAT 槽精确
+WinAPI、0x815E74 分隔串内容、写入业务（日志/临时数据推断）、1 unique
+caller 身份。
+
+================================================================================
+0x67BB10 —— 逗号分隔串解析组装器（464B 全读，◆batch 819/473 点名兑现）
+================================================================================
+签名：thiscall 多栈参 ret 0xC（ecx=this esi、edx=INI section、[esp+0xB0]=
+参 1、[esp+0xB4]=参 2 备用对象; 0x67BB10-0x67BCDD，返回 eax=this 组装
+完成）。
+机器码结构（0x67BB10-0x67BCDD，全程读完，分段要点）:
+    段1 INI 读串（0x67BB10-0x67BB43）：sub esp,0x9C → push 族 → mov
+    esi,ecx（★this）→ 读 [esp+0xB0]/[esp+0xB4] → push 0x80（★缓冲大小
+    ）→ push 0x889F64（★默认值——batch 1616 同款）→ push 参 1 → push
+    参 2 → mov ecx,edx → call 0x528A10（★★batch 002 INISection::
+    ReadString——INI 读串）→ test → je 0x67BC4E（★失败 → 从备用对象复
+    制）。
+    段2 token 解析循环（0x67BB49-0x67BBE4）：xor ebx → lea ecx,[esp+0xC]
+    （★栈解析对象）→ push 0×2 → call 0x5138F0（★★batch 819 VectorClass
+    带参构造器——容量 0 外部缓冲 0——this=[esp+0xC]——调用点逐字节吻
+    合 batch 819 记载）→ lea ecx,[esp+0x28] → [esp+0x20]=0xA → push
+    0x817F70（★分隔符串）→ call 0x7C9CC2（★CRT——token 分割——归档判
+    定）→ 循环 0x67BB80：cmp byte[eax],0 → je 0x67BBE6（★空 token 结束）
+    → mov ecx,eax → call 0x524CB0（★★batch 473 InfantryTypeClass 按名
+    工厂——token → 对象——unique_callers 含 FUN_0067bb10 本批兑现）→
+    mov edi,eax → test → je 0x67BBD4 → 计数校验（[esp+0x1C] vs
+    [esp+0x14]=0x7EAC08 常量）→ 条件写 [ecx+eax*4]=edi（★指针数组填
+    充——计数 ++）→ push 0x817F70 → push 0 → call 0x7C9CC2（★下一
+    token）→ cmp → jne 0x67BB80（★循环——逐逗号分隔项解析）。
+    段3 组装 this（0x67BBE6-0x67BC40）：lea edx,[esp+0xC] → push edx →
+    [esi+4]=0 → [esi+8]=0 → byte[esi+0xC]=1 → byte[esi+0xD]=0 → [esi]=
+    0x7EAC28（★★VectorClass 虚表——batch 819 记载 0x7EAC28）→ call
+    0x512BD0（★★batch 1546 VectorClass 拷贝赋值孪生二）→ [esi]=0x7EAC08
+    （★★虚表切换）→ [esp+0xC]=0x7EAC28 → [esi+0x10]=解析计数 →
+    [esi+0x14]=[esp+0x20] → 清解析缓冲（0x7C8B3D delete）→ mov eax,esi
+    → ret 0xC。
+    段4 备用复制（0x67BC4E-0x67BCDD）：mov edi,[esp+0xB4]（★备用对象）
+    → [esi+4]/[esi+8]=0 → byte[esi+0xC]=1 → [esi]=0x7EAC28 → call
+    [0x7EAC34]（★虚表槽——析构推断）→ [esi+8]=[edi+8]（★计数复制）→
+    new [eax*4]（0x7C8E17）→ 循环拷 [edi+4] 数组 → [esi+10]=[edi+10] →
+    [esi+14]=[edi+14] → [esi]=0x7EAC08 → ret 0xC。
+语义：**逗号分隔串解析组装器（推断名——batch 819/473 点名兑现）**——
+thiscall：① 0x528A10 读 INI 串（0x889F64 默认值）;② 0x5138F0 栈解析
+容器 + 0x7C9CC2 逐 token 循环（0x817F70 分隔符）+ 0x524CB0 按名工厂转
+换 → 指针数组填充（计数 [esp+0x1C]）;③ 组装 this（虚表 0x7EAC28 →
+0x512BD0 拷贝 → 0x7EAC08 切换——双阶段）;④ 失败 → 从备用对象深拷贝
+数组。
+★原版怪癖（照抄）：① ★★0x528A10 读串（batch 002——0x889F64 默认值
+——batch 1616 同款）;② ★★0x5138F0 栈容器构造（batch 819——容量 0
+外部 0——调用点 3 逐字节吻合）;③ ★★0x7C9CC2 逐 token（0x817F70 分隔
+符——逗号分隔列表解析——循环到空 token）;④ ★★0x524CB0 按名工厂
+（batch 473——token → InfantryTypeClass——unique_callers 本批兑现）;
+⑤ ★★双虚表阶段（0x7EAC28 构造 → 0x512BD0 拷贝赋值 → 0x7EAC08 完成
+——VectorClass 家族）;⑥ ★★计数校验双条件（[esp+0x1C] 与 0x7EAC08
+常量比较 + 字节门控——上限推断）;⑦ ★★失败深拷贝（[edi+8] 计数 + new
++ 循环拷贝 [edi+4] 数组——备用对象完整复制）;⑧ ★★[esi+0xC]=1 就绪标
+志（VectorClass IsInitialized——batch 819 布局）。
+★跨批次连接：◆◆◆batch 819（0x5138F0——点名调用者 FUN_0067BB10 兑现
+——现场 0x67BB51 逐字节吻合）◆◆◆batch 473（0x524CB0——点名
+unique_callers FUN_0067bb10 兑现——转换调用现场 0x67BB86）◆◆batch
+002（0x528A10——ReadString 锚点）◆◆batch 1546（0x512BD0——拷贝赋值
+孪生二）◆batch 1616（0x889F64 默认值同款）。
+新候选：无（callees=4 已登记 + CRT 归档）。
+⚠️ partial：函数精确名（「逗号分隔串解析组装器」推断——InfantryTypes
+解析推断）、0x817F70 分隔符内容、token 语义、双虚表阶段业务、备用对
+象身份、1 unique caller 身份。
+
+================================================================================
+0x67A850 —— 数组逐项导出器（75B 全读）
+================================================================================
+签名：thiscall 一栈参 ret 4（ecx=this ebx、[esp+4]=源对象 edi; 0x67A850-
+0x67A898，返回 void）。
+机器码结构（0x67A850-0x67A898，全程读完）:
+    段1 读计数（0x67A850-0x67A86F）：push 族 → mov edi,[esp+0x14]（★源
+    对象）→ mov ebx,ecx（★this）→ push 0 → mov ecx,[edi]（★源虚表）→
+    lea edx,[esp+0x10] → mov eax,[ebx+0x10]（★this+0x10 计数/偏移）→
+    push 4 → push edx → push edi → call [ecx+0x10]（★源虚表槽 0x10——
+    读长度——返回 eax）。
+    段2 逐项写（0x67A870-0x67A892）：mov eax,[esp+0xC]（★返回计数）→
+    xor esi → test → jle 0x67A894 → 循环：mov ecx,[ebx+4]（★this+4 数
+    组）→ mov eax,[edi]（★源虚表）→ push 0/4/[ecx+esi*4]/edi → call
+    [eax+0x10]（★★源虚表槽 0x10 逐项写——返回 4 字节）→ inc esi → 循
+    环。
+    段3 收尾（0x67A894-0x67A898）：pop 族 → ret 4。
+语义：**数组逐项导出器（推断名）**——thiscall：① 源虚表槽 0x10 读长
+度（push 0 + 出参 [esp+0x10] + push 4——查询语义推断）;② this+4 数组
+逐项通过源虚表槽 0x10 写回源对象（每项 push 0/4/[项]/源——读写 4 字节
+项）;③ 计数驱动循环。
+★原版怪癖（照抄）：① ★★全虚表调用（无 E8——源对象方法导出器）;
+② ★★虚表槽 0x10 双用（先读长度后逐项写——同一槽位双向语义推断）;
+③ ★★push 0 + push 4 参数对（查询/写入参数——0=索引偏移 4=字节数推
+断）;④ ★★this+0x10 作 [esp+0x1C] 预存（构造期计数推断——与 0x67BB10
+的 +0x10 字段同宿主）;⑤ ★★ret 4（单栈参——源对象指针）。
+★跨批次连接：◆◆batch 819（+0x10 字段——VectorClass 布局同域——
+this+0x10 计数推断）◆◆batch 1619 同批（0x67BB10——同 0x67xxx 区——
+RulesClass 读族同域）。
+新候选：无（callees=0——全虚表）。
+⚠️ partial：函数精确名（「数组逐项导出器」推断）、源对象类、虚表槽
+0x10 方法、push 0/4 参数语义、1 unique caller 身份。
+
+================================================================================
+本批新候选登记（后续批兑现）
+================================================================================
+无（callees 全部已登记/归档——0x528A10 batch 002、0x5138F0 batch 819、
+0x524CB0 batch 473、0x512BD0 batch 1546、0x7C9CC2 CRT 归档）。IAT 槽
+[0x7E1140]/[0x7E1160]/[0x7E1018]/[0x7E1014]/[0x7E1004]/[0x7E11AC]
+（WinAPI 家族——0x6BB2E0 全 IAT 调用）不登记。
