@@ -1,0 +1,135 @@
+frontier batch 1654 —— 0x717BF0 虚表指针安装构造器 / 0x6E7A80 排序查找器 / 0x6E47C0 双向 32B 对象复制器（2026-10-24）
+
+口径：承接 batch 1653 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+uc=1 callsite=3 top3）。本批取：0x717BF0（11B，callees=0 deps=97——
+**虚表指针安装构造器**，推断名——mov [eax],0x7EB714 vtable 安装）、
+0x6E7A80（204B，callees=2 deps=2550——**排序查找器**，推断名——门控 +
+懒排序 qsort + 二分查找 + 异常路径）、0x6E47C0（41B，callees=0 deps=1875——
+**双向 32B 对象复制器**，推断名——双向 rep movsd ×8）。
+取证手段：disasm.py 三路全读——0x717BF0 0x18 覆盖尾 0x717BF8 ret 4 +
+nop 垫（顺带落 0x717C00 下一函数头——不属本批）;0x6E7A80 0xE0 覆盖尾
+0x6E7B4B ret + nop 垫（顺带落 0x6E7B50 下一函数头——不属本批）;0x6E47C0
+0x40 覆盖尾 0x6E47E6 ret 8 + nop 垫（顺带落 0x6E47F0 下一函数头——不属
+本批）——均读到函数尾。+ TSV 查重（三候选全部未登记）+ callee 核验
+（0x7C8B48（batch 049 CRT 堆 qsort——crt_runtime_verified）、0x7CAAE4
+（batch 111/952 CRT C++ RTTI/异常运行时——crt_runtime_verified）——
+**本批无新候选**）。
+★★★跨批次重大连接：★★◆0x6E7A80 = batch 049 的 0x7C8B48（CRT qsort）
+调用现场——base=[0xB0E840] count=[0xB0E844] size=8 cmp=[0x41C610]——四
+参形态实锤 CRT 调用约定;★★◆0x6E7A80 二分查找 + 懒排序缓存
+（[0xB0E850]/[0xB0E84C]）——RA2 排序查找惯用（排序一次缓存多次查找）;
+★★◆0xB0Exxx 全局族（batch 1653 的 [0xB0FE58] 同 .bss 区风格——全局
+标志/缓存区）;★★◆0x717BF0 vtable 0x7EB714（0x7Exxxx 虚表区——batch
+1639 的 [0x7F2A40] 变换标志表同虚表数据区风格）。
+================================================================================
+0x717BF0 —— 虚表指针安装构造器（11B 全读）
+================================================================================
+签名：thiscall 1 栈参 ret 4（ecx=this; 0x717BF0-0x717BF8）。
+机器码结构（0x717BF0-0x717BF8，全程读完）:
+    mov eax,ecx（★this）→ mov dword [eax],0x7EB714（★★虚表指针安装——
+    0x7EB714 vtable）→ ret 4。
+语义：**虚表指针安装构造器（推断名）**——thiscall 1 栈参：把 this 首字段
+（+0）写虚表指针 0x7EB714（构造器形态——装 vtable 即对象初始化）。
+★原版怪癖（照抄）：① ★★mov [eax],0x7EB714 直装虚表（this+0 vtable——
+    无字段清零/无基类构造调用——最小构造）;② ★★栈参 1 未读（ret 4 清栈
+    但函数体不碰——参数被忽略/默认）;③ ★★11B 极简。
+★跨批次连接：◆◆[0x7EB714] 新虚表（0x7Exxxx 虚表区——batch 1639 的
+[0x7F2A40] 变换标志表同虚表数据区风格）◆◆虚表安装构造器家族（batch
+1654 本批 0x6E7A80 同区模式——this+0 首字段 vtable）。
+新候选：无（callees=0）。
+⚠️ partial：函数精确名（推断「虚表指针安装构造器」）、宿主类、栈参 1
+语义（未读——忽略/默认推断）、1 unique caller 身份。
+================================================================================
+0x6E7A80 —— 排序查找器（204B 全读）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this; 0x6E7A80-0x6E7B4B，返回 eax 指针）。
+机器码结构（0x6E7A80-0x6E7B4B，全程读完，分段要点）:
+    段1 门控+缓存预查（0x6E7A80-0x6E7AA9）：push esi/mov esi,ecx（this）→
+    cmp byte [esi+4],0x34 → jne 0x6E7B48（★★门控——this+4 != 0x34 直接
+    返 0）→ mov ecx,[0xB0E844]（★★全局计数）→ push ebx/edi → test ecx/je
+    0x6E7B17（空数组直跳异常路径）→ mov edx,[0xB0E850]（★★缓存指针）→
+    test edx/je 0x6E7AAF（无缓存）→ mov eax,[edx] → mov edi,[esi]（★this
+    +0 目标 key）→ cmp eax,edi → je 0x6E7B43（★缓存命中——直接走返回）。
+    段2 懒排序（0x6E7AAF-0x6E7AE6）：mov al,[0xB0E84C]（★★排序完成标志）
+    → test al/jne 0x6E7AE6（已排序跳过）→ push 0x41C610（★★比较函数）→
+    push 8（★★元素大小 8）→ push ecx（count）→ mov ecx,[0xB0E840]（★★
+    数组基）→ push ecx → call 0x7C8B48（★★batch 049 CRT 堆 qsort——四
+    参实锤）→ add esp,0x10 → mov ecx,[0xB0E844] → mov [0xB0E850],0（★
+    缓存失效）→ mov byte [0xB0E84C],1（★置排序完成标志）。
+    段3 二分查找循环（0x6E7AE6-0x6E7B15）：mov ebx,[esi]（★目标 key）→
+    mov edi,[0xB0E840]（数组基）→ test ecx/jle 0x6E7B17 → 循环: mov
+    eax,ecx/cdq/sub eax,edx/sar eax,1（★★count/2 中点）→ mov esi,[edi+
+    eax*8]（★★8 字节元素——{key,value} 对）→ lea edx,[edi+eax*8] → cmp
+    esi,ebx → jle 0x6E7B07 → mov ecx,eax（右半收窄）/jmp 0x6E7B13 → je
+    0x6E7B39（★★命中）→ lea edi,[edx+8]（左半基）→ or edx,-1/sub edx,eax
+    → add ecx,edx（左半计数收窄）→ 0x6E7B13: test ecx/jg 循环。
+    段4 命中返回+异常路径（0x6E7B17-0x6E7B4B）：命中（0x6E7B39）: test
+    edx/je 0x6E7B17 → mov [0xB0E850],edx（★★缓存命中项）→ lea eax,[edx+4]
+    （★返 value 字段——+4）→ jmp 0x6E7B1C → 未命中（0x6E7B17）: mov
+    eax,0xB78828 → mov eax,[eax]（★★全局对象）→ push 0/push 0x818D60
+    （★★throwinfo）→ push 0x8177C8（★★throwinfo）→ push 0/push eax →
+    call 0x7CAAE4（★★batch 111/952 CRT C++ RTTI/异常运行时——crt_runtime_
+    verified）→ add esp,0x14 → pop 族 → ret → 门控失败（0x6E7B48）: xor
+    eax,eax → pop esi → ret。
+语义：**排序查找器（推断名）**——thiscall：① this+4 门控（!= 0x34 返 0）
+    → 目标 key = [this+0];② 懒排序（[0xB0E84C] 标志——首次 qsort
+    [0xB0E840] 数组 count=[0xB0E844] size=8 cmp=[0x41C610] 并置标志）;
+    ③ 二分查找 8 字节 {key,value} 对——命中缓存 [0xB0E850] 并返 [edx+4]
+    value 字段;④ 未命中/空数组走 CRT 异常路径（0x7CAAE4 + throwinfo
+    0x8177C8/0x818D60 + [0xB78828] 全局对象——RTTI 异常抛出推断）。
+★原版怪癖（照抄）：① ★★this+4==0x34 门控（类型/状态字节——非 0x34 静默
+    返 0）;② ★★懒排序缓存（[0xB0E84C] 标志 + [0xB0E850] 命中缓存——排
+    序一次缓存多次）;③ ★★8 字节元素二分（{key,value} 对——返 +4 value
+    ——查表惯用）;④ ★★未命中走 CRT 异常（RTTI/throwinfo——异常驱动
+    查找失败）;⑤ ★★四全局协作（[0xB0E840] 数组基/[0xB0E844] 计数/
+    [0xB0E84C] 标志/[0xB0E850] 缓存——排序查找状态机）;⑥ ★★二分手写循
+    环（cdq/sar 除 2 + 左右半收窄——标准二分模式）。
+★跨批次连接：◆◆batch 049（0x7C8B48 CRT qsort——本批=调用现场实锤四
+    参约定）◆◆batch 111/952（0x7CAAE4 CRT RTTI/异常——本批=调用现场
+    ×throwinfo 0x8177C8/0x818D60）◆◆0xB0Exxx 全局族（batch 1653 的
+    [0xB0FE58] 同 .bss 区风格）◆◆[0x41C610] 比较函数（未登记——新候选
+    提示）。
+新候选：无（callees=2 全部已登记——均为 CRT 归档）。
+⚠️ partial：函数精确名（推断「排序查找器」）、this 宿主类、[0xB0E840] 数
+    组内容（8 字节 {key,value}——查找表推断）、[0x41C610] 比较函数身份、
+    throwinfo 0x8177C8/0x818D60 语义、异常路径返回值、1 unique caller 身
+    份。
+================================================================================
+0x6E47C0 —— 双向 32B 对象复制器（41B 全读）
+================================================================================
+签名：thiscall 1 栈参 ret 8（ecx=this; [esp+0xC]=参数1 源对象指针;
+    0x6E47C0-0x6E47E6）。
+机器码结构（0x6E47C0-0x6E47E6，全程读完）:
+    push esi → mov esi,[esp+0xC]（★栈参1——源指针）→ mov eax,ecx（this）
+    → push edi → cmp esi,eax → je 0x6E47D5（★自赋值跳过）→ mov ecx,8 →
+    mov edi,eax → rep movsd（★★第一向——this ← 源：8 dword = 32B）→
+    0x6E47D5: mov esi,eax（this）→ mov eax,[esp+0xC]（★重取源）→ mov
+    ecx,8 → mov edi,eax → rep movsd（★★第二向——源 ← this：再拷 32B）
+    → pop 族 → ret 8。
+语义：**双向 32B 对象复制器（推断名）**——thiscall 1 栈参（源对象指针）：
+    ① 自赋值检查（源 == this 跳过第一向）;② 第一向：this ← 源（32B——8
+    dword）;③ 第二向：源 ← this（32B——此时 this 已等于旧源内容——冗余
+    回写推断）;④ ret 8。
+★原版怪癖（照抄）：① ★★双向 rep movsd ×8（this←源 + 源←this——双向拷
+    贝——第二向语义冗余但机器码照实执行）;② ★★自赋值跳过第一向（cmp
+    esi,eax/je——防御同址）;③ ★★32B 固定尺寸（ecx=8 dword——硬编码对象
+    大小）;④ ★★第二向源重取（mov eax,[esp+0xC] 再读栈——不缓存——保守
+    模式）;⑤ ★★ret 8 1 栈参。
+★跨批次连接：◆◆32B 对象家族（对象大小 32 字节——源宿主类推断）◆◆rep
+    movsd 拷贝惯用（batch 1651 的 0x7B5D70 字符串赋值器同款拷贝模式）
+    ◆◆自赋值防御（batch 1654 本批 0x6E7A80 同区模式——this 语义域）。
+新候选：无（callees=0）。
+⚠️ partial：函数精确名（推断「双向 32B 对象复制器」）、双向拷贝业务语义
+    （第二向冗余回写推断）、32B 对象类型、栈参1 精确契约（源指针推断）、
+    1 unique caller 身份。
+================================================================================
+本批新候选登记（后续批兑现）
+================================================================================
+无（callees 全部已登记——0x7C8B48 batch 049 CRT qsort、0x7CAAE4 batch
+111/952 CRT RTTI/异常）。新全局登记：[0x7EB714]（虚表——0x717BF0）、
+[0xB0E840]/[0xB0E844]/[0xB0E84C]/[0xB0E850]（排序查找器四全局——0x6E7A80）、
+[0x41C610]（qsort 比较函数——未登记提示）、[0xB78828]（异常路径全局）、
+0x8177C8/0x818D60（throwinfo）。★★跨批次闭合：batch 049 的 qsort 调用
+现场实锤（四参 base/count/size/cmp——CRT 调用约定）;batch 111/952 的
+RTTI/异常运行时调用现场（throwinfo 双落点）;0xB0Exxx .bss 全局族再添四
+成员（batch 1653 [0xB0FE58] 同区风格）。
