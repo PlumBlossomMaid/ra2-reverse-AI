@@ -1,0 +1,142 @@
+frontier batch 1700 —— 0x7178B0 表项读取器 / 0x70ED10 RecoilState::Update / 0x70ECE0 RecoilState::Fire（2026-10-24）
+
+口径：承接 batch 1699 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+uc=1 callsite=2 top3）。本批取：0x7178B0（14B，callees=0 deps=1——
+**表项读取器**，推断名——mov eax,[ecx+eax*4+0x814] 索引表取项）、
+0x70ED10（104B，callees=0 deps=1926——**RecoilState::Update**——YRpp
+带名——四态状态机 + 每帧浮点推进）、0x70ECE0（44B，callees=0 deps=1886
+——**RecoilState::Fire**——YRpp 带名——触发端与速度公式）。
+取证手段：disasm.py 三路全读——0x7178B0 0x30 覆盖尾 0x7178BB ret 4 + nop
+垫（顺带落 0x7178C0 邻函数头——sub esp,0x14 → mov al,[esi+0x7BC] →
+je 0x717971 → mov eax,[esi+0x7B0] → mov ecx,[esi+0x7B4]——大函数——+
+0x7B0/+0x7BC 字段宿主——同域不属本批）;0x70ED10 0x80 覆盖尾 0x70ED77
+ret + nop 垫（顺带落 0x70ED80 邻函数头——push ebx/esi → mov esi,[esp+0xC]
+→ mov eax,[0xA8ED84]——同域不属本批）;0x70ECE0 0x40 覆盖尾 0x70ED0B ret
++ nop 垫（顺带落 0x70ED10 首指令——mov eax,[ecx+0x18]——本批 0x70ED10
+——邻证实）——均读到函数尾。
++ TSV 查重（三候选全部未登记——picker 未登记池输出确认）+ callee 核验
+（三候选 callees=0——**零新候选**）。
+★★★跨批次连接：★★◆0x70ED10/0x70ECE0 = **RecoilState::Update / Fire 带
+名双锚点**——YRpp 带名类 RecoilState（后坐力状态机——武器开火后坐/镜
+头抖动推断）——Fire 触发（status=1 + 段数 + 速度公式）↔ Update 推进
+（每帧累进 + 段数递减 + 状态跃迁 1→2→3→复位）——**开火/推进闭环**——
+status==2 路径末段与 Fire 的 fild [ecx] ÷ +0x1C → fstp +0x10 公式逐指
+令同构（开火与复位共用速度公式——复刻点）;★★◆0x7178B0 = **表项读取器**
+——[ecx+idx*4+0x814]——跨 0x814 大偏移的索引表（宿主大对象 +0x814 表—
+—批量访问器推断——与 0x7178C0 邻函数 +0x7B0/+0x7BC 同域宿主）。
+================================================================================
+0x7178B0 —— 表项读取器（14B 全读）
+================================================================================
+签名：thiscall 1 栈参 ret 4（ecx=this（宿主大对象）; [esp+4]=参数1（索引
+int）; 0x7178B0-0x7178BB，返回 eax=表项 dword）。
+机器码结构（0x7178B0-0x7178BB，全程读完）:
+    mov eax,[esp+4]（参数1——索引）→ mov eax,[ecx+eax*4+0x814]（★this
+    偏移 0x814 处数组——索引×4 → 第 idx 项——dword）→ ret 4。
+语义：**表项读取器（推断名）**——thiscall 1 栈参 ret 4：按索引从 this
++0x814 处的表/数组取 dword 项——单指令寻址（无边界检查——数组长度由
+调用者保证推断）——跨 0x814 大偏移的索引表访问（宿主大对象——+0x814
+表——与 0x7178C0 邻函数 +0x7B0/+0x7BC 字段同域宿主——批量数据区访问
+器族推断——0x717xxx 区）。
+★原版怪癖（照抄）：① ★★单指令寻址（mov eax,[ecx+eax*4+0x814]——复合
+寻址一步取——无边界检查）;② ★★+0x814 大偏移（表远在大对象后部——
++0x7B0/+0x7BC 字段宿主同域）;③ ★★14B 紧凑（读索引 → 取项 → ret 4——
+无栈帧）。
+★跨批次连接：◆◆+0x814 表（宿主大对象——与 0x7178C0 邻函数 +0x7B0/
++0x7BC 同域）◆◆0x7178C0（邻函数——大函数——不属本批）◆◆0x717xxx 区
+（动态数组对象族邻域）。
+新候选：无（callees=0）。
+⚠️ partial：函数精确名（推断「表项读取器」）、宿主类（大对象推断）、
++0x814 表语义（批量数据区推断）、无边界检查的依据、1 unique caller 身
+份。
+================================================================================
+0x70ED10 —— RecoilState::Update（104B 全读）
+================================================================================
+签名：thiscall 无参 ret（ecx=this（RecoilState）; 0x70ED10-0x70ED77，无
+返回值）。**YRpp 带名：RecoilState::Update**。
+机器码结构（0x70ED10-0x70ED77，全程读完）:
+    段0 总门控（0x70ED10-0x70ED17）：mov eax,[ecx+0x18]（★+0x18 状态字段
+    —status）→ xor edx → test eax → je 0x70ED77（★status==0 → 直返）。
+    段1 每帧推进（0x70ED19-0x70ED2D）：fld [ecx+0x10]（★+0x10 当前量
+    float）→ fadd [ecx+0x14]（★+0x14 增量/精炼值 float——每帧累加）→
+    push esi → mov esi,[ecx+0x1C]（★+0x1C 段数）→ dec esi → mov
+    [ecx+0x1C],esi（★段数-1——消耗一段）→ cmp esi,edx → fstp [ecx+0x14]
+    （★+0x14 = +0x10+0x14——浮点推进写回）→ pop esi → jg 0x70ED77（★段
+    数仍>0 → 直返——本帧结束）。
+    段2 状态跃迁分派（0x70ED2F-0x70ED77）：dec eax → je 0x70ED3F（★
+    status==1 → 路径 A）→ dec eax → je 0x70ED54（★status==2 → 路径 B）
+    → dec eax → jne 0x70ED77（★status!=3 → 直返——status==3 落穿复位）
+    → mov [ecx+0x18],edx（★status=0——复位）→ mov [ecx+0x14],edx（★
+    +0x14=0）→ ret。
+    路径 A（status==1，0x70ED3F-0x70ED52）：mov eax,[ecx+0xC]（★+0xC 段
+    数据）→ mov [ecx+0x18],2（★status=2）→ cmp eax,1 → mov [ecx+0x1C],
+    eax（★+0x1C=+0xC——回填段数）→ mov [ecx+0x10],edx（★+0x10=0——当
+    前量清零）→ jg 0x70ED77（★+0xC>1 → 直返——两段以上保留 status=2）
+    → 落穿进路径 B。
+    路径 B（status==2，0x70ED54-0x70ED74）：mov eax,[ecx+8]（★+8 字段）
+    → mov [ecx+0x18],3（★status=3）→ cmp eax,1 → mov [ecx+0x1C],eax（★
+    +0x1C=+8）→ jge 0x70ED6D → mov [ecx+0x1C],1（★+8 最小钳为 1）→
+    fild [ecx]（★+0 int——总强度）→ fidiv [ecx+0x1C]（★÷段数）→ fchs
+    （★取负——反向回弹速度）→ fstp [ecx+0x10]（★+0x10 = -(总强度÷段
+    数)——下次推进初速）。
+语义：**RecoilState::Update（YRpp 带名）**——thiscall 无参：后坐力状态
+推进器：①status==0 直返（空闲）;②每帧浮点推进（+0x10 += +0x14）且段
+数计数递减;③段数耗尽进入状态跃迁（1→2→3→复位——dec 分派链）;④路径
+A 回填段数（+0xC→+0x1C）+ 清零当前量;⑤路径 B 计算反向初速（fild +0 ÷
+段数 ÷ 取负——与 Fire 同公式）;⑥status==3 落穿复位（status=0 +0x14=0）
+——**武器后坐力动画状态机**（RecoilState——YRpp 带名——开火→推进→回
+弹→复位四段循环）。
+★原版怪癖（照抄）：① ★★status==0 门控直返（空闲态零开销）;② ★★每帧
+浮点累加（fld+fadd+fstp——+0x10 += +0x14——无钳制溢出推断）;③ ★★段
+数递减（dec + jg——计数驱动）;④ ★★dec 三连分派（status 1/2/3 三分支
++ 3 落穿复位——switch 编译形态）;⑤ ★★路径 B 用 fchs 取负（回弹方向与
+开火相反）;⑥ ★★+8 最小钳 1（jge 处理——小于 1 则段数=1）;⑦ ★★带名
+类双锚点（与 Fire 配对——速度公式共用）。
+★跨批次连接：◆◆RecoilState 类（YRpp 带名——本批双锚点）◆◆+0/+4/+8/
++0xC/+0x10/+0x14/+0x18/+0x1C（八字段布局——新登记）◆◆0x70ECE0（邻函
+数——Fire——trigger 端——不属本批但同批登记——速度公式同构）◆◆fild/
+fidiv/fchs 浮点序列（与 batch 671/680 等浮点惯用法同族——x87 80 位）。
+新候选：无（callees=0）。
+⚠️ partial：宿主（RecoilState——带名但调用者域未核——武器后坐推断）、
++0/+4/+8/+0xC 字段精确语义（强度/段数推断）、+0x14 增量来源、status 值
+语义（1=开火/2=回弹/3=复位推断）。
+================================================================================
+0x70ECE0 —— RecoilState::Fire（44B 全读）
+================================================================================
+签名：thiscall 无参 ret（ecx=this（RecoilState）; 0x70ECE0-0x70ED0B，无
+返回值）。**YRpp 带名：RecoilState::Fire**。
+机器码结构（0x70ECE0-0x70ED0B，全程读完）:
+    push ecx（局部槽）→ mov eax,[ecx]（★+0 int——总强度）→ test eax →
+    mov [esp],eax（★存局部——供 fild）→ je 0x70ED0A（★+0==0 → 直返——
+    零强度不触发）→ mov eax,[ecx+4]（★+4 字段——段数候选）→ mov edx,1
+    → cmp eax,edx → mov [ecx+0x18],edx（★status=1——开火态）→ mov
+    [ecx+0x1C],eax（★+0x1C=+4——回填段数）→ jge 0x70ED00（★+4>=1 → 跳
+    过钳制）→ mov [ecx+0x1C],edx（★+4 最小钳为 1）→ fild [esp]（★局部
+    +0 总强度）→ fidiv [ecx+0x1C]（★÷段数）→ fstp [ecx+0x10]（★+0x10
+    = 总强度÷段数——初始速度/增量）→ ret → 0x70ED0A：pop ecx → ret。
+语义：**RecoilState::Fire（YRpp 带名）**——thiscall 无参：后坐力触发器
+（Update 的配套入口）：①+0==0 直返（零强度不触发——防御）;②置
+status=1（开火态）+ 段数=+4（最小钳 1）;③初始速度 = 总强度÷段数 →
++0x10（Update 路径 B 的 fchs 取负版——开火正向初速，Update 回弹负初速
+）——**开火端/推进端闭环**（Fire 设初态 → Update 每帧推进至复位）。
+★原版怪癖（照抄）：① ★★+0==0 直返（零强度防御门控）;② ★★+4 最小钳
+1（jge 处理——与 Update 路径 B 的 +8 钳制同款）;③ ★★fild 读局部槽
+（push ecx 留栈——供 fild dword——非直接 [ecx]——编译形态）;④ ★★速
+度公式与 Update 路径 B 同构（fild ÷ +0x1C → fstp +0x10——仅缺 fchs——
+符号由调用方向决定推断）;⑤ ★★44B 紧凑（门控 → 状态 → 钳制 → 浮点计
+算 一步链）。
+★跨批次连接：◆◆RecoilState 类（YRpp 带名——本批双锚点）◆◆0x70ED10
+（邻函数——Update——推进端——同批登记——速度公式同构）◆◆fild/fidiv
+浮点序列（x87 80 位——batch 671/680 同族）。
+新候选：无（callees=0）。
+⚠️ partial：宿主（RecoilState——带名但调用者域未核——武器后坐推断）、
++0/+4 字段精确语义（总强度/段数推断）、+0x10 精确语义（初始速度/增量推
+断）、调用者（谁调 Fire——武器开火路径推断）。
+================================================================================
+本批新候选登记（后续批兑现）
+================================================================================
+无（三候选 callees 全 0）。★★跨批次闭合：**RecoilState 家族双锚点带名实
+锤**（0x70ECE0 Fire + 0x70ED10 Update——YRpp 带名——开火→推进→回弹→
+复位四段状态机——八字段布局 +0/+4/+8/+0xC/+0x10/+0x14/+0x18/+0x1C——
+速度公式共用（fild ÷段数，Update 补 fchs 取负）——**半球动画状态机域新
+增成员**）;**表项读取器**（0x7178B0——[ecx+idx*4+0x814] 索引表——与
+0x7178C0 邻函数 +0x7B0/+0x7BC 同域宿主）。
