@@ -1,0 +1,176 @@
+frontier batch 1677 —— 0x47AF70 文件搜索器（目录链枚举）/ 0x4759F0 INI 读串包装器 / 0x46C790 BulletType 按名查表工厂（2026-10-24）
+
+口径：承接 batch 1676 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+uc=1 callsite=3 top3）。本批取：0x47AF70（331B，callees=2 deps=730——
+**文件搜索器**，推断名——[0x81C8EC] 句柄缓存 + [0x89E410] 目录链枚举）、
+0x4759F0（77B，callees=2 deps=156——**INI 读串包装器**，推断名——
+0x528A10 ReadString + 0x48DE70 后处理）、0x46C790（131B，callees=3
+deps=117——**BulletType 按名查表工厂**，推断名——[0xA83C84] 表查名 +
+new 0x2F8 + 0x46BBC0 构造）。
+取证手段：disasm.py 三路全读——0x47AF70 0x200 覆盖尾 0x47B0BA ret + nop
+垫（顺带落 0x47B0C0 下一函数头——同域缓存读取器、0x47B130 同域句柄释
+放器——均不属本批但同族强化证明）;0x4759F0 0xA0 覆盖尾 0x475A3A ret 0xC
++ nop 垫（顺带落 0x475A40 下一函数头——查表转发器同域）;0x46C790 0xE0
+覆盖尾 0x46C812 ret + nop 垫（顺带落 0x46C820/0x46C840/0x46C850/0x46C860
+五个小函数头——同族邻函数）——均读到函数尾。
++ TSV 查重（三候选全部未登记）+ callee 核验（0x47AF70 → 0x7E1208/
+0x7E1300 已实锤 IAT 导入槽身份（FindFirstFileA/FindClose——batch 566
+line1401/line2494/line3425 三处同槽使用）；0x4759F0 → 0x528A10 已登记
+line8（batch 002 INISection::ReadString）+ **0x48DE70 未登记（ranking
+line5271——新候选！）**；0x46C790 → 0x7C8D20 已登记 line7（batch 001
+strcmpi）+ 0x7C8E17（batch 001 new）+ 0x46BBC0 已登记 line3250（batch
+1588 BulletTypeClass ctor）——**本批新候选 1 枚：0x48DE70**）。
+★★★跨批次重大连接：★★◆0x47AF70 = 0x7E1208/0x7E1300（FindFirstFileA/
+FindClose）**目录链文件查找惯用**——batch 566 的 0x52CB90（BATTLEMD*.INI
+扫描装载器）同款三槽 + 0x116 属性掩码 + 全局句柄——**文件枚举族第二
+员**;★★◆0x4759F0 = batch 002 的 0x528A10（INISection::ReadString）调用
+现场 + 格式串 0x889F64——INI 读串包装族;★★◆0x46C790 = batch 1588 的
+0x46BBC0（BulletTypeClass ctor）调用现场——BulletType 容器注册族——
+[0xA83C84] 表（batch 173 的 0x4834A0 同表）+ 0x2F8 大小（batch 1588 同
+款 BulletTypeClass 大小）。
+================================================================================
+0x47AF70 —— 文件搜索器（目录链枚举）（331B 全读）
+================================================================================
+签名：thiscall 无栈参（ecx=输入/输出缓冲指针——模式串；0x47AF70-0x47B0BA，
+返回 al bool 1/0）。
+机器码结构（0x47AF70-0x47B0BA，全程读完，分段要点）:
+    段0 句柄清旧（0x47AF70-0x47AF9E）：sub esp,0x244（大栈帧）→ 4 寄存器
+    压栈 → mov ebp,ecx → test ebp / je 0x47B0AE（空指针直接失败）→ mov
+    eax,[0x81C8EC]（★★全局句柄缓存）→ cmp eax,-1 → je 跳过 → push eax →
+    call [0x7E1300]（★★FindClose——batch 566 IAT 身份实锤）→ mov
+    [0x81C8EC],0xFFFFFFFF（置 -1——清旧句柄）。
+    段1 首次查找（0x47AF9F-0x47B01F）：repne scasb（strlen 输入串 ebp）→
+    rep movsd/movsb 拷贝到栈 [esp+0x10] → lea ecx,[esp+0x114]（
+    WIN32_FIND_DATAA 缓冲）→ push ecx（fpBuffer）→ push edx（lpFileName
+    = 栈拷贝串）→ call [0x7E1208]（★★FindFirstFileA——batch 566 IAT 身份
+    实锤）→ mov edx,eax → cmp edx,-1 → je 段2（INVALID_HANDLE_VALUE）→
+    test [esp+0x114],0x116（★★fd.dwFileAttributes 掩码 0x116 =
+    HIDDEN|SYSTEM|DIRECTORY|TEMPORARY）→ jne 段2（属性命中跳过）→ 成功：
+    lea edi,[esp+0x140]（★WIN32_FIND_DATAA.cFileName 偏移——batch 566 同
+    款布局）→ repne scasb strlen → rep movsd/movsb 拷贝回 ebp（★完整路径
+    写回输入缓冲）→ mov al,1 → mov [0x81C8EC],edx（★句柄缓存）→ ret。
+    段2 目录链枚举（0x47B020-0x47B0B4）：mov ebx,[0x89E410]（★★全局目录
+    链表头）→ test ebx / je 0x47B0AE（失败）→ 循环 0x47B02E：mov edi,
+    [ebx+4]（★节点目录串）→ strlen 拷贝到栈 [esp+0x10] → strlen(ebp 输入
+    串) 拷贝到 [esp+0x10] 后（★★拼接 = 目录 + 输入名）→ lea eax,
+    [esp+0x114] → push eax → lea ecx,[esp+0x14]（拼接串）→ push ecx →
+    call [0x7E1208]（FindFirstFileA）→ cmp edx,-1 / je 0x47B0A8（步进）→
+    test [esp+0x114],0x116 / je 0x47AFE9（★★命中——跳回段1成功拷贝路径）
+    → 步进 0x47B0A8：mov ebx,[ebx]（链表 next）→ test ebx / jne 循环 →
+    失败 0x47B0AE：xor al,al → ret。
+语义：**文件搜索器（目录链枚举）（推断名）**——thiscall：① 先关掉
+[0x81C8EC] 全局缓存的旧句柄（FindClose + 置 -1）;② 首次按输入串直接
+FindFirstFileA，句柄有效且属性掩码 0x116 未命中 → 拷贝 cFileName 回输
+入缓冲（完整文件名）→ 句柄存 [0x81C8EC] → 返 true;③ 失败走 [0x89E410]
+全局目录链表，逐节点拼接（目录+输入名）再 FindFirstFileA，命中跳回成功
+路径;④ 全链失败返 false——Windows 文件查找 helper（在多个搜索目录下按
+名找文件——CCFileClass 域推断）。
+★原版怪癖（照抄）：① ★★全局句柄缓存 [0x81C8EC]（每次进入先 FindClose
+清旧——批 1647 的 0x47B130 同句柄释放器——句柄供外部枚举用推断）;② ★★
+0x116 属性掩码跳过（HIDDEN|SYSTEM|DIRECTORY|TEMPORARY——batch 566 同款
+——隐藏/系统文件跳过）;③ ★★目录链 [0x89E410] 拼接重查（失败不报错——
+逐目录试——链表 next 步进）;④ ★★字符串拷贝（strlen + rep movsd/movsb
+——batch 1651 同款 8B 对齐优化）;⑤ ★★331B 双路径（首查 + 链枚举——分
+支共享成功出口）。
+★跨批次连接：◆◆0x7E1208/0x7E1300（FindFirstFileA/FindClose——batch
+566 line1401 实锤身份 + line2494 同槽 + line3425 同槽三次印证——IAT 导
+入槽）◆◆0x116 属性掩码（batch 566 的 0x52CB90 BATTLEMD*.INI 扫描装载器
+同款）◆◆0x81C8EC 全局句柄（batch 1647 的 0x47B130 同域——0x47B0C0 邻函
+数也读它——句柄资源族）◆◆[0x89E410] 目录链表（新登记全局——目录搜索
+路径链推断）。
+新候选：无代码新候选（callees=2 全为 IAT 导入槽已实锤）。
+⚠️ partial：函数精确名（推断「文件搜索器」）、[0x81C8EC] 句柄用途（外部
+枚举推断）、[0x89E410] 链表身份（搜索目录链推断）、0x116 掩码属性精确
+集（WIN32_FIND_DATAA 偏移对齐 batch 566）、1 unique caller 身份。
+================================================================================
+0x4759F0 —— INI 读串包装器（77B 全读）
+================================================================================
+签名：thiscall 3 栈参 ret 0xC（不显式用 ecx; [esp+8]=参数1、[esp+0xC]=参
+数2、[esp+0x10]=参数3（尾 0x88 处 88 未读但 ret 0xC 清 3 参）; 0x4759F0-
+0x475A3A，返回 al）。
+机器码结构（0x4759F0-0x475A3A，全程读完）:
+    段0 参数装载（0x4759F0-0x475A0B）：mov edx,[esp+8]（参数1）→ sub
+    esp,0x80（80 字节栈缓冲）→ lea eax,[esp]（缓冲）→ push 0x80（大小）
+    → push eax（缓冲）→ mov eax,[esp+0x8C]（★★[esp+0x80] 区后 +0xC = 原
+    [esp+0xC] 参数2——栈重定位读取）。
+    段1 ReadString 调用（0x475A0B-0x475A2D）：push 0x889F64（★格式串——
+    INI 键名推断）→ push edx（参数1）→ push eax（参数2）→ call 0x528A10
+    （★★INISection::ReadString——batch 002 line8 已登记——CRC 缓存键查
+    找 + 限长拷贝 + 默认回退）→ test eax,eax → je 0x475A2D（★★失败跳收尾
+    ——直接返 0）→ lea ecx,[esp]（缓冲）→ call 0x48DE70（★★后处理——未
+    登记新候选——缓冲处理/解析推断）。
+    段2 收尾（0x475A24-0x475A3A）：add esp,0x80 → ret 0xC（★失败路径不
+    调 0x48DE70——仅成功路径后处理）。
+语义：**INI 读串包装器（推断名）**——thiscall 3 栈参：① 参数 1/参数 2 +
+格式串 0x889F64 调 INISection::ReadString（0x528A10）读到 0x80 字节栈缓
+冲;② 成功（非 0）后调 0x48DE70 后处理缓冲;③ 失败直接返 0——INI 键值读
+取 + 后处理的组合包装（格式串拼接查询推断）。
+★原版怪癖（照抄）：① ★★0x80 固定栈缓冲（push 0x80 大小——ReadString
+限长拷贝）;② ★★格式串 0x889F64（键名格式推断——参数拼接）;③ ★★成功才
+后处理（test eax → je 直接返 0——失败不调 0x48DE70）;④ ★★栈重定位读取
+（sub 0x80 后 [esp+0x8C] 回读参数 2——MSVC 惯用）;⑤ ★★77B 紧凑包装。
+★跨批次连接：◆◆0x528A10（batch 002 line8 INISection::ReadString——调
+用现场——INI 读串包装族）◆◆0x889F64 格式串（INI 域——键名格式——同区
+新登记常量）◆◆0x475A40 下一函数头（同域——查表转发器——0x7E523C 索引
+表 + 0x528660——邻族）◆◆★0x48DE70（新候选——未登记——0x4759F0 成功
+后处理）。
+新候选：★★0x48DE70（ranking line5271——未登记——callees=1——0x4759F0
+成功后处理——下一批候选池）。
+⚠️ partial：函数精确名（推断「INI 读串包装器」）、3 参数语义（参数1/2 拼
+接键名推断、参数3 未用）、0x889F64 格式串内容、0x48DE70 语义（缓冲解析
+推断）、1 unique caller 身份。
+================================================================================
+0x46C790 —— BulletType 按名查表工厂（131B 全读）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this 名字串; 0x46C790-0x46C812，返回 eax
+= 命中表项或新对象 / 0）。
+机器码结构（0x46C790-0x46C812，全程读完，分段要点）:
+    段0 名字门控（0x46C790-0x46C7B7）：mov edi,ecx（this 名字串）→ push
+    edi → push 0x817474 → call 0x7C8D20（★★strcmpi——batch 001 line7 已
+    登记大小写不敏感比较）→ test eax / je 0x46C80E（不等直接返 0）→ push
+    edi → push 0x817694 → call 0x7C8D20 → test / je 0x46C80E（第二门控——
+    ★★两个保留名字串比较——特殊名拦截）。
+    段1 表遍历（0x46C7B8-0x46C7E4）：mov eax,[0xA83C90]（★★容器计数）→
+    xor esi,esi → test eax / jle 0x46C7E6（空表直接 new）→ 循环 0x46C7C3：
+    mov eax,[0xA83C84]（★★容器基址表）→ mov ecx,[eax+esi*4]（表项）→
+    add ecx,0x24（★项内名字字段 +0x24）→ push edi → push ecx → call
+    0x7C8D20（strcmpi 表项名）→ test eax / je 0x46C802（★★命中——返表
+    项）→ inc esi → cmp esi,[0xA83C90] / jl 循环。
+    段2 未命中构造（0x46C7E6-0x46C801）：push 0x2F8 → call 0x7C8E17（★
+    ★new 0x2F8——batch 001——★★BulletTypeClass 大小——batch 1588 同
+    款）→ test eax / je 0x46C80E（分配失败返 0）→ push edi（名字）→ mov
+    ecx,eax（新对象）→ call 0x46BBC0（★★BulletTypeClass::BulletTypeClass
+    ——batch 1588 line3250 已登记——构造 + 双容器登记）→ ret（返新对象）。
+    段3 收尾（0x46C802-0x46C812）：命中：mov edx,[0xA83C84] → mov eax,
+    [edx+esi*4]（返表项）→ ret;失败：xor eax,eax → ret。
+语义：**BulletType 按名查表工厂（推断名）**——thiscall：① 两门控 strcmpi
+（0x817474/0x817694 保留名——不等即返 0）;② 遍历 [0xA83C84] 容器（计数
+[0xA83C90]，项名字字段 +0x24）逐项比较——命中返已有表项;③ 未命中 new
+0x2F8（BulletTypeClass 大小）+ 0x46BBC0 构造器（传名——注册进 [0xA83C80]/
+[0xB0F670] 双容器——batch 1588 构造器内部逻辑）→ 返新对象——按名获取/
+注册的 BulletType 工厂（容器查名惯用）。
+★原版怪癖（照抄）：① ★★双门控保留名（0x817474/0x817694 两个特殊名——不
+等直接返 0——非错误码静默失败）;② ★★容器查名（+0x24 名字字段——
+strcmpi——大小写不敏感）;③ ★★未命中 new + 构造器（0x2F8 大小 + 名字参
+数——工厂创建）;④ ★★计数器前置（[0xA83C90] ≤0 跳过遍历直接构造）;
+⑤ ★★131B 五段（门控+遍历+构造+双出口）。
+★跨批次连接：◆◆0x46BBC0（batch 1588 line3250 BulletTypeClass ctor——
+调用现场——BulletType 容器注册族）◆◆[0xA83C84] 容器表（batch 173 的
+0x4834A0 同表——全局类型容器）◆◆0x7C8D20（batch 001 strcmpi——调用现
+场 ×3）◆◆0x7C8E17（batch 001 new——调用现场）◆◆0x2F8 大小（batch
+1588 同款 BulletTypeClass——大小遥相印证）◆◆0x46C820/0x46C840/0x46C850/
+0x46C860 邻函数头（同域——+0x2D8 清字段/+0x2E8 写字段/返 9/返 0x2F8——
+BulletType 域 getter/常量——不属本批）。
+新候选：无新代码候选（callees=3 全已登记）。
+⚠️ partial：函数精确名（推断「BulletType 按名查表工厂」）、0x817474/
+0x817694 保留名内容、+0x24 名字字段语义、宿主容器身份（[0xA83C84]/
+[0xA83C90]）、1 unique caller 身份。
+================================================================================
+本批新候选登记（后续批兑现）
+================================================================================
+★★0x48DE70（ranking line5271——未登记——callees=1——0x4759F0 成功路径
+后处理——56B 小函数——缓冲解析处理推断——下一批候选池）。跨批次闭合：
+文件枚举族第二员（0x47AF70——FindFirstFileA/FindClose + 0x116 掩码 +
+目录链——batch 566 的 0x52CB90 同款惯用）;INI 读串包装族（0x4759F0——
+batch 002 ReadString 调用现场）;BulletType 容器注册族（0x46C790——batch
+1588 ctor 调用现场 + 0x2F8 大小遥相印证）。
