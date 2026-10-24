@@ -1,0 +1,174 @@
+frontier batch 1681 —— 0x7B71D0 字符串容器重分配器 / 0x7B6D90 字符串容量确保器 / 0x7B50F0 字符串字符替换器（2026-10-24）
+
+口径：承接 batch 1680 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+uc=1 callsite=3 池尽——本批转 callsite=2 top3）。本批取：0x7B71D0（288B，
+callees=5 deps=353——**字符串容器重分配器**，推断名——strlen+new+拷贝+
+delete 双路径）、0x7B6D90（143B，callees=5 deps=59——**字符串容量确保
+器**，推断名——长度钳制+new+双边界清零+拷贝）、0x7B50F0（183B，callees=4
+deps=1——**字符串字符替换器**，推断名——strchr 循环+memmove 移位+重分
+配）。
+取证手段：disasm.py 三路全读——0x7B71D0 0x160 覆盖尾 0x7B72ED ret 8 +
+nop 垫（顺带落 0x7B72F0 下一函数头——同域 word 版重分配器——同族不属本
+批）;0x7B6D90 0xC0 覆盖尾 0x7B6E1C ret 8 + nop 垫（顺带落 0x7B6E20 下一
+函数头——同域容量查询器——不属本批）;0x7B50F0 0xC0 覆盖尾 0x7B51A4 ret
+4 + nop 垫（0x7B51A7 起 nop——函数尾全读）——均读到函数尾。
++ TSV 查重（三候选全部未登记）+ callee 核验（0x7B71D0 → 0x7CA405/0x7CA489
+已登记（batch 045 宽字符长度/拷贝）/0x7C8E17/0x7C8B3D（batch 001 new/
+delete）/0x7CA090（batch 031 memmove）;0x7B6D90 → 0x7CA405/0x7C8E17/
+0x7CA489/0x7CA45F（batch 126 wcscat）/0x7C8B3D;0x7B50F0 → 0x7CAF30
+（batch 126 strchr）/0x7CA090/0x7C8E17/0x7C8B3D——**全部已登记——本批
+零新候选**）。
+★★★跨批次重大连接：★★◆三函数 = **0x7B 区字符串容器家族**——0x7C 区
+CRT 字符串原语（strlen 0x7CA405/wcscpy 0x7CA489/wcscat 0x7CA45F/strchr
+0x7CAF30/memmove 0x7CA090）+ new/delete（0x7C8E17/0x7C8B3D）组合——字
+符串容器 Resize/Replace 惯用（batch 045/126 CRT 字符串家族 + batch 001
+new/delete——容器封装）;★★◆0x7B71D0 与 0x7B72F0 邻函数同构（word 版重
+分配器——byte/word 孪生——twin 家族又例）;★★◆0x7B6D90 的钳制逻辑
+（esi+ebx vs 长度 → jle 取小）与 batch 1660 的钳制惯用同族。
+================================================================================
+0x7B71D0 —— 字符串容器重分配器（288B 全读）
+================================================================================
+签名：thiscall 2 栈参 ret 8（ecx=this 容器头（[ecx]=缓冲指针）;
+[esp+0xC]=参数1、[esp+0x14]=参数2; 0x7B71D0-0x7B72ED，返回 al bool 1/0）。
+机器码结构（0x7B71D0-0x7B72ED，全程读完，分段要点）:
+    段0 空缓冲路径（0x7B71D0-0x7B721C）：mov eax,[esi]（★当前缓冲）→
+    test eax / jne 0x7B721E（非空走段1）→ mov edi,[esp+0xC]（参数1）→
+    mov [esi],eax（置 0）→ test edi / je → call 0x7CA405（★长度——参
+    数1）→ inc eax → jmp → 空参 mov eax,1 → add eax,eax（★×2——含终结
+    符双倍）→ push → call 0x7C8E17（★new——batch 001）→ mov [esi],eax
+    （缓冲 = 新块）→ test edi / je → mov ecx,[esi] → push edi → push ecx
+    → call 0x7CA489（★拷贝——batch 045 wcscpy）→ mov al,1 → ret 8。
+    段1 已存在路径（0x7B721E-0x7B72ED）：push eax（旧缓冲）→ call
+    0x7CA405（长度——旧）→ mov ecx,[esp+0x14]（参数2——插入点/长度）→
+    cmp ecx,eax → jbe 0x7B723E（★参数2 ≤ 长度直走）→ call 0x7CA405（旧
+    长度）→ mov [esp+0x10],eax（记新长度）→ 0x7B723E：push ebx/ebp →
+    push [esi] → call 0x7CA405（旧长 A）→ mov ebp,[esp+0x18]（参数2）→
+    mov edi,eax → push ebp → call 0x7CA405（参数2 长度 B）→ add edi,eax
+    （★★A+B——合并长度）→ lea ecx,[edi+edi+2]（★×2+2——含终结符双倍）
+    → push → call 0x7C8E17（new）→ mov edx,[esi] → mov ebx,eax（新块）→
+    push edx → call 0x7CA405（旧长度）→ push ebp → call 0x7CA405（参数2
+    长度）→ add → lea ecx,[edi+edi+2] → mov edi,ebx → rep stosd/stosb
+    （★新块清零——shr 2 + and 3 余数——batch 1651 同款）→ mov eax,[esi]
+    → push ×2 → call 0x7CA489（旧段拷贝）→ mov ecx,[esi] → push → call
+    0x7CA405（旧长度）→ mov ecx,[esp+0x38]（参数2）→ mov edx,1 → sub
+    edx,ecx → add esp,0x20 → add eax,edx → lea edi,[ebx+ecx*2]（★新块+
+    参数2×2——插入点）→ add eax,eax（×2）→ push → push edi → push ebp →
+    call 0x7CA405（参数2 长度）→ add eax,[esp+0x24] → lea ecx,[ebx+eax*2]
+    → push → call 0x7CA090（★memmove——batch 031——移位合并）→ push
+    ebp → call 0x7CA405 → shl 1 → push ×3 → call 0x7CA090（第二段移
+    位）→ mov edx,[esi] → push → call 0x7C8B3D（★delete 旧缓冲——batch
+    001）→ mov [esi],ebx（新缓冲）→ mov al,1 → ret 8。
+语义：**字符串容器重分配器（推断名）**——thiscall 2 栈参：① 空缓冲时按
+参数1 长度 new（×2）并拷贝;② 已存在时合并新旧长度（A+B）new 新块 →
+清零 → 拷贝旧段 → memmove 移位合并（参数2 作为插入点/附加串长度）→
+delete 旧缓冲 → 换新——字符串容器插入/重分配（插入串或扩容——byte 版
+Resize/Insert 推断——0x7B72F0 邻函数为 word 版同构）。
+★原版怪癖（照抄）：① ★★长度 ×2+2（lea [edi+edi+2]——含终结符双倍——
+容器增长率固定 2 倍+2）;② ★★rep stosd 清零（shr 2 + and 3 余数——batch
+1651 同款 8B 对齐优化——stosd+stosb 混合）;③ ★★memmove 双段移位
+（0x7CA090 ×2——插入点前/后——重叠感知——batch 031）;④ ★★参数2 ≤
+旧长度直走（jbe——不扩容分支——长度比较钳制）;⑤ ★★delete 旧缓冲换新
+（0x7C8B3D——batch 001——非 in-place 扩容）;⑥ ★★288B 双路径大函数。
+★跨批次连接：◆◆0x7CA405（batch 045 长度——调用现场 ×5）◆◆0x7CA489
+（batch 045 拷贝——调用现场 ×2）◆◆0x7CA090（batch 031 memmove——调用
+现场 ×2）◆◆0x7C8E17/0x7C8B3D（batch 001 new/delete——调用现场）◆◆
+rep stosd 清零惯用（batch 1651 的 0x7B5D70 同款）◆◆0x7B72F0 邻函数
+（word 版重分配器——byte/word 孪生——twin 家族）。
+新候选：无（callees=5 全已登记）。
+⚠️ partial：函数精确名（推断「字符串容器重分配器」）、宿主容器类
+（+0x0 缓冲指针——StringClass 推断）、参数1/2 精确语义（插入串/长度推
+断）、memmove 双段精确布局、1 unique caller 身份。
+================================================================================
+0x7B6D90 —— 字符串容量确保器（143B 全读）
+================================================================================
+签名：thiscall 2 栈参 ret 8（ecx=this 容器头（[ecx]=缓冲指针）;
+[esp+0x14]=参数1、[esp+0x18]=参数2; 0x7B6D90-0x7B6E1C，返回 ax bool）。
+机器码结构（0x7B6D90-0x7B6E1C，全程读完，分段要点）:
+    段0 长度钳制（0x7B6D90-0x7B6DC7）：push 3 寄存器 → mov edi,ecx →
+    mov eax,[edi] → push → call 0x7CA405（★旧长度）→ mov esi,[esp+0x14]
+    （参数1）→ mov ebx,[esp+0x18]（参数2）→ lea ecx,[esi+ebx]（★参数1+
+    参数2）→ cmp ecx,eax → jle 0x7B6DB3（★★和 ≤ 长度直走——不扩容）→
+    mov esi,eax → sub esi,ebx（★es<长-参数2——钳制）→ test esi / jge
+    0x7B6DBB → add ebx,esi → xor esi,esi（★负值钳 0）→ test ebx / jg
+    0x7B6DC8（参数2 ≤0 → 返 0——失败）→ xor ax,ax → ret 8。
+    段1 扩容（0x7B6DC8-0x7B6E1C）：mov edx,ebx → push ebp → neg edx →
+    shl edx,0x1F → sub edx,ebx（★edx = -ebx×2^31 - ebx = -(2^31+1)ebx
+    ——负数——用于末计算）→ add edx,eax → lea eax,[edx+edx+2]（★×2+2
+    ——分配量）→ push → call 0x7C8E17（new）→ mov ecx,[edi] → mov ebp,
+    eax（新块）→ mov word[ecx+esi*2],0（★旧缓冲写 0——参数1 位置）→
+    mov edx,[edi] → add esi,ebx → shl esi,1 → mov word[esi+edx-2],0
+    （★尾部写 0）→ mov eax,[edi] → push ×2 → call 0x7CA489（★旧段拷
+    贝——到新块）→ add esi,[edi] → push ×2 → call 0x7CA45F（★wcscat——
+    batch 126——拼接）→ mov ecx,[edi] → push → call 0x7C8B3D（★delete
+    旧）→ mov [edi],ebp（新块）→ mov ax,1 → ret 8。
+语义：**字符串容量确保器（推断名）**——thiscall 2 栈参：① 长度钳制（参
+数1+参数2 vs 旧长度——和 ≤ 长度直走返回;超限则 es=长-参数2、负值钳 0、
+参数2 ≤0 返 0）;② 扩容时 new（×2+2）→ 旧缓冲边界写 0（参数1/尾部双
+word）→ 旧段拷贝 → wcscat 拼接参数 → delete 旧 → 换新——字符串容器容量
+确保（预分配/尾部附加——参数2 为新内容长度推断）。
+★原版怪癖（照抄）：① ★★长度钳制三档（jle 直走 / es=长-参数2 / 负值钳
+0——batch 1660 钳制惯用同族）;② ★★×2+2 分配（lea [edx+edx+2]——同
+0x7B71D0 增长率——家族统一）;③ ★★旧缓冲边界双 word 写 0（参数1 位置 +
+尾部——新内容落点清界）;④ ★★wcscat 拼接（0x7CA45F——batch 126——
+非 memmove——尾附语义）;⑤ ★★参数2 ≤0 失败返 0（test ebx / jg——长度
+非法拒斥）;⑥ ★★143B 紧凑。
+★跨批次连接：◆◆0x7CA405/0x7CA489（batch 045 长度/拷贝——调用现场）◆◆
+0x7CA45F（batch 126 wcscat——调用现场——拼接惯用）◆◆0x7C8E17/0x7C8B3D
+（batch 001 new/delete）◆◆×2+2 增长率（本批 0x7B71D0 同款——容器家族
+统一）◆◆长度钳制（batch 1660 同族——jle/钳 0 惯用）。
+新候选：无（callees=5 全已登记）。
+⚠️ partial：函数精确名（推断「字符串容量确保器」）、宿主容器类、参数1/2
+精确语义（尾部附加长度推断）、neg/shl 负数计算（edx 语义）、1 unique
+caller 身份。
+================================================================================
+0x7B50F0 —— 字符串字符替换器（183B 全读）
+================================================================================
+签名：thiscall 1 栈参 ret 4（ecx=this 容器头（[ebp]=缓冲指针）;
+[esp+0x14]=参数1 字符; 0x7B50F0-0x7B51A4，返回 al bool）。
+机器码结构（0x7B50F0-0x7B51A4，全程读完，分段要点）:
+    段0 空检查（0x7B50F0-0x7B5103）：mov edx,[ebp]（★当前缓冲）→ test /
+    jne → xor al,al → ret 4（★空返 0——失败）。
+    段1 查找循环（0x7B5104-0x7B5158）：push esi/edi → mov edi,edx →
+    repne scasb（strlen——★长度）→ movsx edi,byte[esp+0x14]（参数1 字
+    符）→ not ecx → dec → mov esi,ecx（★长度）→ push edi → push edx →
+    call 0x7CAF30（★★strchr——batch 126——查找字符）→ test eax / je
+    0x7B519E（未找到跳收尾——原缓冲直返）→ mov byte[esp+0x14],1（★置
+    标志 1）→ 循环 0x7B512C：mov ecx,[ebp] → sub ecx,eax → lea edx,
+    [ecx+esi-1] → lea ecx,[eax+1] → push ×3 → call 0x7CA090（★★
+    memmove——batch 031——移位覆盖）→ mov edx,[ebp] → dec esi → mov
+    byte[edx+esi],0（★写 0——截断）→ mov eax,[ebp] → push → call
+    0x7CAF30（strchr 再找）→ test eax / jne 循环（★直到无字符）。
+    段2 重分配（0x7B5159-0x7B51A4）：mov edi,[ebp] → repne scasb
+    （strlen 新长度）→ push → call 0x7C8E17（new）→ mov ebx,eax（新块）
+    → repne scasb（strlen 旧）→ rep movsd/movsb（★★旧串拷贝到新块——
+    batch 1651 同款 8B 对齐优化）→ mov eax,[ebp] → push → call 0x7C8B3D
+    （delete 旧）→ mov [ebp],ebx（新块）→ mov bl,byte[esp+0x1C]（★返回
+    标志——1=有替换）→ mov al,bl → ret 4。
+语义：**字符串字符替换器（推断名）**——thiscall 1 栈参：① 空缓冲返 0;②
+strchr 循环查找参数1 字符——每命中 memmove 移位覆盖 + 截断写 0——直至
+无字符;③ 重分配（new + 拷贝 + delete 旧）——返回 1=有替换 / 0=未找到
+（原缓冲保留）——字符串字符移除/替换（去字符操作——memmove 移位覆盖推
+断）。
+★原版怪癖（照抄）：① ★★strchr 循环（0x7CAF30——batch 126——逐命中处
+理——非一次性）;② ★★memmove 移位覆盖（0x7CA090——batch 031——命中后
+左移覆盖——去字符）;③ ★★截断写 0（mov byte[edx+esi],0——es 递减——
+尾部封口）;④ ★★重分配 new+拷贝+delete（batch 001 + rep movsd/movsb 8B
+对齐——batch 1651 同款）;⑤ ★★未找到直返原缓冲（test eax / je 收尾——
+bl=0——零改动）;⑥ ★★183B 三段（查找+循环+重分配）。
+★跨批次连接：◆◆0x7CAF30（batch 126 strchr——调用现场 ×2）◆◆0x7CA090
+（batch 031 memmove——调用现场）◆◆0x7C8E17/0x7C8B3D（batch 001 new/
+delete）◆◆rep movsd/movsb 拷贝惯用（batch 1651 的 0x7B5D70 同款——8B
+对齐）◆◆字符串容器家族（本批 0x7B71D0/0x7B6D90 同区——0x7B 区容器
+族）。
+新候选：无（callees=4 全已登记）。
+⚠️ partial：函数精确名（推断「字符串字符替换器」）、宿主容器类、参数1
+字符语义（移除/替换推断）、memmove 移位精确布局、1 unique caller 身份。
+================================================================================
+本批新候选登记（后续批兑现）
+================================================================================
+无（callees 全已登记——0x7C 区字符串原语 + new/delete 全绿）。★★跨批次
+闭合：0x7B 区字符串容器家族三员（0x7B71D0/0x7B6D90/0x7B50F0——strlen/
+wcscpy/wcscat/strchr/memmove + new/delete 组合——Resize/Replace 容器惯
+用——batch 045/126/031/001 锚点组合消费端）;byte/word 孪生新例
+（0x7B71D0 vs 0x7B72F0——重分配器孪生）;×2+2 容器增长率统一（0x7B71D0/
+0x7B6D90 同款——容器家族指纹）。
