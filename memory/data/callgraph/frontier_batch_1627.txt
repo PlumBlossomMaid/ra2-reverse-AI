@@ -1,0 +1,125 @@
+frontier batch 1627 —— 0x69DE70 ShapeButtonClass::ClearShape / 0x683030 COM 接口安全 getter / 0x682B80 COM 多阶段初始化器（2026-10-24）
+
+口径：承接 batch 1626 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+uc=1 callsite=5 top3）。本批取：0x69DE70（42B，callees=1 deps=46——
+**ShapeButtonClass::ClearShape**，ranking 带名——清资源 + 四字段）、
+0x683030（22B，callees=1 deps=19——**COM 接口安全 getter**，推断名——
+空接口置 E_POINTER）、0x682B80（235B，callees=1 deps=15——**COM 多阶段
+初始化器**，推断名——三段虚表槽 + 失败释放链）。
+取证手段：disasm.py 三路全读——0x69DE70 0x50 覆盖尾 0x69DE99 ret + 后邻
+0x69DEA0（★★batch 1626 SetLoadedStatus——+0x5C 同字段——置/清配对）;
+0x683030 0x40 覆盖尾 0x683045 ret + 后邻 0x683050（★接口释放器——同
+COM 包装族）;0x682B80 0x100 覆盖尾 0x682C68 ret 0xC——均读到函数尾。
++ TSV 查重（三候选全部未登记）+ callee 核验（2 个被调全部已登记——
+0x7C8B3D（batch 001 delete）、0x7DC720（batch 052 单参数转发包装——
+0x80004003 → 0x7DCD9C(param,0) 无效参数异常链）——**本批无新候选**）。
+★★★跨批次重大连接：★★◆0x69DE70 与 batch 1626 的 0x69DEA0
+（ShapeButtonClass::SetLoadedStatus）构成【置/清配对】——SetLoadedStatus
+写 +0x5C 状态字节、ClearShape 读 +0x5C 判置位后 delete +0x58 资源并清
+四字段（+0x58/+0x5C/+0x14/+0x18）——按钮加载生命周期两件套;★★◆
+0x683030 的 0x7DC720 = batch 052「单参数转发包装——param → 0x7DCD9C
+(param, 0) 无效参数异常链入口」——本函数 0x80004003（E_POINTER）经其
+转入 CRT 无效参数异常链;★★◆0x682B80 的三段虚表槽（0x10/0xC/0x10）+
+失败槽 8 释放 = batch 918/919 虚表槽族同款高槽位调用——COM 包装域。
+
+================================================================================
+0x69DE70 —— ShapeButtonClass::ClearShape（42B 全读，带名）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this esi; 0x69DE70-0x69DE99，返回 void）。
+机器码结构（0x69DE70-0x69DE99，全程读完）:
+    push ebx/esi → mov esi,ecx → xor ebx → cmp byte[esi+0x5C],bl → je
+    0x69DE97（★+0x5C 状态==0 → 跳过）→ mov eax,[esi+0x58]（★+0x58 资源
+    ）→ cmp eax,ebx → je 0x69DE97（★资源空 → 跳过）→ push eax → call
+    0x7C8B3D（★batch 001 delete——释放资源）→ add esp,4 → [esi+0x58]=
+    ebx（★清 +0x58）→ byte[esi+0x5C]=bl（★清 +0x5C）→ [esi+0x14]=ebx
+    → [esi+0x18]=ebx（★清 +0x14/+0x18）→ 0x69DE97: pop 族 → ret。
+语义：**ShapeButtonClass::ClearShape（ranking 带名）**——thiscall：
+① +0x5C 状态置位 且 +0x58 资源非空 双条件门控;② delete 资源;③ 清四
+字段（+0x58/+0x5C/+0x14/+0x18）。
+★原版怪癖（照抄）：① ★★双条件门控（+0x5C 状态 + +0x58 资源都非空才
+释放——SetLoadedStatus 写状态后才可能触发）;② ★★清四字段（+0x58 资
+源/+0x5C 状态/+0x14/+0x18——形状清除全字段）;③ ★★与 SetLoadedStatus
+置/清配对（batch 1626——同 +0x5C 字段——按钮生命周期）;④ ★★42B 紧
+凑（双门控 + 单 delete + 四清零——无栈帧仅 ebx/esi 保存）。
+★跨批次连接：◆◆batch 1626（0x69DEA0——SetLoadedStatus——置/清配对
+同 +0x5C）◆◆batch 001（0x7C8B3D delete）◆后邻 0x69DEB0（ClearShape
+带名同宿主——按钮类字段族）。
+新候选：无（callees=1 已登记）。
+⚠️ partial：+0x58 资源类型（形状/SHP 推断）、+0x14/+0x18 字段语义、
+宿主类（带名 ShapeButtonClass）、1 unique caller 身份。
+
+================================================================================
+0x683030 —— COM 接口安全 getter（22B 全读）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this esi; 0x683030-0x683045，返回 eax=
+接口指针）。
+机器码结构（0x683030-0x683045，全程读完）:
+    push esi → mov esi,ecx → cmp dword[esi],0（★this+0 接口指针）→ jne
+    0x683042（★非空 → 跳过）→ push 0x80004003（★★HRESULT E_POINTER）→
+    call 0x7DC720（★★batch 052 单参数转发包装——转入 0x7DCD9C(param,0)
+    无效参数异常链）→ 0x683042: mov eax,[esi]（★返回接口指针）→ pop
+    esi → ret。
+语义：**COM 接口安全 getter（推断名）**——thiscall：① this+0 接口指针
+空 → 0x7DC720 置 E_POINTER 错误（0x80004003）;② 返回接口指针。
+★原版怪癖（照抄）：① ★★E_POINTER 错误码（0x80004003——COM 标准空指
+针错误——push 直参）;② ★★0x7DC720 转入异常链（batch 052——无效参数
+异常链入口——断言风格）;③ ★★22B 极简（cmp/jne + 错误分支 + 返回——
+无栈帧）;④ ★★后邻 0x683050 接口释放器（[ecx] 非空 → 虚表槽 8——同
+COM 包装族——getter/释放配对）。
+★跨批次连接：◆◆batch 052（0x7DC720——单参数转发包装——E_POINTER 转
+入链）◆◆batch 1594/1595（COM 包装族——0x7E 区 IAT 同域）◆后邻
+0x683050（接口释放器——同族）。
+新候选：无（callees=1 已登记）。
+⚠️ partial：宿主类（COM 对象推断）、+0 接口类型、1 unique caller 身份。
+
+================================================================================
+0x682B80 —— COM 多阶段初始化器（235B 全读）
+================================================================================
+签名：thiscall 多栈参 ret 0xC（ecx=this、[esp+0x24]=对象 esi、[esp+
+0x28]=参 2、[esp+0x2C]=参 3; 0x682B80-0x682C68，返回 eax=HRESULT）。
+机器码结构（0x682B80-0x682C68，全程读完，分段要点）:
+    段1 阶段 1（0x682B80-0x682BA2）：sub esp,0x1C → push esi → mov esi,
+    [esp+0x24]（★对象）→ [esp+4]=0（★出参槽清 0）→ mov eax,[esi] →
+    push [esp+4]/0x12（★标志 0x12）/0x7F7D10（★常量）/esi → call
+    [eax+0x10]（★虚表槽 0x10——六参——阶段 1 调用）→ test eax → jge
+    0x682BF2（★成功跳过）。
+    段2 失败释放（0x682BA6-0x682BB1）：mov eax,[esp+4] → test → je →
+    mov edx,[eax] → push eax → call [edx+8]（★虚表槽 8——接口释放）。
+    段3 阶段 2（0x682BB4-0x682BD2）：mov eax,[esi] → push [esp+4]/
+    0x1012（★标志 0x1012）/0 ×2/0x7F7D10/esi → call [eax+0xC]（★虚表槽
+    0xC——六参——阶段 2）→ mov esi,eax → test → jge 0x682BF2（★成功）。
+    段4 失败释放（0x682BDB-0x682BEF）：同段 2 释放 → 返 esi（错误码）。
+    段5 成功路径（0x682BF2-0x682C38）：mov eax,[esp+0x28] → mov ecx,
+    [esp+0x2C] → [esp+0xC]=eax → [esp+8]=1 → word[esp+0x10]=3 → [esp+
+    0x18]=ecx → 出参检查：mov eax,[esp+4] → test → je 0x682C19 → push
+    0x80004003 → call 0x7DC720（★★batch 052——E_POINTER 转入）→ 0x682C27:
+    mov edx,[eax] → push 2（★标志 2）/[esp+0x10]/[esp+0x10]/1/eax →
+    call [edx+0x10]（★虚表槽 0x10——阶段 3——五参）→ mov esi,eax →
+    test → jge 0x682C58（★成功）。
+    段6 收尾（0x682C3D-0x682C68）：出参非空 → 虚表槽 8 释放 → 返
+    esi（HRESULT）→ ret 0xC。
+语义：**COM 多阶段初始化器（推断名）**——thiscall：① 阶段 1 虚表槽
+0x10（0x12 标志 + 0x7F7D10 常量）;② 失败 → 槽 8 释放接口;③ 阶段 2 虚
+表槽 0xC（0x1012 标志）;④ 成功路径参数组装 + 阶段 3 虚表槽 0x10（2
+标志——出参非空检查 + E_POINTER 转入）;⑤ 全程失败走槽 8 释放 → 返回
+HRESULT。
+★原版怪癖（照抄）：① ★★三段虚表槽（0x10 阶段 1 → 0xC 阶段 2 → 0x10
+阶段 3——同一槽复用于首尾）;② ★★标志递进（0x12 → 0x1012 → 2——各
+阶段标志量）;③ ★★0x7F7D10 常量（★str/接口 ID 推断——两次传入）;
+④ ★★失败释放链（每段失败 → 出参槽 8 释放——不泄漏）;⑤ ★★E_POINTER
+转入（出参空 → 0x7DC720——batch 052 异常链）;⑥ ★★word[esp+0x10]=3
+（成功路径内联小结构 3）;⑦ ★★ret 0xC（三栈参）。
+★跨批次连接：◆◆batch 052（0x7DC720——E_POINTER 转入——同 0x683030）
+◆◆batch 918/919（虚表槽多段调用族）◆batch 1627 同批（0x683030——
+同 COM 包装域）。
+新候选：无（callees=1 已登记）。
+⚠️ partial：函数精确名（「COM 多阶段初始化器」推断）、0x7F7D10 常量身
+份、三段标志语义、槽 0x10/0xC/0x8 方法名、1 unique caller 身份。
+
+================================================================================
+本批新候选登记（后续批兑现）
+================================================================================
+无（callees 全部已登记——0x7C8B3D batch 001、0x7DC720 batch 052）。后邻
+观察：0x683050（接口释放器——[ecx] 非空 → 虚表槽 8——同 0x682B80 失
+败释放链——非本批职责留候选池）、0x69DEB0（ShapeButtonClass 同宿主第
+三函数——ClearShape 后邻——留候选池）。
