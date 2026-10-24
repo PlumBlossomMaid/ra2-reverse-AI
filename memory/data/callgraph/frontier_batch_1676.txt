@@ -1,0 +1,174 @@
+frontier batch 1676 —— 0x4AAB30 双点通行/驻军检查器 / 0x4A3370 双槽对象释放器 / 0x483C80 格子类型判定器（2026-10-24）
+
+口径：承接 batch 1675 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+uc=1 callsite=3 top3）。本批取：0x4AAB30（218B，callees=3 deps=59——
+**双点通行/驻军检查器**，推断名——三次查表+双判定）、0x4A3370（45B，
+callees=0 deps=45——**双槽对象释放器**，推断名——虚表槽 8 释放+清零）、
+0x483C80（424B，callees=1 deps=1875——**格子类型判定器**，推断名——多级
+标志分派写类型码 0..7）。
+取证手段：disasm.py 三路全读——0x4AAB30 0x100 覆盖尾 0x4AAC09 ret 0x14
++ nop 垫（顺带落 0x4AAC10 下一函数头——test al,0x55 位测——不属本批）;
+0x4A3370 0x80 覆盖尾 0x4A339C ret + nop 垫（顺带落 0x4A33A0 下一函数头—
+—+0x70 空检查返 -1——同族邻函数，不属本批）;0x483C80 0x200 覆盖尾
+0x483E28 ret + nop 垫（顺带落 0x483E30 下一函数头——+0x34 引用计数
+swap——[0xA8E9A0] 门控——不属本批）——均读到函数尾。
++ TSV 查重（三候选全部未登记）+ callee 核验（0x4AAB30 → 0x5657A0 已登记
+line240/0x4834A0 已登记 line574/0x47C3D0 已登记 line552；0x483C80 →
+0x578460 已登记 line276；0x4A3370 callees=0——**本批无未登记被调、零新候
+选**）。
+★★★跨批次重大连接：★★◆0x483C80 与 batch 173 的 0x4834A0 **同区同族**
+（0x483xxx 区——共享 [0xA83D84] 全局表 + 对象标志 +0x22D/+0x2A8 + 浮点
+表 0x89EA48——0x4834A0 是可移动性判定、0x483C80 是类型码分派——Cell 判
+定器家族第四员）;★★◆0x4AAB30 = 0x5657A0（坐标查表）+ 0x4834A0 + 0x47C3D0
+（FindTechnoNearestTo）三锚点组合消费端——放置/布点合法性检查惯用;
+★★◆0x483C80 前置 = MapClass::IsWithinUsableArea（0x578460——batch 065
+登记——MapClass::Instance 0x87F7E8 主体）——区域合法才继续分派。
+================================================================================
+0x4AAB30 —— 双点通行/驻军检查器（218B 全读）
+================================================================================
+签名：thiscall 5 栈参 ret 0x14（ecx=this 查表器未用; [esp+0x24]=参数3→edi、
+[esp+0x1C]=参数1→ebx、[esp+0x2C]=参数5、[esp+0x28]=参数4、第二段
+[esp+0x3C]（7 push 后）=参数2; 0x4AAB30-0x4AAC09，返回 al bool）。
+机器码结构（0x4AAB30-0x4AAC09，全程读完，分段要点）:
+    段0 参数门控（0x4AAB30-0x4AAB4B）：sub esp,8（栈缓冲）→ 4 寄存器压
+    栈 → mov edi,[esp+0x24]（参数3）→ mov esi,ecx（this）→ cmp edi,4 →
+    jne 0x4AAB4E（★★参数3==4 → 直接 mov al,1 → ret 0x14——早返回 true）。
+    段1 第一点检查（0x4AAB4E-0x4AAB7A）：mov ebx,[esp+0x1C]（参数1）→
+    8 push（1,-1,0,-1,1,1,参数3,参数1——从右向左）→ mov ecx,esi → call
+    0x5657A0（★★坐标→CellClass* 查表——batch 240 锚点）→ mov ecx,eax →
+    call 0x4834A0（★★可移动性/通行判定——batch 173 锚点）→ test al,jne
+    继续 → 失败 mov al,0 → ret 0x14。
+    段2 第二点检查（0x4AAB7D-0x4AABAE）：mov eax,[esp+0x2C]（参数5）→
+    mov ecx,[esp+0x28]（参数4）→ 8 push（1,-1,参数5,参数4,1,1,参数3,
+    [esp+0x3C]=参数2——7 push 后重读）→ call 0x5657A0 → call 0x4834A0 →
+    失败 mov al,0 → ret 0x14。
+    段3 驻军检查 ×2（0x4AABB1-0x4AABDC）：push ebp(0) → lea edx,[esp+
+    0x14]（栈缓冲）→ push 0 → push 缓冲 → push 参数1 → mov [esp+0x20],
+    ebp / mov [esp+0x24],ebp（缓冲清零）→ call 0x5657A0 → mov ecx,eax →
+    call 0x47C3D0（★★CellClass::FindTechnoNearestTo——batch 166 锚点——
+    参数 {qword 缓冲,0,0} 区域查询）→ test eax / je 继续 → 非 0（★★
+    区域内存在最近技术单位）→ mov al,0 → ret 0x14。
+    段4 复检（0x4AABDF-0x4AAC09）：push ebp(0) → lea eax,[esp+0x14] →
+    3 push（0,缓冲,参数3）→ 缓冲清零 → call 0x5657A0 → call 0x47C3D0 →
+    test eax → sete al（★★两次 FindTechnoNearestTo 均返回 0 → true，有单
+    位 → false）→ ret 0x14。
+语义：**双点通行/驻军检查器（推断名）**——thiscall 5 栈参：① 参数3==4
+早返回 true（★★旁路——登记怪癖）;② 两点（参数1,参数3 / 参数2,参数3
++参数4,参数5）分别查表（0x5657A0）后做可移动性判定（0x4834A0）——任一
+不可通行返 false;③ 两次 FindTechnoNearestTo（0x47C3D0——{offset,alt,
+exclude} 区域查询）——区域内存在最近技术单位返 false——布点/放置合法性
+检查器（两坐标点可通行 + 附近无单位才放行）。
+★原版怪癖（照抄）：① ★★参数3==4 早返回 true（旁路——不检查——原版特
+定参数值快退）;② ★★两轮查表+判定（每点独立检查——双点合取）;③ ★★两
+轮 FindTechnoNearestTo（段3/段4——参数序列不同：段3 参数1+缓冲、段4 参
+数3+缓冲——重复确认）;④ ★★缓冲 [esp+0x14] 每轮清零（0x20/0x24 双
+dword——8B 区域）;⑤ ★★8 push 长参列表（查表惯用——batch 173 的
+0x4834A0 同款 8 参）;⑥ ★★218B 五段（门控+双点+双驻军——合成检查器）。
+★跨批次连接：◆◆0x5657A0（batch 240 坐标查表——调用现场 ×4）◆◆
+0x4834A0（batch 173 可移动性判定——调用现场 ×2）◆◆0x47C3D0（batch 166
+FindTechnoNearestTo——调用现场 ×2）◆◆[0xABDC50] 哨兵（batch 240 查表越
+界→哨兵——本函数间接经查表遇到）。
+新候选：无（callees=0 未登记——0x5657A0/0x4834A0/0x47C3D0 全已登记）。
+⚠️ partial：函数精确名（推断「双点通行/驻军检查器」）、5 参数精确语义
+（参数1/2=坐标对推断、参数3=类型/标志推断、参数4/5=候选区推断）、
+FindTechnoNearestTo 参数序列差异（段3 vs 段4）、1 unique caller 身份。
+================================================================================
+0x4A3370 —— 双槽对象释放器（45B 全读）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this; 0x4A3370-0x4A339C，无返回值）。
+机器码结构（0x4A3370-0x4A339C，全程读完）:
+    槽1（0x4A3370-0x4A3385）：mov eax,[esi+0x74]（★★+0x74 对象指针）→
+    test eax,eax → je 跳过 → mov ecx,[eax] → push eax（thiscall this）→
+    call [ecx+8]（★★虚表槽 8——释放/销毁）→ mov [esi+0x74],0（清零）。
+    槽2（0x4A3387-0x4A339C）：mov eax,[esi+0x70]（★★+0x70 对象指针）→
+    test eax,eax → je 跳过 → mov edx,[eax] → push eax → call [edx+8]（
+    ★★虚表槽 8）→ mov [esi+0x70],0（清零）→ ret。
+语义：**双槽对象释放器（推断名）**——thiscall：释放 this+0x74 与 +0x70
+两个对象指针（各自虚表槽 8）并清零——双对象析构辅助/成员清理器
+（45B——极简双槽释放惯用）。
+★原版怪癖（照抄）：① ★★虚表槽 8 释放惯用（thiscall push this → call
+[vtbl+8]——非 delete——对象自释放）;② ★★+0x74 先释放、+0x70 后释放
+（顺序固定）;③ ★★释放后清零（置 0——防双释）;④ ★★45B 紧凑双槽。
+★跨批次连接：◆◆0x4A33A0 下一函数头（同族——+0x70 空检查返 -1——
+0x8A0E08 全局表 + +0x70 门控——双槽族的注册/查询邻函数）◆◆虚表槽 8 释
+放惯用（batch 1653/1659/1662/1668/1669/1671 twin 家族——槽变体库）。
+新候选：无（callees=0）。
+⚠️ partial：函数精确名（推断「双槽对象释放器」）、+0x74/+0x70 对象身份
+（成员对象推断）、虚表槽 8 精确语义（Release/销毁推断）、宿主类、1
+unique caller 身份。
+================================================================================
+0x483C80 —— 格子类型判定器（424B 全读）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this 格子; 0x483C80-0x483E28，+0x4C 写类型
+码 0..7，无返回值）。
+机器码结构（0x483C80-0x483E28，全程读完，分段要点）:
+    段0 区域前置（0x483C80-0x483CA3）：mov edi,ecx（this）→ push 1（★★
+    flag=1）→ mov ecx,0x87F7E8（★★MapClass::Instance）→ lea eax,[edi+
+    0x24]（本格坐标）→ push eax → call 0x578460（★★MapClass::
+    IsWithinUsableArea——batch 065 锚点）→ test al,jne 继续 → 失败 mov
+    [edi+0x4C],7（★★类型码 7）→ ret。
+    段1 索引对象分派（0x483CA4-0x483D29）：mov eax,[edi+0x44]（★★+0x44
+    索引）→ cmp eax,-1 → je 0x483D2A（无对象跳段2）→ mov ecx,[0xA83D84]
+    （★★全局表）→ mov ecx,[ecx+eax*4]（取对象）→ 五连判定：+0x22D 标志
+    → 类型码1;+0x2A8 标志 → 类型码2;+0x298→lea eax+eax*8 → fld
+    [edx*4+0x89EA48]（★★浮点表）→ fcomp [0x7E1748] → test ah,0x40（<
+    比较）→ je → 类型码6;+0x2B5 标志 → 类型码6;+0x2B4 标志 → jne
+    0x483DD4（跳段4 类型码0——★★+0x2B4 置位不配码走 0）。
+    段2 类型码快速分派（0x483D2A-0x483D71）：mov eax,[edi+0xEC]（++0xEC
+    类型字段）→ cmp 2 → 类型码4;cmp 6 → 类型码3;lea eax+eax*8 → fld
+    [eax*4+0x89EA48] → fcomp qword [0x7E3808] → test ah,0x41 → je → mov
+    [edi+0x4C],6（++0xEC 非 2/6 且浮点表超限 → 码 6）→ ret。
+    段3 对象链遍历（0x483D72-0x483DD3）：mov esi,[edi+0xE4]（++0xE4 对象
+    链）→ test esi / je 段4 → 循环：mov edx,[esi] → mov ecx,esi → call
+    [edx+0x2C]（★★虚表槽 0x2C——类型查询）→ cmp eax,6 → je 0x483D8E →
+    cmp eax,0x24 → je 0x483DDF → jmp 0x483DCD（不匹配步进）;0x483D8E：
+    mov eax,[esi+0x520] → mov cl,[eax+0x16C0] → test → je 0x483DB0 →
+    mov eax,[esi+0x21C] → mov cl,[eax+0x1FA] → jne 0x483D6B（★类型码 6
+    → ret）→ jmp 0x483DCD;0x483DB0：mov cl,[eax+0x16BF] → test → je
+    0x483DCD → mov eax,[esi+0x618] → cmp 0xC → je 0x483DCD → cmp 8 → je
+    0x483DCD → mov [edi+0x4C],6（★类型码 6）→ ret;0x483DCD：mov esi,
+    [esi+0x30]（★★链步进 +0x30）→ test esi / jne 循环。
+    段4 兜底（0x483DD4-0x483DDE）：mov [edi+0x4C],0（★★类型码 0——默认
+    平地/未知）→ ret。
+    段5 特例分支（0x483DDF-0x483E28）：mov ecx,[0xA8B230]（★★全局对象
+    表）→ mov eax,[ecx+0x1258] → mov ecx,7 → cmp eax,1 → je 0x483E0C →
+    mov edx,[esi+0xC8] → cmp [edx+0x2A8],7 → jne 0x483E1E → cmp eax,1 →
+    jne 0x483CD4（★类型码 2）→ 0x483E0C：mov eax,[esi+0xC8] → cmp
+    [eax+0x2AC],7 → je 0x483CD4（★类型码 2）→ 0x483E1E：mov [edi+0x4C],
+    5（★★类型码 5——7 号所属关系特判）→ ret。
+语义：**格子类型判定器（推断名）**——thiscall 1 栈参（flag=1 硬编）：①
+前置 IsWithinUsableArea（本格坐标+flag=1）失败 → 类型码 7（不可用区）;②
+按 +0x44 索引查 [0xA83D84] 表对象——+0x22D/+0x2A8/+0x2B5 标志与 0x89EA48
+浮点表依次分派码 1/2/6;③+0xEC 类型字段 2→码 4、6→码 3、浮点表超限→码
+6;④+0xE4 对象链虚表槽 0x2C 类型查询（6/0x24 特判 + 0x520/0x21C/0x618 子
+判定）——命中写码 6、7 号建筑所属特判写码 5;⑤兜底码 0——多级类型分派
+器（格子类型/地表分类推断——与 0x4834A0 同族）。
+★原版怪癖（照抄）：① ★★IsWithinUsableArea 前置（区域合法才分派——失
+败码 7 不查表）;② ★★+0x2A8 标志与码 2 绑定（同 0x4834A0——标志为真即可
+移动/即此类型）;③ ★★0x89EA48 浮点表 ×2（+0x298 索引 / +0xEC 索引——lea
+[rax+rax*8]+*4 = ×9×4 = ×36 步长——浮点浓度表推断）;④ ★★+0x2B4 置位
+跳段4（不配码走 0——标志冲突容错）;⑤ ★★虚表槽 0x2C 类型查询（cmp 6 /
+cmp 0x24——batch 1670 的 0x55B880 同款槽）;⑥ ★★链步进 +0x30（batch 166
+FindTechnoNearestTo 同款链字段——0xE4 链）;⑦ ★★[0xA8B230] 全局 +0x1258
+字段 + 7 号所属特判（cmp 7 → 码 5——建筑所属关系）;⑧ ★★424B 五段大函
+数（前置+表分派+链遍历+兜底+特例）。
+★跨批次连接：◆◆batch 173 的 0x4834A0（同区同族——[0xA83D84] 全局 + 对
+象 +0x22D/+0x2A8 + MapClass 查询——Cell 判定器家族第四员）◆◆batch 065
+的 0x578460 IsWithinUsableArea（前置——调用现场）+0x87F7E8 MapClass::
+Instance（QWEN.md 实锤）◆◆batch 166 的 0x47C3D0（+0xE4 链 + 虚表槽
+0x2C——同款链遍历）◆◆+0x44 索引 [0xA83D84]（batch 173 的 0x4834A0 同
+款）◆◆0x89EA48 浮点表（×36 步长——新登记数据表——batch 173 同区）。
+新候选：无（callees=1——0x578460 已登记）。
+⚠️ partial：函数精确名（推断「格子类型判定器」）、+0x4C 类型码 0..7 精确
+业务（地形/通行分类推断）、0x89EA48 浮点表语义（浓度/高度推断）、
+[0xA83D84] 全局表宿主（batch 173 同款未实锤）、虚表槽 0x2C 类型码（6/
+0x24）、+0x44 索引语义、1 unique caller 身份。
+================================================================================
+本批新候选登记（后续批兑现）
+================================================================================
+无（callees 全为 0/全已登记——0x5657A0/0x4834A0/0x47C3D0/0x578460 均已登
+记）。★★跨批次闭合：Cell 判定器家族第四员（0x483C80——batch 173 的
+0x4834A0 同区同族——共享 [0xA83D84] 全局 + 对象标志 + 浮点表）;
+0x5657A0+0x4834A0+0x47C3D0 三锚点组合消费端（0x4AAB30——双点通行/驻军
+检查器——放置合法性检查惯用）;双槽释放器新例（0x4A3370——虚表槽 8 +
+清零——twin/槽变体家族又一员）。
