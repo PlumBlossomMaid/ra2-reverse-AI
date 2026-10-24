@@ -1,0 +1,199 @@
+frontier batch 1683 —— 0x7AD2F0 安全析构器 / 0x7A2970 一次性回调注册器 / 0x7A19E0 哈希查找记录查询器（2026-10-24）
+
+口径：承接 batch 1682 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+uc=1 callsite=2 top3）。本批取：0x7AD2F0（30B，callees=2 deps=279——
+**安全析构器**，推断名——0x7B46F0 安全 delete + flags&1 自删——析构惯
+用）、0x7A2970（100B，callees=5 deps=3074——**一次性回调注册器**，推断
+名——守卫标志 + 双检查 + 栈对象 + 回调注册——初始化惯用）、0x7A19E0
+（455B，callees=9 deps=2710——**哈希查找记录查询器**，推断名——shl 掩码
+索引 + 判等 + 链 +0x70 遍历 + 记录数组扫描 + 虚表槽 0x20 回调——查表派
+发）。
+取证手段：disasm.py 三路全读——0x7AD2F0 0x50 覆盖尾 0x7AD30B ret 4 +
+nop 垫（顺带落 0x7AD310/0x7AD330 同构邻函数——析构 twin 家族——不属本
+批）;0x7A2970 0x100 覆盖尾 0x7A29D3 ret + nop 垫（顺带落 0x7A29E0 回调
+函数本体头——0x1E0 栈帧大函数——不属本批）;0x7A19E0 0x200 覆盖尾
+0x7A1BA6 ret + nop 垫（顺带落 0x7A1BB0 下一函数头——同域——不属本批）
+——均读到函数尾。
++ TSV 查重（三候选全部未登记）+ callee 核验（0x7AD2F0 → 0x7B46F0 已登
+记 line257（batch 059 带空指针置位的析构）/0x7C8B3D 已登记 line2（batch
+001 operator delete）;0x7A2970 → 0x779940、0x79C520 **未登记**（新候选
+×2）/0x624110 已登记 line596（batch 180 双虚表构造器）/0x6241F0 已登记
+line656（batch 200 MainLoop 驱动宿主循环）/0x624130 已登记 line465
+（batch 136 虚表安装器第二实例）;0x7A19E0 → 0x734E60 已登记 line6（batch
+001 DebugLog）/0x5E2700 已登记 line387（batch 110 对话框控件刷新链）/
+0x7B5B80 已登记 line594（batch 180 strtoupper）/0x7B4780 已登记 line326
+（batch 086 operator==）/0x7B5400 已登记 line323（batch 085 c_str）/
+0x7B4630 已登记 line270（batch 062 operator=）/0x7B5440 已登记 line293
+（batch 072 GetString）/0x7C8D20 已登记 line7（batch 001 不区分大小写比
+较）/0x7B46F0（batch 059）——**本批新候选 2 个**（0x779940/0x79C520）。
+★★★跨批次重大连接：★★◆0x7A19E0 = **batch 1682 的 0x7ADF70（链字段
++0x70 哈希表）消费端实锤**——[0xB77D80] 槽表基址/[0xB77D8C] 槽位数
+log2/[0xB77D98] hash 回调函数指针/[0xB77D84] 存在标志 + 链遍历
+[esi+0x70]——0x7ADF70 操作的正是这张全局哈希表（0x7ADF70 的 +0x70 链字
+段疑问闭合）;★★◆0x7AD2F0 = **安全析构惯用**——0x7B46F0（batch 059）
++ 栈参 flags bit0 自删（0x7C8B3D）——析构器家族;★★◆0x7A2970 = **注册
+惯用**——0x6241F0（batch 200 宿主循环注册口——本现场参数 ecx=0x122/
+回调 0x7A29E0/0x7F7624——与 batch 200 登记的宿主路径互补）。
+================================================================================
+0x7AD2F0 —— 安全析构器（30B 全读）
+================================================================================
+签名：thiscall 1 栈参 ret 4（ecx=this 对象; [esp+8]=flags 栈参——调用者
+栈; 0x7AD2F0-0x7AD30B，返回 this 指针）。
+机器码结构（0x7AD2F0-0x7AD30B，全程读完）:
+    push esi → mov esi,ecx（this）→ call 0x7B46F0（★安全 delete——batch
+    059——带空指针置位的析构——成员指针释放并置 NULL）→ test byte[esp+8],
+    1（★flags bit0）→ je 0x7AD308（不置位跳过）→ push esi → call
+    0x7C8B3D（★operator delete——batch 001——释放 this 本体）→ add
+    esp,4 → mov eax,esi（返回 this）→ pop esi → ret 4。
+语义：**安全析构器（推断名）**——thiscall 1 栈参：①无参调用 0x7B46F0
+（安全 delete 成员指针 + 置 NULL——batch 059）;②栈参 flags bit0 置位则
+再 delete this 本体（0x7C8B3D——batch 001）;③返回 this——析构 + 条件
+自删的双重释放守卫（RAII 对象析构 + 引用计数/自管理推断）。
+★原版怪癖（照抄）：① ★★无参 0x7B46F0 先行（成员指针安全释放——析构
+惯用第一步）;② ★★flags bit0 门控自删（test byte[esp+8],1——调用者栈
+参——非 this 成员——析构器带外部标志）;③ ★★返回 this（mov eax,esi——
+非 void 析构——C++ 惯例返回 this 便于链式）;④ ★★30B 紧凑双段（释放+条
+件自删）。
+★跨批次连接：◆◆0x7B46F0（batch 059 安全 delete——调用现场——析构锚
+点）◆◆0x7C8B3D（batch 001 operator delete——调用现场——条件自删）◆◆
+0x7AD310/0x7AD330（邻函数同构——析构 twin 家族——不属本批）◆◆0x7ADF70
+（本批邻区——同 0x7AD 区容器域）。
+新候选：无（callees=2 全已登记）。
+⚠️ partial：函数精确名（推断「安全析构器」）、宿主类（+0x0 成员指针推
+断）、flags bit0 语义（引用计数/自删标志推断）、0x7B46F0 释放的成员身份。
+================================================================================
+0x7A2970 —— 一次性回调注册器（100B 全读）
+================================================================================
+签名：cdecl 无栈参 ret（0x7A2970-0x7A29D3，无返回值）。
+机器码结构（0x7A2970-0x7A29D3，全程读完，分段要点）:
+    段0 守卫（0x7A2970-0x7A2982）：mov al,[0xB77DC2]（★全局守卫字节）→
+    sub esp,0xC → test al / jne 0x7A29D0（★已注册直返——一次性）→ mov
+    byte[0xB77DC1],0（★清第二全局字节）。
+    段1 双重检查（0x7A2983-0x7A2998）：call 0x779940（★检查①——未登记）
+    → test al / je 0x7A29D0（失败直返）→ mov ecx,0xB76AC4（★全局对象）
+    → call 0x79C520（★检查②/初始化——未登记——[0xB76AC4] 上方法）→
+    test al / je 0x7A29D0。
+    段2 注册（0x7A299A-0x7A29CB）：lea ecx,[esp]（栈对象）→ call
+    0x624110（★双虚表构造器——batch 180——装虚表 0x7EF738 + 清零）→ lea
+    eax,[esp] → mov edx,0x7A29E0（★回调函数指针——紧随本函数的回调本
+    体）→ push eax（参数）→ mov ecx,0x122（★参数 0x122）→ mov
+    dword[esp+4],0x7F7624（★类型/常量 0x7F7624）→ call 0x6241F0（★注册
+    口——batch 200 MainLoop 驱动宿主循环——本现场为注册调用形态）→ lea
+    ecx,[esp] → mov dword[esp],0x7F7624 → call 0x624130（★虚表安装器第
+    二实例——batch 136——装虚表 0x7EF720）→ add esp,0xC → ret。
+语义：**一次性回调注册器（推断名）**——cdecl：①守卫字节 [0xB77DC2] 已
+置则直返（单次注册——幂等）;②0x779940/0x79C520 双重检查通过才继续;③
+栈上构造双虚表对象（0x624110——batch 180）;④把回调 0x7A29E0 经
+0x6241F0 注册（参数 0x122 + 0x7F7624——batch 200 注册口——本现场为注
+册调用形态而非宿主循环形态——同函数双形态互证）;⑤0x624130 装虚表收
+尾（batch 136）——初始化/注册惯用（一次注册 + 全局守卫）。
+★原版怪癖（照抄）：① ★★守卫字节 [0xB77DC2]（已置直返——单次注册幂
+等）;② ★★[0xB77DC1] 清字节（伴随写——第二全局状态）;③ ★★双重检查
+（0x779940 → 0x79C520——串联门控——任一失败直返）;④ ★★栈对象 + 回调
+指针注册（0x6241F0——ecx=0x122/栈参——本现场形态）;⑤ ★★0x7F7624 常
+量（虚表/类型标记——栈对象装两次虚表 0x7EF738/0x7EF720）;⑥ ★★100B
+三段（守卫+检查+注册）。
+★跨批次连接：◆◆0x624110（batch 180 双虚表构造器——调用现场——栈对象
+基建）◆◆0x6241F0（batch 200 宿主循环——调用现场——注册形态互证——
+同函数双调用形态）◆◆0x624130（batch 136 虚表安装器第二实例——调用现
+场）◆◆[0xB76AC4] 全局对象（0x7A19E0 同源——本批另一函数——全局哈希
+宿主域）◆◆0x779940/0x79C520（未登记——新候选 ×2——下批兑现）。
+新候选：0x779940（检查①——0x7A2970 callee）、0x79C520（检查②/初始化
+——0x7A2970 callee）——2 个。
+⚠️ partial：函数精确名（推断「一次性回调注册器」）、[0xB77DC2]/
+[0xB77DC1] 全局语义、0x779940/0x79C520 精确行为、0x6241F0 本现场参数语
+义（0x122/0x7F7624/回调 0x7A29E0——注册表项推断）、0x7F7624 常量身份、
+0x7A29E0 回调本体（0x1E0 栈帧——不属本批）。
+================================================================================
+0x7A19E0 —— 哈希查找记录查询器（455B 全读）
+================================================================================
+签名：cdecl 无栈参 ret（0x7A19E0-0x7A1BA6，无返回值）。
+机器码结构（0x7A19E0-0x7A1BA6，全程读完，分段要点）:
+    段0 日志头（0x7A19E0-0x7A1A0B）：mov eax,[0xB76AC4]（★全局对象——
+    本批 0x7A2970 同源）→ DebugLog（0x734E60——batch 001——文件 0x84A430
+    /行 0x7066=28774）→ push eax → push 0xC0FFFF → call 0x5E2700（★对
+    话框控件刷新链——batch 110）。
+    段1 哈希查找（0x7A1A0F-0x7A1A62）：lea ecx,[esp+8]（栈键）→ push →
+    mov ecx,0xB76AC4 → call 0x7B5B80（★strtoupper——batch 180——键大
+    写化）→ mov eax,[0xB77D84]（★存在标志）→ test / je 0x7A1A64（空表
+    跳过）→ lea ecx,[esp+8] → call dword[0xB77D98]（★hash 回调函数指针
+    ——[0xB77D98] 全局——键 → 哈希）→ mov ecx,[0xB77D8C]（★槽位数
+    log2）→ mov edx,1 → shl edx,cl → dec → and edx,eax（★掩码索引——
+    batch 1682 同款惯用）→ mov eax,[0xB77D80]（★槽表基址）→ mov esi,
+    [eax+edx*4]（槽节点）→ test / je 0x7A1A64 → 循环 0x7A1A4D：lea
+    ecx,[esp+8] → push → mov ecx,esi → call 0x7B4780（★operator==——
+    batch 086——判等）→ test al / jne 0x7A1A64（命中退出）→ mov esi,
+    [esi+0x70]（★★链字段 +0x70——batch 1682 的 0x7ADF70 同字段）→ test
+    / jne 循环（链遍历——未命中穿链）。
+    段2 记录扫描（0x7A1A64-0x7A1AD7）：push ebx → mov ecx,0xB76AC4 →
+    call 0x7B5400（★c_str——batch 085）→ lea ecx,[esp+0x10]（栈缓冲）→
+    push eax → call 0x7B4630（★operator=——batch 062——复制键串）→ mov
+    eax,[0xB77900]（★记录计数）→ xor ebx/esi → test / jle 0x7A1AC0（空
+    数组）→ 循环 0x7A1A88：xor edi → test edi / jl 步进 → cmp esi,eax /
+    jge 步进 → mov edx,[0xB77908]（★记录基址）→ lea ebx,[edi+edx]（记
+    录指针）→ lea eax,[ebx+0x24]（★记录 +0x24 串字段）→ lea ecx,
+    [esp+0x10] → push eax → call 0x7B5440（★GetString——batch 072）→
+    push eax → call 0x7C8D20（★不区分大小写比较——batch 001）→ test /
+    je 0x7A1AC3（命中）→ mov eax,[0xB77900] → inc esi → add edi,0x6C（★
+    ★每条记录 0x6C 字节）→ cmp esi,eax → jl 循环 → or esi,0xFFFFFFFF（
+    未找到 → -1）→ lea ecx,[esp+0x10] → call 0x7B46F0（★安全 delete——
+    batch 059——栈缓冲析构）→ cmp esi,-1 / jne 0x7A1ADC（找到走拷贝）→
+    DebugLog 行 0x7073（未找到报错）→ 0x7A1B79（错误收尾）。
+    段3 记录拷贝（0x7A1ADC-0x7A1B1D）：mov ecx,0x1B → xor eax → lea
+    edi,[esp+0x10] → rep stosd（★清 0x1B dword=0x6C 字节栈缓冲）→ test
+    esi / jl → cmp esi,[0xB77900] / jge → mov edx,[0xB77908] → lea eax,
+    [esi+esi*2] → lea ecx,[eax+eax*8] → lea esi,[edx+ecx*4]（★★索引×
+    0x6C 定位记录）→ mov ecx,0x1B → rep movsd（★拷贝记录 0x6C 字节到栈
+    缓冲）→ mov ecx,[esp+0x28]（★输出指针参数）→ test / jne 0x7A1B1E →
+    DebugLog 行 0x707A（空输出报错）→ 0x7A1B79。
+    段4 虚表回调（0x7A1B1E-0x7A1BA6）：mov eax,[0xAC1170]（★全局对象）
+    → lea esi,[esp+0xC] → mov dword[esp+0xC],0xFFFFFFFF（输出初始 -1）→
+    push esi → mov edx,[eax] → push ecx → push eax → call dword[edx+0x20]
+    （★★虚表槽 0x20 回调——[0xAC1170] 对象方法）→ mov eax,[esp+0xC]
+    （输出索引）→ cmp -1 / je 0x7A1B74（失败）→ DebugLog 行 0x7080 →
+    0x7A1B74：push 0x7082 → 0x7A1B79：DebugLog（文件 0x84A430/行 0x7073/
+    0x707A/0x7082 三路径）→ lea ecx,[esp+8] → call 0x7B46F0（安全 delete
+    ——栈键析构）→ ret。
+语义：**哈希查找记录查询器（推断名）**——cdecl：①日志头（DebugLog +
+    0x5E2700 对话框刷新——batch 001/110）;②[0xB77D80] 全局哈希表查找
+    （shl 掩码索引——batch 1682 惯用 + 0x7B4780 判等——batch 086 + 链遍
+    历 [+0x70]——batch 1682 的 0x7ADF70 同字段——命中/未命中双退）;③记
+    录数组扫描（[0xB77900] 计数/[0xB77908] 基址——每条 0x6C 字节——键
+    串匹配 0x7C8D20 不区分大小写——未找到 esi=-1 报错）;④记录拷贝
+    （0x1B dword=0x6C 字节 rep stosd 清零 + rep movsd 拷贝）;⑤[0xAC1170]
+    全局对象虚表槽 0x20 回调派发（输出索引——-1 失败报错）——字符串键查
+    表 → 记录 → 派发的查表器（注册表/配置表查询推断）。
+★原版怪癖（照抄）：① ★★shl 掩码索引（1<<[0xB77D8C] 减 1——and 掩码——
+    batch 1682 同款——全局哈希表家族）;② ★★链遍历 [+0x70]（0x7B4780 判
+    等穿链——batch 1682 的 0x7ADF70 同字段——同一张表双向实锤）;③ ★★
+    记录每条 0x6C 字节（add edi,0x6C 步进 + 索引×0x6C 定位——lea
+    [esi+esi*2]+lea [eax+eax*8] 三倍×八倍）;④ ★★rep stosd 清零 + rep
+    movsd 拷贝（0x1B dword——8B 对齐惯用——batch 1651 同款）;⑤ ★★虚表
+    槽 0x20 回调（[0xAC1170] 全局对象方法——输出索引——-1 失败）;⑥ ★★
+    四段 DebugLog（行 0x7073/0x707A/0x7080/0x7082——文件 0x84A430——同
+    一文件错误路径四行）;⑦ ★★栈缓冲键串（0x7B5B80 大写化 + 0x7B4630 拷
+    贝 + 0x7B46F0 析构——字符串类全套——batch 180/062/059）;⑧ ★★455B
+    四段大函数（日志+哈希+扫描+派发）。
+★跨批次连接：◆◆0x7B5B80（batch 180 strtoupper——调用现场——键规范化）
+◆◆0x7B4780（batch 086 operator==——调用现场——哈希判等）◆◆0x7B5400/
+0x7B5440（batch 085/072 c_str/GetString——调用现场）◆◆0x7B4630（batch
+062 operator=——调用现场）◆◆0x7C8D20（batch 001 不区分大小写比较——
+调用现场——记录匹配）◆◆0x7B46F0（batch 059 安全 delete——调用现场 ×2
+——栈对象析构）◆◆0x734E60/0x5E2700（batch 001/110——日志/刷新）◆◆
+[0xB77D80] 哈希表（batch 1682 的 0x7ADF70 消费端实锤——链 +0x70 同字
+段——表结构闭合）◆◆[0xB76AC4] 全局（本批 0x7A2970 同源——初始化宿主）
+◆◆[0xB77900]/[0xB77908] 记录数组（0x6C 字节/条——新登记全局）。
+新候选：无（callees=9 全已登记）。
+⚠️ partial：函数精确名（推断「哈希查找记录查询器」）、[0xB77D80] 哈希
+表宿主身份、[0xB77900] 记录数组宿主、[0xAC1170] 全局对象（虚表槽 0x20
+回调身份）、行号 0x7066-0x7082 对应源码函数名、栈参数 [esp+0x28] 语义。
+================================================================================
+本批新候选登记（后续批兑现）
+================================================================================
+0x779940（0x7A2970 检查①——未登记）、0x79C520（0x7A2970 检查②/初始化
+——[0xB76AC4] 上方法——未登记）——2 个。★★跨批次闭合：batch 1682 的
+0x7ADF70（链字段 +0x70 哈希表）消费端实锤（0x7A19E0 段1——[0xB77D80]/
+[0xB77D8C]/[0xB77D98]/[0xB77D84] 全局 + [+0x70] 链遍历——0x7ADF70 的
++0x70 疑问闭合）;安全析构惯用（0x7AD2F0——0x7B46F0 + flags 自删）;注
+册惯用（0x7A2970——0x6241F0 注册形态——与 batch 200 宿主循环形态互证
+——同函数双调用形态）。
