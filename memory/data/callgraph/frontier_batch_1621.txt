@@ -1,0 +1,149 @@
+frontier batch 1621 —— 0x645D00 索引数组元素地址 getter / 0x629720 ParasiteClass::UpdateGrapple / 0x5F76B0 四全局对象惰性加载器（2026-10-24）
+
+口径：承接 batch 1620 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+uc=1 callsite=6 top3）。本批取：0x645D00（10B，callees=0 deps=25——
+**索引数组元素地址 getter**，推断名——lea [ecx+idx*4] 10B 极简）、
+0x629720（198B，callees=1 deps=1886——**ParasiteClass::UpdateGrapple**，
+ranking 带名——0x4C93D0 取朝向 + 状态分派 + 攻击点偏移计算）、0x5F76B0
+（319B，callees=4 deps=869——**四全局对象惰性加载器**，推断名——
+[0xAC1478]/[0xAC147C]/[0xAC1480]/[0xAC1484] 四对象按组惰性加载）。
+取证手段：disasm.py 三路全读——0x645D00 0x20 覆盖尾 0x645D07 ret 4 + 后
+邻 0x645D10（★fld 浮点读取变体——lea/fld 孪生对）;0x629720 0xD0 覆盖尾
+0x6297E5 ret + 后邻 0x6297F0;0x5F76B0 0x150 覆盖尾 0x5F77EE ret + 后邻
+0x5F77F0（[0xAC1488] 就绪标志查询器）——均读到函数尾。+ TSV 查重（三
+候选全部未登记）+ callee 核验（5 个被调全部已登记——0x4C93D0（batch
+083 FacingStruct::GetFacing——朝向插值核心）、0x65CA80（batch 004
+RawFileClass 构造器）、0x4A3890（batch 139 FileClass::ReadWholeFile）、
+0x5B40B0（batch 091 FileSystem::LoadFile）、0x65CA00（batch 101 缓冲类
+析构/降级）——**本批无新候选**）。
+★★★跨批次重大连接：★★◆0x629720 的 0x4C93D0 = batch 083 FacingStruct::GetFacing
+（63 调用方 / ranking 全表最高未登记项之一——本批兑现其调用现场——宿主 +0x388 子对象朝向读取）;★★◆0x5F76B0 的资源加载链四锚点全命中
+（RawFileClass 构造 0x65CA80 → ReadWholeFile 0x4A3890 → LoadFile 回退
+0x5B40B0 → 析构 0x65CA00——batch 004/139/091/101——文件加载家族闭环）;
+★★◆0x5F76B0 的 [0xAC1478]/[0xAC1488] 文件全局与 batch 091 的 FileSystem
+缓存族（[0xABF00C] 哈希表）同资源加载域——四文件全局对象+就绪标志对。
+
+================================================================================
+0x645D00 —— 索引数组元素地址 getter（10B 全读）
+================================================================================
+签名：thiscall 一栈参 ret 4（ecx=this、[esp+4]=索引; 0x645D00-0x645D07，
+返回 eax=元素地址）。
+机器码结构（0x645D00-0x645D07，全程读完）:
+    mov eax,[esp+4]（★索引）→ lea eax,[ecx+eax*4]（★this+索引*4——
+    4B/项数组元素地址）→ ret 4。
+语义：**索引数组元素地址 getter（推断名）**——thiscall：返回 this+
+索引*4 的数组元素地址（4B/项）。10B 极简。
+★原版怪癖（照抄）：① ★★lea [ecx+eax*4] 单指令寻址（4B/项硬编码——
+shl 2 合并）;② ★★10B 极简（mov+lea+ret 4——无建帧）;③ ★★后邻 0x645D10
+fld 浮点读取变体（lea 地址 vs fld 取值孪生对——[ecx+eax*4] 同布局——
+读地址/读值两用途）。
+★跨批次连接：◆◆batch 1616/1619（+0x10 计数槽——数组访问族推断）。
+新候选：无（callees=0）。
+⚠️ partial：宿主类、数组元素类型（4B 项）、2 unique caller 身份。
+
+================================================================================
+0x629720 —— ParasiteClass::UpdateGrapple（198B 全读，带名，◆batch 083 调用现场）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this esi; 0x629720-0x6297E5，返回 al
+bool——1=级满完成 0=继续）。
+机器码结构（0x629720-0x6297E5，全程读完）:
+    段1 朝向读取（0x629720-0x629740）：sub esp,0x10 → lea eax,[esp] →
+    push 族 → mov esi,ecx → push eax → mov ecx,[esi+0x28]（★宿主）→
+    add ecx,0x388（★宿主 +0x388 子对象）→ call 0x4C93D0（★★batch 083
+    FacingStruct::GetFacing——朝向插值——调用现场兑现）→ mov ecx,
+    [esi+0x48]（★状态）→ mov eax,[eax]（★朝向值）。
+    段2 状态分派（0x629740-0x629767）：test ecx → jl 0x62975E（★状态<0
+    → 偏移 0xA0/阈值 4）→ cmp ecx,1 → jle 0x629755（★<=1 → 偏移 0/阈
+    值 3）→ cmp ecx,2 → jne 0x62975E（★其余 → 0xA0/4）→ ==2 → mov
+    ebx,0x50 → mov ecx,4（★状态 2 → 偏移 0x50/阈值 4）→ 0x629755:
+    xor ebx → mov ecx,3。
+    段3 计数推进（0x629768-0x629792）：mov edi,[esi+0x50]（★计数）→ inc
+    → [esi+0x50]=edi → cmp edx,ecx → jl 0x6297DD（★计数 < 阈值 → 返 0）
+    → mov edx,[esi+0x4C]（★级数）→ [esi+0x50]=0（★计数清零）→ inc
+    edx → [esi+0x4C]=edx → cmp edx,0xA → jl 0x629793（★级数 < 0xA 继续）
+    → mov al,1 → ret（★★级数 >= 0xA → 完成返 1）。
+    段4 攻击点偏移（0x629793-0x6297DB）：mov ecx,[esi+0x44]（★宿主）→
+    test → je 0x6297DD（★空返 0）→ mov edx,[0xA8ED84]（★★batch 175/189
+    全局时间戳标记）→ lea ebp,[ecx+0xB4]（★宿主 +0xB4）→ mov edi,0x80
+    → shr eax,0xC（★朝向值 >> 12）→ [ebp]=edx（★+0xB4=时间戳）→ mov
+    edx,[esp+0x18] → inc eax → shr eax,1 → [ecx+0xC0]=edi（★+0xC0=0x80）
+    → and eax,7（★%8）→ [ebp+4]=edx → [ebp+8]=edi（★+0xB8=0x80）→ mov
+    ecx,[esi+0x4C]（★级数）→ lea eax,[eax+eax*4]（★×5）→ lea edx,
+    [ecx+eax*2]（★级数+×10）→ mov eax,[esi+0x44] → add edx,ebx（★+分
+    支偏移 0/0x50/0xA0）→ [eax+0xAC]=edx（★★宿主 +0xAC=攻击点偏移）→
+    0x6297DD 返 0。
+语义：**ParasiteClass::UpdateGrapple（ranking 带名）**——thiscall：①
+0x4C93D0 取宿主 +0x388 朝向（batch 083）;② 状态分派（[+0x48]：<0/其它
+→偏移 0xA0 阈值 4;<=1 → 0/3;==2 → 0x50/4——状态选偏移+阈值）;③ 计数
+++（[+0x50]）应达阈值 → 级数 ++（[+0x4C]）+ 计数清 0;④ 级数 >= 0xA →
+完成返 1;⑤ 否则宿主攻击点偏移写入（+0xB4/+0xB8=0x80、+0xC0=0x80、
++0xAC=级数×10+偏移+((朝向>>12+1)>>1)%8×5）。
+★原版怪癖（照抄）：① ★★0x4C93D0 宿主 +0x388 朝向读取（batch 083——
+FacingStruct 插值调用现场）;② ★★状态分派三档（[+0x48] 值 → 偏移 0/
+0x50/0xA0 + 阈值 3/4/4——状态机分支——偏移与阈值非独立）;③ ★★计数/
+级数双层（[+0x50] 计数自增 + [+0x4C] 级数——10 级封顶）;④ ★★级数 >=
+0xA 完成返 1（==0xA 才 1——10 级满）;⑤ ★★[0xA8ED84] 时间戳全局
+（batch 175/189 同款——+0xB4 写）;⑥ ★★攻击点偏移公式（+0xAC = 级数×
+10 + 偏移 + ((朝向>>12+1)>>1)%8×5——朝向量化 + 模 8 ×5——表索引推断）;
+⑦ ★★+0xB8/+0xC0=0x80 双字段（固定 0x80 常量写入）;⑧ ★★lea 双乘法
+（eax+eax*4 ×5 + ecx+eax*2 ×2——无 imul——手写 lea）;⑨ ★★返 0/1 双
+语义（1=完成 0=继续——状态推进上报）。
+★跨批次连接：◆◆batch 083（0x4C93D0——GetFacing 调用现场兑现）◆◆
+batch 175/189（[0xA8ED84] 时间戳全局——同款）◆batch 001（0x4C93D0 已
+登记锚点库）。
+新候选：无（callees=1 已登记）。
+⚠️ partial：函数精确名（带名——但攻击点偏移业务推断）、[+0x28]/
+[+0x44] 宿主关系、+0xAC 偏移用途（攻击位置推断）、状态三档语义、2
+unique caller 身份。
+
+================================================================================
+0x5F76B0 —— 四全局对象惰性加载器（319B 全读，◆资源加载四锚点全链）
+================================================================================
+签名：无参 cdecl 全局函数 ret（0x5F76B0-0x5F77EE——开头无 ecx 处理，
+返回 void）。
+机器码结构（0x5F76B0-0x5F77EE，全程读完，四组同构）:
+    段 1-4（每组 0x5F76B0/0x5F7701/0x5F774F/0x5F779D 同构）：
+      ① mov eax,[0xAC1478]（★全局对象指针——组 1;组 2=[0xAC147C] 组
+      3=[0xAC1480] 组 4=[0xAC1484]）→ test → jne 下一组（★已初始化跳过）;
+      ② push 0x832AA8（★文件名字符串——组 2=0x832A9C 组 3=0x832A90 组
+      4=0x832A80）→ lea ecx,[esp+4] → call 0x65CA80（★★batch 004
+      RawFileClass 构造器）→ lea ecx,[esp] → call 0x4A3890（★★batch
+      139 ReadWholeFile——读整个文件到新缓冲）→ test eax → setne cl →
+      [0xAC1478]=eax（★全局写回）→ [0xAC1488]=cl（★就绪标志写回——组
+      2/3/4 对应 [0xAC1489]/[0xAC148A]/[0xAC148B]）→ jne 0x5F76F8（★
+      成功跳过回退）→ xor dl → mov ecx,0x832AA8 → call 0x5B40B0（★★
+      batch 091 FileSystem::LoadFile——失败回退加载）→ [0xAC1478]=eax
+      → 0x5F76F8: lea ecx,[esp] → call 0x65CA00（★★batch 101 缓冲类析
+      构/降级——局部对象清理）。
+语义：**四全局对象惰性加载器（推断名——资源加载四锚点全链）**——无参
+全局：① 四个文件全局对象（[0xAC1478]/[0xAC147C]/[0xAC1480]/
+[0xAC1484]）逐一检查;② 未初始化 → RawFileClass 构造（0x65CA80 +
+0x832Axx 文件名）→ ReadWholeFile（0x4A3890）;③ 失败 → FileSystem::
+LoadFile 回退（0x5B40B0）;④ 全局写回 + 就绪标志（[0xAC1488..8B]）;
+⑤ 局部对象析构清理（0x65CA00）。
+★原版怪癖（照抄）：① ★★四组完全展开（无循环——四组逐组手写——复制
+粘贴模板）;② ★★惰性门控（每组开头 test [全局] → 已初始化跳过——只建
+一次）;③ ★★双路径加载（ReadWholeFile 主路径 + LoadFile 回退路径——
+主失败才回退）;④ ★★就绪标志独立于指针（[0xAC1488..8B] 与
+[0xAC1478..84] 分列——指针+标志对）;⑤ ★★0x832Axx 四文件名常量（组 1
+0x832AA8/组 2 0x832A9C/组 3 0x832A90/组 4 0x832A80——递减 0xC 布局）;
+⑥ ★★局部对象构造/析构成对（0x65CA80 构造 + 0x65CA00 析构——栈对象）
+;⑦ ★★后邻 0x5F77F0 就绪标志查询器（[0xAC1488] al 读取——加载器配套
+getter）。
+★跨批次连接：◆◆batch 004（0x65CA80 RawFileClass 构造）◆◆batch 139
+（0x4A3890 ReadWholeFile）◆◆batch 091（0x5B40B0 FileSystem::LoadFile）
+◆◆batch 101（0x65CA00 缓冲析构）◆◆batch 001（0x7C8D20/0x7C8E17 等
+锚点——文件加载家族）。
+新候选：无（callees=4 已登记）。
+⚠️ partial：函数精确名（「四全局对象惰性加载器」推断）、四个文件身份
+（0x832Axx 串内容未 dump）、就绪标志业务、双路径加载用途、2 unique
+caller 身份。
+
+================================================================================
+本批新候选登记（后续批兑现）
+================================================================================
+无（callees 全部已登记——0x4C93D0 batch 083、0x65CA80 batch 004、
+0x4A3890 batch 139、0x5B40B0 batch 091、0x65CA00 batch 101）。新全局登
+记：[[0xAC1478]/[0xAC147C]/[0xAC1480]/[0xAC1484]+[0xAC1488..8B]]（四文
+件全局+就绪标志对）、0x832AA8/0x832A9C/0x832A90/0x832A80（四文件名常
+量——递减 0xC）。
