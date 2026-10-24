@@ -1,0 +1,126 @@
+frontier batch 1637 —— 0x7490D0 UnitTrackerClass::ClearUnitCount / 0x717D20 双虚表拷贝构造器 / 0x7179C0 空操作桩·ret 版（2026-10-24）
+
+口径：承接 batch 1636 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+uc=1 callsite=4 top3）。本批取：0x7490D0（37B，callees=0 deps=278——
+**UnitTrackerClass::ClearUnitCount**，带符号名——+0x800 计数控制 this 起
+逐 4 字节清 0）、0x717D20（136B，callees=2 deps=356——**双虚表拷贝构造
+器**，推断名——new 计数数组 + 逐项拷贝 + 虚表 0x7E4424→0x7F4F9C 双
+换）、0x7179C0（1B，callees=0 deps=356——**空操作桩·ret 版**，推断名
+——1B c3 ret 纯桩——batch 1451 的 0x6A4FF0 同族）。
+取证手段：disasm.py 三路全读——0x7490D0 0x30 覆盖尾 0x7490F4 ret + nop
+垫（函数尾确认）;0x717D20 0x90 覆盖尾 0x717DA5 ret 4 + nop 垫;0x7179C0
+0x10 覆盖尾 0x7179C0 ret（1B 单指令 + 全 nop 垫——函数体即 c3）——均
+读到函数尾。+ TSV 查重（三候选全部未登记）+ callee 核验（0x717D20 的
+0x7C8E17 = batch 001 new 已登记;[0x7E4430] = 导入槽/函数指针表非函数）
+——**本批无新候选**）。
+★★★跨批次重大连接：★★◆0x7490D0 与 batch 1636 的 0x749150
+（UnitTrackerClass::ToPCFormat——+0x800 数组逐项 ntohl 转换写回 + 清
++0x804 计数）**同宿主同字段对**——ClearUnitCount 清 0 vs ToPCFormat 转
+换——UnitTrackerClass 数据成员生命周期两端（本批兑现 batch 1636 遗留
+同宿主第二成员）;★★◆0x717D20 的 0x7C8E17 = batch 001 operator new
+（计数数组分配）;★★◆0x717D20 双虚表（0x7E4424→0x7F4F9C）= 0x7Exxxx
+.rdata 虚表区（batch 1629 等 0x7EAC08/0x7F0D1C VectorClass 双实例族同
+域——双虚表宿主类族）;★★◆0x7179C0 与 batch 1451（0x6A4FF0 空操作桩
+3B ret 4）、batch 1624（0x4AF0F4 类桩）同族——引擎内嵌空桩惯例。
+batch 1636 的 0x749150 partial「1 unique caller 身份」与本批 0x7490D0
+同宿主——UnitTrackerClass 数据成员族继续闭合。
+
+================================================================================
+0x7490D0 —— UnitTrackerClass::ClearUnitCount（37B 全读）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this; 0x7490D0-0x7490F4，返回 void）。
+机器码结构（0x7490D0-0x7490F4，全程读完）:
+    mov edx,[ecx+0x800]（★+0x800 计数——与 batch 1636 的 0x749150 同字
+    段！）→ xor eax → test edx,edx/jle 0x7490F4（★计数 ≤0 → 收尾）→
+    push esi → mov edx,ecx（★edx=this 起）→ 循环: mov [edx],0（★逐 dword
+    清 0——this 起 4 字节步进）→ mov esi,[ecx+0x800]（★重读计数）→ inc
+    eax → add edx,4 → cmp eax,esi/jl 循环（★eax 从 0 到计数-1）→ pop
+    esi → ret。
+语义：**UnitTrackerClass::ClearUnitCount（带符号名）**——thiscall：+
+0x800 计数控制 this 起信息 4 字节清 0 循环（清 0 计数 dword 个），计数
+≤0 快路收尾。
+★原版怪癖（照抄）：① ★★清 0 从 this 起（mov edx,ecx ——非 +0x800 起
+——清 0 对象头区域而非数组区域——计数与清 0 基址分离怪癖）;② ★★每轮
+重读 [ecx+0x800]（mov esi,[ecx+0x800]——循环内重读计数——非循环不变量
+——原版编译器未提升）;③ ★★+0x800 计数与 batch 1636 0x749150 ToPCFormat
+同字段（同宿主数据成员对——Clear 清 0 vs ToPC 转换）;④ ★★37B 极简。
+★跨批次连接：◆◆batch 1636（0x749150 UnitTrackerClass::ToPCFormat——
+同宿主同 +0x800 字段——本批兑现同宿主第二成员）◆◆batch 1636（后邻
+0x749150 前邻关系——0x7490D0/0x749150 连续成员区）。
+新候选：无（callees=0）。
+⚠️ partial：清 0 基址=this 而非 +0x800 的语义（对象头成员区域推断）、
+计数与目标量关系、触发时机、1 unique caller 身份。
+
+================================================================================
+0x717D20 —— 双虚表拷贝构造器（136B 全读）
+================================================================================
+签名：thiscall 1 栈参 ret 4（ecx=this esi、[esp+0x10]=参数1 源对象指针
+edi; 0x717D20-0x717DA5，返回 this）。
+机器码结构（0x717D20-0x717DA5，全程读完）:
+    段1 成员初始化（0x717D20-0x717D40）：push ebx/esi/edi → mov edi,
+    [esp+0x10]（★参数1 源对象）→ mov esi,ecx（★this）→ xor ebx → mov
+    [esi+4],ebx（★清 +4 数组指针）→ mov [esi+8],ebx（★清 +8 计数）→
+    mov byte[esi+0xC],1（★+0xC=1）→ mov byte[esi+0xD],bl（★+0xD=0）→
+    mov [esi],0x7E4424（★虚表 1——0x7Exxxx .rdata 虚表区）→ cmp esi,
+    edi/je 0x717D8E（★this==源 → 跳过拷贝——自拷贝守卫）。
+    段2 源拷贝（0x717D42-0x717D86）：call [0x7E4430]（★导入槽/函数指针
+    表调用——源对象方法推断）→ mov eax,[edi+8]（★源 +8 计数）→ cmp eax,
+    ebx/mov [esi+8],eax（★拷计数）→ je 0x717D88（★源计数 0 → 快速路径）
+    → shl eax,2（★×4）→ push eax/call 0x7C8E17（★★batch 001 operator
+    new——count×4 字节）→ cmp eax/mov [esi+4],eax（★存数组指针）→ je
+    0x717D8E（★分配失败 → 收尾）→ mov ecx,[esi+8]/mov byte[esi+0xD],1
+    （★+0xD=1——有数据标志推断）→ jle 0x717D8E → 拷贝循环: mov ecx,[edi
+    +4]/mov edx,[esi+4]/mov ecx,[ecx+eax*4]/mov [edx+eax*4],ecx（★源数
+    组逐项拷到新数组——4B/项）→ inc eax/cmp [esi+8] 重读/jl 循环 →
+    0x717D88: mov [esi+4],ebx（★清 +4）→ mov byte[esi+0xD],bl（★+0xD=0）。
+    段3 收尾（0x717D8E-0x717DA5）：mov edx,[edi+0x10]/mov [esi+0x10],edx
+    （★拷 +0x10 字段）→ mov eax,[edi+0x14]/mov [esi+0x14],eax（★拷 +0x14
+    字段）→ mov [esi],0x7F4F9C（★★虚表 2——双虚表！先 0x7E4424 后
+    0x7F4F9C——宿主类虚表族）→ mov eax,esi（★返 this）→ ret 4。
+语义：**双虚表拷贝构造器（推断名）**——thiscall 1 栈参（源对象指针）
+ret 4：① 成员初始化（+4/+8 清 0、+0xC=1、+0xD=0、虚表 0x7E4424）;②
+this!=源 时 [0x7E4430] 导入槽调用 + 源 +8 计数拷贝 → new(count×4) 数
+组 + 源 +4 数组逐项拷贝（4B/项，+0xD=1 有数据标志）;③ +0x10/+0x14 字
+段拷贝 → 虚表换 0x7F4F9C → 返 this。
+★原版怪癖（照抄）：① ★★双虚表（先 0x7E4424 后 0x7F4F9C——构造中换虚
+表——派生/初始化序列怪癖）;② ★★[0x7E4430] 导入槽调用（源对象方法——
+非 E8 直调——函数指针表）;③ ★★new(count×4) 数组 + 逐项拷贝（4B/项指
+针数组——深拷贝）;④ ★★+0xC=1/+0xD=0/1 标志字节对（有数据标志推断）;
+⑤ ★★this==源 自拷贝守卫（je 0x717D8E——跳过拷贝仅拷 +0x10/+0x14）;
+⑥ ★★源计数 0 → 快速路径（+4=[0]/+0xD=0——空数组处理）;⑦ ★★ret 4 单
+栈参返 this。
+★跨批次连接：◆◆batch 001（0x7C8E17 operator new——计数数组分配现场）
+◆◆batch 1629 等（0x7EAC08/0x7F0D1C VectorClass 双虚表实例族——0x7Exxxx
+.rdata 虚表区同域——双虚表宿主类族）◆◆batch 1451（0x6A4FF0 空桩——
+同区邻近成员）。
+新候选：无（callees=2 = 0x7C8E17 已登记 + [0x7E4430] 导入槽非函数）。
+⚠️ partial：函数精确名（推断「双虚表拷贝构造器」）、宿主类（虚表
+0x7E4424/0x7F4F9C 归属）、[0x7E4430] 导入槽身份、+0xC/+0xD 标志语义、
++0x10/+0x14 字段、1 unique caller 身份。
+
+================================================================================
+0x7179C0 —— 空操作桩·ret 版（1B 全读）
+================================================================================
+签名：无栈参 ret（0x7179C0，1B 单指令）。
+机器码结构（0x7179C0，全程读完）:
+    c3 ret（★纯空桩——无 prologue 无 body 无状态访问）。
+语义：**空操作桩·ret 版（推断名）**——1B c3 ret 纯桩：无参无操作直接返
+回。batch 1451 的 0x6A4FF0（3B ret 4 带参桩）同族。
+★原版怪癖（照抄）：① ★★1B 单指令（c3——比 0x6A4FF0 的 ret 4 更简——
+无参无返回清理）;② ★★纯桩无逻辑（死代码/占位/虚表槽空实现推断）;③
+★★后邻全 nop 垫（0x7179C1-0x7179CF——对齐填充）。
+★跨批次连接：◆◆batch 1451（0x6A4FF0 空操作桩 3B ret 4——同族对比——
+本函数 1B ret 无参版）◆◆batch 1624（0x4AF0F4 类桩——引擎内嵌空桩惯
+例）。
+新候选：无（callees=0）。
+⚠️ partial：桩用途（虚表槽空实现/启用开关推断）、宿主类、1 unique
+caller 身份。
+
+================================================================================
+本批新候选登记（后续批兑现）
+================================================================================
+无（callees 全部已登记——0x7C8E17 batch 001;[0x7E4430] 导入槽非函
+数）。新全局登记：无（[0x7E4430] 函数指针表——0x7E44xx 区观察）。
+★★跨批次闭合：batch 1636 的 0x749150（ToPCFormat）同宿主第二成员
+0x7490D0（ClearUnitCount）本批兑现——UnitTrackerClass 数据成员族两端
+齐备;空桩族再添 1B 版（0x7179C0）——与 0x6A4FF0/0x4AF0F4 三连。
