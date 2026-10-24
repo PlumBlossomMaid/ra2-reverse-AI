@@ -1,0 +1,193 @@
+frontier batch 1721 —— 0x63F2E0 步进插值填充器 / 0x63E5D0 动态数组左移删除器孪生 / 0x63DB20 矩形包含判定器（2026-10-24）
+
+口径：承接 batch 1720 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+uc=1 callsite=2 top3）。本批取：0x63F2E0（439B，callees=0 deps=44——
+**步进插值填充器**，推断名——多分支步进计算 + 8 字节坐标对表项循环填
+充——模式 1 写 [ebx] / 其他写 [ebx+4]）、0x63E5D0（65B，callees=0 deps=49
+——**动态数组左移删除器孪生**，推断名——与 batch 1717 0x652560 逐字节
+同构——虚表槽 0x10 计数 + 边界检查 + 左移覆盖 + 计数减 1）、0x63DB20
+（58B，callees=0 deps=156——**矩形包含判定器**，推断名——参数1 对象
+X/Y 对 this 矩形 [base, base+w) × [base2, base2+h) 包含判定返 1/0）。
+取证手段：disasm.py 三路全读——0x63F2E0 0x1C0 覆盖尾 0x63F494 ret 0x14
++ nop 垫（读全 0xB5=181B 主结构——4 段：快退/差值/等值/idiv 分支）;
+0x63E5D0 0x60 覆盖尾 0x63E60E ret 4 + nop 垫（顺带落 0x63E620 邻函数头
+——mov edx,[ecx+0x10] → xor eax → push esi → test edx,edx → jle → 变
+体——不属本批）;0x63DB20 0x60 覆盖尾 0x63DB57 ret 4 + nop 垫（顺带落
+0x63DB60 邻函数头——push ebx/esi → mov esi,ecx → xor ebx → mov eax,
+[esi+4] → mov [esi+0x10],ebx → cmp → je → cmp byte[esi+0xD],bl → je →
+push eax → call 0x7C8B3D——VectorClass 析构变体——不属本批）——均读到
+函数尾。
++ TSV 查重（三候选全部未登记——picker 未登记池输出确认）+ callee 核验
+（三函数 **callees=0 零 callee**——0x63E5D0 仅虚表槽 0x10 调用、其余纯
+计算——**零新候选**——免核验）。
+★★★跨批次连接：★★◆0x63E5D0 = **batch 1717 0x652560 的逐字节同构孪生**
+——动态数组左移删除器（虚表槽 0x10 计数 + [esi+4] 数组 + 计数减 1 + 左
+移覆盖 [ecx+eax*4-4]=[ecx+eax*4]——完全一致）——**Westwood twin/孪生
+模式再添一例**（batch 1696 0x717B20 vs 0x67A3C0 同款——编译器对同一模板
+函数多实例展开）;★★◆0x63DB20 = **矩形包含判定器（RECT math）**——与
+batch 176 0x42E410（CRect setter 四字段 +0/+4/+8/+0xC）同族配合——读
+[ecx]/[ecx+8]/[ecx+4]/[ecx+0xC] 四字段与参数 XY 比较——**UI 点击命中/
+显示区域判定**推断;★★◆0x63F2E0 = **步进插值填充器**——thiscall 5 栈
+参 ret 0x14（7 参）——ecx=起始值、edx=起始跨度、[esp+0x14]=起始游标、
+[esp+0x18]=表指针、[esp+0x20]=模式（cmp 1）、[esp+0x24]=跨度、[esp+0x28]
+=表尾输出——多出口写 [ecx] 表尾指针——**坐标对插值/路径填充**推断。
+================================================================================
+0x63F2E0 —— 步进插值填充器（439B 全读）
+================================================================================
+签名：thiscall 7 参（ecx=参数1=起始值; edx=参数2=起始跨度; [esp+0x14]=
+参数3=edi 起始游标; [esp+0x18]=参数4=ebx 表指针; [esp+0x20]=参数5=模
+式（cmp 1——写 [ebx] vs [ebx+4]）; [esp+0x24]=参数6=跨度; [esp+0x28]=
+参数7=表尾输出; 0x63F2E0-0x63F494，返回 void——[参数7]=表尾指针）。
+机器码结构（0x63F2E0-0x63F494，全程读完——四出口）:
+    段0 快退（0x63F2E0-0x63F312）：push ecx → mov eax,[esp+0x18]（参
+    数4——表指针）→ push ebx/esi/edi → mov edi,[esp+0x14]（参数3——
+    游标）→ mov ebx,[eax]（★表指针解引用——首值）→ mov esi,[esp+0x18]
+    → sub edi,ecx（★游标-起始值）→ xor eax → mov [esp+0xC],ebx → test
+    edi,edi → setle al → dec eax → and eax,2 → dec eax（★方向标志——
+    快退 0/2）→ sub esi,edx（★跨度-起始跨度）→ test esi,esi → jle
+    0x63F490（★跨度 ≤ 0 → 直接收尾）。
+    段1 方向与快退（0x63F312-0x63F354）：mov eax,edi → push ebp → cdq →
+    mov ebp,eax → xor ebp,edx → sub ebp,edx（★|游标差| abs）→ jne
+    0x63F354（★非零 → 走插值分支）→ 零差分支：sub esi,[esp+0x24]（★跨
+    度-参数6）→ mov edx,esi → dec esi → test edx,edx → jle 0x63F489（★
+    跨度 ≤ 0 → 收尾）→ 填充循环：lea eax,[esi+1] → mov edx,[esp+0x20] →
+    cmp edx,1 → jne 0x63F33D → mov [ebx],ecx（★模式 1 → 写 +0）→ jmp
+    → 0x63F33D：mov [ebx+4],ecx（★其他 → 写 +4）→ add ebx,8（★8 字节
+    步进）→ dec eax → jne 循环（★跨度+1 次写）→ 0x63F346：mov ecx,
+    [esp+0x28] → pop 族 → mov [ecx],ebx（★表尾输出）→ ret 0x14。
+    段2 等值插值（0x63F354-0x63F39C）：cmp esi,ebp → jne 0x63F39C（★凌
+    跨度 ≠ |差| → 走最终分支）→ 等值分支：mov eax,[esp+0x24] → mov
+    edx,[esp+0x18] → test eax,eax → je 0x63F366 → add ecx,edx（★起始值+
+    表指针——偏移修正）→ sub esi,eax → mov eax,esi → dec esi → test
+    eax,eax → jle 0x63F489（★跨度 ≤ 0 → 收尾）→ 填充循环（模式 1 → [ebx]
+    / 其他 → [ebx+4] → add ebx,8 → add ecx,edx dec eax）→ 0x63F38E：mov
+    ecx,[esp+0x28] → pop 族 → mov [ecx],ebx → ret 0x14。
+    段3 多数分支（0x63F39C-0x63F400）：jle 0x63F403（★跨度 ≤ |差| → 走
+    idiv 分支）→ test edi,edi → jl 0x63F3A6 → xor eax → jmp → 0x63F3A6：
+    mov eax,1 → sub eax,esi（★负向修正（1-跨度））→ mov edi,[esp+0x24]
+    → test edi,edi → je 0x63F3C3 → add eax,ebp → test eax,eax → jle
+    0x63F3C3 → mov edx,[esp+0x18] → add ecx,edx → sub eax,esi → 0x63F3C3：
+    mov edx,esi → sub edx,edi（★跨度-参数6）→ mov edi,edx → dec edx →
+    test edi,edi → jle 0x63F489（★跨度 ≤ 0 → 收尾）→ 填充循环（模式 1 →
+    [ebx] / 其他 → [ebx+4] → add ebx,8 → eax 递增步进 abp）→ 0x63F3F5：
+    mov ecx,[esp+0x28] → pop 族 → mov [ecx],ebx → ret 0x14。
+    段4 idiv 插值（0x63F403-0x63F494）：mov eax,ebp → cdq → idiv esi（★
+    |差|/跨度——除跨度）→ mov ebx,eax → mov eax,ebp → imul ebx,[esp+
+    0x18]（★×表指针）→ cdq → idiv esi（★二次 idiv）→ test edi,edi → jl
+    0x63F41C → xor eax → jmp → 0x63F41C：mov eax,1 → sub eax,esi → mov
+    ebp,[esp+0x24] → test ebp,ebp → je 0x63F43B → add eax,edx → add
+    ecx,ebx → test eax,eax → jle 0x63F43B → mov edi,[esp+0x18] → add
+    ecx,edi → sub eax,esi → 0x63F43B：mov edi,esi → sub edi,ebp → mov
+    ebp,edi → dec edi → test ebp,ebp → jle 0x63F485 → 0x63F44F 填充循环：
+    mov ebp,[esp+0x18] → inc edi → mov [esp+0x24],edi → mov edi,[esp+0x20]
+    → cmp edi,1 → mov edi,[esp+0x10] → jne 0x63F460 → mov [edi],ecx（★
+    模式 1 → 写 [edi]）→ jmp → 0x63F460：mov [edi+4],ecx（★其他 → 写
+    [edi+4]）→ add eax,edx → add ecx,ebx → test eax,eax → jle 0x63F46F →
+    add ecx,ebp → sub eax,esi → 0x63F46F：mov edi,[esp+0x10] → add edi,8
+    → 循环（dec edi 计数 → jne）→ 0x63F485：mov ebx,[esp+0x10] → 0x63F489：
+    mov ecx,[esp+0x28] → 0x63F490：pop 族 → mov [ecx],ebx → ret 0x14（★
+    表尾输出——统一出口）。
+语义：**步进插值填充器（推断名）**——thiscall 7 参（ret 0x14 5 栈参 +
+ecx/edx 2 寄存器参）——①方向标志计算（游标差 setle/dec/and 2/dec——
+0/2 快退标志）;②四分支插值（零差快退 / 等值 / 跨度范围 / idiv 除跨度带
+方向修正）;③核心循环：按模式参数（cmp 1）写 8 字节表项（[ebx] 或
+[ebx+4]——坐标对 X/Y 之一）→ add ebx,8 步进;④统一出口写 [参数7]=表尾
+指针——**线段/路径坐标对插值填充**（8 字节表项 + 模式二选一写 X 或 Y +
+步进推进——Bresenham 类/均匀插值推断）。
+★原版怪癖（照抄）：① ★★方向标志 setle/dec/and 2/dec 四指令（游标差非
+负 → 0;负 → 2——单 bit 标志折叠）;② ★★abs 惯用 cdq/xor/sub（|差|——
+batch 261 Chebyshev 同款）;③ ★★模式参数 (cmp 1) 决定写 [ebx] vs [ebx+4]
+（同一循环体双目标——X/Y 二选一）;④ ★★idiv 除跨度二次（|差|/跨度 与
+表指针 imul 后再次 /跨度——两步除）;⑤ ★★8 字节表项固定步进（add ebx,8
+——坐标对 {值,标记} 或 {X,Y} 推断）;⑥ ★★四出口统一收尾（mov [ecx],ebx
+——[参数7] 表尾指针回写——调用方继续追加）。
+★跨批次连接：◆◆abs 惯用 cdq/xor/sub（batch 261——Chebyshev 距离）◆◆
+8 字节表项（batch 1362/1718——[0xA8BB40]/[0xA8BB60] 双槽打包同宽）◆◆
+模式参数二选一写槽（batch 1718 0x64CDA0——双槽记录同形态）。
+新候选：无（callees=0 零 callee）。
+⚠️ partial：函数精确名（推断「步进插值填充器」）、宿主类（坐标插值工具
+推断）、7 参精确语义（起始值/跨度/游标/表指针/模式/跨度/表尾）、模式
+<1 语义（X/Y 二选一）、8 字节表项布局、4 分支选择条件几何含义。
+================================================================================
+0x63E5D0 —— 动态数组左移删除器孪生（65B 全读）
+================================================================================
+签名：thiscall 1 栈参 ret 4（ecx=this; [esp+8]=参数1=索引; 0x63E5D0-
+0x63E60E，返回 al=bool（1=删除成功））。
+机器码结构（0x63E5D0-0x63E60E，全程读完——与 batch 1717 0x652560 逐字
+节同构）:
+    段0 边界判定与计数减（0x63E5D0-0x63E5F2）：push esi → mov esi,ecx
+    （this）→ mov ecx,[esp+8]（参数1——索引）→ mov eax,[esi] → push
+    ecx → mov ecx,esi → call [eax+0x10]（★★虚表槽 0x10——计数）→ cmp
+    eax,-1 → je 0x63E60B（★计数 -1 → 返 0）→ mov ecx,[esi+0x10]（★this+
+    0x10=计数）→ cmp eax,ecx → jge 0x63E60B（★索引≥计数 → 返 0——越界）
+    → dec ecx → cmp eax,ecx → mov [esi+0x10],ecx（★计数减 1——先减）→
+    jge 0x63E605（★索引≥新计数 → 返 1——删最后一个——无需移位）。
+    段1 左移覆盖（0x63E5F3-0x63E60E）：mov ecx,[esi+4]（★this+4=数组基
+    址）→ 左移循环：inc eax → mov edx,[ecx+eax*4] → mov [ecx+eax*4-4],
+    edx（★★[i-1]=[i]——左移覆盖——4 字节/项）→ mov ecx,[esi+0x10] →
+    cmp eax,ecx → jl 0x63E5F3（★循环到新计数）→ 0x63E605：mov al,1 →
+    pop esi → ret 4（★返 1）→ 0x63E60B：xor al,al → pop esi → ret 4（★
+    返 0）。
+语义：**动态数组左移删除器孪生（推断名）**——thiscall 1 栈参 ret 4：
+索引在 [0, 计数) 内 → 计数减 1 + 从索引+1 起逐项左移覆盖（[i-1]=[i]）→
+返 1;越界（≥计数/-1 哨兵）→ 返 0。**★与 batch 1717 0x652560 逐字节同
+构**（虚表槽 0x10 + [esi+4] 数组 + 0x10 计数 + dec 先减 + jge 末项快退 +
+左移覆盖——唯一差异仅地址）——**编译器对同一 VectorClass::RemoveAt 模板
+函数的多实例展开**——Westwood twin/孪生模式再添一例。
+★原版怪癖（照抄）：① ★★计数先减（dec 计数在移位前——[esi+0x10] 提前
+写新值）;② ★★删除最后一个快退（索引≥新计数 jge → 直接返 1 不移位）;
+③ ★★左移覆盖 [ecx+eax*4-4]=[ecx+eax*4]（inc eax 先行——从索引+1 起）;
+④ ★★虚表槽 0x10 取计数（vs batch 1717 直接读 [ecx+0x10]——★本孪生多
+一次虚调用——细微差异——仍同构主体）;⑤ ★★越界返 0（索引≥旧计数/
+计数==-1 哨兵）。
+★跨批次连接：◆◆0x652560（batch 1717——动态数组左移删除器——★本函
+数为逐字节同构孪生——RemoveAt 模板双实例）◆◆VectorClass 族（batch
+819/820/821/824/1717——+0x4 数组 + 0x10 计数）◆◆0x63E620（邻函数——
+计数读取变体——不属本批）。
+新候选：无（callees=0 零 callee——仅虚表槽 0x10）。
+⚠️ partial：函数精确名（推断「动态数组左移删除器孪生」）、宿主类
+（VectorClass 推断）、孪生对差异语义（虚表槽 0x10 调用点）、删除语义消费
+端。
+================================================================================
+0x63DB20 —— 矩形包含判定器（58B 全读）
+================================================================================
+签名：thiscall 1 栈参 ret 4（ecx=this——矩形对象——+0/+4/+8/+0xC 四字
+段; [esp+8]=参数1=esi 对象——[esi] X 与 [esi+4] Y; 0x63DB20-0x63DB57，
+返回 al=bool（1=包含））。
+机器码结构（0x63DB20-0x63DB57，全程读完）:
+    段0 X 判定（0x63DB20-0x63DB38）：mov edx,[ecx]（★this+0=X 基址）→
+    push esi → mov esi,[esp+8]（参数1）→ mov eax,[esi]（★参数1+0=X）→
+    cmp eax,edx → jl 0x63DB54（★X < 基址 → 返 0）→ push edi → mov edi,
+    [ecx+8]（★this+8=宽度）→ add edi,edx（★基址+宽度=右界）→ cmp eax,
+    edi → pop edi → jge 0x63DB54（★X ≥ 右界 → 返 0——半开区间 [base,base+w)）。
+    段1 Y 判定（0x63DB38-0x63DB57）：mov eax,[esi+4]（★参数1+4=Y）→ mov
+    edx,[ecx+4]（★this+4=Y 基址）→ cmp eax,edx → jl 0x63DB54（★Y < 基址
+    → 返 0）→ mov ecx,[ecx+0xC]（★this+0xC=高度）→ add ecx,edx（★基址+
+    高度=下界）→ cmp eax,ecx → jge 0x63DB54（★Y ≥ 下界 → 返 0）→ mov
+    eax,1 → pop esi → ret 4（★包含 → 返 1）→ 0x63DB54：xor eax → pop esi
+    → ret 4（★返 0）。
+语义：**矩形包含判定器（推断名）**——thiscall 1 栈参 ret 4：参数1 对象
+的 [esi] X 与 [esi+4] Y 对 this 矩形（+0 X 基址 / +4 Y 基址 / +8 宽度 /
++0xC 高度）做半开区间包含判定——X ∈ [base, base+w) 且 Y ∈ [base2, base2
++h) → 返 1;任一越界 → 返 0——**UI 点击命中/区域包含判定**（RECT math
+——batch 176 0x42E410 CRect setter 同四字段布局）。
+★原版怪癖（照抄）：① ★★半开区间 [base, base+w)（jge 拒右界——右界不
+含——像素包含语义）;② ★★X/Y 两段独立判定（先 X 后 Y——任一失败快退）;
+③ ★★边界内联加法（add edi,edx——右界/下界即时计算不存储）;④ ★★双
+jge/jl 四判定（X<Xbase/X≥右界/Y<Ybase/Y≥下界——与门）;⑤ ★★thiscall 1
+栈参（参数1 对象指针——XY 打包结构）。
+★跨批次连接：◆◆0x42E410（batch 176——CRect 四字段 setter——+0/+4/
++8/+0xC 同布局）◆◆UI 命中判定族（batch 1641/1719——按钮/控件区域判定
+推断）◆◆半开区间（像素包含——点击命中推断）。
+新候选：无（callees=0 零 callee）。
+⚠️ partial：函数精确名（推断「矩形包含判定器」）、宿主类（UI 矩形域推
+断）、参数1 XY 结构、+0x8/+0xC 宽高字段语义、调用场景（点击/可见性）。
+================================================================================
+本批新候选登记（后续批兑现）
+================================================================================
+无（三函数 callees=0 零 callee——纯计算/虚调用——免核验零新候选）。
+★★跨批次闭合：**VectorClass 删除器孪生对**（0x63E5D0 + batch 1717
+0x652560——RemoveAt 模板双实例——逐字节同构——孪生模式再添一例）;
+**矩形数学族**（0x63DB20——包含判定——batch 176 CRect setter 同布局
+四字段）;**步进插值工具**（0x63F2E0——7 参插值填充——8 字节表项坐标对
+——Batch 1362/1718 双槽打包同宽）。
