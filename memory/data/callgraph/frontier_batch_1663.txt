@@ -1,0 +1,134 @@
+frontier batch 1663 —— 0x62E380 ParticleSystemClass::SpawnParticle / 0x626200 最小步进扫描器 / 0x5F9B60 对象持有器清理器（2026-10-24）
+
+口径：承接 batch 1662 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+uc=1 callsite=3 top3）。本批取：0x62E380 ParticleSystemClass::SpawnParticle
+（171B，callees=2 deps=1875——**粒子生成器**，带名——类型索引门控 + new
+0x138 + 5 参构造 + 数组扩容写入）、0x626200（69B，callees=1 deps=49——
+**最小步进扫描器**，推断名——0x100 次循环调 0x661350 + 最小值保留）、
+0x5F9B60（32B，callees=1 deps=106——**对象持有器清理器**，推断名——
+delete 首字段 + 六字段清零）。
+取证手段：disasm.py 三路全读——0x62E380 0xC0 覆盖尾 0x62E428 ret 8 + nop
+垫（顺带落 0x62E430 下一函数头——同款 new 0x138——不属本批）;0x626200
+0x50 覆盖尾 0x626242 ret 4 + nop 垫;0x5F9B60 0x40 覆盖尾 0x5F9B7F ret +
+nop 垫（顺带落 0x5F9B80 下一函数头——字段比较——不属本批）——均读到函
+数尾。+ TSV 查重（三候选全部未登记）+ callee 核验（0x62B5E0（batch 262
+粒子对象构造+注册——ranking 名 WhatAmI 误标实锤）、0x661350（batch 1466
+RGB 加权距离计算器）、0x7C8E17/0x7C8B3D（batch 001 new/delete）——**全
+部已登记——本批无新候选**）。
+★★★跨批次重大连接：★★◆0x62E380 = batch 262 的 0x62B5E0（粒子对象构造
++注册）调用现场（5 参 {new, 类型表值, 参数2, 参数1, this}——[0xA83D9C]
+类型表 [ecx+edx*4] 索引——粒子系统域）;★★◆0x626200 = batch 1466 的
+0x661350（RGB 加权距离计算器）调用现场（0x100 次循环 + this+3 步进——
+颜色匹配/量化推断）;★★◆0x5F9B60 = batch 262 同区 0x5Fxxxx 粒子域（清理
+器——delete+清零——VectorClass 布局 batch 1452/1453 同款字段 +0/+4/+8/
++0xC/+0x10）。
+================================================================================
+0x62E380 —— ParticleSystemClass::SpawnParticle（171B 全读）
+================================================================================
+签名：thiscall 2 栈参 ret 8（ecx=this; [esp+0xC]=参数1、[esp+0x10]=参数
+2; 0x62E380-0x62E428，返回 eax 新粒子指针 / 0）。
+机器码结构（0x62E380-0x62E428，全程读完，分段要点）:
+    段1 类型门控+分配（0x62E380-0x62E3A6）：push esi/edi → mov esi,ecx
+    （this）→ mov eax,[esi+0xAC]（★this+0xAC 粒子类型对象）→ cmp [eax+
+    0x294],-1 → je 0x62E424（★★类型索引 -1 → 返 0——粒子未初始化）→
+    push 0x138 → call 0x7C8E17（★new 312 字节）→ test/je 0x62E424（分配
+    失败 → 返 0）。
+    段2 5 参构造（0x62E3A8-0x62E3D0）：mov ecx,[esp+0x10]（参数 2）→ mov
+    edx,[esp+0xC]（参数 1）→ push esi（this）→ push ecx → push edx →
+    mov ecx,[esi+0xAC] → mov edx,[ecx+0x294]（★类型索引）→ mov ecx,
+    [0xA83D9C]（★★类型表全局）→ mov edx,[ecx+edx*4]（★查类型表）→ push
+    edx → mov ecx,eax（new 对象）→ call 0x62B5E0（★★batch 262 粒子对象
+    构造+注册——5 参 {new, 类型, 参数1, 参数2, this}）。
+    段3 数组扩容判定+写入（0x62E3D2-0x62E428）：mov edi,eax（新粒子）→
+    test/je 0x62E424 → mov ecx,[esi+0xC4]（★this+0xC4 计数）→ mov eax,
+    [esi+0xCC]（★this+0xCC 容量）→ add esi,0xBC（★数组对象基）→ cmp
+    eax,ecx → jl 0x62E40E（★容量 < 计数 → 直接写）→ [esi+0xD] 标志 +
+    [esi+0x14] 条件 → 虚表槽 0x8 扩容调用（2 参 {对象, 计数+容量}）→
+    0x62E40E: mov eax,[esi+0x10]（★计数）→ mov edx,[esi+4]（★元素数组）
+    → lea ecx,[eax+1] → mov [esi+0x10],ecx（★计数++）→ mov [edx+eax*4],
+    edi（★数组写新粒子）→ mov eax,edi → ret 8 → 失败: xor eax → ret 8。
+语义：**ParticleSystemClass::SpawnParticle（带名）**——thiscall 2 栈参
+（参数 1/2——坐标/属性推断）：① [esi+0xAC] 粒子类型对象 +0x294 类型索引
+（-1 → 返 0——粒子未初始化）;② new 312B（0x138）;③ 0x62B5E0 5 参构造
+（查 [0xA83D9C] 类型表——new + 类型 + 双参数 + this）;④ 粒子数组（this
++0xBC 区——[esi+0xC4] 计数/[esi+0xCC] 容量）扩容判定（虚表槽 0x8——容
+量足直写/不足扩容）→ 计数++ + 数组写入;⑤ 返新粒子指针 / 0。
+★原版怪癖（照抄）：① ★★类型索引 -1 门控（[esi+0xAC]+0x294 == -1 → 返 0
+——未初始化粒子类型静默跳过）;② ★★new 0x138 固定尺寸（312B——粒子对象
+大小硬编码）;③ ★★5 参构造（{new, 类型表值, 双参, this}——查 [0xA83D9C]
+类型表——batch 262 同表）;④ ★★数组扩容判定（容量 < 计数走槽 0x8 扩容
+调用——[esi+0xD] 标志 + [esi+0x14] 条件双门控）;⑤ ★★计数++ + 写数组
+（先读后写——[esi+0x10] 计数、[esi+4] 数组——VectorClass 布局）;⑥ ★★
+分配失败返 0（test/je——静默）。
+★跨批次连接：◆◆batch 262（0x62B5E0 粒子对象构造——调用现场——[0xA83D9C]
+类型表 +0x294 索引同字段）◆◆batch 001（0x7C8E17 new——调用现场）◆◆
+[0xA83D9C]（粒子类型表全局——batch 262 同款）◆◆粒子系统域（0x62xxxx
+区——batch 262 同区）。
+新候选：无（callees=2 全部已登记）。
+⚠️ partial：函数精确名（带名 ParticleSystemClass::SpawnParticle）、参数 1/2
+语义（坐标/属性推断）、+0xAC/+0xC4/+0xCC/+0xBC 字段语义、槽 0x8 扩容方
+法、[0xA83D9C] 表内容、1 unique caller 身份。
+================================================================================
+0x626200 —— 最小步进扫描器（69B 全读）
+================================================================================
+签名：thiscall 1 栈参 ret 4（ecx=this; [esp+0x10]=参数1; 0x626200-
+0x626242，返回 eax 最小值）。
+机器码结构（0x626200-0x626242，全程读完）:
+    push ecx → mov ebp,[esp+0x10]（参数 1）→ xor ebx（★循环计数）→ mov
+    [esp+0x10],ebx → or esi,-1（★哨兵 -1）→ mov edi,ecx（this）→ 循环:
+    mov eax,edi → mov ecx,ebp → push eax → add edi,3（★this 步进 +3）→
+    call 0x661350（★★batch 1466 RGB 加权距离计算器——1 栈参）→ cmp
+    esi,-1 → je 0x62622A（★哨兵 → 无条件更新）→ cmp eax,esi → jge
+    0x626230（★新值 >= 最小值 → 不更新）→ 0x62622A: mov esi,eax（★更新
+    最小值）→ 0x626230: inc ebx → cmp ebx,0x100 → jl 循环（★0x100=256
+    次）→ mov eax,[esp+0x10] → ret 4。
+语义：**最小步进扫描器（推断名）**——thiscall 1 栈参：① 循环 0x100 次调
+用 0x661350（RGB 加权距离计算——this 每次 +3 步进——颜色采样点序列推
+断）;② 保留最小值（哨兵 -1 首次无条件更新——后续 jge 拒绝更大值）;③
+返最小值（颜色匹配/量化推断——找最近色）。
+★原版怪癖（照抄）：① ★★0x100 次固定循环（256 次采样——硬编码迭代数）
+;② ★★this+3 步进（字节级推进——RGB 三元组步进推断——3 字节颜色单元）
+;③ ★★哨兵 -1 首次更新（or esi,-1/cmp/je——首值无条件入——后续 jge 拒
+更大）;④ ★★调用目标 0x661350（batch 1466 RGB 加权距离——本批=调用现
+场——颜色匹配推断）;⑤ ★★69B 紧凑（单 callee 循环）。
+★跨批次连接：◆◆batch 1466（0x661350 RGB 加权距离计算器——调用现场 ×
+0x100——权重 2/4/3 同款）◆◆颜色匹配域（0x661350 宿主——batch 1466 推
+断）◆◆0x6262xx 区（同宿主区——batch 1663 本批邻域）。
+新候选：无（callees=1 已登记——0x661350 batch 1466）。
+⚠️ partial：函数精确名（推断「最小步进扫描器」）、0x100 迭代业务（调色板
+大小推断）、this+3 步进语义（RGB 三元组推断）、哨兵 -1 精确语义、1
+unique caller 身份。
+================================================================================
+0x5F9B60 —— 对象持有器清理器（32B 全读）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this; 0x5F9B60-0x5F9B7F）。
+机器码结构（0x5F9B60-0x5F9B7F，全程读完）:
+    push esi → mov esi,ecx（this）→ mov eax,[esi]（★this+0 指针成员）→
+    push eax → call 0x7C8B3D（★★batch 001 delete——释放）→ add esp,4 →
+    xor eax → mov [esi],eax（★this+0=NULL）→ mov [esi+4],eax → mov
+    [esi+8],eax → mov byte [esi+0xC],al → mov [esi+0x10],eax（★六字段清
+    零 +0/+4/+8/+C/+0x10）→ ret。
+语义：**对象持有器清理器（推断名）**——thiscall：① delete this+0 指针
+成员（0x7C8B3D 单对象释放）;② 六字段清零（+0/+4/+8/+C 字节/+0x10——
+VectorClass 布局 + 哨兵——Clear/Reset 语义）;③ 无返回值。
+★原版怪癖（照抄）：① ★★无条件 delete（[esi] 非空才 delete?——无 test
+检查——直接 push eax/call——调用方保证非空推断——***照抄***）;② ★★六
+字段清零（+0/+4/+8/+C/+0x10——含计数/数组/标志——VectorClass 布局 batch
+1452 同款）;③ ★★32B 极简（delete + 清零——纯清理器——callees=1）;④
+★★[esi] 置 NULL（delete 后自清——batch 059 的 0x7B46F0 同款安全 delete
+模式——本批无 test 差异）。
+★跨批次连接：◆◆batch 001（0x7C8B3D delete——调用现场）◆◆batch 059
+（0x7B46F0 安全 delete——本批无 test 的变体）◆◆batch 1452/1453
+（VectorClass 布局 +0/+4/+8/+0xC/+0x10——清理对象同款字段）◆◆batch
+262（0x5Fxxxx 粒子域——0x5F9B80 下一函数头字段比较——同区）。
+新候选：无（callees=1 已登记——0x7C8B3D batch 001）。
+⚠️ partial：函数精确名（推断「对象持有器清理器」）、宿主类、+0xC/+0x10
+字段语义（标志/计数推断）、调用方非空保证、1 unique caller 身份。
+================================================================================
+本批新候选登记（后续批兑现）
+================================================================================
+无（callees 全部已登记——0x62B5E0 batch 262、0x661350 batch 1466、0x7C8E17/
+0x7C8B3D batch 001）。★★跨批次闭合：粒子系统域首案（0x62E380 SpawnParticle
+——batch 262 构造器调用现场——[0xA83D9C] 类型表消费端）;RGB 加权距离计
+算器批量消费现场（0x626200——batch 1466 ×0x100——颜色匹配推断）;对象
+清理器（0x5F9B60——VectorClass 布局清零——batch 059/1452 呼应）。
