@@ -1,0 +1,137 @@
+frontier batch 1630 —— 0x625F60 链表按键查询器 / 0x5F61A0 双对象析构释放器 / 0x5EA920 索引表选择器（2026-10-24）
+
+口径：承接 batch 1629 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+uc=1 callsite=5 top3）。本批取：0x625F60（75B，callees=1 deps=63——
+**链表按键查询器**，推断名——strncmp 链遍历 + 命中解引用）、0x5F61A0
+（65B，callees=3 deps=49——**双对象析构释放器**，推断名——双槽各析构
++ delete）、0x5EA920（135B，callees=1 deps=264——**索引表选择器**，推断
+名——[0xA8DA90] 表项 + 模式门控 + 多全局比较）。
+取证手段：disasm.py 三路全读——0x625F60 0x60 覆盖尾 0x625FA8 ret 8 + 后
+邻 0x625FB0（同宿主第二查询器——push ebx 版）;0x5F61A0 0x60 覆盖尾
+0x5F61E0 ret + 后邻 0x5F61F0（同宿主方法）;0x5EA920 0xA0 覆盖尾
+0x5EA9A6 ret + 后邻 0x5EA9B0（同表 getter——[ecx*4+0xA8DA90]）——均读
+到函数尾。+ TSV 查重（三候选全部未登记）+ callee 核验（4 个被调全部已
+登记——0x7CA610（batch 141 CRT::strncmp）、0x755D10（batch 191 三字段
+清理器）、0x5BD5A0（batch 217 单字段释放）、0x696F10（batch 122 哨兵值
+对 getter 族）——**本批无新候选**）。
+★★★跨批次重大连接：★★◆0x625F60 的 0x7CA610 = batch 141 CRT::strncmp
+（定长字符串比较——链按键匹配——名称比较锚点）;★★◆0x5F61A0 的
+0x755D10 = batch 191 三字段清理器（+0x10/+0x14/+0x18 三指针释放——本函
+数用其析构 this+0 对象）+ 0x5BD5A0 = batch 217 单字段释放（+0xC 释放——
+析构 this+4 对象）——双析构链;★★◆0x5EA920 的 0x696F10 = batch 122 哨
+兵值对 getter 族（+0x4F==-2 → -2 否则 [0x4B]——表项值 fallback）;
+★★◆0x5EA920 的 [0xAC119C..0xAC11B4] 六全局 = batch 721「七键字符串选
+择器 [0xAC119C] 键族」同键族——本函数为索引侧消费。
+
+================================================================================
+0x625F60 —— 链表按键查询器（75B 全读）
+================================================================================
+签名：thiscall 两栈参 ret 8（ecx=this、[esp+4]=目标、[esp+8]=出参;
+0x625F60-0x625FA8，返回 al bool——1=命中 0=未命中）。
+机器码结构（0x625F60-0x625FA8，全程读完）:
+    段1 链遍历（0x625F60-0x625F83）：push esi → mov esi,[ecx+4]（★链头
+    ）→ test → push edi → je 0x625F84（★空链 → 返 0）→ mov edi,[esp+
+    0xC]（★目标）→ 循环 0x625F6D: push 4 → push esi → push edi → call
+    0x7CA610（★★batch 141 CRT::strncmp——4 字节比较——链项 vs 目标）→
+    add esp,0xC → test eax → je 0x625F90（★命中）→ mov esi,[esi+0xC]
+    （★链 next——+0xC 偏移）→ test → jne 0x625F6D（★循环）→ 0x625F84:
+    xor eax → setne al → ret 8（★未命中返 0）。
+    段2 命中输出（0x625F90-0x625FA8）：test esi → mov eax,esi → je
+    0x625FA1 → mov ecx,[esi+8]（★链项 +8 对象）→ mov edx,[ecx]（★对象
+    首字段）→ mov ecx,[esp+0x10]（★出参）→ [ecx]=edx（★写回出参）→
+    0x625FA1: test eax → setne al → ret 8（★命中返 1）。
+语义：**链表按键查询器（推断名）**——thiscall：① this+4 链遍历（+0xC
+next——strncmp 4 字节比较 0x7CA610）;② 命中 → 链项 +8 对象首字段解引
+用写回出参 → 返 1;③ 未命中/空链 → 返 0。
+★原版怪癖（照抄）：① ★★0x7CA610 比较（batch 141 strncmp——4 字节名
+/键比较——链项 vs 目标）;② ★★链 next +0xC 偏移（8B 头 + 4 字段——链
+表布局）;③ ★★链项 +8 对象解引用（[esi+8] → [ecx] → 出参——存储值提
+取）;④ ★★ret 8（双栈参——目标+出参）;⑤ ★★setne al 双出口（空/命中
+——0/1——未命中与空合并）;⑥ ★★后邻 0x625FB0 同宿主第二查询器（push
+ebx 版——同链族查询变体）。
+★跨批次连接：◆◆batch 141（0x7CA610——strncmp——CRT 字符串比较族）
+◆batch 104/141（链表族——+0xC next 同款）◆batch 721（[0xAC119C] 键族
+同域）。
+新候选：无（callees=1 已登记）。
+⚠️ partial：函数精确名（「链表按键查询器」推断）、链宿主类、+8 对象字
+段语义、4 字节比较业务、1 unique caller 身份。
+
+================================================================================
+0x5F61A0 —— 双对象析构释放器（65B 全读）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this esi; 0x5F61A0-0x5F61E0，返回 void）。
+机器码结构（0x5F61A0-0x5F61E0，全程读完）:
+    段1 对象 1（0x5F61A0-0x5F61B9）：push esi/edi → mov esi,ecx → mov
+    edi,[esi]（★this+0 对象）→ test → je 0x5F61BA → mov ecx,edi → call
+    0x755D10（★★batch 191 三字段清理器——+0x10/+0x14/+0x18 释放）→
+    push edi → call 0x7C8B3D（★delete 对象 1）→ add esp,4。
+    段2 对象 2（0x5F61BA-0x5F61DD）：mov edi,[esi+4]（★this+4 对象）→
+    [esi]=0（★清 +0）→ test → je 0x5F61D7 → mov ecx,edi → call 0x5BD5A0
+    （★★batch 217 单字段释放——+0xC 释放）→ push edi → call 0x7C8B3D
+    （★delete 对象 2）→ add esp,4 → 0x5F61D7: [esi+4]=0（★清 +4）→
+    pop 族 → ret。
+语义：**双对象析构释放器（推断名）**——thiscall：① this+0 对象 → 0x755D10
+三字段清理 + delete;② this+4 对象 → 0x5BD5A0 单字段释放 + delete;③ 双
+槽清 0。
+★原版怪癖（照抄）：① ★★双对象不同析构方法（0x755D10 三字段清理 vs
+0x5BD5A0 单字段释放——两对象不同内部结构——统一释放器）;② ★★先析构
+后 delete（方法调用 → 0x7C8B3D——标准两段式）;③ ★★双槽清 0（[esi]=0
+在段 2 开头 + [esi+4]=0 段尾——清空顺序）;④ ★★65B 紧凑（双对象两段
++ 双清）。
+★跨批次连接：◆◆batch 191（0x755D10——三字段清理器——对象 1 析构）
+◆◆batch 217（0x5BD5A0——单字段释放——对象 2 析构）◆◆batch 001
+（0x7C8B3D delete）◆batch 1627 同批（双对象族——同构清理链）。
+新候选：无（callees=2 已登记）。
+⚠️ partial：函数精确名（「双对象析构释放器」推断）、两对象类、宿主类、
+1 unique caller 身份。
+
+================================================================================
+0x5EA920 —— 索引表选择器（135B 全读）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this edi 索引; 0x5EA920-0x5EA9A6，返回
+eax 值）。
+机器码结构（0x5EA920-0x5EA9A6，全程读完，分段要点）:
+    段1 模式门控（0x5EA920-0x5EA94F）：push esi/edi → mov edi,ecx（★索
+    引）→ mov eax,0xFFFFFFFE（★默认 -2）→ mov ecx,[0xA8B23C]（★全局对
+    象）→ mov esi,[edi*4+0xA8DA90]（★索引表取项）→ test ecx → je
+    0x5EA94F（★无对象跳过）→ mov edx,[0xA8B238]（★全局模式）→ cmp
+    edx,3 → je 0x5EA94A → cmp edx,4 → jne 0x5EA94F（★★模式 3/4 才继续
+    ——联机门控——batch 1474/1615 同 [0xA8B238]）→ mov eax,[ecx] →
+    call [eax+0x28]（★虚表槽 0x28——全局对象方法）。
+    段2 项比较 1（0x5EA94F-0x5EA975）：test esi → je 0x5EA975（★表项空
+    → 走段 3）→ cmp esi,[0xAC11A4] → je 0x5EA96B → cmp esi,[0xAC11A8]
+    → je 0x5EA96B → cmp esi,[0xAC11AC] → jne 0x5EA975（★★与三全局比
+    较）→ 0x5EA96B: mov eax,[edi*4+0xA8B29C]（★命中返另一表值）→ ret。
+    段3 项比较 2（0x5EA975-0x5EA9A6）：cmp esi,[0xAC119C] → je 0x5EA9A4
+    → cmp esi,[0xAC11A0] → je 0x5EA9A4 → cmp esi,[0xAC11B0] → je
+    0x5EA9A4 → cmp esi,[0xAC11B4] → jne 0x5EA99D（★★与四全局比较——
+    batch 721 键族 [0xAC119C]）→ 0x5EA99D: mov ecx,esi → call 0x696F10
+    （★★batch 122 哨兵值对 getter——+0x4F==-2 → -2 否则 [0x4B]）→
+    0x5EA9A4: ret（★命中返默认/getter 值）。
+语义：**索引表选择器（推断名）**——thiscall：① [0xA8B23C] 全局对象 +
+[0xA8B238] 模式 3/4 门控 → 槽 0x28 调用;② [0xA8DA90] 表项与 [0xAC11A4..
+AC] 三全局比较命中 → 返 [0xA8B29C] 表值;③ 与 [0xAC119C..B4] 四全局比
+较命中 → 返 getter（0x696F10）;④ 默认 -2。
+★原版怪癖（照抄）：① ★★[0xA8B238] 模式 3/4 门控（联机模式——batch
+1474/1615 同全局——仅联机走全局对象）;② ★★[0xA8DA90] 索引表（batch
+1474/1615 同表——玩家表）;③ ★★[0xAC119C..0xAC11B4] 六全局键族（batch
+721 七键字符串选择器同 [0xAC119C] 键族——本函数比较判定）;④ ★★命中返
+[0xA8B29C] 表值（另一索引表——键命中映射）;⑤ ★★默认 -2（mov eax,
+0xFFFFFFFE——未匹配哨兵）;⑥ ★★0x696F10 getter fallback（batch 122——
+哨兵值对）;⑦ ★★后邻 0x5EA9B0 同表 getter（[ecx*4+0xA8DA90]——配套
+读）。
+★跨批次连接：◆◆batch 721（[0xAC119C] 键族——本函数为索引侧消费）◆◆
+batch 122（0x696F10——哨兵值对 getter）◆◆batch 1474/1615（[0xA8B238]/
+[0xA8DA90]——联机/玩家表域）。
+新候选：无（callees=1 已登记）。
+⚠️ partial：函数精确名（「索引表选择器」推断）、[0xA8DA90] 表项语义、
+六全局键身份、[0xA8B29C] 映射表、1 unique caller 身份。
+
+================================================================================
+本批新候选登记（后续批兑现）
+================================================================================
+无（callees 全部已登记——0x7CA610 batch 141、0x755D10 batch 191、
+0x5BD5A0 batch 217、0x696F10 batch 122）。新全局登记：[0xA8B29C]（命中
+映射表——0x5EA920 段 2）、[0xAC11A4]/[0xAC11A8]/[0xAC11AC]/[0xAC11B0]/
+[0xAC11B4]（键族全局——batch 721 同 [0xAC119C] 键族扩展）。后邻观察：
+0x625FB0（同宿主第二查询器）、0x5EA9B0（同表 getter）留候选池。
