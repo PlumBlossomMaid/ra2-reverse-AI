@@ -1,0 +1,131 @@
+frontier batch 1675 —— 0x4CA120 FactoryClass::GetProgress / 0x4BF650 位块压缩选择器 / 0x4BE9D0 RGB 溢出饱和加法打包器（2026-10-24）
+
+口径：承接 batch 1674 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+uc=1 callsite=3 top3）。本批取：0x4CA120 FactoryClass::GetProgress（4B，
+callees=0 deps=207——**进度查询器**，带名——mov [ecx+0x24] 极简 getter）、
+0x4BF650（119B，callees=0 deps=118——**位块压缩选择器**，推断名——跳表 +
+掩码位压缩）、0x4BE9D0（226B，callees=0 deps=7——**RGB 溢出饱和加法打包
+器**，推断名——三分量加法 + 溢出修正 + clamp + 六移位量槽打包）。
+取证手段：disasm.py 三路全读——0x4CA120 0x20 覆盖尾 0x4CA123 ret + nop
+垫（顺带落 0x4CA130 下一函数头——+0x58/+0x24 双字段读——不属本批）;
+0x4BF650 0x90 覆盖尾 0x4BF6C4 ret 4 + nop 垫（跳表 0x4BF6C8 + 字节表
+0x4BF6E0 顺带落——同函数数据）;0x4BE9D0 0x100 覆盖尾 0x4BEA2F+ 段（226B
+全读——ret 8——顺带落 0x4BEAC0 下一函数头——不属本批）——均读到函数尾。
++ TSV 查重（三候选全部未登记）+ callee 核验（三者 callees 全为 0——纯计
+算/纯 getter——**本批无被调、无新候选**）。
+★★★跨批次重大连接：★★◆0x4BE9D0 = [0x8A0DD0..E4] **六移位量槽 RGB 位
+域家族的消费端**（batch 772/758/624/296 同全局族——SAR/SHL 六槽——本批
+实锤消费路径：R 用 [0x8A0DDC]/[0x8A0DD8]、G 用 [0x8A0DE4]/[0x8A0DE0]、
+B 用 [0x8A0DD4]/[0x8A0DD0]——三通道 sar+shl 后 or 合并）;★★◆0x4BF650
+= Westwood 手写汇编候选（跳表 + 字节表 + 位操作当算术——batch 072 的
+westwood_handwritten_asm 识别清单第 2 条「位操作当算术用」）;★★◆
+0x4CA120 = batch 145 的 0x4A60D0 纯 getter 惯例同款（4B 不建模型）。
+================================================================================
+0x4CA120 —— FactoryClass::GetProgress（4B 全读）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this; 0x4CA120-0x4CA123，返回 eax）。
+机器码结构（0x4CA120-0x4CA123，全程读完）:
+    mov eax,[ecx+0x24]（★this+0x24）→ ret。
+语义：**FactoryClass::GetProgress（带名）**——thiscall：读 this+0x24 字段
+返回（进度值推断）——4B 极简 getter。
+★原版怪癖（照抄）：① ★★4B 极简（mov+ret——纯 getter 不建模型惯例——
+batch 145 的 0x4A60D0 同款）;② ★★this+0x24 单字段（生产进度字段推断——
+FactoryClass 域）。
+★跨批次连接：◆◆纯 getter 家族（batch 145 的 0x4A60D0 读全局 getter +
+batch 1654 的 0x717BF0 虚表安装——本批 getter 又一例）◆◆FactoryClass 域
+（batch 073 的 0x40A120 FactoryClass 生产系统同域——生产进度）。
+新候选：无（callees=0）。
+⚠️ partial：函数精确名（带名 FactoryClass::GetProgress——YRpp 覆盖推
+断）、+0x24 字段语义（进度推断）、1 unique caller 身份。
+================================================================================
+0x4BF650 —— 位块压缩选择器（119B 全读）
+================================================================================
+签名：thiscall 1 栈参 ret 4（ecx=this 未用; [esp+8]=参数1 索引;
+0x4BF650-0x4BF6C4，返回 eax）。
+机器码结构（0x4BF650-0x4BF6C4，全程读完，分段要点）:
+    段1 索引门控+跳表（0x4BF650-0x4BF66B）：mov esi,[esp+8]（参数 1）→
+    cmp esi,0x64 → ja 0x4BF6C3（★★>100 → 返 dx 低半字——跳表外兜底）→
+    mov cl,byte[esi+0x4BF6E0]（★★字节表——索引→分支号）→ jmp [ecx*4+
+    0x4BF6C8]（★★5 项跳表）。
+    段2 分支 1（0x4BF66B）：mov dx,word[0x8A0DEA]（★掩码）→ and eax,
+    0xFFFF → shr eax,2 → and eax,edx（★÷4 掩码）→ shl eax,2（★×4 还原
+    ——位压缩——低位 2 位清）→ ret 4。
+    段3 分支 2（0x4BF683）：mov esi,[0x8A0DE8]（★掩码对）→ 两 and（eax/
+    edx 低 16 位）→ shr eax,1/shr edx,1（★÷2）→ and 双掩码 → add（★半字
+    合并——{高半字+低半字} 相加——位叠加）→ ret 4。
+    段4 分支 3（0x4BF6A8）：mov cx,word[0x8A0DEA] → and → shr eax,2 →
+    and → shl eax,2 → ret 4（与分支 1 同构变体）。
+    段5 兜底（0x4BF6C0）：mov ax,dx → ret 4（★★>100 过去 dx——低半字透
+    传）。
+语义：**位块压缩选择器（推断名）**——thiscall 1 栈参（索引）：① 参数 ≤
+100 → 字节表（0x4BF6E0——索引→分支号）+ 跳表（0x4BF6C8）分派 5 分支;
+② 各分支按 [0x8A0DE8]/[0x8A0DEA] 全局掩码做位压缩（shr/shl/and——÷4/
+÷2 收缩 + 掩码 + 还原——位块打包）;③ >100 → 低半字透传——按索引选择压
+缩/透传路径的位处理选择器。
+★原版怪癖（照抄）：① ★★字节表 + 跳表二级分派（0x4BF6E0 索引→分支号 +
+0x4BF6C8 5 项——压缩器手写惯用）;② ★★shr/shl 位操作当算术（÷4 = shr 2
++ shl 2 还原——and 掩码——batch westwood_handwritten_asm 识别清单第 2
+条「位操作当算术用」）;③ ★★半字合并（shr 1 + add——{高+低} 位叠加——
+分支 2 独有）;④ ★★[0x8A0DE8]/[0x8A0DEA] 全局掩码（位域全局——与
+0x8A0DD0..E4 六移位量槽同区）;⑤ ★★>100 兜底透传（ja 0x4BF6C3——mov
+ax,dx——低半字直通）;⑥ ★★119B 双表分派（手写汇编特征——跳表展开）。
+★跨批次连接：◆◆位压缩惯用（batch 072 的 westwood_handwritten_asm——
+RA1 源码实锤 Westwood 手写汇编传统——本函数特征吻合）◆◆[0x8A0DE8]/
+[0x8A0DEA]（位域全局——与 0x8A0DD0..E4 同区——本批 0x4BE9D0 同区家族）
+◆◆字节表/跳表分派（batch 1671 的 0x4BF650 同区——分派器惯用）。
+新候选：无（callees=0）。
+⚠️ partial：函数精确名（推断「位块压缩选择器」）、0x4BF6E0 字节表内容
+（索引→分支映射）、[0x8A0DE8]/[0x8A0DEA] 掩码语义（位域/格子压缩推
+断）、5 分支差异业务、1 unique caller 身份。
+================================================================================
+0x4BE9D0 —— RGB 溢出饱和加法打包器（226B 全读）
+================================================================================
+签名：thiscall 2 栈参 ret 8（ecx=this RGB 三分量; edx=参数1、[esp+0xC]=
+参数2、[esp+0x10]=参数3; 0x4BE9D0-0x4BEAAF，返回 eax 32 位打包）。
+机器码结构（0x4BE9D0-0x4BEAAF，全程读完，分段要点）:
+    段1 三分量加法（0x4BE9D0-0x4BE9EE）：mov al,[ecx]（★R）→ mov esi,eax
+    → add esi,edx（★R + 参数 1）→ mov dl,[ecx+1]（★G）→ add edx,[esp+
+    0xC]（★G + 参数 2）→ mov al,[ecx+2]（★B）→ add eax,[esp+0x10]（★
+    B + 参数 3）——三分量各自加法。
+    段2 溢出统计修正（0x4BE9F2-0x4BEA53）：cmp esi,0xFF/jl → 溢出 → edi++
+    + lea ecx,[esi-0xFF]（★累计溢出量）→ 同构 ×2（G 的溢出并入 ecx）→
+    test edi/je 跳过 → cmp edi,3/jge 跳过（★三通道全溢——不动）→ cmp
+    edi,1 → jne → sar ecx,1（★单通道溢出 → 溢出量 ÷2——平均分配）→ 未溢
+    通道加回（cmp 0xFF/jge 跳过 → add esi/edx/eax,ecx——★溢出量分给未溢
+    通道——饱和近似）。
+    段3 clamp+位段打包（0x4BEA53-0x4BEAAF）：三分量 clamp 0xFF（cmp/jle →
+    mov 0xFF——截断）→ mov ecx,[0x8A0DDC] → sar eax,cl（★R 右移量槽）→
+    mov ecx,[0x8A0DD8] → shl eax,cl（★R 左移量槽——0x8A0DDC/D8 槽）→ 同
+    构 G（0x8A0DE4/0x8A0DE0 槽）+ B（0x8A0DD4/0x8A0DD0 槽）→ or 三通道
+    （★★or eax,edx + or eax,esi——32 位合并打包）→ ret 8。
+语义：**RGB 溢出饱和加法打包器（推断名）**——thiscall 2 栈参：① 三分量
+（[ecx] RGB 字节）分别加三参数（edx/参数2/参数3）;② 溢出统计（各分量
+>0xFF 计数 edi + 累计溢出量 ecx）——edi==1 时溢出量 ÷2（sar 1）分给未溢
+通道（★单通道溢出——平均回填——饱和近似——原版怪癖照抄）;③ clamp 0xFF
+截断;④ 按 [0x8A0DD0..E4] 六移位量槽（R: 0x8A0DDC/D8、G: 0x8A0DE4/E0、
+B: 0x8A0DD4/D0——sar + shl 双槽）移位 → or 合并 32 位打包——RGB 加法 +
+溢出回填 + 位段打包一体器。
+★原版怪癖（照抄）：① ★★溢出回填近似（edi==1 → ecx sar 1 均分给未溢通
+道——非精确饱和——原版容错怪癖）；② ★★edi==2/3 跳过修正（双通道全溢/
+三通道全溢不动——exercise 容错路径）;③ ★★clamp 0xFF（cmp/jle → mov
+0xFF——逐通道截断）;④ ★★六移位量槽绝对地址（[0x8A0DDC]/[0x8A0DD8]/
+[0x8A0DE4]/[0x8A0DE0]/[0x8A0DD4]/[0x8A0DD0]——batch 772/758/624/296 RGB
+位域家族锚点——sar + shl 双槽每通道——位段定位）;⑤ ★★or 合并打包（三
+通道 or——32 位 RGB 位段）;⑥ ★★226B（加法 + 溢出 + clamp + 打包四段）。
+★跨批次连接：◆◆[0x8A0DD0..E4] 六移位量槽（batch 772/758/624/296 RGB
+位域家族——本批消费端实锤——六槽分工全落地）◆◆RGB 位段打包惯用（batch
+1675 本批 0x4BF650 同 [0x8A0DXxx] 区——位域全局族）◆◆三分量加法
+（batch 1661 的 0x658330 颜色拼合同区——RGB 处理族）。
+新候选：无（callees=0）。
+⚠️ partial：函数精确名（推断「RGB 溢出饱和加法打包器」）、三分量语义
+（RGB 推断——[ecx] 字节）、溢出回填近似精确公式、六移位量槽语义、1
+unique caller 身份。
+================================================================================
+本批新候选登记（后续批兑现）
+================================================================================
+无（callees 全为 0——纯计算/纯 getter——零被调零候选）。★★跨批次闭合：
+RGB 位域家族消费端实锤（[0x8A0DD0..E4] 六移位量槽——batch 772/758/624/
+296 锚点——0x4BE9D0 三通道 sar/shl + or 合并）;Westwood 手写汇编候选新
+例（0x4BF650——字节表 + 跳表 + 位压缩——RA1 源码实锤传统再印证）;
+FactoryClass::GetProgress 带名 getter（0x4CA120——batch 145 纯 getter 惯
+例同款）。
