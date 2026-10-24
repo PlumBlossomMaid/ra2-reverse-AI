@@ -1,0 +1,204 @@
+frontier batch 1724 —— 0x626690 地图格扫描器 / 0x624BE0 哈希表扩容器 / 0x624810 向量扩容器（2026-10-24）
+
+口径：承接 batch 1723 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+uc=1 callsite=2 top3）。本批取：0x626690（257B，callees=2 deps=57——
+**地图格扫描器**，推断名——[0xAC48F0] 全局格网表 + XY 双循环扫描 +
+0x4F4CA0/0x4F4CE0 判定——命中反向扫描 + 返回格对象 +0x100 字段）、
+0x624BE0（156B，callees=2 deps=168——**哈希表扩容器**，推断名——+0x14
+标志快退 + 容量×2 + 虚表槽 0x18 哈希 + 链式重搬迁 + delete 旧表）、
+0x624810（135B，callees=2 deps=53——**向量扩容器**，推断名——满则扩
+容 ×2 最小 10 + 24B/项 rep movsd 拷贝 + delete 旧缓冲——batch 819 族
+布局）。
+取证手段：disasm.py 三路全读——0x626690 0x110 覆盖尾 0x626790 ret + nop
+垫（顺带落 0x626791 后邻 nop 垫——函数尾确认）;0x624BE0 0xA0 覆盖尾
+0x624C7B ret + nop 垫（顺带落 0x624C7C 后邻 nop——函数尾确认）;
+0x624810 0x90 覆盖尾 0x624896 ret + nop 垫（顺带落 0x624897 后邻 nop
+垫——函数尾确认）——均读到函数尾。
++ TSV 查重（三候选全部未登记——picker 未登记池输出确认）+ callee 核验
+（0x626690 → 0x4F4CA0 已登记 line1179（batch 372 空位谓词——this+0
+字节 ==0 返 1）/0x4F4CE0 已登记 line1090（batch 343 宽字符相等比较——
+双字节推进 wchar 逐对比较）——★两 callee 均在 batch 372/343 描述过
+本函数现场——全绿;0x624BE0 → 0x7C8E17/0x7C8B3D（CRT new/delete）——
+全绿;0x624810 → 0x7C8E17/0x7C8B3D（CRT new/delete）——全绿——**零
+新候选**）。
+★★★跨批次连接：★★◆0x626690 = **batch 372/343 双调用现场**——
+0x4F4CA0（batch 372 空位谓词）+ 0x4F4CE0（batch 343 宽字符相等比较）
+——batch 343 文档描述「调用方全在 0x633xxx-0x635xxx 功能区」但本函数
+（0x626xxx）是第 6 caller——★兑现承诺兑现：格网表空槽/名字匹配扫描
+——[0xAC48F0] 全局格网对象池（batch 547 [0xAC4B48] 同区）;★★◆
+0x624BE0 = **哈希表扩容器**——虚表槽 0x18 哈希 + (hash&mask) 桶定位
++ 链式重搬迁（[eax+8] 链 + [ebx+0xC] 掩码 + 虚表槽 0x18）——★与 batch
+1719 0x648710 的 [0xAC4BF0]/[0xAC4C78] 同区——哈希池族;★★◆0x624810
+= **向量扩容器**——24B/项（lea ebp*2 → lea ebp+ebp*2 → shl 3 = ×24）
++ 容量×2 最小 10（cmp 0xA → jge → mov ebp,0xA）——★batch 1718 0x64B410
+的 24B/项单位遍历（add ebp,0x18）同尺寸——Team/单位对象数组族。
+================================================================================
+0x626690 —— 地图格扫描器（257B 全读）
+================================================================================
+签名：thiscall 无栈参 ret c3（ecx=this——格网扫描器状态（[esi]=X 索引;
+[esi+4]=Y 索引; [esi+8]=完成标志）; 0x626690-0x626790，返回 eax=格对
+象 +0x100 字段/0）。
+机器码结构（0x626690-0x626790，全程读完——双循环扫描）:
+    段0 正向 XY 双循环扫描（0x626690-0x62670A）：push ecx → mov eax,
+    [0xAC48F0]（★全局格网对象池——batch 547 [0xAC4B48] 同区）→ push
+    ebx/ebp/esi/edi → mov ebx,[eax+0xC]（★+0xC 表对象）→ mov esi,ecx
+    （this）→ mov al,[esi+8]（★+8 完成标志）→ test → jne 0x62670F（★
+    完成 → 返 0）→ 0x6266A6 外循环 X：mov ecx,[esi] → mov eax,[ebx+8]
+    → cmp ecx,eax → jge 0x6266FF（★X 越界 → 置完成）→ 0x6266AF 内循
+    环 Y：mov eax,[esi] → lea edx,[eax+eax*2]（★X×3）→ mov eax,[ebx]
+    → mov ecx,[eax+edx*8+0x10]（★[X] 项 +0x10——Y 计数）→ lea edi,
+    [eax+edx*8]（★[X] 项基址）→ mov eax,[esi+4] → cmp eax,ecx → jge
+    0x6266EA（★Y 越界 → 下一 X）→ 0x6266C4 逐项：mov edx,[edi+4]（★
+    [X] 项 +4 数组）→ mov ecx,eax → shl ecx,6 → add ecx,eax（★Y×65
+    ——65B/项）→ inc eax → mov [esi+4],eax（★Y 索引++）→ lea ebp,[edx+
+    ecx*4]（★项地址 = 数组 + Y×65×4 = Y×260）→ mov ecx,ebp → call
+    0x4F4CA0（★★batch 372——空位谓词——this+0==0）→ test al → je
+    0x62670B（★非空 → 命中路径）→ mov eax,[esi+4] → mov ecx,[edi+0x10]
+    → cmp eax,ecx → jl 0x6266C4（★Y 继续）→ 0x6266EA：mov [esi+4],0
+    （★Y 重置）→ inc [esi] → cmp → jl 外循环 → 0x6266FF：mov byte[esi+
+    8],1（★完成标志）→ xor eax → ret。
+    段1 命中反向扫描（0x62670B-0x626790）：test ebp,ebp → jne 0x626717
+    → 返 0 → 0x626717：mov eax,[0xAC48F0] → mov ecx,ebp → mov esi,
+    [eax+0xC] → call [esi+4]（★★虚表槽 4——格 → 索引）→ cdq → idiv
+    [esi+8]（★% 列数——行列换算）→ lea ecx,[edx+edx*2] → mov edx,[esi]
+    → mov edi,[edx+ecx*8+0x10]（★[列] 项 +0x10 行计数）→ lea eax,[edx+
+    ecx*8] → dec edi → mov [esp+0x10],eax → js 0x62677B（★行数 0 → 返
+    0）→ 0x62673B 反向行扫描：mov ebx,edi → shl ebx,6 → add ebx,edi →
+    shl ebx,2（★行×260——同 65×4）→ 0x62674B 逐行：mov ecx,[eax+4]（★
+    [列] 项数组）→ mov esi,ebx → add esi,ecx（★行基址）→ push ebp →
+    call 0x4F4CE0（★★batch 343——宽字符相等比较——thiscall ecx=行对
+    象 + 栈参 ebp）→ test al → jne 0x626771（★相等 → 命中）→ dec edi →
+    sub ebx,0x104（★-260——反向步进）→ test edi,edi → jge 0x626747
+    （★继续反向）→ 返 0 → 0x626771：lea eax,[esi+0x100] → test → jne
+    0x626783 → 返 0 → 0x626783：mov eax,[eax] → mov eax,[eax+0x100]（★
+    ★返回 +0x100 字段——格对象 ID/句柄）→ ret。
+语义：**地图格扫描器（推断名）**——thiscall 无栈参 ret c3：①[0xAC48F0]
+全局格网对象池（+0xC 表对象——列数组 + 每列行数组）;②正向 XY 双循环
+扫描（X 外层、Y 内层——[esi]/[esi+4] 索引 + [esi+8] 完成标志）——65B
+×4 = 260B/项步进;③逐项 0x4F4CA0（batch 372 空位谓词）判空——空则
+继续、非空则命中;④命中后反向行扫描（虚表槽 4 格→索引 + idiv 列数换算
+行列）→ 0x4F4CE0（batch 343 宽字符相等比较）逐行匹配;⑤返回命中行
++0x100 字段——**格网空槽查找 + 名字匹配定位**（[0xAC48F0] 对象池——
+batch 372/343 双调用现场——batch 547 [0xAC4B48] 注册表同区）。
+★原版怪癖（照抄）：① ★★双阶段扫描（先正向找空槽/非空槽、命中后反向
+按名匹配——两遍扫描）;② ★★65B×4=260B/项步进（shl 6 + add + shl 2——
+项大小 260——格网行对象大小推断）;③ ★★X×3 表项定位（lea eax+eax*2
+——3 dword/列项——[+0x10] 行计数）;④ ★★行列换算虚表槽 4 + idiv 列数
+（对象 → 索引 → /列数 → 行/列——二维展平）;⑤ ★★反向扫描 sub 0x104（-
+260——从末行往前）;⑥ ★★返回 +0x100 字段（非行对象本身——格对象 ID/
+句柄）;⑦ ★★完成标志 [esi+8]（扫描完毕置 1——幂等返回 0）。
+★跨批次连接：◆◆0x4F4CA0（batch 372——空位谓词——调用现场——this+
+0==0）◆◆0x4F4CE0（batch 343——宽字符相等比较——调用现场——双字节推
+进匹配）◆◆[0xAC48F0]（全局格网对象池——batch 547 [0xAC4B48] 注册表
+同区——0xAC4xxx 全局对象族）◆◆虚表槽 4（格→索引——行列表换）。
+新候选：无（callees=2 全已登记）。
+⚠️ partial：函数精确名（推断「地图格扫描器」）、宿主类（0x626xxx 区格
+网管理器推断）、[0xAC48F0] 格网池身份、65B/260B 项布局、+0x100 字段
+语义（ID/句柄）、正向/反向两阶段业务含义、[esi]/[esi+4]/[esi+8] 扫描
+器状态语义。
+================================================================================
+0x624BE0 —— 哈希表扩容器（156B 全读）
+================================================================================
+签名：thiscall 无栈参 ret c3（ecx=this——哈希表; 0x624BE0-0x624C7B，返
+回 void——重哈希扩容）。
+机器码结构（0x624BE0-0x624C7B，全程读完）:
+    段0 扩容与清零（0x624BE0-0x624C2F）：push ecx/ebx → mov ebx,ecx
+    （this）→ cmp byte[ebx+0x14],1 → je 0x624C79（★+0x14=1 标志 → 快
+    退不扩）→ push ebp/esi/edi → mov esi,[ebx+8]（★旧容量）→ mov ebp,
+    [ebx]（★旧表）→ push edi → mov edi,[ebx+0xC]（★+0xC=哈希位数/掩码
+    位数）→ lea eax,[esi+esi]（★×2 新容量）→ inc edi → mov [ebx+8],eax
+    （★+8=新容量）→ mov [esp+0x10],ebp → shl eax,2（★×4 字节）→ push
+    eax → mov [ebx+0xC],edi（★+0xC++）→ call 0x7C8E17（★new 新表）→
+    mov ecx,[ebx+8] → mov edi,eax → shl ecx,2 → mov edx,ecx → xor eax
+    → shr ecx,2 → mov [ebx],edi（★+0=新表）→ rep stosd ×4 + rep stosb
+    ×3（★新表清零——rep stosd/byte 混合——batch 1719 0x648710 同款）。
+    段1 链式重搬迁（0x624C31-0x624C69）：mov edi,ebp（旧表）→ mov ebp,
+    esi（旧容量）→ 0x624C35 旧桶循环：mov esi,[edi]（★旧桶首项）→ test
+    esi → je 0x624C63（★空桶 → 跳过）→ 0x624C3B 链循环：mov ecx,esi →
+    call [ebx+0x18]（★★虚表槽 0x18——哈希函数）→ mov ecx,[ebx+0xC] →
+    mov edx,1 → shl edx,cl → dec edx（★mask = (1<<位数)-1）→ and edx,
+    eax（★hash & mask）→ mov eax,[ebx] → mov ecx,[eax+edx*4]（★新桶首
+    项）→ lea eax,[eax+edx*4] → mov [eax],esi（★新桶首 = 旧项）→ mov
+    eax,[esi+8] → mov [esi+8],ecx（★旧项 +8 = 原新桶首——链插入头插）
+    → mov esi,eax（下一项）→ test → jne 链循环 → 0x624C63：add edi,4
+    → dec ebp → jne 旧桶循环 → 0x624C6D：push ebp → call 0x7C8B3D（★
+    delete 旧表）→ pop 族 → 0x624C79：ret。
+语义：**哈希表扩容器（推断名）**——thiscall 无栈参 ret c3：①+0x14 标
+志门控（=1 → 快退不扩——固定哈希表）;②容量×2 + 位数++（+0x8 容量
+/+0xC 位数——两字段同步）→ new 新表 + rep stosd/byte 清零;③旧桶链式
+重搬迁：虚表槽 0x18 哈希 + mask=(1<<新位数)-1 定位新桶 + 头插链（新项
++8 = 原桶首、桶首 = 新项——链式哈希惯用）;④delete 旧表——**哈希表
+倍增重哈希**（[hash&mask] 桶定位 + 链式冲突——batch 1719 0x648710
+[0xAC4BF0]/[0xAC4C78] 同区哈希池族）。
+★原版怪癖（照抄）：① ★★+0x14 标志快退（=1 不扩——固定容量表——调用
+方无法察觉未扩）;② ★★容量×2 + 位数++双字段同步（+0x8/+0xC——两处写
+——mask 由位数推）;③ ★★清零 rep stosd + rep stosb 混合（dword 主体
++ byte 尾部——非对齐长度）;④ ★★链式头插（新项 +8 = 原桶首——逆序搬
+迁——不保持原序）;⑤ ★★mask 移位推（shl 1,cl / dec——不用表存 mask——
+运行时算）;⑥ ★★虚表槽 0x18 哈希（虚哈希——子类可定制）。
+★跨批次连接：◆◆0x7C8E17/0x7C8B3D（CRT new/delete）◆◆虚表槽 0x18（哈
+希函数——子类虚定制）◆◆[0xAC4BF0]/[0xAC4C78]（batch 1719 0x648710——
+[0xAC4Bxx] 全局哈希池族同区）◆◆链式哈希（头插桶链——batch 276 0x631CC0
+链节点同构）。
+新候选：无（callees=2 全已登记）。
+⚠️ partial：函数精确名（推断「哈希表扩容器」）、宿主类（哈希池推断）、
++0x14 标志语义（固定容量）、+0x8/+0xC 容量/位数字段、虚表槽 0x18 哈希
+函数身份、+8 链字段语义。
+================================================================================
+0x624810 —— 向量扩容器（135B 全读）
+================================================================================
+签名：thiscall 无栈参 ret c3（ecx=this——向量（+0=当前容量; +4=已用
+计数; +8=缓冲）; 0x624810-0x624896，返回 al=bool（1=成功扩容/0=已满
+失败））。
+机器码结构（0x624810-0x624896，全程读完）:
+    段0 满判定与快退（0x624810-0x624821）：push ecx/ebx → mov ebx,
+    ecx（this）→ mov eax,[ebx]（★+0=当前容量）→ mov ecx,[ebx+4]（★
+    +4=已用计数）→ cmp eax,ecx → jge 0x624822 → xor al → ret（★已用
+    < 容量 → 未满 → 返 0——不需要扩）。
+    段1 扩容与拷贝（0x624822-0x624896）：push ebp/esi/edi → lea ebp,
+    [eax+eax]（★容量×2 新容量）→ cmp ebp,0xA → jge 0x624832 → mov
+    ebp,0xA（★最小 10——新容量下限）→ lea esi,[ebp+ebp*2] → shl esi,3
+    （★★★×24——24B/项——新缓冲字节 = 容量×24）→ push esi → call
+    0x7C8E17（★new）→ mov edx,eax → mov ecx,esi → xor eax → mov edi,
+    edx → shr ecx,2 → rep stosd ×4 + rep stosb ×3（★新缓冲清零——dword
+    主体 + byte 尾部混合）→ mov [esp+0x10],edx → mov esi,[ebx+8]（★旧
+    缓冲）→ test esi → je 0x624879 → mov eax,[ebx]（★旧容量）→ mov
+    edi,edx → lea ecx,[eax+eax*2] → shl ecx,3（★旧容量×24 字节数）→
+    mov eax,ecx → shr ecx,2 → rep movsd ×4 + rep movsb ×3（★★旧缓冲
+    拷贝——rep movsd/byte 混合——24B/项粒度）→ 0x624879：push [ebx+8]
+    → call 0x7C8B3D（★delete 旧缓冲）→ mov [ebx+4],ebp（★+4=新容量）→
+    mov [ebx+8],edx（★+8=新缓冲）→ pop 族 → mov al,1 → ret（★返 1）。
+语义：**向量扩容器（推断名）**——thiscall 无栈参 ret c3：①满判定（已用
++4 < 容量 +0 → 未满返 0——不扩）;②容量×2 最小 10（lea ebp+ebp → cmp
+0xA → jge → mov ebp,0xA——新容量下限）→ new 容量×24 字节 + rep stosd/
+byte 清零;③旧缓冲 rep movsd/byte 拷贝（24B/项粒度——旧容量×24 字节
+——混合拷贝非 4 整除）→ delete 旧缓冲;④+4=新容量 + +8=新缓冲 → 返 1
+——**向量倍增扩容**（★24B/项——batch 1718 0x64B410 单位遍历 add ebp,
+0x18 同尺寸——Team/单位对象数组族——batch 819 VectorClass 族布局变体：
+本布局 +0 容量/+4 计数/+8 缓冲 vs batch 819 +4 缓冲/+8 容量）。
+★原版怪癖（照抄）：① ★★满判定返 0（未满返 0 而非 1——调用方语义反转
+——已满才扩）;② ★★最小容量 10（cmp 0xA → jge → mov ebp,0xA——从 0
+起扩直接到 10）;③ ★★24B/项三连寻址（lea ebp+ebp*2 → shl 3 = ×24——
+Team/单位对象 24B）;④ ★★清零/拷贝 rep stosd + rep stosb 混合（24 倍
+数非 4 整除尾——byte 补齐）;⑤ ★★字段布局 +0 容量/+4 计数/+8 缓冲（vs
+batch 819 +4/+8/+0——同族不同布局）。
+★跨批次连接：◆◆0x7C8E17/0x7C8B3D（CRT new/delete）◆◆VectorClass 族
+（batch 819/820/821/824/1717/1721/1723——扩容模板——本布局 +0/+4/+8
+变体）◆◆24B/项（batch 1718 0x64B410——add ebp,0x18 单位遍历同尺寸——
+Team/单位对象族）◆◆rep stosd/byte 混合清零（batch 1719 0x648710 同
+款）。
+新候选：无（callees=2 全已登记）。
+⚠️ partial：函数精确名（推断「向量扩容器」）、宿主类（24B 项对象数组
+——Team/单位族推断）、+0/+4/+8 容量/计数/缓冲字段语义、满判定返 0 消
+费端、最小 10 语义。
+================================================================================
+本批新候选登记（后续批兑现）
+================================================================================
+无（三候选 6 callee 全已登记——0x4F4CA0 batch 372 / 0x4F4CE0 batch
+343 / 0x7C8E17·0x7C8B3D CRT——+0x624BE0/0x624810 虚表槽不计）。
+★★跨批次闭合：**batch 372/343 双调用现场兑现**（0x626690——格网池
+[0xAC48F0] 空槽扫描 + 宽字符名字匹配——65B×4 项步进 + 行列换算虚表槽
+4 + 返回 +0x100 字段）;**哈希表倍增重哈希**（0x624BE0——虚表槽 0x18
+哈希 + mask 移位推 + 链式头插——batch 1719 [0xAC4Bxx] 哈希池族）;**
+向量倍增扩容 24B/项**（0x624810——最小 10 + ×24 项 + rep 混合拷贝——
+batch 1718 0x64B410 同尺寸单位族）。
