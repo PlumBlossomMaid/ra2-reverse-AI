@@ -1,0 +1,333 @@
+frontier batch 1714 —— 0x661530 RLE 零行程压缩器 / 0x6613A0 三分量归一化编码器 / 0x65D8E0 Team 单位投放执行器（2026-10-24）
+
+口径：承接 batch 1713 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+uc=1 callsite=2 top3）。本批取：0x661530（95B，callees=0 deps=1——**RLE
+零行程压缩器**，推断名——0 字节簇 → [00,len] 两字节编码，非 0 字节直通）、
+0x6613A0（321B，callees=0 deps=50——**三分量归一化编码器**，推断名——3
+字节分量求 max/min/range + (max-c)*255/range 归一化 + 0x100/0x300/0x500
+区段偏移 + 0xAAAAAAAB÷3 魔术 + word+max 输出）、0x65D8E0（1093B，callees=20
+deps=1866——**Team 单位投放执行器**，推断名——new 0x234 + 0x6916B0 构造 +
+0x65DD30 单位创建器 + waypoint 取点 + 8 方向邻域 + 乘客装载/同盟判定 +
+0x41CAA0 名表 + 0x4AA440 边缘取格——TeamClass 域大逻辑）。
+取证手段：disasm.py 三路全读——0x661530 0x80 覆盖尾 0x66158C ret 0xC +
+nop 垫（顺带落 0x661590 邻函数头——push esi → mov esi,[esp+0xC] → test
+→ lea edx,[esi+2] → call 0x661530 → add eax,2——**本函数直接调用者**——
+不属本批）;0x6613A0 0x160 覆盖尾 0x6614DE ret 4 + nop 垫（顺带落 0x6614F0
+邻函数头——mov eax,[esp+4] → push 0/3/ecx → mov edx,[eax] → push eax →
+call [edx+0x10]——COM 查询形——不属本批）;0x65D8E0 0x460 覆盖尾 0x65DD24
+ret + nop 垫（顺带落 0x65DD30 邻函数头——sub esp,0x1C → push ebx/ebp/esi/
+edi → mov ebx,ecx → push 0xA0——**batch 1468 已登记的 Team 单位创建器**）
+——均读到函数尾。
++ TSV 查重（三候选全部未登记——picker 未登记池输出确认）+ callee 核验
+（0x65D8E0 callees=20 逐一核验：0x7C8E17（batch 001 operator_new）/0x6916B0
+（batch 1455 ScriptTypeClass ctor）/0x65DD30（batch 1468 Team 单位创建
+器——★调用现场）/0x68BCC0（batch 087 GetWaypointCoords）/0x6F18A0（batch
+470 GetWaypoint）/0x5657A0（坐标→CellClass* 查表）/0x481810（batch 073
+GetNeighbourCell）/0x47C520（batch 066 GetBuilding）/0x4733A0（batch 214
+AddPassenger）/0x578460（batch 065 IsWithinUsableArea）/0x4F9A50（batch
+073 IsAlliedWith）/0x660B80（batch 1466 环形推进器）/0x41CAA0（batch 333
+全局名表查找）/0x50DA80（batch 477 受限 getter——★unique_callers 点名
+本函数）/0x4AA440（batch 1273 PickCellOnEdge）/0x41C230（batch 066 三字
+段赋值）——**17 个已登记**;未登记 3 个：0x65E010（邻函数——新候选）、
+0x459CA0（判定 al 返回——新候选）、0x6F18E0（batch 470 文档已描述孪生
+GetTransportWaypoint——TSV 从未登记——新候选补登记）;0x661530/0x6613A0
+callees=0 零 callee——**三个新候选，余 17 全绿**）。
+★★★跨批次连接：★★◆0x65D8E0 = **batch 1468/475/477 的联合点名兑现**
+——0x65DD30（batch 1468 Team 单位创建器）被本函数调用（★承诺兑现：单位
+创建后进入投放逻辑）;0x6F2070（batch 475 GetHouse）/0x50DA80（batch 477
+受限 getter）的 unique_callers 都点名 FUN_0065d8e0（★三向互证——本函
+数确为 AI/Team 任务区调用族枢纽）;★★◆0x65D8E0 = **TeamClass 域大逻辑**
+——new 0x234 + 0x6916B0（ScriptTypeClass 构造——类型表 +0xE0 装配）+ 槽
+0x2C 链遍历（0xF=15 判定）+ 槽 0x100/0x274/0x1E8/0x480/0x3C8/0xD8/0x20
+（Team 对象方法族——batch 1468 同域）;★★◆0x661530/0x6613A0 = **0x66/0x65
+区小工具**——callees=0 独立函数——0x661530 的调用者 0x661590 就在邻域
+（lea esi+2 跳过头部——压缩输出前处理形态）。
+================================================================================
+0x661530 —— RLE 零行程压缩器（95B 全读）
+================================================================================
+签名：3 栈参 ret 0xC（[esp+4]=源指针; [esp+0xC]=输出指针（可空）; 
+[esp+0x14]=剩余计数; 0x661530-0x66158C，返回 eax=写入字节数）。
+机器码结构（0x661530-0x66158C，全程读完）:
+    段0 入口与主循环（0x661530-0x661587）：mov edx,[esp+4]（源指针）→
+    push esi/edi → mov esi,[esp+0xC]（输出指针——测试 esi 空跳过写）→
+    mov edi,[esp+0x14]（剩余计数）→ xor eax（写入字节计数）→ test
+    edi,edi → jle 0x66158A（★计数 ≤ 0 → 直接返 0）→ push ebx → 主循
+    环 0x661545：mov cl,[edx]（读源字节）→ test cl,cl → jne 0x66157B
+    （★非 0 → 直通路径）。
+    段1 零簇编码（0x66154B-0x661579）：xor ecx → cmp ecx,edi → jg
+    0x66155A（★计数越界）→ 内层扫描循环 0x66154D：mov bl,[ecx+edx+1]
+    → inc ecx → test bl,bl → je 0x66154D（★扫连续 0——遇非 0 停）→
+    cmp ecx,0xFF → jl 0x661567 → mov ecx,0xFF（★长度 clamp 0xFF）→
+    test esi,esi → je 0x661572（★输出可空）→ mov byte[esi],0（写 0
+    标记）→ inc esi → mov byte[esi],cl（写长度）→ inc esi → add
+    eax,2（★2 字节）→ add edx,ecx（源前进 len）→ sub edi,ecx（剩余
+    减 len）。
+    段1' 非 0 直通（0x66157B-0x661584）：test esi,esi → je 0x661582 →
+    mov byte[esi],cl（写原字节）→ inc esi → inc edx → inc eax（★1 字
+    节）→ dec edi → 0x661585：test edi,edi → jg 0x661545（★循环）。
+    0x66158A：pop ebx/edi/esi → ret 0xC（返回 eax=写入字节数）。
+语义：**RLE 零行程压缩器（推断名）**——3 栈参 ret 0xC：把源缓冲按"连
+续 0 簇"压缩——遇 0x00 扫描后续连续 0 个数（长度 clamp 0xFF=255），输
+出 [0x00, len] 两字节（0 标记 + 长度）;遇非 0 字节直接输出原字节 1 字
+节;返回写入输出缓冲的字节数。★输出指针可空（esi==0 时跳过写——纯计
+数模式）。★与 LCW/encode80 的 RLE 预处理形态同族（0 簇变长编码——地
+图压缩前处理推断）。
+★原版怪癖（照抄）：① ★★长度 clamp 0xFF（连续 0 超过 255 截断——多
+段编码）;② ★★扫描先读 [edx] 再扫 [edx+1..]（首个 0 本身不入计数——
+len=后续 0 个数 + 首字节位置隐含）;③ ★★输出指针可空（esi 空 → 只计
+数不写——双重用途）;④ ★★计数 ≤ 0 直接返 0（jle 快退）;⑤ ★★返回写
+入字节数（eax 累加——2/1 分档）。
+★跨批次连接：◆◆0x661590（邻函数——本函数直接调用者——lea esi+2 跳
+过头部——压缩输出形态——新候选池 0x661xxx 区）◆◆LCW/encode80 族
+（RLE 预处理形态推断）。
+新候选：无（callees=0 零 callee）。
+⚠️ partial：函数精确名（推断「RLE 零行程压缩器」）、宿主类（数据压缩
+工具推断）、0x661590 调用上下文、输出用途（压缩前处理推断）。
+================================================================================
+0x6613A0 —— 三分量归一化编码器（321B 全读）
+================================================================================
+签名：thiscall 1 栈参 ret 4（ecx=this——[ecx]/[ecx+1]/[ecx+2] 三字节分
+量; [esp+0x28]=参数1（输出指针）; 0x6613A0-0x6614DE，返回 void——写
+word+byte 三字节到输出）。
+机器码结构（0x6613A0-0x6614DE，全程读完）:
+    段0 分量读取与极值（0x6613A0-0x6613EF）：sub esp,0x14 → push
+    ebx/ebp/esi/edi → mov al,[ecx]（分量1=edi）→ mov dl,[ecx+1]（分
+    量2=ebp）→ mov al,[ecx+2]（分量3=[esp+0x14]）→ cmp edi,ebp → 选
+    max=ebx（cmp eax,ebx → jle → ebx=eax——三分量最大）→ min=[esp+0x10]
+    （cmp edi,ebp → jl → min=ebp; 再 cmp eax → jge → min=eax——三分量
+    最小）→ 0x6613E3：cmp ebx,ecx（ecx=0）→ je 0x6614BA（★max==0 →
+    直接输出）。
+    段1 范围计算（0x6613EF-0x661407）：mov eax,[esp+0x10]（min）→
+    mov esi,ebx → sub esi,eax（★range=max-min）→ mov eax,esi → shl
+    eax,8 → sub eax,esi（★range*255）→ cdq → idiv ebx（★/max）→ mov
+    [esp+0x20],eax（★range*255/max）→ test eax,eax → je 0x6614BA（★
+    0 → 直接输出）。
+    段2 三分量归一化（0x66140D-0x661451）：mov eax,edi（分量1）→ shl
+    eax,8 → sub eax,edi（★c1*255）→ mov ecx,ebx（max）→ shl ecx,8 →
+    sub ecx,ebx（★max*255）→ mov edx,eax → mov eax,ecx → sub eax,edx
+    → div esi（★(max-c1)*255/range）→ mov [esp+0x1C],eax（d1）→ 同法
+    ebp → [esp+0x18]（d2）→ [esp+0x14] 分量3 → 留在 eax（d3）。
+    段3 区段组合（0x661451-0x6614B7）：cmp ebx,edi（max==c1）→ jne
+    0x66146E → cmp [esp+0x10],ebp（min==c2）→ jne 0x661463 → lea
+    ecx,[eax+0x500]（★d3+0x500）→ jmp 0x6614AE → 0x661463：mov eax,
+    [esp+0x18]（d2）→ mov ecx,0x100 → jmp 0x6614AC（★0x100-d2）→
+    0x66146E：cmp ebx,ebp（max==c2）→ jne 0x661491 → cmp [esp+0x10],
+    [esp+0x14]（min==c3）→ jne 0x66148A → mov edx,[esp+0x1C]（d1）→
+    lea ecx,[edx+0x100]（★d1+0x100）→ jmp 0x6614AE → 0x66148A：mov
+    ecx,0x300 → jmp 0x6614AC（★0x300-d2）→ 0x661491：cmp [esp+0x10],
+    edi（min==c1）→ jne 0x6614A3 → mov eax,[esp+0x18]（d2）→ lea
+    ecx,[eax+0x300]（★d2+0x300）→ jmp 0x6614AE → 0x6614A3：mov eax,
+    [esp+0x1C]（d1）→ mov ecx,0x500 → 0x6614AC：sub ecx,eax（★0x500-d1）
+    → 0x6614AE：mov eax,0xAAAAAAAB → mul ecx → mov ecx,edx → shr
+    ecx,2（★★÷3 魔术常量——0xAAAAAAAB*ecx>>34 = ecx/3）→ 0x6614BA：
+    mov eax,[esp+0x28]（输出指针）→ mov byte[esp+0x1C],cl（低字节）→
+    mov cl,[esp+0x20]（★range*255/max 低字节）→ mov byte[esp+0x1D],cl
+    → mov cx,word[esp+0x1C] → mov word[eax],cx（★写 word）→ pop
+    edi/esi/ebp → mov byte[eax+2],bl（★写 max 原值字节）→ pop ebx →
+    add esp,0x14 → ret 4。
+语义：**三分量归一化编码器（推断名）**——thiscall 1 栈参 ret 4：读 3
+字节分量（c1/c2/c3——RGB 或地形三分量推断）→ 求 max/min/range →
+range*255/max 与 (max-c)*255/range 三分量归一化（0..255 量化）→ 按
+max/min 所属分量选择区段偏移（0x100=256/0x300=768/0x500=1280 与差式
+组合——6 区段方向编码推断）→ ×0xAAAAAAAB>>34 即 ÷3（★魔术常量——3
+等分）→ 输出 word（编码值 2 字节）+ max 原值 1 字节——**三分量 → 16
+位编码 + 亮度**（色调/方向编码推断——0x661xxx 区工具族）。
+★原版怪癖（照抄）：① ★★÷3 用 0xAAAAAAAB 魔术常量（mul+shr 34——
+非 idiv——编译期常量除法优化）;② ★★0x100/0x300/0x500 三区段偏移
+（256/768/1280——6 组合分支：d+0x500/d+0x100/d+0x300/0x100-d2/
+0x300-d2/0x500-d1——区段方向编码推断）;③ ★★max==0 或 range*255/max
+==0 直接跳输出（不做后续归一化——零值快退）;④ ★★输出 word+max 字节
+（低字节取归一化商、次字节取 range*255/max 低字节、第三字节 max 原值）;
+⑤ ★★三分量各自独立归一化（(max-c)*255/range——纯数学变换无查表）。
+★跨批次连接：◆◆0x6614F0（邻函数——COM 查询形——虚表槽 0x10——不属
+本批）◆◆0x661530（本批——同 0x661xxx 区工具族——RLE 压缩器）◆◆
+0xAAAAAAAB（÷3 魔术——编译器常量除法惯用——跨函数同族）。
+新候选：无（callees=0 零 callee）。
+⚠️ partial：函数精确名（推断「三分量归一化编码器」）、分量语义（RGB/
+地形三分量推断）、区段编码语义（6 方向/色调推断）、输出消费端。
+================================================================================
+0x65D8E0 —— Team 单位投放执行器（1093B 全读）
+================================================================================
+签名：thiscall + edx 寄存器参（ecx=this——TeamClass 域对象推断;
+edx=参数1（waypoint 索引推断——存 [esp+0x20]; ret 无栈参清理（c3）——
+0x65D8E0-0x65DD24，返回 eax=bool（成功 1/失败 0））。
+机器码结构（0x65D8E0-0x65DD24，全程读完——大函数分段）:
+    段0 预检与类型表装配（0x65D8E0-0x65D976）：sub esp,0x20 → push
+    ebx/ebp/esi/edi → mov edi,ecx（this）→ mov ebx,edx（参数1——
+    waypoint 索引推断）→ test edi,edi → je 0x65DD1B（★this 空 → 返 0）
+    → mov eax,[edi+0xE4] → mov ecx,[eax+0x9C] → test ecx,ecx → je
+    0x65DD1B（★+0xE4 → +0x9C 空 → 返 0）→ mov eax,[edi+0xE0] → test
+    eax,eax → jne 0x65D923 → mov ecx,[eax+0xA0] → test → jne 0x65D976
+    （★+0xE0 → +0xA0 计数非 0 → 跳过装配）→ 0x65D923：xor ebp → mov
+    esi,5 → test eax,eax → jne 0x65D951 → push 0x234 → call 0x7C8E17
+    （★★operator_new——batch 001——new 0x234 对象）→ test eax → je
+    0x65D949 → push ebp → mov ecx,eax → call 0x6916B0（★★batch 1455
+    ScriptTypeClass ctor——构造 0x234 对象）→ 0x65D94B：mov [edi+0xE0],
+    eax（★this+0xE0=类型表对象）→ 0x65D951：mov eax,[edi+0xE0] → mov
+    ecx,[eax+0xA0] → cmp ecx,0x32 → jge 0x65D976（★计数上限 0x32=50）
+    → mov [eax+ecx*8+0xA4],esi（5）→ mov [eax+ecx*8+0xA8],ebp（0）→
+    inc [eax+0xA0]（★+0xA4 每项 8B 写 (5,0)——类型表项装配）。
+    段1 标志与单位创建（0x65D976-0x65D9CE）：mov al,[edi+0xB0] → mov
+    [esp+0x12],0/1（★this+0xB0 标志）→ mov ecx,edi → call 0x65DD30
+    （★★batch 1468——Team 单位创建器——★承诺兑现：创建单位）→ mov
+    ebp,eax → test ebp → mov ecx,[ebp+0x5D4] → mov byte[ecx+0x74],0
+    （★+0x5D4 指针 +0x74 清 0）→ je 0x65DD1B（★创建失败 → 返 0）→
+    cmp ebx,-1 → setne bl（★参数1 != -1）→ mov [esp+0x13],bl → je
+    0x65D9CE → 0x65D9B7：mov edx,[esp+0x20]（waypoint 索引）→ mov
+    ecx,[0xA8B230]（ScenarioClass::Instance）→ lea eax,[esp+0x20] →
+    push edx → push eax → call 0x68BCC0（★★batch 087 GetWaypointCoords
+    ——dest=&[esp+0x20]）→ jmp 0x65D9DA → 0x65D9CE：lea ecx,[esp+0x20]
+    → push → mov ecx,edi → call 0x6F18A0（★★batch 470 GetWaypoint——
+    waypoint==-1 走默认）→ 0x65D9DA：mov cl,[esp+0x12] → mov eax,[eax]
+    → mov [esp+0x14],eax（★坐标）→ test cl → jne 0x65DB2D（★标志 1 →
+    跳过坐标比对）。
+    段2 坐标比对与目标链（0x65D9EC-0x65DA76）：cmp ax,word[0xB04C38]
+    → jne 0x65DA07 → mov dx,[esp+0x16] → cmp dx,word[0xB04C3A] → je
+    0x65DB2D（★坐标 == [0xB04C38]/[0xB04C3A] → 直接成功路径）→
+    0x65DA07 链遍历：mov esi,ebp → mov eax,[esi] → mov ecx,esi → call
+    [eax+0x2C]（★★虚表槽 0x2C——对象类型/状态查询）→ cmp eax,0xF →
+    jne 0x65DB2D（★==0xF=15 判定）→ mov esi,[esi+0x30] → test → jne
+    0x65DA09（★沿 +0x30 链——batch 1468 同字段——被动目标筛选）→
+    0x65DA20：mov ecx,[esp+0x14] → lea edx,[esp+0x20] → mov
+    [esp+0x20],ecx → push edx → mov ecx,0x87F7E8 → call 0x5657A0（★
+    ★坐标→CellClass* 查表——MapClass::Instance）→ xor edi → mov
+    ebx,eax → or ebp,-1 → 0x65DA3E 8 方向循环：cmp ebp,-1 → je
+    0x65DA4D → push ebp → mov ecx,ebx → call 0x481810（★★batch 073
+    GetNeighbourCell——方向索引）→ 0x65DA4D：mov ecx,eax → call
+    0x47C520（★★batch 066 GetBuilding——对象链找建筑）→ mov esi,eax
+    → test esi → je 0x65DA6E → mov eax,[esi+0x6C] → test → jle
+    0x65DA6E（★+0x6C 计数 >0 才考虑）→ mov ecx,esi → call 0x459CA0
+    （★★未登记——判定 al 返回）→ test al → je 0x65DA6E → mov edi,esi
+    （★记录候选）→ inc ebp → cmp ebp,8 → jl 0x65DA3E（★8 方向扫完）。
+    段3 候选处理循环（0x65DA74-0x65DB12）：test edi,edi → je 0x65DB21
+    （★无候选 → 走备用路径）→ mov eax,[esp+0x14] → mov ebp,[esp+0x18]
+    → mov [esp+0x1C],eax → xor ebx → 0x65DA8A 候选循环：lea eax,[ebp+
+    0x30] → mov esi,ebp → mov ecx,edi → mov ebp,[eax] → mov [eax],0
+    （★+0x30 链头摘除）→ mov edx,[edi] → call [edx+0x2C]（★槽 0x2C）→
+    test eax → jle 0x65DAFD → cmp eax,2 → jle 0x65DAD6 → cmp eax,6 →
+    jne 0x65DAFD（★返回值分档：≤2 → 装载路径; ==6 → 放置路径; 其他 →
+    释放路径）→ 0x65DAAC（==6）：mov ecx,[esp+0x1C] → mov eax,[edi] →
+    push ecx → push esi → mov ecx,edi → call [eax+0x100]（★槽 0x100——
+    返回 2 判定）→ cmp eax,2 → je 0x65DAC7 → test esi → je 0x65DB0A →
+    jmp 0x65DB01 → 0x65DAC7：mov eax,[edi] → push 3 → mov ecx,edi →
+    call [eax+0x274]（★槽 0x274——3 参）→ inc ebx → jmp 0x65DB0A →
+    0x65DAD6（≤2）：push esi → lea ecx,[edi+0x114] → call 0x4733A0（★
+    ★batch 214 AddPassenger——乘客装载）→ mov edx,[esi] → mov ecx,esi
+    → call [edx+0x11C]（★槽 0x11C）→ mov eax,[edi] → mov ecx,edi →
+    push 0 → push 0x10 → call [eax+0x1E8]（★槽 0x1E8——0x10=16 参）→
+    inc ebx → jmp 0x65DB0A → 0x65DAFD（其他）：test esi → je 0x65DB0A
+    → 0x65DB01：mov edx,[esi] → push 1 → mov ecx,esi → call [edx+0x20]
+    （★槽 0x20——释放/1 参）→ 0x65DB0A：test ebp → jne 0x65DA8A（★链
+    循环）→ xor eax → test ebx → setne al → ret（★有任一处理 → 返 1）。
+    段4 备用路径（0x65DB21-0x65DBA5）：mov edi,[esp+0x1C] → mov ebp,
+    [esp+0x18] → mov bl,[esp+0x13] → test bl → je 0x65DB4B → lea eax,
+    [esp+0x14] → push 1 → push eax → mov ecx,0x87F7E8 → call 0x578460
+    （★★batch 065 IsWithinUsableArea——标志 1 才查格）→ test al →
+    mov [esp+0x18],1/0 → 0x65DB50：mov al,[esp+0x12] → test → jne
+    0x65DBA6 → mov ecx,[esp+0x18] → lea edx,[esp+0x14] → push ecx →
+    push edx → mov edx,ebp → mov ecx,edi → call 0x65E010（★★未登记——
+    邻函数——投放执行）→ test al → je 0x65DB9C → 0x65DB6F：mov ecx,edi
+    → call 0x6F2070（★★batch 475 GetHouse）→ test eax → je 0x65DB9C
+    → mov ecx,[0xA83D4C] → push → mov ecx,edi → call 0x6F2070 → mov
+    ecx,eax → call 0x4F9A50（★★batch 073 IsAlliedWith——同盟判定）→
+    test al → je 0x65DB9C → lea ecx,[esp+0x14] → call 0x660B80（★★
+    batch 1466 环形缓冲区推进器）→ 0x65DB9C：mov al,1 → ret（★成功）。
+    段5 脚本触发放置（0x65DBA6-0x65DD08）：mov eax,[esp+0x14] → mov
+    ecx,0x839708 → mov [esp+0x20],eax → call 0x41CAA0（★★batch 333 全
+    局名表查找——[0x839708] 名字）→ mov ecx,[0xA8B21C]（★表基址）→
+    mov ebx,[0xA8E7AC]（★计数）→ inc ebx → lea eax,[ecx+eax*4] → mov
+    ecx,[eax] → mov [0xA8E7AC],ebx → mov eax,[ebp+0x21C] → mov edx,
+    [ecx] → push eax → call [edx+0x8C]（★槽 0x8C——单位创建）→ mov
+    ecx,[0xA8E7AC] → dec → mov esi,eax → mov [0xA8E7AC],ecx（★计数
+    ++/-- 对称——batch 1468 同款）→ test esi → je 0x65DB9C → mov
+    byte[esi+0x3D4],1（★+0x3D4=1——放置标记）→ mov al,[edi+0xB1] →
+    test → je 0x65DC11 → lea ecx,[esp+0x18] → push → mov ecx,edi →
+    call 0x6F18E0（★★未登记——batch 470 文档孪生 GetTransportWaypoint）
+    → jmp 0x65DC4B → 0x65DC11：mov ecx,[ebp+0x21C] → mov eax,[ecx+0x1E0]
+    → test → jl 0x65DC26 → cmp eax,3 → jle 0x65DC2B → call 0x50DA80
+    （★★batch 477 受限 getter——★unique_callers 点名本函数——越界返 0）
+    → 0x65DC2B：push 0 → push 1 → push 4 → push 0xB04C38 → push
+    0xB04C38 → lea edx,[esp+0x2C] → push eax → push edx → mov ecx,
+    0x87F7E8 → call 0x4AA440（★★batch 1273 PickCellOnEdge——边缘取格）
+    → 0x65DC4B：mov edi,[eax] → mov eax,[esi] → push 0 → push 0x1A →
+    mov ecx,esi → mov [esp+0x20],edi → call [eax+0x1E8]（★槽 0x1E8——
+    0x1A=26）→ mov edx,[esi] → mov ecx,esi → push 1 → push 0 → call
+    [edx+0x480]（★槽 0x480）→ mov ebx,[esi] → lea eax,[esp+0x20] →
+    push → mov ecx,0x87F7E8 → call 0x5657A0（★坐标→格）→ mov ecx,esi
+    → push eax → call [ebx+0x3C8]（★槽 0x3C8——格放置）→ mov edx,
+    [0xA8E7AC] → movsx ecx,word[esp+0x1A] → inc edx → push 0 → mov
+    [0xA8E7AC],edx → movsx edx,di → shl ecx,8 → shl edx,8 → add
+    ecx,0x80 → add edx,0x80（★*256+128 量化）→ push ecx → push edx →
+    lea ecx,[esp+0x30] → call 0x41C230（★★batch 066 三字段赋值——坐标
+    打包）→ mov eax,[esi] → lea ecx,[esp+0x24] → push 0 → push ecx →
+    mov ecx,esi → call [eax+0xD8]（★槽 0xD8——落格）→ mov edx,
+    [0xA8E7AC] → and eax,0xFF → dec → test eax → mov [0xA8E7AC],edx
+    → je 0x65DD08 → push ebp → lea ecx,[esi+0x114] → mov byte[esi+0x6C9],
+    1（★+0x6C9=1）→ call 0x4733A0（★★batch 214 AddPassenger）→ mov
+    edx,[esi] → mov ecx,esi → call [edx+0x1EC]（★槽 0x1EC）→ jmp
+    0x65DB6F → 0x65DD08：mov eax,[esi] → push 1 → mov ecx,esi → call
+    [eax+0x20]（★槽 0x20——释放）→ mov al,1 → ret → 0x65DD1B：xor
+    al,al → pop → ret（★失败路径返 0）。
+语义：**Team 单位投放执行器（推断名）**——thiscall + edx 寄存器参 ret
+无栈参：①预检 this+0xE4→+0x9C 与 this+0xE0 类型表（空则 new 0x234 +
+0x6916B0（batch 1455 ScriptTypeClass ctor）构造 + +0xA4 每项 8B 写
+(5,0) + 计数上限 0x32）;②call 0x65DD30（batch 1468 Team 单位创建器——
+创建单位对象 ebp）;③waypoint 索引（edx）== -1 → 0x6F18A0（batch 470
+GetWaypoint）否则 0x68BCC0（batch 087 GetWaypointCoords）取坐标;④坐标
+== [0xB04C38]/[0xB04C3A] 直接成功;否则虚表槽 0x2C（==0xF 判定）+ 0x30
+链遍历目标 → 0x5657A0 取格 + 0x481810 8 方向邻域 + 0x47C520 GetBuilding
++ 0x459CA0 判定找候选;⑤候选处理：槽 0x2C 分档——≤2 → 0x4733A0（batch
+214 AddPassenger 装载）+ 槽 0x11C/0x1E8（0x10）;==6 → 槽 0x100（返 2 判
+定）+ 槽 0x274（3 参）;其他 → 槽 0x20（释放）;⑥备用路径（无候选）：0x578460
+（batch 065 IsWithinUsableArea）+ 0x65E010（邻函数投放）+ 0x6F2070（batch
+475 GetHouse）+ 0x4F9A50（batch 073 IsAlliedWith 同盟判定）+ 0x660B80（
+batch 1466 环形推进器）;⑦脚本路径（[edi+0xB0] 标志）：0x41CAA0（batch
+333 全局名表）+ 0x8C 槽单位创建 + [0xA8E7AC] 计数 ++/-- + +0x3D4=1 + 0x6F18E0
+（GetTransportWaypoint）或 0x50DA80（batch 477 受限 getter）+ 0x4AA440
+（batch 1273 PickCellOnEdge 边缘取格）+ 0x41C230 坐标打包 + 槽 0x1E8
+（0x1A）/0x480/0x3C8 放置 + 槽 0xD8 落格——**Team 脚本单位投放执行器**
+（AI/TeamClass 域——batch 1468 单位创建 → 本函数投放 → 目标筛选/乘客装
+载/同盟判定/边缘放置全链——batch 1468/475/477 联合点名兑现）。
+★原版怪癖（照抄）：① ★★new 0x234 + 0x6916B0 构造（ScriptTypeClass
+ctor——batch 1455）——类型表随用随建（+0xE0 空才建）;② ★★+0xA4 每项
+8B 写 (5,0) + 计数上限 0x32（类型表项装配——值 5/0 语义推断）;③ ★★槽
+0x2C 链遍历（==0xF=15 判定 + 沿 +0x30 链——batch 1468 同字段）;④ ★★8
+方向邻域（0x481810——GetNeighbourCell）→ 0x47C520 GetBuilding + 0x459CA0
+判定 + +0x6C>0（候选资格）;⑤ ★★槽 0x2C 返回值三档分派（≤2 装载 /
+==6 放置 / 其他 释放——各档槽位方法不同）;⑥ ★★[0xA8E7AC] 计数 ++/--
+对称管控（batch 1468 同款——创建期间占位）;⑦ ★★0x41C230 *256+128 量化
+（半整数坐标——batch 066 三字段）;⑧ ★★坐标 == [0xB04C38]/[0xB04C3A]
+直接成功（全局坐标对——默认投放点推断）;⑨ ★★备用/脚本双路径（无候选
+走 0x65E010 + 同盟判定;标志 1 走名表 + 边缘取格）。
+★跨批次连接：◆◆0x65DD30（batch 1468——Team 单位创建器——★被本函数
+调用——承诺兑现）◆◆0x6F2070（batch 475 GetHouse——unique_callers 点
+名本函数——双向互证）◆◆0x50DA80（batch 477 受限 getter——unique_callers
+点名本函数——双向互证）◆◆0x6916B0（batch 1455 ScriptTypeClass ctor）
+◆◆0x68BCC0（batch 087 GetWaypointCoords）/0x6F18A0（batch 470
+GetWaypoint）◆◆0x5657A0/0x578460/0x4AA440/0x41C230（MapClass 域——
+batch 065/1273/066）◆◆0x481810/0x47C520（CellClass 域——batch 073/066）
+◆◆0x4733A0（batch 214 AddPassenger）/0x4F9A50（batch 073 IsAlliedWith）
+◆◆0x660B80（batch 1466 环形推进器）/0x41CAA0（batch 333 名表查找）◆◆
+[0xA8B230]/[0xA83D4C]/[0xA8E7AC]/[0xB04C38]/[0xB04C3A]/[0x839708]
+（全局常量族）◆◆虚表槽 0x2C/0x100/0x274/0x11C/0x1E8/0x480/0x3C8/0xD8/
+0x20/0x8C（Team 对象方法族）。
+新候选：**0x65E010**（邻函数——本函数备用路径调用——投放执行——未登
+记）;**0x459CA0**（候选资格判定——al 返回——未登记）;**0x6F18E0**
+（batch 470 文档已描述孪生 GetTransportWaypoint——TSV 从未登记——补登
+记新候选）——三个后续批兑现。
+⚠️ partial：函数精确名（推断「Team 单位投放执行器」）、宿主类（TeamClass
+域推断）、+0xE4→+0x9C/+0xE0→+0xA0/+0xA4 字段语义、+0xA4 值 5/0 语义、
+槽 0x2C 返回值枚举（0xF/2/6 分档）、0x65E010/0x459CA0 身份、[0xB04C38]/
+[0xB04C3A] 坐标对语义、[0x839708] 名字表内容、+0x3D4/+0x6C9 标记语义。
+================================================================================
+本批新候选登记（后续批兑现）
+================================================================================
+**0x65E010**（邻函数——0x65D8E0 备用路径调用——投放执行——uc=1 callsite=2
+推断——未登记）;**0x459CA0**（候选资格判定——al 返回——0x65D8E0 8 方向
+循环内调用——未登记）;**0x6F18E0**（batch 470 文档已描述孪生
+GetTransportWaypoint——YRpp TeamTypeClass.h:52——读 +0xD8 字段——TSV
+从未登记——补登记）。★★跨批次闭合：**Team 单位投放全链**（0x65D8E0——
+batch 1468 单位创建 → 本函数投放 → batch 087/470 取点 → batch 073/066/
+214/475/477/333/1273/1466 callee 全命中——TeamClass 域大逻辑全景）;
+**0x661xxx 区小工具族**（0x661530 RLE 压缩 + 0x6613A0 三分量编码——
+callees=0 独立函数——数据变换工具）。
