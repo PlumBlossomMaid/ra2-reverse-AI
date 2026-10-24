@@ -1,0 +1,187 @@
+frontier batch 1682 —— 0x7B2720 全局指针写入器 / 0x7AE1F0 哈希表移除重哈希器 / 0x7ADF70 哈希表重哈希变体（2026-10-24）
+
+口径：承接 batch 1681 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+uc=1 callsite=2 top3）。本批取：0x7B2720（7B，callees=0 deps=189——
+**全局指针写入器**，推断名——mov [0xB780A0],ecx 极简 setter）、0x7AE1F0
+（616B，callees=4 deps=2704——**哈希表移除重哈希器**，推断名——fild 商
+换算 + shl 掩码索引 + 回调 + 安全 delete + rep stosd 重哈希 + 链重链）、
+0x7ADF70（168B，callees=2 deps=279——**哈希表重哈希变体**，推断名——
+0x7AE460 近全同 twin——链字段 [+0x70] vs [+8]）。
+取证手段：disasm.py 三路全读——0x7B2720 0x40 覆盖尾 0x7B2726 ret + nop
+垫（顺带落 0x7B2730 读取器孪生 + 0x7B2740/0x7B2750 常量返回器——同域
+setter/getter 家族）;0x7AE1F0 0x300 覆盖尾 0x7AE455 ret 8 + nop 垫（顺带
+落 0x7AE460 下一函数头——重哈希近全同变体——不属本批）;0x7ADF70 0xC0
+覆盖尾 0x7AE017 ret + nop 垫（顺带落 0x7AE020 下一函数头——同域标志门
+控函数——不属本批）——均读到函数尾。
++ TSV 查重（三候选全部未登记）+ callee 核验（0x7AE1F0 → 0x7B4780 已登
+记 line326（batch 086 窄字符串类 operator==）/0x7B46F0 已登记 line257
+（batch 059 带空指针置位的析构）/0x7C8B3D、0x7C8E17（batch 001 new/
+delete）;0x7ADF70 → 0x7C8E17/0x7C8B3D;0x7B2720 callees=0——**本批零新
+候选**）。
+★★★跨批次重大连接：★★◆0x7AE1F0 = **哈希表容器移除+重哈希**——shl 掩码
+索引（1<<cl 减 1——hash 表槽位）+ 0x7B4780（batch 086 operator==）回调
+判等 + 0x7B46F0（batch 059 安全 delete）节点释放 + rep stosd 清零重哈希
+（new 半容量 + 链重链——[+8] next 字段）——哈希容器管理惯用;★★◆
+0x7ADF70 = **twin 变体第 8 例**（与 0x7AE460 近全同——链字段 [+0x70] vs
+[+8]——batch 1653/1659/1662/1668/1669/1671/1680 前 7 例）;★★◆0x7B2720
+= 全局 [0xB780A0] setter（0x7B2730 读取器孪生——全局存取对）。
+================================================================================
+0x7B2720 —— 全局指针写入器（7B 全读）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this 值; 0x7B2720-0x7B2726，无返回值）。
+机器码结构（0x7B2720-0x7B2726，全程读完）:
+    mov dword ptr [0xB780A0],ecx（★全局 [0xB780A0] = ecx）→ ret。
+语义：**全局指针写入器（推断名）**——thiscall：this 写入全局 [0xB780A0]
+——7B 极简 setter（0x7B2730 读取器孪生——mov eax,[0xB780A0] → ret——
+全局存取对——全局单例指针/句柄推断）。
+★原版怪癖（照抄）：① ★★7B 极简单指令 setter;② ★★全局 [0xB780A0]
+（0x7B2730 读取器同地址——全局单例/句柄推断——0x7B 区全局域）;③ ★★
+thiscall 传值（ecx → 全局——this 语义推断）。
+★跨批次连接：◆◆0x7B2730（读取器孪生——同地址——全局存取对）◆◆0x7B2740/
+0x7B2750 邻函数（xor eax,eax 常量返回——同域 getter 家族）◆◆全局 [0xB7xxxx]
+区（0x7B 区全局变量域——新登记全局）。
+新候选：无（callees=0）。
+⚠️ partial：函数精确名（推断「全局指针写入器」）、[0xB780A0] 全局语义
+（单例/句柄推断）、宿主类、1 unique caller 身份。
+================================================================================
+0x7AE1F0 —— 哈希表移除重哈希器（616B 全读）
+================================================================================
+签名：thiscall 2 栈参 ret 8（ecx=this 哈希表头; [esp+0x1C]=参数1、
+[esp+0x20]=参数2（输出指针）; 0x7AE1F0-0x7AE455，返回 al bool 1/0）。
+机器码结构（0x7AE1F0-0x7AE455，全程读完，分段要点）:
+    段0 空表检查（0x7AE1F0-0x7AE20D）：mov eax,[esi+4]（★+4 计数）→
+    cmp eax,0 → jne → xor al,al → ret 8（★空表返 0——失败）。
+    段1 比例换算（0x7AE20E-0x7AE23F）：dec eax（计数-1）→ mov eax,
+    [esi+8]（★+8 容量）→ fild qword（★(计数-1) 无符号 fild——32 位当
+    无符号——原版怪癖）→ fidiv [esp+0x10]（★★÷容量——比例）→ fstp
+    dword [esp+0x10]（存比例）→ mov ebx,[esp+0x1C]（参数1）→ mov ecx,
+    ebx → call dword[esi+0x18]（★★虚表槽 0x18——hash 函数回调——参数
+    1 → 哈希值）。
+    段2 索引取槽（0x7AE237-0x7AE258）：mov ecx,[esi+0xC]（★+0xC 槽位
+    数 log2）→ mov edi,1 → shl edi,cl（★1<<槽位数）→ dec edi（掩码）→
+    and edi,eax（★哈希 & 掩码——槽索引）→ mov ebp,[ecx+edi*4]（★槽指针
+    ）→ test ebp / jne → xor al,al → ret 8（空槽返 0）。
+    段3 判等+首节点移除（0x7AE259-0x7AE2ED）：push ebx → mov ecx,ebp →
+    call 0x7B4780（★★operator==——batch 086——窄串判等——链节点与参数
+    1）→ test al / je 0x7AE34B（不等走段5）→ mov eax,[esp+0x20]（输出指
+    针）→ mov edx,[ebp+4]（★节点 +4 数据）→ mov [eax],edx（★输出 = 节
+    点数据）→ mov ecx,[esi] → mov ebp,[ecx+edi*4] → mov ebx,[ebp+8]（
+    ★节点 +8 next）→ test ebp / je → mov ecx,ebp → call 0x7B46F0（★
+    安全 delete——batch 059——释放节点）→ push ebp → call 0x7C8B3D（
+    delete）→ 0x7AE28E：mov edx,[esi] → mov [edx+edi*4],ebx（★槽 = next
+    ——链表头替换）→ mov eax,[esi+4] → dec → mov [esi+4],eax（★计数递
+    减）。
+    段4 重哈希（0x7AE2AC-0x7AE33E）：fcomp qword[esi+0x20]（★比例 vs
+    +0x20 阈值）→ fnstsw / test ah,0x41 / je 0x7AE33F（未超阈值跳过——
+    ★比例 > 阈值才重哈希）→ mov ebp,[esi+8] → mov eax,[esi+0x30]（★
+    +0x30 最小容量）→ cmp ebp,eax → jbe 跳过（★容量 ≤ 最小不缩）→ cmp
+    byte[esi+0x14],1 → je 跳过（★+0x14 标志 1 不缩——锁定）→ mov edi,
+    [esi+0xC] → mov ebx,[esi] → mov eax,ebp → shr eax,1（★容量/2——缩
+    半）→ mov [esi+8],eax → dec edi → shl eax,2（×4）→ push → mov
+    [esi+0xC],edi → call 0x7C8E17（★new——batch 001）→ mov ecx,[esi+8]
+    → mov edi,eax → shl ecx,2 → xor eax,eax → shr ecx,2 → mov [esi],edi
+    → rep stosd/stosb（★★新表清零——shr 2 + and 3 余数——batch 1651 同
+    款）→ test ebp / jle 0x7AE336 → 重链循环 0x7AE2FE：mov edi,[ebx]
+    （旧槽节点）→ test / je 步进 → mov ecx,edi → call dword[esi+0x18]
+    （hash 重算）→ mov ecx,[esi+0xC] → mov edx,1 → shl edx,cl → dec →
+    and edx,eax（新索引）→ mov eax,[esi] → mov ecx,[eax+edx*4] → lea
+    eax,[eax+edx*4] → mov [eax],edi（★节点插新槽）→ mov eax,[edi+8] →
+    mov [edi+8],ecx（★节点 next = 旧槽头——头插）→ mov edi,eax（步进）
+    → test / jne 循环 → 0x7AE32C：add ebx,4 → dec ebp / jne 重链 →
+    push 旧表 → call 0x7C8B3D（delete 旧表）→ 0x7AE33F：mov al,1 → ret
+    8（成功）。
+    段5 链遍历移除（0x7AE34B-0x7AE44A）：mov edi,[ebp+8]（首节点 next）
+    → mov byte[esp+0x1C],0 → test edi / je 0x7AE39D → 循环 0x7AE357：
+    push ebx → mov ecx,edi → call 0x7B4780（判等）→ test al / jne
+    0x7AE36E（★命中——链中移除）→ mov ebp,edi → mov edi,[edi+8] →
+    test / jne 循环 → 0x7AE36E：mov edx,[esp+0x20] → mov ecx,[edi+4] →
+    mov [edx],ecx（输出 = 节点数据）→ mov eax,[edi+8] → mov [ebp+8],eax
+    （★前驱 next = 节点 next——拆链）→ mov ecx,[esi+4] → dec → mov
+    [esi+4],ecx（计数--）→ mov ecx,edi → call 0x7B46F0（安全 delete）→
+    push edi → call 0x7C8B3D → mov byte[esp+0x1C],1（★标志——命中移除）
+    → 0x7AE39D：fcomp 阈值 → 重哈希检查（同段4 全构——容量/2 + new 清
+    零 + 重链 + delete 旧）→ 0x7AE44A：mov al,[esp+0x1C]（返回命中标志）
+    → ret 8。
+语义：**哈希表移除重哈希器（推断名）**——thiscall 2 栈参：① 空表返 0;
+② fild 无符号比例（(计数-1)/容量——fild qword 32 位当无符号——原版怪
+癖）;③ 虚表槽 0x18 hash 回调 → shl 掩码索引（1<<+0xC 槽位数 减 1）;④
+0x7B4780 operator== 判等——首节点命中直接移除（输出 = 节点 +4 数据、槽
+= next、计数递减、安全 delete + delete）;⑤ 移除后比例超阈值（fcomp
++0x20）且容量 > 最小（+0x30）且未锁定（+0x14!=1）→ 重哈希（容量/2 +
+new + rep stosd 清零 + 重链——hash 重算 + 头插——delete 旧表）;⑥ 未命
+中走链遍历（前驱拆链 + 安全 delete + 命中标志）→ 同样重哈希检查——哈
+希表移除 + 缩容重哈希的容器管理（动态哈希表——StringClass 键哈希表推
+断）。
+★原版怪癖（照抄）：① ★★fild qword 无符号读（32 位计数当无符号——
+x87 无 uint32 转换——原版惯用——batch 065 同款）;② ★★虚表槽 0x18
+hash 回调（参数1 → 哈希——函数指针槽——非内联哈希）;③ ★★shl 掩码索
+引（1<<+0xC 减 1——槽位数对数存储——and 掩码）;④ ★★链节点 [+4] 数据/
+[+8] next（链表——首节点快路径 + 链遍历双路径）;⑤ ★★0x7B4780 operator==
+判等（batch 086——窄串判等——hash 冲突链线性扫描）;⑥ ★★0x7B46F0 安全
+delete（batch 059——带空指针置位）;⑦ ★★缩容重哈希（容量/2——cmp
++0x30 最小容量 + +0x14 锁定标志——比例阈值 fcomp +0x20 门控）;⑧ ★★rep
+stosd 清零（shr 2 + and 3 余数——batch 1651 同款）;⑨ ★★重链头插（节
+点 next = 旧槽头——新表槽头插）;⑩ ★★616B 六段大函数（空检/换算/索引/
+移除/重哈希/链遍历）。
+★跨批次连接：◆◆0x7B4780（batch 086 operator==——调用现场 ×2——判等惯
+用）◆◆0x7B46F0（batch 059 安全 delete——调用现场 ×2）◆◆0x7C8E17/
+0x7C8B3D（batch 001 new/delete——调用现场 ×2）◆◆fild 无符号读（batch
+065 同款——x87 uint32 惯用）◆◆rep stosd 清零（batch 1651 同款）◆◆
+0x7AE460 邻函数（重哈希近全同变体——不属本批——同族）◆◆0x7ADF70（本
+批——重哈希变体——链字段差异）。
+新候选：无（callees=4 全已登记）。
+⚠️ partial：函数精确名（推断「哈希表移除重哈希器」）、哈希表宿主类（+0x0
+槽表/+4 计数/+8 容量/+0xC 槽位数/+0x14 锁定/+0x18 回调/+0x20 阈值/
++0x30 最小容量——布局完整但类名推断）、+0x20 阈值精确值、槽 0x18 回调
+身份、参数1/输出 语义、1 unique caller 身份。
+================================================================================
+0x7ADF70 —— 哈希表重哈希变体（168B 全读）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this 哈希表头; 0x7ADF70-0x7AE017，无返回
+值）。
+机器码结构（0x7ADF70-0x7AE017，全程读完）:
+    段0 门控（0x7ADF70-0x7ADF8C）：mov esi,[ebx+8]（★+8 容量）→ mov
+    eax,[ebx+0x30]（★+0x30 最小容量）→ cmp esi,eax → jbe 0x7AE014（★
+    容量 ≤ 最小直返）→ cmp byte[ebx+0x14],1 → je 0x7AE014（★锁定直返）。
+    段1 缩容重哈希（0x7ADF8D-0x7AE012）：mov eax,esi → push ebp/edi →
+    mov ebp,[ebx]（★旧槽表）→ mov edi,[ebx+0xC]（槽位数）→ shr eax,1
+    （★容量/2）→ mov [ebx+8],eax → dec edi → shl eax,2（×4）→ push →
+    mov [ebx+0xC],edi → call 0x7C8E17（new）→ mov ecx,[ebx+8] → mov
+    edi,eax → shl ecx,2 → xor eax,eax → shr ecx,2 → mov [ebx],edi → rep
+    stosd/stosb（清零——shr 2 + and 3）→ test esi / jle 0x7AE009 → 重链
+    循环 0x7ADFD1：mov esi,[edi]（旧槽节点）→ test / je 步进 → mov ecx,
+    esi → call dword[ebx+0x18]（hash 重算）→ mov ecx,[ebx+0xC] → mov
+    edx,1 → shl edx,cl → dec → and edx,eax（新索引）→ mov eax,[ebx] →
+    mov ecx,[eax+edx*4] → lea eax,[eax+edx*4] → mov [eax],esi（★插新槽）
+    → mov eax,[esi+0x70] → mov [esi+0x70],ecx（★★节点 next 字段 +0x70
+    ——vs 0x7AE1F0 的 [+8]——链字段差异——twin 变体）→ mov esi,eax（步
+    进）→ test / jne 循环 → 0x7ADFFF：add edi,4 → dec ebp / jne 重链 →
+    push 旧表 → call 0x7C8B3D（delete 旧表）→ 0x7AE014：收尾 ret。
+语义：**哈希表重哈希变体（推断名）**——thiscall 无栈参：① 门控（容量 >
+最小 + 未锁定——0x7AE1F0 段4 同款条件）;② 缩容重哈希（容量/2 + new + 清零
++ 重链——hash 重算 + 头插 + delete 旧表）——与 0x7AE460 近全同、与
+0x7AE1F0 重哈希段同构——但链字段为 [+0x70]（vs [+8]）——不同节点布局的
+哈希表变体（独立哈希容器——twin 变体第 8 例）。
+★原版怪癖（照抄）：① ★★门控三条件（容量 ≤ 最小 / +0x14 锁定——同
+0x7AE1F0 段4）;② ★★容量/2 缩半 + rep stosd 清零（shr 2 + and 3——batch
+1651 同款）;③ ★★重链头插（节点 next = 旧槽头）;④ ★★链字段 +0x70（★
+★与 0x7AE1F0 的 [+8] 不同——节点布局差异——twin 变体）;⑤ ★★168B 紧凑
+重哈希（无移除段——纯缩容重哈希器）。
+★跨批次连接：◆◆0x7AE460 邻函数（近全同——链字段同 [+8]?——不属本批）
+◆◆0x7AE1F0（本批——重哈希段同构——链字段差异——twin 变体第 8 例——
+batch 1653/1659/1662/1668/1669/1671/1680 前 7 例）◆◆0x7C8E17/0x7C8B3D
+（batch 001 new/delete）◆◆虚表槽 0x18 hash 回调（同 0x7AE1F0——家族统
+一回调槽）◆◆rep stosd 清零（batch 1651 同款）。
+新候选：无（callees=2 全已登记）。
+⚠️ partial：函数精确名（推断「哈希表重哈希变体」）、哈希表宿主类（与
+0x7AE1F0 同布局推断——链字段 +0x70 差异）、+0x70 链字段宿主、与
+0x7AE460 精确差异（未逐字节比对——近全同推断）、1 unique caller 身份。
+================================================================================
+本批新候选登记（后续批兑现）
+================================================================================
+无（callees 全已登记——0x7B4780/0x7B46F0/0x7C8E17/0x7C8B3D 全绿）。★★
+跨批次闭合：哈希表容器管理域（0x7AE1F0 移除重哈希 + 0x7ADF70 重哈希变体
+——shl 掩码索引 + 0x7B4780 判等 + 0x7B46F0 安全 delete + 缩容重哈希——
+batch 086/059/001 锚点组合消费端）;twin 变体第 8 例（0x7ADF70 vs
+0x7AE1F0——链字段 +0x70 vs [+8]）;全局存取对（0x7B2720 setter + 0x7B2730
+reader——[0xB780A0] 全局单例）。
