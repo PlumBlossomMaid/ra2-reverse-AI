@@ -1,0 +1,154 @@
+frontier batch 1626 —— 0x6D6410 格高度差碰撞检测器 / 0x6A1C80 全局管理器三字段同步器（前段） / 0x69DEA0 ShapeButtonClass::SetLoadedStatus（2026-10-24）
+
+口径：承接 batch 1625 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+uc=1 callsite=5 top3）。本批取：0x6D6410（379B，callees=1 deps=17——
+**格高度差碰撞检测器**，推断名——坐标半格换算 + 双格高度差 + 相交判定）、
+0x6A1C80（8470B 超大型，callees=29 deps=0——**全局管理器三字段同步
+器·前段**，推断名——8470B 超大函数仅采样前段 0x80——+0x5E0 字段 +
+[0xB077F8/FC/78] 三全局同步 + 槽 0x184——⚠️ 只登记前段语义）、0x69DEA0
+（10B，callees=0 deps=147——**ShapeButtonClass::SetLoadedStatus**，ranking
+带名——+0x5C 状态字节写入）。
+取证手段：disasm.py 三路采样——0x6D6410 0x180 覆盖尾 0x6D6588 ret 8;
+0x6A1C80 0x80（★8470B 超大函数只采前段——后段未读——登记 partial）;
+0x69DEA0 0x20 覆盖尾 0x69DEA7 ret 4 + 后邻 0x69DEB0（同宿主 ClearShape
+带名——★0x69DE70 ShapeButtonClass::ClearShape 也在 ranking 候选池）——
+均读到函数尾。+ TSV 查重（三候选全部未登记）+ callee 核验（唯一 E8
+callee 0x5657A0（batch 240 坐标→CellClass 查表——407 callers 全表最
+高扇入）已登记——0x6A1C80 前段全虚表槽无 E8、0x69DEA0 callees=0——
+**本批无新候选**）。
+★★★跨批次重大连接：★★◆0x6D6410 的 0x5657A0 = batch 240 坐标→CellClass
+查表（idx=x+y<<9、越界回落哨兵 [0xABDC50]/[0xABDC74]——本函数两次调用
+GetCellAt 取双格——碰撞检测双格取样）;★★◆0x6A1C80 的 [0xB077F8]/
+[0xB077FC]/[0xB07800] = batch 1452「全局链表双表清理器 [0xB077B0]/
+[0xB077B4] 双链全局」同 0xB077xx 区——三全局并列相邻（管理器坐标/状态
+三字段推断——本函数与之同步）;★★◆0x6D6410 的 +0x11B 高度字节 =
+QWEN.md「IsoCell +0x119」同 cell 布局（+0x119/+0x11B 相邻字节——cell
+高度/亮度字段族）;★★◆0x6A1C80 槽 0x10/0x184（虚表槽门控 + 类型判定）
+与 batch 918/919 高槽位虚表族同款。
+
+================================================================================
+0x6D6410 —— 格高度差碰撞检测器（379B 全读）
+================================================================================
+签名：thiscall 两栈参 ret 8（ecx=this、[esp+0x2C]=坐标对 esi（dword
+打包 X/Y word）、[esp+0x30]=矩形参数; 0x6D6410-0x6D6588，返回 eax——
+输出坐标指针 + 写出参）。
+机器码结构（0x6D6410-0x6D6588，全程读完，分段要点）:
+    段1 坐标换算（0x6D6410-0x6D646E）：sub esp,0x18 → push 族 → mov
+    esi,[esp+0x2C]（★坐标对）→ cdq/and edx,0xFF/add（★★除 256 向上取
+    整惯用——batch 783 同款）→ sar ecx,8/sar eax,8（→ /256）→ movsx
+    esi/edi（★word → dword）→ shl esi,8/shl edi,8 → add esi,0x80/add
+    edi,0x80（★★×256+128——半格偏移——batch 1617 坐标 shl8+0x80 同
+    款）→ lea eax,[esp+0x30] → push → mov ecx,0x87F7E8 → call
+    0x5657A0（★★batch 240 GetCellAt——第一格）。
+    段2 双格取样（0x6D6473-0x6D64F8）：mov ebx,[eax+0x140]（★cell+0x140）
+    → shr ebx,0xC → and bl,1（★bit12 提取）→ 第二格 GetCellAt → movsx
+    edx,byte[eax+0x11B]（★★cell+0x11B 高度字节——QWEN.md IsoCell
+    +0x119 相邻字段族）→ add esi,0x600/lea ebp,[edi+0x600]（★+0x600 偏
+    移）→ 坐标相减（sub edi,8/sub ebp,8）→ cdq/and/add/sar（★第二坐标
+    对换算——同段 1 惯用）→ 第三次 GetCellAt（第二点）。
+    段3 高度差（0x6D64F8-0x6D6519）：movsx ecx,byte[eax+0x11B]（★第二格
+    高度）→ sub ecx,[esp+0x18]（★高度差——第一格高度存 [esp+0x18]）→
+    test bl,bl → je 0x6D6516（★bit12 分支）→ mov eax,[eax+0x140] → shr
+    eax,8 → and eax,1 → lea ecx,[ecx+eax*4]（★★bit8 补偿 ×4）→ shl
+    ecx,7（★★高度差 ×128）。
+    段4 相交判定（0x6D6516-0x6D6560）：mov eax,edi/mov esi,ebp → sub
+    坐标差（高度差补偿）→ 二次换算 → cmp cx,dx / cmp ax,[esp+0x32]
+    （★与参数矩形四边比较——jle/jg）→ 循环回 0x6D64AD（★未相交 → 坐标
+    步进再试——螺旋/邻格推进推断）。
+    段5 输出（0x6D6567-0x6D6588）：mov eax,[esp+0x2C] → mov ecx,
+    [esp+0x10] → [eax]=ecx（★输出坐标）→ 或 [eax]=edx → pop 族 → add
+    esp,0x18 → ret 8。
+语义：**格高度差碰撞检测器（推断名）**——thiscall：① 坐标对 ÷256+0x80
+半格换算 → GetCellAt 取格;② cell+0x140 bit12 + cell+0x11B 高度;③ 第二
+坐标点高度差（bit8 补偿 ×4）+ ×128;④ 与参数矩形四边相交判定（未相交
+邻格步进回环）;⑤ 命中写回输出坐标 → ret 8。
+★原版怪癖（照抄）：① ★★cdq/and 0xFF/add + sar 8 除 256 向上取整
+（batch 783 同款——半格换算惯用 ×3 处）;② ★★shl 8+0x80（×256+128
+——半格偏移——batch 1617 同款）;③ ★★cell+0x11B 高度字节（QWEN.md
+IsoCell +0x119 相邻字段族——高度/亮度）;④ ★★cell+0x140 bit12/bit8
+提取（shr 0xC/8 + and 1——cell 标志位）;⑤ ★★高度差 ×128（shl ecx,7
+——垂直量放大）;⑥ ★★+0x600 偏移（坐标 +0x600=1536——半格×2 推断）;
+⑦ ★★相交判定回环（cmp/jle/jg + jmp 0x6D64AD——未命中邻格步进——螺
+旋搜索推断）;⑧ ★★输出坐标双写（mov [eax],ecx / mov [eax],edx——两
+出口）。
+★跨批次连接：◆◆batch 240（0x5657A0——GetCellAt ×3——坐标→格）◆◆
+batch 783（÷256 向上取整 + 16 位坐标读）◆◆batch 1617（shl8+0x80 坐
+标换算）◆QWEN.md（IsoCell +0x119 布局）。
+新候选：无（callees=1 已登记）。
+⚠️ partial：函数精确名（「格高度差碰撞检测器」推断）、cell+0x140
+bit12/bit8 语义、+0x600 偏移、邻格步进几何、输出坐标业务、1 unique
+caller 身份。
+
+================================================================================
+0x6A1C80 —— 全局管理器三字段同步器·前段（8470B 超大函数，⚠️ 仅前段采样）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this ebp; 0x6A1C80-0x6A309C+（8470B 未
+读完——前段 0x80 采样），返回 void）。
+机器码结构（前段 0x6A1C80-0x6A1CFF，分段要点）:
+    段1 门控（0x6A1C80-0x6A1CA7）：sub esp,0x4C → push 族 → mov ebp,ecx
+    → mov ecx,[ebp+4] → mov eax,[ebp+0xC] → mov ebx,[eax+0x5E0]（★
+    +0xC 对象 +0x5E0 字段）→ lea eax,[ebp+4] → push → call [ecx+0x10]
+    （★虚表槽 0x10——this=[ebp+4]——门控查询）→ test al → jne
+    0x6A1D20（★门控通过跳过）→ cmp ebx,-1 → jne 0x6A1D20（★★+0x5E0
+    != -1 → 跳过——未初始化判定）。
+    段2 三字段同步（0x6A1CA9-0x6A1CE7）：mov byte[ebp+0x61],al（★+0x61
+    清 0）→ mov eax,[0xB077F8]（★★全局 1——batch 1452 同 0xB077xx 区）
+    → cmp [ebp+0x40],eax → jne 0x6A1CD0 → mov edx,[0xB077FC]（★全局 2）
+    → cmp [ebp+0x44],edx → jne 0x6A1CD0 → mov ecx,[0xB07800]（★全局 3）
+    → cmp [ebp+0x48],ecx → je 0x6A1CE8（★★三字段与三全局相等 → 跳过写
+    回）→ 0x6A1CD0: [ebp+0x40]=eax / [ebp+0x44]=edx / [ebp+0x48]=ecx
+    （★三字段写回三全局）→ mov byte[ebp+0x63],0（★+0x63 清 0——同步标
+    记）。
+    段3 类型判定（0x6A1CE8-0x6A1CFF）：mov ecx,[ebp+0xC] → mov edx,
+    [ecx] → call [edx+0x184]（★虚表槽 0x184——this=[ebp+0xC]）→ cmp
+    eax,2 → jne 0x6A309C（★类型 !=2 → 跳过主体）→ mov ebp,[ebp+0xC]
+    （★主体入口——[ebp+0xC] 换 this）。
+语义：**全局管理器三字段同步器·前段（推断名——8470B 超大函数仅登记
+前段）**——thiscall：① [ebp+4] 槽 0x10 门控 + [+0xC]→[+0x5E0]==-1
+判定;② [0xB077F8]/[0xB077FC]/[0xB07800] 三全局与 [ebp+0x40]/[0x44]/
+[0x48] 三字段同步（不等则写回 + [+0x63]=0）;③ 槽 0x184 类型==2 才进
+主体。
+★原版怪癖（照抄）：① ★★[0xB077F8]/[0xB077FC]/[0xB07800] 三全局（
+batch 1452 双链全局同区——管理器状态三字段——本函数=同步端）;
+② ★★+0x5E0==-1 判定（对象字段未初始化哨兵）;③ ★★三字段与三全局等
+值跳过（比较相等 → 不写——懒同步）;④ ★★+0x61/+0x63 双标志清零（
+同步前置/后置标记）;⑤ ★★槽 0x10 门控 + 槽 0x184 类型==2（双虚表门
+控——主体分派）;⑥ ★★8470B 超大（29 callees——主体未采样——⚠️ 仅
+前段语义登记——后续批续采）。
+★跨批次连接：◆◆batch 1452（[0xB077B0]/[0xB077B4] 双链——同 0xB077xx
+区）◆◆batch 918/919（虚表槽门控族）◆batch 240（GetCellAt 锚点库）。
+新候选：无（前段 callee=0——全虚表槽;主体 29 callee 未采——后续批
+0x6A1C80 再采）。
+⚠️ partial（★仅前段——主体 0x6A1D20 起未读——29 callee 未核验）：
+函数精确名、[0xB077F8]/[0xB077FC]/[0xB07800] 三全局语义、+0x5E0 对象、
+槽 0x10/0x184 方法、主体业务、1 unique caller 身份。
+
+================================================================================
+0x69DEA0 —— ShapeButtonClass::SetLoadedStatus（10B 全读，带名）
+================================================================================
+签名：thiscall 一栈参 ret 4（ecx=this、[esp+4]=状态字节; 0x69DEA0-
+0x69DEA7，返回 void）。
+机器码结构（0x69DEA0-0x69DEA7，全程读完）:
+    mov al,[esp+4]（★状态字节）→ mov byte[ecx+0x5C],al（★★+0x5C 状态
+    字段写入）→ ret 4。
+语义：**ShapeButtonClass::SetLoadedStatus（ranking 带名）**——thiscall：
++0x5C 状态字节写入。10B 极简。
+★原版怪癖（照抄）：① ★★10B 极简（mov+mov+ret 4——无可再简——无栈帧
+无寄存器保存）;② ★★+0x5C 状态字段（按钮加载状态——后邻 0x69DEB0
+ClearShape 带名同宿主——按钮类字段族）;③ ★★ret 4（单栈参——状态字
+节）；④ ★★同宿主带名族（后邻 ShapeButtonClass::ClearShape 0x69DE70 也
+在 ranking 候选池——按钮家族）。
+★跨批次连接：◆batch 001（带名锚点族——ShapeButtonClass 家族）。
+新候选：无（callees=0）；后邻 0x69DEB0（ClearShape 带名——候选池留
+后续批）。
+⚠️ partial：+0x5C 状态字段语义、宿主类（带名 ShapeButtonClass）、1
+unique caller 身份。
+
+================================================================================
+本批新候选登记（后续批兑现）
+================================================================================
+无（callees 全部已登记/为 0——0x5657A0 batch 240、0x6A1C80 前段虚表槽）。
+0x6A1C80 主体（0x6A1D20 起 29 callee）未采样——标注「超大函数待续采」
+留候选池；后邻 ShapeButtonClass::ClearShape（0x69DEB0 带名）留候选池。
+新全局登记：[0xB077F8]/[0xB077FC]/[0xB07800]（三全局——batch 1452 同
+0xB077xx 区）。
