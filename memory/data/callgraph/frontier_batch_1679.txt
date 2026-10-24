@@ -1,0 +1,230 @@
+frontier batch 1679 —— 0x431170 双循环槽查找器 / 0x42ACF0 单位移动目标推进器 / 0x41DC80 链表移除器（2026-10-24）
+
+口径：承接 batch 1678 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+uc=1 callsite=3 top3）。本批取：0x431170（76B，callees=0 deps=240——
+**双循环槽查找器**，推断名——8×4 槽阵列按参数匹配返槽指针）、0x42ACF0
+（899B，callees=4 deps=68——**单位移动目标推进器**，推断名——虚表槽
+0x1B8 查询 + 方向表推邻格 + 链遍历 + 邻域扫描）、0x41DC80（135B，
+callees=0 deps=76——**链表移除器**，推断名——+0x5D8 拆链 + 计数递减 +
+空表置标志写时间）。
+取证手段：disasm.py 三路全读——0x431170 0x80 覆盖尾 0x4311B9 ret 4 +
+nop 垫（顺带落 0x4311C0 下一函数头——同域 +0x60 复检大函数——不属本
+批）;0x42ACF0 0x400 覆盖尾 0x42B070 ret 4 + nop 垫（顺带落 0x42B080 下
+一函数头——**本批新候选**——坐标换算邻函数——movsx 坐标 + shl 8 + imul
+[0x89C2D8] + 邻域双循环）;0x41DC80 0xE0 覆盖尾 0x41DD04 ret 4 + nop 垫
+（顺带落 0x41DD10 同一级初始化器 + 0x41DD30/0x41DD40 常量 getter（返
+0x60/0x47）+ 0x41DD50 下一函数头——均不属本批）——均读到函数尾。
++ TSV 查重（三候选全部未登记）+ callee 核验（0x42ACF0 → 0x5657A0 已登记
+line240（坐标查表——多次调用）/ 0x4C93D0 已登记 line316（batch 083
+FacingStruct::GetFacing）/ 0x578460 已登记 line276（IsWithinUsableArea）/
+★★0x42B080 **未登记**——callees=4 = {0x5657A0, 0x4C93D0, 0x578460,
+0x42B080}——**本批新候选**；0x431170/0x41DC80 callees=0——本批新候选 1
+枚：0x42B080）。
+★★★跨批次重大连接：★★◆0x42ACF0 = [0x89F688] **方向偏移表的消费端**
+（batch 073 锚点——shr 0xC/inc/shr 1/and 7 取方向 → [edx*4+0x89F688] X/
+[+0x89F68A] Y——第二批方向表现场——单位寻路/推进惯用）;★★◆0x42ACF0 =
+0x5657A0（batch 240 坐标查表——调用现场 ×7）+ 0x4C93D0（batch 083
+FacingStruct——+0x388 子对象朝向查询）+ 0x578460（batch 065
+IsWithinUsableArea）**三锚点组合消费端**;★★◆0x42ACF0 +0xE4/+0xE8 链 +
+虚表槽 0x2C 类型查询（cmp 1/0xF——batch 166 FindTechnoNearestTo 同款链
+字段）;★★◆0x41DC80 = [0xA8ED84] 全局时间写入（batch 1657 同款）+ 链表
++0x5D8 next 字段——事件/单位链表管理域。
+================================================================================
+0x431170 —— 双循环槽查找器（76B 全读）
+================================================================================
+签名：thiscall 1 栈参 ret 4（ecx=this 宿主; [esp+0x14]=参数1 匹配值; 0x431170-
+0x4311B9，返回 eax=匹配槽指针 / 0）。
+机器码结构（0x431170-0x4311B9，全程读完）:
+    段0 前置（0x431170-0x43117E）：mov eax,[ecx+0x60]（★+0x60 槽数组基）
+    → test eax / je 0x4311B3（空 → 返 0）→ mov edi,[esp+0x14]（参数1 匹
+    配值）→ xor ebp,ebp（外层计数）→ mov esi,ecx（this）→ mov bl,2（★
+    标志位 2）。
+    段1 双循环（0x431185-0x4311B1）：xor edx,edx（内层计数）→ mov ecx,
+    esi → 内层 0x431189：mov eax,[ecx]（★槽指针）→ test / je 0x4311A1
+    （空槽跳过）→ test byte[eax+0xC],bl（★★槽 +0xC 标志 bit1）→ je
+    0x4311A1（标志不匹配跳过）→ cmp edi,-1 → je 0x4311B5（★★参数 -1
+    → 返回该槽）→ cmp edi,[eax+0x110]（★★槽 +0x110 字段与参数比）→
+    je 0x4311B5（返回该槽）→ 0x4311A1：inc edx → add ecx,4 → cmp edx,3
+    / jl 内层 → inc ebp（外层++）→ add esi,0xC（★外层步进 0xC）→ cmp
+    ebp,8 / jl 外层（★★8×4 = 32 槽矩阵）。
+    段2 收尾（0x4311B3-0x4311B9）：xor eax,eax（返 0）→ ret 4。
+语义：**双循环槽查找器（推断名）**——thiscall 1 栈参：① 前置 +0x60 槽
+数组非空;② 8 行 × 4 列双循环（外层步进 0xC、内层步进 4——槽记录 +0xC/
++0x110 字段）：按槽 +0xC bit1 标志过滤，匹配条件 = 参数==-1 或 参数==槽
++0x110;③ 匹配返槽指针、全不匹配返 0——按 ID/索引在 8×4 槽矩阵中查找
+（每行 3 列 × 8 行——宿主槽位表查找推断）。
+★原版怪癖（照抄）：① ★★+0x60 槽数组 8×4 布局（外层 0xC 步进 = 3 槽 ×
+4 字节 + 填充推断——内层 4 字节步进 3 项——行间 0xC 间隙——槽记录结构
+未完整建立）;② ★★+0xC bit1 标志门控（bl=2——测试 bit1——不匹配跳过）;
+③ ★★参数 -1 通配（==-1 直接返回该槽——通配查找）;④ ★★参数 == +0x110
+字段匹配;⑤ ★★空槽跳过（[ecx]==0——不计数）;⑥ ★★76B 紧凑双循环。
+★跨批次连接：◆◆+0x60 槽数组（宿主域——0x4311C0 邻函数同 +0x60 复检—
+—同域）◆◆+0xC 标志位测试（batch 1653/1659/1662/1668/1669/1671 twin/
+槽变体家族——位标志门控惯用）◆◆+0x110 字段（槽记录 ID/索引推断）。
+新候选：无（callees=0）。
+⚠️ partial：函数精确名（推断「双循环槽查找器」）、+0x60 槽阵列布局（8×
+4 + 0xC 步进——行结构推断）、+0xC bit1/参数1/+0x110 精确语义（匹配 ID
+推断）、宿主类、1 unique caller 身份。
+================================================================================
+0x42ACF0 —— 单位移动目标推进器（899B 全读）
+================================================================================
+签名：thiscall 1 栈参 ret 4（ecx=this 宿主; [esp+0x3C]=参数1 目标对象;
+0x42ACF0-0x42B070，返回 eax=目标 cell）。
+机器码结构（0x42ACF0-0x42B070，全程读完，分段要点）:
+    段0 标志门控（0x42ACF0-0x42AD05）：mov al,[ecx+3]（★+3 字节标志）→
+    test / je 0x42B069（★★标志为 0 直接收尾——短路）。
+    段1 目标查询+方向推格（0x42AD06-0x42AD92）：mov esi,[esp+0x3C]（参数
+    1 对象）→ lea ecx,[esp+0x3C] → push → mov ecx,esi → call [eax+
+    0x1B8]（★★参数对象虚表槽 0x1B8——查询——结果 edx=[eax]）→ lea
+    eax,[esp+0x18] → push → mov ecx,0x87F7E8（MapClass::Instance）→
+    call 0x5657A0（★坐标→CellClass 查表——batch 240——edi=cell A）→
+    lea ecx,[esp+0x34] → push → lea ecx,[esi+0x388]（★+0x388 子对象——
+    Facing 推断）→ call 0x4C93D0（★FacingStruct::GetFacing——batch 083
+    →当前朝向）→ mov edx,[eax] → shr edx,0xC → inc → shr 1 → and 7（★
+    朝向→方向索引 0..7）→ push 0x89F688 → mov cx,word[esp+0x18] → add
+    cx,word[edx*4+0x89F688]（★★方向表 X 偏移——batch 073 锚点）→ lea
+    eax,[edx*4+0x89F688] → mov dx,word[edx*4+0x89F68A]（★★Y 偏移）→
+    add dx,word[esp+0x1A] → mov word[esp+0x3C],cx → mov word[esp+0x42],
+    dx（★★新邻格坐标 = 原坐标 + 方向偏移）→ lea ecx,[esp+0x2C] → push
+    → call 0x5657A0（cell B——邻格）→ mov ebx,eax。
+    段2 高度差+链选择（0x42AD93-0x42ADF7）：mov eax,[ebx+0x140]（★cell
+    标志）→ test ah,1 → je 0x42ADCC → movsx edx,byte[ebx+0x11B]（★cell
+    高度）→ movsx eax,byte[edi+0x11B] → sub → abs（cdq/xor/sub）→ cmp
+    3 → jg 0x42ADC2 → mov al,byte[esi+0x8C] → test / je 0x42ADCC →
+    0x42ADC2：mov ebp,[ebx+0xE8]（★+0xE8 链——高度差 >3 或 +0x8C 标志 →
+    用副链）→ mov al,1 → jmp;0x42ADCC：mov ebp,[ebx+0xE4]（★+0xE4 主链）
+    → xor al,al。0x42ADD4：test ebp / jne 0x42ADF8 → movsx ecx,byte[ebx+
+    0x11B] → neg al / sbb / and 4 → add ecx（★高度修正 ?）→ lea edx,
+    [ebx+0x24] → push → call 0x42B080（★★邻函数——**新候选**——cell 坐
+    标 + 高度换算）→ mov ebp,eax。
+    段3 链遍历（0x42ADF8-0x42AEB5）：mov eax,[esi] → call dword[eax+
+    0x84]（★参数对象虚表槽 0x84——取物）→ mov esi,eax → test ebp / je
+    0x42AEB9 → 循环 0x42AE15：mov edx,[ebp] → call [edx+0x2C]（★虚表槽
+    0x2C 类型查询——batch 166 同款）→ cmp 1 → je 0x42AE33 → cmp 0xF →
+    jne 0x42AFBF → 0x42AE33：mov ecx,[ebp+0x558]（★+0x558 字段）→ mov
+    ebx,0 → mov ecx,[esp+0x10] → call [edx+0x84] → cmp [ecx+0x3C],2 →
+    je 0x42AE7D → cmp esi,eax / je 0x42AE9E → mov edx,[esi+0x678] →
+    mov ecx,[eax+0x678] → cmp / jle 0x42AE9E → 0x42AE68：lea eax,
+    [esp+0x10] → push 1 → push → mov ecx,0x87F7E8 → call 0x578460（★
+    IsWithinUsableArea——batch 065——可用区校验）→ test al / je 0x42AE9E
+    → 0x42AE7D：call [edx+0x2C] → cmp 1 → lea edi,[ebp+0x5E0] → jne
+    0x42AED8 → cmp [edi],-1 → je 0x42AE9E → cmp [ebp+0x5E4],-1 → jne
+    0x42AEF1 → 0x42AE9E：mov ebp,[ebp+0x30]（★★链步进 +0x30——batch 166
+    同款）→ mov ebx,[esp+0x14] → test ebp / jne 循环 → 0x42AEAD：mov al,
+    [esp+0x3C] → test / jne 0x42AFCB。
+    段4 类型 1 步进 + 方向表推格（0x42AEF1-0x42AFBE）：mov byte[esp+0x3C],
+    1 → cmp ebx,0x18 → jge 0x42AFBB → mov eax,[edi]（+0x5E0 方向记录）→
+    cmp 8 → jne 0x42AF41 → cmp eax,-1 → je 0x42AF2F → mov ecx,[0x8B413C]
+    （★全局表）→ mov edx,[ecx+eax*4] → mov eax,[edx+0x28] → jmp 0x42AF69
+    → 0x42AF41：mov cx,word[eax*4+0x89F688]（★★方向表 X——第三现场）→
+    mov dx,word[eax*4+0x89F68A]（★★Y）→ add cx,word[esp+0x10] → add
+    dx,word[esp+0x12] → mov word[esp+0x28],cx → word[+0x2A],dx → 存 →
+    0x42AF69：mov [esp+0x10],eax → push → call 0x5657A0 ×2（★★双查表——
+    新邻格对）→ mov edx,[esi+0x140] → mov esi,[eax+0x140] → xor/and
+    0x40000（★★+0x140 bit 0x40000 位运算——可见性/阻挡标志推断）→ mov
+    [eax],esi → inc ebx → mov eax,[edi] → cmp -1 → jne 循环。
+    段5 邻域扫描（0x42AFCB-0x42B068）：mov edi,0xFFFFFFFE（-2）→ mov
+    esi,0xFFFFFFFE（-2）→ 0x42AFD5：mov eax,[ebx+0x24]（★基点坐标）→
+    add eax,-2 → 存 → 0x42AFF2：push → call 0x5657A0（查表）→ mov cl,
+    byte[eax+0x124]（★cell +0x124 位源）→ test / je 0x42B043（跳过）→
+    mov ecx,[eax+0x24] → cmp cx,word[esp+0x18] / jne 0x42B029 → cmp
+    [esp+0x2A],word[esp+0x1A] → je 0x42B043 → 0x42B029：mov ecx,[eax+
+    0x140] → not/xor/and 0x40000/xor（★bit 0x40000 翻转）→ mov [eax+
+    0x140],ecx → 0x42B043：inc esi → cmp esi,3 → jl 0x42AFD5（★5×5 邻域
+    -2..+2）→ inc edi → cmp edi,3 → jl 0x42AFD0 → 收尾：mov eax,[ebx+
+    0x140] → not/xor/and 0x40000/xor（★基点自身 +0x140 翻转）→ mov
+    [ebx+0x140],eax → 0x42B069：ret 4。
+语义：**单位移动目标推进器（推断名）**——thiscall 1 栈参：① +3 标志门控
+（0 短路）;② 参数对象虚表槽 0x1B8 查询目标 + 0x5657A0 查表（cell A）+
++0x388 子对象 FacingStruct::GetFacing（0x4C93D0）→ 朝向转方向索引（shr
+0xC/inc/shr 1/and 7）→ [0x89F688] 方向表推邻格（cell B）;③ 高度差（
++0x11B）绝对值 >3 或 +0x8C 标志 → 选 +0xE8 副链 else +0xE4 主链（对象
+链——链路步进 +0x30）;④ 链为空时 0x42B080 cell 坐标+高度换算;⑤ 链遍历
+—虚表槽 0x2C 类型查询（1/0xF）+ 虚表槽 0x84 取物 + +0x678 计数比较 +
+IsWithinUsableArea（0x578460）校验 + +0x5E0/+0x5E4 方向记录合法性;⑥
+类型 1 步进推进——[0x89F688] 方向表推格 ×2 双查表 + +0x140 bit 0x40000
+位运算（可见性标志推断）;⑦ 收尾 5×5 邻域扫描——+0x124 位源门控 + 坐标
+比对 + 邻格 +0x140 bit 翻转 + 基点自身翻转——单位沿朝向推进 + 邻域可见
+性修正的组合逻辑（推进/巡逻扫描推断）。
+★原版怪癖（照抄）：① ★★+3 字节标志门控（0 短路——无目标快速返回）;
+② ★★虚表槽 0x1B8 查询（参数对象——目标查询——调用现场）;③ ★★朝向→
+方向索引（shr 0xC / inc / shr 1 / and 7——8 方向 0..7）;④ ★★[0x89F688]
+方向表 ×3 现场（起始推格 + 段4 推格——X/Y 双 word——batch 073 锚点消费
+端）;⑤ ★★高度差 >3 选副链（abs 差值 cmp 3——+0xE8 vs +0xE4——链选择
+阈值）;⑥ ★★0x42B080 换算（新候选——cell 坐标+高度 → 对象）;⑦ ★★虚表
+槽 0x2C 类型（1/0xF——batch 166 同款）+0x84 取物 + +0x678 计数比较
+（目标择优——代价比较推断）;⑧ ★★+0x140 bit 0x40000 位运算（not/xor/
+and 0x40000/xor——特定位翻转——batch 1658 同款位癖）;⑨ ★★5×5 邻域扫
+描收尾（-2..+2 双环——+0x124 位源门控——基点自身最后翻转）;⑩ ★★899B
+五段大函数。
+★跨批次连接：◆◆[0x89F688] 方向偏移表（batch 073 锚点——消费端三现
+场——方向推进惯用）◆◆0x5657A0（batch 240 坐标查表——调用现场 ×7）◆◆
+0x4C93D0（batch 083 FacingStruct::GetFacing——调用现场——+0x388 子对象）
+◆◆0x578460（batch 065 IsWithinUsableArea——调用现场——可用区校验）◆◆
+虚表槽 0x2C/链 +0x30/+0xE4（batch 166 FindTechnoNearestTo 同款链字段）
+◆◆+0x140 bit 0x40000（batch 1658 同款位运算——可见性标志族）◆◆
+0x8B413C 全局表（id→对象推断——batch 173 [0xA83D84] 同族）◆◆★0x42B080
+（新候选——未登记——0x42ACF0 唯一未登记被调）。
+新候选：★★0x42B080（未登记——0x42ACF0 链空时 cell 坐标+高度换算——邻
+函数——movsx 坐标 shl 8 + imul [0x89C2D8] + 5×5 邻域——坐标换算/放置
+器推断——下一批候选池）。
+⚠️ partial：函数精确名（推断「单位移动目标推进器」）、参数1 对象身份、
++3 标志语义、+0x388 Facing/0x4C93D0 输出语义、链对象身份（+0xE4/+0xE8
+链宿主）、+0x5E0 方向记录、+0x140 bit 0x40000 精确语义、5×5 邻域业务、
+0x8B413C 表、1 unique caller 身份。
+================================================================================
+0x41DC80 —— 链表移除器（135B 全读）
+================================================================================
+签名：thiscall 1 栈参 ret 4（ecx=this 链表宿主; [esp+4]=参数1 目标对象;
+0x41DC80-0x41DD04，无返回值）。
+机器码结构（0x41DC80-0x41DD04，全程读完，分段要点）:
+    段0 头匹配（0x41DC80-0x41DCAE）：mov eax,[ecx+0x5C]（★链表头）→ mov
+    edx,[esp+4]（参数1）→ 压 3 寄存器 → cmp eax,edx → jne 0x41DCB0 → ★
+    头==目标：mov eax,[edx+0x5D8]（★★目标 next）→ mov [ecx+0x5C],eax
+    （头 = next）→ mov [edx+0x5D8],0（目标 next 清空）→ mov eax,[ecx+
+    0x30] → dec → mov [ecx+0x30],eax（★计数递减）→ mov [edx+0x294],0
+    （★目标 +0x294 清零）→ jmp 0x41DCED。
+    段1 链遍历（0x41DCB0-0x41DCEB）：cmp eax,ebx(0) → je 0x41DCED → 循环
+    0x41DCB4：mov esi,[eax+0x5D8]（★★节点 next）→ cmp esi,edx → jne
+    0x41DCE1 → ★命中：mov esi,[edx+0x5D8]（目标 next）→ mov [eax+0x5D8],
+    esi（前驱 next = 目标 next——拆链）→ mov [edx+0x5D8],0 → mov esi,
+    [ecx+0x30] → dec → mov [ecx+0x30],esi（计数--）→ mov [edx+0x294],0
+    → jmp 0x41DCE3 → 0x41DCE1：mov eax,esi（步进）→ 0x41DCE3：inc edi →
+    cmp edi,0x64 → jg 0x41DCED（★★遍历上限 100 项——防环）→ cmp eax,0
+    / jne 0x41DCB4。
+    段2 空表收尾（0x41DCED-0x41DD04）：cmp [ecx+0x30],0 → jg 0x41DD01 →
+    mov edx,[0xA8ED84]（★★全局时间——batch 1657 同款）→ mov byte[ecx+
+    0x3C],0 → mov [ecx+0x40],edx（★★+0x40=当前时间）→ mov byte[ecx+
+    0x3D],0 → 0x41DD01：ret 4。
+语义：**链表移除器（推断名）**——thiscall 1 栈参：① 链表头 == 目标 →
+头=目标 next、目标 next 清空、计数 [ecx+0x30] 递减、目标 +0x294 清零;
+② 否则遍历（next 字段 +0x5D8）：命中节点拆链（前驱 next = 目标 next）+
+同款递减/清零;③ 遍历上限 100 项（防环——★原版怪癖）;④ 收尾：计数 ≤0
+时写全局时间 [0xA8ED84] 到 +0x40 并清零 +0x3C/+0x3D 双字节标志——从链表
+移除对象并维护时间戳的通用链表管理（事件/单位列表管理推断）。
+★原版怪癖（照抄）：① ★★+0x5D8 next 字段链表（头 +0x5C——单链表）;②
+★★头匹配快路径（cmp [ecx+0x5C],edx——头即目标不遍历）;③ ★★拆链三步
+（前驱 next = 目标 next + 目标 next 清空 + 计数递减）;④ ★★+0x294 清零
+（目标移除标志/引用清空）;⑤ ★★遍历上限 100 项（inc edi / cmp 0x64 /
+jg——防环硬顶——未来项不查）；⑥ ★★计数 ≤0 → 写时间戳 [0xA8ED84] 到
++0x40 + 清 +0x3C/+0x3D 双字节（空表快照——时间记录）;⑦ ★★135B 三
+段紧凑。
+★跨批次连接：◆◆[0xA8ED84] 全局时间（batch 1657 同款——时间戳写入—
+—空表事件）◆◆链表 next +0x5D8/+0x5C（宿主域——单链表管理——0x41DD10
+邻函数同 +0x40 时间字段——同域初始化）◆◆0x41DD30/0x41DD40 邻函数（返
+0x60/0x47 常量 getter——同域常量集合）。
+新候选：无（callees=0）。
+⚠️ partial：函数精确名（推断「链表移除器」）、链表宿主类（+0x5C/+0x30/
++0x3C/+0x40/+0x3D 字段域）、+0x294 语义（移除标志推断）、100 项上限业
+务、+0x40 时间戳用途、1 unique caller 身份。
+================================================================================
+本批新候选登记（后续批兑现）
+================================================================================
+★★0x42B080（未登记——0x42ACF0 唯一未登记被调——链空时 cell 坐标+高度换
+算——movsx 坐标 shl 8 + imul [0x89C2D8] + 5×5 邻域循环——坐标换算/邻域
+放置器推断——下一批候选池）。跨批次闭合：[0x89F688] 方向表消费端三现场
+（0x42ACF0——batch 073 锚点——单位朝向推进惯用——shr/inc/and 7 取方向）
+;FacingStruct::GetFacing 调用现场（0x4C93D0——batch 083——+0x388 子对
+象）;三锚点组合（0x5657A0 ×7 + 0x4C93D0 + 0x578460——0x42ACF0）;链表+
+时间戳域（0x41DC80——[0xA8ED84] 空表时间戳——batch 1657 同款）;双循环槽
+矩阵查找（0x431170——+0x60 8×4 槽阵列——参数 -1 通配）。
