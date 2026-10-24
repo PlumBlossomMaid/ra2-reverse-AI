@@ -1,0 +1,155 @@
+frontier batch 1652 —— 0x7AC9D0 索引化元素指针访问器 / 0x783A90 PCX 文件名选择加载器 / 0x7710B0 字符串界面条目填充器（2026-10-24）
+
+口径：承接 batch 1651 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+uc=1 callsite=3 top3）。本批取：0x7AC9D0（41B，callees=0 deps=2782——
+**索引化元素指针访问器**，推断名——[ecx] 计数 + [ecx+8] 基址 + index*0xF8
+元素 + 越界返 0）、0x783A90（199B，callees=1 deps=353——**PCX 文件名选择
+加载器**，推断名——cmp ecx,9 跳表 + 10 .rdata 串 → 0x6BA140 PCX::GetSurface）、
+0x7710B0（524B，callees=10 deps=83——**字符串界面条目填充器**，推断名——
+多字符串成员构建 + 虚表槽 0xC + [index*48] 元素数组 + INI 查找 + C 串追加）。
+取证手段：disasm.py 三路全读——0x7AC9D0 0x40 覆盖尾 0x7AC9F6 ret 8 + nop
+垫;0x783A90 0xE0 覆盖尾 0x783B56 ret + nop 垫;0x7710B0 0x260 覆盖尾
+0x7712B9 ret 0x14 + nop 垫 + 0x7712C0 新函数头（顺带落到——不属本批）——
+均读到函数尾。+ TSV 查重（三候选全部未登记） + callee 核验（11 个被调
+全部已登记——0x6BA140（batch 132 PCX::GetSurface）、0x7AF2A0（batch 333
+单例资源访问器）、0x7B64E0（batch 802 窄字符串拼接赋值器）、0x7B4ED0
+（batch 202 字符串拼接器）、0x7B46F0（batch 059 析构）、0x7B4620/0x7B4630
+（batch 062 默认构造/operator=）、0x528C00（batch 169 INI 查找注册）、
+0x7B5F10（batch 122 窄串字符扫描）、0x7B6280（batch 213 释放器）、0x7B4C20
+（batch 629 C 串追加器）——**本批无新候选**）。
+★★★跨批次重大连接：★★◆0x783A90 的 0x6BA140 = batch 132 PCX::GetSurface
+（PCX::Instance @ [0xAC4848]）——本批 10 分支跳表 = 其 15 callers 里的一
+个批量调用现场（10 个 PCX 文件名选择 → 连续加载断言）;★★◆0x7710B0 =
+batch 629 的 0x7B4C20（C 串追加器）3 unique callers 之一 + batch 802 的
+0x7B64E0（窄串拼接赋值器）调用点 8——双点名宿主一次兑现;★★◆0x7AC9D0
+= pure 计算 getter（callees=0）——248B（0xF8）元素数组访问（RA2 常见成员
+数组形态）。
+================================================================================
+0x7AC9D0 —— 索引化元素指针访问器（41B 全读）
+================================================================================
+签名：thiscall 2 栈参 ret 8（ecx=this; [esp+4]=参数1 输出指针、[esp+8]=
+参数2 index; 0x7AC9D0-0x7AC9F6，返回 al bool）。
+机器码结构（0x7AC9D0-0x7AC9F6，全程读完）:
+    mov eax,[esp+8]（★参数2 index）→ test eax/jl 0x7AC9F4（★负数越界）→
+    cmp eax,[ecx]（★this+0 计数）→ jge 0x7AC9F4（★≥计数越界）→ mov
+    edx,eax → shl edx,5（★index*32）→ sub edx,eax（★index*31）→ mov
+    eax,[ecx+8]（★this+8 基址指针）→ lea ecx,[eax+edx*8]（★base +
+    index*248）→ mov edx,[esp+4]（★参数1 输出指针）→ mov al,1 → mov
+    [edx],ecx（★写回元素指针）→ ret 8 → 0x7AC9F4: xor al,al → ret 8。
+语义：**索引化元素指针访问器（推断名）**——thiscall 2 栈参（输出指针 +
+index）：① 越界检查（index<0 或 index≥[ecx] 计数）;② 元素地址 = [ecx+8]
+基址 + index*(0x20-1)*8 = base + index*248（0xF8 字节元素——32 位偏移
+hack）;③ 成功写回输出指针返 1，越界返 0 不动输出。
+★原版怪癖（照抄）：① ★★index*248 元素步长（shl 5/sub 再 *8——0xF8 字
+节元素——RA2 成员数组大对象形态）;② ★★双重越界守卫（jl/jge——负数与
+上限均拒）;③ ★★输出指针写回（非返回指针——调用方预置槽）;④ ★★41B
+纯计算 getter（callees=0——无任何外部依赖）。
+★跨批次连接：◆◆纯计算 getter 家族（batch 1651 的 0x7B7D80 同款极简
+形态）◆◆元素数组访问惯用（[ecx+8] 基址 + 步长计算——VectorClass 家族
+batch 1453 同构）。
+新候选：无（callees=0）。
+⚠️ partial：函数精确名（推断「索引化元素指针访问器」）、元素类型（0xF8
+字节——对象/记录推断）、this 宿主类、2 unique caller 身份。
+================================================================================
+0x783A90 —— PCX 文件名选择加载器（199B 全读）
+================================================================================
+签名：thiscall 1 寄存器参 ret（ecx=index 0-9; 0x783A90-0x783B56）。
+机器码结构（0x783A90-0x783B56，全程读完，分段要点）:
+    段1 跳表分派（0x783A90-0x783A9F）：cmp ecx,9 → ja 0x783B54（★越界返 0）
+    → jmp [ecx*4+0x783B58]（★10 项跳表——0x783AA0/0x783AB2/0x783AC4/
+    0x783AD6/0x783AE8/0x783AFA/0x783B0C/0x783B1E/0x783B30/0x783B42）。
+    段2 10 分支同构（0x783AA0-0x783B53）：每支 push 0（★栈参2=0）→ push
+    0x835FC8/0x835FBC/0x835FB0/0x835FA4/0x835F98/0x835F8C/0x835F80/
+    0x835F74/0x835F68/0x835F5C（★★10 .rdata 串——每 12B 间隔——文件名
+    推断）→ mov ecx,0xAC4848（★★PCX::Instance——batch 132 同全局）→
+    call 0x6BA140（★★batch 132 PCX::GetSurface）→ ret。
+    段3 默认（0x783B54-0x783B56）：xor eax,eax → ret（★越界空返）。
+语义：**PCX 文件名选择加载器（推断名）**——按 index 0-9 经跳表选择 10 个
+.rdata 文件名串（0x835FC8 起 12B 间隔），thiscall 调 PCX::GetSurface
+（0x6BA140，ecx=PCX::Instance 0xAC4848 + 2 栈参 {串, 0}）加载 PCX 表面；
+越界（index>9）静默返 0。
+★原版怪癖（照抄）：① ★★10 分支全展开（每分支独立 push/ret——无循环共享
+——编译器 unroll 保守模式）;② ★★串表 12B 间隔（0x835FC8..0x835F5C
+递减——.rdata 文件名表——长度固定推断）;③ ★★push 串 + push 0（PCX::
+GetSurface 双栈参——batch 132 记录的此调用约定实锤 emerges 现场）;④
+★★越界静默返 0（ja 兜底——不报错）;⑤ ★★199B 含 10 同构分支（跳表+
+展开混合——分派器典型形态）。
+★跨批次连接：◆◆batch 132（0x6BA140 PCX::GetSurface——本批=调用现场
+×10——15 callers 批量兑现）◆◆[0xAC4848]（PCX::Instance——batch 132
+同全局——渲染资源单例）◆◆0x835FC8..0x835F5C（新 .rdata 文件名串——10
+个 PCX——未登记）。
+新候选：无（callees=1 已登记——0x6BA140 batch 132）。
+⚠️ partial：函数精确名（推断「PCX 文件名选择加载器」）、10 串内容（PCX
+文件名——未 dump .rdata）、push 0 栈参2 语义、1 unique caller 身份。
+================================================================================
+0x7710B0 —— 字符串界面条目填充器（524B 全读）
+================================================================================
+签名：thiscall 5 栈参 ret 0x14（ecx=this; [esp+0x18] 起参数1-5; 0x7710B0-
+0x7712B9，无返回值）。
+机器码结构（0x7710B0-0x7712B9，全程读完，分段要点）:
+    段1 单例取串+拼接（0x7710B0-0x7710E5）：push ecx/ mov eax,[esp+0x18]
+    （★参数1）→ lea ecx,[esp+0xC]/push eax/lea ecx,[esp+0x24]/push
+    ecx/push esi（this）→ call 0x7AF2A0（★★batch 333 单例资源访问器——
+    取资源单例指针）→ mov edx,eax → lea ecx,[esp+0x28] → call 0x7B64E0
+    （★★batch 802 窄字符串拼接赋值器——edx 源串 + 栈参1 追加串 → this->
+    +0）→ mov ecx,eax → call 0x7B4ED0（★★batch 202 字符串拼接器——追加）。
+    段2 局部串初始化（0x7710E5-0x771119）：lea ecx,[esp+0x1C] → call
+    0x7B46F0（★析构）→ lea ecx,[esp+0x24] → call 0x7B4620（★默认构造）
+    → push 0x889F64 → lea ecx,[esp+0x20] → call 0x7B4630（★operator= 默
+    认串）→ 4 参 call 0x528C00（★★batch 169 INI 查找/注册——节名/条目/
+    输出缓冲）→ lea ecx,[esp+0x1C] → call 0x7B46F0（★析构局部串）。
+    段3 元素数组访问+虚调用（0x771122-0x77114F）：mov eax,[esp+0x20]（★
+    index）→ lea eax,[eax+eax*2]（★index*3）→ shl eax,4（★index*48）→
+    lea ebx,[eax+esi]（★this + index*48 元素）→ mov edx,[ebx+4]（★元素
+    虚表）→ lea esi,[ebx+4] → call [edx+0xC]（★虚表槽 0xC）→ lea
+    ecx,[esp+0x1C] → call 0x7B4620（★再构造）→ 3 参 call 0x7B5F10
+    （★★batch 122 窄串字符扫描——{串, 0x817F70 串, 0}）→ mov edi,eax →
+    cmp edi,-1 → je 0x7711C0（★-1 未命中 → 段5 清理）。
+    段4 命中处理循环（0x77115F-0x7711BF）：lea ecx,[esp+0x20] → call
+    0x7B6280（★释放器）→ 长度/标志判（[esi+8] vs [esi+0x10]、[esi+0xD]
+    标志、[esi+0x14] 容量）→ 虚表槽 0x8 双参调用（容量+0/现有长度——扩容
+    判定）→ 命中则 [esi+0x10]++ 且 [esi+4 数组][count]=值（★元素计数+写
+    入）→ 循环回 0x771160（0x7B5F10 再扫——多段解析）。
+    段5 清理+第二块（0x7711C0-0x7712B9）：lea ecx,[esp+0x1C] → call
+    0x7B46F0 → push 0x849208（★.rdata 串2）→ lea ecx,[esp+0x10] → call
+    0x7B4C20（★★batch 629 C 串追加器——this->+0 追加）→ push 0x889F64
+    → 0x7B4630 赋默认 → 同构 INI 4 参 0x528C00 → [ebx+0x1C] 元素（★第二
+    成员 48B 步进）→ 虚表槽 0xC 调用 → 0x7B5F10 扫描 -1 检查 → 命中处理
+    同构（[esi+8]/[esi+0x10]/[esi+0xD]/[esi+0x14] 判 + 槽 0x8 扩容 + 计数
+    写入）→ 收尾 3×0x7B46F0 析构 → ret 0x14。
+语义：**字符串界面条目填充器（推断名）**——thiscall 5 栈参：① 取单例资
+源（0x7AF2A0）→ 窄串拼接（0x7B64E0）→ 追加（0x7B4ED0）构建名字串;②
+局部串默认初始化 + INI 查找（0x528C00 读配置）;③ this + index*48 元素
+数组：虚表槽 0xC 调用 + 窄串字符扫描（0x7B5F10，0x817F70 串条件）多段解
+析——命中经容量判定（[esi+8]/[esi+0x10]/[esi+0xD]/[esi+0x14] + 槽 0x8
+扩容）写入 [esi+4][count++];④ 第二成员 [ebx+0x1C] 同构处理 + C 串追加
+（0x7B4C20）→ 收尾析构。
+★原版怪癖（照抄）：① ★★双成员 48B 元素数组处理（[ebx+4]/[ebx+0x1C]——
+index*48 步进——同构两块）;② ★★虚表槽 0xC 调用 ×2 + 槽 0x8 扩容判定
+（容量/计数/标志/[esi+0x14] 四条件门控）;③ ★★0x7B5F10 扫描 -1 判定
+（0x817F70 串条件——命中/未命中双路径）;④ ★★INI 查找 ×2（0x528C00 4
+参——节名/条目/输出）;⑤ ★★多字符串生命周期（构造/析构 6 次——临时串
+防泄漏管理）;⑥ ★★0x849208/0x889F64 串常量（.rdata 配置值推断）;⑦
+★★ret 0x14 5 栈参无返回值。
+★跨批次连接：◆◆batch 629（0x7B4C20 C 串追加器——本批=其 3 unique
+callers 之一兑现）◆◆batch 802（0x7B64E0 窄串拼接赋值器——本批=其调用
+点 8 兑现——后接 0x7B4ED0 复用返回形态batch 802 已预言）◆◆batch 202/
+059/062/169/122/213/333（0x7B4ED0 拼接器/0x7B46F0 析构/0x7B4620 构造/
+0x7B4630 赋值/0x528C00 INI/0x7B5F10 扫描/0x7B6280 释放/0x7AF2A0 单例
+——串联串处理全家族）◆◆[0x817F70]/[0x849208]（新 .rdata 串——未登记）。
+新候选：无（callees=10 全部已登记）。
+⚠️ partial：函数精确名（推断「字符串界面条目填充器」）、5 栈参语义、元素
+类型（48B 记录——虚表对象推断）、[0x817F70]/[0x849208] 串内容、虚表槽
+0xC/0x8 方法身份、this 宿主类、1 unique caller 身份。
+================================================================================
+本批新候选登记（后续批兑现）
+================================================================================
+无（callees 全部已登记——0x6BA140 batch 132 PCX::GetSurface、0x7AF2A0
+batch 333、0x7B64E0 batch 802、0x7B4ED0 batch 202、0x7B46F0 batch 059、
+0x7B4620/0x7B4630 batch 062、0x528C00 batch 169、0x7B5F10 batch 122、
+0x7B6280 batch 213、0x7B4C20 batch 629）。新全局登记：[0x835FC8..0x835F5C]
+（10 PCX 文件名串——0x783A90）、[0x817F70]/[0x849208]（.rdata 串——
+0x7710B0）。★★跨批次闭合：batch 132 的 0x6BA140 15 callers 之一批量兑现
+（10 分支现场）;batch 629 的 0x7B4C20「3 unique callers」点名 FUN_007710b0
+兑现;batch 802 的 0x7B64E0「调用点 8 = FUN_007710B0」兑现——双点名宿主一
+次兑现。0x7AC9D0 pure 计算 getter 首案（无 callee——纯指针算术）。
