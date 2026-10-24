@@ -1,0 +1,113 @@
+frontier batch 1647 —— 0x47B130 全局光标释放器 / 0x4750D0 配置项查找比较器 / 0x45A160 首字段对象释放器（2026-10-24）
+
+口径：承接 batch 1646 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+uc=1 callsite=4 top3）。本批取：0x47B130（28B，callees=1 deps=731——
+**全局光标释放器**，推断名——[0x81C8EC] != -1 经 [0x7E1300] 导入槽释放
++ 置 -1 哨兵）、0x4750D0（115B，callees=3 deps=354——**配置项查找比较
+器**，推断名——0x528A10 五参调用 + 0x7C9CC2 串比较 + 0x48DEB0 处理）、
+0x45A160（13B，callees=0 deps=158——**首字段对象释放器**，推断名——
+this 首字段非空经虚表槽 8 释放）。
+取证手段：disasm.py 三路全读——0x47B130 0x20 覆盖尾 0x47B14B ret + nop
+垫;0x4750D0 0x80 覆盖尾 0x475143 ret 0xC + nop 垫;0x45A160 0x10 覆盖尾
+0x45A16C ret + nop 垫——均读到函数尾。+ TSV 查重（三候选全部未登记）+
+callee 核验（3 个被调中 2 个已登记——0x528A10（batch 002 INISection::
+ReadString——INI section string lookup with CRC-keyed caches）、0x7C9CC2
+（batch 023 strtok-family token scanner——In-place token scanner using a
+delimiter bitmap）——**0x48DEB0 未登记 = 本批唯一新候选**;[0x7E1300]
+导入槽非函数）。
+★★★跨批次重大连接：★★◆0x4750D0 的 0x528A10 = batch 002 INISection::
+ReadString（CRC 缓存 + 有界拷贝 + 默认回退——INI 读取权威）——本函数是
+其五参调用现场（0x889F64 串——配置节/键推断）+ 0x7C9CC2 = batch 023
+strtok-family（分隔符位图 token 扫描）——配置解析双锚点;★★◆0x47B130
+的 [0x7E1300] 导入槽 = 批 052/062 的 IAT 族（0x7E1300 与 0x7E14A8/
+0x7E14A4 同 0x7E14xx 导入区——DeleteObject/释放 API 推断）;★★◆
+0x45A160 = 虚表槽 8 释放惯用（batch 1635 的 0x5F61A0 双槽 delete 前虚槽
+调用同族——scalar deleting destructor 推断）。
+batch 002 的 0x528A10「语义 verified_partial」——本批 0x4750D0 调用现
+场再锚定（INI 读取消费端）。
+================================================================================
+0x47B130 —— 全局光标释放器（28B 全读）
+================================================================================
+签名：无栈参 ret（纯全局操作; 0x47B130-0x47B14B）。
+机器码结构（0x47B130-0x47B14B，全程读完）:
+    mov eax,[0x81C8EC]（★全局句柄/指针）→ cmp eax,-1（★★-1 哨兵检查）
+    → je 0x47B14B（★空 → 直接返）→ push eax → call [0x7E1300]（★导入槽
+    调用——释放 API）→ mov [0x81C8EC],0xFFFFFFFF（★置 -1 哨兵）→ ret。
+语义：**全局光标释放器（推断名）**——无栈参：① [0x81C8EC] 全局资源若
+!= -1，经 [0x7E1300] 导入槽释放;② 置 -1 哨兵（下次跳过）。
+★原版怪癖（照抄）：① ★★-1 哨兵（cmp eax,-1/je——空检测——惰性释放）;
+② ★★[0x7E1300] 导入槽调用（IAT——释放 API 身份未确认——DeleteObject/
+DestroyCursor 推断）;③ ★★清 -1（mov [0x81C8EC],0xFFFFFFFF——幂等——
+重复调用第二次跳过）;④ ★★28B 极简。
+★跨批次连接：◆◆batch 052/062（[0x7E14A4]/[0x7E14A8] 导入槽族——本槽
+0x7E1300 同 IAT 区）◆◆[0x81C8EC] 全局（光标/句柄资源推断——0x81Cxxx
+区）。
+新候选：无（callees=0 函数——[0x7E1300] 导入槽非函数）。
+⚠️ partial：函数精确名（推断「全局光标释放器」）、[0x7E1300] API 身份
+、[0x81C8EC] 资源语义、1 unique caller 身份。
+================================================================================
+0x4750D0 —— 配置项查找比较器（115B 全读）
+================================================================================
+签名：thiscall 3 栈参 ret 0xC（[esp+8]=参数1、[esp+0x90]=参数2/3;
+0x4750D0-0x475143，返回 esi 结果）。
+机器码结构（0x4750D0-0x475143，全程读完）:
+    段1 读取+比较循环（0x4750D0-0x475137）：mov edx,[esp+8]（★参数1）→
+    sub esp,0x80 → lea eax,[esp]（★输出缓冲 0x80=128B）→ push 0x80/push
+    eax → mov eax,[esp+0x90]（★参数2/3）→ push 0x889F64（★串——配置节/
+    键推断）→ push edx → push eax → call 0x528A10（★★batch 002
+    INISection::ReadString——5 参——CRC 缓存 + 有界拷贝 + 默认回退）→
+    test eax/je 0x475137（★失败 → 返 0）→ mov ecx,[esp+4]（★输出）→
+    循环: push 0x817F70（★串——比较目标）→ push ecx → call 0x7C9CC2
+    （★★batch 023 strtok-family token 扫描——比较/扫描）→ test eax/je
+    0x475137（★空 → 停）→ mov ecx,eax → call 0x48DEB0（★★未登记——处
+    理——本批新候选）→ or esi,eax（★累积）→ 再 push 0x817F70/push 0 →
+    call 0x7C9CC2（★再扫描）→ jne 0x47511B（★循环——逐 token 比较）→
+    0x475137: mov eax,esi → ret 0xC（★返累积结果）。
+语义：**配置项查找比较器（推断名）**——thiscall 3 栈参 ret 0xC：①
+0x528A10（batch 002 INISection::ReadString——5 参——0x889F64 键读入
+128B 缓冲）;② 0x7C9CC2（batch 023 token 扫描）+ 0x48DEB0 处理循环（
+0x817F70 目标——逐 token 比较累积）;③ 返 esi。
+★原版怪癖（照抄）：① ★★0x528A10 五参调用（batch 002 INI 读取——0x889F64
+键 + 0x80 缓冲 + 参数1/2/3——配置节读取权威）;② ★★0x7C9CC2 token 扫
+描循环（batch 023 strtok-family——分隔符位图——逐项比较）;③ ★★
+0x817F70 比较目标串（配置值目标——比较对象推断）;④ ★★0x48DEB0 处理
+（未登记——逐 token 处理——累积 or）;⑤ ★★ret 0xC 3 栈参返 esi。
+★跨批次连接：◆◆batch 002（0x528A10 INISection::ReadString——调用现场
+兑现）◆◆batch 023（0x7C9CC2 strtok-family——token 扫描调用现场）◆◆
+0x889F64/0x817F70 串（配置键/目标）。
+新候选：**0x48DEB0**（0x47511D 调用——thiscall 1 参 ecx=eax——配置项处
+理——本批唯一未登记 callee，留候选池）。
+⚠️ partial：函数精确名（推断「配置项查找比较器」）、参数1-3 语义（键/
+目标/标志推断）、0x48DEB0 身份、0x889F64/0x817F70 串内容、esi 累积语义、
+1 unique caller 身份。
+================================================================================
+0x45A160 —— 首字段对象释放器（13B 全读）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this; 0x45A160-0x45A16C，返回 void）。
+机器码结构（0x45A160-0x45A16C，全程读完）:
+    mov eax,[ecx]（★this 首字段）→ test eax,eax/je 0x45A16C（★空 → 直
+    接返）→ mov ecx,[eax]（★对象虚表）→ push eax → call [ecx+8]（★虚表
+    槽 8——scalar deleting destructor 推断）→ ret。
+语义：**首字段对象释放器（推断名）**——thiscall：this 首字段（对象指
+针）非空时经虚表槽 8 释放（析构+delete 惯用），空跳过。
+★原版怪癖（照抄）：① ★★首字段持有对象（[ecx]——对象指针成员推断）;
+② ★★虚表槽 8 释放（scalar deleting destructor 推断——batch 1635 的
+0x5F61A0 双槽 delete 前虚调用同族）;③ ★★空指针守卫（test/je——幂等）;
+④ ★★13B 极简。
+★跨批次连接：◆◆batch 1635（0x5F61A0 双对象析构释放——虚表槽 delete
+惯用）◆◆虚表槽 8（scalar deleting destructor 家族——batch 1635 同
+槽）◆◆0x45xxxx 区（BuildingClass 域推断）。
+新候选：无（callees=0——虚表槽调用不计）。
+⚠️ partial：函数精确名（推断「首字段对象释放器」）、宿主类（Building
+Class 推断）、this 首字段对象类、虚表槽 8 身份、1 unique caller 身份。
+================================================================================
+本批新候选登记（后续批兑现）
+================================================================================
+**0x48DEB0**（0x47511D 调用——thiscall 1 参——配置项查找比较器的逐项
+处理——留候选池）。其余 callees 全部已登记（0x528A10 batch 002、
+0x7C9CC2 batch 023）。新全局登记：[0x81C8EC]（全局资源——0x47B130——
+光标/句柄推断）、[0x889F64]（配置键串）、[0x817F70]（比较目标串）。
+新导入槽：[0x7E1300]（0x47B130 释放 API——0x7E14xx 区家族）。★★跨批
+次闭合：batch 002 的 0x528A10 INISection::ReadString 调用现场再锚定
+（0x4750D0 配置读取——0x889F64 键）;batch 023 的 0x7C9CC2 strtok 消费
+现场锚定。
