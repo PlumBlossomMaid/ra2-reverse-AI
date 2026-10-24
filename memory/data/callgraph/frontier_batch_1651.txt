@@ -1,0 +1,117 @@
+frontier batch 1651 —— 0x7B7D80 三参调用器 / 0x7B5D70 字符串赋值器 / 0x7B0B00 UTF-8 RLE 压缩器（2026-10-24）
+
+口径：承接 batch 1650 的剩余函数推进（ranking.tsv unique_callers 扇入序，
+uc=1 callsite=3 top3）。本批取：0x7B7D80（16B，callees=1 deps=56——
+**三参调用器**，推断名——[ecx] 串 + 0/0xA → 0x7CB9B8）、0x7B5D70（183B，
+callees=3 deps=70——**字符串赋值器**，推断名——[0x889F64] 默认/源串 +
+new/strncpy + 旧释放 + 双段拷贝）、0x7B0B00（149B，callees=0 deps=45——
+**UTF-8 RLE 压缩器**，推断名——0xC0 前缀位检测 + 0x2F 上限 + [0x7F7930]
+编码表——重复字符压缩）。
+取证手段：disasm.py 三路全读——0x7B7D80 0x20 覆盖尾 0x7B7D8F ret + nop
+垫;0x7B5D70 0xC0 覆盖尾 0x7B5E24 ret 4 + nop 垫;0x7B0B00 0xA0 覆盖尾
+0x7B0B92 ret 4 + nop 垫——均读到函数尾。+ TSV 查重（三候选全部未登记）
++ callee 核验（全部 4 个被调全部已登记——0x7CB9B8（batch 1001 CRT 宽字
+符数值解析包装 _wtoi/_wcstol 族——crt_runtime_verified）、0x7C8E17
+（batch 001 new）、0x7C8B3D（batch 001 delete）、0x7C91D0（batch 169
+_strncpy）——**本批无新候选**）。
+★★★跨批次重大连接：★★◆0x7B7D80 的 0x7CB9B8 = batch 1001 CRT _wtoi/
+_wcstol 族（宽字符数值解析——0x7C-0x7D CRT 层归档——本函数是其 3
+callers 之一调用现场）;★★◆0x7B5D70 = batch 073 的 0x7B4C20/0x7B4CD0
+（C 串追加器双子）同族——0x7Bxxxx 区字符串家族（strncpy + new + 拷贝惯
+用）;★★◆0x7B0B00 = UTF-8 RLE 压缩（0xC0 前缀位 + 0x2F 上限 + [0x7F7930]
+表——与 batch 1649 的 0x7B7A60 宽字符扫描同 0x7B 区字符处理族）。
+batch 1001 的 0x7CB9B8「3 callers」——本批 0x7B7D80 为其一调用现场。
+================================================================================
+0x7B7D80 —— 三参调用器（16B 全读）
+================================================================================
+签名：thiscall 无栈参 ret（ecx=this; 0x7B7D80-0x7B7D8F）。
+机器码结构（0x7B7D80-0x7B7D8F，全程读完）:
+    mov eax,[ecx]（★this 首字段——串指针）→ push 0xA → push 0 → push
+    eax → call 0x7CB9B8（★★batch 1001 CRT 宽字符数值解析包装——_wtoi/
+    _wcstol 族）→ add esp,0xC → ret。
+语义：**三参调用器（推断名）**——thiscall：[ecx] 串 + 0/0xA 两参 →
+0x7CB9B8（宽字符数值解析——基数 0xA=10 进制推断）→ 返。
+★原版怪癖（照抄）：① ★★0x7CB9B8 调用（batch 1001 CRT——_wtoi/_wcstol
+族——基数 0xA 十进制推断）;② ★★push 0xA/0 双参（基数/标志——10 进制
+解析）;③ ★★16B 极简。
+★跨批次连接：◆◆batch 1001（0x7CB9B8——★★3 callers 之一调用现场）
+◆◆0x7Bxxxx 区（消息/字符串家族）。
+新候选：无（callees=1 已登记——0x7CB9B8 CRT）。
+⚠️ partial：函数精确名（推断「三参调用器」）、[ecx] 串语义、0xA 基数业
+务、1 unique caller 身份。
+================================================================================
+0x7B5D70 —— 字符串赋值器（183B 全读）
+================================================================================
+签名：thiscall 1 栈参 ret 4（[esp+0x14]=参数1 长度; 0x7B5D70-0x7B5E24，
+返回 al bool）。
+机器码结构（0x7B5D70-0x7B5E24，全程读完，分段要点）:
+    段1 新串构建（0x7B5D70-0x7B5DA6）：mov esi,[ebx]（★this 首字段——源
+    串）→ test/jne → mov esi,0x889F64（★★默认串——[0x889F64] 全局——
+    batch 1647 的 0x4750D0 同串）→ mov edi,[esp+0x14]（★参数1 长度）→
+    lea eax,[edi+1] → push → call 0x7C8E17（★new 长度+1）→ mov ebp,eax
+    → mov byte[ebp],0 → test esi/je → 0x7C91D0（★★batch 169 _strncpy——
+    拷贝）→ mov byte[edi+ebp],0（★补终止符）。
+    段2 旧缓冲释放+再拷贝（0x7B5DA6-0x7B5E24）：test ebp → 选 esi（新串/
+    默认）→ mov eax,[ebx] → test/je → 0x7C8B3D（★delete 旧）→ 长度计算
+    （repne scasb strlen）→ 0x7C8E17 再 new（strlen+1）→ rep movsd/movsb
+    拷贝 → mov byte[esp+0x14],0 → 0x7C8B3D 释放临时 ebp → mov al,1 →
+    ret 4。
+语义：**字符串赋值器（推断名）**——thiscall 1 栈参（长度）：① 源串选
+择（this 首字段 / [0x889F64] 默认）→ new(长度+1) + strncpy + 补终止符;
+② 旧缓冲 delete + 再 new + 拷贝（rep movsd/movsb）;③ 返 1。
+★原版怪癖（照抄）：① ★★双段分配（new + strncpy → delete 旧 + 再 new +
+拷贝——保守双保险）;② ★★[0x889F64] 默认串（batch 1647 的 0x4750D0
+同串——全局配置键/默认值）;③ ★★strncpy（batch 169——定长拷贝）;④
+★★rep movsd/movsb 手写拷贝（strlen 后逐段）;⑤ ★★ret 4 1 栈参返 1。
+★跨批次连接：◆◆batch 073（0x7B4C20/0x7B4CD0 C 串追加器双子——0x7Bxxxx
+区字符串家族）◆◆batch 169（0x7C91D0 _strncpy）◆◆batch 001（0x7C8E17/
+0x7C8B3D）◆◆[0x889F64]（batch 1647 同串）。
+新候选：无（callees=3 全部已登记）。
+⚠️ partial：函数精确名（推断「字符串赋值器」）、参数1 长度语义、[0x889F64]
+串内容、this 首字段语义、1 unique caller 身份。
+================================================================================
+0x7B0B00 —— UTF-8 RLE 压缩器（149B 全读）
+================================================================================
+签名：fastcall 2 参 + 1 栈参 ret 4（ecx=length、edx=源指针、[esp+0xC]=
+目标; 0x7B0B00-0x7B0B92，返回 eax 输出长度）。
+机器码结构（0x7B0B00-0x7B0B92，全程读完，分段要点）:
+    段1 首字节+循环初值（0x7B0B00-0x7B0B14）：mov esi,[esp+0xC]（★目标）
+    → mov edi,edx（★源）→ xor eax（★输出计数）→ mov dl,1（★连续计数）→
+    mov bl,[edi]（★首字节）→ cmp ecx,1/jle 0x7B0B7A（★长度 1 → 收尾路径）。
+    段2 连续字节压缩循环（0x7B0B14-0x7B0B6D）：lea ebp,[ecx-1] → 循环:
+    mov cl,[edi+1] → inc edi → cmp cl,bl（★连续字符检测）→ jne 0x7B0B3D
+    → inc dl（★计数++）→ cmp dl,0x2F（★★47 上限——超过则刷新）→ jne
+    0x7B0B6D → 命中上限: mov dl,[0x7F7930]（★★编码表——[0x7F7930]）→
+    mov [eax+esi],dl → inc → mov [eax+esi],cl（★写 {编码,字符}）→ inc →
+    xor dl（★计数清零）→ 0x7B0B3D（不连续）: test dl → je 跳过 → cmp dl,1
+    → jne 写 0xC0|count → and bl,0xC0 → cmp 0xC0（★★0xC0 前缀位检测——
+    UTF-8 多字节首字节）→ 写 {0xC0|dl, bl} → 0x7B0B69: mov bl,cl → mov
+    dl,1（★重置计数）→ 0x7B0B6D: dec ebp → jne 循环。
+    段3 收尾（0x7B0B70-0x7B0B92）：test dl → je 收尾 → cmp dl,1 → jne
+    写 0xC0|dl → and bl,0xC0 → cmp 0xC0 → jne 0x7B0B8B → or dl,0xC0 →
+    写 {0xC0|dl, bl} → 0x7B0B8B: 写 bl → inc → ret 4。
+语义：**UTF-8 RLE 压缩器（推断名）**——fastcall（长度 + 源指针 + 目标）
+ret 4：① 连续字符检测（cmp cl,bl）计数 dl（上限 0x2F=47）;② 0xC0 前缀
+位检测（UTF-8 多字节识别——单字节字符压缩为 {0xC0|count, char} 对——
+RLE 编码）;③ [0x7F7930] 表参与上限刷新;④ 输出压缩流 → 返长度。
+★原版怪癖（照抄）：① ★★RLE 压缩（连续字符 {0xC0|count, char} 对——
+变长压缩——UTF-8 感知）;② ★★0xC0 前缀位检测（and bl,0xC0/cmp 0xC0——
+多字节字符不压缩推断）;③ ★★0x2F=47 上限（计数上限——超过强制刷新——
+压缩窗推断）;④ ★★[0x7F7930] 编码表（上限刷新字符——.rdata 表）;⑤
+★★fastcall + 1 栈参（ecx=长度/edx=源/[esp+0xC]=目标——三参形态）;⑥
+★★ret 4 返输出长度。
+★跨批次连接：◆◆0x7Bxxxx 区（消息/字符串家族——batch 1649 的 0x7B7A60
+宽字符扫描同区）◆◆[0x7F7930] 表（.rdata 字符表——未登记）。
+新候选：无（callees=0）。
+⚠️ partial：函数精确名（推断「UTF-8 RLE 压缩器」）、[0x7F7930] 表内容、
+0x2F 上限业务、0xC0 前缀位语义（UTF-8 多字节推断）、输出流格式、1
+unique caller 身份。
+================================================================================
+本批新候选登记（后续批兑现）
+================================================================================
+无（callees 全部已登记——0x7CB9B8 batch 1001 CRT、0x7C8E17/0x7C8B3D
+batch 001、0x7C91D0 batch 169）。新全局登记：[0x7F7930]（编码表——
+0x7B0B00）、[0x889F64]（默认串——batch 1647 已提同串复核）。★★跨批次
+闭合：batch 1001 的 0x7CB9B8「3 callers」之一（0x7B7D80）兑现;batch
+073 的 C 串追加器族再添赋值侧（0x7B5D70）——0x7B 区字符串家族双员;UTF-
+8 RLE 压缩器（0x7B0B00）首案——0x7B 区字符处理第三族。
