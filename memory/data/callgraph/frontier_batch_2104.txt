@@ -1,0 +1,101 @@
+# frontier batch 2104：Rules 收尾区数组系 + 事件批量记录器 + Vector 清空重建器（0x664390 / 0x6640E0 / 0x663B40）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x664390 FUN_00664390 callees=1 deps=540 / 0x6640E0 FUN_006640e0 callees=6 deps=119 / 0x663B40 FUN_00663b40 callees=6 deps=545）
+- 三路 disasm：`.qwen/tmp/_d2104a.txt`（0x664390 size 0x60）/ `_d2104b.txt`（0x6640E0 size 0x160）/ `_d2104c.txt`（0x663B40 size 0x1A0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x664390 | 72B（0x48）| ret 4 @0x6643C5 / @0x6643D5 双出口 | 0x6643E0（batch 2103 c 本尊）| 1（0x7c8d20 已登记）|
+| 0x6640E0 | 337B（0x151）| ret @0x664230 | 0x664240（nop pad 后，未登记）| 5 直调 + 1 间接（call ebx）|
+| 0x663B40 | 392B（0x188）| ret @0x663CC7 | 0x663CD0（未登记）| 6（全已登记）|
+
+## a 路 0x664390（72B）——数组元素字符串匹配 +0x25 字段读取器
+
+```
+00664390  push ebx/esi/edi / mov edi,ecx（this）
+00664397  mov eax,[edi+0x10]（计数）/ test / jle 0x6643bf
+0066439e  mov ebx,[esp+0x10]（匹配字符串）/ mov eax,[edi+4]（数组基址）
+006643a2  loop: mov ecx,[eax+esi*4]（元素指针）/ **inc ecx（+1 跳过首字节）**
+006643aa  push ecx / push ebx / call 0x7c8d20（字符串比较，相等返 0）/ add esp,8
+006643b3  test eax / je 0x6643c8（命中）
+006643b7  mov eax,[edi+0x10] / inc esi / cmp esi,eax / jl loop
+006643c1  （未命中）xor ax,ax（★★只清低 16 位）/ ret 4
+006643c8  mov edx,[edi+4] / mov eax,[edx+esi*4]（命中元素）/ mov ax,[eax+0x25]（读 +0x25 双字）/ ret 4
+```
+**语义**：数组元素字符串匹配 +0x25 字段读取器——按元素指针 **+1** 处字符串与 [esp+0x10] 线性比较（0x7c8d20 相等返 0 → je 命中），命中返回该元素对象 **+0x25** 双字（ax）；未命中返 0（xor ax,ax——高位不清）。与 batch 2103 b 0x664400（写 +0x25）**构成读写对**，但匹配惯用法不同（0x664400 用 movsx 首字节 == 匹配，本路用 0x7c8d20 字符串比较 + 元素+1）。
+
+## b 路 0x6640E0（337B）——事件批量读取+环形记录器
+
+```
+006640e0  sub esp,0x9c / lea ecx,[esp+0x1c] / call 0x53ecb0（构造局部对象）
+006640ef  mov eax,[0xa8ed84]（全局计数）/ test / jle 0x66422a（空直接退）
+006640fc  循环头: 本路五次调 0x541480（[0xa8e9c0] 全局对象方法，key=0xb04e9c）读取条目
+0066412b  mov eax,[0xb04e9c] / cmp al,5 / je 0x66414c
+00664134  非 5: and eax,0xff / push / push 0x839be8 / call 0x4068e0（sprintf 格式化）
+0066414c  ==5: push 0x839bbc / call 0x4068e0（另一格式）
+0066415e  movsx esi,byte ptr [0xb04e9d] / 再构造 / call 0x53ed20
+006641a7  call 0x4c6c50（★★MISSING=EventClass::EventClass 构造器，ranking:5458）
+006641ac  cmp [0xa802c8],0x80 / jge 0x664201（环形已满 128 跳过记录）
+006641b8  lea edi,[ecx+ecx*2+0xa802d4]（环槽 = 0xa802d4 + 索引*0x6F(111)）
+006641cd  mov ecx,0x1b / rep movsd（108B）+ movsw（2B）+ movsb（1B）== 111B 记录拷贝
+006641d7  call ebx（[0x7e1530] 函数指针，间接调用）
+006641df  mov [ecx*4+0xa83a54],eax（结果写全局数组）
+006641f1  inc edx / **and edx,0x7f（环形索引 mod 128）** / inc eax（计数）/ 存回
+00664201  lea eax,[esp+0xe] / … / call 0x541480 / test / **jne 0x66412b（循环）**
+00664230  ret
+```
+**语义**：事件批量读取+环形记录器——循环调用 [0xa8e9c0] 全局对象（0x541480，key 0xb04e9c）读取数值条目；每条约构造局部对象（0x53ecb0/0x53ed20）、对字节 0xb04e9c 值分类 sprintf（0x4068e0，==5 走 0x839bbc 否则 0x839be8 格式），调用 **EventClass 构造器 0x4c6c50**（[0xa83d4c] 全局对象 +0x30 字段、字符 0xb04e9d 为参），把 111B 记录拷进 **[0xa802d4] 128 槽环形缓冲**（索引 [0xa802d0] 递增 and 0x7f，计数 [0xa802c8]，满 0x80 跳过记录但结果仍写），调 [0x7e1530] 函数指针并把结果写 **[0xa83a54]** 全局数组，直到 0x541480 返回 0。
+
+## c 路 0x663B40（392B）——Vector 全清 + 单位列表重建器
+
+```
+006663b40  mov esi,ecx（this Vector）
+006663b4d  清空循环: mov ecx,[eax]（第 0 元素）/ push / call 0x7c8b3d（delete）
+006663b62  dec ecx / mov [esi+0x10],ecx（计数-1）
+006663b6c  左移: mov edx,[ecx+eax*4] / mov [ecx+eax*4-4],edx（整体左移）
+006663b81  test eax / jne 0x663b4d（★★循环删除直到空——O(n²) 逐元素左移清空）
+006663b85  mov eax,[0xa80238]（全局计数）/ mov [esp+4],0（外层循环 i）
+006663b9d  主循环: mov ebx,[0xa8022c + i*4]（全局对象）/ call 0x50b730（判定）
+006663bc2  mov al,[ebx+0x1f6] / test / jne 跳过（标志非零不建）
+006663ca   push 0x2a(42) / call 0x7c8e17（operator new）/ mov [edi],dl（首字节）
+006663da   lea ecx,[ebx+0x1602a] / push 0x14(20) / call 0x7350c0（拷贝 20B）
+006663e9   push eax / lea eax,[edi+1] / push / call 0x7c91d0（字符串拷贝）
+006663fb  内层找: [0xa8da78] 数组里找 [元素+0x6f]==i 的项（[0xa8da84] 个）
+006663c2e  命中: mov ecx,[edx+ebp*4] / add ecx,0x28 / call 0x53eda0（读字段）
+006663c3d   mov [edi+0x21],eax / mov cx,[ebp*2+0xa8e2b2] / mov [edi+0x25],cx（表双字）
+006663c54  mov [edi+0x29],1（写标志）
+006663c58  mov edx,[0xa8e2ac] / mov ebp,[ebx+0x30] / cmp / sete al（相等标志）
+006663c68  shl dl,cl（★★1<<i 位掩码——按索引置位）/ mov [edi+0x27],al / mov [edi+0x28],dl
+006663c70  扩容检查: 计数 vs [esi+8] 容量 / jl 直接插 / owns([esi+0xd]) 或容量为 0 走虚表槽 8（call [edx+8] 扩容）
+006663c9a  尾插: 计数+1 / mov [edx+eax*4],edi
+006663ca9  循环 i++ / cmp i,[0xa80238] / jl 主循环
+006663cc7  ret
+```
+**语义**：Vector 全清 + 单位列表重建器——先把 this Vector **逐元素 delete + 整体左移清空**（O(n²) 照抄），再遍历 [0xa80238] 个全局对象 [0xa8022c]：对通过 0x50b730 判定且 [ebx+0x1f6]==0 的对象 operator new 42B，拷源 [ebx+0x1602a] 20B + 字符串进 [edi+1]，在 [0xa8da78] 数组找 [元素+0x6f]==i 的项取 [项+0x28] 对象填 [edi+0x21]、[ebp*2+0xa8e2b2] 表填 [edi+0x25]，置 [edi+0x29]=1、[edi+0x27]=([0xa8e2ac]==[ebx+0x30])、[edi+0x28]=**1<<i** 位掩码，扩容后尾插 this。
+
+## 原版怪癖（照抄）
+
+1. a 路 `inc ecx`（元素指针 +1 跳过首字节）再字符串比较——元素是**前缀字节 + 字符串**结构；未命中 `xor ax,ax` 只清低 16 位（eax 高位残留计数高 16 位——计数 < 0x10000 时恰为 0）；
+2. a 路与 batch 2103 b 0x664400 是 **+0x25 读写对**但匹配惯用法不同（0x664400 = movsx 首字节 ==，本路 = 0x7c8d20 字符串比较）；
+3. b 路 **环形缓冲 [0xa802d4] 128 槽**，索引递增 `and 0x7f` 环形回绕，满 0x80（jge）时**跳过记录拷贝但函数指针调用与结果写照做**；
+4. b 路记录 111B = rep movsd 27 dwords + movsw + movsb 拼装（无 0x6F 显式常量，寻址用 lea 链 ecx*9→*37→*111）；
+5. b 路字节值 0xb04e9c ==5 走不同 sprintf 格式串（0x839bbc vs 0x839be8）；
+6. c 路清空是 **O(n²) 逐元素 delete + 整体左移**（非标准的计数清零/批量 delete）；
+7. c 路 [edi+0x28] 写 **1<<i** 位掩码（按外层循环索引置位而非按对象 ID）；
+8. c 路扩容走 Vector 虚表槽 8（call [edx+8]），owns([esi+0xd]) 非零或容量为 0 时强制扩容路径。
+
+## 跨批次连接
+
+- ★★★a 路 ↔ batch 2103 b 0x664400（+0x25 读写对）；a 路后邻头 0x6643E0 = batch 2103 c 本尊（0x664 区数组系闭环）；
+- ★★b 路 0x4c6c50 = **EventClass::EventClass**（ranking:5458 带名，96B）——未登记候选，成为观察项；
+- ★b 路 [0xa802c8]/[0xa802d0]/[0xa802d4] 环形缓冲 + [0xa83a54] 结果数组 ↔ c 路 [0xa80238]/[0xa8022c] 全局对象数组（**0xa802 区同一全局状态族**）；
+- ★c 路 0x7350c0/0x7c91d0/0x7c8e17/0x7c8b3d（CRT 拷贝/字符串/new/delete，已登记）；0x50b730（判定，已登记）；Vector 扩容虚表槽 8 ↔ batch 1737（0x58AF80 等 Vector 族）。
+
+## 观察项 / 候选池
+
+- **新候选：0x4C6C50（EventClass::EventClass，b 路调用，ranking 有行未登记）**。
+- **后邻未登记**：0x664240（b 路后邻，nop pad 后）、0x663CD0（c 路后邻，sub esp,8 开头）。
+- 前向：picker 队列继续 0x66 区（0x663910/0x661C10）+ RawFileClass::SetFileTime/GetFileTime（0x65D240/0x65D1F0）+ RadSiteClass 族（0x65B510/0x65B530/0x65BB50）。
