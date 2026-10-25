@@ -1,0 +1,45 @@
+# frontier batch 1999
+
+本批三函数（0x6C 区——浮点四元加减孪生 + 状态保存恢复块）：0x6C97E0 / 0x6C9740 / 0x6C8E80
+Picker：unique_callers 扇入度 top3（0x6C97E0 FUN_006c97e0 callees=0 deps=165；0x6C9740 FUN_006c9740 callees=0 deps=5；0x6C8E80 FUN_006c8e80 callees=5 deps=3484）
+disasm：`_d1999a.txt`（0x6C97E0 size 0x50）/ `_d1999b.txt`（0x6C9740 size 0x50）/ `_d1999c.txt`（0x6C8E80 size 0xB0）——三路全部读取（含尾 ret + nop pad + 后邻函数头：a 尾 ret 8@0x6C9819 后邻 0x6C9820；b 尾 ret 8@0x6C9779 后邻 0x6C9780；c 尾 ret c3@0x6C8F0C 后邻 0x6C8F10）
+callee 核验：5/5 全部已登记（c：0x72D300/0x72E9F0/0x4F4780/0x60D380/0x72D350；a/b 无）——**无新候选**（脚本 _check_callees1999.py，8 位格式）
+
+## 1. 0x6C97E0 —— 浮点四元减法器·[0x6C97E0]
+- 大小：60B（0x6C97E0-0x6C9819），全读，尾 ret 8 单出口 0x6C9819
+- 机器码（两段——浮点四元循环减+16B 结构拷贝）：
+  段0 循环减（0x6C97E0-0x6C97FB）：mov edx,[esp+8]（★栈参1=输出指针）→ push esi → mov eax,ecx（★this）→ sub edx,ecx（★偏移=输出-this）→ mov esi,4 → 循环 0x6C97EE: **fld [eax] / fsub [edx+eax]（★[this+i]-[out+i]→[this+i]）→ add eax,4 / dec esi / fstp [eax-4]** ×4（★4 次迭代——jne 0x6C97EE）
+  段1 16B 拷贝（0x6C97FC-0x6C9819）：mov eax,[esp+8]（★输出）→ mov esi,[ecx] → mov edx,eax → [edx]=esi（★四 dword 拷贝 [this]→[out]）→ [edx+4]/[edx+8]/[edx+0xc] 同构 → ret 8
+- 语义：**浮点四元减法器**——thiscall + 1 栈参（输出指针，ret 8）：①循环 4 次（esi=4）浮点减法 [this+i] = [this+i] - [out+i] 写回原位;②16B 四 dword 拷贝 [this]→[out]——**四元浮点向量（x/y/z/w 或坐标+高度）原地减后拷贝——SIMD 前向量处理惯用（0x7E 区浮点常量邻族）**
+- ★原版怪癖（照抄）：①**fsub 方向为 [this]-弹性指针[edx+eax]**（edx=out-this 预偏移——指针运算经典手法）;②循环 4 次 mov esi,4 / dec / jne（非 unwound——4 迭代循环体）;③fstp 写到 [eax-4]（add eax,4 后补 -4 回写）;④16B 拷贝四 dword 独立（非 rep movsd）;⑤ret 8（1 栈参+thiscall）;⑥60B
+- ★跨批次连接：16B 结构拷贝（batch 1996/1997 容器族同构）+浮点惯用（QWEN.md 取数惯用法同源）
+- 新候选：无（0/0 E8 callee）
+- ⚠️ partial：函数精确名（推断「浮点四元减法器」）、四元语义（向量/坐标推断）、调用方（deps=165）
+
+## 2. 0x6C9740 —— 浮点四元加法器·[0x6C9740]
+- 大小：60B（0x6C9740-0x6C9779），全读，尾 ret 8 单出口 0x6C9779
+- 机器码（两段——浮点四元循环加+16B 结构拷贝）：**与 a（0x6C97E0）逐位同构**——段0 循环加（0x6C9740-0x6C975B）：mov edx,[esp+8] → push esi → mov eax,ecx → sub edx,ecx → mov esi,4 → 循环 0x6C974E: **fld [edx+eax] / fadd [eax]（★[out+i]+[this+i]→[this+i]——与 a 的 fsub 方向相反）** → add eax,4 / dec esi / fstp [eax-4] ×4 → 段1 16B 拷贝（0x6C975C-0x6C9779）同 a → ret 8
+- 语义：**浮点四元加法器**——thiscall + 1 栈参（输出指针，ret 8）：循环 4 次浮点加法 [this+i] = [out+i] + [this+i] + 16B 四 dword 拷贝——**a 的加法孪生（同骨架唯一差异 fadd vs fsub）——加减对惯用**
+- ★原版怪癖（照抄）：①fadd 方向 [out]+[this]（与 a 的 fsub 相反——运算对）;②同 4 迭代循环/预偏移/回写手法;③16B 拷贝同构;④ret 8;⑤60B——**与 a 逐字节差异仅 fsub/fadd 一处**
+- ★跨批次连接：★a/b 孪生对（0x6C97E0/0x6C9740——加减对称——后邻 0x6C9780 变体观察）+16B 拷贝（batch 1997 同构）
+- 新候选：无（0/0 E8 callee）
+- ⚠️ partial：函数精确名（推断「浮点四元加法器」）、四元语义、调用方（deps=5）
+
+## 3. 0x6C8E80 —— 状态保存恢复块（推断名）·[0x6C8E80]
+- 大小：141B（0x6C8E80-0x6C8F0C），全读，尾 ret c3 单出口 0x6C8F0C
+- 机器码（五段——坐标取存+状态调用对）：
+  段0 坐标读（0x6C8E80-0x6C8EC1）：sub esp,0x10 → eax=[0xA8B230]（★全局对象）→ ecx=[eax+0x34B8]（★+0x34B8 子对象）→ **call 0x72D300（★已登记）** → ecx=[0x8A00A4] / edx=[0x8A00A8]（★坐标全局对）→ [esp+8]=ecx / [esp+0xc]=edx → ecx=[0x88730C]（★全局状态对象）→ lea edx,[esp] → [esp]=0 / [esp+4]=0 → **call 0x72E9F0（★已登记——状态保存）**
+  段1 状态应用（0x6C8EC6-0x6C8EE6）：edx=[0x88730C] → push 0 → mov cl,1 → **call 0x4F4780（★已登记——应用调用）** → push 0 → mov edx,0x6C8FF0（★本函数后邻回调地址）→ mov ecx,0x103（★259 参数）→ **call 0x60D380（★已登记——注册回调）**
+  段2 坐标取存（0x6C8EE6-0x6C8F0C）：ecx=[0x88730C] → lea edx,[esp] → **call 0x72E9F0（★再保存）** → edx=[0x88730C] → push 0 → mov cl,1 → **call 0x4F4780（★再应用）** → **call 0x72D350（★已登记——成对复位）** → add esp,0x10 → ret c3
+- 语义：**状态保存恢复块（推断名）**——thiscall 无栈参：①读 [0xA8B230]+0x34B8 子对象 + 0x72D300;②[0x8A00A4]/[0x8A00A8] 坐标对存入栈;③[0x88730C] 状态对象 0x72E9F0 保存 ×2;④0x4F4780 应用 ×2 + 0x60D380 注册回调（参数 0x103/回调 0x6C8FF0 后邻）;⑤0x72D350 复位——**渲染/界面状态进出栈对（[0x88730C] 全局状态对象 + [0x8A00A4] 坐标全局——保存-应用-恢复三连）**
+- ★原版怪癖（照抄）：①[0xA8B230]+0x34B8 子对象取存（全局对象链）;②★[0x8A00A4]/[0x8A00A8] 坐标全局对（栈暂存）;③★[0x88730C] 状态对象（0x72E9F0 保存/0x4F4780 应用成对 ×2）;④0x60D380 注册回调（ecx=0x103/edx=0x6C8FF0 后邻回调地址）;⑤0x72D350 复位收尾;⑥ret c3;⑦141B
+- ★跨批次连接：0x72D300/0x72E9F0/0x4F4780/0x60D380/0x72D350（均 batch 前登记）+[0x88730C] 全局状态对象（batch 1998 0x6C9B40 同全局）+[0x8A00A4]/[0x8A00A8] 坐标全局对
+- 新候选：无（5/5 E8 callee 已登记）
+- ⚠️ partial：函数精确名（推断「状态保存恢复块」）、[0xA8B230] 对象身份、0x103 参数语义、回调 0x6C8FF0 语义、调用方（deps=3484——高扇出）
+
+## 批次观察
+- 本批三函数 = **向量运算孪生对（0x6C97E0/0x6C9740）+ 状态进出栈块（0x6C8E80）**
+- **★浮点四元加减对**：0x6C97E0/0x6C9740 逐字节同构（唯一差异 fsub/fadd）——同骨架兄弟函数——4 迭代循环 + 预偏移指针（edx=out-this）经典手法
+- **[0x88730C] 全局状态对象跨批复用**：batch 1998 0x6C9B40（规则加载）与 本批 0x6C8E80（状态进出栈）同全局——观察字段语义
+- callee 核验：5/5 全部已登记——**无新候选**
+- 新候选入池：无（dump 后邻 0x6C9820/0x6C9780/0x6C8F10 未展开观察——0x6C9820 头几条为浮点比较 [0x7E1748] 常量）
