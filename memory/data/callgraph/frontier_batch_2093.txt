@@ -1,0 +1,52 @@
+# frontier batch 2093：Vector 析构器·虚表孪生族（0x67A060 / 0x67A000 / 0x679FD0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x67A060 callees=1 deps=241 / 0x67A000 callees=1 deps=241 / 0x679FD0 callees=1 deps=241）
+- 三路 disasm：`.qwen/tmp/_d2093a.txt`（0x67A060 size 0x40）/ `_d2093b.txt`（0x67A000 size 0x40）/ `_d2093c.txt`（0x679FD0 size 0x40）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x67A060 | 45B（0x2D）| ret c3 @0x67A08C | 0x67A090（121B 拷贝构造族）| 1（0x7C8B3D）|
+| 0x67A000 | 45B | ret c3 @0x67A02C | 0x67A030（45B 析构器·0x7EAC28）| 1（0x7C8B3D）|
+| 0x679FD0 | 45B | ret c3 @0x67AFFC | 0x67A000（b 本尊）| 1（0x7C8B3D）|
+
+## 机器码结构（a 路 0x67A060 为代表，b/c 逐字节同构仅虚表常量不同）
+
+```
+0067A060  push ebx,esi / mov esi,ecx
+0067A064  xor ebx,ebx
+0067A066  mov eax,[esi+4]           ; 数据指针
+0067A069  mov [esi],0x7f0d9c        ; 虚表（a 路）
+0067A06F  test eax,eax / je 0x67A084
+0067A073  cmp byte ptr [esi+0xD],bl ; owns 检查
+0067A076  je 0x67A084
+0067A078  push eax / call 0x7C8B3D  ; operator delete 释放
+0067A07E  add esp,4 / mov [esi+4],ebx
+0067A084  mov byte ptr [esi+0xD],bl ; owns = 0
+0067A087  mov [esi+8],ebx           ; 容量 = 0
+0067A08A  pop esi,ebx / ret
+```
+- b 路 0x67A000：虚表 0x7EAC68；c 路 0x679FD0：虚表 0x7EAC48。
+
+## 语义
+
+**Vector 析构器·虚表孪生族**——[esi+4] 数据指针非空且 [esi+0xD] owns 时 0x7C8B3D 释放，然后 [esi+4]=0/[esi+0xD]=0/[esi+8]=0 清理；**先写虚表后清理**（析构中对象虚表切至族虚表）。a/b/c 分别对应构造族收口虚表：a 0x7F0D9C（batch 2086-2090 族）、b 0x7EAC68（batch 2087 c 族）、c 0x7EAC48（batch 2088 a 族）——**构造/析构虚表闭环**。
+
+## 原版怪癖（照抄）
+
+1. 析构中虚表写族虚表（0x7F0D9C/0x7EAC68/0x7EAC48）再清理字段；
+2. owns=0 或数据指针空时跳过 delete（不释放）；
+3. [esi+4]=0 + [esi+0xD]=0 + [esi+8]=0 三字段清理（+0x10/+0x14 不动）。
+
+## 跨批次连接
+
+- ★★★batch 2090 a 0x67A8B0（空构造器 0x7F0CFC）/2089 b 0x67B370（0x7F0D9C→0x7F0E0C 构造）+2087 c 0x67B8F0（0x7EAC68 族）+2088 a 0x67B720（0x7EAC48 族）——**构造/析构虚表对全部闭环**；
+- ★0x7C8B3D（CRT operator delete，已登记）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（0x7C8B3D 已登记）。
+- **后邻未登记**：0x67A030（45B 析构器 0x7EAC28 第四连）、0x67A090（121B 拷贝构造族）、INISection::Exists 0x679F40（带名 47B callees=2）。
+- 前向：INISection::Exists + RulesClass::LoadTypesFromINI 等带名函数族。
