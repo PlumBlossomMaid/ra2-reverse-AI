@@ -1,0 +1,87 @@
+# frontier batch 2109：全局数组过期元素清理器 + 带色调选择的屏幕坐标注册器 + 过期元素调度器（0x6603B0 / 0x660050 / 0x660000）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x6603B0 FUN_006603b0 callees=1 deps=179 / 0x660050 FUN_00660050 callees=7 deps=1 / 0x660000 FUN_00660000 callees=1 deps=169）
+- 三路 disasm：`.qwen/tmp/_d2109a.txt`（0x6603B0 size 0xC0）/ `_d2109b.txt`（0x660050 size 0x320——含跳表数据区）/ `_d2109c.txt`（0x660000 size 0x60）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x6603B0 | 172B（0xAC）| ret @0x66045B | 0x660460（未登记）| 1（0x7c8b3d 已登记）|
+| 0x660050 | 787B（0x313）| ret @0x660362（尾随跳表数据 0x660364-0x660373）| 0x660374（索引表数据区，非代码）| 7（全已登记）|
+| 0x660000 | 75B（0x4B）| ret @0x66004A | 0x660050（**b 路本尊**，c 路内部调度调用）| 1（0x660050 批内自引用）|
+
+## a 路 0x6603B0（172B）——全局数组过期元素清理器
+
+```
+006603b0  push ecx / mov eax,[0xb04db8]（全局计数）/ push ebx / lea ebx,[eax-1]（外层索引=计数-1）
+006603ba  test ebx,jl 0x660459（<0 跳尾）/ push esi/edi / mov edi,[0xb04dac]（全局数组基址）
+006603ca  外层循环: mov esi,[edi+ebx*4]（元素[ebx]）/ mov edx,[esi+0x24] / mov eax,[esi+0x2c]
+006603d3  cmp edx,-1 / je 0x6603e6 → mov ecx,[0xa8ed84] / sub ecx,edx / cmp ecx,eax / jge 0x6603ea
+006603e4  sub eax,ecx（★过期窗口压缩）/ test eax / jne 0x660450（非 0 跳过）
+006603ea  mov al,[esi+0x3c] / test al / jne 0x660450（★活跃标志跳过）
+006603f1  mov esi,[edi+ebx*4] / test esi / je 0x660450 / mov edx,[0xb04da8] / lea ecx,[esp+0xc]
+0066040c  ★call dword ptr [edx+0x10]（0xb04da8 虚表槽 0x10 查找）/ cmp eax,-1 / je 0x660441
+00660414  mov ecx,[0xb04db8] / cmp eax,ecx / jge 0x660441（≥ 计数照删）/ dec ecx / mov [0xb04db8],ecx / jge 0x660441
+00660429  左移: mov ecx,[0xb04dac] / inc eax / mov edx,[ecx+eax*4] / mov [ecx+eax*4-4],edx / cmp eax,[0xb04db8] / jl
+00660441  push esi / call 0x7c8b3d（delete）/ mov edi,[0xb04dac]（★重取数组基址）
+00660450  dec ebx / jns 0x6603ca（外层循环倒序）/ ret
+```
+**语义**：全局数组过期元素清理器——与 batch 2107 b 路（0x660B00 槽 0x10 查找批量删除器）**同构 + 过期过滤前缀**：倒序遍历 [0xb04dac]（[0xb04db8] 个元素）从计数-1 递减到 0，先按 [0xa8ed84]-[元素+0x24] 对 [元素+0x2c] 做**过期窗口压缩**（[0xa8ed84] 是全局时间/计数，[元素+0x24] 是生成时间戳，[元素+0x2c] 是生命周期阈值——窗口归 0 即到期），且 [元素+0x3c] 活跃标志为 0 的元素才进入删除：槽 0x10 查找合法索引左移删除 + 0x7c8b3d delete；删除后**重取数组基址**（[0xb04dac] 可能被左移改变）。
+
+## b 路 0x660050（787B）——带色调选择的屏幕坐标注册器
+
+```
+00660050  push ebp / and esp,0xfffffff8 / sub esp,0x94 / mov edi,ecx（this）
+00660061  mov eax,[edi]（★this 虚表槽/类型码）/ cmp eax,0xc / ja 0x6600bc
+00660068  ★跳表: mov cl,[eax+0x660374]（索引表）/ jmp [ecx*4+0x660364]（跳表）
+00660077  分支1: [esp+0x10]=0xff,0x00 / ax=0x00ff / or cl,0xff / jmp 0x6600d3
+0066008b  分支2: push 0,0xff,0xff / lea ecx,[esp+0x1c] / jmp 0x6600c6
+0066009d  分支3: push 0xff,0xff,0 / lea ecx,[esp+0x30] / call 0x4355b0（RGB 构造查表）/ mov ax,[ecx] / mov cl,[ecx+2]
+006600bc  默认: push 0,0,0 / lea ecx,[esp+0x28] / call 0x4355b0 / mov ax,[edx] / mov cl,[edx+2]
+006600d3  → [esp+0x14]=第一套 RGB（word+byte）；再查 [eax+0x660394] 第二跳表 → [esp+0x18]=第二套（0x80 系）
+00660152  mov al,[esp+0x14] / 三字节全 0 → jmp 0x66035c（★跳过主体）
+00660172  主体: 与 batch 2108 b（0x660540）同构——0x660730 构造 + 栈 4 对累加 this+4/+8
+0066022a  ★call [esi+0x78]（槽 0x78 first 段）×4 → push eax → ★call [esi+0x90]（★槽 0x90，2108 b 用 0x44）
+0066025a  ★call [eax+0x78]（槽 0x78 second 段）×4 → 0x7bc2b0（拷贝）
+00660281  [0x880c98]==1 && [0x880c94]==1 门控 → 0x437f10 / 0x45a130 / 0x487f40 / 0x421b60 矩形链 → 写回 4 全局
+00660362  ret
+```
+**语义**：带色调选择的屏幕坐标注册器——batch 2108 b（0x660540）的**入口超集版**：前置按 this 类型码（0..0xc）查双跳表（[0x660364] 跳表 + [0x660374]/[0x660394] 索引表）选**两套 RGBA 色调**（第一套 0xff 系 / 第二套 0x80 系，0x4355b0 三参 RGB 构造查表，取 [obj]word+[obj+2]byte）；第一套三字节全 0 则整跳（不注册）；主体与 2108 b（0x660540）同构，**唯一差异为第二段槽号 0x90 vs 0x44**。
+
+## c 路 0x660000（75B）——过期元素调度器
+
+```
+00660000  mov eax,[0xb04db8]（全局计数）/ push edi / xor edi,edi / test eax / jle 0x660049
+0066000d  循环: mov eax,[0xb04dac] / mov ecx,[eax+edi*4]（元素[edi]）/ mov esi,[ecx+0x30] / mov eax,[ecx+0x38]
+0066001b  cmp esi,-1 / je 0x66002e → mov edx,[0xa8ed84] / sub edx,esi / cmp edx,eax / jge 0x660032
+0066002c  sub eax,edx（★过期窗口压缩，同 a 路惯用法）/ test eax / jg 0x660039（存活跳）
+00660032  mov al,[ecx+0x3c] / test al / je 0x66003e（到期且标志 0 处理）
+00660039  ★call 0x660050（b 路本尊！）
+0066003e  inc edi / cmp edi,[0xb04db8] / jl 0x66000d（正序循环）/ ret
+```
+**语义**：过期元素调度器——**b 路的调度遍历器**：正序遍历 [0xb04dac] 数组，每元素做与 a 路同款的过期窗口检查（**但字段不同：+0x30 coal 时间戳 / +0x38 阈值 vs a 路 +0x24/+0x2c**），存活（窗口>0）或活跃标志（+0x3c）非 0 则跳过，到期元素**调度给 0x660050（本批 b 路本尊）**处理（带色调注册）。a 路是倒序直接删除，c 路是正序调度注册——**同一数组两种过期处理策略**。
+
+## 原版怪癖（照抄）
+
+1. a 路**删除后重取数组基址**（mov edi,[0xb04dac]）——左移删除会改变 [0xb04dac] 内容但基址不变，重取为冗余防漂移；
+2. a/c 路同款过期窗口惯用法：`[0xa8ed84]-时间戳 < 阈值 ? 阈值-差值 : 原值`，归 0 即到期——但两路字段对不同（+0x24/+0x2c vs +0x30/+0x38）；
+3. b 路双跳表选色：`mov cl,[eax+0x660374] / jmp [ecx*4+0x660364]`——类型码经索引表映射到跳表（非连续 case 压缩）；
+4. b 路 0x4355b0 三参调用（0xff/0x80 组合）取色，"分支1"路径用 `or cl,0xff` 直接造值不调 0x4355b0；
+5. b 路第一套三字节（[esp+0x14..0x16]）全 0 时**整跳主体**（色值 0 = 不注册）；
+6. b 路与 2108 b 主体逐段同构、仅第二段槽号 0x90 vs 0x44——同族两注册器；
+7. c 路存活判定 `jg`（窗口>0 跳）vs a 路 `jne`（窗口≠0 跳）——a 路窗口为负也删，c 路窗口必须恰 0 才调度（细微差异需照抄）。
+
+## 跨批次连接
+
+- ★★★b 路 ↔ batch 2108 b 路 0x660540（主体同构，色调前缀 + 槽 0x90 vs 0x44）；↔ batch 2108 后邻 0x660730（b 路调用它构造）；
+- ★★a 路 ↔ batch 2107 b 路 0x660B00（槽 0x10 查找删除骨架同构 + 过期过滤前缀）；
+- ★★c 路调 0x660050（b 路本尊，调度-执行关系）；a/c 共享 [0xb04db8]/[0xb04dac]/[0xb04da8]/[0xa8ed84]（0xb04d 全局数组族 + 全局时间源）；
+- ★0x880 区 UI 族（[0x880c98]/[0x880c94]/[0x880c84]/[0x8809f4..0x880a00]）与 0x421b60/0x437f10/0x45a130/0x487f40 矩形链（batch 2108 b 同款）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（a/b 直接 call 全已登记；c 路 0x660050 批内自引用 = 本批 b 路本尊）。
+- **后邻未登记**：0x660460（a 路后邻，push ebp/and esp 开头）、0x660374（b 路尾随索引表数据区，非代码）。
+- 前向：picker 队列继续 0x66 区（0x660000 已取一族）+ RawFileClass::SetFileTime/GetFileTime（0x65D240/0x65D1F0）+ RadSiteClass 族（0x65B510/0x65B530/0x65BB50）+ 0x65C8B0（batch 2105 候选）。
