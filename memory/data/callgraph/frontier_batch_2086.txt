@@ -1,0 +1,85 @@
+# frontier batch 2086：场景级 SaveLoad 写侧巨函数 + Vector 构造族（0x67D300 / 0x67BFA0 / 0x67BDD0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x67D300 callees=52 deps=39 / 0x67BFA0 callees=1 deps=117 / 0x67BDD0 callees=9 deps=237）
+- 三路 disasm：`.qwen/tmp/_d2086a.txt`（0x67D300 size 0x1150）/ `_d2086b.txt`（0x67BFA0 size 0x80）/ `_d2086c.txt`（0x67BDD0 size 0x1D4）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x67D300 | 4411B（0x113A）| ret c3 @0x67E43A + nop pad | 0x67E440（未登记）| 51（44 已登记 + 1 自引用 + 6 新候选/观察）|
+| 0x67BFA0 | 108B（0x6C）| ret 4 @0x67BFF7 / @0x67C009 | 0x67C010（虚表槽 0x7F0D5C 构造）| 1（0x7C8E17）|
+| 0x67BDD0 | 464B（0x1D0）| ret 0xC @0x67BF0B / @0x67BF9D | 0x67BFA0（b 本尊）| 7（6 已登记 + 0x67BFA0 自引用）|
+
+## a 路 0x67D300（4411B）——场景级 SaveLoad 写侧巨函数
+
+**与 batch 2085 c 路 0x67E730 逐段镜像的写侧**（0x67E730 读、0x67D300 写同族数据），51 个直接 call 堪称调度中枢：
+1. **0x689310 SaveLoad_Prefix（batch 2063 带名）** 起手 → **0x4C6340(0x8a38e0)**（对应读侧 0x4C6320）+ **0x674730(0x8871e0)**（>=读侧 0x675210 SaveLoad_Prefix 的调度依赖，ranking 未登记观察项）；
+2. **0x7E15F4 串写循环 ×16 段**（与 batch 2073-2084 家族同款模板）：每段 = 虚表槽 0x10 读 [esp+0x10] 计数（前置 [0x8b4160]/[0x8b4148]/[0xa83ca8]/[0xa80238]/[0x8b4118]/[0xa83cf0]/[0xa8e358]/[0xa83df8]/[0xa83c78]/[0xa8eb50]/[0xa8b228]/[0xa8e3a0]/[0xa8e9b8]/[0xa8e8e0]/[0xa8ecb0]/[0x8b40f8]/[0x8b41d8]/[0x8872c0] 等全局 dword 计数）→ 循环 `[0x8b4154]/[0x8b413c]/[0xa83c9c]/[0xa8022c]/[0x8b410c]/[0xa83ce4]/[0xa8e34c]/[0xa83dec]/[0xa83c6c]/[0xa8eb44]/[0xa8b21c]/[0xa8e394]/[0xa8e9ac]/[0xa8e8d4]/[0xa8eca4]/[0x8b40ec]/[0x8b41cc]/[0x8872b4]/[0xb0e784]/[0xb0e724]/[0x8b417c]/[0xa8eaec]/[0xa8b204]/[0xb0e65c]/[0xb0f1a4]` 数组元素逐个虚表槽 0 串取 0x7f7c80 → ffd5(0x7E15F4) 写出 → 虚表槽 8 释放，失败跳统一出口 0x67D42A；
+3. 中段带检查变体（[0xa8b210]/[0xb0e668] 段用 7c 短跳）与 [0xa83d60]/[0x8b41f0] 两段**计数直传元素**循环（虚表槽 0x10 写 [edx+ebx*4] 元素本身）；
+4. **★尾段批量兑现 batch 2073-2084 全部 34 个对象数组串写出器**（0x67FDF0(0xa83e30)/0x67FE70(0xa8eb28)/0x67FEF0(0x887388)/0x67FF70(0x8874c0)/0x67FFF0(0x887568)/0x680070(0xa83d98)/0x6800F0(0xa83dc8)/0x680170(0xa83d68)/0x6801F0(0xa80208)/0x680270(0xa83c80)/0x6802F0(0xa8ed40)/0x680370(0xb72608)/0x6803F0(0xa8ec18)/0x680470(0xa83d80)/0x6804F0(0xabca10)/0x680570(0x8b4190)/0x6805F0(0x8b4120)/0x680670(0xb0f4e8)/0x6806F0(0x8a3870)/0x680770(0xa8e330)/0x6807F0(0xa83cb8)/0x680870(0xa8e318)/0x6808F0(0xa8e988)/0x680970(0x8b3d10)/0x6809F0(0x88a0f0)/0x680A70(0xa8ec38)/0x680AF0(0x89e0f0)/0x680B70(0x8a0208)/0x680BF0(0xac4910)/0x680C70(0xb0ec60)/0x680CF0(0x889fb8)/0x680D70(0xb0b880)/0x680DF0(0xb0b5f0)/0x680E70(0x89c668)/0x680EF0(0xb04bd0)）——每路 `mov edx,<数组基址>; mov ecx,esi; call <孪生>` + jge 检查，**实锤孪生第二参数 edx = 各全局数组容器**；
+5. **0x74ED60 + 0x6607D0**（al 检查对，对应读侧 0x74EA70/0x660840）+ **0x413850(0x887888)/0x54E750(0xabc5f8)/0x4391C0(0x87f5d8)**（对应读侧 0x413800/0x54E6F0/0x439110 的写侧镜像）；
+6. [0xa8b238]==5 分支：0x4068E0(0x83d5dc) + **0x69B560(0xa8b250)** 失败 0x4068E0(0x83d584) al=0（对应读侧 0x83D634/0x69B5B0）；
+7. **0x751620 + 0x7533B0 + 0x721010(0xa83d10, esi)** 收口 → setge al（对应读侧 0x751710/0x7533F0/0x721040）。
+**语义**：场景级 SaveLoad 写侧总调度——SaveLoad_Prefix + 16 组 0x7E15F4 串写 + 34 个串写孪生批量调度 + 三对子系统写镜像 + [General] 区收口；与 batch 2085 c 0x67E730（读侧）组成完整读写对。
+
+## b 路 0x67BFA0（108B）——Vector 拷贝构造器
+
+```
+0067BFA0  push esi,edi / mov edi,[esp+0xC]（源）; mov esi,ecx
+0067BFA8  cmp esi,edi / je 0x67C005        ; 自赋值跳过
+0067BFAC  call [eax+0xC]                   ; 虚表槽 0xC
+0067BFB1  mov eax,[edi+8]                  ; 源容量
+0067BFB4  test eax,eax / mov [esi+8],eax
+0067BFBB  lea ecx,[eax*4] / push / call 0x7C8E17  ; operator new 分配 [eax*4]
+0067BFCB  mov [esi+4],eax
+0067BFD2  mov ecx,[esi+8] / xor eax,eax / mov byte ptr [esi+0xD],1  ; owns=1
+0067BFDF  loop: mov edx,[edi+4] / mov ecx,[esi+4] / mov edx,[edx+eax*4]
+          mov [ecx+eax*4],edx / inc eax / cmp eax,ecx / jl loop
+0067BFF3  mov eax,esi / ret 4               ; 成功返回 this
+0067BFFA  mov [esi+4],0 / mov [esi+0xD],0  ; 空路径
+0067C005  mov eax,esi / ret 4
+```
+**语义**：Vector 拷贝构造器——thiscall this=ecx（目标）+ 栈参 [esp+0xC]（源），自赋值 `cmp esi,edi` 跳过，虚表槽 0xC 调 + operator new 0x7C8E17 按 `[edi+8]*4` 分配 + 元素逐项拷贝 + [esi+0xD] owns 标志；**尾用 `ret 4`**（cdecl 清栈回 4 字节 = 1 个栈参）。与 batch 2059 0x68C2B0（指针数组拷贝构造器）/batch 1737 0x58A500（VectorClass 源拷贝构造器 8B/项）同族模板。
+
+## c 路 0x67BDD0（464B）——Vector 派生对象 5 参构造器
+
+```
+0067BDD0  sub esp,0x9C / 五参 thiscall（this=ecx, edx, [esp+0xB0], [esp+0xB4]）
+0067BDFC  call 0x528A10                    ; 对象选择/加载（5 参）
+0067BE01  je 0x67BF0E                       ; 失败走全拷贝分支
+0067BE11  call 0x67C430(0,0)               ; 子构造
+0067BE34  call 0x7C9CC2(0x817F70, [esp+0x28])  ; 串复制/解析（循环 0x67BE40-0x67BEA4）
+0067BE46  call 0x71E2A0                     ; 串→对象
+0067BE75  call [edx+8]                      ; Vector 扩容
+0067BEC0  call 0x67BFA0                     ; ★b 本尊 Vector 拷贝构造兑现
+0067BEF8  call 0x7C8B3D                     ; operator delete
+0067BF0B  ret 0xC
+// 失败分支 0x67BF0E：
+0067BF30  call [0x7f0da8]                   ; 虚表槽间接
+0067BF48  call 0x7C8E17                     ; operator new
+0067BF92: mov eax,esi / ret 0xC
+```
+**语义**：Vector 派生对象 5 参构造器——虚表 0x7F0D9C→0x7F0CFC 两阶段（先 0x7F0D9C 后收口换 0x7F0CFC），成功路径 0x528A10 加载 + 0x67C430 子构造 + 0x7C9CC2 串循环（0x817F70 格式串）+ 0x71E2A0 串转对象 + Vector 扩容 + **b 本尊 0x67BFA0 拷贝构造兑现**；失败路径 0x67BF0E 走 [0x7f0da8] 虚表间接 + operator new 全拷贝。**尾 `ret 0xC`**（清回 12B = 3 个栈参）。虚表对 0x7F0D9C/0x7F0CFC 与 [0x7F0DA8] 计数器虚表槽构成对象家族。
+
+## 原版怪癖（照抄）
+
+1. a 路 16 段串写循环 + 34 串写孪生调度全部失败跳**统一出口 0x67D42A**（al=0），不做部分成功标记；
+2. b/c 路均**双出口**（成功/空路径各一 `ret 4`/`ret 0xC`）；b 路 0x7C8E17 分配大小 `[edi+8]*4` 但 [edi+8] 存的是**容量**非字节数；
+3. c 路 [esi+0xD] owns 标志在空路径写 0、成功路径写 1——与 batch 2059 打印族一致；
+4. a 路 [0xa8b238]==5 与读侧同款双串（0x83d5dc/0x83d584）输出。
+
+## 跨批次连接
+
+- ★★★**0x67D300 = 0x67E730（batch 2085 c）写侧镜像**——5 对读写镜像调用点（0x413850↔0x413800、0x4391C0↔0x439110、0x54E750↔0x54E6F0、0x6607D0↔0x660840、0x4C6340↔0x4C6320）逐一互证；
+- ★★★**批量兑现 batch 2073-2084 全部 34 个串写孪生**——实锤第二参数 edx = 全局数组容器基址（0xa83e30/0xa8eb28/0x887388 等），孪生族闭合成「被 0x67D300 批量调度的数组序列化工人」；
+- ★0x689310（batch 2063 SaveLoad_Prefix 带名）+ 0x7E15F4 家族（2073-2084）+ 0x6CF240 登记（2063）+ [0xa8b238] 模式门控（2067）；
+- ★0x67C430（c 路子构造，未登记）、0x7C8E17/0x7C8B3D/0x7C9CC2（CRT operator new/delete + 串复制）。
+
+## 观察项 / 候选池
+
+- **新候选 6**：0x413850、0x4391C0、0x4C6340、0x54E750、0x5BE6D0、0x6607D0（+ batch 2085 遗留 10 个：0x4136C0/0x439260/0x4C6320/0x4E9550/0x4E97B0/0x539890/0x539AE0/0x54E7B0/0x5BDF70/0x660840）。
+- **观察项**：0x674730（= FUN_00674730 ranking 已列 2779B callees=10）。
+- **后邻未登记**：0x67E440（a 路后邻，0x508 栈帧大函数）、0x67C010（b 路后邻虚表 0x7F0D5C 构造）、0x67C430（c 路子构造）。
+- 前向：0x67B8F0/0x67B720（464B callees=9 孪生）、0x67BD80/0x67BCE0/0x67B500（73B callees=2）等。
