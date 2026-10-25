@@ -1,0 +1,44 @@
+# frontier batch 2000
+
+本批三函数（0x6C 区——this 透传桩 + 容量扩容拷贝器 + 全局状态初始化）：0x6C8E70 / 0x6C8870 / 0x6C87F0
+Picker：unique_callers 扇入度 top3（0x6C8E70 FUN_006c8e70 callees=0 deps=3488；0x6C8870 FUN_006c8870 callees=2 deps=4；0x6C87F0 FUN_006c87f0 callees=1 deps=4293）
+disasm：`_d2000a.txt`（0x6C8E70 size 0x30）/ `_d2000b.txt`（0x6C8870 size 0xA0）/ `_d2000c.txt`（0x6C87F0 size 0x40）——三路全部读取（含尾 ret + nop pad + 后邻函数头：a 尾 ret c3@0x6C8E72 后邻 0x6C8E80=batch 1999 已登记；b 尾 ret c3@0x6C88FF 后邻 0x6C8900；c 尾 ret c3@0x6C8814 后邻 0x6C8820）
+callee 核验：3/3 全部已登记（b：0x7C8E17/0x7C8B3D；c：0x6C8C40）——**无新候选**（脚本 _check_callees2000.py，8 位格式）
+
+## 1. 0x6C8E70 —— this 透传桩·[0x6C8E70]
+- 大小：3B（0x6C8E70-0x6C8E72），全读，尾 ret c3 单出口 0x6C8E72
+- 机器码（单段——透传）：mov eax,ecx（★this → eax）→ ret
+- 语义：**this 透传桩**——thiscall 无栈参返 this：mov eax,ecx 直接返回——**3B 极简（全批最小/极简函数——GetThis/链式调用占位）**
+- ★原版怪癖（照抄）：①mov eax,ecx 透传;②ret c3 无栈参;③3B（全批最小）
+- ★跨批次连接：batch 1999 0x6C8E80（状态保存恢复块——紧邻——0x6C8E70 可能为其辅助透传）
+- 新候选：无（0/0 E8 callee）
+- ⚠️ partial：函数精确名（推断「this 透传桩」）、调用方（deps=3488——高扇出）
+
+## 2. 0x6C8870 —— 容量扩容拷贝器（推断名）·[0x6C8870]
+- 大小：144B（0x6C8870-0x6C88FF），全读，尾 ret c3 双出口 0x6C8887/0x6C88A4（返 0）/0x6C88FF（返 1）
+- 机器码（四段——容量判定+扩容计算+拷贝迁移+更新）：
+  段0 容量判定（0x6C8870-0x6C8888）：push ecx / push ebx,ebp / ebp=ecx（★this）→ eax=[ebp]（★+0=容量?）→ ecx=[ebp+4]（★+4=计数）→ lea eax,[eax+eax*2]（★×3）→ cmp eax,ecx / jle 0x6C8888（★容量×3 ≤ 计数 → 返 0——无需扩容）
+  段1 扩容计算（0x6C8888-0x6C88A5）：mov eax,ecx / cdq / sub eax,edx / mov ebx,eax / **sar ebx,1（★算术半——计数/2）** → cmp ebx,0xa / jge 0x6C889B → mov ebx,0xa（★下限 10）→ 0x6C889B: cmp ebx,ecx / jl 0x6C88A5 → 返 0（★新容量 ≥ 计数 → 返 0）
+  段2 分配拷贝（0x6C88A5-0x6C88E2）：mov ecx,ebx / push esi / **shl ecx,0xc / add ecx,ebx / shl ecx,3（★新容量×(0x1000+1)×8 = 容量×0x8008 字节——82440B/项×容量?推断项大小 0x8008）** → push ecx → call 0x7C8E17（★operator new——已登记）→ esi=[ebp+8]（★旧缓冲）→ test / je 0x6C88E3（★旧缓冲空 → 跳过拷贝）→ **rep movsd + rep movsb（★按 4 字节+余数拷贝——旧→新迁移）** → 0x6C88E3: push [ebp+8] → call 0x7C8B3D（★operator delete——已登记——释放旧缓冲）
+  段3 更新（0x6C88EC-0x6C88FF）：ecx=[esp+0x10] → [ebp+8]=ecx（★+8=新缓冲）→ [ebp+4]=ebx（★+4=新容量）→ pop esi,ebp → mov al,1 返 1
+- 语义：**容量扩容拷贝器（推断名）**——thiscall 无栈参返 bool：VectorClass 扩容：①[+0]=容量 / [+4]=计数 / [+8]=缓冲（三字段布局——batch 1988/1994 同款）;②容量×3 > 计数 且 新容量（计数/2 下限 10）< 计数 → operator new 新缓冲（容量×0x8008 字节）→ rep movsd/movsb 迁移 → delete 旧缓冲 → 更新 [+4]/[+8]——**VectorClass 扩容分配+迁移完整版（batch 1988 0x6CE320 的扩容姊妹——0x6CE320 是删项、本函数是扩容）**
+- ★原版怪癖（照抄）：①★容量判定 lea [eax+eax*2]（×3——3 倍余量判定）;②新容量 = 计数/2 算术半（cdq+sub+sar）下限 10;③★项大小 0x8008 字节（shl 0xc / add / shl 3 = ×0x8008——单目测推断）;④rep movsd + 余数 movsb 双迁移;⑤old 缓冲 delete（0x7C8B3D）;⑥更新 [+4]/[+8];⑦三出口（两 0 一 1）;⑧144B
+- ★跨批次连接：三字段布局 [+0] 容量/[+4] 计数/[+8] 缓冲（batch 1988 0x6CE320 / batch 1994 构造器同款）+operator new/delete（0x7C8E17/0x7C8B3D——均已登记）+前移压缩（batch 1988/1993——扩容与删项是 VectorClass 两操作端）
+- 新候选：无（2/2 E8 callee 已登记）
+- ⚠️ partial：函数精确名（推断「容量扩容拷贝器」）、项大小 0x8008 确认、容量判定 ×3 语义、调用方（deps=4）
+
+## 3. 0x6C87F0 —— 全局状态初始化（推断名）·[0x6C87F0]
+- 大小：37B（0x6C87F0-0x6C8814），全读，尾 ret c3 单出口 0x6C8814
+- 机器码（单段——对象构造+全局写）：sub esp,8 → lea ecx,[esp+4]（★栈上对象）→ **call 0x6C8C40（★已登记——对象构造器）** → mov [0xB0BD28],eax（★全局1 = 构造结果）→ eax=[esp+4] → mov [0xB0BD2C],eax（★全局2 = 栈对象）→ **mov byte [0xB0BDB4],1（★使能标志=1）** → add esp,8 → ret c3
+- 语义：**全局状态初始化（推断名）**——thiscall 无栈参：①栈上构造对象（0x6C8C40）;②[0xB0BD28]=构造结果 / [0xB0BD2C]=栈对象 / [0xB0BDB4]=1（使能）——**0xB0 区全局状态族初始化（后邻 0x6C8820 是同族消费：mov ecx,0xB0BD2C / call 0x6C8C40）**
+- ★原版怪癖（照抄）：①0x6C8C40 栈上构造（未登记确认——已登记）;②三全局写（[0xB0BD28]/[0xB0BD2C]/[0xB0BDB4]=1）;③ret c3;④37B
+- ★跨批次连接：0x6C8C40（已登记——对象构造器——本函数调用现场）+[0xB0BD28]/[0xB0BD2C]/[0xB0BDB4]（0xB0 区全局——batch 1995 0xB0 区容器全局族同区）
+- 新候选：无（1/1 E8 callee 已登记——0x6C8C40）
+- ⚠️ partial：函数精确名（推断「全局状态初始化」）、0x6C8C40 构造对象身份、三全局语义、调用方（deps=4293——高扇出）
+
+## 批次观察
+- 本批三函数 = **极小透传桩（0x6C8E70 3B）+ VectorClass 扩容完整版（0x6C8870）+ 全局状态初始化（0x6C87F0）**
+- **★VectorClass 扩容/删项双端闭合**：batch 1988 0x6CE320（前置递减删项）+ 本批 0x6C8870（扩容拷贝）——同三字段布局 [+0] 容量/[+4] 计数/[+8] 缓冲的两操作端
+- **3B 透传桩**：mov eax,ecx / ret——全批最小（deps=3488 高扇出——大量链式调用透传）
+- callee 核验：3/3 全部已登记——**无新候选**
+- 新候选入池：无（后邻 0x6C8E80 batch 1999 已登记 / 0x6C8900 / 0x6C8820 未展开——0x6C8820 头几条同 0x6C8C40 调用族）
