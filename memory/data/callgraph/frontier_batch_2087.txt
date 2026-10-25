@@ -1,0 +1,56 @@
+# frontier batch 2087：五参简化加载器孪生对 + Vector 派生构造器另族（0x67BD80 / 0x67BCE0 / 0x67B8F0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x67BD80 callees=2 deps=241 / 0x67BCE0 callees=2 deps=241 / 0x67B8F0 callees=9 deps=237）
+- 三路 disasm：`.qwen/tmp/_d2087a.txt`（0x67BD80 size 0x60）/ `_d2087b.txt`（0x67BCE0 size 0x60）/ `_d2087c.txt`（0x67B8F0 size 0x1E0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x67BD80 | 73B（0x49）| ret 8 @0x67BDB6 / @0x67BDC6 | 0x67BDD0（batch 2086 c 本尊）| 2（0x528A10 + 0x71E2A0）|
+| 0x67BCE0 | 73B | ret 8 @0x67BD16 / @0x67BD26 | 0x67BD30（73B 孪生）| 2（0x528A10 + 0x4653C0）|
+| 0x67B8F0 | 464B（0x1D0）| ret 0xC @0x67BA2B / @0x67BABD | 0x67BAC0（73B 孪生族）| 7（全已登记）|
+
+## a/b 路 0x67BD80 / 0x67BCE0（73B 孪生对）——五参简化加载器
+
+```
+0067BD80  sub esp,0x80 / lea eax,[esp]
+0067BD8A  push 0x80 / push eax
+0067BD90  mov eax,[esp+0x8C]          ; 高位栈参
+0067BD97  push 0x889f64              ; 格式串
+0067BD9C  push eax / push edx
+0067BD9E  call 0x528A10              ; 对象加载（5 参 thiscall）
+0067BDA3  test eax,eax / je 失败
+0067BDA7  lea ecx,[esp] / call 0x71E2A0  ; a 路：串→对象转换
+0067BDB0  add esp,0x80 / ret 8        ; 成功返 eax
+0067BDB9  mov eax,[esp+0x88]          ; 失败路：直接取加载结果
+0067BDC0  add esp,0x80 / ret 8
+// b 路 0x67BCE0 与 a 逐字节同构，仅 0x71E2A0 → 0x4653C0
+```
+**语义**：五参简化加载器孪生对——0x889F64 格式串 + 0x528A10（五参 thiscall 加载）+ 成功路径各自转对象转换器（a 0x71E2A0 / b 0x4653C0）；失败路径直接返 eax。与 batch 2086 c 0x67BDD0 前半同骨架（同 0x528A10 + 0x889F64）但省略 Vector 构造部，是**轻量加载变体**。
+
+## c 路 0x67B8F0（464B）——Vector 派生对象五参构造器·另族（虚表 0x7EAC68→0x7EABC8）
+
+与 batch 2086 c 0x67BDD0 **同骨架但另一虚表实例**：
+1. 0x528A10（五参加载）失败 je 0x67BA2E 全拷贝分支；
+2. 成功路：0x513990(0,0) 子构造 → 0x7C9CC2(0x817F70, [esp+0x28]) 串复制循环 → **0x41CEF0 串→对象**（对应 0x67BDD0 的 0x71E2A0）→ Vector 扩容 → **0x513370 拷贝构造**（对应 0x67BDD0 的 0x67BFA0——本族自家）→ 0x7C8B3D delete → ret 0xC；
+3. 失败路 0x67BA2E：虚表 0x7EAC68 → call [0x7eac74] 虚表槽间接 → operator new 0x7C8E17 容量 [edi+8]*4 → 元素循环拷 → [edi+0x10]/[edi+0x14] 双字段 → 虚表 0x7EABC8 → ret 0xC。
+**语义**：Vector 派生对象五参构造器·另一对象族——虚表对 0x7EAC68/0x7EABC8（batch 2086 c 是 0x7F0D9C/0x7F0CFC），子构造 0x513990 与拷贝构造 0x513370 是本族专属（0x513xxx 区）。
+
+## 原版怪癖（照抄）
+
+1. a/b 孪生对仅成功路径转换器不同（0x71E2A0 vs 0x4653C0），其余逐字节同构——同一加载模板两个对象类型；
+2. c 路双出口 ret 0xC；[esi+0xD] owns 空路径 0/成功 1；失败路 [0x7eac74] 虚表槽间接（0x7EAC68 族专用）；
+3. c 路 0x7C9CC2 串循环直至 [eax]==0。
+
+## 跨批次连接
+
+- ★★batch 2086 c 0x67BDD0（同骨架另虚表实例——0x7F0D9C 族 vs 本批 0x7EAC68 族）+ batch 2086 b 0x67BFA0（拷贝构造器模板——本族对应 0x513370）；
+- ★0x528A10/0x889F64/0x817F70（加载/格式串共享）+ 0x7C9CC2/0x7C8B3D/0x7C8E17（CRT 串复制/delete/new）+ 0x71E2A0/0x4653C0/0x41CEF0（串→对象转换器，已登记）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（a/b/c 全部直接 call 已登记）。
+- **后邻未登记**：0x67BD30（73B 孪生族继续）、0x67BAC0（73B）、0x67B4xx-0x67B8xx 区（0x67B720/0x67B8F0 族 464B 孪生 + 73B 族）。
+- 前向：0x67B720（464B callees=9）/0x67B500（73B callees=2）/0x67B480（80B callees=0）/0x67B3D0（176B callees=2）等。
