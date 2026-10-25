@@ -1,0 +1,57 @@
+# frontier batch 2099：RulesClass::Read_* 类型数组三连（Read_AircraftTypes / Read_VehicleTypes / Read_InfantryTypes）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x6723D0 Read_AircraftTypes callees=4 deps=409 / 0x672360 Read_VehicleTypes callees=4 deps=409 / 0x672280 Read_InfantryTypes callees=4 deps=409）
+- 三路 disasm：`.qwen/tmp/_d2099a.txt`（0x6723D0 size 0x70）/ `_d2099b.txt`（0x672360 size 0x70）/ `_d2099c.txt`（0x672280 size 0x70）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x6723D0 | 106B（0x6A）| ret 4 @0x672437 | 0x672440（后邻未知）| 4（0x526960/0x526CC0/0x528A10/0x41CEF0）|
+| 0x672360 | 106B | ret 4 @0x6723C7 | 0x6723D0（a 本尊）| 4（0x526960/0x526CC0/0x528A10/0x7480D0）|
+| 0x672280 | 106B | ret 4 @0x6722E7 | 0x6722F0（后邻未知）| 4（0x526960/0x526CC0/0x528A10/0x524CB0）|
+
+## 机器码结构（a 路 0x6723D0 为代表，b/c 逐字节同构仅表/转换器不同）
+
+```
+006723D0  mov eax,[0x7F0CB4]        ; ✱表（b：0x7F0CB0 / c：0x7F0CA8）
+006723DF  push eax / call 0x526960 ; 读计数 → ebx
+006723E9  xor esi / test ebx / jle 0x67242A
+006723EF  loop: mov edx,[0x7F0CB4] / lea ecx,[esp+0xC]
+006723F9  push 0x20 / push ecx / push 0x889F64 / push esi / push edx
+00672405  call 0x526CC0            ; 读串 [索引] → [esp+0xC]
+0067240A  push eax / mov eax,[0x7F0CB4] / push eax
+00672413  call 0x528A10            ; 五参加载
+00672418  test eax / je 0x672425
+00672420  call 0x41CEF0            ; ✱转换器（a：0x41CEF0 / b：0x7480D0 / c：0x524CB0）
+00672425  inc esi / cmp esi,ebx / jl loop
+0067242A  xor eax / test ebx / setg al   ; 计数>0 → al=1
+00672434  add esp,0x20 / ret 4
+```
+
+## 语义
+
+**类型数组读入器三连**（RulesClass::Read_* 带名小函数）——batch 2098 三连的孪生续集，同模板：
+1. [0x7F0CB4]/[0x7F0CB0]/[0x7F0CA8] 各自 INI 表 → **0x526960** 读计数；
+2. 循环 esi=0..count-1：0x526CC0（0x889F64 格式串）读串 → 0x528A10 五参加载；
+3. 加载成功调各自转换器（a **0x41CEF0** AircraftType 构造 / b **0x7480D0** VehicleType 构造 / c **0x524CB0** InfantryType 构造）；
+4. 尾 `setg al`（计数>0 → al=1）布尔化 —— 与 batch 2098 三连逐字节同族。
+
+## 原版怪癖（照抄）
+
+1. 三路逐字节同构仅表（[0x7F0CB4]/[0x7F0CB0]/[0x7F0CA8]）与转换器（0x41CEF0/0x7480D0/0x524CB0）不同——同模板类族实例化；
+2. 循环失败（加载 je）跳过转换器但计数照常推进（inc esi）；
+3. 尾 `xor eax + test ebx + setg al`（计数<=0 走 al=0）；
+4. 表读取用 `mov eax,[0x7F0CB4]`（全局指针）而非压栈常量键——与 batch 2098 的 push 键常量口径不同（同族两种实现）。
+
+## 跨批次连接
+
+- ★★★batch 2098（Read_ParticleSystems/Particles/VoxelAnims——逐字节同模板，本批续集第 4-6 连）+batch 2097/2096（Read_* 带名族）+batch 2094 b（同查询族）；
+- ★0x526960/0x526CC0/0x528A10（INI 读族已登记）+0x889F64（格式串）+0x41CEF0（batch 2087 c 串→对象转换器）/0x7480D0（batch 2088 a）/0x524CB0（转换器已登记）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（a/b/c 全部直接 call 已登记）。
+- **后邻未登记**：0x672440（a 路后邻）、0x6722F0（c 路后邻）。
+- 前向：picker 队列继续 RulesClass::Read_* 族（0x66D480 Read_ColorAdd / 0x66D1F0 Read_WallModel / 0x66D150 Read_ElevationModel / 0x66CF70 Read_Radiation + 0x66BBB0 Read_CombatDamage 5045B / 0x665650 RulesClass 构造 9175B / 0x667A30 ~RulesClass 3202B 大函数）。
