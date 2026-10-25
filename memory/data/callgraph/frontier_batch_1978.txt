@@ -1,0 +1,42 @@
+# frontier batch 1978
+
+本批三函数（0x6D 区——方向表/格网检测/地面刷新家族）：0x6D8530 / 0x6D7F20 / 0x6D7840
+Picker：unique_callers 扇入度 top3（0x6D8530 callees=1 deps=52；0x6D7F20 callees=6 deps=91；0x6D7840 callees=14 deps=465）
+disasm：`_d1978a.txt`（0x6D8530 size 0x110）/ `_d1978b.txt`（0x6D7F20 size 0x360）/ `_d1978c.txt`（0x6D7840 size 0x3D0）——三路全部读取（含尾 ret + nop pad + 后邻函数头）
+
+## 1. 0x6D8530 —— 八方向表初始化+偏移累加器·[0x6D8530]
+- 大小：254B（0x6D8530-0x6D862B），全读，尾 ret 8 单出口
+- 机器码（两段——一次性初始化 + 偏移累加）：段0（0x6D8530-0x6D85D1）：mov al,[0xB0CDE0]（★标志——batch 1974 0x6DA230 的 [0xB0CE00] 同族不同址）→ mov edx,1 → test dl,al（bit0 已置?）→ jne 0x6D85D4（已初始化跳过）→ 批量写 [0xB0CE38..0xB0CE74]（★16 dword = 8 对：0xB0CE38=0/-1/1/-1/1/0/1/1/0/1/-1/1/-1/0/-1/-1——**与 batch 1974 0x6DA230 初始化值逐对相同**——八方向偏移表 {X,Y} 对 8B 步进）→ push 0x6D8630（★回调=后邻空函数 c3 ret——batch 1973/1974 同款空回调模式）→ or bl,dl → [0xB0CDE0]=bl → call 0x7C978A（★回调注册——batch 004）→ 段1（0x6D85D4-0x6D8628，每次调用执行）：ecx=[esp+0x10]（栈参1——索引）→ ebx=[esp+0x14]（栈参2——缩放）→ edx=[esi+0xd64]（基准X）→ edi=[esi+0xd68]（基准Y）→ eax=[ecx*8+0xB0CE38]（表项X）→ ecx=[ecx*8+0xB0CE3C]（表项Y）→ imul eax,ebx（★×缩放）→ imul ecx,ebx → add eax,edx（+基准）→ add ecx,edi → 变化判定（cmp edx,eax / jne 0x6D8608；cmp edi,ecx / je 0x6D8628——★无变化跳过）→ sub eax,edx（ΔX）→ [esi+0xd74]+=ΔX（累加X）→ sub ecx,edi（ΔY）→ [esi+0xd78]+=ΔY（累加Y）→ ret 8
+- 语义：**八方向表初始化+偏移累加器（推断名）**——thiscall + 2 栈参（索引/缩放）：①一次性：置 [0xB0CDE0] 标志 + 初始化 [0xB0CE38..] 8 对 ±1/0 方向表（与 batch 1974 0x6DA230 初始化值逐对相同——同一方向表两副本）+ 注册回调 0x6D8630;②主体：表项×缩放+基准 → 有变化 → Δ 累加进 this+0xd74/+0xd78——**方向键移动的偏移累积器**（批处理方向表 → 累计位移）
+- ★原版怪癖（照抄）：①[0xB0CDE0] 一次性标志（bit0——与 0x6DA230 的 [0xB0CE00] 同模式）;②★★[0xB0CE38..0xB0CE74] 16 dword 初始化值与 batch 1974 0x6DA230 的 [0xB0CD98..0xB0CDD4] **逐对相同**（0/-1/1/-1/1/0/1/1/0/1/-1/1/-1/0/-1/-1——两个全局方向表同值）;③回调=后邻空函数 0x6D8630（c3 ret）;④栈参2 缩放 imul（方向×倍率）;⑤无变化跳过（基准==目标 → 不累加）;⑥累加进 this+0xd74/+0xd78（vs 0x6DA230 查 [0x84291C] 表——本函数直接累加）;⑦ret 8（2 栈参）
+- ★跨批次连接：0x6DA230（batch 1974 八方向偏移表查找器——初始化值逐对相同——方向表族）+0x7C978A（回调注册——batch 004）+[0xB0CDE0]/[0xB0CE38..0xB0CE74]（新全局——方向表第二副本）+this+0xd64/+0xd68/+0xd74/+0xd78（新字段——基准/累计）
+- 新候选：无（1/1 E8 callee 已登记——0x7C978A）；后邻观察 0x6D8630（c3 ret 空函数——回调）
+- ⚠️ partial：函数精确名（推断「八方向表初始化+偏移累加器」）、索引栈参语义、缩放栈参语义、this+0xd64..0xd78 字段身份、调用方（deps=52）
+
+## 2. 0x6D7F20 —— 双层格网高度检测器·[0x6D7F20]
+- 大小：824B（0x6D7F20-0x6D8255），全读，尾 ret 8 单出口
+- 机器码（双层循环——格网遍历+高度检测+条件绘制全链）：
+  段0 入口坐标变换（0x6D7F20-0x6D7FD2）：edi=栈参1（坐标指针）→ 0x5657A0（GetCellAt——batch 256）→ ebp=cell → movsx [edi]/[edi+2]（X/Y int16）→ shl 8 + 0x80（★8.8 定点——batch 059 惯用）→ cdq/and 0xff/sar 8（带符号量化）→ shl 8 回装 → lea [esp+0x48]/[esp+0x38] → 0x6D1F10（★等距→屏幕——batch 166）→ [ebx+0xb4]/[ebx+0xb0]（视口原点）→ sub → cell+0x11B（层高）cmp dl,2 → jge 0x6D7FD3（★层高>=2 跳过绘制）→ add eax,-0x1e（X-30）→ push 0 → lea → push 0x886FA0 → call 0x480350（★多路单元地形更新器——batch 1382——绘制）
+  段1 外循环（0x6D7FD3-0x6D8248）：edi=X / esi=Y（栈参坐标）→ [esp+0x10]=0（步进索引）→ ebp=0 → 内循环（0x6D7FEC）：[esp+0x30]=ebp+1 → esi=(ebp+1)/2 + X（sar 1——★半格偏移）→ edi=Y-(ebp/2)（sar）→ inc edi → [esp+0x24]=word{si,di}（候选格）→ 0x568300（★CoordinatesLegal——batch 086——菱形合法性）→ je 0x6D821B（非法跳过）→ 0x5657A0（GetCellAt）→ cell → movsx cell+0x11B（层高）→ 判定：ebp==1 分支（jle/jge 区间 [idx, idx+4]——★层高窗口）vs 非1（cmp == idx+1）→ al=1 命中 → cell+0x11D（斜坡高）判定（jle 0x6D80CD——★+0x11D<=0 跳过）→ 复杂高度差判定（ecx=层高-idx → 分支 +0x11D 补足→ js 跳过/命中）→ 深度判定：cmp edx,[esp+0x10] / jne 0x6D8146（层高==idx）→ cell+0x11A（地面类型）→ cell+0x38（地表 tile）→ cmp 0xffff/0xff → je 跳过（★无地表）→ [0xA8ED2C] 表查（batch 222 实锤）→ 虚调用 0x9C（地形查询）→ eax 表项 → imul 容量 → ebp=min(类型, 容量-1) → [eax+ebp*4+0x10] 项 → test byte [项+0x24],1 → je 跳过（★标志门控）→ 命中 → 段2 绘制链（0x6D814E）：movsx si/di（候选格）→ shl 8+0x80 定点 → 0x6D1EB0（★30/15 投影——batch 338）→ 0x6D20E0（★AdjustForZ——batch 096）→ [ebx+0xb4]/[ebx+0xb0] 视口 → sub → [esp+0x3c]=ΔY → lea ecx,[esi-0x1e] → push 0 → lea → push 0x886FA0 → 0x5657A0 → 0x480350（★绘制——batch 1382）→ 内循环递增（inc [esp+0x10] 步长 2）→ 外循环（ebp 0..2 三步——三个候选格距离）
+- 语义：**双层格网高度检测器（推断名）**——thiscall + 1 栈参（坐标）：入口 cell 层高>=2 跳过直接绘制;双层循环（3 个半格偏移候选 × 步进 2 递增）遍历附近格网：CoordinatesLegal 菱形合法性 → GetCellAt → 层高 +0x11B 窗口判定（±区间）+ 斜坡 +0x11D 补足 → 地表 +0x38 查 [0xA8ED2C] 表 + 虚调用 0x9C → 项标志门控 → 命中 → 30/15 投影 + AdjustForZ + 视口偏移 → 0x480350 绘制——**遍历当前坐标附近的格网找合法地表并绘制地形单元**
+- ★原版怪癖（照抄）：①层高>=2 快跳过（入口 cell——只处理低层）;②★★半格偏移（sar 1 除以 2——三个候选格：中心/±半格）;③CoordinatesLegal 前置（batch 086 菱形判定）;④层高窗口判定（ebp==1 分支 [idx,idx+4] 区间 vs 非1 精确 idx+1——不对称）;⑤+0x11D 斜坡高补足（负数判定 js）;⑥地表查表链（+0x38→[0xA8ED2C]→虚调用 0x9C→项+0x24 标志 1 门控）;⑦0xffff/0xff 双哨兵跳过;⑧绘制链 0x6D1EB0+0x6D20E0+0x480350;⑨ret 8（1 栈参）
+- ★跨批次连接：0x5657A0（batch 256）+0x568300（CoordinatesLegal——batch 086）+0x6D1F10（batch 166）+0x6D1EB0（batch 338）+0x6D20E0（AdjustForZ——batch 096）+0x480350（batch 1382）+[0xA8ED2C]（batch 222 实锤表）+[0x886FA0]（相机基准）+8.8 定点（batch 059 惯用）+cell+0x11A/0x11B/0x11D（地图数据区——batch 173 同区）
+- 新候选：无（6/6 E8 callee 已登记）
+- ⚠️ partial：函数精确名（推断「双层格网高度检测器」）、栈参坐标身份、三候选格语义（半格偏移推断）、层高窗口/斜坡判定细节、绘制时机条件、调用方（deps=91）
+
+## 3. 0x6D7840 —— 地面单元刷新器（随机化族调用点）·[0x6D7840]
+- 大小：954B（0x6D7840-0x6D7BF7），全读，尾 ret 8 单出口
+- 机器码（三段——门控+双层遍历+绘制链）：
+  段0 门控链（0x6D7840-0x6D78BF）：0x55AF60（★光照/相机迟滞窗口查询——batch 510——[0xABCD44] 当前值）→ cmp [0xABCD44],eax / jb 跳过（★当前值<返值跳过）→ [0x887314] 虚调用 0x70 → cmp eax,2 / jne 跳过（★分辨率/模式门控）→ [0xA8EB78] 测试 / je 跳过（★全局门控）→ [0x887314] 虚调用 0x5C（xor 0/0 参）→ test / je 跳过 → [0x7E1530] 时间 → [0xB0E640] 上次 → 差 → 限幅 0x3e8（★≤1000）
+  段1 双层格网遍历（0x6D78BF-0x6D7BE5）：[0x887314] 虚调用 0x74（★相机状态）→ 栈参坐标+视口原点+相机基准 → fild 浮点化 → 0x5AFB80（★仿射——batch 103）→ 0x7C5F00 ×2（_ftol）→ 8.8 定点 → 0x88888889 魔术数除法（★÷17/÷33——batch 144 同款魔术数）→ [esp+0x2c] 格网步数 → 外循环（0x6D79CF）：格网坐标（sar 1 半格）→ [esp+0x24] 步进 2 → 内循环（0x6D7A1E）：[esp+0x10] 候选 → 0x568300（★CoordinatesLegal——batch 086）→ je 跳过 → 0x5657A0（GetCellAt）→ 0x485020（★GetContainedTiberiumValue——batch 325）→ cell+0x12C test 0x10（★迷雾标志）→ je 跳过 → 0x487950（★IsShrouded——batch 1579）→ jne 跳过 → cell+0xec==2 / 0x485020 结果 → 判定 → cell+0xe4 / cell+0x140 test ah,0x10 → 跳过 → cell+0xfc（★地表对象指针——懒分配）→ 空 → 0x7C8E17（★operator new——batch 001）→ 0x631E30（★★构造器 B——batch 873 文档点名！）→ 非空 → cmp [ebp+0x10],0x2000 → jl 跳过 → 0x631D40（★随机化结构填充器——batch 873——调用现场）→ 0x631EE0（★★后置再填充——batch 873 文档点名——新候选）→ 0x47FF80（★矩形处理——batch 120）→ 0x631E50（★★batch 873 文档点名——新候选）→ RGB 位段打包（[0x8A0DDC..0x8A0DD0] 六槽 sar/shl/or——batch 1675 同款）→ imul → [edx+esi*2] word 写（★地表绘入缓冲）→ 循环 → ret 8
+- 语义：**地面单元刷新器（推断名）**——thiscall + 1 栈参：①门控链（迟滞窗口 0x55AF60 + 相机虚调用 0x70==2 + [0xA8EB78] + 虚调用 0x5C + 时间差限幅 1000）②双层格网遍历（仿射变换定位 + 8.8 定点 + 魔术数÷17/33 步长 + CoordinatesLegal + GetCellAt）③判定链（迷雾 test 0x10 + IsShrouded + 地表对象懒分配：operator new + 构造器 0x631E30 → 0x2000 门控 → 随机化填充 0x631D40 → 再填充 0x631EE0 → 矩形处理 0x47FF80 → 0x631E50）④RGB 位段打包写缓冲——**地面单元刷新器（含随机化地表对象族——batch 873 文档「FUN_006d7840 宿主业务」跨批兑现）**
+- ★原版怪癖（照抄）：①★★门控链五连（0x55AF60 迟滞 + 虚调用 0x70==2 + [0xA8EB78] + 虚调用 0x5C + 时间差 1000 限幅——全部失败直接跳过）;②0x88888889 魔术数除法（÷17/÷33——batch 144 同款）;③双层格网（外循环半格步进、内循环步长 2）;④迷雾双判定（cell+0x12C test 0x10 + IsShrouded 0x487950）;⑤★★地表对象懒分配链（+0xfc 空 → operator new + 构造器 0x631E30 → 0x2000 门控 → 0x631D40 随机填充 → 0x631EE0 再填充 → 0x47FF80 → 0x631E50——batch 873 文档点名三函数全部兑现）;⑥RGB 六槽打包（[0x8A0DDC..0x8A0DD0] sar/shl/or——batch 1675 同款）;⑦word 写缓冲（[edx+esi*2]）;⑧ret 8（1 栈参）
+- ★跨批次连接：★0x55AF60（batch 510 迟滞窗口——调用现场）+0x5AFB80（batch 103）+0x7C5F00（crt）+0x568300（batch 086）+0x5657A0（batch 256）+0x485020（GetContainedTiberiumValue——batch 325）+0x487950（IsShrouded——batch 1579）+0x7C8E17（operator new——crt）+★★0x631D40（随机化结构填充器——batch 873——调用现场）+★★0x631E30/0x631EE0/0x631E50（batch 873 文档点名——本批新候选）+0x47FF80（batch 120）+[0x887314]（相机对象——batch 1678 同款）+[0x8A0DDx]（六移位量槽——batch 1675 同款）+[0xA8EB78]（新全局门控）
+- 新候选：**0x631E30 / 0x631EE0 / 0x631E50**（★3/14 E8 callee MISSING——batch 873 文档点名「构造器 B/后置再填充」——本批全部兑现为调用现场——候选池）
+- ⚠️ partial：函数精确名（推断「地面单元刷新器」）、门控链五连语义、0x88888889 步长除数、地表对象结构（+0xfc 懒分配链）、RGB 打包消费端、word 缓冲身份、调用方（deps=465）
+
+## 批次观察
+- 本批三函数均为 batch 1973-1977 已登记家族的**上层调度**：0x6D8530（方向表——batch 1974 0x6DA230 初始化值逐对相同的第二副本）、0x6D7F20（格网检测——0x568300/0x6D1EB0/0x6D20E0 相机链）、0x6D7840（地面刷新——batch 873 点名大函数兑现）
+- **★★batch 873 跨批点名兑现**：彼时文档「FUN_006d7840（0x6D7AE3——0x2000 门控后调用 + 后续 0x631EE0/0x47FF80 batch 120 矩形处理）」——本批 0x6D7840 完整登记，0x631E30/0x631EE0/0x631E50 三新候选全部落位
+- callee 核验：18 地址 15 已登记 + 3 新候选（0x631E30/0x631EE0/0x631E50）
+- 新候选入池：0x631E30（随机化构造器 B）/0x631EE0（再填充）/0x631E50（batch 873 点名后置）
