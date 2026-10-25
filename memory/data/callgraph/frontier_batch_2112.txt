@@ -1,0 +1,82 @@
+# frontier batch 2112：RawFileClass::SetFileTime + RawFileClass::GetFileTime + R250 随机状态推进器（0x65D240 / 0x65D1F0 / 0x65C8B0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x65D240 RawFileClass::SetFileTime callees=3 deps=81 / 0x65D1F0 RawFileClass::GetFileTime callees=2 deps=81 / 0x65C8B0 FUN_0065c8b0 callees=0 deps=2——batch 2105 b 路新候选兑现）
+- 三路 disasm：`.qwen/tmp/_d2112a.txt`（0x65D240 size 0x80）/ `_d2112b.txt`（0x65D1F0 size 0x60）/ `_d2112c.txt`（0x65C8B0 size 0x70）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x65D240 | 101B（0x65）| ret 4 双出口 @0x65D299 / @0x65D2A2 | 0x65D2B0（未登记）| 0（3 个 IAT 间接 [0x7e1128]/[0x7e112c]/[0x7e1130]）|
+| 0x65D1F0 | 77B（0x4D）| ret 双出口 @0x65D236 / @0x65D23C | 0x65D240（**a 路本尊**）| 0（2 个 IAT 间接 [0x7e1128]/[0x7e1124]）|
+| 0x65C8B0 | 94B（0x5E）| ret @0x65C90D | 0x65C910（未登记）| 0（纯计算 4 轮 hash）|
+
+## a 路 0x65D240（101B）——RawFileClass::SetFileTime（带名实锤）
+
+```
+0065d240  sub esp,0x3c / push esi / mov esi,ecx（this）
+0065d246  mov eax,[esi+0x14]（★文件句柄字段）/ cmp eax,-1 / je 0x65d29c（句柄无效返 0）
+0065d24e  lea ecx,[esp+0xc]（FILETIME 栈结构）/ push ecx / push eax（句柄）
+0065d254  ★call dword ptr [0x7e1128]（IAT——GetFileTime：查现时时间）
+0065d25a  test eax / je 0x65d29c（失败返 0）
+0065d25e  mov eax,[esp+0x44]（参数 1 = 新文件时间值）/ lea edx,[esp+4] / push edx / push eax / shr eax,0x10 / push eax
+0065d26c  ★call dword ptr [0x7e1130]（IAT——高低 word 组装 FILETIME）
+0065d272  test eax / je 0x65d29c
+0065d276  lea eax,[esp+4] / lea ecx,[esp+4] / push eax / mov eax,[esi+0x14]（句柄）/ lea edx,[esp+0x14] / push ecx / push edx / push eax
+0065d289  ★call dword ptr [0x7e112c]（IAT——SetFileTime：4 参 句柄,创建,访问,写入）
+0065d28f  neg eax / sbb eax,eax / pop esi / neg eax（★布尔化 eax!=0→1）/ add esp,0x3c / ret 4
+0065d29c  xor al,al / pop esi / add esp,0x3c / ret 4（返 0）
+```
+**语义**：**RawFileClass::SetFileTime**（带名实锤）——文件句柄字段 [esi+0x14]≠-1 校验；0x7e1128（IAT GetFileTime）查当前时间 → 参数 1 拆高低 word 经 0x7e1130（IAT）组装 FILETIME → 0x7e112c（IAT SetFileTime，4 参：句柄/创建/访问/写入）设写时间；成功返回 `neg eax/sbb eax,eax/neg eax` 布尔化（非 0 → 1），失败返 0。0 直接 call（3 个 IAT 间接）。
+
+## b 路 0x65D1F0（77B）——RawFileClass::GetFileTime（带名实锤）
+
+```
+0065d1f0  mov ecx,[ecx+0x14]（★文件句柄字段）
+0065d1f3  sub esp,0x3c / lea eax,[esp+8] / push eax / push ecx
+0065d1fc  ★call dword ptr [0x7e1128]（IAT——GetFileTime）
+0065d202  test eax / je 0x65d237（失败返 0）
+0065d206  lea edx,[esp+4] / lea eax,[esp] / push edx / lea ecx,[esp+0x20] / push eax / push ecx
+0065d215  ★call dword ptr [0x7e1124]（IAT——本地时间转换）
+0065d21b  mov eax,[esp] / mov edx,[esp+4] / and eax,0xffff / and edx,0xffff
+0065d22e  shl eax,0x10 / or eax,edx（★高低 word 组装 32 位返回值）/ add esp,0x3c / ret
+0065d237  xor eax,eax / add esp,0x3c / ret（返 0）
+```
+**语义**：**RawFileClass::GetFileTime**（带名实锤）——句柄 [ecx+0x14] → 0x7e1128（IAT GetFileTime）→ 0x7e1124（IAT 本地时间转换）→ **高低 word 组装 32 位返回值**（低 word 移高 16 位 | 高 word 低 16 位——压缩 FILETIME）；失败返 0。0 直接 call（2 个 IAT 间接）。后邻头 0x65D240 = a 路本尊（SetFileTime——读写对同址相邻）。
+
+## c 路 0x65C8B0（94B）——R250 随机状态推进器
+
+```
+0065c8b0  mov eax,[ecx+4]（this+4 计数）/ lea edx,[eax+1] / mov edi,[ecx]（this+0 状态）
+0065c8bc  mov [ecx+4],edx（计数+1）/ xor esi,esi（轮次 i=0）
+0065c8c1  循环: mov ecx,[esi+0x839644]（★常量表 A 第 i 项——QWEN.md R250 播种表同址）/ mov ebx,eax / xor ecx,eax
+0065c8cb  add esi,4 / mov edx,ecx / sar ecx,0x10（算术右移 16）/ and edx,0xffff
+0065c8d9  mov eax,ecx / imul eax,ecx（高×高）/ imul ecx,edx（高×低）/ mov ebp,edx / imul ebp,edx（低×低）
+0065c8e6  not eax / add eax,ebp / mov ebp,eax / sar ebp,0x10 / shl eax,0x10 / or ebp,eax（★拼回 32 位）
+0065c8f4  mov eax,[esi+0x839690]（★常量表 B 第 i 项）/ xor ebp,eax / add ebp,ecx / xor ebp,edi（旧状态混合）
+0065c900  cmp esi,0x10（4 轮 × 4B）/ mov eax,ebp / mov edi,ebx / jl 循环
+0065c90d  pop×4 / ret
+```
+**语义**：**R250 随机状态推进器**——batch 2105 b 路（8B 槽数组逐槽填充器 0x661C10）调用点兑现：thiscall this+0 为状态、this+4 为计数，每次调用计数+1 并做 **4 轮混合 hash**（[0x839644] 常量表 A + [0x839690] 常量表 B 各 4 项；`xor → sar 16 / and 0xffff → 三 imul（高×高/高×低/低×低）→ not + add → sar/shl/or 拼回 → xor 表 B → add → xor 旧状态`——QWEN.md「播种 0x65C6D0（4 轮 Feistel，常量表 0x839644/0x839690）」**常量表同址实锤**，R250 族推进步进器）。返回新状态 eax。
+
+## 原版怪癖（照抄）
+
+1. a 路 `neg eax / sbb eax,eax / neg eax` 三连布尔化（SetFileTime 成功 → 1，非 setne 惯用法）；
+2. a 路 SetFileTime 前**先 GetFileTime 查现时 + 0x7e1130 组装**（三 IAT 分工：查/组装/设）；
+3. b 路返回值**高低 word 交叉组装**（`shl eax,0x10 / or eax,edx`——压缩 FILETIME 为 32 位，高 word 落低位）；
+4. b 路 a/b 同址相邻（0x65D1F0/0x65D240）——**GetFileTime/SetFileTime 读写对**；
+5. c 路 `sar ecx,0x10` 算术右移 + `and edx,0xffff` 半字拆分（非 ROR）——与 QWEN.md R250「SAR EDX,0x10 是算术右移后 SHL/OR 拼半字」同族惯用法；
+6. c 路 4 轮 × 4 字节轮进（cmp esi,0x10），常量表 A/B 每轮各取一项。
+
+## 跨批次连接
+
+- ★★★c 路 ↔ batch 2105 b 路 0x661C10（8B 槽数组逐槽填充器调用点兑现——0x65C8B0 为槽初始化器）；↔ QWEN.md R250 播种 0x65C6D0（[0x839644]/[0x839690] 常量表同址实锤）；
+- ★★a/b 路 ↔ IAT 函数指针族 [0x7e1124]/[0x7e1128]/[0x7e112c]/[0x7e1130]（Win32 文件时间 API：GetFileTime/SetFileTime/本地时间转换——[0x7e11xx] 导入表槽族，与 batch 2085+ 0x7e 区 IAT 处理同族）；
+- ★a/b 路句柄字段 [esi+0x14] ↔ RawFileClass 家族（batch 2085 十枚候选含 RawFileClass 域——0x72AB20 DeleteFile 等已登记）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（a/b/c 全部 0 直接 call；batch 2105 新候选 0x65C8B0 已兑现）。
+- **后邻未登记**：0x65D2B0（a 路后邻，push esi/push edi/mov edi,[esp+0xc] 开头）、0x65C910（c 路后邻，sub esp,0xc 开头）。
+- 前向：picker 队列继续 0x65 区（0x65C890/0x65BB50 RadSiteClass::Deactivate）+ RadSiteClass 族（0x65B510/0x65B530/0x65B4F0/0x65B4D0/0x65B4C0）+ 0x65B1E0 RadSiteClass::RadSiteClass。
