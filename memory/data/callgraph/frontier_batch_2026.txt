@@ -1,0 +1,49 @@
+# frontier batch 2026
+
+本批三函数（0x6B 区）：0x6B7010（231B 四虚表析构器）/ 0x6B6230（197B 带日志初始化器）/ 0x6B5440（65B 数组线性查找器）
+Picker：unique_callers 扇入度 top3（0x6B7010 FUN_006b7010 callees=3 deps=44；0x6B6230 FUN_006b6230 callees=7 deps=2605；0x6B5440 FUN_006b5440 callees=1 deps=147）
+disasm：`_d2026a.txt`（0x6B7010 size 0x110）/ `_d2026b.txt`（0x6B6230 size 0xF0）/ `_d2026c.txt`（0x6B5440 size 0x60）——三路全部读取（a 尾 ret c3 @0x6B70F6 + pad + 后邻头 0x6B7100；b 尾 ret c3 @0x6B62F4 + pad + 后邻头 0x6B6300（sub esp 0xD8 SEH handler 候选）；c 尾 ret c3 双出口 @0x6B547B(-1)/0x6B5480(索引) + pad + 后邻头 0x6B5490 同类）
+callee 核验：`_check_callees2026.py`——a 直接目标 3（0x6B7100/0x7C8B3D/0x4101F0）**已登记**；b 直接目标 6（0x4068E0/0x622650/0x622800/0x623120/0x532100/0x622720）**已登记**；c 直接目标 1（0x7C8D20）**已登记**——**无新候选**
+
+## 1. 0x6B7010 —— 四虚表析构器·[0x6B7010]
+- 大小：231B（0x6B7010-0x6B70F6），全读，尾 pop edi/pop esi/pop ecx/ret c3 单出口 0x6B70F6
+- 机器码结构（多段——四虚表安装+数组族清理+全局注销）：
+  - 段 1（0x6B7010-0x6B703D）：push 三 + `mov edi,ecx` + **四虚表安装**：`mov [edi],0x7F3650/mov [edi+4],0x7F3634/mov [edi+8],0x7F362C/mov [edi+0xC],0x7F3624`（**四个子对象虚表——多继承/复合对象**）+ `mov al,[0xA8E9A0]/test/je`（[0xA8E9A0] 标志时 call 0x6B7100——**条件子清理**）
+  - 段 2（0x6B703E-0x6B7058）：`mov esi,[edi+0x48]`（计数）+ dec/js → 循环 `mov eax,[edi+0x3C]/mov eax,[eax+esi*4]`（指针数组）→ test/je → push/call 0x7C8B3D（delete）→ dec/jns——**[edi+0x3C] 数组族倒序释放**
+  - 段 3（0x6B705A-0x6B70E8）：`mov edx,[edi+0x38]/lea esi,[edi+0x38]`（子容器）+ `mov ebp,[esi+8]` + `call [edx+0xC]`（**虚表槽 0xC 清空**）+ `call [eax+8]`（**虚表槽 8 收缩——push 0/ebp**）+ [0xB0B880] 全局注册表族（[0xB0B884]/[0xB0B890] 递减+前移——**batch 2000/2001 容器族同款手写前移**）→ cmp eax,-1/je 跳过 → 命中索引时前移压缩 → [esi+4] 守卫字节 delete 0x7C8B3D + [esi]=0x7F36D4 虚表改写
+  - 段 4（0x6B70E1-0x6B70F6）：`mov ecx,edi/call 0x4101F0`（**batch 1994 SuperClass 析构器同款收尾**）+ 弹栈 + ret c3
+- 语义：**四虚表析构器**——复合对象（四子对象虚表 0x7F3650/0x7F3634/0x7F362C/0x7F3624）析构：[0xA8E9A0] 条件子清理（0x6B7100）+ [edi+0x3C] 指针数组倒序 delete + [edi+0x38] 子容器虚表清空 + [0xB0B880] 全局注册表注销（前移压缩）+ 0x4101F0 基类析构——**与 batch 1994 SuperClass 家族同构（多虚表+数组族+全局注销模板）**
+- ★原版怪癖（照抄）：①四虚表连续安装（多继承布局）；②[0xA8E9A0] 标志条件调用 0x6B7100（**全局调试标志门控**——batch 2026 b 同标志）；③[edi+0x3C] 数组倒序释放（dec 从计数-1 起）；④[0xB0B880] 注销用前移压缩（同 batch 2000/2001 容器族）；⑤[esi]=0x7F36D4 虚表改写后守卫字节 0x7C8B3D
+- ★跨批次连接：★★batch 1994 0x4101F0（SuperClass 析构收尾）+ ★★[0xA8E9A0] 调试标志（batch 2022 WinMain/batch 2026 b 同标志——**跨函数共享全局**）+ ★★batch 2000/2001 容器族前移压缩模板 + [0xB0B880] 全局注册表（新观察——同族 [0xB0B8xx] 区）
+- 新候选：0x6B7100（a 调用的条件子清理——已登记核验确认）、0x6B6300（b 后邻 SEH handler——观察项）
+- ⚠️ partial：函数精确名（推断「四虚表析构器」）、四子对象类型（虚表 0x7F3650 族归属）、[0xB0B880] 注册表族语义
+
+## 2. 0x6B6230 —— 带日志初始化器·[0x6B6230]
+- 大小：197B（0x6B6230-0x6B62F4），全读，尾 pop edi/pop esi/pop ecx/ret c3 单出口 0x6B62F4
+- 机器码结构（多段——三全局日志+条件初始化链）：
+  - 段 1（0x6B6230-0x6B6257）：push ecx + `mov eax,[0xA8EB78]/mov ecx,[0xA8EB70]/mov edx,[0xA8EB60]`（**三全局取参**）+ or edi,-1 + push 三值 + push 0x840030（日志串）+ **call 0x4068E0**（**batch 2022 WinMain 启动日志同款打印函数——push 0x840xxx 串惯用法**）+ add esp,0x10
+  - 段 2（0x6B6258-0x6B6285）：`mov al,[0xA8E9A0]`（调试标志）+ `mov byte [0xB0B800],0` + push 0 + **`mov edx,0x6B6300`（函数指针——异常 handler 候选）+ `mov ecx,0xD6/0xB8`（行号——[0xA8E9A0] 分支 0xD6=214 行/else 0xB8=184 行）+ call 0x622650**（**SEH/异常注册——行号+函数指针参数**）→ mov esi,eax → test/je 0x6B62D0
+  - 段 3（0x6B6287-0x6B62CB）：`lea eax,[esp+8]/push/push 8/push esi/call [0x7E1470]`（IAT 8 字节读取）+ `mov ecx,esi/call 0x622800` + `cmp [esp+8],edi(-1)/jne` → `call 0x623120`（cmp al,1 → [esp+8]=2）+ `mov al,[0xA8E9A0]/test/jne` → **`xor cl,cl/call 0x532100`**（[0xA8E9A0]==0 时无条件调）+ `cmp [esp+8],edi/je 0x6B62A2`（循环）+ `mov ecx,esi/call 0x622720`（收尾）
+  - 段 4（0x6B62D0-0x6B62F4）：再次三全局取值 + push 0x840030 + **call 0x4068E0**（**尾部对称日志**）+ 弹栈 + ret c3
+- 语义：**带日志初始化器**——三全局 [0xA8EB60/0xA8EB70/0xA8EB78] 打印日志（0x4068E0 头尾对称）+ [0xA8E9A0] 调试标志分支（行号 0xD6/0xB8）注册异常 handler 0x622650（函数指针 0x6B6300）+ 0x622800/0x623120/0x532100/0x622720 初始化链 + [0x7E1470] IAT 读取——**三全局即某配置/状态三元组**
+- ★原版怪癖（照抄）：①0x4068E0 头尾两次对称调用（首尾各 push 0x840030——**前后状态日志**）；②[0xA8E9A0] 分支改行号（0xD6 vs 0xB8——调试版/发布版路径差异）；③or edi,-1 哨兵 + [esp+8] 比较循环；④[0xB0B800] 字节标志清零
+- ★跨批次连接：★★batch 2022 WinMain 0x4068E0（启动日志同款）+ ★★[0xA8E9A0] 调试标志（batch 2026 a/b 共享——**同一全局跨函数门控**）+ 0x622650/0x622800/0x623120/0x622720（异常注册/处理链——已登记）+ 0x532100（已登记）
+- 新候选：0x6B6300（函数指针目标——SEH handler 观察项）
+- ⚠️ partial：函数精确名（推断「带日志初始化器」）、三全局 [0xA8EB60..0xA8EB78] 语义、0x622650 参数（函数指针+行号=异常注册推断）
+
+## 3. 0x6B5440 —— 数组线性查找器·[0x6B5440]
+- 大小：65B（0x6B5440-0x6B5480），全读，尾 ret c3 双出口 @0x6B547B（-1）/0x6B5480（索引）
+- 机器码（单段——全局数组循环 strcmp）：push esi/edi + `mov edi,ecx`（this/查找键）+ test/je 直接返 -1 + `mov eax,[0xA8EC28]`（计数）+ xor esi,esi + test/jle 返 -1 + 循环：`mov eax,[0xA8EC1C]/mov ecx,[eax+esi*4]/add ecx,0x24/lea edx,[edi]/push edi/push ecx/call 0x7C8D20`（**字符串比较——+0x24 偏移取串**）+ test eax → je 命中返 esi → inc esi → cmp/jl 循环 → 未命中返 -1
+- 语义：**数组线性查找器**——全局数组 [0xA8EC1C]（[0xA8EC28] 项）逐项取 [elem+0x24] 字符串与查找键（this 传入）**0x7C8D20（strcmp 系 CRT）比较**，命中返回索引、未命中 -1——O(n) 线性扫描
+- ★原版怪癖（照抄）：①元素串偏移 +0x24（结构体内部字符串字段）；②0x7C8D20 直接调用（CRT strcmp——已登记）；③this 作为查找键传入（非栈参）；④双出口 ret c3（-1/索引）
+- ★跨批次连接：★后邻 0x6B5490 同类（mov eax,[0xA8EC28]——同全局数组族另一查找/遍历器观察项）+ [0xA8EC1C]/[0xA8EC28] 全局数组族（与 batch 2026 b 三全局不同区）
+- 新候选：0x6B5490（后邻同类遍历器——观察项）
+- ⚠️ partial：函数精确名（推断「数组线性查找器」）、[0xA8EC1C] 数组元素类型（含 +0x24 字符串字段的结构推断）、0x7C8D20 具体 CRT 函数（strcmp/wcscmp 系——已登记行可查）
+
+## 批次观察
+- **本批 = 0x6B 区中段杂项**：0x6B7010（复合对象析构）+ 0x6B6230（带日志初始化）+ 0x6B5440（数组查找）——三个独立域
+- **★★[0xA8E9A0] 全局调试标志跨函数门控**：batch 2022 WinMain / 本批 0x6B7010（条件调 0x6B7100）/ 0x6B6230（行号 0xD6/0xB8 分支）——**同一全局三处消费，调试/发布路径分流实锤**
+- **★★batch 1994 家族延续**：0x6B7010 尾 0x4101F0（SuperClass 析构收尾）——四虚表复合对象析构与 SuperClass 家族同模板
+- **★★0x4068E0 日志函数第三消费点**：batch 2022 WinMain 约 50 次 → batch 2023 0x6BB390 → 本批 0x6B6230（头尾对称）——启动日志体系贯通
+- callee 核验：a 3 / b 6 / c 1——**全部已登记，无新候选**
+- 新候选入池：0x6B6300（SEH handler 观察项）、0x6B5490（数组遍历器观察项）
