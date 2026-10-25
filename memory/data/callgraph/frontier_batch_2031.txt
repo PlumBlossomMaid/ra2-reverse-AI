@@ -1,0 +1,46 @@
+# frontier batch 2031
+
+本批三函数（0x6B 区——SlaveManager 家族）：0x6B0D10（65B Deploy1 孪生）/ 0x6B0A20（110B SlaveManagerClass::LostSlave 带名）/ 0x6B0880（416B 部署状态复合器）
+Picker：unique_callers 扇入度 top3（0x6B0D10 FUN_006b0d10 callees=0 deps=319；0x6B0A20 SlaveManagerClass::LostSlave callees=0 deps=273；0x6B0880 FUN_006b0880 callees=6 deps=1896）
+disasm：`_d2031a.txt`（0x6B0D10 size 0x60）/ `_d2031b.txt`（0x6B0A20 size 0x80）/ `_d2031c.txt`（0x6B0880 size 0x1D0）——三路全部读取（a 尾 ret c3 @0x6B0D50 + pad + 后邻头 0x6B0D60（batch 2030 c 本尊——**孪生相邻**）；b 尾 ret 4 双出口 @0x6B0A4A/0x6B0A8B + pad + 后邻头 0x6B0A90；c 尾 ret 8 四出口 @0x6B09DD/0x6B0A05/0x6B0A13/0x6B0A1D + pad + 后邻头 0x6B0A20（b 本尊——相邻））
+callee 核验：`_check_callees2031.py`——a 直接目标 0（全虚表槽 0x3D0 调用）；b 直接目标 0（纯内存操作）；c 直接目标 6（0x45EC90/0x45ECA0/0x42D510/0x5657A0/0x47C520/0x6B0690）——**5 已登记 + 1 MISSING（0x6B0690 入新候选池）**
+
+## 1. 0x6B0D10 —— SlaveManager Deploy1·[0x6B0D10]
+- 大小：65B（0x6B0D10-0x6B0D50），全读，尾 pop edi/pop esi + ret c3 单出口 0x6B0D50
+- 机器码（单段——**与 batch 2030 c 0x6B0D60 逐字节同构**）：push esi/edi + `mov eax,[esi+0x5C]/test/jne`（非 0 跳过）+ `mov [esi+0x5C],4/mov [esi+0x60],0x7FFFFFFF`（置状态 4 + INT_MAX 哨兵）+ `mov edi,[esi+0x48]/dec/js`（倒序）+ 循环：`mov eax,[esi+0x3C]/mov eax,[eax+edi*4]/mov edx,[eax+4]/mov ecx,[eax]`（元素/状态/对象）+ `cmp edx,6/je`（状态 6 跳过）+ `test ecx,ecx/je`（空对象跳过）+ `mov edx,[ecx]/call [edx+0x3D0]`（虚表槽 0x3D0）+ dec/jns + ret
+- 语义：**SlaveManager Deploy1**——batch 2030 c 0x6B0D60（Deploy2）的**逐字节孪生前身**：同样 [0x5C]==0 门控置状态 4 + INT_MAX 哨兵 + 倒序遍历 [0x3C] 数组（状态 6 跳过/空对象跳过）虚表槽 0x3D0 调用——**Deploy1/Deploy2 复制粘贴配对**
+- ★原版怪癖（照抄）：①与 0x6B0D60 逐字节相同（**Westwood 复制粘贴——Deploy1/Deploy2 同实现**）；②[0x5C]==0 幂等门控；③[0x60]=0x7FFFFFFF INT_MAX 哨兵；④状态 6 跳过 + 虚表槽 0x3D0
+- ★跨批次连接：★★batch 2030 c 0x6B0D60（孪生本尊——0x6B0D10<0x6B0D60 相邻排布）+ 0x6B0A20（b LostSlave——**状态 6 写入侧同族**）+ SlaveManagerClass 家族（CreateSlave/SetOwner 等已登记）
+- 新候选：无
+- ⚠️ partial：函数精确名（推断「SlaveManager Deploy1」——与 Deploy2 配对）、[0x5C]/[0x60] 字段名
+
+## 2. 0x6B0A20 —— SlaveManagerClass::LostSlave·[0x6B0A20]
+- 大小：110B（0x6B0A20-0x6B0A8B），全读，尾 pop 三 + add esp,0xC + ret 4 双出口 @0x6B0A4A（未命中）/0x6B0A8B（命中处理完）
+- 机器码结构（多段——倒序线性查找+状态置 6+字段复位）：
+  - 段 1（0x6B0A20-0x6B0A4A）：`mov eax,[ecx+0x48]`（计数）+ dec/js 直接返 + `mov esi,[ecx+0x3C]`（数组）+ `mov edi,[esp+0x1C]`（参 1 查找键）+ 倒序循环：`lea edx,[esi+eax*4]/mov ebx,[edx]/cmp [ebx],edi/je`（**[elem]==键 命中**）→ dec/sub edx,4/jge 循环 → 未命中 ret 4
+  - 段 2（0x6B0A4D-0x6B0A8B）：命中：`mov eax,[esi+eax*4]/mov edx,[eax]/test`（元素对象指针）→ 非空 `mov [edx+0x2DC],0`（**对象 +0x2DC 复位**）+ `mov [eax],0`（元素对象指针清零）+ **`mov [eax+4],6`（元素状态置 6——★batch 2030 c「状态 6 跳过」的写入侧实锤！）** + `mov edx,[0xA8ED84]/mov ecx,[ecx+0x30]/mov [eax+8],edx/mov [eax+0xC],[esp+0x10]（参 1）/mov [eax+0x10],ecx`（**元素 +8/+0xC/+0x10 三字段复位写入**）+ ret 4
+- 语义：**SlaveManagerClass::LostSlave**（带名符号实锤）——1 栈参（查找键）ret 4：倒序线性查找 [0x3C] 数组（[0x48] 项）中 [elem]==键 的元素 → 命中后：对象 +0x2DC 复位 + 元素对象指针清零 + **元素状态置 6（非存活）** + 元素 +8=[0xA8ED84]（时间/标志）+ +0xC=参 1 + +0x10=[0x30]（宿主）——**标记奴隶丢失**
+- ★原版怪癖（照抄）：①倒序线性查找（dec 从计数-1 起 + [elem]==键 用元素首字段比较）；②状态置 6 固定（**与 Deploy1/2 的「6 跳过」同一状态码——读/写闭环**）；③元素 +8/+0xC/+0x10 三字段复位（[0xA8ED84] 全局——batch 1989 0x6CE280 差判定同全局）；④对象 +0x2DC 字段复位
+- ★跨批次连接：★★batch 2030 c 0x6B0D60/本批 a 0x6B0D10（**状态 6 跳过=读侧，本函数=写侧——跨批读写闭环实锤**）+ [0xA8ED84] 全局（batch 1989 0x6CE2C0/0x6CE280 同全局）+ 后邻 0x6B0A90（同类查找器观察项）
+- 新候选：0x6B0A90（后邻同类——观察项）
+- ⚠️ partial：[elem+4]=6 状态码语义（非存活标记推断）、元素 +8/+0xC/+0x10 字段名、对象 +0x2DC 语义
+
+## 3. 0x6B0880 —— 部署状态复合器·[0x6B0880]
+- 大小：416B（0x6B0880-0x6B0A1D），全读，尾 ret 8 四出口 @0x6B09DD/0x6B0A05/0x6B0A13/0x6B0A1D
+- 机器码结构（多段——状态查询+格坐标换算+数组查找）：
+  - 段 1（0x6B0880-0x6B0916）：sub esp,0x18 + `mov edi,ecx` + `mov ecx,[edi+0x24]`（对象）+ `call [eax+0x2C]`（**虚表槽 0x2C 状态查询**）+ `cmp eax,6/jne`（状态 6 分支）+ `mov ebx,[edi+0x24]/call [edx+0x2C]/mov esi,eax/sub esi,6/neg/sbb/not/and esi,ebx`（**状态 6 时取对象否则 0**）+ `mov ecx,[esi+0x520]/call 0x45EC90`（**+0x520 字段方法**）+ `mov ecx,[esi+0x520]/dec eax/call 0x45ECA0`（第二方法）→ cdq/sar 1（除 2）→ 坐标 word 组装 → 虚表槽 0x1B8 调用 → `call 0x42D510`（batch 1739 桥修复 8 邻域——**格坐标换算**）
+  - 段 2（0x6B0918-0x6B098C）：`mov eax,[0xB0B5B8]`（全局坐标）+ 状态查询 cmp 6 → `call 0x6B0690`（**helper——MISSING 新候选**）+ 虚表槽 0x1B8 → 0x42D510 → `mov ecx,0x87F7E8/call 0x5657A0`（**取 cell**）+ `call 0x47C520` + `cmp eax,[edi+0x24]`（**cell 对象比较**）→ 相等走 [0xB0B5B8] 全局
+  - 段 3（0x6B0990-0x6B0A1D）：`mov ecx,0x87F7E8/call 0x5657A0` + [0xB0B5B8]/[0xB0B5BA] word 坐标比较 → `mov ecx,[edi+0x48]/dec/js`（倒序）+ `mov ecx,[edi+0x3C]/lea ecx,[ecx+eax*4]/mov edx,[ecx]/cmp [edx],esi/je`（**数组查找**）→ 命中 ret 8 al=1 / 未命中/空 ret 8 al=0
+- 语义：**部署状态复合器**——2 栈参 ret 8 返回 bool：虚表槽 0x2C 状态查询（cmp 6）→ [0x520] 字段双方法（0x45EC90/0x45ECA0）→ 坐标组装 → 虚表槽 0x1B8 → 0x42D510（格坐标）→ 0x6B0690 helper → 0x5657A0 取 cell + 0x47C520 对象判定 → [0xB0B5B8] 全局坐标族比较 → [edi+0x3C] 数组倒序查找——**SlaveManager 部署/命中检查**
+- ★原版怪癖（照抄）：①虚表槽 0x2C 查询 + cmp 6 分支（与 Deploy1/2 状态 6 同码）；②`sub esi,6/neg/sbb/not/and` 状态 6 布尔化惯用法；③[0x520] 字段 0x45EC90/0x45ECA0 双方法配对（dec eax 后第二调用）；④cdq/sar 1 除 2；⑤多出口 ret 8（四出口 bool）
+- ★跨批次连接：★★0x42D510（batch 1739 桥修复 8 邻域——格坐标换算同族）+ 0x5657A0（batch 1735 取 cell）+ 0x47C520（已登记）+ **0x6B0690（MISSING 新候选）**+ [0xB0B5B8] 全局坐标族（新观察）+ SlaveManager 家族（本批 a/b 相邻）
+- 新候选：**0x6B0690（helper——MISSING 入池）**
+- ⚠️ partial：函数精确名（推断「部署状态复合器」）、虚表槽 0x2C/0x1B8 方法名、[0x520] 字段语义、0x45EC90/0x45ECA0 语义
+
+## 批次观察
+- **★本批 = SlaveManager 家族带**：0x6B0D10（Deploy1 孪生）+ 0x6B0A20（LostSlave 带名）+ 0x6B0880（状态复合器）——0x6B 区 0x6B0A-0x6B0D 家族相邻排布
+- **★★状态 6 读写闭环实锤**：batch 2030 c/本批 a（Deploy1/2——[elem+4]==6 跳过=读侧）+ 本批 b（LostSlave——[elem+4]=6 写入=写侧）——**「6=非存活状态码」跨批读写互证**
+- **★★Deploy1/Deploy2 复制粘贴孪生**：0x6B0D10 与 0x6B0D60 逐字节相同（Westwood 复制粘贴惯用再证——Deploy 系列双实现）
+- **★★[0xA8ED84] 全局跨批复用**：batch 1989（0x6CE2C0/0x6CE280 差判定）→ 本批 b（LostSlave 元素 +8 复位）——全局语义贯通
+- callee 核验：a 0（全虚表）/ b 0（纯内存）/ c 6（5 登记 + 0x6B0690 MISSING）——**1 个新候选**
+- 新候选入池：**0x6B0690（c 的 helper——picker 后续 180B callees=2 候选）** + 观察项 0x6B0A90
