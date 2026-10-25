@@ -1,0 +1,75 @@
+# frontier batch 2085：RulesClass SaveLoad 大族（0x67F9C0 / 0x67F7E0 / 0x67E730）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x67F9C0 callees=2 deps=2148 / 0x67F7E0 callees=1 deps=131 / 0x67E730 callees=32 deps=424）——0x680 区串写孪生族收口后浮出的大函数区
+- 三路 disasm：`.qwen/tmp/_d2085a.txt`（0x67F9C0 size 0x440）/ `_d2085b.txt`（0x67F7E0 size 0x1E0）/ `_d2085c.txt`（0x67E730 size 0x10B0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x67F9C0 | 855B（0x357）| ret c3 @0x67FD16 + nop pad | 0x67FD20（未登记对象）/0x67FDC0 空桩/0x67FDD0-0x67FDE0 指针释放器 | 3（0x6CF240×2 + 0x539AE0）|
+| 0x67F7E0 | 476B（0x1DC）| ret c3 @0x67F9BB + nop pad | 0x67F9C0（a 本尊）| 1（0x539890）|
+| 0x67E730 | 4258B（0x10A2）| ret c3 @0x67F7D1 + nop pad | 0x67F7E0（b 本尊）| 31（含 0x67F9C0 批内自引用）|
+
+## a 路 0x67F9C0（855B）——对象数组登记写入器
+
+虚表槽 0xC（4 参读）系列 + Vector 扩容登记 + 0x6CF240 表写入，**与 b 路读写镜像对**：
+1. `call [eax+0xC]` 读 [0xa8ed78] size 4 → **call 0x6CF240(0xa8ed78, 0xb0c110)** 登记；
+2. `call [edx+0xC]` 读 [0xa83d4c] size 4 → 0x6CF240(0xa83d4c, 0xb0c110)；
+3. `call [eax+0xC]` 读 [0xa8ed84] size 4 → 循环 edi=0..[esp+8]：`call [edx+0xC]` 读 [esp+0xC] → **Vector 扩容门控**（[0xa8ecc0]/[0xa8ecc8] 计数、[0xa8ecc5] byte 标志、[0xa8eccc] 上限、虚表槽 8 扩容、[0xa8ecb8]）→ [0xa8ecc8]++ 写 [0xa8ecbc+eax*4]；第二循环 edi=0..[0xa8ecc8]：**0x6CF240([0xa8ecbc+edi*4], 0xb0c110)**；
+4. `call [edx+0xC]` 读 [0x89ea40] size 0x1b0 → **call 0x539AE0(esi)**；
+5. `call [eax+0xC]` 读 [esp+8] → 循环同 3：**0x8B40D8 族 Vector**（[0x8b40d0]/[0x8b40d8]/[0x8b40d5]/[0x8b40dc]/[0x8b40c8]，写 [0x8b40cc+eax*4]）→ 0x6CF240 登记；
+6. 同上读 [esp+8] → **0x8B41B8 族 Vector**（[0x8b41b0]/[0x8b41b8]/[0x8b41b5]/[0x8b41bc]/[0x8b41a8]，写 [0x8b41ac+eax*4]）→ 0x6CF240 登记；
+7. 虚表槽 0xC 读 [0x81da8c] 0x4c / [0x81dad8] 0x4c / [0x89ec28] 0x98 / [0x89ecc0] 0x13 / [0xa8e3a8] 0x400 / [0xb07784] 4；
+8. 尾 `setge dl / dec edx / and eax,edx`——失败归 0，成功保留 eax。
+**语义**：对象数组登记写入器——三组全局 Vector（0xA8ECC8/0x8B40D8/0x8B41B8）读取登记进 [0xB0C110] 表 + 六段规则区读取（[General] 系 0x81DA8C/0x89EA40 等）。
+
+## b 路 0x67F7E0（476B）——对象数组登记读出器
+
+虚表槽 0x10（4 参读）系列，与 a 路**逐段镜像**（a 写、b 读同一组地址）：
+1. 虚表槽 0x10 读 [0xa8ed78]→4 / [0xa83d4c]→4 / [0xa8ed84]→4；
+2. [0xa8ecc8] 计数 → 循环 edi=0..count：`call [ecx+0x10]` 读 [0xa8ecbc+edi*4]（**读数组元素**，非写）；
+3. 读 [0x89ea40] 0x1b0 → **call 0x539890(esi)**（a 路 0x539AE0 孪生，地址差 0x250）；
+4. [0x8b40d8] 计数 → 循环读 [0x8b40cc+edi*4]；
+5. [0x8b41b8] 计数 → 循环读 [0x8b41ac+edi*4]；
+6. 读 [0x81da8c]/[0x81dad8]/[0x89ec28]/[0x89ecc0]/[0xa8e3a8]/[0xb07784] 同 a 路第 7 段；
+7. 尾 `setge cl / dec ecx / and eax,ecx`。
+**语义**：与 a 路成 SaveLoad 读写镜像对（类似 batch 2063 SavegameInformation 存取族），虚表槽 0xC（写侧）/0x10（读侧）分工。
+
+## c 路 0x67E730（4258B）——场景级 Rules 全量读入大函数（callees=32）
+
+超大型读入器，前置 8 项初始化 + 中段 0x7E15F8 串写循环十余连 + 尾段多子系统 + 0x4F42F0 收口：
+1. **0x6851F0 初始化** → **0x689470(0xa8b230 场景, esi)**（batch 2063 场景存档读入器兑现）→ [0xa8b230]+0x35a2→[0xa8ed9c] + [0xa8b230]+0x34b8 → **0x534FA0** 检查（失败直接 ret）；
+2. 0x72AD20 构造局部 → 0x533FD0(0x886fb0) + **0x4A8960(0x87f7e8 MapClass)** + **0x4C6320(0x8a38e0)** + 0x5349C0 + **0x675210(0x8871e0)**（= PhobosHook_RulesClass_SaveLoad_Prefix，ranking 有行未登记——观察项，picker 后续自然取到）+ `call [eax+0xC]` 读 + **edi=[0x7e15f8] 串写 API 循环**（[0x7f7c90] 格式串）→ **0x5BDF70(0x87f7e8)** + **call 0x67F9C0（a 本尊，批内自引用）**；
+3. 0x581F50(0x87f7e8) + **0x551B90(0x87f778)** + [0x887324] 虚表槽 0x20 释放置 0 + 0x7E15F8 串写 ×10 段（每段 == 虚表槽 0xC 读 + 循环 edi 遍历 + 0x7f7c90 串取）——**0x7E15F8 是第二个串写 API**（区别于 batch 2073-2084 家族的 0x7E15F4）；
+4. **0x4E97B0(0xa83d50)** + 虚表槽 0xC 读 → [0xa83d58]/[0xa83d60] 计数 Vector 扩容（[0xa83d5d] byte/[0xa83d64] 上限）→ 0x6CF240 登记 [0xa83d54] 数组；
+5. **0x4E9550(0x8b41e0)** + 虚表槽 0xC 读 → [0x8b41e8]/[0x8b41f0] Vector（[0x8b41ed]/[0x8b41f4]）→ 0x6CF240 登记 [0x8b41e4]；
+6. **0x67C690 ×14 连**（每段 `call 0x67c690 / test / jge 失败返 0`——子读入器，已登记）+ 0x74EA70 + 0x660840（各带 al 检查）；
+7. **0x413800/0x4136C0(0x887888)** 对 + **0x54E6F0/0x54E7B0(0xabc5f8)** 对 + **0x439110/0x439260(0x87f5d8)** 对（各三连：裸调 + esi 参调 + jge 检查）；
+8. [0xa8b238]==5 分支：0x4068E0(0x83d634 串) + **0x69B5B0(0xa8b250)** 失败 → 0x4068E0(0x83d584) al=0；
+9. **0x751710** + **0x7533F0** + **0x721040(0xa83d10, esi)** + **0x4F42F0(0x87f7e8, 2)** + [0xa8b238]==0 → [0xabce08]=1 → 尾 al=1。
+**语义**：场景级 Rules 全量读入器——batch 2063 存档读入协同 + PhobosHook SaveLoad_Prefix 前置 + 三组 Vector 登记 + 十余个子系统读入 + [0xa8b238] 模式门控（==5 特殊动作/==0 置 [0xabce08]）。
+
+## 原版怪癖（照抄）
+
+1. a 路三组 Vector 登记均走「扩容门控（计数/上限/byte 标志）+ 0x6CF240 逐元素登记到 [0xb0c110]」固定模板；读取失败（jl）即跳统一出口，仅最后一段 setge 尾转；
+2. a/b 对称但**虚表槽不同**：a 用槽 0xC（写），b 用槽 0x10（读）——同一数据双槽位；
+3. c 路 0x67C690 连调 14 次且每段失败都直接 al=0 返回，不做回滚；
+4. c 路 0x7E15F8 串写循环内每段先 `call [eax+0xC]` 读计数再 0x7f7c90 串取——与 2073-2084 家族（虚表槽 0x10 读计数 + 0x7E15F4）**槽位与写 API 均不同**，是另一族模板。
+
+## 跨批次连接
+
+- ★★★batch 2063 b 0x689470（场景存档读入器）——c 路首段直接兑现；
+- ★★0x675210 PhobosHook_RulesClass_SaveLoad_Prefix（ranking 有行未登记 13883B callees=22）——c 路调用，observation 项；
+- ★★0x67C690（已登记）——c 路 14 连子读入器；
+- ★0x6CF240（batch 2063 表查找 [0xb0c110]）——a/c 路登记复用；
+- ★0x539AE0/0x539890——b 路 0x539 区读写孪生候选；
+- ★0x4F42F0（batch 2067 c 场景启动器同调）——c 路尾段。
+
+## 观察项 / 候选池
+
+- **新候选 10**：0x416C0→0x4136C0、0x439260、0x4C6320、0x4E9550、0x4E97B0、0x539890、0x539AE0、0x54E7B0、0x5BDF70、0x660840。
+- **观察项**：0x675210（PhobosHook SaveLoad_Prefix，ranking 已列，等 picker 排序）。
+- a 路后邻块 0x67FD20（0x9B 读入器含 0x681840 call）/0x67FDC0（1B 空桩）/0x67FDD0-0x67FDE0（指针释放器孪生）——后续 picker。
+- 前向：0x67D300（4411B callees=52）/ 0x67BFA0 / 0x67BDD0 等。
