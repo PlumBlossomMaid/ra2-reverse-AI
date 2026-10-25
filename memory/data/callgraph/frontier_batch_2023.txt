@@ -1,0 +1,46 @@
+# frontier batch 2023
+
+本批三函数（0x6B 区——WinMain 周边）：0x6BB390（961B INI 配置读取初始化器）/ 0x6BA580（250B PCX::BlitToSurface 带名）/ 0x6BA120（17B 双标志直通转发器）
+Picker：unique_callers 扇入度 top3（0x6BB390 FUN_006bb390 callees=11 deps=4445；0x6BA580 PCX::BlitToSurface callees=0 deps=201；0x6BA120 FUN_006ba120 callees=1 deps=99）
+disasm：`_d2023a.txt`（0x6BB390 size 0x400）/ `_d2023b.txt`（0x6BA580 size 0x130）/ `_d2023c.txt`（0x6BA120 size 0x30）——三路全部读取（a 尾 ret c3 @0x6BB750 + nop pad + 后邻头 0x6BB760；b 尾 ret 0x10 @0x6BA677 + 后邻 0x6BA680 假桩（xor al,al/ret 0xC）+ 0x6BA690 头；c 尾 ret 4 @0x6BA12E + pad + 后邻头 0x6BA140）
+callee 核验：`_check_callees2023.py`——a 直接 call 目标 1 个（0x6BB2E0）**已登记**；b 直接目标 0 个（全虚表调用 [edx+0x5C] 等）；c 直接目标 1 个（0x6B9D00）**已登记**——**无新候选**
+
+## 1. 0x6BB390 —— INI 配置读取初始化器·[0x6BB390]
+- 大小：961B（0x6BB390-0x6BB750），全读，尾 xor eax,eax + add esp,0x2E0 + ret c3 单出口 0x6BB750
+- 机器码结构（多段——路径获取+文件创建+键值读取）：
+  - 段 1（0x6BB390-0x6BB41A）：`mov ecx,[0xB732F0]`（**hInstance 全局——WinMain 0x6BB9A0 存入，batch 2022 实锤**）+ sub esp,0x2E0 + `call [0x7E11A8]`（push 0x104/push 缓冲/push hInstance——GetModuleFileNameA 系 IAT）+ `call [0x7E15E0]`（push 0x27/push 缓冲/push 0x7E9520 格式串——sprintf 系）+ `call [0x7E124C]`（8 参大调用——路径拼接/INI 打开准备）
+  - 段 2（0x6BB41B-0x6BB5D0）：**配置键读取循环组**——`call [0x7E1140]`（push 0x840B70 键名）+ `call [0x7E1160]`（push 0x815E74 默认值）+ `call [0x7E1018]`（**CreateFileA 系：push 0x80000000(READ)/0/0/0xF003F/0/0/文件名——文件打开**）+ 失败分支 `call [0x7E11AC]`（lstrlen 系）+ `call [0x7E1014]`（WriteFile 系——写默认配置）+ `call [0x7E1004]`（CloseHandle 系？）；三组重复（0x840B70/0x840B5C/0x840B44 键名 + 0x840B4C/0x840B5C/0x840B2C 等串）
+  - 段 3（0x6BB5CA-0x6BB750）：**六次直接 call 0x6BB2E0**（各 push 键名 0x840B4C/0x840B5C/0x840B34/0x840AF8/0x840AE8/0x840AE0 + edx 串——**已登记函数（早批）**配置键值解析）+ `call [0x7E1360]`（push 0x840AD0/缓冲）+ 尾段返回值判定：eax 非零 → `mov ecx,[eax]/push eax/call [ecx+8]`（虚表槽 8——失败清理）→ xor eax,eax → ret
+- 语义：**INI 配置读取初始化器**——**WinMain 0x6BC425 调用实锤（batch 2022 新候选 0x6BB390 兑现）**：GetModuleFileNameA 取 exe 路径 → sprintf 拼配置文件名 → CreateFileA 打开 → 0x6BB2E0 读六组键值（0x840B70/0x840B5C/0x840B34/0x840B44/0x840B2C/0x840B4C 等键名常量）→ 缺省时 WriteFile 写默认值 → 虚表槽 8 收尾
+- ★原版怪癖（照抄）：①无标准序言（不 push ebp），直接 sub esp 大缓冲；②hInstance 从 [0xB732F0] 全局读（非栈参传入）；③失败分支 XOR test 比较（`cmp edx,0x840b4c` 恒不等则走查表分支——**恒真跳转惯用法**）；④零返回值 → 虚表槽 8
+- ★跨批次连接：★★**WinMain 0x6BC425 调用**（batch 2022 b）+ ★★[0xB732F0] hInstance 全局（batch 2022 b 写入——读写闭环）+ ★★0x6BB2E0/0x6B9D00 已登记（无新候选）+ 0x815E74（默认值串区——batch 2022 0x81D57C 日志区相邻）
+- 新候选：无（0x6BB2E0 已登记）
+- ⚠️ partial：函数精确名（推断「INI 配置读取初始化器」）、0x7E1018/0x7E1014/0x7E1004 IAT 槽 API 名（CreateFileA/WriteFileA/CloseHandle 系推断）、0x840Bxx 键名各含义未逐串核对
+
+## 2. 0x6BA580 —— PCX::BlitToSurface·[0x6BA580]
+- 大小：250B（0x6BA580-0x6BA677），全读，尾 mov al,1 + add esp,0x14 + ret 0x10 单出口 0x6BA677（失败出口 ret 0x10 两处 @0x6BA5A7/0x6BA5D0）
+- 机器码结构（多段——双 surface 虚表取尺寸+透明像素拷贝）：
+  - 段 1（0x6BA580-0x6BA5C0）：sub esp,0x14 + `mov esi,[esp+0x24]`（第 3 参——dst surface）+ `call [edx+0x5C]`（取尺寸/初始化——返回 0 → 失败 ret 0x10 返 false）+ `mov edi,[esp+0x2C]`（第 5 参——src surface）+ `call [edx+0x5C]`（同槽——返回 0 → `call [eax+0x60]` 清理 + 返 false）
+  - 段 2（0x6BA5D3-0x6BA65A）：**拷贝主循环**——+0x7C 取宽（伏笔：`mov edx,[ecx+4]/mov eax,[ecx+0xC]` 四个字段取宽高）、+0x80 取高、+0x74 取行距 → `cdq/sub/sar 1` 除 2 → 外层行循环 `imul esi, eax`（行数×行距）+ 内层列循环 + `cmp dx, word[esp+0x34]`（**透明色比较：等于则跳过不写**）+ `mov word[ecx],dx`（16 位像素拷贝）+ `add eax,2/add ecx,2` 步进
+  - 段 3（0x6BA65C-0x6BA677）：`call [edx+0x60]` ×2（双 surface 清理对称）+ pop 三寄存器 + mov al,1（成功）+ ret 0x10
+- 语义：**PCX::BlitToSurface**（带名符号实锤）——双 surface（esp+0x24 dst/esp+0x2C src）虚表槽 0x5C 初始化、0x7C/0x80/0x74 取宽高行距、双层循环 16 位像素拷贝、[esp+0x34] 透明色相等跳过、0x60 清理对称、4 栈参 ret 0x10 返回 bool
+- ★原版怪癖（照抄）：①`cdq/sub/sar 1` 有符号除 2（取半行距）；②透明色比较 `cmp dx,word[esp+0x34]; je` 跳过（**相等不写**——colorkey 语义）；③两个失败出口均 ret 0x10 返 false（al=0）；④拷贝后无 `cmp` 校验源目标类型（纯 16 位假设）
+- ★跨批次连接：★★同族虚表槽 0x5C/0x60/0x7C/0x80 系列与其他 Surface/PCX 处理函数（batch 623-637 PreviewClass::ReadPCXPreview 0x641EE0 域）；后邻 0x6BA680 = 假桩（xor al,al/ret 0xC——失败恒假返回，同 0x6BA682 后的 pad 模式）
+- 新候选：无（callees=0 全虚表调用）
+- ⚠️ partial：槽 0x5C/0x60/0x7C/0x80/0x74 的具体方法名（GDI/Surface 虚表——推断 GetSurface/Release/GetWidth/GetHeight/GetStride 系）、0x6BA680 假桩归属未核
+
+## 3. 0x6BA120 —— 双标志直通转发器·[0x6BA120]
+- 大小：17B（0x6BA120-0x6BA130），全读，尾 ret 4 单出口 0x6BA12E
+- 机器码（单段——取参+双 1 压栈+转发）：mov eax,[esp+4] → push 1 → push 1 → push eax → call 0x6B9D00 → ret 4
+- 语义：**双标志直通转发器**——1 栈参取出后固定补两个 (1,1) 参数，调用 0x6B9D00（**已登记的 0x6B9D00——早批），ret 4 清 1 参——**cdecl 风格 (flag=1, flag=1, arg) 三参转发**
+- ★原版怪癖（照抄）：①无序言无栈帧（纯尾转）；②固定压栈 (1,1)——被转发函数的两个布尔标志恒真；③ret 4（1 栈参）
+- ★跨批次连接：★★0x6B9D00 已登记（核验确认）+ 后邻 0x6BA140（下一函数头——同区 0x6BA 系列）
+- 新候选：无（0x6B9D00 已登记）
+- ⚠️ partial：0x6B9D00 的语义（已登记行可查）、本函数精确名（推断「双标志直通转发器」）
+
+## 批次观察
+- **本批 = WinMain 周边函数带**：0x6BB390（配置初始化——WinMain 调用）+ 0x6BA580（PCX 绘制——带名）+ 0x6BA120（转发器）——0x6B 区 0x6BB390 之后大段已清理
+- **★★batch 2022 新候选兑现**：0x6BB390 是 batch 2022 b（WinMain）的 MANY 候选之一，本批被 picker 选中并实锤 WinMain 0x6BC425 调用点
+- **★★[0xB732F0] hInstance 全局读写闭环**：WinMain 0x6BB9A0 写入（batch 2022）→ 0x6BB390 读取（本批）——全局单例贯通
+- callee 核验：a 1（0x6BB2E0 已登记）/ b 0（全虚表）/ c 1（0x6B9D00 已登记）——**本批无新候选**
+- 新候选入池：无
