@@ -1,0 +1,50 @@
+# frontier batch 2029
+
+本批三函数（0x6B 区——★★QWEN.md 阶段 9 抬升双点名函数）：0x6B3850（557B 抬升 Apply 全图遍历器）/ 0x6B2A70（1209B 抬升网格分配器）/ 0x6B1AB0（74B VectorClass 构造器变体）
+Picker：unique_callers 扇入度 top3（0x6B3850 FUN_006b3850 callees=4 deps=65；0x6B2A70 FUN_006b2a70 callees=7 deps=61；0x6B1AB0 FUN_006b1ab0 callees=1 deps=47）
+disasm：`_d2029a.txt`（0x6B3850 size 0x260）/ `_d2029b.txt`（0x6B2A70 size 0x4D0）/ `_d2029c.txt`（0x6B1AB0 size 0x60）——三路全部读取（a 尾 ret c3 @0x6B3A7C + pad + 后邻头 0x6B3A80（§七 函数连续相邻）；b 尾 ret c3 @0x6B2F28 + pad + 后邻头 0x6B2F30；c 尾 ret 8 双出口 @0x6B1ADE/0x6B1AF7 + pad + 后邻头 0x6B1B00）
+callee 核验：`_check_callees2029.py`——a 直接目标 4（0x578350/0x578290 CellIterator_Reset/Next + 0x58C2A0 + 0x7C8B3D）**已登记**；b 直接目标 7（0x5657A0/0x5AC230/0x58C2A0/0x42D510/0x6B2520 + 0x7C8E17/0x7C8B3D）**已登记**；c 直接目标 1（0x7C8E17）**已登记**——**无新候选**
+
+## 1. 0x6B3850 —— 抬升 Apply 全图遍历器·[0x6B3850]
+- 大小：557B（0x6B3850-0x6B3A7C），全读，尾 pop 五 + mov [0xB0B6EC],0 + mov al,1 + add esp,0x1C + ret c3 单出口 0x6B3A7C
+- 机器码结构（多段——CellIterator 全图循环+格检查+表查+写格）：
+  - 段 1（0x6B3850-0x6B3876）：sub esp,0x18 + `mov ecx,0x87F7E8/call 0x578350`（**MapClass::CellIterator_Reset——QWEN.md ⑨ 实锤**）+ `mov ecx,0x87F7E8/call 0x578290`（**CellIterator_Next**）+ test/je（哨兵退出）
+  - 段 2（0x6B3877-0x6B38CC）：`mov ebx,[eax+0x24]`（cell 坐标）+ 三边界 [0x8759A8/0x8759AC/0x8759A4] + `imul eax,edx`（行距）+ `lea esi,[eax+ecx]`（cell 索引）+ [0xB0B6EC] 8B 项 + **四格邻域检查**（字节 5/0xD 标志——[esi]、[ecx] 两处对角）
+  - 段 3（0x6B38D3-0x6B391F）：8B 项四 dword 读入 [esp+0x18..0x24] + 4 元素 min/max（0x3E8=1000 上界） + `sub ecx,esi/cmp 0xF/jg`（**高度差 >15 跳过**）
+  - 段 4（0x6B3920-0x6B39DB）：**菱形判定 [0xABED04]/[0xABED08]**（batch 1735/2028 同族）+ `cmp [edi+0x44],-1/jne` + `mov eax,[edi+0xE4]/test/jne` + `call 0x58C2A0`（已登记）+ `mov cl,[eax+0x45]/test` + `mov eax,[edi+0x38]/cmp [0xA8ED38]` + `cmp eax,0xFFFF/je` + `mov edx,[0xA8ED2C]/mov edx,[ecx+eax*4]/mov al,[edx+0x2E0]/test`（**表查**）→ 通过 → `mov eax,0x88888889/imul esi/sar edx,3`（**÷10 魔数**）→ `mov byte[edi+0x11B],dl`（**写格高度**）
+  - 段 5（0x6B39D8-0x6B3A44）：**表 [0x83FF18..0x83FF64] 线性查找**（4 dword 比较）→ 命中存 [edi+0x11C]（样式字节）+ 分支：edx==0 → `mov ecx,[0xAA10B0]`（**QWEN.md ⑨ k==0 分支精简地**）/ edx!=0 → `mov eax,[0xABC1D8]/lea ecx,[eax+edx-1]`（**QWEN.md ⑨ ramp_base 全局**）→ `mov [edi+0x38],ecx`（写格砖类型）
+  - 段 6（0x6B3A47-0x6B3A7C）：CellIterator_Next 循环 + 尾清 [0xB0B6EC]（push/call 0x7C8B3D/[0xB0B6EC]=0）+ mov al,1 + ret
+- 语义：**抬升 Apply 全图遍历器**——★★**QWEN.md 阶段 9 §6.3「0x6B3850 会去刷一批高度根本没变的格子」的汇编侧实锤**：CellIterator 全图遍历（0x578350/0x578290），跳过 [cell+0x48]==-1/[cell+0x11F]，格邻域检查 → 菱形 [0xABED04]/[0xABED08] 判定 → 表 [0xA8ED2C] 查 + [0x83FF18] 表线性查找 → **写 [edi+0x11B]（高度）/ [edi+0x11C]（样式）/ [edi+0x38]（砖类型——[0xAA10B0] 或 [0xABC1D8] ramp_base 分支）** → 尾清 [0xB0B6EC] 返回 true
+- ★原版怪癖（照抄）：①高度差 `sub ecx,esi/cmp 0xF/jg` 超过 15 跳过；②÷10 魔数 0x88888889（imul/sar 3）；③**表 [0x83FF18] 线性查找 4 dword 连比**（0x83FF18..0x83FF64 光标 0x83FF64 终止）；④**k==0 → [0xAA10B0] / k!=0 → [0xABC1D8]+k-1**（QWEN.md ⑨ ramp_base 实锤——温带 29）；⑤尾清 [0xB0B6EC]（**本函数消费的 cell 数组用完即删**）
+- ★跨批次连接：★★QWEN.md ⑨（CellIterator 0x578350/0x578290 起点 (1,W) + [0xABC1D8] ramp_base + k==0 [0xAA10B0]）**汇编侧全量互证** + ★★batch 2028 c（0xB4=180 上界同域）+ ★★batch 1735 0x5AC230 菱形判定 + ★★batch 2028 b 0x88888889 魔数除 10 + [0x8759A4..0x8759AC]/[0xB0B6EC]（batch 2028 a/b 共享）+ 0x58C2A0（已登记）
+- 新候选：无（4 callee 全登记）
+- ⚠️ partial：函数精确名（推断「抬升 Apply 全图遍历器」）、[0x83FF18] 表语义（样式表）、[edi+0x11B]/[0x11C] 字段名（高度/样式推断）
+
+## 2. 0x6B2A70 —— 抬升网格分配器·[0x6B2A70]
+- 大小：1209B（0x6B2A70-0x6B2F28），全读，尾 pop 四 + add esp,0x4C + ret c3 单出口 0x6B2F28
+- 机器码结构（多段——cell 数组分配+边界设置+双循环处理）：
+  - 段 1（0x6B2A70-0x6B2AD0）：`mov eax,[0xB0B6EC]/test/je→push/call 0x7C8B3D`（**旧数组释放**）+ `mov eax,[0x87F918]/mov ecx,[0x87F914]/inc/lea esi,[eax+1]/imul esi,ecx`（**新数组大小 (W+1)×(H+1)**）+ `lea edx,[esi*8]/push/call 0x7C8E17`（**new (W+1)(H+1)×8 字节**）+ 零初始化循环（lea ecx,[eax+5] 8B 步进：mov dword[ecx-5],0/mov byte[ecx-1],0/mov byte[ecx],0）→ [0xB0B6EC]=新数组
+  - 段 2（0x6B2ADD-0x6B2B54）：**设置地图边界**——`mov edx,[0x87F90C]/mov [0x8759A8],edx`（左）+ `mov edx,[0x87F910]/mov [0x8759AC],edx`（右）+ `mov [0x8759A4],eax`（[0x87F918]+1）+ `mov [0x8759A0],ecx`（[0x87F914]+1）——**从 [0x87F90C..0x87F918] 源边界拷贝到 [0x8759A0..0x8759AC] 工作边界**
+  - 段 3（0x6B2B54-0x6B2F28）：**双循环全图处理**——外层 [0x8759A0] 行数 × 内层 [0x8759A4] 列数：`imul eax,esi`（行距）+ `lea eax,[ecx+eax*8]`（cell 8B 项指针）+ `mov byte[eax+4],0/mov byte[eax+5],0`（**清格字节 4/5**）+ 菱形判定 [0xABED04]/[0xABED08] → 循环内邻域检查（[esp+0x18] 计数 <3 时四周扩展 word 坐标）→ **`call 0x5657A0`**（取 cell）→ `mov dl,[eax+0x11C]/mov esi,edx`（样式字节）→ `movsx eax,byte[eax+0x11B]`（高度）→ **`mov ecx,[esi*4+0x83FF18]`**（表取）→ `lea eax,[eax+eax*2]/lea eax,[eax+eax*4]/add ecx,eax`（×15 表索引）→ 菱形判定 ×3 邻格 + **`call 0x5AC230`（菱形判定已登记）** + `call 0x58C2A0` + 表 [0xA8ED2C] 查 [idx]+0x2E0 → **`call 0x42D510`** + **`call 0x6B2520`（已登记 cell setter）** ×2 → `mov [edx],ecx`（写格）→ 计数累加
+- 语义：**抬升网格分配器**——★★**QWEN.md 阶段 9 §七「0x6B2A70 从没初始化过这个字节（operator new 垃圾值）」的分配器本尊**：释放旧 [0xB0B6EC] → new (W+1)(H+1)×8 字节并零初始化（**8B 项 = dword+字节×2+dword+字节×2 布局——同 batch 2028 a**）→ [0x87F90C..0x87F918] → [0x8759A0..0x8759AC] 边界拷贝 → 双循环清格字节 4/5 + 菱形判定 + 0x5657A0/0x5AC230/0x58C2A0/0x42D510/0x6B2520 处理链 + [0x83FF18] 表查 ×15 索引 + [0xA8ED2C] 表查回写
+- ★原版怪癖（照抄）：①new 后零初始化循环从 `lea ecx,[eax+5]` 起 8B 步进（**首字段 5 字节对齐清零**）；②大小 (W+1)×(H+1)（**含哨兵行列**）；③边界双份（源 [0x87F90C..0x87F918] → 工作 [0x8759A0..0x8759AC]——**QWEN.md ⑨ 0x87F8DC=MapRect.W 同源区**）；④×15 表索引 `lea [eax+eax*2]/lea [eax+eax*4]`（同 batch 2028 c）
+- ★跨批次连接：★★QWEN.md ⑨（[0x87F8DC] MapRect 源 + [0xABC1D8] ramp_base 同域）**分配/消费闭环** + ★★batch 2028 a（[0xB0B6EC] 8B 项布局一致）+ ★★batch 1735/2028（0x5AC230/0x58C2A0 菱形+换算链）+ 0x42D510（已登记——batch 1739 桥修复链 0x42D510 8 邻域）+ 0x6B2520（已登记 cell setter）+ [0x83FF18] 表（batch 2029 a 同表——**表在两函数间共享**）
+- 新候选：无（7 callee 全登记）
+- ⚠️ partial：函数精确名（推断「抬升网格分配器」）、[0x87F90C..0x87F918] 源边界的写入点（MapClass::Set_Dimensions 系推断）、8B 项字段名
+
+## 3. 0x6B1AB0 —— VectorClass 构造器变体·[0x6B1AB0]
+- 大小：74B（0x6B1AB0-0x6B1AF9），全读，尾 ret 8 双出口 @0x6B1ADE（外部缓冲）/0x6B1AF7（自分配）
+- 机器码（单段——参 2 容量+参 3 外部缓冲）：`mov eax,[esp+4]`（**参 2=容量**）+ `mov esi,ecx`（this）+ `mov [esi+4],0/mov [esi+8],eax/mov byte[esi+0xC],1`（数组/容量/持有标志）+ `mov byte[esi+0xD],0`（守卫）+ `mov [esi],0x7F324C`（**虚表 0x7F324C**）+ 参 3 [esp+0xC] == 0 → **`shl eax,2/push/call 0x7C8E17`（new 容量×4）+ [esi+4]=eax + mov byte[esi+0xD],1**；参 3 != 0 → `mov [esi+4],ecx`（**直用外部缓冲**）+ ret 8
+- 语义：**VectorClass 构造器变体**——2 栈参（容量+外部缓冲指针）ret 8：虚表 0x7F324C + [esi+8]=容量 + [esi+4]=外部缓冲或 new 容量×4 + +0xC=1/+0xD=(自分配)；**与 batch 2025 0x6B8400 VectorClass::Resize 同字段布局（[+4] 数组/[+8] 容量/+0xC/+0xD 双守卫）**
+- ★原版怪癖（照抄）：①虚表 0x7F324C（与 batch 2025 Resize 同族不同表）；②外部缓冲优先（参 3 非零则 [esi+4]=外部，+0xD=0）；③自分配 new 容量×4（4B 项）；④+0xC 恒 1（有数据标志）
+- ★跨批次连接：★★batch 2025 0x6B8400（VectorClass::Resize 同字段布局——**读写配对**）+ 0x7C8E17（operator new 已登记）+ 后邻 0x6B1B00（[0xB0B638..0xB0B63C] 清零器——观察项）+ 虚表 0x7F324C 族（0x7F 区虚表家族延续——batch 2002-2021 同族观察）
+- 新候选：0x6B1B00（后邻清零器——观察项）
+- ⚠️ partial：函数精确名（推断「VectorClass 构造器变体」）、对象类型（4B 项容器推断）
+
+## 批次观察
+- **★★本批 = QWEN.md 阶段 9 抬升双点名函数同日兑现**：0x6B2A70（§七 网格分配器——operator new 垃圾值 +0x06 语义实锤）+ 0x6B3850（§6.3 Apply 遍历器——[0x83FF18] 表 + [0xABC1D8] ramp_base + [0xAA10B0] k==0 分支全量互证）——**文档点名 → 汇编取证 → TSV 登记闭环**
+- **★★[0xB0B6EC] cell 数组生命周期闭环**：0x6B2A70 分配（new (W+1)(H+1)×8）→ batch 2028 a/b 读 → 0x6B3850 尾清（delete）——**消费完即删**
+- **★★[0x83FF18] 表三函数共享**：batch 2029 a（Apply 线性查找 4 dword 连比）+ b（×15 索引取表）——**样式表源**
+- **★★地图边界双份结构**：[0x87F90C..0x87F918] 源（MapClass::Set_Dimensions 域）→ [0x8759A0..0x8759AC] 工作（batch 2028 a/b 同用）——初始化→读取贯通
+- callee 核验：a 4 / b 7 / c 1——**全部已登记，无新候选**
+- 新候选入池：0x6B1B00（后邻清零器——观察项）
