@@ -1,0 +1,58 @@
+# frontier batch 2098：RulesClass::Read_* 类型数组三连（Read_ParticleSystems / Read_Particles / Read_VoxelAnims）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x672A70 Read_ParticleSystems callees=4 deps=409 / 0x672A00 Read_Particles callees=4 deps=406 / 0x672920 Read_VoxelAnims callees=4 deps=409）
+- 三路 disasm：`.qwen/tmp/_d2098a.txt`（0x672A70 size 0x70）/ `_d2098b.txt`（0x672A00 size 0x70）/ `_d2098c.txt`（0x672920 size 0x70）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x672A70 | 102B（0x66）| ret 4 @0x672AD3 | 0x672AE0（batch 2097 c 本尊）| 4（0x526960/0x526CC0/0x528A10/0x644890）|
+| 0x672A00 | 102B | ret 4 @0x672A63 | 0x672A70（a 本尊）| 4（0x526960/0x526CC0/0x528A10/0x645820）|
+| 0x672920 | 102B | ret 4 @0x672983 | 0x672A00（b 本尊）| 4（0x526960/0x526CC0/0x528A10/0x74B960）|
+
+## 机器码结构（a 路 0x672A70 为代表，b/c 逐字节同构仅键/转换器不同）
+
+```
+00672A70  sub esp,0x20 / push ebx,esi,edi
+00672A76  mov edi,[esp+0x30]          ; this
+00672A7A  push 0x83D100              ; ✱键（a：ParticleSystems / b：0x83D0F4 / c：0x83D0E8）
+00672A81  call 0x526960             ; 读计数 → ebx
+00672A8A  xor esi,esi / test ebx / jle 0x672AC6   ; 计数<=0 直接跳尾
+00672A8E  loop: lea eax,[esp+0xC] / push 0x20 / push eax
+00672A9A  push 0x889F64 / push esi / push 键
+00672AA2  call 0x526CC0             ; 读串 [索引] → [esp+0xC]
+00672AA7  push eax / push 键
+00672AAF  call 0x528A10             ; 五参加载
+00672AB4  test eax / je 0x672AC1
+00672AB8  lea ecx,[esp+0xC] / call 0x644890  ; ✱转换器（a：0x644890 / b：0x645820 / c：0x74B960）
+00672AC1  inc esi / cmp esi,ebx / jl loop
+00672AC6  xor eax,eax / pop edi / test ebx,ebx / pop esi / pop ebx
+00672ACD  setg al                   ; 计数>0 → al=1（成功条件）
+00672AD0  add esp,0x20 / ret 4
+```
+
+## 语义
+
+**类型数组读入器三连**（RulesClass::Read_* 带名小函数）——同模板三个实例化：
+1. **0x526960**（键 0x83D100/0x83D0F4/0x83D0E8）读数组计数；
+2. 循环 esi=0..count-1：0x526CC0（0x889F64 格式串）读串 → [esp+0xC] → 0x528A10 五参加载；
+3. 加载成功则调用**各自转换器**（a 0x644890 ParticleSystem 构造 / b 0x645820 Particle 构造 / c 0x74B960 VoxelAnim 构造）——新候选仅 b 路 0x645820；
+4. 尾 `setg al`（计数>0 → al=1）布尔化——与 batch 2094 b 的 neg/sbb/neg 不同的廉价布尔化。
+
+## 原版怪癖（照抄）
+
+1. 三路逐字节同构仅键（0x83D100/0x83D0F4/0x83D0E8）与转换器（0x644890/0x645820/0x74B960）不同——同模板类族实例化；
+2. 循环失败（加载 je）跳过转换器但**计数照常推进**（inc esi）；
+3. 尾 `xor eax/eax + test ebx + setg al`——计数<=0 也走 al=0 出口（非显式失败分支）。
+
+## 跨批次连接
+
+- ★★★batch 2097（Read_AI 同族——0x83D4xx 键链延续）+batch 2096（Read_Movies 同族）+batch 2094 b（INISection::Exists 同查询族）；
+- ★0x526960/0x526CC0/0x528A10（INI 读族已登记，batch 2096 a 同款三连）+0x644890/0x74B960（转换器已登记）+0x889F64（格式串，batch 2086 c/2096 a 共用）。
+
+## 观察项 / 候选池
+
+- **新候选 1**：0x645820（b 路 Read_Particles 转换器——0x64 区）。
+- 前向：picker 队列继续 RulesClass::Read_* 族（0x6723D0 Read_AircraftTypes / 0x672360 Read_VehicleTypes / 0x672280 Read_InfantryTypes + 0x66BBB0 Read_CombatDamage 5045B / 0x665650 RulesClass 构造 9175B / 0x667A30 ~RulesClass 3202B 大函数）。
