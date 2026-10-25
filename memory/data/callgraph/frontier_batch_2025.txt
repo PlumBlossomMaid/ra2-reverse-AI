@@ -1,0 +1,43 @@
+# frontier batch 2025
+
+本批三函数（0x6B 区）：0x6B8AF0（31B 双对象首字段比较器）/ 0x6B8400（176B VectorClass::Resize 惯用法）/ 0x6B7D30（30B SpawnManagerClass::CountAliveSpawns 带名）
+Picker：unique_callers 扇入度 top3（0x6B8AF0 FUN_006b8af0 callees=0 deps=62；0x6B8400 FUN_006b8400 callees=2 deps=46；0x6B7D30 SpawnManagerClass::CountAliveSpawns callees=0 deps=19）
+disasm：`_d2025a.txt`（0x6B8AF0 size 0x30）/ `_d2025b.txt`（0x6B8400 size 0xE0）/ `_d2025c.txt`（0x6B7D30 size 0x30）——三路全部读取（a 尾 ret 4 @0x6B8B07 + pad + 后邻 0x6B8B10 空函数；b 尾 ret 8 @0x6B84A4/0x6B84AD 双出口 + pad + 后邻 0x6B84B0 线性查找器；c 尾 ret c3 @0x6B7D4D + pad + 后邻 0x6B7D50 同类循环）
+callee 核验：`_check_callees2025.py`——a 直接目标 0；b 直接目标 2（0x7C8E17 operator new/0x7C8B3D delete——CRT 已登记）；c 直接目标 0——**无新候选**
+
+## 1. 0x6B8AF0 —— 双对象首字段比较器·[0x6B8AF0]
+- 大小：31B（0x6B8AF0-0x6B8B0E），全读，尾 ret 4 @0x6B8B07（命中 al=1）/0x6B8B0C（未命中 al=0）双出口
+- 机器码（单段——XOR+双段掩码比较）：mov eax,[esp+4]（参 1）→ mov edx,[ecx]（this 首字段）→ mov eax,[eax]（参 1 首字段）→ xor eax,edx → test al,0xFF（**低字节差异检测**）→ jne 返回 0 → test eax,0x7FF00（**次 11 位差异检测**）→ jne 返回 0 → mov al,1 → ret 4
+- 语义：**双对象首字段比较器**——this 首字段与参 1 对象首字段逐位比较：低 8 位（al）与 0x7FF00 位段（位 8-18）任一不同返回 0，全等返回 1——**1 栈参 ret 4，返回 bool**
+- ★原版怪癖（照抄）：①XOR 后分两段掩码比较（0xFF + 0x7FF00——**位 8-18 共 11 位**，位 19-31 高位**不比较**）；②比较目标均取「对象首字段」（[ecx]/[eax] 间接取 dword）；③`test al,0xff` 用 al（低字节）而非 eax（全量）
+- ★跨批次连接：★后邻 0x6B8B10 空函数（1B ret c3——batch 2024 0x6B8B20 同款占位）+ 0x6B8AF0..0x6B8B30 区（batch 2024 位域同步族相邻）
+- 新候选：无
+- ⚠️ partial：函数精确名（推断「双对象首字段比较器」）、被比对象的类型（首字段为标志位/哈希推断）
+
+## 2. 0x6B8400 —— VectorClass::Resize·[0x6B8400]
+- 大小：176B（0x6B8400-0x6B84AF），全读，尾 ret 8 @0x6B84A4（成功 al=1）/0x6B84AD（分配失败 al=0）双出口
+- 机器码结构（多段——计数/容量/数组三字段 Resize）：
+  - 段 1（0x6B8400-0x6B8436）：push ebx/ebp/esi/edi + `mov ebp,[esp+0xC]`（参 2=新容量）+ `mov ebx,[esp+0x18]`（参 3=外部缓冲）——**ebx==0 时 `lea eax,[ebp*4]/call 0x7C8E17`（operator new 新容量×4 字节）→ edi**（自分配）；ebx!=0 直接用外部缓冲（edi=ebx）+ mov byte [esi+0xC],1（持有标志——**edi==0 则跳失败路径 ret 8 返 false**）
+  - 段 2（0x6B8438-0x6B8477）：`mov eax,[esi+4]`（旧数组）→ test → 非空则 `mov ecx,[esi+8]`（旧容量）/`cmp ebp,ecx/jge`（**取 min(新容量, 旧容量)**）→ 前移拷贝循环（mov edx,[edx+eax*4-4]/mov [edi+eax*4-4],edx）→ `mov al,[esi+0xD]/test`（守卫字节——非 0 则 push [esi+4]/call 0x7C8B3D delete 旧数组/[esi+4]=0）
+  - 段 3（0x6B8478-0x6B84AF）：[esi+4]=edi（新数组）+ `test ebx/sete al`（**持有标志 [esi+0xD] = (外部缓冲==0)**）+ [esi+8]=ebp（新容量）+ mov al,1（成功）；ebp==0 分支：`mov edx,[esi]/mov ecx,esi/call [edx+0xC]`（**虚表槽 0xC 清空路径**——ebs==0 时整清）；收尾：`mov eax,[esi+8]/mov ecx,[esi+0x10]/cmp/jge`（**计数 [esi+0x10] = min(计数,容量)**）
+- 语义：**VectorClass::Resize**——2 栈参（参 2=新容量、参 3=外部缓冲）ret 8：自分配（new 容量×4）或外部缓冲两路径 + 旧元素前移（min 截断）+ 守卫字节 [esi+0xD] 决定旧数组 delete + [esi+0x10] 计数收敛 + 虚表槽 0xC 清空 + 返回 bool——**batch 2000/2001 [0xB0BD50] 容器族同款模板的字段级再确认**
+- ★原版怪癖（照抄）：①外部缓冲路径置 [esi+0xC]=1 但 [esi+0xD]=(ebx==0)（**两个持有标志语义不同**：+0xC=本次有数据、+0xD=自分配需释放）；②旧容量比较 `cmp ebp,ecx/jge 7d02`（**jge 相等时取旧值**——min 的上取整边界）；③前移拷贝 `mov edx,[edx+eax*4-4]` 从 eax=1 起（**先 inc 后取**——首元素不拷）；④虚表槽 0xC 清空仅在 ebp==0 时
+- ★跨批次连接：★★batch 2000 0x6C8870（容量扩容拷贝器 0x8008 项大小）/batch 2001 0x6C6D00（收缩器）/0x6B84B0 后邻（线性查找器——**VectorClass::Find/IndexOf 推断，未登记观察**）
+- 新候选：0x6B84B0（后邻线性查找器——观察项）
+- ⚠️ partial：函数精确名（推断「VectorClass::Resize」——与已登记容器族同模板但 4B 项大小）、对象类型（VectorClass<int>/指针族）
+
+## 3. 0x6B7D30 —— SpawnManagerClass::CountAliveSpawns·[0x6B7D30]
+- 大小：30B（0x6B7D30-0x6B7D4D），全读，尾 ret c3 单出口 0x6B7D4D
+- 机器码（单段——数组遍历计数）：mov edx,[ecx+0x48]（**计数 = [this+0x48]**）→ xor eax,eax（计数累加器）→ test edx → jle 直接返回 0 → mov ecx,[ecx+0x3C]（**数组 = [this+0x3C]**）→ 循环：mov edi,[ecx]（取元素指针）→ `cmp dword ptr [edi+4],7`（**[elem+4] 状态字段与 7 比较**）→ je 跳过不计数 → inc eax → add ecx,4（步进 4B 指针数组）→ dec edx → jne 循环 → 返回 eax
+- 语义：**SpawnManagerClass::CountAliveSpawns**（带名符号实锤）——遍历 [this+0x3C] 指针数组共 [this+0x48] 项，**[elem+4] != 7 的元素计数返回**（7 = 死亡/无效状态码，相等则不算存活）——**O(n) 线性扫描**
+- ★原版怪癖（照抄）：①状态判定 `cmp dword ptr [edi+4],7` 用**元素指针 +4 字段**（非元素本体）；②==7 跳过（**7 是「非存活」状态码**——与一般「==存活码才计数」相反）；③计数/数组字段在 +0x48/+0x3C（与 [0x887308] 区无关）
+- ★跨批次连接：★后邻 0x6B7D50 同类循环（同 [this+0x3C]/[this+0x48] 域——**另一个 SpawnManager 遍历器未登记观察**）+ SpawnManagerClass 家族其他已登记成员（batch 623-637 区 SlaveManager 族相邻）
+- 新候选：0x6B7D50（后邻遍历器——观察项）
+- ⚠️ partial：7 的具体状态码语义（存活/死亡枚举名未核）、[this+0x3C] 数组元素类型（SpawnNode 指针推断）
+
+## 批次观察
+- **本批 = 基础容器/管理器带**：0x6B8AF0（对象比较）+ 0x6B8400（Vector Resize）+ 0x6B7D30（Spawn 存活计数）——三个独立域
+- **★★VectorClass::Resize 第三实例**：batch 2000/2001 容器族（扩容 0x6C8870/收缩 0x6C6D00）后再确认 4B 项大小的 Resize 模板——[+4] 数组/[+8] 容量/[+0x10] 计数/+0xC/+0xD 双守卫字段布局一致
+- **★★带名函数再兑现实锤**：SpawnManagerClass::CountAliveSpawns 语义（[elem+4]!=7 计数）直接来自符号名+汇编互证
+- callee 核验：a 0 / b 2（0x7C8E17/0x7C8B3D 已登记）/ c 0——**无新候选**
+- 新候选入池：0x6B84B0（后邻线性查找器）、0x6B7D50（后邻遍历器）——均观察项
