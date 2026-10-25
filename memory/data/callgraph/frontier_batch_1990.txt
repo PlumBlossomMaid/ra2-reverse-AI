@@ -1,0 +1,43 @@
+# frontier batch 1990
+
+本批三函数（0x6C 区——SuperClass 家族带名三件套）：0x6CE1A0 / 0x6CDE90 / 0x6CC2B0
+Picker：unique_callers 扇入度 top3（0x6CE1A0 SuperClass::ShouldFlashTab callees=0 deps=148；0x6CDE90 SuperClass::ShouldDrawProgress callees=0 deps=207；0x6CC2B0 SuperClass::NameReadiness callees=1 deps=207）
+disasm：`_d1990a.txt`（0x6CE1A0 size 0x80）/ `_d1990b.txt`（0x6CDE90 size 0x40）/ `_d1990c.txt`（0x6CC2B0 size 0xB0）——三路全部读取（含尾 ret + nop pad + 后邻：a 后邻 0x6CE1F0 常量桩 / b 后邻 0x6CDEB0 COM 桩 / c 尾垫到 0x6CC35F）
+callee 核验：0x6CE1A0/0x6CDE90 均 callees=0（无 E8）；0x6CC2B0 callees=1——唯一 E8 callee = **0x734E60（DebugLog——5 处调用）**，grep TSV 命中第 6 行 batch 001 已登记 ✅ 无新候选
+
+## 1. 0x6CE1A0 —— SuperClass::ShouldFlashTab（★★带名·[0x6CE1A0]）
+- 大小：74B（0x6CE1A0-0x6CE1E9），全读，尾 ret c3 三出口 0x6CE1D1/0x6CE1E6（返 1）/0x6CE1E9（返 0）
+- 机器码（单段——标志判定链+时间比较）：al=[ecx+0x70] → test / jne 0x6CE1E7（★+0x70 非零 → 直接返 0）→ eax=[ecx+0x28]（★类型指针）→ dl=[eax+0xe5]（★类型标志字节）→ test / je 0x6CE1BD（标志零 → 走 +0x6f 判定）→ edx=[ecx+0x7c] → test / je 0x6CE1E7（★+0x7c 为零 → 返 0）→ jmp 0x6CE1C4；另一路：dl=[ecx+0x6f] → test / je 0x6CE1E7（★+0x6f 为零 → 返 0）→ 合流 0x6CE1C4：eax=[eax+0xe8]（★类型 +0xe8 字段）→ cmp eax,-1 / jne 0x6CE1D2（★==-1 → mov al,1 返 1——哨兵=永久闪烁）→ test eax,eax / je 0x6CE1E7（★==0 → 返 0）→ ecx=[ecx+0x74]（★+0x74 时间戳）→ add ecx,eax（=+0x74+类型+0xe8）→ eax=[0xA8ED84]（★全局时间锚）→ cmp ecx,eax / jle 0x6CE1E7（★和 ≤ 全局 → 返 0）→ mov al,1 返 1（★和 > 全局 → 闪烁期）
+- 语义：**SuperClass::ShouldFlashTab（★★带名）**——thiscall 无栈参返 bool：判定超武标签是否闪烁：①+0x70 使用中标志非零 → 不闪;②类型标志 [type+0xe5] 置位要求 +0x7c（充电计数/就绪状态）非零，否则要求 +0x6f（充能标志）非零;③类型 +0xe8（闪烁时长）==-1 → 永久闪 / ==0 → 不闪 / 其它 → +0x74（起始时间）+ +0xe8 > [0xA8ED84]（当前时间）→ 闪
+- ★原版怪癖（照抄）：①+0x70 前置判定（非零短路返 0）;②双分支合流（type+0xe5?+0x7c:+0x6f——标志链）;③类型 +0xe8 三态（-1 永久/0 禁/正数时长）;④**[0xA8ED84] 全局时间锚比较**（==-1 哨兵与时间判定一体）;⑤三出口（两真一假）;⑥74B
+- ★跨批次连接：**[0xA8ED84]（batch 1989 0x6CE280/0x6CE2C0 的全局锚——本批首次由 SuperClass 消费——「当前游戏时间」语义强化）** + SuperClass 家族（本批 b/c 同族——共享 +0x28 类型指针/+0xe5 类型标志/+0x6f/+0x70 布局）
+- 新候选：无（0/0 E8 callee）
+- ⚠️ partial：+0x70/+0x6f/+0x7c/+0x74 字段语义（推断 使用中/充能/就绪计数/时间戳）、类型 +0xe5/+0xe8 精确含义、调用方（deps=148）
+
+## 2. 0x6CDE90 —— SuperClass::ShouldDrawProgress（★★带名·[0x6CDE90]）
+- 大小：27B（0x6CDE90-0x6CDEAA），全读，尾 ret c3 双出口 0x6CDE9F（返 1）/0x6CDEAA（返 !标志）
+- 机器码（单段——标志短链）：eax=[ecx+0x28]（★类型指针）→ dl=[eax+0xe5]（★类型标志字节——与 a 同偏移）→ test / je 0x6CDEA0（标志非零 → mov al,1 返 1）→ dl=[ecx+0x6f]（★+0x6f 标志）→ **xor eax,eax → test dl,dl → sete al**（★+0x6f==0 → 1，非零 → 0——取反判定）→ ret
+- 语义：**SuperClass::ShouldDrawProgress（★★带名）**——thiscall 无栈参返 bool：①类型标志 [type+0xe5] 置位 → 返 1（画进度）;②否则返 !(+0x6f)（+0x6f==0 才画）——**与 ShouldFlashTab（本批 a）共用类型标志 +0xe5/+0x6f 判定族，但无时间比较、无 +0x70/+0x7c 检查**
+- ★原版怪癖（照抄）：①类型标志短路（+0xe5 置位即真）;②**xor eax,eax → settne/sete 取反**（+0x6f 判零——sete 在清零后置 1，复合惯用）;③双出口;④27B 精简;⑤ret c3 无栈参
+- ★跨批次连接：SuperClass 家族（本批 a/c 同族——+0x28/+0xe5/+0x6f 布局互证）+ ShouldFlashTab（本批 a——同标志族的短链版本——本函数无时间语义）
+- 新候选：无（0/0 E8 callee）
+- ⚠️ partial：字段语义（+0xe5/+0x6f 精确含义）、调用方（deps=207）
+
+## 3. 0x6CC2B0 —— SuperClass::NameReadiness（★★带名·[0x6CC2B0]）
+- 大小：163B（0x6CC2B0-0x6CC352），全读，尾 ret c3 多出口
+- 机器码（两段——就绪状态名分发 + DebugLog 哨兵族）：
+  段0 分发（0x6CC2B0-0x6CC2D8）：al=[ecx+0x70] → test / jne 0x6CC33C（★+0x70 非零 → DebugLog 0x3b6）→ eax=[ecx+0x28]（★类型指针）→ dl=[eax+0xe5] → test / je 0x6CC31E（★类型标志零 → 走 +0x6f 判定）→ ecx=[ecx+0x7c]（★就绪状态枚举）→ sub ecx,0（★占位 no-op）→ je 0x6CC307（==0 → DebugLog 0x397）→ dec ecx → je 0x6CC2F0（==1 → DebugLog 0x39a）→ dec ecx → je 0x6CC2D9（==2 → DebugLog 0x39d）→ **xor eax,eax 返 0**（★非法状态）
+  另一路（0x6CC31E）：al=[ecx+0x6f] → test / je 0x6CC2D6（★+0x6f==0 → 返 0）→ DebugLog 0x3b0
+  段1 DebugLog 族（0x6CC2D9-0x6CC352）：**5 处** `push 行号（0x397/0x39a/0x39d/0x3b0/0x3b6 十进制 919/922/925/944/950）→ push 0x842510（★__FILE__ 串）→ xor edx,edx → mov ecx,消息串（0x8424fc/0x81b454×2/0x8424ec/0x83fb2c）→ call 0x734E60（★DebugLog——batch 001）→ c3 ret`
+- 语义：**SuperClass::NameReadiness（★★带名）**——thiscall 无栈参返 const char*：就绪状态名查询——①+0x70 使用中 → debug 0x3b6;②类型标志 [type+0xe5] 置位时 switch(+0x7c)：0/1/2 三态各打 debug 消息（919/922/925 行），非法值返 0;③类型标志零时要求 +0x6f 非零（否则返 0）→ debug 0x3b0——**全部路径要么返 0 要么 DebugLog 后把 eax 残留（格式串）透传——名字经 DebugLog 返回的 Westwood 惯用**
+- ★原版怪癖（照抄）：①+0x70 前置（非零打 0x3b6——使用中无名字）;②**sub ecx,0 占位 no-op**（编译残留照抄）;③状态枚举 0/1/2 递减比较（dec×2——三态 0x397/0x39a/0x39d）;④5 处 DebugLog 后直接 ret（返 DebugLog 的 eax——名字=消息串透传，未显式设 eax）;⑤默认 `xor eax,eax` 返 0（非法状态）;⑥__FILE__=0x842510 恒定;⑦163B
+- ★跨批次连接：**0x734E60（DebugLog——batch 001 已登记——5 处 callee 全命中，无新候选）** + SuperClass 家族（本批 a/b——+0x70 前置/+0xe5/+0x6f/+0x7c 布局三函数互证——NameReadiness=就绪状态名、ShouldFlashTab/ShouldDrawProgress=同名标志消费）
+- 新候选：无（1/1 E8 callee 已登记——0x734E60）
+- ⚠️ partial：就绪状态枚举值语义（0/1/2 ↔ 未就绪/就绪/充能推断）、消息串内容（0x8424fc/0x81b454/0x8424ec/0x83fb2c——未取串）、__FILE__ 文件名（0x842510 未取串）、返值语义（DebugLog eax 透传推断）、调用方（deps=207）
+
+## 批次观察
+- 本批三函数 = **SuperClass 就绪/进度/闪烁 UI 三件套（全带名）**：0x6CE1A0 ShouldFlashTab（闪烁判定——含时间比较）+ 0x6CDE90 ShouldDrawProgress（进度绘制判定——短链）+ 0x6CC2B0 NameReadiness（就绪状态名——DebugLog 分发）
+- **布局互证**：三函数共享 SuperClass 布局 —— [ecx+0x28]（类型指针）、[type+0xe5]（类型标志字节）、[ecx+0x6f]（标志）、[ecx+0x70]（前置判定标志）、[ecx+0x7c]（就绪状态枚举/计数）、[ecx+0x74]（时间戳——仅 a）
+- **★★跨批次黄金连接**：[0xA8ED84] 全局时间锚（batch 1989 0x6CE280/0x6CE2C0 登记）→ 本批 0x6CE1A0 首次 SuperClass 侧消费（闪烁时长比较）——「当前游戏时间」语义再强化
+- callee 核验：2/2 callees=0（a/b 无 E8）+ 1/1 callees=1（c 的 0x734E60 已登记 batch 001）——无新候选
+- 新候选入池（dump 后邻观察）：**0x6CE1F0**（mov eax,0x39 / ret 4——常量桩——带栈参）/ **0x6CE200**（mov eax,0x39 / ret——常量桩）/ **0x6CE210**（mov eax,0x80 / ret——常量桩——0x80=128 推断类型码）/ **0x6CDEB0**（COM 风格桩——mov eax,[esp+8]→test→返 0x80004003 E_NOTIMPL——ret 8）
