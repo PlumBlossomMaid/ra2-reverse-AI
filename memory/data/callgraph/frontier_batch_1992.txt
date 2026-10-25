@@ -1,0 +1,58 @@
+# frontier batch 1992
+
+本批三函数（0x6C 区——SuperClass 充能/开火核心逻辑）：0x6CC1E0 / 0x6CC080 / 0x6CB920
+Picker：unique_callers 扇入度 top3（0x6CC1E0 SuperClass::SetCharge callees=1 deps=1；0x6CC080 FUN_006cc080 callees=2 deps=7；0x6CB920 SuperClass::ClickFire callees=9 deps=12）
+disasm：`_d1992a.txt`（0x6CC1E0 size 0x90）/ `_d1992b.txt`（0x6CC080 size 0x140）/ `_d1992c.txt`（0x6CB920 size 0x3A0）——三路全部读取（含尾 ret + nop pad + 后邻：a 尾 ret 4 @0x6CC255 后邻 0x6CC260；b 尾 ret 4 @0x6CC19F 后邻跳转表数据 0x6CC1A4；c 尾 ret 8 @0x6CBC9C 后邻 0x6CBCA0）
+callee 核验：**a 1/1 已登记（0x7C5F00 _ftol）；b 2/2 已登记（0x7C5F00/0x752700）；c 6/9 已登记（0x50B730/0x7C5F00/0x6CC390/0x53B400/0x6CE320/0x6CE2D0）——3 个新候选入池（0x53A0E0/0x53AE00/0x53B410）**（脚本 _check_callees1992.py，注意 8 位地址格式——初版 6 位误报全 MISSING，batch 1985 位数 bug 教训）
+
+## 1. 0x6CC1E0 —— SuperClass::SetCharge（★★带名·[0x6CC1E0]）
+- 大小：120B（0x6CC1E0-0x6CC255），全读，尾 ret 4 单出口 0x6CC255
+- 机器码（四段——门控+charge 校验+浮点换算+三字段写）：
+  段0 门控（0x6CC1E0-0x6CC1FA）：sub esp,0x10 / push edi / edi=ecx → al=[edi+0x6d] → test / je 0x6CC251（★+0x6d 支柱标志 0 → 直接返回）→ eax=[esp+0x18]（★栈参=charge）→ test / jl 0x6CC251（★charge<0）→ cmp eax,0x64 / jg 0x6CC251（★charge>100——范围校验 [0,100]）
+  段1 充能时间（0x6CC1FA-0x6CC20C）：push esi / esi=[edi+0x24]（★充能时间字段）→ cmp esi,-1 / jne 0x6CC20C（非 -1 用自身）→ eax=[edi+0x28]（★类型指针）→ esi=[eax+0xb0]（★-1 哨兵 → 回落类型 +0xb0 默认充能时间）
+  段2 浮点换算（0x6CC20C-0x6CC22B）：fild [esp+0x1c]（★charge int→float）→ [esp+8]=esi（存充能时间）→ fmul [0x7EAE00]（★0.01——charge/100 比例）→ fimul [esp+8]（×充能时间）→ call 0x7C5F00（★_ftol——向零截断——**floating-point remainder 换算**）→ sub esi,eax（★剩余 = 充能时间 - 已充帧数）→ jne 0x6CC22B（剩余≠0 跳过）→ [edi+0x6f]=1（★剩余==0 → 置就绪标志——ShouldFlashTab 的 +0x6f！）
+  段3 三字段写（0x6CC22B-0x6CC255）：ecx=[edi+0x30] / lea eax,[edi+0x30] → cmp ecx,-1 / jne 0x6CC23E（★[+0x30] -1 哨兵 → [eax]=[0xA8ED84] 懒初始化当前时间）→ [eax]=[0xA8ED84]（★全局时间）→ [eax+4]=[esp+0x10]（★charge）→ [eax+8]=esi（★剩余帧数）→ pop esi/edi → ret 4
+- 语义：**SuperClass::SetCharge（★★带名）**——thiscall + 1 栈参（charge 0-100 整数）返 void：①门控 +0x6d;②charge ∈ [0,100] 校验;③剩余帧 = 充能时间 - ftol(charge×0.01×充能时间)，等于充能时间时（剩余==0 → **charge 满格即就绪**）置 +0x6f=1;④写三字段 [+0x30]=全局时间 / [+0x34]=charge / [+0x38]=剩余（★batch 1990 ShouldFlashTab 读 +0x6f/+0x74；三字段布局=[batch 1989 0x6CE240 结构加法器同款 [+0x30]/[0x34]/[0x38]）
+- ★原版怪癖（照抄）：①charge 范围校验 jl/jg 双向（[0,100]——含 0 含 100）;②**充能时间 -1 哨兵 → 回落类型 +0xb0**（batch 1990 同族回落惯用）;③**fmul [0x7EAE00]=0.01 → fimul 充能时间 → ftol**（浮点比例+截断——QWEN.md 取数惯用法同源）;④剩余==0 → +0x6f=1（就绪标志写端——batch 1990 读端闭环）;⑤[+0x30] -1 哨兵 → 懒初始化 [0xA8ED84];⑥三字段写（全局时间/charge/剩余）;⑦ret 4（1 栈参）
+- ★跨批次连接：**[0xA8ED84] 全局时间锚（batch 1985/1989/1990 链）** + +0x6f/+0x24/+0x28/+0xb0 字段（batch 1990 ShouldFlashTab/ShouldDrawProgress 布局就读端——本函数=写端） + **0x7C5F00 _ftol（已登记）** + 三字段布局 [0x30]/[0x34]/[0x38]（batch 1989 0x6CE240 结构加法器同字段）
+- 新候选：无（1/1 E8 callee 已登记——0x7C5F00）
+- ⚠️ partial：+0x6d 支柱标志语义、+0x7EAE00=0.01 常量确认、charge 语义（百分比推断）、调用方（deps=1）
+
+## 2. 0x6CC080 —— 超武充能状态重置器（推断名）·[0x6CC080]
+- 大小：290B（0x6CC080-0x6CC19F），全读，尾 ret 4 单出口 0x6CC19F
+- 机器码（五段——门控+充能时间+三字段写+跳转表日志+状态字段）：
+  段0 门控+充能时间（0x6CC080-0x6CC0BC）：sub esp,0x10 / push esi / esi=ecx → al=[esi+0x6d] → test / je 0x6CC19B（★+0x6d 支柱标志 0 → 返回）→ push edi / edi=[esi+0x24]（★充能时间）→ cmp edi,-1 / **mov byte [esi+0x6f],1**（★无条件先置 +0x6f=1！）→ jne 0x6CC0A7（非 -1）→ edi=[类型+0xb0]（★回落默认）→ [esp+8]=edi → fild → call 0x7C5F00（★_ftol——edi=充能时间整形化）→ sub edi,eax → jne 0x6CC0BC / [esi+0x6f]=1（★相等再置一次——双置惯用）
+  段1 三字段写（0x6CC0BC-0x6CC0E1）：cmp [esi+0x30],-1 / jne 0x6CC0CB（★-1 哨兵 → 懒初始化 [0xA8ED84]）→ [esi+0x30]=[0xA8ED84]（全局时间）→ [esi+0x34]=[esp+0x10]（★栈参）→ [esi+0x38]=edi（★充能时间）→ al=[esp+0x1c]（★第 2 字节参——结合 ret 4 疑 1 栈参+1 寄存器语义，标记观察）
+  段2 跳转表日志（0x6CC0E1-0x6CC179）：test al / pop edi / je 0x6CC17E（★日志开关参数 0 → 跳过）→ eax=[esi+0x28]（类型）→ eax=[eax+0xb4]（★类型 +0xb4 状态枚举）→ cmp eax,0xb / ja 0x6CC17E（★>0xb 越界跳过）→ **jmp [eax*4+0x6CC1A4]（★11 项跳转表——0..0xb）** ——每项：push -1 / or edx,0xffffffff / mov ecx,消息串（0x8424D4/0x8424BC/0x8424A4/0x84248C/0x842470/0x842458/0x842440/0x84242C/0x842414/0x8423FC）→ 合流 0x6CC179 call 0x752700（★日志函数——已登记）
+  段3 状态字段（0x6CC17E-0x6CC19F）：ecx=[0xA8ED84] → [esi+0x74]=ecx（★[+0x74]=全局时间——ShouldFlashTab 的起始时间基准！）→ al=[类型+0xe5] → test / je 0x6CC19B（★类型使能标志 0 → 跳过）→ **[esi+0x7c]=1（★使能 → [+0x7c]=1——ShouldFlashTab/NameReadiness 就绪状态！）** → ret 4
+- 语义：**超武充能状态重置器（推断名）**——thiscall + 1 栈参（ret 4）返 void：①门控 +0x6d;②**无条件置 +0x6f=1（就绪标志——写端）**;③充能时间 -1 哨兵回落类型 +0xb0;④三字段写 [+0x30]=全局时间/[+0x34]=栈参/[+0x38]=充能时间;⑤可选日志：类型 +0xb4 状态 0..0xb 跳转表 11 消息串 → 0x752700;⑥[+0x74]=当前时间（闪烁基准）+ 类型使能 → [+0x7c]=1——**batch 1990 ShouldFlashTab（读 +0x74/+0x7c/+0x6f）+ NameReadiness（读 +0x7c 状态枚举）的完整写端**
+- ★原版怪癖（照抄）：①+0x6f **无条件先置 1** 且 ftol 后相等时再置（双置——与 SetCharge 的条件置位不同）;②**fild → ftol 原值整形化**（edi=time → ftol(time)=time → sub=0 恒等——真正用途是截断浮点充能时间）;③类型 +0xb4 跳转表 11 项（0..0xb——ja 越界跳过）每项 push -1 / or edx,-1（哨兵参数）;④0x752700 日志（已登记）;⑤[+0x74]=全局时间 + 类型使能 → [+0x7c]=1（状态写端）;⑥[+0x30] -1 哨兵懒初始化;⑦ret 4（1 栈参——[esp+0x1c] 疑 2 参，标记观察）
+- ★跨批次连接：**[batch 1990 三函数（ShouldFlashTab/ShouldDrawProgress/NameReadiness）的写端闭环]** + [0xA8ED84] 全局时间锚 + 0x7C5F00/0x752700（均已登记）+ 类型 +0xb0/+0xb4 字段（类型表布局）+19 条消息串集中 0x8423FC-0x8424D4 区（推断就绪状态名字串表）
+- 新候选：无（2/2 E8 callee 已登记——0x7C5F00/0x752700）
+- ⚠️ partial：函数精确名（推断「超武充能状态重置器」）、+0x6d 支柱语义、[esp+0x1c] 参数语义（ret 4 vs 读 2 参）、跳转表 11 状态含义、调用方（deps=7）
+
+## 3. 0x6CB920 —— SuperClass::ClickFire（★★带名·[0x6CB920]）
+- 大小：895B（0x6CB920-0x6CBC9C），全读，尾 ret 8 双出口 0x6CBB60（返 1）/0x6CBC9C（返 0）
+- 机器码（多段——状态机 7 分支超武开火）：
+  段0 门控+类型判定（0x6CB920-0x6CB952）：sub esp,0x10 / push ebx,esi / esi=ecx / xor ebx,ebx / push edi → eax=[esi+0x28]（类型）→ cmp [eax+0xe5],0 / je 0x6CBA7D（★类型使能 0 → 走未使能分支）→ ecx=[esi+0x2c]（★子对象）→ call 0x50B730（★判定——已登记）→ test al / je 0x6CBA52（★失败 → 另一路径）
+  段1 状态==2（充能满→开火）（0x6CB949-0x6CB9C4）：eax=[esi+0x7c] → cmp 2 / jne 0x6CB9CD → [esi+0x7c]=1（★状态 2→1——开火中复位）→ [esp+0x24]=充能时间（-1 回落类型 +0xb0）→ edx=[esi+0x30]（起始时间）/ ecx=[esi+0x38]（剩余）→ edi=[0xA8ED84] → add esi,0x30 → cmp edx,-1 / je 0x6CB991（★-1 哨兵跳过差算）→ eax=全局-edx（★流逝）→ cmp eax,ecx / jge 0x6CB9C7（★流逝≥剩余 → 置 0）→ sub ecx,eax（★剩余-流逝）→ fild 充能时间 / fild 剩余 → edx=[0x8871E0] → fdiv qword [edx+0x760]（★[0x8871E0] 全局 +0x760 浮点除）→ fsubp st(1)（★充能时间 - 剩余/除数）→ call 0x7C5F00（_ftol）→ [esi]=edi（全局时间）/ [esi+4]=[esp+0x14]（栈参）/ [esi+8]=eax（计算值）——三字段写 → 返回 0（ret 8）
+  段2 状态==1（开火中→复位）（0x6CB9CD-0x6CBA4F）：eax=[esi+0x7c] → cmp 1 / jne 0x6CBC94 → [esi+0x7c]=2（★状态 1→2）→ edi=充能时间（-1 回落）→ edx=[esi+0x30]/eax=[esi+0x38] → push ebp / ebp=[0xA8ED84] → cmp edx,-1 / je 0x6CBA0E → ecx=全局-edx（流逝）/ cmp ecx,eax / **jge 0x6CBA0C → xor eax（流逝≥剩余 清零）/ sub eax,ecx（剩余-流逝）** → sub edi,eax（★充能时间-已充=已充帧）→ eax=[0x8871E0] → [esp+0x10]=edi → fild → fmul qword [eax+0x760]（★×+0x760 浮点乘）→ call 0x7C5F00 → [esi+0x30]=ebp（全局）/ [esi+0x34]=[esp+0x18]/ [esi+0x38]=eax → push [esp+0x24] / push [esp+0x28] → **call 0x6CC390（★子函数——已登记——2 参）** → pop ebp → 返 0
+  段3 未使能-判定失败路径（0x6CBA52-0x6CBA7A）：ecx=[esi+0x2c] / cmp [ecx+0x1FA],0（★子对象 +0x1FA 标志）→ jne 0x6CBC94 → push 2 参 → call 0x6CC390（★同子函数）→ 返 0
+  段4 类型未使能分支（0x6CBA7D-0x6CBAF9）：ecx=[esi+0x30] / lea edi,[esi+0x30] → cmp -1 / je 0x6CBA92 → cmp [esi+0x6d],0 / je 0x6CBA92 → cmp [esi+0x6f],0 / jne 0x6CBA9E → 0x6CBA92: cmp [eax+0xEE],0 / je 0x6CBC94（★类型 +0xEE 门控）→ 0x6CBA9E: cmp [eax+0xB4],2 / jne 0x6CBACA（★类型 +0xB4==2 → **call 0x53A0E0（未登记——特殊超武判定）** → test / je 0x6CBACA → cmp [esp+0x20],0 / je 0x6CBC94 → **call 0x53AE00（未登记——特殊超武开火）** → 返 0）→ 0x6CBACA: cmp [类型+0xB4],7 / jne 0x6CBAF9（★==7 → **call 0x53B400（已登记）** → test / je → cmp 栈参 / je 0x6CBC94 → **call 0x53B410（未登记）** → 返 0）
+  段5 通用开火（0x6CBAF9-0x6CBB60）：push 2 参 → call 0x6CC390（★通用子函数）→ cmp [类型+0xEE],0 / jne 0x6CBB18 → [esi+0x6f]=0（★类型 +0xEE 未置 → 清就绪标志）→ 0x6CBB18: cmp [esi+0x6E],0 / je 0x6CBB63 → al=[esi+0x6D] / [esi+0x6E]=0 → cmp al,0 / je 0x6CBC94 → lea ecx,[esp+0x20]（★参=指针）→ [esi+0x6F]=0 / [esi+0x6D]=0 → edx=[0xA83D50] / ecx=0xA83D50 → **[esp+0x24]=esi → call [edx+0x10]（★0xA83D50 对象虚表槽 0x10——查找索引）** → cmp eax,-1 / je 0x6CBB58（★-1 未找到跳过）→ push eax（索引）→ ecx=0xA83D50 → **call 0x6CE320（★batch 1988 前置递减数组项移除器——按索引移除！——跨批点名兑现）** → 0x6CBB58: mov al,1 返 1（★成功）
+  段6 类型 +0xF5 分支（0x6CBB63-0x6CBBDD）：cmp [类型+0xF5],0 / je 0x6CBBDE → ecx=充能时间（-1 回落）→ eax=[0xA8ED84] → **[esi+0x78]=-1（★+0x78 置 -1——哨兵）** → [edi]=全局 / [edi+4]=[esp+0x14] / [edi+8]=充能时间（★三字段写 [+0x30] 组）→ eax=[edi] / cmp -1 / je 0x6CBC94 → ecx=[edi+8] / cmp -1 / je 0x6CBBCA → edx=[0xA8ED84] → sub edx,eax（★流逝）→ cmp edx,ecx / jge 0x6CBBC8 → sub ecx,edx（剩余-流逝）→ **[edi]=-1 / [edi+8]=ecx（★复位——[0xA8ED84] 差判定——batch 1989 0x6CE280 三字段计数器复位器内联同款！）** → 返 0
+  段7 类型 +0xED/+0xEE 分支（0x6CBBDE-0x6CBC9C）：cmp [类型+0xED],0 / jne 0x6CBC94 → cmp [类型+0xEE],0 / jne 0x6CBC94 → eax=[esi+0x68] / cmp eax,0 / je 0x6CBC19 → lea ecx,[esp+0x20] → [eax+0x195]=0 → push ecx → **ecx=0xB0F5B8 / call 0x6CE2D0（★已登记——虚表槽 0x10 调用+数组移除——[0xB0F5B8] 对象移除 +0x68 项）** → [esi+0x68]=0 → 0x6CBC19: cmp [esi+0x6C],0 / je 0x6CBC34 → lea edx,[esp+0x20] → ecx=0xB0F5B8 → call 0x6CE2D0（★再次移除 +0x6C 项）→ [esi+0x6C]=0 → 0x6CBC34: cmp [esi+0x6D],0 / je 0x6CBC94 → cmp [esi+0x6F],0 / jne 0x6CBC94 → cmp [esi+0x70],0 / je 0x6CBC4E → eax=[类型] / cmp [eax+0xED],0 / je 0x6CBC94 → 0x6CBC4E: **[esi+0x78]=-1** → eax=[edi] / cmp -1 / jne 0x6CBC64 → [edi]=[0xA8ED84]（★懒初始化）→ 0x6CBC64: ecx=充能时间（-1 回落类型 +0xB0）→ eax=[0xA8ED84] → [edi]=eax / [edi+4]=[esp+0x14] / [edi+8]=ecx（★三字段写）→ cmp [类型+0xE5],0 / je 0x6CBC94 → **[esi+0x7c]=0（★类型使能 → 状态归 0）** → 0x6CBC94: xor al,al 返 0
+- 语义：**SuperClass::ClickFire（★★带名）**——thiscall + 2 栈参（ret 8）返 bool：超武图标点击开火主逻辑——**状态机 7 分支**：①类型使能 +0x2c 子对象判定（0x50B730）;②状态 1/2 互转（[+0x7c] 1↔2）并做剩余时间差算（[0xA8ED84] 流逝）+ [0x8871E0]+0x760 浮点乘除换算;③类型 +0xB4∈{2,7} 特殊超武分支（0x53A0E0/0x53AE00、0x53B400/0x53B410）;④通用开火 call 0x6CC390 + 清标志（+0x6D/+0x6E/+0x6F）+ **0xA83D50 虚表槽 0x10 查索引 → 0x6CE320 数组移除（成功返 1）**;⑤类型 +0xF5 路径：+0x78=-1 哨兵 + 三字段 + [0xA8ED84] 差判定复位（0x6CE280 内联版）;⑥类型 +0xED/+0xEE 路径：0xB0F5B8 对象 0x6CE2D0 移除 +0x68/+0x6C 项 + [+0x7C]=0 复位
+- ★原版怪癖（照抄）：①状态机 [+0x7c] 1↔2 互转（开火/复位互逆）;②**[0x8871E0]+0x760 全局浮点字段**（fdiv/fmul——计时换算基准——新全局！）;③[0xA8ED84] 差判定（流逝=全局-起始——batch 1989 0x6CE280 同款比较 jge 清零）;④**batch 1989 0x6CE280 计数器复位器在段6内联复刻**（[edi]=-1 / [edi+8]=剩余——jge/xor 清零路径逐位同构）；⑤类型 +0xB4 特殊分支（==2 超时空类/==7 其它——0x53A0E0/0x53AE00/0x53B410 未登记）;⑥+0x195 字节清零（[+0x68] 对象内）;⑦0xA83D50 虚表槽 0x10 查索引 + 0x6CE320 移除（跨批兑现）;⑧0xB0F5B8 对象 0x6CE2D0 移除 ×2（+0x68/+0x6C）;⑨ret 8（2 栈参）双出口（成功 1/失败 0）;⑩895B 大体量
+- ★跨批次连接：**★★0x6CE320（batch 1988 前置递减数组项移除器——本函数调用现场——跨批点名兑现！0xA83D50 对象数组按索引移除）** + **0x6CE2D0（已登记——[0xB0F5B8] 对象 2 处调用——batch 1990 后邻观察的「虚表槽 0x10 调用+数组移除」宿主确认）** + [0xA8ED84] 差判定（batch 1989 0x6CE280 内联复刻） + **新全局 [0x8871E0]+0x760** + 新增候选（0x53A0E0/0x53AE00/0x53B410——特殊超武类型 +0xB4==2/7 分支） + [+0x7C]/[+0x6F]/[+0x74] 状态字段（batch 1990 读端 + 本批 a/b 写端闭环）
+- 新候选：**3 个入池（0x53A0E0——+0xB4==2 特殊超武判定；0x53AE00——+0xB4==2 特殊超武开火；0x53B410——+0xB4==7 特殊超武开火）**——6/9 E8 callee 已登记
+- ⚠️ partial：+0x2c 子对象语义、0x50B730 判定语义、0x6CC390 通用开火子函数（已登记）、[0x8871E0] 全局对象身份、栈参 2 个语义（[esp+0x14]/[esp+0x18] 等）、0xA83D50/0xB0F5B8 对象身份、调用方（deps=12）
+
+## 批次观察
+- 本批三函数 = **SuperClass 充能/开火完整链路**：0x6CC1E0（SetCharge——charge 百分比换算三字段）+ 0x6CC080（充能状态重置——+0x6F=1 双置 + 状态写）+ 0x6CB920（ClickFire——状态机 7 分支开火主逻辑）
+- **★★跨批点名兑现 ×1**：batch 1988（0x6CE320 前置递减数组项移除器——彼时 deps=1903 高扇出未知调用方）→ 本批 0x6CB920 ClickFire 段5 实锤调用（0xA83D50 虚表槽 0x10 查索引 → 按索引移除）
+- **batch 1989 0x6CE280（三字段计数器复位器）内联复刻实锤**：ClickFire 段6 的 [edi]=-1 / [edi+8]=剩余 + jge/xor 清零路径与 0x6CE280 逐位同构——**同一惯用在内联/外调两形态并存**
+- **状态字段三角闭合**：本批 SetCharge/重置器写 +0x6F（就绪）→ batch 1990 ShouldFlashTab/ShouldDrawProgress 读 +0x6F → ClickFire 清/置 +0x6F——写-读-清全链
+- **[0x8871E0] 新全局**：+0x760 浮点字段（fdiv/fmul 计时换算基准）——ClickFire 段1/段2 两处消费——标记观察
+- callee 核验：9/12 已登记（a 1 + b 2 + c 6）——3 个新候选（0x53A0E0/0x53AE00/0x53B410）
+- 新候选入池：**0x53A0E0 / 0x53AE00 / 0x53B410**（ClickFire 特殊超武 +0xB4∈{2,7} 分支）
