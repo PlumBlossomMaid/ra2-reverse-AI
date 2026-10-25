@@ -1,0 +1,73 @@
+# frontier batch 2106：虚表槽 0x10 转发器 + 数组按索引删除器 + 8 项表缓存索引更新器（0x6614F0 / 0x660F10 / 0x660BE0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x6614F0 FUN_006614f0 callees=0 deps=10 / 0x660F10 FUN_00660f10 callees=0 deps=48 / 0x660BE0 FUN_00660be0 callees=0 deps=29）
+- 三路 disasm：`.qwen/tmp/_d2106a.txt`（0x6614F0 size 0x30）/ `_d2106b.txt`（0x660F10 size 0x50）/ `_d2106c.txt`（0x660BE0 size 0x80）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x6614F0 | 18B（0x12）| ret 4 @0x6614FF | 0x661510（batch 2105 c 路本尊——**孪生对**）| 0（间接 call [edx+0x10]）|
+| 0x660F10 | 49B（0x31）| ret 4 双出口 @0x660F39 / @0x660F3E | 0x660F50（未登记）| 0 |
+| 0x660BE0 | 106B（0x6A）| ret 三出口 @0x660BF7 / @0x660C38 / @0x660C49 | 0x660C50（[0xb04d88]/[0xb04dd8] 置 -1 初始化器，未登记）| 0 |
+
+## a 路 0x6614F0（18B）——虚表槽 0x10 转发器
+
+```
+006614f0  mov eax,[esp+4]（参数 1）/ push 0 / push 3 / push ecx（this）
+006614f9  mov edx,[eax]（参数 1 对象虚表）/ push eax
+006614fc  call dword ptr [edx+0x10]（★虚表槽 0x10）/ ret 4
+```
+**语义**：虚表槽 0x10 转发器——与 batch 2105 c 路 0x661510（虚表槽 0xC 转发器）**孪生对**（2095 候选池记录兑现）：字节结构完全同构（push 0/push 3/push ecx/push eax/call [edx+槽]），唯一差异为**槽号 0x10 vs 0xC**。把 (this, 参数 1) 转成 4 参调用：`参数1->vtable[0x10](参数1, this, 3, 0)`。0 直接 call，纯间接转发。
+
+## b 路 0x660F10（49B）——数组按索引删除器（左移）
+
+```
+00660f10  mov edx,[ecx+0x10]（计数）/ mov eax,[esp+4]（索引）
+00660f17  cmp eax,edx / jge 0x660f3c（★越界返 0）
+00660f1b  dec edx（计数-1）/ cmp eax,edx / mov [ecx+0x10],edx（计数=计数-1）/ jge 0x660f37（删末元素直接返 1）
+00660f23  左移: mov edx,[ecx+4]（数组基址）/ inc eax（索引+1）/ mov esi,[edx+eax*4]（元素[i+1]）
+00660f2b  mov [edx+eax*4-4],esi（★元素[i]=元素[i+1] 左移填洞）/ cmp eax,[ecx+0x10] / jl 循环
+00660f37  mov al,1（成功返 1）/ ret 4
+00660f3c  xor al,al（越界返 0）/ ret 4
+```
+**语义**：数组按索引删除器——验证索引 < 计数，计数-1，从索引+1 起整体左移填洞删除元素[i]，成功返 1（al），越界（索引≥计数）返 0。与 batch 2104 c 0x663B40 / batch 2105 a 0x663910 的清空循环骨架同族，但本路为**单元素删除**（带索引验证 + 返 1/0 布尔）。0 直接 call。
+
+## c 路 0x660BE0（106B）——8 项表缓存索引更新器
+
+```
+00660be0  mov edx,[0xb04d88]（上次匹配索引）/ mov eax,ecx（输出=this）/ cmp edx,-1 / jne 0x660bf8
+00660bee  （初始态）mov ecx,[0xb04d68]（默认值）/ mov [eax],ecx（写 [this]=默认值）/ ret
+00660bf8  mov ecx,[0xb04dd8]（当前索引）/ dec ecx / test ecx / jge 0x660c06
+00660c03  ★add ecx,8（负数修正 +8——仅 -1→7 单步回绕）/ 
+00660c06  mov si,[ecx*4+0xb04d48]（★8B 项表 [0xb04d48]，项 word）/ cmp si,[0xb04d68]
+00660c17  mov si,[ecx*4+0xb04d4a]（项+2 word）/ cmp si,[0xb04d6a]（双 word 匹配键）
+00660c26  jne 0x660c39（未命中走新索引）
+00660c28  （命中）mov ecx,[edx*4+0xb04d48]（★回退用 edx=[0xb04d88] 旧索引取 dword）
+00660c2f  mov [0xb04dd8],edx（★当前索引=旧索引）/ mov [eax],ecx（写 [this]）/ ret
+00660c39  （未命中）mov edx,[ecx*4+0xb04d48]（新索引取 dword）/ mov [0xb04dd8],ecx（当前索引=新索引）
+00660c46  mov [eax],edx（写 [this]）/ ret
+```
+**语义**：8 项表缓存索引更新器——[0xb04d88] 为上次匹配索引（-1=初始态），[0xb04dd8] 为当前索引，[0xb04d48] 为 8 项 ×8B 表（word+word+dword/项），[0xb04d68]/[0xb04d6a] 为双 word 匹配键。逻辑：初始态直接写 [this]=默认值 [0xb04d68]；否则从当前索引-1（负数 +8 修正，索引域 [0,7]）倒序查表，表项前两个 word 与匹配键相同时**回退用旧索引 [0xb04d88]** 取 dword 并把它设为当前索引，否则用新索引；最后写 [this]=选中 dword。**查找失败仍更新索引到新位置**（不回退）。后邻 0x660C50 恰为把 [0xb04d88]/[0xb04dd8] 置 -1 的初始化器（本函数全局状态复位）。
+
+## 原版怪癖（照抄）
+
+1. a 路与 0x661510 孪生对——**同一转发骨架只差槽号**（0x10 vs 0xC），转发参数 (参数1, this, 3, 0) 硬编码第 3/4 参；
+2. b 路删除**末元素特判**（jge 0x660f37 直接返 1 不走左移循环）；越界返 0 非 -1；
+3. c 路 `dec ecx / test / jge / add ecx,8` **负数修正只加一次 8**（索引域 [0,7] 内 -1→7 成立，非通用 mod）；
+4. c 路命中时**当前索引回退到旧索引**（[0xb04dd8]=[0xb04d88]）——表项被外部改动的防护式缓存更新；
+5. c 路三出口：初始态/命中回退/未命中推进，每出口写 [this] dword；
+6. c 路 8B 项布局 = word(键1)+word(键2)+dword(值)，表基址 0xb04d48，[0xb04d68]/[0xb04d6a] 键、[0xb04d88] 旧索引、[0xb04dd8] 当前索引全局配对。
+
+## 跨批次连接
+
+- ★★★a 路 ↔ batch 2105 c 路 0x661510（虚表转发孪生对，2095 候选池「0x6614F0/0x661510 为孪生对」实锤兑现）；
+- ★★b 路 ↔ batch 2104 c 0x663B40 / batch 2105 a 0x663910（数组左移清空族，单元素删除版）；后邻 0x660F50 同族数组操作函数；
+- ★c 路 ↔ 后邻 0x660C50（全局缓存初始化器）；0xb04d 区全局缓存族。
+
+## 观察项 / 候选池
+
+- **新候选：无**（a/b/c 全部 0 直接 call）。
+- **后邻未登记**：0x660F50（b 路后邻，数组操作函数）、0x660C50（c 路后邻，[0xb04d88]/[0xb04dd8] 置 -1 初始化器）。
+- 前向：picker 队列继续 0x66 区（0x660BB0/0x660B00）+ RawFileClass::SetFileTime/GetFileTime（0x65D240/0x65D1F0）+ RadSiteClass 族（0x65B510/0x65B530/0x65BB50）+ 0x65C8B0（batch 2105 b 路候选）。
