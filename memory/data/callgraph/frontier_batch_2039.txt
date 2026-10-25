@@ -1,0 +1,50 @@
+# frontier batch 2039
+
+本批三函数（0x6A 区——侧栏域带·对象队列容器族）：0x6ABB60（221B 对象队列成员移除器）/ 0x6ABAD0（141B 消息码→槽位分发器，尾调 a）/ 0x6ABAC0（11B 队列非空判定器）
+Picker：unique_callers 扇入度 top3（0x6ABB60 FUN_006abb60 callees=4 deps=3；0x6ABAD0 FUN_006abad0 callees=2 deps=110；0x6ABAC0 FUN_006abac0 callees=0 deps=11）
+disasm：`_d2039a.txt`（0x6ABB60 size 0x110）/ `_d2039b.txt`（0x6ABAD0 size 0x100）/ `_d2039c.txt`（0x6ABAC0 size 0x100）——三路全部读取（a 尾 ret 4 @0x6ABC3A + pad + 后邻头 0x6ABC40（batch 2038 c 本尊）+ 0x6ABC60 判定器头；b 尾 ret 0xc @0x6ABB5A + pad + 后邻头 0x6ABB60（a 本尊——相邻）；c 尾 ret c3 @0x6ABACA + pad + 后邻头 0x6ABAD0（b 本尊——相邻））
+callee 核验：`_check_callees2039.py`——a 直接目标 4 全登记；b 报 1 MISSING（0x6ABB60）实为**本批 a 本尊（尾调）**——非外部候选；c 报的 4 目标全来自后邻 b/a 本尊（c 本体无 call）——**0 个新候选**
+
+## 1. 0x6ABB60 —— 对象队列成员移除器·[0x6ABB60]
+- 大小：221B（0x6ABB60-0x6ABC3C），全读，尾 ret 4 单出口 0x6ABC3A
+- 机器码结构（多段——对象校验→队列扫描移除→地图刷新）：
+  - 段 1（0x6ABB60-0x6ABBBB）：push 五寄存器 + `edi=[esp+0x18]`（**参 1=目标对象指针**）+ esi=ecx (this) + `test edi,edi; je`（参 1 空跳过）+ **`call 0x4ca160(edi)` ×3**（已登记——同一对象三次查询）+ `mov edx,[eax]/mov ecx,eax/call [edx+0x2c]`（**虚表槽 0x2C 方法**）`cmp eax,6; jne 跳过`（**返回状态==6 才继续**）+ 第三查结果 esi=eax + `call [eax+0x2c]` 再取状态 + **条件选择技巧：`sub eax,6; neg eax; sbb eax,eax; not eax; and eax,esi`（(状态==6) ? 对象 : 0）** + `mov ecx,eax/call 0x734270`（已登记——目标或 0）
+  - 段 2（0x6ABBBF-0x6ABC2F）：`mov eax,[esi+0x54]`（**this+0x54=队列计数**）+ xor bl,bl（found 标志）+ `mov byte[esp+0x18],1`（本地标志）+ `test eax,eax; jle 尾部`（计数≤0 跳过）+ **扫描循环**：`add esi,0x64`（首元素 this+0x64）— `mov eax,[esi]; cmp eax,edi`（元素与参 1 比较）— 匹配：`call 0x4c9ff0(edi)`（已登记）+ `mov [esi],0/[esi+4],0`（**槽位清 0**）+ bl=1；不匹配非空：`mov byte[esp+0x18],0`（本地标志清 0）；`inc ebp; add esi,0x34`（**步长 0x34=52B/项**）`cmp ebp,[ecx+0x54]; jl`（循环）—— **0x6ABAC0 的 [this+0x54] 计数同字段互证**
+  - 段 3（0x6ABC06-0x6ABC33）：`test bl,bl; je`（找到才走）→ `mov byte[edx+0x3c],1`（**this+0x3C=1**）+ `push 0/mov ecx,0x87f7e8/call 0x4f42f0`（**已登记——0x87F7E8=MapClass::Instance 实锤（QWEN.md）**）+ `mov byte[0x884b8f],1`（**全局标志**）+ 尾：本地标志非 0 → `mov byte[esi+0x3d],0`（**this+0x3D=0**）
+  - 返回 `mov al,bl`（**布尔：是否找到并移除**）
+- 语义：**对象队列成员移除器**——从 this 管理的对象队列（this+0x64 起 52B/项，数量 [this+0x54]）移除参 1 指定对象：①虚表槽 0x2C 状态==6 三重校验（0x4ca160 查询 + 条件选择技巧）；②扫描匹配→清槽+4 伴随字段；③找到时置 this+0x3C=1 + MapClass::Instance(0x87F7E8)→0x4f42f0 + [0x884b8f]=1 **触发地图/UI 刷新**；④本底标签决定 this+0x3D 归零——**生产队列移除+脏标记（侧栏/工厂）**
+- ★原版怪癖（照抄）：①**虚表槽 0x2C 返回状态==6**（与 SlaveManager 家族 [elem+4]==6 不同机制——虚表方法返回值判 6）；②**条件选择惯用法 `sub/neg/sbb/not/and`**（(==6)?ptr:0）；③同一对象 0x4ca160 查三遍；④52B 步长扫描 + 匹配清双 dword（槽+伴随字段）；⑤`mov byte[esp+0x18],1` 本地标志的「有他元素」语义（不匹配非空元素清 0）
+- ★跨批次连接：★★**0x87F7E8=MapClass::Instance**（QWEN.md 实锤记忆区）+0x4f42f0（已登记——MapClass 方法）+[0x884b8f]（batch 2022 0x6BE1C0 段 7 同区全局）+**this+0x54 计数（本批 c 0x6ABAC0 同字段互证）**+本批 b（0x6ABAD0 尾调本函数）
+- 新候选：无（4 callee 全登记）
+- ⚠️ partial：函数精确名（推断「对象队列成员移除器」）、0x4ca160/0x4c9ff0/0x734270/0x4f42f0 在此处的精确角色、this+0x3C/0x3D 字段名
+
+## 2. 0x6ABAD0 —— 消息码→槽位分发器·[0x6ABAD0]
+- 大小：141B（0x6ABAD0-0x6ABB5C），全读，尾 ret 0xc 单出口 0x6ABB5A（**3 栈参**）
+- 机器码结构（switch→0xF94 步长数组索引→尾调 a）：
+  - 段 1（0x6ABAD0-0x6ABB36）：push esi + esi=ecx (this) + ecx=[esp+8]（**参 1=消息码**）+ **大 switch——与 batch 2038 后邻观察项 0x6ABC60 逐字节同构**：
+    - `cmp ecx,0xf/0x10` → je 0x6abb36（**→2**）；`cmp ecx,1/0x28/2/3` → je 0x6abb2f（**→3**）；`cmp ecx,6/7` → je 0x6abb1a（`mov edx,[esp+0xc]`（参 2）+`call 0x5004e0`（已登记）`cmp eax,5; sete cl`（(**0x5004e0()==5)?1:0））；`cmp ecx,0x39/0x20/0x1f` → je 0x6abb13（**→1**）；默认 `or eax,0xffffffff`（**→-1——寄存器未清零，batch 2038 b 同款怪癖**）
+  - 段 2（0x6ABB3B-0x6ABB5A）：`mov edx,[esp+0x10]`（**参 3——透传**）+ **阶乘展开 `shl ecx,5; sub ecx,eax; lea edx,[eax+ecx*8]; lea eax,[eax+edx*4]; lea ecx,[esi+eax*4+0x1544]`（this + value*3988 + 0x1544——0xF94 步长数组族！）** + `push edx/call 0x6abb60`（**本批 a 本尊**）+ ret 0xc
+- 语义：**消息码→槽位分发器**——3 栈参（参 1=消息码、参 2 供 6/7 分支的 0x5004e0、参 3 透传）：消息码 switch→档位值（-1/1/2/3/0）→ 作**0xF94 步长数组索引（this+0x1544 基址）**→ 把目标槽 element 交 0x6ABB60 处理——**判定器族（0x6ABC60 逐字节同构）+ 0xF94 数组族（batch 2038 a 同款阶乘展开）双族交汇**
+- ★原版怪癖（照抄）：①**switch 与 0x6ABC60 逐字节同构**（企业复制粘贴惯用）；②**value=-1 时索引回绕**（0xFFFFFFFF 有符号乘 3988 + this + 0x1544 = this-3988+0x1544=this+0x550——-1 也照样 call 0x6abb60！）；③执果 eax 未清零的 -1（`or eax,0xffffffff`）；④参 3 透传位置 push 在展开中间（push edx 后 lea 继续用 eax/ecx/edx——edx 已压栈被覆盖前先压）
+- ★跨批次连接：★★batch 2038 后邻观察项 0x6ABC60（**逐字节同构判定器——观察项兑现**）+batch 2038 b（0x6ABCD0 简版 switch 同族）+batch 2038 a（0xF94 阶乘展开同款）+本批 a（0x6ABB60 尾调目标）+0x5004e0（已登记——batch 2038 后邻 0x6ABC60 也调它）
+- 新候选：无（0x5004e0 已登记 + 0x6abb60 批内自引用）
+- ⚠️ partial：函数精确名（推断「消息码→槽位分发器」）、6/7 分支 0x5004e0 的参数语义（edx 装载）、0x6ABC60 与 b 的调用方差异
+
+## 3. 0x6ABAC0 —— 队列非空判定器·[0x6ABAC0]
+- 大小：11B（0x6ABAC0-0x6ABACA），全读，尾 ret c3 单出口 0x6ABACA
+- 机器码（单段——计数判定）：`mov edx,[ecx+0x54]; xor eax,eax; test edx,edx; setg al; ret`
+- 语义：**队列非空判定器**——返回 [this+0x54] > 0（布尔）——**本批 a 的 [esi+0x54] 队列计数同字段互证（读侧）**
+- ★原版怪癖（照抄）：①11B 极简三指令+setg；②返回值 0/1 布尔（无 -1/哨兵）
+- ★跨批次连接：本批 a（0x6ABB60 同字段循环）+本批 b（0x6ABAD0 相邻——三个容器族函数 0x6ABA-0x6ABB 排布）
+- 新候选：无（callee=0）
+- ⚠️ partial：函数精确名（推断「队列非空判定器」）、[this+0x54] 字段名（计数——a/b 互证）
+
+## 批次观察
+- **★本批 = 对象队列容器族**：0x6ABAC0（计数判定）→ 0x6ABAD0（消息码→槽分发，尾调）→ 0x6ABB60（成员移除+地图刷新）——**三函数 0x6ABA-0x6ABB 相邻排布且互调互证**
+- **★★this+0x54 计数两读 + 0xF94 步长数组三实例**：c 判 [this+0x54]>0、a 遍历 [this+0x54] 次 × 52B 步长、b 的 value*3988+0x1544 索引、「batch 2038 a 的 count*3988+0x1544」——**容器布局（计数@+0x54、首元素@+0x64、步长 52B、Array@+0x1544 3988B/项）四侧互证**
+- **★★观察项兑现（batch 2038 → 2039）**：batch 2038 后邻记录 0x6ABC60「消息码判定器族」——本批 b 的 switch 与它**逐字节同构**（唯一差别：b 有 0xF94 索引尾 + 尾调 a，0x6ABC60 纯 switch 返回）——后邻观察→批次登记 的完整闭环
+- **★★0x87F7E8=MapClass::Instance + 0x4f42f0 + [0x884b8f]=1 刷新链**：成员移除后触发——QWEN.md 记忆区实锤地址首次出现在侧栏容器族
+- **★★虚表槽 0x2C 状态==6**：与 SlaveManager 家族（batch 2030-2033）的 [elem+4]==6 不同——**虚表方法返回值判 6**（新状态码机制，非内存字段）
+- callee 核验：a 4 全登记 / b 2（0x5004e0 登记 + 0x6abb60 批内）/ c 0——**0 个新候选**
+- 新候选入池：无（本批自洽闭环）
+- 后邻观察池：0x6ABC40（batch 2038 c 本尊）、0x6ABC60（判定器族——已兑现）、0x6ABD10（0xF94 数组族查找）、0x6ABD30（新函数头）
