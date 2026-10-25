@@ -1,0 +1,66 @@
+# frontier batch 2114：RadSiteClass 家族微函数三连（GetRadLevel / SetRadLevel / SetSpread——0x65B510 / 0x65B4F0 / 0x65B4D0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x65B510 RadSiteClass::GetRadLevel callees=0 deps=12 / 0x65B4F0 RadSiteClass::SetRadLevel callees=0 deps=1934 / 0x65B4D0 RadSiteClass::SetSpread callees=0 deps=1934）
+- 三路 disasm：`.qwen/tmp/_d2114a.txt`（0x65B510 size 0x30）/ `_d2114b.txt`（0x65B4F0 size 0x40）/ `_d2114c.txt`（0x65B4D0 size 0x30）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x65B510 | 24B（0x18）| ret 双出口 @0x65B51B / @0x65B527 | 0x65B530（batch 2113 c 路本尊 Add）| 0 |
+| 0x65B4F0 | 30B（0x1E）| ret 4 @0x65B50B | 0x65B510（**a 路本尊**）| 0 |
+| 0x65B4D0 | 21B（0x15）| ret 4 @0x65B4E2 | 0x65B4F0（**b 路本尊**）| 0 |
+
+## a 路 0x65B510（24B）——RadSiteClass::GetRadLevel（带名实锤）
+
+```
+0065b510  push esi / mov esi,[ecx+0x6c]（★半径字段 0x6c）/ test esi,esi / jg 0x65b51c（>0 继续）
+0065b518  xor eax,eax / pop esi / ret（≤0 返 0）
+0065b51c  mov eax,[ecx+0x70]（半径 0x70）/ imul eax,[ecx+0x4c]（×系数 0x4c）/ cdq / idiv esi（÷半径 0x6c）/ pop esi / ret
+```
+**语义**：**RadSiteClass::GetRadLevel**（带名实锤）——[ecx+0x6c] ≤ 0 返 0；否则返回 `(半径[0x70] × 系数[0x4c]) ÷ 半径[0x6c]`（有符号除法 idiv）。与 batch 2113 c 路（Add）量化公式同族——Add 用浮点 fild/fmulp/fdivp，本路用整数 imul/idiv（**读写对整数版**）。后邻头 0x65B530 = batch 2113 c 路本尊（Add）。
+
+## b 路 0x65B4F0（30B）——RadSiteClass::SetRadLevel（带名实锤）
+
+```
+0065b4f0  mov edx,[esp+4]（参数 1 = 新辐射等级）/ mov [ecx+0x4c],edx（★写系数 0x4c）
+0065b4f7  mov eax,[0x8871e0] / mov eax,[eax+0x1804]（★全局系数）/ imul eax,edx（全局×参数）
+0065b505  mov [ecx+0x6c],eax / mov [ecx+0x70],eax（★双半径字段 = 全局×参数）/ ret 4
+```
+**语义**：**RadSiteClass::SetRadLevel**（带名实锤）——[ecx+0x4c] = 参数 1，[ecx+0x6c]/[ecx+0x70] = [0x8871e0]+0x1804（全局系数）× 参数 1。与 batch 2113 c 路（Add）写双半径段**完全同构**（Add = 量化 + 累加 + 本路式写回）——SetRadLevel 是 Add 的写回子集。后邻头 0x65B510 = a 路本尊（GetRadLevel）。
+
+## c 路 0x65B4D0（21B）——RadSiteClass::SetSpread（带名实锤）
+
+```
+0065b4d0  mov eax,[esp+4]（参数 1 = 扩散半径）/ mov [ecx+0x44],eax（★写内层半径 0x44）
+0065b4d7  shl eax,8 / add eax,0x80（★<<8 + 0x80 半坐标转换）/ mov [ecx+0x48],eax（★写衰减半径 0x48）/ ret 4
+```
+**语义**：**RadSiteClass::SetSpread**（带名实锤）——[ecx+0x44] = 参数（内层循环半径），[ecx+0x48] = `参数<<8 + 0x80`（**<<8 + 0x80 坐标量化惯用法**——batch 2110/2111 大量出现的半坐标转换；0x48 是 Deactivate 衰减半径字段、0x44 是方形遍历半径字段）。后邻头 0x65B4F0 = b 路本尊（SetRadLevel）。
+
+## RadSiteClass 家族内存布局（四连微函数族实锤）
+
+```
+0x65B4D0 SetSpread（c 路）→ 0x65B4F0 SetRadLevel（b 路）→ 0x65B510 GetRadLevel（a 路）
+→ 0x65B530 Add（batch 2113 c 路本尊）→ 0x65B580 刷新（已登记）→ … → 0x65BB50 Deactivate（batch 2113 b 路本尊）
+```
+家族字段语义贯通：**0x44 = 方形遍历半径 / 0x48 = 衰减半径（缩放值 <<8+0x80）/ 0x4c = 衰减系数 / 0x6c = 半径（整数）/ 0x70 = 半径（浮点域）**——GetRadLevel 读 (0x70×0x4c)÷0x6c，SetRadLevel 写 0x4c + 0x6c/0x70 = 全局×参数，SetSpread 写 0x44 + 0x48 缩放半径，Add 量化累加，Deactivate 按 0x44 遍历按 0x48 衰减。
+
+## 原版怪癖（照抄）
+
+1. a 路 GetRadLevel 与 Add（batch 2113 c）量化公式**读写对**：Add 浮点 fild/fmulp/fdivp vs GetRadLevel 整数 imul/cdq/idiv——两套量化精度不同（照抄不统一）；
+2. a 路 [0x6c] ≤ 0 时返 0（`jg 0x65b51c` 判定，≤0 走 xor 路径）；
+3. b 路 SetRadLevel 与 Add 写双半径段完全同构（[0x6c]/[0x70] = [0x8871e0]+0x1804 × 系数）；
+4. c 路 SetSpread `shl eax,8 / add eax,0x80` 坐标量化——0x48 存缩放半径（0x44 的 <<8+0x80 版）；
+5. 三路均 0 直接 call（纯计算微函数）。
+
+## 跨批次连接
+
+- ★★★a/b/c ↔ batch 2113 c 路 0x65B530 Add（量化同族 + SetRadLevel 写回子集）+ b 路 0x65BB50 Deactivate（0x44/0x48 字段消费者）——RadSiteClass 家族读写闭环（四连微函数 + Add/Deactivate 相邻）；
+- ★★[0x8871e0]+0x1804 全局系数（batch 2113 c 同址复用）；[0x65 区] RadSiteClass 域与 RadarEventClass（0x65B2F0 待取）相邻。
+
+## 观察项 / 候选池
+
+- **新候选：无**（a/b/c 全部 0 直接 call）。
+- **后邻未登记**：0x65B530（a 路后邻头——batch 2113 c 路本尊已登记）；0x65B580（Add 内部调用的刷新函数——已登记）。
+- 前向：picker 队列继续 RadSiteClass 族剩余（0x65B4C0 SetBaseCell/0x65B1E0 RadSiteClass::RadSiteClass）+ RadarEventClass::~RadarEventClass（0x65B2F0）+ 0x65AC40/0x65AB80/0x65AB10（0x65A 区候选）。
