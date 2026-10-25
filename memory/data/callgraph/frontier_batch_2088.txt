@@ -1,0 +1,73 @@
+# frontier batch 2088：Vector 派生五参构造器三连 + 简化加载器三连 + 尾插器（0x67B720 / 0x67B500 / 0x67B480）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x67B720 callees=9 deps=239 / 0x67B500 callees=2 deps=241 / 0x67B480 callees=0 deps=130）
+- 三路 disasm：`.qwen/tmp/_d2088a.txt`（0x67B720 size 0x1D8）/ `_d2088b.txt`（0x67B500 size 0x60）/ `_d2088c.txt`（0x67B480 size 0x60）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x67B720 | 464B（0x1D0）| ret 0xC @0x67B85B / @0x67B8ED | 0x67B8F0（batch 2087 c 本尊）| 7（全已登记）|
+| 0x67B500 | 73B（0x49）| ret 8 @0x67B536 / @0x67B546 | 0x67B550（464B 构造族）| 2（0x528A10 + 0x75E3B0）|
+| 0x67B480 | 80B（0x50）| ret 4 @0x67B4B2 / @0x67B4CD | 0x67B4D0（小函数）| 0 |
+
+## a 路 0x67B720（464B）——Vector 派生对象五参构造器·三连族（虚表 0x7EAC48→0x7EABE8）
+
+与 batch 2087 c（0x67B8F0）同骨架第三实例，虚表差 0x20（0x7EAC48 vs 0x7EAC68）、子构造 0x513940（vs 0x513990）、拷贝构造 0x512FA0（vs 0x513370）：
+1. 0x528A10 五参加载失败 je 0x67B85E 全拷贝分支；
+2. 成功路：0x513940(0,0) 子构造 → 0x7C9CC2(0x817F70) 串复制循环 → **0x7480D0 串→对象**（vs 0x41CEF0）→ Vector 扩容 `call [edx+8]` → **0x512FA0 拷贝构造**（本族自家）→ 0x7C8B3D delete → ret 0xC；
+3. 失败路 0x67B85E：虚表 0x7EAC48 → call [0x7eac54] → operator new 0x7C8E17 → 元素循环拷 → 双字段 → 虚表 0x7EABE8 → ret 0xC。
+**语义**：五参构造器三连族（batch 2087 c 0x7EAC68 + 本批 0x7EAC48 + 后续 0x7EAC28 等）——每实例仅虚表/子构造/拷贝构造/转换器槽位差异，骨架逐字节同构。
+
+## b 路 0x67B500（73B）——五参简化加载器·三连（成功转换器 0x75E3B0）
+
+与 batch 2087 a/b（0x67BD80/0x67BCE0）逐字节同构，仅成功路径转换器 0x75E3B0（vs 0x71E2A0/0x4653C0）：
+```
+0067B500  sub esp,0x80 / lea eax,[esp] / push 0x80 / push eax
+0067B510  mov eax,[esp+0x8C] / push 0x889f64 / push eax / push edx
+0067B51E  call 0x528A10            ; 五参加载
+0067B523  test eax,eax / je 失败
+0067B527  lea ecx,[esp] / call 0x75E3B0  ; 串→对象转换（本实例）
+0067B530  add esp,0x80 / ret 8
+0067B539  mov eax,[esp+0x88] / ret 8
+```
+**语义**：五参简化加载器三连族——同模板三个对象类型，仅转换器（0x71E2A0/0x4653C0/0x75E3B0）不同。
+
+## c 路 0x67B480（80B）——Vector 尾插器（callees=0）
+
+```
+0067B480  push esi / mov esi,ecx
+0067B483  mov ecx,[esi+8]        ; 容量
+0067B486  mov eax,[esi+0x10]    ; 计数
+0067B489  cmp eax,ecx / jl 0x67B4B5   ; 容量充足直接写
+0067B48D  mov al,[esi+0xD]      ; owns 检查
+0067B490  test al,al / jne 0x67B498
+0067B494  test ecx,ecx / jne 0x67B4AF ; 有容量但 owns=0 → 拒绝
+0067B498  mov eax,[esi+0x14]    ; 上限
+0067B49B  test eax,eax / jle 0x67B4AF
+0067B49F  add eax,ecx / push 0 / push eax / call [edx+8]  ; 虚表槽 8 扩容
+0067B4B5  mov eax,[esi+0x10] / mov edx,[esi+4]
+0067B4B8  lea ecx,[eax+1] / mov [esi+0x10],ecx   ; 计数++
+0067B4C1  mov ecx,[esp+8] / mov ecx,[ecx] / mov [edx+eax*4],ecx  ; 写入元素
+0067B4CB  mov al,1 / ret 4
+0067B4AF  xor al,al / ret 4     ; 拒绝返 0
+```
+**语义**：Vector 尾插器——计数 vs 容量检查 + owns/上限门控虚表槽 8 扩容 + 计数++写入；成功 al=1 / 拒绝 al=0，尾 `ret 4`（1 栈参）。与 batch 2060 0x68C260（Vector dword 尾插器）同族模板（本路 0 直接 call，全间接）。
+
+## 原版怪癖（照抄）
+
+1. a 路五参构造器双出口 ret 0xC；[esi+0xD] owns 空路径 0/成功 1；失败路 [0x7eac54] 虚表槽间接；
+2. b 路 73B 三连仅转换器槽位差异、其余逐字节同构；
+3. c 路尾插器容量充足但 owns=0 且上限<=0 时**拒绝写入返 0**（不过度扩容）；扩容走虚表槽 8（间接非直接 call）。
+
+## 跨批次连接
+
+- ★★★batch 2087 c 0x67B8F0（构造器同骨架）+batch 2087 a/b 0x67BD80/0x67BCE0（加载器同模板）+batch 2060 0x68C260（尾插器同族）；
+- ★0x528A10/0x889F64/0x817F70（加载/格式串共享）+0x7C9CC2/0x7C8B3D/0x7C8E17（CRT）+0x513940/0x512FA0（0x513xxx 本族构造，已登记）+0x7480D0/0x75E3B0（转换器已登记）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（a/b/c 全部直接 call 已登记）。
+- **后邻未登记**：0x67B550（464B 构造族四连）、0x67B4D0（小函数）、0x67BAC0（73B 族）、0x67B3D0（176B callees=2）/0x67B370（93B）等。
+- 前向：0x67A570/0x67A310/0x67A210/0x67A190（121-132B callees=1）等 0x67A 区 + RulesClass::Read_* 大族（0x66-0x67 区）。
