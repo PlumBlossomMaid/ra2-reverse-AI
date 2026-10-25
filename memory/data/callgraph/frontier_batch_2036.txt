@@ -1,0 +1,43 @@
+# frontier batch 2036
+
+本批三函数（0x6A 区——0x6AC8 周边）：0x6AC840（45B 构造器）/ 0x6AC5F0（323B 对象注册校验器）/ 0x6AC5E0（13B 直通转发器）
+Picker：unique_callers 扇入度 top3（0x6AC840 FUN_006ac840 callees=1 deps=51；0x6AC5F0 FUN_006ac5f0 callees=1 deps=1；0x6AC5E0 PhobosHook_SidebarClass_SaveLoad_Prefix callees=1 deps=5）
+disasm：`_d2036a.txt`（0x6AC840 size 0x40）/ `_d2036b.txt`（0x6AC5F0 size 0x160）/ `_d2036c.txt`（0x6AC5E0 size 0x30）——三路全部读取（a 尾 ret 4 @0x6AC86A + pad + 后邻头 0x6AC870（batch 2035 c 本尊——相邻）；b 尾 ret 8 @0x6AC672（未命中）/0x6AC730（正常）+ pad + 后邻头 0x6AC740；c 尾 ret 4 @0x6AC5EA + pad + 后邻头 0x6AC5F0（b 本尊——相邻））
+callee 核验：`_check_callees2036.py`——a 直接目标 1（0x565190）**MISSING 新候选**；b 直接目标 1（0x5004E0）**已登记**；c 直接目标 1（0x656AC0）**MISSING 新候选**——**2 个新候选**
+
+## 1. 0x6AC840 —— 构造器·[0x6AC840]
+- 大小：45B（0x6AC840-0x6AC86C），全读，尾 mov eax,esi + pop esi + ret 4 单出口 0x6AC86A
+- 机器码（单段——基类构造+三标志清零+虚表安装）：`mov eax,[esp+4]`（参 1）+ `mov esi,ecx`（this）+ `push eax/call 0x565190`（**基类构造——MISSING 新候选**）+ `xor al,al/mov byte[esi+0x11CC],al/mov byte[esi+0x11CD],al/mov byte[esi+0x11CE],al`（**三字节标志清零**）+ `mov [esi],0x7E6114`（**虚表 0x7E6114**）+ mov eax,esi + ret 4
+- 语义：**构造器**——1 栈参 ret 4：0x565190 基类构造 + 三字节标志清零（+0x11CC/+0x11CD/+0x11CE）+ 虚表 0x7E6114——**大对象构造器（0x11CC 偏移 = 大结构体）**
+- ★原版怪癖（照抄）：①三字节标志连清（0x11CC/0x11CD/0x11CE 三个紧邻标志）；②虚表 0x7E6114（0x7E 区——batch 2024 b 0x7E 虚表族观察）；③1 栈参 ret 4（基类参透传）
+- ★跨批次连接：★★0x565190（**MISSING 新候选——基类构造**）+ 后邻 0x6AC870（batch 2035 c 场景元素初始化器——相邻）+ 0x7E6114 虚表（0x7E 区虚表族）
+- 新候选：**0x565190（基类构造）**
+- ⚠️ partial：函数精确名（推断「构造器」）、对象类型（0x11CC 偏移大结构）、三标志语义
+
+## 2. 0x6AC5F0 —— 对象注册校验器·[0x6AC5F0]
+- 大小：323B（0x6AC5F0-0x6AC730），全读，尾 pop 二 + ret 8 双出口 @0x6AC672（未命中）/0x6AC730（正常）
+- 机器码结构（多段——四全局数组查找+类型映射+表写入）：
+  - 段 1（0x6AC5F0-0x6AC674）：`mov eax,[0xA8E358]`（数组 1 计数）+ `mov ecx,[esp+0xC]`（参 2）+ 线性查找 [0xA8E34C] → 未命中 → `mov edx,[0xA83CF0]/mov eax,[0xA83CE4]`（**数组 2 查找）→ `mov edx,[0xA8B228]/mov eax,[0xA8B21C]`（**数组 3 查找）→ `mov edx,[0xA83C78]/mov eax,[0xA83C6C]`（数组 4 查找）——**四全局对象数组逐组线性查找（指针对比）**
+  - 段 2（0x6AC675-0x6AC6D9）：命中：`mov eax,[ecx]/call [eax+0x2C]`（**虚表槽 0x2C 类型查询**）+ `cmp eax,0xF/0x10` → 值 2；`cmp 0x1/0x28/0x2/0x3` → 值 3；`cmp 0x6/0x7` → `call 0x5004E0`（**已登记——cmp 5 判定**）→ 0/1；`cmp 0x39/0x20/0x1F` → 值 1——**类型→优先级映射（0xF/0x10→2、0x1/0x28/0x2/0x3→3、0x6/0x7→0/1、0x39/0x20/0x1F→1）**
+  - 段 3（0x6AC6D9-0x6AC730）：`shl edx,5/sub edx,eax/lea ecx,[eax+edx*8]/lea edx,[eax+ecx*4]`（**×31 索引算式**）+ `lea edx,[edi+edx*4+0x1544]/lea ecx,[edx+0x58]`（**目标表 [edi+0x1544] 元素 +0x58**）+ 线性查找 0x4B（75）个元素（步进 0x34）`cmp [ecx],esi/je`（**匹配数组索引 esi**）→ 命中：`mov ecx,[0xA8ED84]/add ecx,esi/mov [edx+eax*4+0x88],ecx`（**写 [0xA8ED84]+索引**）+ `mov eax,[0xA8ED84]/add eax,edx/mov [edi+0x53A0],eax`（**写 [edi+0x53A0]=[0xA8ED84]+参+1**）
+- 语义：**对象注册校验器**——2 栈参（参 1=this 对象/参 2=查找键）ret 8：**四全局对象数组（[0xA8E358]/[0xA83CF0]/[0xA8B228]/[0xA83C78] 各族）线性查找键** → 命中后虚表槽 0x2C 类型查询 → 类型→优先级映射（0xF/0x10→2、0x1/0x28/0x2/0x3→3、0x6/0x7→0/1、0x39/0x20/0x1F→1）→ **×31 索引**入 [edi+0x1544] 表（0x4B 元素步进 0x34）→ 写 [0xA8ED84]+索引到元素 +0x88 + [edi+0x53A0]=[0xA8ED84]+参+1——**对象注册/槽位分配器（类型优先级排序）**
+- ★原版怪癖（照抄）：①**四全局数组顺序查找**（数组 1 未命中 → 2 → 3 → 4——多族对象查注册）；②类型→优先级映射表（cmp 0xF/0x10→2、0x1/0x28/0x2/0x3→3、0x6/0x7→0/1、0x39/0x20/0x1F→1——**硬编码枚举映射**）；③**×31 索引算式**（shl 5/sub/lea 两重——31 字节元素表）；④0x4B 元素步进 0x34 线性查找；⑤[0xA8ED84] 全局（batch 1989 同全局再消费）
+- ★跨批次连接：★★[0xA8ED84] 全局（batch 1989/2031 b/2033 a/b/2035 c——**五消费点贯通**）+ 0x5004E0（已登记）+ 四全局数组族（[0xA83C6C] 系 batch 1989-1994 SuperClass 宿主族同区 + [0xA8E358] 系 batch 2035 b 域）+ 后邻 0x6AC740（同类表查找器观察）
+- 新候选：无（0x5004E0 已登记）
+- ⚠️ partial：函数精确名（推断「对象注册校验器」）、四全局数组族归属、类型码 0xF/0x10 等枚举名、[edi+0x1544] 表语义
+
+## 3. 0x6AC5E0 —— 直通转发器·[0x6AC5E0]
+- 大小：13B（0x6AC5E0-0x6AC5EC），全读，尾 ret 4 单出口 0x6AC5EA
+- 机器码（单段——取参+转发）：`mov eax,[esp+4]`（参 1）+ `push eax/call 0x656AC0`（**转发目标——MISSING 新候选**）+ ret 4
+- 语义：**直通转发器**——1 栈参 ret 4：原样转发到 0x656AC0——**薄转发桩（PhobosHook_SidebarClass_SaveLoad_Prefix 名——Phobos 钩子前缀转发）**
+- ★原版怪癖（照抄）：①无序言无栈帧（纯尾转）；②1 栈参 ret 4；③13B 极简
+- ★跨批次连接：★★0x656AC0（**MISSING 新候选——转发目标**）+ 后邻 0x6AC5F0（b 本尊——相邻）+ Phobos 命名（PhobosHook_ 前缀——batch 623-637 Phobos 交叉验证域）
+- 新候选：**0x656AC0（转发目标）**
+- ⚠️ partial：函数精确名（PhobosHook_SidebarClass_SaveLoad_Prefix 名已给——语义细分推断）、0x656AC0 语义
+
+## 批次观察
+- **★本批 = 0x6AC8 周边带**：0x6AC840（构造器）+ 0x6AC5F0（注册校验器）+ 0x6AC5E0（转发器）——0x6A 区 0x6AC5-0x6AC8 相邻排布
+- **★★[0xA8ED84] 全局五消费点**：batch 1989（0x6CE2C0/0x6CE280）→ batch 2031 b → batch 2033 a/b → batch 2035 c → 本批 b——**全局贯通记录持续**（事务/时间戳计数全局）
+- **★★PhobosHook_ 前缀函数**：0x6AC5E0（PhobosHook_SidebarClass_SaveLoad_Prefix——batch 623-637 Phobos 交叉验证域 + 0x6AC5D0 相邻同前缀）——**Phobos 钩子注册表区**
+- callee 核验：a 1（0x565190 MISSING）/ b 1（0x5004E0 已登记）/ c 1（0x656AC0 MISSING）——**2 个新候选**
+- 新候选入池：**0x565190（基类构造）+ 0x656AC0（转发目标）**
