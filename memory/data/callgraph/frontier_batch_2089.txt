@@ -1,0 +1,93 @@
+# frontier batch 2089：Vector 容量重置器 + 指定缓冲构造器 + 数组串读入器（0x67B3D0 / 0x67B370 / 0x67A8E0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x67B3D0 callees=2 deps=117 / 0x67B370 callees=1 deps=55 / 0x67A8E0 callees=0 deps=10）
+- 三路 disasm：`.qwen/tmp/_d2089a.txt`（0x67B3D0 size 0xB8）/ `_d2089b.txt`（0x67B370 size 0x60）/ `_d2089c.txt`（0x67A8E0 size 0x50）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x67B3D0 | 176B（0xB0）| ret 8 @0x67B474 / @0x67B47D | 0x67B480（batch 2088 c 本尊）| 2（0x7C8E17 + 0x7C8B3D）|
+| 0x67B370 | 93B（0x5D）| ret 8 @0x67B3CA | 0x67B3D0（a 本尊）| 1（0x7C8E17）|
+| 0x67A8E0 | 75B（0x4B）| ret 4 @0x67A928 | 0x67A930（nop pad 后未知）| 0 |
+
+## a 路 0x67B3D0（176B）——Vector 容量重置器
+
+```
+0067B3D0  push ebx,ebp / mov ebp,[esp+0xC]（新容量）; push esi,edi / mov esi,ecx
+0067B3DC  test ebp,ebp / je 0x67B45A          ; 容量 0 → 走虚表槽 0xC
+0067B3DE  mov ebx,[esp+0x18]（外部缓冲）      ; 非空直接用外部，空则 new
+0067B3E2  mov byte ptr [esi+0xC],0
+0067B3EA  lea eax,[ebp*4] / push / call 0x7C8E17 ; operator new 分配
+0067B3FA  mov edi,eax                          ; 否则 edi = ebx（外部缓冲）
+0067B400  test edi,edi / mov byte ptr [esi+0xC],1 / je 失败
+0067B408  mov eax,[esi+4]（旧缓冲）; test / je 0x67B448（无旧缓冲跳过拷贝）
+0067B40F  mov ecx,[esi+8]（旧容量）; cmp ebp,ecx / jge 用旧容量 ; mov ecx,ebp
+0067B418  loop: 拷贝 min(ebp, 旧容量) 个元素 [esi+4] → [edi+eax*4]
+0067B42E  mov al,[esi+0xD]（旧 owns）; test / je 0x67B448
+0067B435  push [esi+4] / call 0x7C8B3D        ; operator delete 释放旧缓冲
+0067B441  mov [esi+4],0
+0067B448  mov [esi+4],edi / test ebx,ebx / sete al（owns = 外部?0:1）
+0067B452  mov [esi+8],ebp / mov [esi+0xD],al / jmp 成功
+0067B45A  call [edx+0xC]                      ; 容量 0：虚表槽 0xC 回调
+0067B461  mov eax,[esi+8] / mov ecx,[esi+0x10] / cmp eax,ecx / jge
+0067B46B  mov [esi+0x10],eax                  ; 计数钳位 = min(容量,计数)
+0067B46E  pop edi,esi,ebp / mov al,1 / pop ebx / ret 8
+0067B477: pop edi,esi,ebp / xor al,al / pop ebx / ret 8
+```
+**语义**：Vector 容量重置器——新容量 ebp + 外部缓冲 ebx（非空复用、空则 operator new 0x7C8E17）+ 旧缓冲 owns 释放（0x7C8B3D）+ min 拷贝 + [esi+0x10] 计数钳位 + [esi+0xD] owns 重算；容量 0 走虚表槽 0xC 回调；成功 al=1/失败 al=0，尾 `ret 8`（2 栈参）。
+
+## b 路 0x67B370（93B）——Vector 指定缓冲构造器
+
+```
+0067B370  mov eax,[esp+4]（容量）; push esi / mov esi,ecx
+0067B377  test eax,eax / mov [esi+4],0; mov [esi+8],eax
+0067B383  mov byte ptr [esi+0xC],1 / mov byte ptr [esi+0xD],0
+0067B38B  mov [esi],0x7f0d9c              ; 第一阶段虚表
+0067B391  je 0x67B3B3（容量 0 跳过缓冲）
+0067B393  mov ecx,[esp+0xC]（外部缓冲）; test / je 0x67B3A0
+0067B39B  mov [esi+4],ecx / jmp 0x67B3B3  ; 外部缓冲直接用
+0067B3A0  shl eax,2 / push / call 0x7C8E17 ; operator new 容量*4
+0067B3AC  mov [esi+4],eax / mov byte ptr [esi+0xD],1  ; owns=1
+0067B3B3  mov [esi],0x7f0e0c              ; 第二阶段虚表
+0067B3B9  mov [esi+0x14],0xA              ; 上限 0xA
+0067B3C0  mov [esi+0x10],0                ; 计数 0
+0067B3C7  mov eax,esi / pop esi / ret 8
+```
+**语义**：Vector 指定缓冲构造器——虚表 0x7F0D9C→0x7F0E0C 两阶段 + [esp+0xC] 外部缓冲（非空直接用、空则 new 0x7C8E17）+ [esi+0x14] 上限 0xA + [esi+0x10] 计数 0 + owns 标志；尾 `ret 8`（2 栈参）。与 batch 2086 b 0x67BFA0（拷贝构造器）/2088 c 尾插器同数据布局族。
+
+## c 路 0x67A8E0（75B）——对象数组串读入器（callees=0）
+
+```
+0067A8E0  push ecx,ebx,esi,edi / mov edi,[esp+0x14]（数组对象）
+0067A8E8  mov ebx,ecx（this）; push 0
+0067A8EC  mov ecx,[edi] / lea edx,[esp+0x10] / mov eax,[ebx+0x10]（计数预存）
+0067A8F2  push 4 / push edx / push edi / call [ecx+0x10]   ; 虚表槽 0x10 读
+0067A900  mov eax,[esp+0xC]（计数）; xor esi,esi / test / jle 0x67A924
+0067A90A  loop: mov ecx,[ebx+4]（数组）; mov eax,[edi]
+0067A90D  push 0 / push 4 / lea edx,[ecx+esi*4]（元素地址）/ push edx / push edi
+0067A918  call [eax+0x10]             ; 虚表槽 0x10 逐元素读
+0067A91B  inc esi / cmp esi,计数 / jl loop
+0067A924  pop edi,esi,ebx,ecx / ret 4
+```
+**语义**：对象数组串读入器——虚表槽 0x10 读计数 + [ebx+4] 数组元素逐个虚表槽 0x10 读入；**0 直接 call 全间接**，与 batch 2073-2088 串写孪生族的读侧模板同族（batch 2086 b 0x67F7E0 读出器骨架的 75B 简化版）；尾 `ret 4`（1 栈参）。
+
+## 原版怪癖（照抄）
+
+1. a 路容量重置：外部缓冲 [esp+0x18] 非空即复用（owns=0），空则 new（owns=1）——`sete al` 由 ebx 非零判定；
+2. a 路容量 0 走虚表槽 0xC 回调而非直接清空；计数钳位 `[esi+0x10]=min(旧容量,新容量)` 仅当计数>容量；
+3. b 路双阶段虚表（0x7F0D9C 构造中→0x7F0E0C 收口）+ 上限 0xA 固定；
+4. c 路虚表槽 0x10 双重调用（先读计数后逐元素），失败不做标记直接跳结尾。
+
+## 跨批次连接
+
+- ★★batch 2088 c 0x67B480（尾插器——同 [esi+4]/[esi+8]/[esi+0x10]/[esi+0x14]/[esi+0xD] 数据布局）+batch 2086 b 0x67BFA0（拷贝构造器）+batch 2059 0x68C2B0（指针数组拷贝构造）；
+- ★0x7C8E17/0x7C8B3D（CRT new/delete）+虚表 0x7F0D9C/0x7F0E0C（batch 2086 c 同族虚表 0x7F0D9C）；
+- ★c 路与 batch 2073-2088 串写族互为读写镜像（写侧 0x7E15F4 串写/本路虚表槽 0x10 读）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（a/b/c 全部直接 call 已登记）。
+- **后邻未登记**：0x67A930（c 路后邻）、0x67A8B0（34B callees=0）/0x67A8A0（4B）/0x67A7D0（75B）等 0x67A8 区。
+- 前向：0x67A310/0x67A210/0x67A190（121B callees=1 孪生族）、RulesClass::Read_* 大族（0x66-0x67 区）等。
