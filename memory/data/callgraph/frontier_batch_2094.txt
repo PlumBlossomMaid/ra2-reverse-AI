@@ -1,0 +1,61 @@
+# frontier batch 2094：Vector 析构器四连 + INISection::Exists + RulesClass::LoadTypesFromINI（0x679FA0 / 0x679F40 / 0x679A10）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x679FA0 callees=1 deps=241 / 0x679F40 INISection::Exists callees=2 deps=407 / 0x679A10 RulesClass::LoadTypesFromINI callees=3 deps=402）
+- 三路 disasm：`.qwen/tmp/_d2094a.txt`（0x679FA0 size 0x40）/ `_d2094b.txt`（0x679F40 size 0x60）/ `_d2094c.txt`（0x679A10 size 0x2B0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x679FA0 | 45B（0x2D）| ret c3 @0x679FCC | 0x679FD0（batch 2093 c 本尊）| 1（0x7C8B3D）|
+| 0x679F40 | 47B（0x2F）| ret 8 @0x679F58 / @0x679F6C | 0x679F70（45B 析构器 0x7E4DB8）| 2（0x526810 + 0x526B10）|
+| 0x679A10 | 679B（0x2A7）| ret 4 @0x679CB4 + nop pad | 0x679CC0（未知）| 3（0x7729F0 + 0x465CB0 + 0x5B3760）|
+
+## a 路 0x679FA0（45B）——Vector 析构器·四连（虚表 0x7EAA08）
+
+与 batch 2093 a/b/c 逐字节同构，仅虚表常量 0x7EAA08（新族——batch 2093 是 0x7F0D9C/0x7EAC68/0x7EAC48）：[esi+4] owns 检查 + 0x7C8B3D delete + [esi+4]/[esi+0xD]/[esi+8] 三字段清理。析构族第四连，对应 0x7EAA08 族构造侧（未见登记）。
+
+## b 路 0x679F40（47B）——INISection::Exists（带名，PhobosHook）
+
+```
+00679F40  mov eax,[esp+8]          ; 第二参（预置内容指针）
+00679F44  test eax,eax / jne 0x679F5B
+00679F48  mov eax,[esp+4]          ; 第一参（key 名）
+00679F4C  push eax / call 0x526810 ; 无默认值路径：查 key
+00679F52  neg eax / sbb eax,eax / neg eax   ; 布尔化（!=0 → 1）
+00679F58  ret 8
+00679F5B  mov edx,[esp+4] / push eax / push edx
+00679F61  call 0x526B10            ; 带默认值路径：查 key+默认
+00679F66  neg eax / sbb eax,eax / neg eax
+00679F6C  ret 8
+```
+**语义**：**INISection::Exists 带名**——两参（key 名 + 预置默认值指针）：默认值为空走 0x526810 单参查询，非空走 0x526B10 双参查询；结果经 `neg/sbb/neg` 三连布尔化（非零→1/零→0）返回 bool；尾 `ret 8`（2 栈参）。0x526810/0x526B10 均为已登记 INI 查询（Value 读）。
+
+## c 路 0x679A10（679B）——RulesClass::LoadTypesFromINI（带名）
+
+**RulesClass 类型加载主入口**，15 条全局数组链 + 虚表槽 0x64 回调 + 尾段批量清理：
+1. **数组链 ×12（虚表槽 0x64 调用）**：[0xa83ca8]/[0xa83c9c]（场景类数组）、[0xa8e340]/[0xa8e334]、[0x8b4160]/[0x8b4154]（**0x887180 额外参**）、[0xa83c78]/[0xa83c6c]、[0xa8b228]/[0xa8b21c]、[0xa83cf0]/[0xa83ce4]、[0xa8e358]/[0xa8e34c]、[0x887578]/[0x88756c]（两段）、[0xa83c90]/[0xa83c84]、[0x8874d0]/[0x8874c4]、[0xa83d90]/[0xa83d84]、[0xa83da8]/[0xa83d9c]、[0xa83d78]/[0xa83d6c]、[0xa8eb38]/[0xa8eb2c]、[0xa8e328]/[0xa8e31c]、[0xa8ec28]/[0xa8ec1c]——每段循环 `[eax+edi*4]` 元素 + 虚表槽 0x64 调用（this 元素 + esi 参），元素类型带 LoadFromINI 虚表槽；
+2. **直接 call ×3**：0x7729F0（[0x88756c] 元素段，无 esi 参）、0x465CB0（[0xa83c6c] 元素段，无 esi 参）——新候选；
+3. **尾段清理循环**：edi=0..0x400（[0xa8e3a8] 起 0x20 步长 32 项）：`mov [edi],ebx` 清 0 + **0x5B3760(edi)**（新候选）——批量对象释放/初始化；
+4. al=1 + ret 4 收尾。
+**语义**：**RulesClass::LoadTypesFromINI 带名**——游戏启动/场景加载时遍历全部类型数组逐个调 `LoadFromINI`（虚表槽 0x64）+ 尾段 [0xa8e3a8] 区 32 项清理；与 batch 2093 c 前的场景 SaveLoad 大族同域（0x679 区）。
+
+## 原版怪癖（照抄）
+
+1. b 路 `neg/sbb/neg` 布尔化惯用（0x679F52-0x679F56）——非零→1/零→0，不用 setne；
+2. c 路 [0x8b4154] 元素段带**额外参 0x887180**（其余段仅 esi 单参）；
+3. c 路 [0x88756c]/[0xa83c6c] 两段走**直接 call**（0x7729F0/0x465CB0）而非常规虚表槽 0x64——不同类型数组元素；
+4. c 路尾段 0x5B3760 循环 0x20 步长清 [0xa8e3a8]（32 项）且不清计数（[0xa8e340] 段只读计数不写）；
+5. c 路无失败出口（全程无 jl 检查）——纯遍历加载，无条件 al=1。
+
+## 跨批次连接
+
+- ★★batch 2093（析构器族 0x7F0D9C/0x7EAC68/0x7EAC48 + 本批 0x7EAA08 四连）+batch 2086-2092（Vector 构造族同域）；
+- ★0x7C8B3D（CRT delete）+0x526810/0x526B10（INI 查询已登记）+虚表槽 0x64（LoadFromINI 惯用）+0x887180/0x8b4154（Rules 类型数组族 0x8B 区）。
+
+## 观察项 / 候选池
+
+- **新候选 2**：0x465CB0、0x5B3760。
+- **后邻未登记**：0x679F70（45B 析构器 0x7E4DB8——Vector 族第五连）、0x679CC0（LoadTypesFromINI 后邻）。
+- 前向：RulesClass::PointerGotInvalid（4531B callees=2）/PhobosHook_SaveLoad_Prefix（13883B callees=22）/0x674730 等大函数族。
