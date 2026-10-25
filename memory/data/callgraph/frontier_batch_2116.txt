@@ -1,0 +1,97 @@
+# frontier batch 2116：场景对象数组装载/导出三连（SaveLoad 登记延伸——0x65AC40 / 0x65AB80 / 0x65AB10）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x65AC40 FUN_0065ac40 callees=1 deps=1 / 0x65AB80 FUN_0065ab80 callees=3 deps=3 / 0x65AB10 FUN_0065ab10 callees=2 deps=8）
+- 三路 disasm：`.qwen/tmp/_d2116a.txt`（0x65AC40 size 0x70）/ `_d2116b.txt`（0x65AB80 size 0xC0）/ `_d2116c.txt`（0x65AB10 size 0x80）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x65AC40 | 107B（0x6B）| ret 0xc @0x65ACA8 | 0x65ACAB（nop pad）| 1（0x410320 已登记）|
+| 0x65AB80 | 189B（0xBD）| ret 8 @0x65AC3A | 0x65AC3D（nop pad）| 2（0x5f5e80 未登记 + 0x6cf240 已登记）|
+| 0x65AB10 | 111B（0x6F）| ret 4 @0x65AB7C | 0x65AB80（**b 路本尊**）| 2（0x5b3970 未登记 + 0x4a1d50 已登记）|
+
+## a 路 0x65AC40（107B）——场景对象数组导出器·槽 0x10 版
+
+```
+0065ac40  mov eax,[esp+0xc]（参数 3）/ push ebx/esi/edi / mov esi,[esp+0x10]（参数 2）/ mov edi,[esp+0x10]（参数 1）
+0065ac4f  push eax（参数 3）/ push esi（参数 2）/ push edi（参数 1）→ ★call 0x410320（3 参初始化）/ test eax / jl 0x65aca5
+0065ac5b  mov ecx,[edi+0xe8]（★参数 1+0xe8 计数）/ mov edx,[esi]（参数 2 虚表）
+0065ac63  push 0 / lea eax,[esp+0x1c]（栈槽）/ push 4 / push eax / push esi / mov [esp+0x28],ecx
+0065ac71  ★call [edx+0x10]（参数 2 虚表槽 0x10——4 参查计数）/ test / jl 0x65aca5
+0065ac78  mov eax,[esp+0x18]（★返回计数）/ xor ebx,ebx / test / jle 0x65aca3
+0065ac82  循环: mov edx,[edi+0xe4]（参数 1+0xe4 数组基址）/ mov ecx,[esi]（参数 2 虚表）
+0065ac8a  push 0 / push 4 / lea eax,[edx+ebx*4]（数组元素地址）/ push eax / push esi
+0065ac93  ★call [ecx+0x10]（槽 0x10——逐元素导出）/ test / jl 0x65aca5
+0065ac9a  mov eax,[esp+0x18] / inc ebx / cmp ebx,eax / jl 循环
+0065aca3  xor eax,eax（成功返 0）/ 0x65aca5: pop×3 / ret 0xc
+```
+**语义**：场景对象数组导出器·槽 0x10 版——3 参（参数 1=场景对象，参数 2=接收容器，参数 3=附加）。0x410320（3 参）初始化 → 参数 2 虚表槽 0x10 查计数 → 循环把 **[参数 1+0xe4] 数组元素**（[参数 1+0xe8] 个）逐个槽 0x10 导出到参数 2；成功返 0、失败返负值。ret 0xc（3 栈参）。与 c 路共享 [0xe4]/[0xe8] 字段（同一对象类型）。
+
+## b 路 0x65AB80（189B）——场景对象数组装载器·SaveLoad 登记版
+
+```
+0065ab80  push ebp / mov ebp,[esp+8]（参数 1）/ push esi/edi / mov edi,[esp+0x14]（参数 2）
+0065ab8b  push edi / push ebp → ★call 0x5f5e80（2 参初始化）/ test eax / jl 0x65ac37
+0065ab9a  lea esi,[ebp+0xe0]（参数 1+0xe0 容器对象）/ test / je 0x65abc0
+0065aba4  mov [esi+4],0 / [esi+8],0 / mov byte ptr [esi+0xc],1 / mov byte ptr [esi+0xd],0
+0065abba  mov [esi],0x7e180c（★写容器虚表 0x7e180c）
+0065abc0  mov eax,[edi]（参数 2 虚表）/ push 0 / lea ecx,[esp+0x18] / push 4 / push ecx / push edi
+0065abcc  ★call [eax+0xc]（参数 2 虚表槽 0xC——4 参查计数）/ test / jl 0x65ac37
+0065abd3  mov eax,[esp+0x14]（返回计数）/ mov edx,[esi]（容器虚表）/ push 0 / push eax / mov ecx,esi
+0065abde  ★call [edx+8]（容器虚表槽 8——Grow 预留）/ xor esi,esi / test / jle 0x65ac14
+0065abeb  循环1: mov ecx,[edi] / push 0 / lea edx,[esp+0x14] / push 4 / push edx / push edi
+0065abf7  ★call [ecx+0xc]（槽 0xC——逐元素查）/ test / jl 0x65ac37
+0065abfe  mov eax,[ebp+0xe4] / mov ecx,[esp+0x10]（返回值）/ mov [eax+esi*4],ecx（写数组）
+0065ac0b  inc esi / cmp esi,计数 / jl 循环1（填充 [0xe4] 数组）
+0065ac14  循环2: mov edx,[ebp+0xe4] / lea eax,[edx+esi*4]（元素地址）/ push eax / push 0xb0c110（★batch 2102 登记的 [0xb0c110] SaveLoad 登记表！）
+0065ac29  ★call 0x6cf240（SaveLoad 登记函数——batch 2102 同款）
+0065ac2e  inc esi / cmp esi,计数 / jl 循环2（逐元素登记）
+0065ac35  xor eax,eax（成功返 0）/ 0x65ac37: pop×3 / ret 8
+```
+**语义**：场景对象数组装载器·SaveLoad 登记版——2 参（参数 1=场景对象，参数 2=源容器）。0x5f5e80（2 参）初始化 → 参数 1+0xe0 容器初始化（写虚表 0x7e180c）→ 参数 2 虚表槽 0xC 查计数 → 容器虚表槽 8 Grow → 循环1 逐元素槽 0xC 查值写 **[参数 1+0xe4] 数组** → **循环2 逐元素调 0x6cf240 登记到 [0xb0c110] 全局表**（batch 2102 SaveLoad_Prefix 实锤的登记表！SaveLoad 体系延伸）→ 成功返 0。ret 8（2 栈参）。
+
+## c 路 0x65AB10（111B）——场景对象数组导出器·虚表查询版
+
+```
+0065ab10  push ebx / mov ebx,[esp+8]（参数 1 目标）/ push esi/edi / mov esi,ecx（this 场景对象）
+0065ab19  push ebx → ★call 0x5b3970（1 参初始化）
+0065ab1f  mov eax,[esi+0xe8]（★this+0xe8 计数）/ mov ecx,ebx / push eax / ★call 0x4a1d50（2 参——登记计数到目标）
+0065ab2d  mov eax,[esi+0xe8]（计数）/ xor edi,edi / test / jle 0x65ab79
+0065ab39  循环: mov ecx,[esi+0xe4]（★数组基址）/ mov eax,[ecx+edi*4]（元素[edi]）/ test eax / je 0x65ab6e（空跳过）
+0065ab46  mov edx,[eax+4]（元素+4）/ add eax,4 / push eax / ★call [edx+0x10]（元素+4 虚表槽 0x10 查询）→ push eax / mov ecx,ebx / ★call 0x4a1d50（登记返回值）
+0065ab58  mov eax,[esi+0xe4] / mov ecx,[eax+edi*4]（元素）/ mov edx,[ecx] / ★call [edx+0x2c]（元素虚表槽 0x2C 查询）→ push eax / mov ecx,ebx / ★call 0x4a1d50（登记）
+0065ab6e  inc edi / cmp edi,计数 / jl 循环
+0065ab7c  ret 4
+```
+**语义**：场景对象数组导出器·虚表查询版——1 参（参数 1=目标容器）。0x5b3970（1 参）初始化 → [esi+0xe8] 计数经 0x4a1d50 登记 → 循环遍历 [esi+0xe4] 数组元素：元素+4 虚表槽 0x10 查询 + 元素虚表槽 0x2C 查询，返回值都经 0x4a1d50 登记到目标。ret 4（1 栈参）。
+
+## 三路关系（同一对象类型装载/导出三连）
+
+三路共享 **[esi+0xe0]（容器）/ [esi+0xe4]（数组）/ [esi+0xe8]（计数）** 字段——同一场景对象类型：
+- a（导出·槽 0x10）：0x410320 初始化 + 槽 0x10 循环导出
+- b（装载·SaveLoad）：0x5f5e80 初始化 + 0xe0 容器（0x7e180c）+ 槽 0xC 查 + 槽 8 Grow + 填充 + **0x6cf240 登记 [0xb0c110]**
+- c（导出·虚表查询）：0x5b3970 初始化 + 0x4a1d50 登记 + 槽 0x10/0x2C 查询登记
+b 路是装载（从参数 2 读入并登记 SaveLoad 表），a/c 是导出（把数组导出到容器）——**装载/导出读写对**。
+
+## 原版怪癖（照抄）
+
+1. b 路 0xe0 容器初始化写虚表 0x7e180c（[+4]/[+8]=0、[+0xc]=1、[+0xd]=0——Vector 四字段布局）；容器槽 8 Grow 预留；
+2. b 路 **0x6cf240 + [0xb0c110] SaveLoad 登记表**（batch 2102 实锤同址）——本批是 SaveLoad 体系的装载延伸；
+3. a 路参数 3 先入栈再被 mov [esp+0x28] 覆盖式保存（栈槽复用）；
+4. c 路元素空（je）跳过查询但**不递增任何计数**（数组索引继续）；
+5. 三路成功统一返 0（xor eax,eax），失败返调用返回负值（<0 判定）；
+6. c 路 0x4a1d50 双调（计数 + 逐元素返回值登记）。
+
+## 跨批次连接
+
+- ★★★b 路 ↔ batch 2102（SaveLoad_Prefix 0x675210 登记的 [0xb0c110] 表 + 0x6cf240 函数——SaveLoad 体系装载延伸实锤）；
+- ★★a/b/c 共享 [0xe0]/[0xe4]/[0xe8] 字段 ↔ batch 2110/2111（[edi+0x674]/[edi+0x288] 等场景对象字段族——同一场景对象域）；
+- ★0x410320/0x410170/0x4101f0（0x410 区家族基类/初始化函数族）+ 0x6cf240/0x4a1d50/0x5f5e80/0x5b3970（装载/登记函数族）。
+
+## 观察项 / 候选池
+
+- **新候选：0x5F5E80**（b 路 callee，ranking:4818 有行，125B）+ **0x5B3970**（c 路 callee，ranking:5571 有行，132B）——均未登记，后续 picker 自然取到。
+- **后邻未登记**：0x65ACAB（a 路后邻 nop pad）、0x65AC3D（b 路后邻 nop pad）。
+- 前向：picker 队列继续 0x65A 区（0x65AAC0/0x65AA80/0x65A7E0/0x65A750 RadioClass::RadioClass）+ 0x59 区大函数（0x59650 等）。
