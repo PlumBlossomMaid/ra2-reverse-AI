@@ -1,0 +1,52 @@
+# frontier batch 2028
+
+本批三函数（0x6B 区——RMG 抬升域相邻）：0x6B4240（365B cell 邻域扫描器）/ 0x6B4100（306B cell 放置资格检查）/ 0x6B3E60（669B RMG 抬升区放置器）
+Picker：unique_callers 扇入度 top3（0x6B4240 FUN_006b4240 callees=0 deps=65；0x6B4100 FUN_006b4100 callees=1 deps=65；0x6B3E60 FUN_006b3e60 callees=2 deps=64）
+disasm：`_d2028a.txt`（0x6B4240 size 0x190）/ `_d2028b.txt`（0x6B4100 size 0x150）/ `_d2028c.txt`（0x6B3E60 size 0x2C0）——三路全部读取（a 尾 ret 三出口 @0x6B4344/0x6B437C/0x6B43AC + pad + 后邻头 0x6B43B0（含 0x7C8B3D 的容器清空器）；b 尾 ret 双出口 @0x6B421E/0x6B4231 + pad + 后邻头 0x6B4240（a 本尊——相邻）；c 尾 ret 8 双出口 @0x6B4036(成功 al=1)/0x6B40FA(失败 al=0) + pad + 后邻头 0x6B4100（b 本尊——相邻））
+callee 核验：`_check_callees2028.py`——a 直接目标 1（0x7C8B3D 属**后邻 0x6B43B0**，本批 a 自身 callees=0 纯计算）；b 直接目标 1（0x58C2A0）**已登记**；c 直接目标 2（0x7C8B3D/0x6B3A80——**QWEN.md 阶段 9 抬升 §七 点名函数 0x6B3A80**）**已登记**——**无新候选**
+
+## 1. 0x6B4240 —— cell 邻域扫描器·[0x6B4240]
+- 大小：365B（0x6B4240-0x6B43AC），全读，尾 ret 三出口 @0x6B4344/0x6B437C/0x6B43AC
+- 机器码结构（多段——地图边界+cell 数组 8B 项+四元素比较）：
+  - 段 1（0x6B4240-0x6B42F1）：sub esp,0x38 + `mov eax,[ecx+0x24]`（坐标 word）+ `mov ebp,[0x8759A4]/mov ecx,[0x8759A8]/mov eax,[0x8759AC]`（**地图三边界全局**）+ `movsx edi,word[esp+0x12]/movsx esi,ax`（坐标差值）+ `imul edi,ebp`（行距乘法）+ `lea ecx,[eax+esi]`（**cell 索引 = y*width + x**）+ `mov eax,[0xB0B6EC]`（**cell 数组全局**）+ 8B 项读取（[eax+ecx*8] 起点 + 2 处 8B 项 = 格属性 dword + 字节 4/5 + dword 8 + 字节 0xC/0xD）——**cell 8B 项 + 4 属性字段**
+  - 段 2（0x6B42F1-0x6B431F）：lea [esp+0x18]（四 dword 列表）+ 循环 4 次：`mov ecx,[eax]/cmp ecx,0x3E8/jge`（**1000 上界**）+ `cmp ecx,-1/jle`（-1 下界）→ 维护 min(esi)/max(edi)
+  - 段 3（0x6B431A-0x6B43AC）：`cmp edi,esi/jne`（**min==max 分支**）→ 相等：`lea edx,[esp+0x2C]`（字节 8B 步进列表）循环 4 次 `cmp byte[edx],0/jne → shl 1,cl 掩码累加`（**bitmask 构建**）；不相等且 [esp+0x14]>0：按 min 比较（jge 分支）；不相等且 [esp+0x14]<=0：按 max 比较（jle 分支）——**三路扫描模式**
+- 语义：**cell 邻域扫描器**——输入坐标 [ecx+0x24]，以地图边界 [0x8759A4/0x8759A8/0x8759AC] 计算 cell 索引（y×width+x），读 [0xB0B6EC] 数组 8B 项的四属性字段，收集 4 元素 dword 列表求 min/max（0x3E8=1000 上界/-1 下界），再按 min==max/不等两模式扫描 4 字节位掩码——**cell 邻域状态聚合器（高度/类型字段）**
+- ★原版怪癖（照抄）：①`imul edi,ebp` 行距乘法 + `lea ecx,[eax+esi]` 索引（**y×width+x 一维索引**）；②[0xB0B6EC] 8B 项（dword+字节×2+dword+字节×2 布局）；③0x3E8=1000 与 -1 双哨兵边界（jge/jle）；④三出口 ret（min==max/不等两路）
+- ★跨批次连接：★★[0x8759A4/0x8759A8/0x8759AC] 地图边界三全局（batch 2028 b 同用——**本批 a/b 共享**）+ ★★[0xB0B6EC] cell 数组（**与 QWEN.md 已知 MapClass 相关**）+ 后邻 0x6B43B0（容器清空器含 0x7C8B3D——batch 2025 VectorClass::Resize 同族观察）
+- 新候选：无（callees=0）
+- ⚠️ partial：函数精确名（推断「cell 邻域扫描器」）、[0xB0B6EC] 8B 项字段语义（cell 高度/地面类型推断）、0x3E8 哨兵语义
+
+## 2. 0x6B4100 —— cell 放置资格检查·[0x6B4100]
+- 大小：306B（0x6B4100-0x6B4231），全读，尾 ret 双出口 @0x6B421E/0x6B4231
+- 机器码结构（多段——边界判定+菱形域+表查+魔数除法）：
+  - 段 1（0x6B4100-0x6B4161）：sub esp,0x18 + `mov edx,[0x8759AC]/mov ebx,[0x8759A4]/mov esi,[0x8759A8]`（三边界）+ `mov edi,[ecx+0x24]`（坐标）+ 差值/索引计算（同 a 的 imul+lea）+ [0xB0B6EC] 两处 8B 项读取（对角两格）
+  - 段 2（0x6B4162-0x6B41B1）：4 元素列表 min（0x3E8 上界）+ `mov eax,edi/mov edx,[0xABED04]/movsx`（**菱形判定 [0xABED04]/[0xABED08]——batch 1735 0x5902C0 同族菱形四角判定**）：`lea ebx,[eax+ecx]/cmp ebx,[0xABED04]/jle` + `sub ebp,eax` 等三路菱形边界
+  - 段 3（0x6B41B3-0x6B4223）：`mov ebx,[esp+0x10]/cmp [ebx+0x44],-1/jne`（**cell+0x44 索引哨兵**）+ `mov eax,[ebx+0xE4]/test/jne`（**cell+0xE4 对象指针**）+ `lea ecx,[esp+0x14]/call 0x58C2A0`（**已登记——格坐标换算**）+ `mov cl,[eax+0x45]/test/jne` + `mov eax,[ebx+0x38]/mov ecx,[0xA8ED38]/cmp/jge`（**cell+0x38 与全局表比较**）+ `cmp eax,0xFFFF/je` + `mov edx,[0xA8ED2C]/mov edx,[ecx+eax*4]/mov al,[edx+0x2E0]/test/je`（**表 [0xA8ED2C][idx]+0x2E0 标志**）→ 条件满足走 `mov eax,0x88888889/imul esi/sar eax,3`（**÷10 魔数除法**）返回；否则 `movsx eax,byte[ebx+0x11B]`（**cell+0x11B 高度）返回**
+- 语义：**cell 放置资格检查**——同 a 的边界索引计算读对角 8B 项 → 菱形边界 [0xABED04]/[0xABED08] 判定 → cell+0x44 索引/-1 + cell+0xE4 对象 + 0x58C2A0 换算 + cell+0x38 索引表 [0xA8ED2C] 查 [idx]+0x2E0 标志 → 通过时 0x88888889 魔数 ÷10（**取整**），否则返回 cell+0x11B 高度——**放置资格/高度决策器（建筑/地形放置前检查）**
+- ★原版怪癖（照抄）：①`imul esi` 行距 + lea 一维索引（同 a）；②菱形判定 [0xABED04]/[0xABED08]（batch 1735 同族）；③**0x88888889 × 0x3E8 逆元 → sar 3 = 除以 10**（8 位魔数除法惯用法）；④双出口（资格通过 → ÷10 值 / 否则 → cell+0x11B 高度）
+- ★跨批次连接：★★batch 1735 0x5902C0（菱形四角判定 [0xABED04]/[0xABED08] 同族）+ ★★本批 a（[0x8759A4..0x8759AC] 共享边界）+ 0x58C2A0（已登记）+ [0xA8ED2C] 表（**RMG 类型表——QWEN.md 阶段 9 抬升 0x6B3A80 用表同族**）
+- 新候选：无（0x58C2A0 已登记）
+- ⚠️ partial：函数精确名（推断「cell 放置资格检查」）、0x88888889÷10 后值的语义、[0xA8ED2C]+0x2E0 标志含义
+
+## 3. 0x6B3E60 —— RMG 抬升区放置器·[0x6B3E60]
+- 大小：669B（0x6B3E60-0x6B40FA），全读，尾 ret 8 双出口 @0x6B4036（成功 al=1）/0x6B40FA（失败 al=0）
+- 机器码结构（多段——全局区数组族+矩形扫描+高度写入+回滚）：
+  - 段 1（0x6B3E60-0x6B3E9A）：sub esp,0x18 + `mov eax,[0xB0B654]/mov [0xB0B660],0`（**全局区数组族清空**）+ [0xB0B65D] 守卫 delete 0x7C8B3D
+  - 段 2（0x6B3E9B-0x6B3F0A）：`mov eax,[esp+0x30]`（参）+ `mov ebp,[0x8759AC]/mov eax,[0x8759A8]`（边界）+ 位重组（shr/and/shl/or——**格类型位拆装**）+ `movsx edx,word[esp+0x2C]/sub edx,[0x8759A8]`（坐标差值）+ 双循环边界（lea [eax+2]/lea [edx+2]）
+  - 段 3（0x6B3F10-0x6B3FBB）：**矩形内格处理**——`test [esp+0x14],ecx/je`（位掩码过滤）+ `imul eax,[0x8759A4]/add eax,edi/lea esi,[esi+eax*8]`（cell 索引 8B 项）+ `mov al,[esi+4]/test/jne`（格标志）+ `lea eax,[ebx+ebx*2]/lea ecx,[eax+eax*4]`（**×15 高度步进**）+ `mov eax,[esi]/add eax,ecx`（高度累加）+ `cmp eax,0xB4/jg`（**180 上界——QWEN.md 阶段 9 抬升 [0,180] 边界实锤！**）+ [0xB0B658]/[0xB0B660] 计数/容量比较扩容（[0xB0B650] 容器虚表槽 8）+ **入队 [0xB0B654] 数组（3-dword 项：x/y/高度）** + `call 0x6B3A80`（**QWEN.md 阶段 9 抬升 §七 点名函数——角点项 +0x06 读取**）+ 失败回滚
+  - 段 4（0x6B4039-0x6B40BC）：**回滚段**——`mov eax,[0xB0B660]/lea ecx,[eax-1]/循环`（倒序撤销已写格）+ [0xB0B6EC] 格高度写回（imul 行距 + 索引）
+  - 段 5（0x6B40BC-0x6B40FA）：清理 [0xB0B654]/[0xB0B658]/[0xB0B65D]（delete + 标志清零）+ xor al,al + ret 8
+- 语义：**RMG 抬升区放置器**——★★**QWEN.md 阶段 9 抬升域函数**：全局区数组 [0xB0B650..0xB0B664]（计数/容量/数组/守卫四字段 VectorClass）+ 矩形双循环扫描 + cell 索引（y×width+x 8B 项）+ 高度累加（×15 步进）+ **0xB4=180 高度上界（QWEN.md 实锤 [0,180] 边界）** + [0xB0B654] 3-dword 项入队（坐标+高度）+ **call 0x6B3A80（阶段 9 抬升 §七 角点项 +0x06）** + 失败倒序回滚写回 [0xB0B6EC] + 2 栈参 ret 8 返回 bool
+- ★原版怪癖（照抄）：①高度步进 `lea [ebx+ebx*2]/lea [eax+eax*4]` = ×15（**RampTable 步进**）；②`cmp eax,0xB4/jg`（**180 上界——QWEN.md 阶段 9 抬升 §6.2 撞边界静默退回同域**）；③入队 [0xB0B654] 3-dword 项（x/y/高度——**12B 项**）；④失败回滚倒序（lea [ecx+ecx*2]/shl 2 逆推索引）；⑤2 栈参 ret 8
+- ★跨批次连接：★★**QWEN.md 阶段 9 抬升实锤**：0x6B3A80（§七 角点项 +0x06——已登记）+ 0xB4=180 边界（§6.2）+ ★★batch 1735 0x5AC230（菱形判定同域）+ ★★batch 2000/2001 容器族（[0xB0B650] 虚表槽 8 扩容）+ [0x8759A4..0x8759AC]（本批 a/b 共享）+ [0xB0B6EC]（本批 a/b 同数组）
+- 新候选：无（0x6B3A80/0x7C8B3D 已登记）
+- ⚠️ partial：函数精确名（推断「RMG 抬升区放置器」）、0x6B3A80 调用协议（§七 角点项读 +0x06）、[0xB0B654] 项完整语义
+
+## 批次观察
+- **★★本批 = RMG 抬升域核心带**：0x6B4240（邻域扫描）+ 0x6B4100（放置资格）+ 0x6B3E60（**抬升区放置器——QWEN.md 阶段 9 实锤域**）——0x6B 区抬升代码相邻排布（0x6B4100→0x6B4240→0x6B3E60→0x6B3A80 链）
+- **★★QWEN.md 交叉验证**：0x6B3E60 的 0xB4=180 上界 + 0x6B3A80 调用 = **阶段 9 抬升 §6.2/§七 的汇编侧实锤**——文档与机器码互证
+- **★★地图边界 [0x8759A4..0x8759AC] + cell 数组 [0xB0B6EC] 三函数共享**：a/b/c 全用——**RMG 高度/类型域的公共全局**
+- **★★菱形判定 [0xABED04]/[0xABED08] 再现**：batch 1735 0x5902C0 同族——跨批地形域贯通
+- callee 核验：a 0（纯计算——脚本捕获的 0x7C8B3D 属后邻 0x6B43B0）/ b 1（0x58C2A0 已登记）/ c 2（0x6B3A80/0x7C8B3D 已登记）——**无新候选**
+- 新候选入池：无（0x6B43B0 后邻容器清空器为观察项）
