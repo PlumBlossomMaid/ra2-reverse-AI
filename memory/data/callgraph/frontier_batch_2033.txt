@@ -1,0 +1,49 @@
+# frontier batch 2033
+
+本批三函数（0x6A 区——SlaveManagerClass 家族带三）：0x6AF650（98B SlaveManagerClass::CreateSlave 带名）/ 0x6AF580（101B SlaveManagerClass::SetOwner 带名）/ 0x6AF4A0（217B SlaveManager 析构器）
+Picker：unique_callers 扇入度 top3（0x6AF650 SlaveManagerClass::CreateSlave callees=0 deps=21；0x6AF580 SlaveManagerClass::SetOwner callees=1 deps=318；0x6AF4A0 FUN_006af4a0 callees=2 deps=44）
+disasm：`_d2033a.txt`（0x6AF650 size 0x80）/ `_d2033b.txt`（0x6AF580 size 0x90）/ `_d2033c.txt`（0x6AF4A0 size 0xE0）——三路全部读取（a 尾 ret 4 @0x6AF6AF + pad + 后邻头 0x6AF6C0；b 尾 ret 4 @0x6AF5E2 + pad + 后邻头 0x6AF5F0；c 尾 pop 三 + ret c3 @0x6AF578 + pad + 后邻头 0x6AF580（b 本尊——相邻））
+callee 核验：`_check_callees2033.py`——a 直接目标 0（纯虚表槽 0x3C/0x8C/0xD4 调用）；b 直接目标 1（0x6B0AE0）**已登记**；c 直接目标 2（0x7C8B3D/0x4101F0）**已登记**——**无新候选**
+
+## 1. 0x6AF650 —— SlaveManagerClass::CreateSlave·[0x6AF650]
+- 大小：98B（0x6AF650-0x6AF6B1），全读，尾 pop edi/pop esi + add esp,0xC + ret 4 单出口 0x6AF6AF
+- 机器码（单段——双宿主虚表链+元素构造+字段写入）：
+  - `mov esi,ecx`（this）+ `mov ecx,[esi+0x24]`（宿主 1）+ `mov eax,[esi+0x28]`（宿主 2 对象族）+ `mov edi,[eax]`（宿主 2 虚表）+ `call [edx+0x3C]`（虚表槽 0x3C——创建请求）+ `mov ecx,[esi+0x28]/push eax/call [edi+0x8C]`（**宿主 2 虚表槽 0x8C——元素分配**）→ `mov edi,[esp+0x18]`（输出参数）+ `mov [edi],eax`（**写元素指针到输出**）+ test/je（分配失败跳过）
+  - 成功后：`call [edx+0xD4]`（**元素虚表槽 0xD4**）+ `mov ecx,[esi+0x24]/mov [eax+0x2DC],ecx`（**宿主写元素 +0x2DC——batch 2031 b LostSlave +0x2DC 复位字段的写入侧实锤！**）+ `mov [edi+4],0`（元素状态 0）+ `mov eax,[0xA8ED84]/xor ecx/mov [edi+8],eax/mov [edi+0xC],edx（参 1）/mov [edi+0x10],ecx`（**元素 +8=[0xA8ED84]（同 LostSlave）+0xC=参 1 +0x10=0**）+ ret 4
+- 语义：**SlaveManagerClass::CreateSlave**（带名符号实锤）——1 栈参（查找键/宿主）ret 4：宿主 1 虚表槽 0x3C 创建请求 → 宿主 2 虚表槽 0x8C 分配元素 → 元素虚表槽 0xD4 初始化 → **写元素 +0x2DC=宿主（↔ LostSlave 读复位同字段）+ 状态 [edi+4]=0 + +8=[0xA8ED84] + +0xC=参 1 + +0x10=0** ——**与 LostSlave 元素字段读写配对（Create 写/Lost 复位）**
+- ★原版怪癖（照抄）：①双宿主（[0x24]/[0x28] 两个对象族——虚表槽 0x3C/0x8C split）；②输出参数写元素指针（非返回——[esp+0x18]）；③元素 +0x2DC 宿主字段（Create 写/LostSlave 清——**同字段读写闭环**）；④元素 +8=[0xA8ED84]（同 LostSlave 复位全局）
+- ★跨批次连接：★★batch 2031 b（LostSlave 0x6B0A20——+0x2DC 复位/+8=[0xA8ED84] 同一字段族读写配对）+ [0xA8ED84] 全局（batch 1989 0x6CE280 同全局）+ [esi+0x24]/[0x28] 双宿主（batch 2033 b SetOwner 同族）+ 后邻 0x6AF6C0（同族函数观察项）
+- 新候选：无
+- ⚠️ partial：函数精确名（CreateSlave 带名已实锤——语义细分推断）、虚表槽 0x3C/0x8C/0xD4 方法名、[0x24]/[0x28] 双宿主类型
+
+## 2. 0x6AF580 —— SlaveManagerClass::SetOwner·[0x6AF580]
+- 大小：101B（0x6AF580-0x6AF5E4），全读，尾 pop edi/pop esi + ret 4 单出口 0x6AF5E2
+- 机器码（单段——旧宿主减引用+新宿主回写+全元素改写）：
+  - `mov esi,ecx`（this）+ `mov edi,[esp+0xC]`（参 1=新宿主）+ `mov eax,[esi+0x24]/mov [eax+0x2D8],0`（**旧宿主 +0x2D8 清引用**）+ `mov [esi+0x24],edi`（**新宿主写入 this+0x24**）
+  - 新宿主 [edi+0x2D8] 非 0 时：`push 0/push 0/call 0x6B0AE0`（**宿主增减引用——已登记**）+ 再查 [edi+0x2D8] 非 0 → `call [edx+0x20]`（虚表槽 0x20 释放）
+  - `mov [edi+0x2D8],esi`（**新宿主 +0x2D8 = this**）+ 全元素循环：`mov ecx,[esi+0x48]/dec/js` → `mov eax,[esi+0x3C]/mov edx,[eax+ecx*4]/mov eax,[edx]`（元素对象）→ test/je → `mov edx,[esi+0x24]/mov [eax+0x2DC],edx`（**元素 +0x2DC = 新宿主——全部元素改写**）+ dec/jns + ret 4
+- 语义：**SlaveManagerClass::SetOwner**（带名符号实锤）——1 栈参（新宿主）ret 4：旧宿主 +0x2D8 清引用 → 0x6B0AE0 宿主增减引用 + 虚表槽 0x20 释放 → 新宿主 +0x2D8=this → **[0x3C] 数组全部元素 +0x2DC 改写为新宿主**——**宿主切换（断开旧连接+建立新连接+全员通知）**
+- ★原版怪癖（照抄）：①宿主连接字段 +0x2D8 双向维护（宿主记 slave / slave 记宿主——**引用计数无显式变化手写**）；②0x6B0AE0 双参（push 0×2——**增减引用函数固定双零参**）；③元素 +0x2DC 全覆盖改写（**O(n) 宿主广播**）；④虚表槽 0x20 释放（标量析构）
+- ★跨批次连接：★★batch 2033 a（CreateSlave +0x2DC 写入侧）+ batch 2031 b（LostSlave +0x2DC 复位）——**+0x2DC 宿主字段三函数闭环（Set/Create 写 / Lost 清）** + 0x6B0AE0（已登记）+ 后邻 0x6AF5F0（同族函数观察）
+- 新候选：无（0x6B0AE0 已登记）
+- ⚠️ partial：函数精确名（SetOwner 带名已实锤）、0x6B0AE0 具体语义（增减引用推断）、虚表槽 0x20 方法名
+
+## 3. 0x6AF4A0 —— SlaveManager 析构器·[0x6AF4A0]
+- 大小：217B（0x6AF4A0-0x6AF578），全读，尾 pop edi/pop esi/pop ecx + ret c3 单出口 0x6AF578
+- 机器码结构（多段——**batch 2026 a 0x6B7010 四虚表析构器同族**）：
+  - 段 1（0x6AF4A0-0x6AF4C0）：push 三 + `mov edi,ecx` + **四虚表安装**：`mov [edi],0x7F31C8/mov [edi+4],0x7F31AC/mov [edi+8],0x7F31A4/mov [edi+0xC],0x7F319C`（四子对象虚表）
+  - 段 2（0x6AF4C0-0x6AF4DC）：`mov esi,[edi+0x48]/dec/js` → 循环 `mov eax,[edi+0x3C]/mov eax,[eax+esi*4]/test/je/push/call 0x7C8B3D`（**数组族倒序 delete**）+ dec/jns
+  - 段 3（0x6AF4DC-0x6AF53F）：`mov edx,[edi+0x38]/lea esi,[edi+0x38]`（子容器虚表槽 0xC/0x8 清空收缩）+ **`mov edx,[0xB0B5F0]/call [edx+0x10]`（[0xB0B5F0] 全局注册表查找）+ cmp eax,-1/je 跳过 + [0xB0B600] 计数递减 + [0xB0B5F4] 数组前移压缩**（batch 2026 a 同款注册表注销）
+  - 段 4（0x6AF53F-0x6AF578）：[esi+4] 守卫 delete + [esi]=0x7F324C 虚表改写 + 字节 [esi+0xD]=0 + [esi+8]=0 + **`call 0x4101F0`**（batch 1994 SuperClass 析构收尾）+ pop 三 + ret c3
+- 语义：**SlaveManager 析构器**——四虚表（0x7F31C8/0x7F31AC/0x7F31A4/0x7F319C）复合对象析构：数组族倒序 delete + 子容器虚表清空 + **[0xB0B5F0] 全局注册表注销（前移压缩）+ 0x4101F0 基类析构**——**batch 2026 a（0x6B7010 四虚表析构器）同模板的 SlaveManager 实例**
+- ★原版怪癖（照抄）：①四虚表连续安装（多继承布局——batch 2026 a 同款）；②[0xB0B5F0] 注册表注销用前移压缩（[0xB0B600] 计数——batch 2026 a [0xB0B880] 同款）；③[esi]=0x7F324C 虚表改写后守卫（VectorClass 收尾）；④0x4101F0 基类析构
+- ★跨批次连接：★★batch 2026 a（0x6B7010 四虚表析构器[0xB0B880] 注册表——**0x6B/0x6A 两区同族**）+ batch 1994（0x4101F0）+ batch 2026 c（VectorClass 构造器虚表 0x7F324C 同表）+ [0xB0B5F0] 注册表族（batch 2032 b 坐标族 [0xB0B5B8] 相邻全局）
+- 新候选：无（2 callee 全登记）
+- ⚠️ partial：函数精确名（推断「SlaveManager 析构器」）、四子对象虚表 0x7F31C8 族归属、[0xB0B5F0] 注册表族语义
+
+## 批次观察
+- **★本批 = SlaveManagerClass 家族带三（双带名 + 析构器）**：CreateSlave + SetOwner + 析构器——**生命周期完整三角形（创建/宿主切换/销毁）**
+- **★★+0x2DC 宿主字段三函数闭环**：SetOwner（全元素改写）/ CreateSlave（元素创建写入）/ LostSlave（batch 2031 b 复位清零）——**同一宿主字段的写/写/清三角互证**
+- **四虚表析构器再实例**：batch 2026 a（0x6B7010）→ 本批 c（0x6AF4A0）——**0x6A/0x6B 两区同类复合对象**（四虚表+数组族+注册表注销+0x4101F0 模板）
+- callee 核验：a 0（全虚表）/ b 1（0x6B0AE0 已登记）/ c 2（0x7C8B3D/0x4101F0 已登记）——**无新候选**
+- 新候选入池：无（0x6AF6C0/0x6AF5F0 后邻为观察项）
