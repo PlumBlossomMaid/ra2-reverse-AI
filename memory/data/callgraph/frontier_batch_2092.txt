@@ -1,0 +1,61 @@
+# frontier batch 2092：Vector 拷贝构造器·三字段版孪生族（0x67A310 / 0x67A210 / 0x67A190）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x67A310 callees=1 deps=241 / 0x67A210 callees=1 deps=241 / 0x67A190 callees=1 deps=241）
+- 三路 disasm：`.qwen/tmp/_d2092a.txt`（0x67A310 size 0x80）/ `_d2092b.txt`（0x67A210 size 0x80）/ `_d2092c.txt`（0x67A190 size 0x80）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x67A310 | 121B（0x79）| ret 4 @0x67A386 | 0x67A390（未知）| 1（0x7C8E17）|
+| 0x67A210 | 121B | ret 4 @0x67A286 | 0x67A290（未知）| 1（0x7C8E17）|
+| 0x67A190 | 121B | ret 4 @0x67A206 | 0x67A1A0（未知）| 1（0x7C8E17）|
+
+## 机器码结构（a 路 0x67A310 为代表，b/c 逐字节同构仅偏移差 0x100/0x180）
+
+```
+0067A310  push esi,edi / mov edi,[esp+0xC]（源）; mov esi,ecx（目标）
+0067A318  cmp esi,edi / je 0x67A370        ; 自赋值跳过
+0067A31C  call [eax+0xC]                   ; 虚表槽 0xC
+0067A321  mov eax,[edi+8]                  ; 源容量
+0067A326  mov [esi+8],eax                  ; 目标容量
+0067A329  je 0x67A365                      ; 容量 0 → 空路径
+0067A32B  lea ecx,[eax*4] / push / call 0x7C8E17  ; operator new
+0067A33B  mov [esi+4],eax
+0067A33E  test eax,eax / je 0x67A370       ; new 失败 → 跳过拷贝
+0067A342  mov ecx,[esi+8] / xor eax,eax / mov byte ptr [esi+0xD],1  ; owns=1
+0067A34D  loop: mov edx,[edi+4] / mov ecx,[esi+4] / mov edx,[edx+eax*4]
+          mov [ecx+eax*4],edx / inc eax / cmp eax,ecx / jl loop     ; 元素循环拷贝
+0067A363  jmp 0x67A370
+0067A365  mov [esi+4],0 / mov byte ptr [esi+0xD],0  ; 空路径
+0067A370  mov eax,[edi+0x10] / mov [esi+0x10],eax   ; ★+0x10 字段拷贝
+0067A376  mov ecx,[edi+0x14] / mov [esi+0x14],ecx   ; ★+0x14 字段拷贝
+0067A37C  mov edx,[edi+0x18] / mov [esi+0x18],edx   ; ★+0x18 字段拷贝
+0067A382  mov eax,esi / pop edi,esi / ret 4
+```
+
+## 语义
+
+**Vector 拷贝构造器·三字段版**——与 batch 2091 c 0x67A570（双字段版 +0x10/+0x14）同骨架、本族**多 +0x18 第三字段**：
+1. 自赋值跳过 + 虚表槽 0xC + 源容量 → 目标容量；
+2. 容量>0：operator new 0x7C8E17 分配 [eax*4] + 元素循环拷贝 + [esi+0xD] owns=1；容量==0 空路径清 [esi+4]/[esi+0xD]；
+3. **三个尾部字段 +0x10/+0x14/+0x18 无条件拷贝**（自赋值/空路径也执行）；
+4. 尾 `ret 4`（1 栈参）。
+
+## 原版怪癖（照抄）
+
+1. 三字段 +0x10/+0x14/+0x18 拷贝**无条件执行**（含 self==src 跳过路径——从 [edi] 拷到 [esi] 同址无害）；
+2. 容量==0 路径仍走三字段拷贝段（不清零直接覆盖）；
+3. 自赋值 `cmp esi,edi / je` 后跳至三字段段而非函数尾——同 batch 2091 c 结构。
+
+## 跨批次连接
+
+- ★★★batch 2091 c 0x67A570（双字段版——本族加 +0x18 变体）+batch 2086 b 0x67BFA0（基础版）+batch 2088 c/2089 a/2090 a（Vector 数据布局家族：+4/+8/+0xC/+0xD/+0x10/+0x14/+0x18）；
+- ★0x7C8E17（CRT operator new，已登记）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（0x7C8E17 已登记）。
+- **后邻未登记**：0x67A390/0x67A290/0x67A1A0（各 121B 孪生族后邻）、0x67A060/0x67A000/0x679FD0/0x679FA0（45B callees=1 族）、INISection::Exists 0x679F40（带名）。
+- 前向：45B 族 + RulesClass 带名函数族（0x679F40 INISection::Exists / 0x679A10 LoadTypesFromINI 等）。
