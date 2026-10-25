@@ -1,0 +1,57 @@
+# frontier batch 2096：RulesClass::Read_* 带名三连（Read_Movies / Read_JumpjetControls / Read_IQ）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x674550 Read_Movies callees=6 deps=458 / 0x6743D0 Read_JumpjetControls callees=3 deps=409 / 0x674240 Read_IQ callees=2 deps=409）
+- 三路 disasm：`.qwen/tmp/_d2096a.txt`（0x674550 size 0x110）/ `_d2096b.txt`（0x6743D0 size 0x130）/ `_d2096c.txt`（0x674240 size 0x1A0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x674550 | 252B（0xFC）| ret 4 @0x674640 / @0x674649 | 0x674650（未登记，[esp+8] 门控）| 6（0x526810/0x526960/0x526CC0/0x528A10/0x48DF30/0x7D5408）|
+| 0x6743D0 | 290B（0x122）| ret 4 @0x6744E8 / @0x6744EF | 0x6744F0 起 nop pad（0x674550 前邻）| 3（0x526810/0x5276D0/0x5283D0）|
+| 0x674240 | 397B（0x18D）| ret 4 @0x6743C3 / @0x6743CA | 0x6743D0（b 本尊）| 2（0x526810/0x5276D0）|
+
+## a 路 0x674550（252B）——RulesClass::Read_Movies（带名）
+
+**电影列表读取器**——[Movies] 键组读取：
+1. **0x526810**（[0x7f0ce4] 表 + 0x817474 键）查询失败（setne al 布尔化 + je）直接返 0；
+2. **0x526960** 读计数 → ebp = 电影数；**循环 esi=0..count**：
+   - **0x526CC0**（[0x7f0ce4] + 0x817474 + 0x20 缓冲 + ebx 索引）读文件名串 → [esp+0x10]；
+   - **0x528A10**（5 参加载）→ 失败跳过；
+   - **0x48DF30** 判重（cmp eax,-1 je 跳过）→ **0x7D5408** 串匹配 → **Vector 扩容登记 [0xABF3A0]**（[0xabf390] 虚表槽 8 扩容 + 计数++ 写 [0xabf394+eax*4]）；
+3. 成功 al=1 / 失败 al=0，尾 `ret 4`。
+**语义**：RulesClass::Read_Movies（带名）——读取 [Movies] 区电影条目列表，去重登记进 [0xABF390] 全局 Vector。
+
+## b 路 0x6743D0（290B）——RulesClass::Read_JumpjetControls（带名）
+
+**跳跃喷射控制参数读取器**（Jumpjet 键组）：
+1. 0x526810（[0x7f0ce0]）查询失败直接返 0；
+2. **0x5276D0**（[0x7f0ce0] + 键 0x83D554）读整数写 [esi+0x40C] → 0x81D9CC 键写 [esi+0x410]；
+3. **0x5283D0**（0x83D54C 键 + 双参）读浮点 **`fstp qword [esi+0x418]`** → 0x81B140 键 `fstp [esi+0x428]` → 0x83D528 键 `fstp [esi+0x430]`；
+4. 0x5276D0（0x83D518 键）写 [esi+0x438]；
+5. 成功 al=1 / 失败 al=0，尾 `ret 4`。
+**语义**：RulesClass::Read_JumpjetControls（带名）——读取 Jumpjet 控制参数（整数 + 三浮点），键 0x83D554/0x81D9CC/0x83D54C/0x81B140/0x83D528/0x83D518。
+
+## c 路 0x674240（397B）——RulesClass::Read_IQ（带名）
+
+**AI 智商参数读取器**（[IQ] 键组）——**0x5276D0 读串链 ×12 字段**（[0x7f0cdc] 表）：
+[esi+0x1434]（0x83D50C）→ [0x1438]（0x83D4FC）→ [0x143C]（0x83D4F0）→ [0x1440]（0x81BEBC）→ [0x1444]（0x83D4E4）→ [0x1448]（0x83D4D8）→ [0x144C]（0x82C284）→ [0x1450]（0x83B3B4）→ [0x1454]（0x817460）→ [0x1458]（0x83D4CC）→ [0x145C]（0x83D4C0）——每段 `mov <field>,eax` 链式赋值；0x526810 前置查询失败返 0；成功 al=1，尾 `ret 4`。
+
+## 原版怪癖（照抄）
+
+1. 三路统一前置：0x526810 查询 + `setne al` 布尔化 + `je` 直接返 0（al=0）；
+2. a 路判重链：0x48DF30 `cmp eax,-1` + 0x7D5408 串匹配 + Vector 虚表槽 8 扩容（[0xabf390]）登记 [0xabf394]——重复电影不登记；
+3. b 路浮点写用 **`fstp qword`**（x87 直接写 8 字节），整数用 0x5276D0、浮点双参用 0x5283D0——同一函数三种读法并存；
+4. c 路 12 字段全 0x5276D0 读串、键全 0x83Dxxx/0x81BEBC/0x82C284/0x83B3B4/0x817460 混合。
+
+## 跨批次连接
+
+- ★★★batch 2094 b 0x679F40（INISection::Exists——同 0x526810/0x526B10 查询族）+batch 2095（Rules SaveLoad 大族同域——本批是 Read_* 字段级读取）；
+- ★0x526810/0x526960/0x526CC0/0x528A10/0x5276D0/0x5283D0/0x48DF30/0x7D5408（INI 查询/加载/判重，已登记）+[0x7f0ce4]/[0x7f0ce0]/[0x7f0cdc]（INI 表族）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（a/b/c 全部直接 call 已登记）。
+- **后邻未登记**：0x674650（a 路后邻，[esp+8] 门控 0x200 栈帧）、0x6744F0 起 nop pad。
+- 前向：picker 队列继续 RulesClass::Read_* 族（0x674000 Read_LandCharacteristics / 0x673E80 Read_Powerups / 0x672AE0 Read_AI 5015B / 0x66BBB0 Read_CombatDamage 5045B / 0x665650 RulesClass 构造 9175B / 0x667A30 ~RulesClass 3202B）。
