@@ -1,0 +1,42 @@
+# frontier batch 2061
+
+本批三函数（0x68B 区——ScenarioClass waypoint 域，两个 PhobosHook 带名）：0x68BE90（146B Waypoint 写入循环器·PhobosHook_ScenarioClass_Write_Waypoints）/ 0x68BD60（26B Waypoint 全清器·PhobosHook_ScenarioClass_Clear_All_Waypoints）/ 0x68BCB0（14B +0x214 计数器递增器）
+Picker：unique_callers 扇入度 top3（0x68BE90 PhobosHook_ScenarioClass_Write_Waypoints callees=3 deps=129；0x68BD60 PhobosHook_ScenarioClass_Clear_All_Waypoints callees=0 deps=2561；0x68BCB0 FUN_0068bcb0 callees=0 deps=1）
+disasm：`_d2061a.txt`（0x68BE90 size 0x100）/ `_d2061b.txt`（0x68BD60 size 0x100）/ `_d2061c.txt`（0x68BCB0 size 0x100）——三路全部读取（a 尾 ret 4 @0x68BF1F + nop×15 + 后邻头 0x68BF30（[ecx+eax*4+0x632]=[0xb05458] 写入器）+ 再后邻 0x68BF50（双参写入器）+ 0x68BF70（0x5657a0 取 cell + 0x87f7e8 MapClass）；b 尾 ret c3 @0x68BD79 + nop×5 + 后邻头 0x68BD80（waypoint 查询器——cmp 0x2be 越界守卫 + word 双比较 [0xb05458]/[0xb0545a]）+ 再后邻 0x68BDC0（waypoint 计算写入器——0x7e14b0 sprintf + 0x5276d0 + 0x10624dd3÷1000 魔数 + 0x5657a0）；c 尾 ret c3 @0x68BCBD + nop×2 + 后邻头 0x68BCC0（[ecx+eax*4+0x632] 读回器 ret 8）+ 再后邻 0x68BCE0（0x5657a0 取 cell + 0x87f7e8）+ 0x68BD00（坐标计算器——0x5657a0 + 虚表槽 0x48 + [0xb054bc] 叠加））
+callee 核验：`_check_callees2061.py`——a 3（0x5257c0/0x5275c0 + 后邻 0x5657a0）全登记；b 1（后邻 0x5657a0 属 0x68BDC0 段）全登记；c 1（后邻 0x5657a0 属 0x68BCE0 段）全登记——**0 个新候选**
+
+## 1. 0x68BE90 —— Waypoint 写入循环器·[0x68BE90]（PhobosHook_ScenarioClass_Write_Waypoints 带名）
+- 大小：146B（0x68BE90-0x68BF1F），全读，尾 ret 4 单出口 0x68BF1F（1 栈参=目标对象）
+- 机器码（多段——预写→702 次循环比较→格式化写入）：`mov eax,[0x7f0e60]`（全局对象）+ `[esp+0x28]` 参数 ebx + **call 0x5257c0**（push 0; push [0x7f0e60]——预写）+ `mov ebp,[0x7e14b0]`（sprintf API）+ **循环 edi=0..0x2be（702 次）**：`[esi]` word vs `word [0xb05458]`（默认低）&& `[esi+2]` word vs `word [0xb0545a]`（默认高）→ 相等跳过 + 不等：**call [0x7e14b0]**（push edi; lea [esp+0x14]; push 0x817f6c 格式串——sprintf）+ movsx word 坐标 + **lea eax,[eax+eax*4]×3（×125）** + `lea eax,[edx+ecx*8]`（坐标线性化）+ **call 0x5275c0**（push 0x817f6c 格式串/[esp+0x14]/坐标/[0x7f0e60]/参数——6 参写入）→ esi+=4 步进 → ret 4
+- 语义：**Waypoint 写入循环器**——thiscall this=ecx（+0x632 起 702 项 4B waypoint 数组），参数=目标对象：先 0x5257c0 预写 → **702 次循环**逐项与默认值（[0xb05458] 低/[0xb0545a] 高）比较，非默认项经 0x7e14b0 sprintf（0x817f6c 格式串）+ 坐标线性化（×125+×8）后 0x5275c0 写入 [0x7f0e60] 全局对象——**ScenarioClass waypoint 表导出（带名 PhobosHook）**
+- ★原版怪癖（照抄）：①702（0x2be）固定循环 + 4B/项（word 对低/高比较）；②默认值双 word（[0xb05458]/[0xb0545a]）跳过；③坐标线性化 lea 链 ×125×8（movsx word → eax+eax*4 三连）；④0x817f6c 格式串
+- ★跨批次连接：★★0x5657a0（取 cell——batch 1735/1736 同 callee）+[0xb05458]/[0xb0545a]（waypoint 默认值全局——batch 2061 b 同读）+[0x7f0e60]（全局对象）+0x817f6c（0x817 区格式串——batch 2058 b 0x817f6c 同串）+0x5275c0/0x5257c0
+- 新候选：无（3 callee 全登记）
+- ⚠️ partial：函数精确名（带名 Write_Waypoints 已确认——但目标对象 [0x7f0e60] 类名、0x817f6c 格式串内容）
+
+## 2. 0x68BD60 —— Waypoint 全清器·[0x68BD60]（PhobosHook_ScenarioClass_Clear_All_Waypoints 带名）
+- 大小：26B（0x68BD60-0x68BD79），全读，尾 ret c3 单出口 0x68BD79
+- 机器码（单段）：`lea eax,[ecx+0x632]; mov ecx,0x2be; mov edx,[0xb05458]; mov [eax],edx; add eax,4; dec ecx; jne` → ret
+- 语义：**Waypoint 全清器**——thiscall this=ecx：**this+0x632 起 702（0x2be）项 4B 数组全部写默认值 [0xb05458]**——**ScenarioClass waypoint 表清空（带名 PhobosHook）**
+- ★原版怪癖（照抄）：①702 项全写默认 [0xb05458]（4B 整写——不拆 word 对）；②计数 0x2be 常量
+- ★跨批次连接：★★batch 2061 a（0x68BE90 同 0x632/0x2be/0xb05458 域——写/清孪生）+[0xb05458]（waypoint 默认值全局）
+- 新候选：无（callees=0）
+- ⚠️ partial：函数精确名（带名 Clear_All_Waypoints 已确认——0x632 数组字段名）
+
+## 3. 0x68BCB0 —— +0x214 计数器递增器·[0x68BCB0]
+- 大小：14B（0x68BCB0-0x68BCBD），全读，尾 ret c3 单出口 0x68BCBD
+- 机器码（单段）：`mov eax,[ecx+0x214]; inc eax; mov [ecx+0x214],eax` → ret
+- 语义：**+0x214 计数器递增器**——thiscall this=ecx：this+0x214 dword 计数 +1（无参返回 void）——**ScenarioClass 域计数器递增**
+- ★原版怪癖（照抄）：①无符号递增（inc）；②无守卫无溢出处理
+- ★跨批次连接：+0x214（0x214 偏移族——batch 2051 0x69B170 同区）
+- 新候选：无（callees=0）
+- ⚠️ partial：函数精确名（推断「+0x214 计数器递增器」）、计数器语义
+
+## 批次观察
+- **★本批 = ScenarioClass waypoint 域三函数（0x68B 区）**：0x68BCB0（+0x214 计数）→ 0x68BD60（全清）→ 0x68BE90（写入）——**waypoint 表（+0x632 起 702 项）生命周期（清→写）**
+- **★★0x632 waypoint 数组族**：702（0x2be）项 4B——a 写循环 / b 全清 / 后邻 0x68BD80 查询（cmp 0x2be 守卫 + word 双比较）/ 0x68BDC0 计算写入（0x10624dd3÷1000 魔数）/ 0x68BCC0 读回 / 0x68BF30/0x68BF50 单双参写——**ScenarioClass waypoint 表全家族**
+- **★★默认值 [0xb05458]/[0xb0545a]**：低/高 word 对——**0xb054xx 全局族（batch 2059 [0xb054d0] Vector 族同区带续）**
+- **★★0x5657a0 取 cell 多批次带续**：batch 1735/1736（取 cell）+ 本批后邻 ×3（0x68BF70/0x68BCE0/0x68BD00）——**MapClass::Instance(0x87f7e8) + 0x5657a0 惯用**
+- callee 核验：a 3 / b 1（后邻）/ c 1（后邻）全登记——**0 个新候选**
+- 新候选入池：无
+- 后邻观察池：0x68BF30（[ecx+eax*4+0x632]=[0xb05458] 单参写入器）、0x68BF50（双参写入器 ret 8）、0x68BF70（0x5657a0+0x87f7e8 取 cell）、0x68BD80（waypoint 查询器——cmp 0x2be + word 双比较）、0x68BDC0（计算写入器——0x7e14b0+0x5276d0+0x10624dd3÷1000 魔数+0x5657a0）、0x68BCC0（读回器 ret 8）、0x68BCE0（0x5657a0+0x87f7e8）、0x68BD00（坐标计算器——0x5657a0+虚表槽 0x48+[0xb054bc]）
