@@ -1,0 +1,73 @@
+# frontier batch 2084：对象数组串写出器孪生族（0x67FEF0 / 0x67FE70 / 0x67FDF0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x67FEF0 callees=1 deps=132 等，均为 127B 孪生）
+- 三路 disasm：`.qwen/tmp/_d2084a.txt`（0x67FEF0 size 0x80）/ `_d2084b.txt`（0x67FE70 size 0x80）/ `_d2084c.txt`（0x67FDF0 size 0x80）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x67FEF0 | 127B（0x7F）| ret c3 @0x67FF6E | 0x67FF70（batch 2083 c 本尊）| 0 |
+| 0x67FE70 | 127B | ret c3 @0x67FEEE | 0x67FEF0（a 本尊）| 0 |
+| 0x67FDF0 | 127B | ret c3 @0x67FE6E | 0x67FE70（b 本尊）| 0 |
+
+## 机器码结构（a 路 0x67FEF0 为代表，b/c 逐字节同构仅偏移差 0x80）
+
+```
+0067FEF0  sub esp,8 / push ebx,esi,edi
+0067FEF6  mov edi,edx          ; edi = 数组对象（this=ecx → ebx；edx → edi）
+0067FEFA  push 0               ; 虚表槽 0x10 第五参（尾部字段初值）
+0067FEFC  mov eax,[edi+0x10]   ; 计数
+0067FF0D  call [ecx+0x10]      ; 虚表槽 0x10（4 参读——计数写回 [esp+0x10]）
+0067FF10  test eax,eax / jl 出口
+0067FF14  mov eax,[esp+0x10]   ; 计数
+0067FF18  xor esi,esi
+0067FF1A  test eax,eax / jle 出口（计数<=0 直接返 0）
+0067FF1E  mov eax,[edi+4]      ; 元素数组基址
+0067FF29  lea edx,[esp+0xc]    ; 结果槽
+0067FF2D  mov eax,[eax+esi*4]  ; 元素 [esi]
+0067FF30  push edx / push 0x7f7c80 / push eax
+0067FF37  mov ecx,[eax]
+0067FF39  call [ecx]           ; 元素虚表槽 0（3 参串取——0x7f7c80 格式串）
+0067FF3B  test eax,eax / jl 出口
+0067FF3F  mov eax,[esp+0xc]    ; 串结果
+0067FF43  push ebx / push eax
+0067FF45  call [0x7e15f4]      ; 写 API（0x7E 区，间接）
+0067FF4B  test eax,eax / jl 出口
+0067FF4F  mov eax,[esp+0xc]
+0067FF53  push eax
+0067FF54  mov ecx,[eax]
+0067FF56  call [ecx+8]         ; 元素虚表槽 8（释放）
+0067FF5D  mov eax,[esp+0x10]
+0067FF61  inc esi / cmp esi,eax / jl 循环
+0067FF66  xor eax,eax          ; 成功返 0
+0067FF68  pop edi,esi,ebx / add esp,8 / ret
+```
+
+## 语义
+
+**对象数组串写出器**（推断名）——与 batch 2073-2083 全族**逐字节同构**（同一编译源模板展开，仅入口地址差 0x80）：
+1. 虚表槽 0x10（4 参）读入计数；
+2. 循环 esi=0..计数-1：`[edi+4]` 数组元素逐个取，元素虚表槽 0（3 参）经 0x7f7c80 格式串取字符串；
+3. 结果经 `call [0x7e15f4]`（0x7E 区写 API）写出；
+4. 元素虚表槽 8 释放；任一环节失败（jl）即中断返回错误码，成功返 0。
+
+状态：`semantics_verified` + `assembly_decompile_verified`（全寄存器级核对）。
+
+## 原版怪癖（照抄）
+
+1. `[esp+0xc]` 栈槽存元素串结果，循环内每轮复用（不重新清零）；
+2. 0x7f7c80 为格式串常量（0x7F 区），虚表槽 0 三参调用；
+3. 任一失败（含虚表槽 0x10 返回负、串取负、写出负、释放负）直接跳出口返回负值，不做部分成功清理。
+
+## 跨批次连接
+
+- ★★batch 2073 b/c + 2074-2083（每批 3 连）+ 本批（3 连）= **0x680 区对象数组串写出器族三十五连**（0x67FDF0-0x6807F0 高密度连续区，127B 模板逐一展开）。
+- [0x7e15f4]：0x7E 区写 API（间接调用，非直接 call——故 callee 数 0）。
+- 0x7f7c80：0x7F 区格式串。
+
+## 观察项 / 候选池
+
+- 新候选：**无**（0 直接 call，全间接）。
+- 本批闭包后 0x680 区串写族已近收口（0x67FD80/0x67FD10 等紧随其后），队前大函数 0x67F9C0（855B callees=2 deps=2148）/ 0x67F7E0（476B）即将浮出水面。
