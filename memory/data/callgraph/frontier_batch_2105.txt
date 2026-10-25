@@ -1,0 +1,73 @@
+# frontier batch 2105：Vector 全清器 + 8B 槽数组填充器 + 虚表槽 0xC 转发器（0x663910 / 0x661C10 / 0x661510）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x663910 FUN_00663910 callees=1 deps=147 / 0x661C10 FUN_00661c10 callees=2 deps=13 / 0x661510 FUN_00661510 callees=0 deps=130）
+- 三路 disasm：`.qwen/tmp/_d2105a.txt`（0x663910 size 0x60）/ `_d2105b.txt`（0x661C10 size 0x70）/ `_d2105c.txt`（0x661510 size 0x30）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x663910 | 76B（0x4C）| ret @0x66395B | 0x663960（同族孪生清空器，未登记）| 1（0x7c8b3d 已登记）|
+| 0x661C10 | 88B（0x58）| ret 8 双出口 @0x661C56 / @0x661C65 | 0x661C70（未登记）| 2（0x6c98e0 已登记 / 0x65c8b0 未登记）|
+| 0x661510 | 18B（0x12）| ret 4 @0x66151F | 0x661530（未登记）| 0（间接 call [edx+0xC]）|
+
+## a 路 0x663910（76B）——Vector 全清器（带 +0x18/+0x1C 尾字段清零）
+
+```
+00663910  push ebx/esi / mov esi,ecx（this）/ xor ebx,ebx
+00663916  cmp [esi+0x10],ebx（计数 vs 0）/ je 0x663953（空直接跳尾）
+0066391b  清空循环: mov eax,[esi+4] / mov ecx,[eax]（第 0 元素）/ push / call 0x7c8b3d（delete）
+0066392c  mov eax,[esi+0x10] / cmp eax,ebx / jle 0x66394e
+00663930  lea ecx,[eax-1]（计数-1）/ mov [esi+0x10],ecx / xor eax
+0066393c  左移: mov edx,[ecx+eax*4] / mov [ecx+eax*4-4],edx / cmp eax,ecx / jl
+0066394e  cmp [esi+0x10],ebx / jne 0x66391b（★循环删除直到空）
+00663953  mov byte ptr [esi+0x18],bl（清 +0x18 字节）/ mov [esi+0x1c],ebx（清 +0x1C 双字）/ ret
+```
+**语义**：Vector 全清器——逐元素 **delete 第 0 元素 + 整体左移**（O(n²)）直到计数为 0，最后清 this+0x18 字节与 this+0x1C 双字尾字段。与 batch 2104 c 路 0x663B40 前半段**完全同构**（同一清空循环骨架），但 0x663B40 清空后重建列表，本路清空后直接清尾字段返回——**纯清空版**；后邻 0x663960 开头逐字节相同（push ebx/push esi/mov esi,ecx/xor ebx,ebx/cmp [esi+0x10],ebx/je）——**同族孪生**。
+
+## b 路 0x661C10（88B）——8B 槽数组逐槽填充器（thiscall + 计数 mod 32 回绕）
+
+```
+00661c10  push ebx / mov ebx,[esp+0xc]（参数 2 = N 次数）/ push esi/edi
+00661c17  mov edi,[esp+0x10]（参数 1 = 输出字节缓冲指针）/ mov esi,ecx（this）
+00661c1d  test edi,edi / je 0x661c59（输出指针无效走清空）→ cmp ebx,1 / jl 0x661c59（N<1 走清空）
+00661c2c  mov [esp+0x10],ebx（N 副本存参数 1 槽，供返回）
+00661c30  循环: mov eax,[esi+0x10]（this 计数）/ lea ecx,[esi+eax*8+0x14]（★槽 = this+0x14+计数*8，8B 项）
+00661c37  inc eax / mov [esi+0x10],eax（计数+1）/ call 0x65c8b0（thiscall，ecx=槽地址，返回 al）
+00661c40  mov [edi],al（al 写输出缓冲）/ mov edx,[esi+0x10]
+00661c45  ★and edx,0x1f（计数 mod 32 回绕）/ inc edi / dec ebx / mov [esi+0x10],edx
+00661c4d  jne 0x661c30（循环 N 次）/ mov eax,[esp+0x10]（返回 N 副本）/ ret 8
+00661c59  无效路径: push ebx/edi / mov ecx,esi / call 0x6c98e0（清空 this）/ ret 8
+```
+**语义**：8B 槽数组逐槽填充器——每次取 this 的 8B 槽（this+0x14+计数*8），thiscall 0x65c8b0 初始化槽并返回 al，al 写入输出缓冲；**计数递增后 and 0x1f 回绕**（计数 ∈ [0,31]，槽环 32 项，this 是 32×8B=256B 槽数组）；输出指针或 N 无效时走 0x6c98e0 清空路径。尾 `ret 8`（2 栈参），返回 eax=N（参数 2 副本）。
+
+## c 路 0x661510（18B）——虚表槽 0xC 转发器
+
+```
+00661510  mov eax,[esp+4]（参数 1）/ push 0 / push 3 / push ecx（this）
+0066151b  mov edx,[eax]（参数 1 对象虚表）/ push eax
+0066151f  call dword ptr [edx+0xc]（★虚表槽 0xC）/ ret 4
+```
+**语义**：虚表槽 0xC 转发器——把 (this, 参数 1) 转成 4 参调用：`参数1->vtable[0xC](参数1, this, 3, 0)`（thiscall 约定下虚表槽 0xC 为对象方法）。0 直接 call，纯间接转发。参数 1 对象类型与槽 0xC 语义取决于调用方场景。
+
+## 原版怪癖（照抄）
+
+1. a 路清空是 **O(n²) 逐元素 delete + 整体左移**（与 0x663B40 前半同构），清空后**额外清 +0x18 字节 + +0x1C 双字**尾字段（纯清空版标志）；
+2. a 路后邻 0x663960 是**同族孪生**（开头逐字节相同）——同族对象多条清空路径；
+3. b 路**计数 mod 32 回绕**（and 0x1f）——槽环只覆盖 this+0x14 起的 32×8B=256B 槽数组，N 超过 32 时槽地址循环复用；
+4. b 路**返回参数 2（N 副本）**而非参数 1——N 被存进原参数 1 栈槽（[esp+0x10]）再于结尾取回；
+5. b 路无效参数（输出指针空或 N<1）走 0x6c98e0 清空路径，且该路径**重复 push ebx/edi**（栈对齐冗余）；
+6. c 路转发参数顺序 (参数1, this, 3, 0)——第 3/4 参硬编码 3 与 0。
+
+## 跨批次连接
+
+- ★★★a 路 ↔ batch 2104 c 路 0x663B40（同一清空循环骨架，全清 vs 清空+重建）；后邻 0x663960 同族孪生；
+- ★★b 路 0x65c8b0 = **未登记候选**（ranking 有行，callees=0 deps=2——picker 队列 0x65C8B0 项）；0x6c98e0 已登记（清空器）；
+- ★c 路虚表槽 0xC 转发 ↔ batch 2095 候选（0x512960/0x5136C0 等虚表族）；与 batch 1737 Vector 虚表槽 8 扩容（call [edx+8]）同族间接调用惯用法。
+
+## 观察项 / 候选池
+
+- **新候选：0x65C8B0（b 路 callee，ranking 有行未登记，picker 后续自然取到）**。
+- **后邻未登记**：0x663960（a 路后邻，同族孪生清空器）、0x661C70（b 路后邻）、0x661530（c 路后邻）。
+- 前向：picker 队列继续 0x66 区（0x661C10 已取后邻族）+ RawFileClass::SetFileTime/GetFileTime（0x65D240/0x65D1F0）+ RadSiteClass 族（0x65B510/0x65B530/0x65BB50）。
