@@ -1,0 +1,109 @@
+# frontier batch 2111：批量对象放置器双胞胎 + 复杂对象放置器多路径版（0x65EAB0 / 0x65E850 / 0x65E010）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x65EAB0 FUN_0065eab0 callees=2 deps=1898 / 0x65E850 FUN_0065e850 callees=4 deps=75 / 0x65E010 FUN_0065e010 callees=7 deps=159）
+- 三路 disasm：`.qwen/tmp/_d2111a.txt`（0x65EAB0 size 0x180）/ `_d2111b.txt`（0x65E850 size 0x260）/ `_d2111c.txt`（0x65E010 size 0x640）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x65EAB0 | 384B（0x180）| ret 0x10 双出口 @0x65EC0F / @0x65EC2D | 0x65EC30（batch 2110 c 路本尊）| 2（0x50da80+0x4aa440 已登记）|
+| 0x65E850 | 599B（0x257）| ret 0x1C 双出口 @0x65EA88 / @0x65EAA4 | 0x65EAB0（**a 路本尊**）| 4（0x50da80+0x4aa440+0x56dc20+0x4733a0 全已登记）|
+| 0x65E010 | 1599B（0x63F）| ret 8 @0x65E64C | 0x65E64F（nop pad）| 7（全已登记）|
+
+## a 路 0x65EAB0（384B）——批量对象放置器·模板版
+
+```
+0065eab0  sub esp,0x18 / mov eax,[0xa8b21c]（全局模板数组）/ mov ebp,ecx（this）/ mov ecx,[eax+edx*4]（★第 edx 个模板）
+0065eabc  mov eax,[esp+0x24]（参数 3 = 次数 N）/ test / mov [esp+0x14],ecx / mov [esp+0x10],0（循环 i）/ jle 0x65ec04
+0065ead9  mov ebx,[esp+0x38]（参数 4）
+0065eae3  循环: mov edi,[0xa8e7ac]（全局原子计数）/ push ebp / inc edi / mov [0xa8e7ac],edi
+0065eaf1  mov edx,[ecx] / ★call [edx+0x8c]（模板槽 0x8C 创建对象，thiscall ecx=模板）→ esi
+0065eb04  dec [0xa8e7ac] / test esi / je 0x65ec04（创建失败退出）
+0065eb10  mov [esi+0x3d4],1（★置标志——batch 2110 c 同字段）
+0065eb17  mov eax,[ebp+0x1e0]（this 类型码）/ jl 0x65eb26 / cmp 3 / jle 0x65eb2d
+0065eb26  ★call 0x50da80（类型码越界处理）
+0065eb2d  push 0,1,4 / push 0xb04c38×2（★X/Y 坐标全局）/ push eax / lea eax,[esp+0x30] / mov ecx,0x87f7e8
+0065eb48  ★call 0x4aa440（MapClass 放置查询）→ edi 坐标
+0065eb4f  mov edx,[esi] / push 0 / push 坐标 / mov ecx,esi / ★call [edx+0x1e8]（槽 0x1E8 设置）
+0065eb64  test ebx（参数 4）/ je → 槽 0x480（push 1,参数 4）/ 参数 5 非 0 → 槽 0x3C8
+0065eb88  movsx ecx,word ptr [esp+0x3a] / movsx eax,di / shl eax,8 / add eax,0x80（★坐标<<8+0x80 半坐标）
+0065eb98  inc [0xa8e7ac] / mov [esp+0x20]/[esp+0x24] 坐标对 / mov ecx,esi / ★call [edx+0xd8]（槽 0xD8 写坐标）
+0065ebcf  and eax,0xff / dec [0xa8e7ac] / test eax / je 0x65ec12（失败 → 释放路径）
+0065ebe5  ★call [edx+0x1ec]（槽 0x1EC 收尾——batch 2110 c 同款）
+0065ebef  inc i / cmp i,N / jl 循环
+0065ec04  eax=i / ret 0x10（返循环计数）
+0065ec12  test esi / je → ★call [eax+0x20]（槽 0x20 释放）/ lea eax,[i-1] / ret 0x10
+```
+**语义**：批量对象放置器·模板版——[0xa8b21c] 全局模板数组取第 edx 个，循环 N 次：模板槽 0x8C 创建对象（[0xa8e7ac] 原子计数对包住）→ [esi+0x3d4]=1 → this 类型码越界清 0x50da80 → 0x4aa440（MapClass 放置，[0xb04c38] 坐标全局）→ 槽 0x1E8 设置 + 可选槽 0x480/0x3C8 → 坐标 <<8+0x80 半坐标 → 槽 0xD8 写坐标 → 槽 0x1EC 收尾；失败路径槽 0x20 释放。返回循环计数（成功 i / 失败 i-1）。
+
+## b 路 0x65E850（599B）——批量对象放置器·链挂版
+
+```
+0065e85b  mov ebp,[eax+edx*4]（★模板存 ebp，a 路存栈）/ mov esi,ecx（this）
+0065e863  mov eax,[esi+0x1e0]（类型码）/ jl / cmp 3 / jle 0x65e881 → ★call 0x50da80（同 a 路）
+0065e881  push 0,1,4 / push 0xb04c38×2 / lea ecx,[esp+0x30] / push / mov ecx,0x87f7e8 / ★call 0x4aa440（同 a 路）
+0065e8bc  循环: mov edi,[0xa8e7ac] / push esi / inc / mov ecx,ebp / ★call [eax+0x8c]（槽 0x8C 创建）→ esi
+0065e8ec  mov al,[esi+0x14] / and al,4 / neg al / sbb eax,eax / and eax,esi（★位标志提取指针）
+0065e8ff  mov [esi+0x3d4],1 / mov [esi+0x294],参数
+0065e910  mov edx,[ecx+0x5c] / ★链表: mov [eax+0x5d8],edx / mov [ecx+0x5c],eax（[esi+0x5c] 尾插）
+0065e91c  push 一堆 / lea ecx,[esp+0x5c] / 坐标 word=0×2 / ★call 0x56dc20（MapClass 放置——batch 2110 c 同款）→ edi
+0065e958  ★call [edx+0x1e8]（槽 0x1E8）/ 可选槽 0x480/0x3C8
+0065e992  坐标 <<8+0x80 / ★call [edx+0xd8]（槽 0xD8）/ and 0xff / dec [0xa8e7ac] / je 0x65ea8b
+0065e9f2  ★call [edx+0x2c]（槽 0x2C 查询）/ cmp 2 / jne 0x65ea5e
+0065e9fa  eax=参数≠-1 && 参数 3≠0 → [esi+0x6c9]=1 / mov ebp,[0xa8e34c + eax*4]（★表取对象）
+0065ea23  链挂循环: vec 0xea23-0xea58 遍历 [ebp+0x30] 链表: ★call [eax+0x8c] → ★call [edx+0xd4] → ★call 0x4733a0（挂入 [esi+0x114]！）
+0065ea5e  ★call [eax+0x1ec]（槽 0x1EC 收尾）/ inc i / cmp i,N / jl 循环
+0065ea88  eax=i / ret 0x1C（7 栈参）
+0065ea8b  ★call [edx+0x20]（释放）/ lea eax,[i-1] / ret 0x1C
+```
+**语义**：批量对象放置器·链挂版——a 路同族骨架（[0xa8b21c] 模板 + 槽 0x8C 创建 + 0x4aa440/0x56dc20 放置 + 槽 0x1E8/0x1EC + 坐标<<8+0x80 + 0xD8），**差异**：①置标志前 `[esi+0x14]&4 → neg al/sbb eax/and` **位标志提取指针**（eax=esi 或 0）；②**[esi+0x5c] 链表尾插**（[esi+0x5d8] prev 双链）；③槽 0x2C ==2 时 [0xa8e34c] 表取对象后**把 [ebp+0x30] 链表逐节点经 0x4733a0 挂入 [esi+0x114] 族列表**；④[esi+0x6c9]=1 标志。ret 0x1C（比 a 路多 3 栈参）。
+
+## c 路 0x65E010（1599B）——复杂对象放置器·多路径版
+
+```
+0065e01b  mov al,[esi+0xb0]（this 标志）→ [esp+0x12] / mov ebp,edx（参数 2 对象链表头）
+0065e039  链表扫描: call [ebx+0x84]（槽 0x84）→ lea esi,[eax+0x34c] / edi=0x7e9a50 / ecx=4 / ★repe cmpsd（16B 常量比较）
+0065e057  jne 0x65e0c3（不等 → [esp+0x13]=0）→ mov ebx,[ebx+0x30]（next）循环 → 全部匹配 [esp+0x13]=1
+0065e069  三标志判路: [esp+0x12] / [esp+0x13] / [esp+0x84] → 全 0 走简单路径 0x65e097 否则复杂 0x65e0ce
+0065e097  简单路径: call 0x6f2070（this）/ eax+0x1e0 类型码判定 → [esp+0x20]=值×2
+0065e0ce  复杂路径: push 一堆 / call [ebp+0x84] / [eax+0x67c] → call 0x56dc20（放置）→ [esp+0x1c]
+0065e128  坐标环: mov edi,[ebp+0x30] / [ebp+0x30]=0（摘首）/ cmp ax,[0xb04c38] → 0x65e601 / cmp cx,[0xb04c3a] → 0x65e601
+0065e17d  test ebp / je 0x65e611
+0065e185  主循环: [esp+0x20]<<0xd（★13 位坐标换算）/ 槽 0x2C 查询 ==2 → shl 0xd / sub 0x6001 / and 0xffffe000（★单元格对齐掩码）
+0065e1c2  inc [0xa8e7ac]（原子计数）/ [esp+0x12] 判路
+0065e1db  复杂路径2: movsx 坐标<<8+0x80 → call 0x5657a0（取格）→ 槽 0x480 → [ebp+0x674] COM 查 → 槽 0x44（写 3 坐标）→ 槽 0x488 → [ebp+0x9c] → call 0x567da0
+0065e2d3  简单路径2: 槽 0x1D0 → [ebp+0x9c] → 槽 0x1B4 → 0x5657a0 → 槽 0x480 → 槽 0x544（0x3ff00000）→ [ebp+0x674] → 槽 0x44
+0065e406  索引换算: shr esi,7 / inc / shr / and 0xff → 槽 0xD8
+0065e442  收尾: [ebp+0x84]=1 标志 / 槽 0x2C ==2 → 槽 0x1E8(0,5) + 槽 0x1EC
+0065e471  ★8 邻域尝试: [esp+0x12] 标志 → 循环 8 次: cx+[0x89f688 + eax*4]（★8 方向步长表）/ call 0x568300（尝试）→ 成功 → [esp+0x14]=新坐标
+0065e506  ★失败重试: 8 邻域 + call 0x5657a0（带 -1 生命参）→ 槽 0x1AC 放置判定 → 成功 [esp+0x14]
+0065e5ae  dec [0xa8e7ac]（计数对收尾）→ [edi+0x30] 链表遍历继续（[edi+0x30] 摘链 + 槽 0x20 释放）
+0065e643  mov al,bl（★返回值 = [esp+0x84] 标志）/ ret 8
+```
+**语义**：复杂对象放置器·多路径版——参数 2 为对象链表：先扫描链表（槽 0x84 取对象临时区 [eax+0x34c] 与 0x7e9a50 常量做 **16B repe cmpsd 比较**，全匹配置 [esp+0x13]）；[this+0xb0] 标志（[esp+0x12]）与两标志组合出**多放置路径**（简单 0x6f2070 类型码式 / 复杂 0x56dc20 式）；坐标 [ebp+0x30] 链表逐节点处理（<<0xd + 单元格对齐 and 0xffffe000）；[0xa8e7ac] 原子计数对；两条放置路径各有取格/放格/坐标写组合（0x5657a0/0x567da0/0x480a30 + 槽 0x44/0x44/0x1B4/0x1AC/0xD8/0x488/0x544）；**8 邻域尝试**用 [0x89f688] 8 方向步长表 + 0x568300 尝试；tail：计数对收尾 + [edi+0x30] 链表逐节点释放（槽 0x20 摘链）。返回值 al = [esp+0x84] 标志。ret 8（2 栈参）。
+
+## 原版怪癖（照抄）
+
+1. a/b 同族但 ret 宽度不同（a=0x10 / b=0x1C——b 多 3 栈参）+ 模板存放位置不同（a 存栈 / b 存 ebp）+ b 路链表尾插（[esi+0x5c]/[esi+0x5d8] 双链）+ 0x4733a0 挂 [esi+0x114] 族 + [esi+0x6c9]=1；
+2. b 路 `[esi+0x14]&4 → neg al → sbb eax,eax → and eax,esi` 位标志提取指针惯用法（eax=esi 或 0）；
+3. 三路共享 [0xa8e7ac] **全局原子计数对**（inc 进入/dec 退出包住危险调用——batch 2110 c 同款）；
+4. a/b/c 坐标惯用法：`movsx <<8 + 0x80`（半坐标）；c 路另有 `<<0xd` + `sub 0x6001` + `and 0xffffe000` 单元格对齐；
+5. c 路 **16B repe cmpsd** vs 0x7e9a50 常量比较（0x34c 偏移临时区）；
+6. c 路三标志多路径（[esp+0x12]/[esp+0x13]/[esp+0x84]——全 0 走简单，否则复杂）；
+7. c 路 8 邻域尝试 [0x89f688] 表（8×8B 方向步长——batch 2104 提到的 8 邻域 work 索引表同址）+ 0x568300 尝试 + 失败带 -1 生命参重试；
+8. c 路返回值 al 是 [esp+0x84] 标志（非布尔成功标志，需读取原值）。
+
+## 跨批次连接
+
+- ★★★a/b ↔ batch 2110 c 路 0x65EC30（同 [0xa8e7ac] 计数对 + 槽 0x1E8/0x1EC/0x20/0xD8 + [0x3d4] 字段族）；a 路后邻头 0x65EC30=batch 2110 c 本尊；
+- ★★三路共享 0x56dc20/0x5657a0/0x4aa440（MapClass 放置族）+ [0xb04c38] 坐标全局 + [0x87f7e8] MapClass::Instance；
+- ★c 路 [0x89f688] 8 邻域步长表 ↔ batch 2104（0x89F688 8 邻域 work 索引步长实锤）同址复用；
+- ★0x4733a0（链表挂载）/0x50da80（类型码越界）/0x41c250 等已登记；0x480a30/0x567da0/0x568300/0x681180 同族已登记。
+
+## 观察项 / 候选池
+
+- **新候选：无**（a/b/c 直接 call 全部已登记）。
+- **后邻未登记**：0x65E64F（c 路后邻 nop pad）、0x65F30E（batch 2110 c 路后邻——已含于 2110 观察项）。
+- 前向：picker 队列继续 0x65 区（0x65D1F0 RawFileClass::GetFileTime / SetFileTime 0x65D240）+ RadSiteClass 族（0x65B510/0x65B530/0x65BB50）+ 0x65C8B0（batch 2105 候选）+ 0x65BB50 Deactivate。
