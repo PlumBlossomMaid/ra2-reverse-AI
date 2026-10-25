@@ -1,0 +1,40 @@
+# frontier batch 1991
+
+本批三函数（0x6C 区——SuperClass 充能时间设置/复位 + 超武使能查询）：0x6CC280 / 0x6CC290 / 0x6CC2A0
+Picker：unique_callers 扇入度 top3（0x6CC2A0 FUN_006cc2a0 callees=0 deps=12；0x6CC290 SuperClass::ResetRechargeTime callees=0 deps=1；0x6CC280 SuperClass::SetRechargeTime callees=0 deps=1）
+disasm：`_d1991a.txt`（0x6CC280 size 0x50）/ `_d1991b.txt`（0x6CC290 size 0x40）/ `_d1991c.txt`（0x6CC2A0 size 0x40）——三路全部读取（含尾 ret + nop pad + 后邻函数头：a 后邻 0x6CC290/0x6CC2A0/0x6CC2B0；b 后邻 0x6CC2A0/0x6CC2B0；c 后邻 0x6CC2B0——均 batch 1990 已登记或本批）
+callee 核验：3/3 callees=0——三函数机器码均为纯寄存器/内存操作（mov/test/ret），**无任何 E8 call 指令**，grep 空集，无需逐地址核验
+
+## 1. 0x6CC280 —— SuperClass::SetRechargeTime（★★带名·[0x6CC280]）
+- 大小：10B（0x6CC280-0x6CC287），全读，尾 ret 4 单出口 0x6CC287
+- 机器码（单段——单字段写）：`mov eax,[esp+4]`（★栈参1）→ `mov [ecx+0x24],eax`（★写充能时间字段）→ `ret 4`
+- 语义：**SuperClass::SetRechargeTime（★★带名）**——thiscall + 1 栈参（充能时间值）返 void：把栈参写入 [ecx+0x24]（★充能时间字段）——**配对复位器为 0x6CC290（本批 b）**
+- ★原版怪癖（照抄）：①单字段直写（无校验无边界）;②ret 4（1 栈参）;③10B 极简;④与 Reset 成对（Set 写值 / Reset 写 -1）
+- ★跨批次连接：SuperClass 家族（batch 1990 三函数同族——+0x24 充能时间字段与 +0x28 类型指针/+0xe5 标志布局互证——本批 +0x24 首次登场）
+- 新候选：无（0/0 E8 callee）
+- ⚠️ partial：+0x24 字段语义（充能时间——推断，Set/Reset 对支持）、调用方（deps=1）
+
+## 2. 0x6CC290 —— SuperClass::ResetRechargeTime（★★带名·[0x6CC290]）
+- 大小：8B（0x6CC290-0x6CC297），全读，尾 ret c3 单出口 0x6CC297
+- 机器码（单段——哨兵复位）：`mov [ecx+0x24],0xffffffff`（★充能时间字段置 -1 哨兵）→ `ret`
+- 语义：**SuperClass::ResetRechargeTime（★★带名）**——thiscall 无栈参返 void：[ecx+0x24]（充能时间字段）置 0xffffffff（★-1 哨兵=未设置/已复位）——**配对设置器为 0x6CC280（本批 a）；-1 哨兵语义与 batch 1988 SuperWeaponTypeClass 构造器五 -1 哨兵同族**
+- ★原版怪癖（照抄）：①哨兵直写 0xffffffff（无校验）;②ret c3 无栈参;③8B 极简（全批最小）;④与 Set 成对（Set 写值 / Reset 写 -1）
+- ★跨批次连接：SuperClass 家族（batch 1990 同族）+**-1 哨兵惯用（batch 1988 SuperWeaponTypeClass 构造器 +0xa0..0xac 五 -1 哨兵 / batch 1989 0x6CE280/0x6CE2C0 [ecx]==-1 判定——本批 +0x24 复位端）**
+- 新候选：无（0/0 E8 callee）
+- ⚠️ partial：+0x24 字段语义（充能时间——推断）、调用方（deps=1）
+
+## 3. 0x6CC2A0 —— 超武使能标志查询器·[0x6CC2A0]
+- 大小：10B（0x6CC2A0-0x6CC2A9），全读，尾 ret c3 单出口 0x6CC2A9
+- 机器码（单段——类型标志读回）：`mov eax,[ecx+0x28]`（★类型指针）→ `mov al,[eax+0xe6]`（★类型 +0xe6 字节）→ `ret`
+- 语义：**超武使能标志查询器（推断名）**——thiscall 无栈参返 bool：读 [ecx+0x28]（类型指针）→ 返回 [type+0xe6] 字节（★使能标志）——**与 batch 1990 三函数共用 +0x28 类型指针布局；[type+0xe6] 精确对应 batch 1988 SuperWeaponTypeClass 构造器 [ebp+0xe6]=1（★使能标志——构造时置 1）**
+- ★原版怪癖（照抄）：①类型指针间接读（[ecx+0x28] → [type+0xe6]）;②ret c3 无栈参;③10B 极简;④al 返回（bool 窄返回）
+- ★跨批次连接：**★[type+0xe6] 使能标志（batch 1988 SuperWeaponTypeClass 构造器 [ebp+0xe6]=1 实锤——本函数=读回端）** + SuperClass 家族（batch 1990 同族——+0x28 类型指针布局互证；batch 1990 读 [type+0xe5]，本函数读 [type+0xe6]——相邻偏移成对）
+- 新候选：无（0/0 E8 callee）
+- ⚠️ partial：函数精确名（推断「超武使能标志查询器」）、调用方（deps=12）
+
+## 批次观察
+- 本批三函数 = **SuperClass 充能时间 Set/Reset 对 + 超武使能查询**：0x6CC280（SetRechargeTime——写值）+ 0x6CC290（ResetRechargeTime——写 -1 哨兵）+ 0x6CC2A0（读 [type+0xe6] 使能标志）
+- **★跨批次黄金闭合**：batch 1988 SuperWeaponTypeClass 构造器 [ebp+0xe6]=1（使能标志写端）→ 本批 0x6CC2A0（读回端）——**构造器写/查询器读闭环**
+- **布局互证**：SuperClass [ecx+0x28] 类型指针（batch 1990 三函数 + 本批 0x6CC2A0 共用）;[type+0xe5]（batch 1990 读）/[type+0xe6]（本批读）相邻偏移成对;[ecx+0x24] 充能时间（本批 Set/Reset 对——batch 1990 未触及）
+- callee 核验：3/3 callees=0（无 E8 call 指令——纯寄存器/内存操作）
+- 新候选入池：无（后邻 0x6CC2B0 已 batch 1990 登记，0x6CC290/0x6CC2A0 为本批）
