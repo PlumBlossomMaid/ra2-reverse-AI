@@ -1,0 +1,51 @@
+# frontier batch 2027
+
+本批三函数（0x6B 区）：0x6B5260（270B SmudgeTypeClass::SmudgeTypeClass 带名构造器）/ 0x6B4DD0（207B 全图扫描器）/ 0x6B4C80（322B INI 场景读入器）
+Picker：unique_callers 扇入度 top3（0x6B5260 SmudgeTypeClass::SmudgeTypeClass callees=2 deps=58；0x6B4DD0 FUN_006b4dd0 callees=4 deps=279；0x6B4C80 FUN_006b4c80 callees=9 deps=2534）
+disasm：`_d2027a.txt`（0x6B5260 size 0x130）/ `_d2027b.txt`（0x6B4DD0 size 0xF0）/ `_d2027c.txt`（0x6B4C80 size 0x160）——三路全部读取（a 尾 ret 4 @0x6B535E/0x6B536B 双出口 + pad + 后邻头 0x6B5370（同族第二构造器）；b 尾 ret c3 @0x6B4E9E + pad + 后邻头 0x6B4EA0；c 尾 ret c3 @0x6B4DC1 + pad + 后邻即 b 本尊 0x6B4DD0——相邻排布）
+callee 核验：`_check_callees2027.py`——a 真 callee 2（0x5F7090/0x410230）**已登记**；b 真 callee 4（0x5257C0/0x5657A0/0x7C8EF4/0x528660）**已登记**；c 真 callee 9（0x526B00/0x526960/0x526CC0/0x528A10/0x7C9CC2/0x7C9BFD/0x7C8E17/0x6B5440/0x6B4A50）**全部已登记**；脚本报 MISSING 的 0x5F7320/0x5F5E80 属**后邻函数头**（0x6B5370 调 0x5F7320、0x6B4EA0 调 0x5F5E80）——归后邻观察项不入本批——**本批无新候选**
+
+## 1. 0x6B5260 —— SmudgeTypeClass::SmudgeTypeClass·[0x6B5260]
+- 大小：270B（0x6B5260-0x6B536D），全读，尾 ret 4 双出口 @0x6B535E（[esi+0x294]=索引）/0x6B536B（= -1）
+- 机器码结构（多段——基类构造+字段初始化+虚表安装+全局注册）：
+  - 段 1（0x6B5260-0x6B52B4）：push ebx/esi + `mov esi,ecx` + `push [esp+4]（参 1）/call 0x5F7090`（**基类构造**）+ `lea eax,[esi+4]/push eax/call 0x410230`（**batch 1994 SuperClass 构造器——[esi+4] 子对象构造**）+ 字段初始化：`mov [esi+0x294],0xFFFFFFFF`（索引占位）+ `mov [esi+0x298],1/mov [esi+0x29C],1`（两计数）+ `mov byte [esi+0x2A0],0/mov byte [esi+0x2A1],0` + **四虚表安装**：`mov [esi],0x7F3528/mov [eax],0x7F350C/mov [esi+8],0x7F3504/mov [esi+0xC],0x7F34FC`
+  - 段 2（0x6B52BA-0x6B52E1）：字段初始化：`mov byte [esi+0x22F],1/mov byte [esi+0x230],0/mov byte [esi+0x231],0/mov byte [esi+0x232],1/mov byte [esi+0x233],1/mov byte [esi+0x235],0`（字节标志族）
+  - 段 3（0x6B52E1-0x6B5338）：**全局数组族注册**——`mov eax,[0xA8EC28]（计数）/mov ecx,[0xA8EC20]（容量）/cmp/jl`（容量充足直接入队）→ 不足时 `mov dl,[0xA8EC25]/test`（守卫）→ 需扩容：`mov edx,[0xA8EC2C]（新容量=旧+计数）/push 0/push edx/call [0xA8EC18+8]`（**虚表槽 8 扩容——VectorClass 惯用法**）→ `mov eax,[0xA8EC28]/inc/mov [0xA8EC28],eax` + `mov eax,[0xA8EC1C]/mov [eax+ecx*4],esi`（**入队 [0xA8EC1C] 数组尾**）
+  - 段 4（0x6B5339-0x6B536D）：**线性查找自身**——循环 `mov edx,[0xA8EC1C]/cmp [edx],esi/je`（命中）→ 返回索引存 [esi+0x294]；未命中 `or eax,-1` → [esi+0x294]=-1 → `mov eax,esi`（返 this）+ ret 4
+- 语义：**SmudgeTypeClass::SmudgeTypeClass**（带名符号实锤）——构造器：0x5F7090 基类构造 + 0x410230 SuperClass 子对象构造 + 大量字段初始化 + 四虚表（0x7F3528/0x7F350C/0x7F3504/0x7F34FC）+ **[0xA8EC18..0xA8EC2C] 全局 VectorClass 族扩容入队（虚表槽 8）+ 线性查找自身索引存 [0x294]**——**SmudgeTypeClass 全局注册表单例登记**
+- ★原版怪癖（照抄）：①两计数 [0x298]/[0x29C] 恒 1 + 两字节 [0x22F]/[0x232]/[0x233] 恒 1（构造器默认值）；②[0x294] 先写 -1 后线性查找覆写（**入队后自寻址**）；③容量判断 `cmp eax,ecx/jl`（**eax<容量才入队**，相等则进扩容分支）；④扩容条件 `[0xA8EC25] 守卫==0 && [0xA8EC20]==0` 时跳过（空容器才扩）
+- ★跨批次连接：★★**batch 1994 0x410230（SuperClass 构造器）+ batch 2000/2001 容器族（虚表槽 8 扩容模板）+ [0xA8EC1C] 全局数组族（batch 2026 c 查找器同一数组——入队/查找读写闭环）**+ 0x5F7090（基类构造——已登记）
+- 新候选：0x6B5370（后邻第二构造器——同族 0x5F7320 基类，观察项）
+- ⚠️ partial：字段 0x22F-0x235/0x298-0x2A1 具体语义（SmudgeType 数据成员名未核）、[0xA8EC1C] 数组类型（SmudgeTypeClass* 数组推断）
+
+## 2. 0x6B4DD0 —— 全图扫描器·[0x6B4DD0]
+- 大小：207B（0x6B4DD0-0x6B4E9E），全读，尾 pop 四 + add esp,0x98 + ret c3 单出口 0x6B4E9E
+- 机器码结构（多段——512×512 双循环+cell 属性取串）：
+  - 段 1（0x6B4DD0-0x6B4E06）：sub esp,0x98 + `mov eax,[0x7F32C8]（INI 对象全局）` + push 0/push eax + `mov ecx,0x87F7E8` + **call 0x5257C0**（[0x887xxx] 容器族——batch 2022 0x6BE1C0 段 5 同款六容器之一）+ `mov ecx,0x87F7E8/call 0x5657A0`（**取 cell——batch 1735 系列 0x5657A0**）
+  - 段 2（0x6B4E0B-0x6B4E7A）：`mov esi,eax/mov eax,[esi+0x48]/cmp eax,-1/je`（**cell 索引 == -1 跳过**）+ `mov cl,[esi+0x11F]/test/jne`（**cell+0x11F 标志跳过**）+ `mov edx,[0xA8EC1C]/mov ebx,[edx+eax*4]`（**数组按 cell 索引取元素**）+ `add ebx,0x24`（元素串偏移）+ 字符串链：`push [esp+0x10]/push 0x817F6C/push ecx/call 0x7C8EF4`（**sprintf 系——格式串 0x817F6C**）+ `mov dl,[esi+0x11F]/push dl/push ebp/push edi/push ebx/push 0x83FFFC/push eax/call 0x7C8EF4`（第二 sprintf）+ `push ecx/push edx/push eax/call 0x528660`（拼接）
+  - 段 3（0x6B4E76-0x6B4E9E）：inc [esp+0x10]（行计数）+ `mov edi,0/inc edi/cmp edi,0x200/jl`（**内循环 512 次**）+ `inc ebp/cmp ebp,0x200/jl`（**外循环 512 次——全图 512×512 遍历**）+ ret c3
+- 语义：**全图扫描器**——双循环遍历全图 512×512 格：跳过 [cell+0x48]==-1（无效格）与 [cell+0x11F] 标志格；有效格以 cell 索引查 [0xA8EC1C] 数组取元素（+0x24 串），两段 sprintf（0x7C8EF4）+ 拼接（0x528660）生成日志/数据串，计数累加——**与 [0x7F32C8] INI 对象相关的全图信息导出**
+- ★原版怪癖（照抄）：①双循环 jl 0x200（**512×512 全图**——与地图大小无关的硬编码遍历）；②[cell+0x48] 索引 -1 哨兵跳过 + [cell+0x11F] 标志跳过；③数组 [0xA8EC1C] 以 cell 索引直接取（**cell 索引↔数组索引同序**）；④0x7C8EF4 两次调用格式串不同（0x817F6C 与 0x83FFFC）
+- ★跨批次连接：★★batch 1735 0x5657A0（取 cell——RMG 造山区同款）+ ★★batch 2022 0x5257C0（六容器统一清空同族）+ [0xA8EC1C] 数组（batch 2026/2027 a 同一族）+ [0x7F32C8] INI 全局（batch 2027 c 同用——**同函数组共享**）
+- 新候选：0x6B4EA0（后邻——mov eax,[esp+8]/call 0x5F5E80，观察项）
+- ⚠️ partial：函数精确名（推断「全图扫描器」）、0x7C8EF4 具体 CRT（sprintf 系推断）、0x817F6C/0x83FFFC 格式串内容
+
+## 3. 0x6B4C80 —— INI 场景读入器·[0x6B4C80]
+- 大小：322B（0x6B4C80-0x6B4DC1），全读，尾 pop 四 + add esp,0x94 + ret c3 单出口 0x6B4DC1
+- 机器码结构（多段——INI 读段读键+查找+构造入队）：
+  - 段 1（0x6B4C80-0x6B4CBA）：sub esp,0x94 + `call 0x526B00`（读侧准备——batch 2026 a 同款）+ `mov eax,[0x7F32C8]/push/call 0x526960`（INI 对象取值）+ 初始化循环变量
+  - 段 2（0x6B4CB0-0x6B4DA2）：**循环体**——`call 0x526CC0`（INI 取段）+ `call 0x528A10`（取键值——batch 1996/1997 规则解析同族）+ `push 0x817F70/push ecx/call 0x7C9CC2`（**字符串分配拼接——CRT**）+ `mov ecx,eax/call 0x6B5440`（**batch 2026 c 数组线性查找器——跨批兑现！**）+ `cmp esi,-1/je` 跳过 + 多次 0x7C9CC2/0x7C9BFD（**字符串对——atoi/str 系**，`movsx edi,bx` 宽字符转）+ `push 0xB0/call 0x7C8E17`（**new 0xB0 对象**）+ `movsx edx,di/shl edx,8/add edx,0x80/movsx ecx,bx/shl ecx,8/add ecx,0x80`（**坐标换算 ×256+0x80=cell 中心像素**）+ `mov ecx,[0xA8EC1C]/mov edx,[ecx+esi*4]/push -1/push edx/push eax/mov ecx,eax/call 0x6B4A50`（**构造对象 0x6B4A50 + 入队**）
+  - 段 3（0x6B4DA2-0x6B4DC1）：inc [esp+0x10]/cmp 循环 + ret c3
+- 语义：**INI 场景读入器**——[0x7F32C8] INI 对象读段读键（0x526960/0x526CC0/0x528A10）→ 字符串处理（0x7C9CC2/0x7C9BFD）→ **0x6B5440 线性查找（batch 2026 c）** → 命中后 new 0xB0 对象 → 坐标换算（×256+0x80=cell 中心）→ 0x6B4A50 构造并入队 [0xA8EC1C] 数组——**INI 场景元素（建筑/物体坐标）批量装载器**
+- ★原版怪癖（照抄）：①坐标换算 `movsx/shl 8/add 0x80`（**cell 坐标 → 像素中心 ×256+128**——与 RMG 等距坐标系无关的屏幕坐标换算）；②0x7C9CC2/0x7C9BFD 字符串对多次配对（取串+转换）；③new 0xB0 后无条件构造（分配失败 je 跳过）；④[0xA8EC1C] 数组按 esi 索引取既有元素传参（**先查后建防重**）
+- ★跨批次连接：★★**call 0x6B5440（batch 2026 c——跨批点名兑现）**+ ★★[0x7F32C8] INI 全局（batch 2027 b 同用）+ ★★[0xA8EC1C] 数组（batch 2026 c/2027 a 同一族——查找/入队/构造三向闭环）+ 0x526B00/0x526960/0x526CC0/0x528A10/0x6B4A50（INI 解析链已登记）
+- 新候选：0x6B4A50（构造入队器——观察项，本批已调用）
+- ⚠️ partial：函数精确名（推断「INI 场景读入器」）、0x7C9CC2/0x7C9BFD 具体 CRT（字符串分配/atoi 系推断）、0x817F70 格式串内容
+
+## 批次观察
+- **★★[0xA8EC1C] 全局数组族四函数贯通（batch 2026-2027）**：batch 2026 c 查找器（0x6B5440 读侧）→ 本批 a 入队（SmudgeTypeClass 构造器注册）+ b 索引取（全图扫描）+ c 查找+构造入队（INI 装载）——**同一 SmudgeTypeClass/场景对象注册表全链闭合**
+- **★★SmudgeTypeClass 家族成形**：0x6B5260（构造器四虚表 0x7F3528 族）+ 后邻 0x6B5370（第二构造器 0x5F7320 基类）+ [0x294] 索引字段——带名符号与汇编互证
+- **★★跨批兑现**：c 调 0x6B5440（batch 2026 c）+ a 调 0x410230（batch 1994）+ b 调 0x5657A0（batch 1735）——点名候选池机制持续闭环
+- **★★[0x7F32C8] INI 对象全局三函数共享**：batch 2027 b/c + 0x6B4DD0 段 1——INI 解析体系（batch 1995-1998 规则解析栈）同族
+- callee 核验：a 2 / b 4 / c 9——**全部已登记（两个 MISSING 归后邻函数头），本批无新候选**
+- 新候选入池：0x6B5370（第二构造器）、0x6B4EA0（后邻 0x5F5E80）、0x6B4A50（构造入队器）——均观察项
