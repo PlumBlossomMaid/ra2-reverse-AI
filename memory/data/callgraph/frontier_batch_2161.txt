@@ -1,0 +1,58 @@
+# frontier batch 2161：111B 提交器三连 + 门控缩放初始化器（0x637DD0 / 0x637D00 / 0x6379C0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x637DD0 FUN_00637dd0 callees=1 deps=12 / 0x637D00 FUN_00637d00 callees=4 deps=126 / 0x6379C0 FUN_006379c0 callees=1 deps=130）
+- 三路 disasm：`.qwen/tmp/_d2161a.txt`（0x637DD0 size 0x60）/ `_d2161b.txt`（0x637D00 size 0xC0）/ `_d2161c.txt`（0x6379C0 size 0x80）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x637DD0 | 47B（0x2F）| ret 0x70 @0x637DFC | 0x637E00（sub esp,0x38 + [esi]==0x2b 判定 大函数头——未登记）| 1（0x6521C0，已登记）|
+| 0x637D00 | 164B（0xA4）| ret @0x637DA3 | 0x637DB0（[0xac4cf4] 门控 + ecx==4 判定——未登记）| 4（全已登记）|
+| 0x6379C0 | 66B（0x42）| ret @0x637A01 | 0x637A10（sub esp,0x70 + 0x4c66c0 大函数头——未登记）| 1（0x750920，已登记）|
+
+三函数为 **0x63 区 111B 提交器族（rep movsd 0x1b + 0x6521c0 提交）+ 门控缩放初始化器（[0xac4cf4] 置位 + 0x750920）**：
+
+## a 路 0x637DD0（47B）——111B 提交器·参数 4 门控
+
+```
+00637dd0  mov al,[esp+4]（参数 1）→ push esi/edi → cmp al,4 → jne 0x637dfa（≠4 → 跳过）→ sub esp,0x70 → rep movsd 0x1b+movsw+movsb（111B 复制到栈）→ mov byte [esp+0x99],1（★栈字节置位）→ ★call 0x6521c0（提交）→ pop 族 → ret 0x70
+```
+**语义**：**111B 提交器·参数 4 门控（推断名）**——参数 == 4 时：rep movsd 0x1b 111B 复制到栈 + byte [esp+0x99]=1 置位 + 0x6521c0 提交；≠4 静默跳过。**ret 0x70 大参提交器（batch 2156 c 路 ret 0x70 同形态）**。
+
+## b 路 0x637D00（164B）——三段标志 111B 提交器
+
+```
+00637d00  mov eax,[ecx+4] → sub esp,0xe8 → mov edx,[eax] → mov esi,[edx+4] → rep movsd 0x1b+movsw+movsb（111B）→ mov al,[esp+0x22]（★标志字节 1）→ test → je 0x637d2c → lea ecx,[esp+0x1e]（偏移 1）→ jmp 0x637d46 → mov al,[esp+0x2c]（标志字节 2）→ test → je → lea ecx,[esp+0x28] → jmp → mov al,[esp+0x27]（标志字节 3）→ test → je 0x637d9b → lea ecx,[esp+0x23] → 0x637d46：★call 0x6e6e20（★三段标志跳板——batch 2152 a 路同款）→ test eax → je 0x637d9b → push eax → ★call 0x6e6ab0 → 栈构 5B → push 0x2c → mov ecx,[0xa83d4c] → mov edx,[ecx+0x30] → ★call 0x4c65e0 → rep movsd 0x1b+movsw+movsb（111B）→ ★call 0x6521c0（提交）→ ret
+```
+**语义**：**三段标志 111B 提交器（推断名）**——① 111B 复制 + ★三段标志判定（[esp+0x22]/[esp+0x2c]/[esp+0x27] 依次 → 偏移 [esp+0x1e]/[esp+0x28]/[esp+0x23]——batch 2152 a 路 0x63B050 三段跳板同款）；② 0x6e6e20 跳板命中 → 0x6e6ab0 栈构 + 0x4c65e0（[0xa83d4c]+0x30）→ 111B + 0x6521c0 提交。**0x63 区三段标志 + 111B 提交器（a 路的标志链变体）**。
+
+## c 路 0x6379C0（66B）——门控缩放初始化器
+
+```
+006379c0  mov al,[0xac4cf4]（★门控标志）→ test → jne 0x637a01（已置位 → 返回）→ mov eax,[0x8871e0] → mov byte [0xac4cf4],1（★门控置位）→ push 0 → mov edx,0x2000 → mov ecx,[eax+0x1d4] → push 0x3f800000 → ★call 0x750920（缩放设置）→ mov ecx,[0xac4b80]（★全局对象）→ test → je 0x637a01 → mov edx,[ecx] → push 0 → push 0x11c7 → ★call [edx]（★虚表槽 0——消息/回调）→ ret
+```
+**语义**：**门控缩放初始化器（推断名）**——[0xac4cf4] 门控首次置位：① [0x8871e0]+0x1d4 + 0x750920（push 0x3f800000——batch 2154/2155 同款缩放设置）；② [0xac4b80] 全局对象虚表槽 0 调用（push 0x11c7=4551 参数）。**0x63 区门控置位 + 缩放 + 回调初始化器（[0xac4cf4] 门控族写入端——batch 2153 门控判定族配对）**。
+
+## 原版怪癖（照抄）
+
+1. a/b 路 ★rep movsd 0x1b+movsw+movsb（111B 复制——batch 2149-2150 记录复制同款）；
+2. a 路参数 == 4 门控（≠4 静默跳过）+ byte [esp+0x99]=1 栈字节置位；
+3. b 路 ★三段标志判定（[esp+0x22]/[esp+0x2c]/[esp+0x27] → 偏移 [esp+0x1e]/[esp+0x28]/[esp+0x23]——batch 2152 a 路 0x63B050 三段跳板同款模板）；
+4. b 路 0x6e6e20 跳板 + 0x6e6ab0 栈构 + 0x4c65e0（[0xa83d4c]+0x30）；
+5. c 路 [0xac4cf4] 门控首次置位（已置位直接返回——batch 2153 门控判定族写入端）；
+6. c 路 [0x8871e0]+0x1d4 + 0x750920（push 0/0x3f800000）+ [0xac4b80] 虚表槽 0（push 0x11c7）。
+
+## 跨批次连接
+
+- ★★★batch 2152 a 路（b 路三段标志跳板同款——0x63B050 模板）；batch 2149-2150（111B 记录复制）。
+- ★★batch 2153（[0xac4cf4] 门控族——c 路写入端）；batch 2154/2155（0x750920 缩放设置 + [0x8871e0] 同款收尾）。
+- ★0x6521c0/0x6e6e20/0x6e6ab0/0x4c65e0/0x750920（全部已登记——a 1 个 + b 4 个 + c 1 个）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（直接 call 全已登记——a 1 个 + b 4 个 + c 1 个全在 TSV）。
+- **后邻未登记**：0x637E00（a 路后邻——sub esp,0x38 + [esi]==0x2b 判定大函数）、0x637DB0（b 路后邻——[0xac4cf4] 门控 + ecx==4 判定）、0x637A10（c 路后邻——sub esp,0x70 + 0x4c66c0 大函数）。
+- **新观察**：[0xac4b80]（c 路全局对象——虚表槽 0 回调）；0x11c7（c 路回调参数）。
+- 前向：picker 队列继续 0x63 区 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650。
