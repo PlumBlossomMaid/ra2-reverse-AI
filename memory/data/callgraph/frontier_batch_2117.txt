@@ -1,0 +1,70 @@
+# frontier batch 2117：场景对象数组条件清零器 + 标志门控槽 0x280 调度器 + 场景对象构造器（0x65AAC0 / 0x65AA80 / 0x65A7E0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x65AAC0 FUN_0065aac0 callees=1 deps=95 / 0x65AA80 FUN_0065aa80 callees=1 deps=182 / 0x65A7E0 FUN_0065a7e0 callees=1 deps=48）
+- 三路 disasm：`.qwen/tmp/_d2117a.txt`（0x65AAC0 size 0x60）/ `_d2117b.txt`（0x65AA80 size 0x40）/ `_d2117c.txt`（0x65A7E0 size 0x50）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x65AAC0 | 75B（0x4B）| ret 8 @0x65AB08 | 0x65AB10（batch 2116 c 路本尊）| 1（0x5f5230 未登记）+0x5b3970 同邻域未登记 |
+| 0x65AA80 | 32B（0x20）| ret @0x65AA9F | 0x65AAA0（槽 0x27C 转发器，未登记）| 1（0x5f4d30 已登记）|
+| 0x65A7E0 | 56B（0x38）| ret 4 @0x65A815 | 0x65A820（未登记）| 1（0x5f3b50 已登记）|
+
+## a 路 0x65AAC0（75B）——场景对象数组条件清零器
+
+```
+0065aac0  push ebx / mov ebx,[esp+0xc]（参数 2）/ push esi/edi / mov edi,[esp+0x10]（参数 1）
+0065aacb  push ebx（参数 2）/ mov esi,ecx（this）/ push edi（参数 1）→ ★call 0x5f5230（2 参初始化）
+0065aad4  mov eax,[esi+0xe8]（★this+0xe8 计数）/ xor ecx,ecx / test / jle 0x65ab05
+0065aae0  循环: mov eax,[esi+0xe4]（★数组基址）/ mov edx,[eax+ecx*4]（元素[ecx]）/ lea eax,[eax+ecx*4]（元素地址）
+0065aaec  cmp edx,edi（元素 vs 参数 1）/ jne 0x65aafa（不等跳过）
+0065aaf0  test bl,bl（★参数 2 低字节）/ je 0x65aafa（bl==0 跳过）
+0065aaf4  mov [eax],0（★清零元素——匹配且 bl≠0 才清）
+0065aafa  mov eax,[esi+0xe8] / inc ecx / cmp ecx,eax / jl 循环
+0065ab05  pop×3 / ret 8
+```
+**语义**：场景对象数组条件清零器——0x5f5230（2 参）初始化后遍历 [esi+0xe4] 数组（[esi+0xe8] 个元素），对每个 **元素==参数 1 且 参数 2 低字节≠0** 的项清零（置 NULL）；参数 2 低字节==0 时全部跳过（清空不执行）。ret 8（2 栈参）。与 batch 2116 c 路同对象类型（[0xe4]/[0xe8] 字段）。
+
+## b 路 0x65AA80（32B）——标志门控槽 0x280 调度器
+
+```
+0065aa80  push esi / mov esi,ecx（this）
+0065aa83  mov al,[esi+0x81]（★标志字节 +0x81）/ test al / jne 0x65aa97（非 0 跳过）
+0065aa8d  mov eax,[esi]（虚表）/ push 3 / ★call [eax+0x280]（虚表槽 0x280——参数 3）
+0065aa97  mov ecx,esi / ★call 0x5f4d30（无参方法）
+0065aa9e  pop esi / ret
+```
+**语义**：标志门控槽 0x280 调度器——[esi+0x81] 标志非 0 跳过；否则虚表槽 0x280（push 3 参数）调用 + 0x5f4d30（无参方法）。32B 微函数。后邻 0x65AAA0 = 槽 0x27C 转发器（mov edx,[esp+8]/push 0xa8ec30/call [eax+0x27c]，未登记——观察项）。
+
+## c 路 0x65A7E0（56B）——场景对象构造器·虚表写入版
+
+```
+0065a7e0  mov eax,[esp+4]（参数 1）/ push esi / mov esi,ecx（this）/ push eax / ★call 0x5f3b50（1 参初始化）
+0065a7ed  mov [esi+0xe0],0x7e180c（★写容器虚表 0x7e180c——batch 2116 b 路装载器同址！）
+0065a7f7  mov [esi],0x7f0508 / [esi+4],0x7f04ec / [esi+8],0x7f04e4 / [esi+0xc],0x7f04dc（★写四层虚表——0x7f0508 族）
+0065a812  mov eax,esi（返回 this）/ ret 4
+```
+**语义**：场景对象构造器·虚表写入版——0x5f3b50（1 参）初始化 → 写 [esi+0xe0] 容器虚表（0x7e180c——batch 2116 b 路装载器操作的容器虚表同址！）+ 四层虚表（0x7f0508/0x7f04ec/0x7f04e4/0x7f04dc）→ 返回 this。这是**场景对象类型的构造函数**（batch 2116 装载器装载的对象）。
+
+## 原版怪癖（照抄）
+
+1. a 路**双条件清零**：元素==参数 1 **且** 参数 2 低字节≠0 才置 NULL（bl==0 时清空不执行——参数 2 是使能标志）；
+2. a 路 jne/je 双跳过路径（不等跳过 + bl==0 跳过）——清零条件严格；
+3. b 路 [esi+0x81] 标志非 0 时**整跳**（连 0x5f4d30 也不调）；
+4. b 路槽 0x280 push 3 参数（常量）；
+5. c 路 [esi+0xe0] 容器虚表 0x7e180c 与四层虚表 0x7f0508 族**分开写**（0xe0 是容器槽、0x0-0xc 是对象主虚表）；
+6. c 路 ret 4 返回 this（构造器惯用）。
+
+## 跨批次连接
+
+- ★★★c 路 ↔ batch 2116 b 路（0x65AB80 装载器操作的容器虚表 0x7e180c 同址——构造器写、装载器读）；a/c 路 ↔ batch 2116 a/c 路（同一场景对象类型 [0xe0]/[0xe4]/[0xe8] 字段族）；
+- ★★a 路 0x5f5230（未登记，ranking:5849 有行）+ 0x5b3970（batch 2116 观察项，ranking:5571 有行）——场景对象族初始化函数；
+- ★b 路 0x5f4d30/0x5f3b50/0x5f5230/0x5b3970（0x5f/0x5b 区场景对象族函数群）；0x7e180c 虚表（batch 2116 b 路同址）。
+
+## 观察项 / 候选池
+
+- **新候选：0x5F5230**（a 路 callee，ranking:5849 有行，77B）+ **0x5B3970**（batch 2116 已登记的观察项再次出现）+ 0x65AAA0（b 路后邻槽 0x27C 转发器）。
+- **后邻未登记**：0x65AB10（a 路后邻头——batch 2116 c 路本尊已登记）、0x65AAA0（b 路后邻）、0x65A820（c 路后邻）。
+- 前向：picker 队列继续 0x65A 区（0x65A750 RadioClass::RadioClass/0x65A1B0）+ 0x59 区大函数（0x59650 等）。
