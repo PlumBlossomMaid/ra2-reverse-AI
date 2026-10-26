@@ -1,0 +1,93 @@
+# frontier batch 2324：巨型全局表初始化器 + 表项定位装载器 + 双容器析构器（0x547370 / 0x547230 / 0x544A70）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x547370 FUN_00547370 callees=1 deps=1875 / 0x547230 FUN_00547230 callees=1 deps=2 / 0x544A70 FUN_00544a70 callees=3 deps=44）
+- 三路 disasm：`.qwen/tmp/_d2324a.txt`（0x547370 size 0x980）/ `_d2324b.txt`（0x547230 size 0x160）/ `_d2324c.txt`（0x544A70 size 0x180）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x547370 | 2403B（0x963）| ret c3 @0x547CC2（xor eax,eax 失败）/ @0x547CD2（lea eax,[ecx*8+0xabad34] 成功返回表项）| 0x547CE0（纯 ret 桩——atexit 注册目标）| 1 次/去重 1（0x7c978a——已登记，picker callees=1 吻合）|
+| 0x547230 | 315B（0x13B）| ret 0x24 @0x547368 | 0x547370（★本批 a 路）| 1 次/去重 1（0x4aed70——已登记，picker callees=1 吻合）|
+| 0x544A70 | 361B（0x169）| ret c3 @0x544BD8 | 0x544BE0（未登记——虚表槽 0x9c 调用器）| 4 次/去重 3（0x7258d0/0x7c8b3d/0x5f7400——已登记，picker callees=3 吻合）|
+
+## a 路 0x547370（2403B）——巨型全局表初始化器
+
+```
+00547370  sub esp, 8 → mov al, [ecx+0x2e1] → test al → je 0x547cbb（★门控）
+00547389  mov al, [0xabbeb8] → test al, 1 → jne 0x547c98（★已初始化跳过）
+00547396  ★★[0xabad48..0xabae08] 8 组 16B 常量装载（word 0x7fff 双写 → dword 写表——★表项 = (0x7fff, 0x7fff)）
+00547404  mov eax, [0xaa105c]（★基准常量）→ ★★[0xabad34..0xabadf0] 数十 dword 写 0xaa105c（★表族填基准）
+0054751f  ★★[0xabae08..0xabaf10] 8 组 16B 常量装载（0x7fff 双写）
+005476ea  ★★[0xabaf14..0xabb0f0] 尾段表（bx=0/si=-1/di=-2/dx=-3 交错 word 对——★负常量回绕对）
+00547c7a  push 0x547ce0 → call 0x7c978a（★atexit 注册 0x547ce0 纯 ret 桩）
+00547c98  mov edx, [ecx+0x294]（★入参）→ mov ecx, 0xaa102c（★起点）→ 循环：mov esi, [ecx] → sub eax → js → cmp eax, 0x28 → jl 0x547cc3（★区间匹配 [0,0x28)）→ add ecx, 4 → cmp ecx, 0xaa1040 → jl 循环
+00547cbb  xor eax, eax → ret c3（失败）
+00547cc3  lea ecx, [eax+eax*2] → lea eax, [ecx*8+0xabad34]（★表项地址 = 基准 + 索引×24）→ ret c3（成功）
+```
+
+**语义**：**巨型全局表初始化器（推断名）——雷达/地图表族装载器（2403B）**：[ecx+0x2e1] 门控 + [0xabbeb8] 已初始化标志 → ★★[0xabad34..0xabb0f0] **巨型常量表族初始化**（8+8 组 (0x7fff,0x7fff) 16B 常量 + [0xaa105c] 基准填充数十槽 + 负常量回绕对 -1/-2/-3）→ 0x7c978a atexit 注册 → ★区间匹配循环（[ecx+0x294] 入参 ∈ [0,0x28) 段）→ **成功返回 [0xabad34+index*24] 表项 / 失败返 0**。**★★2403B 巨型表初始化 + 索引查找二合一（0 call 纯写表——★[0xabad34] 24B 步长表族）**。
+
+## b 路 0x547230（315B）——表项定位装载器
+
+```
+00547230  mov edx, [ecx+0x294]（★入参）→ push esi → mov esi, [0xabc1f8]（★基准 1）→ cmp edx → jl 0x547248
+00547241  lea eax, [esi+0xa] → cmp edx, eax → jl 0x547259（★[ref, ref+0xa) 区间）
+00547248  mov esi, [0xaa1098]（★基准 2）→ cmp → jl 0x547294 → lea eax, [esi+0xa] → jge 0x547294
+00547259  sub eax, esi → cmp eax, -1 → je 0x547294（★区间 → 索引）
+00547262  mov ecx, [esp+8]（★栈参 1）→ shl eax, 4 → cmp ecx, [eax+0xabc214] → jne 0x547367（★id 匹配表 [0xabc214]）
+00547275  mov esi, [eax+0xabc210] → test → je 0x547367（★非空门控）→ mov ecx, [eax+0xabc218] → mov edx, [eax+0xabc21c] → add ecx, 0x1e → jmp 0x5472f7
+00547294  ★第二分支：[ecx+0x2e1] 门控 → [0xaa102c..0xaa1040] 循环区间匹配 → [eax+0xabc2d4] id 匹配 → [eax+0xabc2d0] 非空 → [eax+0xabc2d8]/[0xabc2dc] → add 0x1e/0xf
+005472f7  mov eax, [esp+0x10] → add eax, ecx → mov ecx, [esp+0x14] → add ecx, edx → add eax, [0x886fa0] → add ecx, [0x886fa4]（★★全局偏移装载 [0x886fa0]/[0x886fa4]）→ sub 栈参 → 坐标计算
+00547316  ★0x4aed70 装载（push 0x3e8/0x4601/[0x87f69c] 虚表/[0xabc554]/坐标——★十参装载）→ ret 0x24
+```
+
+**语义**：**表项定位装载器（推断名）**——thiscall 9 栈参（ret 0x24）：★[ecx+0x294] 入参 vs [0xabc1f8]/[0xaa1098] 双基准区间（[ref, ref+0xa)）→ ★★[eax+0xabc214]/[0xabc2d4] id 匹配表（shl eax,4——16B 步长）→ ★[0xabc210]/[0xabc2d0] 非空门控 → ★坐标装载（[0xabc218]+0x1e/[0xabc21c]+0xf）+ ★★[0x886fa0]/[0x886fa4] 全局偏移 + 栈参坐标并入 → ★0x4aed70 装载（0x3e8/0x4601/[0x87f69c]——★十参宝函数）→ ret 0x24。**表项定位 + 坐标装载（★★双基准区间 + id 表匹配 + 0x4aed70 十参——batch 2317 a 路 0x4aed70 同族）**。
+
+## c 路 0x544A70（361B）——双容器析构器
+
+```
+00544a70  push ecx/ebx/esi → mov esi, ecx（this）→ mov dl, 1
+00544a77  ★★虚表四件套：[esi]=0x7ecc48 → [esi+4]=0x7ecc2c → [esi+8]=0x7ecc24 → [esi+0xc]=0x7ecc1c
+00544a92  call 0x7258d0（★基类析构装载）
+00544a97  mov ecx, [esi+0x2bc] → test → je → mov [esi+0x2bc], ebx → call [eax+0x20]（★虚表槽 0x20 释放）
+00544ab0  ★容器 1 清理：[0xa8ed28] 虚表槽 0x10 查找 → 命中 → [0xa8ed38]-- + [0xa8ed2c] 数组前移压缩
+00544af9  ★容器 2 清理：[0xb0f670] 虚表槽 0x10 查找 → 命中 → [0xb0f680]-- + [0xb0f674] 数组前移压缩
+00544b42  ★★[esi+0x2b4] 数组循环清理：mov edi, [esi+0x2b4] → dec → js → [esi+0x2a8] 数组逐项 push → call 0x7c8b3d（★释放）→ 前移压缩
+00544b96  mov [esi+0x2a4], 0x7ecd0c（★虚表）→ mov eax, [esi+0x2a8] → test → je → [esi+0x2b1] 字节门控 → call 0x7c8b3d → mov [esi+0x2a8], ebx → mov byte [esi+0x2b1], bl → mov [esi+0x2ac], ebx
+00544bd0  call 0x5f7400（★收尾装载）→ pop 三件套 → ret c3
+```
+
+**语义**：**双容器析构器（推断名）——复合对象销毁器**：★★虚表四件套（0x7ecc48/0x7ecc2c/0x7ecc24/0x7ecc1c）→ ★0x7258d0 基类析构 → ★虚表槽 0x20 释放 [esi+0x2bc] → ★★双容器清理（[0xa8ed28]/[0xb0f670] 虚表槽 0x10 查找 + 计数减 + 数组前移压缩——★batch 2320/2321 同容器族）→ ★★[esi+0x2a8]/[0x2b4] 数组倒序清理（0x7c8b3d 逐项释放 + 压缩）→ ★[esi+0x2a4]=0x7ecd0c 虚表 → 尾数组释放 → 0x5f7400 收尾 → ret c3。**复合对象双容器析构（★★四层虚表 + 双全局容器 + 内嵌数组清理——析构器完整链）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 1 个/去重 1（0x7c978a——★atexit 注册）——**已登记**（picker callees=1 吻合——巨型表初始化 0 call 纯写）。
+- b 路：跨函数直接 call 1 个/去重 1（0x4aed70——★★十参装载，batch 2317 a 路同族）——**已登记**（picker callees=1 吻合）。
+- c 路：跨函数直接 call 4 次/去重 3（0x7258d0/0x7c8b3d/0x5f7400）——**全部已登记**（picker callees=3 吻合；虚表槽 0x10/0x20 属间接不计）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING、无批内自引用**（连续四十一批三路全登记）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★[0xabad34..0xabb0f0] 巨型表族（8+8 组 (0x7fff,0x7fff) 16B 常量 + [0xaa105c] 基准填槽 + -1/-2/-3 负回绕对——直接寻址写表 2403B 展开）;
+2. a 路 ★★[0xabbeb8] 已初始化标志 + 0x7c978a atexit 注册 0x547ce0 纯 ret 桩 + [ecx+0x2e1] 门控;
+3. a 路 ★★区间匹配循环（[ecx+0x294] ∈ [0,0x28) → 表项 [0xabad34+index*24]——lea [eax+eax*2]*8 = ×24 步长）;
+4. b 路 ★★双基准区间（[0xabc1f8]/[0xaa1098] + 0xa 宽）→ 索引 shl 4 → [0xabc214]/[0xabc2d4] id 匹配 + [0xabc210]/[0xabc2d0] 非空门控;
+5. b 路 ★★坐标 + [0x886fa0]/[0x886fa4] 全局偏移 + [0xabc218]+0x1e/[0xabc21c]+0xf + 0x4aed70 十参装载（0x3e8/0x4601/[0x87f69c]/[0xabc554]）→ ret 0x24;
+6. c 路 ★★虚表四件套（0x7ecc48/0x7ecc2c/0x7ecc24/0x7ecc1c）+ 0x7258d0 基类析构;
+7. c 路 ★★双全局容器清理（[0xa8ed28]/[0xb0f670] 虚表槽 0x10 + 计数减 + 前移压缩）;
+8. c 路 ★★[esi+0x2a8]/[0x2b4] 数组倒序清理（0x7c8b3d 逐项 + 压缩）+ [esi+0x2a4]=0x7ecd0c + 0x5f7400 收尾。
+
+## 跨批次连接
+
+- ★★batch 2320/2321（[0xabc878]/[0xabc87c]/[0xabc888] 容器族——c 路双全局容器同源）+ batch 2312（[0xabcbxx] 容器族——c 路前移压缩同源）+ batch 2282-2284（VectorClass 容器族——c 路同源）。
+- ★★batch 2317 a 路（0x552D60 LoadProgressManager::Draw——b 路 0x4aed70 十参装载同族 + [0x886fa0] 虚表同源）+ batch 2319 b 路（0x551630——b 路 [0x886fa0] 同源）。
+- ★★batch 2316（0x554760 LightSourceClass 构造器——c 路虚表四件套同风）+ batch 2306/2307（事件系统——c 路虚表槽 0x20 同源）。
+- ★★batch 2322（Kamikaze::Load——c 路容器查找同源）+ batch 2302（0x721B80——a 路 [0xaa102c] 区段近似）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x547CE0（a 路后邻——纯 ret 桩 atexit 注册目标）；0x544BE0（c 路后邻——虚表槽 0x9c 调用器）；[0xabad34..0xabb0f0]（a 路巨型表族——24B 步长）；[0xabc1f8]/[0xaa1098]/[0xaa105c]（b 路基准区间族）；[0xa8ed28]/[0xb0f670]（c 路双容器全局）。
+- 未兑现 MISSING 旧观察（继续排队）：0x00486790（2267 起）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150 + ★0x556AD0/0x556EB0/0x556D20 + ★0x554830/0x49E400 + ★0x551B20 + ★0x5517A0/0x5512D0 + ★0x5509E0/0x551300/0x551320/0x551330/0x551370 + ★0x550080/0x54F6F0/0x54F670 + ★0x54E890/0x54E8C0 + ★0x54E590/0x54D930/0x549E90 + ★0x547CE0/0x544BE0（2324 新观察）。
+- 本批 **无 MISSING**（连续四十一批三路全登记——batch 2276 起，TSV 5455）。next 批预期 top3 = 0x543330（1050B callees=7）/ 0x5430C0（20B callees=0）/ 0x542620（2208B callees=6）。
