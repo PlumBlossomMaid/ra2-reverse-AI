@@ -1,0 +1,86 @@
+# frontier batch 2251：设置主流程调度器 + 设置文件装载器 + 设置加载双对象入队器（0x5B77E0 / 0x5B7360 / 0x5B7090）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5B77E0 FUN_005b77e0 callees=19 deps=4048 / 0x5B7360 FUN_005b7360 callees=23 deps=2622 / 0x5B7090 FUN_005b7090 callees=16 deps=2619）
+- 三路 disasm：`.qwen/tmp/_d2251a.txt`（0x5B77E0 size 0x200）/ `_d2251b.txt`（0x5B7360 size 0x300）/ `_d2251c.txt`（0x5B7090 size 0x300）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5B77E0 | 398B（0x18E）| ret c3 @0x5B796D | 0x5B7970（未登记——巨型消息处理回调：sub esp,0x228 + 0x622b50 比较 + 0x7e1474 IAT + cmp 0x111 分派 观察项——**a 路注册的回调 0x5b7970**）| 19 次/去重 17（0x4068e0/0x622650/0x5b82f0/0x622800/0x6c8c40/0x679d90/0x679ee0/0x679ec0/0x679ed0/0x623120/0x5b9f30/0x5ba060/0x532100/0x5bac60/0x622720/0x6990a0/0x5bab00——callees=19 含 IAT 间接口径吻合）|
+| 0x5B7360 | 623B（0x270）| ret c3 @0x5B75CE | 0x5B75D0（未登记——四 dword 清零器：[0xabf098..0xabf0a4] 四连 mov 观察项）| 37 次/去重 22（0x6c8c40/0x4068e0/0x5f1bf0/0x5f1ea0/0x48d080/0x693b70/0x65ca80/0x65d0d0/0x7c8e17/0x65cce0/0x43ad00/0x55c720/0x6c9890/0x55c7c0/0x6406f0/0x7c8b3d/0x6406e0/0x6425f0/0x55c780/0x43ae50/0x6c9850/0x65ca00——callees=23 含 IAT [0x7e149c] 间接口径吻合）|
+| 0x5B7090 | 705B（0x2C1）| ret 4 c20400 @0x5B734E | 0x5B7360（本批 b 路）| 20 次/去重 16（0x5b56f0/0x7c8e17/0x53ecb0/0x735060/0x7ca489/0x734e60/0x623230/0x622800/0x6c8c40/0x5f1ea0/0x48d080/0x5d4d50/0x5f1c60/0x622720/0x5f19c0/0x6b8b10——callees=16 吻合，**0x5B56F0 MISSING 观察项**）|
+
+## a 路 0x5B77E0（398B）——设置主流程调度器
+
+```
+005b77e0  push ecx/ebx/ebp/esi → xor ebx → mov esi,ecx（★this）→ push 0x82c958 → call 0x4068e0（★日志）→ or ebp,0xffffffff
+005b77fc  mov edx,0x5b7970（★回调函数指针）→ mov ecx,0xf1（★消息 241）→ push ebx → call 0x622650（★注册回调）→ mov [esi],eax → test → je 0x5b7939
+005b7819  push edi → push esi/push 8/push eax → call [0x7e1470]（★IAT 事件）→ mov ecx,esi → call 0x5b82f0（★batch 2250 c 路巨型 IAT 事件关联器——初始化）→ mov ecx,[esi] → call 0x622800（★校验）→ mov byte [esi+8],0 → mov byte [esi+9],1（★标志）
+005b7839  ★时间戳字段装载：[0x887338..0x887340] + 0x6c8c40 → mov [esi+0xc],edi → mov [esi+0x10],0x2710（★超时 10000）→ 时间戳 → mov [esi+0x14],edi → mov [esi+0x18],0x4b0（★1200）→ mov [esi+0x1c],ebx → mov [esi+0x20],bl → mov word [esi+0x22],bx → mov [esi+0x4c],ebp → mov [esi+0x50],ebp（哨兵）
+005b789f  mov [0xabf10c],esi（★全局登记）→ call 0x679d90 → mov [esi+0x54],eax → call 0x679ee0 → call 0x679ec0 → mov [esi+0x58],eax → call 0x679ed0 → mov [esi+0x5c],eax（★四查询装载）
+005b78cb  mov edi,[0x7e1498]（★IAT）→ mov [esi+4],ebp → ★主循环：call 0x623120 → cmp al,1 → je 0x5b78f4 → push ebx → mov ecx,esi → call 0x5b9f30（★batch 2250 a 路设置周期处理器）→ push ebx → mov ecx,esi → call 0x5ba060（★batch 2249 c 路设置巨型状态机）→ cmp al,1 → je 0x5b78f4 → xor cl → call 0x532100 → cmp [esi+4],ebx → jl 循环
+005b78f4  cmp [esi+4],1 → jne 0x5b791a → ★成功路径：mov eax,[esi] → push ebx/push eax → call edi（IAT [0x7e1498]）→ push ebx → mov ecx,esi → call 0x5bac60（★batch 2248 c 路设置主控加载）→ cmp al,1 → je 0x5b7915 → mov ecx,[esi] → push 5/push ecx → call edi（IAT 尾发）→ jmp 0x5b78c8 循环 → mov byte [esp+0x13],1
+005b791a  mov ecx,[esi] → call 0x622720（★释放）→ mov [0xabf10c],ebx（★清全局）→ mov al,[esi+8] → cmp 1 → jne → mov ecx,0xa8b238 → call 0x6990a0（★[0xa8b238] 门控——batch 2217 族）
+005b7939  cmp [esi+4],2 → jne → mov ecx,esi → call 0x5bab00（★batch 2249 a 路设置轮询器）→ ★尾部：bl 标志 → 0x81c5f0/0x81c5e8 串选 → push → push 0x82c93c → call 0x4068e0 → mov al,bl → ret
+```
+**语义**：**设置主流程调度器（推断名）**——① 0x4068e0 日志 + 0x622650 注册回调（0x5b7970/0xf1 消息）+ IAT [0x7e1470] 事件 + 0x5b82f0（batch 2250 巨型 IAT 关联器）初始化；② ★时间戳超时字段装载（[esi+0xc]/[0x10]=0x2710/[0x14]/[0x18]=0x4b0/[0x4c]/[0x50] 哨兵）+ [0xabf10c] 全局登记 + 0x679d90/0x679ee0/0x679ec0/0x679ed0 四查询；③ ★★主循环（[esi+4] 状态机）：0x623120 判定 → 0x5b9f30（周期处理器）+ 0x5ba060（状态机）+ 0x532100 + IAT [0x7e1498] + 0x5bac60（主控加载）——**batch 2248/2249/2250 设置族最大宿主**；④ 0x622720 释放 + [0xabf10c] 清空 + 0x6990a0（[0xa8b238] 门控）+ 0x5bab00（轮询器）收尾。**设置主流程调度中心（回调注册 + 时间戳超时 + 状态机循环 + 五设置函数宿主——[0xabf10c] 全局登记闭环）**。
+
+## b 路 0x5B7360（623B）——设置文件装载器
+
+```
+005b7360  sub esp,0x280 → mov [esp+0x10],ecx（★this）→ call 0x6c8c40（★计时）→ push 0x82c918 → call 0x4068e0（★日志）→ rep stosd 清 0x3e dword 缓冲 + mov [esp+0x98],0x76（★魔数 0x76）
+005b73b4  push 1/push 0xfa/lea eax → mov ecx,0xa8ea70 → call 0x5f1bf0（★INI 写段）→ call 0x6c8c40 → mov ecx,0x258 → call 0x5f1ea0（★INI 读计数）→ test → jle 0x5b7432
+005b73f9  ★计时差循环：or edi,0xffffffff → mov eax,[esp+0xc] → mov esi,[esp+0x14] → cmp eax,edi → je → call 0x6c8c40 → sub → cmp jge → call 0x48d080（★清零）→ mov ecx,0xa8ea70 → call 0x5f1ea0 → jg 循环
+005b7432  ★日志双发（0x82c8e4/0x82c8a8）→ mov edx,1 → lea ecx,[esp+0x18c] → call 0x693b70（★校验）→ test al → je 失败（0x82c884 日志 → ret）
+005b7476  ★成功路径：push 0x82c85c → call 0x4068e0 → lea eax/lea ecx → call 0x65ca80（★RawFileClass 构造）→ call 0x65d0d0（★读取）→ mov esi,eax → call 0x7c8e17（new）→ mov edi → call 0x65cce0（★RawFileClass 装载）→ mov ebx,[edi]（★大小）
+005b74c5  push 0x82c838 → call 0x4068e0 → lea ecx,[edi+4] → push esi → call 0x43ad00（★构造 虚表 0x7e61f0）→ push 0x2000/push 1 → call 0x55c720（★构造 虚表 0x7e61e0）→ lea edx/lea ecx → call 0x6c9890（★查询）→ lea eax,[ebx+ebx] → call 0x7c8e17（new）→ mov esi → call 0x55c7c0（★装载）
+005b7526  push 0x82c814 → call 0x4068e0 → ★[0xac1154] 释放重建：mov eax,[0xac1154] → cmp ebp → je → call 0x6406f0 + 0x7c8b3d + mov [0xac1154],0 → 0x7c8e17(4) + 0x6406e0 构造 → mov [0xac1154],eax → call 0x6425f0
+005b7579  mov ecx,[esp+0x18] → push ebp/push ebp/push [ecx] → call [0x7e149c]（★IAT）→ push 0x82c7e0 → call 0x4068e0 → ★0x7c8b3d×2 释放（esi/edi）→ 析构收口：0x55c780/0x43ae50/0x6c9850/0x65ca00 → ret
+```
+**语义**：**设置文件装载器（推断名）**——① 0x6c8c40 计时 + 0x4068e0 日志双发 + rep stosd 清缓冲 + 0x76 魔数；② 0x5f1bf0/0x5f1ea0 INI 读写（0xa8ea70）+ 计时差循环 + 0x48d080；③ 0x693b70 校验 + ★RawFileClass 族（0x65ca80 构造/0x65d0d0 读取/0x65cce0 装载）+ 0x43ad00/0x55c720 构造（0x7e61f0/0x7e61e0 虚表）+ 0x55c7c0 装载；④ ★[0xac1154] 释放重建（0x6406f0 + 0x6406e0 构造）+ 0x6425f0 + IAT [0x7e149c] + 四析构收口。**设置文件读取装载端（RawFileClass 族 + INI 读写 + [0xac1154] 全局重建——batch 2248 b 路同族 + batch 2250 c 路 [0xac1154] 联动）**。
+
+## c 路 0x5B7090（705B）——设置加载双对象入队器
+
+```
+005b7090  mov al,[esp+4] → cmp 1 → jne 0x5b70a5（★参 1 早退返 0）→ mov edi,ecx（★this）
+005b70a5  mov ecx,edi → call 0x5b56f0（★校验——MISSING 观察）→ push 0x85 → mov [0xa8b54c],0 → call 0x7c8e17（★new 0x85=133B）→ mov esi → lea ecx,[esi+0x28] → call 0x53ecb0（★构造）→ push -1/push 0xa8b380 → mov ecx,esi → call 0x735060（★构造）→ mov eax,[0xa8b3ac] → mov [esi+0x4b] → mov ecx,[0xa8b394] → mov [esi+0x53] → mov [esi+0x73],-1（哨兵）
+005b70f9  ★★共享值表 [0xa8da7c]/[0xa8da84]/[0xa8da81]/[0xa8da88]/[0xa8da74]/[0xa8da78] 入队：cmp ecx,eax → jl 0x5b7137 → [0xa8da81] 标志/[0xa8da88] 上限/[0xa8da74] 虚表槽 8 扩容 → push 0/push ecx → call [edx+8] → test al → je → [0xa8da84]++ → [0xa8da78+eax*4]=esi（★入队）→ inc [0xa8b54c]
+005b7155  ★第二对象同款：0x7c8e17(0x85) + 0x53ecb0 + 0x7ca489 串拷贝（[edi+0x20]）+ [edi+0x4c]/[edi+0x48] → +0x4b/+0x53 → 共享值表入队 → inc [0xa8b54c]
+005b71ec  cmp [0xa8b54c],2 → je 0x5b71fd → 否则返 0
+005b71fd  push 0/push 0x6f3（行号 1779）/push 0x82c534（文件）→ xor edx → mov ecx,0x82c7cc（格式串）→ call 0x734e60（★DebugLog）→ mov ecx,eax → call 0x623230 → mov ebp → test → je → call 0x622800
+005b722c  ★时间戳循环：[0x887338..0x887340] + 0x6c8c40 → mov ecx,0xa8ea70 → call 0x5f1ea0 → test → je → ★时间差 cmp 0x708（1800）→ jb → 0x48d080 + 0x5d4d50 + 0x5f1c60 → jmp 循环 → cmp 0x3c（60）→ jae → 0x622720 释放
+005b72cf  mov ecx,0xa8ea70 → call 0x5f19c0（★INI 保存前）→ mov eax,[0xa8b230] → mov edx,[0xa8b254] → mov byte [0xa8d60e],0 → mov [eax+0x1254],edx → ★位掩码收尾：[0xa8b260]/[0xa8b31d] and 1 → shl 4/0xb → or [0xa8e960] → and ch,0x77 → or dl,0xc0 → mov [0xa8ed84],0 → mov [0xa8b24c],2 → mov [0xa8e960],edx → call 0x6b8b10（★刷新）→ mov al,1 → ret 4
+```
+**语义**：**设置加载双对象入队器（推断名）**——① 参 1 早退 + 0x5b56f0 校验（MISSING 观察）；② ★0x7c8e17(0x85) 双对象构造（0x53ecb0 + 0x735060/0x7ca489 + [0xa8b3ac]/[0xa8b394] 字段 + 0x73 哨兵）；③ ★★共享值表 [0xa8da74..0xa8da88] 入队 ×2（容量检查 + 虚表槽 8 扩容 + [0xa8da84]++ + [0xa8da78] 存指针——batch 2248 c 路同款模板）+ [0xa8b54c] 计数；④ DebugLog 0x734e60（0x82c534 文件/0x6f3 行号）+ 时间戳循环（0x708/0x3c 双阈值）+ 0x622720 释放；⑤ ★位掩码收尾（[0xa8e960] + 0x77/0xc0 + [0xa8b24c]=2 + [0xa8ed84]=0）+ 0x6b8b10 刷新。**设置加载+入队大函数（双对象共享值表入队 + 位掩码收尾——batch 2248 c 路 [0xa8da90] 三视图族延续）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 19 次/去重 17 个——**全部已登记**（picker callees=19 含 IAT [0x7e1470]/[0x7e1498] 间接按口径吻合）。
+- b 路：跨函数直接 call 37 次/去重 22 个——**全部已登记**（picker callees=23 含 IAT [0x7e149c] 间接按口径吻合）。
+- c 路：跨函数直接 call 20 次/去重 16 个——**15 个已登记 + 0x5B56F0 MISSING**（grep ranking.tsv:1024 确认有行未登记：FUN_005b56f0 deps=2556，调用者正是本批 c 路本体 0x5B7090，且为 picker 队列第 18 顺位——**按惯例记观察项自然排队、不阻塞本批**）；callees=16 吻合。
+- ★核验脚本（norm() 规范化版）输出：a/b 全 PASS、c 路 1 枚 MISSING 观察项。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★[0xabf10c] 全局登记/清空闭环（mov [0xabf10c],esi / mov [0xabf10c],ebx）+ 0x622650 回调注册（0x5b7970 函数指针 + 0xf1 消息）+ IAT [0x7e1470]/[0x7e1498]；
+2. a 路 ★时间戳超时字段族（[esi+0xc]/[0x10]=0x2710/[0x14]/[0x18]=0x4b0/[0x4c]/[0x50]=-1 哨兵）+ 0x679d90/0x679ee0/0x679ec0/0x679ed0 四查询装载 + 0x532100；
+3. a 路 ★主循环 [esi+4] 状态机（0x623120 → 0x5b9f30 + 0x5ba060 + 0x5bac60 + IAT）+ [esi+8]/[esi+9] 标志 + 0x6990a0（[0xa8b238] 门控——batch 2217 族）+ 0x81c5f0/0x81c5e8 串选日志；
+4. b 路 ★RawFileClass 族（0x65ca80/0x65d0d0/0x65cce0）+ 0x43ad00/0x55c720 构造（0x7e61f0/0x7e61e0）+ 0x55c7c0 装载 + [0xac1154] 释放重建（0x6406f0 + 0x6406e0）+ 0x6425f0 + IAT [0x7e149c]；
+5. b 路 ★0x76 魔数 + 0x693b70 校验 + 计时差循环 + 四析构收口（0x55c780/0x43ae50/0x6c9850/0x65ca00）；
+6. c 路 ★★共享值表 [0xa8da74..0xa8da88] 入队模板（容量判定 + [0xa8da81] 标志 + [0xa8da88] 上限 + 虚表槽 8 + [0xa8da84]++ + [0xa8da78] 存指针）+ [0xa8b54c] 计数 + 参 1 早退 + 0x73=-1 哨兵；
+7. c 路 ★位掩码收尾（[0xa8b260]/[0xa8b31d] and 1 → shl 4/0xb → [0xa8e960] + and ch,0x77 + or dl,0xc0 → [0xa8ed84]=0 → [0xa8b24c]=2）+ 0x6b8b10 刷新。
+
+## 跨批次连接
+
+- ★★batch 2248（c 路 0x5BAC60 设置主控——a 路成功路径调用；c 路共享值表入队同款模板）+ batch 2249（a 路 0x5BAB00 设置轮询器 + c 路 0x5BA060 设置状态机——a 路主循环双调用）+ batch 2250（a 路 0x5B9F30 设置周期处理器 + c 路 0x5B82F0 巨型 IAT 关联器——a 路初始化调用）：**设置族五函数宿主闭环（2248-2251 连续四批）**。
+- ★batch 2217（★★[0xa8b238]==4 门控——a 路 0x6990a0）+ batch 2213（★★[0xa8da90] 共享值表三视图——c 路入队）。
+- ★★双虚表 0x7e16b0/0x7e1668（batch 2231/2235/2236/2249/2250——b/c 路 [0xac1154]/[0xac1288] 同脉络）+ RawFileClass 族（batch 2211——b 路）+ [0x887338] 时间戳（batch 2219-2224——a/b/c 三路）。
+
+## 观察项 / 候选池
+
+- **MISSING 1 枚（本批 c 路 callee，观察项排队）**：**0x5B56F0**（ranking.tsv:1024，FUN_005b56f0，210B，deps=2556，c 路 0x5b70a7 校验调用端——**picker 第 18 顺位自然兑现候选**）。
+- **后邻未登记（自然排队）**：0x5B7970（a 后邻——**巨型消息处理回调**：sub esp,0x228 + 0x622b50 比较 + 0x7e1474 IAT + cmp 0x111 分派——**a 路注册的回调本体，大函数观察项**）；0x5B75D0（b 后邻——四 dword 清零器：[0xabf098..0xabf0a4] 四连 mov）；0x5B75F0（b 后邻第二——浮点初始化器：fld [0x7e1710]/[0x7e1708] → 0x7c8fb0 → fadd → 0x4cac40 → fstp [0xabf0b0]）；0x5B7620（b 后邻第三——fld [0xabf0b0] → fdiv [0x7edf68] → fstp [0xabf100]）；0x5B7640（b 后邻第四——fld [0x7e1718] → fdiv [0xabf100] → fstp [0xabf0e8]）。
+- **新观察**：[0xabf10c] 全局设置管理器（a 路登记/清空闭环）+ [0xac1154] 全局对象重建模板（b 路——batch 2250 c 路同脉络）+ [0xa8b54c] 入队计数（c 路）+ 0x5b7970 回调地址 + 0x532100 状态函数（a 路）+ 0x693b70 校验器（b 路）。
+- 前向：picker 队列继续 0x5B/0x5C 区（0x5B7970 消息回调 + 0x5B56F0 MISSING 兑现 + 0x5B77E0 前邻 0x5B77C0 + 0x5B77E0 后邻）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
