@@ -1,0 +1,78 @@
+# frontier batch 2326：表装载统计器 + 尾跳装载器 ×2（0x542520 / 0x542500 / 0x5424A0）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x542520 FUN_00542520 callees=3 deps=2550 / 0x542500 FUN_00542500 callees=1 deps=2550 / 0x5424A0 FUN_005424a0 callees=1 deps=2）
+- 三路 disasm：`.qwen/tmp/_d2326a.txt`（0x542520 size 0x120）/ `_d2326b.txt`（0x542500 size 0x30）/ `_d2326c.txt`（0x5424A0 size 0x40）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x542520 | 247B（0xF7）| ret c3 @0x542616 | 0x542620（★batch 2325 c 路已登记）| 3 次/去重 3（0x735090/0x48ba90/0x48ba80——已登记，picker callees=3 吻合）|
+| 0x542500 | 18B（0x12）| jmp 0x48ba80 尾跳 @0x54250A + ret c3 @0x542511 | 0x542520（★本批 a 路）| 1 次/去重 1（0x48ba80——已登记，picker callees=1 吻合）|
+| 0x5424A0 | 19B（0x13）| ret 4 @0x5424B0 | 0x5424C0（未登记——[ecx+0x48] jmp 0x48ba80 孪生）| 1 次/去重 1（0x48ba80——已登记，picker callees=1 吻合）|
+
+## a 路 0x542520（247B）——表装载统计器
+
+```
+00542520  push ebx/ebp → mov ebp, ecx（this）→ xor ebx, ebx（i=0）
+00542526  mov eax, [ebp+0x44] → test → jle 0x542614（★计数门控）
+00542531  push esi/edi → lea edi, [ebp+0x28]（★源表）→ mov esi, 0xa8b5b4（★目标表）
+0054253b  ★循环：mov eax, [edi]（源表项）→ mov edx, [0xa8022c]（★类型表）→ mov ecx, [eax+0x64] → mov ecx, [edx+ecx*4] → test → je 0x542600
+00542551  cmp ecx, [0xa83d4c] → je 0x542600（★类型排除）
+0054255d  mov dl, [esi-0x40]（★目标表已装载门控）→ lea ecx, [esi-0x40] → test → jne 0x542589
+00542567  push -1 → lea edx, [eax+0x68] → call 0x735090（★装载）→ ★源表三字段拷贝（[eax+0x4c]/[eax+0x4c+4]/[eax+0x4c+8] → [esi+0x1c] 区）
+00542589  mov ecx, [edi] → mov ecx, [ecx+4] → call 0x48ba90（★对象装载 1）→ ★★0x88888889 除法缩比 ÷100（shl 3/mul/shr 5）→ ★max 比较（[esi] vs edx → 取大存 [esi]）
+005425bc  mov ecx, [edi] → mov ecx, [ecx+4] → call 0x48ba80（★对象装载 2）→ ★★0x88888889 除法缩比 ÷1000000 → ★max 比较（[esi+0x10]）
+005425e8  mov eax, [edi] → mov ecx, [eax+8] → mov [esi+4], ecx → mov eax, [edx+0xc] → mov [esi+8], eax → mov edx, [ecx+0x10] → mov [esi+0xc], edx（★★四字段拷贝）
+00542600  mov eax, [ebp+0x44] → inc ebx → add edi, 4 → add esi, 0x68（★目标表 0x68 步长）→ cmp ebx, eax → jl 0x54253b
+00542616  pop 四件套 → ret c3
+```
+
+**语义**：**表装载统计器（推断名）**——thiscall：[ebp+0x44] 计数循环 → [edi]=[ebp+0x28] 源表逐项 → ★[0xa8022c] 类型表 + [eax+0x64] 索引 + [0xa83d4c] 排除 → ★0x735090 装载（push -1）→ ★0x48ba90/0x48ba80 对象装载 + ★★[0x88888889] ÷100/÷1000000 缩比 + max 统计 → ★四字段拷贝到 [0xa8b5b4] 目标表（0x68 步长）→ ret c3。**源表统计装载（★★÷100/÷1000000 双缩比 + max 统计 + 0x68 步长目标表——batch 2325 c 路 [0x88888889] 同族）**。
+
+## b 路 0x542500（18B）——尾跳装载器 A
+
+```
+00542500  mov eax, [ecx+0x50]（★子对象）→ test → je 0x54250f
+00542507  mov ecx, [eax+4] → jmp 0x48ba80（★尾跳装载——栈参不变）
+0054250f  xor eax, eax → ret c3
+```
+
+**语义**：**尾跳装载器 A（推断名）**——thiscall 无栈参：[ecx+0x50] 非空 → [eax+4] 入 ecx → ★尾跳 0x48ba80（★对象装载——栈参原样透传）；空 → 返 0 → ret c3。**子对象尾跳装载（18B 极简——[ecx+0x50] 容器族）**。
+
+## c 路 0x5424A0（19B）——下标装载器
+
+```
+005424a0  mov eax, [esp+4]（★栈参 1 = 下标）→ mov ecx, [ecx+eax*4+0x28]（★表项 [ecx+0x28] 下标）→ mov ecx, [ecx+4] → call 0x48ba80（★对象装载）→ ret 4
+```
+
+**语义**：**下标装载器（推断名）**——thiscall 1 栈参（下标）：[ecx+eax*4+0x28] 表项（★[ebp+0x28] 源表族）→ [ecx+4] → 0x48ba80 对象装载 → ret 4。**源表下标装载（19B——★与 a 路同 [ebp+0x28] 表族）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 3 次/去重 3（0x735090/0x48ba90/0x48ba80）——**全部已登记**（picker callees=3 吻合）。
+- b 路：跨函数直接 jmp 1 个/去重 1（0x48ba80——★尾跳）——**已登记**（picker callees=1 吻合）。
+- c 路：跨函数直接 call 1 个/去重 1（0x48ba80）——**已登记**（picker callees=1 吻合）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING、无批内自引用**（连续四十三批三路全登记）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★[0xa8022c] 类型表 + [eax+0x64] 索引 + [0xa83d4c] 排除门控;
+2. a 路 ★★[esi-0x40] 已装载门控（0x735090 装载 + 源表三字段拷贝 [eax+0x4c] → [esi+0x1c]）;
+3. a 路 ★★[0x88888889] ÷100/÷1000000 双缩比 + max 统计（[esi]/[esi+0x10] 取大）;
+4. a 路 ★★四字段拷贝（[eax+8]/[0xc]/[0x10] → [esi+4]/[8]/[0xc]）+ 目标表 [0xa8b5b4] 0x68 步长;
+5. b 路 ★★[ecx+0x50] 门控 + jmp 0x48ba80 尾跳（栈参透传——★尾跳装载惯用）;
+6. c 路 ★★[ecx+eax*4+0x28] 表项下标 + 0x48ba80（★19B 极简下标装载）。
+
+## 跨批次连接
+
+- ★★batch 2325 c 路（0x542620 巨型格式化日志宿主——a 路 [0x88888889] 缩比/[0xa8022c] 表同源 + 0x48ba80/0x48ba90 装载链）+ batch 2317 a 路（0x552D60——a 路 0x48ba80 邻域装载同源）。
+- ★★batch 2320 b/c 路（0x550240/0x550150——b/c 路容器门控尾跳同源）+ batch 2318 c 路（0x551A90——c 路下标表族同源）。
+- ★★batch 2314（颜色浮点族——a 路 ÷100 缩比同源）+ batch 2302/2308（0x7c5f00 _ftol/fdiv 缩比——a 路缩比同精神）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x5424C0（c 路后邻——[ecx+0x48] jmp 0x48ba80 孪生）；[0xa8b5b4]（a 路目标表 0x68 步长）；[0xa8022c]/[0xa83d4c]（a 路类型表/排除常量）。
+- 未兑现 MISSING 旧观察（继续排队）：0x00486790（2267 起）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150 + ★0x556AD0/0x556EB0/0x556D20 + ★0x554830/0x49E400 + ★0x551B20 + ★0x5517A0/0x5512D0 + ★0x5509E0/0x551300/0x551320/0x551330/0x551370 + ★0x550080/0x54F6F0/0x54F670 + ★0x54E890/0x54E8C0 + ★0x54E590/0x54D930/0x549E90 + ★0x547CE0/0x544BE0 + ★0x543780/0x542EC0 + ★0x5424C0（2326 新观察）。
+- 本批 **无 MISSING**（连续四十三批三路全登记——batch 2276 起，TSV 5461）。next 批预期 top3 = 0x542450 IPXManagerClass::ResponseTime（73B callees=1）/ 0x542280（56B callees=0）/ 0x540F00 IPXManagerClass::Delete_Connection（136B callees=0）。
