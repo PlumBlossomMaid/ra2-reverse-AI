@@ -1,0 +1,75 @@
+# frontier batch 2266：Adding tech buildings 阶段函数 + 四角区域遍历判定器 + Creating LATs/rocks 阶段主函数（0x5A95B0 / 0x5A7B40 / 0x5A4280）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x5A95B0 FUN_005a95b0 callees=13 deps=2723 / 0x5A7B40 FUN_005a7b40 callees=2 deps=5 / 0x5A4280 FUN_005a4280 callees=12 deps=2723）
+- 三路 disasm：`.qwen/tmp/_d2266a.txt`（0x5A95B0 size 0x400）/ `_d2266b.txt`（0x5A7B40 size 0x200）/ `_d2266c.txt`（0x5A4280 size 0x380）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5A95B0 | 870B（0x366）| ret c3 @0x5A9915 | 0x5A9920（已登记——8B 双 dword 结构拷贝器：ret 8）| 21 次/去重 13（0x65c780+0x7c5f00+0x595400+0x5117d0+0x502d30+0x7c8e17+0x43b740+0x598030+0x42d470+0x50e470+0x5657a0+0x486380+0x578540——全部已登记，callees=13 吻合）|
+| 0x5A7B40 | 445B（0x1BD）| ret c3 @0x5A7CFC | 0x5A7D00（未登记——同族变体观察项：[0xa8ed2c] 表 + 虚表槽 0x9c + [esi+0x2e8] 计数遍历）| 2 次/去重 2（0x5657a0 + 0x486670——全部已登记，callees=2 吻合）|
+| 0x5A4280 | 861B（0x35D）| ret c3 @0x5A45DC | 0x5A45E0（已登记——LAT 放置器：lea 5x → 3x2 坐标 + 0x5980c0 正态）| 27 次/去重 12（0x578350+0x578290+0x65c780+0x7c5f00+0x5980c0+0x5a4b60+0x47ca80+0x598030+0x42d470+0x50e470+0x5657a0+0x486380——全部已登记，callees=12 吻合）|
+
+## a 路 0x5A95B0（870B）——Adding tech buildings 阶段函数
+
+```
+005a95b0  mov eax,[ecx+0x3c]（★模式）→ cmp 2 → jne 0x5a9630 → ★模式2 分支：mov ecx,0xabe890 → call 0x65c780（Randomizer::Random 带符号名）→ fild qword [esp+0x3c] × [0x7ed8c0] → _ftol → cmp 2/ja 拒绝采样 → 全局数组遍历：[0xabdfa0] 计数 + [0xabdf94] 表逐项 [edx+0x20] 计数判定 → 0x595400（★成员更新）→ dec 外层次数 → ret
+005a9630  ★主分支：mov ecx,0x82ba08 → call 0x5117d0（★INI 查询）→ call 0x502d30 → Randomizer → fild × [0x7edab0] → _ftol → cmp 4/ja 拒绝采样 → mov [esp+0x28],次数 → push 0x720 → call 0x7c8e17（★0x720 项分配）→ [0x8871e0]+0xaec 计数 → fild × [0x7ed898] 拒绝采样 → [0x8871e0]+0xae0 表取 → 0x43b740（★取项）→ mov [esp+0x1c],循环变量
+005a9713  ★循环体：cmp [esp+0x1c],0x64 → jge 0x5a98ea → [0x89c2dc]² 随机格 → 0x598030（RandomRanged）→ 0x42d470（坐标）→ [0xabed10] work 数组 [esi*5]→shl 4 → 0x50e470（★work 写）→ inc 循环 → cmp 0xc8 → 0x5657a0 取格 → 0x486380 判定 → 0x578540（★放置判定）→ [ebx+0x520] 虚表槽 0x90 调用 → word 坐标相加 → [esp+0x24] 半精度 → 0x5657a0 → [esi+0xe4] 判定 → 0x486380 → [esi+0x11b] 高度 → [esi+0xec] 类型 → 0x578540 → [0x89c2dc] 索引 + [0xabed10]+0x45 work 字节 → 虚表槽 0xd8 调用 → 循环 → dec [esp+0x28] → ret
+```
+
+**语义**：**Adding tech buildings 阶段函数（QWEN.md 实锤——阶段 7 科技建筑）**——★★模式 2（[ecx+0x3c]==2）走全局数组遍历更新；主分支：0x5117d0/0x502d30 INI 查询 + Randomizer 拒绝采样 + 0x720 项分配 + [0x8871e0] 全局 + 0x43b740 取项 + ★随机格选择（[0x89c2dc]² 区间 0x598030 + 0x42d470 + [0xabed10] work 数组 + 0x50e470）+ ★放置判定链（0x5657a0 取格 → 0x486380 → 0x578540 → [ebx+0x520] 虚表槽 0x90 → word 半精度坐标 → [esi+0xe4]/[esi+0x11b]/[esi+0xec] cell 字段判定 → 虚表槽 0xd8 设置）+ Randomizer 循环。**科技建筑放置主流程（RMG 阶段 7——Randomizer 消耗点密集，种子兼容性关键段）**。
+
+## b 路 0x5A7B40（445B）——四角区域遍历判定器
+
+```
+005a7b40  sub esp,0xc → push 四件套 → mov ebp,ecx（★this）→ mov ecx,[0xabed04]（★边界1）→ mov eax,[ebp]（★坐标组1）→ mov ebx,[ebp+4] → movsx esi,ax → movsx edx,bx → lea edi,[edx+esi]（★和）→ cmp [0xabed04] → jle 0x5a7cf3（★边界失败）→ sub edi,edx（★差）→ jge 失败 → sub edx,esi → jge 失败 → cmp [0xabed08]（★边界2）→ jg 失败 → ★第二组：lea esi,[edx+eax-1]（★坐标组2 [ebp+8]+组1）→ movsx 和/差 三连 → cmp [0xabed04]/[0xabed08] → ★第三组：lea esi,[esi+edi-1]（★坐标组3 [ebp+0xc]+组2）→ 和/差三连 → ★第四组：lea esi,[edx+eax-1] 再算 → 全过
+005a7c69  ★双层循环：mov ecx,[ebp+0xc] → add esi,ecx → mov edi,eax → lea esi,[edx+eax] → 循环内：lea edx,[esp+0x14] → mov word [esp+0x16],cx → mov word [esp+0x18],di → push edx → mov ecx,0x87f7e8 → call 0x5657a0（★取格）→ mov ebx,[esi+0x38] → call 0x486670（★判定）→ jne → [0xaa10a4] 区间判定（< / >+7 失败）→ [esi+0xe4] 判定 → 循环 inc → al=1 / 失败 xor al → ret
+```
+
+**语义**：**四角区域遍历判定器（推断名）**——★矩形四角坐标组（[ebp]/[ebp+4]/[ebp+8]/[ebp+0xc] 四组 word）与 [0xabed04]/[0xabed08] 全局边界的**和/差双向边界判定链**（每组 lea 和 + 两个差值 cmp——菱形四角区域判定）+ ★双层循环遍历（0x5657a0 取格 + 0x486670 + [esi+0x38] vs [0xaa10a4] 地形区间 + [esi+0xe4] 判定）+ 成功返 1/失败返 0。**四角区域判定器（batch 1736 0x5902C0 同族——矩形结构四角菱形判定 [0xabed04]/[0xabed08] 边界双全局）**。
+
+## c 路 0x5A4280（861B）——Creating LATs/rocks 阶段主函数
+
+```
+005a4280  push ebp → mov ebp,esp → and esp,0xfffffff8 → sub esp,0x40 → push 四件套 → mov edi,ecx（★this）→ mov ecx,0x87f7e8 → call 0x578350（★MapClass::CellIterator_Reset 带符号名）→ call 0x578290（★MapClass::CellIterator_Next）→ 循环：mov ecx,[eax+0x24]（★坐标）→ movsx word 索引 → imul [0x89c2dc] → lea [eax+eax*4] → shl 4 → [0xabed10] work 数组 → mov [edx+eax+0x3c],0（★work 清 0）→ Next 循环
+005a42e2  ★第二段：Reset → Next → 循环：mov ecx,[esi+0x24] → mov edx,[0xabed10] → 索引 → call 0x486380（★判定）→ [esi+0x11c] 字节判定 → [ebp+0x45] work 判定 → mov eax,[esi+0x24] → Randomizer → fild × [0x7ed898] → fcomp [ebp+0x28]（★概率判定）→ je → NormalDeviate 0x5980c0（0xabdfb8）→ fmul [0x7ece60] → fadd [0x7e44c8] → fcomp [0x7e3cc8] → 拒绝采样 → fcomp [0x7e1728] → 0x5a4b60（★LAT 放置）→ Next 循环
+005a43f0  ★第三段：Reset → Next → call 0x47ca80（★RecalcAttributes）→ 循环
+005a441d  ★主循环：fild [edi+0x64] × [0x7e3860] + [0x7edac0] × [edi+0x5c] × [0x7e3808] → fimul [edi+0x2fc] → _ftol → 循环：Randomizer（[0x89c2dc]² 拒绝采样）→ 0x42d470 → [0xabed10] → 0x50e470 → 0x5657a0 → 0x486380 → 判定 → ★双正态 NormalDeviate（[0x7e3860]/[0x7e3548] 与 [0x7e44a8]/[0x7edab8] 双拒绝采样）→ 0x7c5f00 → 0x5657a0 → 0x5a45e0（★LAT 放置器）→ sub [esp+0x24] 次数 → 循环 → ret
+```
+
+**语义**：**Creating LATs/rocks 阶段主函数（QWEN.md 实锤——阶段 10 LAT 装饰）**——★★三段 CellIterator（0x578350/0x578290 带符号名）遍历：1）全图 work [0xabed10]+0x3c 清 0；2）★LAT 概率放置（0x486380 判定 + [esi+0x11c]/[ebp+0x45] 双重 work 判定 + Randomizer × [0x7ed898] 概率 + ★NormalDeviate 0x5980c0 正态拒绝采样 + 0x5a4b60 放置）；3）RecalcAttributes 0x47ca80 全图刷新；★主循环：[edi+0x64]/[edi+0x5c]/[edi+0x2fc] 数量计算 → Randomizer 随机格 → ★双正态 NormalDeviate（两组常量 [0x7e3860]/[0x7e3548] 与 [0x7e44a8]/[0x7edab8]）→ 0x5a45e0 放置。**LAT 装饰主流程（Randomizer 消耗密集——阶段 10 种子兼容性关键段）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 21 次/去重 13 个——**全部已登记**（0x65c780/0x7c5f00/0x595400/0x5117d0/0x502d30/0x7c8e17/0x43b740/0x598030/0x42d470/0x50e470/0x5657a0/0x486380/0x578540）；picker callees=13 吻合。
+- b 路：跨函数直接 call 2 个（0x5657a0 + 0x486670）——**全部已登记**（callees=2 吻合）。
+- c 路：跨函数直接 call 27 次/去重 12 个——**全部已登记**（0x578350/0x578290/0x65c780/0x7c5f00/0x5980c0/0x5a4b60/0x47ca80/0x598030/0x42d470/0x50e470/0x5657a0/0x486380）；picker callees=12 吻合。
+- ★核验脚本（norm() 规范化版）输出：**三路全 PASS，无 MISSING、无批内自引用**——本批零观察项新增。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★[ecx+0x3c] 模式 2 分支走全局数组遍历更新（[0xabdfa0]/[0xabdf94] + 0x595400）；主分支 INI 查询（0x5117d0/0x502d30）;
+2. a 路 ★★Randomizer 拒绝采样惯用（fild qword 无符号 × 常量 → _ftol → cmp/ja——**fild 无符号语义 + [0x7ed8c0]/[0x7edab0]/[0x7ed898] 常量**）;
+3. a 路 ★[0x89c2dc]² 随机格 + 0x598030 RandomRanged + [0xabed10] work 数组 0x50e470 写 + 循环 0xc8 上限;
+4. a 路 ★放置判定链：[ebx+0x520] 虚表槽 0x90 + word 半精度坐标（[esp+0x24] 相加）+ [esi+0xe4]/[esi+0x11b]/[esi+0xec] cell 字段 + 0x578540;
+5. b 路 ★★四角边界判定：lea [edx+esi] 和 + 两个差值（sub edi,edx / sub edx,esi）三连 cmp [0xabed04]/[0xabed08]——**6 组边界全过才进入双层循环**;
+6. b 路 ★[esi+0x38] vs [0xaa10a4] 区间判定（< 或 >+7 失败——地形区间 [x, x+7]）;
+7. c 路 ★★NormalDeviate 0x5980c0 双正态拒绝采样（每组 fmul/fadd 常量 + fcomp 双阈值 [0x7e3cc8]/[0x7e1728] 与 [0x7e8ae8]/[0x7e3550] 与 [0x7e44a8]/[0x7eda10]——**跨阶段缓存标志串（QWEN.md NormalDeviate@0x5980C0 怪癖）**）;
+8. c 路 ★[edi+0x64]/[edi+0x5c]/[edi+0x2fc] 数量公式（fild × [0x7e3860] + [0x7edac0] × [0x7e3808] → fimul [edi+0x2fc] → _ftol）;
+9. c 路 ★第一段遍历 work [0xabed10]+0x3c 全图清 0（**每次 LAT 装饰前冷启动清理——batch 2256 全图清惯例**）。
+
+## 跨批次连接
+
+- ★★★**QWEN.md RMG 流水线实锤兑现**：a 路 0x5A95B0 = Adding tech buildings（阶段 7）、c 路 0x5A4280 = Creating LATs/rocks（阶段 10）——**RMG 主流程两阶段登记完毕**（QWEN.md 全景：0x594B50/0x5A1FB0 出生点、0x5A23A0 tiberium、0x5A35F0 hills、0x5A38C0/0x5A3AE0/0x5A4280 LATs）。
+- ★★batch 2258（场景巨型分派器——[0xabed04]/[0xabed08] 边界同族）+ batch 1736（0x5902C0 四角菱形判定——b 路同族）+ batch 2245（MapClass::CellIterator 0x578350/0x578290 带符号名——c 路三处复用）。
+- ★Randomizer 0x65c780 / RandomRanged 0x598030 / NormalDeviate 0x5980C0（带符号名——a/c 路核心随机件）+ [0xabed10] work 数组（a/c 路——QWEN.md 每格 0x50 字节工作记录数组）。
+
+## 观察项 / 候选池
+
+- **本批零 MISSING、零批内自引用**（三路 callee 全部已登记）。
+- **后邻未登记（自然排队）**：0x5A7D00（b 路后邻——同族变体：[0xa8ed2c] 表 + 虚表槽 0x9c + [esi+0x2e8] 计数遍历——四角判定器孪生）。
+- **新观察**：RMG 阶段 7/10 主函数（a/c 路——**Randomizer 消耗点密集段，CLI 复刻对齐关键**）+ [edi+0x64]/[edi+0x5c]/[edi+0x2fc] 数量公式常量族（c 路）+ [0x7ed8c0]/[0x7edab0]/[0x7ed898] 拒绝采样常量（a/c 路——QWEN.md scaled_random 常量表 [0x7ED9E8]/[0x7ED9E0]/[0x7ED9D8] 同区）。
+- 前向：picker 队列继续 0x5A 区（0x5A3AE0/0x5A35F0/0x5A23A0/0x5A1FB0 大宿主——RMG 阶段函数链）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
