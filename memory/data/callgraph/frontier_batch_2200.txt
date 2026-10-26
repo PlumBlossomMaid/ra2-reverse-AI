@@ -1,0 +1,60 @@
+# frontier batch 2200：0x5F 区虚表跳转/判定族三连（虚表槽 0x138 尾调用跳转器 + ObjectClass::IsInAir + ObjectClass::IsOnFloor）（0x5F6C70 / 0x5F6B90 / 0x5F6B60）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5F6C70 FUN_005f6c70 callees=0 deps=2 / 0x5F6B90 ObjectClass::IsInAir callees=0 deps=1 / 0x5F6B60 ObjectClass::IsOnFloor callees=0 deps=6）
+- 三路 disasm：`.qwen/tmp/_d2200a.txt`（0x5F6C70 size 0x80）/ `_d2200b.txt`（0x5F6B90 size 0x80）/ `_d2200c.txt`（0x5F6B60 size 0x80）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x5F6C70 | 8B（0x8）| jmp @0x5F6C72（无 ret——尾调用形态）| 0x5F6C80（虚表槽 0x48 调用 + 12B 拷贝——同族取数器，未登记）| 0（mov eax,[ecx]+jmp [eax+0x138]——callees=0 吻合）|
+| 0x5F6B90 | 34B（0x22）| ret c3 @0x5F6BAE/0x5F6BB1 | 0x5F6BC0（xor eax+ret 恒 0 器；0x5F6BD0 虚表槽 0xac ×2 求和器——连排，未登记）| 0（[eax+0x1c8] 虚表槽间接——callees=0 吻合）|
+| 0x5F6B60 | 34B（0x22）| ret c3 @0x5F6B7E/0x5F6B81 | 0x5F6B90（= b 路本体——IsInAir/IsOnFloor 孪生互指）| 0（[eax+0x1c8] 虚表槽间接——callees=0 吻合）|
+
+三函数为 **0x5F 区虚表跳转/判定族**（ObjectClass 带名 + [ecx+0x74] 字段 + [0xac13c8] 全局——0x5F 区对象判定族）：
+
+## a 路 0x5F6C70（8B）——虚表槽 0x138 尾调用跳转器
+
+```
+005f6c70  mov eax,[ecx]（★虚表指针）→ jmp dword ptr [eax+0x138]（★虚表槽 0x138 尾调用跳转——无 ret，直接跳转）
+```
+**语义**：**虚表槽 0x138 尾调用跳转器（推断名）**——① ★mov eax,[ecx] 取虚表 → jmp [eax+0x138]（★虚表槽 0x138——高级接口转发/封装惯用，8 字节妖精函数）。**虚表槽转发端（jmp 尾调用形态——深层接口透传）**。
+
+## b 路 0x5F6B90（34B）——ObjectClass::IsInAir
+
+```
+005f6b90  mov al,[ecx+0x74]（★字段 0x74 字节——当前状态判定）→ test → je 0x5f6baf（未激活返 0）→ ★虚表槽 0x1c8（[eax+0x1c8] 调用——取高度/下标）→ mov ecx,[0xac13c8]（★全局基准）→ lea edx,[ecx+ecx]（★基准×2）→ cmp eax,edx（返回 vs 双倍基准）→ jl 0x5f6baf → mov al,1 返 1 → 0x5f6baf：xor al,al 返 0
+```
+**语义**：**ObjectClass::IsInAir（YRpp 带名 ObjectClass::IsInAir）**——① ★[ecx+0x74] 字节门控（激活状态）；② ★虚表槽 0x1c8 调用（取高度）+ [0xac13c8] 全局基准 ×2 比较：jge 双倍基准即"在空中"返 1（★iGE 判定——is in air 语义）；③ 未激活/偏低返 0。**空中判定端（高度 ≥ 2×全局基准）**。
+
+## c 路 0x5F6B60（34B）——ObjectClass::IsOnFloor
+
+```
+005f6b60  与 b 路同构（mov al,[ecx+0x74] → test → je 0x5f6b7f → 虚表槽 0x1c8 → [0xac13c8]×2 → cmp）→ ★jge 0x5f6b7f（★与 b 路 jl 相反——条件取反）→ mov al,1 返 1 → 0x5f6b7f：xor al,al 返 0
+```
+**语义**：**ObjectClass::IsOnFloor（YRpp 带名 ObjectClass::IsOnFloor）**——① 与 b 路**完全同骨架**（[ecx+0x74] 门控 + 虚表槽 0x1c8 + [0xac13c8]×2）；② ★比较分支翻转：jl 双倍基准 → 在地面返 1（**IsInAir jge vs IsOnFloor jl——相反条件孪生对**）。**地面判定端（高度 < 2×全局基准——b 路相反条件对）**。
+
+## callee 核验
+
+- a 路：0 个直接 call（mov+jmp 尾调用——callees=0 吻合）。
+- b 路：0 个直接 call（[eax+0x1c8] 虚表槽间接——callees=0 吻合）。
+- c 路：0 个直接 call（[eax+0x1c8] 虚表槽间接——callees=0 吻合）。
+
+## 原版怪癖（照抄）
+
+1. b/c 路 ★[ecx+0x74] 字节门控惯用（激活状态前置判定）；
+2. b/c 路 ★虚表槽 0x1c8 调用 + [0xac13c8] 全局基准 ×2（lea edx,[ecx+ecx]——整数双倍惯用）+ 条件翻转孪生（jg/jl）；
+3. a 路 ★jmp [eax+0x138] 尾调用（无 ret——接口透传妖精函数）。
+
+## 跨批次连接
+
+- ★★ObjectClass 带名族（0x5F6B60/0x5F6B90——YRpp 符号源）；batch 2199（0x5F7320 对象构造器——同 0x5F 区对象族）。
+- ★batch 2194/2195（0x7c8ef4/0x7c9ff0 无关，[0xac13c8] 全局基准——0xac 区全局网）。
+
+## 观察项 / 候选池
+
+- **MISSING：无**（a/b/c 均 0 个直接 call——全虚表槽间接）。
+- **后邻未登记**：0x5F6C80（a 后邻——虚表槽 0x48 + 12B 拷贝）、0x5F6BC0/0x5F6BD0（b 后邻——恒 0 器 + 虚表槽 0xac 求和器）、0x5F6B90（c 后邻 = b 路本体——IsInAir/IsOnFloor 孪生互指）。
+- **新观察**：[ecx+0x74] 激活字节（b/c 路）；[0xac13c8] 高度基准全局（b/c 路）；虚表槽 0x1c8（b/c 路——高度查询槽）。
+- 前向：picker 队列继续 0x5F 区（0x5F6C80/0x5F6BD0 连排链）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
