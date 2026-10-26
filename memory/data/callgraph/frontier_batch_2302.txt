@@ -1,0 +1,89 @@
+# frontier batch 2302：六字段装载宿主 + 邻域位清器 + 边界钳位装载器（0x56B3F0 / 0x567F70 / 0x567230）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x56B3F0 FUN_0056b3f0 callees=4 deps=122 / 0x567F70 FUN_00567f70 callees=1 deps=17 / 0x567230 FUN_00567230 callees=4 deps=4）
+- 三路 disasm：`.qwen/tmp/_d2302a.txt`（0x56B3F0 size 0x240）/ `_d2302b.txt`（0x567F70 size 0x260）/ `_d2302c.txt`（0x567230 size 0x1C0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x56B3F0 | 420B（0x1A4）| ret 4 @0x56B591 | 0x56B5A0（★★已登记——batch 2301 c 路三重全图装载宿主）| 9 次/去重 4（0x55c2b0+0x631cc0+0x55c350+0x55c310——全部已登记，picker callees=4 吻合）|
+| 0x567F70 | 464B（0x1D0）| ret 8 @0x56813D | 0x568140（未登记——同族孪生：0x6d20e0+0x77777777 imul）| 2 次/去重 1（0x6d20e0——已登记，picker callees=1 吻合）|
+| 0x567230 | 315B（0x13B）| ret 4 @0x567368 | 0x567370（未登记——12 参跳转包装器 ret 0x24）| 4 次/去重 4（0x421b60+0x4f42f0+0x578460+0x50b6f0——全部已登记，picker callees=4 吻合）|
+
+## a 路 0x56B3F0（420B）——六字段装载宿主
+
+```
+0056b3f0  mov esi, ecx（this）→ ★★0x55c2b0（push 0x2000/0 ——★容器构造）→ ★0x631cc0（参1 坐标装载）
+0056b419  mov ecx, [esi+0x140]（★项数）→ xor edi（★累加器）→ jle 0x56b558（0 项早退）
+0056b431  ★★项循环（eax∈[0, [esi+0x140])）：[esi+0x13c] 表层 [ecx+eax*4] → test esi → je 跳过
+0056b44a  mov ebx, [esi+0x24]（★cell 坐标对）→ movsx 行/列 → ★★边界判定四元：[eax+edx] vs [ecx+0xf4]（jle/jge/jge/jg 四跳法）→ [esi+0xf8] 尺寸扩展 [0xf4]+[0xf8]*2
+0056b4a1  ★★[0xabd480]/[0xabd482] 坐标匹配（cmp bx/je 跳过）→ cmp esi, 0xabdc50（★哑元排除）→ cmp dword [esi+0x38], 0xffff → jne → ★★cell+0x11b 门控（byte jle 跳过）
+0056b4db  ★★六字段装载（0x55c350 ×6）：[esp+0x14] 坐标对 push 4 → [esi+0x38] push 4 → cell+0x11a push 1 → cell+0x11b push 1 → cell+0x119 push 1 → ★累加 edi += eax ×5
+0056b53b  循环推进 → 结束
+0056b558  ★★收尾：[0xabd480] 坐标回注 [esp+0x10] → 0x55c350 → ★虚表槽 4（call [edx+4]）→ 0x55c310 收尾 → ★lea eax, [esi+edi]（★累加和返回）→ ret 4
+```
+
+**语义**：**六字段装载宿主（推断名）**——★★0x55c2b0 容器 + 0x631cc0 坐标装载 + ★★[esi+0x140] 项循环（cell 表 [esi+0x13c]）→ ★★边界判定四元（cell 坐标 vs [0xf4]/[0xf8] 尺寸——★batch 2299 b 路 RecalculateZones 同族）+ ★★[0xabd480]/[0xabd482] 坐标匹配跳过 + 哑元排除 + ★cell+0x38 0xffff 与 cell+0x11b 门控 → ★★六字段装载（0x55c350 ×6：坐标对/cell+0x38/cell+0x11a/cell+0x11b/cell+0x119）→ ★累加和 eax=[虚表槽4]+edi → ret 4。**cell 数据聚合宿主（六字段装载 + 边界裁剪 + 全局坐标排除——★0x55c3xx 装载族新现场**）**。
+
+## b 路 0x567F70（464B）——邻域位清器
+
+```
+00567f70  mov eax, [esp+0x14]（参1 坐标）→ mov esi, [eax] → mov edi, [eax+4] → mov ebx, [eax+8]（★三 dword 拆）
+00567f84  ★★0x6d20e0（★坐标换算）×2 → ★★0x77777777 imul ÷16（sar 4 + shr 0x1f 校正——★★除法缩比常量）→ shl 8 → ★坐标三字段拼接
+00567fd6  ★★cdq/sar 8 量化（两坐标 + 0x80 舍入——★半格偏移）→ mov edx, 0xfffffffe → ★★双循环扫描（ebx∈[ecx-2, ecx+2]×edx∈…——5×5 邻域）
+00568015  ★★平方和（imul 自乘 + add——★距离平方）→ cmp jge 跳过
+00568039  ★★格坐标累加（[esp+0x18]/[0x1a] + ebx/edx）→ ★★[0x87f924] 查格（双次回落哑元）→ ★★cell+0x130 判定（cmp 0 → jne 跳过）→ ★★cell+0x130=1 写 + ★cell+0x12c 清位（and 0xfffffff7 / and 0xffffffef——bit3/bit4 清除）
+00568119  循环推进（inc edx/ebx）→ ret 8
+```
+
+**语义**：**邻域位清器（推断名）**——★★参1 三 dword 坐标 → ★0x6d20e0 ×2 + ★★0x77777777 imul ÷16 校正（★除法缩比常量族——batch 2300 c 路 0x7e07e07f 之外新常量）→ ★★cdq/sar 8 量化（+0x80 舍入）→ ★★5×5 邻域双循环（距离平方 imul 门控）→ ★★[0x87f924] 查格回落哑元 → ★★cell+0x130 判定/置 1 + cell+0x12c 清位（and 0xfffffff7/0xffffffef——bit3/bit4 邻域占用标记清）→ ret 8。**邻域占用标记清除器（5×5 扫描 + ÷16 量化 + cell+0x12c/0x130 位域——★batch 2296/2298 cell 位域族**）**。
+
+## c 路 0x567230（315B）——边界钳位装载器
+
+```
+00567230  mov edx, [esp+0x14]（参3）→ mov edi, ecx（this）
+0056723c  push 0×2 → lea eax, [edi+0xec] → ★0x421b60（★装载）→ ★★十二 dword 拷贝（[eax]/[eax+4]/[eax+8]/[eax+0xc] → [edi+0xfc]）
+0056726e  ★★边界钳位四元：[esi]=max(2, [esi])（cmp jg/set mov 2）→ [edi+0x100] 同理 → [edi+0x104]=min([ecx-2], [0x104])（jge 跳过）→ [edi+0x108]=min([0xf8-2-6], [0x108])（★★四边界钳位）
+005672c6  push 2 → mov ecx, 0x87f7e8 → ★0x4f42f0（★已登记）
+005672d3  ★★[0xa8ec88] 循环（ebp∈[0, 计数)）：[0xa8ec7c] 表 [ecx+ebp*4] → mov bl, [esi+0x3d5]（★对象+0x3d5 标志）→ ★虚表槽 0x1b8 调用 → ★0x578460 判定（★已登记——区域判定）→ mov [esi+0x3d5], al
+0056730e  ★★级联门控：[0x21c] 对象 → ★0x50b6f0（★已登记）→ test → ★虚表槽 0x2c 调用 cmp eax, 6（★★对象族类型判 6）→ [esi+0x90] 字节门控 → [esi+0x81] 取反门控 → ★虚表槽 0x120 双 0 调用
+00567357  循环推进 → ret 4
+```
+
+**语义**：**边界钳位装载器（推断名）**——★★参3 坐标 → ★0x421b60 装载 + 十二 dword 拷贝（[edi+0xec] → [edi+0xfc]）→ ★★四边界钳位（[0xfc]/[0x100] max 2 + [0x104]/[0x108] min 钳——★[0xf4]/[0xf8] 尺寸族）→ ★0x4f42f0（已登记）→ ★★[0xa8ec88] 对象族循环（[0xa8ec7c] 表——★batch 2296 c 路 [0xa8ed2c] 同族）→ ★0x578460 判定 + ★对象+0x3d5 标志写入 → ★★级联门控（0x50b6f0 + 虚表槽 0x2c 类型==6 判 + [0x90]/[0x81] 字节——★重建可见性语义）→ ★虚表槽 0x120 调用 → ret 4。**对象族可见性更新宿主（边界钳位 + 对象遍历 + 虚表槽级联——★带虚表槽 0x1b8/0x2c/0x120 三槽**）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 9 个/去重 4（0x55c2b0/0x631cc0/0x55c350/0x55c310）——**全部已登记**（picker callees=4 吻合——虚表槽 4 属间接调用不计）。
+- b 路：跨函数直接 call 2 个/去重 1（0x6d20e0）——**全部已登记**（picker callees=1 吻合）。
+- c 路：跨函数直接 call 4 个/去重 4（0x421b60/0x4f42f0/0x578460/0x50b6f0）——**全部已登记**（picker callees=4 吻合——虚表槽 0x1b8/0x2c/0x120 属间接调用不计）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING**（连续二十五批三路全登记——batch 2276 起）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★[esi+0x140] 项循环 + [esi+0x13c] 表层（cell 数组遍历——★batch 2275/2299 同族）;
+2. a 路 ★★边界判定四元（[eax+edx] vs [0xf4]/[0xf8]+[0xf4]——jle/jge/jge/jg 四跳法）;
+3. a 路 ★★cell+0x38 0xffff 判定 + cell+0x11b 字节门控（jle 跳——★负值跳过）;
+4. a 路 ★★六字段装载累加（0x55c350 ×6 + edi += eax×5——★装载宽度 4/4/1/1/1 混合）;
+5. a 路 ★★[0xabd480] 坐标回注 [esp+0x10]（★收尾段全局坐标覆盖参1——★batch 2300 a 路同款）;
+6. b 路 ★★0x77777777 imul ÷16（sar 4 + shr 0x1f 校正——★★新除法缩比常量）;
+7. b 路 ★★cdq/sar 8 量化（+0x80 舍入——半格偏移）;
+8. b 路 ★★5×5 邻域双循环（距离平方 imul 门控——jge 跳）;
+9. b 路 ★★cell+0x130 判定/置 1 + cell+0x12c 清位（and 0xfffffff7/0xffffffef——bit3/bit4）;
+10. c 路 ★★边界钳位四元（max 2 / min 钳——[0xfc]/[0x100]/[0x104]/[0x108] 边界族）;
+11. c 路 ★★对象+0x3d5 标志读写 + 虚表槽 0x2c 类型==6 判 + [0x90]/[0x81] 字节门控（★★可见性状态机）。
+
+## 跨批次连接
+
+- ★★★batch 2301 c 路（0x56B5A0 三重全图装载宿主——a 路后邻 + 0x55c3xx 装载族同源）+ batch 2300 a 路（0x56BBE0——a 路收尾全局坐标回注同款）。
+- ★★batch 2299 b 路（0x56D5A0 RecalculateZones——a 路边界判定同族）+ batch 2287/2288（cell+0x140/0x12c 位域——b 路位清 + c 路对象族同源）。
+- ★★batch 2296 b 路（0x571490 巨型宿主——c 路 [0xa8ec7c] 对象表同族）+ batch 2295（0x578390 InLocalRadar——c 路 0x578460 判定同款）。
+- ★★batch 2300 c 路（0x7e07e07f 除法缩比——b 路 0x77777777 新常量对照）+ QWEN.md 常量族。
+
+## 观察项 / 候选池
+
+- **新观察**：0x568140（b 路后邻——同族孪生 0x6d20e0+0x77777777 imul）；0x567370（c 路后邻——12 参跳转包装器 ret 0x24）；0x55C2B0/0x55C310（a 路容器族——0x55c3xx 新族）；[0xa8ec7c]/[0xa8ec88]（c 路对象族表）；0x6D20E0（b 路坐标换算器——已登记新观察点）。
+- 未兑现 MISSING 旧观察：0x00486790（2267 起排队）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430（batch 2280-2301 新观察）。
+- 本批 **无 MISSING**（连续二十五批三路全登记——batch 2276 起，TSV 5389）。next 批预期 top3 = 0x565C10（5374B callees=17 巨型宿主）/ 0x565BC0 PhobosHook_MapClass_InitCells（67B callees=1）/ 0x565AA0（94B callees=1）。
