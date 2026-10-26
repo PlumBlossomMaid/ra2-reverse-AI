@@ -1,0 +1,87 @@
+# frontier batch 2294：巨型地形类型选择器 + 六区间判定器 + 最小计数器（0x579620 / 0x578D80 / 0x578AC0）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x579620 FUN_00579620 callees=4 deps=70 / 0x578D80 FUN_00578d80 callees=0 deps=6 / 0x578AC0 FUN_00578ac0 callees=0 deps=1）
+- 三路 disasm：`.qwen/tmp/_d2294a.txt`（0x579620 size 0x600）/ `_d2294b.txt`（0x578D80 size 0x100）/ `_d2294c.txt`（0x578AC0 size 0x60）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x579620 | 1352B（0x548）| ret 8 c20800 @0x579B65（al=1）/0x579B59（al=0）| 0x579B70（未登记——cell 类型查：0x58c2a0+cell+0x4a+[0x87f8dc..0x87f8e0] 菱形判定）| 12 次/去重 4（0x598030+0x579b70+0x4a91b0+0x57b440——全部已登记，picker callees=4 吻合）|
+| 0x578D80 | 219B（0xDB）| ret c3 @0x578D94/0x578DC8/0x578DF1/0x578E19/0x578E42/0x578E56/0x578E5A | 0x578E60（未登记——work 数组清 -1+8 邻域遍历区）| 0 次/去重 0（六区间纯内存判定，picker callees=0 吻合）|
+| 0x578AC0 | 7B（0x7）| ret c3 @0x578AC6 | 0x578AD0（未登记——cell+0xe4 对象族遍历区）| 0 次/去重 0（单指令计数器，picker callees=0 吻合）|
+
+## a 路 0x579620（1352B）——巨型地形类型选择器
+
+```
+00579620  sub esp,0x14 → push 四件套 → mov edi,ecx（★this）→ mov edx,5 → xor ecx → ★★call 0x598030（★RandomRanged(0,5)——QWEN.md 0x598030 惯用法现场）→ mov ebp,[esp+0x28]（★参1 cell）→ push ebp → call 0x579b70（★cell 类型查）→ ebx=eax → ★★and eax,0xa0 → cmp al,0xa0 → jne 0x579806（★位掩码分派 1）
+00579658  ★★分派 1（bl&0xa0==0xa0）：坐标 +1 修正 → [0x87f924] 查格（越界回落哑元 0xabdc50）→ 0x579b70 ×3 → ★★test bl,0x20 → jne → test al,0x80 → jne → ★★idiv 3 → add edx,9 → cmp -1 → jne 0x579abd（★余数 → 类型偏移 9）
+00579722  ★★分派 2（bl&2）：坐标修正 ×2 → 0x579b70 ×2 → ★★test bl,4 → test bl,0x18 → and ecx,0xa → cmp cl,0xa → je → idiv 3 → add edx,0x23（★余数 → 偏移 0x23）
+00579806  ★★分派 3（bl&0x82==0x82）：mov edx,0x27（★直接偏移 0x27）→ 0x579ac5
+0057981d  ★★分派 4（bl&0xa==0xa）：mov edx,0x21 → 0x579ac5
+00579830  ★★分派 5（bl&0x28==0x28）：mov edx,0x28 → 0x579ac5
+00579848  ★★分派 6（bl&0xc==0）：test al,2 → test [esp+0x10],1 → mov edx,1 → else 0x26
+0057986c  ★★分派 7（bl&0x20）：坐标修正 → 0x579b70 → test bl,0x10 → test bl,0xc → and eax,0x28 → idiv 3 → add edx,0xf → else 0x12
+00579900  ★★分派 8（bl&8）：坐标修正 ×2 → 0x579b70 ×2 → test bl,4 → test bl,3 → and ecx,0xa → idiv 3 → add edx,0x17 → else 0x15/0x1a
+005799f8  ★★分派 9（bl&0x80）：坐标修正 ×2 → 0x579b70 ×2 → test bl,1 → test bl,6 → and eax,0x82 → idiv 3 → add edx,5 → else 8
+00579a7c  ★★分派 10（收尾链）：test bl,1 → 2 → test bl,4 → and ecx,1 → add ecx,0x1d → test bl,0x10 → 0x16 → test bl,0x40 → idiv 3 → add edx,0xc
+00579ac5  ★★落地段：[0xaa1020] 表 → [0xa8ed2c] 对象表 → [ecx+eax*4-4] 取对象 → ★mov [0x880990],eax（★全局类型写）→ ★★[edx*4+0xabdda4] 坐标表（★新表族）→ add 当前坐标 → ★call 0x4a91b0（★坐标对转换）→ ★★0x57b440 格网处理器（push 6 参——★batch 2269 同款）→ 成功 al=1/失败 al=0 → ret 8
+```
+
+**语义**：**巨型地形类型选择器（推断名）**——★★RandomRanged(0,5)（0x598030——QWEN.md 惯用法）+ ★★十路位掩码分派链（bl&0xa0/0x82/0xa/0x28/0xc/0x20/8/0x80/0x40/…——每支坐标修正 + [0x87f924] 查格 + ★0x579b70 类型查 + ★★idiv 3 余数 → 类型偏移常量 9/0x23/0x27/0x21/0x28/1/0x26/0xf/0x12/0x17/0x15/0x1a/5/8/2/0x1d/0x16/0xc）→ ★★落地段（[0xaa1020] 表 + [0xa8ed2c] 对象表 → [0x880990] 全局类型写 + [0xabdda4] 坐标表 + 0x4a91b0 + ★0x57b440 格网处理器）→ ret 8。**RMG 地形类型选择宿主（十路位掩码分派 + idiv 3 余数偏移 + 0x57b440 格网放置——batch 2269 c 路 0x59E740 同族**）**。
+
+## b 路 0x578D80（219B）——六区间判定器
+
+```
+00578d80  mov eax,[0xaa1020]（★区间1 基址）→ cmp ecx,eax → jl → add eax,0x28 → jge → ★al=1（★[0xaa1020, +0x28) 区间命中）
+00578d95  ★★区间2：mov eax,[0xaa073c] → cmp → lea esi,[eax+4] → jge → ★cmp ecx,eax → je → add eax,3 → cmp → jne 0x578e53 → ★★edx ∈ {0,4} 特判（test edx → je 0x578e57 → cmp edx,4 → je → ★al=1）
+00578dc9  ★★区间3：mov eax,[0xabb110] → 同模板 → edx ∈ {1,3} 特判
+00578df2  ★★区间4：mov eax,[0xaa1050] → 同模板 → edx ∈ {0,1} 特判
+00578e1a  ★★区间5：mov eax,[0xaa10a0] → 同模板 → edx ∈ {2,3} 特判
+00578e43  ★★区间6：mov eax,[0xabbebc] → add eax,0x14 → jge → 0x578e53 al=1（★[0xabbebc, +0x14) 区间）
+00578e53  al=1 / 0x578e57 al=0 → ret c3
+```
+
+**语义**：**六区间判定器（推断名）**——★★六组 [基址, 基址+宽) 半开区间判定（[0xaa1020]/[0xaa073c]/[0xabb110]/[0xaa1050]/[0xaa10a0]/[0xabbebc]——★RMG 地形类型六区间）+ ★★edx 特判（区间 2: {0,4}、3: {1,3}、4: {0,1}、5: {2,3}——★第二参数类型约束）→ al=1/al=0。**RMG 地形类型六区间判定（[0xaa10xx]/[0xabb1xx]/[0xabbebc] 常量族——a 路落地段 [0xaa1020] 同源）**。
+
+## c 路 0x578AC0（7B）——最小计数器
+
+```
+00578ac0  inc byte ptr [ecx+0x1158]（★this+0x1158 计数器 +1）→ ret c3
+```
+
+**语义**：**最小计数器（推断名）**——★[ecx+0x1158] 单字节计数器递增（★batch 2270/2272 计步器族最小成员）。**字节计数器（单指令——对象计数/事件计数基元）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 12 次/去重 4 个（0x598030/0x579b70/0x4a91b0/0x57b440）——**全部已登记**（picker callees=4 吻合）。
+- b 路：跨函数直接 call 0 次/去重 0 个（六区间纯内存判定）——**picker callees=0 吻合**。
+- c 路：跨函数直接 call 0 次/去重 0 个（单指令计数器）——**picker callees=0 吻合**。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING**（连续十八批三路全登记）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★RandomRanged(0,5)（0x598030——QWEN.md 0x598030 位计数怪癖现场——randmap 取数惯用法）;
+2. a 路 ★★十路位掩码分派链（and/cmp 恒等模式：bl&0xa0==0xa0/bl&0x82==0x82/bl&0xa==0xa/bl&0x28==0x28/bl&0xc==0/bl&0x20/bl&8/bl&0x80/bl&0x40——★batch 2277 b 路 0x590970 同族）;
+3. a 路 ★★idiv 3 余数 → 类型偏移常量（add edx,9/0x23/0xf/0x17/5/0xc——★余数表：9 是 3 余 0 → 类型偏移族）;
+4. a 路 ★★落地段 [0xaa1020] 表 → [0xa8ed2c] 对象表 → [0x880990] 全局类型写（mov [0x880990],eax——★batch 2270/2288 [0x880990] 同款）;
+5. a 路 ★★[edx*4+0xabdda4] 坐标表（★新表族——坐标对偏移表）;
+6. a 路 ★★0x57b440 格网处理器（push 6 参 0/坐标/高度/…——batch 2269 c 路同款）;
+7. b 路 ★★六组半开区间判定（[基址, +宽)：[0xaa1020,+0x28)/[0xaa073c,+4)/[0xabb110,+4)/[0xaa1050,+4)/[0xaa10a0,+4)/[0xabbebc,+0x14)）;
+8. b 路 ★★edx 特判（区间 2: {0,4}、3: {1,3}、4: {0,1}、5: {2,3}——★第二参数类型约束 je 跳过→al=0 else al=1）;
+9. b 路 ★★区间中点号语义（cmp ecx,eax → je → add eax,3 → cmp → jne——★区间 {基址, 基址+3} 两点式）;
+10. c 路 ★★inc byte [ecx+0x1158]（单字节计数器——batch 2270/2272 计步器族最小成员）。
+
+## 跨批次连接
+
+- ★★★batch 2277 b 路（0x590970 巨型位掩码分派器——a 路十路分派同族）+ batch 2269 c 路（0x59E740 RMG 地形巨型生成器——a 路 0x57b440 格网处理器同款）。
+- ★★batch 2270/2288（[0x880990] 类型写 + 0x57b210 类型查——a 路落地段同源）+ batch 2271/2272（0x481810 水域判定——b 路区间判定同源）。
+- ★★batch 2263/2264（容器家族——a 路 [0xa8ed2c] 对象表）+ batch 2273 a 路（[0x87f924] 地图表 + 哑元 0xabdc50——a 路查格同款）。
+- ★★QWEN.md RandomRanged 0x598030（a 路——RNG 里程碑现场）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x579B70（a 路——cell 类型查：0x58c2a0+cell+0x4a+[0x87f8dc..0x87f8e0] 菱形判定，7 处调用）；[0xabdda4] 坐标表（a 路）；0x578E60（b 路后邻——work 数组清 -1+8 邻域遍历区）；0x578AD0（c 路后邻——cell+0xe4 对象族遍历区）。
+- 未兑现 MISSING 旧观察：0x00486790（2267 起排队）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x578640 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430（batch 2280-2293 新观察）。
+- 本批 **无 MISSING**（连续十八批三路全登记——batch 2276 起，TSV 5365）。
