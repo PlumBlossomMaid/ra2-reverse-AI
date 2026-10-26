@@ -1,0 +1,66 @@
+# frontier batch 2153：门控坐标判定器 + 距离钳制重置器 + 坐标对设置器（0x63AB60 / 0x63AB00 / 0x63AAC0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x63AB60 FUN_0063ab60 callees=4 deps=113 / 0x63AB00 FUN_0063ab00 callees=0 deps=349 / 0x63AAC0 FUN_0063aac0 callees=0 deps=349）
+- 三路 disasm：`.qwen/tmp/_d2153a.txt`（0x63AB60 size 0x160，分段全读）/ `_d2153b.txt`（0x63AB00 size 0x80）/ `_d2153c.txt`（0x63AAC0 size 0x80）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x63AB60 | 252B（0xFC）| ret 8 @0x63AC59（多出口）| 0x63AC60（=batch 2152 c 路本尊，已登记）| 4（全已登记）|
+| 0x63AB00 | 86B（0x56）| ret 8 @0x63AB53 | 0x63AB60（=本批 a 路本尊，已登记）| 0 |
+| 0x63AAC0 | 64B（0x40）| ret 8 @0x63AAFD | 0x63AB00（=本批 b 路本尊，已登记）| 0 |
+
+三函数为 **0x63 区门控判定/坐标对全局状态机**——[0xac4cf4]/[0xac4cb0] 双门控 + [0xac4c68]/[0xac4c6c] 坐标对 + [0xac4bf0]/[0xac4ccc]/[0xac4c38] 全局对象：
+
+## a 路 0x63AB60（252B）——门控坐标判定器
+
+```
+0063ab60  mov al,[0xac4cf4]（★门控标志 1）→ test → jne 0x63ab76 → xor al,al → ret 8（关 → 返回 0）
+0063ab76  mov al,[0xac4cb0]（★门控标志 2）→ test → je 0x63ab88 → xor al,al → ret 8（关 → 返回 0）
+0063ab88  mov ecx,[0xac4ccc]（全局对象）→ mov ebx,[0xac4c38] → test ecx → je 0x63ac28 → lea eax,[esp+0x20] → push → ★call 0x6343c0 → 读三元组 → lea ecx,[esp+0xc] → ★call 0x6339e0 → 读三元组 → push 8,8 → ★call 0x42e410（四元组构造——push x-4/y-4 补）→ 四元组边界判定（[esp+0x44] vs [esp+0x30]-4 / +8 范围）→ [0xac4ccc] 命中 → eax=[0xac4ccc] else 0
+0063ac2a  test ebx（[0xac4c38] 旧对象）→ jne 0x63ac3d → test eax → jne 0x63ac45 → xor al,al → ret 8（双空 → 0）
+0063ac3d  cmp eax,ebx → je 0x63ac45 → push 0 else push 1 → push 0 → mov ecx,0x87f7e8（MapClass::Instance）→ ★call 0x5bda80（地图方法——新对象替换）→ mov al,1 → ret 8
+```
+**语义**：**门控坐标判定器（推断名）**——① [0xac4cf4]/[0xac4cb0] 双门控标志任一关闭直接返回 0；② [0xac4ccc] 全局对象 + 0x6343c0/0x6339e0 双三元组 + 0x42e410 四元组构造 + 边界判定（命中返回 [0xac4ccc] else 0）；③ **新旧对象比较**（[0xac4c38] vs [0xac4ccc]）→ MapClass::Instance [0x87f7e8] + 0x5bda80 替换（push 0/1 区分相等/不等）→ 返回 1。**地图坐标点判定 + 全局对象替换器（0x63 区全局状态机核心）**。
+
+## b 路 0x63AB00（86B）——距离钳制重置器
+
+```
+0063ab00  mov al,[0xac4cf4] → xor ecx,ecx → cmp al,cl → mov byte [0xac4cb0],0（★门控 2 清 0）→ je 0x63ab53
+0063ab11  cmp [0xa8ecc8],ecx → jg 0x63ab53（计数 > 0 → 直接返回）→ cmp [0xac4bf0],ecx → je 0x63ab53（对象空 → 返回）
+0063ab21  mov eax,[esp+4]（参数 1）→ mov edx,[0xac4c68]（坐标对 x）→ sub eax,edx → cdq → xor eax,edx → sub eax,edx（★abs 距离）→ cmp eax,3 → jg 0x63ab53（>3 返回）
+0063ab37  mov eax,[esp+8]（参数 2）→ mov edx,[0xac4c6c]（坐标对 y）→ 同上 abs → cmp eax,3 → jg 0x63ab53 → mov [0xac4bf0],ecx（★全局对象清 0）→ ret 8
+```
+**语义**：**距离钳制重置器（推断名）**——① [0xac4cf4] 门控（开时清 [0xac4cb0]=0）；② [a8ecc8] 计数 > 0 或 [0xac4bf0] 空时直接返回；③ 参数 1/2 与 [0xac4c68]/[0xac4c6c] 坐标对的 **abs 距离 ≤ 3** 才清 [0xac4bf0]=0（距离钳制重置——c 路坐标对写入端的消费方）。
+
+## c 路 0x63AAC0（64B）——坐标对设置器
+
+```
+0063aac0  or eax,-1 → or ecx,-1 → mov [0xac4c68],-1 → mov al,[0xac4cf4] → mov byte [0xac4cb0],1（★门控 2 置 1）→ mov [0xac4c6c],-1 → je 0x63aafd（门控 1 关 → 返回）
+0063aae1  mov eax,[0xa8ecc8] → test → jg 0x63aafd（计数 > 0 → 返回）→ mov eax,[esp+4] → mov ecx,[esp+8] → mov [0xac4c68],eax → mov [0xac4c6c],ecx（★坐标对写入）→ ret 8
+```
+**语义**：**坐标对设置器（推断名）**——① 默认 [0xac4c68]/[0xac4c6c] = -1（初始化对）；② [0xac4cf4] 门控开时置 [0xac4cb0]=1；③ [a8ecc8] 计数 ≤ 0 才写入参数 1/2 到 [0xac4c68]/[0xac4c6c] 坐标对。**b 路距离判定的坐标对写入端（三函数全局状态机闭环）**。
+
+## 原版怪癖（照抄）
+
+1. a/b/c 路 ★[0xac4cf4] 门控标志 + [0xac4cb0] 门控 2（a 路读两门控、b 路清门控 2、c 路置门控 2——**三路分工操作同一门控对**）；
+2. b/c 路 ★[0xa8ecc8] 计数判定（> 0 时既不重置也不写入——计数优先原则）；
+3. b 路 abs 距离计算惯用法（sub → cdq → xor eax,edx → sub eax,edx——x86 abs 模板）→ cmp 3 钳制；
+4. a 路四元组构造 0x42e410（push 8,8 + x-4/y-4——batch 2150/2151 同款 0x42e410 框绘制构造）；
+5. a 路 MapClass::Instance [0x87f7e8] + 0x5bda80 替换（push 0/1 区分相等/不等——同对象跳过 vs 替换）；
+6. c 路默认 -1 初始化（or eax,-1/or ecx,-1——batch 2145/2147 同款 -1 惯用法）。
+
+## 跨批次连接
+
+- ★★★batch 2151/2152：**[0xac4bf0] 全局对象网**（batch 2152 c 路读取器 / a 路后邻 setter/清零器 / 本批 b 路重置 + [0xac4ccc]/[0xac4c38] 对象对 batch 2151 a 路同款）。
+- ★★batch 2149-2150（0x6343c0/0x6339e0 三元组 + 0x42e410 四元组/框绘制同款）；★★batch 2137 等（0x5bda80 地图方法族）。
+- ★0x6343c0/0x6339e0/0x42e410/0x5bda80（全部已登记——a 路 4 个直接 call）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（直接 call 全已登记——a 4 个 + b/c 0 个全在 TSV）。
+- **后邻未登记**：无（三路后邻全部为本批/前批已登记本尊——a 后邻=batch 2152 c 路、b/c 后邻=本批相邻路）。
+- **新观察**：[0xac4cf4]/[0xac4cb0]（★双门控标志对——三路分工操作）、[0xac4c68]/[0xac4c6c]（坐标对——b 路消费/c 路写入）、[0xac4ccc]/[0xac4c38]（a 路新旧对象对）。
+- 前向：picker 队列继续 0x63 区 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650。
