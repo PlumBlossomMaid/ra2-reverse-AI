@@ -1,0 +1,66 @@
+# frontier batch 2160：环形四元组构造器 + 记录清理遍历器 + 类型分支装配器（0x638A80 / 0x638840 / 0x638120）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x638A80 FUN_00638a80 callees=2 deps=56 / 0x638840 FUN_00638840 callees=9 deps=188 / 0x638120 FUN_00638120 callees=23 deps=108）
+- 三路 disasm：`.qwen/tmp/_d2160a.txt`（0x638A80 size 0x100）/ `_d2160b.txt`（0x638840 size 0x240，分段全读）/ `_d2160c.txt`（0x638120 size 0x520，分段全读）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x638A80 | 195B（0xC3）| ret @0x638B42 | 0x638B50（cmp cl,9/6/7 类型判定器——未登记）| 2（全已登记）|
+| 0x638840 | 471B（0x1D7）| ret @0x638A16 | 0x638A20（[0xac4c20] 容器尾插器——未登记）| 9（8 已登记 + 1 MISSING 0x633D30）|
+| 0x638120 | 1181B（0x49D）| 双出口 @0x638533/0x6385BC | 0x6385C0（sub esp,0xe0 + 0x705d20 大函数头——未登记）| 23（21 已登记 + 2 MISSING 0x633AC0/0x636EB0）|
+
+三函数为 **0x63 区环形四元组族（[ecx+0x8c]/[0x90]/[0x94] + byte [0x98]/[0x99]）+ [0xac4c78]/[0xac4c88] 容器 + 类型分支记录装配**：
+
+## a 路 0x638A80（195B）——环形四元组构造器
+
+```
+00638a80  push 族 → push 0x9c → ★call 0x7c8e17（new 0x9c）→ test eax → je 0x638ae2 → 构造：[eax+8]=0/[eax+0xc]=0/byte [eax+0x10]=1/byte [eax+0x11]=0/[eax+4]=0x7efe44（虚表）/[eax+0x18]=0xa（步长）/[eax+0x14]=0/byte [eax+0x1c]=0/or edx,-1/byte [eax+0x1d]=0/[eax+0x8c]=-1/[eax+0x90]=-1/[eax+0x94]=-1（★环形三元组 -1 复位）/byte [eax+0x98]=0/byte [eax+0x99]=0/[eax]=edi（宿主）→ mov esi,eax
+00638ae4  ★[0xac4c80]/[0xac4c88] 容器扩容判定（[0xac4c85] owns 标志 + [0xac4c8c] 步长 + 虚表槽 8 扩容调用）→ [0xac4c88] 计数+1 → [0xac4c7c] 数组尾插 esi → push esi → mov ecx,edi → ★call 0x705d10（宿主关联）→ mov eax,esi → ret
+```
+**语义**：**环形四元组构造器（推断名）**——① new 0x9c + 全字段构造（虚表 0x7efe44、[0x18]=0xa 步长、★★环形三元组 [0x8c]/[0x90]/[0x94]=-1 + byte [0x98]/[0x99]=0、[eax]=宿主）；② [0xac4c78] 容器扩容尾插 + 0x705d10 宿主关联。**0x63 区环形四元组对象构造器（batch 2156-2159 环形三元组 [0x90]/[0x94]/[0x98] 字段网构造端）**。
+
+## b 路 0x638840（471B）——记录清理遍历器
+
+```
+00638840  sub esp,0x10 → ★call 0x705d20 → mov ebx,eax → test ebx → je 0x638a12 → mov ecx,[ebx+0x14]（计数）→ sete [esp+0xb]（空标志）→ test → jle 0x638949 → 循环 [ebx+8] 数组（0x638872-0x638941）：mov esi,[ecx+eax*4] → push [ebx] → ★call 0x634290（查找）→ cmp eax,-1 → jne → mov ebp,[edx+eax*4] → test ebp → je 0x638932 → mov al,[ebp+0xc] → test → je → push ebp → ★call 0x6351e0 → mov eax,[ebp+8] → cmp eax,-1 → je 0x6388da → ★[esi+0x24] 数组 [edi+0x74]=-1 → ★call 0x635db0 → [edi+0x70]-- → je → ★call 0x6378b0 → 0x6388da：mov [ebp+8],-1 → ★delete 0x7c8b3d×2 → 虚表槽 0x10 → cmp eax,-1 → je → ★call 0x63ef70 → delete → test [esi+0x10] → jne → test esi → je → ★call 0x633d30（MISSING 观察项）→ delete 0x7c8b3d
+00638949  mov al,[esp+0xb]（空标志）→ test → jne 0x6389e5 → mov eax,[ebx] → mov ecx,[eax+0x21c] → mov esi,[ecx+0x30] → ★call 0x50b6f0（判定）→ test → je 0x638979 → mov eax,[0xa83d4c] → test → je → mov esi,[eax+0x30] → test esi → jl/jge 0x63899c → ★[0xac4b84] 计数递减（sets/dec/and 惯用法）→ [0xac4c40] 虚表槽 0x10 → [0xac4c50] 计数-1 + [0xac4c44] 数组前移压缩 → 0x6389e8：★[ebx+0x8c]/[0x90]/[0x94]=-1 + byte [ebx+0x98]/[0x99]=0（★环形三元组复位）→ ret
+```
+**语义**：**记录清理遍历器（推断名）**——① 0x705d20 + [ebx+0x14] 计数循环 [ebx+8] 数组：0x634290 查找 + [ebp+0xc] 激活判定 + 0x6351e0/0x635db0/0x6378b0 生命周期（[edi+0x74]=-1/[edi+0x70]--）+ delete×2 + 0x63ef70 + 0x633d30（MISSING）；② 空标志后：0x50b6f0 + [0xa83d4c]+0x30 + [0xac4b84] 递减 + [0xac4c40] 虚表槽 0x10 + [0xac4c50] 前移压缩；③ ★环形三元组 [0x8c]/[0x90]/[0x94]=-1 + byte [0x98]/[0x99]=0 复位。**0x63 区记录清理遍历器（[0xac4c40] 容器 + 环形三元组复位收尾）**。
+
+## c 路 0x638120（1181B 大函数）——类型分支装配器
+
+```
+00638120  sub esp,0x2c → test ecx → je 0x638533（空 → 0）→ mov ecx,[0xa83d4c] → movsx eax,[edi+2] → mov ebp,[ecx+0x30] → sete [esp+0x13]（★类型相等标志）→ ★call 0x633bc0 → mov esi,eax → 读三元组（cmp -1 全空 → 0x638533）
+00638171  mov ebx,[0xac4b40] → 循环 [0xac4b34] 数组（0x63819c-0x6381f3）：mov edi,[ecx+ebp*4] → 栈构 3 参 → ★call 0x634550（判定）→ test al → je 跳过 → mov eax,[esp+0x18] → cmp eax,-1 → je → cmp eax,[edi+0x18] → jne 跳过 → ★call 0x6342d0 → ★call 0x6339b0 → cmp esi,-1 → je 0x638252 → cmp esi,eax → je → 0x638252 继续循环
+00638203  ★★0x638ce0（batch 2158 c 路）调度：push → ★call 0x634290 → cmp eax,-1 → jne 0x6385b3 → ★call 0x638ce0 → cmp eax,-1 → je 0x638325 → test cl（类型相等）→ je 0x638533 → test eax → jne 0x63828e → ★类型字节 9/6/7 分支：byte [edi]==9 → 0x63a230（0x836c34 串）→ 0；==6 → 0x63a230（0x836c1c 串）→ 0；==7 → 0x63a230（0x836c00 串）→ 0
+0063828e  ★0x638ce0 返回 1/2 分支：[0xac4c08] 日志门控 → DebugLog 0x734e60（0x836bb8/0x836b9c 串）+ 0x750920 → 0
+00638325  ★构造新对象：0x705d20 → test → jne 0x638378 → new 0x9c → ★call 0x635f20（构造）→ [0xac4c78] → ★call 0x63eb80（入队）→ 0x705d10 → 类型 7/8/9 → [0xac4c90]=0；else ★call 0x638c40（batch 2159 b 路）→ test → [0xac4c90]=0；cmp [ebp+0x14],0xf → [0xac4c90]=2
+006383c4  ★[ebp+0x94] 判定：test → jg → [0xac4c08] 门控 → DebugLog 0x836bf0 → 0；else [ebp+0x14]==0 → [0xac4c48]/[0xac4c50] 容器扩容尾插 esi → ★inc [eax*4+0xac4b84]（计数+1）→ new 0xb8 → ★call 0x63dec0/0x63e1d0（batch 2149 构造器）+ 0x633ac0（MISSING）→ [edi+0xb0]/[0xb4]=-1 → [0xac4b30] → ★call 0x63e540（入队）→ 0x636eb0（MISSING）→ test → je 0x638588 → ★sub esp,0x70 + rep movsd 0x1b 111B → ★call 0x639a50（batch 2156 c 路——记录构造提交器）→ else ★call 0x633fa0 → [0x8871e0]+0x1d8 → 0x750920 → mov al,1 → ret（成功路径）
+```
+**语义**：**类型分支装配器（推断名）**——① 0x633bc0 记录取数 + 三元组判空；② [0xac4b34] 数组循环 0x634550/0x6342d0/0x6339b0 判定匹配；③ ★0x638ce0 类型解析（1/2/-1）+ 类型字节 9/6/7 → 0x63a230 错误上报（0x836c34/0x836c1c/0x836c00 三串）+ DebugLog 日志门控；④ 新对象构造（new 0x9c + 0x635f20 + 0x63eb80 入队 + 0x705d10）+ ★0x638c40 类型双态 + [ebp+0x94] 判定 → [0xac4c90] 类型结果 + [0xac4c48] 容器尾插 + [0xac4b84] 计数；⑤ new 0xb8 + 0x63dec0/0x63e1d0 双构造 + 0x633ac0（MISSING）+ 0x63e540 入队 + 0x636eb0（MISSING）+ 111B + 0x639a50 提交 + 0x633fa0。**0x63 区记录装配主处理（类型分支 × 容器 × 构造提交全景——batch 2149/2156/2158/2159 调度汇聚点）**。
+
+## 原版怪癖（照抄）
+
+1. a 路环形三元组 [0x8c]/[0x90]/[0x94]=-1 + byte [0x98]/[0x99]=0 构造复位（batch 2156-2159 环形索引族字段网构造端）；
+2. b 路环形三元组复位收尾（[ebx+0x8c]/[0x90]/[0x94]=-1 + byte [0x98]/[0x99]=0——与 a 路构造器闭环）；
+3. b 路 [0xac4b84] 计数递减（sets/dec/and 惯用法——batch 2155 c 路后邻 0x639F80 同款）+ [0xac4c40] 虚表槽 0x10 + 前移压缩；
+4. c 路类型字节 9/6/7 → 0x63a230 错误上报三串（0x836c34/0x836c1c/0x836c00）+ DebugLog 门控（0x836bb8/0x836b9c/0x836bf0/0x836b8c 四串——本批共 7 新串）；
+5. c 路 [0xac4c90] 类型结果字段（0/1/2 三值写入——[ebp+0x94] 判定 + [ebp+0x14]==0xf 判定）；
+6. c 路 new 0xb8 + 0x63dec0/0x63e1d0 双构造（batch 2149 孪生构造器调度）+ 0x633ac0/0x636eb0（MISSING 内部族）；
+7. c 路 111B rep movsd + 0x639a50 提交 + 0x633fa0 装配（batch 2156 c 路调度）。
+
+## 跨批次连接
+
+- ★★★batch 2156-2159（环形三元组 [0x8c]/[0x90]/[0x94] + byte [0x98]/[0x99] 字段网构造/复位闭环——a/b 路两端口）；batch 2158 c 路（c 路 0x638ce0 调度）；batch 2159 b 路（c 路 0x638c40 调度）。
+- ★★batch 2149（c 路 new 0xb8 + 0x63dec0/0x63e1d0 孪生构造器调度）；batch 2156 c 路（c 路 0x639a50 提交调度）；batch 2151 b/c（[0xac4b34]/[0xac4b40] 数组对）。
+- ★0x705d20/0x705d10/0x7c8e17/0x7c8b3d/0x634290/0x6351e0/0x635db0/0x6378b0/0x63ef70/0x50b6f0/0x634550/0x6342d0/0x6339b0/0x63a230/0x635f20/0x63eb80/0x63e540/0x63dec0/0x63e1d0/0x639a50/0x633fa0/0x734e60/0x730a90/0x750920/0x6e6ab0/0x633bc0（全部已登记）。
+
+## 观察项 / 候选池
+
+- **MISSING 观察项（3 个）**：★0x633D30（FUN_00633d30，rank:4713，280B——b 路清理收尾）、0x633AC0（FUN_00633ac0，rank:3094，20B——c 路 [edi+0x38] 构造）、0x636EB0（FUN_00636eb0，rank:3095，16B——c 路判定）——ranking 均有行未登记，caller 俱为本批 b/c 路，0x63 区内部族自然排队。
+- **后邻未登记**：0x638B50（a 路后邻——cmp cl,9/6/7 类型判定器）、0x638A20（b 路后邻——[0xac4c20] 容器尾插器）、0x6385C0（c 路后邻——sub esp,0xe0 + 0x705d20 大函数）。
+- **新观察**：[0xac4c90]（c 路类型结果字段）；[0xac4c78]/[0xac4c80]/[0xac4c85]/[0xac4c88]/[0xac4c8c]（a 路容器五字段网）；0x836c34/0x836c1c/0x836c00/0x836bb8/0x836b9c/0x836bf0/0x836b8c（c 路七新调试串）。
+- 前向：picker 队列继续 0x63 区 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650。
