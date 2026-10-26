@@ -1,0 +1,69 @@
+# frontier batch 2148：数组删除器 + 虚表定位删除器 + owns 清理器（0x63F040 / 0x63EBD0 / 0x63E400）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x63F040 FUN_0063f040 callees=0 deps=60 / 0x63EBD0 FUN_0063ebd0 callees=0 deps=56 / 0x63E400 FUN_0063e400 callees=1 deps=175）
+- 三路 disasm：`.qwen/tmp/_d2148a.txt`（0x63F040 size 0x60）/ `_d2148b.txt`（0x63EBD0 size 0x80）/ `_d2148c.txt`（0x63E400 size 0x60）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x63F040 | 49B（0x31）| ret 4 @0x63F069/0x63F06E（双出口 al=1/0）| 0x63F080（sub esp,0x24/push 族 大函数头，未登记）| 0 |
+| 0x63EBD0 | 65B（0x41）| ret 4 @0x63EC08/0x63EC0E（双出口 al=1/0）| 0x63EC20（线性查找器：[ecx+0x10] 计数循环 cmp [ecx],esi——batch 2148 c 路后邻同构，未登记）| 0（仅间接 call 虚表槽 0x10）|
+| 0x63E400 | 39B（0x27）| ret @0x63F426 | 0x63E430（byte [ecx+0xc] 标志→[ecx+8] 计数线性查找——同 0x63EC20 变体，未登记）| 1（0x7C8B3D，已登记）|
+
+三函数为 **VectorClass 风格容器删除/清理微函数族**——计数 [ecx+0x10]、指针 [ecx+4]（4 字节槽）、owns [ecx+0xd] 三字段布局，与 batch 2131-2137 记录的对象族字段网同款：
+
+## a 路 0x63F040（49B）——数组删除器（按值删除）
+
+```
+0063f040  mov edx,[ecx+0x10]（计数）→ mov eax,[esp+4]（删除索引参数）→ cmp eax,edx → jge 0x63f06c（越界 → al=0 失败）
+0063f04b  dec edx → cmp eax,edx → mov [ecx+0x10],edx（计数-1）→ jge 0x63f067（末尾删除 → al=1 成功，无移位）
+0063f053  循环移位：push esi → mov edx,[ecx+4]（数组指针）→ inc eax → mov esi,[edx+eax*4] → mov [edx+eax*4-4],esi（前移一格）→ mov edx,[ecx+0x10] → cmp eax,edx → jl 0x63f054 → pop esi
+0063f067  mov al,1 → ret 4（成功）
+0063f06c  xor al,al → ret 4（失败）
+```
+**语义**：**数组删除器·按值（推断名）**——删除 [ecx+0x10] 计数数组（[ecx+4] 指针，4 字节槽）中索引 [esp+4] 的元素：越界返回 0；否则计数-1 并把后续元素前移一格（末尾删除免移位）。**VectorClass 风格按索引删除器（batch 2131-2137 对象族容器字段网同款）**。
+
+## b 路 0x63EBD0（65B）——虚表定位删除器
+
+```
+0063ebd0  push esi → mov esi,ecx → mov ecx,[esp+8]（查找参数）→ mov eax,[esi] → push ecx → mov ecx,esi → ★call [eax+0x10]（★虚表槽 0x10——定位/索引查找）
+0063ebdf  cmp eax,-1 → je 0x63ec0b（未找到 → al=0 失败）→ cmp eax,[esi+0x10]（计数）→ jge 0x63ec0b（越界 → 失败）
+0063ebeb  dec ecx（计数-1）→ cmp eax,ecx → mov [esi+0x10],ecx → jge 0x63ec05（末尾删除 → al=1 成功）
+0063ebf3  循环移位：mov ecx,[esi+4]（数组指针）→ inc eax → mov edx,[ecx+eax*4] → mov [ecx+eax*4-4],edx（前移一格）→ mov ecx,[esi+0x10] → cmp eax,ecx → jl 0x63ebf3
+0063ec05  mov al,1 → pop esi → ret 4（成功）
+0063ec0b  xor al,al → pop esi → ret 4（失败）
+```
+**语义**：**虚表定位删除器（推断名）**——先经虚表槽 0x10（[esi] 对象方法）定位参数，再删除 [esi+0x10] 计数数组（[esi+4] 指针）中该位置元素：未找到/越界返回 0；否则计数-1 + 前移一格。**a 路的虚表定位版（同一容器布局，删除键经虚表查询）**。
+
+## c 路 0x63E400（39B）——owns 清理器
+
+```
+0063e400  push ebx → push esi → mov esi,ecx → xor ebx,ebx → mov eax,[esi+4]（数组指针）→ test → je 0x63e41e
+0063e40d  cmp byte [esi+0xd],0（★owns 标志）→ je 0x63e41e（不拥有 → 只清指针不清堆）
+0063e412  push eax → call 0x7c8b3d（★delete）→ add esp,4 → mov [esi+4],ebx（指针置 0）
+0063e41e  mov byte [esi+0xd],bl（owns 清 0）→ mov [esi+8],ebx（容量清 0）→ pop 族 → ret
+```
+**语义**：**owns 清理器（推断名）**——[esi+4] 数组指针 + [esi+0xd] owns 标志：owns=1 时 delete 堆内存；随后指针置 0、owns 清 0、[esi+8] 容量清 0。**容器释放器（owns 语义——batch 2131 等 VectorClass 删除器构造侧同款）**。
+
+## 原版怪癖（照抄）
+
+1. a/b 路删除器双出口（al=1 成功/al=0 失败——越界与未找到共用失败路径）；
+2. a/b 路末尾删除免移位分支（jge 0x63f067/0x63ec05——倒数第二个位置时计数-1 后直接成功）；
+3. a/b 路移位循环从索引+1 开始（inc eax 后 mov [edx+eax*4-4],esi——左移压缩口味）；
+4. c 路 owns 标志 [esi+0xd]（byte）与指针 [esi+4]、容量 [esi+8] 三字段清理顺序（先删堆→再清三字段）；
+5. c 路 delete 后 [esi+8] 容量也清零（即使 owns=0 也清——统一复位路径）。
+
+## 跨批次连接
+
+- ★★★batch 2131-2137：对象族容器字段网（[ecx+0x10] 计数/[ecx+4] 指针/[ecx+0xd] owns——batch 2131 0x5D8730 虚表槽差异、2137 删除器构造侧同款字段）。
+- ★★batch 2134 c 路：虚表槽 0x10 定位惯用法（b 路先查后删）。
+- ★0x7c8b3d（delete CRT——c 路唯一直接 call，已登记）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（直接 call 全已登记——a/b 0 个 + c 1 个全在 TSV）。
+- **后邻未登记**：0x63F080（a 路后邻大函数——sub esp,0x24/push 族）、0x63EC20（b 路后邻线性查找器——[ecx+0x10] 计数循环 cmp [ecx],esi 返回索引或 -1）、0x63E430（c 路后邻 [ecx+0xc] 标志变体线性查找器）。
+- **新观察**：★0x63EC20/0x63E430（线性查找器孪生——后邻观察项自然排队）；容器三字段布局（计数/指针/owns）跨系统复用确认。
+- 前向：picker 队列继续 0x63 区 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650。
