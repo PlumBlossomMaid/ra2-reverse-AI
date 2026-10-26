@@ -1,0 +1,62 @@
+# frontier batch 2182：FieldClass 链表族三连（节点比较器 + 链表序列化器 + 链表反序列化器）（0x625DB0 / 0x625C00 / 0x625AF0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x625DB0 FUN_00625db0 callees=1 deps=63 / 0x625C00 FUN_00625c00 callees=5 deps=272 / 0x625AF0 FUN_00625af0 callees=3 deps=58）
+- 三路 disasm：`.qwen/tmp/_d2182a.txt`（0x625DB0 size 0x80）/ `_d2182b.txt`（0x625C00 size 0x140）/ `_d2182c.txt`（0x625AF0 size 0x140）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x625DB0 | 72B（0x48）| ret 8 双出口 @0x625DDD/0x625DF8 | 0x625E00（mov esi,[ecx+4] + 0x7ca610——同族比较器孪生，未登记）| 1（全已登记）|
+| 0x625C00 | 276B（0x114）| ret 4 双出口 @0x625D0A/0x625D13 | 0x625D20（mov esi,[ecx+4] + 0x7ca610——同族孪生，未登记）| 5（4 已登记 + **1 MISSING：0x4CB8B0**）|
+| 0x625AF0 | 267B（0x10B）| ret 4 双出口 @0x625BF1/0x625BFB | 0x625C00（=本批 b 路本尊）| 3（全已登记）|
+
+三函数为 **0x62 区 FieldClass 链表族**——0x4CB8B0 HostToNet/0x4CB920 NetToHost 网络序转换（★均带 YRpp 符号名）+ 0x7C8968/0x7C8974 字节序 + 0x7CA610 内存比较 + 0x4CB920 节点收尾 + 链表 [ecx+4] 头 / [item+0xc] 尾：
+
+## a 路 0x625DB0（72B）——链表节点比较器
+
+```
+00625db0  mov esi,[ecx+4]（链表头）→ test → je 返 0 → 循环：edi=[esp+0xc]（栈参1=目标）→ push 4 / push esi / push edi → ★call 0x7ca610（内存比较——4 字节）→ test → 命中 → write [esi+8] byte → 返 1（setne）→ 未命中 → esi=[esi+0xc]（链表尾推进）→ 循环 → 返 0
+```
+**语义**：**链表节点比较器（推断名）**——链表遍历（[ecx+4] 头 / [item+0xc] 尾）：每节点 0x7ca610 前后缀比较（4 字节长度）→ 命中返 1 / 未命中推进。**FieldClass 链表查找端（ret 8 双栈参——目标 + 输出槽）**。
+
+## b 路 0x625C00（276B）——链表序列化器
+
+```
+00625c00  push ebx/ebp/esi/edi → mov esi,[esp+0x10]（栈参1=输出缓冲区）→ mov ebx=ecx → [esi]=4（起始长度头）→ 链表遍历（[ebx+4] → [item+0xc]）：累加 word[item+6] + 8（对齐 4 补丁：and 3 → neg → and 3（★4 字节对齐惯用））→ ★new [esi]（call 0x7c8e17——按总长分配）→ ★call 0x7c8968 ×2（word 字节序转换——项计数 + 项宽）→ mov word → 循环每个节点：★call 0x4CB8B0（★★FieldClass::HostToNet——网络序转换！MISSING）→ mov eax/ecx 双 dword 拷贝（[ebx]/[ebx+4]）→ ★call 0x7c8974 ×3（word 字节序——数据长度 + 对齐）→ rep movsd/rep movsb（★数据拷贝）→ word[item+6] 对齐补丁（and 3 → neg → and 3 → rep stos 清零）→ ★call 0x4CB920（FieldClass::NetToHost——已登记）→ [item+0xc] 推进 → ret 4
+```
+**语义**：**链表序列化器（推断名）**——① 单遍链表遍历计算总长（word[item+6] + 8 累加 + 4 字节对齐补丁）；② new 总长（0x7c8e17）+ 0x7c8968 word 字节序转换；③ ★逐节点：0x4CB8B0（FieldClass::HostToNet——网络序）→ 双 dword + 数据区（0x7c8974 长度转换 + rep movsd/movsb 拷贝 + 对齐补零）→ 0x4CB920（NetToHost 收尾）。**FieldClass 链表序列化端（0x4CB8B0/0x4CB920 网络序转换对——★b 路 MISSING 观察自然兑现）**。
+
+## c 路 0x625AF0（267B）——链表反序列化器
+
+```
+00625af0  sub esp,8 → mov esi,[esp+0x10]（栈参1=输入缓冲区）→ mov edi=ecx → 首字段循环（-4 后 >0）：★call 0x7c8974 ×4（word 字节序还原——头字段 + 项宽 + 对齐）→ mov word → 循环：[esp+8] 计数 - 4 → je → ★new 0x10（call 0x7c8e17——节点块）→ ★new 数据缓冲（0x7c8e17 × 项长）→ rep movsd/rep movsb（数据拷贝）→ 对齐补丁 → ★call 0x4CB920（FieldClass::NetToHost——收尾）→ [esp+0xc] 链表尾接（[eax+4] 挂新节点）→ ★call 0x4CB920 → 推进 → ret 4
+```
+**语义**：**链表反序列化器（推断名）**——① ★0x7c8974 word 字节序还原（首字段 + 项宽——网络序 → 主机序）；② 循环：new 0x10 节点块 + new 数据缓冲（0x7c8e17）+ rep movsd/movsb 拷贝 + 对齐补零；③ 0x4CB920（FieldClass::NetToHost）收尾 + [eax+4] 链表尾接（反序列化重建链表）。**FieldClass 链表反序列化端（与 b 路成对——序列化/反序列化闭环）**。
+
+## callee 核验
+
+- a 路：1 个直接 call 全已登记（0x7ca610——内存比较族）。
+- b 路：5 个直接 call，4 已登记 + **MISSING 0x4CB8B0**（ranking 有行：**FieldClass::HostToNet 90B uc=1 callees=2 caller=FUN_00625c00 = 本批 b 路**——★带 YRpp 符号名观察项自然排队）。
+- c 路：3 个直接 call 全已登记（new 0x7c8e17 ×2、0x7c8974 ×4、0x4CB920 FieldClass::NetToHost——已登记）。
+
+## 原版怪癖（照抄）
+
+1. b/c 路 ★4 字节对齐补丁（and 3 → neg → and 3——batched 对齐惯用 3 段式）；
+2. b/c 路 ★0x7c8968/0x7c8974 word 字节序转换双函数分工（0x8968 头字段 / 0x8974 数据段）；
+3. b 路 单遍长度计算（累加 word[item+6] + 8 后再分配，非两遍遍历）；
+4. c 路 反序列化重建链表（[eax+4] 尾接——输入缓冲区游标推进）；
+5. a/b 后邻 0x625E00/0x625D20 同族比较器孪生（未登记）。
+
+## 跨批次连接
+
+- ★★batch 2150b/2165b/c/2166b（[0xa8022c] 表查族——0x7ca610 内存比较同链路的查表语义）；batch 2149-2166（0x7c8e17 new 高频 + 0x7c8968/0x7c8974 字节序族）。
+- ★0x4CB920 FieldClass::NetToHost（已登记——b/c 路收尾）；0x4CB8B0 FieldClass::HostToNet（MISSING 观察——配对函数自然排队）。
+
+## 观察项 / 候选池
+
+- **新候选：0x4CB8B0 = FieldClass::HostToNet（MISSING 观察——ranking 有行未登记带名，caller=本批 b 路，picker 自然取到）**。
+- **后邻未登记**：0x625E00（a 后邻——同族比较器孪生）、0x625D20（b 后邻——同族孪生）。
+- **新观察**：FieldClass 链表族（[ecx+4] 头 / [item+0xc] 尾——网络序转换对 HostToNet/NetToHost 序列化闭环）。
+- 前向：picker 队列继续 0x62 区（0x625E00/0x625D20 孪生 + 0x625C00 后邻链）+ **0x4CB8B0 FieldClass::HostToNet** + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650。
