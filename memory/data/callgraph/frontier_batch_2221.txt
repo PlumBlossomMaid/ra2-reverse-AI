@@ -1,0 +1,83 @@
+# frontier batch 2221：0x5E 区事件回调/计数/上报族三连（事件回调分发器 + HouseClass 未击败计数 + 事件上报主控）（0x5E2FA0 / 0x5E2BA0 / 0x5E29A0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5E2FA0 FUN_005e2fa0 callees=3 deps=2797 / 0x5E2BA0 HouseClass::CountOtherUndefeatedHumanHouses callees=0 deps=2550 / 0x5E29A0 FUN_005e29a0 callees=4 deps=63）
+- 三路 disasm：`.qwen/tmp/_d2221a.txt`（0x5E2FA0 size 0x100）/ `_d2221b.txt`（0x5E2BA0 size 0x100）/ `_d2221c.txt`（0x5E29A0 size 0x200）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x5E2FA0 | 101B（0x65）| ret c3 @0x5E3004 | 0x5E3010（未登记——sub esp,0x1c + [0xa8b270]/[0xa8b25c]/[0xa8b268] 坐标族 + 0x65d430/0x65d480/0x65d460 串族观察项）| 2（0x775b20 + 0x775b10——callees=3 含 IAT [0x7e1490] 口径）|
+| 0x5E2BA0 | 64B（0x40）| ret c3 @0x5E2BDF | 0x5E2BE0（未登记——[0xa8022c] 双层遍历 + 0x4f9a50 观察项）| 0（callees=0 吻合）|
+| 0x5E29A0 | 278B（0x114）| ret 8 @0x5E2AB3 | 0x5E2AC0（未登记——0x775b10/0x7759b0 + IAT [0x7e14a8] 观察项）| 3 次/去重 2（0x7ca422 + 0x7ca8c6——callees=4 含 IAT [0x7e14a4]/[0x7e13bc] 口径）|
+
+三函数为 0x5E 区命令/事件体系的**回调分发、House 计数、事件上报**三向（batch 2219/2220 命令族邻域 + HouseClass 族）：
+
+## a 路 0x5E2FA0（101B）——事件回调分发器
+
+```
+005e2fa0  push esi/edi → call 0x775b20（★类型码查询）→ cmp eax,0x6b → jne 0x5e2ff0
+005e2fac  （==0x6b 路径）call 0x775b10（★对象查询）→ mov edi,[0x7e1490]（IAT）→ mov esi=eax → push 0/0/0x188/0x6eb/esi → call edi（★事件 0x188）
+          → cmp eax,-1 → je 0x5e3002 → push 0/eax/0x199/0x6eb/esi → call edi（★事件 0x199）→ test → je 0x5e3002
+          → mov edx,[eax] → mov ecx=eax → call [edx+0x94]（★虚表槽 0x94）→ ret
+005e2ff0  （!=0x6b 路径）mov ecx,[0xa8b23c] → test → je 0x5e3002 → mov eax,[ecx] → call [eax+0x94]（★同一虚表槽——[0xa8b23c] 对象）
+005e3002  pop edi/esi → ret
+```
+**语义**：**事件回调分发器（推断名）**——① 0x775b20 类型码查询 == 0x6b 时经 0x775b10 取对象 + IAT [0x7e1490] 双发事件（0x188/0x199，带 0x6eb 行号）后调对象虚表 0x94；② 非 0x6b 路径直接 [0xa8b23c] 对象虚表 0x94。**类型分发回调端（虚表槽 0x94 双路径入口）**。
+
+## b 路 0x5E2BA0（64B）——HouseClass::CountOtherUndefeatedHumanHouses
+
+```
+005e2ba0  mov edx,[0xa80238]（★房屋数组计数器）→ xor eax,eax → test edx → jle 0x5e2bdf（空返 0）
+005e2bac  push 三件套 → mov esi,[0xa8022c]（★房屋数组）→ mov edi=edx → ★循环：mov edx,[esi] → test → je 跳过
+          → mov bl,[edx+0x1ec]（★未击败标志）→ test → je 跳过 → mov bl,[edx+0x1f5]（★Human 标志）→ test → jne 跳过
+          → cmp edx,ecx（★排除自身）→ je 跳过 → inc eax（★计数+1）
+          → add esi,4 / dec edi / jne（[0xa80238] 次）
+005e2bdc  pop 三件套 → ret（返回 eax 计数）
+```
+**语义**：**HouseClass::CountOtherUndefeatedHumanHouses（带符号名——YRpp 实名）**——[0xa80238] 计数的房屋数组 [0xa8022c] 遍历，统计「**未击败（+0x1EC）且人类（+0x1F5）且非自身**」的房屋数。**胜负判定辅助计数端（条件计数三过滤）**。
+
+## c 路 0x5E29A0（278B）——事件上报主控
+
+```
+005e29a0  sub esp,0x14 → push 四件套 → mov esi=ecx → mov ecx,0x100 → mov edi,0xac029c（★全局缓冲）→ rep stosd 清 0x400B
+005e29b7  mov eax,[esp+0x28] → push eax → push edx → push 0xac029c → call 0x7ca422（★串格式化）→ push 0xd → push 0xac029c → call 0x7ca8c6（★串查找）→ test → jne 0x5e29ed
+          → push 0xa → push 0xac029c → call 0x7ca8c6 → test → je 0x5e29f2 → 0x5e29ed：mov word [eax],0（★截断）
+005e29f2  mov edi,[0x7e14a4]（★IAT）→ ★事件六连发：push 1/0/0x49d/esi → call edi → push 0/0/0x18e/esi → call edi（存 ebx）→ push 0/0/0x18b/esi → call edi（存 ebp）
+          → push 0/ebx/0x1a1/esi → call edi（存 [esp+0x30]）→ lea ecx → push ecx/esi → call [0x7e13bc]（★逗号分隔读取）→ call edi
+005e2a3f  mov eax,[esp+0x20] → sub edx 差值 → idiv [esp+0x28]（★平均计算）→ sub edx,ebx → cmp → setle bl
+005e2a57  cmp ebp,0x1f4 → jle 0x5e2a6c → push 0/0/0x182/esi → call edi → dec ebp
+005e2a6c  ★收口：push 0xac029c（★全局缓冲）→ push 0/0x4cd/esi → call edi → cmp [esp+0x2c],-1 → je → push ecx/eax/0x498/esi → call edi
+          → test bl → je → push 0/ebp/0x197/esi → call edi → push [esp+0x10]/0/0x49d/esi → call edi → 0x5e2ab0：add esp,0x14 → ret 8（★8B 栈清理——4 参）
+```
+**语义**：**事件上报主控（推断名）**——① 0xac029c 全局缓冲清空 + 0x7ca422/0x7ca8c6 串格式化/查找（0xd/0xa 定界截断）；② ★IAT [0x7e14a4] 事件六连发（0x49d/0x18e/0x18b/0x1a1/0x182/0x4cd/0x498/0x197 多事件码）+ [0x7e13bc] 逗号分隔读取；③ ★idiv 平均差值计算 + 0x1f4 阈值裁剪。**事件批量上报端（全局缓冲 → IAT 事件族多码连发）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 2 个（0x775b20 + 0x775b10），**全部已登记**（callees=3 含 IAT [0x7e1490] 间接口径吻合）。
+- b 路：跨函数直接 call **0 个**（callees=0 吻合——纯数组遍历计数）。
+- c 路：跨函数直接 call 3 次/去重 2 个（0x7ca422 + 0x7ca8c6），**全部已登记**（callees=4 含 IAT [0x7e14a4]/[0x7e13bc] 间接口径吻合）。
+- ★核验脚本（norm() 规范化版）直接输出 PASS，**MISSING：无**。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★类型码分发（0x775b20 == 0x6b → 专用路径 / else [0xa8b23c] 兜底路径）——两路径最终都调虚表槽 0x94；
+2. a 路 ★IAT [0x7e1490] 事件双发（0x188/0x199 事件码 + 0x6eb 行号——DebugLog 风格行号附带）；
+3. b 路 ★★房屋计数三过滤（+0x1EC 未击败 && +0x1F5 Human && !=this）——HouseClass 字段语义（+0x1EC=落败标志/+0x1F5=Human 标志）；
+4. c 路 ★0xac029c 全局缓冲 + 0x7ca422/0x7ca8c6 串格式化/查找（0xd/0xa 字符定界截断 mov word [eax],0）；
+5. c 路 ★★IAT [0x7e14a4] 事件六连发 + [0x7e13bc] 逗号分隔读取（0x49d/0x18e/0x18b/0x1a1/0x182/0x4cd/0x498/0x197 多码）——batch 2184/2211 IAT 族；
+6. c 路 ★idiv 差值平均 + 0x1f4（500）阈值裁剪（>0x1f4 → 发 0x182 + dec）+ ret 8 四参清理。
+
+## 跨批次连接
+
+- ★★batch 2219/2220（命令族 [0xac116c] 门控 + IAT 0x7e14a4/0x7e1490/0x7e13bc ——a/c 路同族）+ batch 2211（IAT [0x7e14a0]/[0x7e14a4]/[0x7e14a8] + 0x775b20/0x775b10 类型码族）。
+- ★★batch 2184/2186/2190/2194/2196/2210/2211（IAT 回调族 + DebugLog——a/c 路）+ batch 909/1073 等（HouseClass 族——b 路带符号名）。
+- ★0x7ca422/0x7ca8c6（c 路串格式化族——INI/串处理脉络）。
+
+## 观察项 / 候选池
+
+- **MISSING：无**（a 路 2 / b 路 0 / c 路 2 直接 call 全部已登记）。
+- **后邻未登记**：0x5E3010（a 后邻——[0xa8b270]/[0xa8b25c]/[0xa8b268] 坐标三件套 + 0x65d430/0x65d480/0x65d460 串族 + IAT [0x7e1490]——坐标上报器观察项）；0x5E2BE0（b 后邻——[0xa8022c] 双层遍历 + 0x4f9a50 判定）；0x5E2AC0（c 后邻——0x775b10/0x7759b0 + IAT [0x7e14a8] + 0x623f60 + 0x5e2820 串处理）。
+- **新观察**：[0xa80238]/[0xa8022c] 房屋数组计数器/数组（b 路直读——HouseClass 全局）；0xac029c 事件上报缓冲（c 路）。
+- 前向：picker 队列继续 0x5E/0x5D 区（0x5E00B0 deps=2715 + 0x5DC350 deps=3922 + 0x5DBF50/0x5E23A0 MISSING 候选）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
