@@ -1,0 +1,65 @@
+# frontier batch 2162：门控遍历器 + 全局状态调度器 + [0xac4b80] setter（0x637840 / 0x637270 / 0x637060）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x637840 FUN_00637840 callees=1 deps=1878 / 0x637270 FUN_00637270 callees=16 deps=2545 / 0x637060 FUN_00637060 callees=0 deps=63）
+- 三路 disasm：`.qwen/tmp/_d2162a.txt`（0x637840 size 0x80）/ `_d2162b.txt`（0x637270 size 0x340，分段全读）/ `_d2162c.txt`（0x637060 size 0x40）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x637840 | 104B（0x68）| ret @0x6378A7 | 0x6378B0（push esi + byte [esi+0x1c] 判定——未登记）| 1（0x705D20，已登记）|
+| 0x637270 | 734B（0x2DE）| ret @0x63754D | 0x637550（[0xac4b58] 数组清理器：0x652230 析构 + 前移压缩——未登记）| 16（全已登记）|
+| 0x637060 | 7B（0x7）| ret @0x637066 | 0x637070（[0xac4cf4]/[0xac4cf5]/[0xac4ccc]/[0xac4c38]/[0xac4bf0]/[0xac4c68]/[0xac4c6c]/[0xac4cb0] 八字段清零——未登记）| 0 |
+
+三函数为 **0x63 区全局状态系（[0xac4cf4]/[0xac4cf6] 门控对 + [0xac4c88] 容器 + [0xac4c90] 类型结果 + [0xac4b80] 全局对象）**——batch 2158-2161 全局网主调度收口：
+
+## a 路 0x637840（104B）——门控遍历器
+
+```
+00637840  mov al,[0xac4cf6]（★门控 2）→ test → jne 0x6378a7（已置位 → 直接返回）→ mov al,[0xac4cf4]（★门控 1）→ push 族 → test al → mov byte [0xac4cf6],1（★门控 2 置位——重入保护）→ je 0x63789d
+0063785c  ★call 0x705d20 → test eax → je 0x63789d → mov ecx,[eax+0x14]（计数）→ dec → js 0x63789d → mov eax,[eax+8] → mov edi,[eax+ecx*4]（★末尾项）→ test edi → je 0x63789d → mov ebx,[edi+0x10]（二级计数）→ 循环：mov ecx,[edi+4] → mov edx,[ecx+esi*4] → mov ecx,[edx] → byte [ecx+0x83]（★激活判定）→ test → jne 0x637898 → ★虚表槽 0x14c（未激活调用）→ inc → 循环
+0063789d  pop 族 → mov byte [0xac4cf6],0（★门控 2 清 0——重入恢复）→ ret
+```
+**语义**：**门控遍历器（推断名）**——① [0xac4cf6] 重入保护（已置位直接返回）；② [0xac4cf4] 门控 + 0x705d20 + [eax+0x14]-1 末尾项 + [edi+0x10] 二级计数循环 → byte [ecx+0x83] 激活判定 → 虚表槽 0x14c 调用；③ 门控 2 清 0 恢复。**0x63 区重入保护遍历器（[0xac4cf6] 门控对 + 虚表槽 0x14c——batch 2157/2158 [0xac4cf4] 族变体）**。
+
+## b 路 0x637270（734B 大函数）——全局状态调度器
+
+```
+00637270  sub esp,0x80 → ★call 0x638e60（batch 2158 b 路缓存探针判定器——先刷新）→ mov ecx,[0xac4bf0] → cmp [a8ecc8] → 空计数时 [0xac4bf0]=0（★清全局）→ mov ecx,[0xac4c88]（容器计数）→ jle 0x6373eb → 主循环 [0xac4c7c] 数组（0x6372ae-0x6373de）：mov ebp,[edx+eax*4] → mov ebx,[ebp+0x14]（计数）→ dec → js 0x6373de → mov esi,[ebp+8+ebx*4]（★末尾项）→ push [ebp] → ★call 0x634290（查找）→ mov esi,[eax+4] → rep movsd 0x1b+movsw+movsb（111B）→ cmp byte [esp+0x20],4 → jne 0x63732c → ★三段标志判定（[esp+0x32]/[esp+0x37] → 偏移 [esp+0x2e]/[esp+0x33]）→ ★call 0x6e6e20 → test → sete → je 0x6373cf
+0063732c  ★idiv 环形索引归一（[ebp+0x90]/[ebp+0x94]——batch 2156 环形族）→ [ebp+8] 数组取项 → ★call 0x705d20 → 虚表槽 0x10 → cmp 1 → ★call 0x636e60（候选）→ test → je → [eax+0x1c]（激活标志）→ jne → byte [eax+0x1c]=1 → ★call 0x63e540（[0xac4c98] 容器入队）→ ★call 0x636b50（主动回调）→ dec → 循环
+006373eb  ★第二段 [0xac4ca8] 计数循环 [0xac4c9c] 数组（0x6373fa-0x637438）：mov esi,[edx+ebx*4] → ★call 0x635120（析构）→ [esi+0x10] 二级计数循环 → ★call 0x634e10（关联）→ ★call 0x6349b0 → byte [esi+0x1c]=0（激活标志清 0）→ 循环
+0063743a  mov [0xac4ca8],0 → ★call 0x63e400（[0xac4c98] 容器清空——batch 2148 c 路 owns 清理器）→ mov esi,[0xac4c90]（★类型结果——batch 2160 c 路写入）→ cmp -1 → je 0x63752e → ★call 0x6da740（[0x887324] 地图方法）→ test esi → jne 0x6374bf → ★[0xac4c90]!=0 分支：DebugLog 0x734e60（0x836bb8 — line 0xca1 + 0x836bd4 文件）+ 0x730a90 + 0x750920 → [0xac4c90]==1 分支：DebugLog 0x836b9c + 0x750920 → ==2：★call 0x63a230（0x836b8c）
+00637524  mov [0xac4c90],-1（★类型结果复位）→ 0x63752e：pop 族 → byte [0xac4cd0]=0/byte [0xac4cc8]=0/byte [0xac4c08]=0（★三日志门控清 0）→ ret
+```
+**语义**：**全局状态调度器（推断名）**——0x63 区核心调度：① 0x638e60 缓存探针刷新 + [0xac4bf0] 空计数清理；② [0xac4c88] 主循环：[ebp+8] 末尾项 + 0x634290 查找 + 111B + ★三段标志判定（batch 2161 b 路同款）+ 0x6e6e20 + idiv 环形归一 + 0x636e60 候选 + [eax+0x1c] 激活标志 + 0x63e540 入队 + 0x636b50 回调；③ 第二段 [0xac4ca8] 清理循环：0x635120/0x634e10/0x6349b0 + 标志清 0；④ 0x63e400 容器清空 + ★[0xac4c90] 类型结果三分支（DebugLog 0x836bb8/0x836b9c + 0x63a230）+ [0xac4c90]=-1 复位 + 三日志门控清 0。**0x63 区全局状态主循环 + 类型结果消费端（batch 2158/2160/2161 全局网汇聚）**。
+
+## c 路 0x637060（7B）——[0xac4b80] setter
+
+```
+00637060  mov [0xac4b80],ecx → ret
+```
+**语义**：**[0xac4b80] setter（推断名）**——[0xac4b80] 全局对象写（batch 2161 c 路虚表槽 0 调用方配对——7B 微函数 setter 家族）。
+
+## 原版怪癖（照抄）
+
+1. a 路 [0xac4cf6] 重入保护（置位 → 遍历 → 清 0——遍历期间防重入）；
+2. b 路开头 0x638e60 缓存探针刷新（batch 2158 调度）+ [0xac4bf0] 空计数清理；
+3. b 路三段标志判定（batch 2161 b 路同款 [esp+0x32]/[esp+0x37] → [esp+0x2e]/[esp+0x33]）+ 0x6e6e20 + sete 取反；
+4. b 路 idiv ÷[ebp+0x90] 环形索引归一（batch 2156/2157 环形族）；
+5. b 路 [eax+0x1c] 激活标志（置 1 防重复入队 + 第二段清 0——batch 2156 b 路 [ebx+0x1c] 同字段）；
+6. b 路 ★[0xac4c90] 类型结果三分支消费（0 → DebugLog 0x836bb8 / 1 → 0x836b9c / 2 → 0x63a230 0x836b8c）+ [-1] 复位；
+7. b 路三日志门控清 0 收尾（[0xac4cd0]/[0xac4cc8]/[0xac4c08]——batch 2155/2157/2158 三门控汇聚）。
+
+## 跨批次连接
+
+- ★★★batch 2158 b 路（b 路开头 0x638e60 缓存探针刷新调度）；batch 2160 c 路（b 路 [0xac4c90] 类型结果消费端 + 0x63e400 容器清空——[0xac4c98] 容器）；batch 2161 c 路（c 路 [0xac4b80] 虚表槽 0 配对）。
+- ★★batch 2156（环形归一 idiv [ebp+0x90]）；batch 2156 b 路（[ebx+0x1c] 标志）；batch 2155/2157/2158（三日志门控 [0xac4c08]/[0xac4cc8]/[0xac4cd0]）。
+- ★0x705d20/0x6e6e20/0x634290/0x636e60/0x63e540/0x636b50/0x635120/0x634e10/0x6349b0/0x63e400/0x6da740/0x734e60/0x730a90/0x750920/0x63a230（全部已登记——b 路 16 个直接 call）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（直接 call 全已登记——a 1 个 + b 16 个 + c 0 个全在 TSV）。
+- **后邻未登记**：0x6378B0（a 路后邻——byte [esi+0x1c] 判定）、0x637550（b 路后邻——[0xac4b58] 数组清理器：0x652230 析构 + 前移压缩）、0x637070（c 路后邻——八字段全局清零器）。
+- **新观察**：[0xac4cf6]（a 路重入门控——[0xac4cf4] 门控对第二员）；[0xac4c9c]/[0xac4ca8]（b 路第二容器计数对）；[0xac4c98]（b 路 0x63e400/0x63e540 目标容器）。
+- 前向：picker 队列继续 0x63 区 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650。
