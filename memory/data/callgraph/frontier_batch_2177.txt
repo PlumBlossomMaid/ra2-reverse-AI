@@ -1,0 +1,61 @@
+# frontier batch 2177：0x4F4Cxx 记录族三连（记录数组构造器 + 记录头拷贝器 + 记录尾插器）（0x628ED0 / 0x628DD0 / 0x628D10）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x628ED0 FUN_00628ed0 callees=2 deps=44 / 0x628DD0 FUN_00628dd0 callees=1 deps=134 / 0x628D10 FUN_00628d10 callees=1 deps=134）
+- 三路 disasm：`.qwen/tmp/_d2177a.txt`（0x628ED0 size 0xC0）/ `_d2177b.txt`（0x628DD0 size 0x80）/ `_d2177c.txt`（0x628D10 size 0x80）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x628ED0 | 172B（0xAC）| ret 8 @0x628F7A（三出口 @0x628F23/0x628F68/0x628F7A）| 0x628F80（fld qword [0x7e1710]/[0x7e1708]——浮点小函数，未登记）| 2（全已登记）|
+| 0x628DD0 | 31B（0x1F）| ret 8 @0x628DEC | 0x628DF0（+0x104 步长数组构造器——同族，未登记）| 1（**MISSING 观察：0x4F4C70**）|
+| 0x628D10 | 107B（0x6B）| ret 4 @0x628D78 | 0x628D80（+0x104 步长遍历器——同族，未登记）| 1（**MISSING 观察：0x4F4CB0**）|
+
+三函数为 **0x62 区 0x4F4Cxx 记录族**——0x104（260B）步长记录块 + [esi+0x100] 头字段 + 0x4f4c20/0x4f4c70/0x4f4cb0 记录构造/拷贝族：
+
+## a 路 0x628ED0（172B）——记录数组构造器
+
+```
+00628ed0  push ebx/ebp/esi/edi → mov esi,[esp+0x10]（栈参1=计数）→ mov edi,ecx → test esi → [edi+4]=0 → [edi+8]=esi → byte[edi+0xc]=1 → byte[edi+0xd]=0 → [edi]=0x7ef7d0（虚表）→ je 返 → mov ebx,[esp+0x18]（栈参2=外部缓冲）→ test → 非空：★循环 N 次（esi-1 次）：★call 0x4f4c20（每块构造——[edi+4] 数组项）→ add ebp,0x104（步长）→ [edi+4]=ebx → ret / 空：★new 0x104×N（mov eax,esi → shl 6 → add esi → shl 2 = ×260（0x104）→ ★call 0x7c8e17）→ ★循环 ★call 0x4f4c20 ×N → [edi+4]=ebx + byte[edi+0xd]=1（owns）→ ret 8
+```
+**语义**：**记录数组构造器（推断名）**——① [edi+4]=外部缓冲或 new 0x104×N（栈参1×260B——lea eax,[eax+eax*2]×4 惯用 = ×0x104）；② ★循环每块 0x4f4c20 构造（步长 0x104——260B 记录块族）；③ byte[+0xd]=owns 标志 + 虚表 0x7ef7d0；④ ret 8 双栈参（计数/外部缓冲）。
+
+## b 路 0x628DD0（31B）——记录头拷贝器
+
+```
+00628dd0  mov eax,[esp+4]（栈参1）→ mov esi,ecx → push eax → ★call 0x4f4c70（记录构造——MISSING 观察）→ mov ecx,[esp+0xc]（栈参2）→ mov eax,esi → mov edx,[ecx]（栈参2 首字段）→ mov [esi+0x100],edx（★头字段拷贝 +0x100）→ ret 8
+```
+**语义**：**记录头拷贝器（推断名）**——① 0x4f4c70 构造记录；② 栈参2 首字段 → [esi+0x100] 拷贝（0x104 记录块头字段——与 a 路/c 路 [esi+0x100] 字段同源）。
+
+## c 路 0x628D10（107B）——记录尾插器
+
+```
+00628d10  mov esi,ecx → ecx=[esi+8]（容量）→ eax=[esi+0x10]（计数）→ cmp eax,ecx → jl 直接写 → byte[esi+0xd]（owns）判定 → test ecx → jne 失败 → [esi+0x14]（步长）>0 → 虚表槽 8（Resize——[esi]）→ 失败返 0 → 成功：edx=计数 → shl 6 → lea ecx,[eax+1]（★计数+1）→ add edx,eax → shl 2（×0x104 步长）→ esi=[esi+4]+edx（★尾项地址）→ push edi → ★call 0x4f4cb0（记录构造——MISSING 观察）→ ★[esi+0x100]=[edi+0x100]（头字段拷贝）→ ret 4 返 1
+```
+**语义**：**记录尾插器（推断名）**——① [esi+8] 容量 vs [esi+0x10] 计数判定 → 满时虚表槽 8 Resize（batch 467 Add 同构扩容）；② ★计数×0x104 步长定位尾项 → 0x4f4cb0 构造 + [esi+0x100] 头字段拷贝；③ 返 1/0 布尔（成功/失败）。**0x104 记录块容器尾插端（batch 467 Add 同构 + 0x4f4cxx 记录构造族）**。
+
+## callee 核验
+
+- a 路：2 个直接 call 全已登记（0x4f4c20 ×N、new 0x7c8e17）。
+- b 路：1 个直接 call **MISSING 0x4F4C70**（ranking 有行：44B uc=1 callees=0 caller=FUN_00628dd0 = 本批 b 路——观察项自然排队）。
+- c 路：1 个直接 call **MISSING 0x4F4CB0**（ranking 有行：44B uc=1 callees=0 caller=FUN_00628d10 = 本批 c 路——观察项自然排队）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★0x104 步长计算（shl 6 + add + shl 2 = ×260——lea 合成惯用）；
+2. a 路外部缓冲/自有分配双路径（栈参2 非空 → 直接用 + 不设 owns；空 → new + byte[+0xd]=1）；
+3. c 路 ★容量判定 jl 直接写（不越界检查——batch 467 Add 同款计数<容量直写）；
+4. c 路 [esi+0x100] 头字段拷贝（0x104 记录块头——a/b/c 三函数同字段互证）。
+
+## 跨批次连接
+
+- ★★batch 467（0x63E540 Add——c 路容量/owns/步长/虚表槽 8 扩容同构）；batch 2171-2176（0x104 步长记录块族 + [esi+0x100] 字段——[+0x10c..0x114] 弹道三分量的前一字段）。
+- ★0x4f4c20（已登记——本批 a 路高频消费）；0x4f4c70/0x4f4cb0（未登记观察——0x4f4cxx 记录构造族两成员自然排队）。
+
+## 观察项 / 候选池
+
+- **新候选：0x4F4C70 / 0x4F4CB0（MISSING 观察——ranking 有行未登记，caller 分别 = 本批 b/c 路本尊，picker 自然取到）**。
+- **后邻未登记**：0x628F80（a 后邻——fld qword [0x7e1710]/[0x7e1708] 浮点小函数）、0x628DF0（b 后邻——+0x104 步长数组构造器同族）、0x628D80（c 后邻——+0x104 步长遍历器同族）。
+- **新观察**：[esi+0x100] 头字段（0x104 记录块族）；0x7ef7d0 虚表（a 路记录容器）。
+- 前向：picker 队列继续 0x62 区（0x628DF0/0x628D80 + 0x6284A0/0x628170/0x627F00 等）+ 0x4F4C70/0x4F4CB0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650。
