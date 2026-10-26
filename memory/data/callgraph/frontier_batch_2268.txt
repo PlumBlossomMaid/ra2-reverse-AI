@@ -1,0 +1,83 @@
+# frontier batch 2268：hills 高度场预处理器 + hills 高度场生成器 + Creating tiberium 阶段 8 主函数（0x5A33F0 / 0x5A2F50 / 0x5A23A0）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x5A33F0 FUN_005a33f0 callees=6 deps=62——**2267 c 路 MISSING 兑现** / 0x5A2F50 FUN_005a2f50 callees=2 deps=63——**2267 c 路 MISSING 兑现** / 0x5A23A0 FUN_005a23a0 callees=9 deps=2720——**QWEN.md Creating tiberium 实锤**）
+- 三路 disasm：`.qwen/tmp/_d2268a.txt`（0x5A33F0 size 0x200）/ `_d2268b.txt`（0x5A2F50 size 0x500）/ `_d2268c.txt`（0x5A23A0 size 0x500）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5A33F0 | 507B（0x1FB）| ret c3 @0x5A35EA | 0x5A35F0（**2267 c 路 Creating hills 本体——后邻相邻已登记**）| 9 次/去重 6（0x578350+0x578290+0x4865b0+0x5657a0+0x486380+0x4863d0——全部已登记，callees=6 吻合）|
+| 0x5A2F50 | 1184B（0x4A0）| ret c3 @0x5A33EF | 0x5A33F0（**本批 a 路本体——后邻相邻**）| 4 次/去重 2（0x5980c0 + 0x7c5f00——全部已登记，callees=2 吻合）|
+| 0x5A23A0 | 1278B（0x4FE）| ret c3 @0x5A289D | 0x5A28A0（跳转表区——**本函数内部跳转表**）| 17 次/去重 8（0x65c780+0x68bcc0+0x7c5f00+0x4cac40+0x5980c0+0x5a28c0+0x5adab0+0x7c8b3d——全部已登记，callees=9 含跳转表吻合）|
+
+## a 路 0x5A33F0（507B）——hills 高度场预处理器
+
+```
+005a33f0  sub esp,0xc → mov ecx,0x87f7e8 → push edi → call 0x578350（★CellIterator_Reset）→ call 0x578290（★CellIterator_Next）→ mov edi,eax → test → je 0x5a35e6（★空地图跳过）→ push 三件套 → 循环：
+005a3415  mov ecx,edi → call 0x4865b0（★绿地判定）→ je 0x5a350d → ★分支1（绿地）：mov esi,[0xabed04] → xor ebx,ebx → 循环：mov eax,[edi+0x24] → mov ecx,ebx → and ecx,7 → add ax,[ecx*4+0x89f688]（★8 邻域表 [0x89f688] 偏移）→ mov cx,[ecx+2] → add cx,[esp+0x12] → ★四角边界判定（lea [eax+edx] 和 + 两个差值 vs [0xabed04]/[0xabed08]）→ 通过：lea eax,[esp+0x10] → push → mov ecx,0x87f7e8 → call 0x5657a0（★取格）→ call 0x486380（★判定）→ jne 0x5a34b0 → inc ebx → cmp 8 → jl 循环（★8 邻域全扫）
+005a34b0  ★写 work：movsx eax,[esp+0x12] → imul [0x89c2dc] → movsx ecx,[esp+0x10] → add → lea [eax+eax*4] → mov eax,[0xabed10] → shl 4 → mov [edx+eax+8],0（★work+8=0）→ mov [edx+ecx+0xc],0x3fe00000（★work+0xc=0.5）→ mov byte [edx+eax+0x45],1（★work+0x45=1 保护区）
+005a350d  ★分支2（非绿地）：mov ecx,edi → call 0x4863d0（★判定2）→ je 跳过 → 同 8 邻域四角边界循环（0x486380 判定通过才写 work+0x45=1 保护区）→ Next 循环 → ret
+```
+
+**语义**：**hills 高度场预处理器（推断名）**——★2267 c 路 0x5A35F0 的调用子函数（MISSING 兑现）：CellIterator 遍历 + ★绿地/非绿地双分支（0x4865b0/0x4863d0）+ ★★8 邻域表 [0x89f688] 偏移扫描（and ecx,7——batch 2260 同款）+ 四角边界判定（[0xabed04]/[0xabed08]）+ 0x5657a0 取格 + 0x486380 判定 → ★work 写：+8=0 / +0xc=0x3fe00000（0.5 双精度）/ +0x45=1（保护区标记）。**hills 高度场前置清理+保护区标记器（阶段 9 造山的 work 初始化段——0x89f688 8 邻域表实锤）**。
+
+## b 路 0x5A2F50（1184B）——hills 高度场生成器
+
+```
+005a2f50  push ebp → mov ebp,esp → and esp,0xfffffff8 → sub esp,0x78 → fild dword [ecx+0x44]（★高度输入）→ mov eax,[0x89c2dc] → imul（★side²）→ fld st(0) × [0x7edaa8] + [0x7e3860] → fstp [esp+0x58]（★高度公式1）→ × [0x7edaa0] → fstp [esp+0x50] → × [0x7e44e8] → fstp [esp+0x80] → fld [esp+0x50] → fcomp [0x7ed7c8]（★阈值比较）→ jne 0x5a33e8（★跳过主流程）
+005a2fb8  ★work 数组遍历（[0xabed10] 0x50B/项）：mov ecx,[esi]（★坐标 word）→ cmp cx,0 / ax,0 → je 跳过 → dec ecx/eax → mov [esi+0x10],0 → mov [esi+0x14],0（★清）→ ★四角边界（[0xabed04]/[0xabed08] 和/差三连）→ 通过：lea eax,[eax+edx*1] → [0xabed10] 索引 → fld [eax+edx+8] → fstp [esp+0x48]（★邻域高度）
+005a305b  ★第二组：lea edx,[eax+ecx] → 边界三连 → 通过：fld [esi+8] + fadd [eax+8] → fstp [esi+8]（★高度累加）→ mov ecx,[eax+0x10] → mov [esi+0x10],ecx → mov edx,[eax+0x14] → mov [esi+0x14],edx → fld [eax+8] - fsub [esp+0x48] → fstp [esp+0x30]
+005a3154  ★缩放：fld [esi+8] × [0x7e1738] → fst [esi+8] → fld [esi+0x10] × [0x7e1738] → fstp [esi+0x10] → ★[0x7e2800] 比较链（[esp+0x30] vs 常量 → 复制 [esp+0x60] / fchs 取反）→ ★[esi+0x45] 保护区判定 → fcom [0x7e2800] → 钳到常量 → mov [esi+0x10],0x47ae147b → mov [esi+0x14],0x3f647ae1（★常量对）
+005a31db  ★★双正态 NormalDeviate（0x5980c0 × [0x7ed7c8] 阈值 + [0x7e1738] 缩放——fsub/fadd [esp+0x10]/[esp+0x40] 区间钳位 + 拒绝采样）→ ★[0x7eda98]/[0x7e1708] 高度差钳位 → 0x5980c0 第二正态 → [esi+0x10]/[esi+8] 更新
+005a3389  ★尾段：work 数组遍历（[0xabed10]+edi*0x50）：fld [edi+eax+8] → fcomp [0x7e2800] → ★高度取整（fsub [0x7e1738] → _ftol → fild 或 fadd → _ftol → fild → fstp）→ Next → ret
+```
+
+**语义**：**hills 高度场生成器（推断名）**——★2267 c 路 0x5A35F0 的调用子函数（MISSING 兑现）：★高度公式（[ecx+0x44] × [0x7edaa8] + [0x7e3860] / × [0x7edaa0] / × [0x7e44e8]）+ [0x7ed7c8] 阈值门控 + ★work 数组遍历（0x50B/项：坐标 word 判空 + 清 [0x10]/[0x14] + 四角边界 + 邻域高度累加 [esi+8] + [0x7e1738] 缩放）+ [0x7e2800] 钳位 + [esi+0x45] 保护区 + ★★双正态 NormalDeviate 拒绝采样 + ★尾段高度取整（fsub/fadd 0.5 → _ftol 向零截断——**QWEN.md 造山 §2.5 trunc(h±0.5) 取整现场**）。**hills 高度场核心生成器（阶段 9 造山——QWEN.md §2.4/§2.5 浮点/取整怪癖双现场）**。
+
+## c 路 0x5A23A0（1278B）——Creating tiberium 阶段 8 主函数
+
+```
+005a23a0  push ebp → mov ebp,esp → and esp,0xfffffff8 → sub esp,0x80 → push 四件套 → mov esi,ecx（★this）→ mov eax,[esi+0x3c]（★模式）→ mov ecx,[esi+0x40] → cmp eax,4 → ja 0x5a23e9 → jmp [eax*4+0x5a28a0]（★★跳转表分派 0..4）→ 各模式分支：cmp ecx,3 → sete/setne [esp+0x17]（★条件字节）
+005a23ee  ★全局对象遍历：mov ecx,[0xabdfa0]（★计数）→ jle 0x5a2896 → 循环：mov ecx,[0xabdf94] → mov edi,[ecx+eax*4]（★对象）→ cmp [edi],0 → je 0x5a287f → mov al,[esp+0x17] → test → je 0x5a254c（★模式分支）
+005a242b  ★分支A（条件字节非 0）：mov eax,[edi+0x20]（★数量）→ jle 0x5a247d → 循环：lea eax,[esi+edx] → push → lea ecx,[esp+0x44] → push → mov ecx,[0xa8b230] → call 0x68bcc0（★装载）→ mov eax,[eax] → mov [esp+0x50],eax → add bp,[esp+0x52] → add bx,ax（★坐标累加）→ idiv [edi+0x20]（★均值）
+005a247d  ★分支B：mov esi,[edi+0x38] → dec → fild × [0x7ed898] → _ftol → cmp eax,esi → ja 拒绝采样 → mov edx,[edi+0x2c] → mov edx,[ecx+eax*4]（★表取项）→ ★距离计算：mov ecx,[edi] → mov edx,[ecx+0x10]（★计数）→ 循环：movsx ebx,bx → movsx ebp,ax → mov eax,[ecx+4] → mov eax,[eax+esi*4]（★坐标）→ sub cx,bp → sub ax,bx → imul 平方和 → fild → call 0x4cac40（★距离）→ fcomp [esp+0x28] → ★最近邻选择（mov [esp+0x2c],esi）
+005a254c  ★高度计算：mov eax,[esi+0x2bc] → mov edx,[esi+0x2c0] → fild [esi+0x54] × [0x7e3808] → fild [esp+0x38] → fmulp → fiadd [esp+0x20]（★公式）→ _ftol → fild [edi+0x20] → fcomp [0x7e1738] → 钳位 → ★正态 0x5980c0（× [0x7e4f50] + [0x7eda88] 拒绝采样 + [0x7e2ac0] 阈值）→ fild [esp+0x38] + fadd [esp+0x20] → _ftol → ★0x5a28c0（★放置回调）→ inc esi → cmp 计数 → jl
+005a263a  ★VectorClass 构造器：push 0/0 → lea ecx,[esp+0x80] → call 0x5adab0（★batch 2263 a 路构造器）→ mov [esp+0x78],0x7eda6c（★虚表）→ mov [esp+0x8c],0xa → ★循环：lea eax,[esp+0x48] → push edx → mov ecx,[0xa8b230] → call 0x68bcc0 → ★距离循环（0x4cac40）→ fild [edx+0x10] → fdivr [esp+0x60]（★均值）→ ★虚表槽 8 调用（扩容）→ mov [esp+0x88],0xa → ★尾段：0x7ed7b0 缩放 + 0x5a28c0 放置 + 0x7c8b3d 释放 + 0x7eda4c 虚表复位 → Next 对象 → ret
+```
+
+**语义**：**Creating tiberium 阶段 8 主函数（QWEN.md 实锤——布矿主流程）**——★★[esi+0x3c] 模式 0..4 跳转表分派（[eax*4+0x5a28a0]）+ [0xabdfa0]/[0xabdf94] 全局矿场对象遍历 + ★分支A 坐标均值（0x68bcc0 装载 + 累加 + idiv 数量）+ ★分支B 表取项 + ★★距离计算（0x4cac40 平方和开方 + 最近邻选择）+ ★高度公式（[0x2bc]/[0x2c0] 差 × [0x7e3808] + [esi+0x54]）+ ★正态 0x5980c0 拒绝采样 + ★0x5a28c0 放置回调 + ★★VectorClass 构造器 0x5adab0（batch 2263 a 路）+ 虚表 0x7eda6c/0x7eda4c + 循环扩容（虚表槽 8）+ [0x7ed7b0] 缩放 + 0x7c8b3d 释放。**布矿主流程（阶段 8——Randomizer 消耗密集段，QWEN.md 阶段 8 布矿 §2.1/§3.1 怪癖现场）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 9 次/去重 6 个——**全部已登记**（0x578350/0x578290/0x4865b0/0x5657a0/0x486380/0x4863d0）；picker callees=6 吻合。
+- b 路：跨函数直接 call 4 次/去重 2 个（0x5980c0 + 0x7c5f00）——**全部已登记**（callees=2 吻合）。
+- c 路：跨函数直接 call 17 次/去重 8 个——**全部已登记**（0x65c780/0x68bcc0/0x7c5f00/0x4cac40/0x5980c0/0x5a28c0/0x5adab0/0x7c8b3d）；picker callees=9 含跳转表间接按口径吻合。
+- ★核验脚本（norm() 规范化版）输出：**三路全 PASS，无 MISSING、无批内自引用**——本批零观察项新增；b 路后邻 = a 路本体、a 路后邻 = 2267 c 路，均为批内/跨批相邻非 MISSING。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★8 邻域表 [0x89f688] 偏移扫描（and ecx,7 → add ax,[ecx*4+0x89f688] + mov cx,[ecx+2]——**8 邻域双向偏移表，batch 2260 b 路同款**）;
+2. a 路 ★work 写：[+8]=0（高度清 0）/ [+0xc]=0x3fe00000（0.5 双精度）/ [+0x45]=1（保护区标记）——**绿地与非绿地双分支都写保护区但只有绿地写高度**;
+3. b 路 ★★高度公式多段（[0x7edaa8]/[0x7edaa0]/[0x7e44e8]/[0x7e3860] 常量链）+ [0x7ed7c8] 阈值门控（fcomp → jne 跳过整个主流程）;
+4. b 路 ★★双正态 NormalDeviate（0x5980c0 × 常量 + 双阈值拒绝采样——**跨阶段缓存标志串，QWEN.md NormalDeviate@0x5980C0 怪癖现场**）;
+5. b 路 ★★尾段高度取整：**fsub [0x7e1738] → _ftol（向零截断）/ fadd → _ftol → fild 回写——QWEN.md 造山 §2.5 trunc(h±0.5) 现场**;
+6. b 路 ★[esi+0x45] 保护区判定 → fcom [0x7e2800] 钳位 + mov [esi+0x10],0x47ae147b/mov [esi+0x14],0x3f647ae1（★双精度常量对 1e-10/0.01 类）;
+7. c 路 ★★[esi+0x3c] 模式 0..4 跳转表（[eax*4+0x5a28a0]——batch 2249/2253 a 路同款结构）+ 条件字节 [esp+0x17] sete/setne（模式 4 分支）;
+8. c 路 ★★距离计算：sub cx,bp / sub ax,bx → imul 平方 → fild → 0x4cac40（平方和开方）→ fcomp 阈值 → 最近邻选择（mov [esp+0x2c],esi——**最近距离槽，无重置哨兵**）;
+9. c 路 ★VectorClass 构造器 0x5adab0 + 虚表 0x7eda6c 后置 + 0x7eda4c 复位（**栈对象生命周期：构造 → 使用 → 复位**）;
+10. c 路 ★虚表槽 8 扩容（push 0/push eax → call [eax+8]——VectorClass::Resize 接口）。
+
+## 跨批次连接
+
+- ★★★batch 2267（c 路 0x5A35F0 Creating hills——a/b 路是其调用子函数，**MISSING 双兑现**）+ QWEN.md RMG 流水线（阶段 8 布矿 0x5A23A0 / 阶段 9 造山 0x5A35F0——**三函数补齐 8/9 两阶段链条**）。
+- ★★batch 2260（b 路 0x5B20F0 巨型相机变换器——[0x89f688] 8 邻域表同款）+ batch 2263（a 路 VectorClass 构造器 0x5ADAB0——c 路调用）+ batch 2245（CellIterator 0x578350/0x578290——a/c 路）。
+- ★0x5980c0 NormalDeviate（b/c 路——batch 2266/2267 连续四批）+ 0x4cac40 浮点内核（c 路——batch 2259/2260 同族）+ [0x7e1738] 常量（b 路——batch 2259 同族）。
+
+## 观察项 / 候选池
+
+- **本批零 MISSING、零批内自引用**（三路 callee 全部已登记；b 路后邻 = a 路本体、a 路后邻 = 2267 c 路，均为批内/跨批相邻非 MISSING）。
+- **后邻已登记**：0x5A28A0（c 路跳转表区——本函数内部表）、0x5A33F0/0x5A35F0（b/a 路后邻）。
+- **新观察**：[0x89f688] 8 邻域偏移表（a 路——batch 2260 同款再确认）+ [0x7ed7c8] 阈值常量（b 路）+ 0x47ae147b/0x3f647ae1 双精度常量对（b 路）+ [esi+0x3c] 模式 0..4 跳转表（c 路）+ [0x7ed7b0] 缩放常量（c 路）。
+- 前向：picker 队列继续 0x5A 区（0x5A1FB0/0x5A0410 大宿主——RMG 阶段函数链）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
