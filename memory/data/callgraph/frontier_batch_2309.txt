@@ -1,0 +1,63 @@
+# frontier batch 2309：全局写最小器 + 常量返回器 + 双字段装载器（0x55AF50 / 0x55AD00 / 0x55A710）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x55AF50 FUN_0055af50 callees=0 deps=1892 / 0x55AD00 FUN_0055ad00 callees=0 deps=1 / 0x55A710 FUN_0055a710 callees=0 deps=1）
+- 三路 disasm：`.qwen/tmp/_d2309a.txt`（0x55AF50 size 0x30）/ `_d2309b.txt`（0x55AD00 size 0x30）/ `_d2309c.txt`（0x55A710 size 0x40）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x55AF50 | 7B（0x7）| ret c3 @0x55AF56 | 0x55AF60（未登记——[0xabcd50] 门控 + [0x829ff4]/[0x829ff8] 距离判定）| 0 次/去重 0（单指令写全局，picker callees=0 吻合）|
+| 0x55AD00 | 5B（0x5）| ret 4 @0x55AD03 | 0x55AD10（未登记——虚表槽 0x538 调用包装器）| 0 次/去重 0（单指令返 0，picker callees=0 吻合）|
+| 0x55A710 | 19B（0x13）| ret 8 @0x55A722 | 0x55A730（未登记——0x5ae860+虚表槽装载区）| 0 次/去重 0（双字段写，picker callees=0 吻合）|
+
+## a 路 0x55AF50（7B）——全局写最小器
+
+```
+0055af50  mov dword ptr [0x829ff8], ecx（★单指令写全局 [0x829ff8] = this）→ ret c3
+```
+
+**语义**：**全局写最小器（推断名）**——★★mov [0x829ff8], ecx 单指令全局指针写（★[0x829ff8] 全局槽——batch 2308 c 路 LogicClass::Update 同区全局）→ ret c3。**全局指针注册（单指令 setter——0 call 最小写器**）**。
+
+## b 路 0x55AD00（5B）——常量返回器
+
+```
+0055ad00  xor eax, eax（★清 0）→ ret 4
+```
+
+**语义**：**常量返回器（推断名）**——★★xor eax,eax 单指令返回 0（带参 ret 4——★恒 0 stub）→ ret 4。**恒 0 返回器（5B 最小——★0 call 空实现**）**。
+
+## c 路 0x55A710（19B）——双字段装载器
+
+```
+0055a710  mov ecx, [esp+4]（参1 this）→ mov eax, [esp+8]（参2 值）→ mov [ecx+8], eax（★写 this+8）→ mov [ecx+4], eax（★写 this+4）→ xor eax, eax → ret 8
+```
+
+**语义**：**双字段装载器（推断名）**——★★参2 值双字段写（[ecx+8]/[ecx+4]——★batch 2305 c 路 [0x1160] 族同款双字段）+ eax=0 → ret 8。**双字段写装载器（19B 最小——0 call 纯写器**）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 0 个/去重 0（单指令写全局）——**全部已登记**（picker callees=0 吻合）。
+- b 路：跨函数直接 call 0 个/去重 0（单指令返 0）——**全部已登记**（picker callees=0 吻合）。
+- c 路：跨函数直接 call 0 个/去重 0（双字段写）——**全部已登记**（picker callees=0 吻合）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING**（连续二十八批三路全登记——batch 2276 起）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★mov [0x829ff8], ecx 单指令全局写（★batch 2308 c 路 [0x829ff4]/[0x829ff8] 全局族）;
+2. b 路 ★★xor eax,eax 恒 0 返回（带参 ret 4——★空实现 stub 语义）;
+3. c 路 ★★参2 双字段写（[ecx+8]/[ecx+4]——★batch 2305 c 路 [0x1160]/[0x1164] 双字段同款）;
+4. c 路 ★★收尾 eax=0（xor 清后 ret 8——★返回值 0）。
+
+## 跨批次连接
+
+- ★★★batch 2308 c 路（0x55AFB0 LogicClass::Update——a 路 [0x829ff8] 全局同区）+ batch 2305 c 路（0x565090 MapSeedClass 构造器——c 路双字段同款）。
+- ★★batch 2274-2308（全局族 [0x829ffx]/[0xa8b2xx]——a 路同源）+ batch 2283/2284（VectorClass 容器族——b 路 stub 语义同族）。
+- ★★batch 2270-2300（DebugLog 族——三路 0 call 无日志对照）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x55AF60（a 路后邻——[0xabcd50] 门控 + [0x829ff4]/[0x829ff8] 距离判定器）；0x55AD10（b 路后邻——虚表槽 0x538 调用包装器）；0x55A730（c 路后邻——0x5ae860+虚表槽装载区）。
+- 未兑现 MISSING 旧观察：0x00486790（2267 起排队）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150（batch 2280-2308 新观察）。
+- 本批 **无 MISSING**（连续二十八批三路全登记——batch 2276 起，TSV 5410）。next 批预期 top3 = 0x55A150（42B callees=1）/ 0x5596A0（1396B callees=22 巨型宿主）/ 0x5588E0（267B callees=4）。
