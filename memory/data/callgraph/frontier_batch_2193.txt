@@ -1,0 +1,67 @@
+# frontier batch 2193：0x5F 区构造/收集/查询族三连（XSurface 构造器 + 地图 cell 收集器 + 注册表索引查询器）（0x5FE020 / 0x5FDDF0 / 0x5FDCC0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5FE020 XSurface::XSurface callees=0 deps=118 / 0x5FDDF0 FUN_005fddf0 callees=6 deps=2529 / 0x5FDCC0 FUN_005fdcc0 callees=0 deps=1）
+- 三路 disasm：`.qwen/tmp/_d2193a.txt`（0x5FE020 size 0x100）/ `_d2193b.txt`（0x5FDDF0 size 0x200）/ `_d2193c.txt`（0x5FDCC0 size 0x100）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x5FE020 | 32B（0x20）| ret 8 @0x5FE03D | 0x5FE040（[0xac15f8..0xac1604] 四 dword 清零器；0x5FE060 fld/fmul/0x7c8fb0 浮点初始化器连排——未登记）| 0（callees=0 吻合）|
+| 0x5FDDF0 | 261B（0x105）| ret c3 @0x5FDEF4 | 0x5FDF00（mov eax,0xb0 常量返回器；0x5FDF10 dword 拷贝器；0x5FDF70 0x7ef3d4 四虚表构造+[0xa8ec50] 注册表移除——连排，未登记）| 5（0x578350/0x578290 CellIterator×3/0x485460/0x485af0/0x7c8b3d——callees=6 含虚表槽 8 间接吻合）|
+| 0x5FDCC0 | 87B（0x57）| ret c3 @0x5FDD16 | 0x5FDD20（[0xa83d84] 表+[b0f4f8]/[b0f4ec] 区间判定+0x4068e0——同族查询器，未登记）| 0（callees=0 吻合）|
+
+三函数为 **0x5F 区构造/收集/查询族**（batch 2191/2192 Spotlight/注册表族同源）：a 路为 XSurface 虚表构造；b 路为 CellIterator 全图遍历收集（cell+0x44==0x7e 与 cell+0x11e 字节判定）；c 路为 [0xa83d84] 注册表索引标志查询:
+
+## a 路 0x5FE020（32B）——XSurface 构造器
+
+```
+005fe020  mov edx,[esp+8]（第二参数）→ mov eax=ecx（this）→ mov ecx,[esp+4]（第一参数）→ mov [eax+4],ecx / mov [eax+8],edx（★双参数写入）→ mov [eax+0xc],0（清零）→ mov [eax],0x7e2104（★虚表装载——batch 2191/2192 同款）→ ret 8
+```
+**语义**：**XSurface 构造器（推断名，YRpp 带名 XSurface::XSurface）**——① ★两参数写入 [eax+4]/[eax+8]（尺寸/缓冲对）；② [eax+0xc]=0 清零 + **0x7e2104 虚表**（DSurface 族——batch 2191 c/2192 c 同款虚表）。**XSurface 基础构造端（0x7e2104 虚表族最小形态）**。
+
+## b 路 0x5FDDF0（261B）——地图 cell 收集器
+
+```
+005fddf0  sub esp,0x18 → mov ecx,0x87f7e8（MapClass::Instance）→ call 0x578350（★CellIterator::Reset）→ call 0x578290（★CellIterator::Next——batch ⑨ CellIterator 终止机制实锤同源）→ mov esi=eax（cell 指针）→ xor ebx/ebx → [esp+0x20]=0x3e8（★1000 容量上限）→ [esp+0xc]=0x7ed9bc（表地址）→ test esi → je 0x5fdea8（空图直接收尾）→ or edi,0xffffffff
+          → 遍历循环：cmp [esi+0x44],0x7e（★cell+0x44 全区类型码 0x7e 判定——GroundType）→ jne 0x5fde98 → cmp byte [esi+0x11e],0x30（★cell+0x11e 字节阈值——未定砖/可收集判定）→ jb 跳过 → 收集条件链 → 虚表槽 8（[eax+8] 追加）→ [esp+0x1c] 计数++ → [ecx+eax*4]=esi（★收集表写入）→ mov [esi+0x44],edi（写 0xffffffff 标记）→ mov byte [esi+0x11e],bl（清 0）→ call 0x578290（Next）→ jne 循环
+          → 收集后回扫（edi=[count-1] 递减）：mov esi,[eax+edi*4] → call 0x485460（判收集格）→ test al → je → call 0x485af0（★收集格处理——cell 状态回写）→ 循环
+          → 收尾：[esp+0xc]=0x7ed480 → 已收集 → 0x7c8b3d 释放（表 free）→ ret c3
+```
+**语义**：**地图 cell 收集器（推断名）**——① ★★MapClass::CellIterator（0x578350 Reset/0x578290 Next——batch ⑨ CellIterator 终止机制 + 0x6B3A61 实锤同源）全图遍历；② ★cell+0x44==0x7e（全区类型码）+ cell+0x11e 字节（<0x30 阈值）双重判定收集（1000 容量上限）；③ ★收集表写入 + cell 标记（+0x44=0xffffffff 已收标记 + 0x11e 清 0）；④ ★回扫处理（0x485460 判定 + 0x485af0 回写）；⑤ 0x7c8b3d 释放收尾。**全区 cell 收集端（CellIterator 全图扫描 + 0x7e 类型码 + 收集表）**。
+
+## c 路 0x5FDCC0（87B）——注册表索引查询器
+
+```
+005fdcc0  mov eax=ecx（出参）→ mov ecx,[0xa83d84]（★注册表对象数组——batch 2192 c 路同全局）→ mov esi,[ecx+edx*4]（★edx 索引取对象）→ xor edi,edi → mov bl,[esi+0x2a9]（★标志字节族）→ test → jne 0x5fdcf9 → mov bl,[esi+0x2a8] → test → jne → cmp [esi+0x294],0x7e（★注册表索引==0x7e 判定）→ je → mov bl,[esi+0x2aa] → test → jne → je 0x5fdcfe
+          → 0x5fdcf9：mov ecx,0xfffffff4（★基础偏移 -12）→ 0x5fdcfe：cmp [esi+0x298],9（★计数字段==9）→ jne → dec ecx → cmp edx,0x7e（索引==0x7e）→ jne → dec ecx → mov [eax],edi（★出参[0]=0）→ mov [eax+4],ecx（★出参[4]=偏移值）→ ret
+```
+**语义**：**注册表索引查询器（推断名）**——① ★[0xa83d84] 注册表对象数组 + edx 索引取对象（batch 2192 c 路同全局）；② ★多标志组合判定（[esi+0x2a9]/[esi+0x2a8]/[esi+0x2aa] 字节标志 + [esi+0x294] 注册索引==0x7e + [esi+0x298] 计数==9——各减 1 修正偏移）；③ ★出参写入（[eax]=0 + [eax+4]=0xfffffff4 起逐级修正的偏移值）。**注册表标志偏移查询端（0xfffffff4 基础偏移 + 三条件递减修正）**。
+
+## callee 核验
+
+- a 路：0 个直接 call（纯构造——callees=0 吻合）。
+- b 路：5 个直接 call（0x578350 Reset/0x578290 Next×2/0x485460/0x485af0/0x7c8b3d——虚表槽 8 追加为间接），**全部已登记**（callees=6 含虚表槽 8 吻合）。
+- c 路：0 个直接 call（纯查询——callees=0 吻合）。
+
+## 原版怪癖（照抄）
+
+1. b 路 ★★CellIterator 全图遍历（0x578350/0x578290——batch ⑨ 终止机制实锤同源，[0x87f8dc] MapRect.W 起点）；
+2. b 路 ★cell+0x44==0x7e（全区类型码）+ cell+0x11e 字节 <0x30 双重判定 + 1000 容量上限（[esp+0x20]=0x3e8）；
+3. b 路 ★收集后 cell 标记（+0x44=0xffffffff + 0x11e 清 0——防重收惯用）；
+4. c 路 ★标志组合递减修正（0xfffffff4 基础偏移 + [0x2a9]/[0x2a8]/[0x2aa] 标志 + [0x294]==0x7e + [0x298]==9 各减 1）；
+5. a 路 ★0x7e2104 虚表族（batch 2191/2192 同款——DSurface 族全景）。
+
+## 跨批次连接
+
+- ★★batch ⑨/⑬（CellIterator 0x578350/0x578290 + [0x87f8dc] MapRect.W——b 路同源）；QWEN.md 阶段 9（CellIterator 起点/终止机制）。
+- ★★batch 2192 c（[0xa83d84] 注册表——c 路同全局）；batch 2191（0x7e2104 虚表族——a 路同款）。
+- ★batch 2190（0x5FFFA0 Spotlight 遍历——b 路 [0xac1678]/[0xac167c] 邻域注册表族）。
+
+## 观察项 / 候选池
+
+- **MISSING：无**（a 路 0 个 / b 路 5 个 / c 路 0 个直接 call 全部已登记）。
+- **后邻未登记**：0x5FE040/0x5FE060/0x5FE090/0x5FE0B0/0x5FE0D0/0x5FE0F0/0x5FE110（a 后邻——清零/浮点初始化连排 7 件套）、0x5FDF00/0x5FDF10/0x5FDF70（b 后邻——常量返回器/拷贝器/四虚表注册表移除器）、0x5FDD20（c 后邻——[b0f4f8]/[b0f4ec] 区间判定查询器）。
+- **新观察**：[0xac15f8..0xac1604] 全局清零族（a 后邻）；[0xac1610]/[0xac1668]/[0xac1650]/[0xac1648]/[0xac1618] 浮点常量全局（a 后邻连排）；cell+0x44==0x7e 全区类型码（b 路）。
+- 前向：picker 队列继续 0x5F 区（0x5FDF70/0x5FDD20/0x5FE040 孪生链）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
