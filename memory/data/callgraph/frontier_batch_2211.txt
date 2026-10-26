@@ -1,0 +1,72 @@
+# frontier batch 2211：0x5E 区资源调度族三连（资源状态循环调度器 + 资源档位差值调度器 + 资源状态查询器）（0x5EBEC0 / 0x5EBDD0 / 0x5EAEE0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5EBEC0 FUN_005ebec0 callees=7 deps=752 / 0x5EBDD0 FUN_005ebdd0 callees=5 deps=2744 / 0x5EAEE0 FUN_005eaee0 callees=4 deps=265）
+- 三路 disasm：`.qwen/tmp/_d2211a.txt`（0x5EBEC0 size 0x200）/ `_d2211b.txt`（0x5EBDD0 size 0x100）/ `_d2211c.txt`（0x5EAEE0 size 0x200）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x5EBEC0 | 361B（0x169）| ret 4 @0x5EC026 | 0x5EC030（[0x8316a4] 判定 + [0xa8b238]==4 + 槽位 2/6/8 + 0x411-0x418 序列——同族调度器孪生，未登记）| 6（0x77d940/0x77d970/0x5ec9f0/0x5eb7b0/0x5dafd0/0x5e32d0——callees=7 含 [0x7e1490] IAT 间接吻合）|
+| 0x5EBDD0 | 225B（0xE1）| ret 8 @0x5EBEAE | 0x5EBEC0（= a 路本体——差值/循环调度孪生互指）| 5（0x77d940/0x77d970/0x5eb7b0/0x5eba00/0x5ebc00——callees=5 吻合）|
+| 0x5EAEE0 | 375B（0x177）| ret c3 @0x5EB056 | 0x5EB060（[0xa8b23c] 虚表槽 0x40 + 0x77d940 + [0x8316a4]——同族查询器，未登记）| 4（0x7dd0f8/0x4e41d0/0x696f20/0x4e49a0——callees=4 吻合）|
+
+三函数为 **0x5E 区资源调度族**（[0xa8b238] 模式 + 0x77d940/0x77d970 状态判定 + 槽位 2/6/8 分档 + [0x7e1490] IAT 回调 + [0xac119c..0xac11b4] 资源 ID 族 + 0x411-0x418 资源类型序列——batch 2210 资源族续）：
+
+## a 路 0x5EBEC0（361B）——资源状态循环调度器
+
+```
+005ebec0  mov eax=[esp+0x10]/mov ebx=edx（★槽位起止）→ mov edi=ecx → mov esi=[ebx+eax]（止界）→ mov eax,[0xa8b238]（★模式）→ cmp 4 → jne 0x5ebf09（非 4 → 槽位 8）→ call 0x77d940 → test al → je 0x5ebeff → call 0x77d970 → test al → jne 0x5ebeff → ★槽位 2 → 0x5ebeff：槽位 6 → 0x5ebf09：槽位 8（★三档判定）
+          → ★主循环（ebx 起止递增）：mov ebp,[0x7e1490]（★IAT 回调——batch 2171 IAT 族）→ ★0x411-0x418 资源类型序列（cmp ebx 0-6 → esi=0x411..0x417 / 0x418 兜底——★7+ 归一惯用）→ ★IAT 双发（0x147/0x150 事件码 × 资源类型 edi/es 参数）→ call [ebp] 两次
+          → ★资源 ID 判定（eax vs [0xac119c]/[0xac11a0]/[0xac11b4]/[0xac11b0]——命中跳过）→ push 0/push eax → call 0x5ec9f0（★提交）→ [0x8316a4] 判定 + ebx vs eax 边界 → push 参数 → call 0x5ec9f0 ×2
+          → 循环推进（inc ebx vs [esp+0x14]）→ 收尾：push 参数 → call 0x5eb7b0（★边界装载）→ call 0x5dafd0（★通知）→ xor dl/mov cl,1 → call 0x5e32d0（★收尾调度）→ ret 4
+```
+**语义**：**资源状态循环调度器（推断名）**——① ★[0xa8b238] 模式 4 门控 + 0x77d940/0x77d970 双状态判定 → 槽位 2/6/8 三档（batch 2210 槽位族同款）；② ★★0x411-0x418 资源类型序列（cmp 0-6 → 0x411..0x417 / 0x418 兜底——★7+ 归一惯用）；③ ★★[0x7e1490] IAT 回调双发（0x147/0x150 事件码——资源申请/释放通知）；④ ★资源 ID 判定（[0xac119c..0xac11b4]——batch 2210 同族）+ 0x5ec9f0 提交 ×3；⑤ 0x5eb7b0/0x5dafd0/0x5e32d0 收尾三连。**资源状态循环调度端（槽位三档 + 类型序列 + IAT 双发——资源管理主循环）**。
+
+## b 路 0x5EBDD0（225B）——资源档位差值调度器
+
+```
+005ebdd0  mov edi=ecx → mov esi=edx（★档位参数）→ mov ecx,[0xa8b23c]（★全局）→ test → je 跳过 → 虚表槽 0x40（★合法判定）→ test al → jne 跳过 → call 0x77d940 → test al → jne 跳过 → mov eax,[0xa8b238] → cmp 4 → jne → ★槽位分档（0x77d940/0x77d970 → eax=2/6/8）→ cmp esi,eax → jle 0x5ebe26（★上限钳位：esi=eax）
+          → ★第二段（[esp+0x10] 参数）：虚表槽 0x40 判定 + 0x77d940 → 槽位分档（2/6/8）→ cmp edx,eax → jle → edx=eax（★上限钳位二）
+          → ★差值装载：mov eax=edx → sub eax,esi（★档位差）→ test → jle 0x5ebe9c → push eax → mov edx=esi → call 0x5eb7b0（★档位装载）→ call 0x5eba00（★推进）→ ret 8 → 0x5ebe9c：jge 0x5ebea5 → call 0x5ebc00（★回退装载）→ call 0x5eba00 → ret 8
+```
+**语义**：**资源档位差值调度器（推断名）**——① ★[0xa8b23c] 全局虚表槽 0x40 判活 + 0x77d940 门控 + [0xa8b238]==4 模式分档（槽位 2/6/8）；② ★★双段上限钳位（esi/edx vs 槽位——档位封顶）；③ ★★差值装载（edx-esi → 0x5eb7b0 正差装载 / 0x5ebc00 负差回退）+ 0x5eba00 推进——**资源档位差值调度端（钳位 + 差值三路）**。
+
+## c 路 0x5EAEE0（375B）——资源状态查询器
+
+```
+005eaee0  mov eax,[0xa8da84]（★资源计数）→ test → jne 0x5eaefa → or ebp,0xffffffff → 0x5eafbb（空返）
+          → 0x5eaefa：mov eax,[0xa8da78]（★资源表）→ ★遍历循环（esi 0xa8da90..0xa8dab0 步进 4）：mov ebx,[eax] / mov eax,[esi] → test → je 0x5eaf1c → push/push → call 0x7dd0f8（★串比较）→ test → je 0x5eaf6b（命中）→ 0x5eaf1c：推进（esi+=4/inc edi/cmp 0xa8dab0）
+          → ★命中路径：mov ecx=esi → call 0x4e41d0（★索引查询）→ mov ecx,[esi*4+0xa8da90]（★槽位值）→ ★资源 ID 判定（[0xac11a4]/[0xac11a8]/[0xac11ac] → [esi*4+0xa8b2bc] 槽族取 / [0xac119c]/[0xac11a0]/[0xac11b0]/[0xac11b4] → 0xfffffffe / 兜底 0x696f20（全局写））
+          → ★第二遍历（esi 0xa8b2bc..0xa8b2dc 步进 4）：mov ecx=edi → call 0x4e41d0 → [esi+0x27d4] 槽值 → 同款 ID 判定 → push eax → mov edx=ebx → call 0x4e49a0（★查询提交）→ 循环 → ret
+```
+**语义**：**资源状态查询器（推断名）**——① ★[0xa8da84] 资源计数门控 + [0xa8da78] 资源表 + [0xa8da90..0xa8dab0] 遍历族；② ★0x7dd0f8 串比较命中（资源名匹配）→ 0x4e41d0 索引查询；③ ★★资源 ID 判定（[0xac11a4..0xac11b4] 族——batch 2210/2211 a 路同族）+ [0xa8b2bc] 槽族取 / 0xfffffffe 特殊值 / 0x696f20 兜底；④ ★双遍历镜像（[0xa8da90] 族 + [0xa8b2bc] 槽族）+ 0x4e49a0 提交。**资源状态查询端（双族遍历 + ID 判定——资源注册表查询）**。
+
+## callee 核验
+
+- a 路：6 个直接 call（0x77d940/0x77d970/0x5ec9f0/0x5eb7b0/0x5dafd0/0x5e32d0——[0x7e1490] 为 IAT 间接），**全部已登记**（callees=7 含 IAT 吻合口径）。
+- b 路：5 个直接 call（0x77d940/0x77d970/0x5eb7b0/0x5eba00/0x5ebc00——虚表槽 0x40 间接），**全部已登记**（callees=5 吻合）。
+- c 路：4 个直接 call（0x7dd0f8/0x4e41d0/0x696f20/0x4e49a0），**全部已登记**（callees=4 吻合）。
+
+## 原版怪癖（照抄）
+
+1. ★★★[0xa8b238]==4 模式门控 + 0x77d940/0x77d970 双状态判定 → 槽位 2/6/8 三档（a/b 路同款——batch 2210 槽位族续）；
+2. a 路 ★0x411-0x418 资源类型序列（cmp ebx 0-6 → 0x411..0x417 / 0x418 兜底——★7+ 归一惯用）；
+3. a 路 ★★[0x7e1490] IAT 回调双发（0x147/0x150 事件码——资源申请/释放）；
+4. a/b 路 ★★★[0xac119c..0xac11b4] 资源 ID 判定族（命中跳过/特殊值 0xfffffffe/0x696f20 兜底——三函数共享）；
+5. b 路 ★双段上限钳位（esi/edx vs 槽位）+ 差值三路（0x5eb7b0 正差/0x5ebc00 负差/0x5eba00 推进）；
+6. c 路 ★双遍历镜像（[0xa8da90] 资源族 + [0xa8b2bc] 槽族）+ 0x7dd0f8 串匹配。
+
+## 跨批次连接
+
+- ★★batch 2210 a（[0xac11a4..0xac11b4] 资源 ID 族 + 槽位 2/6/8——a/b/c 路三函数共享同全局）；batch 2171（[0x7e1490] IAT 回调族——a 路）。
+- ★★batch 2210 b（0x8870c0 INI 无关，[0xa8b23c] 全局——b/c 路同用）；batch 2199（槽位族——a 路 0x411 序列同脉络）。
+- ★batch 2205/2206（命令族无关，[0x77d940]/[0x77d970] 状态判定族——a/b/c 路）。
+
+## 观察项 / 候选池
+
+- **MISSING：无**（a 路 6 个 / b 路 5 个 / c 路 4 个直接 call 全部已登记）。
+- **后邻未登记**：0x5EC030（a 后邻——[0x8316a4] 判定 + 槽位 2/6/8 + 0x411 序列调度器孪生）、0x5EBEC0（b 后邻 = a 路本体——差值/循环调度孪生互指）、0x5EB060（c 后邻——[0xa8b23c] 虚表槽 0x40 + 0x77d940 + [0x8316a4] 查询器）。
+- **新观察**：[0xa8da84]/[0xa8da78]/[0xa8da90..0xa8dab0] 资源族全局（c 路）；0x411-0x418 资源类型常量（a 路）；[0x8316a4] 调度判定（a 后邻 + c 后邻双向）。
+- 前向：picker 队列继续 0x5E 区（0x5EC030/0x5EB060 孪生链 + 0x5E00B0 大宿主候选）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
