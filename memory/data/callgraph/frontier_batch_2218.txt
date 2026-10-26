@@ -1,0 +1,72 @@
+# frontier batch 2218：0x5E 区共享值表读写族三连（共享值表单槽写入器 + 共享值表查询定位器 + 共享值表查询定位器·精简）（0x5E8D90 / 0x5E8D40 / 0x5E8D00）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5E8D90 FUN_005e8d90 callees=0 deps=2797 / 0x5E8D40 FUN_005e8d40 callees=1 deps=265 / 0x5E8D00 FUN_005e8d00 callees=1 deps=90）
+- 三路 disasm：`.qwen/tmp/_d2218a.txt`（0x5E8D90 size 0x100）/ `_d2218b.txt`（0x5E8D40 size 0x100）/ `_d2218c.txt`（0x5E8D00 size 0x100）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5E8D90 | 8B（0x8）| ret c3 @0x5E8D97 | 0x5E8DA0（未登记——全局提交器观察项：[0xa8da78] 读 + [0xa8da8c]=ecx + [ecx*4+0xa8da90]=edx）| 0（callees=0 吻合）|
+| 0x5E8D40 | 75B（0x4B）| ret c3 @0x5E8D8A | 0x5E8D90（= a 路本体——查询/写连排）| 1（0x7dd0f8——callees=1 吻合）|
+| 0x5E8D00 | 57B（0x39）| ret c3 @0x5E8D38 | 0x5E8D40（= b 路本体——精简/完整连排）| 1（0x7dd0f8——callees=1 吻合）|
+
+三函数为 0x5E 区共享值表 [0xa8da90..0xa8dab0] 的**读写端点**（batch 2211/2212/2213/2214/2215/2216/2217 槽族续——本批收口读写基元）：
+
+## a 路 0x5E8D90（8B）——共享值表单槽写入器
+
+```
+005e8d90  mov dword ptr [ecx*4+0xa8da90], edx（★单槽写共享值表——索引 ecx 写 edx）
+005e8d97  ret c3
+```
+**语义**：**共享值表单槽写入器（推断名）**——[0xa8da90+ecx*4]=edx 的最简 8B 写器。**共享值表写基元（各槽位/填充族的下游写端点）**。
+
+## b 路 0x5E8D40（75B）——共享值表查询定位器
+
+```
+005e8d40  mov eax,[0xa8da84]（★全局计数）→ test → jne 0x5e8d4d → or eax,0xffffffff → ret（★计数==0 直接返 -1）
+005e8d4d  mov eax,[0xa8da78] → mov ebx,[eax]（★[0xa8da78] 对象解引用）→ edi=0（索引）→ esi=0xa8da90
+005e8d59  ★共享值表扫描：mov eax,[esi] → test → je 跳过 → push eax/ebx → call 0x7dd0f8（★查询——batch 2211c 资源状态查询器同款）→ add esp,8 → test → je 0x5e8d85（命中）
+          → add esi,4 / inc edi / cmp 0xa8dab0 / jl（8 槽）
+005e8d7e  （未命中）or eax,0xffffffff → ret（-1）→ 005e8d85：（命中）mov eax,edi → ret（★返回命中槽索引）
+```
+**语义**：**共享值表查询定位器（推断名）**——① [0xa8da84] 全局计数==0 直接返 -1（前置门控）；② 共享值表 8 槽扫描，每槽经 0x7dd0f8 双参查询（push eax 槽值 + push ebx 对象）→ 命中返回槽索引 edi / 未中返 -1。**共享值表查询定位端（返回命中槽位索引——真值位查询）**。
+
+## c 路 0x5E8D00（57B）——共享值表查询定位器·精简
+
+```
+005e8d00  push 三件套 → mov ebx=ecx（this）→ edi=0 → esi=0xa8da90
+005e8d0c  ★共享值表扫描同 b：mov eax,[esi] → test → je 跳过 → push eax/ebx → call 0x7dd0f8 → test → je 0x5e8d33（命中）
+          → add esi,4 / inc edi / cmp 0xa8dab0 / jl（8 槽）
+005e8d2c  （未命中）or eax,0xffffffff → ret（-1）→ 005e8d33：（命中）mov eax,edi → ret（返回索引）
+```
+**语义**：**共享值表查询定位器·精简（推断名）**——与 b 路扫描段**逐字节同构**（同一 0x7dd0f8 查询 + 索引返回 + -1 哨兵），仅差异：★无 [0xa8da84] 前置门控 + mov ebx=ecx 直接取 this（b 路 [0xa8da78] 解引用）——**同查询语义的独立轻量版**。
+
+## callee 核验
+
+- a 路：跨函数直接 call **0 个**（callees=0 吻合——单指令写器）。
+- b 路：跨函数直接 call 1 个（0x7dd0f8），**已登记**（batch 2211c 资源状态查询器同款——callees=1 吻合）。
+- c 路：跨函数直接 call 1 个（0x7dd0f8），**已登记**（callees=1 吻合）。
+- ★核验脚本（norm() 规范化版——batch 2214 修复）直接输出 PASS。**MISSING：无**。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★最简 8B 单槽写器（无任何门控——[0xa8da90+ecx*4]=edx）——与 2217 c 路插槽器的写端点同款（mov [eax*4+0xa8da90],ecx）；
+2. b 路 ★[0xa8da84] 全局计数==0 前置门控（空表直接返 -1——不扫描）；
+3. b/c 路 ★0x7dd0f8 双参查询（push 槽值 + push 对象）+ 命中返索引 / 未中返 -1（or eax,0xffffffff 哨兵——batch 2211c 同款查询函数）；
+4. b 路 ★[0xa8da78] 对象解引用取 [eax]（c 路直接 this——两种对象来源并存）；
+5. b/c 路 ★索引 edi 从 0 递增、扫描 8 槽（cmp 0xa8dab0 / jl——共享值表固定 8 槽）。
+
+## 跨批次连接
+
+- ★★batch 2211（0x7dd0f8 查询函数 + 共享值表 [0xa8da90..0xa8dab0] + [0xa8da78]/[0xa8da84] 全局族——b/c 路全模板）+ batch 2217（插槽器写端点 [eax*4+0xa8da90]——a 路同款）。
+- ★★batch 2214/2215/2216（共享值表扫描模板 + [0x8316a4] 索引 + [eax+0x6b] 哨兵——b/c 路扫描同脉络）。
+- ★batch 2213/2212（槽族查询/构建族——a/b/c 路读写基元的宿主族）。
+
+## 观察项 / 候选池
+
+- **MISSING：无**（a 路 0 / b 路 1 / c 路 1 跨函数直接 call 全部已登记）。
+- **后邻未登记**：0x5E8DA0（a 后邻——全局提交器：mov eax,[0xa8da78] → mov [0xa8da8c],ecx → mov edx,[eax] → mov [ecx*4+0xa8da90],edx——[0xa8da8c] 全局提交+表写，自然排队）；0x5E8DC0（更后邻——串构建循环（call 0x7b66c0/0x7b6880/0x5edef0/0x7b7ed0/0x7b68e0/0x7b6760/0x7b46f0 字符串族 + 0x7ca45f 两连 0x8304fc 键——共享值表名串 dump 器观察项）；0x5E8D90（b 后邻 = a 路本体）；0x5E8D40（c 后邻 = b 路本体）。
+- **新观察**：0x5E8DC0 共享值表名串 dump 器（7b 字样串族 0x7b66c0/0x7b6880/0x7b7ed0/0x7b68e0/0x7b6760/0x7b46f0 + 0x7ca45f 串追加 + 0x8304fc 宽串键——batch 2189 宽串族同脉络）。
+- 前向：picker 队列继续 0x5E 区（0x5E00B0 大宿主 deps=2715 + 0x5DC350 deps=3922 候选）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
