@@ -1,0 +1,65 @@
+# frontier batch 2171：0x62 区运动族三连（声音事件初始化器 + 弹道运动更新器 + 弹道散布生成器）（0x631B20 / 0x62F9A0 / 0x62F230）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x631B20 FUN_00631b20 callees=2 deps=2552 / 0x62F9A0 FUN_0062f9a0 callees=12 deps=110 / 0x62F230 FUN_0062f230 callees=17 deps=107）
+- 三路 disasm：`.qwen/tmp/_d2171a.txt`（0x631B20 size 0x140）/ `_d2171b.txt`（0x62F9A0 size 0x400）/ `_d2171c.txt`（0x62F230 size 0x800，c 路输出过大已落盘全读）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x631B20 | 224B（0xE0）| ret c3 @0x631C00 | 0x631C10（双参结构拷贝器 + 尾 strcmp，未登记）| 0（两个 call 均为寄存器间接 [0x7e14a8]/[0x7e14a4]）|
+| 0x62F9A0 | 951B（0x3B7）| ret c3 @0x62FD56 | 0x62FD60（虚表槽跳转分派器——[esi+0xac]+0x2b4 四路 switch，未登记）| 12（11 已登记 + **1 MISSING：0x62E4C0**）|
+| 0x62F230 | 1904B（0x770）| ret c3 @0x62F99F | 0x62F9A0（=本批 b 路本尊）| 17（全已登记）|
+
+三函数为 **0x62/0x63 区运动/散射族**——RandomRanged 0x65C7E0 + [0xa8b230]+0x218 随机源 + 虚表槽 0xf8/0xb0/0x1b4 + 0x4cacxx FastSqrt 数学族 + [0x836704]/[0x836724]/[0xb46254] 表：
+
+## a 路 0x631B20（224B）——声音事件初始化器
+
+```
+00631b20  push ecx+5 寄存 → mov ebp,ecx → mov esi,[0x7e14a8]（回调1）→ push 0x5e5（行号）→ push [ebp] → call esi（[0x7e14a8] 间接调用）→ mov ecx,[ebp+8] → add ecx,0x70 → push ecx → push 0 → push 0x4b2 → push eax → mov ebx,[0x7e14a4]（回调2）→ call ebx → 同款第二组（0x5df 行号 + [ebp+8]+0x9a 目标 + 0x4b4）→ mov esi,[ebp+8] → 三元组判定（[esi]≠0 && [esi+4]≠-1 && [esi+8]≠-1）→ 是：lea edi,[ebp+0xc] → rep movsd 0x1c（★112B 模板拷 [esi]→[ebp+0xc]）+ byte[esp+0x13]=1 / 否：mov esi,0xa8dac0（默认源）→ rep movsd 0x1c + byte[esp+0x13]=0 → 条件设置×2（0x664/0x663 行号 + 0xf1 + sete 反转）→ ret c3
+```
+**语义**：**声音事件初始化器（推断名）**——① 通过 [0x7e14a8] 回调按行号查取（0x5e5/0x5df/0x664/0x663 = __LINE__ 常量，DebugLog 族 IAT 槽）；② 通过 [0x7e14a4] 回调初始化目标字段（0x4b2/0x4b4/0xf1 参数 + [ebp+8]+0x70/+0x9a）；③ ★112B 模板拷贝（三元组有效则拷 [esi]，否则拷默认 0xa8dac0）；④ 两次条件设置（byte 标志反转 sete）。**行号+双回调形态 = 调试宏族间接调用变体**。
+
+## b 路 0x62F9A0（951B）——弹道运动更新器
+
+```
+0062f9a0  push ebp → and esp,-8（栈对齐）→ sub esp,0x4c → mov esi,ecx → 段1 倒序遍历 [esi+0xc0] 数组（[esi+0xcc] 计数）：call 0x62ce40 + call 0x62d5e0 每元素 → 段2 倒序 byte[+0x131] 非零 → call [edx+0xf8]（虚表槽 0xf8）→ 段3 ecx=[esi+0xe0] → ★call 0x40dd70（获取对象 → ebx）→ ebx && byte[ebx+0x90] && [ebx+0x2b4]：lea ecx,[ebx+0x388] → call 0x4c9480（判定）→ [ebx+0x2b4] 虚表槽 0x48（取坐标）→ ★浮点距离/角度（fild 三分量差 → 点积 → call 0x4cac40 FastSqrt → call 0x7c5f00 _ftol；[ebx+0x388] call 0x4c93d0 → movsx word[eax]-0x3fff → fmul [0x7e2810]；call 0x4cacb0/0x4cad00 → _ftol）→ lea ecx,[esp+0x58] → call 0x41c230（坐标构造）→ 写 [esi+0xd4..0xdc]（3 dword）→ 虚表槽 0xb0（[ebx]）+ 虚表槽 0x1b4（[edi]）→ byte[esp+0xf]=1 → 否则分支 → 虚表槽 0xf8 → 段4 帧门控：eax=[0xa8ed84] idiv [edi+0x29c] → 余数判定 + idiv 3 → idiv 0x1f4（500）→ ebx=余数 → [esi+0x9c] vs [esi+0xd4] 差平方和 → call 0x4cac40 → fcomp [0x7efd88] → fnstsw → [esp+0x10]=3 或 1 → movsx word[ebx*2+0xb46254] → ×3 ×4 → fild → fmul [0x7efd84] → fdiv → call 0x7c5f00 → ebx → lea ecx,[esp+0x24]/lea edx,[esp+0x30] → ★call 0x75f230（方向索引）→ mov ecx,[eax*4+0x836704] / mov eax,[eax*4+0x836724] → imul ×ebx → 加 [esi+0xd4]/[esi+0xd8] → push 4 → lea edx,[edi+1] → ★call 0x62e4c0（推进）→ ret
+```
+**语义**：**弹道运动更新器（推断名）**——① 倒序遍历 [esi+0xc0] 数组（0x62ce40/0x62d5e0 每元素处理 + 虚表槽 0xf8 门控调用）；② 主体：0x40dd70 获取对象 → 虚表槽 0x48 取坐标 → **距离/角度浮点计算**（0x4cac40 FastSqrt 族、0x4c93d0 半角→弧度、0x4cacb0/0x4cad00 数学、0x7c5f00 _ftol）→ 0x41c230 坐标 → 写回 [esi+0xd4..0xdc] → 虚表槽 0xb0/0x1b4 通知；③ ★帧数门控（[0xa8ed84] % [edi+0x29c] + %3 + %500）→ 0xb46254 表 → 0x75f230 方向 → **0x836704/0x836724 双表** → 0x62e4c0 推进。**0x62 区飞行/投射物运动更新器（★★与 c 路同对象族：[esi+0xc0]/[esi+0xcc] 数组 + 虚表槽 0xf8 + FastSqrt 数学链）**。
+
+## c 路 0x62F230（1904B）——弹道散布生成器
+
+```
+0062f230  push ebp → and esp,-8 → sub esp,0xe0 → mov edi,ecx → byte[edi+0xf8] 非零 → 跳尾段；[edi+0xcc]==0 → 跳尾段 → 段1 坐标差（[edi+0x9c] vs [edi+0xd4..0xdc]）→ fild 点积 → call 0x4cac40 ×2 → call 0x7c5f00 ×多 → 钳位 ±（[esp+0x18]/[esp+0x1c] min/max）→ fild [esp+0x14] → fmul [eax+0x2c8] → _ftol → fild → fdiv → call 0x4cad80 → fidiv → call 0x4cadb0（角度分数换算）→ [esp+0x18] fchs（ebp<0 取负）→ lea ecx,[esp+0xc0] → call 0x5ae860 → push [esp+0x18] → call 0x5af1a0 → push [esp+0x14] → call 0x5aef60（三维向量构造链）→ 大循环（0x62f3db-0x62f876）：fild → fdiv → fmul [eax+0x2d0] → call 0x4cacb0/0x4cad00 → call 0x5afb80 → ★三次 RandomRanged（mov ecx,[0xa8b230]+0x218 → call 0x65c7e0，常量 0x7ffffffe/0）→ [0x7e3570]/[0x7e1738] 常量换算 → fmul [eax+0x2e0] → 散布坐标 → call 0x7c5f00 ×3 → lea eax,[edi+0xd4] → call 0x75f540（坐标变换）→ [edi+0xac]+0x294 判定（==-1 → ebx=0 跳过）→ ★new 0x138（call 0x7c8e17）=312B → 构造参数 → [0xa83d9c] 索引表 → call 0x62b5e0（构造）→ call 0x630250（挂 [edi+0xbc] 列表）→ [ebx+0x10c] 三 dword 写 → 又三次 RandomRanged → [eax+0x2e8] 散布 → fadd [esi] → 写 [esi]/[esi+4]/[esi+8] → 长度平方 → call 0x4cac40 → fcom [0x7e2800] → fnstsw → 归一化 fdiv ×3 → 又 RandomRanged → [0x7e3570]/[0x7e1738] → fmul [ecx+0x2f0] 夹取（fcompp 链）→ [esp+0x14] → [ebx+0xac]+0x2fc → [ebx+0xe4] 推进 → 循环 inc/jl → 尾段：byte[edx+0x30b] 非零 → ★new 0x5c（call 0x7c8e17）=92B → 构造参数（0x3f000000=0.5f + [edi+0xd4..0xdc] + [edi+0x9c..0xa4] 两坐标组）→ call 0x54fe60（构造/发射）→ [edi+0xf8]=1 置位 → 倒序遍历 [edi+0xc0]（call 0x62ce40）+ byte[+0x131] 非零 → call [edx+0xf8] → ret
+```
+**语义**：**弹道散布生成器（推断名）**——① +0xf8 门控 + 数组空门控；② 距离/方向浮点计算（0x4cac40 FastSqrt、0x4cad80/0x4cadb0 数学、0x7c5f00 _ftol、0x5ae860/0x5af1a0/0x5aef60 三维向量构造链）；③ ★★大循环按方向散布：**Randomizer@[0xa8b230]+0x218 多次 RandomRanged（0x65C7E0——QWEN.md RNG 里程碑实锤函数复用）** + [0x7e3570]/[0x7e1738] 常量换算 → ×[eax+0x2e0] 散布；④ ★new 0x138（0x7c8e17）→ 0x62b5e0 构造 → 0x630250 挂列表 → [ebx+0x10c] 三写 + 三次 RandomRanged 散布 [eax+0x2e8]；⑤ 长度归一化（fcom [0x7e2800] 判 0）→ new 0x5c → 0x54fe60 构造发射（0.5f + 两坐标组）；⑥ +0xf8=1 收尾 + 数组 0x62ce40/虚表槽 0xf8 倒序。**★发射/轰炸散布生成器（0x62 区——与 b 路同对象族）**。
+
+## callee 核验
+
+- a 路：直接 call 0 个（间接 [0x7e14a8]/[0x7e14a4]——IAT 回调槽）。
+- b 路：12 个直接 call，11 已登记 + **MISSING 0x62E4C0**（ranking.tsv 有行：FUN_0062e4c0 270B uc=1 callees=3，caller 列表含 FUN_0062f9a0 = **本批 b 路本尊**——观察项自然排队）。
+- c 路：17 个直接 call 全已登记（含 0x65C7E0 RandomRanged、0x7C8E17 operator new、0x7C5F00 _ftol CRT）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★112B 模板拷贝三元组判定（[esi]≠0 && +4≠-1 && +8≠-1 才拷，否则默认 0xa8dac0）+ byte 标志两种拷贝路径；
+2. a 路四个 __LINE__ 常量（0x5e5/0x5df/0x664/0x663）——调试宏族行号透传；
+3. b/c 路 ★帧数/余数门控（idiv 500/[edi+0x29c]/3——隔帧才推进）；
+4. b 路 word[ebx*2+0xb46254] ×3 ×4 表查（lea eax,[eax+eax*2] + shl 2 = ×12）；
+5. b/c 路 ★FastSqrt 数学族连续 _ftol（0x7c5f00——全 0x62 区运动更新惯用）；
+6. c 路 ★new 0x138 312B + new 0x5c 92B 两档分配（0x7c8e17）、0x3f000000=0.5f 常量；
+7. c 路 ★三次 RandomRanged 连续消费（0x65C7E0 ×3 + 又 ×3——散布随机数不退回，照抄）。
+
+## 跨批次连接
+
+- ★★★QWEN.md RNG 里程碑：0x65C7E0 RandomRanged（原版怪癖清单实锤——本批 c 路连续消费 6 次）。
+- ★★batch 2157-2165（0x65C7E0 区间随机族 + [0x88731c] 虚表提交族）；batch 2170（0x63 区随机化结构族——a 路 112B 模板拷贝同族）。
+- ★0x4cac40/0x4cacb0/0x4cad00/0x4cad80/0x4cadb0（FastSqrt/数学族已登记）；0x75f230/0x75f540（方向/坐标变换）；0x7c8e17（operator new CRT）；0x7c5f00（_ftol CRT）。
+
+## 观察项 / 候选池
+
+- **新候选：0x62E4C0（MISSING 观察——ranking 有行未登记，caller=本批 b 路，picker 自然取到）**。
+- **后邻未登记**：0x631C10（a 后邻——双参结构拷贝器 + strcmp 尾段）、0x62FD60（b 后邻——[esi+0xac]+0x2b4 四路虚表槽跳转分派器 [0x62fe44] 跳转表）。
+- **新观察**：[0x7e14a8]/[0x7e14a4] IAT 回调对（a 路 112B 初始化形态）；[0xa8b230]+0x218 随机源对象（c 路 RandomRanged 宿主）；0xb46254/0x836704/0x836724 运动表（b 路）。
+- 前向：picker 队列继续 0x62 区（0x62E4C0/0x62FD60/0x631C10 + 0x62E6D0/0x62E840/0x62ED40 等）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650。
