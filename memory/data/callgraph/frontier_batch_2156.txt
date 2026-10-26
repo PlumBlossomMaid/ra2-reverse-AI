@@ -1,0 +1,67 @@
+# frontier batch 2156：类型改写遍历器 + 环形索引回调处理器 + 记录构造提交器（0x639CB0 / 0x639BC0 / 0x639A50）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x639CB0 FUN_00639cb0 callees=1 deps=66 / 0x639BC0 FUN_00639bc0 callees=5 deps=194 / 0x639A50 FUN_00639a50 callees=4 deps=174）
+- 三路 disasm：`.qwen/tmp/_d2156a.txt`（0x639CB0 size 0x120，分段全读）/ `_d2156b.txt`（0x639BC0 size 0x140，分段全读）/ `_d2156c.txt`（0x639A50 size 0x1B0，分段全读）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x639CB0 | 239B（0xEF）| ret @0x639D9E | 0x639DA0（=batch 2155 c 路本尊，已登记）| 1（0x705D20，已登记）|
+| 0x639BC0 | 238B（0xEE）| ret @0x639CAD | 0x639CB0（=本批 a 路本尊，已登记）| 5（全已登记）|
+| 0x639A50 | 354B（0x162）| ret 0x70 @0x639BAF | 0x639BC0（=本批 b 路本尊，已登记）| 4（全已登记）|
+
+三函数为 **0x63 区环形索引族（idiv ÷[ecx+0x90] 归一）+ 记录遍历/回调/构造提交**：
+
+## a 路 0x639CB0（239B）——类型改写遍历器
+
+```
+00639cb0  sub esp,8 → ★call 0x705d20（时间戳）→ mov ecx,eax → mov esi,[ecx+0x14]（计数）→ mov ebp,[ecx+0x94]（★环形偏移）→ test esi → je 0x639cfa → jg 0x639cf2 → test ebp → jg/jne → idiv 负调整
+00639cdd  ★环形索引归一：mov eax,ebp → neg eax → cdq → ★idiv [ecx+0x90]（负数余数修正）→ add edx,ebp → 边界判定（jl/jge）→ mov eax,[ecx+8] → mov edi,[eax+edx*4]（数组取项）→ 0x639cfa：xor edi,edi（空项）
+00639cfc  ★第一层循环（0x639d09-0x639d29）：mov ecx,[edi+4] → mov edx,[ecx+esi*4] → mov ecx,[edx] → mov eax,[ecx] → ★call [eax+0x4c0]（虚表槽 0x4c0 判定）→ test al → jne 0x639d2a（命中）→ inc esi → 循环
+00639d2a  ★第二层循环（0x639d32-0x639d95）：cmp ebp,[esp+0x10] → jge 0x639d97 → mov bl,2 → mov edi,[esp+0x14] → ★环形索引归一（[edi+0x94] 正数路径 idiv [edi+0x90]）→ [edi+8] 数组取项 → [edx+0x10] 二级计数 → 第三层循环：mov eax,[edx+4] → mov eax,[eax+ecx*4] → mov eax,[eax+4] → cmp byte [eax+0xc],bl（★类型字节 vs 2）→ jne → mov byte [eax+0xc],0x1d（★改写为 0x1d）→ inc ebp → 循环
+```
+**语义**：**类型改写遍历器（推断名）**——① 0x705d20 时间戳 + [ecx+0x14] 计数 + [ecx+0x94] 环形偏移 + **idiv [ecx+0x90] 环形索引归一**（负数路径 neg/cdq/idiv 修正 + 正数路径 cdq/idiv）；② 虚表槽 0x4c0 判定命中；③ 双层循环把命中项二级数组中 **byte [eax+0xc] == 2 的项改写为 0x1d**（类型标记改写）。**0x63 区环形索引遍历 + 类型改写器（idiv 环形归一 + 虚表槽 0x4c0 + 0xc 类型字节改写三件套）**。
+
+## b 路 0x639BC0（238B）——环形索引回调处理器
+
+```
+00639bc0  push 族 → test ebp（this 判空）→ je 0x639ca8 → mov eax,[ebp+4] → mov ecx,[eax] → mov ecx,[ecx] → ★call 0x705d20 → mov esi,eax → [esi+4] 虚表槽 0x10 读取 → cmp eax,-1 → je 0x639bf4（空 → ebx=0）→ mov edi,[esi+0x14] → cmp edi,1 → je 0x639c00（==1 → ebx=ebp）→ ★环形索引归一（inc eax → cmp edi → idiv [esi+0x90] + [esi+0x94]）→ [esi+8] 数组取项 → mov ebx,edx
+00639c40  ★第二段循环（0x639c46-0x639c70）：mov edi,[ebp+0x10] → dec edi → js 0x639c72 → mov edx,[ebp+4] → mov eax,[edx+edi*4] → mov ecx,[eax] → ★call 0x705d20 → lea eax,[esp+0x10] → push → [esi+4] 虚表槽 0x10 → ★call 0x636b50（★主动回调——本批 b 路 callee）→ dec edi → jns 循环
+00639c72  ★收尾：test ebx → je 0x639ca8 → cmp ebx,ebp → je → mov ecx,ebx → ★call 0x635120 → [ebx+0x10] 二级计数循环：mov ecx,[ebx+4] → mov edx,[ecx+esi*4] → push edx → ★call 0x634e10 → inc esi → 循环 → mov ecx,ebx → ★call 0x6349b0 → mov byte [ebx+0x1c],0 → ret（bbx+0x1c 标志清 0）
+```
+**语义**：**环形索引回调处理器（推断名）**——① 0x705d20 时间戳 + [esi+4] 虚表槽 0x10 读取 + **idiv [esi+0x90] 环形索引归一** + [esi+8] 数组取项；② 第二段循环对 [ebp+4] 数组逐项 0x705d20 + 虚表槽 0x10 + **0x636b50 主动回调**；③ 收尾 0x635120 + 二级计数循环 0x634e10 + 0x6349b0 + **[ebx+0x1c] 标志清 0**。**0x63 区环形索引 + 回调派发器（0x705d20 三次 + 虚表槽 0x10 + 0x636b50 回调）**。
+
+## c 路 0x639A50（354B）——记录构造提交器（ret 0x70）
+
+```
+00639a50  sub esp,0x18 → mov eax,[edx+0x10]（参数 2 计数）→ mov ebp,ecx（this）→ test eax → jle 0x639baa → 循环（0x639a7a-0x639ba2）：mov eax,[edx+4] → mov edx,[eax+ecx*4] → mov ebx,[edx] → ★call 0x6e6ab0 → ★new 0x10（0x7c8e17）→ 初始化（[eax]=0/[eax+4]=0/[eax+8]=-1/byte [eax+0xc]=0）→ ★new 0x6f（0x7c8e17——byte 数组 0x6f 字节）→ ★rep movsd 0x1b+movsw+movsb（111B 复制到新块）→ [edi+4]=eax（记录指针挂接）
+00639af7  ★容器扩容判定：mov eax,[ebp+8] → cmp [ebp+0x10],eax → jl 0x639b22 → mov cl,[ebp+0xd]（owns）→ test → jne → test eax → jne 0x639b31 → [ebp+0x14] 扩容步长 → push 0/计数和 → ★虚表槽 [edx+8] 调用（扩容）→ 0x639b22：mov eax,[ebp+0x10] → mov edx,[ebp+4] → mov [ebp+0x10],ecx（计数+1）→ mov [edx+eax*4],edi（★尾插）
+00639b31  ★0x705d20 二次 → mov ebx,eax → [ebx+0xc] vs [ebx+0x14] 计数判定（反方向同构扩容/尾插——[esi+4] 数组尾插 ebp）→ [ebx+0x8c] == -1 时 [ebx+0x14]-1 写入（★回退索引）→ push edi → ★call 0x634e10（关联挂接）→ inc eax → 循环
+```
+**语义**：**记录构造提交器（推断名，ret 0x70 大参）**——① 参数 2 计数循环：[edx+4] 数组取项 → 0x6e6ab0 拷贝 5B 栈构 → **new 0x10 记录对象 + new 0x6f 字节块 + rep movsd 0x1b 111B 复制** → [edi+4] 挂记录；② ★容器扩容（[ebp+0xd] owns + [ebp+0x14] 步长 + 虚表槽 [edx+8] 扩容调用）+ 计数+1 + [ebp+4] 数组尾插；③ 0x705d20 反向容器同构尾插（[ebx+8c] 回退索引 = [ebx+0x14]-1）+ 0x634e10 关联挂接。**0x63 区记录构造 + 双向容器尾插提交器（batch 2148-2151 容器字段网构造端）**。
+
+## 原版怪癖（照抄）
+
+1. a/b 路 ★idiv ÷[ecx+0x90] 环形索引归一（负数路径 neg/cdq/idiv 修正 + 正数路径 cdq/idiv + add edx 还原——Fredd 环形缓冲索引惯用法，batch 2155 b 路同款）；
+2. a 路 ★byte [eax+0xc] 类型字节改写（==2 → 0x1d——batch 2155 a/b 路 0xc 类型字段同语义）；
+3. b 路 0x705d20 三次 + 虚表槽 0x10 两次 + ★0x636b50 主动回调；
+4. b 路 [ebx+0x1c] 标志清 0 收尾（batch 2142/2143 状态字节族同区）；
+5. c 路 ★new 0x10 + new 0x6f（byte 数组）+ rep movsd 0x1b 111B（记录块构造三件套）；
+6. c 路容器扩容判定（[ebp+0xd] owns + [ebp+0x14] 步长 —— batch 2149 a/b 路构造器同款字段）；
+7. c 路 [ebx+0x8c] 回退索引 = [ebx+0x14]-1（idiv 环形索引族的回退缓存）；
+8. c 路 ret 0x70（大参数栈调用——回调处理器形态）。
+
+## 跨批次连接
+
+- ★★★batch 2155 b 路（idiv ÷[ecx+0x90] 环形索引归一同款——0x639E30 双对象比较器）；batch 2152/2154（[ebp+0x10]/[ebp+0x14] 容器字段网——batch 2152 b 路同款）。
+- ★★batch 2149 a/b 路（VectorClass 构造器容器字段网 [esi+0xd] owns/[esi+0x14] 步长——c 路同款扩容判定）；batch 2149-2150（rep movsd 0x1b 111B 记录复制）。
+- ★0x705d20/0x6e6ab0/0x7c8e17/0x636b50/0x635120/0x634e10/0x6349b0（全部已登记——a 1 个 + b 5 个 + c 4 个）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（直接 call 全已登记——a 1 个 + b 5 个 + c 4 个全在 TSV）。
+- **后邻未登记**：无（三路后邻全部为本批/前批已登记本尊——a 后邻=batch 2155 c 路、b/c 后邻=本批相邻路）。
+- **新观察**：★[ecx+0x94]/[ecx+0x90] 环形索引字段对（idiv 归一——a/b 路两处路径完整恢复 = Fredd 环形缓冲确认）；0x636b50（b 路主动回调）；[ebx+0x8c] 回退索引字段（c 路）。
+- 前向：picker 队列继续 0x63 区 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650。
