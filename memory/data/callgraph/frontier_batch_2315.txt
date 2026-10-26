@@ -1,0 +1,83 @@
+# frontier batch 2315：颜色钳位浮点调整器 + LightSourceClass::ChangeLevels + 全局缓冲清除器（0x5558E0 / 0x554AA0 / 0x5549A0）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x5558E0 FUN_005558e0 callees=1 deps=7 / 0x554AA0 LightSourceClass::ChangeLevels callees=1 deps=91 / 0x5549A0 FUN_005549a0 callees=1 deps=711）
+- 三路 disasm：`.qwen/tmp/_d2315a.txt`（0x5558E0 size 0x220）/ `_d2315b.txt`（0x554AA0 size 0x80）/ `_d2315c.txt`（0x5549A0 size 0xC0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5558E0 | 474B（0x1DA）| ret 0xc @0x555AB7 | 0x555AC0（未登记——0x3e8 钳位推进器）| 9 次/去重 1（0x7c5f00——已登记，picker callees=1 吻合）|
+| 0x554AA0 | 70B（0x46）| ret 0x14 @0x554AE3 | 0x554AF0（★本批 b 路唯一 callee——后邻加载器 [0x829ae4] 门控）| 1 次/去重 1（0x554af0——已登记，picker callees=1 吻合）|
+| 0x5549A0 | 180B（0xB4）| ret c3 @0x554A53 | 0x554A60（未登记——装载器族）| 1 次/去重 1（0x7c8b3d——已登记，picker callees=1 吻合）|
+
+## a 路 0x5558E0（474B）——颜色钳位浮点调整器
+
+```
+005558e0  mov esi, [esp+0x14]（参1 指针）→ mov ebp, ecx（this）→ mov ebx, [esp+0x18]（参2）
+005558ee  ★★[esi]/[ebx]/[edi] 三处负值钳位（test setle/dec/and——★batch 2314 c 路同款钳位）
+00555921  ★★0x7d0 上限钳位三处（cmp jl else mov 0x7d0——★2000 钳位族）
+00555951  mov [ebp], 0x10000（★this 超分辨率 0x10000）
+00555958  ★★[esi] cmp 0x3e8 特判（jne 0x555971 → 三分支）
+0055597f  ★★分支 A（[ebx]≤eax ≤[edi]）：fild [esi] → fmul [0x7ed088] → fmul [0x7e3818] → ★0x7c5f00 → ★★cmp 0x42 阈值（jge 0x5559a2 else 置 0x10000/0x3e8×3/0）→ [esi]=0x3e8 → fild [ebx] fmul fdiv st(1) → 0x7c5f00 → [ebx] → fild [edi] 同模板 → [edi]
+005559d5  ★★分支 B（[ebx]为较大者）：fild [ebx] 同模板 → ★★cmp 0x42 → 走 0x555a1e → [ebx]=0x3e8 → fild [esi]/[edi] fmul [0x7ed088] fidiv [ebp] → 0x7c5f00 → 写回
+00555a4a  ★★分支 C（[edi]为较大者）镜像 → 0x5559f6 兜底（全 0x3e8 + 0x10000）
+00555a8f  ★★收尾：imul [ebp]×[eax] → sar 0x10（★除法缩比 65536）→ [eax] → 0x7d0 末钳 → ret 0xc
+```
+
+**语义**：**颜色钳位浮点调整器（推断名）**——★★474B 三分支宿主：★★三指针（参1/参2/参3 [edi]）负值钳位（setle/dec/and）+ 0x7d0 上限钳位 → ★★[ebp]=0x10000 超分辨率 + [esi] 0x3e8 特判三分支（★[ebx] vs [edi] 大小比较）→ ★★每个分支 fild/fmul [0x7ed088]/[0x7e3818] → ★0x7c5f00 ×9（_ftol）+ ★★cmp 0x42 阈值（<0x42 走 0x5559f6 兜底全 0x3e8）→ fidiv [ebp] 归一缩放 → ★★收尾 imul×sar 0x10（÷65536）→ ret 0xc。**颜色缩放调整器（三分支 + _ftol×9 + 0x42 阈值——★batch 2307/2314 颜色族**）**。
+
+## b 路 0x554AA0（70B）——LightSourceClass::ChangeLevels
+
+```
+00554aa0  mov eax, [ecx+0x24]（★亮度）→ mov edx, [esp+8]（参1）→ mov edi, [esp+0x18]（参4）
+00554ab1  ★★相等快检：cmp [ecx+0x24], esi → jne / cmp [ecx+0x28], edx → jne / cmp eax, edi → je 0x554ae1（★三值全等即跳过）
+00554ac0  ★★四字段写：mov [ecx+0x24], esi → mov [ecx+0x2c], [esp+0x14] → mov [ecx+0x28], edx → mov [ecx+0x30], edi → ★★[ecx+0x48] 字节门控（test al je 0x554ae1）→ push [esp+0x1c] → ★0x554af0（★后邻装载器）→ ret 0x14
+```
+
+**语义**：**LightSourceClass::ChangeLevels（★带符号名）**——★★[ecx+0x24]/[0x28] 亮度相等快检（★新旧值全等跳过）→ ★★四字段装载（[0x24]/[0x2c]/[0x28]/[0x30]——亮度四元组）→ [ecx+0x48] 字节门控 → ★0x554af0 后邻装载器 → ret 0x14。**LightSourceClass 亮度更新（四字段装载 + 相等快检 70B——★LightSourceClass 系列开启**）**。
+
+## c 路 0x5549A0（180B）——全局缓冲清除器
+
+```
+005549a0  mov edx, [0xabca20]（★表 A 计数）→ mov byte [0x829ae4], 0（★标志 A 清 0）→ test → je 0x5549ff
+005549b1  ★★[0xabca14] 表 A 循环（[esi] 首项 → 虚表槽 0x20 → push 1 → 调用）→ ★★前移压缩（[esi+eax*4]=[esi+eax*4+4]——★数组收缩）→ [0xabca20] 计数递减回环
+005549ff  ★★[0xabca50] 表 B 循环：[0xabca44] 表 [eax] 项 → ★0x7c8b3d 逐个释放 → ★★前移压缩 + [0xabca50] 计数递减回环
+00554a4c  mov byte [0x829ae4], 1（★标志 A 置 1）→ ret c3
+```
+
+**语义**：**全局缓冲清除器（推断名）**——★★[0xabca20]/[0xabca14] 表 A 循环（[0x829ae4] 标志清 0 → 虚表槽 0x20 回调 + 前移压缩）→ ★★[0xabca50]/[0xabca44] 表 B 循环（0x7c8b3d 逐个释放 + 前移压缩）→ ★★[0x829ae4] 标志置 1 → ret c3。**全局缓冲清理（双表族 [0xabca14]/[0xabca44] + 前移压缩——★batch 2312 全局容器族同源**）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 9 个/去重 1（0x7c5f00——★_ftol 反复调用）——**全部已登记**（picker callees=1 吻合）。
+- b 路：跨函数直接 call 1 个/去重 1（0x554af0——★后邻装载器）——**全部已登记**（picker callees=1 吻合）。
+- c 路：跨函数直接 call 1 个/去重 1（0x7c8b3d）——**全部已登记**（picker callees=1 吻合——[0xabca14] 表虚表槽 0x20 属间接调用不计）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING、无批内自引用**（连续三十三批三路全登记）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★三指针负值钳位（test setle/dec/and——batch 2314 c 路同款）；
+2. a 路 ★★0x10000 超分辨率 + 0x7d0/0x3e8 双上限族（★不同颜色比例缩放）；
+3. a 路 ★★0x3e8 特判三分支（[ebx] vs [edi] 大小比较——★最大值选择）；
+4. a 路 ★★fild/fmul [0x7ed088]/[0x7e3818] → 0x7c5f00 ×9（★颜色浮点链）；
+5. a 路 ★★cmp 0x42 阈值（<0x42 兜底全 0x3e8 + 0x10000——★最小亮度钳）；
+6. a 路 ★★fidiv [ebp] 归一缩放 + imul/sar 0x10（÷65536 除法缩比）；
+7. b 路 ★★[ecx+0x24]/[0x28] 相等快检（三值全等跳过——★亮度不变早退）；
+8. b 路 ★★四字段装载（[0x24]/[0x2c]/[0x28]/[0x30]）+ [0x48] 字节门控；
+9. c 路 ★★[0x829ae4] 标志清 0/置 1 对称（★批内互斥标志）；
+10. c 路 ★★表 A 虚表槽 0x20 回调 + 表 B 0x7c8b3d 释放（★双表清理双路径）。
+
+## 跨批次连接
+
+- ★★★batch 2314 c 路（0x556090 LightConvertClass::UpdateColors——a 路颜色浮点族同源）+ batch 2307 c 路（0x55E420 巨型启动事件宿主——a 路 [0x7e3818] 浮点常量同款）。
+- ★★batch 2312（[0xabcbxx] 全局容器族——c 路 [0xabca14]/[0xabca44] 表族同源）+ batch 2282-2284（VectorClass 容器族——c 路前移压缩同款）。
+- ★★batch 2302/2308（0x7c5f00 _ftol / fidiv 缩比——a 路同源）+ QWEN.md _ftol 舍入现场（a 路浮点链）。
+- ★★batch 2286 MapClass 家族（a/b/c 路带符号名类家族对照）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x555AC0（a 路后邻——0x3e8 钳位推进器）；0x554AF0（b 路后邻 callee——[0x829ae4]+[0xa8eb78] 装载器）；0x554A60（c 路后邻——装载器族）；[0x7ed088]（a 路颜色乘法常量）；[0xabca14]/[0xabca44]（c 路双表族）。
+- 未兑现 MISSING 旧观察：0x00486790（2267 起排队）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150 + ★0x556AD0/0x556EB0/0x556D20（batch 2280-2314 新观察）。
+- 本批 **无 MISSING**（连续三十三批三路全登记——batch 2276 起，TSV 5428）。next 批预期 top3 = 0x554760 LightSourceClass::LightSourceClass（194B callees=1）/ 0x5541C0（177B callees=3）/ 0x554150（108B callees=0）。
