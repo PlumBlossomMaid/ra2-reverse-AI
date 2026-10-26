@@ -1,0 +1,63 @@
+# frontier batch 2146：状态机刷新器 + 全局对象析构/初始化对（0x63FB20 / 0x63F7E0 / 0x63F7C0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x63FB20 FUN_0063fb20 callees=2 deps=215 / 0x63F7E0 FUN_0063f7e0 callees=2 deps=45 / 0x63F7C0 FUN_0063f7c0 callees=2 deps=145）
+- 三路 disasm：`.qwen/tmp/_d2146a.txt`（0x63FB20 size 0x2B0，分段全读）/ `_d2146b.txt`（0x63F7E0 size 0x60）/ `_d2146c.txt`（0x63F7C0 size 0x60）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x63FB20 | 664B（0x298）| ret 4 @0x63FDB5 | 0x63FDC0（sub esp,0xc/lea eax,[esp+4]/lea edx,[esp] 坐标对构造器，未登记）| 2（全已登记）|
+| 0x63F7E0 | 36B（0x24）| ret @0x63F803 | 0x63F810（sub esp,0xc/push esi/[esi+0x151c]=0xa 初始化器——batch 2145 c 路同字段同值，未登记）| 2（全已登记）|
+| 0x63F7C0 | 26B（0x1A）| ret @0x63F7D9 | 0x63F7E0（=本批 b 路本尊，已登记）| 2（全已登记）|
+
+三函数为 **0x63 区状态机族 + [0xac4e74] 全局对象生命周期对**——与 batch 2145 c 路（0x63FEA0 状态机更新器）同字段族：
+
+## a 路 0x63FB20（664B 大函数）——状态机刷新器
+
+```
+0063fb20  mov al,[esp+4]（参数 1）→ test → jne 0x63fb3c → mov al,[ebp+0x150c]（★脏标志）→ test → je 0x63fda5 → mov al,[0x884b8d]（★全局标志——batch 2145 c 路同）→ test → je 0x63fda5
+0063fb49  主体：mov byte [ebp+0x150c],0（清脏）→ mov eax,[0xa8b230] → mov byte [0xb0b518],1（★全局标志写）→ mov eax,[eax+0x34b8] → test → jne → mov ebx,5（空补偿）→ mov ecx,[0x886f94] → lea esi,[ecx+0x45]（基址+0x45 步进）
+0063fb83  mov ecx,[0x887300]（全局对象）→ push eax → call [edx+0x78]（★虚表槽 0x78 取四元组）→ 读 [eax]/[eax+4]/[eax+8]/[eax+0xc] 四字段 → mov eax,[0xb0b504] → lea ecx,[eax+3] → mov eax,0x55555556 → imul ecx → shr ecx,0x1f → add edx,ecx（★(x+3)/3 向上取整魔法数）→ mov ecx,[ebp+0x1534] → sub eax,ecx → sub eax,[ebp+0x1530] → sub eax,[ebp+0x152c]（减三坐标得余量）→ test → jle 0x63fc26
+0063fbe0  ★循环 ×5 段（push 0/4/1/2/3 五变体）：大参栈（[0xac4e74]/[0x87f6cc]/0x3e8/0x400/[0x887300] 虚表槽 0x78）→ ★call 0x4aed70（batch 2144 c 路同 callee）→ add esi,3（步进）→ dec/inc 计数 → jl 循环
+0063fda5  尾部：mov edx,[esp+0x28]（参数）→ mov ecx,ebp → push edx → ★call 0x653100（batch 2124 主状态机更新器）→ pop 族 → ret 4
+```
+**语义**：**状态机刷新器（推断名）**——参数 1 或 [ebp+0x150c] 脏标志或 [0x884b8d] 全局标志门控；清 [ebp+0x150c]=0 + [0xb0b518]=1；[a8b230]+0x34b8 空补偿 5；[0x887300] 虚表槽 0x78 取四元组 + **(x+3)/3 向上取整**（0x55555556 魔法数）→ 减去三坐标 [0x152c]/[0x1530]/[0x1534] 得余量 → 5 段循环（push 0/4/1/2/3 五变体）大参栈调用 0x4aed70（每轮 esi += 3 步进）；尾部参数块 push → 0x653100 主状态机更新器。**0x63 区状态机刷新/绘制器（batch 2145 c 路同字段族）**。
+
+## b 路 0x63F7E0（36B）——全局对象析构器
+
+```
+0063f7e0  call 0x652d90 → mov al,[0xac4e78]（★全局标志）→ test → je 0x63f803 → mov eax,[0xac4e74]（★全局对象指针）→ push eax → call 0x7c8b3d（delete）→ mov byte [0xac4e78],0（清标志）→ ret
+```
+**语义**：**全局对象析构器（推断名）**——[0xac4e78] 标志置位时 delete [0xac4e74] 并清标志。**c 路初始化器的配对清理端（[0xac4e74] 全局对象生命周期对）**。
+
+## c 路 0x63F7C0（26B）——全局对象初始化器
+
+```
+0063f7c0  call 0x652e90 → mov edx,0xac4e78 → mov ecx,0x836d9c（★串常量——batch 2144 c 路 0x836df4 邻域串）→ call 0x4a38d0（batch 2144 c 路同 callee）→ mov [0xac4e74],eax（返回指针存全局）→ ret
+```
+**语义**：**全局对象初始化器（推断名）**——0x4a38d0 查 [0x836d9c] 串 → 返回对象指针存 [0xac4e74]。**b 路析构器的配对构造端**。a 路 0x4aed70 大参栈读 [0xac4e74] 作对象参数——三函数共用同一全局对象。
+
+## 原版怪癖（照抄）
+
+1. a 路参数 1 / [ebp+0x150c] 脏标志 / [0x884b8d] 全局标志三路门控（任一触发即刷新）；
+2. a 路 [a8b230]+0x34b8 空补偿 5（mov ebx,5——batch 2145 b 路同款补偿）；
+3. a 路 **(x+3)/3 向上取整**（lea ecx,[eax+3] → imul 0x55555556 → shr 0x1f 修正——batch 2146 本轮新确认）；
+4. a 路 5 段循环大参栈结构逐段同构（仅 push 序号 0/4/1/2/3 不同 + esi += 3 步进——绘制步长）；
+5. a 路 [ebp+0x151c] 与 0x80000001 奇偶判定（and eax,0x80000001 → jns → dec/or 0xfffffffe/inc——偶数化惯用法）；
+6. b/c 路 [0xac4e78] 标志 + [0xac4e74] 指针的全局对象生命周期对（构造端 0x4a38d0 查串、析构端 delete）；
+7. c 路 0x836d9c 串常量（与 batch 2144 c 路 0x836df4 同 0x83 区常量区）。
+
+## 跨批次连接
+
+- ★★★batch 2145 c 路 0x63FEA0：a 路 [ebp+0x150c]/[0x884b8d]/[0x152c]/[0x1530]/[0x1534] 同字段族——0x63 区状态机更新器 ↔ 刷新器成对。
+- ★★batch 2124（0x653100 主状态机更新器——a 路尾部直接调用）；batch 2144 c 路（0x4aed70/0x4a38d0/0x836df4 串同 callee/常量）。
+- ★0x4aed70/0x653100/0x652d90/0x652e90/0x7c8b3d/0x4a38d0（全部已登记）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（直接 call 全已登记——a 2 个 + b 2 个 + c 2 个全在 TSV）。
+- **后邻未登记**：0x63FDC0（a 路后邻坐标对构造器）、0x63F810（b 路后邻 [esi+0x151c]=0xa 初始化器——batch 2145 c 路 0x63ffce 同字段同值）。
+- **新观察**：[0xac4e74]/[0xac4e78]（全局对象生命周期对——构造/析构/状态机刷新三端共用）、[0xb0b518]（a 路全局标志写）、[0x887300]（虚表槽 0x78 四元组取数器）、[0x836d9c]（c 路串常量）。
+- 前向：picker 队列继续 0x63 区 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650。
