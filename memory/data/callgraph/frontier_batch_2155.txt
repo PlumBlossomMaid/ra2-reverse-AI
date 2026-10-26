@@ -1,0 +1,63 @@
+# frontier batch 2155：日志门控缩放器 + 双对象计数比较器 + [a8ecc8] 循环状态查询器（0x63A0D0 / 0x639E30 / 0x639DA0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x63A0D0 FUN_0063a0d0 callees=3 deps=69 / 0x639E30 FUN_00639e30 callees=0 deps=130 / 0x639DA0 FUN_00639da0 callees=0 deps=156）
+- 三路 disasm：`.qwen/tmp/_d2155a.txt`（0x63A0D0 size 0x80）/ `_d2155b.txt`（0x639E30 size 0x180，分段全读）/ `_d2155c.txt`（0x639DA0 size 0xA0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x63A0D0 | 79B（0x4F）| ret @0x63A11E | 0x63A120（test dl,dl + [esi*4+0xac4bf4] 计数递增——batch 2154 c 路同表，未登记）| 3（全已登记）|
+| 0x639E30 | 291B（0x123）| 多出口 @0x639E46/0x639E74/0x639F1A/0x639F45/0x639F52 | 0x639F60（[ecx*4+0xac4b84] 计数递增器——0x18 边界，未登记）| 0 |
+| 0x639DA0 | 131B（0x83）| 多出口 @0x639DF8/0x639E0F/0x639E1A/0x639E22 | 0x639E30（=本批 b 路本尊，已登记）| 0（仅虚表槽间接 call）|
+
+三函数为 **0x63 区日志门控族 + 双对象比较族 + [a8ecc8] 数组循环查询族**——batch 2154 观察项 0x639DA0（多态状态查询器）兑现：
+
+## a 路 0x63A0D0（79B）——日志门控缩放器
+
+```
+0063a0d0  mov al,[0xac4c08]（★日志门控——batch 2154 b 路同款）→ test → jne 0x63a11e（已报过 → 直接返回）→ push 0xca1（line 3233）→ push 0x836bd4（文件）→ xor edx,edx → mov ecx,0x836c80（★新串——batch 2154 四串之外的第五串）→ mov byte [0xac4c08],1（★门控置位——只报一次）→ ★call 0x734e60（DebugLog）→ mov edx,0x1e0 → mov ecx,eax → ★call 0x730a90 → mov eax,[0x8871e0] → mov edx,0x2000 → push 0 → push 0x3f800000 → mov ecx,[eax+0x700] → ★call 0x750920（缩放设置）→ ret
+```
+**语义**：**日志门控缩放器（推断名）**——[0xac4c08] 日志门控（已报直接返回）：首次进入 push 0xca1/0x836bd4/0x836c80（★新调试串）→ DebugLog 0x734e60 → 0x730a90 → [0x8871e0]+0x700 + 0x750920（push 0x3f800000——与 batch 2154 b 路命中路径逐字节同款缩放设置）。**一次性日志 + 缩放设置器（batch 2154 b 路 0x63a75a 命中路径同构独立版）**。
+
+## b 路 0x639E30（291B）——双对象计数比较器
+
+```
+00639e30  push ecx/ebx/ebp/esi/edi → test ecx,ecx → mov ebx,edx → jne 0x639e47 → test ebx → jne → 双空：mov al,1 → ret（都空 → 1）
+00639e47  xor eax,eax → test ecx → je 0x639e50 → mov eax,[ecx+0x14]（对象 1 计数）→ xor edx,edx → test ebx → je → mov edx,[ebx+0x14]（对象 2 计数）→ test eax → jne 0x639e75 → test edx → jne 0x639f13 → 双计数空：mov al,1 → ret
+00639e75  ★★核心：mov edi,[ecx+0x14] → dec eax → test edi → je 0x639eb6 → cmp eax,edi → jl 0x639ea6 → mov esi,[ecx+0x94] → test esi → jg/jne → sub eax,esi → cdq → ★idiv [ecx+0x90]（★环形索引归一）→ add edx,esi → mov eax,edx → 边界判定（jl/jge）→ mov esi,[ecx+8] → mov ebp,[esi+eax*4]（对象 1 数组取项）→ 0x639eb8：mov edi,[ebx+0x14] → lea eax,[edx-1] → 同构取对象 2 数组项 edi（idiv [ebx+0x90]）
+00639ef1  mov eax,[ecx] → mov ecx,[ebp+0x10]（对象 1 命中项二级计数）→ mov esi,[ebx] → test ecx → jle → 0x639f13：mov al,0 → ret → 内层：mov edx,[ebp+4] → mov ebx,[edx] → cmp [ebx],esi → je 0x639f1b → inc eax → 循环 → 0x639f1b：cmp eax,-1 → je 0x639f13 → mov edx,[edi+0x10]（对象 2 命中项二级计数）→ 内层：mov ecx,[edi+4] → mov esi,[ecx] → mov edi,[esp+0x10] → cmp [esi],edi → je 0x639f46 → inc eax → 循环 → 0x639f46：cmp eax,-1 → je 0x639f13 → mov al,1 → ret（双数组交叉全命中 → 1）
+```
+**语义**：**双对象计数比较器（推断名）**——双对象（ecx/edx 参数）比较：① 双空/双计数空 → 返回 1；② 核心 **idiv [ecx+0x90] 环形索引归一**（[ecx+0x94] 余数）+ [ecx+8]/[ebx+8] 数组按索引取项→ 二级计数 [ebp+0x10] 内层线性查 [ebx] 对象 → 再查 [esp+0x10] → **双数组交叉命中 → 返回 1，任一级未命中 → 0**。**0x63 区双对象交集判定器（环形索引 + 双数组线性查找——batch 2148 后邻 0x63EC20 线性查找同款）**。
+
+## c 路 0x639DA0（131B）——[a8ecc8] 循环状态查询器（batch 2154 MISSING 观察项兑现）
+
+```
+00639da0  push ecx/ebx → mov ebx,[0xa8ecc8]（★计数——batch 2151/2152/2154 同源）→ push ebp/esi/edi → or ebp,-1（默认 -1）→ xor edi,edi → test ebx → jle 0x639e1b（空计数 → 返回 -1）
+00639db4  循环：mov eax,[0xa8ecbc] → mov esi,[eax+edi*4]（数组项）→ test esi → je 0x639e10 → mov cl,[esi+0x14] → and cl,1（★标志筛选——batch 2151/2152 同款）→ je 0x639e10 → mov edx,[esi] → mov ecx,esi → ★call [edx+0x4bc]（虚表槽 0x4bc——判定）→ test al → je 0x639de1 → inc edi → 循环
+00639de1  ★★虚表槽 0x2c ×2：mov eax,[esi] → ★call [eax+0x2c] → cmp eax,2 → je 0x639df1 → mov al,0 → ret（虚表槽 0x2c == 2 → 返回 0）→ mov edx,[esi] → ★call [edx+0x2c] → cmp eax,6 → je 0x639e05 → mov eax,1 → ret（== 6 → 返回 1）
+00639e10  兜底：mov eax,2 → ret（不满足 → 返回 2）→ 0x639e1b：mov eax,ebp → ret（空计数 → 返回 -1）
+```
+**语义**：**[a8ecc8] 循环状态查询器（推断名）**——[a8ecc8] 计数循环 [a8ecbc] 数组：① [esi+0x14]&1 标志筛选 + 虚表槽 0x4bc 判定（跳过已激活项）；② **虚表槽 0x2c 双态判定：返回 2 → 0、返回 6 → 1**；③ 兜底 2、空计数 -1（or ebp,-1 默认）。**batch 2154 b 路 0x639da0 调用目标兑现（多态状态查询器——返回 -1/0/1/2 四态，b 路对应 4 分支 DebugLog）**。
+
+## 原版怪癖（照抄）
+
+1. a 路 [0xac4c08] 日志门控（已报直接返回）+ line 3233 硬编码 + ★0x836c80 第五串（batch 2154 四串之外的独立串）；
+2. a 路 [0x8871e0]+0x700 + 0x750920（push 0/0x3f800000——与 batch 2154 b 路命中路径逐字节同款缩放设置）；
+3. b 路 ★idiv [ecx+0x90] 环形索引归一（[ecx+0x94] 做偏移——Fredd 环形缓冲索引惯用法）+ [ecx+8] 数组取项；
+4. b 路双数组交叉线性查找（[ebp+0x10]/[edi+0x10] 二级计数 + cmp [ebx],esi/[esi],edi——batch 2148 后邻同款）；
+5. b 路返回语义（双空/双计数空 → 1；交叉全命中 → 1；任一级未命中 → 0）；
+6. c 路 [esi+0x14]&1 标志筛选 + 虚表槽 0x4bc 跳过 + **虚表槽 0x2c 双态（2→0、6→1）** + 兜底 2 + 空 -1。
+
+## 跨批次连接
+
+- ★★★batch 2154 b 路：c 路 0x639DA0 为 MISSING 观察项兑现（b 路 0x63a7c4 多态查询调用）；a 路与 b 路 0x63a75a 命中路径同构（[0xac4c08] 门控 + 0x734e60 + [0x8871e0] 0x750920）。
+- ★★batch 2151/2152/2154（[a8ecc8]/[a8ecbc] 计数/数组对 + [esi+0x14]&1 筛选 + [0xac4c08] 日志门控全部同源）；★0x734e60/0x730a90/0x750920（全部已登记）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（直接 call 全已登记——a 3 个 + b/c 0 个全在 TSV，c 路仅虚表槽间接 call）。
+- **后邻未登记**：0x63A120（a 路后邻 [esi*4+0xac4bf4] 计数递增——batch 2154 c 路同表）、0x639F60（b 路后邻 [ecx*4+0xac4b84] 0x18 边界计数递增器）、0x639F80（b 路后邻相接递减器——新观察）。
+- **新观察**：★[0xac4b84]（[esi*4] 数组——0x18=24 上限递增/递减器对）、0x836c80（a 路第五调试串）、0x639F60/0x639F80（[0xac4b84] 计数增减对）。
+- 前向：picker 队列继续 0x63 区 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650。
