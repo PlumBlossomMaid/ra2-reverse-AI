@@ -1,0 +1,67 @@
+# frontier batch 2210：0x5E 区调度/缓存/比较族三连（资源状态调度器 + INI 读缓存器 + 七串比较器）（0x5EE3A0 / 0x5EE190 / 0x5EE100）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5EE3A0 FUN_005ee3a0 callees=7 deps=2746 / 0x5EE190 FUN_005ee190 callees=1 deps=107 / 0x5EE100 FUN_005ee100 callees=1 deps=153）
+- 三路 disasm：`.qwen/tmp/_d2210a.txt`（0x5EE3A0 size 0x200）/ `_d2210b.txt`（0x5EE190 size 0x80）/ `_d2210c.txt`（0x5EE100 size 0x100）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x5EE3A0 | 361B（0x169）| ret c3 @0x5EE4A8 | 0x5EE510（0x775940 四查 + [0xa8b23c] 门控 + [0xa8b2fc] 槽族——同族调度器孪生，未登记）| 4（0x775940×4/0x4e5940/0x735120×2/0x7ca5d3×2/0x697020——去重 4 个，callees=7 含 [0x7e14a0]/[0x7e14a8] IAT 间接吻合）|
+| 0x5EE190 | 28B（0x1C）| ret c3 @0x5EE1AB | 0x5EE1B0（0x65ca80 构造 + 0x5275c0 写 + 0x474430 + 0x65ca00——同族 INI 读写器，未登记）| 1（0x5276d0——callees=1 吻合）|
+| 0x5EE100 | 135B（0x87）| ret c3 @0x5EE186 | 0x5EE190（= b 路本体——比较/缓存对连排）| 1（0x7b4710×7——去重 1 个，callees=1 吻合）|
+
+三函数为 **0x5E 区调度/缓存/比较族**（[0x8870c0] INI 全局 + [0xac10c8] 缓存 + [0x831704..0x83171c] 七串池 + [0xa8b2fc..0xa8b31c] 槽位族 + [0x7e14a0]/[0x7e14a8] IAT 回调——batch 2194/2205 同族全局续）：
+
+## a 路 0x5EE3A0（361B）——资源状态调度器
+
+```
+005ee3a0  sub esp,0xc → ★0x775940 ×4（0xc2/0xc9/0xbc/0xbd 类型码查询——任一命中 ebx=该类型）→ jne 0x5ee3f4 → mov eax,[0xa8b23c]（★全局）→ test → je → mov al,[eax+0x3c]（★字节状态）→ 0x5ee404：
+          → mov ebp,[0x7e14a0]（★IAT 回调——batch 2171/2184 事件回调族）→ xor ecx → mov ebx,0xa8b2fc（★槽位族基址）→ ★槽循环：mov edi,[ebx+0x2794]（槽值）→ call 0x4e5940（★索引查询）→ jl 跳过 → push eax/push 参数 → call [0x7e14a8]（★IAT 回调——batch 2171 同族）→ mov esi=eax → test → je 跳过
+          → ★资源 ID 判定链：cmp edi,[0xac11a4]/[0xac11a8]/[0xac11ac] → je → call 0x735120（★名查）→ push 0xa8d610 → call 0x7ca5d3（★串比较）→ test → jne 跳过 → [esp+0x13] 字节 → push 1 / push 0xfffffffe 双态 → ffd5 call ebp（★回调提交）
+          → ★第二判定链：cmp edi,[0xac119c]/[0xac11a0] → je → [esp+0x18] 计数 vs [0xa8da8c] → 0x697020（★全局写）→ 槽循环推进（ebx+=4 → cmp 0xa8b31c）→ ret c3
+```
+**语义**：**资源状态调度器（推断名）**——① ★0x775940 ×4 类型码查询（0xc2/0xc9/0xbc/0xbd——资源对象族）；② ★★[0xa8b2fc..0xa8b31c] 槽位族遍历（[ebx+0x2794] 槽值 + 0x4e5940 索引查询——batch 2199 槽位族同脉络）；③ ★★[0x7e14a0]/[0x7e14a8] IAT 回调对（事件回调族——batch 2171/2184 同源）；④ ★资源 ID 三/二段判定（[0xac11a4..0xac11ac] + [0xac119c]/[0xac11a0]——资源类型匹配）+ 0x735120/0x7ca5d3 名查串比 + 0x697020 全局写。**资源状态调度端（槽位族 + IAT 回调 + 资源 ID 匹配——资源更新/通知）**。
+
+## b 路 0x5EE190（28B）——INI 读缓存器
+
+```
+005ee190  push 0/push 0x831da4（键）/push 0x82642c（★文件串）→ mov ecx,0x8870c0（★INI 全局——batch 2194/2195 同用）→ call 0x5276d0（★整数读族）→ mov [0xac10c8],eax（★缓存写）→ ret c3
+```
+**语义**：**INI 读缓存器（推断名）**——① ★0x8870c0 全局 INI（batch 2194/2195 同全局）+ 0x5276d0 整数读族（0x82642c 文件 + 0x831da4 键）；② ★[0xac10c8] 缓存写（读即缓存——c 路后邻 0x5EE1B0 写回配对）。**INI 单值读缓存端（0x82642c/0x831da4 键对 → [0xac10c8]）**。
+
+## c 路 0x5EE100（135B）——七串比较器
+
+```
+005ee100  mov eax,[0x831704]（★串池 1）→ push → call 0x7b4710（★串比较）→ test al → jne 0x5ee180（命中返 1）→ ★[0x831708]/[0x83170c]/[0x831710]/[0x831714]/[0x831718]/[0x83171c] 六串同款 ×6（★七串全比较）→ 全部未中 → xor eax 返 0 → 0x5ee180：mov eax,1 返 1 → ret
+```
+**语义**：**七串比较器（推断名）**——① ★0x7b4710 串比较 ×7（[0x831704..0x83171c] 七串池 vs this——batch 2194 c 路 0x832c20 表邻域）；② ★任一命中返 1 / 全未中返 0（布尔判定）。**七串白名单判定端（[0x831704] 串池族——名称匹配）**。
+
+## callee 核验
+
+- a 路：4 个直接 call（0x775940/0x4e5940/0x735120/0x7ca5d3/0x697020——去重 4 个），**全部已登记**（callees=7 含 [0x7e14a0]/[0x7e14a8] IAT 间接吻合口径）。
+- b 路：1 个直接 call（0x5276d0——callees=1 吻合），**全部已登记**。
+- c 路：1 个直接 call（0x7b4710×7——去重 1 个，callees=1 吻合），**全部已登记**。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★0x775940 ×4 类型码查询链（0xc2/0xc9/0xbc/0xbd——四候选命中即用，全 miss 才收尾）；
+2. a 路 ★★[0xa8b2fc..0xa8b31c] 槽位族遍历（[ebx+0x2794] 槽值 + 0x4e5940 索引查询 + 步进 4——batch 2199 槽位族同脉络）；
+3. a 路 ★[0x7e14a0]/[0x7e14a8] IAT 回调对（事件回调族——batch 2171/2184 同源）；
+4. a 路 ★资源 ID 判定链（[0xac11a4]/[0xac11a8]/[0xac11ac] 三段 + [0xac119c]/[0xac11a0] 二段——资源类型双路匹配）+ push 1/0xfffffffe 双态回调参；
+5. b 路 ★0x8870c0 INI 全局 + 0x5276d0 读（0x82642c/0x831da4 键对 → [0xac10c8] 缓存）；
+6. c 路 ★0x7b4710 七串比较（[0x831704..0x83171c]——任一命中返 1）。
+
+## 跨批次连接
+
+- ★★batch 2171/2184/2186（[0x7e14a0]/[0x7e14a8] IAT 回调族——a 路）；batch 2194/2195（0x8870c0 INI 全局 + 0x5276d0 读族——b 路）。
+- ★★batch 2199（[edi+esi*8] 槽位族——a 路 [0xa8b2fc] 槽族同脉络）；batch 2194 c 路（0x832c20 常量表——c 路 [0x831704] 串池邻域）。
+- ★batch 2205/2206（命令族无关，[0xac11a4..0xac11ac] 资源 ID 族——a 路新基址）。
+
+## 观察项 / 候选池
+
+- **MISSING：无**（a 路 4 个 / b 路 1 个 / c 路 1 个直接 call 全部已登记）。
+- **后邻未登记**：0x5EE510（a 后邻——0x775940 四查 + [0xa8b23c] + [0xa8b2fc] 槽族调度器孪生）、0x5EE1B0（b 后邻——0x65ca80 构造 + 0x5275c0 写 + 0x474430 + 0x65ca00 INI 读写器）、0x5EE190（c 后邻 = b 路本体——比较/缓存对连排互指）。
+- **新观察**：[0xac11a4..0xac11ac]/[0xac119c]/[0xac11a0] 资源 ID 族（a 路）；[0x831704..0x83171c] 七串池（c 路）；[0xac10c8] 缓存（b 路——batch 2194 同全局双向确认）。
+- 前向：picker 队列继续 0x5E 区（0x5EE510/0x5EE1B0 孪生链）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
