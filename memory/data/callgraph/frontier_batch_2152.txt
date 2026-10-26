@@ -1,0 +1,68 @@
+# frontier batch 2152：三段标志跳板器 + 计数循环驱动提交器 + 全局指针读取器（0x63B050 / 0x63AD50 / 0x63AC60）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x63B050 FUN_0063b050 callees=1 deps=138 / 0x63AD50 FUN_0063ad50 callees=12 deps=70 / 0x63AC60 FUN_0063ac60 callees=0 deps=147）
+- 三路 disasm：`.qwen/tmp/_d2152a.txt`（0x63B050 size 0x60）/ `_d2152b.txt`（0x63AD50 size 0x360，分段全读）/ `_d2152c.txt`（0x63AC60 size 0x40）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x63B050 | 48B（0x30）| ret @0x63B07F | 0x63B080（mov [0xac4bf0],ecx setter 7B + 0x63B090 清零器 9B——均未登记）| 1 jmp（0x6E6E20，已登记）|
+| 0x63AD50 | 756B（0x2F4）| 双出口 @0x63B029/0x63B043 | 0x63B050（=本批 a 路本尊，已登记）| 11（7 已登记 + 3 MISSING 观察项 + 1 批内自引用）|
+| 0x63AC60 | 6B（0x6）| ret @0x63AC65 | 0x63AC70（sub esp,0x8 [a8ecc8] 循环 大函数头，未登记）| 0 |
+
+三函数为 **0x63 区对象族三段标志跳板 + [a8ecc8] 计数循环驱动 + [0xac4bf0] 全局指针小工具**：
+
+## a 路 0x63B050（48B）——三段标志跳板器
+
+```
+0063b050  mov dl,[ecx+0x12]（标志 1）→ test dl → je 0x63b061 → add ecx,0xe（偏移 1）→ ★jmp 0x6e6e20（尾跳）
+0063b061  mov dl,[ecx+0x1c]（标志 2）→ test → je 0x63b070 → add ecx,0x18（偏移 2）→ jmp 0x6e6e20
+0063b070  mov dl,[ecx+0x17]（标志 3）→ test → je 0x63b07f → add ecx,0x13（偏移 3）→ jmp 0x6e6e20
+0063b07f  ret（全零直接返回）
+```
+**语义**：**三段标志跳板器（推断名）**——[ecx+0x12]/[ecx+0x1c]/[ecx+0x17] 三个标志字节依次判定：命中者将 this 偏移 +0xe/+0x18/+0x13 后尾跳 0x6e6e20（已登记 0x6e 区对象方法）；全零直接返回。**对象族偏移选择跳板（0x63 区 → 0x6e 区尾跳惯用法）**。
+
+## b 路 0x63AD50（756B）——计数循环驱动提交器
+
+```
+0063ad50  sub esp,0x184 → mov eax,[0xac4c38] → mov esi,[0xa8ecc8]（★计数）→ mov [0xac4c38],0 → test esi → jle 0x63b02a（空分支）
+0063ad7f  push 0,0 → lea ecx,[esp+0x18] → ★call 0x40bd00（构造——[0x7e17ac] 表）→ 循环（[0xa8ecbc] 数组）：mov ecx,[0xa8ecbc] → mov esi,[ecx+eax*4] → test → je 跳过 → mov dl,[esi+0x14] → and dl,1（★标志筛选）→ je 跳过 → ★call 0x705d20（时间戳）→ test eax → je → mov ecx,[eax+0x14] → dec → js → mov ebp,[eax+8+ecx*4] → test ebp → 内层：mov edi,[ebp+0x10] → 循环（[ebp+4] 数组）：mov ecx,[ebp+4+ebx*4] → mov esi,[ecx] → 查重（[esp+0x14] 数组 cmp 线性找）→ 未命中：提交 mov [esp+0x14+eax*4],esi → 虚表槽 [edx+8]（[0x7e17ac] 表）调用 → inc ebx
+0063af1f  二次循环（[esp+0x14] 已收数组）：mov eax,[esp+0x14] → jle 0x63b00e → mov ebx,[edx+ebp*4] → push 0 → lea eax,[esp+0x124] → ★call 0x6342e0（MISSING 观察项）→ rep movsd 0x1b+movsw+movsb（111B）→ ★call 0x63b050（本批 a 路跳板）→ test eax → je 0x63afcc → push eax → lea ecx,[esp+0x34] → ★call 0x6e6ab0 → 栈构 5B → push 0x2a → mov ecx,[0xa83d4c] → mov edx,[ecx+0x30] → ★call 0x4c6780 → sub esp,0x70 → rep movsd 0x1b 111B（栈构）→ ★call 0x6521c0
+0063afd9  收尾：test eax → jle → cmp [0xac4c00],1 → jge → ★DebugLog 0x734e60（0x836bd4/0x836d0c，line 0xca1=3233）→ ★call 0x730a90 → inc [0xac4c00] → lea ecx,[esp+0x10] → mov [esp+0x10],0x7e180c → ★call 0x40ba50（析构——MISSING 观察项）→ ret
+0063b02a  空分支：mov ecx,4 → mov [0xac4bf0],eax → ★call 0x63a1b0（MISSING 观察项）→ ret
+```
+**语义**：**计数循环驱动提交器（推断名）**——[a8ecc8] 计数循环 [a8ecbc] 数组：① 0x40bd00 构造 + [esi+0x14]&1 标志筛选 + 0x705d20 时间戳 → 内层 [ebp+4] 数组元素查重 → 提交 [esp+0x14] 数组 + 虚表槽 [edx+8]（[0x7e17ac] 表）调用；② 二次循环：0x6342e0 取记录 → rep movsd 0x1b 111B → **0x63b050 三段标志跳板**（命中才继续）→ 0x6e6ab0/0x4c6780（[0xa83d4c]+0x30）/0x6521c0；③ 收尾 DebugLog 条件（[0xac4c00] 门控 line 3233）+ 0x40ba50 析构 + 空分支 0x63a1b0。**0x63 区记录收集/提交处理器（含三段跳板 + 111B 记录 + DebugLog）**。
+
+## c 路 0x63AC60（6B）——全局指针读取器
+
+```
+0063ac60  mov eax,[0xac4bf0] → ret
+```
+**语义**：**全局指针读取器（推断名）**——读取 [0xac4bf0]（本批 b 路空分支写、a 路后邻 0x63B080 setter/0x63B090 清零器成对的全局对象指针）返回。6B 微函数（batch 2148 b 路 0x63F7E0 同型读取器族）。
+
+## 原版怪癖（照抄）
+
+1. a 路三段标志链（[ecx+0x12]/[ecx+0x1c]/[ecx+0x17] 依次判定——先命中先偏移，偏移 +0xe/+0x18/+0x13 非递进）→ 尾跳 0x6e6e20；
+2. a 路全零返回（三段全空不跳——ret 空返回路径）；
+3. b 路 [esi+0x14]&1 标志筛选（记录激活位筛——batch 2151 b 路同款 and dl,1）；
+4. b 路查重（[esp+0x14] 收数组线性找 cmp——batch 2148 b 路后邻 0x63EC20 同款线性查找）；
+5. b 路虚表槽 [edx+8]（[0x7e17ac] 表对象方法）+ [0x7e180c] 析构表（0x7e 区双表配对）；
+6. b 路 ★DebugLog 行号 3233 硬编码 + [0xac4c00] 逐次计数门控（只报一次）；
+7. b 路空分支 mov ecx,4 + 0x63a1b0（计数为 0 时的固定调用路径）；
+8. c 路 6B 单行读取器（mov eax,[0xac4bf0];ret——batch 2148 同型）。
+
+## 跨批次连接
+
+- ★★★batch 2151（[0xac4bf0] 全局对象 a 路使用 + [0xa8ecc8]/[0xa8ecbc] 计数/数组对同源——0x63 区调度网）。
+- ★★batch 2149-2150（111B 记录 rep movsd 0x1b 同款）；★★batch 2148（0x63F7E0 全局读取器同型 + 线性查找同款）。
+- ★0x6e6e20/0x6e6ab0/0x40bd00/0x705d20/0x4c6780/0x6521c0/0x734e60/0x730a90/0x40ba50/0x6342e0/0x63a1b0（除 MISSING 3 个外全部已登记）。
+
+## 观察项 / 候选池
+
+- **MISSING 观察项（3 个）**：★0x40BA50（FUN_0040ba50，rank:3245，39B——[0x7e180c] 表析构器）、0x6342E0（FUN_006342e0，rank:3247，36B——记录取数器）、0x63A1B0（FUN_0063a1b0，rank:3248，85B——空分支调用）——ranking 均有行未登记，caller 俱为本批 b 路 0x63AD50，0x63 区内部族自然排队。
+- **批内自引用（不算 MISSING）**：0x63B050（本批 a 路本尊）。
+- **后邻未登记**：0x63B080（a 路后邻 [0xac4bf0] setter）+ 0x63B090（清零器）、0x63AC70（c 路后邻 [a8ecc8] 循环大函数）。
+- **新观察**：[0x7e17ac]/[0x7e180c]（0x7e 区构造/析构双表——b 路配对使用）；[0xac4c00]（DebugLog 计数门控全局）；[0xac4c38]（b 路开头读清零）。
+- 前向：picker 队列继续 0x63 区 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650。
