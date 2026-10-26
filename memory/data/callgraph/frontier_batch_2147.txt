@@ -1,0 +1,59 @@
+# frontier batch 2147：状态机 thunk + 状态字段二次初始化器 + 状态机构造器（0x63F7B0 / 0x63F730 / 0x63F6B0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x63F7B0 thunk_FUN_00652cf0 callees=1 deps=99 / 0x63F730 FUN_0063f730 callees=2 deps=2 / 0x63F6B0 FUN_0063f6b0 callees=2 deps=3）
+- 三路 disasm：`.qwen/tmp/_d2147a.txt`（0x63F7B0 size 0x60）/ `_d2147b.txt`（0x63F730 size 0xA0）/ `_d2147c.txt`（0x63F6B0 size 0xA0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x63F7B0 | 5B（0x5）| jmp（thunk 无 ret）| 0x63F7C0（=batch 2146 c 路本尊，已登记）| 1 jmp（0x652CF0，已登记）|
+| 0x63F730 | 123B（0x7B）| ret @0x63F7AA | 0x63F7B0（=本批 a 路 thunk，已登记）| 2（全已登记）|
+| 0x63F6B0 | 119B（0x77）| ret @0x63F726 | 0x63F730（=本批 b 路本尊，已登记）| 2（全已登记）|
+
+三函数为 **0x63 区状态机对象的构造/初始化族**——batch 2145-2146 的 [0x150c..0x1540] 字段网构造端 + 0x65 区前置钩子三兄弟（0x652960/0x652de0/0x652e90/0x652d90 已被多批记录）：
+
+## a 路 0x63F7B0（5B）——thunk_jmp 0x652CF0
+
+```
+0063f7b0  jmp 0x652cf0（★5B thunk——直接跳转）
+```
+**语义**：**thunk（jmp 跳板）**——5B `jmp 0x652cf0`（batch 2146 b/c 路 0x652d90/0x652e90 的兄弟——0x65 区钩子族 thunk 化入口）。后邻 0x63F7C0 = batch 2146 c 路本尊（已登记）。
+
+## b 路 0x63F730（123B）——状态字段二次初始化器
+
+```
+0063f730  sub esp,0xc/push ebx/push esi/mov esi,ecx → ★call 0x652de0（0x65 区前置钩子）→ or eax,0xffffffff（-1）→ [esi+0x153c]=-1/[esi+0x1540]=-1（缓存对复位）
+0063f74f  lea ecx,[esp+0xc] → ★call 0x6c8c40（取数）→ lea edx,[esi+0x1510] → xor ecx,ecx/xor ebx,ebx → [edx]=eax（[esi+0x1510]=取数）→ mov eax,[esp+0xc] → [esi+0x151c]=0（计数器复位）→ [edx+4]=eax（[esi+0x1514]=取数对）→ [edx+8]=ecx（[esi+0x1518]=0）
+0063f770  lea ecx,[esp+0xc] → ★call 0x6c8c40（二次取数）→ lea edx,[esi+0x1520] → [esi+0x152c]=0/[esi+0x1530]=0 → [edx]=eax（[esi+0x1520]=取数）→ mov eax,[esp+0xc] → [esi+0x1534]=0 → byte [esi+0x1538]=0（内部标志复位）→ [edx+4]=eax（[esi+0x1524]）→ pop 族 → [edx+8]=ecx（[esi+0x1528]=0）→ ret
+```
+**语义**：**状态字段二次初始化器（推断名）**——0x652de0 前置钩子后：① [esi+0x153c]/[esi+0x1540] 缓存对复位 -1；② 0x6c8c40 两次取数填三元组 [esi+0x1510+4+8] 与四元组 [esi+0x1520+24+28]（lea [esi+0x1524] 使 [edx+4]/[edx+8] 落在 0x1524/0x1528）；③ 复位 [esi+0x151c]=0/[esi+0x152c]=0/[esi+0x1530]=0/[esi+0x1534]=0/byte [esi+0x1538]=0。**0x63 区状态机字段复位器（batch 2145 c 路 0x63FEA0 同字段网）**。
+
+## c 路 0x63F6B0（119B）——状态机构造器
+
+```
+0063f6b0  push ebx/push esi/mov esi,ecx → ★call 0x652960（0x65 区前置钩子）→ xor ebx,ebx → lea ecx,[esi+0x1514] → byte [esi+0x150c]=0（脏标志）→ ★call 0x6c8c40（取数）→ [esi+0x1510]=eax → [esi+0x1518]=0 → lea ecx,[esi+0x1524] → [esi+0x151c]=0 → ★call 0x6c8c40（二次取数）→ [esi+0x1520]=eax → or eax,0xffffffff → [esi+0x1528]=0 → [esi+0x153c]=-1/[esi+0x1540]=-1（缓存对复位）→ [esi+0x152c]=0/[esi+0x1530]=0/[esi+0x1534]=0 → byte [esi+0x1538]=0 → ★mov [esi],0x7eff54（★虚表写——本对象虚表 0x7eff54）→ mov eax,esi → pop 族 → ret
+```
+**语义**：**状态机构造器（推断名）**——0x652960 前置钩子后：① 虚表 [esi]=0x7eff54（★构造器特征——虚表槽写）；② 0x6c8c40 两次取数填三元组 [esi+0x1510+4+8] 与四元组 [esi+0x1520+24+28]；③ 全字段复位（[0x150c] 脏、[0x151c] 计数、[0x152c]/[0x1530]/[0x1534] 三坐标、[0x1538] 标志、[0x153c]/[0x1540] 缓存对 -1）。**0x63 区状态机对象构造器（与 b 路二次初始化器互补——构造设虚表，二次初始化不留虚表）**。
+
+## 原版怪癖（照抄）
+
+1. a 路 5B thunk（jmp 0x652cf0——0x63 区对外暴露的跳板入口，0x65 区钩子族 thunk 化）；
+2. b/c 路 [esi+0x153c]/[esi+0x1540] 缓存对复位 -1（or eax,0xffffffff——batch 2145 c 路 0x640004/0x640018 同款复位惯用法）；
+3. b/c 路 0x6c8c40 两次取数填三元组+四元组（lea [esi+0x14]/[esi+0x24] 使 +4/+8 槽落在下一字段——连续内存块填充口味）；
+4. c 路虚表写 [esi]=0x7eff54（★构造器虚表——0x7e 区虚表常量，batch 2132 等 0x7e 区常量族）；
+5. b/c 路的 0x65 区前置钩子成对（0x652de0 vs 0x652960——不同入口同族）——batch 2146 的 0x652d90/0x652e90 兄弟再扩两员。
+
+## 跨批次连接
+
+- ★★★batch 2145 c 路 0x63FEA0：b/c 路 [0x150c..0x1540] 全字段网同族（状态机更新器 ↔ 构造器/初始化器成对）。
+- ★★batch 2146（0xac4e74 生命周期对 + 0x652d90/0x652e90 钩子）；★★batch 2132 等（0x7e 区虚表常量族——0x7eff54）。
+- ★0x652cf0/0x652de0/0x652960/0x6c8c40（全部已登记）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（直接 call/jmp 全已登记——a 1 个 + b 2 个 + c 2 个全在 TSV）。
+- **后邻未登记**：无（三路后邻全部为本批/前批已登记本尊——a 后邻=batch 2146 c 路、b 后邻=本批 a 路、c 后邻=本批 b 路）。
+- **新观察**：★0x7eff54（c 路虚表常量——0x7e 区），0x652cf0/0x652de0/0x652960（0x65 区 thunk/钩子族——0x652cf0 由 a 路 jmp 暴露）。
+- 前向：picker 队列继续 0x63 区 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650。
