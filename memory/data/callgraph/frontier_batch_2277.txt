@@ -1,0 +1,94 @@
+# frontier batch 2277：3×3 邻域掩码检查器 + 巨型位掩码分派器 + 区域匹配放置器（0x590FD0 / 0x590970 / 0x5905D0）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x590FD0 FUN_00590fd0 callees=2 deps=19 / 0x590970 FUN_00590970 callees=10 deps=124 / 0x5905D0 FUN_005905d0 callees=6 deps=84）
+- 三路 disasm：`.qwen/tmp/_d2277a.txt`（0x590FD0 size 0x200）/ `_d2277b.txt`（0x590970 size 0x800）/ `_d2277c.txt`（0x5905D0 size 0x500）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x590FD0 | 279B（0x117）| ret 0x10 c21000 @0x5910E4 | 0x5910F0（未登记——造山区域填充再变体：0x594010 矩形判定+坐标差 ±5/±3/±0xb 修正+斜坡段）| 3 次/去重 2（0x7c5f00+0x5a1e50——全部已登记，picker callees=2 吻合）|
+| 0x590970 | 1625B（0x659）| ret 0xc c20c00 @0x590FC6 | 0x590FD0（**本批 a 路本体——后邻相邻**）| 29 次/去重 10（**9 已登记 + 0x590FD0 本批 a 路批内自引用**，picker callees=10 吻合）|
+| 0x5905D0 | 920B（0x398）| ret c3 @0x59095F | 0x590970（**本批 b 路本体——后邻相邻**）| 10 次/去重 6（**4 已登记 + 0x590970 本批 b 路批内自引用 + 1 MISSING**，picker callees=6 吻合）|
+
+## a 路 0x590FD0（279B）——3×3 邻域掩码检查器
+
+```
+00590fd0  sub esp,0x18 → fld [0x7ed6e0] → fsub [0x7ed6d8]（★双精度差）→ fld [0x7e2ac8] → fsub [esp+0x28]（★单精度参）→ fmulp → fadd [0x7ed6d8] → call 0x7c5f00（★_ftol）→ mov edx,eax → [esp+0xc]=edx
+00591004  mov ecx,[esp+0x24]（★坐标对指针）→ mov ax,[ecx] / mov cx,[ecx+2] → sub ax,2 / sub cx,2 → movsx 双坐标 → [esp+0xc]/[esp+0x18] → 5 常量 → [esp+0x1c]/[esp+0x20]=5
+00591032  call 0x5a1e50（★区域判定——首检查）→ test al → je 失败（mov [ecx]（写回参）,al → xor eax → ret 0x10 = eax=0）
+0059105c  ★★3×3 循环：esi 0..2 × edi 0..2：mov ebx,[esp+0x2c] → add ebx,-5（★步进 -5/+5）→ lea ecx,[esi+eax-5]（★坐标折）→ 5 常量 → call 0x5a1e50 → test al → je 跳过 → ★★[edx*4+0x82af18] 掩码表：lea ecx,[edi+esi*2] → lea edx,[esi+ecx] → mov eax,[edx*4+0x82af18] → or ecx,eax → [esp+0x38]（★掩码 OR 合并）
+005910d9  收尾：mov eax,[esp+0x38]（★返回掩码）→ pop ×4 → add esp,0x18 → ret 0x10（★4 参）
+```
+
+**语义**：**3×3 邻域掩码检查器（推断名）**——★双精度差公式（[0x7ed6e0]-[0x7ed6d8] ×（[0x7e2ac8]-参））+ [0x7ed6d8] → 0x7c5f00）+ ★首格 0x5a1e50 区域判定（失败 eax=0 直接返回）+ ★★3×3 循环（ebx 步进 -5/+5 × edi 0..2）→ 0x5a1e50 逐格判定 → ★★[0x82af18] 掩码表 OR 合并 → 返回掩码 eax。**区域 3×3 邻域掩码合并（[0x82af18] 掩码表——b 路位掩码分派的上游）**。
+
+## b 路 0x590970（1625B）——巨型位掩码分派器
+
+```
+00590970  sub esp,0x10 → mov eax,[esp+0x1c] → mov esi,[esp+0x20]（★坐标对1）→ mov edi,[esp+0x28]（★坐标对2）→ mov ebp,ecx（★this）→ push eax → lea ecx → push edi → push ecx → push esi → mov byte [esp+0x23],1 → call 0x590fd0（★本批 a 路——3×3 掩码检查）→ ebx=eax（★掩码）
+0059099b  test [esp+0x13] → je 失败（xor al,al ret 0xc）→ cmp ebx,0xff → je 失败
+005909c5  ★★位掩码分派 1：and edx,0x82 → cmp dl,0x82 → ★test bl,0x38 → jne 跳过 → 坐标对修正（lea eax-1/x+5、y-5/y+1 + 0x40/4 位微调）→ call 0x593af0（★batch 2276 b 路——造山区填充孪生 A）→ test cl → jne 0x590e8b（成功跳收尾）
+00590a2c  ★★位掩码分派 2：and edx,0xa → cmp dl,0xa → test bl,0x11 → jne 跳过 → 坐标修正（x+5/x-1、y-1/y+5 + 0x10/1 位微调）→ call 0x593550（★batch 2276 c 路——造山区填充孪生 B）
+00590a90  ★★位掩码分派 3：and edx,0x28 → cmp dl,0x28 → test bl,0x83 → jne 跳过 → 坐标修正（x+1/x-5、y+5/y-1 + 0x40/4 位微调）→ call 0x593030（★未登记——造山区填充再变体，下批候选）
+00590af4  ★★位掩码分派 4：and edx,0xa0 → cmp dl,0xa0 → test bl,0xe → jne 跳过 → 坐标修正（x-5/x+1、y+1/y-5 + 1/0x10 位微调）→ call 0x593030
+00590b5b  ★★位掩码分派 5：test bl,0x70 → jne 跳过 → test bl,0x88 → je 跳过 → 坐标修正（x-1/x-4、y-4/y+4 + 0x80/8 位微调）→ ★Randomizer 0x65c780 × [0x7ed8b0] → 0x7c5f00 → cmp eax,1 ja 重抽 → add word 修正 → 第二 Randomizer × [0x7ed8b0] → add word → call 0x592440（★batch 1735 块 7）
+00590c28  ★★位掩码分派 6：test bl,7 → jne 跳过 → test bl,0x88 → je 跳过 → 坐标修正（x+1/x+4、y+4/y-4 + 0x80/8 位微调）→ ★★双 Randomizer 拒绝采样 + dec eax（★-1 微调）→ call 0x591740（★batch 1735 块 3）
+00590cf7  ★★位掩码分派 7：test bl,0xc1 → jne 跳过 → test bl,0x22 → je 跳过 → 坐标修正（x+4/x-4、y-1/y-1 + 0x20/2 位微调）→ ★★双 Randomizer 拒绝采样 → call 0x591d80（★batch 1735 块 5）
+00590dc4  ★★位掩码分派 8：test bl,0x1c → jne 跳过 → test bl,0x22 → je 跳过 → 坐标修正（x-4/x+4、y+1/y+1 + 0x20/2 位微调）→ ★★双 Randomizer 拒绝采样 + dec → call 0x5910f0（★后邻——造山区填充再变体）
+00590e8b  ★★收尾段：fld [esp+0x2c] → fcomp [0x7e5168]（★单精度阈值）→ test ah,0x41 → jne 收尾 → test cl → jne 收尾 → 四方向残余循环（test edi,8 / test bl,2 / test bl,0x20 / 坐标修正）→ call 0x5910f0/0x591740/0x591d80/0x592440（★四填充器复用）
+00590fbd  收尾：pop ×4 → mov al,cl（★返回填充成功标志）→ add esp,0x10 → ret 0xc（★3 参）
+```
+
+**语义**：**巨型位掩码分派器（推断名）**——★★调 0x590fd0（本批 a 路）得 3×3 掩码 → ★★八路位掩码分派（and/cmp 对：0x82/0xa/0x28/0xa0/0x70&0x88/0x7&0x88/0xc1&0x22/0x1c&0x22）每支构建四角坐标对（±5/±4/±1 修正 + 位微调）→ 调对应造山填充器（0x593af0/0x593550/0x593030×2/0x592440/0x591740/0x591d80/0x5910f0——batch 2276/1735 家族全覆盖）→ ★★部分分支 Randomizer 拒绝采样（[0x7ed8b0] 常量、0x7c5f00、cmp eax,1 ja 重抽、部分 dec eax 微调）→ 收尾残余四方向 + fcomp [0x7e5168] 阈值。**造山位掩码分派宿主（8 路填充器选择——batch 2276 b/c 路 + 1735 块的调用超级体）**。
+
+## c 路 0x5905D0（920B）——区域匹配放置器
+
+```
+005905d0  sub esp,0x44 → mov esi,ecx（★this）→ mov al,[esi+0x14]（★标志）→ test → je 0x59072b（★双入口——标志 0 走简化路径）
+005905e8  ★★全局对象族匹配：[esi+4] → [ecx+0x10] 计数 → mov ebx,[0xabdf94]（★全局对象表）→ mov ebp,[0xabdfa0]（★计数）→ 外层循环 [esp+0x18] 步 4：mov edx,[ecx+4] → [edx+esi] 取项 → cmp [ebx+8]（★+8 字段相等判定）→ je 0x59068e（命中取 [ebx+eax*4]）
+00590640  ★内层检查：mov eax,[esp+0x14] → [eax+4] → cmp [edx+0x10],1 → jg → 或 cmp [eax+0xc],0x32（★50 阈值）
+0059066f  ★★双重匹配：mov edx,[ecx+edx*4] → cmp [edi+8],edx → je → [eax+4] → cmp [edx+0x10],1 → jg → mov cl,[eax+0x14] → test → jne 跳过 → mov edi,[eax+0x10] → cmp [edx+0x10] → jne 跳过 → cmp [esi+0x10] → jne 跳过 → call 0x58f2c0（★MISSING——双参 [eax]+[edx] 匹配器）
+0059072b  ★简化入口：mov ecx,[esi+4] → xor ebx → [ecx+0x10] → jle 收尾 → mov edi,[0xabdfa0] → 匹配循环（cmp [ebp+8],edx）
+00590774  ★★Randomizer 拒绝采样：mov eax,[esi+8] / [ebp+8] 比较 → cmp [esi+0x10],[ebp+0x10] → je 跳过 → Randomizer 0x65c780 × [0x7ed8b8] → 0x7c5f00 → cmp eax,0x64（★100 上限）→ ja 重抽 → cmp eax,[0xabe044] → jge 走 0 → 第二 Randomizer × [0x7ed8b0] + fadd [0x7e1718] → 0x7c5f00 → cmp eax,2 → ja 重抽（★0..2 三态）
+005907f8  ★★放置尝试循环：[esp+0x28] 次（≤0x64=100）：mov ecx,[ebp+0x10] → mov eax,[esi+0x10] → 比较 → mov edi,[esi+8]/[ebp+8] → [0xabdf94] 匹配 → call 0x58d410（★构造器）→ mov edi,eax → Randomizer 0x65c780 × fild 计数 × [0x7ed898] → 0x7c5f00 → ja 重抽 → [edi+4] 取项 → push 1/push 坐标 → 0x578460（★放格判定）→ test → je 跳过 → fild [esp+0x24] → fmul [0x7eaae0]（★单精度比例）→ fstp → call 0x590970（★本批 b 路——巨型分派器）→ neg al → sbb → neg（★布尔归一）→ 累加 [esp+0x14] → 尝试计数 ebx < 0x64 循环
+00590919  ★收尾：mov eax,[esp+0x14] → test → jne 跳过 → mov byte [edx+0x1b],0（★失败写标志）→ test edi → 虚表槽 0 析构（push 1）→ [0xabdfa0] 循环 → ret c3
+```
+
+**语义**：**区域匹配放置器（推断名）**——★[esi+0x14] 标志双入口 + ★★[0xabdf94]/[0xabdfa0] 全局对象族匹配（+8 字段相等、[+0x10] 计数、0x32 阈值）→ ★★Randomizer 拒绝采样三态（[0x7ed8b8]/[0x7ed8b0]+[0x7e1718]、0x64 上限、[0xabe044] 门控）→ ★★放置尝试循环（0x58d410 构造 + 0x578460 放格 + fild fmul [0x7eaae0] → 0x590970 本批 b 路 → neg/sbb/neg 布尔归一）→ 失败 [edx+0x1b]=0 标志。**区域匹配+放置宿主（0x58f2c0 MISSING 排队——4095B 双参匹配器）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 3 次/去重 2 个（0x7c5f00/0x5a1e50）——**全部已登记**（picker callees=2 吻合）。
+- b 路：跨函数直接 call 29 次/去重 10 个——**9 已登记 + 0x590FD0（本批 a 路本体，批内自引用非 MISSING）**；picker callees=10 吻合。
+- c 路：跨函数直接 call 10 次/去重 6 个——**4 已登记（0x65c780/0x7c5f00/0x578460/0x58d410）+ 0x590970（本批 b 路本体，批内自引用）+ 1 MISSING（0x58f2c0——ranking.tsv:4233 有行，caller=0x005905d0 本批 c 路本体，自然排队）**；picker callees=6 吻合。
+- ★★核验脚本输出：三路全 PASS（含 2 批内自引用闭环），1 枚 MISSING 观察排队（0x58F2C0）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★3×3 循环步进 ebx 从 -5 到 +5（add ebx,-5 起、add ebx,5 止——**9 格扫描 0x82af18 掩码表**）;
+2. a 路 ★★[0x82af18] 掩码表索引 edx=edi+esi*2+esi（★斜向索引（i+j*3）*4——9 项表）;
+3. a 路 ★双精度差公式（[0x7ed6e0]-[0x7ed6d8] + [0x7ed6d8]——★浮点再加回）;
+4. b 路 ★★八路位掩码分派（and/cmp 恒定模式——每支先 and 0x82/0xa/0x28/0xa0/0x70/0x88/0xc1/0x22 位组 → test 互补位组 → 分支）;
+5. b 路 ★★坐标对修正模板（lea x±1/x±5、y±4/y±5 + 位微调 inc/dec word——每个分支不同组合但骨架一致）;
+6. b 路 ★★Randomizer 拒绝采样（[0x7ed8b0] 常量 × 0x7c5f00 → cmp eax,1 ja 重抽——**部分分支 dec eax 再 add word（-1 微调）**）;
+7. b 路 ★收尾 fcomp [0x7e5168]（单精度阈值）+ 残余四方向（test edi,8/bl,2/bl,0x20 → 0x5910f0/0x591740/0x591d80/0x592440 复用）;
+8. c 路 ★★[esi+0x14] 标志双入口（0 分支简化路径无 Randomizer）;
+9. c 路 ★★放置尝试 ≤0x64 次（cmp eax,0x64 ja 重抽）+ Randomizer 三态（0..2）;
+10. c 路 ★fild fmul [0x7eaae0]（单精度比例——★调用前浮点参数构造）;
+11. c 路 ★neg al → sbb eax,eax → neg eax（★布尔归一惯用法——batch 2253/2261 同款）;
+12. c 路 ★失败写 [edx+0x1b]=0 标志 + 虚表槽 0 析构收尾。
+
+## 跨批次连接
+
+- ★★★batch 2276（b 路 0x593AF0/c 路 0x593550——本批 b 路分派器直接调用 + **批内自引用三连（2276 三函数被 2277 b 路全覆盖）**）+ batch 1735/1736（0x592440/0x591740/0x591d80 块 3/5/7——本批 b 路分派器+收尾复用）。
+- ★★[0x82af18] 掩码表（a/b 路——batch 2266/2272 同族 8 邻域表）+ [0x7ed8b0]/[0x7ed8b8]/[0x7e1718] 常量族（b/c 路——scaled_random 邻区）+ 0x7c5f00 _ftol（三路高频）。
+- ★★[0xabdf94]/[0xabdfa0] 全局对象族（b/c 路——batch 2255/2256/2272 同族匹配）+ 0x578460 放格（c 路——batch 1736 同款）+ 0x58d410 构造（c 路——未登记观察）。
+- ★0x5a1e50 区域判定（a 路——RQ 区域族）+ 0x65c780 Randomizer（b/c 路省略采样核心）。
+
+## 观察项 / 候选池
+
+- **MISSING 观察 1 枚**：**0x58F2C0**（c 路——4095B 双参全局对象匹配器，ranking.tsv:4233 callees=12——**2275 picker 列表里出现过（callees=12 deps=72），本批 c 路亲历，下批强候选**）。
+- **后邻 3 枚未登记**：0x5910F0（a 路后邻——造山区域填充再变体：0x594010 矩形判定+坐标差 ±5/±3/±0xb 修正+斜坡段，b 路收尾复用）；0x593030（b 路分派器两次调用——造山区填充再变体）；0x594700（batch 2276 a 路后邻）。
+- 未兑现 MISSING 旧观察：0x00486790（2267 起排队）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x58B820/0x58CE90/0x578640 + 0x595400 + 0x58d410（c 路——构造器）。
