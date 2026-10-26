@@ -1,0 +1,82 @@
+# frontier batch 2238：0x5C 区大整数运算族三连（模除移位-减法内核 + 位左移位器 + 符号扩展逆序拷贝器）（0x5C7990 / 0x5C67A0 / 0x5C6490）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5C7990 FUN_005c7990 callees=1 deps=2——**batch 2237 b 路 MISSING 兑现候选** / 0x5C67A0 FUN_005c67a0 callees=0 deps=1 / 0x5C6490 FUN_005c6490 callees=0 deps=1）
+- 三路 disasm：`.qwen/tmp/_d2238a.txt`（0x5C7990 size 0x300）/ `_d2238b.txt`（0x5C67A0 size 0x200）/ `_d2238c.txt`（0x5C6490 size 0x100）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5C7990 | 518B（0x202）| ret 4 c20400 @0x5C7B93 | 0x5C7BA0（未登记——**跳转表大函数**：repne scasb + movsx + call 0x7c97d3 + cmp 0x21 + jmp [ecx*4+0x5c7d70] + 0x7c99b4/0x7c998c 字符判定——字符串解析器观察项）| 1（**0x5c67a0——本批 b 路本体，批内自引用闭环**）|
+| 0x5C67A0 | 306B（0x132）| ret 4 c20400 @0x5C67D3（共用出口，分支体到 0x5C68D0）| 0x5C68E0（未登记——双倍左移器：add esi,esi + shr ebx,0x1f 进位 观察项）| 0（callees=0 吻合——纯移位运算）|
+| 0x5C6490 | 107B（0x6B）| ret 4 c20400 @0x5C64F8 | 0x5C6500（未登记——带符号扩展倒序拷贝器·变体2：mov al,[edx]+and 0x80+neg/sbb 观察项）| 0（callees=0 吻合——纯字节运算）|
+
+## a 路 0x5C7990（518B）——大整数模除移位-减法内核
+
+```
+005c7990  sub esp,0x114 → push ebx/esi → mov eax,edx（★输入数组）/mov ebx,ecx（★输出）→ mov ecx,[eax] → test → jne 0x5c79db
+005c79ad  ★空输入反向扫描（mov edx,[eax+esi*4-4] → lea eax,[eax+esi*4-4] → dec ecx → test → 循环找最高非零 dword）→ cmp ecx,1 → jg 0x5c79db → ★or eax,0xffffffff 返回 -1 → ret 4
+005c79db  push ebp/edi → lea ebp,[esi*4]（★大小）→ rep stosd 清栈缓冲 [esp+0x24]（esi*4 B）+ rep stosd 清 [ebx]（输出区）→ mov [ebx],0
+005c7a1e  ★反向扫描输入（mov edx,[eax+ebp-4] → dec ecx → 找最高非零 dword）→ 0x80000000 位扫描（mov edx,0x80000000 → shl eax,5 → test → jne → shr edx,1 → dec eax → 循环）→ mov esi=eax（★最高位 index）
+005c7a64  lea eax,[esi+1] → test eax → je 0x5c7a6b（[esp+0x10]=0）→ ★余数修正（lea ecx,[eax-1] → and ecx,0x8000001f → jns → dec/or 0xffffffe0/inc）→ mov eax,1 → shl eax,cl → [esp+0x10]=掩码
+005c7a8c  ★位图置位（lea edi,[esi-1] → shr ecx,5 定位 → lea eax,[esp+ecx*4+0x24] → and ecx,0x1f → shl edx,cl → or [eax],edx）→ ★尺寸（lea eax,[esi+0x20] → cdq → and edx,0x1f → add → sar eax,5 向上取整）→ lea ebx,[ebx+eax*4-4]（输出尾部）
+005c7ac2  ★外层循环：inc edi → lea ebp,[esp+ebp+0x20] → push edi → lea ecx,[esp+0x28] → call 0x5c67a0（★本批 b 路：位左移）→ ★比较链（mov edx,[ebp] vs [eax] → jb 0x5c7b61 → sub edx,eax → cmp [edx+eax],ecx → ja 0x5c7b08 → 递减扫描）
+005c7b08  ★内层 16 位减法：mov ax,[edx+ecx]（被减数）→ mov ax,[ecx-2]（减数）→ sub eax,edi → and edi,0xff → sub eax,edi（借位）→ mov [ecx-2],ax → shr eax,0x10 → and al,1 → 借位字节 [esp+0x18] → 循环
+005c7b57  ★商位置位：[ebx] |= [esp+0x10] → shr [esp+0x10],1 → je 0x80000000 回绕 → sub ebx,4 → dec 外层计数 → jne 0x5c7acb
+005c7b87  xor eax,eax（返回 0）→ pop 四件套 → add esp,0x114 → ret 4
+```
+**语义**：**大整数模除移位-减法内核（推断名）**——① 空输入反向扫描 + 返回 -1；② rep stosd 双清（栈缓冲 + 输出区）；③ 反向扫描找最高非零 dword + 0x80000000 位扫描定最高位 index；④ 商位掩码计算（余数修正 + 1<<cl）+ 位图置位；⑤ ★外层循环：每轮调 0x5c67a0 位左移被除数 → 16 位 word 减法借位传播（够减则商位置 1，[ebx] |= 掩码）→ 掩码 shr 1 / 0x80000000 回绕 → 输出指针左移。**大整数二进制长除法内核（shift-subtract 试商——被除数逐位左移、够减则商位 1）**，与 batch 2237 c 路 0x5C7DB0 16 位乘法累加器同族（大数运算基元）。
+
+## b 路 0x5C67A0（306B）——大整数位左移位器
+
+```
+005c67a0  push ecx/ebx/ebp/esi/edi → mov edi,edx（★移位量）/mov esi,ecx（★目标数组）→ test edi → je 0x5c67ce（共用出口）
+005c67ad  cmp edi,0x20 → je 0x5c67ce 分支（★==32：mov ecx,[esp+0x18] 计数 → 循环 mov [esi]=0/add esi,4 清零）→ jge 0x5c682b（★>32 分支）
+005c67d8  ★<32 分支：mov eax,0x20 → sub eax,edi（余量）→ or ebx,0xffffffff → shr ebx,cl（掩码）→ not ebx → 循环：mov eax,[esi] → shl eax,cl → mov edx,eax → and edx,ebx → shr ebp,cl → or eax,ebp → mov [esi-4],eax（写回）→ mov ebp,edx（进位）→ 循环
+005c682b  ★>32 分支：mov eax,edi → cdq → and edx,0x1f → add eax,edx → sar eax,5（=ceil(edi/32) 字偏移）→ and edi,0x8000001f（★余数修正：jns/dec/or 0xffffffe0/inc）→ 双词装载（mov ebx,[ebx] shr cl → mov ebp,[ebp] shl cl → or）→ 循环写
+005c68b4  尾部：清零循环（mov [edx],0 → sub edx,4 → inc esi → cmp/jge）→ jmp 0x5c68b6
+005c67ce  ★共用出口：pop 五件套 → ret 4
+```
+**语义**：**大整数位左移位器（推断名）**——按 edi 位左移 dword 数组：移位量 **<32 / ==32 / >32 三路分派**（shl/shr/or 拼接 + 0x8000001f 余数修正 + 高位清零 + ==32 整体清零）。**大整数 << 位运算内核（三路移位量分派 + 进位链）**，零 call。
+
+## c 路 0x5C6490（107B）——带符号扩展的逆序字节拷贝器
+
+```
+005c6490  mov eax,[esp+4]（★长度）→ push ebx/ebp → mov ebp,ecx（★目标）→ mov ebx,[edx+eax*4-4]（输入尾部 dword）→ setl cl（★负标志）→ mov bl,cl → lea esi,[edx+eax-1]（★字节尾指针）→ neg bl → sbb bl,bl（★符号扩展字节 0x00/0xff）→ and ebx,0xff
+005c64b3  ★边界扫描循环：cmp esi,edx → jbe 0x5c64c0 → cmp byte ptr [esi],bl → jne 0x5c64c0 → dec esi → 循环（找符号字节边界）
+005c64c0  ★符号处理：mov al,[esi] → and al,0x80 → test cl（负判定）→ 写 [ebp]=bl + edi=1 或跳过（不写符号字节）
+005c64dc  ★倒序拷贝循环：mov al,[esi] → mov [edi+ebp],al → dec esi → mov cl,[esi-1] → mov [edi+ebp],cl → inc edi → 循环直到 edx
+005c64f2  mov eax,edi（★返回长度）→ pop 四件套 → ret 4
+```
+**语义**：**带符号扩展的逆序字节拷贝器（推断名）**——① 输入尾部 dword 取符号位（setl + neg/sbb 生成 0x00/0xff 符号扩展字节）；② 向前扫描符号字节边界；③ 倒序拷贝字节到 [ebp]（头部补符号字节，负数补 0xff）。**带符号扩展的字节序倒置拷贝（大整数正负号规范化）**，零 call。
+
+## callee 核验
+
+- a 路：跨函数直接 call 1 个（**0x5c67a0**）——**批内自引用（本批 b 路本体）**：grep ranking.tsv 有行（picker 候选源），TSV 尚未登记但**本批同时登记** → 按「批内自引用闭环」处理非 MISSING；callees=1 吻合。
+- b 路：跨函数直接 call **0 个**（callees=0 吻合——纯移位/清零运算）。
+- c 路：跨函数直接 call **0 个**（callees=0 吻合——纯字节运算）。
+- ★核验脚本（norm() 规范化版）输出：a 路 1 枚 MISSING 判定为批内自引用闭环、b/c 全 PASS；**无真 MISSING、无 UNKNOWN**。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★空输入反向扫描 + 返回 -1（or eax,0xffffffff——哨兵）+ rep stosd 双清（栈缓冲 + 输出区）——大数运算内核惯用布局；
+2. a 路 ★0x80000000 位扫描（shl eax,5 + test + shr 进位——标准 clz 实现，batch 2237 b 路同款）+ ★余数修正（and 0x8000001f + jns/dec/or 0xffffffe0/inc——负数除法修正式）；
+3. a 路 ★外层循环调 0x5c67a0 位左移 → 16 位 word 减法借位传播（shr eax,0x10 + and al,1——借位字节化）→ 商位掩码置位 → **掩码 shr 1 遇 0 回绕 0x80000000**（位扫描逐步左移）→ 输出指针 sub ebx,4 反向推进——**shift-subtract 长除法试商结构**；
+4. b 路 ★移位量三路分派（<32 shl/shr/or 拼接 + ==32 整体清零 + >32 双词装载）+ and edi,0x8000001f 余数修正 + not ebx 掩码（shr cl 后取反）；
+5. b 路 ★共用出口 0x5c67ce（pop 五件套 + ret 4——<32 分支和清零分支都汇到这里）+ 尾部清零循环（mov [edx],0 倒序清高位）；
+6. c 路 ★setl cl + neg bl + sbb bl,bl 生成符号扩展字节（0x00 正/0xff 负）+ and 0xff 钳位 + 边界扫描（cmp byte ptr [esi],bl 找符号边界）+ 倒序拷贝（正数头部无符号字节、负数头部补 0xff）。
+
+## 跨批次连接
+
+- ★★batch 2237（b 路 0x5C7EC0 的 [0xabf5a4] 计数调用端——**a 路即该 MISSING 兑现**；c 路 0x5C7DB0 16 位乘法累加器——**本批 a 路内层 16 位减法借位链同族**）：大整数运算族（乘法 0x5C7DB0 + 左移 0x5C67A0 + 长除法 0x5C7990 + 符号扩展拷贝 0x5C6490）闭环。
+- ★batch 2237 a 路（0x5C9470 DebugLog 0x734e60 族——a 路邻域）+ batch 2228（0x7c8e17/0x7c8b3d 家族——c 路邻域）。
+- ★0x80000000 位扫描（batch 2237 b 路 0x5C7EC0 同款）+ 0x8000001f 修正（batch 2237 b 路 0x5C7EC0 [0xabf8c4] 修正同款）——**位数计算族双基元跨批复用**。
+- ★rep movsd/rep stosd 清区模板（batch 2237 c 路 0x5C7DB0 邻域——本批 a/b 路大量复用）。
+
+## 观察项 / 候选池
+
+- **批内自引用 1 枚（非 MISSING）**：a 路 callee = 0x5C67A0（本批 b 路本体，同批登记闭环）。
+- **后邻未登记（自然排队）**：0x5C7BA0（a 后邻——**跳转表大函数**：repne scasb 找串尾 + movsx 尾字符 + call 0x7c97d3 + add eax,-0x2e + cmp 0x21 + jmp [ecx*4+0x5c7d70] 跳转表 + 0x7c99b4/0x7c998c 字符判定 + sub 0x30/sub bl,0x41/add 0xa——**atoi 风格字符串解析器，大函数，优先排队**）；0x5C68E0（b 后邻——双倍左移器：add esi,esi + shr ebx,0x1f + and bl,1 + 写 [ecx]——大整数 <<1 进位链）；0x5C6920（b 后邻——大整数取反器：not edx 循环）；0x5C6940（b 后邻——数组构造器：rep stosd 清 + mov [esi],edx）；0x5C6960（b 后邻——最高位定位器：反向扫描 + 0x80000000 位扫描——**与 a 路同款位扫描**）；0x5C6500（c 后邻——带符号扩展倒序拷贝器·变体2：mov al,[edx] + and 0x80 + neg/sbb + 倒序拷贝含填充）；0x5C6550（c 后邻——清零填充倒序拷贝器）。
+- **新观察**：[esp+0x24] 栈缓冲位图置位（a 路——edi shr 5 定位 + shl 置位）+ [esp+0x10] 商位掩码回绕（a 路——shr 1 + 0x80000000）。
+- 前向：picker 队列继续 0x5C 区（0x5C7BA0 跳转表大函数 + 0x5C68E0/0x5C6920 大整数族 + 0x5C60D0 2605 大宿主 + 0x5B77E0 deps=4048 大宿主）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
