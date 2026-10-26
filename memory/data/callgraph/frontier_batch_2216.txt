@@ -1,0 +1,74 @@
+# frontier batch 2216：0x5E 区槽族判定/计数族三连（槽族状态匹配判定器 + 槽族 ID 命中计数器 + ID 常量排除判定器）（0x5E9580 / 0x5E94D0 / 0x5E9470）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5E9580 FUN_005e9580 callees=0 deps=85 / 0x5E94D0 FUN_005e94d0 callees=0 deps=85 / 0x5E9470 FUN_005e9470 callees=0 deps=2841）
+- 三路 disasm：`.qwen/tmp/_d2216a.txt`（0x5E9580 size 0x100）/ `_d2216b.txt`（0x5E94D0 size 0x100）/ `_d2216c.txt`（0x5E9470 size 0x100）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x5E9580 | 92B（0x5C）| ret c3 @0x5E95DB | 0x5E95E0（= batch 2215 c 路已登记——状态统计判定器互指）| 0（callees=0 吻合）|
+| 0x5E94D0 | 62B（0x3E）| ret c3 @0x5E950D | 0x5E9510（未登记——min 裁剪+共享值表判定器观察项）| 0（callees=0 吻合）|
+| 0x5E9470 | 45B（0x2D）| ret c3 @0x5E949C | 0x5E94A0（未登记——ID→档位反向映射器观察项）| 0（callees=0 吻合）|
+
+三函数为 0x5E 区槽族/资源族的**判定、计数**两向补全——**零 call 纯查表族**（batch 2211/2212/2213/2214/2215 槽族续）：
+
+## a 路 0x5E9580（92B）——槽族状态匹配判定器
+
+```
+005e9580  push ebx/esi/edi → mov ebx,[0xac11a0] → mov esi,[0x8316a4]（★索引基准）→ mov edi,[0xac119c]
+005e9595  ★共享值表循环：edx=0（索引）→ ecx=0xa8da90 → mov eax,[ecx] → test → je 跳过 → cmp edi（[0xac119c]）/ebx（[0xac11a0]）/[0xac11b4]/[0xac11b0] 四 ID 常量 → je 跳过
+          → cmp edx,esi（★索引==[0x8316a4] 门控）→ jne 跳过 → cmp [eax+0x6b],-1（★哨兵字段）→ je 0x5e95d6（命中）
+          → add ecx,4 / inc edx / cmp 0xa8dab0 / jl（8 槽）
+005e95d0  （未命中）xor al,al → ret（false）→ 005e95d6：（命中）mov al,1 → ret（true）
+```
+**语义**：**槽族状态匹配判定器（推断名）**——共享值表 [0xa8da90..0xa8dab0] 8 槽扫描：非空且非四 ID 常量且**索引==[0x8316a4]** 且 **[eax+0x6b]==-1** 时命中返回 true。——与 **batch 2215 c 路 0x5E95E0 的扫描段逐字节同构**（同 ebx/esi/edi 装载 + 同四 ID 过滤 + 同索引门控 + 同哨兵判定），仅少了 min 裁剪/全局计数/日志段——**共享值表扫描判定的精简可直接判定版**。
+
+## b 路 0x5E94D0（62B）——槽族 ID 命中计数器
+
+```
+005e94d0  push ebx/esi/edi → mov ebx,[0xac11ac] → mov esi,[0xac11a4] → mov edi,[0xac11a8]
+005e94e5  ★共享值表循环：eax=0（★计数器）→ edx=0xa8da90 → mov ecx,[edx] → test → je 跳过
+          → cmp ecx,esi（[0xac11a4]）/edi（[0xac11a8]）/ebx（[0xac11ac]）三 ID → 命中 inc eax
+          → add edx,4 / cmp 0xa8dab0 / jl（8 槽）
+005e950a  pop 三件套 → ret c3（★返回计数 eax）
+```
+**语义**：**槽族 ID 命中计数器（推断名）**——共享值表 [0xa8da90..0xa8dab0] 8 槽扫描，统计命中 [0xac11a4]/[0xac11a8]/[0xac11ac] 三 ID 的槽数并返回。**活跃 ID 占用计数端（0..8 整数返回——纯查表零 call）**。
+
+## c 路 0x5E9470（45B）——ID 常量排除判定器
+
+```
+005e9470  test ecx,ecx → je 0x5e949a（空 → false）
+005e9474  → cmp ecx,[0xac119c] → je false → cmp [0xac11a0] → je false → cmp [0xac11b4] → je false → cmp [0xac11b0] → je false
+005e9494  mov eax,1 → ret（true）→ 005e949a：xor eax,eax → ret（false）
+```
+**语义**：**ID 常量排除判定器（推断名）**——参数 ecx 非空且不等于四 ID 常量（[0xac119c]/[0xac11a0]/[0xac11b4]/[0xac11b0]）时返回 true。**ID 合法/可用性判定端（五条件单链——最简判定族成员）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call/jmp **0 个**（callees=0 吻合——纯查表判定）。
+- b 路：跨函数直接 call/jmp **0 个**（callees=0 吻合——纯查表计数）。
+- c 路：跨函数直接 call/jmp **0 个**（callees=0 吻合——纯常量比较）。
+- ★三路均为**零 call 纯查表族**（共享值表 [0xa8da90] + 资源 ID 常量 [0xac119c..0xac11b4] + 全局 [0x8316a4]），核验脚本确认范围内无跨函数 direct call/jmp。**MISSING：无**。
+
+## 原版怪癖（照抄）
+
+1. a/b/c 路 ★★★资源 ID 常量族（[0xac119c]/[0xac11a0]/[0xac11b0]/[0xac11b4]/[0xac11a4]/[0xac11a8]/[0xac11ac]——七 ID 常量在 a/b/c 路**分片使用**：a 路用 [0xac119c]/[0xac11a0]/[0xac11b4]/[0xac11b0] 四组（排除）、b 路用 [0xac11a4]/[0xac11a8]/[0xac11ac] 三组（计数）、c 路用 [0xac119c]/[0xac11a0]/[0xac11b4]/[0xac11b0] 四组（排除）——batch 2211 起第七次复用；
+2. a 路 ★共享值表循环结构与 2215 c 路扫描段**逐字节同构**（6 组 cmp + 索引门控 + [eax+0x6b] 哨兵）——同一扫描模板的独立封装；
+3. a/b 路 ★[0x8316a4] 全局 — a 路作索引门控，b 路未用（计数不看索引）；
+4. b 路 ★计数器语义：共享值表 8 槽扫三 ID 命中累加（非首个命中即停——统计全部匹配槽数）；
+5. c 路 ★五条件单链（空 + 四常量）最短判定——先 test 空再四 cmp。
+
+## 跨批次连接
+
+- ★★batch 2215（0x5E95E0 状态统计判定器——a 路扫描段逐字节同构 + 0x5E9720/0x5E96A0 判定器）——a 路是 2215c 扫描段的**直接精简后继**（0x5E95E0 前邻位置 0x5E9580）。
+- ★★batch 2213/2214（共享值表 [0xa8da90..0xa8dab0] + 三视图槽 ID 表 + 资源 ID 判定链——a/b/c 路全部基于该模板）。
+- ★batch 2211（[0x8316a4] 索引基准首现 + 资源 ID 判定链首现）。
+
+## 观察项 / 候选池
+
+- **MISSING：无**（三路 callees=0，无跨函数直接目标）。
+- **后邻未登记**：0x5E9510（b 后邻——min 裁剪 [0xa8b548] vs [0xa8bb0c] + 共享值表 [0xac119c] 匹配判定 + [0x8316a4] test + ecx<8 门控 + [ecx*4+0xa8da90] 单槽查——自然排队）；0x5E9560（更后邻——[0xac11b4] 全表扫描判定器）；0x5E94A0（c 后邻——ID→档位反向映射器：[0xac11a4]→2/[0xac11a8]→1/[0xac11ac]→0/其他→-1——batch 2215 观察的 0x5E97A0/0x5E9800 档位族的关联映射器）；0x5E95E0（a 后邻 = batch 2215 c 路已登记）。
+- **新观察**：0x5E94A0 档位反向映射（注意与 0x5E97A0 档位映射方向相反且取值 2/1/0/-1 vs 2..7——两种档位编码并存）。
+- 前向：picker 队列继续 0x5E 区（0x5E00B0 大宿主 deps=2715 + 0x5DC350 deps=3922 候选）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
