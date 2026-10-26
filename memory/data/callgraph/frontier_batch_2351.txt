@@ -1,0 +1,79 @@
+# frontier batch 2351：INISection::Write2Integers ★带名 + PhobosHook_INIClass_ReadGUID_Overwrite ★带名 + VectorClass 拷贝构造器（0x5297E0 / 0x527920 / 0x524F20）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x5297E0 INISection::Write2Integers callees=2 deps=126 / 0x527920 PhobosHook_INIClass_ReadGUID_Overwrite callees=10 deps=354 / 0x524F20 FUN_00524f20 callees=1 deps=160）
+- 三路 disasm：`.qwen/tmp/_d2351a.txt`（0x5297E0 size 0x60）/ `_d2351b.txt`（0x527920 size 0x2A0）/ `_d2351c.txt`（0x524F20 size 0xA0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x5297E0 | 64B | ret 0xc @0x52981D | 0x529820（0x7b5440 ×2——确认框/字符串，未登记）| 2 个/去重 2——全部已登记，picker callees=2 吻合 |
+| 0x527920 | 610B | ret 0x1c @0x527B43（成功）/0x527B7F（失败回退）| 0x527B90（[esp+0x94] → 0x7e15ec IAT——相关装载器，未登记）| 9 个/去重 8——全部已登记（picker callees=10：差 2 为 IAT [0x7e11c4]/[0x7e15f0] 不计）|
+| 0x524F20 | 132B | ret 4 @0x524F83/0x524FA1 | 0x524FB0（[ecx+4] + 索引 → 下标读取器，未登记）| 1 个/去重 1——全部已登记，picker callees=1 吻合 |
+
+## a 路 0x5297E0（64B）——INISection::Write2Integers ★带名
+
+```
+005297e0  thiscall 1 栈参（[esp+0xc]=pair 指针）→ eax+0/[eax+4] 两值 → 0x7c8ef4（0x81c000 格式串——★"%d,%d" 类）→ [esp+0x50]/[esp+0x54]
+00529812  0x528660（★INISection::WriteString 类——格式化串写入）→ ret 0xc
+```
+
+**语义**：**INISection::Write2Integers（★带符号名——YRpp INISection.h 交叉验证）——双整数对写入（64B）**：thiscall 1 栈参（pair 指针）：★[eax]/[eax+4] 两 int → 0x7c8ef4（0x81c000 格式串）→ ★0x528660 写入节 → ret 0xc。**★★INI 节双整数写（★★0x81c000 格式串 + 0x528660 Write 家族——INISection 写侧家族）**。
+
+## b 路 0x527920（610B）——PhobosHook_INIClass_ReadGUID_Overwrite ★带名
+
+```
+00527920  sub esp, 0x1ac → [esp+0x10]=0x889f64（★默认 GUID 槽）→ 参数验证：[esp+0x1c0]/[esp+0x1c4]/[esp+0x1c8] 非空 → je 0x527b46（回退路径）
+0052795f  [ebp+4] vs [esp+0x1c0] 比较分双路：
+0052796b  ★路 A（相等）：[ebp+8] 非空 → 0x4a1de0（键 hash 装载）→ [esi+0x30] test → 0x52b4f0（VectorClass 查找）→ 0x52b170（插入）→ [0xb78830] 全局
+005279ec  ★路 B（不等）：0x4a1de0（键）→ 0x52b600/0x52b620（VectorClass 查找变体）→ 0x52b390（插入）→ [0xb7882c] 全局
+00527a9f  [esp+0x14] 结果 → 0x7c91d0（0x80=128 复制）→ 0x727cf0（★GUID/字符串转换）→ [0x7e11c4] IAT（★十六进制解析）→ [0x7e15f0] IAT（★结果比较）
+00527b16  ★★成功：[eax] 输出 4 dword（[eax+0]/[eax+4]/[eax+8]/[eax+0xc]=[esp+0x10]/[esp+0x14]/[esp+0x18]）→ ret 0x1c
+00527b46  ★失败回退：输出 = 原始参数（[esp+0x1c8]/[esp+0x1c0]/[esp+0x1c4]）→ ret 0x1c
+```
+
+**语义**：**PhobosHook_INIClass_ReadGUID_Overwrite（★带符号名——YRpp/Phobos 钩子名）——GUID 覆盖读取（610B）**：thiscall 4 栈参（[esp+0x1c0]=节/[esp+0x1c4]=键/[esp+0x1c8]=默认/[esp+0x1bc]=输出）：★★[ebp+4] 与节名比较双路 → 0x4a1de0 键装载 + ★VectorClass 族（0x52b4f0/0x52b170/0x52b600/0x52b620/0x52b390——batch 2348/2349 容器族）查找/插入 → [0xb7882c]/[0xb78830] 全局 → ★0x727cf0 GUID 转换 + [0x7e11c4]/[0x7e15f0] 双 IAT → ★★成功输出 4 dword（GUID 四段）→ ret 0x1c。**★★INI GUID 覆盖读取（★★Phobos 联机扩展——反作弊/Spawner GUID 校验族 + VectorClass 容器族实锤使用方）**。
+
+## c 路 0x524F20（132B）——VectorClass 拷贝构造器
+
+```
+00524f20  thiscall 1 栈参（edi=源对象）→ cmp esi, edi → je 0x524f91（★自赋值跳过）
+00524f2c  [esi] 虚表槽 0xc 调用（★清旧数据）→ [edi+8] count → test → [esi+8]=count → je 0x524f86
+00524f3b  0x7c8e17（count×4）→ [esi+4]=新指针 → ★★4B/项数组拷贝循环（[edx+eax*4] → [ecx+eax*4]）→ [esi+0xd]=1（owns）
+00524f73  [edi+0x10]/[edi+0x14] → [esi+0x10]/[esi+0x14]（★复制尾字段）→ ret 4
+00524f86  count==0： [esi+4]=0 → [esi+0xd]=0 → ret 4
+```
+
+**语义**：**VectorClass 拷贝构造器（推断名）——源对象深拷贝（132B）**：thiscall 1 栈参（源）：★[esi] 虚表槽 0xc 清旧 → 0x7c8e17（count×4）分配 + ★4B/项数组拷贝 → [esi+0xd]=1（owns）+ [esi+0x10]/[esi+0x14] 尾字段复制 → ret 4。**★★VectorClass 拷贝构造（★★batch 1737 8B/项拷贝器的 4B/项变体——owns 标志语义同族）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 2 个/去重 2（0x7c8ef4/0x528660——格式化/写入对）——**全部已登记无 MISSING**（picker callees=2 吻合）。
+- b 路：跨函数直接 call 9 个/去重 8（0x4a1de0/0x52b4f0/0x52b170/0x52b600/0x52b620/0x52b390/0x727cf0/0x7c91d0——全部已登记；0x52b4f0/0x52b600/0x52b620/0x52b390/0x52b170 = ★batch 2347-2349 后邻容器族实锤使用方）——**全部已登记无 MISSING**（picker callees=10：差 2 为 IAT [0x7e11c4]/[0x7e15f0] 不计）。
+- c 路：跨函数直接 call 1 个/去重 1（0x7c8e17——分配）——**全部已登记无 MISSING**（picker callees=1 吻合）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING、无批内自引用**（连续六十一批三路无真 MISSING——排队 7 个真 MISSING 不变）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★0x7c8ef4 格式串 0x81c000（"%d,%d" 类——★非 "%d %d" 空格分隔）；
+2. b 路 ★★[ebp+4] 与节名比较分双路（★同一键在 [0xb7882c]/[0xb78830] 两个全局容器分别查找——两套索引表）;
+3. b 路 ★★[esp+0x10]=0x889f64（★默认 GUID 槽——键未命中时的回落值）;
+4. b 路 ★★成功输出 4 dword 来自 [esp+0x10]/[esp+0x14]/[esp+0x18] 三个栈槽（★[eax+0xc] 用 [esp+0x18]——与 [esp+0x14] 同源）;
+5. b 路 ★★失败回退直接写原始参数（[esp+0x1c8]/[esp+0x1c0]/[esp+0x1c4]——★默认值穿透）;
+6. b 路 ★★0x727cf0 GUID 转换 + [0x7e11c4]（十六进制解析）+ [0x7e15f0]（比较）双 IAT 串接;
+7. c 路 ★★自赋值跳过（cmp esi, edi → je）+ [esi] 虚表槽 0xc 清旧（★拷贝前先清目标）;
+8. c 路 ★★4B/项拷贝（★batch 1737 是 8B/项——本路 4B/项变体）+ [esi+0xd]=owns 标志;
+9. c 路 ★★count==0 时 [esi+4]=0/[esi+0xd]=0（★空拷贝走独立路径——不调用虚表槽 0xc）。
+
+## 跨批次连接
+
+- ★★batch 2348/2349（0x52B4F0 双指针判定器/0x52B600/0x52B620/0x52B390/0x52B170 容器族——b 路实锤使用方闭环）+ batch 2339/2340（VectorClass 构造/扩容——c 路同族）。
+- ★★batch 2350（0x52A670——a 路 0x528660 写家族同源 INI 域）+ batch 2344（0x530460——b 路 [0xb7882c]/[0xb78830] 全局槽族邻域）。
+- ★★Phobos 钩子家族（★带符号名——YRpp/Phobos 交叉验证 + QWEN.md Phobos 克隆 E:\code\Phobos）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x529820（a 路后邻——0x7b5440 ×2 确认框）+ 0x527B90（b 路后邻——[esp+0x94] → 0x7e15ec IAT）+ 0x524FB0（c 路后邻——下标读取器）+ [0xb7882c]/[0xb78830]（b 路双全局容器）+ 0x52b4f0/0x52b170/0x52b600/0x52b620/0x52b390（★b 路使用方——batch 2347-2349 后邻未登记函数：0x52B720 比较器已观察）。
+- 未兑现 MISSING 旧观察（继续排队）：0x00486790（2267 起）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150 + ★0x556AD0/0x556EB0/0x556D20 + ★0x554830/0x49E400 + ★0x551B20 + ★0x5517A0/0x5512D0 + ★0x5509E0/0x551300/0x551320/0x551330/0x551370 + ★0x550080/0x54F6F0/0x54F670 + ★0x54E890/0x54E8C0 + ★0x54E590/0x54D930/0x549E90 + ★0x547CE0/0x544BE0 + ★0x543780/0x542EC0 + ★0x5424C0 + ★0x5422C0/0x540F90 + ★0x540A80 + ★0x5402D0/0x53F5B0 + ★0x53ECB0/0x53EC70/0x53E470 + ★0x408B40/0x53E070/0x53E1D0/0x53DDE0 + ★0x53C4C0/0x53C280/0x53B560 + ★0x53B3F0/0x53B064 + ★0x53AC50 + ★0x53A6A0/0x53A140 + ★0x53A130/0x53A100 + ★0x538C10 + ★0x537F20/0x537E80/0x537F30/0x537E90 + ★0x537DE0/0x537B50/0x537DF0/0x537B60/0x535BD0/0x535BE0 + ★0x533F50 + ★0x41caf0/0x45e750/0x4f6eb0/0x531F60/0x5318C0 + ★0x52FFD0/0x52FC20/0x52D430 + ★0x406b10/0x434ad0/0x52CB90 + ★0x52B7A0/0x52B720 + ★0x52B4F0 + ★0x52B160/0x52AFC0 + ★0x52ACE0/0x52AA90/0x52A760 + ★0x529820/0x527B90/0x524FB0（2351 新观察）。
+- 本批 **无 MISSING**（连续六十一批三路无真 MISSING——排队 7 个真 MISSING 不变）。next 批预期 top3 由 picker 决定（0x52B4F0/0x52B170 等容器族后续）。
