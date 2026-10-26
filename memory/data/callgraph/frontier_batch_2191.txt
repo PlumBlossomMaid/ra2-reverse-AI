@@ -1,0 +1,77 @@
+# frontier batch 2191：0x5F 区 Spotlight 渲染族三连（Spotlight 绘制器 + Spotlight 全局数组析构器 + 渲染系统初始化器）（0x5FF850 / 0x5FF800 / 0x5FF420）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5FF850 SpotlightClass::Draw callees=12 deps=1 / 0x5FF800 FUN_005ff800 callees=1 deps=690 / 0x5FF420 FUN_005ff420 callees=10 deps=862）
+- 三路 disasm：`.qwen/tmp/_d2191a.txt`（0x5FF850 size 0x800——624 行，完整读取）/ `_d2191b.txt`（0x5FF800 size 0x100）/ `_d2191c.txt`（0x5FF420 size 0x500）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x5FF850 | 1842B（0x732）| ret c3 @0x5FFF81 | 0x5FFFA0（= batch 2190 c 路已登记——Spotlight 遍历调度器互指）| 12（0x55af60/0x6d2140/0x5865e0/0x7bc040/0x7df3c2/0x7df191/0x7df500/0x7df0b4/0x7df280/0x7deefa/0x7defd7 + 尾虚表槽 0x60 ×2 间接——callees=12 全含）|
+| 0x5FF800 | 64B（0x40）| ret c3 @0x5FF840 | 0x5FF850（= a 路本体——析构/绘制对连排）| 1（0x7c8b3d 释放 + [eax] 虚表槽 0 间接——callees=1 吻合）|
+| 0x5FF420 | 983B（0x3D7）| ret c3 @0x5FF7F6 | 0x5FF800（= b 路本体——初始化/析构对连排）| 9（0x7c8e17 ×3/0x4aec60/0x43ad00/0x7bbab0/0x43ae50/0x7bb920/0x7c5f00/0x4bbc90/0x4e6150 + [eax+0x18]/[eax+8] 虚表槽间接——callees=10 含间接吻合）|
+
+三函数为 **0x5F 区 Spotlight 渲染族**（batch 2190 c 路同族——[0xac1688]/[0xac167c] Spotlight 对象族 + [0xac1698]/[0xac1834]/[0xac1838] 渲染全局；★★★[0x8a0dd0-0x8a0de4] 方向位域表第 10 处复用 + 0x7dfxxx 绘制子函数族）:
+
+## a 路 0x5FF850（1842B）——Spotlight 绘制器（★★★[0x8a0dd0] 表第 10 处复用）
+
+```
+005ff850  sub esp,0x84 → mov ebp=ecx（this）→ mov ebx,[ebp+0x14] → and ebx,0xf → test ebx,0xfffffffe → jne → call 0x55af60（时间/帧查询）→ cmp [0xabcd44],eax → jb 0x5fff77（节流退出）
+          → call 0x6d2140（[0x887324] 相机查询——可见性判定）→ test al → je 0x5fff77（不可见退出）
+          → [0xa8b230] 全局头 → test ah,0x10 → je → push ebp → mov ecx,0x87f7e8 → call 0x5865e0（MapClass 判定）→ jne 0x5fff77
+          → 坐标/尺寸装载：[0x886fa0]/[0x886fa4]/[0x886fa8]/[0x886fac] 界面坐标 + [0x887314] + [ebp+0xc] 字节表 [0x83358c] → sar 6 缩放 → [ecx*4+0xac1698] 渲染对象查表 → [esi] 虚表槽 0x74 调用（渲染器查询）
+          → 8 个参数装载 → call 0x7bc040（DSurface 绘制入口）→ test al → je 退出
+          → [0x833588] 模式 → jmp [ecx*4+0x5fff84]（★跳转表 4 分支）→ 每分支：call 0x7df3c2/0x7df191/0x7df500/0x7df0b4/0x7df280/0x7deefa/0x7defd7（★绘制子函数族——2 参数/7 参数双形态）→ jmp 0x5fff65 收尾
+          → 主循环（0x5ffb1c 起）：[ebp+0x14] test al,1（方向标志低 bit）→ ★★双循环缓扫（esi 行计数 × edi 游标）→ ★★★[0x8a0dd0-0x8a0de4] 方向位域表六连重组（shr/shl/sar 按表位宽——batch 2118-2122/2185 运动系统位域表）→ imul/sar 混合（alpha 混合）→ word 写回 → 循环推进
+          → 0x5ffc70 分支：test al,0xe（第二组标志）→ 同款六连重组 + imul 0x100 混合 + 0xff 钳位写回
+          → 0x5ffdfb 分支：第三组（无标志）→ 同款重组 + imul/sar 混合 + 钳位 → 收尾：虚表槽 0x60 ×2（[esp+0x30]/[esp+0x34] 渲染器收尾）→ ret c3
+```
+**语义**：**Spotlight 绘制器（推断名，YRpp 带名 SpotlightClass::Draw）**——① ★节流/可见性/地图判定三重门控（0x55af60 + [0xabcd44] 帧计数、0x6d2140 相机、0x5865e0 MapClass）；② ★8 参数 0x7bc040 绘制入口 + [0x833588] 模式跳转表 4 分支（0x7df3c2/0x7df191/0x7df500/0x7df0b4/0x7df280/0x7deefa/0x7defd7 绘制子函数族）；③ ★★★[0x8a0dd0-0x8a0de4] 方向位域表六连重组（shr/shl/sar——batch 2118-2122 运动系统核心表第 10 处复用）+ imul/sar 混合 + 0xff 钳位（颜色混合）；④ 虚表槽 0x60 ×2 收尾。**Spotlight 全绘制流水线（节流门控 → 可见性 → 绘制入口 → 模式分支 → 位域混合）**。
+
+## b 路 0x5FF800（64B）——Spotlight 全局数组析构器
+
+```
+005ff800  mov eax,[0xac1838]（★渲染辅助缓冲——batch 2191 c 路分配）→ test → je → push eax → call 0x7c8b3d（★free 释放）→ mov [0xac1838],0 清
+          → 循环：esi=0xac1698 → [esi] 对象 → test → je → [eax] 虚表槽 0（push 1 delete flag）→ mov [esi],0 → esi+=4 → cmp esi,0xac17c0 → jl（★[0xac1698..0xac17c0] 全数组 0x128/4=74 项逐个虚表释放）→ ret c3
+```
+**语义**：**Spotlight 全局数组析构器（推断名）**——① ★[0xac1838] 渲染辅助缓冲 free（0x7c8b3d）+ 清 0；② ★★[0xac1698]..[0xac17c0] 全数组 74 项逐个虚表槽 0（scalar delete flag 1）释放 + [esi]=0。**渲染全局数组清理端（batch 2191 c 路分配器配对析构——初始化/析构对连排）**。
+
+## c 路 0x5FF420（983B）——渲染系统初始化器
+
+```
+005ff420  mov al,[0xac1834]（★初始化标志）→ cmp al,bl → jne 0x5ff72e（已初始化跳过）
+          → 循环 1（edi=1，ebp=0xac1698 起步 0x128 步进 ×16 项）：[ebp]==0 → 0x7c8e17 new 0x20 → 4aec60（0x100×0x80 DSurface 构造）→ [esi]=0x7e2104 虚表 → 0x43ad00（0x8000 缓冲）→ [esi]=0x7e2070 虚表 → 循环 → 0x7bbab0（收尾）
+          → 循环 2（edi 0xc 起步 +4）：虚表槽 8 调用（[eax+8] 填充）+ 0x7bb920（0x80×0x80 填充）——edi 至 0xff 钳位
+          → 循环 3（ebp=0xac1798 起步 +4 ×16 项）：同款 new+构造+双虚表 → [0x8871e0]+0x7a8 查表（+0x7ac×4 缩放表族）lea 三连 ×20 → fild/fmul [0x7ef6f8]/call 0x7c5f00（_ftol）→ 0x7bb920 填充
+          → 循环 4：虚表槽 8 填充（esi 0..0x80 ×2 → [eax+8] 提交）→ 0x43ae50 析构收尾
+          → 结尾：mov [0xac1834],1（★初始化标志置位）→ call 0x4bbc90（全局初始化）→ 0x4e6150（INI 读取）→ [esp+0x13] 标志 → [0xac1838]==0 → 0x7c8e17 new 0x40000（★256K 渲染辅助缓冲）→ ★★★[0x8a0dd0-0x8a0de4] 位域表六连重组（初始字）→ dword [edx+ebx*4]=ecx → 循环 0x10000 项（★65536 项 dword 填充——位域展开表）→ ret c3
+```
+**语义**：**渲染系统初始化器（推断名）**——① ★[0xac1834] 初始化标志门控（已初始化跳过）；② ★[0xac1698]/[0xac1798] 两组 16 项渲染对象构造（0x7c8e17 new + 0x4aec60 DSurface + 0x7e2104/0x7e2070 双虚表 + 0x43ad00 缓冲 + 虚表槽 8 填充）；③ ★[0x8871e0]+0x7a8 缩放表（batch 2154-2162/2174 高频表）+ fild/fmul/0x7c5f00 浮点换算；④ ★★[0xac1838] 256K 缓冲分配 + [0x8a0dd0..0x8a0de4] 位域表展开 65536 项 dword（batch 2118-2122 运动系统位域表）；⑤ 0x4bbc90/0x4e6150 全局+INI 初始化。**渲染系统整体初始化端（两组对象族 + 位域展开表 + 256K 缓冲——与 b 路析构配对）**。
+
+## callee 核验
+
+- a 路：12 个直接 call（0x55af60/0x6d2140/0x5865e0/0x7bc040/0x7df3c2/0x7df191/0x7df500/0x7df0b4/0x7df280/0x7deefa/0x7defd7——跳转表 4 分支各含分叉），**全部已登记**（0x7dfxxx 绘制子函数族均在册；callees=12 含尾部虚表槽 0x60 ×2 吻合）。
+- b 路：1 个直接 call（0x7c8b3d 释放——[eax] 虚表槽 0 为间接），**全部已登记**。
+- c 路：9 个直接 call（0x7c8e17/0x4aec60/0x43ad00/0x7bbab0/0x43ae50/0x7bb920/0x7c5f00/0x4bbc90/0x4e6150），**全部已登记**（callees=10 含虚表槽 8/0x18 间接吻合）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★三重门控（0x55af60 + [0xabcd44] 帧计数节流、[0x887324] 0x6d2140 相机可见性、MapClass 0x5865e0）；
+2. a 路 ★[0x833588] 模式跳转表（jmp [ecx*4+0x5fff84] 4 分支）+ 绘制子函数族双形态（2 参数 0x7df191/0x7df0b4/0x7deefa/0x7defd7 vs 7 参数 0x7df3c2/0x7df500/0x7df280）；
+3. ★★★a/c 路 [0x8a0dd0-0x8a0de4] 方向位域表六连重组（batch 2118-2122 运动系统第 10 处复用）+ imul/sar + 0xff 钳位颜色混合；
+4. b 路 ★[0xac1698..0xac17c0] 全数组 74 项虚表释放（含空槽跳过）；
+5. c 路 ★65536 项 dword 位域展开表（0x10000 循环——初始字由位域表六连算出）、[0xac1834] 标志幂等初始化、edi 0xc..0xff 步进 4 钳位循环。
+
+## 跨批次连接
+
+- ★★★batch 2118-2122/2185（[0x8a0dd0-0x8a0de4] 方向位域表——a/c 路第 10 处复用）；batch 2154-2162/2174（[0x8871e0]+0x7ac×4 缩放表——c 路）。
+- ★★batch 2190 c 路（0x5FFFA0 Spotlight 遍历调度器——调用 a 路本尊，a/b/c 三函数 + 调度器四件套闭环）；batch 2174/2175（Spotlight 渲染族）。
+- ★batch 2188（0x69bbe0/[0xa8b238]——a 路 [0xa8b230] 邻接全局）；batch 2186/2189（0x7b66c0/0x7b6720 宽串族无关）。
+
+## 观察项 / 候选池
+
+- **MISSING：无**（a 路 12 个 / b 路 1 个 / c 路 9 个直接 call 全部已登记——0x7dfxxx 绘制子函数族在册；batch 2190 c 路 MISSING 0x5FF850 由本批 a 路兑现）。
+- **后邻未登记**：0x5FFFA0（a 后邻——batch 2190 c 路**已登记**，四件套互指闭环）；0x5FF850（b 后邻 = a 路本体）；0x5FF800（c 后邻 = b 路本体）。
+- **新观察**：[0xac1698]/[0xac17c0]/[0xac1798]/[0xac1834]/[0xac1838] 渲染全局（a/b/c 路全景）；[0x83358c]/[0x833588] 模式/字节表（a 路）；0x7df0b4/0x7df191/0x7df280/0x7df3c2/0x7df500/0x7deefa/0x7defd7 绘制子函数族（a 路跳转表目标——均已在册）。
+- 前向：picker 队列继续 0x5F 区（0x5FFFC0/0x5FFFF0/0x600010/0x600020 VectorClass 族 + 0x5FF800 后邻链）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
