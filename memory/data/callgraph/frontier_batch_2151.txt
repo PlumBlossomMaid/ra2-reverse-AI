@@ -1,0 +1,63 @@
+# frontier batch 2151：记录提交器调度器族 + 位域坐标计算器 + 全局清理解析器（0x63B2F0 / 0x63B150 / 0x63B0A0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x63B2F0 FUN_0063b2f0 callees=5 deps=471 / 0x63B150 FUN_0063b150 callees=8 deps=461 / 0x63B0A0 FUN_0063b0a0 callees=4 deps=465）
+- 三路 disasm：`.qwen/tmp/_d2151a.txt`（0x63B2F0 size 0x2C0，分段全读）/ `_d2151b.txt`（0x63B150 size 0x220，分段全读）/ `_d2151c.txt`（0x63B0A0 size 0x100）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x63B2F0 | 608B（0x260）| ret @0x63B54F | 0x63B550（=batch 2150 c 路本尊，已登记）| 5（全已登记）|
+| 0x63B150 | 411B（0x19B）| ret @0x63B2EA | 0x63B2F0（=本批 a 路本尊，已登记）| 8（全已登记）|
+| 0x63B0A0 | 176B（0xB0）| ret @0x63B14F | 0x63B150（=本批 b 路本尊，已登记）| 4（全已登记）|
+
+三函数形成 **0x63 区记录提交器族的调度闭环**——batch 2149-2150 的 0x63CAE0/0x63C690/0x63BE60/0x63B550 提交器 + 本批的调度端（按 [0xac4b34]/[0xa8ec7c] 数组遍历 + 0x4f9a50 判定分发）：
+
+## a 路 0x63B2F0（608B）——位域坐标计算器·四元组提交
+
+```
+0063b2f0  mov ax,word [0xa80221]（16 位全局）→ sub esp,0x50 → mov cl,ah → mov esi,ecx → mov cl,[0x8a0ddc] → shr esi,cl → mov ecx,[0x8a0dd8] → mov dl,al → mov al,[0xa80220] → mov edi,[0xac4ccc]（全局）→ shl esi,cl → mov cl,[0x8a0de4] → shr edx,cl → mov ecx,[0x8a0de0] → mov ebp,0xfffffffe（-2）→ shl edx,cl → mov cl,[0x8a0dd4] → shr eax,cl → mov ecx,[0x8a0dd0] → or esi,edx → shl eax,cl → or esi,eax（★★[0x8a0dd0] 位域表拼装——batch 2118-2122 方向位域表第 6 处复用）
+0063b357  [0xac4ccc] 判定 → ★call 0x72ad20 → 读四元组 → ★call 0x634400 → ★call 0x634510（四元组提取——edx=8）→ 四元组偏移（[esp+0x20]=x-4/[esp+0x24]=y-4/[esp+0x28]=z+8/[esp+0x2c]=w+8）→ 循环 edi=3 次（0x63b3ca-0x63b42a）：[0x88731c] 虚表槽 0x54 调用（+esi 位域值）→ 四元组 vs -2 边界（jle/jg）→ 超界全零 else x/y+1、z/w-2 → dec edi → jne
+0063b42c  [0xac4bf0]（另一全局）判定 → ★call 0x72ad20 → 读四元组 → ★call 0x6345a0 → ★call 0x6357d0（edx=4）→ ★call 0x6357d0（edx=4）→ 同 3 次循环虚表槽 0x54 → ret
+```
+**语义**：**位域坐标计算器·四元组提交（推断名）**——① ★[0x8a0dd0-0x8a0de4] 位域表拼装 [0xa80221]/[0xa80220] 16/8 位全局三字节 → 位域值 esi（shr/shl 五链——batch 2118-2122 运动系统位域表第 6 处复用）；② [0xac4ccc] 全局：0x72ad20 → 0x634400 → 0x634510 四元组提取 → 四元组偏移（x-4/y-4/z+8/w+8）→ **3 次循环**虚表槽 0x54 提交（每次四元组 vs -2 边界判定：超界清零 else x/y+1+z/w-2）；③ [0xac4bf0] 全局：0x6345a0 → 0x6357d0 两次（edx=4）→ 3 次循环虚表槽 0x54。
+
+## b 路 0x63B150（411B）——提交调度器·0x63CAE0/0x63BE60 分发
+
+```
+0063b150  sub esp,0x60 → mov ebp,[0xac4b40]（★计数——batch 2151 c 路同源）→ test → jle 0x63b194 → 循环 1（0x63b163-0x63b192）：mov eax,[0xac4b34] → mov edi,[eax+esi*4]（数组项）→ mov ecx,[edi+4] → mov edx,[ecx] → mov eax,[edx] → mov edx,[0xa83d4c]（0x83 区全局）→ push edx → mov ecx,[eax+0x21c]（虚表槽）→ ★call 0x4f9a50（判定）→ test al → je 跳过 → mov ecx,edi → ★call 0x63cae0（batch 2149 c 路提交器基础版）→ inc esi
+0063b194  循环 2（0x63b19e-0x63b2a6）：mov eax,[0xac4b34] → mov esi,[eax+ebx*4] → 0x4f9a50 判定 → je 跳过 → mov ecx,esi → ★call 0x635830 → ★call 0x72ad20 → 读四元组 → ★call 0x6343c0 → ★call 0x6339e0 → ★call 0x634510（edx=8）→ 四元组 vs -2 边界（cmp eax,-2/jle+cmp ecx,-2/jg）→ 超界清零 else x/y+1、z/w-2 → [0x88731c] 虚表槽 0x10 调用（+edi）→ inc ebx
+0063b2ac  循环 3（0x63b2b8-0x63b2e1）：mov ebx,[0xa8ec88]（★计数——batch 2150 a 路同源）→ mov ecx,[0xa8ec7c] → mov edi,[ecx+esi*4] → mov edx,[0xa83d4c] → push → mov ecx,[edi+0x21c] → ★call 0x4f9a50 → test al → je 跳过 → mov ecx,edi → ★call 0x63be60（batch 2150 b 路提交器多路分支版）→ inc esi → ret
+```
+**语义**：**提交调度器·0x63CAE0/0x63BE60 分发（推断名）**——三段循环数组遍历 + 0x4f9a50 判定分发：① [0xac4b34] 数组（计数 [0xac4b40]）→ 0x63cae0 基础版提交；② 同数组二次遍历 → 0x635830 + 0x72ad20 + 0x6343c0/0x6339e0 双三元组 + 0x634510 四元组 + -2 边界 → 虚表槽 0x10；③ [0xa8ec7c] 数组（计数 [0xa8ec88]）→ 0x63be60 多路分支版提交。
+
+## c 路 0x63B0A0（176B）——全局清理解析器·0x63C690/0x63B550 分发
+
+```
+0063b0a0  mov eax,[0xac4c1c]（全局指针）→ xor ebx,ebx → mov [0xac4c28],0（计数清零）→ test eax → je 0x63b0cc → cmp byte [0xac4c25],0（owns 标志）→ je → push eax → ★call 0x7c8b3d（delete）→ mov [0xac4c1c],0 → 0x63b0cc：mov ebp,[0xac4b40]（计数）→ mov [0xac4c25],0 → mov [0xac4c20],0 → 循环 1（0x63b0e4-0x63b113）：mov eax,[0xac4b34] → mov edi,[eax+esi*4] → mov ecx,[edi+4] → mov edx,[ecx] → mov eax,[edx] → mov edx,[0xa83d4c] → push → mov ecx,[eax+0x21c] → ★call 0x4f9a50 → test al → je 跳过 → mov ecx,edi → ★call 0x63c690（batch 2150 a 路基础版）→ inc esi
+0063b115  循环 2（0x63b121-0x63b149）：mov ebp,[0xa8ec88] → mov eax,[0xa8ec7c] → mov edi,[eax+esi*4] → mov edx,[0xa83d4c] → push → mov ecx,[edi+0x21c] → ★call 0x4f9a50 → test al → je 跳过 → mov ecx,edi → ★call 0x63b550（batch 2150 c 路完整版）→ inc esi → ret
+```
+**语义**：**全局清理解析器·0x63C690/0x63B550 分发（推断名）**——① [0xac4c1c] 全局对象 owns 清理（[0xac4c25] 标志 → delete + 三字段清零）——batch 2148 c 路 owns 清理器同款全局版；② [0xac4b34] 数组（计数 [0xac4b40]）→ 0x4f9a50 判定 → 0x63c690 提交；③ [0xa8ec7c] 数组（计数 [0xa8ec88]）→ 0x4f9a50 → 0x63b550 提交。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★[0x8a0dd0-0x8a0de4] 位域表拼装（[0xa80221] 16 位 + [0xa80220] 8 位 → shr/shl 五链 or 拼装——**batch 2118-2122 方向位域表第 6 处复用**）；
+2. a 路四元组偏移（x-4/y-4/z+8/w+8）+ 3 次循环虚表槽 0x54 + 四元组 vs -2 边界判定（超界清零 else x/y+1、z/w-2）；
+3. b/c 路三数组循环惯用法（[0xac4b34]/[0xa8ec7c] 双数组 + 0x4f9a50 判定 + 提交器分发——b/c 路循环体逐字节同型）；
+4. c 路 [0xac4c1c] owns 清理（[0xac4c25] 标志 + delete + [0xac4c28]/[0xac4c20] 双清零）；
+5. 0x4f9a50 判定参数恒为 [0xa83d4c]（0x83 区全局对象）+ 虚表槽 [eax+0x21c]。
+
+## 跨批次连接
+
+- ★★★★★batch 2118-2122 运动系统：a 路 [0x8a0dd0] 方向位域表**第 6 处**复用（2144 b/c + 2131 c + 2135 a + 2136 c + 2144 b + 本批 a）。
+- ★★★batch 2149/2150：b/c 路调度端 → 0x63CAE0（2149 c）/0x63C690（2150 a）/0x63BE60（2150 b）/0x63B550（2150 c）提交器分发闭环。
+- ★★batch 2144 c 路（[0x8a00a4]/[0xa8022c] 同全局区）；batch 2148 c 路（c 路 owns 清理器同款）。
+- ★0x72ad20/0x634400/0x634510/0x6345a0/0x6357d0/0x4f9a50/0x635830/0x6343c0/0x6339e0/0x63cae0/0x63be60/0x63c690/0x63b550/0x7c8b3d（全部已登记）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（直接 call 全已登记——a 5 个 + b 8 个 + c 4 个全在 TSV）。
+- **后邻未登记**：无（三路后邻全部为本批/前批已登记本尊——a 后邻=batch 2150 c 路、b/c 后邻=本批相邻路）。
+- **新观察**：[0xac4ccc]/[0xac4bf0]（a 路双全局对象）、[0xac4b34]/[0xac4b40]（b/c 路调度数组+计数）、[0xa8ec7c]/[0xa8ec88]（b/c 路第二数组+计数）、[0xac4c1c]/[0xac4c20]/[0xac4c25]/[0xac4c28]（c 路全局对象四字段）。
+- 前向：picker 队列继续 0x63 区 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650。
