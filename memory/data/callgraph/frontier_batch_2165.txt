@@ -1,0 +1,64 @@
+# frontier batch 2165：记录清理遍历器 + 位域表查询器孪生 + [0xac] 表项求解器（0x636120 / 0x635C10 / 0x635A40）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x636120 FUN_00636120 callees=11 deps=46 / 0x635C10 FUN_00635c10 callees=3 deps=160 / 0x635A40 FUN_00635a40 callees=3 deps=160）
+- 三路 disasm：`.qwen/tmp/_d2165a.txt`（0x636120 size 0x260，分段全读）/ `_d2165b.txt`（0x635C10 size 0x220，分段全读）/ `_d2165c.txt`（0x635A40 size 0x240，分段全读）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x636120 | 492B（0x1EC）| ret @0x63630B | 0x636310（=batch 2164 c 路本尊，已登记）| 11（全已登记）|
+| 0x635C10 | 401B（0x191）| ret @0x635DA0 | 0x635DB0（[ecx+0xb4]=-1 三字段复位器——未登记）| 3（全已登记）|
+| 0x635A40 | 462B（0x1CE）| ret 4 @0x635C0B（多出口）| 0x635C10（=本批 b 路本尊，已登记）| 3（全已登记）|
+
+三函数为 **0x63 区记录清理遍历器 + [0x8a0dd0] 位域表查询孪生（b/c 路——第 7/8 处复用）**：
+
+## a 路 0x636120（492B）——记录清理遍历器（batch 2160 b 路同骨架）
+
+```
+00636120  sub esp,0x10 → mov ebx,ecx → mov ecx,[ebx+0x14]（计数）→ sete [esp+0xb]（空标志）→ jle 0x63623e → 循环 [ebx+8] 数组（0x636145-0x636236）：mov esi,[ecx+eax*4] → push [ebx] → ★call 0x634290 → mov ebp,[edx+eax*4] → test ebp → je 0x636227 → mov al,[ebp+0xc] → test → je → ★call 0x6351e0 → mov eax,[ebp+8] → cmp eax,-1 → je 0x6361ad → [esi+0x24] 数组 [edi+0x74]=-1 → ★call 0x635db0 → [edi+0x70]-- → je → ★call 0x6378b0 → 0x6361ad：[ebp+8]=-1 → ★delete 0x7c8b3d ×2 → 虚表槽 0x10 → ★call 0x63ef70 → delete → test [esi+0x10] → jne → ★call 0x635120 → ★call 0x637640 → [esi+0x20]=0x7eff24（虚表一写）→ ★call 0x63e140 → [esi]=0x7eff04（虚表二写）→ ★call 0x63de30 → delete 0x7c8b3d（★完整析构链）
+0063623e  空标志：mov al,[esp+0xb] → test → jne 0x6362da → mov eax,[ebx] → [eax+0x21c]+0x30 → ★call 0x50b6f0 → test → jne → [0xa83d4c]+0x30 → ★[0xac4b84] 递减（sets/dec/and）→ [0xac4c40] 虚表槽 0x10 → ★前移压缩（[0xac4c50] 计数-1 + [0xac4c44] 前移）→ 0x6362dd：★环形三元组复位（[ebx+0x8c]/[0x90]/[0x94]=-1 + byte [0x98]/[0x99]=0）→ ret
+```
+**语义**：**记录清理遍历器（推断名）**——① [ebx+0x14] 计数循环 [ebx+8] 数组：0x634290 + [ebp+0xc] 判定 + 0x6351e0/0x635db0/0x6378b0 生命周期 + delete×2 + 0x63ef70 + 0x635120/0x637640 + ★[esi+0x20]=0x7eff24/[esi]=0x7eff04 双虚表 + 0x63e140/0x63de30 + delete（完整析构链）；② 空标志后 [0xac4b84] 递减 + [0xac4c40] 虚表槽 0x10 + 前移压缩；③ ★环形三元组复位。**batch 2160 b 路（0x638840）记录清理遍历器孪生（双虚表析构链变体）**。
+
+## b 路 0x635C10（401B）——位域表查询器·[0xac] 求解（push 0x50 分支）
+
+```
+00635c10  sub esp,8 → mov ebx,ecx → mov eax,[ebx+0xac]（★[0xac] 缓存字段）→ cmp eax,-1 → jne 0x635d99（已缓存 → 直接返回）→ mov ebp,[ebx+0x10]（计数）→ 循环 [ebx+4] 数组（0x635c33-0x635c56）：mov eax,[eax+edi*4] → cmp byte [eax+0xc],0（★激活判定）→ je 跳过 → mov esi,[eax] → ★call 0x705d20 → mov cl,[eax+0x98]（★激活标志）→ test → je 0x635c6b（命中）
+00635c6b  命中路径：mov esi,[esi+0x21c] → mov edi,[esi+0x30] → ★call 0x50b6f0 → test → jne → [0xa83d4c]+0x30 → ★[0xa8022c] 表查（push 0xa83cd9/0x50——★表 1 + 索引 0x50）→ [edx+0x56f9] 读 word+byte → ★call 0x6612c0（查表）→ ★★[0x8a0dd0-0x8a0de4] 位域表拼装（shr/shl 链——[0x8a0ddc]/[0x8a0dd8]/[0x8a0de4]/[0x8a0de0]/[0x8a0dd4]/[0x8a0dd0] 六槽）→ mov [ebx+0xac],eax（★写缓存）→ ret
+00635cf7  兜底路径：0x50b6f0 + [0xa83d4c]+0x30 → ★[0xa8022c] 表查（push 0xa80220/0x64——表 2 + 索引 0x64）→ 同上 0x6612c0 + 位域表拼装 → mov [ebx+0xac],eax → ret
+```
+**语义**：**位域表查询器·[0xac] 求解（推断名）**——① [ebx+0xac] 缓存检查（已有 → 直接返回）；② [ebx+0x10] 循环 [ebx+4] 数组：[eax+0xc] 激活判定 + byte [eax+0x98] 标志命中；③ 命中/兜底双路径：0x50b6f0 + [0xa83d4c]+0x30 + **[0xa8022c] 表查（0x50/0x64 双索引）→ [项+0x56f9] 读 word+byte → 0x6612c0 查表 → ★[0x8a0dd0] 位域表六槽拼装** → [ebx+0xac]=eax 写缓存。**0x63 区 [0xac] 缓存求解器（[0xa8022c] 表网 + 位域表第 7 处复用）**。
+
+## c 路 0x635A40（462B）——位域表查询器·[0x74] 求解（同族孪生）
+
+```
+00635a40  sub esp,0x10 → mov ebx,ecx → mov ecx,[esp+0x18]（★索引参数）→ mov eax,[ebx+0x24] → mov eax,[eax+ecx*4]（★二级数组取项）→ mov eax,[eax+0x74] → cmp eax,-1 → jne 0x635c04（已缓存 → 返回）→ mov ecx,[ebx+0x10]（计数）→ 循环 [ebx+4] 数组（0x635a76-0x635abe）：mov eax,[edx+ebp*4] → cmp [eax+8],edx（★匹配参数）→ jne 跳过 → mov edi,[eax] → ★call 0x705d20 → 虚表槽 0x10 → mov esi,[esi+0x8c] → cmp -1 → je → cmp eax,esi → setge（★索引比较）→ test → trailing → 循环
+00635ac5  命中路径：mov edi,[edi+0x21c] → mov esi,[edi+0x30] → ★call 0x50b6f0 → [0xa83d4c]+0x30 → ★[0xa8022c] 表查（push 0xa83cd9/0x50）→ [ecx+0x56f9] → ★call 0x6612c0 → ★★[0x8a0dd0] 位域表拼装 → mov [ecx+0x74],eax（★写 [0x74]）→ ret
+00635b61  兜底路径：0x50b6f0 + [0xa8022c] 表查（push 0xa80220/0x64）→ 0x6612c0 + 位域表拼装 → mov [ecx+0x74],eax → ret 4
+```
+**语义**：**位域表查询器·[0x74] 求解（推断名）**——b 路同族孪生：① [ebx+0x24]+索引取项 + [eax+0x74] 缓存检查；② [ebx+0x10] 循环 [eax+8] 匹配参数 + 0x705d20 + 虚表槽 0x10 + [esi+0x8c] 索引比较；③ 命中/兜底双路径：[0xa8022c] 表查（0x50/0x64）+ 0x6612c0 + ★[0x8a0dd0] 位域表拼装 → [ecx+0x74]=eax。**b 路的 [0x74] 字段变体（位域表第 8 处复用——b/c 路孪生查询器）**。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★[esi+0x20]=0x7eff24/[esi]=0x7eff04 双虚表析构链（batch 2149 a/b 路构造器虚表配对端）+ 0x63e140/0x63de30；
+2. a 路环形三元组复位（[ebx+0x8c]/[0x90]/[0x94]=-1 + byte [0x98]/[0x99]=0——batch 2160-2163 同款）；
+3. b/c 路 ★[0x8a0dd0-0x8a0de4] 位域表六槽拼装（shr/shl 链——**第 7/8 处复用**）；
+4. b/c 路 ★[0xa8022c] 表查（push 0x50/0x64 双索引 + [项+0x56f9] 读 word+byte——batch 2150 b 路 0x63d070 表项读取器同源）；
+5. b/c 路 [ebx+0xac]/[eax+0x74] 缓存检查（-1 未缓存 → 求解写回）；
+6. b/c 路 0x6612c0 查表（0x55 区 0x661 族——batch 2137 同区）。
+
+## 跨批次连接
+
+- ★★★★★batch 2118-2122 运动系统（b/c 路 [0x8a0dd0] 方向位域表**第 7/8 处**复用）。
+- ★★★batch 2160 b 路（a 路记录清理遍历器孪生）；batch 2150 b 路（[0xa8022c] 表项读取器 0x63d070 同源）。
+- ★★batch 2149 a/b 路（a 路双虚表 0x7eff24/0x7eff04 构造器配对端）；batch 2160-2163（环形三元组复位）。
+- ★0x634290/0x6351e0/0x635db0/0x6378b0/0x63ef70/0x635120/0x637640/0x63e140/0x63de30/0x705d20/0x50b6f0/0x6612c0/0x7c8b3d/0x6e6e20（全部已登记——a 11 个 + b 3 个 + c 3 个）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（直接 call 全已登记——a 11 个 + b 3 个 + c 3 个全在 TSV）。
+- **后邻未登记**：0x635DB0（b 路后邻——[ecx+0xb4]=-1 三字段复位器：byte [esp+4] 参数门控）。
+- **新观察**：★[0xa8022c] 表项布局（[项+0x56f9] 读 word+byte——0x50/0x64 双索引确认）；0x6612c0（查表——0x55 区 0x661 族）。
+- 前向：picker 队列继续 0x63 区 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650。
