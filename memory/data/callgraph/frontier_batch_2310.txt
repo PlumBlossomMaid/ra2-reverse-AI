@@ -1,0 +1,84 @@
+# frontier batch 2310：VectorClass 析构器 + Kamikaze 类装载巨型宿主 + 事件读取分派器（0x55A150 / 0x5596A0 / 0x5588E0）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x55A150 FUN_0055a150 callees=1 deps=1 / 0x5596A0 FUN_005596a0 callees=22 deps=2560 / 0x5588E0 FUN_005588e0 callees=4 deps=850）
+- 三路 disasm：`.qwen/tmp/_d2310a.txt`（0x55A150 size 0x60）/ `_d2310b.txt`（0x5596A0 size 0x600）/ `_d2310c.txt`（0x5588E0 size 0x140）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x55A150 | 42B（0x2A）| ret c3 @0x55A179 | 0x55A180（未登记——索引读取器 shr 2）| 1 次/去重 1（0x7c8b3d——已登记，picker callees=1 吻合）|
+| 0x5596A0 | 1396B（0x574）| ret 4 @0x559C11 | 0x559C20（未登记——装载收尾区）| 17 次/去重 11（全部已登记，picker callees=22 差额为 [0x7e14a4] 族虚表间接调用 11 枚）|
+| 0x5588E0 | 267B（0x10B）| ret 8 @0x5589E8 | 0x5589F0（未登记——同族分派器变体）| 0 次/去重 0（全虚表间接调用——picker callees=4 差额为 [0x7e1474]/[0x7e14a4]/[0x7e14a8]/[0x7e13cc] 四枚）|
+
+## a 路 0x55A150（42B）——VectorClass 析构器
+
+```
+0055a150  mov esi, ecx（this）→ xor ebx → mov [esi+0x10], ebx（★项数清 0）→ mov eax, [esi+4]（★项指针）→ test → je 0x55a171
+0055a160  cmp byte [esi+0xd], bl（★owns 门控）→ je 0x55a171 → push eax → ★0x7c8b3d（★释放）→ mov [esi+4], ebx
+0055a171  mov byte [esi+0xd], bl（★owns 清 0）→ mov [esi+8], ebx（★容量清 0）→ ret c3
+```
+
+**语义**：**VectorClass 析构器（推断名）**——★★[esi+4] 项指针 + [esi+0xd] owns 门控 → ★0x7c8b3d 释放 + 三字段清 0（[+4]/[+0xd]/[+8]——★batch 2308 b 路 0x55BB40 构造器镜像）→ ret c3。**VectorClass 释放器（owns 门控镜像构造器——0x55BB40 同族**）**。
+
+## b 路 0x5596A0（1396B）——Kamikaze 类装载巨型宿主
+
+```
+005596a0  mov esi, ecx（this）→ ★0x600630（装载）→ ★★[esi+0x30] 项循环（[esi+0x24] 表 [ecx+edi*4] → ★0x7c8b3d 逐项释放）
+005596db  [esi+0x20] 虚表槽 0xc 调用（容器收尾）
+005596e6  [esi+4] cmp 2 门控 → ★★0x7c8e17 0x1BC 分配（★Kamikaze 类字段初始化 +0x120/+0x124=0xffffffff/+0x1a8=0xffffffff/+0x1b4=1/+0x1b5=0/+0x1b8/+0x128）→ ★0x734e60 DebugLog（行 0x306）→ 0x7ca564 字符串
+00559768  ★★[0xa83d4c] house 分支：非空 → [0xa8b230] 三字段装载（+0x1254/+0x1c74/+0x34cc → [ebp+0x120]/[0x124]/[0x1a8]）+ 0x7ca489 字符串 / 空 → [0xa8b3ac] 装载 + 0x735120 + 0x7ca564
+00559801  ★★[0x7e10d4]/[0x7e10fc] 虚表族（时间装载）→ [0xa8b238] 装载 [ebp+0x1b8] → ★★[edi+0x10] 项容量判定（虚表槽 8 扩容 + 项尾插 [edx+eax*4]=ebp——★VectorClass 标准扩容）
+00559865  ★★[0x7c8ef4] 字符串装载（0x829f7c 串）→ ★0x7c8e17 0x1BC 二次分配 → [0x7e1208] 虚表 → ★★[esp+0x1d0] test 0x116 门控 → 0x7c8e17 三次分配 → [0x7e120c]/[0x7e1300] 虚表 → ★★0x7c8b48 排序（push 0x559d30 回调 + 4 字节步长）
+0055999e  ★★[0x7e14a4] 虚表族循环（[esi+0x30] 项：[esi+0x24] 表 + [eax+0x1b5] 门控 → push 0x4cd → ★[0x7e14a8] → ★0x7b7600 字符串 ×3 → ★★[eax+0x1b0]/-1 门控 + [eax+0x1ac]/-1 门控 → [0x7e10f8]/[0x7e10f4]/[0x7e10f0]/[0x7e11c4]/[0x7e10ec] 虚表族（0x400/0x80 尺寸装载）→ ★0x7b7600 再装载 → [esi+4] cmp 1/3 分派（0x186/0x197 事件））
+00559bf5  ★★0x7b6760 ×2（字符串收尾）→ ret 4
+```
+
+**语义**：**Kamikaze 类装载巨型宿主（推断名——★★picker 队列 Kamikaze::Load/Save/Update 同区）**——★★1396B 巨型：0x600630 装载 + [esi+0x30] 项循环释放 → ★★0x7c8e17 0x1BC 分配（Kamikaze 类十字段初始化——+0x120/+0x124/+0x1a8 距离族 + 0x1b4/0x1b5 门控标志 + 0x1b8 类型）→ ★★house 分支装载（[0xa83d4c] 空/非空两路 + [0xa8b230] 三字段 + [0xa8b3ac]）→ ★★[0x7e10d4]/[0x7e10fc] 虚表族时间装载 → ★★VectorClass 标准扩容尾插（虚表槽 8 + [edx+eax*4]）→ ★★0x7c8b48 排序（回调 0x559d30）→ ★★[0x7e14a4]/[0x7e14a8] 事件族循环（0x4cd/0x4a8/0x19a/0x186/0x197 事件码）+ ★0x7b7600/0x7b6760 字符串族 → ret 4。**类装载巨型宿主（0x7e14a4 事件族 + 0x7e10xx 虚表族 + 排序回调——★★Kamikaze 系列**）**。
+
+## c 路 0x5588E0（267B）——事件读取分派器
+
+```
+005588e0  mov edi, ecx（this）→ push 8 → ★★[0x7e1474] 虚表（事件读取）→ sub edx, 0x527 → je 0x558944
+005588ff  sub edx, 0x15f → je 0x55892a → sub edx, 0x41 → jne 0x5589e4
+00558910  ★★分派 0x41（[esp+0x18] 门控 0 → mov [eax+0x18], 1 → ret 8）
+0055892a  ★★分派 0x15f（[esp+0x18] 门控 0 → mov [eax+0x18], 2 → ret 8）
+00558944  ★★分派 0x527（[esp+0x18] cmp 1 门控）→ ★★[0x7e14a4] 虚表族（0x18b/0x188/0x199/0x4b2/0x526 事件码装载）→ [ebp+0x1b4]/[0x1b5] 双门控 → [eax+0xc] 对象 → ★0x7e14a8 虚表 → [0x7e13cc] 虚表 → ★★0x4b2/0xb1 收尾事件 → ret 8
+```
+
+**语义**：**事件读取分派器（推断名）**——★★[0x7e1474] 虚表事件读取 → ★★事件码三路分派（0x527/0x15f/0x41——★[esp+0x18] 参数门控 + [eax+0x18] 状态写 1/2）→ ★★[0x7e14a4]/[0x7e14a8]/[0x7e13cc] 虚表族（0x18b/0x188/0x199/0x4b2/0x526 事件码 + [ebp+0x1b4]/[0x1b5] 双门控）→ ret 8。**事件读取分派（[0x7e1474] 族虚表——★batch 2306/2307 事件系统同区**）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 1 个/去重 1（0x7c8b3d）——**全部已登记**（picker callees=1 吻合）。
+- b 路：跨函数直接 call 17 个/去重 11（0x600630/0x7c8b3d/0x7c8e17/0x734e60/0x7ca564/0x7ca489/0x735120/0x7c8ef4/0x7c8b48/0x7b7600/0x7b6760）——**全部已登记**（picker callees=22 差额为 [0x7e14a4]/[0x7e10f0] 族虚表间接调用 11 枚不计）。
+- c 路：跨函数直接 call 0 个/去重 0（全虚表间接调用）——**已登记无 MISSING**（picker callees=4 差额为 [0x7e1474]/[0x7e14a4]/[0x7e14a8]/[0x7e13cc] 四枚不计）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING、无批内自引用**（连续二十九批三路全登记）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★owns 门控释放（cmp byte [esi+0xd], bl → 0x7c8b3d——★batch 2308 b 路 0x55BB40 构造镜像）;
+2. a 路 ★★三字段清 0（[+4]/[+0xd]/[+8]——★析构器标准模板）;
+3. b 路 ★★[esi+4] cmp 2 门控（★类型分派分支）;
+4. b 路 ★★0x7c8e17 0x1BC 分配 + 十字段初始化（+0x120/+0x124=0xffffffff/+0x1a8=0xffffffff/+0x1b4=1/+0x1b5=0——★★Kamikaze 类布局）;
+5. b 路 ★★house 分支（[0xa83d4c] 空/非空两路装载——★batch 2296/2308 house 族同源）;
+6. b 路 ★★VectorClass 标准扩容尾插（虚表槽 8 + [edx+eax*4]=ebp——★batch 2282 同款）;
+7. b 路 ★★0x7c8b48 排序（回调 0x559d30 + 4 字节步长——★排序器族）;
+8. b 路 ★★[esp+0x1d0] test 0x116 门控（★装载旗标）;
+9. b 路 ★★[0x7e14a4] 事件族循环（0x4cd/0x4a8/0x19a/0x186/0x197——★batch 2306/2307 事件码族）;
+10. c 路 ★★事件码三路分派（0x527/0x15f/0x41 + [esp+0x18] 参门控 + [eax+0x18] 状态写 1/2）;
+11. c 路 ★★[ebp+0x1b4]/[0x1b5] 双门控（★Kamikaze 类门控字节——b 路初始化同字段）。
+
+## 跨批次连接
+
+- ★★★batch 2308 b 路（0x55BB40 VectorClass 构造器——a 路析构器镜像）+ batch 2282-2284（VectorClass 容器族——a/b 路扩容尾插同源）。
+- ★★batch 2306/2307（事件系统 [0x7e14a4]/[0x7e1474] 族——b/c 路同源）+ batch 2307 c 路（0x55E420 巨型启动事件宿主——b 路 DebugLog/事件族同区）。
+- ★★batch 2296/2308（house 族 [0xa83d4c]/[0xa8022c]——b 路分支同源）+ batch 2303/2304（0x7c8e17 分配族——b 路 0x1BC 分配同源）。
+- ★★picker 队列（Kamikaze::Load 0x54E7B0/Save 0x54E750/Update 0x54E4D0——b 路 Kamikaze 系列对照）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x55A180（a 路后邻——索引读取器 shr 2）；0x559C20（b 路后邻——装载收尾区）；0x5589F0（c 路后邻——同族分派器变体）；0x7B6760/0x7B7600（b 路字符串装载族）；0x600630（b 路装载器）。
+- 未兑现 MISSING 旧观察：0x00486790（2267 起排队）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150（batch 2280-2309 新观察）。
+- 本批 **无 MISSING**（连续二十九批三路全登记——batch 2276 起，TSV 5413）。next 批预期 top3 = 0x558840（19B callees=1）/ 0x557830（240B callees=1）/ 0x557800（42B callees=0）。
