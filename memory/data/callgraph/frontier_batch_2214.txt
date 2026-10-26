@@ -1,0 +1,76 @@
+# frontier batch 2214：0x5E 区槽族查询/重建/事件族三连（槽族单槽 ID 查询器·变体2 + 槽 ID 表重建器 + IAT 事件双发归一器）（0x5EAA10 / 0x5E9E00 / 0x5E9B20）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5EAA10 FUN_005eaa10 callees=1 deps=265 / 0x5E9E00 FUN_005e9e00 callees=5 deps=2839 / 0x5E9B20 FUN_005e9b20 callees=1 deps=94）
+- 三路 disasm：`.qwen/tmp/_d2214a.txt`（0x5EAA10 size 0x100）/ `_d2214b.txt`（0x5E9E00 size 0x100）/ `_d2214c.txt`（0x5E9B20 size 0x100）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x5EAA10 | 88B（0x58）| ret c3 @0x5EAA67 | 0x5EAA70（= batch 2213 c 路已登记——单槽查询孪生互指）| 1（jmp 尾跳 0x696f50——callees=1 尾跳口径吻合）|
+| 0x5E9E00 | 97B（0x61）| ret c3 @0x5E9E60 | 0x5E9E70（未登记——slot 登记大函数观察项）| 5（0x4e5940 + 0x4e6030 + 0x4e59a0 + 0x4e5ed0 + 0x697020——callees=5 吻合）|
+| 0x5E9B20 | 62B（0x3E）| ret 4 @0x5E9B5B | 0x5E9B60（未登记——slot 登记函数观察项）| 0 直接（2×ffd3 call ebx 间接 [0x7e1490]——callees=1 按 IAT 间接口径）|
+
+三函数为 0x5E 区槽族/资源族的**查询、重建、事件分发**三向补全（batch 2211/2212/2213 槽族续）：
+
+## a 路 0x5EAA10（88B）——槽族单槽 ID 查询器·变体2
+
+```
+005eaa10  mov eax,[ecx*4+0xa8da90]（★共享值表单槽查）→ test → je 0x5eaa3b
+005eaa1b  → ID 判定链（cmp [0xac11a4]/[0xac11a8]/[0xac11ac] → je 0x5eaa33 → mov eax,[ecx*4+0xa8b2dc] ret——★命中返回槽 ID 表 [0xa8b2dc] 项）
+005eaa3b  → cmp [0xac119c]/[0xac11a0]/[0xac11b0]/[0xac11b4] → je 0x5eaa62 → mov eax,0xfffffffe ret
+005eaa5b  mov ecx,eax → jmp 0x696f50（★尾跳兜底——哨兵 getter 族第四成员）
+005eaa67  ret c3
+```
+**语义**：**槽族单槽 ID 查询器·变体2（推断名）**——与 batch 2213 c 路 0x5EAA70 **逐字节同构**，仅差异：★命中查 [0xa8b2dc] 槽 ID 表（2213c 查 [0xa8b2fc]）+ 尾跳兜底 0x696f50（2213c 是 0x696f70）。正好补齐 2213 三视图（[0xa8b2bc]/[0xa8b2dc]/[0xa8b2fc] 槽 ID 表共用共享值表 [0xa8da90]）的第三个查询端。**共享值表 → 槽 ID 表 2 区的正向查询端（2213a 名串构建的逆）**。
+
+## b 路 0x5E9E00（97B）——槽 ID 表重建器
+
+```
+005e9e04  mov ebx=ecx（this）→ xor ebp → ★8 槽主循环（cmp ebp,8 / jl 0x5e9e08）：
+005e9e0a    mov ecx=ebp → call 0x4e5940（★索引查询）→ mov esi=eax → push -1 → call 0x4e6030（★查询变体）→ mov edi=eax
+005e9e20    mov ecx=esi → call 0x4e59a0（★状态查）→ cmp eax,[0xa8da8c]（★全局状态基准）→ jne 0x5e9e4f
+005e9e2d    （相等路径）push edi → call 0x4e5ed0（★提交）→ [0xa8da84] test → je → [0xa8da78] → mov ecx,[eax] → push edi → call 0x697020（★写）→ jmp 0x5e9e56
+005e9e4f    （不等路径）mov [eax*4+0xa8b2fc],edi（★直接写槽 ID 表 [0xa8b2fc] 项）
+005e9e56    inc ebp → cmp ebp,8 → jl → ret c3
+```
+**语义**：**槽 ID 表重建器（推断名）**——8 槽遍历重建：每槽经 0x4e5940/0x4e6030 查询拿到索引 esi/值 edi，0x4e59a0 状态查与全局 [0xa8da8c] 比较：**相等**（状态一致）→ 0x4e5ed0 提交 + [0xa8da84]/[0xa8da78] 双门控调 0x697020 写；**不等** → 直接把 edi 写进 [eax*4+0xa8b2fc] 槽 ID 表。**槽 ID 表 [0xa8b2fc] 的重建写端（2213c/a 查询端的写对）**。
+
+## c 路 0x5E9B20（62B）——IAT 事件双发归一器
+
+```
+005e9b20  mov eax,[esp+4]（★第三参数）→ push ebx/esi/edi → mov ebx,[0x7e1490]（★IAT 回调——batch 2211 高频 IAT 族）→ mov esi=edx / mov edi=ecx → cmp eax,-1 → jne 0x5e9b43
+005e9b36   （参数==-1 路径）push 0/0/0x147/esi/edi → call ebx（★发 0x147 事件）
+005e9b43   （汇合）push 0 → push eax → push 0x150 → push esi → push edi → call ebx（★发 0x150 事件）
+005e9b4f  mov ecx=eax → inc eax → neg eax → sbb eax,eax → and eax,ecx（★负数归一：返回值==-1 → 归一为 0）→ ret 4
+```
+**语义**：**IAT 事件双发归一器（推断名）**——[0x7e1490] IAT 回调用例：第三参数==-1 时先发 0x147 事件（补 0/0 参数），随后恒发 0x150 事件（带原参数）；返回值做 **-1 → 0 归一**（inc/neg/sbb/and 惯用法——batch 2205/2213 同款）。**事件双发归一端（IAT 族 0x147/0x150 类型码双发）**。
+
+## callee 核验
+
+- a 路：跨函数直接目标 1 个（jmp 尾跳 0x696f50），**已登记**（TSV:439——callees=1 尾跳口径吻合）。
+- b 路：跨函数直接 call 5 个（0x4e5940/0x4e6030/0x4e59a0/0x4e5ed0/0x697020），**全部已登记**（callees=5 吻合——batch 2211/2212 索引/提交/写族）。
+- c 路：跨函数直接 call 0 个（2×`call ebx` 为 [0x7e1490] IAT 间接）；callees=1 按 **IAT 间接口径**（[0x7e1490] 为 batch 2211 已登记 IAT 回调族）记录。
+- ★核验口径说明：核验脚本经本轮修复后输出全部 PASS——此前 UNKNOWN 系 6 位 vs 8 位地址前缀 + 0x/0X 大小写 + 函数内 6 位短跳三处误报，norm() 规范化（去前缀+大写）后真实登记状态正确呈现。**MISSING：无**。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★★资源 ID 判定链模板（[0xac11a4]/[0xac11a8]/[0xac11ac] → 表项取 / [0xac119c]/[0xac11a0]/[0xac11b0] → 0xfffffffe / [0xac11b4] → 特殊值 / 0x696f50 兜底）——batch 2211/2212/2213 同款，本批第五次复用；
+2. b 路 ★双路径写端：状态与全局 [0xa8da8c] **相等**走提交链（0x4e5ed0 + [0xa8da84]/[0xa8da78] 双门控 + 0x697020），**不等**直写 [eax*4+0xa8b2fc]——同一 edi 值两条落点路径；
+3. b 路 ★8 槽硬编码循环（cmp ebp,8 / jl）+ [0x8316a4] 未用（b 路体内未见，后邻函数用）——槽数 8 与 2213 a/b 路的 8 槽遍历一致；
+4. c 路 ★★[0x7e1490] IAT 回调 + 0x147/0x150 双事件码分发（参数==-1 时补发 0x147）+ **返回值 -1 → 0 归一**（inc/neg/sbb/and——batch 2213 c 路 0x5EAAD0 同款惯用法）；
+5. c 路 ★ret 4（本函数栈清理 4B——[esp+4] 第三参数读证明是 4 参调用方栈）。
+
+## 跨批次连接
+
+- ★★batch 2213（单槽 ID 查询器 a/b/c 路同构模板 + 三视图 [0xa8b2bc]/[0xa8b2dc]/[0xa8b2fc] + 共享值表 [0xa8da90]——a 路补齐第三查询端）+ batch 2211（资源 ID 判定链 + [0xa8da8c] 全局状态基准 + [0x7e1490] IAT 族 + 0x4e5940 索引）。
+- ★★batch 2212（0x4e5940/0x4e5ed0 索引/提交族 + 0x696f50 兜底）+ batch 201/128/135（0x696f50 哨兵 getter 族 + 0x697020 setter——b 路写端）。
+- ★batch 2199/2194/2195（槽位族 + 索引函数族 0x4e6030/0x4e59a0 邻域）。
+
+## 观察项 / 候选池
+
+- **MISSING：无**（a 路 1 / b 路 5 跨函数直接目标全部已登记；c 路 IAT 间接口径无直接目标）。
+- **后邻未登记**：0x5E9E70（b 后邻——slot 登记大函数：sub esp,0x10 + 0x4e37d0/0x4e41d0/0x4e4e60/0x4e5940 四查 + [0x8316a4] 门控 + [ebp*4+0xa8da90] + push -3/-2 调 0x4e3f70/0x4e49a0/0x4e5480，自然排队）；0x5E9B60（c 后邻——slot 登记函数：0x4e4170 + 0x4e3830 + cmp [0xa8da8c] + [0x69b760] 写 [0xa8b238] 槽位）；0x5E9C00（c 后邻邻——0x4e4e20/0x4e4230 slot 查族）。
+- **新观察**：b/c 路后邻 0x5E9E70/0x5E9B60/0x5E9C00 构成 slot 登记函数链（含 [0xa8b238] 槽位 + [0x69b760]——batch 2211 [0xa8b238]==4 门控同区）；c 路 ret 4 四参调用约定。
+- 前向：picker 队列继续 0x5E 区（0x5E00B0 大宿主 deps=2715 + 0x5DC350 deps=3922 候选）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
