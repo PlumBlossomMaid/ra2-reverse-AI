@@ -1,0 +1,78 @@
+# frontier batch 2219：0x5E 区判定/解析族三连（索引串比较归一器 + 槽位判定修正器 + 巨型命令解析器）（0x5E8740 / 0x5E64C0 / 0x5E3D10）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5E8740 FUN_005e8740 callees=1 deps=282 / 0x5E64C0 FUN_005e64c0 callees=3 deps=96 / 0x5E3D10 FUN_005e3d10 callees=98 deps=2701）
+- 三路 disasm：`.qwen/tmp/_d2219a.txt`（0x5E8740 size 0x100）/ `_d2219b.txt`（0x5E64C0 size 0x100）/ `_d2219c.txt`（0x5E3D10 size 0x2400——8702B 巨型函数）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call（去重）|
+|------|------|--------|-----------|----------------------|
+| 0x5E8740 | 28B（0x1C）| ret c3 @0x5E875B | 0x5E8760（未登记——[0xa8b380]+0x735120 判定器观察项）| 1（0x7ca5d3——callees=1 吻合）|
+| 0x5E64C0 | 91B（0x5B）| ret c3 @0x5E651A | 0x5E6520（未登记——[0xa8b8d8]/[0xa8b8cc] 表查询+0x4739f0/0x40e320 构造观察项）| 3（0x5e6520 + 0x77d970 + 0x77d940——callees=3 吻合）|
+| 0x5E3D10 | 8702B（0x21FD）| ret c3 @0x5E5F0D | 0x5E5F10（未登记——sub esp,0xc1c 巨型函数观察项）| 91（330 次调用去重——callees=98 含 IAT 间接口径，直接 call 91）|
+
+## a 路 0x5E8740（28B）——索引串比较归一器
+
+```
+005e8740  mov eax,[0xa8da78] → push 0xa8d610（★键地址）→ mov ecx,[eax+ecx*4]（★索引查表）→ push ecx
+005e874e  call 0x7ca5d3（★串比较）→ add esp,8 → neg eax → sbb eax,eax → inc eax → ret c3（★归一：相等 → 1 / 不等 → 0）
+```
+**语义**：**索引串比较归一器（推断名）**——[0xa8da78] 对象表按 ecx 索引取项，与 0xa8d610 键做 0x7ca5d3 串比较，结果 **neg/sbb/inc 归一为 bool**（相等→1）。**键值索引比较端（串比较→布尔归一）**。
+
+## b 路 0x5E64C0（91B）——槽位判定修正器
+
+```
+005e64c0  cmp ecx,-1 → jne 0x5e64cb → mov eax,8 → ret（★参数 -1 直接返 8）
+005e64cb  call 0x5e6520（★表查询——[0xa8b8cc] 按索引取串）→ mov ecx,[0xa8b23c] → test → je 跳过
+          → mov eax,[ecx] → call [eax+0x98]（★虚表槽 0x98）→ cmp eax,-1 → je 跳过 → cmp eax,esi → jge 跳过 → mov esi,eax（★取更小值）
+005e64f0  cmp [0xa8b238],4 → jne 0x5e6517（直接返 esi）
+005e64f9  （==4 路径）call 0x77d970 → test → je 0x5e6509 → and esi,0xfffffffe → ret（★清零 bit0）
+005e6509  call 0x77d940 → test → je 0x5e6517 → mov esi,2 → ret（★强制 2）
+005e6517  mov eax,esi → ret
+```
+**语义**：**槽位判定修正器（推断名）**——① 参数 -1 → 槽位 8；② 0x5e6520 表查询 + [0xa8b23c] 对象虚表 0x98 取更小值修正；③ [0xa8b238]==4 门控：0x77d970 真 → **and esi,0xfffffffe（清零 bit0）** / 0x77d940 真 → 强制槽位 2（batch 2211 同款槽位模板）。**槽位值修正端（-1→8 + 虚表取小 + 模式门控修正）**。
+
+## c 路 0x5E3D10（8702B）——巨型命令解析器
+
+```
+005e3d10  sub esp,0x3d0（★984B 栈帧）→ push 四件套 → mov esi=ecx/mov ebp=edx → call 0x7d5408（★读串）→ mov edi=eax
+005e3d3a  mov al,[edi] → ★字符分派：cmp al,0x5a（'Z'）→ 0x5e3e73 / 0x57（'W'）→ 0x5e40cb / 0x4f（'O'）→ 0x5e3e96
+005e3d44  （'Z' 路径）0x4068e0 日志 → [edi+1]-0x31 三档分派（0x5e3dff=数字 1 / 0x5e3de0=数字 2 / 0x5e3d68=数字 3）
+          → 0x7930a0 判定 + 0x775940(0xc9) + IAT 0x7e14a8/0x7e1498/0x7e14a4 事件族 + DebugLog 0x734e60（0x831998 串/0x52e/0x4b2 行）→ 0x5e4373 收口
+005e3dff  （数字 1 路径）共享值表 [0xa8da90..0xa8dab0] 扫描（0x7350c0 判空 + 0x7c8d20 键读）→ repne scasb+rep movsd/movsb 串拷贝 → [edi+2]-0x30 数字 → 0x793930 写入
+005e3e73  （非 Z 路径）cmp [0xa8b238],4 + [0xb77dc1]/[0xb77e28] 门控 → cmp al,0x57（'W'）→ 0x5e40cb / cmp al,0x4f（'O'）→ 0x5e4388
+005e3e9e  （'W' 路径）0x4068e0 日志 + 0x817f70 键×8 0x7c9cc2/0x7c9b72 串读（★8 组字段读）→ [0xa8b230]+0x1134/+0x1138/+0x112c/+0x1130/+0x113c 五字段写 + ★循环 [0xa8b230]+0x1140..0x1180 双字/字节对写（0x4046 起 8 槽）→ 0x775940(0xc9/0xbd) → IAT 0x7e149c
+005e40cb  （'O' 路径）0x775940(0xc9/0xbd) → [edi+1] 字符 '8'→edx=-1/else edx=字符-0x30 → ★mov [0x8316a4],edx（★写全局索引）→ 0x5eba00 调用
+005e5e1a  （尾部收口）0x5e3ab0（★MISSING 观察）→ 0x775940(0xc2/0xc9/0xbc/0xbd) 四类型 → IAT 0x7e1490 → [0xac116c] 门控 → 0x785360 / 0x5dafd0（★MISSING 观察）→ [0x8316ec]/[0x8316f0]/[0x8316f4]/[0xac11c3..0xac11c7] 全局提交 → 0x7b6760 → sete al → ret
+```
+**语义**：**巨型命令解析器（推断名）**——8702B 命令分派主控：① 7d5408 读命令串；② ★首字符分派（'Z'/'W'/'O' 三分支）；③ 'Z'=缩放类命令（数字 1/2/3 档 + 共享值表写 + IAT 事件族 + DebugLog）；④ 'W'=参数类命令（0x817f70 键八连串读 + [0xa8b230] 结构 0x112c..0x1180 批量写 + 0x775940 类型码 + IAT 0x7e149c）；⑤ 'O'=索引类命令（[0x8316a4] 全局索引写 + 0x5eba00）；⑥ ★尾部全局提交（[0x8316ec]/[0x8316f0]/[0x8316f4]/[0xac11c3..0xac11c7] 全局表同步）。**命令解析/分派主控（DebugLog 高频 + IAT 族 + 槽族/共享值表写端全集）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 1 个（0x7ca5d3），**已登记**（callees=1 吻合）。
+- b 路：跨函数直接 call 3 个（0x5e6520 + 0x77d970 + 0x77d940），**全部已登记**（callees=3 吻合——batch 2211 槽位判定族）。
+- c 路：跨函数直接 call 330 次/去重 91 个：**89 个已登记 + 2 个 MISSING（0x5DBF50 + 0x5E3AB0）**——两枚均已 grep ranking.tsv 确认有行未登记（ranking.tsv:698/709，均为 0x5E3D10 的直接 callee 且是 picker 队列大函数候选：0x5DBF50 deps=2746/0x5E3AB0 deps=2744），**按惯例记观察项自然排队、不阻塞本批**。
+- ★c 路 callees=98（picker） vs 直接 call 去重 91——差值含 IAT 间接（0x7e14a4/0x7e14a8/0x7e1498/0x7e1490/0x7e149c 五枚）与重复调用，按「含 IAT 间接吻合口径」记录。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★neg/sbb/inc 布尔归一（相等→1/不等→0——batch 2205/2213 同款惯用法）+ [0xa8da78] 索引查表 + 0xa8d610 键；
+2. b 路 ★参数 -1 → 槽位 8 直返（哨兵语义）+ [0xa8b23c] 虚表 0x98 取更小值（jge 跳过修正）+ [0xa8b238]==4 门控（0x77d970 真 → and 0xfffffffe 清零 bit0 / 0x77d940 真 → 强制 2）——batch 2211 槽位模板双变体；
+3. c 路 ★★巨型栈帧（sub esp,0x3d0）+ 首字符分派（'Z'/'W'/'O'）——命令码首字母路由；
+4. c 路 ★'W' 路径 0x817f70 键八连（0x7c9cc2 串读 + 0x7c9b72 转值）+ [0xa8b230] 结构 0x112c..0x1180 批量写（★循环 8 槽双字/字节对）+ 0x775940(0xc9/0xbd) 类型码双查 + IAT 0x7e149c；
+5. c 路 ★'O' 路径 [edi+1] 字符 '8' → edx=-1 / 否则字符-0x30 数字 → **mov [0x8316a4],edx 全局索引写**（'8' 特判 → -1 哨兵）；
+6. c 路 ★尾部四类型码判定（0x775940 0xc2/0xc9/0xbc/0xbd）+ [0xac116c] 门控（0x785360 vs 0x5dafd0 双路径）+ ★[0x8316ec]/[0x8316f0]/[0x8316f4]/[0xac11c3..0xac11c7] 全局同步提交。
+
+## 跨批次连接
+
+- ★★batch 2211（[0xa8b238]==4 门控 + 0x77d940/0x77d970 判定 + 槽位 2/6/8 模板——b 路/c 路）+ batch 2214/2215/2216/2217/2218（共享值表 [0xa8da90..0xa8dab0] + 0x7350c0 判空 + 0x7c8d20 键读 + [0x8316a4] 索引——c 路 'Z' 路径）。
+- ★★batch 2184/2186/2190/2194/2196/2210/2211（IAT 族 [0x7e14a0]/[0x7e14a4]/[0x7e14a8]/[0x7e1490]/[0x7e1498]/[0x7e149c] + DebugLog 0x734e60——c 路高频））+ batch 2171（DebugLog 文件/行号族）。
+- ★batch 2189（0x7b66c0 宽串族——c 路 0x7b6760/0x7b6880）+ batch 2197（0x7c9cc2/0x7c9b72 串读转值——c 路 'W' 路径）。
+
+## 观察项 / 候选池
+
+- **MISSING 2 枚（本批 c 路 callee，观察项排队）**：**0x5DBF50**（ranking.tsv:698，deps=2746，0x5E3D10 尾部 [0xac116c] 门控的 0x5dafd0 邻域）+ **0x5E3AB0**（ranking.tsv:709，deps=2744，0x5E3D10 尾部收口直调——0x5E3D10 的后继大函数候选）。
+- **后邻未登记**：0x5E8760（a 后邻——[0xa8b380]+0x735120 判定器）；0x5E6520（b 后邻——[0xa8b8d8]/[0xa8b8cc] 表查询 + 0x4739f0/0x40e320 构造——b 路直调）；0x5E5F10（c 后邻——sub esp,0xc1c 巨型函数，IAT 0x7e14a4 + 哈希容器 0x5ef010 调用）。
+- **新观察**：c 路 'Z'/'W'/'O' 命令首字母路由体系 + [0xa8b230] 结构 0x112c..0x1180 批量写区（'W' 路径专属）+ 0x817f70 键表（八连串读）。
+- 前向：picker 队列继续 0x5E/0x5D 区（0x5E00B0 deps=2715 + 0x5DC350 deps=3922 + **0x5DBF50/0x5E3AB0 本轮 MISSING 兑现候选**）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
