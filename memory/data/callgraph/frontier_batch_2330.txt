@@ -1,0 +1,72 @@
+# frontier batch 2330：门控表读取器 + 门控符号写入器 + 查找清除器（0x53EC90 / 0x53EC40 / 0x53E420）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x53EC90 FUN_0053ec90 callees=1 deps=2 / 0x53EC40 FUN_0053ec40 callees=0 deps=4 / 0x53E420 FUN_0053e420 callees=0 deps=46）
+- 三路 disasm：`.qwen/tmp/_d2330a.txt`（0x53EC90 size 0x40）/ `_d2330b.txt`（0x53EC40 size 0x60）/ `_d2330c.txt`（0x53E420 size 0x80）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x53EC90 | 32B（0x20）| ret c3 @0x53ECA0/@0x53ECAF | 0x53ECB0（未登记——8 字节 0xff 填充器）| 0 次/去重 0（[0x7e13e0] IAT 间接——picker callees=1 含间接）|
+| 0x53EC40 | 40B（0x28）| ret c3 @0x53EC67 | 0x53EC70（未登记——[0x7e13a8] 孪生读取器）| 0 次/去重 0（纯全局写入，picker callees=0 吻合）|
+| 0x53E420 | 67B（0x43）| ret c3 @0x53E44F/@0x53E462 | 0x53E470（未登记——[0xaa0470]/[0xaa0474] 查询器）| 0 次/去重 0（纯数组查找，picker callees=0 吻合）|
+
+## a 路 0x53EC90（32B）——门控表读取器
+
+```
+0053ec90  mov eax, [0xaa0444]（★全局门控）→ test → jne 0x53eca1
+0053ec99  push ecx → call [0x7e13e0]（★IAT 间接调用——★无门控时转调外部）→ ret c3
+0053eca1  and ecx, 0xff（★门控开）→ mov ax, [ecx*2+0xaa0168]（★word 表读取——0xff 索引钳位）→ ret c3
+```
+
+**语义**：**门控表读取器（推断名）**——thiscall：[0xaa0444] 全局门控 → **关**：push ecx → ★[0x7e13e0] IAT 间接调用（★外部函数透传）；**开**：ecx&0xff → ★word 表读取 [ecx*2+0xaa0168] → ret c3。**双模表读取（★★[0xaa0168] word 表 + IAT 外部转调——0x53Exxx 区 [0xaa0444] 门控族）**。
+
+## b 路 0x53EC40（40B）——门控符号写入器
+
+```
+0053ec40  mov eax, [0xaa0444] → test → je 0x53ec67（★门控关直接返回）
+0053ec49  ★★符号折叠：neg dl → sbb edx, edx → and edx, 0x8000 → add edx, 0xffff8000（★★dl==0 → -0x8000 / dl!=0 → +0x8000——★参数符号折叠）
+0053ec59  and ecx, 0xff → mov word [ecx*2+0xaa0168], dx（★word 表写入）→ ret c3
+```
+
+**语义**：**门控符号写入器（推断名）**——thiscall 2 栈参：[0xaa0444] 门控（关直接返回）→ ★★neg/sbb/and/add 符号折叠（dl==0 → 0xffff8000（-0x8000）/ dl!=0 → 0x8000（+0x8000））→ ★word 表写入 [ecx*2+0xaa0168] → ret c3。**符号 ±0x8000 写入（★★[0xaa0168] word 表 + 门控——a 路写入孪生）**。
+
+## c 路 0x53E420（67B）——查找清除器
+
+```
+0053e420  mov eax, [0xaa0448]（★门控 1）→ push esi → test → je 0x53e461 → test ecx → je 0x53e461（★入参非零门控）
+0053e42e  mov esi, [0xaa0374]（★计数）→ mov eax, [0xaa044c]（★数组指针）→ mov edx, 1 → cmp esi, edx → jle 0x53e461（★计数 > 1 门控）
+0053e442  ★查找循环：cmp [eax], ecx → je 0x53e450 → inc edx → add eax, 4 → cmp edx, esi → jl 0x53e442
+0053e44e  pop esi → ret c3（★未找到）
+0053e450  mov [eax], 0（★命中清除）→ mov eax, [0xaa0450] → dec eax → mov [0xaa0450], eax（★计数减）→ pop esi → ret c3
+```
+
+**语义**：**查找清除器（推断名）**——thiscall 1 栈参：[0xaa0448] 门控 + ecx 非零 + [0xaa0374] 计数 > 1 → ★查找循环 [0xaa044c] 数组（cmp [eax],ecx）→ 命中 → [eax]=0 清除 + [0xaa0450]-- → ret c3。**数组查找清除（★★[0xaa044c] 全局数组 + 计数增减——[0xaa04xx] 全局族）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 0 个/去重 0（[0x7e13e0] 为 IAT 间接调用不匹配直接 call 正则）——**已登记无 MISSING**（picker callees=1 含间接）。
+- b 路：跨函数直接 call 0 个/去重 0（纯全局写入）——**已登记无 MISSING**（picker callees=0 吻合）。
+- c 路：跨函数直接 call 0 个/去重 0（纯数组查找）——**已登记无 MISSING**（picker callees=0 吻合）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING、无批内自引用**（连续四十七批三路全登记）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★[0xaa0444] 全局门控双模（关 → IAT [0x7e13e0] 外部转调 / 开 → [ecx*2+0xaa0168] word 表读取——ecx&0xff 钳位）;
+2. b 路 ★★neg dl/sbb/and 0x8000/add 0xffff8000 符号折叠（★★dl==0 → -0x8000 / dl!=0 → +0x8000——±0x8000 双值）;
+3. b 路 ★★[0xaa0444] 门控 + [ecx*2+0xaa0168] word 表写入（★与 a 路同表读写孪生）;
+4. c 路 ★★[0xaa0448] 门控 + ecx 非零 + [0xaa0374] 计数 > 1 三重门控;
+5. c 路 ★★[0xaa044c] 数组查找（cmp [eax],ecx）+ 命中 [eax]=0 清除 + [0xaa0450]--。
+
+## 跨批次连接
+
+- ★★batch 2329（0x53F540/0x53F4F0——[0xaa05xx] 会话槽族——本批 [0xaa04xx] 相邻域）+ batch 2327（IPX 域——[0xaa05xx] 同域）。
+- ★★batch 2306/2307（事件系统——a 路 IAT [0x7e13e0] 转调同源）+ batch 2319 b 路（0x551630——IAT 间接族同源）。
+- ★★batch 2320 b/c 路（0x550240/0x550150——c 路数组查找/计数同源）+ batch 2321（0x550000——c 路数组清除同源）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x53ECB0（a 路后邻——8 字节 0xff 填充器）；0x53EC70（b 路后邻——[0x7e13a8] 孪生读取器）；0x53E470（c 路后邻——[0xaa0470]/[0xaa0474] 查询器）；[0xaa0444]/[0xaa0448]/[0xaa044c]/[0xaa0450]/[0xaa0374]（a/b/c 路全局族）；[0xaa0168]（a/b 路 word 表）。
+- 未兑现 MISSING 旧观察（继续排队）：0x00486790（2267 起）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150 + ★0x556AD0/0x556EB0/0x556D20 + ★0x554830/0x49E400 + ★0x551B20 + ★0x5517A0/0x5512D0 + ★0x5509E0/0x551300/0x551320/0x551330/0x551370 + ★0x550080/0x54F6F0/0x54F670 + ★0x54E890/0x54E8C0 + ★0x54E590/0x54D930/0x549E90 + ★0x547CE0/0x544BE0 + ★0x543780/0x542EC0 + ★0x5424C0 + ★0x5422C0/0x540F90 + ★0x540A80 + ★0x5402D0/0x53F5B0 + ★0x53ECB0/0x53EC70/0x53E470（2330 新观察）。
+- 本批 **无 MISSING**（连续四十七批三路全登记——batch 2276 起，TSV 5473）。next 批预期 top3 = 0x53DE00（609B callees=17）/ 0x53DDA0（49B callees=0）/ 0x53D960（133B callees=0）。
