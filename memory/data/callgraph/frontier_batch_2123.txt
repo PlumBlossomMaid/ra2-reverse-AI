@@ -1,0 +1,80 @@
+# frontier batch 2123：单参转发器 + 回放数据读取初始化器 + 数组元素遍历处理调度器（0x658770 / 0x6586D0 / 0x658640）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x658770 FUN_00658770 callees=1 deps=90 / 0x6586D0 FUN_006586d0 callees=7 deps=2605 / 0x658640 FUN_00658640 callees=2 deps=374）
+- 三路 disasm：`.qwen/tmp/_d2123a.txt`（0x658770 size 0x30）/ `_d2123b.txt`（0x6586D0 size 0xB0）/ `_d2123c.txt`（0x658640 size 0xA0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x658770 | 13B（0xD）| ret 4 @0x65877A | 0x658780（scalar deleting destructor，未登记）| 1（0x4ae4f0 未登记）|
+| 0x6586D0 | 150B（0x96）| ret @0x658765 | 0x658766（nop pad）| 7（0x4ae4f0 未登记 + 6 已登记）|
+| 0x658640 | 141B（0x8D）| ret 4 @0x6586CA | 0x6586D0（**b 路本尊**）| 2（0x50b6f0+0x658330 已登记）|
+
+## a 路 0x658770（13B）——单参转发器
+
+```
+00658770  mov eax,[esp+4]（参数 1）/ push eax / ★call 0x4ae4f0（1 参转发）/ ret 4
+```
+**语义**：单参转发器——把参数 1 转发给 0x4ae4f0（437B 未登记函数，ranking:5802 有行——观察项）。13B 微函数。后邻 0x658780 = scalar deleting destructor（push esi/mov esi,ecx/call 0x4e1390/核验 [esp+8]&1 删标志 delete 0x7c8b3d，未登记）。
+
+## b 路 0x6586D0（150B）——回放数据读取初始化器
+
+```
+006586d0  push ecx / push esi
+006586d2  push 0 / mov edx,0x657da0（★函数指针参）/ mov ecx,0x73（★参数 73——对象大小/标识）→ ★call 0x622650（构造器——new 0x73 字节对象 + 0x657da0 回调）
+006586e3  mov ecx,[0x87f770]（★全局对象）/ mov esi,eax（新对象）/ mov byte ptr [0xa8ed9c],1（★全局标志置位）
+006586f2  ★call 0x54f720（全局对象锁定/预置——×2 成对）
+006586f7  test esi / je 0x65873a
+006586fb  lea eax,[esp+4]（栈槽）/ push eax / push 8 / push esi → ★call dword ptr [0x7e1470]（IAT——写入/读取 3 参）
+00658709  mov ecx,esi / ★call 0x622800（对象方法）
+00658710  mov [esp+4],0 / ★call 0x623120（读取循环——返回值 al 判定）→ test al / jne 0x65872b / mov eax,[esp+4] / test / jne 0x658733 / jmp 0x658718（循环读到非 0）
+0065872b  mov [esp+4],0x423（★常量 0x423=1059——大小/EOF 判定）
+00658733  ★call 0x622720（对象方法收尾）
+0065873a  mov ecx,[0x87f770] / ★call 0x54f720（全局对象解除锁定——成对）
+00658745  mov ecx,[0xa8b230]（★全局对象）/ push 2 / mov dl,[ecx+0x35a2]（★取字节）/ mov ecx,0x87f7e8 / mov [0xa8ed9c],dl（★全局标志恢复）
+0065875e  ★call 0x4f42f0（带名 TakeMoney/资金结算——已登记）
+00658765  ret
+```
+**语义**：回放数据读取初始化器——0x622650（new 0x73 字节对象 + 0x657da0 回调）→ [0xa8ed9c] 全局标志置位 → [0x87f770] 全局对象锁定（0x54f720 成对调用）→ 0x7e1470（IAT）→ 0x622800/0x623120/0x622720（读取对象族循环，0x423=1059 常量判定 EOF/大小）→ 0x54f720 解除锁定 → [0xa8b230]+0x35a2 字节恢复 [0xa8ed9c] → 0x4f42f0（资金结算）。回放/录像数据读取系统（0x73=115B 对象 + 0x423=1059 数据块常量）。
+
+## c 路 0x658640（141B）——数组元素遍历处理调度器
+
+```
+00658640  sub esp,8 / mov eax,[0xa80238]（★全局计数——batch 2107 c 路 [0x663B40] 同字段！）/ push 3 寄存器
+0065864a  mov ebp,[esp+0x14]（参数 1）/ or edi,0xffffffff（★结果索引=-1）/ xor esi,esi（循环 i=0）
+00658653  test eax / mov ebx,ecx（this）/ mov [esp+0x10],edi（结果索引=-1）/ mov [esp+0x14],eax（计数）/ jle 0x6586a4
+00658663  循环: mov eax,[0xa8022c]（★全局数组基址——batch 2107 c 路同字段！）/ mov edi,[eax+esi*4]（元素[esi]）/ test edi / je 0x658697
+0065866f  mov ecx,edi / ★call 0x50b6f0（判定）→ test al / je 0x658680 / mov [esp+0x10],esi（★命中记录索引）/ jmp 0x65868d
+00658680  mov ecx,[edi+0x34] / mov al,[ecx+0x1a6]（★二级判定——[元素+0x34]+0x1a6 字节）/ test al / jne 0x658697
+0065868d  push edi / push esi / push ebp → ★call 0x658330（处理函数——3 参：参数 1,索引,元素）
+00658697  mov eax,[esp+0x14] / inc esi / cmp esi,eax / jl 循环
+006586a0  收尾: mov edi,[esp+0x10]（★命中索引）/ mov eax,[0xa8022c] / mov edx,[eax+edi*4]（命中元素）/ mov esi,[eax]（★元素[0]）
+006586b0  push edx / push 0 / push ebp → call 0x658330（处理命中元素）
+006586b9  push esi / push edi / push ebp → call 0x658330（处理元素[0]——索引用命中索引）
+006586ca  ret 4
+```
+**语义**：数组元素遍历处理调度器——遍历 [0xa8022c] 数组（[0xa80238] 个——**batch 2107 c 路 0x663B40 同字段**）：每元素 0x50b6f0 判定，命中记索引 + 调 0x658330（3 参处理）；[元素+0x34]+0x1a6 二级判定；收尾补调命中元素 + 元素[0]（索引用命中索引——元素[0] 用 esi+edi 参数）。ret 4。
+
+## 原版怪癖（照抄）
+
+1. b 路 [0xa8ed9c] 标志**置位-恢复对**（先置 1 后从 [0xa8b230]+0x35a2 恢复）；
+2. b 路 0x54f720 成对锁定（进入/退出全局对象）；
+3. b 路读取循环 0x423=1059 常量判定（EOF/数据块大小）；
+4. b 路 0x7e1470 IAT 3 参（栈槽, 8, 对象）；
+5. c 路结果索引初始 -1（or edi,0xffffffff），命中才更新；
+6. c 路收尾**双补调**：命中元素（push 0） + 元素[0]（push esi=元素[0], push edi=命中索引）——元素[0] 处理用命中索引作第二参（怪癖：非 0）；
+7. a 路 13B 单参直转发（无校验）。
+
+## 跨批次连接
+
+- ★★★c 路 ↔ batch 2107 c 路 0x663B40（[0xa8022c]/[0xa80238] 全局对象数组同址——同一全局数组族）；
+- ★★0x4ae4f0（a/b 路 callee，ranking:5802 有行 437B）——新候选观察项；
+- ★0x4f42f0（带名 TakeMoney/资金结算已登记）+ [0x87f770]/[0xa8b230]/[0xa8ed9c]（全局对象族）+ 0x657da0（回调，未登记）+ 0x622650/0x622800/0x623120/0x622720（0x62 区读取对象族）。
+
+## 观察项 / 候选池
+
+- **新候选：0x4AE4F0**（a/b 路 callee，ranking:5802 有行，437B——后续 picker 自然取到）。
+- **后邻未登记**：0x658780（a 路后邻 scalar deleting destructor）、0x657da0（b 路回调参）。
+- 前向：picker 队列继续 0x65 区（0x658770 已取一族）+ 0x4AE4F0 + 0x599650（QWEN.md Init random map）。
