@@ -1,0 +1,105 @@
+# frontier batch 2320：巨型绘制装载器变体 + 数组循环调度器 + 清理释放循环器（0x550260 / 0x550240 / 0x550150）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x550260 FUN_00550260 callees=7 deps=1 / 0x550240 FUN_00550240 callees=1 deps=466 / 0x550150 FUN_00550150 callees=1 deps=1928）
+- 三路 disasm：`.qwen/tmp/_d2320a.txt`（0x550260 size 0x800——覆盖到 0x5509F0 头）/ `_d2320b.txt`（0x550240 size 0x60）/ `_d2320c.txt`（0x550150 size 0x100）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x550260 | 1906B（0x772）| ret c3 @0x5509D1（pop 四件套+add esp,0x40）| 0x5509E0（纯 ret 桩）→ 0x5509F0（★batch 2319 c 路已登记）| 11 次/去重 7（全部已登记，picker callees=7 吻合）|
+| 0x550240 | 32B（0x20）| ret c3 @0x55025F | 0x550260（★本批 a 路）| 1 次/去重 1（0x550260——★批内自引用 b→a，被范围过滤；picker callees=1 吻合）|
+| 0x550150 | 230B（0xE6）| ret c3 @0x550235 | 0x550240（★本批 b 路）| 1 次/去重 1（0x7c8b3d——已登记，picker callees=1 吻合）|
+
+## a 路 0x550260（1906B）——巨型绘制装载器变体
+
+```
+00550260  sub esp, 0x40 → push ebx/ebp/esi/edi → mov ebx, ecx（this）
+00550268  mov eax, [ebx+0x4c] → test eax → jle 0x5509ca（★count ≤ 0 → 直跳尾）
+00550274  mov al, [ebx+0x20] → test al → je 0x550288
+0055027b  call 0x5509f0（★batch 2319 c 路 巨型绘制装载器——[ebx+0x20] 门控转调）→ 直返
+00550288  mov al, [0xabc8b8]（★门控字节）→ test al, 1 → jne 0x5503ae
+00550295  ★★[0xabc738..0xabc7b4] 32 槽常量表初始化（交错 -1/1/0/0xffffffff 双写——★8 组 × 4 槽 16B 表，batch 2319 c 路同款 [0xabc7f8] 表镜像）
+00550384  push 0x5509e0 → call 0x7c978a（★atexit 注册 0x5509e0 纯 ret 桩）→ mov [0xabc8b8], dl|1（★置位）
+005503ae  mov al, [ebx+0x51] → test al → jne 0x5509ca（★跳过）
+005503b9  mov ecx, [ebx+0x30] → mov eax, [ebx+0x24] → fild/fisub 浮点差 → 0x4cae30 → fsub [0x7e2820] → fmul [0x7e2818] → 0x7c5f00（★_ftol）→ shr/inc/shr/and 7（★8 档取模）
+00550410  ★0x6d2140 ×2（[0x887324] 全局 + 坐标装载）+ 0x6d20e0 ×2（[ebx+0x2c]/[0x38] 换算）
+00550459  mov al, [ebx+0x44] → ★[esp+0x13] 三字节门控（[ebx+0x44]/[0x45]/[0x46] 任一非 0 → 1）
+0055048f  ★★RandomRanged 0x65c7e0 ×3（ecx=0x886b88 全局 Randomizer——push neg 字节值 [ebx+0x47]/[0x48]/[0x49]——★三通道随机抖动）
+005504e3  ★[ebx+0x44..0x46] 与随机和 + 0xff 钳位 → [0x8a0dd0..0x8a0de4] 六槽位域打包（sar/shl/or 三组）
+005505b2  mov dl, [ebx+0x42] → lea eax, [ebx+0x41] → seta 三比较（[ebx+0x41]/[0x42]/[0x43] vs 0 → [esp+0x30]/[0x2c]/[0x28]）
+005505e8  mov cl, [ebx+0x52] → je 0x550611 → fld [ebx+0x54] → fsub [ebx+0x58] → fimul/fidiv/fadd（★[ebx+0x4c]/[0x54]/[0x58] 插值）
+00550611  mov ecx, [0xa8eb78]（★全局门控）→ test → je 0x55088b
+0055061f  mov al, [ebx+0x50] → test → je 0x55074b
+0055062a  ★★[0x887314] 虚表装载（[0x886fa0] 表 + 虚表槽 0x3c——★格内绘制）+ [esp+0x13] 门控
+00550664  ★★[esi+0xabc738] 8 方向查表（shl esi,4 → 16B 表）→ 六坐标累加 → 虚表槽 0x3c ×2
+0055074b  ★第二分支：虚表槽 0x40 ×3（[0x887314]——★另一绘制路径）
+0055088b  ★第三分支：[0x887314] 虚表槽 0x34 ×2 + [0x8a0dd0..0x8a0de4] 六槽位域
+005509ca  pop 四件套 → add esp, 0x40 → ret c3 @0x5509D1
+```
+
+**语义**：**巨型绘制装载器变体（推断名）——载入界面/格网绘制宿主（1906B）**——thiscall：[ebx+0x4c] 计数门控 → [ebx+0x20] 门控转调 ★batch 2319 c 路 0x5509F0 → ★[0xabc8b8] 门控 bit0 首次进初始化 [0xabc738..0xabc7b4] 32 槽 16B 表（★batch 2319 c 路 [0xabc7f8] 表镜像）+ 0x7c978a atexit 注册 0x5509e0 桩 → [ebx+0x51] 跳过 → ★fild/fisub/fsub/fmul/0x7c5f00 _ftol 浮点链 + 8 档 → ★0x6d2140 ×2 + 0x6d20e0 ×2（[0x887324] 像素/格换算）→ ★★RandomRanged 0x65c7e0 ×3（ecx=0x886b88——★★QWEN.md 实锤 RandomRanged@0x65C7E0——三通道随机抖动 + [ebx+0x44..0x46] 和 + 0xff 钳位）→ ★[0x8a0dd0..0x8a0de4] 六槽位域 → ★seta 三比较 + fld/fsub/fimul/fidiv/fadd 插值 → ★[0xa8eb78] 门控 → ★[0x887314] 虚表（[0x886fa0] + 槽 0x3c/0x40/0x34 三分支）→ ★[esi+0xabc738] 8 方向查表 → ret c3。**载入界面格网绘制全管线变体（★★8 方向表 + RandomRanged×3 随机抖动 + 虚表三分支——batch 2319 c 路同族大宿主）**。
+
+## b 路 0x550240（32B）——数组循环调度器
+
+```
+00550240  mov eax, [0xabc888]（★数组长度）→ push esi → lea esi, [eax-1] → test esi → jl 0x55025e
+0055024d  ★循环：mov ecx, [0xabc87c]（★数组指针）→ mov ecx, [ecx+esi*4]（当前项）→ call 0x550260（★本批 a 路——逐项调度）→ dec esi → jns 0x55024d
+0055025e  pop esi → ret c3
+```
+
+**语义**：**数组循环调度器（推断名）**——无栈参：[0xabc888] 长度 → 倒序循环 [0xabc87c] 指针数组逐项调 ★本批 a 路 0x550260（★批内自引用 b→a）→ ret c3。**[0xabc87c]/[0xabc888] 全局数组逐项调度（32B 极简——★b 路与 c 路同容器族，调度/清理成对）**。
+
+## c 路 0x550150（230B）——清理释放循环器
+
+```
+00550150  mov eax, [0xabc888] → sub esp, 0x10 → push edi → lea edi, [eax-1] → test edi → jl 0x550231
+00550165  mov ebp, [esp+0x10]（★栈参 1 = 清理参数）→ push esi → mov esi, [0xabc87c+edi*4]（当前项）
+00550173  mov edx, [esi+8] → mov eax, [esi+0x10] → cmp edx, -1 → je 0x55018c
+0055017e  mov ecx, [0xa8ed84] → sub ecx, edx → cmp ecx, eax → jge 0x550190 → sub eax, ecx
+00550190  mov ecx, [esi+0x14] → test → je 0x5501b4 → ★[esi]/[0x18] 累加装载 → mov byte [esi+4], 1 → mov [esi], eax → mov [esi+8], [0xa8ed84] → mov [esi+0xc], ebp → mov [esi+0x10], ecx
+005501b4  mov byte [esi+4], 0（★不清理）
+005501b8  mov al, [esi+0x50] → mov al, [esi+0x51] → sete → mov [esi+0x51], al（★翻转）
+005501ca  mov ecx, [esi] → mov eax, [esi+0x4c] → cmp → jl 0x550228
+005501d7  mov eax, [0xabc878]（★容器虚表）→ lea edx, [esp+0xc] → push edx → mov ecx, 0xabc878 → mov [esp+0x10], esi → call [eax+0x10]（★虚表槽 0x10 查找）
+005501ed  cmp eax, -1 → je 0x55021f → ★[0xabc888]-- → 数组前移压缩（[ecx+eax*4-4] = [ecx+eax*4] 循环搬）
+0055021f  push esi → call 0x7c8b3d（★operator delete）→ dec edi → jns 0x55016a
+00550235  pop esi/ebp/edi → add esp, 0x10 → ret c3
+```
+
+**语义**：**清理释放循环器（推断名）**——thiscall 1 栈参（清理参数）：[0xabc888] 长度倒序循环 → [0xabc87c] 数组逐项清理：[esi+8]/[0x10] 与 [0xa8ed84] 全局差值判定 → ★[esi]/[0x18] 累加 + [esi+4] 清理标志（1/0）→ ★[esi+0x50]/[0x51] 字节翻转（sete）→ ★[0xabc878] 容器虚表槽 0x10 查找定位 → 命中 → ★[0xabc888]-- + 数组前移压缩 → 0x7c8b3d operator delete 释放 → ret c3。**[0xabc878]/[0xabc87c]/[0xabc888] 全局容器清理循环（★b 路调度器成对——调度/清理双循环器）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call/jmp 11 次/去重 7（0x5509f0/0x7c978a/0x4cae30/0x7c5f00/0x6d2140/0x6d20e0/0x65c7e0——★RandomRanged 0x65c7e0 为 QWEN.md 实锤 RNG 函数）——**全部已登记**（picker callees=7 吻合）。
+- b 路：跨函数直接 call 1 个/去重 1（0x550260——★本批 a 路，批内自引用 b→a，被范围过滤不计 MISSING；picker callees=1 吻合）。
+- c 路：跨函数直接 call 1 个/去重 1（0x7c8b3d——★operator delete）——**已登记**（picker callees=1 吻合）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING**；**批内自引用 1 例：b→a（0x550240→0x550260，同批登记闭环）**。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★[0xabc8b8] 门控 bit0 + [0xabc738..0xabc7b4] 32 槽 16B 表（★batch 2319 c 路 [0xabc7f8] 表镜像——交错 -1/1/0/0xffffffff）;
+2. a 路 ★★0x7c978a atexit 注册 0x5509e0 纯 ret 桩;
+3. a 路 ★★fild/fisub/fsub/fmul/0x7c5f00 _ftol 浮点链 + 8 档取模（shr/inc/shr/and 7）;
+4. a 路 ★★RandomRanged 0x65c7e0 ×3（ecx=0x886b88 全局——push neg 字节值 [ebx+0x47]/[0x48]/[0x49]——★三通道随机抖动——RNG 消耗点）;
+5. a 路 ★★[ebx+0x44..0x46] 与随机和 + 0xff 钳位 + [0x8a0dd0..0x8a0de4] 六槽位域;
+6. a 路 ★★seta 三比较（[ebx+0x41]/[0x42]/[0x43] vs 0）+ fld/fsub/fimul/fidiv/fadd 插值;
+7. a 路 ★★[0x887314] 虚表槽 0x3c/0x40/0x34 三分支（[0x886fa0] 表——★格内绘制三路径）;
+8. a 路 ★★[esi+0xabc738] 8 方向查表（shl esi,4 → 16B 表——★六坐标累加）;
+9. b 路 ★★倒序循环 [0xabc87c] 数组逐项调 0x550260（★32B 极简调度器）;
+10. c 路 ★★[0xa8ed84] 全局差值判定 + [esi+4] 清理标志（1/0）+ [esi+0x50]/[0x51] sete 翻转;
+11. c 路 ★★[0xabc878] 容器虚表槽 0x10 查找 + [0xabc888]-- + 数组前移压缩 + 0x7c8b3d 释放。
+
+## 跨批次连接
+
+- ★★batch 2319 c 路（0x5509F0 巨型绘制装载器——a 路 [ebx+0x20] 门控转调 + [0xabc7f8] 表镜像）+ batch 2317（0x552C90/0x552CC0——a 路 [0x8a0dd0..0x8a0de4] 六槽同锚点）+ batch 1742/1743（0x554280/0x554100——a/c 路位域同锚点）。
+- ★★QWEN.md 实锤 RandomRanged@0x65C7E0（a 路 ecx=0x886b88 全局——★★RNG 消耗点）+ batch 2308（0x55AFB0/0x55AF60——a 路 0x55af60 邻域）。
+- ★★batch 2306/2307（事件系统——b/c 路 [0xabc878] 容器族）+ batch 163（[0xa8eb78] 全局——a 路门控装载同源）。
+- ★★batch 2314（颜色浮点族——a 路三通道随机/插值同源）+ batch 2312（[0xabcbxx] 全局容器族——b/c 路 [0xabc87c]/[0xabc888] 同源）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x5509E0（a 路后邻——纯 ret 桩 atexit 注册目标）；[0xabc738..0xabc7b4]/[0xabc8b8]（a 路 32 槽表 + 门控）；[0xabc878]/[0xabc87c]/[0xabc888]（b/c 路容器族三全局）；[0xa8ed84]（c 路差值基准全局）。
+- 未兑现 MISSING 旧观察（继续排队）：0x00486790（2267 起）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150 + ★0x556AD0/0x556EB0/0x556D20 + ★0x554830/0x49E400 + ★0x551B20 + ★0x5517A0/0x5512D0 + ★0x5509E0/0x551300/0x551320/0x551330/0x551370（2320 新观察）。
+- 本批 **无 MISSING**（连续三十七批三路全登记——batch 2276 起，TSV 5443）。next 批预期 top3 = 0x550000（116B callees=1）/ 0x54F6D0（18B callees=0）/ 0x54F650（29B callees=0）。
