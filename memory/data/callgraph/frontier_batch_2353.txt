@@ -1,0 +1,73 @@
+# frontier batch 2353：PhobosHook 奴隶主金钱转移 ★带名 + 浮点判定器 + 双参传递器（0x522D50 / 0x522D30 / 0x522D20）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x522D50 PhobosHook_InfantryClass_SlaveGiveMoney_RecordBalanceBefore callees=4 deps=17 / 0x522D30 FUN_00522d30 callees=0 deps=21 / 0x522D20 FUN_00522d20 callees=0 deps=21）
+- 三路 disasm：`.qwen/tmp/_d2353a.txt`（0x522D50 size 0x140）/ `_d2353b.txt`（0x522D30 size 0x40）/ `_d2353c.txt`（0x522D20 size 0x30）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x522D50 | 276B | ret 4 @0x522E61 | 0x522E70（[esi+0x6c0] → [eax+0x800] test——InfantryClass 域，未登记）| 6 个/去重 4——全部已登记，picker callees=4 吻合 |
+| 0x522D30 | 27B | ret @0x522D4A | 0x522D50（★本批 a 路）| 0 个/去重 0（虚表槽 0x2b4 间接不计，picker callees=0 吻合）|
+| 0x522D20 | 13B | ret @0x522D2C | 0x522D30（★本批 b 路）| 0 个/去重 0（虚表槽 0x1e8 间接不计，picker callees=0 吻合）|
+
+## a 路 0x522D50（276B）——PhobosHook_InfantryClass_SlaveGiveMoney_RecordBalanceBefore ★带名
+
+```
+00522d50  thiscall 1 栈参（[esp+0x20]=对象指针）→ lea ebp, [ecx+0x33c]（★InfantryClass 子对象表）→ 0x6c9820（★索引查询）→ esi != -1
+00522d71  [esp+0x20] → [eax+0x21c] → edi（★目标对象）→ [edi+0x1ec] byte → [edi+0x538c] → [esp+0x14]（★金额）
+00522d8f  ★★[edi+0x1ec]==0 且 [0xa8b238] != 0 → [0x8871e0]+0x1324 资金表 + [edi+0x184]*4 索引 → [esp+0x14] +=（★资金累加——SlaveGiveMoney 语义）
+00522db2  ★★浮点两段：[esp+0x10] = 0x6c9680（esi 索引——★倍率）→ [esp+0x14] fild → [0x8871e0]+0xf3c × → [esp+0x10] × → fstp（★fild 金额 × 倍率 × 因子）
+00522de7  [esp+0x10]!=0 → 0x6c96b0（esi 二次查询）→ ★★0x4f9610 ×2（edi 目标 + 金额推栈——★SlaveGiveMoney 核心调用）bl=1
+00522e16  [esp+0x14] fcomp [0x7e1748] → fnstsw ah 0x41（★<0 检查）→ 再 0x4f9610（★负值二次转移）
+00522e38  ★循环 0x6c9820 再查 → jne 0x522d71（★多目标遍历）→ bl==1 → [esp+0x1c] 虚表槽 0x468 调用（★钩子回调）→ ret 4
+```
+
+**语义**：**PhobosHook_InfantryClass_SlaveGiveMoney_RecordBalanceBefore（★带符号名——YRpp/Phobos 钩子）——奴隶主金钱转移 + 余额前置记录（276B）**：thiscall 1 栈参（对象）：★★0x6c9820 索引遍历 [ecx+0x33c] 对象表 → 每目标 edi（[esp+0x20]→[+0x21c]）金额计算（★[edi+0x1ec] 门控 + [0x8871e0]+0x1324 资金表 + [edi+0x184] 索引 + [0x8871e0]+0xf3c 倍率 float 链）→ ★★0x4f9610 金钱转移 ×2（正/负路径）+ bl 标记 → ★循环多目标 → 钩子回调虚表槽 0x468 → ret 4。**★★Phobos 奴隶主金钱钩子（★★SlaveGiveMoney 语义 + 余额前置记录——[0x8871e0] 时间对象资金表实锤使用方）**。
+
+## b 路 0x522D30（27B）——浮点判定器
+
+```
+00522d30  [ecx] 虚表槽 0x2b4 调用 → fcomp qword ptr [0x7e1718]（★double 比较）→ fnstsw ah 0x40 → je 0x522d48 → al=1 / xor al, al → ret
+```
+
+**语义**：**浮点判定器（推断名）——虚表槽 0x2b4 返回值 vs [0x7e1718] double（27B）**：thiscall 无参：★虚表槽 0x2b4（★返回 float）→ fcomp [0x7e1718]（double 常量）→ ★fnstsw ah 0x40（≥ 标志）→ 返 bool。**浮点阈值判定（★★[0x7e1718] 常量——纯 x87 比较）**。
+
+## c 路 0x522D20（13B）——双参传递器
+
+```
+00522d20  [ecx] 虚表槽 0x1e8 → push 0 / push 5 → ret
+```
+
+**语义**：**双参传递器（推断名）——虚表槽 0x1e8 双参调用（13B）**：thiscall 无参：★虚表槽 0x1e8 + ★push 0/push 5（★ID=5 查询类）→ ret。**最小透传器（13B——★ID 5 + 标志 0）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 6 个/去重 4（0x6c9820/0x6c9680/0x6c96b0/0x4f9610）——**全部已登记无 MISSING**（picker callees=4 吻合）。
+- b 路：跨函数直接 call 0 个/去重 0（虚表槽 0x2b4 间接）——**已登记无 MISSING**（picker callees=0 吻合）。
+- c 路：跨函数直接 call 0 个/去重 0（虚表槽 0x1e8 间接）——**已登记无 MISSING**（picker callees=0 吻合）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING、无批内自引用**（连续六十三批三路无真 MISSING——排队 7 个真 MISSING 不变）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★[edi+0x1ec] 门控（byte 非 0 跳过资金表累加——★InfantryClass 奴隶标记字段）;
+2. a 路 ★★[0x8871e0]+0x1324 资金表 + [edi+0x184]×4 索引（★奴隶主/奴隶对象表）;
+3. a 路 ★★浮点链：fild 金额 × [0x8871e0]+0xf3c × [esp+0x10]（倍率因子——★★x87 三连乘）;
+4. a 路 ★★fnstsw ah 0x41 检查（★<0 浮点比较——负值二次转移 0x4f9610）;
+5. a 路 ★★0x4f9610 调用两次（正/负路径各自转移）+ 钩子回调虚表槽 0x468;
+6. a 路 ★★0x6c9820 循环（le esi, [ecx+0x33c] 子对象表——★索引推进模式）;
+7. b 路 ★★fcomp qword [0x7e1718]（★float 结果 vs double 常量——x87 隐式提升）;
+8. c 路 ★★push 0/push 5 双参（★ID=5 + 标志 0——Phobos 查询语义）。
+
+## 跨批次连接
+
+- ★★batch 2351（0x527920 PhobosHook——a 路 Phobos 钩子家族同源）+ QWEN.md Phobos 克隆（E:\code\Phobos——★带符号名交叉验证）。
+- ★★[0x8871e0] 全局时间对象（★QWEN.md 实锤——a 路 +0x1324 资金表/+0xf3c 倍率 + batch 2346 c 路创建点）。
+- ★★batch 2343/2344（[0xa8b238] 会话状态槽——a 路门控使用方 + [0x7e1748]/[0x7e1718] 浮点常量槽族——batch 2346 c 路 0x7e1e6c 邻域）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x522E70（a 路后邻——[esi+0x6c0] → [eax+0x800] test InfantryClass 域）+ [ecx+0x33c]（a 路子对象表偏移）+ [edi+0x1ec]/[edi+0x538c]/[edi+0x184]（★InfantryClass 字段族）+ [0x7e1748]/[0x7e1718]（浮点常量槽——a/b 路共用）。
+- 未兑现 MISSING 旧观察（继续排队）：0x00486790（2267 起）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150 + ★0x556AD0/0x556EB0/0x556D20 + ★0x554830/0x49E400 + ★0x551B20 + ★0x5517A0/0x5512D0 + ★0x5509E0/0x551300/0x551320/0x551330/0x551370 + ★0x550080/0x54F6F0/0x54F670 + ★0x54E890/0x54E8C0 + ★0x54E590/0x54D930/0x549E90 + ★0x547CE0/0x544BE0 + ★0x543780/0x542EC0 + ★0x5424C0 + ★0x5422C0/0x540F90 + ★0x540A80 + ★0x5402D0/0x53F5B0 + ★0x53ECB0/0x53EC70/0x53E470 + ★0x408B40/0x53E070/0x53E1D0/0x53DDE0 + ★0x53C4C0/0x53C280/0x53B560 + ★0x53B3F0/0x53B064 + ★0x53AC50 + ★0x53A6A0/0x53A140 + ★0x53A130/0x53A100 + ★0x538C10 + ★0x537F20/0x537E80/0x537F30/0x537E90 + ★0x537DE0/0x537B50/0x537DF0/0x537B60/0x535BD0/0x535BE0 + ★0x533F50 + ★0x41caf0/0x45e750/0x4f6eb0/0x531F60/0x5318C0 + ★0x52FFD0/0x52FC20/0x52D430 + ★0x406b10/0x434ad0/0x52CB90 + ★0x52B7A0/0x52B720 + ★0x52B4F0 + ★0x52B160/0x52AFC0 + ★0x52ACE0/0x52AA90/0x52A760 + ★0x529820/0x527B90/0x524FB0 + ★0x523980/0x5233D0/0x522FE0 + ★0x522E70（2353 新观察）。
+- 本批 **无 MISSING**（连续六十三批三路无真 MISSING——排队 7 个真 MISSING 不变）。next 批预期 top3 由 picker 决定（0x522D00/0x522CB0 等继续排队）。
