@@ -1,0 +1,84 @@
+# frontier batch 2281：区域距离计算器 + 区域表项读取器 + 全局区域表构建器（0x58C6F0 / 0x58BB00 / 0x58B820）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x58C6F0 FUN_0058c6f0 callees=3 deps=67——**batch 2279 c 路 MISSING 兑现** / 0x58BB00 FUN_0058bb00 callees=0 deps=780 / 0x58B820 FUN_0058b820 callees=7 deps=139——**batch 2275 b 路 MISSING 兑现**）
+- 三路 disasm：`.qwen/tmp/_d2281a.txt`（0x58C6F0 size 0x160）/ `_d2281b.txt`（0x58BB00 size 0x60）/ `_d2281c.txt`（0x58B820 size 0x340）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x58C6F0 | 271B（0x10F）| ret 0x10 c21000 @0x58C7F1 | 0x58C800（未登记——cell 判定器：0x42fcb0 0x7e3890 0xc350+cell+0x24 装载）| 3 次/去重 3（0x4cac40+0x4cade0+0x65c780——全部已登记，picker callees=3 吻合）|
+| 0x58BB00 | 44B（0x2C）| ret c3 @0x58BB21/0x58BB2B | 0x58BB30（未登记——[a8b230]+0x113c 区域表装载：[0xabe304]/[0xabe328] 复制+0x11c0 偏移）| 0 次/去重 0（纯内存读写，picker callees=0 吻合）|
+| 0x58B820 | 727B（0x2D7）| ret c3 @0x58BAF6 | 0x58BB00（**本批 b 路本体——后邻相邻**）| 10 次/去重 7（0x68bd80+0x68bcc0+0x5657a0+0x6d62e0+0x578350+0x578290+0x578460——全部已登记，picker callees=7 吻合）|
+
+## a 路 0x58C6F0（271B）——区域距离计算器
+
+```
+0058c6f0  sub esp,0x10 → mov eax,[esp+0x14]（★参1 坐标对A）→ mov ecx,[esp+0x18]（★参2 坐标对B）→ ★movsx 四坐标：movsx edx,word [eax] / movsx esi,word [ecx] → sub esi,edx（★ΔX）→ movsx edx,word [eax+2] / movsx eax,word [ecx+2] → sub eax,edx（★ΔY）→ imul 平方和 → [esp+0x20]
+0058c729  fild [esp+0x20] → fstp qword → push → call 0x4cac40（★开方——QWEN.md 浮点内核）→ fstp [esp+0x14]
+0058c73c  test esi → je 0x58c7f4（★ΔX=0 分支 fld [0x7e2820]）→ fild [esp+0x1c] → fidiv [esp+0xc] → fchs（★-ΔY/ΔX）→ push → call 0x4cade0（★反正切——浮点内核）→ add [0x7e44d0] 条件 → fsub [esp+0x20] → fabs → fcom [0x7e3cc0]（★比较）
+0058c77e  ★循环校准：fsub [0x7e3cc0] → fcom [0x7e3cc0] → test ah,1 → je 循环（★迭代逼近 [0x7e3cc0]）→ fld [0x7e3cc0] → fsub st(1)
+0058c7ae  ★★Randomizer 合成：mov ecx,0xabe890 → fstp st(0) → call 0x65c780 → fild qword → fmul [0x7ed898] → fmul [0x7ed6a8] → fld [0x7ed6b8] → fmul [esp+0x1c] → faddp → fld [0x7ed6b0] → fmul [esp+8] → faddp → add esp,0x10 → ret 0x10（★4 参浮点返回）
+```
+
+**语义**：**区域距离计算器（batch 2279 c 路 MISSING 兑现）**——★movsx 四坐标 ΔX/ΔY 平方和 → 0x4cac40 开方 + 0x4cade0 反正切（[0x7e44d0] 条件修正）→ fabs fcom [0x7e3cc0] 迭代校准 → ★★Randomizer 0x65c780 × [0x7ed898] × [0x7ed6a8] + [0x7ed6b8]×[esp+0x1c] + [0x7ed6b0]×[esp+8] → 浮点 st(0) 返回 ret 0x10。**区域距离+角度双算（4 参浮点返回器——0x4cade0 反正切、[0x7ed6a8]/[0x7ed6b0]/[0x7ed6b8] 常量族）**。
+
+## b 路 0x58BB00（44B）——区域表项读取器
+
+```
+0058bb00  test edx,edx → jl 0x58bb22（★越界）→ mov eax,ecx（★this 输出指针）→ cmp edx,[0xabed0c]（★索引上限 [0xabed0c]）→ jge 0x58bb22（★越界清 0）
+0058bb0e  mov ecx,[edx*8+0xabe328] → mov [eax],ecx（★8B 项低半）→ mov edx,[edx*8+0xabe32c] → mov [eax+4],edx（★8B 项高半）→ ret
+0058bb22  越界路径：xor ecx,ecx → xor edx,edx → mov [eax],ecx → mov [eax+4],edx → ret
+```
+
+**语义**：**区域表项读取器（推断名）**——★[edx*8+0xabe328]/[0xabe32c]（8B/项区域表）→ 输出 [eax]/[eax+4]；★★索引 [0, [0xabed0c]) 门控越界清 0（[0xabed0c] = 区域计数——batch 2280/2279 同款 [0xabed0c] 全局）。**区域表 8B 项读取（[0xabe328]/[0xabe32c] 表——本批 c 路构建对侧）**。
+
+## c 路 0x58B820（727B）——全局区域表构建器
+
+```
+0058b820  mov eax,[0xa8b230]（★全局对象）→ cmp eax,0 → je 0x58baef（早退）→ cmp [0x887324],0 → je 早退 → mov [0xabed0c],0（★区域计数清零）
+0058b84a  ★★8 起点循环（edi 0..7）：push 0 → call 0x68bd80（★首查）→ test → je 0x58b91f → push 0/lea [esp+0x18] → call 0x68bcc0（★双键装载——batch 2273/2275 同款）→ push eax → 0x5657a0 取格 → ★虚表槽 0x48 双调（cell 坐标 transform ×2）→ push → 0x6d62e0（★理论坐标）
+0058b8b2  第二装载：call 0x68bcc0 → ★★0x88888889 除法缩比 ×2：imul [esp+0x10] → sar edx,5 → shr → add（★÷100? 0x88888889>>5=÷100）→ mov [ecx*4+0xabe304],edx（★四字节表 [0xabe304]）→ mov [ecx*8+0xabe328],ebx（★8B 表低半）→ imul [esp+0x14] → sar edx,4 → shr → add（★÷16）→ mov [ecx*8+0xabe32c],edx（★8B 表高半）→ inc [0xabed0c] → 循环 8 次
+0058b91f  ★★CellIterator 全图扫描：0x578350 Reset → 0x578290 Next 循环：0x578460 放格判定 → je 跳过 → 虚表槽 0x48 双调 → 0x6d62e0 → ★★0x88888889 ÷100/÷16 缩比 ×2 → ★min/max 跟踪（[esp+0x10]/edi/ebp/ebx——全局四极值）
+0058b9f4  ★★全局写：mov [0xabdfd0],eax（★min）→ mov [0xabdfd4],edi → mov [0xabec90],ebp（★max）→ mov [0xabecd0],ebx
+0058ba20  ★★[a8b230] 区域表装载：mov [a8b230+0x113c],edx（★区域计数）→ 循环：mov esi,0xabe328-0x1140 → mov edx,0xabe304-0x11c0 → ★cmp edi,[0xabed0c] → jge 清 0 → mov edx,[esi+eax] → mov [eax+ebx],edx（★表复制到 [a8b230]）→ mov esi,[esi+eax+4] → mov [eax+edx+4],esi → 循环
+0058bab0  ★★四字段收尾：[ebx+0x112c]=[0xabdfd4] → [ecx+0x1130]=[0xabdfd0] → [eax+0x1134]=[0xabec90] → [edx+0x1138]=[0xabecd0]（★[a8b230]+0x112c..0x1138 四极值装载）→ ret c3
+```
+
+**语义**：**全局区域表构建器（batch 2275 b 路 MISSING 兑现）**——★★[0xa8b230]/[0x887324] 双门控 + ★★8 起点循环（0x68bd80 首查 + 0x68bcc0 双键装载 + 0x5657a0 取格 + 虚表槽 0x48 坐标 transform ×2 + 0x6d62e0 理论坐标）→ ★★0x88888889 除法缩比 ×2（sar 5 ÷100 / sar 4 ÷16——QWEN.md 除法缩比族）→ [0xabe304]/[0xabe328]/[0xabe32c] 三表构建 + [0xabed0c] 计数 → ★★CellIterator 全图扫描（0x578460 放格判定 + 虚表槽 0x48 + 0x6d62e0 + ÷100/÷16 + ★四极值跟踪 [0xabdfd0]/[0xabdfd4]/[0xabec90]/[0xabecd0]）→ ★★[a8b230]+0x112c..0x1138 区域表装载+四字段收尾。**全局区域表构建宿主（[0xabe304]/[0xabe328]/[0xabe32c] 表族构建 + [0xabed0c] 计数 + 四极值——b 路读取对侧闭环）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 3 次/去重 3 个（0x4cac40/0x4cade0/0x65c780）——**全部已登记**（picker callees=3 吻合）。
+- b 路：跨函数直接 call 0 次/去重 0 个（纯内存读写）——**picker callees=0 吻合**。
+- c 路：跨函数直接 call 10 次/去重 7 个（0x68bd80/0x68bcc0/0x5657a0/0x6d62e0/0x578350/0x578290/0x578460）——**全部已登记**（picker callees=7 吻合）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING**（连续第五批三路全登记）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★movsx 四坐标（ΔX/ΔY 全符号扩展——imul 平方和 [esp+0x20]）;
+2. a 路 ★★0x4cade0 反正切（fidiv [esp+0xc] → fchs → [0x7e44d0] 条件修正——ΔX 符号分支）;
+3. a 路 ★★fcom [0x7e3cc0] 迭代校准循环（fsub → fcom → test ah,1 → je——★角度归约 [0,π]）;
+4. a 路 ★★Randomizer 三联常量（[0x7ed898]×[0x7ed6a8] + [0x7ed6b8]×[esp+0x1c] + [0x7ed6b0]×[esp+8]——★随机角度合成）;
+5. b 路 ★★[edx*8+0xabe328]/[0xabe32c] 8B/项表 + [0, [0xabed0c]) 门控越界清 0;
+6. c 路 ★★0x88888889 除法缩比 ×2（sar edx,5+shr 0x1f+add = ÷100、sar edx,4 = ÷16——★同一 imul 常量两次不同移位）;
+7. c 路 ★★8 起点循环（edi 0..7——虚表槽 0x48 坐标 transform ×2 + 0x6d62e0 理论坐标）;
+8. c 路 ★★[abdfd0]/[abdfd4]/[abec90]/[abecd0] 四极值（min/max 全局——CellIterator 全图跟踪）;
+9. c 路 ★★[a8b230]+0x113c 区域计数装载 + 表复制（mov [esi+eax],edx / [esi+eax+4],esi——★8B 项逐对复制）;
+10. c 路 ★★[a8b230]+0x112c/0x1130/0x1134/0x1138 四字段收尾装载（[0xabdfd4]/[0xabdfd0]/[0xabec90]/[0xabecd0]——★batch 2273 a 路同款 [a8b230] 字段族）。
+
+## 跨批次连接
+
+- ★★★batch 2279 c 路（0x58D620 调 0x58c6f0——**MISSING 兑现闭环**：山区扩张距离计算 → 区域距离计算器）+ batch 2275 a 路后邻（0x595400 技术建筑表抽取——本批 c 路 [0xabe304]/[0xabe328] 表族构建对侧）。
+- ★★batch 2259（0x4cac40/0x4cae30/0x4cad00/0x4cacb0 浮点内核——a 路 0x4cade0 反正切新成员先已登记）+ batch 2252/2269（0x65c780 Randomizer + [0x7ed898] 常量——a 路同款）。
+- ★★batch 2273 a 路（[a8b230]+0x3528..0x353c 字段装载——c 路 0x112c..0x1138 同字段族）+ batch 2266/2273（0x5657a0 取格、0x68bcc0 双键装载、[0xabed10] work——c 路同款）。
+- ★★batch 2272 c 路（[0xabdf90] 全局注销——c 路 [0xa8b230] 全局域分离）+ batch 2265（前移压缩——c 路表复制同款）。
+- ★0x88888889 除法缩比（c 路——QWEN.md 高频族 0xcccccccd/0x55555556/0x51eb851f 同批）+ [0x7ed6a8]/[0x7ed6b0]/[0x7ed6b8]/[0x7ed6b0] 常量族（a 路——[0x7ed6xx] 区域常量段）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x58C800（a 路后邻——cell 判定器：0x42fcb0 0x7e3890 0xc350 + cell+0x24 装载——batch 2280 a/b 路共用判定器，ranking 未登记）；0x58D070（batch 1736 已登记——[0xabed10] work 读）；0x58BB30（b 路后邻——[a8b230]+0x113c 区域表装载）。
+- **MISSING 兑现 2 枚**：0x58C6F0（batch 2279）+ 0x58B820（batch 2275 b 路）。
+- 未兑现 MISSING 旧观察：0x00486790（2267 起排队）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x578640 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0/0x58C6F0（batch 2276-2279 观察——0x58C6F0 本批已兑现）。
+- 本批 **无 MISSING**（连续五批三路全登记——batch 2276 起）。
