@@ -1,0 +1,71 @@
+# frontier batch 2245：28B 步长表查索引器孪生对 + MapClass 字段批量上报器（0x5BE990 / 0x5BE970 / 0x5BE6D0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5BE990 FUN_005be990 callees=0 deps=192 / 0x5BE970 FUN_005be970 callees=0 deps=192 / 0x5BE6D0 FUN_005be6d0 callees=5 deps=126）
+- 三路 disasm：`.qwen/tmp/_d2245a.txt`（0x5BE990 size 0x80）/ `_d2245b.txt`（0x5BE970 size 0x80）/ `_d2245c.txt`（0x5BE6D0 size 0x300）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5BE990 | 23B | ret 4 c20400 @0x5BE9A4 | 0x5BE9B0（batch 2244 c 路已登记——构造器·双层指针装载）| 0（callees=0 吻合——纯查表）|
+| 0x5BE970 | 23B | ret 4 c20400 @0x5BE984 | 0x5BE990（本批 a 路——孪生）| 0（callees=0 吻合——纯查表）|
+| 0x5BE6D0 | 613B（0x265）| ret 4 c20400 @0x5BE932 | 0x5BE940（未登记——全局槽释放器：[0xabf294] + 0x69e500 + 0x7c8b3d + 清标志 观察项）| 9 次/去重 4（0x6ac5e0 + 0x578350 CellIterator_Reset + 0x578290 CellIterator_Next + 0x5657e0——callees=5 差异含 [0x7e15f4] 间接 call ebp 按间接口径吻合）|
+
+## a 路 0x5BE990（23B）——28B 步长表查索引器
+
+```
+005be990  mov eax,[esp+4]（★索引）→ lea ecx,[eax*8] → sub ecx,eax（★×7）→ mov eax,[ecx*4+0x82d02c]（★★×7 再 ×4 = 28B 步长表查询）→ ret 4
+```
+**语义**：**28B 步长表查索引器（推断名）**——索引 i 经 lea [i×8]-i = i×7 → ×4 = **i×28 字节偏移**查 [0x82d02c] 表（7 元素结构体数组的第 0 dword）。**定长结构体数组按步长取首字段（零 call 纯查表）**。
+
+## b 路 0x5BE970（23B）——28B 步长表查索引器·孪生
+
+```
+005be970  mov eax,[esp+4] → lea ecx,[eax*8] → sub ecx,eax → mov eax,[ecx*4+0x82d028]（★表基址 0x82d028，比 a 路 0x82d02c 低 4B）→ ret 4
+```
+**语义**：**28B 步长表查索引器·孪生（推断名）**——与 a 路**逐字节同构**，仅表基址差 4B（0x82d028 vs 0x82d02c——**相邻表项/相邻结构体**）。**定长结构体数组孪生查询（相邻 28B 结构体族的两个字段）**。
+
+## c 路 0x5BE6D0（613B）——MapClass 字段批量上报器
+
+```
+005be6d0  sub esp,0x20 → push ebx/ebp/esi/edi → mov esi,[esp+0x30]（★第 4 参）→ mov edi,ecx（★this=MapClass）→ push esi → call 0x6ac5e0（★判空/初始化）→ test eax → jl 0x5be92b（失败出口）
+005be6eb  mov eax,[0xa8b230]（★全局对象）→ mov edx,[esi] → ★虚表槽 0x10 调用链（push 0/push 4/push [esp+0x1c] 指针/push esi → call [edx+0x10]——读 4B 字段）
+005be711  mov ecx,[esi] → push 0/push 0x556c（★常量大小 0x556c）/push edi/push esi → call [ecx+0x10]（★整对象上报）
+005be727  mov eax,[edi+0x6c] → mov ecx,[edi+0x68] → shl eax,2（★数组长度×4）→ push 0/push eax/push ecx/push esi → call [edx+0x10]（指针数组上报）
+005be742  ★循环 1：lea ebx,[edi+0x18] → mov eax,[edi+0x4c] → shl eax,1 → push 0/push eax/push [ebx]/push esi → call [edx+0x10] → inc ebp/add ebx,4/cmp ebp,0xd → jl（★13 项，[edi+0x18] 起 4B 步长）
+005be769  mov edx,[edi+0x60] → push 0/push 4/push 指针/push esi → call [eax+0x10]（单字段）
+005be787  ★循环 2：mov ecx,[edi+0x54] → mov eax,ebx → add eax,ecx → push 0/push 0x10（★16B）→ push 指针/push esi → call [ecx+0x10]（16B 结构数组逐项）
+005be7d8  ★CellIterator：call 0x578350（★MapClass::CellIterator_Reset——带符号名）→ call 0x578290（★MapClass::CellIterator_Next）→ ★循环：mov eax,[eax+0x24]（★cell+0x24）→ lea ecx,[esp+0x18] → call 0x5657e0（★判定）→ test al → je → inc [esp+0x34]（★计数）→ 循环
+005be818  再发：[esi] 虚表槽 0x10（push 0/push 4/push 指针/push esi）→ 返回 eax ge 0 → ★二次 CellIterator：mov ebp,[0x7e15f4]（★函数指针）→ mov ecx,[ebx+0x24] → call 0x5657e0 → test → je → push esi/push ebx → call ebp（★★间接调用函数指针）→ dec [esp+0x34]
+005be899  ★[edi+0x116c] 字段上报（push 0/push 4/push ptr/push esi → call [ecx+0x10]）→ ★循环 3：mov ecx,[edi+0x1160] → lea edx,[ecx+ebx*4] → push 0/push 4/push edx/push esi → call [eax+0x10]（[edi+0x1160] 数组逐项）
+005be8e1  ★[edi+0xe4] 字段上报 → ★循环 4：mov ecx,[edi+0xd8] → lea edx,[ecx+ebx*4] → push 0/push 4/push edx/push esi → call [eax+0x10]（[edi+0xd8] 数组逐项）
+005be929  xor eax → ret 4（成功出口）；0x5be92b cmp 失败统一出口
+```
+**语义**：**MapClass 字段批量上报器（推断名）**——① 0x6ac5e0 判空门控；② [esi] 虚表槽 0x10 批量调用（push 0/push size/push ptr/push this 四参惯用——读 4B 字段/0x556c 整对象/指针数组+0x68/+0x6c/单字段+0x60）；③ ★循环 1：[edi+0x18] 起 4B 步长 13 项（shl eax,1 长度×2）+ 循环 2：[edi+0x54] 16B 结构数组；④ ★★CellIterator（0x578350 Reset + 0x578290 Next——带符号名）遍历 + 0x5657e0 判定 + 计数 + [0x7e15f4] 函数指针间接调用（命中时 call ebp）；⑤ [edi+0x116c]/[edi+0x1160]/[edi+0xe4]/[edi+0xd8] 多数组逐项上报。**MapClass 序列化/上报主循环（虚表槽 0x10 批量读 + CellIterator 全图遍历 + 四数组逐项——batch 2232 绘制提交器同族）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call **0 个**（callees=0 吻合——纯查表）。
+- b 路：跨函数直接 call **0 个**（callees=0 吻合——纯查表）。
+- c 路：跨函数直接 call 9 次/去重 4 个（0x6ac5e0 + 0x578350 + 0x578290 + 0x5657e0）——**全部已登记**（picker callees=5 差异 = [0x7e15f4] 间接 call ebp 按含间接口径记录吻合）。
+- ★核验脚本（norm() 规范化版）输出：**三路全 PASS，无 MISSING、无 UNKNOWN**。
+
+## 原版怪癖（照抄）
+
+1. a/b 路 ★★lea [eax*8]-eax = eax×7 → ×4 = **28B 步长数组索引**（7 元素结构体）+ 孪生表基址差 4B（0x82d028/0x82d02c 相邻结构体字段）；
+2. c 路 ★虚表槽 0x10 四参调用惯用（push 0/push size/push ptr/push this）+ 常量大小 0x556c（整对象上报）+ shl eax,2/shl eax,1 长度换算；
+3. c 路 ★★CellIterator 三连（Reset 0x578350 + Next 0x578290 双带符号名 + 0x5657e0 判定）+ [0x7e15f4] 函数指针间接调用（**判定命中 call ebp**）+ dec [esp+0x34] 计数修正；
+4. c 路 ★[edi+0x116c]/[edi+0x1160]/[edi+0xe4]/[edi+0xd8] 多数组逐项上报（lea edx,[ecx+ebx*4]）+ 循环计数（cmp ebx,[esp+0x34]/jl）。
+
+## 跨批次连接
+
+- ★★batch 2232（0x5D2260 批量绘制提交器——c 路虚表槽 0x10 批量调用同族）+ batch 2244（构造器·双层指针装载——a 路后邻 0x5BE9B0 已登记）。
+- ★★CellIterator 0x578350/0x578290（Qwen.md/批次 2241 后邻 0x5C2640 同调用——c 路带符号名兑现）+ 0x5657e0（cell 判定——batch 2232 邻域）。
+- ★[0x7e15f4] 函数指针（c 路——batch 2232 IAT 邻接）/ [0xa8b230] 全局（batch 2217 区 [0xa8b238]==4 门控同脉络）。
+
+## 观察项 / 候选池
+
+- **后邻未登记（自然排队）**：0x5BE940（c 后邻——全局槽释放器：[0xabf294] + 0x69e500 + 0x7c8b3d + 清 [0xabf2dc] 标志 + [0xabf294]=0——batch 2228 全局族观察项）。
+- **新观察**：[0x82d028]/[0x82d02c] 相邻 28B 结构体表（a/b 路——**定长结构体数组族**）+ [0x7e15f4] 函数指针槽（c 路）+ [edi+0x116c]/[edi+0x1160]/[edi+0xd8]/[edi+0xe4] 多数组字段（c 路 MapClass 布局）。
+- 前向：picker 队列继续 0x5B/0x5C 区（0x5BE940 释放器 + 0x5B77E0 deps=4048 大宿主）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
