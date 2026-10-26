@@ -1,0 +1,71 @@
+# frontier batch 2149：VectorClass 孪生构造器对 + 0x63 区大函数记录遍历器（0x63E1D0 / 0x63DEC0 / 0x63CAE0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x63E1D0 FUN_0063e1d0 callees=1 deps=175 / 0x63DEC0 FUN_0063dec0 callees=1 deps=175 / 0x63CAE0 FUN_0063cae0 callees=19 deps=169）
+- 三路 disasm：`.qwen/tmp/_d2149a.txt`（0x63E1D0 size 0x80）/ `_d2149b.txt`（0x63DEC0 size 0x80）/ `_d2149c.txt`（0x63CAE0 size 0x420，分段全读）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x63E1D0 | 93B（0x5D）| ret 8 @0x63E22A | 0x63E230（push ebx/push ebp/mov ebp,[esp+0xc] 大函数头，未登记）| 1（0x7C8E17，已登记）|
+| 0x63DEC0 | 93B（0x5D）| ret 8 @0x63DF1A | 0x63DF20（push ebx/push ebp/mov ebp,[esp+0xc] 大函数头，未登记）| 1（0x7C8E17，已登记）|
+| 0x63CAE0 | 852B（0x354）| ret @0x63CE2C | 0x63CE40（sub esp,0x44/push 族 大函数头，未登记）| 19（16 已登记 + 3 MISSING 观察项）|
+
+三函数为 **VectorClass 孪生构造器对 + 0x63 区大函数（111B 记录遍历/绘制族）**：
+
+## a 路 0x63E1D0（93B）——VectorClass 构造器（虚表 0x7eff24→0x7efec4）
+
+```
+0063e1d0  mov eax,[esp+4]（容量参数）→ push esi → mov esi,ecx → test eax,eax → mov [esi+4],0（指针清零）→ mov [esi+8],eax（容量）→ byte [esi+0xc]=1 → byte [esi+0xd]=0（owns=0）→ mov [esi],0x7eff24（★虚表一写）→ je 0x63e213
+0063e1f3  mov ecx,[esp+0xc]（外部数组指针参数 2）→ test → je 0x63e200 → mov [esi+4],ecx（用外部数组）→ jmp 0x63e213
+0063e200  shl eax,2（容量×4）→ push eax → ★call 0x7c8e17（operator new）→ add esp,4 → mov [esi+4],eax（自建数组）→ byte [esi+0xd]=1（owns=1）
+0063e213  mov [esi],0x7efec4（★虚表二写——最终虚表）→ mov [esi+0x14],0xa → mov [esi+0x10],0（计数 0）→ mov eax,esi → pop esi → ret 8
+```
+**语义**：**VectorClass 构造器·变体 A（推断名）**——容量参数 + 可选外部数组指针（参数 2）：外部数组非空则借用（owns=0），否则 new 容量×4 字节自建（owns=1）；虚表双写（0x7eff24 中间态 → 0x7efec4 终态）、[esi+0xc]=1（激活标志）、[esi+0x14]=0xa（扩容步长）、[esi+0x10]=0（计数）。**VectorClass 双参构造器（batch 2148 三字段布局 + 扩容步长 [esi+0x14]）**。
+
+## b 路 0x63DEC0（93B）——VectorClass 构造器（虚表 0x7eff04→0x7efee4）
+
+```
+0063dec0  mov eax,[esp+4]（容量参数）→ push esi → mov esi,ecx → test eax,eax → mov [esi+4],0 → mov [esi+8],eax → byte [esi+0xc]=1 → byte [esi+0xd]=0 → mov [esi],0x7eff04（★虚表一写）→ je 0x63df03
+0063dee3  mov ecx,[esp+0xc]（外部数组指针参数 2）→ test → je 0x63def0 → mov [esi+4],ecx → jmp 0x63df03
+0063def0  shl eax,2 → push eax → ★call 0x7c8e17（operator new）→ add esp,4 → mov [esi+4],eax → byte [esi+0xd]=1
+0063df03  mov [esi],0x7efee4（★虚表二写——最终虚表）→ mov [esi+0x14],0xa → mov [esi+0x10],0 → mov eax,esi → pop esi → ret 8
+```
+**语义**：**VectorClass 构造器·变体 B（推断名）**——与 a 路**逐字节同构**（同一构造器模板），仅虚表常量不同（0x7eff04 → 0x7efee4）。**孪生构造器（a/b 两虚表族各自实例化）**。
+
+## c 路 0x63CAE0（852B 大函数）——记录遍历器（111B 记录 + 坐标计算 + 双循环提交）
+
+```
+0063cae0  sub esp,0xd8 → lea eax,[esp+0x38] → push eax → ★call 0x6343c0 → 读三元组 → lea ecx,[esp+0x28] → lea edx,[esp+0x14] → ★call 0x6339e0 → 读三元组 → or ebx,-1 → [esp+0x10]=-1（哨兵）→ [ebp+0x10] 计数判定 → jle 0x63cb74
+0063cb32  mov eax,[ebp+4] → mov ecx,0x1b → lea edi,[esp+0x78] → mov edx,[eax] → mov esi,[edx+4] → ★rep movsd 0x1b（27×4=108B）+ movsw（2B）+ movsb（1B）→ ★111B 记录复制 → movsx eax,byte [esp+0x84] → cmp eax,0xb → je 0x63cb55 → ★call 0x731ce0（类型 0xb 分支）→ cmp 0x1d → je → ★call 0x731cd0（类型 0x1d 分支）→ 默认 [esp+0x10]=-1
+0063cb74  push 0 → mov ecx,ebp → ★call 0x6342d0 → mov ecx,eax → ★call 0x63d0f0 → [esp+0x38]=eax → [ebp+0x30] 循环（0x63cba3-0x63cd0d）：push esi → ★call 0x635a40 → [esp+0x48]=eax → mov eax,[ebp+0x24] → mov ecx,[eax+esi*4] → lea edx,[esp+0x6c] → push edx → ★call 0x633b90 → 读三元组 → push 双 → mov ecx,[0x887324] → ★call 0x6d2140（坐标换算——batch 2144 c 路同款）→ 加 [0x886fa0]/[0x886fa4] 偏移 → push -1×3 → lea ecx,[esp+0x58] → ★call 0x41c230（坐标构造）→ 三元组比较（[esp+0x14]vs[esp+0x4c] 等——相同才继续）→ [ebp+0x24] 查表 → [ebp+0x10] 循环内联找（cmp [edi+8],esi → je 0x63ce2d）→ rep movsd 0x1b 111B 再复制 → ★call 0x63ca80 → 读三元组 → ★call 0x6339e0 → ★call 0x63d810（esi=0/1 双次）→ [esp+0x10]!=-1 时 ★call 0x63d630（附加提交）→ 循环递增
+0063cd16  [ebp+0xa8] 计数判定 + [ebp+0xb0]==-1 检查 → ★call 0x635c10 → lea ebx,[ebp+0x38] → ★call 0x633b90 → 读三元组 → push 双 → [0x887324] → ★call 0x6d2140 → 加偏移 → push -1×3 → ★call 0x41c230 → 三元组比较 → ★call 0x634770 → ★call 0x63d210 → ★call 0x63d960（ecx=4）→ [esp+0x10]!=-1 时 ★call 0x63d630
+0063ce13  收尾：★call 0x635830 → push eax → ★call 0x635490 → pop 族 → add esp,0xd8 → ret
+```
+**语义**：**记录遍历器（推断名）**——0x63 区大函数：① 0x6343c0/0x6339e0 取双三元组（记录对象）；② [ebp+0x10] 计数循环：0x635a40 按索引取项 → 0x633b90 取项记录 → [0x887324]+0x6d2140 坐标换算 + [0x886fa0]/[0x886fa4] 偏移 + 0x41c230 坐标构造 → 三元组比较判重 → rep movsd 0x1b（**111B 记录复制**——与 QWEN.md 跨批连接 ⑤「111B 记录注册块」同款）→ 0x63ca80 解析 → 0x63d810 双次提交（esi=0/1）→ 0x63d630 附加提交；③ [ebp+0xa8] 二段：0x635c10 → 0x63d960（ecx=4）提交；④ 收尾 0x635830/0x635490。**111B 记录遍历/提交器（0x63 区，与 [0x8b4204]/[0xa70204] 记录表族同源推断）**。
+
+## 原版怪癖（照抄）
+
+1. a/b 路虚表双写（0x7eff24/0x7eff04 中间态 → 0x7efec4/0x7efee4 终态——构造器两段式虚表初始化）；
+2. a/b 路外部数组借用 vs new 自建双路径（owns=0 借用 / owns=1 自建 + shl eax,2 容量×4）；
+3. a/b 路 [esi+0xc]=1（激活标志）+ [esi+0x14]=0xa（扩容步长）+ [esi+0x10]=0（计数初值）；
+4. c 路 rep movsd 0x1b + movsw + movsb（**111B 记录复制**——27×4+2+1 精确长度，与 QWEN.md 跨批连接 ⑤ 同款）；
+5. c 路类型分支（byte [esp+0x84] == 0xb → 0x731ce0 / == 0x1d → 0x731cd0 / 默认 -1 哨兵）；
+6. c 路三元组比较判重（[esp+0x14]vs[esp+0x4c]/[esp+0x18]vs[esp+0x50]/[esp+0x1c]vs[esp+0x54]——相同才继续提交）；
+7. c 路 [esp+0x10] 哨兵 -1 判定（!= -1 才走 0x63d630 附加提交）；
+8. c 路双循环（[ebp+0x30] 主循环 + [ebp+0xa8] 二段循环）。
+
+## 跨批次连接
+
+- ★★★batch 2148（容器三字段布局 [ecx+0x10] 计数/[ecx+4] 指针/[ecx+0xd] owns——a/b 构造器是 batch 2148 删除器/清理器的构造端）。
+- ★★★QWEN.md 跨批连接 ⑤（111B 记录注册块 rep movsd 0x1b+movsw+movsb → [0x8b4204]/[0xa70204]/&0x3fff——c 路 111B 记录复制同款）。
+- ★★batch 2144 c 路（[0x887324]+0x6d2140 坐标换算同款）；★batch 2118-2122（0x41c230 坐标构造）。
+- ★0x6343c0/0x6339e0/0x6342d0/0x63d0f0/0x633b90/0x6d2140/0x41c230/0x731ce0/0x731cd0/0x7c8e17/0x63ca80/0x63d810/0x63d630/0x635c10/0x63d210/0x63d960/0x635830（全部已登记）。
+
+## 观察项 / 候选池
+
+- **MISSING 观察项（3 个）**：★0x635490（FUN_00635490，rank:3212，202B）、0x635A40（FUN_00635a40，rank:3213，462B）、0x635C10（FUN_00635c10，rank:3214，401B）——ranking 均有行未登记，caller 恰为本批 c 路本尊 0x63CAE0（0x63 区内部族自然排队）。
+- **后邻未登记**：0x63E230（a 路后邻大函数）、0x63DF20（b 路后邻大函数）、0x63CE40（c 路后邻大函数——sub esp,0x44/0x635830 开头）。
+- **新观察**：[0x7efec4]/[0x7efee4]/[0x7eff24]/[0x7eff04]（a/b 虚表四常量——0x7e 区）；111B 记录布局（0x1b rep movsd 长度）；0x731ce0/0x731cd0（类型 0xb/0x1d 分支处理器）。
+- 前向：picker 队列继续 0x63 区 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650。
