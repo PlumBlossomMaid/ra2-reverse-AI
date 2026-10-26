@@ -1,0 +1,96 @@
+# frontier batch 2303：巨型 cell 地图重建设备 + PhobosHook_MapClass_InitCells + 容器构造器（0x565C10 / 0x565BC0 / 0x565AA0）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x565C10 FUN_00565c10 callees=17 deps=1 / 0x565BC0 PhobosHook_MapClass_InitCells callees=1 deps=2007 / 0x565AA0 FUN_00565aa0 callees=1 deps=2006）
+- 三路 disasm：`.qwen/tmp/_d2303a.txt`（0x565C10 size 0x1600）/ `_d2303b.txt`（0x565BC0 size 0x90）/ `_d2303c.txt`（0x565AA0 size 0xB0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x565C10 | 5374B（0x14FE）| ret 0x10 @0x56710B | 0x567110（未登记——收尾器：0x7c8b3d×2 析构+0x7c8e17×2 分配+0x42ac00+0x568bb0+0x56d6e0+0x56c510）| 37 次/去重 17（★★1 MISSING：0x50d250——其余 16 全已登记，picker callees=17 吻合）|
+| 0x565BC0 | 67B（0x43）| ret c3 @0x565C02 | 0x565C10（★本批 a 路）| 1 次/去重 1（0x47bbf0——已登记，picker callees=1 吻合）|
+| 0x565AA0 | 94B（0x5E）| ret c3 @0x565AFD | 0x565B00（未登记——cell 表遍历清 0x2c/0x30 器）| 0 次/去重 0（虚表槽 8 间接调用——picker callees=1 为间接差额）|
+
+## a 路 0x565C10（5374B）——巨型 cell 地图重建设备
+
+```
+00565c10  mov ebx, ecx（this）→ [0x87f8e0] 尺寸 → ★★[0xa8e370] 对象循环（[0xa8e364] 表 + ★虚表槽 0x124 调用）
+00565c6b  ★★[ebx+0x140] 项循环（edi∈[0, 计数)）：★★and 0x800001ff 符号钳位（jns/dec/or 0xfffffe00/inc——±255 量化）+ cdq/and 0x1ff/add/sar 9（★除法缩比 512）→ ★★[ebx+0x13c] 表 + cell+0x11b 字节写
+00565ce5  [esp+0x68] 参门控（test al jne 0x5662ac）→ ★★0x7c8e17 分配（[0xf4]×[0xf8]×40B/项 = imul×5×8）→ ★★CellIterator 初始化（[0x10c]=1/[0x110]=[0xf4]/[0x114]=[0xf4]-1/[0x118]=[0xf4]<<11+[0x13c]+4）
+00565d4c  ★★0x578290 遍历 + ★0x588c10 五字段拷贝 → ★★cell 全字段备份（0x18 次 word 拷贝双段 [0x54-0x7a]/[0xac-0xc2] + dword/word/byte 逐字段 0x24-0x140 + ★★cell+0x12c/0x140 逐位异或 merge ×30 位——★位域归并而非直拷）
+0056628e  CellIterator 推进（0x148B/项步长）→ 循环结束
+005662ac  ★★[0xabd480] 坐标四 dword 拷贝 → [ebx+0xec] → [0x87f8dc]/[0x87f8e0] 尺寸 → ★★[0xabed04]/[0xabed08] 菱形边界写 + [0x880c74]=2 + [ebx+0x124]/[0x128]=1 → ★★边界钳位（[0x12c]/[0x130]=[参8]+[参c]-1 + 2 扩展）
+00566342  ★★双重循环 cell 分配（[0x13c] 表层）：[ecx+edi*4]==0 → push 0x148 → ★0x7c8e17 → ★0x47bbf0 构造 → ★0x485240（★已登记 cell 初始化）→ mov [0x13c] 表 → ★★cell+0x11b 字节写 / 已存在 → 0x47bbf0 转换 + 0x485240
+0056646d  二次 CellIterator 初始化 → ★★cell 还原（0x588c10 + 全字段还原拷贝同备份模板）→ 0x485240
+005666ab  三次 CellIterator 初始化 → ★★CellIterator 新格分配（[0x13c] 表层 + 虚表槽 0x20 清 + 0x7c8e17 0x148 + 0x47bbf0 + 0x485240 + ★★cell+0x38=0xffff/cell+0x11a=0/cell+0x11c=0/cell+0x44=-1/cell+0x11b 写——新格初始化五字段）
+00566c30  ★★[0xa8b230] 区域表族循环（esi∈[0,0x2be)）：★0x68bd80 → test → ★0x68bcc0 → ★0x42d510 邻域表 → ★0x68bf50（★★区域表四连——batch 2281 同族）
+00566c80  ★★[0x8b4148]/[0x8b413c] 对象族循环：★0x588c40 坐标对加法器 ×2（+0x24/+0x28 字段）
+00566cb8  ★★0x41c230 ×3（坐标边界装载/转换——[esp+0x2c]/[0x48] 两组）→ ★★[0xa8e370] 对象循环：虚表槽 0x2c 类型判 4 → +0x9c 边界 + 0x41c230 + ★虚表槽 0x1b4
+00566dc5  ★★[0xa80238]/[0xa8022c] house 族循环（esi 倒序）：★0x50d250（★★MISSING——house 表对象处理）
+00566de7  ★★[0xa8e9b8]/[0xa8e9ac] 循环：+0xcc 门控 → +0x9c 边界 + 0x41c230 + 虚表槽 0x1b4
+00566e54  ★★[0xa8e7ac] 计数 +1 → [0xa8e364] 对象循环：虚表槽 0x2c 类型判 0x18 → [0xac]+[0x2b4]==1 判 → ★虚表槽 0x1b8/0x108 → ★★边界判定四元（[0xf4]/[0xf8] 尺寸族）→ ★虚表槽 0xd4
+00566f5a  ★★[ebx+0x140] 循环：钳位量化 + ★★cell 清理（mov [0x13c] 表项, 0 + 虚表槽 0x20）——菱形外 cell 清理
+00567001  四次 CellIterator 初始化 → ★★cell+0x140 bit7 门控 + cell+0x2c 判 → ★★cell+0x44 判 0x18/0x19 → 0x47e470/0x47e040 样式写（not/shr/and 位运算）
+00567088  [esp+0x70] 参门控 → ★0x567110 收尾器 → ★★[0xa8e370] 循环（虚表槽 0x124）→ ★0x4f42f0 ×2 → 0x47bbf0 哑元 + 0x7c8b3d → ret 0x10
+```
+
+**语义**：**巨型 cell 地图重建设备（推断名）**——★★5374B 全图重建巨型宿主（ret 0x10 4 参）：★★[0xa8e370] 对象族循环（虚表槽 0x124）+ ★★[ebx+0x140] 项循环（and 0x800001ff 钳位 + cdq/sar 9 量化——★除法缩比 512）+ ★★0x7c8e17 全图分配（[0xf4]×[0xf8]×40B）+ ★★CellIterator 五轮遍历 + **cell 全字段备份/还原（0x18 次 word 拷贝双段 + 逐字段 + ★★cell+0x12c/0x140 逐位异或归并 ×30 位）** + ★★菱形边界写（[0xabed04]/[0xabed08]）+ ★★cell 分配/清理（0x7c8e17+0x47bbf0+0x485240 + 新格五字段初始化）→ ★★区域表四连（0x68bd80/0x68bcc0/0x42d510/0x68bf50——batch 2281 同族）+ ★★对象族三表循环（[0x8b413c]/[0xa8e364]/[0xa8e9ac] + 0x41c230 ×3 + 虚表槽 0x1b4/0x1b8/0x108/0xd4）→ ★★house 族循环（[0xa8022c] + ★0x50d250 MISSING）→ ★★cell+0x44 判 0x18/0x19 样式写（0x47e470/0x47e040）→ ★0x567110 收尾器 + 0x4f42f0 → ret 0x10。**MapClass 地图全量重建设备（cell 备份还原 + 菱形边界 + 区域表 + 对象族三表——★★全图状态机**）**。
+
+## b 路 0x565BC0（67B）——PhobosHook_MapClass_InitCells
+
+```
+00565bc0  mov ebp, ecx（this）→ xor edi/esi → mov [ebp+0x134], 0（★字段清 0）→ mov ebx, 0x200（★512 项上限）
+00565bd5  ★★循环（edi∈[0, min(计数, 0x200))）：[ebp+0x13c] 表 [eax+esi] → test → je 0x565bef → ★0x47bbf0（★哑元清理器）→ add esi, 4 → inc edi → dec ebx → jne
+00565bf6  ★★外层（0x200 步进 512 项）：cmp edi, 0x40000 → jl 0x565bd0（★0x40000 = 512×512 全图上限）
+00565bfe  ret c3
+```
+
+**语义**：**PhobosHook_MapClass_InitCells（★带符号名——Phobos hook）**——★★[ebp+0x134] 字段清 0 + ★★0x200（512）项 × 0x40000（512²）上限双重循环（[ebp+0x13c] cell 表 4B 步进）→ ★0x47bbf0 清理器逐项调用 → ret c3。**Phobos 注入的 cell 初始化 hook（最小清理循环——★★带符号名实锤 Phobos 修改点**）**。
+
+## c 路 0x565AA0（94B）——容器构造器
+
+```
+00565aa0  mov esi, ecx（this）→ lea ecx, [esi+0x138] → test ecx → je 0x565ac9
+00565aad  ★★[ecx+4]=0/[ecx+8]=0/[ecx+0xc]=1/[ecx+0xd]=0 → mov [ecx], 0x7ed480（★★虚表 0x7ed480 写入——VectorClass 族）
+00565ac9  mov edx, [esi+0x154]（★项数）→ mov eax, [ecx] → push 0 → push edx → ★虚表槽 8 调用（★装载）
+00565ad7  mov ecx, [esi+0x154] → xor eax → jle 0x565afc → ★★[esi+0x13c] 表循环（[ecx+eax*4-4]=0——★全项清 0）
+00565afc  ret c3
+```
+
+**语义**：**容器构造器（推断名）**——★★[esi+0x138] 容器四字段初始化（[+4]=0/[+8]=0/[+0xc]=1/[+0xd]=0 + ★虚表 0x7ed480——★VectorClass 家族虚表）→ ★虚表槽 8 装载（[esi+0x154] 项数）→ ★★[esi+0x13c] 表全项清 0 → ret c3。**cell 容器构造器（0x7ed480 虚表 + 装载 + 清零——★batch 2283/2284 VectorClass 虚表族对照**）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 37 个/去重 17——**16 已登记 + 1 MISSING（★0x50d250——[0xa8022c] house 族表对象处理，a 路 0x566DDF 调用，记观察排队）**（picker callees=17 吻合）。
+- b 路：跨函数直接 call 1 个/去重 1（0x47bbf0）——**全部已登记**（picker callees=1 吻合）。
+- c 路：跨函数直接 call 0 个/去重 0（虚表槽 8 属间接调用不计——picker callees=1 为虚表槽间接差额）——**已登记无 MISSING**。
+- ★★核验脚本输出：三路 1 真 MISSING（0x50d250 观察排队），**无批内自引用**。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★and 0x800001ff 符号钳位（jns/dec/or 0xfffffe00/inc——±255 量化四连——★batch 2301 c 路 0x8000007f 同族宽量）;
+2. a 路 ★★cdq/and 0x1ff/add/sar 9（★除法缩比 512——新缩比常量现场）;
+3. a 路 ★★cell+0x12c/0x140 逐位异或归并（★位域 merge 非直拷——30 位循环 and/xor 模板）;
+4. a 路 ★★0x7c8e17 分配 40B/项（imul×5×8 = [0xf4]×[0xf8]×40）;
+5. a 路 ★★cell 新格五字段初始化（cell+0x38=0xffff/cell+0x11a=0/cell+0x11c=0/cell+0x44=-1/cell+0x11b 写——★batch 2296-2302 收尾同款字段族）;
+6. a 路 ★★[0xabed04]/[0xabed08] 菱形边界写（★[0x87f8dc]/[0x87f8e0] 尺寸 + [0x88dc74]=2）;
+7. a 路 ★★区域表四连（0x68bd80/0x68bcc0/0x42d510/0x68bf50——★batch 2281 同族）;
+8. a 路 ★★对象族三表循环（[0x8b413c]/[0xa8e364]/[0xa8e9ac] + 0x41c230 ×3 + 虚表槽 0x1b4/0x1b8/0x108/0xd4——★★0x1b4 新槽）;
+9. a 路 ★★house 族循环倒序（[0xa80238] 计数-1 递减——★0x50d250 MISSING）;
+10. a 路 ★★cell+0x44 判 0x18/0x19（je 分支 → 0x47e040 else 0x47e470——★样式族 0x18/0x19）;
+11. b 路 ★★0x200×0x40000 双重上限（512 项 × 512² 全图——★★Phobos hook 上限）;
+12. c 路 ★★[esi+0x138] 容器四字段（[+4]=0/[+8]=0/[+0xc]=1/[+0xd]=0）+ 虚表 0x7ed480（★VectorClass 族新虚表）。
+
+## 跨批次连接
+
+- ★★★batch 2281（0x58B820 区域表构建器——a 路区域表四连同族）+ batch 2273 a 路（0x599650 CellIterator 全图六字段初始化——a 路五轮遍历同模板）。
+- ★★batch 2283/2284（VectorClass 虚表族——c 路 0x7ed480 对照）+ batch 2296/2298（cell 五字段收尾族——a 路新格初始化同款）。
+- ★★batch 2274-2302（[0x87f924]/[0x13c] 查格回落哑元 0xabdc50——a 路多处同款）+ batch 2287/2288（cell+0x12c/0x140 位域——a 路逐位归并同源）。
+- ★★batch 2299（[0xabd480]/[0xabd482] 坐标表——a 路坐标拷贝同源）+ QWEN.md 寻路（0x56c510 — a 路收尾器同链）。
+
+## 观察项 / 候选池
+
+- **新观察**：★0x50D250（a 路 MISSING——house 族表对象处理，ranking 有行未登记）；0x567110（a 路收尾器——0x7c8b3d×2+0x7c8e17×2+0x42ac00+0x568bb0+0x56d6e0+0x56c510）；0x565B00（c 路后邻——cell 表遍历清 0x2c/0x30 器）；0x568BB0/0x56D6E0（a 路收尾器 callee 新观察）；[0xa8e9ac]/[0xa8e9b8]/[0xa8e7ac]（a 路对象族表）；[0x880c74]（a 路模式写）。
+- 未兑现 MISSING 旧观察：0x00486790（2267 起排队）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430（batch 2280-2302 新观察）。
+- 本批 **真 MISSING 1 个（0x50D250 观察排队）**（TSV 5392）。next 批预期 top3 = 0x5659F0（170B callees=5）/ 0x565800（493B callees=4）/ 0x565660（107B callees=0）。
