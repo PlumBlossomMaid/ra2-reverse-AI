@@ -1,0 +1,61 @@
+# frontier batch 2178：0x62 区记录组三连（记录组构造器 + 记录组查找器 + 记录持有释放器）（0x6284A0 / 0x628170 / 0x627F00）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x6284A0 FUN_006284a0 callees=2 deps=49 / 0x628170 FUN_00628170 callees=1 deps=136 / 0x627F00 FUN_00627f00 callees=1 deps=456）
+- 三路 disasm：`.qwen/tmp/_d2178a.txt`（0x6284A0 size 0x140）/ `_d2178b.txt`（0x628170 size 0xA0）/ `_d2178c.txt`（0x627F00 size 0x80）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x6284A0 | 247B（0xF7）| ret 8 双出口 @0x62858C/0x628595 | 0x6285A0（push ebx/ebp/esi/edi + [esi+0x10] 计数遍历 + 0x5175d0——同族查找器，未登记）| 2（全已登记）|
+| 0x628170 | 127B（0x7F）| ret 4 双出口 @0x6281E4/0x6281ED | 0x6281F0（push ebx/ebp + [ebp+8] vs [edi+8] 比较 + 0x4f4ca0——同族，未登记）| 1（全已登记）|
+| 0x627F00 | 39B（0x27）| ret c3 @0x627F26 | 0x627F30（byte[ecx+0xc] 判定 + 数组线性查找——同族 getter，未登记）| 1（全已登记）|
+
+三函数为 **0x62 区记录组族**——3 字节/项记录（word+byte）+ [+0x10c] 0x104 步长 + 0x4f4cxx 构造/查找 + 虚表槽 0xc/0x10 + 0x7c8e17 new + 0x7c8b3d delete：
+
+## a 路 0x6284A0（247B）——记录组构造器（Reserve/Clear + 复制）
+
+```
+006284a0  push ebx/ebp/esi/edi → mov ebp,[esp+0xc]（栈参1=计数 N）→ mov esi,ecx → cmp ebp,0 → je 0x628572（虚表槽 0xc 收尾 + 计数收尾 + 返 1）→ mov edi,[esp+0x18]（栈参2=外部缓冲/源）→ byte[esi+0xc]=0 → cmp edi,0 → ★空：new 3N（lea eax,[ebp+ebp*2] → ★call 0x7c8e17）→ 3 字节清零循环（mov byte [ecx-2]/[ecx-1]/[ecx] ×N）→ [esi+4]=edi / 非空：3 字节清零循环（外部缓冲直接清）→ byte[esi+0xc]=1 → cmp [esi+4],0 → 旧数组非空 → 复制旧→新：word + byte 三字节搬运循环（mov bp,word[edx] + mov dl,byte[edx+2] → 写 [ebx]）→ cmp byte[esi+0xd] owns → ★call 0x7c8b3d（delete 旧）→ [esi+4]=edi（新）→ [esi+8]=ebp（容量）→ byte[esi+0xd]=参2==0（owns=外部缓冲?0:1）→ 虚表槽 0xc 收尾 → [esi+0x10]=min([esi+8],[esi+0x10])（计数收尾）→ ret 8 返 1
+```
+**语义**：**记录组构造器（推断名）**——① 栈参2 非空（外部缓冲）→ 3 字节清零循环 + 不设 owns；空 → new 3×N（0x7c8e17）+ 清零 + owns=1；② ★旧数组非空时 3 字节复制（word 跟随 + byte 尾随——3 字节记录搬运惯用）→ delete 旧（0x7c8b3d）；③ byte[+0xc]/[+0xd] 标志 + [+0x10] 计数收尾（min 容量）。**记录组 Reserve/Clear + 复制（3 字节/项记录族——batch 2153-2165 3 字节记录族同源）**。
+
+## b 路 0x628170（127B）——记录组查找器
+
+```
+00628170  push ebx/ebp/esi/edi → mov esi,[esp+0x10]（栈参1=目标组）→ mov ebx,ecx → byte[esi+8] 判定（完成标志）→ jne 返 0 → eax=[esi]（外层索引）→ cmp [ebx+8]（容量）→ jge 置 byte[esi+8]=1 返 0 → 循环：eax=[esi] → edx=[ebx]（数组表）→ lea ecx,[eax+eax*2]（×3）→ lea edi,[edx+ecx*8]（★表项 = 记录组表 [ebx] 的 eax×3×8 项 = 0x18B 步长）→ cmp [esi+4]（内层索引）vs [edi+0x10]（表项计数）→ 外循环：内层循环：edx=[edi+4]（表项数组）→ ecx=内层索引 → shl 6 + add + shl 2（×0x104 步长）→ eax++ → lea ebp,[edx+ecx*4]（★0x104 步长尾项定位——batch 2177 c 路同款）→ ★call 0x4f4ca0（构造/查找）→ al 判定 → 成功返 ebp（记录指针）/ 失败外层 [esi]++ 推进 → 内层 [esi+4]=0 重置 → 循环 → ret 4
+```
+**语义**：**记录组查找器（推断名）**——① 双层遍历（[esi] 外层表索引 × [esi+4] 内层记录索引）；② ★表项 0x18B 步长（[ebx] 表 eax×3×8）+ 内层 0x104 步长（[ebp+4] 记录数组——batch 2177 c 路同款步长族）；③ 0x4f4ca0（查找族）→ 命中返记录指针 / 未命中推进重置（内层清 0 外层 +1）→ byte[esi+8] 完成标志。**记录组双层查找器（0x104 步长记录族 + 0x4f4cxx 查找族）**。
+
+## c 路 0x627F00（39B）——记录持有释放器
+
+```
+00627f00  push ebx/esi → mov esi,ecx → eax=[esi+4]（持有）→ cmp 0 → je → byte[esi+0xd]（owns）→ je → push eax → ★call 0x7c8b3d（delete）→ [esi+4]=0 → byte[esi+0xd]=0（清 owns）→ [esi+8]=0（清容量）→ ret c3
+```
+**语义**：**记录持有释放器（推断名）**——双门控 delete（[+4] 非空 && [+0xd] owns）→ 成对复位（own 清 0 + 容量清 0）。**batch 2176-2177 记录容器释放端（batch 1285 0x63E140 持有释放器同构——满 3 处登记）**。
+
+## callee 核验
+
+- a 路：2 个直接 call 全已登记（new 0x7c8e17、delete 0x7c8b3d）。
+- b 路：1 个直接 call 全已登记（0x4f4ca0——batch 2178 前已登记记录查找族）。
+- c 路：1 个直接 call 全已登记（delete 0x7c8b3d——batch 001 CRT）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★3 字节记录搬运（mov word 跟随 + mov byte 尾随——mov bp,word[edx] + mov dl,byte[edx+2] 三字节惯用）；
+2. a 路 ★owns 判定 （byte[+0xd]=参2==0——sete 生成——外部缓冲传入则不 owns）；
+3. b 路 ★表项 0x18B 步长（lea ecx,[eax+eax*2] ×3 + ×8 = 24B/项）+ 内层 0x104 步长（shl 6 + add + shl 2 = ×260——batch 2177 同款）；
+4. b/c 路 完成标志 byte[+8]（b 路成功后置 1——遍历终止标志）。
+
+## 跨批次连接
+
+- ★★batch 2177（0x104 步长记录族——b 路内层定位同款 [ebp+4] shl 6+add+shl 2）；batch 1285（0x63E140 持有释放器——c 路同构第 3 处登记）；batch 467（0x63E540 Add——a 路容量/owns 语义同源）。
+- ★0x4f4ca0（已登记——b 路查找族）；0x4f4c70/0x4f4cb0（batch 2177 MISSING 观察——同 0x4f4cxx 族仍在排队）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（a 2 个 + b 1 个 + c 1 个直接 call 全在 TSV）。
+- **后邻未登记**：0x6285A0（a 后邻——[esi+0x10] 计数遍历 + 0x5175d0 同族查找器）、0x6281F0（b 后邻——[ebp+8] vs [edi+8] 比较 + 0x4f4ca0 同族）、0x627F30（c 后邻——byte[ecx+0xc] 判定 + 数组线性查找 getter）。
+- **新观察**：0x4f4ca0（b 路查找族——0x4f4cxx 族第三成员已登记，0x70/0xB0 仍在排队）；3 字节记录族（a 路 word+byte 搬运——batch 2153-2165 同源）。
+- 前向：picker 队列继续 0x62 区（0x6285A0/0x6281F0/0x627F30 + 0x627D80/0x627F00 后邻链）+ 0x4F4C70/0x4F4CB0（batch 2177 MISSING 观察）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650。
