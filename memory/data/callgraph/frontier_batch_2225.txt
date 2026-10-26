@@ -1,0 +1,72 @@
+# frontier batch 2225：0x5D 区槽位注册/检查族三连（槽位注册器 + 槽位注册器·变体2 + 槽位检查器）（0x5DB600 / 0x5DAF30 / 0x5DA6C0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5DB600 FUN_005db600 callees=1 deps=742 / 0x5DAF30 FUN_005daf30 callees=3 deps=742 / 0x5DA6C0 FUN_005da6c0 callees=3 deps=133）
+- 三路 disasm：`.qwen/tmp/_d2225a.txt`（0x5DB600 size 0x100）/ `_d2225b.txt`（0x5DAF30 size 0x100）/ `_d2225c.txt`（0x5DA6C0 size 0x100）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5DB600 | 72B（0x48）| ret c3 @0x5DB647 | 0x5DB650（= batch 2224 c 路已登记——槽位事件执行器互指）| 1（0x5410f0——callees=1 吻合）|
+| 0x5DAF30 | 152B（0x98）| ret c3 @0x5DAFC7 | 0x5DAFD0（未登记——jmp 0x5dafe0 thunk 观察项）| 3（0x5e8dc0 + 0x5410f0 + 0x48d080——callees=3 吻合）|
+| 0x5DA6C0 | 82B（0x52）| ret c3 @0x5DA711 | 0x5DA720（未登记——[0x887628] 虚表 0 析构器观察项）| 3（0x540a80 + 0x53eda0 + 0x542fc0——callees=3 吻合）|
+
+三函数为 0x5D 区槽位体系的**注册、检查**两端（batch 2211/2222/2223/2224 槽位族续）：
+
+## a 路 0x5DB600（72B）——槽位注册器
+
+```
+005db600  mov edx=ecx（this）→ push edi → mov ecx,0x71 → mov edi,0xa8d638（★槽位记录区）→ rep stosd 清 0x71 dword + stosw + stosb（★清 452B 槽位记录）
+005db613  add edx,0x28（★this+0x28 偏移）→ push 0/0/edx/1/0x1c7/0xa8d638（★六参）→ mov ecx,0xa8e9c0 → call 0x5410f0（★容器注册）
+005db62d  mov [0xa8d638],8 → mov [0xa8d667],4（★槽位记录初始化：类型码 8 + 标志 4）→ pop edi → ret
+```
+**语义**：**槽位注册器（推断名）**——① rep stosd 清空 [0xa8d638] 槽位记录区（0x71 dword + word + byte = 452B）；② 0x5410f0 容器注册（[0xa8e9c0] 容器 + this+0x28 + 0x1c7 事件码六参）；③ ★[0xa8d638]=8 类型码 + [0xa8d667]=4 标志初始化。**槽位记录注册端（记录区清零 + 容器入队 + 初值写）**。
+
+## b 路 0x5DAF30（152B）——槽位注册器·变体2
+
+```
+005daf30  sub esp,0x1c8 → push 双件套 → mov ecx,0x71 → rep stosd 清栈 + stosw + stosb → mov [esp+8],0x16（★16 长度）
+005daf4c  ★串拷贝：[0xa8b380]（repne scasb + shr 2 rep movsd + and 3 rep movsb）→ lea ecx,[esp+0x37] → call 0x5e8dc0（★名串构建——batch 2218 观察项）
+005daf7f  mov edi,[0xa8da84]（★对象计数）→ mov esi,1 → cmp edi,esi → jle 0x5dafbf
+005daf8e  ★循环：[0xa8da78+esi*4]（★对象）→ add edx,0x28 → push 0/0/edx/1/0x1c7/[esp+0x10] → call 0x5410f0（★容器注册）→ call 0x48d080（★提交）→ inc esi → jl
+005dafbf  pop 双件套 → add esp,0x1c8 → ret
+```
+**语义**：**槽位注册器·变体2（推断名）**——① 栈区清空 + [0xa8b380] 串拷贝 + [esp+8]=0x16；② 0x5e8dc0 名串构建；③ ★[0xa8da84] 计数循环（[0xa8da78] 对象数组逐项 +0x28 → 0x5410f0 注册 + 0x48d080 提交——batch 2224 c 路/2220 c 路同款模板）。**批量对象注册端（计数循环版）**。
+
+## c 路 0x5DA6C0（82B）——槽位检查器
+
+```
+005da6c0  sub esp,0xc → mov ecx,0xa8e9c0 → call 0x540a80（★容器查空）→ test → jne 0x5da6d7 → xor al,al → ret（★空返 false）
+005da6d7  cmp [0xa8b238],4（★模式门控）→ je 0x5da70c → mov eax,[0xa8d5fc] → test → je 0x5da70c
+005da6e9  ★双参读取：lea eax/ecx → push eax/ecx → mov ecx,0xa8d600 → call 0x53eda0（★值读取）→ lea edx → mov ecx,0xa8e9c0 → push edx → call 0x542fc0（★容器查询）→ 0x5da70c：mov al,1 → ret（true）
+```
+**语义**：**槽位检查器（推断名）**——① 0x540a80 容器判空（空返 false）；② [0xa8b238]==4 门控（==4 直返 true）；③ [0xa8d5fc] 门控 + 0x53eda0 双参读取 + 0x542fc0 容器查询。**槽位存在性检查端（容器判空 + 模式门控 + 条件查询）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 1 个（0x5410f0），**已登记**（callees=1 吻合）。
+- b 路：跨函数直接 call 3 个（0x5e8dc0 + 0x5410f0 + 0x48d080），**全部已登记**（callees=3 吻合）。
+- c 路：跨函数直接 call 3 个（0x540a80 + 0x53eda0 + 0x542fc0），**全部已登记**（callees=3 吻合）。
+- ★核验脚本（norm() 规范化版——batch 2214 修复模板）直接输出三路全 PASS。**MISSING：无**。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★rep stosd 0x71 dword + stosw + stosb 三段清空（452B 槽位记录区 [0xa8d638]——count 0x71 非整 dword 需补 word/byte）；
+2. a 路 ★0x5410f0 六参容器注册（[0xa8e9c0] + this+0x28 + 0x1c7 事件码——batch 2224 c 路同款模板）+ [0xa8d638]=8/[0xa8d667]=4 初值写；
+3. b 路 ★[0xa8b380] 串拷贝（repne scasb + shr 2 rep movsd + and 3 rep movsb）+ [esp+8]=0x16 长度字段 + 0x5e8dc0 名串构建；
+4. b 路 ★[0xa8da84] 计数循环（[0xa8da78] 对象数组逐项 +0x28 → 0x5410f0 + 0x48d080——batch 2220/2224 同款模板）；
+5. c 路 ★[0xa8b238]==4 模式门控（==4 直接 true 短路）+ [0xa8d5fc] 门控 + 0x53eda0 双参读取 + 0x542fc0 容器查询。
+
+## 跨批次连接
+
+- ★★batch 2224（0x5DB650 槽位事件执行器——a 路直接后邻互指 + 0x5410f0 同款注册模板）+ batch 2211（[0xa8b238]==4 门控——c 路）。
+- ★★batch 2220/2222（0x5410f0 容器注册 + 0x48d080 提交循环模板——b 路循环同款）+ batch 2218（0x5E8DC0 名串 dump 器观察项——b 路直调兑现邻域）。
+- ★batch 2223（[0xa8da78]/[0xa8da84] 对象数组族 + 0x53eda0/0x542fc0 容器族——b/c 路）+ batch 2194/2195（串族 0x7b46f0——b 路邻域）。
+
+## 观察项 / 候选池
+
+- **MISSING：无**（a 路 1 / b 路 3 / c 路 3 全部已登记）。
+- **后邻未登记**：0x5DAFD0（b 后邻——jmp 0x5dafe0 thunk：xor cl,cl + jmp 尾跳——零函数体 thunk 观察项）；0x5DA720（c 后邻——[0x887628] 虚表槽 0 析构器：cmp + mov word [0xa8d610],0 + call [eax] + mov [0x887628],0）；0x5DB650（a 后邻 = batch 2224 c 路已登记）。
+- **新观察**：[0xa8d638] 槽位记录区（452B 清空 + 类型码 8 + 标志 4）+ 0x5DAFD0 jmp thunk（与 0x5DAFE0 构成 xor cl,cl + 全函数对）。
+- 前向：picker 队列继续 0x5D 区（0x5DAFD0/0x5DA720 邻域 + 0x5CF8E0 1935B 大宿主）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
