@@ -1,0 +1,60 @@
+# frontier batch 2138：批量记录追加器 + 记录注册器 + 模式判定尾跳器（0x646E90 / 0x646DF0 / 0x646D70）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x646E90 FUN_00646e90 callees=2 deps=13 / 0x646DF0 FUN_00646df0 callees=1 deps=537 / 0x646D70 FUN_00646d70 callees=1 deps=536）
+- 三路 disasm：`.qwen/tmp/_d2138a.txt`（0x646E90 size 0xE0）/ `_d2138b.txt`（0x646DF0 size 0x40）/ `_d2138c.txt`（0x646D70 size 0x40）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x646E90 | 210B（0xD2）| ret 0xc @0x646F5F（双出口 al=1/0）| 0x646F70（超出 dump，未读）| 1（0x4c6860 已登记）|
+| 0x646DF0 | 21B（0x15）| ret @0x646E04 | 0x646E10（mov eax,0xac694c/push 族/edi,0x100 初始化器，未登记）| 0 |
+| 0x646D70 | 20B（0x14）| ret @0x646D83 | 0x646D90（mov ecx,0xac664c/0x6c8c40/push 0x646db0 回调——计时器初始化，未登记）| 1（jmp 0x543080 已登记）|
+
+三函数为**游戏模式记录族**（[0xa802d4] 记录表、[0xafa36c] 记录表、[0xa83d4c] 全局对象、[0x7e1530] IAT、[0xa8b238] 模式）：
+
+## a 路 0x646E90（210B）——批量记录追加器
+
+```
+00646e90  sub esp,0x70/xor al/al/push esi/push edi/mov edi,[esp+0x7c]（参数 1 = 记录指针）→ sub esp,8/mov esi,esp → ★栈上组装多组 5 字节对（[esi]=edi/[esi+4]=al——dword+byte 记录首部）→ 参数 2 [eax]/[eax+4] → [edx]/[edx+4] → [esp+0x98] 参数 4 → [esp+0xa4] 参数 5 字节 → ★call 0x4c6860（[0xa83d4c]→[eax+0x30] 参数——★批量记录构造器）
+00646ef5  [0xa802c8] 记录计数（cmp 0x80）→ jge 失败 → ★111 字节记录写 [0xa802d4]（lea [ecx+ecx*8]/lea [ecx+edx*4]/lea [ecx+ecx*2+0xa802d4] → rep movsd 0x1b+movsw+movsb → call [0x7e1530] IAT → [ecx*4+0xa83a54] 注册 → [0xa802d0]++/&0x7f → [0xa802c8]++）→ al=1 → ret 0xc
+00646f58  失败 → al=0 → ret 0xc
+```
+**语义**：**批量记录追加器（推断名）**——栈上组装多组 5 字节（dword+byte）记录首部（参数 1-5 组）→ 0x4c6860（[0xa83d4c]+0x30 对象，批量记录构造）→ [0xa802d4] 记录表追加（111B 写 + [0x7e1530] + [0xa83a54] + &0x7f 环形——**batch 2135/2136/2137 c 路同款**）。比 batch 2137 c 路 0x647040 参数更多（ret 0xc = 3 参 + this？）。
+
+## b 路 0x646DF0（21B）——记录注册器（单索引）
+
+```
+00646df0  push esi/mov esi,ecx（★this 索引）→ ★call dword ptr [0x7e1530]（IAT）→ lea ecx,[esi+esi*2]（×3）→ mov [ecx*8+0xafa36c]=eax（★★[0xafa36c] 记录表——batch 2137 a 路 [0xafa368] 邻域！×24 槽）→ ret
+```
+**语义**：**记录注册器（推断名）**——this 索引 → IAT → [0xafa36c] 表写（lea [esi+esi*2]×8=**×24 槽**——与 batch 2137 a 路 [0xafa368] 遍历同表族）。21B 微函数。后邻 0x646E10 = [0xac694c] 表初始化器（mov edi,0x100——256 项，未登记）。
+
+## c 路 0x646D70（20B）——模式判定尾跳器
+
+```
+00646d70  cmp dword ptr [0xa8b238],4（★游戏模式——batch 2137 a/b 路同字段）→ jne 0x646d83（ret）→ mov ecx,0xa8e9c0（★batch 2135/2137 a 路同辅助对象）→ ★jmp 0x543080（尾跳——已登记）
+```
+**语义**：**模式判定尾跳器（推断名）**——[0xa8b238]==4 时 [0xa8e9c0] 尾跳 0x543080；否则直接 ret。20B 微函数（模式 4 = 某特殊游戏模式门控）。
+
+## 原版怪癖（照抄）
+
+1. a 路栈上组装多组 5 字节记录首部（dword+byte——每组 5 字节，参数 1-5 连续组装 sub esp,8 三次）；
+2. a 路 ret 0xc（3 参——批量记录追加的多参风格）；
+3. b 路 [0xafa36c] 表 ×24 槽（lea [esi+esi*2]×8——batch 2137 [0xafa368] 同族遍历目标）；
+4. c 路 jmp 尾跳（0x543080——非 call，tail-call 优化）；
+5. c 路 [0xa8b238]==4 门控（==4 才跳——模式特定分支）。
+
+## 跨批次连接
+
+- ★★★★batch 2137 a 路 0x6475F0：b 路 [0xafa36c] = batch 2137 [0xafa368] 记录表邻域（同表族遍历/写入两端）；a/b/c 路全部操作 [0xa8b238]/[0xa83d4c]/[0xa8e9c0] 同全局。
+- ★★★★batch 2135/2136/2137 c 路：a 路 111B 记录写 [0xa802d4]（rep movsd 0x1b+movsw+movsb + [0x7e1530] + [0xa83a54] + &0x7f）**四批逐字节同款**。
+- ★★batch 2137 b 路：c 路 [0xa8b238] 模式判定（调度器同字段）。
+- ★0x4c6860（批量记录构造器，已登记——batch 2137 c 路 0x4c66c0 邻域）+ 0x543080（尾跳目标，已登记）+ [0x7e1530]（IAT，已登记）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（直接 call/jmp 全已登记——a 路 0x4c6860 + c 路 0x543080）。
+- **后邻未登记**：0x646E10（b 路后邻 [0xac694c] 表初始化器）、0x646D90（c 路后邻 [0xac6648]/[0xac664c] 计时器初始化——push 0x646db0 回调）。
+- **新观察**：[0xafa36c]（×24 槽记录表——batch 2137 [0xafa368] 邻域）、[0xac694c]（后邻初始化目标）、0x646db0（c 路后邻回调）。
+- 前向：picker 队列继续 0x64 区 + 0x4A8xxx/0x4A9xxx 判定族 + 0x599650。
