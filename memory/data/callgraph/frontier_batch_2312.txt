@@ -1,0 +1,79 @@
+# frontier batch 2312：全局容器清理器孪生 + 三表匹配宿主（0x556DF0 / 0x556D40 / 0x556C00）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x556DF0 FUN_00556df0 callees=1 deps=68 / 0x556D40 FUN_00556d40 callees=3 deps=470 / 0x556C00 FUN_00556c00 callees=3 deps=45）
+- 三路 disasm：`.qwen/tmp/_d2312a.txt`（0x556DF0 size 0x100）/ `_d2312b.txt`（0x556D40 size 0xC0）/ `_d2312c.txt`（0x556C00 size 0x160）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x556DF0 | 192B（0xC0）| ret c3 @0x556EAF | 0x556EB0（未登记——容器析构器 0x7c8b3d owns 门控）| 2 次/去重 1（0x7c8b3d——已登记，picker callees=1 吻合）|
+| 0x556D40 | 162B（0xA2）| ret c3 @0x556DE1 | 0x556DF0（★本批 a 路）| 3 次/去重 3（★★0x556b70 MISSING + 0x7c8b3d + ★★0x556c00 批内自引用——picker callees=3 吻合）|
+| 0x556C00 | 281B（0x119）| ret c3 @0x556D18 | 0x556D20（未登记——最小判定器 shl 4 表项读）| 5 次/去重 3（0x6d2140+0x6d20e0+0x4beac0——全部已登记，picker callees=3 吻合）|
+
+## a 路 0x556DF0（192B）——全局容器清理器
+
+```
+00556df0  mov eax, [0xabcb88]（★计数）→ xor edi → cmp jle 0x556e7a（★空早退）
+00556e01  ★★[0xabcb7c] 表循环（[ecx+edi*4] → esi 对象）：test → je 跳过 → mov eax, [esi+4] → test → je 跳过 → mov [eax+0xa8], 0（★子对象字段清）→ mov [esi+4], 0
+00556e1d  ★★[0xabcb78] 虚表槽 0x10 查索引（[esp+0xc] 参）→ cmp eax,-1 je 0x556e66 → cmp [0xabcb88] jge 跳过 → ★★dec [0xabcb88] → ★★前移压缩循环（[ecx+eax*4-4]=[ecx+eax*4] 逐项前移——★数组收缩）→ ★0x7c8b3d（★释放）
+00556e7a  ★★[0xabcb7c] 表收尾：mov [0xabcb88], 0 → cmp [0xabcb7c] → ★★[0xabcb85] owns 门控（cmp byte je 跳过）→ 0x7c8b3d 释放表 → mov [0xabcb7c], 0 → mov byte [0xabcb85], 0 → mov [0xabcb80], 0 → ret c3
+```
+
+**语义**：**全局容器清理器（推断名）**——★★[0xabcb88] 计数 + [0xabcb7c] 表循环（★[0xabcbxx] 全局容器族）：子对象字段 [eax+0xa8] 清 0 + ★★[0xabcb78] 虚表槽 0x10 索引查找 + ★★前移压缩循环（[ecx+eax*4-4] 数组收缩——★删除语义）→ ★0x7c8b3d 释放 → ★★表收尾（计数清 0 + [0xabcb85] owns 门控释放 + 双字段清）→ ret c3。**全局容器族清理器（[0xabcb7c]/[0xabcb78]/[0xabcb88] 三表 + 前移压缩**）**。
+
+## b 路 0x556D40（162B）——全局容器清理器·变体
+
+```
+00556d40  mov eax, [0xabcb88]（★计数）→ lea edi, [eax-1]（★倒序索引）→ test jl 0x556ddf（空早退）
+00556d53  ★★[0xabcb7c] 倒序循环（edi 递减）：mov esi, [ecx+edi*4] → ★★0x556b70（★★MISSING 观察——容器判定器）→ mov eax, [esi+4] → test jne 0x556dd0 → mov edx, [esi+0xc] → shl 4 → mov eax, [edx+esi+0x1c] → test jne 0x556dd0（★[esi+0xc] 表项判定）
+00556d78  ★★[0xabcb78] 虚表槽 0x10 索引（同 a 路模板）→ cmp -1/计数 双跳 → dec [0xabcb88] → ★★前移压缩循环（同 a 路）→ ★0x7c8b3d 释放
+00556dd0  ★★未命中分支：mov ecx, esi → ★0x556c00（★★批内自引用本批 c 路——三表匹配）→ 倒序推进 → ret c3
+```
+
+**语义**：**全局容器清理器·变体（推断名）**——★★a 路孪生（同一 [0xabcb78]/[0xabcb88]/[0xabcb7c] 三表 + 虚表槽 0x10 索引 + 前移压缩 + 0x7c8b3d），**差异**：① **倒序遍历**（lea edi,[eax-1] 递减 vs a 路正序）② 开头多 ★0x556b70（MISSING——容器判定器）③ [esi+0xc] shl 4 表项判定门控（[edx+esi+0x1c]）④ 未命中走 ★0x556c00（批内 c 路三表匹配）。**a/b 孪生对照（正序/倒序清理双变体——0x556b70 MISSING + 0x556c00 批内自引用**）**。
+
+## c 路 0x556C00（281B）——三表匹配宿主
+
+```
+00556c00  mov eax, [ecx+0xc]（★项数）→ inc → mov ebp, eax → ★★cmp 0x20 钳位（jl 0x556c18 else xor ebp——★0x20 上限）
+00556c18  mov esi, [0xabcb50] → shl eax, 4（★16B/项）→ ★★[eax+ecx] 表项三 dword 全等匹配（cmp [0xabcb50]/[0xabcb54]/[0xabcb58]——★★三表匹配）
+00556c47  ★★推进循环：mov esi, ebp → shl 4 → ★★[esi+ecx+0xc] 项续判 → 三表再匹配 → jne 0x556c85 继续
+00556c85  ★★0x6d2140 ×2（[0x887324] 装载）→ ★0x6d20e0 ×2（坐标换算——0xfffffffe-差）→ ★★[0x88731c] → ★0x4beac0（push 0x886fa0——★已登记）
+00556cea  ★★ebp 回环：cmp 0x20 → xor 0 → cmp [ebx+0xc] je 0x556d11 → inc ebp → shl 4 → jne 0x556c5c 回环 → ret c3
+```
+
+**语义**：**三表匹配宿主（推断名）**——★★[ecx+0xc] 项数递增 + ★★0x20 上限钳位（jl/xor——★batch 2305/2308 钳位族）→ ★★16B/项 shl 4 表遍历 + [0xabcb50]/[0xabcb54]/[0xabcb58] 三 dword 全等匹配（★全局坐标三表）→ ★★0x6d2140 ×2 + 0x6d20e0 ×2 坐标换算（0xfffffffe-差——★batch 2302 b 路同款）+ ★0x4beac0（[0x88731c] + 0x886fa0）→ 回环推进 → ret c3。**三表坐标匹配宿主（[0xabcb5x] 全局族 + 16B/项遍历——★★b 路批内直调**）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 2 个/去重 1（0x7c8b3d）——**全部已登记**（picker callees=1 吻合——[0xabcb78] 虚表槽 0x10 属间接调用不计）。
+- b 路：跨函数直接 call 3 个/去重 3——**1 已登记（0x7c8b3d）+ 1 MISSING（★★0x556b70 记观察排队）+ 1 批内自引用（★★0x556c00 = 本批 c 路，同批登记闭环）**（picker callees=3 吻合）。
+- c 路：跨函数直接 call 5 个/去重 3（0x6d2140/0x6d20e0/0x4beac0）——**全部已登记**（picker callees=3 吻合）。
+- ★★核验脚本输出：三路 1 真 MISSING（0x556b70 观察排队）+ 1 批内自引用（0x556c00 同批闭环）。
+
+## 原版怪癖（照抄）
+
+1. a/b 路 ★★[0xabcb78] 虚表槽 0x10 索引查找（[esp+0xc] 参——★容器删除索引语义）;
+2. a/b 路 ★★前移压缩循环（[ecx+eax*4-4]=[ecx+eax*4] 逐项前移 + dec [0xabcb88]——★数组收缩删除）;
+3. a/b 路 ★★表收尾 owns 门控（[0xabcb85] cmp byte → 0x7c8b3d + [0xabcb7c]/[0xabcb80] 清 0）;
+4. a 路 ★★正序遍历（xor edi + jl 回环）vs b 路 ★★倒序遍历（lea edi,[eax-1] + jns 回环——孪生差异实锤）;
+5. b 路 ★★[esi+0xc] shl 4 表项判定（[edx+esi+0x1c] test jne——★16B/项表结构）;
+6. c 路 ★★0x20 上限钳位（cmp jl else xor——★计数上限）;
+7. c 路 ★★三 dword 全等匹配（[0xabcb50]/[0xabcb54]/[0xabcb58] cmp 三连——★全局坐标三表）;
+8. c 路 ★★0x6d20e0 坐标换算（0xfffffffe-差——★batch 2302 b 路同款负坐标模板）;
+9. c 路 ★★0x4beac0（[0x88731c] + push 0x886fa0——★已登记装载）。
+
+## 跨批次连接
+
+- ★★★batch 2302 b 路（0x567F70 邻域位清器——c 路 0x6d20e0 同款）+ batch 2300-2308（[0xabcbxx] 全局容器族——a/b/c 路三表同源）。
+- ★★batch 2282-2284（VectorClass 容器族——a/b 路 owns 门控释放同源）+ batch 2310 a 路（0x55A150 VectorClass 析构器——a/b 路 0x7c8b3d 同款）。
+- ★★batch 2287/2288（cell 位域/时间字段——b 路 [esi+0xc] 表项同源）+ batch 2309（全局写最小器——a/b 路 [0xabcbxx] 全局同区）。
+- ★★0x556B70（b 路 MISSING——容器判定器，ranking 有行未登记，观察排队）。
+
+## 观察项 / 候选池
+
+- **新观察**：★★0x556B70（b 路 MISSING——容器判定器 [0xabcb7c] 表项判定，ranking 有行未登记）；0x556EB0（a 路后邻——容器析构器 0x7c8b3d owns 门控）；0x556D20（c 路后邻——最小判定器 shl 4 表项读）；[0xabcb50]/[0xabcb54]/[0xabcb58]（c 路三表）。
+- 未兑现 MISSING 旧观察：0x00486790（2267 起排队）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150（batch 2280-2311 新观察）。
+- 本批 **真 MISSING 1 个（0x556B70 观察排队）+ 批内自引用 1 个（0x556c00 同批闭环）**（TSV 5419）。next 批预期 top3 = 0x556B70（140B callees=0 ★MISSING 兑现候选）/ 0x556B50 LineTrail::SetDecrement（21B callees=0）/ 0x556A20 LineTrail::LineTrail（164B callees=0）。
