@@ -1,0 +1,85 @@
+# frontier batch 2327：IPX ResponseTime + 表项拷贝器 + IPX Delete_Connection（0x542450 / 0x542280 / 0x540F00）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x542450 IPXManagerClass::ResponseTime callees=1 deps=121 / 0x542280 FUN_00542280 callees=0 deps=2550 / 0x540F00 IPXManagerClass::Delete_Connection callees=0 deps=537）
+- 三路 disasm：`.qwen/tmp/_d2327a.txt`（0x542450 size 0x70）/ `_d2327b.txt`（0x542280 size 0x60）/ `_d2327c.txt`（0x540F00 size 0xA0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x542450 | 73B（0x49）| ret c3 @0x542498 | 0x5424A0（★batch 2326 c 路已登记）| 2 次/去重 1（0x48ba80——已登记，picker callees=1 吻合）|
+| 0x542280 | 56B（0x38）| ret 8 @0x5422B5 | 0x5422C0（未登记——单字段读取器）| 0 次/去重 0（纯虚表槽 0x18，picker callees=0 吻合）|
+| 0x540F00 | 136B（0x88）| ret 4 @0x540F34（失败）/ @0x540F85（成功）| 0x540F90（未登记——计数读取器）| 0 次/去重 0（纯虚表槽 0，picker callees=0 吻合）|
+
+## a 路 0x542450（73B）——IPXManagerClass::ResponseTime
+
+```
+00542450  push ebp/esi/edi → mov esi, ecx（this）→ xor ebp/edi（★max/计数）
+00542459  mov eax, [esi+0x44] → test → jle 0x542480
+00542460  push ebx → lea ebx, [esi+0x28]（★表基址）
+00542464  ★循环：mov eax, [ebx]（表项）→ mov ecx, [eax+4] → call 0x48ba80（★对象装载）→ cmp eax, ebp → jbe 0x542474 → mov ebp, eax（★max 更新）
+00542474  mov eax, [esi+0x44] → inc edi → add ebx, 4 → cmp edi, eax → jl 0x542464
+00542480  mov esi, [esi+0x50]（★尾对象）→ test → je 0x542493 → mov ecx, [esi+4] → call 0x48ba80 → cmp eax, ebp → ja 0x542495（★尾对象 max 比较）
+00542493  mov eax, ebp → ret c3
+```
+
+**语义**：**IPXManagerClass::ResponseTime（★带符号名）——IPX 响应时间查询**——thiscall：[esi+0x44] 计数循环 [esi+0x28] 表逐项 → ★0x48ba80 对象装载（[eax+4]）→ ★max 比较（jbe 不更新）→ [esi+0x50] 尾对象装载 + max → 返最大值 → ret c3。**IPX 连接表最大响应时间（★★max 统计双段——[esi+0x28] 数组 + [esi+0x50] 尾对象）**。
+
+## b 路 0x542280（56B）——表项拷贝器
+
+```
+00542280  push esi → mov esi, ecx（this）→ mov ecx, [esp+8]（★栈参 1）
+00542287  mov eax, [esi]（★虚表）→ push ecx → mov ecx, esi → call [eax+0x18]（★虚表槽 0x18 查找）
+0054228f  cmp eax, -1 → je 0x5422b4 → cmp eax, [esi+0x44] → jge 0x5422b4（★范围门控）
+00542299  mov edx, [esi+eax*4+0x28]（★表项）→ mov eax, [esp+0xc]（★栈参 2 = 源）→ add edx, 0x4c → ★★三字段拷贝（[eax]/[eax+4]/[eax+8] → [edx]/[edx+4]/[edx+8]）
+005422b4  pop esi → ret 8
+```
+
+**语义**：**表项拷贝器（推断名）**——thiscall 2 栈参（栈参 1 = 查找键/栈参 2 = 源结构）：★虚表槽 0x18 查找（push 栈参 1）→ -1/≥[esi+0x44] 门控 → ★[esi+eax*4+0x28] 表项 +0x4c → ★★三字段拷贝（源 → 表项偏移区）→ ret 8。**表查找 + 三字段装载（★★虚表槽 0x18 定位 + [esi+0x28] 表族 +0x4c 区）**。
+
+## c 路 0x540F00（136B）——IPXManagerClass::Delete_Connection
+
+```
+00540f00  push ebx/esi/edi → mov edi, ecx（this）
+00540f05  mov al, [edi+4] → test → je 0x540f2f（★字节门控）
+00540f0c  mov ecx, [edi+0x44] → test → je 0x540f2f（★计数门控）
+00540f13  xor esi, esi（i=0）→ test ecx → jle 0x540f2f
+00540f19  ★查找循环：mov edx, [esp+0x10]（★栈参 1 = 连接 id）→ lea eax, [edi+0x28] → mov ebx, [eax]（表项）→ cmp [ebx+0x64], edx → je 0x540f37（★id 匹配）→ inc esi → add eax, 4 → cmp esi, ecx → jl 0x540f20
+00540f2f  pop 三件套 → xor eax, eax → ret 4（★未找到 → 返 0）
+00540f37  mov ecx, [edi+esi*4+0x28]（★匹配项）→ lea ebx, [edi+esi*4+0x28] → test → je → mov eax, [ecx] → push 1 → call [eax]（★★虚表槽 0 释放）
+00540f49  mov edx, [edi+0x44] → dec → cmp esi, edx → jge 0x540f66 → ★★前移压缩（[eax+4] → [eax] 循环搬）
+00540f66  mov edx, [edi+0x44] → mov ecx, [edi+0x54] → dec edx → mov [edi+0x44], edx → cmp ecx, eax → jl 0x540f7d → mov [edi+0x54], 0（★高水位清零）
+00540f7d  pop 三件套 → mov eax, 1 → ret 4（★成功）
+```
+
+**语义**：**IPXManagerClass::Delete_Connection（★带符号名）——IPX 连接删除**——thiscall 1 栈参（连接 id）：[edi+4] 字节门控 + [edi+0x44] 计数门控 → ★查找循环 [edi+0x28] 表项 [ebx+0x64] == 栈参 1 → 未找到返 0 → ★命中项虚表槽 0 释放（[ecx] → [eax]）→ ★★数组前移压缩（［[eax+4] → [eax]）→ [edi+0x44]-- + ★[edi+0x54] 高水位清零判定 → 返 1 → ret 4。**IPX 连接删除（★★[ebx+0x64] id 匹配 + 虚表槽 0 释放 + 数组压缩——网络管理域）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 2 次/去重 1（0x48ba80——★batch 2326 同装载器）——**已登记**（picker callees=1 吻合）。
+- b 路：跨函数直接 call 0 个/去重 0（纯虚表槽 0x18 间接）——**已登记无 MISSING**（picker callees=0 吻合）。
+- c 路：跨函数直接 call 0 个/去重 0（纯虚表槽 0 间接）——**已登记无 MISSING**（picker callees=0 吻合）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING、无批内自引用**（连续四十四批三路全登记）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★[esi+0x44] 计数循环 [esi+0x28] 表逐项 + 0x48ba80 max 比较（jbe 不更新——★max 统计）;
+2. a 路 ★★[esi+0x50] 尾对象装载 + max 第二段（ja 取尾对象）;
+3. b 路 ★★虚表槽 0x18 查找（push 栈参 1）+ -1/≥[esi+0x44] 范围门控;
+4. b 路 ★★[esi+eax*4+0x28] 表项 +0x4c 三字段拷贝（源 [esp+0xc] → 表项区）;
+5. c 路 ★★[edi+4] 字节门控 + [edi+0x44] 计数门控 + [ebx+0x64] id 匹配查找;
+6. c 路 ★★虚表槽 0 释放（[ecx] → [eax]——★0 槽释放惯用）+ 前移压缩;
+7. c 路 ★★[edi+0x44]-- + [edi+0x54] 高水位清零判定（cmp jl——★连接计数水位）。
+
+## 跨批次连接
+
+- ★★batch 2326（0x542520/0x5424A0——a 路 0x48ba80 装载同族 + b 路 [esi+0x28] 表族同源）+ batch 2324（0x544A70 双容器析构——c 路压缩/释放同源）。
+- ★★batch 2320 b/c 路（0x550240/0x550150——c 路数组压缩同源）+ batch 2321（0x550000 容器首元素清理——c 路容器释放同源）。
+- ★★batch 2306/2307（事件系统——b 路虚表槽 0x18 查找同源）+ batch 2312（[0xabcbxx] 容器族——c 路前移压缩同精神）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x5422C0（b 路后邻——单字段读取器 [ecx+0xa8]）；0x540F90（c 路后邻——计数读取器 [ecx+0x44]）；[edi+0x54]（c 路连接计数高水位）；[ebx+0x64]（c 路连接 id 槽）。
+- 未兑现 MISSING 旧观察（继续排队）：0x00486790（2267 起）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150 + ★0x556AD0/0x556EB0/0x556D20 + ★0x554830/0x49E400 + ★0x551B20 + ★0x5517A0/0x5512D0 + ★0x5509E0/0x551300/0x551320/0x551330/0x551370 + ★0x550080/0x54F6F0/0x54F670 + ★0x54E890/0x54E8C0 + ★0x54E590/0x54D930/0x549E90 + ★0x547CE0/0x544BE0 + ★0x543780/0x542EC0 + ★0x5424C0 + ★0x5422C0/0x540F90（2327 新观察）。
+- 本批 **无 MISSING**（连续四十四批三路全登记——batch 2276 起，TSV 5464）。next 批预期 top3 = 0x540E70（141B callees=3）/ 0x540DC0（171B callees=2）/ 0x5409F0（141B callees=1）。
