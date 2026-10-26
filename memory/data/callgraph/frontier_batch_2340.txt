@@ -1,0 +1,69 @@
+# frontier batch 2340：Vector 构造器 + 虚表安装器 ×2（0x538B30 / 0x537F10 / 0x537E70）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x538B30 FUN_00538b30 callees=1 deps=459 / 0x537F10 FUN_00537f10 callees=0 deps=192 / 0x537E70 FUN_00537e70 callees=0 deps=192）
+- 三路 disasm：`.qwen/tmp/_d2340a.txt`（0x538B30 size 0x80）/ `_d2340b.txt`（0x537F10 size 0x40）/ `_d2340c.txt`（0x537E70 size 0x40）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x538B30 | 74B（0x4A）| ret 8 @0x538B77 | 0x538B80（★batch 2339 c 路已登记）| 1 次/去重 1（0x7c8e17——已登记，picker callees=1 吻合）|
+| 0x537F10 | 9B | ret @0x537F18 | 0x537F20（mov eax,0x827b3c → ret——单例 getter，未登记）| 0 次/去重 0（picker callees=0 吻合）|
+| 0x537E70 | 9B | ret @0x537E78 | 0x537E80（mov eax,0x827adc → ret——单例 getter，未登记）| 0 次/去重 0（picker callees=0 吻合）|
+
+## a 路 0x538B30（74B）——VectorClass 构造器（4B/项）
+
+```
+00538b30  mov eax, [esp+4]（★栈参 1 = 容量）→ push esi → mov esi, ecx（this）→ xor edx, edx
+00538b37  cmp eax, edx → ★[esi+4]=0/[esi+8]=eax（★容量）/[esi+0xc]=1/[esi+0xd]=0 → mov [esi], 0x7eb80c（★虚表）
+00538b4e  je 0x538b74（★容量==0 → 跳过分配）
+00538b50  mov ecx, [esp+0xc]（★栈参 2 = 初始指针）→ cmp ecx, edx → je 0x538b61（★指针==0 → 分配路径）
+00538b58  [esi+4]=ecx（★直接用外部指针，不拥有）→ eax=esi → ret 8
+00538b61  shl eax, 2（★容量×4B/项）→ push → call 0x7c8e17（★operator new）→ [esi+4]=eax → [esi+0xd]=1（★owns 置 1）
+00538b74  eax=esi → pop esi → ret 8
+```
+
+**语义**：**VectorClass 构造器（推断名）——4B/项容器构造**——thiscall 2 栈参（容量、初始指针）：★[esi]=0x7eb80c 虚表 + [esi+4]=0/[esi+8]=容量/[esi+0xc]=1/[esi+0xd]=0 → 容量==0 跳过 → 初始指针非空直接采用（[esi+4]=参2，不拥有）→ 指针==0 时 ★0x7c8e17 分配容量×4B + [esi+0xd]=1（owns）→ ret 8。**★★VectorClass 4B/项构造器（★容量×4B——batch 1731/1737 8B/项扩容族的 4B/项构造变体，虚表 0x7eb80c 异槽）**。
+
+## b 路 0x537F10（9B）——虚表安装器 A
+
+```
+00537f10  mov eax, ecx → mov [eax], 0x7ebf7c → ret
+```
+
+**语义**：**虚表安装器 A（推断名）——thiscall 无参对象虚表写入（9B）**：mov eax, ecx（this）→ ★[eax]=0x7ebf7c（虚表）→ ret。**对象构造/重置最小模板（9B 三指令——虚表 0x7ebf7c 槽族安装）**。
+
+## c 路 0x537E70（9B）——虚表安装器 B
+
+```
+00537e70  mov eax, ecx → mov [eax], 0x7ebf54 → ret
+```
+
+**语义**：**虚表安装器 B（推断名）——thiscall 无参对象虚表写入（9B）**：mov eax, ecx（this）→ ★[eax]=0x7ebf54（虚表）→ ret。**对象构造/重置最小模板（9B 三指令——虚表 0x7ebf54 槽族安装，b 路孪生）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 1 个/去重 1（0x7c8e17——★operator new 分配）——**已登记无 MISSING**（picker callees=1 吻合；栈参 [esp+0xc] 初始指针非空路径 0 call）。
+- b 路：跨函数直接 call 0 个/去重 0（纯虚表写 9B）——**已登记无 MISSING**（picker callees=0 吻合）。
+- c 路：跨函数直接 call 0 个/去重 0（纯虚表写 9B）——**已登记无 MISSING**（picker callees=0 吻合）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING、无批内自引用**（连续五十二批三路全登记）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★虚表 0x7eb80c + [esi+4]=0/[esi+8]=容量/[esi+0xc]=1/[esi+0xd]=0 字段序（构造即定容量）;
+2. a 路 ★★容量==0 跳过分配（[esi+4] 保持 0）; 初始指针非空直接用（不拥有）; 指针==0 → 0x7c8e17 分配 **容量×4B** + [esi+0xd]=1;
+3. a 路 ★★4B/项（shl eax,2）——与 batch 1737/1731 8B/项（lea [ebx*8]）**项宽不同**（虚表槽族异源）;
+4. b/c 路 ★★9B 三指令最小虚表安装（0x7ebf7c / 0x7ebf54——独立槽族）。
+
+## 跨批次连接
+
+- ★★batch 2339（0x538B80 Vector 扩容器——a 路后邻同族：扩容器是 a 路构造器的扩容对偶）+ batch 1737/1731/1721（VectorClass 容器族——a 路 4B/项构造变体）。
+- ★★batch 2320/2321（容器族清理/循环——a 路同族）。
+- ★★后邻 0x537F20/0x537E80 单例 getter（mov eax, 0x827b3c/0x827adc → ret）+ 0x537F30/0x537E90 DebugLog 壳（0x734e60）——★观察项。
+
+## 观察项 / 候选池
+
+- **新观察**：0x537F20/0x537E80（b/c 路后邻——mov eax, 全局 → ret 单例 getter 9B 孪生）+ 0x537F30/0x537E90（DebugLog 壳——push 行号/文件 + call 0x734e60）+ 0x538B30 的虚表 0x7eb80c 槽族（4B/项容器族）。
+- 未兑现 MISSING 旧观察（继续排队）：0x00486790（2267 起）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150 + ★0x556AD0/0x556EB0/0x556D20 + ★0x554830/0x49E400 + ★0x551B20 + ★0x5517A0/0x5512D0 + ★0x5509E0/0x551300/0x551320/0x551330/0x551370 + ★0x550080/0x54F6F0/0x54F670 + ★0x54E890/0x54E8C0 + ★0x54E590/0x54D930/0x549E90 + ★0x547CE0/0x544BE0 + ★0x543780/0x542EC0 + ★0x5424C0 + ★0x5422C0/0x540F90 + ★0x540A80 + ★0x5402D0/0x53F5B0 + ★0x53ECB0/0x53EC70/0x53E470 + ★0x408B40/0x53E070/0x53E1D0/0x53DDE0 + ★0x53C4C0/0x53C280/0x53B560 + ★0x53B3F0/0x53B064 + ★0x53AC50 + ★0x53A6A0/0x53A140 + ★0x53A130/0x53A100 + ★0x538C10 + ★0x537F20/0x537E80/0x537F30/0x537E90（2340 新观察）。
+- 本批 **无 MISSING**（连续五十二批三路全登记——batch 2276 起，TSV 5503）。next 批预期 top3 = 0x537DD0（9B callees=0）/ 0x537B40（9B callees=0）/ 0x535B30（146B callees=0）。
