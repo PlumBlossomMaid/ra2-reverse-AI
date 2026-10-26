@@ -1,0 +1,77 @@
+# frontier batch 2264：VectorClass 构造器·4B 变体 + VectorClass Resize·8B 双参变体 + VectorClass Resize·16B 变体（0x5AD820 / 0x5AD290 / 0x5ACD30）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x5AD820 FUN_005ad820 callees=1 deps=54 / 0x5AD290 FUN_005ad290 callees=2 deps=182 / 0x5ACD30 FUN_005acd30 callees=2 deps=46）
+- 三路 disasm：`.qwen/tmp/_d2264a.txt`（0x5AD820 size 0x100）/ `_d2264b.txt`（0x5AD290 size 0x100）/ `_d2264c.txt`（0x5ACD30 size 0x100）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5AD820 | 74B（0x4A）| ret 8 c20800 @0x5AD867 | 0x5AD870（已登记——数组浮点排序器：fcompp 父子索引交换）| 1 次/去重 1（0x7c8e17——已登记，callees=1 吻合）|
+| 0x5AD290 | 189B（0xBD）| ret 8 c20800 @0x5AD34A | 0x5AD350（未登记——浮点线性查找器观察项：fcomp [edi] 遍历 +0x8 步长返回索引 or -1）| 2 次/去重 2（0x7c8e17 + 0x7c8b3d——全部已登记，callees=2 吻合）|
+| 0x5ACD30 | 226B（0xE2）| ret 8 c20800 @0x5ACE0F | 0x5ACE20（已登记——数组清理器：owns 判定 + 虚表槽 0 析构）| 2 次/去重 2（0x7c8e17 + 0x7c8b3d——全部已登记，callees=2 吻合）|
+
+## a 路 0x5AD820（74B）——VectorClass 构造器·4B 变体
+
+```
+005ad820  mov eax,[esp+4]（★元素数）→ push esi → mov esi,ecx（★this）→ xor edx,edx → cmp eax,edx → mov [esi+4],edx（★计数=0）→ mov [esi+8],eax（★容量=元素数）→ mov byte [esi+0xc],1（★owns=1）→ mov byte [esi+0xd],dl → mov [esi],0x7ed480（★虚表）→ je 0x5ad864
+005ad840  mov ecx,[esp+0xc]（★外部 buffer 参数）→ cmp ecx,edx → je 0x5ad851 → mov [esi+4],ecx → ret 8
+005ad851  shl eax,2（★4B/项）→ push eax → call 0x7c8e17 → mov [esi+4],eax → mov byte [esi+0xd],1（★owns=1）→ ret 8
+```
+
+**语义**：**VectorClass 构造器·4B 变体（推断名）**——★VectorClass 模板构造器（4B/项，虚表 0x7ed480）：四字段初始化 + **外部 buffer 双路径**（同 batch 2263 a/b 路模板）。**4B/项构造器（batch 2263 8B/16B 变体的第三副本——4B/8B/16B 三档项宽全登记）**。
+
+## b 路 0x5AD290（189B）——VectorClass Resize·8B 双参变体
+
+```
+005ad290  push 三件套 → mov ebx,[esp+8]（★新容量参数）→ mov esi,ecx（★this）→ test ebx → je 0x5ad329（★容量=0 走虚表析构）→ mov edi,[esp+0x14]（★外部 buffer 参数）→ mov byte [esi+0xc],0 → test edi → jne 0x5ad2bf → lea eax,[ebx*8] → push eax → call 0x7c8e17（★分配）→ mov edi,eax
+005ad2bf  test edi,edi → mov byte [esi+0xc],1 → je 0x5ad345（★分配失败）→ mov eax,[esi+4] → test → je 0x5ad313 → mov ecx,[esi+8] → cmp ebx,ecx → jge 0x5ad2d7 → mov ecx,ebx（★min 取小）→ 拷贝循环：mov edx,[esi+4] → mov ebx,[edx+eax*8-8] → mov [edi+eax*8-8],ebx → mov edx,[edx+eax*8-4] → mov [edi+eax*8-4],edx → inc eax → cmp eax,ecx → jl（★逐 8B 拷贝）
+005ad2f9  mov al,[esi+0xd] → test → je 0x5ad313 → mov eax,[esi+4] → push eax → call 0x7c8b3d（★释放旧）→ mov [esi+4],0
+005ad313  mov ecx,[esp+0x14] → xor eax,eax → test ecx → sete al → mov [esi+4],edi → mov [esi+8],ebx → mov byte [esi+0xd],al（★owns=外部 buffer 参数==0）→ jmp → mov eax,[esi+8] → mov ecx,[esi+0x10] → cmp eax,ecx → jge → mov [esi+0x10],eax（★[esi+0x10] 更新）→ al=1 → ret 8
+005ad329  mov edx,[esi] → mov ecx,esi → call [edx+0xc]（★容量=0 → 虚表槽 0xc 析构）→ 同上收尾
+```
+
+**语义**：**VectorClass Resize·8B 双参变体（推断名）**——★8B/项扩容（双参：新容量参数 + 外部 buffer 参数）：**新容量=0 → 虚表槽 0xc 析构（非全清路径）**；[esi+0xc] 先清 0 再置 1；分配新缓冲（外部 buffer 参数非 0 → 直接采用）；★拷贝循环 min(新容量,旧容量) 逐 8B；[esi+0xd] owns 判定释放旧 + [esi+4]=0；★[esi+0xd]=sete(外部 buffer==0)（owns 语义反转）；[esi+0x10] 更新。**8B/项 Resize·双参版（batch 2263 c 路 0x5AD930 增长语义 vs 本函数绝对值/双参版——家族第 2 型）**。
+
+## c 路 0x5ACD30（226B）——VectorClass Resize·16B 变体
+
+```
+005acd30  push 四件套 → mov ebx,[esp+0xc]（★新容量参数）→ mov esi,ecx（★this）→ test ebx → je 0x5ace01（★容量=0 走虚表析构）→ mov ebp,[esp+0x1c]（★外部 buffer 参数）→ mov byte [esi+0xc],0 → test ebp → jne 0x5acd70 → mov eax,ebx → shl eax,4（★16B/项）→ push eax → call 0x7c8e17 → mov edi,eax → lea ecx,[ebx-1] → mov [esp+0x10],ecx（★ebx-1 写回栈——-1 偏差）→ jmp 0x5acd79
+005acd70  lea edx,[ebx-1] → mov edi,ebp（★外部 buffer 采用）→ mov [esp+0x10],edx（★-1 偏差）
+005acd79  test edi,edi → mov byte [esi+0xc],1 → je 0x5acd81（★分配失败）→ mov eax,[esi+4] → test → je 0x5acde7 → mov ecx,[esi+8] → cmp ebx,ecx → jge → mov ecx,ebx → 拷贝循环：lea ebx,[eax+edi] → mov edx,[esi+4] → add edx,eax → add eax,0x10 → dec ecx → mov ebp,[edx] → mov [ebx],ebp → 四 dword [edx+4]/[edx+8]/[edx+0xc] → mov [ebx+4]/[ebx+8]/[ebx+0xc] → jne 0x5acda1（★逐 16B 拷贝）
+005acdcd  mov al,[esi+0xd] → test → je → 0x7c8b3d 释放旧 → [esi+4]=0
+005acde7  xor eax,eax → mov [esi+4],edi → test ebp → sete al → mov [esi+8],ebx → mov byte [esi+0xd],al → al=1 → ret 8
+005ace01  mov edx,[esi] → mov ecx,esi → call [edx+0xc]（★虚表槽 0xc 析构）→ al=1 → ret 8
+```
+
+**语义**：**VectorClass Resize·16B 变体（推断名）**——★16B/项扩容（双参）：结构同 b 路但项宽 16（shl eax,4 + 拷贝循环 4 dword）；★★[esp+0x10] 写回 **ebx-1**（栈参数 -1 偏差怪癖——同 batch 2263 b 路构造器 dec edi 模式）；[esi+0xd]=sete(外部 buffer==0)。**16B/项 Resize（b 路 8B/项孪生——项宽 + 拷贝步长差异）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 1 个（0x7c8e17）——**已登记**（callees=1 吻合）。
+- b 路：跨函数直接 call 2 个（0x7c8e17 + 0x7c8b3d）——**全部已登记**（callees=2 吻合）。
+- c 路：跨函数直接 call 2 个（0x7c8e17 + 0x7c8b3d）——**全部已登记**（callees=2 吻合）。
+- ★核验脚本（norm() 规范化版）输出：**三路全 PASS，无 MISSING、无批内自引用**——本批零观察项新增。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★VectorClass 构造器四字段模板（同 2263 a/b 路）：[esi+4]=0/[esi+8]=容量/[esi+0xc]=owns=1/[esi+0xd]=0 + 虚表（a=0x7ed480 4B/项 / 2263a=0x7eda4c 8B / 2263b=0x7ed970 16B）;外部 buffer 双路径;
+2. b/c 路 ★★[esi+0xc] 先清 0 再置 1（两步骤非原子）;新容量=0 → **虚表槽 0xc 析构调用（自动析构非手动清理）**;
+3. b/c 路 ★★[esi+0xd]=sete(外部 buffer==0)——**owns 语义反转：外部 buffer 非 0 时 owns=0（不拥有），为 0 时 owns=1（自己分配）**;
+4. b/c 路 ★拷贝循环 min(新容量,旧容量) 取小 + 逐项拷贝（8B/16B）;**旧缓冲释放后 [esi+4]=0 先清再写新指针**;
+5. c 路 ★★[esp+0x10] 写回 ebx-1（栈参数 -1 偏差——与 batch 2263 b 路 dec edi 同一怪癖族）;
+6. b 路 ★[esi+0x10] 新容量后置更新（cmp jge 才写——**只减不增语义：新容量 < 旧 [esi+0x10] 才更新**）。
+
+## 跨批次连接
+
+- ★★★batch 2263（a/b 路 VectorClass 构造器 8B/16B + c 路扩容器——a 路 4B 构造器补全三档项宽；b/c 路 Resize 与 2263 c 路 0x5AD930 同族）：**VectorClass 构造 4B/8B/16B 全档 + Resize 8B/16B 全档登记完毕（2263-2264 跨两批六函数闭环）**。
+- ★batch 2244（0x5BEA30/0x5BE9B0 构造器）+ batch 2240（0x5C5510 Resize）——VectorClass 家族跨四批。
+- ★0x7c8e17/0x7c8b3d（CRT new/delete——b/c 路）+ 虚表槽 0xc 析构模板（b/c 路——batch 2242 析构器族同款）+ 0x7ed480/0x7eda4c/0x7ed970/0x7ed92c 虚表族（a 路 + 2263）。
+
+## 观察项 / 候选池
+
+- **本批零 MISSING、零批内自引用**（三路 callee 全部已登记）。
+- **后邻未登记（自然排队）**：0x5AD350（b 路后邻——浮点线性查找器：fcomp [edi] 遍历 +0x8 步长返回索引 or -1——**batch 2263 三态比较器 0x5AD9C0 同族**）。
+- **新观察**：VectorClass 4B 构造器（a 路 0x7ed480 虚表——4B/8B/16B 三档全）+ Resize 双参版（b/c 路）+ 虚表槽 0xc 析构模板（b/c 路）。
+- 前向：picker 队列继续 0x5A/0x5B 区（0x5ADE20 包装副本 + 0x5AD350 查找器新候）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
