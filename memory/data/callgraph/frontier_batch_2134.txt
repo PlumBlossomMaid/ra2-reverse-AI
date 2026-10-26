@@ -1,0 +1,66 @@
+# frontier batch 2134：容量扩充器 + 环形计数器 + 全局记录登记器（0x6525A0 / 0x652540 / 0x652230）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x6525A0 FUN_006525a0 callees=2 deps=79 / 0x652540 FUN_00652540 callees=0 deps=2550 / 0x652230 FUN_00652230 callees=8 deps=44）
+- 三路 disasm：`.qwen/tmp/_d2134a.txt`（0x6525A0 size 0xA0）/ `_d2134b.txt`（0x652540 size 0x40）/ `_d2134c.txt`（0x652230 size 0x180）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x6525A0 | 134B（0x86）| ret 4 @0x652623（双出口 0x65261A 成功 al=1 / 0x652623 失败 al=0）| 0x652630（mov eax,[esp+4]/[esp+8] 比较器，未登记）| 2（0x7c8e17/0x7c8b3d 全已登记）|
+| 0x652540 | 22B（0x16）| ret @0x652555 | 0x652560（mov edx,[ecx+0x10] 数组弹出器，未登记）| 0 |
+| 0x652230 | 356B（0x164）| ret @0x652393（双出口 0x6522B6 正常/0x652393 满分支）| 0x6523A0（sub esp,0x1e4/push 0x8391cc 大函数头，未登记）| 7（0x734e60/0x5d3490/0x5bc400/0x6c8820/0x6c6f50/0x72ddb0/0x6842f0 全已登记）|
+
+三函数为**全局记录/缓冲系统**（[0x8b41f8]/[0x8b41fc] 全局记录计数、[0x8b4204] 记录表、[0x7e1530] IAT、环形缓冲 &0x7f）：
+
+## a 路 0x6525A0（134B）——容量扩充器
+
+```
+006525a0  push ebx/push ebp/mov ebp,[esp+0xc]（参数 1 = 增量）/push esi/push edi/mov esi,ecx（this）→ test ebp → jl 0x65261d（★负增量 → 失败出口）
+006525ae  mov ebx,[esi+8]（★容量）→ add ebx,ebp → lea eax,[ebx*8]（★新容量×8 字节元素）→ push eax → ★call 0x7c8e17（operator new）→ mov edi,eax → test → je 失败
+006525c9  [esi+4]（★计数）→ ★复制循环：[esi] 旧数组 → 8 字节元素复制（mov [eax+edi]/[eax+edi+4]）→ dec 计数次 → push [esi] → ★call 0x7c8b3d（delete 旧数组）→ [esi]=edi（新数组）→ [esi+8]=新容量 → [esi+0x10]=0 → mov al,1（成功）→ ret 4
+0065261d  失败：xor al,al → ret 4
+```
+**语义**：**容量扩充器（推断名）**——参数 1 增量 → 新容量 = [esi+8]+增量 → new 新数组（×8 字节）→ 复制旧元素（8 字节逐项）→ delete 旧数组 → 成功返回 1/失败返回 0。数组扩容惯用（VectorClass 风格，与 batch 1737/1738 已登记的 0x58AF80/0x58A500 同族）。
+
+## b 路 0x652540（22B）——环形计数器
+
+```
+00652540  mov eax,[ecx]（★[this] 计数）→ test eax → je 0x652553 → mov edx,[ecx+4]（★[this+4] 环形索引）→ inc edx → and edx,0x7f（★&127——128 环形缓冲取模！）→ dec eax → [ecx+4]=edx → [ecx]=eax → 0x652553: mov eax,[ecx] → ret
+```
+**语义**：**环形计数器（推断名）**——[this] 计数 dec、[this+4] 环形索引 inc **& 0x7f**（128 取模——1 字节环形缓冲）→ 返回 [this] 计数。22B 微函数。后邻 0x652560 = 数组弹出器（mov edx,[ecx+0x10]/dec/cmp——batch 2124 a 路弹出惯用同族，未登记）。
+
+## c 路 0x652230（356B）——全局记录登记器（DebugLog 同源）
+
+```
+00652230  push ecx/mov edx,[0xa8ed84]（★全局计数）→ mov ecx,[0xa8b24c]（★全局）→ lea eax,[edx+1] → cmp ecx,2 → jne → [esi+3]=eax（★[this+3] 字节写——疑似标志域）
+0065225b  mov eax,[0x8b41f8]（★全局记录计数）→ cmp 0x4000（★16384 上限）→ jge 0x6522b7（★满 → 走第二分支）→ [0x8b41fc] 判定 → [0x8b41fc]=eax（dec 或 0x3fff）→ lea [eax+eax*8]/lea [eax+ecx*4]（★×36 索引）→ ★rep movsd 0x1b + movsw + movsb（★this → [eax*2+eax+0x8b4204] 拷贝 111 字节记录）→ ★call dword ptr [0x7e1530]（IAT——间接调用）→ [edx*4+0xa70204]=eax（★记录注册）→ [0x8b41f8]++ → ret
+006522b7  ★满分支：[0xa8b238] 判定（==5/==4）→ ==4 → call 0x6c8820 → [0xa8dab4]++ → ★★DebugLog 三连（push 0x22ae/push 0x8374a0 → ★call 0x734e60 带注释 DebugLog！→ 0x5d3490）→ [0xa8dab4]-- → [0xa8b8b8]=0/[0xa8b8bc]=0/[0xa8e9a0]=0 → [0xb04874] 判定 → call 0x5bc400 → [0xa8b238]==4 → [0xb0bd78]=1/[0xa8b8c1]=1/[0xa8b8c2]=1 → call 0x6c8820 → 0x6c6f50 → call 0x72ddb0 → call 0x6842f0 → ret
+```
+**语义**：**全局记录登记器（推断名）**——[0x8b41f8] 计数判定（<0x4000=16384 正常登记 / >=0x4000 满分支）：① 正常：this 拷贝 **111 字节**（rep movsd 0x1b×4+movsw+movsb）到全局记录表 **[eax*2+eax+0x8b4204]** → [0x7e1530] IAT 调用 → [edx*4+0xa70204] 注册 → 计数++；② 满：**0x734E60 DebugLog 三连（= QWEN.md 调试宏 0x734E60 同源！编译单元测绘域函数）** + [0xa8dab4] 计数 + 状态标志清理（[0xa8b8b8]/[0xa8b8bc]/[0xa8e9a0]/[0xb0bd78]/[0xa8b8c1]/[0xa8b8c2]）。**全局记录上限 16384 条，超限走 DebugLog 路径**。
+
+## 原版怪癖（照抄）
+
+1. a 路负增量直接失败（test ebp → jl——负容量扩充拒绝）；
+2. a 路扩容后 [esi+0x10]=0 清零（扩容连带重置其他字段）；
+3. b 路环形索引 **& 0x7f**（128 取模——1 字节环形缓冲，非 2 次幂 128 恰好是）；
+4. c 路记录拷贝 **111 字节**（rep movsd 0x1b=27 次 ×4 + movsw 2 + movsb 1——27×4+2+1=111）；
+5. c 路记录表索引 lea [eax+eax*8]+lea [eax+ecx*4]（×9×4=×36——每条记录 36 字节？实际 111 字节记录/36 槽偏移——待确认）；
+6. c 路满分支 DebugLog 三连（0x734E60 ×2 + 0x5d3490——QWEN.md 调试宏同源）；
+7. c 路 [0xa8dab4] 计数 ++/-- 成对（记录失败计数）。
+
+## 跨批次连接
+
+- ★★★★**QWEN.md 调试宏 0x734E60**：c 路满分支直接调用——「编译单元测绘：调试宏字节对 68 行号 68 文件VA + CALL 0x734E60」同源函数（本批 c 路 = MapGen 编译单元域？或全局记录域——0x8374a0 是文件名字符串）；
+- ★★batch 1737/1738：a 路扩容（VectorClass 风格——0x58AF80/0x58A500 同族数组操作）；
+- ★★batch 2124 a 路 0x6579E0：后邻 0x652560 弹出器与 a 路数组收缩同族；
+- ★全局 [0x8b41f8]/[0x8b41fc]（全局记录计数——batch 1737 commit「全局数组族 [0x8B41A8] 移除」同域！）+ [0x7e1530]（IAT 新）+ [0xa8ed84]（[0xa8ed9c] 族邻域）+ [0xa8dab4]（计数）。
+- ★0x734e60/0x5d3490/0x5bc400/0x6c8820/0x6c6f50/0x72ddb0/0x6842f0（全部已登记——c 路 7 个 callee 无 MISSING）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（直接 call 全已登记——a 路 2 个 + c 路 7 个全在 TSV）。
+- **后邻未登记**：0x652630（a 路后邻比较器）、0x652560（b 路后邻数组弹出器）、0x6523A0（c 路后邻大函数头——sub esp,0x1e4/0x8391cc）。
+- **新观察**：全局 [0x8b41f8]/[0x8b41fc]（记录计数——batch 1737「[0x8B41A8] 全局数组族」同域）、[0x8b4204]（记录表）、[0xa70204]（注册表）、[0x7e1530]（IAT）、[0xa8ed84]（[0xa8ed9c] 族）、0x8374a0（DebugLog 文件名字符串）。
+- 前向：picker 队列继续 0x65 区 + 0x4A8xxx/0x4A9xxx 判定族 + 0x599650。
