@@ -1,0 +1,83 @@
+# frontier batch 2304：MapSeed 清理重置器 + 三容器构造宿主 + 坐标边界换算器（0x5659F0 / 0x565800 / 0x565660）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x5659F0 FUN_005659f0 callees=5 deps=1 / 0x565800 FUN_00565800 callees=4 deps=100 / 0x565660 FUN_00565660 callees=0 deps=1952）
+- 三路 disasm：`.qwen/tmp/_d2304a.txt`（0x5659F0 size 0x120）/ `_d2304b.txt`（0x565800 size 0x2A0）/ `_d2304c.txt`（0x565660 size 0xD0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5659F0 | 170B（0xAA）| ret c3 @0x565A99 | 0x565AA0（★★已登记——batch 2303 c 路容器构造器）| 8 次/去重 5（0x4068e0×2+0x48d080×3+0x7bcf50+0x4112d0+★★0x4f42d0 MISSING——4 已登记+1 观察，picker callees=5 吻合）|
+| 0x565800 | 493B（0x1ED）| ret c3 @0x5659EC | 0x5659F0（★本批 a 路）| 7 次/去重 4（0x4f42a0+0x7c8e17×3+0x58aff0+0x58b070——★★0x4f42a0 MISSING，3 已登记+1 观察，picker callees=4 吻合）|
+| 0x565660 | 107B（0x6B）| ret 8 @0x5656C8 | 0x5656D0（未登记——cell+0x12c bit3 读取器）| 0 次/去重 0（纯坐标运算，picker callees=0 吻合）|
+
+## a 路 0x5659F0（170B）——MapSeed 清理重置器
+
+```
+005659f0  mov edi, ecx（this）→ push 0x82acc4 → ★0x4068e0（★DebugLog 桩）→ ★0x48d080
+00565a07  mov ecx, [0x887644] → push 0xffff → ★0x7bcf50（★装载）
+00565a17  mov ecx, [0x87e8a4] → push 0x7f → ★0x4112d0 → ★0x48d080 → ★0x4f42d0（★★MISSING 观察）→ ★0x48d080
+00565a35  ★★[edi+0x158] 0x100 项清理循环（16B/项）：[0xabd480] 坐标回注 [edx+0xc] → ★★[edx+8] 距离钳位（[0xa8ed84]-[esi] jge → 减钳 → xor 0）→ ★★mov [edx], 0xffffffff（★项头置 -1 哨兵）
+00565a78  push 0x82aca8 → mov [edi+0x148], 0xd（★参数 0xd）→ mov byte [edi+0x1158], 0（★计数器清 0）→ ★0x4068e0 → ret c3
+```
+
+**语义**：**MapSeed 清理重置器（推断名）**——★★this+0x158 起 0x100 项（16B/项）线性表清理：★★[0xabd480] 全局坐标回注 [edx+0xc] + ★★[0xa8ed84] 距离钳位（batch 2300 a 路同款）+ ★项头 0xffffffff 哨兵 → ★★[edi+0x148]=0xd 参数 + [edi+0x1158] 计数器清 0（★batch 2294 c 路最小计数器 0x578AC0 同字段）→ ★0x4068e0 DebugLog 桩 ×2 + 0x48d080 ×3 + 0x7bcf50/0x4112d0 装载 → ret c3。**MapSeedClass 参数表清理重置（0x158 表族 + 0x148 参数 + 0x1158 计数器——★batch 2274/2294 同族**）**。
+
+## b 路 0x565800（493B）——三容器构造宿主
+
+```
+00565800  mov ebp, ecx（this）→ ★0x4f42a0（★★MISSING 观察）→ mov [ebp+0x14c], 0x200 → mov [ebp+0x150], 0x200 → mov [ebp+0x154], 0x40000 → ★虚表槽 0x58 调用
+00565835  [ebp+0x14] 门控（jne 0x5658ee）→ ★★第一组容器：0x7c8e17（0x10B 头分配）→ mov [edi+4], 0x56cb80（★虚表）→ mov [edi+8], 0x100 → mov [edi+0xc], 0x14 → 0x7c8e17（0x1804B 数据分配）→ ★★0x58aff0 ×0x100（虚表 0x7ed540 + [+0x14]=0xa + [+0x10]=0——18B/项尾置构造）
+005658bf  ★★收尾：[edi] 指数据 → 循环 [+0x14]=0x14 族装载 → [ebp+0x14]=edi
+005658ee  ★★第二组容器（同模板）：0x7c8e17（0x10B + 0x1804B）→ ★★0x58b070 ×0x100（虚表 0x7ed520 + 同三字段）→ [ebp+0x80] 槽
+0056590f  ★★第三组三槽循环（[ebp+0x8c] 起 ×3）：虚表槽 0xc 调用 → 0x7c8e17 ×2（同模板）→ 0x58b070 ×0x100 → mov [槽], edi
+005659d9  ★★[ebp+0x18] rep stosd 0xd（★13 dword 清 0）→ ret c3
+```
+
+**语义**：**三容器构造宿主（推断名）**——★★0x4f42a0（MISSING）+ [0x14c]/[0x150]=0x200/[0x154]=0x40000 三计数初始化 + ★虚表槽 0x58 回调 → ★★三组 0x100 项容器构造（0x7c8e17 头+数据双层分配 + ★0x58aff0×0x100 虚表 0x7ed540 + ★0x58b070×0x100 虚表 0x7ed520——★VectorClass 18B/项族）+ ★★[ebp+0x80]/[0x8c] 槽位族装载 → [ebp+0x18] 13 dword 清 0 → ret c3。**VectorClass 三容器批量构造宿主（0x7ed540/0x7ed520 新虚表 + 0x58aff0/0x58b070 尾置构造器——★batch 2282-2284 容器族对照**）**。
+
+## c 路 0x565660（107B）——坐标边界换算器
+
+```
+00565660  mov eax, [esp+0x10]（参1 坐标）→ mov ebx, [ecx+0xf4]（★this 尺寸）→ mov ebp, [ecx+0xfc] → mov eax, [ecx+0x100] → movsx esi, [参1+2] → movsx edi, [参1]
+00565686  ★★test bl, 1（★标志位分支）→ je → sub ecx, esi / jne → sub + inc（★边界 +1 校正）
+00565696  ★★sar 折叠链：[ebx]-[esi] cdq 舍入 + [esi]+[edi] → sar ecx,1 → sar eax,1 → 和 → -[ebp]（[0xfc]）→ -[0x100] → ★★word 坐标写 [esp+0x20]/[0x22] → mov [参2], 双 word → ret 8
+```
+
+**语义**：**坐标边界换算器（推断名）**——★★参1 坐标 + this 尺寸三字段（[0xf4]/[0xfc]/[0x100]——★batch 2299/2302 尺寸族）→ ★★test bl,1 标志分支（±1 校正）+ ★★sar 1 折叠（cdq 舍入除法缩比）→ 坐标边界换算 → 参2 双 word 写 → ret 8。**坐标边界换算（尺寸族 + sar 折叠——★0 call 纯计算器**）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 8 个/去重 5（0x4068e0×2/0x48d080×3/0x7bcf50/0x4112d0/★★0x4f42d0）——**4 已登记 + 1 MISSING（0x4f42d0 记观察排队）**（picker callees=5 吻合）。
+- b 路：跨函数直接 call 7 个/去重 4（★★0x4f42a0/0x7c8e17×3/0x58aff0/0x58b070）——**3 已登记 + 1 MISSING（0x4f42a0 记观察排队）**（picker callees=4 吻合——虚表槽 0x58/0xc 属间接调用不计）。
+- c 路：跨函数直接 call 0 个/去重 0（纯坐标运算）——**全部已登记**（picker callees=0 吻合）。
+- ★★核验脚本输出：三路 2 真 MISSING（0x4f42a0/0x4f42d0——★0x4f42xx 家族两兄弟记观察排队），**无批内自引用**。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★[edi+0x158] 0x100 项清理（16B/项——★batch 2300 a 路 [0x158] 表族）;
+2. a 路 ★★[0xabd480] 坐标回注 [edx+0xc] + [0xa8ed84] 距离钳位（batch 2300 a 路同款）;
+3. a 路 ★★项头 0xffffffff 哨兵（mov [edx], 0xffffffff——★清理标记）;
+4. a 路 ★★[edi+0x148]=0xd 参数 + [edi+0x1158] 计数器清 0（★batch 2294 c 路 0x578AC0 同字段——0x1158 字节计数器）;
+5. a 路 ★★0x4068e0 DebugLog 桩 ×2（push 0x82acc4/0x82aca8——日志串表）;
+6. b 路 ★★[0x14c]/[0x150]=0x200/[0x154]=0x40000（★512/65536 计数初始化）;
+7. b 路 ★★容器头虚表 0x56cb80 + 数据 0x1804B 双层分配（0x7c8e17 ×2——★头 16B + 数据 0x1804 旗标）;
+8. b 路 ★★0x58aff0 ×0x100 虚表 0x7ed540 + 0x58b070 ×0x100 虚表 0x7ed520（★18B/项尾置构造——[+0x14]=0xa/[+0x10]=0）;
+9. b 路 ★★第三组三槽循环（[ebp+0x8c] 起 ×3 槽——★同模板重复构造）;
+10. b 路 ★★[ebp+0x18] rep stosd 0xd（★13 dword 批量清 0）;
+11. c 路 ★★test bl,1 标志分支（je/jne ±1 校正——★尺寸标志语义）;
+12. c 路 ★★sar 1 折叠链（cdq 舍入 + 两坐标和差——★除法缩比 2）。
+
+## 跨批次连接
+
+- ★★★batch 2300 a 路（0x56BBE0——a 路 [0xabd480]/[0xa8ed84] 距离钳位同款）+ batch 2294 c 路（0x578AC0 最小计数器 [ecx+0x1158]——a 路计数器同字段）。
+- ★★batch 2282-2284（VectorClass 容器族——b 路 0x58aff0/0x58b070 尾置构造同族对照）+ batch 2301（0x5523e0/0x552490 容器族——b 路三组同模板）。
+- ★★batch 2274（MapSeedClass 参数装载器——a 路 0x158 表族同源）+ batch 2299/2302（尺寸族 [0xf4]/[0xfc]/[0x100]——c 路同源）。
+- ★★batch 2303 a 路（0x565C10 巨型重建设备——b 路容器构造同区）。
+
+## 观察项 / 候选池
+
+- **新观察**：★★0x4F42A0/0x4F42D0（a/b 路 MISSING——0x4f42xx 家族两兄弟，batch 2302 c 路 0x4f42f0 已登记同族）；0x5656D0（c 路后邻——cell+0x12c bit3 读取器）；[0x887644]/[0x87e8a4]（a 路装载全局）；[0x82acc4]/[0x82aca8]（a 路 DebugLog 串表）。
+- 未兑现 MISSING 旧观察：0x00486790（2267 起排队）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110（batch 2280-2303 新观察）。
+- 本批 **真 MISSING 2 个（0x4F42A0/0x4F42D0 观察排队）**（TSV 5395）。next 批预期 top3 = 0x565190（292B callees=4）/ 0x565090（244B callees=4）/ 0x561180（460B callees=12）。
