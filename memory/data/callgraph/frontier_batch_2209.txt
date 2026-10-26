@@ -1,0 +1,73 @@
+# frontier batch 2209：0x5E 区哈希表重建/对象日志族三连（哈希表扩容重建器 + 哈希表缩容重建器 + 对象族日志扫描器）（0x5EF010 / 0x5EEF60 / 0x5EE9D0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5EF010 FUN_005ef010 callees=2 deps=55 / 0x5EEF60 FUN_005eef60 callees=2 deps=57 / 0x5EE9D0 FUN_005ee9d0 callees=6 deps=2533）
+- 三路 disasm：`.qwen/tmp/_d2209a.txt`（0x5EF010 size 0x100）/ `_d2209b.txt`（0x5EEF60 size 0x100）/ `_d2209c.txt`（0x5EE9D0 size 0x200）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x5EF010 | 156B（0x9C）| ret c3 @0x5EF0AB | 0x5EF0B0（0x7eef50 虚表 + [esi+0x4]/[esi+8] 尺寸 + 0x7c8e17 new——同族容器构造器，未登记）| 2（0x7c8e17 + 0x7c8b3d——callees=2 吻合）|
+| 0x5EEF60 | 168B（0xA8）| ret c3 @0x5EF007 | 0x5EF010（= a 路本体——扩容/缩容孪生互指）| 2（0x7c8e17 + 0x7c8b3d——callees=2 吻合）|
+| 0x5EE9D0 | 475B（0x1DB）| ret c3 @0x5EEBAA | 0x5EEBB0（[esi+0x4] 释放 + [esi+0xd] 标志——同族析构器，未登记）| 6（0x688380/0x4068e0×N/0x5ee6f0×2/0x50e000×2/0x50def0×4/0x7c8b3d——去重 6 个，callees=6 吻合）|
+
+三函数为 **0x5E 区哈希表重建/对象日志族**（0x7eef90/0x7eef50 虚表族 + [ebx+0x8]/[ebx+0xc]/[ebx+0x14]/[ebx+0x18] 哈希表字段 + [0xa80238]/[0xa8022c]/[0xa8b230] 对象族全局——batch 2208 同族续）：
+
+## a 路 0x5EF010（156B）——哈希表扩容重建器
+
+```
+005ef010  mov ebx=ecx（this）→ cmp byte [ebx+0x14],1（★重建标志）→ je 0x5ef0a9（跳过）
+          → mov esi=[ebx+8]（★容量）→ mov ebp=[ebx]（旧表指针）→ mov edi=[ebx+0xc]（★掩码位宽）→ lea eax,[esi+esi]（★容量 ×2 扩容）→ inc edi（掩码位宽 +1）→ mov [ebx+8],eax → shl eax,2 → push → call 0x7c8e17（new）→ mov edi=eax → ★rep stosd 清零（[ebx+8]×4 dword）→ mov [ebx],edi（★新表）
+          → ★重链循环（esi 旧表条数）：mov esi,[edi]（旧表项）→ test → je 跳过 → ★虚表槽 0x18（[ebx+0x18] 索引调用——batch 2209 表头重链）→ mov edx,1 → shl edx,cl（★新掩码）→ dec → and（取索引）→ mov eax,[ebx] → mov ecx,[eax+edx*4]（旧链头）→ mov [eax+edx*4],esi（★表头插入）→ mov [esi+8],ecx（★挂旧链）→ 循环
+          → ★0x7c8b3d 旧表释放（mov esi,[ebx] 新表保留前）→ ret c3
+```
+**语义**：**哈希表扩容重建器（推断名）**——① ★[ebx+0x14] 重建标志门控 + 容量 ×2 + 掩码位宽 +1；② ★0x7c8e17 new + rep stosd 清零（dword 表 + 尾字节）；③ ★★重链循环（虚表槽 0x18 取索引 + shl/dec/and 新掩码 + 表头插入 + [esi+8] 挂旧链——★头插法重散列）；④ 0x7c8b3d 旧表释放。**哈希表扩容重建端（×2 扩容 + 头插重散列——batch 2209 哈希容器族）**。
+
+## b 路 0x5EEF60（168B）——哈希表缩容重建器
+
+```
+005eef60  mov ebx=ecx → mov esi=[ebx+8]（容量）→ cmp esi,[ebx+0x30]（★下限容量）→ jbe 0x5ef004（跳过）→ cmp byte [ebx+0x14],1 → je 跳过
+          → 同 a 路骨架：shr eax,1（★缩容/2）→ dec edi（掩码位宽 -1）→ 0x7c8e17 new + rep stosd 清零 → 虚表槽 0x18 重链（同款 shl/dec/and + 表头插入）→ 0x7c8b3d 旧表释放 → ret c3
+```
+**语义**：**哈希表缩容重建器（推断名）**——① ★[ebx+0x8] vs [ebx+0x30] 下限判定（不缩回）+ [ebx+0x14] 重建标志门控；② ★shr 1 缩容 + 掩码位宽 -1 + 同款重链（虚表槽 0x18 + 头插）；③ 与 a 路**构成扩容/缩容孪生对**（×2/÷2 + 位宽 ±1）。**哈希表缩容重建端（a 路 ÷2 孪生——容量自适应）**。
+
+## c 路 0x5EE9D0（475B）——对象族日志扫描器
+
+```
+005ee9d0  mov dl,cl → 0x688380（★栈对象构造）→ mov ecx,[0xa8b230]（★全局对象）→ add ecx,0x1180（★十六槽区）→ ★循环 16 次：cmp [ecx],-1 → 字节[esp+eax+0xc]=1/0（★槽占用表）
+          → [0xa80238] 计数 → jle 0x5eeaeb → ★遍历循环（edi 索引）：mov edx,[0xa8022c]（★对象表）→ mov esi,[edx+edi*4]（取对象）→ mov ebp,[esi+0x34]（★子对象）→ [ebp+0x1a6] 字节 → jne 跳过 → [esi+0x1ec] 字节 → je 跳过（★双字节门控）
+          → ★槽匹配：add ecx,0x1180 → 16 次 cmp [槽],edi → bl=1（★占用匹配）→ jne 0x5eeacc（占中跳转）
+          → ★未占用路径：0x4068e0（0x82dd2c 串 + [ebp+0x24] 名 + edi 索引）→ 0x5ee6f0（★坐标/结果查询）→ 0x50e000/0x50def0（★对象族查询）→ movsx word + 0x4068e0（0x831de8 坐标串）
+          → ★占用路径：0x50e000（[esp+0x30] 表查）→ 循环推进 → ★第二段遍历（[esi+0x34]/[ebp+0x1a6]/[esi+0x1ec] 反向门控——未占用才打日志的镜像）
+          → 收尾：[esp+0x28] 参数 + 0x7c8b3d 释放（★栈对象清理）→ ret c3
+```
+**语义**：**对象族日志扫描器（推断名）**——① ★[0xa8b230]+0x1180 十六槽占用表（-1 空槽判定 + 字节写 1/0）；② ★★[0xa80238]/[0xa8022c] 对象族遍历（batch 2207 b 后邻 0x5F0185 同全局）+ [esi+0x34]/[ebp+0x1a6]/[esi+0x1ec] 双重字节门控；③ ★0x5ee6f0 查询 + 0x50e000/0x50def0 对象族函数 + 0x4068e0 日志（0x82dd2c/0x831de8 串——坐标/名称输出）；④ 0x688380 栈对象 + 0x7c8b3d 清理。**对象族日志扫描端（十六槽占用 + 双段遍历镜像——调试输出）**。
+
+## callee 核验
+
+- a 路：2 个直接 call（0x7c8e17 + 0x7c8b3d——虚表槽 0x18 为间接），**全部已登记**（callees=2 吻合）。
+- b 路：2 个直接 call（0x7c8e17 + 0x7c8b3d——虚表槽 0x18 为间接），**全部已登记**（callees=2 吻合）。
+- c 路：6 个直接 call（0x688380/0x4068e0/0x5ee6f0/0x50e000/0x50def0/0x7c8b3d——去重 6 个），**全部已登记**（callees=6 吻合）。
+
+## 原版怪癖（照抄）
+
+1. a/b 路 ★[ebx+0x14] 重建标志门控 + 掩码位宽 ±1（inc/dec [ebx+0xc]——位宽随容量同步）；
+2. a/b 路 ★★重链循环惯用（虚表槽 0x18 索引 + mov edx,1/shl edx,cl/dec/and 新掩码 + 表头插入 [eax+edx*4]=esi + [esi+8]=旧链头——★头插法重散列）；
+3. a/b 路 ★rep stosd 清零（容量×4 dword + and 3 尾字节——batch 2199 槽位器同款）；
+4. b 路 ★[ebx+0x30] 下限容量门控（不缩回——缩容保护）；
+5. c 路 ★[0xa8b230]+0x1180 十六槽占用表（-1 空槽判定 + 字节 1/0）+ 双段遍历镜像（占用/未占用反向门控）；
+6. c 路 ★[esi+0x34]/[ebp+0x1a6]/[esi+0x1ec] 双重字节门控（对象族过滤）。
+
+## 跨批次连接
+
+- ★★batch 2199（[edi+esi*8] 槽位族——a/b 路 [ebx+0xc] 掩码位宽同脉络）；batch 2192（[0xa83d80] 注册表——c 路 [0xa8022c] 对象族同构）。
+- ★★batch 2207 b 后邻（[0xa8022c]/[edi+0x1ec]——c 路同全局双向确认）；batch 2191（[esi+0x34] 子对象字段——c 路）。
+- ★batch 2208（0x7c8e17/0x7c8b3d + 0x7eefxx 虚表族——a/b/c 路同族）。
+
+## 观察项 / 候选池
+
+- **MISSING：无**（a 路 2 个 / b 路 2 个 / c 路 6 个直接 call 全部已登记）。
+- **后邻未登记**：0x5EF0B0（a 后邻——0x7eef50 虚表 + [esi+0x4]/[esi+8] + new 容器构造器）、0x5EF010（b 后邻 = a 路本体——扩容/缩容孪生互指）、0x5EEBB0（c 后邻——[esi+0x4] 释放 + [esi+0xd] 标志析构器）。
+- **新观察**：[ebx+0x8]/[ebx+0xc]/[ebx+0x14]/[ebx+0x18]/[ebx+0x30] 哈希表五字段（a/b 路——容量/掩码位宽/标志/索引回调/下限全景）；[0xa8b230]+0x1180 十六槽区（c 路）。
+- 前向：picker 队列继续 0x5E 区（0x5EF0B0/0x5EEBB0 连排链 + 0x5EE6F0 前邻已被 c 路点名）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
