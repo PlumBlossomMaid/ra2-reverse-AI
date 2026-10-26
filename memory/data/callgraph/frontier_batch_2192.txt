@@ -1,0 +1,64 @@
+# frontier batch 2192：0x5F 区对象族清理/注册族三连（Spotlight 对象族批量清理器 + 数组项移除器 + 类注册构造器）（0x5FF390 / 0x5FF2D0 / 0x5FE250）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5FF390 FUN_005ff390 callees=1 deps=1928 / 0x5FF2D0 FUN_005ff2d0 callees=0 deps=68 / 0x5FE250 OverlayTypeClass::WhatAmI callees=2 deps=58）
+- 三路 disasm：`.qwen/tmp/_d2192a.txt`（0x5FF390 size 0x100）/ `_d2192b.txt`（0x5FF2D0 size 0x100）/ `_d2192c.txt`（0x5FE250 size 0x200）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x5FF390 | 132B（0x84）| ret c3 @0x5FF413 | 0x5FF420（= batch 2191 c 路已登记——渲染系统初始化器互指）| 1（0x7c8b3d 释放——[eax+0x10] 虚表槽查索引间接，callees=1 吻合）|
+| 0x5FF2D0 | 76B（0x4C）| ret c3 @0x5FF31B | 0x5FF320（同族"单对象引用注册"版——[esi+0xc]+=8 + 虚表槽查索引 + 释放三件套中段，未登记）| 0（[edx+0x10] 虚表槽间接，callees=0 吻合）|
+| 0x5FE250 | 356B（0x164）| 多出口 ret 4 @0x5FE3A4/0x5FE3B1 | 0x5FE3C0（同族简化构造器——0x5f7320 + [esi+0x2a0..0x2b8] 四虚表，未登记；0x5FE3F0 注册表移除器孪生——均未登记）| 2（0x5f7090/0x410230 + [edx+8]/[edx+0x10] 虚表槽间接，callees=2 吻合）|
+
+三函数为 **0x5F 区对象族清理/注册族**（batch 2191 Spotlight 渲染族同源 + 注册表族）：a/b 路共享 [0xac1688]/[0xac167c]/[0xac1678] 对象族全局 + 虚表槽 0x10 查索引 + 数组收缩前移惯用（batch 2191 b/c 路四件套同族）；c 路为 [0xa83d80]/[0xa83d84]/[0xa83d88]/[0xa83d90]/[0xa83d94] 注册表全局 + 类注册构造/移除：
+
+## a 路 0x5FF390（132B）——Spotlight 对象族批量清理器
+
+```
+005ff390  push ecx → mov eax,[0xac1688]（对象族计数）→ lea edi,[eax-1]（★倒序遍历）→ test → jl 0x5ff411 → 循环：mov ecx,[0xac167c] → mov esi,[ecx+edi*4]（对象表取对象）→ mov ecx,[esi+0xc] → add ecx,8（★引用计数 +=8）→ mov [esi+0xc],ecx → cmp eax,0x50（★0x50 阈值判定）→ jl 0x5ff40d（未达阈值跳过）→ test esi → je 跳过 → mov eax,[0xac1678] → push 出参 → mov ecx,0xac1678 → call [eax+0x10]（虚表槽 0x10 查索引）→ cmp eax,-1 → je 0x5ff404 → [0xac1688] 计数 → cmp eax → jge → dec 计数 → mov [0xac1688],ecx → jge → ★数组收缩循环：inc eax → mov edx,[ecx+eax*4] → mov [ecx+eax*4-4],edx（★前移一格）→ 循环 → push esi → call 0x7c8b3d（free 释放）→ dec edi → jns 循环 → ret c3
+```
+**语义**：**Spotlight 对象族批量清理器（推断名）**——① ★[0xac1688] 计数倒序遍历 + [0xac167c] 对象表（batch 2190 c 路/2191 渲染族同全局）[esi+0xc] 引用计数 +=8 **达 0x50 阈值**才清理；② ★[0xac1678] 虚表槽 0x10 查索引 → 数组收缩（[0xac1688]-- + [ecx+eax*4-4]=[ecx+eax*4] 前移——batch 2191 b 路同款惯用）→ 0x7c8b3d 释放。**对象族引用计数清理端（0x50 阈值 + 收缩前移 + 释放三连）**。
+
+## b 路 0x5FF2D0（76B）——数组项移除器
+
+```
+005ff2d0  push ecx → mov edx,[0xac1678] → mov [esp],ecx（this 存栈）→ push eax → mov ecx,0xac1678 → call [edx+0x10]（虚表槽 0x10 查索引）→ cmp eax,-1 → je 收尾 → [0xac1688] → cmp → jge 收尾 → dec 计数 → mov [0xac1688],ecx → jge → ★数组收缩循环：inc eax → mov edx,[ecx+eax*4] → mov [ecx+eax*4-4],edx（前移一格）→ 循环 → ret c3
+```
+**语义**：**数组项移除器（推断名）**——① ★[0xac1678] 虚表槽 0x10 查索引（对象族容器——batch 2191 b 路/本批 a 路同族）；② ★数组收缩前移（[0xac1688]-- + [ecx+eax*4-4]=[ecx+eax*4]——**无释放纯移除**，a 路多出的 0x7c8b3d 释放是本路差异）；③ 返回 void（寄存器无承载）。**对象族纯移除端（收缩前移惯用最小形态）**。
+
+## c 路 0x5FE250（356B）——类注册构造器
+
+```
+005fe250  mov eax,[esp+4]（构造参数）→ push → call 0x5f7090（基类构造）→ mov esi=ecx → ★[esi+0x2a0]=1/[esi+0x2a4]=1（双标志置 1）→ [esi+0x2ac]=1/[esi+0x2b3]=1（双字节标志）→ [esi+0x294]=0xffffffff（未注册索引）→ [esi+0x298]/[esi+0x29c]=0 → [esi+0x2a8..0x2b8] 13 字节清零 → ★四虚表装载（0x7ef600/0x7ef5e4/0x7ef5dc/0x7ef5d4——DSurface 虚表族）→ push [esi+4] → call 0x410230（基类初始化）→ [esi+0x22f]=1/[esi+0x232]=1 → [esi+0x230]/[esi+0x235]=0
+          → ★注册表装载：[0xa83d90] 计数 vs [0xa83d88] 容量 → jl 已满 → [0xa83d8d] 字节标志 → [0xa83d94] 大小 → jle 拒 → ★add edx,ecx（容量+计数）→ push ebx/push edx → mov edx,[0xa83d80] → mov ecx,0xa83d80 → call [edx+8]（虚表槽 8 扩容）→ test al → [0xa83d90]++（★计数增 1）→ mov [0xa83d84]+[eax+ecx*4],esi（★注册表追加 this）→ mov eax,[0xa83d90]
+          → ★回查循环（ecx=0..count）：cmp [edx],esi → je 命中 → ★[esi+0x294] = 命中索引 / 未命中 = 0xffffffff → ret 4
+```
+**语义**：**类注册构造器（推断名）**——① ★0x5f7090 基类构造 + [esi+0x2a0..0x2b8] 字段初始化（双标志/双字节 + 13 字节清零）；② ★四虚表装载（0x7ef600/0x7ef5e4/0x7ef5dc/0x7ef5d4——DSurface/图形对象虚表族）+ 0x410230 基类初始化；③ ★★注册表装载：[0xa83d80]（容器）/ [0xa83d84]（对象数组）/ [0xa83d88]（容量）/ [0xa83d90]（计数）/ [0xa83d94]（大小）→ 虚表槽 8 扩容 → 追加 this → [esi+0x294] 索引写回（命中索引 / 0xffffffff 未注册）。**类注册表注册端（[0xa83d80] 容器全景——构造即注册惯用）**。
+
+## callee 核验
+
+- a 路：1 个直接 call（0x7c8b3d 释放——[eax+0x10] 虚表槽查索引为间接），**全部已登记**（callees=1 吻合）。
+- b 路：0 个直接 call（[edx+0x10] 虚表槽间接——callees=0 吻合）。
+- c 路：2 个直接 call（0x5f7090/0x410230——[edx+8]/[edx+0x10] 虚表槽间接），**全部已登记**（callees=2 吻合）。
+
+## 原版怪癖（照抄）
+
+1. a/b 路 ★[0xac1678] 虚表槽 0x10 查索引 + [0xac1688]-- + 数组收缩前移（[ecx+eax*4-4]=[ecx+eax*4]——batch 2191 b 路同款惯用）；
+2. a 路 ★引用计数 +=8 达 0x50 阈值才清理（阈值门控——对象族生命周期管理）；
+3. c 路 ★注册表扩容判定（[0xa83d90] 计数 vs [0xa83d88] 容量 + [0xa83d8d] 字节标志 + [0xa83d94] 大小三重门控）+ 虚表槽 8 扩容 + 追加 this + [esi+0x294] 索引写回（命中/0xffffffff 双态）；
+4. c 路 ★构造即注册惯用（0x5f7090 + 字段初始化 + 四虚表 + 注册四连——同族后邻 0x5FE3C0/0x5FE3F0 构造/移除孪生）。
+
+## 跨批次连接
+
+- ★★batch 2191（Spotlight 渲染族——a/b 路 [0xac1688]/[0xac167c]/[0xac1678] 同全局 + 收缩前移同惯用）；batch 2190 c 路（0x5FFFA0 遍历调度器——[0xac1688]/[0xac167c]）。
+- ★batch 2191 a（0x7e2104/0x7e2070 虚表——c 路四虚表 0x7ef600 系同族）；batch 2174/2175（[0x8871e0] 缩放表无关，Spotlight 全局网）。
+- ★新注册表 [0xa83d80]/[0xa83d84]/[0xa83d88]/[0xa83d90]/[0xa83d94]（c 路——本会话新全景）。
+
+## 观察项 / 候选池
+
+- **MISSING：无**（a 路 1 个 / b 路 0 个 / c 路 2 个直接 call 全部已登记）。
+- **后邻未登记**：0x5FF320（b 后邻——单对象引用注册版三件套）、0x5FE3C0/0x5FE3F0（c 后邻——简化构造器 + 注册表移除器孪生）。
+- **新观察**：[0xa83d80..0xa83d94] 注册表容器全景（c 路——虚表槽 8 扩容容器第五个实例）；0x7ef600/0x7ef5e4/0x7ef5dc/0x7ef5d4 图形对象虚表族（c 路）。
+- 前向：picker 队列继续 0x5F 区（0x5FF320/0x5FE3C0/0x5FE3F0 孪生链 + 0x5FE250 后邻）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
