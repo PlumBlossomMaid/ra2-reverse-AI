@@ -1,0 +1,67 @@
+# frontier batch 2237：0x5C 区团队构造/位图计算/乘法累加族三连（MPObserverTeam::MPTeam + 位数计算器 + 16 位乘法累加器）（0x5C9470 / 0x5C7EC0 / 0x5C7DB0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5C9470 MPObserverTeam::MPTeam callees=4 deps=95——带符号名 / 0x5C7EC0 FUN_005c7ec0 callees=2 deps=3 / 0x5C7DB0 FUN_005c7db0 callees=0 deps=1）
+- 三路 disasm：`.qwen/tmp/_d2237a.txt`（0x5C9470 size 0x100）/ `_d2237b.txt`（0x5C7EC0 size 0x200）/ `_d2237c.txt`（0x5C7DB0 size 0x100）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5C9470 | 67B（0x43）| ret c3 @0x5C94B2 | 0x5C94C0（未登记——0x5d8c90 尾调 thunk 观察项）| 4（0x734e60 + 0x7b66d0 + 0x5d8c50 + 0x7b6760——callees=4 吻合）|
+| 0x5C7EC0 | 475B（0x1DB）| ret c3 @0x5C809A | 0x5C80A0（未登记——0xabf6bc 8B 步长表 + 0x5c6660 观察项）| 4 次/去重 2（0x5c6660 + 0x5c7990——callees=2 吻合，**0x5C7990 MISSING 观察项**）|
+| 0x5C7DB0 | 76B（0x4C）| ret 8 @0x5C7DF9 | 0x5C7E00（未登记——rep stosd 清 + 双层乘法累加 观察项——c 路后邻大函数）| 0（callees=0 吻合——纯整数运算）|
+
+## a 路 0x5C9470（67B）——MPObserverTeam::MPTeam
+
+```
+005c9470  push ecx/esi → mov esi=ecx → push 5/0x82fd40（★串）→ xor edx → mov ecx,0x82fd30（★文件）→ call 0x734e60（★DebugLog——batch 2171 族）
+005c9487  push eax → lea ecx,[esp+8] → call 0x7b66d0（★宽串构造）→ lea eax,[esp+4] → push -1 → push eax → mov ecx=esi → call 0x5d8c50（★初始化——push -1 哨兵）→ lea ecx,[esp+4] → call 0x7b6760（★串释放）→ mov [esi],0x7ee6c8（★虚表）→ mov eax=esi → ret
+```
+**语义**：**MPObserverTeam::MPTeam（带符号名——YRpp 实名）**——① DebugLog 0x734e60（0x82fd40 串/0x82fd30 文件/push 5 行号——batch 2171 调试族）；② 0x7b66d0 宽串构造 + 0x5d8c50 初始化（push -1 哨兵）+ 0x7b6760 栈串释放；③ [esi]=0x7ee6c8 虚表。**观察者团队构造端（日志 + 初始化 + 虚表）**。
+
+## b 路 0x5C7EC0（475B）——位数计算器
+
+```
+005c7ec0  push 双件套 → mov ebx=edx（★位数参数）→ mov esi=ecx → ★rep movsd 拷贝（[ebx*4] 大小 → [0xabf5b4]）→ lea esi,[eax+0xabf5b0]（★位图表）
+005c7eed  ★首位扫描：mov eax=esi → cmp [eax],0 → jne 0x5c7eff → dec ecx → je 0x5c7f03 → mov edx,[eax-4] → sub eax,4 → test edx → je 循环 → ★位扫描（mov ecx,[ecx*4+0xabf5b0] → mov edx,0x80000000 → shl eax,5 → test edx,ecx → jne 0x5c7f23 → shr edx,1 → dec eax → 循环）
+005c7f23  mov [0xabf6b8],eax → add eax,0xf → cdq → and edx,0xf → add eax,edx → sar eax,4 → mov [0xabf59c],eax（★尺寸计算）
+005c7f39  ★第二区扫描（[0xabf5ac] 表 → [0xabf8c8] 区：mov ecx,[eax] → mov [0xabf8c8],ecx → 位扫描同款）→ lea edx,[eax-0x20] → push 2 → mov ecx,0xabf8c8 → mov [0xabf8c4],edx → call 0x5c6660（★函数调用）→ ★0x5c7990 调用（push 2 → mov ecx,0xabf5a4 → call 0x5c7990——MISSING 观察）→ ★第三区（0x5c6660 push 2/edx=1/0xabf5a4）→ ★[0xabf8c4] 修正（add 0xf → and 0x8000000f → jns → inc）→ ★[0xabf5a4]/[0xabf5a8] 计数递增（mov [0xabf5a4],edx → 0x5c6660 调用 → dec [0xabf8c4]）→ ★尾段：[0xabf5a0]/[0xabf6b4] word 装载 → ret
+```
+**语义**：**位数计算器（推断名）**——① rep movsd 拷贝输入到 [0xabf5b4] 全局缓冲；② ★★0x80000000 位扫描三段（[0xabf5b0]/[0xabf8c4]/[0xabf5a0] 三区——shl eax,5 + test + shr 进位找最高位）；③ ★尺寸计算（add 0xf + and 0xf + sar 4——向上取整）；④ ★0x5c6660/0x5c7990 函数双调用（push 2 参数）+ [0xabf5a4]/[0xabf8c4] 计数修正。**全局位图位数计算端（三区位扫描 + 尺寸修正 + 双调用）**。
+
+## c 路 0x5C7DB0（76B）——16 位乘法累加器
+
+```
+005c7db0  push 双件套 → mov ebx,[esp+0xc]（★循环数）→ xor esi → test ebx → jle 0x5c7df4
+005c7dbc  push 双件套 → mov edi,[esp+0x14] → and edi,0xffff（★乘数钳位）→ ★循环：mov ax,[edx]（★源）→ mov bp,[ecx]（★目标）→ imul eax,edi（★乘法）→ add ebp,esi（★进位）→ add eax,ebp → mov [ecx],ax（★写低 16 位）→ add edx,2/add ecx,2 → shr eax,0x10（★进位）→ mov esi=eax → dec ebx → jne → ★尾：add word [ecx],si（★最终进位）→ ret 8
+005c7df4  add word [ecx],si → ret 8
+```
+**语义**：**16 位乘法累加器（推断名）**——★16 位逐项乘法累加（mov ax/[edx] × and edi,0xffff → imul → add 进位 → mov [ecx],ax → shr 0x10 进位传播——**大数乘法低半进位链**）。**16 位乘法内核（无 call 纯整数——卷积/大数乘法基元）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 4 个（0x734e60/0x7b66d0/0x5d8c50/0x7b6760），**全部已登记**（callees=4 吻合）。
+- b 路：跨函数直接 call 4 次/去重 2 个（0x5c6660 + 0x5c7990），**0x5C6660 已登记 + 0x5C7990 MISSING**（grep ranking.tsv:5733 确认有行未登记：FUN_005c7990 deps=2，调用者正是 b 路本体 0x5C7EC0——**按惯例记观察项自然排队、不阻塞本批**）；callees=2 吻合。
+- c 路：跨函数直接 call **0 个**（callees=0 吻合——纯整数乘法）。
+- ★核验脚本（norm() 规范化版）输出：a/c 全 PASS、b 路 1 枚 MISSING 观察项。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★DebugLog 0x734e60（0x82fd40 串/0x82fd30 文件/push 5——batch 2171 调试族）+ 0x5d8c50 初始化（push -1 哨兵）+ 0x7b66d0/0x7b6760 宽串栈闭环 + [esi]=0x7ee6c8 虚表；
+2. b 路 ★★0x80000000 位扫描三段（[0xabf5b0]/[0xabf8c4]/[0xabf5a0]——shl eax,5 + test + shr 进位找最高位——标准 clz 实现）+ rep movsd 输入拷贝 + add 0xf/sar 4 尺寸向上取整；
+3. b 路 ★0x5c6660/0x5c7990 双调用（push 2 参数——与 [0xabf5a4]/[0xabf8c8] 计数修正交互）+ 0x8000000f 无符号修正（and + jns 分支）；
+4. c 路 ★★16 位乘法进位链（imul eax,edi → add ebp 进位 → mov [ecx],ax → shr 0x10 → 传播——大数乘法低半基元）+ and edi,0xffff 钳位 + 尾 add word [ecx],si 最终进位。
+
+## 跨批次连接
+
+- ★★batch 2171（DebugLog 0x734e60——a 路）+ batch 2227（[0xabfda0..0xabfdb4] 全局族——b 路 [0xabf5a0..0xabf6b8] 同脉络）。
+- ★★batch 2224/2226（0x7b66d0/0x7b6760 宽串族——a 路）+ batch 2228（0x7c8e17/0x7c8b3d 家族——a 路邻域）。
+- ★batch 2219（[0xabfbe0] 全局族——b 路 [0xabfxxx] 邻域）+ batch 2205（0x5d8c50 初始化族——a 路）。
+
+## 观察项 / 候选池
+
+- **MISSING 1 枚（本批 b 路 callee，观察项排队）**：**0x5C7990**（ranking.tsv:5733，FUN_005c7990，deps=2，b 路 [0xabf5a4] 计数调用——自然排队兑现候选）。
+- **后邻未登记**：0x5C94C0（a 后邻——0x5d8c90 尾调 thunk：push [esp+4] → call 0x5d8c90 → ret 4）；0x5C80A0（b 后邻——0xabf6bc 8B 步长表 + 0x5c6660 调用——**b 路后邻大函数，自然排队**）；0x5C7E00（c 后邻——rep stosd 清 + 双层乘法累加——**c 路后邻大函数**）。
+- **新观察**：[0xabf5a0..0xabf8c8] 全局位图族（b 路三区）+ 0x5c6660/0x5c7990 函数对（b 路双调用）。
+- 前向：picker 队列继续 0x5C 区（0x5C7990 MISSING 兑现候选 + 0x5C80A0/0x5C7E00 后邻大函数）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
