@@ -1,0 +1,91 @@
+# frontier batch 2295：六字段坐标更新器 + 格内地形边界判定器 + MapClass::InLocalRadar（0x578850 / 0x578640 / 0x578390）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x578850 FUN_00578850 callees=0 deps=32 / 0x578640 FUN_00578640 callees=0 deps=60 / 0x578390 MapClass::InLocalRadar callees=1 deps=3）
+- 三路 disasm：`.qwen/tmp/_d2295a.txt`（0x578850 size 0x80）/ `_d2295b.txt`（0x578640 size 0x100）/ `_d2295c.txt`（0x578390 size 0x100）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x578850 | 41B（0x29）| ret c3 @0x578878 | 0x578880（未登记——mov edx,[esp+8] 模式参+[0x87f924] 查格回落哑元 0xabdc50+ret 0xc，疑似区域判定分派）| 0 次/去重 0（六字段纯加减，picker callees=0 吻合）|
+| 0x578640 | 201B（0xC9）| ret 0xc @0x5786FD（al=1）/0x578706（al=0）| 0x578710（★★已登记——batch 1739 坐标钳位更新器六字段 lea [edi+ecx*2+0xC] 见 commit 48fcb9f2）| 0 次/去重 0（纯比较，picker callees=0 吻合）|
+| 0x578390 | 205B（0xCD）| ret 8 @0x57844F（eax=1）/0x57845A（eax=0）| 0x578460（★★已登记——区域判定器，本函数唯一 callee）| 4 次/去重 1（0x578460——全部已登记，picker callees=1 吻合）|
+
+## a 路 0x578850（41B）——六字段坐标更新器
+
+```
+00578850  mov eax, dword ptr [ecx + 0x100]（★this+0x100 读）
+00578856  mov edx, dword ptr [ecx + 0xfc]（★this+0xfc 读）
+0057885d  lea esi, [edx + eax + 1] → mov [ecx + 0x11c], esi（★写 this+0x11c = 0xfc+0x100+1）
+00578867  mov esi, dword ptr [ecx + 0xf4]（★this+0xf4 方向/基准读）
+0057886d  sub esi, edx → add esi, eax → mov [ecx + 0x120], esi（★写 this+0x120 = 0xf4-0xfc+0x100）
+00578878  ret c3
+```
+
+**语义**：**六字段坐标更新器（推断名）**——★最小字段更新：读 [ecx+0xfc]/[ecx+0x100] 写 [ecx+0x11c]（=fc+100+1 相界）；读 [ecx+0xf4] 写 [ecx+0x120]（=f4-fc+100 斜界）。**batch 1739 六字段边界计算器 0x578710 族的字段写侧最小成员**（0x11c/0x120 槽位 + [ecx+0xf4] 方向族——与 batch 2287/2290-2295 的 [ecx+0xf4]/[0x11c]/[0x120] 家族同源）。
+
+## b 路 0x578640（201B）——格内地形边界判定器
+
+```
+00578640  mov al, byte ptr [esp + 0xc]（★参3 标志）→ push 四件套
+00578645  mov ebx, [esp + 0xc]（★参2 坐标对）→ movsx edx, word ptr [ebx + 2]（列）→ movsx edi, word ptr [ebx]（行）
+00578659  test al, al → je 0x5786ae（★标志=0 跳地形检查）
+0057865d  ★★[0x87f924] 查格（shl 9 拼格号→越界回落哑元 0xabdc50）
+00578686  mov bl, byte ptr [eax + 0x11c]（★cell+0x11c 样式）→ movsx esi, byte ptr [eax + 0x11b]（★cell+0x11b 高度）
+00578693  test bl, bl → je 0x5786ae（样式 0 跳过）
+00578697  mov eax, [ebp + 4]（★参1+4 宽）→ mov ebx, [ecx + 0xf4]（★this+0xf4）
+005786a0  lea eax, [ebx + eax*2 + 4] → lea ebx, [edx + edi]（行+列）→ add eax, esi → cmp → jge → ★inc esi（★高度防撞 +1）
+005786ae  ★★主比较四组：① [edx+edi] vs [f4 + [ebp+4]*2] + es（cmp jle→0）
+005786c3  ② [edx+edi] vs [f4 + ([ebp+0xc]+宽)*2 + 2] + es（cmp jg→0）
+005786d6  ③ 行-列 vs ([esi+8]+[esi])*2 - f4（cmp jge→0）
+005786ed  ④ 列-行 vs f4 - ([esi]*2)（cmp jge→0）
+005786f7  ★全过 al=1 / 0x578700 al=0 → ret 0xc
+```
+
+**语义**：**格内地形边界判定器（推断名）**——★★cell 坐标 movsx + 标志参走 [0x87f924] 查格回落哑元（★标准查格模板三点式）+ ★cell+0x11c 样式门控 / cell+0x11b 高度 + ★高度防撞 inc（样式非 0 且相撞 [行+列] ≥ [f4+宽*2+4]+高 时高度 +1）+ ★★四组菱形/斜向边界比较（[ecx+0xf4] 方向基准 + 宽 [ebp+4] / 高 [ebp+0xc] + [esi+8]+[esi] 对角跨度——★batch 2287 0x586AC0 同族 +0xf4）→ al=1/al=0。**与 c 路 callee 0x578460（已登记）头部几乎同模板——同族判定器**。
+
+## c 路 0x578390（205B）——MapClass::InLocalRadar
+
+```
+00578390  mov ebx, [esp + 0x14]（★参2 标志）→ mov esi, [esp + 0x14]（★参1 范围 [esi]x/[esi+4]y/[esi+8]w/[esi+0xc]h）→ mov edi, ecx（this）
+005783a0  ★★四角判定 ×4 call 0x578460（★已登记区域判定器）：
+005783b9  ① 中心 (x, y) → test → je 0x578452（失败即返 0）
+005783e5  ② lea edx,[w+x-1] 右上角 (x+w-1, y)
+0057840d  ③ lea edx,[h+y-1] 左下角 (x, y+h-1)
+0057843b  ④ 双减 1 对角 (x+w-1, y+h-1)
+00578444  ★全过 mov eax,1 → ret 8 / 0x578452 xor eax,eax → ret 8
+```
+
+**语义**：**MapClass::InLocalRadar（★带符号名——batch 2295 唯一符号函数）**——★参数范围结构 [esi]x/[esi+4]y/[esi+8]宽/[esi+0xc]高 + 参2 标志 → ★★四角判定（中心/右上 x+w-1/左下 y+h-1/对角双减 1 全部过 0x578460 区域判定才 eax=1，任一失败即 0）→ ret 8。**雷达可见范围四角测试（0x578460 多次调用—★c 路唯一 callee）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call/jmp 0 个（六字段纯加减）——**picker callees=0 吻合**。
+- b 路：跨函数直接 call/jmp 0 个（纯比较 + 查格）——**picker callees=0 吻合**。
+- c 路：跨函数直接 call 4 个/去重 1（0x578460——★全部已登记）——**picker callees=1 吻合**。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING**（连续十九批三路全登记——batch 2276 起）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★[ecx+0x11c] = [0xfc]+[0x100]+1（相界 = 两字段和 +1）;
+2. a 路 ★★[ecx+0x120] = [0xf4]-[0xfc]+[0x100]（斜界 = 基准 - 反 + 正——batch 1739 0x578710 六字段计算 lea [edi+ecx*2+0xC] 同族）;
+3. b 路 ★★[0x87f924] 查格模板（shl 9 + 越界 js/jge 回落哑元 0xabdc50 + [0xabdc74] 写源坐标）——★batch 2274-2294 标准三点式;
+4. b 路 ★★cell+0x11c 样式 0 跳过 / cell+0x11b 高度 movsx——★高度场族字段（batch 2279/2288 同源）;
+5. b 路 ★★高度防撞 inc esi（[行+列] 与 [f4+宽*2+4]+高 比较）;
+6. b 路 ★★四组边界比较（jle/jg/jge/jge 四种跳法各一——★菱形域 [edx+edi] 中心线 vs 斜跨 2×跨度）;
+7. c 路 ★★四角判定（中心 + 右/下/对角各减 1——★边界用 -1 不含端点）;
+8. c 路 ★★任一失败短路返 0（je 4 处均跳同一返 0 尾）。
+
+## 跨批次连接
+
+- ★★★batch 1739（0x578710 坐标钳位更新器六字段 lea [edi+ecx*2+0xC]——a 路字段族宿主）+ batch 2287（0x586AC0 坐标换算器 [ecx+0xf4] 方向标志——b 路 +0xf4 同族）。
+- ★★batch 2274-2294（[0x87f924] 查格 + 哑元 0xabdc50 标准模板——b 路三点式同款）+ batch 2279/2288（cell+0x11b 高度场族——b 路 movsx 同源）。
+- ★★batch 2286（0x588750 MapClass::BuildingToWall 带符号名 MapClass 成员——c 路 InLocalRadar 同为 MapClass 方法家族）。
+- ★★0x578460（c 路唯一 callee，已登记——b 路同模板判定器）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x578880（a 路后邻——mov edx,[esp+8] 模式参 + [0x87f924] 查格回落哑元 + ret 0xc，疑似区域判定分派大函数）。
+- 未兑现 MISSING 旧观察：0x00486790（2267 起排队）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x578640（★本批 b 路已登记）+ 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430（batch 2280-2294 新观察）。
+- 本批 **无 MISSING**（连续十九批三路全登记——batch 2276 起，TSV 5368）。next 批预期 top3 = 0x577C90（252B callees=6）/ 0x577BB0（216B callees=4）/ 0x576BA0（3402B callees=19 巨型宿主）。
