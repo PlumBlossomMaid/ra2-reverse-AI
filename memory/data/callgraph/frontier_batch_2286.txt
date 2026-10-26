@@ -1,0 +1,86 @@
+# frontier batch 2286：MapClass::BuildingToWall + MapClass::BuildingToFirestormWall + MapClass::FindFirstFirestorm（0x588750 / 0x588570 / 0x5880A0）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x588750 MapClass::BuildingToWall callees=1 deps=235 / 0x588570 MapClass::BuildingToFirestormWall callees=2 deps=235 / 0x5880A0 MapClass::FindFirstFirestorm callees=1 deps=73——**三个带符号名 MapClass 成员**）
+- 三路 disasm：`.qwen/tmp/_d2286a.txt`（0x588750 size 0x240）/ `_d2286b.txt`（0x588570 size 0x220）/ `_d2286c.txt`（0x5880A0 size 0x500）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x588750 | 515B（0x203）| ret 0xc c20c00 @0x588950 | 0x588960（未登记——[ecx+0x148] 值钳位器：setle/dec/and 归一）| 1 次/去重 1（0x47c620——已登记，picker callees=1 含虚表间接吻合）|
+| 0x588570 | 478B（0x1DE）| ret 0xc c20c00 @0x58874B | 0x588750（**本批 a 路本体——后邻相邻**）| 2 次/去重 2（0x47c520+0x47c620——已登记，picker callees=2 吻合）|
+| 0x5880A0 | 1217B（0x4C1）| ret 0x10 c21000 @0x588536/0x58855E | 0x588570（**本批 b 路本体——后邻相邻**）| 3 次/去重 1（0x47c520——已登记，picker callees=1 吻合）|
+
+## a 路 0x588750（515B）——MapClass::BuildingToWall
+
+```
+00588750  sub esp,0x2c → mov edi,[esp+0x3c]（★参1 对象）→ mov eax,[edi+0xe54]（★对象计数）→ test → je 0x58894c（空收尾）→ mov ebp,[edi+0x5b8] → sar ebp,8（★半径 >>8）→ mov esi,[ecx]（★中心坐标）→ test ebp → jle 0x588935
+0058879a  ★★8 方向循环（[esp+0x10] 0..8 步 2）：and eax,7 → lea ebx,[eax*4+0x89f688]（★8 邻域表——batch 2267/2268 同款）→ mov cx,[ebx+2]/ax,[ebx] → add 中心 → [esp+0x14]/[esp+0x16] → ★★movsx → shl ecx,9（★Y<<9）→ add → [0x87f924] 查格（※越界回落哑元 0xabdc50/[0xabdc74]）→ mov ecx,[ecx+0x44]（★cell+0x44）→ cmp -1 → je 跳过 → ★cmp [ebp+0x294],ecx（★对象类型匹配）→ jne 跳过 → [0x87f924] 复查 → ★★cmp [ebp+0x30],[ecx+0x50]（★对象比对）→ je 0x588891（★命中）
+0058882c  ★0x47c620 判定（★MapClass 格判定——push 三参）→ je 跳过 → 循环
+00588891  ★★命中段：mov ebp,[esp+0x10]（★方向索引）→ test → jle 收尾 → 坐标重建（movsx si/di → shl 8 → add 0x80——★×256 像素坐标）→ ★虚表槽 0x8c 调用（mov edx,[edi] → call [edx+0x8c]——★对象回调）→ push 0 → lea [esp+0x34] 坐标 → ★虚表槽 0xd8 调用（call [eax+0xd8]——★放置调用）→ 循环
+00588935  收尾：add [esp+0x28],2 → cmp 8 → jl 外层 → ret 0xc（★3 参）
+```
+
+**语义**：**MapClass::BuildingToWall（带符号名——YRpp 签名实锤）**——★★8 方向循环（[0x89f688] 8 邻域表步 2）→ ★★Y<<9 + [0x87f924] 地图表查格（越界回落哑元 0xabdc50）→ ★cell+0x44 判定 + 对象类型 [ebp+0x294] 匹配 + ★★对象比对 [ebp+0x30] vs cell+0x50 → 命中 → ★0x47c620 格判定 → ★虚表槽 0x8c 对象回调 + ★虚表槽 0xd8 放置调用（×256 像素坐标构造——shl 8 + 0x80）。**BuildingToWall 建墙搜索（8 邻域对象匹配 + 虚表槽 0x8c/0xd8 双回调——cell+0x44 砖号族）**。
+
+## b 路 0x588570（478B）——MapClass::BuildingToFirestormWall
+
+```
+00588570  sub esp,0x28 → mov eax,[esp+0x3c]（★参1）→ mov ebp,[esp+0x44]（★参2 对象）→ mov edx,[eax]（★中心坐标）→ mov eax,[ebp+0x5b8] → sar eax,8（★半径 >>8）→ test → jle 0x588730
+005885a8  ★★8 方向循环（[esp+0x24] 0..8 步 2）：and ecx,7 → lea edi,[ecx*4+0x89f688]（★8 邻域表）→ add 中心 → [esp+0x18]/[esp+0x1a] → ★★movsx → shl ecx,9（★Y<<9）→ lea esi,[ecx+edx] → [0x87f924] 查格（越界回落哑元）→ ★call 0x47c520（★MapClass 格判定——b 路独有）→ test eax → je 跳过 → ★★[eax+0x520] 对象 → [ecx+0x16c0] 标志（★对象标志位）→ test → je 跳过 → mov edx,[eax+0x21c] → cmp [esp+0x40]（★参1 比对）→ je 0x588686（★命中——[eax+0x21c] 与参1 同对象）
+00588604  ★非命中复查：0x47c520 再查 → 0x47c620 判定 → je 跳过 → 循环
+00588686  ★★命中段（与 a 路同骨架）：mov ebx=[esp+0x14] 方向 → 坐标重建（movsx bp/si → shl 8 + 0x80）→ ★虚表槽 0x8c 对象回调 + push 0 → ★虚表槽 0xd8 放置调用 → 循环
+00588744  收尾：inc [esp+0x24] → cmp 8 → jl → ret 0xc
+```
+
+**语义**：**MapClass::BuildingToFirestormWall（带符号名——YRpp 签名实锤）**——★与 a 路同骨架（8 方向 [0x89f688] + Y<<9 + [0x87f924] 查格）但判定链不同：★★0x47c520 格判定（b 路独有）+ ★★[eax+0x520]+0x16c0 对象标志 + ★★[eax+0x21c] vs 参1 对象比对（命中）→ ★虚表槽 0x8c/0xd8 双回调放置。**BuildingToFirestormWall 建墙搜索（判定链 [eax+0x520]/[0x21c]/+0x16c0 对象族——与 a 路 0x294/0x30 对象族不同）**。
+
+## c 路 0x5880A0（1217B）——MapClass::FindFirstFirestorm
+
+```
+005880a0  push ebp → mov ebp,esp → and esp,-8 → sub esp,0x3c → mov eax,[ebp+0x10]（★参3）→ mov esi,[ebp+0xc]（★参2 坐标）→ mov ebx,[eax]（★目标坐标）→ mov edi,[esi] → cmp edi,ebx → jne 0x5880d2 → cmp [esi+4],[eax+4] → cmp [esi+8],[eax+8] → je 0x588539（★三 dword 全等 → 直接返回 [0xabdc10..0xabdc18] 哑元坐标组）
+005880d2  ★★坐标换算（sar 8 归一）：mov eax,edi → cdq → and edx,0xff → add → sar ecx,8（★(v+sign)>>8——x87 风格量化）→ mov [esp+0xc]/[esp+0x10] → cmp cx,ax → jne 0x5881d8（★X 高位不等分叉）
+00588101  ★★X 等分支：Y 坐标同量化 → mov bx,[esp+0xc]（★X 量化）→ mov di,[esp+0xe]（★Y 量化）→ setge al → dec → and 2 → dec（★方向步长 ±2）→ movsx di（★Y）→ shl 9 → movsx bx（★X）→ add → [0x87f924] 查格（越界回落哑元）→ ★call 0x47c520（★MapClass 格判定）→ test → je 跳过 → ★★[eax+0x520] 对象 → [ecx+0x16c0] 标志 → je 跳过 → mov eax,[eax+0x21c] → ★mov cl,[eax+0x1fa]（★对象标志位）→ test → je 跳过 → cmp [ebp+0x14]（★参4 比对）→ jne 0x5881d0（★非目标 → 步进重试 di += 方向）
+005881d0  ★★命中：movsx ecx,bx → jmp 0x5882c2（★输出段）
+005881d8  ★★X 不等分支：Y 量化 → [esp+0x1c] 步长 → 循环（与 X 等分支对称——movsx si/di → shl 9 → [0x87f924] → 0x47c520 → [eax+0x520]+0x16c0 → [eax+0x21c]+0x1fa → [ebp+0x14] 比对 → 命中/步进）
+005882c2  ★★输出段：mov eax,[ebp+8]（★输出坐标指针）→ movsx ecx,si → shl 8 → add 0x80 → mov [edi],ecx → movsx edx,di → shl 8 → add 0x80 → mov [edi+4],edx → mov [edi+8],0 → ret 0x10（★4 参）
+005882ef  ★★斜向分支：setge 方向 + 0x200/0xffffff00 步长构造 → sub 差 → fild 浮点 → [0x7e1718] 比例 → ★★浮点插值循环（fcomp [0x7e1718]/[0x7e2800] 双向钳位 → fild [esp+0x24] → fmul 比例 → 步进）→ [0x87f928] 上界判定 → 0x47c520 → 对象判定 → ★命中/步进分叉
+00588521  命中：mov [edx],ebx → mov [edx+4],edi → mov [edx+8],0 → ret 0x10
+00588539  ★★全等路径：mov edx,[0xabdc10] → mov [ecx],edx → mov edx,[0xabdc14] → mov [ecx+4],edx → mov edx,[0xabdc18] → mov [ecx+8],edx → ret 0x10（★哑元坐标组 [0xabdc10..0xabdc18]——batch 2273 哑元家族）
+```
+
+**语义**：**MapClass::FindFirstFirestorm（带符号名——YRpp 签名实锤）**——★三 dword 全等直接返回哑元坐标组（[0xabdc10..0xabdc18]）+ ★★坐标量化（sar 8 归一 + cdq 符号扩展）→ ★★X/Y 双分支步进搜索（方向步长 ±2/setge 构造 → ★movsx Y<<9 + [0x87f924] 查格 → ★0x47c520 格判定 → ★★对象链判定 [eax+0x520]+0x16c0 → [eax+0x21c]+0x1fa → 参4 比对 → 命中/步进）→ ★★斜向浮点插值分支（[0x7e1718]/[0x7e2800] 双钳位 + fild fmul 比例）→ 输出 ×256 像素坐标 ret 0x10（4 参）。**FindFirstFirestorm 搜索（量化步进 + 对象链判定 + 浮点插值——哑元坐标组 [0xabdc10..0xabdc18] 家族）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 1 次/去重 1 个（0x47c620）——**全部已登记**（picker callees=1 含虚表槽 0x8c/0xd8 间接按口径吻合）。
+- b 路：跨函数直接 call 2 次/去重 2 个（0x47c520/0x47c620）——**全部已登记**（picker callees=2 吻合）。
+- c 路：跨函数直接 call 3 次/去重 1 个（0x47c520）——**全部已登记**（picker callees=1 吻合）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING**（连续第十批三路全登记）。
+
+## 原版怪癖（照抄）
+
+1. a/b 路 ★★8 方向循环步 2（[esp+0x10]/[esp+0x24] 0..8——★8 邻域表 [0x89f688] 取对角+四向）;
+2. a/b 路 ★★Y<<9 + [0x87f924] 地图表查格 + 越界回落哑元 0xabdc50/[0xabdc74]（batch 1736/2272 同款）;
+3. a 路 ★★cell+0x44 砖号判定（cmp -1 → [ebp+0x294] 类型匹配 → [ebp+0x30] vs [ecx+0x50] 对象比对——★★对象两个字段族）;
+4. a/b 路 ★★虚表槽 0x8c 对象回调 + 虚表槽 0xd8 放置调用（movsx si/di → shl 8 + 0x80 ×256 像素坐标构造）;
+5. b 路 ★★0x47c520 格判定（b 路独有——[eax+0x520] 对象 → [ecx+0x16c0] 标志 → [eax+0x21c] vs 参1 比对）;
+6. c 路 ★★三 dword 全等 → 哑元坐标组 [0xabdc10..0xabdc18]（批量读全局坐标——batch 2273 哑元家族新增）;
+7. c 路 ★★cdq/sar 8 量化归一（movsx + and edx,0xff + add + sar 8——★x87 风格取整）;
+8. c 路 ★★setge → dec → and 2 → dec 方向步长（±2——batch 2259/2268 同款布尔归一）;
+9. c 路 ★★斜向浮点插值（[0x7e1718]/[0x7e2800] 双钳位 + fild dword + fmul 比例 + 步进循环）;
+10. c 路 ★★对象链判定 [eax+0x520]+0x16c0 → [eax+0x21c]+0x1fa + 参4 比对（★三级链——b 路兄弟版）。
+
+## 跨批次连接
+
+- ★★★batch 2273 a 路（[0x87f924] 地图表 + 哑元 0xabdc50/[0xabdc74]——三路同款）+ batch 2267/2268（[0x89f688] 8 邻域表——a/b 路同款）。
+- ★★batch 2266/2273（0x5657a0 取格、0x47c520/0x47c620 格判定族——三路核心）+ batch 2259（setge/dec/and 布尔归一 + Y<<9——三路同款）。
+- ★★batch 1736/2272（MapClass 地图表查格 + 哑元回落——三路同族）+ batch 2276/2277（cell+0x44 砖号族——a 路判定）。
+- ★★0x47c520/0x47c620（b/c 路——MapClass 格判定双子已登记）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x588960（a 路后邻——[ecx+0x148] 值钳位器：setle/dec/and 归一——batch 2285 c 路 min 高度检索器同族）；[0xabdc10..0xabdc18] 哑元坐标组（c 路——batch 2273 哑元家族新增三全局）。
+- 未兑现 MISSING 旧观察：0x00486790（2267 起排队）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x578640 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0（batch 2280-2285 新观察）。
+- 本批 **无 MISSING**（连续十批三路全登记——batch 2276 起，TSV 5341）。
