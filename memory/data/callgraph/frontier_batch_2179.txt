@@ -1,0 +1,63 @@
+# frontier batch 2179：0x62 区弹道管理器族三连（持有释放器 + 全局清理器 + 管理器构造器）（0x627D80 / 0x6272A0 / 0x627170）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x627D80 FUN_00627d80 callees=1 deps=49 / 0x6272A0 FUN_006272a0 callees=6 deps=44 / 0x627170 FUN_00627170 callees=2 deps=49）
+- 三路 disasm：`.qwen/tmp/_d2179a.txt`（0x627D80 size 0x80）/ `_d2179b.txt`（0x6272A0 size 0x280）/ `_d2179c.txt`（0x627170 size 0x140）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x627D80 | 42B（0x2A）| ret c3 @0x627DA9 | 0x627DB0（byte[ecx+0xc] 判定 + 0xaaaaaaab mul 除法——3 字节索引换算，未登记）| 1（全已登记）|
+| 0x6272A0 | 581B（0x245）| ret c3 @0x6274E5 | 0x6274F0（sub esp,0x100 + 0x4f4c30 坐标/类型构造——同族大函数，未登记）| 6（5 已登记 + 1 批内自引用）|
+| 0x627170 | 292B（0x124）| ret c3 双出口 @0x627288/0x627294 | 0x6272A0（=本批 b 路本尊）| 2（全已登记）|
+
+三函数为 **0x62 区弹道管理器族**——[0xac48f0] 全局管理器 + 0x104 步长记录组 + 0x4f4ca0/0x4f4ce0 记录构造/查找 + 虚表槽 0xc/0x10 + new 0x7c8e17 + delete 0x7c8b3d：
+
+## a 路 0x627D80（42B）——记录持有释放器
+
+```
+00627d80  push ebx/esi → mov esi,ecx → [esi+0x10]=0（计数清零）→ eax=[esi+4]（持有）→ cmp 0 → je → byte[esi+0xd]（owns）→ je → push eax → ★call 0x7c8b3d（delete）→ [esi+4]=0 → byte[esi+0xd]=0（清 owns）→ [esi+8]=0（清容量）→ ret c3
+```
+**语义**：**记录持有释放器（推断名）**——双门控 delete（[+4] 非空 && [+0xd] owns）→ 0x7c8b3d 删除 → 成对复位（owns 清 0 + 容量清 0 + 计数清零）。**batch 2178 c 路 0x627F00 同构（多一个 [esi+0x10] 计数清零）——batch 1285 0x63E140 持有释放器同族第 4 处**。
+
+## b 路 0x6272A0（581B）——弹道管理器全局清理器
+
+```
+006272a0  sub esp,0x18 → mov ebp,ecx → [ebp+0xc]（表）非空判定 → je 收尾 → ★[0xac48f0] 全局管理器懒初始化：mov eax,[0xac48f0] → test → jne 有 → ★new 0x10（call 0x7c8e17）→ ★call 0x627170（c 路本尊构造器——批内自引用）→ [0xac48f0]=eax → 定值：[[0xac48f0]+4]+0x10 计数遍历 → 逐项 ★call 0x7c8b3d（delete 记录）→ 虚表槽 0xc ×2（[+4]/[+8] 子容器收尾）→ [[ebp+4]] 虚表槽 0（push 1 scalar delete）→ [[ebp+8]] 虚表槽 0 → 主循环：[ebp+0xc] 表 0x18 步长遍历（[edi+0x10] 计数）→ lea ebp,[ecx+eax*4]（★0x104 步长）→ ★call 0x4f4ca0 ×2（记录构造/查找）→ 0x4f4ce0（记录清理判定）→ 命中返回 [ebx+0x100] → 失败 ★call 0x626370（清理）+ 0x7c8b3d → 双重循环（0x18 步长×0x104 步长）→ 虚表槽 0xc ×N（表项收尾）→ [[ebp+0xc]] 虚表槽 0（push 3 scalar delete）→ delete 0x7c8b3d → ret c3
+```
+**语义**：**弹道管理器全局清理器（推断名）**——① ★[0xac48f0] 全局管理器懒初始化（new 0x10 + 0x627170 构造器——批内自引用）；② 全局记录数组逐项 delete（0x7c8b3d）+ 子容器虚表槽 0xc 收尾；③ [ebp+4]/[ebp+8] 子对象虚表槽 0（scalar delete flag 1）释放；④ ★主循环 0x18 步长表 × 0x104 步长记录（0x4f4ca0 构造/0x4f4ce0 清理判定 + 0x626370 清理 + 失败 delete）；⑤ 表项虚表槽 0xc 收尾 + 0x7c8b3d。**弹道管理器清理端（[0xac48f0] 全局 + 0x104 记录族——batch 2177/2178 同族）**。
+
+## c 路 0x627170（292B）——弹道上层管理器构造器
+
+```
+00627170  sub esp,8 → mov esi,ecx → push 0x18 → ★call 0x7c8e17（new 0x18 子容器1）→ [eax+4]/[eax+8]=0 + byte[+0xc]=1 + byte[+0xd]=0 + 虚表 0x7e5bc4 + [+0x14]=0xa（步长）→ [+0x10]=0 → [esi+4]=eax → ★new 0x18（子容器2）→ 虚表 0x7ef750 同款 → [esi+8]=eax → ★new 0x10（表）→ [edi+4]=0x626660（表函数指针）+ [edi+8]=0x1f（表长 31）+ [+0xc]=0xa → ★循环 new 0x2ec（call 0x7c8e17 ×30）→ 子表项 0x18 步长：mov [eax]=0x1f → +4 → ★call 0x628ed0（batch 2177 a 路记录组构造）→ 虚表 0x7ef770 + [+0x14]=0xa ×31 → [esi+0xc]=edi（表装入）→ ret c3（失败路径 [esi+0xc]=0）
+```
+**语义**：**弹道上层管理器构造器（推断名）**——① new 0x18 ×2（[+4]/[+8] 子容器，虚表 0x7e5bc4/0x7ef750 + [+0x14]=0xa 步长）；② ★new 0x10 表（[+0xc]）+ **new 0x2ec ×31 子记录**（[edi+8]=0x1f 表长、0x626660 表函数指针）+ 0x628ed0 记录组构造（0x18 步长 × 31，虚表 0x7ef770）；③ [+0xc] 表装入 + [+0x14]=0xa。**弹道管理器构造端（[0xac48f0] 懒初始化被 b 路调用——batch 2177/2178 记录组构造同族**。
+
+## callee 核验
+
+- a 路：1 个直接 call 全已登记（delete 0x7c8b3d）。
+- b 路：6 个直接 call，5 已登记 + **1 批内自引用 0x627170（c 路本尊，按惯例不算 MISSING）**（new 0x7c8e17、delete 0x7c8b3d ×4、0x4f4ca0 ×2、0x4f4ce0、0x626370）。
+- c 路：2 个直接 call 全已登记（new 0x7c8e17 ×4、0x628ed0 batch 2177 a 路）。
+
+## 原版怪癖（照抄）
+
+1. b 路 ★[0xac48f0] 全局管理器懒初始化（new 0x10 + 0x627170 构造器——首次使用时建，同 builder 单例惯用）；
+2. b 路 ★0x18 步长表 × 0x104 步长记录双重循环（[ebp+0xc] 表 [edi+0x10] 计数 + [ebp+4] 记录数组 shl 6+add+shl 2——batch 2177/2178 同款）；
+3. b 路 [[ebp+4]] 虚表槽 0 push 1 / [[ebp+0xc]] push 3（scalar deleting destructor 不同 flag——多层释放语义）；
+4. c 路 ★虚表 0x7e5bc4/0x7ef750/0x7ef770 三虚表 + new 0x2ec ×31 子记录（0x1f 表长硬编码）；
+5. c 路 [+0x14]=0xa（步长 10）三处同款（子容器/表项记录）。
+
+## 跨批次连接
+
+- ★★★batch 2177（0x628ed0 记录组构造——c 路调用；0x104 步长族）；batch 2178（0x627F00 持有释放器——a 路同构）。
+- ★★batch 1285（0x63E140 持有释放器——a 路同族第 4 处）；batch 467（0x63E540 Add——容器语义同源）；batch 2153-2165（0x7c8e17 new 高频 + 0x626660 表函数指针族）。
+- ★batch 2171-2176（0x62 区弹道族——本批三函数为管理器的构造/清理端）；QWEN.md（Randomizer/MapClass 区无关——纯容器族）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（a 1 个 + b 5 个（+1 批内自引用）+ c 2 个直接 call 全在 TSV）。
+- **后邻未登记**：0x627DB0（a 后邻——byte[ecx+0xc] 判定 + 0xaaaaaaab mul 除法 3 字节索引换算 getter）、0x6274F0（b 后邻——sub esp,0x100 + 0x4f4c30 坐标/类型构造同族大函数）。
+- **新观察**：[0xac48f0] 全局管理器（b 路懒初始化——batch 2151-2164 全局对象网 [0xac4bxx]/[0xac4cxx] 之外的 0xac48xx 网）；0x626660 表函数指针（c 路表驱动）。
+- 前向：picker 队列继续 0x62 区（0x6274F0 + 0x626370/0x626c60/0x626ab0 等）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650。
