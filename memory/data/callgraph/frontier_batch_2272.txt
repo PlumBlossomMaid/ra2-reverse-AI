@@ -1,0 +1,85 @@
+# frontier batch 2272：水系生成器·河流 + 水系形状生成器 + Seeding water 总入口（0x59AD10 / 0x59A8F0 / 0x59A6C0）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x59AD10 FUN_0059ad10 callees=8 deps=105 / 0x59A8F0 FUN_0059a8f0 callees=6 deps=103 / 0x59A6C0 FUN_0059a6c0 callees=10 deps=2715——**QWEN.md Seeding water 首函数实锤**）
+- 三路 disasm：`.qwen/tmp/_d2272a.txt`（0x59AD10 size 0x300）/ `_d2272b.txt`（0x59A8F0 size 0x500）/ `_d2272c.txt`（0x59A6C0 size 0x300）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x59AD10 | 645B（0x285）| ret c3 @0x59AF94 | 0x59AFA0（**2271 c 路 Seeding water 主流程·池——后邻相邻已登记**）| 11 次/去重 8（0x5ada40+0x65c780+0x7c5f00+0x59a8f0+0x578350+0x578290+0x59bbc0+0x7c8b3d——**0x59a8f0 本批 b 路批内自引用 + 7 已登记**，picker callees=8 吻合）|
+| 0x59A8F0 | 1051B（0x41B）| ret 0xc c20c00 @0x59AD08 | 0x59AD10（**本批 a 路本体——后邻相邻**）| 9 次/去重 5（0x4cac40+0x7c5f00+0x65c780+0x477be0+0x7c8b3d——全部已登记，callees=6 含虚表槽 8 间接吻合）|
+| 0x59A6C0 | 545B（0x221）| ret c3 @0x59A8E0 | 0x59A8F0（**本批 b 路本体——后邻相邻**）| 20 次/去重 10（0x578350+0x578290+0x481810+0x486380+0x59ad10+0x59afa0+0x59b200+0x57a0c0+0x4865b0+0x7c8b3d——**0x59ad10 本批 a 路批内自引用 + 9 已登记**，picker callees=10 吻合）|
+
+## a 路 0x59AD10（645B）——水系生成器·河流
+
+```
+0059ad10  push ebp → mov ebp,esp → and esp,0xfffffff8 → sub esp,0x50 → push 四件套 → mov ebx,ecx（★this）→ mov [ebx+0x308],1（★计步器=1）→ push 0/0 → lea ecx,[esp+0x50] → call 0x5ada40（★VectorClass 16B 构造器）→ mov [esp+0x48],0x7ed99c（★虚表）→ mov [esp+0x5c],0xa → ★[ebx+0x50]>>1 河流数（sar eax,1 → max 2）→ esi=min
+0059ad62  ★Randomizer：call 0x65c780 × [esp+0x20] × [0x7ed898] + [0x7e1718] → _ftol → cmp esi 上限拒绝采样
+0059ad9d  ★MapRect 边界：mov edx,[0x87f8e8]/[0x87f8e4]/[0x87f8f0]/[0x87f8ec] → [esp+0x38..0x44] 四坐标 → ★0x59a8f0 调用（本批 b 路——push 6 参 [esp+0x4c]/[ebx+0x50]+eax/坐标组）
+0059addc  ★CellIterator work 清 0：call 0x578350 → call 0x578290 → 循环：work+0x3c 清 0 → Next
+0059ae29  ★主循环：[esp+0x58] 次：mov ecx,[esp+0x4c] → 装载 [esp+0x28..0x34] 四坐标 → Randomizer × [0x7ed898] × [0x7e8ae8] + [0x7ed990] → 坐标换算（sar 半差 + [0x87f8dc] 修正）→ [esp+0x18]/[esp+0x1c] 目标点 → ★循环 0xa 次：push 0/0x3fd00000/0/[esp+0x18] 坐标/1/… → call 0x59bbc0（★河段扩展）→ test eax → jne 0x59af1c → inc [ebx+0x308]（★失败 +1 计步）→ ★数组前移压缩（16B 项头指针后移）→ 循环
+0059af6c  ★收尾：mov [esp+0x48],0x7ed970（★虚表复位）→ test [esp+0x4c] → byte [esp+0x55] owns 判定 → 0x7c8b3d 释放 → ret c3
+```
+
+**语义**：**水系生成器·河流（推断名）**——★阶段 2 河流生成：VectorClass 16B 构造器 0x5ada40 + 虚表 0x7ed99c + ★河流数 [ebx+0x50]>>1（至少 2）+ Randomizer 拒绝采样 + MapRect 四边界 [0x87f8e4..0x87f8f0] + ★0x59a8f0（本批 b 路形状生成器）调用 + ★★主循环 8 项（0x59bbc0 河段扩展 + 失败 +1 计步 + 16B 数组前移压缩）+ 收尾虚表复位 0x7ed970 + 0x7c8b3d。**河流生成器（vector 16B 坐标容器管理——河段扩展消耗随机数段）**。
+
+## b 路 0x59A8F0（1051B）——水系形状生成器
+
+```
+0059a8f0  sub esp,0x74 → fild [esp+0x7c]（★形状参）→ push 四件套 → ★0x4cac40 开方 + 0x7c5f00 取整 → imul 平方对 [esp+0x8c] 大小（★开方关系：⌈√n⌉ 判定）→ [esp+0x20]/[esp+0x10] 宽/高分派 → ★[ebp+8]/[ebp+0xc] idiv 尺寸（ebx 除宽高
+0059a97c  ★Randomizer × [0x7ed898] → fcomp [0x7e1738]（★方向判定）→ 分支A/B：[ebp+8]/[ebp+0xc] idiv esi → [esp+0x14]/[esp+0x18] 步长
+0059a9ed  ★双 VectorClass 构造：mov ecx,0x477be0（★构造器）→ 虚表 0x7e4e78 ×2 → [esp+0x10] 循环：mov [esp+0x70]/[esp+0x58] 装载 → 虚表槽 8 扩容 → 数组写
+0059aae3  ★抽取循环：Randomizer × 计数 × [0x7ed898] → _ftol → 数组前移压缩 → mov [ecx+edx*4],esi（★抽取填充）
+0059ab68  ★填充循环：[esp+0x10] 次：mov ecx,[esp+0x70] 数组 → cmp ebx → ★环形步进（[esp+0x3c]/[esp+0x40] 累加步长）→ ★虚表槽 8 扩容（[esi+0x14]+[esi+8] → call [edx+8]）→ mov [edx],edi（★16B 项写入 [0x3c]/[0x18] 坐标 + 步长）→ 循环
+0059acad  ★收尾：mov [esp+0x54],0x7e4db8（★虚表）→ test [esp+0x58] → 0x7c8b3d 释放 → mov byte [esp+0x55],0 → test [esp+0x70] → 第二 0x7c8b3d → ret 0xc （★3 参）
+```
+
+**语义**：**水系形状生成器（推断名）**——★阶段的形状扩散核心（a 路河流的 b 参 3 参核心）：★开方关系宽高分派（0x4cac40 + imul 平方对 ⌈√n⌉）→ [ebp]/[ebp+4]/[ebp+8]/[ebp+0xc] 四尺寸 → ★idiv 步长 + Randomizer 方向判定（fcomp [0x7e1738]）→ ★双 VectorClass 构造（0x477be0 + 虚表 0x7e4e78 + 虚表槽 8 扩容）→ ★抽取循环（数组前移压缩）+ ★★填充循环（环形步进 + 16B 项写入 [esp+0x3c]/[esp+0x18] 坐标 + 步长）→ 收尾双释放（虚表 0x7e4db8 + 0x7c8b3d ×2）。**水系形状扩散核心（Randomizer 消耗密集段——形状步进每格消耗随机序）**。
+
+## c 路 0x59A6C0（545B）——Seeding water 总入口
+
+```
+0059a6c0  push ecx → push 三件套 → mov esi,ecx（★this）→ ★第一段 CellIterator 遍历：call 0x578350 → call 0x578290 → 循环：mov ecx,[0xaa0738] → mov [eax+0x38],ecx（★全图水域类型初始化）→ Next
+0059a6f6  ★模式分派：mov eax,[esi+0x3c] → sub 0 → je 0x59a716 → dec → je 0x59a70d → dec → jne 0x59a71d → ★模式 0：call 0x59ad10（本批 a 路河流）；模式 1：call 0x59afa0（2271 c 路池）；模式 2：call 0x59b200（2271 b 路湖）
+0059a71d  ★第二段 CellIterator 遍历：Reset → Next → 循环：mov edx,[edi+0x38] → cmp [0xaa0738] → jne → ★bl=1 全邻域水域验证：0x481810 8 方向（esi 0..6 步 2）→ 0x486380 判定 → 全过 → mov [edi+0x38],0（★水上清 0）→ Next
+0059a77f  ★[0xabed10] 全图 work 清 -1：mov [eax+esi+0x38],-1 / mov [eax+esi+0x3c],-1 → 0x50 步长 → 循环
+0059a7c2  ★[0xabdf90] 全局对象析构：mov ebx,[0xabdfa0]-1 → 循环：mov esi,[0xabdf94] 表 → [esi] 虚表槽 0 析构 → [0xabdf90] 虚表槽 0x10 移除 → [0xabdfa0] 计数递减 → 计数前移压缩 → [esi+0x28]=0x7e38d0（★虚表）+ [esi+0x2c] 成员析构（[esi+0x35] 门控）→ 0x7c8b3d 释放本体 → 循环
+0059a875  ★[0xabed14]=0 → ★第三段 CellIterator：Reset → Next → 循环：0x4865b0 绿地判定 → 0x481810 8 方向 → 0x486380 → mov [edi+0x38],[0xaa0e18]（★水缘填充）→ Next → ret c3
+```
+
+**语义**：**Seeding water 总入口（QWEN.md 实锤——阶段 2 首函数）**——★专属参数 [esi+0x3c] 模式分派（0=河流 0x59ad10 / 1=池 0x59afa0 / 2=湖 0x59b200——**三函数一次闭环**）+ ★第一段全图水域类型初始化（[0xaa0738]）+ ★★第二段 8 邻域水域验证（0x481810 + 0x486380 → 全水上清 0）+ ★[0xabed10] 全图 work+0x38/+0x3c=-1 清 + ★[0xabdf90]/[0xabdf94]/[0xabdfa0] 全局对象注销（虚表槽 0 析构 + 0x10 移除 + 计数递减前移 + 0x7e38d0 虚表 + 成员析构 + 0x7c8b3d）+ [0xabed14]=0 + 第三段水缘填充（0x4865b0 + 8 邻域 + [0xaa0e18]）。**Seeding water 总调度宿主（QMEN.md 阶段 2 首函数——全流程开工点，Randomizer 全阶段消耗起点）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 11 次/去重 8 个——**7 已登记 + 0x59A8F0（本批 b 路本体，批内自引用闭环非 MISSING）**；picker callees=8 吻合。
+- b 路：跨函数直接 call 9 次/去重 5 个（0x4cac40/0x7c5f00/0x65c780/0x477be0/0x7c8b3d）——**全部已登记**（picker callees=6 含虚表槽 8 间接按口径吻合）。
+- c 路：跨函数直接 call 20 次/去重 10 个——**9 已登记 + 0x59AD10（本批 a 路本体，批内自引用闭环非 MISSING）**；picker callees=10 吻合。
+- ★核验脚本（norm() 规范化版）输出：b 路全 PASS；a/c 路各 1 枚批内自引用闭环（a 路 callee=0x59A8F0 本批 b 路；c 路 callee=0x59AD10 本批 a 路——grep ranking.tsv:3787/:3768 确认调用者正是本批本体，同批登记）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★河流数 [ebx+0x50]>>1（sar）+ max 2 下界（cmp 2 jl 保留 2）；Randomizer × [esp+0x20] × [0x7ed898] + [0x7e1718] 拒绝采样;
+2. a 路 ★★主循环 0xa 次河段扩展（0x59bbc0）+ **失败（test eax → je）也 inc [ebx+0x308] 计步**——失败轮随机数已消耗不退回（种子兼容性关键）;
+3. a 路 ★16B/项坐标数组前移压缩（头指针 +0x10）→ 虚表 0x7ed99c → 复位 0x7ed970（VectorClass 16B 生命周期）;
+4. b 路 ★★开方关系宽高分派（0x4cac40 → imul 平方对 ⌈√n⌉——n=形状面积）;[ebp]/[ebp+4]/[ebp+8]/[ebp+0xc] 四尺寸 idiv 步长;
+5. b 路 ★★Randomizer 方向判定（fcomp [0x7e1738] → 分支A/B 步长取向）+ ★★填充循环 16B 项写入（[esp+0x3c]/[esp+0x18] 坐标 + 步长）——**每格形状步进消耗随机序**;
+6. b 路 ★虚表槽 8 扩容模板（[esi+0x14]+[esi+8] → call [edx+8]——batch 2263/2264 同款）+ 0x477be0 构造器 + 虚表 0x7e4e78/0x7e4db8;
+7. c 路 ★★[esi+0x3c] 模式分派（0=河流/1=池/2=湖——三阶段函数一次闭环）;
+8. c 路 ★★8 邻域水域验证（0x481810 步 2 + 0x486380——bl 全过才清 0）;
+9. c 路 ★[0xabed10] 全图 work+0x38/+0x3c 清 -1（0x50 步长——**每次 Seeding water 冷启动清理**）;
+10. c 路 ★★[0xabdf90] 全局注销（虚表槽 0x10 移除 + 计数递减 + 前移压缩——batch 2255 c 路同款模板）+ [0xabed14]=0 全局清。
+
+## 跨批次连接
+
+- ★★★batch 2271（Seeding water 主流程·湖 0x59B200/池 0x59AFA0——c 路模式分派调用）+ QWEN.md RMG 阶段 2（0x59A6C0/0x59C580/0x59C630——**阶段 2 河流+池+湖+水域+河湖调度凡函数全登记（2270-2272 跨三批）**）。
+- ★★batch 2263/2264（VectorClass 构造器/清理器——a/b 路同族）+ batch 2260/2268/2269（0x481810/0x486380/0x4865b0 邻域判定链 + 0x4cac40 浮点内核——b 路 callee）。
+- ★0x59bbc0/0x59bab0（a/b 路 callee——batch 2271 同款）+ [0x7ed898]/[0x7e1738]/[0x7e1718] 常量族（a/b 路——scaled_random/CHOP 常量） + [0xabdf90]/[0xabdf94]/[0xabdfa0] 全局注册表（c 路——batch 2255/2265 同族）。
+
+## 观察项 / 候选池
+
+- **批内自引用 2 枚（非 MISSING）**：a 路 callee = 本批 b 路本体 0x59A8F0、c 路 callee = 本批 a 路本体 0x59AD10（同批登记闭环）。
+- **后邻已登记**：0x59AFA0（a 路后邻——2271 c 路池本体）。
+- **新观察**：0x477be0 构造器（b 路——VectorClass 双入口）+ 虚表 0x7e4e78/0x7e4db8/0x7ed99c/0x7ed970（a/b 路——VectorClass 虚表族）+ [0x7e8ae8]/[0x7ed990] 常量（a 路）+ 0x7e38d0 虚表（c 路——batch 2265 同款）。
+- 前向：picker 队列继续 59/5A 区（0x599650 超大宿主——QWEN.md Init random map）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
