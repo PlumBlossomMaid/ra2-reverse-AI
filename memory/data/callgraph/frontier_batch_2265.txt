@@ -1,0 +1,73 @@
+# frontier batch 2265：VectorClass Resize·4B 变体 + VectorClass 清理器·精简 + 巨型对象析构器·全局注销版（0x5AC820 / 0x5AC790 / 0x5AC290）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x5AC820 FUN_005ac820 callees=2 deps=142 / 0x5AC790 FUN_005ac790 callees=1 deps=142 / 0x5AC290 FUN_005ac290 callees=1 deps=2723）
+- 三路 disasm：`.qwen/tmp/_d2265a.txt`（0x5AC820 size 0x100）/ `_d2265b.txt`（0x5AC790 size 0x100）/ `_d2265c.txt`（0x5AC290 size 0x100）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5AC820 | 176B（0xB0）| ret 8 c20800 @0x5AC8CD | 0x5AC8D0（已登记——线性查找器：cmp [ecx] dword 遍历 +4 步长返回索引 or -1）| 2 次/去重 2（0x7c8e17 + 0x7c8b3d——全部已登记，callees=2 吻合）|
+| 0x5AC790 | 39B（0x27）| ret c3 @0x5AC7B6 | 0x5AC7C0（已登记——查找器：estil [ecx+0xc] 门控 + [ecx+8] 计数遍历）| 1 次/去重 1（0x7c8b3d——已登记，callees=1 吻合）|
+| 0x5AC290 | 167B（0xA7）| ret 4 c20400 @0x5AC334 | 0x5AC340（已登记——子析构器：[esi+8] 释放 + flags 位 1 释放本体）| 2 次/去重 1（0x7c8b3d ×2——已登记，callees=1 吻合）|
+
+## a 路 0x5AC820（176B）——VectorClass Resize·4B 变体
+
+```
+005ac820  push 三件套 → mov ebp,[esp+0xc]（★新容量参数）→ mov esi,ecx（★this）→ test ebp → je 0x5ac8aa（★容量=0 走虚表槽 0xc 析构）→ mov ebx,[esp+0x18]（★外部 buffer 参数）→ mov byte [esi+0xc],0 → test ebx → jne 0x5ac84e → lea eax,[ebp*4]（★4B/项）→ push eax → call 0x7c8e17 → mov edi,eax → jmp → mov edi,ebx（★外部 buffer 采用）
+005ac850  test edi,edi → mov byte [esi+0xc],1 → je 0x5ac8c7（★分配失败）→ mov eax,[esi+4] → test → je 0x5ac898 → mov ecx,[esi+8] → cmp ebp,ecx → jge → mov ecx,ebp（★min 取小）→ 拷贝循环：mov edx,[esi+4] → mov edx,[edx+eax*4-4] → mov [edi+eax*4-4],edx → inc eax → cmp eax,ecx → jl（★逐 4B 拷贝）
+005ac87e  mov al,[esi+0xd] → test → je → mov eax,[esi+4] → push eax → call 0x7c8b3d（★释放旧）→ mov [esi+4],0
+005ac898  xor eax,eax → mov [esi+4],edi → xor eax → test ebx → sete al → mov [esi+8],ebp → mov byte [esi+0xd],al（★sete owns 语义反转）→ jmp → mov eax,[esi+8] → mov ecx,[esi+0x10] → cmp → jge → mov [esi+0x10],eax（★[esi+0x10] 只减不增更新）→ al=1 → ret 8
+005ac8aa  mov edx,[esi] → mov ecx,esi → call [edx+0xc]（★虚表槽 0xc 析构）→ 同收尾 → ret 8
+```
+
+**语义**：**VectorClass Resize·4B 变体（推断名）**——★4B/项扩容（双参：新容量 + 外部 buffer）：与 batch 2264 b/c 路同骨架但项宽 4B（lea [ebp*4] + 4B 步长拷贝）；[esi+0xc] 先清 0 再置 1；min 拷贝 + owns 判定释放旧 + sete owns 反转 + [esi+0x10] 只减不增 + 容量=0 虚表槽 0xc 析构。**4B/项 Resize（batch 2264 b 路 8B/2264 c 路 16B 全家第三档——4B/8B/16B Resize 全登记）**。
+
+## b 路 0x5AC790（39B）——VectorClass 清理器·精简
+
+```
+005ac790  push 二件套 → mov esi,ecx（★this）→ xor ebx,ebx → mov eax,[esi+4]（★buffer 指针）→ cmp eax,ebx → je 0x5ac7ae → mov al,[esi+0xd]（★owns 标志）→ cmp bl → je 0x5ac7ae → push eax → call 0x7c8b3d（★释放）→ mov [esi+4],ebx
+005ac7ae  mov byte [esi+0xd],bl（★owns 清 0）→ mov [esi+8],ebx（★容量清 0）→ ret
+```
+
+**语义**：**VectorClass 清理器·精简（推断名）**——★[esi+4] 非空且 owns 标志 [esi+0xd] 非 0 → 0x7c8b3d 释放 + [esi+4]=0；恒清 owns 标志 + 容量。**数组清理器精简版（batch 2241 0x5C5480/0x5C5220 同族——三字段清零收敛：owns+容量+buffer）**。
+
+## c 路 0x5AC290（167B）——巨型对象析构器·全局注销版
+
+```
+005ac290  push 二件套 → mov esi,ecx（★this）→ mov ecx,[esi] → test ecx → je 0x5ac2a6 → mov eax,[ecx] → push 1 → call [eax]（★虚表槽 0 析构：push 1）→ mov [esi],0
+005ac2a6  mov edx,[0xabdf90]（★全局管理器）→ lea ecx,[esp+4] → push ecx → mov ecx,0xabdf90 → mov [esp+8],esi → call [edx+0x10]（★虚表槽 0x10 全局移除）→ cmp eax,-1 → je 0x5ac2ef → mov ecx,[0xabdfa0]（★全局计数）→ cmp eax,ecx → jge 0x5ac2ef → dec ecx → cmp eax,ecx → mov [0xabdfa0],ecx → jge 0x5ac2ef → 前移压缩循环：mov ecx,[0xabdf94] → mov edx,[ecx+eax*4] → mov [ecx+eax*4-4],edx → inc eax → cmp eax,[0xabdfa0] → jl（★数组前移）
+005ac2ef  mov [esi+0x28],0x7e38d0（★虚表）→ mov eax,[esi+0x2c] → test → je → mov cl,[esi+0x35] → test → je → push eax → call 0x7c8b3d（★成员析构）→ mov [esi+0x2c],0
+005ac314  mov al,[esp+0xc]（★flags）→ mov byte [esi+0x35],0 → test al,1 → mov [esi+0x30],0 → je → push esi → call 0x7c8b3d（★flags 位 1 释放本体）→ mov eax,esi → ret 4
+```
+
+**语义**：**巨型对象析构器·全局注销版（推断名）**——★★析构三段：1）[esi] 虚表槽 0 析构（push 1）；2）★[0xabdf90] 全局管理器虚表槽 0x10 移除 + [0xabdfa0] 全局计数递减 + [0xabdf94] 数组前移压缩（典型 VectorClass 全局注册表注销）；3）[esi+0x28]=0x7e38d0 虚表 + [esi+0x2c] 成员释构（[esi+0x35] 标志门控）+ flags 位 1 → 0x7c8b3d 释放本体。**全局管理对象析构器（[0xabdf90]/[0xabdf94]/[0xabdfa0] 全局注册表三件套——batch 2248 [0xa8da74..0xa8da88] 入队模板配对的注销端）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 2 个（0x7c8e17 + 0x7c8b3d）——**全部已登记**（callees=2 吻合）。
+- b 路：跨函数直接 call 1 个（0x7c8b3d）——**已登记**（callees=1 吻合）。
+- c 路：跨函数直接 call 2 次/去重 1 个（0x7c8b3d ×2）——**已登记**（picker callees=1 含虚表槽 0 间接按口径吻合）。
+- ★核验脚本（norm() 规范化版）输出：**三路全 PASS，无 MISSING、无批内自引用**——本批零观察项新增。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★4B/项扩容模板（同 2264 b/c 路骨架）：[esi+0xc] 先清 0 再置 1 + min 拷贝 + sete owns 反转 + [esi+0x10] 只减不增 + 容量=0 虚表槽 0xc 析构;
+2. a 路 ★拷贝循环 4B 步长（[edx+eax*4-4] 前向索引——**与 8B/16B 版步长差异实锤**）;
+3. b 路 ★★清理器三字段收敛：**[esi+4] 判空 && owns [esi+0xd] 判非 0 → 释放；恒清 owns + 容量**（不保留旧指针）;
+4. c 路 ★★全局注销三件套：**[0xabdf90] 管理虚表槽 0x10 移除 → [0xabdfa0] 计数递减 → [0xabdf94] 数组前移压缩**（-1 / >= 计数双早退）;
+5. c 路 ★虚表槽 0 析构 push 1（delete this 惯用）+ [esi+0x28]=0x7e38d0 虚表置位 + 成员释放 [esi+0x35] 标志门控;
+6. c 路 ★flags 位 1 判定释放本体（[esp+0xc] 第一参数）。
+
+## 跨批次连接
+
+- ★★batch 2264（b/c 路 VectorClass Resize 8B/16B——a 路 4B 补全第三档）+ batch 2263（c 路 0x5AD930 扩容器）：**VectorClass Resize 4B/8B/16B 三档全登记（2263-2265 跨三批）**。
+- ★batch 2241（0x5C5480/0x5C5220 数组清理器——b 路同族）+ batch 2242（虚表槽 0 析构 + 0x7c8b3d 释放——c 路析构模板）。
+- ★★[0xabdf90]/[0xabdf94]/[0xabdfa0] 全局注册表（c 路——batch 2248 [0xa8da74..0xa8da88] 入队模板配对注销端 + batch 2260 [0x88730c] 虚表同区）。
+
+## 观察项 / 候选池
+
+- **本批零 MISSING、零批内自引用**（三路 callee 全部已登记；三路后邻 0x5AC8D0/0x5AC7C0/0x5AC340 均已登记）。
+- **新观察**：[0xabdf90]/[0xabdf94]/[0xabdfa0] 全局注册表族（c 路——注销端与 2248 入队模板配对）+ VectorClass Resize 4B 档（a 路——4B/8B/16B 三档项宽闭环）。
+- 前向：picker 队列继续 0x5A/0x5B 区（0x5A95B0/0x5A7B40 + 0x5AC290 后邻族）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
