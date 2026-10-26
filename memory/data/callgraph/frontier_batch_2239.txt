@@ -1,0 +1,64 @@
+# frontier batch 2239：变长长度前缀编码器 + 双常量返回值孪生（0x5C62B0 / 0x5C61E0 / 0x5C61D0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5C62B0 FUN_005c62b0 callees=1 deps=76 / 0x5C61E0 FUN_005c61e0 callees=0 deps=2 / 0x5C61D0 FUN_005c61d0 callees=0 deps=2）
+- 三路 disasm：`.qwen/tmp/_d2239a.txt`（0x5C62B0 size 0x200）/ `_d2239b.txt`（0x5C61E0 size 0x80）/ `_d2239c.txt`（0x5C61D0 size 0x80）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5C62B0 | 180B（0xB4）| ret 4 c20400 @0x5C6361 | 0x5C6370（未登记——**LZO/LCW 风格长度解码器**：cmp al,2 + test al,0x80 + and 0x7f + 续字节链——a 路编码器的解码孪生观察项）| 1（**0x5c6490——batch 2238 c 路已登记**）|
+| 0x5C61E0 | 6B | ret c3 @0x5C61E5 | 0x5C61F0（未登记——dword 首项匹配+反向扫描判定器：cmp [ecx],edx → jne 返 0 → 反向扫描 → 返 1/0 观察项）| 0（callees=0 吻合——mov eax,常量 + ret）|
+| 0x5C61D0 | 6B | ret c3 @0x5C61D5 | 0x5C61E0（本批 b 路——常量 0xdb7 返回值孪生）| 0（callees=0 吻合——mov eax,绝对地址 + ret）|
+
+## a 路 0x5C62B0（180B）——变长长度前缀编码器
+
+```
+005c62b0  mov eax,[esp+4]（★第 4 参：计数）→ sub esp,0x104 → push ebx/ebp/esi/edi → mov ebp,edx（★目标）→ mov edx,ecx（★源）→ push eax → lea ecx,[esp+0x14]（★栈缓冲）→ call 0x5c6490（★batch 2238 c 路：带符号扩展逆序拷贝器——输出到栈缓冲，返回字节长度）
+005c62cc  cmp eax,0x7f → mov byte [ebp],2（★类型头 2）→ ja 0x5c62df → ★短路径：mov [ebp+1],al（单字节长度）→ mov edx,1 → jmp 0x5c633b
+005c62df  ★长路径：mov edx,4 → mov ecx,0x18 → mov esi,eax → shr esi,cl → test → jne → sub ecx,8/dec edx/cmp ecx,-8 循环找非零字节（24→16→8→0）→ or dl,0x80（★高位续字节标志）→ mov [ebp+1],dl（第一长度字节含 0x80）
+005c6305  ★第二循环：mov edx,1（计数复位）→ mov ecx,0x18 → mov esi,eax → shr esi,cl → 同上找非零 → mov edi,4 → lea esi,[edi*8-8] → mov ebx,eax → mov ecx,esi → shr ebx,cl → inc edx → sub esi,8/dec edi → mov [edx+ebp],bl（写每 8 位一片的长度字节）→ jne 循环
+005c633b  ★数据拷贝：mov ecx,eax → lea esi,[esp+0x10]（栈缓冲）→ mov ebx,ecx → lea edi,[edx+ebp+1] → shr ecx,2 → rep movsd → mov ecx,ebx → and ecx,3 → rep movsb → lea eax,[eax+edx+1]（★返回总长）→ pop 四件套 → add esp,0x104 → ret 4
+```
+**语义**：**变长长度前缀编码器（推断名）**——① call 0x5c6490 把源数据符号扩展逆序拷贝到栈缓冲并得字节长度；② 头字节写 2（类型标记）；③ 长度 ≤0x7f 走单字节短路径，否则走多字节长路径（0x80000080 高位标志环 + 每 8 位一片写长度字节）；④ rep movsd/movsb 把栈缓冲拷到目标 [ebp] 后，返回头部+长度+数据的写后总长。**LZO/LCW 风格长度前缀序列化器（小长度 1B、大长度多字节带 0x80 续标志——encode80 同族）**。
+
+## b 路 0x5C61E0（6B）——常量返回值函数·0xDB7
+
+```
+005c61e0  mov eax, 0xdb7 → ret
+```
+**语义**：**常量返回值函数·0xDB7（推断名）**——固定返回立即数 0xDB7（十进 3511），零 call。**常量 3511 的 getter（校验和/魔数/编码参数查询端）**。
+
+## c 路 0x5C61D0（6B）——全局地址返回器·0x82E174
+
+```
+005c61d0  mov eax, 0x82e174 → ret
+```
+**语义**：**全局地址返回器·0x82E174（推断名）**——固定返回绝对地址 0x82E174（数据段全局对象），零 call。**全局单例/表指针 getter（batch 2228 0x5D5AC0 同族风格）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 1 个（0x5c6490）——**batch 2238 c 路已登记**（全部已登记，callees=1 吻合）。
+- b 路：跨函数直接 call **0 个**（callees=0 吻合——mov eax,立即数 + ret）。
+- c 路：跨函数直接 call **0 个**（callees=0 吻合——mov eax,绝对地址 + ret）。
+- ★核验脚本（norm() 规范化版）输出：**三路全 PASS，无 MISSING、无 UNKNOWN**。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★头字节写 2（mov byte [ebp],2）+ 长度 ≤0x7f 单字节 / >0x7f 多字节（or dl,0x80 高位续标志——LZO/LCW encode80 同族风格）；
+2. a 路 ★两个独立循环找非零字节（mov ecx,0x18 → shr esi,cl → sub ecx,8 → cmp ecx,-8——24/16/8/0 四档步进）+ 第二循环写长度（mov edx,1 计数复位 + lea esi,[edi*8-8] 偏移 + shr ebx,cl 逐片写）；
+3. a 路 ★rep movsd + rep movsb 双拷贝（shr ecx,2 字计数 + and ecx,3 字节尾）+ lea eax,[eax+edx+1] 返回写后总长（数据长+长度字节数+1 头字节）；
+4. b/c 路 ★★纯立即数返回（mov eax,0xdb7/0x82e174 + ret——无栈帧无 call，6B 微型 getter）。
+
+## 跨批次连接
+
+- ★★batch 2238 c 路（0x5C6490 带符号扩展逆序拷贝器——**a 路唯一 callee 兑现**）：本批 a 路把 2238 c 路纳入长度前缀序列化管线。
+- ★batch 2228（0x5D5AC0 全局单例获取器——c 路 0x82E174 全局地址 getter 同族）+ batch 2238（0x5C6490/0x5C67A0/0x5C7990 大整数运算族——a 路邻域 [esp+0x10] 栈缓冲）。
+- ★LZO/LCW encode80 家族（QWEN.md [OverlayPack]=encode80 实锤——a 路长度前缀编码器同族）+ code/rewrite/map/（base64/LZO/LCW 编码器官方参照）。
+
+## 观察项 / 候选池
+
+- **后邻未登记（自然排队）**：0x5C6370（a 后邻——**LZO/LCW 风格长度解码器**：cmp al,2 + test al,0x80 + and 0x7f + 续字节装载 + shl edi,8/or + 符号扩展倒序写回——**a 路编码器的解码孪生，优先排队**）；0x5C61F0（b 后邻——dword 首项匹配+反向扫描判定器：cmp [ecx],edx → jne 返 0 → dec/反向扫描 → cmp edx,1 → jg 返 0 → 返 1——batch 2215 判定族同款）；0x5C6230（b 后邻——变长长度编码器·变体2：cmp edx,0x7f → ja → mov [edi],dl 单字节 → 多字节循环——**a 路前邻独立副本自然排队**）；0x5C63F0（a 后邻第二函数——符号扩展填充倒序拷贝器：setge + dec + and 0xff + rep stosd 填充 + movsx 拷贝——batch 2238 c 路邻域同款）。
+- **新观察**：[ebp] 头字节 2（a 路类型标记）+ [esp+0x14] 栈缓冲 siz 参数（a 路 call 0x5c6490 前的第 4 参链）+ 0xdb7（b 路常量）+ 0x82e174（c 路全局地址）。
+- 前向：picker 队列继续 0x5C 区（0x5C6370 解码器 + 0x5C6230 编码器变体 + 0x5C60D0 2605 大宿主 + 0x5B77E0 deps=4048 大宿主）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
