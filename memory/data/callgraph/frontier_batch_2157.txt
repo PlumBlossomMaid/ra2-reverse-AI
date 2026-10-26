@@ -1,0 +1,63 @@
+# frontier batch 2157：环形索引记录分发器 + 门控改写调度器 + [a8ecc8] 计数钳制判定器（0x639800 / 0x639740 / 0x639130）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x639800 FUN_00639800 callees=7 deps=201 / 0x639740 FUN_00639740 callees=4 deps=201 / 0x639130 FUN_00639130 callees=4 deps=281）
+- 三路 disasm：`.qwen/tmp/_d2157a.txt`（0x639800 size 0x2D0，分段全读）/ `_d2157b.txt`（0x639740 size 0x100）/ `_d2157c.txt`（0x639130 size 0x120）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x639800 | 587B（0x24B）| 多出口 @0x639A1A/0x639A4A | 0x639A50（=batch 2156 c 路本尊，已登记）| 7（6 已登记 + 1 MISSING 观察项 0x6367B0）|
+| 0x639740 | 185B（0xB9）| ret @0x6397F8 | 0x639800（=本批 a 路本尊，已登记）| 4（全已登记）|
+| 0x639130 | 215B（0xD7）| ret 双出口 @0x639202/0x639206 | 0x639210（sub esp,0x18 [ac4b40] 循环 大函数头，未登记）| 4（全已登记）|
+
+三函数为 **0x63 区环形索引族（idiv ÷[ecx+0x90] 归一）+ 记录分发/改写/钳制判定**——batch 2156 环形索引族 + batch 2155 状态查询族的调度层：
+
+## a 路 0x639800（587B）——环形索引记录分发器
+
+```
+00639800  sub esp,0x90 → mov edi,edx（参数 2）→ mov esi,ecx（参数 1）→ mov eax,[edi+4] → mov ecx,[eax] → mov ebx,[ecx] → ★call 0x705d20 → [eax+4] 虚表槽 0x10 读取 → mov ebp,eax（索引）→ ★call 0x705d20 二次 → mov ebx,eax → mov ecx,[ebx+0x14]（计数）→ sub ecx,ebp → push 3 参（计数差/索引/参数 1）→ ★call 0x6367b0（MISSING 观察项——计数差处理）→ or eax,-1 → 0x639865：★call 0x705d20 → mov esi,[ebx+0x94]（环形偏移）→ test esi → jg → ★idiv [ebx+0x90] 环形索引归一 → [ebx+8] 数组取项 → 虚表槽 0x10 二次
+006398e1  参数 1 对象 ★call 0x705d20 → test eax → je 0x639958 → ★环形遍历（[ebx+8] 数组 [esp+0x14] 索引）：mov ecx,[ebx+8] → mov ecx,[ecx+edx*4] → push [ebx] → ★call 0x6346b0（记录取数）→ rep movsd 0x1b+movsw+movsb（111B）→ ★call 0x6e6ab0 → ★call 0x633fa0（记录装配）→ inc 索引 → jl 循环
+00639958  虚表槽 0x10 三读 → [ecx+0x90]=eax/[ecx+0x94]=edx/byte [ecx+0x98]=1（★环形三元组写入——batch 2157 b 路同款）→ test edi → je → ★call 0x6349b0 → mov al,[0xac4cd0]（★日志门控 2）→ test → jne 0x639a40 → mov ecx,[esp+0x24] → mov ecx,[ecx+0x21c] → ★call 0x50b6f0（判定）→ test → je 0x639a40 → mov byte [0xac4cd0],1 → ★最后遍历：[ecx+0x14]-1 取项 → [esi+0x10] 二级计数循环：mov eax,[edx+edi*4] → mov ecx,[eax] → byte [ecx+0x83] 判定 → je → ★虚表槽 0x14c（未激活调用）else 虚表槽 0x150 → inc → 循环 → ret
+```
+**语义**：**环形索引记录分发器（推断名）**——① 0x705d20 三次 + 虚表槽 0x10 三次 + ★0x6367b0（MISSING——计数差处理）+ **idiv [ebx+0x90] 环形索引归一**；② 环形遍历：0x6346b0 记录取数 + rep movsd 0x1b 111B + 0x6e6ab0 + 0x633fa0 记录装配；③ [ecx+0x90]/[ecx+0x94]/byte [ecx+0x98] 环形三元组写入 + 0x6349b0；④ [0xac4cd0] 日志门控 + 0x50b6f0 判定 + 最终遍历（byte [ecx+0x83] 激活判定 → 虚表槽 0x14c/0x150）。**0x63 区环形索引记录分发主处理（batch 2156/2157 b 路环形三元组 [0x90]/[0x94]/[0x98] 同款）**。
+
+## b 路 0x639740（185B）——门控改写调度器
+
+```
+00639740  sub esp,8 → ★call 0x705d20 → [eax+4] 虚表槽 0x10 → mov edi,eax（索引）→ ★call 0x705d20 → mov esi,eax → mov eax,[esi+0x14]（计数）→ mov [esi+0x94],edi（★环形偏移写）→ sub eax,edi → byte [esi+0x98],1 → mov [esi+0x90],eax（★环形三元组写——[0x90]=差/[0x94]=索引/[0x98]=1）
+00639788  mov al,[0xac4cc8]（★日志门控）→ test → jne 0x6397ea → mov ecx,[ebp+0x21c] → ★call 0x50b6f0（判定）→ test → je 0x6397e3 → mov byte [0xac4cc8],1 → mov eax,[esi+0x14] → dec eax → [esi+8] 数组取项 → [edi+0x10] 二级计数循环：mov eax,[edx+esi*4] → mov ecx,[eax] → byte [ecx+0x83] 判定 → je → ★虚表槽 0x150 → inc → 循环
+006397df  mov ecx,ebp → ★call 0x639cb0（batch 2156 a 路——类型改写遍历器调度）→ 0x6397ea：mov ecx,ebx → ★call 0x6349b0 → ret
+```
+**语义**：**门控改写调度器（推断名）**——① 0x705d20 二次 + 虚表槽 0x10 + **[esi+0x90]/[esi+0x94]/byte [esi+0x98] 环形三元组写入**（[0x94]=索引/[0x90]=计数差/[0x98]=1）；② [0xac4cc8] 日志门控 + 0x50b6f0 判定 + 遍历（byte [ecx+0x83] 判定 → 虚表槽 0x150）；③ ★0x639cb0 类型改写遍历器调度 + 0x6349b0 收尾。**a 路环形三元组写入的调度端（0x639cb0 调度 = batch 2156 a 路兑现）**。
+
+## c 路 0x639130（215B）——[a8ecc8] 计数钳制判定器
+
+```
+00639130  push ecx → mov al,[0xac4cf4]（★门控标志）→ test → je 0x639203（关 → al=1 返回）→ mov eax,[0xa83d4c] → mov ecx,[eax+0x30]（★索引字段）→ test ecx → jl/jge 0x639153 → mov al,1（[0,0x18] 内）→ mov ebp,[ecx*4+0xac4b84]（★[0xac4b84] 计数表）→ mov ebx,[0xa8ecc8]（计数）→ 循环：[0xa8ecbc] 数组逐项：mov dl,[ecx+0x14] → and dl,1（★标志筛选）→ je 跳过 → ★call 0x705d20 → test eax → je → mov ecx,[eax+0x14] → test ecx → jne 跳过 → inc edi（★空计数项计数）→ 循环
+006391a3  add ebp,edi（[0xac4b84] 基数 + 空计数项数）→ cmp ebp,0x80（★阈值 128）→ jle 0x639203（≤128 → al=1）→ mov al,[0xac4c08]（★日志门控）→ test → jne 0x6391ff → ★DebugLog 0x734e60（0x836bd4/0x836c6c——line 0xca1）→ ★call 0x730a90 → [0x8871e0] → ★call 0x750920 → mov al,0 → ret（>128 → al=0）→ 0x639203：mov al,1 → ret
+```
+**语义**：**[a8ecc8] 计数钳制判定器（推断名）**——① [0xac4cf4] 门控 + [0xa83d4c]+0x30 索引范围判定（[0,0x18]）+ [0xac4b84] 计数表基数；② [a8ecc8] 循环 [a8ecbc] 数组：[esi+0x14]&1 筛选 + 0x705d20 + [eax+0x14] 空计数项累计；③ **基数+空计数 > 128 → DebugLog（0x836c6c 新串）+ 0x750920 → 返回 0**；≤128 返回 1。**0x63 区容量钳制判定器（batch 2155 a 路日志门控 + 0x750920 同款收尾）**。
+
+## 原版怪癖（照抄）
+
+1. a/b 路 ★[ecx+0x90]/[ecx+0x94]/byte [ecx+0x98] 环形三元组写入（[0x90]=计数差/[0x94]=索引/[0x98]=1——batch 2156 环形索引族确认）；
+2. a 路 ★idiv [ebx+0x90] 环形索引归一 + 111B rep movsd + 0x6e6ab0 + 0x633fa0 装配；
+3. a/b 路 ★byte [ecx+0x83] 激活判定（虚表槽 0x14c/0x150 分派——batch 2154/2155 同字段）；
+4. b/c 路 ★DebugLog 行号 3233 硬编码 + [0xac4cc8]/[0xac4c08] 日志门控（只报一次）+ 0x836bd4 固定文件 + 0x836c6c 新串（batch 2155 a 路 0x836c80 之后又 1 串）；
+5. c 路 [0xa83d4c]+0x30 索引范围判定（[0,0x18]）+ [0xac4b84] 基数累计 + ★128 阈值钳制（>128 才报错返 0）；
+6. c 路 [a8ecc8] 循环 [esi+0x14]&1 筛选 + [eax+0x14] 空计数项累计（batch 2151/2152 同款）。
+
+## 跨批次连接
+
+- ★★★batch 2156（环形索引族 idiv ÷[ecx+0x90] + 0x639CB0 调度——b 路调度兑现）；batch 2155 a 路（[0xac4c08] 门控 + 0x750920 收尾同款）。
+- ★★batch 2154/2155（[a8ecc8]/[a8ecbc] 数组 + [esi+0x14]&1 筛选 + byte [ecx+0x83] 激活判定）；batch 2149-2150（rep movsd 0x1b 111B）。
+- ★0x705d20/0x6e6ab0/0x7c8e17/0x633fa0/0x6346b0/0x6349b0/0x50b6f0/0x734e60/0x730a90/0x750920（全部已登记——a 6 个 + b 4 个 + c 4 个）。
+
+## 观察项 / 候选池
+
+- **MISSING 观察项（1 个）**：★0x6367B0（FUN_006367b0，rank:4208，454B——ranking 有行未登记，caller 恰为本批 a 路本尊 0x639800，0x63 区内部族自然排队——计数差处理）。
+- **后邻未登记**：0x639210（c 路后邻——sub esp,0x18 + [0xac4b40] 循环大函数头）。
+- **新观察**：[0xac4cc8]（b 路日志门控——batch 2154/2155 [0xac4c08] 姐妹门控）；0x836c6c（c 路新调试串）；[ecx+0x90]/[0x94]/[0x98] 环形三元组字段确认。
+- 前向：picker 队列继续 0x63 区 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650。
