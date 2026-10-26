@@ -1,0 +1,63 @@
+# frontier batch 2208：0x5E 区校验/设置/构造族三连（字节折叠校验累加器 + 字段设置器 + 对象构造器）（0x5EF240 / 0x5EF170 / 0x5EF100）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5EF240 FUN_005ef240 callees=0 deps=11 / 0x5EF170 FUN_005ef170 callees=1 deps=77 / 0x5EF100 FUN_005ef100 callees=2 deps=76）
+- 三路 disasm：`.qwen/tmp/_d2208a.txt`（0x5EF240 size 0x80）/ `_d2208b.txt`（0x5EF170 size 0x80）/ `_d2208c.txt`（0x5EF100 size 0x80）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x5EF240 | 37B（0x25）| ret c3 @0x5EF264 | 0x5EF270（mov eax,0x18 常量返回器；0x5EF280 jmp 0x48bf10 尾跳——连排，未登记）| 0（纯整数折叠——callees=0 吻合）|
+| 0x5EF170 | 19B（0x13）| ret 4 @0x5EF180 | 0x5EF190（[ebp+0x4c]==-1 判定 + [eax+0x50] 0xdabd/0xdeaf 头尾 + rep movsd/movsb 拷贝——同族拷贝器，未登记）| 1（0x48bf10——**MISSING 未登记**，见观察项）|
+| 0x5EF100 | 78B（0x4E）| ret 0x10 @0x5EF14B | 0x5EF150（0x7c8b3d 释放 + 0x48bee0——同族析构器，未登记）| 2（0x48be60 + 0x7c8e17——callees=2 吻合）|
+
+三函数为 **0x5E 区校验/设置/构造族**（0x7eef90 虚表 + 0x48be60/0x48bee0/0x48bf10 核心函数族 + [esi+0x4c]/[esi+0x50] 长度/缓冲字段——3 个连续构造对场景）：
+
+## a 路 0x5EF240（37B）——字节折叠校验累加器
+
+```
+005ef240  push ebp/edi → xor eax/edi → mov ebp=ecx → test edx（★长度）→ jle 0x5ef262（空返 0）
+          → 循环（edi 0..edx）：mov cl,[edi+ebp]（★读字节）→ shr esi,0x1f（★高位搬移）→ add esi,ecx → inc edi → lea eax,[esi+eax*2]（★滚动器：eax = 2*eax + (字节 + 原最高位)——★档案折叠校验）→ cmp edi,edx → jl 循环 → ret c3
+```
+**语义**：**字节折叠校验累加器（推断名）**——① ★edx 长度循环遍历 [ebp+edi] 字节；② ★★折叠累加（eax = 2×eax + byte + esi 高位——相对滚动校验，传统 CRC 折叠变体）；③ 空长返 0。**字节折叠校验端（档案/数据完整性——纯整数无调用）**。
+
+## b 路 0x5EF170（19B）——字段设置器
+
+```
+005ef170  mov esi=ecx → call 0x48bf10（★★核心函数——0x48 区家族）→ mov eax,[esp+8] → mov [esi+0x4c],eax（★参数写 +0x4c 长度字段）→ ret 4
+```
+**语义**：**字段设置器（推断名）**——① ★0x48bf10 调用（0x48 区核心函数——batch 2208 同族 0x48be60/0x48bee0 邻域）；② ★[esi+0x4c] = 参数（长度/索引字段设置——设置即返回）。**+0x4c 长度字段设置端（0x48bf10 前置调用 + 单字段写）**。
+
+## c 路 0x5EF100（78B）——对象构造器
+
+```
+005ef100  mov eax=[esp+0x10]/mov edx=[esp+8]（★双参数装载）→ push 0/push 0x4b0/push -1/push 0x3c/push eax/push 参数/push edx/push 参数 → call 0x48be60（★★核心构造——0x48 区家族 8 参调用）→ mov ecx,[esi+0x1c]（★大小字段）→ mov [esi],0x7eef90（★虚表装载）→ add ecx,0xb → mov [esi+0x4c],0xffffffff（★长度未设置标记）→ push ecx → call 0x7c8e17（operator new）→ mov [esi+0x50],eax（★缓冲分配）→ mov eax=esi → ret 0x10
+```
+**语义**：**对象构造器（推断名）**——① ★0x48be60 核心构造 8 参调用（0x48 区家族——本批同族三连锁）；② ★0x7eef90 虚表装载 + [esi+0x4c]=0xffffffff 长度未设标记；③ ★0x7c8e17 new（[esi+0x1c]+0xb——缓冲+头尾修正）；④ [esi+0x50] 缓冲指针写 + ret 0x10。**对象构造端（0x48be60 8 参 + 虚表 + 缓冲分配——b 路设置/析构同族配对）**。
+
+## callee 核验
+
+- a 路：0 个直接 call（纯整数折叠——callees=0 吻合）。
+- b 路：1 个直接 call（0x48bf10——**MISSING 未登记**，见观察项）；**其余全部已登记**（callees=1 一致但 MISSING 记观察）。
+- c 路：2 个直接 call（0x48be60 + 0x7c8e17），**全部已登记**（callees=2 吻合）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★折叠累加惯用（shr esi,0x1f 高位搬移 + add + lea eax,[esi+eax*2]——非标准 CRC 折叠，档案校验）；
+2. b 路 ★[esi+0x4c]=参数写（0x48bf10 前置调用 + 单字段设置）；
+3. c 路 ★0x48be60 8 参调用（0x3c/0xffffffff/-1/0x4b0/0 参数组合）+ [esi+0x1c]+0xb 缓冲大小修正；
+4. c 路 ★[esi+0x4c]=0xffffffff 长度未设标记（初始 -1——batch 2208 b 路设置配对）；
+5. 三路 ★0x7eef90 虚表族（构造/析构/设置三连锁——0x48 区对象家族）。
+
+## 跨批次连接
+
+- ★★0x48 区核心函数族（0x48be60/0x48bee0/0x48bf10——b/c 路三连锁；0x48BEE0 batch 2208 后邻 0x5EF150 调用）；batch 2208 后邻（0x5EF190/0x5EF150/0x5EF270/0x5EF280 拷贝/析构/常量连排）。
+- ★batch 2205/2206（命令族无关，0x7eef90 虚表族新基址——0x5E 区对象家族）。
+
+## 观察项 / 候选池
+
+- **MISSING：0x48BF10**（b 路直接 call——ranking.tsv:5797 有行未登记 uc=1 callees=1 deps=1；0x48 区候选自然排队）+ **0x48BEE0**（ranking.tsv:4774 有行未登记 uc=5——后邻 0x5EF150 调用，观察项）。
+- **后邻未登记**：0x5EF270/0x5EF280（a 后邻——常量返回器 + jmp 0x48bf10 尾跳）、0x5EF190（b 后邻——0xdabd/0xdeaf 头尾 + rep movsd 拷贝器）、0x5EF150（c 后邻——0x7c8b3d 释放 + 0x48bee0 析构器）。
+- **新观察**：[esi+0x4c] 长度字段（b/c 路——0xffffffff 未设标记）；[esi+0x1c] 大小字段（c 路）；0x7eef90 虚表族（三路）。
+- 前向：picker 队列继续 0x5E 区（0x5EF190/0x5EF150/0x5EF280 连排链 + 0x48be60/0x48bee0/0x48bf10 核心族）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
