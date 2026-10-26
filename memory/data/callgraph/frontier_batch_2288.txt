@@ -1,0 +1,85 @@
+# frontier batch 2288：cell 覆盖清理器 + 水域判定器 + 高度采样器（0x5866C0 / 0x5864A0 / 0x585F40）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x5866C0 FUN_005866c0 callees=2 deps=2525 / 0x5864A0 FUN_005864a0 callees=1 deps=66 / 0x585F40 FUN_00585f40 callees=0 deps=5）
+- 三路 disasm：`.qwen/tmp/_d2288a.txt`（0x5866C0 size 0x80）/ `_d2288b.txt`（0x5864A0 size 0x180）/ `_d2288c.txt`（0x585F40 size 0x400）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5866C0 | 93B（0x5D）| ret c3 @0x58671C | 0x586720（未登记——同款孪生：区间字段装载+CellIterator+cell+0x140 门控）| 3 次/去重 2（0x578290+0x486a70——全部已登记，picker callees=2 吻合）|
+| 0x5864A0 | 309B（0x135）| ret 4 c20400 @0x5865D2（al=1）/0x5865D2（al=0）| 0x5865E0（未登记——4B 常量返回器：xor al,al ret 4）| 1 次/去重 1（0x481810——已登记，picker callees=1 吻合）|
+| 0x585F40 | 885B（0x375）| ret 0x10 c21000 @0x5862B2/0x5862AC | 0x5862C0（未登记——矩形遍历+0x87f924 查格+cell+0xe4 判定）| 0 次/去重 0（纯内存运算，picker callees=0 吻合）|
+
+## a 路 0x5866C0（93B）——cell 覆盖清理器
+
+```
+005866c0  push esi → mov esi,ecx（★this）→ mov eax,[esi+0xf4]（★上限数）→ mov [esi+0x10c],1 → mov [esi+0x110],eax → lea ecx,[eax-1] → mov [esi+0x114],ecx → mov edx,[esi+0x13c] → shl eax,0xb（★×2048——Y<<9 家族）→ lea eax,[eax+edx+4] → mov [esi+0x118],eax（★区间字段装载——batch 2285 a 路同款）→ ★★call 0x578290（★CellIterator Next）→ test → je 0x58671b（收尾）
+00586700  ★★主循环：test byte [eax+0x140],2（★cell+0x140 bit1 门控）→ jne 0x586710（跳过）→ mov ecx,eax → call 0x486a70（★cell 清理器）→ call 0x578290 Next → 循环 → ret c3
+```
+
+**语义**：**cell 覆盖清理器（推断名）**——★区间字段装载（[esi+0x10c]=1/[0x110]=上限/[0x114]=上限-1/[0x118]=上限×0xb<<+4——batch 2285 a 路 0x588AC0 同款）+ ★★CellIterator 全图遍历（0x578290）→ ★★cell+0x140 bit1 门控（test byte [eax+0x140],2——★位 1 占用标志）→ 未占用 → ★0x486a70 cell 清理器 → 继续遍历。**cell 覆盖清理（cell+0x140 bit1 门控 + 0x486a70——batch 2287 b 路位域兄弟）**。
+
+## b 路 0x5864A0（309B）——水域判定器
+
+```
+005864a0  sub esp,8 → mov esi,[esp+0x10]（★参1 对象）→ mov eax,[esi+8]（★计数）→ ★cdq → idiv [0xabde88]（★全局除数）→ test al,1（★奇偶门控——batch 2288 a 路孪生 [0xabde88] 分派）→ je 0x586547（★偶数分支）
+005864bb  ★★奇数分支：sub eax,edx（★商修正）→ mov ecx,eax → ★坐标换算（movsx [esi] → cdq and 0xff → add → sar 8——★sar 8 归一；movsx [esi+4] 同）→ ★★中心折半：sar ecx,1 → inc ecx → sub 双坐标（★对象中心偏移）→ mov word [esp+0x10]/[esp+0x12] → ★★movsx → shl eax,9（★Y<<9）→ add → [0x87f924] 查格（越界回落哑元 0xabdc50/[0xabdc74]）→ mov ecx,[eax+0x13c]（★cell 计数）→ test → jle 0x5865cc（al=0）
+0058653c  ★★水域判定：push 3 → mov ecx,eax → call 0x481810（★水域判定——batch 2270/2272 同款 push 3 三向）→ 成功 → jmp 0x5865b9（→ test [eax+0x13c] → 非 0 → al=1）
+00586547  ★★偶数分支：同模板（sub eax,edx → sar ecx,1 折半 → movsx → Y<<9 → 查格 → 0x481810 push 3 → test [eax+0x13c] → al=1/al=0）
+005865cc  收尾：xor al,al → ret 4（★1 参）
+```
+
+**语义**：**水域判定器（推断名）**——★★[0xabde88] 全局除数 idiv 奇偶门控（★商奇偶双分支——batch 2270 水域类型处理器同族）+ ★★坐标换算（movsx → sar 8 归一 + ★中心折半 sar ecx,1/inc）→ ★★Y<<9 + [0x87f924] 查格（越界回落哑元 0xabdc50）→ ★★cell 计数 [eax+0x13c] 门控 → ★★0x481810 水域判定（push 3 三向——batch 2270/2272 同款）→ 成功 al=1/失败 al=0 ret 4。**水域判定（[0xabde88] 奇偶分派 + 0x481810 三向水域验证——QWEN.md 水域族）**。
+
+## c 路 0x585F40（885B）——高度采样器
+
+```
+00585f40  mov eax,[esp+8]（★参 模式）→ sub eax,0 → je 0x5862ac（★模式 0 → al=0 直接返回）→ dec → je 0x58628a（★模式 1 → [0x87f890] 表查 [esp+0x20]×9 → +0x57e4 数组读）→ dec → jne 0x5862ac → ★★模式 2（主路径）：
+00585f5f  ★★[0x87f8a8] 表装载：mov ebx,[0x87f8a8] → lea eax,[eax+eax*8]（★×9）→ mov ecx,[ebx+eax*4+0x20]（★表项）→ ★★idiv 0x82（★/130 取整）→ ★★0x7e07e07f imul 除法缩比（sar edx,6 + shr 0x1f + add = ÷100 系）→ ★lea edx*4-4 → mod4 归一（and 3 → add → sar 2 → ★负数修正 and 0x80000001/jns/dec/or/inc——batch 2259 同款）→ ★★neg/sbb/neg 符号掩码 → sub 坐标
+00586063  ★★坐标等判定：cmp cx,si → jne 0x5860d7 → cmp di,bx → jne 0x5860d4 → ★★全等路径：movsx → mod4 → sar 2 → ★shl ecx,6 + add（★×65——Y<<6+×1）→ lea esi,[eax+ecx*2]（★×2 累加）→ [ecx+esi*4+0x59f0] 高度表读 ×2 → add → sar eax,1（★平均）→ ret 0x10
+005860d4  ★★方向分支：cmp cx,si → jle 0x5860f0 → cmp bx,di → jle → mov eax,3（★方向 3）else setge inc（1/2）→ 0x5860f0 jge 分支 → setl add 6 → setle dec and 4 → ★★[eax*8+0x82a984]/[0x82a988]/[0x82a9c4]/[0x82a9c8] 四表（★方向表族）→ [eax*4+0xabd460] 坐标表（★邻格偏移）→ movsx → mod4 → sar 2 → ★shl 6 + add ×65 → lea [eax+edx*2] → [ecx+eax*4+0x59f0] 高度表读 → ★★min/max 双读 → add → sar 1 → ret 0x10
+0058628a  ★★模式 1：[0x87f890] 表 → [eax+edx*4+0x20] → [edx+ecx*4+0x57e4] 数组读 → ret 0x10
+005862ac  收尾：xor eax → ret 0x10（★4 参）
+```
+
+**语义**：**高度采样器（推断名）**——★★三路模式分派（[esp+8] 0 → al=0 / 1 → [0x87f890] 表 + 0x57e4 数组 / 2 → 主路径）：★★[0x87f8a8] 表 + idiv 0x82（÷130）+ ★★0x7e07e07f imul 除法缩比（sar 6 ÷100 系）+ ★★mod4 取整（and 3 → sar 2 → ★负数修正 and 0x80000001/dec/or/inc——batch 2259 同款）→ ★★坐标等/方向双分支（[eax*8+0x82a984]/[0x82a988]/[0x82a9c4]/[0x82a9c8] 方向表族 + [0xabd460] 邻格坐标表）→ ★★shl 6 + ×65 索引 + [ecx+eax*4+0x59f0] 高度表读（★+0x59f0 高度数组）→ ★min/max 双读平均 → add → sar 1 → ret 0x10（4 参）。**高度采样（模式分派 + 方向表族 [0x82a984..0x82a9c8] + 高度表 [0x59f0]——纯内存运算）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 3 次/去重 2 个（0x578290/0x486a70）——**全部已登记**（picker callees=2 吻合）。
+- b 路：跨函数直接 call 1 次/去重 1 个（0x481810）——**全部已登记**（picker callees=1 吻合）。
+- c 路：跨函数直接 call 0 次/去重 0 个（纯内存运算）——**picker callees=0 吻合**。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING**（连续十二批三路全登记）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★区间字段装载模板（[esi+0x10c]=1/[0x110]=上限/[0x114]=上限-1/[0x118]=上限×0xb<<+4——batch 2285 a 路同款）;
+2. a 路 ★★cell+0x140 bit1 门控（test byte [eax+0x140],2——★位 1 占用标志——batch 2287 b 路位域兄弟）;
+3. a 路 ★0x486a70 cell 清理器（★新 callee——未观察过）;
+4. b 路 ★★[0xabde88] 全局除数 idiv 奇偶门控（test al,1 双分支——★全局除数族）;
+5. b 路 ★★坐标换算 sar 8 归一（movsx → cdq and 0xff → add → sar 8——batch 2286 c 路同款）;
+6. b 路 ★★中心折半（sar ecx,1 → inc → sub 双坐标——★对象中心偏移）;
+7. b 路 ★★cell 计数 [eax+0x13c] 门控（test → jle al=0——★空 cell 直接失败）;
+8. b 路 ★★0x481810 水域判定 push 3（batch 2270/2272 同款三向）;
+9. c 路 ★★[0x87f8a8] 表 + idiv 0x82（÷130——★除数是 0x82 非常规）;
+10. c 路 ★★0x7e07e07f imul 除法缩比（sar edx,6 + shr 0x1f + add = ÷100 系——QWEN.md 除法缩比族新常量）;
+11. c 路 ★★mod4 取整负数修正（and 0x80000001 → jns → dec → or 0xfffffffe → inc——batch 2259 同款）;
+12. c 路 ★★方向表族 [eax*8+0x82a984]/[0x82a988]/[0x82a9c4]/[0x82a9c8]（★8B/项方向表——新表族）+ [0xabd460] 邻格坐标表;
+13. c 路 ★★shl 6 + ×65 索引 + [ecx+eax*4+0x59f0] 高度表（★+0x59f0 高度数组新字段族）;
+14. c 路 ★★min/max 双读平均（add → sar 1——★与 c 路全等路径平均同款）。
+
+## 跨批次连接
+
+- ★★★batch 2285 a 路（区间字段装载——a 路同款）+ batch 2287 b 路（cell+0x140 位域——a 路门控兄弟）。
+- ★★batch 2270/2272（0x481810 水域判定 push 3——b 路同款）+ batch 2270（[0xabde88] 水域常量族——b 路 idiv 除数同族）。
+- ★★batch 2259（mod4 取整负数修正 + setge/dec/and 布尔归一——c 路同款）+ batch 2286 c 路（sar 8 归一——b 路同款）。
+- ★★batch 2273 a 路（[0x87f924] 地图表 + 哑元 0xabdc50/[0xabdc74]——b 路同款）+ batch 2266/2273（0x5657a0 取格——b 路查格前置）。
+- ★0x7e07e07f 除法缩比（c 路——QWEN.md 除法缩比族新常量）+ [0x87f8a8]/[0x87f890] 表（c 路——MapRect 邻区表族）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x486A70（a 路——cell 清理器）+ 0x586720（a 路后邻——同款孪生）+ 0x5865E0（b 路后邻——4B 常量返回器）+ 0x5862C0（c 路后邻——矩形遍历 + cell+0xe4 判定）；[0x82a984..0x82a9c8] 方向表族（c 路）+ [0x59f0] 高度数组（c 路）。
+- 未兑现 MISSING 旧观察：0x00486790（2267 起排队）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x578640 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50（batch 2280-2287 新观察）。
+- 本批 **无 MISSING**（连续十二批三路全登记——batch 2276 起，TSV 5347）。
