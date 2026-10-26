@@ -1,0 +1,94 @@
+# frontier batch 2308：LZO 压缩编码器 + VectorClass 容器构造器 + LogicClass::Update 巨型宿主（0x55BC00 / 0x55BB40 / 0x55AFB0）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x55BC00 FUN_0055bc00 callees=0 deps=1 / 0x55BB40 FUN_0055bb40 callees=1 deps=1928 / 0x55AFB0 LogicClass::Update callees=28 deps=2508）
+- 三路 disasm：`.qwen/tmp/_d2308a.txt`（0x55BC00 size 0x520）/ `_d2308b.txt`（0x55BB40 size 0x80）/ `_d2308c.txt`（0x55AFB0 size 0x7A0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x55BC00 | 1237B（0x4D5）| ret 0xc @0x55C0D2 | 0x55C0E0（未登记——解码器变体 0x55c0e0 起）| 0 次/去重 0（★★纯汇编编码器——picker callees=0 吻合）|
+| 0x55BB40 | 74B（0x4A）| ret 8 @0x55BB87 | 0x55BB90（未登记——解码器变体 0x55bb90 起）| 1 次/去重 1（0x7c8e17——已登记，picker callees=1 吻合）|
+| 0x55AFB0 | 1901B（0x76D）| ret c3 @0x55B71C | 0x55B720（未登记——全局时间检查器 0x55b720 起）| 41 次/去重 27（★★9 真 MISSING + 1 批内自引用 0x55bb40——picker callees=28 吻合含批内）|
+
+## a 路 0x55BC00（1237B）——LZO 压缩编码器
+
+```
+0055bc00  mov edi, ecx（★参1 源指针）→ mov ebp, [esp+0x30]（★参4 输出指针）→ ★★hash 折叠链（字节三取 [edi]/[edi+1]/[edi+2] → shl/xor 5/8 位折叠 → ★★lea [ecx+ecx*4] ×5 + shl 5 + sub → shr 5 + and 0x3fff——★★hash 表索引）→ mov [edx+ecx*4], edi（★hash 表写）
+0055bc5b  ★★三重折叠推进（esi 逐字节 + 每项 hash 表 [edx+eax*4] 写指针——★游标推进循环）
+0055bd08  ★★匹配检测：mov ebx, [hash 表命中项] → cmp 前后指针（jb/jle 早退）→ ★★长度校验（>0xbfff 早退 + 首 3 字节相等 cmp 3 次）
+0055bd4f  ★★编码分支（match 长度分档）：
+0055bd5a  ① 长度>0x800：mov [ebp-2], 0x3 → 拷贝 3 字节直写（★近距编码）
+0055bd9e  ② 长度≤3：or [ebp-2]（★折叠进前字节）
+0055bdc0  ③ ≤0x12：sub al,3 → 单字节（★短编码）
+0055bdcc  ④ 更长：mov [ebp], 0 → ★★0x80808081 mul 除法缩比（÷127）→ rep stosd/rep stosb 零填充（★变长编码）
+0055be3d  ★★字面量匹配推进（cmp dl,al 六连 + 尾段循环）→ ★★编码长度分支（≤0x4000/≤0x800/更长——sar 0xb/and 8/or 0x10/0x20 编码位）
+0055bf64  ★★不匹配回退（dec esi → 编码 hash 指针差 + 长度编码）
+0055c023  ★★收尾：[esp+0x18]-[edi] 长度 → [ebp] 末字节编码（add 0x11/or [ebp-2]/sub 3 分档）→ mov [参4], ebp（★输出指针写）→ ret 0xc
+```
+
+**语义**：**LZO 压缩编码器（推断名——★★QWEN.md map 输出编码器族）**——★★1237B 纯汇编压缩器（0 call）：参1 源 + 参4 输出 → ★★hash 表折叠（三字节 [edi..+2] → shl 5/8/xor → ×5+shl 5 折叠 → and 0x3fff——★LZO1X hash）→ ★★match 检测（hash 命中 + 长度校验 + 三字节相等）→ ★★编码分支族（0x800/3/0x12/更长 四档 + 0x80808081 mul ÷127 变长零填充 + 0x4000/0x800 编码位）→ 收尾长度编码 → ret 0xc。**LZO 压缩器（map 输出编码链——★★0 call 纯汇编、与 0x55BB90/0x55C0E0 解码器孪生**）**。
+
+## b 路 0x55BB40（74B）——VectorClass 容器构造器
+
+```
+0055bb40  mov eax, [esp+4]（参1 容量）→ mov esi, ecx（this）→ xor edx → mov [esi+4], edx（★项数 0）→ mov [esi+8], eax（★容量）→ mov byte [esi+0xc], 1 → mov byte [esi+0xd], dl → mov [esi], 0x7e9f84（★虚表）
+0055bb5e  test eax → je 0x55bb84 → mov ecx, [esp+0xc]（参2 数据指针）→ test → je 0x55bb71（★空直挂）→ mov [esi+4], ecx（★参2 直挂不 owns）→ ret 8
+0055bb71  ★★分配路径：shl eax, 2（×4）→ push → ★0x7c8e17（★operator new）→ mov [esi+4], eax → mov byte [esi+0xd], 1（★owns 置 1）→ ret 8
+```
+
+**语义**：**VectorClass 容器构造器（推断名）**——★★虚表 0x7e9f84 + 四字段初始化（[+4] 项数 0/[+8] 容量/[+0xc]=1/[+0xd] owns 0）→ ★★参2 数据指针分支：**非空直挂不 owns** / 空 → ★0x7c8e17 分配 + owns=1 → ret 8。**VectorClass 构造器（0x7e9f84 虚表——★batch 2263-2284 容器族对照 + c 路 LogicClass::Update 批内直调**）**。
+
+## c 路 0x55AFB0（1901B）——LogicClass::Update 巨型宿主
+
+```
+0055afb0  mov edx, [0xabcd40]（★更新计数）→ inc → mov [0xabcd40], edx → [0xa83cdc] 清 0
+0055afe0  ★★[0x8b40d8] 对象族循环（[0x8b40cc] 表 [ecx+eax*4]）：★[0xa8b230] 字节门控（+0x34be）→ ★0x6e53a0 ×9（事件族：0x32/0x1b/0x1c/0x24/0x25/0x2d/0x2e/0xd/0x33/0xe——★★[0xabccd8] 参 + test al → jne 0x55b15e 跳过）
+0055b11e  [0xa8b230]+0x11e8 距离钳位判定（[0xa8ed84] 差）→ 0x6e53a0（0xe）
+0055b17d  ★★[0xa8b230]+0x11e8 族清理（cmp/je + 距离钳位 → mov [edx], 0xffffffff/edx 回 0）→ ★0x4f42f0
+0055b1d8  ★★[0xa8b230] 四字节清 0（+0x34aa/+0x34a9/+0x34ab/+0x34be——★门控标志族）
+0055b205  ★★[0x8871e0] 全局时间族：fld [ebx+0x1640] → fcomp [0x7e2800] → test ah,0x40 → ★★fld×fmul [0x7e27f8] → ★0x7c5f00（_ftol）→ ★★[ebp+0x1218] 三字段写（[0xa8ed84]/参/[esp+0x18]）→ ★0x4acac0
+0055b2a8  ★★[0xa8ed84] % 0x78 门控（idiv 78 → test edx）→ ★0x578100
+0055b2c4  ★★[ebp] test ah,0x10 → fld [ebx+0x1648] → 同模板 → ★0x4acbc0（★★MISSING）→ [ebp+0x1224] 三字段写
+0055b33d  ★★[ebp+0x3530]/[0x352c] 比较 → fld [ebx+0x1668] → ★★0x53a110/0x53a120/0x53bad0/0x53b400 判定四连 → 分支 → [ebp+0x1248] 三字段写 → ★★[ebp+0x352c] 时间推进（setle/dec/and 钳位 + fld [0x1670]×fmul [0x7e2ac0] + jge/jg 双向钳位）→ byte [ebp+0x34ab]=1 → ★0x4ae4c0 → ★0x4f42f0
+0055b4d7  ★★全局更新链：0x722c40/0x7221b0 + ★0x438bf0（★★MISSING）+ ★0x54e4d0（★★MISSING）→ ★★0x55bb40（★★批内自引用本批 b 路容器构造）→ ★★[0x8b40f8] 容器族循环（虚表槽 8 装载 + [0x8b40ec] 表 + 虚表槽 0x5c 调用）→ ★★[0x8a0218]/[0x8a020c] 族循环（虚表槽 0x5c）→ ★0x5ff390 → ★0x550150（★★MISSING）→ ★0x53a6c0（★★MISSING）→ ★★[0xb04be0]/[0xb04bd4] 族循环 → 0x554d50 → ★0x4c54a0（★★MISSING）→ ★★[edi+0x10] 项循环（虚表槽 0x5c）→ ★★[0xa83e10]/[0xa83e04] 族循环 → ★0x53d310（★★MISSING）→ ★0x420e90（★★MISSING）→ ★0x56bbe0（★batch 2300 a 路已登记）→ ★★[0x887324] 虚表槽 0x5c → ★★[0xa83e40]/[0xa83e34] 族 → ★★[0xa80238]/[0xa8022c] house 族（虚表槽 0x5c）→ ★0x4aeb10 ×2 → ★0x6d6070 → ★★虚表 0x7e9f84 局部容器收尾（0x7c8b3d 析构 owns 门控）→ ret c3
+```
+
+**语义**：**LogicClass::Update（★带符号名——QWEN.md 逻辑心脏）**——★★1901B 巨型更新宿主：★★[0xabcd40] 帧计数 + [0x8b40d8] 对象族（★0x6e53a0 ×10 事件族——[0xabccd8] 参 + 0x32/0x1b/0x1c/0x24/0x25/0x2d/0x2e/0xd/0x33/0xe 事件码）→ ★★[0xa8b230] 距离钳位清理族（+0x11e8 三字段）→ ★★[0x8871e0] 全局时间族（fld [0x1640]/[0x1648]/[0x1668]/[0x1670] + fcomp/fmul + ★0x7c5f00 _ftol + [ebp+0x1218]/[0x1224]/[0x1248]/[0x352c] 四字段推进）→ ★★0x53a110/0x53a120/0x53bad0/0x53b400 判定四连 → ★★全局更新链（0x722c40/0x7221b0/0x438bf0/0x54e4d0）→ ★★容器族五循环（[0x8b40f8]/[0x8a020c]/[0xb04bd4]/[edi+0x10]/[0xa83e04]/[0xa83e34]/[0xa8022c]——★虚表槽 0x5c 统一回调）→ ★0x56bbe0/0x4aeb10/0x6d6070 → ret c3。**游戏逻辑心脏（全对象族更新 + 全局时间推进 + 事件族——★★batch 2300 a 路 0x56bbe0 批内对照**）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 0 个/去重 0（纯汇编编码器）——**全部已登记**（picker callees=0 吻合）。
+- b 路：跨函数直接 call 1 个/去重 1（0x7c8e17）——**全部已登记**（picker callees=1 吻合）。
+- c 路：跨函数直接 call 41 个/去重 27——**17 已登记 + 9 真 MISSING（★★0x420e90/0x438bf0/0x4acbc0/0x4c54a0/0x53a120/0x53a6c0/0x53d310/0x54e4d0/0x550150 记观察排队）+ 1 批内自引用（★★0x55bb40 = 本批 b 路，同批登记闭环）**（picker callees=28 吻合含批内）。
+- ★★核验脚本输出：三路 9 真 MISSING（全记观察）+ 1 批内自引用（0x55bb40 同批闭环）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★hash 折叠链（[edi]×[edi+1]×[edi+2] → shl 5/8/xor → lea ×5 + shl 5 + sub → shr 5 + and 0x3fff——★★LZO1X hash 三字节折叠）;
+2. a 路 ★★match 检测（hash 表命中 + 长度 jb/jle 早退 + 首 3 字节 cmp 三连）;
+3. a 路 ★★编码分档（0x800/3/0x12/更长 四档 + 0x80808081 mul ÷127 变长零填充 rep stosd——★★除法缩比常量）;
+4. a 路 ★★编码位分派（sar 0xb + and 8 + or 0x10/0x20——长度 >0x4000/>0x800 编码位）;
+5. b 路 ★★参2 数据指针直挂不 owns（mov [esi+4], ecx——★batch 2282 同款语义）;
+6. b 路 ★★空指针 → 0x7c8e17 分配 + owns=1（shl 2 ×4 字节/项）;
+7. c 路 ★★[0xabcd40] 帧计数（inc 每帧——★update 心跳）;
+8. c 路 ★★0x6e53a0 ×10 事件族（[0xabccd8] 参 + 0x32/0x1b/0x1c/0x24/0x25/0x2d/0x2e/0xd/0x33/0xe 事件码——★对象族更新）;
+9. c 路 ★★距离钳位三字段族（[0xa8ed84]-[+0x11e8] + [esp+0x18]——★batch 2300 a 路同款）;
+10. c 路 ★★fld/fcomp [0x7e2800] + fmul [0x7e27f8]/[0x7e2ac0] → 0x7c5f00（★_ftol 全局时间推进）;
+11. c 路 ★★setle/dec/and 钳位 + 双向 jge/jg 时间推进（[ebp+0x352c]）;
+12. c 路 ★★虚表槽 0x5c 统一回调（★六个容器族循环共用——对象更新回调）;
+13. c 路 ★★[0xa83e10]/[0xa83e04]/[0xa83e40]/[0xa83e34] 族循环（★全局对象族表）。
+
+## 跨批次连接
+
+- ★★★batch 2300 a 路（0x56bbe0——c 路直调已登记）+ batch 2274（[0xa8b238] 门控——c 路同源）+ QWEN.md LogicClass::Update（★★逻辑心脏候选——QWEN.md「逻辑心脏 LogicClass::Update（MainLoop 内驱动）」实锤登记）。
+- ★★batch 2282-2284（VectorClass 容器族——b 路 0x7e9f84 对照）+ batch 2290（桥修复 0x722390/0x722e50——c 路 0x722c40/0x7221b0 同族）。
+- ★★batch 2303（0x565C10 巨型重建设备——c 路 house 族同源）+ batch 2299/2302（尺寸族 [0xf4]——c 路时间族浮点同源）。
+- ★★batch 2270-2300（DebugLog 0x734e60——c 路同源）。
+
+## 观察项 / 候选池
+
+- **新观察**：★★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150（c 路 9 真 MISSING——全记观察排队）；0x55C0E0（a 路后邻——解码器变体）；0x55BB90（b 路后邻——解码器变体）；0x55B720（c 路后邻——全局时间检查器）；0x722C40/0x7221B0（c 路全局更新链）。
+- 未兑现 MISSING 旧观察：0x00486790（2267 起排队）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0（batch 2280-2307 新观察）。
+- 本批 **真 MISSING 9 个（全记观察排队）+ 批内自引用 1 个（0x55bb40 同批闭环）**（TSV 5407）。next 批预期 top3 = 0x55AF50（7B callees=0）/ 0x55AD00（5B callees=0）/ 0x55A710（19B callees=0）。
