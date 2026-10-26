@@ -1,0 +1,68 @@
+# frontier batch 2257：MissionControlClass::LoadFromINI + 场景切换器 + 场景注册器（0x5B3760 / 0x5B36B0 / 0x5B3650）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x5B3760 MissionControlClass::LoadFromINI callees=4 deps=7 / 0x5B36B0 FUN_005b36b0 callees=0 deps=1 / 0x5B3650 FUN_005b3650 callees=0 deps=1）
+- 三路 disasm：`.qwen/tmp/_d2257a.txt`（0x5B3760 size 0x300）/ `_d2257b.txt`（0x5B36B0 size 0x100）/ `_d2257c.txt`（0x5B3650 size 0x100）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5B3760 | 428B（0x1AC）| ret 4 c20400 @0x5B3909 | 0x5B3910（未登记——[0x816cac] 表串查索引器观察项：0x7c8d20 串比较遍历+返回索引 or -1）| 10 次/去重 4（0x526b00 + 0x526810 + 0x5295f0 ×6 + 0x5283d0 ×2——全部已登记，callees=4 吻合）|
+| 0x5B36B0 | 40B（0x28）| ret c3 @0x5B36D7 | 0x5B36E0（未登记——场景字节读取器观察项：cmp -1 → shl ecx,5 + [ecx+0xa8e3ae] 字节）| 0 次（纯字段操作，callees=0 吻合）|
+| 0x5B3650 | 132B（0x84）| ret 0xc c20c00 @0x5B36A0 | 0x5B36B0（**本批 b 路本体——批内后邻相邻**）| 0 次（纯字段操作，callees=0 吻合）|
+
+## a 路 0x5B3760（428B）——MissionControlClass::LoadFromINI（带符号名）
+
+```
+005b3760  push esi/edi → mov edi,[esp+0xc]（★INI 对象）→ mov esi,ecx（★this）→ mov ecx,edi → call 0x526b00（★初始化）→ mov eax,[esi] → cmp -1 → jne 0x5b377d → mov eax,0x817474（★兜底串）→ jmp → 0x5b377d mov eax,[eax*4+0x816cac]（★索引表取串）→ push eax → call 0x526810（★查段）→ test → setne al → test → je 0x5b3905（★失败返 0）
+005b3799  ★六字节字段装载链（[esi+4]..[esi+9]，键串 0x82c2b8/0x82c2b0/0x82c2a4/0x82c298/0x82c28c/0x82c284）：每次先取 [esi] 索引→表/兜底串→push 旧值/push 键/push 串→call 0x5295f0→mov [esi+N],al（★逐字节回写）
+005b38a4  mov ecx,[esi+0x14]/mov edx,[esi+0x10] → push/push/push 0x8185a4/push 串 → call 0x5283d0 → fstp qword [esi+0x10]（★浮点装载1 键 0x8185a4）→ 第二次：push 0/push 0/push 0x82c27c/push 串 → call 0x5283d0 → fst qword [esi+0x18]（★浮点装载2 键 0x82c27c）→ fcomp qword [0x7e2800]（★比较常量）→ fnstsw ax → test ah,0x40 → je 0x5b38fe → mov eax,[esi+0x10]/mov ecx,[esi+0x14] → mov [esi+0x18],eax/mov [esi+0x1c],ecx（★[esi+0x18] < 常量 → 从 [esi+0x10] 复制）→ al=1 → ret 4；0x5b3905 xor al,al → ret 4
+```
+
+**语义**：**MissionControlClass::LoadFromINI（YRpp 带符号名）**——INI 装载器：0x526b00 初始化 + 0x526810 查段 + ★[esi] 索引 → [eax*4+0x816cac] 表取串（-1 → 0x817474 兜底串）+ ★0x5295f0 六字节字段装载链（[esi+4..9] 逐字节回写，键串 0x82c2b8/0x82c2b0/0x82c2a4/0x82c298/0x82c28c/0x82c284）+ ★0x5283d0 双浮点装载（键 0x8185a4 → [esi+0x10] / 键 0x82c27c → [esi+0x18]）+ ★★[0x7e2800] 常量比较——**[esi+0x18] < 常量时从 [esi+0x10] 复制到 [esi+0x18]**（0x7e2800 = 双精度常量，x87 fcomp 比较）。**带符号名 INI 装载器（YRpp MissionControlClass 族——0x5B3650/0x5B36B0 同对象字段族）**。
+
+## b 路 0x5B36B0（40B）——场景切换器（推断名）
+
+```
+005b36b0  mov eax,[ecx+0xb0]（★当前场景索引）→ cmp -1 → je 0x5b36d5（★无当前 → 返 0）→ mov [ecx+0xac],eax（★当前 → 上次槽）→ mov [ecx+0xb0],0xffffffff（★当前清 -1）→ mov byte [ecx+0xb8],0（★字节清零）→ al=1 → ret；0x5b36d5 xor al,al → ret
+```
+
+**语义**：**场景切换器（推断名）**——★[ecx+0xac]/[ecx+0xb0]/[ecx+0xb8] 场景字段族操作：**当前场景 [0xb0] != -1 时推入上次槽 [0xac]，当前清 -1，字节 [0xb8] 清零，返 1；无当前场景返 0**。**场景字段族写器（batch 2256 c 路 0x5B3970 场景六字段装载器的同对象字段——0xac/0xb0/0xb8 写侧）**。
+
+## c 路 0x5B3650（132B）——场景注册器（推断名）
+
+```
+005b3650  mov eax,[ecx+0xac]（★类型）→ cmp 0x1c → jne 0x5b3665 → cmp esi,5 → je 0x5b369f（★特判：类型==0x1c 且 值==5 → 跳过）→ 0x5b3665 cmp 0x13 → je 0x5b369f（★特判：类型==0x13 → 跳过）→ mov edx,[ecx+0xb4]（★旧场景）→ cmp -1 → je 0x5b368c（★旧场景无 → [0xb0]=类型 / [0xac]=值 / 字节清）→ mov [ecx+0xac],esi（★值 → 类型槽）→ mov [ecx+0xb0],edx（★旧场景 → 当前槽）→ mov byte [ecx+0xb8],0（★字节清）→ ret 0xc；0x5b368c mov [ecx+0xb0],eax（★类型 → 当前）→ mov [ecx+0xac],esi（★值 → 类型槽）→ 字节清 → ret 0xc
+```
+
+**语义**：**场景注册器（推断名）**——★场景切换的双分支：**[ecx+0xac] 类型特判 0x1c+值 5 / 0x13 直接跳过**（不注册）；旧场景 [ecx+0xb4] 存在 → 值→[0xac]、旧场景→[0xb0]；无 → 类型→[0xb0]、值→[0xac]；字节 [0xb8] 恒清零。**与 b 路成对（注册/切换场景索引族——0xac/0xb0/0xb4/0xb8 写侧双子）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 10 次/去重 4 个（0x526b00 ×1 + 0x526810 ×1 + 0x5295f0 ×6 + 0x5283d0 ×2）——**全部已登记**（callees=4 吻合）。
+- b 路：跨函数直接 call 0 个（纯字段操作）——callees=0 吻合。
+- c 路：跨函数直接 call 0 个（纯字段操作）——callees=0 吻合。
+- ★核验脚本（norm() 规范化版）输出：**三路全 PASS，无 MISSING、无批内自引用**——本批零观察项新增；c 路后邻 = b 路本体（批内后邻相邻，非 MISSING）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★[0x7e2800] 常量比较 + 复制：**fcomp 双精度常量后 test ah,0x40（C3 标志）——[esi+0x18] < 常量才复制 [esi+0x10]→[esi+0x18]**（x87 无跳转直接 fnstsw 判标志，chop 舍入下 [0x7e2800] 需逐位取证确认值）;
+2. a 路 ★索引 [esi] 取串双路径：**-1 → 0x817474 兜底串，否则 [eax*4+0x816cac] 表**（0x816cac = 4B/项指针表，非 32B/项）——每次字段装载前都重取;
+3. a 路 ★0x5295f0 六连字节回写（[esi+4..9]），0x5283d0 双浮点装载（[esi+0x10]/[esi+0x18] 各 8B qword）;
+4. b/c 路 ★★场景字段族操作：**[ecx+0xac] 类型/值、[ecx+0xb0] 当前、[ecx+0xb4] 旧场景、[ecx+0xb8] 字节清零**——b 路"当前推上次+清当前"，c 路"值入类型+旧入当前"（**两个方向相反的交换语义**）;
+5. c 路 ★类型特判：**[ecx+0xac]==0x1c 且 值==5 → 跳过；==0x13 → 跳过**（0x1c/0x13 为场景类型常量——**原版怪癖，照抄**）;
+6. b/c 路 ★字节 [0xb8] 在三处分支内各自清零（重复写，非统一出口）。
+
+## 跨批次连接
+
+- ★★batch 2256（c 路 0x5B3970 场景字段批量装载器——[esi+0xac/0xb0/0xb4/0xbc/0xc8/0xc0] 六字段读侧；本批 b/c 路 [0xac/0xb0/0xb4/0xb8] 写侧——**场景字段族读写闭环**）+ 2256 后邻 0x5B3A00（getter 族：shl eax,5 + 0xa8e3a8 基址——本批 b 路后邻 0x5B36E0 同款）。
+- ★a 路 0x816cac 索引表（后邻 0x5B3910 串查索引器同表）+ 0x817474 兜底串（后邻 0x5B3740 getter 同款）+ 0x7e2800 常量（**batch 2255 0x750920 系数常量族同区**）。
+- ★0x52xxxx 区 INI 类（0x526b00/0x526810/0x5295f0/0x5283d0——a 路四 callee 全已登记，0x52D9A0 选关/0x526b00 INI 区）。
+
+## 观察项 / 候选池
+
+- **本批零 MISSING、零批内自引用**（三路 callee 全部已登记；c 路后邻 = b 路本体为批内相邻非 MISSING）。
+- **后邻未登记（自然排队）**：0x5B3910（a 路后邻——[0x816cac] 表串查索引器：0x7c8d20 串比较遍历+返回索引 or -1）、0x5B36E0（b 路后邻——场景字节读取器：cmp -1 → shl ecx,5 + [ecx+0xa8e3ae]）、0x5B3700/0x5B3740（b/c 路前邻——场景字段初始化器：xor 字节 4/5/7=0+6/8/9=1+双 dword 0xd2f1a9fc/0x3f90624d+[eax]=-1；getter：cmp -1 → 0x817474 else 表）。
+- **新观察**：0x7e2800 双精度比较常量（a 路——**需 PE 字节取证确认值**）+ 0x816cac/0x817474 索引表/兜底串族（a 路）+ [0xac/0xb0/0xb4/0xb8] 场景四字段族写侧（b/c 路——batch 2256 读侧配对）+ 0x1c/0x13 场景类型特判常量（c 路）。
+- 前向：picker 队列继续 0x5B/0x5C 区（0x5B20F0/0x5B3060/0x5AE220 大宿主 + 0x5B3910 新候）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
