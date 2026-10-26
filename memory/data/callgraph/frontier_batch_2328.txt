@@ -1,0 +1,86 @@
+# frontier batch 2328：IPX 连接装载器 ×2 + 连接析构器（0x540E70 / 0x540DC0 / 0x5409F0）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x540E70 FUN_00540e70 callees=3 deps=546 / 0x540DC0 FUN_00540dc0 callees=2 deps=546 / 0x5409F0 FUN_005409f0 callees=1 deps=44）
+- 三路 disasm：`.qwen/tmp/_d2328a.txt`（0x540E70 size 0xB0）/ `_d2328b.txt`（0x540DC0 size 0xC0）/ `_d2328c.txt`（0x5409F0 size 0xC0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x540E70 | 141B（0x8D）| ret c3 @0x540EFC（mov eax,1 成功）/ @0x540E7D（xor eax,eax 失败）| 0x540F00（★batch 2327 c 路已登记）| 3 次/去重 3（0x7c8e17/0x735120/0x53f430——已登记，picker callees=3 吻合）|
+| 0x540DC0 | 171B（0xAB）| ret 0xc @0x540E68（成功）/ @0x540DCD（失败）| 0x540E70（★本批 a 路）| 2 次/去重 2（0x7c8e17/0x53f430——已登记，picker callees=2 吻合）|
+| 0x5409F0 | 141B（0x8D）| ret c3 @0x540A6F/@0x540A7C | 0x540A80（未登记——[0x887628] 装载器）| 1 次/去重 1（0x53f5b0——已登记，picker callees=1 吻合）|
+
+## a 路 0x540E70（141B）——IPX 连接装载器 A
+
+```
+00540e70  push esi → mov esi, ecx（this）
+00540e73  mov al, [esi+4] → test → jne 0x540e7e → xor eax, eax → ret c3（★字节门控失败）
+00540e7e  push ebp → push 0xb8 → call 0x7c8e17（★operator new 0xb8）→ mov ebp, eax → test → je 0x540ec8
+00540e93  mov ebx, [0xa8da78]（★全局表）→ mov edi, [esi+0x14] → push 0 → mov ecx, 0x8283c8（★串常量）→ call 0x735120（★名称装载）
+00540ea9  mov cx, [esi+0x20] → mov edx, [esi+0x10] → push eax → mov eax, [ebx] → add eax, 0x28 → push -1 → push eax → push ecx → push edx → push edi → push edi（★坐标/地址装载参）→ mov ecx, ebp → call 0x53f430（★连接装载——8 参）→ jmp 0x540eca
+00540ec8  xor eax, eax（★分配失败）
+00540eca  test eax → mov [esi+0x50], eax（★槽位落点）→ jne 0x540ed4 → ret c3
+00540ed4  mov edx, [eax] → mov ecx, eax → call [edx+4]（★虚表槽 4）→ ★三字段拷贝（[esi+0x58]/[0x5c]/[0x60] → [eax+0x28]/[0x2c]/[0x30]）→ mov eax, 1 → ret c3
+```
+
+**语义**：**IPX 连接装载器 A（推断名）**——thiscall：[esi+4] 字节门控 → ★0x7c8e17 0xb8 分配 → ★0x735120 名称装载（0x8283c8 串）+ 0x53f430 连接装载（★8 参：坐标/地址族）→ ★[esi+0x50] 槽位落点 → ★虚表槽 4 → 三字段拷贝（[esi+0x58]/[0x5c]/[0x60] → 对象 +0x28/+0x2c/+0x30）→ 返 1/0 → ret c3。**IPX 连接创建（★★0xb8 对象分配 + 0x53f430 装载 + 三字段落位——batch 2327 IPX 域缺失的装载侧）**。
+
+## b 路 0x540DC0（171B）——IPX 连接装载器 B
+
+```
+00540dc0  push esi → mov esi, ecx（this）
+00540dc3  mov al, [esi+4] → test → jne 0x540dd0 → xor eax, eax → ret 0xc（★字节门控失败）
+00540dd0  cmp [esi+0x44], 7 → jne 0x540ddc → xor eax, eax → ret 0xc（★★连接数 == 7 特判——最多 7 连接）
+00540ddc  push 0xb8 → call 0x7c8e17（★operator new 0xb8）→ test → je 0x540e15
+00540ded  ★0x53f430 连接装载（push 0/[esp+0xc]/[esp+0x10]/[esi+0x14]/[esi+0x20] word/[esi+0x10]/[esi+0x14]×2——★7 参）→ jmp 0x540e17
+00540e15  xor eax, eax
+00540e17  mov edx, [esi+0x44] → mov [esi+edx*4+0x28], eax（★表尾插）→ mov ecx, [esi+eax*4+0x28] → test → je → ret 0xc
+00540e2f  mov edx, [ecx] → call [edx+4]（★虚表槽 4）→ ★三字段拷贝（[esi+0x58]/[0x5c]/[0x60] → [ecx+0x28]/[0x2c]/[0x30]）→ inc [esi+0x44]（★count++）→ mov eax, 1 → ret 0xc
+```
+
+**语义**：**IPX 连接装载器 B（推断名）**——thiscall 3 栈参：[esi+4] 字节门控 + ★★[esi+0x44]==7 特判（★最多 7 连接）→ 0x7c8e17 0xb8 分配 → ★0x53f430 连接装载（★7 参）→ ★★[esi+edx*4+0x28] 表尾插 → 虚表槽 4 + 三字段拷贝 + count++ → 返 1/0 → ret 0xc。**IPX 连接创建（★★==7 上限 + 表尾插——batch 2327 Delete_Connection 配对装载侧）**。
+
+## c 路 0x5409F0（141B）——连接析构器
+
+```
+005409f0  push ebx/ebp/esi → mov esi, ecx（this）
+005409f7  mov al, [esi+5] → mov [esi], 0x7ec16c（★虚表写）→ cmp al, bl → je 0x540a0c → call 0x53f5b0（★子装载）→ mov byte [esi+5], bl
+00540a0c  ★三槽释放：mov ecx, [esi+0x48] → test → je → push 1 → call [eax]（★虚表槽 0）→ mov [esi+0x48], bl
+00540a1c  [esi+0x4c] 同款 → [esi+0x50] 同款
+00540a3c  mov eax, [esi+0x44] → ★循环：mov ecx, [edi]=[esi+0x28+ebp*4] → test → je → push 1 → call [edx]（★虚表槽 0）→ mov [edi], bl → 循环至 count → mov [esi+0x44], bl
+00540a65  mov [esi], 0x7ec1d4（★★虚表 0x7ec16c → 0x7ec1d4 双写）→ ret c3 @0x540A6F / @0x540A7C
+```
+
+**语义**：**连接析构器（推断名）**——thiscall：[esi+5] 字节门控 → ★虚表 0x7ec16c 写 → 0x53f5b0 子装载 → ★★三槽虚表槽 0 释放（[esi+0x48]/[0x4c]/[0x50]）→ ★[esi+0x44] 计数循环 [esi+0x28] 表逐项虚表槽 0 释放 → count=0 → ★★虚表 0x7ec1d4 二次写（★★析构虚表切换双写）→ ret c3。**连接对象析构（★★虚表 0x7ec16c→0x7ec1d4 双写 + 3+（N）个虚表槽 0 释放——batch 2324 双容器析构同风）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 3 次/去重 3（0x7c8e17/0x735120/0x53f430）——**全部已登记**（picker callees=3 吻合；虚表槽 4 属间接不计）。
+- b 路：跨函数直接 call 2 次/去重 2（0x7c8e17/0x53f430）——**全部已登记**（picker callees=2 吻合；虚表槽 4 属间接不计）。
+- c 路：跨函数直接 call 1 个/去重 1（0x53f5b0）——**已登记**（picker callees=1 吻合；虚表槽 0 ×4 属间接不计）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING、无批内自引用**（连续四十五批三路全登记）。
+
+## 原版怪癖（照抄）
+
+1. a/b 路 ★★[esi+4] 字节门控（失败返 0）+ 0x7c8e17 0xb8 分配;
+2. b 路 ★★[esi+0x44]==7 特判（★★最多 7 连接——超过直接失败）;
+3. a 路 ★★0x735120 名称装载（0x8283c8 串）+ 0x53f430 连接装载（8 参：坐标/地址族）;
+4. a 路 ★★[esi+0x50] 槽位落点（★单槽）/ b 路 ★★[esi+edx*4+0x28] 表尾插（★多槽——a/b 双变体）;
+5. a/b 路 ★★虚表槽 4 + 三字段拷贝（[esi+0x58]/[0x5c]/[0x60] → 对象 +0x28/+0x2c/+0x30）;
+6. c 路 ★★虚表 0x7ec16c → 0x7ec1d4 双写（★析构虚表切换）;
+7. c 路 ★★三槽虚表槽 0 释放（[esi+0x48]/[0x4c]/[0x50]）+ 计数循环释放 + count=0;
+8. c 路 ★★[esi+5] 字节门控 + 0x53f5b0 子装载。
+
+## 跨批次连接
+
+- ★★batch 2327（0x540F00 IPXManagerClass::Delete_Connection——b 路表尾插/计数同族 + [ebx+0x64] id 域）+ batch 2326（0x542520——b 路 [esi+0x28] 表族同源）。
+- ★★batch 2324（0x544A70 双容器析构——c 路虚表槽 0 释放同风）+ batch 2321（0x550000——c 路虚表槽 0 释放同源）。
+- ★★batch 2316（0x554760 LightSourceClass 构造器——c 路虚表双写同风）+ batch 2306/2307（事件系统——c 路虚表槽 0 释放同源）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x540A80（c 路后邻——[0x887628] 装载器 + 0x4068e0 DebugLog 桩）；[esi+0x44]==7（b 路连接上限）；[0x7ec16c]/[0x7ec1d4]（c 路析构虚表双件套）；0x53f430（a/b 路连接装载——★已登记但为高扇出核心，后续批次自然排到）。
+- 未兑现 MISSING 旧观察（继续排队）：0x00486790（2267 起）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150 + ★0x556AD0/0x556EB0/0x556D20 + ★0x554830/0x49E400 + ★0x551B20 + ★0x5517A0/0x5512D0 + ★0x5509E0/0x551300/0x551320/0x551330/0x551370 + ★0x550080/0x54F6F0/0x54F670 + ★0x54E890/0x54E8C0 + ★0x54E590/0x54D930/0x549E90 + ★0x547CE0/0x544BE0 + ★0x543780/0x542EC0 + ★0x5424C0 + ★0x5422C0/0x540F90 + ★0x540A80（2328 新观察）。
+- 本批 **无 MISSING**（连续四十五批三路全登记——batch 2276 起，TSV 5467）。next 批预期 top3 = 0x5402B0（22B callees=0）/ 0x53F540（106B callees=0）/ 0x53F4F0（74B callees=0）。
