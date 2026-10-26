@@ -1,0 +1,81 @@
+# frontier batch 2269：山区最小堆路径生成器 + 山区路径落实器 + RMG 地形巨型生成器（0x5A1FB0 / 0x5A0410 / 0x59E740）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x5A1FB0 FUN_005a1fb0 callees=12 deps=2723 / 0x5A0410 FUN_005a0410 callees=8 deps=104 / 0x59E740 FUN_0059e740 callees=11 deps=112——**6413B 超大函数**）
+- 三路 disasm：`.qwen/tmp/_d2269a.txt`（0x5A1FB0 size 0x400）/ `_d2269b.txt`（0x5A0410 size 0x300）/ `_d2269c.txt`（0x59E740 size 0x1A00——1650 行覆盖全函数）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5A1FB0 | 1007B（0x3EF）| ret c3 @0x5A239E | 0x5A23A0（**2268 c 路 Creating tiberium 本体——后邻相邻已登记**）| 15 次/去重 12（0x68bcc0+0x7c8e17+0x578350+0x578290+0x5ad870+0x42d510+0x4cac40+0x5657a0+0x486380+0x5ac960+0x7c8b3d+0x5ac340——全部已登记，callees=12 吻合）|
+| 0x5A0410 | 737B（0x2E1）| ret 0xc c20c00 @0x5A06EE | 0x5A0700（已登记——对象构造器：0x7c8e17(0x18)+0x7e3890）| 10 次/去重 6（0x5a0700+0x578350+0x578290+0x5657a0+0x42fcb0+0x7c8e17——全部已登记，picker callees=8 含虚表槽 8 间接吻合）|
+| 0x59E740 | 6413B（0x190D）| ret 0x1c c21c00 @0x5A004A | 0x5A004D（跳转表区——**本函数内部跳转表 0x5a0050**）| 82 次/去重 11（0x65c780+0x7c5f00+0x5657a0+0x57b440+0x4a91b0+0x578350+0x578290+0x5a08d0+0x57a0c0+0x5a0160+0x7c8e17——全部已登记，picker callees=11 吻合）|
+
+## a 路 0x5A1FB0（1007B）——山区最小堆路径生成器
+
+```
+005a1fb0  push ebp → mov ebp,esp → and esp,0xfffffff8 → sub esp,0x40 → mov eax,[ecx+0x50]（★路径数）→ test → jle 0x5a2395（★空提前退出）→ 循环：mov ecx,[0xa8b230] → lea eax,[esp+0x48] → push 0/push eax → call 0x68bcc0（★装载）→ mov edi,[eax] → push 0x1900 → call 0x7c8e17（★0x1900 项分配）→ mov ebp,eax → push 0x14 → call 0x7c8e17（★0x14 项分配）→ mov esi,eax
+005a2005  ★结构初始化：mov [esi+0xc],0 → mov [esi+0x10],0xffffffff → mov [esi],0 → mov [esi+4],0x320（★容量 0x320）→ push 0xc84 → call 0x7c8e17 → mov [esi+8],eax（★堆数组）→ 循环清 0
+005a2050  ★CellIterator 遍历：call 0x578350 → call 0x578290 → 循环：mov ecx,[eax+0x24] → imul [0x89c2dc] → [0xabed10] → mov [edx+eax+0x3c],0（★work 清 0）→ Next
+005a20c3  ★堆初始化：mov [ebp],edi → mov [ebp+4],0 → 首元素入堆（[esi] 计数 + [esi+8] 数组）→ ★堆上浮（fld [ebx+4] fcomp [esp+0x34]——浮点键比较 + shr edx,1 父索引上浮循环）→ [esi+0xc]/[esi+0x10] 更新
+005a2159  ★主循环：mov eax,[esi+8] → push 1 → mov ecx,[eax+ecx*4] → mov edi,[eax+4] → call 0x5ad870（★堆顶弹出排序）→ test edi → je 0x5a236e → cmp [esp+0x1c],0x190 → jge 0x5a236e（★0x190 上限）→ ★[0xabed10]+0x45 保护区写 1 → ★8 邻域表 [0x89f688]（and eax,7 → lea [eax*4+0x89f688] → 0x42d510 邻域坐标）→ 四角边界（[0xabed04]/[0xabed08]）→ work+0x3c 判空 → 0x5657a0 → 0x486380 → ★距离计算（0x4cac40 平方和开方 + fstp [edi+4]）→ work+0x3c 标记 → 堆上浮（fcomp 键值）→ inc [esp+0x18] → cmp 8 → jl（★8 邻域）→ call 0x5ac960（★下一步弹出）→ 循环
+005a236e  ★收尾：push ebp → call 0x7c8b3d（★释放）→ test esi → je → push 1 → mov ecx,esi → call 0x5ac340（★子析构器）→ Next 路径 → ret c3
+```
+
+**语义**：**山区最小堆路径生成器（推断名）**——★★基于二叉堆的山区路径生长器：0x68bcc0 装载起点 + 0x7c8e17(0x1900/0x14/0xc84) 三分配（大块 buffer/堆头/堆数组）+ ★堆结构初始化（[esi] 计数/[esi+4]=0x320 容量/[esi+8] 数组 + [esi+0xc]/[esi+0x10] 边界跟踪）+ CellIterator 全图 work+0x3c 清 0 + ★★堆上浮（浮点键值 fcomp + shr 父索引——最小堆插入）+ ★主循环（0x5ad870 堆顶弹出 + 0x190 上限 + 8 邻域 [0x89f688] 表 0x42d510 + 四角边界 + 距离计算 0x4cac40 + work 标记 + 0x5ac960 推进）+ 收尾双释放（0x7c8b3d + 0x5ac340 析构）。**山区路径 Dijkstra/最小堆生成器（batch 2260 b 路 [0x89f688] 8 邻域表 + 2263 a 路 VectorClass 构造器同族——堆结构内联实现）**。
+
+## b 路 0x5A0410（737B）——山区路径落实器
+
+```
+005a0410  sub esp,0x20 → mov eax,[esp+0x24]（★参2）→ push 四件套 → mov ebx,ecx（★this）→ push eax → call 0x5a0700（★校验/构造）→ mov esi,[esp+0x38]（★参3）→ mov ebp,eax → cmp esi,1 → jle 0x5a0487 → ★CellIterator 遍历：call 0x578350 → call 0x578290 → 循环：work+0x3c 清 0 → Next
+005a0489  ★主循环：[esp+0x14] < [esp+0x38]：mov esi,[ebp+0x10]（★计数）→ dec → 循环：mov ecx,[ebp+4] → mov ecx,[ecx+esi*4]（★坐标表）→ [0xabed10] work+0x38 写 [esp+0x3c] → 0x5657a0 取格 → mov [eax+0x38],0 → mov byte [eax+0x11a],0 → mov cl,[ebx+0x30c] → mov byte [eax+0x11b],cl（★高度写）
+005a04f6  ★落实：push 0x18 → call 0x7c8e17 → 构造 0x42fcb0（push 0/0）→ mov [esi],0x7e3890（★虚表）→ mov [esi+0x14],0xa → mov [esi+0x10],0 → ★8 邻域循环：mov [esp+0x1c],坐标 → and eax,7 → [0x89f688] 表偏移 → 四角边界 → work+0x38 匹配判定（cmp [esp+0x34]）→ work+0x3c 检查 → 虚表槽 8 扩容（[ebx+0x14]+[ebx+8] → call [edx+8]）→ 写坐标 → work+0x3c 标记
+005a0658  ★收尾：虚表槽 0 析构（push 1 → call [edx]）→ 保存 [esp+0x10] → inc → cmp [esp+0x38] → jl 主循环 → ★第三段 CellIterator 清 work+0x3c → mov al,1 → ret 0xc
+```
+
+**语义**：**山区路径落实器（推断名）**——★三参（ret 0xc）山区路径落实：0x5a0700 校验 + CellIterator 两段清 work+0x3c + ★坐标表遍历（[ebp+4] 数组 → 0x5657a0 取格 → [eax+0x38]/[eax+0x11a]/[eax+0x11b] 高度写 [ebx+0x30c]）+ ★0x42fcb0 对象构造（虚表 0x7e3890）+ ★8 邻域落实（[0x89f688] 表 + 四角边界 + work+0x38 匹配 + 虚表槽 8 扩容 + work+0x3c 标记）+ 虚表槽 0 析构收尾。**山区路径落实器（a 路路径生成的下游消费端——8 邻域 [0x89f688] 表 + 虚表槽 8 扩容模板同族）**。
+
+## c 路 0x59E740（6413B）——RMG 地形巨型生成器
+
+```
+0059e740  sub esp,0x118 → mov eax,[esp+0x12c]（★参7 输出字节）→ mov byte [eax],0 → mov eax,[esp+0x134]（★参8 模式）→ cmp 6 → ja 0x59e9fa → jmp [eax*4+0x5a0050]（★★跳转表分派 0..6——七个模式分支，各初始化一组 word 坐标区间到 [esp+0x50..0x7c]）
+0059e9fa  ★主流程：mov eax,[0xabed04]（★边界）→ 双层循环（[esp+0x18]/[esp+0x10] 区间）→ 四角边界判定 → work+0x38 判空 → 0x5657a0 → 0x486380 → ★Randomizer（0x65c780 × [0x7eda40] → cmp 5 拒绝采样）→ [0xaa0738] 表取 → 0x5657a0 → mov [eax+0x38],索引 → Randomizer × [0x7eda38] → cmp 3 → [eax+0x11a] 写 → work+0x38 写 [esp+0x12c]
+0059ec49  ★验证段：push 0 → push 缓冲 → mov ecx,[esp+0x48] → mov eax,[ecx+0x308] → push → push 0x3b449ba6 → call 0x5a08d0（★校验）→ push 0 → push [ecx+0x308] → mov ecx,0x87f7e8 → call 0x57a0c0（★地形验证）→ ★5 参调用 0x5a0160（[esp+0x70]/[esp+0x7c] 坐标 + [esp+0x94] → 判断）→ CellIterator（0x578350/0x578290）→ [eax+0x11b]+4 高度修正（work+0x38 匹配）
+0059ed4b  ★第二阶段区间循环：[esp+0x54]/[esp+0x5c]/[esp+0x50]/[esp+0x58] 四参数区间 → Randomizer × [0x7eda40] → [0xaa0738] 表 → [eax+0x38] 写 → Randomizer × [0x7eda38] → [eax+0x11a] 写 → work+0x38 写
+0059eee8  ★模式 3+ 分支（[esp+0x138]==6 跳转表二段）：movsx [eax+0x11b] 高度 → [0xa8ed2c]/[0xaa073c] 表 → [0x880990] 全局装载 → 0x4a91b0（★坐标转换）→ push 6 参（[0x10000]/高度/工作标志）→ call 0x57b440（★格网处理器——batch 1738 地形类型选择器同族）→ 8 邻域落实（0x5657a0 + [eax+0x38]=0xffff + [eax+0x11b]+4/-4 高度修）→ 循环（and 0x80000001 奇偶分派）
+0059ffd4  ★统一收尾：mov cl,[esp+0x3b]（★布尔结果）→ 写回 [esp+0x13c] 输出 → mov al,cl → ret 0x1c（★7 参）
+```
+
+**语义**：**RMG 地形巨型生成器（推断名）**——★★6413B 超大函数（frontier 批次罕见体量）：★★[esp+0x134] 模式 0..6 跳转表分派（[eax*4+0x5a0050] 七分支各初始化坐标区间）+ ★双层循环四角边界（[0xabed04]/[0xabed08]）+ ★★Randomizer 双拒绝采样（[0x7eda40] cmp 5 + [0x7eda38] cmp 3——[0xaa0738] 表取类型）+ ★验证段（0x5a08d0 + 0x57a0c0 + 0x5a0160 三校验）+ CellIterator 高度修正 + ★模式 3+（0x4a91b0 坐标转换 + [0x880990] 全局装载 + 0x57b440 格网处理器 + 8 邻域落实）+ 统一收尾（布尔结果写回 [esp+0x13c]）。**RMG 地形生成最大宿主（批 1738 0x57B440 地形类型选择器的调用端 + QWEN.md 阶段 9/10 山区地貌生成核心）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 15 次/去重 12 个——**全部已登记**（0x68bcc0/0x7c8e17/0x578350/0x578290/0x5ad870/0x42d510/0x4cac40/0x5657a0/0x486380/0x5ac960/0x7c8b3d/0x5ac340）；picker callees=12 吻合。
+- b 路：跨函数直接 call 10 次/去重 6 个——**全部已登记**（0x5a0700/0x578350/0x578290/0x5657a0/0x42fcb0/0x7c8e17）；picker callees=8 含虚表槽 8 间接按口径吻合。
+- c 路：跨函数直接 call 82 次/去重 11 个——**全部已登记**（0x65c780/0x7c5f00/0x5657a0/0x57b440/0x4a91b0/0x578350/0x578290/0x5a08d0/0x57a0c0/0x5a0160/0x7c8e17）；picker callees=11 吻合。
+- ★核验脚本（norm() 规范化版）输出：**三路全 PASS，无 MISSING、无批内自引用**——本批零观察项新增；a 路后邻 = 2268 c 路本体为跨批相邻非 MISSING。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★最小堆结构内联实现：[esi+4]=0x320 容量 + [esi+8] 数组 + **[esi+0xc]/[esi+0x10] 边界跟踪（max/min 键值）** + 堆上浮（fld [ebx+4] fcomp 键 + shr edx,1 父索引）；
+2. a 路 ★★0x7c8e17 三连分配（0x1900/0x14/0xc84）——**大块 buffer 直接 new 非 VectorClass 管理**；
+3. a 路 ★0x190 路径上限（cmp [esp+0x1c],0x190 → jge 跳出）+ 8 邻域 0x42d510 坐标偏移表；
+4. b 路 ★★[ebx+0x30c] 高度源写 cell [eax+0x11b] + 虚表槽 8 扩容（[ebx+0x14]+[ebx+8]）——**落实路径高度批量写**；
+5. b 路 ★0x42fcb0 构造（push 0/0）+ 虚表 0x7e3890 + 虚表槽 0 析构（push 1）——**对象生命周期壳**；
+6. c 路 ★★跳转表分派 [eax*4+0x5a0050] 0..6 七分支（[esp+0x12c]/[esp+0x134]/[esp+0x138]/[esp+0x13c]/[esp+0x140]/[esp+0x144] 六参）+ 统一收尾写 [esp+0x13c]；
+7. c 路 ★★Randomizer 双拒绝采样（[0x7eda40] cmp 5 + [0x7eda38] cmp 3）——**每种模式消耗的随机数个数随模式分支而异（种子兼容性关键）**；
+8. c 路 ★[0x880990] 全局装载（[0xa8ed2c]/[0xaa073c]/[0xaa1050]/[0xabb110] 四表索引）+ 0x4a91b0 坐标转换 + 0x57b440 格网处理器（batch 1738 同族）。
+
+## 跨批次连接
+
+- ★★★batch 2268（c 路 Creating tiberium 0x5A23A0——a 路后邻本体）+ batch 2266/2267（RMG 阶段函数链——a/c 路同域）；**QWEN.md RMG 阶段 8/9/10 链条再补两段**。
+- ★★batch 2260（b 路 0x5B20F0——[0x89f688] 8 邻域表同款 + 0x42d510）+ batch 2263（VectorClass 构造器/清理器——a/b 路同族）+ batch 1738（0x57B440 地形类型选择器——c 路调用端）。
+- ★0x5980c0 NormalDeviate / 0x65c780 Randomizer / 0x7c5f00 _ftol（a/b/c 路——连续多批高频）+ [0xabed04]/[0xabed08]/[0xabed10] RMG 全局（a/b/c 路——QWEN.md 实锤区）。
+
+## 观察项 / 候选池
+
+- **本批零 MISSING、零批内自引用**（三路 callee 全部已登记；a 路后邻 = 2268 c 路本体为跨批相邻非 MISSING）。
+- **后邻已登记**：0x5A0700（b 路 callee + 后邻——对象构造器）。
+- **新观察**：[0xaa0738]/[0xaa073c]/[0xaa1050]/[0xabb110] 地形表族（c 路）+ [0x880990] 全局装载槽（c 路——batch 1738 同族）+ [0x7eda40]/[0x7eda38] 拒绝采样常量（c 路）+ 0x5a08d0/0x57a0c0/0x5a0160 校验三连（c 路——均未登记观察项）。
+- 前向：picker 队列继续 0x59/0x5A 区（0x59E740 后邻 0x5A0050 跳转表区 + 0x59C630/0x59C580 大宿主——RMG 阶段函数链）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
