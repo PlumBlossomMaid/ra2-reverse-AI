@@ -1,0 +1,77 @@
+# frontier batch 2125：状态字节 getter + 多字段序列化器 + 初始化/加载器（0x656DE0 / 0x656AC0 / 0x6568A0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x656DE0 FUN_00656de0 callees=0 deps=75 / 0x656AC0 FUN_00656ac0 callees=1 deps=1 / 0x6568A0 FUN_006568a0 callees=6 deps=1）
+- 三路 disasm：`.qwen/tmp/_d2125a.txt`（0x656DE0 size 0x20）/ `_d2125b.txt`（0x656AC0 size 0x130）/ `_d2125c.txt`（0x6568A0 size 0x240）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x656DE0 | 7B（0x7）| ret @0x656DE6 | 0x656DF0（mov ebx,[esp+8]/cmp [esi+0x14d8],bl setter，未登记）| 0 |
+| 0x656AC0 | 275B（0x113）| ret 4 @0x656BD0 | 0x656BE0（cmp al,1/mov esi,ecx 带参 setter，未登记）| 1（0x4AE720 未登记）|
+| 0x6568A0 | 541B（0x21D）| ret 4 @0x656ABA | 0x656ABD（nop pad）→ 0x656AC0（**b 路本尊**）| 4（0x4AE6F0 未登记 + 3 已登记）|
+
+三函数为**batch 2124 同一动画/运动对象族的加载/序列化/状态字节访问器**——所有字段 [0x14b0]/[0x14ac]/[0x14b4]/[0x14b8]/[0x126c]/[0x1234]/[0x1260]/[0x1228]/[0x14c0]/[0x14d8] 与 batch 2124 三函数完全同族：
+
+## a 路 0x656DE0（7B）——状态字节 getter
+
+```
+00656de0  mov al, byte ptr [ecx + 0x14d8]（★[this+0x14d8] 状态字节）
+00656de6  ret
+```
+**语义**：**状态字节 getter**——读 [this+0x14d8] 字节返回。7B 微函数（与 batch 2123 a 路 0x658770 13B 单参转发器同款微函数风格）。后邻 0x656DF0 = 配对 setter（`mov ebx,[esp+8]/cmp [esi+0x14d8],bl`——同一 [0x14d8] 字段写，未登记）。[0x14d8] 为 batch 2124 状态字节族（[0x14d9]/[0x14da]）的前邻字段。
+
+## b 路 0x656AC0（275B）——多字段序列化器（虚表槽 0x10 成对读写）
+
+```
+00656ac0  push ebx/push esi/mov esi,[esp+0xc]（★参数 1 = 外部对象 ptr）/push edi/mov edi,ecx（this）/push esi → ★call 0x4ae720（判 定——MISSING）→ test eax/jl 0x656bcd（失败收尾）
+00656ad7  mov eax,[edi+0x126c]（★this 计数 1——batch 2124 c 路同字段）→ mov ecx,[esi]（外部对象虚表）→ push 0/push 4/lea edx,[esp+0x14]（栈槽）→ ★call [ecx+0x10]（虚表槽 0x10——读 4 字节到栈槽）→ test eax/jl 收尾
+00656af8  mov eax,[esp+0x10]（读到数量）→ 循环：mov ecx,[edi+0x1260]（★this 数组 1——batch 2124 c 路同字段）→ push 0/push 8/lea edx,[ecx+ebx*8]（8 字节元素）→ call [eax+0x10] → inc ebx/cmp jl
+00656b27  mov eax,[edi+0x1234]（★this 计数 2——batch 2124 c 路同字段）→ 虚表槽 0x10 读 4 字节 → 循环：mov ecx,[edi+0x1228]（数组 2，4 字节元素）→ call [eax+0x10] → inc/cmp jl
+00656b73  [esi] 虚表槽 0x10 读 4 字节到 [edi+0x14b0] → 再读 [edi+0x14ac] → 再读 [edi+0x14b4] → 再读 [edi+0x14b8]（add edi,0x14b8）
+00656bc3  收尾：xor ecx/setge cl（eax>=0）/dec ecx/and eax,ecx（★错误归零惯用：失败返回 0）→ pop 族 → ret 4
+```
+**语义**：**多字段序列化器/读取器（推断名）**——this（edi）的四个字段组 + 外部对象（esi，参数 1）虚表槽 0x10 成对读写：① 0x4ae720 首判；② [edi+0x126c] 计数 → 槽 0x10 读实际数 → [edi+0x1260] ×8 字节元素逐读；③ [edi+0x1234] 计数 → [edi+0x1228] ×4 字节元素逐读；④ [0x14b0]/[0x14ac]/[0x14b4]/[0x14b8] 四字段直读。收尾**错误归零惯用**（jl 链 + setge + dec + and——失败统一返回 0）。ret 4（1 参）。
+
+## c 路 0x6568A0（541B）——初始化/加载器（子对象+双数组+22 槽批量构造）
+
+```
+006568a0  sub esp,0x14/push 族/mov edi,[esp+0x28]（★参数 1 = 外部对象 ptr）/mov ebp,ecx（this）/push edi → ★call 0x4ae6f0（判定——MISSING）→ test/jl 0x656ab3
+006568c1  [edi] 虚表槽 0xc 读 4 字节到栈槽 → jl 收尾
+006568d7  lea ecx,[ebp+0x14c0]（★this 子对象——batch 2124 a/b 路 [esi+0x14c0] 同字段！）→ ★call 0x405be0（子对象构造/清理，已登记）
+006568e6  lea esi,[ebp+0x125c]（★this 数组 1）→ 非 0 → push 0/0 → ★call 0x658d60（数组构造）→ mov [esi],0x7eeb54（★虚表 0x7eeb54）→ [esi+0x14]=0xa=10（容量）→ [esi+0x10]=0（计数）
+00656909  循环 1：外部对象槽 0xc 读 8 字节到栈槽 → [esi+8]（容量）vs [esi+0x10]（计数）扩容判定 → [esi+0xd]（owns 标志）→ [esi+0x14]>0 → [edx+8]（添加元素判定）→ 写 [edx+eax*8]（★8 字节元素追加，计数 ++）
+00656980  [edi] 槽 0xc 读 4 字节 → lea esi,[ebp+0x1224]（★this 数组 2）→ ★call 0x42fcb0（数组构造）→ mov [esi],0x7e3890（★虚表 0x7e3890）→ [esi+0x14]=0xa → [esi+0x10]=0
+006569b9  循环 2：同模式 → [edx+8] 判定 → 写 [edx+eax*4]（★4 字节元素追加）
+00656a1e  mov esi,[esp+0x14]（★栈槽=数组基址）→ mov ecx,0x16=22 → mov dl,1 → ★批量初始化 22 个 [esi+0x1280] 起的 0x18 字节槽（循环 0x16 次：写 [eax-8]=0x7eeb54 虚表/[eax-4]=0/[eax]=0/[eax+4]=1（dl）/[eax+5]=0/[eax+0xc]=0xa=10/[eax+8]=0）——★22 个同构子对象批量构造（0x7eeb54 虚表族）
+00656a58  [edi] 槽 0xc 读 [esi+0x14b0] → [esi+0x14ac] → [esi+0x14b4] → [esi+0x14b8]（add esi,0x14b8）四字段
+00656aa8  mov ecx,[esp+0x18]（★= this 0x14c0 子对象）→ call 0x405be0 → xor eax,eax → pop 族 → ret 4
+```
+**语义**：**初始化/加载器（推断名）**——this（ebp）从外部对象（edi，参数 1）虚表槽 0xc 读入数据：① 0x4ae6f0 首判；② 0x14c0 子对象构造（0x405be0）；③ 0x125c 数组（虚表 0x7eeb54，8 字节元素）循环追加；④ 0x1224 数组（虚表 0x7e3890，4 字节元素）循环追加；⑤ **0x1280 起 22 个 0x18 字节同构子对象批量构造**（虚表 0x7eeb54 族，内含 [++4]=1 启用标志）；⑥ [0x14b0]/[0x14ac]/[0x14b4]/[0x14b8] 四字段读入；⑦ 0x405be0 收尾。**0x7eeb54/0x7e3890 两个新虚表常量登记**。
+
+## 原版怪癖（照抄）
+
+1. b 路收尾**错误归零惯用**：`xor ecx / setge cl / dec ecx / and eax,ecx`（失败统一返回 0 而非错误码）；
+2. b 路虚表槽 0x10 全对读写（读外部对象也复用槽 0x10——双向接口）；
+3. b 路 [0x1260] ×8 字节 / [0x1228] ×4 字节两种元素宽度并存（同一对象两数组不同步长）；
+4. c 路 0x125c 数组虚表 **0x7eeb54**、0x1224 数组虚表 **0x7e3890**（两个不同虚表共存）；
+5. c 路**批量初始化惯用**：栈上展开 0x18 字节×22 循环（mov [eax-8]/[eax-4]/[eax]/[eax+4]/[eax+5]/[eax+0xc]/[eax+8] 七字段写）——写 [eax+4]=1（dl）启用标志 + [eax+0xc]=0xa=10 容量；
+6. c 路 0x14c0 子对象 0x405be0 成对调用（开头构造/收尾清理）；
+7. a 路 7B getter 不建帧不保存（mov al/ret 一行流）。
+
+## 跨批次连接
+
+- ★★★**batch 2124 同一动画/运动对象族**：c 路 [0x14b0]/[0x14ac]/[0x14b4]/[0x14b8] 四字段 = batch 2124 c 路 0x656EC0 门控（[0x14b0]==1 且 [0x14ac]==1）+ b 路 [0x14b8] 状态机 + a 路 [0x14ac] 状态切换；[0x14c0] 子对象 = batch 2124 a/b 路 0x406060 调用目标；[0x126c]/[0x1234]/[0x1260]/[0x1228] = batch 2124 c 路同字段计数与数组；[0x14d8] = batch 2124 [0x14d9]/[0x14da] 状态字节族前邻。
+- ★★0x4AE720（b 路首判，39B，ranking:5803 有行未登记）+ 0x4AE6F0（c 路首判，35B，ranking:4729 有行未登记）——0x4AExxx 判定族（batch 2124 调用 0x4aed70 同区）——本批 MISSING 观察项。
+- ★0x405be0（0x14c0 子对象构造/清理，已登记——batch 2124 a/b 路 0x14c0 现场交叉）+ 0x658d60/0x42fcb0（数组构造器，已登记）。
+- ★新虚表常量：0x7eeb54（0x125c 数组 + 0x1280 批量槽共用）、0x7e3890（0x1224 数组）。
+- ★b 路后邻 0x656BE0（cmp al,1 带参 setter）+ a 路后邻 0x656DF0（cmp [esi+0x14d8],bl setter）——未登记。
+
+## 观察项 / 候选池
+
+- **新候选（2 个，ranking 均有行未登记——后续 picker 自然取到）**：
+  - 0x4AE6F0（35B，ranking:4729，caller = 本批 c 路 0x6568A0）——0x4AExxx 判定族
+  - 0x4AE720（39B，ranking:5803，caller = 本批 b 路 0x656AC0）——0x4AExxx 判定族
+- **后邻未登记**：0x656DF0（a 路后邻 [0x14d8] setter）、0x656BE0（b 路后邻带参 setter）。
+- 前向：picker 队列继续 0x65 区 + 0x4AExxx 判定族 + 0x599650。
