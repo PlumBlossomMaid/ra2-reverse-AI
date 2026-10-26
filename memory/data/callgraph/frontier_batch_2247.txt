@@ -1,0 +1,71 @@
+# frontier batch 2247：表格字符规范化器 + 文本行渲染器 + 全局注册器（0x5BD360 / 0x5BD0D0 / 0x5BC3C0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5BD360 FUN_005bd360 callees=0 deps=10 / 0x5BD0D0 FUN_005bd0d0 callees=2 deps=82 / 0x5BC3C0 FUN_005bc3c0 callees=3 deps=2543）
+- 三路 disasm：`.qwen/tmp/_d2247a.txt`（0x5BD360 size 0x100）/ `_d2247b.txt`（0x5BD0D0 size 0x200）/ `_d2247c.txt`（0x5BC3C0 size 0x80）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5BD360 | 101B（0x65）| ret 4 c20400 @0x5BD3C2 | 0x5BD3D0（未登记——地图格状态更新器：mov eax,[0xabf110]/[0xabf128] + IAT [0x7e107c]/[0x7e106c] 双发 + [edi+0x2714] 写 观察项）| 0（callees=0 吻合——cmp/je 分派链）|
+| 0x5BD0D0 | 287B（0x11F）| ret 4 c20400 @0x5BD1EC | 0x5BD1F0（未登记——顶部 thunk 族：sub esp,0x100 + 0x7cb7ba 串拷贝 + jmp 0x5bd0d0 观察项）| 2（0x5bd360——**本批 a 路批内自引用** + 0x5bd490——callees=2 吻合）|
+| 0x5BC3C0 | 58B（0x3A）| ret c3 @0x5BC3F9 | 0x5BC400（未登记——全局清空器：[0xabf240]→[0xabf239]=0 + IAT [0x7e1498] + [0xabf23a]=0 观察项）| 1（0x5bc530——callees=1 吻合，另 2 个 IAT 间接 [0x7e1498]/[0x7e13cc]）|
+
+## a 路 0x5BD360（101B）——表格字符规范化器
+
+```
+005bd360  mov al,[esp+4] → cmp al,0xa → jne → mov al,0x20（★换行→空格）→ ret 4
+005bd36d  cmp al,0xb3 → jne → mov al,0x7c（★│→|）→ ret 4
+005bd376  cmp al,0xc4 → jne → mov al,0x2d（★─→-）→ ret 4
+005bd37f  cmp al,0xcd → jne → mov al,0x3d（★═→=）→ ret 4
+005bd388  ★盒子字符族判定：cmp 0xda/0xc2/0xbf/0xc6/0xc3/0xd1/0xc5/0xd8/0xb5/0xc0/0xc1/0xd9/0xd5/0xb4 → je 0x5bd3c0 → mov al,0x2b（★┌┐└┘├┤┬┴┼┼…→+）
+005bd3c2  ret 4
+```
+**语义**：**表格字符规范化器（推断名）**——单字节字符映射分派链：换行(0xa)→空格、表格竖线(0xb3)→`|`、横线(0xc4)→`-`、双线(0xcd)→`=`、**盒子绘制字符族（┌┐└┘├┤┬┴┼ 等 14 个 GBK 扩展字符）→ `+`**、其余原样返回。**文本界面表格字符→ASCII 规范化（零 call 纯判定链——地图边框绘制管线字符映射端）**。
+
+## b 路 0x5BD0D0（287B）——文本行渲染器
+
+```
+005bd0d0  mov al,[0xabf23a]（★门控标志）→ sub esp,0x10 → test al → je 0x5bd1e8（关直出）→ push esi → mov esi,ecx（★this）
+005bd0e3  mov ecx,[esi+0x2728]/mov edx,[esi+0x2720]/mov eax,[esi+0x2724]/mov edi,[esi+0x271c]（★四字段）→ add 链 sums → mov byte [esi+0x2734],0（★清标志）
+005bd114  mov edi,[esp+0x24]（★输入串）→ or ecx,0xffffffff → xor eax → repne scasb al,[edi]（★找串尾）→ not ecx → dec ecx（★串长）→ mov edi,ecx → add edi,ebp → cmp edi,edx → jle → mov edi,edx（★钳位）
+005bd12f  ★主循环：cmp ebp,edi → jge 0x5bd1d3 → mov eax,[esp+0x24] → sub eax,ebp → mov al,[eax+ebx]（★取字符）→ mov [esp+0x24],al → push → mov ecx,esi → call 0x5bd360（★a 路字符规范化）→ mov [edx],al（★写转换后字符）→ mov ecx,[esi+0x2710] → mov [ecx],eax（★写源值）
+005bd191  mov al,[esp+0x24] → cmp al,0xa → jne → mov eax,[esi+0x2720] → mov [esi+0x271c],0 → inc eax → mov [esi+0x2720],eax（★换行计数）→ 否则 inc [esi+0x271c]
+005bd1b8  inc ebx → add edx,0x64 → add ecx,0x19（★字宽 0x19/行距 0x64）→ cmp ebx,edi → jl 主循环
+005bd1d3  mov edx,[esp+0x18] → sub edi,ebp → push 1/push edi/push edx/push ebp → mov ecx,esi → call 0x5bd490（★批量提交）→ pop 四件套 → ret 4
+```
+**语义**：**文本行渲染器（推断名）**——① [0xabf23a] 门控；② 输入串 repne scasb 长度 + 边界钳位（min(串尾行, 上限)）；③ ★主循环逐字符调 **0x5bd360（a 路）规范化** → 写目标缓冲 + 换行计数（[esi+0x2720]/[esi+0x271c]）+ 字宽 0x19 步进；④ 尾部 0x5bd490 批量提交。**地图文字渲染管线（[0xabf23a] 门控 → 逐字符映射 → 行计数 → 批量提交——0x5bd360 批内自引用兑现）**。
+
+## c 路 0x5BC3C0（58B）——全局注册器
+
+```
+005bc3c0  mov al,[0xabf238]（★门控标志）→ test al → je 0x5bc3f9（关直出）→ mov eax,[0xabf240]（★目标）→ test eax → jne 0x5bc3d7 → call 0x5bc530（★懒加载）→ mov eax,[0xabf240] → push 1/push eax → mov byte [0xabf23a],1（★置门控）→ call [0x7e1498]（★IAT）→ mov ecx,[0xabf234] → push ecx → call [0x7e13cc]（★IAT 第二发）→ ret
+```
+**语义**：**全局注册器（推断名）**——[0xabf238] 门控 + [0xabf240] 懒加载（0x5bc530）+ [0xabf23a]=1 置门控 + IAT [0x7e1498]/[0x7e13cc] 双触发（[0xabf234] 参）。**全局对象注册/启动端（[0xabf234]/[0xabf238]/[0xabf23a]/[0xabf240] 四全局状态区操作——后邻 0x5BC400 清空器配对）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call **0 个**（callees=0 吻合——cmp/je 纯判定分派链）。
+- b 路：跨函数直接 call 2 个——**0x5bd360（本批 a 路本体，批内自引用闭环非 MISSING）+ 0x5bd490（已登记）**（callees=2 吻合）。
+- c 路：跨函数直接 call 1 个（0x5bc530）——**已登记**（callees=1 吻合；另 2 个 IAT 间接 [0x7e1498]/[0x7e13cc] 无 TSV 行属正常）。
+- ★核验脚本（norm() 规范化版）输出：a/c 全 PASS、b 路 1 枚 MISSING 判定为**批内自引用（a 路）**闭环。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★cmp/je 分派链直判（换行 0xa→空格/0xb3→`|`/0xc4→`-`/0xcd→`=`/盒子字符 14 个→`+`——**GBK 表格字符族→ASCII 映射**）+ 每分支独立 mov al + ret 4（无跳表，线性 cmp 链）；
+2. b 路 ★[0xabf23a] 门控 + repne scasb 串长（not ecx/dec）+ 边界钳位（cmp edi,edx → jle → mov edi,edx）+ 主循环字宽 0x19/行距 0x64 步进；
+3. b 路 ★换行计数分派（cmp al,0xa → 清 [esi+0x271c]/inc [0x2720] vs 直接 inc [0x271c]）+ 尾部 0x5bd490 批量提交（push 1/push 计数/push 起始）；
+4. c 路 ★★[0xabf238] 门控 + [0xabf240] 懒加载（0x5bc530）+ [0xabf23a]=1 置位 + IAT [0x7e1498]/[0x7e13cc] 双触发 + [0xabf234] 参——四全局状态区。
+
+## 跨批次连接
+
+- ★★批内自引用：b 路主循环调 a 路 0x5bd360（本批 a/b 联动闭环——渲染管线字符映射）。
+- ★batch 2220-2222（IAT [0x7e1498] 事件族——c 路）+ batch 2244/2246（[0xabf2dc]/[0xabf294] 全局族——c 路 [0xabf234..0xabf240] 邻居）+ batch 2247 后邻 0x5BD3D0（IAT [0x7e107c]/[0x7e106c]）。
+- ★0x7e13cc（c 路 IAT——batch 2220 邻接）+ 0x5bd490（b 路批量提交——batch 2247 后邻族）。
+
+## 观察项 / 候选池
+
+- **后邻未登记（自然排队）**：0x5BD3D0（a 后邻——地图格状态更新器：mov eax,[0xabf110]/[0xabf128] + IAT [0x7e107c]/[0x7e106c] 双发 + [edi+0x2714] 写——**零 call 纯 IAT 族观察项**）；0x5BD1F0（b 后邻——顶部 thunk 族：sub esp,0x100 + 0x7cb7ba 串拷贝 + jmp 0x5bd0d0——变长调用端）；0x5BD240（b 后邻第二——sub esp,0x300 + 0x7ca858 宽串 + 0x7c8ef4 格式化 + jmp 0x5bd0d0）；0x5BD2A0（b 后邻第三——[0xabf23a] 门控 + 四字段写 [esi+0x271c]/[0x2720]/[0x2710]）；0x5BC400（c 后邻——全局清空器：[0xabf240]→[0xabf239]=0 + IAT [0x7e1498] + [0xabf23a]=0——**c 路配对端**）；0x5BC420（c 后邻第二——双标志判定器：mov al,[0xabf23a]/[0xabf239] → test → 返 0/1）。
+- **新观察**：[0xabf234]/[0xabf238]/[0xabf239]/[0xabf23a]/[0xabf240] 全局状态区五件套（c 路及后邻）+ [0xabf110]/[0xabf128] 全局对（a 后邻——IAT 参）+ 字宽 0x19/行距 0x64 文本布局常量（b 路）。
+- 前向：picker 队列继续 0x5B/0x5C 区（0x5BC530/0x5BD490/0x5BD3D0 后邻 + 0x5B77E0 deps=4048 大宿主）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
