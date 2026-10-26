@@ -1,0 +1,76 @@
+# frontier batch 2231：0x5D 区调色板加载/析构/数组清理三连（调色板加载器 + 全局调色板析构器 + 数组项清理器）（0x5D2E90 / 0x5D2E30 / 0x5D2780）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5D2E90 FUN_005d2e90 callees=11 deps=1 / 0x5D2E30 FUN_005d2e30 callees=1 deps=44 / 0x5D2780 FUN_005d2780 callees=1 deps=47）
+- 三路 disasm：`.qwen/tmp/_d2231a.txt`（0x5D2E90 size 0x300）/ `_d2231b.txt`（0x5D2E30 size 0x100）/ `_d2231c.txt`（0x5D2780 size 0x100）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5D2E90 | 553B（0x229）| ret 4 @0x5D30B6 | 0x5D30C0（未登记——0x7ca405+虚表槽 4 宽度计算观察项）| 15 次/去重 11（全部已登记——callees=11 吻合）|
+| 0x5D2E30 | 93B（0x5D）| ret c3 @0x5D2E8C | 0x5D2E90（= a 路本体——析构/加载连排）| 1（0x7c8b3d——callees=1 吻合）|
+| 0x5D2780 | 42B（0x2A）| ret c3 @0x5D27A9 | 0x5D27B0（未登记——[ecx+0xc] 门控+shr 2 索引差观察项）| 1（0x7c8b3d——callees=1 吻合）|
+
+三函数为 0x5D 区调色板体系的**加载、析构、数组清理**三向（batch 2222 浮点常量族邻域 + [0xabfbe0..0xabfc00] 全局族）：
+
+## a 路 0x5D2E90（553B）——调色板加载器
+
+```
+005d2e90  sub esp,0x6c → push 四件套 → mov ebp=ecx → call 0x473a80（★坐标读取）→ mov eax,[0xabfbe0]（★全局标志）→ cmp → jne 0x5d3083（已初始化跳收口）
+005d2eb0  mov byte [ebp+0x1c],0 → mov ecx,0x830664（★路径串）→ call 0x5b40b0（★读取）→ mov [ebp+0x14],eax → test → jne 0x5d2ef1
+005d2ec6  ★失败路径：push 0x830664 → call 0x473fc0 → call 0x4a3890 → mov [ebp+0x14],eax → mov byte [ebp+0x1c],1 → push 0x830640 → call 0x4068e0（★日志）
+005d2ef1  cmp [ebp+0x14],0 → je 0x5d3041 → ★RGB 通道装载：cmp byte [esp+0x7c],1 → push 0x830630/0x830620（★分支串）→ call 0x473fc0 → call 0x4a3890 → mov esi=eax → test → je 0x5d3041
+005d2f29  ★★转换循环（0x100 次）：lea edx,[esi+2] → mov al,[edx-2]/cl,[edx-1] → shl al,2/shl cl,2（★RGB→565 三通道×4）→ ★位域表：lea ecx,[ecx+ecx*2+0x886080]（★[0x886080] 调色板缓冲——0x800×3 步长）→ mov word [ecx],bx → mov byte [ecx+2],al → inc edi/add edx,3 → cmp edi,0x100 → jl
+005d2f81  ★★三通道位域表：mov al,[esi+0xce]/cl,[esi+0xcd]/dl,[esi+0xcc] → shl 2 ×3 → mov [ebp+0xe],al/[ebp+0xc],dl/[ebp+0xd],cl（★RGB 存字段）→ ★★[0x8a0dd4]/[0x8a0dd0]/[0x8a0ddc]/[0x8a0dd8]/[0x8a0de4]/[0x8a0de0] 六连位域表（sar eax,cl + shl eax,cl + or——batch 2191a 同表第 11 处复用）→ mov [ebp+0x10],eax
+005d3002  push esi → call 0x7c8b3d（★释放源缓冲）→ push 0x188 → call 0x7c8e17（★分配）→ test → je 0x5d3038 → ★构造：mov ecx,[0x887308] → push 0/1/ecx/0x886080/0x886080 → call 0x48e740（★调色板对象构造）→ mov [ebp+0x18],eax → jne 0x5d3072
+005d3041  ★收口：mov [esp+0xc],0x7e16b0（虚表）→ call 0x43ae50 → mov [esp+0xc],0x7e1668 → call 0x431b80 → xor al,al → ret 4
+005d3072  ★成功：movsx edx,word [eax+2] → mov [ebp+4],edx → movsx eax,word [eax+4] → mov [ebp+8],eax → call 0x407000 → 收口 → mov al,1 → ret 4
+```
+**语义**：**调色板加载器（推断名）**——① [0xabfbe0] 全局标志幂等 + 0x830664 路径 + 0x5b40b0 读取（失败路径 0x473fc0/0x4a3890/0x4068e0）；② ★★RGB→565 转换循环（0x100 次 shl 2 三通道 → [0x886080] 调色板缓冲，0x800×3 步长）；③ ★★[0x8a0dd0..0x8a0de4] 方向位域表六连（sar/shl + or 合成 → [ebp+0x10]——batch 2191a 同表第 11 处复用）；④ 0x7c8e17 分配 0x188 + 0x48e740 构造（[0x887308] + 0x886080）；⑤ 双虚表收口（0x7e16b0/0x7e1668 → 0x43ae50/0x431b80）+ 成功回填 [ebp+4]/[ebp+8] 尺寸。**调色板加载端（RGB→565 + 位域表 + 对象构造）**。
+
+## b 路 0x5D2E30（93B）——全局调色板析构器
+
+```
+005d2e30  push esi → mov esi=ecx → mov [esi],0x7eec64（★虚表）→ mov eax,[0xabfbe0]（★全局计数）→ dec → mov [0xabfbe0],eax → jne 0x5d2e8b（非零直返）
+005d2e46  ★清零循环：[0xabfbe8..0xabfc00]（add eax,8 / cmp 0xabfc00 / jl）→ mov [eax],0 → mov byte [eax+4],0（★逐槽清理）
+005d2e61  mov ecx,[esi+0x18] → test → je → mov eax,[ecx] → push 1 → call [eax]（★虚表槽 0 析构）→ mov eax,[esi+0x14] → test → je → cmp byte [esi+0x1c],1 → jne → push eax → call 0x7c8b3d（★释放）→ mov [esi+0x14],0 → mov byte [esi+0x1c],0 → ret
+```
+**语义**：**全局调色板析构器（推断名）**——[0xabfbe0] 全局计数递减（非零直返——★引用计数语义）→ 零时 [0xabfbe8..0xabfc00] 8B 槽逐项清理 → [esi+0x18] 虚表槽 0 析构 + [esi+0x14] 释放（[esi+0x1c] 标志门控）。**调色板全局析构端（引用计数 + 槽区清理）**。
+
+## c 路 0x5D2780（42B）——数组项清理器
+
+```
+005d2780  push 双件套 → mov esi=ecx → mov [esi+0x10],0 → mov eax,[esi+4]（★缓冲指针）→ test → je 0x5d27a1 → cmp byte [esi+0xd],0 → je 0x5d27a1 → push eax → call 0x7c8b3d（★释放）→ mov [esi+4],0
+005d27a1  mov byte [esi+0xd],0 → mov [esi+8],0 → ret
+```
+**语义**：**数组项清理器（推断名）**——[esi+4] 缓冲 + [esi+0xd] 拥有标志 → 0x7c8b3d 释放 + 字段清零（[esi+4]=0/[esi+8]=0/[esi+0xd]=0——batch 2229 a 路 0x5D5820 同字段布局）。**缓冲成员释放端（拥有标志门控）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 15 次/去重 11 个（0x473a80/0x5b40b0/0x473fc0/0x4a3890/0x4068e0/0x7c8b3d/0x7c8e17/0x48e740/0x43ae50/0x431b80/0x407000），**全部已登记**（callees=11 吻合）。
+- b 路：跨函数直接 call 1 个（0x7c8b3d），**已登记**（callees=1 吻合）。
+- c 路：跨函数直接 call 1 个（0x7c8b3d），**已登记**（callees=1 吻合）。
+- ★核验脚本（norm() 规范化版）直接输出三路全 PASS。**MISSING：无**。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★[0xabfbe0] 全局标志幂等（非零直跳收口——单例初始化）+ 0x830664 路径 + 0x5b40b0 读取（失败路径 0x473fc0/0x4a3890/0x4068e0 双实现）；
+2. a 路 ★★RGB→565 转换（shl 2 ×3 通道 ×0x100 次 → [0x886080] 缓冲 0x800×3 步长——★窄型 8-bit 调色板转内部 565 格式）+ 字节回填（[ebp+0xc..0xe] 三字段）；
+3. a 路 ★★★[0x8a0dd0..0x8a0de4] 方向位域表六连（sar eax,cl + shl eax,cl + or 三通道合成——**batch 2191a 第 10 处复用后本批第 11 处**，shr/shl/sar 六连 + imul/sar + 0xff 钳位混合模板）；
+4. a 路 ★0x7c8e17 分配 0x188 + 0x48e740 构造（[0x887308] + 双 0x886080 参数）+ 双虚表收口（0x7e16b0→0x43ae50 / 0x7e1668→0x431b80——★顺序双析构模板）+ 成功回填尺寸（movsx word [eax+2]/[eax+4] → [ebp+4]/[ebp+8]）；
+5. b 路 ★★[0xabfbe0] 引用计数（dec → jne 直返——★计数非零不析构）+ [0xabfbe8..0xabfc00] 8B 槽逐项清理循环；
+6. c 路 ★[esi+0xd] 拥有标志门控释放 + [esi+4]/[esi+8]/[esi+0xd] 三字段清零（batch 2229 a 路同字段布局）。
+
+## 跨批次连接
+
+- ★★★batch 2191（[0x8a0dd0] 方向位域表首现——a 路第 11 处复用）+ batch 2222（浮点常量族 [0x7e1710]/[0x7e1708] 邻域——a 路邻域）。
+- ★★batch 2229（[esi+0xd] 拥有标志 + 0x7c8b3d 释放模板——c 路同布局）+ batch 2228（0x7c93e8/0x7c8b3d 释放族——b/c 路）。
+- ★batch 2223（0x7c8e17/0x48e740 构造族——a 路）+ batch 2207（0x4068e0 日志族——a 路失败路径）。
+
+## 观察项 / 候选池
+
+- **MISSING：无**（a 路 11 / b 路 1 / c 路 1 全部已登记）。
+- **后邻未登记**：0x5D30C0（a 后邻——0x7ca405 + 虚表槽 4 宽度计算 + 0xa 字符过滤——串宽计算观察项）；0x5D27B0（c 后邻——[ecx+0xc] 门控 + shr 2 索引差）；0x5D2E90（b 后邻 = a 路本体——析构/加载连排）。
+- **新观察**：[0x886080] 全局调色板缓冲（a 路 0x800×3 步长）+ [0xabfbe0..0xabfc00] 调色板全局区（b 路引用计数）。
+- 前向：picker 队列继续 0x5D 区（0x5D30C0 串宽计算 + 0x5CF8E0 1935B 大宿主）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
