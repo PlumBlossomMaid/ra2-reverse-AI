@@ -1,0 +1,69 @@
+# frontier batch 2241：数组清理器孪生对 + 槽族事件批量处理器（0x5C5480 / 0x5C5220 / 0x5C2500）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5C5480 FUN_005c5480 callees=1 deps=106 / 0x5C5220 FUN_005c5220 callees=1 deps=44 / 0x5C2500 FUN_005c2500 callees=10 deps=616）
+- 三路 disasm：`.qwen/tmp/_d2241a.txt`（0x5C5480 size 0x80）/ `_d2241b.txt`（0x5C5220 size 0x80）/ `_d2241c.txt`（0x5C2500 size 0x300）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5C5480 | 39B（0x27）| ret c3 @0x5C54A6 | 0x5C54B0（未登记——数组查找器：mov al,[ecx+0xc] 门控 + 计数循环 cmp [ecx],esi → 命中返下标/未命中返 -1 观察项）| 1（0x7c8b3d——callees=1 吻合）|
+| 0x5C5220 | 39B（0x27）| ret c3 @0x5C5246 | 0x5C5250（未登记——数组查找器孪生：同 a 后邻 观察项）| 1（0x7c8b3d——callees=1 吻合）|
+| 0x5C2500 | 317B（0x13D）| ret 4 c20400 @0x5C263A | 0x5C2640（未登记——槽族批量分派器：mov edi,[0xa8da84] 计数循环 0x4e37d0/0x5c23b0/0x5c21d0 观察项）| 12 次/去重 10（0x49e3b0/0x49bcc0/0x4e37d0/0x5c23b0/0x4e3f70/0x696f90/0x49d9f0/0x5ebc00/0x5e26c0/0x5c21d0——callees=10 吻合，**0x5C23B0 MISSING 观察项**）|
+
+## a 路 0x5C5480（39B）——数组清理器·虚表无关版
+
+```
+005c5480  push ebx/esi → mov esi,ecx（★this）→ xor ebx → mov eax,[esi+4]（★数组指针）→ cmp eax,ebx → je 0x5c549e → cmp byte [esi+0xd],bl（★owns 判定）→ je 0x5c549e → push eax → call 0x7c8b3d（★operator delete）→ add esp,4 → mov [esi+4],ebx（★指针清零）
+005c549e  mov byte [esi+0xd],bl（owns=0）→ mov [esi+8],ebx（★容量清零）→ pop esi/ebx → ret
+```
+**语义**：**数组清理器·虚表无关版（推断名）**——owns 判定（+0xd 标志）+ 0x7c8b3d 释放 + 三字段清零（+4 指针/+8 容量/+0xd owns）。**VectorClass 数组清理惯用（batch 2240 c 路后邻 0x5C56E0 同款，虚表无关、纯字段操作版）**。
+
+## b 路 0x5C5220（39B）——数组清理器·孪生
+
+```
+005c5220  push ebx/esi → mov esi,ecx → xor ebx → mov eax,[esi+4] → cmp eax,ebx → je 0x5c523e → cmp byte [esi+0xd],bl → je 0x5c523e → push eax → call 0x7c8b3d → add esp,4 → mov [esi+4],ebx → 0x5c523e mov byte [esi+0xd],bl → mov [esi+8],ebx → pop esi/ebx → ret
+```
+**语义**：**数组清理器·孪生（推断名）**——与 a 路**逐字节同构**（同 0x7c8b3d 释放 + 三字段清零，仅地址差 0x260）。**VectorClass 清理器第二副本（同一基类独立编译产物——代码地址区间不同）**。
+
+## c 路 0x5C2500（317B）——槽族事件批量处理器
+
+```
+005c2500  sub esp,0x14 → push ebx/ebp/esi/edi → xor edi（★循环计数）→ mov ebp,ecx（★this）→ cmp ebx,edi（★第 4 参）→ je 0x5c2633
+005c251b  mov ecx,[ebp+0x33c]（★源对象）→ mov esi,[0xa8bb0c]（★全局计数）→ lea eax,[esp+0x14] → push eax → push ecx → mov ecx,0x89f518（★容器地址）→ call 0x49e3b0（★查询）→ mov edx,[esp+0x14] → cmp edx,edi → je 0x5c2633 → cmp [edx+0x20],edi → je 0x5c2633（双空判定）
+005c2554  mov ecx,[ebp+0x40] → cmp ecx,edi → je 0x5c2571 → ★call 0x49bcc0（判空）→ test al → jne → mov eax,[esp+0x10] / 01 分支 xor eax → 0x5c257d mov edx,[esp+0x14] → cmp eax,[edx+0x20]（★游标 vs 边界）→ jge 0x5c2633
+005c258a  mov ecx,[edx+0x14] → mov edx,[ecx+eax*4]（★取项）→ mov eax,[edx+0x10]（★项内容）→ mov [esp+0x20],eax → test esi → jle 0x5c2617
+005c259b  mov ebp,0xa8da90（★★共享值表）→ ★循环：mov ecx,edi → call 0x4e37d0（★槽位——batch 2214 槽 ID 族）→ mov esi,eax → push esi → push ebx → call 0x5c23b0（★MISSING 观察）→ cmp [esp+0x20],1 → jle 0x5c25d2 → ★高阶分支：push -2 → mov edx,esi → mov ecx,ebx → call 0x4e3f70 → mov ecx,[ebp] → push -2 → call 0x696f90（★槽族命令执行器）→ jmp 0x5c2605
+005c25d2  ★低阶分支：mov ecx,[esp+0x14] → mov edx,[esp+0x10] → mov edx,[ecx+0x14] → mov ecx,[edx+eax*4] → mov edx,[ecx+4] → mov ecx,[edx] → call 0x49d9f0（★查询）→ mov ebx,eax → push ebx → mov edx,esi → call 0x4e3f70 → mov ecx,[ebp] → push ebx → call 0x696f90
+005c2605  mov eax,[esp+0x18] → inc edi → add ebp,4 → cmp edi,eax → jl 0x5c25a0（★循环）
+005c2617  mov edx,esi → mov ecx,ebx → call 0x5ebc00（★上报）→ call 0x5e26c0（★查询）→ test eax → je 0x5c2633 → push 1 → push eax → mov ecx,ebp → call 0x5c21d0（★入队）→ pop 四件套 → ret 4
+```
+**语义**：**槽族事件批量处理器（推断名）**——① 0x49e3b0 查询 + [0xa8bb0c] 全局计数 + 0x89f518 容器；② 双空判定（[eax]+[eax+0x20]）+ 0x49bcc0 判空 + 游标 vs 边界；③ ★★循环：0x4e37d0 槽位 → 0x5c23b0 槽处理 → 内容>1 走高阶分支（0x4e3f70 + 0x696f90 槽族命令执行）否则低阶分支（0x49d9f0 + 0x4e3f70 + 0x696f90）——**共享值表 0xa8da90 逐项遍历**；④ 尾部 0x5ebc00 上报 + 0x5e26c0 查询 + 0x5c21d0 入队。**槽族事件批量分派主循环（0xa8da90 共享值表遍历 + 高/低阶双分支槽执行）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 1 个（0x7c8b3d）——**已登记**（callees=1 吻合）。
+- b 路：跨函数直接 call 1 个（0x7c8b3d）——**已登记**（callees=1 吻合）。
+- c 路：跨函数直接 call 12 次/去重 10 个——**9 个已登记 + 0x5C23B0 MISSING**（grep ranking.tsv:2761 确认有行未登记：FUN_005c23b0 deps=252，调用者正是本批 c 路本体 0x5C2500，且为 picker 队列第 2 顺位——**按惯例记观察项自然排队、不阻塞本批**）；callees=10 吻合。
+- ★核验脚本（norm() 规范化版）输出：a/b 全 PASS、c 路 1 枚 MISSING 观察项。
+
+## 原版怪癖（照抄）
+
+1. a/b 路 ★★owns 判定用 +0xd 字节标志（cmp byte ptr [esi+0xd],bl）而非计数/指针判空——**VectorClass owns 位惯用**，释放后三字段清零（+4/+8/+0xd）；
+2. c 路 ★双空判定链（0x49e3b0 查询结果 [esp+0x14] 空 + 结果 +0x20 边界空）+ 0x49bcc0 判空三连；
+3. c 路 ★★循环主体高/低阶双分支（内容 >1 走 0x4e3f70+0x696f90 高阶、否则 0x49d9f0+0x4e3f70+0x696f90 低阶——共享值表 0xa8da90 逐项）；
+4. c 路 ★[esp+0x20] 保存项内容 + 0x4e37d0/0x5c23b0/0x5ebc00/0x5e26c0/0x5c21d0 五连调用收口（上报/查询/入队——batch 2219-2224 槽族调度链）。
+
+## 跨批次连接
+
+- ★★batch 2240（0x5C56E0 数组清理器同款——a/b 路兑现；VectorClass 族）+ batch 2214（0x4e37d0 槽 ID 族——c 路）+ batch 2213/2215（0x696f90 槽族命令执行器——c 路双分支）。
+- ★batch 2219-2224（[0xac116c]/[0xa8dab0]/槽位分派初始化——c 路 [0xa8bb0c]/[0xa8da84]/0x89f518 容器族 + batch 2226 0x5D9410 巨型坐标处理器同脉络）。
+- ★★★[0xa8da90] 共享值表（batch 2213 三视图同址实锤——c 路循表遍历主循环）+ batch 2238（0x5C62B0 长度前缀编码器邻域——c 路 [esp+0x14] 栈参数区）。
+
+## 观察项 / 候选池
+
+- **MISSING 1 枚（本批 c 路 callee，观察项排队）**：**0x5C23B0**（ranking.tsv:2761，FUN_005c23b0，335B，deps=252，c 路槽处理调用端——**picker 第 2 顺位自然兑现候选**）。
+- **后邻未登记（自然排队）**：0x5C54B0（a 后邻——数组查找器：mov al,[ecx+0xc] 门控 + 计数循环 cmp [ecx],esi → 命中返下标/未命中返 -1）；0x5C5250（b 后邻——数组查找器孪生）；0x5C2640（c 后邻——槽族批量分派器：mov edi,[0xa8da84] 计数循环 0x4e37d0/0x5c23b0/0x5c21d0——**c 路简化版观察项**）；0x5C2680（c 后邻第二——状态提交器：0x49bc80 判空 + 0x5e26c0 + 0x340 标志 + 0x5c2500 递归 + 0x49d680）；0x5C26D0（c 后邻第三——槽表填充器：rep stosd 0xfffffffe 清 [0xabf460] 八连 + [0xa8da84]/[0xa8da78] 循环 0x696f30）；0x5C2710（c 后邻第四——sub esp,0x1b4 大函数：0x49e3b0 + sprintf 0x7c8ef4 + 八循环虚表槽 0xc/0x8 + [0xabf460] 填充）。
+- **新观察**：[ebp+0x33c] 源对象字段 + [0xa8bb0c] 全局计数 + 0x89f518 容器 + [esp+0x20] 项内容暂存（c 路）+ [0xabf460..0xabf47c] 槽值缓冲八连（c 后邻）。
+- 前向：picker 队列继续 0x5C 区（0x5C23B0 MISSING 兑现 + 0x5C2640/0x5C26D0/0x5C2710 c 后邻 + 0x5B77E0 deps=4048 大宿主）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
