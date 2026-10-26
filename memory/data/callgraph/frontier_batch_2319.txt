@@ -1,0 +1,109 @@
+# frontier batch 2319：LayerClass::Sort + 启动装载宿主 + 巨型绘制装载器（0x551A30 / 0x551630 / 0x5509F0）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x551A30 LayerClass::Sort callees=0 deps=2550 / 0x551630 FUN_00551630 callees=10 deps=64 / 0x5509F0 FUN_005509f0 callees=10 deps=55）
+- 三路 disasm：`.qwen/tmp/_d2319a.txt`（0x551A30 size 0x90）/ `_d2319b.txt`（0x551630 size 0x200——覆盖后邻 0x5517A0 浮点装载族）/ `_d2319c.txt`（0x5509F0 size 0xA00——覆盖到 0x5513F0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x551A30 | 85B（0x55）| ret c3 @0x551A84 | 0x551A90（★batch 2318 c 路已登记）| 0 次/去重 0（纯虚表比较排序，picker callees=0 吻合）|
+| 0x551630 | 363B（0x16B）| ret c3 @0x55178E / @0x55179A 双出口 | 0x5517A0（未登记——浮点装载族）| 2 次/去重 2（0x7c8df0/0x7c8ef4——已登记；另有 8 个 [0x7e10xx] IAT 间接不计）|
+| 0x5509F0 | 2245B（0x8C5）| ret c3 @0x5511CD / @0x55120C / @0x5512B4 多出口 | 0x5512C0（纯 ret 桩）| 21 次/去重 10（全部已登记，picker callees=10 吻合）|
+
+## a 路 0x551A30（85B）——LayerClass::Sort
+
+```
+00551a30  push ecx → push ebx → push ebp → mov ebp, ecx（this）
+00551a35  xor ebx, ebx（i=0）→ mov eax, [ebp+0x10] → dec eax → test eax, eax → jle 0x551a81（★count-1 ≤ 0 跳过）
+00551a41  ★★双层冒泡：mov eax, [ebp+4] → mov esi, [eax+ebx*4+4]（后项）→ mov edi, [eax+ebx*4]（前项）
+00551a4b  mov ecx, esi → mov edx, [esi] → call [edx+0xb8]（★虚表槽 0xB8 比较器——后项）→ mov [esp+0x10], eax
+00551a59  mov eax, [edi] → mov ecx, edi → call [eax+0xb8]（★前项同比较器）→ cmp [esp+0x10], eax → jge 0x551a76（★不交换）
+00551a69  ★★交换：mov ecx, [ebp+4] → mov [ecx+ebx*4+4], edi → mov edx, [ebp+4] → mov [edx+ebx*4], esi
+00551a76  mov eax, [ebp+0x10] → inc ebx → dec eax → cmp ebx, eax → jl 0x551a41（★外层循环）
+00551a84  pop edi/esi/ebp/ebx/ecx → ret c3
+```
+
+**语义**：**LayerClass::Sort（★带符号名）——图层排序器**——thiscall 无栈参：[ebp+0x10] 计数（count-1 门控）→ ★★双层冒泡排序：每轮调 ★虚表槽 0xB8 比较器（[esi] 虚表 → [edx+0xb8]——★Layer 对象比较）比较前/后项 → 后项值 < 前项值（jge 不交换）→ 交换数组 [ebp+4] 两项 → 外循环 count-1 轮。**Layer 数组冒泡排序（★虚表槽 0xB8 比较器——纯间接调用 0 直接 call）**。
+
+## b 路 0x551630（363B）——启动装载宿主
+
+```
+00551630  sub esp, 0x468 → push ebx/esi/edi → mov ebx, ecx（this=串指针）→ test ebx → je 0x55178f
+00551643  repne scasb 测串长（edi=ebx/ecx=-1 → not ecx → dec）→ je 0x55178f（空串）
+00551655  ★0x7e10e8 间接调用（[esp+0x26c] 缓冲 + 0x104 长——★GetModuleFileNameA 装载器）
+0055166c  ★0x7e10e4 间接调用（0x829774 格式串 → [esp+0x64]——★sprintf 装载器）
+00551682  ★0x7c8df0（push 0x2e——★strrchr 点号定位）+ rep movsd/rep movsb 串拷贝
+005516c0  ★0x7e11bc 间接调用（push 0x40000000/[esp+0x78]——★CreateFileA 装载器）→ cmp esi, -1 → je 0x55178f
+005516dd  ★0x7e11a0 间接调用（0x829754 格式串 ×2 + [esp+0xc]——★WriteFileA 装载器）+ 0x7e11e0 间接调用（★CloseHandle）
+00551707  ★0x7e138c 间接调用（[esp+0x370] 输出 → [esp+0x64]——★文件读取装载器）+ 0x7e10e0 间接调用（★删除/移动）
+0055172e  ★0x7c8ef4（push 0x829748 格式串 → [esp+0x16c]——★sprintf 拼接）→ rep stosd 清 0x11 槽
+00551751  ★0x7e10dc 间接调用（十参数装载——★窗口创建/显示族）→ dec eax → neg eax → sbb eax, eax → inc eax（★成功=1/失败=0 折叠）
+0055178e  ret c3 @0x55178E（成功路径）→ @0x55179A（xor al,al 失败路径）
+```
+
+**语义**：**启动装载宿主（推断名）**——thiscall 1 栈参（串指针）：★repne scasb 串长测 → ★[0x7e10e8] GetModuleFileNameA 族 + ★[0x7e10e4] sprintf 族（0x829774 格式串）→ ★0x7c8df0 strrchr（0x2e 点号——★扩展名定位）+ 串拷贝 → ★[0x7e11bc] CreateFileA（0x40000000 访问标志）+ ★[0x7e11a0] WriteFileA（0x829754 格式串）+ ★[0x7e11e0] CloseHandle → ★[0x7e138c] 读文件 + ★[0x7e10e0] 删除/移动 → ★0x7c8ef4 sprintf（0x829748 格式串）+ rep stosd 清 0x11 槽 → ★[0x7e10dc] 十参数窗口/显示装载 → ★neg/sbb/inc 成功标志折叠（成功=1/失败=0）→ ret c3。**启动阶段文件/窗口装载宿主（★★[0x7e10xx]/[0x7e11xx] IAT 间接调用族——文件→字符串→窗口管线）**。
+
+## c 路 0x5509F0（2245B）——巨型绘制装载器
+
+```
+005509f0  sub esp, 0x134 → push ebx/ebp/esi/edi → mov ebx, ecx（this）
+005509f6  mov al, [0xabc7c8]（★全局门控字节）→ test al, 1 → jne 0x550b27（★已初始化跳过）
+00550a0d  ★★[0xabc7f8..0xabc874] 32 槽常量表初始化（交错 -1/1/0/0xffffffff 双写——★8 组 × 4 槽 16B 表）
+00550b03  push 0x5512c0 → call 0x7c978a（★atexit 注册——0x5512c0 纯 ret 桩）→ mov [0xabc7c8], dl|1（★置位）
+00550b27  mov ecx, [ebx+0x30] → mov eax, [ebx+0x24] → fild/fisub 浮点差（[ebx+0x24]-[ebx+0x30]）→ 0x4cae30 → fsub [0x7e2820] → fmul [0x7e2818] → 0x7c5f00（★_ftol）→ shr/inc/shr/and 7（★8 档取模）
+00550b8c  ★0x6d2140 ×2（[0x887324] 全局 + 坐标装载）+ 0x6d20e0 ×2（[ebx+0x2c]/[ebx+0x38] 换算——★像素→格换算）
+00550bca  ★0x55af60（★batch 2308 全局容器装载）→ cmp [0xabcd44], eax → ★[0xa8eb78] 门控装载
+00550bea  mov al, [ebx+0x52] → ★[ebx+0x4c]/[ebx+0x54]/[ebx+0x58] 浮点装载（fsub/fimul/fidiv/fadd——★插值）→ 0x7c5f00
+00550c30  mov al, [ebx+0x21] → ★[ebx+0x41..0x43] 三通道装载（shl 1 加倍 + 0xff 钳位——★颜色倍增）→ 0x550caa 半减分支（shr 1——★颜色半减）
+00550d03  mov eax, [ebx+0x1c]（★循环计数）→ cmp 1 → jl 0x550fd5（★count<1 跳过）
+00550d1f  ★★[0xabc7f8+edi*16] 表查（shl eax,4 → 8 槽 16B 查表——★8 方向表）→ 六坐标累加
+00550e25  mov al, [0x8a0df0]（★门控）→ ★[0x887314] 虚表装载（[0x886fa0] 表 + 虚表槽 0x40/0x34 双调用——★格内绘制）→ 0x6612c0（★位域装载）
+00550eb0  ★[0x8a0dd0..0x8a0de4] 六槽位域（shr/shl 组合——★颜色打包）→ 虚表槽 0x34 ×2
+00550f47  mov al, [ebx+0x21] → ★三通道半减（shr 1 ×3）+ neg/sbb/and 0xffffffc8 + add 0x40（★阈值装载）→ 比较门控
+00550fbd  ★循环推进（[esp+0x5c]++ ≤ [ebx+0x1c] → 0x550d2d）→ 0x550fd1 第二循环
+00550fe2  mov eax, [0x8a0e10]（★门控 2）→ je 0x5511ce → ★[0x887644] 全局 → ★[ecx+0x24]/[ecx+4] 坐标装载 → fild/fmul [0x7e3560]（★缩放）→ ★0x4a35a0 ×2 + ★0x4a35f0 ×4（[0x3f800000] 参——★三色装载）→ ★0x4a3840 ×2（[0x8a0e10] 全局）
+005511c3  pop 四件套 → add esp, 0x134 → ret c3 @0x5511CD
+005511ce  ★第三分支：mov al, [esp+0x13] → je 0x55120d → 虚表槽 0x40 调用 → ret c3 @0x55120C
+0055120d  ★0x6612c0 + 六槽位域 + 虚表槽 0x34 调用 → ret c3 @0x5512B4
+```
+
+**语义**：**巨型绘制装载器（推断名）——载入界面/格网绘制宿主（2245B）**——thiscall：[0xabc7c8] 门控（bit0——★首次进初始化 [0xabc7f8..0xabc874] 32 槽 16B 表 + 0x7c978a atexit 注册 0x5512c0 桩）→ ★浮点差装载（[ebx+0x24]/[ebx+0x30] → fild/fisub → 0x4cae30 → fsub/fmul [0x7e2820]/[0x7e2818] → _ftol → 8 档）→ ★0x6d2140 ×2 + 0x6d20e0 ×2（[0x887324] 全局像素/格换算）→ ★0x55af60 + [0xabcd44] + [0xa8eb78]（★batch 2308/163 全局装载）→ ★[ebx+0x52]/[0x4c]/[0x54]/[0x58] 颜色插值（fsub/fimul/fidiv/fadd）→ ★[ebx+0x41..0x43] 三通道倍增（shl 1 + 0xff 钳位）/半减（shr 1）→ ★循环计数 [ebx+0x1c] → ★★[0xabc7f8+edi*16] 8 方向 16B 查表 → ★[0x887314] 虚表（[0x886fa0] + 槽 0x40/0x34）→ ★0x6612c0 + [0x8a0dd0..0x8a0de4] 六槽位域（★batch 1742/2317 同锚点）→ ★三通道半减 + neg/sbb/and 0xffffffc8 + 0x40 阈值 → 第二循环 [0x8a0e10] 门控 → ★[0x887644] + [0x7e3560] 缩放 → ★0x4a35a0 ×2 + 0x4a35f0 ×4 + 0x4a3840 ×2（★三色装载族）→ 三分支 ret c3。**载入界面格网/单元绘制全管线（★★8 方向表 + 虚表绘制 + 六槽位域 + 三色装载——多门控多分支巨型宿主）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 0 个/去重 0（纯虚表槽 0xB8 间接比较）——**已登记无 MISSING**（picker callees=0 吻合）。
+- b 路：跨函数直接 call 2 个/去重 2（0x7c8df0/0x7c8ef4——★CRT 串函数族）——**全部已登记**（另有 8 个 [0x7e10xx]/[0x7e11xx] IAT 间接调用不匹配直接 call 正则；picker callees=10 含间接）。
+- c 路：跨函数直接 call 21 个/去重 10（0x7c978a/0x4cae30/0x7c5f00/0x6d2140/0x6d20e0/0x55af60/0x6612c0/0x4a35a0/0x4a35f0/0x4a3840）——**全部已登记**（picker callees=10 吻合）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING、无批内自引用**（连续三十六批三路全登记）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★虚表槽 0xB8 比较器冒泡（Layer 对象比较——双层循环 count-1 轮）；
+2. a 路 ★★后项先比较存 [esp+0x10] 再比较前项（jge 不交换——★稳定冒泡）;
+3. b 路 ★★repne scasb 测串长 + rep movsd/rep movsb 串拷贝（★手写串操作）;
+4. b 路 ★★[0x7e10e8]/[0x7e10e4]/[0x7e11bc]/[0x7e11a0]/[0x7e11e0]/[0x7e138c]/[0x7e10e0]/[0x7e10dc] IAT 间接族（★GetModuleFileName/sprintf/CreateFile/WriteFile/CloseHandle/读删/窗口）;
+5. b 路 ★★neg/sbb/inc 成功标志折叠（dec→neg→sbb→inc——★成功=1/失败=0）;
+6. c 路 ★★[0xabc7c8] 门控 bit0 + [0xabc7f8..0xabc874] 32 槽 16B 表（交错 -1/1/0/0xffffffff——★8 方向 x/y 表）;
+7. c 路 ★★0x7c978a atexit 注册 0x5512c0 纯 ret 桩（★退出清理桩）;
+8. c 路 ★★fild/fisub/fsub/fmul/0x7c5f00 _ftol 浮点链 + 8 档取模（shr/inc/shr/and 7）;
+9. c 路 ★★[ebx+0x41..0x43] 三通道倍增（shl 1+0xff 钳位）/半减（shr 1——★颜色处理双路径）;
+10. c 路 ★★[0xabc7f8+edi*16] 8 方向查表 + 六坐标累加;
+11. c 路 ★★[0x887314] 虚表槽 0x40/0x34（[0x886fa0] 表——★格内绘制双调用）;
+12. c 路 ★★[0x8a0dd0..0x8a0de4] 六槽位域 + 0x6612c0（★batch 1742/2317 同锚点）;
+13. c 路 ★★neg/sbb/and 0xffffffc8 + add 0x40 阈值（★亮度阈值装载）;
+14. c 路 ★★[0x8a0e10] 门控 + [0x887644] + [0x7e3560] 缩放 + 0x4a35a0/0x4a35f0/0x4a3840 三色装载。
+
+## 跨批次连接
+
+- ★★batch 2318（0x551A90——a 路后邻同族排序/插入）+ batch 2317（0x552C90/0x552CC0——c 路 [0x8a0dd0..0x8a0de4] 六槽同锚点）+ batch 1742/1743（0x554280/0x554100——c 路位域同锚点）。
+- ★★batch 2308（0x55AFB0/0x55AF60——c 路 0x55af60 全局容器装载）+ batch 163（[0xa8eb78] 全局——c 路门控装载同源）。
+- ★★batch 2282-2284（VectorClass 容器族——c 路 [0x887314]/[0x887324] 全局容器）+ batch 2306/2307（事件系统——b 路 IAT 装载族同源）。
+- ★★batch 2314（颜色浮点族——c 路三通道倍增/半减同源）+ 0x4a35a0/0x4a35f0/0x4a3840（★三色装载族——batch 2317 a 路 0x4a38d0/0x4aed70 邻域）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x5517A0（b 路后邻——浮点装载族：0x7e1710/0x7e1708 常量 + 0x7c8fb0 + 0x4cac40 + [0xabc8e0]/[0xabc930]/[0xabc918]/[0xabc910] 全局装载）；0x5512D0（c 路后邻——容器清理器 [esi+4]/[0xd]/[esi+8] 清空 + 0x7c8b3d）；0x551300（索引差值器）；0x551320（索引读取器）；0x551330（相等判定器）；0x551370（复制构造器）；[0xabc7f8..0xabc874]（c 路 32 槽表——★8 方向表全局）。
+- 未兑现 MISSING 旧观察（继续排队）：0x00486790（2267 起）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150 + ★0x556AD0/0x556EB0/0x556D20 + ★0x554830/0x49E400 + ★0x551B20 + ★0x5517A0/0x5512D0（2319 新观察）。
+- 本批 **无 MISSING**（连续三十六批三路全登记——batch 2276 起，TSV 5440）。next 批预期 top3 = 0x550260（1906B callees=7）/ 0x550240（32B callees=1）/ 0x550150（230B callees=1）。
