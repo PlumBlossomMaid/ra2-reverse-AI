@@ -1,0 +1,74 @@
+# frontier batch 2246：MapClass 巨型重置器 + 全局槽创建器 + 二维网格缓冲重建器（0x5BDF70 / 0x5BDF30 / 0x5BD5C0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5BDF70 FUN_005bdf70 callees=19 deps=1020 / 0x5BDF30 FUN_005bdf30 callees=2 deps=857 / 0x5BD5C0 FUN_005bd5c0 callees=3 deps=1）
+- 三路 disasm：`.qwen/tmp/_d2246a.txt`（0x5BDF70 size 0x800）/ `_d2246b.txt`（0x5BDF30 size 0x80）/ `_d2246c.txt`（0x5BD5C0 size 0x200）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5BDF70 | 1874B（0x752）| ret 4 c20400（多出口至 0x5BE6B8）| 0x5BE940（未登记——全局槽释放器：[0xabf294] + 0x69e500 + 0x7c8b3d + 清 [0xabf2dc] 观察项）| 31 次/去重 16（0x6ac5d0/0x7c8b3d/0x5be9b0/0x6cf240/0x7c8e17/0x5bea30/0x58b070 等——callees=19 含虚表间接差异按含间接口径吻合）|
+| 0x5BDF30 | 26B（0x1A）| ret c3 @0x5BDF49 | 0x5BDF50（未登记——构造器：call 0x6a5030 + 清 [esi+0x555c]/[esi+0x5564] 观察项）| 2（0x6d0260 + 0x4a38d0——callees=2 吻合）|
+| 0x5BD5C0 | 362B（0x16A）| ret 4 c20400 @0x5BD727 | 0x5BD730（未登记——三维浮点缩放器：双层循环 fld [esp+0xc] × [eax+edi+0xc]/[+0x1c]/[+0x2c] 三通道 观察项）| 5 次/去重 3（0x7c8b3d + 0x7c8e17 + 0x5ae5e0——callees=3 吻合）|
+
+## a 路 0x5BDF70（1874B）——MapClass 巨型重置器
+
+```
+005bdf70  sub esp,0x30 → push ebx/ebp/esi/edi → mov ebp,ecx（★this）→ 虚表槽 0xc 双调用（[ebp+0x115c]/[ebp+0xd4] 复位）→ mov esi,[esp+0x44]（★第 4 参）→ push esi → call 0x6ac5d0（★初始化/判空）→ test eax → jl 0x5be6b8（失败出口）
+005bdfad  mov eax,[esi] → push 0/push 4/lea ecx,[esp+0x30] → call [eax+0xc]（★虚表槽 0xc 读 4B）→ mov [0x822cf8],0xffffffff → 虚表槽 0x5c 调用 → 0x7c8b3d 释放 [ebp+0x70]/[ebp+0x68]
+005bdfea  ★[ebp+0x14] 释放（虚表槽 0 带参 + 0x7c8b3d）→ lea esi,[ebp+0x8c] → ★3× 循环虚表槽 0xc（[ebp+0x8c] 起 0x18 步长）→ ★0xd 循环 0x7c8b3d（[ebp+0x18] 起 4B 步长）→ ★3× 循环（[ebp+0x80] 起 4B 步长）虚表槽 0 释放 + 0x7c8b3d
+005be074  [ebp+0x138] 虚表槽 0xc → ★虚表槽 0xc（push 0/0x556c 大小/ebp 整对象）→ call 0x5be9b0（★batch 2244 c 路构造器·双层指针装载）→ mov [ebp],0x7e1964 + [ebp+0x5518],0x7e195c（新虚表）
+005be0be  ★4×0x4b 组子对象重建（lea ebx,[ebp+0x15a8] → push esi/push 0xb0c110 → call 0x6cf240 ×0x4b，0x34 步长每组）+ [ebp+0x11a4]/[ebp+0x11a8]/[ebp+0x11a0] 三路 0x6cf240
+005be12b  虚表槽 0x58/0x60/0x70 调用 → 释放重分配 [ebp+0x70]（[ebp+0x6c]×10）/ [ebp+0x68]（×4）→ 0x7c8e17(0x10) → [esi+4]=0x56cb80 → [esi+8]=0x100 → [esi+0xc]=0x14
+005be1d4  0x7c8e17(0x1804) → ★循环 0x100 次 call 0x5bea30（batch 2244 b 路 VectorClass 构造器变体）+ [edi+0x14]=0x14 → 1× 第三次同款 0x58b070 构造
+005be241  ★三层循环子对象重建（lea [ebp+0x80]/[ebp+0x8c]，3 组：[edi]=指针 → 0x7c8e17(0x10) → 0x7c8e17(0x1804) → 循环 0x100 次 0x58b070 + [esi]=0x7ed520 + [esi+0x14]=0xa）
+005be355  ★虚表槽 0xc 上报（shl eax,2 大小 ×4 + [ebp+0x68] 数组）→ ★[ebp+0x18] 起 0xd 循环 0x7c8e17 分配 + [esi] 虚表槽 0xc 上报
+005be3ca  [ebp+0x50] 虚表槽 0xc → ★循环虚表槽 0xc（push 0x10 栈结构写入 word 四连 buf）→ [esi] 虚表槽 8 增长判定（[esi+0x10] ≥ [esi+8] → 虚表槽 8 调用扩容 → 16B 项写入 [ecx+eax*4]/+4/+8/+0xc）
+005be488  ★[ebp+0x13c]/[ebp+0x140] 对象数组遍历（虚表槽 0x20 释放 + 指针清零）→ 虚表槽 0xc 读 → ★[0x7e15f8] 函数指针循环调用（push 0x7f7c90 参）→ 失败出口 0x5be6b8 统一 pop 四件套 → ret 4
+```
+**语义**：**MapClass 巨型重置器（推断名）**——① 虚表槽 0xc 双复位 + 0x6ac5d0 门控；② 多段指针数组释放（[ebp+0x70]/[ebp+0x68]/[ebp+0x14]/[ebp+0x80..]/[ebp+0x8c..] 3×/0xd× 循环 0x7c8b3d + 虚析构）；③ 0x5be9b0 构造器调用 + 新虚表 0x7e1964/0x7e195c 装载；④ ★★4×0x4b 组子对象重建（0x6cf240 + 0xb0c110 构造器参数）+ 0x100 项 VectorClass 数组（0x5bea30/0x58b070）；⑤ 三层组循环重分配；⑥ 虚表槽 0xc/8 批量上报 + [0x7e15f8] 函数指针循环。**MapClass 大对象整体重建/重置主循环（多数组释放重建 + 子对象族构造 + 虚表批量上报——0x5BE9xx 家族邻区最大函数）**。
+
+## b 路 0x5BDF30（26B）——全局槽创建器
+
+```
+005bdf30  call 0x6d0260（★初始化/查询）→ mov edx,0xabf2dc（★槽标志地址）→ mov ecx,0x82604c（★串）→ call 0x4a38d0（★创建/查询）→ mov [0xabf294],eax（★存全局槽指针）→ ret
+```
+**语义**：**全局槽创建器（推断名）**——0x6d0260 前置初始化 + 0x4a38d0 创建（0x82604c 参数串 + 0xabf2dc 标志）+ 结果存 [0xabf294]。**全局单例槽创建（[0xabf294] 写入端——后邻 0x5BE940 全局槽释放器配对，创建/释放闭环）**。
+
+## c 路 0x5BD5C0（362B）——二维网格缓冲重建器
+
+```
+005bd5c0  sub esp,0x7c → push ebx/ebp/esi/edi → mov ebx,ecx（★this）→ [ebx+0xc] 0x7c8b3d 释放 → mov esi,[esp+0x90]（★第 4 参）→ [esi] 虚表槽 0x1c（push 1 门控）→ test → je 0x5bd5f2（early 返 0）
+005bd5fc  [esi] 虚表槽 0x24（push 0x18 尺寸补齐）→ [ebx+4] = [esp+0x28]/[ebx+8] = [esp+0x24]（★宽高）→ ★imul [ebx+4]×[ebx+8] → lea [edi+edi*2] → shl 4（★×48 = 每格 48B）→ 0x7c8e17 分配 → [ebx+0xc]=eax → je → 虚表槽 0x34 失败收口
+005bd668  [esi] 虚表槽 0x28（push 1/shl 4 宽×16）→ ★双层循环：outer [ebx+8]（行）/inner [ebx+4]（列）：[esi] 虚表槽 0x24（push 0x30=48B 尺寸）→ cmp eax,0x30 → jne 0x5bd700 → call 0x5ae5e0（★拷贝构造）→ rep movsd 0xc 项（48B/4）写入 [edi]（★3 通道 ×16B/格）
+005bd6ea  [esi] 虚表槽 0x34 收口 → pop 四件套 → mov eax,1（成功）→ ret 4；0x5bd700 失败路径：虚表槽 0x34 + [ebx+0xc] 释放 → ret 4
+```
+**语义**：**二维网格缓冲重建器（推断名）**——① [esi] 虚表槽 0x1c 门控 + 虚表槽 0x24 取尺寸（push 0x18）；② ★宽×高×48B（lea [edi+edi*2] ×16）0x7c8e17 分配；③ [esi] 虚表槽 0x28（宽×16 初始化）+ 双层循环逐格虚表槽 0x24（push 0x30）+ 0x5ae5e0 拷贝构造 + rep movsd 3 通道 ×16B；④ 虚表槽 0x34 成功/失败双收口。**二维网格缓冲重建（48B/格 × 宽×高 + 虚表槽 0x1c/0x24/0x28/0x34 四连——后邻 0x5BD730 三维浮点缩放孪生）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 31 次/去重 16 个（0x6ac5d0/0x7c8b3d/0x5be9b0/0x6cf240/0x7c8e17/0x5bea30/0x58b070 等）——**全部已登记**（picker callees=19 含虚表间接差异，按含间接口径吻合）。
+- b 路：跨函数直接 call 2 个（0x6d0260 + 0x4a38d0）——**全部已登记**（callees=2 吻合）。
+- c 路：跨函数直接 call 5 次/去重 3 个（0x7c8b3d + 0x7c8e17 + 0x5ae5e0）——**全部已登记**（callees=3 吻合）。
+- ★核验脚本（norm() 规范化版）输出：**三路全 PASS，无 MISSING、无 UNKNOWN**。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★巨型多段释放（[ebp+0x70]/[ebp+0x68]/[ebp+0x14]/[ebp+0x80..]/[ebp+0x8c..] 3×/0xd× 循环 0x7c8b3d + 虚表槽 0 带参虚析构）+ 0x5be9b0 构造器装载新虚表 0x7e1964/0x7e195c；
+2. a 路 ★★4×0x4b 组子对象重建（0x6cf240 + 0xb0c110 构造器，0x34 步长）+ 0x100 项 VectorClass 数组（0x5bea30/0x58b070）+ [esi+4]=0x56cb80/[esi+8]=0x100/[esi+0xc]=0x14 三常量；
+3. a 路 ★虚表槽 0xc 上报（shl eax,2 大小×4 + 0x556c 整对象）+ [0x7e15f8] 函数指针循环（push 0x7f7c90）；
+4. b 路 ★[0xabf294] 全局槽写入（0x6d0260 前置 + 0x4a38d0 创建 0x82604c 串 + 0xabf2dc 标志）——创建/释放 [0xabf294] 闭环的创建端；
+5. c 路 ★★le a [edi+edi*2]×shl 4 = ×48B 每格（3 通道 ×16B）+ rep movsd 0xc 项 + 虚表槽 0x1c/0x24(push 0x18)/0x28/0x34 四连 + cmp eax,0x30 尺寸核对。
+
+## 跨批次连接
+
+- ★★batch 2244（c 路构造器·双层指针装载 0x5BE9B0——a 路直接调用兑现；b 路 VectorClass 构造器变体 0x5BEA30——a 路循环调用）+ batch 2245（a 路后邻 0x5BE940 全局槽释放器——b 路 [0xabf294] 写入端配对）。
+- ★batch 2240（VectorClass 族——a 路 0x5bea30/0x58b070 循环）+ batch 2232（虚表槽批量调用——a 路虚表槽 0xc 上报）。
+- ★0x6cf240 + 0xb0c110（a 路子对象构造器——新观察）+ [0x7e15f8] 函数指针（a 路——batch 2232 邻接）。
+
+## 观察项 / 候选池
+
+- **后邻未登记（自然排队）**：0x5BE940（a 后邻——全局槽释放器：[0xabf294] + 0x69e500 + 0x7c8b3d + 清 [0xabf2dc]——**b 路创建器配对端**）；0x5BDF50（b 后邻——构造器：call 0x6a5030 + 清 [esi+0x555c]/[esi+0x5564]）；0x5BD730（c 后邻——三维浮点缩放器：双层循环 fld [esp+0xc] × [eax+edi+0xc]/[+0x1c]/[+0x2c] 三通道——**c 路浮点孪生观察项**）。
+- **新观察**：[0xabf294]/[0xabf2dc] 全局槽对（b 路/后邻创建-释放闭环）+ [0x822cf8]=0xffffffff 哨兵写（a 路）+ [0x7e15f8] 函数指针 + 0xb0c110 构造器参数（a 路）+ 0x7e1964/0x7e195c 虚表对（a 路）。
+- 前向：picker 队列继续 0x5B/0x5C 区（0x5BD730 三通道缩放器 + 0x5BDF50 构造器 + 0x5B77E0 deps=4048 大宿主）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
