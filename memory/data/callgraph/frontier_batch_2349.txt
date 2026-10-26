@@ -1,0 +1,73 @@
+# frontier batch 2349：VectorClass 扩容尾插器 + 双链表宿主构造器小变体 + 六字段装载构造器（0x52B0A0 / 0x52AF50 / 0x52AF00）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x52B0A0 FUN_0052b0a0 callees=2 deps=63 / 0x52AF50 FUN_0052af50 callees=0 deps=63 / 0x52AF00 FUN_0052af00 callees=0 deps=63）
+- 三路 disasm：`.qwen/tmp/_d2349a.txt`（0x52B0A0 size 0xC0）/ `_d2349b.txt`（0x52AF50 size 0x70）/ `_d2349c.txt`（0x52AF00 size 0x50）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x52B0A0 | 199B | ret 8 @0x52B15A | 0x52B160（dump 边界未显示）| 2 个/去重 2——全部已登记，picker callees=2 吻合 |
+| 0x52AF50 | 111B | ret @0x52AFBE | 0x52AFC0（dump 边界未显示）| 0 个/去重 0（picker callees=0 吻合）|
+| 0x52AF00 | 68B | ret 0x1c @0x52AF41 | 0x52AF50（★本批 b 路）| 0 个/去重 0（picker callees=0 吻合）|
+
+## a 路 0x52B0A0（199B）——VectorClass 扩容尾插器
+
+```
+0052b0a0  thiscall 1 栈参（[esp+0x18]=插入值指针）→ [esi+4] count+1 vs [esi+8] capacity → jle 0x52b12b（★无需扩容）
+0052b0b2  ★扩容：capacity==0 → ebx=0xa（10——★初始容量）；ebx<0 → 失败 0x52b15d
+0052b0c7  lea [ebp*8] → 0x7c8e17 分配（★8B/项）→ 8B/项双 dword 拷贝 → 0x7c8b3d 释放旧 → [esi]=新指针/[esi+8]=新容量
+0052b12b  ★★尾插：[esp+0x18] 指针 → [edx+ecx*8]=[eax]/[edx+ecx*8+4]（8B 项双 dword）→ count++ → [esi+0xc]=0（★清排序标志——batch 2348 c 路配套）→ al=1 → ret 8
+```
+
+**语义**：**VectorClass 扩容尾插器（推断名）——自动扩容 + 8B 项尾插（199B）**：thiscall 1 栈参（插入值指针）：★count+1 > capacity 时自动扩容（capacity==0 → ★0xa=10 初始 + lea [ebp*8] 8B/项 + 0x7c8e17 + 0x7c8b3d）→ ★★[edx+ecx*8] 8B 项双 dword 尾插 → count++ → ★[esi+0xc]=0（排序标志失效）→ 返 1。**★★VectorClass 扩容尾插（★★batch 2348 c 路有序删除器的插入配对——[esi+0xc] 排序标志共槽）**。
+
+## b 路 0x52AF50（111B）——双链表宿主构造器（小变体）
+
+```
+0052af50  thiscall 无参 → [eax]=0x7e1b04（★第一阶段虚表写）→ [esi]=[eax+4] 节点 1（虚表 0x7e1b0c）→ [edx]=[eax+0x10] 节点 2（虚表 0x7e1b0c）→ 双节点字段清零（[esi+4]/[esi+8]/[edx+4]/[edx+8]）
+0052af7d  cmp edx, ecx（★死分支——lea 后 edx 恒非 0，batch 2341 同款）→ 节点互链（[edi+4]=ebx/[edi+8]=ebx 交叉写 + 清节点 2）
+0052af9f  节点 1/2 头尾互链（[edx+8]=esi/[edx+4]=edi + [edi+8]=edx + [esi+4]=edx）→ [eax]=0x7eb744（★★最终虚表——0x7e1b04 → 0x7eb744 两阶段）→ ret
+```
+
+**语义**：**双链表宿主构造器小变体（推断名）——内嵌双节点环形互链（111B）**：thiscall 无参：★外层 [eax] 两阶段虚表（先 0x7e1b04 后 ★0x7eb744）→ ★内嵌双节点（[eax+4]/[eax+0x10]，虚表 0x7e1b0c）环形互链（8 字段交叉写 + 死分支 cmp edx, ecx）→ ret。**★★双链表容器宿主构造（★batch 2341 c 路 0x535B30 小变体——0x535B30 多七字段清零 + 0x7e1af4 虚表，本路虚表 0x7eb744 无清零段）**。
+
+## c 路 0x52AF00（68B）——六字段装载构造器
+
+```
+0052af00  cdecl 7 栈参（[esp+4]/[esp+8]/[esp+0xc]/[esp+0x10]/[esp+0x14]/[esp+0x18]/[esp+0x1c]）
+0052af08  [eax+4]=0/[eax+8]=0（★清 count/容量）→ ★★六字段装载：[eax+0x10]=[esp+8]/[eax+0xc]=[esp+4]/[eax+0x18]=[esp+0x10]/[eax+0x14]=[esp+0xc]/[eax+0x20]=[esp+0x1c]/[eax+0x1c]=[esp+0x18]/[eax+0x24]=[esp+0x14]
+0052af3b  [eax]=0x7eb734（★虚表）→ ret 0x1c
+```
+
+**语义**：**六字段装载构造器（推断名）——7 栈参填 6 字段结构（68B）**：cdecl（返 this）：★[eax+4]/[eax+8]=0 + ★★[eax+0xc..0x24] 六字段逐参装载（7 栈参——6 值 + 1 冗余？）→ ★[eax]=0x7eb734 虚表 → ret 0x1c。**六字段结构装载（★★ret 0x1c——7 参 × 4B 栈弹 + 虚表 0x7eb734 槽族——b 路后邻同族对象）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 2 个/去重 2（0x7c8e17/0x7c8b3d——分配/释放对）——**全部已登记无 MISSING**（picker callees=2 吻合）。
+- b 路：跨函数直接 call 0 个/去重 0（纯内嵌字段写）——**已登记无 MISSING**（picker callees=0 吻合）。
+- c 路：跨函数直接 call 0 个/去重 0（纯栈参装载）——**已登记无 MISSING**（picker callees=0 吻合）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING、无批内自引用**（连续五十九批三路无真 MISSING——排队 7 个真 MISSING 不变）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★扩容时 capacity==0 → ebx=0xa（10）初始容量（batch 2339/2340 扩容族的 10 初值变体——0x538B80 用增量式、0x52B0A0 用 check-then-set）;
+2. a 路 ★★[esi+0xc]=0 清排序标志（★batch 2348 c 路有序删除器配对——同一标志槽）;
+3. a 路 ★★尾插前先做 count+1>capacity 判断（jle 跳过扩容）——与 0x538B80 纯扩容不同（本路是扩容+尾插合体）;
+4. b 路 ★★外层虚表两阶段（0x7e1b04 → 0x7eb744）——batch 2341 c 路 0x535B30 是 0x7e1af4 终值，本路 0x7eb744（槽族不同）;
+5. b 路 ★★死分支 cmp edx, ecx（lea [eax+0x10] 后 edx 恒非 0——batch 2341 c 路同款）;
+6. c 路 ★★ret 0x1c（7 栈参 ×4B 弹）——★6 字段装载实际用了 7 个栈参（[esp+0x24] 装载到 [eax+0x24]——字段数与参数字不完全对应）;
+7. c 路 ★★[eax+4]/[eax+8]=0（count/容量清零——VectorClass 头字段）。
+
+## 跨批次连接
+
+- ★★batch 2339/2340（0x538B80/0x538B30 VectorClass 扩容/构造——a 路同族 + batch 2348（0x52B2B0 有序删除器——a 路 [esi+0xc] 排序标志使用方配对）。
+- ★★batch 2341（0x535B30 双链表宿主——b 路小变体同族）+ batch 2342（0x535aa0——★b 路节点构造 0x7e1b0c 虚表同族）。
+- ★★batch 2346（0x52BA60——★c 路虚表 0x7eb734 槽族与 0x7eb82c/0x7eb80c 邻域）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x52B160（a 路后邻——dump 边界外）+ 0x52AFC0（b 路后邻）+ [esi+0xc] 排序标志（a/b 路共槽——batch 2348 配对）+ 0x7eb744/0x7eb734 虚表槽族（b/c 路——批 2346/2347 [0x7eb82c]/[0x7eb80c] 邻域）。
+- 未兑现 MISSING 旧观察（继续排队）：0x00486790（2267 起）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150 + ★0x556AD0/0x556EB0/0x556D20 + ★0x554830/0x49E400 + ★0x551B20 + ★0x5517A0/0x5512D0 + ★0x5509E0/0x551300/0x551320/0x551330/0x551370 + ★0x550080/0x54F6F0/0x54F670 + ★0x54E890/0x54E8C0 + ★0x54E590/0x54D930/0x549E90 + ★0x547CE0/0x544BE0 + ★0x543780/0x542EC0 + ★0x5424C0 + ★0x5422C0/0x540F90 + ★0x540A80 + ★0x5402D0/0x53F5B0 + ★0x53ECB0/0x53EC70/0x53E470 + ★0x408B40/0x53E070/0x53E1D0/0x53DDE0 + ★0x53C4C0/0x53C280/0x53B560 + ★0x53B3F0/0x53B064 + ★0x53AC50 + ★0x53A6A0/0x53A140 + ★0x53A130/0x53A100 + ★0x538C10 + ★0x537F20/0x537E80/0x537F30/0x537E90 + ★0x537DE0/0x537B50/0x537DF0/0x537B60/0x535BD0/0x535BE0 + ★0x533F50 + ★0x41caf0/0x45e750/0x4f6eb0/0x531F60/0x5318C0 + ★0x52FFD0/0x52FC20/0x52D430 + ★0x406b10/0x434ad0/0x52CB90 + ★0x52B7A0/0x52B720 + ★0x52B4F0 + ★0x52B160/0x52AFC0（2349 新观察）。
+- 本批 **无 MISSING**（连续五十九批三路无真 MISSING——排队 7 个真 MISSING 不变）。next 批预期 top3 由 picker 决定（0x52AB80/0x52A9E0 等继续排队）。
