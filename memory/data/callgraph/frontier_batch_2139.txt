@@ -1,0 +1,64 @@
+# frontier batch 2139：浮点角度计算器 + 点积插值器 + 向量叉积归一化器（0x646730 / 0x646590 / 0x645ED0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x646730 FUN_00646730 callees=1 deps=9 / 0x646590 FUN_00646590 callees=2 deps=2 / 0x645ED0 FUN_00645ed0 callees=0 deps=25）
+- 三路 disasm：`.qwen/tmp/_d2139a.txt`（0x646730 size 0x260）/ `_d2139b.txt`（0x646590 size 0x1B0）/ `_d2139c.txt`（0x645ED0 size 0x180）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x646730 | 581B（0x245）| ret @0x646974（双出口 0x646804/0x646974）| 0x646980（sub esp,0x40/fld [edx+8] 浮点函数，未登记）| 1（0x4cac40 已登记）|
+| 0x646590 | 409B（0x199）| ret 8 @0x646726 | 0x646730（**a 路本尊**）| 2（0x4cadb0/0x4cacb0 全已登记）|
+| 0x645ED0 | 367B（0x16F）| ret 4 @0x64603C | 0x646040（sub esp,0x20/fld/fchs 浮点函数，未登记）| 0 |
+
+三函数为 **3D 浮点数学函数族**（游戏相机/朝向/插值库——fld/fmul/fdiv 链 + [0x7e1718]（1.0）/ [0x7e1738]（π 或 180/π）/ [0x7e2ac8]（某常量）/ [0x7e3810]/ [0x7e1748] 常量 + 0x4cac40/0x4cadb0/0x4cacb0 数学库）：
+
+## a 路 0x646730（581B）——角度/四元组计算器
+
+```
+00646730  sub esp,0x50/push 族/mov esi,edx（参数 2 = 坐标组）/mov edi,ecx（输出）→ fld [esi+0x28]/fadd [esi+0x14]/fadd [esi]（★三角求和）→ [esp+0x18]=0xa/[esp+0x14]=5 → ★[esp+0x28]=0x3f800000（1.0f）/[esp+0x30]=1/[esp+0x34]=2/[esp+0x38]=3/[esp+0x3c]=4/[esp+0x40]=5/[esp+0x44]=6/[esp+0x48]=7/[esp+0x4c]=8/[esp+0x50]=9/[esp+0x58]=0xb（★索引映射表 0-9/11！）→ fcom [0x7e2800]（与 0 比较）→ fnstsw/test ah,0x40 → je → 收尾写四元组（[eax]=[esp+0x1c]/[eax+4]=[esp+0x20]/[eax+8]=0xa/[eax+0xc]）ret
+00646805  非 0 → fcom [0x7e2800] → test ah,0x41 → jne 0x646863 → fadd [0x7e1718]（★+1.0）→ ★call 0x4cac40（数学库——acos/asin 推断）→ fld st/fmul [0x7e1738]（★π/角度常量）→ ★叉积计算（[esi+0x24]-[esi+0x18]）×st → 写三字段 → jmp 0x64694f
+00646863  否则 → fld [esi+0x14]/fld [esi]/fcompp（★两分量比较）→ [esp+ebp*4+0x14] 索引表（cmp ah,1 分支）→ 分支 edi/ebx（2/1/0 组合选择）→ 0x4cac40 ×2 → fld [esi+edx*4] 分量 → fld/fmul/fsub 叉积链 → 写四元组 → 尾收
+```
+**语义**：**角度/四元组计算器（推断名）**——参数 2 坐标组 → 三角求和 + fcom 归一判定（与 [0x7e2800] 比较）→ 索引映射表（[esp+0x14] 起 0-9/0xb 表）→ 0x4cac40 数学库（acos/asin 推断）→ fdiv/fmul 组合 → 叉积链 → 写四元组输出。[esp+0x28]=1.0f 起点 + 0-9 整数表 = 方向索引枚举（与运动系统方向位域相关的角度转换推断）。
+
+## b 路 0x646590（409B）——点积/插值器
+
+```
+00646590  push ebp/mov ebp,esp/and esp,0xfffffff8/sub esp,0x2c/push 族/mov esi,edx（参数 2 向量 A）/mov edi,[ebp+8]（参数 3 向量 B）/mov ebx,ecx（输出）→ ★四分量点积（fld [esi+0xc]×fmul [edi+0xc] + [esi+8]×[edi+8] + [esi+4]×[edi+4] + [esi]×[edi]）→ fst [esp+0x10] → fadd [0x7e1718]（+1.0）→ fcomp [0x7e3810]（与 2.0 比较）→ 边界判定（test ah,0x41 双路）
+00646611  常规路径：→ ★call 0x4cadb0/0x4cacb0 ×3（数学库）→ [0x7e2ac8] 常量 → fsub/fmul 组合 → 分量循环（lea ecx,[esp+0x28]/sub edi,esi/4 次 fld fmul fstp——★四分量缩放）→ 写四元组 → ret 8
+006466a7  边界路径：→ [0x7e2ac8] → fmul [0x7f0288]（★新常量）→ 0x4cacb0 ×2 → 分量循环（同 4 次）→ 写四元组 → ret 8
+```
+**语义**：**点积/插值器（推断名）**——参数 2/参数 3 四分量点积 → [0x7e1718]（1.0）+ [0x7e3810]（2.0）比较（球面插值判定——acos 区间）→ 0x4cadb0/0x4cacb0（数学库——acos/sin/cos 推断）→ [0x7e2ac8] 缩放 + [0x7f0288] 边界常量 → 四分量循环 → 写四元组。**球面插值（slerp）风格数学**。
+
+## c 路 0x645ED0（367B）——向量叉积归一化器
+
+```
+00645ed0  sub esp,0x40/fld [edx]（参数 2 向量 A）/fld [edx+4]/fld [edx+8] → [esp+0x44] 参数 3 向量 B [eax] → ★叉积三分量（fld/fmul/fsubp 链：A.y×B.z-A.z×B.y / A.z×B.x-A.x×B.z / A.x×B.y-A.y×B.x）→ [0x7e1748] 常量 → fcomp 判定 → 归一化（fdiv st(1) ×4 分量——长度除）→ 写四元组 → ret 4
+```
+**语义**：**向量叉积归一化器（推断名）**——参数 2/参数 3 向量叉积三分量（fld/fmul/fsubp 链——标准叉积公式）→ [0x7e1748] 长度判定 → fdiv 归一化（四分量）→ 写四元组输出。纯浮点无 call。
+
+## 原版怪癖（照抄）
+
+1. a 路索引映射表：**[esp+0x14] 起 [5]/[1]/[2]/[3]/[4]/[5]/[6]/[7]/[8]/[9]/[0xb]** 硬编码栈表（0x3f800000=1.0f + 0-9 + 11——方向索引枚举）；
+2. a 路 fcom 双比较链（[0x7e2800] 与 0 比较 → test ah,0x40/0x41 双分支——相等/小于路径分离）；
+3. a 路 [0x7e1718]（1.0）+ [0x7e1738]（π/角度）数学常量对；
+4. a 路收尾四元组 [eax+8]=0xa（10）常量写（非零值）；
+5. b 路四分量点积 + [0x7e1718]+1.0 + [0x7e3810] 2.0 比较（★slerp 区间判定——acos 输入钳制）；
+6. b 路双路径（常规 [0x7e2ac8] 缩放 / 边界 [0x7f0288]——★[0x7f0288] 新常量）；
+7. b 路分量循环惯用：lea ecx,[esp+0x28]/sub edi,esi（★指针差分）/mov edx,4/dec jne——4 次展开 fld fmul fstp；
+8. c 路叉积公式 fld/fmul/fsubp 链（A×B 三分量标准公式）+ [0x7e1748] 判定 + fdiv st(1) 归一化。
+
+## 跨批次连接
+
+- ★★batch 2118-2122 运动系统：a 路方向索引枚举（0-9/11 表）+ [0x7e1718]/[0x7e1738] 常量与运动系统角度语义相关（方向位域 [0x8a0dd0] 的数学实现推断——partial）。
+- ★★batch 2136 c 路 0x64A7B0：本批 b 路 [0x7e1718]/[0x7e1738] 常量与 2136 c 路 [0x7e1710] 常量同域（数学常量表 [0x7e17xx] 族）。
+- ★0x4cac40/0x4cadb0/0x4cacb0（数学库——已登记，0x4cAxxx 数学函数族）+ 0x4c66c0/0x4c6860（batch 2137/2138 记录族 callee 同 0x4c 区系）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（直接 call 全已登记——a 路 0x4cac40 + b 路 0x4cadb0/0x4cacb0）。
+- **后邻未登记**：0x646980（a 路后邻浮点函数）、0x646040（c 路后邻浮点函数）。
+- **新观察**：数学常量 [0x7e1748]/[0x7e2800]/[0x7e3810]/[0x7f0288]（[0x7e17xx] 族延伸）——0x4cAxxx 数学库（acos/sin/cos/sqrt 推断）。
+- 前向：picker 队列继续 0x64 区 + 0x4A8xxx/0x4A9xxx 判定族 + 0x599650。
