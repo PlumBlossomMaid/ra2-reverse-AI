@@ -1,0 +1,73 @@
+# frontier batch 2341：虚表安装器 ×2 + 复合结构构造器（0x537DD0 / 0x537B40 / 0x535B30）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x537DD0 FUN_00537dd0 callees=0 deps=192 / 0x537B40 FUN_00537b40 callees=0 deps=192 / 0x535B30 FUN_00535b30 callees=0 deps=2984）
+- 三路 disasm：`.qwen/tmp/_d2341a.txt`（0x537DD0 size 0x30）/ `_d2341b.txt`（0x537B40 size 0x30）/ `_d2341c.txt`（0x535B30 size 0xC0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x537DD0 | 9B | ret @0x537DD8 | 0x537DE0（mov eax,0x827a7c → ret——单例 getter，未登记）| 0 次/去重 0（picker callees=0 吻合）|
+| 0x537B40 | 9B | ret @0x537B48 | 0x537B50（mov eax,0x827a18 → ret——单例 getter，未登记）| 0 次/去重 0（picker callees=0 吻合）|
+| 0x535B30 | 146B（0x92）| ret @0x535BC1 | 0x535BD0（xor al,al → ret 4——恒返 0，未登记）| 0 次/去重 0（picker callees=0 吻合）|
+
+## a 路 0x537DD0（9B）——虚表安装器 C
+
+```
+00537dd0  mov eax, ecx → mov [eax], 0x7ebf2c → ret
+```
+
+**语义**：**虚表安装器 C（推断名）——thiscall 无参对象虚表写入（9B）**：mov eax, ecx（this）→ ★[eax]=0x7ebf2c（虚表）→ ret。**对象构造/重置最小模板（9B 三指令——虚表 0x7ebf2c 槽族安装，batch 2340 a/b 路孪生）**。
+
+## b 路 0x537B40（9B）——虚表安装器 D
+
+```
+00537b40  mov eax, ecx → mov [eax], 0x7ebf04 → ret
+```
+
+**语义**：**虚表安装器 D（推断名）——thiscall 无参对象虚表写入（9B）**：mov eax, ecx（this）→ ★[eax]=0x7ebf04（虚表）→ ret。**对象构造/重置最小模板（9B 三指令——虚表 0x7ebf04 槽族安装，batch 2340 a/b 路孪生异槽）**。
+
+## c 路 0x535B30（146B）——复合结构构造器（双链表宿主）
+
+```
+00535b30  mov eax, ecx（this）→ push ebx/esi → xor edx, edx → lea esi, [eax+0x10]（★内嵌节点 1）→ lea ecx, [eax+0x1c]（★内嵌节点 2）
+00535b3c  [eax+4]=0/[eax+8]=0（★宿主 count 等字段清零）→ [esi+4]=0/[esi+8]=0 → mov [esi], 0x7e1b0c（★节点 1 虚表）
+00535b4e  [ecx+4]=0/[ecx+8]=0 → mov [ecx], 0x7e1b0c（★节点 2 虚表）→ cmp ecx, edx → push edi
+00535b5d  mov [eax+0xc], 0x7e1b04（★第一阶段虚表）→ je 0x535b86（ecx 恒非 0——死分支，原版怪癖）
+00535b66  mov ebx, [ecx+4] → cmp ebx, edx → je 0x535b86 → mov edi, [ecx+8] → cmp edi, edx → je 0x535b86（★节点 2 前后项检查）
+00535b74  [edi+4]=ebx（★尾→头互链）→ [ecx+4]→[ecx+8] 交叉 → [ecx+8]=0/[ecx+4]=0（★清节点 2）
+00535b86  mov edi, [esi+4] → [ecx+8]=esi（★节点 2 尾接节点 1）→ [ecx+4]=edi（★节点 2 头接节点 1 旧头）
+00535b8f  mov edi, [esi+4] → cmp edi, edx → je 0x535b99 → [edi+8]=ecx（★旧头尾接节点 2）→ 0x535b99: [esi+4]=ecx（★节点 1 头=节点 2）
+00535b9c  mov [eax+0xc], 0x7e1afc（★★第二阶段虚表——0x7e1b04 → 0x7e1afc 两阶段切换）
+00535ba3  pop edi → [eax+0x28]=0/[eax+0x2c]=0/[eax+0x30]=0/[eax+0x34] byte=0/[eax+0x38]=0/[eax+0x3c]=0/[eax+0x40] byte=0（★七字段清零）
+00535bba  mov [eax], 0x7e1af4（★宿主虚表）→ pop esi/ebx → ret
+```
+
+**语义**：**复合结构构造器（推断名）——双链表宿主对象构造（146B）**：thiscall 无参——★宿主 [eax]=0x7e1af4 虚表 + [eax+4]=0/[eax+8]=0（count/容量）→ ★★内嵌双节点（[eax+0x10] 节点 1/[eax+0x1c] 节点 2，虚表 0x7e1b0c）互链成环形链表（前驱/后继 8 字段交叉写）→ ★★[eax+0xc] 两阶段虚表（先 0x7e1b04 后 0x7e1afc）→ 七字段清零（[eax+0x28]..[eax+0x40]）→ ret。**★★双链表容器宿主构造器（★0x7e1af4/0x7e1afc/0x7e1b04/0x7e1b0c 四虚表同族——batch 2340 c 路 VectorClass 构造器邻域容器族）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 0 个/去重 0（纯虚表写 9B）——**已登记无 MISSING**（picker callees=0 吻合）。
+- b 路：跨函数直接 call 0 个/去重 0（纯虚表写 9B）——**已登记无 MISSING**（picker callees=0 吻合）。
+- c 路：跨函数直接 call 0 个/去重 0（纯内嵌对象字段写/清零，无外部调用）——**已登记无 MISSING**（picker callees=0 吻合）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING、无批内自引用**（连续五十三批三路全登记）。
+
+## 原版怪癖（照抄）
+
+1. a/b 路 ★★9B 三指令最小虚表安装（0x7ebf2c / 0x7ebf04——batch 2340 a/b 路 0x7ebf7c/0x7ebf54 同槽族族系）;
+2. c 路 ★★cmp ecx, edx 死分支（lea ecx,[eax+0x1c] 后 ecx 恒非 0——0x535b66 段节点 2 前后项检查因此恒过）;
+3. c 路 ★★[eax+0xc] 两阶段虚表（先 0x7e1b04 后 0x7e1afc——构造中途切换，最终值 0x7e1afc）;
+4. c 路 ★★内嵌双节点 0x7e1b0c 环形互链（[esi+4]/[esi+8] ↔ [ecx+4]/[ecx+8] 8 字段交叉写）+ [eax+4]/[eax+8] 宿主字段清零 + 七字段清零（[eax+0x28]..[eax+0x40]）。
+
+## 跨批次连接
+
+- ★★batch 2340（0x537F10/0x537E70 虚表安装器——a/b 路同族孪生 + 0x538B30 VectorClass 构造器——c 路容器族邻域）+ batch 1737/1731/1721（VectorClass 容器族——c 路宿主同源）。
+- ★★后邻 0x537DE0/0x537B50 单例 getter（mov eax, 0x827a7c/0x827a18 → ret）+ DebugLog 壳（0x734e60）——★观察项同 batch 2340 后邻模式。
+- ★★batch 2320/2321（容器族清理/循环——c 路宿主结构同源）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x537DE0/0x537B50（a/b 路后邻——单例 getter 9B 孪生）+ 0x537DF0/0x537B60（DebugLog 壳）+ 0x535BD0（c 路后邻——xor al,al → ret 4 恒返 0）+ 0x535BE0（c 路隔邻——not/shr 11/and 1 位运算小器）+ c 路四虚表族（0x7e1af4/0x7e1afc/0x7e1b04/0x7e1b0c 双链表容器）。
+- 未兑现 MISSING 旧观察（继续排队）：0x00486790（2267 起）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150 + ★0x556AD0/0x556EB0/0x556D20 + ★0x554830/0x49E400 + ★0x551B20 + ★0x5517A0/0x5512D0 + ★0x5509E0/0x551300/0x551320/0x551330/0x551370 + ★0x550080/0x54F6F0/0x54F670 + ★0x54E890/0x54E8C0 + ★0x54E590/0x54D930/0x549E90 + ★0x547CE0/0x544BE0 + ★0x543780/0x542EC0 + ★0x5424C0 + ★0x5422C0/0x540F90 + ★0x540A80 + ★0x5402D0/0x53F5B0 + ★0x53ECB0/0x53EC70/0x53E470 + ★0x408B40/0x53E070/0x53E1D0/0x53DDE0 + ★0x53C4C0/0x53C280/0x53B560 + ★0x53B3F0/0x53B064 + ★0x53AC50 + ★0x53A6A0/0x53A140 + ★0x53A130/0x53A100 + ★0x538C10 + ★0x537F20/0x537E80/0x537F30/0x537E90 + ★0x537DE0/0x537B50/0x537DF0/0x537B60/0x535BD0/0x535BE0（2341 新观察）。
+- 本批 **无 MISSING**（连续五十三批三路全登记——batch 2276 起，TSV 5506）。next 批预期 top3 = 0x535B30 已登记后的下一档（uc=1 callees=0 族继续）。
