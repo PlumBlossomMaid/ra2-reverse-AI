@@ -1,0 +1,73 @@
+# frontier batch 2259：浮点向量缩放/归一化器 + 16 位坐标钳位器 + 16 位有符号除法器（0x5B2A30 / 0x5B29C0 / 0x5B2970）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x5B2A30 FUN_005b2a30 callees=5 deps=24 / 0x5B29C0 FUN_005b29c0 callees=0 deps=24 / 0x5B2970 FUN_005b2970 callees=0 deps=24）
+- 三路 disasm：`.qwen/tmp/_d2259a.txt`（0x5B2A30 size 0x200）/ `_d2259b.txt`（0x5B29C0 size 0x100）/ `_d2259c.txt`（0x5B2970 size 0x100）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5B2A30 | 342B（0x156）| ret 4 c20400 @0x5B2B83 | 0x5B2B90（未登记——全局常量装载器观察项：[0x7e1710]/[0x7e1708] 装载→0x7c8fb0 幂→fadd st(0)→0x4cac40→[0xabef78]）| 9 次/去重 5（0x4cac40 + 0x4cae30 + 0x7c5f00 + 0x4cad00 + 0x4cacb0——全部已登记，callees=5 吻合）|
+| 0x5B29C0 | 100B（0x64）| ret 8 c20800 @0x5B2A21 | 0x5B2A30（本批 a 路——后邻相邻）| 0 次（纯 word 操作，callees=0 吻合）|
+| 0x5B2970 | 26B（0x1A）| ret 8 c20800 @0x5B2987 | 0x5B2990（未登记——word 差绝对值比较器观察项：sub cx + movsx + cdq/xor/sub 绝对值→setge）| 0 次（纯 word 操作，callees=0 吻合）|
+
+## a 路 0x5B2A30（342B）——浮点向量缩放/归一化器
+
+```
+005b2a30  push ebp → mov ebp,esp → and esp,0xfffffff8（★栈对齐 8）→ sub esp,0x14 → push 四件套 → sub esp,8 → ★点积第一段：fld [esi+8]/fld [esi]/fld st(0)/fmul st(1)/fld st(2)/fmul st(3)/faddp → fstp [esp]（★x²+y² 入栈参）→ call 0x4cac40（★平方根/模长）→ mov edx,[esi+0x14] → fstp [esp+0x18]
+005b2a5c  ★双参数装载：push [esp+0x1c]/[esp+0x18]/[esi+0x14]/[esi+0x10] → call 0x4cae30（★变换）→ fsub [0x7e2820] → fmul [0x7e2818] → call 0x7c5f00（★_ftol）→ movsx ecx,ax → sub ecx,0x3fff（★半精度指数）→ fild/fmul [0x7e2810]（★缩放）→ fstp [esp+0x18]
+005b2aa6  ★点积第二段（三分量）：fld 三字段链 → fstp [esp] → call 0x4cac40 → fstp [esp+0x20] → fld [esp+0x18] → fcomp [0x7e2800] → fnstsw/test ah,0x40 → jne 0x5b2b07（★[0x7e2800] 比较分支）
+005b2ae4  ★归一化分支：push [esp+0x14]/[esp+0x10] → call 0x4cad00（★倒数）→ fdivr [esi] → fstp [esi] → push/push → call 0x4cad00 → fdivr [esi+8] → fstp [esi+8]（★除 [esi]/[esi+8]）
+005b2b07  ★word 半精度装载三段：movsx edx,[edi] → sub 0x3fff → fild/fmul [0x7e2810] → push → call 0x4cad00 → fmul [esi] → fstp [esi]（★缩放 [esi]）→ 同款 ×2：fmul [esi+8] → fstp [esi+8] / call 0x4cacb0 → fmul [esp+0x20] → fstp [esi+0x10]（★缩放 [esi+0x10]）→ ret 4
+```
+
+**语义**：**浮点向量缩放/归一化器（推断名）**——★[esi]/[esi+8]/[esi+0x10] 三维向量处理：0x4cac40 点积/模长 + 0x4cae30 双参数变换 + ★fsub/fmul 常量（[0x7e2820]/[0x7e2818]）+ 0x7c5f00 _ftol + ★movsx word 半精度 → sub 0x3fff → fild/fmul [0x7e2810] 缩放 + ★[0x7e2800] 比较分支（**< 常量走归一化除法 0x4cad00，否则缩放**）+ 0x4cacb0 + 分段回写 [esi]/[esi+8]/[esi+0x10]。**浮点向量变换器（batch 2257 a 路 [0x7e2800] 常量同族——x87 半精度指数 + 0x3fff 偏移 + 0x4CAD 区浮点内核）**。
+
+## b 路 0x5B29C0（100B）——16 位坐标钳位器
+
+```
+005b29c0  mov edx,[esp+8]（★参数2）→ mov eax,[esp+4]（★参数1）→ push 四件套 → mov bp,[edx]（★word 参数2值）→ mov di,[eax]（★word 参数1值）→ mov si,[ecx]（★this+0 当前值）→ ★绝对值模板：movsx eax,bp → cdq → xor eax,edx → sub eax,edx（★abs(bp)）→ mov ebx,esi → sub ebx,edi → movsx eax,bx → cdq → xor/sub（★abs(si-di)）→ cmp → jl 0x5b2a01
+005b29f5  ★分支1（abs(bp) >= abs(si-di)）：mov [ecx],di（★[ecx]=参数1值）→ al=1 → ret 8
+005b2a01  ★分支2：sub edi,esi → test di,di → jge 0x5b2a16 → sub esi,ebp → mov [ecx],si（★[ecx]=参数1-当前值）→ al=0 → ret 8
+005b2a16  ★分支3：add ebp,esi → mov [ecx],bp（★[ecx]=参数2+当前值）→ al=0 → ret 8
+```
+
+**语义**：**16 位坐标钳位器（推断名）**——★word 三输入（[ecx] 当前 / [esp+4] 参数1 / [esp+8] 参数2）分支配对：**abs(bp) >= abs(si-di) → 直接写参数1；否则 di-si < 0 → 写 参数1-当前；否则写 参数2+当前**（16 位模运算回绕语义——mov word [ecx] 直接截断）。**16 位坐标调整模板（batch 2258 b/c 路 0x5B2DA0/[ecx] word 字段族——movsx/cdq/xor/sub 绝对值惯用）**。
+
+## c 路 0x5B2970（26B）——16 位有符号除法器
+
+```
+005b2970  movsx eax,[ecx]（★word 分子）→ cdq（★符号扩展）→ idiv [esp+8]（★有符号除法 分母）→ mov word [esp+8],ax（★商截断回 16 位）→ mov eax,[esp+4]（★输出指针）→ mov ecx,[esp+8] → mov [eax],ecx（★商写入输出）→ ret 8
+```
+
+**语义**：**16 位有符号除法器（推断名）**——★word 分子 movsx 符号扩展 → cdq → idiv 有符号除法 → **商 ax 截断回 16 位写回输出**（除法结果基于 32 位除数，但入参/出参均 16 位截断）。**16 位算术模板（movsx + idiv + word 截断——原版怪癖：32 位除 16 位出 16 位，商可能溢出回绕）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 9 次/去重 5 个（0x4cac40 ×3 + 0x4cae30 + 0x7c5f00 + 0x4cad00 ×2 + 0x4cacb0）——**全部已登记**（callees=5 吻合）。
+- b 路：跨函数直接 call 0 个（纯 word 操作）——callees=0 吻合。
+- c 路：跨函数直接 call 0 个（纯 word 操作）——callees=0 吻合。
+- ★核验脚本（norm() 规范化版）输出：**三路全 PASS，无 MISSING、无批内自引用**——本批零观察项新增；b 路后邻 = a 路本体（批内后邻相邻，非 MISSING）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★浮点流程：0x4cae30 变换后 **fsub [0x7e2820] → fmul [0x7e2818] → _ftol → movsx ax → sub 0x3fff**——半精度指数换算链（Word 半精度浮点 → 有符号整数，**0x3fff 偏移 = IEEE 半精度指数偏移**）;
+2. a 路 ★★[0x7e2800] 比较分支：fcomp 后 test ah,0x40（C3 标志）——**归一化分支（divr）只在 [esp+0x18] < [0x7e2800] 时进入**（0x7e2800 = 双精度常量，batch 2257 a 路同常量——需 PE 字节取证确认值）;
+3. a 路 ★movsx word [edi] 半精度装载 ×3（sub 0x3fff → fild → fmul [0x7e2810]）——**同一 word 三次重复装载**（非循环）;
+4. a 路 ★and esp,0xfffffff8 栈对齐 + 多段 fstp [esp+N] 栈参传递（8 字节 fp 值栈传）;
+5. b 路 ★★十六位回绕：abs(bp) >= abs(si-di) 直接写参数1，否则按 di-si 符号分支——**mov word 截断（未检查溢出）**;
+6. c 路 ★★idiv 后 mov word [esp+8],ax——**商截断回 16 位写回**（32 位除法结果可能溢出 word 范围，回绕照抄）。
+
+## 跨批次连接
+
+- ★★batch 2257（a 路 [0x7e2800] 常量 + 0x817474/0x816cac 表——a 路同常量族）+ batch 2258（[ecx]/[esi] word 字段族——b/c 路 16 位操作同族）。
+- ★0x4CAD 区浮点内核（0x4cac40/0x4cae30/0x4cad00/0x4cacb0——a 路四 callee 全已登记，浮点变换核心）+ 0x7c5f00 _ftol（CRT 区，batch 2255 0x750920 系数同族）。
+- ★[0x7e2810]/[0x7e2818]/[0x7e2820] 常量族（a 路——与 [0x7e2800] 同区，半精度/缩放常数区）。
+
+## 观察项 / 候选池
+
+- **本批零 MISSING、零批内自引用**（三路 callee 全部已登记；b 路后邻 = a 路本体为批内相邻非 MISSING）。
+- **后邻未登记（自然排队）**：0x5B2B90（a 路后邻——全局常量装载器：[0x7e1710]/[0x7e1708] → 0x7c8fb0 幂 → fadd → 0x4cac40 → [0xabef78]）+ 0x5B2BC0/0x5B2BE0/0x5B2C00/0x5B2C20（同族全局常量装载器链：fdiv 0x7edc80→[0xabefc8]、fld [0xabefc8]→[0xabefb0]、fld 0x7edc88×[0x7e1720]→[0xabefa8]）、0x5B2990（c 路后邻——word 差绝对值比较器：sub cx + movsx + cdq/xor/sub → setge）。
+- **新观察**：0x4CAD 区浮点内核四连（a 路——**0x4C 区浮点变换候选池**）+ [0x7e2810]/[0x7e2818]/[0x7e2820] 半精度常量族 + [0xabef78]/[0xabefc8]/[0xabefb0]/[0xabefa8] 全局浮点槽族（a 路后邻链）。
+- 前向：picker 队列继续 0x5B/0x5C 区（0x5B20F0/0x5AE220 大宿主 + 0x5B2B90 常量装载链新候）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x4CAD 区浮点内核 + 0x599650（QWEN.md Init random map）。
