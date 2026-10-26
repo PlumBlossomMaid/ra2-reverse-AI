@@ -1,0 +1,67 @@
+# frontier batch 2233：0x5D 区 VectorClass 家族三连（赋值器 + 赋值器·孪生 + 数组项清理器·变体3）（0x5D0EC0 / 0x5D0C60 / 0x5D0730）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5D0EC0 FUN_005d0ec0 callees=2 deps=161 / 0x5D0C60 FUN_005d0c60 callees=2 deps=161——孪生对 / 0x5D0730 FUN_005d0730 callees=1 deps=47）
+- 三路 disasm：`.qwen/tmp/_d2233a.txt`（0x5D0EC0 size 0x200）/ `_d2233b.txt`（0x5D0C60 size 0x200）/ `_d2233c.txt`（0x5D0730 size 0x100）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5D0EC0 | 176B（0xB0）| ret 8 @0x5D0F64 | 0x5D0F70（未登记——[ecx+0x10] 门控索引查找观察项）| 2（0x7c8e17 + 0x7c8b3d——callees=2 吻合）|
+| 0x5D0C60 | 176B（0xB0）| ret 8 @0x5D0D04 | 0x5D0D10（未登记——[ecx+0x10] 门控索引查找观察项）| 2（0x7c8e17 + 0x7c8b3d——callees=2 吻合）|
+| 0x5D0730 | 42B（0x2A）| ret c3 @0x5D0759 | 0x5D0760（未登记——[ecx+0xc] 门控+shr 2 索引差观察项）| 1（0x7c8b3d——callees=1 吻合）|
+
+## a 路 0x5D0EC0（176B）——VectorClass 赋值器
+
+```
+005d0ec0  push 四件套 → mov esi=ecx → mov ebp,[esp+0xc]（★容量参数）→ test → je 0x5d0f4a
+005d0ece  mov ebx,[esp+0x18]（★外部缓冲参数）→ mov byte [esi+0xc],0 → test ebx → jne 0x5d0eee → lea eax,[ebp*4] → push → call 0x7c8e17（★分配）→ mov edi=eax → jmp 0x5d0ef0
+005d0eee  mov edi=ebx（★复用外部缓冲）→ 0x5d0ef0：test edi → mov byte [esi+0xc],1 → je 0x5d0f67（分配失败返 false）
+005d0ef8  ★逐项拷贝：mov eax,[esi+4]（★源缓冲）→ test → je 0x5d0f38 → mov ecx,[esi+8]（★源容量）→ cmp ebp,ecx → jge 0x5d0f08 → mov ecx=ebp（★取小）→ ★前移拷贝循环（mov edx,[edx+eax*4-4] → mov [edi+eax*4-4],edx——倒序拷贝）→ mov al,[esi+0xd] → test → je → mov eax,[esi+4] → push → call 0x7c8b3d（★释放旧缓冲）→ mov [esi+4],0
+005d0f38  mov [esi+4],edi（★新缓冲）→ test ebx → sete al → mov [esi+8],ebp → mov byte [esi+0xd],al → jmp 0x5d0f51
+005d0f4a  （容量==0）mov edx,[esi] → call [edx+0xc]（★虚表槽 0xc——清空）→ 0x5d0f51：mov eax,[esi+8] → cmp [esi+0x10] → jge → mov [esi+0x10],eax → mov al,1 → ret 8
+005d0f67  （分配失败）xor al,al → ret 8
+```
+**语义**：**VectorClass 赋值器（推断名）**——① 容量×4 分配 0x7c8e17 / 外部缓冲复用（[esp+0x18] 非空）双路径；② ★倒序前移拷贝（源→新缓冲）+ 旧缓冲 0x7c8b3d 释放（[esi+0xd] 拥有标志门控）；③ 字段写（[esi+4]=新缓冲/[esi+8]=容量/[esi+0xc]=1/[esi+0xd]=拥有标志/[esi+0x10]=max 容量）；④ 容量==0 → 虚表槽 0xc 清空。**Vector 容器赋值端（分配/复用 + 倒序拷贝 + 字段更新）**。
+
+## b 路 0x5D0C60（176B）——VectorClass 赋值器·孪生
+
+```
+005d0c60  与 a 路逐字节同构（push 四件套 → ebp=容量 → ebx=外部缓冲 → 0x7c8e17 分配/复用双路径 → 倒序前移拷贝 → 0x7c8b3d 释放 → 字段写 → 虚表槽 0xc 清空分支 → ret 8）
+```
+**语义**：**VectorClass 赋值器·孪生（推断名）**——与 a 路**逐字节同构**（同一赋值模板第二副本——Westwood 复制粘贴惯用，0x5D0C60/0x5D0EC0 孪生对）。
+
+## c 路 0x5D0730（42B）——数组项清理器·变体3
+
+```
+005d0730  与 batch 2232 a 路 0x5D2720 逐字节同构：mov [esi+0x10],0 → mov eax,[esi+4] → cmp [esi+0xd] → call 0x7c8b3d → [esi+4]=0/[esi+0xd]=0/[esi+8]=0 → ret
+```
+**语义**：**数组项清理器·变体3（推断名）**——VectorClass 释放模板**第五副本**（0x5D0730/0x5D1550/0x5D2720/0x5D2780/0x5D1090/0x5D0E30 全族——同一 0x7c8b3d + 三字段清零模板复制六份）。
+
+## callee 核验
+
+- a 路：跨函数直接 call 2 个（0x7c8e17 + 0x7c8b3d），**全部已登记**（callees=2 吻合）。
+- b 路：跨函数直接 call 2 个（0x7c8e17 + 0x7c8b3d），**全部已登记**（callees=2 吻合）。
+- c 路：跨函数直接 call 1 个（0x7c8b3d），**已登记**（callees=1 吻合）。
+- ★核验脚本（norm() 规范化版）直接输出三路全 PASS。**MISSING：无**。
+
+## 原版怪癖（照抄）
+
+1. a/b 路 ★★容量×4 分配 0x7c8e17 / 外部缓冲复用双路径（test ebx → jne 复用——batch 2229 b 路同款）+ 倒序前移拷贝（mov [edi+eax*4-4],edx——★倒序而非正序）+ 旧缓冲释放（[esi+0xd] 拥有标志门控 0x7c8b3d）；
+2. a/b 路 ★容量==0 → 虚表槽 0xc 清空分支（mov edx,[esi] → call [edx+0xc]）+ [esi+0x10]=max 容量更新（cmp → jge → mov）+ ret 8;
+3. a/b 路 ★★逐字节同构孪生对（0x5D0C60/0x5D0EC0——Westwood 复制粘贴惯用）；
+4. c 路 ★VectorClass 释放模板第五副本（0x5D0730 与 0x5D1550/0x5D2720/0x5D2780 + 后邻 0x5D1090/0x5D0E30 全族六副本——0x7c8b3d + 三字段清零）。
+
+## 跨批次连接
+
+- ★★batch 2232（0x5D2720 数组项清理器·孪生 + 0x5D2260 批量绘制——c 路逐字节同构 + a/b 路 [esi+4]/[esi+8]/[esi+0xc]/[esi+0xd]/[esi+0x10] 字段布局同族）+ batch 2231（0x5D2780 清理器 + [0x887308] 全局）。
+- ★★batch 2229（[esi+0xd] 拥有标志 + 0x7c8e17/0x7c8b3d 分配释放模板——a/b 路）+ batch 2227（VectorClass 构造器变体——a/b 路赋值对）。
+- ★batch 2228/2226（VectorClass 家族 + 0x7c8e17/0x7c8b3d CRT 族——a/b/c 路）。
+
+## 观察项 / 候选池
+
+- **MISSING：无**（a 路 2 / b 路 2 / c 路 1 全部已登记）。
+- **后邻未登记**：0x5D0F70（a 后邻——[ecx+0x10] 门控索引查找：mov edx,[ecx+0x10] → test → jle → 遍历 cmp [ecx],esi → je 返回索引/ or eax,-1——batch 2232 c 路 0x5D1580 同款）；0x5D0D10（b 后邻——同款索引查找）；0x5D0760（c 后邻——[ecx+0xc] 门控 + shr 2 索引差）。
+- **新观察**：VectorClass 全家族副本统计（赋值器 2 + 释放器 6 = 0x5D 区 8+ 副本——模板复制惯用实锤）。
+- 前向：picker 队列继续 0x5D 区（0x5D0F70/0x5D0D10 索引查找孪生对 + 0x5CF8E0 1935B 大宿主）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
