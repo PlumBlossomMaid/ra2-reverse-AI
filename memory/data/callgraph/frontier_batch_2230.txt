@@ -1,0 +1,73 @@
+# frontier batch 2230：MessageListClass 家族三连（Manage + ConcatMessage + 析构 thunk）（0x5D4430 / 0x5D3FC0 / 0x5D3A40）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5D4430 MessageListClass::Manage callees=1 deps=2550 / 0x5D3FC0 MessageListClass::ConcatMessage callees=9 deps=1882 / 0x5D3A40 MessageListClass::~MessageListClass callees=1 deps=51——**三枚均带符号名 YRpp**）
+- 三路 disasm：`.qwen/tmp/_d2230a.txt`（0x5D4430 size 0x200）/ `_d2230b.txt`（0x5D3FC0 size 0x300）/ `_d2230c.txt`（0x5D3A40 size 0x100）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5D4430 | 220B（0xDC）| ret c3 @0x5D450B | 0x5D4510（未登记——[esp+0xc] 参数键盘处理观察项）| 1（0x6c8c40——callees=1 吻合）|
+| 0x5D3FC0 | 533B（0x215）| ret 0x10 @0x5D41D2 | 0x5D41E0（未登记——虚表 0x50/0x58 jmp thunk 对观察项）| 24 次/去重 9（0x7ca405+0x7c8e17+0x4a60d0+0x433ed0+0x7ca489+0x7ca45f+0x5d4b20+0x7c8b3d+0x6c8c40——callees=9 吻合）|
+| 0x5D3A40 | 31B（0x1F）| ret c3 @0x5D3A5E | 0x5D3A60（未登记——十参构造器观察项，c 路直调）| 1（0x5d3a60——callees=1 吻合）|
+
+## a 路 0x5D4430（220B）——MessageListClass::Manage
+
+```
+005d4430  push 三件套 → mov edi=ecx（this）→ mov esi,[edi]（★链表头）→ test → je 0x5d4506
+005d4442  ★链表遍历：mov eax,[esi+0x24]（★子项）→ test → je 0x5d44be → mov eax,[0x887338]（★时间戳）→ mov ebx,[0x887340] → cmp -1 → je → call 0x6c8c40（★计时）→ add ebx → cmp [esi+0x24] → jle 0x5d44be
+005d4470  （超时）mov eax,[esi] → call [eax+4]（★虚表槽 4 下一项）→ call [edx+0x24]（★虚表槽 0x24 替换头）→ mov [edi],eax → ★[edi+0x1480] 14 槽循环（cmp [esi+0x30],ecx → 置 word 1）→ 虚表槽 0 析构（push 1）→ ebp=1
+005d44be  （未超时）call [edx+4] 前进 → 循环
+005d44cf  ★收口：test ebp → je 0x5d4506 → mov al,[edi+0x19] → test → je → mov al,[edi+0x1a] → test → je 0x5d44ec → mov esi,[edi+0x14] → add [edi+8] → jmp / mov esi,[edi+8]
+005d44ef  ★求和写链：mov eax,[edi] → test → je → mov edx,[eax] → mov [eax+0x10],esi（★写偏移）→ call [edx+4] → add esi,[edi+0x14] → 循环
+```
+**语义**：**MessageListClass::Manage（带符号名——YRpp 实名）**——① 链表遍历（虚表槽 4 前进）；② ★[0x887338] 时间戳 + 0x6c8c40 计时超时判定（[esi+0x24] 阈值）；③ 超时项移除（虚表槽 0x24 替换头 + [edi+0x1480] 14 槽标志 + 虚表槽 0 析构）；④ ★[edi+0x19]/[edi+0x1a] 双标志求和（[0x14]+[8] vs [8]）；⑤ ★写链（虚表槽 4 遍历写 [eax+0x10]=esi 偏移）。**消息列表管理端（超时清理 + 求和写链）**。
+
+## b 路 0x5D3FC0（533B）——MessageListClass::ConcatMessage
+
+```
+005d3fc0  push 五件套 → mov ebx=ecx → mov edi,[esp+0x18]（★串参）→ test → je 0x5d401f → mov eax,[esp+0x20] → test → je → mov al,[ebx+0x18]（★使能标志）→ test → je → mov ebp,[ebx]（★链表头）→ test → je
+005d3fe8  ★链表遍历：mov eax,[esp+0x1c] → cmp [ebp+0x28],eax → jne 0x5d400d → push edi → call 0x7ca405（★长度）→ mov esi,[ebp+0x30] → shl ecx,1 → repe cmpsb（★串比较）→ je 0x5d4029（命中）
+005d400d  call [eax+4]（虚表槽 4）→ 循环
+005d4029  ★命中处理：call 0x7ca405（长度）→ lea esi,[edx+eax*2+2] → call 0x7ca405 ×2（★长度和）→ cmp edi,eax → jae 0x5d4140 → call 0x7c8e17（★分配）→ call 0x4a60d0（★坐标）→ call 0x433ed0 ×3（★绘制链）→ call 0x7ca489/0x7ca45f（★串追加）→ call 0x5d4b20（★构造）→ cmp [ebx+0x2c4] → jl → 循环 → 0x7c8b3d 释放
+005d4140  ★绕行路径：0x7ca405 ×3 长度计算 → call 0x5d4b20 → 0x7ca45f → 0x5d4184
+005d4184  cmp [esp+0x24],-1 → jne 0x5d41a1 → mov [ebp+0x24],0 → al=1 → ret
+005d41a1  ★时间戳：mov eax,[0x887338] → mov esi,[0x887340] → call 0x6c8c40 → add esi,edi → mov [ebp+0x24],esi（★写时间）→ al=1 → ret 0x10
+```
+**语义**：**MessageListClass::ConcatMessage（带符号名——YRpp 实名）**——① [ebx+0x18] 使能门控 + 链表遍历（[ebp+0x28] 比较 + 0x7ca405 长度 + ★repe cmpsb 串比较命中判定）；② ★命中处理（0x7c8e17 分配 + 0x4a60d0 坐标 + 0x433ed0 绘制 ×3 + 0x7ca489/0x7ca45f 串追加 + 0x5d4b20 构造 + [ebx+0x2c4] 宽度循环）；③ ★[0x887338] 时间戳 + 0x6c8c40 写 [ebp+0x24]。**消息拼接端（链表命中 + 绘制链 + 时间戳写）**。
+
+## c 路 0x5D3A40（31B）——MessageListClass::~MessageListClass
+
+```
+005d3a40  push 0x280 → push 0 ×9（★十参）→ call 0x5d3a60（★真正析构器——后邻十参构造器）→ ret
+```
+**语义**：**MessageListClass::~MessageListClass（带符号名——YRpp 实名）**——**thunk 转发器**：十参（0x280 + 九零）转发 0x5d3a60（后邻十参构造器/析构器，观察项）。**消息列表析构入口（参数桩 → 十参转发）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 1 个（0x6c8c40），**已登记**（callees=1 吻合）。
+- b 路：跨函数直接 call 24 次/去重 9 个（0x7ca405/0x7c8e17/0x4a60d0/0x433ed0/0x7ca489/0x7ca45f/0x5d4b20/0x7c8b3d/0x6c8c40），**全部已登记**（callees=9 吻合）。
+- c 路：跨函数直接 call 1 个（0x5d3a60），**已登记**（callees=1 吻合——0x5d3a60 为后邻十参构造器）。
+- ★核验脚本（norm() 规范化版）直接输出三路全 PASS。**MISSING：无**。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★[0x887338] 时间戳三件套（0x6c8c40 计时——batch 2207 同款）+ 链表遍历双虚表（0x4 前进 / 0x24 替换头）+ [edi+0x1480] 14 槽标志循环（cmp [esi+0x30],ecx → word 1）；
+2. a 路 ★[edi+0x19]/[edi+0x1a] 双标志求和分支（[0x14]+[8] vs [8]）+ 写链 [eax+0x10]=esi（虚表槽 4 遍历）；
+3. b 路 ★★repe cmpsb 串比较（shl ecx,1 双字节对齐——宽串比较）+ 0x7ca405 长度 ×5 + 0x7c8e17 分配 + 0x433ed0 绘制 ×3 三连链 + 0x5d4b20 构造 + [ebx+0x2c4] 宽度门控循环（0xa 下限）；
+4. b 路 ★[ebp+0x24] 时间戳写（0x6c8c40 + add esi,edi）+ [ebp+0x24]=0 哨兵路径（[esp+0x24]==-1）；
+5. c 路 ★★thunk 转发（push 0x280 + 九 push 0 → call 0x5d3a60 十参——批量参数桩转后邻构造器）。
+
+## 跨批次连接
+
+- ★★batch 2229（MessageListClass::SetWidth/Draw——a/b/c 路同家族，共享 [0x19]/[0x24]/[0x2b8]/[0x2c4] 面板字段布局）+ batch 2207（[0x887338] 时间戳三件套——a/b 路）。
+- ★★batch 2226（0x4a60d0/0x4a61c0 坐标/绘制族——b 路 0x4a60d0）+ batch 2229（0x4a60d0/0x433ed0 绘制链——b 路同款）。
+- ★batch 2224（0x7ca489/0x7ca45f 串族——b 路）+ batch 2219/2221（0x433ed0 绘制族——b 路）。
+
+## 观察项 / 候选池
+
+- **MISSING：无**（a 路 1 / b 路 9 / c 路 1 全部已登记）。
+- **后邻未登记**：0x5D4510（a 后邻——[esp+0xc] 参数 + [0x87f770] 0x54f530 键盘判定 + 0x7781a0/0x778170 门控 + 数字/空格/回车过滤——键盘输入处理观察项）；0x5D41E0（b 后邻——虚表 0x50/0x58 jmp thunk 对：mov al,[ecx+0x19] → jmp [eax+0x50]/[eax+0x58]）；0x5D3A60（c 后邻——十参构造器：add eax,-8 + 0x830680 日志 + 链表虚表 0x24 遍历 + rep stosd 0x10001 + 参数钳位 0xe/0x70——**十参构造器观察项**）。
+- **新观察**：MessageListClass 十参构造器 0x5D3A60（c 路转发目标）+ [0x1480] 槽位标志区（a 路）+ 虚表 0x50/0x58 thunk 对（b 路后邻）。
+- 前向：picker 队列继续 0x5D 区（0x5D3A60 十参构造器候选 + 0x5CF8E0 1935B 大宿主）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
