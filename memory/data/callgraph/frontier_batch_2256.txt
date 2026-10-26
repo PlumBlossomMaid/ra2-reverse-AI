@@ -1,0 +1,67 @@
+# frontier batch 2256：全局对象释放器 + 有序双向链表插入器 + 场景字段批量装载器（0x5B4310 / 0x5B3FF0 / 0x5B3970）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x5B4310 FUN_005b4310 callees=2 deps=689 / 0x5B3FF0 FUN_005b3ff0 callees=0 deps=97 / 0x5B3970 FUN_005b3970 callees=2 deps=4）
+- 三路 disasm：`.qwen/tmp/_d2256a.txt`（0x5B4310 size 0x100）/ `_d2256b.txt`（0x5B3FF0 size 0x100）/ `_d2256c.txt`（0x5B3970 size 0x200）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5B4310 | 58B（0x3A）| ret c3 @0x5B4349 | 0x5B4350（未登记——sub esp,0x304 大函数：[0xabefe0] 链表遍历+0x7cb673/0x7c9ff0/0x7c8d20 串处理+0x7ca489）| 3 次/去重 2（0x5b4080 + 0x7c8b3d——全部已登记，callees=2 吻合）|
+| 0x5B3FF0 | 45B（0x2D）| ret c3 @0x5B401C | 0x5B4020（未登记——同族查找器：cmp [eax+8] 有序遍历+[eax+0xc] 命中清 0）| 0 次（纯指针操作零直接 call，callees=0 吻合）|
+| 0x5B3970 | 132B（0x84）| ret 4 c20400 @0x5B39F1 | 0x5B3A00（未登记——同族 getter：shl eax,5 + 0xa8e3a8 基址、cmp -1 setne、差值钳位副本）| 7 次/去重 2（0x5f6250 + 0x4a1d50 ×6——全部已登记，callees=2 吻合）|
+
+## a 路 0x5B4310（58B）——全局对象释放器
+
+```
+005b4310  mov eax,[0xabf00c]（★全局对象指针）→ push esi → mov esi,eax → test → je 0x5b433e → mov eax,[eax] → test → je → mov ecx,eax → call 0x5b4080（★递归析构）→ mov ecx,[esi+4] → test → je → call 0x5b4080（★第二成员析构）→ push esi → call 0x7c8b3d（★operator delete）→ mov [0xabf00c],0（★全局置空）→ ret
+```
+
+**语义**：**全局对象释放器（推断名）**——★batch 2251 b 路 0x5B7360 / 2248 同款 [0xac1154] 释放重建模板的孪生（全局 [0xabf00c]）：0x5b4080 成员析构 ×2（首成员/第二成员判空逐个析构）+ 0x7c8b3d 释放 + 全局置 0。[0xabf00c] 与 batch 2243 的 [0xabf3f4] 同为 0xAB 区全局对象族。**全局对象释放器·[0xabf00c] 版（batch 2246 0x5BDF30 全局槽创建器/释放器配对的释放侧孪生）**。
+
+## b 路 0x5B3FF0（45B）——有序双向链表插入器
+
+```
+005b3ff0  mov eax,[edx]（★链表头）→ test → je 0x5b400d → mov esi,[ecx+8]（★新节点键值）→ mov edx,[eax+8]（★当前节点键值）→ cmp edx,esi → lea edx,[eax+4] → jl 0x5b4006（★小于走前向指针）→ mov edx,eax（★大于等于走后向指针）→ mov eax,[edx] → test → jne 0x5b3ffa（★遍历）→ pop esi → mov [edx],ecx（★插入）→ mov [ecx],0 → mov [ecx+4],0 → ret
+```
+
+**语义**：**有序双向链表插入器（推断名）**——★有序链表按 [ecx+8] 键值（与节点 [eax+8] 比较）找位插入：键值小于当前走 [eax+4]（前向），否则走 [eax]（后向）——**双向插入语义**；[ecx]/[ecx+4] 新节点指针清零。**链表插入模板（后邻 0x5B4020 同族查找器配对——0x5B3FF0 插入/0x5B4020 查找）**。
+
+## c 路 0x5B3970（132B）——场景字段批量装载器
+
+```
+005b3970  push esi/edi → mov edi,[esp+0xc]（★目标对象）→ mov esi,ecx（★this）→ push edi → call 0x5f6250（★目标初始化）→ mov eax,[esi+0xac] → push eax → mov ecx,edi → call 0x4a1d50（★装载1）→ mov ecx,[esi+0xb0] → 装载2 → mov edx,[esi+0xb4] → 装载3 → mov eax,[esi+0xbc] → 装载4
+005b39b6  mov edx,[esi+0xc8]（★高度字段）→ mov eax,[esi+0xd0] → cmp edx,-1 → je 0x5b39d9 → mov ecx,[0xa8ed84]（★全局边界）→ sub ecx,edx → cmp ecx,eax → jge 0x5b39d7 → sub eax,ecx（★差值钳位：边界-高度 < 值 → 值-（边界-高度））→ jmp → 0x5b39d7 xor eax,eax（★钳到 0）→ push eax → call 0x4a1d50（★装载5 钳位值）→ mov ecx,[esi+0xc0] → 装载6 → ret 4
+```
+
+**语义**：**场景字段批量装载器（推断名）**——0x5f6250 目标初始化 + **六字段 [esi+0xac/0xb0/0xb4/0xbc/0xc8/0xc0] 批量装载** 0x4a1d50 ×6；★高度字段钳位：**[esi+0xc8] != -1 时按 [0xa8ed84] 全局边界差值钳位（边界-高度 < 值 → 值减差值，否则钳 0）**。0x4a1d50 = 0x4A 区已登记装载器族（**0x4A6xxx/0x4A8xxx/0x4A9xxx 族 MISSING 观察区近旁——本函数 callee 全已登记**）。**场景对象字段装载器·六字段版（后邻 0x5B3A00 同族 getter 孪生区）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 3 次/去重 2 个（0x5b4080 ×2 + 0x7c8b3d）——**全部已登记**（callees=2 吻合）。
+- b 路：跨函数直接 call 0 个（纯指针遍历零调用）——callees=0 吻合。
+- c 路：跨函数直接 call 7 次/去重 2 个（0x5f6250 + 0x4a1d50 ×6）——**全部已登记**（callees=2 吻合）。
+- ★核验脚本（norm() 规范化版）输出：**三路全 PASS，无 MISSING、无批内自引用**——本批零观察项新增。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★全局 [0xabf00c] 判空后**逐个成员**析构（[eax] 首成员 → 0x5b4080,[esi+4] 第二成员 → 0x5b4080）再整体释放——两成员析构器相同但**不合并循环**;
+2. a 路 ★失败路径（[0xabf00c]==0）**跳过析构直接置 0**——置 0 在判空分支之外恒执行;
+3. b 路 ★★有序链表插入的**双向语义陷阱**：`cmp edx,esi（当前键 vs 新键）/ jl → lea [eax+4] 前向 / 否则走 [eax] 后向`——**小于才前向，大于等于走后向**（与传统升序链表相反？按 [eax+8] 键值升序排列下这是先找大于等于位再后退——**需结合 0x5B4020 查找器语义整体看，raw 语义照抄**）;
+4. b 路 ★新节点 [ecx]/[ecx+4] 清零在**插入之后**顺序执行（非构造期）;
+5. c 路 ★★高度钳位公式：**值 = 值 -（全局边界 - 高度）**当 边界-高度 < 值 时；否则值钳 0——**向上溢出回绕语义（先减后比，非 min(max()) 标准钳位）**;
+6. c 路 0x4a1d50 装载 6 次**每次重新 mov ecx,edi**（目标对象重载，非寄存器保持）。
+
+## 跨批次连接
+
+- ★batch 2251（b 路 0x5B7360 [0xac1154] 释放重建——a 路同模板）+ batch 2246（0x5BDF30 全局槽创建器/0x5BE940 释放器——a 路全局族配对）+ batch 2243（[0xabf3f4] 登记——[0xabf00c] 同区全局）。
+- ★batch 2242（0x7c8b3d 释放模板——a 路）+ batch 2233-2237（链表族——b 路双向链表遍历模板）。
+- ★0x4A 区装载器族（c 路 callee 0x4a1d50——**0x4A6xxx/0x4A8xxx/0x4A9xxx 未兑现 MISSING 观察区近旁**）+ 0x5f6250（batch 2256 c 路 callee——0x5F 区设置族）。
+
+## 观察项 / 候选池
+
+- **本批零 MISSING、零批内自引用**（三路 callee 全部已登记）。
+- **后邻未登记（自然排队）**：0x5B4350（a 路后邻——sub esp,0x304 大函数：[0xabefe0] 链表遍历+0x7cb673/0x7c9ff0/0x7c8d20 串处理+0x7ca489——**picker 大宿主候选**）、0x5B4020/0x5B4050（b 路后邻——有序链表查找器孪生对）、0x5B3A00（c 路后邻——getter 族：shl eax,5+0xa8e3a8 基址、setne、差值钳位副本）。
+- **新观察**：[0xabf00c] 全局对象指针族（a 路——与 [0xac1154]/[0xabf3f4] 同区）+ 0x5b4080 递归析构器（a 路 callee + a 路后邻 0x5B4350 的遍历骨架）+ [esi+0xac/0xb0/0xb4/0xbc/0xc8/0xc0] 场景六字段族（c 路——0x5B3A00 getter 同族）+ [0xa8ed84] 全局场景边界（c 路钳位源）。
+- 前向：picker 队列继续 0x5B/0x5C 区（0x5B20F0/0x5B3060/0x5AE220 大宿主 + 0x5B4350 新候）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
