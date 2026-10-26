@@ -1,0 +1,70 @@
+# frontier batch 2144：字段清零器 + PreviewClass::ReadPreviewPack + PreviewClass::DrawMap（0x642AD0 / 0x641B00 / 0x640A40）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x642AD0 FUN_00642ad0 callees=0 deps=3357 / 0x641B00 PreviewClass::ReadPreviewPack callees=12 deps=212 / 0x640A40 PreviewClass::DrawMap callees=11 deps=340）
+- 三路 disasm：`.qwen/tmp/_d2144a.txt`（0x642AD0 size 0x40）/ `_d2144b.txt`（0x641B00 size 0x2C0，306 行分段全读）/ `_d2144c.txt`（0x640A40 size 0x6A0，539 行分段全读）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x642AD0 | 5B（0x5）| ret @0x642AD4 | 0x642AE0（push esi/[esi+0x58] 判定/delete [esi+0x54] 析构器，未登记）| 0 |
+| 0x641B00 | 681B（0x2A9）| ret 4 @0x641DA6（双出口 al=1/0）| 0x641DB0（mov eax,[esp+4]/sub esp,0x6c 大函数头，未登记）| 12（全已登记）|
+| 0x640A40 | 1664B（0x680）| ret 4 @0x6410BD（双出口）| 0x6410C0（push ecx/movsx word 坐标转换器，未登记）| 11（全已登记）|
+
+三函数为 **PreviewClass（预览图类，★★两个带 YRpp 符号名）+ 零散字段微函数**——QWEN.md「RandMap.img = PreviewClass/RawFileClass 预览图」相关：
+
+## a 路 0x642AD0（5B）——字段清零器
+
+```
+00642ad0  mov byte ptr [ecx+0x60],0 → ret
+```
+**语义**：**字段清零器（推断名）**——[this+0x60]=0。5B 微函数（sider 族——batch 2142/2143 同型）。后邻 0x642AE0 = 析构器（[esi+0x58] 标志 → delete [esi+0x54]，未登记）。
+
+## b 路 0x641B00（681B）——PreviewClass::ReadPreviewPack（★符号名）
+
+```
+00641b00  sub esp,0x5c/push 族/mov edi,[esp+0x70]（参数 1）→ ★call 0x526b00（[edi] 对象方法）→ 虚表槽 0（[esi] 对象析构——delete）→ ★call 0x527cc0（[0x7f0048]/0x87f8e4/0x820178——★文件/资源读取，5 参）→ 读四元组 → ★new 0x24 → push 0/1/ebp/edi → ★call 0x4ba5a0（4 参构造器——batch 2144 c 路同构造器）→ 虚表槽 0x18
+00641b7c  [0x887310] 虚表槽 0x80/0x7c/0x70（★三连尺寸获取）imul 连乘 → 虚表槽 0x5c → ★call 0x526fb0（[0x7f004c] 参数）→ 尺寸判定（jle 失败）→ ★栈构造：0x43ad00（[0x7e61f0] 表——0x43 区对象）+ 0x55c720（[0x7e61e0] 表——0x55 区对象）→ ★call 0x6c9890（0x6c 区）
+00641c3c  ★双重循环（外层虚表槽 0x80 次 [0x7c] 次——0x641C5B-0x641D19）：lea [esp+0x10] → ★call 0x55c7c0（★三字节读取——读取像素/单元格数据）→ cmp eax,3（★判定 3 字节）→ ★★[0x8a0dd0-0x8a0de4] 位域表（shr/shl 链——batch 2118-2122 运动系统位域表复用！）→ 虚表槽 0x24（写单元格）→ 内层 jl 循环
+00641d1f  收尾：虚表槽 0x60 ×2（[esi]+[0x887310]）→ 0x55c780 → 0x43ae50（0x43 区析构）→ 0x6c9850 → al=1 成功 → ret 4
+00641d65  失败路径：0x55c780/0x43ae50/0x6c9850 → al=0 → ret 4
+```
+**语义**：**PreviewClass::ReadPreviewPack（YRpp 符号名实锤）**——读取预览包数据：① 0x526b00 + 虚表槽 0 清理旧对象；② 0x527cc0（[0x7f0048] 类 + 0x87f8e4/[0x820178] 参数——文件/资源读取）+ new 0x24 + 0x4ba5a0 4 参构造；③ [0x887310] 虚表槽 0x80/0x7c/0x70 三连尺寸 + 0x526fb0（[0x7f004c]）；④ 0x43ad00/0x55c720/0x6c9890 三区对象栈构造；⑤ **双重循环像素读取**（0x55c7c0 三字节 + ★[0x8a0dd0] 位域表 + 虚表槽 0x24 写）；⑥ 收尾三区析构（0x55c780/0x43ae50/0x6c9850）+ 虚表槽 0x60。**预览图数据读取器（RandMap.img 相关）**。
+
+## c 路 0x640A40（1664B 大函数）——PreviewClass::DrawMap（★符号名）
+
+```
+00640a40  sub esp,0x88/mov eax,[ecx]（[this] 对象判定）→ je 0x6410b6（空 → 跳过）→ ★MapClass::CellIterator_Reset（0x578350——带注释）→ ★循环：CellIterator_Next（0x578290）→ ★0x578460（区域判定）→ ★坐标转换 0x41c230 ×2（[X<<8]+0x80）→ ★0x6d62e0（[0x887324]——坐标计算）→ ★imul 0x88888889/sar 5+4（÷100 魔法数 ×2）→ 边界求 min/max（[esp+0x40]/[esp+0x28]）
+00640b6a  [0xa8b230]（★全局——batch 2123/2135 同）→ ★0x68bd80（★8 次循环 side 判定——统计活跃 side 数）→ 循环：[0xa8b230] → 0x68bd80/★0x68bcc0（side 坐标获取）→ 0x41c230/0x6d62e0 → ★魔法数 ÷100 → ★★[0x8a0dd0-0x8a0de4] 位域表（shr/shl 链——运动系统位域表复用）→ 虚表槽 0x78/0x10（绘制）
+00640ce2  [0x8a00a4] vs [0x7f5be4]/[0x7f5be8]（★★三种分辨率档位判定：0x1f3/0x17b/0xd8/0xa6（800×600）+ 0x23a/0x1a8/0x12c/0x104（1024×768）+ 默认 0xc8/0x181/0x10e）→ 尺寸计算（lea ×5 五次 → shl 6 → idiv [0xa8b230]+0x1134/+0x1138——★地图尺寸归一）→ ★new 0x24 → 0x4ba5a0 → 大参栈 → 虚表槽 0x78/0x8
+00640e40  ★0x4a38d0（0x836df4 串）→ [a8b230] side 循环 ×8：0x68bd80/0x68bcc0 → 0x41c230/0x6d62e0 → 魔法数 → ★[a8022c]/[0xb054d4] 表查（★单位对象查表——batch 2135/2137 同表）→ [0x30c] 字段 → 大参栈 ★0x4aed70（batch 2124 a 路同 callee）→ 尾收
+00641071  收尾：虚表槽 0x14/0x78/0x8（[edi]/[esi] 双对象）→ 虚表槽 0（[esi] 析构 delete）→ ret 4
+```
+**语义**：**PreviewClass::DrawMap（YRpp 符号名实锤）**——绘制预览地图：① CellIterator 全图遍历（0x578350/0x578290/0x578460）+ 坐标转换（0x41c230/0x6d62e0）+ ÷100 魔法数 → 边界 min/max；② [0xa8b230] + 0x68bd80/0x68bcc0 活跃 side 循环 + ★[0x8a0dd0] 位域表 + 虚表槽 0x78/0x10 绘制；③ **[0x7f5be4]/[0x7f5be8] 三种分辨率档位**（800×600/1024×768/默认）+ 地图尺寸归一（idiv [0xa8b230]+0x1134）；④ new 0x24 + 0x4ba5a0 构造 + [a8022c]/[0xb054d4] 单位查表 + 0x4aed70 文本/绘制；⑤ 收尾双对象虚表槽 + 析构。**预览图绘制器（RandMap.img 相关）**。
+
+## 原版怪癖（照抄）
+
+1. b 路 [0x887310] 虚表槽 0x80/0x7c/0x70 三连 imul 连乘（尺寸计算链）；
+2. b 路双重循环（外层虚表槽 0x80 次 × 内层 0x7c 次——0x55c7c0 三字节读取 + cmp eax,3 判定）；
+3. b/c 路 ★★[0x8a0dd0-0x8a0de4] 位域表复用（batch 2118-2122 运动系统方向位域表——**预览图系统第 5 处复用**）；
+4. c 路三种分辨率档位（[0x7f5be4]→0x1f3/0x17b/0xd8/0xa6（800×600）、[0x7f5be8]→0x23a/0x1a8/0x12c/0x104（1024×768）、默认 0xc8/0x181/0x10e——4 组坐标常量）；
+5. c 路地图尺寸归一（lea ×5 五次 → shl 6 → idiv [a8b230]+0x1134/+0x1138——30×30→100×100 的幂缩放推断）；
+6. c 路 ★[a8022c]/[0xb054d4] 单位查表（batch 2135/2137 同表——[0x16054] 索引）；
+7. c 路 CellIterator 全图遍历（与 batch 2129 b 路 0x654EA0 同款 Reset/Next 对）；
+8. c 路 imul 0x88888889/sar 5+4（÷100 ×2）+ imul 0x431bde83/sar 0x12（÷1000——像素/格子换算）。
+
+## 跨批次连接
+
+- ★★★★★**QWEN.md RMG 里程碑**：b/c 路 = PreviewClass（RandMap.img 预览图读写端——batch 2135「RandMap.img 是预览图（PreviewClass/RawFileClass）」文档实锤的两大函数）。
+- ★★★★batch 2118-2122 运动系统：b/c 路 [0x8a0dd0-0x8a0de4] 方向位域表**第 5 处**复用。
+- ★★★batch 2135/2137：c 路 [a8022c]/[0xb054d4] 单位查表 + 0x4aed70 + [a8b230] 全局 + 0x4ba5a0 构造逐段同族。
+- ★★batch 2129 b 路 0x654EA0：c 路 CellIterator 全图遍历同款（0x578350/0x578290/0x578460）。
+- ★0x527cc0（文件/资源读取）+ 0x526b00/0x526fb0（[0x7f0048]/[0x7f004c] 类——0x52 区序列化族）+ 0x55c720/0x55c7c0/0x55c780（0x55 区）+ 0x43ad00/0x43ae50（0x43 区构造/析构对）+ 0x6c9890/0x6c9850（0x6c 区成对）+ 0x68bd80/0x68bcc0（[a8b230] side 族）+ 0x4a38d0/0x4aed70 + 0x4ba5a0（全部已登记）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（直接 call 全已登记——b 路 12 个 + c 路 11 个全在 TSV）。
+- **后邻未登记**：0x642AE0（a 路后邻析构器）、0x641DB0（b 路后邻大函数）、0x6410C0（c 路后邻坐标转换器）。
+- **新观察**：★★[0x7f5be4]/[0x7f5be8]（分辨率常量对——0x1f3/0x17b/0xd8/0xa6 与 0x23a/0x1a8/0x12c/0x104）、[0x7f0048]/[0x7f004c]（0x52 区类）、0x6c9890/0x6c9850（0x6c 区对象对）、[0x836df4]（c 路 0x4a38d0 串）。
+- 前向：picker 队列继续 0x64 区 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650。
