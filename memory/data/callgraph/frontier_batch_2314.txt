@@ -1,0 +1,85 @@
+# frontier batch 2314：LinkClass::AddTail + LinkClass::TailOfList + LightConvertClass::UpdateColors（0x556700 / 0x556670 / 0x556090）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x556700 LinkClass::AddTail callees=0 deps=1 / 0x556670 LinkClass::TailOfList callees=0 deps=2 / 0x556090 LightConvertClass::UpdateColors callees=5 deps=57）
+- 三路 disasm：`.qwen/tmp/_d2314a.txt`（0x556700 size 0x50）/ `_d2314b.txt`（0x556670 size 0x40）/ `_d2314c.txt`（0x556090 size 0x4E0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x556700 | 41B（0x29）| ret 4 @0x556726 | 0x556730（未登记——链遍历器虚表槽 0x18/0x1c）| 0 次/去重 0（纯虚表间接调用，picker callees=0 吻合）|
+| 0x556670 | 33B（0x21）| ret c3 @0x55668C/0x556690 | 0x5566A0（未登记——链插入器虚表槽 0x24 族）| 0 次/去重 0（纯链表遍历，picker callees=0 吻合）|
+| 0x556090 | 1135B（0x46C）| ret 0x10 @0x5564FC | 跳跃表 0x556500 → 0x556520（未登记——析构器 0x7ed0a4+0x490400）| 7 次/去重 5（0x7c5f00+0x7de53a+0x7de87a+0x7de200+0x7debba——全部已登记，picker callees=5 吻合）|
+
+## a 路 0x556700（41B）——LinkClass::AddTail
+
+```
+00556700  mov esi, ecx（this）→ mov eax, [esi] → ★★虚表槽 0x24 调用（★尾部对象获取）→ mov ecx, [esp+8]（参1 待插入节点）→ mov edx, [ecx] → ★★虚表槽 0x1c 调用（★尾部链接获取）→ mov [eax+4], esi（★旧尾 +4 → 新节点）→ mov [esi+8], eax（★新节点 +8 → 旧尾）→ mov [esi+4], 0（★新节点 +4 清 0）→ mov eax, [esi] → ★★虚表槽 0x18 调用（★头部链接更新）→ ret 4
+```
+
+**语义**：**LinkClass::AddTail（★带符号名双向链表尾插）**——★★虚表槽 0x24 尾对象 + 槽 0x1c 尾链接 + 槽 0x18 头链接三回调 → ★★双向链尾插（[eax+4]=esi 新节点尾指 / [esi+8]=eax 旧尾前指 / [esi+4]=0）→ ret 4。**LinkClass 双向链尾插（★虚表槽 0x24/0x1c/0x18 三链接回调——LinkClass 家族开启**）**。
+
+## b 路 0x556670（33B）——LinkClass::TailOfList
+
+```
+00556670  mov eax, [ecx+4]（★首节点）→ lea edx, [ecx+4] → test → je 0x55668d（★空链返 this）
+0055667b  ★★链尾遍历循环：mov eax, [edx] → cmp eax, ecx → je 0x55668f（★回环到 this 返 this）→ mov esi, [eax+4] → lea edx, [eax+4] → test jne 回环
+0055668b  返 0（无环终止）→ 0055668d mov eax, ecx（★空链返 this）→ ret c3
+```
+
+**语义**：**LinkClass::TailOfList（★带符号名链表尾检索）**——★★[ecx+4] 首节点 + ★★链尾遍历循环（[eax+4] 递进 + cmp eax,ecx 回环检测——★this 哨兵）→ ★★空链/回环均返 this → ret c3。**LinkClass 尾节点检索（★[eax+4] 单链遍历 + this 回环哨兵——33B 最小**）**。
+
+## c 路 0x556090（1135B）——LightConvertClass::UpdateColors
+
+```
+00556090  mov esi, [ebx+0x16c]（★计数）→ cmp 1 → jl 0x5564f5（★<1 早退）→ [ebx+0x190] 表门控（test jne else mov 0x829c20 装载）
+005560bc  ★★[esp+0x3c]/[0x40]/[0x44] 三参钳位（cmp 0x7d0 jl else mov 0x7d0 + test setle/dec/and——★2000 上限三钳）
+0055611d  [esp+0x48] 字节门控 → ★★[ebx+0x1a4]/[0x1a8]/[0x1ac] vs [0x198]/[0x19c]/[0x1a0] 双组装载（字节标志 [ebx+0x1b0] 写 1/0）
+00556192  ★★[eax+eax*4]×3 ×8 乘法缩放（fild + fmul [0x7ed0b0] → ★0x7c5f00 _ftol ×3——★颜色缓存计算）
+005561fc  ★★[esi+esi*2] lea 化 + ★0x51eb851f imul ÷100（sar 6 + shr 0x1f 校正——★★除法缩比常量）→ [ebx+0x170] 装载
+00556260  ★★[esp+0x20]/[0x24] 钳位链 + ★★[esp+0x14]/[0x18]/[0x1c] 三装载 → ★★[0x829d20] 跳转表分派 4 支（jmp [ebp*4+0x556500]——★跳跃表）
+005562e5  ★★分支 1：★0x7de53a（push 帧）
+0055630b  分支 2：★0x7de87a
+00556331  分支 3：★0x7de200
+00556357  分支 4：★0x7debba（★四渲染器——add edi,0x200 推进）
+0055637d  ★★颜色字循环（[ebx+0x190] 字节表 [edx+ebp] 0 判定 + [ebx+0x188] 表 [ecx+ecx*2] 三字节 imul 缩放 + sar 0x10 → ★★[0x8a0dd0]/[0x8a0dd4]/[0x8a0dd8]/[0x8a0ddc]/[0x8a0de0]/[0x8a0de4] 位移参数六槽（sar/shl 位移族）→ or 合并 → mov word [ecx], dx（★16 位颜色写）→ cmp 0x100 jl 回环）
+0055649c  ★★循环推进（[esp+0x28]/[0x30]/[0x34]×2 + 0x10000 步进 + [ebx+0x16c] 计数 → jle 0x556260 回环）→ ret 0x10
+```
+
+**语义**：**LightConvertClass::UpdateColors（★带符号名——光照转换颜色更新）**——★★1135B 巨型：**计数门控（[ebx+0x16c] <1 早退）+ 表门控（[ebx+0x190]=0x829c20 装载）** → ★★三参 0x7d0 上限钳位（setle/dec/and——★2000 钳位族）→ ★★双组颜色装载（[0x1a4]/[0x1a8]/[0x1ac] vs [0x198]/[0x19c]/[0x1a0] + [0x1b0] 字节标志）→ ★★颜色缩放（[eax+eax*4]×3×8 + fild/fmul [0x7ed0b0]/0x7c5f00 _ftol ×3）→ ★0x51eb851f imul ÷100（除法缩比）→ ★★[0x829d20] 跳转表四支渲染器（0x7de53a/0x7de87a/0x7de200/0x7debba）→ ★★颜色字循环（[0x8a0dd0..0x8a0de4] 六位移参数槽 + sar/shl + or 合并 + 0x100 上限 + word 写）→ 循环推进 → ret 0x10。**光照颜色更新巨型宿主（跳跃表四渲染器 + ÷100 缩放 + 位移参数六槽——LightConvertClass 系列**）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 0 个/去重 0（纯虚表槽 0x24/0x1c/0x18 间接调用）——**已登记无 MISSING**（picker callees=0 吻合）。
+- b 路：跨函数直接 call 0 个/去重 0（纯链表遍历）——**已登记无 MISSING**（picker callees=0 吻合）。
+- c 路：跨函数直接 call 7 个/去重 5（0x7c5f00/0x7de53a/0x7de87a/0x7de200/0x7debba）——**全部已登记**（picker callees=5 吻合）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING、无批内自引用**（连续三十二批三路全登记）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★虚表槽 0x24/0x1c/0x18 三链接回调（★LinkClass 双向链语义——尾插三回调）;
+2. a 路 ★★双向链尾插 [eax+4]=esi/[esi+8]=eax/[esi+4]=0（★新节点双链挂接）;
+3. b 路 ★★链尾遍历循环 + cmp eax,ecx this 回环哨兵（★环形链检测）;
+4. b 路 ★★空链/回环均返 this（★TailOfList 语义——无 0 返回值）;
+5. c 路 ★★计数门控 [ebx+0x16c] <1 早退 + 表门控 [0x190]=0x829c20 装载;
+6. c 路 ★★三参 0x7d0 上限钳位（cmp jl else mov + test setle/dec/and——★2000 钳位族多重翻转）;
+7. c 路 ★★[eax+eax*4]×3×8 乘法缩放 + fild/fmul [0x7ed0b0] → 0x7c5f00 _ftol;
+8. c 路 ★★[esi+esi*2] lea + 0x51eb851f imul ÷100（sar 6 + shr 0x1f 校正——除法缩比）;
+9. c 路 ★★[0x829d20] 跳转表四支（jmp [ebp*4+0x556500]——★batch 2291-2293 跳转表族）;
+10. c 路 ★★[0x8a0dd0]/[0x8a0dd4]/[0x8a0dd8]/[0x8a0ddc]/[0x8a0de0]/[0x8a0de4] 位移参数六槽（sar/shl 位移族——★色彩位移控制）;
+11. c 路 ★★mov word [ecx], dx 16 位颜色写 + add edi,0x200 步进（0x100 上限循环）;
+12. c 路 ★★循环推进 0x10000 步进（[esp+0x1c] add 0x10000——★颜色分级步进）。
+
+## 跨批次连接
+
+- ★★★batch 2291-2293（跳转表分派族——c 路 [0x829d20] 四支跳跃表同族）+ batch 2300/2302（除法缩比常量——c 路 0x51eb851f 新收录对照）。
+- ★★batch 2308（LZO 压缩器——c 路颜色字编码同链）+ batch 2287/2288（[0x8a0ddx] 位移参数族——c 路六槽同源）。
+- ★★batch 2296/2308（cell+0x44 族——b 路 [eax+4] 链遍历同源）+ batch 2274-2310（[0x829d20] 全局——c 路分派同源）。
+- ★★LinkClass/LightConvertClass 系列（a/b/c 路带符号名——★batch 2286 MapClass 家族外新类系列）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x556730（a 路后邻——链遍历器虚表槽 0x18/0x1c）；0x5566A0（b 路后邻——链插入器虚表槽 0x24 族）；0x556520（c 路后邻——析构器 0x7ed0a4+0x490400）；[0x7ed0b0]（c 路颜色乘法常量）；[0x829d20]（c 路渲染器分派表）。
+- 未兑现 MISSING 旧观察：0x00486790（2267 起排队）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150 + ★0x556AD0/0x556EB0/0x556D20（batch 2280-2313 新观察）。
+- 本批 **无 MISSING**（连续三十二批三路全登记——batch 2276 起，TSV 5425）。next 批预期 top3 = 0x5558E0（474B callees=1）/ 0x554AA0 LightSourceClass::ChangeLevels（70B callees=1）/ 0x5549A0（180B callees=1）。
