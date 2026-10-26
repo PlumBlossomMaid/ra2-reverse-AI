@@ -1,0 +1,72 @@
+# frontier batch 2329：门控清理器 + 会话状态查询器 + 全局六槽装载器（0x5402B0 / 0x53F540 / 0x53F4F0）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x5402B0 FUN_005402b0 callees=0 deps=1 / 0x53F540 FUN_0053f540 callees=0 deps=55 / 0x53F4F0 FUN_0053f4f0 callees=0 deps=55）
+- 三路 disasm：`.qwen/tmp/_d2329a.txt`（0x5402B0 size 0x40）/ `_d2329b.txt`（0x53F540 size 0x90）/ `_d2329c.txt`（0x53F4F0 size 0x70）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x5402B0 | 22B（0x16）| ret 4 @0x5402C3 | 0x5402D0（未登记——装载器含 0x48b720）| 0 次/去重 0（纯全局门控，picker callees=0 吻合）|
+| 0x53F540 | 106B（0x6A）| ret c3 @0x53F5A9（失败）/ @0x53F591（成功）| 0x53F5B0（未登记——[0x887628] 虚表槽 0x20 调用器）| 0 次/去重 0（纯虚表槽间接，picker callees=0 吻合）|
+| 0x53F4F0 | 74B（0x4A）| ret 0x14 @0x53F537 | 0x53F540（★本批 b 路）| 0 次/去重 0（纯全局装载，picker callees=0 吻合）|
+
+## a 路 0x5402B0（22B）——门控清理器
+
+```
+005402b0  mov eax, [0xaa05a4]（★全局门控标志）→ test → je 0x5402c3
+005402b9  mov [ecx+0xc4], 0（★清 this+0xc4）→ ret 4
+```
+
+**语义**：**门控清理器（推断名）**——thiscall 1 栈参：★[0xaa05a4] 全局门控（==1 时）→ 清 [ecx+0xc4] → ret 4。**全局门控字段清理（22B 极简——[0xaa05a4] 会话标志族）**。
+
+## b 路 0x53F540（106B）——会话状态查询器
+
+```
+0053f540  mov ecx, [0x887628]（★全局会话对象）→ mov edx, [0xa8ebb4] → push esi → mov esi, [0xaa0568]（★十六位会话字段）
+0053f553  mov eax, [ecx] → push edx → call [eax+0x50]（★虚表槽 0x50）→ mov ecx, [0x887628] → and esi, 0xffff → push esi → mov eax, [ecx] → call [eax+0x3c]（★虚表槽 0x3c）→ and eax, 0xff → mov [0xaa05a8], eax（★写会话状态）
+0053f576  je 0x53f5a7（★前次结果门控）→ mov ecx, [0x887628] → mov edx, [ecx] → call [edx+0x1c]（★虚表槽 0x1c）→ test al → je 0x53f592
+0053f587  mov eax, 1 → mov [0xaa05ac], eax → ret c3（★成功）
+0053f592  mov ecx, [0x887628] → mov eax, [ecx] → call [eax+4]（★虚表槽 4）→ mov [0xaa05a8], 0
+0053f5a7  xor eax, eax → ret c3（★失败）
+```
+
+**语义**：**会话状态查询器（推断名）**——无参：[0x887628] 全局会话对象虚表 → ★虚表槽 0x50（[0xa8ebb4] 参）+ ★虚表槽 0x3c（[0xaa0568] 十六位字段）→ 写 [0xaa05a8] → ★虚表槽 0x1c 二次判定 → 成功 [0xaa05ac]=1 返 1 / ★虚表槽 4 失败清 [0xaa05a8]=0 返 0 → ret c3。**会话活跃状态查询（★★[0x887628] 全局 + 虚表槽 0x50/0x3c/0x1c/0x4 链 + [0xaa05a8]/[0xaa05ac] 状态写）**。
+
+## c 路 0x53F4F0（74B）——全局六槽装载器
+
+```
+0053f4f0  mov eax, [esp+4]（★栈参 1）→ mov word [0xaa0568], cx（★this+0 参 → 十六位槽）
+0054f4fb  mov ecx, [esp+8] → mov [0xaa0548], edx（★ edx 参 → 槽）→ mov edx, [esp+0xc] → mov [0xaa055c], eax → mov eax, [esp+0x10] → mov [0xaa0578], ecx
+0053f518  mov ecx, [esp+0x14] → mov [0xaa0530], edx → mov [0xaa0508], eax → mov [0xaa056c], ecx
+0053f52d  mov [0xaa05a4], 1（★置门控标志）→ ret 0x14
+```
+
+**语义**：**全局六槽装载器（推断名）**——6 栈参（ret 0x14）：★[0xaa0568] word 槽（cx）+ ★[0xaa0548]/[0xaa055c]/[0xaa0578]/[0xaa0530]/[0xaa0508]/[0xaa056c] 六 dword 槽装载 → ★★[0xaa05a4]=1 门控置位 → ret 0x14。**会话全局参数装载（★★[0xaa05xx] 全局槽族 + 门控置位——a 路后邻装载侧）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 0 个/去重 0（纯全局门控）——**已登记无 MISSING**（picker callees=0 吻合）。
+- b 路：跨函数直接 call 0 个/去重 0（纯虚表槽 0x50/0x3c/0x1c/0x4 间接）——**已登记无 MISSING**（picker callees=0 吻合）。
+- c 路：跨函数直接 call 0 个/去重 0（纯全局装载）——**已登记无 MISSING**（picker callees=0 吻合）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING、无批内自引用**（连续四十六批三路全登记）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★[0xaa05a4] 全局门控（==1 → 清 [ecx+0xc4]——22B 极简）;
+2. b 路 ★★[0x887628] 全局会话对象 + 虚表槽 0x50/0x3c/0x1c/0x4 四槽链;
+3. b 路 ★★[0xaa0568] 十六位字段 + [0xaa05a8]/[0xaa05ac] 状态双写（成功 1 / 失败清 0）;
+4. c 路 ★★[0xaa05xx] 六 dword 槽 + [0xaa0568] word 槽装载 + [0xaa05a4]=1 门控置位（ret 0x14——6 栈参）。
+
+## 跨批次连接
+
+- ★★batch 2328（0x5409F0 连接析构——b 路 [0x887628] 全局会话同源 [0x887628] 批次 2328 c 路后邻）+ batch 2327（IPX 域——[0xaa05xx] 会话槽族同域）。
+- ★★batch 2306/2307（事件系统——b 路虚表槽链同源）+ batch 2324（0x544A70——b 路虚表槽 4 同源）。
+- ★★batch 2325 c 路（0x542620——c 路 [0xaa05xx] 全局槽族邻域）+ batch 2322（0x54F530——b 路大门控分支同风）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x5402D0（a 路后邻——装载器含 0x48b720）；0x53F5B0（b 路后邻——[0x887628] 虚表槽 0x20 调用器 + [0xaa05ac]=0）；[0xaa05a4]/[0xaa05a8]/[0xaa05ac]（a/b/c 路会话门控/状态三角）；[0x887628]/[0xa8ebb4]（b 路全局会话族）。
+- 未兑现 MISSING 旧观察（继续排队）：0x00486790（2267 起）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150 + ★0x556AD0/0x556EB0/0x556D20 + ★0x554830/0x49E400 + ★0x551B20 + ★0x5517A0/0x5512D0 + ★0x5509E0/0x551300/0x551320/0x551330/0x551370 + ★0x550080/0x54F6F0/0x54F670 + ★0x54E890/0x54E8C0 + ★0x54E590/0x54D930/0x549E90 + ★0x547CE0/0x544BE0 + ★0x543780/0x542EC0 + ★0x5424C0 + ★0x5422C0/0x540F90 + ★0x540A80 + ★0x5402D0/0x53F5B0（2329 新观察）。
+- 本批 **无 MISSING**（连续四十六批三路全登记——batch 2276 起，TSV 5470）。next 批预期 top3 = 0x53EC90（32B callees=1）/ 0x53EC40（40B callees=0）/ 0x53E420（67B callees=0）。
