@@ -1,0 +1,67 @@
+# frontier batch 2258：场景巨型分派器 + 常量返回器·0x1C2 + 场景对象构造器（0x5B3060 / 0x5B2EF0 / 0x5B2DA0）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x5B3060 FUN_005b3060 callees=1 deps=1925 / 0x5B2EF0 FUN_005b2ef0 callees=0 deps=1 / 0x5B2DA0 FUN_005b2da0 callees=1 deps=44）
+- 三路 disasm：`.qwen/tmp/_d2258a.txt`（0x5B3060 size 0x500）/ `_d2258b.txt`（0x5B2EF0 size 0x100）/ `_d2258c.txt`（0x5B2DA0 size 0x200）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5B3060 | 1158B（0x486）| ret c3 @0x5B34E5 | 0x5B34E8（跳转表区——jmp 表 0x5b34e8/0x5b34ec... 本函数内部跳转表）| 1 次/去重 1（0x5f3e70——全部已登记，callees=1 吻合；余为虚表槽间接 call 不入直接计数）|
+| 0x5B2EF0 | 6B（0x6）| ret c3 @0x5B2EF5 | 0x5B2F00（同款常量返回器 mov eax,0x1c2 ret——虚表槽填充族）| 0 次（mov eax,0x1c2 常量返回，callees=0 吻合）|
+| 0x5B2DA0 | 104B（0x68）| ret c3 @0x5B2E07 | 0x5B2E10（同款常量返回器 mov eax,0x1c2 ret——虚表槽填充族）| 1 次/去重 1（0x5f3900——全部已登记，callees=1 吻合）|
+
+## a 路 0x5B3060（1158B）——场景巨型分派器
+
+```
+005b3060  sub esp,0xc → push esi/edi → mov edi,ecx（★this）→ call 0x5f3e70（★查询初始化）→ mov al,[edi+0x90]（★门控标志）→ test → je 0x5b34e0（★失败直接返回）→ mov edx,[edi+0xc8]（★高度字段）→ mov eax,[edi+0xd0] → lea esi,[edi+0xc8] → cmp edx,-1 → je 0x5b309f → mov ecx,[0xa8ed84]（★全局边界）→ sub ecx,edx → cmp ecx,eax → jge 0x5b30a7 → sub eax,ecx → 0x5b309f test eax,eax → jne 0x5b34e0（★高度钳位后为 0 才继续）→ 0x5b30a7 mov eax,[edi+0x6c] → test → jle 0x5b34e0（★[edi+0x6c] 计数 <= 0 提前返回）→ mov eax,[edi+0xac]（★场景类型索引）→ cmp 0x1f → ja 0x5b34c4 → jmp [eax*4+0x5b34e8]（★★跳转表分派——场景类型 0..0x1e）
+005b30c8  ★各分支统一模板：mov edx,[edi] → mov ecx,edi → call [edx+0x204/0x208/0x240/0x244/0x248/0x210/0x230/0x224/0x220/0x234/0x238/0x20c/0x23c/0x24c/0x254/0x250/0x21c/0x214/0x218/0x22c/0x228/0x258/0x25c/0x260/0x264/0x26c/0x270/0x268/0x21c/0x214]}（★虚表槽调用，每分支一个槽）+ 统一尾部：mov ecx,[0xa8ed84] → mov [esi],ecx（★[edi+0xc8]=全局边界）→ mov ecx,[esp+8] → mov [esi+4],ecx（★[edi+0xcc]=传参）→ mov [esi+8],eax（★[edi+0xd0]=返回值）→ ret
+005b34c4  ★兜底分支（类型 >= 0x1f）：同模板 call [edx+0x204] → 尾部三字段写 → ret；0x5b34e0 直接 pop/esp → ret（★[edi+0x90]==0 / 高度 / 计数 任一失败路径）
+```
+
+**语义**：**场景巨型分派器（推断名）**——★场景对象主更新器：0x5f3e70 查询 + [edi+0x90] 门控 + ★[edi+0xc8] 高度字段按 [0xa8ed84] 全局边界差值钳位（**钳位后非 0 提前返回**）+ [edi+0x6c] 计数门控 + ★★[edi+0xac] 场景类型索引 → **跳转表 [eax*4+0x5b34e8] 分派 0..0x1e 共 31 分支（每分支调用不同虚表槽）** + 统一尾部三字段写（[edi+0xc8/0xcc/0xd0]=全局边界/传参/返回值）。**场景状态机最大宿主（batch 2256/2257 场景字段族的顶端调度器——虚表槽 0x204-0x270 族）**。
+
+## b 路 0x5B2EF0（6B）——常量返回器·0x1C2
+
+```
+005b2ef0  mov eax,0x1c2 → ret
+```
+
+**语义**：**常量返回器·0x1C2（推断名）**——返回常量 0x1C2（450）的无条件 getter；**后邻 0x5B2F00-0x5B2FC0 约 7 个同款（mov eax,0x1c2 ret，间隔 0x10）——虚表槽填充族**（对象虚表多个槽位指向同一常量函数，返回场景默认尺寸/计数 450）。**场景常量 getter 虚表槽填充族（batch 2258 b 路 + 同区 0x5B2E10-0x5B2EF0 批量）**。
+
+## c 路 0x5B2DA0（104B）——场景对象构造器
+
+```
+005b2da0  push esi → mov esi,ecx（★this）→ call 0x5f3900（★查询初始化）→ or eax,-1 → mov [esi+0xac],eax（★类型=-1）→ mov [esi+0xb0],eax → mov [esi+0xb4],eax（★场景三字段全 -1）→ xor eax,eax → mov byte [esi+0xb8],al（★字节清 0）→ mov [esi+0xbc],eax → mov [esi+0xc0],eax → mov [esi+0xc4],eax（★清 0）→ mov ecx,[0xa8ed84]（★全局边界）→ mov [esi+0xd0],eax → mov [esi+0xc8],ecx（★[esi+0xc8]=全局边界）→ mov [esi],0x7edcc0 → mov [esi+4],0x7edca4 → mov [esi+8],0x7edc9c → mov [esi+0xc],0x7edc94（★★四虚表）→ mov eax,esi → ret
+```
+
+**语义**：**场景对象构造器（推断名）**——★场景对象字段初始化：0x5f3900 查询 + [esi+0xac/0xb0/0xb4] 三场景字段清 -1 + [esi+0xb8] 字节 0 + [esi+0xbc/0xc0/0xc4] 清 0 + ★[esi+0xc8]=[0xa8ed84] 全局边界 + [esi+0xd0]=0 + ★★四虚表 0x7edcc0/0x7edca4/0x7edc9c/0x7edc94。**与 batch 2256 c 路后邻 0x5B3A60 析构器虚表完全相同（0x7edcc0 族——场景对象四虚表，构造/析构镜像配对）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 1 个（0x5f3e70 ×1）——**已登记**（picker callees=1 吻合；其余为虚表槽 [edx+0x204] 等间接 call 不入直接计数）。
+- b 路：跨函数直接 call 0 个——callees=0 吻合。
+- c 路：跨函数直接 call 1 个（0x5f3900 ×1）——**已登记**（callees=1 吻合）。
+- ★核验脚本（norm() 规范化版）输出：**三路全 PASS，无 MISSING、无批内自引用**——本批零观察项新增。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★[edi+0xc8] 高度钳位：**cmp edx,-1 跳过钳位；否则 eax（=原值）与（全局边界 [0xa8ed84] - 高度）比较，差值 < 原值 → 原值减差值，否则原值保留——与 batch 2256 c 路 0x5B3970 钳位公式一致（先减后比）**；钳位后 test eax,eax → **非 0（有剩余距离）反而提前返回**（语义反转：高度差为 0 才进入分派）;
+2. a 路 ★★跳转表分派 [eax*4+0x5b34e8]：索引 [edi+0xac] cmp 0x1f → ja 兜底分支（call [edx+0x204]）——**31 场景类型 + 兜底**;每分支虚表槽号不同（0x204/0x208/0x240/0x244/0x248/0x210/0x230/0x224/0x220/0x234/0x238/0x20c/0x23c/0x24c/0x254/0x250/0x21c/0x214/0x218/0x22c/0x228/0x258/0x25c/0x260/0x264/0x26c/0x270/0x268/0x21c/0x214）;
+3. a 路 ★统一尾部三字段写：[esi]=[0xa8ed84] 全局边界 / [esi+4]=[esp+8] 传参 / [esi+8]=虚表返回值——**各分支不返回值直接落字段**;
+4. b 路 ★mov eax,0x1c2 常量无操作参数——万用 getter 填充虚表槽（后邻同款约 7 个）;
+5. c 路 ★★[esi+0xc8]=[0xa8ed84] 全局边界初始化（非 0）+ [esi+0xd0]=0 —— 与 batch 2256 装载器/2257 场景族的 [0xa8ed84] 常量全局一致。
+
+## 跨批次连接
+
+- ★★batch 2256（c 路 0x5B3970 场景字段批量装载器——[esi+0xc8]/[0xa8ed84] 钳位同款；后邻 0x5B3A60 析构器四虚表 0x7edcc0 族 = c 路构造器镜像配对）+ batch 2257（a 路 MissionControlClass::LoadFromINI [0x7e2800] 常量、b/c 路场景切换器 [0xac/0xb0] 字段 = a 路跳转表索引源）：**场景对象族跨三批读写闭环（2256 装载/2257 切换+注册/2258 分派+构造）**。
+- ★★[0xa8ed84] 全局场景边界（batch 2256/2257/2258 三批共用——a 路钳位+尾部写、c 路初始化）。
+- ★0x5f3e70/0x5f3900（0x5F 区设置族——a/c 路查询初始化，batch 2255-2258 连续四批 0x5F 区 callee）+ 0x7edcc0/0x7edca4/0x7edc9c/0x7edc94 四虚表（c 路构造器 = batch 2256 0x5B3A60 析构器同族）。
+
+## 观察项 / 候选池
+
+- **本批零 MISSING、零批内自引用**（三路 callee 全部已登记）。
+- **后邻未登记（自然排队）**：0x5B34E8（a 路跳转表区——31 项 jmp 表 0x5b34e8..0x5b355c）、0x5B2F00-0x5B2FC0（b 路后邻——同款常量返回器 mov eax,0x1c2 虚表槽填充族约 7 个）、0x5B2E10-0x5B2EF0（c 路前邻——同上常量返回器批量）。
+- **新观察**：[edi+0xac] 场景类型索引 → 虚表槽 0x204-0x270 族（a 路 31 分支——**场景对象虚表槽分布全景**）+ 0x7edcc0 四虚表（c 路 = batch 2256 0x5B3A60 同族）+ 0x1c2 常量 getter 批量（b/c 路邻域——虚表填充惯用）。
+- 前向：picker 队列继续 0x5B/0x5C 区（0x5B20F0/0x5AE220 大宿主 + 0x5B2F00 常量族新候）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
