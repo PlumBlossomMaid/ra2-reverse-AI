@@ -1,0 +1,78 @@
+# frontier batch 2313：容器指针环推进器 + LineTrail::SetDecrement + LineTrail::LineTrail（0x556B70 / 0x556B50 / 0x556A20）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x556B70 FUN_00556b70 callees=0 deps=55 / 0x556B50 LineTrail::SetDecrement callees=0 deps=59 / 0x556A20 LineTrail::LineTrail callees=0 deps=59）
+- 三路 disasm：`.qwen/tmp/_d2313a.txt`（0x556B70 size 0xB0）/ `_d2313b.txt`（0x556B50 size 0x60）/ `_d2313c.txt`（0x556A20 size 0xC0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x556B70 | 140B（0x8C）| ret c3 @0x556BFB | 0x556C00（★★已登记——batch 2312 c 路三表匹配宿主）| 0 次/去重 0（纯内存操作，picker callees=0 吻合）|
+| 0x556B50 | 21B（0x15）| ret 4 @0x556B63 | 0x556B70（★本批 a 路）| 0 次/去重 0（单指令门控，picker callees=0 吻合）|
+| 0x556A20 | 164B（0xA4）| ret c3 @0x556AC3 | 0x556AD0（未登记——容器清字段器 mov [eax+0xa8],0）| 0 次/去重 0（虚表槽 8 间接——picker callees=0 吻合）|
+
+## a 路 0x556B70（140B）——容器指针环推进器（★★batch 2312 b 路 MISSING 兑现）
+
+```
+00556b70  mov eax, [ecx+4]（★容器指针）→ test → je 0x556bc9
+00556b7a  add eax, 0x9c（★+0x9c 偏移）→ mov edx, [eax]/esi [eax+4]/edi [eax+8]（★三 dword 坐标族）
+00556b87  mov eax, [ecx+0xc]（★项数）→ inc → shl 4（★16B/项）→ add ecx → ★★三 dword 全等匹配（cmp [eax]/[eax+4]/[eax+8]）→ je 0x556bc9（★命中跳过）
+00556b9e  mov eax, [ecx+0xc] → dec（★回绕前移）→ jns 0x556bae → mov [ecx+0xc], 0x1f（★★0x1f 回绕）
+00556bae  inc → shl 4 → add → mov [eax+0xc], 0xff（★哨兵写）→ mov [ebp]/[ebp+4]/[ebp+8], edx/esi/edi（★★三字段落位）
+00556bc9  mov eax, [ecx+0xc] → lea edx, [eax+1] → ★★循环推进（shl 4 + [eax+0xc]-[ecx+8] 差钳位 jns/→0）→ cmp 0x20 jl else xor 0 → cmp [ecx+0xc] jne 回环 → ret c3
+```
+
+**语义**：**容器指针环推进器（推断名——★★batch 2312 b 路 0x556D40 MISSING 观察兑现）**——★★[ecx+4] 容器指针 +0x9c 三 dword 坐标读取 → ★★[ecx+0xc] 项数 16B/项表遍历（三 dword 全等匹配命中跳过——★batch 2312 c 路同款匹配模板）→ ★★dec 回绕 0x1f（*JNS else 0x1f——★环形表语义）+ 0xff 哨兵写 + 三字段落位 → ★★循环推进（[eax+0xc]-[ecx+8] 差钳位 + 0x20 上限 cmp/xor）→ ret c3。**容器环形表推进器（16B/项 + 0x1f 回绕 + 0xff 哨兵——batch 2312 三表族同源**）**。
+
+## b 路 0x556B50（21B）——LineTrail::SetDecrement
+
+```
+00556b50  mov eax, [0xa8eb78]（★★全局门控）→ test → mov eax, [esp+4]（参1 值）→ jne 0x556b5f → ★★shl eax, 1（★加倍）
+00556b5f  mov [ecx+8], eax（★写 this+8）→ ret 4
+```
+
+**语义**：**LineTrail::SetDecrement（★带符号名）**——★★[0xa8eb78] 全局标志门控（★jne 跳过加倍）→ ★★参1 值 shl 1 加倍写 [ecx+8] → ret 4。**LineTrail 递减量 setter（[0xa8eb78] 门控加倍——★带符号名实锤 LineTrail 类成员**）**。
+
+## c 路 0x556A20（164B）——LineTrail::LineTrail
+
+```
+00556a20  mov esi, ecx（this）→ mov al, 0x80 → mov byte [esi]/[esi+1]/[esi+2], al（★三字节 0x80 填充）→ xor edx → mov [esi+4], 0 → mov [esi+8], 0x10（★容量 0x10）→ mov [esi+0xc], 0
+00556a3e  ★★[esi+0x1c] 表 0x20 项循环（lea eax, [esi+0x1c] + ecx=0x20）：mov ebx, [0xabcb50] → mov [edi]/[edi+4]/[edi+8], ebx（★★三表 [0xabcb50]/[0xabcb54]/[0xabcb58] 填充 16B/项）→ mov [eax-0x10], 0（★哨兵）→ dec jne 回环
+00556a6c  ★★[0xabcb80]/[0xabcb88] 容量比较（jl 0x556aa6）→ [0xabcb85] owns 门控 → ★★[0xabcb8c] 判定 → ★★[0xabcb78] 虚表槽 8 扩容（push 0/push 和）→ test al → je 0x556abe
+00556aa6  ★★[0xabcb88] inc → [0xabcb7c] 表尾插（[ecx+eax*4]=esi）→ eax=esi → ret c3
+```
+
+**语义**：**LineTrail::LineTrail（★带符号名构造器）**——★★this 初始化（[esi]=0x80×3 方向字节 + [esi+4]=0/[esi+8]=0x10 容量/[esi+0xc]=0）→ ★★[esi+0x1c] 表 0x20 项三表填充（[0xabcb50]/[0xabcb54]/[0xabcb58] 16B/项 + 哨兵）→ ★★全局容器尾插（[0xabcb78] 虚表槽 8 扩容 + [0xabcb88] 计数 inc + [0xabcb7c] 表写——★batch 2312 全局容器族构造侧）→ ret c3。**LineTrail 构造器（0x80 方向三字节 + 全局容器注册——★★batch 2312 [0xabcbxx] 族构造侧闭合**）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 0 个/去重 0（纯内存操作）——**全部已登记**（picker callees=0 吻合）。
+- b 路：跨函数直接 call 0 个/去重 0（单指令门控）——**全部已登记**（picker callees=0 吻合）。
+- c 路：跨函数直接 call 0 个/去重 0（[0xabcb78] 虚表槽 8 属间接调用）——**已登记无 MISSING**（picker callees=0 吻合）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING（a 路 0x556B70 为 batch 2312 MISSING 兑现）、无批内自引用**（连续三十一批三路全登记）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★[ecx+4] 指针 +0x9c 三 dword 坐标读取（★batch 2312 c 路 [0xabcb50] 三表族）;
+2. a 路 ★★16B/项 shl 4 表遍历 + 三 dword 全等匹配（★命中跳过）;
+3. a 路 ★★dec 回绕 0x1f（jns else 0x1f——※环形表语义——★原版怪癖：0x1f 回绕非 0x20）;
+4. a 路 ★★0xff 哨兵写（mov [eax+0xc], 0xff——★末项哨兵）;
+5. a 路 ★★循环推进差钳位（[eax+0xc]-[ecx+8] jns else 0——★负值钳 0）;
+6. b 路 ★★[0xa8eb78] 全局门控（jne 跳过 shl 1——★加倍条件化）;
+7. c 路 ★★[esi]=0x80×3 方向字节（★LineTrail 方向三字节填充）;
+8. c 路 ★★[esi+8]=0x10 容量 + [esi+4]=0 项数 + [esi+0xc]=0（★容器初始化）;
+9. c 路 ★★[esi+0x1c] 表 0x20 项三表 [0xabcb50]/[0xabcb54]/[0xabcb58] 填充（★全局坐标三表快照）;
+10. c 路 ★★全局容器尾插（[0xabcb78] 虚表槽 8 + [0xabcb88] inc + [0xabcb7c] 写——★batch 2312 族闭环节点）。
+
+## 跨批次连接
+
+- ★★★batch 2312 b 路（0x556D40——★★a 路 0x556B70 为该批 MISSING 观察的兑现点 + [0xabcbxx] 三表族同源）+ batch 2312 c 路（0x556C00——a 路三 dword 匹配同款模板）。
+- ★★batch 2282-2284（VectorClass 容器族——c 路虚表槽 8 扩容同源）+ batch 2310（VectorClass 析构器 [0xabcbxx]——c 路尾插同区）。
+- ★★batch 2309（全局写最小器——c 路 [0xabcb80]/[0xabcb88] 全局同区）+ batch 2300-2308（[0xa8eb78] 全局——b 路门控同源）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x556AD0（c 路后邻——容器清字段器 mov [eax+0xa8],0）；[0xabcb8c]（c 路全局容量补——batch 2312 未涉字段）。
+- 未兑现 MISSING 旧观察：0x00486790（2267 起排队）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150（batch 2280-2312 新观察）。
+- 本批 **无 MISSING（a 路 0x556B70 为 batch 2312 MISSING 兑现）**（TSV 5422）。next 批预期 top3 = 0x556700 LinkClass::AddTail（41B callees=0）/ 0x556670 LinkClass::TailOfList（33B callees=0）/ 0x556090 LightConvertClass::UpdateColors（1135B callees=5）。
