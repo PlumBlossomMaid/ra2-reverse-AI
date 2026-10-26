@@ -1,0 +1,74 @@
+# frontier batch 2135：单位/对象列表构建器 + 记录清理器 + 记录注册器（0x650A90 / 0x64D990 / 0x64BDD0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x650A90 FUN_00650a90 callees=11 deps=3 / 0x64D990 FUN_0064d990 callees=0 deps=2550 / 0x64BDD0 FUN_0064bdd0 callees=4 deps=72）
+- 三路 disasm：`.qwen/tmp/_d2135a.txt`（0x650A90 size 0xC70，1003 行分段全读）/ `_d2135b.txt`（0x64D990 size 0x60）/ `_d2135c.txt`（0x64BDD0 size 0x5C0，422 行全读）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x650A90 | 3161B（0xC59）| ret @0x6516E8 | 0x6516F0（sub esp,0x3a4 大函数头，未登记）| 11（全已登记：0x65c780/0x7350c0/0x7c91d0/0x7c8d20/0x7c8e17/0x7c8b3d/0x4068e0/0x4c93d0/0x40dcb0/0x7dc720/0x7c5f00）|
+| 0x64D990 | 73B（0x49）| ret @0x64D9D8 | 0x64D9E0（push ecx/[0xa8ed84] 头，未登记）| 0 |
+| 0x64BDD0 | 1455B（0x5AF）| ret @0x64C37E（双出口 0x64C36F 返回-1/0x64C37E）| 0x64C380（mov ebx,[0xa80238] 头，未登记）| 3（0x7c8e17/0x4068e0/0x7c8b3d 全已登记）|
+
+三函数为**全局记录/对象列表系统**（[0x8b41f8]/[0x8b4200]/[0x8b41fc] 记录计数与索引、[0x8b4204] 记录表、[0xa70204] 注册表、[0x7e1530] IAT、[0xac6660]/[0xac50fc]/[0xafa468] 槽表族）：
+
+## a 路 0x650A90（3161B 超大函数）——单位/对象列表构建器
+
+```
+00650a90  push ebp/mov ebp,esp/and esp,0xfffffff8（★栈对齐）/sub esp,0x28 → mov al,[0xb04880]（★门控字节）→ test al → je 0x650ac9
+00650aac  分支 1（门控==0）：[0xa8b230]（★全局）→ lea ecx,[eax+0x218] → ★★call 0x65c780（Randomizer::Random——带注释！QWEN.md RNG 里程碑取数函数）→ [0xafa26c] → ret 提前出口
+00650ac9  分支 2（门控非 0）：lea eax,[esi+esi*2]/shl 3/sub esi/lea [eax+eax*8]/lea [ecx*4+0xac6660]（★★大表索引）→ [edi]=[0xac51fc] → call 0x65c780（Random）→ [edi+4] → [edi+8]=[0xa8ed84] → ★循环 8 次（cmp ebx,8/jl）：[0xa8022c] 数组（[0xa80238] 个——batch 2107/2123 同全局）→ [ecx+0x6f] 判定 → 0x7350c0/0x7c91d0 → strcmp 双判定（0x82ba08/0x817318 → 0x7c8d20）→ repne scasb/rep movsd/rep movsb 拷贝 → [ecx+0x1ec] 字节 → [0xb054d4] 表查 → [ecx+0x304] → 0x7c91d0 → [0xa83c9c] 表查 → 0x7c91d0 → 8 次结束
+00650c4b  [0x8b4118]/[0xa83df8]/[0xa8e3a0]/[0x87f788]/[0xa8eb50] 五组求和 + [0x8a0370] 起 0x18 步长全局数组求和（cmp 0x8a03e8）
+00650c81  [edi+0x334]/[0x338] 容量 → 0x7c8e17/0x7c8b3d 扩容 → sprintf 0x838ec0 → [edi+0x300]=新数组/[0x2f0] → ★★第一组全局数组遍历（[0xa83df8] 个 [0xa83dec] 元素）：[edi+0x9c] 字段 → ★魔法数除法（imul 0x66666667/sar 2/shr 0x1f 修正——除以 10）→ [esi]=ecx 写对象首字段 → 0x4c93d0（[edi+0x388]）→ shr 7/inc/shr 1（★÷256 速度归一）→ [esi+0x64] → 虚表槽 0x184 → fld [edi+0x578]×fmul [0x7e1710] → 0x7c5f00 → [esi+0x67] → [edi+0x21c]+0x30 字节 → [edi+0x6c0]+0xdf8 → [esi+4] → [esi+0x1f]=0 → [edi+0x674] 虚表槽 0xbc/0xc0/0xc4（含 0x7dc720 错误路径 0x80004003）→ 0x7c91d0（名称拷贝）→ [edi+0x5a4] 虚表槽 0x40/0x2c（cmp 0xb 判定）→ 0x40dcb0 → 0x7c91d0 → [edi+0x2b4] 同款 → ★esi+=0x68 步长循环
+0065114c  第二/三组（[0xa8e3a0] 个 [0xa8e394] 元素）：同款构建（0x4c93d0×2/[0x3a0] 字段/0x6c4+0xdf8/虚表槽 0xbc/0xc0/0xc4/0x40/0x2c/0x88/0x3c）
+0065132a  第四组（[0xa8eb50] 个 [0xa8eb44] 元素）：同款（[edi+0x520]+0xdf8/虚表槽 0x184）
+00651478  ★第五组：[0x8a0370] 起 0x18 步长表（[ebx-0xc] 数组）：虚表槽 0x2c/0x10（cmp -2 跳过）/0x88/0x40/0x3c → 0x7c91d0 → esi+=0x28 步长
+006515c3  ★第六组：[0x87f788] 个 [0x87f77c] 元素：同款构建 → [ecx+0x32c]=ebp 计数收尾 → pop 族 → ret
+```
+**语义**：**单位/对象列表构建器（推断名）**——① [0xb04880] 门控：==0 时 **Randomizer::Random（0x65C780）取一次随机数到 [0xafa26c] 提前返回**；② 非 0 时：初始化 [0xac6660] 大表记录（Random ×2 + [0xa8ed84] 计数）→ **[0xa8022c] 数组 8 次循环**（字符串匹配 + 名称拷贝 + 表查）→ 五全局求和 → 容量扩容 + **六组全局数组遍历构建对象记录**（[0xa83df8]/[0xa8e3a0]/[0xa8eb50]/[0x8a0370] 表/[0x87f788]——每组：魔法数除法 imul 0x66666667（÷10）+ 0x4c93d0 取值 + shr7/inc/shr1（÷256）+ fld×fmul[0x7e1710]×_ftol + 虚表槽族（0x2c/0x40/0x88/0x3c/0xbc/0xc0/0xc4/0x184）+ 0x40dcb0 名称 + 0x7c91d0 字符串拷贝）→ [ecx+0x32c] 计数收尾。**单位/对象属性快照列表构建（0x68/0x28 字节记录步长）**。★**Randomizer 0x65C780 = QWEN.md RNG 里程碑取数函数的运动/对象系统调用点**（跨系统连接）。
+
+## b 路 0x64D990（73B）——记录清理器
+
+```
+0064d990  mov edx,[0x8b41f8]（★记录计数——batch 2134 c 路同全局）→ push esi → test edx → je 收尾 → mov esi,[0xa8ed84]（★全局计数）→ mov eax,[0x8b41fc]（★记录索引）→ lea [eax+eax*8]/lea [eax+ecx*4] → ★test byte [ecx+ecx*2+0x8b4205],1（记录标志）→ jne → cmp esi,[ecx+ecx*2+0x8b4207]（★记录时间戳 vs 全局计数）→ jle 跳过 → ★循环：inc eax/and eax,0x3fff（&16383）→ dec edx → [0x8b41fc]=eax/[0x8b41f8]=edx → jne 循环 → ret
+```
+**语义**：**记录清理器（推断名）**——[0x8b41f8] 记录计数循环：索引 [0x8b41fc] 递增 **& 0x3fff**（16384 环形）→ [0x8b4205] 记录标志测试 + [0x8b4207] 时间戳 vs [0xa8ed84] 比较 → 清出超期记录（计数递减）。**与 batch 2134 c 路登记器（0x652230）/本批 c 路注册器配对（清理端）**。
+
+## c 路 0x64BDD0（1455B）——记录注册器
+
+```
+0064bdd0  sub esp,0x9c/push 族/mov esi,ecx（★输入字符串/记录指针）→ [esp+0x3c] 清零（rep stosd 0x1b+stosw+stosb——★111 字节清零）→ movsx eax,[esi+2]/cmp edx,0xe（★长度判定）→ 首字节 switch：0x19（je 0x64c335）/0x1c（inc 6 字节偏移）/0x4（inc 1）→ [edi+0x8208ec]（★长度表）→ ecx → rep movsd/movsw/movsb 拷贝到栈槽
+0064be9b  分支 0x1f：[esp+0x47] 读 → 0x7c8e17（new）→ 拷贝 → [0xac50fc] 槽 = 1 → [0xafa468] 表写（lea [eax+eax*4]/shl 7/0xafa468——★0x280 字节记录槽）→ sprintf 0x837dcc/0x837da8 → ★循环：cmp [0x8b41f8],0x4000 → jge 满分支 → [0x8b4200] 索引 → ★rep movsd 0x1b+movsw+movsb（★111 字节拷贝到 [0x8b4204] 记录表）→ call dword ptr [0x7e1530]（IAT）→ [ecx*4+0xa70204] 注册 → [0x8b4200]++/and 0x3fff → [0x8b41f8]++ → [0xac50fc]/[0xafa468] 槽更新 → 循环
+0064c0c2  sprintf 0x837d6c/0x837d30/0x837d00/0x837cd4（★多串日志）→ 满分支：cmp [esp+0x3c],0x1f → 0x7c8b3d（delete）→ or eax,-1 → ret
+```
+**语义**：**记录注册器（推断名）**——输入字符串/记录（参数 1）→ 首字节分派（0x19/0x1c/0x4/0x1f 等格式码）→ 长度表 [0x8208ec] 拷贝 → [0xac50fc] 槽登记 + [0xafa468] 表写（0x280 字节记录）→ **111 字节记录注册到 [0x8b4204] 表**（[0x8b4200] 索引 & 0x3fff 环形）→ [0x7e1530] IAT → [0xa70204] 注册 → [0x8b41f8] 计数 → 满（>=0x4000）→ 0x7c8b3d 清理返回 -1。**与 batch 2134 c 路 0x652230（记录登记器）完全同族——[0x8b4200]/[0x8b41fc] 索引、[0x8b4204] 表、[0xa70204]、[0x7e1530] 全同**。
+
+## 原版怪癖（照抄）
+
+1. a 路门控分支：**[0xb04880]==0 → Randomizer::Random（0x65C780）取随机数到 [0xafa26c] 提前返回**（门控短路）；
+2. a 路 [0xac6660] 大表索引：lea [esi+esi*2]/shl 3/sub esi/lea [eax+eax*8]/lea [ecx*4+0xac6660]（★(esi×3×8−esi)×9×4 = 混乱乘法组合——记录槽索引）；
+3. a 路 [0xa8022c] 数组 **8 次循环**（cmp ebx,8——非计数遍历固定 8 轮）；
+4. a 路魔法数除法：imul 0x66666667/sar 2/shr 0x1f/add（★除以 10 的编译器魔法数——共 8 处）；
+5. a 路速度归一：shr 7/inc/shr 1（★÷256 后 +1 再 ÷2）；
+6. a 路 [0x674] 虚表槽 0xbc/0xc0/0xc4 三连调用（每调前 test + 0x7dc720 错误路径 push 0x80004003）；
+7. b 路环形索引 **& 0x3fff**（16384 取模——batch 2134 登记器同款）；
+8. c 路首字节格式码分派（0x19/0x1c/0x4/0x1f——偏移 6/1 字节解析）；
+9. c 路 111 字节记录（rep movsd 0x1b×4+movsw+movsb——27×4+2+1=111，batch 2134 c 路同款）；
+10. c 路满分支返回 -1（or eax,0xffffffff）。
+
+## 跨批次连接
+
+- ★★★★★**QWEN.md RNG 里程碑**：a 路直接调用 **Randomizer::Random 0x65C780**（带注释——RNG 取数函数的运动/对象系统调用点，跨系统连接实锤）。
+- ★★★★batch 2134 c 路 0x652230：c 路记录注册器（[0x8b4200] 索引/[0x8b4204] 表/[0xa70204]/[0x7e1530]）与登记器完全同族；b 路清理器（[0x8b41f8]/[0x8b41fc]/[0x8b4205]）配对。
+- ★★★batch 2107/2123：[0xa8022c]/[0xa80238] 全局对象数组（a 路 8 次循环遍历）。
+- ★★batch 2124 a 路：0x40dcb0（名称获取）/0x7c91d0（字符串拷贝——batch 2124 a 路 sprintf 族上下文）同 callee。
+- ★[0xa8b230]（batch 2123 b 路全局）+ [0xb054d4]（batch 2127 全局对象表）+ 0x65c780/0x4c93d0/0x7dc720/0x7c5f00（已登记）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（直接 call 全已登记——a 路 11 个 + c 路 3 个全在 TSV）。
+- **后邻未登记**：0x6516F0（a 路后邻大函数头）、0x64D9E0（b 路后邻）、0x64C380（c 路后邻，mov ebx,[0xa80238]）。
+- **新观察**：大表 [0xac6660]/[0xac50fc]/[0xafa468]/[0xafa26c]、[0x8208ec] 长度表、[0x7e1530] IAT、[0xb04880] 门控字节、sprintf 串 0x837dcc/0x837da8/0x837d6c/0x837d30/0x837d00/0x837cd4/0x838ec0。
+- 前向：picker 队列继续 0x65/0x64 区 + 0x4A8xxx/0x4A9xxx 判定族 + 0x599650。
