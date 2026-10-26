@@ -1,0 +1,78 @@
+# frontier batch 2282：区域计数读取器 + 8B/项容器尾置构造器 + 8B/项容器源拷贝器（0x58B7D0 / 0x58AFF0 / 0x58AD10）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x58B7D0 FUN_0058b7d0 callees=0 deps=2701 / 0x58AFF0 FUN_0058aff0 callees=1 deps=46 / 0x58AD10 FUN_0058ad10 callees=1 deps=47）
+- 三路 disasm：`.qwen/tmp/_d2282a.txt`（0x58B7D0 size 0x40）/ `_d2282b.txt`（0x58AFF0 size 0x80）/ `_d2282c.txt`（0x58AD10 size 0xA0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x58B7D0 | 6B（0x6）| ret c3 @0x58B7D5 | 0x58B7E0（未登记——[0xabdfd4] 全局读取器，同款 6B）| 0 次/去重 0（纯 mov/ret，picker callees=0 吻合）|
+| 0x58AFF0 | 114B（0x72）| ret 8 c20800 @0x58B05F | 0x58B070（未登记——双层对象构造区）| 1 次/去重 1（0x7c8e17——已登记，picker callees=1 含虚表间接吻合）|
+| 0x58AD10 | 148B（0x94）| ret 4 c20400 @0x58ADA1 | 0x58ADA4（nop pad 后 0x58ADB0——另一构造器区）| 1 次/去重 1（0x7c8e17——已登记，picker callees=1 含虚表槽 0xc 间接吻合）|
+
+## a 路 0x58B7D0（6B）——区域计数读取器
+
+```
+0058b7d0  mov eax,[0xabed0c]（★区域计数——batch 2281 构建侧）→ ret c3
+```
+
+**语义**：**区域计数读取器（推断名）**——★[0xabed0c] 全局区域计数（batch 2281 0x58B820 构建对侧）单指令读返回。**区域计数 getter（三字节读取器——batch 2281 表构建的读侧基元）**。后邻 0x58B7E0/0x58B7F0/0x58B800 三个同款 6B getter（[0xabdfd4]/[0xabdfd0]/[0xabec90]——batch 2281 c 路四极值读侧家族）。
+
+## b 路 0x58AFF0（114B）——8B/项容器尾置构造器
+
+```
+0058aff0  push esi/edi → mov edi,[esp+0xc]（★参1 容量）→ mov esi,ecx（★this）→ test edi → mov [esi+4],0（★计数=0）→ mov [esi+8],edi（★容量）→ mov byte [esi+0xc],1 → mov byte [esi+0xd],0 → ★mov [esi],0x7ed5c0（★虚表 0x7ed5c0——8B/项容器虚表）→ je 0x58b05b（容量 0 直接收尾）
+0058b014  mov eax,[esp+0x10]（★参2 源指针）→ test → je 0x58b02b → ★已提供源：dec edi → mov [esi+4],eax（★直接挂接源数组）→ 收尾 ret 8
+0058b02b  ★★自分配：lea eax,[edi*8]（★8B/项 × 容量）→ push → 0x7c8e17 → dec edi → mov [esi+4],eax（★新数组）→ mov byte [esi+0xd],1（★owns=1）→ ret 8（★2 参）
+0058b052  分配失败：xor eax → mov byte [esi+0xd],1 → mov [esi+4],eax（★空）→ 收尾 ret 8
+0058b05b  收尾：mov eax,esi（★返回 this）→ pop → ret 8
+```
+
+**语义**：**8B/项容器尾置构造器（推断名）**——★★8B/项容器（虚表 0x7ed5c0——batch 2263/2264 VectorClass 三档外的第 4 档 8B 变体）：[+4] 计数 / [+8] 容量 / [+0xc] 标志 / [+0xd] owns / 虚表 0x7ed5c0；★参2 源指针非 0 直接挂接（不拷贝不 owns）、为 0 则 0x7c8e17 自分配 [容量×8B]（owns=1）。**8B/项容器构造（向量 8B/项变体——batch 2263 8B 构造器同族，虚表 0x7ed5c0 新家族）**。
+
+## c 路 0x58AD10（148B）——8B/项容器源拷贝器
+
+```
+0058ad10  push 三件套 → mov ebp,[esp+0xc]（★参 源容器）→ mov esi,ecx（★this）→ cmp esi,ebp → je 0x58ad9b（★自拷贝跳过）
+0058ad1e  mov eax,[esi] → ★call dword ptr [eax+0xc]（★this 旧数据清理——虚表槽 0xc）→ mov edi,[ebp+8]（★源容量）→ mov [esi+8],edi（★新容量）→ je 0x58ad95（源空：mov [esi+4],0 / [esi+0xd]=0）
+0058ad2f  ★★自分配：lea ecx,[edi*8] → push → 0x7c8e17 → lea edx,[edi-1] → 清 0 循环（mov [ecx],ebx / mov byte [ecx+4],bl——★8B/项清零）→ mov [esi+4],eax
+0058ad63  ★★拷贝循环：mov ecx,[esi+8]（★容量）→ mov byte [esi+0xd],1（★owns=1）→ 循环：mov edx,[ebp+4] → mov edi,[edx+eax*8] → mov [ecx+eax*8],edi → mov edx,[edx+eax*8+4] → mov [ecx+eax*8+4],edx（★8B 逐项拷贝）→ mov al=1 收尾 ret 4（★1 参）
+0058ad95  源空路径：[esi+4]=0 / [esi+0xd]=0 → ret 4
+```
+
+**语义**：**8B/项容器源拷贝器（推断名）**——★★从源容器拷贝（c 参数）：先虚表槽 0xc 清理旧数据 → ★★源容量 [ebp+8] 自分配（0x7c8e17 [容量×8B] + 8B/项清零循环）→ ★★8B 逐项拷贝循环（[ebp+4] → [esi+4] 双 dword/项）→ owns=1 收尾 ret 4；★自拷贝（this==源）跳过。**8B/项容器拷贝构造（虚表槽 0xc 清旧 + 8B/项清零 + 双 dword 拷贝——与 b 路构造器配对）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 0 次/去重 0 个（纯 mov/ret）——**picker callees=0 吻合**。
+- b 路：跨函数直接 call 1 次/去重 1 个（0x7c8e17）——**全部已登记**（picker callees=1 吻合）。
+- c 路：跨函数直接 call 1 次/去重 1 个（0x7c8e17）——**全部已登记**（picker callees=1 含虚表槽 0xc 间接按口径吻合）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING**（连续第六批三路全登记）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★6B 三体 getter 家族（0x58B7D0/0x58B7E0/0x58B7F0/0x58B800——[0xabed0c]/[0xabdfd4]/[0xabdfd0]/[0xabec90]——batch 2281 c 路构建写侧家族读侧）;
+2. b 路 ★★虚表 0x7ed5c0（8B/项容器虚表——batch 2263 0x7eda4c 8B/0x7ed970 16B/0x7ed480 4B 三档外的第 4 档）;
+3. b 路 ★★参2 源指针直接挂接（mov [esi+4],eax 不拷贝不 owns——★0x7c8e17 自分配才 owns=1）;
+4. b 路 ★★9 字段装配（[+4] 计数/+[+8] 容量/+[+0xc]=1/+[+0xd]=0 初始 owns + 虚表——batch 2263/2264 同款 9 段式）;
+5. c 路 ★★虚表槽 0xc 清旧（call [eax+0xc]——★拷贝前旧数据清理）;
+6. c 路 ★★8B/项清零循环（mov [ecx],ebx / mov byte [ecx+4],bl——★8B/项双段清零）;
+7. c 路 ★★8B 逐项拷贝（mov [edx+eax*8],edi / [edx+eax*8+4],edx——双 dword/项）;
+8. c 路 ★★自拷贝跳过（cmp esi,ebp → je 收尾——★batch 2263 a 路同款自赋值跳过）;
+9. c 路 ★★源空路径（[esi+4]=0 / [esi+0xd]=0——清 owns）;
+10. b/c 路 ★★ret 8/ret 4（2 参构造 / 1 参拷贝——★8B/项容器家族两入口）。
+
+## 跨批次连接
+
+- ★★★batch 2281 c 路（[0xabe304]/[0xabe328]/[0xabe32c] 表构建 + [0xabed0c] 计数 + 四极值 [0xabdfd0]/[0xabdfd4]/[0xabec90]/[0xabecd0]——a 路 getter 家族读侧闭环）。
+- ★★batch 2263（VectorClass 构造器 8B 变体 0x7eda4c + 自赋值跳过——b/c 路同族）+ batch 2264（Resize 8B 双参——b 路同款 9 段式模板）+ batch 2265（VectorClass 清理器——c 路虚表槽 0xc 对应）。
+- ★★batch 2259/2260（16 位坐标容器族——b/c 路 8B/项=坐标+高度对容器、虚表 0x7ed5c0 新家族）。
+- ★0x7c8e17 operator new（b/c 路——QWEN.md 高频）+ 0x7ed5c0 虚表（b 路——新收录）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x58B7E0/0x58B7F0/0x58B800（a 路后邻——6B getter 家族三成员）；0x58B070（b 路后邻——双层对象构造区）；0x7ED5C0 虚表（b 路——8B/项容器虚表家族）。
+- 未兑现 MISSING 旧观察：0x00486790（2267 起排队）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x578640 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30（batch 2280/2281 新观察）。
+- 本批 **无 MISSING**（连续六批三路全登记——batch 2276 起）。
