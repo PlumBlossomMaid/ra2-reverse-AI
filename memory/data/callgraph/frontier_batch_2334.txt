@@ -1,0 +1,89 @@
+# frontier batch 2334：永久心控判定器 + 巨型浮点插值器 + 全局初始化宿主（0x53C450 / 0x53C0A0 / 0x53B460）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x53C450 TechnoClass::CanBePermaMindControlled callees=0 deps=1909 / 0x53C0A0 FUN_0053c0a0 callees=2 deps=5 / 0x53B460 FUN_0053b460 callees=9 deps=1871）
+- 三路 disasm：`.qwen/tmp/_d2334a.txt`（0x53C450 size 0x80）/ `_d2334b.txt`（0x53C0A0 size 0x1E0）/ `_d2334c.txt`（0x53B460 size 0x120）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x53C450 | 107B（0x6B）| ret c3 @0x53C4BA | 0x53C4C0（未登记——装载器）| 0 次/去重 0（纯虚表判定，picker callees=0 吻合）|
+| 0x53C0A0 | 475B（0x1DB）| ret 0x14 @0x53C278 | 0x53C280（未登记）| 2 次/去重 2（0x4cb1a0/0x4cb150——已登记，picker callees=2 吻合）|
+| 0x53B460 | 252B（0xFC）| ret c3 @0x53B55B | 0x53B560（未登记——跳跃表 [eax*4+0x53b770]）| 9 次/去重 9（全部已登记，picker callees=9 吻合）|
+
+## a 路 0x53C450（107B）——TechnoClass::CanBePermaMindControlled
+
+```
+0053c450  push esi → mov esi, ecx（this）→ test esi → jne 0x53c45b → xor al, al → ret c3（★this 空返 0）
+0053c45b  mov eax, [esi] → mov ecx, esi → call [eax+0x2c]（★虚表槽 0x2c——类型）→ cmp eax, 6 → jne → xor al, al（★类型 6 返 0）
+0053c46b  call [edx+0x84]（★虚表槽 0x84）→ mov cl, [eax+0xd35] → test → jne → 返 0（★[eax+0xd35] 门控）
+0053c483  call [eax+0x160]（★虚表槽 0x160）→ test al → je → 返 0（★虚表判定）
+0053c495  call [edx+0x84] → mov cl, [eax+0xd6a] → test → jne → 返 0（★[eax+0xd6a] 门控）
+0053c4ad  call [eax+0x54]（★虚表槽 0x54）→ sete al（★最终取反）→ ret c3
+```
+
+**语义**：**TechnoClass::CanBePermaMindControlled（★带符号名）——永久心控可行性判定**——thiscall：this 空 → 返 0 → ★虚表槽 0x2c 类型（==6 返 0）→ ★虚表槽 0x84 + [eax+0xd35] 字节门控 → ★虚表槽 0x160 判定 → ★虚表槽 0x84 + [eax+0xd6a] 字节门控 → ★虚表槽 0x54 + sete 取反 → ret c3。**★带符号名心控判定链（纯虚表五槽——★免疫/心控状态机）**。
+
+## b 路 0x53C0A0（475B）——巨型浮点插值器
+
+```
+0053c0a0  push ebp → mov ebp, esp → sub esp, 0x40 → mov ebx, [ebp+0xc]（参 2）→ mov eax, ebx → cdq/sub/sar 1（★半程）→ fild [ebp-0x24] → mov esi, [ebp+0x10]（参 3）→ fstp [ebp-0xc]
+0053c0be  mov eax, esi → cdq/sub/sar 1（★半程）→ fild → fst [ebp-0x10] → fmul 自乘 → fld [ebp-0xc] → fmul 自乘 → faddp（★★平方和 → [ebp-0x30]）→ fld [ebp-0x10] → fchs → [ebp-8]
+0053c0ec  test esi → jle 0x53c273 → ★外层循环：fld [ebp-0xc] → fchs → [ebp-0x28] → mov [ebp-0x24], esi → test ebx → jle 0x53c250
+0053c10c  ★内层循环：fld/fmul 平方 → ★★系数链（fadd [0x7e2ac8]/fsubr/fmul [0x7eaa00]/fld [0xa9faa0]/fmul/fmul）→ call 0x4cb1a0（★sin 装载）→ call 0x4cb150（★cos 装载）→ ★★双通道插值（[ebp-0xc]/[ebp-0x10] 乘加）→ fistp 取整 ×2
+0053c197  ★★坐标钳位（ecx/eax <0 → 0 / ≥ 上界 → 上界-1）→ imul eax, [ebp+0x18]（★行宽）→ add eax, ecx（★索引）
+0053c1ca  mov ecx, [ebp-0x40]（★目标表）→ lea eax, [ecx+eax*2] → ★★word 位运算（shr 0xb/and 0x1f/shr 5/and 0x3f——★tile 三通道取位）→ ★★合并写（shl 0xb/or shl 5/or → mov word [ecx], bx）
+0053c24a  dec eax（★内循环推进）→ jne 0x53c121 → ★外层推进（[ebp+0x14] 步长 + fadd [0x7e2ac8]）→ jne 0x53c0fe → ret 0x14
+```
+
+**语义**：**巨型浮点插值器（推断名）——tile 表插值绘制（475B）**：4 栈参（ret 0x14）——★cdq/sub/sar 半程双折叠（ebx/esi 参）→ ★★平方和 + 系数链（[0x7e2ac8]/[0x7eaa00]/[0xa9faa0]——★sin/cos 缩放常量）→ ★0x4cb1a0/0x4cb150（★sin/cos 装载）→ ★★双通道插值 + fistp 取整 → ★坐标钳位（0/上界-1）→ ★imul 行宽索引 → ★★word 三通道位运算（shr 0xb/and 0x1f/shr 5/and 0x3f——★tile 通道打包）→ ★★合并写（shl 0xb/or shl 5/or → word）→ 双重循环 → ret 0x14。**★★sin/cos 插值 tile 绘制器（浮点三角 + 位打包——巨型宿主）**。
+
+## c 路 0x53B460（252B）——全局初始化宿主
+
+```
+0053b460  push edi → mov edi, ecx（this 参）→ test edi → jle 0x53b55a（★≤0 跳过）
+0053b46b  mov ecx, [0xa9fa9c]（★旧槽）→ test → je → 虚表槽 0 释放 → mov [0xa9fa9c], 0（★清理旧槽）
+0053b485  push 0x24 → call 0x7c8e17（★operator new 0x24）→ mov esi, eax → test → je 0x53b4be
+0053b496  mov ecx, [0x88731c]（★全局会话）→ push 0/push 1 → call [edx+0x80]（★虚表槽 0x80）→ mov ecx, [0x88731c] → push eax → call [eax+0x7c]（★虚表槽 0x7c）→ mov ecx, esi → push eax → call 0x4ba5a0（★对象装载）
+0053b4c0  mov ecx, [0x88731c] → push 1 → mov [0xa9fa9c], eax（★槽落位）→ 虚表槽 4（push 0/ecx）
+0053b4d7  mov [0xa9faa0], 0 → mov [0xa9faa4], 0 → mov [0xa9fa98], edi → mov [0xa9faa8], edi（★★多槽初始化：98/a0/a4/a8 + [0xa9fab0]=1）
+0053b501  call 0x406e80（★装载）→ mov cl, 1 → call 0x7529a0（★装载）→ mov ecx, 0xa9f9b8 → call 0x405be0（★构造）
+0053b517  mov eax, [0x8871e0] → push 0xa9f9b8/push 0x3f800000 → mov ecx, [eax+0x284] → call 0x750920（★装载——0x3f800000 参）→ xor cl, cl → call 0x7518c0（★装载）
+0053b53d  mov ecx, [0xa8b230] → mov dl, [ecx+0x35a2] → mov [0xa9fad1], dl（★★字节拷贝 [0xa8b230]+0x35a2 → [0xa9fad1]）→ call 0x684240 → call 0x753570 → ret c3
+```
+
+**语义**：**全局初始化宿主（推断名）——会话/图形全局初始化（252B）**：this 参 ≤0 跳过 → ★[0xa9fa9c] 旧槽释放 → 0x7c8e17 0x24 分配 → ★[0x88731c] 虚表槽 0x80/0x7c + 0x4ba5a0 对象装载 → ★[0xa9fa9c] 槽落位 + 虚表槽 4 → ★★多槽初始化（[0xa9fa98]/[0xa9faa0]/[0xa9faa4]/[0xa9faa8]/[0xa9fab0]=1）→ 0x406e80 + 0x7529a0 + 0x405be0 + ★0x750920（0x3f800000 参）+ 0x7518c0 → ★★[0xa8b230]+0x35a2 字节拷贝 → 0x684240 + 0x753570 → ret c3。**★★全局初始化链（会话/图形多虚表 + 多槽 + 装载族——0x53Bxxx 区初始化域）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 0 个/去重 0（纯虚表槽 0x2c/0x84/0x160/0x54 间接）——**已登记无 MISSING**（picker callees=0 吻合）。
+- b 路：跨函数直接 call 2 次/去重 2（0x4cb1a0/0x4cb150——★sin/cos 浮点装载）——**全部已登记**（picker callees=2 吻合）。
+- c 路：跨函数直接 call 9 次/去重 9（0x7c8e17/0x4ba5a0/0x406e80/0x7529a0/0x405be0/0x750920/0x7518c0/0x684240/0x753570）——**全部已登记**（picker callees=9 吻合）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING、无批内自引用**（连续四十八批三路全登记）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★虚表槽 0x2c 类型（==6 返 0）+ 虚表槽 0x84 ×2（[eax+0xd35]/[0xd6a] 字节门控）;
+2. a 路 ★★虚表槽 0x160 + 虚表槽 0x54 sete 取反（★五槽心控判定链——纯虚表 0 直接 call）;
+3. b 路 ★★cdq/sub/sar 半程双折叠（ebx/esi 参）+ 平方和 + fchs;
+4. b 路 ★★系数链（[0x7e2ac8]/[0x7eaa00]/[0xa9faa0]——★sin/cos 缩放）+ 0x4cb1a0/0x4cb150;
+5. b 路 ★★fistp 取整 + 坐标钳位（0/上界-1）+ imul 行宽索引;
+6. b 路 ★★word 三通道位运算（shr 0xb/and 0x1f/shr 5/and 0x3f——tile 打包）+ 合并写（shl 0xb/or shl 5/or）;
+7. b 路 ★★双重循环（[ebp-0x20] 内 × [ebp-0x24] 外）+ fadd [0x7e2ac8] 步进;
+8. c 路 ★★[0xa9fa9c] 旧槽释放 + 0x7c8e17 0x24 + [0x88731c] 虚表槽 0x80/0x7c + 0x4ba5a0;
+9. c 路 ★★多槽初始化（[0xa9fa98]/[0xa9faa0]/[0xa9faa4]/[0xa9faa8]/[0xa9fab0]=1）;
+10. c 路 ★★0x750920（0x3f800000 参）+ [0xa8b230]+0x35a2 字节拷贝 → [0xa9fad1] + 0x684240/0x753570 收尾。
+
+## 跨批次连接
+
+- ★★batch 2333（0x53CBE0 IonBlastClass::Update——c 路 [0x88731c]/[0x8871e0] 会话族同域）+ batch 2331（0x53DE00——c 路 0x406e80 装载同源）。
+- ★★batch 2329（0x53F540/0x53F4F0——c 路 [0x887628]/[0x88731c] 会话族同源）+ batch 2330（0x53E420——b 路 [0xa9faa0] 邻域表同源）。
+- ★★batch 2314（颜色浮点族——b 路 sin/cos 插值同源）+ batch 2302/2308（0x7c5f00 _ftol——b 路 fistp 取整同精神）。
+- ★★batch 2324（0x544A70——a 路虚表槽判定同风）+ batch 2306/2307（事件系统——a/c 路虚表槽链同源）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x53C4C0（a 路后邻——装载器）；0x53C280（b 路后邻）；0x53B560（c 路后邻——跳跃表 [eax*4+0x53b770] 分派器——★0x53bba0 装载器区）；[0xa9fa9c]/[0xa9faa0]/[0xa9faa4]/[0xa9fa98]/[0xa9faa8]/[0xa9fab0]/[0xa9fad1]（c 路全局槽族）；[0x88731c]（c 路会话对象——batch 2325 同源）。
+- 未兑现 MISSING 旧观察（继续排队）：0x00486790（2267 起）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150 + ★0x556AD0/0x556EB0/0x556D20 + ★0x554830/0x49E400 + ★0x551B20 + ★0x5517A0/0x5512D0 + ★0x5509E0/0x551300/0x551320/0x551330/0x551370 + ★0x550080/0x54F6F0/0x54F670 + ★0x54E890/0x54E8C0 + ★0x54E590/0x54D930/0x549E90 + ★0x547CE0/0x544BE0 + ★0x543780/0x542EC0 + ★0x5424C0 + ★0x5422C0/0x540F90 + ★0x540A80 + ★0x5402D0/0x53F5B0 + ★0x53ECB0/0x53EC70/0x53E470 + ★0x408B40/0x53E070/0x53E1D0/0x53DDE0 + ★0x53C4C0/0x53C280/0x53B560（2334 新观察）。
+- 本批 **无 MISSING**（连续四十八批三路全登记——batch 2276 起，TSV 5485）。next 批预期 top3 = 0x53B410（72B callees=2）/ 0x53B080（877B callees=11）/ 0x53AF40（289B callees=2）。
