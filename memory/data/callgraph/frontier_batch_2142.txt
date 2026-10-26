@@ -1,0 +1,59 @@
+# frontier batch 2142：坐标读取转换器 + 字段 setter + 模式判定错误报告器（0x642E00 / 0x642DF0 / 0x642B60）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x642E00 FUN_00642e00 callees=1 deps=201 / 0x642DF0 FUN_00642df0 callees=0 deps=3357 / 0x642B60 FUN_00642b60 callees=1 deps=347）
+- 三路 disasm：`.qwen/tmp/_d2142a.txt`（0x642E00 size 0x60）/ `_d2142b.txt`（0x642DF0 size 0x40）/ `_d2142c.txt`（0x642B60 size 0x60）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x642E00 | 63B（0x3F）| ret 8 @0x642E3C | 0x642E40（push esi/0x4e3560 头，未登记）| 1（0x69e7e0 已登记）|
+| 0x642DF0 | 10B（0xA）| ret 4 @0x642DF7 | 0x642E00（**a 路本尊**）| 0 |
+| 0x642B60 | 78B（0x4E）| jmp 尾 @0x642BA9 | 0x642BB0（mov edx,[0xa8b238]/esi 头，未登记）| 1（jmp 0x68ca50 已登记）|
+
+三函数为 **游戏模式辅助函数族**（[0xa8b238] 游戏模式、[0xa8da78] 对象数组、0x68ca50 错误日志）：
+
+## a 路 0x642E00（63B）——坐标读取转换器
+
+```
+00642e00  sub esp,0x20/mov ecx,[ecx+0x54]（★this+0x54 对象）→ lea eax,[esp+0x10]/push 0/push eax → ★call 0x69e7e0（对象方法获取）→ 读 [ecx]/[ecx+4]/[ecx+8]/[ecx+0xc]（★四元组）→ [esp+0x24] 参数 1 → [esp+0x28] 参数 2 → ★写 [edx]=[ecx+8]+6 / [eax]=[ecx+0xc]+6（★两输出 [X+6]/[Y+6]——+6 硬编码偏移）→ ret 8
+```
+**语义**：**坐标读取转换器（推断名）**——[this+0x54] 对象 → 0x69e7e0 获取四元组 → 两个输出参数写第 3/4 字段 +6 偏移（[X+6]/[Y+6]——屏幕坐标偏移换算推断）。ret 8（2 参）。
+
+## b 路 0x642DF0（10B）——字段 setter
+
+```
+00642df0  mov eax,[esp+4] → mov [ecx+0x78],eax → ret 4
+```
+**语义**：**字段 setter（推断名）**——[this+0x78]=参数。10B 微函数（0x64 区 setter 族与 batch 2141 b 路 0x643E70 同型）。
+
+## c 路 0x642B60（78B）——模式判定错误报告器
+
+```
+00642b60  mov eax,[0xa8b238]（★游戏模式——batch 2137/2141 同字段）→ cmp 3/je 0x642b6f → cmp 4/jne 0x642b8b → [0xa8da78]（★batch 2135/2136 c 路同数组！）→ mov edx,[eax] → cmp [edx+0x6b],-1（★模式对象字段==-1 判定）→ jne → mov edx,1/mov ecx,0x836ecc（★串）→ ★jmp 0x68ca50（错误日志——batch 2127 a 路同 callee）
+00642b8b  [ecx+0x80] 判定 → 非 0 → mov ecx,0x836ec0（串）→ jmp 0x68ca50 → else mov ecx,0x836eb4（串）→ jmp 0x68ca50（★三串三出口尾跳）
+```
+**语义**：**模式判定错误报告器（推断名）**——[0xa8b238]==3/4 且 [0xa8da78]+0x6b==-1 → 0x68ca50（mov edx,1/0x836ecc 串——模式对象未定义错误）；[ecx+0x80] 判定 → 0x68ca50（0x836ec0/0x836eb4 串选择——三串三出口尾跳）。**0x68ca50 = 错误日志函数（batch 2127 a 路同 callee 复用）**。
+
+## 原版怪癖（照抄）
+
+1. a 路 [this+0x54] 对象四元组读取 + 输出写 [X+6]/[Y+6]（★+6 硬编码偏移——非零基准）；
+2. a 路 ret 8（2 参输出指针）；
+3. b 路 10B setter 一行流（mov [ecx+0x78],eax——batch 2141 b 路 0x643E70 同型）；
+4. c 路 ★[0xa8da78]+0x6b==-1 判定（模式对象字段哨兵）；
+5. c 路三串三出口尾跳（0x836ecc/0x836ec0/0x836eb4——错误信息串选择，mov edx,1 恒为 1 参数）。
+
+## 跨批次连接
+
+- ★★★★★batch 2135/2136 c 路：c 路 [0xa8da78]（经验对象数组——batch 2135 a 路 8 次循环/2136 c 路同数组）。
+- ★★batch 2137：c 路 [0xa8b238] 游戏模式（主更新器/调度器同字段；batch 2141 c 路 0x646D70 同门控）。
+- ★★batch 2127 a 路：c 路 0x68ca50（错误日志——batch 2127 a 路 0x656150 同 callee）。
+- ★0x69e7e0（已登记）+ 0x68ca50（已登记——多次复用错误日志函数）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（直接 call/jmp 全已登记——a 路 0x69e7e0 + c 路 0x68ca50）。
+- **后邻未登记**：0x642E40（a 路后邻）、0x642BB0（c 路后邻）。
+- **新观察**：[this+0x54]（坐标对象）、错误串 0x836ecc/0x836ec0/0x836eb4（batch 2127 同串区——[0x836exx] 错误信息族）。
+- 前向：picker 队列继续 0x64 区 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650。
