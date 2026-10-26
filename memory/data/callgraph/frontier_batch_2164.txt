@@ -1,0 +1,68 @@
+# frontier batch 2164：记录替换提交器 + 环形有效判定器 + 环形索引清理器（0x636590 / 0x636570 / 0x636310）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x636590 FUN_00636590 callees=8 deps=45 / 0x636570 FUN_00636570 callees=0 deps=202 / 0x636310 FUN_00636310 callees=12 deps=104）
+- 三路 disasm：`.qwen/tmp/_d2164a.txt`（0x636590 size 0x2A0，分段全读）/ `_d2164b.txt`（0x636570 size 0x40）/ `_d2164c.txt`（0x636310 size 0x260，分段全读）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x636590 | 539B（0x21B）| ret 4 多出口 @0x6367A8 | 0x6367B0（=batch 2163 c 路本尊，已登记）| 8（全已登记）|
+| 0x636570 | 31B（0x1F）| ret 双出口 @0x63658B/0x63658E | 0x636590（=本批 a 路本尊，已登记）| 0 |
+| 0x636310 | 513B（0x201）| ret @0x636510（多出口）| 0x636520（byte [ecx+0x1c]=1 setter 7B——未登记）| 12（11 已登记 + 1 MISSING 0x6340B0）|
+
+三函数为 **0x63 区环形索引族（[ebp+0x8c]/[0x90]/[0x94]/[0x98]/[0x99]）+ 记录替换/清理**：
+
+## a 路 0x636590（539B 大函数）——记录替换提交器
+
+```
+00636590  sub esp,0x74 → mov ebp,ecx → mov ebx,[ebp+8] 数组取项 → push [ebp] → ★call 0x634290（查找）→ mov esi,[eax+4] → rep movsd 0x1b+movsw+movsb（111B → 栈）→ rep movsd 0x1b+movsw+movsb（→ [ebp+0x1d]）
+006365da  [ebp+0x14] 计数前移压缩（lea ecx,[eax-1] + 循环前移——batch 2148 删除器同款）→ mov eax,[ebp+0x94]（★环形索引）→ test → jne 0x63667b（走替换分支）→ byte [ebp+0x99]=1（★标志）→ [esi+8] vs [esi+0x10] 计数扩容判定（[esi+0xd] owns + [esi+0x14] 步长 + 虚表槽 8）→ [esi+0x10] 计数+1 → [esi+4] 尾插 ebx
+0063664c  ★[ebp] 宿主判定：mov byte [ebx+0x1c]=1（★激活标志）→ ★call 0x63e540（[0xac4c98] 容器入队）→ jmp 0x636703（成功收尾）
+0063667b  ★[ebp+0x94] != 0（替换分支）：再次 0x634290 查找 → ★call 0x635060（清理）→ delete 0x7c8b3d ×2 → ★call 0x63dfd0（替换入队）→ test [ebx+0x10] → jne → push 1 → ★call 0x63d9c0（析构）→ mov eax,[ebp+0x94] → dec → ★负值钳制（setle/dec/and——batch 2163 b 路同款）→ [ebp+0x94]=eax
+00636703  ★[ebp+0x8c] 递减钳制（cmp -1 → or eax,-1）→ [ebp+0x14]==0 时：★0x50b6f0 判定 + [0xa83d4c]+0x30 + [0xac4b84] 递减（sets/dec/and）+ [0xac4c40] 虚表槽 0x10 → ★call 0x63f000（容器移除）
+0063678a  ★收尾：mov eax,[esp+0x88]（返回参数）→ rep movsd 0x1b+movsw+movsb（111B 回写）→ ret 4
+```
+**语义**：**记录替换提交器（推断名）**——① [ebp+8] 数组 + 0x634290 查找 + ★111B 双复制（栈 + [ebp+0x1d]）；② [ebp+0x14] 计数前移压缩；③ **[ebp+0x94] 环形索引判定分流**：==0 → 新增（[esi+0x10] 扩容尾插 + [ebx+0x1c]=1 + 0x63e540 入队）/ !=0 → 替换（0x635060 清理 + delete×2 + 0x63dfd0 替换 + 0x63d9c0 析构 + [ebp+0x94] 负值钳制递减）；④ [ebp+0x8c] 递减钳制 + 0x50b6f0 + [0xac4b84] 递减 + [0xac4c40] 虚表槽 0x10 + 0x63f000；⑤ 111B 回写 + ret 4。**0x63 区记录替换提交主处理（环形索引分流 + 双容器 + 111B 三处复制）**。
+
+## b 路 0x636570（31B）——环形有效判定器
+
+```
+00636570  mov eax,[ecx+0x14]（计数）→ test → jle 0x63658c（空计数 → 0）→ mov eax,[ecx+0x8c]（★环形索引）→ cmp eax,-1 → je 0x636586 → test eax → jle 0x63658c → 0x636586：mov eax,1 → ret → 0x63658c：xor eax,eax → ret
+```
+**语义**：**环形有效判定器（推断名）**——[ecx+0x14] 计数 > 0 且 [ecx+0x8c] != -1（-1 视为有效）→ 1；否则 0。**0x63 区环形索引有效位判定（[ecx+0x8c]==-1 → 有效——batch 2163/2164 环形索引 -1 哨兵语义）**。
+
+## c 路 0x636310（513B 大函数）——环形索引清理器
+
+```
+00636310  sub esp,0xc → mov esi,ecx → mov ebx,[esi+0x14]（计数）→ sete [esp+0x13]（空标志）→ 循环 [esi+8] 数组（0x636329-0x6363a5）：mov edi,[eax+ebp*4] → push [esi] → ★call 0x634290 → ★call 0x635060（清理）→ delete 0x7c8b3d ×2 → [edi] 虚表槽 0x10 → ★call 0x63ef70 → delete → test [edi+0x10] → jne → push 1 → ★call 0x63d9c0（析构）→ 循环
+006363a7  空标志：test al → jne 0x6363e9 → mov eax,[esi] → [eax+0x21c]+0x30 → ★call 0x50b6f0 → test → jne → [0xa83d4c]+0x30 → ★call 0x639f80（[0xac4b84] 递减）→ ★call 0x63e900（[0xac4c40] 入队）
+006363e9  ★环形三元组复位：虚表槽 0xc → byte [esi+0x98]=0 → mov [esi+0x8c]=-1/[esi+0x90]=-1/[esi+0x94]=-1 → byte [esi+0x99]=0 → mov [esi]=0 → ★call 0x705d10（0 参新路径）→ [0xac4cf5] 门控 → [0xac4c78] 虚表槽 0x10 → ★call 0x63f040（容器移除）
+00636461  ★第二段：[esi+0x14] 计数循环 → ★call 0x6340b0（MISSING 观察项）→ 空标志 → 0x6339b0 + 0x639f80 + 0x63e900（[0xac4c40] 再次）→ ★第二遍环形三元组复位（虚表槽 0xc + [esi+0x8c]/[0x90]/[0x94]=-1 + byte [0x98]/[0x99]=0）→ ★[edi]=0x7efe64 虚表写 + owns 清理（[edi+0xd] 标志 → delete [edi+4]）→ delete 0x7c8b3d → ret
+```
+**语义**：**环形索引清理器（推断名）**——① [esi+0x14] 计数循环 [esi+8] 数组：0x634290 查找 + 0x635060 清理 + delete×2 + 虚表槽 0x10 + 0x63ef70 + 0x63d9c0 析构；② 空标志后：0x50b6f0 + [0xa83d4c]+0x30 + 0x639f80（[0xac4b84] 递减）+ 0x63e900（[0xac4c40] 入队）；③ **环形三元组复位 ×2**（[esi+0x8c]/[0x90]/[0x94]=-1 + byte [0x98]/[0x99]=0）+ [esi]=0 + 0x705d10 + [0xac4cf5] 门控 + [0xac4c78] 虚表槽 0x10 + 0x63f040 容器移除；④ 第二段 0x6340b0（MISSING）循环 + ★[edi]=0x7efe64 虚表写 + owns 清理 + delete。**0x63 区环形索引完整清理/析构主处理（★虚表 0x7efe64 确认 + 环形三元组复位 + 双容器移除）**。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★[ebp+0x94] 环形索引分流（==0 新增 / !=0 替换——两条完全不同的提交路径）；
+2. a 路 111B 三处复制（栈 + [ebp+0x1d] + 回写 [esp+0x88]）+ ret 4；
+3. a/b/c 路 ★负值钳制惯用法（[ebp+0x94] dec/setle/dec/and + [ebp+0x8c] cmp -1/or——batch 2163 b 路同款）；
+4. b 路 [ecx+0x8c]==-1 → 有效（环形哨兵语义）；
+5. c 路 ★环形三元组复位 ×2 + [esi]=0（[0x8c]/[0x90]/[0x94]=-1 + byte [0x98]/[0x99]=0）；
+6. c 路 ★[edi]=0x7efe64 虚表写 + owns 清理（[edi+0xd] → delete [edi+4]）；
+7. c 路 [0xac4cf5] 门控（batch 2162 c 路后邻八字段清零器同字段）。
+
+## 跨批次连接
+
+- ★★★batch 2163 b 路（环形三元组复位 + 负值钳制同款）；batch 2163 c 路（111B + 0x634e10 + new 0x10/new 0x6f——c 路 a 路 0x635060/0x63dfd0/0x63d9c0 互补）。
+- ★★batch 2160-2162（环形索引族 [0x8c]/[0x90]/[0x94]/[0x98]/[0x99] 字段网）；batch 2148（计数前移压缩同款）。
+- ★0x634290/0x635060/0x63dfd0/0x63d9c0/0x63e540/0x63f000/0x63e900/0x63f040/0x63ef70/0x50b6f0/0x705d20/0x705d10/0x7c8b3d/0x6e6e20/0x639f80/0x6340b0（除 MISSING 外全部已登记）。
+- ★0x7efe64（c 路虚表——batch 2149 a/b 路 0x7efe44 邻族虚表常量）。
+
+## 观察项 / 候选池
+
+- **MISSING 观察项（1 个）**：★0x6340B0（FUN_006340b0，rank:4592，475B——ranking 有行未登记，caller 恰为本批 c 路本尊 0x636310，0x63 区内部族自然排队——第二段循环清理器）。
+- **后邻未登记**：0x636520（c 路后邻——byte [ecx+0x1c]=1 setter 7B）。
+- **新观察**：★0x7efe64（c 路虚表常量——[si]+0x24 节点虚表）；0x63f040（a 路 c 路共用容器移除器——batch 2148 删除器配对端）。
+- 前向：picker 队列继续 0x63 区 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650。
