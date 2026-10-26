@@ -1,0 +1,87 @@
+# frontier batch 2120：对象运动推进器·钳制版 + 对象运动控制器 + 标志字节写入器（0x659AC0 / 0x659650 / 0x659550）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x659AC0 FUN_00659ac0 callees=2 deps=8 / 0x659650 FUN_00659650 callees=8 deps=55 / 0x659550 FUN_00659550 callees=0 deps=55）
+- 三路 disasm：`.qwen/tmp/_d2120a.txt`（0x659AC0 size 0x200）/ `_d2120b.txt`（0x659650 size 0x380）/ `_d2120c.txt`（0x659550 size 0x30）
+- **执行修正**：b 路首跑传错地址（`0x59650` 五位被解析为 0x00059650 → ValueError），修正为完整 VA `0x659650` 后成功。
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x659AC0 | 474B（0x1DA）| ret @0x659C99 | 0x659CA0（batch 2119 c 路本尊）| 3（0x4cacb0+0x7c5f00 等已登记）|
+| 0x659650 | 879B（0x36F）| ret 双出口 @0x6599A1 / @0x6599BE | 0x6599C0（未登记）| 8（含批内自引用 a 路）|
+| 0x659550 | 10B（0xA）| ret 4 @0x659557 | 0x659560（标志清零器，未登记）| 0 |
+
+## a 路 0x659AC0（474B）——对象运动推进器·钳制版
+
+```
+00659ac0  push ebp / and esp,0xfffffff8 / sub esp,0x18 / push esi/edi
+00659acd  fld [esi+0x68]（距离）/ fcomp [0x7f04c0]（★常量钳制下限）/ test ah,1 / je 0x659ae5 / fld [0x7f04c0]（钳制）/ fld [esi+0x68]
+00659ae8  fadd st(0)（×2）/ fst [esp+0x18]
+00659af1  fild [esi+0x88]（时间）/ fstp [esp+0x10] / fild [esi+0x8c]（速度）/ fdivr / fmulp / fld [0x839530] / fmul / fstp [esp]
+00659b14  call 0x4cacb0（sqrt）/ fmul [esi+0x80] / fld [esp+0x10] / call 0x7c5f00（_ftol）
+00659b28  位移: [esi+0x90]/[0x94]/[0x98] × eax → add [esi+0x24]/[0x28]/[0x2c] → 写 [esi+0x9c]（★目标位置）
+00659b64  fild [esi+0xa4] / fadd st(1) / call 0x7c5f00 → [esi+0xa4]（时间+1）
+00659b77  第二段（同构重复）: [esi+0x88]+1 重算 → 写 [esi+0xa8] + [esi+0xb0]
+00659c0d  第三段: 3 个 _ftol + 字节 [esi+0x20]/[0x21]/[0x22] × [0x7e1738] / [esi+0x40] → 写 [esi+0xb8]/[0xc0]/[0xc1]/[0xc2]
+00659c99  ret
+```
+**语义**：对象运动推进器·钳制版——与 batch 2118 c 路（0x659FF0）**几乎逐字节同构**：双段位置计算（[0x9c]/[0xa8] 两目标位置 + [0xa4]/[0xb0] 两时间）+ 方向字节；**唯一差异**：开头多 **0x7f04c0 常量钳制**（fcomp [0x7f04c0] 距离下限钳制——[esi+0x68] 距离小于常量时钳制到常量）。被 batch 2120 b 路（0x659650 控制器）主循环调用。
+
+## b 路 0x659650（879B）——对象运动控制器（复合调度器）
+
+```
+00659650  push ebp / and esp,0xfffffff8 / sub esp,0x28 / push 4 寄存器 / mov esi,ecx（this）
+0065965f  mov al,[esi+8]（★初始化标志）/ test / jne 0x6596d7 / mov byte ptr [esi+8],1
+0065966a  初始化位移: [0x38]/[0x2c]/[0x28]/[0x30]/[0x34]/[0x24] 两点差 → push ×3 → ★call 0x41c230（向量函数）→ 写 [esi+0x5c]
+006596a6  距离平方和 → ★call 0x4cac40（sqrt）→ [esi+0x68]
+006596d7  mov al,[esi+0x58]（★子对象路径标志）/ test / je 0x65978c
+006596e2  mov ecx,[esi+4]（★子对象）/ test / je 0x65978c
+006596ed  mov al,[ecx+0x14] / test al,2 / jne 0x659700 / ★call [edx+0x58]（子对象槽 0x58）/ ★call [edx+0xa4]（★槽 0xA4——位分叉）
+0065970b  → 写 [esi+0x30]（★子对象坐标）
+00659720  再算位移 → 0x41c230 → [esi+0x5c] → 0x4cac40 sqrt → [esi+0x68]
+0065978c  mov al,[esi+9]（★启用标志）/ test / je 0x659968
+00659797  速度: [esi+0x68] ÷ [esi+0x18] → 0x7c5f00 → [esi+0x8c]（速度）→ ★call 0x65a1b0（batch 2118 b 路——向量三分量标量除法器！）
+006597c7  fild [esi+0x7c] / fidiv [esi+0x3c]（计数÷上限）→ [esi+0x80] / mov [esi+0x88],0（时间=0）
+006597e1  写 [esi+0x90] 方向 → 写 [esi+0x9c] 位置 → 写 [esi+0xc0] 方向字节
+0065982a  fld [0x7e2800] / fcomp [esi+0x68]（距离 vs 常量）→ je 0x659968
+0065983e  主循环: ★call 0x659ac0（本批 a 路本尊——运动推进）→ 方向字节解码 [0x8a0dd4..0x8a0de4] → ★call 0x6d2140 ×2 → ★call 0x7bc2b0 → ★call 0x6d20e0 ×2 → [0x887314] 槽 0x34 绘制
+00659942  循环: [esi+0x88] 递增 / fild × [esi+0x18] / fcomp [esi+0x68] / jne 主循环（★循环直到距离）
+00659968  尾段: mov al,[esi+0x58] / test / je 0x6599a2 → [esi+0x54] 方向修正（neg）/ [esi+0x7c] 计数处理 → xor al,al（返 0）
+006599a2  尾段2: [esi+0x7c]+1 / cmp vs [0x3c] / setge cl（★返回 计数≥上限）/ ret
+```
+**语义**：对象运动控制器——**batch 2119 c 路（0x659CA0 调度器）的同族更完整版**：[8] 初始化标志首次初始化位移（0x41c230 向量函数）→ **[0x58] 子对象路径**（调子对象槽 0x58/0xA4 按 [ecx+0x14]&2 位分叉取子对象坐标）→ [9] 启用标志门控 → 速度计算（÷[0x18] + 0x65a1b0 batch 2118 b 路除法器）→ 主循环调 a 路推进器 + 方向解码（[0x8a0dd0-0x8a0de4] 位域表）+ 0x6d2140 + 绘制（[0x887314] 槽 0x34）→ 循环直到距离 → 尾段 [0x54] 方向修正 + 计数≥上限返回。**与 batch 2119 c 路共享全部运动字段族 + 绘制链**。
+
+## c 路 0x659550（10B）——标志字节写入器
+
+```
+00659550  mov al,[esp+4]（参数 1）/ mov [ecx+0x58],al（写 [this+0x58] = 参数 1 低字节）/ ret 4
+```
+**语义**：标志字节写入器——[this+0x58] = 参数 1 低字节（**b 路 [0x58] 子对象路径使能标志的 setter**）。后邻 0x59560（mov byte ptr [ecx+9],0——[9] 标志清零器）→ 0x59570（mov al,[ecx+9]——[9] getter）——**标志 setter/getter 微函数组**。
+
+## ★地址修正记录（batch 2119 观察项误标）
+
+batch 2119 观察项曾写「0x59650 = QWEN.md Init random map(0x599650)」——**修正**：本批 b 路完整 VA 为 **0x00659650（=0x659650，对象运动控制器）**，与 QWEN.md 的 **Init random map = 0x00599650（=0x599650）**是**两个不同地址**（0x659650 ≠ 0x599650）。QMEN.md 流水线第一步 Init random map 仍未被本仓库登记（0x599650 在 0x59 区 RMG 域，batch 队列后续自然取到）。
+
+## 原版怪癖（照抄）
+
+1. a 路与 batch 2118 c 路（0x659FF0）逐字节同构**仅差 0x7f04c0 常量钳制**（距离下限钳制）——同族两版本推进器；
+2. b 路 [8] 初始化标志首次触发的初始化路径（0x41c230 向量函数 + sqrt）与 [0x58] 子对象路径并存（两条位移计算路径）；
+3. b 路子对象路径按 **[ecx+0x14]&2 位分叉**选槽 0x58 或 0xA4；
+4. b 路速度计算调 **batch 2118 b 路 0x65a1b0（向量三分量标量除法器）**——跨批次调用点兑现；
+5. b 路主循环条件 `fild × [0x18] vs [0x68]`（距离判据 jne 循环）；
+6. b 路尾段 [0x58] 标志时 [0x54] 方向 neg 修正 + 计数钳 0；[0x58]==0 时走 setge 计数≥上限返回；
+7. c 路 [0x58] setter 与后邻 [9] 清零器/[9] getter 三连微函数（标志族）。
+
+## 跨批次连接
+
+- ★★★a 路 ↔ batch 2118 c 路 0x659FF0（同构钳制版）；a 路后邻头 0x659CA0=batch 2119 c 路本尊；
+- ★★b 路 ↔ batch 2119 c 路 0x659CA0（同族控制器，共享运动字段族 + 绘制链 [0x887314] 槽 0x34 + 方向解码 [0x8a0dd0-0x8a0de4]）↔ batch 2118 b 路 0x65a1b0（除法器调用点兑现）；
+- ★b/c 路 [0x58] 子对象路径标志 ↔ c 路 setter（写侧）；0x41c230/0x4cac40/0x7c5f00/0x6d2140/0x7bc2b0/0x6d20e0 已登记。
+
+## 观察项 / 候选池
+
+- **新候选：无**（a 路 3 直接 call 已登记；b 路 8 直接 call 除批内自引用 a 路外全已登记；c 路 0 直接 call）。
+- **后邻未登记**：0x659560（c 路后邻 [9] 标志清零器）、0x659570（[9] getter）、0x6599C0（b 路后邻）。
+- 前向：picker 队列继续 0x59 区（0x659AC0 已取一族）+ 0x65 区剩余 + **QMEN.md Init random map（0x599650）后续自然取到**。
