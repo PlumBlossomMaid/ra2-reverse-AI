@@ -1,0 +1,79 @@
+# frontier batch 2285：全图 marker 清理遍历器 + 三表 8 项比对器 + min 高度检索器（0x588AC0 / 0x5889F0 / 0x588990）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x588AC0 FUN_00588ac0 callees=1 deps=3 / 0x5889F0 FUN_005889f0 callees=0 deps=1 / 0x588990 FUN_00588990 callees=0 deps=733）
+- 三路 disasm：`.qwen/tmp/_d2285a.txt`（0x588AC0 size 0x160）/ `_d2285b.txt`（0x5889F0 size 0x100）/ `_d2285c.txt`（0x588990 size 0x80）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x588AC0 | 289B（0x121）| ret c3 @0x588BE0 | 0x588BF0（未登记——对象析构包装：0x5652c0+[esp+8] bit1 门控 0x7c8b3d）| 2 次/去重 1（0x578290——已登记，picker callees=1 吻合）|
+| 0x5889F0 | 203B（0xCB）| ret c3 @0x588ABA | 0x588AC0（**本批 a 路本体——后邻相邻**）| 0 次/去重 0（纯内存比对，picker callees=0 吻合）|
+| 0x588990 | 93B（0x5D）| ret c3 @0x5889EC | 0x5889F0（**本批 b 路本体——后邻相邻**）| 0 次/去重 0（纯内存检索，picker callees=0 吻合）|
+
+## a 路 0x588AC0（289B）——全图 marker 清理遍历器
+
+```
+00588ac0  sub esp,0x10 → mov ebp,ecx（★this）→ mov eax,[ebp+0xf4]（★上限数）→ mov [ebp+0x10c],1 → mov [ebp+0x110],eax → lea ecx,[eax-1] → mov [ebp+0x114],ecx → mov edx,[ebp+0x13c] → ★shl eax,0xb（★×2048——Y<<9 家族）→ lea eax,[eax+edx+4] → mov [ebp+0x118],eax → ★★call 0x578290（★CellIterator Next——batch 2273 a 路同款）→ test eax → je 0x588bdc（收尾）
+00588b0e  ★★主循环：mov ecx,[eax+0x48]（★cell+0x48 marker）→ cmp -1 → je 跳过 → mov edx,[0xa8ec1c]（★对象表）→ mov ebx,[edx+ecx*4]（★对象）→ mov ecx,[eax+0x24]（★cell 坐标）→ [esp+0x18] → ★mov dl,[eax+0x11f]（★cell+0x11f 源高度）→ mov ecx,[ebx+0x298]（★对象宽）→ mov di,dx → idiv（★余数取模）→ sub [esp+0x18],di → 第二次 idiv → sub [esp+0x1a],ax（★坐标换算：cell+0x11f 高度 → 对象网格偏移）
+00588b53  ★★内层双循环（[ebx+0x29c] 高 × [ebx+0x298] 宽）：mov ebp,[esp+0x18] → 循环：movsx eax,ax → lea eax,[edx+ebp] → mov word [esp+0x10],ax → ★shl esi,9（★Y<<9）→ lea eax,[edx+ebp] → movsx → add eax,esi → js 越界 → cmp 0x40000 → jge 越界 → ★mov ecx,[0x87f924]（★地图表——batch 1736 同款）→ mov eax,[ecx+eax*4] → test → jne 通过 → 越界：mov eax,[esp+0x10] → mov [0xabdc74],eax → mov eax,0xabdc50（★哑元回落——batch 1736/2272 同款）→ ★★mov [eax+0x48],0xffffffff（★cell+0x48 = -1 清 marker）→ 循环
+00588be0  ★收尾：pop ×4 → ret c3
+```
+
+**语义**：**全图 marker 清理遍历器（推断名）**——★★CellIterator 全图遍历（0x578290）+ ★[0xa8ec1c] 对象表索引（cell+0x48 marker → 对象）+ ★★cell+0x11f 源高度 idiv 取模换算（对象宽 [ebx+0x298] → 网格偏移）+ ★★内层双循环（对象高 [ebx+0x29c] × 宽）→ ★★Y<<9 + [0x87f924] 地图表查格 → ★越界回落哑元 0xabdc50/[0xabdc74] → ★★mov [eax+0x48],-1（★清 marker——cell+0x48 语义确认：占用标记）。**全图 marker 清理（cell+0x48 = 对象占用标记确认——对象覆盖格批量清 -1）**。
+
+## b 路 0x5889F0（203B）——三表 8 项比对器
+
+```
+005889f0  sub esp,0x1c → mov [esp+0x24],edx（★参2 索引）→ mov [esp+0x28],ecx（★参1 索引）→ mov [esp+0x20],0xffffffff（★初值 -1）→ xor [esp+0x1c] → mov ebx,0x82a594（★表基址）
+00588a1a  ★★外层循环（[esp+0x14] 8 次 → 0x82a734 终点）：shl edi,5（★索引×32）→ shl esi,5 → add 0x82a594 → mov dl,1 → [esp+0x18]=8
+00588a42  ★★8 项内层：mov ebp,[esi]（★表 A）→ mov ecx,[edi]（★表 B）→ mov eax,[ebx]（★表 C）→ cmp ebp,2 → je → cmp ecx,2 → jne → ★cmp eax,1 → jne → xor dl,dl（★A/B 任一 ==2 且 C==1 → dl=0）→ ★cmp ebp,eax → cmp ecx,eax → ★cmp eax,1 → jne → inc [esp+0x10]（★三表全等且 ==1 → 计数+1）→ 循环 8 次（add 4×3）
+00588a7e  ★★结果结算：test dl → je 0x588a9a（跳过）→ mov eax,[esp+0x10] → cmp [esp+0x1c] → jle 跳过 → mov [esp+0x1c],eax（★最大计数记录）→ mov eax,[esp+0x14] → mov [esp+0x20],eax（★索引记录）→ 外层循环（inc [esp+0x14] → cmp ebx,0x82a734 → jl）
+00588aaf  ★收尾：mov eax,[esp+0x20]（★返回最优索引）→ ret c3
+```
+
+**语义**：**三表 8 项比对器（推断名）**——★★0x82a594 表族（32B/索引 × 8 项）：外层 8 索引循环（shl 5 ×32 + 表基址）+ ★★8 项内层三表比对（表 A 0x82a594+idx、表 B 参2 索引、表 C 参1 索引——★任一 A/B ==2 且 C==1 置 dl=0；★三表全等且 ==1 计数+1）→ ★★最大计数+索引记录（[esp+0x1c]/[esp+0x20]）→ 返回最优索引。**0x82a594 表族比对检索（32B/索引×8 项——纯内存比对无调用）**。
+
+## c 路 0x588990（93B）——min 高度检索器
+
+```
+00588990  mov eax,[ecx+0x148]（★阈值初值）→ cmp 0xd → jl 0x5889e4（★低于 0xd 直接返回当前值）→ mov edi,[ecx+0x140]（★计数）→ xor esi → test → jle 收尾
+005889a9  ★★循环：mov eax,[ecx+0x13c]（★对象数组）→ mov eax,[eax+esi*4]（★取对象）→ test → je 跳过 → ★movsx eax,[eax+0x11b]（★cell+0x11b 高度）→ mov edx,[ecx+0x148] → cmp → jge 跳过 → mov eax,edx（★保留更小值）→ mov [ecx+0x148],eax → ★★setle dl → dec edx → and eax,edx（★setle/dec/and 布尔归一钳位——batch 2259 双输入 abs 同族）→ mov [ecx+0x148],eax（★非正钳 0）
+005889df  循环：inc esi → cmp edi → jl → ★收尾 mov eax,[ecx+0x148] → ret c3
+```
+
+**语义**：**min 高度检索器（推断名）**——★★阈值门控（[ecx+0x148] < 0xd 直接返回）+ ★[ecx+0x140] 计数循环（[ecx+0x13c] 对象数组）→ ★★movsx [eax+0x11b] 高度读取 → min 比较（cmp jge → 保留更小值）+ ★★setle/dec/and 布尔归一钳位（非正清 0）→ 返回最小值。**min 高度检索（cell+0x11b 高度族——batch 2279 c 路同字段族）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 2 次/去重 1 个（0x578290）——**全部已登记**（picker callees=1 吻合）。
+- b 路：跨函数直接 call 0 次/去重 0 个（纯内存比对）——**picker callees=0 吻合**。
+- c 路：跨函数直接 call 0 次/去重 0 个（纯内存检索）——**picker callees=0 吻合**。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING**（连续第九批三路全登记）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★CellIterator 全图遍历（0x578290——batch 2273 a 路同款）+ 区间字段装载（[ebp+0x10c]=1/[ebp+0x110]=上限/[ebp+0x114]=上限-1/[ebp+0x118]=上限×0xb<<+4）;
+2. a 路 ★★cell+0x48 marker 语义确认（cmp -1 → 已清跳过 → [0xa8ec1c] 对象表索引 → mov [eax+0x48],-1 清 marker——**占用标记**）;
+3. a 路 ★★cell+0x11f 源高度 idiv 取模（mov dl,[eax+0x11f] → idiv [ebx+0x298] 对象宽 → sub 坐标——**余数取模网格偏移**）;
+4. a 路 ★★内层双循环（[ebx+0x29c] 高 × [ebx+0x298] 宽——对象覆盖格遍历）;
+5. a 路 ★★Y<<9 + [0x87f924] 地图表查格（shl esi,9 → cmp 0x40000 → js/jge 越界——batch 1736 同款）;
+6. a 路 ★★哑元回落（mov [0xabdc74],eax → mov eax,0xabdc50——batch 1736/2272 同款）;
+7. b 路 ★★0x82a594 表族（32B/索引×8 项 + 0x82a734 终点——★唯一区间 [0x82a594, 0x82a734]）;
+8. b 路 ★★三表比对逻辑（A/B==2 且 C==1 → dl=0 否定；三表全等且 ==1 → 计数+1——★两个独立判定）;
+9. c 路 ★★setle/dec/and 布尔归一钳位（setle dl → dec edx → and eax,edx——batch 2259 同族）;
+10. c 路 ★★阈值 0xd 门控（cmp 0xd → jl 直接返回——★低于 13 不检索）。
+
+## 跨批次连接
+
+- ★★★batch 2273 a 路（0x578290 CellIterator Next——a 路同款）+ batch 1736/2272（[0x87f924] 地图表 + 哑元 0xabdc50/[0xabdc74]——a 路同款）。
+- ★★batch 2279 c 路（cell+0x11b 高度族——c 路同字段）+ batch 2259（setle/dec/and 布尔归一——c 路同款）+ batch 2266/2273（[0xa8ec1c] 对象表族——a 路索引）。
+- ★★batch 2263/2264（容器家族——a 路区间字段装载 + 哑元回落同族）。
+- ★0x578290 CellIterator（a 路——QWEN.md RMG 三件套高频）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x588BF0（a 路后邻——对象析构包装：0x5652c0+[esp+8] bit1 门控 0x7c8b3d，batch 2255「delete 包装器·精简」同族）+ 0x82A594 表族（b 路——[0x82a594, 0x82a734] 32B/索引×8 项唯一区间）。
+- 未兑现 MISSING 旧观察：0x00486790（2267 起排队）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x578640 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0（batch 2280-2284 新观察）。
+- 本批 **无 MISSING**（连续九批三路全登记——batch 2276 起）。
