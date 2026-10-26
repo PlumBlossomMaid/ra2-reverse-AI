@@ -1,0 +1,58 @@
+# frontier batch 2167：记录族三连（调试遍历打印器 + 记录索引拷贝器 + 记录移除器/容器注销析构器）（0x634B20 / 0x6342E0 / 0x6340B0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x634B20 FUN_00634b20 callees=2 deps=69 / 0x6342E0 FUN_006342e0 callees=0 deps=155 / 0x6340B0 FUN_006340b0 callees=7 deps=56）
+- 三路 disasm：`.qwen/tmp/_d2167a.txt`（0x634B20 size 0x200）/ `_d2167b.txt`（0x6342E0 size 0x80）/ `_d2167c.txt`（0x6340B0 size 0x240）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x634B20 | 407B（0x1A6）| ret c3 @0x634CB6 | 0x634CC0（sub esp,0x100 = batch 2166 c 路本尊，已登记）| 2（全已登记）|
+| 0x6342E0 | 36B（0x22）| ret 8 @0x634301 | 0x634310（mov edx,[ecx+0x10] = batch 1485 按值查找+结构拷贝器，已登记）| 0（无 call，callees=0 吻合）|
+| 0x6340B0 | 475B（0x1D9）| ret 4 @0x634288 | 0x634290（push ebx + or eax,-1 = batch 2166 c 路 callee 查找，已登记）| 7（全已登记）|
+
+三函数为 **0x63 区记录族**——111B 结构 + 三元组（0x633bc0）+ 虚表槽 0x88/0x1b8/0x10 + 0x40 区 stub 日志 + 容器网 [0xac4c98]/[0xac4b30]/[0xac4c18] + 全局对象网三指针：
+
+## a 路 0x634B20（407B）——调试遍历打印器
+
+```
+00634b20  sub esp,0x90 → mov ebx,ecx → [esp+0x14]=[ebx+0x30]（计数1）→ 段1 外层循环 ebp over 计数1：esi=[[ebx+0x24]+ebp*4]（项）→ [esp+0x10]=[esi+0x70] → rep movsd 0x1b+movsw+movsb（111B → [esp+0x30]）→ lea ecx,[esp+0x24] → ★call 0x633bc0（读三元组）→ push t2/t1/t0 + push [esp+0x1c] + push ebp + push 0x836b48（格式串）→ ★call 0x4068e0（诊断日志 stub）→ 内层循环 ecx over [ebx+0x10]：eax=[[ebx+4]+ecx*4] → cmp [eax+8],ebp（项+8 == 外层索引）→ 命中：esi=[eax] → ★call [esi虚表+0x88]（取结果 → edi=eax）→ add edi,0x24 → lea ecx,[esp+0x1c] → ★call [esi虚表+0x1b8]（写结果）→ movsx 双 word → push edi + push 0x836b20 → ★call 0x4068e0 → 段2 外层循环 ebp over [ebx+0xa8]（计数2）：lea esi,[ebx+0x38] → rep movsd 0x1b（111B → [esp+0x30]）→ ★call 0x633bc0 → push t2/t1/t0 + push ebp + push [ebx+0xb0] + push 0x836ad4 → ★call 0x4068e0 → 内层循环：test byte[eax+0xc]（项 +0xC 标志）→ 命中：虚表槽 0x88/0x1b8 同款 + push 0x836b20 → ★call 0x4068e0 → ret c3
+```
+**语义**：**调试遍历打印器（推断名）**——双段遍历打印：① 段1 按 +0x30 计数遍历 +0x24 指针数组：每项 111B 拷栈 + 0x633bc0 三元组 + 日志 0x836b48；内层按项 +8 索引匹配调虚表槽 0x88（取结果）/0x1b8（写结果）+ 日志 0x836b20；② 段2 按 +0xA8 计数遍历 +0x38 源 111B + 日志 0x836ad4；内层按项 +0xC 标志匹配同款。③ 日志目标 0x4068E0 = **batch 001 实锤空返回桩**（诊断/日志调用点形态，照抄）。
+
+## b 路 0x6342E0（36B）——记录索引拷贝器
+
+```
+006342e0  mov eax,[ecx+4]（数组）→ mov ecx,[esp+8]（栈参1=索引）→ mov edx,[eax+ecx*4]（项）→ mov eax,[esp+0xc]（栈参2=输出指针）→ mov esi,[edx+4]（项+4 结构）→ rep movsd 0x1b+movsw+movsb（111B → 输出）→ ret 8
+```
+**语义**：**记录索引拷贝器（推断名）**——按索引从 +4 数组取项，把项 +4 处 111B 结构拷到输出指针（ret 8 双栈参）。**★后邻 0x634310 = batch 1485 按值查找+结构拷贝器已登记——本函数是其"直接按索引取"变体（0x634310 按首字段查找、本函数按索引直取）**。
+
+## c 路 0x6340B0（475B）——记录移除器/容器注销析构器
+
+```
+006340b0  push ecx+4 寄存 → mov esi,ecx → 段1 线性查找：edx=[esi+0x10]（计数）→ 循环 [[esi+4]+eax*4] 项首字段 == [esp+0x18]（栈参1=目标）→ 命中 ebp=项 / 未命中 ebp=0（cmp eax,-1 冗余死分支）→ ebp==0 → ret → 段2 清理：byte[ebp+0xc]!=0 → 清 0 → [esi+0xa8]-- → 变 0 → [esi+0xb0]=-1；[ebp+8]!=-1 → edi=[[esi+0x24]+[ebp+8]*4]（关联记录）→ [edi+0x74]=-1 → ★call 0x635DB0（批量对象失效标记器，byte 标志=0）→ [edi+0x70]-- → 变 0 → esi!=0 && byte[esi+0x1c]==0 → [esi+0x1c]=1 → lea edx,[esp+0x18] → mov ecx,0xac4c98 → ★call 0x63E540（容器1 Add 入队）→ [ebp+8]=-1 → 段3 删除：push [ebp+4] → ★call 0x7C8B3D（delete 项+4）→ lea eax,[esp+0x10] → ★call [esi虚表+0x10]（查索引）→ 非 -1 且 < 计数 → 计数-1 + 左移覆盖移除 → push ebp → ★call 0x7C8B3D（delete 项本体）→ 段4 数组空（[esi+0x10]==0）：★call 0x635120（容器清理器）→ lea ecx,[esp+0x18] → mov ecx,0xac4c98 → call [0xac4c98虚表+0x10]（容器1 查索引）→ 命中 → push eax → ★call 0x63E590（容器1 Remove！）→ [0xac4b30]/[0xac4c18] 经 ★call 0x63E5D0（虚表槽 0x10 转发包装）×2 → eax=[esp+0x18]（=esi）→ [0xac4ccc]==eax → 清 0；[0xac4c38]==eax → 清 0；[0xac4bf0]==eax → 清 0（全局对象网三指针清除）→ lea ecx,[esi+0x20] → mov [ecx],0x7eff24（虚表）→ ★call 0x63E140（持有释放器）→ mov [esi],0x7eff04（虚表）→ [esi+4]!=0 && byte[esi+0xd]!=0 → push [esi+4] → ★call 0x7C8B3D（delete 数组）→ [esi+4]=0 → push esi → byte[esi+0xd]=0 → [esi+8]=0 → ★call 0x7C8B3D（delete this）→ ret 4
+```
+**语义**：**记录移除器/容器注销析构器（推断名）**——① 按栈参 1 首字段线性查找 +4 数组（命中返项 / 未命中返 0）；② 清理：项 +0xC 标志清 + 关联计数 [esi+0xa8] 递减至 0 → +0xB0=-1；关联记录 [edi+0x74]=-1 + 0x635DB0 批量失效 + 引用计数 [edi+0x70] 至 0 → 挂 [0xac4c98] 容器（0x63E540 Add）；③ 删除项 +4 与项本体（0x7C8B3D）+ 虚表槽 0x10 查索引 + 左移覆盖移除 + 计数-1；④ 数组空 → 0x635120 容器清理 + **三容器注销**（[0xac4c98] 虚表槽 0x10 + 0x63E590 Remove；[0xac4b30]/[0xac4c18] 经 0x63E5D0 转发）+ **全局对象网三指针 [0xac4ccc]/[0xac4c38]/[0xac4bf0] 清除** + 虚表 0x7eff24/0x7eff04 + 0x63E140 持有释放 + delete this。
+
+## 原版怪癖（照抄）
+
+1. c 路 cmp eax,-1 冗余检查死分支（batch 1485/1484 同款——MSVC 缺空检查，照抄）；
+2. a 路日志目标是 0x4068E0 stub（batch 001 实锤空返回桩——诊断/日志调用点形态，照抄）；
+3. c 路 0x635DB0 调用 push ebx(=0) 作 byte 标志（0 = 只写 +0xB4/+0xAC 双失效标志不批量）；
+4. a 路两段 lea edx,[esp+0x30] 冗余（MSVC6 代码生成惯用，非业务语义）；
+5. c 路三全局指针清除顺序 [0xac4ccc]→[0xac4c38]→[0xac4bf0]。
+
+## 跨批次连接
+
+- ★★★**batch 885 点名现场兑现**：0x63E590 容器元素移除器文档点名「FUN_006340b0（0x6341F5，475B 未登记——push eax → mov ecx,0xac4c98 → call 0x63e590；lea eax,[esp+0x18] → mov ecx,0xac4b30 → call 0x63e5d0）」= **本批 c 路 0x6340B0 现场 0x6341EF-0x634204 逐字节兑现**！
+- ★★★batch 536（0x635DB0 批量对象失效标记器——unique_callers 含 FUN_006340b0，c 路调用点 0x634135 兑现）。
+- ★★batch 215（0x635120 容器清理器——c 路数组空分支调用点 0x6341CE）；batch 467（0x63E540 Add——c 路 0x63415E 容器1 入队）；batch 1285（0x63E140 持有释放器——c 路 0x634251）；batch 1721（0x63E5D0 左移删除孪生——c 路 [0xac4b30]/[0xac4c18] 注销转发）。
+- ★batch 1485（0x634310 按值查找+结构拷贝器——b 路后邻 + c 路查找段同构）；batch 869/870（三注册表注销形态 + [0xac4c98] 容器网）；batch 2149-2166（111B + 三元组 + 虚表槽族）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（a 2 个 + b 0 个 + c 7 个直接 call 全在 TSV）。
+- **后邻全已登记**：0x634CC0（a 后邻 = batch 2166 c 路本尊）、0x634310（b 后邻 = batch 1485）、0x634290（c 后邻 = batch 2166 c 路 callee）。
+- **新观察**：a 路虚表槽 0x88/0x1b8 双入口（取结果/写结果）+ 格式串 0x836b48/0x836b20/0x836ad4（0x40 区 stub 日志族）；c 路虚表 0x7eff24/0x7eff04（batch 2148-2164 虚表族新成员）；[0xac4c98]/[0xac4b30]/[0xac4c18] 三容器注销形态（batch 869/870/885 全链）。
+- 前向：picker 队列继续 0x63 区（batch 885 点名的 FUN_00633d30 未登记仍在排队——rank:4713 观察项）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650。
