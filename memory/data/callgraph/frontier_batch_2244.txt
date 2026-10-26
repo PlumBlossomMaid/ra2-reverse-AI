@@ -1,0 +1,68 @@
+# frontier batch 2244：全局双数组卸载孪生 + VectorClass 构造变体 + 构造器（0x5BF530 / 0x5BEA30 / 0x5BE9B0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5BF530 FUN_005bf530 callees=5 deps=292 / 0x5BEA30 FUN_005bea30 callees=1 deps=2007 / 0x5BE9B0 FUN_005bea30 callees=1 deps=1998）
+- 三路 disasm：`.qwen/tmp/_d2244a.txt`（0x5BF530 size 0x80）/ `_d2244b.txt`（0x5BEA30 size 0x100）/ `_d2244c.txt`（0x5BE9B0 size 0x80）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5BF530 | 69B（0x45）| ret c3 @0x5BF574 | 0x5BF575（batch 2243 c 路 0x5BF580——双数组懒加载初始化器，本批 a 路孪生对）| 6 次/去重 5（0x408230 + 0x4082f0 + 0x4083d0 + 0x407170×2 + 0x753620——callees=5 含 0x407170 双调用吻合）|
+| 0x5BEA30 | 117B（0x75）| ret 8 c20800 @0x5BEAA2 | 0x5BEAB0（未登记——四 dword 清零器：[0xabf2e8..0xabf2f4] 四连 mov 观察项，batch 2243 c 后邻同款）| 1（0x7c8e17——callees=1 吻合）|
+| 0x5BE9B0 | 45B（0x2D）| ret 4 c20400 @0x5BE9DA | 0x5BE9E0（未登记——四循环初始化器：push 0x40d260/push 0x4b/push 0x34 + 0x40afd0 循环×4 + 0x652c00 初始化观察项）| 1（0x6a4f20——callees=1 吻合）|
+
+## a 路 0x5BF530（69B）——全局双数组卸载孪生
+
+```
+005bf530  mov al,[0xabf35c]（★懒加载标志）→ test al → je 0x5bf574（未初始化直出）
+005bf539  call 0x408230（★清理 A）→ call 0x4082f0（★清理 B）→ call 0x4083d0（★清理 C）
+005bf548  mov ecx,[0x87e758] → mov edx,0x4000 → call 0x407170（★Grow 0x4000）
+005bf558  mov ecx,[0x87e750] → mov edx,0x4000 → call 0x407170（★第二数组 Grow 0x4000）
+005bf568  call 0x753620（★收口）→ mov byte [0xabf35c],0（★清标志）→ ret
+```
+**语义**：**全局双数组卸载孪生（推断名）**——★batch 2243 c 路 0x5BF580 的镜像对：标志位幂等检查（test → je 直出）→ 0x408230/0x4082f0/0x4083d0 三清理 + 双数组各 Grow 0x4000（**注意：初始化器是 0x2000，本批 0x4000——方向相反的幂等孪生**）+ 0x753620 收口 + 清 [0xabf35c] 标志。**全局数组卸载惯用（batch 2243 c 路同全局 [0xabf35c]/[0x87e758]/[0x87e750]/0x407170 闭环——init vs uninit 配对）**。
+
+## b 路 0x5BEA30（117B）——VectorClass 构造器变体
+
+```
+005bea30  push esi/edi → mov edi,[esp+0xc]（★容量参数）→ mov esi,ecx（★this）→ test edi → mov [esi+4],0（★数组指针=0）→ mov [esi+8],edi（★容量）→ mov byte [esi+0xc],1（★标志=1）→ mov byte [esi+0xd],0（owns=0）→ mov [esi],0x7ed5c0（★第一虚表）
+005bea52  je 0x5bea8a（容量==0 直出）→ mov eax,[esp+0x10]（★第 4 参：外部 buffer 或 0）→ test eax → je 0x5bea66 → dec edi → mov [esi+4],eax（★复用外部 buffer）→ mov [esp+0xc],edi → jmp 0x5bea8a
+005bea66  ★自分配：lea eax,[edi*8]（★容量×8 → 8B/项：双指针容器）→ push → call 0x7c8e17（operator new）→ test → je 0x5bea81 → dec edi → mov [esp+0xc],edi → jmp 0x5bea83 → xor eax → mov [esi+4],eax → mov byte [esi+0xd],1（owns=1）
+005bea8a  mov [esi],0x7ed540（★第二虚表）→ mov [esi+0x14],0xa（★+0x14=10 常量）→ mov [esi+0x10],0 → mov eax,esi → ret 8
+```
+**语义**：**VectorClass 构造器变体（推断名）**——① 六字段初始化（+4 数组指针/+8 容量/+0xc 标志 1/+0xd owns/+0x14=0xa 常量/+0x10=0）；② 双虚表 0x7ed5c0→0x7ed540（**构造中段改虚表——batch 2240 b 路同族**）；③ 容量==0 直出；④ 外部 buffer 复用（dec edi + 直接收）或 lea eax,[edi*8]（**容量×8 = 双指针 8B/项容器**）自分配 + owns=1。**VectorClass 双指针容器构造（8B/项 + 虚表双写 + 外部/自分配双路径——batch 2240 b 路、batch 2243 a 路虚表双写同族）**。
+
+## c 路 0x5BE9B0（45B）——构造器·双层指针装载
+
+```
+005be9b0  mov eax,[esp+4] → push esi → mov esi,ecx（★this）→ push eax → call 0x6a4f20（★基类构造）→ mov [esi+0x5518],0x7e1fbc（★+0x5518 第一层指针 0x7e1fbc）→ mov [esi],0x7edfb4（★虚表）→ mov [esi+0x5518],0x7edfac（★+0x5518 第二层指针 0x7edfac）→ mov eax,esi → ret 4
+005be9e0  ★后邻第二函数：push ebx/esi/edi → lea esi,[ebx+0x53ec] → mov edi,4 → push 0x40d260/push 0x4b/push 0x34 → push esi → call 0x40afd0（★循环 ×4）→ mov ecx,ebx → call 0x652c00 → test [esp+0x10],1 → je → push ebx → call 0x7c8b3d
+```
+**语义**：**构造器·双层指针装载（推断名）**——① 0x6a4f20 基类构造 + [esi+0x5518] 双层指针装载（先 0x7e1fbc 后 0x7edfac——**双值回写同址**）+ 虚表 0x7edfb4；② 后邻 0x5BE9E0：四循环初始化器（push 0x40d260/push 0x4b/push 0x34 + 0x40afd0 循环×4 + 0x652c00 初始化 + 0x7c8b3d 释放门控）。**基类构造 + 双指针装载构造器（[esi+0x5518] 大偏移 0x5518 + 虚表 0x7edfb4——0x6a4f20 基类族）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 6 次/去重 5 个（0x408230 + 0x4082f0 + 0x4083d0 + 0x407170×2 + 0x753620）——**全部已登记**（callees=5 含 0x407170 双调用吻合）。
+- b 路：跨函数直接 call 1 个（0x7c8e17 operator new）——**已登记**（callees=1 吻合）。
+- c 路：跨函数直接 call 1 个（0x6a4f20 基类构造）——**已登记**（callees=1 吻合）。
+- ★核验脚本（norm() 规范化版）输出：**三路全 PASS，无 MISSING、无 UNKNOWN**。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★[0xabf35c] 标志幂等检查（test → je 直出）+ 0x408230/0x4082f0/0x4083d0 三清理 + 双数组各 Grow 0x4000（**batch 2243 c 路是 0x2000 反向**）+ 0x753620 收口 + 清标志——**init/uninit 配对孪生**；
+2. b 路 ★★双虚表（0x7ed5c0→0x7ed540 中段改虚表）+ 8B/项容器（lea eax,[edi*8]）+ 外部 buffer 复用（dec edi）vs 自分配双路径 + [esi+0x14]=0xa 常量；
+3. c 路 ★[esi+0x5518] 双层指针回写（先 0x7e1fbc 后 0x7edfac 同址双值）+ 0x6a4f20 基类构造 + 虚表 0x7edfb4；
+4. b/c 路 ★★VectorClass 六字段布局（+4/+8/+0xc/+0xd/+0x14/+0x10——batch 2240 b 路 0x5C5A30 同族四字段扩展版）。
+
+## 跨批次连接
+
+- ★★batch 2243（c 路 0x5BF580 双数组懒加载初始化器——**a 路即其卸载孪生（init 0x2000/Grow vs uninit 0x4000/Grow 配对）**）：[0xabf35c] 标志 + [0x87e758]/[0x87e750] 双数组 + 0x407170 Grow 同闭环。
+- ★batch 2240（b 路 0x5C5A30 VectorClass 构造器——b 路同族四/六字段 + 虚表双写）+ batch 2233（0x5D0EC0 赋值器——b 路虚表双写同族）。
+- ★0x6a4f20（c 路基类构造——大偏移 0x5518 装载族）+ 0x407170（a 路 Grow——batch 2239/2243 全局数组族）。
+
+## 观察项 / 候选池
+
+- **后邻未登记（自然排队）**：0x5BEAB0（b 后邻——四 dword 清零器：[0xabf2e8..0xabf2f4] 四连 mov——batch 2243 c 后邻同款）；0x5BEAD0（b 后邻第二——浮点初始化器：fld [0x7e1710]/[0x7e1708] → 0x7c8fb0 → fadd → 0x4cac40 → fstp [0xabf300]——**浮点常量族观察项**）；0x5BEB00（b 后邻第三——fld [0xabf300] → fdiv [0x7ee090] → fstp [0xabf350] 浮点派生）；0x5BE9E0（c 后邻——四循环初始化器：push 0x40d260/0x4b/0x34 + 0x40afd0 循环×4 + 0x652c00 + 0x7c8b3d）。
+- **新观察**：[0xabf35c] 标志位 + [0x87e758]/[0x87e750] 双数组 + 0x407170 Grow 的 init/uninit 配对（a 路）+ 虚表 0x7ed5c0/0x7ed540/0x7edfb4 三邻接（b/c 路——**0x7ED5xx..0x7EDFxx 虚表连续布局**）+ [esi+0x5518] 大偏移双指针装载（c 路）。
+- 前向：picker 队列继续 0x5B 区（0x5BEAB0 清零器 + 0x5BEAD0 浮点初始化器 + 0x5B77E0 deps=4048 大宿主）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
