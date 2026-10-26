@@ -1,0 +1,69 @@
+# frontier batch 2240：VectorClass 构造/Resize 族 + DebugLog 布尔包装器（0x5C60D0 / 0x5C5A30 / 0x5C5510）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5C60D0 FUN_005c60d0 callees=2 deps=2605 / 0x5C5A30 FUN_005c5a30 callees=1 deps=106 / 0x5C5510 FUN_005c5510 callees=2 deps=106）
+- 三路 disasm：`.qwen/tmp/_d2240a.txt`（0x5C60D0 size 0x100）/ `_d2240b.txt`（0x5C5A30 size 0x100）/ `_d2240c.txt`（0x5C5510 size 0x200）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5C60D0 | 74B（0x4A）| ret c3 @0x5C6119 | 0x5C6120（未登记——数组项遍历释放销毁器：mov eax,[esi+0x10] 计数循环 0x7c8b3d 释放 + 虚表槽 0xc 收口 观察项）| 3 次/去重 2（0x734e60 DebugLog + 0x5d3490——callees=2 吻合）|
+| 0x5C5A30 | 74B（0x4A）| ret 8 c20800 @0x5C5A77 | 0x5C5A80（未登记——变体 2：虚表 0x7ee3b0 的构造孪生 观察项——rep stosd 清 + new 变体）| 1（0x7c8e17 operator new——callees=1 吻合）|
+| 0x5C5510 | 176B（0xB0）| ret 8 c20800 @0x5C55BD | 0x5C55C0（未登记——数组查找器：mov edx,[ecx+0x10] 计数循环 cmp [ecx],esi → 命中返下标/未命中返 -1 观察项）| 2 次/去重 2（0x7c8e17 operator new + 0x7c8b3d operator delete——callees=2 吻合）|
+
+## a 路 0x5C60D0（74B）——DebugLog 双发布尔包装器
+
+```
+005c60d0  push ecx/esi → push 0 → mov esi,ecx（★this）→ push 0 → push 0x6c（★行号 108）→ push 0x82e134（★文件串）→ xor edx → mov ecx,0x825fd0（★格式串）→ mov [esp+0x14],0x82083c（★参 4 常量）→ call 0x734e60（★DebugLog——batch 2171 族）→ mov eax 返回
+005c60f3  xor edx → mov ecx,0x825fb0（★第二格式串）→ push eax → push 0x6c → push 0x82e134 → call 0x734e60（★DebugLog 第二发）→ call eax 返回
+005c6107  lea ecx,[esp+0x10]（★栈参数区）→ push eax → push esi → call 0x5d3490（★功能函数——DebugLog 后调）→ neg eax → sbb eax,eax → inc eax（★布尔归一：neg/sbb/inc——非零→0，零→1）→ pop esi/ecx → ret
+```
+**语义**：**DebugLog 双发布尔包装器（推断名）**——① 0x734e60 双连发（0x82e134 文件/0x6c 行号/0x825fd0 与 0x825fb0 两格式串——batch 2171 调试族）；② call 0x5d3490 执行实际逻辑；③ neg eax → sbb eax,eax → inc eax 把返回值归一成布尔（成功=1/失败=0）。**带日志的布尔结果包装器（DebugLog 双发 + 布尔归一收口）**。
+
+## b 路 0x5C5A30（74B）——VectorClass 构造器·虚表 0x7ee390
+
+```
+005c5a30  mov eax,[esp+4]（★容量参数）→ push esi → mov esi,ecx（★this）→ xor edx → cmp eax,edx → mov [esi+4],edx（★数组指针=0）→ mov [esi+8],eax（★容量）→ mov byte [esi+0xc],1（★标志=1）→ mov byte [esi+0xd],dl（owns=0）→ mov [esi],0x7ee390（★虚表）
+005c5a4e  je 0x5c5a74（容量==0 直出）→ mov ecx,[esp+0xc]（★第二参：外部 buffer 或 0）→ cmp ecx,edx → je 0x5c5a61 → mov [esi+4],ecx（★复用外部 buffer）→ mov eax,esi → ret 8
+005c5a61  shl eax,2（★容量×4）→ push eax → call 0x7c8e17（★operator new）→ mov [esi+4],eax（★自分配）→ mov byte [esi+0xd],1（owns=1）→ mov eax,esi → ret 8
+```
+**语义**：**VectorClass 构造器·变体（推断名）**——① 四字段初始化（+4 数组指针/+8 容量/+0xc 标志 1/+0xd owns+虚表 0x7ee390）；② 容量==0 直出；③ 第二参外部 buffer 复用（首指针直收）或 shl 2 自分配（0x7c8e17 + owns=1）。**VectorClass 构造惯用（外部 buffer 复用 vs 自分配双路径——batch 2233 0x5D0EC0 赋值器同族）**。
+
+## c 路 0x5C5510（176B）——VectorClass::Resize 重建器
+
+```
+005c5510  push ebx/ebp → mov ebp,[esp+0xc]（★新容量）→ push esi/edi → mov esi,ecx（★this）→ test ebp → je 0x5c559a（★新容量==0：虚表槽 0xc 收口分支）
+005c551e  mov ebx,[esp+0x18]（★第 4 参：外部 buffer 或 0）→ mov byte [esi+0xc],0 → test ebx → jne 0x5c553e → ★自分配：lea eax,[ebp*4] → push → call 0x7c8e17（operator new）→ mov edi,eax → jmp 0x5c5540 → 0x5c553e mov edi,ebx（★复用外部 buffer）
+005c5540  test edi → mov byte [esi+0xc],1 → je 0x5c55b7（分配失败返 0）→ ★拷贝循环：mov eax,[esi+4] → test → je 0x5c5588 → mov ecx,[esi+8]（旧容量）→ cmp ebp,ecx → jge → mov ecx,ebp → ★逐项拷贝（min(新,旧) 项：mov edx,[edx+eax*4-4] → mov [edi+eax*4-4],edx 倒序）→ mov al,[esi+0xd] → test → je 0x5c5588 → ★释放旧数组：push [esi+4] → call 0x7c8b3d（operator delete）→ mov [esi+4],0
+005c5588  mov [esi+4],edi → test ebx → sete al（★owns = !外部）→ mov [esi+8],ebp → mov byte [esi+0xd],al → jmp 0x5c55a1 → ★0x5c559a 虚表槽 0xc 收口分支（mov edx,[esi] → call [edx+0xc]）
+005c55a1  mov eax,[esi+8] → mov ecx,[esi+0x10]（★+0x10 字段）→ cmp → jge → mov [esi+0x10],eax（★容量修正）→ pop 四件套 → mov al,1 → ret 8
+```
+**语义**：**VectorClass::Resize 重建器（推断名）**——① 新容量==0 走虚表槽 0xc 收口；② 外部 buffer 复用（第 4 参）或 0x7c8e17 自分配（容量×4）；③ 拷贝 min(新,旧) 项（倒序前移）；④ owns 旧数组时 0x7c8b3d 释放 + 指针清零；⑤ [esi+0x10] 容量下限修正（旧容量若更大则保留）。**VectorClass Resize 语义（外部 buffer 复用 + 自分配 + 旧数组释放 + 容量下限修正——batch 2233 赋值器族同款倒序拷贝）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 3 次/去重 2 个（0x734e60 + 0x5d3490）——**全部已登记**（callees=2 吻合）。
+- b 路：跨函数直接 call 1 个（0x7c8e17 operator new）——**已登记**（callees=1 吻合）。
+- c 路：跨函数直接 call 2 次/去重 2 个（0x7c8e17 + 0x7c8b3d）——**全部已登记**（callees=2 吻合）。
+- ★核验脚本（norm() 规范化版）输出：**三路全 PASS，无 MISSING、无 UNKNOWN**。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★DebugLog 0x734e60 双连发（0x82e134 文件/0x6c 行号/0x825fd0 与 0x825fb0 格式串——第二发把第一发返回值 push 进参数链）+ mov [esp+0x14],0x82083c 栈上参数直写；
+2. a 路 ★neg eax → sbb eax,eax → inc eax 布尔归一（非零→0、零→1——把 0x5d3490 返回整理成布尔）；
+3. b/c 路 ★★VectorClass 四字段布局（+4 数组指针/+8 容量/+0xc 标志/+0xd owns）+ 虚表 0x7ee390（b 路）/外部 buffer 复用 vs 自分配双路径（shl eax,2 容量×4 + 0x7c8e17 + owns=1）；
+4. c 路 ★倒序前移拷贝（mov edx,[edx+eax*4-4] → mov [edi+eax*4-4],edx——处理新旧重叠）+ min(新,旧) 裁剪 + 旧数组 0x7c8b3d 释放 + [esi+0x10] 容量下限修正；
+5. c 路 ★新容量==0 时虚表槽 0xc 收口（mov edx,[esi] → call [edx+0xc]——batch 2229 虚表调用族）+ 分配失败返 al=0 分支（0x5c55b7）。
+
+## 跨批次连接
+
+- ★★batch 2233（0x5D0EC0 VectorClass 赋值器——b/c 路构造/Resize 同族）+ batch 2227（0x5D86D0 VectorClass 构造器变体——b 路孪生）+ batch 2214（0x5E9E00 槽 ID 表重建器——VectorClass 族）。
+- ★batch 2171+（DebugLog 0x734e60——a 路）+ batch 2228（0x7c8e17/0x7c8b3d 家族——b/c 路 new/delete）+ batch 2229（虚表槽 0xc 调用——c 路收口分支）。
+- ★0x7ee390 虚表（b 路）+ 0x7ee3b0（b 后邻观察——同族虚表偏移 0x20 邻接）。
+
+## 观察项 / 候选池
+
+- **后邻未登记（自然排队）**：0x5C6120（a 后邻——数组项遍历释放销毁器：mov eax,[esi+0x10] 计数循环 call 0x7c8b3d + 虚表槽 0xc 收口——**VectorClass 析构语义观察项**）；0x5C5A80（b 后邻——VectorClass 构造器·变体 2：虚表 0x7ee3b0——**b 路孪生观察项**）；0x5C5AD0（b 后邻——四 dword 清零器：mov [0xabf4a8..0xabf4b4],eax 四连——[0xabf4a8] 全局四元组观察项）；0x5C5AF0（b 后邻——浮点初始化器：fld [0x7e1710]/[0x7e1708] → call 0x7c8fb0 → fadd st(0),st(0) → call 0x4cac40 → fstp [0xabf4c0]——**浮点常量族观察项**）；0x5C55C0（c 后邻——数组查找器：计数循环 cmp [ecx],esi 命中返下标/未命中返 -1）；0x5C55F0（c 后邻——数组逐项比较器：双数组 cmp 循环返 1/0）；0x5C5630（c 后邻——Resize 重建器·变体 2：虚表空尾分支差异——**c 路孪生观察项**）；0x5C56E0（c 后邻——数组清理器：owns 判定 + 0x7c8b3d + 三字段清零）。
+- **新观察**：[esi+0x10] 容量下限字段（c 路——batch 2233 同字段）+ [0xabf4a8..0xabf4c0] 全局组合四元组+浮点（b 后邻）+ 0x7ee390/0x7ee3b0 虚表对（b 路/b 后邻——VectorClass 族虚表邻接布局）。
+- 前向：picker 队列继续 0x5C 区（0x5C5A80 构造变体 + 0x5C5AF0 浮点初始化器 + 0x5C6370 解码器 + 0x5C60D0 后邻 0x5C6120 析构器 + 0x5B77E0 deps=4048 大宿主）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
