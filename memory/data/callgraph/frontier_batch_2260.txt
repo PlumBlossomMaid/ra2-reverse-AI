@@ -1,0 +1,70 @@
+# frontier batch 2260：16 位加法器 + 巨型相机/场景变换器 + Matrix3D::ScaleZ（0x5B2930 / 0x5B20F0 / 0x5AEB20）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x5B2930 FUN_005b2930 callees=0 deps=24 / 0x5B20F0 FUN_005b20f0 callees=23 deps=1951 / 0x5AEB20 Matrix3D::ScaleZ callees=0 deps=13）
+- 三路 disasm：`.qwen/tmp/_d2260a.txt`（0x5B2930 size 0x100）/ `_d2260b.txt`（0x5B20F0 size 0x900）/ `_d2260c.txt`（0x5AEB20 size 0x100）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x5B2930 | 28B（0x1C）| ret 8 c20800 @0x5B2949 | 0x5B2950（已登记——16 位减法器）| 0 次（纯 word 操作，callees=0 吻合）|
+| 0x5B20F0 | 2101B（0x835）| ret 0x18 c21800 @0x5B2922 | 0x5B2930（**本批 a 路本体——后邻相邻**）| 57 次/去重 23（0x41c350/0x4cae30/0x7c5f00/0x5b2990/0x5b2950/0x41c2e0/0x41c3c0/0x4cad00/0x41c230/0x41c460/0x41c430/0x4cacb0/0x437160/0x41c380/0x487f20/0x4c1b50/0x578080/0x565730/0x5b2970/0x5b2930/0x5b29c0/0x5b2a30/0x41c380——**0x5b2930 本批 a 路批内自引用 + 22 已登记**，picker callees=23 吻合）|
+| 0x5AEB20 | 33B（0x21）| ret 4 c20400 @0x5AEB3E | 0x5AEB50（未登记——Matrix3D 变换函数观察项：双参数乘加链 +0x10/0x20 偏移）| 0 次（纯浮点操作，callees=0 吻合）|
+
+## a 路 0x5B2930（28B）——16 位加法器
+
+```
+005b2930  mov eax,[esp+8]（★参数2 指针）→ mov dx,[eax]（★word 参数2值）→ mov eax,[esp+4]（★输出指针）→ add dx,[ecx]（★word this 值 + 参数2值）→ mov word [esp+8],dx（★和回写槽）→ mov ecx,[esp+8] → mov [eax],ecx（★和写入输出）→ ret 8
+```
+
+**语义**：**16 位加法器（推断名）**——word [ecx] + word 参数2 → 和写入输出指针；**后邻 0x5B2950 减法器孪生（add/sub 差一）——16 位算术对模板（batch 2259 b/c 路同族）**。**16 位坐标加法器（batch 2259 18 位钳位/除法器族第三成员）**。
+
+## b 路 0x5B20F0（2101B）——巨型相机/场景变换器
+
+```
+005b20f0  push ebp → mov ebp,esp → and esp,0xfffffff8 → sub esp,0x8c → push 三件套 → mov edi,[ebp+8]（★参1）→ mov ebx,ecx（★this）→ mov esi,edx（★参2）→ mov eax,[edi] → cmp [0xabef10] → jne 0x5b2350（★分支A：全局不匹配）→ cmp [0xabef14]/[0xabef18] → jne 0x5b2350
+005b213a  ★主分支：mov ecx,esi → call 0x41c350（★变换查询）→ [esi+0x14]/[esi+0x10] → 0x4cae30 双参数 → fsub [0x7e2820] → fmul [0x7e2818] → 0x7c5f00 _ftol → mov word [esp+0x34],ax → 0x5b2990（★word 差绝对值比较器）→ 分支：0x5b2950（减法器）+ word 调位 → 0x41c2e0 → movsx word → sub 0x3fff → fild/fmul [0x7e2810] → 0x41c3c0 → [0x7e2800] 比较 → 0x4cad00 归一化分支（fdivr [esi]/[esi+8]）→ 半精度三段装载（0x4cad00+0x4cacb0）→ 0x41c230 三坐标 + [ebx] 累加 → 0x4cac40 模长 → 0x7c5f00 → ret 0x18
+005b2350  ★分支A（全局不匹配）：[esi+0x10] 装载 → 0x7c5f00 ×3 → [ebx] 累加 → 0x41c230 → 0x437160（★变换）→ 0x41c380 → 0x487f20（★矩阵）→ 0x4c1b50 → 差值计算（[edi]-[ebx] 三坐标差）→ 0x41c230 → fild 半精度 → 0x4cae30 ×2（fchs 负数链）→ 0x5b2990/0x5b2950 word 调整 → 0x41c460/0x41c430 → 0x4cad00/0x4cacb0 → fchs → 0x41c350 → 0x4cae30 → 0x7c5f00 → [ebp+0x10/0x14/0x18/0x1c] 四字节参数分支（neg al/sbb/and 3/add 3/shl 8 钳位 → shr ecx,7 计数）→ 0x578080（MapClass 查询）→ 0x565730（★取 cell）→ [eax+0x140] ch 位 1 判定 → add [0xabef44] → sar 钳位（cmp 5 → 5 钳位 / 0xa 常量）→ imul [0xabef50] → 边界比较（cmp -0x14/0x14 → ±0x12 调整）→ 多分支（0x2000/0x4800/0x4000 word 常量）→ 0x5b2990/0x5b2950 → 0x5b2930（★本批 a 路加法器）→ 0x5b2970（除法器）→ 0x41c2e0 → 0x5b29c0（16 位钳位器）→ 0x5b2a30（★batch 2259 a 路浮点缩放器）→ [ebp+0x14] 分支（sar 2 钳位）→ 0x41c380 → ret 0x18
+```
+
+**语义**：**巨型相机/场景变换器（推断名）**——★★三参数大函数（ret 0x18=3 参）：★[0xabef10/0xabef14/0xabef18] 三全局场景匹配分流（主分支 = 匹配场景变换；分支A = 全局不匹配时的完整相机矩阵路径）+ 0x41C350/0x41C2E0/0x41C3C0/0x41C230/0x41C460/0x41C430/0x41C380 变换族 + 0x4C** 浮点内核（0x4cae30/0x4cad00/0x4cacb0/0x4cac40）+ ★半精度缩放链（[0x7e2810]/[0x7e2820]/[0x7e2818]/[0x7e2800]——batch 2259 a 路同族）+ 0x437160/0x487f20/0x4c1b50 矩阵数学 + ★0x578080/0x565730 MapClass 取 cell + [0xabef44]/[0xabef50] 全局相机参数 + ★word 钳位族调用（0x5b2990/0x5b2950/0x5b2930/0x5b2970/0x5b29c0——16 位坐标算术全族）+ 0x5b2a30 浮点缩放教尾。**0x41C/0x4C 相机变换最大宿主（batch 2259 浮点/16 位族的上游调用端）**。
+
+## c 路 0x5AEB20（33B）——Matrix3D::ScaleZ（带符号名）
+
+```
+005aeb20  fld dword [esp+4]（★缩放因子）→ fmul dword [ecx+8] → fstp dword [ecx+8]（★Z 分量缩）→ ×3：+0x18/+0x28（★三行 Z 分量）→ ret 4
+```
+
+**语义**：**Matrix3D::ScaleZ（YRpp 带符号名）**——矩阵缩放：缩放因子 × [ecx+8]/[ecx+0x18]/[ecx+0x28]（**3×3 矩阵 Z 列三个元素逐乘**）→ 回写。**Matrix3D 变换家族（后邻 0x5AEB50 双参数乘加链 +0x10/0x20 偏移——同族缩放/旋转函数）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 0 个（纯 word 操作）——callees=0 吻合。
+- b 路：跨函数直接 call 57 次/去重 23 个——**22 已登记 + 0x5B2930（本批 a 路本体，批内自引用闭环非 MISSING）**；picker callees=23 吻合。
+- c 路：跨函数直接 call 0 个（纯浮点操作）——callees=0 吻合。
+- ★核验脚本（norm() 规范化版）输出：a/c 全 PASS、b 路 1 枚批内自引用闭环（0x5b2930 为本批 a 路本体，grep ranking.tsv:5051 确认调用者正是本批 b 路本体 FUN_005b20f0）。
+
+## 原版怪癖（照抄）
+
+1. b 路 ★★[0xabef10/0xabef14/0xabef18] 三全局场景匹配分流——**不匹配直接走分支A 完整矩阵路径（主分支只服务匹配场景）**;
+2. b 路 ★★浮点流程：0x4cae30 变换 → fsub [0x7e2820] → fmul [0x7e2818] → _ftol → movsx ax → sub 0x3fff（半精度指数换算，batch 2259 a 路同款）;归一化分支 [0x7e2800] 比较（test ah,0x40）;
+3. b 路 ★分支A 中 fchs 负数链 ×2（0x4cae30 前取反——矩阵负向路径）;
+4. b 路 ★★[ebp+0x10/0x14/0x18/0x1c] 四字节参数分支：neg al/sbb/and 3/add 3/shl 8 钳位 → shr ecx,7+inc+shr 1+and 0xff 计数判定（**cmp 1 → jle 提前跳出**）;
+5. b 路 ★sar 钳位：movsx word → cdq → sub eax,edx → sar 1（**符号扩展右移取半**）+ cmp 5 → clamp 5；（[ebp+0x14]==0 时）0xa 常量;imul [0xabef50] 后边界比较（cmp -0x14/0x14 → add ±0x12 位置修正——**相机越界回拉 0x12**）;
+6. b 路 ★0x2000/0x4800/0x4000 word 常量三分支（相机参考位）;0x578080 → 0x565730 取 cell 后 [eax+0x140] ch 位 1 → add [0xabef44]（相机高度修正）;
+7. c 路 ★[ecx+8]/[ecx+0x18]/[ecx+0x28] 三行 Z 分量逐乘（无循环展开）——Matrix3D 3×3 布局实锤。
+
+## 跨批次连接
+
+- ★★batch 2259（a 路 0x5B2A30 浮点向量缩放/归一化器 + b/c 路 16 位钳位/除法器——b 路本批调用 0x5b2a30/0x5b29c0/0x5b2970/0x5b2990/0x5b2950 全族 + a 路本批加法器 0x5b2930）：**16 位坐标算术族跨双批读写闭环（2259 登记 4 成员 + 2260 加法器）**。
+- ★★[0x7e2800]/[0x7e2810]/[0x7e2818]/[0x7e2820] 半精度常量族（b 路 + 2259 a 路共用）+ 0x4CAD 浮点内核（0x4cae30/0x4cad00/0x4cacb0/0x4cac40——b 路四 callee 全已登记）。
+- ★0x41Cxxx 变换族（0x41c350/0x41c2e0/0x41c3c0/0x41c230/0x41c460/0x41c430/0x41c380——b 路七 callee）+ 0x437160/0x487f20/0x4c1b50（矩阵数学——b 路三 callee）+ 0x578080/0x565730 MapClass（b 路——batch 2245 同族）。
+- ★0x5AEB20 Matrix3D::ScaleZ（c 路带符号名）+ 0x5AEB50 同族——**0x5AEB 区 Matrix3D 家族**。
+
+## 观察项 / 候选池
+
+- **批内自引用 1 枚（非 MISSING）**：b 路 callee = 本批 a 路本体 0x5B2930（同批登记闭环）。
+- **后邻未登记（自然排队）**：0x5AEB50（c 路后邻——Matrix3D 变换函数：双参数乘加链 +0x10/0x20 偏移——**0x5AEB 区矩阵族新候**）。
+- **新观察**：[0xabef10/0xabef14/0xabef18] 三全局场景参数族（b 路——与 [0xabef44]/[0xabef50] 相机参数同区）+ [ebp+0x10/0x14/0x18/0x1c] 四字节相机会话语义 + 0x578080/0x565730 → [eax+0x140] ch 位（相机高度修正——batch 2245 同族）+ 半精度指数换算链（b 路 + 2259 复现）。
+- 前向：picker 队列继续 0x5B/0x5C 区（0x5AE220 大宿主 + 0x5AEB50 矩阵族新候）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x4CAD 区浮点内核 + 0x41C 区变换族 + 0x599650（QWEN.md Init random map）。
