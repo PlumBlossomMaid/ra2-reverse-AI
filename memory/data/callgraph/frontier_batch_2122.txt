@@ -1,0 +1,87 @@
+# frontier batch 2122：[0xC] 字段写入器 + 运动对象构造器 + 运动对象数组清理调度器（0x659490 / 0x6593F0 / 0x6591B0）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x659490 FUN_00659490 callees=0 deps=55 / 0x6593F0 FUN_006593f0 callees=0 deps=44 / 0x6591B0 FUN_006591b0 callees=5 deps=465）
+- 三路 disasm：`.qwen/tmp/_d2122a.txt`（0x659490 size 0x30）/ `_d2122b.txt`（0x6593F0 size 0x90）/ `_d2122c.txt`（0x6591B0 size 0x250）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 直接 call 数 |
+|------|------|--------|-----------|-------------|
+| 0x659490 | 10B（0xA）| ret 4 @0x659497 | 0x6594A0（12B 三元组写入器，未登记）| 0 |
+| 0x6593F0 | 113B（0x71）| ret 4 @0x65945E | 0x659470（方向字节 setter，未登记）| 0 |
+| 0x6591B0 | 564B（0x234）| ret @0x6593E3 | 0x6593E4（nop pad）| 5（0x7c5f00+0x659650+0x65c7e0+0x659ca0+0x7c8b3d 全已登记）|
+
+## a 路 0x659490（10B）——[0xC] dword 字段写入器
+
+```
+00659490  mov eax,[esp+4]（参数 1）/ mov [ecx+0xc],eax（写 [this+0xc]）/ ret 4
+```
+**语义**：**[0xC] dword 字段写入器**——[this+0xc] = 参数 1（运动对象字段族 0x48-0x58 之外的低位字段 setter 族继续）。后邻头 0x6594A0（mov eax,[esp+4] / add ecx,0x24 / 拷 3 dword 到 [this+0x24]——**12B 三元组写入器**，未登记——位置字段 setter）。
+
+## b 路 0x6593F0（113B）——运动对象构造器·字段清零版
+
+```
+006593f0  mov eax,ecx（this）/ push esi / mov esi,[esp+8]（参数 1 宿主）
+006593f7  xor ecx,ecx（0）/ mov edx,1
+006593fe  mov [eax+0x18],ecx / [eax],ecx / [eax+4],ecx / mov byte ptr [eax+8],cl（清标志）
+00659409  mov byte ptr [eax+9],dl（★[9]=1 启用标志——batch 2120/2121 族！）
+0065940c  mov [eax+0xc],ecx / [eax+0x10],esi（★[0x10]=参数 1 宿主）/ [eax+0x1c],ecx
+00659415  字节 [eax+0x20]/[0x21]/[0x22],cl（清方向字节）
+0065941e  [eax+0x24]/[0x28]/[0x2c]/[0x30]/[0x34]/[0x38] 清零（位置六字段）
+00659430  [eax+0x40]/[0x48]/[0x3c]/[0x44]/[0x4c]/[0x50] 清零
+00659442  [eax+0x54],edx（★[0x54]=1 方向步长默认 1！）/ mov byte ptr [eax+0x58],cl（[0x58]=0 子对象标志）
+00659448  [eax+0x7c],ecx（计数）/ mov byte ptr [eax+0xc0]/[0xc1]/[0xc2],cl（清方向字节）
+0065945d  pop esi / ret 4
+```
+**语义**：运动对象构造器·字段清零版——[0]=0/[4]=0/[8]=0 标志/**[9]=1 启用**/[0xc]=0/**[0x10]=参数 1 宿主指针**/[0x18]=0/[0x1c]=0/[0x20-0x22] 方向字节 0/[0x24-0x38] 位置六字段 0/[0x3c-0x50] 各字段 0/**[0x54]=1 方向步长默认 1**/[0x58]=0 子对象标志/[0x7c]=0 计数/[0xc0-0xc2] 方向字节 0。与 batch 2120/2121 的运动对象字段族完全吻合（[9] 启用、[0x54] 方向步长、[0x58] 子对象标志、[0x7c] 计数、[0xc0-0xc2] 方向字节）——**运动对象的构造函数**。ret 4（1 栈参）。
+
+## c 路 0x6591B0（564B）——运动对象数组清理调度器
+
+```
+006591b0  push ebp / and esp,0xfffffff8 / sub esp,0x20 / mov eax,[0xb04a70]（★全局计数）/ push 4 寄存器 / xor ebx,ebx
+006591c3  lea ecx,[eax-1]（索引=计数-1）/ cmp ecx,ebx / jl 0x6591ff
+006591d7  统计循环: mov eax,[0xb04a64]（★全局数组基址）/ lea edx,[eax+ecx*4] / mov eax,[edx]（元素）
+006591e4  cmp [eax+0x10],2（★类型码==2）/ jne 0x6591f1 / inc esi / cmp byte ptr [eax+9],bl（启用）/ je 0x6591f1 / inc ebp
+006591ff  [0xabcd44] / [0xa8b558] 全局 → fild/fdiv（浮点比例）→ 计算 + [0x7e2800] 常量钳制链
+00659278  主循环（edi 从计数-1 递减到 0）: mov esi,[eax+edi*4]（元素）
+00659289  mov eax,[esi+0x10]（类型码）/ cmp eax,1 / jne 0x6592cd
+00659291  （类型==1）fld / fmul [0x7e44a8] / call 0x7c5f00 / cmp eax,0xa / mov [esp+0x18],eax
+006592a9  （★钳制下限 10）/ cmp eax,ebp / jle / mov [esp+0x18],ebp（钳制上限）→ fild / fstp [esi+0x18]（写 [0x18] 速度）
+006592c6  ★call 0x659650（batch 2120 b 路——对象运动控制器！）
+006592cd  cmp eax,2 / jne 0x6593d5（类型==2 处理）
+006592d6  cmp byte ptr [esi+9],bl（启用）/ je 0x659308
+006592db  push 0x63 / push ebx / mov ecx,0x886b88（★Randomizer 实例）→ ★call 0x65c7e0（Randomizer::RandomRanged！QWEN.md 实锤）
+006592e8  mov esi,eax / fld / fmul [0x7e2ac0] / call 0x7c5f00 / cmp esi,eax（随机 vs 量化）/ jge 0x659304 / mov byte ptr [ecx+9],bl（★随机禁用元素）
+00659308  ★call 0x659ca0（batch 2119 c 路——运动调度器！）
+0065930f  cmp al,bl / je 0x6593d5（返回 false 跳过清理）
+00659317  清理链: [edx] 宿主 / cmp [宿主+0x510],edx / je → mov [宿主+0x510],0 / mov [edx],0（★双向解除宿主引用）
+00659339  [edx+4] 宿主链 / test byte ptr [eax+0x14],1 → neg cl/sbb/and（位标志提取指针）→ mov [ecx+0x510],0 / mov [edx+4],0（解除二级引用）
+00659383  [0xb04a60] 全局容器（★查找 this 元素）→ 虚表槽 0x10 → 找到则计数-1+左移删除 → push / call 0x7c8b3d（delete）
+006593d5  dec edi / jns 主循环 / ret
+```
+**语义**：运动对象数组清理调度器——遍历全局 [0xb04a64] 数组（[0xb04a70] 个元素）：统计段（类型码 [0x10]==2 且 [9] 启用的计数）→ 浮点比例计算（[0xabcd44]/[0xa8b558] + 钳制）→ 主循环倒序：**类型==1**：速度计算（[0x7e44a8] 比例×钳制 [10, 上限]）→ 写 [0x18] → **调 0x659650（batch 2120 b 控制器）**；**类型==2 且启用**：**Randomizer::RandomRanged(1,99)**（0x65c7e0，[0x886b88] 实例）随机值 vs 量化比较 → 可能禁用（[9]=0）→ **调 0x659ca0（batch 2119 c 调度器）**；返回 false 时清理：解除宿主双向引用（[宿主+0x510] 与 [元素+0]/[+4]）+ **0xb04a60 容器删除 + delete**。运动对象系统全局更新/清理主循环。
+
+## 原版怪癖（照抄）
+
+1. b 路构造 [0x54]=1（方向步长**默认 1**）、[9]=1（启用标志**默认开**）、[0x10]=参数 1（宿主指针保存）——与 batch 2120/2121 setter 族字段语义完全吻合；
+2. b 路 [0x20-0x22]/[0xc0-0xc2] 两组方向字节都清零（batch 2119/2120 的字节缩放字段族）；
+3. c 路统计段与主循环**同一数组两遍遍历**（先统计再处理）；
+4. c 路类型==1 速度钳制 **[10, 上限]**（下限 10 硬编码，上限 ebp=0x64=100）；
+5. c 路 **Randomizer::RandomRanged(1,99)**（0x65c7e0）——运动链与 RNG 系统跨系统连接（QWEN.md RNG 里程碑实锤函数）；
+6. c 路随机值 ≥ 量化值时禁用元素（[9]=0），否则保留并调调度器；
+7. c 路清理链**双向解除宿主引用**（[宿主+0x510] 与 [元素+0]/[+4] 两组）+ 位标志提取指针惯用法（neg/sbb/and）；
+8. c 路 [0xb04a60] 容器查找删除（标准 Vector 左移 + 0x7c8b3d delete）。
+
+## 跨批次连接
+
+- ★★★c 路 ↔ batch 2119 c 路 0x659ca0（运动调度器调用点）+ batch 2120 b 路 0x659650（运动控制器调用点）——**运动链主调度器贯通**；
+- ★★c 路 **Randomizer::RandomRanged（0x65c7e0）** ↔ QWEN.md RNG 里程碑（区间随机实锤）+ batch 2109（[0x886b88] 同区全局）；
+- ★b 路 ↔ batch 2120/2121（运动对象字段族构造 + setter 读写闭环）；a 路 [0xc] setter ↔ 后邻 0x6594A0（12B 三元组写入器）；
+- ★[0xb04a60]/[0xb04a64]/[0xb04a70] 全局容器族 ↔ batch 2107/2109（[0xb04dac]/[0xb04db8] 同 0xb04 区全局数组族）。
+
+## 观察项 / 候选池
+
+- **新候选：无**（a/b 0 直接 call；c 路 5 直接 call 全已登记）。
+- **后邻未登记**：0x6594A0（a 路后邻 12B 三元组写入器）、0x659470（b 路后邻方向字节 setter）——picker 队列后续自然取到。
+- 前向：picker 队列继续 0x59 区（0x659490 已取一族）+ 0x65 区剩余 + 0x599650（QWEN.md Init random map）。
