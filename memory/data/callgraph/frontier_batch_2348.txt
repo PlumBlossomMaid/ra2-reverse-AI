@@ -1,0 +1,70 @@
+# frontier batch 2348：Vector 扩容器副本 + 双指针相等判定器 + VectorClass 有序删除器（0x52B570 / 0x52B4D0 / 0x52B2B0）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x52B570 FUN_0052b570 callees=2 deps=63 / 0x52B4D0 FUN_0052b4d0 callees=0 deps=98 / 0x52B2B0 FUN_0052b2b0 callees=1 deps=52）
+- 三路 disasm：`.qwen/tmp/_d2348a.txt`（0x52B570 size 0x90）/ `_d2348b.txt`（0x52B4D0 size 0x40）/ `_d2348c.txt`（0x52B2B0 size 0xE0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x52B570 | 134B | ret 4 @0x52B5EA（成功）/0x52B5F3（失败）| 0x52B600（dump 边界未显示——后续函数）| 2 个/去重 2——全部已登记，picker callees=2 吻合 |
+| 0x52B4D0 | 27B | ret 4 @0x52B4E3（相等）/0x52B4E8（不等）| 0x52B4F0（[esi+4] test + [esi+0xc] + 0x7c8b48——VectorClass 相关，未登记）| 0 个/去重 0（picker callees=0 吻合）|
+| 0x52B2B0 | 213B | ret 4 @0x52B330（未找到）/0x52B382（删除成功）| 0x52B390（dump 边界——nop pad 后函数）| 1 个/去重 1——全部已登记，picker callees=1 吻合 |
+
+## a 路 0x52B570（134B）——Vector 扩容器（副本）
+
+```
+0052b570  thiscall 1 栈参（[esp+0xc]=增量）→ test ebp → jl 0x52b5ed（★增量负 → 失败）→ [esi+8] 旧容量 + ebp → lea [ebx*8]（★8B/项）→ 0x7c8e17 分配
+0052b599  8B/项双 dword 拷贝循环（[ecx*8] 起点 → [eax+edi]/[eax+edi+4]）→ 0x7c8b3d 释放旧数组 → [esi]=新指针/[esi+8]=新容量/[esi+0x10]=0 → al=1 → ret 4
+0052b5ed  失败：xor al, al → ret 4
+```
+
+**语义**：**Vector 扩容器副本（推断名）——8B/项容器扩容（134B）**：thiscall 1 栈参（增量）：增量负 → 返 0 → 0x7c8e17（旧容量+增量）×8B → 8B/项双 dword 拷贝 → 0x7c8b3d 释放旧 → [esi]/[esi+8]/[esi+0x10]=0 → 返 1。**★★与 batch 2339 c 路 0x538B80 逐字节同构（VectorClass 扩容器的复制粘贴副本——另一虚表槽族对象）**。
+
+## b 路 0x52B4D0（27B）——双指针相等判定器
+
+```
+0052b4d0  mov eax, [ecx+0x10] → test eax → je 0x52b4e6（返 0）→ mov ecx, [esp+4] → mov eax, [eax] → cmp eax, [ecx] → jne 0x52b4e6 → mov al, 1 → ret 4
+0052b4e6  32c0 xor al, al → ret 4
+```
+
+**语义**：**双指针相等判定器（推断名）——两对象首字段比较（27B）**：thiscall 1 栈参：★[this+0x10] 对象非空 → [eax]（对象首字段）vs [ecx]（参对象首字段）相同时返 1 → ret 4。**最小相等判定（零 callee——对象身份/虚表比较）**。
+
+## c 路 0x52B2B0（213B）——VectorClass 有序删除器
+
+```
+0052b2b0  thiscall 1 栈参（[esp+0x1c]=查找值）→ [esi+4] count → test → je 0x52b327（返 0）
+0052b2c0  [esi+0xc] byte → jne 0x52b2e5（★已排序跳过）→ ★0x7c8b48 qsort（0x52b720 比较器 + 8 + count + 数组——★★batch 2347 c 路后邻 0x52B720 双指针比较器）→ [esi+0x10]=0 → [esi+0xc]=1（标记已排序）
+0052b2e5  [esp+0x1c] → [esp+0x10] → ★★二分查找（[ebp+eax*8] 8B 项 cdq/sar 折半——◆batch 2347 b/c 路同构算法）→ je 0x52b333（命中）
+0052b333  命中：ecx 索引（sar ecx,3）→ 数组前移循环（[eax+ecx*8] 逐项前移）→ count-- → [edi+eax*8]=0/[+4]=edx（★新末尾 = 删除值）→ [esi+0x10]=edx → al=1 → ret 4
+0052b327  未找到：xor al, al → ret 4
+```
+
+**语义**：**VectorClass 有序删除器（推断名）——排序 + 二分 + 前移删除（213B）**：thiscall 1 栈参（查找值）：★[esi+0xc] 未排序标志时 ★0x7c8b48（qsort）排序（★0x52b720 比较器——batch 2347 c 路后邻）→ ★★8B/项二分查找（batch 2347 b/c 路同构）→ 命中 → ★前移删除（逐项 memmove 式前移）+ count-- + [esi+0x10]=删除值 → 返 1 / 未找到返 0。**★★VectorClass 有序删除（★★qsort+二分+前移三合一——batch 2347 查找器/比较器实锤使用方）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 2 个/去重 2（0x7c8e17/0x7c8b3d——分配/释放对）——**全部已登记无 MISSING**（picker callees=2 吻合）。
+- b 路：跨函数直接 call 0 个/去重 0（纯指针比较）——**已登记无 MISSING**（picker callees=0 吻合）。
+- c 路：跨函数直接 call 1 个/去重 1（0x7c8b48——★qsort）——**全部已登记无 MISSING**（picker callees=1 吻合）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING、无批内自引用**（连续五十八批三路无真 MISSING——排队 7 个真 MISSING 不变）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★与 batch 2339 c 路 0x538B80 **逐字节同构**（134B 完全一致——VectorClass 扩容器的复制粘贴副本）;
+2. b 路 ★★[this+0x10] → [eax] 首字段比较（★★只比首 4 字节——对象身份判定）;
+3. c 路 ★★[esi+0xc] 排序标志惰性（首次删除才 qsort——0x7c8b48 + 0x52b720 比较器）;
+4. c 路 ★★二分查找后前移删除（sar ecx,3 索引 + 逐项前移）+ 新末尾写入删除值（[edi+eax*8]=0/[+4]=edx）+ [esi+0x10]=删除值（★删除值残留在 last 槽——原版不清理）;
+5. c 路 ★★0x52b720 比较器（batch 2347 c 路后邻——★被本路 qsort 实锤使用）。
+
+## 跨批次连接
+
+- ★★batch 2339（0x538B80 Vector 扩容器——a 路逐字节同构对）+ batch 2347（0x52B750/0x52B6D0 二分查找器——c 路二分同构 + 0x52B720 比较器——c 路 qsort 实锤使用方）。
+- ★★batch 2340（0x538B30 VectorClass 构造器——a/b/c 路对象构造同族）+ batch 1737/1731/1721（VectorClass 容器族）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x52B4F0（b 路后邻——[esi+4] test + [esi+0xc] + 0x52b6a0 地址 + 0x7c8b48——VectorClass 排序插入器候选）+ 0x52B720（c 路 qsort 比较器——batch 2347 已观察）+ [esi+0xc] 排序标志（c 路惰性排序语义槽）。
+- 未兑现 MISSING 旧观察（继续排队）：0x00486790（2267 起）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150 + ★0x556AD0/0x556EB0/0x556D20 + ★0x554830/0x49E400 + ★0x551B20 + ★0x5517A0/0x5512D0 + ★0x5509E0/0x551300/0x551320/0x551330/0x551370 + ★0x550080/0x54F6F0/0x54F670 + ★0x54E890/0x54E8C0 + ★0x54E590/0x54D930/0x549E90 + ★0x547CE0/0x544BE0 + ★0x543780/0x542EC0 + ★0x5424C0 + ★0x5422C0/0x540F90 + ★0x540A80 + ★0x5402D0/0x53F5B0 + ★0x53ECB0/0x53EC70/0x53E470 + ★0x408B40/0x53E070/0x53E1D0/0x53DDE0 + ★0x53C4C0/0x53C280/0x53B560 + ★0x53B3F0/0x53B064 + ★0x53AC50 + ★0x53A6A0/0x53A140 + ★0x53A130/0x53A100 + ★0x538C10 + ★0x537F20/0x537E80/0x537F30/0x537E90 + ★0x537DE0/0x537B50/0x537DF0/0x537B60/0x535BD0/0x535BE0 + ★0x533F50 + ★0x41caf0/0x45e750/0x4f6eb0/0x531F60/0x5318C0 + ★0x52FFD0/0x52FC20/0x52D430 + ★0x406b10/0x434ad0/0x52CB90 + ★0x52B7A0/0x52B720 + ★0x52B4F0（2348 新观察）。
+- 本批 **无 MISSING**（连续五十八批三路无真 MISSING——排队 7 个真 MISSING 不变）。next 批预期 top3 由 picker 决定（0x52B0A0/0x52AF50 等继续排队）。
