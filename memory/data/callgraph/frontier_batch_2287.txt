@@ -1,0 +1,77 @@
+# frontier batch 2287：最近对象检索器 + 坐标对遍历修正器 + 坐标换算器（0x586FC0 / 0x586BF0 / 0x586AC0）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x586FC0 FUN_00586fc0 callees=2 deps=69 / 0x586BF0 FUN_00586bf0 callees=1 deps=1892 / 0x586AC0 FUN_00586ac0 callees=0 deps=69）
+- 三路 disasm：`.qwen/tmp/_d2287a.txt`（0x586FC0 size 0x220）/ `_d2287b.txt`（0x586BF0 size 0x300）/ `_d2287c.txt`（0x586AC0 size 0x180）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x586FC0 | 438B（0x1B6）| ret 0xc c20c00 @0x587173 | 0x587180（未登记——[ebp+0xd4] 虚表槽 0xc 清空+CellIterator 遍历）| 2 次/去重 2（0x578460+0x4cac40——全部已登记，picker callees=2 吻合）|
+| 0x586BF0 | 604B（0x25C）| ret c3 @0x586E4B | 0x586E50（未登记——五字段坐标换算器：[ecx+0x104]/[0xfc]/[0xf4] 加减）| 2 次/去重 1（0x42d510——已登记，picker callees=1 吻合）|
+| 0x586AC0 | 292B（0x124）| ret 0xc c20c00 @0x586BE1 | 0x586BF0（**本批 b 路本体——后邻相邻**）| 0 次/去重 0（纯整数运算，picker callees=0 吻合）|
+
+## a 路 0x586FC0（438B）——最近对象检索器
+
+```
+00586fc0  push ebp → and esp,-8 → sub esp,0x34 → mov eax,[0xabd480]（★全局常量）→ mov edi,[ebp+0xc]（★参1 坐标）→ mov [esp+0x20],eax → mov [esp+0x28],ecx（★this）→ [esp+0x38]=0 → ★movsx 坐标 → shl eax,9（★Y<<9）→ add → [0x87f924] 查格（越界回落哑元 0xabdc50/[0xabdc74]）→ mov eax,[ebx+0x38]（★work+0x38）→ test → jge 0x587035 → 失败路径 mov [ebp+8],edi 坐标 → ret 0xc
+00587035  ★★对象索引：[0xa8ed2c] 对象表 → [edx+eax*4] → esi=对象 → ★虚表槽 0x9c 调用（mov eax,[esi] → call [eax+0x9c]——★对象 getter）→ ★★[esi+0x2e4]/[esi+0x2e8] 宽高 → idiv 取模（★cell+0x11a → [esi+0x2e4] 宽 → sub 坐标——batch 2285 a 路同款）
+0058709a  ★★双循环（[esi+0x2e8] 高 × [esi+0x2e4] 宽）：movsx [esp+0x18] 坐标 → ★lea [edx+edi]（★网格偏移）→ mov ecx,[eax+edx*4+0x10]（★对象格数组）→ test → je 跳过 → push 1/坐标 → 0x578460（★放格判定）→ je 跳过 → ★★movsx 差平方 → 0x4cac40 开方（★距离——QWEN.md 浮点内核）→ fcom [esp+0x40]（★阈值 [esp+0x3c]=0x40c38800 常量）→ fstp 保留最近
+00587164  收尾：mov eax,[ebp+8] → mov ecx,[esp+0x20]（★最近格）→ mov [eax],ecx → ret 0xc
+```
+
+**语义**：**最近对象检索器（推断名）**——★Y<<9 + [0x87f924] 查格（work+0x38 门控失败返坐标）→ ★[0xa8ed2c] 对象表索引 + ★虚表槽 0x9c 对象 getter → ★★[esi+0x2e4]/[esi+0x2e8] 宽高 + idiv 取模坐标换算（cell+0x11a——batch 2285 a 路同款）→ ★★双循环（对象宽高）→ 0x578460 放格判定 → ★★0x4cac40 开方距离 + fcom [esp+0x3c]=0x40c38800（★6.11 距离阈值）→ 保留最近 → 输出 [ebp+8]。**最近对象检索（0x40c38800 距离阈值 + [a8ed2c] 对象表 + 虚表槽 0x9c getter——对象族检索核心）**。
+
+## b 路 0x586BF0（604B）——坐标对遍历修正器
+
+```
+00586bf0  sub esp,0x34 → mov eax,[ecx+0x60]（★this 计数）→ dec → js 0x586e48（收尾）→ shl ebp,4（★×16——[ecx+0x54] 数组步长）→ 主循环：[ebp+0x54] 装载 → ★★[ebp+0xc] 门控（★已处理标志）→ jne 跳过 → ★★[ebp+8] 门控 → jne 跳过 → ★★坐标对：[ebp] vs [ebp+4] → jne 0x586d41（分叉）→ ★cmp [ebp+2] vs [ebp+6] → setge → dec → and 4 → and eax,7 → ★[0x89f688] 8 邻域表 → 0x42d510 坐标对加法（★batch 1736 同款）→ ★★Y<<9 + [0x87f924] 查格（越界回落哑元）→ mov eax,[eax+0x140]（★cell+0x140 位域）→ test ch,1 → jne 跳过 → ★★位修正：mov ecx,0xfffffffe → [esp+0x16] → ★and [eax+0x140],0xfffff7ff → or 0x400（★cell+0x140 位操作）→ 循环 → 收尾 dec → jne → ret c3
+```
+
+**语义**：**坐标对遍历修正器（推断名）**——★[ecx+0x60] 计数循环（[ecx+0x54] 数组 16B/项步长）+ ★★[ebp+0xc]/[ebp+8] 双门控（★已处理标志跳过）→ ★★坐标对 [ebp] vs [ebp+4] 比较分叉（setge → dec → and 4 → 8 邻域表 [0x89f688] → 0x42d510 坐标对加法）→ ★★Y<<9 + [0x87f924] 查格（越界回落哑元 0xabdc50）→ ★★cell+0x140 位域操作（test ch,1 门控 → and 0xfffff7ff → or 0x400——★占位标志位）→ 循环遍历。**坐标对遍历修正（cell+0x140 位域位操作 + 16B/项数组遍历——batch 1736 0x42d510 同款）**。
+
+## c 路 0x586AC0（292B）——坐标换算器
+
+```
+00586ac0  sub esp,0xc → mov eax,[esp+0x14]（★参1 坐标）→ mov ebx,[ecx+0xf4]（★this+0xf4）→ movsx ebp/edi 双坐标 → ★test bl,1（★方向标志）→ je 0x586ae8 → sub esi,edi → inc → sar esi,1（★对角折半）→ mov eax,ebx → cdq → sub → sar eax,1（★[0xf4]>>1）
+00586af9  ★★五字段运算：[ecx+0xfc]/[0x100]/[0x104]/[0x108] 加减 → sar 半 → ★★cdq 符号扩展 → 差绝对值（xor/sub）→ cmp 分支 → ★setne al（★参数门控布尔）→ 分派
+00586ba5  ★★收尾：add eax,[ecx+0x100] → add edx,[ecx+0xfc] → lea ecx,[eax+1] → sar 半 ×2 → ★mov word [esp+0x1c]/[esp+0x1a] 坐标 → mov [eax],ecx（★输出 dword）→ ret 0xc（★3 参）
+```
+
+**语义**：**坐标换算器（推断名）**——★[ecx+0xf4] 方向标志 test bl,1 分叉（对角折半 sar）→ ★★五字段（[0xfc]/[0x100]/[0x104]/[0x108]）加减 + cdq 符号扩展 + ★差绝对值（xor/sub——batch 2259 同族）→ ★setne 参数布尔归一分派 → ★★收尾 lea [eax+1] + sar 半 ×2 坐标输出 ret 0xc（3 参）。**坐标换算（纯整数运算——[ecx+0xf4..0x108] 五字段族 + setne 分派）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 2 次/去重 2 个（0x578460/0x4cac40）——**全部已登记**（picker callees=2 吻合）。
+- b 路：跨函数直接 call 2 次/去重 1 个（0x42d510）——**全部已登记**（picker callees=1 吻合）。
+- c 路：跨函数直接 call 0 次/去重 0 个（纯整数运算）——**picker callees=0 吻合**。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING**（连续十一批三路全登记）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★0x40c38800 距离阈值常量（fcom [esp+0x40]——★6.11 float 最近对象判定）;
+2. a 路 ★★虚表槽 0x9c 对象 getter（mov eax,[esi] → call [eax+0x9c]——★对象族获取）;
+3. a 路 ★★[esi+0x2e4]/[esi+0x2e8] 宽高 + idiv 取模（cell+0x11a → [esi+0x2e4] 宽——batch 2285 a 路同款）;
+4. a 路 ★★双循环对象宽高 + 0x578460 放格判定 + 0x4cac40 开方距离;
+5. b 路 ★★[ebp+0xc]/[ebp+8] 双门控（★已处理标志——跳过已处理项）;
+6. b 路 ★★坐标对比较分叉（cmp [ebp] vs [ebp+4] → jne 分支 + setge/dec/and 4 方向）;
+7. b 路 ★★cell+0x140 位域操作（test ch,1 → and 0xfffff7ff → or 0x400——★位 10 占位标志）;
+8. b 路 ★★[ecx+0x54] 数组 16B/项步长（shl ebp,4——★坐标对结构体数组）;
+9. c 路 ★★[ecx+0xf4] 方向标志 test bl,1 分叉（对角折半 sar esi,1）;
+10. c 路 ★★五字段 [0xfc]/[0x100]/[0x104]/[0x108] 加减 + cdq 符号扩展 + 差绝对值（xor/sub——batch 2259 同族）;
+11. c 路 ★★setne 参数门控布尔归一（★参3 byte 门控分派）;
+12. c 路 ★★lea [eax+1] + sar 半 ×2 输出（★向上取整折半）。
+
+## 跨批次连接
+
+- ★★★batch 2285 a 路（cell+0x11f idiv 取模网格偏移——a 路同款）+ batch 2273 a 路（0x87f924 地图表 + 哑元 0xabdc50/[0xabdc74]——a/b 路同款）。
+- ★★batch 1736（0x42d510 坐标对加法——b 路同款）+ batch 2267/2268（[0x89f688] 8 邻域表——b 路同款）+ batch 2259（差绝对值 xor/sub + Y<<9——c/b 路同款）。
+- ★★batch 2266/2273（0x5657a0 取格、[0xa8ed2c] 对象表族——a 路索引）+ batch 2255/2256（[0xabdf90] 全局对象族——a 路 [0xa8ed2c] 兄弟）。
+- ★0x4cac40 浮点内核（a 路——QWEN.md 高频）+ 0x578460 放格（a 路——batch 1736 同款）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x587180（a 路后邻——[ebp+0xd4] 虚表槽 0xc 清空 + CellIterator 遍历）；0x586E50（b 路后邻——五字段坐标换算器：0x104/0xfc/0xf4 加减 sar 半——batch 2287 c 路同族孪生）。
+- 未兑现 MISSING 旧观察：0x00486790（2267 起排队）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x578640 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960（batch 2280-2286 新观察）。
+- 本批 **无 MISSING**（连续十一批三路全登记——batch 2276 起，TSV 5344）。
