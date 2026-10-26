@@ -1,0 +1,80 @@
+# frontier batch 2283：8B/项容器源拷贝器·变体 + 12B/项容器去重插入器 + 4B/项容器扩容重组器（0x58ABD0 / 0x589E20 / 0x589CE0）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x58ABD0 FUN_0058abd0 callees=1 deps=66 / 0x589E20 FUN_00589e20 callees=0 deps=9 / 0x589CE0 FUN_00589ce0 callees=2 deps=1）
+- 三路 disasm：`.qwen/tmp/_d2283a.txt`（0x58ABD0 size 0xA0）/ `_d2283b.txt`（0x589E20 size 0x90）/ `_d2283c.txt`（0x589CE0 size 0xC0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x58ABD0 | 153B（0x99）| ret 4 c20400 @0x58AC66 | 0x58AC70（未登记——同族拷贝器区）| 1 次/去重 1（0x7c8e17——已登记，picker callees=1 含虚表槽 0xc 间接吻合）|
+| 0x589E20 | 137B（0x89）| ret 8 c20800 @0x589E9E（al=1）/0x589EA6（al=0）| 0x589EB0（未登记——容器插入区）| 0 次/去重 0（纯内存+虚表槽 8 间接，picker callees=0 吻合）|
+| 0x589CE0 | 174B（0xAE）| ret 8 c20800 @0x589D7B（al=1）/0x589D8B（al=1）| 0x589D90（未登记——容器清理器区）| 2 次/去重 2（0x7c8e17+0x7c8b3d——已登记，picker callees=2 吻合）|
+
+## a 路 0x58ABD0（153B）——8B/项容器源拷贝器·变体
+
+```
+0058abd0  push 三件套 → mov ebp,[esp+0xc]（★参 源容器）→ mov esi,ecx（★this）→ cmp esi,ebp → je 0x58ac54（★自拷贝跳过）
+0058abde  mov eax,[esi] → ★call dword ptr [eax+0xc]（★this 旧数据清理——虚表槽 0xc）→ mov edi,[ebp+8]（★源容量）→ mov [esi+8],edi（★新容量）→ je 0x58ac4e（源空：mov [esi+4],0 / [esi+0xd]=0）
+0058abef  ★★自分配：lea ecx,[edi*8] → push → 0x7c8e17 → lea edx,[edi-1] → 清 0 循环（mov [ecx],ebx / mov byte [ecx+4],bl——★8B/项清零）→ mov [esi+4],eax → 拷贝循环（[ebp+4]→[esi+4] 双 dword/项 mov [edx+eax*8]/[edx+eax*8+4]）→ owns=1 收尾
+0058ac54  ★★额外双字段：[esi+0x10]=[ebp+0x10] / [esi+0x14]=[ebp+0x14]（★变体差异——尾部 +0x10/+0x14 双 dword 拷贝）→ ret 4
+```
+
+**语义**：**8B/项容器源拷贝器·变体（batch 2282 c 路 0x58AD10 的 +0x10/+0x14 扩展版）**——★自拷贝跳过 + ★虚表槽 0xc 清旧 + ★★源容量自分配（0x7c8e17 [容量×8B] + 8B/项清零循环）→ ★★8B 逐项拷贝（双 dword/项）+ owns=1 → ★★变体差异尾部 [esi+0x10]=[ebp+0x10] / [esi+0x14]=[ebp+0x14] 双字段补拷。**8B/项容器拷贝构造（batch 2282 c 路同族——尾部双字段扩展版）**。
+
+## b 路 0x589E20（137B）——12B/项容器去重插入器
+
+```
+00589e20  mov eax,[esp+4]（★参 新项指针）→ mov ecx,[ecx]（★this 容器）→ lea eax,[eax+eax*2]（★×3 索引）→ mov ebx,[esp+0x10] → ★容器三分区：[ecx+eax*8+0x10]（★容量）/[ecx+eax*8+4]（★数组）→ lea esi,[ecx+eax*8]（★分区基址）→ lea eax,[edx-1]
+00589e3e  ★★去重循环：test eax → jl 通过 → mov edi,[ebx] → cmp edi,[ecx]（★首 dword 相等判定）→ je 0x589ea1（★已存在 → 返回 al=0）→ add ecx,0xc（★12B/项步长）→ dec eax → jns 循环
+00589e4e  ★★插入：mov ecx,[esi+8] → cmp [esi+0x10],ecx → jl → 槽 8 扩容检查（[esi+0xd] owns / [esi+0x14] 容量 → ★call [edx+8] 虚表槽 8 扩容）→ test al → je 收尾 → ★★12B 项尾插：lea edx,[eax+eax*2]（×3）→ lea ecx,[eax+edx*4]（×12）→ mov [ecx],edx / [ecx+4] / [ecx+8]（★12B 逐项拷贝）→ 计数 +1 → ret 8（al=1）
+00589ea1  已存在路径：xor al,al → ret 8（★al=0 拒绝重复插入）
+```
+
+**语义**：**12B/项容器去重插入器（推断名）**——★this 容器三分区（[+0x10] 容量 / [+4] 数组 / 12B/项——lea [eax+eax*2]×3 索引）→ ★★去重循环（cmp 首 dword 相等判定 → 已存在返回 al=0）→ ★★插入（槽 8 扩容检查 + 12B 逐项尾插 mov [ecx]/[ecx+4]/[ecx+8] + 计数 +1 → al=1）。**12B/项容器去重尾插（虚表槽 8 扩容 + 12B 三分区——batch 2263 同款模板的 12B 变体）**。
+
+## c 路 0x589CE0（174B）——4B/项容器扩容重组器
+
+```
+00589ce0  push 三件套 → mov ebp,[esp+0xc]（★参1 新容量）→ mov esi,ecx（★this）→ test ebp → je 0x589d7e（★容量 0 走虚表槽 0xc 清空路径）
+00589cf2  mov ebx,[esp+0x18]（★参2 新数组指针）→ mov byte [esi+0xc],0 → test ebx → jne 0x589d12（★参2 提供数组）→ ★★自分配：lea eax,[ebp*4] → push → 0x7c8e17 → edi=新数组 → mov byte [esi+0xc],1
+00589d25  ★★旧数据拷贝：mov eax,[esi+4] → test → je 0x589d65（无旧数组跳过）→ mov ecx,[esi+8] → cmp ebp,ecx → jge → mov ecx,ebp（★新容量 min 旧容量）→ 拷贝循环：mov edx,[edx+eax*4-4] → mov [edi+eax*4-4],edx（★4B/项逐项拷贝）→ ★owns 判定：test [esi+0xd] → je 跳过 → push [esi+4] → 0x7c8b3d 释放旧数组 → mov [esi+4],0
+00589d65  ★★收尾：mov [esi+4],edi（★新数组挂接）→ mov [esi+8],ebp（★新容量）→ ★sete al（[esi+0xd]=（参2==0）owns 布尔归一——★batch 2264「sete owns 反转」同款）→ ret 8（al=1）
+00589d7e  容量 0 路径：mov edx,[esi] → mov ecx,esi → ★call dword ptr [edx+0xc]（★虚表槽 0xc 清空）→ ret 8（al=1）
+```
+
+**语义**：**4B/项容器扩容重组器（推断名）**——★容量 0 走虚表槽 0xc 清空路径；★★参2 提供数组直挂（owns=0）或 0x7c8e17 自分配 [新容量×4B]（owns=1）→ ★★旧数据拷贝（[新容量 min 旧容量] 4B/项逐项 mov [edx+eax*4-4]/[edi+eax*4-4]）→ ★owns 旧数组 0x7c8b3d 释放 → ★★sete 布尔归一 owns（[esi+0xd]=（参2==0）——batch 2264 同款 sete owns 反转）+ 新容量挂接 ret 8。**4B/项容器扩容重组（0x7c8e17 自分配 + 旧数据 4B 拷贝 + sete owns 归一——batch 2264 家族同款）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 1 次/去重 1 个（0x7c8e17）——**全部已登记**（picker callees=1 含虚表槽 0xc 间接按口径吻合）。
+- b 路：跨函数直接 call 0 次/去重 0 个（纯内存+虚表槽 8 间接）——**picker callees=0 吻合**。
+- c 路：跨函数直接 call 2 次/去重 2 个（0x7c8e17/0x7c8b3d）——**全部已登记**（picker callees=2 吻合）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING**（连续第七批三路全登记）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★自拷贝跳过（cmp esi,ebp → je——batch 2263/2282 同款）;
+2. a 路 ★★虚表槽 0xc 清旧（call [eax+0xc]——拷贝前清理）;
+3. a 路 ★★8B/项清零循环（mov [ecx],ebx / mov byte [ecx+4],bl——8B/项双段清零）;
+4. a 路 ★★变体差异尾部 [esi+0x10]=[ebp+0x10] / [esi+0x14]=[ebp+0x14]（vs batch 2282 c 路无此段）;
+5. b 路 ★★三分区 12B/项（lea [eax+eax*2] ×3 索引 + [ecx+eax*8+0x10] 容量 / +4 数组——★容量在 +0x10 字段的变体布局）;
+6. b 路 ★★去重循环（cmp 首 dword 相等判定 → 已存在返回 al=0——★防重拒绝重复插入）;
+7. b 路 ★★12B 逐项尾插（lea edx,[eax+eax*2] → lea ecx,[eax+edx*4] → mov [ecx]/[ecx+4]/[ecx+8]）;
+8. c 路 ★★sete 布尔归一 owns（mov [esi+0xd],al = sete（参2==0）——batch 2264「sete owns 反转」同款）;
+9. c 路 ★★旧数据拷贝上限 min（cmp ebp,ecx → jge → mov ecx,ebp——新容量 > 旧才全拷否则截断）;
+10. c 路 ★★容量 0 虚表槽 0xc 清空路径（test ebp → je 0x589d7e）;
+11. c 路 ★★参2 提供数组直挂不 owns（test ebx → jne 直挂 + sete al=0）。
+
+## 跨批次连接
+
+- ★★★batch 2282 c 路（8B/项容器源拷贝器——a 路同族变体闭环）+ batch 2263/2264（VectorClass 构造/Resize 三档——b/c 路 12B/4B 变体家族）。
+- ★★batch 2264（sete owns 反转——c 路同款）+ batch 2265（VectorClass 清理器——c 路虚表槽 0xc 对应）+ batch 2259/2260（16 位坐标容器族——a/b 路 8B/12B 项布局）。
+- ★0x7c8e17 operator new（a/c 路——QWEN.md 高频）+ 0x7c8b3d delete（c 路——QWEN.md 高频）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x58AC70（a 路后邻——同族拷贝器区）+ 0x589EB0（b 路后邻——容器插入区）+ 0x589D90（c 路后邻——容器清理器区）。
+- 未兑现 MISSING 旧观察：0x00486790（2267 起排队）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x578640 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070（batch 2280-2282 新观察）。
+- 本批 **无 MISSING**（连续七批三路全登记——batch 2276 起）。
