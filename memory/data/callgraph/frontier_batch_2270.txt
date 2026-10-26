@@ -1,0 +1,79 @@
+# frontier batch 2270：水域地形类型处理器 + AddRiversAndLakes 调度函数 + 河/湖坐标几何计算器（0x59C630 / 0x59C580 / 0x59B940）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x59C630 FUN_0059c630 callees=6 deps=2723 / 0x59C580 FUN_0059c580 callees=2 deps=2717——**QWEN.md AddRiversAndLakes 实锤** / 0x59B940 FUN_0059b940 callees=1 deps=100）
+- 三路 disasm：`.qwen/tmp/_d2270a.txt`（0x59C630 size 0x200）/ `_d2270b.txt`（0x59C580 size 0x100）/ `_d2270c.txt`（0x59B940 size 0x200）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call |
+|------|------|--------|-----------|-----------------|
+| 0x59C630 | 457B（0x1C9）| ret c3 @0x59C7F8 | 0x59C800（已登记——水域类型处理器孪生：CellIterator+[0xabed10] work 清 +0x38 判定）| 13 次/去重 6（0x578350+0x578290+0x481810 ×3+0x65c780 ×3+0x7c5f00 ×3+0x5a6c10——全部已登记，callees=6 吻合）|
+| 0x59C580 | 163B（0xA3）| ret c3 @0x59C622 | 0x59C630（**本批 a 路本体——后邻相邻**）| 20 次/去重 2（0x59d510 ×10 + 0x59c920 ×10——**全部已登记**，callees=2 吻合）|
+| 0x59B940 | 356B（0x164）| ret 0x18 c21800 @0x59BA5D | 0x59BAA0（未登记——同族校验器观察项：四全局等值 → ret 0x1c 返 1）| 1 次/去重 1（0x4cac40——已登记，callees=1 吻合）|
+
+## a 路 0x59C630（457B）——水域地形类型处理器
+
+```
+0059c630  sub esp,0x18 → mov ecx,0x87f7e8 → push 三件套 → call 0x578350（★CellIterator_Reset）→ call 0x578290（★Next）→ mov esi,eax → test → je 0x59c7f3 → 循环：
+0059c657  mov eax,[esi+0x38] → mov ecx,[0xaa0738]（★水面类型）→ cmp eax,ecx → jne 0x59c7dd → cmp byte [esi+0x11a],bl → jne 0x59c7dd → ★三向水域判定：push 2 → mov ecx,esi → call 0x481810（★邻域判定 +2 水系）→ mov edi,eax → push 4 → call 0x481810（★+4）→ mov ebp,eax → push 3 → call 0x481810（★+3）→ 三返回值 [edi+0x38]/[ebp+0x38]/[eax+0x38] 全 == [0xaa0738] && [0x11a]==0（★★水域三格全验证）
+0059c6da  ★Randomizer × [0x7ed9e8] + [0x7e1718] → _ftol → cmp 0xa 拒绝采样 → cmp 1 → je 0x59c79c（★概率 1 跳过）
+0059c70f  ★第二 Randomizer × [0x7ed9e0] → _ftol → cmp 0xf1/0xf0 → ★0x66666667 imul sar 4 除法缩比（f0-ff → /16 钳位）+ mov edi 差值 → [0xabed10] work+0x38 取 → push -1/push eax → add ecx,edi → call 0x5a6c10（★水域类型写）
+0059c79c  ★第三 Randomizer × [0x7ed9d8] → _ftol → cmp 0xc8 拒绝采样 → 0xcccccccd mul shr 5（★/64 除法缩比）→ add [0xaa0738]+8 → mov [esi+0x38]（★地形类型改写）→ Next 循环 → ret c3
+```
+
+**语义**：**水域地形类型处理器（推断名）**——★==[0xaa0738] 水面格遍历 + ★0x481810 三向（+2/+4/+3）邻域水域验证 + ★★Randomizer 三段（[0x7ed9e8]/[0x7ed9e0]/[0x7ed9d8]——**QWEN.md scaled_random 常量族：10/242/201 除 2^32-1 字节对齐实锤**）→ 0x5a6c10 水域类型写 + 0x66666667/0xcccccccd 除法缩比 + [0xaa0738]+8 地形改写。**RMG 水域深化处理器（QWEN.md 阶段 2 Seeding water 族——[0xaa0738] 水面全局 + scaled_random 三常量确认段）**。
+
+## b 路 0x59C580（163B）——AddRiversAndLakes 调度函数
+
+```
+0059c580  push ebp → mov ebp,esp → and esp,0xfffffff8 → push ecx → push 三件套 → mov esi,ecx（★this）→ mov edx,[esi+0x308] → inc edx → mov [esi+0x308],edx（★计步器++）→ mov eax,[esi+0x3c]（★模式）→ cmp 3 → je → cmp 4 → jne 0x59c5e1（★非 3/4 模式跳过）
+0059c5a8  ★[esi+0x4c] > 0x14 判定 → jle 0x59c5e1 → 循环①：mov edi,0 → xor al → 循环体：push 0/0/0 → lea eax,[esp+0x14] → push ebx → push eax → mov ecx,esi → call 0x59d510（★River 递归起点——QWEN.md 实锤：支流递归画河）→ inc edi → test al → je 0x59c5d7 → inc [esi+0x308]（★成功 +1 计步）→ 循环①条（cmp 0xa 上限）
+0059c5e1  ★循环②：mov edi,0 → 循环体：lea ecx,[esp+0xc] → call 0x59c920（★湖泊/支流终点）→ inc edi → test al → je 0x59c612 → inc [esi+0x308] → 循环②条（cmp 0xa 上限）→ ret c3
+```
+
+**语义**：**AddRiversAndLakes 调度函数（QWEN.md 实锤——阶段 2 河湖调度）**——★[esi+0x308] 计步器++ + [esi+0x3c] 模式 3/4 门控 + [esi+0x4c]>0x14 判定 → ★★循环① 0x59d510（**River 递归起点 = QWEN.md「River 0x59D510」实锤**——成功时计步器再 +1）10 次上限 + ★循环② 0x59c920（湖泊/支流终点）10 次上限。**河湖阶段调度宿主（QWEN.md 阶段 2 AddRiversAndLakes 调度——种子兼容性关键段：每个循环调 0x59d510 消耗随机数）**。
+
+## c 路 0x59B940（356B）——河/湖坐标几何计算器
+
+```
+0059b940  mov eax,[esp+0xc]（★参3）→ mov edx,[0xabe2f0] → sub esp,8 → push 三件套 → ★四全局等值早退：[eax] vs [0xabe2f0] / [eax+4] vs [0xabe2f4] / [eax+8] vs [0xabe2f8] / [eax+0xc] vs [0xabe2fc] 全等 → je 0x59ba60（★等值返回 0x4cac40 距离）
+0059b97f  ★坐标差计算：[esp+0x20] 参1 vs [esp+0x18] 参2 → movsx 四 word → sub/sar 1 差减 → abs（cdq/xor/sub）→ test 和 → je 0x59b9d6（★零差返回 fld [0x7e1748]）
+0059b9e4  ★距离：imul 平方和 → fild → call 0x4cac40（★开方）→ fdiv/fidivr 混合（fdiv st(1) + fidivr [esp+0x20]）→ ★fmul 缩放（[esp+0x28] + fld [esp+0x24] × [esp+8] → faddp → fmulp）→ ret 0x18
+0059ba60  ★等值分支：movsx 四 word（[ecx]/[edx] + [ecx+2]/[edx+2]）→ imul 平方和 → call 0x4cac40 → ret 0x18
+```
+
+**语义**：**河/湖坐标几何计算器（推断名）**——★[0xabe2f0..0xabe2fc] 四全局坐标等值早退分支（等值走 0x4cac40 简单距离）；★主分支 movsx 差/sar 1 半差值 + abs 零差早退（fld [0x7e1748]）+ imul 平方和 → 0x4cac40 开方 → ★fdiv/fidivr 混合除法 + fmul 缩放链。**河/湖几何距离计算器（ret 0x18 六参——[0xabe2f0..0xabe2fc] 河湖全局坐标族 + 0x4cac40 距离内核）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 13 次/去重 6 个——**全部已登记**（0x578350/0x578290/0x481810 ×3/0x65c780 ×3/0x7c5f00 ×3/0x5a6c10）；picker callees=6 吻合。
+- b 路：跨函数直接 call 20 次/去重 2 个（0x59d510 ×10 + 0x59c920 ×10）——**全部已登记**（QWEN.md 实锤 River 0x59D510 在池内；callees=2 吻合）。
+- c 路：跨函数直接 call 1 个（0x4cac40 ×2）——**已登记**（callees=1 吻合）。
+- ★核验脚本（norm() 规范化版）输出：**三路全 PASS，无 MISSING、无批内自引用**——本批零观察项新增；b 路后邻 = a 路本体为批内相邻非 MISSING。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★[0x7ed9e8]/[0x7ed9e0]/[0x7ed9d8] **scaled_random 常量族**（QWEN.md：10/242/201 除 2^32-1，字节对齐实锤）——fild qword 无符号 × 常量 → fadd [0x7e1718] → _ftol;
+2. a 路 ★★0x481810 三向水域验证（+2/+4/+3 邻域方向）+ 三返回值全 ==[0xaa0738] && [0x11a]==0——**水域三格全验证才深化**;
+3. a 路 ★0x66666667 imul sar 4（f0-ff 差值 → /16）+ 0xcccccccd mul shr 5（/64——**[0xaa0738]+8 地形类型改写取 1/64**）;
+4. a 路 ★cmp 1 → je 跳过（第一 Randomizer 值==1 的特殊跳过分支）;
+5. b 路 ★★[esi+0x308] 计步器**在循环外先 ++（调度入场即消耗），模式 3/4 且 [esi+0x4c]>0x14 才走循环**;循环内成功再 +1;
+6. b 路 ★★循环上限固定 10（cmp 0xa）且**循环失败（al==0）也烧随机数**（0x59d510 内部消耗）——**种子兼容性关键：失败轮随机数不退回**;
+7. b 路 ★循环②出口 0x59c612 与 0x59c61c 两个成功 +1 分支（循环②成功写 0x59c605、循环①成功写 0x59c5db——**计步器双写点**）;
+8. c 路 ★★[0xabe2f0..0xabe2fc] 四全局等值早退（若参3 四 dword 与全局全等 → 简单距离分支）;
+9. c 路 ★movsx 差/sar 1 半差值 + cdq/xor/sub 绝对值 + 零差 fld [0x7e1748] 早退;
+10. c 路 ★fdiv/fidivr 混合除法（fdiv st(1) + fidivr [esp+0x20]）+ fmul 缩放链三段（[esp+0x28] × [esp+8] → faddp → fmulp）。
+
+## 跨批次连接
+
+- ★★★QWEN.md RMG 流水线实锤兑现：b 路 0x59C580 = **AddRiversAndLakes 调度**（阶段 2，0x59D510 River 递归 + 0x59C920 湖泊）+ a 路 0x59C630 = **水域地形类型处理器**（Seeding water 族——QWEN.md 阶段 2 三函数：0x59A6C0/0x59C580/0x59C630）。
+- ★★batch 2266/2267/2268/2269（RMG 阶段函数链 7/8/9/10——本批补阶段 2）+ batch 2255（scaled_random 常量族 [0x7ED9E8]/[0x7ED9E0]/[0x7ED9D8]——a 路复现）。
+- ★0x4cac40 浮点内核（c 路——batch 2259/2260/2268 同族）+ Randomizer 0x65c780 + CellIterator 0x578350/0x578290（a 路）+ [0xaa0738] 水面全局（a 路——batch 2269 c 路同款表）。
+
+## 观察项 / 候选池
+
+- **本批零 MISSING、零批内自引用**（三路 callee 全部已登记；b 路后邻 = a 路本体为批内相邻非 MISSING）。
+- **后邻未登记（自然排队）**：0x59BAA0（c 路后邻——同族校验器：四全局 [0xabe2f0..0xabe2fc] 等值 → ret 0x1c 返 1——河湖坐标相等判定器）。
+- **新观察**：[0xabe2f0..0xabe2fc] 河湖全局坐标族（c 路）+ [0x7ed9e8]/[0x7ed9e0]/[0x7ed9d8] scaled_random 常量（a 路——QWEN.md 实锤区再确认）+ [esi+0x308] 计步器（b 路——河湖调度计数）+ 0x59c920 湖泊递归（b 路 callee 已登记）。
+- 前向：picker 队列继续 59/5A 区（0x59A6C0/0x59A8F0/0x59AD10 大宿主——Seeding water 阶段链）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
