@@ -1,0 +1,67 @@
+# frontier batch 2201：0x5F 区坐标计算族三连（两点距离计算器·浮点版 + 坐标均值累加器 + 两点距离平方计算器·整数版）（0x5F6810 / 0x5F6790 / 0x5F6500）
+
+- 日期：2026-10-26
+- picker：按 unique_callers 扇入度取 top3（0x5F6810 FUN_005f6810 callees=2 deps=79 / 0x5F6790 FUN_005f6790 callees=0 deps=79 / 0x5F6500 FUN_005f6500 callees=0 deps=9）
+- 三路 disasm：`.qwen/tmp/_d2201a.txt`（0x5F6810 size 0x140）/ `_d2201b.txt`（0x5F6790 size 0x100）/ `_d2201c.txt`（0x5F6500 size 0x100）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 函数体直接 call |
+|------|------|--------|-----------|----------------|
+| 0x5F6810 | 291B（0x123）| ret c3 @0x5F6932 | 0x5F6940（[esp+4] 参数 + [ecx+0x9c] 拷贝器——同族坐标拷贝，未登记）| 2（0x4cac40×2 sqrt + 0x7c5f00×2 _ftol——callees=2 吻合）|
+| 0x5F6790 | 127B（0x7F）| ret c3 @0x5F680E | 0x5F6810（= a 路本体——均值/距离对连排）| 0（纯整数 ip 运算——callees=0 吻合）|
+| 0x5F6500 | 96B（0x60）| ret 4 @0x5F655D | 0x5F6560（虚表槽 0x48 距离平方器·单参版；0x5F65A0 12B 拷贝器；0x5F65D0 虚表槽 0x114 双参转发器——连排，未登记）| 0（[eax+0x48]/[edx+0x48] 虚表槽间接——callees=0 吻合）|
+
+三函数为 **0x5F 区坐标计算族**（[eax+0x9c] 坐标三元组 + 0x4cac40 sqrt + 0x7c5f00 _ftol + imul 平方和——0x5F 区几何计算全景）：
+
+## a 路 0x5F6810（291B）——两点距离计算器·浮点版
+
+```
+005f6810  mov ebp,esp → and esp,0xfffffff8（栈对齐）→ mov ebx=ecx → mov esi=edx（目标坐标）→ mov edi,[ebx+0x10]（★坐标表计数）→ dec edi → mov ebp,0x5f5e0ff（★初始最大距离）→ js 收尾
+          → 循环（edi 递减）：test [esp+0x10]（已找到标记）→ jne 0x5f68a4（第二路径）→ mov eax,[ebx+4]（★坐标表）→ mov eax,[eax+edi*4]（取项）→ add eax,0x9c（★+0x9c 坐标三元组偏移）→ ★差值：目标 [esi] 三点 - 该项 [edx] 三点 → 存 [esp+0x1c/0x20/0x24] → fild ×3（浮点化）→ ★fmul/fadd 平方和（距离²）→ fstp [esp] → call 0x4cac40（★sqrt——batch 2197 浮点初始化同源）→ call 0x7c5f00（_ftol 截断）→ jmp 0x5f691e 更新
+          → 第二路径（0x5f68a4，已找到标记置位）：同款取项 + 0x9c + 差值 + fild/fmul/fadd 平方和 → sqrt → _ftol → ★cmp eax,ebp → jge 跳过（★保留最小距离）→ mov [esp+0x10],ecx（记录）→ 0x5f691e：mov ebp,eax（★更新当前最小）→ dec edi → jns 循环 → ret c3
+```
+**语义**：**两点距离计算器·浮点版（推断名）**——① ★[ebx+4] 坐标表 + [ebx+0x10] 计数倒序遍历，[eax+0x9c] 坐标三元组（batch 2199 槽位族 +0x158/0xc8 邻区）；② ★目标 [esi] 三点差值（[edx]/[edx+4]/[edx+8]）；③ ★★fild/fmul/fadd 距离平方 + 0x4cac40 sqrt + 0x7c5f00 _ftol（浮点链——batch 2196/2197 同款定式）；④ ★ebp 保最小距离（jge 跳过 + 记录索引）。**两点欧氏距离端（坐标表扫描 + sqrt——最近点查询）**。
+
+## b 路 0x5F6790（127B）——坐标均值累加器
+
+```
+005f6790  sub esp,0xc → mov esi,[edx+0x10]（★坐标表计数）→ mov ebx=ecx（出参）→ lea edi,[esi-1] → xor eax/ebp/ecx（★三分量累加器）→ test edi → jl 0x5f67ea（空表）→ mov edx,[edx+4]（表）→ 循环（edi 倒序）：mov esi,[edx] → add esi,0x9c（★+0x9c 三元组）→ mov ebx,esi → add eax,[ebx]（★x 分量累加）→ mov edi,[ebx+4] → add ebp,edi（★y 累加）→ mov ebx,[ebx+8] → add ecx,ebx（★z 累加）→ 循环推进
+          → 收尾：★idiv 三连（eax/ebp/ecx 各 ÷ 计数 esi——取平均）→ mov [ecx],edi / mov [ecx+4],ebp / mov [ecx+8],eax（★三均值写回出参）→ ret c3
+```
+**语义**：**坐标均值累加器（推断名）**——① ★[edx+4] 坐标表遍历 + [eax+0x9c] 三元组三分量累加（x/y/z 三独立累加器 eax/ebp/ecx）；② ★★idiv 三连取平均（cdq 符号扩展 + 除以计数——整数均值）；③ ★三均值写回 [ecx] 出参。**坐标均值端（三分量累加 + idiv——重心/平均坐标计算，与 a 路成对）**。
+
+## c 路 0x5F6500（96B）——两点距离平方计算器·整数版
+
+```
+005f6500  sub esp,0xc → mov ebx=[esp+0x14]（★第二坐标参数）→ test → je 返 0 → ★虚表槽 0x48 ×2（[eax+0x48] 取 this 坐标 / [edx+0x48] 取 ebx 坐标——batch 2200 a 后邻 0x5F6C80 同槽）
+          → ★分量差 → imul 平方（ecx=dx² + eax=dy²）→ add 平方和（dx²+dy²）→ ret 4（★返回整数距离平方——不含 dz 与 sqrt）
+```
+**语义**：**两点距离平方计算器·整数版（推断名）**——① ★虚表槽 0x48 两次调用取坐标三元组（[eax]/[eax+4]/[eax+8]）；② ★★imul 平方和（dx²+dy²——**仅二维，不含 dz**）；③ ret 4 返回整数距离平方（a 路的二维整数轻量版）。**二维距离平方端（虚表槽 0x48 + imul——快速距离比较用）**。
+
+## callee 核验
+
+- a 路：2 个直接 call（0x4cac40 sqrt + 0x7c5f00 _ftol——各 2 次去重），**全部已登记**（callees=2 吻合）。
+- b 路：0 个直接 call（纯整数 idiv 运算——callees=0 吻合）。
+- c 路：0 个直接 call（[eax+0x48]/[edx+0x48] 虚表槽间接——callees=0 吻合）。
+
+## 原版怪癖（照抄）
+
+1. ★a/b 路 [eax+0x9c] 坐标三元组偏移 + [ebx+0x10] 计数 + [ebx+4] 表（0x5F 区坐标表族——batch 2199 槽位族同区）；
+2. a 路 ★ebp=0x5f5e0ff 初始最大距离 + jge 保最小（★0x5f5e0ff 巨型哨兵——最大距离初值）；
+3. a 路 ★fild 三分量差分平方和 + 0x4cac40 sqrt + 0x7c5f00 _ftol（浮点链定式——batch 2196/2197 同款）；
+4. b 路 ★idiv 三连取平均（cdq + 除计数——三分量均值各算一次）；
+5. c 路 ★imul 平方和仅二维（dx²+dy² 不含 dz——距离比较优化版）+ 虚表槽 0x48 坐标查询。
+
+## 跨批次连接
+
+- ★★batch 2196/2197（0x7c5f00 _ftol + 浮点链——a 路同款）；batch 2200 a 后邻（虚表槽 0x48——c 路）。
+- ★batch 2199（0x5F7320 对象构造器 + 0x5F7DB0/0x5F7A90 槽位装载器——[eax+0x9c] 同区坐标族）；batch 2194/2195（0x7c8ef4/0x7c9ff0 无关，0x5F 区对象族全景）。
+- ★batch 2177-2181（0x104 步长记录族无关，[eax+0x9c] 三元组为 0x5F 区坐标表新基址）。
+
+## 观察项 / 候选池
+
+- **MISSING：无**（a 路 2 个 / b 路 0 个 / c 路 0 个直接 call 全部已登记）。
+- **后邻未登记**：0x5F6940（a 后邻——[esp+4] 参数 + [ecx+0x9c] 拷贝器）、0x5F6810（b 后邻 = a 路本体——均值/距离对连排互指）、0x5F6560/0x5F65A0/0x5F65D0（c 后邻——虚表槽 0x48 单参距离平方器 + 12B 拷贝器 + 虚表槽 0x114 双参转发器连排）。
+- **新观察**：[eax+0x9c] 坐标三元组（a/b 路——0x5F 区坐标表基址）；ebp=0x5f5e0ff 最大距离哨兵（a 路）；虚表槽 0x48 坐标查询（c 路——batch 2200 a 后邻同槽）。
+- 前向：picker 队列继续 0x5F 区（0x5F6940/0x5F6560/0x5F65D0 连排链）+ 未兑现 MISSING 观察（0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0）+ 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x599650（QWEN.md Init random map）。
