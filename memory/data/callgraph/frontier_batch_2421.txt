@@ -1,0 +1,59 @@
+# frontier batch 2421
+
+日期：2026-10-27
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据）
+三路：a=0x4C84E0（239B）/ b=0x4C6C50（96B）/ c=0x4C6B60（113B）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2421{a,b,c}.txt，完整读取确认尾 ret
+核验：.qwen/tmp/_check_callees2421.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 5746 → 5749（三行全新增，ADD 3）；真 MISSING 队列 15 个不变
+
+## a 路：0x4C84E0 状态机分派初始化器（239B）
+
+- 范围 0x4C84E0-0x4C85D7（尾 ret @0x4C85D6；0x4C85D7 起 nop pad，下函数 0x4C85E0 = batch 2420 已登记日志转储器巨函）
+- 入口：push esi/edi → 0x53e6b0 → 读 [0x820e5c] 全局状态字 → **三次 dec/je 分派**（==1 → 0x4c859a、==2 → 0x4c85cf 直接 `mov eax,0x481` 返回、==3 → 0x4c858a）
+- 主链（状态非 1/2/3）：edi=[0x7e13dc] 函数指针 → push 1/call edi（进入/加锁）→ edx=5/ecx=0xf7 → 0x4a3b40（构造语义）→ test esi,esi 成功/失败双分支：
+  - 成功（0x4c8525）：push 0x821d30 格式串 → 0x4068e0 DebugLog → [0xb73550]/[0xb732f0] → push 0 / 0x4c83e0（回调） / [0xb73550] / esi / [0xb732f0] → **call [0x7e13d8]**（5 参）→ esi=eax → push 0/call edi（解锁）→ ret
+  - 失败（0x4c8553）：push 0x821d1c 格式串 → DebugLog → 同五参 **call [0x7e13d4]**（第 4 参换 0xf7）→ push 0/call edi → ret
+- ==3 分支（0x4c858a）：push 0 → **call [0x7e1214]** → eax=0x481 → ret
+- ==1 分支（0x4c859a）：call [0x7e1218] → edi=[0x7e1210] → test eax,eax jne 跳解锁对 → 否则 call edi / call [0x7e1218]（加解锁对）→ push 0x821cc0 → 0x7dd4f4（串输出）→ push 0xfa0(4000) → **call [0x7e11f0]（Sleep 4000ms）** → 0x7dd1d7（串收尾）→ call edi → 落到 0x4c85cf → eax=0x481 → ret
+- 直接 call 6 次/去重 5：0x53e6b0 / 0x4a3b40 / 0x4068e0 / 0x7dd4f4 / 0x7dd1d7——**全部已登记**
+- picker callees=11 vs 核验去重 5，**差值 6**：[0x7e13d8]/[0x7e13d4]/[0x7e13dc]/[0x7e1214]/[0x7e1218]/[0x7e1210]/[0x7e11f0] 等 IAT 间接调用（不匹配直接 call 正则，惯例标注）
+- 判类：状态机分派初始化器（[0x820e5c] 全局状态字三路分派 + 加解锁函数指针对 + 失败重试 Sleep(4000) + 0x481 常量返回 + DebugLog 双格式串）——工厂/句柄创建域，0x4c83e0 回调地址
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x4C6C50 事件对象构造器·第一形态（96B）
+
+- 范围 0x4C6C50-0x4C6CB0（尾 ret 0xc @0x4C6C94 / @0x4C6CAD；0x4C6CB0 = 下函数 0x4C6CB0 大数据构造器头部）
+- picker 命名 EventClass::EventClass；thiscall 3 栈参（ret 0xc）
+- 负分支（param1=[esp+4] < 0 → 0x4c6c97）：+2=0xff、+0=0、+3=[0xa8ed84]（全局共享）→ ret 0xc
+- 正分支：+2=al（param1 低字节）、+0=0x29（41，事件类型码）→ lea [esp+4]/[esp+0x10] 双栈缓冲 → 0x53eda0（双指针读写语义）→ [esp+4]/[esp+0x18] 写回 +8 dword / +7 byte → +3=[0xa8ed84] → ret 0xc
+- 直接 call 1 次/去重 1（0x53eda0——已登记）callees=1 吻合（picker 1，差值 0）
+- 判类：EventClass 构造器第一形态（[0xa8ed84] 全局共享字段 + 事件类型码 0x29 + 双缓冲读数）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x4C6B60 事件对象构造器·第二形态（113B）
+
+- 范围 0x4C6B60-0x4C6BD1（尾 ret 0x10 @0x4C6BB7 / @0x4C6BCE；0x4C6BD1 起 nop pad，下函数 0x4C6BE0 同族第三构造器）
+- picker 命名 EventClass::EventClass；thiscall 4 栈参（ret 0x10）含日志侧
+- 前缀：param2=ebx=[esp+0xc] → and eax,0xff → **查表 ecx=[eax*4+0x82091c]**（按 param2 低字节）→ push 表项 + push 0x820bf0 格式串 → 0x4068e0 DebugLog（每构造一次打一条）
+- 负分支（param3=[esp+0x14] < 0 → 0x4c6bba）：+2=0xff、+0=0、+3=[0xa8ed84] → ret 0x10
+- 正分支：+2=al（param3 低字节）、+0=bl（param2 低字节）、+7=param3、param4=[esp+0x18] 指针拷 word 对 → +0xb/+0xd、+3=[0xa8ed84] → ret 0x10
+- 直接 call 1 次/去重 1（0x4068e0——已登记）callees=1 吻合（picker 1，差值 0）
+- 判类：EventClass 构造器第二形态（比 b 路多 param2 类型码查表 0x82091c + DebugLog 记录；负分支与 b 路逐字节同构）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2421.py：a 路 6 次去重 5/5、b 路 1/1、c 路 1/1——三路全 PASS
+- picker callees vs 核验差值：**a 路差 6（IAT 间接调用 [0x7e13d8]/[0x7e13d4]/[0x7e13dc]/[0x7e1214]/[0x7e1218]/[0x7e1210]/[0x7e11f0] 不匹配直接 call 正则）**；b/c 差 0
+- 无批内自引用；真 MISSING 队列 15 个不变
+- 真 MISSING 排队 15 个：0x49E400 / 0x408B40 / 0x41caf0 / 0x45e750 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x4752e0 / 0x4759d0 / 0x472330 / 0x4B69D0 / 0x42C900（2418 批新增）
+- UNKNOWN 观察 2 个不变：0x5077da / 0x474b20
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4C6CB0（b 路下函数）：大数据构造器——sub esp,0x370 + movsx [esi+2] 类型码 + ecx=[0xa8022c] + edi=[ecx+ebx*4] 查表（EventClass 家族域）
+- 0x4C6BE0（c 路下函数）：同族第三构造器——与 c 路同头（push ebx/and eax,0xff/mov esi,ecx——0x4c6bed 起与 0x4c6b60 逐字节同构）
+- 0x4C83E0（a 路回调）：五参回调函数地址（a 路主链 [0x7e13d8]/[0x7e13d4] 的第三参）——供后续批次核验其是否在 ranking 池
+- 既有池延续：0x4D5660 / 0x4D55C0 / 0x4D4FC0 / 0x4D2F50 / 0x4D4B20 / 0x4D24A0 / 0x4D2510 / 0x4D1890 / 0x4D2ED0 / 0x4D1370 / 0x4D0510/0x4D0520/0x4D0530 / 0x4D0540 / 0x4D0560 / 0x4D0400 / 0x4CFA70 / 0x4CEFB0 / 0x4CC360 / 0x4CBEF0 / 0x4CBF10 / 0x4CC790 / 0x4CB98C / 0x4CB480 / 0x4CAD80 / 0x4CA750/0x4CA760/0x4CA770 / 0x4C9C70 / 0x4C9FF0 / [0x7e27f8] / [0x7e9228] / [0xa8b230]+0x218
