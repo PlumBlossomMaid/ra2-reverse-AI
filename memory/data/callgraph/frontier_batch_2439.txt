@@ -1,0 +1,49 @@
+# frontier batch 2439
+
+日期：2026-10-27
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据）
+三路：a=0x4A8930（41B）/ b=0x4A88C0（98B）/ c=0x4A8850（101B）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2439{a,b,c}.txt，完整读取确认尾 ret
+核验：.qwen/tmp/_check_callees2439.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 5800 → 5803（三行全新增，ADD 3）；真 MISSING 队列 20 个不变
+
+## a 路：0x4A8930 字节门控装配器（41B）
+
+- 范围 0x4A8930-0x4A8958（尾 ret @0x4A8957；0x4A8959 起 nop pad，下函数 0x4A8960 四槽读取器）
+- thiscall 无参：push esi → **0x4f42e0** → [0xa8ed6b] 字节门控（非零直退）→ not 分支：ecx=0x8a06f8 → **0x5565f0**（[0x8a06f8] 槽初始化）→ [esi] 虚表槽 0x30 + push 0x8a06f8 装配 → ret
+- 直接 call 2 次/去重 2：0x4f42e0 / 0x5565f0——**全部已登记** callees=2 吻合（picker 2，差值 0）
+- 判类：字节门控装配器（[0xa8ed6b] 全局门控 + 0x5565f0 全局槽刷新 + 虚表槽 0x30 装配——全局状态装配域）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x4A88C0 清零构造器（98B）
+
+- 范围 0x4A88C0-0x4A8922（尾 ret @0x4A8921；0x4A8922 起 nop pad，下函数 0x4A8930 = a 路）
+- thiscall 无参：push esi → **0x5659f0** → 五槽初始化（+0x11a4=0/+0x11a8=0/+0x11ac=-1/+0x117c=0/+0x11b8=-1）+ 五字节清零（+0x11b0/+0x11cf/+0x11d0/+0x11b1/+0x11b2）
+- **[0x8a0360..0x8a03d8] 0x18 步长 7 槽遍历**：每槽虚表槽 0xc 调用（间接）→ ret
+- 直接 call 1 次/去重 1（0x5659f0——已登记）callees=1 吻合（picker 1，差值 0）（[0x8a0360] 区间 7 次虚表槽 0xc 为间接调用不计）
+- 判类：清零构造器（五槽 + 五字节初始化 + [0x8a0360] 槽族虚表遍历——batch 2433/2432 [0x8a0360] 槽族构造侧）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x4A8850 双槽串初始化器（101B）
+
+- 范围 0x4A8850-0x4A88B5（尾 ret @0x4A88B4；0x4A88B5 起 nop pad，下函数 0x4A88C0 = b 路）
+- thiscall 无参：sub esp,0x20 + push esi → **0x565800** → **0x5b40b0 ×2**（0x820080/0x820074 格式串）→ [0x8a03fc]/[0x8a072c] 存 → **0x72ad20**（12B 串读 [esp+4..14]）→ [esi] 虚表槽 0xa8 装配 → ret
+- 直接 call 4 次/去重 3：0x565800 / 0x5b40b0 / 0x72ad20——**全部已登记** callees=3 吻合（picker 3，差值 0）
+- 判类：双槽串初始化器（0x5b40b0 双格式串 + [0x8a03fc]/[0x8a072c] 全局槽 + 0x72ad20 串读取 + 虚表槽 0xa8——全局串配置加载域）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2439.py：a 路 2/2、b 路 1/1、c 路 4 次去重 3/3——三路全 PASS
+- picker callees vs 核验差值：三路均差 0（a 2、b 1、c 3 均吻合）
+- 无批内自引用；真 MISSING 队列 20 个不变
+- 真 MISSING 排队 20 个：0x49E400 / 0x408B40 / 0x41caf0 / 0x45e750 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x4752e0 / 0x4759d0 / 0x472330 / 0x42C900 / 0x4A33A0 / 0x4A3630 / 0x484FF0 / 0x4758C0 / 0x430F70 / 0x487630
+- UNKNOWN 观察 2 个不变：0x5077da / 0x474b20
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4A8960（a 路下函数）：四槽读取器——sub esp,0x1c + [esi+0xc]/[esi+8] 双读 + 后续（0x4a896d 起）
+- 0x4A8930→0x4A88C0（a→b 后邻）：字节门控装配器 → 清零构造器构成 [0x8a0360] 槽族装配/构造链
+- 0x5565F0/0x5659F0（a/b 路被调）：全局槽刷新/清构造（纸条 0x8a06f8/0x8a0360 槽族宿主）
+- 既有池延续：0x4D5660 / 0x4D55C0 / 0x4D4FC0 / 0x4D2F50 / 0x4D4B20 / 0x4D24A0 / 0x4D2510 / 0x4D1890 / 0x4D2ED0 / 0x4D1370 / 0x4D0510/0x4D0520/0x4D0530 / 0x4D0540 / 0x4D0560 / 0x4D0400 / 0x4CFA70 / 0x4CEFB0 / 0x4CC360 / 0x4CBEF0 / 0x4CBF10 / 0x4CC790 / 0x4CB98C / 0x4CB480 / 0x4CAD80 / 0x4CA750/0x4CA760/0x4CA770 / 0x4C9C70 / 0x4C9FF0 / 0x4C6CB0 / 0x4C6BE0 / 0x4C66C0 / 0x4C6360 / 0x4C6210 / 0x4C6170 / 0x4C58C0 / 0x4C3DD0 / 0x4C38D0 / 0x4C2C10 / 0x4C2B40 / 0x4C2790 / 0x4C19B0 / 0x4C1E50 / 0x4C1B50 / 0x4C1600 / 0x4BBC30 / 0x4BB000 / 0x4BAD70 / 0x4BACF0 / 0x4BA390 / 0x4B9BD0 / 0x4B9BE0 / 0x4B69E0 / 0x4B6B80 / 0x4AEAD0 / 0x4AE9B0 / 0x4AE6D0 / 0x4ADA30 / 0x4AE450 / 0x4ACC50 / 0x4AC660 / 0x4AC2B0 / 0x4AAD30 / 0x4AA290 / 0x4A9DD0 / 0x4A9720 / 0x4A91B0 / 0x4A8960 / [0x7e27f8] / [0x7e9228] / [0xa8b230]+0x218
