@@ -1,0 +1,54 @@
+# frontier batch 2452
+
+日期：2026-10-28
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据）
+三路：a=0x49E950（42B）/ b=0x49E4F0（31B）/ c=0x49E400（227B）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2452{a,b,c}.txt，完整读取确认尾 ret
+核验：.qwen/tmp/_check_callees2452.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 5839 → 5842（三行全新增，ADD 3）；**c 路 0x49E400 = 真 MISSING 队列排首项（0x49E400），本批 picker 自然命中转正，真 MISSING 队列 19→18**
+
+## a 路：0x49E950 Vector 清空器·cap 版（42B）
+
+- 范围 0x49E950-0x49E979（尾 ret @0x49E979；0x49E97A 起 nop pad，下函数 0x49E980 索引换算器）
+- thiscall 无参：owns+1（[esi+0xd]!=0）且 [esi+4] 非 0 时 operator delete 0x7c8b3d 释放 → [esi+4]=0；随后清 [esi+0xd]=0、[esi+8]=0（count）、**额外清 [esi+0x10]=0（cap）**——与 batch 2449 b 路 0x4A1330 同构但多清 cap 字段（变体：调用后 cap 也复位）
+- 直接 call 1 次/去重 1：0x7c8b3d（delete）——picker callees=1 吻合，差值 0
+- 判类：Vector 清空器·cap 版（owns 释放 + count/cap 双清零——batch 2449 0x4A1330 变体）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x49E4F0 状态读取器·惰性初始化（31B）
+
+- 范围 0x49E4F0-0x49E50C（尾 ret 4 @0x49E50C；0x49E50F 起 nop pad，下函数 0x49E510 表清理器）
+- thiscall 单参（ret 4，[esp+8]=输出指针）：[esi+0x60] 状态标志为 0 时 call 0x49db00（惰性初始化/构建）；随后 [esp+8]=[esi+0x5c] 写输出（返回结构指针）
+- 直接 call 1 次/去重 1：0x49db00（惰性构建）——picker callees=1 吻合，差值 0
+- 判类：状态读取器（0x49db00 惰性初始化门控 + 0x5c 字段读出——与 c 路 0x49E400 同结构域）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x49E400 字符串表查询器（227B）
+
+- 范围 0x49E400-0x49E4E0（尾 ret 8 @0x49E4BE/0x49E4E0；0x49E4E3 起 nop pad，下函数 0x49E4F0 = b 路）
+- thiscall 双参（ret 8，[esp+0x20]=查询串）：[ebp+0x60] 状态标志为 0 时 call 0x49db00 惰性构建；[ebp+0x5c] 为 0 直接返 0；外层循环 [ebp+0x5c] 次（每次 [esp+0x10]+=0x4c 结构步长），内层 [ebp+0x58] 表项 +0x8 字节计数（每项内循环 [eax+8] 次，[esp+0x18] 槽 +=0x104 步长，串指针 [eax+0xc] 处 +esi 偏移）：
+  - repne scasb 求串长（not/dec 后入栈）→ 0x7cd680 字符串比较（查询串 eax / 表串 edx / 长度 ecx）→ 相等则命中
+  - 命中 0x49E4C1：`lea edx,[eax+eax*8] + lea eax,[eax+edx*2]`（索引 ×18 → ×4 项宽）→ [ebp+0x58]+eax*4 写 [esp+0x14]（输出指针）→ return 1
+  - 未命中返 0（0x49E4B5 路径）
+- 直接 call 2 次/去重 2：0x49db00（惰性构建）、0x7cd680（字符串比较）——picker callees=2 吻合，差值 0
+- 判类：字符串表查询器（0x4c/0x104/0x30c 三结构步长 + repne scasb 长度 + 0x7cd680 串比较 + 索引 ×18 换算写输出；**本函数为真 MISSING 队列排首项，现转正**）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2452.py：a 路 1/1、b 路 1/1、c 路 2/2——三路全 PASS
+- picker callees vs 核验差值：三路均差 0（无 IAT/虚表间接调用）
+- 无批内自引用；**真 MISSING 转正 1 个（0x49E400，队列排首项），队列 19→18**
+- 真 MISSING 排队 18 个：0x408B40 / 0x41caf0 / 0x45e750 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x4752e0 / 0x4759d0 / 0x472330 / 0x42C900 / 0x484FF0 / 0x4758C0 / 0x430F70 / 0x487630 / 0x47AAC0（0x49E400 已转正移除）
+- UNKNOWN 观察 2 个不变：0x5077da / 0x474b20
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x49E980（a 路下函数）：索引换算器——[ecx+0xc] 忙标志判定后 (param - [ecx+4]) >> 2 指针差返 index（与 batch 2449 0x4A13A0 同构）
+- 0x49E9A0（a 路后邻）：元素访问器——[ecx+4] 数组按 [esp+4] 索引取 dword（ret 4）
+- 0x49E9B0（a 路后邻）：清空器第三形态——与 a 路 0x49E950 同构（0x7c8b3d + 清 +0xd/+8/+0x10）
+- 0x49E510（b 路下函数）：表清理器——[edi+0x58] 表项 +0xc/+0x40 字段 0x7c8b3d ×3 释放（0x4c/0x104 步长结构族清理）
+- 0x49DB00（b/c 路共同惰性构建调用）：未登记调用目标——c 路核验已登记（TSV 已存在），后续批次若 picker 命中自然登记
+- 0x49E4F0 族关联：0x49DB00 惰性构建 + 0x5c/0x58/0x60 三字段字符串表结构——批次 2452 三路构成"字符串表惰性构建 + 查询 + 清空"完整族，后续批次优先跟进 0x49E510/0x49DB00
+- 既有池延续：0x4A3650 / 0x4A3C00 / 0x4D5660 / 0x4D55C0 / 0x4D4FC0 / 0x4D2F50 / 0x4D4B20 / 0x4D24A0 / 0x4D2510 / 0x4D1890 / 0x4D2ED0 / 0x4D1370 / 0x4D0510/0x4D0520/0x4D0530 / 0x4D0540 / 0x4D0560 / 0x4D0400 / 0x4CFA70 / 0x4CEFB0 / 0x4CC360 / 0x4CBEF0 / 0x4CBF10 / 0x4CC790 / 0x4CB98C / 0x4CB480 / 0x4CAD80 / 0x4CA750/0x4CA760/0x4CA770 / 0x4C9C70 / 0x4C9FF0 / 0x4C6CB0 / 0x4C6BE0 / 0x4C66C0 / 0x4C6360 / 0x4C6210 / 0x4C6170 / 0x4C58C0 / 0x4C3DD0 / 0x4C38D0 / 0x4C2C10 / 0x4C2B40 / 0x4C2790 / 0x4C19B0 / 0x4C1E50 / 0x4C1B50 / 0x4C1600 / 0x4BBC30 / 0x4BB000 / 0x4BAD70 / 0x4BACF0 / 0x4BA390 / 0x4B9BD0 / 0x4B9BE0 / 0x4B69E0 / 0x4B6B80 / 0x4AEAD0 / 0x4AE9B0 / 0x4AE6D0 / 0x4ADA30 / 0x4AE450 / 0x4ACC50 / 0x4AC660 / 0x4AC2B0 / 0x4AAD30 / 0x4AA290 / 0x4A9DD0 / 0x4A9720 / 0x4A91B0 / 0x4A8960 / 0x4A83D0 / 0x4A7AD0 / 0x4A79D0 / 0x4A7340 / 0x4A6500 / 0x4A60D0 / 0x4A5E50 / 0x4A5390 / 0x4A51B0 / 0x4A5130 / 0x4A4E80 / 0x4A4700 / 0x4A45C0 / 0x4A3FD0 / 0x4A1AA0 / 0x49F920 / 0x49F7A0 / 0x49E510 / 0x49DB00 / [0x7e27f8] / [0x7e9228] / [0xa8b230]+0x218
