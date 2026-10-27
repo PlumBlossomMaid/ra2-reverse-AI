@@ -1,0 +1,49 @@
+# frontier batch 2443
+
+日期：2026-10-27
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据）
+三路：a=0x4A5150（92B）/ b=0x4A5110（20B）/ c=0x4A50F0（26B）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2443{a,b,c}.txt，完整读取确认尾 ret
+核验：.qwen/tmp/_check_callees2443.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 5812 → 5815（三行全新增，ADD 3）；真 MISSING 队列 21 个不变
+
+## a 路：0x4A5150 时间差浮点判定器（92B）
+
+- 范围 0x4A5150-0x4A51AC（尾 ret @0x4A51A4 / @0x4A51AB；0x4A51AC 起 nop pad，下函数 0x4A51B0 双字节状态判定器）
+- thiscall 无参：[ecx+0x18] 字节门控 + [ecx+0x14] 对象指针门控（任一空 → 返回 **al=1**）
+- 主链：[ecx+8] 基准时间（==-1 跳过钳制）+ **[0xa8ed84] 全局时间差**（sub/ecx 比较钳制）→ [ecx+0x14] 减值 → 比例计算：**fild dword + fidiv dword** → **fcomp [0x7e1718]**（0.35 常量比）→ fnstsw + test ah,0x40 → 条件反 置 al=0 → ret
+- 直接 call 0 次/去重 0 callees=0 吻合（picker 0，差值 0）——纯浮点 compare 无调用
+- 判类：时间差浮点判定器（[0xa8ed84] 全局时间基准 + [0x7e1718] 比例阈值 fcomp——等待完成判定域，与 batch 2443 c 路 [0xa8ed84] 快照配对）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x4A5110 双字节 AND 状态判定器（20B）
+
+- 范围 0x4A5110-0x4A5124（尾 ret @0x4A5120 / @0x4A5123；0x4A5124 起 nop pad，下函数 0x4A5130 双字节 NAND 判定器）
+- thiscall 无参：[ecx+0x18] 非零 **且** [ecx+0x19] 非零 → **al=1**；否则 al=0 → ret
+- 直接 call 0 次/去重 0 callees=0 吻合（picker 0，差值 0）
+- 判类：双字节 AND 状态判定器（[0x18]/[0x19] 双标志与判定——与 batch 2442 c 路 0x4A5360 状态机配对读侧）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x4A50F0 双字节状态初始化器（26B）
+
+- 范围 0x4A50F0-0x4A510A（尾 ret @0x4A5109；0x4A510A 起 nop pad，下函数 0x4A5110 = b 路）
+- thiscall 无参：**[0xa8ed84] 全局时间快照 → +8** → +0x10/+0x14 = 0 → [+0x18]/[+0x19] = 0 → ret
+- 直接 call 0 次/去重 0 callees=0 吻合（picker 0，差值 0）
+- 判类：双字节状态初始化器（[0xa8ed84] 快照 + 四槽清零——与 a 路 [0xa8ed84] 差值判定 + b 路双字节 AND 构成状态三件套）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2443.py：a 路 0/0、b 路 0/0、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：三路均差 0（三路均无直接 call）
+- 无批内自引用；真 MISSING 队列 21 个不变
+- 真 MISSING 排队 21 个：0x49E400 / 0x408B40 / 0x41caf0 / 0x45e750 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x4752e0 / 0x4759d0 / 0x472330 / 0x42C900 / 0x4A33A0 / 0x4A3630 / 0x484FF0 / 0x4758C0 / 0x430F70 / 0x487630 / 0x47AAC0
+- UNKNOWN 观察 2 个不变：0x5077da / 0x474b20
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4A51B0（a 路下函数）：双字节状态判定器——[ecx+0x18] 非零 + [0x19]==1 判定（0x4a51b7 起，与 b 路同域变异）
+- 0x4A5130（b 路下函数）：双字节 NAND 判定器——[0x18] 非零 且 [0x19]==0 → al=1（0x4a5135 起）
+- 0x4A50F0→0x4A5110→0x4A5150（c→b→a 后邻链）：状态初始化器 → AND 判定器 → 时间差判定器——**同对象状态三件套（[0xa8ed84]/[0x18]/[0x19]/[0x14] 字段族）**
+- 既有池延续：0x4D5660 / 0x4D55C0 / 0x4D4FC0 / 0x4D2F50 / 0x4D4B20 / 0x4D24A0 / 0x4D2510 / 0x4D1890 / 0x4D2ED0 / 0x4D1370 / 0x4D0510/0x4D0520/0x4D0530 / 0x4D0540 / 0x4D0560 / 0x4D0400 / 0x4CFA70 / 0x4CEFB0 / 0x4CC360 / 0x4CBEF0 / 0x4CBF10 / 0x4CC790 / 0x4CB98C / 0x4CB480 / 0x4CAD80 / 0x4CA750/0x4CA760/0x4CA770 / 0x4C9C70 / 0x4C9FF0 / 0x4C6CB0 / 0x4C6BE0 / 0x4C66C0 / 0x4C6360 / 0x4C6210 / 0x4C6170 / 0x4C58C0 / 0x4C3DD0 / 0x4C38D0 / 0x4C2C10 / 0x4C2B40 / 0x4C2790 / 0x4C19B0 / 0x4C1E50 / 0x4C1B50 / 0x4C1600 / 0x4BBC30 / 0x4BB000 / 0x4BAD70 / 0x4BACF0 / 0x4BA390 / 0x4B9BD0 / 0x4B9BE0 / 0x4B69E0 / 0x4B6B80 / 0x4AEAD0 / 0x4AE9B0 / 0x4AE6D0 / 0x4ADA30 / 0x4AE450 / 0x4ACC50 / 0x4AC660 / 0x4AC2B0 / 0x4AAD30 / 0x4AA290 / 0x4A9DD0 / 0x4A9720 / 0x4A91B0 / 0x4A8960 / 0x4A83D0 / 0x4A7AD0 / 0x4A79D0 / 0x4A7340 / 0x4A6500 / 0x4A60D0 / 0x4A5E50 / 0x4A5390 / 0x4A51B0 / 0x4A5130 / [0x7e27f8] / [0x7e9228] / [0xa8b230]+0x218
