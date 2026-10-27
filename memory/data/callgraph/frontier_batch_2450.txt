@@ -1,0 +1,52 @@
+# frontier batch 2450
+
+日期：2026-10-28
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据）
+三路：a=0x49F8B0（101B）/ b=0x49F740（88B）/ c=0x49F620（276B）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2450{a,b,c}.txt，完整读取确认尾 ret
+核验：.qwen/tmp/_check_callees2450.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 5833 → 5836（三行全新增，ADD 3）
+
+**三路同族**：注册表/系统句柄等待-缓存管理器——共用句柄缓存 [0x89f75c]、0xbeef 哨兵、[0x7e10xx]/[0x7e11xx]/[0x7e12xx] Reg* IAT 族、0xf001f/0xf003f 权限常量、0x4068e0 DebugLog
+
+## a 路：0x49F8B0 注册表键打开器（101B）
+
+- 范围 0x49F8B0-0x49F914（尾 ret @0x49F914；0x49F915 起 nop pad，下函数 0x49F920 RegQueryValue 包装器）
+- 无参：push 0x81f5b8 → DebugLog（0x4068e0）；读句柄缓存 [0x89f75c] 非 0 → call [0x7e1238] 释放 + 清 [0x89f75c]=0；五参装配（lea eax,[esp] 输出槽 / 0xf003f=KEY_ALL_ACCESS / 0 / 0x81f554 子键路径 / 0x80000000=HKEY_LOCAL_MACHINE）→ call [0x7e100c]（RegOpenKeyExA 风格）→ 成功（eax==0）后 call [0x7e1010]（RegQueryValueExA 风格，0x81f550 值名）+ call [0x7e1004]（RegCloseKey 风格）
+- 直接 call 1 次/去重 1：0x4068e0（DebugLog）；IAT 间接 4 个 [0x7e1238]/[0x7e100c]/[0x7e1010]/[0x7e1004] 核验不计——picker callees=5 差 4
+- 判类：注册表键打开器（HKLM 键 + 句柄缓存 [0x89f75c] + KEY_ALL_ACCESS 0xf003f + RegOpen/Query/Close IAT 族）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x49F740 注册表句柄缓存设定器（88B）
+
+- 范围 0x49F740-0x49F797（尾 ret @0x49F787/失败路径 0x49F797；0x49F798 起 nop pad，下函数 0x49F7A0 恒真 stub + 句柄状态打印器）
+- thiscall 无参：读 [esi+4]，==0xbeef（哨兵值）才继续：push 0x81f51c → DebugLog；读 [esi+0xc] → 六参装配（0/0/0/0/0xf001f=KEY_READ/eax）→ call [0x7e1244]（RegCreateKeyExA 风格）→ 写缓存 [0x89f75c]=eax；eax==0 失败 DebugLog 0x81f4fc 返；成功 DebugLog 0x81f4e4 返；[esi+4]!=0xbeef 直接 ret（哨兵门控）
+- 直接 call 3 次/去重 1：0x4068e0（DebugLog ×3）；IAT 间接 1 个 [0x7e1244] 核验不计——picker callees=2 差 1
+- 判类：注册表句柄缓存设定器（0xbeef 哨兵门控 + KEY_READ 0xf001f + 缓存 [0x89f75c] + DebugLog 双路径日志）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x49F620 注册表键轮询等待器（276B）
+
+- 范围 0x49F620-0x49F733（尾 ret @0x49F708/失败路径 0x49F733；0x49F734 起 nop pad，下函数 0x49F740 = b 路）
+- 无参：push 0x81f4c0 → DebugLog；栈上五参装配（lea eax,[esp+0x10] / 0 / 0x400 / 0x400 / 0）→ call [0x7e1484]（文件/对象创建风格）；ebx=[[0x7e1530]]（取 IAT 函数地址，GetTickCount 风格）→ 双时间窗口轮询：
+  - 窗口一 [edi, edi+0xea60]（60000ms）：循环调 ebx + call [0x7e123c]（2/1/0x81f498 三参等待创建）→ esi；esi==0 时 call [0x7e11f0] 续等，超时失败；esi 非 0 → call [0x7e1234] + call [0x7e11e0]（句柄清理）+ DebugLog ×2
+  - 窗口二 [esi, esi+0x2710]（10000ms）：循环栈上装配 0xbeef 哨兵（0 / 0xbeef / 0xbeef / 1 / ecx）→ call [0x7e1484] → 检查 [esp+0x14]==0xbeef 成功转 0x49F709：读 [esp+0x1c] → 六参装配（0/0/0/0/0xf001f/edx）→ call [0x7e1244] → 写缓存 [0x89f75c] → return 1；超时 0x49F6F2：DebugLog 0x81f43c → return 0
+- 直接 call 4 次/去重 1：0x4068e0（DebugLog ×4）；IAT 间接 6 个 [0x7e1484]/[0x7e1530]（取址非 call）/[0x7e123c]/[0x7e11f0]/[0x7e1234]/[0x7e11e0]/[0x7e1244] 核验不计——picker callees=8 差 7
+- 判类：注册表键轮询等待器（双时间窗口 GetTickCount 轮询 + 0xbeef 哨兵探测 + KEY_READ 打开 + 缓存 [0x89f75c]）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2450.py：a 路 1/1、b 路 1/1、c 路 1/1（b 路 3 次、c 路 4 次 DebugLog 去重后均 1）——三路全 PASS
+- picker callees vs 核验差值（IAT 间接调用 `call dword ptr [...]` 不匹配直接 call 正则）：a 差 4（[0x7e1238]/[0x7e100c]/[0x7e1010]/[0x7e1004]）、b 差 1（[0x7e1244]）、c 差 7（[0x7e1484]/[0x7e1530]/[0x7e123c]/[0x7e11f0]/[0x7e1234]/[0x7e11e0]/[0x7e1244]）
+- 无批内自引用；无新 MISSING；真 MISSING 队列 19 个不变
+- 真 MISSING 排队 19 个：0x49E400 / 0x408B40 / 0x41caf0 / 0x45e750 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x4752e0 / 0x4759d0 / 0x472330 / 0x42C900 / 0x484FF0 / 0x4758C0 / 0x430F70 / 0x487630 / 0x47AAC0
+- UNKNOWN 观察 2 个不变：0x5077da / 0x474b20
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x49F920（a 路下函数）：RegQueryValue 包装器——0x20019=KEY_WRITE 装配 + call [0x7e100c] + call [0x7e1008]（0x81f550 值名）四参（RegSetValueExA 风格）
+- 0x49F7A0（b 路下函数）：恒真 stub（mov al,1; ret）+ 句柄状态打印器——[0x89f75c] 判空 + DebugLog 0x81f574 装配 + 字符串比较循环（0x81f560 vs [0x89f75c] 逐字节）——**与 batch 2446 a 路 0x4A3BF0 恒真函数同型**
+- 0x49F740 族关联：[0x89f75c] 句柄缓存写入点 ×3（0x49F772/0x49F723/0x49F8CE）、0xbeef 哨兵（0x49F743/0x49F6C4）——注册表句柄生命周期族，后续批次优先跟进
+- 既有池延续：0x4A3650 / 0x4A3C00 / 0x4D5660 / 0x4D55C0 / 0x4D4FC0 / 0x4D2F50 / 0x4D4B20 / 0x4D24A0 / 0x4D2510 / 0x4D1890 / 0x4D2ED0 / 0x4D1370 / 0x4D0510/0x4D0520/0x4D0530 / 0x4D0540 / 0x4D0560 / 0x4D0400 / 0x4CFA70 / 0x4CEFB0 / 0x4CC360 / 0x4CBEF0 / 0x4CBF10 / 0x4CC790 / 0x4CB98C / 0x4CB480 / 0x4CAD80 / 0x4CA750/0x4CA760/0x4CA770 / 0x4C9C70 / 0x4C9FF0 / 0x4C6CB0 / 0x4C6BE0 / 0x4C66C0 / 0x4C6360 / 0x4C6210 / 0x4C6170 / 0x4C58C0 / 0x4C3DD0 / 0x4C38D0 / 0x4C2C10 / 0x4C2B40 / 0x4C2790 / 0x4C19B0 / 0x4C1E50 / 0x4C1B50 / 0x4C1600 / 0x4BBC30 / 0x4BB000 / 0x4BAD70 / 0x4BACF0 / 0x4BA390 / 0x4B9BD0 / 0x4B9BE0 / 0x4B69E0 / 0x4B6B80 / 0x4AEAD0 / 0x4AE9B0 / 0x4AE6D0 / 0x4ADA30 / 0x4AE450 / 0x4ACC50 / 0x4AC660 / 0x4AC2B0 / 0x4AAD30 / 0x4AA290 / 0x4A9DD0 / 0x4A9720 / 0x4A91B0 / 0x4A8960 / 0x4A83D0 / 0x4A7AD0 / 0x4A79D0 / 0x4A7340 / 0x4A6500 / 0x4A60D0 / 0x4A5E50 / 0x4A5390 / 0x4A51B0 / 0x4A5130 / 0x4A4E80 / 0x4A4700 / 0x4A45C0 / 0x4A3FD0 / 0x4A1AA0 / [0x7e27f8] / [0x7e9228] / [0xa8b230]+0x218
