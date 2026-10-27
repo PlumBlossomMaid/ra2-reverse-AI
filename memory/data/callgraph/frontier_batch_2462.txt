@@ -1,0 +1,50 @@
+# frontier batch 2462
+
+日期：2026-10-28
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据）
+三路：a=0x487CB0（39B，带名 CellClass::GetRadLevel）/ b=0x487720（546B）/ c=0x4876F0（39B，带名 CellClass::Unshroud）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2462{a,b,c}.txt，完整读取确认尾 ret
+核验：.qwen/tmp/_check_callees2462.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 5869 → 5872（三行全新增，ADD 3）
+
+## a 路：0x487CB0 CellClass::GetRadLevel（39B 带名）
+
+- 范围 0x487CB0-0x487CD6（尾 `jmp 0x7c5f00` @0x487CD2；0x487CD7 起 nop pad，下函数 0x487CE0 = batch 2461 c 路 RadLevel_Increase）
+- thiscall 无参：fild [0x8871e0]+0x180c（规则表辐射上限）→ fld [ecx+0xf0]（当前辐射）→ fcomp st(1) 比较 → 小于上限时 fstp 丢弃重取 [ecx+0xf0]（取 min 语义）→ **尾 jmp 0x7c5f00（_ftol 向零截断）** 返回 int
+- 直接 call 0 次 + 尾 jmp 1 个（0x7c5f00）——picker callees=1 吻合，差值 0
+- 判类：CellClass::GetRadLevel（带名——辐射读取 + 上限钳制 + 尾 jmp _ftol 转 int；**与 batch 2461 c 路 RadLevel_Increase（写入 +0xf0）构成读写对**）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x487720 3×3 邻域扫描器（546B）
+
+- 范围 0x487720-0x487941（尾 ret @0x487941；0x487942 起 nop pad，下函数 0x487950 同族坐标换算器）
+- thiscall 无参：[edi+0x128] 标志门控（为 0 直接返回）→ movsx [edi+0x24]/[edi+0x26]（中心坐标 word）→ **shl 8 + add 0x80 坐标换算** → 0x578080 取格（MapClass）+ [0x89e7b4] 偏移 → 双循环（外层 [esp+0x18] -2 起 3 次 × 内层 [esp+0x24] -2 起 3 次 = **3×3 邻域**）：
+  - 0x5657a0 取 cell → [eax+0xe4] 链遍历（[esi+0x30] 下一节点）：[esi+0x14] shr 2 and 1 位检查 → [esi+0x674] 对象（null 时 0x7dc720 E_NOTIMPL 0x80004003 兜底）→ 虚表 [ecx+0xa0] 三参装配调用（坐标三 dword）→ 命中则 [esi+0x6c] + [0x8871e0]+0xfa8 装配 → 虚表 [edx+0x16c] 七参调用（0/0/1/1/ecx/lea/0）
+  - 双链遍历段（[eax+0xe8] 与 [eax+0xe4] 各一遍，0x4877D9/0x487880 两处同构循环）
+- 直接 call 4 次/去重 3：0x578080（取格）、0x5657a0（取 cell）、0x7dc720 ×2（E_NOTIMPL）——picker callees=3 吻合，差值 0
+- 判类：3×3 邻域扫描器（shl 8 + 0x80 坐标换算 + 双循环邻域 + [eax+0xe4]/[eax+0xe8] 双链遍历 + 虚表 0xa0/0x16c 调用 + E_NOTIMPL 兜底）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x4876F0 CellClass::Unshroud（39B 带名）
+
+- 范围 0x4876F0-0x487716（尾 ret @0x487716；0x487717 起 nop pad，下函数 0x487720 = b 路）
+- thiscall 无参：[ecx+0x12c] `or 0x18`（迷雾标志置位）→ [ecx+0x130] > 0 时 [ecx+0x140] `or 0x20`（迷雾计数相关字段联动）
+- 直接 call 0 次/去重 0 callees=0 吻合（picker 0，差值 0）
+- 判类：CellClass::Unshroud（带名——去迷雾标志置位：+0x12c or 0x18 + 条件 +0x140 or 0x20）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2462.py：a 路 1 个尾 jmp（0x7c5f00）、b 路 3/3（4 次调用含 7dc720×2 去重）、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：三路均差 0（b 路虚表间接 call [ecx+0xa0]/[edx+0x16c] 不计入正则）
+- 无批内自引用；无新 MISSING；真 MISSING 队列 18 个不变
+- 真 MISSING 排队 18 个：0x408B40 / 0x41caf0 / 0x45e750 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x4752e0 / 0x4759d0 / 0x472330 / 0x42C900 / 0x484FF0 / 0x4758C0 / 0x430F70 / 0x487630 / 0x47AAC0
+- UNKNOWN 观察 2 个不变：0x5077da / 0x474b20
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x487D00（a 路下函数）：RadLevel_Decrease 类——fld [ecx+0xf0] → fsub [esp+4] → fst + fcomp [0x7e2800]（0 比较钳制：<=0 清 +0xf0/+0xf4）——batch 2461 c 路观察项，辐射增减族后续批次优先跟进登记
+- 0x487950（b 路下函数）：同族坐标换算器——movsx [ecx+0x24] + shl 8 + add 0x80（同 shl 8 + 0x80 模式，后续批次优先跟进登记）
+- 0x4876F0 族关联：CellClass 迷雾标志字段 +0x12c/0x130/0x140（Unshroud/Shroud 族）
+- 既有池延续：0x4A3650 / 0x4A3C00 / 0x4D5660 / 0x4D55C0 / 0x4D4FC0 / 0x4D2F50 / 0x4D4B20 / 0x4D24A0 / 0x4D2510 / 0x4D1890 / 0x4D2ED0 / 0x4D1370 / 0x4D0510/0x4D0520/0x4D0530 / 0x4D0540 / 0x4D0560 / 0x4D0400 / 0x4CFA70 / 0x4CEFB0 / 0x4CC360 / 0x4CBEF0 / 0x4CBF10 / 0x4CC790 / 0x4CB98C / 0x4CB480 / 0x4CAD80 / 0x4CA750/0x4CA760/0x4CA770 / 0x4C9C70 / 0x4C9FF0 / 0x4C6CB0 / 0x4C6BE0 / 0x4C66C0 / 0x4C6360 / 0x4C6210 / 0x4C6170 / 0x4C58C0 / 0x4C3DD0 / 0x4C38D0 / 0x4C2C10 / 0x4C2B40 / 0x4C2790 / 0x4C19B0 / 0x4C1E50 / 0x4C1B50 / 0x4C1600 / 0x4BBC30 / 0x4BB000 / 0x4BAD70 / 0x4BACF0 / 0x4BA390 / 0x4B9BD0 / 0x4B9BE0 / 0x4B69E0 / 0x4B6B80 / 0x4AEAD0 / 0x4AE9B0 / 0x4AE6D0 / 0x4ADA30 / 0x4AE450 / 0x4ACC50 / 0x4AC660 / 0x4AC2B0 / 0x4AAD30 / 0x4AA290 / 0x4A9DD0 / 0x4A9720 / 0x4A91B0 / 0x4A8960 / 0x4A83D0 / 0x4A7AD0 / 0x4A79D0 / 0x4A7340 / 0x4A6500 / 0x4A60D0 / 0x4A5E50 / 0x4A5390 / 0x4A51B0 / 0x4A5130 / 0x4A4E80 / 0x4A4700 / 0x4A45C0 / 0x4A3FD0 / 0x4A1AA0 / 0x49F920 / 0x49F7A0 / 0x49E510 / 0x49DB00 / 0x49B660 / 0x491210 / 0x490490 / 0x48E090 / 0x48E030 / 0x48DFD0 / 0x48DEE0 / 0x48DBC0 / 0x48DC20 / 0x48DB70 / 0x48BF40 / 0x48B570 / 0x48B0C0 / 0x48ACE0 / 0x489280 / 0x487D00 / 0x487950 / [0x7e27f8] / [0x7e9228] / [0xa8b230]+0x218
