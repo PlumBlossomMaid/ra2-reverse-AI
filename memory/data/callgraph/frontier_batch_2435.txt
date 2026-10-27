@@ -1,0 +1,55 @@
+# frontier batch 2435
+
+日期：2026-10-27
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据）
+三路：a=0x4ACDA0（196B）/ b=0x4ACBC0（142B）/ c=0x4AC4F0（358B）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2435{a,b,c}.txt，完整读取确认尾 ret
+核验：.qwen/tmp/_check_callees2435.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 5788 → 5791（三行全新增，ADD 3）；真 MISSING 队列 18 个不变
+
+## a 路：0x4ACDA0 邻域位清理器（196B）
+
+- 范围 0x4ACDA0-0x4ACE62（尾 ret 4 @0x4ACE61；0x4ACE64 起 nop pad，下函数 0x4ACE70 = batch 2434 已登记地图渲染装配巨函）
+- thiscall 1 栈参（ret 4）：[esp+0x10] 坐标参数
+- 主链：0x568300（查询）→ 假直退 → **0x5657a0（MapClass 放格）** → [eax+0x12c] test cl,8（占据标志）→ je 直退 → **and ecx,0xffffffe7**（清 0x8 位 + 0x10 位）→ [0x887324] → **0x6da7d0（重绘）**
+- 邻域遍历（edi 0..7）：**[0x89f688] 8 邻域表**（[eax*4+0x89f688] word 对）→ +cx/+dx 叠加 [esi] 坐标 → 0x5657a0 放格 → [eax+0x12c] test bit 0x10 → 已清 → and 0xffffffef（清 bit 4）→ [0x887324] → 0x6da7d0 重绘 → 循环
+- 直接 call 5 次/去重 3：0x5657a0 / 0x568300 / 0x6da7d0——**全部已登记** callees=3 吻合（picker 3，差值 0）
+- 判类：邻域位清理器（占据标志位 0x8/0x10 清除 + 0x89f688 八邻域重绘链——地图占据状态刷新域）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x4ACBC0 CellIterator 双遍历器（142B）
+
+- 范围 0x4ACBC0-0x4ACC4E（尾 ret @0x4ACC4D；0x4ACC4E 起 nop pad，下函数 0x4ACC50 子函数）
+- thiscall 无参：
+  - 第一遍（0x578350 Reset + 0x578290 Next）：[eax+0x140] test cl,1/2 → 置 **0x40 位**（or ecx,0x40 写回）
+  - **0x4adff0（push 1/0 双参）** → 第二遍（0x578350 Reset + 0x578290 Next）：[eax+0x140] test 0x40 → 置位 → and 0xffffffbf（清 0x40）→ [eax+0x24] 对象存 [esp+4] → **0x4acc50 子函数**（[esp+4] 参）
+- 直接 call 8 次/去重 4：0x4acc50 / 0x4adff0 / 0x578290 / 0x578350——**全部已登记** callees=4 吻合（picker 4，差值 0）
+- 判类：CellIterator 双遍历器（两遍全图遍历 + [eax+0x140] bit 0x40 置/清 + 0x4adff0 批量处理 + 0x4acc50 子调用——地图格子批量标志处理域）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x4AC4F0 全局重心四槽滚动器（358B）
+
+- 范围 0x4AC4F0-0x4AC656（尾 ret @0x4AC655；0x4AC656 起 nop pad，下函数 0x4AC660 同域查询器）
+- thiscall 无参：sub esp,0x1c + push ebx/edi
+- 收集段：[0xa8ec88] 计数遍历 [0xa8ec7c] 数组（[ebp] 对象）：[ecx+0x81]/[ecx+0x41a] 双字节门控 → **+0x9c 三 dword 累加**（eax/ebx/edx 三路）→ 计数>0 → **idiv 三连平均**（各累加 / edi）
+- 空分支（计数==0）：**0x50df30 ×2**（[0xa83d4c] 宿主 + [esp+0x18] 双查询位置读）
+- 收尾：cdq + and 0xff + sar 8（负数修正除 256）→ word [esp]/[esp+2] → **[0xa8b230]+0x349a/0x3496/0x3492/0x348e 四槽滚动**（+0x20c → +0x210 同构）→ [0x887324] 非空 → **0x6d6070（坐标设置器）** → ret
+- 直接 call 3 次/去重 2：0x50df30 / 0x6d6070——**全部已登记** callees=2 吻合（picker 2，差值 0）
+- 判类：全局重心四槽滚动器（[0xa8ec7c] 数组三轴累加 + idiv 平均 + 0x50df30 位置读 + [0xa8b230]+0x348e..0x349a 四槽滚动 + [0x887324]/0x6d6070 写相机——与 batch 2434 a 路 CenterMap 同 [0xa8b230]+0x349a 家族）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2435.py：a 路 5 次去重 3/3、b 路 8 次去重 4/4、c 路 3 次去重 2/2——三路全 PASS
+- picker callees vs 核验差值：三路均差 0（a 3、b 4、c 2 均吻合）
+- 无批内自引用；真 MISSING 队列 18 个不变
+- 真 MISSING 排队 18 个：0x49E400 / 0x408B40 / 0x41caf0 / 0x45e750 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x4752e0 / 0x4759d0 / 0x472330 / 0x42C900 / 0x4A33A0 / 0x4A3630 / 0x484FF0 / 0x4758C0
+- UNKNOWN 观察 2 个不变：0x5077da / 0x474b20
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4ACC50（b 路子函数）：子函数——sub esp,0x10 + [esp+0x1c] 对象 + 后续处理链（b 路第二遍调用）
+- 0x4AC660（c 路下函数）：同域查询器——[esi+0x11b1] 字节 + 后续（0x4ac668 起）
+- 0x568300/0x6DA7D0（a 路被调）：查询/重绘对（a 路核心，可追溯登记批次）
+- 既有池延续：0x4D5660 / 0x4D55C0 / 0x4D4FC0 / 0x4D2F50 / 0x4D4B20 / 0x4D24A0 / 0x4D2510 / 0x4D1890 / 0x4D2ED0 / 0x4D1370 / 0x4D0510/0x4D0520/0x4D0530 / 0x4D0540 / 0x4D0560 / 0x4D0400 / 0x4CFA70 / 0x4CEFB0 / 0x4CC360 / 0x4CBEF0 / 0x4CBF10 / 0x4CC790 / 0x4CB98C / 0x4CB480 / 0x4CAD80 / 0x4CA750/0x4CA760/0x4CA770 / 0x4C9C70 / 0x4C9FF0 / 0x4C6CB0 / 0x4C6BE0 / 0x4C66C0 / 0x4C6360 / 0x4C6210 / 0x4C6170 / 0x4C58C0 / 0x4C3DD0 / 0x4C38D0 / 0x4C2C10 / 0x4C2B40 / 0x4C2790 / 0x4C19B0 / 0x4C1E50 / 0x4C1B50 / 0x4C1600 / 0x4BBC30 / 0x4BB000 / 0x4BAD70 / 0x4BACF0 / 0x4BA390 / 0x4B9BD0 / 0x4B9BE0 / 0x4B69E0 / 0x4B6B80 / 0x4AEAD0 / 0x4AE9B0 / 0x4AE6D0 / 0x4ADA30 / 0x4AE450 / 0x4ACC50 / 0x4AC660 / [0x7e27f8] / [0x7e9228] / [0xa8b230]+0x218
