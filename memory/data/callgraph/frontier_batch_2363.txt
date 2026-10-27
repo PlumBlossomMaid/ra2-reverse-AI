@@ -1,0 +1,77 @@
+# frontier batch 2363：HouseClass::GainedPoweredCenter★符号存疑 + LostPoweredCenter★带名 + 供电中心计数递增器（0x50E1B0 / 0x50E0E0 / 0x50E010）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x50E1B0 HouseClass::GainedPoweredCenter callees=0 deps=92 / 0x50E0E0 HouseClass::LostPoweredCenter callees=2 deps=1873 / 0x50E010 FUN_0050e010 callees=2 deps=1874）
+- 三路 disasm：`.qwen/tmp/_d2363a.txt`（0x50E1B0 size 0x40）/ `_d2363b.txt`（0x50E0E0 size 0xE0）/ `_d2363c.txt`（0x50E010 size 0x110）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x50E1B0 | 16B | ret 4 @0x50E1BD | 0x50E1C0（HouseClass★带名邻域——[esp+4] 参 + [0xa8ec88]/[0xa8ec7c] 数组遍历器，未登记）| 0 个/去重 0（picker callees=0 吻合）|
+| 0x50E0E0 | 198B | ret 4 @0x50E1A3 | 0x50E1B0（★本批 a 路）| 2 个/去重 2——全部已登记，picker callees=2 吻合 |
+| 0x50E010 | 203B | ret 4 @0x50E0D8 | 0x50E0E0（★本批 b 路）| 2 个/去重 2——全部已登记，picker callees=2 吻合 |
+
+## a 路 0x50E1B0（16B）——HouseClass::GainedPoweredCenter★符号存疑实为供电计数 getter
+
+```
+0050e1b0  mov edx, [ecx+0x2d8]   ; this+0x2d8（★供电中心计数）
+0050e1b6  xor eax, eax
+0050e1b8  test edx, edx
+0050e1ba  setg al                ; edx > 0 → al=1
+0050e1bd  ret 4                  ; ret 4（thiscall + 1 栈参）
+```
+
+**语义**：**HouseClass::GainedPoweredCenter★符号存疑实为供电计数 getter（推断名）——供电中心计数判定（16B）**：thiscall 1 栈参：★★[ecx+0x2d8] 供电中心计数 test → setg 返回计数 > 0 判定 → ret 4。**★★符号存疑：c 路 0x50E010 才是 GainedPoweredCenter 语义真身（++count + 触发链），a 路实为独立 getter（计数 > 0 判定——供电状态检查）**。
+
+## b 路 0x50E0E0（198B）——HouseClass::LostPoweredCenter★带名
+
+```
+0050e0e0  push ebx/ebp/edi → mov eax, [ebp+0x2d8] → dec → [ebp+0x2d8]（★--count）→ jne 0x50e1a0（计数非 0 直接返回）
+0050e0f8  [esp+0x10] 参测试（★非 0 才触发链）→ [0xa8ec88] 数组长 → lea edi,[eax-1] 倒序遍历
+0050e117  [0xa8ec7c] 数组基址 → [ecx+edi*4] 取对象 ★★[esi+0x21c]==ebp（this 匹配）→ 虚表槽 0x84 间接调用（IAT 不计数）→ cmp eax,[esp+0x14]（第二栈参）→ [esi+0x81]==0 门控 → 0x70fc90 直接调用 + bl=1
+0050e14e  test bl → [0xa8e9a0]/[0xa8b238]/[ebp+0x1ec]/[ebp+0x1ed]/★[0xa83d4c] sete 条件链 → push -1 + or edx,-1 + ★ecx=0x824e4c + 0x752700 直接调用（★失电通知）
+0050e1a0  pop edi/ebp/ebx → ret 4
+```
+
+**语义**：**HouseClass::LostPoweredCenter★带名（推断名）——失去供电中心通知（198B）**：thiscall 2 栈参：★★[ebp+0x2d8] 供电中心计数 --（计数非 0 直接返回）→ 计数归 0 时遍历全局对象数组 [0xa8ec7c]/[0xa8ec88] 倒序——匹配 [esi+0x21c]==this + 虚表槽 0x84 调用返回==[esp+0x14] + [esi+0x81]==0 → 0x70fc90 更新 + bl=1 → 命中后 [0xa8e9a0]/[0xa8b238]/[ebp+0x1ec]/[ebp+0x1ed]/[0xa83d4c] 条件链 → ★0x752700（ecx=0x824e4c + push -1）失电广播 → ret 4。**★★供电中心失电通知（★★c 路 -- 孪生：++count/cmp 1/0x70fbe0/0x824fe4 vs --count/jne 0/0x70fc90/0x824e4c 边界与串成对）**。
+
+## c 路 0x50E010（203B）——供电中心计数递增器
+
+```
+0050e010  push ebx/ebp/edi → mov edi, ecx → mov edx, [edi+0x2d8] → inc → [edi+0x2d8]（★++count）→ cmp eax, 1 → jne 0x50e0d5（计数非 1 直接返回）
+0050e02d  [esp+0x10] 参测试（★非 0 才触发链）→ [0xa8ec88] 数组长 → lea ebp,[eax-1] 倒序遍历
+0050e04c  [0xa8ec7c] 数组基址 → [ecx+ebp*4] 取对象 ★★[esi+0x21c]==edi（this 匹配）→ 虚表槽 0x84 间接调用（IAT 不计数）→ cmp eax,[esp+0x14]（第二栈参）→ [esi+0x81]==0 门控 → 0x70fbe0 直接调用 + bl=1
+0050e083  test bl → [0xa8e9a0]/[0xa8b238]/[edi+0x1ec]/[edi+0x1ed]/★[0xa83d4c] sete 条件链 → push -1 + or edx,-1 + ★ecx=0x824fe4 + 0x752700 直接调用（★供电通知）
+0050e0d5  pop edi/ebp/ebx → ret 4
+```
+
+**语义**：**供电中心计数递增器（推断名，GainedPoweredCenter 语义真身）——获得供电中心通知（203B）**：thiscall 2 栈参：★★[edi+0x2d8] 供电中心计数 ++（计数非 1 直接返回）→ 计数归 1 时遍历全局对象数组 [0xa8ec7c]/[0xa8ec88] 倒序——匹配 [esi+0x21c]==this + 虚表槽 0x84 调用返回==[esp+0x14] + [esi+0x81]==0 → 0x70fbe0 更新 + bl=1 → 命中后同 b 路条件链 → ★0x752700（ecx=0x824fe4 + push -1）供电广播 → ret 4。**★★供电中心得电通知（★★与 b 路 -- 孪生配对——同一阈值触发链的 ++/-- 双生实现）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 0 个/去重 0（纯 getter）——**已登记无 MISSING**（picker callees=0 吻合）。
+- b 路：跨函数直接 call 2 个/去重 2（0x70fc90/0x752700）——**全部已登记无 MISSING**（picker callees=2 吻合）。
+- c 路：跨函数直接 call 2 个/去重 2（0x70fbe0/0x752700）——**全部已登记无 MISSING**（picker callees=2 吻合）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING、无批内自引用**（连续七十三批三路无真 MISSING——排队 7 个真 MISSING 不变）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★符号带名 GainedPoweredCenter 实为 getter（★[ecx+0x2d8] > 0 判定——符号名与 ++count 触发链真身 c 路语义错位，同 InfantryTypeClass::WhatAmI 符号存疑先例）;
+2. b/c 路 ★★计数阈值边界：b 路 jne 0（-- 后非 0 返回）、c 路 cmp 1/jne 1（++ 后非 1 返回）——**失电在归 0 触发、得电在归 1 触发**（成对不对称边界）;
+3. b/c 路 ★★触发链仅当第二栈参 [esp+0x10] 非 0 才执行（参门控）;
+4. b/c 路 ★★对象数组 [0xa8ec7c]（[0xa8ec88] 长度）倒序遍历（lea [eax-1] + jns 循环）;
+5. b/c 路 ★★匹配三条件 [esi+0x21c]==this + 虚表槽 0x84 返回==第二栈参 + [esi+0x81]==0;
+6. b/c 路 ★★孪生调用 0x70fbe0（得电）/0x70fc90（失电）+ ★0x752700 广播（ecx=0x824fe4/0x824e4c 双串 + push -1 + or edx,-1）;
+7. b/c 路 ★★条件链 [0xa8e9a0]→[0xa8b238]（非 0 走 [0xa83d4c] sete 分支；0 走 [ebp+0x1ec]/[ebp+0x1ed] 双字节）→[0xa8e7ac] 非 0 短路。
+
+## 跨批次连接
+
+- ★★batch 2361（0x50E780 系 HouseClass 邻域——0x50E1C0 后邻数组遍历器同源 [0xa8ec88]/[0xa8ec7c] 全局对象数组族）+ batch 2362（0x50E4D0 等 HouseClass 邻近 getter）。
+- ★★带名符号存疑先例：batch 2352 InfantryTypeClass::WhatAmI 实为构造器、batch 2339/2340 虚表安装器家族（本批 b/c 路虚表槽 0x84 间接调用）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x50E1C0（a 路后邻——[esp+4] 参 + [0xa8ec88]/[0xa8ec7c] 数组遍历器——HouseClass 邻域)+ b/c 路 0x752700 广播串（★0x824e4c/0x824fe4——★广播字符串族）+ [0xa83d4c]/[0xa8b238]/[0xa8e9a0]/[0xa8e7ac] 四全局开关（b/c 路条件链——HouseClass 失电/得电通知开关族）。
+- 未兑现 MISSING 旧观察（继续排队）：0x00486790（2267 起）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150 + ★0x556AD0/0x556EB0/0x556D20 + ★0x554830/0x49E400 + ★0x551B20 + ★0x5517A0/0x5512D0 + ★0x5509E0/0x551300/0x551320/0x551330/0x551370 + ★0x550080/0x54F6F0/0x54F670 + ★0x54E890/0x54E8C0 + ★0x54E590/0x54D930/0x549E90 + ★0x547CE0/0x544BE0 + ★0x543780/0x542EC0 + ★0x5424C0 + ★0x5422C0/0x540F90 + ★0x540A80 + ★0x5402D0/0x53F5B0 + ★0x53ECB0/0x53EC70/0x53E470 + ★0x408B40/0x53E070/0x53E1D0/0x53DDE0 + ★0x53C4C0/0x53C280/0x53B560 + ★0x53B3F0/0x53B064 + ★0x53AC50 + ★0x53A6A0/0x53A140 + ★0x53A130/0x53A100 + ★0x538C10 + ★0x537F20/0x537E80/0x537F30/0x537E90 + ★0x537DE0/0x537B50/0x537DF0/0x537B60/0x535BD0/0x535BE0 + ★0x533F50 + ★0x41caf0/0x45e750/0x4f6eb0/0x531F60/0x5318C0 + ★0x52FFD0/0x52FC20/0x52D430 + ★0x406b10/0x434ad0/0x52CB90 + ★0x52B7A0/0x52B720 + ★0x52B4F0 + ★0x52B160/0x52AFC0 + ★0x52ACE0/0x52AA90/0x52A760 + ★0x529820/0x527B90/0x524FB0 + ★0x523980/0x5233D0/0x522FE0 + ★0x522E70 + ★0x5200B0 + ★0x517FA0 + ★0x5176D0/0x5164D0/0x516320 + ★0x513F40/0x513710/0x512F20 + ★0x512990/0x5111E0/0x510ED0 + ★0x510A20/0x510860/0x510640 + ★0x5104A0/0x50FFB0/0x50FBD0 + ★0x50F4A0/0x50F170/0x50E7A0 + ★0x50E4D0/0x50E450 + ★0x50E1C0（2363 新观察）。
+- 本批 **无 MISSING**（连续七十三批三路无真 MISSING——排队 7 个真 MISSING 不变）。next 批预期 top3 由 picker 决定（0x50DB00 FUN_0050db00 callees=4 等排队中）。
