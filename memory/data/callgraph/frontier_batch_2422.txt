@@ -1,0 +1,50 @@
+# frontier batch 2422
+
+日期：2026-10-27
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据）
+三路：a=0x4C6650（107B）/ b=0x4C6340（18B）/ c=0x4C6320（18B）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2422{a,b,c}.txt，完整读取确认尾 ret
+核验：.qwen/tmp/_check_callees2422.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 5749 → 5752（三行全新增，ADD 3）；真 MISSING 队列 15 个不变
+
+## a 路：0x4C6650 EventClass 事件对象构造器·第三形态（107B）
+
+- 范围 0x4C6650-0x4C66BB（尾 ret 0xc @0x4C66A1 / @0x4C66B8；0x4C66BB 起 nop pad，下函数 0x4C66C0 同族第四构造器）
+- picker 命名 EventClass::EventClass；thiscall 3 栈参（ret 0xc）——**与 batch 2421 c 路 0x4C6B60 同头**：push ebx / [esp+0xc] / and eax,0xff / **查表 [eax*4+0x82091c]** / 0x820bf0 格式串 → 0x4068e0 DebugLog
+- 负分支（param3=[esp+0x14] < 0 → 0x4c66a4）：+2=0xff、+0=0、+3=[0xa8ed84]（与 2421 b/c 路负分支逐字节同构）
+- 正分支：+2=al、+0=bl、param4=[esp+0x14] 指针拷 **两 word 对** → +7/(dx)/+9/(ax)（区别于 2421 c 路 +0xb/+0xd 的偏移定位）→ +3=[0xa8ed84] → ret 0xc
+- 直接 call 1 次/去重 1（0x4068e0——已登记）callees=1 吻合（picker 1，差值 0）
+- 判类：EventClass 构造器第三形态（同族：2421 b 路 ret 0xc 第一形态 / 2421 c 路 ret 0x10 第二形态 / 本路 ret 0xc 第三形态——类型码查表 0x82091c + DebugLog 记录是后两形态的共同前缀）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x4C6340 虚表槽 0x10 分派 thunk（18B）
+
+- 范围 0x4C6340-0x4C6352（尾 ret 4 @0x4C634F；0x4C6352 起 nop pad，下函数 0x4C6360 浮点运算器）
+- 完整体积：`mov eax,[esp+4]; push 0; push 0x44; push ecx; mov edx,[eax]; push eax; call dword ptr [edx+0x10]; ret 4`——1 栈参 thunk，取 [esp+4] 对象指针 → 压 0 / 0x44(68) / ecx / 对象 → 调其虚表槽 0x10（cdecl 风格 3 参传递）
+- 直接 call 0 次/去重 0 callees=0 吻合（picker 0，差值 0）——唯一调用是间接 `call [edx+0x10]`
+- 判类：参数预设尾跳 thunk（固定实参 0 与 0x44 后转虚表槽 0x10；与 batch 5xx 已登记 0x785360 同族）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x4C6320 虚表槽 0xc 分派 thunk（18B）
+
+- 范围 0x4C6320-0x4C6332（尾 ret 4 @0x4C632F；0x4C6332 起 nop pad，下函数 0x4C6340 = b 路）
+- 完整体积：`mov eax,[esp+4]; push 0; push 0x44; push ecx; mov edx,[eax]; push eax; call dword ptr [edx+0xc]; ret 4`——与 b 路逐字节同构，唯一差异 = 虚表槽 **0xc**（b 路 0x10）
+- 直接 call 0 次/去重 0 callees=0 吻合（picker 0，差值 0）——唯一调用是间接 `call [edx+0xc]`
+- 判类：参数预设尾跳 thunk·虚表槽 0xc 变体（b/c 路孪生，槽位不同；0x44=68 固定实参含义待上游确认）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2422.py：a 路 1/1、b 路 0/0、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：三路均差 0（a 路唯一直接 call 0x4068e0 已登记；b/c 路无直接调用）
+- 无批内自引用；真 MISSING 队列 15 个不变
+- 真 MISSING 排队 15 个：0x49E400 / 0x408B40 / 0x41caf0 / 0x45e750 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x4752e0 / 0x4759d0 / 0x472330 / 0x4B69D0 / 0x42C900（2418 批新增）
+- UNKNOWN 观察 2 个不变：0x5077da / 0x474b20
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4C66C0（a 路下函数）：同族第四构造器——与 a 路同头（push ebx/and eax,0xff/mov esi,ecx——0x4c66cd 起逐字节同构延续）
+- 0x4C6360（b 路下函数）：浮点运算器——fld [0x7e1710]/[0x7e1708] 双常数 → 0x7c8fb0（atan2/除法族）→ fadd st,st + fstp → 0x4cac40（已登记距离计算器，2421 后邻观察）
+- 0x4C6320/0x4C6340 孪生槽位族继续观察：0x44=68 常量实参的上游调用语义（EventClass 事件提交域？）
+- 既有池延续：0x4D5660 / 0x4D55C0 / 0x4D4FC0 / 0x4D2F50 / 0x4D4B20 / 0x4D24A0 / 0x4D2510 / 0x4D1890 / 0x4D2ED0 / 0x4D1370 / 0x4D0510/0x4D0520/0x4D0530 / 0x4D0540 / 0x4D0560 / 0x4D0400 / 0x4CFA70 / 0x4CEFB0 / 0x4CC360 / 0x4CBEF0 / 0x4CBF10 / 0x4CC790 / 0x4CB98C / 0x4CB480 / 0x4CAD80 / 0x4CA750/0x4CA760/0x4CA770 / 0x4C9C70 / 0x4C9FF0 / 0x4C6CB0 / 0x4C6BE0 / [0x7e27f8] / [0x7e9228] / [0xa8b230]+0x218
