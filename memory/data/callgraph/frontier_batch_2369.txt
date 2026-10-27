@@ -1,0 +1,83 @@
+# frontier batch 2369：16B/项倒序装载器 + 越界检查器 + 坐标对搜索更新器（0x50D250 / 0x50CAD0 / 0x50C920）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x50D250 FUN_0050d250 callees=1 deps=1893 / 0x50CAD0 FUN_0050cad0 callees=4 deps=5 / 0x50C920 FUN_0050c920 callees=3 deps=301）
+- 三路 disasm：`.qwen/tmp/_d2369a.txt`（0x50D250 size 0x60）/ `_d2369b.txt`（0x50CAD0 size 0x180）/ `_d2369c.txt`（0x50C920 size 0x240）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x50D250 | 54B | ret 4 @0x50D283 | 0x50D290（★batch 2368 c 路——双路标记设置器）| 1 个/去重 1（0x42e6d0——★★真 MISSING）picker callees=1 但未全登记 |
+| 0x50CAD0 | 281B | ret 4 @0x50CBE6 | 0x50CBF0（[0xa8022c]×[edi+0x5600] 索引 + 0x4e0e80 调用器，未登记）| 4 个/去重 4——全部已登记，picker callees=4 吻合 |
+| 0x50C920 | 421B | ret @0x50CAC4 | 0x50CAD0（★本批 b 路）| 3 个/去重 3——全部已登记，picker callees=3 吻合 |
+
+## a 路 0x50D250（54B）——16B/项倒序装载器
+
+```
+0050d250  push ebx → mov ebx, ecx → mov eax, [ebx+0x5714]（★计数）→ dec → js 0x50d282（非正直接返回）
+0050d25d  mov ebp, [esp+0xc]（栈参）→ mov esi, eax → lea edi, [eax+1] → ★shl esi, 4（16B/项）
+0050d26b  mov ecx, [ebx+0x5708]（★数组基址）→ add ecx, esi → push ebp → call 0x42e6d0（★16B 项装载器）
+0050d279  ★sub esi, 0x10 → dec edi → jne 0x50d26b（倒序逐项）
+0050d283  ret 4
+```
+
+**语义**：**16B/项倒序装载器（推断名）——数组批量装载（54B）**：thiscall 1 栈参：★★[ebx+0x5714] 计数 dec 判定 → [ebx+0x5708] 数组基址 ★shl 4（16B/项）倒序逐项 → ★0x42e6d0（16B 项装载器）批量装载 → ret 4。**★16B/项倒序批量装载（★★0x42e6d0 是唯一直接 callee——本次核验报 MISSING）**。
+
+## b 路 0x50CAD0（281B）——越界检查器
+
+```
+0050cad0  push ebx/esi/edi → mov edi, [esp+0x10]（栈参坐标/索引指针）→ mov eax, [edi] → test → jge 0x50cae7 → eax<0 → al=1 返回（★下越界放行）
+0050cae7  cmp eax, [0xa83c78] → jl 0x50caf7 → eax≥上界 → al=0 返回（★上越界拒绝）
+0050caf7  mov ecx, [0xa83c6c] → mov esi, [ecx+eax*4]（★对象数组索引）→ ★[esi+0x5ed]/[esi+0x5ec] 双字节门控 → 0x50cb14 [0x8871e0]+0x1340 时间槽表 vs [ebx+0x158] → setl
+0050cb39  [0xa8b238] 开关 → 0 时 al=1 返回 → esi==0 → al=0 返回 → 0x7177c0（★对象检查器）→ [eax]!=0 → al=1
+0050cb6c  [esi+0x1571] 门控 → 0x50cb76 8 邻域循环（0x5657a0 + 0x481810 + 0x47c520 → [eax+0x21c]==this → je 0x50cadf 返回 true）
+0050cbb3  [esi+0xee0] > 0 → al=1 → else [0x8871e0]+0xdf0 + [ebx+0x54d8] vs [0xa8ed84] → setle al → ret 4
+```
+
+**语义**：**越界检查器（推断名）——多段放行/拒绝判定（281B）**：thiscall 1 栈参：★★[esp+0x10] 索引指针 → [0xa83c78] 上界/0 下界双判定 → [0xa83c6c] 对象数组索引 + [esi+0x5ed]/[esi+0x5ec] 双门控 → [0x8871e0]+0x1340 时间槽表比较 → [0xa8b238] 开关 → 0x7177c0 对象检查 → [esi+0x1571] 门控 8 邻域循环（★0x5657a0 + 0x481810 + 0x47c520）→ [esi+0xee0]/[0x8871e0]+0xdf0 双尾判 → ret 4。**★★HouseClass 越界/邻域判定（★★[0x8871e0] 时间对象双槽 + 8 邻域扫描）**。
+
+## c 路 0x50C920（421B）——坐标对搜索更新器
+
+```
+0050c920  sub esp, 0x10 → mov ebx, [0xa8ec88]（★对象数组长）→ mov edi, ecx → [esp+0x14]=ebx
+0050c932  [edi+0x5494] vs [0xa8ef98]/[edi+0x5496] vs [0xa8ef9a] 坐标对比较 → [edi+0x5490]/[edi+0x5494] 选择（★坐标对惯用法）
+0050c960  xor ebp + lea edx,[esp+0x10] → ★0x56dc20（MapClass 大参调用——cell 获取）→ 坐标对再比较 → inc word [esp+0xc]/[esp+0xe]（★半角坐标 ++）
+0050c9cc  [0xa8ec88] 循环 → [0xa8ec7c] 数组 → [esi+0x21c]==edi → 虚表槽 0x2c 类型==6/2 跳过 → 虚表槽 0x84 → [eax+0x404]/[eax+0x16b9] 门控
+0050ca40  坐标对三比（[edi+0x5494] vs [0xa8ef98] + word [esp+0x16] vs [0xa8ef9a]）→ je 跳过 → ★0x5657a0（MapClass cell 提取）+ 虚表槽 0x480 + 0x70c610 + 虚表槽 0x1e8（★对象更新链路 push 0/push 2）
+0050cab4  inc ebp → jl 0x50c9d5 循环 → pop 4 + add esp, 0x10 + ret
+```
+
+**语义**：**坐标对搜索更新器（推断名）——半角坐标对搜索 + 对象更新（421B）**：thiscall 无参：★★[edi+0x5494]/[edi+0x5496] vs [0xa8ef98]/[0xa8ef9a] 坐标对选择 → 0x56dc20（★MapClass cell 获取）+ 半角 ++ → [0xa8ec88]/[0xa8ec7c] 对象数组循环（[esi+0x21c]==this + 虚表槽 0x2c 类型 6/2 跳过 + 虚表槽 0x84 [eax+0x404]/[eax+0x16b9] 门控）→ 0x5657a0（★MapClass cell 提取 ★0x87f7e8）+ 虚表槽 0x480 + 0x70c610 + 虚表槽 0x1e8 更新链 → ret。**★★坐标对搜索更新（★★batch 2365/2364 同域 [0x5490]/[0x5494] 字段族 + 0x5657a0）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 1 个/去重 1（0x42e6d0）——**★MISSING 1 个：0x42e6d0**（ranking.tsv:5789 `FUN_0042e6d0` 有行未登记——★真 MISSING 排队第 8 个，不阻塞本批）。
+- b 路：跨函数直接 call 4 个/去重 4（0x7177c0/0x5657a0/0x481810/0x47c520）——**全部已登记无 MISSING**（picker callees=4 吻合）。
+- c 路：跨函数直接 call 3 个/去重 3（0x56dc20/0x5657a0/0x70c610）——**全部已登记无 MISSING**（picker callees=3 吻合）。
+- ★★核验脚本输出：a 路 1 MISSING（0x42e6d0——★真 MISSING 经 grep 实锤 ranking.tsv:5789 有行）、b/c 路全 PASS。**排队 7 个真 MISSING → 8 个**。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★[ebx+0x5714] 计数 dec 判负才遍历（非正直接返回）;
+2. a 路 ★★shl esi, 4（16B/项）+ sub esi, 0x10 倒序（★先算末项地址、逐项回退）;
+3. a 路 ★★0x42e6d0 16B 项装载器（★唯一直接 callee——真 MISSING 排队）；
+4. b 路 ★★[0xa83c78] 上界 cmp jl / 0 下界 jge 双判定（★带符号 vs 无符号混杂——test jge 后 cmp jl）;
+5. b 路 ★★[esi+0x5ed]/[esi+0x5ec] 双字节门控 + [0x8871e0]+0x1340 时间槽表 vs [ebx+0x158] setl;
+6. b 路 ★★8 邻域循环（xor esi + add edi,4 + cmp esi,8 jl——★固定 8 次非计数驱动）;
+7. c 路 ★★坐标对三比（[0xa8ef98]/[0xa8ef9a] + [edi+0x5490]/[edi+0x5494] 双路选择——batch 2364/2365 同族）;
+8. c 路 ★★inc word [esp+0xc]/[esp+0xe] 半角坐标 ++（★非 dword 快写）;
+9. c 路 ★★虚表槽 0x2c 类型==6/2 双跳过 + 虚表槽 0x84 [eax+0x404]/[eax+0x16b9] 门控链。
+
+## 跨批次连接
+
+- ★★batch 2364/2365/2366（[0x5490]/[0x5494]/[0x5496] 坐标字段族——c 路同域 + [0xa8ef98]/[0xa8ef9a] 坐标对惯用法）。
+- ★★batch 2356/2357（[0x8871e0] 全局时间对象 + 0x4cac40 三角函数族——b 路 +0x1340/+0xdf0 时间槽同源）。
+- ★★batch 2363/2368（[0xa8ec7c]/[0xa8ec88] 全局对象数组族——b/c 路同族 + 虚表槽 0x84/0x2c 同款）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x50CBF0（b 路后邻——[0xa8022c]×[edi+0x5600] 索引 + 0x4e0e80 调用器——HouseClass 邻域）+ ★0x42e6d0（a 路 callee——★★真 MISSING 排队第 8：ranking.tsv:5789 `FUN_0042e6d0` 21B/uc=1/FUN_0050d250 单 caller）+ [0xa83c6c]/[0xa83c78]（b 路——全局对象数组 + 上界）。
+- 真 MISSING 排队（8 个）：0x49E400（2317）+ 0x408B40（2331）+ 0x41caf0/0x45e750/0x4f6eb0（2343）+ 0x406B10/0x434AD0（2346）+ ★0x42e6d0（2369）。
+- 未兑现 MISSING 旧观察（继续排队）：0x00486790（2267 起）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250（本批后邻已入）/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150 + ★0x556AD0/0x556EB0/0x556D20 + ★0x554830 + ★0x551B20 + ★0x5517A0/0x5512D0 + ★0x5509E0/0x551300/0x551320/0x551330/0x551370 + ★0x550080/0x54F6F0/0x54F670 + ★0x54E890/0x54E8C0 + ★0x54E590/0x54D930/0x549E90 + ★0x547CE0/0x544BE0 + ★0x543780/0x542EC0 + ★0x5424C0 + ★0x5422C0/0x540F90 + ★0x540A80 + ★0x5402D0/0x53F5B0 + ★0x53ECB0/0x53EC70/0x53E470 + ★0x408B40/0x53E070/0x53E1D0/0x53DDE0 + ★0x53C4C0/0x53C280/0x53B560 + ★0x53B3F0/0x53B064 + ★0x53AC50 + ★0x53A6A0/0x53A140 + ★0x53A130/0x53A100 + ★0x538C10 + ★0x537F20/0x537E80/0x537F30/0x537E90 + ★0x537DE0/0x537B50/0x537DF0/0x537B60/0x535BD0/0x535BE0 + ★0x533F50 + ★0x41caf0/0x45e750/0x4f6eb0/0x531F60/0x5318C0 + ★0x52FFD0/0x52FC20/0x52D430 + ★0x406b10/0x434ad0/0x52CB90 + ★0x52B7A0/0x52B720 + ★0x52B4F0 + ★0x52B160/0x52AFC0 + ★0x52ACE0/0x52AA90/0x52A760 + ★0x529820/0x527B90/0x524FB0 + ★0x523980/0x5233D0/0x522FE0 + ★0x522E70 + ★0x5200B0 + ★0x517FA0 + ★0x5176D0/0x5164D0/0x516320 + ★0x513F40/0x513710/0x512F20 + ★0x512990/0x5111E0/0x510ED0 + ★0x510A20/0x510860/0x510640 + ★0x5104A0/0x50FFB0/0x50FBD0 + ★0x50F4A0/0x50F170/0x50E7A0 + ★0x50E4D0/0x50E450 + ★0x50E1C0 + ★0x50E000/0x50DEF0 + ★0x50DA80/0x50DA40 + ★0x50D9E0/0x50D9F0 + ★0x50D560 + ★0x47c520/0x50D2C9 + ★0x50CBF0/0x42e6d0（2369 新观察）。
+- 本批 **1 真 MISSING**（0x42e6d0——★排队第 8 个，按惯例记观察项不阻塞本批）。next 批预期 top3 由 picker 决定（0x50C0A0 FUN_0050c0a0 callees=0 等排队中）。
