@@ -1,0 +1,65 @@
+# frontier batch 2415
+
+日期：2026-10-27
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据）
+三路：a=0x4D0EF0（1150B 大函数）/ b=0x4D0490（117B）/ c=0x4D03D0（36B）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2415{a,b,c}.txt，完整读取确认尾 ret
+核验：.qwen/tmp/_check_callees2415.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 5728 → 5731（三行全新增，ADD 3）
+
+## a 路：0x4D0EF0 单位标记对象构造器（1150B）
+
+- 范围 0x4D0EF0-0x4D136E（尾 ret 8 @0x4D136B，0x4D136E 起 nop pad，下函数 0x4D1370 同族构造器）
+- thiscall 1 栈参（ebx=[esp+0x54]）：0x410170 基类构造 → [edi+0x24]=0xffffffff/[edi+0x2c]=0/[edi+0x28]=[ebx+0x21c]/[edi+0x30]=6（类型码）
+- 坐标拷贝：lea [ebx+0x9c] 三字段 → [edi+0x34]（等距坐标对 + 第三字段）→ `ecx=0x87f7e8` MapClass::Instance + 0x565730 取格 → `movsx [eax+0x11b]` 高度 → [edi+0x50]
+- 子对象装配：lea [edi+0x5c] → call 0x4d2db0（batch 2414 a 路 VectorClass 16B 项构造器，已登记）→ [esi]=0x7e8ba0 vtable + [esi+0x14]=0xa + [esi+0x10]=0
+- 多重继承虚表写：[edi]=0x7e8b38/[+4]=0x7e8b1c/[+8]=0x7e8b14/[+0xc]=0x7e8b0c——与 batch 2414 c 路析构器同族对象布局镜像
+- 虚表槽 0x12c 调用（ebx 参）→ 四字段 rect → [edi+0x40]
+- 全局注册：[0x8b3d20] 计数 vs [0x8b3d18] 容量 → 需扩容时 [0x8b3d10] 虚表槽 8（push 0/新容量）→ [0x8b3d14][eax*4]=edi 全局表尾插（[0x8b3d24] 增量检查 + 红黑字节 [0x8b3d1d]）
+- 8B 项地图注册：坐标展平（cdq/and 0xff/sar 8 取整 + movsx + 37 倍式 + 0x7fffffff 调整，与 2414 c 路同款）→ [0x8b3cc0]/[0x8b3cc4] 表 → `mov eax,0xa` 初始容量 + push → call 0x4d2e40（batch 2413 c 路 8B 项扩容重置器，已登记）→ 8B 项写 [mapkey=ebp, value=edi] + [0x8b3ccc]=0（脏标记）
+- 类型联动：[ebx+0x6e7]=1 → 0x43ef90（返回 eax）→ [ebp+0x16bf]/[ebp+0x16c0] 子类型字节 + [ebx+0x618] cmp 8/0xc → 条件字节 [esp+0x38]
+- 16B 项 list 尾插（[esi+0x10] 计数 vs [esi+8] 容量扩容检查 + 虚表槽 8 → 16B 项写 {ebp, ret, flag, 0}，对齐 2414 a/2413 c 家族插法）
+- 21 槽循环（ebx+0x55c 起，[esp+0x14]=0x15）：byte[+0x199]=1 + 虚表槽 0x128 调用 → 四字段 rect 相交钳位（与 0x8b3cc0 项 X/Y 边界 clamp）→ 16B 项尾插 {ptr, 坐标, flag…}
+- 收尾：lea [edi+0x40] rect 四字段栈拷贝 → [0x887324] 门控 + 0x6d2790 重绘提交 → 重新加回 [0x887324]+0xb0/+0xb4 相机偏移 → 返回 edi
+- 直接 call 6 次/去重 6（0x410170/0x43ef90/0x4d2db0/0x4d2e40/0x565730/0x6d2790——全部已登记）callees=6（picker 7，差值 1：本路无 IAT 间接调用，疑似 picker 统计计入一处间接虚表或边界，按惯例标注不阻塞）
+- 判类：单位标记对象构造器——与 2414 c 路析构器（0x4D1650）镜像配对；全局表注册 + 8B 项地图 + 16B 项附属 list + 相机脏区，同一对象族生命周期两端
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x4D0490 COM 对象槽替换器（117B）
+
+- 范围 0x4D0490-0x4D0503（ret 4 ×3 @0x4D04C9 / @0x4D04E4 / @0x4D0502；0x4D0505 起 nop pad）
+- thiscall 1 栈参：eax=[esp+4]（解引用取对象指针）
+- 对象非空路径：虚表槽 0 调用（push lea [esp+0xc] / push 0x822410 全局常量 / push eax，3 参）→ edi=返回索引：
+  - 返回 <0：释放旧槽 [esi]（虚表槽 8 调用）+ [esi]=0（null 化）→ 返回索引
+  - 返回 >=0：释放旧槽 → [esi]=[esp+0x10] 新对象 → 返回索引
+- 对象空路径（[esp+4] 解引用==0）：释放旧槽 + [esi]=0 → 返回 0x80004002（E_NOINTERFACE）
+- 直接 call 0 次（全为虚表槽间接调用，无直接 call/jmp 目标）callees=0 吻合（picker 0，差值 0）
+- 判类：COM 风格接口槽替换器——虚表槽 0 = 查询/注册（带 0x822410 接口常量参数）、虚表槽 8 = 释放，E_NOINTERFACE 兜底；[esi] 槽持有者语义
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x4D03D0 16 位绝对值比较器（36B）
+
+- 范围 0x4D03D0-0x4D03F2（尾 ret 4 @0x4D03F1，0x4D03F4 起 nop pad）
+- thiscall 1 栈参：eax=[esp+4] → `movsx word ptr [eax]`（参数字 word）+ `movsx eax word ptr [ecx]`（this word）
+- 绝对值化：cdq/xor/sub 惯用法两次（|param| 与 |this|）→ cmp eax,esi → setge cl → 返回 al（|param| >= |this| 布尔）
+- 直接 call 0 次（纯整数比较）callees=0 吻合（picker 0，差值 0）
+- 判类：无符号绝对值比较谓词——排序/查找回调风格（16 位 word 对，比较器语义）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2415.py：a 路 6/6 全部已登记；b 路 0/0 空集；c 路 0/0 空集——三路全 PASS
+- picker callees vs 核验差值：a 路差 1（picker 7 vs 核验 6，无 IAT 间接调用目标可指认，标注观察不阻塞）；b/c 路差 0
+- 无批内自引用；连续一百一十六批无真 MISSING
+- 真 MISSING 排队 15 个不变：0x49E400 / 0x408B40 / 0x41caf0 / 0x45e750 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x4ca6e0 / 0x42ed60 / 0x4752e0 / 0x4759d0 / 0x472330 / 0x4B69D0
+- UNKNOWN 观察 2 个不变：0x5077da / 0x474b20
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4D1370（a 路后邻）：同族构造器·类型码 0x24——0x410170 基类构造 + [esi+0x30]=0x24 + 坐标拷贝 + 0x565730 取格 + 子对象 + 0x7e8b38/0x7e8b1c/0x7e8b14/0x7e8b0c 四重虚表（a 路孪生，长函数）
+- 0x4D0510/0x4D0520/0x4D0530（b 路后邻）：thunk 三连——`sub dword ptr [esp+4],4` + jmp 0x55a9b0/0x55a950/0x55a970（栈参偏移修正跳板）
+- 0x4D0540（thunk 后邻）：四清全局器——xor eax + [0x8b3ce0]/[0x8b3ce4]/[0x8b3ce8]/[0x8b3cec] 四个 dword 清零 + ret（16B 域）
+- 0x4D0560（0x4D0540 后邻）：全局常量写入器——fld [0x7e1710]/[0x7e1708] → 0x7c8fb0 → fadd 二倍 → 0x4cac40 → fstp [0x8b3cf8]（与 2413 b 路后邻 0x4D2F50 同构，写不同全局）
+- 0x4D0400（c 路后邻）：COM 空参检查器——参 1 空 → push 0x80004003 + 0x7dc720 + 返回 [esi]==0 布尔（2412 族 0x7dc720）
+- 既有池延续：0x4D5660 / 0x4D55C0 / 0x4D4FC0 / 0x4D2F50 / 0x4D4B20 / 0x4D24A0 / 0x4D2510 / 0x4D1890 / 0x4D2ED0 / [0x7e27f8] / [0x7e9228] / [0xa8b230]+0x218
