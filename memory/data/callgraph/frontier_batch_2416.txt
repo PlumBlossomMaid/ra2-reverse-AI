@@ -1,0 +1,70 @@
+# frontier batch 2416
+
+日期：2026-10-27
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据）
+三路：a=0x4CF950（282B）/ b=0x4CE840（1898B 大函数）/ c=0x4CE680（438B）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2416{a,b,c}.txt，完整读取确认尾 ret
+核验：.qwen/tmp/_check_callees2416.py 三路全 PASS，无 MISSING、无 UNKNOWN；**含批内自引用 1 例（b→a 0x4cf950，累计第 7 例，归入同批登记闭环）**
+注册：TSV 5731 → 5734（三行全新增，ADD 3）
+
+## a 路：0x4CF950 单位状态四门控触发器（282B）
+
+- 范围 0x4CF950-0x4CFA6A（尾 ret @0x4CFA69，0x4CFA6A 起 nop pad，下函数 0x4CFA70）
+- thiscall 无栈参（esi=this）：[esi+0xc] 子对象虚表槽连续四门控判定——0x37c / 0x380 / 0x1d4 / 0x1d8 任一返回真（jne 0x4CFA65）→ 提前返回
+- 四门全过：byte[esi+0x51]=al + byte[esi+0x50]=1 → 虚表槽 0x2f4 取坐标 → 与 [0x8b3c58]/[0x8b3c5a] 目标坐标 word 对比较 → 命中则 0x887888 全局 + push [esi+0xc] → call 0x4134a0
+- 虚表槽 0x84 → 子对象 → 虚表槽 0xbc → [esi+0x38]=返回
+- 虚表槽 0x1c8 ==0 分支：lea [esp+4] + [esi+0xc]+0x3a0 → call 0x4c9470；push eax + [esi+0xc]+0x388 → call 0x4c9300
+- 收尾：[ecx+0x9c] 三字段装配栈 → 虚表槽 0x84 → [eax+0x52c] → call 0x7509e0
+- 直接 call 4 次/去重 4（0x4134a0/0x4c9300/0x4c9470/0x7509e0——全部已登记）callees=4 吻合（picker 4，差值 0）
+- 判类：单位行为触发判定器——四虚表槽状态门控链 + 目标坐标匹配 + 关联对象注册
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x4CE840 单位 AI 主更新巨函（1898B）
+
+- 范围 0x4CE840-0x4CEFAA（尾 ret @0x4CEFA9，0x4CEFAA 起 nop pad，下函数 0x4CEFB0）；dump 649 行全读
+- thiscall 无栈参：入口 gate byte[esi+0x51]==0 → 直接返回 1（0x4CE850-0x4CE859）
+- 虚表槽 0x1c8 → edi=[eax]（帧/计数）→ [esi+0xc]+0x9c 三字段 → 0x565730 取格 → cell+0x140 test ch,1 → [0x8b3cac] 调整
+- 虚表槽 0x84 → [eax+0xc95] 字节门控 → [ecx+0x2e8] float 钳位（fcomp [0x7e1748] / fsub [0x7e89e8] / 钳到 [0x7e2800]）
+- COM 查询惯用法：[esi+0xc] 虚表槽 0 → push lea[esp+0x20]/0x822410/push eax → <0 走 0x4d0430；==0x80004002 跳过；否则 0x7dc720 记错
+- lea edi,[esi+0x1c] → 0x565730 取格 + byte[esi+0x18] 门控 → 0x47c520 + 0x65ad50 → 虚表槽 0x1ac 五参调用（push 1/0/-1/-1/ebx）==0 分支 → **call 0x4cf950（本批 a 路，批内自引用 #7）**
+- 坐标打包（cdq/and 0xff/sar 8 取整惯用法）→ 0x56dc20 大参调用（push 9/-1/1/0/0/1/0 等）→ 返回坐标 vs [0x8b3c58]/[0x8b3c5a]
+- 0x578080（坐标取格）+ 0x5657a0 → cell+0x140 test ch,1；[esp+0x18] < 0x12c 门控 → 0x578080 复取
+- 对象创建双路径：push 0x1c8 → 0x7c8e17 new → 0x427cb0 构造（vtable 0x82242c / 0x822420）→ 0x421ea0 装配；虚表槽 0x84 → [eax+0x530] → 0x7509e0
+- 虚表槽 0x1cc + 0x4135d0（0x887888 全局）→ 虚表槽 0x544
+- 8 邻域 cell 循环（edi 0..7，0x89f688 8 向表 + 0x5657a0）：byte[eax+0x122] dec / inc 修正（两段：0x4CED61 减段、0x4CEDD5 加段、0x4CEE48 加段）
+- 虚表槽 0x1b8 取坐标 → 打包比较 → 0x5657a0 + 0x47c520 + 0x65ad30 相等判定 → 栈 rect [0x8b3c78/0x7c/0x80] 装配 → 虚表槽 0x44 + 虚表槽 0x480（push 1/0）
+- 收尾：COM 释放（虚表槽 8）→ al=byte[esp+0x13] 返回
+- 直接 call 27 次/去重 15（0x4135d0/0x421ea0/0x427cb0/0x47c520/**0x4cf950（批内 a）**/0x4d0430/0x565730/0x5657a0/0x56dc20/0x578080/0x65ad30/0x65ad50/0x7509e0/0x7c8e17/0x7dc720）——14 个已登记 + 1 个批内待同批登记；callees=15 吻合（picker 15，差值 0）
+- 判类：单位 AI 行为主更新（帧计数 + cell 标志 + COM 对象查询 + 目标坐标匹配 + 8 邻域高度修正 + 条件对象创建/释放）——a 路触发器为其中的子判定
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x4CE680 单位状态判定触发器·B（438B）
+
+- 范围 0x4CE680-0x4CE836（尾 ret @0x4CE835，0x4CE836 起 nop pad，下函数 0x4CE840 = 本批 b 路后邻）
+- thiscall 无栈参（esi=this）：虚表槽 0x1c8 → edi → [esi+0xc] byte+0x8c 门控 → +0x9c 三字段 → 0x565730 取格 → cell+0x140 test ch,1 → [0x8b3cac] 调整
+- COM 查询：[esi+0xc] 虚表槽 0 → lea[esp+0x14]/0x822410 → <0 走 0x4d0430；0x80004002 跳过；0x7dc720 记错；[esp+0x14] 对象虚表槽 0xc 调用
+- 数学链：sub edi,eax / sub ecx,eax → imul 0x55555556（÷3 魔数）→ byte[esi+0x50]=0 + byte[esi+0x51]=0
+- 分支一（edi > eax÷3）：[esi+0xc]+0x388 → 0x4c9470；push eax + [esi+0xc]+0x3a0 → 0x4c9220
+- 分支二（edi ≤ eax÷3 且 > eax÷6）：虚表槽 0x48 取坐标 → fild/fisub/fstp → 0x4cae30 → fsub [0x7e2820] → fmul [0x7e2818] → 0x7c5f00（_ftol）→ word 打包 → [esi+0xc]+0x388 → 0x4c9220 → [esi+0x40]=0 + [esi+0x44]=0x3ff00000（1.0 双精度）
+- 收尾：COM 释放（虚表槽 8）→ al=1 返回
+- 直接 call 9 次/去重 7（0x4c9220/0x4c9470/0x4cae30/0x4d0430/0x565730/0x7c5f00/0x7dc720——全部已登记）callees=7 吻合（picker 7，差值 0）
+- 判类：单位状态更新判定器（帧计数分档 → 坐标/距离阈值 → 取格标记/修正）——与 a 路同属行为触发族
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2416.py：a 路 4/4、b 路 15/15（含批内自引用 0x4cf950）、c 路 7/7——三路全 PASS
+- **批内自引用 1 例（累计第 7 例）**：b 路 0x4CE840 → a 路 0x4CF950——目标正是本批 a 路，判明后归入同批登记闭环，非真 MISSING
+- picker callees vs 核验差值：三路均差 0（b 路 15=14 已登记+1 批内）
+- 连续一百一十七批无真 MISSING
+- 真 MISSING 排队 15 个不变：0x49E400 / 0x408B40 / 0x41caf0 / 0x45e750 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x4ca6e0 / 0x42ed60 / 0x4752e0 / 0x4759d0 / 0x472330 / 0x4B69D0
+- UNKNOWN 观察 2 个不变：0x5077da / 0x474b20
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4CFA70（a 路后邻）：单位判定器——虚表槽 0x184 返回==7 门控 + 0x705d60 + 虚表槽 0x2c==2 + [edi+0x6c4]→[eax+0xe0d] 标志 + 虚表槽 0x1bc → 0x47c520 + 0x65ad50（与 a 路同族）
+- 0x4CEFB0（b 路后邻）：单位对象装配器——lea [ecx+0xc] + 虚表槽 0x1b8 + **call 0x4d0490（batch 2415 b 路 COM 槽替换器）** + 0x7dc720 + [eax+0x2b4]/[eax+0x2fc] 双域 + 虚表槽 0x18 + 虚表槽 0x2c==2（b 路收尾镜像）
+- 0x4C9470 / 0x4C9300 / 0x4C9220（本批多次被调）：坐标/路径对象装配三件套——多次出现在 a/b/c 路，均为已登记
+- 0x7509e0（a/b 路共同调用）：坐标计算器——已登记，高频
+- 既有池延续：0x4D5660 / 0x4D55C0 / 0x4D4FC0 / 0x4D2F50 / 0x4D4B20 / 0x4D24A0 / 0x4D2510 / 0x4D1890 / 0x4D2ED0 / 0x4D1370 / 0x4D0510/0x4D0520/0x4D0530 / 0x4D0540 / 0x4D0560 / 0x4D0400 / [0x7e27f8] / [0x7e9228] / [0xa8b230]+0x218
