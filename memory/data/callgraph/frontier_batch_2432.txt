@@ -1,0 +1,53 @@
+# frontier batch 2432
+
+日期：2026-10-27
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据）
+三路：a=0x4AEA20（169B）/ b=0x4AE750（595B）/ c=0x4AE720（39B）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2432{a,b,c}.txt，完整读取确认尾 ret
+核验：.qwen/tmp/_check_callees2432.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 5779 → 5782（三行全新增，ADD 3）；真 MISSING 队列 16 个不变
+
+## a 路：0x4AEA20 查表写色器（169B）
+
+- 范围 0x4AEA20-0x4AEAC7（尾 ret 4 @0x4AEAC6；0x4AEAC9 起 nop pad，下函数 0x4AEAD0 同族第二实例）
+- thiscall 1 栈参（ret 4）：[esp+4] 索引参数——== -1 → edx=0；否则 **idiv 0xc（除以 12）+ shl 3**（索引→字节偏移）
+- 主循环（esi 0..7 八次）：[0x87f6c8]+0x174 表基址 + edx → **and 0x800000ff 符号修正** → lea [eax+eax*2+0x885180] 三字节表查 → 依 [0x8a0dd0..dc] **六 shift 常量**逐位移位拼接（shr al/bl + shl eax/ebx + or 组合）→ 写 word [edi-2]
+- 直接 call 0 次/去重 0 callees=0 吻合（picker 0，差值 0）
+- 判类：查表写色器（idiv 12 索引换算 + 0x885180 三字节色表 + [0x8a0dd0..dc] 六 shift 位拼接写 16 位——batch 2428 b 路 0x4BBB00 同 [0x8a0dd0..dc] 族）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x4AE750 全局对象状态更新器（595B）
+
+- 范围 0x4AE750-0x4AE9A1（尾 ret 0xc @0x4AE86A / @0x4AE8E5 / @0x4AE94B / @0x4AE9A0；0x4AE9A3 起 nop pad，下函数 0x4AE9B0 域清理器）
+- thiscall 3 栈参（ret 0xc）：[0xa8ed6b] **全局字节门控**非零 → 直退（0x4ae99b 尾段）；否则：
+  - 0x586e50（**MapClass 取格，ecx=0x87f7e8 MapClass::Instance** + 双栈参）→ 0x5023b0（对象查询）→ 非空 → 0x502460（双栈参另一查询）
+  - **[0xa8ecc8]/[0xa8ecbc] 全局数组遍历**（esi 计数）：虚表槽 0x1a4 查询 + [ecx+0x14]>>2&1 标志 → 清 [eax+0x430] 字节
+  - 分派（[esp+0x24] 第二参）：==0 → 虚表槽 0x74+0x144 调用；==1/==0x33 → 虚表槽 0x70+0x140；==2 → 同；**默认 → 虚表槽 0x70+0x140 三连**——每次遍历后写 [0x822cf2] 重入标志（0→1）
+- 直接 call 3 次/去重 3：0x586e50 / 0x5023b0 / 0x502460——**全部已登记** callees=3 吻合（picker 3，差值 0）
+- 判类：全局对象状态更新器（[0xa8ed6b] 门控 + MapClass 取格 0x87f7e8 + [0xa8ecc8]/[0xa8ecbc] 数组族遍历 + 虚表槽 0x1a4/0x74/0x70/0x144/0x140 装配 + [0x822cf2] 重入标志——对象选中/标记刷新域）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x4AE720 区间表遍历器（39B）
+
+- 范围 0x4AE720-0x4AE745（尾 ret 4 @0x4AE744；0x4AE747 起 nop pad，下函数 0x4AE750 = b 路）
+- thiscall 1 栈参（ret 4）：esi 从 **[0x8a0360] 到 [0x8a03d8]** 步长 0x18（7 槽）→ 每槽 **0x551b20 查询**（[esp+0xc] 参数）→ 返回 >= 0 即中（test eax,eax jl 继续/否则停）→ ret 4
+- 直接 call 1 次/去重 1（0x551b20——已登记）callees=1 吻合（picker 1，差值 0）
+- 判类：区间表遍历器（[0x8a0360]/[0x8a03d8] 全局槽区间 0x18 步长扫描 + 0x551b20 查询——全局表格查找域）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2432.py：a 路 0/0、b 路 3/3、c 路 1/1——三路全 PASS
+- picker callees vs 核验差值：三路均差 0（b/c 直接 call 全已登记；a 无调用）
+- 无批内自引用；真 MISSING 队列 16 个不变
+- 真 MISSING 排队 16 个：0x49E400 / 0x408B40 / 0x41caf0 / 0x45e750 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x4752e0 / 0x4759d0 / 0x472330 / 0x42C900 / 0x4A33A0 / 0x4A3630
+- UNKNOWN 观察 2 个不变：0x5077da / 0x474b20
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4AEAD0（a 路下函数）：同族第二实例——idiv 0xc + shl 3 + [0x87f6c8]+0x174 + 0x885180 表（a 路逐字节同构复制）
+- 0x4AE9B0（b 路下函数）：域清理器——[0x8a0360] 区间（c 路同域）遍历清理
+- 0x4AE720→0x4AE750（c→b 后邻）：区间遍历器 → 状态更新器构成 [0x8a0360] 域的对查/更新链
+- 0x551B20（c 路被调）：区间查询函数（c 路核心，可追溯登记批次）
+- 既有池延续：0x4D5660 / 0x4D55C0 / 0x4D4FC0 / 0x4D2F50 / 0x4D4B20 / 0x4D24A0 / 0x4D2510 / 0x4D1890 / 0x4D2ED0 / 0x4D1370 / 0x4D0510/0x4D0520/0x4D0530 / 0x4D0540 / 0x4D0560 / 0x4D0400 / 0x4CFA70 / 0x4CEFB0 / 0x4CC360 / 0x4CBEF0 / 0x4CBF10 / 0x4CC790 / 0x4CB98C / 0x4CB480 / 0x4CAD80 / 0x4CA750/0x4CA760/0x4CA770 / 0x4C9C70 / 0x4C9FF0 / 0x4C6CB0 / 0x4C6BE0 / 0x4C66C0 / 0x4C6360 / 0x4C6210 / 0x4C6170 / 0x4C58C0 / 0x4C3DD0 / 0x4C38D0 / 0x4C2C10 / 0x4C2B40 / 0x4C2790 / 0x4C19B0 / 0x4C1E50 / 0x4C1B50 / 0x4C1600 / 0x4BBC30 / 0x4BB000 / 0x4BAD70 / 0x4BACF0 / 0x4BA390 / 0x4B9BD0 / 0x4B9BE0 / 0x4B69E0 / 0x4B6B80 / [0x7e27f8] / [0x7e9228] / [0xa8b230]+0x218
