@@ -1,0 +1,54 @@
+# frontier batch 2428
+
+日期：2026-10-27
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据）
+三路：a=0x4C14D0（296B）/ b=0x4BBB00（291B）/ c=0x4BAFE0（29B）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2428{a,b,c}.txt，完整读取确认尾 ret
+核验：.qwen/tmp/_check_callees2428.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 5767 → 5770（三行全新增，ADD 3）；**a 路 0x4C14D0 = 真 MISSING 队列第 2427 批登记项，本批转正，真 MISSING 队列 18→17**
+
+## a 路：0x4C14D0 栈帧位标志校验器（296B）
+
+- 范围 0x4C14D0-0x4C15F8（尾 ret @0x4C15F1；0x4C15F8 起 nop pad，下函数 0x4C1600 渲染域大函数）
+- thiscall 无参：sub esp,0x1f8 大栈帧 + push edi
+- 初始化：rep stosd 0x3f×2 清两个 0xfc 容量段（[esp+4] 与 [esp+0x100]）+ [0x8a0df8] 虚表槽 0xc 双槽查询（压 [esp+0x100]/[esp+8]/[eax] 三参）
+- 校验链（全 `or eax,0xffffffff` 早退返 -1）：[esp+4] & **0x1c3** == 0x1c3 → [esp+8] al & 2 → [esp+0xc] & 0x400 → ah & 2 → [esp+0x9c] & 0x400 → [esp+0xa0] & 0x400 → [esp+0x70] & 0xa → [esp+0x74] & 2 → [esp+0x78] & 2
+- 收尾：[esp+0xb4] >= 0x100 判定（jae 直退）→ [esp+0xb8] vs 0x100 sbb eax,eax（无符号借位 -> 0/-1）→ ret
+- 直接 call 0 次/去重 0 callees=0 吻合（picker 0，差值 0）——唯一调用是间接 `call [ecx+0xc]`
+- 判类：栈帧位标志校验器（虚表槽 0xc 查询 + 九段位标志逐项校验 + 0x100 边界 + sbb 返回值）——**本函数为真 MISSING 队列第 2427 批登记项，现转正**
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x4BBB00 像素展开写表器（291B）
+
+- 范围 0x4BBB00-0x4BBC21（尾 ret 4 @0x4BBC20；0x4BBC23 起 nop pad，下函数 0x4BBC30 常量 getter）
+- thiscall 1 栈参（ret 4）：push ebx/esi，edx 计数（[esp+0x10]），esi>=1 门控 + [esp+0x20] 目标指针
+- 外层循环（计数次 × 0x20000 步进）：esi==1 → eax=0x10000 兜底；否则 `idiv ecx`（[esp+0x10] / (esi-1) 商）
+- 内层循环（ebp 0..0x100）：**and ecx,0x800000ff 符号修正** + lea edx,[edx+ecx*2] 字节序地址（与 batch 2425 a 路 0x4C37D0 同构）→ 读三字节 → **imul eax 除数 + sar 0x10** 除法 → 三通道钳位 0xff → [0x8a0dd0..dc] 六 shift 常量（sar/shl 位拼接，与 batch 2427 c 路 0x4C16A0 tile 表填充同构）→ 写 word [ebx-2]
+- 直接 call 0 次/去重 0 callees=0 吻合（picker 0，差值 0）
+- 判类：像素展开写表器（三字节 × 除数 idiv/imul 缩放 + 钳位 0xff + 六 shift 位拼接写 16 位——缩放表生成域，与 0x4C16A0 共享 [0x8a0dd0..dc] 位拼接常量族）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x4BAFE0 常量类型判定器（29B）
+
+- 范围 0x4BAFE0-0x4BAFFD（尾 ret @0x4BAFFC；0x4BAFFD 起 nop pad，下函数 0x4BB000 双标志门控器）
+- thiscall 无参：`mov eax,[ecx+0x1c]` 对象槽非空 → `call [ecx+0x60]`（虚表槽 0x60 查询）→ **cmp eax,0x887601c2**（常量指纹比较）→ 相等 eax=1/否则 0
+- 直接 call 0 次/去重 0 callees=0 吻合（picker 0，差值 0）——唯一调用是间接 `call [ecx+0x60]`
+- 判类：常量类型判定器（虚表槽 0x60 返回值与 0x887601c2 指纹比对——类型识别/接口查询惯用法）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2428.py：a 路 0/0、b 路 0/0、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：三路均差 0（三路均无直接 call，仅虚表间接）
+- 无批内自引用；**真 MISSING 转正 1 个（0x4C14D0，原第 2427 批登记）**，队列 18→17
+- 真 MISSING 排队 17 个：0x49E400 / 0x408B40 / 0x41caf0 / 0x45e750 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x4752e0 / 0x4759d0 / 0x472330 / 0x4B69D0 / 0x42C900 / 0x4A33A0 / 0x4A3630（0x4C14D0 已转正移除）
+- UNKNOWN 观察 2 个不变：0x5077da / 0x474b20
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4C1600（a 路下函数）：渲染域大函数——[0x8a0094] + sub esp,0x13c（虚表槽 0xc 同族宿主）
+- 0x4BBC30（b 路下函数）：常量 getter——mov eax,[0x8a0dd0] ret（位拼接常量族首槽直接读）
+- 0x4BB000（c 路下函数）：双标志门控器——[0x89f978]/[0xa8ed80] 双字节标志 + [esi+0x1c] 虚表槽 0x60 查询（c 路同域续）
+- 0x4A33A0/0x4A3630（2427 批登记 MISSING 余项）：渲染域清理/构造器，caller = 0x4C16A0（与 0x4C14D0 同域，后续批次优先跟进）
+- 既有池延续：0x4D5660 / 0x4D55C0 / 0x4D4FC0 / 0x4D2F50 / 0x4D4B20 / 0x4D24A0 / 0x4D2510 / 0x4D1890 / 0x4D2ED0 / 0x4D1370 / 0x4D0510/0x4D0520/0x4D0530 / 0x4D0540 / 0x4D0560 / 0x4D0400 / 0x4CFA70 / 0x4CEFB0 / 0x4CC360 / 0x4CBEF0 / 0x4CBF10 / 0x4CC790 / 0x4CB98C / 0x4CB480 / 0x4CAD80 / 0x4CA750/0x4CA760/0x4CA770 / 0x4C9C70 / 0x4C9FF0 / 0x4C6CB0 / 0x4C6BE0 / 0x4C66C0 / 0x4C6360 / 0x4C6210 / 0x4C6170 / 0x4C58C0 / 0x4C3DD0 / 0x4C38D0 / 0x4C2C10 / 0x4C2B40 / 0x4C2790 / 0x4C19B0 / 0x4C1E50 / 0x4C1B50 / [0x7e27f8] / [0x7e9228] / [0xa8b230]+0x218
