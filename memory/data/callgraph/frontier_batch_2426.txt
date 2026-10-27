@@ -1,0 +1,62 @@
+# frontier batch 2426
+
+日期：2026-10-27
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据）
+三路：a=0x4C29E0（115B）/ b=0x4C2830（425B）/ c=0x4C1F20（2159B）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2426{a,b,c}.txt，完整读取确认尾 ret
+核验：.qwen/tmp/_check_callees2426.py 三路全 PASS，无 MISSING、无 UNKNOWN；**批内自引用 1 个（b→c 0x4c1f20）归同批登记**
+注册：TSV 5761 → 5764（三行全新增，ADD 3）；真 MISSING 队列 15 个不变
+
+## a 路：0x4C29E0 全局 EBolt 数组清空器（115B）
+
+- 范围 0x4C29E0-0x4C2A53（尾 ret @0x4C2A52；0x4C2A53 起 nop pad，下函数 0x4C2A60 = batch 2425 已登记 EBolt::Fire）
+- thiscall 无参：[0x8a0e98] 全局计数 jle 直退 → **遍历 [0x8a0e8c] 数组**（[eax+esi*4] 项）：
+  - 项非空：+0x20 owner 槽非空 → `mov [ecx+0x6dc],0` + `mov [eax+0x20],0`（清 owner 双向引用）→ **0x7c8b3d delete 每项**（operator delete）
+  - dec esi / jl 循环
+- 收尾：[0x8a0e98]=0（计数清零）→ [0x8a0e8c] 数组本身非空 + [0x8a0e95] 字节标志非零 → **0x7c8b3d delete 数组本体** → [0x8a0e8c]=0 → [0x8a0e95]=0、[0x8a0e90]=0（三全局复位）
+- 直接 call 2 次/去重 1（0x7c8b3d ×2——已登记）callees=1 吻合（picker 1，差值 0）
+- 判类：全局 EBolt 数组整体清空器（逐项清 owner 槽 + delete 每项 + delete 数组本体 + 三全局复位——与 batch 2425 EBolt::Fire 入队端 [0x8a0e8c] 配对清空端）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x4C2830 EBolt 全局数组遍历更新器（425B）
+
+- 范围 0x4C2830-0x4C29D9（尾 ret @0x4C29D8；0x4C29D9 起 nop pad，下函数 0x4C29E0 = a 路）
+- thiscall 无参：sub esp,0x24 + push ebx/ebp/esi/edi；[0x8a0e98] 计数减 1 倒序遍历 [0x8a0e8c]（[esp+0x10] 保存项）
+- 主链（[eax+0x20] owner 非空）：虚表槽 0xb0 双参调用（[eax+0x24] + lea [esp+0x34]）→ 返回 12B 三元组与 [0x8a0e50]/[0x8a0e54]/[0x8a0e58] 三全局比较 → 不等则写回 [esi+0..8]（owner 位置同步）
+- [eax+0x28] 非空分支：0x887324 + 0x6d2140 CoordsToClient 双调（[esi+0xc] 与 [esp+0x20] 两坐标对）→ 0x7bc2b0 串比较（0x886fa0 格式串）→ [esi+0x2c] 判级（neg/sbb/and 0xfb/add 0xa）→ 12B 双栈组装配 → **0x4c1f20（批内自引用 = 本批 c 路）** 调用 → `inc [esi+0x1c]`
+- 后续：[eax+0x28] sar 1 半衰减 → 为零走 [0x8a0e88] 虚表槽 0x10 查询 → 命中非 -1 且 < 计数 → 前移压缩（[ecx+eax*4-4]=后项）→ 项非空：清 owner 槽（[ecx+0x6dc]=0 / [eax+0x20]=0）→ **0x7c8b3d delete**
+- 直接 call 5 次/去重 4：0x6d2140 ×2 / 0x7bc2b0 / 0x7c8b3d + **0x4c1f20（批内自引用）**——非自引用 3 个已登记；picker 4 vs 核验去重 4 差值 0
+- 判类：EBolt 全局数组遍历更新器（owner 位置同步 + 坐标换算 + 串比较判级 + 递归主更新 + 计数衰减 + 前移压缩删除——batch 2425 EBolt 族的调度主链）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x4C1F20 EBolt 主更新巨函（2159B）
+
+- 范围 0x4C1F20-0x4C278F（尾 ret 0x1c @0x4C278C `mov esp,ebp; pop ebp; ret 0x1c`；0x4C278F 起 nop pad，下函数 0x4C2790 同族第二实例）
+- thiscall 7 栈参（ret 0x1c）：push ebp/mov ebp,esp/and esp,0xfffffff8/sub esp,0x3fc 大栈帧对齐
+- 初始化段：**8 项 × 0x4068f0（0x4c2c30 格式串 ×3 参）** 填 [esp+0x148] 起 8×0x58 缓冲（帧模板）
+- 几何段：三坐标差（[ebp+8..0x1c] 六值相减）→ 0x41c230（三点距离计算）→ fild/fmul/fadd 浮点链 → 0x4cac40（距离平方）→ 0x7c5f00（_ftol）→ 长度分支（cmp 0x40 / 0x80 / [esp+0x98]）
+- 中值段：0x20c9 循环 4 项中值算（sar 1 平均）+ 0x2110 分支 fild/fmul [0x7e44d0]/fdiv → 0x4cacb0（插值求值）→ 0x7c5f00 → 0x108 缓冲 6 项
+- 随机段：**多次 0x65c7e0 Randomizer::RandomRanged（ecx=0x886b88）**——小尺寸分支（eax<=0x80）imul 抖动 ×3 / 大尺寸分支（eax>0x80）双循环 2 次 ×3 轴 ±b 随机
+- 坐标换算段：0x6d2140 CoordsToClient 多次（[0x887324] 宿主）+ 0x6d20e0 坐标取整多次 + [0x87f6c4] 表查询（cmp [eax+4],1 字节/word 分支 + [eax+0x174] 索引表）
+- 装配段：**0x88731c 虚表槽 0x34** 多次装配（0x886fa0 格式串 + 多栈缓冲推参）
+- 收尾：[esp+0x28] 递减 js 退出 → 0x58 步长回卷（[esp+0x24]/[esp+0x2c]/[esp+0x34]/[esp+0x20] 四指针推进）→ rep movsd 9 项 ×2 缓冲恢复 → jmp 0x4c20b3 主循环
+- 直接 call 31 次/去重 8：0x4068f0 / 0x41c230 / 0x4cac40 / 0x4cacb0 / 0x65c7e0 / 0x6d20e0 / 0x6d2140 / 0x7c5f00——**全部已登记**（0x65c7e0 ×6、0x6d20e0 ×4、0x6d2140 ×6、0x4068f0 ×8）
+- picker callees=8 vs 核验去重 8，**差值 0**（本批无 IAT 间接调用差值；0x88731c 虚表槽 0x34 等虚表调用不计）
+- 判类：EBolt 主更新巨函（帧模板初始化 + 三点几何 + 多次随机抖动 + 坐标换算 + 字节/word 表查 + 虚表装配 + 0x58 步长多缓冲回卷——batch 2425 EBolt 族的引擎本体）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2426.py：a 路 2 次去重 1/1、b 路 5 次去重 4（含批内自引用 1 个）、c 路 31 次去重 8/8——三路全 PASS
+- picker callees vs 核验差值：三路均差 0（a 1、b 4、c 8 均吻合）
+- **批内自引用 1 个：b 路 0x4C2830 → c 路 0x4C1F20**（归同批登记闭环，累计 8 例）
+- 真 MISSING 队列 15 个不变：0x49E400 / 0x408B40 / 0x41caf0 / 0x45e750 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x4752e0 / 0x4759d0 / 0x472330 / 0x4B69D0 / 0x42C900（2418 批新增）
+- UNKNOWN 观察 2 个不变：0x5077da / 0x474b20
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4C2790（c 路下函数）：同族第二实例——sub esp,0x10 + [esi+0x28] 门控 + 0x6d2140 双调 + 0x7bc2b0 串比较 + 0x4c1f20（自引用续）调用 + inc [esi+0x1c]
+- 0x4C2830→0x4C29E0 链（b→a 后邻）：遍历更新器 → 清空器构成 EBolt 全局数组的更新/清空对
+- [0x8a0e50]/[0x8a0e54]/[0x8a0e58]（b 路三全局）：EBolt 全局基准三元组（owner 位置同步参考系）
+- 既有池延续：0x4D5660 / 0x4D55C0 / 0x4D4FC0 / 0x4D2F50 / 0x4D4B20 / 0x4D24A0 / 0x4D2510 / 0x4D1890 / 0x4D2ED0 / 0x4D1370 / 0x4D0510/0x4D0520/0x4D0530 / 0x4D0540 / 0x4D0560 / 0x4D0400 / 0x4CFA70 / 0x4CEFB0 / 0x4CC360 / 0x4CBEF0 / 0x4CBF10 / 0x4CC790 / 0x4CB98C / 0x4CB480 / 0x4CAD80 / 0x4CA750/0x4CA760/0x4CA770 / 0x4C9C70 / 0x4C9FF0 / 0x4C6CB0 / 0x4C6BE0 / 0x4C66C0 / 0x4C6360 / 0x4C6210 / 0x4C6170 / 0x4C58C0 / 0x4C3DD0 / 0x4C38D0 / 0x4C2C10 / 0x4C2B40 / [0x7e27f8] / [0x7e9228] / [0xa8b230]+0x218
