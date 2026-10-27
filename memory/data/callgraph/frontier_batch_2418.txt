@@ -1,0 +1,57 @@
+# frontier batch 2418
+
+日期：2026-10-27
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据）
+三路：a=0x4CBBA0（158B FootClass::FindPath 带名）/ b=0x4CB8B0（FieldClass::HostToNet 带名）/ c=0x4CB890（24B FieldClass::~FieldClass 带名）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2418{a,b,c}.txt，完整读取确认尾 ret
+核验：.qwen/tmp/_check_callees2418.py——a 路 **真 MISSING 1 个（0x42C900，已确认 ranking 有行未登记，排队不阻塞）**；b/c 路全 PASS；无批内自引用
+注册：TSV 5737 → 5740（三行全新增，ADD 3）
+
+## a 路：0x4CBBA0 FootClass::FindPath（158B）
+
+- 范围 0x4CBBA0-0x4CBC3C（ret 0x18 ×2 @0x4CBBF5 / @0x4CBC3B；0x4CBC3E 起 nop pad，后邻 0x4CBC40 = batch 2417 c 路八向扫描器已登记）
+- thiscall 5 栈参（ret 0x18）：虚表槽 0x4c 调用（push 0 + lea [esp+0x10] 输出槽）→ 返回坐标对象 → cdq/and 0xff/sar 8 取整打包 word 对
+- 参数判空：edi=[esp+0x24] ==0 → return 0（xor eax,eax @0x4CBBEF）
+- 主路径（edi 非空）：lea eax,[esi+0x5e0] 子对象 + push 目标坐标 → call 0x429780（thiscall 多参坐标装配）→ 返回值 + [esp+0x34]/[esp+0x20] 栈参 → push 序列（eax/edi/esi/lea 栈）→ `ecx=0x87e8b8` 全局 → call 0x42c900（thiscall 多参寻路起点）→ ret 0x18
+- 直接 call 2 次/去重 2（0x429780 已登记 / **0x42c900 真 MISSING**）
+- callees=2 吻合 picker（0x42c900 亦在 picker 计数内——核验报 MISSING 因 ranking 有行未登记）
+- 判类：FootClass::FindPath 寻路入口封装（带名 YRpp 类）——坐标取整 + 子对象装配 + 0x87e8b8 全局寻路器
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x4CB8B0 FieldClass::HostToNet（90B）
+
+- 范围 0x4CB8B0-0x4CB979（ret ×2 @0x4CB966 / @0x4CB978；0x4CB979 lea 对齐 + 0x4CB97C 起跳转表数据；后邻 0x4CB98C 三清全局器）
+- thiscall 无参：word[esi+4] 类型码 `add -3 / cmp 3 / ja` → jmp [eax*4+0x4CB90C] 跳转表四分支：
+  - 分支 0x4CB8C8：word[ptr] → push → call 0x7c8968 → word 写回（16 位字节序交换）
+  - 分支 0x4CB8DC：dword[ptr] → push → call 0x7c8962 → dword 写回（32 位字节序交换）
+- 第二段：word[esi+4]/word[esi+6] 双双 push → call 0x7c8974 ×2 → 写回 → and 0xffff + 同型跳转表 [eax*4+0x4CB97C]：
+  - 分支：word → 0x7c8974 / dword → 0x7c896e（16/32 位交换第二实例）
+- 直接 call 8 次/去重 4（0x7c8962/0x7c8968/0x7c896e/0x7c8974——全部已登记 CRT 字节序交换族）callees=4（picker 2，差值 2：核验按去重 4 计，picker 仅计唯一直接目标？——本路无 IAT，差值归 picker 口径，按惯例标注）
+- 判类：FieldClass::HostToNet 主机到网络字节序转换（带名 YRpp 类）——双跳转表 + CRT 16/32 位交换四函数
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x4CB890 FieldClass::~FieldClass（24B）
+
+- 范围 0x4CB890-0x4CB8A8（尾 ret @0x4CB8A7；0x4CB8A8 起 nop pad，后邻 0x4CB8B0 = 本批 b 路）
+- thiscall 无参：eax=[esi+8] 成员指针 → push + call 0x7c8b3d（operator delete）→ [esi+8]=0 清槽 → ret
+- 直接 call 1 次/去重 1（0x7c8b3d——已登记）callees=1 吻合（picker 1，差值 0）
+- 判类：FieldClass 析构器（带名）——单成员 delete + 清槽（注意无虚表槽析构链，直接 thiscall）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2418.py：a 路 2/2 但含真 MISSING 0x42c900；b 路 4/4 已登记；c 路 1/1 已登记
+- **真 MISSING 新增 1 个（16 个）**：0x42C900（ranking.tsv:5620 `FUN_0042c900` 974B callees=10，caller=FootClass::FindPath——正是本批 a 路的调用目标；grep 确认 frontier_status.tsv 无该行）——记观察项排队，不阻塞本批
+- picker callees vs 核验差值：b 路差 2（picker 2 vs 核验 4，为 picker 间接/口径差异，无 IAT 目标可指认，标注观察不阻塞）；a 路差 0（含 MISSING 内计数）；c 路差 0
+- 无批内自引用；连续一百一十九批无真 MISSING（新 MISSING 按观察项排队）
+- 真 MISSING 排队 16 个：0x49E400 / 0x408B40 / 0x41caf0 / 0x45e750 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x4ca6e0 / 0x42ed60 / 0x4752e0 / 0x4759d0 / 0x472330 / 0x4B69D0 / **0x42C900（本批新增）**
+- UNKNOWN 观察 2 个不变：0x5077da / 0x474b20
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x42C900（真 MISSING，排队）：FUN_0042c900 974B callees=10 caller=FootClass::FindPath——寻路起点装配巨函，优先级靠前，后续批次 picker 命中时登记
+- 0x4CB8EC 跳转表 @0x4CB90C 与 @0x4CB97C（b 路内部数据段，已含在函数内）
+- 0x4CB98C（b 路后邻）：三清全局器——[0x8b3b38]/[0x8b3b40]/[0x8b3b44] 清零（同构 0x4D0540/0x4CBEF0 族）
+- 0x4CB990-0x4CB9A6：接 0x4CB97C 跳转表数据的后续指令（dword 清零段，属 0x4CB98C 函数）
+- 既有池延续：0x4D5660 / 0x4D55C0 / 0x4D4FC0 / 0x4D2F50 / 0x4D4B20 / 0x4D24A0 / 0x4D2510 / 0x4D1890 / 0x4D2ED0 / 0x4D1370 / 0x4D0510/0x4D0520/0x4D0530 / 0x4D0540 / 0x4D0560 / 0x4D0400 / 0x4CFA70 / 0x4CEFB0 / 0x4CC360 / 0x4CBEF0 / 0x4CBF10 / 0x4CC790 / [0x7e27f8] / [0x7e9228] / [0xa8b230]+0x218
