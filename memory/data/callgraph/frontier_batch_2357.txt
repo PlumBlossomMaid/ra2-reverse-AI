@@ -1,0 +1,78 @@
+# frontier batch 2357：帧时间更新器 + VectorClass 尾插器 + VectorClass 扩容装载器（0x513D20 / 0x5136C0 / 0x512E70）
+
+- 日期：2026-10-27
+- picker：按 unique_callers 扇入度取 top3（0x513D20 FUN_00513d20 callees=4 deps=1951 / 0x5136C0 FUN_005136c0 callees=0 deps=130 / 0x512E70 FUN_00512e70 callees=2 deps=127）
+- 三路 disasm：`.qwen/tmp/_d2357a.txt`（0x513D20 size 0x280）/ `_d2357b.txt`（0x5136C0 size 0x80）/ `_d2357c.txt`（0x512E70 size 0xC0）
+
+## 三函数总览
+
+| 地址 | 大小 | 尾 ret | 后邻函数头 | 跨函数直接 call/jmp |
+|------|------|--------|-----------|---------------------|
+| 0x513D20 | 529B | ret @0x513F30 | 0x513F40（[ebx+8] 坐标 fabs 比较——浮点检查器，未登记）| 7 个/去重 4——全部已登记，picker callees=4 吻合 |
+| 0x5136C0 | 80B | ret 4 @0x5136F2（失败）/0x51370D（成功）| 0x513710（[ecx+0x10] 下标查找——读取器，未登记）| 0 个/去重 0（虚表槽 8 间接不计，picker callees=0 吻合）|
+| 0x512E70 | 176B | ret 8 @0x512F14（成功）/0x512F1D（失败）| 0x512F20（★b 路同款尾插器变体，未登记）| 2 个/去重 2——全部已登记，picker callees=2 吻合 |
+
+## a 路 0x513D20（529B）——帧时间更新器
+
+```
+00513d20  push ebp → and esp, 0xfffffff8（★8 对齐帧）→ [esi+0xc] 虚表槽 0x1c8（★类型获取）→ [esp+0x10]/[esp+0x14]
+00513d45  [eax+0x5e0] cmp -1 → je 0x513de0 → ★0x578080（[0x87f7e8] MapClass 坐标 [eax+0x9c]）→ edi → ★[eax+0x5e0] and 7 → [0x89f6d8] 表（★8 项 8B——batch 2356 同表！）→ 0x578080 再算 → cmp → [0x8871e0]+0x5cc → [esp+0x14]
+00513de0  ★★浮点链：fild [esp+0x10] + fadd [esi+0x60] → 0x7c5f00 → [esp+0x10] → [esi+0xc]+4 虚表槽 0x10 → test al,1 → fld [0x7e1718]/[0x7e9258]（★分支常量）→ fmul [0x8871e0]+0x5d0 → fmul [0x7e27f8] → 0x7c5f00 → ★idiv 余数 → fild → fmul [0x7e3cc0] → fdiv → 0x4cacb0 → fadd st → fiadd → 0x7c5f00 → ★[esi+0x60] 钳制（<0 → 0）→ 虚表槽 0x1cc + [ecx+0x74] byte 交换
+00513e9d  ★[0x8871e0]+0x5cc 比较 → 0x55a930（[esi+4] 帧推进）→ fild + fisub + fdiv + fimul [eax+0x16b8] → fadd [esi+0x60]
+00513ed3  [0x8871e0]+0x5cc sar 2（★/4）→ ★★0x55555556 魔法数（imul → shr 0x1f → add——★÷3）→ fild + fadd [esi+0x60]
+00513f0e  ★尾部：fild [0x8871e0]+0x16b8 → fsubr [esi+0x60] → fmul [0x8871e0]+0x5f0 → [esi+0x60] → ret
+```
+
+**语义**：**帧时间更新器（推断名）——单位帧计时器推进（529B）**：thiscall 无参：★★[esi+0xc] 单位对象：虚表槽 0x1c8 类型 → ★0x578080 坐标 ×2（[0x87f7e8] MapClass）+ [0x89f6d8] 8B 表偏移（batch 2356 同表）→ ★★浮点链（fild/fadd/fmul/fdiv + 0x4cacb0 + [0x7e1718]/[0x7e9258]/[0x7e3cc0]/[0x7e27f8] 常量族 + 0x7c5f00）→ ★idiv 余数 + ★0x55555556 ÷3 魔法 → ★[esi+0x60] 帧计时器（钳制 <0→0 + 0x55a930 推进 + [0x8871e0] 时间对象 +0x5cc/0x5d0/0x5f0/0x16b8）→ 虚表槽 0x1cc 收尾。**★★帧时间更新（★★÷3 魔法 + 时间对象帧槽 + [0x89f6d8] 表——batch 2356 c 路同域）**。
+
+## b 路 0x5136C0（80B）——VectorClass 尾插器
+
+```
+005136c0  thiscall 1 栈参（[esp+8]=值指针）→ [esi+0x10] count vs [esi+8] capacity → jl 0x5136f5（无需扩容）
+005136cd  [esi+0xd] owns → 0x7c8e17 扩容（虚表槽 8——push 0/新容量）→ [esi+0x14] 增量 → test al → je 0x5136ef
+005136f5  ★尾插：[esi+0x10]++ → [edx+eax*4]=[esp+8] 值 → al=1 → ret 4
+005136ef  失败：xor al, al → ret 4
+```
+
+**语义**：**VectorClass 尾插器（推断名）——4B/项自动扩容尾插（80B）**：thiscall 1 栈参（值指针）：★count>=capacity 时扩容（[esi+0xd] owns 门控 + [esi+0x14] 增量 + ★虚表槽 8）→ ★★[edx+eax*4] 4B/项尾插 → count++ → ret 4。**★★VectorClass 尾插（★★batch 2349 a 路 0x52B0A0 同构 4B/项变体——虚表槽 8 扩容）**。
+
+## c 路 0x512E70（176B）——VectorClass 扩容装载器
+
+```
+00512e70  thiscall 2 栈参（[esp+0xc]=count/[esp+0x18]=外部指针）→ [esi+0xc]=0（★清排序标志）→ 外部指针非空直用（edi=ebx）→ 空：0x7c8e17（count×4）分配 → [esi+0xc]=1（owns）
+00512ea8  旧数组：★部分拷贝（count 较小者——[edx+eax*4-4] → [edi+eax*4-4]）→ owns → 0x7c8b3d 释放旧
+00512ee8  [esi+4]=新指针/[esi+8]=count → [esi+0xd]=sete（★外部指针时不 owns）→ [esi+0x10] 更新 → al=1 → ret 8
+```
+
+**语义**：**VectorClass 扩容装载器（推断名）——2 栈参容量装载（176B）**：thiscall 2 栈参（count + 可选外部指针）：★外部指针直用（不 owns）→ 空则 0x7c8e17（count×4）分配（owns）→ ★旧数组部分拷贝（count 较小者）+ 0x7c8b3d 释放旧 → [esi+4]/[esi+8]/[esi+0xd] 更新 → ret 8。**★★VectorClass 扩容装载（★★batch 2340 a 路 0x538B30 构造器同构变体——外部指针双路径）**。
+
+## callee 核验
+
+- a 路：跨函数直接 call 7 个/去重 4（0x578080/0x7c5f00/0x4cacb0/0x55a930）——**全部已登记无 MISSING**（picker callees=4 吻合）。
+- b 路：跨函数直接 call 0 个/去重 0（虚表槽 8 扩容间接）——**已登记无 MISSING**（picker callees=0 吻合）。
+- c 路：跨函数直接 call 2 个/去重 2（0x7c8e17/0x7c8b3d——分配/释放对）——**全部已登记无 MISSING**（picker callees=2 吻合）。
+- ★★核验脚本输出：三路全 PASS，**无 MISSING、无批内自引用**（连续六十七批三路无真 MISSING——排队 7 个真 MISSING 不变）。
+
+## 原版怪癖（照抄）
+
+1. a 路 ★★and esp, 0xfffffff8（★8 对齐帧——push ebp/and esp 混合）;
+2. a 路 ★★[eax+0x5e0] and 7 → [0x89f6d8] 表（★8 项 8B——[eax*8+0x89f6d8] 低 3 位索引）;
+3. a 路 ★★虚表槽 0x10 结果 test al,1 → fld [0x7e1718]/[0x7e9258]（★★分支常量选择）;
+4. a 路 ★★idiv 余数（cdq + idiv ecx——★余数当小数）+ fild/fmul [0x7e3cc0]/fdiv 链 + 0x4cacb0（★三角函数族）;
+5. a 路 ★★0x55555556 ÷3 魔法（imul → shr 0x1f → add edx——★batch 2355 同款除法族）;
+6. a 路 ★★[esi+0x60] 帧计时器钳制（<0 → 0——★负帧归零）+ [0x8871e0]+0x5cc sar 2（/4）分段;
+7. b 路 ★★[esi+0x14] 增量扩容（虚表槽 8 + push 0/新容量——batch 2349 同构）;
+8. c 路 ★★[esi+0xc]=0 清排序标志（batch 2348/2349 同槽）+ [esi+0xd]=sete（★外部指针 owns=0）;
+9. c 路 ★★部分拷贝 count 较小者（min(count, capacity)——★不拷贝超容量部分）.
+
+## 跨批次连接
+
+- ★★batch 2356（0x515ED0——a 路 [0x89f6d8] 表/0x4cacb0/[0x7e1718] 常量族同域）+ batch 2355（0x51FB00——a 路 0x55555556 ÷3 魔法同族）。
+- ★★batch 2349（0x52B0A0——b 路尾插器同构 8B/项 vs 4B/项）+ batch 2340（0x538B30——c 路构造器同构变体）+ batch 2348（0x52B2B0——c 路 [esi+0xc]/[esi+0xd] 排序/owns 槽族）。
+- ★★QWEN.md（0x87f7e8 MapClass——a 路 0x578080 使用方 + [0x8871e0] 时间对象——a 路帧槽使用方）。
+
+## 观察项 / 候选池
+
+- **新观察**：0x513F40（a 路后邻——[ebx+8] 坐标 fabs + fcomp [0x7e44e8] 浮点检查器）+ 0x513710（b 路后邻——[ecx+0x10] 下标查找读取器）+ 0x512F20（c 路后邻——★b 路同款尾插器变体）+ [0x89f6d8]（a 路 8B 表——batch 2356 同表）+ [esi+0x60]/[esi+0x74]（★a 路帧计时器/标志槽族）。
+- 未兑现 MISSING 旧观察（继续排队）：0x00486790（2267 起）+ 0x62E4C0/0x4F4C70/0x4F4CB0/0x4CB8B0/0x48BF10/0x48BEE0 + 0x4A6xxx/0x4A8xxx/0x4A9xxx 族 + 0x59A670/0x597A30/0x597760/0x5975F0/0x595CE0/0x595740 + 0x595400 + 0x593030/0x5910F0/0x5902C0/0x58EBC0/0x5A7440/0x5904B0 + 0x58C800/0x58BB30 + 0x58B7E0/0x58B7F0/0x58B800/0x58B070 + 0x58AC70/0x589EB0/0x589D90 + 0x5896A0/0x589190/0x588DE0 + 0x588BF0 + 0x588960 + 0x587180/0x586E50 + 0x486A70/0x586720/0x5865E0/0x5862C0 + 0x589290/0x5855A0/0x584550 + 0x581140/0x57F6A0 + 0x57DD50 + 0x58C2A0/0x57A430 + ★0x50D250/0x567110/0x4F42D0/0x4F42A0/0x4F4220 + ★0x55F6E0/0x55F1E0 + ★0x420E90/0x438BF0/0x4ACBC0/0x4C54A0/0x53A120/0x53A6C0/0x53D310/0x54E4D0/0x550150 + ★0x556AD0/0x556EB0/0x556D20 + ★0x554830/0x49E400 + ★0x551B20 + ★0x5517A0/0x5512D0 + ★0x5509E0/0x551300/0x551320/0x551330/0x551370 + ★0x550080/0x54F6F0/0x54F670 + ★0x54E890/0x54E8C0 + ★0x54E590/0x54D930/0x549E90 + ★0x547CE0/0x544BE0 + ★0x543780/0x542EC0 + ★0x5424C0 + ★0x5422C0/0x540F90 + ★0x540A80 + ★0x5402D0/0x53F5B0 + ★0x53ECB0/0x53EC70/0x53E470 + ★0x408B40/0x53E070/0x53E1D0/0x53DDE0 + ★0x53C4C0/0x53C280/0x53B560 + ★0x53B3F0/0x53B064 + ★0x53AC50 + ★0x53A6A0/0x53A140 + ★0x53A130/0x53A100 + ★0x538C10 + ★0x537F20/0x537E80/0x537F30/0x537E90 + ★0x537DE0/0x537B50/0x537DF0/0x537B60/0x535BD0/0x535BE0 + ★0x533F50 + ★0x41caf0/0x45e750/0x4f6eb0/0x531F60/0x5318C0 + ★0x52FFD0/0x52FC20/0x52D430 + ★0x406b10/0x434ad0/0x52CB90 + ★0x52B7A0/0x52B720 + ★0x52B4F0 + ★0x52B160/0x52AFC0 + ★0x52ACE0/0x52AA90/0x52A760 + ★0x529820/0x527B90/0x524FB0 + ★0x523980/0x5233D0/0x522FE0 + ★0x522E70 + ★0x5200B0 + ★0x517FA0 + ★0x5176D0/0x5164D0/0x516320 + ★0x513F40/0x513710/0x512F20（2357 新观察）。
+- 本批 **无 MISSING**（连续六十七批三路无真 MISSING——排队 7 个真 MISSING 不变）。next 批预期 top3 由 picker 决定（0x512F20/0x513F40 等后邻族继续排队）。
