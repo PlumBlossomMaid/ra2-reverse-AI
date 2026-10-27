@@ -1,0 +1,63 @@
+# frontier batch 2413
+
+日期：2026-10-27
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据）
+三路：a=0x4D4280（caller FUN_00740b10，deps=4）/ b=0x4D2F00（caller FUN_004d1650，deps=53）/ c=0x4D2E40（caller FUN_004d0ef0，deps=54）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2413{a,b,c}.txt，完整读取确认尾 ret
+核验：.qwen/tmp/_check_callees2413.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 5722 → 5725（三行全新增，ADD 3）
+
+## a 路：0x4D4280 单位状态跳转分派巨函（2177B）
+
+- 范围 0x4D4280-0x4D4B01（尾 ret @0x4D4B00，0x4D4B01 lea ecx,[ecx] 对齐，0x4D4B04 起跳转表）
+- prologue：sub esp,0x90 + 四寄存器保存；入口即 `mov [esi+0x430],1` 置位标志 + 虚表槽 0x31c 调用（push 2 → call [eax+0x31c]，返回字节 >>8 +6 作参数装配）
+- 状态分派：`mov eax,[esi+0xbc]` → `cmp eax,3` / `ja 0x4D4569`（默认路径）→ `jmp dword ptr [eax*4+0x4D4B04]` 跳转表
+- 跳转表 @0x4D4B04 四项目（数据解码）：状态 0→0x4D42EC、状态 1→0x4D45D8、状态 2→0x4D498A、状态 3→0x4D42C4
+- 状态 3 分支 0x4D42C4：`mov eax,[esi+0x5a4]` 门控（==0 → ja 目标 0x4D4569）→ `[esi+0xbc]=0` 复位 + 返回 1（结束路径）
+- 状态 0 分支 0x4D42EC：`lea ecx,[esi+0x9c]` 三字段（+0/+4/+8）装配栈 → 虚表槽 0x3c4 调用（push 2 参）→ 返回值 [eax+0x14]&2 标志位负化掩码（sbb/and 惯用法）对象筛选 → 链式虚表槽分派（0x3c4 后接 0x44/0x480/0x484/0x53c/0x2c/0x330/0x3f8/0x3c8/0x4c 等多槽）
+- 尾段虚表槽 0x484 调用 → `mov [esi+0xbc],3` 状态推进 → 返回 1（0x4D4AE7-0x4D4B00）
+- 直接 call 19 次去重 12：0x42d170×3 / 0x4f9a50 / 0x565730 / 0x5657a0 / 0x56d230 / 0x56dc20 / 0x5b3a00 / 0x5f5c60 / 0x65c7e0（RandomRanged）/ 0x70c610 / 0x7c5f00（_ftol）/ 0x7dc720（COM 错误记录）——全部已登记
+- callees=12 吻合（picker 12，核验去重 12，差值 0）；无 IAT 间接调用差值
+- 判类：状态机推进器——每状态阶段消耗固定虚表槽调用序列 + 随机数（0x65c7e0），[esi+0xbc] 状态域 0-3 复位循环
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x4D2F00 二分查找（68B）
+
+- 范围 0x4D2F00-0x4D2F42（ret 4 ×2 @0x4D2F39 未命中路径 / @0x4D2F41 命中路径）
+- thiscall 2 栈参：esi=edx（计数，test edx,edx jle 直接返回 0）、键值 [esp+0x10]（mov ebx,[eax] 首 dword）、ecx=8B 项数组基址
+- 循环 0x4D2F0F：cdq/sar eax,1 中间索引（无符号折半）→ `[ecx+eax*8]` 项首 dword 与键值比较：
+  - `cmp edi,ebx` / `jle`——项值 ≤ 键值 → 命中检查 `je 0x4D2F3C`（命中返回 ptr=[edx] 项地址）；未命中则 lea ecx,[edx+8] 右边界收紧（or edx,-1 / sub edx,eax / add esi,edx）
+  - 项值 > 键值 → esi=eax 左边界收紧
+  - `test esi,esi` / `jg` 继续；归零 → 未命中返回 0（xor eax,eax @0x4D2F36）
+- 命中路径 0x4D2F3C：mov eax,edx（返回项指针）+ eax=1 布尔化（返回 [0x4D2F3C 首] 实际是项指针，返回语义=找到项地址）
+- 直接 call 0 次（纯比较循环，callees=0 空集吻合，差值 0）
+- 后邻 0x4D2F50 独立函数：fld [0x7e1710]/[0x7e1708] 常量对 → 0x7c8fb0 C 库 → fadd st0,st0 二倍 → 0x4cac40 距离/平方根 → fstp [0x8b3d90] 全局——待入池候选
+- 判类：排序 8B 项数组的二分查找器（VectorClass 缓冲直查，无虚表）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x4D2E40 VectorClass 8B 项扩容重置器·副本（134B）
+
+- 范围 0x4D2E40-0x4D2EC4（ret 4 ×2 @0x4D2EBA 成功路径 / @0x4D2EC3 失败路径）
+- thiscall 1 栈参（ebp=增额）：`test ebp,ebp` / `jl 0x4D2EBD`（负数直接失败返回 0）
+- 新容量 = [esi+8] 旧容量 + 增额；`lea eax,[ebx*8]` 字节数（8B/项）→ push + 0x7c8e17 operator new
+- new 失败（edi==0 → je 0x4D2EBD）返回 0；成功则拷贝旧数据：
+  - 拷贝循环 0x4D2E77：mov edx,[esi] 旧缓冲 + ecx 计数，`cmp ecx,[esi+4]` / `jl` 限制拷贝 min(新容量, 旧有效数) 项，每项双 dword（[edx]/[edx+4] → [eax+edi]/[eax+edi+4]）8B 拷贝
+- 0x7c8b3d operator delete 释放旧缓冲 → [esi]=新缓冲 / [esi+8]=新容量 / `[esi+0x10]=0` 计数清零 → al=1 返回
+- 失败路径 0x4D2EBD：xor al,al 返回 0
+- 直接 call 2 次/去重 2：0x7c8b3d / 0x7c8e17——全部已登记；callees=2 吻合（picker 2，核验 2，差值 0）
+- 判类：VectorClass 家族扩容器（与 2398/2399/2400 同构副本，8B 项版本；[esi+4] 缓冲 / [esi+8] 容量 / [esi+0x10] 计数布局，与家族 vtable 0x7ea624 一致）
+- 语义证据级别：assembly_decompile_verified（partial；同族已有 2398/2399/2400 已登记副本，本函数为独立实体另行登记）
+
+## 核验结果
+
+- _check_callees2413.py：a 路 19 次直接 call 去重 12 全部已登记（callees=12 差值 0）；b 路 0/0 空集；c 路 2/2 已登记（差值 0）——三路全 PASS
+- 本批无批内自引用；连续一百一十四批无真 MISSING
+- 真 MISSING 排队 15 个不变：0x49E400 / 0x408B40 / 0x41caf0 / 0x45e750 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x4ca6e0 / 0x42ed60 / 0x4752e0 / 0x4759d0 / 0x472330 / 0x4B69D0
+- UNKNOWN 观察 2 个不变：0x5077da / 0x474b20
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4D2F50（b 路后邻）：独立函数——fld 常量对 0x7e1710/0x7e1708 → 0x7c8fb0 → fadd 二倍 → 0x4cac40 → [0x8b3d90] 全局写
+- 0x4D4B20（a 路后邻）：独立函数——[esi+0x2b4] 对象 + 虚表槽 0x2c 类型 ==6 判定 + [edi+0x6c0] → [eax+0xec2] 标志 + push 0xe 参数
+- 既有池延续：0x4D5660 / 0x4D55C0 / 0x4D4FC0 / [0x7e27f8] 延迟常量 / [0x7e9228] 阈值 / [0xa8b230]+0x218 开关域
