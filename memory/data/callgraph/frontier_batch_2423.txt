@@ -1,0 +1,54 @@
+# frontier batch 2423
+
+日期：2026-10-27
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据）
+三路：a=0x4C6180（130B）/ b=0x4C6140（37B）/ c=0x4C54E0（985B）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2423{a,b,c}.txt，完整读取确认尾 ret
+核验：.qwen/tmp/_check_callees2423.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 5752 → 5755（三行全新增，ADD 3）；真 MISSING 队列 15 个不变
+
+## a 路：0x4C6180 表拷贝+字段填充初始化器（130B）
+
+- 范围 0x4C6180-0x4C6202（尾 ret @0x4C6201；0x4C6202 起 nop pad，下函数 0x4C6210 逐字节扫描器）
+- thiscall 无参：push esi → [0xa8b230] 全局基址 → **循环拷贝**：eax 从 0x29 步进 +1/次到 0x802（cmp eax,0x802 jl），每次 `mov dl,[eax+edx+0x1c87]`（[0xa8b230]+0x1c87 偏移表）→ `mov [ecx+esi-1],dl`（ecx 从 0 递增，写到 this+ecx-1 → this[0..0x7d8] 逐字节填表）
+- 续：[0xa83d4c]+0x24 虚表对象 → call [ecx+0x18] → +0x34=eax；[0xa8b230]+0x11e8/+0x11f0 差值钳位（-1 哨兵跳 / [0xa8ed84]-edx 与 eax 比较取差或 0）→ +0x38；[0xa83d4c]+0x184 → +0x3c；[0xa8b230]+0x35a0 word → +0x40（word）
+- 直接 call 0 次/去重 0 callees=0 吻合（picker 0，差值 0）——唯一调用是间接 `call [ecx+0x18]`
+- 判类：全局表初始化字段填充器（[0xa8b230] 大表 0x1c87 偏移段 0x29..0x802 拷入对象头部 + 三全局快照字段）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x4C6140 清零构造器（37B）
+
+- 范围 0x4C6140-0x4C6165（尾 ret @0x4C6164；0x4C6165 起 nop pad，下函数 0x4C6170 空函数 ret）
+- thiscall 无参：mov edx,ecx → +0x34=0、+0x38=0、+0x3c=1（默认值）、+0x40(word)=0 → rep stosd 0xc 次（0x30 字节清零 this[0..0x2f]）+ stosw（+0x30 word）→ ret
+- 直接 call 0 次/去重 0 callees=0 吻合（picker 0，差值 0）
+- 判类：对象清零构造器（+0x3c=1 默认标志——与 a 路 +0x3c=[0xa83d4c]+0x184 真值填充配对：构造先置 1、后续覆盖）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x4C54E0 双循环邻域扫描器（985B）
+
+- 范围 0x4C54E0-0x4C58B7（尾 ret 4 @0x4C58B6；0x4C58B9 起 nop pad，下函数 0x4C58C0 同族扫描器）
+- thiscall 1 栈参（ret 4）：sub esp,0x38 栈帧 + push ebx/ebp/esi/edi
+- 前置门控：[ebx+0x2c]+[ebx+0x30] vs [0xa8ed84]（全局共享计数）jle 直退；[ebx+0x28] 自乘 = 半径²（[esp+0x20]）
+- 外层：[0xa8e3a0] 全局计数遍历 [0xa8e394] 数组（esi=项）：[esi+0x74] 标志非零 + [esi+0x81] 标志为零 + call [edx+0x54]（虚表查询）假 + [esi+0x6c]>0 门控链 → 取 [ebx+0x24]/[ebx+0x26] word 中心 → shl 8 + add 0x80 → call [eax+0x48] 取包围盒 → 0x41c230（三点距离计算）→ 0x41c380（区间判定）→ 与 [ebx+0x28]<<8 比较 jge 跳过 → 0x5657e0（MapClass 取格，ecx=0x87f7e8）+ 0x5657a0（MapClass 放置链）→ 0x47c520（关联对象）→ 非空走主链：0x47c3d0（按对坐标查对象）→ 虚表槽 0x2c 判定（==1/==2）→ [esi+0x674] 子对象链 0x7dc720（0x80004003 E_NOINTERFACE 三次抛出点）+ 虚表槽 0x5c/0x10/0x48 → 0x7c8e17（operator new 0x1c8）→ 0x65c7e0（Randomizer::RandomRanged(0,0x19) ecx=[0xa8b230]+0x218）→ 虚表槽 0x48 装配 + [0x8871e0]+0x17f4 → 0x421ea0（对象装配）→ 0x424b50（附加对象）
+- 内层双循环：[ebx+0x28] 半径正负扫描（esi 从 -r..+r、edx 从 -r..+r），中心+偏移 word 对 → 边界判定（<0 / >=0x200 跳）→ 0x5657e0 取格 → 距离² 与半径² 比较 → 0x5657a0 放格 → 0x47c520 取关联 → 0x452480（对象状态查询）→ [esi+0x520]+0x1701 标志门控 → 写 [esi+0x504]
+- 直接 call 14 次/去重 12：0x41c230 / 0x41c380 / 0x421ea0 / 0x424b50 / 0x452480 / 0x47c3d0 / 0x47c520 / 0x5657a0 / 0x5657e0 / 0x65c7e0 / 0x7c8e17 / 0x7dc720——**全部已登记**（0x7dc720 ×3）
+- picker callees=12 vs 核验去重 12，**差值 0**（本批无 IAT 间接调用差值；多虚表调用不计）
+- 判类：地图邻域对象扫描/装配器（半径环扫描 + MapClass 取放格 + 关联对象查询 + RandomRanged 随机 + operator new + 对象装配——生产域巨型扫描函数）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2423.py：a 路 0/0、b 路 0/0、c 路 14 次去重 12/12——三路全 PASS
+- picker callees vs 核验差值：三路均差 0（c 路 12 直接 call 全已登记，含 0x7dc720 ×3 去重 1）
+- 无批内自引用；真 MISSING 队列 15 个不变
+- 真 MISSING 排队 15 个：0x49E400 / 0x408B40 / 0x41caf0 / 0x45e750 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x4752e0 / 0x4759d0 / 0x472330 / 0x4B69D0 / 0x42C900（2418 批新增）
+- UNKNOWN 观察 2 个不变：0x5077da / 0x474b20
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4C6210（a 路下函数）：逐字节扫描器——sub esp,0xc + 0x32 次循环 0x689670 逐字节处理 + fild [edi+0x34] fmul [0x7e1728 系] 浮点链 + 0x7c5f00 + 0x4f9950（MakeEnemy 后邻已登记族）
+- 0x4C6170（b 路下函数）：空函数——`ret` 单指令（占位/空实现）
+- 0x4C58C0（c 路下函数）：同族扫描器第二实例——sub esp,8 + movsx 类型码 + neg/imul 半径² + 双循环骨架（0x4c58dd 起与 c 路同构）
+- 0x41C230/0x41C380（c 路已登记被调）：三点距离计算/区间判定（c 路核心几何，可追溯其登记批次语义）
+- 既有池延续：0x4D5660 / 0x4D55C0 / 0x4D4FC0 / 0x4D2F50 / 0x4D4B20 / 0x4D24A0 / 0x4D2510 / 0x4D1890 / 0x4D2ED0 / 0x4D1370 / 0x4D0510/0x4D0520/0x4D0530 / 0x4D0540 / 0x4D0560 / 0x4D0400 / 0x4CFA70 / 0x4CEFB0 / 0x4CC360 / 0x4CBEF0 / 0x4CBF10 / 0x4CC790 / 0x4CB98C / 0x4CB480 / 0x4CAD80 / 0x4CA750/0x4CA760/0x4CA770 / 0x4C9C70 / 0x4C9FF0 / 0x4C6CB0 / 0x4C6BE0 / 0x4C66C0 / 0x4C6360 / [0x7e27f8] / [0x7e9228] / [0xa8b230]+0x218
