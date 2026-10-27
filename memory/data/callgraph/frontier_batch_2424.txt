@@ -1,0 +1,53 @@
+# frontier batch 2424
+
+日期：2026-10-27
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据）
+三路：a=0x4C54A0（55B）/ b=0x4C5470（37B）/ c=0x4C3D00（199B）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2424{a,b,c}.txt，完整读取确认尾 ret
+核验：.qwen/tmp/_check_callees2424.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 5755 → 5758（三行全新增，ADD 3）；真 MISSING 队列 15 个不变
+
+## a 路：0x4C54A0 全局数组倒序虚表调度器（55B）
+
+- 范围 0x4C54A0-0x4C54D7（尾 ret @0x4C54D6；0x4C54D7 起 nop pad，下函数 0x4C54E0 = batch 2423 已登记双循环邻域扫描器）
+- thiscall 无参：`mov eax,[0x8a3880]`（全局计数）→ lea esi,[eax-1] → esi<0 直退；**倒序遍历** [0x8a3874] 数组（[ecx+esi*4] 项）：
+  - [ecx+0x30]+[ecx+0x2c] 相加 edx → 与 [0xa8ed84]（全局共享计数）比较：`cmp eax,edx; jl 跳过`（[0xa8ed84] < 该项和才调）
+  - 通过 + 项非空 → call [eax+0x20] 虚表槽 0x20，**push 1**
+  - dec esi / jns 循环
+- 直接 call 0 次/去重 0 callees=0 吻合（picker 0，差值 0）——唯一调用是间接 `call [eax+0x20]`
+- 判类：全局数组批量通知调度器（[0x8a3880]/[0x8a3874] 数组族 + 虚表槽 0x20 实参 1——与 b 路同槽位不同遍历方向；门控 = [0xa8ed84] vs 项内计数和）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x4C5470 全局首项循环调度器（37B）
+
+- 范围 0x4C5470-0x4C5495（尾 ret @0x4C5494；0x4C5495 起 nop pad，下函数 0x4C54A0 = a 路）
+- thiscall 无参：`[0x8a3880]>0` 门控 → **while 循环**：取 [0x8a3874][0] 首项 → 非空 call [edx+0x20] 虚表槽 0x20 push 1 → 重读 [0x8a3880] 若仍 >0 继续（**首项循环反复调同一项**——不递减索引，靠被调副作用退栈）
+- 直接 call 0 次/去重 0 callees=0 吻合（picker 0，差值 0）——唯一调用是间接 `call [edx+0x20]`
+- 判类：全局首项重复调度器（与 a 路同数组族/同虚表槽 0x20/同实参 1；遍历策略相反：a 倒序全扫、b 首项 while 反复）——a/b 构成调度孪生
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x4C3D00 边界判定+颜色装配器（199B）
+
+- 范围 0x4C3D00-0x4C3DC5（尾 ret 4 @0x4C3DC4；0x4C3DC7 起 nop pad，下函数 0x4C3DD0 同族第二实例）
+- thiscall 1 栈参（ret 4）：sub esp,0x10 栈帧 + push esi/edi
+- 门控链：[0x887314] 虚表槽 0x80 查询（两次：>= / > 双边界）→ [edi+8] 与 `[0x887314] 值-0x34` 比较 + [edi+8] ∈ [-0x10, 0x20] 判定 → 栈参 [esp+0x1c] 字节标志门控 0x4c3dbf 直退
+- 主链：[0x8a00a4] 减 0x208 + cdq/sar 除 2 中心算出 → +0xc 高位标志：ah bit0 → ecx=1 / ah bit1 → ecx=4 → [0xa8ed80] 字节门控
+- 装配：[0x8a0f58] + [edi] + ecx + 0 + push 0 + 0x7ca405（5 参 IAT 族）→ add esp,4 清一参 → 0x6211d0（ecx=0x80ffff 掩码 + edx+ecx push——颜色/标志位装配）
+- 直接 call 2 次/去重 2：0x7ca405 / 0x6211d0——**全部已登记** callees=2 吻合（picker 2，差值 0）
+- 判类：边界区间判定 + 颜色标志装配器（虚表槽 0x80 尺寸查询 + 中心双字 + [edi+0xc] 高低位标志两态 + [0xa8ed80] 门控 + 0x80ffff 掩码装配）——UI/地图显示域
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2424.py：a 路 0/0、b 路 0/0、c 路 2/2——三路全 PASS
+- picker callees vs 核验差值：三路均差 0（c 路 2 直接 call 全已登记；a/b 无直接调用）
+- 无批内自引用；真 MISSING 队列 15 个不变
+- 真 MISSING 排队 15 个：0x49E400 / 0x408B40 / 0x41caf0 / 0x45e750 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x4752e0 / 0x4759d0 / 0x472330 / 0x4B69D0 / 0x42C900（2418 批新增）
+- UNKNOWN 观察 2 个不变：0x5077da / 0x474b20
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4C3DD0（c 路下函数）：同族第二实例——sub esp,0x10 + [esi+0xc] → 0x4a60d0 + [esi] → 0x433ed0 + [0x8a00a4]/[esi+8] + [0x887314]（c 路虚表槽 0x80 同宿主续）
+- 0x4C558C 附近 0x7ca405/0x6211d0 调用现场（batch 2423 c 路 0x4C54E0 与 2424 c 路 0x4C3D00 同域在线）——[0x887314]/[0x8a00a4]/[0x8a00a8] 全局族贯穿两批
+- 既有池延续：0x4D5660 / 0x4D55C0 / 0x4D4FC0 / 0x4D2F50 / 0x4D4B20 / 0x4D24A0 / 0x4D2510 / 0x4D1890 / 0x4D2ED0 / 0x4D1370 / 0x4D0510/0x4D0520/0x4D0530 / 0x4D0540 / 0x4D0560 / 0x4D0400 / 0x4CFA70 / 0x4CEFB0 / 0x4CC360 / 0x4CBEF0 / 0x4CBF10 / 0x4CC790 / 0x4CB98C / 0x4CB480 / 0x4CAD80 / 0x4CA750/0x4CA760/0x4CA770 / 0x4C9C70 / 0x4C9FF0 / 0x4C6CB0 / 0x4C6BE0 / 0x4C66C0 / 0x4C6360 / 0x4C6210 / 0x4C6170 / 0x4C58C0 / [0x7e27f8] / [0x7e9228] / [0xa8b230]+0x218
