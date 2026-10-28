@@ -1,0 +1,63 @@
+# frontier batch 2530
+
+日期：2026-10-28
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x41F490（229B FUN_0041f490 callees=5 deps=279）/ b=0x41F230（148B AITriggerTypeClass::HouseCredits callees=0 deps=78）/ c=0x41F180（171B AITriggerTypeClass::ChronoSphereCharged callees=1 deps=78）——AI 触发器/分派域三连（b/c 紧邻地址连续且同 AITriggerTypeClass 族延续 batch 2529；a 为句柄表遍历分派器）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2530{a,b,c}.txt（三路 0x200 窗分段读全，尾 ret 确认：a 单出口 ret@0x41F574（下函数 0x41F580 sub esp,0x270 巨函：0x526b00/0x528a10/0x7c9cc2/0x7c91d0/0x727cf0/0x7c8d20/0x6f0fc0 INI 装载——观察项）、b 多出口 ret 8（跳表 6 出口 + default @0x41F2C1 收敛，下函数 0x41F2E0 大函数：0x526960/0x526cc0/0x7c8d20/0x7c8e17/0x41e350/虚表槽 0x64 AI trigger 装配——观察项）、c 双出口 ret 8 @0x41F1B5(al=0)/@0x41F21E(al=1)（下函数 0x41F230=b 路，地址连续））
+核验：.qwen/tmp/_check_callees2530.py；a 5/5、b 0/0、c 1/1；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6073 → 6076（三行全新增，ADD 3）
+
+## a 路：0x41F490 FUN_0041f490（229B）
+
+- 范围 0x41F490-0x41F574（单出口 ret @0x41F574；0x41F580 起下函数 0x41F580（sub esp,0x270 巨函：0x526b00 装载 + 0x528a10 [0x7e2a18]+0x889f64 串 ×N + 0x7c9cc2/0x7c91d0 strcpy/memcpy + 0x727cf0 + 0x7c8d20 + 0x6f0fc0 + 0x818114 串族——INI/配置装载器，观察项））
+- thiscall，edx 输入（ebp=edx 参数，esi=ecx this）：**句柄表遍历/分派器**：
+  - **[0x7e2a18] 全局句柄计数 → call 0x526960**（@0x41f4a1 查询计数）→ ebx；test jle 0x41f4ea 空表早退
+  - **循环**（0x41f4ae-0x41f4e8，edi 0..ebx-1）：[0x7e2a18] → **call 0x526cc0**（@0x41f4b8 取第 i 项）→ **四参 call 0x528a10**（@0x41f4d2：push [0x7e2a18] + eax 项 + push 0x889f64 串 + lea [esp+0x10] 缓冲区 + push 0x20 长度——格式装载）→ **call 0x5257c0**（@0x41f4e0 读取回填）→ inc edi jl
+  - **清尾**：push 0 + [0x7e2a18] → **call 0x5257c0**（@0x41f4f5）
+  - **[0xa8b210] 对象表计数 jle 0x41f525**；[0xa8b204] 数组基：[eax+edi*4] 逐项 → **cmp [ecx+0x9c],ebp**（匹配 edx 参数）→ 命中：push esi + **虚表槽 0x68**（@0x41f518 委派匹配项）
+  - **ebp==0 分支**（0x41f529-0x41f56b）：[0x7e2a1c] 句柄计数 → 先 call 0x5257c0（@0x41f532）→ [0xa8b210]/[0xa8b204] 二次遍历：[eax+0xa4] 字节 + [eax+0x24] 坐标 → **三参 call 0x529560**（@0x41f55e：[0x7e2a1c] + 坐标 + byte）
+- 直接 call 7 次/去重 5：0x526960×1、0x526cc0×1、0x528a10×1、0x5257c0×2、0x529560×1——picker callees=5 吻合，差值 0（虚表槽 0x68 间接不计）
+- 判类：FUN_0041f490——句柄表遍历/分派器（[0x7e2a18]/[0x7e2a1c] 全局句柄组：0x526960 计数 + 0x526cc0 取项 + 0x528a10/0x5257c0 格式装载读回；[0xa8b204] 对象表匹配 [+0x9c]==edx 虚表槽 0x68 委派；edx==0 时 0x529560 二次分派）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x41F230 AITriggerTypeClass::HouseCredits（148B）
+
+- 范围 0x41F230-0x41F2C1（多出口 ret 8：跳表 6 个算子出口 + default @0x41F269/0x41F27B/0x41F28D/0x41F29F/0x41F2B1/0x41F2C1；0x41F2C4 起跳表数据，0x41F2E0 起下函数 0x41F2E0（大函数：0x526960/0x526cc0 句柄遍历 + 0x817474/0x817694 串比对 + [0xa8b210]/[0xa8b204] 表 + new 0x110 + call 0x41e350 构造 + 虚表槽 0x64/0x9c/0xa4 装配——AI trigger 装载，观察项））
+- thiscall 1 栈参（ret 8）：**信用比较分派器**（跳表比较算子）：
+  - eax=[esp+8]（第 1 参对象）；test eax je 0x41f2bd（空参返 0）
+  - **[eax+0x24] 虚表头 → call dword [ecx+0x18]**（@0x41f245 虚表槽 0x18 取信用值）→ eax=被比较值
+  - **[esi+0xe8] 5 路跳表**：cmp ecx,5 ja 0x41f2bd default；jmp [ecx*4+0x41f2c4]（6 出口算子族）：
+    - setl（<）/ setle（<=）/ sete（==）/ setge（>=）/ setg（>）/ setne（!=）——逐一 cmp eax,[esi+0xe4] 基准值 → al=bl → ret 8
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0（虚表槽 0x18 间接不计；jmp 跳表非 call）
+- 判类：AITriggerTypeClass::HouseCredits——信用比较分派器（参数对象虚表槽 0x18 取 кредит 值 vs [esi+0xe4] 基准，[esi+0xe8] 比较算子跳表 setXX 六种比较返回值；纯跳表无跨函数调用）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x41F180 AITriggerTypeClass::ChronoSphereCharged（171B）
+
+- 范围 0x41F180-0x41F21E（双出口 ret 8 @0x41F1B5（失败 al=0）/ret 8 @0x41F21E（通过 al=1）；0x41F230 起下函数 = b 路，地址连续）
+- thiscall 1 栈参（ret 8）：**超时空充能判定器**（队列内有超时空兵且充能比例达标返 1）：
+  - ecx=[esp+8]（第 1 参队列对象）；test ecx je 0x41f1b5 返 0
+  - **[ecx+0x264] 计数 jle 返 0**；[ecx+0x258] 阵列基：mov esi,ecx → 逐项（eax 0..count-1，[esi+eax*4]）：mov ebx,[ecx]（项虚表）→ [ebx+0x28] → **cmp [ebx+0xb4],3**（类型 3：超时空）命中 0x41f1bd，未命中 inc 继续
+  - **命中项校验**：eax=[esi+eax*4] 非空 → [eax+0x6d] 字节非 0（激活/存在标志）→ [eax+0x30] 坐标
+  - **距离换算**：[0xa8ed84] 全局坐标 - [eax+0x30] → cmp [eax+0x38] 越界 → 0x41f221 置 0（超远钳制）
+  - **call 0x6cc260**（@0x41f1ea 对象/坐标查询转换）→ [0x8871e0] 全局 → **fild [esp+8] / fild [esp+0x10] → fdiv st(1)**（充能比例）→ **fld [0x7e2ac8] - fsub [eax+0xd70]**（阈值差）→ **fcompp** → test ah,1 jne 0x41f1b5 返 0 → al=1 ret 8
+- 直接 call 1 次/去重 1：0x6cc260——picker callees=1 吻合，差值 0
+- 判类：AITriggerTypeClass::ChronoSphereCharged——超时空充能判定器（[+0x264] 计时计数 >0 + [+0x258] 队列项虚表类型 3（[ebx+0xb4]==3）+ [+0x6d] 激活 → [0xa8ed84] 距离钳制 + 0x6cc260 查询 → fild/fdiv 充能比例 vs [0x7e2ac8]-[0x8871e0]+0xd70 阈值 fcompp 比对返 bool）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2530.py：a 路 5/5（0x526960/0x526cc0/0x528a10/0x5257c0/0x529560 已登记）、b 路 0/0、c 路 1/1（0x6cc260 已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0（虚表槽 0x68/0x18 间接不计）
+- 无批内自引用（a/b/c 互不落对方函数体，b/c 地址连续仅为排布）；无 MISSING（真 MISSING 队列 6 个不变：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x41F580（a 路下函数）：INI/配置装载巨函（0x526b00 + 0x528a10 [0x7e2a18]+0x889f64 串 ×N + 0x7c9cc2/0x7c91d0 strcpy/memcpy + 0x727cf0 + 0x7c8d20 + 0x6f0fc0 + 0x818114 串族，sub esp,0x270）——后续批次优先跟进登记
+- 0x41F2E0（b 路下函数）：AI trigger 装载大函数（0x526960/0x526cc0 句柄遍历 + 0x817474/0x817694 串比对 + [0xa8b210]/[0xa8b204] 表查重 + new 0x110 + 0x41e350 构造 + 虚表槽 0x64/0x9c/0xa4 装配）——后续批次优先跟进登记
+- 0x6cc260（c 路 callee）：对象/坐标查询转换（fild/fdiv 前转换，全库高频）——候选池优先跟进
+- 0x526960 / 0x526cc0 / 0x528a10 / 0x5257c0 / 0x529560（a 路 callee 组）：句柄表查询/装载族（[0x7e2a18]/[0x7e2a1c] 双句柄组高频）——候选池优先跟进
+- 0x41e350（b 路下函数 callee）：对象构造器（new 0x110 后调用）——候选池优先跟进
+- 0x8871e0 / 0x7e2ac8 / 0x7e2a18 / 0x7e2a1c（c/a 全局）：游戏全局对象 + 浮点阈值常数 + 双句柄组——数据全局/常量，登记池外观察
+- 既有池延续：见 batch 2529 观察项列表（AI 触发计数域 + 历史候选池全量延续）
