@@ -1,0 +1,66 @@
+# frontier batch 2528
+
+日期：2026-10-28
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x421350（865B FUN_00421350 callees=4 deps=122）/ b=0x420F40（1031B FUN_00420f40 callees=4 deps=127）/ c=0x420E90（170B FUN_00420e90 callees=0 deps=1928）——绘制/查表域三连（**地址连续：c→b→a 紧邻排布**；c 惰性构建 [0x88a118] 双通道混合表，a/b 两个绘制器消费同一张表；a 独有 8 邻域 0x88a0f4 对象数组主循环，b 带 0x20 空格透明分支）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2528{a,b,c}.txt（a 0x400 窗 169 行、b 0x500 窗 381 行分段读取、c 0x200 窗 72 行），完整读取确认尾 ret（a 单出口 ret @0x4216B0（下函数 0x4216C0 [0x88a118] 无条件填表器 0x81020409）、b 单出口 ret @0x421346（下函数 0x421350 = a 路）、c 单出口 ret @0x420F39（下函数 0x420F40 = b 路））
+核验：.qwen/tmp/_check_callees2528.py；a 4/4、b 4/4、c 0/0；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6067 → 6070（三行全新增，ADD 3）
+
+## a 路：0x421350 FUN_00421350（865B）
+
+- 范围 0x421350-0x4216B0（单出口 ret @0x4216B0；0x4216C0 起下函数 0x4216C0（mov byte [0x89a134],1 + [0x88a118] 0x81020409 imul 魔法逐项填表 0x10000 项，无惰性门控变体——观察项）、0x421730 [+0x7e32a4] vtable 装配器——观察项）
+- thiscall 无栈参（ret 空）：**绘制器主循环/调色板查表绘制器**（遍历对象数组逐项对屏幕区做混合查表 blit）：
+  - **对象数组主循环**：[0x88a100] 计数 `test eax,jle 0x4216a9` 空早退；[0x88a0f4] 数组基 `[eax+ebx*4]` 逐项（ebx 0..count-1）；[esp+0x44] 存 this
+  - 每项：push 0 ×2 → edx=item+0x28 → 四 dword 坐标结构拷 [esp+0x48..0x54]：[0x887324]+0xb0/+0xb4 相减（相机偏移取反）+ [0x886fa0]/[0x886fa4] 相加 → 屏幕坐标
+  - **call 0x421b60**（@0x4213fa 三参矩形求并：lea [esp+0x38] 输入 / lea [esp+0x4c] 输出 / lea [esp+0x88] this）→ 回 4 dword [esp+0x60..0x6c]；test [esp+0x68] jle 0x421694 跳过空
+  - 懒指针：edi=[item+0x38]；test edi je → [item+0x24] → **虚表槽 0x88**（@0x42144a）→ [eax+0xac] → [item+0x38] 回填（分帧延迟渲染指针化）
+  - **call 0x69e7e0**（@0x421473：edi 为 ecx，push 0 + lea [esp+0x90]）→ 4 dword 结果；四则 max/clamp 运算（[esp+0x1c]/[esp+0x10]/[esp+0x14]/[esp+0x18] 边界族）
+  - **call 0x69e740**（@0x421534：edi 为 ecx）→ [0x886fa0]/[0x886fa4] 再偏移 + **call 0x4114b0**（@0x42155d：[0x87e8a4] 为 ecx，push deltas 换行回绕处理）
+  - **内层双循环 blit**（0x4215c1-0x421624 / 0x421646-0x42168e）：源字节 [edi]（处 cursor）→ shl 8 + 现行目标字低字节 → **[edx+ecx+0x88a118] 双通道混合表查表** → 写 word [eax]；边界 [ecx+0x1c]/[ecx+0x20] 回绕 wrap；end-of-row [esp+0x10]/[esp+0x14] 步进
+  - 收尾：outer loop [0x88a100] vs ebx inc jl 0x421371；pop ×4 + add esp,0x90 → ret
+- 直接 call 4 次/去重 4：0x421b60、0x69e7e0、0x69e740、0x4114b0——picker callees=4 吻合，差值 0（虚表槽 0x88 间接不计）
+- 判类：FUN_00421350——绘制器主循环/调色板查表绘制器（[0x88a100]/[0x88a0f4] 对象数组逐项 + 相机偏移 [0x887324]+0xb0/+0xb4 + 0x421b60 矩形求并 + 虚表槽 0x88 懒指针回填 + 0x69e7e0/0x69e740 坐标换算 + 0x4114b0 换行回绕 + [0x88a118] 双通道混合表逐像素查表 blit）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x420F40 FUN_00420f40（1031B）
+
+- 范围 0x420F40-0x421346（单出口 ret @0x421346；0x421350 起下函数 0x421350 = a 路，地址连续）
+- thiscall 无栈参（ret 空）：**字形/精灵绘制器**（同类遍历 + 双向 0x3c×0x1e 尺寸剪裁 + 空格透明 blit）：
+  - [0x88a100] 计数 jle 0x42133e；[0x88a0f4] 数组基 [eax+edi*4] 逐项；**[+0x3c] 字节标志 test jne 0x42132a 跳过非激活**
+  - 每项：push 0 ×2 → edx=item+0x28 → 四 dword 拷 [esp+0x40..0x4c] + [0x887324] 相机偏移 + [0x886fa0]/[0x886fa4] → **call 0x421b60**（@0x420fe2 第一次求并）→ 4 dword [esp+0x90..0xa4]
+  - **二次 call 0x421b60**（@0x421048：[esp+0x84]=0x3c / [esp+0x88]=0x1e 尺寸对 + [item]/[item+4] 双 dword 输入）→ test [esp+0x54] jle 0x42132a
+  - **call 0x69e7e0**（@0x4210b1 item+0x38 为 ecx）→ 4 dword 结果 → [esp+0x84]/[esp+0x8c] 边界 + **call 0x69e740**（@0x4211b4）+ 0x7e2b20 表族（lea [ecx+eax*4+0x7e2b20] @0x4211a5）+ **call 0x4114b0**（@0x4211d3）
+  - **内层双循环 blit**（0x42123f-0x421281 / 0x4212d5-0x421306）：源字节 [esi] → **cmp cl,0x20 je 跳过（空格透明）** + shl 8 + 现行字低字节 → [0x88a118] 查表 → 写 word [eax]；[0x87e8a4] 换行回绕族
+  - 收尾：[esp+0x24] 计数 vs [0x88a100] jl 0x420f69；pop + add esp,0xc8 → ret
+- 直接 call 5 次/去重 4：0x421b60×2、0x69e7e0、0x69e740、0x4114b0——picker callees=4 吻合，差值 0
+- 判类：FUN_00420f40——字形/精灵绘制器（[0x88a0f4] 数组逐项 + [+0x3c] 激活门控 + 0x421b60 ×2（0x3c×0x1e 尺寸剪裁）+ 0x69e7e0/0x69e740 坐标换算 + 0x7e2b20 字形表 + 0x4114b0 换行回绕 + 0x20 空格透明 + [0x88a118] 查表 blit）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x420E90 FUN_00420e90（170B）
+
+- 范围 0x420E90-0x420F39（单出口 ret @0x420F39；0x420F40 起下函数 0x420F40 = b 路，地址连续）
+- thiscall 无栈参（ret 空，前段非 this 全局）：**双通道混合表惰性构建 + 对象刷新唤醒器**（a/b 绘制器共用表的唯一构建入口）：
+  - **[0x89a134] 惰性标志**：mov al,[0x89a134]; test al jne 0x420f07（已建跳过）→ mov byte [0x89a134],1
+  - **建表循环**（0x420ea3-0x420f05，esi 0..0x10000）：ecx=esi & 0x800000ff 符号扩展；eax=(esi + (esi>>31 & 0xff)) >> 8（算术 sar）；eax *= ecx；**imul eax,0x81020409**（除 255 近似魔法：sar edx,6 + shr eax,0x1f 补偿）→ clamp [0,0xff] → **[esi+0x88a118]=dl**——65536 项 256×256 双通道混合/着色表
+  - **对象刷新循环**（0x420f07-0x420f36）：ecx=[0x88a100]-1；esi=ecx-1 jl 0x420f38；[0x88a0f4][esi*4] 逐项 + **[+0x3c] 字节标志 test je 跳过非激活** → ecx=item → **虚表槽 0x20 push 1**（@0x420f2d 对象刷新唤醒）→ dec esi jns 循环
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0（虚表槽 0x20 间接不计）
+- 判类：FUN_00420e90——双通道混合表惰性构建 + 对象刷新唤醒器（[0x89a134] 惰性标志 + 0x81020409 imul 魔法构建 [0x88a118] 65536 项 clamp01 混合表 + [0x88a100]/[0x88a0f4] 数组逆序遍历 [+0x3c] 激活项虚表槽 0x20(1) 刷新）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2528.py：a 路 4/4（0x421b60/0x69e7e0/0x69e740/0x4114b0 已登记）、b 路 4/4（同四件套 0x421b60 ×2）、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0（虚表槽 0x88/0x20 间接不计）
+- 无批内自引用（a/b/c 互不落对方函数体，b 下函数=a、c 下函数=b 仅为地址连续性）；无 MISSING（真 MISSING 队列 6 个不变：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4216C0（a 路下函数）：[0x88a118] 无条件填表器（mov byte [0x89a134],1 + 0x81020409 imul 魔法 0x10000 项，c 路的无门控变体）——后续批次优先跟进登记
+- 0x421730（a 路下函数族）：[+0x7e32a4]/[+0x7e3288] vtable 装配器 + [0x88a0f0] 全局关联——观察项
+- 0x69e7e0 / 0x69e740（a/b 共用 callee）：坐标/尺寸换算对（多次 [0x886fa0]/[0x886fa4] 偏移联动，全库高频）——候选池优先跟进
+- 0x421b60（a/b 共用 callee）：矩形求并器（三参，batch 2524 观察池已在列）——后续批次优先跟进登记
+- 0x4114b0（a/b 共用 callee）：[0x87e8a4] 换行回绕处理器（push deltas 两参）——候选池优先跟进
+- 0x88a118 / 0x89a134（c 路全局）：65536 项双通道混合表 / 惰性构建标志（0x81020409 imul 魔法，绘制域核心数据）——数据全局，非函数，登记池外观察
+- 既有池延续：见 batch 2527 观察项列表（坐标/生命周期域 + 历史候选池全量延续）
