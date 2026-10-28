@@ -1,0 +1,70 @@
+# frontier batch 2525
+
+日期：2026-10-28
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x428DE0（81B FUN_00428de0 callees=2 deps=104）/ b=0x426990（187B FUN_00426990 callees=0 deps=45）/ c=0x4267F0（406B FUN_004267f0 callees=3 deps=1）——文件格式装载域三连（同族：c 装载器 → **call b 校验器（批内自引用）**；a 为读取器旁的释放器）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2525{a,b,c}.txt（b 路 0x300 窗、c 路 0x400 窗覆到 b 路口头），完整读取确认尾 ret（a 单出口 ret @0x428E30（下函数 0x428E40 `or eax,-1;ret` 恒 -1 桩族）、b 双出口 ret @0x426A46(al=1)/ret @0x426A4A(al=0)（下函数 0x426A50 [+0xa6] 条件递减装载器）、c 单出口 ret @0x426985（下函数 0x426990=b 路））
+核验：.qwen/tmp/_check_callees2525.py；a 2/2、b 0/0、c 3/3（含批内自引用 1：0x426990=b 路）；无 MISSING、无 UNKNOWN
+注册：TSV 6058 → 6061（三行全新增，ADD 3）
+
+## a 路：0x428DE0 FUN_00428de0（81B）
+
+- 范围 0x428DE0-0x428E30（单出口 ret @0x428E30；0x428E40 起下函数 0x428E40 `or eax,-1;ret` 恒返 -1 桩、0x428E50 `mov eax,5;ret` 恒 5、0x428E60 [ecx+0x294] 装载器、0x428E70 `mov eax,0x378;ret` 尺寸桩、0x428E80 ret 8 桩、0x428E90 ret 4 桩、0x428EA0 [0xb0f670] 链表族构造——观察项）
+- thiscall 无栈参（ret 空）：三标志门控释放器：
+  - **门控链**：[esi+0x35e] 字节非 0 → [esi+0xa4] 指针非空 → [esi+0x35f] 字节非 0，三条件全成立才执行释放；任一不成立跳 0x428e2f 直接 ret
+  - 释放体：lea [esi+0x64] → push + push 0x818688 → **call 0x4068e0**（DebugLog 串）→ mov ecx,[esi+0xa4] → push + **call 0x7c8b3d**（delete）→ add esp,0xc
+  - 收尾：[esi+0xa4]=0 指针清空 + byte[esi+0xa8]=0 标志复位 → ret
+- 直接 call 2 次/去重 2：0x4068e0、0x7c8b3d——picker callees=2 吻合，差值 0
+- 判类：FUN_00428de0——三标志门控释放器（[+0x35e]/[+0xa4]/[+0x35f] 全成立 → DebugLog(0x818688) + delete 指针 + 复位 [+0xa4]/[+0xa8]，否则静默返回）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x426990 FUN_00426990（187B）
+
+- 范围 0x426990-0x426A4A（双出口 ret @0x426A46（al=1 通过）/ret @0x426A4A（xor al,al 拒绝）；0x426A50 起下函数 0x426A50（[ecx+0xa6] 非 0 时 [ecx+0xcc] 减 1 装载器）、0x426A70/0x426A80 width/height 装载器——观察项）
+- thiscall 无栈参（ret 空）：文件头指纹校验器（**打印格式魔数判读，返回 bool**）：
+  - **[ecx+0x8c] dword cmp 0x2046504c（"LPF "）** jne 拒绝；**[ecx+0x9c] dword cmp 0x4d494e41（"ANIM"）** jne 拒绝——魔数对
+  - 尺寸族：word[+0x90] == 0x100（宽）；dword[+0x94] ja 0xffff 拒绝（高字压缩上限）；word[+0x98] == 0x100（高）；word[+0x9a] == 0x500 拒绝；word[+0xa0] == 0x140；word[+0xa2] == 0xc8
+  - 标志族：byte[+0xa9] ja 1 拒绝；byte[+0xab] != 1 拒绝；byte[+0xaa] 非 0 拒绝；byte[+0xa8] 非 0 拒绝
+  - **表遍历**：[+0x92] word 计数 > 0 时从 [ecx+0x80e] 起步长 6 逐项 cmp word == 0x100，任一 ja 拒绝（条目宽上限）
+  - 全过 → al=1 ret；任一拒绝 → 0x426a47 xor al,al ret
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0
+- 判类：FUN_00426990——文件头指纹校验器（"LPF "/"ANIM" 魔数 + 0x100/0x140/0xc8 尺寸族 + 标志族 + [+0x80e] 表逐项 0x100 上限，全过返 1；c 路 0x4268ed 装载后调用）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x4267F0 FUN_004267f0（406B）
+
+- 范围 0x4267F0-0x426985（单出口 ret @0x426985 收 [esi+0x88] al；0x426986 nop pad，下函数 0x426990=b 路）
+- thiscall 无栈参（ret 空）：格式装载器（读头部 + 建查找表 + 校验 + 分配工作缓冲）：
+  - **[esi+0x88] 已初始化标志 je 0x42697c 早返；[esi+0x84] 读取器指针非空检查**
+  - **清 [esi+0x8c..+0x10c]（rep stosd 0x20 dword）= 0x80 字节** → [esi+0x88]=1 → **[esi+0x84] 虚表槽 0x24 读 0x80 字节**到 [+0x8c]
+  - **清 [esi+4..+0x84]** → 虚表槽 0x24 读 0x80 字节到 [+4]（第二段头）→ **虚表槽 0x28 push 1/0 定位**
+  - 清/write [esi+0x10c..] → 虚表槽 0x24 读 0x400 字节到 [+0x10c]
+  - **查找表装配**（0x426888-0x4268c7，edx 0..0x100）：[ecx+1]/[ecx-1]/[ecx] 三字节 + 前符号扩展 → lea [eax+edi+0x50c] 写 word + byte（0x100 项 ×3B 表）
+  - 清 [esi+0x80c..]（rep stosd 0x180 dword = 0x600 字节）→ 虚表槽 0x24 读 0x600 字节到 [+0x80c]
+  - **调用校验：mov ecx,esi → call 0x426990（=b 路校验，批内自引用）→ test al,al jne 0x426904**；失败 → [esi] 虚表槽 8（析构入口）→ xor al,al ret
+  - 通过 → **new 0x20**（0x7c8e17）→ 失败 0x426956；成功装配：**[edi]=0x7e2104 vtable** → [edi+4]=word[+0xa0] 宽 / [edi+8]=word[+0xa2] 高 → imul 面积 → push → lea [edi+0x14] → [edi+0xc]=0 / [edi+0x10]=1 → **call 0x43ad00（二维数组构造）→ [edi]=0x7e2070 vtable 切换**
+  - **new 0x10000 → [esi+0xe0c]=edi** → rep stosd 0x4000 dword 清零 0x10000 字节 → **[esi+0xe10]=edi** 工作数组
+  - 收尾 → al=[esi+0x88] ret
+- 直接 call 4 次/去重 3：0x426990(批内=b)、0x7c8e17、0x43ad00——picker callees=3 吻合，差值 0（虚表槽 0x24/0x28/0x8/[esi] 间接不计；**批内自引用 1：0x426990/b，同批登记后闭合**）
+- 判类：FUN_004267f0——格式装载器（虚表槽 0x24/0x28 分段读头 + 0x100 项查找表装配 + b 路魔数校验委托 + new 0x20 渲染缓冲（0x7e2104→0x7e2070）+ new 0x10000 工作数组 [+0xe0c]/[+0xe10]，失败走虚表槽 8）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2525.py：a 路 2/2（0x4068e0/0x7c8b3d 已登记）、b 路 0/0、c 路 3/3（0x43ad00/0x7c8e17 已登记 + 批内自引用 1：0x426990）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0（虚表槽 0x24/0x28/0x8 间接不计）
+- **批内自引用 1 条**（c→b 0x426990），同批登记后闭合
+- 无 MISSING（真 MISSING 队列 6 个不变：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x428EA0（a 路下函数族）：[0xb0f670]/[0x8b4150] 链表族构造（虚表族 0x7e3608/0x7e35ec/0x7e35e4/0x7e35dc 四父 + delete）——后续批次优先跟进登记
+- 0x428E40/0x428E50/0x428E70（a 路下函数族）：恒返桩（or eax,-1 / mov eax,5 / mov eax,0x378 尺寸）——小桩族，后续批次可批量登记
+- 0x428E60（a 路下函数）：[ecx+0x294] 装载器（7B mov eax,[ecx+0x294];ret）——小桩族
+- 0x426A50（b 路下函数）：[ecx+0xa6] 非 0 时 [ecx+0xcc] 减 1 装载器（计数派生）——后续批次优先跟进登记
+- 0x426A70/0x426A80（b 路下函数族）：width/height word 装载器（极简）——小桩族
+- 0x426A90（b 路下函数，大函数）：[esi+0xe14]/[+0xe0c]/[+0xe10] 计数族 + 0x80c 表 6B/项二分量区间判 + 虚表槽 0x5c/0x80/0x7c/0x70/0x24/0x28/0x18 多槽——动画/渲染推进器，后续批次优先跟进登记
+- 0x43ad00（c 路 callee）：二维数组构造器（new 0x20 缓冲 [edi+0x14] 调用）——候选池
+- 0x7c8e17（c 路 callee）：operator new（全库高频）——既有已登记，无新增
+- 既有池延续：见 batch 2524 观察项列表（格生成放置域 + 历史候选池全量延续）
