@@ -1,0 +1,76 @@
+# frontier batch 2532
+
+日期：2026-10-28
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x41E720（937B AITriggerTypeClass::ConditionMet callees=9 deps=54）/ b=0x41DA20（283B AirstrikeClass::ResetTarget callees=1 deps=105）/ c=0x41D860（437B FUN_0041d860 callees=4 deps=3）——AITriggerTypeClass/Airstrike 域三连（a 为 AI 触发条件评估主分发器——跳表分派到 batch 2530/2531 五路已登记函数；b/c 为 AirstrikeClass 邻域相邻函数，c 下函数即 b 地址连续）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2532{a,b,c}.txt（a 0x400 窗、b 0x200 窗、c 0x200 窗读全，尾 ret 确认：a 主出口 ret 0xc @0x41EAC6（0x41EAC9 lea pad + 0x41EACC 跳表 + 0x41EAF0 = batch2531 c 路 EnemyHouseOwns 下函数）、b 双出口 ret 4 @0x41DA65（早退清理路径）/ret 4 @0x41DB38（主路径；0x41DB40 下函数 = b 路 callee 清理器）、c 单出口 ret 4 @0x41DA12（0x41DA15 nop pad + 0x41DA20 = b 路下函数，地址连续））
+核验：.qwen/tmp/_check_callees2532.py；a 9/9、b 1/1、c 4/4；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6079 → 6082（三行全新增，ADD 3）
+
+## a 路：0x41E720 AITriggerTypeClass::ConditionMet（937B）
+
+- 范围 0x41E720-0x41EAC6（主出口 ret 0xc @0x41EAC6，多失败点 ret 0xc 收敛；0x41EAC9 lea ecx,[ecx] pad + 0x41EACC 跳表数据 + 0x41EAF0 起下函数 = batch2531 c 路 EnemyHouseOwns，地址连续）
+- thiscall 3 栈参（ret 0xc）：**AI 触发条件评估主分发器**（条件族多路门控 + 跳表分派 + 双对象复核）：
+  - **双对象门控**：[+0xdc] 非空 && byte[+0xf6] 标志 → dl=1；或 [+0xe0] 非空 && [+0xf6] → dl=1；双空 xor dl（0x41e72c-0x41e752）
+  - **ebx=[esp+0x18] 参非空分支**：[0x8871e0] byte[+0x17f3] → [edi+0x184] 索引 → [eax+0x1394] 表项 vs [edi+0x566c] `cmp ebp,[eax+ecx*4]` jge 继续（0x41e764-0x41e78c）
+  - 门控早退：test dl je ret 0；[esp+0x1c] al 非空 jne 0x41e84c 跳过下段
+  - **条件族分段**（0x41e7b1-0x41e8f0）：[+0x9c]==1 → [0xa8b230]+0x34b4 cmp 1 je 0x41e84c（失败收敛）；[+0xa4] 字节非空 → [0xa8b238] 非空分支（[+0xd0] 字节非空 jne 0x41e855 成功区）→ 空则 [eax+0x60c] 检查 cmp 1/2 三分支（[+0xd2]/[+0xd3]/[+0xd4] 字节族门控）+ [+0xa0] cmp 1/2（[edi+0x34]→[+0xb8] vs [+0xa8] jne 失败）+ [+0xac] cmp 1/2/3（[edi+0x1e8] 比对族）+ [+0xb0] vs [edi+0x1d4] jle 继续
+  - **跳表分派**（0x41e8f0-0x41e9e1）：eax=[esi+0x98]+1，ebx 非空（0x41e8f6 je 0x41e9c7 默认路径）→ cmp 8 ja 失败；**jmp [eax*4+0x41eacc] 九路**：
+    - case 1: **call 0x41eaf0**（=batch2531 c 路 EnemyHouseOwns @0x41e913）
+    - case 2: **call 0x41ee90**（EnemyHouseOwns 变体 @0x41e921）
+    - case 3/4: 虚表槽 0x24 → 虚表槽 0x20（[ebx+0x24] 双调用 @0x41e932/0x41e93f）+ [esp+0x1c] 差量 → **fild + fcomp [0x7e2ac0]**（case 3 @0x41e950）/ **fcomp [0x7e2800]**（case 4 @0x41e98a）→ test ah,1 → al
+    - case 5: **call 0x41f230**（=batch2530 b 路 HouseCredits @0x41e99f）
+    - case 6: **call 0x41f0d0**（=batch2531 a 路 IronCurtainCharged @0x41e9aa）
+    - case 7: **call 0x41f180**（=batch2530 c 路 ChronoSphereCharged @0x41e9b5）
+    - case 8: **call 0x41ec90**（=batch2531 b 路 CivilianHouseOwns @0x41e9c0）
+    - 默认（ebx 空 0x41e9c7）：[+0x98]==1 → **call 0x41ee90**（@0x41e9d0）/ cmp -1 sete al
+  - **通过后双对象复核**（0x41e9ea-0x41eac6）：**call 0x41fee0** ×2（[+0xdc] @0x41e9f5 / [+0xe0] @0x41ea14 复核）→ **call 0x509610** ×2（[+0xdc] @0x41ea2d / [+0xe0] @0x41ea4a 计时器复核）→ [+0xdc] 非空 → [eax+0xb8] jl 跳过 → **call 0x5095d0**（@0x41ea71）+ cmp [+0xb8] jl 失败；[+0xe0] 同（@0x41eaa4）→ al=1 ret 0xc
+- 直接 call 13 次/去重 9：0x41eaf0、0x41ee90×2、0x41f230、0x41f0d0、0x41f180、0x41ec90、0x41fee0×2、0x509610×2、0x5095d0×2——picker callees=9 吻合，差值 0（虚表槽 0x24/0x20 间接不计；0x41ee90/0x41fee0 观察项确认早已登记，无 MISSING）
+- 跨批分派注记：case 1/5/6/7/8 五路 = batch 2530/2531 已登记 AI 触发子判定器，a 为它们的**条件评估总入口**
+- 判类：AITriggerTypeClass::ConditionMet——AI 触发条件评估主分发器（[+0xdc]/[+0xe0] 双对象 [+0xf6] 门控 + [0x8871e0]+0x1394 表 vs [+0x566c] + 条件族分段 + **0x41eacc 九路跳表分派**（batch2530/2531 五子判定器 + 0x41ee90 变体 + 虚表槽 0x24/0x20 差额浮点比较）+ 0x41fee0/0x509610/0x5095d0 双对象计时器复核）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x41DA20 AirstrikeClass::ResetTarget（283B）
+
+- 范围 0x41DA20-0x41DB38（双出口 ret 4 @0x41DA65（目标链不匹配清理早退）/ret 4 @0x41DB38（主路径）；0x41DB3B-0x41DB3F nop pad + 0x41DB40 起下函数 = 状态清理器（[0xa8e9a0] 门控 + [+0x5c] 链 [+0x5d8]/[+0x2fc] 清零 + 虚表槽 0x1e8/0x3c8/0x480 三连 + 0x100 上限 + [0x889fc8]/[0x889fbc] 全局表 + [+0x50] 虚表槽 0x2c==6 校验——观察项，b 路 callee）
+- thiscall 1 栈参（ret 4）：**目标重置/转移器**（Airstrike 指定新目标并清理旧目标）：
+  - [+0x5c] 目标链遍历（0x41da26-0x41da4d）：[+0x5d8] next 链 + [+0x2fc] 比对（链内任一 != eax 不匹配）→ **call 0x41db40**（@0x41da5c 清理早退）→ ret 4
+  - **旧目标钳制**：esi=[+0x50]；非空 → 虚表槽 0x2c（@0x41da6c 有效性查询）→ `sub 6 / neg / sbb / not / and` 掩码钳制（非法归 0）→ edi
+  - **新目标钳制**：ebx=[esp+0x14]；非空 → 虚表槽 0x2c（@0x41da8c 同掩码）→ esi；空则 xor esi
+  - **旧目标清理**（edi 非空 0x41daa0-0x41dabe）：[+0x294]=0 + 虚表槽 0x158（@0x41daae 清雷达/目标）+ 虚表槽 0x124 push 2（@0x41daba 移除动画）
+  - **新目标挂载**（esi 非空 0x41dacb-0x41dae6）：[+0x294]=ebp（回链 owner）+ push 0x186a0 + 虚表槽 0x15c（@0x41dada 设置大头阵/目标）+ 虚表槽 0x124 push 2（@0x41dae6）
+  - [+0x50]=[esp+0x14] 新目标写回（0x41daf4）→ [+0x30] 计数循环（edi 0..count-1，0x41daf7-0x41db32）：[+0x5c] 链 [+0x2fc]>0 → 虚表槽 0x3c8（push ebx @0x41db0e）+ 虚表槽 0x1e8（push 0/1 @0x41db1c）+ byte[+0x3d]=1（已标记）→ [+0x5d8] 下链 → ret 4
+- 直接 call 1 次/去重 1：0x41db40——picker callees=1 吻合，差值 0（虚表槽 0x2c/0x158/0x124/0x15c/0x3c8/0x1e8 间接不计）
+- 判类：AirstrikeClass::ResetTarget——目标重置/转移器（[+0x5c] 链 [+0x5d8]/[+0x2fc] 遍历 + 新旧目标双虚表槽 0x2c 有效性掩码钳制 + 旧目标 0x158/0x124 清理 + 新目标 0x294 回链 + 0x15c 挂载 + 0x124 动画 + [+0x30] 计数循环 + [+0x3d] 状态标记；0x41db40 清理委托）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x41D860 FUN_0041d860（437B）
+
+- 范围 0x41D860-0x41DA12（单出口 ret 4 @0x41DA12；0x41DA15-0x41DA1F nop pad + 0x41DA20 起下函数 = b 路 ResetTarget，地址连续）
+- thiscall 1 栈参（ret 4）：**出生点/放置引导装配器**（Airstrike 邻域坐标量引导装配）：
+  - [edi+0x54] 对象 → [+0xdf8] + [0x8871e0]+0xc78 → [+0xdf8]（双层对象跳转 @0x41d881-0x41d895）+ [+0x3c]=1/[+0x3d]=1/[+0x34]=0 初始化
+  - [edi+0x4c]+0x150 → **call 0x750010**（@0x41d8a2 检查/查询）→ test al 分支：[+0x58]→[+0xdf8]（3 参）或 [+0x24]（@0x41d8ab-0x41d8b9）
+  - [esp+0x28] 坐标对象 → 虚表槽 0x48（@0x41d8c9 坐标 getter）→ **cdq/sar 8 坐标量化**（>>8）/2 轴 → 写 word [esp+0x28]/[+0x2a] → **call 0x5657a0**（@0x41d907 坐标→cell）
+  - [+0x4c] 虚表槽 0x3c **七参**（push 1/ebx/0/edx/0/edi @0x41d913-0x41d91f 装配点名）→ **call 0x65e850**（@0x41d926 生成/注册）→ **[+0x2c]=[+0x30]=eax** 结果写回（0x41d92d-0x41d930）
+  - [+0x5c] 非空 → [+0x9c] 12B 坐标 + [0x8871e0]+0x260 → **call 0x7509e0**（@0x41d96b 登记）
+  - [+0x50]=esi（0x41d972）→ esi 虚表槽 0x2c==6（@0x41d97f）→ [+0x294]=edi + push 0x186a0 + 虚表槽 0x15c（@0x41d99a）+ [0x8871e0]+0x18a4 表 → **[+0x6f8]/[+0x6f9]/[+0x6fa] 序列字节 + [+0x6fc]=1**（0x41d9a1-0x41d9fb）+ 虚表槽 0x124（@0x41da05）→ ret 4
+- 直接 call 4 次/去重 4：0x750010、0x5657a0、0x65e850、0x7509e0——picker callees=4 吻合，差值 0（虚表槽 0x48/0x3c/0x2c/0x15c/0x124 间接不计）
+- 判类：FUN_0041d860——出生点/放置引导装配器（[0x8871e0] 全局 +0xc78/+0x18a4 表 + 0x750010 检查 + 虚表槽 0x48 坐标 >>8 量化 + 0x5657a0 取格 + 虚表槽 0x3c 七参点名 + 0x65e850 生成注册 + 0x7509e0 登记 + [+0x6f8..0x6fc] 序列字节 + 虚表槽 0x15c/0x124 挂载）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2532.py：a 路 9/9（0x41eaf0/0x41ec90/0x41ee90/0x41f0d0/0x41f180/0x41f230/0x41fee0/0x509610/0x5095d0 已登记——含 batch2530/2531 五子判定器 + 观察项 0x41ee90/0x41fee0 确认早已登记）、b 路 1/1（0x41db40 已登记）、c 路 4/4（0x750010/0x5657a0/0x65e850/0x7509e0 已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0（虚表槽间接不计）
+- 无批内自引用（a/b/c 互不落对方函数体；a 分派的是**前批已登记**函数，非本批另路）；无 MISSING（真 MISSING 队列 6 个不变：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x41DB40（b 路 callee/下函数）：状态清理器（[0xa8e9a0] 门控 + [+0x5c] 链 [+0x5d8]/[+0x2fc] 清零 + 虚表槽 0x1e8/0x3c8/0x480 三连 + 0x100 上限 + [0x889fc8]/[0x889fbc] 全局表 + [+0x50] 虚表槽 0x2c==6 校验）——后续批次优先跟进登记
+- 0x65e850（c 路 callee）：生成/注册器（虚表槽 0x3c 七参后调用，[+0x2c]/[+0x30] 双回写）——候选池优先跟进
+- 0x750010 / 0x7509e0（c 路 callee 对）：检查/登记对（[0x8871e0]+0xc78/+0x260 全局联动，0x7500xx 域）——候选池优先跟进
+- 0x41ee90 / 0x41fee0（a 路 callee）：已登记（核验确认）——无新增
+- 0x509610 / 0x5095d0（a 路 callee 对）：计时器复核（[+0xb8] 链比对，push eax 参数，0x509xxx 域）——候选池优先跟进
+- 0x8871e0（a/b/c 共用全局）：游戏全局对象（+0xc78/+0x1394/+0x17f3/+0x18a4/+0x260 多表族）——数据全局，非函数，登记池外观察
+- 既有池延续：见 batch 2531 观察项列表（AITriggerTypeClass 域 + 历史候选池全量延续）
