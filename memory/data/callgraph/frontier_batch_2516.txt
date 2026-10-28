@@ -1,0 +1,58 @@
+# frontier batch 2516
+
+日期：2026-10-28
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x431060（42B FUN_00431060 callees=0 deps=2）/ b=0x430F70（237B **带名 __declspec::SelectBeacon** callees=3 deps=281）/ c=0x430F30（36B **带名 __declspec::CanPlaceBeacon** callees=0 deps=4）——beacon 槽族三连（a 位清器、b 距离查找选中器、c 空格判定器；与 batch 2515 c 路 0x431090 异名同构，⭐b 路 0x430F70 正是真 MISSING 队列 10 个之一，本批自然选中即解决一条：队列 10→9）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2516{a,b,c}.txt，完整读取确认尾 ret（a 单出口 ret@0x431089（下函数 0x431090=batch2515 c 路已登记）、b 双出口 ret 0xc@0x43102E(al=0)/ret 0xc@0x43105A(al=1，下函数 0x431060=a 路)、c 双出口 ret 4@0x430F4C(al=0)/ret 4@0x430F51(al=1，下函数 0x430F60 双 dword 清零器)）
+核验：.qwen/tmp/_check_callees2516.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6031 → 6034（三行全新增，ADD 3）
+
+## a 路：0x431060 FUN_00431060（42B）
+
+- 范围 0x431060-0x431089（单出口 ret @0x431089；0x43108A 起 nop pad，下函数 0x431090 = batch 2515 c 路）
+- thiscall 无参：beacon 槽族位清器：
+  - **[ecx+0x60] 判空（je 0x431089）** → 直接返
+  - mov esi,8（外层组数）/ mov bl,0xfd（掩码）/ mov edx,3（每组槽数）→ **8×3 双层循环**：[ecx] 槽判空（je 跳过）→ 非空 **[eax+0xc] AND 0xfd**（清位 1，0xfd=11111101）→ 槽指针 +4/组 +0xc 步进
+- 直接 call 0 次/去重 0：纯直写——picker callees=0 吻合
+- 判类：FUN_00431060——beacon 槽族位清器（[ecx+0x60] 判空 + 8×3 槽 and [+0xc],0xfd 清位 1；与 batch 2515 c 路 0x431090 同对象域，清位版）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x430F70 __declspec::SelectBeacon（237B 带名）
+
+- 范围 0x430F70-0x43105A（双出口 ret 0xc @0x43102E(al=0)/ret 0xc @0x43105A(al=1)；0x43105D 起 nop pad，下函数 0x431060 = a 路）
+- thiscall 3 栈参（ret 0xc = **[ebp+8]**/**[ebp+0xc]**/**[ebp+0x10]** 三坐标）：最近信标查找选中：
+  - **[ecx+0x60] 判空（je 0x431026 返 al=0）**；[esp+0x18]=原 this → 8×3 双层循环（外层 [esp+0x10] 组数 +0xc、内层 esi 槽数 +4）
+  - 每槽：[edi] 非空 → **[eax]=x/[eax+4]=y/[eax+8]=z 三坐标 vs 三栈参 三轴 sub 差** → [esp+0x20/0x24/0x1c] 存差 → **fild ×3 + fld/fmul st(1)×3 + faddp 三维距离平方**（与 batch 2515 c 路同构）→ sub esp,8 + fstp qword → **call 0x4cac40**（sqrt）→ **call 0x7c5f00**（_ftol）→ **cmp eax,0x80 jl**（距离 <0x80 命中）
+  - 命中 0x431031：**eax=[esp+0x10]+[esi+eax*2] 复合索引 → [edx+eax*4] 槽对象 esi** → 非空 → **call 0x48dc90**（槽对象回调/激活）→ al=[esi+0xc] → **or al,2 → [esi+0xc]=2 置位（选中标志）** → al=1 → ret 0xc
+  - 全槽未命中 → 0x431026 xor al,al → ret 0xc
+- 直接 call 3 次/去重 3：0x4cac40、0x7c5f00、0x48dc90——picker callees=3 吻合，差值 0
+- 判类：__declspec::SelectBeacon（**带名**——三坐标 + 8×3 槽三维距离 0x80 门限查找最近信标 + 命中置 [esi+0xc] bit1 + 0x48dc90 激活回调；与 batch 2515 c 路 0x431090 异名同构（前者返槽指针，本路置位+回调））
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x430F30 __declspec::CanPlaceBeacon（36B 带名）
+
+- 范围 0x430F30-0x430F51（双出口 ret 4 @0x430F4C(al=0)/ret 4 @0x430F51(al=1)；0x430F54 起 nop pad，下函数 0x430F60（[esp+4] 双 dword 清零器——观察项））
+- thiscall 1 栈参（ret 4 = [esp+4] house 索引）：信标空格判定：
+  - **lea edx,[edx+edx*2]（house×3）→ lea ecx,[ecx+edx*4]**（3 槽窗口基址）
+  - 循环 eax=0..2：**cmp [ecx],0 → je 0x430F4F（有空格返 al=1）**；槽指针 +4 步进
+  - 三槽全非空（eax==3 退出）→ xor al,al → ret 4（返 0）
+- 直接 call 0 次/去重 0：纯判空——picker callees=0 吻合
+- 判类：__declspec::CanPlaceBeacon（**带名**——house 索引 ×3 槽窗口判空，有空格返回 1、三槽全占返 0）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2516.py：a 路 0/0（纯直写）、b 路 3/3（0x4cac40/0x7c5f00/0x48dc90 全已登记）、c 路 0/0（纯判空）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用（b 路命中槽索引计算为地址运算，非直接 call）；无 MISSING（**真 MISSING 队列 10→9：0x430F70 已被本批登记兑现**）；无 UNKNOWN
+- 真 MISSING 排队 9 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x430F60（c 路下函数）：[esp+4] 双 dword 清零器（mov [eax],ecx/[eax+4],edx ret 4——b 路复合索引清零配套）——后续批次优先跟进登记
+- 0x431028（b 路内部复合索引运算段）：命中槽索引 eax=[esp+0x10]+[esi+eax*2] → [edx+eax*4]——非函数不登记，仅记录索引算法
+- 0x48dc90（b 路 callee）：槽对象回调/激活器（SelectBeacon 命中后调）——后续批次优先跟进登记
+- 0x4cac40 / 0x7c5f00（b 路 callee）：sqrt / _ftol（batch 2506 a 路/c 路已多次见现场）——无新增
+- 既有池延续：0x459870 / 0x459880 / 0x459890 / 0x4598A0 / 0x4595C0 / 0x47C3D0 / 0x47C520 / 0x4C9220 / 0x4C9480 / 0x4C93D0 / 0x451E40 / 0x451890 / 0x65AD30 / 0x568300 / 0x4834A0、0x4589C0/0x457C90、0x5AE860/0x5AE980/0x5AE9B0/0x5AE9E0/0x5AF080/0x5AF1A0/0x5AEAD0/0x5AEAF0/0x5AEB20、0x4D0EF0/0x425260/0x50E010/0x50E0E0/0x472140/0x70FEE0/0x4870B0/0x487110/0x487130/0x7BB920、0x454730/0x452DC0/0x4533A0/0x452BB0/0x453060/0x4528A0/0x4525F0/0x452480/0x554A60/0x554A80/0x4A5130/0x4A51B0/0x4A51D0/0x656580/0x655560、0x452210/0x452260/0x4517D0/0x4500A0/0x5257c0/0x526b00/0x526960/0x526cc0/0x7c9cc2/0x7c9bfd/0x50c170/0x45e7b0/0x43b740/0x6e5e70/0x6e52a0/0x752700/0x509140/0x50b6f0/0x5f5b50/0x436be0、0x4068e0/0x481670/0x481810/0x6f3f40/0x4ff700/0x4c9680/0x465af0/0x750090/0x50b730/0x500510/0x4ca160/0x4aed70、0x43c0d0/0x43b680/0x427cb0/0x421ea0/0x424c90/0x424ca0/0x49fae0/0x4ff550/0x45ae10/0x45add0/0x410220/0x41c590、0x41c230/0x41c380/0x480a30/0x43adf0/0x43a160/0x43a190、0x439b00/0x4393d0/0x4393e0/0x578080/0x6cf240/0x439110、0x439030/0x438e60/0x410170/0x405be0/0x405d40/0x750d40/0x434b10/0x433940/0x4346c0/0x433990/0x434700/0x6612c0/0x434120/0x433cf0、0x433860/0x4336c0/0x433270/0x433330、0x433060/0x432e40/0x432bd0/0x53e730/0x53e770/0x54f720/0x54f000/0x54f050、0x432750/0x65d0d0/0x4326c0、0x4318d0/0x4318f0/0x65cce0/0x65cdd0/0x7ca090/0x431dd0/0x4f9a10、0x431450/0x431170/0x4f9a10(重)（以上 batch 2501-2515 观察项）
