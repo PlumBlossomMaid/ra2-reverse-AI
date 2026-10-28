@@ -1,0 +1,70 @@
+# frontier batch 2503
+
+日期：2026-10-28
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x44FE60（82B FUN_0044fe60 callees=2 deps=44）/ b=0x44F820（1586B FUN_0044f820 callees=24 deps=22）/ c=0x44ABD0（277B **带名 BuildingClass::FireLaser** callees=2 deps=7）——BuildingClass 状态批量格式化/配置解析/激光触发域（a 与 c 经 0x44fec0/0x54fe60 汇入 batch2502 格式化器，b 为 24 callee 大解析器）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2503{a,b,c}.txt，完整读取确认尾 ret（a 单出口 ret@0x44FEB1、b 单出口 ret@0x44FE51、c 单出口 ret 0xc@0x44ACE2）
+核验：.qwen/tmp/_check_callees2503.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 5992 → 5995（三行全新增，ADD 3）
+
+## a 路：0x44FE60 FUN_0044fe60（82B）
+
+- 范围 0x44FE60-0x44FEB1（单出口 ret @0x44FEB1；0x44FEB2 起 nop pad，下函数 0x44FEC0 = batch 2502 c 路）
+- thiscall 无参：建筑状态批量格式化驱动器：
+  - 开场 `call 0x5257c0`（[0x7e3e88] 全局 + push 0——日志/描述符获取）
+  - 遍历全局建筑表 **[0xa8eb50]** 计数 / **[0xa8eb44]** 指针数组（esi 索引步进）
+  - 每建筑：`[bld+0x81]` 标志非 0 → 跳过；`[bld+0x520]+0x16bf` TypeClass 标志非 0 → 跳过；两标志皆 0 → **`call 0x44fec0`**（batch 2502 c 路格式化输出器，esi=该建筑）
+- 直接 call 2 次/去重 2：0x5257c0、0x44fec0——picker callees=2 吻合，差值 0
+- 判类：FUN_0044fe60——建筑状态批量驱动器（遍历全局表，对未标记建筑调用 0x44fec0 格式化；与下函数 0x44fec0 构成"驱动-格式化"对）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x44F820 FUN_0044f820（1586B）
+
+- 范围 0x44F820-0x44FE51（单出口 ret @0x44FE51；0x44FE52 起 nop pad，下函数 0x44FE60 = a 路）
+- thiscall 无参（大解析器）：建筑配置字符串解析与装配：
+  - 开场 `call 0x526b00` / `call 0x526960` / `call 0x526cc0`（三个 [0x7e3e88] 描述符获取，eax 入栈暂存）
+  - 遍历全局建筑表 **[0xa8eb50]** × 循环（0x44f866 回跳，计数 [esp+0x30]）
+  - 每建筑：`call 0x528a10`（batch 2502 格式化写器，0x80 缓冲 + 格式串 0x817f70）→ `call 0x7c9cc2`（strtok 风格 0x817f70 分隔）→ `call 0x7c9bfd`（atoi 风格数值）循环提取多段 token（坐标/索引/标志）→ `call 0x45e7b0`（[0xa8022c]/[0xa83d4c] 查表）
+  - `call 0x50c170`（字符串比较/复制）→ 索引查 `[0xa83c6c]` 数组 → `call 0x43b740`（构造 索引+ptr）→ `call 0x6e5e70`/`call 0x6e52a0`（朝向/坐标归一化）
+  - 字段写回建筑：[esi+0x6dc]/[esi+0x6ca]/[esi+0x6cb]/[esi+0x6c9]（4 字节标志）+ 浮点串化 `call 0x7c5f00`(_ftol) → [esi+0x6c]；`call 0x5f5b50`（关联对象）
+  - 后续段：`call 0x436be0`（[esi+0x600] 判空路径）→ `[esp+0x10]` 标志门控 `call 0x454a60`（batch 2500 c 路注册）→ TypeClass+0x16be 标志 `call 0x4533a0`（方向收敛）→ [esi+0x55c] 槽族 0x594 步 0x44 循环 `[edi+ecx+0xf8c]` 标志 → `call 0x425270`（槽释放）→ TypeClass+0xeb8 非空 `call 0x509140` / `call 0x50b6f0` → `call 0x752700`（消息广播 0x8190c8）→ `call 0x452360`(GoOffline)/`call 0x452480`(disable，batch 2502 观察项) → `call 0x4c93d0`（[esi+0x388] 容器查询）+ shr 0xa/and 0x1f → 写 [esi+0x580]+0xac + [+0xc4]=0 → 虚表槽 0x3fc 判定
+  - 每建筑 `call 0x7c8e17`（new 0x720 字节结构）
+- 直接 call 53 次/去重 24：0x425270/0x436be0/0x43b740/0x452360/0x452480/0x4533a0/0x45e7b0/0x4c93d0/0x509140/0x50b6f0/0x50c170/0x526960/0x526b00/0x526cc0/0x528a10/0x554a60/0x5f5b50/0x6e52a0/0x6e5e70/0x752700/0x7c5f00/0x7c8e17/0x7c9bfd/0x7c9cc2——picker callees=24 吻合，差值 0
+- 判类：FUN_0044f820——建筑配置解析装配器（strtok/atoi 多段 token 解析 + 字段写回 + 槽族/标志/朝向归一化 + 状态广播；24 callee 巨型解析器，与 a 路 0x44fe60 构成解析-驱动对，下邻 batch2502 格式化器 0x44fec0）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x44ABD0 BuildingClass::FireLaser（277B 带名）
+
+- 范围 0x44ABD0-0x44ACE2（单出口 ret 0xc @0x44ACE2；0x44ACF0 起下函数）
+- thiscall 多参（ret 0xc 弹 3 参）：激光触发：
+  - `call 0x7c8e17`（new 0x5c 字节激光对象，[esp+0x14] 持有）
+  - 装配对象：from `[0x8871e0]+0x4a8`（坐标源）/[esi+0x21c]+0x56fc（结构指针）→ 多推参构造 → 虚表槽 0xb0 调用 → `call 0x54fe60`（a 路批量驱动器，将激光对象纳入状态格式化）
+  - 字段写：**[eax+0x20]=1**、**[eax+0x1c]=3**（激光类型/状态常量）
+  - 写回 `[esi+0x664]`（this 关联）+ `[esi+0x2ec]` 三 dword（坐标 [0xa8ed84]/[0x8871e0]+0x4a4/[esp+0x28]）
+- 直接 call 2 次/去重 2：0x7c8e17、0x54fe60——picker callees=2 吻合，差值 0
+- 判类：BuildingClass::FireLaser（**带名**——new 0x5c 激光对象 + 坐标装配 + 虚表槽 0xb0 + 0x54fe60 纳入格式化 + [obj+0x20]=1/[obj+0x1c]=3 标志常量）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2503.py：a 路 2/2（0x5257c0/0x44fec0 全已登记）、b 路 24/24（全已登记）、c 路 2/2（0x7c8e17/0x54fe60 全已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用（a→c 路 0x44fec0/0x54fe60 均为 batch2502 已登记，非本批）；无 MISSING（真 MISSING 队列 11 个不变）；无 UNKNOWN
+- 真 MISSING 排队 11 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x5257c0（a 路唯一前置 callee）：[0x7e3e88] 全局描述符获取（push 0 + this）——日志/资源获取器——后续批次优先跟进登记
+- 0x526b00 / 0x526960 / 0x526cc0（b 路开场三连 callee）：[0x7e3e88] 描述符族三例——后续批次优先跟进登记
+- 0x7c9cc2 / 0x7c9bfd（b 路高频 callee）：strtok/atoi 风格字符串解析对（0x817f70 分隔符）——后续批次优先跟进登记
+- 0x50c170（b 路 callee）：字符串比较/复制器——后续批次优先跟进登记
+- 0x45e7b0（b 路 callee）：[0xa8022c]/[0xa83d4c] 查表（0x817f70 串）——后续批次优先跟进登记
+- 0x43b740（b 路 callee）：构造器（索引+ptr，×2 现场）——后续批次优先跟进登记
+- 0x6e5e70 / 0x6e52a0（b 路 callee）：朝向/坐标归一化对——后续批次优先跟进登记
+- 0x752700（b 路 callee）：消息广播（0x8190c8 串）——后续批次优先跟进登记
+- 0x509140 / 0x50b6f0（b 路 callee）：TypeClass+0xeb8 路径处理对——后续批次优先跟进登记
+- 0x5f5b50（b 路 callee）：关联对象设置（esi, eax）——后续批次优先跟进登记
+- 0x436be0（b 路 callee）：[esi+0x600] 判空路径处理——后续批次优先跟进登记
+- 既有池延续：0x459870 / 0x459880 / 0x459890 / 0x4598A0 / 0x4595C0 / 0x47C3D0 / 0x47C520 / 0x4C9220 / 0x4C9480 / 0x4C93D0 / 0x451E40 / 0x451890 / 0x65AD30 / 0x568300 / 0x4834A0、0x4589C0/0x457C90、0x5AE860/0x5AE980/0x5AE9B0/0x5AE9E0/0x5AF080/0x5AF1A0/0x5AEAD0/0x5AEAF0/0x5AEB20、0x4D0EF0/0x425260/0x50E010/0x50E0E0/0x472140/0x70FEE0/0x4870B0/0x487110/0x487130/0x565730/0x7BB920、0x454730/0x452DC0/0x4533A0/0x452BB0/0x453060/0x4528A0/0x4525F0/0x452480/0x554A60/0x554A80/0x4A5130/0x4A51B0/0x4A51D0/0x656580/0x655560、0x452210/0x452260/0x4517D0/0x4500A0（以上 batch 2501-2502 观察项）
