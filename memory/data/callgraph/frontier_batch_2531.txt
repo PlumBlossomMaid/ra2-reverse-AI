@@ -1,0 +1,61 @@
+# frontier batch 2531
+
+日期：2026-10-28
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x41F0D0（171B AITriggerTypeClass::IronCurtainCharged callees=1 deps=78）/ b=0x41EC90（416B AITriggerTypeClass::CivilianHouseOwns callees=2 deps=21）/ c=0x41EAF0（324B AITriggerTypeClass::EnemyHouseOwns callees=1 deps=78）——AITriggerTypeClass 域四连收官（延续 batch 2529/2530，b/c/enemy 三函数同构：前置房屋匹配段（b 独有）+ 两段式拥有判定 + [+0xe8] 跳表比较算子）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2531{a,b,c}.txt（三路 0x200/0x300 窗读全，尾 ret 确认：a 双出口 ret 8 @0x41F10A(al=0)/ret 8 @0x41F16E(al=1)（下函数 0x41F180 = batch2530 c 路 ChronoSphereCharged，同族相邻）、b 单出口 ret 8 @0x41EE2D（下函数 0x41EE90 EnemyHouseOwns 变体（CivilianHouseOwns 尾随）、c 单出口 ret 8 @0x41EC31（下函数 0x41EC90 = b 路，地址连续））
+核验：.qwen/tmp/_check_callees2531.py；a 1/1、b 2/2、c 1/1；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6076 → 6079（三行全新增，ADD 3）
+
+## a 路：0x41F0D0 AITriggerTypeClass::IronCurtainCharged（171B）
+
+- 范围 0x41F0D0-0x41F16E（双出口 ret 8 @0x41F10A（失败 al=0）/ret 8 @0x41F16E（通过 al=1）；0x41F180 起下函数 = batch2530 c 路 ChronoSphereCharged（0x41F180），同族相邻）
+- thiscall 1 栈参（ret 8）：**铁幕充能判定器**（batch2530 c 路 ChronoSphereCharged 的孪生——逐字节同构唯一差异：`cmp [edi+0xb4],1`（铁幕类型 1）vs ChronoSphere 的 `cmp [ebx+0xb4],3`（超时空类型 3））：
+  - ecx=[esp+8]（队列对象）；test ecx je 0x41f105 返 0
+  - [ecx+0x264] 计数 jle 返 0；[ecx+0x258] 阵列基 mov esi,ecx 逐项（eax 0..count-1，[esi+eax*4]）mov edi,[ecx] 虚表 → [edi+0x28] → **cmp [edi+0xb4],1（铁幕类型）** je 0x41f10d 命中
+  - 命中项：eax=[esi+eax*4] 非空 + [eax+0x6d] 字节非 0（激活）→ [eax+0x30] 坐标 → [0xa8ed84] 全局坐标差 → cmp [eax+0x38] 越界钳 0（0x41f171）→ **call 0x6cc260**（@0x41f13a 对象/坐标查询）→ [0x8871e0] → fild/fild → **fdiv st(1)** 充能比例 → fld [0x7e2ac8] - fsub [eax+0xd70] → fcompp → test ah,1 jne 返 0 → al=1 ret 8
+- 直接 call 1 次/去重 1：0x6cc260——picker callees=1 吻合，差值 0
+- 判类：AITriggerTypeClass::IronCurtainCharged——铁幕充能判定器（[+0x264] 计数 >0 + [+0x258] 队列项虚表类型 1（[edi+0xb4]==1 铁幕）+ [+0x6d] 激活 → [0xa8ed84] 距离钳制 + 0x6cc260 查询 → fild/fdiv 充能比例 vs [0x7e2ac8]-[0x8871e0]+0xd70 阈值 fcompp 返 bool；batch2530 ChronoSphereCharged 孪生）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x41EC90 AITriggerTypeClass::CivilianHouseOwns（416B）
+
+- 范围 0x41EC90-0x41EE2D（单出口 ret 8 @0x41EE2D；0x41EE30 起 0x41ee30 跳表数据 + 0x41ee44 字节表 + 0x41EE90 起下函数 EnemyHouseOwns 变体（[esp+0x18] 栈参版，0x41EFD4 跳表/0x41EFE8 字节表，与 c 路同构共享段）——观察项）
+- thiscall 无栈参（ret 8，`edx` 隐式 0 参？实际第 1 栈参经 [esp+0x14] 传入函数内部）：**平民房屋拥有判定器**（b/c/enemy 三连中带前置房屋匹配段的路）：
+  - **前置房屋匹配**：[0xa80238] 房屋计数 `test eax,jle 0x41ee23` 空表早退 → 循环（esi 0..count-1）：mov ecx,0x818164（**房屋 id 串**）→ **call 0x6a46d0**（@0x41ecb5 房屋 id 查询）→ [0xa8022c] 房屋数组基 [ecx+esi*4] → [edx+0x34] → **cmp [edx+0xbc],eax**（房屋 id 匹配）je 0x41ece5 命中
+  - **房屋匹配失败**：0x41ecd8 al=byte[esp+0xf]（默认 0）→ ret 8（未找到任何匹配房屋→返 0）
+  - **命中**：ebx=[ecx+esi*4] → **两段式拥有判定**（与 c 路共享）：
+    - [ebx+0xd8] 子对象非空 → 虚表槽 0x40（@0x41ed03）→ 虚表槽 0x2c（@0x41ed0e）→ add eax,-3 cmp 0x25 → **0x41ee44 字节表** → [ecx*4+0x41ee30] 4 路分派：lea [ebx+0x5550]/[+0x5564]/[+0x5578]/[+0x558c] → **call 0x49fae0**（@0x41ed2f/0x41ed44/0x41ed59/0x41ed6e 四偏移成员询）→ eax=值
+    - **跳表比较**：默认值 eax vs [ebx+0xe4] + [ebx+0xe8] cmp 5 ja 0x41ee23 → [ecx*4+0x41ee6c] 6 出口 setXX（setl/setle/sete/setge/setg/setne byte[esp+7]）→ al → ret 8
+- 直接 call 5 次/去重 2：0x6a46d0×1、0x49fae0×4——picker callees=2 吻合，差值 0（虚表槽 0x40/0x2c 间接不计）
+- 判类：AITriggerTypeClass::CivilianHouseOwns——平民房屋拥有判定器（前置 [0xa80238]/[0xa8022c] 房屋数组匹配（0x818164 串 + 0x6a46d0 查询 + [edx+0x34]→[edx+0xbc] 比对）+ 两段式拥有判定（[+0xd8] 虚表槽 0x40/0x2c → 0x41ee44 字节表 4 路 0x49fae0）+ [+0xe4]/[+0xe8] setXX 6 出口跳表返回）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x41EAF0 AITriggerTypeClass::EnemyHouseOwns（324B）
+
+- 范围 0x41EAF0-0x41EC31（单出口 ret 8 @0x41EC31；0x41EC34 起 跳表/0x41EC48 字节表，0x41EC90 起下函数 = b 路，地址连续）
+- thiscall 无栈参（ret 8）：**敌国房屋拥有判定器**（无前置房屋匹配段，直接两段式拥有判定 + 跳表比较）：
+  - [ebx+0xd8] 子对象非空 → 虚表槽 0x40（@0x41eb1a）→ 虚表槽 0x2c（@0x41eb25）→ add eax,-3 cmp 0x25 → **0x41ec48 字节表**（mov cl,[eax+0x41ec48]）→ [ecx*4+0x41ec34] 4 路分派：lea [edx+0x5550]/[eax+0x5564]/[ecx+0x5578]/[edx+0x558c] → **call 0x49fae0**（@0x41eb4a/0x41eb60/0x41eb76/0x41eb8c 四偏移成员询）→ edi/eax=值
+  - [ebx+0xd8] 为空（0x41eb99）：xor eax,eax（默认 0）
+  - **跳表比较**：eax vs [ebx+0xe4] + [ebx+0xe8] cmp 5 ja 0x41ec2b → [ecx*4+0x41ec70] 6 出口 setXX（setl/setle/sete/setge/setg/setne byte[esp+3]/[esp+7]）→ al → ret 8
+- 直接 call 4 次/去重 1：0x49fae0×4——picker callees=1 吻合，差值 0（虚表槽 0x40/0x2c 间接不计）
+- 判类：AITriggerTypeClass::EnemyHouseOwns——敌国房屋拥有判定器（[+0xd8] 子对象虚表槽 0x40/0x2c 查询 → 0x41ec48 字节表 4 路分派 0x49fae0（+0x5550/+0x5564/+0x5578/+0x558c 成员询）+ [+0xe4]/[+0xe8] setXX 6 出口跳表返回；b 路 CivilianHouseOwns 同构无前置匹配段）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2531.py：a 路 1/1（0x6cc260 已登记）、b 路 2/2（0x6a46d0/0x49fae0 已登记）、c 路 1/1（0x49fae0 已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0（虚表槽 0x40/0x2c 间接不计；0x49fae0 ×4/×1 同函数多调用点）
+- 无批内自引用（a/b/c 互不落对方函数体，b/c 地址连续仅为排布）；无 MISSING（真 MISSING 队列 6 个不变：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x47ec40 / 0x4758C0——其中 0x41caf0 已于 rank 11 出现，继续排队）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x41EE90（b 路下函数）：EnemyHouseOwns 变体（[esp+0x18] 栈参版 + 0x41EFD4 跳表/0x41EFE8 字节表，与 c 路 0x41EAF0 同构共享段——CivilianHouseOwns 的敌判断尾随）——后续批次优先跟进登记
+- 0x41F180（a 路下函数）：batch2530 c 路 ChronoSphereCharged 已登记——无新增
+- 0x6a46d0（b 路 callee）：房屋 id 查询（0x818164 串 + [0xa80238]/[0xa8022c] 房屋表，+0xbc 比对）——候选池优先跟进
+- 0x49fae0（b/c 共用 callee）：拥有判定成员询（+0x5550/+0x5564/+0x5578/+0x558c 四偏移，b/c 同函数 ×4 调用点）——候选池优先跟进
+- 0x6cc260（a 路 callee）：对象/坐标查询转换（batch2530 c 路同 callee，全库高频）——候选池优先跟进
+- 0xa80238 / 0xa8022c（b 路全局）：房屋计数/数组（+0x34→+0xbc 派生 id 比对链）——数据全局，非函数，登记池外观察
+- 0x41ec48 / 0x41ee44 / 0x41efe8（b/c 字节表）+ 0x41ec34 / 0x41ee30 / 0x41efd4（跳表）：30 项 case 分类（add -3 cmp 0x25）的 5 种跳桶字节表与跳表数据——数据表，登记池外观察
+- 既有池延续：见 batch 2530 观察项列表（AI trigger 装载域 + 历史候选池全量延续）
