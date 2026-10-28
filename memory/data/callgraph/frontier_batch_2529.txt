@@ -1,0 +1,69 @@
+# frontier batch 2529
+
+日期：2026-10-28
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x420960（399B 构造器 callees=1 deps=58）/ b=0x41FE20（187B AITriggerTypeClass::RegisterFailure callees=0 deps=87）/ c=0x41FD60（191B AITriggerTypeClass::RegisterSuccess callees=0 deps=87）——混合域三连（a 构造器紧邻 batch 2528 的混合表/绘制域，b/c 为 AI 触发器的成功/失败计数）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2529{a,b,c}.txt（三路 0x200 窗分段读全，尾 ret 确认：a 单出口 ret 0xc@0x420AEC（下函数 0x420AF0 清空构造器 [0x88a0f0] 注册变体）、b 单出口 ret@0x41FEDA（下函数 0x41FEE0 坐标/触发判定大函数）、c 单出口 ret@0x41FE1E（下函数 0x41FE20=b 路））
+核验：.qwen/tmp/_check_callees2529.py；a 1/1、b 0/0、c 0/0；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6070 → 6073（三行全新增，ADD 3）
+
+## a 路：0x420960 FUN_00420960（399B）
+
+- 范围 0x420960-0x420AEC（单出口 ret 0xc @0x420AEC；0x420AF0 起下函数 0x420AF0（清空构造器：[0x88a0f0] 关联数组清零 + 0x7e32a4/0x7e3288/0x7e3280/0x7e3278 四虚表，0x420960 的注册变体）——观察项）
+- thiscall 3 栈参（ret 0xc）：**构造器**（ranking 名 "AlphaShapeClass::WhatAmI" 与机器码行为矛盾——这里实为对象构造，非虚函数返回枚举；符号表疑似错位，按机器码权威口径登记）：
+  - **基类初始化**：call 0x410170（AbstractClass::AbstractClass @0x420965）
+  - **字段清零 + 装配**：[esi+0x38]=0 / [esi+0x24]=ecx（第 1 栈参）/ [esi+0x3c]=0 → [esi]=0x7e32a4 / [esi+4]=0x7e3288 / [esi+8]=0x7e3280 / [esi+0xc]=0x7e3278（四虚表槽）
+  - 取 [ecx] 虚表 → **虚表槽 0x88**（@0x420999）→ [eax+0xac] → [esi+0x38]=eax（延迟渲染指针）；movsx [eax+2]/[eax+4] + [esp+0x14]/[esp+0x18] → [esi+0x28..0x30] 坐标结构
+  - **全局数组注册 1**（0x420A03-0x420A1B）：[0x88a100] vs [0x88a0f8] 计数、[0x88a0fd] 门控、[0x88a104] 数组基 call 虚表槽 8（vtable[2]）查重 → inc [0x88a100] + [0x88a0f4][eax*4]=esi
+  - **全局数组注册 2**（0x420A59-0x420A71）：同结构 [0xb0f730]/[0xb0f724]/[0xb0f720] → [0xb0f724][eax*4]=esi
+  - **惰性混合表**（0x420A71-0x420AE7）：[0x89a134] 门控 → 0x81020409 imul 魔法逐填 [0x88a118] 65536 项（与 batch 2528 c 路 0x420E90 同源）
+  - ret 0xc
+- 直接 call 1 次/去重 1：0x410170——picker callees=1 吻合，差值 0（虚表槽 0x88/0x8 间接不计）
+- 判类：FUN_00420960——构造器（call 0x410170 基类 + [esi]=0x7e32a4/0x7e3288/0x7e3280/0x7e3278 四虚表 + [0x88a0f4]/[0xb0f724] 双全局数组注册 + 虚表槽 0x88 延迟指针 + [0x88a118] 惰性混合表；ranking 名 "AlphaShapeClass::WhatAmI" 为符号表错位——机器码实为构造器）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x41FE20 AITriggerTypeClass::RegisterFailure（187B）
+
+- 范围 0x41FE20-0x41FEDA（单出口 ret @0x41FEDA；0x41FEE0 起下函数 0x41FEE0（[edi+0xf0] 标志 + [edi+0xec] 坐标 + 0x50def0 解析 + 0x56d230 坐标→cell ×3 比对——观察项））
+- thiscall 无栈参（ret 空）：**失败计数/浮点衰减**（触发失败时累加失败量并钳制到合法区间）：
+  - [ecx+0x108] 计数 → mov dword [esp], edx（暂存）
+  - test edx jle 0x41fe6d（非首失败跳过比例插值）→ 否则：fild [esp] / fild [ecx+0x104] / **fdiv** → fsub [0x7e1738] → [0x8871e0]+0xd0（全局缩放）fmul/fmulp → **fcom [0x7e2800]**（下限钳制，test ah,0x41 ja 跳出）→ fld [0x7e2800]
+  - 主：fld [esi+0xc8]（全局基）+ fadd [ecx+0xb8] → **faddp** → fst [ecx+0xb8]（累加失败量到 [+0xb8]）
+  - **钳制下界**（fcomp [ecx+0xc0]：je 跳过；否则 [ecx+0xc0]/[ecx+0xc4] → [ecx+0xb8]/[ecx+0xbc]）
+  - **钳制上界**（fcomp [ecx+0xc8]：test ah,0x41 jne 跳过；否则 [ecx+0xc8]/[ecx+0xcc] → [ecx+0xb8]/[ecx+0xbc]）
+  - inc [ecx+0x108] → ret
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0
+- 判类：AITriggerTypeClass::RegisterFailure——失败计数/浮点衰减（[+0x108] 自增 + [+0xb8] 累加失败量（首次失败带 fild/fdiv/[0x7e1738]/[0x8871e0]+0xd0 比例插值） + [+0xc0]/[+0xc8] 双界 fcomp 钳制）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x41FD60 AITriggerTypeClass::RegisterSuccess（191B）
+
+- 范围 0x41FD60-0x41FE1E（单出口 ret @0x41FE1E；0x41FE20 起下函数 0x41FE20 = b 路，地址连续）
+- thiscall 无栈参（ret 空）：**成功计数/浮点累加**（与 b 路同族，成功时直接累加不插值）：
+  - [ecx+0x108] 计数 → test edx jle 0x41fda0（非首成功跳过比例插值）→ 否则：fild [esp] / fild [ecx+0x104] / fdiv → fsub [0x7e1738] → fmulp（无全局缩放，test ah,1 je 跳过）→ fld [0x7e2800]
+  - 主：fld [0x8871e0]+0xc0（全局基，区别于 b 路 +0xc8）→ fadd [ecx+0xb8] → faddp → fst [ecx+0xb8]（累加成功量）
+  - **钳制下界**（fcomp [ecx+0xc0]：je 跳过；否则 [ecx+0xc0]/[ecx+0xc4] → [ecx+0xb8]/[ecx+0xbc]）
+  - **钳制上界**（fcomp [ecx+0xc8]：test ah,0x41 jne 跳过；否则 [ecx+0xc8]/[ecx+0xcc] → [ecx+0xb8]/[ecx+0xbc]）
+  - **双自增**：inc [ecx+0x104] + inc [ecx+0x108] → ret（b 路仅 inc [+0x108]）
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0
+- 判类：AITriggerTypeClass::RegisterSuccess——成功计数/浮点累加（[+0x104]/[+0x108] 双自增 + [+0xb8] 累加成功量（首次成功带 fild/fdiv/[0x7e1738] 比例插值，全局基 [0x8871e0]+0xc0）+ [+0xc0]/[+0xc8] 双界 fcomp 钳制；b 路同族失败变体）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2529.py：a 路 1/1（0x410170 已登记）、b 路 0/0、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0（虚表槽 0x88/0x8 间接不计）
+- 无批内自引用（a/b/c 互不落对方函数体）；无 MISSING（真 MISSING 队列 6 个不变：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+- 符号错位备注：a 路 ranking 名 "AlphaShapeClass::WhatAmI" 与机器码构造器行为矛盾，按机器码权威口径登记为 FUN_00420960；b/c 路 RegisterFailure/RegisterSuccess 与浮点计数行为吻合，采用符号名
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x420AF0（a 路下函数）：清空构造器（[0x88a0f0] 关联数组清零 + 0x7e32a4/0x7e3288/0x7e3280/0x7e3278 四虚表，0x420960 的注册变体）——后续批次优先跟进登记
+- 0x41FEE0（b 路下函数）：[edi+0xf0] 标志 + [edi+0xec] 坐标 + 0x50def0 解析 + 0x56d230 坐标→cell ×3 比对（大函数）——后续批次优先跟进登记
+- 0x410170（a 路 callee）：AbstractClass::AbstractClass（全库基类构造，已登记）——既有，无新增
+- 0x56d230（b 路下函数 callee）：坐标→cell 索引器（batch 2523/2524 观察池已在列）——后续批次优先跟进登记
+- 0x50def0（b 路下函数 callee）：字符串/坐标解析器（call 0x50def0 ×2）——候选池优先跟进
+- 0x8871e0（b/c 路全局）：游戏全局对象（[+0xc0]/[+0xc8]/[+0xd0] 浮点基/缩放，AI 触发计数域核心数据）——数据全局，非函数，登记池外观察
+- 0x7e1738 / 0x7e2800（b/c 路常量）：浮点插值常数 / 钳制下限（fsub/fcom 基准）——数据常量，登记池外观察
+- 既有池延续：见 batch 2528 观察项列表（绘制/查表域 + 历史候选池全量延续）
