@@ -1,0 +1,66 @@
+# frontier batch 2502
+
+日期：2026-10-28
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x451F60（152B FUN_00451f60 callees=0 deps=1881）/ b=0x451750（122B **带名 BuildingClass::PlayNthAnim** callees=1 deps=1875）/ c=0x44FEC0（466B FUN_0044fec0 callees=5 deps=54）——BuildingClass 动画/格式化域（a 与 batch 2501 c 路同构槽族装配，b 动画串表槽派发，c 多段 sprintf 大格式化）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2502{a,b,c}.txt，完整读取确认尾 ret（a 单出口 ret 8@0x451FF5、b 单出口 ret 0x10@0x4517C7、c 单出口 ret 4@0x45008F）
+核验：.qwen/tmp/_check_callees2502.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 5989 → 5992（三行全新增，ADD 3）
+
+## a 路：0x451F60 FUN_00451f60（152B）
+
+- 范围 0x451F60-0x451FF5（单出口 ret 8 @0x451FF5；0x451FF8 起 nop pad，下函数 0x452000 = batch 2501 c 路）
+- thiscall 2 栈参（ret 8 = [esp+0x18]/[esp+0x1c] 两值）：槽族数据装配（batch 2501 c 路同构的独立泛化版）：
+  - [esp+0x10]=0x15 外层计数；ebp 从 [edi+0x55c] 起按 +4 步进遍历 0x15 槽数组
+  - 每槽：[槽+0xc8]（对象）→ [+0x35c] 字节门控非 0 → **`[槽+0xd4]=[esp+0x18]`、`[槽+0xfc]=[esp+0x1c]`**（两栈参直写——batch 2501 c 路由虚表槽 0x1e4/0x70e360 算值，本路直接由调用者传入）
+  - 内层：[edi+0x6ed] movsx cmp 0xf → 虚表槽 0x68（push 0/0）返 5 → ebx=0x10 → 0x15 槽二段遍历 **`[槽+0x178]=bl`**（动画字节）
+  - 外层 0x451F75 循环回跳（jne），ebp+4 步进
+- 直接 call 0 次/去重 0：纯直写 + 虚表槽 0x68 间接——picker callees=0 吻合
+- 判类：FUN_00451f60——槽族数据装配器·栈参版（[槽+0xd4]/[槽+0xfc] 直写 + [槽+0x178] 动画字节，batch 2501 c 路同构但数据源自 2 栈参；0x6ed==0xf 特化 0x10 惯用法三批连见）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x451750 BuildingClass::PlayNthAnim（122B 带名）
+
+- 范围 0x451750-0x4517C7（单出口 ret 0x10 @0x4517C7；0x4517CA 起 nop pad，下函数 0x4517D0）
+- thiscall 4 栈参（ret 0x10；代码实际使用 a2=[esp+0x8→ecx]/a3=[esp+0xc]/a4=[esp+0x10]）：
+  - **动画串表槽三选一**（TypeClass = [esi+0x520]，索引 = a3）：a2 低字节非 0 → 槽 **+0xf5c**；a2==0 且 a3 非 0 → 槽 **+0xf6c**；a2==0 且 a3==0 → 槽 **+0xf4c**——索引 `a3*17*4`（shl 4 + add + *4 惯用法）
+  - 选槽后判空：[槽] NULL 或 [槽] 首字节 0 → 直接返回（静默跳过）
+  - 非空 → **`call 0x451890`**（batch 2500 a 路观察项/已登记——清理动作/广播族），5 参：push a4/a3/a2/a3/槽指针，thiscall esi
+- 直接 call 1 次/去重 1：0x451890——picker callees=1 吻合，差值 0
+- 判类：BuildingClass::PlayNthAnim（**带名**——按 a2/a3 从 TypeClass 三动画串表槽 0xf4c/0xf5c/0xf6c 选串，非空则 0x451890 五参广播播放——动画触发调度器）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x44FEC0 FUN_0044fec0（466B）
+
+- 范围 0x44FEC0-0x45008F（单出口 ret 4 @0x45008F；0x450092 起 nop pad，下函数 0x4500A0）
+- thiscall 1 栈参（ret 4）：大格式化输出器（多段 sprintf 装配状态串 + 显示）：
+  - 开场 0x7c8ef4（sprintf）格式化 [esi+4] Vtable 槽 0x10 查询结果入 [esp+0x24] 缓冲（格式串 0x817f6c）
+  - [esi+0x600] 非空 → [+0xdc] / 空 → 0 传入 [esp+0x10]；[esi+0x34] 非空 → [+0x24]（+0x24 二次取）→ ebp / 空 → 0x817f64 回退
+  - **call 0x4c93d0**（batch 2500 候选池——[esi+0x388] 容器查询）→ [eax] → shr 7/inc/shr 1/and 0xff 数值计算
+  - 字节族打包：[esi+0x702]/+0x660/+0x6ca/+0x6dc 逐字节 + ebp/eax → **虚表槽 0x1b8**（两次，含 movsx word [eax+2] 半字）
+  - **call 0x5f5c60**（已登记——浮点值→串）+ fmul [0x7e1710] + fadd [0x7e1738] + **call 0x7c5f00**（_ftol 向零截断）→ push eax/edi/ebx → 0x7c8ef4 sprintf（格式串 0x8190e4）
+  - [esi+0x5ec] 起 3 槽循环（ebp=3）：非空 → +0x24 / 空 → 0x817f64，repne scasb strlen + 0x7c8ef4（格式串 0x8190e0）
+  - [esi+0x6cb]/[esi+0x6c9] setne → 0x7c8ef4（格式串 0x8190dc ×2）
+  - **[0x7e3e88] + 双缓冲 + 栈参 → call 0x528660**（已登记——格式化串输出/写器）→ ret 4
+- 直接 call 9 次/去重 5：0x4c93d0、0x528660、0x5f5c60、0x7c5f00、0x7c8ef4（×5）——picker callees=5 吻合，差值 0（虚表槽 0x10/0x1b8 间接不计）
+- 判类：FUN_0044fec0——状态格式化输出器（sprintf 多段装配 + 浮点串化 + _ftol 截断 + 0x528660 输出——BuildingClass 调试/状态串族）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2502.py：a 路 0/0（纯直写+虚表槽间接，callees=0 吻合）、b 路 1/1（0x451890 已登记）、c 路 5/5（0x4c93d0/0x528660/0x5f5c60/0x7c5f00/0x7c8ef4 全已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0（虚表槽 0x68/0x10/0x1b8 间接全部不计）
+- 无批内自引用；无 MISSING（真 MISSING 队列 11 个不变）；无 UNKNOWN
+- 真 MISSING 排队 11 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4517D0（b 路下函数）：（虚表槽 0xac 双坐标查询 + [ebx+0x55c] 槽族 + 0x6d2360 坐标加法 + [+0xf7c] 槽——坐标装配器）——后续批次优先跟进登记
+- 0x4500A0（c 路下函数）：（虚表槽 0x48 双坐标 + [esi+0x520]+0xebc 槽 + 三 dword 直拷——坐标拷贝器）——后续批次优先跟进登记
+- 0x451890（b 路唯一 callee）：清理动作/广播族（batch 2500 观察项，本批兑现 PlayNthAnim 调用现场）——后续批次优先跟进登记
+- 0x528660（c 路 callee）：格式化串输出/写器（batch 2500 观察项 [0x7e3e88] 域）——后续批次优先跟进登记
+- 0x7c8ef4（c 路 callee，×5）：sprintf 族（已登记）——本批高频消费点 c 路 9 call 中 5 次
+- 0x5f5c60（c 路 callee）：浮点值→串（batch 2495 浮点双串段已登记）——无新增
+- 既有池延续：0x459870 / 0x459880 / 0x459890 / 0x4598A0 / 0x4595C0 / 0x47C3D0 / 0x47C520 / 0x4C9220 / 0x4C9480 / 0x4C93D0 / 0x451E40 / 0x451890 / 0x65AD30 / 0x568300 / 0x4834A0、0x4589C0/0x457C90、0x5AE860/0x5AE980/0x5AE9B0/0x5AE9E0/0x5AF080/0x5AF1A0/0x5AEAD0/0x5AEAF0/0x5AEB20、0x4D0EF0/0x425260/0x50E010/0x50E0E0/0x472140/0x70FEE0/0x4870B0/0x487110/0x487130/0x565730/0x7BB920、0x454730/0x452DC0/0x4533A0/0x452BB0/0x453060/0x4528A0/0x4525F0/0x452480/0x554A60/0x554A80/0x4A5130/0x4A51B0/0x4A51D0/0x656580/0x655560、0x452210/0x452260（以上 batch 2501 观察项）
