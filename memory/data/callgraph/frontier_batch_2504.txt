@@ -1,0 +1,66 @@
+# frontier batch 2504
+
+日期：2026-10-28
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x449540（357B FUN_00449540 callees=5 deps=1881）/ b=0x442C40（327B FUN_00442c40 callees=5 deps=62）/ c=0x43E7B0（325B **带名 BuildingClass::DrawInfoTipAndSpiedSelection** callees=5 deps=9）——BuildingClass 绘制/设置域（a 坐标定位+双串绘制、b 多字段装配、c 信息提示+间谍选择绘制）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2504{a,b,c}.txt，完整读取确认尾 ret（a 双出口 ret@0x44969A(al=1)/@0x4496A4(al=0)、b 单出口 ret@0x442D86、c 单出口 ret 8@0x43E8F2）
+核验：.qwen/tmp/_check_callees2504.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 5995 → 5998（三行全新增，ADD 3）
+
+## a 路：0x449540 FUN_00449540（357B）
+
+- 范围 0x449540-0x4496A4（双出口 ret @0x44969A(al=1)/@0x4496A4(al=0)；0x4496B0 起下函数）
+- thiscall 无参（返 AL）：坐标定位 + 双串绘制：
+  - **TypeClass [esi+0x520]+0x16bd 标志**非 0 才执行；[eax+0xed4]→[+0x28] 取坐标 → 虚表槽 0x1b8（坐标查询）→ 半字运算（[esp+0x10]-1 + 两轴 shl 8/+0x80 → 单元格中心）→ `call 0x5657a0`（坐标→cell，MapClass 0x87f7e8）
+  - `call 0x47c3d0`（取格对象）→ 虚表槽 0x84 → +0x24 → push + 串 0x819008 → **`call 0x4068e0`**（字符串绘制）→ `call 0x481670`（3 参 push 0x89c848 全局）→ `call 0x481810` → 再 `call 0x47c3d0`+虚表槽 0x84+串 0x818fdc → 0x4068e0+0x481670
+  - **循环 8 轮**（esp+0x10 计数 0..7 递增进格对象 re-query）
+- 直接 call 8 次/去重 5：0x5657a0、0x47c3d0、0x4068e0、0x481670、0x481810——picker callees=5 吻合，差值 0（虚表槽 0x1b8/0x84 间接不计）
+- 判类：FUN_00449540——坐标定位双串绘制器（TypeClass+0x16bd 门控 + 中心坐标换算 + 两串 0x819008/0x818fdc 循环 8 轮绘制）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x442C40 FUN_00442c40（327B）
+
+- 范围 0x442C40-0x442D86（单出口 ret @0x442D86；0x442D90 起下函数）
+- thiscall 无参：多字段装配：
+  - `call 0x6f3f40`（开场初始化）→ [esi+0x21c]→[+0x34]→[+0xb8] → [esi+0x53c] → push esi → **`call 0x4ff700`**
+  - **TypeClass [esi+0x520] 判空**：+0xa0 两轴半字 → [esi+0x6c]/[esi+0x70]；+0x680/-1 回落 +0x684 → [esi+0x2fc]；+0x71c push → `call 0x4c9680`（[esi+0x388] 容器）
+  - 虚表槽 0xc0（查询）→ 非 0 → **`call 0x465af0`** + [esi+0x6e9]=1；为 0 → [esi+0x6dc]=0
+  - [esi+0x21c] 非空 && [+0x2c0] 标志 && TypeClass+0xcce==0 && +0xc8e!=0 && +0x408 非空 → push 1 + [esi+0x150] → **`call 0x750090`**
+  - TypeClass+0x16b0 标志 → **[0x8b41e0] 全局数组族**判断（[0x8b41f0] 计数/容量比较/虚表槽 8 Grow）→ 入队 [ecx+eax*4]=esi
+- 直接 call 5 次/去重 5：0x6f3f40、0x4ff700、0x4c9680、0x465af0、0x750090——picker callees=5 吻合，差值 0（虚表槽 0xc0/8 间接不计）
+- 判类：FUN_00442c40——建筑多字段装配器（TypeClass 字段族 + 0x53c/0x6c/0x70/0x2fc 写回 + 全局 [0x8b41e0] 数组入队）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x43E7B0 BuildingClass::DrawInfoTipAndSpiedSelection（325B 带名）
+
+- 范围 0x43E7B0-0x43E8F2（单出口 ret 8 @0x43E8F2；0x43E900 起下函数）
+- thiscall 2 栈参（ret 8 = [esp+0x18]=edi/[esp+0x1c]=ebp 两坐标矩形）：信息提示+间谍选择绘制：
+  - 虚表槽 0x1b8（坐标查询）→ **[esi+0x83] 标志** + [0xa83d4c] 玩家队 → `call 0x4f9a50`（IsSpied 判定）→ [0xa83d4c]+0x34→[+0xb8] shl 掩码 & [esi+0x210] 位测 → 虚表槽 0x458（push 坐标矩形式 2 参）
+  - [0xa83d4c] 掩码位测 → [esi+0x83] → **`call 0x50b730`**（返回 AL）→ 非 0：TypeClass+0xcce/+0xeb8 → `call 0x500510`（3 参）；为 0：`call 0x4ca160`（[esi+0x524] 对象查询）→ 虚表槽 0x84 → 虚表槽 0x98（多推参 0x3e8/0xe00/矩形/this）→ **`call 0x4aed70`**（[0x87f6c4]+[0x887314] 两全局）
+- 直接 call 5 次/去重 5：0x4f9a50、0x50b730、0x500510、0x4ca160、0x4aed70——picker callees=5 吻合，差值 0（虚表槽 0x1b8/0x458/0x84/0x98 间接不计）
+- 判类：BuildingClass::DrawInfoTipAndSpiedSelection（**带名**——[esi+0x83] 标志 + 玩家掩码位测 + 0x50b730/0x500510 信息提示路径 + 虚表槽 0x98 多参绘制 + 0x4aed70 全局对）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2504.py：a 路 5/5（0x5657a0/0x47c3d0/0x4068e0/0x481670/0x481810 全已登记）、b 路 5/5（0x6f3f40/0x4ff700/0x4c9680/0x465af0/0x750090 全已登记）、c 路 5/5（0x4f9a50/0x50b730/0x500510/0x4ca160/0x4aed70 全已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0（虚表槽 0x1b8/0x84/0xc0/0x98/0x458/8 间接全部不计）
+- 无批内自引用；无 MISSING（真 MISSING 队列 11 个不变）；无 UNKNOWN
+- 真 MISSING 排队 11 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4068e0（a 路 callee ×2）：字符串绘制器（两调用点 0x819008/0x818fdc 串）——后续批次优先跟进登记
+- 0x481670 / 0x481810（a 路 callee ×2 对）：格对象标志/绘制对（0x89c848 全局）——后续批次优先跟进登记
+- 0x6f3f40（b 路开场 callee）：初始化器——后续批次优先跟进登记
+- 0x4ff700（b 路 callee）：push esi 单参调用（[esi+0x53c] 关联）——后续批次优先跟进登记
+- 0x4c9680（b 路 callee）：[esi+0x388] 容器查询（+0x71c 参）——后续批次优先跟进登记
+- 0x465af0（b 路 callee）：TypeClass 查询（虚表槽 0xc0 非 0 分支）——后续批次优先跟进登记
+- 0x750090（b 路 callee）：push 1 + [esi+0x150] 双参（计时器/通知）——后续批次优先跟进登记
+- 0x4f9a50（c 路 callee）：[0xa83d4c] 玩家判定（IsSpied 语义）——后续批次优先跟进登记
+- 0x50b730 / 0x500510（c 路 callee 对）：信息提示判定/触发对——后续批次优先跟进登记
+- 0x4ca160（c 路 callee）：[esi+0x524] 对象查询——后续批次优先跟进登记
+- 0x4aed70（c 路 callee）：[0x87f6c4]+[0x887314] 两全局对——后续批次优先跟进登记
+- 既有池延续：0x459870 / 0x459880 / 0x459890 / 0x4598A0 / 0x4595C0 / 0x47C3D0 / 0x47C520 / 0x4C9220 / 0x4C9480 / 0x4C93D0 / 0x451E40 / 0x451890 / 0x65AD30 / 0x568300 / 0x4834A0、0x4589C0/0x457C90、0x5AE860/0x5AE980/0x5AE9B0/0x5AE9E0/0x5AF080/0x5AF1A0/0x5AEAD0/0x5AEAF0/0x5AEB20、0x4D0EF0/0x425260/0x50E010/0x50E0E0/0x472140/0x70FEE0/0x4870B0/0x487110/0x487130/0x565730/0x7BB920、0x454730/0x452DC0/0x4533A0/0x452BB0/0x453060/0x4528A0/0x4525F0/0x452480/0x554A60/0x554A80/0x4A5130/0x4A51B0/0x4A51D0/0x656580/0x655560、0x452210/0x452260/0x4517D0/0x4500A0/0x5257c0/0x526b00/0x526960/0x526cc0/0x7c9cc2/0x7c9bfd/0x50c170/0x45e7b0/0x43b740/0x6e5e70/0x6e52a0/0x752700/0x509140/0x50b6f0/0x5f5b50/0x436be0（以上 batch 2501-2503 观察项）
