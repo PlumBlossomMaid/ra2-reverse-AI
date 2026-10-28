@@ -1,0 +1,63 @@
+# frontier batch 2510
+
+日期：2026-10-28
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x434AD0（58B **带名 BitText::BitText** callees=2 deps=2981）/ b=0x434500（439B FUN_00434500 callees=3 deps=5）/ c=0x433880（189B **带名 BitFont::BitFont** callees=3（核验 2）deps=44）——字体渲染域三连（a 经 0x433880 委托 c 路构造 BitFont 全局 [0x89c4d0]，b 为位图文字绘制器，⭐a 路 0x434AD0 正是真 MISSING 队列 11 个之一，本批自然选中即解决一条：队列 11→10）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2510{a,b,c}.txt，完整读取确认尾 ret（a 双出口 ret@0x434AFB/ret@0x434B09、b 双出口 ret 0x14@0x43468A/ret 0x14@0x4346B4、c 双出口 ret 4@0x4338F8/ret 4@0x43393A）
+核验：.qwen/tmp/_check_callees2510.py 三路全 PASS；a 路 1 条批内自引用（0x433880=c 路，同批登记闭合）；无 MISSING、无 UNKNOWN
+注册：TSV 6013 → 6016（三行全新增，ADD 3）
+
+## a 路：0x434AD0 BitText::BitText（58B 带名）
+
+- 范围 0x434AD0-0x434B09（双出口 ret @0x434AFB（成功）/ret @0x434B09（失败）；0x434B0A 起 nop pad，下函数 0x434B10（BitText::~BitText：虚表 0x7e3a80 + [0x89c4d0] 全局判定虚表槽 0 push 1 删除 + 清全局——a 路析构对）——观察项）
+- thiscall 无参：BitText 构造：
+  - **[esi]=0x7e3a80**（BitText 虚表）；push 0x44 → **call 0x7c8e17**（new 0x44 字节）→ 失败路径 0x434AFC：**[0x89c4d0]=0** 后返 this
+  - 成功：push 0x818b98（字体名串）→ ecx=new → **call 0x433880**（=c 路 BitFont::BitFont 构造）→ **a3 d0c48900 mov [0x89c4d0],eax**（全局 BitFont 单例）→ 返 this
+- 直接 call 2 次/去重 2：0x7c8e17（已登记）、0x433880（**批内自引用 = c 路，同批登记后闭合**）——picker callees=2 吻合
+- 判类：BitText::BitText（**带名**——new 0x44 BitFont + c 路委托构造 + [0x89c4d0] 全局单例落点；与下函数 0x434B10 析构成对）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x434500 FUN_00434500（439B）
+
+- 范围 0x434500-0x4346B4（双出口 ret 0x14 @0x43468A/ret 0x14 @0x4346B4（jge 提前路径）；0x4346B7 起 nop pad，下函数 0x4346C0（ret 4 容器查询：[ecx+4]→[+0x18] word 表 + [ecx+0x14] imul [ecx+0x1c]——观察项））
+- thiscall 5 栈参（ret 0x14）：位图文字绘制器：
+  - 开场 mov si,[edx]（**[esp+0x14] 串指针首字**）+ add edx,2 → 逐字循环（[esp+0x24] 游标）；[edi+0x24] word bx（像素色暂存，0x43467B 恢复写回）
+  - **颜色位拆包**：全局位偏移表 **[0x8a0dd0]/[0x8a0dd4]/[0x8a0de0]/[0x8a0de4]/[0x8a0dd8]/[0x8a0ddc] 六槽**（word 移位量 + dword 位计数）→ shr/shl 分路拆 3 通道（dl/al 半字）→ 组装 [esp+0x18] 三字节 → word 高半 [esp+0x1c]
+  - **call 0x6612c0**（[esp+0x1c] 3 字节缓冲 → 查询）→ [esp+0x14..0x16] 三字节再拆（shr/shl）→ or 组装 → **[edi+0x24]=ax** 写入当前色
+  - 逐字：si==0xd / 0xa（换行）→ 0x434655 跳过换行；否则 **call 0x434120**（push -1/[esp+0x2c]/[esp+0x28]/si 四参——字形绘制）→ 返回字宽累加 [esp+0x28]；[esp+0x30] 递减门控 → 提前退出
+  - jge 提前路径 0x43468D：四次 push 0 + edx → **call 0x433cf0**（串渲染收尾）→ 返 eax=[esp+0x24]+[esp+0x28]
+- 直接 call 3 次/去重 3：0x6612c0、0x434120、0x433cf0——picker callees=3 吻合，差值 0
+- 判类：FUN_00434500——位图文字绘制器（串逐字循环 + 六槽位拆包颜色 + 0x6612c0 查询 + 0x434120 字形绘制 + 0x433cf0 收尾；de PS=5 小函数同族，BitFont 域核心绘制）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x433880 BitFont::BitFont（189B 带名）
+
+- 范围 0x433880-0x43393A（双出口 ret 4 @0x4338F8（成功）/ret 4 @0x43393A（fallback）；0x43393D 起 nop pad，下函数 0x433940（BitFont::~BitFont：[esi+8] 0x7c93e8 free + [esi+4] 内部 [+0x18]/[+0x1c] 0x7c8b3d delete ×2——c 路析构对）——观察项）
+- thiscall 1 栈参（ret 4 = [esp+0x14] 字体名/资源）：BitFont 构造：
+  - 字段初始化族：**[esi]=0x7e3a78**（BitFont 虚表）/[+4]=0/[+0x24]=0x7fff/[+0x26]=0x3555/[+0x28]=0x40/byte[+0x40]=1/byte[+0x41]=1/[+0x18]=1/[+0x1c]=1/[+0x20]=0/[+0xc]=0/[+8]=0 → **call [0x7e14b4]**（绝对地址间接——加载钩子，picker 计 callee、核验不计）→ **[+0x2c]=1**
+  - **call 0x433990**（[esp+0x14] 资源加载 → eax）→ 成功：**[+4]=eax**（持有）+ **[+0x18]=[eax+4]** + **[+0x1c]=[eax+0xc]** → **call 0x434700**（后继装配）→ 返 this
+  - fallback 0x4338FB（资源加载失败）：重写全字段（含再次 0x7e14b4 加载钩子 + [+0x2c]=1）→ 返 this
+- 直接 call 4 次/去重 2：0x433990、0x434700（+ 0x7e14b4×2 绝对地址间接不计）——**picker callees=3 vs 核验 2，差值 1 = 0x7e14b4（绝对地址间接，既有惯例：picker 计、核验不计），按实记录非漏登**
+- 判类：BitFont::BitFont（**带名**——16 字段初始化 + 0x7e14b4 加载钩子 + 0x433990 资源加载 + 0x434700 装配 + fallback 双路径；与 batch 2502 BitFont 域同族，a 路 0x434AD0 的委托目标）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2510.py：a 路 1 已登记（0x7c8e17）+ **1 批内自引用（0x433880=c 路）**=2；b 路 3/3（0x433cf0/0x434120/0x6612c0 已登记）；c 路 2/2（0x433990/0x434700 已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 1（0x7e14b4 绝对地址间接 `call dword ptr [0x7e14b4]`，picker 计、核验不计——既有惯例，按实记录非漏登）
+- 批内自引用 1 条（a→c 路 0x433880），同批登记后闭合；无 MISSING（**真 MISSING 队列 11→10：0x434AD0 已被本批登记兑现**）；无 UNKNOWN
+- 真 MISSING 排队 10 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x434B10（a 路下函数）：BitText::~BitText（虚表 0x7e3a80 + [0x89c4d0] 全局判定虚表槽 0 push 1 删除 + 清全局）——后续批次优先跟进登记
+- 0x433940（c 路下函数）：BitFont::~BitFont（[esi+8] 0x7c93e8 free + [esi+4] 内部 [+0x18]/[+0x1c] 0x7c8b3d delete ×2）——后续批次优先跟进登记
+- 0x4346C0（b 路下函数）：ret 4 容器查询（[ecx+4]→[+0x18] word 表 + [ecx+0x14] imul [ecx+0x1c]）——后续批次优先跟进登记
+- 0x433990（c 路 callee）：字体资源加载器（[esp+0x14] 参数 → 对象）——后续批次优先跟进登记
+- 0x434700（c 路 callee）：字体装配器——后续批次优先跟进登记
+- 0x6612c0（b 路 callee）：3 字节缓冲颜色查询——后续批次优先跟进登记
+- 0x434120（b 路 callee）：字形绘制（push -1/2 坐标/si 四参）——后续批次优先跟进登记
+- 0x433cf0（b 路 callee）：串渲染收尾器——后续批次优先跟进登记
+- 既有池延续：0x459870 / 0x459880 / 0x459890 / 0x4598A0 / 0x4595C0 / 0x47C3D0 / 0x47C520 / 0x4C9220 / 0x4C9480 / 0x4C93D0 / 0x451E40 / 0x451890 / 0x65AD30 / 0x568300 / 0x4834A0、0x4589C0/0x457C90、0x5AE860/0x5AE980/0x5AE9B0/0x5AE9E0/0x5AF080/0x5AF1A0/0x5AEAD0/0x5AEAF0/0x5AEB20、0x4D0EF0/0x425260/0x50E010/0x50E0E0/0x472140/0x70FEE0/0x4870B0/0x487110/0x487130/0x7BB920、0x454730/0x452DC0/0x4533A0/0x452BB0/0x453060/0x4528A0/0x4525F0/0x452480/0x554A60/0x554A80/0x4A5130/0x4A51B0/0x4A51D0/0x656580/0x655560、0x452210/0x452260/0x4517D0/0x4500A0/0x5257c0/0x526b00/0x526960/0x526cc0/0x7c9cc2/0x7c9bfd/0x50c170/0x45e7b0/0x43b740/0x6e5e70/0x6e52a0/0x752700/0x509140/0x50b6f0/0x5f5b50/0x436be0、0x4068e0/0x481670/0x481810/0x6f3f40/0x4ff700/0x4c9680/0x465af0/0x750090/0x50b730/0x500510/0x4ca160/0x4aed70、0x43c0d0/0x43b680/0x427cb0/0x421ea0/0x424c90/0x424ca0/0x49fae0/0x4ff550/0x45ae10/0x45add0/0x410220/0x41c590、0x41c230/0x41c380/0x480a30/0x43adf0/0x43a160/0x43a190、0x439b00/0x4393d0/0x4393e0/0x578080/0x6cf240/0x439110、0x439030/0x438e60/0x410170/0x405be0/0x405d40/0x750d40/0x7509e0（以上 batch 2501-2509 观察项）
