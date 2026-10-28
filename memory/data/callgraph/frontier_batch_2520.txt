@@ -1,0 +1,67 @@
+# frontier batch 2520
+
+日期：2026-10-28
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x42DF40（80B FUN_0042df40 callees=4 deps=68）/ b=0x42DDB0（386B FUN_0042ddb0 callees=4 deps=69）/ c=0x42DCA0（184B FUN_0042dca0 callees=0 deps=5）——浮点容器域三连（a 分量装载、b 二进制块读取、c 浮点二叉堆 sift-down；a/b 共享 0x42fd30/0x42fe50 分量构造对，c 为纯 FP 比较）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2520{a,b,c}.txt，完整读取确认尾 ret（a 单出口 ret@0x42DF8F（下函数 0x42DF90 3/4 槽分量变体）、b 双出口 ret 8@0x42DF1A / ret 8@0x42DF2F（下函数 0x42DF40=a 路）、c 单出口 ret 4@0x42DD55（下函数 0x42DD60 0x7c8e17 容量构造器））
+核验：.qwen/tmp/_check_callees2520.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6043 → 6046（三行全新增，ADD 3）
+
+## a 路：0x42DF40 FUN_0042df40（80B）
+
+- 范围 0x42DF40-0x42DF8F（单出口 ret @0x42DF8F；0x42DF90 起下函数 0x42DF90（[esi+0xc] 判空 + 3/4 分量 [esp+0x18]=3 装配——a 路同族变体，观察项））
+- thiscall 无参：分量容器 装载/查询收尾器：
+  - **[esi+0x10]（计数）判空** → je 0x42DF84 直接查询
+  - **[esi+0xc] 分量标记判 0/非 0**：
+    - 0（无分量）分支：lea edi,[esi+0x14] + push 4 / push edi + lea ecx,[esi+0x18] → **call 0x42fd30**（分量构造，4 型）
+    - 非 0 分支：lea edi,[esi+0x18] + push 3 / push edi + lea ecx,[esi+0x14] → **call 0x42fe50**（分量构造，3 型）
+  - push 返回值 + push edi → ecx=esi → **call 0x631d10**（容器装载）→ edi=装载结果 → **[esi+0x10]=0（计数清零）**
+  - 公共出口 0x42DF84：ecx=esi → **call 0x631d30**（容器查询）→ **eax+edi 汇总返回**
+- 直接 call 4 次/去重 4：0x42fd30、0x42fe50、0x631d10、0x631d30——picker callees=4 吻合，差值 0
+- 判类：FUN_0042df40——分量容器装载/查询收尾器（计数判空 + 0x42fd30/0x42fe50 4/3 分量分支构造 + 0x631d10 装载 + 0x631d30 查询汇总）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x42DDB0 FUN_0042ddb0（386B）
+
+- 范围 0x42DDB0-0x42DF2F（双出口 ret 8 @0x42DF1A（简化路径）/ret 8 @0x42DF2F（主路径）；0x42DF32 起 nop pad，下函数 0x42DF40 = a 路）
+- thiscall 3 栈参（ret 8 = [esp+0x14]=ebp 源缓冲/[esp+0x1c]=长度/[esp+0x24]=偏移）：二进制块读取器（分量容器 ReadBytes 族）：
+  - **ebp=[esp+0x14]（源）、[esp+0x1c]（长度）cmp 1 jl → 0x42DF1D 简化路径**（直接 push 长度/源 → **call 0x631d10** 装载 → ret 8）
+  - [edi+0xc] 分量标记 → 4/3 分量选择（esi=4 或 3，[esp+0x10]/[esp+0x20] 双指针装配）
+  - **[edi+0x10]（原计数）jle 0x42DEA1 跳过首段** → 长度裁剪（[esp+0x24] vs esi-计数 取小）→ push/源/目标 → **call 0x7ca090**（memcpy 首段拷贝）→ 计数+偏移 推进
+  - 满容量边界：[edi+0x10]==esi → **[edi+0xc] 判 0/非 0 → call 0x42fd30 / call 0x42fe50**（分量构造切换）→ **call 0x631d10**（装载新的外缓冲）→ [edi+0x10]=0
+  - 残余循环：[esp+0x24]（剩余）>= esi → 再 0x42fd30/0x42fe50 + 0x631d10 + 计数推进；**残余 < esi 且 >0 → call 0x7ca090**（残量 memcpy）→ [edi+0x10]=最终计数
+  - 收尾 → ret 8
+- 直接 call 9 次/去重 4：0x7ca090(×2)、0x42fd30(×2)、0x42fe50(×2)、0x631d10(×3)——picker callees=4 吻合，差值 0
+- 判类：FUN_0042ddb0——二进制块读取器（长度门控 + 4/3 分量切换 + 0x7ca090 首段/残量 memcpy + 0x42fd30/0x42fe50 分量构造 + 0x631d10 外缓冲装载；与 a 路同容器族）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x42DCA0 FUN_0042dca0（184B）
+
+- 范围 0x42DCA0-0x42DD55（单出口 ret 4 @0x42DD55；0x42DD58 起 nop pad，下函数 0x42DD60（[esp+4] 容量 + [esp+0xc] 缓冲 + ret 8 容量构造器——观察项））
+- thiscall 1 栈参（ret 4 = [esp+0x10]=esi 入堆索引）：浮点二叉堆 sift-down：
+  - **ebx=[ecx]（堆计数）**；edx=2×esi（左子）、edi=2×esi+1（右子）标准堆索引
+  - 左子比较：[ecx+8] 项数组 [eax+edx*4]（左子对象）vs [eax+esi*4]（当前）→ **fld [obj+8] ×2 + fcompp + fnstsw + test ah,0x41**（浮点字段比较）→ 左子更大则 edx=esi（下移候选）
+  - 右子比较：同理 [eax+edi*4] vs [eax+edx*4] → 右子更大则 edx=edi
+  - **edx != esi → 交换 [eax+esi*4]↔[eax+edx*4]（对象指针交换）→ esi=edx 循环继续（sift-down 下潜）**；edx==esi 退出 → ret 4
+- 直接 call 0 次/去重 0：纯 FP 比较 + 指针交换——picker callees=0 吻合
+- 判类：FUN_0042dca0——浮点二叉堆 sift-down（[obj+8] 浮点字段 fcompp 比较 + 2×/2×+1 子索引 + 指针交换下潜；标准最小/最大堆向下调整）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2520.py：a 路 4/4（0x42fd30/0x42fe50/0x631d10/0x631d30 全已登记）、b 路 4/4（0x42fd30/0x42fe50/0x631d10/0x7ca090 全已登记）、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用（a/b 共用 0x42fd30/0x42fe50/0x631d10 均已登记，非本批新增）；无 MISSING（真 MISSING 队列 8 个不变）；无 UNKNOWN
+- 真 MISSING 排队 8 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x47ec40 / 0x42ed60→batch2518 已登记删（实为 7 个）：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x47ec40 / 0x42C900 / 0x4758C0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x42DF90（a 路下函数）：3/4 槽分量装配变体（[esi+0xc] 判空 + [esp+0x18]=3 + 0x42fe50/0x42fd30 双分支 + 0x631d10 装载）——后续批次优先跟进登记
+- 0x42DD60（c 路下函数）：容量构造器（[esp+4] 容量 + [esp+0xc] 缓冲 + 0x7c8e17 new 分配 + ret 8——VectorClass 容量构造变体）——后续批次优先跟进登记
+- 0x42fd30（a/b 路 callee）：分量构造器·4 型（lea ecx 分量指针 + push 4）——后续批次优先跟进登记
+- 0x42fe50（a/b 路 callee）：分量构造器·3 型（push 3——0x42fd30 孪生）——后续批次优先跟进登记
+- 0x631d10（a/b 路 callee ×3）：容器外缓冲装载器（push 返回+分量 → ecx=this）——后续批次优先跟进登记
+- 0x631d30（a 路 callee）：容器查询器（缓冲内容读回）——后续批次优先跟进登记
+- 既有池延续：0x459870 / 0x459880 / 0x459890 / 0x4598A0 / 0x4595C0 / 0x47C3D0 / 0x47C520 / 0x4C9220 / 0x4C9480 / 0x4C93D0 / 0x451E40 / 0x451890 / 0x65AD30 / 0x568300 / 0x4834A0、0x4589C0/0x457C90、0x5AE860/0x5AE980/0x5AE9B0/0x5AE9E0/0x5AF080/0x5AF1A0/0x5AEAD0/0x5AEAF0/0x5AEB20、0x4D0EF0/0x425260/0x50E010/0x50E0E0/0x472140/0x70FEE0/0x4870B0/0x487110/0x487130/0x7BB920、0x454730/0x452DC0/0x4533A0/0x452BB0/0x453060/0x4528A0/0x4525F0/0x452480/0x554A60/0x554A80/0x4A5130/0x4A51B0/0x4A51D0/0x656580/0x655560、0x452210/0x452260/0x4517D0/0x4500A0/0x5257c0/0x526b00/0x526960/0x526cc0/0x7c9cc2/0x7c9bfd/0x50c170/0x45e7b0/0x43b740/0x6e5e70/0x6e52a0/0x752700/0x509140/0x50b6f0/0x5f5b50/0x436be0、0x4068e0/0x481670/0x481810/0x6f3f40/0x4ff700/0x4c9680/0x465af0/0x750090/0x50b730/0x500510/0x4ca160/0x4aed70、0x43c0d0/0x43b680/0x427cb0/0x421ea0/0x424c90/0x424ca0/0x49fae0/0x4ff550/0x45ae10/0x45add0/0x410220/0x41c590、0x41c230/0x41c380/0x480a30/0x43adf0/0x43a160/0x43a190、0x439b00/0x4393d0/0x4393e0/0x578080/0x6cf240/0x439110、0x439030/0x438e60/0x410170/0x405be0/0x405d40/0x750d40/0x434b10/0x433940/0x4346c0/0x433990/0x434700/0x6612c0/0x434120/0x433cf0、0x433860/0x4336c0/0x433270/0x433330、0x433060/0x432e40/0x432bd0/0x53e730/0x53e770/0x54f720/0x54f000/0x54f050、0x432750/0x65d0d0/0x4326c0、0x4318d0/0x4318f0/0x65cce0/0x65cdd0/0x7ca090(重)/0x431dd0/0x4f9a10、0x431450/0x431170、0x430f60/0x48dc90、0x430ba0/0x4a3890/0x5b40b0/0x65ca00/0x65ca80、0x430590/0x4305e0/0x430600/0x430610/0x430620/0x430580、0x42f260/0x42ee30/0x5275c0/0x6d2140/0x517440/0x421b60/0x433c90/0x433ca0/0x433c70/0x434cd0、0x42e780/0x52d760(重)/0x42fc40(重)/0x42fcb0(重)（以上 batch 2501-2519 观察项）
