@@ -1,0 +1,61 @@
+# frontier batch 2508
+
+日期：2026-10-28
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x439150（104B **带名 BombListClass::PointerGotInvalid** callees=0 deps=79）/ b=0x4390D0（59B **带名 BombListClass::RemoveDetector** callees=0 deps=190）/ c=0x439080（71B **带名 BombListClass::AddDetector** callees=0 deps=83）——BombListClass 探测器检测/移除/添加三连（b 与 c 物理相邻，a 与 batch2507 c 路同邻，均为纯虚表槽间接操作）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2508{a,b,c}.txt，完整读取确认尾 ret（a 单出口 ret 4@0x4391B5、b 单出口 ret 4@0x439108、c 单出口 ret 4@0x4390C4）
+核验：.qwen/tmp/_check_callees2508.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6007 → 6010（三行全新增，ADD 3）
+
+## a 路：0x439150 BombListClass::PointerGotInvalid（104B 带名）
+
+- 范围 0x439150-0x4391B5（单出口 ret 4 @0x4391B5；0x4391B8 起 nop pad，下函数 0x4391C0 = batch 2507 c 路）
+- thiscall 1 栈参（ret 4 = 待校验指针 edi [esp+0xc]）：指针失效清理：
+  - [esi] 虚表槽 0x10（Find 查询）→ eax==-1 或 >= [esi+0x10]（计数）直接跳过
+  - 命中 → [esi+0x10]--（计数减一）→ 前移压缩循环（[esi+4] 项数组 [eax*4] 左移覆盖）
+  - 第二遍：[esi+0x10] 计数循环遍历 [esi+4] 数组每项 ptr → 若 **[ptr+0x24]==edi**（传入指针）则 **[ptr+0x24]=0**（清空该对象的指针字段）
+- 直接 call 0 次/去重 0：纯虚表槽 0x10 间接——picker callees=0 吻合
+- 判类：BombListClass::PointerGotInvalid（**带名**——虚表槽 0x10 Find + 计数-- + 前移压缩 + 第二遍 [+0x24] 指针字段清空；探测器指向的方块失效时调用）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x4390D0 BombListClass::RemoveDetector（59B 带名）
+
+- 范围 0x4390D0-0x439108（单出口 ret 4 @0x439108；0x43910B 起 nop pad，下函数 0x439110）
+- thiscall 1 栈参（ret 4 = 探测器指针 [esp+8]）：子容器探测器移除：
+  - [ecx+0x18] 子容器基址；lea esi,[ecx+0x18]
+  - [eax+0x10]（eax=[esi]）虚表槽 0x10（Find）→ eax==-1 或 >= [esi+0x10] 跳过
+  - 命中 → [esi+0x10]--（计数减一）→ 前移压缩循环（[esi+4] 项数组左移覆盖）
+- 直接 call 0 次/去重 0：纯虚表槽 0x10 间接——picker callees=0 吻合
+- 判类：BombListClass::RemoveDetector（**带名**——[+0x18] 子容器虚表槽 0x10 Find + 计数-- + 前移压缩；与 a 路同构仅作用于子容器）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x439080 BombListClass::AddDetector（71B 带名）
+
+- 范围 0x439080-0x4390C4（单出口 ret 4 @0x4390C4；0x4390C7 起 nop pad，下函数 0x4390D0 = b 路）
+- thiscall 1 栈参（ret 4 = 探测器指针 [esp+8]）：探测器添加：
+  - [ecx+0x28]（容量）vs [ecx+0x20]（计数）→ jl 0x4390b0 容量充足跳过增长
+  - [esi+0xd]（owns 标志）判空 / 容量==0 → **虚表槽 8**（Grow 增长）
+  - [esi+0x14]（某计数）+ 容量 → 虚表槽 8 再 Grow
+  - 增长后 [esi+0x10]（计数）++ → 写 **[esi+4]+eax*4 = [esp+8]**（传入指针追加入数组）
+- 直接 call 0 次/去重 0：纯虚表槽 8 间接——picker callees=0 吻合
+- 判类：BombListClass::AddDetector（**带名**——容量检查 + 虚表槽 8 Grow + 计数++ + 指针追加入 [+0x4] 数组；b 路 remove 的对称 add）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2508.py：a 路 0/0（纯虚表槽 0x10 间接，callees=0 吻合）、b 路 0/0（纯虚表槽 0x10 间接，callees=0 吻合）、c 路 0/0（纯虚表槽 8 间接，callees=0 吻合）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0（虚表槽 0x10/8 间接全部不计）
+- 无批内自引用；无 MISSING（真 MISSING 队列 11 个不变）；无 UNKNOWN
+- 真 MISSING 排队 11 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4391C0（a 路下函数）：batch2507 c 路（外部读取器虚表槽 0x10 版）——已登记
+- 0x439110（b 路下函数）：[esi+0x30]=0x2d + 双虚表槽 0xc/8 读取器装配（与 batch2507 c 路 0x4391C0 同族）——后续批次优先跟进登记
+- 0x4393D0 / 0x4393E0（batch2507 b 路观察项）：`mov eax,0x5c/0x44; ret` 尺寸 getter 对——后续批次优先跟进登记
+- 0x439B00（batch2507 a 路观察项）：0x130 栈帧坐标大函数（0x43a130/0x43a0d0/0x437090/0x43a100 四 callee）——后续批次优先跟进登记
+- 0x578080（batch2507 a 路 callee）：MapClass 0x87f7e8 坐标→cell（与 0x565730 配对）——后续批次优先跟进登记
+- 0x6cf240（batch2507 b 路 callee）：全局装载器（push 项指针 + 0xb0c110）——后续批次优先跟进登记
+- 既有池延续：0x459870 / 0x459880 / 0x459890 / 0x4598A0 / 0x4595C0 / 0x47C3D0 / 0x47C520 / 0x4C9220 / 0x4C9480 / 0x4C93D0 / 0x451E40 / 0x451890 / 0x65AD30 / 0x568300 / 0x4834A0、0x4589C0/0x457C90、0x5AE860/0x5AE980/0x5AE9B0/0x5AE9E0/0x5AF080/0x5AF1A0/0x5AEAD0/0x5AEAF0/0x5AEB20、0x4D0EF0/0x425260/0x50E010/0x50E0E0/0x472140/0x70FEE0/0x4870B0/0x487110/0x487130/0x7BB920、0x454730/0x452DC0/0x4533A0/0x452BB0/0x453060/0x4528A0/0x4525F0/0x452480/0x554A60/0x554A80/0x4A5130/0x4A51B0/0x4A51D0/0x656580/0x655560、0x452210/0x452260/0x4517D0/0x4500A0/0x5257c0/0x526b00/0x526960/0x526cc0/0x7c9cc2/0x7c9bfd/0x50c170/0x45e7b0/0x43b740/0x6e5e70/0x6e52a0/0x752700/0x509140/0x50b6f0/0x5f5b50/0x436be0、0x4068e0/0x481670/0x481810/0x6f3f40/0x4ff700/0x4c9680/0x465af0/0x750090/0x50b730/0x500510/0x4ca160/0x4aed70、0x43c0d0/0x43b680/0x427cb0/0x421ea0/0x424c90/0x424ca0/0x49fae0/0x4ff550/0x45ae10/0x45add0/0x410220/0x41c590、0x41c230/0x41c380/0x480a30/0x43adf0/0x43a160/0x43a190（以上 batch 2501-2507 观察项）
