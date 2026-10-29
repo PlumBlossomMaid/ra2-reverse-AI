@@ -1,0 +1,64 @@
+# frontier batch 2594
+
+日期：2026-10-30
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 0，落回 0x7A 段 ranking 序——batch 2591/2592/2593 同段连续）
+三路：a=0x7AE0E0（156B FUN_007ae0e0 callees=2 deps=0）/ b=0x7AE020（156B FUN_007ae020 callees=2 deps=0）/ c=0x7ADCD0（657B FUN_007adcd0 callees=4 deps=0）——三路同属 0x7A 段哈希容器域（a/b 为哈希表扩容重哈希器·翻倍版双副本——与 batch 2593 c 路 0x7AE510 逐字节同构，a 冲突链 [+0x48]、b 冲突链 [+0x70]，c 为哈希表取用器·删除计数器版——计数-1 + 容量/计数浮点因子 + 0x7B4780 匹配判定 + rep movsd 0x1B dword 拷出参 + 链剔除 + 收缩重哈希 + [esp+0x20] 标志返 1/0）；a 尾 0x7AE180 起同族函数观察项（继续 2×/最小 10 扩容路径）、b 尾 0x7AE0C0 起掩码哈希索引器第三副本（batch 2593 a/b 路同构——call [esi+0x18] + (1<<[+0xc])-1 + ret 4，观察项）、c 尾 0x7ADF70 起计数器比较扩容器（mov esi,[ebx+8] mov eax,[ebx+0x30] cmp jbe——0x7AEF50 同族报头，观察项）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2594{a,b,c}.txt（a 0xA0 窗读全、b 0xC0 窗读全、c 0x2C0 窗读全，尾 ret 确认：a 单出口 ret @0x7AE17B（0x7AE17C-0x7AE17F nop pad + 0x7AE180 起同族函数观察项）、b 单出口 ret @0x7AE0BB（0x7AE0BC-0x7AE0BF nop pad + 0x7AE0C0 起掩码哈希索引器第三副本观察项）、c 双出口 ret 8 @0x7ADCEB/0x7ADF5E（0x7ADF61-0x7ADF6F nop pad + 0x7ADF70 起计数器比较扩容器观察项））
+核验：.qwen/tmp/_check_callees2594.py；a 2/2、b 2/2、c 4/4；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6265 → 6268（三行全新增，ADD 3）
+
+## a 路：0x7AE0E0 FUN_007ae0e0（156B）
+
+- 范围 0x7AE0E0-0x7AE17B（单出口 ret @0x7AE17B；0x7AE17C-0x7AE17F nop pad + 0x7AE180 起同族函数观察项）——0x7A 段标准序
+- thiscall 无栈参（ecx=this，ret 空）：**哈希表扩容重哈希器·翻倍版**（batch 2593 c 路 0x7AE510 逐字节同构副本——冲突链 [+0x48]）：
+  - push ecx/ebx → mov ebx,ecx → **cmp byte[ebx+0x14],1 je 0x7ae179**（[+0x14] 标志==1 直退）→ push ebp/esi/edi → mov esi,[ebx+8] mov ebp,[ebx]（[+8] 容量/[+0] 表指针）mov edi,[ebx+0xc] inc edi（位数+1）
+  - **mov [ebx+8],eax**（新计数=esi×2）→ shl eax,2 push eax **call 0x7c8e17**（@0x7ae10b 分配 4×新容量）→ mov edx,ecx mov [ebx],edi（新表）rep stosd + rep stosb 清零（@0x7ae124-0x7ae12d）
+  - **重挂循环**（@0x7ae12f-0x7ae167）：mov edi,ebp mov ebp,esi 外层：mov esi,[edi] test esi je 0x7ae163（空槽跳过）→ 内层：mov ecx,esi **call dword ptr [ebx+0x18]**（@0x7ae13d 哈希回调 thiscall）→ mov ecx,[ebx+0xc] mov edx,1 shl edx,cl dec edx and edx,eax（掩码 = (1<<(位数+1))-1）→ mov eax,[ebx] mov ecx,[eax+edx*4] lea eax,[eax+edx*4] mov [eax],esi（插新表）→ **mov eax,[esi+0x48] mov [esi+0x48],ecx**（[+0x48] 冲突链更新）mov esi,eax test jne 内层 → add edi,4 dec ebp jne 外层
+  - **mov ebp,[esp+0x10] push ebp call 0x7c8b3d**（@0x7ae16e 释放旧表）add esp,4 → pop 各寄存器 ret @0x7ae17b
+- 直接 call 2 次/去重 2：0x7c8e17（分配）、0x7c8b3d（释旧表）——picker callees=2 吻合，差值 0；哈希回调走虚表槽 [ebx+0x18] 间接
+- 判类：FUN_007ae0e0——哈希表扩容重哈希器·翻倍版（thiscall ret 空；[+0x14] 标志==1 直退；否则新计数=旧×2 → 0x7C8E17 分配 4×新计数清零 + 位数 [+0xc]+1 + 全表遍历（[ebx+0x18] 哈希回调 → 掩码 (1<<(位数+1))-1 计算新槽 → 插新表 + **[+0x48] 冲突链更新**）+ 0x7C8B3D 释放旧表——batch 2593 c 路 0x7AE510 逐字节同构（同链 [+0x48]））
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x7AE020 FUN_007ae020（156B）
+
+- 范围 0x7AE020-0x7AE0BB（单出口 ret @0x7AE0BB；0x7AE0BC-0x7AE0BF nop pad + 0x7AE0C0 起掩码哈希索引器第三副本观察项（push esi mov esi,ecx mov ecx,[esp+8] call [esi+0x18] mov ecx,[esi+0xc] mov edx,eax mov eax,1 shl eax,cl dec eax and eax,edx ret 4——batch 2593 a/b 路同构第三副本））——0x7A 段标准序
+- thiscall 无栈参（ecx=this，ret 空）：**哈希表扩容重哈希器·翻倍版 B**（与 a 路 0x7AE0E0 逐字节同构——**唯一差异 = 冲突链偏移 [+0x70]（非 [+0x48]）**）：
+  - push ecx/ebx → mov ebx,ecx → **cmp byte[ebx+0x14],1 je 0x7ae0b9**（[+0x14] 标志==1 直退）→ push ebp/esi/edi → mov esi,[ebx+8] mov ebp,[ebx] mov edi,[ebx+0xc] inc edi（位数+1）
+  - **mov [ebx+8],eax**（新计数=esi×2）→ shl eax,2 push eax **call 0x7c8e17**（@0x7ae04b 分配 4×新容量）→ mov [ebx],edi（新表）rep stosd + rep stosb 清零
+  - **重挂循环**（@0x7ae06f-0x7ae0a7）：外层 mov edi,ebp mov ebp,esi：mov esi,[edi] test esi je 0x7ae0a3 → 内层：mov ecx,esi **call dword ptr [ebx+0x18]**（@0x7ae07d 哈希回调）→ 掩码 (1<<(位数+1))-1（@0x7ae080-0x7ae08b）→ mov eax,[ebx] mov ecx,[eax+edx*4] lea eax,[eax+edx*4] mov [eax],esi → **mov eax,[esi+0x70] mov [esi+0x70],ecx**（@0x7ae097-0x7ae09a **[+0x70] 冲突链更新**）→ mov esi,eax test jne 内层 → add edi,4 dec ebp jne 外层
+  - **mov ebp,[esp+0x10] push ebp call 0x7c8b3d**（@0x7ae0ae 释放旧表）add esp,4 → pop 各寄存器 ret @0x7ae0bb
+- 直接 call 2 次/去重 2：0x7c8e17、0x7c8b3d——picker callees=2 吻合，差值 0
+- 判类：FUN_007ae020——哈希表扩容重哈希器·翻倍版 B（thiscall ret 空；与 0x7AE0E0 逐字节同构（[+0x14]==1 门控 + 2× 计数 + 位数+1 + 0x7C8E17 分配 + [ebx+0x18] 回调掩码 (1<<(位数+1))-1 重挂 + 0x7C8B3D 释放旧表），**唯一差异 = 冲突链偏移 [+0x70]（a 路为 [+0x48]）**；b 尾 0x7AE0C0 为掩码哈希索引器第三副本（batch 2593 a/b 同构））
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x7ADCD0 FUN_007adcd0（657B）
+
+- 范围 0x7ADCD0-0x7ADF5E（双出口 ret 8 @0x7ADCEB/0x7ADF5E，另有 0x7ADD3B/0x7ADE43 中间 ret 8；0x7ADF61-0x7ADF6F nop pad + 0x7ADF70 起计数器比较扩容器观察项）——0x7A 段标准序
+- thiscall 3 栈参（ecx=this/[esp+0x20]=出参指针/[esp+0x24]=目标指针（fp 出参），ret 8）：**哈希表取用器·删除计数器版**（大函数——取用+链剔除+收缩综合）：
+  - sub esp,0xc push ebx/ebp/esi/edi → mov ebp,ecx → **mov eax,[ebp+4] cmp eax,ecx jne 0x7adcee**（[+4] 计数==0）→ pop 各寄存器 xor al,al ret 8 @0x7adceb（计数 0 直退返 0）
+  - **计数-1 + 浮点因子**（@0x7adcee-0x7add10）：mov eax,[ebp+4] dec eax mov [esp+0x14],eax（计数-1 存局部）→ mov eax,[ebp+8] fild qword [esp+0x14]/x2 → **fidiv dword [esp+0x14]**（@0x7add06 容量/（计数-1））mov edi,[esp+0x20] **fstp dword [esp+0x14]**（浮点因子存局部）
+  - **取槽**（@0x7add0e-0x7add2a）：mov ecx,edi **call dword ptr [ebp+0x18]**（@0x7add14 哈希回调）→ mov ecx,[ebp+0xc] mov ebx,1 shl ebx,cl dec ebx and ebx,eax（掩码 (1<<[+0xc])-1）→ mov esi,[ecx+ebx*4]（槽首项）test esi mov [esp+0x10],esi jne 0x7add3e → pop 各寄存器 xor al,al ret 8 @0x7add3b（槽空返 0）
+  - **首项匹配路径**（@0x7add3e-0x7ade3a）：push edi mov ecx,esi **call 0x7b4780**（@0x7add41 匹配判定）test al je 0x7ade46（转到链找）→ mov edi,[esp+0x24] add esi,4 mov ecx,0x1b **rep movsd**（@0x7add5a 拷出 0x1B dword = 108B 数据体到目标）→ mov edx,[ebp] mov esi,[edx+ebx*4] test esi **mov edi,[esi+0x70] je 0x7add79**（[+0x70] 冲突链）→ mov ecx,esi **call 0x7b46f0**（@0x7add6b 元素析构）push esi **call 0x7c8b3d**（@0x7add71 释放元素）→ mov eax,[ebp] **mov [eax+ebx*4],edi**（槽指向冲突链下一项）mov eax,[ebp+4] dec eax mov [ebp+4],eax（计数-1）
+  - **浮点比较 + 收缩重哈希**（@0x7add7c-0x7ade37）：fld [esp+0x14] **fcomp qword [ebp+0x20]**（@0x7add86 浮点因子与 [+0x20] 双精度常量比较）fnstsw test ah,0x41 je 0x7ade3a（>则收缩）→ mov esi,[ebp+8] mov eax,[ebp+0x30] cmp esi,eax jbe 0x7ade3a → cmp byte[ebp+0x14],1 je 0x7ade3a → 收缩块（@0x7adeb0 起，与 batch 2591 b 路 0x7AEF50 同构）：新计数=旧/2（shr eax,1）+ 位数-1（dec edi）+ 掩码 (1<<(位数-1))-1 … → 0x7C8E17 分配 4× 清零 + 全表重挂（[ebp+0x18] 回调 + [+0x70] 冲突链）+ 0x7C8B3D 释放旧表 → mov al,1 ret 8 @0x7ade43
+  - **链找路径**（@0x7ade46-0x7adf5e）：mov ebx,[esi+0x70] mov byte[esp+0x20],0（标志清）test ebx je 0x7adea3（链空）→ 循环：mov ecx,ebx **call 0x7b4780**（@0x7ade55 链项匹配）test al jne 0x7ade6b（命中）mov [esp+0x10],ebx mov ebx,[ebx+0x70] test je 0x7adea3 → 命中：mov edi,[esp+0x24] mov edx,[esp+0x10] lea esi,[ebx+4] mov ecx,0x1b **rep movsd**（拷出）mov ecx,[ebx+0x70] mov [edx+0x70],ecx（链剔除）mov ecx,[ebp+4] dec ecx mov [ebp+4],ecx mov [esp+0x10],ebx（保存待删）test ebx je 0x7ade9e mov ecx,ebx **call 0x7b46f0**（@0x7ade90 析构）push ebx **call 0x7c8b3d**（@0x7ade96 释放）mov byte[esp+0x20],1（标志置位）
+  - **链路径收尾**（@0x7adea3-0x7adf5e）：fld [esp+0x14] fcomp qword [ebp+0x20] test ah,0x41 je 0x7adf53（触收缩则重复收缩块 @0x7adeb5 同构）→ mov al,[esp+0x20] pop 各寄存器 add esp,0xc ret 8 @0x7adf5e（按标志返 1/0）
+- 直接 call 10 次/去重 4：0x7b4780×2、0x7b46f0×2、0x7c8b3d×3（元素释放×2 + 旧表释放）、0x7c8e17×2（两次收缩分配）——picker callees=4 吻合，差值 0；哈希回调走虚表槽 [ebp+0x18] 间接
+- 判类：FUN_007adcd0——哈希表取用器·删除计数器版（thiscall 3 栈参 ret 8 返布尔；[+4] 计数 0 直退返 0；计数-1 + 容量/(计数-1) 浮点因子（fild/fidiv/fstp）；[ebp+0x18] 哈希回调掩码 (1<<[+0xc])-1 取槽；0x7B4780 匹配判定：首项命中 rep movsd 0x1B dword（108B 数据体）拷出参 + [+0x70] 冲突链接管 + 0x7B46F0 析构 + 0x7C8B3D 释放 + 计数-1；未中沿 [+0x70] 链逐项 0x7B4780 链剔除；浮点因子与 [+0x20] 双精度常量比较（> 且 [+8] 容量 > [+0x30] 上限且 [+0x14]!=1）触发收缩重哈希（新计数=/2、0x7C8E17、重挂、0x7C8B3D）；收尾 [esp+0x20] 命中标志返 1/0——哈希容器取用+释放+收缩综合大函数）
+- 语义证据级别：assembly_decompile_verified（partial——浮点因子/[-0x20] 常量语义（容量-占用率阈值推断）未确认，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2594.py：a 路 2/2（0x7c8b3d/0x7c8e17 已登记）、b 路 2/2（同）、c 路 4/4（0x7b46f0/0x7b4780/0x7c8b3d/0x7c8e17 已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0（a/b/c 均无间接差值；哈希回调虚表槽 [ebx+0x18]/[ebp+0x18] 间接未计）
+- 无批内自引用（a/b/c 互不落对方函数体；a 尾 0x7AE180 同族函数、b 尾 0x7AE0C0 掩码哈希索引器第三副本、c 尾 0x7ADF70 计数器比较扩容器，均为批间邻接）；排队 MISSING 观察项已清零；真 MISSING 队列 3 个不变（0x4f6eb0 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6243 行」= 唯一地址数 = 行数 6265 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x7AE180（a 路下函数）：同族扩容重哈希器（2×/最小 10 扩容路径——batch 2592 b 路 0x7AED40 系）——容器族观察
+- 0x7AE0C0（b 路下函数）：掩码哈希索引器第三副本（call [esi+0x18] + (1<<[+0xc])-1 + ret 4——batch 2593 a/b 路同构）——getter 族观察
+- 0x7ADF70（c 路下函数）：计数器比较扩容器（mov esi,[ebx+8] mov eax,[ebx+0x30] cmp jbe 直退——0x7AEF50 同族报头）——容器族观察
+- 0x7B4780（c 路 callee）：哈希元素匹配判定原语（取用器匹配核心，已登记）——原语族（已登记）
+- 0x7B46F0（c 路 callee）：元素析构原语（0x7B 段字符串对象虚表 0x7F7B0C 族组件析构——batch 2592 c 路共用）——原语族（已登记）
+- [+0x48] vs [+0x70] 冲突链偏移（a/b 差异点）：同一哈希容器模板两实例的冲突链槽位差异——数据结构观察
+- 既有池延续：见 batch 2593 观察项列表（0x7AECD0 哈希表构造器 + 0x7AE5D0 VectorClass Grow·4B 元素版 + 0x7F78A4 虚表 + 0x7C8E17/0x7C8B3D CRT 原语 + [+0x18] 虚表槽）+ batch 2592 观察项列表（0x7B46F0 析构主体 + 0x7CA090 memmove 原语 + VectorClass 容器族五成员）+ batch 2591 观察项列表（0x7AF640 [0x887310] 门控判定器 + 0x7AF000 计数器比较器 + 0x7AEEC0 计数器比较扩容器 + 0x7E149C IAT 槽 + 0x887310 全局槽）+ batch 2590-2540 全量观察项 + 真 MISSING 队列 3 个 + 历史候选池全量延续
