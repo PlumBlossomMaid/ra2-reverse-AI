@@ -1,0 +1,57 @@
+# frontier batch 2610
+
+日期：2026-10-30
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 0，落回 0x77 段 ranking 序）
+三路：a=0x77E300（296B FUN_0077e300 callees=6 deps=0）/ b=0x77E1D0（296B FUN_0077e1d0 callees=6 deps=0）/ c=0x77D4C0（579B FUN_0077d4c0 callees=7 deps=0）——a/b 同模板双胞胎（仅数组地址/虚表槽不同），c 为条件表校验器——场景选项/连接域第 8 连击
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2610{a,b,c}.txt（a 0x300 窗、b 0x300 窗、c 0x400 窗读全；尾 ret 确认：a 双出口 ret @0x77E360（edx=0 快路径）+ ret @0x77E427（链表重建路径；0x77E428-0x77E42F nop pad，0x77E430 起 a8b322 串族巨函）、b 双出口 ret @0x77E230（edx=0 快路径）+ ret @0x77E2F7（链表重建路径；0x77E2F8-0x77E2FF nop pad，0x77E300 起为 a 路）、c 多出口 ret @0x77D62C/0x77D63D（al=0/al=1）+ ret @0x77D6C5/0x77D6D6（回落路径）+ ret @0x77D702（双标志路径；0x77D703-0x77D70F nop pad，0x77D710 起 jmp 0x77F900 薄转发 + 0x77D720 新函数））
+核验：.qwen/tmp/_check_callees2610.py；a 4/4、b 4/4、c 7/7；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6313 → 6316（三行全新增，ADD 3）
+
+## a 路：0x77E300 FUN_0077e300（296B）
+
+- 范围 0x77E300-0x77E427（双出口 ret @0x77E360 快路径 + ret @0x77E427 重建路径；0x77E428-0x77E42F nop pad，0x77E430 起为 a8b322 串族巨函）
+- thiscall 1 栈参（ecx=esi）：**场景选项表链表重建调度器·A**（消息 0x191 查表 + [0xB77900]/[0xB7381C] 双源遍历 0x6C 元素 + 0x7C8E17 分配链 + [0xAC116C] 虚表槽 0xF0 回调 + 0x7C8B3D 链释放）：
+  - **消息查询 + 空表快路径**（@0x77e300-0x77e360）：sub esp,0x78 push 各 mov esi,ecx + push 0x53e call 0x775b10（@0x77e311 取句柄）push eax call dword[0x7e14a8]（IAT [0x7E14A8]）+ push 0xb7381c/push 0x20/push 0x191/push eax call dword[0x7e14a4]（@0x77e32a IAT [0x7E14A4] 消息 0x191 查表）mov edx,eax xor ebx test edx jne 0x77e361（非空→重建）+ 空表：mov eax,[0xac116c] mov ecx,esi mov edi,[eax] call 0x7b7140（@0x77e345 取串）mov ecx,[0xac116c] push eax/push ecx call dword[edi+0xf0]（@0x77e352 虚表槽 0xF0——[0xAC116C] 全局）xor eax,eax pop 各 add esp,0x78 ret @0x77E360（返回 0）
+  - **链表重建主循环**（@0x77e361-0x77e3e5）：push ebp xor ebp mov ecx,0x1b rep stosd 清 [esp+0x1c] 槽 + test edx jle 0x77e41b + 循环 mov eax,[ebx*4+0xb7381c]（源索引数组）test eax jl 0x77e3a9/cmp eax,[0xb77900] jge 0x77e3a9（越界跳过）+ lea eax,[eax+eax*2] lea edx,[eax+eax*8] rep movsd×0x1B（从 [0xb77908]+idx*0x6C 快照 27 dword 到 [esp+0x1c]）→ push 0x6c call 0x7c8e17（@0x77e3ab 分配 0x6C）rep movsd×0x1B 拷回 → test ebx（首节点 ebp=eax 锚点）mov [eax+0x20],0（新节点 +0x20=0）+ 链式：mov ecx,[esp+0x10] test je + mov [ecx+0x20],eax（前节点 +0x20 指新节点）mov [esp+0x10],eax + inc ebx cmp ebx,[esp+0x14] jl 循环 → **链式回调 + 释放**（@0x77e3e5-0x77e427）：test ebp je 0x77e41b + mov ecx,[0xac116c] mov esi,[ecx] mov ecx,[esp+0x18] call 0x7b7140（@0x77e3f5 取串）mov edx,[0xac116c] push eax/push ebp/push edx call dword[esi+0xf4]（@0x77e403 虚表槽 0xF4 回调）→ 释放循环 mov eax,ebp mov ebp,[ebp+0x20] push eax call 0x7c8b3d（@0x77e40f 逐节点释放）+ cmp jne 循环 → mov eax,1 pop 各 add esp,0x78 ret @0x77E427（返回 1）
+- 直接 call 5 次/去重 4：0x775b10/0x7b7140/0x7c8b3d/0x7c8e17——picker callees=6 vs 核验 4 差 2 = IAT [0x7E14A4]/[0x7E14A8] 两枚间接 + 虚表槽 [edi+0xf0]/[esi+0xf4] 两槽间接——按机器码直接 call 登记非 MISSING（IAT 差值惯例同 batch 2568/2575/2605/2606/2609）
+- 判类：FUN_0077e300——场景选项表链表重建调度器·A（thiscall 1 栈参双出口；0x775B10 取句柄 + IAT [0x7E14A4] 消息 0x191 查表 0xB7381C + [0xb77900]/[0xb77908] 表 + 0x7C8E17 分配 0x6C 节点 + [0xAC116C] 虚表槽 0xF0（空表）/0xF4（链回调）+ 0x7C8B3D 链释放——batch 2609 数组重插域同族，链表版）
+- 语义证据级别：assembly_decompile_verified（partial——0xB7381C 源数组/[0xAC116C] 虚表槽 0xF0/0xF4 回调语义未确认，无对应已登记 C++ 重写）
+
+## b 路：0x77E1D0 FUN_0077e1d0（296B）
+
+- 范围 0x77E1D0-0x77E2F7（双出口 ret @0x77E230 快路径 + ret @0x77E2F7 重建路径；0x77E2F8-0x77E2FF nop pad，0x77E300 起为 a 路）
+- thiscall 1 栈参（ecx=esi）：**场景选项表链表重建调度器·B**（a 路同模板双胞胎——仅消息源数组 [0xB766C0]、虚表槽 0xE8/0xEC 不同）：
+  - **消息查询 + 空表快路径**（@0x77e1d0-0x77e230）：sub esp,0x78 push 各 mov esi,ecx + push 0x53e call 0x775b10（@0x77e1e1 取句柄）push eax call dword[0x7e14a8]（IAT [0x7E14A8]）+ push 0xb766c0/push 0x20/push 0x191/push eax call dword[0x7e14a4]（@0x77e1fa IAT [0x7E14A4] 消息 0x191 查表）mov edx,eax xor ebx test edx jne 0x77e231 + 空表：mov eax,[0xac116c] mov ecx,esi mov edi,[eax] call 0x7b7140（@0x77e215 取串）mov ecx,[0xac116c] push eax/push ecx call dword[edi+0xe8]（@0x77e222 虚表槽 0xE8——[0xAC116C] 全局）xor eax,eax pop 各 add esp,0x78 ret @0x77E230（返回 0）
+  - **链表重建主循环**（@0x77e231-0x77e2e5）：与 a 路字节级同构——mov eax,[ebx*4+0xb766c0]（源索引数组）+ [0xb77900] 越界判 + rep movsd×0x1B 快照 + 0x7C8E17 分配 0x6C（@0x77e27b）+ +0x20 链式 + 链式回调：call 0x7b7140（@0x77e2c5 取串）+ call dword[esi+0xec]（@0x77e2d3 虚表槽 0xEC 回调）→ 释放循环 0x7C8B3D（@0x77e2df）+ mov eax,1 pop 各 add esp,0x78 ret @0x77E2F7（返回 1）
+- 直接 call 5 次/去重 4：0x775b10/0x7b7140/0x7c8b3d/0x7c8e17——picker callees=6 vs 核验 4 差 2 = IAT [0x7E14A4]/[0x7E14A8] 两枚间接 + 虚表槽 [edi+0xe8]/[esi+0xec] 两槽间接——按机器码直接 call 登记非 MISSING（IAT 差值惯例同 batch 2568/2575/2605/2606/2609）
+- 判类：FUN_0077e1d0——场景选项表链表重建调度器·B（thiscall 1 栈参双出口；0x775B10 取句柄 + IAT [0x7E14A4] 消息 0x191 查表 0xB766C0 + [0xb77900]/[0xb77908] 表 + 0x7C8E17 分配 0x6C 节点 + [0xAC116C] 虚表槽 0xE8（空表）/0xEC（链回调）+ 0x7C8B3D 链释放——a 路同模板：源数组 0xB766C0、虚表槽 0xE8/0xEC 为差异点）
+- 语义证据级别：assembly_decompile_verified（partial——0xB766C0 源数组/[0xAC116C] 虚表槽 0xE8/0xEC 回调语义未确认，无对应已登记 C++ 重写）
+
+## c 路：0x77D4C0 FUN_0077d4c0（579B）
+
+- 范围 0x77D4C0-0x77D702（五出口 ret @0x77D62C/0x77D63D（al=0/al=1）+ ret @0x77D6C5/0x77D6D6（四标志回落）+ ret @0x77D702（双标志路径）；0x77D703-0x77D70F nop pad，0x77D710 起 jmp 0x77F900 薄转发 + 0x77D720 新函数）
+- stdcall 0 栈参（ecx=ebp 对象，ret al 布尔）：**条件表校验-删除派发器**（双标志门控 + 0x775940 分配 0x113 + [0xB77900] 表串匹配定位 + [0xB73AA8]/[0xB73AB0] 次表遍历 + [0xB73E40] 基准串 + 内联 strcmp/0x7C8D20 双向比较 + 0x7B4940/0x7B5400 取串）：
+  - **双标志门控**（@0x77d4c0-0x77d4e9）：push ecx mov al,[0xb76af0] push 各 mov ebp,ecx test al jne 0x77d4dd（[0xB76AF0] 置位→跳过）+ mov al,[0xb73ad0] test al je 0x77d636（双零→直接 ret al=1）→ mov ecx,0x113 call 0x775940（@0x77d4e2 分配 0x113）test eax je 0x77d636
+  - **主表串匹配定位**（@0x77d4ef-0x77d559）：mov eax,[0xb77900]（计数）xor ebx/esi test eax jle 0x77d53a + 循环 lea edi 判界 + mov eax,[0xb77908] lea ebx,[edi+eax]（第 idx 项）→ lea ecx,[ebx+0x24] push ecx/mov ecx,0xb73e40 call 0x7b5440（@0x77d517 取基准串）push eax call 0x7c8d20（@0x77d51d 比较）test eax je 0x77d604（命中→跳 0x77d53d）inc esi/add edi,0x6c cmp esi,eax jl 循环 → or esi,-1（未中 esi=-1）→ 0x77d53d：xor ecx test esi jl 0x77d636（未中→ret al=1）+ cmp esi,eax jge 0x77d559 + lea eax,[esi+esi*2] lea edx,[eax+eax*8] mov eax,[0xb77908] lea ecx,[eax+edx*4]（命中项指针到 ecx）
+  - **双标志再门控**（@0x77d559-0x77d597）：mov al,[0xb76af0] test al mov al,[0xb73ad0] je 0x77d6d7（[0xB76AF0]=0 走 0x77D6D7 路径）+ test al je 0x77d63e（[0xB73AD0]=0 走 0x77D63E 路径）→ 双置位：test ecx je 0x77d597 + test ebp je 0x77d625（ret al=0）lea edx,[ebp+0x2e] add ecx,0x2e push 两 call 0x7c8d20（@0x77d587 比较 +0x2E 域）test eax je 0x77d636（相等→ret al=1）
+  - **次表遍历比较族**（@0x77d597-0x77d636 / 0x77d63e-0x77d6d6 双份复制）：mov ebx,[0xb73aa8]（次表计数）lea ecx,[esp+0x10] call 0x7b4620（@0x77d5a9 构造）+ xor edi test ebx jle 0x77d61c + 循环 add ebp,0x24 lea ecx,[esp+0x10] 判界 + mov eax,[0xb73ab0] lea ecx,[eax+edi*4] push ecx lea ecx,[esp+0x14] call 0x7b4940（@0x77d5d0 取次表项）→ lea ecx,[esp+0x10] mov esi,ebp call 0x7b5400（@0x77d5db 取串）+ 内联 strcmp（dl vs [esi] 逐字节 @0x77d5e0-0x77d613）test eax je 0x77d62d（相同→ret al=1）/ inc edi cmp edi,ebx jl 循环 → call 0x7b46f0（@0x77d620 析构）pop 各 xor al,al ret @0x77D62C（均不同→ret al=0）
+  - **0x77D6D7 路径**（@0x77d6d7-0x77d702）：[0xB76AF0]=0：test al je 0x77d6fb + test ecx je + test ebp je + add ebp,0x2e/add ecx,0x2e push 两 call 0x7c8d20（@0x77d6eb 比较 +0x2E 域）test eax je 0x77d636（相等→al=1）→ pop 各 xor al,al ret @0x77D702
+- 直接 call 15 次/去重 7：0x775940/0x7b4620/0x7b46f0/0x7b4940/0x7b5400/0x7b5440/0x7c8d20——picker callees=7 吻合，差值 0
+- 判类：FUN_0077d4c0——条件表校验-删除派发器（stdcall 0 栈参五出口；双标志 [0xB76AF0]/[0xB73AD0] 门控 + 0x775940 分配 + [0xb77900]/[0xb77908] 主表 0x6C 元素 0x7B5440/0x7C8D20 串匹配定位（0xB73E40 基准串）→ 命中后 0x7C8D20 +0x2E 域比较 + [0xb73aa8]/[0xb73ab0] 次表 0x7B4940/0x7B5400 遍历 + 内联 strcmp + 0x7B4620/0x7B46F0 构造析构——返回布尔：命中/相等=1、落空=0；场景选项删除/校验同域）
+- 语义证据级别：assembly_decompile_verified（partial——双标志语义/0xB73E40 基准串/0x7B4940/次表精确语义未确认，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2610.py：a 路 4/4（0x775b10/0x7b7140/0x7c8b3d/0x7c8e17 已登记）、b 路 4/4（同 a 四枚 已登记）、c 路 7/7（0x775940/0x7b4620/0x7b46f0/0x7b4940/0x7b5400/0x7b5440/0x7c8d20 已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 2（IAT [0x7E14A4]/[0x7E14A8] 两枚 + 虚表槽 0xF0/0xF4 间接）、b 差 2（IAT 同两枚 + 虚表槽 0xE8/0xEC 间接）、c 差 0——a/b 差值均为 IAT+虚表槽间接，按机器码直接 call 登记非 MISSING（惯例同 batch 2568/2575/2605/2606/2609）
+- 无批内自引用（a/b/c 互不落对方函数体；b 路后邻 0x77E300 = a 路起点，a 路后邻 0x77E430 串族巨函不在本批范围）；排队 MISSING 观察项已清零；真 MISSING 队列 3 个不变（0x4f6eb0 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6291 行」= 唯一地址数 = 行数 6313 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- [0xB7381C]（a 路消息源数组）/ [0xB766C0]（b 路消息源数组）：IAT [0x7E14A4] 消息 0x191 查表的接收数组——a/b 双胞胎差异点，数据结构观察
+- [0xAC116C] 虚表槽 0xF0/0xF4（a 路）+ 0xE8/0xEC（b 路）：[0xAC116C] 全局虚表再扩四槽（batch 2605-2609 已有 0x10/0x18/0x28）——虚表槽观察扩员
+- [0xB76AF0]/[0xB73AD0]（c 路双标志）：门控标志位（双零直退 al=1、单置位分流 0x77D6D7/0x77D63E 路径）——数据结构观察
+- [0xB73E40]（c 路基准串目标）+ 0x7B4940/0x7B5400（c 路次表取串族）+ [0xB73AA8]/[0xB73AB0]（c 路次表计数/指针）：次表遍历族——串/表结构观察
+- 消息 0x191/0x53E（a/b 路）：IAT [0x7E14A4] 消息泵扩员（batch 2609 九族 + 本批 0x191）
+- 既有池延续：见 batch 2609 观察项列表（[0xA8B8D8]/[0xA8B8CC] 数组、0x82BC30/0x82BA2C/0x887734 串、[0xB73E10] 族、0x84A214/0x84A670/0x84A658/0xB76B44/0x84A554 串、消息族 0x18E-0x4C5、[0xB76520] 族、[0xAC116C] 虚表槽 0x18、IAT [0x7E149C]、0x600630/0x623E00/0x623F00/0x7C9B72/0x7CA564/0x7CA610 工具族）+ batch 2608（0x781CC0/0x781CF0 双回调、[0xB77E0C]、0x7AE0C0 哈希、表项域）+ batch 2607（双回调族、[0xB77E48]）+ batch 2606（IAT [0x7E1178] 族、[0xB73684] 四槽、装配四全局、[0xB77E60]/[0xB77E64]、串族、DebugLog 串族、0x78E230/0x78E950、0x77D710、0x84A234、[0xB778D8]/[0xB778E0]）+ batch 2605（跳转表对 + 0x7E1470 族 + 0xF8 表）+ batch 2604-2586 全量 + 真 MISSING 队列 3 个 + 历史候选池全量延续
