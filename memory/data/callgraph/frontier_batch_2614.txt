@@ -1,0 +1,51 @@
+# frontier batch 2614
+
+日期：2026-10-30
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 0，落回 0x77 段 ranking 序）
+三路：a=0x77A050（42B FUN_0077a050 callees=3 deps=0）/ b=0x7784A0（36B FUN_007784a0 callees=2 deps=0）/ c=0x7781B0（91B FUN_007781b0 callees=1 deps=0）——a/b 为析构链（0x77 段虚表写入门户），c 为字符编码组装器（IAT [0x7E11C4]）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2614{a,b,c}.txt（a 0x60 窗、b 0x60 窗、c 0xA0 窗 137 行读全；尾 ret 确认：a 单出口 ret @0x77A079（0x77A07A-0x77A07F nop pad，0x77A080 起后邻巨型函数：sub esp,0xac + 0x5175F0 + cmp [esi+8] + je 0x77a48d）、b 单出口 ret 4 @0x7784C1（0x7784C4-0x7784CF nop pad，0x7784D0 起后邻四清零 [0xB73580..0xB7358C] + FP 初始化族 fld qword [0x7E1710]/[0x7E1708]）、c 单出口 ret @0x77820A（0x77820B-0x77820F nop pad，0x778210 起后邻巨型函数：0x4739F0 + 0x630310 + 虚表槽 [eax+0x7C]））
+核验：.qwen/tmp/_check_callees2614.py；a 3/3、b 2/2、c 0/0；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6325 → 6328（三行全新增，ADD 3）
+
+## a 路：0x77A050 FUN_0077a050（42B）
+
+- 范围 0x77A050-0x77A079（单出口 ret @0x77A079；0x77A07A-0x77A07F nop pad，0x77A080 起后邻巨型函数）
+- thiscall 0 栈参（ecx=esi）:**析构链·多子对象回收器（无 delete 版）**——batch 2611 b 路 0x77B030 的 ret 0 变体（同虚表 0x7F74F4、双子对象 + delete this 段缺失）：
+  - push esi mov esi,ecx lea ecx,[esi+0x40] mov dword[esi],0x7f74f4（写虚表 0x7F74F4）**call 0x7b6760**（@0x77a05c 析构 +0x40 子对象）→ lea ecx,[esi+0x3c] **call 0x7b6760**（@0x77a064 析构 +0x3C 子对象）→ lea ecx,[esi+0xc] **call 0x7b46f0**（@0x77a06c 析构 +0xC 子对象）→ mov ecx,esi **call 0x65d660**（@0x77a073 基类析构）→ pop esi ret @0x77A079（无 delete this 段——与 0x77B030 差异在 `test byte[esp+8],1 + push esi call 0x7c8b3d` 缺失、ret 0 vs ret 4）
+- 直接 call 4 次/去重 3：0x65d660/0x7b46f0/0x7b6760——picker callees=3 吻合，差值 0（0x7b6760 ×2 去重 1）
+- 判类：FUN_0077a050——析构链·多子对象回收器·无 delete 版（thiscall 0 栈参单出口 ret 0；虚表 0x7F74F4 + 0x7B6760×2（+0x40/+0x3C）+ 0x7B46F0（+0xC）+ 0x65D660 基类析构——batch 2611 b 路 0x77B030 同族 ret 0 变体，子对象布局 +0x40/+0x3C/+0xC 全同）
+- 语义证据级别：assembly_decompile_verified（partial——虚表 0x7F74F4 类型/子对象语义未确认，无对应已登记 C++ 重写）
+
+## b 路：0x7784A0 FUN_007784a0（36B）
+
+- 范围 0x7784A0-0x7784C1（单出口 ret 4 @0x7784C1；0x7784C4-0x7784CF nop pad，0x7784D0 起后邻四清零 + FP 初始化族）
+- thiscall 1 栈参（delete 标志 [esp+8]&1）:**析构链·单基析构回收器**：
+  - push esi mov esi,ecx mov dword[esi],0x7f74c4（写虚表 0x7F74C4）**call 0x7240b0**（@0x7784a9 基类析构）→ test byte[esp+8],1（delete 标志）je 0x7784be + push esi **call 0x7c8b3d**（@0x7784b6 delete this）add esp,4 → mov eax,esi（返 this）pop esi ret 4 @0x7784C1
+- 直接 call 2 次/去重 2：0x7240b0/0x7c8b3d——picker callees=2 吻合，差值 0
+- 判类：FUN_007784a0——析构链·单基析构回收器（thiscall 1 栈参单出口 ret 4；虚表 0x7F74C4 + 0x7240B0 基类析构 + delete 标志位 1 → 0x7C8B3D——与 batch 2611 b 路（0x7B6760×2 双子对象）不同：本路单基类析构（0x7240B0），子对象数不同）
+- 语义证据级别：assembly_decompile_verified（partial——虚表 0x7F74C4 类型/0x7240B0 基类语义未确认，无对应已登记 C++ 重写）
+
+## c 路：0x7781B0 FUN_007781b0（91B）
+
+- 范围 0x7781B0-0x77820A（单出口 ret @0x77820A；0x77820B-0x77820F nop pad，0x778210 起后邻巨型函数）
+- fastcall 1 栈参（ecx 打包字节值，ch 高位标志）:**字符编码组装器·宽字符转换**：
+  - **ch 高位分支**（@0x7781b0-0x7781d5）：sub esp,8 test ch,0xff je 0x7781cc（ch==0 → 单字节路径）+ 双字节：mov eax,ecx mov byte[esp+1],cl shr eax,8 mov byte[esp],al mov byte[esp+2],0 jmp 0x7781d5（低字序组装 2 字节 + 0 终止）→ 单字节：mov byte[esp],cl mov byte[esp+1],0（1 字节 + 0 终止）
+  - **长度 + IAT 转换**（@0x7781d5-0x77820a）：push edi lea ecx,[esp+8] push 1 push ecx lea edi,[esp+0xc] or ecx,-1 xor eax repne scasb（strlen 组装的串）not ecx dec ecx push ecx（长度）push edx（串指针）push eax push eax **call dword[0x7e11c4]**（@0x7781f3 IAT [0x7E11C4] 转换）→ dec eax mov ecx,[esp+8] pop edi neg eax sbb eax,eax not eax and eax,ecx（零判定 → 条件选 eax/ecx）add esp,8 ret
+- 直接 call 0 次/去重 0（唯一 call 为 IAT [0x7E11C4] 间接）——picker callees=1 vs 核验 0 差 1 = IAT [0x7E11C4] 一枚间接——按机器码直接 call 登记非 MISSING（IAT 差值惯例同 batch 2568/2575/2605-2612）
+- 判类：FUN_007781b0——字符编码组装器·宽字符转换（fastcall 1 栈参单出口；ch 高位标志分流单/双字节 + 小端组装 + 0 终止 + 内联 strlen + IAT [0x7E11C4] 宽字符转换 + sbb/neg/and 条件返回值——0x7E11C4 IAT 首次在本会话 frontier 出现）
+- 语义证据级别：assembly_decompile_verified（partial——IAT [0x7E11C4] 精确转换语义/返回值约定未确认，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2614.py：a 路 3/3（0x65d660/0x7b46f0/0x7b6760 已登记）、b 路 2/2（0x7240b0/0x7c8b3d 已登记）、c 路 0/0（无跨函数直接 call——唯一 call 为 IAT [0x7E11C4] 间接，不计入核验范围）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c **差 1（IAT [0x7E11C4] 一枚间接）**——c 按机器码直接 call 登记非 MISSING（IAT 差值惯例同 batch 2568/2575/2605-2612）
+- 无批内自引用（a/b/c 互不落对方函数体；a 路后邻 0x77A080 巨型函数、b 路后邻 0x7784D0 四清零+FP 族、c 路后邻 0x778210 巨型函数均不在本批范围）；排队 MISSING 观察项已清零；真 MISSING 队列 3 个不变（0x4f6eb0 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6303 行」= 唯一地址数 = 行数 6325 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x7F74F4（a 路虚表——batch 2611 b 路同虚表）：0x7F74F4 多子对象类型析构虚表（0x7B6760×2 + 0x7B46F0 布局）——虚表常量观察确认双登记
+- [0xB73580..0xB7358C]（b 路后邻四清零目标）：四 dword 清零（mov [0xB73580/84/88/8C],0）——数据结构观察（新地址族）[0x7E1710]/[0x7E1708]（FP 常量 double）——FP 常量观察
+- IAT [0x7E11C4]（c 路宽字符转换）：本会话 frontier 首次出现——IAT 观察项扩员（0x7E11C4 下邻 IAT 族可能连续）
+- 0x5175F0（a 路后邻巨型函数 callee）+ 0x4739F0/0x630310/虚表槽 [eax+0x7C]（c 路后邻巨型函数）：后邻两巨型函数的内部 callee——工具函数观察
+- 既有池延续：见 batch 2613 观察项列表（六字段 setters 家族闭环、脏位 byte[+8] 模板）+ batch 2612（0x77A870/0x77A890/0x77A8B0 后邻三兄弟、消息全族、0x889F64/0x887734、DebugLog 0x84A0D0/0x84A16C）+ batch 2611（0x7F7624/0x7F74F4 虚表、FP 族、消息全族、字段族、DebugLog 六串、0x7CA405/0x7B71B0/0x7B7100 工具族）+ batch 2610（[0xB7381C]/[0xB766C0] 源数组、[0xAC116C] 虚表槽、[0xB76AF0]/[0xB73AD0] 双标志、[0xB73E40] 次表族）+ batch 2609-2586 全量 + 真 MISSING 队列 3 个 + 历史候选池全量延续
