@@ -1,0 +1,68 @@
+# frontier batch 2569
+
+日期：2026-10-29
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；a 路 uc=1，b/c 落回 uc=0 段 ranking 序）
+三路：a=0x401190（29B FUN_00401190 callees=0 deps=1）/ b=0x7E02CB（194B FUN_007e02cb callees=0 deps=0）/ c=0x7E01FB（208B FUN_007e01fb callees=2 deps=0）——a 路为 0x401 段最后一个 uc=1 未登记函数（其下 0x4011C0 = batch 2568 c 路）；b/c 两路进入 0x7E 段（0x7C-0x7D 为 MSVC6 CRT、0x7E 段为 pushal 手写风格非标准序代码——与游戏主代码区 0x401-0x6x 不同的第三方/手工汇编库区）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2569{a,b,c}.txt（a 0x80 窗读全、b 0x100 窗读全、c 0x100 窗读全，尾 ret 确认：a 单出口 ret @0x4011AC（0x4011AD-0x4011AF nop pad + 0x4011B0 起 9×4 步长表基址定位器（mov ecx,[ecx]; lea eax,[edx+edx*8]; lea eax,[ecx+eax*4]; ret——观察项，同 batch 2568 观察项族）+ 0x4011C0 起 batch 2568 c 路已登记）、b 单出口 ret @0x7E038C（0x7E038D 起 00 00 数据区/段尾——函数末尾无 nop pad 直接落入零数据，符合手写序库区风格）、c 单出口 ret @0x7E02CA（0x7E02CB 起 = b 路已登记，背靠背邻接））
+核验：.qwen/tmp/_check_callees2569.py；a 0/0、b 0/0、c 2/2；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6190 → 6193（三行全新增，ADD 3）
+
+## a 路：0x401190 FUN_00401190（29B）
+
+- 范围 0x401190-0x4011AC（单出口 ret @0x4011AC；0x4011AD-0x4011AF nop pad + 0x4011B0 起 9×4 步长表基址定位器观察项 + 0x4011C0 起 batch 2568 c 路）
+- thiscall 2 参（ecx=this/edx=乘数，ret eax）：**百分比换算器**（[+0x2C] 高 16 位 × edx ÷ 100，带符号 magic 除法）：
+  - **mov ecx,[ecx+0x2c] mov eax,0x51eb851f shr ecx,0x10 imul ecx,edx imul ecx**（@0x401190-0x40119f [+0x2C]>>16 × edx 得 64 位积）
+  - **mov eax,edx sar eax,5 mov ecx,eax shr ecx,0x1f add eax,ecx**（@0x4011a0-0x4011aa 带符号 ÷100——magic 0x51EB851F + sar 5（=÷100 修正）+ 符号位修正）→ ret @0x4011ac
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0
+- 判类：FUN_00401190——百分比换算器（([+0x2C]>>16) × edx ÷ 100，带符号——magic 0x51EB851F imul + sar 5 + shr 0x1f 符号修正；无跨函数调用）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x7E02CB FUN_007e02cb（194B）
+
+- 范围 0x7E02CB-0x7E038C（单出口 ret @0x7E038C；0x7E038D 起 00 00 数据区/段尾，无 nop pad）——0x7E 段 pushal 手写风格
+- 无参（ret 空，pushal 全寄存器保存）：**调色板最近色索引生成器**（[0xA8F918] 调色板 0x100×3B RGB + 平均色参考 + 全表最小平方距离搜索 + [0xA8F91C] 索引表写出）：
+  - push ebp/mov ebp,esp/add esp,-0x1c/**pushal**（@0x7e02cb-0x7e02d1 非标准栈骨架）→ mov [ebp-0x10],0（输出计数）→ mov [ebp-4],0x100（外层计数）
+  - **mov esi,[0xa8f918] mov edi,[0xa8f918] mov ecx,0x100**（@0x7e02e0-0x7e02ec 双击调色板基址 [0xA8F918]，内层 0x100 次）
+  - **平均色参考**（@0x7e02f1-0x7e0305）：mov bl,[esi] add bl,[edi] shr bl,1（R 平均）→ mov bh,[esi+1] add bh,[edi+1] shr bh,1（G 平均）→ mov dl,[esi+2] add dl,[edi+2] shr dl,1（B 平均）
+  - push edi/push ecx → mov edi,[0xa8f918] mov [ebp-0x14],0（搜索索引）→ xor eax,eax xor ecx,ecx
+  - **距离搜索循环**（@0x7e0328-0x7e0361，0x100 项）：al=[edi] sub al,bl imul al（8 位有符号平方）mov ecx,eax → al=[edi+1] sub al,bh imul al add ecx,eax → al=[edi+2] sub al,dl imul al add ecx,eax（三维平方距离）→ **cmp ecx,[ebp-0x1c] ja 0x7e0354**（大于当前最小直跳）→ 更小：mov [ebp-0x1c],ecx（新最小）mov eax,[ebp-0x14] mov [ebp-0x18],eax（记录最佳索引）→ **test ecx,ecx je 0x7e0363**（距离 0 提前杀出）→ lea edi,[edi+3] inc [ebp-0x14] cmp [ebp-0x14],0x100 jb 循环
+  - @0x7e0363（命中写出）：mov edi,[ebp-0x10] mov eax,[ebp-0x18] **mov byte ptr [edi+0xa8f91c],al**（最佳索引写 [0xA8F91C]+计数）→ inc [ebp-0x10] → pop ecx/pop edi → lea edi,[edi+3] dec ecx jne 0x7e02f1（内层 0x100 次）→ lea esi,[esi+3] dec [ebp-4] jne 0x7e02e6（外层 0x100 次）
+  - popal/leave/ret @0x7e038c
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0
+- 判类：FUN_007e02cb——调色板最近色索引生成器（pushal 手写库风格；[0xA8F918] 0x100×3B 调色板 + (src+dst)>>1 平均色参考 + 内层全表 8 位平方距离最小搜索（三维 RGB）+ 最佳索引写 [0xA8F91C] 表 + 外/内双层 0x100 循环（esi/edi 各步进 3B）；无跨函数调用）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x7E01FB FUN_007e01fb（208B）
+
+- 范围 0x7E01FB-0x7E02CA（单出口 ret @0x7E02CA；0x7E02CB 起 = b 路已登记，背靠背邻接）——0x7E 段 pushal 手写风格
+- 5 栈参（[ebp+8]=dst 指针/[ebp+0xc]=src 指针/[ebp+0x10]=行数/[ebp+0x14]=宽度/[ebp+0x18]=高度，ret 空）：**半宽图像混色 blit 处理器**（宽度/高度减半 + 全局混色缓冲 + 0x7E0170 blit×3 + 0x7E01D2 混色 + 双缓冲 rep movsd 拷贝）：
+  - push ebp/mov ebp,esp/add esp,-0x10/**pushal**（@0x7e01fb-0x7e0201 非标准栈骨架）→ mov eax,[ebp+0xc] mov [ebp-4],eax（src 存档）→ mov [ebp-0xc],0x877d20 / mov [ebp-0x10],0x878720（双全局混色缓冲）
+  - **mov ecx,[ebp+0x14] shr ecx,1 mov [ebp-8],ecx**（宽度>>1 = 半宽 dword 计数）→ **shr dword ptr [ebp+0x18],1**（高度>>1 = 半高）
+  - **push [ebp+0x14] push [ebp-0xc] push [ebp+8] call 0x7e0170**（@0x7e022a blit#1）→ add esp,0xc
+  - mov esi,[ebp+0x14] push [ebp-0xc] push [ebp-0x10] pop [ebp-0xc] pop [ebp-0x10]（缓冲交换）→ add [ebp+8],esi（dst += 宽度）→ dec [ebp+0x10]（行数-1）
+  - **push [ebp+0x14] push [ebp-0xc] push [ebp+8] call 0x7e0170**（@0x7e0250 blit#2）→ add esp,0xc
+  - **push [ebp+0x14] push 0x879124 push [ebp-0xc] push [ebp-0x10] call 0x7e01d2**（@0x7e0266 混色#1，0x879124 第三缓冲）→ add esp,0x10
+  - **rep movsd 双段拷贝**（@0x7e026e-0x7e02a4）：esi=[ebp-0x10] edi=[ebp-4] ecx=[ebp-8] rep movsd（[0x878720]→dst）→ movesi 0x879124 edi=dst+高度 add edi,[ebp+0x18] 第二次 rep movsd（[0x879124]→dst+高度）→ add [ebp+8],esi add [ebp-4],edi
+  - 缓冲交换 → dec [ebp+0x10] jne 0x7e0247（行循环）→ **push [ebp+0x14] push [ebp-0xc] push [ebp+8] call 0x7e0170**（@0x7e02b5 blit#3 尾行）→ add esp,0xc → mov esi,[ebp-0xc] mov edi,[ebp-4] mov ecx,[ebp-8] rep movsd（@0x7e02c6 尾拷贝 [0x877d20]→dst）
+  - popal/leave/ret @0x7e02ca
+- 直接 call 4 次/去重 2：0x7e0170×3、0x7e01d2×1——picker callees=2 吻合，差值 0
+- 判类：FUN_007e01fb——半宽图像混色 blit 处理器（pushal 手写库风格；宽度/高度各 >>1 减半 + 双缓冲 0x877D20/0x878720 交换 + 0x7E0170 blit×3（首/中/尾行）+ 0x7E01D2 混色（0x879124 第三缓冲）+ rep movsd 双段写 dst/dst+高度 + 行循环 dec [ebp+0x10]）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2569.py：a 路 0/0（纯算术）、b 路 0/0（纯计算）、c 路 2/2（0x7e0170/0x7e01d2 已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用（a/b/c 互不落对方函数体；a 尾 0x4011C0 = batch 2568 c 路、c 尾 0x7E02CB = b 路已登记，均为批间邻接）；排队 MISSING 观察项已清零（batch 2552-2561 全部兑现完毕）；真 MISSING 队列 3 个不变（0x4f6eb0 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 0x7E 段标记：b/c 两路为 pushal 非标准栈骨架代码，进入 0x7E 段第三方/手工汇编库区（0x7C-0x7D MSVC6 CRT 之外的新代码段），后续批次 picker 落入 0x7E/0x7B 段时按同类取证登记
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6168 行」= 唯一地址数 = 行数 6190 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4011B0（a 路下函数）：9×4 步长表基址定位器（mov ecx,[ecx]; lea eax,[edx+edx*8]; lea eax,[ecx+eax*4]; ret）——同 batch 2568 观察项族（0x401600 同构），小桩族
+- 0x7E0170（c 路 callee）：0x7E 段 blit 原语（已登记）——0x7E 段库函数族参考
+- 0x7E01D2（c 路 callee）：0x7E 段混色原语（已登记）——0x7E 段库函数族参考
+- 0xA8F918（b 路全局槽）：调色板基址指针（0x100×3B RGB 表）——数据常量观察
+- 0xA8F91C（b 路全局槽）：最近色索引表（0x100B）——数据常量观察
+- 0x877D20/0x878720/0x879124（c 路全局槽）：双混色缓冲 + 第三缓冲——数据常量观察
+- 既有池延续：见 batch 2568 观察项列表（0x401600 9×4 表基址定位器 + 0x401620 [+0x14] 查询器 + IAT 0x7E1208/0x120C/0x1300）+ batch 2567 观察项列表（0x401910 播放清理器 + 0x401940 getter + 0x401950 析构器 + 0x401980 双虚表槽转发器 + 0x4019A0 构造器 + 0x4016B0 表项状态写入器）+ batch 2566 观察项列表（0x4022C0/0x402330/0x4023F0 三函数指针族 + 0x401BB0 链查找器 + 0x401BE0 链清理器）+ batch 2565 观察项列表（0x4026F0 位标志清位桩镜像 + 0x402720 超大虚表驱动器）+ batch 2564 观察项列表 + batch 2563 观察项列表 + batch 2562 观察项列表 + batch 2561/2560/2559/2558/2557/2556/2555/2554/2553/2552/2551/2550/2549/2548/2547/2546/2545/2544/2543/2542/2541/2540 全量观察项 + 真 MISSING 队列 3 个 + 历史候选池全量延续
