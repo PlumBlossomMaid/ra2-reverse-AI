@@ -1,0 +1,56 @@
+# frontier batch 2542
+
+日期：2026-10-29
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x40DCE0（57B FUN_0040dce0 callees=1 deps=13）/ b=0x40CDC0（39B FUN_0040cdc0 callees=1 deps=1881）/ c=0x40BA50（39B FUN_0040ba50 callees=1 deps=155）——串表查询/持有释放域三连（a 为串表索引查询器，b/c 为逐字节相同的双字段持有释放器双副本）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2542{a,b,c}.txt（a/b/c 0x100 窗读全，尾 ret 确认：a 双出口 ret @0x40DD0D（未命中）/ret @0x40DD18（命中返表项；0x40DD19-0x40DD1F nop pad + 0x40DD20 起下函数虚表槽 0x2c 查询 + dec eax + cmp 0xe + 字节表 0x40DD54 跳转表 [ecx*4+0x40DD4C] + 0x40DDC0 起 fld [0x7e1710]/[0x7e1708] + call 0x7c8fb0 随机器 + call 0x4cac40（batch 2536 c 路 callee 0x4cacb0 兄弟）——观察项）、b 单出口 ret @0x40CDE6（0x40CDE7-0x40CDEF nop pad + 0x40CDF0 起下函数 [ecx+0xc] 标志门控 + 线性查找 [ecx+4] vs [esp+8] → 索引/-1 ret 4 + 0x40CE30 起索引计算（addr-[ecx+4] shr 2）ret 4 + 0x40CE50 起 0x7c8e17/0x7c8b3d 容量重置器——观察项）、c 单出口 ret @0x40BA76（0x40BA77-0x40BA7F nop pad + 0x40BA80 起下函数与 b 路 0x40CDF0 起整族逐字节相同——西屋双副本族，观察项））
+核验：.qwen/tmp/_check_callees2542.py；a 1/1、b 1/1、c 1/1；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6109 → 6112（三行全新增，ADD 3）
+
+## a 路：0x40DCE0 FUN_0040dce0（57B）
+
+- 范围 0x40DCE0-0x40DD18（双出口 ret @0x40DD0D（未命中返 0）/ret @0x40DD18（命中返配对表项）；0x40DD19-0x40DD1F nop pad + 0x40DD20 起下函数（虚表槽 0x2c 查询 → dec eax → cmp 0xe → mov cl,[eax+0x40dd54] 字节索引表 → jmp [ecx*4+0x40dd4c] 跳转表（数据夹在代码里）——观察项；0x40DDC0 起 fld [0x7e1710]/[0x7e1708] + call 0x7c8fb0 + fadd st(0),st(0) + fstp [esp] + call 0x4cac40——批间连锁观察项））
+- thiscall 1 栈参（ret 4）：**串表索引查询器**（线性串表匹配 → 返回配对值）：
+  - push ebx/esi/edi → mov ebx,ecx（this）→ **xor edi（索引）**→ **mov esi,0x816ee0（表基）**
+  - **查表循环**（0x40dcec-0x40dd06）：mov eax,[esi]（表项 1）→ push ebx/push eax → **call 0x7c8d20**（@0x40dcf0 串比较）→ add esp,8 → test eax je 0x40dd0e（命中）→ **add esi,8 / inc edi** → **cmp esi,0x817130**（@0x40dd00 表尾边界）jl 循环
+  - 未命中：pop ×3 → xor eax,eax → ret @0x40dd0d
+  - 命中：**mov eax,[edi*8+0x816ee4]**（@0x40dd0e 配对值，8B 步长第二槽）→ pop ×3 → ret @0x40dd18
+- 直接 call 1 次/去重 1：0x7c8d20×1——picker callees=1 吻合，差值 0
+- 判类：FUN_0040dce0——串表索引查询器（0x816ee0 起 8B 步长双槽表遍历，0x7c8d20 串比较，命中返 [edi*8+0x816ee4] 配对值/未命中 0；0x817130 表尾常量）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x40CDC0 FUN_0040cdc0（39B）
+
+- 范围 0x40CDC0-0x40CDE6（单出口 ret @0x40CDE6；0x40CDE7-0x40CDEF nop pad + 0x40CDF0 起下函数（[ecx+0xc] 标志门控线性查找 vs [esp+8]→索引/-1 ret 4 + 0x40CE30 起无门控 (addr-[ecx+4])>>2 索引计算 ret 4 + 0x40CE50 起容量重置器（push ebp/edi + [esp+0xc] 容量 + [esp+0x18] 外部缓冲分支 0x7c8e17 new + [esi+0xc]=1 + [esi+0xd] 持有标志删除 0x7c8b3d 分支）——观察项））
+- thiscall 无栈参（ret 空）：**双字段持有释放器**（VectorClass 风格清理端）：
+  - push ebx/esi → mov esi,ecx → xor ebx
+  - **mov eax,[esi+4]（缓冲）cmp eax,ebx je 0x40cdde**（空直接跳过）→ **cmp byte ptr [esi+0xd],bl je 0x40cdde**（持有标志 0 跳过）
+  - push eax → **call 0x7c8b3d**（@0x40cdd3 delete 缓冲）→ add esp,4 → **mov [esi+4],ebx**（清指针）
+  - **[esi+0xd]=bl（清持有标志）→ mov [esi+8],ebx（清计数）** → pop ×2 → ret @0x40cde6
+- 直接 call 1 次/去重 1：0x7c8b3d×1——picker callees=1 吻合，差值 0
+- 判类：FUN_0040cdc0——双字段持有释放器（[esi+4] 缓冲 + [esi+0xd] 持有标志双门控 0x7c8b3d delete + 清指针/标志/计数三清零；VectorClass/跟随器清理端）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x40BA50 FUN_0040ba50（39B）
+
+- 范围 0x40BA50-0x40BA76（单出口 ret @0x40BA76；**与 b 路 0x40CDC0 整函数体逐字节相同**（`53 56 8b f1 33 db 8b 46 04 3b c3 74 11 38 5e 0d 74 0c 50 e8 .. .. .. .. 83 c4 04 89 5e 04 88 5e 0d 89 5e 08 5e 5b c3`）——Westwood 双副本；后邻 0x40BA80 起查找族亦与 b 路 0x40CDF0 起逐字节相同（整族双副本））
+- thiscall 无栈参（ret 空）：**双字段持有释放器·双副本之二**（与 0x40CDC0 字节级相同，VectorClass 家族同函数第二实例）
+- 直接 call 1 次/去重 1：0x7c8b3d×1——picker callees=1 吻合，差值 0
+- 判类：FUN_0040ba50——双字段持有释放器（与 0x40CDC0 同 body；[esi+4]/[esi+0xd] 双门控 + 0x7c8b3d + 三清零）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2542.py：a 路 1/1（0x7c8d20 已登记）、b 路 1/1（0x7c8b3d 已登记）、c 路 1/1（0x7c8b3d 已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用（a/b/c 互不落对方函数体）；无 MISSING（真 MISSING 队列 5 个不变：0x408B40 / 0x4f6eb0 / 0x406B10 / 0x47ec40 / 0x4758C0；0x408B40 当前 rank 序排列前端持续排队）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6087 行」= 唯一地址数 = 行数 6109 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x40DD20（a 路下函数）：虚表槽 0x2c 查询 → dec eax → cmp 0xe → 字节索引表 [eax+0x40dd54] + jmp [ecx*4+0x40dd4c] 跳转表（表的字节值即函数序号 0..0xe）——15 态分发器，后续批次优先跟进
+- 0x40DDC0（a 路下下函数）：fld [0x7e1710]/[0x7e1708] + call 0x7c8fb0 + fadd st(0),st(0) + fstp [esp] + call 0x4cac40——**0x4cac40 与 batch 2536 c 路 callee 0x4cacb0（三角对）同域**——批间连锁跟进
+- 0x40CDF0/0x40BA80（b/c 路下函数族）：[ecx+0xc] 标志门控线性查找（vs [esp+8] 值 → 索引/-1）+ 0x40CE30/0x40BAC0 idx=(addr-ptr)>>2 + 0x40CE50/0x40BAE0 容量重置器（0x7c8e17 new/外部缓冲 + 0x7c8b3d 持有删除）——VectorClass 查找/重置域整族双副本，后续批次跟进
+- 0x816ee0（a 路表基）：8B 步长串表常量（0x816ee0..0x817130，~84 项）——数据常量观察
+- 0x7c8fb0/0x4cac40（a 路下下函数 callee 对）：随机常量 + 三角函数——候选池
+- 既有池延续：见 batch 2541 观察项列表（0x410220 双子另一半 + 0x410320/0x410380/0x4103e0 虚表槽查询族 + 0x410410 双装载 + 0x6cf2c0 + batch 2540/2539/2538/2537 全量观察项 + 历史候选池全量延续）
