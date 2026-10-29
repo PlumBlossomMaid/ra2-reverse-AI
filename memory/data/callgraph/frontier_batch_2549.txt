@@ -1,0 +1,56 @@
+# frontier batch 2549
+
+日期：2026-10-29
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x408410（67B FUN_00408410 callees=2 deps=141）/ b=0x408390（54B FUN_00408390 callees=3 deps=141）/ c=0x408140（7B FUN_00408140 callees=0 deps=102）——全局对象链域三连（a 为全局一致性校验器，b 为全局批量重置器，c 为双字段 getter；a/b 共用 [0x87E81C] 门控 + [0x87E810] 链 + 0x4073C0/0x4073E0 查链对）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2549{a,b,c}.txt（a/b 0x100 窗、c 0x40 窗读全，尾 ret 确认：a 双出口 ret @0x408448（不一致返 0）/ret @0x408452（全过返 1；0x40845F nop pad + **0x408460 起 0x20 构造器（0x7c8e17 new 64B + rep stosd 8 dword + [0x4]=ebx + 0x4072c0 + new ebx + [0]=eax + 失败 0x7c8b3d）+ 0x4084C0 析构器（[esi] 0x7c8b3d + delete this）+ 0x4084E0 清零复位器（四字段 0 + jmp 0x4072c0）——观察项族**）、b 单出口 ret @0x4083C5（0x4083C6-0x4083CF nop pad + **0x4083D0 起同域第二实例（mov [esp+4],0x4000 变体：0x407170 重置 [esi+0x14]+0x10 + 0x4073e0 链遍历——批量重置 0x4000 变体，观察项）** + 0x408410 起 = 本批 a 路，批内邻接）、c 单出口 ret @0x408146（7B 极简；0x408147-0x40814F nop pad + 0x408150 起 [0x87e81c] 门控 + 0x87e810 + 0x4073c0 + push 0x87e7f8 + call dword ptr [0x7e11e8]（IAT）+ and [esi+0xc],~2 + [esi+0x14] 重置——全局对象配置重置器第三实例，观察项））
+核验：.qwen/tmp/_check_callees2549.py；a 2/2、b 3/3、c 0/0；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6130 → 6133（三行全新增，ADD 3）
+
+## a 路：0x408410 FUN_00408410（67B）
+
+- 范围 0x408410-0x408452（双出口 ret @0x408448（双字段不一致返 0）/ret @0x408452（全过返 1）；0x408453-0x40845F nop pad + 0x408460 起 0x20 构造器（0x7c8e17 new 64B + rep stosd 8 dword + [0x4]=ebx + 0x4072c0 + new ebx + [0]=eax + 失败 0x7c8b3d）+ 0x4084C0 析构器（[esi] 0x7c8b3d + delete this）+ 0x4084E0 清零复位器（四字段 0 + jmp 0x4072c0）——观察项族）
+- thiscall 无栈参（ret 空）：**全局一致性校验器**（装配对象链双字段一致性检查）：
+  - **mov eax,[0x87e81c]**（全局标志）test eax,eax je 0x40844c（空 → 返 1）→ **mov ecx,0x87e810**（全局对象）→ **call 0x4073c0**（@0x40841f 查询首项）→ test eax je 0x40844c → push esi
+  - **遍历循环**（@0x408428-0x408446）：**test byte [eax+0xc],1**（@0x408428 bit0 门控）je 0x40843b（跳过该项检查）→ **mov ecx,[eax+0x14] → mov edx,[ecx+0x14]（字段 A）→ mov esi,[ecx+0x18]（字段 B）→ cmp edx,esi jne 0x408448**（@0x408434-0x408439 双字段不一致 → 返 0）
+  - mov ecx,eax → **call 0x4073e0**（@0x40843d 下一项）→ test eax je 0x40844c（遍历完 → 返 1）→ **jmp 0x408428**（循环）
+  - 收口：**xor eax,eax ret**（不一致返 0，@0x408448）/ **mov eax,1 ret**（全过返 1，@0x40844c）
+- 直接 call 2 次/去重 2：0x4073c0×1、0x4073e0×1——picker callees=2 吻合，差值 0
+- 判类：FUN_00408410——全局一致性校验器（[0x87e81c] 全局门控 + [0x87e810] 装配链遍历（0x4073c0 查首/0x4073e0 逐项）+ [eax+0xc] bit0 单项跳过 + [eax+0x14]/[+0x18] 双字段一致对比 → 不一致返 0/全过返 1）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x408390 FUN_00408390（54B）
+
+- 范围 0x408390-0x4083C5（单出口 ret @0x4083C5；0x4083C6-0x4083CF nop pad + 0x4083D0 起同域第二实例（mov [esp+4],0x4000 变体：0x407170 重置 [esi+0x14]+0x10 + 0x4073e0 链遍历——**批量重置 0x4000 变体**，观察项）+ 0x408410 起 = 本批 a 路，批内邻接）
+- thiscall 无栈参（ret 空）：**全局批量重置器**（装配对象链逐项重置）：
+  - **mov eax,[0x87e81c]**（全局标志）test eax,eax je 0x4083c4（空直退）→ **mov ecx,0x87e810** → **call 0x4073c0**（@0x40839f 查询首项）→ mov esi,eax → test esi je 0x4083c4 → push esi
+  - **遍历循环**（@0x4083aa-0x4083c2）：**mov ecx,[esi+0x14] → xor edx → add ecx,0x10（[+0x14]+0x10）→ call 0x407170**（@0x4083b2 重置目标区）→ **mov ecx,esi → call 0x4073e0**（@0x4083b9 下一项）→ mov esi,eax → test esi jne 0x4083aa（循环）
+  - pop esi → ret @0x4083c5
+- 直接 call 3 次/去重 3：0x4073c0×1、0x407170×1、0x4073e0×1——picker callees=3 吻合，差值 0
+- 判类：FUN_00408390——全局批量重置器（[0x87e81c] 门控 + [0x87e810] 装配链遍历（0x4073c0 查首 + 0x407170 重置每项 [+0x14]+0x10 目标 + 0x4073e0 推进））
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x408140 FUN_00408140（7B）
+
+- 范围 0x408140-0x408146（单出口 ret @0x408146；0x408147-0x40814F nop pad + 0x408150 起 [0x87e81c] 门控 + 0x87e810 + 0x4073c0 + push 0x87e7f8 + **call dword ptr [0x7e11e8]**（IAT）+ and [esi+0xc],0xfffffffb（清 bit2）+ [esi+0x14] 重置 + 0x87e810 链——全局对象配置重置器第三实例，观察项）
+- thiscall 无栈参（ret 空）：**双字段 getter**（极简双返回）：
+  - **mov eax,[ecx+0x20] → mov edx,[ecx+0x24]**（@0x408140-0x408143 双字段读）→ ret @0x408146（eax/edx 双返回）
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0
+- 判类：FUN_00408140——双字段 getter（[+0x20]/[+0x24] → eax/edx；7B 极简无调用）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2549.py：a 路 2/2（0x4073c0/0x4073e0 已登记）、b 路 3/3（0x407170/0x4073c0/0x4073e0 已登记）、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用（a/b/c 互不落对方函数体；b 尾 0x4083C5 与 a 头 0x408410 为批内邻接但无调用）；无 MISSING（真 MISSING 队列 4 个不变：0x4f6eb0 / 0x406B10 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6108 行」= 唯一地址数 = 行数 6130 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4083D0（b 路下函数）：批量重置 0x4000 变体（mov [esp+4],0x4000 + 0x407170 重置 [esi+0x14]+0x10 + 0x4073e0 链遍历）——b 路同域第二实例，后续批次跟进
+- 0x408150（c 路下函数）：全局对象配置重置器第三实例（[0x87e81c] 门控 + 0x87e810 + 0x4073c0 + push 0x87e7f8 + **call dword ptr [0x7e11e8]**（IAT 槽）+ and [esi+0xc],~2 + [esi+0x14] 重置 + 再链遍历）——观察项
+- 0x408460/0x4084C0/0x4084E0（a 路下函数族）：0x20 构造器（0x7c8e17 new 64B + rep stosd + 0x4072c0 + new ebx + 失败 delete）+ 析构器（[esi] 0x7c8b3d + delete this）+ 清零复位器（四字段 0 + jmp 0x4072c0）——装配对象生命周期族，后续批次优先跟进
+- 0x87e81c/0x87e810（a/b/c 全局槽）：全局装配对象双槽（标志 + 链头）——与 batch 2544 观察的 0x87e73c..0x87e758 八槽区、batch 2545 的 0x87e828/0x87e848 时基槽相邻——全局对象区布局观察
+- 0x4073c0/0x4073e0/0x407170（a/b 路 callee 组）：查首项/下一项/重置三件套（全库高频）——已登记确认，围联观察
+- 既有池延续：见 batch 2548 观察项列表（0x408540 ÷1000 魔法数 + 0x4085A0 清零器 + 0x408520 thunk + 0x407420/0x407440/0x407470 链三兄弟 + batch 2547/2546/2545/2544/2543/2542/2541/2540 全量观察项 + 真 MISSING 队列 4 个 + 历史候选池全量延续）
