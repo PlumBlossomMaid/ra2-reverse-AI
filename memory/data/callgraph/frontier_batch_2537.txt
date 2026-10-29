@@ -1,0 +1,73 @@
+# frontier batch 2537
+
+日期：2026-10-29
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x414080（513B FUN_00414080 callees=9 deps=44）/ b=0x413F80（241B FUN_00413f80 callees=6 deps=69）/ c=0x413CD0（68B FUN_00413cd0 callees=0 deps=4）——同型对象生命周期域三连（a 为对象反注册清理器，b 为对象状态同步装载器，c 为多条件标志判定器；a/b 同型装配 0x7e22a4 五虚表族）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2537{a,b,c}.txt（a 0x240 窗、b/c 0x200/0x100 窗读全，尾 ret 确认：a 双出口 ret @0x41420D/ret @0x414280（0x414281-0x41428F nop pad + 0x414290 起下函数 = batch 2535 观察项 thunk 族 jmp 目标 [0x41C640..0x41C690 → 0x414290/0x4142f0/0x414300]，本函数含 call 0x410260——观察项）、b 单出口 ret @0x414070（0x414071-0x41407F nop pad + 0x414080 起 = 本批 a 路，批内邻接）、c 四出口 ret @0x413CDA/0x413CF2/0x413D06/0x413D13（0x413D14-0x413D1F nop pad + 0x413D20 起 = batch 2535 c 路 callee 已登记的构造器（同 0x7e22a4 虚表族装配 + 0x410230 + [esi+0x674]）——批间邻接，同型配对实锤））
+核验：.qwen/tmp/_check_callees2537.py；a 9/9、b 6/6、c 0/0；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6094 → 6097（三行全新增，ADD 3）
+
+## a 路：0x414080 FUN_00414080（513B）
+
+- 范围 0x414080-0x414280（双出口 ret @0x41420D（二分查找为空路径首出口）/ret @0x414280（正常路径尾出口）；0x414281-0x41428F nop pad + 0x414290 起下函数 = batch 2535 观察项 thunk jmp 目标族（sub [esp+4] 调整 thunk → 0x414290 本体含 call 0x410260 + [0x7e9b40] 四 dword cmpsd 比较——观察项））
+- thiscall 无栈参（ret 空）：**对象反注册清理器**（析构主链 + 全局表反注册 + 惰性排序表移除）：
+  - **五虚表槽装配**（@0x41408a-0x4140a4）：[edi]=0x7e22a4、[edi+8]=0x7e2280、[edi+0xc]=0x7e2278、[esi=edi+4]=0x7e2288、[edi+0x6c0]=0x7e2250——与 batch 2535 观察项 0x41B430 / batch 2537 c 路邻接 0x413d20 同族装配（0x7e22a4 家族）
+  - **[0xa8e9a0] 全局标志**（@0x4140ae）test al,al je 0x41411f（跳过清理段直入析构）
+  - **[edi+0x6c4] test je 0x414121**（无类型直入析构）→ [edi+0x21c] 目标 → push 0/0/eax → **call 0x4f7870**（@0x4140cc 查询）→ cmp -1 jne 跳过 → **[eax+0x1fc]=1**（失败标记）
+  - **call 0x707cb0**（@0x4140e6 清理第一链）→ **[edi+0x5d4] test je 跳过** → push 0/-1/edi → **call 0x6ea870**（@0x4140f9 3 参清理）→ **[edi+0x5d4]=0**
+  - [edi+0x21c] → push edi → **call 0x4ff550**（@0x41410b 解除关联）→ **call 0x4db260**（@0x414112 析构辅助）→ **[edi+0x6c4]=0**
+  - **call 0x7258d0**（@0x414125 mov dl,1 基类析构，双路径共用）
+  - **[0xa8e390] 虚表槽 0x10**（@0x41413e 全局注册表查找，lea [esp+0x10] 含 edi 槽）→ cmp eax,-1 je 0x414173 → **[0xa8e3a0] 计数 dec → 前移压缩 [0xa8e394] 数组**（@0x41415b-0x414171 逐项 4B 左移）
+  - push esi（=edi+4）→ **call 0x410220**（@0x414174 查询内存序 → [esp+0x10]）
+  - **[0xb0e844] 计数**（@0x414179）test je 0x41426d → **[0xb0e84c] 惰性排序标志**（@0x41418b）test jne 跳过初始化 → **push 0x41c610（比较器）/8/ebx/eax → call 0x7c8b48**（@0x4141a2 排序初始化）→ **[0xb0e850]=0 / [0xb0e84c]=1**
+  - **二分查找**（0x4141bd-0x4141f6）：[esp+0x10] vs [ebp+eax*8] sar 1 折半（jge/je 双分支）
+  - **je 0x41420e** → [ecx]-[0xb0e840] **sar 3 索引** → cmp -1 → **[0xb0e844] dec 计数 → 前移压缩 [0xb0e840] 数组**（@0x414225-0x414242 8B 步长 {8 项 dword 对}）→ **[0xb0e850]=0**（尾槽清零）
+  - **双尾共用**（@0x414203/@0x414276）：**[edi+0x90]=0**（清理标志）→ **call 0x4d3590**（收口）
+- 直接 call 10 次/去重 9：0x4f7870×1、0x707cb0×1、0x6ea870×1、0x4ff550×1、0x4db260×1、0x7258d0×1、0x410220×1、0x7c8b48×1、0x4d3590×2——picker callees=9 吻合，差值 0（虚表槽 0x10 间接不计）
+- 判类：FUN_00414080——对象反注册清理器（五虚表槽装配 0x7e22a4 族 + [0xa8e9a0] 全局标志门控 + [edi+0x6c4] 类型分支 + 0x4f7870/0x707cb0/0x6ea870/0x4ff550/0x4db260 清理链 + [eax+0x1fc] 失败标记 + 0x7258d0 基类析构 + [0xa8e390] 虚表槽 0x10 全局表反注册前移压缩 + 0x410220 查询 + [0xb0e840]/[0xb0e84c] 惰性排序 0x7c8b48 + 0x41c610 比较器 + 二分查找前移压缩 + [edi+0x90]=0 + 0x4d3590 收口）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x413F80 FUN_00413f80（241B）
+
+- 范围 0x413F80-0x414070（单出口 ret @0x414070；0x414071-0x41407F nop pad + 0x414080 起 = 本批 a 路，批内邻接）
+- thiscall 无栈参（ret 空）：**对象状态同步装载器**（刷新装载的非析构分支端）：
+  - **call 0x6f3f40**（@0x413f85 初始化）→ **[esi+0x6c4] test je 0x41405d**（无类型短路径）
+  - **[esi+0x21c] test je 0x413fd2** → **[eax+0x34]+0x184 表** → [eax+0x10] 计数 jle 跳过 → **线性查找** [eax+4] 数组 vs [esi+0x6c4]（@0x413fb7-0x413fc1）
+  - 命中 → push 1/lea [esi+0x150] → **call 0x750090**（@0x413fcd 注册装载）
+  - [esi+0x6c4]+0x71c → push → lea [esi+0x388] → **call 0x4c9680**（@0x413fe7 结构一装载）→ [esi+0x6c4]+0x71c → push → lea [esi+0x3a0] → **call 0x4c9680**（@0x414001 结构二装载）
+  - lea [esp+0xc] → **call 0x4c93d0**（@0x41400d 结构一读）→ push eax → **call 0x4c9300**（@0x414015 ecx=esi+0x3a0 结构二读）
+  - [esi+0x6c4] **虚表槽 0xbc**（@0x414024）→ push eax → **虚表槽 0x1cc**（@0x41402d）
+  - **[eax+0x680] cmp -1 jne → [eax+0x684]**（@0x414040-0x414045 else 分支）→ **[esi+0x2fc]=ecx**（错误码复制）→ **[eax+0xa0] → [esi+0x6c]=eax / [esi+0x70]=eax**（@0x414051-0x41405a 缩放量复制）
+  - [esi+0x21c] test je → push esi → **call 0x4ff700**（@0x414068 收尾）→ ret @0x414070
+- 直接 call 7 次/去重 6：0x6f3f40×1、0x750090×1、0x4c9680×2、0x4c93d0×1、0x4c9300×1、0x4ff700×1——picker callees=6 吻合，差值 0（虚表槽 0xbc/0x1cc 间接不计）
+- 判类：FUN_00413f80——对象状态同步装载器（0x6f3f40 初始化 + [esi+0x6c4]/[esi+0x21c] 双类型检查 + 0x750090 线性查找注册 + 0x4c9680×2 双结构装载 [esi+0x388]/[esi+0x3a0] + 0x4c93d0/0x4c9300 结构读复制 + 虚表槽 0xbc/0x1cc 查询 + [eax+0x680]/[+0x684]→[esi+0x2fc] + [+0xa0]→[esi+0x6c]/[+0x70] + 0x4ff700 收尾）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x413CD0 FUN_00413cd0（68B）
+
+- 范围 0x413CD0-0x413D13（四出口 ret @0x413CDA（空指针）/ret @0x413CF2（类型哨兵命中）/ret @0x413D06（标志位命中）/ret @0x413D13（正常尾）；0x413D14-0x413D1F nop pad + 0x413D20 起 = 已登记构造器（batch 2535 c 路 callee 0x413d20，同型 0x7e22a4 装配 + 0x410230 + [esi+0x674]，与 a 路 0x414080 配对——批间邻接观察项））
+- thiscall 无栈参（ret 空）：**多条件标志判定器**（极简纯判定）：
+  - mov esi,ecx → **test esi je → al=0 ret** @0x413cda
+  - **虚表槽 0x2c**（@0x413cdf 类型查询）→ **sub eax,0xf → neg → sbb eax,eax → not eax → and eax,esi**（@0x413ce2-0x413ceb：v==0xf 时结果为 0 / v!=0xf 时结果为 esi 的哨兵检测技巧）→ test eax jne → **al=0 ret** @0x413cf2
+  - **[eax+0x6c0]+0xec1 byte test dl**（@0x413cf9）jne → al=0 ret @0x413d06
+  - **[eax+0x6d9] test cl → sete al**（@0x413d07-0x413d10：0 时返 1）→ ret @0x413d13
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0（虚表槽 0x2c 间接不计）
+- 判类：FUN_00413cd0——多条件标志判定器（虚表槽 0x2c 类型值 sub 0xf 哨兵检测（neg/sbb/not/and 技巧）+ [eax+0x6c0]+0xec1 字节检查 + [+0x6d9] sete 反转输出；纯读无调用）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2537.py：a 路 9/9（0x410220/0x4d3590/0x4db260/0x4f7870/0x4ff550/0x6ea870/0x707cb0/0x7258d0/0x7c8b48 已登记）、b 路 6/6（0x4c9300/0x4c93d0/0x4c9680/0x4ff700/0x6f3f40/0x750090 已登记）、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0（虚表槽 0x10/0xbc/0x1cc/0x2c 间接不计）
+- 无批内自引用（a/b/c 互不落对方函数体；b 尾 0x414070 与 a 头 0x414080 为批内邻接但无调用）；无 MISSING（真 MISSING 队列 5 个不变：0x408B40 / 0x4f6eb0 / 0x406B10 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6072 行」= 唯一地址数 = 行数 6094 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x414290（a 路下函数）：batch 2535 观察项 thunk jmp 目标兑现——本体含 call 0x410260 + [0x7e9b40] 四 dword repe cmpsd 比较（batch 2536 观察 0x41c640..0x41c690 thunk 族的落点）——后续批次优先跟进
+- 0x413D20（c 路邻接，已登记）：同 0x7e22a4 五虚表族装配 + 0x410230 + [esi+0x674]——与 a 路 0x414080 配对实锤（构造/清理同型），无新增登记需求，仅围联观察
+- 0x7e22a4/0x7e2288/0x7e2280/0x7e2278/0x7e2250（a/c/b 路虚表族）：五槽装配模式贯穿 0x414080/0x413d20/0x41b430（batch 2535 观察）——同一对象类型的虚表家族，作为数据常量观察（后续同型函数识别线索）
+- 0x8C 系列偏移：a 路 [edi+0x90]（清理标志）、b 路 [esi+0x2fc]/[0x6c]/[0x70]（错误码/缩放复制）、c 路 [eax+0x6c0]+0xec1/[+0x6d9]（判定位）——对象布局观察
+- 0x410220/0x410260（a 路 callee + 0x414290 callee 对）：查询器双子（0x410220 在 batch 2536 a 路也出现）——候选池跟进
+- 0x4f7870/0x4ff550/0x4ff700（a/b 路 callee 组）：同域清理/装载三口（[edi+0x21c] 目标族）——候选池
+- 既有池延续：见 batch 2536 观察项列表（0x416D50 jmp-table 分发器 + 0x415EE0 递归宿主 + 0x41c250 7 参装载 + 0x4cacb0/0x4cad00 三角对 + 0x481180 5 参 + 0x7509e0 装载 + 0x703590/0x65ad30 查询对 + VectorClass 家族 + 历史候选池全量延续）
