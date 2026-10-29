@@ -1,0 +1,56 @@
+# frontier batch 2556
+
+日期：2026-10-29
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x406530（7B FUN_00406530 callees=0 deps=137）/ b=0x406520（7B FUN_00406520 callees=0 deps=137）/ c=0x4064A0（127B FUN_004064a0 callees=2 deps=134）——对象标志位 setter 族 + 槽表索引写入器（a=[+0x13C] setter、b=[+0x138] setter——batch 2555 a 路双标志位 setter 管理字段的直接配套；c=槽表索引写入器）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2556{a,b,c}.txt（a/b 0x40 窗、c 0x100 窗读全，尾 ret 确认：a 单出口 ret @0x406536（0x406537-0x40653F nop pad + 0x406540 起 = batch 2555 c 路已登记 [+0x40] setter + 0x406550 = batch 2555 b 路双段重置器 + 0x406570 = batch 2555 a 路双标志位 setter + 0x4065C0..0x406640 = batch 2554/2553/2552 已登记 setter 族——批间邻接）、b 单出口 ret @0x406526（0x406527-0x40652F nop pad + 0x406530 起 = 本批 a 路，批内邻接）、c 多出口 ret @0x4064B3（槽满返 0）/ret @0x406501（成功返 1）/ret @0x40651E（失败返 1；0x40652 0 起 = 本批 b 路，批内邻接；0x406510 失败收口 mov [edi+0xc],0））
+核验：.qwen/tmp/_check_callees2556.py；a 0/0、b 0/0、c 2/2（0x4015c0 MISSING 排队、0x4068e0 已登记）；无批内自引用
+注册：TSV 6151 → 6154（三行全新增，ADD 3）
+
+## a 路：0x406530 FUN_00406530（7B）
+
+- 范围 0x406530-0x406536（单出口 ret @0x406536；0x406537-0x40653F nop pad + 0x406540 起 = batch 2555 c 路已登记 [+0x40] setter 批间邻接）
+- thiscall 1 栈参（edx=新值，ret 空）：**单字段装载 setter（[+0x13C]）**（batch 2555 a 路 0x406570 双标志位 setter 中 dl bit6 管理字段 [0x13C] 的直接 setter 配套）：
+  - **mov [ecx+0x13c],edx**（@0x406530 字段写）→ ret @0x406536
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0
+- 判类：FUN_00406530——单字段装载 setter（[+0x13C]=edx；7B 极简 mov+ret 无调用）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x406520 FUN_00406520（7B）
+
+- 范围 0x406520-0x406526（单出口 ret @0x406526；0x406527-0x40652F nop pad + 0x406530 起 = 本批 a 路，批内邻接）
+- thiscall 1 栈参（edx=新值，ret 空）：**单字段装载 setter（[+0x138]）**（batch 2555 a 路 0x406570 双标志位 setter 中 dl bit5 管理字段 [0x138] 的直接 setter 配套）：
+  - **mov [ecx+0x138],edx**（@0x406520 字段写）→ ret @0x406526
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0
+- 判类：FUN_00406520——单字段装载 setter（[+0x138]=edx；7B 极简 mov+ret 无调用）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x4064A0 FUN_004064a0（127B）
+
+- 范围 0x4064A0-0x40651E（多出口 ret @0x4064B3（槽满返 0）/ret @0x406501（成功返 1）/ret @0x40651E（失败返 1）；0x406510 失败收口 mov [edi+0xc],0；0x406520 起 = 本批 b 路，批内邻接）
+- thiscall 2 栈参（edx=输入串指针，ret 空但返回 1/0）：**槽表索引写入器**（$/# 前缀跳过后查串表写入 [edi+0xb4] 索引槽）：
+  - push esi/edi → mov edi,ecx → mov esi,edx → **cmp dword [edi+0x134],0x20 jne 0x4064b4**（@0x4064a6 槽计数达 32 满 → **pop ×2 + xor eax + ret 0** 槽满返 0）
+  - **mov eax,[0x87e2a0] test je 0x406517**（@0x4064b4 全局 1 缺失）→ **mov ecx,[0x87e294] test je 0x406517**（全局 2 缺失）
+  - **前缀跳过循环**（@0x4064c7-0x4064d2）：**mov al,[esi] cmp al,0x24（'$'）je 0x4064d1 / cmp al,0x23（'#'）jne 0x4064d4 → inc esi → jmp 0x4064c7**（跳过开头 $/# 字符）
+  - **mov edx,esi → call 0x4015c0**（@0x4064d6 串表查询 → eax 索引）→ **cmp eax,-1 je 0x406502**（查无 → 失败路径）
+  - **成功装载**：mov ecx,[edi+0x134] → **mov [edi+ecx*4+0xb4],eax**（@0x4064e6 写索引槽）→ **inc [edi+0x134]**（槽计数 +1）→ pop ×2 → mov eax,1 → ret（返 1）
+  - **失败路径**（0x406502）：push esi/push 0x816218 → **call 0x4068e0**（@0x406508 日志）→ add esp,8 → **mov [edi+0xc],0**（失败清标志）→ 收口 ret @0x406517（返 1）
+- 直接 call 2 次/去重 2：0x4015c0×1（**MISSING**）、0x4068e0×1（已登记）——picker callees=2 吻合，差值 0
+- 判类：FUN_004064a0——槽表索引写入器（[edi+0x134] 槽计数 <0x20 门控（满返 0）+ [0x87e2a0]/[0x87e294] 全局检查 + 前导 '$'/'#' 跳过循环 + 0x4015c0 串→索引 + 写 [edi+ecx*4+0xb4] 槽表 + inc 计数；查无 0x4068e0 日志 + [edi+0xc]=0）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2556.py：a 路 0/0、b 路 0/0、c 路 2/2（0x4015c0 **MISSING**——ranking 有行未登记，按惯例记观察项排队不阻塞本批；0x4068e0 已登记）——三路无批内自引用
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用（a/b/c 互不落对方函数体；c 尾 0x40651E 与 b 头 0x406520、b 尾 0x406526 与 a 头 0x406530 均为批内邻接但无调用）；**MISSING 队列增 1**：0x4015c0（batch 2552 六 MISSING 0x4011c0/0x402940/0x402af0/0x402c70/0x403530/0x403ed0 + 本批 0x4015c0 = 7 个排队观察项）；真 MISSING 队列 3 个不变（0x4f6eb0 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6129 行」= 唯一地址数 = 行数 6151 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **MISSING 增 1**：0x4015c0（串表查询器，本批 c 路 callee）——ranking.tsv 有行未登记，排队观察项（与 batch 2552 六 MISSING 合计 7 个：0x4011c0/0x402940/0x402af0/0x402c70/0x403530/0x403ed0/0x4015c0）
+- 0x406510（c 路失败收口）：mov [edi+0xc],0——c 路内联段，观察项
+- 0x816218（c 路失败串）：日志串常量——数据常量观察
+- 0x4065C0..0x406640（a/b 路后续连续区）：对象 setter 族 [0x14]/[0x40]/[0x48]/[0x4c]/[0x50]/[0x54]/[0x58]/[0x5c]/[0x60]/[0x64]/[0x68] 全齐（batch 2555 观察项延续）+ [+0x138]/[+0x13C] 双标志 setter 配套（batch 2555 a 路管理字段）
+- 0x87e2a0/0x87e294（c 路全局槽）：全局对象双槽（batch 2552 观察项 0x406670 [0x87e2a0] 大函数起始关联）——全局对象区布局观察
+- 既有池延续：见 batch 2555 观察项列表（0x4065C0..0x406640 setter 族 + 0x406650/0x406670 观察项）+ batch 2554/2553 观察项列表 + batch 2552 观察项列表（MISSING 6 个 + 0x406D40 查询器 + 0x87E73C..0x87E758 八槽实锤 + 0x401000）+ batch 2551/2550/2549/2548/2547/2546/2545/2544/2543/2542/2541/2540 全量观察项 + 真 MISSING 队列 3 个 + 历史候选池全量延续）
