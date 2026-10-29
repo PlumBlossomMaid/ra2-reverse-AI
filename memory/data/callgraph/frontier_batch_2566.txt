@@ -1,0 +1,65 @@
+# frontier batch 2566
+
+日期：2026-10-29
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x402220（155B FUN_00402220 callees=3 deps=4）/ b=0x401B00（172B FUN_00401b00 callees=7 deps=52）/ c=0x4019E0（275B FUN_004019e0 callees=10 deps=53）——**b/c 两路 = batch 2560 排队 MISSING 兑现**（0x401b00/0x4019e0）；三路同属事件槽节点生命周期域（a 为槽节点构造器，b 为对象清理器，c 为事件对象构造器），a 路 dump 邻接 batch 2565 b 路观察项三函数指针（0x4022C0/0x402330/0x4023F0）本体
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2566{a,b,c}.txt（a 0x130 窗读全、b 0x150 窗读全、c 0x200 窗读全，尾 ret 确认：a 单出口 ret @0x4022BA（0x4022BB-0x4022BF nop pad + 0x4022C0 起 = batch 2565 b 路写入的三函数指针本体 0x4022C0（含 call 0x407470/+0x16C 查询回写——观察项）+ 0x402330（[+0xA8] 递增检查——观察项）+ 0x4023F0——观察项族）、b 单出口 ret @0x401BAB（0x401BAC-0x401BAF nop pad + 0x401BB0 起链查找器（[ecx+0xc] 链遍历 [+0x14] 比较——观察项）+ 0x401BE0 起链清理器（[ecx+0xc] 链遍历 [+0x18]=0——观察项）+ 0x401C00 起超大注册器（call 0x4016f0/+0x407520 等——观察项，batch 2566 picker 前 5 名 0x4016F0 为 b/c 路邻接核心）、c 双出口 ret 8 @0x401AE7/@0x401AF0（0x401AF3-0x401AFF nop pad + 0x401B00 起 = b 路已登记，批间邻接））
+核验：.qwen/tmp/_check_callees2566.py；a 3/3、b 7/7、c 10/10；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6181 → 6184（三行全新增，ADD 3）
+
+## a 路：0x402220 FUN_00402220（155B）
+
+- 范围 0x402220-0x4022BA（单出口 ret @0x4022BA；0x4022BB-0x4022BF nop pad + 0x4022C0 起三函数指针族观察项本体）
+- thiscall this=esi（ret 空）：**槽节点构造器**（[esi+0xAC] 父回链 + 0x401000 构造 + 六引用 0x4010C0 挂载 + 条件 0x401170）：
+  - push ebx/ebp/esi/edi → mov esi,ecx（this）→ **mov ebp,[esi+0xac]**（父对象回链，batch 2562 a 路 [eax+0xac] 对应）
+  - **lea edi,[esi+0xd8] mov ecx,edi call 0x401000**（@0x402234 +0xD8 子对象重置）→ **lea ebx,[esi+0x10] mov ecx,edi mov edx,ebx call 0x4010c0**（@0x402240 +0xD8.0x4010C0 挂载 [esi+0x10]）→ **mov ecx,ebx call 0x401170**（@0x402247 +0x10 子对象重置）
+  - **mov edx,[esi+0x90] test edx,edx je 0x402268 → mov ecx,edi call 0x4010c0 + mov ecx,[esi+0x90] call 0x401170**（@0x40224c-0x402263 [+0x90] 引用挂载 + 重置，成对）
+  - **mov edx,[esi+0x94] test je 0x402279 → call 0x4010c0**（@0x402268-0x402274 [+0x94] 引用挂载）
+  - **mov edx,[esi+0x98] test je 0x40228a → call 0x4010c0**（@0x402279-0x402285 [+0x98] 引用挂载）
+  - **mov edx,[esi+0x9c] test je 0x40229b → call 0x4010c0**（@0x40228a-0x402296 [+0x9C] 引用挂载）
+  - **lea edx,[ebp+0x68] mov ecx,edi call 0x4010c0**（@0x40229b-0x4022a0 父 +0x68 链挂载）→ **mov edx,[ebp+0xe8] test edx,edx je 0x4022b6 → call 0x4010c0**（@0x4022a5-0x4022b1 父 +0xE8 引用挂载）
+  - pop ×4 → ret @0x4022ba
+- 直接 call 10 次/去重 3：0x401000×1、0x4010c0×7、0x401170×2——picker callees=3 吻合，差值 0
+- 判类：FUN_00402220——槽节点构造器（[esi+0xAC] 父回链 + 0x401000 +0xD8 子对象重置 + [+0x90]/[+0x94]/[+0x98]/[+0x9C] 四引用逐个 0x4010C0 挂载（[+0x90] 再 0x401170）+ [ebp+0x68] 父链 + [ebp+0xE8] 父引用挂载）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x401B00 FUN_00401b00（172B）
+
+- 范围 0x401B00-0x401BAB（单出口 ret @0x401BAB；0x401BAC-0x401BAF nop pad + 0x401BB0 起链查找器观察项 + 0x401BE0 起链清理器观察项 + 0x401C00 起超大注册器观察项）——**batch 2560 排队 MISSING 兑现**
+- thiscall this=esi（ret 空）：**对象清理器**（+0xC 链节点级联析构 + 表解链 + 尾清理 + delete）：
+  - push ecx/ebp/esi/edi → mov esi,ecx → mov [esp+0xc],esi → lea ebp,[esi+0xc] → **call 0x407470**（@0x401b0f +0xC 链首）→ edi=eax → je 0x401b86（空→跳尾清理）
+  - **外层链循环**（@0x401b1b）：**cmp [edi+4],edi je 0x401b27**（单节点自链→跳过析构）→ **mov ecx,edi call 0x407450**（@0x401b22 头部析构）
+  - **lea ebx,[edi+0x24] call 0x407470**（@0x401b2c +0x24 子链首）→ esi=eax → je 0x401b5f（空→跳下一环）→ **内层循环**（@0x401b37）：**call 0x407450**（@0x401b39 子节点析构）+ **mov ecx,esi call 0x408600**（@0x401b40 虚表槽清理）→ **mov eax,[edi+0x3c] mov edx,esi mov ecx,[eax+4] call 0x407530**（@0x401b4d 表 [+0x3C]+4 解链）→ **call 0x407470**（@0x401b54 下一子节点）→ jne 内层循环
+  - **lea ecx,[edi+0x1c] call 0x408530**（@0x401b62 +0x1C 清理）→ **mov ecx,[edi+0x3c] mov edx,edi mov ecx,[ecx+8] call 0x407530**（@0x401b6f 表 [+0x3C]+8 解链）→ **call 0x407470**（@0x401b76 下一外层节点）→ jne 0x401b1b
+  - **尾清理**（@0x401b86）：**mov ecx,[esi+4] test je 0x401b92 → call 0x407510**（@0x401b8d [+4] 引用释放）→ **mov ecx,[esi+8] test je 0x401b9e → call 0x407510**（@0x401b99 [+8] 引用释放）→ **push esi call 0x7c8b3d**（@0x401b9f delete this）→ ret @0x401bab
+- 直接 call 13 次/去重 7：0x407450×2、0x407470×4、0x407510×2、0x407530×2、0x408530×1、0x408600×1、0x7c8b3d×1——picker callees=7 吻合，差值 0
+- 判类：FUN_00401b00——对象清理器（[+0xC] 链外层 0x407470/0x407450 级联 + [+0x24] 子链内层 0x407450/0x408600 清理 + [+0x3C] 表 +4/+8 双 0x407530 解链 + [+0x1C] 0x408530 + [+4]/[+8] 双 0x407510 引用释放 + 0x7c8b3d delete this）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x4019E0 FUN_004019e0（275B）
+
+- 范围 0x4019E0-0x401AF0（双出口 ret 8 @0x401AE7 失败返 0 / @0x401AF0 成功返对象；0x401AF3-0x401AFF nop pad + 0x401B00 起 b 路已登记）——**batch 2560 排队 MISSING 兑现**
+- 非虚 3 栈参（ecx=传入值/edx=第二参 eax=esp+0x1c 第三参，ret 8）：**事件对象构造器**（new 0xE8 + 0x3A dword 清零 + 回链 + idiv 容量计算 + 链装载 + 失败级联清理；成功返对象/失败返 0）：
+  - push ebx/ebp/esi/edi → mov ebp,edx → mov esi,ecx → **push 0xe8 call 0x7c8e17**（@0x4019ed new 232 字节）→ mov ebx,eax → **mov ecx,0x3a xor eax,eax rep stosd**（@0x4019f4-0x4019fd 58 dword=232B 清零）→ **mov eax,[esp+0x1c] mov [ebx],esi mov [ebx+0x18],eax**（第三参写回 + [ebx]=this 回链 + [+0x18]）
+  - **lea esi,[eax+0x1c] mov eax,ebp cdq idiv esi**（@0x401a0b-0x401a11 第二参 ÷ (第三参+0x1C)）→ **mov ecx,eax call 0x4074d0**（@0x401a17 容量计算 → [ebx+4]）→ **mov ecx,[esp+0x14] mov edx,0x64 call 0x4074d0**（@0x401a1c-0x401a28 第三参原值 ÷ 100 → [ebx+8]）
+  - **lea esi,[ebx+0xc] mov ecx,esi call 0x4072c0**（@0x401a35 +0xC 链头构造）→ **mov eax,[ebx+4] test je 0x401a4c**（容量 0→失败路径）→ **mov eax,[ebx+8] test jne 0x401aea**（两容量均非零→成功路径）
+  - **失败清理**（@0x401a4c）：与 b 路 0x401B00 同构级联析构——0x407470（+0xC 链首）+ 0x407450×2 + [+0x24] 子链 0x407470/0x407450/0x408600/0x407530 + [+0x1C] 0x408530 + [+0x3C]+8 0x407530 + [+4]/[+8] 双 0x407510 + **0x7c8b3d delete**（@0x401ad9）→ xor eax,eax pop ×4 ret 8 @0x401ae7（失败返 0）
+  - @0x401aea（成功）：mov eax,ebx pop ×4 ret 8 @0x401af0（返对象）
+- 直接 call 17 次/去重 10：0x4072c0×1、0x407450×2、0x407470×3、0x4074d0×2、0x407510×2、0x407530×2、0x408530×1、0x408600×1、0x7c8b3d×1、0x7c8e17×1——picker callees=10 吻合，差值 0
+- 判类：FUN_004019e0——事件对象构造器（new 0xE8 + rep stosd 58dword 清零 + [ebx]=this 回链 + [+0x18] 第三参 + (edx ÷ ([第三参]+0x1C)) idiv → 0x4074D0 → [+4] + 第三参÷100 → 0x4074D0 → [+8] + 0x4072C0 +0xC 链头 + 双容量非零判定 + 失败 b 路同构级联清理 delete 返 0/成功返对象；ret 8）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2566.py：a 路 3/3（0x401000/0x4010c0/0x401170 已登记）、b 路 7/7（0x407450/0x407470/0x407510/0x407530/0x408530/0x408600/0x7c8b3d 已登记）、c 路 10/10（0x4072c0/0x407450/0x407470/0x4074d0/0x407510/0x407530/0x408530/0x408600/0x7c8b3d/0x7c8e17 已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0（a 路 call×10 去重 3/b 路 call×13 去重 7/c 路 call×17 去重 10，全为直接调用无 IAT 槽）
+- 无批内自引用（a/b/c 互不落对方函数体；c 尾 0x401B00 = b 路已登记、a 尾 0x4022C0 = batch 2565 b 路观察项函数指针本体，均为批间邻接）；**batch 2560 排队 MISSING 0x401b00/0x4019e0 本批双兑现**（排队 MISSING 5→3：0x4011c0/0x4015c0 + 新增候选待续；batch 2552 原六件 0x4011c0 仍未兑现）；真 MISSING 队列 3 个不变（0x4f6eb0 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6159 行」= 唯一地址数 = 行数 6181 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4022C0 / 0x402330 / 0x4023F0（a 路下函数，batch 2565 b 路写入的三函数指针本体）：0x4022C0 含 call 0x407470 + [+0x16C] 查询回写；0x402330 含 [+0xA8] 递增检查——事件槽生命周期回调族，后续批次优先跟进
+- 0x401BB0（b 路下函数）：链查找器（[ecx+0xc] 链遍历 [+0x14] 比较 → 命中返 [+0x18]）——小函数族
+- 0x401BE0（b 路下下函数）：链清理器（[ecx+0xc] 链遍历 [+0x18]=0 清零）——小函数族
+- 0x401C00（b 路下下下函数）：**超大注册器**（call 0x4016f0（batch 2566 picker 前 5 名）+ 0x407520 分配 + 链遍历 [+0x14] 匹配——后续批次优先跟进）
+- 既有池延续：见 batch 2565 观察项列表（0x4026F0 位标志清位桩镜像 + 0x402720 超大虚表驱动器）+ batch 2564 观察项列表（0x402850 双字段清零器 + 0x402860 节点插入器 + 0x402900 [0x87DE2C] 门控链回调驱动器）+ batch 2563 观察项列表（0x402B80 单节点析构器 + 0x402BB0 链式析构器 + 0x402C00 查首装载器）+ batch 2562 观察项列表 + batch 2561/2560/2559/2558/2557/2556/2555/2554/2553/2552/2551/2550/2549/2548/2547/2546/2545/2544/2543/2542/2541/2540 全量观察项 + 真 MISSING 队列 3 个 + 历史候选池全量延续
