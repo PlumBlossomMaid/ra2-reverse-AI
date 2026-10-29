@@ -1,0 +1,61 @@
+# frontier batch 2576
+
+日期：2026-10-29
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 0，落回 0x7B 段 ranking 序）
+三路：a=0x7B7830（158B FUN_007b7830 callees=5 deps=0）/ b=0x7B77E0（69B FUN_007b77e0 callees=2 deps=0）/ c=0x7B76F0（69B FUN_007b76f0 callees=2 deps=0）——三路同属 0x7B 段宽字符串大小写转换族（a 为小写化拷贝器，b 为就地小写化器，c 为就地大写化器——c/b/a 地址连续邻接，c 尾 0x7B7740 起还有第四份大写化拷贝器变体观察项）；三路共用 CRT 串原语（0x7CA405 测长 / 0x7C8E17 new / 0x7CA489 拷贝 / 0x7C8B3D delete / 0x7C97D3 tolower 系 / 0x7CAFF4 toupper 系）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2576{a,b,c}.txt（a 0x100 窗读全、b 0x80 窗读全、c 0x80 窗读全，尾 ret 确认：a 单出口 ret 4 @0x7B78CB（0x7B78CE-0x7B78CF nop pad + 0x7B78D0 起宽串装载器（new+0x7CA422 拷贝+[+0] 源或 0x887734 默认）——观察项）、b 单出口 ret @0x7B7824（0x7B7825-0x7B782F nop pad + 0x7B7830 起 = a 路已登记）、c 单出口 ret @0x7B7734（0x7B7735-0x7B773F nop pad + 0x7B7740 起大写化拷贝变体——观察项））
+核验：.qwen/tmp/_check_callees2576.py；a 5/5、b 2/2、c 2/2；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6211 → 6214（三行全新增，ADD 3）
+
+## a 路：0x7B7830 FUN_007b7830（158B）
+
+- 范围 0x7B7830-0x7B78CB（单出口 ret 4 @0x7B78CB；0x7B78CE-0x7B78CF nop pad + 0x7B78D0 起宽串装载器观察项）——0x7B 段标准序
+- thiscall 1 栈参（ecx=this/[esp+0x10]=结果结构，ret 4）；共享引用宽字符串：**小写化拷贝器**（原串测长复制 + 逐字 tolower + 旧串释放 + 结果写回）：
+  - push esi/edi → mov edi,ecx → xor esi,esi → **mov eax,[edi] test eax,eax je 0x7b785a**（@0x7b7836-0x7b783a 原串空直跳建空）
+  - **push eax call 0x7ca405**（@0x7b783c-0x7b783d 测原串长）→ **lea eax,[eax+eax+2] push eax call 0x7c8e17**（@0x7b7842-0x7b7847 new（长×2+2）宽串缓冲）→ mov ecx,[edi] mov esi,eax → **push ecx push esi call 0x7ca489**（@0x7b7850-0x7b7852 原串拷贝）→ add esp,0x10
+  - push ebx → xor ebx,ebx → mov edi,esi → **test esi,esi je 0x7b7896**（@0x7b785f-0x7b7861 空串直跳）
+  - **小写化循环**（@0x7b7863-0x7b7894，用 0x7CA405 测长作上界）：push esi call 0x7ca405（测长）add esp,4 → **cmp ebx,eax jae 0x7b7896**（@0x7b786c-0x7b786e 越界退出）→ **mov ax,[edi] cmp ax,0x61 jb 0x7b7890 cmp ax,0x7a ja 0x7b7890**（@0x7b7870-0x7b787d [a-z] 小写窗口）→ **and eax,0xffff push eax call 0x7c97d3**（@0x7b787f-0x7b7885 tolower 系转换）→ add esp,4 → **mov word ptr [edi],ax**（@0x7b788d 回写 16 位）→ inc ebx / add edi,2 / jmp 循环
+  - **mov edi,[esp+0x10]**（@0x7b7896 结果结构）→ pop ebx → test esi,esi → **mov dword ptr [edi],0**（@0x7b789d 结果 [+0] 先置 0）→ je 0x7b78c7（空串结束）
+  - **push esi call 0x7ca405**（测长）→ **lea edx,[eax+eax+2] push edx call 0x7c8e17**（@0x7b78ab-0x7b78b3 new 结果缓冲）→ **push esi push eax mov dword ptr [edi],eax**（@0x7b78b5-0x7b78b7 结果 [+0]=新串）→ **call 0x7ca489**（@0x7b78b9 拷贝）→ **push esi call 0x7c8b3d**（@0x7b78be-0x7b78bf 释放旧工作串）→ add esp,0x14
+  - @0x7b78c7：mov eax,edi pop edi/esi ret 4 @0x7b78cb
+- 直接 call 9 次/去重 5：0x7ca405×3、0x7c8e17×2、0x7ca489×2、0x7c97d3×1、0x7c8b3d×1——picker callees=5 吻合，差值 0
+- 判类：FUN_007b7830——小写化拷贝器（thiscall 1 栈参；[edi] 原串非空测长 0x7CA405 + new（长×2+2）0x7C8E17 + 0x7CA489 拷贝 + 逐字 [a-z] 窗口 0x7C97D3 tolower 系转换回写 + 结果结构 [+0] 的 new+拷贝 + 0x7C8B3D 释放工作串；ret 4）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x7B77E0 FUN_007b77e0（69B）
+
+- 范围 0x7B77E0-0x7B7824（单出口 ret @0x7B7824；0x7B7825-0x7B782F nop pad + 0x7B7830 起 = a 路已登记）——0x7B 段标准序
+- thiscall this=edi（ret 空）：**就地小写化器**（原串原地逐字 tolower，无拷贝）：
+  - push esi/edi → mov edi,ecx → xor esi,esi → **mov eax,[edi] test eax,eax je 0x7b7822**（@0x7b77e6-0x7b77ea 原串空直退）
+  - **小写化循环**（@0x7b77ec-0x7b7820）：push eax call 0x7ca405（测长）add esp,4 → **cmp esi,eax jae 0x7b7822**（@0x7b77f5-0x7b77f7 越界退出）→ **mov eax,[edi] mov ax,[eax+esi*2] cmp ax,0x61 jb 0x7b781f cmp ax,0x7a ja 0x7b781f**（@0x7b77f9-0x7b7809 [a-z] 窗口）→ **and eax,0xffff push eax call 0x7c97d3**（@0x7b780b-0x7b7811 tolower 系）→ add esp,4 → **mov ecx,[edi] mov [ecx+esi*2],ax**（@0x7b7816-0x7b781b 回写）→ inc esi / jmp 循环
+  - pop edi/esi → ret @0x7b7824
+- 直接 call 2 次/去重 2：0x7ca405×1、0x7c97d3×1——picker callees=2 吻合，差值 0
+- 判类：FUN_007b77e0——就地小写化器（thiscall；[edi] 原串非空 + 0x7CA405 测长循环 + 逐字 [a-z] 窗口 0x7C97D3 tolower 系回写原地；ret 空）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x7B76F0 FUN_007b76f0（69B）
+
+- 范围 0x7B76F0-0x7B7734（单出口 ret @0x7B7734；0x7B7735-0x7B773F nop pad + 0x7B7740 起大写化拷贝变体观察项）——0x7B 段标准序
+- thiscall this=edi（ret 空）：**就地大写化器**（原串原地逐字 toupper，b 路的小写镜像）：
+  - push esi/edi → mov edi,ecx → xor esi,esi → **mov eax,[edi] test eax,eax je 0x7b7732**（@0x7b76f6-0x7b76fa 原串空直退）
+  - **大写化循环**（@0x7b76fc-0x7b7730）：push eax call 0x7ca405（测长）add esp,4 → **cmp esi,eax jae 0x7b7732**（@0x7b7705-0x7b7707 越界退出）→ **mov eax,[edi] mov ax,[eax+esi*2] cmp ax,0x41 jb 0x7b772f cmp ax,0x5a ja 0x7b772f**（@0x7b7709-0x7b7719 [A-Z] 大写窗口）→ **and eax,0xffff push eax call 0x7caff4**（@0x7b771b-0x7b7721 toupper 系）→ add esp,4 → **mov ecx,[edi] mov [ecx+esi*2],ax**（@0x7b7726-0x7b772b 回写）→ inc esi / jmp 循环
+  - pop edi/esi → ret @0x7b7734
+- 直接 call 2 次/去重 2：0x7ca405×1、0x7caff4×1——picker callees=2 吻合，差值 0
+- 判类：FUN_007b76f0——就地大写化器（thiscall；[edi] 原串非空 + 0x7CA405 测长循环 + 逐字 [A-Z] 窗口 0x7CAFF4 toupper 系回写原地——b 路 0x7B77E0 小写镜像；ret 空）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2576.py：a 路 5/5（0x7ca405/0x7c8e17/0x7ca489/0x7c97d3/0x7c8b3d 已登记）、b 路 2/2（0x7ca405/0x7c97d3 已登记）、c 路 2/2（0x7ca405/0x7caff4 已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0（全部为 CRT 串原语直接 call）
+- 无批内自引用（a/b/c 互不落对方函数体；c 尾 0x7B7740 大写化拷贝变体、b 尾 0x7B7830 = a 路、a 尾 0x7B78D0 宽串装载器，均为批间邻接观察项）；排队 MISSING 观察项已清零；真 MISSING 队列 3 个不变（0x4f6eb0 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6189 行」= 唯一地址数 = 行数 6211 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x7B78D0（a 路下函数）：宽串装载器（new+0x7CA422 拷贝+[+0] 源或 0x887734 默认——与 batch 2576 a 路同族）——后续批次跟进
+- 0x7B7740（c 路下函数）：大写化拷贝变体（4 份同族；0x7CA405/0x7C8E17/0x7CA489/0x7CAFF4——a 路大写版）——后续批次跟进
+- 0x887734（b/c 路旁默认串）：空/默认宽字符串全局（0x7B78DB 装载器 +0x887734 默认源）——数据常量观察
+- 0x7CA405 / 0x7CA489 / 0x7CA422（串原语）：CRT/库宽串测长/拷贝/装载原语（已登记）——锚点
+- 0x7C97D3 / 0x7CAFF4（转换原语）：CRT tolower/toupper 系（已登记）——锚点
+- 既有池延续：见 batch 2575 观察项列表（0x7BA2F0 全局释放器 + 0x7BA300 标量删除析构器 + 0x7BA320 [+0xC] 负判定 getter + 0x7BA330 [+0x10] 标志 getter + 0x7B8F30 0x7B8C60 门控大函数 + 0x7B86B0 [0xB7816C] 门控全局清理块）+ batch 2574 观察项列表（0x7BA420 析构器（虚表 0x7E4DA0）+ 0x7B88D0 清理原语 + 0x7E4DA0 虚表 + 0x631C80 基类析构原语）+ batch 2573 观察项列表（0x7BA530 同族缓冲装载变体 + 0x7BA590 析构器 + 0x7BA5C0 全局清零器 + 0x7BA8C0 矩形四参函数 + 0x421B60 采集原语 + 0x7BC2B0 矩形相交原语）+ batch 2572 观察项列表（0x7BC640 虚表槽 0 析构 stub 族 + 0x7BBB90 双缓冲转发变体 + 0x7BAE60 getter 变体）+ batch 2571 观察项列表（0x7BEA80 判空/状态检查器 + 0x7BEFE0 装载原语 + 0x7BE940 重建链原语）+ batch 2570 观察项列表（0x7BF220/0x7BF230 ret 桩 + 0x7BF240 跳转表虚表分发器 + 0x879124/0xA8F91C 全局槽）+ batch 2569 观察项列表（0x4011B0 9×4 步长表基址定位器 + 0x7E0170 blit 原语 + 0x7E01D2 混色原语 + 0xA8F918/0xA8F91C/0x877D20/0x878720/0x879124 全局槽）+ batch 2568 观察项列表 + batch 2567 观察项列表 + batch 2566 观察项列表（0x4022C0/0x402330/0x4023F0 三函数指针族 + 0x401BB0 链查找器 + 0x401BE0 链清理器）+ batch 2565 观察项列表（0x4026F0 位标志清位桩镜像 + 0x402720 超大虚表驱动器）+ batch 2564 观察项列表（0x402850 双字段清零器 + 0x402860 节点插入器 + 0x402900 [0x87DE2C] 门控链回调驱动器）+ batch 2563 观察项列表（0x402B80 单节点析构器 + 0x402BB0 链式析构器 + 0x402C00 查首装载器）+ batch 2562 观察项列表 + batch 2561/2560/2559/2558/2557/2556/2555/2554/2553/2552/2551/2550/2549/2548/2547/2546/2545/2544/2543/2542/2541/2540 全量观察项 + 真 MISSING 队列 3 个 + 历史候选池全量延续
