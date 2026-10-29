@@ -1,0 +1,63 @@
+# frontier batch 2545
+
+日期：2026-10-29
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x409360（79B FUN_00409360 callees=2 deps=755）/ b=0x409100（188B FUN_00409100 callees=1 deps=1）/ c=0x408F80（174B FUN_00408f80 callees=1 deps=97）——时间/计数/批量读取域三连（a 为全局时间函数指针选择器，b 为计数累计调整器，c 为批量读取循环器；b/c 共用已登记内部辅助 0x4091C0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2545{a,b,c}.txt（a 0x100 窗、b/c 0x200 窗读全，尾 ret 确认：a 双出口 ret @0x4093A0（高精度时基路径）/ret @0x4093AE（回退路径；0x4093AF-0x4093B9 nop pad + **0x4093B0 起调度器（mov eax,[0x87e848] test je → jmp eax 函数指针分发）** + 0x4093C0 起计时器 A（call [0x7e11d4] + 0x87e828/0x87e82c → 0x7c92d0）+ 0x4093F0 起计时器 B（[0x87e84c] inc + [0x7e1764]/[0x7e1760] 双槽 + call [0x7e1530] tick → cmp/jae inc 进位 + 读写）——观察项）、b 多出口 ret @0x40910B（无累计）/ret @0x409115（边界）/ret @0x4091BB（正常；0x4091BC-0x4091BF nop pad + 0x4091C0 起已登记内部辅助（0x4091c0-0x4092ac，本批 call 目标）+ 0x4092B0 起精简复位变体（jmp 0x4091c0）+ 0x4092F0 起第三变体——观察项）、c 三出口 ret 8 @0x409014（es==0 返 2）/ret 8 @0x40901E（es==-1 返 0）/ret 8 @0x40902B（完成返 1；0x40902C-0x40902F nop pad + **0x409030 起孪生变体（结构相同但内层 call 0x7c95d3/0x7c94bc + push ebp 三参——批量读取循环器扩展版，观察项）** + 0x4090F0 起 [ecx+0x24] 错误码 getter + 0x409100 起 = 本批 b 路，批间邻接））
+核验：.qwen/tmp/_check_callees2545.py；a 1/1、b 1/1、c 1/1（0x4091C0 两路共用已登记）；无 MISSING、无 UNKNOWN、无批内自引用；**a 路 picker 差值 1**（详见核验结果）
+注册：TSV 6118 → 6121（三行全新增，ADD 3）
+
+## a 路：0x409360 FUN_00409360（79B）
+
+- 范围 0x409360-0x4093AE（双出口 ret @0x4093A0（高精度时基成功路径）/ret @0x4093AE（回退路径）；0x4093AF-0x4093B9 nop pad + **0x4093B0 起调度器（mov eax,[0x87e848] → test eax,eax je → jmp eax 函数指针分发，纯尾跳）** 观察项）
+- thiscall 无栈参（ret 空）：**全局时间函数指针选择器**（高精度时基探测 → 计时器双路径选择）：
+  - **sub esp,8 → lea eax,[esp] → push eax → call dword ptr [0x7e11d8]**（@0x409368 IAT 槽调用，时基能力探测）→ **test eax je 0x4093a1**（不支持 → 回退）
+  - **成功路径**：mov ecx,[esp+4]/mov edx,[esp]（探测返回值双槽）→ push 0/push 0x3e8/push ecx/push edx → **call 0x7c92d0**（@0x409383 高精度换算）→ **[0x87e828]=eax / [0x87e82c]=edx**（64 位时基双槽写入）→ **[0x87e848]=0x4093c0**（计时器函数指针 A）→ ret @0x4093a0
+  - **回退路径**（@0x4093a1）：**[0x87e848]=0x4093f0**（计时器函数指针 B，tick 风格）→ ret @0x4093ae
+- 直接 call 1 次/去重 1：0x7c92d0×1——**picker callees=2 vs 核验 1，差值 1**（picker 计入 IAT 槽 [0x7e11d8] 的 `call dword ptr [0x7e11d8]`；该类内存间接调用按惯例不计入直接 callee，本函数直接 call=1）
+- 判类：FUN_00409360——全局时间函数指针选择器（IAT [0x7e11d8] 时基能力探测 → 0x7c92d0 换算写 [0x87e828]/[0x87e82c] 64 位时基 → [0x87e848] 计时器函数指针选 0x4093c0（高精度）/0x4093f0（回退）；调度器 0x4093B0 尾跳分发）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x409100 FUN_00409100（188B）
+
+- 范围 0x409100-0x4091BB（多出口 ret @0x40910B（无累计）/ret @0x409115（索引边界 2-1）/ret @0x4091BB（正常；0x4091BC-0x4091BF nop pad + 0x4091C0 起内部辅助（**已登记**，0x4091c0-0x4092ac：[ecx+0x34] cmp [ecx+0x38] sub → [ecx+0x8] 对齐 + 8B 项循环 + [ecx+0xc]/[ecx+0x10] 位域 + div [edx+0x14] 取模 + 递归 call 0x409100（@0x4092a0 回写）——观察项）+ 0x4092B0 起精简复位变体（[ecx+0x28]→[ecx+0xc] + [ecx+4]=[eax+esi*8+0x20] + and [ecx+0x10],~2 + **jmp 0x4091c0** 尾调）+ 0x4092F0 起第三变体（call 0x4091c0 + [esi+8] 分支）——观察项））
+- thiscall 无栈参（ret 空）：**计数累计调整器**（时间/位置累计环）：
+  - **mov esi,[ecx+0x2c]** test esi,esi je 0x409108（无累计 → xor eax ret）
+  - **mov eax,[ecx+0x14] inc cmp 2 jne 0x409117**（索引边界）→ xor eax（归零路径）
+  - **shl eax,6（64B 项）→ lea eax,[eax+edx+0x18]**（@0x40911e-0x409121 项定位）→ **[ecx+0x38] add esi → 写回** / **[eax+0x34] add esi → 写回**（@0x409122-0x40912f 双累计）
+  - **8B 项循环**（@0x409137-0x409169）：mov eax,[ecx+0x28] → mov edx,[ecx+0x14] → **mov edi,[eax+edx*8+0x24] / lea edx,[eax+edx*8+0x20]** → **cmp edi,esi jg 0x40916d**（> 调整分支）
+    - ≤ 路径：sub esi,edi → [edx]=[eax+0x18]/[edx+4]=[eax+0x1c]（复制）→ add [eax+0x30],4 + cmp [eax]（相邻链检查）→ 双相等跳转 xor eax（链断标记）→ **test esi jne jmp 0x409137**（继续循环）
+    - > 路径（0x40916d）：[edx]+=esi / [edx+4]-=esi
+  - 收口（@0x40917b-0x4091af）：**[ecx+0x28]=eax / [ecx+0x2c]=0 / [ecx+0xc]=eax** → je 0x409198 → [ecx+4]=[eax+edx*8+0x20] else [ecx+4]=0 → [ecx+8]=0 → **and [ecx+0x10],0xfffffffe** → **call 0x4091c0**（@0x4091b1 内部辅助刷新）→ eax=ebx（累计值）→ ret @0x4091bb
+- 直接 call 1 次/去重 1：0x4091c0×1——picker callees=1 吻合，差值 0
+- 判类：FUN_00409100——计数累计调整器（[ecx+0x2c] 门控 + 64B 项 [0x38]/[+0x34] 双累计 + 8B 项表循环（≤ 复制/> 调整）+ 相邻链检查 + 收口字段写 + 0x4091c0 内部辅助刷新；多出口单返回值）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x408F80 FUN_00408f80（174B）
+
+- 范围 0x408F80-0x40902B（三出口 ret 8 @0x409014（es==0 返 2）/ret 8 @0x40901E（es==-1 返 0）/ret 8 @0x40902B（完成返 1）；0x40902C-0x40902F nop pad + 0x409030 起孪生变体（批量读取循环器扩展版：结构同但 **call 0x7c95d3/0x7c94bc + push ebp 三参** + 虚表槽 0x30/0x24 同理——观察项）+ 0x4090F0 起 [ecx+0x24] 错误码 getter + 0x409100 起 = 本批 b 路）
+- thiscall 2 栈参（ret 8）：**批量读取循环器**（参 1 目标数量/参 2 输出指针，带周期性读取刷新）：
+  - **call 0x4091c0**（@0x408f8b 初始刷新）→ **mov eax,[esp+0x1c]（参 2 输出指针）test eax jne 0x408fa0** → lea eax,[esp+0x10]（默认槽）
+  - 初始化：[esp+0x1c]=0（累计清零）→ **循环**（@0x408fae-0x409008）：**mov eax,[edi+8]（剩余）cmp ebp（参 1 目标数）jle → mov eax,ebp（min）** → test eax je 0x409021（完成返 1）
+  - **mov ecx,[edi+0x14] test je` → 虚表槽 0x24**（@0x408fd6，无统计）else **虚表槽 0x30**（@0x408fcb）→ esi=eax（读取量）
+  - **esi<0 → [edi+0x24]=0x80040000**（@0x408fdf 亚标准 HRESULT 错误码）→ test esi je 0x40900a（==0 → ret 8 返 2）→ **cmp esi,-1 je 0x409017**（==-1 → ret 8 返 0）
+  - **esi>0**：mov edx,esi/mov ecx,edi → **call 0x4091c0**（@0x408ff3 刷新）→ [esp+0x1c]+=esi（累计）→ [esp+0x18]-=esi（剩余）→ **test ebp,ebp jne jmp 0x408fae**（循环）→ ret 8 返 1
+- 直接 call 3 次/去重 1：0x4091c0×2、0x4091c0（循环内）+（虚表槽 0x24/0x30 间接不计——picker callees=1 吻合，差值 0
+- 判类：FUN_00408f80——批量读取循环器（参 1 目标数/参 2 输出指针 + 0x4091c0 初始/循环内双刷新 + [edi+0x14] 分支虚表槽 0x24/0x30 读取 + esi<0 错误码 0x80040000/==0 返 2/-1 返 0 特殊返回 + 累计剩余循环；ret 8 三出口）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2545.py：a 路 1/1（0x7c92d0 已登记）、b 路 1/1（0x4091c0 已登记）、c 路 1/1（0x4091c0 已登记，2 call 去重）——三路无 MISSING/UNKNOWN/批内自引用
+- **picker callees vs 核验差值：a 差 1**（picker 计 2 = 0x7c92d0 + IAT 槽 [0x7e11d8] 的 `call dword ptr [0x7e11d8]` 内存间接调用；该类型按惯例不计入直接 callee，以机器码直接 call=1 为准——本会话首次出现差值 1 的批次写法差异，非 MISSING，不影响登记）；b 差 0、c 差 0（虚表槽 0x24/0x30 间接不计）
+- 无批内自引用（a/b/c 互不落对方函数体；c 尾 0x40902B 与 0x409030 孪生变体、b 尾 0x4091BB 与 0x4091c0 已登记辅助均为批间邻接）；无 MISSING（真 MISSING 队列 5 个不变：0x408B40 / 0x4f6eb0 / 0x406B10 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6096 行」= 唯一地址数 = 行数 6118 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4093B0（a 路下函数）：**函数指针调度器**（mov eax,[0x87e848] → test je → jmp eax 纯尾跳；空槽 xor eax/edx ret）——计时器域中枢，后续批次优先跟进
+- 0x4093C0/0x4093F0（a 路下下函数）：计时器 A（call [0x7e11d4] + 0x87e828/0x87e82c → 0x7c92d0）与计时器 B（[0x87e84c] inc + [0x7e1764]/[0x7e1760] 双槽 + call [0x7e1530] tick → cmp/jae inc 进位 + [0x816320] 读）——高精度/回退计时器对，后续批次优先跟进
+- 0x409030（c 路孪生变体）：批量读取循环器扩展版（call 0x7c95d3/0x7c94bc + push ebp + 虚表槽 0x30/0x24）——c 路同族扩展，后续批次优先跟进
+- 0x4092B0/0x4092F0（b 路下函数族）：精简复位变体（jmp 0x4091c0 尾调）+ 第三变体（call 0x4091c0 + [esi+8] 分支）——计时器/累计域兄弟，观察项
+- 0x87e828/0x87e82c/0x87e848/0x87e84c（a 路全局槽）：全局时基四槽（[0x87e828]/[0x87e82c] 64 位时基 + [0x87e848] 函数指针 + [0x87e84c] 计数器）——数据常量观察
+- 既有池延续：见 batch 2544 观察项列表（0x40A9A0 八全局批量刷新 + 0x409D90/0x409DE0 函数指针目标 + 0x40AA70 + batch 2543/2542/2541/2540/2539/2538/2537 全量观察项 + 历史候选池全量延续）
