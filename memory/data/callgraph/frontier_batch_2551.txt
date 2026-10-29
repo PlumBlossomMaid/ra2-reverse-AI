@@ -1,0 +1,54 @@
+# frontier batch 2551
+
+日期：2026-10-29
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x4073B0（16B FUN_004073b0 callees=0 deps=60）/ b=0x4072B0（7B FUN_004072b0 callees=0 deps=510）/ c=0x407040（23B FUN_00407040 callees=1 deps=10）——链表原语域三连（a 为循环单链计数遍历器，b 为高半字分量 getter，c 为全局引用计数减触发器）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2551{a,b,c}.txt（a/b 0x40 窗、c 0x40 窗读全，尾 ret 确认：a 单出口 ret @0x4073BF（0x4073C0 起 = 查链首项器（test ecx je → [ecx] → [eax+8] cmp 双校验 xor eax）——batch 2549/2550 callee 0x4073c0 亲眼所见，已登记确认 + 0x4073E0 起同模式下一项器——链族观察项）、b 单出口 ret @0x4072B6（0x4072C0 起 **自链构造器对**：[ecx]=[ecx+4]=[ecx+8]=ecx 三自链（=batch 2550 c 路 callee 0x4072c0 实锤三自链双链头）/ 0x4072D0 起 [ecx]=[ecx+4]=ecx+[ecx+8]=0 二自链（=batch 2546-2549 多路 callee 0x4072d0 实锤装配链头）+ 0x4072E0 起链推入器（[edx+8] 项数 + 链表遍历 [esi]）——链家族观察项）、c 单出口 ret @0x407056（0x407057-0x40705F nop pad + **0x407060 起 mov edx,0x4000 jmp 0x407170 / 0x407070 起 xor edx jmp 0x407170 参数预设尾跳 thunk 对**（batch 2550 b 路 callee 0x407170 的预设入口）——观察项））
+核验：.qwen/tmp/_check_callees2551.py；a 0/0、b 0/0、c 1/1；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6136 → 6139（三行全新增，ADD 3）
+
+## a 路：0x4073B0 FUN_004073b0（16B）
+
+- 范围 0x4073B0-0x4073BF（单出口 ret @0x4073BF；0x4073C0 起 = 查链首项器（已登记 0x4073c0，亲眼确认：test ecx je → mov eax,[ecx] → test eax je → cmp eax,[eax+8] jne → xor eax 双校验）——batch 2549/2550 多路 callee 实锤）+ 0x4073E0 起下一项器同模式——链家族观察项）
+- thiscall 无栈参（ret 空）：**循环单链计数遍历器**（回环哨兵计数）：
+  - **mov edx,[ecx]（首节点指针）→ xor eax（计数清零）→ cmp edx,ecx je 0x4073bf**（@0x4073b6 空链直返 0）
+  - **遍历计数循环**（@0x4073b8-0x4073bd）：**mov edx,[edx]（下一节点）→ inc eax → cmp edx,ecx jne 0x4073b8**（直到回到哨兵 ecx）
+  - ret @0x4073bf（eax=节点数）
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0
+- 判类：FUN_004073b0——循环单链计数遍历器（[ecx] 头指针起逐 [edx] 迭代计数，回环到哨兵 ecx 终止；纯内存遍历无调用）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x4072B0 FUN_004072b0（7B）
+
+- 范围 0x4072B0-0x4072B6（单出口 ret @0x4072B6；0x4072C0 起**自链构造器对**（[ecx]=[ecx+4]=[ecx+8]=ecx 三自链 / 0x4072D0 起 [ecx]=[ecx+4]=ecx+[ecx+8]=0 二自链）——0x4072c0/0x4072d0 均为已登记高频 callee，亲眼确认双/三自链语义，链家族观察项 + 0x4072E0 起链推入器（[edx+8] 项数 + [esi] 遍历））
+- thiscall 无栈参（ret 空）：**高半字分量 getter**（极简）：
+  - **mov eax,[ecx+8] → shr eax,0x10**（@0x4072b0-0x4072b3 取高 16 位）→ ret @0x4072b6
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0
+- 判类：FUN_004072b0——高半字分量 getter（[+0x8] 高 16 位返回；纯移位无调用）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x407040 FUN_00407040（23B）
+
+- 范围 0x407040-0x407056（单出口 ret @0x407056 + 归零尾跳；0x407057-0x40705F nop pad + **0x407060 起 mov edx,0x4000 jmp 0x407170 / 0x407070 起 xor edx jmp 0x407170 参数预设尾跳 thunk 对**（batch 2550 b 路 callee 0x407170 重置器的双预设入口）——观察项）
+- thiscall 无栈参（ret 空）：**全局引用计数减触发器**（归零联动）：
+  - **mov eax,[0x87e730]（全局引用计数）→ test eax,eax je 0x407056**（0 直退）→ **dec eax → mov [0x87e730],eax → jne 0x407056**（未归零直退）
+  - **归零 0 → jmp 0x40a950**（@0x407051 尾跳 batch 2544 a 路全局对象状态刷新器）→ ret @0x407056
+- 直接 call 0 次 + 直接 jmp 1 次/去重 1：0x40a950×1（jmp 尾跳）——picker callees=1 吻合，差值 0
+- 判类：FUN_00407040——全局引用计数减触发器（[0x87e730] dec → 归零 0 jmp 0x40a950 触发全局刷新；纯内存+尾跳无内部调用）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2551.py：a 路 0/0、b 路 0/0、c 路 1/1（0x40a950 已登记——batch 2544 a 路确认）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用（a/b/c 互不落对方函数体）；无 MISSING（真 MISSING 队列 4 个不变：0x4f6eb0 / 0x406B10 / 0x47ec40 / 0x4758C0；0x406B10 本批 rank 第 4 位持续排队）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6114 行」= 唯一地址数 = 行数 6136 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4073C0/0x4073E0（a 路后邻）：查链首项器/下一项器对（test ecx je → [ecx] → [eax+8] cmp 双校验 xor eax——batch 2549/2550 callee 亲眼实锤已登记，围联观察双链校验语义）
+- 0x4072C0/0x4072D0（b 路后邻）：**自链构造器对实锤**（0x4072c0=[ecx]=[ecx+4]=[ecx+8]=ecx 三自链双链头 / 0x4072d0=[ecx]=[ecx+4]=ecx+[ecx+8]=0 二自链单链头）——全库高频 callee，语义第一次亲眼确认，后续链族登记参照
+- 0x4072E0（b 路下下函数）：链推入器（[edx+8] 项数 + [esi] 链表遍历 + [ecx+4] 尾插/头插 + 项计数 inc）——链族观察项
+- 0x407060/0x407070（c 路后邻）：参数预设尾跳 thunk 对（mov edx,0x4000 / xor edx → jmp 0x407170）——0x407170 重置器双预设入口，观察项
+- 0x407170（thunk 目标）：batch 2550 b 路 callee（重置器）已登记，预设入口确认——围联观察
+- 既有池延续：见 batch 2550 观察项列表（0x407860 定时器节点构造大函数 + 0x407680 定时器线程回调 + 0x407770 双向重置器 + 0x7E11DC..0x7E1204 IAT 十一槽 + 0x87E770..0x87E820 全局十二槽 + 0x4025B0/0x407A90/0x48D080 候选池 + batch 2549/2548/2547/2546/2545/2544/2543/2542/2541/2540 全量观察项 + 真 MISSING 队列 4 个 + 历史候选池全量延续）
