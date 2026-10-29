@@ -1,0 +1,51 @@
+# frontier batch 2539
+
+日期：2026-10-29
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x412600（6B FUN_00412600 callees=0 deps=3）/ b=0x4125F0（6B FUN_004125f0 callees=0 deps=126）/ c=0x411510（36B FUN_00411510 callees=0 deps=97）——极简桩族三连（a/b 为逐字节相同的恒 1 常量返回器双副本，c 为四字段结构写入器）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2539{a,b,c}.txt（a/b 0x40 窗、c 0x80 窗读全，尾 ret 确认：a 单出口 ret @0x412605（`mov eax,1; ret` 6B 整函数体；0x412606-0x41260F nop pad + 0x412610 起下函数含 movsx byte + call 0x7c99b4 isalpha 系 + shl esi,4 十六进制逐位累加 cl 门控——观察项）、b 单出口 ret @0x4125F5（与 a 路**逐字节相同**的双副本：`b8 01 00 00 00 c3`；0x4125F6-0x4125FF nop pad + 0x412600 起 = 本批 a 路，批内邻接）、c 单出口 ret 4 @0x411531（0x411510-0x411533 36B；0x411534-0x41153F nop pad + 0x411540/0x411550/0x411560/0x411570/0x411580 起 getter/inc/dec/setne 小桩族——观察项））
+核验：.qwen/tmp/_check_callees2539.py；a 0/0、b 0/0、c 0/0；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6100 → 6103（三行全新增，ADD 3）
+
+## a 路：0x412600 FUN_00412600（6B）
+
+- 范围 0x412600-0x412605（单出口 ret @0x412605；整函数体仅 2 指令：`b8 01 00 00 00 mov eax,1` + `c3 ret`；0x412606-0x41260F nop pad + 0x412610 起下函数（movsx byte [edi] → push eax → call 0x7c99b4（字符分类系）+ shl esi,4 十六进制逐位累加 + cmp al,0x30/0x39 数字区间门控 + lea [esi+ecx-0x30]——观察项））
+- thiscall 无栈参（ret 空）：**恒 1 常量返回器**（f6B 极简——`mov eax,1; ret` 两指令，无任何参数消费/寄存器副作用；常量谓词/虚表占位回调）
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0
+- 判类：FUN_00412600——恒 1 常量返回器（2 指令 6B：mov eax,1 + ret；无调用、无分支）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x4125F0 FUN_004125f0（6B）
+
+- 范围 0x4125F0-0x4125F5（单出口 ret @0x4125F5；整函数体与 a 路**逐字节相同**：`b8 01 00 00 00 mov eax,1` + `c3 ret`——Westwood/MSVC 编译的双副本；0x4125F6-0x4125FF nop pad + 0x412600 起 = 本批 a 路，批内邻接）
+- thiscall 无栈参（ret 空）：**恒 1 常量返回器（副本二）**（与 0x412600 同 body 的第二个副本，6B/2 指令；常量谓词）
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0
+- 判类：FUN_004125f0——恒 1 常量返回器·双副本之二（2 指令 6B：mov eax,1 + ret；与 0x412600 字节级相同）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x411510 FUN_00411510（36B）
+
+- 范围 0x411510-0x411533（单出口 ret 4 @0x411531；0x411534-0x41153F nop pad + 0x411540/0x411550（[ecx+4]/[ecx+8] 纯 getter 各 4B `mov eax,[ecx+0x..]; ret`）、0x411560（[ecx+0xc] inc + xor eax,ret 8）、0x411570（[ecx+0xc] dec + al=1,ret）、0x411580（[ecx+0xc] setne al,ret）起小桩族——对象引用计数结构 getter/inc/dec 配套，观察项））
+- thiscall 1 栈参（ret 4）：**四字段结构写入器**（极简 5 写 16B）：
+  - mov eax,[esp+4]（第 1 栈参：目标结构指针）→ mov ebx,eax
+  - **mov edi,[ecx+4] / mov ecx,[ecx+8]**（源结构 [ecx+4]/[ecx+8] 两字段）
+  - [ebx]=0（xor edx,edx 写入）→ [ebx+4]=0（xor esi,esi 写入）→ **[ebx+8]=edi（继承 [ecx+4]）→ [ebx+0xc]=ecx（继承 [ecx+8]）**
+  - ret 4 @0x411531
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0
+- 判类：FUN_00411510——四字段结构写入器（[esp+4] 目标 16B 结构：前 8B 清零 + 后 8B 继承 this 的 [ecx+4]/[ecx+8]；纯 mov/xor 无调用）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2539.py：a 路 0/0、b 路 0/0、c 路 0/0（三路均无直接 call/jmp）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用（a/b/c 互不落对方函数体；b 尾 0x4125F5 与 a 头 0x412600 为批内邻接但无调用）；无 MISSING（真 MISSING 队列 5 个不变：0x408B40 / 0x4f6eb0 / 0x406B10 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6078 行」= 唯一地址数 = 行数 6100 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x412610（a 路下函数）：movsx byte + call 0x7c99b4（字符分类系）+ shl esi,4 十六进制逐位累加 + cmp 0x30/0x39 数字区间门控——**十六进制串解析器**（59B 级），后续批次优先跟进
+- 0x411540/0x411550/0x411560/0x411570/0x411580（c 路下函数族）：[ecx+4]/[ecx+8]/[ecx+0xc] 对象引用计数结构小桩族（getter ×2 + inc ret 8 + dec al=1 + setne al）——同一结构字段 5 配对小桩，后续批次跟进
+- 0x412600/0x4125F0 双副本：恒 1 常量返回器双副本（Westwood 惯用）——同型双副本识别线索（另一份为 0x412610 hex 解析器的上游谓词）
+- 0x7c99b4（a 路下函数 callee）：字符分类系（isalpha 风格）——CRT 域候选池
+- 既有池延续：见 batch 2538 观察项列表（0x4138C0 地图坐标魔法数除法 + 0x4137A0 门控移除器 + 0x4134A0 虚表槽查询 + 0x6cf240 关联查询 + 0x190 槽表遍历同族 + batch 2537/2536 全量观察项 + 历史候选池全量延续）
