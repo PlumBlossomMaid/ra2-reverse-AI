@@ -1,0 +1,61 @@
+# frontier batch 2564
+
+日期：2026-10-29
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x402940（70B FUN_00402940 callees=2 deps=757）/ b=0x4028B0（78B FUN_004028b0 callees=1 deps=44）/ c=0x402800（72B FUN_00402800 callees=0 deps=44）——**a 路 0x402940 = batch 2552 排队 MISSING 兑现**（原六件 0x4011c0/0x402940/0x402af0/0x402c70 剩 4 中 0x402af0/0x402c70 已于 batch 2563 兑现，本批 0x402940 兑现，仅剩 0x4011c0 未兑现）；三路同属事件槽节点生命周期域（a 为事件系统全局初始化器，b 为槽节点释放器，c 为 32 字节缓冲区比较拷贝器），地址连续邻接（c 尾 0x402847 → nop pad + 0x402850 双字段清零器观察项 + 0x402860 节点插入器观察项（c 路 dump 可见）→ b 头 0x4028B0 → b 尾 0x4028FD → nop pad + 0x402900 [0x87DE2C] 门控链回调驱动器观察项（b 路 dump 可见）→ a 头 0x402940 → a 尾 0x402985 → nop pad → 0x402990 = batch 2563 c 路已登记）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2564{a,b,c}.txt（a 0x130 窗读全、b 0x130 窗读全、c 0x130 窗读全，尾 ret 确认：a 单出口 ret @0x402985（0x402986-0x40298F nop pad + 0x402990 起 batch 2563 c 路已登记）、b 单出口 ret @0x4028FD（0x4028FE-0x4028FF nop pad + 0x402900 起 [0x87DE2C] 门控链回调驱动器——观察项 + 0x402938-0x40293F nop pad + 0x402940 起 = a 路已登记）、c 两出口 ret @0x402827/@0x402847（0x402848-0x40284F nop pad + 0x402850 起双字段清零器——观察项 + 0x402860 起节点插入器——观察项））
+核验：.qwen/tmp/_check_callees2564.py；a 2/2、b 1/1、c 0/0；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6175 → 6178（三行全新增，ADD 3）
+
+## a 路：0x402940 FUN_00402940（70B）
+
+- 范围 0x402940-0x402985（单出口 ret @0x402985；0x402986-0x40298F nop pad + 0x402990 起 batch 2563 c 路已登记）——**batch 2552 排队 MISSING 兑现（最后件，原六件仅剩 0x4011c0）**
+- 无参全局初始化器（ret eax=0）：**事件系统全局初始化器**（[0x815E98] 双链构造 + 计数清零 + [0x87DE30] 指针 + 0x401000 构造 + [0x87DE2C] 门控置位）：
+  - **mov ecx,[0x815e98] → call 0x4072c0**（@0x402946 全局对象 +0x0 链头构造，batch 2552 域）
+  - **mov eax,[0x815e98] → lea ecx,[eax+0xc] → call 0x4072c0**（@0x402953 +0xC 链头构造）——双链构造
+  - **mov ecx,[0x815e98] mov [ecx+0x18],0**（@0x402958-0x402962 全局计数清零）
+  - **mov edx,[0x815e98] lea ecx,[edx+0x20] mov [0x87de30],ecx**（@0x402965-0x40296e 全局段 +0x20 取址写全局指针 [0x87DE30]）
+  - **call 0x401000**（@0x402974 构造器）→ **mov [0x87de2c],1**（@0x402979 全局门控标志置位）
+  - xor eax,eax → ret @0x402985
+- 直接 call 3 次/去重 2：0x4072c0×2、0x401000×1——picker callees=2 吻合，差值 0
+- 判类：FUN_00402940——事件系统全局初始化器（[0x815E98] 全局对象 +0x0/+0xC 双链 0x4072C0 构造 + [+0x18] 计数清零 + [+0x20] 段指针写 [0x87DE30] + 0x401000 构造 + [0x87DE2C]=1 门控置位；ret 0）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x4028B0 FUN_004028b0（78B）
+
+- 范围 0x4028B0-0x4028FD（单出口 ret @0x4028FD；0x4028FE-0x4028FF nop pad + 0x402900 起 [0x87DE2C] 门控链回调驱动器（test [0x87de2c] → mov eax,[0x815e98] mov ecx,[eax+0x18] test jne 直退 → esi=[eax+0xc] 链遍历（cmp esi,edi je 直退）→ test byte [esi+0xc],2 jne 0x40292f → call dword ptr [esi+0x10c]（虚表槽 0x10c 回调）→ esi=[esi] 下一项 → 循环——观察项 + 0x402938-0x40293F nop pad + a 头 0x402940）
+- thiscall this=edi（ret 空）：**槽节点释放器**（[edi+0xAC] 父回链取 esi + 0x407450 头部析构×2 + 双计数维护）：
+  - push esi/edi → mov edi,ecx（this）→ **mov esi,[edi+0xac]**（父对象回链，batch 2562 a 路 0x403530 的 [eax+0xac]=esi 对应）
+  - **call 0x407450**（@0x4028ba 头部析构）→ **mov eax,[esi+0xf0] dec mov [esi+0xf0]**（父使用量计数 -1）
+  - **mov eax,[esi+0x104] inc mov [esi+0x104]**（父总量计数 +1）→ **mov ecx,edi call 0x407450**（@0x4028db 再次头部析构）
+  - **mov eax,[esi+0x104] dec test mov [esi+0x104] → jge 0x4028fb → mov [esi+0x104],0**（总量计数递减/负保底）
+  - pop edi/esi → ret @0x4028fd
+- 直接 call 2 次/去重 1：0x407450×2——picker callees=1 吻合，差值 0
+- 判类：FUN_004028b0——槽节点释放器（[edi+0xAC] 父回链 + 0x407450 头部析构×2 + [esi+0xF0] 使用量 -1 + [esi+0x104] 总量 +1/-1 负保底）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x402800 FUN_00402800（72B）
+
+- 范围 0x402800-0x402847（两出口 ret @0x402827/@0x402847；0x402848-0x40284F nop pad + 0x402850 起双字段清零器（mov [ecx+8],0; mov [ecx+4],0; ret——观察项）+ 0x402860 起节点插入器（mov [edx+0xac],esi 回链 + inc [esi+0xf0] + inc [esi+0x104] + lea ecx,[esi+0xf8] call 0x407420 链尾插 + dec [esi+0x104] 负保底——观察项））
+- thiscall 2 栈参（ecx=this/edx=源缓冲区，ret eax=0 或 1）：**32 字节缓冲区比较拷贝器**（this+0x17C 8dword vs 第二参 repe cmpsd + 不等 rep movsd 拷贝 + dirty 标志）：
+  - mov eax,ecx（this）→ push ebx/ebp/esi/edi → **lea ebx,[eax+0x17c]**（目标段 +0x17C，8 dword 缓冲区）→ mov ecx,8; mov edi,ebx; mov esi,edx（第二参=源）; xor ebp,ebp
+  - **repe cmpsd**（@0x402817 比较 8 dword=32 字节 this+0x17C vs 第二参）→ jne 0x402828（不等→跳拷贝路径）
+    - 相等：**mov [eax+0x19c],ebp**（dirty 标志清零）→ mov eax,ebp（返回 0）→ pop ×4 → ret @0x402827
+    - @0x402828（不等→拷贝）：mov ecx,8; mov esi,edx; mov edi,ebx; **mov [eax+0x19c],1**（dirty 标志置 1）→ mov eax,[eax+0x19c]; **rep movsd**（@0x402841 拷 32 字节到 this+0x17C）→ pop ×4 → ret @0x402847
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0（纯内联，repe cmpsd/rep movsd 为 x86 前缀）
+- 判类：FUN_00402800——32 字节缓冲区比较拷贝器（this+0x17C 8dword vs 第二参 repe cmpsd 相等→[+0x19C]=0 返 0；不等→[+0x19C]=1 rep movsd 拷贝返 1；纯内联无跨函数调用）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2564.py：a 路 2/2（0x401000/0x4072c0 已登记）、b 路 1/1（0x407450 已登记）、c 路 0/0（纯内联）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0（c 纯内联无间接调用条目）
+- 无批内自引用（a/b/c 互不落对方函数体；a 尾 0x402985 与 0x402990 batch 2563 c 路、c 旁之 0x402860 节点插入器（call 0x407420 已登记）均为批间邻接）；**batch 2552 排队 MISSING 0x402940 本批兑现（最后件）**（排队 MISSING 8→7：0x4011c0/0x4015c0/0x4026c0/0x401b00/0x4019e0/0x402440 + 新增候选待续；batch 2552 原六件 0x4011c0/0x402940/0x402af0/0x402c70/0x4026c0/0x401b00 中 0x402af0/0x402c70 batch 2563 兑现 + 0x402940 本批兑现）；真 MISSING 队列 3 个不变（0x4f6eb0 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6153 行」= 唯一地址数 = 行数 6175 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x402850（c 路下函数）：双字段清零器（mov [ecx+8],0; mov [ecx+4],0; ret）——小桩族
+- 0x402860（c 路下下函数）：节点插入器（mov [edx+0xac],esi 回链 + inc [esi+0xf0]/[esi+0x104] 双计数 + lea ecx,[esi+0xf8] call 0x407420 链尾插 + dec [esi+0x104] 负保底）——与 b 路 0x4028B0 释放器配对，事件槽生命周期域核心
+- 0x402900（b 路下函数）：[0x87DE2C] 门控链回调驱动器（test [0x87de2c] 门控 + [0x815e98] 计数检查 + [eax+0xc] 链遍历 + test [esi+0xc],2 + call [esi+0x10c] 虚表回调）——后续批次优先跟进
+- 既有池延续：见 batch 2563 观察项列表（0x402B80 单节点析构器 + 0x402BB0 链式析构器 + 0x402C00 查首装载器）+ batch 2562 观察项列表（0x4035B0 链查首装载器 + 0x403460 常量返回器 + 0x403470/0x403480 thunk 对 + 0x403490/0x4034A0 getter×2 + 0x4034B0 批量分配器变体 + 0x402F60 定时器精化器 + MISSING 7 个）+ batch 2561/2560/2559/2558/2557/2556/2555/2554/2553/2552/2551/2550/2549/2548/2547/2546/2545/2544/2543/2542/2541/2540 全量观察项 + 真 MISSING 队列 3 个 + 历史候选池全量延续
