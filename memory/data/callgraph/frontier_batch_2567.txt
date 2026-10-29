@@ -1,0 +1,67 @@
+# frontier batch 2567
+
+日期：2026-10-29
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x4018C0（72B FUN_004018c0 callees=0 deps=64）/ b=0x4016F0（457B FUN_004016f0 callees=4 deps=19）/ c=0x401640（97B FUN_00401640 callees=0 deps=64）——**b 路 0x4016F0 = batch 2566 b 路下函数观察项「超大注册器」兑现**（batch 2566 文档观察项列表首项）；三路同属事件槽/注册状态域（a 为播放进度缓冲消耗器，b 为注册/重建器，c 为表项状态读取器），地址连续邻接（c 尾 0x40169E → 0x4016B0 表项状态写入器观察项（c 路 dump 可见）→ b 头 0x4016F0 → b 尾 0x4018B8 → nop pad → a 头 0x4018C0 → a 尾 0x401905 → 0x401910 播放清理器观察项 + 0x401940/0x401950/0x401980/0x4019A0 小桩族观察项）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2567{a,b,c}.txt（a 0x100 窗读全、b 0x200 窗读全（457B 超大函数整读，ret @0x4018B8 确认）、c 0x100 窗读全，尾 ret 确认：a 双出口 ret 4 @0x4018D0 空直退/@0x401905 消耗推进（0x401908-0x40190F nop pad + 0x401910 起播放清理器（[+0x110] 虚表槽 0 释放 + [+0x118]=0——观察项）+ 0x401940 起 getter（[+0x18]——观察项）+ 0x401950 起析构器（虚表 0x7e1668 + 0x431B80 + delete this——观察项）+ 0x401980 起双虚表槽转发器（槽 8/0x1c 链——观察项）+ 0x4019A0 起构造器（虚表 0x7e16b0 + 0x43AE50 + 0x7e1668——观察项族））、b 双出口 ret @0x401890 成功返 1/@0x4018B8 失败返 0（0x4018B9-0x4018BF nop pad + 0x4018C0 起 = a 路已登记）、c 双出口 ret 4 @0x401684 bit8 分支/@0x40169E 常规分支（0x4016A1-0x4016AF nop pad + 0x4016B0 起表项状态写入器（[+0x18]/[+0x1C] 写回表项含 &4/&8 位判定——观察项）））
+核验：.qwen/tmp/_check_callees2567.py；a 0/0、b 4/4、c 0/0；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6184 → 6187（三行全新增，ADD 3）
+
+## a 路：0x4018C0 FUN_004018c0（72B）
+
+- 范围 0x4018C0-0x401905（双出口 ret 4 @0x4018D0 空直退/@0x401905 消耗推进；0x401908-0x40190F nop pad + 0x401910 起播放清理器观察项族）
+- thiscall 2 栈参（ecx=this/edx=参数/[esp+8]=缓冲数，ret 4 eax=消耗数）：**播放进度缓冲消耗器**（[+0x118] 计数门控 + min(缓冲数,[+0x11C] 剩余) + 虚表槽 0x24 回调 + 剩余推进）：
+  - push edi → mov edi,ecx → **mov ecx,[edi+0x118] test ecx,ecx jne 0x4018d3**（@0x4018c3-0x4018cb [+0x118] 计数门控）→ 空：xor eax,eax pop edi ret 4 @0x4018d0（返回 0）
+  - **mov eax,[esp+8] mov esi,[edi+0x11c] cmp eax,esi jle 0x4018e4**（缓冲数 clamp 到 [+0x11C] 剩余）→ **mov eax,esi**（@0x4018e2 取剩余）→ **test eax,eax jle 0x4018f3**（0/负→直退置 0）
+  - **mov esi,[ecx] push eax push edx call dword ptr [esi+0x24]**（@0x4018e8-0x4018ec 虚表槽 0x24 回调读缓冲）→ **test eax,eax jge 0x4018f5**（负→置 0 路径）
+  - @0x4018f3 xor eax,eax → @0x4018f5 **mov ecx,[edi+0x11c] sub ecx,eax mov [edi+0x11c],ecx**（@0x4018f5-0x4018fe 剩余推进 [+0x11C] -= 消耗数）→ pop esi/edi ret 4 @0x401905
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0（虚表槽 [esi+0x24] 间接）
+- 判类：FUN_004018c0——播放进度缓冲消耗器（[+0x118] 计数门控直退 0 + 缓冲数 clamp [+0x11C] 剩余 + 虚表槽 0x24 回调读 + 负值归零 + [+0x11C] 消耗推进；ret 4）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x4016F0 FUN_004016f0（457B）
+
+- 范围 0x4016F0-0x4018B8（双出口 ret @0x401890 成功返 1/@0x4018B8 失败返 0；0x4018B9-0x4018BF nop pad + 0x4018C0 起 = a 路已登记）——**batch 2566 观察项「超大注册器」兑现**
+- 非虚 2 栈参（ecx=this/edx=索引，ret eax=1/0）：**注册/重建器**（0x12C 栈帧 + 表基址索引 + 三段串拷贝 + new 构造器族 + 虚表回调验证 + 状态位写回）：
+  - sub esp,0x12c → push ebx → mov ebx,ecx → **lea eax,[edx+edx*8] mov ecx,[ebx] lea ebp,[ecx+eax*4]**（@0x4016f9-0x40170a 表索引 [ebx] + edx×9×4 → ebp 目标项）→ xor esi,esi → mov [esp+0xc],1
+  - **mov ecx,[ebx+0x110] cmp ecx,esi mov [ebx+0x118],esi je 0x401729**（旧引用清理门控）→ **mov edx,[ecx] push 1 call [edx] mov [ebx+0x110],esi**（虚表槽 0 释放旧 + null）
+  - **mov ecx,[ebx+0x10c] push esi mov [ebx+0x118],ecx mov eax,[ebp+0x14] mov [ebx+0x11c],eax**（@0x401729-0x401739 状态装载 [+0x118]/[+0x11C]）→ **mov eax,[ebp+0x10] mov edx,[ecx] push eax call [edx+0x28]**（@0x40173f-0x401745 虚表槽 0x28 回调）→ **cmp eax,[ebp+0x10] je 0x401751**（相等→保 1）→ **mov [esp+0xc],esi**（不等→置 0）→ **cmp [ebp+0x14],esi jne 0x40175a → mov [esp+0xc],esi**（[+0x14] 空→置 0）
+  - **cmp [ebx+0x114],esi je 0x4018ab**（@0x40175a [+0x114] 门控，0 直退失败零路径）
+  - **三段 repne scasb 串拷贝**（@0x401766-0x4017e2）：push edi → or ecx,-1 → lea edi,[ebx+8] repne scasb → not ecx → 串1 拷贝到 [esp+0x38] → 串2 [ebp+0x14] 拷 → 串3 全局 0x815e90 拷贝（rep movsd/movsb 三连，每段先 scasb 测长再拷）
+  - **call 0x7c8e17**（@0x4017e4 new）→ test eax,eax je 0x401801（失败→esi=0）→ **lea ecx,[esp+0x34] push ecx mov ecx,eax call 0x65ca80**（@0x4017f8 构造器）→ esi=eax → **mov [ebx+0x110],esi**（引用装载）→ **mov edx,[esi] push 0 mov ecx,esi call [edx+0x14]**（@0x40180f 虚表槽 0x14 回调验证）→ test al,al je 0x401891（假→失败清理）
+  - **mov eax,[esi] push 1 mov ecx,esi call [eax+0x1c]**（@0x40181c 虚表槽 0x1C 回调）→ test eax,eax je 0x401891（0→失败清理）→ **lea ecx,[esp+0x14] call 0x4085a0**（@0x401827 构造）→ **lea ecx,[esp+0x10] lea edx,[esp+0x14] push ecx mov ecx,esi call 0x408610**（@0x401837 查询）→ test eax,eax je 0x401891
+  - **mov eax,2 mov [ebp+0x1c],eax**（@0x401840-0x401845 状态位初写 2）→ **mov ecx,[esp+0x24] cmp ecx,2 jne 0x401857 → mov [ebp+0x1c],6**（==2 → 置 6）→ **cmp [esp+0x20],2 jne 0x401865 → mov eax,[ebp+0x1c] or al,1 mov [ebp+0x1c],eax**（==2 → 或 1）→ **mov edx,[esp+0x1c] mov [ebp+0x18],edx**（状态写回 [+0x18]）
+  - **mov eax,[esp+0xc] mov ecx,[ebx+0x110] mov [ebx+0x11c],eax mov [ebx+0x118],ecx**（@0x40186d-0x40187d 状态收尾）→ mov eax,1 add esp,0x12c ret @0x401890（成功返 1）
+  - @0x401891（失败清理）：**mov ecx,[ebx+0x110] test je 0x4018ab → mov edx,[ecx] push 1 call [edx] mov [ebx+0x110],0**（虚表槽 0 释放）→ @0x4018ab **mov eax,[esp+0xc]**（结果 0）→ ret @0x4018b8
+- 直接 call 4 次/去重 4：0x7c8e17×1、0x65ca80×1、0x4085a0×1、0x408610×1——picker callees=4 吻合，差值 0（虚表槽 0x28/0x14/0x1c/0 间接不计）
+- 判类：FUN_004016f0——注册/重建器（0x12C 栈帧 + 表基址 [ebx]+edx×9×4 索引 + 旧引用虚表槽 0 释放 + [+0x10C]/[+0x110]/[+0x114]/[+0x118]/[+0x11C] 状态装载 + 虚表槽 0x28 验证 + [+0x114] 门控 + 三段 repne scasb 串拷贝（[ebx+8]/[ebp+0x14]/0x815e90）+ new 0x7C8E17 + 0x65CA80 构造 + 虚表槽 0x14/0x1C 回调验证 + 0x4085A0/0x408610 + [+0x18]/[+0x1C] 状态位写回（2/6/or 1）+ 失败虚表槽 0 释放返 0/成功返 1）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x401640 FUN_00401640（97B）
+
+- 范围 0x401640-0x40169E（双出口 ret 4 @0x401684 bit8 分支/@0x40169E 常规；0x4016A1-0x4016AF nop pad + 0x4016B0 起表项状态写入器观察项）
+- thiscall 2 栈参（ecx=this/edx=索引/[esp+4]=输出结构，ret 4）：**表项状态读取器**（9×4 步长表索引 + 位标志转数值 + 输出结构填充）：
+  - **mov ecx,[ecx] lea eax,[edx+edx*8] lea ecx,[ecx+eax*4]**（@0x401640-0x401645 表基址 + edx×9×4 → 目标项）→ **mov eax,[esp+4] mov [eax],4**（@0x401648-0x40164c 输出 [+0]=4 固定）
+  - **mov edx,[ecx+0x18] mov [eax+8],edx**（[+8]=表项[+0x18]）→ **mov edx,[ecx+0x1c] and dl,1 neg dl sbb edx,edx neg edx inc edx mov [eax+0xc],edx**（@0x401652-0x401665 [+0xC] = ([+0x1C]&1 ? 2 : 1)）→ **mov edx,[ecx+0x20] mov [eax+0x18],edx**（[+0x18]=表项[+0x20]）
+  - **mov dl,[ecx+0x1c] test dl,8 je 0x401687**（@0x40166e-0x401671 bit8 门控）→ 置位：**mov [eax+4],1 mov [eax+0x10],2 ret 4**（@0x401676-0x401684 [+4]=1/[+0x10]=2）
+  - @0x401687 **mov [eax+4],0**（清）→ **mov ecx,[ecx+0x1c] and cl,4 neg cl sbb ecx,ecx neg ecx inc ecx mov [eax+0x10],ecx**（@0x40168e-0x40169b [+0x10] = ([+0x1C]&4 ? 2 : 1)）→ ret 4 @0x40169e
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0（纯计算+位操作，无跨函数调用）
+- 判类：FUN_00401640——表项状态读取器（表基址 + edx×9×4 索引 + 输出结构 [+0]=4 固定 [+8]=表项[+0x18] [+0xC]=bit1 判定 [+0x18]=表项[+0x20] + bit3 门控分支（[+4]=1/[+0x10]=2）或（[+4]=0/[+0x10]=bit2 判定）；ret 4）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2567.py：a 路 0/0（纯虚表间接）、b 路 4/4（0x4085a0/0x408610/0x65ca80/0x7c8e17 已登记）、c 路 0/0（纯计算）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0（a/c 虚表槽/纯计算不计）
+- 无批内自引用（a/b/c 互不落对方函数体；b 尾 0x4018C0 = a 路已登记、c 旁 0x4016B0 = 表项状态写入器观察项、a 尾 0x401910 起观察项族，均为批间邻接）；**batch 2566 观察项 0x4016F0「超大注册器」本批兑现**（汇总：排队 MISSING 3→3 不变（0x4011c0/0x4015c0 尚未兑现 + 新增候选待续）；真 MISSING 队列 3 个不变（0x4f6eb0 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变））
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6162 行」= 唯一地址数 = 行数 6184 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4016B0（c 路下函数）：表项状态写入器（[+0x18]/[+0x1C] 写回表项 + [+0x1C]&4/&8 位判定 or 置位）——c 路配对器，小函数族
+- 0x401910（a 路下函数）：播放清理器（[+0x110] 虚表槽 0 释放 + [+0x118]=0）——小桩族
+- 0x401940（a 路下函数）：getter（mov eax,[ecx+0x18]; ret）——小桩族
+- 0x401950（a 路下函数）：析构器（虚表 0x7e1668 + call 0x431B80 + delete this + 参数位 1 时 delete 双路径）——同域析构族
+- 0x401980（a 路下函数）：双虚表槽转发器（槽 8 链 + 槽 0x1c 链，ret 8）——thunk 族
+- 0x4019A0（a 路下下函数）：构造器（虚表 0x7e16b0 装填 + [+0x64]=0 + 0x43AE50 + 0x7e1668 覆写）——同域构造族
+- 既有池延续：见 batch 2566 观察项列表（0x4022C0/0x402330/0x4023F0 三函数指针族 + 0x401BB0 链查找器 + 0x401BE0 链清理器 + 0x401C00 超大注册器（已兑现））+ batch 2565 观察项列表（0x4026F0 位标志清位桩镜像 + 0x402720 超大虚表驱动器）+ batch 2564 观察项列表（0x402850 双字段清零器 + 0x402860 节点插入器 + 0x402900 [0x87DE2C] 门控链回调驱动器）+ batch 2563 观察项列表（0x402B80 单节点析构器 + 0x402BB0 链式析构器 + 0x402C00 查首装载器）+ batch 2562 观察项列表 + batch 2561/2560/2559/2558/2557/2556/2555/2554/2553/2552/2551/2550/2549/2548/2547/2546/2545/2544/2543/2542/2541/2540 全量观察项 + 真 MISSING 队列 3 个 + 历史候选池全量延续
