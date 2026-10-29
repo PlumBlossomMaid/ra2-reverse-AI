@@ -1,0 +1,72 @@
+# frontier batch 2587
+
+日期：2026-10-30
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 0，落回 0x7B 段 ranking 序）
+三路：a=0x7B2630（149B FUN_007b2630 callees=3 deps=0）/ b=0x7B23B0（289B FUN_007b23b0 callees=3 deps=0）/ c=0x7B2240（156B FUN_007b2240 callees=1 deps=0）——三路同属 0x7B 段网络/附挂对象运行时族（a 为双层句柄注册器——[+0x3F06C] 默认句柄 + 2 组 0x7C89A4 尝试 + DebugLog 记录，b 为复合附挂构造/登记器——0x7B20E0 取对象 + 双 buffer 拷贝 + 双子对象链挂入 + 虚表槽 0x38 上报，c 为槽位分配器——[+0x3F05C] 计数 + 0x80×0x2A0 槽表扫描 + 满时 0x7C8E17 new 区块）；a 尾 0x7B26D0 起双栈参调用器（0x7C89CE + DebugLog 错误路径）+ 0x7B2720 起 `mov [0xb780a0],ecx` 全局 setter（batch 2586 c 路 0x7B2730 getter 配对，观察项）、b 尾 0x7B24E0 起同构变体（观察项）、c 尾 0x7B22E0 起 [0x87F770] 门控对象装载器（观察项）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2587{a,b,c}.txt（a 0x100 窗读全、b 0x180 窗读全、c 0x100 窗读全，尾 ret 确认：a 双出口 ret 4 @0x7B26B0/0x7B26C2（0x7B26C5-0x7B26CF nop pad + 0x7B26D0 起双栈参调用器观察项 + 0x7B2720 起 [0xB780A0] 全局 setter 观察项）、b 单出口 ret 0x1c @0x7B24CE（0x7B24D1-0x7B24DF nop pad + 0x7B24E0 起同构变体观察项）、c 单出口 ret @0x7B22DB（0x7B22DC-0x7B22DF nop pad + 0x7B22E0 起 [0x87F770] 门控装载器观察项））
+核验：.qwen/tmp/_check_callees2587.py；a 3/3、b 2/2、c 1/1；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6244 → 6247（三行全新增，ADD 3）
+
+## a 路：0x7B2630 FUN_007b2630（149B）
+
+- 范围 0x7B2630-0x7B26C2（双出口 ret 4 @0x7B26B0/0x7B26C2；0x7B26C5-0x7B26CF nop pad + 0x7B26D0 起双栈参调用器观察项（0x7C89CE + 0x4068E0 DebugLog 错误路径 + xor al,al/mov al,1 双出口）+ 0x7B2720 起 [0xB780A0] 全局 setter 观察项（mov [0xb780a0],ecx; ret——batch 2586 c 路 0x7B2730 getter 配对））——0x7B 段标准序
+- thiscall 1 栈参（ecx=this/[esp+8]=句柄，ret 4 恒 al=1）：**双层句柄注册器**：
+  - push esi → mov esi,[esp+8] → **cmp esi,-1 jne 0x7b2640**（句柄==-1 无效）→ **mov esi,[ecx+0x3f06c]**（@0x7b263a 回退 [+0x3F06C] 默认句柄）
+  - **第一组注册尝试**：push 4/push 0x84dda0/push 0x1002/push 0xffff/push esi → **call 0x7c89a4**（@0x7b2652 五参调用）→ cmp eax,-1
+    - 失败（eax==-1）：**call 0x7c897a**（@0x7b265c 取错误码）→ push eax/push 0x84e0d8 → **call 0x4068e0**（@0x7b2667 DebugLog 错误串）→ add esp,8 → jmp 0x7b267e
+    - 成功：push 0x84e0b8 → **call 0x4068e0**（@0x7b2676 DebugLog 成功串）→ add esp,4
+  - **第二组注册尝试**：push 4/push 0x84dd9c/push 0x1001/push 0xffff/push esi → **call 0x7c89a4**（@0x7b2690 五参调用）→ cmp eax,-1 pop esi
+    - 失败：**call 0x7c897a**（@0x7b269b）→ push eax/push 0x84e080 → **call 0x4068e0**（@0x7b26a6 DebugLog 错误串）→ add esp,8 → mov al,1 ret 4 @0x7b26b0
+    - 成功：push 0x84e060 → **call 0x4068e0**（@0x7b26b8 DebugLog 成功串）→ add esp,4 → mov al,1 ret 4 @0x7b26c2
+- 直接 call 8 次/去重 3：0x7c89a4×2、0x7c897a×2、0x4068e0×4——picker callees=3 吻合，差值 0
+- 判类：FUN_007b2630——双层句柄注册器（thiscall 1 栈参 ret 4 恒 al=1；句柄==-1 回退 [+0x3F06C] 默认；两组 push 4/0x84DDA0|0x84DD9C/0x1002|0x1001/0xffff/句柄 → 0x7C89A4 尝试，失败 0x7C897A 取码 + 0x4068E0 DebugLog 错误串 0x84E0D8|0x84E080、成功 DebugLog 串 0x84E0B8|0x84E060——第一组失败不退出继续第二组，结尾恒返真）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x7B23B0 FUN_007b23b0（289B）
+
+- 范围 0x7B23B0-0x7B24CE（单出口 ret 0x1c @0x7B24CE；0x7B24D1-0x7B24DF nop pad + 0x7B24E0 起同构变体观察项（0x7B24E0：0x7B20E0 取对象 + [ebx+0x20] 拷贝 + [+0x14]=1 + [ebp+0x38] 链挂入））——0x7B 段标准序
+- thiscall 7 栈参（ecx=this，ret 0x1c）：**复合附挂构造/登记器**：
+  - mov eax,[esp+0x14]（p5）→ push ebx/ebp/esi/edi 四寄存器 → mov ebx,ecx（保存 this）→ **push eax call 0x7b20e0**（@0x7b23bb 取/构造对象，返回 ebp=eax）
+  - **第一段拷贝（数据体）**：mov esi,[esp+0x14]（p1 源）mov ebp,eax → mov eax,[esp+0x18]（p2 尺寸）→ push ebp/lea edi,[ebp+0x20] → **shr ecx,2 rep movsd + and ecx,3 rep movsb**（从 esi 拷 p2 字节到 [ebp+0x20]）→ mov [ebp+0x10],eax（p2=size 存 [+0x10]）
+  - **第二段拷贝（头部块）**：mov ecx,[esp+0x24]（p5 尺寸）mov esi,[esp+0x20]（p4 源）→ mov [ebp+0x10] 已存/rep movsd+movsb 拷 p5 字节到 ebp 头 → mov byte[ebp+0x14],0（@0x7b23f4 [+0x14] 标志清零）→ mov al,[esp+0x2c]（p7）mov [ebp+0x18],al（@0x7b23f8 设 [+0x18]）→ mov ax,[esp+0x30]（p8）mov [ebp+0x1a],ax（@0x7b2409 设 [+0x1A] word）
+  - **mov edx,[ebx] mov ecx,ebx call dword ptr [edx+0x54]**（@0x7b240d-0x7b2411 虚表槽 0x54 间接调用）
+  - **双路挂链**（按 [esp+0x24]=al 标志）：mov al,[esp+0x24] test al,al
+    - 非零 → **[+0x38] 子对象链**（@0x7b241c-0x7b2457）：mov ecx,[ebx+0x40]（容量）mov eax,[ebx+0x48] lea esi,[ebx+0x38] → cmp eax,ecx jl 直插 else 走 [+0xD] 标志/容量/长度门控 → 虚表槽 8（lea eax,[eax+ecx]/push 0/push eax/mov ecx,esi **call dword ptr [edx+8]** 扩容）+ 检查 → **mov eax,[esi+0x10] mov edx,[esi+4] lea ecx,[eax+1] mov [esi+0x10],ecx mov [edx+eax*4],ebp**（表尾插入 ebp，计数递增）
+    - 零 → **[+0x20] 子对象链**（@0x7b2462-0x7b249d）：mov ecx,[ebx+0x28]（容量+8 格）mov eax,[ebx+0x30] lea esi,[ebx+0x20] → 同上门控 + 虚表槽 8 扩容 + 表尾插入（结构逐字节同构，仅基址差 0x18）
+  - **上报收尾**（@0x7b24a0-0x7b24c5）：mov eax,[ebx+0x3f06c]（默认句柄）→ mov edx,[ebx] push 2/push 0/push eax/mov ecx,ebx **call dword ptr [edx+0x38]**（虚表槽 0x38 间接）→ push eax → mov eax,[0xb73550] push eax → **call dword ptr [0x7e14a4]**（@0x7b24b9 IAT 间接）→ mov ecx,[0x87f770] **call 0x54f000**（@0x7b24c5 全局对象调用）→ pop edi/esi/ebp/ebx ret 0x1c @0x7b24ce
+- 直接 call 4 次/去重 2：0x7b20e0×1、0x54f000×1——**picker callees=3 vs 核验 2 差 1 = [0x7E14A4] IAT 间接（call dword ptr [0x7e14a4]）**——按机器码直接 call 登记，非 MISSING（IAT 差值惯例同 batch 2568/2575）；另有虚表槽 0x54/8/0x38 三处间接不在核验直接 call 内
+- 判类：FUN_007b23b0——复合附挂构造/登记器（thiscall 7 栈参 ret 0x1c；0x7B20E0 取/构造对象 → 双段 rep movsd/movsb 拷贝（数据体到 [+0x20]、头部到对象头，尺寸存 [+0x10]）+ [+0x14]=0/[+0x18]/[+0x1A] 设值 → 虚表槽 0x54 回调 → 按 [esp+0x24] 标志挂入 [+0x38] 或 [+0x20] 子对象链（VectorClass 式表尾插入 + 虚表槽 8 扩容门控）→ [+0x3F06C] 默认句柄经虚表槽 0x38 + IAT [0x7E14A4] + [0x87F770] 全局对象 0x54F000 上报）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x7B2240 FUN_007b2240（156B）
+
+- 范围 0x7B2240-0x7B22DB（单出口 ret @0x7B22DB；0x7B22DC-0x7B22DF nop pad + 0x7B22E0 起 [0x87F770] 门控对象装载器观察项（call 0x54F000 + [+0x18] 判空直退 + 双段 rep movsd/movsb 拷贝 + 0x10 clamp 上限））——0x7B 段标准序
+- thiscall this=ecx（ret eax 新槽指针，ret 空）：**槽位分配器**：
+  - **mov edx,[ecx+0x3f05c]**（@0x7b2240 取 [+0x3F05C] 占用计数）→ xor ebx,ebx/xor eax,eax → push ebx/esi/edi → **cmp edx,0x80 jne 0x7b226c**（计数满则走 new 分支）
+  - **满分支**（@0x7b2255）：push 0x2a0 **call 0x7c8e17**（@0x7b225a 分配 0x2A0B 区块）→ **mov byte[+0x16],1 mov byte[+0x15],1**（@0x7b2264-0x7b2267 双标志置位）→ jmp 0x7b22ce
+  - **常规分支**（@0x7b226c-0x7b22bd）：xor edi,edi → **mov esi,[ecx+0x3f050]**（@0x7b226e 取当前游标）→ lea edx,[esi+1] **cmp edx,0x7f jle 直存 else mov [ecx+0x3f050],0**（@0x7b227a-0x7b2282 游标+1 回绕）→ **lea edx,[esi*8] sub edx,esi lea edx,[edx+edx*2] shl edx,5**（esi×0x2A0 槽偏移）→ **cmp byte[edx+ecx+0x65],bl je 0x7b22aa**（槽 [+0x65] 忙标志门控）
+    - 忙：inc edi cmp edi,0x80 jl 0x7b226e 继续扫描 → 全忙退出 pop edi/esi/ebx ret（eax=0 空指针）
+    - 空：**lea eax,[esi*8] sub eax,esi lea eax,[eax+eax*2] shl eax,5 lea eax,[eax+ecx+0x50]**（槽基址 [+0x50]）→ **mov byte[eax+0x15],1**（[+0x15] 占用标志置位）→ **mov edx,[ecx+0x3f05c] inc edx mov [ecx+0x3f05c],edx**（@0x7b22c1-0x7b22c8 占用计数递增）
+  - **收尾**（@0x7b22ce）：cmp eax,ebx je 0x7b22d8 → **mov byte[eax+0x17],bl mov byte[eax+0x18],bl**（@0x7b22d2-0x7b22d5 [+0x17]/[+0x18] 清零）→ pop edi/esi/ebx ret @0x7b22db
+- 直接 call 1 次/去重 1：0x7c8e17×1——picker callees=1 吻合，差值 0（new 0x2A0B 区块）
+- 判类：FUN_007b2240——槽位分配器（thiscall ret eax 新槽基址；[+0x3F05C] 占用计数满 0x80 时 0x7C8E17 分配 0x2A0B 区块 + [+0x16]/[+0x15] 置位；常规路径 [+0x3F050] 游标+1 回绕（>0x7F 归 0）→ 每槽 0x2A0B 偏移 + [+0x65] 忙标志扫描最多 0x80 槽、全忙退空指针 → 空槽 [+0x15] 置位 + 计数递增 → 非空返回前清 [+0x17]/[+0x18]）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2587.py：a 路 3/3（0x4068e0/0x7c897a/0x7c89a4 已登记）、b 路 2/2（0x54f000/0x7b20e0 已登记）、c 路 1/1（0x7c8e17 已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b **差 1（[0x7E14A4] IAT 间接——按机器码直接 call 登记，非 MISSING，IAT 差值惯例同 batch 2568/2575）**、c 差 0；b 路另有虚表槽 0x54/8/0x38 三处间接（call [edx+0x54]/[edx+8]/[edx+0x38]）不在核验直接 call 内
+- 无批内自引用（a/b/c 互不落对方函数体；a 尾 0x7B26D0/0x7B2720 观察项、b 尾 0x7B24E0 变体、c 尾 0x7B22E0 装载器，均为批间邻接）；排队 MISSING 观察项已清零；真 MISSING 队列 3 个不变（0x4f6eb0 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6222 行」= 唯一地址数 = 行数 6244 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x7B26D0（a 路下函数）：双栈参调用器（0x7C89CE 一次调用 + 失败 0x7C897A/0x4068E0 DebugLog 错误串 0x84E134 + 成功串 0x84E110，xor al,al/mov al,1 双出口）——调用器族
+- 0x7B2720（a 路下下函数）：[0xB780A0] 全局 setter（mov [0xb780a0],ecx; ret——batch 2586 c 路 0x7B2730 getter 的配对写入侧）——数据常量观察（配 batch 2586 0xB780A0）
+- 0x7B24E0（b 路下函数）：同构变体（0x7B20E0 + [ebx+0x20] 拷贝 + [+0x14]=1 置位 + [ebp+0x38] 链挂入——b 路变异：单段拷贝、标志反置）——附挂家族
+- 0x7B22E0（c 路下函数）：[0x87F770] 门控对象装载器（call 0x54F000 + [+0x18] 判空直退 + 双段 rep movsd/movsb + 0x10 clamp）——装载器族
+- 0x84DDA0/0x84DD9C（a 路串常量）：注册键串（0x7C89A4 第一/二参数族）——串常量观察
+- 0x84E0D8/0x84E0B8/0x84E080/0x84E060（a 路串常量）：DebugLog 结果串四枚（失败 X/成功 X 各一）——串常量观察
+- 0x7E14A4（b 路 IAT 槽）：全局 IAT 入口（上报链末端 + [0xB73550] 全局 + [0x87F770] 全局对象 0x54F000）——数据常量观察
+- 0x54F000（b/c 路共用）：全局对象处理器（[0x87F770] 目标——连续两路调用，batch 2583 0x5D4D50 族）——处理器观察
+- 既有池延续：见 batch 2586 观察项列表（0x7B2870 标志门控索引 getter + 0x7B2890 [+4] 表项 getter + 0x7B2740 xor eax,eax 桩 + 0x7B2750 大区域 + 0x7F79DC 回调槽 + 0xB780A0 全局值）+ batch 2585 观察项列表（0x7B2BA0 双常量浮点计算器 + 0x7B29C0 索引查找器 + 0x7F7A3C 虚表 + 0x7E1710/0x7E1708 浮点常量 + 0xB780C8 结果槽）+ batch 2584 观察项列表（0x7B3450 0x80 字符串查询变体 + 0x7B2FF0 4B new 装载器 + 0x7F7A6C UDPInterfaceClass 虚表 + 0x7B1DE0 状态自检原语 + 0x7CA530 宽串装载原语 + 0x83D9FC/0x84E39C/0x84E3B0 串常量）+ batch 2583 观察项列表（0x84E3F8/0x84E3D0 DebugLog 串 + 0xB73550 全局 + 0x7B1C50/0x7B1BC0 原语 + 0x7C89BC 查表 + 0x5D4D50 处理器）+ batch 2582 观察项列表（0x7B42F0 标志门控索引 getter + 0x7B4310 表项 getter + 0x7B3A20 DebugLog 表遍历器 + 0x7F7A6C 附挂对象虚表 + 0x7B1B50/0x7B1AB0 子对象析构原语）+ batch 2581 观察项列表（0x7B4620 清零器 + 0x7B4630 装载比较变体 + 0x7B4440 索引查找器 + 0x7F7B0C 字符串对象虚表）+ batch 2580-2540 全量观察项 + 真 MISSING 队列 3 个 + 历史候选池全量延续
