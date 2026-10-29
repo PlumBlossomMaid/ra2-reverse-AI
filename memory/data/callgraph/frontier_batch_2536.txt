@@ -1,0 +1,87 @@
+# frontier batch 2536
+
+日期：2026-10-29
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x41AF80（387B FUN_0041af80 callees=8 deps=279）/ b=0x416AF0（600B FUN_00416af0 callees=11 deps=30）/ c=0x415C60（630B FUN_00415c60 callees=10 deps=1940）——INI 装载/战场刷新域三连（a 为 INI 键装载批量刷新器，b 为战场单元刷新装载器，c 为战场单元放置装载器）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2536{a,b,c}.txt（a 0x200 窗、b/c 0x300 窗读全，尾 ret 确认：a 单出口 ret @0x41B102（0x41B103-0x41B10F nop pad + 0x41B110 起 batch 2535 已登记 FUN_0041b110——观察现有的批间邻接）、b 三出口 ret @0x416C59/0x416D32/0x416D47（0x416D48-0x416D4F nop pad + 0x416D50 起下函数 jmp-table 分发器 [eax*4+0x4172e4] + [0xa8b230]+0x218 Randomizer::RandomRanged 0x65c7e0——观察项）、c 双出口 ret @0x415EB0（成功）/ret @0x415ED5（失败回滚；0x415ED6-0x415EDF nop pad + 0x415EE0 起下函数标准帧栈宿主 [ebp 帧] 含对本函数 0x415c60 递归调用 + 0x6fdd50——观察项））
+核验：.qwen/tmp/_check_callees2536.py；a 8/8、b 11/11、c 10/10；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6091 → 6094（三行全新增，ADD 3）
+
+## a 路：0x41AF80 FUN_0041af80（387B）
+
+- 范围 0x41AF80-0x41B102（单出口 ret @0x41B102；0x41B103-0x41B10F nop pad + 0x41B110 起下函数 = batch 2535 c 路 FUN_0041b110（INI 流式对象装载循环器，已登记）——批间邻接）
+- thiscall 无栈参（ret 空）：**INI 键装载批量刷新器**（预加载装配器旁路刷新）：
+  - mov eax,[0x7e2248]（装载管理类实例）→ 6a00 push 0 / push eax → **call 0x5257c0**（@0x41af92 装载查询初始化）→ [0xa8e3a0]（表计数）test jle 0x41b0fc 空表早退
+  - **主循环**（[esp+0x10] 0..count-1 jl）：[0xa8e394][eax*4]（@0x41afaf 取第 i 项 → esi）test esi je 跳过 → **[esi+0x81] test cl jne 跳过 / [esi+0x90] test cl je 跳过**（双标志门控，0x90 为启用位）
+  - **call 0x7c8ef4**（@0x41afe7 push 0x817f6c 格式串 sprintf 族）+ [esi+0x34] test je → [eax+0x24]+0x24 / else 0x817f64 常量串（@0x41aff2-0x41b002）
+  - **call 0x4c93d0**（@0x41b015 [esi+0x388] 结构读取 → edi=[eax]）→ **shr edi,7 → inc edi → shr edi,1 → and edi,0xff**（@0x41b03e-0x41b04d 两级移位量化 ((v>>7)+1)>>1 & 0xff）
+  - [esi+0x422]/[esi+0x421]/[esi+0x214]/lea [esi+0x150] → **call 0x7500d0**（@0x41b05c 5 参装载）
+  - **虚表槽 0x184**（@0x41b06b push eax/ebx(=0x24 [esi+0x6c4])/ebp(=[esi+0x21c]+0x15ff4)）→ **call 0x5b3950**（@0x41b073 索引换算）
+  - **虚表槽 0x1b8 ×2**（@0x41b083/@0x41b097 两次内联坐标查询 push edi/lea [esp+0x38] 与 movsx [eax+2]/[eax]）→ **call 0x5f5c60**（@0x41b0a3 word 坐标累计）→ **fmul [0x7e1710]** → **call 0x7c5f00**（@0x41b0ae _ftol）
+  - push eax/ebx/ebp/lea [esp+0x64] → push 0x817f40 → **call 0x7c8ef4**（@0x41b0c0 sprintf 第二格式）
+  - **call 0x528660**（@0x41b0dc 6 参：lea [esp+0x34]/lea [esp+0x28]/[0x7e2248] 登记写回）→ inc [esp+0x10] jl 循环
+- 直接 call 9 次/去重 8：0x5257c0×1、0x7c8ef4×2、0x4c93d0×1、0x7500d0×1、0x5b3950×1、0x5f5c60×1、0x7c5f00×1、0x528660×1——picker callees=8 吻合，差值 0（虚表槽 0x184/0x1b8 间接不计）
+- 判类：FUN_0041af80——INI 键装载批量刷新器（[0xa8e3a0] 表遍历 + [esi+0x81]/[esi+0x90] 双标志门控 + 0x817f6c/0x817f64/0x817f40 格式串族 + 0x4c93d0 结构读 + 0x7500d0 装载 + 虚表槽 0x184/0x1b8 查询 + 0x5b3950/0x5f5c60/0x7c5f00 换算 + 0x528660 登记）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x416AF0 FUN_00416af0（600B）
+
+- 范围 0x416AF0-0x416D47（三出口 ret @0x416C59（虚表槽 0xd8 失败早退）/ret @0x416D32（坐标不等路径）/ret @0x416D47（坐标相等路径）；0x416D48-0x416D4F nop pad + 0x416D50 起下函数 jmp-table 分发器 [eax*4+0x4172e4] + [0xa8b230]+0x218 Randomizer::RandomRanged 0x65c7e0 调用点——观察项）
+- thiscall 无栈参（ret 空）：**战场单元刷新装载器**（对象重定位/刷新主入口）：
+  - push 0x817bdc → **call 0x4068e0**（@0x416afd DebugLog 入口）→ **lea ecx,[edi+0x114] → call 0x473430**（@0x416b0f 查询对象 → esi=eax）
+  - [ebp(=edi+0x9c)+0/+4/+8] 三 dword 结构拷贝 [esp+0x14..0x20] → push + **call 0x578080**（@0x416b3c ecx=0x87f7e8 MapClass）→ **call 0x565730**（@0x416b4f 坐标→cell）
+  - **[eax+0x140] test ch,1**（@0x416b5a 位门控）→ True：**[0x889ebc]** add [esp+0x1c] + [esi+0x8c]=1 / False：[esi+0x8c]=0
+  - [esi+0x674]（共享引用槽）test je → push 0x80004003 → **call 0x7dc720**（@0x416b90 E_FAIL）→ [esi+0x674] **虚表槽 8**（@0x416b9e AddRef 均衡）→ [esi+0x674]=0
+  - **虚表槽 0x84**（@0x416bab 查询器）→ add eax,0x34c → push 7/push 0/push eax → lea ecx,[esp+0x1c] → **call 0x41c250**（@0x416bc2 7 参装载）→ cmp eax jge 通过 / 0x80004002 je 通过 / else push eax → **call 0x7dc720**（@0x416bd3）
+  - [esi+0x674] 旧值 ebx vs 新 [esp+0x10] 交换：eax ≠ ebx → [esi+0x674]=eax + **虚表槽 4**（@0x416bf3 新 AddRef）+ ebx ≠ 0 → **虚表槽 8**（@0x416c01 旧 Release）→ 尾部 **虚表槽 8**（@0x416c10 收口 Release）
+  - [esi+0x674] test je → **call 0x7dc720**（@0x416c22 E_FAIL）→ push esi → [esi+0x674] **虚表槽 0xc**（@0x416c31 双参调用）
+  - **虚表槽 0xd8**（@0x416c3f push 0/lea [esp+0x14]）test al je → **call 0x4733a0**（@0x416c4e 反向查询）→ ret @0x416c59
+  - 继续：**[esi+0x424]=0** → **虚表槽 0x48c**（@0x416c6d 4 参全 0）→ **虚表槽 0x488**（@0x416c81 5 参全 0）
+  - [ebp+8]/[ebp]/[ebp+4] → [esp+0x28/0x20/0x24] + [esi+0x260] → lea [eax+3]/add eax,-3 → push → **call 0x567da0**（@0x416cb6 ecx=0x87f7e8）
+  - lea eax,[esp+0x10] push 0 → **call 0x703590**（@0x416cc4）→ [eax] 头字 → push 0 → **call 0x65ad30**（@0x416cd3）→ cmp eax,esi jne 0x416cf4（不相等跳过）→ **虚表槽 0x274 ×2**（@0x416ce2 push 0x19 / @0x416cee push 3）
+  - word [esp+0xc] cmp **[0x889e68]** / word [esp+0xe] cmp **[0x889e6a]**（@0x416cf9/@0x416d07 双坐标常量比较）je 0x416d33（相等路径）→ 不等：**虚表槽 0x480**（@0x416d26 push 坐标参数）→ ret @0x416d32 → 相等：**虚表槽 0x480**（@0x416d3b push 1/push 0）→ ret @0x416d47
+- 直接 call 13 次/去重 11：0x4068e0×1、0x473430×1、0x578080×1、0x565730×1、0x7dc720×3、0x41c250×1、0x4733a0×1、0x567da0×1、0x703590×1、0x65ad30×1、0x5657a0×1——picker callees=11 吻合，差值 0（虚表槽 8/0x84/4/0xc/0xd8/0x48c/0x488/0x274×2/0x480×2 间接不计）
+- 判类：FUN_00416af0——战场单元刷新装载器（0x4068e0 DebugLog 入口 + [edi+0x114] 0x473430 查询 + MapClass 0x87f7e8 坐标换算链 0x578080/0x565730 + [eax+0x140] bit 门控 [esi+0x8c] + 0x7dc720 HRESULT 检查族 + 虚表槽 8/0x84/4/0xc/0xd8/0x48c/0x488/0x274×2/0x480×2 九槽族 + 0x41c250 7 参装载 + 0x567da0 区域 + 0x703590/0x65ad30 查询 + [0x889e68]/[0x889e6a] 坐标常量）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x415C60 FUN_00415c60（630B）
+
+- 范围 0x415C60-0x415ED5（双出口 ret @0x415EB0（成功）/ret @0x415ED5（失败回滚）；0x415ED6-0x415EDF nop pad + 0x415EE0 起下函数标准帧栈宿主（mov ebp,esp + and esp,0xfffffff8 框架，含 [edi+0x118] test 门控后对本函数 call 0x415c60 递归 + 0x6fdd50 主装载 + [esi+0xac]+0x2dc 检查 + 0x7dc720 E_FAIL 族——观察项））
+- thiscall 无栈参（ret 空）：**战场单元放置装载器**（刷新装载的放置/回滚配对端）：
+  - **lea ecx,[edi+0x114] → call 0x473430**（@0x415c6e 查询对象 → esi）test esi,esi je 0x415ecd 空早退 → **[edi+0x2fc] dec**（@0x415c89 引用计数减）
+  - **虚表槽 0x48**（@0x415c93 cell 读取 → [esp+0x20..0x28] 三 dword 坐标）
+  - **[edi+0x2fc] test al,1**（@0x415cac 计数低位分支）→ lea [esp+0xc] + [edi+0x388] → **call 0x4c93d0**（@0x415cbf 结构读）→ je 分支 **add ax,0x3fff** / else **sub cx,0x3fff**（@0x415cea/@0x415cc7 ±16383 偏移）→ movsx ecx,ax → sub ecx,0x3fff → [esp+0xc]
+  - **fild [esp+0x10] fmul [0x7e2810]** 双精度缩放 → fstp [esp+0x18] → fild [esp+0x28] → **call 0x4cacb0**（@0x415d29 三角函数）→ **fmul [0x7e2808]** → **fsubr [esp+0x18]** → **call 0x7c5f00**（@0x415d38 _ftol）→ [esp+0x18]
+  - **call 0x4cad00**（@0x415d47 反三角函数对称）→ **fmul [0x7e2808]** → **fiadd [esp+0x24]** → **call 0x7c5f00**（@0x415d59）→ [esp+0x28]
+  - lea edx,[esp+0x24] → **call 0x565730**（@0x415d78 ecx=0x87f7e8 坐标→cell → ebx）
+  - **虚表槽 0x1ac**（@0x415d8c push 1/push 0/push -1/push -1/push ebx → jne 0x415eb1 失败）
+  - push eax×3/lea ecx/lea edx → **call 0x481180**（@0x415daa 5 参 cell 处理）→ [eax+0/+4/+8] vs **[0x889e88]/[0x889e8c]/[0x889e90]** 三 dword 相等比较（@0x415db9-0x415dd1）je 0x415eb1
+  - **虚表槽 0xe8**（@0x415de8 push lea [esp+0x20]）test al je 0x415eb1
+  - [edi+0x9c] 三 dword 结构 + [0x8871e0]+0x71c → **call 0x7509e0**（@0x415e21 装载）
+  - **call 0x565730**（@0x415e30）→ **虚表槽 0x48**（@0x415e3e）→ **cdq/sar 8 ×2**（@0x415e45-0x415e62 坐标÷256 量化 word）→ **[esi+0x55c]** 写回（@0x415e6e）
+  - [edi+0x5d4] test je → push 0/push -1/push esi → **call 0x6ea870**（@0x415e83 3 参关联）→ **[0xa8ed84]** → push [edi+0x2ec] 结构三 dword（+[esp+0x24]/xor 0）+ **[edi+0x6d3]=5**（@0x415e93）→ ret @0x415eb0
+  - **失败回滚路径**（0x415eb1）：push esi / lea ecx,[edi+0x114] → **call 0x4733a0**（@0x415eb8 反向查询）→ **虚表槽 0x11c**（@0x415ec1）→ **inc [edi+0x2fc]**（@0x415ec7 计数还原）→ xor eax,eax → ret @0x415ed5
+- 直接 call 13 次/去重 10：0x473430×1、0x4c93d0×2、0x4cacb0×1、0x7c5f00×2、0x4cad00×1、0x565730×2、0x481180×1、0x7509e0×1、0x6ea870×1、0x4733a0×1——picker callees=10 吻合，差值 0（虚表槽 0x48×2/0x1ac/0xe8/0x11c 间接不计）
+- 判类：FUN_00415c60——战场单元放置装载器（[edi+0x114] 0x473430 查询 + [edi+0x2fc] 计数 dec + 虚表槽 0x48 cell 读 + [edi+0x388] 0x4c93d0 ±0x3fff 数值 + fild/fmul 0x4cacb0/0x4cad00 三角函数对 + 0x7e2808/0x7e2810 常量 + 0x7c5f00 _ftol + 0x565730 坐标→cell + 虚表槽 0x1ac/0xe8/0x48/0x11c + 0x481180 5 参 + 0x7509e0 装载 + 0x6ea870 3 参关联 + [0x889e88..90] 坐标常量 + 失败回滚 0x4733a0 + [edi+0x2fc] inc 还原）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2536.py：a 路 8/8（0x4c93d0/0x5257c0/0x528660/0x5b3950/0x5f5c60/0x7500d0/0x7c5f00/0x7c8ef4 已登记）、b 路 11/11（0x4068e0/0x41c250/0x4733a0/0x473430/0x565730/0x5657a0/0x567da0/0x578080/0x65ad30/0x703590/0x7dc720 已登记）、c 路 10/10（0x4733a0/0x473430/0x481180/0x4c93d0/0x4cacb0/0x4cad00/0x565730/0x6ea870/0x7509e0/0x7c5f00 已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0（虚表槽 0x184/0x1b8/8/0x84/4/0xc/0xd8/0x48c/0x488/0x274/0x480/0x48×2/0x1ac/0xe8/0x11c 间接不计）
+- 无批内自引用（a/b/c 互不落对方函数体）；无 MISSING（真 MISSING 队列 5 个不变：0x408B40 / 0x4f6eb0 / 0x406B10 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6069 行」= 唯一地址数 = 行数 6091 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x416D50（b 路下函数）：jmp-table 分发器（[eax*4+0x4172e4] 四态 + 0x817f18/0x817edc DebugLog 串 + [esi+0x5a4] 检查 + 虚表槽 0x484 + 0x5b3a00/0x65c7e0 RandomRanged + [0xa8b230]+0x218 随机器调用点）——后续批次优先跟进登记
+- 0x415EE0（c 路下函数）：标准帧栈宿主大函数（mov ebp,esp 框架 + [edi+0x118] 门控 + 对本函数 0x415c60 递归 + 0x6fdd50 主装载 + [esi+0xac]+0x2dc 检查 + 0x7dc720 E_FAIL 族 + 虚表槽 0x84/0xd8 等）——后续批次优先跟进登记
+- 0x41AFDC-0x41B0C0（a 路内部）：0x817f6c/0x817f64/0x817f40 三格式串 + [esi+0x34] 分支常量——数据常量观察
+- 0x41c250（b 路 callee）：7 参装载器（被 0x416bc2 push 7 调用）——候选池优先跟进（batch 2535 c 路 0x41caa0 早已登记的兄弟域）
+- 0x4cacb0/0x4cad00（c 路 callee 对）：三角函数对（fild→fmul 缩放 + fsubr/fiadd 反算）——候选池优先跟进
+- 0x481180（c 路 callee）：5 参 cell 处理（[0x889e88..90] 坐标常量比较上游）——候选池优先跟进
+- 0x7509e0（c 路 callee）：装载器（[0x8871e0]+0x71c 目标，与 a 路 0x7500d0 同域兄弟）——候选池优先跟进
+- 0x703590/0x65ad30（b 路 callee 对）：查询器对（[eax] 头字 + cmp 对象相等判断）——候选池
+- 0x889e68/0x889e6a/0x889e88/0x889e8c/0x889e90（b/c 路常量）：坐标常量区（地图边界/原点结构）——数据常量观察
+- 0x8C 系列偏移：b 路 [esi+0x8c]（位门控标志）、c 路 [esi+0x55c]（量化坐标写回）——对象布局观察
+- 既有池延续：见 batch 2535 观察项列表（VectorClass 家族 0x41B430/0x41C500/0x41C590/0x41C610/thunk 族 + 0x763720 + Airstrike/Aircraft 构造域 + 历史候选池全量延续）
