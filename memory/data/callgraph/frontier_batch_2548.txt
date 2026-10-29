@@ -1,0 +1,56 @@
+# frontier batch 2548
+
+日期：2026-10-29
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x4085B0（34B FUN_004085b0 callees=0 deps=757）/ b=0x408560（51B FUN_00408560 callees=2 deps=95）/ c=0x408500（31B FUN_00408500 callees=1 deps=63）——缓冲尺寸/换算/链域三连（a 为缓冲区尺寸计算器，b 为双 64 位换算器，c 为链加入器变体）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2548{a,b,c}.txt（a/b/c 0x100 窗读全，尾 ret 确认：a 单出口 ret @0x4085D1（0x4085D2-0x4085DF nop pad + 0x4085E0 起 = batch 2547 c 路已登记双参装载构造器，批间邻接 + 0x408600 起清零器 + 0x408610 起 RIFF/WAVE 解析器——batch 2547 观察项延续）、b 双出口 ret @0x40858C（有值）/ret @0x408592（空值双零；0x408593-0x40859F nop pad + 0x4085A0 起 32B rep stosd 清零器（8 dword）+ 0x4085B0 起 = 本批 a 路，批内邻接；另 0x408540 起 = b 路前邻 ÷1000 魔法数换算器（0x10624dd3 imul + sar 6 + shr 31 修正 ret 8）——观察项 + 0x408520 起 add ecx,8 jmp 0x407470 thunk + 0x408530 空壳 ret 桩）、c 单出口 ret @0x40851E（0x40851F nop pad + 0x408520 起 add ecx,8 jmp 0x407470 thunk——观察项；0x408500 与 b/a 同区连续，0x408540 前邻 ÷1000 族））
+核验：.qwen/tmp/_check_callees2548.py；a 0/0、b 2/2、c 1/1；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6127 → 6130（三行全新增，ADD 3）
+
+## a 路：0x4085B0 FUN_004085b0（34B）
+
+- 范围 0x4085B0-0x4085D1（单出口 ret @0x4085D1；0x4085D2-0x4085DF nop pad + 0x4085E0 起 = batch 2547 c 路已登记 0x4085E0（双参装载构造器），批间邻接）
+- thiscall 无栈参（ret 空）：**缓冲区尺寸计算器**（三维尺寸积 + 类型除 4）：
+  - **mov eax,[ecx+0x10] → imul eax,[ecx+0xc] → imul eax,[ecx+8]**（@0x4085b6-0x4085ba 三尺寸连乘 = W×H×D 或 长×宽×高）
+  - **mov edx,[ecx+4]（类型）→ mov [ecx+0x14],eax（尺寸字段首写）** → **cmp edx,1 je 0x4085cb / cmp edx,2 jne 0x4085d1**
+  - 类型 1 或 2：**sar eax,2（÷4）→ mov [ecx+0x14],eax（改写）** → ret @0x4085d1
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0
+- 判类：FUN_004085b0——缓冲区尺寸计算器（[+0x10]×[+0xc]×[+0x8] 三维连乘 → [0x14]；[+0x4] 类型 1/2 → sar 2 除 4；纯整数无调用）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x408560 FUN_00408560（51B）
+
+- 范围 0x408560-0x408592（双出口 ret @0x40858C（有值）/ret @0x408592（空值双零）；0x408593-0x40859F nop pad + 0x4085A0 起 32B rep stosd 清零器（8 dword，ret 3B）；0x4085B0 起 = 本批 a 路，批内邻接；0x408540 起前邻 = **÷1000 魔法数换算器**（[ecx+0x14] imul [esp+4] → imul 0x10624dd3 → mov eax,edx → sar eax,6 → mov ecx,eax → shr ecx,0x1f → add eax,ecx ret 8——0x10624dd3 魔法数 + sar 6 + shr 31 修正 = ÷1000 快速除法，观察项））
+- thiscall 1 栈参（[esp+4]=参 1，ret 空）：**双 64 位换算器**（尺寸 × 参 ÷ 1000 的 64 位链）：
+  - **mov esi,[ecx+0x14]（尺寸）test esi,esi je 0x40858d**（空 → **xor eax,eax + xor edx,edx ret** @0x408592 双零返回）
+  - **mov eax,edx（参 1）→ push 0/push 0x3e8（1000）→ cdq → push edx（参 1 高 32）→ push eax（参 1 低 32）→ call 0x7c8ec0**（@0x408575 64 位乘/除链第一段）→ ecx=eax / edi=edx（结果）
+  - **mov eax,esi（尺寸）→ cdq → push edx（尺寸高 32）/push eax（尺寸低 32）→ push edi/push ecx → call 0x7c9380**（@0x408585 64 位链第二段）→ pop edi/pop esi → ret @0x40858c
+- 直接 call 2 次/去重 2：0x7c8ec0×1、0x7c9380×1——picker callees=2 吻合，差值 0
+- 判类：FUN_00408560——双 64 位换算器（[+0x14] 尺寸 × [esp+4] ÷ 1000：0x7c8ec0/0x7c9380 两段 64 位链；空值双零（eax/edx=0）早退）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x408500 FUN_00408500（31B）
+
+- 范围 0x408500-0x40851E（单出口 ret @0x40851E；0x40851F nop pad + 0x408520 起 add ecx,8 jmp 0x407470 thunk——观察项）
+- thiscall 2 栈参（ecx=链头/edx=新对象，ret 空）：**链加入器变体**（batch 2546 c 路 0x408B10 的多 8B 项/回链差异版本——对象布局 [0x4]/[0x10]/[0x14] 族）：
+  - push esi/edi → mov esi,ecx（链头）→ mov edi,edx（新对象）→ **lea ecx,[esi+8] → call 0x407420**（@0x408509 链尾连接）
+  - **mov eax,[edi+0x10]（新对象尺寸）→ mov ecx,[esi+4] → add ecx,eax → mov [esi+4],ecx**（@0x40850e-0x408516 尺寸累计至链头）
+  - **mov [edi+0x14],esi**（@0x408519 新对象回链头）→ pop ×2 → ret @0x40851e
+- 直接 call 1 次/去重 1：0x407420×1——picker callees=1 吻合，差值 0
+- 判类：FUN_00408500——链加入器变体（0x407420 链尾连接 + [edi+0x10] 尺寸累计 [esi+4] + [edi+0x14] 回链头；对象布局 [0x4]/[0x10]/[0x14] 族，与 batch 2546 c 路 0x408B10（0x407440/[edi+0x30] 回链）布局不同）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2548.py：a 路 0/0、b 路 2/2（0x7c8ec0/0x7c9380 已登记）、c 路 1/1（0x407420 已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用（a/b/c 互不落对方函数体；b 尾 0x408592 与 a 头 0x4085B0 为批内邻接但无调用）；无 MISSING（真 MISSING 队列 4 个不变：0x4f6eb0 / 0x406B10 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6105 行」= 唯一地址数 = 行数 6127 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x408540（b 路前邻）：÷1000 魔法数换算器（[ecx+0x14] imul [esp+4] → imul 0x10624dd3 → sar 6 + shr 0x1f 修正 ret 8——0x10624dd3/sar 6 快速除 1000）——换算域优先跟进
+- 0x4085A0（b 路下邻）：32B rep stosd 清零器（8 dword，3B+rep）——小桩族
+- 0x408520（c 路下邻 + b 路前邻）：add ecx,8 jmp 0x407470 thunk——thunk 族观察项（0x407420/0x407470 链家族连续）
+- 0x407420/0x407440/0x407470（c/a/b 路 callee 组）：链连接三兄弟（已登记确认，围联观察：0x407420=[edi+0x14] 回链族 callee、0x407440=[edi+0x30] 回链族 callee、0x407470=thunk 目标）
+- 既有池延续：见 batch 2547 观察项列表（0x408610 RIFF/WAVE 解析大函数 + 0x408A70 孪生 + 0x408C30 状态清理器 + 0x4072D0/0x407450 callee 对 + batch 2546/2545/2544/2543/2542/2541/2540/2539/2538/2537 全量观察项 + 真 MISSING 队列 4 个 + 历史候选池全量延续）
