@@ -1,0 +1,57 @@
+# frontier batch 2596
+
+日期：2026-10-30
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 0，落回 0x7A 段 ranking 序——batch 2591/2592/2593/2594/2595 同段连续）
+三路：a=0x7AD690（243B FUN_007ad690 callees=0 deps=0）/ b=0x7AD3C0（73B FUN_007ad3c0 callees=1 deps=0）/ c=0x7AD370（73B FUN_007ad370 callees=1 deps=0）——三路同属 0x7A 段接口/容器域（a 为 COM 风格接口匹配/查找器——p1 空返 E_INVALIDARG、p2 四 dword 头部校验、[0x7F7640] 全局对象表逐项比对、虚表槽/函数指针间接调用——全间接无直接 call；b/c 为虚表 0x7F78A4 哈希表类的标量删除析构器双副本——[+4] 非空且 [+0xD] 标志置位门控 0x7C8B3D 释放 + delete this）；b 尾 0x7AD410 起同族析构器/构造器观察项（lea eax,[esi+8] mov [esi+4],0 …）、c 尾 0x7AD3C0 起 = b 路（背靠背邻接）、a 尾 0x7AD783-0x7AD78F nop pad
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2596{a,b,c}.txt + a 补段 _d2596a2.txt（a 0x50+0xB0 两窗读全、b 0x60 窗读全、c 0x60 窗读全，尾 ret 确认：a 四出口 ret 0xc @0x7AD6F1/0x7AD766/0x7AD780 + ret 0xc @0x7AD762（0x7AD783-0x7AD78F nop pad）、b 单出口 ret 4 @0x7AD406（0x7AD409-0x7AD40F nop pad + 0x7AD410 起同族观察项）、c 单出口 ret 4 @0x7AD3B6（0x7AD3B9-0x7AD3BF nop pad + 0x7AD3C0 起 = b 路，背靠背邻接））
+核验：.qwen/tmp/_check_callees2596.py；a 0/0、b 1/1、c 1/1；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6271 → 6274（三行全新增，ADD 3）
+
+## a 路：0x7AD690 FUN_007ad690（243B）
+
+- 范围 0x7AD690-0x7AD780（四出口 ret 0xc @0x7AD6F1/0x7AD762/0x7AD766/0x7AD780；0x7AD783-0x7AD78F nop pad）——0x7A 段标准序
+- thiscall 3 栈参（ecx=this/[esp+0x10]=p1 出参指针/[esp+0x14]=p3/[esp+0x18]=p2 输入结构指针，ret 0xc）：**COM 风格接口匹配/查找器**（全间接调用——无直接 call）：
+  - push ebx/ebp/esi/edi → **mov ebx,[esp+0x10] mov esi,0x7f7638 test ebx jne 0x7ad6ad**（p1 空）→ pop 各 mov eax,0x80004003 ret 0xc @0x7ad6a1（E_INVALIDARG）
+  - **mov edi,[esp+0x18] mov [ebx],0**（p1 出参清零）→ **cmp [edi],0 jne 0x7ad6f4 / cmp [edi+4],0 jne 0x7ad6f4 / cmp [edi+8],0xc0 jne 0x7ad6f4 / cmp [edi+0xc],0x46000000 jne 0x7ad6f4**（p2 四 dword 头部校验：[0]=0/[4]=0/[8]=0xC0/[0xC]=0x46000000——结构签名）
+  - **mov eax,[esp+0x14] mov ecx,[0x7f763c]**（p3 + 全局 [0x7F763C]）→ @0x7ad6e0 起（adc al,1 lea esi,[ecx+eax] push esi **call dword ptr [edx+4]**（@0x7ad6e6 虚表槽 4 间接——目标对象方法）mov [ebx],esi pop 各 xor eax,eax ret 0xc @0x7ad6f1（成功返 0）
+  - **主查找路径**（@0x7ad6f4-0x7ad780）：**mov eax,[0x7f7640] test eax je 0x7ad75d**（[0x7F7640] 全局对象表判空）→ mov eax,[esi] xor ecx sete cl mov ebp,ecx（[esi]=对象指针非空标志）→ **test ebp jne 0x7ad732**（空对象走直接）→ 逐项四 dword 比对（@0x7ad70c-0x7ad730：cmp [eax]/[edi]、[eax+4]/[edi+4]、[eax+8]/[edi+8]、[eax+0xc]/[edi+0xc]，任一不等 jne 0x7ad753）→ **mov eax,[esi+8] cmp eax,1 je 0x7ad769**（[esi+8] 分派数 ==1 走直取）→ mov ecx,[esi+4] mov edx,[esp+0x14] push ecx/push ebx/push edi/push edx **call eax**（@0x7ad745 函数指针间接——四参调用）→ test eax je 0x7ad762（失败返 0x80004002 E_NOTIMPL）→ 循环（add esi,0xc 下一项）
+  - **直取路径**（@0x7ad769-0x7ad780）：mov esi,[esi+4] mov edx,[esp+0x14] add esi,edx push esi **call dword ptr [eax+4]**（@0x7ad775 虚表槽 4）mov [ebx],esi pop 各 xor eax,eax ret 0xc @0x7ad780（成功返 0）
+  - **失败收敛**（@0x7ad75d/0x7ad762）：mov eax,0x80004002 / … pop 各 ret 0xc（E_NOTIMPL）
+- 直接 call 0 次/去重 0（虚表槽 4 call [edx+4]/[eax+4] + 函数指针 call eax 均间接）——picker callees=0 吻合，差值 0
+- 判类：FUN_007ad690——COM 风格接口匹配/查找器（thiscall 3 栈参 ret 0xc；p1 空返 E_INVALIDARG(0x80004003)；p2 四 dword 头部校验（[0]=0/[4]=0/[8]=0xC0/[0xC]=0x46000000）命中走 [0x7F763C] 虚表槽 4 间接目标方法成功返 0；未命中走 [0x7F7640] 全局对象表逐项四 dword 比对（[esi] 对象指针 + 非空 sete），[esi+8] 分派数 ==1 直取虚表槽 4、否则四参函数指针间接，失败返 E_NOTIMPL(0x80004002)——全间接调用无直接 callee，语义为接口方法分发/注册表查找）
+- 语义证据级别：assembly_decompile_verified（partial——p2 头部四 dword 的接口身份语义、[0x7F7638]/[0x7F763C]/[0x7F7640] 全局域语义未确认，无对应已登记 C++ 重写）
+
+## b 路：0x7AD3C0 FUN_007ad3c0（73B）
+
+- 范围 0x7AD3C0-0x7AD406（单出口 ret 4 @0x7AD406；0x7AD409-0x7AD40F nop pad + 0x7AD410 起同族析构器/构造器观察项）——0x7A 段标准序
+- thiscall 1 栈参（ecx=this/[esp+8]=标志位，ret 4 eax=this）：**标量删除析构器·哈希表类**（虚表 0x7F78A4——batch 2593 a 路 0x7AECD0 哈希表构造器同虚表配对侧）：
+  - push esi → mov esi,ecx → **mov eax,[esi+4] mov [esi],0x7f78a4**（@0x7ad3c3-0x7ad3c6 [+4] 缓冲 + 虚表 0x7F78A4 装填）→ **test eax je 0x7ad3e7**（[+4] 门控）→ **mov cl,[esi+0xd] test cl,cl je 0x7ad3e7**（[+0xD] 标志门控）→ **push eax call 0x7c8b3d**（@0x7ad3d8 释放 [+4]）add esp,4 → mov [esi+4],0（清零）
+  - **mov al,[esp+8] mov byte[esi+0xd],0 test al,1 mov [esi+8],0**（@0x7ad3e7-0x7ad3f1 [+0xD]/[+8] 清零 + 标志位）→ **je 0x7ad403 push esi call 0x7c8b3d**（@0x7ad3fb delete this）add esp,4 → mov eax,esi pop esi ret 4 @0x7ad406
+- 直接 call 2 次/去重 1：0x7c8b3d（释放缓冲 + delete this）——picker callees=1 吻合，差值 0
+- 判类：FUN_007ad3c0——标量删除析构器·哈希表类（thiscall 1 栈参 ret 4 eax=this；虚表 0x7F78A4 装填 + [+4] 非空且 [+0xD] 标志置位门控 0x7C8B3D 释放 + 清零 + [esp+8]&1 时 0x7C8B3D delete this——批次 2593 a 路 0x7AECD0 哈希表构造器（虚表 0x7F78A4）的配对析构侧）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x7AD370 FUN_007ad370（73B）
+
+- 范围 0x7AD370-0x7AD3B6（单出口 ret 4 @0x7AD3B6；0x7AD3B9-0x7AD3BF nop pad + 0x7AD3C0 起 = b 路，背靠背邻接）——0x7A 段标准序
+- thiscall 1 栈参（ecx=this/[esp+8]=标志位，ret 4 eax=this）：**标量删除析构器·哈希表类副本**（与 b 路 0x7AD3C0 逐字节同构）：
+  - push esi → mov esi,ecx → **mov eax,[esi+4] mov [esi],0x7f78a4**（虚表 0x7F78A4 装填）→ test eax je 0x7ad397 → mov cl,[esi+0xd] test cl,cl je 0x7ad397 → **push eax call 0x7c8b3d**（@0x7ad388 释放 [+4]）→ mov [esi+4],0
+  - **mov al,[esp+8] mov byte[esi+0xd],0 test al,1 mov [esi+8],0** → je 0x7ad3b3 **push esi call 0x7c8b3d**（@0x7ad3ab delete this）→ mov eax,esi pop esi ret 4 @0x7ad3b6
+- 直接 call 2 次/去重 1：0x7c8b3d——picker callees=1 吻合，差值 0
+- 判类：FUN_007ad370——标量删除析构器·哈希表类副本（thiscall 1 栈参 ret 4 eax=this；与 0x7AD3C0 逐字节同构——虚表 0x7F78A4 装填 + [+4]/[+0xD] 双门控 0x7C8B3D 释放 + delete this；同一 0x7F78A4 哈希表类的双副本析构）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2596.py：a 路 0/0（无直接 call——虚表槽 4/函数指针全间接）、b 路 1/1（0x7c8b3d 已登记）、c 路 1/1（0x7c8b3d 已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0（a 全间接虚调用未计）
+- 无批内自引用（a/b/c 互不落对方函数体；b 尾 0x7AD410 同族析构器/构造器、c 尾 0x7AD3C0 = b 路，均为批间邻接）；排队 MISSING 观察项已清零；真 MISSING 队列 3 个不变（0x4f6eb0 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6249 行」= 唯一地址数 = 行数 6271 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x7AD410（b 路下函数）：同族析构器/构造器（lea eax,[esi+8] mov [esi+4],0 …——[+8] 字段构造/析构态）——0x7F78A4 哈希表类邻域观察
+- 0x7F78A4（b/c 路虚表）：哈希表虚表（batch 2593 a 0x7AECD0 构造器 + 本批 b/c 析构器双侧装填——类生命周期闭环）——虚表观察
+- 0x7F7638/0x7F763C/0x7F7640（a 路全局）：接口分发光环三槽（[0x7F7638] 基址/[0x7F763C] 方法槽/[0x7F7640] 对象表判空）——数据常量观察
+- 0x80004003/0x80004002（a 路 HRESULT）：E_INVALIDARG/E_NOTIMPL（COM 约定返回值）——常量观察
+- 既有池延续：见 batch 2595 观察项列表（0x7ADB00 同族容量管理函数 + 0x7AD9D0 观察项 + VectorClass 容器族八成员）+ batch 2594 观察项列表（0x7AE180 同族扩容重哈希器 + 0x7AE0C0 掩码哈希索引器第三副本 + 0x7ADF70 计数器比较扩容器 + 0x7B4780/0x7B46F0 原语 + [+0x48] vs [+0x70] 冲突链偏移）+ batch 2593 观察项列表（0x7AECD0 哈希表构造器 + 0x7AE5D0 VectorClass Grow·4B 元素版 + 0x7F78A4 虚表 + 0x7C8E17/0x7C8B3D CRT 原语 + [+0x18] 虚表槽）+ batch 2592 观察项列表（0x7B46F0 析构主体 + 0x7CA090 memmove 原语 + VectorClass 容器族五成员）+ batch 2591 观察项列表（0x7AF640 [0x887310] 门控判定器 + 0x7AF000 计数器比较器 + 0x7AEEC0 计数器比较扩容器 + 0x7E149C IAT 槽 + 0x887310 全局槽）+ batch 2590-2540 全量观察项 + 真 MISSING 队列 3 个 + 历史候选池全量延续
