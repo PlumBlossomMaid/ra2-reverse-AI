@@ -1,0 +1,58 @@
+# frontier batch 2571
+
+日期：2026-10-29
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 0，落回 0x7B 段 ranking 序）
+三路：a=0x7BF140（67B FUN_007bf140 callees=3 deps=0）/ b=0x7BF0B0（138B FUN_007bf0b0 callees=1 deps=0）/ c=0x7BEA40（57B FUN_007bea40 callees=2 deps=0）——b 路 = batch 2570 c 路 0x7BF190 同构门控分发器的变体（尾部插 0x7BE940 直接调用）；a/c 两路为 0x7BEA80 判空 + 0x7BEFE0 装载 + [+0x1A0]→[+0x6DC] 关联对象回写族（a 含 0x7BE940、c 精简版）；c 路尾 0x7BEA80 起 = callee 0x7BEA80 本体（a/c 调用的判空函数）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2571{a,b,c}.txt（a 0x80 窗读全、b 0x100 窗读全、c 0x80 窗读全，尾 ret 确认：a 单出口 ret @0x7BF182（0x7BF183-0x7BF18F nop pad + 0x7BF190 起 batch 2570 c 路已登记 0x7BF190）、b 双出口 ret @0x7BF139 返 0xfffffffe/0xffffffff（0x7BF13A-0x7BF13F nop pad + 0x7BF140 起 = a 路已登记）、c 单出口 ret @0x7BEA78（0x7BEA79-0x7BEA7F nop pad + 0x7BEA80 起 = callee 0x7BEA80 本体——a/c 调用的判空函数，含 sub esp,0xc + push ebx/ebp/esi/edi + mov ebp,[esi+0x1a0] + lea ebx,[esi+0x1a0] + lea edi,[esi+0x40] + test byte [ebp+0x14],1——观察项））
+核验：.qwen/tmp/_check_callees2571.py；a 3/3、b 1/1、c 2/2；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6196 → 6199（三行全新增，ADD 3）
+
+## a 路：0x7BF140 FUN_007bf140（67B）
+
+- 范围 0x7BF140-0x7BF182（单出口 ret @0x7BF182；0x7BF183-0x7BF18F nop pad + 0x7BF190 起 batch 2570 c 路已登记）——0x7B 段标准序
+- thiscall this=esi（ret eax=-1）：**关联对象懒重建器**（0x7BEA80 判空 + 0x7BEFE0 装载 + [+0x1A0]→[+0x6DC] 回写 + 0x7BE940 链 + [+0x1A4] bit3 检查）：
+  - push esi → mov esi,ecx（this）→ **call 0x7bea80**（@0x7bf143 判空/状态检查）→ **cmp eax,-1 jne 0x7bf181**（@0x7bf148-0x7bf14b 返回 -1 直退：跳过重建）
+  - **mov ecx,esi call 0x7befe0**（@0x7bf14e 装载器）→ **mov edi,[esi+0x1a0]**（@0x7bf155 取关联源 [+0x1A0]）→ **mov ecx,esi mov edx,edi call 0x7be940**（@0x7bf15f 重建链 +0x1A0 入参）→ **mov [esi+0x6dc],edi**（@0x7bf164 关联对象回写 [+0x6DC]）
+  - **mov al,[esi+0x1a4] test al,8 jne 0x7bf17d**（@0x7bf16a-0x7bf172 [+0x1A4] bit3 门控，置位直退）→ **mov eax,[edi+0xc] mov [esi+0x1a0],eax**（@0x7bf174-0x7bf177 未置位→[+0x1A0]=[edi+0xC] 回溯）
+  - @0x7bf17d：or eax,0xffffffff（返 -1）→ pop edi/esi ret @0x7bf182
+- 直接 call 3 次/去重 3：0x7bea80×1、0x7befe0×1、0x7be940×1——picker callees=3 吻合，差值 0
+- 判类：FUN_007bf140——关联对象懒重建器（0x7BEA80 判空(-1 直退) + 0x7BEFE0 装载 + [+0x1A0]→[+0x6DC] 关联回写 + 0x7BE940 重建链(esi,[esi+0x1A0]) + [+0x1A4] bit3 门控[+0x1A0]=[edi+0xC] 回溯；ret -1）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x7BF0B0 FUN_007bf0b0（138B）
+
+- 范围 0x7BF0B0-0x7BF139（双出口 ret @0x7BF139：mov eax,0xfffffffe 返 -2 / or eax,0xffffffff 返 -1；0x7BF13A-0x7BF13F nop pad + 0x7BF140 起 = a 路已登记）——0x7B 段标准序
+- thiscall this=esi（ret eax=0/-1/-2）：**门控回调分发器变体**（与 batch 2570 c 路 0x7BF190 同构门控 + 尾部插 0x7BE940 直接调用）：
+  - push esi/edi → mov esi,ecx → mov edi,[esi+0x6dc]（关联对象）→ **mov eax,[edi+0x14] and eax,4 test eax,eax jne 0x7bf0cb**（@0x7bf0ba-0x7bf0c0 [edi+0x14] bit2 门控）→ **test byte ptr [esi+0x1a4],1 je 0x7bf10e**（@0x7bf0c2-0x7bf0c9 [esi+0x1A4] bit0 门控）
+  - @0x7bf0cb（bit2 置位分支）：test eax,eax je 0x7bf0df（[edi+0x14]&4 非零→走主路径）→ mov eax,[esi+0x48] test je 0x7bf10e → mov ecx,[edi+0x28] mov edx,[edi+8] push ecx push edx push 2 push esi **call eax**（@0x7bf109 虚表 [esi+0x48] 回调）→ add esp,0x10
+  - @0x7bf0df（bit2 清零分支）：mov eax,[esi+0x1a4] test al,1 je 0x7bf10e（再确认 bit0）→ **and al,0xfe mov [esi+0x1a4],eax**（清 bit0）→ mov eax,[esi+0x48] test je 0x7bf10e → mov ecx,[esi+0x1c0] lea edx,[esi+0x1c4] push ecx push edx push 2 push esi call eax（@0x7bf109 第二入口）
+  - **@0x7bf10e（尾部差异点）：mov edx,edi mov ecx,esi call 0x7be940**（@0x7bf10e-0x7bf112 关联对象 0x7BE940 重建链——0x7BF190 无此直调）→ **mov eax,[esi+0x4c] test eax,eax je 0x7bf134**（@0x7bf117-0x7bf11c [esi+0x4C] 第二虚表回调门控）→ mov ecx,[edi+0x1c] push ecx push esi call eax（@0x7bf123）→ test eax,eax je 0x7bf134（0→直退）→ **mov eax,0xfffffffe（-2）ret @0x7bf12d**（@0x7bf12c-0x7bf133）
+  - @0x7bf134（收尾）：pop edi; **or eax,0xffffffff（-1）** pop esi ret @0x7bf139
+- 直接 call 2 次/去重 1：0x7be940×1、虚表 [esi+0x48]/[esi+0x4c] 间接 2——picker callees=1 吻合（仅计直接 call 0x7be940），差值 0
+- 判类：FUN_007bf0b0——门控回调分发器变体（与 0x7BF190 同构 [esi+0x6dc] 关联 + [edi+0x14] bit2 / [esi+0x1A4] bit0 双门控 → 虚表 [esi+0x48] 回调 + [esi+0x4C] 第二回调；差异：尾部插 mov edx,edi mov cx,esi call 0x7BE940 关联重建链；第二回调返 0 时返 -2、其余返 -1；纯虚表间接 + 1 直接）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x7BEA40 FUN_007bea40（57B）
+
+- 范围 0x7BEA40-0x7BEA78（单出口 ret @0x7BEA78；0x7BEA79-0x7BEA7F nop pad + 0x7BEA80 起 = callee 0x7BEA80 本体——a/c 调用的判空函数）——0x7B 段标准序
+- thiscall this=esi（ret eax=-1）：**关联对象装载器**（0x7BEA80 判空 + 0x7BEFE0 装载 + [+0x1A0]→[+0x6DC] 回写 + [+0x1A4] bit3 检查——a 路 0x7BF140 去掉 0x7BE940 调用的精简版）：
+  - push esi → mov esi,ecx → **call 0x7bea80**（@0x7bea43 判空/状态检查）→ **cmp eax,-1 jne 0x7bea77**（@0x7bea48-0x7bea4b 返回 -1 直退：跳过装载）→ **mov ecx,esi call 0x7befe0**（@0x7bea4f 装载器）→ **mov eax,[esi+0x1a0] mov [esi+0x6dc],eax**（@0x7bea54-0x7bea5a [+0x1A0]→[+0x6DC] 关联回写）
+  - **mov cl,[esi+0x1a4] test cl,8 jne 0x7bea74**（@0x7bea60-0x7bea69 [+0x1A4] bit3 门控，置位直退）→ **mov eax,[eax+0xc] mov [esi+0x1a0],eax**（@0x7bea6b-0x7bea6e 未置位→[+0x1A0]=[eax+0xC] 回溯）
+  - @0x7bea74：or eax,0xffffffff（返 -1）→ pop esi ret @0x7bea78
+- 直接 call 2 次/去重 2：0x7bea80×1、0x7befe0×1——picker callees=2 吻合，差值 0
+- 判类：FUN_007bea40——关联对象装载器（0x7BEA80 判空(-1 直退) + 0x7BEFE0 装载 + [+0x1A0]→[+0x6DC] 关联回写 + [+0x1A4] bit3 门控[+0x1A0]=[eax+0xC] 回溯；a 路 0x7BF140 精简版无 0x7BE940；ret -1）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2571.py：a 路 3/3（0x7be940/0x7bea80/0x7befe0 已登记）、b 路 1/1（0x7be940 已登记，虚表间接不计）、c 路 2/2（0x7bea80/0x7befe0 已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0（b 虚表 [esi+0x48]/[esi+0x4c] 间接不计）
+- 无批内自引用（a/b/c 互不落对方函数体；a 尾 0x7BF190 = batch 2570 c 路已登记、b 尾 0x7BF140 = a 路已登记、c 尾 0x7BEA80 = callee 本体，均为批间邻接）；排队 MISSING 观察项已清零；真 MISSING 队列 3 个不变（0x4f6eb0 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6174 行」= 唯一地址数 = 行数 6196 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x7BEA80（c 路下函数）：判空/状态检查器（sub esp,0xc + push ebx/ebp/esi/edi + mov ebp,[esi+0x1a0] + lea ebx,[esi+0x1a0] + lea edi,[esi+0x40] + test byte [ebp+0x14],1——a/c 调用的前置判空函数，后续批次优先跟进）
+- 0x7BEFE0（a/c 路 callee）：关联对象装载器原语（a/c 调用的 0x7BEFE0——0x7B 段装载原语，已登记）
+- 0x7BE940（a/b 路 callee）：关联对象重建链原语（a/b 调用的 0x7BE940——0x7B 段重建链原语，已登记）
+- 既有池延续：见 batch 2570 观察项列表（0x7BF220/0x7BF230 ret 桩 + 0x7BF240 跳转表虚表分发器 + 0x879124/0xA8F91C 全局槽）+ batch 2569 观察项列表（0x4011B0 9×4 步长表基址定位器 + 0x7E0170 blit 原语 + 0x7E01D2 混色原语 + 0xA8F918/0xA8F91C/0x877D20/0x878720/0x879124 全局槽）+ batch 2568 观察项列表 + batch 2567 观察项列表 + batch 2566 观察项列表（0x4022C0/0x402330/0x4023F0 三函数指针族 + 0x401BB0 链查找器 + 0x401BE0 链清理器）+ batch 2565 观察项列表（0x4026F0 位标志清位桩镜像 + 0x402720 超大虚表驱动器）+ batch 2564 观察项列表（0x402850 双字段清零器 + 0x402860 节点插入器 + 0x402900 [0x87DE2C] 门控链回调驱动器）+ batch 2563 观察项列表（0x402B80 单节点析构器 + 0x402BB0 链式析构器 + 0x402C00 查首装载器）+ batch 2562 观察项列表 + batch 2561/2560/2559/2558/2557/2556/2555/2554/2553/2552/2551/2550/2549/2548/2547/2546/2545/2544/2543/2542/2541/2540 全量观察项 + 真 MISSING 队列 3 个 + 历史候选池全量延续
