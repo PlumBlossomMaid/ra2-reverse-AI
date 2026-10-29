@@ -1,0 +1,66 @@
+# frontier batch 2608
+
+日期：2026-10-30
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 0，落回 0x78 段 ranking 序）
+三路：a=0x782320（2179B FUN_00782320 callees=11 deps=0）/ b=0x781FB0（877B FUN_00781fb0 callees=4 deps=0）/ c=0x781D20（655B FUN_00781d20 callees=6 deps=0）——同属 [0xB77900] 场景选项表域（batch 2586-2607 同表域第 6 连击，本批连抄三路收官）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2608{a,b,c}.txt（a 先 0x830 窗发现未及尾 ret，改 0xA00 窗 798 行读全、b 0x3A0 窗、c 0x2C0 窗读全；尾 ret 确认：a 单出口 ret @0x782BA2（0x782BA3-0x782BAF nop pad，0x782BB0 起为 batch 2607 已登记的表查找匹配器——a 路第二个 grep 命中的 0x782BEB ret 属其后邻函数空表快路径，非本函数）、b 单出口 ret @0x78231C（0x78231D-0x78231F nop pad，0x782320 起为 a 路）、c 单出口 ret @0x781FAE（0x781FAF nop pad，0x781FB0 起为 b 路））
+核验：.qwen/tmp/_check_callees2608.py；a 11/11、b 4/4、c 6/6；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6307 → 6310（三行全新增，ADD 3）
+
+## a 路：0x782320 FUN_00782320（2179B）
+
+- 范围 0x782320-0x782BA2（单出口 ret @0x782BA2；0x782BA3-0x782BAF nop pad，0x782BB0 起为 batch 2607 已登记函数）——0x78 段巨型函数（本批最大）
+- thiscall 2 栈参（ecx=ebp 存 [esp+0x24]，dl=bl 存方向标志）：**场景选项表巨算子**（哈希桶索引 + 链式匹配 + 双向比较定位 + 扩容搬移 + 快照回滚全套——batch 2607 a/b 同域的最复杂变体）：
+  - **装载 + 哈希查询**（@0x782326-0x7823af）：sub esp,0xf0 push 各 mov ebp,ecx mov bl,dl lea ecx,[esp+0x10] **call 0x7b4620**（@0x782336 构造）+ mov ecx,0x1b rep stosd 清 [esp+0x94] 槽 + mov [esp+0x20],0xffffffff（目标索引初始 -1）→ lea eax,[ebp+0x24] lea ecx,[esp+0x10] push eax **call 0x7b5a40**（@0x78235b 取串）+ **call 0x7b5b30**（@0x782364）→ mov ecx,[0xb77e0c] test je 0x7823af + lea eax,[esp+0x1c] lea edx,[esp+0x10] push 两 **call 0x7adc60**（@0x782385 查询）test al je + mov esi,[esp+0x1c] test esi je + mov ecx,0x1b rep movsd 拷贝到 [esp+0x94] + mov eax,[esp+0xb0] mov [esp+0x20],eax（目标索引）
+  - **空表快路径**（@0x7823af-0x7823d8）：mov edx,[0xb77900] test eax je 0x7823dd + push edx/push ebp mov ecx,0xb77900 **call 0x7aca00**（@0x7823d3 关联）jmp 0x782b8f（直跳收尾）
+  - **占用槽扫描 + 源项标志**（@0x7823dd-0x782437）：mov ebp,[0xb77908]（表基址）+ rep movsd×0x1b 快照到 [esp+0x28] + test byte[esp+0x28],1（占用标志）回绕循环找空位（0x6C 步长）→ mov eax,[esp+0x24] test byte[eax],1 je 0x782773（源项 +0 未置位分支）
+  - **bl!=0 主循环族**（@0x782437-0x78259d，dl=1 方向）：mov edx,[0xb77900] 计数 + rep movsd 快照 + lea ecx,[esp+0x4c] lea eax,[esp+0x10] push eax **call 0x7b5a40**（@0x782466 取串）+ **call 0x7b5b30**（@0x78246f）→ mov esi,[0xb77e0c] test je 0x7824b9 + mov eax,[esi+4] test eax je + lea eax,[esp+0x10] mov ecx,esi push eax **call 0x7ae0c0**（@0x7824b0 哈希桶索引）mov ecx,[esi] mov esi,[ecx+eax*4]（桶取链头）test esi je + lea edx,[esp+0x10] mov ecx,esi push edx **call 0x7b4780**（@0x78255c/0x782638/0x782732/0x7828c6/0x782aaf 匹配）test al jne 0x782573（命中）/ mov esi,[esi+0x70]（链表下一项）jne 0x78255a 循环 → lea esi,[esi+4] rep movsd×0x1b 拷贝到 [esp+0x94] + mov edi,[esp+0xb0]（目标索引）→ cmp ebx,[esp+0x18] jl 0x7824d3 循环
+  - **bl==0 反向循环族**（@0x7825a2-0x782677）：同构但比较判据反向（cmp edi,eax jle / test edi jg / cmp eax,-1 jne 0x78267c 跳过——batch 2606 b 路 0xFFFFFFFF 目标索引判定同构）→ 哈希索引 **0x7ae0c0** + 链式 **0x7b4780** 同结构
+  - **双向比较定位**（@0x78267C-0x78276E）：mov ecx,[esp+0x14] lea ebp,[ecx+ecx*2] 索引×0x6C 计算 → cmp [esp+0x20],edi jne 0x782aea + lea eax,[esp+0x4c]/lea edx,[ecx+0x24] push 两 **call 0x7c8d20**（@0x7826b2 串比较）test eax jge 0x782aea（>=0 跳走）/ jl 则 inc+0x6c 步进继续
+  - **源项未置位分支**（@0x782773-0x7829f5）：mov eax,[esp+0x18] mov [esp+0x14],eax + 索引×0x6C rep movsd 快照 + **0x7b5a40/0x7b5b30** + 哈希链 **0x7ae0c0/0x7b4780** 同构 + test bl,bl 双向 **0x7c8d20**（@0x782a29 串比较）test eax jge/jle 判据 + 循环族到 0x7829f5 收敛
+  - **扩容 + 搬移留洞 + 写回**（@0x782aea-0x782b8f）：mov esi,[esp+0x14] mov ecx,[0xb77900] cmp esi,ecx jle + cmp esi,[0xb77904] jl 跳过 **call 0x7ad9d0**（@0x782b07 扩容）→ 二次 **call 0x7ad9d0**（@0x782b1f 扩容）→ lea eax,[esi+esi*2] 索引×0x6C 计算 + push 三参 **call 0x7ca090**（@0x782b4c 区间搬移留洞）→ mov ecx,[0xb77908] lea edi 目标 rep movsd 写回 → pop 各 add esp,0xf0 ret @0x782BA2
+- 直接 call 40 次/去重 11：0x7aca00/0x7ad9d0/0x7adc60/0x7ae0c0/0x7b4620/0x7b46f0/0x7b4780/0x7b5a40/0x7b5b30/0x7c8d20/0x7ca090——picker callees=11 吻合，差值 0
+- 判类：FUN_00782320——场景选项表巨算子（thiscall 2 栈参单出口；0x7B4620 构造 + 0x7B5A40/0x7B5B30 取串 + 0x7ADC60 查询（[0xB77E0C] 门控）+ 0x7AE0C0 哈希桶索引 + 0x7B4780 链式匹配（[esi+0x70] 链表）+ 0x7C8D20 双向串比较（[ebp+0x24] vs 表项串，bl 方向 + 0xFFFFFFFF 目标索引判定）+ 0x7ACA00 关联 + 0x7AD9D0 扩容 + 0x7CA090 搬移留洞——batch 2607 a/b 同域最复杂变体，新增 0x7AE0C0 哈希索引层）
+- 语义证据级别：assembly_decompile_verified（partial——哈希桶结构/0x7AE0C0 索引语义未确认，无对应已登记 C++ 重写）
+
+## b 路：0x781FB0 FUN_00781fb0（877B）
+
+- 范围 0x781FB0-0x78231C（单出口 ret @0x78231C；0x78231D-0x78231F nop pad，0x782320 起为 a 路）
+- thiscall 2 栈参（ecx=ebp，dl 存 [esp+0x13]）：**场景选项表插入定位器**（dl 方向双态比较 + 空位扫描 + 扩容搬移留洞——batch 2607 b 路同域插入版，无分配/无析构）：
+  - **空表快路径**（@0x781fb0-0x781ff1）：sub esp,0x78 push 各 mov ebp,ecx mov byte[esp+0x13],dl mov edx,[0xb77900] mov ecx,0x1b rep stosd 清 [esp+0x1c] 槽 → test edx je 0x781ff2 + push edx/push ebp mov ecx,0xb77900 **call 0x7aca00**（@0x781fe5 关联——空表直退）pop 各 add esp,0x78 ret @0x781FF1
+  - **占用槽扫描**（@0x781ff2-0x782048）：xor ebx + rep movsd×0x1b 快照到 [esp+0x1c] + test byte[esp+0x1c],1 回绕循环找空位（0x6C 步长）→ mov ebp,[esp+0x14] test byte[ebp],1 je 0x78219d（源项 +0 未置位分支）
+  - **bl!=0 比较循环**（@0x782048-0x78210f）：xor ebp + rep movsd 快照 → mov al,[esp+0x13] test al je 0x7820ba（反向）→ lea eax,[esp+0x40]/lea ecx,[ebp+0x24] push 两 **call 0x7c8d20**（@0x78207e 串比较 [ebp+0x24] vs 栈槽串）test eax jge 0x782109（>=0 跳过）/ jl 则 inc ebp + add esi,0x6c 继续 → 回绕边界 cmp
+  - **bl==0 反向循环**（@0x7820ba-0x78210f）：同构 **0x7c8d20**（@0x7820cd 串比较）test eax jle 0x782109（<=0 跳过）/ jg 继续
+  - **扩容 + 搬移留洞 + 写回**（@0x78210f-0x78231c）：cmp esi,[0xb77904] jl 跳过 **call 0x7ad9d0**（@0x782124 扩容）+ 二次 **call 0x7ad9d0**（@0x78213c 扩容）→ lea eax,[esi+esi*2] 索引×0x6C 计算 + push 三参 **call 0x7ca090**（@0x782174 搬移留洞）→ mov eax,[0xb77908] lea edi 目标 rep movsd 写回 + inc edx mov [0xb77900],edx pop 各 ret @0x78231C
+  - **源项未置位分支**（@0x78219d-0x78230e）：mov cl,[esp+0x13] 同构双向 **0x7c8d20**（@0x7821e7/0x782239 串比较）循环 + **0x7ad9d0** ×2（@0x78228c/0x7822a4）+ **0x7ca090**（@0x7822dc）+ 写回 + inc 计数 ret @0x78231C
+- 直接 call 11 次/去重 4：0x7aca00/0x7ad9d0/0x7c8d20/0x7ca090——picker callees=4 吻合，差值 0
+- 判类：FUN_00781fb0——场景选项表插入定位器（thiscall 2 栈参单出口；0x7ACA00 空表关联快路径 + dl 方向双态 0x7C8D20 串比较（[ebp+0x24] vs 表中串）+ 占用槽扫描 0x6C 步长 + 0x7AD9D0 扩容 + 0x7CA090 搬移留洞 + rep movsd 写回 + [0xb77900] 计数 inc——无分配/无析构纯定位插入）
+- 语义证据级别：assembly_decompile_verified（partial——插入方向/排序精确语义未确认，无对应已登记 C++ 重写）
+
+## c 路：0x781D20 FUN_00781d20（655B）
+
+- 范围 0x781D20-0x781FAE（单出口 ret @0x781FAE；0x781FAF nop pad，0x781FB0 起为 b 路）
+- thiscall 1 cl 参（cl 存 [esp+0x13]）：**场景选项表重建器**（快照缓冲分配 + 逐项重建 + 清表 + 回调分派 + 扩容搬移 + 三处释放——batch 2607 a 路复制算子同构重建版）：
+  - **分配快照缓冲**（@0x781d20-0x781d7a）：sub esp,0x88 push 各 mov esi,[0xb77900] lea eax,[esi+esi*2] shl eax,2（×12）push eax **call 0x7c8e17**（@0x781d4d 分配 count×0xC）mov ebp,eax test je 释放路径（push [esp+0x20] **call 0x7c8b3d** @0x781d68 → pop 各 add esp,0x88 ret @0x781D7A）
+  - **逐项快照 + 串块重建**（@0x781d7b-0x781e32）：rep stosd×0x1b 清 [esp+0x2c] + cmp esi,ebx jle 0x781e34 + 循环：mov eax,[esp+0x14] test jl + cmp ebx,[0xb77900] jge + mov edx,[0xb77908] lea esi,[eax+edx] rep movsd×0x1b 快照 + push 0xa **call 0x7c8e17**（@0x781dc2 分配 0xA 串块）mov edx,eax mov [ebp-8],ebx/mov [ebp-4],edx test je 0x781e49（释放路径）+ 从 [esp+0x50] 源 repne scasb strlen + rep movsd/movsb 拷串 → mov ecx,[esp+0x2c] and 1 mov [ebp],ecx（项 +0 标志）+ push [esp+0x18]/push eax/lea ecx,[esp+0x20] **call 0x7aca00**（@0x781e0c 关联）→ inc ebx/add ebp,0xc/add edx,0x6c cmp jl 循环
+  - **清表 + 回调分派**（@0x781e34-0x781e77）：mov [0xb77900],0（清表计数）+ mov al,[esp+0x13] test al je 0x781e69 + push 0x781cc0（回调 A）jmp 0x781e6e / push 0x781cf0（回调 B）→ push 0xc/push esi/push ebp **call 0x7c8b48**（@0x781e72 回调分派）
+  - **主循环**（@0x781e90-0x781f63）：mov eax,[ebp]（项 +0 索引）cmp jl + cmp eax,[esp+0x18] jge + lea eax,[eax+eax*2] 索引×0x6C rep movsd 快照 → cmp esi,[0xb77904] jl 跳过 **call 0x7ad9d0**（@0x781ec8 扩容）+ 二次 **call 0x7ad9d0**（@0x781ee0）→ lea eax×0x6C 计算 push 三参 **call 0x7ca090**（@0x781f18 搬移留洞）→ mov ecx,[0xb77908] lea edi 目标 rep movsd 写回 + inc edx mov [0xb77900],edx dec eax jne 循环
+  - **回收尾段**（@0x781f6d-0x781fae）：cmp esi,ebx jle + lea edi,[ebp+4] 循环 mov eax,[edi] je 跳过/push eax **call 0x7c8b3d**（@0x781f7f 逐项释放）+ add edi,0xc dec esi jne + push ebp **call 0x7c8b3d**（@0x781f8e 释放缓冲）+ mov edx,[esp+0x24] push edx **call 0x7c8b3d**（@0x781f9c 释放）→ pop 各 add esp,0x88 ret @0x781FAE
+- 直接 call 12 次/去重 6：0x7aca00/0x7ad9d0/0x7c8b3d/0x7c8b48/0x7c8e17/0x7ca090——picker callees=6 吻合，差值 0
+- 判类：FUN_00781d20——场景选项表重建器（thiscall 1 cl 参单出口；0x7C8E17 分配 count×0xC 快照缓冲 + 逐项 rep movsd×0x1B 快照 + 0xA 串块分配 strcpy + 0x7ACA00 关联 + [0xb77900]=0 清表 + 0x7C8B48 回调分派（0x781cc0/0x781cf0 双回调）+ 0x7AD9D0 扩容 + 0x7CA090 搬移 + 0x7C8B3D 三处释放——batch 2607 a 路复制算子同构，清表+回调分派为本版本特征）
+- 语义证据级别：assembly_decompile_verified（partial——重建/回调触发语义未确认，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2608.py：a 路 11/11（0x7aca00/0x7ad9d0/0x7adc60/0x7ae0c0/0x7b4620/0x7b46f0/0x7b4780/0x7b5a40/0x7b5b30/0x7c8d20/0x7ca090 已登记）、b 路 4/4（0x7aca00/0x7ad9d0/0x7c8d20/0x7ca090 已登记）、c 路 6/6（0x7aca00/0x7ad9d0/0x7c8b3d/0x7c8b48/0x7c8e17/0x7ca090 已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0——三路全 0（batch 2606 b 路 IAT 八枚差值惯性不复现，本批无 IAT/虚表槽间接）
+- 无批内自引用（a/b/c 互不落对方函数体；a 路核验范围终点 0x782BA2 在 batch 2607 已登记函数 0x782BB0 之前，其空表快路径 ret 0x782BEB 不在本批范围）；排队 MISSING 观察项已清零；真 MISSING 队列 3 个不变（0x4f6eb0 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6285 行」= 唯一地址数 = 行数 6307 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x781CC0/0x781CF0（c 路双回调）：0x7C8B48 回调分派器的回调地址（thiscall cl 参选路）——batch 2586-2607 0x7C8B48 分派器族回调池再扩员（已有 0x7835C0/0x7836E0/0x7830C0/0x7831A0）
+- [0xB77E0C]（a/b 路查询门控）：0x7ADC60 查询前置 test + a 路 [esi+4] 计数门控——数据结构观察
+- 0x7AE0C0（a 路哈希桶索引）+ [esi+0x70] 链式下一项（a 路 0x7B4780 匹配链）：[0xB77E0C] 指向的哈希结构——batch 2607-2608 首次出现的哈希索引层，重点观察
+- 表项 +0 索引 / +4 标志 / +0x24 串域（a/b/c 路共用）：rep movsd×0x1B 快照（27 dword=0x6C 元素）+ [ebp+0x24] 比较串——字段语义观察扩员
+- 既有池延续：见 batch 2607 观察项列表（0x7835C0/0x7836E0/0x7830C0/0x7831A0 双回调、[0xB77E48] 分派器、[0xB77900]/[0xB77904]/[0xB77908] 表头族、[0xB77E0C]、表项 +0x57/+0x24 域）+ batch 2606 观察项（0x7896A0、IAT [0x7E1178] 族八枚、[0xB73684] 四槽、装配四全局、[0xB77E60]/[0xB77E64]、串族四枚、DebugLog 串族十一枚、0x78E230/0x78E950、0x77D710、0x84A234、[0xB778D8]/[0xB778E0]）+ batch 2605（0x78DFCC/0x78DFE0 跳转表对 + 0x7E1470 族 + 0xF8 表）+ batch 2604-2586 全量 + 真 MISSING 队列 3 个 + 历史候选池全量延续
