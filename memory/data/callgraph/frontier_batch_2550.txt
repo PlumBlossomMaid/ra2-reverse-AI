@@ -1,0 +1,63 @@
+# frontier batch 2550
+
+日期：2026-10-29
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x4080F0（68B FUN_004080f0 callees=2 deps=60）/ b=0x407780（218B FUN_00407780 callees=9 deps=82）/ c=0x407550（302B FUN_00407550 callees=12 deps=752）——全局定时器系统域三连（a 为超时轮询检查器，b 为定时器系统关停器，c 为定时器系统初始化器；b/c 涉及 [0x87E7F0]/[0x87E810]/[0x87E81C]/[0x87E820] 全局槽族与 [0x7E11DC..0x7E1204] IAT 槽族）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2550{a,b,c}.txt（a 0x100 窗、b/c 0x200 窗读全，尾 ret 确认：a 单出口 ret @0x408133（0x408134-0x40813F nop pad + 0x408140 起 = batch 2549 c 路已登记双字段 getter，批间邻接 + 0x408150 起 [0x87e81c] 门控重置器——batch 2549 观察项续确认）、b 单出口 ret @0x407859（0x40785A-0x40785F nop pad + 0x407860 起大函数（mov [esp+8],ecx 门控 + 0x1b58 上限 clamp + new 0xf8 + rep stosd 0x3e + 0x4072d0 + 0x4036c0 + [eax+0x94]/[+0x90]/[+0x98]/[+0x9c] 四清零 + [ebx+0x3c] 0x4084e0 + [ebx+0x5c] 0x4085a0 + 0x8162c8 串复制（repne scasb+rep movsd+rep movsb）+ [eax+0xc0]=ebx + [ecx+0xb0]=0x4079c0/[+0xb8]=0x407a30/[+0xbc]=0x407a60 三函数指针 + 0x4087f0——定时器节点构造大函数，观察项续）+ 0x407770 起 [0x87e81c] 门控 + 0x7e11e8/0x7e11ec 双向重置器——观察项）、c 多出口 ret @0x407622（早期失败返 0）/ret @0x40767D（成功返 1；0x40767E-0x40767F nop pad + **0x407680 起线程回调（[edi+0x18]=1 + [edi+0x8]=0 + [edi] cmp jne + 0x4093b0 时间戳 + 0x403920 + [0x87e7f8] 锁 + 0x87e810 链遍历（byte [esi+0xc] test 4 + 0x408f80 批量读取（batch 2545 c 路已登记 callee 复用）+ [0xb04bec] 标志对 + [esi+0x9c] 计数递减 + [esi+0xc] and ~4 + 0x4073e0）——定时器线程回调大函数，观察项**））
+核验：.qwen/tmp/_check_callees2550.py；a 2/2、b 3/3、c 7/7；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6133 → 6136（三行全新增，ADD 3）
+
+## a 路：0x4080F0 FUN_004080f0（68B）
+
+- 范围 0x4080F0-0x408133（单出口 ret @0x408133；0x408134-0x40813F nop pad + 0x408140 起 = batch 2549 c 路已登记 0x408140（双字段 getter），批间邻接）
+- thiscall 无栈参（ret 空）：**超时轮询检查器**（64 位时间戳累计 + 超时处理循环）：
+  - push ebp/esi/edi → mov esi,ecx → **call 0x4093b0**（@0x4080f5 取当前 64 位时间戳 → ebp=低/edi=高）→ **mov eax,[esi+0x14] → add ebp,[eax+0x20] / adc edi,[eax+0x24]**（@0x4080fc-0x408106 目标时刻 = 当前 + 偏移 64 位加）
+  - **test byte [esi+0xc],1 je 0x408130**（@0x408107 标志位 0 → 直返）→ mov eax,[esi+0x14] → mov ecx,[eax+0x14] / mov edx,[eax+0x18] → **cmp ecx,edx je 0x408130**（相等 → 直返）
+  - **超时轮询循环**（@0x40811a-0x40812e）：**call 0x4093b0**（@0x40811a 再取当前时间）→ **cmp edx,edi ja 0x408130**（高字超过目标 → 提前退出）→ jb 0x408129 / cmp eax,ebp jae 0x408130（低字未到 → 循环）→ **call 0x48d080**（@0x408129 超时处理回调）→ **jmp 0x408107**（回到标志检查循环）
+  - 正常尾 ret @0x408133
+- 直接 call 3 次/去重 2：0x4093b0×2、0x48d080×1——picker callees=2 吻合，差值 0
+- 判类：FUN_004080f0——超时轮询检查器（0x4093b0 取 64 位时间戳 + [+0x14]+0x20/+0x24 目标时刻累计 + [esi+0xc] bit0 门控 + [+0x14] 双字段相等跳过 + 循环 0x48d080 超时处理直至到达目标）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x407780 FUN_00407780（218B）
+
+- 范围 0x407780-0x407859（单出口 ret @0x407859；0x40785A-0x40785F nop pad + 0x407860 起定时器节点构造大函数（上限 0x1b58 clamp + new 0xf8 + 0x4072d0 + 0x4036c0 + 四清零 + 0x4084e0/0x4085a0 + 0x8162c8 串复制 + 三函数指针 0x4079c0/0x407a30/0x407a60 + 0x4087f0——观察项续）+ 0x407770 起双向重置器——观察项）
+- thiscall 无栈参（ret 空）：**定时器系统关停器**（全局锁等待 + 链遍历释放 + 标志复位）：
+  - **mov eax,[0x87e81c]（系统标志）test eax je 0x407859**（未初始化直退）→ **mov eax,[0x87e820] test eax je 0x4077e5**（二级标志）
+  - **关停准备**（@0x407797-0x4077db）：**[0x87e770]=1** → mov eax,[0x87e778] test jne 0x4077bd → **锁等待循环**（@0x4077b0：push 0 → call [0x7e11f0]（IAT 槽，@0x4077b2）→ [0x87e778] test je 0x4077b0 旋等）→ **push 0x1388（5000）→ push [0x87e7f0] → call [0x7e11dc]**（@0x4077c8 休眠）→ **push [0x87e7f0] → call [0x7e11e0]**（@0x4077d5 关联挂起）→ **[0x87e820]=0**
+  - **链遍历**（@0x4077e5-0x407841）：mov ecx,0x87e810 → **call 0x4073c0**（@0x4077ea 查首项）→ esi test je 0x407843 → **逐项循环**：mov eax,[esi+0x88] test jne 0x40782a（跳过已释放）→ mov eax,[esi+0x14] test je 0x40782a → **push 0x87e7f8 → call edi（=[0x7e11e8] 锁）→ mov ecx,[esi+0x14] → call 0x4025b0**（@0x40781e 项释放）→ **push 0x87e7f8 → call ebx（=[0x7e11ec] 解锁）** → **mov ecx,esi → call 0x407a90**（@0x40782c 项复位）→ mov ecx,0x87e810 → call 0x4073c0（@0x407836 重查首）→ esi test jne 0x407803 循环
+  - **关停收口**（@0x407843-0x407859）：**push 0x87e7f8 → call [0x7e11e4]**（@0x407848 锁系收口）→ **[0x87e81c]=0** → ret @0x407859
+- 直接 call 4 次/去重 3：0x4073c0×2、0x4025b0×1、0x407a90×1——**picker callees=9 vs 核验 3，差值 6**（picker 计入 [0x7e11dc]/[0x7e11e0]/[0x7e11e4]/[0x7e11e8]/[0x7e11ec]/[0x7e11f0] 六个 IAT 槽的 `call dword ptr [0x7e11xx]` 内存间接调用；该类按惯例不计入直接 callee，以机器码直接 call=3 为准——与 batch 2545 a 路 IAT 差值同惯例）
+- 判类：FUN_00407780——定时器系统关停器（[0x87e81c]/[0x87e820] 双标志门控 + [0x87e778] 锁旋等（[0x7e11f0]）+ 0x1388 休眠 + [0x87e7f0] 关联 + 0x87e810 链遍历（0x4073c0 查首 + 0x4025b0 项释放 + 锁对 [0x7e11e8]/[0x7e11ec] + 0x407a90 复位）+ [0x7e11e4] 收口 + [0x87e81c]=0）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x407550 FUN_00407550（302B）
+
+- 范围 0x407550-0x40767D（多出口 ret @0x407622（早期失败返 0）/ret @0x40767D（成功返 1）；0x40767E-0x40767F nop pad + 0x407680 起定时器线程回调（[edi+0x18]=1 + [edi+0x8]=0 + [edi] cmp jne 0x407774 + 0x4093b0 时间戳 + 0x403920 + [0x87e7f8] 锁 + 0x87e810 链遍历（byte [esi+0xc] test 4 + **0x408f80 批量读取（batch 2545 c 路已登记 callee 复用）** + [0xb04bec] 标志对 + [esi+0x9c] 计数递减 + [esi+0xc] and 0xfb + 0x4073e0 推进）——定时器线程回调大函数，观察项）
+- thiscall 无栈参（ret 空）：**定时器系统初始化器**（全局槽族装配 + 工作线程创建）：
+  - **sub esp,0x400**（@0x407550 大栈帧）→ mov ecx,0x87e810 → **call 0x4072c0**（@0x40755c 链头构造）→ push 0x87e7f8 → **call [0x7e11f4]**（@0x407566 锁槽初始化）
+  - **全局槽族清零/初值**（@0x40756c-0x407590）：[0x87e770]=0 / [0x87e778]=0 / [0x87e788]=0 / **[0x87e780]=0x3e8**（1000）/ [0x87e784]=0 / [0x87e774]=0
+  - **子对象装载**（[0x87e790]）：mov ecx,0x87e790 → **call 0x403820**（@0x40759b 初始化）→ push [0x87e784]/push [0x87e780] → **call 0x403870**（@0x4075b2 装载）→ **push 0/push 4/push [0x87e784]/push [0x87e780] → call 0x7c8ec0**（@0x4075c7 64 位换算）→ **call 0x4038a0**（@0x4075d3）→ 同参第二组 → **call 0x7c8ec0 → call 0x4038c0**（@0x4075e9/@0x4075f5）
+  - **线程创建**（@0x4075fa-0x407618）：**push 0x87e7f4/push 0/push 0x87e770/push 0x407680（回调）/push 0x1000（栈）/push 0 → call [0x7e11f8]**（@0x407610 建线程）→ **[0x87e7f0]=eax** → test jne 0x407629（成功）→ **xor eax,eax + ret** @0x407622（失败返 0）
+  - **成功路径**（@0x407629-0x40767d）：**push 2/push eax → call [0x7e11fc]**（@0x40762c 线程优先级）→ test eax jne 0x407667 → 失败探测段（@0x407636-0x407664：lea [esp+8] → push 0x400/push eax/push 0 → call [0x7e1200] → push eax/push 0/push 0x1000 → call [0x7e1204] → lea ecx,[esp+4]/push ecx/push 0x81628c → **call 0x4068e0**（@0x40765f 日志）→ add esp,8）
+  - **收口**（@0x407667-0x40767d）：**mov eax,1 → [0x87e820]=1 → [0x87e81c]=1** → add esp,0x400 → ret @0x40767d
+- 直接 call 8 次/去重 7：0x403820×1、0x403870×1、0x7c8ec0×2、0x4038a0×1、0x4038c0×1、0x4068e0×1、0x4072c0×1——**picker callees=12 vs 核验 7，差值 5**（picker 计入 [0x7e11f4]/[0x7e11f8]/[0x7e11fc]/[0x7e1200]/[0x7e1204] 五个 IAT 槽；与 b 路同惯例不计）
+- 判类：FUN_00407550——定时器系统初始化器（sub esp,0x400 + 0x4072c0 链头构造 + 锁槽 [0x7e11f4] + 全局槽族 [0x87e770..0x87e788] 清零 + [0x87e780]=0x3e8 + [0x87e790] 子对象 0x403820/0x403870/0x4038a0/0x4038c0 四装载 + 0x7c8ec0 换算 + [0x7e11f8] 建线程（0x407680 回调）+ [0x7e11fc] 优先级 + 失败段 0x7e1200/0x7e1204/0x4068e0 + [0x87e81c]=[0x87e820]=1）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2550.py：a 路 2/2（0x4093b0/0x48d080 已登记）、b 路 3/3（0x4025b0/0x4073c0/0x407a90 已登记）、c 路 7/7（0x403820/0x403870/0x4038a0/0x4038c0/0x4068e0/0x4072c0/0x7c8ec0 已登记）——三路全 PASS
+- **picker callees vs 核验差值：a 差 0、b 差 6、c 差 5**（b/c 差值全为 [0x7e11xx] IAT 槽内存间接 `call dword ptr`，picker 计入而核验按机器码直接 call 不计——与 batch 2545 a 路 IAT 差值同一惯例；非 MISSING）
+- 无批内自引用（a/b/c 互不落对方函数体；a 尾 0x408133 与 0x408140 已登记 getter、b 尾 0x407859 与 0x407860 构造大函数均为批间邻接）；无 MISSING（真 MISSING 队列 4 个不变：0x4f6eb0 / 0x406B10 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6111 行」= 唯一地址数 = 行数 6133 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x407860（b 路下函数）：**定时器节点构造大函数**（[esp+8] 门控 + 0x1b58 上限 clamp + 0x7c8e17 new 0xf8 + rep stosd 0x3e + 0x4072d0 + 0x4036c0 + [eax+0x94]/[+0x90]/[+0x98]/[+0x9c] 四清零 + [ebx+0x3c] 0x4084e0 + [ebx+0x5c] 0x4085a0 + 0x8162c8 串复制 + [eax+0xc0]=ebx 回链 + [ecx+0xb0]=0x4079c0/[+0xb8]=0x407a30/[+0xbc]=0x407a60 三函数指针 + 0x4087f0）——后续批次优先跟进
+- 0x407680（c 路下函数）：**定时器线程回调**（[edi+0x18]=1 + 0x4093b0 时间戳 + 0x403920 + [0x87e7f8] 锁 + 0x87e810 链遍历（test byte [esi+0xc],4 + **0x408f80 批量读取** + [0xb04bec] 标志对 + [esi+0x9c] 计数递减 + [esi+0xc] and 0xfb + 0x4073e0））——后续批次优先跟进
+- 0x407770（b 路下下函数）：[0x87e81c] 门控 + 0x7e11e8/0x7e11ec 双向重置器——观察项
+- 0x7E11DC/0x7E11E0/0x7E11E4/0x7E11E8/0x7E11EC/0x7E11F0/0x7E11F4/0x7E11F8/0x7E11FC/0x7E1200/0x7E1204（b/c 路 IAT 槽族）：定时器系统 11 连 IAT 槽（休眠/挂起/锁/线程/优先级/探测）——数据常量观察
+- 0x87E770/0x87E778/0x87E780/0x87E784/0x87E788/0x87E790/0x87E7F0/0x87E7F4/0x87E7F8/0x87E810/0x87E81C/0x87E820（b/c 路全局槽族）：定时器系统十二槽（锁/标志/链头/回调柄）——与 batch 2544 八槽区、2545 时基四槽同区——全局对象区布局观察
+- 0x4025b0/0x407a90/0x48d080（b/a 路 callee 组）：项释放/项复位/超时回调——候选池
+- 既有池延续：见 batch 2549 观察项列表（0x4083D0 0x4000 变体 + 0x408150 配置重置器 + 0x408460..0x4084E0 生命周期族 + 0x87e81c/0x87e810 全局装配双槽 + 0x4073c0/0x4073e0/0x407170 三件套 + batch 2548/2547/2546/2545/2544/2543/2542/2541/2540 全量观察项 + 真 MISSING 队列 4 个 + 历史候选池全量延续）
