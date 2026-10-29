@@ -1,0 +1,65 @@
+# frontier batch 2588
+
+日期：2026-10-30
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 0，落回 0x7B 段 ranking 序）
+三路：a=0x7B2050（144B FUN_007b2050 callees=2 deps=0）/ b=0x7B1FD0（113B FUN_007b1fd0 callees=1 deps=0）/ c=0x7B1D10（201B FUN_007b1d10 callees=1 deps=0，picker 带名 __declspec::DiscardOutBuffers）——三路同属 0x7B 段网络/附挂对象运行时族（a 为校验和验证器——0x64DE80 逐 dword 累加 + 对照 [+0x1C] 存根，b 为同族校验和计算器——结果直写 [+0x1C] 槽，a/b 互逆成对；c 为双缓冲队列清空器——[+0x24]/[+0x3c] 双子数组逐项释放/左移，与 batch 2587 b/c 的槽分配器 [+0x3f05x] 计数区、a 尾 0x7B20E0 槽分配器变体 [+0x3f060]/[+0x3f054]/0x15065 槽标志完全同一对象族）；a 尾 0x7B20E0 起 = batch 2587 b 路已登记 callee 的槽分配器变体（0x7B20E0 本体：[[+0x3f060] 计数满 0x80 new 0x2A0B 区块 or 游标 [+0x3f054] 回绕扫描 0x15065 槽标志]/[esp+4] 方向选择，观察项确认）+ 0x7B2194 起同构第二路（观察项）、b 尾 0x7B2041 起 nop pad + 0x7B2050 起 = a 路（背靠背邻接）、c 尾 0x7B1DE0 起状态自检原语（0x7CA650 构造 + 0x4068E0 DebugLog + [+0x3f068] 位标志多分支，观察项）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2588{a,b,c}.txt（a 0x100 窗读全、b 0x100 窗读全、c 0x100 窗读全，尾 ret 确认：a 单出口 ret 4 @0x7B20DD（0x7B20DE-0x7B20DF nop pad + 0x7B20E0 起槽分配器变体 = batch 2587 b 路 callee 已登记，观察项确认）、b 单出口 ret 4 @0x7B203E（0x7B2041-0x7B204F nop pad + 0x7B2050 起 = a 路，背靠背邻接）、c 单出口 ret @0x7B1DD8（0x7B1DD9-0x7B1DDF nop pad + 0x7B1DE0 起状态自检原语观察项））
+核验：.qwen/tmp/_check_callees2588.py；a 2/2、b 1/1、c 1/1；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6247 → 6250（三行全新增，ADD 3）
+
+## a 路：0x7B2050 FUN_007b2050（144B）
+
+- 范围 0x7B2050-0x7B20DD（单出口 ret 4 @0x7B20DD；0x7B20DE-0x7B20DF nop pad + 0x7B20E0 起槽分配器变体（[[esp+4]==0 → [+0x3f060] 计数满 0x80 时 0x7C8E17 new 0x2A0B + [+0x16]/[+0x15] 置位，常规 [+0x3f054] 游标+1 回绕扫描 [+0x15065] 忙标志 = batch 2587 c 路 0x7B2240 的 [+0x3f05c]/[+0x3f050]/0x65 镜像格局）——batch 2587 b 路已登记 callee，观察项确认）+ 0x7B2194 起同构第二路（[esp+4]!=0 分支，观察项））——0x7B 段标准序
+- cdecl 1 栈参（[esp+8]=目标对象指针，ret 4 返 1/0）：**校验和验证器**（b 路计算器的对照方）：
+  - push ebx → mov ebx,[esp+8]（对象指针）→ **mov eax,[ebx+0x10] cmp eax,0x280 jge 0x7b20da**（尺寸 >= 0x280=640 直接返 0——上限门控）
+  - **cdq and edx,3 add eax,edx sar eax,2**（向上取整 dword 数）→ push esi/edi → xor edi,edi → lea esi,[ebx+0x20]（数据区）→ mov [esp+0x10],edi（累加器局部清零）
+  - **主循环**（@0x7b2077-0x7b2094）：mov edx,[esi] lea ecx,[esp+0x10] add esi,4 → **call 0x64de80**（@0x7b2080 逐 dword 累加）→ inc edi 重算 dword 数 cmp edi,eax jl 循环
+  - **尾字节**（@0x7b2096-0x7b20b5）：mov eax,[ebx+0x10] and eax,3 je 0x7b20ba → shl eax,3（位数）mov ecx,0x20 sub ecx,eax（移位数）or edx,0xffffffff mov eax,[esi] shr edx,cl（构造掩码）and edx,eax lea ecx,[esp+0x10] → **call 0x64de80**（@0x7b20b5 掩码尾 dword 累加）
+  - **对照**（@0x7b20ba-0x7b20dd）：mov ecx,[esp+0x10]（计算值）mov eax,[ebx+0x1c]（存根 [+0x1C]）cmp ecx,eax jne 0x7b20cd → 相等 mov al,1 pop ebx ret 4 @0x7b20ca / **不等 push 0x84e040 call 0x4068e0**（@0x7b20d2 DebugLog 0x84E040 串）add esp,4 xor al,al pop ebx ret 4 @0x7b20dd
+- 直接 call 不定次/去重 2：0x64de80（主循环 N 次 + 尾字节）、0x4068e0（不相符 DebugLog）——picker callees=2 吻合，差值 0
+- 判类：FUN_007b2050——校验和验证器（cdecl 1 栈参 ret 4 返 1/0；[+0x10] 尺寸 >= 0x280 上限门控直退 0；向上取整 dword 数逐 dword 走 0x64DE80 累加到局部累加器，尾字节构造掩码补累；与 [+0x1C] 存根相等返 1，不等 0x4068E0 DebugLog 0x84E040 串返 0——b 路计算器的对照方）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x7B1FD0 FUN_007b1fd0（113B）
+
+- 范围 0x7B1FD0-0x7B203E（单出口 ret 4 @0x7B203E；0x7B2041-0x7B204F nop pad + 0x7B2050 起 = a 路，背靠背邻接）——0x7B 段标准序
+- cdecl 1 栈参（[esp+0x14]=目标对象指针，ret 4）：**校验和计算器**（a 路验证器的计算方——结果直写 [+0x1C] 槽）：
+  - push ebx/ebp/esi/edi 四寄存器 → mov edi,[esp+0x14]（对象指针）→ xor ebx,ebx → **mov eax,[edi+0x10] lea ebp,[edi+0x1c] cdq and edx,3 mov dword[ebp],0 add eax,edx lea esi,[edi+0x20] sar eax,2**（[+0x1C] 槽清零 + 向上取整 dword 数 + 数据区）
+  - **主循环**（@0x7b1ff7-0x7b2012）：mov edx,[esi] mov ecx,ebp（目标=[+0x1C] 槽）add esi,4 → **call 0x64de80**（@0x7b1ffe 逐 dword 累加）→ inc ebx 重算 dword 数 cmp ebx,eax jl 循环
+  - **尾字节**（@0x7b2014-0x7b2035）：mov edi,[edi+0x10] and edi,3 je 0x7b203a → lea eax,[edi*8] mov ecx,0x20 sub ecx,eax mov eax,[esi] or edx,0xffffffff shr edx,cl mov ecx,ebp and edx,eax → **call 0x64de80**（@0x7b2035 掩码尾 dword 累加）
+  - pop edi/esi/ebp/ebx → ret 4 @0x7b203e
+- 直接 call 不定次/去重 1：0x64de80（主循环 N 次 + 尾字节）——picker callees=1 吻合，差值 0
+- 判类：FUN_007b1fd0——校验和计算器（cdecl 1 栈参 ret 4；[+0x10] 尺寸向上取整 dword 数逐 dword 走 0x64DE80 累加到 [+0x1C] 槽（首步清零），尾字节构造掩码补累；无对照无 DebugLog——a 路验证器的计算方，结果直写 [+0x1C] 存根）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x7B1D10 FUN_007b1d10（201B）
+
+- 范围 0x7B1D10-0x7B1DD8（单出口 ret @0x7B1DD8；0x7B1DD9-0x7B1DDF nop pad + 0x7B1DE0 起状态自检原语观察项（0x7CA650 构造 + 0x4068E0 DebugLog 0x84E028/0x84E000/… 串 + [+0x3f068] 位标志多分支））——0x7B 段标准序
+- thiscall this=esi（ret 空）：**双缓冲队列清空器**（picker 带名 __declspec::DiscardOutBuffers——[+0x24] 出缓冲数组 + [+0x3c] 入缓冲数组两段同构）：
+  - **第一段（出缓冲 [+0x24] 数组）**（@0x7b1d16-0x7b1d68）：cmp [esi+0x30],ebx je 0x7b1d6a（计数 0 跳过）→ 循环 @0x7b1d1b：mov eax,[esi+0x24] mov eax,[eax]（数组首元素指针）**cmp byte[eax+0x16],bl je 0x7b1d30**（[+0x16] 标志门控）
+    - 标志置位 → **push eax call 0x7c8b3d**（@0x7b1d26 释放首元素）add esp,4 → jmp 0x7b1d40
+    - 标志清零 → mov byte[eax+0x15],bl（[+0x15] 清零）mov eax,[esi+0x3f060] dec eax mov [esi+0x3f060],eax（[+0x3F060] 计数递减）
+    - @0x7b1d40：mov eax,[esi+0x30] cmp eax,ebx jle 0x7b1d65 → lea ecx,[eax-1] mov [esi+0x30],ecx（计数-1）→ **左移循环**（@0x7b1d53-0x7b1d63）：mov ecx,[esi+0x24] inc eax mov edx,[ecx+eax*4] mov [ecx+eax*4-4],edx（数组左移一格删首元素）cmp eax,计数 jl 循环 → cmp [esi+0x30],ebx jne 0x7b1d1b（计数非 0 继续外层循环）
+  - @0x7b1d6a：**mov [esi+0x3f060],ebx mov [esi+0x3f054],ebx**（清零 + 游标）
+  - **第二段（入缓冲 [+0x3c] 数组）**（@0x7b1d76-0x7b1dc8）：cmp [esi+0x48],ebx je 0x7b1dca → 循环 @0x7b1d7b 逐字节同构（[+0x3c] 数组 + [+0x48] 计数 + [+0x3F064] 计数递减 + 0x7C8B3D 释放 + 左移）→ 循环至计数 0
+  - @0x7b1dca：**mov [esi+0x3f064],ebx mov [esi+0x3f058],ebx**（清零 + 游标）→ pop esi/ebx ret @0x7b1dd8
+- 直接 call 不定次/去重 1：0x7c8b3d（两段循环释放）——picker callees=1 吻合，差值 0
+- 判类：FUN_007b1d10——双缓冲队列清空器（thiscall ret 空；[+0x24]/[+0x3c] 双缓冲数组两段同构逐项处理：首元素 [+0x16] 标志置位则 0x7C8B3D 释放、清零则 [+0x15] 置 0 + [+0x3F060]/[+0x3F064] 计数递减；数组左移删首元素 + 计数-1 循环至 0；收尾清零计数与游标（[+0x3F060]/[+0x3F054] 和 [+0x3F064]/[+0x3F058]）——batch 2587 b/c 槽分配器同一对象族的释放侧；picker 带名 __declspec::DiscardOutBuffers）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2588.py：a 路 2/2（0x64de80/0x4068e0 已登记）、b 路 1/1（0x64de80 已登记）、c 路 1/1（0x7c8b3d 已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0（a/b/c 均无间接差值）
+- 无批内自引用（a/b/c 互不落对方函数体；b 尾 0x7B2050 = a 路、a 尾 0x7B20E0 = 槽分配器变体（batch 2587 b 路 callee 已登记）+ 0x7B2194 同构第二路、c 尾 0x7B1DE0 状态自检原语，均为批间邻接）；排队 MISSING 观察项已清零；真 MISSING 队列 3 个不变（0x4f6eb0 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6225 行」= 唯一地址数 = 行数 6247 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x7B20E0（a 路下函数）：槽分配器变体·方向参数版（[esp+4]==0 → [+0x3f060] 计数满 0x80 时 new 0x2A0B + [+0x16]/[+0x15] 置位、常规 [+0x3f054] 游标+1 回绕扫描 [+0x15065] 忙标志；[esp+4]!=0 → 0x7B2194 同构第二路）——batch 2587 c 路 0x7B2240 的镜像姊妹（[+0x3f05c]/[+0x3f050]/0x65 vs [+0x3f060]/[+0x3f054]/0x15065），**已登记**（batch 2587 b 路 callee），本批仅确认语义归属
+- 0x7B2194（a 路下下函数）：槽分配器同构第二路（方向!=0 分支）——观察
+- 0x7B1DE0（c 路下函数）：状态自检原语（0x7CA650 构造 + 0x4068E0 DebugLog 0x84E028/0x84E000/… 串 + [+0x3f068] 位标志多分支）——原语族观察
+- 0x64DE80（a/b/批 2585 共用）：校验和累加原语（逐 dword 混合 + 目标槽指针参数）——原语族（已登记）
+- 0x84E040（a 路串常量）：校验失败 DebugLog 串——串常量观察
+- [+0x3F050]~[+0x3F06C] 区（三批连续出现）：UDP 对象槽表/计数/游标/位标志区（[+0x3F050] 游标、[+0x3F054] 游标、[+0x3F058] 游标、[+0x3F05C] 计数、[+0x3F060] 计数、[+0x3F064] 计数、[+0x3F068] 位标志、[+0x3F06C] 默认句柄）——数据结构观察
+- 既有池延续：见 batch 2587 观察项列表（0x7B26D0 双栈参调用器 + 0x7B2720 [0xB780A0] setter + 0x7B24E0 同构变体 + 0x7B22E0 [0x87F770] 门控装载器 + 0x84DDA0/0x84DD9C/0x84E0D8/0x84E0B8/0x84E080/0x84E060 串常量 + 0x7E14A4 IAT 槽 + 0x54F000 处理器）+ batch 2586 观察项列表（0x7B2870 标志门控索引 getter + 0x7B2890 [+4] 表项 getter + 0x7B2740 xor eax,eax 桩 + 0x7B2750 大区域 + 0x7F79DC 回调槽 + 0xB780A0 全局值）+ batch 2585 观察项列表（0x7B2BA0 双常量浮点计算器 + 0x7B29C0 索引查找器 + 0x7F7A3C 虚表 + 0x7E1710/0x7E1708 浮点常量 + 0xB780C8 结果槽）+ batch 2584-2540 全量观察项 + 真 MISSING 队列 3 个 + 历史候选池全量延续
