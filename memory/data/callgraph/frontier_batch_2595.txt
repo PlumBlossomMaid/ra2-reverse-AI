@@ -1,0 +1,61 @@
+# frontier batch 2595
+
+日期：2026-10-30
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 0，落回 0x7A 段 ranking 序——batch 2591/2592/2593/2594 同段连续）
+三路：a=0x7ADA70（142B FUN_007ada70 callees=2 deps=0）/ b=0x7AD930（150B FUN_007ad930 callees=2 deps=0）/ c=0x7AD790（407B FUN_007ad790 callees=3 deps=0）——三路同属 0x7A 段 VectorClass 容器域（a/b 为 VectorClass Grow 收缩扩容双副本——`计数×3 <= 容量` 门控 + 新容量=max(10, 容量/2) 收缩策略，a 元素 108B、b 元素 268B；c 为 VectorClass EnsureCapacity+插入·268B 元素版——双段扩容判定 + 0x7CA090 后移 + rep movsd 0x43 dword 拷入）；a 尾 0x7ADB00 起同族函数观察项（连续 0x7A 段容量管理族）、b 尾 0x7AD9D0 起 nop pad、c 尾 0x7AD927-0x7AD92F nop pad + 0x7AD930 起 = b 路（背靠背邻接）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2595{a,b,c}.txt（a 0x90 窗读全、b 0xA0 窗读全、c 0x1C0 窗读全，尾 ret 确认：a 单出口 ret @0x7ADAFC（0x7ADAFE-0x7ADAFF nop pad + 0x7ADB00 起同族函数观察项——0x7ADB00 由 0x7ADA70 下邻承接容量管理族）、b 单出口 ret @0x7AD9C4（0x7AD9C6-0x7AD9CF nop pad + 0x7AD9D0 起观察项）、c 单出口 ret 8 @0x7AD923（0x7AD927-0x7AD92F nop pad + 0x7AD930 起 = b 路，背靠背邻接））
+核验：.qwen/tmp/_check_callees2595.py；a 2/2、b 2/2、c 3/3；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6268 → 6271（三行全新增，ADD 3）
+
+## a 路：0x7ADA70 FUN_007ada70（142B）
+
+- 范围 0x7ADA70-0x7ADAFC（单出口 ret @0x7ADAFC；0x7ADAFE-0x7ADAFF nop pad + 0x7ADB00 起同族函数观察项）——0x7A 段标准序
+- thiscall 无栈参（ecx=this，ret 空）：**VectorClass Grow·108B 元素版**（收缩扩容——`计数×3 <= 容量` 时收缩）：
+  - push ecx/ebx/ebp → mov ebp,ecx → **mov eax,[ebp] mov ecx,[ebp+4] lea eax,[eax+eax*2] cmp eax,ecx jle 0x7ada88**（计数×3 <= 容量 跳收缩）→ pop 各 pop ret @0x7ada87（不收缩返 0）
+  - **新容量计算**（@0x7ada88-0x7adaa4）：mov eax,ecx cdq sub eax,edx mov ebx,eax sar ebx,1（容量/2）**cmp ebx,0xa jge 0x7ada9b mov ebx,0xa**（最小 10）→ cmp ebx,ecx jl 0x7adaa5（新容量 < 旧容量才续）→ 否则 pop 各 pop xal ret（不缩返 0）
+  - **lea eax,[ebx+ebx*2] lea ecx,[eax+eax*8] shl ecx,2**（新容量×108）push ecx **call 0x7c8e17**（@0x7adab0 分配 108×新容量）→ **mov esi,[ebp+8] test esi je 0x7adae1**（无旧表跳过拷贝）
+  - **拷贝旧表**（@0x7adac3-0x7adae0）：mov ecx,[ebp] lea ecx,[ecx+ecx*2]（计数×3）lea ecx,[ecx+ecx*8]（×9=计数×27）shl ecx,2（×4=计数×108）→ rep movsd + rep movsb（@0x7adad7-0x7adade 拷旧数据）
+  - **mov eax,[ebp+8] push eax call 0x7c8b3d**（@0x7adae5 释放旧表）→ mov ecx,[esp+0x10] mov [ebp+8],ecx mov [ebp+4],ebx（新表/新容量）→ pop 各 pop mov al,1 ret @0x7adafd
+- 直接 call 2 次/去重 2：0x7c8e17（分配）、0x7c8b3d（释旧表）——picker callees=2 吻合，差值 0
+- 判类：FUN_007ada70——VectorClass Grow·108B 元素版（thiscall 无栈参 ret 空；`计数×3 <= 容量` 门控直退返 0；否则新容量 = max(10, 容量/2)（收缩策略）→ 仅当新容量 < 旧容量时 0x7C8E17 分配 108×新容量 + rep movsd/movsb 拷旧（计数×108）+ 0x7C8B3D 释放旧表 + 容量/表更新返 1——元素 108B（含 0x6C 子结构）VectorClass 收缩扩容路径）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x7AD930 FUN_007ad930（150B）
+
+- 范围 0x7AD930-0x7AD9C4（单出口 ret @0x7AD9C4；0x7AD9C6-0x7AD9CF nop pad + 0x7AD9D0 起观察项）——0x7A 段标准序
+- thiscall 无栈参（ecx=this，ret 空）：**VectorClass Grow·268B 元素版**（与 a 路 0x7ADA70 同构——仅元素尺寸 268B 与门控差异）：
+  - push ecx/ebx/ebp → mov ebp,ecx → **mov eax,[ebp] mov ecx,[ebp+4] lea eax,[eax+eax*2] cmp eax,ecx jle 0x7ad948**（计数×3 <= 容量 跳收缩）→ 不收缩返 0
+  - **新容量计算**（@0x7ad948-0x7ad964）：mov eax,ecx cdq sub eax,edx mov ebx,eax sar ebx,1（容量/2）cmp ebx,0xa jge 0x7ad95b mov ebx,0xa（最小 10）→ cmp ebx,ecx jl 0x7ad965（新容量 < 旧容量才续）→ 否则返 0
+  - **mov ecx,ebx shl ecx,5 add ecx,ebx lea edx,[ebx+ecx*2] shl edx,2**（新容量×268）push edx **call 0x7c8e17**（@0x7ad974 分配 268×新容量）→ **mov esi,[ebp+8] test esi je 0x7ad9a9**（无旧表跳过）
+  - **拷贝旧表**（@0x7ad987-0x7ad9a8）：mov ecx,[ebp] mov edx,ecx shl edx,5 add edx,ecx lea ecx,[ecx+edx*2] shl ecx,2（计数×268）→ rep movsd + rep movsb
+  - **mov ecx,[ebp+8] push ecx call 0x7c8b3d**（@0x7ad9ad 释放旧表）→ mov edx,[esp+0x10] mov [ebp+8],edx mov [ebp+4],ebx（新表/新容量）→ pop 各 pop mov al,1 ret @0x7ad9c5
+- 直接 call 2 次/去重 2：0x7c8e17、0x7c8b3d——picker callees=2 吻合，差值 0
+- 判类：FUN_007ad930——VectorClass Grow·268B 元素版（thiscall 无栈参 ret 空；与 0x7ADA70 逐结构同构（计数×3<=容量 门控 + 新容量=max(10,容量/2) + 0x7C8E17 分配 268×新容量 + rep movsd/movsb 拷旧 + 0x7C8B3D 释放旧表），区别为元素尺寸 268B（含 0x10C 子结构）与 p1 拷贝位移序列——268B 元素 VectorClass 收缩扩容路径）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x7AD790 FUN_007ad790（407B）
+
+- 范围 0x7AD790-0x7AD923（单出口 ret 8 @0x7AD923；0x7AD927-0x7AD92F nop pad + 0x7AD930 起 = b 路，背靠背邻接）——0x7A 段标准序
+- thiscall 1 栈参（ecx=this/[esp+0x14]=请求容量/[esp+0x20]=插入源指针，ret 8 返布尔）：**VectorClass EnsureCapacity+插入·268B 元素版**：
+  - push ecx/ebx/esi/edi → mov ebx,ecx → **mov esi,[esp+0x14] mov ecx,[ebx] cmp esi,ecx jle 0x7ad7a6 mov [esp+0x18],ecx mov esi,ecx**（请求容量钳到计数）
+  - **第一段扩容判定**（@0x7ad7a6-0x7ad835）：mov eax,[ebx+4] cmp esi,eax jl 0x7ad832 / cmp ecx,eax jl 0x7ad832（容量足够跳过）→ **新容量 = max(10, 计数×2)**（@0x7ad7b6-0x7ad7c1）→ **mov eax,ebp shl eax,5 add eax,ebp lea esi,[ebp+eax*2] shl esi,2**（新容量×268）→ push esi **call 0x7c8e17**（@0x7ad7d2 分配）→ **rep stosd + rep stosb**（@0x7ad7e2-0x7ad7f0 清零）→ **mov esi,[ebx+8] test esi je 0x7ad818**（无旧表跳过）→ rep movsd/movsb 拷旧（计数×268）→ **mov eax,[ebx+8] push eax call 0x7c8b3d**（@0x7ad81c 释放旧表）→ mov [ebx+8],新表 mov [ebx+4],ebp
+  - **第二段扩容判定**（@0x7ad832-0x7ad8b6）：mov eax,[ebx] mov ecx,[ebx+4] cmp eax,ecx jl 0x7ad8b7 → 同构再扩容（@0x7ad83b-0x7ad8b4，与第一段逐字节同构：新容量=max(10,计数×2) + 0x7C8E17 + 清零 + 拷旧 268×计数 + 0x7C8B3D 释放）——双保险判定
+  - **插入位后移**（@0x7ad8b7-0x7ad8f7）：mov ecx,[ebx] cmp esi,ecx jge 0x7ad8fa（请求容量 >= 计数无需后移）→ **shl edx,5 add edx,esi … lea eax,[esi+edx*2] shl eax,2**（目标位偏移×268）→ lea ecx,[ecx+edi*2] shl ecx,2 sub ecx,eax add eax,edx（后移区间计算）→ push ecx/push eax/lea eax,[esi+1]/lea ecx,[edx+eax*4] push ecx **call 0x7ca090**（@0x7ad8f2 内存块后移 memmove）→ add esp,0xc
+  - **插入数据**（@0x7ad8fa-0x7ad920）：mov ecx,[ebx+8] mov edx,esi shl edx,5 add edx,esi lea eax,[esi+edx*2] lea edi,[ecx+eax*4]（插入槽）**test edi,je 0x7ad919** → mov esi,[esp+0x14] mov ecx,0x43 **rep movsd**（@0x7ad917 拷入 0x43 dword = 268B）→ mov eax,[ebx] inc eax mov [ebx],eax（计数+1）→ pop 各 pop mov al,1 ret 8 @0x7ad923
+- 直接 call 5 次/去重 3：0x7c8e17×2、0x7c8b3d×2、0x7ca090×1——picker callees=3 吻合，差值 0
+- 判类：FUN_007ad790——VectorClass EnsureCapacity+插入·268B 元素版（thiscall 1 栈参 ret 8 返布尔；请求容量钳到计数；双段同构扩容判定（新容量 = max(10, 计数×2) + 0x7C8E17 分配清零 + rep movsd/movsb 拷旧 + 0x7C8B3D 释放旧表 + 新表/容量更新）；请求容量 < 计数时 0x7CA090 后移尾部腾位；rep movsd 0x43 dword（268B）拷入插入源到目标槽 + 计数+1 返 1——268B 元素 VectorClass 确保容量+插入综合路径）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2595.py：a 路 2/2（0x7c8b3d/0x7c8e17 已登记）、b 路 2/2（同）、c 路 3/3（0x7c8b3d/0x7c8e17/0x7ca090 已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0（a/b/c 均无间接差值）
+- 无批内自引用（a/b/c 互不落对方函数体；a 尾 0x7ADB00 同族函数、b 尾 0x7AD9D0 观察项、c 尾 0x7AD930 = b 路，均为批间邻接）；排队 MISSING 观察项已清零；真 MISSING 队列 3 个不变（0x4f6eb0 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6246 行」= 唯一地址数 = 行数 6268 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x7ADB00（a 路下函数）：同族容量管理函数（0x7ADA70 下邻承接——0x7A 段容量管理族）——容器族观察
+- 0x7AD9D0（b 路下函数）：观察项（0x7A 段容量管理族延续）——容器族观察
+- VectorClass 容器族扩充（四批连续出现）：0x7ADA70 Grow·108B（本批 a）+ 0x7AD930 Grow·268B（本批 b）+ 0x7AD790 EnsureCapacity+插入·268B（本批 c）+ 0x7AEF50 重哈希（2591 b）+ 0x7AEDD0 RemoveAt（2592 a）+ 0x7AED40 Grow·224B（2592 b）+ 0x7AEE90 索引安全取值（2591 c）+ 0x7AEEC0 EnsureCapacity 报头（2591 观察项）——同族全景——容器族观察
+- 既有池延续：见 batch 2594 观察项列表（0x7AE180 同族扩容重哈希器 + 0x7AE0C0 掩码哈希索引器第三副本 + 0x7ADF70 计数器比较扩容器 + 0x7B4780/0x7B46F0 原语 + [+0x48] vs [+0x70] 冲突链偏移）+ batch 2593 观察项列表（0x7AECD0 哈希表构造器 + 0x7AE5D0 VectorClass Grow·4B 元素版 + 0x7F78A4 虚表 + 0x7C8E17/0x7C8B3D CRT 原语 + [+0x18] 虚表槽）+ batch 2592 观察项列表（0x7B46F0 析构主体 + 0x7CA090 memmove 原语 + VectorClass 容器族五成员）+ batch 2591 观察项列表（0x7AF640 [0x887310] 门控判定器 + 0x7AF000 计数器比较器 + 0x7AEEC0 计数器比较扩容器 + 0x7E149C IAT 槽 + 0x887310 全局槽）+ batch 2590-2540 全量观察项 + 真 MISSING 队列 3 个 + 历史候选池全量延续
