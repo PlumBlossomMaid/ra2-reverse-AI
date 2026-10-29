@@ -1,0 +1,67 @@
+# frontier batch 2540
+
+日期：2026-10-29
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x411330（377B ABuffer::BlitRect callees=0 deps=127）/ b=0x410ED0（1011B ABuffer::BlitAt callees=0 deps=472）/ c=0x410B90（71B FUN_00410b90 callees=2 deps=111）——ABuffer 图形域 + INI 装载域三连（a/b 为纯 CPU rep stosd 位块填充/绘制（无任何直接调用），c 为 INI 键装载小函数）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2540{a,b,c}.txt（a 0x200 窗、b 0x400 窗、c 0x100 窗读全，尾 ret 确认：a 双出口 ret 0x10 @0x411460（正常退出）/0x411463 内联分支回跳 0x41143A（0x411463-0x4114A8 行未越界路径；0x4114A9-0x4114AF nop pad + 0x4114B0 起下函数 [esi+0x14] 虚表槽 0x5c/0x60 查询 + 坐标回绕计算 ret 8——观察项 + 0x4114F0/0x411500 mov al,1 ret 8 恒 1 桩 ×2）、b 双出口 ret 0xc @0x411258/@0x4112C0（正常/边界外路径；0x4112C3-0x4112CF nop pad + 0x4112D0 起下函数虚表槽 0x2f8 系——观察项）、c 单出口 ret 4 @0x410BD4（0x410BD7-0x410BDF nop pad + 0x410BE0 起下函数 0x410410→0x4a1db0×3 装载器 + 0x410C20 空壳 ret 4 桩 + 0x410C30 起 0x7e2000 四虚表装配 + [0xa8e968] 全局表反注册前移压缩——观察项））
+核验：.qwen/tmp/_check_callees2540.py；a 0/0、b 0/0、c 2/2；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6103 → 6106（三行全新增，ADD 3）
+
+## a 路：0x411330 ABuffer::BlitRect（377B）
+
+- 范围 0x411330-0x4114A8（双出口 ret 0x10 @0x411460（正常出口）/内联分支 0x411463-0x4114A8（行未越界路径，jmp 0x41143a 回主循环）→ 实际流经 ret 0x10；0x4114A9-0x4114AF nop pad + 0x4114B0 起下函数（[esi+0x14] 虚表槽 0x5c/0x60 查询 + [esi+0x10]+值 cmp [esi+0x1c] jb 回绕 + ret 8——ABuffer 坐标推进器，观察项；0x4114F0/0x411500 mov al,1 ret 8 恒 1 桩 ×2）
+- thiscall 4 栈参（ret 0x10）：**位块矩形填充器**（标记 ABuffer::BlitRect，纯 CPU rep stosd 优化无调用）：
+  - mov edx,[esp+0x18]（参 2）/mov eax,[esp+0x14]（参 1）→ push 双参 → **[edi+0x14] 虚表槽 0x5c**（@0x41134a）→ **[edi+0x14] 虚表槽 0x60**（@0x411354）→ esi=eax（尺寸返回）
+  - **[edi+0x10]+esi cmp [edi+0x1c]**（@0x411357-0x411361）jb 跳过 → **sub [edi+0x20]**（回绕）
+  - **[esp+0x28]（参 3：行数）test jle 0x41145b**（@0x41136a-0x41136c 空早退）
+  - **主行循环**（[esp+0x1c]=参 3 计数 dec jne 0x411378，行步进 lea edx,[edx+ecx*2]）：lea esi,[edx+ecx*2]（行起始 @0x41137c）→ cmp [edi+0x1c] jb 0x411463（未越界内联）→ **test dl,2 对齐 → mov word [edx],0x7f 边角**（@0x411396-0x4113a4）→ **sar esi,1 → rep stosd 0x7f007f**（@0x4113b4-0x4113c1 每 4B 填充）→ 尾部 **test [esp+0x14],1 → mov word 0x7f**（@0x4113cb-0x4113d6）
+  - **[edi+0x18]（下一行指针 @0x4113e3）→ test bl,2 → mov word [ebx],0x7f → sar → rep stosd → 尾 word**（@0x4113ea-0x411435 第二段相同模式）
+  - **[edi+0x28]（行间距 @0x41143a）lea edx,[edx+ecx*2] → cmp [edi+0x1c] jb → sub [edi+0x20] 回绕**（@0x411440-0x411449）→ dec 计数 jne 循环 → pop ×4/add esp/ret 0x10 @0x411460
+  - **未越界内联路径**（0x411463）：test dl,2 → mov word [edx],0x7f → sar ebx,1 → mov eax,0x7f007f rep stosd → test bl,1 → mov word [eax],0x7f → jmp 0x41143a
+- 直接 call 0 次/去重 0（含内联分支全无）——picker callees=0 吻合，差值 0（虚表槽 0x5c/0x60 间接不计）
+- 判类：ABuffer::BlitRect——位块矩形填充器（0x7F 灰值矩形 fill：行循环 + test dl,2/dword 对齐 rep stosd 0x7f007f 每 dword 双 word + 边角 word 0x7f 补齐 + [edi+0x18]/[edi+0x28] 行步进 + [edi+0x1c]/[edi+0x20] 回绕；纯 CPU 无调用）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x410ED0 ABuffer::BlitAt（1011B）
+
+- 范围 0x410ED0-0x4112C2（双出口 ret 0xc @0x411258（正常路径）/ret 0xc @0x4112C0（边界外清零路径）；0x4112C3-0x4112CF nop pad + 0x4112D0 起下函数虚表槽 0x2f8 系——观察项）
+- thiscall 3 栈参（ret 0xc）：**位块绘制器**（标记 ABuffer::BlitAt，纯坐标数学 + rep stosd 值填充无直接调用）：
+  - [esp+0x24]（参 1：x）→ **[esi+0x10] sar → idiv [esi+0x28]**（@0x410ee3-0x410ee9 按宽度取余）→ |x| > [esi+0x28] 跳 0x411286（溢出清零路径）
+  - [esp+0x2c]（参 2：y）→ **|y| > [esi+0x2c] 跳 0x411286**（@0x410f00-0x410f0e）
+  - **[esi+0x10]+ecx*2**（@0x410f28 偏移推进）+ [esi+0x24] 计数变化 + 坐标回绕（[esi+0x20] 加/减）
+  - **四象限分支**（@0x410f51/0x410fb1/0x410fe6/0x411043）：每支 5 组 **[esp+0x14..0x20] 栈上矩形结构 {x,y,w,h}** → push and 0xffff 值 → lea eax,[esp+0x14] → **[esi+0x14] 虚表槽 0x14**（@0x410f7f/@0x410fa9/@0x410fda/@0x411014/@0x41103e/@0x41106f 共 **6 次**行回调）
+  - **第二段**（[esp+0x2c] 参 3：高度）：[esi+0x10] idiv [esi+0x28]（@0x410e8c）→ [esi+0x24]-=edi（@0x410e94）→ 行填充段：**test dl,2 → mov word [edx],bp 边角 → sar → rep stosd（bp AND 0xffff 拼 dword @0x41110a-0x411113）→ 尾 word**——四段相同 rep stosd bp 模式（@0x4110ea-0x411248/@0x411157-0x411195/@0x411127-0x411245/@0x4111c7-0x411245）
+  - **边界外路径**（0x411286）：栈上 {0,0,[esi+0x2c],and 0xffff} → 虚表槽 0x14 → **mov [esi+0x24],0x8000**（@0x4112b2 高度哨兵）→ ret 0xc @0x4112c0
+- 直接 call 0 次/去重 0（含全部内联段）——picker callees=0 吻合，差值 0（虚表槽 0x14×6 间接不计）
+- 判类：ABuffer::BlitAt——位块绘制器（坐标 idiv 取整 + |边界| 检查 + 4 象限分支栈上矩形结构 {x,y,w,h} 每象限虚表槽 0x14 行回调 + bp 值 rep stosd 按行填充（and 0xffff 拼 dword [bp|bp<<16]）+ 边界外 [esi+0x24]=0x8000 哨兵清零；纯坐标数学 + 间接调用）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x410B90 FUN_00410b90（71B）
+
+- 范围 0x410B90-0x410BD4（单出口 ret 4 @0x410BD4；0x410BD7-0x410BDF nop pad + 0x410BE0 起下函数（call 0x410410 + call 0x4a1db0×3（[esi+0x24]/[esi+0x64]/[esi+0x3d] 三装载）ret 4——同域装载器，观察项 + 0x410C20 `ret 4` 空壳桩 + 0x410C30 起 0x7e2000 四虚表装配 + [0xa8e968] 虚表槽 0x10 全局表查询 + 反注册前移压缩——观察项））
+- thiscall 1 栈参（ret 4）：**INI 键装载小函数**（条件键装载）：
+  - mov ebx,[esp+8]（参 1：INI 容器）→ **lea edi,[esi+0x24]**（目标）
+  - push 0/push edi → **call 0x5257c0**（@0x410ba1 装载查询，ecx=ebx）
+  - lea eax,[esi+0x64] → push eax/push 0x817854 → push edi → **call 0x528660**（@0x410bb2 格式化写）
+  - **[esi+0x3d] test cl je 跳过**（@0x410bb7-0x410bbf 条件门控）→ push [esi+0x3d]/push 0x81784c/push edi → **call 0x528660**（@0x410bca 第二键）
+  - al=1 → ret 4 @0x410bd4
+- 直接 call 3 次/去重 2：0x5257c0×1、0x528660×2——picker callees=2 吻合，差值 0
+- 判类：FUN_00410b90——INI 键装载小函数（0x5257c0 装载查询 + 0x528660 双格式化写 [esi+0x24]/[esi+0x64] + [esi+0x3d] 门控第三键 0x81784c；0x817854/0x81784c 格式串）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2540.py：a 路 0/0、b 路 0/0、c 路 2/2（0x5257c0/0x528660 已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0（虚表槽 0x5c/0x60/0x14×6 间接不计）
+- 无批内自引用（a/b/c 互不落对方函数体）；无 MISSING（真 MISSING 队列 5 个不变：0x408B40 / 0x4f6eb0 / 0x406B10 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6081 行」= 唯一地址数 = 行数 6103 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4114B0（a 路下函数）：[esi+0x14] 虚表槽 0x5c/0x60 查询 + [esi+0x10]+值 cmp [esi+0x1c] jb 回绕 + ret 8——ABuffer 坐标推进器（BlitRect/BlitAt 同域），后续批次优先跟进
+- 0x4112D0（b 路下函数）：虚表槽 0x2f8 系——后续批次跟进
+- 0x410BE0（c 路下函数）：0x410410 + 0x4a1db0×3 装载器（[esi+0x24]/[esi+0x64]/[esi+0x3d] 三目标）+ 0x410C20 空壳 ret 4 桩——c 路同域装载器，后续批次跟进
+- 0x410C30（c 路下下函数）：0x7e2000 四虚表装配 + [0xa8e968] 虚表槽 0x10 全局表查询 + 反注册前移压缩——对象注册/反注册域（batch 2537 0x414080 同域），后续批次优先跟进
+- 0x817854/0x81784c（c 路格式串）：INI 键基串——数据常量观察
+- 0x4114F0/0x411500（a 路下函数族）：mov al,1 ret 8 恒 1 桩 ×2——小桩族
+- 既有池延续：见 batch 2539 观察项列表（0x412610 十六进制串解析器 + 0x411540..0x411580 引用计数小桩族 + 0x7c99b4 字符分类系 + batch 2538/2537/2536 全量观察项 + 历史候选池全量延续）
