@@ -1,0 +1,64 @@
+# frontier batch 2570
+
+日期：2026-10-29
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 0，落回 0x7E/0x7B 段 ranking 序）
+三路：a=0x7E00A6（191B FUN_007e00a6 callees=0 deps=0）/ b=0x7E0001（135B FUN_007e0001 callees=0 deps=0）/ c=0x7BF190（129B FUN_007bf190 callees=0 deps=0）——a/b 两路 = 0x7E 段 pushal 手写调色板 blit 库（与 batch 2569 c 路 0x7E01FB 同族，0x7E00A6 为其背靠背双缓冲版、0x7E0001 为单目标版）；c 路 = 0x7B 段门控回调分发器（batch 2570 picker top 列表前段 0x7B 段入口，与后续 0x7B 段函数同域）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2570{a,b,c}.txt（a 0x100 窗读全、b 0x100 窗读全、c 0x100 窗读全，尾 ret 确认：a 单出口 ret @0x7E016F（0x7E0170 起 = batch 2569 c 路 callee 0x7E0170 blit 原语已登记，背靠背邻接）、b 单出口 ret @0x7E00A5（0x7E00A6 起 = a 路已登记，背靠背邻接）、c 单出口 ret @0x7BF210（双出口 or eax,0xffffffff 返 -1 / mov eax,0xfffffffe 返 -2；0x7BF211-0x7BF21F nop pad + 0x7BF220 起 ret 桩（or eax,0xffffffff; ret——空函数族）+ 0x7BF230 起 or eax,0xffffffff;ret 第二桩 + 0x7BF240 起 虚表分发器（mov ecx,[esp+8]; push esi/edi; mov edi,[esp+0xc]; xor eax,eax; dec ecx; mov esi,[edi+0xb8]; cmp ecx,8 ja 0x7bf36f; jmp [ecx*4+0x7bf374] 跳转表——观察项））
+核验：.qwen/tmp/_check_callees2570.py；a 0/0、b 0/0、c 0/0；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6193 → 6196（三行全新增，ADD 3）
+
+## a 路：0x7E00A6 FUN_007e00a6（191B）
+
+- 范围 0x7E00A6-0x7E016F（单出口 ret @0x7E016F；0x7E0170 起 = batch 2569 c 路 callee 0x7E0170 blit 原语已登记，背靠背邻接）——0x7E 段 pushal 手写库
+- 5 栈参（[ebp+8]=src/[ebp+0xc]=dst/[ebp+0x10]=行数/[ebp+0x14]=宽度/[ebp+0x18]=高度，ret 空）：**调色板 blit 双缓冲处理器**（RGB565→8 位最近色索引，双写 dst + 0x879124 缓冲）：
+  - push ebp/mov ebp,esp/add esp,-0xc/**pushal**（@0x7e00a6-0x7e00ac 非标准栈骨架）→ mov [ebp-4],src（@0x7e00ad）→ esi=src; edi=dst（@0x7e00b3-0x7e00b6）→ mov [ebp-8],0（行内计数）→ ecx=[ebp+0x14]-2; shr ecx,1; mov [ebp-0xc],ecx（宽度-2>>1 半宽 dword 计数）→ **mov ecx,0x879124**（@0x7e00cb 第三缓冲基址）
+  - **主行循环**（@0x7e00b9-0x7e0167，行数 [ebp+0x10] 次）：内层 dword 循环（@0x7e00e0-0x7e011b，半宽 [ebp-0xc] 次）：**mov eax,[esi]（读 RGB565 16 位）lea esi,[esi+2] mov edx,eax mov ebx,eax and edx,0xffff ror ebx,8 mov bl,[edx+0xa8f91c]（低字→[0xA8F91C] 最近色索引）mov bh,ah and eax,0xffff00 ror ebx,8 shr eax,8 mov bh,[eax+0xa8f91c]（高字→最近色索引）ror ebx,0x10 mov [edi],ebx mov [ecx],ebx（双写 dst + 0x879124）add edi,4 add ecx,4 dec [ebp-0xc] jne 循环**
+  - **尾部半字**（@0x7e011d-0x7e0142）：xor eax,eax; mov ax,[esi]（读末 16 位 RGB565）mov [edi],al mov [ecx],al（低字节→索引）inc edi/ecx; lea esi,[esi+2]; mov al,[eax+0xa8f91c]（高字→索引）mov [edi],al mov [ecx],al inc; mov [edi],ah mov [ecx],ah inc; mov byte [edi],0 mov byte [ecx],0（零终止）
+  - **高度 >>=1 推进**（@0x7e0143-0x7e0161）：mov edi,[ebp+0x18] shr edi,1; add [ebp-4],edi（src += 高度/2）→ push esi/edi; mov esi,0x879124; mov edi,[ebp-4]; mov ecx,[ebp+0x14] shr ecx,1; **rep movsd**（@0x7e015a [0x879124]→dst 半高拷贝）→ add [ebp-4],edi; dec [ebp+0x10] jne 0x7e00b9（行循环）
+  - popal/leave/ret @0x7e016f
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0
+- 判类：FUN_007e00a6——调色板 blit 双缓冲处理器（pushal 手写库；RGB565 16 位源 → 低/高字分别查 [0xA8F91C] 最近色 8 位索引 → 双写 dst + 全局 0x879124 缓冲；宽度/高度各 >>1 半宽/半高；尾部半字零终止；行循环 dec [ebp+0x10]；rep movsd 半高回填 dst）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x7E0001 FUN_007e0001（135B）
+
+- 范围 0x7E0001-0x7E00A5（单出口 ret @0x7E00A5；0x7E00A6 起 = a 路已登记，背靠背邻接）——0x7E 段 pushal 手写库
+- 5 栈参（[ebp+8]=src/[ebp+0xc]=dst/[ebp+0x10]=行数/[ebp+0x14]=宽度/[ebp+0x18]=高度，ret 空）：**调色板 blit 单目标处理器**（RGB565→8 位最近色索引，单写 dst——a 路去掉 0x879124 双缓冲的精简版）：
+  - push ebp/mov ebp,esp/add esp,-4/push ebx/ecx/edi/esi/**pushal**（@0x7e0001-0x7e000b 非标准栈骨架）→ mov [ebp-4],src（@0x7e000c）→ esi=src（@0x7e0012）→ ecx=[ebp+0x14]-2; shr ecx,1; mov edi,[ebp-4]（半宽 dword 计数）→ jmp 0x7e0040
+  - **主行循环**（@0x7e0015-0x7e0099，行数 [ebp+0x10] 次）：内层 dword 循环（@0x7e0040-0x7e0074，半宽 ecx 次）：**mov eax,[esi] lea esi,[esi+2] mov edx,eax mov ebx,eax and edx,0xffff ror ebx,8 mov bl,[edx+0xa8f91c] mov bh,ah and eax,0xffff00 ror ebx,8 shr eax,8 mov bh,[eax+0xa8f91c] ror ebx,0x10 mov [edi],ebx（单写 dst）add edi,4 dec ecx jne 循环**
+  - **尾部半字**（@0x7e0076-0x7e008d）：xor eax,eax; mov ax,[esi] mov [edi],al inc edi; lea esi,[esi+2]; mov al,[eax+0xa8f91c] mov [edi],al inc; mov [edi],ah inc; mov byte [edi],0（零终止）
+  - **高度 >>=1 推进**（@0x7e0090-0x7e0099）：mov edi,[ebp+0x18] add [ebp-4],edi（src += 高度）→ dec [ebp+0x10] jne 0x7e0015（行循环）
+  - popal/pop esi/edi/ecx/ebx/leave/ret @0x7e00a5
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0
+- 判类：FUN_007e0001——调色板 blit 单目标处理器（pushal 手写库；RGB565→8 位最近色索引单写 dst——a 路 0x7E00A6 双缓冲版去掉 0x879124 的精简版；尾部半字零终止；行循环 dec [ebp+0x10]）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x7BF190 FUN_007bf190（129B）
+
+- 范围 0x7BF190-0x7BF210（双出口 ret @0x7BF210：or eax,0xffffffff 返 -1 / mov eax,0xfffffffe 返 -2；0x7BF211-0x7BF21F nop pad + 0x7BF220 起 ret 桩 + 0x7BF230 起第二桩 + 0x7BF240 起跳转表虚表分发器观察项）——0x7B 段标准序
+- thiscall this=esi（ret eax=0/-1/-2）：**门控回调分发器**（[esi+0x6dc] 对象 → [edi+0x14] bit2 检查 + [esi+0x1a4] bit0 检查 → 虚表 [esi+0x48] 回调 / [esi+0x4c] 第二回调）：
+  - push esi/edi → mov esi,ecx（this）→ **mov edi,[esi+0x6dc]**（@0x7bf194 关联对象）→ **mov eax,[edi+0x14] and eax,4 test eax,eax jne 0x7bf1ab**（@0x7bf19a-0x7bf1a0 [edi+0x14] bit2 门控）
+  - **test byte ptr [esi+0x1a4],1 je 0x7bf1ee**（@0x7bf1a2-0x7bf1a9 [esi+0x1a4] bit0 门控，未置位直退返 -1）
+  - @0x7bf1ab（bit2 置位分支）：test eax,eax je 0x7bf1bf（[edi+0x14]&4 非零→走主路径）→ **mov eax,[esi+0x48] test eax,eax je 0x7bf1ee**（@0x7bf1af-0x7bf1b4 [esi+0x48] 虚表回调空→返 -1）→ mov ecx,[edi+0x28] mov edx,[edi+8] push ecx → **push edx push 2 push esi call eax**（@0x7bf1e5 虚表回调：2 + esi + edx（[edi+8]）+ [edi+0x28]）→ add esp,0x10
+  - @0x7bf1bf（bit2 清零分支）：mov eax,[esi+0x1a4] test al,1 je 0x7bf1ee（再确认 bit0）→ **and al,0xfe mov [esi+0x1a4],eax**（@0x7bf1c9-0x7bf1cb 清 bit0）→ mov eax,[esi+0x48] test je 0x7bf1ee → **mov ecx,[esi+0x1c0] lea edx,[esi+0x1c4] push ecx**（@0x7bf1d8-0x7bf1e4 [esi+0x1c0]/[esi+0x1c4] 参数）→ push edx push 2 push esi call eax（@0x7bf1e9 虚表回调）→ add esp,0x10
+  - **mov eax,[esi+0x4c] test eax,eax je 0x7bf20b**（@0x7bf1ee-0x7bf1f3 [esi+0x4c] 第二虚表回调门控）→ **mov ecx,[edi+0x1c] push ecx push esi call eax**（@0x7bf1f5-0x7bf1fa 第二回调）→ add esp,8 → test eax,eax je 0x7bf20b（0→直退）→ **mov eax,0xfffffffe（-2）ret @0x7bf203**（@0x7bf203-0x7bf20a 第二回调返回 0 时返 -2）
+  - @0x7bf20b（收尾）：pop edi; **or eax,0xffffffff（-1）** pop esi ret @0x7bf210
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0（全部为 vtable [esi+0x48]/[esi+0x4c] 间接 call eax）
+- 判类：FUN_007bf190——门控回调分发器（[esi+0x6dc] 关联对象 + [edi+0x14] bit2 门控 + [esi+0x1a4] bit0 门控 → 虚表 [esi+0x48] 回调（参数 esi/[edi+8]/[edi+0x28] 或 [esi+0x1c0]/[esi+0x1c4] 二选一）+ [esi+0x4c] 第二回调（参数 [edi+0x1c]）→ 第二回调返 0 时返 -2、其余门控未过返 -1；纯虚表间接）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2570.py：a 路 0/0（纯 rep movsd/串运算）、b 路 0/0（纯串运算）、c 路 0/0（纯虚表间接 call eax）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0（c 虚表间接不计）
+- 无批内自引用（a/b/c 互不落对方函数体；a 尾 0x7E0170 = batch 2569 c 路 callee 已登记、b 尾 0x7E00A6 = a 路已登记、c 旁 0x7BF220/0x7BF240 = 观察项，均为批间邻接）；排队 MISSING 观察项已清零；真 MISSING 队列 3 个不变（0x4f6eb0 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6171 行」= 唯一地址数 = 行数 6193 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x7BF220（c 路下函数）：ret 桩（or eax,0xffffffff; ret——空函数）——小桩族
+- 0x7BF230（c 路下下函数）：第二 ret 桩（or eax,0xffffffff; ret）——小桩族
+- 0x7BF240（c 路下下下函数）：跳转表虚表分发器（mov ecx,[esp+8] push esi/edi mov edi,[esp+0xc] xor eax,eax dec ecx mov esi,[edi+0xb8] cmp ecx,8 ja 0x7bf36f jmp [ecx*4+0x7bf374]——9 路虚表分发，后续批次优先跟进）
+- 0x879124（a/b 路全局槽）：混色/索引第三缓冲（a 路双写目标 + rep movsd 半高回填 dst）——数据常量观察
+- 0xA8F91C（a/b 路全局槽）：最近色索引表（0x100B，batch 2569 b 路写出）——数据常量观察
+- 既有池延续：见 batch 2569 观察项列表（0x4011B0 9×4 步长表基址定位器 + 0x7E0170 blit 原语 + 0x7E01D2 混色原语 + 0xA8F918/0xA8F91C/0x877D20/0x878720/0x879124 全局槽）+ batch 2568 观察项列表 + batch 2567 观察项列表 + batch 2566 观察项列表（0x4022C0/0x402330/0x4023F0 三函数指针族 + 0x401BB0 链查找器 + 0x401BE0 链清理器）+ batch 2565 观察项列表（0x4026F0 位标志清位桩镜像 + 0x402720 超大虚表驱动器）+ batch 2564 观察项列表（0x402850 双字段清零器 + 0x402860 节点插入器 + 0x402900 [0x87DE2C] 门控链回调驱动器）+ batch 2563 观察项列表（0x402B80 单节点析构器 + 0x402BB0 链式析构器 + 0x402C00 查首装载器）+ batch 2562 观察项列表 + batch 2561/2560/2559/2558/2557/2556/2555/2554/2553/2552/2551/2550/2549/2548/2547/2546/2545/2544/2543/2542/2541/2540 全量观察项 + 真 MISSING 队列 3 个 + 历史候选池全量延续
