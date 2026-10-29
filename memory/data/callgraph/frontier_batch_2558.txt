@@ -1,0 +1,53 @@
+# frontier batch 2558
+
+日期：2026-10-29
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 1，落回 ranking 序）
+三路：a=0x4053E0（71B FUN_004053e0 callees=1 deps=4）/ b=0x4052E0（9B FUN_004052e0 callees=0 deps=74）/ c=0x405160（16B FUN_00405160 callees=0 deps=6）——事件调度器配套域三连（a 为计数器驱动时间追赶器，b 为标志位 setter [+0x18] or 8，c 为全局条件双字段 getter）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2558{a,b,c}.txt（a 0x100 窗、b/c 0x40 窗读全，尾 ret 确认：a 单出口 ret @0x405426（0x405430 起 = batch 2557 c 路已登记计数器驱动时间推进器，批间邻接——孪生对实证）、b 单出口 ret @0x4052E8（0x4052F0 起大函数 [esi+0x18] bit1 测试 + [esi+0xb0] 检查 + 0x4025b0 释放——观察项；0x4053E0 起 = 本批 a 路，批间邻接）、c 双出口 ret @0x40516B（[0x87E2A0] 空返 0）/ret @0x40516F（返 [+0x14]；0x405170 起全局条件选择器（[0x87e2a0] test → 0x816204 / lea [ecx+0x6c]）+ 0x405190 起 [0x816108] 门控大函数——观察项））
+核验：.qwen/tmp/_check_callees2558.py；a 1/1、b 0/0、c 0/0；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6157 → 6160（三行全新增，ADD 3）
+
+## a 路：0x4053E0 FUN_004053e0（71B）
+
+- 范围 0x4053E0-0x405426（单出口 ret @0x405426；0x405430 起 = batch 2557 c 路已登记 0x405430（计数器驱动时间推进器，64 位 add），批间邻接——**两者构成「追赶/推进」孪生对**）
+- thiscall 无栈参（ret 空）：**计数器驱动时间追赶器**（batch 2557 c 路孪生：64 位 sub 追赶）：
+  - push esi → mov esi,ecx → **mov eax,[esi+0x158] test eax jne 0x405418**（计数器非 0 → 直跳递增段）
+  - **mov eax,[esi+0x1c] cmp 2 jne 0x405418**（状态≠2 直跳）→ **call 0x4093b0**（@0x4053f6 取 64 位时刻）→ mov ecx,[esi+0x140]/mov edi,[esi+0x144] → **sub ecx,eax / sbb edi,edx（64 位减 = 追赶）** → **mov [esi+0x140],ecx / mov [esi+0x144],edi**（写回）→ pop edi
+  - **0x405418：mov edx,[esi+0x158] inc edx → mov [esi+0x158],edx**（计数器恒 +1）→ pop esi → ret @0x405426
+- 直接 call 1 次/去重 1：0x4093b0×1——picker callees=1 吻合，差值 0
+- 判类：FUN_004053e0——计数器驱动时间追赶器（[esi+0x158] 计数器非 0 跳过 + 状态==2 时 0x4093b0 取时刻 → [+0x140]/[+0x144] 64 位 sub 追赶 + 计数器恒 +1；与 batch 2557 c 路 0x405430（add 推进 + dec 计数）孪生）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x4052E0 FUN_004052e0（9B）
+
+- 范围 0x4052E0-0x4052E8（单出口 ret @0x4052E8；0x4052F0 起大函数（test byte [esi+0x18],1 jne 0x4053cf → mov ecx,[esi+0xb0] → cmp esi,[ecx+0xc0] jne → test byte [esi+0x18],2 → 0x4025b0 释放——观察项））
+- thiscall 无栈参（ret 空）：**标志位 setter（[+0x18] or 8）**（极简）：
+  - **mov eax,[ecx+0x18] → or al,8 → mov [ecx+0x18],eax**（@0x4052e0-0x4052e6 bit3 置位）→ ret @0x4052e8
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0
+- 判类：FUN_004052e0——标志位 setter（[+0x18] or 8；9B 极简读改写，bit3 置位）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x405160 FUN_00405160（16B）
+
+- 范围 0x405160-0x40516F（双出口 ret @0x40516B（[0x87E2A0] 空返 0）/ret @0x40516F（返 [+0x14]）；0x405170 起全局条件选择器（mov eax,[0x87e2a0] test je → mov eax,0x816204 / lea eax,[ecx+0x6c]——观察项）+ 0x405190 起 [0x816108] 门控大函数（mov eax,[0x816108] → cmp [0x87e2a0] → ...——观察项））
+- thiscall 无栈参（ret 空：返回 eax）：**全局条件双字段 getter**（[0x87E2A0] 门控缓存选择）：
+  - **mov eax,[0x87e2a0] test eax,eax je 0x405168**（全局缺 → xor eax + ret 0）→ **mov eax,[ecx+0x14]**（返第二字段）→ ret @0x40516f
+- 直接 call 0 次/去重 0——picker callees=0 吻合，差值 0
+- 判类：FUN_00405160——全局条件双字段 getter（[0x87E2A0] 门控：空返 0 / 有则返 [+0x14]；全局对象缺失安全模式）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2558.py：a 路 1/1（0x4093b0 已登记）、b 路 0/0、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用（a/b/c 互不落对方函数体；a 尾 0x405426 与 batch 2557 c 路 0x405430 批间邻接无调用）；无 MISSING（真 MISSING 队列 3 个不变：0x4f6eb0 / 0x47ec40 / 0x4758C0；排队 MISSING 8 个：batch 2552 六件 0x4011c0/0x402940/0x402af0/0x402c70/0x403530/0x403ed0 + batch 2556 0x4015c0 + batch 2557 0x4026c0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6135 行」= 唯一地址数 = 行数 6157 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x4053E0/0x405430 孪生对：**追赶（64 位 sub）/推进（64 位 add）孪生实证**（本批 a 路 + batch 2557 c 路均已登记）——事件调度器时间域双操作，围联观察
+- 0x4052F0（b 路下函数）：test byte [esi+0x18],1 + [esi+0xb0] 槽检查 + test byte [esi+0x18],2 + 0x4025b0 释放大函数——后续批次优先跟进
+- 0x405170（c 路下函数）：全局条件选择器（[0x87e2a0] test → 0x816204 常量 / lea [ecx+0x6c] 字段）——观察项
+- 0x405190（c 路下下函数）：[0x816108] 门控大函数（cmp [0x87e2a0] + [esi+0x18] 标志 + [esi+0xb0] 槽）——batch 2557 b 路 0x4055C0 同全局门控族，后续批次优先跟进
+- 0x816204（c 路下函数常量串）：全局缺省串——数据常量观察
+- 既有池延续：见 batch 2557 观察项列表（0x405BE0 全局自链节点头 + 0x405C00 [0x87e2a0] 链头验证器 + 0x4059F0/0x405A00/0x405AC0 函数指针目标 + 0x405490 [esi+0x158] getter + 0x4054A0 槽完整性检查器 + 0x816108 标志槽）+ batch 2556/2555/2554/2553/2552 观察项列表（MISSING 8 个 + setter 族全齐 + 0x87E73C..0x87E758 八槽 + 0x406650/0x406670）+ batch 2551/2550/2549/2548/2547/2546/2545/2544/2543/2542/2541/2540 全量观察项 + 真 MISSING 队列 3 个 + 历史候选池全量延续）
