@@ -1,0 +1,51 @@
+# frontier batch 2622
+
+日期：2026-10-30
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 0，落回 0x77 段 ranking 序）
+三路：a=0x771A00（45B FUN_00771a00 callees=1 deps=0）/ b=0x771950（22B FUN_00771950 callees=1 deps=0）/ c=0x771900（65B FUN_00771900 callees=1 deps=0）——a 为析构器·条件释放版（虚表 0x7E37EC），b/c 为懒初始化 getter/懒释放器（共用 0x6C8C40 计算器）——0x77 段对象生命周期/句柄缓存域
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2622{a,b,c}.txt（a 0x80 窗 53 行、b 0x60 窗 43 行、c 0x80 窗 67 行读全；尾 ret 确认：a 单出口 ret @0x771A2C（0x771A2D-0x771A2F nop pad，0x771A30 起为 batch 2621 已登记 c 路析构器 scalar deleting——家族紧邻闭环）、b 单出口 ret @0x771965（0x771966-0x77196F nop pad，0x771970 起后邻短壳：mov ecx,[ecx+0x1c] call 0x771620 ret 8 族 + 0x771990 三字段结构拷贝器）、c 单出口 ret @0x771940（0x771941-0x77194F nop pad，0x771950 起为 b 路））
+核验：.qwen/tmp/_check_callees2622.py；a 1/1、b 1/1、c 1/1；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6349 → 6352（三行全新增，ADD 3）
+
+## a 路：0x771A00 FUN_00771a00（45B）
+
+- 范围 0x771A00-0x771A2C（单出口 ret @0x771A2C；0x771A2D-0x771A2F nop pad，0x771A30 起为 batch 2621 已登记 c 路）
+- thiscall 0 栈参（ecx=esi）:**析构器·条件释放版**（虚表 0x7E37EC + [+4] 指针/[+0xD] 标志双条件 → 0x7C8B3D 释放）：
+  - push ebx push esi mov esi,ecx xor ebx mov eax,dword ptr[esi+4]（读 [+4] 指针）mov dword[esi],0x7e37ec（写虚表 0x7E37EC）cmp eax,ebx je 0x771a24（[+4]==0 跳过）→ cmp byte ptr[esi+0xd],bl（[+0xD] 标志检查）je 0x771a24（==0 跳过）→ push eax call 0x7c8b3d（@0x771a19 释放 [+4]）add esp,4 mov dword[esi+4],ebx（清 [+4]）→ 0x771a24 mov byte[esi+0xd],bl（清 [+0xD]）mov dword[esi+8],ebx（清 [+8]）→ pop esi pop ebx ret
+- 直接 call 1 次/去重 1：0x7c8b3d——picker callees=1 吻合，差值 0
+- 判类：FUN_00771a00——析构器·条件释放版（thiscall 0 栈参单出口；虚表 0x7E37EC + [+4] 指针非空 AND [+0xD] 标志非零 → 0x7C8B3D 释放 + 清 [+4]/[+0xD]/[+8]——条件门控释放 + 三字段清零；后邻 0x771A30（batch 2621 c 路析构器 scalar deleting）为同族相邻成员）
+- 语义证据级别：assembly_decompile_verified（partial——0x7E37EC 虚表/[+4]/[+0xD] 语义未确认，无对应已登记 C++ 重写）
+
+## b 路：0x771950 FUN_00771950（22B）
+
+- 范围 0x771950-0x771965（单出口 ret @0x771965；0x771966-0x77196F nop pad，0x771970 起后邻短壳族）
+- thiscall 0 栈参（ecx=esi）:**懒初始化 getter·[+0x10]**（-1 哨兵门控 → 0x6C8C40 计算缓存）：
+  - push esi mov esi,ecx cmp dword ptr[esi+0x10],-1（[+0x10]==-1 检查）jne 0x771964（已初始化直退）→ lea ecx,[esi+0x14] call 0x6c8c40（@0x77195c 计算 [+0x14] 输入的句柄/索引）mov dword[esi+0x10],eax（缓存 [+0x10]=eax）→ pop esi ret
+- 直接 call 1 次/去重 1：0x6c8c40——picker callees=1 吻合，差值 0
+- 判类：FUN_00771950——懒初始化 getter·[+0x10]（thiscall 0 栈参单出口；[+0x10]==-1 → 0x6C8C40 计算 [+0x14] 源 → [+0x10]=eax；≠-1 直退返回缓存——-1 哨兵懒初始化模式，c 路懒释放器配对）
+- 语义证据级别：assembly_decompile_verified（partial——0x6C8C40 计算语义/[+0x10]/[+0x14] 字段未确认，无对应已登记 C++ 重写）
+
+## c 路：0x771900 FUN_00771900（65B）
+
+- 范围 0x771900-0x771940（单出口 ret @0x771940；0x771941-0x77194F nop pad，0x771950 起为 b 路）
+- thiscall 0 栈参（ecx=esi）:**懒释放器·[+0x10]/[+0x18]**（0x6C8C40 差值管理 + 双字段 -1 哨兵）：
+  - push esi mov esi,ecx mov eax,dword ptr[esi+0x10]（读 [+0x10]）cmp eax,-1 je 0x77193f（已 -1 直退）→ push edi mov edi,dword ptr[esi+0x18]（读 [+0x18]）cmp eax,-1 je 0x771934（再判 -1 → 置 [+0x18]=0）→ lea ecx,[esi+0x14] call 0x6c8c40（@0x771917 计算 [+0x14] 源）sub eax,dword ptr[esi+0x10]（计算值 - [+0x10] 差量）cmp eax,edi jge 0x771932（差量 ≥ [+0x18] → 保留）→ sub edi,eax（[+0x18] -= 差量）mov dword[esi+0x10],-1（置 [+0x10]=-1）mov dword[esi+0x18],edi（写 [+0x18]）pop edi pop esi ret → 0x771932 xor edi + 0x771934 mov [esi+0x18],edi mov [esi+0x10],-1 pop edi 0x77193f pop esi ret
+- 直接 call 1 次/去重 1：0x6c8c40——picker callees=1 吻合，差值 0
+- 判类：FUN_00771900——懒释放器·[+0x10]/[+0x18]（thiscall 0 栈参单出口；[+0x10] 已 -1 直退，否则 0x6C8C40 计算与差量管理：计算−当前 ≥ [+0x18] 则保留差额逻辑（sub/cmp/jge 分支）、否则置 [+0x10]=-1 更新 [+0x18]——b 路懒 getter 的写侧配对，双字段 -1 哨兵同模式）
+- 语义证据级别：assembly_decompile_verified（partial——0x6C8C40 计算语义/+0x10/+0x18 字段未确认，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2622.py：a 路 1/1（0x7c8b3d 已登记）、b 路 1/1（0x6c8c40 已登记）、c 路 1/1（0x6c8c40 已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0——三路全 0（本批无 IAT/虚表槽间接 callee；b/c 共用 0x6C8C40 非互调、a 后邻 0x771A30 为 batch 2621 已登记家族成员非本批范围）
+- 无批内自引用（a/b/c 互不落对方函数体；b 后邻 0x771970/0x771980 短壳族+0x771990 结构拷贝器均不在本批范围）；排队 MISSING 观察项已清零；真 MISSING 队列 3 个不变（0x4f6eb0 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6327 行」= 唯一地址数 = 行数 6349 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x6C8C40（b/c 路共用计算器）：句柄/索引计算器——工具函数观察（b getter/c 释放器双侧共用，重点候选）
+- [+0x10]/[+0x14]/[+0x18]（b/c 路三字段族）：-1 哨兵懒初始化/双字段差值管理——字段语义观察（batch 2621 后同域新字段族）
+- 0x7E37EC（a 路析构虚表）：虚表常量观察扩员（0x7E3xxx 段）
+- 0x771970/0x771980（b 路后邻短壳族：mov ecx,[ecx+0x1c] call 0x771620 ret 8 / 同版）+ 0x771990（三字段结构拷贝器）：后邻候选——工具函数观察
+- 0x771620（后邻短壳的 callee）：picker 已见 229B/6 callees——后续候选大项
+- 既有池延续：见 batch 2621 观察项列表（[+0xAC]/[+0x144] 字段、0x7E4DD8/0x7EB6D4/0x7F73B8 族虚表、0x772AE0 装载器族、0x7F7354 析构虚表、0x771A60 FP 初始化族）+ batch 2620（0x7F743C 虚表对象族、[0x7F7C60]/[0x7F7C30] 子对象、+0x40C/+0x410 字段族、IAT [0x7E15FC]）+ batch 2619（[0xB72D0C] 全局、IAT [0x7E1470]/[0x7E14C4]、0x7738A0 RegOpenKeyEx 装载器）+ batch 2618（0x7F7488/0x7F743C 虚表、[0xB72D10..0xB72D1C] 全局族、0x774120 构造器）+ batch 2617-2586 全量 + 真 MISSING 队列 3 个 + 历史候选池全量延续
