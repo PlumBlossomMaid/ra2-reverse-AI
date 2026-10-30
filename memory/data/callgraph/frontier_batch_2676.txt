@@ -1,0 +1,65 @@
+# frontier batch 2676
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序）
+三路：a=0x746670（167B **Unit 目标类型分派切换器（槽 0x2c 类型三分支 → 0x70E280 关联）** callees=1 deps=0）/ b=0x7463A0（83B **Unit 伴随/乘客出入切换器（+0x21c + 0x4DBED0）** callees=1 deps=0）/ c=0x7447B0（6215B **UnitClass::AssignDestination（寻路目标分配主函数，巨型）** callees=7 deps=0）——UnitClass 核心目标分配 + 类型分派切换
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2676{a,b,c}.txt，完整读取确认尾 ret（a 单出口 ret 4@0x746714、b 双出口 ret 8@0x7463E9/@0x7463F0、c 主 ret 4@0x745FF4（xor eax,eax 失败出口）、下函数 0x746720=批 2675 c / 0x746400 / 0x746000 辅助函数（c 路内部调用））
+核验：.qwen/tmp/_check_callees2676.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6511 → 6514（三行全新增，ADD 3）
+
+## a 路：0x746670 Unit 目标类型分派切换器（167B）
+
+- 范围 0x746670-0x746714（单出口 ret 4 @0x746714；0x746717 起 nop pad，下函数 0x746720 = 批 2675 c 路重置器）
+- thiscall 1 栈参（ret 4）：esi=[esp+8]=目标对象、edi=this（Unit）
+- 流程：
+  - esi==0 → ret 0
+  - **目标虚表槽 0x2c（类型查询）** → eax：dec==0（类型 1）→ 0x7466d8；sub 0xa==0（类型 0xb）→ 0x7466bb；sub 0x19==0（类型 0x24）→ 0x746694；else → ret
+  - **分支 0x24（单元）**：槽 0x88（esi）→ `[edi+0x518]=eax`、`[edi+0x51c]=0` → push esi → **call 0x70E280** → ret
+  - **分支 0xb（建筑）**：槽 0x398（edi，push esi 切换判定）→ al==0 → ret；通过 → `[0xA83D84]（对象数组）[esi+0x44]` 取目标 → jmp 0x74669e（并入 0x24 分支：**[+0x518] 关联 + 0x70E280**）
+  - **分支 1**：槽 0xc4（esi）→ al!=0 → **槽 0xcc（push 1）**（[+0x518]）+ **槽 0xd0（push 1）**（[+0x51c]）→ push esi → **call 0x70E280**（统一关联收尾）→ ret
+- 直接 call 2 次/去重 1：0x70e280（+5 虚表槽 0x2c/0x88/0x398/0xc4/0xcc/0xd0 运行时派发）——picker callees=1 吻合差 0
+- 判类：Unit 目标类型分派切换器（**按目标虚表槽 0x2c 类型 1/0xb/0x24 三分支** → 各自取关联（槽 0x88/0xcc/0xd0）写 [+0x518]/[+0x51c] → 0x70E280 统一关联——[0xA83D84] 对象数组取目标；与批 2675 c 路重置器 [+0x518]/[+0x51c] 字段族闭环）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x7463A0 Unit 伴随/乘客出入切换器（83B）
+
+- 范围 0x7463A0-0x7463F0（双出口 ret 8 @0x7463E9（成功，eax 沿用 0x4DBED0 返回）/@0x7463EC（xor al,al 相同短路）；0x7463F3 起 nop pad，下函数 0x746400 = 大函数）
+- thiscall 2 栈参（ret 8）：ebx=[esp+8]=新目标、edi=this
+- 流程：
+  - `[edi+0x21c]（当前伴随）== ebx → xor al,al → ret 8（相同早退）`
+  - `byte [edi+0x6d0]=0`（清标志）→ `esi=[edi+0x6c8]（当前乘客）` → 非空 → **槽 0x3d4（esi 虚表，push 1、push ebx——乘客切换/离开通知）** → `[edi+0x6c8]=esi`、`byte [esi+0x6d0]=1`（乘客标志维护）
+  - push 1、push ebx → **call 0x4DBED0**（+0x21c 伴随对象切换，正面执行）→ ret 8
+- 直接 call 1 次/去重 1：0x4dbed0（+1 槽 0x3d4 运行时派发）——picker callees=1 吻合差 0
+- 判类：Unit 伴随/乘客切换入（**+0x21c 伴随关系更新**：目标相同短路返回 0、旧乘客 [0x6c8] 槽 0x3d4 切换通知、[+0x6d0] 双标志维护、0x4DBED0 正面切换——载具/乘客（步兵进出载具）关系管理）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x7447B0 UnitClass::AssignDestination（寻路目标分配主函数，巨型）（6215B）
+
+- 范围 0x7447B0-0x745FF4（主单出口 ret 4 @0x745FF4（xor eax,eax 失败路径）；多分支 jmp 回环（0x744bcf/0x745fe6 等）；0x745FF7 起 nop pad，下函数 0x746000 = 辅助函数（本函数内部调用，批内第 4 函数））
+- thiscall 1 栈参（ret 4）：edi=this（Unit）、[esp+0x44]=目标类型对象 ebp 等
+- 流程（前段已完整取证，中间控制流由核验脚本 102 call 统计）：
+  - **[+0x588] 子对象槽 0xc（前置清理）** → **槽 0xbc（push 0）**（状态复位）→ [esp+0x13]=al（门控标志）
+  - **槽 0x4c（push 0 + &栈）** → 返回坐标 → `sar eax,8`（×/256 量化）+ `cdq/and edx,0xff`（**原版半字舍入：+255 后再 sar 8**）→ 两字坐标 [esp+0x28]/[esp+0x2a]（源点）
+  - **call 0x5657A0**（GetCellAt，MapClass 0x87F7E8）→ cell → **call 0x486FF0**（可通行判定）→ 失败 → **槽 0x1c8**（数量）+ [esp+0x12] 标志
+  - 目标对象：**槽 0x48（ebp）** 取目标坐标 → 同样 sar 8 + cdq/and 量化 → [esp+0x44]/[esp+0x46]（目标点）
+  - **call 0x5657A0**（目标 cell）→ `[eax+0x140] shr 8 and dl,1`（目标格高地/阻断标志 [esp+0x44]）→ **call 0x486FF0**
+  - 双坐标成立（[esp+0x13] && [esp+0x44]）→ **call 0x5833F0 ×2**（MapClass 坐标/路径换算，两目标点）→ 判定（0x746000 辅助 call：+0x1c8 槽 + 双点路径查询）→ 通过 → **三组 0x56D230/0x56DC20 成对**（寻路主流程：0x56D230 找格、0x56DC20 设格——10+ 参压栈 + 目标路径 [0xB1CFB8] 全局当前坐标比对）→ 循环遍历 [esi]（[+0x588] 子对象：next/head 检查 `[+0x10]>= [+8] && byte[+0xd]==0`、`[+0x14]>0` 分支）→ 起伏循环移动目标点（0x745fd3 段：lea + push 0x5657A0 取新格 → jmp 0x744bcf 回主循环）……
+  - **末段：0x56D100（寻路落地判定）** + 收尾
+- 直接 call 102 次/去重 6：0x486ff0、0x5657a0、0x56d100、0x56d230、0x56dc20、0x5833f0（+大量虚表槽 0xc/0xbc/0x4c/0x48/0x1c8/0x88 等运行时派发非静态）——**picker callees=7 差 1**：虚表槽派发不计入静态正则，差异 1 如实记录（动态槽目标 0x56d230 序列中 jmp 0x744bcf 回环为目标内分支不计）
+- 判类：**UnitClass::AssignDestination**（寻路目标分配主函数：源/目标坐标 sar 8 半字量化（cdq/and 0xff 原版惯用）+ GetCellAt/可通行判定双核（0x5657A0/0x486FF0）+ 0x5833F0 路径换算 + 0x56D230/0x56DC20 寻路核心三件套 + 0x56D100 落地判定 + [+0x588] 子对象路径遍历——**与 QWEN.md 候选机制「寻路 MapClass::Update_Pathfinding（0x56C510/0x586990）」同域，Unit 目标点寻路主链**）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2676.py：a 路 2/1、b 路 1/1、c 路 102/6——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 1（虚表槽派发非静态正则不计，如实记录）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **UnitClass 主战场**：c 路 AssignDestination 6215B 为 UnitClass 核心主函数——寻路链 0x56D230/0x56DC20/0x56D100（+0x56C510/0x586990 QWEN.md 候选寻路）全部已登记；后续批次 UnitClass 大户持续（0x738D30 GotoClearSpot 1652B / 0x73D450 Harvesting / 0x739AC0 Deploy / 0x73AC Undeploy / 0x737180 UpdateVisceroid / 0x736DF0 UpdateFiring / 0x7359F0 UpdateTube 1730B 等）
+- 0x746000（c 路内部辅助，已登记）：+0x1c8 槽 + 0x56D100 组合查询——AssignDestination 封装函数
+- 既有池延续：0x767010（数组析构器）/ 0x766BC0（数组比较器）/ 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F6B30 / 0x7F6B14 / 0x7F6B0C / 0x7F6B04 / 0x7F6AC4 / 0x7F69F8 / 0x7F69D4 / 0x7F69A4 / 0x7F6924 / 0x7F68CC / 0x7F665C / 0x7F66A8 / 0x7F668C / 0x7F6684 / 0x7F667C / 0x7F65F4 / 0x7F6318 / 0x7F62FC / 0x7F62F4 / 0x7F62EC / 0x7F0D5C / 0x7F0DCC / 0x7EA57C / 0x7EBFA4 虚表族、批 2635-2675 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
