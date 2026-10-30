@@ -1,0 +1,49 @@
+# frontier batch 2673
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序）
+三路：a=0x747560（43B **工厂/克隆器（new 0x8E8 + 0x7353C0 构造器）** callees=2 deps=0）/ b=0x746EA0（27B **指针标识比较器（[+0x10] 头字段比对）** callees=0 deps=0）/ c=0x746E80（30B **析构器·scalar deleting·无写虚表（0x735780 链派发）** callees=2 deps=0）——0x7353xx 类族工厂/析构对 + 标识比较器
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2673{a,b,c}.txt，完整读取确认尾 ret（a 双出口 ret 4@0x747582(@成功)/@0x747588(NULL 失败)、b 双出口 ret 4@0x746EB3(al=1)/@0x746EB8(al=0)、c 单出口 ret 4@0x746E9B、下函数 0x747590 [+0x1ec]/4 取整观察项 / 0x746EC0 [0xB1D0C8]/[0xB1D0CC] 全局清 0 观察项 / 0x746EA0=本批 b）
+核验：.qwen/tmp/_check_callees2673.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6502 → 6505（三行全新增，ADD 3）
+
+## a 路：0x747560 工厂/克隆器（new 0x8E8 + 0x7353C0 构造器）（43B）
+
+- 范围 0x747560-0x747588（双出口 ret 4 @0x747582（成功返回新对象）/@0x747588（NULL 失败）；0x74758B 起 nop pad，下函数 0x747590 = [+0x1ec] 除法取整器（mov ecx,[ecx+0x1ec]; mov eax,ecx; cdq; and edx,3; add edx,eax; ... ——观察项））
+- thiscall 1 栈参（ret 4 新对象）：**push 0x8e8（2272 字节）→ call 0x7C8E17（operator new）** → NULL（je）→ 返回 0 失败；成功 → **push [esp+8]（参数）; push esi（this）; mov ecx,eax（新块）; call 0x7353C0**（类构造器，2 栈参——this + 参数副本）→ eax=新对象 → ret 4（返回新实例）
+- 直接 call 2 次/去重 2：0x7c8e17、0x7353c0——picker callees=2 吻合差 0
+- 判类：工厂/克隆器（**0x7353C0 类实例工厂**：0x7C8E17 new 0x8E8 字节 + 双参构造——与 c 路析构器（0x735780 链派发）成对，0x7353xx 类族构造侧）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x746EA0 指针标识比较器（[+0x10] 头字段比对）（27B）
+
+- 范围 0x746EA0-0x746EB8（双出口 ret 4 @0x746EB3（al=1）/@0x746EB8（al=0）；0x746EBB 起 nop pad，下函数 0x746EC0 = 全局双清零器（xor eax; mov [0xB1D0C8],eax; mov [0xB1D0CC],eax——观察项））
+- thiscall 1 栈参（ret 4 al）：`[ecx+0x10]（子对象指针）!= 0` → `[ecx+0x10]->[0]` vs `[esp+4]->[0]`（**两对象首字段相等比较**）→ 相等 → al=1；空/不等 → al=0
+- 直接 call 0 次/去重 0——picker callees=0 吻合差 0
+- 判类：指针标识比较器（**[+0x10] 子对象头字段 vs 参数对象头字段相等判定**——类型标识/归属比对工具）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x746E80 析构器·scalar deleting·无写虚表（0x735780 链派发）（30B）
+
+- 范围 0x746E80-0x746E9B（单出口 ret 4 @0x746E9B；0x746E9E 起 nop pad，下函数 0x746EA0 = 本批 b 路）
+- thiscall 1 栈参（[esp+8]&1 delete）：**call 0x735780**（基类/子对象析构链派发——0x7353xx 同区，a 路工厂构造器 0x7353C0 相邻）→ test [esp+8],1 → 0x7C8B3D delete 自身 → ret 4——**无写虚表**
+- 直接 call 2 次/去重 2：0x735780、0x7c8b3d——picker callees=2 吻合差 0
+- 判类：析构器·scalar deleting·无写虚表（**batch 2640 a 路 0x766A60 / batch 2671 c 路 0x74AB50 同形态**：链派发 + delete 无虚表写——与 a 路工厂组成 0x7353xx 类族构造/析构配对）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2673.py：a 路 2/2、b 路 0/0、c 路 2/2——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x747590（a 路下函数）：[+0x1ec] 除法取整器（cdq + and edx,3 向上取整除 4——工厂类尺寸换算）——后续批次可顺手登记
+- 0x746EC0（b 路下函数）：全局双清零器（[0xB1D0C8]/[0xB1D0CC] 两 dword 清 0）——后续批次可顺手登记
+- **0x7353xx 类族生命周期**：工厂/克隆器 0x747560（本批 a，0x7353C0 构造器）↔ 析构器 0x746E80（本批 c，0x735780 链派发）——调用图封闭
+- picker 已就位 UnitClass 带名区（0x7447B0 AssignDestination 6215B / 0x73D450 Harvesting / 0x73F000 区）——后续批次即将进入 UnitClass 大户（QWEN.md 候选机制「采矿 UnitClass 0x73D000 区」）
+- 既有池延续：0x767010（数组析构器）/ 0x766BC0（数组比较器）/ 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F6B30 / 0x7F6B14 / 0x7F6B0C / 0x7F6B04 / 0x7F6AC4 / 0x7F69F8 / 0x7F69D4 / 0x7F69A4 / 0x7F6924 / 0x7F68CC / 0x7F665C / 0x7F66A8 / 0x7F668C / 0x7F6684 / 0x7F667C / 0x7F65F4 / 0x7F6318 / 0x7F62FC / 0x7F62F4 / 0x7F62EC / 0x7F0D5C / 0x7F0DCC / 0x7EA57C / 0x7EBFA4 虚表族、批 2635-2672 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
