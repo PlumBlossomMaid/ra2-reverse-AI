@@ -1,0 +1,47 @@
+# frontier batch 2641
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 0 孤立函数，落回 ranking 序）
+三路：a=0x766960（36B **析构器·scalar deleting·写虚表 0x7F701C** callees=2 deps=0）/ b=0x766930（36B **析构器·scalar deleting·写虚表 0x7F6F34** callees=2 deps=0）/ c=0x766800（43B **析构器·无写虚表无 delete（虚表槽 0 派发 + 字段清）** callees=0 deps=0）——0x7F70xx 虚表族析构侧 + 配套析构器
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2641{a,b,c}.txt，完整读取确认尾 ret（a 单出口 ret 4@0x766981、b 单出口 ret 4@0x766951、c 单出口 ret@0x76682A、下函数 0x766830 索引 getter / 0x766850 指针算术）
+核验：.qwen/tmp/_check_callees2641.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6406 → 6409（三行全新增，ADD 3）
+
+## a 路：0x766960 析构器·scalar deleting·写虚表 0x7F701C（36B）
+
+- 范围 0x766960-0x766981（单出口 ret 4 @0x766981；0x766984 起 nop pad，下函数 0x766990 = batch 2640 c 路 0x7F7014 同模板，物理相邻成组）
+- thiscall 1 栈参（[esp+8] delete 标志 &1）：**写虚表 0x7F701C** → **call 0x65D460**（基类析构链派发）→ test [esp+8],1 → 0x7C8B3D delete → ret 4
+- 直接 call 2 次/去重 2：0x65d460、0x7c8b3d——picker callees=2 吻合差 0
+- 判类：析构器·scalar deleting·写虚表 0x7F701C（**0x7F701C 虚表族析构侧**——与 batch 2640 b/c（0x7F7040/0x7F7014）同模板系列，仅虚表常量不同，0x7F70xx 虚表族析构侧连续登记）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x766930 析构器·scalar deleting·写虚表 0x7F6F34（36B）
+
+- 范围 0x766930-0x766951（单出口 ret 4 @0x766951；0x766954 起 nop pad，下函数 0x766960 = 本批 a 路上函数头，b/a 物理相邻成组）
+- thiscall 1 栈参（[esp+8] delete 标志 &1）：**写虚表 0x7F6F34** → **call 0x65D460**（基类析构链派发）→ test [esp+8],1 → 0x7C8B3D delete → ret 4
+- 直接 call 2 次/去重 2：0x65d460、0x7c8b3d——picker callees=2 吻合差 0
+- 判类：析构器·scalar deleting·写虚表 0x7F6F34（**0x7F6F34 虚表族析构侧**——与 a/c（0x7F701C/0x7F7014）同模板系列，0x7F6Fxx/0x7F70xx 虚表族析构侧连续登记）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x766800 析构器·无写虚表无 delete（虚表槽 0 派发 + 字段清）（43B）
+
+- 范围 0x766800-0x76682A（单出口 ret @0x76682A；0x76682B 起 nop pad，下函数 0x766830 = 索引 getter / 0x766850 = 指针算术（7B/项，[ecx+4]+ecx*8）——配套函数，观察项）
+- 非 thiscall 单栈参形态：**无写虚表**，**无 0x7C8B3D delete**——析构侧为**虚表槽 0 push 3 派发**子对象析构（cmp [esi+4],0 → je / cmp byte [esi+0xd],0 → je / mov eax,[ecx] → push 3 → call [eax]）→ 清 [+4]/[+0xd]/[+8] + [+0x10] 置 0
+- 直接 call 0 次/去重 0：仅 `call dword ptr [eax]`（虚表槽 0 派发，目标为子对象析构器，运行时解析，非静态地址）——picker callees=0 吻合差 0
+- 判类：析构器·无写虚表无 delete（**虚表槽 0 派发 + 字段清**——持有子类对象（[+4] 子对象指针 + [+0xd] 标志 + [+8] 长度 + [+0x10] 持有标志）的析构前置清理模板，与 batch 2634 a/c（条件释放器·带清）同源系列：本路仅清子对象 + 字段，不 delete 自身）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2641.py：a 路 2/2、b 路 2/2、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x766830（c 路下函数）：**索引 getter**（mov al,[ecx+0xc] → test al → 0 / mov eax,[esp+4] - [ecx+4] >> 3——子对象数组索引换算，7B/项）——后续批次优先跟进登记
+- 0x766850（c 路下下函数）：**指针算术**（mov eax,[ecx+4] + ecx*8——子对象数组元素取址，7B/项）——后续批次优先跟进登记
+- 既有池延续：0x767010（数组析构器）/ 0x766BC0（数组比较器）/ 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 虚表族、批 2635-2640 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
