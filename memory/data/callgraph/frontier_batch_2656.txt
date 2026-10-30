@@ -1,0 +1,49 @@
+# frontier batch 2656
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 0 孤立函数，落回 ranking 序）
+三路：a=0x75AC80（33B **标记 setter（[+0x31] 置位/复位 + 槽 0x10 查询）** callees=1 deps=0）/ b=0x75ABA0（81B **坐标写入器（本对象 [+0x18] 三维或全局 [0xB45BE8]）** callees=0 deps=0）/ c=0x75AB40（86B **变化检测器（浮点 + 三维比对）** callees=0 deps=0）——输入坐标处理族三段（批 2655 c 路 0x75ACB0 的前置三函数）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2656{a,b,c}.txt，完整读取确认尾 ret（a 单出口 ret 4@0x75AC9E、b 双出口 ret 8@0x75ABC9/0x75ABEE、c 双出口 ret 4@0x75AB8D/0x75AB93、下函数 0x75ACB0=批 2655 c 路 / 0x75AC80=本批 a / 0x75AB96）
+核验：.qwen/tmp/_check_callees2656.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6451 → 6454（三行全新增，ADD 3）
+
+## a 路：0x75AC80 标记 setter（[+0x31] 置位/复位 + 槽 0x10 查询）（33B）
+
+- 范围 0x75AC80-0x75AC9E（单出口 ret 4 @0x75AC9E；0x75ACA1 起 nop pad，下函数 0x75ACB0 = batch 2655 c 路输入坐标更新器，物理相邻）
+- thiscall 1 栈参（ret 4）：esi=[esp+8]（输入处理器）
+- 流程：`lea ecx,[esi-4]`（控制器对象 = esi-4）→ **`mov byte [esi+0x31],1`** → **call 0x75AEC0**（控制器操作，已登记）→ **`mov byte [esi+0x31],0`** → `mov eax,[esi]; push esi; call dword ptr [eax+0x10]`（虚表槽 0x10 查询——运行时派发）→ ret 4
+- 直接 call 1 次/去重 1：0x75aec0（+1 虚表槽 0x10 运行时派发非静态）——picker callees=1 吻合差 0
+- 判类：标记 setter（**输入处理 [+0x31] 忙标志包络**：置位 → 0x75AEC0 控制器操作 → 复位 → 槽 0x10 状态查询——批次 2655 c 路 0x75ACB0 的前置配套）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x75ABA0 坐标写入器（本对象三维或全局 [0xB45BE8]）（81B）
+
+- 范围 0x75ABA0-0x75ABEE（双出口 ret 8 @0x75ABC9（查询真）/0x75ABEE（查询假）；0x75ABF1 起 nop pad，下函数 0x75AC80 = 本批 a 路）
+- thiscall 2 栈参（ret 8）：esi=[esp+8]=this、edi=[esp+0x10]=输出指针（12B 坐标槽）
+- 流程：`push esi; call dword ptr [eax+0x10]`（虚表槽 0x10 查询）→ **真**：[edi]=[esi+0x18]、[edi+4]=[esi+0x1c]、[edi+8]=[esi+0x20]（本对象三维）；**假**：[edi]=[0xB45BE8]、[edi+4]=[0xB45BEC]、[edi+8]=[0xB45BF0]（全局当前三维）
+- 直接 call 0 次/去重 0：仅 `call dword ptr [eax+0x10]`（虚表槽 0x10 运行时派发非静态）——picker callees=0 吻合差 0
+- 判类：坐标写入器（**当前生效坐标导出**：槽 0x10 查询真→本对象 [+0x18]/[+0x1c]/[+0x20]、假→全局 [0xB45BE8] 三维；与批 2655 c 路/本批 c 路同享 [0xB45BE8] 全局三维坐标）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x75AB40 变化检测器（浮点 + 三维比对）（86B）
+
+- 范围 0x75AB40-0x75AB93（双出口 ret 4 @0x75AB8D（al=1）/0x75AB93（al=0）；0x75AB96 起 nop pad，下函数 0x75ABA0 = 本批 b 路）
+- thiscall 1 栈参（ret 4 al）：esi=[esp+8]=this
+- 流程：`push esi; call dword ptr [eax+0x10]`（槽 0x10 查询）→ 假则 al=0 返回 → 真 → `fld qword [ecx+0x578]; fcomp qword [0x7E2800]; fnstsw ax; test ah,0x41`（[+8].+0x578 双精度 vs 全局常量 0x7E2800 浮点比较）→ 无法比较则 al=0 → 通过 → **三维坐标比对**：[esi+0x24] vs [0xB45BE8]、[esi+0x28] vs [0xB45BEC]、[esi+0x2c] vs [0xB45BF0]——任一不同 → al=1（有变化），全等 → al=0
+- 直接 call 0 次/去重 0：仅 `call dword ptr [eax+0x10]`（虚表槽 0x10 运行时派发非静态）——picker callees=0 吻合差 0
+- 判类：变化检测器（**「生效坐标 ≠ 全局 [0xB45BE8]」判定**：槽 0x10 门控 + [+0x578] 浮点阈值 + 三维差异比对——批 2655 c 路 0x75ACB0 更新前的脏检测配套）
+
+## 核验结果
+
+- _check_callees2656.py：a 路 1/1、b 路 0/0、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 本批三路 + 批 2655 c 路 0x75ACB0 构成**输入坐标处理四件套**（0x75AB40 变化检测 → 0x75ABA0 坐标写入 → 0x75AC80 标记包络 → 0x75ACB0 坐标更新器），共享全局 [0xB45BE8] 三维坐标与槽 0x10 门控——调用图封闭
+- 0x75AEC0（a 路被调，已登记）：控制器槽操作器——a 路 [+0x31] 包络的实质操作
+- 既有池延续：0x767010（数组析构器）/ 0x766BC0（数组比较器）/ 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F6B30 / 0x7F6B14 / 0x7F6B0C / 0x7F6B04 / 0x7F6AC4 / 0x7F69F8 / 0x7F69D4 / 0x7F0D5C / 0x7F0DCC / 0x7EBFA4 虚表族、批 2635-2655 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
