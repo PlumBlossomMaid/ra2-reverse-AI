@@ -1,0 +1,47 @@
+# frontier batch 2649
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 0 孤立函数，落回 ranking 序）
+三路：a=0x763F90（42B **析构器·无写虚表无 delete（0x7C8B3D 直放条件子对象 + [+0x10] 清）** callees=1 deps=0）/ b=0x763EF0（53B **析构器·无写虚表无 delete（[eax-4] 头 decrement + 0x7C8B3D + [+0x10] 清）** callees=1 deps=0）/ c=0x763BE0（21B **重置器（[+0x28] 子对象虚表槽 0xc 派发 + [+0x24] 置 -1）** callees=0 deps=0）——0x7C8B3D 直放释放模板族 + 子对象重置器
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2649{a,b,c}.txt，完整读取确认尾 ret（a 单出口 ret@0x763FB9、b 单出口 ret@0x763F24、c 单出口 ret@0x763BF4、下函数 0x763FC0/0x763F30/0x763C00 均为 getter）
+核验：.qwen/tmp/_check_callees2649.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6430 → 6433（三行全新增，ADD 3）
+
+## a 路：0x763F90 析构器·无写虚表无 delete（0x7C8B3D 直放条件子对象 + [+0x10] 清）（42B）
+
+- 范围 0x763F90-0x763FB9（单出口 ret @0x763FB9；0x763FBA 起 nop pad，下函数 0x763FC0 = getter（mov al,[ecx+0xc] 门控 → 0 或 [esp+4]，ret 4——观察项））
+- push ebx/esi 保存；**无写虚表**、**无 delete 段**（ret 无栈参清理）：ebx=0 → `[+0x10]=0` → `[+4] && byte[+0xd] 双条件` → push [+4] call 0x7C8B3D（直放子对象）→ `[+4]=0` → byte[+0xd]=0、[+8]=0 → pop 返回
+- 直接 call 1 次/去重 1：0x7c8b3d——picker callees=1 吻合差 0
+- 判类：析构器·无写虚表无 delete（**batch 2648 a 路 0x764220 同模板**：直 push 直放（无 [eax-4] 头 decrement 变体）、含 [+0x10] 清理）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x763EF0 析构器·无写虚表无 delete（[eax-4] 头 decrement + 0x7C8B3D + [+0x10] 清）（53B）
+
+- 范围 0x763EF0-0x763F24（单出口 ret @0x763F24；0x763F25 起 nop pad，下函数 0x763F30 = getter（mov al,[ecx+0xc] 门控 → 0 或 [esp+4]，ret 4——观察项））
+- **与 a 路同模板**，但子对象释放为 `mov ecx,[eax-4]; add eax,-4; dec ecx; push eax; call 0x7C8B3D`（MSVC6 new[] 分配头 [eax-4] 读取后 decrement 再 free）+ 含 `[+0x10]=0` 清理
+- 直接 call 1 次/去重 1：0x7c8b3d——picker callees=1 吻合差 0
+- 判类：析构器·无写虚表无 delete（a 路 0x763F90 的 **[eax-4] 头 decrement 变体**（子对象为数组分配、带分配头））
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x763BE0 重置器（[+0x28] 子对象虚表槽 0xc 派发 + [+0x24] 置 -1）（21B）
+
+- 范围 0x763BE0-0x763BF4（单出口 ret @0x763BF4；0x763BF5 起 nop pad，下函数 0x763C00 = setter（[esp+0xc] 传参 → call 0x410410 + [+0x24] 写回——观察项））
+- push esi 保存；`mov eax,[esi+0x28]` → `lea ecx,[esi+0x28]` → `call dword ptr [eax+0xc]`（**[+0x28] 子对象虚表槽 0xc 派发**，运行时解析）→ `[esi+0x24]=0xFFFFFFFF`（置 -1 重置哨兵）→ pop esi → ret
+- 直接 call 0 次/去重 0：仅 `call dword ptr [eax+0xc]`（虚表槽 0xc 运行时派发，非静态地址）——picker callees=0 吻合差 0
+- 判类：重置器（**持有 [+0x28] 子对象 + [+0x24] 哨兵字段的重置入口**——子对象虚表槽 0xc 派发 + 哨兵置 -1，与 batch 2647 c 路 0x7642E0 的 [+0x10] 下限更新成族：本路重置 [+0x24] 为 -1 清回初始）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2649.py：a 路 1/1、b 路 1/1、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x763FC0 / 0x763F30（a/b 路下函数）：双 getter（mov al,[ecx+0xc] 门控 → 0 或 [esp+4]，ret 4）——batch 2648 b 路下 0x764260 同模板，后续批次可顺手登记
+- 0x763C00（c 路下函数）：setter（[esp+0xc] 传参 → call 0x410410 + [+0x24] 写回——c 路重置器的写向配对）——后续批次可顺手登记
+- 既有池延续：0x767010（数组析构器）/ 0x766BC0（数组比较器）/ 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7EBFA4 虚表族、批 2635-2648 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
