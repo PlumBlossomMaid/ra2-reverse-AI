@@ -1,0 +1,71 @@
+# frontier batch 2682
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序）
+三路：a=0x73B0B0（140B **Unit 挂载前置检查包裹器（[+0x418] 门控 + 4×0x4A5x 槽查询 + 0x5F4B10 转发）** callees=6 deps=0）/ b=0x739CD0（494B **UnitClass::Undeploy 收起部署（采矿停止搬移 + 矿车构造回收 + 0x7509E0 写回）** callees=6 deps=0）/ c=0x739AC0（516B **UnitClass::Deploy 展开部署（三态门控 + 矿车构造 + 采矿记录）** callees=4 deps=0）——UnitClass 域三连（部署/收起部署/挂载检查），标名与批 2681 采矿启动成族
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2682{a,b,c}.txt，完整读取确认尾 ret（a ret 0xc×2 @0x73B121/@0x73B139、b 单出口 ret @0x739EBD、c 单出口 ret @0x739CC3；下函数 a 0x73B140 大函数 sub esp,0x38、b 0x739EC0 大函数 sub esp,0x30、c 0x739CD0=本批 b 路）
+核验：.qwen/tmp/_check_callees2682.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6529 → 6532（三行全新增，ADD 3）
+备注：核验脚本打印「TSV 已登记 N 行」为去重后唯一地址数（6507，行数 6529，差 22 = 数据卫生已知 16 个重复地址增量），核验判定用 set 无碍
+
+## a 路：0x73B0B0 Unit 挂载前置检查包裹器（140B）
+
+- 范围 0x73B0B0-0x73B139（ret 0xc×2 @0x73B121/@0x73B139——三栈参 thiscall；0x73B13C 起 nop pad，下函数 0x73B140 sub esp,0x38 大函数观察项）
+- thiscall 3 栈参（ret 0xc）：
+  - `byte [edi+0x418]`（标志）零 → 0x73b124（直接转发）
+  - 非零 → push 0 → **call 0x65AD40**（取目标对象）→ esi；`[esi]→槽 0x2c`（类型查询）== 6 且（`[esi]→槽 0x184` == 0x10 或 `[esi+0xb4]` == 0x10）→ 继续；否则 0x73b124
+  - `add esi,0x350` → 依次 **call 0x4A5110 / 0x4A5130 / 0x4A51B0 / 0x4A51D0**（4 个装载槽查询）——任一返回非零 → 0x73b11d：al=0 → ret 0xc（**拒绝挂载**）
+  - 全零 → 0x73b124：[esp+0xc]/[esp+0x10]（第 2/3 栈参）→ push 0 → **call 0x5F4B10**（转发主实现）→ ret 0xc
+- 直接 call 6 次/去重 6：0x65ad40、0x4a5110、0x4a5130、0x4a51b0、0x4a51d0、0x5f4b10（+2 槽 0x2c/0x184 运行时派发非静态）——picker callees=6 完全吻合
+- 判类：Unit 挂载前置检查包裹器（**目标对象类型 6/0x10 校验 + 4 个装载槽全空检查（0x4A5110/0x4A5130/0x4A51B0/0x4A51D0——0x4A5x 家族新成员 3 个）；条件不满足拒绝 al=0，满足则转发 0x5F4B10 主实现**——0x4A5x 装载周期新增成员：0x4A5110/0x4A5130/0x4A51B0 查询 + 0x4A51D0 查 + 0x4A5240 写 + 0x4A51F0 部署）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x739CD0 UnitClass::Undeploy 收起部署（494B）
+
+- 范围 0x739CD0-0x739EBD（单出口 ret @0x739EBD；0x739EBE 起 nop pad，下函数 0x739EC0 sub esp,0x30 大函数观察项）
+- thiscall 0 栈参（ret 无返回值）：
+  - `[+0x6e0]`（展开标志）零 → 0x739EB8（直接返回）
+  - 0x739CE5：`[+0x6e2]`（采矿标志）非零 → 0x739CEF（采矿停止路径）；零 → 0x739D6D（采矿启动路径——注意本函数同时处理两向）
+  - 0x739CEF（采矿中停止）：`[+0x130]`（矿车）非零 → `[eax+0xc8]→[+0x2c0]`（矿量上限）`[+0x2b4]`（矿量下限）→ lea [ecx+edx-2] → `[+0xf8]`（当前矿量）≥ 上限 → 清 `[+0x6e0]`/`[+0x6e2]` → `[esi]→槽 0x84`（取坐标）→ `[eax+0x6ad]` 标志非零 → lea [esp+0xc] push esi → **call 0x703590**（公事/任务处理）→ push eax → **call 0x5657A0**（坐标转换）→ push eax → 槽 0x480（搬运出发/回收）→ 0x739e56；矿量不足 → 跳过
+  - 0x739D6D（启动采矿）：`[+0x6c4]→[+0x6bc]`（类型矿量字段）非零 → `[+0x130]` 已存在 → 0x739E04；无矿车 → push 0x1c8 → **call 0x7C8E17**（operator new）→ 非零 → 构造：[+0x9c] 坐标 + push 0x600/1/0/push 1 → **call 0x421EA0**（矿车构造器）→ **call 0x424B50**（装载/初始化，ocs=0 时 this=0 空调安全）→ `[esi]→槽 0x1e4` → `[+0x130]+0xd4`=eax
+  - 0x739E04（更新矿量）：`[+0xf8]` = 类型 `[+0x2b4]`；`[+0x100]` 记录 = [0xa8ed84] 基准 / 坐标（[esp+0x10]）/ 容量（`[+0x2b0]`）；`[+0x10c]`=容量；`[+0x6e2]=1`（采矿标志）
+  - 0x739E4F：类型 `[+0x6bc]` 零 → `[+0x6e0]=0`
+  - 0x739E56（合并）：`[esi]→槽 0xc4` al 非零 → 槽 0x470；`[esi]→槽 0x84` → `[eax+0x570] != -1` → lea [+0x9c] 坐标 push 0 → 槽 0x84 → `[eax+0x570]` → **call 0x7509E0**（写回）→ ret
+- 直接 call 6 次/去重 6：0x7c8e17、0x421ea0、0x424b50、0x5657a0、0x703590、0x7509e0（+5 槽 0x84×2/0xc4/0x470/0x1e4 运行时派发非静态）——picker callees=6 完全吻合
+- 判类：**UnitClass::Undeploy 收起部署**（**[+0x6e0]/[+0x6e2] 展开/采矿双标志联动：采矿停止（矿量满 → 0x703590 任务 → 0x5657A0 → 槽 0x480 搬运回收）+ 采矿启动（矿车构造 0x421EA0/0x424B50 + 记录更新 [+0x100]）+ 0x7509E0 写回**——与 c 路 Deploy 成对，采收机/武装矿车部署循环，批 2681 采矿启动 0x73D450 的夹具层）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x739AC0 UnitClass::Deploy 展开部署（516B）
+
+- 范围 0x739AC0-0x739CC3（单出口 ret @0x739CC3；0x739CC4 起 nop pad，下函数 0x739CD0=本批 b 路）
+- thiscall 0 栈参（ret 无返回值）：
+  - `[+0x6c4]→byte[+0xe13]`（类型部署标志）零 → 0x739cbf（返回）
+  - `[esi]→槽 0x1c8`（部署查询）≤0 → 0x739b08；>0 → `[esi]→槽 0x84`（取对象）→ `[eax+0x6ad]` 标志 → 非零走 0x739b08、零 → 0x739cbf
+  - 0x739b08（三态门控）：`[+0x6e0]`（展开标志）非零 → 0x739cbf；`[+0x134]`（部署中标志）非零 → 跳；零 → 槽 0x1c8 ≤0 → 跳；`[+0x134]=1`
+  - 0x739b32：`[+0x6e1]`（采矿标志）非零 → 0x739b3c；零 → 0x739b7c
+  - 0x739b3c（采矿中）：`[+0x130]`（矿车）非零 → `[+0x2c0]/[+0x2b4]` → lea [ecx+edx-1] → `[+0xf8]`（当前矿量）≥ 上限 → `[+0x6e0]=1`（可展开）`[+0x6e1]=0`；不足 → 0x739c70
+  - 0x739b7c：`[+0x134]` 非零 → 0x739c70；`[+0x6c4]→[+0x6bc]` 零 → `[+0x6e0]=1`（直接展开）→ 0x739c70；非零 → `[+0x130]` 已存在 → 0x739c20；无矿车 → push 0x1c8 **call 0x7C8E17**（new）→ **call 0x421EA0**（矿车构造，坐标 push 0x600/push 0/0/1）→ **call 0x424B50**（装载）→ `[esi]→槽 0x1e4` → `[+0x130]+0xd4`=eax
+  - 0x739c20（更新矿量）：同 b 路 0x739E04 模式——`[+0xf8]`=类型 `[+0x2b4]`；`[+0x100]` 记录=[0xa8ed84]/坐标/容量（`[+0x2b0]`）；`[+0x6e1]=1`
+  - 0x739c70：`[esi]→槽 0x84` → `[eax+0x56c] != -1` → lea [+0x9c] 坐标 push 0 → 槽 0x84 → `[eax+0x56c]` → **call 0x7509E0**（写回）→ ret
+- 直接 call 4 次/去重 4：0x7c8e17、0x421ea0、0x424b50、0x7509e0（+2 槽 0x1c8/0x84 运行时派发非静态）——picker callees=4 完全吻合
+- 判类：**UnitClass::Deploy 展开部署**（**类型 [0xe13] 部署标志 + 槽 0x1c8 部署查询 + [0x6e0]/[0x134]/[0x6e1] 三态门控：采矿未满/无矿车时构造矿车（0x421EA0/0x424B50）+ 采矿记录 [+0x100] + 矿量满 [0x6e0]=1 展开 + 0x7509E0 写回**——部署/展开主循环，与 b 路 Undeploy 成对（0x7509E0 写回两者共用；0x421EA0/0x424B50 矿车构造对两路同款））
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2682.py：a 路 6/6、b 路 6/6、c 路 4/4——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4A5x 装载家族扩员**：0x4A5110 / 0x4A5130 / 0x4A51B0（查询）+ 0x4A51D0（查）/ 0x4A5240（写）/ 0x4A51F0（部署）——a 路单函数用 4 个查询成员，家族已 7 成员
+- 0x5F4B10（a 路转发目标）：挂载/部署主实现，后续批次可顺手登记
+- 0x7509E0（b/c 路共用写回）：坐标/属性写回多使用者新增（0x739CD0/0x739AC0）
+- 0x703590（b 路采矿停止任务）：0x703xxx 域任务处理（批 2681 a 路观察项 0x703B10/0x703E70 同域），候选池加码
+- **0x421EA0/0x424B50（矿车构造对）**：两路共用，0x424B50 无对象时 this=0 空调安全（防双构）
+- **UnitClass 域持续推进**：已登记 22+ 个——剩余大户（0x7359F0 UpdateTube / 0x737180 UpdateVisceroid / 0x736DF0 UpdateFiring / 0x739AC0 Deploy 本批 / 0x739CD0 Undeploy 本批 / 0x738D30 GotoClearSpot 等）持续在列
+- 既有池延续：0x73B140（a 路下函数，sub esp,0x38 大函数含 0x5657A0/0x487950/0x703B10）/ 0x739EC0（b 路下函数）/ 0x767010 / 0x766BC0 / 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F6B30 / 0x7F6B14 / 0x7F6B0C / 0x7F6B04 / 0x7F6AC4 / 0x7F69F8 / 0x7F69D4 / 0x7F69A4 / 0x7F6924 / 0x7F68CC / 0x7F665C / 0x7F66A8 / 0x7F668C / 0x7F6684 / 0x7F667C / 0x7F65F4 / 0x7F6318 / 0x7F62FC / 0x7F62F4 / 0x7F62EC / 0x7F0D5C / 0x7F0DCC / 0x7EA57C / 0x7EBFA4 虚表族、批 2635-2681 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
