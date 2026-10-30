@@ -1,0 +1,47 @@
+# frontier batch 2657
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 0 孤立函数，落回 ranking 序）
+三路：a=0x75AB00（45B **析构器·三虚表 0x7F6AC4/0x7F69F8/0x7F69D4（批 2653 c 纯析构变体）** callees=1 deps=0）/ b=0x75AA90（103B **WalkLocomotionClass::WalkLocomotionClass（构造器）** callees=1 deps=0）/ c=0x75A740（73B **析构器·scalar deleting·写虚表 0x7F69A4 + 条件释放** callees=1 deps=0）——0x7F6AC4/0x7F69xx 族生命周期闭环
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2657{a,b,c}.txt，完整读取确认尾 ret（a 单出口 ret@0x75AB2C、b 单出口 ret@0x75AAF6、c 单出口 ret 4@0x75A786、下函数 0x75AB30 +0x30 getter / 0x75AB00=本批 a / 0x75A790）
+核验：.qwen/tmp/_check_callees2657.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6454 → 6457（三行全新增，ADD 3）
+
+## a 路：0x75AB00 析构器·三虚表 0x7F6AC4/0x7F69F8/0x7F69D4（45B）
+
+- 范围 0x75AB00-0x75AB2C（单出口 ret @0x75AB2C；0x75AB2D 起 nop pad，下函数 0x75AB30 = getter（mov al,[esp+4].+0x30——+0x30 标志 getter，观察项））
+- **三虚表写：+[0]=0x7F6AC4、[+4]=0x7F69F8、[+0x18]=0x7F69D4**（与 batch 2653 c 路 0x75CBE0 完全相同）→ [+0x38] 非空 → `mov ecx,[eax]; push eax; call dword ptr [ecx+8]`（子对象槽 8 释放）→ **call 0x55A6F0**（基类析构链）→ ret——**无 delete 段、无栈参清理**
+- 直接 call 1 次/去重 1：0x55a6f0（+1 虚表槽 8 运行时派发非静态）——picker callees=1 吻合差 0
+- 判类：析构器·三虚表 0x7F6AC4 系（**batch 2653 c 路 0x75CBE0（scalar deleting 带 delete）的纯析构变体**——0x7F6AC4 族对象两个析构形态，与 b 路构造器物理相邻配对）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x75AA90 WalkLocomotionClass::WalkLocomotionClass（构造器）（103B）
+
+- 范围 0x75AA90-0x75AAF6（单出口 ret @0x75AAF6；0x75AAF7 起 nop pad，下函数 0x75AB00 = 本批 a 路析构器，物理相邻）
+- thiscall 0 栈参（普通构造器）：**call 0x55A6C0**（基类构造）→ 从全局 **[0xB45BE8]/[0xB45BEC]/[0xB45BF0]** 拷贝三维坐标双份（**[+0x1c]/[+0x20]/[+0x24] 与 [+0x28]/[+0x2c]/[+0x30]**）→ xor eax → 清 [+0x34]/[+0x35]/[+0x36]（三 byte）+ [+0x38]=0 → **三虚表写：+[0]=0x7F6AC4、[+4]=0x7F69F8、[+0x18]=0x7F69D4** → eax=esi → ret
+- 直接 call 1 次/去重 1：0x55a6c0——picker callees=1 吻合差 0
+- 判类：WalkLocomotionClass::WalkLocomotionClass（**步行运动类构造器**：0x55A6C0 基构造 + 全局 [0xB45BE8] 三维坐标双份初始化（[+0x1c]/[+0x28] 两套）+ 三虚表 0x7F6AC4 系 + 清标志——与 a 路析构器、batch 2653 c 路 0x75CBE0 构成 0x7F6AC4 族构造/析构完整闭环；[0xB45BE8] 与批 2655/2656 输入坐标族共享全局三维坐标）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x75A740 析构器·scalar deleting·写虚表 0x7F69A4 + 条件释放（73B）
+
+- 范围 0x75A740-0x75A786（单出口 ret 4 @0x75A786；0x75A789 起 nop pad，下函数 0x75A790）
+- thiscall 1 栈参（[esp+8]&1 delete）：**写虚表 0x7F69A4**（0x7F69xx 族）→ `[+4] != 0 && byte [+0xd] != 0` 双条件 → `push [+4]; call 0x7C8B3D`（crt free 直放子对象）→ [+4]=0 → 清 [+0xd]=0、[+8]=0 → test [esp+8],1 → 0x7C8B3D delete 自身 → ret 4
+- 直接 call 2 次/去重 1：0x7c8b3d——picker callees=1 吻合差 0
+- 判类：析构器·scalar deleting·写虚表 0x7F69A4 + 条件释放（**0x7F69xx 虚表族析构侧**——batch 2646 c 路 0x764710 / batch 2648 族同模板：0x7C8B3D 直放条件子对象 + delete，与 b 路 0x7F69F8 虚表相邻成族）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2657.py：a 路 1/1、b 路 1/1、c 路 2/1——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x75AB30（a 路下函数）：+0x30 标志 getter（mov al,[esp+4].+0x30; ret 4——8B 极简 getter）——后续批次可顺手登记
+- **0x7F6AC4 + 0x7F69F8 + 0x7F69D4 三虚表生命周期族已闭环**：构造器 0x75AA90（b 路）→ 析构器 0x75CBE0（批 2653 c，scalar deleting）→ 0x75AB00（a 路，纯析构）、0x7F69A4（c 路）——WalkLocomotionClass 构造/析构调用图封闭
+- 既有池延续：0x767010（数组析构器）/ 0x766BC0（数组比较器）/ 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F6B30 / 0x7F6B14 / 0x7F6B0C / 0x7F6B04 / 0x7F6AC4 / 0x7F69F8 / 0x7F69D4 / 0x7F69A4 / 0x7F0D5C / 0x7F0DCC / 0x7EBFA4 虚表族、批 2635-2656 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
