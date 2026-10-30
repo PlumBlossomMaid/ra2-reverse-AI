@@ -1,0 +1,61 @@
+# frontier batch 2677
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序——前三 0x746670/0x7463A0/0x7447B0 已批 2676 登记，本批取紧跟其次的 0x744720/0x744600/0x744210）
+三路：a=0x744720（122B **Unit 轨道/附着标记更新器（+0x34 + 0x6E53A0 三指令）** callees=3 deps=0）/ b=0x744600（50B **Unit 决策更新入口（+0x6dc 清理 + 0x4DB690）** callees=2 deps=0）/ c=0x744210（83B **UnitClass::WhatAmI（cell 标记位清理）** callees=2 deps=0）——UnitClass 域三连（0x7442-0x7447 段，接近 UnitClass 主函数区）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2677{a,b,c}.txt，完整读取确认尾 ret（a 单出口 ret 4@0x744797、b 单出口 ret 0xc@0x74462E、c 双出口 ret 4@0x74424D/@0x744260、下函数 0x7447A0 / 0x744640 / 0x744270 = sub esp,0x18 大函数观察项）
+核验：.qwen/tmp/_check_callees2677.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6514 → 6517（三行全新增，ADD 3）
+
+## a 路：0x744720 Unit 轨道/附着标记更新器（122B）
+
+- 范围 0x744720-0x744797（单出口 ret 4 @0x744797；0x74479A 起 nop pad，下函数 0x7447A0 = 小函数）
+- thiscall 1 栈参（ret 4）：esi=this、edi=[esp+0xc]=参数标志
+- 流程：
+  - `[esi+0x34]（轨道子对象）` 非空 → `[esi+0x338] != -1`（索引有效）→ **call 0x6E57C0**（轨道状态校验）→ al 非零（不需要清）→ 0x74478d 暂停
+  - edi != 0（参数真）→ **call 0x6E53A0（push 7 + esi + [0xB1CFB8]（全局坐标）+ 0 + 0——通知指令 7）**
+  - `[esi+0x34]` 非空 → **call 0x6E53A0（指令 0x30）**
+  - `[esi+0x34]` 非空 → **call 0x6E53A0（指令 0x1d）**
+  - 0x74478d：**call 0x702D40（push edi——主状态机推进）** → ret 4
+- 直接 call 5 次/去重 3：0x6e53a0×3、0x6e57c0、0x702d40——picker callees=3 吻合差 0
+- 判类：Unit 轨道/附着标记更新器（**[+0x34] 轨道子对象 + 0x6E53A0 三指令（7/0x30/0x1d）通知 + [0xB1CFB8] 全局 + 0x6E57C0 校验 + 0x702D40 主状态推进**——按 edi 参数触发轨道清整（问题 CS 清轨道标记）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x744600 Unit 决策更新入口（50B）
+
+- 范围 0x744600-0x74462E（单出口 ret 0xc @0x74462E；0x744632 起 nop pad，下函数 0x744640 = Unit 状态 getter）
+- thiscall 3 栈参（ret 0xc）：esi=[esp+8]=this、[esp+0xc]/[esp+0x10]=参数
+- 流程：
+  - `[esi+0x6dc]（决策子对象）` 非空 → **call 0x4C2C10**（0x6dc 子对象析构/清理）→ `[esi+0x6dc]=0`
+  - push 三参（[esp+0x10]/[esp+0xc]/esi）→ **call 0x4DB690**（3 栈参决策/指挥执行）→ ret 0xc
+- 直接 call 2 次/去重 2：0x4c2c10、0x4db690——picker callees=2 吻合差 0
+- 判类：Unit 决策更新入口（**[+0x6dc] 子对象先清（0x4C2C10）+ 0x4DB690 三参决策执行**——Unit 每帧指挥决策调度端口）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x744210 UnitClass::WhatAmI（83B）
+
+- 范围 0x744210-0x744260（双出口 ret 4 @0x74424D（清 [+0x128] 0xdf 位）/@0x744260（清 [+0x124] 0xdf 位）；0x744263 起 nop pad，下函数 0x744270 = sub esp,0x18 大函数观察项）
+- thiscall 1 栈参（ret 4）：esi=[esp+8]=坐标指针
+- 流程：
+  - push esi; mov ecx,0x87F7E8 → **call 0x565730**（坐标 → cell 取格，MapClass）→ edi=cell
+  - push esi → **call 0x578080**（边界钳制/检查）
+  - `eax + [0xB1D0AC]（全局半径偏移）` vs `[esi+8]`（参数范围）→ **jg 0x744250**（超限 → `[edi+0x124] & 0xdf` 清 bit5 分支）
+  - 未超限 → `[edi+0x128] & 0xdf`（清 bit5）→ ret 4
+- 直接 call 2 次/去重 2：0x565730、0x578080——picker callees=2 吻合差 0
+- 判类：**UnitClass::WhatAmI**（cell 获取 0x565730 + 边界 0x578080 + [0xB1D0AC] 全局半径比对 → 按是否超限清 cell 的 +0x128/+0x124 标志位（and 0xdf=清 bit5）——cell 归属/占用标记清理；picker 同名列 0x7441B0 为另一 WhatAmI 变体）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2677.py：a 路 5/3、b 路 2/2、c 路 2/2——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x744270（c 路下函数）：sub esp,0x18 大函数（[+0xac] cmp 6 分支——Unit 状态机）——后续批次优先跟进登记
+- **UnitClass 域持续推进**：已登记 AssignDestination（批 2676 巨型）+ 轨道/决策/WhatAmI（本批）——剩余 UnitClass 大户（0x738D30 GotoClearSpot / 0x73D450 Harvesting / 0x739AC0 Deploy / 0x739CD0 Undeploy / 0x737180 UpdateVisceroid / 0x736DF0 UpdateFiring / 0x7359F0 UpdateTube 等）持续入列
+- 既有池延续：0x767010（数组析构器）/ 0x766BC0（数组比较器）/ 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F6B30 / 0x7F6B14 / 0x7F6B0C / 0x7F6B04 / 0x7F6AC4 / 0x7F69F8 / 0x7F69D4 / 0x7F69A4 / 0x7F6924 / 0x7F68CC / 0x7F665C / 0x7F66A8 / 0x7F668C / 0x7F6684 / 0x7F667C / 0x7F65F4 / 0x7F6318 / 0x7F62FC / 0x7F62F4 / 0x7F62EC / 0x7F0D5C / 0x7F0DCC / 0x7EA57C / 0x7EBFA4 虚表族、批 2635-2676 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
