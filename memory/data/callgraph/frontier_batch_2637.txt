@@ -1,0 +1,57 @@
+# frontier batch 2637
+
+日期：2026-10-30
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 0，落回 0x76 段 ranking 序前 3：0x767B70 / 0x7678C0 / 0x767880）
+三路：a=0x767B70（59B FUN_00767b70 callees=2 deps=0）/ b=0x7678C0（36B FUN_007678c0 callees=2 deps=0）/ c=0x767880（54B FUN_00767880 callees=3 deps=0）——a 为构造器·双子对象（三虚表 0x7F0954→[+8] 0x7F70EC→0x7F70DC 切换）；b 为析构器·scalar deleting·写虚表 0x7F7060（batch 2629 c 路同模板）；c 为析构器·scalar deleting·双子对象（[+0x18]/[+0x14] 双 0x7B46F0 子对象析构 + 写虚表 0x7F7060 + 0x65D660 + delete）——0x76 段虚表对象生命周期域
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2637{a,b,c}.txt（a 0x60 窗 59B 读全，尾 ret 4 @0x767BAA（0x767BAD-0x767BAF nop pad，0x767BB0 起后邻赋值构造·双子对象：mov eax,[esp+8] + push esi + lea edx,[ecx+8] + push eax + mov ecx,[esp+8] + call 0x76f470 + ret 8——非本批范围）；b 0x40 窗 36B 读全，尾 ret 4 @0x7678E1（0x7678E4-0x7678EF nop pad，0x7678F0 起后邻双全局清零器：xor eax,eax + mov [0xb72818],eax + mov [0xb7281c],eax——[0xB72818]/[0xB7281C]，非本批范围）；c 0x60 窗 54B 读全（含 b 路起始），尾 ret 4 @0x7678B3（0x7678B6-0x7678BF nop pad，0x7678C0 起后邻 = b 路本函数））
+核验：.qwen/tmp/_check_callees2637.py；a 2/2（0x65d430/0x65d480 已登记）、b 2/2（0x65d660/0x7c8b3d 已登记）、c 3/3（0x65d660/0x7b46f0/0x7c8b3d 已登记——0x7b46f0 两次 call 去重 3）；无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6394 → 6397（三行全新增，ADD 3）
+
+## a 路：0x767B70 FUN_00767b70（59B）
+
+- 范围 0x767B70-0x767BAA（单出口 ret 4 @0x767BAA；0x767BAD-0x767BAF nop pad，0x767BB0 起后邻赋值构造·双子对象）
+- thiscall 1 栈参（ecx=esi 目标，[esp+0xc]=[esp+8] 源对象参数，ret 4）:**构造器·双子对象·三虚表切换**（主虚表 0x7F0954 + [+8] 子对象 0x7F70EC 构造/深拷贝 + 最终虚表 0x7F70DC）：
+  - **清 + 主虚表 + 子对象构造**（@0x767b70-0x767b86）：push esi mov esi,ecx push edi lea edi,[esi+8]（子对象 [+8]）mov [esi+4],0（清 [+4]）mov ecx,edi mov [esi],0x7f0954（写虚表 0x7F0954）call 0x65d430（@0x767b86 每项构造——[+8] 子对象基构造）
+  - **子对象虚表 + 深拷贝**（@0x767b8b-0x767b9b）：mov eax,[esp+0xc]（源对象参数）mov [edi],0x7f70ec（写子对象虚表 0x7F70EC）mov ecx,[eax+4]（源 [+4] 字段）push ecx mov ecx,edi call 0x65d480（@0x767b9b 每项深拷贝——源 [+4] 拷入 [+8] 子对象）
+  - **最终虚表**（@0x767ba0-0x767baa）：mov [esi],0x7f70dc（最终写虚表 0x7F70DC）mov eax,esi pop edi pop esi ret 4
+- 直接 call 2 次/去重 2：0x65d430/0x65d480——picker callees=2 吻合，差值 0
+- 判类：FUN_00767b70——构造器·双子对象·三虚表切换（thiscall 1 栈参单出口 ret 4；主虚表 0x7F0954 → [+8] 子对象虚表 0x7F70EC（0x65D430 构造 + 0x65D480 深拷贝，batch 2625/2626 装载对）→ 最终虚表 0x7F70DC（batch 2636 b/c 路双子对象主虚表同）——0x7F0954 虚表族对象构造器（0x7F70EC 内嵌子对象 + 0x7F70DC 宿主对象族）；后邻 0x767BB0 赋值构造·双子对象（call 0x76f470）同族构造侧延续）
+- 语义证据级别：assembly_decompile_verified（partial——0x7F0954/0x7F70DC/0x7F70EC 虚表目标/[+4] 字段/源对象参数语义未确认，无对应已登记 C++ 重写）
+
+## b 路：0x7678C0 FUN_007678c0（36B）
+
+- 范围 0x7678C0-0x7678E1（单出口 ret 4 @0x7678E1；0x7678E4-0x7678EF nop pad，0x7678F0 起后邻双全局清零器）
+- thiscall 1 栈参（ecx=esi，[esp+8] delete 标志 &1，ret 4）:**析构器·scalar deleting·写虚表 0x7F7060**（写虚表 + 基类析构链 + 条件 delete）：
+  - push esi mov esi,ecx mov dword[esi],0x7f7060（写虚表 0x7F7060）call 0x65d660（@0x7678c9 基类析构链派发——batch 2629 b 路 0x76B6C0 同调点）
+  - test byte[esp+8],1（delete 标志）je 0x7678de（仅析构跳过）→ push esi call 0x7c8b3d（@0x7678d6 delete this）add esp,4
+  - 0x7678de mov eax,esi pop esi ret 4
+- 直接 call 2 次/去重 2：0x65d660/0x7c8b3d——picker callees=2 吻合，差值 0
+- 判类：FUN_007678c0——析构器·scalar deleting·写虚表 0x7F7060（thiscall 1 栈参单出口 ret 4；batch 2629 c 路 0x769D90/2629 b 路同模板——写虚表 0x7F7060 + 基类析构链 0x65D660 + [esp+8]&1 条件 delete 0x7C8B3D；虚表常量族 0x7F7060（与 c 路 0x767880 同虚表——0x7F7060 对象族析构侧）；后邻 0x7678F0 双全局清零器（[0xB72818]/[0xB7281C]——batch 2636 a 路后邻 [0xB72898]/[0xB7289C] 同族全局清零模式）同工区）
+- 语义证据级别：assembly_decompile_verified（partial——0x7F7060 虚表目标/0x65D660 基类析构精确语义未确认，无对应已登记 C++ 重写）
+
+## c 路：0x767880 FUN_00767880（54B）
+
+- 范围 0x767880-0x7678B3（单出口 ret 4 @0x7678B3；0x7678B6-0x7678BF nop pad，0x7678C0 起后邻 = b 路本函数）
+- thiscall 1 栈参（ecx=esi，[esp+8] delete 标志 &1，ret 4）:**析构器·scalar deleting·双子对象**（[+0x18]/[+0x14] 双 0x7B46F0 子对象析构 + 写虚表 0x7F7060 + 基类析构 + 条件 delete）：
+  - **双子对象析构**（@0x767880-0x76788e）：push esi mov esi,ecx lea ecx,[esi+0x18]（子对象 [+0x18]）call 0x7b46f0（@0x767886 子对象 1 析构）lea ecx,[esi+0x14]（子对象 [+0x14]）call 0x7b46f0（@0x76788e 子对象 2 析构——batch 2635 b 路同调点）
+  - **写虚表 + 基类析构 + 条件 delete**（@0x767893-0x7678b3）：mov ecx,esi mov [esi],0x7f7060（写虚表 0x7F7060）call 0x65d660（@0x76789b 基类析构链派发）test byte[esp+8],1 je 0x7678b0 → push esi call 0x7c8b3d（@0x7678a8 delete this）add esp,4 → 0x7678b0 mov eax,esi pop esi ret 4
+- 直接 call 4 次/去重 3：0x7b46f0（×2）/0x65d660/0x7c8b3d——picker callees=3 吻合，差值 0
+- 判类：FUN_00767880——析构器·scalar deleting·双子对象（thiscall 1 栈参单出口 ret 4；与 b 路 0x7678C0 同虚表 0x7F7060 对象族——本路为复合双子对象析构（[+0x18]/[+0x14] 两个 0x7B46F0 子对象先行析构）+ 写虚表 0x7F7060 + 基类析构 0x65D660 + [esp+8]&1 delete；b 路为同族简单析构，两路构成 0x7F7060 对象族析构双形态（带/不带双内嵌子对象））
+- 语义证据级别：assembly_decompile_verified（partial——0x7F7060 虚表目标/[+0x14]/[+0x18] 子对象语义/0x7B46F0 精确语义未确认，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2637.py：a 路 2/2（0x65d430/0x65d480 已登记）、b 路 2/2（0x65d660/0x7c8b3d 已登记）、c 路 4 次去重 3/3（0x7b46f0×2/0x65d660/0x7c8b3d 已登记）——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0——三路全 0
+- 无批内自引用（a/b/c 互不落对方函数体——c 路双子对象 0x7B46F0 与 batch 2635 b 路同调点、a 路装载对 0x65D430/0x65D480 为已登记函数；a 路后邻 0x767BB0 赋值构造、b 路后邻 0x7678F0 双全局清零器、c 路后邻 = b 路本函数均不在本批范围）；排队 MISSING 观察项已清零；真 MISSING 队列 3 个不变（0x4f6eb0 / 0x47ec40 / 0x4758C0）；无 UNKNOWN（0x5077da 观察不变）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；check 脚本报「已登记 6372 行」= 唯一地址数 = 行数 6394 − 22；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x7F0954 / 0x7F70DC / 0x7F70EC（a 路三虚表切换）：0x7F70DC 包装 0x7F70EC 内嵌子对象宿主族构造侧（batch 2636 b/c 路析构侧配对）+ 0x7F0954 前缀虚表——虚表常量观察（0x7F0954→0x7F70DC 构造期虚表切换模式）
+- 0x7F7060（b/c 路写虚表）：虚表常量族 0x7F7060（0x7F7060 对象族析构双形态：简单/带双内嵌子对象）——虚表常量观察
+- 0x7B46F0（c 路子对象析构 ×2 + batch 2635 b 路同调点）：双子对象内嵌子对象析构入口（0x7B46F0 复用）——基类析构/子对象析构观察
+- 0x65D660（b/c 路基类析构链）：batch 2629 b 路同调点再确认——基类析构链观察
+- 0x76F470（a 路后邻赋值构造·双子对象呼叫）：双子对象赋值构造器候选——后邻候选（工具函数观察）
+- [0xB72818] / [0xB7281C]（b 路后邻双全局清零器目标）：双全局清零对（batch 2636 a 路后邻 [0xB72898]/[0xB7289C] 同族——[0xB72818..0xB7289C] 全局段清零模式）—全局对象观察
+- 既有池延续：见 batch 2636 观察项列表（0x7F70EC 析构侧闭环、0x7F70DC 主虚表、0x65D460/0x65D660 双基类析构对、[0xB72898]/[0xB7289C]）+ batch 2635（0x7F7104、0x5CB6C0/0x6C8C40/0x7B46F0、0x767EC0 thunk、0x7692F0）+ batch 2634（0x7680C0、[+0x10] 前置清、0x769D00/0x769C80、0x769C20）+ batch 2633（0x7F712C、0x65D460）+ batch 2632-2586 全量 + 真 MISSING 队列 3 个 + 历史候选池全量延续
