@@ -1,0 +1,56 @@
+# frontier batch 2655
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 0 孤立函数，落回 ranking 序）
+三路：a=0x75C8E0（58B **状态门控 getter（四条件 AND）** callees=0 deps=0）/ b=0x75C7F0（93B **QI 接口转发器（GUID 比对 + 槽 4 AddRef）** callees=1 deps=0）/ c=0x75ACB0（225B **输入坐标更新器（Map 取格 + 高度修正）** callees=2 deps=0）——门控 getter + QI 转发器 + 坐标更新器
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2655{a,b,c}.txt，完整读取确认尾 ret（a 单出口 ret 4@0x75C911、b 单出口 ret 0xc@0x75C84A、c 单出口 ret 0x10@0x75AD8E、下函数 0x75C920=批 2654 c / 0x75C850 E_NOTIMPL 桩 / 0x75ADA0）
+核验：.qwen/tmp/_check_callees2655.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6448 → 6451（三行全新增，ADD 3）
+
+## a 路：0x75C8E0 状态门控 getter（四条件 AND）（58B）
+
+- 范围 0x75C8E0-0x75C911（单出口 ret 4 @0x75C911；0x75C91A 起 nop pad，下函数 0x75C920 = batch 2654 c 路 COM 接口获取器）
+- thiscall 1 栈参（ret 4）：esi=[esp+8]（查询对象）
+- 流程：**call dword ptr [ecx+0x10]**（[esi-0x14] 控制器对象虚表槽 0x10 查询——运行时派发，返回 al）→ 通过（al!=0）→ `[esi+0x20]!=0 && byte [esi+0x1d]==0` → `[esi-0xc]` → `byte [edx+0x6ad]==0` → 全条件满足 → al=1，否则 al=0
+- 直接 call 0 次/去重 0：仅 `call dword ptr [ecx+0x10]`（虚表槽 0x10 运行时派发非静态）——picker callees=0 吻合差 0
+- 判类：状态门控 getter（**四条件 AND 判定「可否操作」**：控制器槽 0x10 + 资源槽 [esi+0x20]/[+0x1d] + 全局标志 [0x6ad]——多状态汇总查询）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x75C7F0 QI 接口转发器（GUID 比对 + 槽 4 AddRef）（93B）
+
+- 范围 0x75C7F0-0x75C84A（单出口 ret 0xc @0x75C84A；0x75C84D 起 nop pad，下函数 0x75C850 = E_NOTIMPL 桩（mov eax,0x80004003; ret 8——观察项））
+- thiscall 3 栈参（ret 0xc）：ebx=[esp+8]（对象）、esi=[esp+0x14]（接口指针）、ebp=[esp+0x14]（输出槽）
+- **这是 batch 2653 观察项 0x75CC30 thunk（sub [esp+4],4; jmp 0x75C7F0）的目标**——thunk 修正栈后跳入本路
+- 流程：**call 0x55A9B0**（系统接口查询）→ 返回 0x80004002（E_NOINTERFACE）→ **`repe cmpsd` 比对 [esi] vs [0x7E9B10] 4 个 dword**（16B GUID/接口 ID）→ 相等 → `[ebp] = ebx+0x18 或 0`（按 ebx 空取）→ `[ebp]==0` → 0x80004002 返回；命中 → `push ebx; call dword ptr [ecx+4]`（对象虚表槽 4 AddRef）→ eax=0 → ret 0xc
+- 直接 call 1 次/去重 1：0x55a9b0（+1 个虚表槽 4 运行时派发非静态）——picker callees=1 吻合差 0
+- 判类：QI 接口转发器（**先 0x55A9B0 系统查询、未命中则比对 0x7E9B10 目标 GUID、命中回传子对象 +0x18、否则 E_NOINTERFACE；接口命中槽 4 AddRef**——0x75CC30 thunk 的前置接口转发，与 batch 2654 c 路 QueryInterface 成族）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x75ACB0 输入坐标更新器（Map 取格 + 高度修正）（225B）
+
+- 范围 0x75ACB0-0x75AD8E（单出口 ret 0x10 @0x75AD8E；0x75AD91 起 nop pad，下函数 0x75ADA0）
+- thiscall 4 栈参（ret 0x10）：esi=this（输入处理器）、[esp+0x18]/[esp+0x1c]/[esp+0x20]=X/Y/Z 三维坐标
+- 流程：
+  - **三择一门控**：[esi+8] 对象虚表槽 **0x37c**、**0x1d4**、**0x1d8** 三个查询（任一 al!=0 则直接返回——外部禁止更新）
+  - **[esi+0x18]/[+0x1c]/[+0x20] = 三坐标**（写本对象目标坐标）
+  - 与全局 **[0xB45BE8]/[0xB45BEC]/[0xB45BF0]**（当前生效三维坐标）比对：均相等 → 再与 [+0x24]/[+0x28]/[+0x2c] 相同 → 清 [+0x30] 并调虚表槽 0x54c（对象跟随）；不相同 → `push 坐标; mov ecx,0x87F7E8（MapClass）; call 0x565730`（坐标取格/ClampToCells）
+  - 返回 cell → `[eax+0x140] test ch,1`（高地判定）→ **call 0x6D2120**（cell 高度→屏幕偏移，ecx=0x3c）→ `[+0x20] += eax`（高度修正）→ `[+0x30]=1`（置脏标志）
+  - ret 0x10
+- 直接 call 2 次/去重 2：0x565730、0x6d2120（+4 虚表槽 0x37c/0x1d4/0x1d8/0x54c 运行时派发非静态）——picker callees=2 吻合差 0
+- 判类：输入坐标更新器（**鼠标/目标三维坐标 → Map 取格 0x565730 → cell 高度修正 0x6D2120 → [+0x30] 脏标志**；与全局 [0xB45BE8] 三维坐标比对去重、对象跟随槽 0x54c——batch 记忆 0x6D2120/0x565730 均属输入/坐标处理族）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2655.py：a 路 0/0、b 路 1/1、c 路 2/2——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x75C850（b 路下函数）：E_NOTIMPL 桩（mov eax,0x80004003; ret 8——batch 2653 观察项 0x75E080 同模板，后续批次可顺手登记）
+- 0x75C920（a 路下函数）= batch 2654 c 路 COM 接口获取器（已登记）——0x75C8E0/0x75C7F0/0x75C920/0x75CA30 构成 QI/门控处理族
+- 既有池延续：0x767010（数组析构器）/ 0x766BC0（数组比较器）/ 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F6B30 / 0x7F6B14 / 0x7F6B0C / 0x7F6B04 / 0x7F6AC4 / 0x7F69F8 / 0x7F69D4 / 0x7F0D5C / 0x7F0DCC / 0x7EBFA4 虚表族、批 2635-2654 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
