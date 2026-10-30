@@ -1,0 +1,69 @@
+# frontier batch 2668
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序）
+三路：a=0x74D7C0（1073B **VeinholeMonsterClass::UpdateGrowth（增长推进）** callees=8 deps=0）/ b=0x74C5B0（1087B **VeinholeMonsterClass::VeinholeMonsterClass（构造器，四虚表 0x7F66xx 系）** callees=10 deps=0）/ c=0x74C0E0（39B **析构器·无写虚表无 delete（批 2647 b 同模板）** callees=1 deps=0）——Veinhole 家族构造/增长闭环
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2668{a,b,c}.txt，完整读取确认尾 ret（a 单出口 ret@0x74DBF0、b 单出口 ret 4@0x74C9EC、c 单出口 ret@0x74C106、下函数 0x74DC00 / 0x74C9F0 = 批 2667 b 路析构链派发器（物理相邻实证）/ 0x74C110 getter）
+核验：.qwen/tmp/_check_callees2668.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6487 → 6490（三行全新增，ADD 3）
+
+## a 路：0x74D7C0 VeinholeMonsterClass::UpdateGrowth（增长推进）（1073B）
+
+- 范围 0x74D7C0-0x74DBF0（单出口 ret @0x74DBF0；0x74DBF1 起 nop pad，下函数 0x74DC00）
+- thiscall 0 栈参（ret 无参）：栈帧 sub esp,0x28 + 四寄存器保存
+- 流程：
+  - **门控链**：[+0xb0]（增长堆）== 0 → 返回；`[0x8871E0]+0xdc（地图宽）- 0x28` vs [+0xac]（增长计数）→ 超 → 返回；`[0x8871E0]+0xdc - 0x64` vs [+0x104] → 超 → 返回；`[0xA8B230]+0x34A7` byte == 0（旁路激活门控）→ 返回
+  - `lea ecx,[0xA8B230]+0x218`（Wave 对象池）→ 传 [+0xb0] → **call 0x65C780（Randomizer::Random）** → `cdq; xor; sub; mov ecx,5; cdq; idiv`（**Random % 5**）→ ebx=mod+1（**1..5 个增长点**）
+  - **从 [+0xb0] 堆弹出**（VectorClass pop 常规 + **call 0x5AD870** 元素清理）→ ebp=弹出 cell
+  - **主循环（ebx 次 jle 退出）**：
+    - push ebp → **call 0x5657A0**（坐标取格，MapClass 0x87F7E8）→ `[ebx+0x11e] < 0x30` → **call 0x485AF0**（cell 创建/实例化，已登记）+ [+0x104]++
+    - `[ebx+0x44]==0x7e`（已是 Veinhole 地表）→ **call 0x42B1C0 / 0x42B1F0**（对象数组区间）→ 区间内 `[esi+0xc4][edi]=1`（Veinhole 标记）
+    - **4 方向探索（i=0,2,4,6 [0x89F688] 偏移表）**：`[ebp]+off、[ebp+2]+off` → [esp+0x18] 坐标 → push → **call 0x578460**（cell 边界检查/可达性）→ 通过 → push → **call 0x5657A0** 取格 → 高度差（abs(movsx 两格 [0x11b] diff）`>= 2 → 跳过` → **call 0x42B1C0** → idx=ebx → `[0xB1D2F0][ebx]==0`（未占用）→ [+0xac] 边界 → **`[esi+0xb4][esi+0xac*8] = 坐标`**（增长点入队）→ **call 0x65C780（Random）** → `cdq; mov ecx,0x32; idiv`（Random % 0x32）→ `imul ecx,0x51eb851f; sar edx,4; shr eax,0x1f; lea`（**÷10 优化除法**）→ ecx=Random%0x32÷10+1（**1..6 优先级**）→ `fild → fstp dword [增长点+4]`（float 键）→ `[0xB1D2F0][ebx]=1` → **偏序堆插入**（fcomp +4 float 键比较、[+0xb0] 堆调整、[+0xac]++、[+0xb0] 计数/最小堆指针维护）
+    - `[esi+0xc4][ebx]=1`（标记）→ 循环继续（[+0x28]++ < [+0x34] 计数、弹出下一项）
+- 直接 call 12 次/去重 8：0x65c780×2、0x5ad870、0x5657a0×2、0x485af0、0x42b1c0×2、0x42b1f0×2、0x578460、0x485460（去重 0x65c780/0x5ad870/0x5657a0/0x485af0/0x42b1c0/0x42b1f0/0x578460/0x485460 = 8）——picker callees=8 吻合差 0
+- 判类：**VeinholeMonsterClass::UpdateGrowth**（增长推进：Random%5+1 数量、[+0xb0] 堆弹出、4 方向 [0x89F688] 探索、高度差 < 2 过滤、Random%0x32÷10+1 float 优先级偏序堆插入、[0xB1D2F0] 占用位图、[+0x84] 全局 [0xA8B230]+0x218 共享——Veinhole 地图扩散每一帧的生长逻辑）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x74C5B0 VeinholeMonsterClass::VeinholeMonsterClass（构造器，四虚表 0x7F66xx 系）（1087B）
+
+- 范围 0x74C5B0-0x74C9EC（单出口 ret 4 @0x74C9EC；0x74C9EF 起 nop pad，下函数 **0x74C9F0 = 批 2667 b 路析构链派发器——构造器/析构器物理相邻实证**）
+- thiscall 1 栈参（ret 4）：ebp=[esp+0x2c]=参数坐标指针
+- 流程：
+  - **call 0x5F3900**（基类构造）→ 清字段：[+0xac]/[+0xb0]/[+0xb4]=0、[+0xb8]=[0xA8ED84]、[+0xc0]=[0x8871E0]+0xe0、[+0xc4..0xd0]=0、byte[+0xd4]=0、[+0xd8]=[0xA8ED84]、[+0xe0]/[+0xe4]=0、[+0xe8]=1、[+0xec]=[0xA8ED84]、[+0xf4]=0、[+0xf8]=[ebp]（坐标）、[+0xfc]=0、byte[+0x100]/[+0x101]=0、[+0x104]=0
+  - **四虚表系：[esi]=0x7F66A8、[+4]=0x7F668C、[+8]=0x7F6684、[+0xc]=0x7F667C**（0x7F66xx 家族——批 2667 a/b 路 0x7F665C 相邻）
+  - lea eax,[esi+4] push → **call 0x410230**（子对象注册/初始化）→ **call 0x74D670**（参数验证，返回 al）→ 失败 je 0x74c9e3 返回
+  - **注册全局 [0xB1D290] 列表**：[0xB1D298]容量 vs [0xB1D2A0]计数门控 → 满且空池检查 → 超 [0xB1D2A4] 则虚表槽 8 Grow（[0xB1D290] 对象）→ [0xB1D2A0]++ → **[0xB1D294][eax*4]=esi**
+  - **[0xA8E7AC]==0（新实例地形初始化）双循环（edi=-1..1、0x845F49..0x845F4F 地形表地址）**：坐标 ±1 → push → **call 0x5657A0**（取格）→ `[eax+0x11c] = [0x845F49+edi]`（地形图案字节）→ 非零 → `[eax+0x38] = [0xABC1D8] + cl - 1`（**tile 计算：ramp_base 0xABC1D8（批⑨实锤）**）→ `[eax+0x11a]=0`、`[eax+0x11b]--`（高度减 1）
+  - `[+0xd0]=0xffffffff`、[+0xd8] 四字段装入
+  - **三段分配**：`[0x8871E0]+0xdc ×8` → **call 0x7C8E17** → [+0xb4]=eax（增长点数组）→ push 0x14 → **call 0x7C8E17** → [+0xb0]=edi（堆结构：+[0]=0、[+4]=[0x8871E0]+0xdc、[+8]=call 0x7C8E17（width×4）全清、[+0xc]=0、[+0x10]=0xffffffff——**VectorClass 风格初始化**）
+  - **[0xB1D2F0]==0 懒初始化**：**call 0x42B1F0**（size）→ push → **call 0x7C8E17** → [0xB1D2F0]=eax（全局占用位图）→ 同理 [+0xc4]=call 0x7C8E17（格标记数组）
+  - 坐标 shl 8 + 0x80（半格）→ [esp+0x20] push → **call 0x578080**（cell 钳制）→ push 0、push 结果 → **call 0x5F4EC0**（区域/影响初始化）→ [+0x6c]=[0x8871E0]+0xff4→+0xa0
+  - lea [esi+4] push → **call 0x410220**（子对象初始化尾）→ [esp+0x18]=eax
+  - **全局 [0xB0E840] 对象表扩容**（[0xB0E844]+1 > [0xB0E848] 容量 → ×2 倍增 0xa 起步）→ [eax*8] **call 0x7C8E17** → 旧表拷贝 → push [0xB0E840] → **call 0x7C8B3D**（旧释放）→ 更新表/容量 → **[0xB0E840][计数*8]=[esp+0x18]、[+4]=esi**（入队）→ [0xB0E844]++
+- 直接 call 16 次/去重 10：0x5f3900、0x410230、0x74d670、0x5657a0、0x7c8e17×5、0x42b1f0×2、0x578080、0x5f4ec0、0x410220、0x7c8b3d——picker callees=10 吻合差 0
+- 判类：**VeinholeMonsterClass 构造器**（基构造 0x5F3900 + 地形表 [0x845F49] 写入 + tile [0xABC1D8] 计算 + [0xB1D290] 全局列表注册 + 增长堆 [+0xb0] VectorClass 初始化 + 全局 [0xB0E840] 表入队 + [0xB1D2F0] 位图懒初始化——四虚表 0x7F66A8/0x7F668C/0x7F6684/0x7F667C；与 a 路 UpdateGrowth 同 0x7F66xx 家族、下邻 0x74C9F0 析构链派发器）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x74C0E0 析构器·无写虚表无 delete（39B）
+
+- 范围 0x74C0E0-0x74C106（单出口 ret @0x74C106；0x74C107 起 nop pad，下函数 0x74C110 = getter（mov al,[ecx+0xc]; test; jne → 取 [esp+4]——观察项，批 2647 系同模板））
+- **与 batch 2647 b 路 0x764550 / batch 2664 c 路 0x751A20 逐字节相同**：push ebx/esi、xor ebx → `[+4] != 0 && byte [+0xd] != 0` 双条件 → push [+4] call 0x7C8B3D（crt free 直放子对象）→ [+4]=0 → 清 [+0xd]=0、[+8]=0 → 返回
+- 直接 call 1 次/去重 1：0x7c8b3d——picker callees=1 吻合差 0
+- 判类：析构器·无写虚表无 delete（**batch 2647 b / 2664 c / 2667 a 同模板跨区复制实例**——0x7C8B3D 直放条件子对象释放族，与批 2667 a 路同函数）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2668.py：a 路 12/8、b 路 16/10、c 路 1/1——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x74C110（c 路下函数）：getter（mov al,[ecx+0xc] 门控 → 取 [esp+4]——批 2647 系同模板，可顺手登记）
+- 0x74D670（b 路被调，已登记）：参数验证器（构造器前置检查）——b 路调用图封闭
+- **Veinhole 家族生命周期闭环**：构造器 0x74C5B0（本批 b）→ 析构链 0x74C9F0（批 2667 b）→ UpdateGrowth 0x74D7C0（本批 a）→ Recalculate 0x74E930（批 2667 c）——0x7F66xx 四虚表族 + [0xB1D290]/[0xB1D2F0]/[0xB0E840] 全局表三件套调用图封闭
+- 既有池延续：0x767010（数组析构器）/ 0x766BC0（数组比较器）/ 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F6B30 / 0x7F6B14 / 0x7F6B0C / 0x7F6B04 / 0x7F6AC4 / 0x7F69F8 / 0x7F69D4 / 0x7F69A4 / 0x7F6924 / 0x7F68CC / 0x7F665C / 0x7F66A8 / 0x7F668C / 0x7F6684 / 0x7F667C / 0x7F0D5C / 0x7F0DCC / 0x7EA57C / 0x7EBFA4 虚表族、批 2635-2667 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
