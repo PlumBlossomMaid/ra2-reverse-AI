@@ -1,0 +1,58 @@
+# frontier batch 2659
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 0 孤立函数，落回 ranking 序）
+三路：a=0x75A120（351B **多操作分派器（switch 9 分支 + 子对象 5 虚表槽，含 0x5B4430 装载）** callees=1 deps=0）/ b=0x759FB0（299B **同族双子·无装载变体** callees=0 deps=0）/ c=0x759F30（59B **坐标/索引更新器（+0x510 哨兵分派）** callees=1 deps=0）——操作分派器双子 + 哨兵更新器
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2659{a,b,c}.txt，完整读取确认尾 ret（a 多出口 ret 0xc（0x75A193/0x75A1B3/0x75A1BC/0x75A1D8/0x75A212/0x75A26A/0x75A27C 等）、b 多出口 ret 0xc（0x75A00F/0x75A018/0x75A034/0x75A0C6/0x75A0D8 等）、c 双出口 ret 8@0x759F58/@0x759F68、下函数 0x75A288 表项区 / 0x75A0DC 表项区 / 0x759F70）
+核验：.qwen/tmp/_check_callees2659.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6460 → 6463（三行全新增，ADD 3）
+
+## a 路：0x75A120 多操作分派器（switch 9 分支 + 5 虚表槽）（351B）
+
+- 范围 0x75A120-0x75A27C（函数体 ret 0xc 多出口收束于 0x75A26A；0x75A280-0x75A29F 为 9 项 switch 跳转表数据区，capstone 会误拆为指令——非代码）
+- thiscall 3 栈参（ret 0xc）：[esp+8]=命令 opcode（dec 后 `cmp ecx,8; ja 0x75a269` 默认分支）、[esp+0xc]/[esp+0x10]=参数
+- **switch 表 [ecx*4 + 0x75A280]**：9 分支分派到 `[esi+4]` 子对象的 **5 个虚表槽（0x20/0x24/0x28/0x2c/0x34）** + **call 0x5B4430**（[esi+0x71] 子装载器，仅 opcode 1 分支）
+  - opcode 1（0x75a13d）：0x5B4430 装载（成功测试）→ 槽 0x20（push 1 + 参数 +0xc）→ 槽 0x28（push 1 + 参数）→ [+0x70]=setne
+  - opcode 2（0x75a196）：槽 0x24（两参数）→ 比较
+  - opcode 3（0x75a1b6）：恒返 1
+  - opcode 4（0x75a1bf）：槽 0x28（两参数）→ 比较
+  - opcode 5/6（0x75a1db/0x75a215）：[esp+0x10] 计数循环「[+4] 子对象数组遍历」→ 槽 0x28（dec 计数）→ 全过则槽 0x24（push 1 + 栈指针）→ dec 比较
+  - opcode 7（0x75a258）：槽 0x2c（无参）→ [esp+0xc] 写回
+  - opcode 8（0x75a26d）：槽 0x34 → [+0x70]=0
+- 直接 call 1 次/去重 1：0x5b4430（+5 虚表槽 0x20/0x24/0x28/0x2c/0x34 运行时派发非静态）——picker callees=1 吻合差 0
+- 判类：多操作分派器（**命令 opcode 1..8 分派到子对象 [+4] 的五虚表槽**——顶点/Shape 缓冲操作风格，b 路 0x759FB0 为其无装载变体双子）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x759FB0 同族双子·无装载变体（299B）
+
+- 范围 0x759FB0-0x75A0D8（多出口 ret 0xc；0x75A0DC-0x75A0F4 为 9 项 switch 跳转表数据区）
+- **与 a 路逐字节同构**（同 switch 表 [ecx*4+0x75a0dc]、同 5 虚表槽 0x20/0x24/0x28/0x2c/0x34、同 9 分支），**唯一差异 = opcode 1 分支无 0x5B4430 装载**：槽 0x20 → setne al → [+0x70]=al → test al,al → sete cl → 返回（a 路装载后返回比较，含 0x5B4430）
+- 直接 call 0 次/去重 0（全部虚表槽运行时派发非静态）——picker callees=0 吻合差 0
+- 判类：多操作分派器无装载变体（**a 路 0x75A120 的双子**——同源复制粘贴、装载器分支被裁掉；两条 switch 表 0x75A280/0x75A0DC 各自独立）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x759F30 坐标/索引更新器（+0x510 哨兵分派）（59B）
+
+- 范围 0x759F30-0x759F68（双出口 ret 8 @0x759F58/@0x759F68；0x759F6B 起 nop pad，下函数 0x759F70）
+- thiscall 2 栈参（ret 8）：[esp+8]=索引、[esp+0xc]=值
+- **`cmp dword [esi+0x510], -1; je 0x759f5b`**（哨兵判定——未初始化走直拷分支）
+  - 已初始化：`mov edx,[esp+0xc]; mov ecx,[esp+8]; shr edx,1`（值 >>1 量化）→ **call 0x748380**（阈值换算，已登记）→ `[+0x54c]=[+0x504]` → ret 8（eax=0x748380 返回值）
+  - 未初始化（=-1）：`[+0x54c]=[+0x504]` 直接拷贝 → ret 8
+- 直接 call 1 次/去重 1：0x748380——picker callees=1 吻合差 0
+- 判类：坐标/索引更新器（**[+0x510] 哨兵分派**：初始化后值 >>1 经 0x748380 换算更新、未初始化直接拷贝 [+0x504]→[+0x54c]——+0x510 状态字段的三态归一并更新）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2659.py：a 路 1/1、b 路 0/0、c 路 1/1——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- a/b 路 switch 跳转表（0x75A280/0x75A0DC）为数据区，capstone 误拆成指令——disasm 取证时注意表项区不可按代码判读
+- 0x5B4430（a 路装载器）/ 0x748380（c 路阈值换算）均在 TSV——a/b/c 被调链调用图封闭
+- 既有池延续：0x767010（数组析构器）/ 0x766BC0（数组比较器）/ 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F6B30 / 0x7F6B14 / 0x7F6B0C / 0x7F6B04 / 0x7F6AC4 / 0x7F69F8 / 0x7F69D4 / 0x7F69A4 / 0x7F0D5C / 0x7F0DCC / 0x7EBFA4 虚表族、批 2635-2658 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
