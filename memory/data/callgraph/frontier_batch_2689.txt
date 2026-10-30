@@ -1,0 +1,57 @@
+# frontier batch 2689
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序）
+三路：a=0x7321D0（56B **容器遍历谓词（call ebx 回调 al=1 短路命中 → al=1）** callees=0 deps=0）/ b=0x732190（56B **容器遍历逆谓词（call ebx 回调 al=0 命中 → al=1，全过才 al=0）** callees=0 deps=0）/ c=0x732110（41B **容器遍历回调（call ebp 无短路恒定遍历，ret 4）** callees=0 deps=0）——容器遍历三兄弟（谓词/逆谓词/纯遍历），全部纯寄存器间接调用，无静态 callee
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2689{a,b,c}.txt，完整读取确认尾 ret（a ret 4 双出口 @0x7321FC/@0x732205、b ret 4 双出口 @0x7321BC/@0x7321C5、c 单出口 ret 4 @0x732136；下函数 a 0x732210 sub esp 变体双回调、b 0x7321D0=本批 a 路、c 0x732190=本批 b 路）
+核验：.qwen/tmp/_check_callees2689.py 三路全 PASS（0/0/0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6550 → 6553（三行全新增，ADD 3）
+
+## a 路：0x7321D0 容器遍历谓词（56B）
+
+- 范围 0x7321D0-0x732205（ret 4 双出口 @0x7321FC/@0x732205；0x732208 nop，下函数 0x732210 sub esp 变体双回调观察项）
+- thiscall 1 栈参 + edx 回调（ret 4，eax=1 命中/0 否）：
+  - `edi=ecx`（this）、`ebx=edx`（回调指针）、`ebp=[edi+0x10]`（计数）
+  - ebp≤0 → 0x7321f6（al=0）
+  - 循环：`ecx=[edi+4][esi*4]`（数组元素）→ `call ebx`（回调谓词）→ al 非零 → 0x7321ff（**al=1 短路命中**）；al 零 → esi++ 续
+  - 全不中 → al=0 ret 4；命中 → al=1 ret 4
+- 直接 call 0 个（纯 `call ebx` 寄存器间接非静态）——picker callees=0 完全吻合
+- 判类：容器遍历谓词（**[+0x10] 计数循环 [+4] 数组 call ebx 回调谓词短路命中**——任一元素谓词成立即返回 1；与 b 路同构反相、c 路无短路，三兄弟之一）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x732190 容器遍历逆谓词（56B）
+
+- 范围 0x732190-0x7321C5（ret 4 双出口 @0x7321BC/@0x7321C5；0x7321C8 nop，下函数 0x7321D0=本批 a 路）
+- thiscall 1 栈参 + edx 回调（ret 4，eax=1 命中/0 否）：
+  - 结构与 a 路同（edi=this、ebx=edx 回调、ebp=[edi+0x10] 计数）
+  - 循环：`ecx=[edi+4][esi*4]` → `call ebx` → **al==0（谓词假）→ 0x7321bf：al=0**（反相命中——一旦谓词假即返回 0）
+  - 全过（谓词恒真）→ al=1 ret 4
+- 直接 call 0 个（纯 `call ebx` 寄存器间接非静态）——picker callees=0 完全吻合
+- 判类：容器遍历逆谓词（**[+0x10] 计数循环 call ebx 反相短路（谓词假即 al=0）**——与 a 路语义互补：a 路任一真→1、b 路任一假→0（全真才 1）；三兄弟中位）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x732110 容器遍历回调（41B）
+
+- 范围 0x732110-0x732136（单出口 ret 4 @0x732136；0x732139 nop，下函数 0x732190=本批 b 路）
+- thiscall 1 栈参 + edx 回调（ret 4，无返回值）：
+  - `ebp=edx`（回调）、`ebx=[edi+0x10]`（计数）、esi=0
+  - 循环全遍历：`ecx=[edi+4][esi*4]` → `call ebp`（回调）→ **不检查 al 返回值** → esi++ 续 → ebx 满 ret
+- 直接 call 0 个（纯 `call ebp` 寄存器间接非静态）——picker callees=0 完全吻合
+- 判类：容器遍历回调（**[+0x10] 计数循环 call ebp 纯遍历（忽略回调返回值）**——三兄弟中最简（无短路无谓词），ret 4 单栈参容器元素遍历）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2689.py：a 路 0/0、b 路 0/0、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 观察 0x732210（a 路下函数）：sub esp 变体双回调（call [esp+0x18] 命中后调 [esp+0x20] 第二回调并传元素）——容器遍历族第四成员，候选池加码
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **容器遍历族三兄弟 + 第四成员**：0x732110（纯遍历）/0x732190（逆谓词）/0x7321D0（谓词）+ 0x732210（双回调变体）——标准 DynamicVectorClass 遍历模板（[+0x10] 计数 [+4] 数组 + 寄存器间接回调），批量登记价值高
+- **0x7322xx-0x7328xx 区**（战场事件处理器与容器模板交叉区）：0x732280 主变体（批 2688）+ 0x732210 双回调 + 0x732580 判型器尾邻，分段推进
+- 既有池延续：0x732210 / 0x732580 / 0x7325C0 / 0x732950 / 0x732D00 / 0x733930 / 0x733640 / 0x7336A0 / 0x7342C0 / 0x7343E0 / 0x734210 / 0x734250 / 0x733CD0 / 0x736C10 / 0x736CA0 / 0x736D50 / 0x737090 / 0x737430 / 0x7360C0 / 0x767010 / 0x766BC0 / 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F6B30 / 0x7F6B14 / 0x7F6B0C / 0x7F6B04 / 0x7F6AC4 / 0x7F69F8 / 0x7F69D4 / 0x7F69A4 / 0x7F6924 / 0x7F68CC / 0x7F665C / 0x7F66A8 / 0x7F668C / 0x7F6684 / 0x7F667C / 0x7F65F4 / 0x7F6318 / 0x7F62FC / 0x7F62F4 / 0x7F62EC / 0x7F0D5C / 0x7F0DCC / 0x7EA57C / 0x7EBFA4 虚表族、批 2635-2688 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
