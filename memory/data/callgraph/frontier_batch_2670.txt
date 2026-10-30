@@ -1,0 +1,63 @@
+# frontier batch 2670
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序）
+三路：a=0x74BDC0（210B **索引批量重编号器（含空数组 Reset 分支）** callees=2 deps=0）/ b=0x74BD50（106B **索引查询统一器（钳制 + 槽 4 比对）** callees=2 deps=0）/ c=0x74BCA0（164B **索引管理对象拷贝构造器（深拷贝）** callees=2 deps=0）——索引管理对象族五件套（批 2669 b/c + 本批三件，0x74BCA0-0x74BFF0 连续分布）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2670{a,b,c}.txt，完整读取确认尾 ret（a 双出口 ret 4@0x74BE5D/@0x74BE8F、b 双出口 ret 4@0x74BDB0(al=1)/@0x74BDB7(al=0)、c 双出口 ret 4@0x74BD29/@0x74BD41、下函数 0x74BEA0=批 2669 c 重置器 / 0x74BDC0=本批 a / 0x74BD50=本批 b）
+核验：.qwen/tmp/_check_callees2670.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6493 → 6496（三行全新增，ADD 3）
+
+## a 路：0x74BDC0 索引批量重编号器（含空数组 Reset 分支）（210B）
+
+- 范围 0x74BDC0-0x74BE8F（双出口 ret 4 @0x74BE5D（批量路径）/@0x74BE8F（空数组 Reset 路径，eax=1）；0x74BE92 起 nop pad，下函数 **0x74BEA0 = batch 2669 c 路重置器，物理相邻**）
+- thiscall 1 栈参（ret 4）：[esp+0x10]=批量数量 ebx
+- 流程：
+  - `[esi+8]（旧索引）!= -1` → `mov ecx,[esi+0x10]; mov al,[esi+4]; push eax; call 0x54A900`（旧解除）→ `[esi+8]=-1`（先全取消）
+  - **ebx<=0 → 0x74be60 空数组分支**：旧 != -1 再解除 → `mov edx,[esi+0xc]; lea ecx,[esi+0xc]; mov [esi]=0（虚表清 0）; call dword ptr [edx+0xc]`（**槽 0xc Reset 派发**）→ eax=1 → ret 4——**与 batch 2669 c 路 0x74BEA0 逐字节同构（Reset 形态）**
+  - **ebx>0 → 批量重编号**：`mov edx,[esi+0xc]; lea ecx,[esi+0xc]; shl (ebx+7)>>3; push 0; push eax; call dword ptr [edx+8]`（**子对象槽 8：空间/容量测算（(n+7)>>3 字节数）**）→ and eax,0xff → [esp+0x10]=结果 → `[esi]=ebx`（上限 = 批量数）→ eax==0 → 0x74be56
+  - 上限增长（edi=原上限 < ebx）→ **循环 edi=0..ebx（[0x74be0e] jb 回升）**：`edx=[esi+8]`（当前索引）≠ edi → 内部按批 2669 b 路 setter 逻辑（新值钳制 >= [esi] 则 -1、旧 != -1 则 0x54A900、新 != -1 则 0x54A950 登记 + byte[+4]=al、[+8]=ebp）→ `inc edi; byte [esi+4]=0; cmp edi,ebx; jb 回`
+  - **语义：0..n-1 连续重编号**（旧全解除 → 子对象槽 8 测容量 → 逐项 0x54A950 登记）
+- 直接 call 4 次/去重 2：0x54a900×2、0x54a950×2（+2 虚表槽 8/0xc 运行时派发非静态）——picker callees=2 吻合差 0
+- 判类：索引批量重编号器（**批 2669 b（set）/c（reset）的组合批处理版**——空数组直走槽 0xc Reset（与 0x74BEA0 同构）、非空旧全解除 + 槽 8 空间测算 + 0x54A950 逐项登记 0..n-1 连续重编号）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x74BD50 索引查询统一器（钳制 + 槽 4 比对）（106B）
+
+- 范围 0x74BD50-0x74BDB7（双出口 ret 4 @0x74BDB0（al=1）/@0x74BDB7（al=0）；0x74BDBA 起 nop pad，下函数 0x74BDC0 = 本批 a 路）
+- thiscall 1 栈参（ret 4 al）：[esp+0xc]=查询索引指针
+- 流程：
+  - `edx=[esi+8]`（当前索引）、`eax=[esi]`（上限）→ edi=edx → `cmp edi,eax; jb 通过; or edi,-1`（**当前索引 >= 上限 → 钳为 -1**）
+  - edi != edx → 按 setter 逻辑：[+4] 状态、旧 != -1 → `call 0x54A900`（旧解除）、新 != -1 → `call 0x54A950`（登记）+ byte[+4]=al、`[esi+8]=edi`（索引合法化）
+  - **[esp+0xc]->[+0]（控制器上限）== [esi]（本对象上限）** → `mov edx,[esi+0xc]; lea ecx,[esi+0xc]; add eax,0xc; push eax; call dword ptr [edx+4]`（**子对象槽 4 匹配/比较：本对象 [+0xc] 子对象 vs 查询 ptr+0xc**）→ al!=0 → **eax=1**；否则 eax=0
+- 直接 call 3 次/去重 2：0x54a900、0x54a950（+1 虚表槽 4 运行时派发非静态）——picker callees=2 吻合差 0
+- 判类：索引查询统一器（**先钳制当前索引合法化（setter 逻辑子序列）、再与目标控制器比对（槽 4 匹配）**——「我的索引状态是否与指定控制器一致」查询入口；与批 2669 b 路 setter 逻辑同源）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x74BCA0 索引管理对象拷贝构造器（深拷贝）（164B）
+
+- 范围 0x74BCA0-0x74BD41（双出口 ret 4 @0x74BD29（深拷贝路径）/@0x74BD41（边界/失败路径）；0x74BD44 起 nop pad，下函数 0x74BD50 = 本批 b 路）
+- thiscall 1 栈参（ret 4）：ebx=[esp+0x14]=源对象、edi=this
+- 流程：
+  - `[edi+8] != -1`（自身旧索引）→ `mov ecx,[edi+0x10]; mov al,[edi+4]; push eax; call 0x54A900`（旧解除）→ `[edi+8]=-1`（先清自身）
+  - `byte [edi+4] = byte [ebx+4]`（源状态 byte 拷）、`[edi+8] = [ebx+8]`（源索引拷）
+  - lea esi=[edi+0xc]、lea ebp=[ebx+0xc] → **[edi+0xc] 槽 0xc 调用（`call dword ptr [eax+0xc]`——清空自身子对象）** → `[esi+8] = [ebp+8]`（源子对象字段拷）
+  - `[ebp+8]（源子对象容量）!= 0` → push 容量 → **call 0x7C8E17**（分配）→ `[esi+4]=eax`（子对象缓冲）→ 失败 `je 0x74bd2c → mov [esi+4]=0; mov byte[esi+0xd]=0` → 0x74bd37 边界收尾；成功 → `byte [esi+0xd]=1`（持有标志）→ **循环 eax=0..容量-1：`byte [esi+4][eax] = byte [ebp+4][eax]`（逐字节深拷贝）**
+  - 收尾（0x74bd1f/0x74bd37 两路）：`[edi] = [ebx]`（虚表拷）→ eax=edi → ret 4
+- 直接 call 2 次/去重 2：0x54a900、0x7c8e17（+1 虚表槽 0xc 运行时派发非静态）——picker callees=2 吻合差 0
+- 判类：索引管理对象拷贝构造器（**深拷贝**：先清算旧索引 0x54A900、源 byte[+4]/[+8] 拷贝、[+0xc] 子对象重置 + 0x7C8E17 缓冲分配 + 逐字节复制 + 虚表继承/边界容错返回）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2670.py：a 路 4/2、b 路 3/2、c 路 2/2——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **索引管理对象族五件套闭环**：0x74BCA0 拷贝构造（本批 c）→ 0x74BD50 查询统一（本批 b）→ 0x74BDC0 批量重编号（本批 a）→ 0x74BEA0 重置（批 2669 c）→ 0x74BF40 单索引设置（批 2669 b）→ 0x74BFA0 析构（批 2669 a）——0x74BCA0-0x74BFF0 连续代码区 + 共享 0x54A900/0x54A950 双回调 + [+4]/[+8]/[+0xc]/[+0x10] 字段布局，调用图完全封闭
+- 0x54A900 / 0x54A950（已被调，已登记）：索引管理器解除/登记双回调——族内全部成员共享
+- 既有池延续：0x767010（数组析构器）/ 0x766BC0（数组比较器）/ 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F6B30 / 0x7F6B14 / 0x7F6B0C / 0x7F6B04 / 0x7F6AC4 / 0x7F69F8 / 0x7F69D4 / 0x7F69A4 / 0x7F6924 / 0x7F68CC / 0x7F665C / 0x7F66A8 / 0x7F668C / 0x7F6684 / 0x7F667C / 0x7F65F4 / 0x7F0D5C / 0x7F0DCC / 0x7EA57C / 0x7EBFA4 虚表族、批 2635-2669 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
