@@ -1,0 +1,64 @@
+# frontier batch 2652
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 0 孤立函数，落回 ranking 序）
+三路：a=0x75F330（400B **WaveClass::DamageArea** callees=6 deps=0）/ b=0x75EBE0（332B **大对象构造器·四虚表 0x7F6BFx 系** callees=4 deps=0）/ c=0x75E6B0（136B **拷贝构造器·双虚表 0x7F0D5C→0x7F0DCC** callees=2 deps=0）——WaveClass 伤害区 + 构造器族 + 拷贝构造器
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2652{a,b,c}.txt，完整读取确认尾 ret（a 单出口 ret 4@0x75F4BD、b 单出口 ret@0x75ED2B、c 单出口 ret 4@0x75E735、下函数 0x75F4C0/0x75ED30/0x75E740）
+核验：.qwen/tmp/_check_callees2652.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6439 → 6442（三行全新增，ADD 3）
+
+## a 路：0x75F330 WaveClass::DamageArea（400B）
+
+- 范围 0x75F330-0x75F4BD（单出口 ret 4 @0x75F4BD；下函数 0x75F4C0 = getter）
+- thiscall 1 栈参（ret 4）：[esp+0x18]=坐标指针（+0x1d4 子波目标指针判空门控）
+- 流程：
+  - 坐标 >>8 量化（sar；带 +0xff 进位截断——YX 坐标工作格换算）+ **call 0x5657A0**（GetCellAt 取格，MapClass 0x87F7E8）
+  - [ebp+0x1d4] 对象虚表槽 0x3f8 调用（取接管对象）→ ebx=对象（[+0xac]/[+0x98] 取系字段）
+  - cell 高地判定：`test ah,1`（[edi+0x140] 标志）→ 命中则 `movsx [edi+0x11b]（高度）+4 × imul [0xB725C8]` vs [ebp+0xbc]（当前高度）选择 [edi+0xe8]/[edi+0xe4]（cell 对象链头）
+  - **链遍历 esi（链 = [esi+0x30]）**：对象有效性五重检查（[+0x90] 存活标志、[+0x74] 有效标志、[+0x81] 免疫标志==0、[+0x6c] 生命>0）→ 通过则**虚表槽 0x16c 调用**（8 栈参：坐标+对象→特效伤害施加）
+  - cell 对象 [edi+0x44] != -1 → [0xA83D84] 对象数组取 esi → [esi+0x2b1] 标志 → **call 0x489270**（cell 重算/关联）→ [esi+0x2a8] 标志 → **call 0x480CB0**（对象通知）
+  - **call 0x486900**（可攻击判定）→ 通过则 `RandomRanged(0, 0x63=99)`（**call 0x65C7E0**——原版 RNG 里程碑函数）vs [0x8871E0]+0x17CC（波计数）比较 → 小于则 **call 0x581140**（附加攻击/溅射）
+- 直接 call 6 次/去重 6：0x5657a0、0x489270、0x480cb0、0x486900、0x65c7e0、0x581140（+2 虚表槽 0x3f8/0x16c 运行时派发非静态）——picker callees=6 吻合差 0
+- 判类：WaveClass::DamageArea（**波攻击伤害区域**：坐标取格 → 链遍历格子对象 → 虚表槽 0x16c 特效伤害 → RandomRanged(0,99) vs 波计数概率补刀 0x581140）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x75EBE0 大对象构造器·四虚表 0x7F6BFx 系（332B）
+
+- 范围 0x75EBE0-0x75ED2B（单出口 ret @0x75ED2B；下函数 0x75ED30 = 同虚表族构造器变体）
+- thiscall 0 栈参（ret 无参，普通构造器）：
+  - **call 0x5F3900**（基类构造）→ 清字段：[+0x12c]=1、[+0x138..0x14c]=0、[+0x130]=0x64、[+0x1a0..0x1a8]=0、[+0x1d0/0x1d4]=0
+  - lea ecx,[esi+0x1d8] → **call 0x4C91C0**（子对象构造器）→ [+0x1f8]=5、[+0x1fc]=1
+  - **[+0x1f0]=0x7ED480**（内嵌 int 数组构造，batch 2650 a 路 0x7632D0 同款）→ push 0x14（20 元素）×4B → **call 0x7C8E17** 分配 → [+0x1f4]=ptr、[+0x1fd]=1 → [+0x1f0]=0x7ED9BC 终虚表 → [+0x204]=0xa、[+0x200]=0
+  - **四虚表系：+[0]=0x7F6BF4、[+4]=0x7F6BD8、[+8]=0x7F6BD0、[+0xc]=0x7F6BC8**（多重继承多虚表）
+  - 注册全局管理器 [0xA8EC38]：[0xA8EC48] 计数 < [0xA8EC40] 容量或标志 → 虚表槽 8 扩容 → ++[0xA8EC48] → [0xA8EC3C]+index*4 = esi；[0xB725CC]==0 → **call 0x75F020**（初始化钩子）
+- 直接 call 4 次/去重 4：0x5f3900、0x4c91c0、0x7c8e17、0x75f020（+1 虚表槽 8 运行时派发）——picker callees=4 吻合差 0
+- 判类：大对象构造器·四虚表 0x7F6BFx 系（**内嵌 int 数组 0x7ED480→0x7ED9BC + [0xA8EC38] 全局管理器注册**——字段布局 [+0x130]/[+0x1d4] 与 a 路 WaveClass::DamageArea 同构，波形类大对象）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x75E6B0 拷贝构造器·双虚表 0x7F0D5C→0x7F0DCC（136B）
+
+- 范围 0x75E6B0-0x75E735（单出口 ret 4 @0x75E735；0x75E738 起 nop pad，下函数 0x75E740）
+- thiscall 1 栈参（ret 4）：edi=[esp+0x10]=源对象指针
+  - 写虚表 0x7F0D5C；[+4]=0、[+8]=0、[+0xc]=1、[+0xd]=0
+  - esi != edi → **call dword ptr [0x7F0D68]**（全局函数指针/工厂 trampoline——间接调用，静态正则不计入）→ eax=[edi+8]（源计数）→ !=0 则 shl eax,2（count×4） → **call 0x7C8E17** 分配 → [+4]=ptr、[+0xd]=1 → 循环 count 次 `[edx+eax*4] = [ecx+eax*4]`（int 4B×n 拷贝）
+  - 源计数==0 → [+4]=0、[+0xd]=0
+  - [+0x10]=[edi+0x10]、[+0x14]=[edi+0x14]（尾字段直拷）→ 回写虚表 0x7F0DCC → eax=esi → ret 4
+- 直接 call 1 次/去重 1（静态）：0x7c8e17（+1 个 `call dword ptr [0x7F0D68]` 全局函数指针间接调用非静态正则目标）——**picker callees=2 差 1**：0x7F0D68 为数据段全局函数指针，picker 计入 callees、静态正则无法解析，如实记录差异
+- 判类：拷贝构造器·双虚表 0x7F0D5C→0x7F0DCC（**int 4B/元素数组拷贝构造**——源对象复制、0x7C8E17 分配、count×4 元素拷贝、[+0x10]/[+0x14] 尾字段直拷，与 batch 2650 a 路 0x7632D0 构造器同族）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2652.py：a 路 6/6、b 路 4/4、c 路 1/1——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 1（0x7F0D68 全局函数指针间接调用不计静态正则，如实记录）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x75ED30（b 路下函数）：同 0x7F6BFx 虚表族构造器变体（mov dl,1 + mov [edi],0x7f6bf4）——后续批次优先跟进登记
+- 0x75F4C0（a 路下函数）：getter——后续批次可顺手登记
+- a 路调用链 0x65C7E0（RandomRanged）/0x581140（附加攻击）/0x486900（可攻击判定）均已在 TSV 登记——WaveClass 伤害链路调用图封闭
+- 既有池延续：0x767010（数组析构器）/ 0x766BC0（数组比较器）/ 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F0D5C / 0x7F0DCC / 0x7EBFA4 虚表族、批 2635-2651 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
