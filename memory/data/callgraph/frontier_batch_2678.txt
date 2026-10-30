@@ -1,0 +1,63 @@
+# frontier batch 2678
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序）
+三路：a=0x7441B0（94B **UnitClass::WhatAmI 置位变体（[0x140] 高地 + 置 bit5）** callees=2 deps=0）/ b=0x744100（117B **Unit 超时空/传送计时器（+0x2d8 + [0x7E27F8] + RandomRanged(0,2)）** callees=6 deps=0）/ c=0x7438F0（339B **UnitClass::ShouldCrashIt（距离判定 + 槽 0xc8 sete）** callees=5 deps=0）——UnitClass 域三连（WhatAmI 清/置配对 + 传送计时 + 坠毁判定）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2678{a,b,c}.txt，完整读取确认尾 ret（a 双出口 ret 4@0x7441F8/@0x74420B、b 双出口 ret@0x74416A/@0x744174、c 双出口 ret 4@0x743A36(sete)/@0x743A40(xor)、下函数 0x744210=批 2677 c 路 WhatAmI（清位版，本批 a 与它物理相邻实证）/ 0x7441B0=本批 a / 0x743A50 sub esp,0x48 大函数）
+核验：.qwen/tmp/_check_callees2678.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6517 → 6520（三行全新增，ADD 3）
+
+## a 路：0x7441B0 UnitClass::WhatAmI 置位变体（94B）
+
+- 范围 0x7441B0-0x74420B（双出口 ret 4 @0x7441F8（命中置位）/@0x74420B（未命中置位）；0x74420E 起 nop pad，下函数 **0x744210 = 批 2677 c 路已登记的 WhatAmI（清位 and 0xdf 版）——两个 WhatAmI 物理相邻（0x7441B0/0x744210），一清一置配对变体实证**）
+- thiscall 1 栈参（ret 4）：esi=[esp+8]=坐标指针
+- 流程：
+  - push esi; mov ecx,0x87F7E8 → **call 0x565730**（坐标 → cell 取格）→ edi=cell
+  - push esi → **call 0x578080**（边界钳制/检查）
+  - `eax + [0xB1D0AC]（全局半径偏移）` vs `[esi+8]`（参数范围）→ **jg 0x7441fb**（超限直接 0x7441fb 分支）
+  - 未超限 → **`[edi+0x140] test ah,1`（cell 高地/阻断标志 bit9）** → je 0x7441fb → **`[edi+0x128] or 0x20`（置 bit5——命中标记）**
+  - 0x7441fb：**`[edi+0x124] or 0x20`**（置 bit5——未命中标记）→ ret 4
+- 直接 call 2 次/去重 2：0x565730、0x578080——picker callees=2 吻合差 0
+- 判类：**UnitClass::WhatAmI 置位变体**（**or 0x20 置 bit5 vs 批 2677 c 路 0x744210 的 and 0xdf 清 bit5——清/置逻辑反转配对**；本路多 [0x140] test ah,1 高地判定、命中/未命中双分支置位——cell 占用标记的置位侧）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x744100 Unit 超时空/传送计时器（117B）
+
+- 范围 0x744100-0x744174（双出口 ret @0x74416A（计算路径）/@0x744174（短路径）；0x744175 起 nop pad，下函数 0x7441B0 = 本批 a 路）
+- thiscall 0 栈参（ret eax）：
+  - `[esi+0x2d8]（子对象）== 0 → 0x74416c 短路径`；`[0x8871E0]+0x1790（全局计时阈值）+ [esi+0xc0]` vs `[0xA8ED84]（全局基准）` jge → 短路径（计时满）
+  - **call 0x6B1020**（子对象校验）→ je 短路径 → **call 0x6B0CC0**（[+0x2d8] 子对象操作）→ **call 0x5B3A00**（取对象字段）→ `[eax+0x10] × [0x7E27F8]`（**双精度乘法——[0x7E27F8] 全局系数常量消费点**）→ **call 0x7C5F00**（_ftol 截断）→ esi=eax
+  - `lea ecx,[0xA8B230]+0x218`（Wave 对象池，批 2668 a 路同源）→ **call 0x65C7E0**（Randomizer::RandomRanged，push 2/push 0）→ `add eax,esi`（**基础量 + Random(0,2) 随机化**）→ ret
+  - 短路径 0x74416c：**call 0x4D6AA0**（清理/默认路径）→ ret
+- 直接 call 6 次/去重 6：0x6b1020、0x6b0cc0、0x5b3a00、0x7c5f00、0x65c7e0、0x4d6aa0——picker callees=6 吻合差 0
+- 判类：**Unit 超时空/传送计时器**（+0x2d8 子对象 + [0x8871E0]+0x1790 全局阈值门控 → [0x7E27F8] 系数 ×浮点 + RandomRanged(0,2) 随机化——传送冷却/持续时间计算，[0x7E27F8]/[0xA8B230] 全局系与批 2668 a 路同源）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x7438F0 UnitClass::ShouldCrashIt（339B）
+
+- 范围 0x7438F0-0x743A40（双出口 ret 4 @0x743A36（sete 转运判定）/@0x743A40（xor al,al 失败）；0x743A43 起 nop pad，下函数 0x743A50 = sub esp,0x48 大函数）
+- thiscall 1 栈参（ret 4 al）：
+  - `[esi+0x6c4]→byte[+0xd28]`（类型标志）== 0 → **call 0x70D0D0**（push 0x11 类型检查）→ al==0 → 返回 0
+  - ebx=[esp+0x30]（目标对象）== 0 → 返回 0；**call 0x5F6CD0**（目标友好性校验）→ al==0 → 返回 0
+  - **双槽 0x48**（ebx 目标坐标 → [esp+0x14]、esi 自身坐标 → [esp+0x24]）→ 三维坐标差（sub ×3）→ **双 fild/fmul/faddp 浮点距离计算** → 双精度 push [esp] → **call 0x4CAC40**（浮点距离高阶函数）→ **call 0x7C5F00**（_ftol）→ vs `[0x8871E0]+0x1728`（全局距离阈值）→ **jg 0x743a39（超距 → 允许坠毁返回 0）**
+  - `[esi+0x21c]（伴随对象）` → **call 0x50B730**（伴随检查）→ 通过但 `[0x8871E0]+0x17eb` 标志 或 `[0x6c4]→byte[+0xd2d]`==0 → 0x7439e8 跳过；`[+0x21c]→[+0x184]==2 → 0x743a39`（特定状态短路）
+  - 再 **call 0x50B730** → al==0 且 `[+0x21c]→[+0x24c]` >= `[0x8871E0]+0x1448`（全局阈值）→ pass → **槽 0xc8（ebx：push [+0x21c]）** → 返回 al → **sete al**（目标「不可行」→ 返回真=应坠毁）→ ret 4
+- 直接 call 6 次/去重 5：0x70d0d0、0x5f6cd0、0x4cac40、0x7c5f00、0x50b730（+2 虚表槽 0x48/0xc8 运行时派发非静态）——picker callees=5 吻合差 0
+- 判类：**UnitClass::ShouldCrashIt**（单位坠毁判定：类型标志 [0xd28] + 目标有效（0x5F6CD0）+ **三维浮点距离（0x4CAC40 + _ftol）> [0x8871E0]+0x1728 阈值** → 坠毁允许；伴随状态（0x50B730/0x17eb/[0xd2d]/[+0x184]）精细短路；最终槽 0xc8 目标可行性 → **sete 返回「应坠毁」真值**）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2678.py：a 路 2/2、b 路 6/6、c 路 6/5——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **WhatAmI 清/置配对实证**：0x7441B0（置位，本批 a）↔ 0x744210（清位，批 2677 c）物理相邻、逻辑反转——Unit 占用标记双态管理
+- 0x743A50（c 路下函数）：sub esp,0x48 大函数（[ebp] 虚表 + 栈帧 0x48）——后续批次优先跟进登记
+- **UnitClass 域持续推进**：已登记 AssignDestination（批 2676）/轨道（2677a）/决策（2677b）/WhatAmI ×2（2677c+本批 a）/传送计时（本批 b）/ShouldCrashIt（本批 c）——剩余 UnitClass 大户（0x738D30 GotoClearSpot / 0x73D450 Harvesting / 0x739AC0 Deploy / 0x739CD0 Undeploy / 0x737180 UpdateVisceroid / 0x736DF0 UpdateFiring / 0x7359F0 UpdateTube 等）持续在列
+- 既有池延续：0x767010（数组析构器）/ 0x766BC0（数组比较器）/ 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F6B30 / 0x7F6B14 / 0x7F6B0C / 0x7F6B04 / 0x7F6AC4 / 0x7F69F8 / 0x7F69D4 / 0x7F69A4 / 0x7F6924 / 0x7F68CC / 0x7F665C / 0x7F66A8 / 0x7F668C / 0x7F6684 / 0x7F667C / 0x7F65F4 / 0x7F6318 / 0x7F62FC / 0x7F62F4 / 0x7F62EC / 0x7F0D5C / 0x7F0DCC / 0x7EA57C / 0x7EBFA4 虚表族、批 2635-2677 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
