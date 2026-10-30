@@ -1,0 +1,64 @@
+# frontier batch 2679
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序）
+三路：a=0x743190（214B **UnitClass 动作判定组合器（槽 0x3f8 三条件 OR + 0x4D9920 聚合）** callees=5 deps=0）/ b=0x7414E0（435B **PhobosHook_UnitClass_ApproachTarget_DisallowMoving（接近目标移动控制）** callees=5 deps=0）/ c=0x7414A0（62B **Unit 速度/时间缩放计算器（fidiv [+0x800]）** callees=1 deps=0）——UnitClass 域三连（动作判定 + Phobos 钩子 + 速度缩放）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2679{a,b,c}.txt，完整读取确认尾 ret（a 多出口 ret 0xc@0x7431B5/@0x743263、b 多出口 ret 4@0x741600/@0x741682/@0x741690、c 双出口 ret@0x7414C4（st0=常量）/@0x7414DC（st0=除法）、下函数 0x743270 sub esp,0xc0 大函数 / 0x7416A0 / 0x7414E0=本批 b）
+核验：.qwen/tmp/_check_callees2679.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6520 → 6523（三行全新增，ADD 3）
+
+## a 路：0x743190 UnitClass 动作判定组合器（214B）
+
+- 范围 0x743190-0x743263（多出口 ret 0xc @0x7431B5（伴随短路）/@0x743263（组合收尾）；0x743266 起 nop pad，下函数 0x743270 = sub esp,0xc0 大函数）
+- thiscall 3 栈参（ret 0xc）：[esp+0x14]/[esp+0x10]=额外参、edi=[esp+0xc]（第 2 参）初值
+- 流程：
+  - `[esi+0x21c]（伴随对象）→ call 0x50B730 → al!=0 → [esi+0x6c4]→byte[+0xe12]`（类型标志）→ 通过 → **xor eax,eax → ret 0xc**（伴随条件短路返回 0——禁止某动作）
+  - `test edi,0x1b978`（第三参位掩码 0x1b978）→ jne 0x74324f（跳过组合）
+  - **call 0x70DC60**（状态查询）→ 分支 A（通过且 [0x6c4]→byte[+0xcd5]==0）：**call 0x70DD20**（取参）→ **槽 0x3f8（push 参）→ [eax] → call 0x772A90**（谓词判真）→ **or edi,eax**
+  - 分支 B：**槽 0x3f8（push 0）→ [eax] 判空 → 槽 0x3f8 再取 → 0x772A90 → or edi**；再 **槽 0x3f8（push 1）→ 判空 → 0x772A90** → or edi——**三个位条件逐一 OR 合并进 edi 组合位掩码**
+  - 收尾：push [esp+0x14]/[esp+0x10]/edi（三参）→ **call 0x4D9920（聚合决策执行）** → ret 0xc
+- 直接 call 7 次/去重 5：0x50b730、0x70dc60、0x70dd20、0x772a90×3、0x4d9920（+槽 0x3f8 运行时派发非静态）——picker callees=5 吻合差 0
+- 判类：UnitClass 动作判定组合器（**[+0x21c] 伴随场禁止短路（类型 [0x6c4]→[0xe12]）+ 3 个槽 0x3f8 条件各自 0x772A90 判真 OR 合并 edi 位掩码 + 0x4D9920 三参聚合决策执行**——Unit 每帧条件化动作调度（发射/移动允许判定））
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x7414E0 PhobosHook_UnitClass_ApproachTarget_DisallowMoving（接近目标移动控制）（435B）
+
+- 范围 0x7414E0-0x741690（多出口 ret 4：0x741600（分支 A 放行）/0x741682（分支 B 放行）/0x741690（**push 0 → call 0x4D5690 移动禁止**）；0x741693 起 nop pad，下函数 0x7416A0）
+- thiscall 1 栈参（ret 4）：[esp+0xc]=bool（1=禁止移动）
+- 流程：
+  - `[esi+0x21c] → call 0x50B730 → al!=0 → jne 0x741599`（伴随存在进分支 A/B 处理）
+  - `[esi+0x2b4]（目标）` 非空且 `[esi+0x5a4]` 空（无阻挡）→ **edi = 目标（[+0x14]&1 位标记取对象，否则 NULL）**
+  - `[esi+0x6c4]→byte[+0xd28]`（类型）→ 零则 `call 0x70D0D0`（push 0x11）→ 通过 → `[+0x2b4] → call 0x5F6360`（间距计算）→ `cmp eax,[0x8871E0]+0x1728` jge → 放行
+  - edi 非空 → **call 0x5F6CD0（目标校验）** → 通过 → `[0x6c4]→byte[+0xd2d]` 或 `[+0x21c]→0x50B730` → 0x74165f 终态
+  - **分支 A（[0x6c4]→byte[+0xd6a] 标志）**：`[+0x2b4] → 槽 0x2e4（目标坐标）→ 槽 0x3f8（坐标对象）→ [+0xa0]→byte[+0x2c0]` 通过 → `[esp+0xc]==0` → **槽 0x480（push 1+目标——放行移动）** → ret
+  - **分支 B（[0x6c4]→byte[+0xd29] 标志）**：`[+0x2b4]→[+0x21c]→byte[+0x1ec]` 且自身 `[+0x50c]==0` → 目标 `[eax+0x14]&2` → **call 0x5F6CD0（push esi 自身）** → 0x74165f
+  - **终态（0x74165f）**：`[esp+0xc]==0` → **槽 0x480（push 1+目标）** 放行；否则 → **call 0x4D5690（push 0——执行停止移动）** → ret
+- 直接 call 7 次/去重 5：0x50b730×2、0x70d0d0、0x5f6360、0x5f6cd0×2、0x4d5690（+3 槽 0x2e4/0x3f8/0x480 运行时派发非静态）——picker callees=5 吻合差 0
+- 判类：**PhobosHook_UnitClass_ApproachTarget_DisallowMoving**（接近目标移动控制：跟随目标 0x50B730 + 目标位 0 标记取对象（[+0x14]&1）+ 类型 0xD28/0xD29/0xD6A 三标志分支 + 间距 0x5F6360 vs [0x8871E0]+0x1728 + 槽 0x2E4/0x3F8 目标坐标链 + 0x5F6CD0 校验 ×2 + **槽 0x480 放行 / 0x4D5690 禁止**——Phobos 注入的「到达目标禁止移动」钩子，原版 UnitClass::ApproachTarget 移动策略）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x7414A0 Unit 速度/时间缩放计算器（62B）
+
+- 范围 0x7414A0-0x7414DD（双出口 ret @0x7414C4（st0=常量 [0x7E2800]）/@0x7414DC（st0=除法结果）；0x7414DE 起 nop pad，下函数 0x7414E0 = 本批 b 路）
+- thiscall 0 栈参（ret st0 浮点）：
+  - `[esi+0x6c4]→byte[+0xe0e]` 与 `[+0xe0f]` **双标志——都为零 → fld qword [0x7E2800] → ret**（无缩放基准）
+  - 任一非零 → `lea ecx,[esi+0x33c]; call 0x6C9650`（取时间/速率值 → st0）→ `[esi+0x6c4]→+0x800` → **fidiv dword [eax+0x800]**（st0 / 整数速率字段）→ ret
+- 直接 call 1 次/去重 1：0x6c9650——picker callees=1 吻合差 0
+- 判类：Unit 速度/时间缩放计算器（**[0x6c4] 类型双标志 0xe0e/0xe0f 门控**：无缩放返 [0x7E2800] 常量、缩放走 0x6C9650 取时间值 fidiv [+0x800]——单位动画/移动速率缩放）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2679.py：a 路 7/5、b 路 7/5、c 路 1/1——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **Phobos 符号域开始出现**：b 路 0x7414E0 为 Phobos 命名钩子（ApproachTarget 移动控制）——原版方法语义（0x4D5690 禁止/槽 0x480 放行）与 Phobos hook 注入点可交叉验证（Phobos 源码 E:\code\Phobos 未在仓库内，仅在本机交叉验证）
+- 0x743270（a 路下函数）：sub esp,0xc0 大函数（Unit 状态机主函数候选）——后续批次优先跟进登记
+- **UnitClass 域持续推进**：已登记 15+ 个（批 2674-2679）——剩余大户（0x73D450 Harvesting / 0x7359F0 UpdateTube / 0x737180 UpdateVisceroid / 0x736DF0 UpdateFiring / 0x739AC0 Deploy 等）持续在列
+- 既有池延续：0x767010（数组析构器）/ 0x766BC0（数组比较器）/ 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F6B30 / 0x7F6B14 / 0x7F6B0C / 0x7F6B04 / 0x7F6AC4 / 0x7F69F8 / 0x7F69D4 / 0x7F69A4 / 0x7F6924 / 0x7F68CC / 0x7F665C / 0x7F66A8 / 0x7F668C / 0x7F6684 / 0x7F667C / 0x7F65F4 / 0x7F6318 / 0x7F62FC / 0x7F62F4 / 0x7F62EC / 0x7F0D5C / 0x7F0DCC / 0x7EA57C / 0x7EBFA4 虚表族、批 2635-2678 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
