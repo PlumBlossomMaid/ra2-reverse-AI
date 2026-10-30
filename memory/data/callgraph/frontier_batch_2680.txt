@@ -1,0 +1,60 @@
+# frontier batch 2680
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序）
+三路：a=0x740EF0（144B **UnitClass 超武冷却更新器（槽 0x528 双态 + [0x7E27F8] + _ftol）** callees=2 deps=0）/ b=0x740E80（82B **UnitClass::FlagRemove（挂载移除 + HR 报告）** callees=2 deps=0）/ c=0x740B10（65B **Unit 槽位装载器（[+0x350] 懒装载，0x4A5x 家族）** callees=3 deps=0）——UnitClass 域三连（冷却更新 + 挂载移除 + 槽装载）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2680{a,b,c}.txt，完整读取确认尾 ret（a 多出口 ret@0x740F5A/@0x740F7F、b 单出口 ret@0x740ED1、c 单出口 ret@0x740B50、下函数 0x740F80 [0x6c4]→byte[+0xca1] getter 观察项 / 0x740EF0=本批 a / 0x740B60 sub esp,0x24 大函数）
+核验：.qwen/tmp/_check_callees2680.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6523 → 6526（三行全新增，ADD 3）
+
+## a 路：0x740EF0 UnitClass 超武冷却更新器（144B）
+
+- 范围 0x740EF0-0x740F7F（多出口 ret @0x740F5A（计算路径）/@0x740F7F（eax=1 指令通知）；0x740F80 起 nop pad，下函数 0x740F80 = getter（mov eax,[ecx+0x6c4]; mov al,[eax+0xca1]; test dl,dl——类型冷却标志 getter，观察项））
+- thiscall 0 栈参（ret eax）：
+  - `mov ecx,[0x8871E0]; add ecx,0x850`（全局超武/冷却目标）→ **槽 0x528（push 0/push 0——冷却查询）** → eax
+  - eax!=0（有冷却中）→ **槽 0x278（push 2）**（状态进阶查询）→ ==1 → **槽 0x1e8（push 0/push 7——指令码 7 通知）** → eax=1 → ret（已入冷却 → 通知后返回 1）
+  - eax==0（未冷却）→ **[0x8871E0]+0x850 → 槽 0x528（push 1/push 0）** → 返回 0 → 0x740f44；非 0 → **槽 0x484（push 1/push 0——放行/激活）** → 落 0x740f44
+  - 计算路径（0x740f44）：**call 0x5B3A00**（取字段）→ `[eax+0x10] × qword [0x7E27F8]`（**双精度系数——[0x7E27F8] 全局系数再消费（批 2678 b 路同型）**）→ **call 0x7C5F00**（_ftol 截断）→ eax → ret
+- 直接 call 2 次/去重 2：0x5b3a00、0x7c5f00（+3 槽 0x528/0x278/0x1e8/0x484 运行时派发非静态）——picker callees=2 吻合差 0
+- 判类：UnitClass 超武冷却更新器（**槽 0x528 冷却双态查询 + 槽 0x278 进阶 + 槽 0x1e8 指令码 7 通知 + 槽 0x484 放行 + [0x7E27F8] 系数 × [eax+0x10] + _ftol 计算**——超武/特殊数据冷却推进，与批 2678 b 路同冷却型）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x740E80 UnitClass::FlagRemove（挂载移除 + HR 报告）（82B）
+
+- 范围 0x740E80-0x740ED1（单出口 ret @0x740ED1；0x740ED2 起 nop pad，下函数 0x740EF0 = 本批 a 路）
+- thiscall 0 栈参（ret 无参）：
+  - `[esi+0x674]（挂载对象）` == 0 → **push 0x80004003（E_NOTIMPL）; call 0x7DC720**（HR 报告——批 2654 c 路同用 HR 报告）
+  - `[+0x674] → 槽 0x10`（挂载对象允许查询返回 al）→ al!=0 → 0x740ed0（跳过移除）
+  - al==0 → `byte [esi+0x6af]`（自身标志）非零 → 0x740ed0 跳过；为零（允许移除）→ `[esi+0x6c4]→[+0x3cc]`（目标 A）、`[+0x3c8]`（目标 B）→ lea [+0x350] → **call 0x4A51F0**（双参搬移/部署——从 0x674 移除到 [+0x350]）→ ret
+- 直接 call 2 次/去重 2：0x7dc720、0x4a51f0（+1 槽 0x10 运行时派发非静态）——picker callees=2 吻合差 0
+- 判类：**UnitClass::FlagRemove**（旗帜/挂载移除：+0x674 挂载有效性（空则 HR 报告 0x80004003/0x7DC720）+ 槽 0x10 允许门控 + [+0x6af] 标志 → **0x4A51F0**（目标 [0x3cc]/[0x3c8] 双参部署）——与批 2655 b 路 QI 转发器同为 0x7DC720 HR 报告使用者；[+0x350] 槽装载周期（查 0x4A51D0 → 写 0x4A5240 → 部署 0x4A51F0）成员）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x740B10 Unit 槽位装载器（[+0x350] 懒装载，0x4A5x 家族）（65B）
+
+- 范围 0x740B10-0x740B50（单出口 ret @0x740B50；0x740B51 起 nop pad，下函数 0x740B60 = sub esp,0x24 大函数）
+- thiscall 0 栈参（ret 无参）：
+  - `lea edi,[esi+0x350]`（目标槽）、`byte [esi+0x6d2]=0`（标志清）
+  - **call 0x4A51D0**（[+0x350] 槽查询/取对象）→ al!=0 → 0x740b47（跳过写入）
+  - 无对象 → `[esi+0x6c4]→[+0x3cc]`、`[+0x3c8]`（两目标值）→ push 结果 → **call 0x4A5240**（双参——[+0x350] 槽写入对象）
+  - 0x740b47：**call 0x4D4280**（follow-up 主推进）→ ret
+- 直接 call 3 次/去重 3：0x4a51d0、0x4a5240、0x4d4280——picker callees=3 吻合差 0
+- 判类：Unit 槽位装载器（**[+0x350] 槽懒装载：0x4A51D0 查空 → 0x4A5240 从类型对象 [0x3cc]/[0x3c8] 写槽 → 0x4D4280 推进**——与 b 路 FlagRemove 的 0x4A51F0（部署）同 0x4A5x 家族，构成装载周期：查 0x4A51D0 → 写 0x4A5240 → 部署 0x4A51F0）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2680.py：a 路 2/2、b 路 2/2、c 路 3/3——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x740F80（a 路下函数）：getter（[0x6c4]→byte[+0xca1] 类型冷却标志）——后续批次可顺手登记
+- **0x4A5x 装载部署家族**：0x4A51D0（查）/0x4A5240（写）/0x4A51F0（部署）三件套已全部在 TSV——[+0x350] 槽装载周期调用图封闭
+- 0x7DC720（HR 报告，b 路被调）：批 2654 c 路 QueryInterface 同用——HR 报告调用点登记 b 路
+- **UnitClass 域持续推进**：已登记 17+ 个（批 2674-2680）——剩余大户（0x73D450 Harvesting / 0x7359F0 UpdateTube / 0x737180 UpdateVisceroid / 0x739AC0 Deploy 等）持续在列
+- 既有池延续：0x767010（数组析构器）/ 0x766BC0（数组比较器）/ 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F6B30 / 0x7F6B14 / 0x7F6B0C / 0x7F6B04 / 0x7F6AC4 / 0x7F69F8 / 0x7F69D4 / 0x7F69A4 / 0x7F6924 / 0x7F68CC / 0x7F665C / 0x7F66A8 / 0x7F668C / 0x7F6684 / 0x7F667C / 0x7F65F4 / 0x7F6318 / 0x7F62FC / 0x7F62F4 / 0x7F62EC / 0x7F0D5C / 0x7F0DCC / 0x7EA57C / 0x7EBFA4 虚表族、批 2635-2679 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
