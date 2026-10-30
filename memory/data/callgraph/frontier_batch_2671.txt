@@ -1,0 +1,58 @@
+# frontier batch 2671
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序）
+三路：a=0x74B640（65B **名称 → [0xA8EB2C] 列表索引查找** callees=1 deps=0）/ b=0x74B050（1485B **规则装载器（Read_General 型：+0x294..0x304 字段批 INI 读 + 3 标志子段拷贝 + 0x755CD0 复杂对象装载）** callees=20 deps=0）/ c=0x74AB50（30B **析构器·scalar deleting·无写虚表（0x7499F0 链派发）** callees=2 deps=0）——列表索引查找 + 大规模规则装载器 + 无虚表析构
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2671{a,b,c}.txt，完整读取确认尾 ret（a 双出口 ret@0x74B67B(-1)/@0x74B680(索引)、b 多出口 ret 4（0x74B4F8/0x74B523/0x74B552/0x74B569/0x74B607 al=1 + 0x74B612 al=0）、c 单出口 ret 4@0x74AB6B、下函数 0x74B690 对象操作器 / 0x74B620 索引→名称（a 路互逆）/ 0x74AB70 fld [0x7E1710] 浮点函数）
+核验：.qwen/tmp/_check_callees2671.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6496 → 6499（三行全新增，ADD 3）
+
+## a 路：0x74B640 名称 → [0xA8EB2C] 列表索引查找（65B）
+
+- 范围 0x74B640-0x74B680（双出口 ret @0x74B67B（-1 未找到）/@0x74B680（esi 索引）；0x74B681 起 nop pad，下函数 0x74B690 = 对象操作器（call 0x410be0 开头——观察项））
+- thiscall 0 栈参（ret eax 索引）：edi=ecx（名称）→ edi==0 → -1；`[0xA8EB38]（计数）<= 0 → -1` → 循环 esi=0..count-1：`[0xA8EB2C][esi]`（对象）+0x24（名称字段）→ push → **call 0x7C8D20**（字符串比较）→ 相等 → 返回 esi；全不中 → -1
+- 直接 call 1 次/去重 1：0x7c8d20——picker callees=1 吻合差 0
+- 判类：名称查找器（**名称 → [0xA8EB2C] 全局列表索引**（0x7C8D20 比对对象+0x24 名称字段）——[0xA8EB38] 计数、与批 2652 b 路 WaveClass 构造器注册的全局管理器同列表；与下函数 0x74B620「索引 → 对象+0x24 名称」互逆、与批 2663 c 路名称查找器同族）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x74B050 规则装载器（Read_General 型，+0x294..0x304 字段批 INI 读）（1485B）
+
+- 范围 0x74B050-0x74B61A（多出口 ret 4：0x74B4F8/0x74B523/0x74B552/0x74B569/0x74B607（al=1）+ 0x74B612（al=0 门控失败）；0x74B61D 起 nop pad，下函数 **0x74B620 = 索引 → 对象+0x24 名称查询（cmp [0xA8EB38]; jbe → 0x889f64 默认；否则 [0xA8EB2C][idx]+0x24）——与 a 路互逆**）
+- thiscall 1 栈参（ret 4 al）：ebx=[ebp+8]=INI/规则对象、esi=this
+- 流程：
+  - **call 0x526B00**（前置/上下文初始化）→ push ebx → **call 0x5F92D0**（门控，al=0 → 0x74b612 失败返回）
+  - **+0x294..0x304 字段批读（约 25 个字段）**：
+    - bool 5 处（**call 0x5295F0**，push [字段]/0x818610/0x818604/0x818518/0x8184B0 + edi=[esi+0x24] 名字）：[+0x294]/[+0x295]/[+0x300]/[+0x2d0]
+    - double 6 处（**call 0x5283D0**，0x8184F4/0x8184E0/0x8184E8 + 三组 push 高/低 dword）：[+0x2a0]/[+0x2a8]/[+0x2b0]/[+0x2b8]/[+0x2c0]/[+0x2c8]——含 `fcom [0x7e2800]` + `fmul [0x7f65e8]`（负值钳制 → 0 处理）
+    - int 4 处（**call 0x5276D0**）：[+0x29c]/[+0x2d8]/[+0x298]/[+0x2f0]/[+0x2f4]
+    - 字符串→索引 8 处（**call 0x528A10**，目标缓冲 [esp+0x18]、长度 0x80、常量 0x889F64 结构 + 0x8184C8/0x818418/0x818404/0x8183F8/0x8183EC/0x8183E0/0x8183B4/0x845EA0 名）→ 读到的名字查回 ID（**call 0x74BB20 / 0x7514D0 / 0x428B80 / 0x75E3B0 / 0x644890** 多型查表）：[+0x2d4]/[+0x2dc]/[+0x2e0]/[+0x2e4]/[+0x2e8]/[+0x2ec]/[+0x2f8]/[+0x2fc]
+  - **[+0x296] 三标志综合**（esp 栈三 byte OR）→ 非零 → 多功能分支
+  - **多功能分支（0x74b4b9）**：push 0x845e94 → **call 0x476EB0**（按名查段/子对象）→ 非 NULL → 按三标志（esp+0x17/+0x16/+0x15）**3 选 1 拷贝 [esi+0xb0]/[+0xb4] = [eax+0xb0]/[+0xb4] 或 [eax+0xb8]/[+0xbc] 或 [eax+0xc0]/[+0xc4]**；NULL → `[esi+0xb0]=0` → al=1 ret
+  - **[+0xb0] 复杂对象装载（0x74b56c 分支）**：`lea [esi+0x1f8]; push 0x8194ac; ...; call 0x7C9FF0`（通用格式化读取）→ **call 0x4739F0** → 旧 [+0xb0] 非空 → **call 0x755D10**（清）+ 0x7C8B3D 释放 → push 0x1c → **call 0x7C8E17**（分配 28B）→ 非 NULL → **call 0x755CD0**（对象构造，2 参）→ **`[esi+0xb0]=eax`** → 尾部 `mov [esp+0x18],0x7e16b0; call 0x43AE50` + `mov [esp+0x18],0x7e1668; call 0x431B80`（两个静态类虚表常量栈对象方法）→ al=1 ret
+- 直接 call 45 次/去重 20：0x526b00、0x5f92d0、0x5295f0、0x5283d0、0x5276d0、0x528a10、0x74bb20、0x7514d0、0x428b80、0x75e3b0、0x644890、0x476eb0、0x7c9ff0、0x4739f0、0x755d10、0x7c8b3d、0x7c8e17、0x755cd0、0x43ae50、0x431b80——picker callees=20 吻合差 0
+- 判类：**规则装载器（Read_General 型）**（对象 +0x294..0x304 约 25 字段连续 INI 批读（bool/double/int/string→ID 四类 4 读取器）+ 3 标志子段拷贝 + [+0xb0] 28B 复杂对象装载（0x755CD0）+ 尾部静态类方法——与 QWEN.md「规则映射：反编译 Read_General 把偏移映射回 rules.ini 字段名」方法学同族，单位/建筑类主力规则装载函数）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x74AB50 析构器·scalar deleting·无写虚表（0x7499F0 链派发）（30B）
+
+- 范围 0x74AB50-0x74AB6B（单出口 ret 4 @0x74AB6B；0x74AB6E 起 nop pad，下函数 0x74AB70 = 浮点函数（fld qword [0x7e1710]——观察项））
+- thiscall 1 栈参（[esp+8]&1 delete）：**call 0x7499F0**（基类/子对象析构链派发）→ test [esp+8],1 → 0x7C8B3D delete 自身 → ret 4——**无写虚表**
+- 直接 call 2 次/去重 2：0x7499f0、0x7c8b3d——picker callees=2 吻合差 0
+- 判类：析构器·scalar deleting·无写虚表（**batch 2640 a 路 0x766A60 / batch 2667 b 路 0x74F340 同形态**：链派发 + delete 无虚表写——0x7499F0 为一析构链派发器，与 0x7F 族无虚表析构模板并行）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2671.py：a 路 1/1、b 路 45/20、c 路 2/2——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x74B620（b 路下函数）：**索引 → 对象+0x24 名称查询**（cmp [0xA8EB38]; jbe 默认 0x889f64；否则 [0xA8EB2C][idx]+0x24——与 a 路 0x74B640 互逆双向查询对）——后续批次优先跟进登记
+- 0x74B690（a 路下函数）：对象操作器（call 0x410be0 开头）——后续批次可顺手登记
+- 0x526B00 / 0x5295F0 / 0x5283D0 / 0x5276D0 / 0x528A10（b 路被调，已登记）：INI 四类读取器家族（bool/double/int/string）——b 路调用图封闭，Read_General 装载器家族锚点
+- 既有池延续：0x767010（数组析构器）/ 0x766BC0（数组比较器）/ 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F6B30 / 0x7F6B14 / 0x7F6B0C / 0x7F6B04 / 0x7F6AC4 / 0x7F69F8 / 0x7F69D4 / 0x7F69A4 / 0x7F6924 / 0x7F68CC / 0x7F665C / 0x7F66A8 / 0x7F668C / 0x7F6684 / 0x7F667C / 0x7F65F4 / 0x7F0D5C / 0x7F0DCC / 0x7EA57C / 0x7EBFA4 虚表族、批 2635-2670 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
