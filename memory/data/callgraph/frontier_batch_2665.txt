@@ -1,0 +1,57 @@
+# frontier batch 2665
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序）
+三路：a=0x7518D0（42B **析构器·无写虚表无 delete + [+0x10] 清（批 2649 a 同模板）** callees=1 deps=0）/ b=0x750380（109B **全局对象池注册器（[0xB1D378] 系容量门控 + 入槽 + ID 回写）** callees=1 deps=0）/ c=0x74F730（43B **VersionClass::VersionClass（构造器，写虚表 0x7EA57C）** callees=0 deps=0）——释放模板跨区复制 + 全局注册器 + 版本类构造器
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2665{a,b,c}.txt，完整读取确认尾 ret（a 单出口 ret@0x7518F9、b 单出口 ret 4@0x7503EA、c 单出口 ret@0x74F75A、下函数 0x751900 getter / 0x7503F0 thunk / 0x74F760 版本比对大函数观察项）
+核验：.qwen/tmp/_check_callees2665.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6478 → 6481（三行全新增，ADD 3）
+
+## a 路：0x7518D0 析构器·无写虚表无 delete + [+0x10] 清（42B）
+
+- 范围 0x7518D0-0x7518F9（单出口 ret @0x7518F9；0x7518FA 起 nop pad，下函数 0x751900 = getter（mov al,[ecx+0xc]; test; jne → 取 [esp+4]——观察项，批 2649/2663 下函数同模板））
+- **与 batch 2649 a 路 0x763F90 逐字节相同**：push ebx/esi、xor ebx → `[+0x10]=0` 前置清 → `[+4] && byte [+0xd]` 双条件 → push [+4] call 0x7C8B3D（crt free 直放子对象）→ [+4]=0 → 清 [+0xd]=0、[+8]=0 → 返回（无写虚表、无 delete 段）
+- 直接 call 1 次/去重 1：0x7c8b3d——picker callees=1 吻合差 0
+- 判类：析构器·无写虚表无 delete + [+0x10] 清（**batch 2649 a 路 0x763F90 同模板跨区复制实例**——含 [+0x10] 清理变体模板）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x750380 全局对象池注册器（[0xB1D378] 系容量门控 + 入槽 + ID 回写）（109B）
+
+- 范围 0x750380-0x7503EA（单出口 ret 4 @0x7503EA；0x7503ED 起 nop pad，下函数 0x7503F0 = thunk（push ecx; lea eax,[esp]; mov [esp],ecx——观察项））
+- thiscall 1 栈参（ret 4）：ecx=this=esi、[esp+8]=参数对象
+- 流程：
+  - `[esi]=0`（主槽清 0）→ `[0xB1D388]（计数） < [0xB1D380]（容量）` → 满则跳过 0x7503c4
+  - `[0xB1D385]（快路径标志）==0 && [0xB1D380]==0` → 跳 0x7503c4（空池快路径）
+  - `[0xB1D38C]（上限）> 0` → ecx = [0xB1D38C]+[0xB1D380]（上限+容量）→ push 0、push ecx、`call dword ptr [eax+8]`（[0xB1D378] 池对象虚表槽 8 = Grow 扩容）→ 成功（al!=0）继续
+  - 0x7503c4：`[0xB1D388]++`（计数递增）→ **`[0xB1D37C][eax*4] = esi`**（this 入槽 [0xB1D37C] 槽数组、eax=[0xB1D388] 递增前）
+  - **call 0x4063B0**（[esp+8] 参数对象 → 返回登记 ID/索引）→ **`[esi]=eax`**（this 主槽存 ID）→ eax=esi → ret 4
+- 直接 call 1 次/去重 1：0x4063b0（+1 虚表槽 8 运行时派发非静态）——picker callees=1 吻合差 0
+- 判类：全局对象池注册器（**对象自注册进 [0xB1D378] 管理的全局池**：容量 [0xB1D380]/计数 [0xB1D388]/上限 [0xB1D38C] 三场门控、虚表槽 8 扩容、[0xB1D37C]+idx*4 入槽、0x4063B0 返回 ID 写主槽）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x74F730 VersionClass::VersionClass（构造器，写虚表 0x7EA57C）（43B）
+
+- 范围 0x74F730-0x74F75A（单出口 ret @0x74F75A；0x74F75B 起 nop pad，下函数 0x74F760 = 版本比对主函数（sub esp,0x4c + test [esi+0x44],8——观察项））
+- thiscall 0 栈参（普通构造器，ret 无参）：
+  - eax=this、xor ecx → `[+4]=0`、`word [+8]=0`、`word [+0xa]=0`、`[+0x3c]=0`、`[+0x40]=0`
+  - **`[+0x44] & 0xfffffff0`**（保留低 4 位标志、清高 28 位）→ 写回 [+0x44]
+  - **写虚表 0x7EA57C** → byte [+0x2a]=0、byte [+0xc]=0 → eax=this → ret
+- 直接 call 0 次/去重 0——picker callees=0 吻合差 0
+- 判类：VersionClass::VersionClass（**版本类构造器**：清版本字段（[+8]/[+0xa]/[+0x3c]/[+0x40]）+ [+0x44] 掩码保留 + 写虚表 0x7EA57C——下函数 0x74F760 为版本比对主函数；与 batch 记忆 VersionClass 家族（0x74FD20 Protocol 查表/0x74FD60 Clip 钳窗）同域）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2665.py：a 路 1/1、b 路 1/1、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x751900（a 路下函数）：getter（mov al,[ecx+0xc] 门控 → 取 [esp+4]——批 2649/2663 同模板，可顺手登记）
+- 0x74F760（c 路下函数）：**版本比对主函数**（sub esp,0x4c + test [esi+0x44],8——与 c 路 [+0x44] 掩码字段强绑定，后续批次优先跟进登记）
+- 0x7503F0（b 路下函数）：thunk（push ecx + [esp] 写回——[0xB1D378] 池族配对）
+- 既有池延续：0x767010（数组析构器）/ 0x766BC0（数组比较器）/ 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F6B30 / 0x7F6B14 / 0x7F6B0C / 0x7F6B04 / 0x7F6AC4 / 0x7F69F8 / 0x7F69D4 / 0x7F69A4 / 0x7F6924 / 0x7F68CC / 0x7F0D5C / 0x7F0DCC / 0x7EA57C / 0x7EBFA4 虚表族、批 2635-2664 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
