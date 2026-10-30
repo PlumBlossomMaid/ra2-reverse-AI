@@ -1,0 +1,61 @@
+# frontier batch 2693
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序；未登记池 2226）
+三路：a=0x72A210（30B **scalar deleting 析构器（0x55A6F0 虚析构 + [esp+8]&1 → 0x7C8B3D delete）** callees=2 deps=0）/ b=0x72A1C0（31B **副词索引解析器（0x55AD00 查询 → 失败回退 7）** callees=1 deps=0）/ c=0x729B40（754B **武器坐标/时间插值器（类型跳转表 6 态 + fidiv 归一化 + 0x55A730/0x5AE610/0x5AE860/0x5AF080 取格构对象 + 0x7559B0 + 0x7C5F00 截断 + 48B 输出）** callees=8 deps=0）——武器数据域（坐标时间插值 + 副词解析 + 析构）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2693{a,b,c}.txt，完整读取确认尾 ret（a 单 ret 4 @0x72A22B、b 单 ret 4 @0x72A1DC、c 单 ret 0xc @0x729E2F/0x729C0F/0x729C4F；下函数 a 0x72A230 四全局清零器（[0xB0F960..0xB0F96C]）、b 0x72A1E0 类型 5/6 判定器 0x72A200 常量 0x3C 函数、c 0x729E40 [0x729E34] 跳转表数据后新函数）
+核验：.qwen/tmp/_check_callees2693.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6562 → 6565（三行全新增，ADD 3）
+
+## a 路：0x72A210 scalar deleting 析构器（30B）
+
+- 范围 0x72A210-0x72A22B（单 ret 4 @0x72A22B；0x72A22E nop，下函数 0x72A230 四全局清零器（[0xB0F960]/[0xB0F964]/[0xB0F968]/[0xB0F96C]=0）观察项）
+- thiscall 1 栈参（ret 4，eax=this）：
+  - esi=ecx（this）→ **call 0x55A6F0**（虚析构主体，thiscall 0 栈参）
+  - `test byte [esp+8],1`（删除标志）→ 置位 → push esi → **call 0x7C8B3D**（operator delete）→ add esp,4
+  - `eax=esi`（返回 this）→ ret 4
+- 直接 call 2 个/去重 2：0x55a6f0、0x7c8b3d——picker callees=2 完全吻合
+- 判类：scalar deleting 析构器（**0x55A6F0 虚析构 + [esp+8]&1 → 0x7C8B3D delete，返回 this**——与批 2692 c 路同模板（同 0x7C8B3D 门控、同返回 this），虚析构主体换 0x55A6F0（武器/副武器子系统对象））
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x72A1C0 副词索引解析器（31B）
+
+- 范围 0x72A1C0-0x72A1DC（单 ret 4 @0x72A1DC；0x72A1DF nop，下函数 0x72A1E0 类型 5/6 判定器（[esp+4]→[+0x14]==5||6→1 / else 0）+ 0x72A200 常量 0x3C 常量函数）
+- thiscall 0 栈参（ret 4）——疑似双层this：
+  - `esi=[esp+8]`（栈参指针）；push esi → **call 0x55AD00**（thiscall 查询，esi 为 this/解引用候选）
+  - eax 非零 → ret 0（默认索引 0？——非零时 eax 即返回则 ret 4 前未改 eax，carry 0 语义）
+  - eax 零 → `[esi+0x14]` 非零 → `eax=7`（默认副词索引 7）→ ret 4
+- 直接 call 1 个/去重 1：0x55ad00——picker callees=1 完全吻合
+- 判类：副词索引解析器（**0x55AD00 查询 → 零结果且 [esi+0x14] 非零 → 回退默认 7**——副词（广告/语素）索引查表，0x55ADxx 域（55A6F0/55AD00/55A730/55B3A0 等）为武器/副武器子系统）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x729B40 武器坐标/时间插值器（754B）
+
+- 范围 0x729B40-0x729E2F（多出口 ret 0xc @0x729C0F/@0x729C4F/@0x729E2F——ret 0xc 三栈参；0x729E32 nop，下函数 0x729E40 [0x729E34] 跳转表数据之后）
+- thiscall 3 栈参（ret 0xc；[ebp+8]=源对象、[ebp+0xc]=输出 48B、[ebp+0x10]=索引指针可空）——4 段复合：
+  - 段 1（默认路径）：`[esi+0x14]`（类型）零 → `[esi+8]+0x9c`（坐标）→ 0x565730（取格）→ `bl=[eax+0x11c]`（格高/类型字节）→ `[edi+0x10]` 索引 -1 跳过 → 索引<<6 + bl（**格字节并入索引**）→ 0x5AE860（构造输出对象）
+  - 段 2（主分发）：`[esi+0x14]` 非零 → `add eax,-2; ja → 0`（跳转表 [eax*4+0x729E34] 6 态门控）→ 每态写 [esp+0x10] 双精度值（常值 0x3FF921FB54442D18=π/2、0xBFF921FB54442D18=-π/2、0x7E1718×0x7E2820、fild 时间差 / [+0x10] fidiv 等）
+  - 态计算：`[esi+0x30]`（末次时刻）→ 空 → 常数；非空 → `[esi+0x24]-1` 且 `[0xa8ed84]-[esi+0x24]` 与 `[0xa8ed84]-[+0x2c]` 差量 → sub/fild/fidiv/fmul 归一化（0x7E2820/0x7F0C10 双常量）——**时间插值核心**
+  - 段 3（组装）：push ebx（索引指针）→ lea [esp+0xb8] → push esi → **call 0x55A730**（对象查询/构造）→ push eax → **call 0x5AE610**（构建坐标）→ ebx 非空 → [ebx]!=-1 → **call 0x7C5F00**（_ftol）and 0x3f → shl esi,8 → or eax（**小写 hex | 索引<<8**）→ 写回 [ebx]
+  - 段 4（输出）：fstp [esp] → **call 0x5AF080**（取坐标）→ rep movsd 0xc（48B）→ [ebp+0xc] 输出 → ret 0xc
+- 直接 call 12 个/去重 8：0x55a730、0x565730、0x5ae610、0x5ae860、0x5af080、0x5af980、0x7559b0、0x7c5f00（+跳转表 0x729e34 数据非 call）——picker callees=8 完全吻合
+- 判类：武器坐标/时间插值器（**类型跳转表 6 态（+2 门控 [0x729E34]）→ 常值/π/时间差 fidiv 归一化 → 0x55A730 对象查询 + 0x5AE610/0x5AE860/0x5AF080/0x7559B0 坐标构建 + 0x7C5F00 截断 + 索引<<8|小值 36B 输出**——武器目标坐标/时间插值计算，与 b 路 0x55AD00 同 55Axxx 域（55A6F0/55A730/55AD00/55B3A0 等武器副武器子系统））
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2693.py：a 路 2/2、b 路 1/1、c 路 8/8——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 观察 0x729E40（c 路下函数）：[0x729E34] 跳转表后续新函数（c 路 6 态分发后邻）——候选池加码
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **55Axxx 武器副武器子系统域**：55A6F0（a 路虚析构）/55AD00（b 路查询）/55A730（c 路查询）/55AE610（c 路）——持续登记，候选池加码
+- **[0x729E34] 跳转表 6 态 + [0x7E2820]/[0x7F0C10] 插值常量**：c 路时间插值核心，武器坐标计算全局资源
+- **0x72A1E0 类型 5/6 判定器 + 0x72A200 常量 0x3C 函数**（b 路下函数）：武器类型判定小件，候选池
+- **0x72A230 四全局清零器**（a 路下函数）：[0xB0F960..0xB0F96C]，与批 2692 c 路下函数 0x72A690 同型
+- 既有池延续：0x72A690 / 0x72B060 / 0x72AA40 / 0x72F4C0 / 0x72F4D0 / 0x72A1E0 / 0x72A200 / 0x72A230 / 0x729E40 / 0x731A30 / 0x731A50 / 0x731A70 / 0x7315A0 / 0x731060 / 0x732210 / 0x732580 / 0x7325C0 / 0x732950 / 0x732D00 / 0x733930 / 0x733640 / 0x7336A0 / 0x7342C0 / 0x7343E0 / 0x734210 / 0x734250 / 0x733CD0 / 0x736C10 / 0x736CA0 / 0x736D50 / 0x737090 / 0x737430 / 0x7360C0 / 0x767010 / 0x766BC0 / 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F6B30 / 0x7F6B14 / 0x7F6B0C / 0x7F6B04 / 0x7F6AC4 / 0x7F69F8 / 0x7F69D4 / 0x7F69A4 / 0x7F6924 / 0x7F68CC / 0x7F665C / 0x7F66A8 / 0x7F668C / 0x7F6684 / 0x7F667C / 0x7F65F4 / 0x7F6318 / 0x7F62FC / 0x7F62F4 / 0x7F62EC / 0x7F0D5C / 0x7F0DCC / 0x7EA57C / 0x7EBFA4 虚表族、批 2635-2692 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
