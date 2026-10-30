@@ -1,0 +1,47 @@
+# frontier batch 2642
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；三路 uc 均为 0 孤立函数，落回 ranking 序）
+三路：a=0x7667A0（52B **析构器·scalar deleting·双子对象·写虚表 0x7F6FC4 + [+8] 0x7EBFA4** callees=3 deps=0）/ b=0x766030（32B **析构器·双子对象·无 delete·写虚表 0x7F6FC4 + [+8] 0x7EBFA4** callees=2 deps=0）/ c=0x765FD0（61B **构造器·双子对象·写虚表 0x7F0954→0x7F6FC4** callees=2 deps=0）——0x7F6FC4 虚表族构造/析构配对
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2642{a,b,c}.txt，完整读取确认尾 ret（a 单出口 ret 4@0x7667D1、b 单出口 ret@0x76604F、c 单出口 ret 4@0x76600A、下函数 0x7667E0/0x766050/0x766010 均为 getter/比较器）
+核验：.qwen/tmp/_check_callees2642.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6409 → 6412（三行全新增，ADD 3）
+
+## a 路：0x7667A0 析构器·scalar deleting·双子对象·写虚表 0x7F6FC4 + [+8] 0x7EBFA4（52B）
+
+- 范围 0x7667A0-0x7667D1（单出口 ret 4 @0x7667D1；0x7667D4 起 nop pad，下函数 0x7667E0 = getter movzx [ecx+0xe] / 0x7667F0 = getter [ecx+0xf]——双字节字段 getter 观察项）
+- **双虚表写**：`mov [esi], 0x7f6fc4`（主虚表）+ `lea ecx,[esi+8]` → `mov [ecx], 0x7ebfa4`（[+8] 子对象虚表 0x7EBFA4——共享引用对象 0x7B0390 同虚表，batch 记忆已登记 0x7EBFA4 = 共享引用对象构造器虚表）→ **call 0x65D460**（基类析构链）→ **call 0x65D660**（第二基类析构链）→ 0x7C8B3D delete → ret 4
+- thiscall 1 栈参（[esp+8]&1 delete）；直接 call 3 次/去重 3：0x65d460、0x65d660、0x7c8b3d——picker callees=3 吻合差 0
+- 判类：析构器·scalar deleting·双子对象·写虚表 0x7F6FC4（双基类析构链 0x65D460 + 0x65D660，batch 2637 双子族同构——b 路 0x766030 为该模板的 delete 可选变体）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x766030 析构器·双子对象·无 delete·写虚表 0x7F6FC4 + [+8] 0x7EBFA4（32B）
+
+- 范围 0x766030-0x76604F（单出口 ret @0x76604F；0x766050 起下函数 getter [ecx+0xc] 非空检查）
+- **双虚表写**：`mov [esi], 0x7f6fc4` + `lea ecx,[esi+8]` → `mov [ecx], 0x7ebfa4` → **call 0x65D460** → **call 0x65D660** → pop esi → **ret（无 [esp+8]&1 delete 段、无栈参清理）**
+- 直接 call 2 次/去重 2：0x65d460、0x65d660——picker callees=2 吻合差 0
+- 判类：析构器·双子对象·无 delete（与 a 路同模板的**非 scalar deleting 变体**——MSVC 内联双基类析构链后的收尾形态，batch 2637 b 路 0x767BF0「双子对象·无 delete」同族）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x765FD0 构造器·双子对象·写虚表 0x7F0954→0x7F6FC4（61B）
+
+- 范围 0x765FD0-0x76600A（单出口 ret 4 @0x76600A；0x76600D 起 nop pad，下函数 0x766010 = 比较器 [esp+4].+0xC vs [ecx+0xC] sete）
+- thiscall 1 栈参（ret 4）：**[+4] 置 0 → 写主虚表 0x7F0954**（原始虚表）→ `lea edi,[esi+8]` 子对象 → **call 0x65D430**（基类构造）→ 写子对象虚表 0x7EBFA4 → `mov eax,[esp+0xc]`（栈参对象）→ `mov ecx,[eax+4]`（取其 +4 字段）→ push → **call 0x65D480**（装载对）→ 收尾回写 **主虚表 0x7F6FC4** → ret 4
+- 直接 call 2 次/去重 2：0x65d430、0x65d480——picker callees=2 吻合差 0
+- 判类：构造器·双子对象·写虚表 0x7F0954→0x7F6FC4（**[+8] 子对象 0x7EBFA4 共享引用构造**——与 a/b 析构器配对的构造侧，batch 2637 构造器·写虚表·装载对（0x65D430/0x65D480）同调用族）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2642.py：a 路 3/3、b 路 2/2、c 路 2/2——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- 0x7667E0 / 0x7667F0（a 路下函数）：双字节字段 getter（movzx [ecx+0xe] / [ecx+0xf]，4B + ret 直取）——批量小 getter，后续批次可顺手登记
+- 0x766010（c 路下函数）：比较器（[esp+4].+0xC vs [ecx+0xC] sete，thiscall 1 栈参 ret 4）——双子对象族配套
+- 既有池延续：0x767010（数组析构器）/ 0x766BC0（数组比较器）/ 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7EBFA4 虚表族、批 2635-2641 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
