@@ -1,0 +1,56 @@
+# frontier batch 2712
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序；未登记池 2172→2169）
+三路：a=0x71A130（45B **scalar deleting 析构器（子对象 [+0x48] 虚表槽 8 释放 + 主体 0x55A6F0 LocomotionClass::~LocomotionClass + [esp+8]&1 门控 0x7C8B3D）** callees=2 deps=0）/ b=0x71A0F0（13B **注销包装薄壳（单参转发 0x55A970，batch 292 注销包装调用侧）** callees=1 deps=0）/ c=0x71A0E0（13B **登记包装薄壳（单参转发 0x55A950，batch 292 登记包装调用侧）** callees=1 deps=0）——移动系统析构 + 登记/注销薄壳
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2712{a,b,c}.txt，完整读取确认尾 ret（a 单 ret 4 @0x71A15A、b 单 ret 4 @0x71A0FA、c 单 ret 4 @0x71A0EA；下函数 a 0x71A160 参数 -4 修正 thunk（sub [esp+4],4 → jmp 0x71A0E0/0x71A0F0 家族）、b 0x71A100 [+0x30] 非空 check getter、c 0x71A0F0 = b 路本身；0x71A120 返回 0x4C 常量函数）
+核验：.qwen/tmp/_check_callees2712.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6619 → 6622（三行全新增，ADD 3）
+
+## a 路：0x71A130 scalar deleting 析构器（45B）
+
+- 范围 0x71A130-0x71A15A（单 ret 4 @0x71A15A；0x71A15D nop×3，下函数 0x71A160 参数 -4 修正 thunk（sub [esp+4],4 → jmp 0x71A0E0/0x71A0F0…家族——向前转发 0x719E30/0x71A0E0/0x71A0F0）
+- thiscall 1 栈参（ret 4，eax=this）——**子对象虚表槽 8 释放 + 主体析构 + 门控 delete**：
+  - `eax=[esi+0x48]`（子对象）非空 → `call dword ptr [ecx+8]`（虚表槽 8 释放子对象）
+  - `mov ecx,esi` → **call 0x55A6F0**（LocomotionClass::~LocomotionClass——移动方式类析构，batch 125 已登记）
+  - al=`[esp+8]`（删除标志）→ al&1 零 → 不删本体；置位 → push esi → **call 0x7C8B3D**（delete 本体）
+  - eax=esi → ret 4
+- 直接 call 2 个/去重 2：0x55a6f0、0x7c8b3d——picker callees=2 完全吻合（虚表槽 8 间接释放不计）
+- 判类：scalar deleting 析构器（**移动子系统对象包装——子对象 [+0x48] 虚表槽 8 释放 + LocomotionClass 析构主体 + [esp+8]&1 门控 delete 本体**——Locomotion 衍生类 scalar deleting 壳；与批 2706 a 路 0x720210/批 2709 b 路 0x71D350 同委托式壳形态）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x71A0F0 注销包装薄壳（13B）
+
+- 范围 0x71A0F0-0x71A0FA（单 ret 4 @0x71A0FA；0x71A0FD nop×3，下函数 0x71A100 [+0x30] 非空 check getter（setne al ret 4）观察项；0x71A120 返回 0x4C 常量函数观察项）
+- thiscall 1 栈参（ret 4）——**薄壳转发**：
+  - `eax=[esp+4]`（参1）→ push → **call 0x55A970**（注销包装——batch 292 已登记：全局计数-- + 导入槽 [0x7E11CC] + 槽 0x20 释放）→ ret 4
+- 直接 call 1 个/去重 1：0x55a970——picker callees=1 完全吻合
+- 判类：注销包装薄壳（**0x55A970 的调用侧 thunk——登记/注销包装的上层薄壳，0x71A160 系参数修正 thunk 家族的转发目标**——Locomotion 域注销入口候选）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x71A0E0 登记包装薄壳（13B）
+
+- 范围 0x71A0E0-0x71A0EA（单 ret 4 @0x71A0EA；下函数 0x71A0F0 = b 路本身，紧密相邻）
+- thiscall 1 栈参（ret 4）——**薄壳转发**：
+  - `eax=[esp+4]`（参1）→ push → **call 0x55A950**（登记包装——batch 292 已登记：全局计数++ + 导入槽 [0x7E11C8]）→ ret 4
+- 直接 call 1 个/去重 1：0x55a950——picker callees=1 完全吻合
+- 判类：登记包装薄壳（**0x55A950 的调用侧 thunk——与 b 路 0x71A0F0 成对（登记/注销），层叠转发 [0x71A0E0→0x55A950] / [0x71A0F0→0x55A970]**——Locomotion 域登记入口候选）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2712.py：a 路 2/2、b 路 1/1、c 路 1/1——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x55A6F0（LocomotionClass::~LocomotionClass·batch 125：YRpp.h:190-193 JMP_THIS 实锤）、0x55A970（注销包装·batch 292：全局计数-- + [0x7E11CC] + 槽 0x20）、0x55A950（登记包装·batch 292：全局计数++ + [0x7E11C8]）、0x7C8B3D（operator delete·batch 001）
+- 观察 0x71A160（a 路下函数）：参数 -4 修正 thunk 家族（sub [esp+4],4 → jmp 0x719E30/0x71A0E0/0x71A0F0——层叠转发）；0x71A100（b 路下函数）：[+0x30] 非空 check getter；0x71A120：返回 0x4C 常量函数（对象大小 getter 推断）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **移动系统域**（a 路）：LocomotionClass 析构壳 + 子对象 [+0x48] 虚表槽 8——Locomotion 衍生类候选；0x71A160 参数修正 thunk 家族（[0x719E30/0x71A0E0/0x71A0F0] 转发目标）待登记
+- **登记/注销薄壳对**（b/c 路）：0x71A0E0/0x71A0F0 成对转发 thunk——batch 292 包装的调用侧；0x71A100/0x71A120（[+0x30] check + 0x4C 常量）配套 getter 候选
+- 0x71A160 / 0x71A170 / 0x71A180（参数修正 thunk 三连）、0x71A100、0x71A120——a/b 路下函数观察及候选池
+- 既有池延续：0x71A100 / 0x71A120 / 0x71A160 / 0x71A4E0 / 0x71AD40 / 0x71B270 / 0x71B290 / 0x71B5A0 / 0x71B3C0 / 0x71B7B0 / 0x71BFB0 / 0x71D370 / 0x71D390 / 0x71D3C0 / 0x71E800 / 0x71F5B0 / 0x720230 / 0x720260 / 0x720280 / 0x720960 / 0x7209B0 / 0x7209D0 / 0x720E50 / 0x720E80 / 0x720EA0 / 0x722AB0 / 0x7220D0 / 0x721880 / 0x721430 / 0x7212E0 / 0x723760 / 0x7235A0 / 0x723A90 / 0x7238B0 / 0x7240B0 / 0x724BB0 / 0x724A30 / 0x724AD0 / 0x724C30 / 0x724DB0 / 0x726FE0 / 0x726FB0 / 0x7263A0 / 0x726690 / 0x7286B0 / 0x727CF0 / 0x7271D0 / 0x728A50 / 0x728AF0 / 0x729370 / 0x729AA0 / 0x72A690 / 0x72B060 / 0x72AA40 / 0x72F4C0 / 0x72F4D0 / 0x72A1E0 / 0x72A200 / 0x72A230 / 0x729E40 / 0x731A30 / 0x731A50 / 0x731A70 / 0x7315A0 / 0x731060 / 0x732210 / 0x732580 / 0x7325C0 / 0x732950 / 0x732D00 / 0x733930 / 0x733640 / 0x7336A0 / 0x7342C0 / 0x7343E0 / 0x734210 / 0x734250 / 0x733CD0 / 0x736C10 / 0x736CA0 / 0x736D50 / 0x737090 / 0x737430 / 0x7360C0 / 0x767010 / 0x766BC0 / 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F6B30 / 0x7F6B14 / 0x7F6B0C / 0x7F6B04 / 0x7F6AC4 / 0x7F69F8 / 0x7F69D4 / 0x7F69A4 / 0x7F6924 / 0x7F68CC / 0x7F665C / 0x7F66A8 / 0x7F668C / 0x7F6684 / 0x7F667C / 0x7F65F4 / 0x7F6318 / 0x7F62FC / 0x7F62F4 / 0x7F62EC / 0x7F0D5C / 0x7F0DCC / 0x7EA57C / 0x7EBFA4 虚表族、批 2635-2711 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
