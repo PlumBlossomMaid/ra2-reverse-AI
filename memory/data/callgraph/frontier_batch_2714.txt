@@ -1,0 +1,63 @@
+# frontier batch 2714
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序；未登记池 2166→2163）
+三路：a=0x719E30（93B **COM QueryInterface 风格（0x55A9B0 COM 辅助 + IID 0x7E9B10 4-dword 比较 + 填输出 + 虚表槽 4 Release，HRESULT）** callees=1 deps=0）/ b=0x719BF0（104B **计时/冷却状态更新器（[0xA8ED84] 全局帧计数 vs [+0x3c]/[+0x44] 到期判断 → 清 [+0xc]+0x271 标志 + 0x70F770/0x709480 状态查询 + 虚表槽 0x484 置位）** callees=2 deps=0）/ c=0x718B70（0x74E=1870B **地图格坐标系大函数（常量三元组 [0xB0EBF8..0xB0EC00] 比较 + 坐标 8 位量化 + MapClass 格系统七被调 + 虚表槽 0x84/0xf0/0xf4/0x1ac/0x1b8/0x4c/0x48 家族，返回 mapcell 是否更新）** callees=7 deps=0）——地图格域大函数 + COM 家族
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2714{a,b,c}.txt，完整读取确认尾 ret（a 单 ret 0xc @0x719E8A、b 单 ret 4 @0x719C55、c 双 ret 4 @0x719283（al=1 更新）/ @0x7192BB（al=0 未更新）；下函数 a 0x719E90 COM 方法（0x80004003 检查 + [+0x30] 子对象转存）、b 0x719C60 COM 浅拷贝方法（[0x7E9A90]/[0x7E9A94] 常量填输出）、c 0x7192C0 [+4]/[+8] 双栈参小函数）
+核验：.qwen/tmp/_check_callees2714.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6625 → 6628（三行全新增，ADD 3）
+
+## a 路：0x719E30 COM QueryInterface 风格（93B）
+
+- 范围 0x719E30-0x719E8A（单 ret 0xc @0x719E8A；0x719E8D nop×3，下函数 0x719E90 COM 方法（[esp+8] 空→0x80004003；[+0x30] 子对象转存输出；[0x7E9A90]/[0x7E9A94] 常量填输出家族）观察项）
+- thiscall 3 栈参（ret 0xc，ebx=参1/[esp+8]；esi=参2/[esp+0x14]；ebp=参3/[esp+0x14] 输出指针）——**COM QueryInterface 风格**：
+  - `call 0x55A9B0`（COM 辅助：3 参请求，返回 HRESULT；batch 已登记）→ cmp **0x80004002（E_NOINTERFACE）** → 不等 → 返 eax
+  - ==E_NOINTERFACE → **repe cmpsd 4 dword**（esi 与 IID 0x7E9B10 比较——IID 匹配判定）
+  - 匹配 → `ebx 非空 ? [ebx+0x18] : 0` → 存 `[ebp]`（填输出）
+  - `[ebp]==0` → 返 **0x80004002**；非空 → `mov ecx,[ebx]` → push ebx → **call [ecx+4]**（虚表槽 4 Release）→ `xor eax,eax`（S_OK）→ ret 0xc
+- 直接 call 1 个/去重 1：0x55a9b0——picker callees=1 完全吻合（虚表槽 4 间接不计）
+- 判类：COM QueryInterface 风格（**推断名——0x55A9B0 COM 辅助请求 + IID 0x7E9B10（4-dword 常量）匹配后 [ebx+0x18] 填输出 + 虚表槽 4 Release，失败返 E_NOINTERFACE/E_POINTER**——COM 接口查询/取对象语义，与批 2713 a 路 0x719F80 同族）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x719BF0 计时/冷却状态更新器（104B）
+
+- 范围 0x719BF0-0x719C55（单 ret 4 @0x719C55；0x719C58 nop×8，下函数 0x719C60 COM 浅拷贝方法（[esp+8] 空→0x80004003；[eax]=[0x7E9A90]、[eax+4]=[0x7E9A94]、[eax+8]=[0x7E9A98] 常量填输出）观察项）
+- thiscall 1 栈参（ret 4，esi=[esp+8] 对象）——**计时到期更新**：
+  - `edx=[esi+0x3c]`（时间戳 base）→ `edx!=-1` 时 `ecx=[0xA8ED84]（全局帧计数 标记）-edx` → 若 `ecx<[esi+0x44]`（剩余）→ `eax-=ecx`（调整剩余）
+  - `eax==0`（到期）→ `[esi+0xc]` 子对象 → `byte[eax+0x271]=0`（清标志）→ `[eax+0x2b4]` 空 → **call 0x70F770**（动画/闪烁状态查询）+ **call 0x709480**（返回状态）→ 非零 → push 1/push 0 → **call [edx+0x484]**（虚表槽 0x484 置位）
+  - `[esi+0x38]>0` → `++` → ret 4
+- 直接 call 2 个/去重 2：0x709480、0x70f770——picker callees=2 完全吻合
+- 判类：计时/冷却状态更新器（**推断名——[0xA8ED84] 全局帧计数与 [+0x3c]/[+0x44] 时间字段比较判到期，到期清子对象 +0x271 标志并虚表槽 0x484 设激活态，[+0x38] 计数自增**——Techno 计时/冷却到期处理）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x718B70 地图格坐标系大函数（0x74E=1870B）
+
+- 范围 0x718B70-0x7192BB（双 ret 4 @0x719283（al=1 已更新）/ @0x7192BB（al=0 未更新）；下函数 0x7192C0 [+4]/[+8] 双栈参小函数）
+- thiscall 1 栈参（ret 4，输入 mapcell 三元组 [0xB0EBF8..0xB0EC00] 常量目标 + 输出 edi 三元组；返回值 bool 是否已更新）——**地图格坐标系统大函数**：
+  - **常量三元组比较**：[0xB0EBF8]/[0xB0EBFC]/[0xB0EC00] 与输入/输出 edi 三元组对比——相等则抄 [ecx+0x9C] 区（3 dword）到 [esp+0x30]，否则直传 edi
+  - **[0x565730]（MapClass：格坐标批量转换）** 多次 → **[0x578080]（cell 尺寸/格索引）** → **[0x5657A0]（CellClass 获取）** → **[0x481180]（格坐标规范化）** → **[0x47C520]（cell→xyz）** → **[0x56D230]（投射/区域计算）** → **[0x56DC20]（cell 批量读取）**
+  - **坐标 8 位量化**：`and edx,0xff ; add eax,edx ; sar eax,8`（cell 坐标 + 0x80 半格 → 像素）多段重复
+  - 子对象 [+0x5A4]（类对象）+0x5B4/+0x67C 字段、虚表槽 0x84（取技术）、0xf0/0xf4（cell 访问）、0x1ac（放置检查）0x1b8（坐标取格）、0x4c/0x48（cell 获取）
+  - [`[0xB0EBD8]/[0xB0EBDA]` 像素目标比较 → 跳 0x719249；[0xB0EC38] 常量 ×3 + cmp 边界栅栏（0x718c67：lea eax,[eax+eax*2] 三倍区间）
+  - 结尾：[esi+0x30]=[0x578080] 结果（存格索引）；edi 三元组 vs 常量组判定 al=1（已更新）/ al=0
+- 直接 call 20 个/去重 7：0x47c520、0x481180、0x565730、0x5657a0、0x56d230、0x56dc20、0x578080——picker callees=7 完全吻合（虚表槽 0x84/0xf0/0xf4/0x1ac/0x1b8/0x4c/0x48 大量间接不计）
+- 判类：地图格坐标系大函数（**推断名——输入/目标 mapcell 三元组与全局常量组 [0xB0EBF8..0xB0EC00]（原版哨兵坐标）比较，MapClass 格系统七被调完成 坐标量化→cell 获取→面积计算→cell 读取，逐格判定并更新 [esi+0x30] 格索引，返回 bool 分配/更新状态**——CellIterator 域 / 格放置合法性判定大宿主；被调七函数全为格系统核心，是函数体量最大的一类地图宿主（0x565730×8 处调用复用））
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2714.py：a 路 1/1、b 路 2/2、c 路 7/7——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x55A9B0（COM 辅助·[0x2d7] 族已登记）、0x709480/0x70F770（动画/状态查询族）、0x565730（MapClass 格批量转换）、0x578080（cell 尺寸/索引）、0x5657A0（CellClass 获取）、0x481180（格坐标规范化）、0x47C520（cell→xyz）、0x56D230（投射/区域计算）、0x56DC20（cell 批量读取）
+- 观察 [0xB0EBF8..0xB0EC00]（c 路常量三元组）：原版哨兵 mapcell（-1 族）；[0x7E9B10]（a 路 IID 4-dword）；[0x7E9A90..0x7E9A98]（b 路下函数 COM 常量）；0x7192C0（c 路下函数：双栈参 [+4]/[+8]）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **地图格系统大函数**（c 路 1870B）：常量哨兵三元组 [0xB0EBF8..0xB0EC00] + 格系统七被调——同域大宿主候选（[0x718B70 类] 地图/放置合法性判定为剩下最大的一类）；0x7192C0（下函数双栈参小函数）候选
+- **COM QI 家族累计**：批 2713 a/c（0x719F80/0x719EE0）+ 本批 a（0x719E30）——IID 0x7E9B10 常量登记 + Release 语义成族
+- 0x719E90 / 0x719C60 / 0x7192C0（a/b/c 路下函数）：候选池
+- 既有池延续：0x7192C0 / 0x719C60 / 0x719E90 / 0x71A080 / 0x71A090 / 0x71A100 / 0x71A120 / 0x71A160 / 0x71A4E0 / 0x71AD40 / 0x71B270 / 0x71B290 / 0x71B5A0 / 0x71B3C0 / 0x71B7B0 / 0x71BFB0 / 0x71D370 / 0x71D390 / 0x71D3C0 / 0x71E800 / 0x71F5B0 / 0x720230 / 0x720260 / 0x720280 / 0x720960 / 0x7209B0 / 0x7209D0 / 0x720E50 / 0x720E80 / 0x720EA0 / 0x722AB0 / 0x7220D0 / 0x721880 / 0x721430 / 0x7212E0 / 0x723760 / 0x7235A0 / 0x723A90 / 0x7238B0 / 0x7240B0 / 0x724BB0 / 0x724A30 / 0x724AD0 / 0x724C30 / 0x724DB0 / 0x726FE0 / 0x726FB0 / 0x7263A0 / 0x726690 / 0x7286B0 / 0x727CF0 / 0x7271D0 / 0x728A50 / 0x728AF0 / 0x729370 / 0x729AA0 / 0x72A690 / 0x72B060 / 0x72AA40 / 0x72F4C0 / 0x72F4D0 / 0x72A1E0 / 0x72A200 / 0x72A230 / 0x729E40 / 0x731A30 / 0x731A50 / 0x731A70 / 0x7315A0 / 0x731060 / 0x732210 / 0x732580 / 0x7325C0 / 0x732950 / 0x732D00 / 0x733930 / 0x733640 / 0x7336A0 / 0x7342C0 / 0x7343E0 / 0x734210 / 0x734250 / 0x733CD0 / 0x736C10 / 0x736CA0 / 0x736D50 / 0x737090 / 0x737430 / 0x7360C0 / 0x767010 / 0x766BC0 / 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F6B30 / 0x7F6B14 / 0x7F6B0C / 0x7F6B04 / 0x7F6AC4 / 0x7F69F8 / 0x7F69D4 / 0x7F69A4 / 0x7F6924 / 0x7F68CC / 0x7F665C / 0x7F66A8 / 0x7F668C / 0x7F6684 / 0x7F667C / 0x7F65F4 / 0x7F6318 / 0x7F62FC / 0x7F62F4 / 0x7F62EC / 0x7F0D5C / 0x7F0DCC / 0x7EA57C / 0x7EBFA4 虚表族、批 2635-2713 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
