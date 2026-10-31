@@ -1,0 +1,69 @@
+# frontier batch 2732
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序；未登记池 2112→2109）
+三路：a=0x709550（0x2A0=672B **技能/升级排序管理器（[+0x468] 计数 + [+0x474]/[+0x45C] 数组对 + 双 VectorClass 容器合并 [0x4E0E80/0x477BE0 + 虚表常量 0x7E91EC/0x7E4E78/0x7E920C/0x7E4DB8 + 槽 8 Grow 去重追加] + 最大值查找 → 虚表槽 0x3C8 派发 + 尾部双 0x7C8B3D 容器释放）** callees=3 deps=0）/ b=0x7090A0（0x127=295B **PhobosHook_TechnoClass_VoiceAttack（带名：[0x8871E0]+0x230 全局/技术 [+0x580..0x58C] 字段选声效 → edi==-1 走 0x65C780 Randomizer::Random 随机声效 → 虚表槽 0x354 派发）** callees=3 deps=0）/ c=0x709060（0x3C=60B **技术槽位派发器（虚表槽 0x84 → [+0x57C]==-1 哨兵 → 0x354 传槽 / 0x368 兜底）** callees=0 deps=0）——TechnoClass 技能/声效域三件（排序容器 + Phobos 钩子带名 + 槽派发）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2732{a,b,c}.txt，完整读取确认尾 ret（a 单 ret @0x7097F0、b 单 ret 4 @0x7091C7、c 双 ret @0x709090/0x70909C；下函数 a 0x709800 [esp+4]==5/6 分支函数观察项、b 0x7091D0 虚表槽 0x1DC 检查函数、c 0x7090A0=b 路本身）
+核验：.qwen/tmp/_check_callees2732.py 三路全 PASS（a 3/3、b 3/3、c 0/0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6679 → 6682（三行全新增，ADD 3）
+
+## a 路：0x709550 技能/升级排序管理器（0x2A0=672B）
+
+- 范围 0x709550-0x7097F0（单 ret @0x7097F0）；下函数 0x709800 [esp+4]==5/6 分支函数（cmp eax,5/6 → 跳 0x709816）观察项
+- thiscall 0 栈参（ret）——**排序/合并管理器**：
+  - 快路径：`[+0x468]`（计数）==0 → `lea ecx,[edi+0x470]` 容器 → **虚表槽 0xC 清空** → ret（空列表直接清）
+  - 主路径：`edx=[+0x480]-1`（尾索引）→ 逆序遍历 [+0x474] 数组（[+0x468] 计数逐项匹配 [+0x45C] 去重）→ **删除合并**：`[+0x480]--` + [+0x474] 数组前移（0x7095C1 loop 逐项 [ecx+eax*4]=[ecx+eax*4-4]）
+  - **双 VectorClass 容器合并**（两轮同构）：
+    - 轮 1：`lea ecx,[esp+0x38]` → **call 0x4E0E80**（VectorClass 构造，虚表常量 **[0x7E91EC]** 写 [esp+0x38]）→ `lea ecx,[esp+0x20]` → **call 0x477BE0**（第二 VectorClass 构造，容量 0xA）
+    - 双嵌套循环合并：[+0x480] 外循环 × [+0x468] 内循环——`esi=[+0x45C][ebx]` 值 vs [+0x474][eax] 去重 → 未命中 → 容器 Grow（**`call [eax+8]` 虚表槽 8**，容量满时）→ 追加 `[edx+eax*4]=esi`（esp+0x40 计数++）
+    - 轮 2：同构（esp+0x18 虚表 **[0x7E4E78]** + esp+0x20/0x28 计数，追加 `[edx+eax*4]=[esi]` 从 [+0x444] 区读）
+  - 合并后：[esp+0x40] 计数非零 → 虚表槽 0x3C8（push +0x444 最优值？）→ **最大值查找**（`edx=0,esi=0` 遍历 [+0x444] 计数对比 [+0x45C] 值取最大）→ 虚表槽 0x3C8（push esi）→ 或 [esp+0x1c]/[esp+0x34] 容器值取最大 → 虚表槽 0x3C8
+  - **尾部容器释放**：`byte[esp+0x25]&1` 门控 `[esp+0x1c]` → push → **call 0x7C8B3D**（delete），`byte[esp+0x35]&1` 门控 `[esp+0x34]` → **call 0x7C8B3D**（delete）→ ret
+  - 语义：**技能/升级列表排序合并管理器——双 VectorClass 去重合并 + 最大值选取 + 槽 0x3C8 派发 + 双容器析构**（虚表常量 0x7E91EC/0x7E4E78/0x7E920C/0x7E4DB8 容器族）
+- 直接 call 4 个/去重 3：0x477be0、0x4e0e80、0x7c8b3d——picker callees=5 差值 2（两处 0x7c8b3d 各计 + 虚表槽 8 间接）×计数口径，实际去重 3 全部已登记
+- 判类：技能/升级排序管理器（**推断名——技能列表容器合并（去重）+ 最大值选取 + 槽 0x3C8 派发**——TechnoClass 技能/属性管理大件；虚表常量 0x7E4E78/0x7E4DB8 与批 2716 b 路下函数虚表初始化器（0x7E4E78）交叉印证）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x7090A0 PhobosHook_TechnoClass_VoiceAttack（0x127=295B）
+
+- 范围 0x7090A0-0x7091C7（单 ret 4 @0x7091C7）；下函数 0x7091D0 虚表槽 0x1DC 检查函数观察项
+- thiscall 1 栈参（ret 4）——**带名 Phobos 钩子 VoiceAttack**：
+  - 虚表槽 0x2E4（push [esp+8] 参1）→ 虚表槽 0x3F8（传上结果）→ eax=[eax]（取声池/表）
+  - eax 非空且 `[eax+0xa4] < 0`（可用索引）→ push 0x84314C → **call 0x5F3E50**（thiscall esi 判断——batch 已登记）→ al 非零 → `edi=[0x8871E0]+0x230`（全局声效配置）→ jmp 0x70914a
+  - 否则 `lea ecx,[esi+0x150]` 装备容器 → **call 0x750010**（批 2727/2730 b 路同被调容器检查）→ al 非零 → edi 空 → 虚表槽 0x84 → `edi=[eax+0x584]`；非空 → `edi=[eax+0x58c]`；al 零 → edi 空 → `[+0x580]`；非空 → `[+0x588]`
+  - 0x70914a：虚表槽 0x84 → `[eax+0x494]`（声效索引序列）非空且 edi!=-1 → 虚表槽 0x354（push edi）→ ret 4
+  - **edi==-1 → call 0x65C780（Randomizer::Random，thiscall 0x886B88）** → `div [ecx+0x10]`（序列长度取模）→ `[ecx+4][edx*4]` 选随机声效 → 虚表槽 0x354 push → ret 4
+  - 语义：**VoiceAttack——声音攻击触发布局：[0x8871E0]+0x230 或技术 [+0x580..0x58C] 声效索引派发，索引 -1 随机选取**
+- 直接 call 3 个/去重 3：0x5f3e50、0x65c780、0x750010——picker callees=3 完全吻合（虚表槽 0x2E4/0x3F8/0x84/0x354 间接不计）
+- 判类：PhobosHook_TechnoClass_VoiceAttack（**带名钩子——声效字段族 [+0x580..0x58C] + 全局 [+0x230] + Randomizer 随机声效**——Phobos 反链第二带名（批 2720 c 路 CanAttackMove 后）；0x65C780 Randomizer::Random 是 RNG 里程碑核心寄存器）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x709060 技术槽位派发器（0x3C=60B）
+
+- 范围 0x709060-0x70909C（双 ret @0x709090/0x70909C）；下函数 0x7090A0=b 路本身（紧密相邻）
+- thiscall 0 栈参（ret）——**槽位派发**：
+  - 虚表槽 0x84（取技术）→ **`[eax+0x57c]==-1`**（技术槽哨兵）→ je 0x709091 →
+  - 有效：虚表槽 0x84 再取 → push `[eax+0x57c]` → **虚表槽 0x354**（thiscall esi 传技术槽）→ ret
+  - 哨兵：虚表槽 0x368（兜底）→ ret
+  - 语义：**技术槽位读取器——[+0x57C] 槽有效则 0x354 传槽，-1 走 0x368 兜底**
+- 直接 call 0 个/去重 0——picker callees=0 完全吻合（虚表槽 0x84/0x354/0x368 间接不计）
+- 判类：技术槽位派发器（**推断名——技术 [+0x57C] 槽位门控派发**——与 b 路 VoiceAttack 虚表槽 0x354 派发同槽（技术声效统一出口））
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2732.py：a 路 3/3（4 处调用去重 3）、b 路 3/3、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：a 差 2（picker 5 vs 去重 3：两处 0x7c8b3d 各计 + 虚表槽 8 间接计数口径，实际全部已登记），b 差 0，c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4E0E80/0x477BE0（VectorClass 构造·batch 已登记）、0x7C8B3D（operator delete·batch 001）、0x5F3E50（技能判断·batch 已登记）、0x750010（容器占用检查·批 2727/2730 同被调）、0x65C780（Randomizer::Random·RNG 里程碑核心，this 0x886B88）
+- 观察 [0x8871E0]+0x230（b 路全局声效——批 2720/2729/2731 同全局区）；[0x7E91EC]/[0x7E4E78]/[0x7E920C]/[0x7E4DB8]（a 路容器虚表常量族——0x7E4E78 与批 2716 b 路下函数虚表初始化器交叉）；0x709800/0x7091D0（a/b 路下函数）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **Phobos 钩子带名累计 2**：批 2720 c 路 CanAttackMove_IgnoreWeapon + 本批 b 路 VoiceAttack——Phobos 反链登记家族
+- **Randomizer::Random 0x65C780 消费点**：本批 b 路（thiscall 0x886B88 随机声效）——RNG 全局实例消费端 +1
+- 0x709800 / 0x7091D0（a/b 路下函数）：候选池
+- 既有池延续：0x709800 / 0x7091D0 / 0x70BCB0 / 0x70ADC0 / 0x70BF50 / 0x70D7E0 / 0x70CCF0 / 0x70DE20 / 0x70DDF0 / 0x70DD00 / 0x70DCF0 / 0x70E240 / 0x70E1A0 / 0x70E300 / 0x70F0B0 / 0x70EFE0 / 0x70F000 / 0x70FBE0 / 0x70F890 / 0x70FEB0 / 0x70FEC0 / 0x7104F0 / 0x710750 / 0x712040 / 0x711EB0 / 0x711EC0 / 0x716132 / 0x717820 / 0x717A30 / 0x717A40 / 0x717A50 / 0x717A70 / 0x717A80 / 0x717AA0 / 0x717AB0 / 0x717AD0 / 0x717AE0 / 0x717C00 / 0x717C70 / 0x717CD0 / 0x717D20 / 0x717B20 / 0x717AF0 / 0x7178C0 / 0x718080 / 0x7179D0 / 0x7180F0 / 0x7192C0 / 0x719C60 / 0x719E90 / 0x71A080 / 0x71A090 / 0x71A100 / 0x71A120 / 0x71A160 / 0x71A4E0 / 0x71AD40 / 0x71B270 / 0x71B290 / 0x71B5A0 / 0x71B3C0 / 0x71B7B0 / 0x71BFB0 / 0x71D370 / 0x71D390 / 0x71D3C0 / 0x71E800 / 0x71F5B0 / 0x720230 / 0x720260 / 0x720280 / 0x720960 / 0x7209B0 / 0x7209D0 / 0x720E50 / 0x720E80 / 0x720EA0 / 0x722AB0 / 0x7220D0 / 0x721880 / 0x721430 / 0x7212E0 / 0x723760 / 0x7235A0 / 0x723A90 / 0x7238B0 / 0x7240B0 / 0x724BB0 / 0x724A30 / 0x724AD0 / 0x724C30 / 0x724DB0 / 0x726FE0 / 0x726FB0 / 0x7263A0 / 0x726690 / 0x7286B0 / 0x727CF0 / 0x7271D0 / 0x728A50 / 0x728AF0 / 0x729370 / 0x729AA0 / 0x72A690 / 0x72B060 / 0x72AA40 / 0x72F4C0 / 0x72F4D0 / 0x72A1E0 / 0x72A200 / 0x72A230 / 0x729E40 / 0x731A30 / 0x731A50 / 0x731A70 / 0x7315A0 / 0x731060 / 0x732210 / 0x732580 / 0x7325C0 / 0x732950 / 0x732D00 / 0x733930 / 0x733640 / 0x7336A0 / 0x7342C0 / 0x7343E0 / 0x734210 / 0x734250 / 0x733CD0 / 0x736C10 / 0x736CA0 / 0x736D50 / 0x737090 / 0x737430 / 0x7360C0 / 0x767010 / 0x766BC0 / 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F6B30 / 0x7F6B14 / 0x7F6B0C / 0x7F6B04 / 0x7F6AC4 / 0x7F69F8 / 0x7F69D4 / 0x7F69A4 / 0x7F6924 / 0x7F68CC / 0x7F665C / 0x7F66A8 / 0x7F668C / 0x7F6684 / 0x7F667C / 0x7F65F4 / 0x7F6318 / 0x7F62FC / 0x7F62F4 / 0x7F62EC / 0x7F0D5C / 0x7F0DCC / 0x7EA57C / 0x7EBFA4 虚表族、批 2635-2731 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
