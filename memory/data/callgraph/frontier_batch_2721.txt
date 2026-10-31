@@ -1,0 +1,56 @@
+# frontier batch 2721
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序；未登记池 2145→2142）
+三路：a=0x711E80（3B **恒真函数（mov al,1 ret——返回 1 的占位/钩子）** callees=0 deps=0）/ b=0x710700（77B **三维向量除法器（[+0]/[+4]/[+8] 三元组 idiv 标量 → 输出三元组，ret 8）** callees=0 deps=0）/ c=0x7106E0（30B **scalar deleting 析构器（虚析构 0x6F4500 + [esp+8]&1 门控 0x7C8B3D，委托式壳）** callees=2 deps=0）——恒真占位 + 向量除法 + 委托式壳
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2721{a,b,c}.txt，完整读取确认尾 ret（a 单 ret @0x711E82、b 双 ret 8 @0x711E71E/0x71074A、c 单 ret 4 @0x7106FB；下函数 a 0x711E90=批 2720 c 路已登记 PhobosHook、b 0x710750 array resize（push eax call 0x7C8E17 operator new）、c 0x710700=b 路本身）
+核验：.qwen/tmp/_check_callees2721.py 三路全 PASS（a 0/0、b 0/0、c 2/2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6646 → 6649（三行全新增，ADD 3）
+
+## a 路：0x711E80 恒真函数（3B）
+
+- 范围 0x711E80-0x711E82（单 ret @0x711E82；0x711E83 nop×13，下函数 0x711E90=批 2720 c 路已登记 PhobosHook_TechnoTypeClass_CanAttackMove_IgnoreWeapon）
+- thiscall 0 栈参（ret，返回值恒 1）——**恒真**：
+  - `mov al,1` → ret（返回 1——恒真占位/钩子替换目标）
+- 直接 call 0 个/去重 0——picker callees=0 完全吻合
+- 判类：恒真函数（**mov al,1 ret 恒真占位——紧邻批 2720 c 路 PhobosHook 上移 16B，极可能为其钩子前身/占位（原版函数被 Phobos 替换后残留恒真）**——3B 微函数）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x710700 三维向量除法器（77B）
+
+- 范围 0x710700-0x71074A（双 ret 8 @0x71071E（除以 0 清零）/ @0x71074A（正常除法）；0x71074D nop×3，下函数 0x710750 array resize（[+8] 计数人 ebp 增 → lea [ebx*8] → push call 0x7C8E17 operator new 扩容）观察项）
+- cdecl 2 栈参（ret 8，ecx=this 源三元组 [ecx]/[ecx+4]/[ecx+8]；esi=[esp+0xc] 除数）——**向量除法**：
+  - `esi==0`（除零）→ 输出 `[edi]/[edi+4]=0`、`[edi+8]=esi(0)` → ret 8
+  - `esi!=0` → 三分量 **cdq/idiv esi**（带符号除法）：`[+0]/esi`、`[+4]/esi`、`[+8]/esi` → 写输出 `[esp+0x10]` 三元组 → `eax=输出指针` → ret 8
+- 直接 call 0 个/去重 0——picker callees=0 完全吻合
+- 判类：三维向量除法器（**推断名——[+0]/[+4]/[+8] 三元组逐分量 cdq/idiv 标量，除零输出零三元组**——坐标/向量标量除法小件；下函数 0x710750 数组扩容 confirm 同域）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x7106E0 scalar deleting 析构器（30B）
+
+- 范围 0x7106E0-0x7106FB（单 ret 4 @0x7106FB；0x7106FE nop×2，下函数 0x710700=b 路本身——紧密相邻）
+- thiscall 1 栈参（ret 4，eax=this）——**委托式壳**：
+  - `esi=ecx` → **call 0x6F4500**（虚析构函数，thiscall 无栈参——batch 已登记）
+  - `test byte [esp+8],1`（删除标志）→ al&1 零 → 不删本体；置位 → push esi → **call 0x7C8B3D**（delete 本体）
+  - eax=esi → ret 4
+- 直接 call 2 个/去重 2：0x6f4500、0x7c8b3d——picker callees=2 完全吻合
+- 判类：scalar deleting 析构器（**引导虚析构 0x6F4500 + [esp+8]&1 门控 delete 本体**——与批 2706 a 路 0x720210/批 2709 b 路 0x71D350/批 2716 c 路 0x7179A0 同委托式壳模板，虚析构换 0x6F4500）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2721.py：a 路 0/0、b 路 0/0、c 路 2/2——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x6F4500（虚析构·batch 1947 系同域）、0x7C8B3D（operator delete·batch 001）
+- 观察 0x710750（b 路下函数）：array resize（[+8] 计数 + ebp → lea [ebx*8] → 0x7C8E17 operator new 扩容）；0x711E90（a 路下函数）= 批 2720 c 路已登记
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **恒真占位 + Phobos 钩子对**（a 路 + 批 2720 c 路）：0x711E80（mov al,1）紧邻 0x711E90（PhobosHook 带名）上方 16B——Phobos 替换残留占位候选解释
+- **向量/数组域**（b 路）：0x710750（array resize 扩容）——与批 2717/2718 容器域同族候选
+- 0x710750（b 路下函数）：候选池
+- 既有池延续：0x710750 / 0x712040 / 0x711EB0 / 0x711EC0 / 0x716132 / 0x717820 / 0x717880 / 0x717A30 / 0x717A40 / 0x717A50 / 0x717A70 / 0x717A80 / 0x717AA0 / 0x717AB0 / 0x717AD0 / 0x717AE0 / 0x717C00 / 0x717C70 / 0x717CD0 / 0x717D20 / 0x717B20 / 0x717AF0 / 0x7178C0 / 0x7177C0 / 0x718080 / 0x7179D0 / 0x7180F0 / 0x7192C0 / 0x719C60 / 0x719E90 / 0x71A080 / 0x71A090 / 0x71A100 / 0x71A120 / 0x71A160 / 0x71A4E0 / 0x71AD40 / 0x71B270 / 0x71B290 / 0x71B5A0 / 0x71B3C0 / 0x71B7B0 / 0x71BFB0 / 0x71D370 / 0x71D390 / 0x71D3C0 / 0x71E800 / 0x71F5B0 / 0x720230 / 0x720260 / 0x720280 / 0x720960 / 0x7209B0 / 0x7209D0 / 0x720E50 / 0x720E80 / 0x720EA0 / 0x722AB0 / 0x7220D0 / 0x721880 / 0x721430 / 0x7212E0 / 0x723760 / 0x7235A0 / 0x723A90 / 0x7238B0 / 0x7240B0 / 0x724BB0 / 0x724A30 / 0x724AD0 / 0x724C30 / 0x724DB0 / 0x726FE0 / 0x726FB0 / 0x7263A0 / 0x726690 / 0x7286B0 / 0x727CF0 / 0x7271D0 / 0x728A50 / 0x728AF0 / 0x729370 / 0x729AA0 / 0x72A690 / 0x72B060 / 0x72AA40 / 0x72F4C0 / 0x72F4D0 / 0x72A1E0 / 0x72A200 / 0x72A230 / 0x729E40 / 0x731A30 / 0x731A50 / 0x731A70 / 0x7315A0 / 0x731060 / 0x732210 / 0x732580 / 0x7325C0 / 0x732950 / 0x732D00 / 0x733930 / 0x733640 / 0x7336A0 / 0x7342C0 / 0x7343E0 / 0x734210 / 0x734250 / 0x733CD0 / 0x736C10 / 0x736CA0 / 0x736D50 / 0x737090 / 0x737430 / 0x7360C0 / 0x767010 / 0x766BC0 / 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F6B30 / 0x7F6B14 / 0x7F6B0C / 0x7F6B04 / 0x7F6AC4 / 0x7F69F8 / 0x7F69D4 / 0x7F69A4 / 0x7F6924 / 0x7F68CC / 0x7F665C / 0x7F66A8 / 0x7F668C / 0x7F6684 / 0x7F667C / 0x7F65F4 / 0x7F6318 / 0x7F62FC / 0x7F62F4 / 0x7F62EC / 0x7F0D5C / 0x7F0DCC / 0x7EA57C / 0x7EBFA4 虚表族、批 2635-2720 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
