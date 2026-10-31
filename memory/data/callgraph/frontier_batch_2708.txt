@@ -1,0 +1,62 @@
+# frontier batch 2708
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序；未登记池 2184→2181）
+三路：a=0x71F390（0xDE=222B **TEventClass::PrepareSaveToINI（[+0x2c] 事件类型跳转表映射 → 12 分支常量 → 按 [+0x30]/类型选串写入 IAT 0x7E14B0）** callees=1 deps=0）/ b=0x71E6A0（0x160=352B **TEventClass 构造器（基类 0x410170 + 四虚表 0x7F5578 族 + 三全局列表注册 + 自身索引查找）** callees=1 deps=0）/ c=0x71DE10（43B **TerrainClass 构造工厂（operator new 0xE0 + 0x71BB90 双参构造 + [0xB0ED7C] 常量）** callees=2 deps=0）——TEventClass 保存/构造双件 + TerrainClass 工厂
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2708{a,b,c}.txt，完整读取确认尾 ret（a 双 ret 4 @0x71F443/0x71F46D、b 单 ret @0x71E7FF、c 双 ret 4 @0x71DE32/0x71DE38；下函数 a 0x71F470 跳转表数据区、b 0x71E800、c 0x71DE40）
+核验：.qwen/tmp/_check_callees2708.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6607 → 6610（三行全新增，ADD 3）
+
+## a 路：0x71F390 TEventClass::PrepareSaveToINI（0xDE=222B）
+
+- 范围 0x71F390-0x71F46D（双 ret 4 @0x71F443（edi==0x2b 支路）/ @0x71F46D（主路）；0x71F470-0x71F49F 为跳转表数据区（12 项地址表），0x71F4A0 为 byte 查表——dump 尾部被反汇编成垃圾指令是数据非代码，已排除）
+- thiscall 1 栈参（ret 4，eax=映射值；edi=[+0x34] 计数字段被复用为栈变量）：
+  - `edx=[ecx+0x2c]`（事件类型）→ `esi=edx-1` → `cmp esi,0x3c`（60）→ ja 0x71f3fc（越界 eax=0）→ `mov al,[esi+0x71F4A0]`（byte 查表）→ `jmp [eax*4+0x71F470]`（跳转表 12 分支）→ 各分支 `mov eax,常量`（0xd/0xa/0x16/0x1d/8/6/5/7/0xc/9/0x2b——事件类型→数映射）
+  - 三路写串（`call dword ptr [0x7E14B0]`（IAT 槽，写字符串函数指针推断——间接调用不计静态正则））：
+    - `[+0x30]` 非空：`esi=[+0x30]+0x24` → push esi / push 1 / push edx / push 0x844714 → call [IAT]
+    - eax==0x2b：`ecx=[+0x38]` → 计算串长（repne scasb）→ push 尾指针 / push edi([+0x34]) / push 2 / push edx / push 0x8258dc → call [IAT]
+    - 默认：push edi / push 0 / push edx / push 0x8189b0 → calc strlen → call [IAT]
+- 直接 call 0 个（静态）/ IAT 间接 3 处 [0x7E14B0]——**picker callees=1 差值 = IAT 间接调用**（`call dword ptr [0x7e14b0]` 走函数指针槽，静态正则 `call\s+0x` 不匹配；与历史批次虚表槽/间接调用同类差值，核验判定以「全部已登记」为准）
+- 判类：TEventClass::PrepareSaveToINI（**带名函数——[+0x2c] 事件类型经 0x71F4A0 byte 表 + 0x71F470 跳转表映射为数值（12 分支），再按类型/字段选 0x844714/0x8258dc/0x8189b0 格式串 + INI 写入口 [0x7E14B0]=保存事件字段；与批 2707 c 路 TEventClass 构造器字段装配互补（写向对偶）**）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x71E6A0 TEventClass 构造器（0x160=352B）
+
+- 范围 0x71E6A0-0x71E7FF（单 ret @0x71E7FF；下函数 0x71E800）
+- thiscall 0 栈参（ret，eax=this）——**构造器身份证**：
+  - **call 0x410170**（AbstractClass::AbstractClass 基类构造——batch 076 已登记"RA2 对象树根基类构造 42 callers"）
+  - 四虚表：`[esi+0]=0x7F5578` / `[+4]=0x7F555C` / `[+8]=0x7F5554` / `[+0xC]=0x7F554C`（多继承布局）
+  - 字段初始化：`[+0x24]=0xFFFFFFFF`、`[+0x28]/[+0x2C]/[+0x30]=0`、`[+0x38]=0`、`[+0x54]=0`
+  - **三全局列表注册**（同构 ×3：[0xB0F1A0] 系 / [0xB0F658] 系 / [0xB0F670] 系——容量不足时调 `call [eax+8]`（虚表槽 8 Grow 重扩）→ 计数++ → `[数组+idx*4]=esi` 追加 this）
+  - **自身索引查找**：线性扫 [0xB0F1A4] 数组找 this → 存 `[+0x24]`（找不到 -1——先注册后查找，必命中）
+- 直接 call 1 个/去重 1：0x410170——picker callees=1 完全吻合（三处 `call dword ptr [eax+8]/[edx+8]` 为虚表槽 8 间接 grow，不计静态）
+- 判类：TEventClass 构造器（**推断名——基类 AbstractClass + 自身四虚表 0x7F5578 族 + 字段初始化 + 三全局事件列表注册（[0xB0F1A0]/[0xB0F658]/[0xB0F670] 系） + 索引回写 [+0x24]**——对象表注册语义；picker 标 GetStateB 实为构造器（GetState 为 getter 型短函数，352B 含列表注册非 getter））
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x71DE10 TerrainClass 构造工厂（43B）
+
+- 范围 0x71DE10-0x71DE38（双 ret 4 @0x71DE32（new 成功）/ @0x71DE38（new 失败）；0x71DE3B nop×5，下函数 0x71DE40）
+- thiscall 1 栈参（ret 4，esi=参1；返回值 = 新对象）：
+  - `push 0xE0`（224B）→ **call 0x7C8E17**（CRT operator new）→ test → 失败返 0
+  - 成功 → `push 0xB0ED7C`（**全局常量对象地址**）+ `push esi`（栈参1）→ **call 0x71BB90**（TerrainClass 构造器——batch 344 已登记"CreateTerrain/TerrainClass 构造 593B ret 8"）→ 返回
+- 直接 call 2 个/去重 2：0x7c8e17、0x71bb90——picker callees=2 完全吻合
+- 判类：TerrainClass 构造工厂（**TerrainClass 构造器 0x71BB90 的薄工厂——operator new 0xE0 + (0xB0ED7C 常量, esi) 双参构造**——new+构造 惯用工厂形态）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2708.py：a 路 0/0（静态）+IAT 3、b 路 1/1、c 路 2/2——全部已登记
+- picker callees vs 核验差值：a 差 1（IAT 间接 [0x7E14B0] 不计静态正则，历史同类），b 差 0，c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x410170（AbstractClass::AbstractClass·batch 076）、0x7C8E17（operator new·batch 001）、0x71BB90（TerrainClass 构造器/CreateTerrain·batch 344 含 0x71D000 放置函数提醒）
+- 观察 0x71F470/0x71F4A0（a 路跳转表数据区）：事件类型映射表（12 项地址 + 60 项 byte 表）；0x7E14B0（IAT 写串槽，3 处调用）；[0xB0F1A0]/[0xB0F658]/[0xB0F670]（b 路三注册表——与批 2706 b 路下函数 0x71FF00 四全局清零 [0xB0F1E8..0xB0F1F4] 同域）；0x71DE40（c 路下函数：+0x2B8 字段懒加载 getter 形态观察项）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **TEventClass 家族**（带名）两连：本批 PrepareSaveToINI（保存写向）+ 构造器（注册读向）——与批 2707 c 路构造/初始化器三件套交叉印证 ([+0x2c] 类型 / [+0x30] 对象 / [+0x34] 计数 / [+0x38] inline 串)；下函数 0x71E800/0x71DE40、事件映射表 0x71F4A0 候选
+- **全局注册表对**：[0xB0F1A0]/[0xB0F658]/[0xB0F670] 三系 VectorClass 表（b 路追加端）——批 2706 b 路下函数 0x71FF00（[0xB0F1E8..0xB0F1F4] 四清零）同域
+- 0x71DE40（c 路下函数）：+0x2B8 字段懒加载 + [0xB0ED60]/[0xB0ED78] 全局——TerrainClass 域 getter 候选
+- 既有池延续：0x71DE40 / 0x71E800 / 0x71F5B0 / 0x720230 / 0x720260 / 0x720280 / 0x720960 / 0x7209B0 / 0x7209D0 / 0x720E50 / 0x720E80 / 0x720EA0 / 0x722AB0 / 0x7220D0 / 0x721880 / 0x721430 / 0x7212E0 / 0x723760 / 0x7235A0 / 0x723A90 / 0x7238B0 / 0x7240B0 / 0x724BB0 / 0x724A30 / 0x724AD0 / 0x724C30 / 0x724DB0 / 0x726FE0 / 0x726FB0 / 0x7263A0 / 0x726690 / 0x7286B0 / 0x727CF0 / 0x7271D0 / 0x728A50 / 0x728AF0 / 0x729370 / 0x729AA0 / 0x72A690 / 0x72B060 / 0x72AA40 / 0x72F4C0 / 0x72F4D0 / 0x72A1E0 / 0x72A200 / 0x72A230 / 0x729E40 / 0x731A30 / 0x731A50 / 0x731A70 / 0x7315A0 / 0x731060 / 0x732210 / 0x732580 / 0x7325C0 / 0x732950 / 0x732D00 / 0x733930 / 0x733640 / 0x7336A0 / 0x7342C0 / 0x7343E0 / 0x734210 / 0x734250 / 0x733CD0 / 0x736C10 / 0x736CA0 / 0x736D50 / 0x737090 / 0x737430 / 0x7360C0 / 0x767010 / 0x766BC0 / 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F6B30 / 0x7F6B14 / 0x7F6B0C / 0x7F6B04 / 0x7F6AC4 / 0x7F69F8 / 0x7F69D4 / 0x7F69A4 / 0x7F6924 / 0x7F68CC / 0x7F665C / 0x7F66A8 / 0x7F668C / 0x7F6684 / 0x7F667C / 0x7F65F4 / 0x7F6318 / 0x7F62FC / 0x7F62F4 / 0x7F62EC / 0x7F0D5C / 0x7F0DCC / 0x7EA57C / 0x7EBFA4 虚表族、批 2635-2707 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
