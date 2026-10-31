@@ -1,0 +1,54 @@
+# frontier batch 2710
+
+日期：2026-10-31
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序；未登记池 2178→2175）
+三路：a=0x71B550（73B **scalar deleting 析构器模板（虚表 0x7F5134 + 子对象 [esi+0xd] 门控 0x7C8B3D + [esp+8]&1 本体 delete）** callees=1 deps=0）/ b=0x71B500（73B **逐字节双胞胎同上模板（虚表 0x7F5134，与 a 路完全相同）** callees=1 deps=0）/ c=0x71B390（39B **内联析构器变体（[esi+4] 子对象门控 0x7C8B3D + 清标志/槽，无 [+0x10] 清零短形态）** callees=1 deps=0）——析构器模板体系续（虚表族 0x7F5134 孪生 + 内联短形态再实例）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2710{a,b,c}.txt，完整读取确认尾 ret 4（a @0x71B596、b @0x71B546、c @0x71B3B6；下函数 a 0x71B5A0 双浮点常量蹦床（[0x7E1710]/[0x7E1708] fild + 0x7C8FB0 fadd + 0x4CAC40 + [0xB0ECF8]）、b 0x71B550 = a 路本身、c 0x71B3C0 索引 getter（[ecx+0xc] 标志 + 线性扫描 [ecx+4] 数组匹配 [esp+8]→未找到 -1））
+核验：.qwen/tmp/_check_callees2710.py 三路全 PASS，无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6613 → 6616（三行全新增，ADD 3）
+
+## a 路：0x71B550 scalar deleting 析构器模板（73B）
+
+- 范围 0x71B550-0x71B596（单 ret 4 @0x71B596；0x71B599 nop×7，下函数 0x71B5A0 双浮点常量蹦床（fild [0x7E1710]/[0x7E1708] + 0x7C8FB0 fadd + 0x4CAC40 角系统 + [0xB0ECF8]）观察项）
+- thiscall 1 栈参（ret 4，eax=this）——**与批 2699-2709 同模板，虚表换 0x7F5134**：
+  - `[esi]=0x7F5134`（写虚表）→ `[esi+4]`（子对象）非零且 `byte [esi+0xd]`（子对象标志）非零 → push → **call 0x7C8B3D**（delete 子对象）→ `[esi+4]=0`
+  - al=`[esp+8]`（删除标志）→ `byte [esi+0xd]=0`、`[esi+8]=0` → al&1 零 → 不删本体；置位 → push esi → **call 0x7C8B3D**（delete 本体）
+  - eax=esi → ret 4
+- 直接 call 2 个/去重 1：0x7c8b3d×2——picker callees=1 完全吻合
+- 判类：scalar deleting 析构器（**虚表 0x7F5134 + 子对象 [esi+0xd] 门控 + [esp+8]&1 双门控 0x7C8B3D 返回 this**——条件释放器模板虚表 0x7F5134 实例（批 2699-2706 同族 [0x7F57E8/0x7F56DC/0x7EA584/0x7F552C/0x7F5134...] 虚表族续））
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x71B500 scalar deleting 析构器模板（73B）
+
+- 范围 0x71B500-0x71B546（单 ret 4 @0x71B546；0x71B549 nop×7，下函数 0x71B550 = a 路本身，紧密相邻）
+- **与 a 路 0x71B550 逐字节双胞胎**：同虚表 0x7F5134、同子对象 [esi+0xd] 门控、同 [esp+8]&1 双 delete、同 ret 4——编译器复制粘贴双副本
+- 直接 call 2 个/去重 1：0x7c8b3d——picker callees=1 完全吻合
+- 判类：scalar deleting 析构器（**虚表 0x7F5134 第二实例——批内逐字节双胞胎**（跨批双胞胎累计：0x724EF0/0x724F40、0x7239F0/0x723A40、0x723730/0x7212B0、0x722A20/0x723510、0x71FE60/0x71FEB0 后新增 0x71B500/0x71B550））
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x71B390 内联析构器变体（39B）
+
+- 范围 0x71B390-0x71B3B6（单 ret @0x71B3B6；0x71B3B7 nop×9，下函数 0x71B3C0 索引 getter（[ecx+0xc] 标志 + 线性扫描 [ecx+4] 数组匹配 [esp+8]→未找到 -1）观察项）
+- thiscall 0 栈参（ret，无返回值）——**与批 2707 a 路 0x71FCF0 逐字同构（无 [+0x10] 清零短形态）**：
+  - `[esi+4]`（子对象）非零且 `byte [esi+0xd]` 非零 → push → **call 0x7C8B3D**（delete 子对象）→ `[esi+4]=0`
+  - `byte [esi+0xd]=0`、`[esi+8]=0` → ret
+- 直接 call 1 个/去重 1：0x7c8b3d——picker callees=1 完全吻合
+- 判类：内联析构器变体（**无 [+0x10] 清零短形态第五实例**——[0x723730/0x7212B0/0x71FBA0 含清零 3 件][0x71FCF0/0x71B390 短形态 2 件]，同一源码模板编译器展开家族）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2710.py：a 路 1/1、b 路 1/1、c 路 1/1——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 观察 0x71B5A0（a 路下函数）：双浮点常量蹦床（0x7C8FB0 + 0x4CAC40 角系统 + [0xB0ECF8]）——与批 2706/2709 观察的蹦床同域；0x71B3C0（c 路下函数）：索引 getter（[ecx+0xc] 标志 + 线性扫描 [ecx+4] 数组匹配 [esp+8]）——与批 2707 a 路下函数 0x71FD20 同构
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **析构器模板虚表族累计 5 虚表**：[0x7F57E8]/[0x7F56DC]/[0x7EA584]/[0x7F552C]/[0x7F5134] 双门控实例 + 简化变体 2（0x720210/0x71D350 虚析构委托态）+ 内联变体 5 实例（含清零 3 + 短形态 2）；跨批双胞胎累计 6 对——同一源码模板编译器展开家族大成
+- **索引 getter 渐变**：0x71FD20（批2707 a 下函数）/ 0x71B3C0（本批 c 下函数）——同构小件候选池
+- 0x71B5A0（双浮点蹦床）、0x71B3C0（索引 getter）——a/c 路下函数
+- 既有池延续：0x71B5A0 / 0x71B3C0 / 0x71B7B0 / 0x71BFB0 / 0x71D370 / 0x71D390 / 0x71D3C0 / 0x71E800 / 0x71F5B0 / 0x720230 / 0x720260 / 0x720280 / 0x720960 / 0x7209B0 / 0x7209D0 / 0x720E50 / 0x720E80 / 0x720EA0 / 0x722AB0 / 0x7220D0 / 0x721880 / 0x721430 / 0x7212E0 / 0x723760 / 0x7235A0 / 0x723A90 / 0x7238B0 / 0x7240B0 / 0x724BB0 / 0x724A30 / 0x724AD0 / 0x724C30 / 0x724DB0 / 0x726FE0 / 0x726FB0 / 0x7263A0 / 0x726690 / 0x7286B0 / 0x727CF0 / 0x7271D0 / 0x728A50 / 0x728AF0 / 0x729370 / 0x729AA0 / 0x72A690 / 0x72B060 / 0x72AA40 / 0x72F4C0 / 0x72F4D0 / 0x72A1E0 / 0x72A200 / 0x72A230 / 0x729E40 / 0x731A30 / 0x731A50 / 0x731A70 / 0x7315A0 / 0x731060 / 0x732210 / 0x732580 / 0x7325C0 / 0x732950 / 0x732D00 / 0x733930 / 0x733640 / 0x7336A0 / 0x7342C0 / 0x7343E0 / 0x734210 / 0x734250 / 0x733CD0 / 0x736C10 / 0x736CA0 / 0x736D50 / 0x737090 / 0x737430 / 0x7360C0 / 0x767010 / 0x766BC0 / 0x767300 / 0x767600 / 0x767320 / 0x7F6FF4 / 0x7F7024 / 0x7F70DC / 0x7F70EC / 0x7F0954 / 0x7F702C / 0x7F7048 / 0x7F7060 / 0x7F7040 / 0x7F7014 / 0x7F701C / 0x7F6F34 / 0x7F6FC4 / 0x7F6F7C / 0x7F6F6C / 0x7F6F2C / 0x7F6F24 / 0x7F6F74 / 0x7F6F3C / 0x7F6E24 / 0x7F6EF4 / 0x7ED480 / 0x7ED9BC / 0x7F6BF4 / 0x7F6BD8 / 0x7F6BD0 / 0x7F6BC8 / 0x7F6B30 / 0x7F6B14 / 0x7F6B0C / 0x7F6B04 / 0x7F6AC4 / 0x7F69F8 / 0x7F69D4 / 0x7F69A4 / 0x7F6924 / 0x7F68CC / 0x7F665C / 0x7F66A8 / 0x7F668C / 0x7F6684 / 0x7F667C / 0x7F65F4 / 0x7F6318 / 0x7F62FC / 0x7F62F4 / 0x7F62EC / 0x7F0D5C / 0x7F0DCC / 0x7EA57C / 0x7EBFA4 虚表族、批 2635-2709 域、4A-4D 域（见批 2640 文档「既有池延续」长列表）
