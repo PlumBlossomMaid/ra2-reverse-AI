@@ -1,0 +1,61 @@
+# frontier batch 2783
+
+日期：2026-11-01
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序；未登记池 1956→1953）
+三路：a=0x6D1800（0xD=13B **参数转发器 thunk（[esp+4] 单参转发 0x6ac210）** callees=1 deps=0）/ b=0x6D14F0（0x74=116B **对象方法批量调用器（虚表槽 0x34 遍历 + 索引表 → 0x724730）** callees=1 deps=0）/ c=0x6D0EC0（0x35=53B **状态字段设置器（虚表槽 0x38 + 三字段写）** callees=0 deps=0）——转发 thunk + 批量调用器 + 状态字段设置器
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2783{a,b,c}.txt（长度 0x80），完整读取确认（a ret 4 @0x6D180A、b ret @0x6D1563、c ret @0x6D0EF4；下函数 a 0x6D1810（`mov eax,ecx; xor ecx; [eax+0..0x18]=0; ret`——6 dword+1 byte 清零构造观察项）、b 0x6D1570（同域观察项）、c 0x6D0F00（`mov eax,[ecx]; push 0; mov byte[ecx+0x5545],1; call [eax+0x38]; ret`——与 c 路同模板第 2 实例观察项））
+核验：.qwen/tmp/_check_callees2783.py 三路全 PASS（a 1/1、b 2/2 去重 1、c 0/0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6832 → 6835（待 _append_tsv_batch2783.py）
+
+## a 路：0x6D1800 参数转发器 thunk（0xD=13B）
+
+- 范围 0x6D1800-0x6D180A（ret 4 @0x6D180A）；0x6D180D nop×3，下函数 0x6D1810（`mov eax,ecx; xor ecx,ecx; [eax+0]=0..[eax+0x14]=0; [eax+0x18]=0; ret`——6 dword+1 byte 清零构造观察项，无参）
+- 无 this（ret 4；stdcall 裸函数）——**参数转发器 thunk**：
+  - `push [esp+4]`（取单参）→ **call 0x6ac210**（转发目标）→ ret 4
+  - 语义：**参数转发器（thunk）——[esp+4] 单栈参转发到 0x6ac210，ret 4（1 栈参）**
+- 直接 call 1 个/去重 1：0x6ac210——picker callees=1 完全吻合
+- 判类：参数转发器（推断名——13B 极简 thunk）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x6D14F0 对象方法批量调用器（0x74=116B）
+
+- 范围 0x6D14F0-0x6D1563（ret @0x6D1563）；0x6D1564 nop×12，下函数 0x6D1570（同域观察项）
+- thiscall 0 栈参（ret；edi=this）——**对象方法批量调用器**：
+  - `[edi]` 虚表槽 0x34 call（间接）遍历：
+    - esi=0xb0c1c0 起，每轮 add esi,0x60（**96B 步长**）到 0xb0cb20：`call [eax+0x34]`（虚表槽 0x34，this=edi）
+    - 额外：`push 0xb0ccb0` → 虚表槽 0x34
+  - esi=0xb0cb78 起，每轮 add esi,4 到 0xb0cbdc：
+    - `[esi]`（全局索引表）在 [0,0x19]（0-25）区间 → `lea eax,[eax+eax*2]; shl eax,5; add eax,0xb0c1c0`（**index×96 + [0xb0c1c0] 表基**）→ `[eax+0x24]`（字段）→ **call 0x724730**（push eax/ecx=[0x887368]）→ 循环
+  - 最后：`push 0xf0` → **call 0x724730**（ecx=[0x887368]）→ 返
+  - 语义：**对象方法批量调用器——[edi] 虚表槽 0x34 遍历 [0xb0c1c0..0xb0cb20]（96B 步长）+ 单次 0xb0ccb0 + [0xb0cb78..0xb0cbdc]（4B 步长）全局索引表（[0,25] → index×96 + [0xb0c1c0] 表 + 0x24 字段）→ 0x724730 批量调用（ecx=[0x887368]）**
+- 直接 call 2 个/去重 1：0x724730（两次同址）——picker callees=1 完全吻合（虚表槽 0x34 间接不计）
+- 判类：对象方法批量调用器（推断名——[0xb0c1c0] 96B 表 + index×96 寻址 + 0x724730 已登记批量调用）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x6D0EC0 状态字段设置器（0x35=53B）
+
+- 范围 0x6D0EC0-0x6D0EF4（ret @0x6D0EF4）；0x6D0EF5 nop×11，下函数 0x6D0F00（`mov eax,[ecx]; push 0; mov byte[ecx+0x5545],1; call [eax+0x38]; ret`——与 c 路同模板第 2 实例观察项）
+- thiscall 1 栈参（ret；esi=this；[esp+8]=值）——**状态字段设置器**：
+  - `push 0` → `[esi]` 虚表槽 0x38 call（间接）→ `[esi+0x5545]=1`（置标志）
+  - `[esi+0x5538] = [0xa8ed84]`（全局帧计数）、`[esi+0x553c] = [esp+8]`（值）、`[esi+0x5540] = 7`（常数）
+  - 语义：**状态字段设置器——虚表槽 0x38 间接调用 + [esi+0x5545]=1 标志 + [esi+0x5538]=[0xa8ed84] 帧/[+0x553c]=值/[+0x5540]=7 三字段写**
+- 直接 call 0 个/去重 0（唯一跨函数为虚表槽 0x38 间接 call）——picker callees=0 完全吻合
+- 判类：状态字段设置器（推断名——[+0x5538..0x5545] 状态块，下函数 0x6D0F00 同模板第 2 实例）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2783.py：a 路 1/1、b 路 2/2（去重 1）、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x6AC210（a 路转发目标·batch 已登记）、0x724730（b 路批量调用·batch 已登记）——全部命中早前登记
+- 观察 [0xb0c1c0]（b 路 96B 步长表 + index×96 寻址——三件套 [0xb0c1c0]/[0xb0cb20]/[0xb0cb78..0xb0cbdc]）、[0x887368]（b 路批量调用宿主）；[0xa8ed84]（c 路帧计数全局）；虚表槽 0x38（c 路）；0x6D0F00（c 路下函数同模板第 2 实例）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **批量调用域**：b 路 [0xb0c1c0] 96B 表 + [0x887368] 宿主——后续同域批量调用器吸收
+- **状态块域**：c 路 [+0x5538..0x5545] 状态块 + 下函数 0x6D0F00 同模板第 2 实例——后续同域吸收
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
