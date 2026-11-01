@@ -1,0 +1,62 @@
+# frontier batch 2774
+
+日期：2026-11-01
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序；未登记池 1983→1980）
+三路：a=0x6E5610（0x83=131B **实体 ID 移除/注销器（[+0x24] ID 清除 + [+0x28] 链表拆链 + [0xB0F698] 延迟销毁队列虚表槽 8 + [0xB0F69C] 表登记）** callees=0 deps=0）/ b=0x6E4B00（0x49=73B **对象析构器 + 标量删除（虚表 0x7f43f0）** callees=1 deps=0）/ c=0x6E4AB0（0x49=73B **与 b 路逐字双胞胎** callees=1 deps=0）——ID 注销器 + 71B/73B 析构器同簇第 3/4 个
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2774{a,b,c}.txt（a 长度 0xE0、b/c 长度 0x80），完整读取确认（a ret 8 @0x6E5692、b ret 4 @0x6E4B46、c ret 4 @0x6E4AF6；下函数 a 0x6E56A0（COM GUID getter：`mov eax,[esp+8]; test eax,eax; jne; mov eax,0x80004003（E_NOTIMPL）; ret 8`——[0x7E97C0..0x7E97CC] 4 dword GUID 观察项）、b 0x6E4B50（浮点计算：fld[0x7e1710]/fld[0x7e1708]/0x7c8fb0/fadd/sub esp,8/fstp[esp]/0x4cac40（开方）→fstp[0xb0e708]——与批 2771/2773 下函数同模板观察项）、c 0x6E4B00=b 路本身））
+核验：.qwen/tmp/_check_callees2774.py 三路全 PASS（a 0/0、b 1/1、c 1/1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6805 → 6808（待 _append_tsv_batch2774.py）
+
+## a 路：0x6E5610 实体 ID 移除/注销器（0x83=131B）
+
+- 范围 0x6E5610-0x6E5692（ret 8 @0x6E5692）；0x6E5693 nop×13，下函数 0x6E56A0（COM GUID getter：`mov eax,[esp+8]; test eax,eax; jne 0x6e56b0; mov eax,0x80004003; ret 8`——E_NOTIMPL 观察项；0x6E56B0 分支 [0x7E97C0..0x7E97CC] 4 dword GUID 拷贝）
+- thiscall 1 栈参（ret 8；esi=this；[esp+8]=id）——**实体 ID 移除/注销器**：
+  - `[esi+0x24] == ecx`（id 匹配）→ 清 `[esi+0x24]=0`
+  - `[esi+0x28]`（链表/项）：`[eax+0x28]` == id → 拆链 `[esi+0x28]=[eax+0x28]`（跳过匹配项）
+  - `[esi+0x24]==0`（已清除）→ `[esi+0x34]=1`（置标志）
+  - **延迟销毁队列登记**：`[0xB0F6A8] >= [0xB0F6A0]` 且（`[0xB0F6A5]` 标志 或 `[0xB0F6A0]` 非空）且 `[0xB0F6AC] > 0` → **虚表槽 8 call**（`call dword[edx+8]`——间接调用，push 0/push count+[0xB0F6A0]，this=0xB0F698）→ al 非零 → 入队
+  - `[0xB0F6A8]++`（count 递增）且 `[0xB0F69C][eax*4]=esi`（表登记）
+  - 语义：**实体 ID 移除/注销器——[+0x24] ID 清除 + [+0x28] 链表拆链 + [0xB0F698] 全局延迟销毁队列（虚表槽 8 grow 调用）入队 + [0xB0F6A8] 计数递增 + [0xB0F69C] 表登记；与批 2762 登记 0x726720 Destroy 同 [0xB0F698] 族（写侧）**
+- 直接 call 0 个/去重 0（唯一跨函数调用为虚表槽 8 间接 call，非直接）——picker callees=0 完全吻合
+- 判类：实体 ID 移除/注销器（推断名——[0xB0F698] 延迟销毁队列族写侧）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x6E4B00 对象析构器 + 标量删除（0x49=73B）
+
+- 范围 0x6E4B00-0x6E4B46（ret 4 @0x6E4B46）；0x6E4B47 nop×9，下函数 0x6E4B50（浮点计算：`fld[0x7e1710]; fld[0x7e1708]; 0x7c8fb0; fadd st(0),st(0); sub esp,8; fstp[esp]; 0x4cac40（开方）→ fstp[0xb0e708]`——与批 2771 c 路下函数 0x6E6840 同模板观察项）
+- thiscall 1 栈参（ret 4；esi=this；[esp+8]=删除标志）——**对象析构器 + 标量删除（71B/73B 析构器同簇第 3 个，虚表 0x7f43f0）**：
+  - `mov dword[esi],0x7f43f0`（虚表写回——析构器首步）
+  - `[esi+4]` 成员非空且 `[esi+0xd]` 标志非零 → **0x7c8b3d**（delete 成员指针）→ 清 `[esi+4]=0`
+  - 清 `[esi+0xd]=0`、`[esi+8]=0`
+  - `[esp+8] & 1`（删除标志）→ **0x7c8b3d**（delete this）
+  - 返 eax=esi
+- 直接 call 2 个/去重 1：0x7c8b3d（两次同址）——picker callees=1 完全吻合
+- 判类：对象析构器（推断名——虚表 0x7f43f0，与批 2771 c/2772 a 同簇不同虚表实例）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x6E4AB0 对象析构器 + 标量删除 · 逐字双胞胎（0x49=73B）
+
+- 范围 0x6E4AB0-0x6E4AF6（ret 4 @0x6E4AF6）；0x6E4AF7 nop×9，下函数 0x6E4B00=b 路本身
+- thiscall 1 栈参（ret 4）——**与 b 路逐字同模板（仅指令地址偏移，全部指令逐字一致；虚表 0x7f43f0 同）——跨批逐字双胞胎第 17 对**：
+  - 虚表 0x7f43f0 写回 + 成员 [esi+4] 条件 delete（[esi+0xd] 门控）+ 删除标志 [esp+8]&1 delete this + ret 4
+- 直接 call 2 个/去重 1：0x7c8b3d（两次同址）——picker callees=1 完全吻合
+- 判类：对象析构器（推断名——与 b 路同批双胞胎）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2774.py：a 路 0/0、b 路 1/1、c 路 1/1——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D（CRT delete·batch 已登记）——析构器/清理器 delete 惯用
+- 观察 [0xB0F698]/[0xB0F69C]/[0xB0F6A0]/[0xB0F6A5]/[0xB0F6A8]/[0xB0F6AC]（a 路延迟销毁队列六元组——批 2762 0x726720 Destroy 同族）；虚表 0x7f43f0（b/c 路）；0x6E56A0（a 路下函数 COM GUID getter）；0x6E4B50（b 路下函数浮点计算）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **71B/73B 析构器同簇当前进度**：已登记 0x6E67F0（2771）/0x6E67A0（2772）/本批 b+c = 4 个；虚表族 0x7f4578（2771/2772）/0x7f43f0（本批）——同簇邻接虚表族后续吸收
+- **延迟销毁队列族**：a 路 [0xB0F698] 六元组写侧——与批 2762 0x726720 Destroy 配对（读侧），后续同域函数吸收
+- **跨批逐字双胞胎累计 17 对**（本批 c/b）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
