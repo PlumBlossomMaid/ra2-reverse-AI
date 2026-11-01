@@ -1,0 +1,67 @@
+# frontier batch 2788
+
+日期：2026-11-01
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序；未登记池 1941→1938）
+三路：a=0x6CC360（0x27=39B **SuperClass::CanFire（[+0x70] 禁止返 0 + [+0x28]+0xe5 标志判定 [+0x7c]）** callees=0 deps=0）/ b=0x6CC070（0x1=1B **空函数 stub（纯 ret）** callees=0 deps=0）/ c=0x6CBCA0（0x206=518B **SuperClass::HasChargeProgressed（计时器递减 + 充电检查 + 类型跳转表 11 项）** callees=4 deps=0）——充电类（SuperClass）三件套：CanFire + stub + HasChargeProgressed
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2788{a,b,c}.txt（a/b 长度 0x80、c 长度 0x220），完整读取确认（a 多 ret @0x6CC37C/0x6CC380/0x6CC383、b ret @0x6CC070（1 字节 c3）、c 多 ret 4 @0x6CBD50/0x6CBDB4/0x6CBDC0/0x6CBE76/0x6CBE9A（返 1）/0x6CBEA5（返 0）；下函数 a 0x6CC390（`sub esp,0x1d4; [ebx+0x28] 类型对象: [ebp+0xb4] cmp 0xb ja; jmp [eax*4+0x6cde44]`——**大跳转表 0x6cde44 分派器**观察项，0x6cc3d6 call 0x5657a0 取格）、b 0x6CC080（`mov al,[esi+0x6d]; test; je; [esi+0x24] cmp -1; [0xa8ed84] 帧; fild; 0x7c5f00（_ftol）; [esi+0x30]=-1 → 0xa8ed84; ...`——**状态进度更新器**（charge 状态块域）观察项）、c 0x6CBEE0（子查询——已登记））
+核验：.qwen/tmp/_check_callees2788.py 三路全 PASS（a 0/0、b 0/0、c 4/4），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6847 → 6850（待 _append_tsv_batch2788.py）
+
+## a 路：0x6CC360 SuperClass::CanFire（0x27=39B，带名）
+
+- 范围 0x6CC360-0x6CC383（多 ret @0x6CC37C（setne）/0x6CC380（返 [+0x6f]）/0x6CC383（返 0））；0x6CC384 起 nop×12，下函数 0x6CC390（`sub esp,0x1d4; push ebx; mov ebx,ecx; mov ebp,[ebx+0x28]; mov eax,[ebp+0xb4]; cmp eax,0xb; ja 0x6cde36; jmp dword[eax*4+0x6cde44]`——**大跳转表 0x6cde44 分派器**（[+0x28] 类型对象 + 类型索引跳转，12 项）观察项；0x6cc3d6 call 0x5657a0（MapClass 取格））
+- thiscall 0 栈参（ret；ecx=this）——**SuperClass::CanFire（带名）**：
+  - `[ecx+0x70]`（禁止标志）非零 → xor al 返 0（0x6cc383）
+  - `[ecx+0x28]`（类型对象）`[+0xe5]`（标志）非零 →：
+    - `[ecx+0x7c]`（充电状态字段）非零 → setne al（返 1）；零 → 返 0（0x6cc37c）
+  - `[+0xe5]` 零 → mov al,[ecx+0x6f]（返充电标志 [0x6f]）
+  - 语义：**SuperClass::CanFire——[+0x70] 禁止返 0；类型对象 [+0x28]+0xe5 标志 → 有 [+0x7c] 返 1/无 0；无类型标志 → 返 [+0x6f]**
+- 直接 call 0 个/去重 0（纯内存 + 条件返回）——picker callees=0 完全吻合
+- 判类：SuperClass::CanFire（带名——charge 状态块 + 类型对象标志判定）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x6CC070 空函数 stub（0x1=1B）
+
+- 范围 0x6CC070-0x6CC070（ret @0x6CC070——**单字节 c3**）；0x6CC071 起 nop×15，下函数 0x6CC080（`sub esp,0x10; push esi; mov esi,ecx; mov al,[esi+0x6d]; test al,al; je 0x6cc19b; push edi; mov edi,[esi+0x24]; cmp edi,-1; mov byte[esi+0x6f],1; jne; [esi+0x28][+0xb0]; [esp+8]=edi; fild; call 0x7c5f00（_ftol）; sub edi,eax; mov byte[esi+0x6f],1; ... [0xa8ed84] 帧 → [esi+0x30]`——**状态进度更新器**（charge 状态块域：+0x6d/+0x6f/+0x24/+0x30/+0x34/+0x38 + [0xa8ed84] 帧 + _ftol）观察项）
+- **1 字节空函数（纯 ret）——stub/nop 占位（虚表槽占位或断言桩）**
+- 直接 call 0 个/去重 0——picker callees=0 完全吻合
+- 判类：空函数 stub（推断名——1B ret 极简占位）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x6CBCA0 SuperClass::HasChargeProgressed（0x206=518B，带名）
+
+- 范围 0x6CBCA0-0x6CBEA5（多 ret 4 @0x6CBD50/0x6CBDB4/0x6CBDC0/0x6CBE76/0x6CBE9A（返 1）/0x6CBEA5（返 0））；0x6CBEA8 起**跳转表数据**（11 项：0x6cbded/0x6cbdf9/0x6cbe05/0x6cbe11/0x6cbe1d/0x6cbe29/0x6cbe35/0x6cbe41/0x6cbe4d/0x6cbe59 + 默认）
+- thiscall 1 栈参（ret 4；esi=this；[esp+4..14]=外部帧参）——**SuperClass::HasChargeProgressed（带名）**：
+  - `[esi+0x50]`（计时器）>0 → dec；==0 → `[esi+0x28]` 类型 `[+0xc0]`（发射帧）+ [esi+0x54] → **call 0x7509e0**（帧重置）→ `[esi+0x50]=-1`
+  - `[0x8809a0]`（全局模式）== 4 → 跳过对象路径；否则 `[esi+0x68]`（目标对象）非空 → `[+0x19d]=1` + `[+0x1a0]` → **call 0x405fd0**（对象方法）
+  - **充电检查**（`[esi+0x6d]` 非零且 `[esi+0x6f]` 非零且 `[esi+0x28][+0xe5]` 非零）：
+    - `[esi+0x70]`（禁止）非零 → 0x6cbe9d 返 0
+    - `[esi+0x30]`（起始帧）== -1 →：`[esi+0x78]`==-1 → 返 0；否则 `[esi+0x78]=-1` 返 1
+    - 未初始化（`[esi+0x30]`!=-1）：`[0xa8ed84]` 帧 - [esi+0x30] vs [esi+0x38]（时长）：
+      - 未超时 → `[esi+0x28][+0xe5]` 标志 →：
+        - `[esi+0x7c]==2` → `[esi+0x7c]=0`、起始帧更新（[esi+0x24] 或 [+0x28][+0xb0]）→ 返 1（帧推进）
+        - `[esi+0x7c]!=2` → `[esi+0x7c]=1`、`[esi+0x6f]=1` → 返 1
+        - `[+0xe5]==0` → `[esp+0x1c]` 参数 → 类型跳转表 **jmp [eax*4+0x6cbea8]**（11 项：0x8423fc-0x8424d4 字符序列，各分支 `or edx,-1; mov ecx,0x842xxx; jmp 0x6cbe63` → **call 0x752700**（串处理））→ [esi+0x74]=[0xa8ed84] 帧 → 返 1
+      - 超时（帧差非零）→ **call 0x6cbee0**（子查询，已登记）×2 → 与 [esi+0x78] 比较 → 不同 → [esi+0x78]=结果 → 返 1
+    - 返 0（0x6cbe9d）
+  - 语义：**SuperClass::HasChargeProgressed——[+0x50] 计时器递减/重置（0x7509e0）；[0x8809a0]==4 或对象非空路径；充电检查：禁止/未初始化/超时判定 + 类型跳转表 0x6cbea8（11 项串）+ [esi+0x74] 帧更新 + 0x6cbee0 子查询**
+- 直接 call 6 个/去重 4：0x7509e0、0x405fd0、0x752700、0x6cbee0（×2）——picker callees=4 完全吻合
+- 判类：SuperClass::HasChargeProgressed（带名——charge 全流程状态机，跳转表 0x6cbea8 11 项）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2788.py：a 路 0/0、b 路 0/0、c 路 4/4——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7509E0（帧重置）、0x405FD0（对象方法）、0x752700（串处理）、0x6CBEE0（子查询）——全部命中早前登记
+- 观察 [0xa8ed84]（帧计数全局——批 2783 c/2788 b 同域）、[0x8809a0]（c 路全局模式）、跳转表 0x6cbea8（c 路 11 项）、串序列 0x8423fc-0x8424d4（c 路 10 项）；0x6CC390（a 路下函数大跳转表分派器 0x6cde44）、0x6CC080（b 路下函数状态进度更新器）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **charge 状态块域**：c 路 HasChargeProgressed + b 路下函数 0x6CC080（状态进度更新器）+ a 路 CanFire——[+0x24]/[+0x28]/[+0x30]/[+0x34]/[+0x38]/[+0x50]/[+0x54]/[+0x6d]/[+0x6f]/[+0x70]/[+0x74]/[+0x78]/[+0x7c]/[+0x68] 全字段族；后续 charge 域函数吸收
+- **跳转表域**：c 路 0x6cbea8（11 项）+ a 路下函数 0x6cde44（12 项）——[+0x28] 类型对象 [+0xb4] 分类跳转惯用，后续同型吸收
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
