@@ -1,0 +1,66 @@
+# frontier batch 2791
+
+日期：2026-11-01
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序；未登记池 1932→1929）
+三路：a=0x6C9960（0x49=73B **字符串持有器设置器（宽串 delete/求长/分配/拷贝 → [+0x14]）** callees=4 deps=0）/ b=0x6C9940（0x1C=28B **三字节打包器（3 字节 OR 打包 → [ecx+8]）** callees=0 deps=0）/ c=0x6C9600（0x4F=79B **CRCEngine::GetTotalValue（4 项 float×int 加权求和）** callees=1 deps=0）——字符串持有器 + 三字节打包 + 带名 CRCEngine
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2791{a,b,c}.txt（长度 0x80），完整读取确认（a ret 4 @0x6C99A9、b ret 0xc @0x6C995C、c ret @0x6C964E；下函数 a 0x6C99B0（`xor eax,eax; mov [0xb0bfd8],0; [0xb0bfdc]=0; [0xb0bfe0]=0; [0xb0bfe4]=0; ret`——**b0bfd8 四 dword 清零器**观察项 + 0x6C99D0（`sub esp,0x100; cmp ebp,ebx`——大函数观察项）、b 0x6C9960=a 路本身、c 0x6C9650（`fild [esp+8]; fadd [esi]; 0x7c5f00; esi+=4; dec edi(4)`——**浮点数组累加器**（4 项 float 求和 _ftol）观察项））
+核验：.qwen/tmp/_check_callees2791.py 三路全 PASS（a 4/4、b 0/0、c 1/1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6856 → 6859（待 _append_tsv_batch2791.py）
+
+## a 路：0x6C9960 字符串持有器设置器（0x49=73B）
+
+- 范围 0x6C9960-0x6C99A9（ret 4 @0x6C99A9）；0x6C99AC nop×3，下函数 0x6C99B0（`xor eax,eax; mov dword[0xb0bfd8],eax; [0xb0bfdc]=0; [0xb0bfe0]=0; [0xb0bfe4]=0; ret`——**b0bfd8 四 dword 清零器**（全局 16B 清零）观察项；0x6C99D0 起大函数：`sub esp,0x100; push ebx; push ebp; mov ebp,ecx; xor ebx; cmp ebp,ebx; push edi`——观察项）
+- thiscall 1 栈参（ret 4；esi=this；[esp+0xc]=新串指针）——**字符串持有器设置器（宽串）**：
+  - `[esi+0x14]`（旧串）非空 → **0x7c8b3d**（delete 旧串）→ `[esi+0x14]=0`
+  - `[esp+0xc]`（新串）非空 → **call 0x7ca405**（strlen/wcslen 求长）→ `eax+eax+2`（**宽串：2 字节/字符 + 2 终止**）→ **call 0x7c8e17**（new 分配）→ `[esi+0x14]=eax` → 非空 → **call 0x7ca489**（拷贝）到新分配
+  - 语义：**字符串持有器设置器——旧串 0x7c8b3d delete + 新串 0x7ca405 求长（×2+2）0x7c8e17 分配 + 0x7ca489 拷贝存 [+0x14]**
+- 直接 call 4 个/去重 4：0x7c8b3d、0x7ca405、0x7c8e17、0x7ca489——picker callees=4 完全吻合
+- 判类：字符串持有器设置器（推断名——4 CRT 组件：delete/求长/new/拷贝）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x6C9940 三字节打包器（0x1C=28B）
+
+- 范围 0x6C9940-0x6C995C（ret 0xc @0x6C995C）；0x6C995F nop，下函数 0x6C9960=a 路本身
+- 3 栈参 stdcall（ret 0xc；[esp+4]=B0、[esp+8]=B1、[esp+0xc]=B2）——**三字节打包器**：
+  - `eax = (byte[esp+4]) << 16 | (byte[esp+8]) << 8 | (byte[esp+0xc] & 0xff)`（三单字节 OR 打包 24 位）
+  - `[ecx+8]=eax`（存 this+8）
+  - ret 0xc
+  - 语义：**三字节打包器——[esp+4]/[esp+8]/[esp+0xc] 三字节 <<16/<<8/&0xff OR 打包 → [ecx+8]，ret 0xc**
+- 直接 call 0 个/去重 0（纯位运算）——picker callees=0 完全吻合
+- 判类：三字节打包器（推断名——位打包惯用）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x6C9600 CRCEngine::GetTotalValue（0x4F=79B，带名）
+
+- 范围 0x6C9600-0x6C964E（ret @0x6C964E）；0x6C964F nop，下函数 0x6C9650（`push ecx/esi/edi; fild [esp+8]; fadd [esi]; call 0x7c5f00; esi+=4; dec edi(4); jne`——**浮点数组累加器**（4 项 float 逐项 fadd + _ftol）观察项）
+- thiscall 0 栈参（ret；esi=this）——**CRCEngine::GetTotalValue（带名）**：
+  - `edi = [0xb0f4ec] - ecx`（**数组界 = 全局 [0xb0f4ec] - this 基址**——指针差运算）
+  - `ebx=4`（4 项循环）：
+    - `fld [esi]` vs `[0x7e1748]`（float 常量对比：**fcomp/fnstsw ax/test ah,0x41**——跳过非正项，jne 0x6c9642）
+    - 若 [esi] > 0（有值）：
+      - `[edi+esi]`（项）→ **fild**（int 装载）`[eax+0xb8]`（int 字段）+ **fmul** `[esi]`（×float 系数）+ **fiadd** `[esp+0xc]`（+累加）
+      - **call 0x7c5f00**（_ftol）→ 累加存 [esp+0xc]
+    - esi+=4 / dec ebx / jne 循环 4 次
+  - 返 eax=累加值
+  - 语义：**CRCEngine::GetTotalValue——[0xb0f4ec] 数组界内 4 项：float 系数 × int(+0xb8) 加权求和（0x7c5f00 _ftol 截断），fcomp 跳过 [0x7e1748] 非正项**
+- 直接 call 1 个/去重 1：0x7c5f00——picker callees=1 完全吻合
+- 判类：CRCEngine::GetTotalValue（带名——CRCEngine 家族，加权和 float×int）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2791.py：a 路 4/4、b 路 0/0、c 路 1/1——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D（CRT delete）、0x7CA405（求长）、0x7C8E17（CRT new）、0x7CA489（拷贝）、0x7C5F00（_ftol·CRT 高频）——全部命中早前登记
+- 观察 [0xb0bfd8]/[0xb0bfdc]/[0xb0bfe0]/[0xb0bfe4]（a 路下函数四 dword 清零全局）；[0xb0f4ec]（c 路数组界全局）；[0x7e1748]（c 路 float 常量）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **CRCEngine 家族**：c 路 GetTotalValue（[0xb0f4ec] 数组界 + [+0xb8] int 系数字段）——CRCEngine 家族（内存记忆：CRCEngine 家族/CRT 自动化三件套曾登记），后续 CRC 函数吸收
+- **b0bfd8 四 dword 清零器**：a 路下函数 0x6C99B0（[0xb0bfd8..0xb0bfe4] 16B 清零）——新全局限定器，后续吸收
+- **三字节打包器**：b 路（3 栈参 stdcall / ret 0xc）——小工具函数族
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
