@@ -1,0 +1,61 @@
+# frontier batch 2781
+
+日期：2026-11-01
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序；未登记池 1962→1959）
+三路：a=0x6DC580（0x2A=42B **成员清理器 + 清 +0x10（与批 2775 b 路逐字双胞胎）** callees=1 deps=0）/ b=0x6DC4E0（0x2A=42B **与 a 路逐字双胞胎** callees=1 deps=0）/ c=0x6DC470（0x43=67B **对象析构器 + 标量删除（四层虚表 + 清全局 [0x887324] + 0x4101f0）** callees=2 deps=0）——42B 清理器双胞胎对 + 四层虚表析构器
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2781{a,b,c}.txt（长度 0x80），完整读取确认（a ret @0x6DC5A9、b ret @0x6DC509、c ret 4 @0x6DC4B0；下函数 a 0x6DC5B0（`mov al,[ecx+0xc]; [esp+4] 参; sub; shr eax,2; ret 4` 成员索引查询观察项）、b 0x6DC510（`[esp+4] 参; sub; mov eax,0xcccccccd; mul; shr eax,4; ret 4`——**÷10 魔数除法**观察项）、c 0x6DC4C0（`mov eax,ecx; [eax] vs [ecx] 差值; [eax+4] vs [ecx+4] 差值; ret 4` 坐标差值观察项））
+核验：.qwen/tmp/_check_callees2781.py 三路全 PASS（a 1/1、b 1/1、c 2/2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6826 → 6829（待 _append_tsv_batch2781.py）
+
+## a 路：0x6DC580 成员清理器 + 清 +0x10（0x2A=42B）
+
+- 范围 0x6DC580-0x6DC5A9（ret @0x6DC5A9）；0x6DC5AA nop×5，下函数 0x6DC5B0（`mov al,[ecx+0xc]; test al,al; jne; xor eax; ret 4; [esp+4] 参; [ecx+4]; sub eax,edx; shr eax,2; ret 4` 成员索引查询观察项）
+- thiscall 0 栈参（ret；esi=this）——**与批 2775 b 路 0x6E47F0 逐字双胞胎（跨批逐字双胞胎第 24 对，清 +0x10 版本）**：
+  - `mov [esi+0x10],ebx`（清 +0x10）
+  - `[esi+4]` 非空且 `[esi+0xd]` 非零 → **0x7c8b3d**（delete 成员指针）→ 清 `[esi+4]=0`
+  - 清 `[esi+0xd]=0`、`[esi+8]=0`
+  - 返 eax 未设（void 语义）
+- 直接 call 1 个/去重 1：0x7c8b3d——picker callees=1 完全吻合
+- 判类：成员清理器（推断名——42B 清理器模板 + 清 +0x10 变体）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x6DC4E0 成员清理器 + 清 +0x10 · 逐字双胞胎（0x2A=42B）
+
+- 范围 0x6DC4E0-0x6DC509（ret @0x6DC509）；0x6DC50A nop×5，下函数 0x6DC510（`mov al,[ecx+0xc]; test; jne; ret 4; [esp+4] 参; [ecx+4]; sub edx,eax; mov eax,0xcccccccd; mul edx; shr eax,4; ret 4`——**÷10 魔数除法（0xcccccccd = 1/10 魔数）**观察项）
+- thiscall 0 栈参（ret；esi=this）——**与 a 路逐字双胞胎（跨批逐字双胞胎第 25 对）**：
+  - `mov [esi+0x10],ebx` + `[esi+4]` 条件 delete + 清 `[esi+0xd]=0`/`[esi+8]=0`
+- 直接 call 1 个/去重 1：0x7c8b3d——picker callees=1 完全吻合
+- 判类：成员清理器（推断名——与 a 路同批双胞胎）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x6DC470 对象析构器 + 标量删除 · 四层虚表（0x43=67B）
+
+- 范围 0x6DC470-0x6DC4B0（ret 4 @0x6DC4B0）；0x6DC4B1 nop×15，下函数 0x6DC4C0（`mov eax,ecx; push esi; [esp+8] 参; mov esi,[eax]; mov edx,[ecx]; sub esi,edx; mov edx,[eax+4]; mov ecx,[ecx+4]; sub edx,ecx; ret 4` 坐标差值观察项）
+- thiscall 1 栈参（ret 4；esi=this；[esp+8]=删除标志）——**对象析构器 + 标量删除（四层虚表版本，与 73B 单虚表析构器不同）**：
+  - **四层虚表**：`[esi]=0x7f4348`、`[esi+4]=0x7f432c`、`[esi+8]=0x7f4324`、`[esi+0xc]=0x7f431c`
+  - `mov [0x887324],0`（清全局 [0x887324]）
+  - **call 0x4101f0**（清理函数）
+  - `[esp+8] & 1`（删除标志）→ **0x7c8b3d**（delete this）
+  - 返 eax=esi
+  - 语义：**对象析构器 + 标量删除——四层虚表（0x7f4348/0x7f432c/0x7f4324/0x7f431c）+ 清全局 [0x887324] + 0x4101f0 清理 + 删除标志 delete this**
+- 直接 call 2 个/去重 2：0x4101f0、0x7c8b3d——picker callees=2 完全吻合
+- 判类：对象析构器（推断名——四层虚表析构器，与批 2778 b 路构造器四层虚表概念对应）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2781.py：a 路 1/1、b 路 1/1、c 路 2/2——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D（CRT delete·batch 已登记）、0x4101F0（清理·batch 已登记）——全部命中早前登记
+- 观察虚表四件套 0x7f4348/0x7f432c/0x7f4324/0x7f431c（c 路）、全局 [0x887324]（c 路清）；0x6DC5B0/0x6DC510（a/b 下函数索引查询——shr 2 与 魔数 div10 双版本）、0x6DC4C0（c 路下函数坐标差值）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **跨批逐字双胞胎累计 25 对**（本批 a/批 2775 b 第 24 对、本批 b/a 第 25 对）——42B 清理器模板（清 +0x10）第三/四副本（0x6E64E0/0x6E47F0/0x6DC580/0x6DC4E0）
+- **四层虚表析构器族**：c 路 0x6DC470（0x7f4348..0x7f431c + [0x887324]）——与批 2778 b 路构造器（0x7f443c..0x7f4410）另一虚表族；后续同族吸收
+- **魔数除法发现**：b 路下函数 0x6DC510 用 0xcccccccd ÷10——新索引计算变体
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
