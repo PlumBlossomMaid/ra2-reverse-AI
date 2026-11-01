@@ -1,0 +1,67 @@
+# frontier batch 2787
+
+日期：2026-11-01
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序；未登记池 1944→1941）
+三路：a=0x6CEF80（0x5B=91B **行为决策器（[+0xb4]==0xa + 子对象虚表槽 0x2c==6 → 0x4f9a50 判定，返 [+0xbc]/0x46）** callees=1 deps=0）/ b=0x6CE570（0x35=53B **字符串表索引查找器（0x8425c0 12 项串表 0x7c8d20 匹配）** callees=1 deps=0）/ c=0x6CE220（0x1C=28B **标量删除包装器（0x6cb120 清理 + 删除标志 delete this）** callees=2 deps=0）——行为决策器 + 串表索引 + 标量删除包装器（批 2773 a/b 同模板）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2787{a,b,c}.txt（长度 0x80），完整读取确认（a 双 ret 8 @0x6CEFC9（返 0x46=70）/0x6CEFDB（返 [+0xbc]）、b 双 ret @0x6CE59E（-1）/0x6CE5A4（索引 edi）、c ret 4 @0x6CE23B；下函数 a 0x6CEFE0（`lea eax,[esp+4]; mov ecx,0xa8e330; mov dword[esi],0x7f4090; [esi+4] 0x7f4074`——双虚表构造器观察项）、b 0x6CE5B0（`push eax; call 0x410800; [ebp+0x9c..0xac]=-1`——构造器观察项）、c 0x6CE240（`[esp+8]/[esp+0xc] 双参; [ecx+0..8] + [eax+0..8] 三 dword 相加 → 输出`——**三维向量加法器**观察项 + 0x6CE270（虚表槽 4 析构调用）+ 0x6CE280（-1 索引检查函数）））
+核验：.qwen/tmp/_check_callees2787.py 三路全 PASS（a 1/1、b 1/1、c 2/2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6844 → 6847（待 _append_tsv_batch2787.py）
+
+## a 路：0x6CEF80 行为决策器（0x5B=91B）
+
+- 范围 0x6CEF80-0x6CEFDB（双 ret 8 @0x6CEFC9（返 0x46=70）/0x6CEFDB（返 [+0xbc]））；0x6CEFDE nop×2，下函数 0x6CEFE0（`push ecx; push esi; mov esi,ecx; lea eax,[esp+4]; mov ecx,0xa8e330; mov dword[esi],0x7f4090; mov dword[esi+4],0x7f4074`——双虚表构造器（0x7f4090/0x7f4074，this=[0xa8e330] 全局）观察项）
+- thiscall 1 栈参（ret 8；edi=this；[esp+0x10]=对象）——**行为决策器**：
+  - `[edi+0xb4]`（类型）== 0xa →：
+    - `[esp+0x10]`（对象）非空：
+      - 子对象虚表槽 0x2c → eax == 6（单位类）→：
+        - 子对象虚表槽 0x2c 再调 → sub 6
+        - `[0xa83d4c]`（house）→ neg/sbb/not/and（**eax==6 时选 esi，否则 0**——条件选择惯用）→ `[eax+0x21c]`（house 字段）
+        - **call 0x4f9a50**（判定）→ al 非零 → 0x6cefd3 返 `[edi+0xbc]`；否则 0x6cefc9 返 0x46
+    - 0x6cefc9：返 0x46（70）
+    - 0x6cefd3：返 `[edi+0xbc]`
+  - 语义：**行为决策器——[+0xb4]==0xa 且子对象虚表槽 0x2c==6 时：house[0xa83d4c] 的 [+0x21c] 经 0x4f9a50 判定 → 返 [+0xbc]；否则返 0x46（70）**
+- 直接 call 1 个/去重 1：0x4f9a50——picker callees=1 完全吻合（虚表槽 0x2c 为间接）
+- 判类：行为决策器（推断名——0x4f9a50 已登记判定，house [+0x21c] 字段）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x6CE570 字符串表索引查找器（0x35=53B）
+
+- 范围 0x6CE570-0x6CE5A4（双 ret @0x6CE59E（未找到 or eax,-1）/0x6CE5A4（找到返 edi 索引））；0x6CE5A5 nop×11，下函数 0x6CE5B0（`mov eax,[esp+4]; push ebx/ebp/esi/edi; mov ebp,ecx; push eax; call 0x410800; xor ebx; or eax,-1; lea edi,[ebp+0xcc]; [ebp+0x9c..0xac]=-1`——构造器（0x410800 基类 + [+0x9c..0xac]=-1）观察项）
+- thiscall 0 栈参（ret；ebx=this）——**字符串表索引查找器**：
+  - `mov esi,0x8425c0` ~ 0x8425f0（**12 项 4B 串指针表**）循环：
+    - `[esi]`（串指针）vs ebx（this 串）→ **0x7c8d20**（双参串比较）→ 相等 → 返 edi（索引）；不等 → inc edi / add esi,4 / cmp esi,0x8425f0 jl 循环
+  - 未找到 → or eax,-1 返 -1
+  - 语义：**字符串表索引查找器——0x8425c0..0x8425ef（12 项 4B 串指针表）0x7c8d20 匹配 → 返索引 / 无 → 返 -1；与批 2766 a/b 路 0x7c8d20 串比较同被调**
+- 直接 call 1 个/去重 1：0x7c8d20——picker callees=1 完全吻合
+- 判类：字符串表索引查找器（推断名——0x8425c0 12 项串表）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x6CE220 标量删除包装器（0x1C=28B）
+
+- 范围 0x6CE220-0x6CE23B（ret 4 @0x6CE23B）；0x6CE23E nop×2，下函数 0x6CE240（`mov eax,[esp+8]; push esi; mov esi,[ecx]; push edi; mov edx,[eax]; mov edi,[ecx+4]; add edx,esi; mov esi,[eax+4]; add esi,edi; mov edi,[eax+8]; mov eax,[ecx+8]; add edi,eax; [esp+0xc] 输出 = 三 dword 和; ret 8`——**三维向量加法器**（3 dword 分量相加）观察项 + 0x6CE270（`[ecx] 非空 → 虚表槽 4 析构调用; ret`）+ 0x6CE280（`[ecx] cmp -1; [+8] count; [0xa8ed84] 帧; sub; jge; ...`——-1 索引检查函数））
+- thiscall 1 栈参（ret 4；esi=this；[esp+8]=删除标志）——**标量删除包装器（与批 2773 a/b 路 0x6E64C0/0x6E58B0 同模板）**：
+  - **call 0x6cb120**（清理/析构函数——已登记）
+  - `[esp+8] & 1`（删除标志）→ **0x7c8b3d**（delete this）
+  - 返 eax=esi
+  - 语义：**标量删除包装器——0x6cb120 清理 + 删除标志 [esp+8]&1 delete this（跨批双胞胎第 29 对——与批 2773 a/b 同模板）**
+- 直接 call 2 个/去重 2：0x6cb120、0x7c8b3d——picker callees=2 完全吻合
+- 判类：标量删除包装器（推断名——调已登记清理函数 0x6CB120 + 条件 delete this）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2787.py：a 路 1/1、b 路 1/1、c 路 2/2——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4F9A50（a 路判定·batch 已登记）、0x7C8D20（b 路双参串比较·批 2765 c/2766 同）、0x6CB120（c 路清理·batch 已登记）、0x7C8B3D（CRT delete）——全部命中
+- 观察 [0xa83d4c]（a 路 house 全局，批 2761 后同域）、0x30 虚表槽 0x2c（a 路）；[0x8425c0]/[0x8425f0]（b 路 12 项串表）；虚表 0x7f4090/0x7f4074（a 路下函数双虚表构造器）、0x6CE240/0x6CE270/0x6CE280（c 路下函数族）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **跨批逐字双胞胎累计 29 对**（本批 c/批 2773 a/b）——标量删除包装器模板第三副本
+- **串表域**：b 路 0x8425c0（12 项 4B 串指针表 0x7c8d20 匹配）——后续同表查询函数吸收
+- **向量族**：c 路下函数 0x6CE240 三维向量加法器（3 dword 相加）——新观察项
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
