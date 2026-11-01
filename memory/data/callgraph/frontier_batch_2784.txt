@@ -1,0 +1,64 @@
+# frontier batch 2784
+
+日期：2026-11-01
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序；未登记池 1953→1950）
+三路：a=0x6D04A0（0x26=38B **对象批量遍历器（[0xb0c1c0] 96B 步长，虚表槽 0x20/0x30 双调用）** callees=0 deps=0）/ b=0x6CFC80（0x31=49B **索引清理器（[esi+0xb0cbdc] 标志门控 delete [esi*4+0xb0c148]）** callees=1 deps=0）/ c=0x6CF8F0（0x93=147B **对象构造器·数组成员分配（虚表 0x7f4154 + 外部缓冲或 new 分配）** callees=1 deps=0）——批量遍历器（批 2783 b 路虚表槽 0x34 版的姊妹）+ 索引清理器（批 2783 b 路索引表域）+ 数组构造器
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2784{a,b,c}.txt（a/b 长度 0x80、c 长度 0xA0），完整读取确认（a ret @0x6D04C5、b ret @0x6CFCB0、c ret 8 @0x6CF980；下函数 a 0x6D04D0（`mov esi,0xb0c1c0; mov eax,[edi]; push esi; mov ecx,edi; call [eax+0x34]; add esi,0x60; cmp esi,0xb0cb20; jl; ret`——**虚表槽 0x34 遍历版**（批 2783 b 路同模板）观察项）、b 0x6CFCC0（`push ebx/ebp/esi/edi; xor ebp; mov edi,0x8427d0; mov edx,[edi]; mov esi,ecx; ... cmp byte[edx],[esi] 逐字符; sbb edx,edx; sbb edx,-1; add edi,4; inc ebp`——**宽串表匹配器**（0x8427d0 起 4B 步长）观察项）、c 0x6CF990（观察项，未显示）））
+核验：.qwen/tmp/_check_callees2784.py 三路全 PASS（a 0/0、b 1/1、c 1/1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6835 → 6838（待 _append_tsv_batch2784.py）
+
+## a 路：0x6D04A0 对象批量遍历器（0x26=38B）
+
+- 范围 0x6D04A0-0x6D04C5（ret @0x6D04C5）；0x6D04C6 nop×10，下函数 0x6D04D0（`push esi; push edi; mov edi,ecx; mov esi,0xb0c1c0; mov eax,[edi]; push esi; mov ecx,edi; call [eax+0x34]; add esi,0x60; cmp esi,0xb0cb20; jl; ret`——**虚表槽 0x34 遍历版**（批 2783 b 路同模板）观察项）
+- thiscall 0 栈参（ret；edi=this）——**对象批量遍历器**：
+  - esi=0xb0c1c0 起，每轮 add esi,0x60（**96B 步长**）到 0xb0cb20：
+    - `mov eax,[esi]; mov ecx,esi; call [eax+0x20]`（**子对象虚表槽 0x20**）
+    - `mov edx,[edi]; push esi; mov ecx,edi; call [edx+0x30]`（**this 虚表槽 0x30**）
+  - ret
+  - 语义：**对象批量遍历器——[0xb0c1c0..0xb0cb20]（96B 步长）遍历：子对象虚表槽 0x20 + this 虚表槽 0x30 双调用；与批 2783 b 路同域（虚表槽 0x34 版）**
+- 直接 call 0 个/去重 0（唯一跨函数为虚表槽 0x20/0x30 间接）——picker callees=0 完全吻合
+- 判类：对象批量遍历器（推断名——[0xb0c1c0] 96B 表域，批 2783 b 路姊妹）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x6CFC80 索引清理器（0x31=49B）
+
+- 范围 0x6CFC80-0x6CFCB0（ret @0x6CFCB0）；0x6CFCB1 nop×15，下函数 0x6CFCC0（`push ebx; push ebp; push esi; push edi; xor ebp; mov edi,0x8427d0; mov edx,[edi]; mov esi,ecx; ... cmp byte[edx],[esi] 逐字符; sbb edx,edx; sbb edx,-1; add edi,4; inc ebp`——**宽串表匹配器**（0x8427d0 起 4B 步长）观察项）
+- thiscall 0 栈参（ret；esi=this 索引）——**索引清理器**：
+  - `[esi+0xb0cbdc]`（标志）非零 → `[esi*4+0xb0c148]`（表项）→ **call 0x7c8b3d**（delete）→ `[esi+0xb0cbdc]=0`（清标志）
+  - `[esi*4+0xb0c148]=0`（清表项）
+  - 语义：**索引清理器——[esi+0xb0cbdc] 标志门控 delete [esi*4+0xb0c148] 表项 + 清表项/标志；[0xb0c148] 表 + [0xb0cbdc] 标志为批 2783 b 路全局索引表域**
+- 直接 call 1 个/去重 1：0x7c8b3d——picker callees=1 完全吻合
+- 判类：索引清理器（推断名——[0xb0c148] 索引表 + [0xb0cbdc] 标志，批 2783 b 路同域）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x6CF8F0 对象构造器·数组成员分配（0x93=147B）
+
+- 范围 0x6CF8F0-0x6CF980（ret 8 @0x6CF980）；0x6CF983 nop×13，下函数 0x6CF990（观察项，未显示）
+- thiscall 1 栈参（ret 8；esi=this；[esp+0xc]=数组长、[esp+0x14]=外部缓冲）——**对象构造器（数组成员分配）**：
+  - `[edi+4]=0`、`[edi+8]=[esp+0xc]`（数组长）、`[edi+0xc]=1`（标志 1）、`[edi+0xd]=0`（标志 0）
+  - `[edi]=0x7f4154`（虚表写回——构造器首步）
+  - `[esp+0x14]`（外部缓冲）非空 → 用外部缓冲：`[eax+0..]=0`（rep 清零 n 项 8B，esi 项数）→ `[edi+4]=外部缓冲` → 返 esi
+  - `[esp+0x14]` 空 → **call 0x7c8e17**（new 分配，size=esi*8）→ 非空 → 清零 n 项 8B + `[edi+4]=eax` + `[edi+0xd]=1` → 返 esi
+  - 分配失败 → `[edi+4]=0`、`[edi+0xd]=1` → 返 esi
+  - 语义：**对象构造器——[edi]=0x7f4154 虚表 + [+8] 数组长 + [+4] 数组指针（外部缓冲或 new 分配）+ [+0xc]=1/+0xd 标志；数组成员 8B 项清零**
+- 直接 call 1 个/去重 1：0x7c8e17——picker callees=1 完全吻合
+- 判类：对象构造器（推断名——0x7f4154 虚表 + 数组指针/长 + 双标志，构造器模板族）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2784.py：a 路 0/0、b 路 1/1、c 路 1/1——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D（CRT delete·batch 已登记）、0x7C8E17（CRT new·batch 已登记）——全部命中早前登记
+- 观察 [0xb0c1c0]/[0xb0cb20]（a 路 96B 表域，同批 2783 b 路）；[0xb0c148]/[0xb0cbdc]（b 路索引表 + 标志，批 2783 b 路同域）；虚表 0x7f4154（c 路）；0x6D04D0（a 路下函数虚表槽 0x34 版）、0x6CFCC0（b 路下函数宽串表匹配器 0x8427d0）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **批量遍历域**：a 路 0x6D04A0（虚表槽 0x20/0x30）+ 下函数 0x6D04D0（虚表槽 0x34，批 2783 b 路同模板）——[0xb0c1c0] 96B 表三连（2783 b + 2784 a + 下函数）
+- **索引表域**：b 路 [0xb0c148] 表 + [0xb0cbdc] 标志——批 2783 b 路 [0xb0cb78..0xb0cbdc] 同域
+- **宽串表匹配器**：b 路下函数 0x6CFCC0（0x8427d0 起 4B 步长字符串表匹配）——新观察项
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
