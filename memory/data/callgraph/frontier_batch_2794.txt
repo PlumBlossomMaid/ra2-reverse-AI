@@ -1,0 +1,66 @@
+# frontier batch 2794
+
+日期：2026-11-01
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；当前聚焦段 0x6C——6C 段剩余 3 个全 uc=0 dep=0 孤立函数，落回 ranking 序；未登记池 1925→1922）
+三路：a=0x6C89B0（0x1E=30B **缓冲区类构造器/分配器** callees=1 deps=0）/ b=0x6C89D0（0x0F=15B **成员指针释放器** callees=1 deps=0）/ c=0x6C8B10（0x130=304B **向量元素追加器（stdcall ret 0x10）** callees=2 deps=0）——6C 段收尾（缓冲区构造器 + 指针释放器 + 向量追加器）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2794{a,b,c}.txt（a/b 长度 0x100、c 长度 0x180），完整读取确认（a ret 4 @0x6C89CB、b ret @0x6C89DE、c ret 0x10 @0x6C8C3D；下函数 a 0x6C89D0=b 路本身、b 0x6C89E0（`sub esp,0x10; push ebx; push ebp; mov ebp,ecx; push esi; push edi; mov edi,[ebp+8]; mov ecx,[ebp]; mov esi,[ebp+4]; lea eax,[edi+0xc]; add ecx,esi; cmp eax,ecx; ja; ...; 0x437f30 元素初始化; 0x661590 + [0xb0bdd0] 全局; rep movsd 拷贝; 虚表槽 0x5c/0x74 分派`——**向量元素追加器**（同 c 路模板，0xc 元素大小 + 0xb0bdd0 全局）观察项）、c 0x6C8C40（`call dword[0x7e1530]; shr eax,4; ret`——**tick/16 获取器**（IAT [0x7e1530] tick → shr 4 = ÷16，batch 399 同款）观察项 + 0x6C8C50（同模板第二实例）观察项 + 0x6C8C60（`xor eax,eax; mov dword[0xb0bed8],eax; [0xb0bedc]=0; [0xb0bee0]=0; [0xb0bee4]=0; ret`——**b0bed8 四 dword 清零器**（全局 16B 清零，与批 2791 的 b0bfd8、批 2792 的 b0bcf8 清零器同模板，全局地址不同 b0bed8）观察项 + 0x6C8C80（`fld qword[0x7e1710]; fld qword[0x7e1708]`——**b0bd 全局 double 初始化器**（与批 2793 b 路下函数 0x6C68C0 同模板）观察项）））
+核验：.qwen/tmp/_check_callees2794.py 三路全 PASS（a 1/1、b 1/1、c 2/2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6865 → 6868（待 _append_tsv_batch2794.py）
+
+## a 路：0x6C89B0 缓冲区类构造器/分配器（0x1E=30B）
+
+- 范围 0x6C89B0-0x6C89CB（ret 4 @0x6C89CB）；0x6C89CE nop，下函数 0x6C89D0=b 路本身（同批自引用）
+- thiscall 1 栈参（ret 4；esi=this；[esp+4]=容量/字节数）——**缓冲区类构造器/分配器**：
+  - `mov eax,[esp+4]`（参数）→ `mov [esi],eax`（**this+0 = 参数**）
+  - `push eax` → **call 0x7c8e17**（new 分配 eax 字节）→ `[esi+4]=eax`
+  - `[esi+8]=eax`（**同值写 +4 与 +8**）
+  - 返 eax=esi
+- 直接 call 1 个/去重 1：0x7c8e17——picker callees=1 完全吻合
+- 判类：缓冲区类构造器/分配器（推断名——存参数 + new 分配双槽）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x6C89D0 成员指针释放器（0x0F=15B）
+
+- 范围 0x6C89D0-0x6C89DE（ret @0x6C89DE）；0x6C89DF nop，下函数 0x6C89E0（**向量元素追加器**——[ebp]=count、[ebp+4]=capacity、[ebp+8]=data；0xc 元素大小检查 + 0x437f30 元素初始化 + 0x661590 + [0xb0bdd0] 全局 + rep movsd 拷贝 + 虚表槽 0x5c/0x74 分派——同 c 路模板）观察项）
+- thiscall 0 栈参（ret；ecx=this）——**成员指针释放器**：
+  - `mov eax,[ecx+4]`（成员指针）→ 非空 → **call 0x7c8b3d**（delete 成员指针）→ `pop ecx`（清栈）
+  - 返
+- 直接 call 1 个/去重 1：0x7c8b3d——picker callees=1 完全吻合
+- 判类：成员指针释放器（推断名——[+4] 非空 delete，极小 15B 工具）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x6C8B10 向量元素追加器（0x130=304B）
+
+- 范围 0x6C8B10-0x6C8C3D（ret 0x10 @0x6C8C3D）；0x6C8C40（**tick/16 获取器**——`call dword[0x7e1530]; shr eax,4; ret`，IAT [0x7e1530] tick → shr 4 = ÷16）观察项 + 0x6C8C50（同模板第二实例）观察项 + 0x6C8C60（**b0bed8 四 dword 清零器**）观察项 + 0x6C8C80（**b0bd 全局 double 初始化器**——与批 2793 b 路下函数 0x6C68C0 同模板）观察项）
+- stdcall 4 栈参（ret 0x10；ebx=this；[ebp]=元素源、[esp+0x28]/[esp+0x2c]/[esp+0x30]=参数）——**向量元素追加器**（[ebx]=count、[ebx+4]=capacity、[ebx+8]=data）：
+  - `lea eax,[edi+0xc]; add ecx,esi; cmp eax,ecx; ja`（**溢出检查**——data+0xc vs count+capacity）→ 失败 xor eax,eax; ret 0x10
+  - `[esp+0x10]=edi`（保存旧 data）；`[ebx+8]=eax`（新 data 位置）
+  - 拷贝元素头部：`word[edi]=[esp+0x2c]`、`word[edi+2]=[esp+0x30]`、`word[edi+4]=[ebp+8]`、`word[edi+6]=[ebp+0xc]`、`[edi+8]=[ebx+8]`（新位置）
+  - `lea ecx,[esp+0x18]; mov ecx,ebp` → **call 0x437f30**（元素初始化）
+  - `mov edx,[eax]; mov esi,[esp+0x24]; sub esp,8; mov ecx,esp; mov [ecx],edx; mov eax,[eax+4]; mov [ecx+4],eax`（栈上传 8B）→ `mov edx,[esi]; mov ecx,esi; call dword[edx+0x5c]`（**虚表槽 0x5c 分派**）→ `[esp+0x2c]=eax`
+  - `mov eax,[ebp+0xc]; test eax,eax; jle 0x6c8c2d`（元素数 ≤0 跳过循环）；`[esp+0x30]=0`（循环计数）
+  - 循环：`mov eax,[ebp+8]; mov ecx,[esp+0x2c]; push eax; push 0xb0bdd0; push ecx; lea ecx,[esp+0x20]; call 0x661590`（**0xb0bdd0 全局**）→ `lea ecx,[edi+eax]; cmp ecx,edx; ja`（溢出检查）→ `[ebx+8]=ecx` → `shr ecx,2; rep movsd; and ecx,3; rep movsb`（拷贝）→ `mov edx,[ecx]; call dword[edx+0x74]`（**虚表槽 0x74 分派**）→ 循环
+  - 收尾 `call dword[edx+0x60]`（虚表槽 0x60）→ `mov eax,edi`（返旧 data）；ret 0x10
+- 直接 call 2 个/去重 2：0x437f30、0x661590——picker callees=2 完全吻合（虚表槽 0x5c/0x74/0x60 为间接分派，不计直接 call）
+- 判类：向量元素追加器（推断名——溢出检查 + 元素初始化 + 0xb0bdd0 全局 + rep movsd 拷贝 + 虚表分派；stdcall ret 0x10）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2794.py：a 路 1/1、b 路 1/1、c 路 2/2——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用（a 下函数 = b 路本身，但 a range 不含下函数）；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8E17（CRT new）、0x7C8B3D（CRT delete）、0x437F30、0x661590——全部命中早前登记
+- 观察 [0xb0bed8]/[0xb0bedc]/[0xb0bee0]/[0xb0bee4]（c 路下函数四 dword 清零全局）；[0xb0bdd0]（c 路全局）；[0x7e1530]（tick IAT）；[0x7e1710]/[0x7e1708]（double 常量）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **6C 段收尾**：a/b/c 路为本段最后 3 个未登记——6C 段已走完（0x6C62C0/0x6C6480/0x6C64D0/0x6C6610/0x6C6880/0x6C8840/0x6C89B0/0x6C89D0/0x6C8B10 全部登记）
+- **向量元素追加器模板**：c 路 + b 路下函数 0x6C89E0（同模板，0xc 元素 + [0xb0bdd0] 全局）——VectorClass 家族，后续吸收
+- **b0bed8 四 dword 清零器**：c 路下函数 0x6C8C60（[0xb0bed8..0xb0bee4] 16B 清零）——与批 2791 b0bfd8、批 2792 b0bcf8 同模板，全局限定器族
+- **b0bd 段 double 全局族**：c 路下函数 0x6C8C80（与批 2793 b 路下函数 0x6C68C0 同模板）——浮点全局族
+- **tick/16 获取器**：c 路下函数 0x6C8C40（+ 0x6C8C50 第二实例）——batch 399 同款（IAT [0x7e1530] tick ÷16）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
