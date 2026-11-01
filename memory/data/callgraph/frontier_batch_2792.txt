@@ -1,0 +1,61 @@
+# frontier batch 2792
+
+日期：2026-11-01
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；当前聚焦段 0x6C——6C 段剩余 9 个全 uc=0 dep=0 孤立函数，落回 ranking 序；未登记池 1931→1928）
+三路：a=0x6C62C0（0x27=39B **成员清理器（42B 模板变体，不清 +0x10）** callees=1 deps=0）/ b=0x6C6480（0x49=73B **对象析构器 + 标量删除（虚表 0x7f3748）** callees=1 deps=0）/ c=0x6C64D0（0x49=73B **与 b 路逐字双胞胎（虚表 0x7f3748）** callees=1 deps=0）——成员清理器变体 + 析构器同簇第 12/13 个
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2792{a,b,c}.txt（长度 0x80），完整读取确认（a ret @0x6C62E6、b ret 4 @0x6C64C6、c ret 4 @0x6C6516；下函数 a 0x6C62F0（**4B 项数组索引查找器**——[ecx+8] count + [ecx+4] 数组 + 按值线性搜索（cmp [ecx],esi je/inc eax/add ecx,4/cmp eax,edx jl）→ or eax,-1 未找到返 -1，带 +0xc 门控）观察项 + 0x6C6330（**+0xc 门控 getter**——test al,al jne/xor eax,eax/ret 4 + [esp+4] 参）观察项、c 0x6C6520（`xor eax,eax; mov dword[0xb0bcf8],eax; [0xb0bcfc]=0; [0xb0bd00]=0; [0xb0bd04]=0; ret`——**b0bcf8 四 dword 清零器**（全局 16B 清零，与批 2791 a 路 0x6C99B0 的 b0bfd8 清零器同模板，全局地址不同 b0bcf8 vs b0bfd8）观察项 + 0x6C6540（`mov eax,[esp+0x14]; push ebx; push ebp; mov ebp,[esp+0x24]; push esi; push edi; mov edi,[esp+0x28]`——**大函数（多栈参）**观察项））
+核验：.qwen/tmp/_check_callees2792.py 三路全 PASS（a 1/1、b 去重 1、c 去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6859 → 6862（待 _append_tsv_batch2792.py）
+
+## a 路：0x6C62C0 成员清理器（0x27=39B）
+
+- 范围 0x6C62C0-0x6C62E6（ret @0x6C62E6）；0x6C62E7 nop×9，下函数 0x6C62F0（`mov al,[ecx+0xc]; test al,al; jne 0x6c62fe; xor eax,eax; pop esi; ret 4; 0x6c62fe: mov edx,[ecx+8]; xor eax,eax; test edx,edx; jle 0x6c631c; mov esi,[esp+8]; mov ecx,[ecx+4]; mov esi,[esi]; cmp dword[ecx],esi; je 0x6c631f; inc eax; add ecx,4; cmp eax,edx; jl; or eax,0xffffffff; ret 4`——**4B 项数组索引查找器**（带 +0xc 门控；[ecx+8] count 逐项按值 cmp [ecx],esi 线性搜索，命中返索引 eax，未命中 or eax,-1 返 -1）观察项；下下 0x6C6330：`mov al,[ecx+0xc]; test al,al; jne 0x6c633c; xor eax,eax; ret 4; 0x6c633c: mov eax,[esp+4]`——**+0xc 门控 getter**（test al,al jne/xor eax,eax/ret 4 + [esp+4] 参）观察项）
+- thiscall 0 栈参（ret；esi=this）——**与批 2790 b 路 0x6CA7C0 同模板（42B 清理器模板），但少了清 +0x10 一步（42-39=3B = `mov [esi+0x10],ebx` 89 5E 10）——39B 变体（不清 +0x10）**：
+  - `xor ebx; mov esi,ecx`（this）
+  - `[esi+4]` 非空且 `[esi+0xd]` 非零 → **0x7c8b3d**（delete 成员指针）→ 清 `[esi+4]=0`
+  - 清 `[esi+0xd]=0`、`[esi+8]=0`
+  - 返 eax 未设（void 语义）
+- 直接 call 1 个/去重 1：0x7c8b3d——picker callees=1 完全吻合
+- 判类：成员清理器（推断名——42B 清理器模板家族第六变体，不清 +0x10）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x6C6480 对象析构器 + 标量删除（0x49=73B）
+
+- 范围 0x6C6480-0x6C64C6（ret 4 @0x6C64C6）；0x6C64C7 nop×9，下函数 0x6C64D0=c 路本身（同批自引用）
+- thiscall 1 栈参（ret 4；esi=this；[esp+8]=删除标志）——**与批 2790 a 路 0x6CA9C0 同模板，虚表不同（0x7f3748 vs 0x7f3f8c）**：
+  - `mov eax,[esi+4]`（先读成员）→ `mov dword[esi],0x7f3748`（**虚表写回**——析构器首步）
+  - `[esi+4]` 非空且 `[esi+0xd]` 非零 → **0x7c8b3d**（delete 成员指针）→ 清 `[esi+4]=0`
+  - 清 `[esi+0xd]=0`、`[esi+8]=0`
+  - `[esp+8] & 1`（删除标志）→ **0x7c8b3d**（delete this）
+  - 返 eax=esi
+- 直接 call 2 个/去重 1：0x7c8b3d（两次同址）——picker callees=1 完全吻合
+- 判类：对象析构器 + 标量删除（推断名——虚表 0x7f3748，71B/73B 析构器同簇第 12 个）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x6C64D0 对象析构器 + 标量删除（0x49=73B）
+
+- 范围 0x6C64D0-0x6C6516（ret 4 @0x6C6516）；0x6C6517 nop×9，下函数 0x6C6520（`xor eax,eax; mov dword[0xb0bcf8],eax; [0xb0bcfc]=0; [0xb0bd00]=0; [0xb0bd04]=0; ret`——**b0bcf8 四 dword 清零器**（全局 16B 清零，与批 2791 a 路 0x6C99B0 的 b0bfd8 清零器同模板，全局地址不同 b0bcf8 vs b0bfd8）观察项；下下 0x6C6540：`mov eax,[esp+0x14]; push ebx; push ebp; mov ebp,[esp+0x24]; push esi; push edi; mov edi,[esp+0x28]`——**大函数（多栈参）**观察项）
+- thiscall 1 栈参（ret 4；esi=this；[esp+8]=删除标志）——**与 b 路 0x6C6480 逐字双胞胎（同批双胞胎；虚表 0x7f3748 相同；71B/73B 析构器同簇第 13 个）**：
+  - 与 b 路完全一致：虚表写回 + delete 成员 + 清三字段 + `[esp+8]&1` delete this + 返 eax=esi
+- 直接 call 2 个/去重 1：0x7c8b3d——picker callees=1 完全吻合
+- 判类：对象析构器 + 标量删除（推断名——虚表 0x7f3748，与 b 路逐字双胞胎）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2792.py：a 路 1/1、b 路去重 1、c 路去重 1——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用（b/c 下函数 = 同批 c 路本身，但 b range 不含下函数，故未计入）；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D（CRT delete）——全部命中早前登记
+- 观察 [0xb0bcf8]/[0xb0bcfc]/[0xb0bd00]/[0xb0bd04]（c 路下函数四 dword 清零全局）；虚表 [0x7f3748]（b/c 路）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **71B/73B 析构器族**：b/c 路（虚表 0x7f3748，同簇第 12/13 个）——71B/73B 析构器同簇累计（虚表 0x7f3f8c/0x7f3748 等），后续 CRC/容器函数吸收
+- **b0bcf8 四 dword 清零器**：c 路下函数 0x6C6520（[0xb0bcf8..0xb0bd04] 16B 清零）——新全局限定器，与批 2791 的 b0bfd8 清零器同模板，后续吸收
+- **4B 项数组索引查找器**：a 路下函数 0x6C62F0（按值线性搜索返 -1，带 +0xc 门控）——与批 2790 b 路下函数 0x6CA7F0（指针差求索引）不同族（按值搜索 vs 指针差）
+- **42B 清理器模板**：a 路（39B 变体，不清 +0x10）——家族第六变体（0x6E64E0/0x6E47F0/0x6DC580/0x6CF4F0/0x6CA7C0/0x6C62C0）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
