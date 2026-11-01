@@ -1,0 +1,66 @@
+# frontier batch 2793
+
+日期：2026-11-01
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；当前聚焦段 0x6C——6C 段剩余 6 个全 uc=0 dep=0 孤立函数，落回 ranking 序；未登记池 1928→1925）
+三路：a=0x6C6610（0x2A=42B **对象析构器（非标量，虚表 0x7f3ea0）** callees=3 deps=0）/ b=0x6C6880（0x3E=62B **对象析构器 + 标量删除（虚表 0x7f3ea0，与 a 路配对）** callees=3 deps=0）/ c=0x6C8840（0x24=36B **对象析构器 + 标量删除（虚表 0x7f3f44）** callees=2 deps=0）——析构器 + scalar deleting destructor 对 + 另一虚表析构器
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2793{a,b,c}.txt（长度 0x100），完整读取确认（a ret @0x6C6639、b ret 4 @0x6C68BB、c ret 4 @0x6C8861；下函数 a 0x6C6640（`mov eax,[esp+4]; push esi; mov esi,ecx; push eax; call 0x4e1550; test eax,eax; je 0x6c6672; mov edx,[esi]; mov ecx,esi; call dword[edx+0x88]; mov ecx,[esi+0x30]; mov eax,[esi]; push ecx; mov ecx,esi; call dword[eax+0x8c]; mov eax,1; ret 4`——**带名方法（虚表槽 0x88/0x8c 分派，返 1/0）**观察项 + 0x6C6680（`sub esp,0xc; push esi; mov esi,ecx; push edi; mov eax,[esi+0x30]; test eax,eax; je; push eax; call 0x7c8b3d; mov [esi+0x30],0; mov edi,[esp+0x18]; test edi,edi; je; push edi; call 0x7ca405（求长）; lea eax,[eax+eax+2]; push eax; call 0x7c8e17（new）; mov [esi+0x30],eax; test; je; push edi/push eax; call 0x7ca489（拷贝）; mov edx,[esi]; mov ecx,esi; call dword[edx+0x48]; mov al,[esp+0x1c]; test al,al; je 0x6c6729; mov eax,[esi+0x30]; test; je; mov eax,[esi]; mov ecx,esi; call dword[eax+0x88]; mov ecx,[esi+0x34]; call 0x4a60d0; mov ecx,[esi+0x30]; mov edi,eax; push 0/push ecx; mov ecx,edi; call 0x433ed0; mov [esi+0x14],eax; mov edx,[edi+0x1c]; ...`——**字符串持有器设置器 + 虚表分派宿主**（batch 2791 a 路 0x6C9960 同模板的宿主——[esi+0x30] 宽串 delete/求长/分配/拷贝 + 虚表槽 0x88 分派）观察项）、b 0x6C68C0（`fld qword[0x7e1710]; fld qword[0x7e1708]; call 0x7c8fb0; fadd st(0),st(0); sub esp,8; fstp qword[esp]; call 0x4cac40; fstp qword[0xb0bd30]; ret`——**全局 double 初始化器**（fld 双常量 + 0x7c8fb0 + fadd 自加倍 + 0x4cac40 → 存 [0xb0bd30]）观察项 + 0x6C68F0（`fld qword[0xb0bd30]; fdiv qword[0x7f3f30]; fstp qword[0xb0bda8]; ret`——**全局 double 除法存储器**观察项 + 0x6C6910（`fld qword[0x7e1718]; fdiv qword[0xb0bda8]; fstp qword[0xb0bd88]`）观察项 + 0x6C6930（`fld qword[0x7f3f38]; fmul qword[0x7e1720]; fstp qword[0xb0bd80]`）观察项 + 0x6C6950（`fld qword[0x7f3f38]; fmul qword[0x7e1728]; fstp qword[0xb0bd38]`）观察项 + 0x6C6970（`fld qword[0x7f3f38]; fmul qword[0x7e1730]`）观察项——**b0bd 段 double 全局族**（初始化/除法/乘法存储））、c 0x6C8870（`push ecx; push ebx; push ebp; mov ebp,ecx; mov eax,[ebp]; mov ecx,[ebp+4]; lea eax,[eax+eax*2]; cmp eax,ecx; jle 0x6c8888; pop ebp; xor al,al; pop ebx; pop ecx; ret; cdq/sub/sar 除 2; cmp ebx,0xa; jge; mov ebx,0xa; cmp ebx,ecx; jl; shl ecx,0xc; add ecx,ebx; shl ecx,3; push ecx; call 0x7c8e17（new）; mov esi,[ebp+8]; test esi,esi; je; mov edx,[ebp]; mov edi,eax; shl ecx,0xc; add ecx,edx; shl ecx,3; mov edx,ecx; shr ecx,2; rep movsd; mov ecx,edx; and ecx,3; rep movsb; mov eax,[ebp+8]; push eax; call 0x7c8b3d（delete）; mov ecx,[esp+0x10]; mov [ebp+8],ecx; mov [ebp+4],ebx; mov al,1; ret`——**向量扩容/重建器**（[ebp]=count、[ebp+4]=capacity、[ebp+8]=data；count×3 vs capacity 判定 + cdq/sar 除 2（capacity=count*3/2）+ min 0xa + `shl 0xc/add/shl 3`（元素步长 0x8008? = 32776? 观察）new + rep movsd/movsb 拷贝 + delete 旧——VectorClass 家族）观察项 + 0x6C8900（同模板第二实例——[ebx]/[ebx+4] count/capacity + 0x7c8e17 + rep stosd 清零）观察项））
+核验：.qwen/tmp/_check_callees2793.py 三路全 PASS（a 去重 3、b 去重 3、c 2/2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6862 → 6865（待 _append_tsv_batch2793.py）
+
+## a 路：0x6C6610 对象析构器（0x2A=42B，非标量）
+
+- 范围 0x6C6610-0x6C6639（ret @0x6C6639）；0x6C663A nop×6，下函数 0x6C6640（**带名方法**——虚表槽 0x88/0x8c 分派 + 0x4e1550 判定 + 返 1/0）观察项；下下 0x6C6680（**字符串持有器设置器 + 虚表分派宿主**——batch 2791 a 路 0x6C9960 同模板 [esi+0x30] 宽串 delete/求长/分配/拷贝 + 虚表槽 0x48/0x88 分派 + 0x4a60d0/0x433ed0）观察项）
+- thiscall 0 栈参（ret；esi=this）——**对象析构器（非标量，无 [esp+8]&1 标量删除）**：
+  - `mov eax,[esi+0x30]`（成员指针）→ `mov dword[esi],0x7f3ea0`（**虚表写回**——析构器首步）
+  - `[esi+0x30]` 非空 → **0x7c8b3d**（delete 成员指针）
+  - `lea ecx,[esi+0x24]` → **call 0x43ae50**（子对象 +0x24 析构）
+  - `mov ecx,esi` → **call 0x4e1390**（基类析构）
+  - 返（无 delete this）
+- 直接 call 3 个/去重 3：0x7c8b3d、0x43ae50、0x4e1390——picker callees=3 完全吻合
+- 判类：对象析构器（推断名——虚表 0x7f3ea0，非标量析构；与 b 路配对）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x6C6880 对象析构器 + 标量删除（0x3E=62B）
+
+- 范围 0x6C6880-0x6C68BB（ret 4 @0x6C68BB）；0x6C68BE nop，下函数 0x6C68C0（**全局 double 初始化器**——fld [0x7e1710]/fld [0x7e1708] + 0x7c8fb0 + fadd st(0),st(0) + 0x4cac40 → 存 [0xb0bd30]）观察项；下下 0x6C68F0（**全局 double 除法存储器**——fld [0xb0bd30] / fdiv [0x7f3f30] → 存 [0xb0bda8]）观察项 + 0x6C6910（fld [0x7e1718] / fdiv [0xb0bda8] → 存 [0xb0bd88]）观察项 + 0x6C6930（fld [0x7f3f38] × fmul [0x7e1720] → 存 [0xb0bd80]）观察项 + 0x6C6950（fld [0x7f3f38] × fmul [0x7e1728] → 存 [0xb0bd38]）观察项 + 0x6C6970（fld [0x7f3f38] × fmul [0x7e1730]）观察项——**b0bd 段 double 全局族**）
+- thiscall 1 栈参（ret 4；esi=this；[esp+8]=删除标志）——**对象析构器 + 标量删除（与 a 路 0x6C6610 同虚表 0x7f3ea0，配对：a=~Class()、b=scalar deleting destructor 包装）**：
+  - `mov eax,[esi+0x30]` → `mov dword[esi],0x7f3ea0`（**虚表写回**）
+  - `[esi+0x30]` 非空 → **0x7c8b3d**（delete 成员指针）
+  - `lea ecx,[esi+0x24]` → **call 0x43ae50**（子对象 +0x24 析构）
+  - `mov ecx,esi` → **call 0x4e1390**（基类析构）
+  - `[esp+8] & 1`（删除标志）→ **0x7c8b3d**（delete this）
+  - 返 eax=esi
+- 直接 call 4 个/去重 3：0x7c8b3d（两次同址：delete 成员 + delete this）、0x43ae50、0x4e1390——picker callees=3 完全吻合
+- 判类：对象析构器 + 标量删除（推断名——虚表 0x7f3ea0，scalar deleting destructor）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x6C8840 对象析构器 + 标量删除（0x24=36B）
+
+- 范围 0x6C8840-0x6C8861（ret 4 @0x6C8861）；0x6C8864 nop×12，下函数 0x6C8870（**向量扩容/重建器**——[ebp]=count、[ebp+4]=capacity、[ebp+8]=data；count×3 vs capacity 判定 + cdq/sar 除 2 + min 0xa + `shl 0xc/add/shl 3` 步长 new + rep movsd/movsb 拷贝 + delete 旧——VectorClass 家族）观察项；下下 0x6C8900（同模板第二实例——rep stosd 清零）观察项）
+- thiscall 1 栈参（ret 4；esi=this；[esp+8]=删除标志）——**对象析构器 + 标量删除（虚表 0x7f3f44）**：
+  - `mov dword[esi],0x7f3f44`（**虚表写回**——析构器首步）
+  - `mov ecx,esi` → **call 0x65d460**（析构子例程——成员/子对象清理）
+  - `[esp+8] & 1`（删除标志）→ **0x7c8b3d**（delete this）
+  - 返 eax=esi
+- 直接 call 2 个/去重 2：0x65d460、0x7c8b3d——picker callees=2 完全吻合
+- 判类：对象析构器 + 标量删除（推断名——虚表 0x7f3f44，析构子例程 + scalar deleting）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2793.py：a 路去重 3、b 路去重 3、c 路 2/2——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D（CRT delete）、0x43AE50、0x4E1390、0x65D460——全部命中早前登记
+- 观察虚表 [0x7f3ea0]（a/b 路）、[0x7f3f44]（c 路）；[0xb0bd30]/[0xb0bda8]/[0xb0bd88]/[0xb0bd80]/[0xb0bd38]（b 路下函数 double 全局族）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **析构器 + scalar deleting destructor 对**：a/b 路（虚表 0x7f3ea0）——MSVC 标准配对（~Class + scalar deleting 包装）
+- **b0bd 段 double 全局族**：b 路下函数 0x6C68C0/0x6C68F0/0x6C6910/0x6C6930/0x6C6950/0x6C6970（初始化/除法/乘法存储——[0xb0bd30]/[0xb0bda8]/[0xb0bd88]/[0xb0bd80]/[0xb0bd38]）——浮点全局族，后续吸收
+- **向量扩容/重建器**：c 路下函数 0x6C8870（+ 0x6C8900 第二实例）——VectorClass 家族（count×3 判定 + cdq/sar 除 2 + 0x8008 步长观察 + rep movsd 拷贝）
+- **字符串持有器设置器 + 虚表分派宿主**：a 路下下函数 0x6C6680——batch 2791 a 路 0x6C9960 同模板的宿主，后续吸收
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
