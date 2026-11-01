@@ -1,0 +1,66 @@
+# frontier batch 2782
+
+日期：2026-11-01
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序；未登记池 1959→1956）
+三路：a=0x6D9EF0（0x8B=139B **TacticalClass::AddSelectable（count<500 且 X/Y 界内 → [0xb0cec8] 表登记）** callees=0 deps=0）/ b=0x6D6190（0x2A=42B **坐标差值计算器（[+0xb0]-[+0xd64]/[+0xb4]-[+0xd68]）** callees=0 deps=0）/ c=0x6D1E30（0x49=73B **拷贝构造器（0x4101c0 基类 + [esi+0xda8] 子对象 0x6c8c40 + 四层虚表）** callees=2 deps=0）——AddSelectable 带名 + 坐标差值 + 拷贝构造器（与批 2781 c 路析构器同虚表四件套构造端）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2782{a,b,c}.txt（a 长度 0xA0、b/c 长度 0x80），完整读取确认（a 双 ret 0xc @0x6D9F71（返 1）/0x6D9F78（返 0）、b ret 4 @0x6D61B7、c ret 4 @0x6D1E76；下函数 a 0x6D9F80（`mov eax,[ecx+0xd90]; test; jne 0x6d9fba; mov eax,[ecx+0xd94]` 同域选择器观察项）、b 0x6D61C0（`lea eax,[ecx+ecx*2]; [edi]=魔数乘除; [ecx]=eax; neg; shl 4` 复杂坐标计算观察项）、c 0x6D1E80（`mov [ecx],0x7f4348; +4 0x7f432c; +8 0x7f4324; +0xc 0x7f431c; mov [0x887324],0; jmp 0x4101f0`——**析构器尾跳 thunk**（与批 2781 c 路析构器 0x6DC470 同虚表四件套）观察项））
+核验：.qwen/tmp/_check_callees2782.py 三路全 PASS（a 0/0、b 0/0、c 2/2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6829 → 6832（待 _append_tsv_batch2782.py）
+
+## a 路：0x6D9EF0 TacticalClass::AddSelectable（0x8B=139B，带名）
+
+- 范围 0x6D9EF0-0x6D9F78（双 ret 0xc @0x6D9F71（返 1）/0x6D9F78（返 0））；0x6D9F7B nop×5，下函数 0x6D9F80（`mov eax,[ecx+0xd90]; test eax,eax; jne 0x6d9fba; mov eax,[ecx+0xd94]`——同域选择器观察项）
+- thiscall 2 栈参（ret 0xc；ecx=this；[esp+0xc]=值1、[esp+0x10]=X、[esp+0x14]=Y）——**TacticalClass::AddSelectable**：
+  - `[ecx+0xdb0]`（count）== 0x1f4（500）→ 0x6d9f74 返 0（满）
+  - X（[esp+0x10]）< -0x20 → 0x6d9f74 返 0；X > `[0x886fa8]+0x20`（右界）→ 0x6d9f74 返 0
+  - Y（[esp+0x14]）< -0x20 → 0x6d9f74 返 0；Y > `[0x886fac]+0x20`（下界）→ 0x6d9f74 返 0
+  - `[0xb0cec8]`（表基）`[eax*4+0xb0cec8] = 值1`（eax=count×3）
+  - `[0xb0cecc] = X + [ecx+0xb0]`（实际 X + 偏移）
+  - `[0xb0ced0] = Y + [ecx+0xb4]`（实际 Y + 偏移）
+  - `[ecx+0xdb0]++`（count 递增）→ 返 1
+  - 语义：**TacticalClass::AddSelectable——count<500 且 X/Y 在 [-0x20, [0x886fa8/fac]+0x20] 界内 → [0xb0cec8] 表登记（值1 + X/Y 加 [+0xb0]/[+0xb4] 偏移）+ count++ → 返 1；越界/满 → 返 0**
+- 直接 call 0 个/去重 0（纯内存操作）——picker callees=0 完全吻合
+- 判类：TacticalClass::AddSelectable（带名——[0xb0cec8] 选中单位登记表 + [+0xdb0] count + [+0xb0]/[+0xb4] 偏移）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x6D6190 坐标差值计算器（0x2A=42B）
+
+- 范围 0x6D6190-0x6D61B7（ret 4 @0x6D61B7）；0x6D61BA nop×6，下函数 0x6D61C0（`lea eax,[ecx+ecx*2]; push esi; [esp+8] 参; lea eax,[eax+eax*4]; [edi]=eax; shl eax,2; cdq; sub; sar; [edi] 魔数乘除; [ecx]=eax; ... neg; shl 4; ...` 复杂坐标计算观察项——[+0xb0]/[+0xb4] 相关）
+- thiscall 1 栈参（ret 4；ecx=this；[esp+8]=输出指针）——**坐标差值计算器**：
+  - `[esp+8]`（输出）= `[ecx+0xb0] - [ecx+0xd64]`（X 差值）
+  - `[esp+8]+4`（输出+4）= `[ecx+0xb4] - [ecx+0xd68]`（Y 差值）
+  - 语义：**坐标差值计算器——输出 { [ecx+0xb0]-[ecx+0xd64], [ecx+0xb4]-[ecx+0xd68] } 到 [esp+8] 输出结构**
+- 直接 call 0 个/去重 0（纯内存操作）——picker callees=0 完全吻合
+- 判类：坐标差值计算器（推断名——[+0xb0]/[+0xb4] 与 [+0xd64]/[+0xd68] 双坐标差）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x6D1E30 拷贝构造器（0x49=73B）
+
+- 范围 0x6D1E30-0x6D1E76（ret 4 @0x6D1E76）；0x6D1E79 nop×7，下函数 0x6D1E80（`mov dword[ecx],0x7f4348; [ecx+4] 0x7f432c; [ecx+8] 0x7f4324; [ecx+0xc] 0x7f431c; mov [0x887324],0; jmp 0x4101f0`——**析构器尾跳 thunk**（与批 2781 c 路析构器 0x6DC470 同虚表四件套 + [0x887324] 清 + 0x4101f0 jmp）观察项）
+- thiscall 1 栈参（ret 4；esi=this；[esp+4]=源对象）——**拷贝构造器**：
+  - **call 0x4101c0**（基类拷贝构造）
+  - `lea ecx,[esi+0xda8]` → **call 0x6c8c40**（子对象构造）→ `[esi+0xda4]=eax`（保存返回）
+  - `[esi+0xdac]=0`（清字段）
+  - **四层虚表**：`[esi]=0x7f4348`、`[esi+4]=0x7f432c`、`[esi+8]=0x7f4324`、`[esi+0xc]=0x7f431c`
+  - 返 esi
+  - 语义：**拷贝构造器——0x4101c0 基类拷贝 + [esi+0xda8] 子对象 0x6c8c40 构造（[+0xda4] 存返回值）+ 清 [0xdac] + 四层虚表（0x7f4348/0x7f432c/0x7f4324/0x7f431c——与批 2781 c 路析构器 0x6DC470 同虚表四件套，**构造/析构配对称性**）**
+- 直接 call 2 个/去重 2：0x4101c0、0x6c8c40——picker callees=2 完全吻合
+- 判类：拷贝构造器（推断名——四层虚表对象族构造端，与批 2781 c 路析构器成对）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2782.py：a 路 0/0、b 路 0/0、c 路 2/2——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4101C0（基类拷贝·batch 已登记）、0x6C8C40（子对象构造·batch 已登记）——全部命中早前登记
+- 观察 [0xb0cec8]/[0xb0cecc]/[0xb0ced0]（a 路选中登记表三件套）、[0x886fa8]/[0x886fac]（a 路 X/Y 界）；虚表四件套 0x7f4348/0x7f432c/0x7f4324/0x7f431c（c 路，与批 2781 c 路同）；0x6D9F80（a 路下函数同域选择器）、0x6D61C0（b 路下函数坐标计算）、0x6D1E80（c 路下函数析构器尾跳 thunk）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **TacticalClass 选中登记域**：a 路 AddSelectable（[0xb0cec8] 表 + [+0xdb0] count + [+0xb0]/[+0xb4] 偏移）+ 下函数 0x6D9F80（[+0xd90]/[+0xd94] 选择器）——同域后续吸收
+- **四层虚表对象族**：c 路拷贝构造器（0x6D1E30）+ 批 2781 c 路析构器（0x6DC470）+ 下函数 0x6D1E80 析构器 thunk——构造/析构配对称性，同虚表 0x7f4348..0x7f431c
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
