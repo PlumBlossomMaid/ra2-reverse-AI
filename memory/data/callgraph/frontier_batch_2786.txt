@@ -1,0 +1,68 @@
+# frontier batch 2786
+
+日期：2026-11-01
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序；未登记池 1947→1944）
+三路：a=0x6CF4F0（0x2A=42B **成员清理器 + 清 +0x10（与批 2781 a 路逐字双胞胎）** callees=1 deps=0）/ b=0x6CF430（0x5B=91B **COM 接口查询器（riid vs 双 GUID + AddRef）** callees=0 deps=0）/ c=0x6CF1D0（0x5E=94B **双层析构器（首层虚表 0x7f4108 + 0x6cf350 基类 + 两子对象 0x7f4154 条件 delete）** callees=2 deps=0）——42B 清理器第四副本 + COM QI + 双层析构器
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2786{a,b,c}.txt（长度 0x80），完整读取确认（a ret @0x6CF519、b ret 0xc @0x6CF488、c ret @0x6CF22D；下函数 a 0x6CF520（`mov al,[ecx+0xc]; test; jne; ret 4; [esp+4] 参; [ecx+4]; sub; shr eax,3; ret 4`——**8B 项数组索引查找器**（批 2785 c 路下函数同模板）观察项 + 下下 0x6CF540（`[ecx+4] 数组; [edx+ecx*8] 读 8B 项; [eax]=; ret 8`——8B 项 getter 观察项）、b 0x6CF490（`mov ecx,[esp+8]; test; je; [esp+0xc]; test; je; [eax]=ecx; xor eax; ret 0xc; 0x6cf4a7: mov eax,0x80004003; ret 0xc`——COM 查询失败路径观察项）、c 0x6CF230（`mov ecx,[esp+4]; call 0x6cf350; xor eax; ret 4`——转发/清理 thunk 观察项））
+核验：.qwen/tmp/_check_callees2786.py 三路全 PASS（a 1/1、b 0/0、c 2/2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6841 → 6844（待 _append_tsv_batch2786.py）
+
+## a 路：0x6CF4F0 成员清理器 + 清 +0x10（0x2A=42B）
+
+- 范围 0x6CF4F0-0x6CF519（ret @0x6CF519）；0x6CF51A nop×6，下函数 0x6CF520（`mov al,[ecx+0xc]; test al,al; jne; xor eax; ret 4; [esp+4] 参; [ecx+4] 数组; sub eax,edx; shr eax,3; ret 4`——**8B 项数组索引查找器**（shr 3=8B 项，批 2785 c 路下函数 0x6CF6C0 同模板）观察项；下下函数 0x6CF540：`mov edx,[ecx+4]; [esp+8] 索引; [esp+4] 输出; [edx+ecx*8] 读 8B 项 → [eax] 输出; ret 8`——**8B 项 getter** 观察项）
+- thiscall 0 栈参（ret；esi=this）——**与批 2781 a 路 0x6DC580 逐字双胞胎（跨批逐字双胞胎第 28 对，清 +0x10 版本）**：
+  - `mov [esi+0x10],ebx`（清 +0x10）
+  - `[esi+4]` 非空且 `[esi+0xd]` 非零 → **0x7c8b3d**（delete 成员指针）→ 清 `[esi+4]=0`
+  - 清 `[esi+0xd]=0`、`[esi+8]=0`
+  - 返 eax 未设（void 语义）
+- 直接 call 1 个/去重 1：0x7c8b3d——picker callees=1 完全吻合
+- 判类：成员清理器（推断名——42B 清理器模板（清 +0x10）第四副本：0x6E64E0/0x6E47F0/0x6DC580/0x6CF4F0）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x6CF430 COM 接口查询器（0x5B=91B）
+
+- 范围 0x6CF430-0x6CF488（ret 0xc @0x6CF488）；0x6CF48B nop×5，下函数 0x6CF490（`mov ecx,[esp+8]; test ecx,ecx; je 0x6cf4a7; [esp+0xc]; test; je 0x6cf4a7; [eax]=ecx; xor eax; ret 0xc; 0x6cf4a7: mov eax,0x80004003; ret 0xc`——COM 双参空检失败路径观察项）
+- 3 栈参 stdcall（ret 0xc；[esp+0xc]=riid、[esp+0x10]=ppvOut）——**COM 接口查询器（QueryInterface 惯用）**：
+  - `[esp+0xc]`（riid）空 → ret **0x80004003（E_POINTER）**
+  - `repe cmpsd` [esp+0x10] vs **0x7e9b20**（4 dword GUID1）→ je 0x6cf478
+  - `repe cmpsd` [esp+0x10] vs **0x7f7c90**（4 dword GUID2）→ je 0x6cf478
+  - 不匹配 → ret **0x80004002（E_NOINTERFACE）**
+  - 0x6cf478：`[edx]=[esp+0xc]`（ppvOut=riid）+ `[edx]` 虚表槽 4 call（间接 **AddRef**）→ xor eax 返 0（S_OK）
+  - 语义：**COM 接口查询器——riid 与 GUID1(0x7e9b20)/GUID2(0x7f7c90) 比较，命中 → 输出 + 虚表槽 4（AddRef）→ S_OK；不命中 → E_NOINTERFACE；空参 → E_POINTER；与批 2774 a 路下函数 COM GUID getter 同域**
+- 直接 call 0 个/去重 0（唯一为虚表槽 4 间接 call）——picker callees=0 完全吻合
+- 判类：COM 接口查询器（推断名——双 GUID 表 0x7e9b20/0x7f7c90 + ret 0xc stdcall）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x6CF1D0 双层析构器（0x5E=94B）
+
+- 范围 0x6CF1D0-0x6CF22D（ret @0x6CF22D）；0x6CF22E nop×2，下函数 0x6CF230（`mov ecx,[esp+4]; call 0x6cf350; xor eax; ret 4`——转发/清理 thunk 观察项）
+- thiscall 0 栈参（ret；esi=this）——**双层析构器（与 73B 单成员析构器不同模板）**：
+  - `[esi]=0x7f4108`（首层虚表写回）
+  - **call 0x6cf350**（基类析构——已登记）
+  - `[esi+0x1c]=0x7f4154`（**第二层虚表**——子对象 1）
+  - 成员1：`[esi+0x20]` 非空且 `[esi+0x29]` 非零 → **0x7c8b3d**（delete）→ 清 `[esi+0x20]=0`；清 `[esi+0x29]=0`、`[esi+0x24]=0`
+  - `[esi+4]=0x7f4154`（**另一子对象虚表**——子对象 2）
+  - 成员2：`[esi+8]` 非空且 `[esi+0x11]` 非零 → **0x7c8b3d**（delete）→ 清 `[esi+8]=0`；清 `[esi+0x11]=0`、`[esi+0xc]=0`
+  - 语义：**双层析构器——首层虚表 0x7f4108 + 0x6cf350 基类析构 + 两子对象（[+0x20]/[+0x29] 与 [+8]/[+0x11] 各带虚表 0x7f4154）条件 delete + 清字段**
+- 直接 call 3 个/去重 2：0x6cf350、0x7c8b3d（×2）——picker callees=2 完全吻合
+- 判类：双层析构器（推断名——对象组合体析构，0x7f4108 主虚表 + 0x7f4154 子虚表×2）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2786.py：a 路 1/1、b 路 0/0、c 路 2/2——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0（batch 2498 追加，同 [Type+0x1573] 装载域）
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D（CRT delete）、0x6CF350（已登记——SwizzleManager::Process/对象清理）——全部命中
+- 观察 GUID 表 0x7e9b20/0x7f7c90（b 路 COM QI）；虚表 0x7f4108/0x7f4154（c 路）；0x6CF520/0x6CF540（a 路下函数 8B 项索引/ getter）、0x6CF490（b 路下函数）、0x6CF230（c 路下函数 thunk）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **42B 清理器模板（清 +0x10）四副本闭合**：0x6E64E0（2772 c）/0x6E47F0（2775 b）/0x6DC580（2781 a）/0x6CF4F0（本批 a）
+- **COM 接口域**：b 路 QI（0x7e9b20/0x7f7c90 双 GUID）——批 2774 a 路下函数 [0x7e97c0..0x7e97cc] GUID 同域；后续 COM 族吸收
+- **双层析构器族**：c 路 0x6CF1D0（0x7f4108 + 双 0x7f4154 子对象）——下函数 0x6CF230（0x6cf350 thunk）候选取
+- **跨批逐字双胞胎累计 28 对**（本批 a/批 2781 a）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
