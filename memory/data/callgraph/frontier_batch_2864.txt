@@ -1,0 +1,61 @@
+# frontier batch 2864
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4399E0（**带名 Status::GetDrawingMatrix** 40B）+ 0x43A350（**带名 NeuronClass::WhatAmI** 238B）+ 0x43A600（104B）
+三路：a=0x4399E0（0x26=38B **Status::GetDrawingMatrix** callees=1 deps=0）/ b=0x43A350（0xEE=238B **构造器（带名 WhatAmI 命名存疑）** callees=1 deps=0）/ c=0x43A600（0x68=104B **析构器** callees=1 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2864{a,b,c}.txt（a 长度 0x60、b 长度 0xF0、c 长度 0x80），完整读取确认（a ret 4 @0x439A05、b ret @0x43A43D、c ret @0x43A667）
+核验：.qwen/tmp/_check_callees2864.py 三路全 PASS（a 1/1、b 1/1、c 1/1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7069 → 7072（待 _append_tsv_batch2864.py）
+
+## a 路：0x4399E0 Status::GetDrawingMatrix（0x26=38B，带名）
+
+- 范围 0x4399E0-0x439A05（ret 4 @0x439A05）；下函数 0x439A10（**float 三分量坐标转换器**：fld [esi+0x18]/[+0x1c]/[+0x20] + 0x7c5f00 ×3——观察项）
+- stdcall 1 栈参（ret 4；ecx=this；[esp+0x3c]=输出指针 edi）——**Status::GetDrawingMatrix（YRpp 带名符号）**：
+  - `lea edx,[ecx+0x30]; lea ecx,[esp]; call 0x646980`（**0x646980 矩阵构造（[+0x30] 源 → 栈上目标）**）→ `mov esi,eax`
+  - `mov eax,[esp+0x3c]`（**输出指针**）→ `mov edi,eax; mov ecx,0xc; rep movsd`（**拷贝 0xc×4=48B 矩阵（12 dword）到输出**）→ ret 4
+- 直接 call 1 个/去重 1：0x646980——picker callees=1 完全吻合
+- 判类：Status::GetDrawingMatrix（带名——0x646980 矩阵构造 + 48B rep movsd 拷贝；逻辑直白但 0x646980 内部未核验——partial）(partial)
+
+## b 路：0x43A350 构造器（带名 WhatAmI 命名存疑）（0xEE=238B）
+
+- 范围 0x43A350-0x43A43D（ret @0x43A43D）
+- thiscall 0 栈参（ret；esi=this）——**构造器（带名 NeuronClass::WhatAmI 但内容与名字矛盾——按取证内容登记）**：
+  - `call 0x410170`（**基类构造**）→ `[+0x24]=0; [+0x28]=0; [+0x2c]=0` → `mov eax,[0xa8ed84]; [+0x30]=eax`（**全局帧计数 [0xA8ED84] 拷 [+0x30]**）
+  - **四虚表写**：`[esi]=0x7e3df0; [+4]=0x7e3dd4; [+8]=0x7e3dcc; [+0xc]=0x7e3dc4`（**多继承——与 BombClass/BuildingLightClass 同模板**）
+  - **双全局列表注册**（首次见双注册）：
+    - [0xB0F5D8] 动态数组：`eax=[0xb0f5e0](容量); cmp [0xb0f5e8](计数),eax; jl 0x43a3cc`（**容量充足直接注册**）→ 否则 `[0xb0f5e5]` 标志/`[0xb0f5ec]` 检查 → `call [0xb0f5d8]+8`（**扩容**）→ `[0xb0f5e8]++` → `[0xb0f5dc+count*4]=esi`
+    - [0xB0F670] 动态数组：同模板二次注册（[0xb0f678] 容量/[0xb0f680] 计数/[0xb0f670]+8 扩容/[0xb0f674] 数组）
+  - `mov eax,esi; ret`（返 this）
+- 直接 call 1 个/去重 1：0x410170——picker callees=1 完全吻合（+ [0xB0F5D8]/[0xB0F670] 虚表槽 8 间接 2）
+- 判类：构造器（**双全局注册**——0x410170 基类 + [0xA8ED84] 帧计数 [+0x30] + 四虚表 0x7E3DF0/0x7E3DD4/0x7E3DCC/0x7E3DC4 + [0xB0F5D8]/[0xB0F670] 双全局数组注册；**带名 WhatAmI 与内容矛盾——WhatAmI 通常返 RTTI，此处为构造器，命名存疑如实登记**）(partial)
+- **关键**：首次见到**双全局数组注册**（单一对象同时注册到 [0xB0F5D8] 与 [0xB0F670] 两个全局动态数组）——可能神经元/单位对象同时参与两个索引（按类型索引 + 按阵营索引？或绘制索引 + 逻辑索引）
+
+## c 路：0x43A600 析构器（0x68=104B）
+
+- 范围 0x43A600-0x43A667（ret @0x43A667）；下函数 0x43A670（**元素释放器（循环变体）**——观察项）
+- thiscall 0 栈参（ret；edi=this）——**析构器（虚表 0x7E3E74 + 成员清理链）**：
+  - `[edi]=0x7e3e74`（**析构态虚表**）
+  - 循环 `[+0x14]` 计数：`mov eax,[edi+8]; ecx=[eax+esi*4]; cmp,0; je 0x43a628`（**空槽跳过**）→ `mov edx,[ecx]; push 1; call [edx+0x20]`（**虚表槽 0x20 释放元素**）→ `[eax+esi*4-4]=0`（**前移压缩**）
+  - `lea esi,[edi+4]; mov edx,[edi+4]; call [edx+0xc]`（**虚表槽 0xc 清理 [+4] 子对象**）→ `[esi]=0x7e3e54`（**子虚表 0x7E3E54**）→ 成员释放（[+4] 门控 delete 标准模板）→ 返
+- 直接 call 1 个/去重 1：0x7c8b3d——picker callees=1 完全吻合（+ 虚表槽 0x20/0xc 间接 2）
+- 判类：析构器（虚表 0x7E3E74 + 元素虚表槽 0x20 逐个释放/前移压缩 + [+4] 子对象虚表槽 0xc + 标准成员释放）(partial)
+
+## 核验结果
+
+- _check_callees2864.py：a 路 1/1、b 路 1/1、c 路 1/1——三路全 PASS
+- picker callees vs 核验差值：三路均差 0（b/c 的虚表槽间接 Ghidra 未计入）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x646980（矩阵构造）、0x410170（基类构造）、0x7C8B3D（operator delete 族）
+- **a 路带名判三态**：Status::GetDrawingMatrix 为 YRpp 可信符号，但 0x646980 矩阵构造内部未核验（48B rep movsd 拷贝语义清晰）——partial（不强行升 semantics_verified，0x646980 作为外部依赖待核验）
+- **b 路命名存疑纪律**：带名 NeuronClass::WhatAmI 的机器码是构造器（非 RTTI 查询），**按取证内容登记构造器，如实标注命名矛盾**——符合"机器码是权威"纪律
+- **全局数组注册表族扩展**：[0x8B4190] 建筑灯光 / [0x89C668] 炸弹 / [0xB0F5D8]+[0xB0F670] 神经元（**双注册**）——三个全局对象登记中心，同模板（容量/计数/扩容/数组四元组）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **float 三分量坐标转换器**：a 路下函数 0x439A10（[esi+0x18..0x20] + 0x7c5f00 ×3）
+- **元素释放器循环变体**：c 路下函数 0x43A670
+- **Status::Update**（0x439B00，带名 1451B 大函数）/ **0x43A6B0**（76B）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
