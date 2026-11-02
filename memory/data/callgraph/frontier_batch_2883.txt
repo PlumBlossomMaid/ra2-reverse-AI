@@ -1,0 +1,53 @@
+# frontier batch 2883
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4589C0（60B）+ 0x458A00（121B）+ 0x458DB0（28B）
+三路：a=0x4589C0（0x3C=60B **容量利用率计算器** callees=2 deps=0）/ b=0x458A00（0x79=121B **进驻容量检查器** callees=1 deps=0）/ c=0x458DB0（0x1C=28B **可行动检查器** callees=1 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2883{a,b,c}.txt（a 长度 0x50、b 长度 0x90、c 长度 0x30），完整读取确认（a ret @0x4589FB、b ret 4 @0x458A78、c ret @0x458DCB）
+核验：.qwen/tmp/_check_callees2883.py 三路全 PASS（a 4/4 去重2、b 1/1 去重1、c 1/1 去重1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7126 → 7129（待 _append_tsv_batch2883.py）
+
+## a 路：0x4589C0 容量利用率计算器（0x3C=60B）
+
+- 范围 0x4589C0-0x4589FB（ret @0x4589FB）
+- thiscall 0 栈参（ret；esi=this）——**容量利用率计算器**：
+  - `lea edi,[esi+0x33c]; call 0x6c9650`（**AbstractClass::GetTotalAmount batch 155**——[+0x33c] 前 4 个 float 字段截断累加）→ `call 0x7c5f00`（_ftol）→ 0 则返 0
+  - 再次 `0x6c9650` → `0x7c5f00` → `shl eax,2`（**×4**）→ `cdq; idiv [Type+0x800]`（**除以 [Type+0x800] 容量**）→ 返商
+- 直接 call 4 个/去重 2——picker callees=2 **完全吻合**（0x6c9650/0x7c5f00 已登记）
+- 判类：容量利用率计算器（[+0x33c] GetTotalAmount 截断累加 ×2 → _ftol → ×4 ÷ [Type+0x800]）——建筑容量占用计算 (partial)
+
+## b 路：0x458A00 进驻容量检查器（0x79=121B）
+
+- 范围 0x458A00-0x458A78（ret 4 @0x458A78，1 栈参）
+- thiscall 1 栈参（ret 4；[esp+0xc]=参对象）——**进驻容量检查器**：
+  - `mov ecx,edi; call 0x47c520`（**CellClass::GetBuilding batch 066**——参对象链找建筑）→ `cmp eax,esi`（== this）→ 不等 ret 0
+  - `[Type+0x1620] == -1` → ret 1（**无限容量**）
+  - `[Type+0x16ab]` 标志 + `[+0x2e4]` 非空 → ret 1（**开关直通**）
+  - 虚表槽 0x1b8（lea [esp+0xc] 输出）→ `movsx edi, word[edi+0x24]`（**参对象+0x24 格**）+ `movsx eax, word[eax]`（返回值）→ `[Type+0x1620]+位置 > 参对象+0x24 → setg`（**容量比较**）
+- 直接 call 1 个/去重 1——picker callees=1 **完全吻合**（0x47c520 已登记）
+- 判类：进驻容量检查器（GetBuilding==this + Type+0x1620 容量 -1=无限 + 0x16ab/0x2e4 开关 + 虚表槽 0x1b8 位置 + [Type+0x1620]+pos > 参[+0x24] 判定）——建筑进驻许可 (partial)
+
+## c 路：0x458DB0 可行动检查器（0x1C=28B）
+
+- 范围 0x458DB0-0x458DCB（ret @0x458DCB）
+- thiscall 0 栈参（ret；esi=this）——**可行动检查器**：
+  - `call [eax+0x400]`（**虚表槽 0x400**）→ 真返 1
+  - 假 → `call 0x701120`（**目标存在判定器·[0x70112x] batch 1937**——虚表槽 0x3F4 取目标 + 双空判定）→ 返其值
+- 直接 call 1 个/去重 1——picker callees=1 **完全吻合**（0x701120 已登记）
+- 判类：可行动检查器（虚表槽 0x400 门 + 目标存在判定器 0x701120）——28B 短函数 (partial)
+
+## 核验结果
+
+- _check_callees2883.py：a 路 4/4（去重 2）、b 路 1/1（去重 1）、c 路 1/1（去重 1）——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x6c9650（AbstractClass::GetTotalAmount）、0x7c5f00（_ftol）、0x47c520（CellClass::GetBuilding）、0x701120（目标存在判定器·[0x70112x]）
+- **a 路怪癖**：GetTotalAmount ×2 + _ftol ×2——[+0x33c] 截断累加两轮、×4 整除——与 batch 155 GetTotalAmount 每步截断累加原版怪癖同源
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x458E00**（74B）/ **0x4593A0 BuildingClass::UnloadBunker**（带名 208B）/ **0x4595C0 BuildingClass::EmptyBunker**（带名 634B，7 callees）——后续候选（Bunker 族带名双函数）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
