@@ -1,0 +1,46 @@
+# frontier batch 2890
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x45ACE0（73B）+ 0x45AD30（73B）+ 0x45E520（89B）
+三路：a=0x45ACE0（0x49=73B 虚表 0x7E4468）/ b=0x45AD30（0x49=73B 虚表 0x7E4468 孪生）/ c=0x45E520（0x57=89B **多继承构造器** callees=1 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2890{a,b,c}.txt（a/b 长度 0x60、c 长度 0x70），完整读取确认（a ret 4 @0x45AD26、b ret 4 @0x45AD76、c ret 4 @0x45E576）
+核验：.qwen/tmp/_check_callees2890.py 三路全 PASS（a 2/2 去重1、b 2/2 去重1、c 1/1 去重1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7147 → 7150（待 _append_tsv_batch2890.py）
+
+## a/b 路：VectorClass 族 scalar deleting 析构器 ×2（虚表 0x7E4468，逐字节同构孪生）
+
+- 范围 a 0x45ACE0-0x45AD26 / b 0x45AD30-0x45AD76
+- thiscall 1 栈参（ret 4）——**scalar deleting 析构器（虚表 0x7E4468）**：
+  - `mov [esi], 0x7E4468`（虚表复位）
+  - `[+4]` 指针非空 且 `[+0xd]` 标志非零 → `call 0x7c8b3d`（CRT delete）→ `[+4]=0`（释放内部缓冲）
+  - `[+0xd]=0`、`[+8]=0`（字段清零）
+  - `[esp+8] & 1` → `call 0x7c8b3d`（delete this）
+- 直接 call 各 2 个/去重 1——picker callees=1 **完全吻合**（0x7c8b3d 已登记）
+- 判类：VectorClass 族 scalar deleting 析构器（虚表 0x7E4468 新虚表——两实例逐字节孪生） (partial)
+
+## c 路：0x45E520 多继承构造器（0x57=89B）
+
+- 范围 0x45E520-0x45E576（ret 4 @0x45E576）
+- thiscall 1 栈参（ret 4）——**多继承构造器**：
+  - `call 0x711840`（**子对象族构造器 batch 1432**——663B 14 子对象构造）传栈参
+  - 清 `[+0xe00]/[+0x1788]/[+0x178c]` 三 dword = 0；`[+0x1790]=1`、`[+0x1791]=0` 双标志
+  - `[+0x1784]=0x7E4638`（**子对象虚表**）
+  - 写 **四虚表** `[esi]/[+4]/[+8]/[+0xc]` = 0x7E4570/0x7E4554/0x7E454C/0x7E4544（**多继承四层虚表族**）
+- 直接 call 1 个/去重 1——picker callees=1 **完全吻合**（0x711840 已登记）
+- 判类：多继承构造器（四虚表 0x7E4570 族 + 子对象虚表 0x7E4638 + 0x711840 转发 + 三 dword 清零 + 双标志）——0x711840 子对象族配对的宿主构造器 (partial)
+
+## 核验结果
+
+- _check_callees2890.py：a 路 2/2（去重 1）、b 路 2/2（去重 1）、c 路 1/1（去重 1）——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7c8b3d（CRT delete）、0x711840（子对象族构造器·[0x711840] batch 1432）
+- **族谱推进**：VectorClass 族 scalar deleting 析构器第六/七实例（虚表 0x7E4468 新增孪生）；c 路多继承四虚表构造器——0x711840 调用方现场兑现（batch 1432 配对）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x45E760**（65B）/ **0x45E880**（43B）/ **0x45ED50**（127B）——后续候选（0x45Exxx 区新族）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
