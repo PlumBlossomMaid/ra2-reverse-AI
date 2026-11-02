@@ -1,0 +1,56 @@
+# frontier batch 2819
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段；未登记池 6918→6915）——0x40 段继续（清理器变体 + 虚表析构族 0x7E1B44 双实例）
+三路：a=0x40E940（0x27=39B **成员释放清理器（变体）** callees=1 deps=0）/ b=0x40EAB0（0x47=71B **虚表写入成员析构器（虚表 0x7E1B44）** callees=1 deps=0）/ c=0x40EB00（0x47=71B **虚表写入成员析构器（同模板）** callees=1 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2819{a,b,c}.txt（长度 0x100），完整读取确认（a ret @0x40E966、b ret 4 @0x40EAF6、c ret 4 @0x40EB46）
+核验：.qwen/tmp/_check_callees2819.py 三路全 PASS（a 1/1、b 1/1、c 1/1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6934 → 6937（待 _append_tsv_batch2819.py）
+
+## a 路：0x40E940 成员释放清理器（变体）（0x27=39B）
+
+- 范围 0x40E940-0x40E966（ret @0x40E966）；0x40E967-0x40E96F nop×9，下函数 0x40E970（**+0xc 门控索引线性查找**观察项）+ 0x40E9B0（**+0xc 门控索引换算**观察项）+ 0x40E9D0（**预分配装载器**观察项）
+- thiscall 0 栈参（ret；esi=this）——**成员释放清理器（变体）**（与批 2809 b 路 0x40B7F0 同模板——容器族变体第六实例）：
+  - `mov eax,[esi+4]`（**无 +0x10 清零**——变体差异点）
+  - `test eax,eax; je` + `cmp byte[esi+0xd],0; je`（**双条件门控**）→ `push eax; call 0x7c8b3d`（**delete 成员 [+4]**）→ `mov [esi+4],0`（**清零**）
+  - `mov [esi+0xd],0; mov [esi+8],0`（**清零 [+0xd]/[+8]**）
+- 直接 call 1 个/去重 1：0x7c8b3d（CRT delete）——picker callees=1 完全吻合
+- 判类：成员释放清理器（变体）（推断名——容器族变体第六实例，variant_of_0x40B7F0）
+- 语义证据级别：assembly_decompile_verified（variant_of_0x40B7F0）
+
+## b 路：0x40EAB0 虚表写入成员析构器（虚表 0x7E1B44）（0x47=71B）
+
+- 范围 0x40EAB0-0x40EAF6（ret 4 @0x40EAF6）；0x40EAF9-0x40EAFF nop×7，下函数 0x40EB00（**本批 c 路**）观察项
+- thiscall 1 栈参（ret 4；esi=this/栈参=delete flags）——**虚表写入成员析构器（虚表 0x7E1B44）**（与批 2811-2817 同模板，新虚表 0x7E1B44）：
+  - `mov eax,[esi+4]; mov [esi],0x7e1b44`（**虚表写入 0x7E1B44**）
+  - `test eax,eax; je` + `cmp byte[esi+0xd],0; je`（**双条件门控**）→ `push eax; call 0x7c8b3d`（**delete 成员 [+4]**）→ `mov [esi+4],0`（**清零**）
+  - `mov [esi+0xd],0; mov [esi+8],0`（**清零 [+0xd]/[+8]**）
+  - `test al,1; je` → `push esi; call 0x7c8b3d`（**delete this**）→ `mov eax,esi; ret 4`（**返 this**）
+- 直接 call 2 个/去重 1：0x7c8b3d（CRT delete）——picker callees=1 完全吻合
+- 判类：虚表写入成员析构器（推断名——容器族析构虚表第九档 0x7E1B44，scalar deleting destructor）
+- 语义证据级别：assembly_decompile_verified（same_template_vtable_0x7E1B44）
+
+## c 路：0x40EB00 虚表写入成员析构器（同模板）（0x47=71B）
+
+- 范围 0x40EB00-0x40EB46（ret 4 @0x40EB46）；0x40EB49-0x40EB4F nop×7，下函数 0x40EB50（**计时器全局初始化器**：`mov ecx,0x88734c; call 0x6c8c40`（timeGetTime>>4 batch 060）+ [0x887348]=eax + [0x887350]=0 + push 0x40eb80 + 0x7c978a——观察项）观察项 + 0x40EB80（**空返回 stub**观察项）+ 0x40EB90（**会话计时器初始化器**：[0x88732c] + 0x5d5890 + [0x887328] + 0x5d5870 + [0x887330]=0——观察项）
+- thiscall 1 栈参（ret 4）——**虚表写入成员析构器（同模板）**——逐字节同 b 路（0x40EAB0 与 0x40EB00 全指令一致，虚表均 0x7E1B44）：
+  - `mov [esi],0x7e1b44`（**虚表写入 0x7E1B44**）+ 成员 delete（[+0xd] 门控）+ 清零 + flags bit0 delete this
+- 直接 call 2 个/去重 1：0x7c8b3d（CRT delete）——picker callees=1 完全吻合
+- 判类：虚表写入成员析构器（推断名——与 b 路逐字节同构；虚表 0x7E1B44 第二实例）
+- 语义证据级别：assembly_decompile_verified（identical_to_0x40EAB0）
+
+## 核验结果
+
+- _check_callees2819.py：a 路 1/1、b 路 1/1、c 路 1/1——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D（CRT delete）
+- **虚表析构族九档虚表确认**：0x7E177C/0x7E17EC/0x7E180C/0x7E184C/0x7E188C/0x7E18DC/0x7E192C/0x7E1A64/0x7E1B44——容器族析构虚表布局第九档
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **计时器全局初始化器族**：c 路下函数 0x40EB50（[0x887348] 族：mov ecx,0x88734c + call 0x6c8c40 + [0x887348]=eax + [0x887350]=0 + 0x7c978a）+ [0x88732c] 会话计时器（0x5d5890/0x5d5870/0x5d5880）+ [0x88733c] 族（0x40EBD0 同款）——**主循环帧计时全局 [0x887348]/[0x88734c]/[0x887350]**（batch 262 主循环帧步进已见 [0x887348]/[0x88734C]/[0x887350] 时间戳全局族，写侧初始化器确认）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
