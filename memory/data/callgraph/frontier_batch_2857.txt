@@ -1,0 +1,59 @@
+# frontier batch 2857
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x433C00（46B）+ 0x433C30（50B）+ 0x433EF0（88B）
+三路：a=0x433C00（0x2E=46B **成员三元释放器** callees=1 deps=0）/ b=0x433C30（0x30=48B **构造加载器** callees=2 deps=0）/ c=0x433EF0（0x56=86B **双模式调用器** callees=1 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2857{a,b,c}.txt（a 长度 0x60、b 长度 0x70、c 长度 0xA0，含下函数族开头），完整读取确认（a ret @0x433C2D、b ret 4 @0x433C5F、c ret 8 @0x433F45）
+核验：.qwen/tmp/_check_callees2857.py 三路全 PASS（a 3/3 去重1、b 2/2、c 2/2 去重1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7048 → 7051（待 _append_tsv_batch2857.py）
+
+## a 路：0x433C00 成员三元释放器（0x2E=46B）
+
+- 范围 0x433C00-0x433C2D（ret @0x433C2D）；下函数 0x433C30（b 路）
+- thiscall 0 栈参（ret；esi=this）——**成员三元释放器（与批 2856 c 路 0x433940 析构器的子对象释放段逐字节同构——可能为析构子例程）**：
+  - `eax=[+0x18]; test; je → push eax; call 0x7c8b3d`（delete [+0x18]）
+  - `eax=[+0x1c]; test; je → push eax; call 0x7c8b3d`（delete [+0x1c]）
+  - `push esi; call 0x7c8b3d`（**delete this**）
+- 直接 call 3 个/去重 1：0x7c8b3d——picker callees=1 完全吻合
+- 判类：成员三元释放器（[+0x18]/[+0x1c]/本体 delete；0x433940 析构子例程同构）(partial)
+
+## b 路：0x433C30 构造加载器（0x30=48B）
+
+- 范围 0x433C30-0x433C5F（ret 4 @0x433C5F）；下函数 0x433C70（**word 交换器**：[+0x24] 与 param 交换——观察项）+ 0x433C80（**word 写入器**：[+0x26]=param 返 [+0x24]）+ 0x433C90（**byte 交换器**：[+0x41] 与 param）
+- stdcall 1 栈参（ret 4；esi=this；[esp+8]=param1）——**构造加载器**：
+  - `mov ecx,[esp+8]; call 0x433990`（**0x433990——批 2856 c 路下函数观察的 new 0x6c + 0x4739f0 构造链，param1 传入**）→ `test eax; je 0x433c5c`（**失败 → 返 0**）
+  - `[esi+4]=eax`（**子对象指针 [+4]**）
+  - `mov ecx,[eax+4]; [esi+0x18]=ecx; mov edx,[eax+0xc]; [esi+0x1c]=edx`（**从子对象 [+4]/[+0xc] 拷出两值 → 本对象 [+0x18]/[+0x1c]**）
+  - `mov ecx,esi; call 0x434700`（**0x434700 初始化**）→ `mov al,1; ret 4`（成功）
+- 直接 call 2 个/去重 2：0x433990、0x434700——picker callees=2 完全吻合
+- 判类：构造加载器（0x433990 子构造 + 字段拷贝 [+4]/[+0xc]→[+0x18]/[+0x1c] + 0x434700 初始化；成功返 1）(partial)
+
+## c 路：0x433EF0 双模式调用器（0x56=86B）
+
+- 范围 0x433EF0-0x433F45（ret 8 @0x433F45）；下函数 0x433F50（**大遍历器**：[+4] 链遍历 + 多成员读——观察项）
+- stdcall 2 栈参（ret 8；esi=this；[esp+8]=param1、[esp+0xc]=param2）——**双模式调用器**：
+  - `mov al,[esi+0x40]; test; je 0x433f28`（**[+0x40] 模式标志**）
+  - **置位分支**：`[esi+0x2c]=2` → `push param2; lea ecx,[esp+0x10]; push 0; push ecx; push param1; call 0x433cf0`（**0x433CF0 四参 (param1, &stack, 0, param2)**）→ `[esi+0x2c]=1`（**恢复模式**）→ ret 8
+  - **未置位分支**：`[esi+0x2c] 不变` → `call 0x433cf0`（同四参）→ ret 8
+- 直接 call 2 个/去重 1：0x433cf0（×2）——picker callees=1 完全吻合
+- 判类：双模式调用器（[+0x40] 门控 → [+0x2c]=2/1 → 0x433CF0 四参）(partial)
+
+## 核验结果
+
+- _check_callees2857.py：a 路 3/3（去重 1）、b 路 2/2、c 路 2/2（去重 1）——三路全 PASS
+- picker callees vs 核验差值：三路均差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D（operator delete 族）、0x433990（new 0x6c + 0x4739f0 构造链）、0x434700（初始化）、0x433CF0（四参调用器）
+- **a 路与 0x433940 同构**：0x433C00 释放段（[+0x18]/[+0x1c]/本体）与批 2856 c 路 0x433940 析构器内部 [+4] 子对象的两级释放+delete 逐字节同构——**对象族析构子例程复用**（0x433990 构造出的子对象由 0x433C00 三元释放回收）
+- **b 路对象族**：0x433990 建 → 0x433C30 加载 → 0x434700 初始化 → 0x433C00 释放——0x433Cxx/0x4339xx 对象族构造-加载-初始化-释放链闭合
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **word 交换器/写入器**：b 路下函数 0x433C70/0x433C80（[+0x24]/[+0x26] 字段访问器）
+- **byte 交换器**：0x433C90（[+0x41] 与 param）
+- **大遍历器**：c 路下函数 0x433F50（[+4] 链遍历 + 多成员）
+- **0x4340A0**（86B）/ **0x435560**（69B）/ **0x435820 BuildingLightClass::BuildingLightClass**（带名 816B 构造器）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
