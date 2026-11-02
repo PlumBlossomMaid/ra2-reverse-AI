@@ -1,0 +1,53 @@
+# frontier batch 2898
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x46AFD0（30B）+ 0x46AFF0（55B）+ 0x46B280（**带名 BulletClass::InitScalable** 137B）
+三路：a=0x46AFD0（0x1E=30B **全局计数分配器** callees=0 deps=0）/ b=0x46AFF0（0x38=55B **全局计数释放器** callees=0 deps=0）/ c=0x46B280（0x8A=137B **BulletClass::InitScalable** callees=1 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2898{a,b,c}.txt（a 长度 0x30、b 长度 0x50、c 长度 0x90），完整读取确认（a ret 4 @0x46AFEB、b ret 4 @0x46B024、c ret @0x46B308）
+核验：.qwen/tmp/_check_callees2898.py 三路全 PASS（a 0/0、b 0/0、c 1/1 去重1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7171 → 7174（待 _append_tsv_batch2898.py）
+
+## a 路：0x46AFD0 全局计数分配器（0x1E=30B）
+
+- 范围 0x46AFD0-0x46AFEB（ret 4 @0x46AFEB，1 栈参）
+- thiscall 1 栈参（ret 4；[esp+4]=对象指针，+0x1c 偏移）——**全局计数分配器**：
+  - `[0xabcd3c]`（全局计数）`inc` → 回写
+  - `lea eax,[esp+4+0x1c]`（**对象 +0x1C 偏移**）→ `call dword ptr [0x7e11c8]`（**IAT 导入槽**——分配/登记）
+- 直接 call 0 个（IAT 间接 [0x7E11C8]——核验脚本不抓非字面量，预期差）
+- 判类：全局计数分配器（[0xABCD3C] 计数自增 + IAT 槽 0x7E11C8 分配 [obj+0x1C]）——与 b 路计数释放配对 (partial)
+
+## b 路：0x46AFF0 全局计数释放器（0x38=55B）
+
+- 范围 0x46AFF0-0x46B024（ret 4 @0x46B024，1 栈参）
+- thiscall 1 栈参（ret 4；[esp+0xc]=对象指针）——**全局计数释放器**：
+  - `[0xabcd3c]`（全局计数）`dec` → 回写（与 a 路 inc 配对）
+  - `lea eax,[edi+0x1c]` → `call dword ptr [0x7e11cc]`（**IAT 导入槽**——释放）
+  - 失败且对象非空 → `call dword ptr [edx+0x20]`（**虚表槽 0x20 清理**）push 1
+- 直接 call 0 个（IAT 间接 [0x7E11CC] + 虚表槽 0x20——预期差）
+- 判类：全局计数释放器（[0xABCD3C] 计数自减 + IAT 槽 0x7E11CC 释放 [obj+0x1C] + 失败虚表槽 0x20 清理）——与 a 路分配配对 (partial)
+
+## c 路：0x46B280 BulletClass::InitScalable（0x8A=137B，带名）
+
+- 范围 0x46B280-0x46B308（ret @0x46B308）
+- thiscall 0 栈参（ret；esi=this）——**BulletClass::InitScalable（YRpp 带名——弹道按比例初始化）**：
+  - `[0x89de20]` vs `[0x89de28]` 计数检查（**全局弹道表容量/计数**）→ 不足则检查 `[0x89de25]` 标志 → `[0x89de2c]` 容量 → 虚表槽 8 扩容 `[0x89de18]` → 计数 `[0x89de28]`++ → `[0x89de1c]` 数组写入 this 指针
+  - `[0x89de28]-5` 与 0 取 max → **imul 0x55555556 → shr 0x1f → 补——除以 5（编译器魔数除法）** ×2 → `[+0xac]` 类型 `+0x2e4` 值 + 商 → `push; call 0x46c840`（已登记——缩放/附加）
+- 直接 call 1 个/去重 1——picker callees=1 **完全吻合**（0x46c840 已登记）
+- 判类：**BulletClass::InitScalable**（带名——[0x89DE18] 全局弹道表注册（查重→满扩→计数++入表）+ 0x55555556÷5 魔数除法 + Type+0x2E4 缩放 + 0x46C840 附加）——与批 2896 构造器 [0xA8ED48] 表不同的第二全局弹道表 (partial)
+
+## 核验结果
+
+- _check_callees2898.py：a 路 0/0、b 路 0/0、c 路 1/1——三路全 PASS
+- picker callees vs 核验差值：**a/b 路 picker=1（Ghidra 计 IAT 间接）vs 核验=0（非字面量）**——IAT 槽 [0x7E11C8]/[0x7E11CC] 间接调用预期差；**c 路差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x46c840（弹道缩放/附加）
+- **a/b 配对**：[0xABCD3C] 全局计数 inc/dec 对 + IAT 槽 0x7E11C8/0x7E11CC 分配/释放——对象池生命周期
+- **c 路带名**：InitScalable 弹道第二全局表 [0x89DE18] 注册 + 0x55555556÷5 魔数除法（与 QWEN.md 0x66666667÷5 同族）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x46B030**（b 路下函数 [+0xac]+0x2dc 链）/ **0x46B5C0**（30B）/ **0x46B5E0**（42B）/ **0x46B750**（39B）——后续候选（0x46Bxxx 区 BulletClass 邻域）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
