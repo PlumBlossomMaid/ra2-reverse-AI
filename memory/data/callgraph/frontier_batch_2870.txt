@@ -1,0 +1,64 @@
+# frontier batch 2870
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x445F00（114B）+ 0x447110（247B）+ 0x447AC0（84B）
+三路：a=0x445F00（0x70=112B **双槽位状态检查器** callees=2 deps=0）/ b=0x447110（0xF5=245B **生产模式切换器** callees=3 deps=0）/ c=0x447AC0（0x52=82B **坐标缩放器** callees=2 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2870{a,b,c}.txt（a 长度 0xB0、b 长度 0x120、c 长度 0x90，含下函数族开头），完整读取确认（a ret 0xc @0x445F6F、b ret 4 @0x447204、c ret 4 @0x447B11）
+核验：.qwen/tmp/_check_callees2870.py 三路全 PASS（a 3/3 去重2、b 3/3、c 2/2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7087 → 7090（待 _append_tsv_batch2870.py）
+
+## a 路：0x445F00 双槽位状态检查器（0x70=112B）
+
+- 范围 0x445F00-0x445F6F（ret 0xc @0x445F6F）；下函数 0x445F80（**建筑状态机大函数**：[+0x6e4] 标志门 + [+0x520]+0x1560——观察项）
+- stdcall 3 栈参（ret 0xc；esi=this；[esp+0xc]/[0x10]/[0x14]=三参）——**双槽位状态检查器**：
+  - 槽 0：`push 0; call [eax+0x3f8]`（**虚表槽 0x3f8 (0)**）→ `[eax]==0; je 0x445f2e`（**空跳过**）→ 再取 → `mov ecx,[eax]; call 0x772a90`（**0x772A90 检查**）→ `or edi,eax`（**OR 合并**）
+  - 槽 1：`push 1; call [eax+0x3f8]`（**虚表槽 0x3f8 (1)**）→ 同路 → `call 0x772a90` → `or edi,eax`
+  - 收尾：`push [esp+0x14]; push [esp+0x10]; push edi|1; call 0x6f8df0`（**0x6F8DF0 三参**）→ ret 0xc
+- 直接 call 3 个/去重 2：0x772a90（×2）、0x6f8df0——picker callees=2 完全吻合（+ 虚表槽 0x3f8 间接 ×4）
+- 判类：双槽位状态检查器（虚表槽 0x3f8 双通道（0/1）+ 0x772A90 检查 OR 合并 + 0x6F8DF0 三参收尾）(partial)
+
+## b 路：0x447110 生产模式切换器（0xF5=245B）
+
+- 范围 0x447110-0x447204（ret 4 @0x447204）；下函数 0x447210（**检查器**：[+0x520]+0x1701 标志门——观察项）
+- stdcall 1 栈参（ret 4；esi=this；[esp+8]=param1 模式 -1/0/1）——**生产模式切换器**：
+  - `mov al,[esi+0x6e9]; test; je 0x4471c5`（**[+0x6e9] 标志门**）
+  - param1 分派（cmp -1/0/1）：
+    - **==1**：`call [eax+0x184]`（**虚表槽 0x184**）→ `cmp eax,0x13; je 0x447203`（**类型 0x13 → 跳过**）→ `[+0x6df]` 标志 → 0x44717D 汇合
+    - **==0**：`call [edx+0x184]` → `cmp eax,0x13; jne 0x447203`（**类型 !=0x13 → 跳过**——与 ==1 分支条件相反）→ 0x447195
+    - **==-1**：`call [eax+0x184]` → `cmp 0x13; setne al`（**类型 !=0x13 → 1**）→ 汇合
+  - **汇合（0x44717D）**：`call [edx+0x1e8]（push 0/0x13）`（**虚表槽 0x1e8 两参**）→ `call [eax+0x1ec]`（**虚表槽 0x1ec**）
+  - 0x447195：`mov ecx,[esi+0x21c]; call 0x50b6f0`（**0x50B6F0**）→ `test al; je 0x447203` → `mov ecx,[0x8871e0]; push 0; mov edx,0x2000; push 0x3f800000; mov ecx,[ecx+0x70c]; call 0x750920`（**[0x8871E0]+0x70c + 0x750920 三参（1.0, 0x2000）——音量/数值设置**）→ ret 4
+  - **备选路径（0x4471C5）**：[+0x6e9] 未置位 → `[+0x520]+0x16c0` 标志门 → `call [edx+0x84]`（**虚表槽 0x84**）→ `call 0x50b730`（**0x50B730**）→ `call [edx+0xd4]`（**虚表槽 0xd4**）→ `call [eax+0xf8]`（**虚表槽 0xf8**）→ ret 4
+- 直接 call 3 个/去重 3：0x50b6f0、0x750920、0x50b730——picker callees=3 完全吻合（+ 虚表槽 0x184/0x1e8/0x1ec/0x84/0xd4/0xf8 间接 6）
+- 判类：生产模式切换器（[+0x6e9] 门 + param 三路分派（-1/0/1）+ 虚表槽 0x184 类型 0x13 检查 + 0x1e8/0x1ec 模式写 + 0x50B6F0 + [0x8871E0]+0x70c 数值设置 0x750920；[+0x520]+0x16c0 备选路径）(partial)
+
+## c 路：0x447AC0 坐标缩放器（0x52=82B）
+
+- 范围 0x447AC0-0x447B11（ret 4 @0x447B11）；下函数 0x447B20（**检查器**：[+0x520]+0x16bc 标志门 + 虚表槽 0x1b8——观察项）
+- stdcall 1 栈参（ret 4；edi=this；[esp+0xc]=输出指针 esi）——**坐标缩放器**：
+  - `push 0; mov ecx,[edi+0x520]; call 0x45eca0`（**0x45ECA0（[+0x520] 源）**）→ `shl esi,7; sub esi,0x80`（**×128 - 128**）
+  - `mov ecx,[edi+0x520]; call 0x45ec90`（**0x45EC90**）→ `shl eax,7; sub eax,0x80`（**×128 - 128**）
+  - `add edi,0x9c`（**[+0x9c] 坐标三分量**）→ `mov ecx,[edi]; add ecx,eax`（**X 累加**）→ `mov edx,[edi+4]; add edx,esi`（**Y 累加**）→ `mov edi,[edi+8]`（**Z**）
+  - `[输出]=ecx; [输出+4]=edx; [输出+8]=edi`（**三分量写回**）→ ret 4
+- 直接 call 2 个/去重 2：0x45eca0、0x45ec90——picker callees=2 完全吻合
+- 判类：坐标缩放器（0x45ECA0/0x45EC90 双源 ×128-128 缩放 + [+0x9c] 坐标累加 + 三分量写回）(partial)
+
+## 核验结果
+
+- _check_callees2870.py：a 路 3/3（去重 2）、b 路 3/3、c 路 2/2——三路全 PASS
+- picker callees vs 核验差值：三路均差 0（a/b 虚表槽间接 Ghidra 未计入）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x772A90（检查族）、0x6F8DF0（三参收尾）、0x50B6F0/0x50B730（[+0x21c] 对象检查族）、0x750920（[0x8871E0]+0x70c 数值设置）、0x45ECA0/0x45EC90（坐标取源族）
+- **b 路虚拟类型 0x13 模式**：虚表槽 0x184 类型检查 ==0x13 与批 2869 c 路 0x443B90（AssignTarget +0xac==0x13）同为建筑类型 0x13 判断——**0x13 = 特定建筑类型码（推断：假建筑/隐形建筑？）**
+- **+0x6e9/+0x6e4/+0x6df/+0x6e3 建筑标志区**：b/a 路读取的 +0x6ex 标志族——与批 2869 a 路 [+0x6e3] 连续，建筑状态字段族
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **建筑状态机大函数**：a 路下函数 0x445F80（[+0x6e4] + [+0x520]+0x1560——大函数）
+- **检查器（[+0x520]+0x1701）**：b 路下函数 0x447210
+- **检查器（[+0x520]+0x16bc）**：c 路下函数 0x447B20
+- **0x448070**（234B）/ **0x449410**（46B）/ **0x4494C0**（122B）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
