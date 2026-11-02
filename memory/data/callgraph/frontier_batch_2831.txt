@@ -1,0 +1,59 @@
+# frontier batch 2831
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段；未登记池 6954→6951）——0x41Bxxx AircraftClass 域继续（复合门控判定 + 孪生 COM 取对象器）
+三路：a=0x41B890（0x67=103B **复合门控判定器** callees=1 deps=0）/ b=0x41B920（0x53=83B **COM 取对象器** callees=2 deps=0）/ c=0x41B980（0x52=82B **COM 取对象器（孪生）** callees=2 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2831{a,b,c}.txt（长度 0x100），完整读取确认（a ret @0x41B8F6、b ret @0x41B972、c ret @0x41B9D1）
+核验：.qwen/tmp/_check_callees2831.py 三路全 PASS（a 1/1、b 2/2、c 2/2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6970 → 6973（待 _append_tsv_batch2831.py）
+
+## a 路：0x41B890 复合门控判定器（0x67=103B）
+
+- 范围 0x41B890-0x41B8F6（ret @0x41B8F2 命中/0x41B8F6 未中）；0x41B8F7-0x41B8FF nop×9，下函数 0x41B900（**空返回 stub**观察项）+ 0x41B910（**虚表槽 0x50 尾跳**观察项）
+- thiscall 0 栈参（ret；esi=this，返 byte）——**复合门控判定器**：
+  - `mov eax,[esi+0x2b4]; test; je 0x41b8a6`（**+0x2B4 非空判断**）
+  - `cmp [esi+0xac],0x1f; jne 0x41b8f3`（**+0xAC != 0x1F → 直接出**——对 [esi+0xac] 门控的"双条件取反"路径）
+  - `mov al,[esi+0x3d5]; test; je 0x41b8f3`（**+0x3D5 标志位门控**）
+  - 类型排除：`call [eax+0x184]`（**虚表槽 0x184 类型**）→ `cmp eax,0x1a; je 出` + `cmp eax,0x1b; je 出`（**类型 0x1A/0x1B 排除**）
+  - `mov ecx,[esi+0x5d4]; test; jne 0x41b8e6`（**+0x5D4 目标门控**）→ `mov al,[esi+0x3d4]; test; jne`（**+0x3D4 标志**）→ 双空出
+  - `call 0x6ec300`（**全局判定调用**）→ `test al; je 出` → 命中 `mov al,1; ret`（**返 1**）
+- 直接 call 1 个/去重 1：0x6ec300——picker callees=1 完全吻合
+- 判类：复合门控判定器（推断名——+0x2B4/+0x3D5/+0x5D4/+0x3D4 组合门控 + 类型 0x1A/0x1B 排除 + 0x6EC300 全局判定）
+- 语义证据级别：assembly_decompile_verified（partial）
+
+## b 路：0x41B920 COM 取对象器（0x53=83B）
+
+- 范围 0x41B920-0x41B972（ret @0x41B946/0x41B972）；0x41B973-0x41B97F nop×13，下函数 0x41B980（**本批 c 路**）观察项
+- thiscall 0 栈参（ret；esi=this，返 byte）——**COM 取对象器（类型匹配分派）**：
+  - `mov ecx,[0x8871e0]; mov eax,[esi+0x6c4]`（**全局场景 + 类型**）
+  - `cmp eax,[ecx+0x4e0]; je 0x41b948`（**类型 == 全局+0x4E0 → COM 路径**）+ `cmp eax,[ecx+0x514]; je`（**类型 == +0x514 → COM 路径**）
+  - 默认路径：`mov ecx,esi; call 0x4de620`（**常规取对象**）→ ret
+  - COM 路径：`mov eax,[esi+0x674]; test; jne`（**+0x674 COM 对象非空**）→ `push 0x80004003; call 0x7dc720`（**错误抛投**）→ `push eax; mov eax,[eax]; call [eax+0x80]`（**COM 虚表槽 0x80**）→ `neg/sbb/neg`（**布尔翻转**）→ ret
+- 直接 call 2 个/去重 2：0x4de620、0x7dc720——picker callees=2 完全吻合
+- 判类：COM 取对象器（推断名——[0x8871E0]+0x4E0/0x514 类型匹配 → COM 虚表槽 0x80 vs 常规 0x4DE620 分派）(partial)
+
+## c 路：0x41B980 COM 取对象器（孪生）（0x52=82B）
+
+- 范围 0x41B980-0x41B9D1（ret @0x41B9A6/0x41B9D1）；0x41B9D2-0x41B9DF nop×14，下函数 0x41B9E0（**+0x6D5 字节 getter**观察项）+ 0x41B9F0（**+0xAC 状态跳表**：add -4 + 双 jmp table 0x41BA40/0x41BA64 ——观察项）观察项
+- thiscall 0 栈参（ret；esi=this，返 byte）——**COM 取对象器（孪生）**——与 b 路逐字节同构，唯一差异：常规路径调 **0x5f6b60**（vs b 路 0x4de620）+ 尾句 **inc eax**（vs b 路直接 ret）：
+  - `mov ecx,[0x8871e0]; mov eax,[esi+0x6c4]` → `cmp [ecx+0x4e0]/[ecx+0x514]; je COM`（**同款类型匹配**）
+  - 默认路径：`call 0x5f6b60`（**常规取对象——第二实现**）
+  - COM 路径：+0x674 空 → 0x7DC720 错误 → COM 虚表槽 0x80 → `neg/sbb/inc`（**布尔翻转+1**）
+- 直接 call 2 个/去重 2：0x5f6b60、0x7dc720——picker callees=2 完全吻合
+- 判类：COM 取对象器（孪生）（推断名——与 b 路同模板，常规路径目标不同；同族变体）(partial)
+
+## 核验结果
+
+- _check_callees2831.py：a 路 1/1、b 路 2/2、c 路 2/2——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x6EC300、0x4DE620、0x5F6B60、0x7DC720（错误抛投）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **+0xAC 状态跳表**：c 路下函数 0x41B9F0（[+0xAC]-4 → 双 jmp table 0x41BA40/0x41BA64，0xAC 状态 0x1B 上下限 + 0x5B2FD0 收尾）——**42B 跳表分发器**（0xAC 状态机第二处，batch 2830 尾部跳转器同源）
+- **空返回 stub/虚表槽尾跳**：0x41B900/0x41B910——槽 0x50 尾跳
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
