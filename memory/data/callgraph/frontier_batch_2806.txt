@@ -1,0 +1,86 @@
+# frontier batch 2806
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段；未登记池 6879→6876）——0x40 段继续（阈值-容量装载大函数 + 镜像长度拷贝器 + 成员对象构造器）
+三路：a=0x409880（0x3BA=954B **多虚表槽装载大函数** callees=3 deps=0）/ b=0x409D90（0x4A=74B **min-长度镜像拷贝器** callees=0 deps=0）/ c=0x40A260（0x70=112B **成员对象构造器** callees=2 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2806a_full.txt（0x500 展开）+ _d2806b/c.txt（长度 0x100），完整读取确认（a ret @0x409C39、b ret 0xc @0x409DD9、c ret @0x40A2CF；a 路 954B 与 ranking body_bytes 吻 合）
+核验：.qwen/tmp/_check_callees2806.py 三路全 PASS（a 3/3、b 0/0、c 2/2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6895 → 6898（待 _append_tsv_batch2806.py）
+
+## a 路：0x409880 多虚表槽装载大函数（0x3BA=954B）
+
+- 范围 0x409880-0x409C39（ret @0x409C39）；0x409C3A-0x409C3F nop×6，下函数 0x409C40（**双缓冲装载初始化器** batch 2544 已登记）观察项
+- thiscall 1 栈参（ret；ecx=this/edx=参数）——**多虚表槽装载大函数（门控阈值循环 + 策略回调虚表槽 + 日志）**：
+  - `sub esp,0x2c/push 族/mov [esp+0x30],edx`（1 栈参）；`cmp edx,edi; jle 0x409c03`（**门控：参数 ≤0 → 直接返 1**）
+  - `mov eax,[esi+0x38]; cmp eax,edi; jg 跳过`（**[+0x38] 容量 ≤0 → 从 [+0x68] 回填**：`mov [esi+0x30],edi; mov eax,[esi+0x68]; mov [esi+0x38],eax`）
+  - 参数钳制：`cmp edx,[esi+0x38]; jbe; mov [esp+0x14],[esi+0x38]`（**超过容量 → 钳到容量**）
+  - 首次虚表槽调用（[+0x28] 非 0 的条件路径）：`mov eax,[esi+0x64]; mov edx,[eax]; 6 参 push; call [edx+0x4c]`（**虚表槽 0x4c**）
+  - 批量处理循环：`lea 6 栈参; mov ebx,3; call [edx+0x2c]`（**虚表槽 0x2c**——首批 3 个）→ test eax 循环入口
+  - 清零路径：[+0x2c]=0、[+0x8]=0、`[+0x3c]=[+0x6c]<<2`（**容量×4**）、`call [ecx+0x34]`（**虚表槽 0x34**——零参）
+  - `lea edi,[esi+0x34]; lea ecx,[esp+0x38]; push edi/push ecx/push eax; call [edx+0x10]`（**虚表槽 0x10**）→ `mov eax,[esp+0x38]; xor edx; div [esi+0x6c]`（**无符号除**）→ `mov [esi+0xc],eax`（**商存 [+0xc]**）
+  - `call 0x4093B0`（**全局函数指针 trampoline** batch 118——[0x87E848] 策略回调）→ 返回 edx:eax 存 [+0x10]/[+0x14]
+  - `mov [esi+0x40],[esi+0x68]`；`lea edi,[esi+0x30]; push edi; call [ecx+0x10]`（**虚表槽 0x10 二调**）→ `[+0x38]=[+0x68]-[edi]`（**差值回填容量**）
+  - 四字段对初始化：`[+0xd0]=0/[+0xd8]=[+0xc]/[+0xd4]=0/[+0xdc]=[edi]`
+  - `push 0x816768; call 0x4068E0`（**DebugLog batch 001**）→ `mov eax,ebx; dec ebx`（**计数递减循环**）
+  - 循环体：`lea edx,[esp+0x18]; 7 参 push; call [ecx+0x2c]`（**虚表槽 0x2c 循环调用**）→ test 回跳
+  - 内部状态检查：`cmp [esp+0x18],[esp+0x14]; jne 0x409bf3`（**不一致 → 日志+跳收尾**）；`cmp eax,edi; jne 0x409bf3`
+  - [+0x2c] 判定路径：`cmp [esi+0x2c],edi; jne` → `mov [esi+0x2c],0xffffffff; cmp [esi+0xcc],edi; jne` → `mov ecx,[esi]; call [ecx+0x15c]`（**虚表槽 0x15c——策略回调族**！与 batch 2796/2797 构造函数写的 [+0x15c]/[+0x160]/[+0x164] 三函数指针同族）→ `mov [esi+0xcc],1`
+  - `mov ecx,[esi]; cmp [ecx+0x174],edi; jne` + `cmp [esi+0xa8],edi`（**双条件**）→ `call [ecx+0x160]`（**虚表槽 0x160 二回调**）→ `call 0x409C40`（**双缓冲装载初始化器 batch 2544**——含 [+0x174] 判定路径）
+  - 状态复制：`[+0xcc]=0; mov ecx,[eax+0x170]; mov [esi+0x28],ecx; mov edx,[eax+0x170]; mov [esi+0x20],edx; mov eax,[eax+0x174]; mov [esi+0x24]/[+0x2c],eax`（**从宿主 [+0x170]/[+0x174] 复制四字段**）
+  - 填充路径：`cmp [eax+0x18c],2; jne; xor eax; jmp; mov eax,0x80808080`（**0x80808080 填充模式**）→ `rep stosd + rep stosb`（**按 [esp+0x10] 长度清/[0x80808080] 填**）→ `[+0x3c]-=[esp+0x10]`
+  - 尾部推进：`[+0x28]+=eax/[+0x2c]-=eax/[+0x8]+=eax/[+0x30]+=eax/[+0x38]-=eax`（**四字段按已处理量推进**）；`[esp+0x2c]+=eax; sub ebp,eax; jne 循环`
+  - 收尾：`[esp+0x30]=[esp+0x2c]` 差值；`jle 0x409c03` → `mov edx,eax; jmp 0x4098af`（**回跳到主循环头**）
+  - 错误分支：`push 0x81674c/0x816734/0x816710; call 0x4068E0`（**三段日志**）→ 收尾
+  - 尾虚表槽：`mov esi,[esi+0x64]; 5 参 push; call [eax+0x4c]`（**虚表槽 0x4c 二调**）→ ret [esp+0x34]（**返回批处理标志**）
+- 直接 call 6 个/去重 3：0x4068E0（DebugLog ×4）、0x4093B0（trampoline）、0x409C40（双缓冲装载）——picker callees=3 完全吻合
+- 虚表槽调用（间接，不计核验）：0x10/0x2c/0x34/0x4c/0x15c/0x160——**0x15c/0x160 正是 batch 2796/2797 构造函数三函数指针族被调用点**（全局策略回调链闭合）
+- 判类：多虚表槽装载大函数（推断名——门控阈值 + 容量钳制 + 双缓冲初始化 + 策略回调虚表槽 + 0x80808080 填充 + 四字段推进；装载/批量处理语义）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x409D90 min-长度镜像拷贝器（0x4A=74B）
+
+- 范围 0x409D90-0x409DD9（ret 0xc @0x409DD9）；0x409DDC-0x409DDF nop×4，下函数 0x409DE0（**多参装载大函数** [ebx+0x74] cmp 3 + jmp table）观察项
+- stdcall 3 栈参（ret 0xc；ecx=this/edx=源——**注意非 thiscall 参数用法**）——**min-长度镜像拷贝器**：
+  - `mov ebx,[esp+8]; mov ebp,[esp+0x14]`（**两个长度指针参数**）
+  - `mov eax,[ebx]; mov ecx,[ebp]; cmp eax,ecx; jle; mov eax,ecx`（**取两长度 min**）
+  - `test eax,eax; je 0x409dd2`（**长度 0 → 直接返 1**）
+  - `mov esi,[esp+0x14]; mov edi,edx`（**esi=源/edi=目标**）→ `mov ecx,eax; shr ecx,2; rep movsd`（**按 min 长度 dword 拷贝**）→ `mov ecx,edx; and ecx,3; rep movsb`（**剩余字节**）
+  - `mov [ebx],eax; mov [ebp],eax`（**两个长度指针都写回 min**——镜像语义）
+  - `mov eax,1; ret 0xc`（**返 1**）
+- 直接 call 0 个/去重 0——picker callees=0 完全吻合
+- 判类：min-长度镜像拷贝器（推断名——取两指针长度 min、按 min 拷贝、回写两长度；供成对缓冲同步用）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x40A260 成员对象构造器/分配器（0x70=112B）
+
+- 范围 0x40A260-0x40A2CF（ret @0x40A2CF）；0x40A2D0 起**成员对象析构器**（[+0x7c]/[+0x90] free + 虚表槽 8 + delete）观察项（同族）
+- thiscall 0 栈参（ret；esi=this）——**成员对象构造器/分配器**：
+  - `push 0xe0; call 0x7c8e17`（**new 0xE0=224B 子对象**）
+  - `mov edx,eax; mov ecx,0x38; xor eax,eax; mov edi,edx; rep stosd`（**清 0x38 dword=0xE0B 全零**）
+  - `mov [esi+0x158],edx`（**+0x158 存子对象指针**）；`mov [edx],esi`（**子对象回指 this**）
+  - `mov [esi+0x1a8],0x108; mov [esi+0x1b0],0x420`（**常量 0x108/0x420**）；`mov [esi+0x1ac],0; mov [esi+0x1b4],0`（**清零**）
+  - `mov [edx+0xb0],0; mov [edx+0x7c],0; mov [edx+0x90],0; mov [edx+0xa8],0`（**子对象四字段清零**）
+  - `mov ecx,[edx]; mov edx,[ecx+0xac]; add edx,0x44; call 0x402800`（**+0x44 偏移式 32B 缓冲区比较拷贝器初始化** batch 2564——用宿主 +0xac 指向子构造）
+  - `xor eax,eax; ret`（**返 0**）
+- 直接 call 2 个/去重 2：0x7c8e17（operator new）、0x402800（缓冲区比较拷贝器）——picker callees=2 完全吻合
+- 判类：成员对象构造器/分配器（推断名——new 0xE0 子对象 + 全零初始化 + 宿主 [+0x158] 挂载 + [+0x1a8]/[+0x1b0] 常量置位 + 子构造 0x402800）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2806.py：a 路 3/3、b 路 0/0、c 路 2/2——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4068E0（DebugLog batch 001）、0x4093B0（trampoline batch 118）、0x409C40（双缓冲装载 batch 2544）、0x402800（缓冲区比较拷贝器 batch 2564）、0x7C8E17（operator new）
+- **a 路虚表槽 0x15c/0x160 与 batch 2796/2797 构造函数写的 [+0x15c]/[+0x160]/[+0x164] 三函数指针族闭合**——策略回调族被调用点实证
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **成员对象析构器**：c 路下函数 0x40A2D0（[+0x7c]/[+0x90] 0x7c93e8 free + 虚表槽 8 + 0x7c8b3d delete + [+0x158] 清零）——与 c 路构造器成对，容器族生命周期
+- **多参装载大函数**：b 路下函数 0x409DE0（[ebx+0x74] cmp 3 + jmp table [eax*4+0x409fdc] + rep movsd 族 + 0x40aa44 观察）——0x409xxx 区装载族
+- **调试常量串**：a 路 0x816768/0x81674c/0x816734/0x816710 四串位——装载路径日志点
+- **填充模式 0x80808080**：a 路填充路径（cmp [eax+0x18c],2 决定 0 或 0x80808080）——区域初始化惯用法
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
