@@ -1,0 +1,59 @@
+# frontier batch 2884
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x458E00（74B）+ 0x4593A0（**带名 BuildingClass::UnloadBunker** 208B）+ 0x4595C0（**带名 BuildingClass::EmptyBunker** 634B）
+三路：a=0x458E00（0x4A=74B **短边半径计算器** callees=2 deps=0）/ b=0x4593A0（0xD0=208B **BuildingClass::UnloadBunker** callees=1 deps=0）/ c=0x4595C0（0x27A=634B **BuildingClass::EmptyBunker** callees=7 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2884{a,b,c}.txt（a 长度 0x60、b 长度 0x100、c 长度 0x300），完整读取确认（a ret @0x458E49、b ret @0x45946F、c ret @0x459839）
+核验：.qwen/tmp/_check_callees2884.py 三路全 PASS（a 4/4 去重2、b 2/2 去重1、c 11/11 去重7），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7129 → 7132（待 _append_tsv_batch2884.py）
+
+## a 路：0x458E00 短边半径计算器（0x4A=74B）
+
+- 范围 0x458E00-0x458E49（ret @0x458E49）
+- thiscall 0 栈参（ret；esi=this）——**短边半径计算器**：
+  - `push 0; call 0x45eca0`（**BuildingTypeClass::GetFoundationHeight(bIncludeBib=0) batch 105**）→ edi
+  - `call 0x45ec90`（**BuildingTypeClass::GetFoundationWidth batch 105**）→ cmp eax,edi（**宽 vs 高**）
+  - `jge 0x458E35`（**宽>=高 → 取高**）/ 否则取宽——**取较小者** → `cdq; sub eax,edx; sar eax,1`（**向零截断 ÷2**）
+- 直接 call 4 个/去重 2——picker callees=2 **完全吻合**（0x45ec90/0x45eca0 已登记）
+- 判类：短边半径计算器（GetFoundationWidth/Height 宽高比较取较小者 → 向零 ÷2）——建筑占地短边半径（布局/落点计算） (partial)
+
+## b 路：0x4593A0 BuildingClass::UnloadBunker（0xD0=208B，带名）
+
+- 范围 0x4593A0-0x45946F（ret @0x45946F）
+- thiscall 0 栈参（ret；edi=this）——**BuildingClass::UnloadBunker（YRpp 带名）**：
+  - `[+0x2e4]`（羁押单位）非空 → 虚表槽 0x2c 类型 ==1 才继续
+  - `[+0x674]` 判空 → `call 0x7dc720`（**无效参数异常链 batch 052**）——两次
+  - `[+0x674]` 虚表槽 0x58 + this 虚表槽 0x48（**坐标三元组**）→ 坐标 ±0x80
+  - `[+0x674]` 虚表槽 0x70（push 0x47/坐标——**放置出舱**）；虚表槽 0x544（push 0x3FF00000=1.0f/0）
+  - `[+0x2e4]=0`（**清羁押**）×2 + 虚表槽 0x274（push 3）
+- 直接 call 2 个/去重 1——picker callees=1 **完全吻合**（0x7dc720 已登记）
+- 判类：**BuildingClass::UnloadBunker**（带名——+0x2e4 羁押人口 + 0x7DC720 异常 ×2 + 虚表槽 0x58/0x48 坐标 + 0x70 放置 + 0x544 + 0x274 卸载链）——建筑卸单兵出舱 (partial)
+
+## c 路：0x4595C0 BuildingClass::EmptyBunker（0x27A=634B，带名）
+
+- 范围 0x4595C0-0x459839（ret @0x459839）
+- thiscall 0 栈参（ret；edi=this）——**BuildingClass::EmptyBunker（YRpp 带名）**：
+  - `0x451e40`（**DestroyNthAnim batch 143**）×2：Slot 0xa、0xb
+  - `[0x8871e0]+0x244` != -1 → 坐标 → `call 0x7509e0`（**VocClass::PlayAt batch 084**——音效）
+  - `0x5f5c60`（比例 helper）→ fcomp `[0x8871e0]+0x1700`（帧门）→ `0x451890`（**PlayAnim batch 120**）Slot 0xc（+0x128c/0x127c 名）、再一轮 Slot 0xd（+0x12d0/0x12c0）
+  - `[+0x2e4]`（羁押单位）空 → 虚表槽 0x1e8（push 0/5）+ `[+0x718]=0` ret（**无羁押快径**）
+  - 非空：虚表槽 0x2c 类型==1 → `[+0x2e4]=0`（清）→ `[+0x674]` → `0x7dc720` ×2 → 虚表槽 0x58/0x48 → 坐标 ±0x80 → 虚表槽 0x70（push 0x47）→ 虚表槽 0x544（push 0x3FF00000/0）→ 虚表槽 0x1b8（坐标）→ 坐标调整 → `0x56dc20`（**MapClass::NearByLocation batch 079**）→ `0x5657a0`（**坐标→CellClass 查表**）→ 虚表槽 0x480（放置）→ 虚表槽 0x1e8（push 0/2）→ `[+0x718]=0` → 虚表槽 0x1e8（push 0/5）→ 虚表槽 0x274（push 3）
+- 直接 call 11 个/去重 7——picker callees=7 **完全吻合**（0x451890/0x451e40/0x5657a0/0x56dc20/0x5f5c60/0x7509e0/0x7dc720 全已登记）
+- 判类：**BuildingClass::EmptyBunker**（带名——DestroyNthAnim 0xa/0xb + PlayAt 音效 + PlayAnim 0xc/0xd + 全量卸载羁押：清 +0x2e4 → NearByLocation 找位 → 虚表槽 0x480 放置 → 0x1e8 恢复）——建筑清空地堡/碉堡全部驻军 (partial)
+
+## 核验结果
+
+- _check_callees2884.py：a 路 4/4（去重 2）、b 路 2/2（去重 1）、c 路 11/11（去重 7）——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x45ec90（BuildingTypeClass::GetFoundationWidth）、0x45eca0（BuildingTypeClass::GetFoundationHeight）、0x7dc720（无效参数异常链）、0x451e40（BuildingClass::DestroyNthAnim）、0x451890（BuildingClass::PlayAnim）、0x5f5c60（电力/比例 helper）、0x7509e0（VocClass::PlayAt）、0x56dc20（MapClass::NearByLocation）、0x5657a0（坐标→CellClass 查表）
+- **b/c 路带名孪生对**：UnloadBunker（卸单个）+ EmptyBunker（清空全部）——共享 +0x2e4 羁押字段、双 +0x7DC720 异常、坐标 ±0x80、虚表槽 0x70/0x544 同构——Bunker 家族卸载端闭合
+- **c 路收尾链**：NearByLocation(0x56DC20) + GetCellAt(0x5657A0) + 虚表槽 0x480 放置——驻军出舱落位全链
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4595AC** 附近（b 路 0x459470 下函数 DestroyNthAnim 0xa/0xb 开头）/ **0x4598A0 TechnoClass::IsAbsorbAllowed**（带名 35B）/ **0x459C00**（29B）/ **0x459F20**（30B）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
