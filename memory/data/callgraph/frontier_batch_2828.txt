@@ -1,0 +1,59 @@
+# frontier batch 2828
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段；未登记池 6945→6942）——0x417xxx/0x419xxx 单元 AI 区继续（门控调用器 + 全局 getter + 超大型状态机）
+三路：a=0x417F80（0x4E=78B **门控三参调用器** callees=2 deps=0）/ b=0x417FD0（0x09=9B **全局场 getter** callees=0 deps=0）/ c=0x4190B0（0x45D=1117B **超大型状态机（jmp table 上限 10）** callees=9 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2828{a,b}.txt（长度 0x100）+ _d2828c.txt（长度 0x600），完整读取确认（a ret 0xc @0x417FCD、b ret @0x417FD8、c jmp table @0x418D58）
+核验：.qwen/tmp/_check_callees2828.py 三路全 PASS（a 2/2、b 0/0、c 9/9），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6961 → 6964（待 _append_tsv_batch2828.py）
+
+## a 路：0x417F80 门控三参调用器（0x4E=78B）
+
+- 范围 0x417F80-0x417FCD（ret 0xc @0x417FCD）；0x417FD0（**本批 b 路**）下函数观察项
+- stdcall 3 栈参（ret 0xc；esi=this/栈参 3）——**门控三参调用器**：
+  - `mov ecx,[esi+0x21c]; call 0x50b6f0`（**门控判定**——batch 2827 b 路同款 0x50B6F0）→ `test al; jne`（**失败 → 返 0**）
+  - `mov eax,[esp+0x10]/[esp+0xc]/[esp+8]; push×3; mov ecx,esi; call 0x4ddde0`（**三参透传调用**）
+  - `mov edi,eax; cmp edi,5; jne`（**结果 ==5 时**）→ `push 0; call [eax+0x3f8]`（**虚表槽 0x3f8 取对象**）→ `cmp [eax],0; jne`（**对象非空 → 修正为 0**）→ `mov eax,edi; ret 0xc`（**返结果或 0**）
+- 直接 call 2 个/去重 2：0x4ddde0、0x50b6f0——picker callees=2 完全吻合
+- 判类：门控三参调用器（推断名——0x50B6F0 判定门 + 三参透传 0x4DDDE0 + ==5 特判取实体修正；单元交互路径）
+- 语义证据级别：assembly_decompile_verified（partial——0x4DDDE0 语义推断）
+
+## b 路：0x417FD0 全局场 getter（0x09=9B）
+
+- 范围 0x417FD0-0x417FD8（ret @0x417FD8 后 7 nop）；下函数 0x417FE0（**超大型状态机入口**——[+0xBC] jmp table 0x418D58，本批 c 路同区）观察项
+- 无参（ret；直接读全局）——**全局场 getter（[0x8871E0] + 0x44）**：
+  - `mov eax,[0x8871e0]; mov eax,[eax+0x44]; ret`（**全局对象链 [0x8871E0]→+0x44 字段**——极薄 9B getter）
+- 直接 call 0 个/去重 0——picker callees=0 完全吻合
+- 判类：全局场 getter（推断名——[0x8871E0] 是全局场景/管理器对象（batch 2827 已见 +0x54C 阈值），+0x44 字段读取）
+- 语义证据级别：assembly_decompile_verified（trivial）
+
+## c 路：0x4190B0 超大型状态机（0x45D=1117B）
+
+- 范围 0x4190B0-0x41950C（jmp table 0x418D58 上限 10；多分支早退）；0x41950D nop，下函数 0x41960C+ 观察项
+- thiscall 0 栈参（ret；esi=this）——**超大型状态机（[+0xBC] 状态 0-10 + jmp table 分发）**：
+  - `mov eax,[esi+0xbc]; cmp eax,0xa; ja 0x418d1d`（**状态门控**）→ `jmp [eax*4+0x418d58]`（**十一路分派**）
+  - 分支（0x418006）：`mov eax,[esi+0x2b4]; mov byte[esi+0x6d2],0; neg/sbb/and 0xf7/add 0xa`（**状态推进到 0xa 附近**——diff 状态转移）→ 返 1
+  - 分支（0x418031）：`mov al,[esi+0x6c8]; mov[esi+0x6d2],0; test; je`（**+0x6C8 标志**）→ `dec [esi+0x2fc]`（**+0x2FC 计数递减**）→ `mov eax,[esi+0x2b4]; test; je 返` + `mov ecx,[esi+0x2fc]; test; je`（**双门控**）→ `push 1/push eax; call 0x4197c0`（**→ FindFireLocation 路径创建**——batch 2827 观察带名 `AircraftClass::FindFireLocation` 的调用点）→ `push eax; call [edi+0x480]`（**虚表槽 0x480**）→ `mov ecx,[esi+0x5a4]; neg/sbb/and 0xfffffff9/add`（**状态推进**）
+  - 分支（0x4180A1）：同款 +0x6C8/0x2FC 双递减 + 0x4197C0 + 虚表槽 0x3f8/0xf8/0xa4/0x2c 调用（**飞行器投放/寻路派发**）
+  - 其余分支：燃料/伤害检查（0x40dd70 取目标 + 0x4f9a90 类型匹配 + 0x65ad30 主体取址 + 0x4a51f0/0x4a5240/0x4d8fb0/0x473450/0x41a160 各族 + 0x7dc720 COM 错误）
+- 直接 call 14 个/去重 9：0x40dd70、0x41a160、0x473450、0x4a51f0、0x4a5240、0x4d8fb0、0x4f9a90、0x65ad30、0x7dc720——picker callees=9 完全吻合
+- **注意**：0x4197C0（AircraftClass::FindFireLocation 带名）是**被调用方**而非本批调用目标——下一批候选池已含它（pick 出 0x4197C0 AircraftClass::FindFireLocation 824B）
+- 判类：超大型状态机（推断名——[+0xBC] 状态 0-10 超多分支 + +0x6C8/0x2FC 双计数 + FindFireLocation 调用点 + 各族单元交互；单元/载具 AI 状态机核心）
+- 语义证据级别：assembly_decompile_verified（partial——主体类身份未确认；0x4197C0 带名是邻接铁证）
+
+## 核验结果
+
+- _check_callees2828.py：a 路 2/2、b 路 0/0、c 路 9/9——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x50B6F0（batch 2827 已见门控）、0x7DC720（错误抛投）、0x40DD70、0x4F9A90（类型匹配）、0x65AD30
+- **邻接带名**：0x4197C0 = AircraftClass::FindFireLocation（下一批候选）——c 路为其调用点，飞行器域实锤
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **AircraftClass::FindFireLocation**：0x4197C0（824B，下一批主候选——带名）——飞行器开火点检索
+- **同区超大型状态机**：0x417FE0（jmp table 0x418D58，0x4190B0 同区另实例）——0x418xxx 状态机进一步
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
