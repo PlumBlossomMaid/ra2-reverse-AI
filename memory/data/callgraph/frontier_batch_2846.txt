@@ -1,0 +1,62 @@
+# frontier batch 2846
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x42A900（批 2845 c 路巨型构造器 0x42A6D0 的下函数）+ 0x42D5A0/0x42D6F0（0x40B6A0/0x40B7F0 成员释放清理器族模板同构区）
+三路：a=0x42A900（0x13C=316B **巨型析构器** callees=1 直接(×15)/1 去重 deps=0）/ b=0x42D5A0（0x2A=42B **成员释放清理器（含 +0x10 清零）** callees=1 deps=0）/ c=0x42D6F0（0x27=39B **成员释放清理器变体（无 +0x10 清零）** callees=1 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2846{a,b,c}.txt（a 长度 0x200 含下函数、b/c 长度 0x180 含下函数族），完整读取确认（a ret @0x42AA3C、b ret 0 @0x42D5C9、c ret @0x42D716）
+核验：.qwen/tmp/_check_callees2846.py 三路全 PASS（a 15/15 去重1、b 1/1、c 1/1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7015 → 7018（待 _append_tsv_batch2846.py）
+
+## a 路：0x42A900 巨型析构器（0x13C=316B）
+
+- 范围 0x42A900-0x42AA3C（ret @0x42AA3C）；下函数 0x42AA40（**8 邻域方向表索引器**：[0x818760] 查找表、drow/dcol 距 1 判定——观察项）+ 0x42AA90（**全局交互对象初始化器**：atexit 注册 0x42ABF0 + [0x89A2DC..0x89A2F4] 全局写——观察项）
+- thiscall 0 栈参（ret；edi=this）——**巨型析构器（与批 2845 c 路 0x42A6D0 巨型构造器逐字段配对）**：
+  - **第一子对象释放**（0x42A907）：`esi=[edi+0x14]; jne → push [esi+8]; call delete`（**内层缓冲**）→ `push esi; call delete`（**子对象本体**）→ `[edi+0x14]=0`
+  - **第二子对象释放**（0x42A920）：同款两层 delete（`[esi+8]` 内层 + 本体）→ `[edi+0x68]=0`
+  - **单层缓冲释放 ×6**：`[+0x10]`（0x42A93C）/`[+0xc]`（0x42A94F）/`[+0x18]`（0x42A962）/`[+0x1c]`（0x42A978）/`[+0x24]`（0x42A98B）/`[+0x20]`（0x42A99E）各 `push; call delete; [off]=0`
+  - **3×3 缓冲矩阵释放**（0x42A9B1 循环，ebp=3，esi 从 +0x4c 迭代 stride 4）：每轮处理 `[esi-0xc]`/`[esi]`/`[esi+0xc]` 三槽 delete + 清零 → **9 个 dword 指针 = [+0x40]/[+0x4c]/[+0x58]、[+0x44]/[+0x50]/[+0x5c]、[+0x48]/[+0x54]/[+0x60]**
+  - **第五缓冲释放**（0x42A9F7）：`push [edi+0x64]; call delete`（**单层，无清零**——构造器 [+0x64]=new 0x27100 配对）
+  - **3×0x18B 子对象释放 + 析构虚表切换**（0x42AA03 循环，edi=3，esi 从 +0xbc 每轮 sub 0x18）：`mov [esi],0x7e37ec`（**虚表 0x7E37EC——批 2845 c 路构造器写 0x7E37CC 的析构态版本**，3 子对象挂 [+0x74]/[+0x8C]/[+0xA4] 与构造器 stride 全同）→ `[+0xd]` 门控 delete `[+4]` → `[+8]=0/[+0xd]=0`
+- 直接 call 15 个/去重 1：0x7c8b3d（delete×15）——picker callees=1 完全吻合
+- 判类：巨型析构器（推断名——与 0x42A6D0 构造器逐字段镜像：六级缓冲倒序 + 9 槽矩阵 + 3×0x18B 子对象虚表 0x7E37EC；大型系统对象生命周期闭合）(partial)
+
+## b 路：0x42D5A0 成员释放清理器（含 +0x10 清零）（0x2A=42B）
+
+- 范围 0x42D5A0-0x42D5C9（ret @0x42D5C9）；下函数 0x42D5D0（**16 位 stride 元素计数读取器**：[+0xc] 门控 + (end-ptr)>>1——观察项）+ 0x42D5F0（**16 位 stride 索引读取器**：`mov ax,[eax+ecx*2]`——观察项）+ 0x42D600（**等价比较器**：[+8] 计数 + 逐 dword——观察项）
+- thiscall 0 栈参（ret；esi=this）——**成员释放清理器（标准模板，含 +0x10 清零）——与 0x40B6A0 逐字节 identical**：
+  - `[+0x10]=0`（**+0x10 计数器清零——模板特征①**）
+  - `eax=[+4]; je → cmp byte[+0xd],bl; je → push eax; call 0x7c8b3d`（**[+4] 成员 + [+0xd] 门控 delete——模板特征②③**）→ `[+4]=0`
+  - `[+0xd]=0; [+8]=0`（**门控 + 计数双清零**）
+- 直接 call 1 个/去重 1：0x7c8b3d——picker callees=1 完全吻合
+- 判类：成员释放清理器（标准模板——容器族/Owning 成员释放；identical_to_0x40B6A0）(partial)
+- **[+0x10] 清零的有无是模板分型点**：0x40B6A0 与 0x42D5A0（含）vs 0x40B7F0 与 0x42D6F0（不含）——确认同一族内部按容器形态分两型
+
+## c 路：0x42D6F0 成员释放清理器变体（无 +0x10 清零）（0x27=39B）
+
+- 范围 0x42D6F0-0x42D716（ret @0x42D716）；下函数 0x42D720（**dword stride 元素查找器**：[+0xc] 门控 + cmp [ecx],esi 线性扫 + 未命中 or eax,0xffffffff——观察项）+ 0x42D760（**4B stride 差值计算器**：`(end-ptr)>>2`）+ 0x42D780（**构造/分配器**：+0xc 置 0、new 或外部 buffer、拷贝 min(ebp,cap) 元素、门控 delete 旧——观察项）
+- thiscall 0 栈参（ret；esi=this）——**成员释放清理器变体（无 +0x10 清零）——与 0x40B7F0 同模板变体**：
+  - 无 `[+0x10]` 清零（**与 b 路唯一差异**）
+  - `eax=[+4]; je → cmp byte[+0xd],bl; je → push eax; call 0x7c8b3d` → `[+4]=0`
+  - `[+0xd]=0; [+8]=0`
+- 直接 call 1 个/去重 1：0x7c8b3d——picker callees=1 完全吻合
+- 判类：成员释放清理器变体（无 +0x10 清零型；variant_of_0x40B7F0）(partial)
+
+## 核验结果
+
+- _check_callees2846.py：a 路 15/15（去重 1）、b 路 1/1、c 路 1/1——三路全 PASS
+- picker callees vs 核验差值：a/b/c 三路均差 0（全为直接 `call 0x7c8b3d` 字面量）——本批零间接调用
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D（operator delete 族）
+- **a 路配对闭合**：0x42A900 析构器与批 2845 c 路 0x42A6D0 构造器逐字段镜像（六级缓冲 + 9 槽矩阵 + 3×0x18B 子对象）——构造写 0x7E37CC、析构切 0x7E37EC（析构态虚表），stride 挂点 [+0x74]/[+0x8C]/[+0xA4] 完全一致——大型系统对象生命周期全闭合
+- **b/c 路模板闭合**：成员释放清理器含 +0x10 型（0x40B6A0/0x42D5A0）与无 +0x10 型（0x40B7F0/0x42D6F0）——两型各 2 实例实锤，[+0xd] 门控 delete + [+4]/[+8]/[+0xd] 三清零为族签名
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **8 邻域方向表索引器**：a 路下函数 0x42AA40（[0x818760] 查找表 + drow/dcol 距 1 判定 → 返回表项或 8）
+- **全局交互对象初始化器**：0x42AA90（[0x89A300] 一次性标志 + atexit 0x42ABF0 + [0x89A2DC..0x89A2F4] 全局写 + [0x89A324] 读）
+- **dword stride 元素查找器**：0x42D720（FindIndex 模板：[+0xc] 门控 + 线性扫 + 未命中 -1）
+- **构造/分配器**：0x42D780（new/buffer 二态 + min(ebp,cap) 拷贝 + 门控 delete 旧——与 b/c 清理器同对象族）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
