@@ -1,0 +1,51 @@
+# frontier batch 2899
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x46B5C0（30B）+ 0x46B5E0（42B）+ 0x46B750（39B）
+三路：a=0x46B5C0（0x1E=30B **scalar deleting 析构器** callees=2 deps=0）/ b=0x46B5E0（0x2A=42B **容器释放器** callees=1 deps=0）/ c=0x46B750（0x27=39B **容器释放器 39B 变体** callees=1 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2899{a,b,c}.txt（a 长度 0x30、b/c 长度 0x40），完整读取确认（a ret 4 @0x46B5DB、b ret @0x46B609、c ret @0x46B776）
+核验：.qwen/tmp/_check_callees2899.py 三路全 PASS（a 2/2 去重2、b 1/1 去重1、c 1/1 去重1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7174 → 7177（待 _append_tsv_batch2899.py）
+
+## a 路：0x46B5C0 scalar deleting 析构器（0x1E=30B）
+
+- 范围 0x46B5C0-0x46B5DB（ret 4 @0x46B5DB）
+- thiscall 1 栈参（ret 4）——**scalar deleting 析构器**：
+  - `call 0x466560`（**析构反注册器 batch 2489**——250B BulletClass 析构主体：四虚表族 + [0xB0F5B8]/[0xA8ED40] 双全局表反注册）→ `test [esp+8],1` → `call 0x7c8b3d`（delete this）
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x466560/0x7c8b3d 已登记）
+- 判类：scalar deleting 析构器（批 2489 析构反注册器 + delete this）—BulletClass 类析构收尾 (partial)
+
+## b 路：0x46B5E0 容器释放器（0x2A=42B）
+
+- 范围 0x46B5E0-0x46B609（ret @0x46B609）
+- thiscall 0 栈参（ret）——**容器释放器（42B 变体，含 +0x10 清零）**：
+  - `[+4]` 指针非空 且 `[+0xd]` 标志非零 → `call 0x7c8b3d`（CRT delete）→ `[+4]=0`
+  - `[+0xd]=0`、`[+8]=0`、`[+0x10]=0`（**四字段清零**）
+- 直接 call 1 个/去重 1——picker callees=1 **完全吻合**（0x7c8b3d 已登记）
+- 判类：容器释放器（42B 变体——与批 2886/2890 同模板，含 +0x10 清零） (partial)
+
+## c 路：0x46B750 容器释放器 39B 变体（0x27=39B）
+
+- 范围 0x46B750-0x46B776（ret @0x46B776）
+- thiscall 0 栈参（ret）——**容器释放器（39B 变体，无 +0x10 清零）**：
+  - `[+4]` 指针非空 且 `[+0xd]` 标志非零 → `call 0x7c8b3d`（CRT delete）→ `[+4]=0`
+  - `[+0xd]=0`、`[+8]=0`（**三字段清零，无 +0x10**）
+- 直接 call 1 个/去重 1——picker callees=1 **完全吻合**（0x7c8b3d 已登记）
+- 判类：容器释放器（39B 变体——与批 2887/2895 同模板） (partial)
+
+## 核验结果
+
+- _check_callees2899.py：a 路 2/2（去重 2）、b 路 1/1、c 路 1/1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x466560（析构反注册器 batch 2489）、0x7c8b3d（CRT delete）
+- **a 路跨批次闭合**：0x466560 析构反注册器调用现场兑现（批 2489 登记，BulletClass 析构四虚表族 + [0xB0F5B8]/[0xA8ED40] 双全局表反注册）
+- **b/c 路族谱**：VectorClass 容器释放器再添两实例（42B/39B 变体）——批 2886-2897 容器族持续闭合
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x46B8C0 / 0x46B910**（73B 孪生）/ **0x46C440**（143B，3 callees）/ **0x46C840**（已登记，c 路被调）——后续候选（0x46Bxxx 区 BulletClass 邻域）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
