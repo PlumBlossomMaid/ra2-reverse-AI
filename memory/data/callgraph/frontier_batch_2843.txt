@@ -1,0 +1,62 @@
+# frontier batch 2843
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段；未登记池 6990→6987）——0x427xxx 纹理/装载处理区（RLE 解压器 + 视图析构器 + 装载器）
+三路：a=0x4270D0（0x196=406B **RLE 解压器** callees=0 deps=0）/ b=0x4272A0（0x7E=126B **带子对象析构器（scalar deleting）** callees=1 deps=0）/ c=0x427B50（0x138=312B **装载器（门控+格式化+装载）** callees=6 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2843a.txt（长度 0x200）+ _d2843b.txt（长度 0x100）+ _d2843c.txt（长度 0x200），完整读取确认（a ret 0x10 @0x427265、b ret 4 @0x42731D、c ret 4 @0x427C87）
+核验：.qwen/tmp/_check_callees2843.py 三路全 PASS（a 0/0、b 1/1、c 6/6），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7006 → 7009（待 _append_tsv_batch2843.py）
+
+## a 路：0x4270D0 RLE 解压器（0x196=406B）
+
+- 范围 0x4270D0-0x427265（ret 0x10 @0x427265）；下函数 0x427270（**scalar deleting 析构器**：虚表 0x7E35A8 + flags bit0——观察项）+ 0x427290（**+0x50C 基址 getter**观察项）
+- stdcall 4 栈参（ret 0x10；[esp+4]=源长度/[esp+0x14]=源指针/[esp+0x24]=输出指针）——**RLE 解压器（长度前缀 + 0x80 字面标记）**：
+  - `mov ecx,[esp+8]; test; je 返0x10`（**源指针空/长度 0 → 返 1**）→ `sub ecx,2`（**长度-2**）
+  - 主循环：`movsx ebp,word[esi]`（**读取 16 位长度前缀**）→ 循环推进
+  - `sub ebp,0; je 0x427239`（**长度 0 → 收尾检查**）→ `dec ebp; je`（**长度 1 → 跳转清单**）→ 默认返 0
+  - 长度 2 分支（0x42712A）：`cmp ecx,3; jl 返 0; cmp byte[esi+ecx-3],0x80; jne 返0; test 后两字节零`（**0x80 标记 + 尾部校验**）→ 进入 RLE 展开循环（0x427148）
+  - RLE 展开（0x427148 主分发）：`mov al,[ebp]; movsx eax,al; test; jle 0x427171`（**正长度 → 字面拷贝**：rep movsd/movsb）→ `jne 0x4271a9`（**负 → 0x80 标记**）→ `test al,0xff` → 0 分支：双字节长度（0x427177 填模式字）→ 0x80 标记（0x4271A9）：`add al,0x80; jne 0x42722b`（**+3：填充运行**）→ 双字节负长度（0x4271AD：`mov dx,[ebp]; test dx; jg 0x4271ff`——字面运行）→ 0x8000 段（0x4271C3：sub 0x8000 → 填充模式）→ 0x4000 段（0x4271D1：sub 0x4000 → 长填充）→ 正长度字面（0x42720A）→ 短运行（0x42722B：`movsx ecx,al; add ebx,ecx`——负长度跳过）
+  - 收尾（0x427239）：`cmp ecx,[esp+0x20]; je`（**长度校验**）→ 拷贝剩余 → 返 1/0
+- 直接 call 0 个/去重 0——picker callees=0 完全吻合
+- 判类：RLE 解压器（推断名——长度前缀 RLE：正长度=字面拷贝、0x80 标记=填充运行、0x8000/0x4000 段=长运行、负长度=跳过字节；纹理/调色板数据解压）(partial——RLE 格式细节推断自汇编分支)
+
+## b 路：0x4272A0 带子对象析构器（scalar deleting）（0x7E=126B）
+
+- 范围 0x4272A0-0x42731D（ret 4 @0x42731D）；下函数 0x427320（**浮点常量写入器族**：fld [0x7e1710]/[0x7e1708] + 0x7c8fb0 + fadd + 0x4cac40 + fstp [0x89a1f8]——观察项）观察项
+- thiscall 1 栈参（ret 4；esi=this/栈参=delete flags）——**带子对象析构器（scalar deleting）**——与 batch 2842 a 路 0x426790 同模板 + flags bit0 delete this：
+  - `mov [esi],0x7e3584`（**虚表写入 0x7E3584**）→ +0x89 占用 → 槽 0x34 释放 → [+0x84] 清零 → +0xE0C 槽 0 释放 → +0xE10 delete（0x7c8b3d）→ 清零
+  - `mov [esi],0x7e35a8`（**虚表切 0x7E35A8**）→ `test flags,1; je` → `call 0x7c8b3d`（**delete this**）→ ret this
+- 直接 call 2 个/去重 1：0x7c8b3d——picker callees=1 完全吻合（其余为虚表槽 0x34/0 间接）
+- 判类：带子对象析构器（推断名——虚表 0x7E3584→0x7E35A8 + 子对象链释放 + flags bit0 delete this；视图管理族完整析构）(partial)
+
+## c 路：0x427B50 装载器（门控+格式化+装载）（0x138=312B）
+
+- 范围 0x427B50-0x427C87（ret 4 @0x427C87）；下函数 0x427C90（**ID→名字解析器**：[0x8B4160] 计数 + [0x8B4154] 数组 + 0x24 名字字段——观察项）+ 0x427CB0（**名字匹配查找器**：0x7C8D20 stricmp ×[0x8B4154]——观察项）+ 0x427D00（**大装载器 0x9BB**：[0x8B4154] 表 + 0x5295F0——观察项）
+- stdcall 1 栈参（ret 4；esi=this/栈参=参数）——**装载器（门控 + 格式化 + 装载链）**：
+  - `mov al,[esi+0x35e]; test; jne 0x427c12`（**+0x35E 门控**）→ `mov al,[esi+0x22c]; test; je`（**+0x22C 门控**）→ `call 0x5f9070`（**直接返回路径**）
+  - 双成员释放：`mov eax,[esi+0xa4]; test` + `cmp byte[esi+0xa8],0; je`（**+0xA4 成员 + +0xA8 标志门控**）→ `push eax; call 0x7c8b3d`（**delete +0xA4**）→ 清标志 → `mov dword[esi+0xa4],0`（**清指针**）
+  - 格式化装载：`cmp byte[esi+0x1f8],0; jne` → `lea eax,[esi+0x24]`（**+0x24 目标选择**）→ `push 0x81834c; push eax; push 0; lea eax,[esp+0x10]; push 0; push eax; call 0x7c9ff0`（**格式化串 0x81834C → 五参 0x7C9FF0**）
+  - 装载链：`lea ecx,[esp+4]; call 0x5f96b0`（**装载器一**）→ `push 1; call 0x5b40b0`（**激活**）→ `test eax; jne`（**失败重试**）→ `call 0x5f9710`（**装载器二**）→ `push 1; call 0x5b40b0`（**激活二**）→ `mov [esi+0xa4],eax`（**+0xA4 = 装载结果**）
+  - 装载后处理（0x427C12）：`mov ecx,[esi+0xa4]; test; je 0x427c80`（**结果空 → 直接返**）→ `mov byte[esi+0x2a4],1`（**+0x2A4 置位**）→ `movsx eax,word[ecx+6]; mov [esi+0x2c0],eax`（**+0x2C0 = 尺寸**）→ `test al;[+0x372] 半除`（**半尺寸**）→ `[+0x2BC] 回填、[+0x298] 尺寸、[+0x29C]/[+0x2A0] = -1`（**六字段收尾**）
+- 直接 call 7 个/去重 6：0x5f9070、0x5f96b0、0x5f9710、0x5b40b0（×2）、0x7c8b3d、0x7c9ff0——picker callees=6 完全吻合
+- 判类：装载器（推断名——+0x35E/+0x22C 门控 + 旧成员释放 + 0x7C9FF0 格式化 + 0x5F96B0/0x5F9710 双装载 + 0x5B40B0 激活 + 六字段尺寸收尾）(partial)
+
+## 核验结果
+
+- _check_callees2843.py：a 路 0/0、b 路 1/1、c 路 6/6——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D（CRT delete）、0x7C9FF0（格式化）、0x5F9070/0x5F96B0/0x5F9710/0x5B40B0
+- **RLE 解压器为纯手写解压循环**——0x80 字面标记 + 0x8000/0x4000 运行段，Westwood 纹理数据格式特征
+- **视图管理族三例闭合**：2841 b/2842 a/2843 b——虚表 0x7E3584→0x7E35A8 析构模板完整
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **ID→名字解析器**：c 路下函数 0x427C90（[0x8B4160] 计数 + [0x8B4154] 数组 + 0x24 名字字段）
+- **名字匹配查找器**：c 路下函数 0x427CB0（0x7C8D20 stricmp ×[0x8B4154] ——名字→ID 反查）
+- **大装载器 0x9BB**：c 路下函数 0x427D00（[0x8B4154] 表 + 0x5295F0 + 0x818660 串——[0x8B4154] 域大函数）
+- **+0x50C 基址 getter**：0x427290
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
