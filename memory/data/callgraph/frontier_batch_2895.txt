@@ -1,0 +1,59 @@
+# frontier batch 2895
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x465E70（221B）+ 0x465F50（39B）+ 0x466000（128B）
+三路：a=0x465E70（0xDD=221B **VectorClass 变体构造/初始化器** callees=2 deps=0）/ b=0x465F50（0x27=39B **容器释放器** callees=1 deps=0）/ c=0x466000（0x80=128B **名字→对象工厂** callees=3 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2895{a,b,c}.txt（a 长度 0x100、b 长度 0x40、c 长度 0x90），完整读取确认（a ret 8 @0x465F4C、b ret @0x465F76、c ret @0x46607F）
+核验：.qwen/tmp/_check_callees2895.py 三路全 PASS（a 2/2 去重2、b 1/1 去重1、c 5/5 去重3），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7162 → 7165（待 _append_tsv_batch2895.py）
+
+## a 路：0x465E70 VectorClass 变体构造/初始化器（0xDD=221B）
+
+- 范围 0x465E70-0x465F4C（ret 8 @0x465F4C，2 栈参）
+- thiscall 2 栈参（ret 8；[esp+0xc]=计数、[esp+0x18]=容量、[esp+0x1c]=外部 buffer）——**VectorClass 变体构造/初始化器**：
+  - 参数3（外部 buffer）空 → `ebx*3 << 2`（**12B/项**）→ `call 0x7c8e17`（CRT new）→ edi=新 buffer；`[+0xc]=1`（**拥有标志**）
+  - 参数3 非空 → edi=外部 buffer；`[+0xc]=1`
+  - edi 空 → 返 0
+  - 从 `[+4]` 旧 buffer 拷贝 `min(计数, [+8])` 项 ×12B（**memcpy 内联**）→ 若 `[+0xd]` 拥有标志 → `call 0x7c8b3d`（delete 旧 buffer）
+  - `[+4]=edi`、`[+8]=计数`、`[+0xd]=参3==0`（翻转拥有标志）
+  - 参1==0 → 虚表槽 0xc（清空）
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x7c8e17/0x7c8b3d 已登记）
+- 判类：VectorClass 变体构造/初始化器（12B/项 new 或外部 buffer 注入 + memcpy 拷贝 min + 旧 buffer 释放 + [+0xc]/[+0xd] 拥有标志翻转）——**与批 2886-2894 释放器同 VectorClass 族（写入端 vs 清理端配对）** (partial)
+
+## b 路：0x465F50 容器释放器（0x27=39B）
+
+- 范围 0x465F50-0x465F76（ret @0x465F76）
+- thiscall 0 栈参（ret）——**容器释放器（39B 变体，与批 2887 b/c 同构）**：
+  - `[+4]` 指针非空 且 `[+0xd]` 标志非零 → `call 0x7c8b3d`（CRT delete）→ `[+4]=0`
+  - `[+0xd]=0`、`[+8]=0`（三字段清零）
+- 直接 call 1 个/去重 1——picker callees=1 **完全吻合**
+- 判类：容器释放器（39B 变体——与 a 路 [+0xc]/[+0xd] 拥有标志字段族呼应） (partial)
+
+## c 路：0x466000 名字→对象工厂（0x80=128B）
+
+- 范围 0x466000-0x46607F（ret @0x46607F）
+- thiscall 1 栈参（ret 4；edi=参1 对象表）——**名字→对象工厂**：
+  - push this / push 0x817474（**常量串 A**）→ `call 0x7c8d20`（strcmp）→ 匹配则继续
+  - push this / push 0x817694（**常量串 B**）→ strcmp → 匹配则继续
+  - `[edi+0x10]` 计数 >0 → 遍历 `[edi+4]` 数组：`[eax+esi*4]+0x24`（**每项 +0x24 名字字段**）vs this → strcmp → 命中返 `[edi+4][esi]`（对象）
+  - 未命中 → `push 0x1798; call 0x7c8e17`（CRT new 0x1798 B）→ `push this; call 0x45dd90`（**BuildingTypeClass::BuildingTypeClass batch 1590** 构造）→ 返新对象
+  - 未命中 + new 失败 → 返 0
+- 直接 call 5 个/去重 3——picker callees=3 **完全吻合**（0x7c8d20/0x7c8e17/0x45dd90 已登记）
+- 判类：名字→对象工厂（两常量串匹配豁免 + [edi+4] 表遍历 +0x24 名字 + new 0x1798 + BuildingTypeClass 构造器 0x45DD90 调用现场）——建筑类型名字注册/查找工厂 (partial)
+
+## 核验结果
+
+- _check_callees2895.py：a 路 2/2（去重 2）、b 路 1/1、c 路 5/5（去重 3）——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7c8e17（CRT new）、0x7c8b3d（CRT delete）、0x7c8d20（CRT strcmp）、0x45dd90（BuildingTypeClass::BuildingTypeClass batch 1590）
+- **c 路跨批次闭合**：BuildingTypeClass 构造器 0x45DD90 真调用现场（batch 1590 登记），new 0x1798 = 建筑类型对象大小
+- **a/b 路族谱**：VectorClass 族读写端配对（构造 new/copy + 释放 delete），12B/项步长实锤
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x465F80**（a 路下函数 [+0xc] 门控）/ **0x466080**（c 路下函数虚表 0x7E4638）/ **0x466380 BulletClass::BulletClass 带名**（319B）/ **0x4666E0**（6422B 巨型函数，33 callees——后续大单）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
