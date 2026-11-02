@@ -1,0 +1,52 @@
+# frontier batch 2901
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x46CB60（**带名 CampaignClass::CampaignClass** 172B）+ 0x46CC90（61B）+ 0x46D330（30B）
+三路：a=0x46CB60（0xAC=172B **CampaignClass::CampaignClass 带名** callees=2 deps=0）/ b=0x46CC90（0x3D=61B **Campaign 名字表查找器** callees=1 deps=0）/ c=0x46D330（0x1E=30B **全局单例构造器** callees=0 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2901{a,b,c}.txt（a 长度 0xC0、b 长度 0x50、c 长度 0x30），完整读取确认（a ret 4 @0x46CC0C、b ret @0x46CCC8、c ret @0x46D34D）
+核验：.qwen/tmp/_check_callees2901.py 三路全 PASS（a 2/2 去重2、b 1/1 去重1、c 0/0 去重0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7180 → 7183（待 _append_tsv_batch2901.py）
+
+## a 路：0x46CB60 CampaignClass::CampaignClass（0xAC=172B，带名）
+
+- 范围 0x46CB60-0x46CC0C（ret 4 @0x46CC0C，1 栈参）
+- thiscall 1 栈参（ret 4；[esp+4]=名字/参数）——**CampaignClass::CampaignClass（YRpp 带名——战役类构造器）**：
+  - `call 0x410800`（**基类构造**——已登记）→ [+0x98]/[+0x29c]=-1（哨兵）
+  - **四层虚表**：0x7E4A28/0x7E4A0C/0x7E4A04/0x7E49FC（多继承虚表族）
+  - `[0xa83d00]/[0xa83d08]` 全局容器注册：查重→满虚表槽 8 扩容→计数++ → `[0xa83cfc]` 数组写入 this（**与 BulletClass 0x466380 [0xa8ed48]/[0xa8ed50] 同模板不同表**）
+  - `[+0x9c]=0`（标志清零）→ `lea edx,[esi+0x2a0]; push 0x887734; call 0x7ca489`（**0x7CA489 初始化器**——已登记，0x887734 常量串）
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x410800/0x7ca489 已登记）
+- 判类：**CampaignClass::CampaignClass**（带名——基类构造 + 四层虚表 0x7E4A28 族 + [0xA83D00]/[0xA83D08] 全局容器注册 + [0x887734] 初始化器）——战役类构造器 (partial)
+
+## b 路：0x46CC90 Campaign 名字表查找器（0x3D=61B）
+
+- 范围 0x46CC90-0x46CCC8（ret @0x46CCC8）
+- thiscall 1 栈参（ret；edi=查找名）——**Campaign 名字表查找器**：
+  - `[0xa83d08]` 计数 >0 → 遍历 `[0xa83cfc]` 数组：`[eax+esi*4]+0x24`（**每项 +0x24 名字字段**）vs 入参 → `call 0x7c8d20`（strcmp）→ 命中返 esi（索引）；未命中返 -1
+- 直接 call 1 个/去重 1——picker callees=1 **完全吻合**（0x7c8d20 已登记）
+- 判类：Campaign 名字表查找器（[0xA83CFC]/[0xA83D08] 表 + 每项 +0x24 名字 + strcmp）——与 a 路 [0xa83cfc] 容器配对查找端 (partial)
+
+## c 路：0x46D330 全局单例构造器（0x1E=30B）
+
+- 范围 0x46D330-0x46D34D（ret @0x46D34D）
+- thiscall 0 栈参（ret；ecx=this）——**全局单例构造器**：
+  - `mov [eax], 0x7E4AAC`（虚表写）→ `[+4]=0` → `[0x89e050]=0`（全局清零）→ `[0x81b1e8]=-1`（全局哨兵）
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**
+- 判类：全局单例构造器（虚表 0x7E4AAC + [0x89E050] 清零 + [0x81B1E8] -1 哨兵）——极简 30B (partial)
+
+## 核验结果
+
+- _check_callees2901.py：a 路 2/2（去重 2）、b 路 1/1、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x410800（基类构造）、0x7ca489（初始化器）、0x7c8d20（CRT strcmp）
+- **a 路带名构造器**：CampaignClass 战役类——四层虚表 0x7E4A28 族 + [0xA83D00] 全局容器注册（与 BulletClass [0xA8ED48]、BuildingTypeClass [0xA83C70] 三类各表）
+- **a/b 配对**：CampaignClass 构造注册端（[0xa83cfc] 数组写入）+ b 路查找端（+0x24 名字 strcmp）——同表读写配对
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x46D360**（152B，2 callees）/ **0x46D4A0**（427B，9 callees）/ **0x46D8B0**（368B，10 callees）——后续候选（0x46Dxxx 区战役/地图域）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
