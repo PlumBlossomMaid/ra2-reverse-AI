@@ -1,0 +1,62 @@
+# frontier batch 2881
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x455DD0（313B）+ 0x456580（93B）+ 0x4571E0（965B）
+三路：a=0x455DD0（0x138=313B **最近元素搜索器** callees=2 deps=0）/ b=0x456580（0x5D=93B **雷达标记批量入队器** callees=2 deps=0）/ c=0x4571E0（0x3C5=965B **跨家攻击/占领处理大函数** callees=9 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2881{a,b,c}.txt（a 长度 0x140、b 长度 0x60、c 长度 0x3C0 + 尾 0x4575A0-0x4575B0 补 dump），完整读取确认（a ret @0x455F08、b ret @0x4565DC、c ret 4 @0x4575A2）
+核验：.qwen/tmp/_check_callees2881.py 三路全 PASS（a 3/3 去重2、b 2/2 去重2、c 31/31 去重9），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7120 → 7123（待 _append_tsv_batch2881.py）
+
+## a 路：0x455DD0 最近元素搜索器（0x138=313B）
+
+- 范围 0x455DD0-0x455F08（ret @0x455F08；下函数 0x455F10 区）
+- thiscall 1 栈参（ret 4；[esp+0x10]=目标对象）——**最近元素搜索器**：
+  - **惰性静态初始化**：[0x89C828] 标志 → 未初始化 → `fld [0x89C820]; fmul [0x7E44C8]; call 0x7c5f00`（_ftol）→ `[0x89C7F0]=eax`（**静态缓存 = 全局某值×常量 → 截断**）
+  - `[+0x90]` 计数 → ≤0 返 0；遍历 `[+0x84]` 数组（eax*4）：esi=元素指针
+  - 虚表槽 0x278（push esi/push 0xf）→ 非零继续：目标+0x9c 与元素+0x9c 坐标三元组相减 → `fild×3 → 平方和 → 0x4cac40(sqrt) → 0x7c5f00(_ftol)` → 距离
+  - `< [esp+0x14]`（best）且 `< [0x89C7F0]`（**静态阈值**）→ 更新 best（元素指针 + 距离）
+- 直接 call 3 个/去重 2——picker callees=2 **完全吻合**（0x4cac40/0x7c5f00 已登记）
+- 判类：最近元素搜索器（[+0x84] 数组 + [+0x90] 计数 + 虚表槽 0x278 过滤 + 目标[+0x9c] 坐标差平方和 sqrt 距离 + [0x89C7F0] 阈值）——建筑/单位最近邻查询 (partial)
+
+## b 路：0x456580 雷达标记批量入队器（0x5D=93B）
+
+- 范围 0x456580-0x4565DC（ret @0x4565DC）
+- thiscall 0 栈参（ret）——**雷达标记批量入队器**：
+  - `mov ecx,0x87f7e8; push [esi+0x520]; call 0x656580`（**索引计算器·[0x656580] batch 2126**——[Type+0xef0]+0xc5×24 元素定位）→ ebx
+  - `[ebx+0x10]` 计数 >0 → 遍历 `[ebx+4]` 数组（edi*8）：X+[+0x208]、Y+[+0x20C]（**this 偏移叠加**）→ `push ecx/eax/esi; call 0x655560`（**雷达标记入队器 batch 1472**——3 参）
+  - `[+0x423]=1`（**标志置位**）
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x656580/0x655560 已登记）
+- 判类：雷达标记批量入队器（[Type]+0xef0 索引计算器 → [ebx+4]/[ebx+0x10] 数组遍历 → this+0x208/0x20C 偏移 → 雷达标记入队器 0x655560 → [+0x423] 标志）——建筑雷达标记批量提交 (partial)
+
+## c 路：0x4571E0 跨家攻击/占领处理大函数（0x3C5=965B）
+
+- 范围 0x4571E0-0x4575A2（ret 4 @0x4575A2，1 栈参）
+- thiscall 1 栈参（ret 4；edi=参1 目标家）——**跨家攻击/占领处理大函数（BuildingClass 事件分发）**：
+  - `[+0x21c]` HouseClass == 参1 → 直接 ret（**同家跳过**）
+  - `call 0x50b6f0`（**IsControlledByCurrentPlayer batch 062**——双家链：this+0x21c 家 / 参1 家，任一非当前玩家控制才继续）
+  - 虚表槽 0x1b8（push 局部）→ `call 0x65fa70`（**RadarEventClass::Add batch 154**，ecx=9 雷达事件类型）
+  - `[Type+0x16a4]` 标志 → `call 0x50bd10`（**ReshroudMap batch 2371** this+0x21c）+ `[+0x577a]` 标志清检查 → `call 0x752700`（**VoxClass::Play batch 093**，0x8191E4/0x8191C4 语音名）
+  - `[Type+0xee0]>0` → `[0x8871e0]+0xd64` 参数 → `call 0x50bc90`（**CreatePowerOutage batch 1552** this+0x21c）→ VoxClass::Play（0x8191B0）
+  - `[0x8871e0]+0x92c/+0x920` 数组查 this+0x21c → 命中 → `[参1+0x6d0]` 检查 → 写 `[参1+0x2be/0x2bd/0x2bc]` + `[参1+0x1fc]=1` 标志 → VoxClass::Play（0x819138）
+  - `[+0x16f0] != -1` → `[+0x21c]+0x258` 数组取 Super 索引 → `call 0x6ce0b0`（**SuperClass::Reset batch 1446**——超级武器计时重置）；`[+0x16f0]==-1` 且 `[+0x21c]+0x800>0` → 虚表槽 0x18（+0x24 子对象）→ `fild; fmul [0x8871e0]+0xd68; 0x7c5f00` → `call 0x4f9790`（**TakeMoney batch 389** this+0x21c）→ `call 0x4f9950`（**GiveMoney batch 205** 参1 家——**资金转移**）→ VoxClass::Play（0x81916C）
+  - `[Type+0xeb8]==0x28/0x10` → 写 `[参1+0x2c0]/[参1+0x2bf]` + `[参1+0x1fc]=1` → `[0x884b8e]=1` → VoxClass::Play（0x819138）
+  - 虚表槽 0x124（push 2）收尾
+- 直接 call 31 个/去重 9——picker callees=9 **完全吻合**（0x4f9790/0x4f9950/0x50b6f0/0x50bc90/0x50bd10/0x65fa70/0x6ce0b0/0x752700/0x7c5f00 全已登记）
+- 判类：跨家攻击/占领处理大函数（同家跳过 + IsControlledByCurrentPlayer 双家链 + RadarEventClass::Add(9) + ReshroudMap + CreatePowerOutage + TakeMoney/GiveMoney 资金转移 + [参1+0x2bc..0x2c0/0x1fc] 占领标志位 + SuperClass::Reset 超级武器重置 + 多路 VoxClass::Play 语音 + 虚表槽 0x1b8/0x124）——建筑被占/被毁事件分发核心 (partial)
+
+## 核验结果
+
+- _check_callees2881.py：a 路 3/3（去重 2）、b 路 2/2（去重 2）、c 路 31/31（去重 9）——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（c 大函数 31 call 去重 9 与 picker 完全吻合——零 MISSING 大函数核验完整闭合）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4cac40（MSVC6 sqrt）、0x7c5f00（_ftol）、0x656580（索引计算器·[0x656580]）、0x655560（雷达标记入队器）、0x50b6f0（HouseClass::IsControlledByCurrentPlayer）、0x65fa70（RadarEventClass::Add）、0x50bd10（HouseClass::ReshroudMap）、0x752700（VoxClass::Play）、0x50bc90（HouseClass::CreatePowerOutage）、0x6ce0b0（SuperClass::Reset）、0x4f9790（HouseClass::TakeMoney）、0x4f9950（HouseClass::GiveMoney）
+- **c 路跨批次闭合**：HouseClass 族 6 成员同现场（IsControlledByCurrentPlayer/ReshroudMap/CreatePowerOutage/TakeMoney/GiveMoney + 资金转移双锚点）——建筑被占→电力中断→资金转移→语音播报全链
+- **a 路惰性静态缓存**：[0x89C820]×[0x7E44C8]→_ftol→[0x89C7F0]——全局阈值惰性初始化（batch 386 常量簇 0x7E44C8 关联）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4575B0**（c 路下函数，mov al,[+0x702]——观察项）/ **0x458200**（301B，8 callees）/ **0x4587D0**（49B，0 callees）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
