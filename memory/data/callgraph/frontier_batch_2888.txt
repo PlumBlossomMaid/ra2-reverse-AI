@@ -1,0 +1,35 @@
+# frontier batch 2888
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x45A9C0（73B）+ 0x45AA10（73B）+ 0x45AA60（73B）
+三路：a=0x45A9C0（0x49=73B）/ b=0x45AA10（0x49=73B）/ c=0x45AA60（0x49=73B）——callees=1 deps=0 各，**VectorClass 族 scalar deleting 析构器（同构 73B 三连）**
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2888{a,b,c}.txt（a/b/c 长度 0x60），完整读取确认（a ret 4 @0x45AA06、b ret 4 @0x45AA56、c ret 4 @0x45AAA6）
+核验：.qwen/tmp/_check_callees2888.py 三路全 PASS（a/b/c 各 2/2 去重1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7141 → 7144（待 _append_tsv_batch2888.py）
+
+## a/b/c 路：VectorClass 族 scalar deleting 析构器 ×3（各 0x49=73B，同构）
+
+- 范围 a 0x45A9C0-0x45AA06 / b 0x45AA10-0x45AA56 / c 0x45AA60-0x45AAA6
+- thiscall 1 栈参（ret 4；[esp+8]=deleting 标志）——**scalar deleting 析构器**：
+  - `mov [esi], 虚表常量`——a/b 路 0x7E4424、c 路 0x7E43E8（**虚表复位**，析构首动作）
+  - `[+4]` 指针非空 且 `[+0xd]` 标志非零 → `call 0x7c8b3d`（**CRT delete 0x7C8B3D**）→ `[+4]=0`（释放内部缓冲区）
+  - `[+0xd]=0`、`[+8]=0`（**字段清零**）
+  - `[esp+8] & 1` → `call 0x7c8b3d`（**delete this**）→ 返 this
+- 直接 call 各 2 个/去重 1——picker callees=1 **完全吻合**（0x7c8b3d 已登记）
+- 判类：VectorClass 族 scalar deleting 析构器（虚表复位 0x7E4424/0x7E43E8 + [+4]/[+0xd] 双门释放内部缓冲 + deleting 标志 delete this）——批 2886/2887 容器释放器的完整析构升级版 (partial)
+
+## 核验结果
+
+- _check_callees2888.py：a 路 2/2（去重 1）、b 路 2/2（去重 1）、c 路 2/2（去重 1）——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7c8b3d（CRT delete）
+- **族谱推进**：批 2886/2887 是纯释放器（无虚表写/无 delete this），本批三路是带虚表复位 + delete this 的完整 scalar deleting 析构器——VectorClass 族析构两档（释放-only / 析构+释放）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x45AAB0**（73B，0x7E43E8 虚表同 c 路）/ **0x45AC00**（39B）/ **0x45AC90**（73B）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
