@@ -1,0 +1,59 @@
+# frontier batch 2860
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x437030（31B）+ 0x4371D0（178B）+ 0x437290（180B）
+三路：a=0x437030（0x1F=31B **注册检查器** callees=2 deps=0）/ b=0x4371D0（0xB0=176B **区块分配执行器** callees=3 直接/4 含间接 deps=0）/ c=0x437290（0xB2=178B **区块分配执行器（虚表槽 8 版）** callees=2 直接/4 含间接 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2860{a,b,c}.txt（a 长度 0x60、b/c 长度 0xC0），完整读取确认（a ret @0x43704E、b ret 4 @0x43727F、c ret 4 @0x437341）
+核验：.qwen/tmp/_check_callees2860.py 三路全 PASS（a 2/2、b 3/3、c 2/2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7057 → 7060（待 _append_tsv_batch2860.py）
+
+## a 路：0x437030 注册检查器（0x1F=31B）
+
+- 范围 0x437030-0x43704E（ret @0x43704E）；下函数 0x437050（**0x5F4EC0 + 0x55BAA0 两参版**：与 a 路同构、检查函数不同——观察项）
+- thiscall 0 栈参（ret；esi=this）——**注册检查器**：
+  - `call 0x5f4d30`（**0x5F4D30 检查**）→ `test al; je 返 0`
+  - 成功 → `push esi; mov ecx,0x87f778; call 0x55bae0`（**全局 [0x87F778] 对象 + 0x55BAE0 两参注册**）→ `mov al,1; ret`
+- 直接 call 2 个/去重 2：0x5f4d30、0x55bae0——picker callees=2 完全吻合
+- 判类：注册检查器（0x5F4D30 门控 → [0x87F778] + 0x55BAE0 注册；[0x87F778] 与批 2858 c 路构造器同全局）(partial)
+
+## b 路：0x4371D0 区块分配执行器（0xB0=176B）
+
+- 范围 0x4371D0-0x43727F（ret 4 @0x43727F）；下函数 0x437290（c 路）
+- thiscall 2 栈参（ret 4；edi=this、esi=edx=param1、[esp+0x3c]=param2）——**区块分配执行器**：
+  - `[esi+8]<=0 || [esi+0xc]<=0 → 返 0`（**无效尺寸门**）
+  - `call [edx+0x70]`（**虚表槽 0x70 因子**）→ `imul ecx,edx（[+8]*[+0xc]）; imul ecx,eax`（**面积×因子**）→ `push ecx; push [param2]; lea ecx; mov [esp+0x24],0x7e2104; ...; call 0x43ad00`（**0x43AD00 构造 + 虚表 0x7E2104**）
+  - `push 1; push 0; push esi; lea edx; push edi; push edx; lea ecx; mov [esp+0x30],0x7e2070; ...; call 0x7bbb90`（**0x7BBB90 执行**）→ `mov bl,al`
+  - `lea ecx,[esp+0x30]; call 0x43ae50`（**0x43AE50 析构**）→ 返 bl
+- 语义：**区块分配执行器（zones/region 计算推断）**——面积×因子 → 0x43AD00 构造（虚表 0x7E2104）→ 0x7BBB90 执行 → 0x43AE50 析构（虚表 0x7E2070）
+- 直接 call 3 个/去重 3：0x43ad00、0x7bbb90、0x43ae50——picker callees=4，差 1 为虚表槽 0x70 间接（Ghidra 含间接统计）
+- 判类：区块分配执行器（面积×虚表槽 0x70 因子 → 0x43AD00/0x7BBB90/0x43AE50 三段链）(partial)
+
+## c 路：0x437290 区块分配执行器（虚表槽 8 版）（0xB2=178B）
+
+- 范围 0x437290-0x437341（ret 4 @0x437341）；下函数 0x437344+（0x437xxx 连续区段——观察项）
+- thiscall 2 栈参（ret 4；edi=this、esi=edx=param1、[esp+0x3c]=param2）——**区块分配执行器（与 b 路同模板，执行段用虚表槽 8 而非 0x7BBB90）**：
+  - `[esi+8]<=0 || [esi+0xc]<=0 → 返 0`
+  - `call [edx+0x70]`（**虚表槽 0x70 因子**）→ imul 面积 → `call 0x43ad00`（**构造 + 虚表 0x7E2104**）
+  - `push 1; lea eax; push 0; lea ecx; ... 0x7e2070 虚表写; call [edx+8]`（**虚表槽 8 执行**）→ `mov bl,al`
+  - `lea ecx; call 0x43ae50`（**析构**）→ 返 bl
+- 直接 call 2 个/去重 2：0x43ad00、0x43ae50——picker callees=4，差 2 为虚表槽 0x70/8 间接（Ghidra 含间接统计）
+- 判类：区块分配执行器（虚表槽 8 版——与 b 路 0x7BBB90 版同模板，执行方式不同）(partial)
+
+## 核验结果
+
+- _check_callees2860.py：a 路 2/2、b 路 3/3、c 路 2/2——三路全 PASS
+- picker callees vs 核验差值：a 差 0；b 差 1（虚表槽 0x70 间接）；c 差 2（虚表槽 0x70/8 间接）——均属预期差
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x5F4D30（检查）、0x55BAE0（注册）、0x43AD00（构造 + 虚表 0x7E2104）、0x7BBB90（执行）、0x43AE50（析构 + 虚表 0x7E2070）
+- **b/c 路模板**：构造（0x43AD00 + 虚表 0x7E2104）→ 执行（0x7BBB90 直接 / 虚表槽 8）→ 析构（0x43AE50 + 虚表 0x7E2070）——**同一块操作模板两种执行出口**（直接调用 vs 虚表多态）
+- **a 路 [0x87F778] 全局对象族**：与批 2858 c 路 BuildingLightClass 构造器的 0x55BAA0 调用同 [0x87F778] 对象——全局注册/查询中心（灯光/渲染对象登记）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x55BAA0 两参登记版**：a 路下函数 0x437050（0x5F4EC0 + 0x55BAA0——与 a 路同构、检查不同）
+- **0x437xxx 连续区段**：0x437344+ 区块模板族后续候选
+- **0x438060**（53B）/ **0x4380A0**（291B）/ **0x4381D0**（64B）——0x438xxx 区段后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
