@@ -1,0 +1,66 @@
+# frontier batch 2805
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段；未登记池 6876→6873）——0x40 段继续（引用计数脱出器 + 条件双重调用包装器 + 全局计数自旋）
+三路：a=0x408E20（0x2D=45B **引用计数递减/脱出器** callees=1 deps=0）/ b=0x4092F0（0x1F=31B **条件双重调用包装器** callees=1 deps=0）/ c=0x4093F0（0x7B=123B **全局计数自旋+timeGetTime 比较写入器** callees=0（间接 1） deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2805{a,b,c}.txt（长度 0x100），完整读取确认（a ret @0x408E4C、b ret @0x40930E、c ret @0x40946A）
+核验：.qwen/tmp/_check_callees2805.py 三路全 PASS（a 1/1、b 1/1、c 0/0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6892 → 6895（待 _append_tsv_batch2805.py）
+
+## a 路：0x408E20 引用计数递减/脱出器（0x2D=45B）
+
+- 范围 0x408E20-0x408E4C（ret @0x408E4C）；0x408E4D-0x408E4F nop×3，下函数 0x408E50（**双重自环比较器**）观察项
+- thiscall 0 栈参（ret；esi=this）——**引用计数递减/脱出器**：
+  - `call 0x407450`（**链表清理**——0x407450 已登记为链表注册/清理原语，本批 a 路调用点）
+  - `mov eax,[esi+0x30]; mov [esi+0x30],0`（**this 的 [+0x30] 成员指针清零**——脱出）
+  - `mov ecx,[eax]; dec ecx; mov [eax],ecx`（**目标对象 [+0] 引用计数 -1**）
+  - `mov edx,[eax+0x14]; sub edx,ecx(=[esi+0x1c]); mov [eax+0x14],edx`（**目标 [+0x14] 减 this 的 [+0x1c]**）
+  - `mov ecx,[eax+0x10]; and ecx,0xfffffffd; mov [eax+0x10],ecx`（**目标 [+0x10] 清 bit1**）
+- 直接 call 1 个/去重 1：0x407450——picker callees=1 完全吻合
+- 判类：引用计数递减/脱出器（推断名——先链表清理，再清自身成员指针，递减目标引用计数并清 bit1、减量 [+0x14]；对象从容器脱出语义）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x4092F0 条件双重调用包装器（0x1F=31B）
+
+- 范围 0x4092F0-0x40930E（ret @0x40930E）；0x40930F nop，下函数 0x409310（**+0x8 getter 包装器**：`xor edx; call 0x4091c0; mov eax,[esi+8]; ret`）观察项；0x409320（**字段差值 getter [+0x34]-[+0x38]**）观察项；0x409330（**+0x30 getter**）观察项
+- thiscall 0 栈参（ret；esi=this）——**条件双重调用包装器（HRESULT 返回）**：
+  - `xor edx,edx; call 0x4091C0`（**首次调用**——0x4091C0 环形缓冲推进，edx=0 参数）
+  - `mov edx,[esi+8]; test edx,edx; je 0x409308`（**[+0x8] 判空**）
+  - `mov ecx,esi; call 0x4091C0`（**[+0x8] 非空时二次调用**）
+  - `mov eax,0x80040000; ret`（**返回固定 HRESULT 0x80040000**——FACILITY_ITF code 0，通用接口错误推断）
+- 直接 call 2 个/去重 1：0x4091C0——picker callees=1 完全吻合
+- 判类：条件双重调用包装器（推断名——edx=0 首次调用 + [+0x8] 非空触发二次调用同一函数，固定 HRESULT 错误码返回；操作失败/未完成语义）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x4093F0 全局计数自旋+timeGetTime 比较写入器（0x7B=123B）
+
+- 范围 0x4093F0-0x40946A（ret @0x40946A）；0x40946B-0x40946F nop×5，下函数 0x409470（**COM 巨型栈帧**：sub esp,0x400 + [0x7E11F4] + [0x7C89DA] + [0x7E11F0]）观察项
+- 无 thiscall 参数（ret；直接操作全局）——**全局计数自旋+timeGetTime 比较写入器**：
+  - `mov eax,[0x87e84c]; inc eax; mov [0x87e84c],eax`（**全局计数器 [+0x87E84C] +1**）
+  - 自旋循环：`mov esi,[0x87e84c]; mov ecx,[0x7e1764]; mov edx,[0x7e1760]; mov edi,[ecx]; mov ebx,[edx]`（**读两全局指针 [0x7E1764]/[0x7E1760] 并解引用**）→ `cmp esi,eax; je 0x40942d`（**计数器稳定才继续**）
+  - `mov ebp,[0x7e1530]; call ebp`（**timeGetTime**——[0x7E1530] 导入槽 batch 060 已实锤，间接调用）
+  - `cmp eax,ebx; jae 0x40943a; inc edi`（**时间与旧值比较，小于则 edi+1**）
+  - `mov ecx,[0x7e1764]; mov [ecx],edi; mov edx,[0x7e1760]; mov [edx],eax`（**写回两全局**）
+  - 再自旋同步 → `mov eax,[0x816320]; mov edx,[0x816324]; ret`（**返回 [0x816320]/[0x816324] 64 位值 edx:eax**）
+- 直接 call 0 个/去重 0——picker callees=0 吻合；间接 1（call ebp = [0x7E1530] timeGetTime，batch 060 已实锤，非直接 call 不计核验）
+- 判类：全局计数自旋+timeGetTime 比较写入器（推断名——[0x87E84C] 计数器自旋同步；读 [0x7E1764]/[0x7E1760] 全局指针解引用，timeGetTime 与旧值比较递增 edi；写回；返回 [0x816320]/[0x816324] 64 位）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2805.py：a 路 1/1、b 路 1/1、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0（c 路 picker 计入的 1 为间接调用 call ebp→[0x7E1530] timeGetTime，核验脚本只抓直接 call/jmp 字面量，属预期差）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x407450（链表清理原语）、0x4091C0（环形缓冲推进 batch 251）
+- 观察 [0x87E84C] 全局计数器、[0x7E1764]/[0x7E1760] 全局指针对、[0x816320]/[0x816324] 64 位返回对——0x40 段全局同步域
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **+0x8 getter 包装器**：b 路下函数 0x409310（xor edx + call 0x4091c0 + mov eax,[esi+8]——首次调用后返回成员）——0x409xxx 环形缓冲族包装器
+- **字段差值 getter 第三实例**：0x409320（[+0x34]-[+0x38]）+ 0x409330（+0x30 getter）——与批 2804 a/b 路同模板，字段对 [0x34]/[0x38]
+- **双重自环比较器**：a 路下函数 0x408E50（[+0x30] 指向 +4 自环检测）——0x40 段容器族
+- **COM 巨型栈帧**：c 路下函数 0x409470（sub esp,0x400 + [0x7E11F4] 导入槽 + [0x7C89DA] + [0x7E11F0]）——0x409xxx 段 COM 初始化族
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
