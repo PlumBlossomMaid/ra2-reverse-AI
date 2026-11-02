@@ -1,0 +1,72 @@
+# frontier batch 2827
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段；未登记池 6942→6939）——0x415xxx/0x416xxx 主体对象方法区（单元 AI 状态机区：两个大函数 + 一个判定器）
+三路：a=0x4158E0（0x7D=125B **对象存在性判定器** callees=1 deps=0）/ b=0x415EE0（0x6DB=1755B **主体→目标交互主函数** callees=18 deps=0）/ c=0x416D50（0x594=1428B **主体状态机调度器** callees=14 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2827a.txt（长度 0x100）+ _d2827b/c.txt（长度 0x800），完整读取确认（a ret @0x41595C、b ret 8 @0x4165BA、c ret @0x4172E3）
+核验：.qwen/tmp/_check_callees2827.py 三路全 PASS（a 1/1、b 18/18、c 14/14），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6958 → 6961（待 _append_tsv_batch2827.py）
+
+## a 路：0x4158E0 对象存在性判定器（0x7D=125B）
+
+- 范围 0x4158E0-0x41595C（ret @0x41595C）；0x41595D nop，0x415960 起**配套状态写入器**（[+0x6d2]=1 + 虚表槽 0x1e8 → 状态机——观察项）观察项
+- thiscall 0 栈参（ret；esi=this）——**对象存在性判定器**：
+  - `mov eax,[esi+0x2b4]; test; jne`（**门控：+0x2B4 存在性**）
+  - 分支一（+0x2B4 空）：`push 1/0; call [eax+0x480]`（**虚表槽 0x480**）→ `push 0/4; call [edx+0x1e8]`（**虚表槽 0x1e8**）→ 返 3
+  - 分支二（+0x2B4 非空 + +0x5A4 空）：`push 1/push eax; call [edx+0x480]`→ 返 3
+  - 分支三（双非空）：`push eax; call 0x5F6440`（**随机伤害计算器——被调唯一**）→ `mov ecx,[0x8871e0]; cmp eax,[ecx+0x54c]; jg 0x415956`（**伤害 vs 阈值 [0x8871E0]+0x54C**）→ `push 0/0x1b; call [edx+0x1e8]` + `dec byte [esi+0x6d3]`（**+0x6D3 递减**）→ 返 3
+- 直接 call 1 个/去重 1：0x5F6440——picker callees=1 完全吻合
+- 判类：对象存在性判定器（推断名——+0x2B4/+0x5A4 双字段存在性门控 + 伤害/阈值比较 + 虚表槽 0x480/0x1e8 分派 + 返 3 恒值）
+- 语义证据级别：assembly_decompile_verified（partial——[0x8871E0]+0x54C 阈值语义未确认）
+
+## b 路：0x415EE0 主体→目标交互主函数（0x6DB=1755B）
+
+- 范围 0x415EE0-0x4165BA（ret 8 @0x4165BA）；0x4165BD-0x4165BF nop×3，下函数 0x4165C0（**主体→目标交互次函数**：调 0x4d7330 + 分支返回 5/7——观察项）观察项 + 0x4166C0（**分派跳板**：`mov eax,[ecx+0x6c4]; test [eax+0xdfc]; je/jmp 0x416d50`——状态机分派）
+- stdcall 2 栈参（ret 8；edi=this/栈参 2）——**主体→目标交互主函数（浮点组件 + 坐标校验 + 事件派发）**：
+  - `mov eax,[edi+0x118]; test; je 0x415f08`（**目标对象门控**）→ `call 0x415c60`（**直接返回路径**）→ 返 0
+  - 主路径：`push/push; mov ecx,edi; call 0x6FDD50`（**取目标实体**）→ test → `mov ecx,[esi+0xac]; mov eax,[ecx+0x2dc]`（**目标类型 +0x2DC**）
+  - COM 检查：`test eax; jne; push 0x80004003; call 0x7DC720`（**HRESULT 0x80004003 错误**——COM 接口检查三连）
+  - 浮点组件 assemb（esi+0xE8 起 24B 三 double）：`call 0x41c3f0/0x41c3c0`（**双曲/角度换算器**）→ `fild/fmul [0x7e2810]; fld st(0); fmul [esi]; fstp [esi]...`（**三通道缩放**）→ `call 0x41c2e0`（**角度换算**）→ `movsx cx,[eax]; sub ecx,0x3fff`（**半精度指数还原**）
+  - 归一化分支：`fcomp [0x7e2800]; test ah,0x40; jne 0x415ffe`（**浮点零比较**）→ `call 0x4cad00; fdivr`（**除法归一化**）
+  - 常量缩放：`push 0xbf19222d/0x989f5e57`（**浮点常量**）→ `call 0x4cad00/0x4cacb0; fmul`（**缩放三通道**）
+  - 坐标类型转换：`call 0x4c93d0`（**坐标转换器**）→ `call 0x41c460/0x41c430`（**角度换算对**）→ `movsx; sub 0x3fff; fild; fmul [0x7e2810]`（**半精度还原**）→ `call 0x4cae30; fsub [0x7e2820]; fmul [0x7e2818]; call 0x7c5f00`（**_ftol 角度→整**）
+  - 中断坐标：`call 0x41c230`（**向量加**）+ ±0x200/0xfffffe00 边界 → `mov ecx,0x87f7e8; call 0x586360`（**MapClass::Instance 坐标合法性**）→ 分支处理
+  - 事件派发：`push 0x414290 系列; push 0; call [edx+0x3f8]`（**虚表槽 0x3f8 取实体**）→ `mov ecx,[0x8871e0]; [ecx+0x18]; push... call 0x5678e0`（**地图插格/放置**）——坐标合法后放置
+  - 完成：`test byte [edi+0x6ca]; je; call [edx+0xf8]`（**+0x6CA 标志触发虚表槽 0xf8**）→ `mov eax,esi; ret 8`（**返目标**）
+- 直接 call 53 个/去重 18：0x415c60、0x41c230/0x41c2e0/0x41c350/0x41c3c0/0x41c3f0/0x41c430/0x41c460（向量/角度换算 7 连）、0x4c93d0/0x4cacb0/0x4cad00/0x4cae30（浮点库 4 连）、0x50b6f0、0x5678e0、0x586360、0x6fdd50、0x7c5f00、0x7dc720——picker callees=18 完全吻合
+- 判类：主体→目标交互主函数（推断名——浮点向量组件 assemb/归一化/半精度指数还原 + MapClass 坐标合法性 + 事件派发放置 + COM 错误检查；单元交互核心）
+- 语义证据级别：assembly_decompile_verified（partial——主体/目标类身份未确认，0x6FDD50 取实体语义推断）
+
+## c 路：0x416D50 主体状态机调度器（0x594=1428B）
+
+- 范围 0x416D50-0x4172E3（ret @0x4172E3 末端/多分支早退）；0x4172E4 起 **jmp table**（4 目标：0x416D6B/0x416F29/0x416FA3/0x41715E），下函数 0x417300（**状态机调度器第二实例**：同 [+0xBC] jmp table 0x4176DC + 上限 4——观察项）观察项
+- thiscall 0 栈参（ret；esi=this）——**主体状态机调度器（[+0xBC] 状态 + 分支派发）**：
+  - `mov eax,[esi+0xbc]; cmp eax,3; ja 0x416d9d`（**状态门控**）→ `jmp [eax*4+0x4172e4]`（**四路分派**）
+  - 状态 0（0x416D6B）：日志 + `mov ecx,[esi+0x5a4]; test; jne 0x416dd3`（**+0x5A4 目标门控**）→ `push 1/0; call [eax+0x484]`（**虚表槽 0x484**）→ `call 0x5b3a00; fld [eax+0x10]; fmul [0x7e27f8]; call 0x7c5f00`（**_ftol 参数求值**）→ `push 2/0; mov ecx,[0xa8b230]; add ecx,0x218; call 0x65c7e0`（**Randomizer::RandomRanged——带名 RNG 命中！**）→ `add eax,esi`（**随机偏移**）→ 返
+  - 状态 0 深路径（0x416DD3）：`call 0x40dd70`（**取目标**）→ `push edi; call 0x4f9a90`（**类型匹配判定**）→ `mov cl,[edi+0x14]; and cl,1`（**标志位**）→ `call [edx+0x3c]; call 0x4f9a90`（**二次匹配**）→ `call [eax+0x2c]; cmp eax,1`（**虚表槽 0x2c → 1 门控**）→ 日志 + `call 0x65ad30`（**主体取址**）+ `cmp eax,edi` → 虚表槽 0x274/0x278/0x480/0x484 分派（**AI 行动派发**）
+  - 状态 1（0x416F29）：`mov ecx,[esi+0x5a4]; test; jne 0x416f4d`（**目标门控**）→ `push 1/push; call [eax+0x484]`→ 返 1；深路径 `call [edx+0x48]`（**虚表槽 0x48 取坐标**）→ `mov eax,[esi+0x674]; push 0x80004003; call 0x7dc720`（**COM 检查**）→ `call [ecx+0x44]`（**虚表槽 0x44**——坐标传输）→ `[esi+0xbc]=2`（**状态推进**）→ 返 1
+  - 状态 2（0x416FA3）：目标存在性/类型 0xb 检查 → `call 0x65ad30`→ `cmp eax,[esi+0x5a4]` → 虚表槽 0x550/0x90/0x2c/0x10 分派（**收尾清理**）→ `call 0x565730`（**MapClass 坐标查询**）→ `call 0x47eba0`（**格取单元**）→ 虚表槽 0x274/0x124/0x484 派发 → `call 0x4733a0`（**单元入队**）→ `[esi+0x6d4]=1`（**完成标志**）
+  - 状态 3（0x41715E）：日志 + 检查 + 虚表槽 0x124 → `call 0x416af0`（**配套方法**）→ 收尾
+  - 返 1 恒值经全分支
+- 直接 call 33 个/去重 14：0x4068e0、0x40dd70、0x416af0、0x418e20、0x4733a0、0x47eba0、0x4f9a90、0x565730、0x5b3a00、0x65ad30、**0x65c7e0（Randomizer::RandomRanged）**、0x6e9050、0x7c5f00、0x7dc720——picker callees=14 完全吻合
+- **★RNG 命中**：0x65C7E0 为带名 Randomizer::RandomRanged（QWEN.md 已实锤 0x65C7E0 掩码+拒绝采样）——本路在状态 0 用 `RandomRanged(0,2) + _ftol(参数×[0x7e27f8])` 生成随机偏移，**与 RMG 无关的游戏逻辑 RNG 消耗点**
+- 判类：主体状态机调度器（推断名——[+0xBC] 状态 0-3 + RandomRanged 随机偏移 + 目标匹配/坐标传输/收尾清理 + MapClass 坐标查询 + 单元入队；单元 AI 行动状态机核心）
+- 语义证据级别：assembly_decompile_verified（partial——主体类身份未确认；RNG 命中 0x65C7E0 为带名铁证）
+
+## 核验结果
+
+- _check_callees2827.py：a 路 1/1、b 路 18/18、c 路 14/14——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x65C7E0（Randomizer::RandomRanged 带名）、0x7C5F00（_ftol）、0x7DC720（错误抛投）、0x4068E0（DebugLog）、0x5678E0/0x586360/0x565730（MapClass 域）、0x4CAD00/0x4CACB0/0x4CAE30（浮点库）
+- **进入单元 AI 状态机区**：[+0xBC] 状态字段 + jmp table 双实例（0x4172E4/0x4176DC）+ RandomRanged 游戏逻辑消耗点——与 RMG 平行的常规游戏 RNG 使用面
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **状态机调度器第二实例**：c 路下函数 0x417300（同 [+0xBC] jmp table 0x4176DC，上限 4——状态 0-4）——同族自律第二只
+- **主体→目标交互次函数**：b 路下函数 0x4165C0（调 0x4d7330 + 分支返回 5/7 + new 0x1c8 + 0x65c780 Random + 0x421ea0）
+- **分派跳板**：0x4166C0（[+0x6C4]→[+0xDFC] 标志 → jmp 0x416d50/0x4166e0）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
