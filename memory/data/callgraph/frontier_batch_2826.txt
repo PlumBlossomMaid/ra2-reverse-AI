@@ -1,0 +1,53 @@
+# frontier batch 2826
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段；未登记池 6939→6936）——0x414xxx 定位判定区开张（比较判定器 + 双转发器）
+三路：a=0x414290（0x5F=95B **条件坐标判定器/标识匹配器** callees=1 deps=0）/ b=0x4142F0（0x0D=13B **转发器** callees=1 deps=0）/ c=0x414300（0x0D=13B **转发器（第二实例）** callees=1 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2826{a,b,c}.txt（长度 0x100），完整读取确认（a ret 0xc @0x4142EC、b ret 4 @0x4142FA、c ret 4 @0x41430A）
+核验：.qwen/tmp/_check_callees2826.py 三路全 PASS（a 1/1、b 1/1、c 1/1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6955 → 6958（待 _append_tsv_batch2826.py）
+
+## a 路：0x414290 条件坐标判定器（0x5F=95B）
+
+- 范围 0x414290-0x4142EC（ret 0xc @0x4142EC）；0x4142EF nop，下函数 0x4142F0（**本批 b 路**）观察项
+- stdcall 3 栈参（ret 0xc；ebx=[esp+8]/ebp=[esp+0x14]/esi=[esp+0x14]）——**条件坐标判定器/标识匹配器**：
+  - `push [ebp]/push [esi]/push [ebx]; call 0x410260`（**三参判定调用**）
+  - `test eax,eax; jge 0x4142e9`（**≥0 → 返 0**）
+  - `mov ecx,4; mov edi,0x7e9b40; repe cmpsd`（**与 [0x7E9B40] 四 dword 串比较**——标识匹配）
+  - 命中：`jne 0x4142df` → `lea eax,[ebx+0x6c0]; mov [ebp],eax`（**命中 → 输出 [ebx]+0x6C0 地址**）→ `mov ecx,[ebx]; call [ecx+4]`（**虚表槽 4**）→ `xor eax; ret 0xc`（**返 0**）
+  - 未命中：`mov [ebp],0`（**未命中 → 输出 0**）→ 虚表槽 4 → 返 0
+- 直接 call 1 个/去重 1：0x410260——picker callees=1 完全吻合
+- 判类：条件坐标判定器/标识匹配器（推断名——三参判定 + [0x7E9B40] 四 dword 标识比较 + 命中输出 +0x6C0 段地址）
+- 语义证据级别：assembly_decompile_verified（partial——[0x7E9B40] 常量串身份未确认）
+
+## b 路：0x4142F0 转发器（0x0D=13B）
+
+- 范围 0x4142F0-0x4142FA（ret 4 @0x4142FA）；0x4142FD-0x4142FF nop×3，下函数 0x414300（**本批 c 路**）观察项
+- stdcall 1 栈参（ret 4）——**转发器**：
+  - `mov eax,[esp+4]; push eax; call 0x410300`（**单参转发调用**）→ `ret 4`
+- 直接 call 1 个/去重 1：0x410300——picker callees=1 完全吻合
+- 判类：转发器（推断名——薄转发，参数原样透传 0x410300）
+- 语义证据级别：assembly_decompile_verified（trivial）
+
+## c 路：0x414300 转发器（第二实例）（0x0D=13B）
+
+- 范围 0x414300-0x41430A（ret 4 @0x41430A）；0x41430D-0x41430F nop×3，下函数 0x414310（**坐标转换大函数**：[0x87f7e8] MapClass 经纬度转换 + 虚表槽 0xbc + 0x4d7170——观察项）观察项
+- stdcall 1 栈参（ret 4）——**转发器（调 0x410310）**：转发至 0x410310，与 b 路仅目标地址不同
+- 直接 call 1 个/去重 1：0x410310——picker callees=1 完全吻合
+- 判类：转发器（推断名——薄转发第二实例）
+- 语义证据级别：assembly_decompile_verified（trivial）
+
+## 核验结果
+
+- _check_callees2826.py：a 路 1/1、b 路 1/1、c 路 1/1——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x410260、0x410300、0x410310
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **坐标转换大函数**：c 路下函数 0x414310（**[0x87f7e8] MapClass::Instance 地理坐标转换**——0x5785f0/0x578080 带名 MapClass 方法 + 虚表槽 0xbc + 0x4d7170——已接近已知 MapClass 域，优先候选）——0x414xxx 坐标域
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
