@@ -1,0 +1,55 @@
+# frontier batch 2894
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x465C70（51B）+ 0x465D30（3B）+ 0x465DC0（30B）
+三路：a=0x465C70（0x33=51B **缓冲释放器槽 0x1504** callees=1 deps=0）/ b=0x465D30（0x3=3B **恒返 0 禁用器** callees=0 deps=0）/ c=0x465DC0（0x1E=30B **scalar deleting 析构器** callees=2 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2894{a,b,c}.txt（a 长度 0x40、b 长度 0x10、c 长度 0x30），完整读取确认（a ret @0x465CA2、b ret @0x465D32、c ret 4 @0x465DDB）
+核验：.qwen/tmp/_check_callees2894.py 三路全 PASS（a 1/1 去重1、b 0/0 去重0、c 2/2 去重2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7159 → 7162（待 _append_tsv_batch2894.py）
+
+## a 路：0x465C70 缓冲释放器（0x33=51B，槽 0x1504）
+
+- 范围 0x465C70-0x465CA2（ret @0x465CA2）
+- thiscall 0 栈参（ret）——**缓冲释放器**：
+  - `[+0x1508]` 标志 且 `[+0x1504]` 指针非空 → `call 0x7c8b3d`（CRT delete）→ `[+0x1504]=0`、`[+0x1508]=0`（双清）
+- 直接 call 1 个/去重 1——picker callees=1 **完全吻合**
+- 判类：缓冲释放器（槽 +0x1504）——**批 2892/2893 连续槽位族第六实例（0x14e4/0x14ec/0x14f4/0x14fc/0x1518/0x1504 六槽闭合）** (partial)
+
+## b 路：0x465D30 恒返 0 禁用器（0x3=3B）
+
+- 范围 0x465D30-0x465D32（ret @0x465D32）
+- thiscall 0 栈参（ret）——**恒返 0 禁用器**：`xor al,al; ret`（3B 极简——**恒返 0 占位**）
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**
+- 判类：恒返 0 禁用器（3B 极简 stub——接口禁用/占位） (partial)
+
+## c 路：0x465DC0 scalar deleting 析构器（0x1E=30B）
+
+- 范围 0x465DC0-0x465DDB（ret 4 @0x465DDB）
+- thiscall 1 栈参（ret 4；[esp+8]=deleting 标志）——**scalar deleting 析构器**：
+  - `call 0x45e580`（**多字段析构反注册器 batch 2493**——457B 析构主体）→ `test byte[esp+8],1` → 真 → `call 0x7c8b3d`（delete this）→ 返 this
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x45e580/0x7c8b3d 已登记）
+- 判类：scalar deleting 析构器（0x45E580 多字段析构 + deleting 标志 delete this）——批 2493 析构器配对 (partial)
+
+## ★★重大跨批次闭合：批 2892-2894 槽位释放器 = 0x45E580 八组清字段对的单槽版
+
+- **0x45E580（批 2493 多字段析构反注册器）**内部八组清字段对（标志字节+指针字段逐个 delete）：
+  `[+0xe04]/[+0xe00]`、`[+0x151c]/[+0x1518]`、`[+0x14e8]/[+0x14e4]`、`[+0x14f0]/[+0x14ec]`、`[+0x14f8]/[+0x14f4]`、`[+0x1500]/[+0x14fc]`、`[+0x1508]/[+0x1504]`
+- **本批 + 批 2892/2893 登记的单槽释放器逐对命中**（同字段偏移、同 delete 语义）：
+  0x465C70（+0x1504）→ 对应 [+0x1508]/[+0x1504] 组；0x465C30（+0x14fc）→ [+0x1500]/[+0x14fc] 组；0x465BF0（+0x14f4）→ [+0x14f8]/[+0x14f4] 组；0x465BB0（+0x14ec）→ [+0x14f0]/[+0x14ec] 组；0x465B70（+0x14e4）→ [+0x14e8]/[+0x14e4] 组；0x465B30（+0x1518）→ [+0x151c]/[+0x1518] 组
+- **语义实证**：这些 51B 单槽释放器是 0x45E580 析构器"逐槽析构"展开时的独立成员/被调——补完了批 2493 只登记主析构、未登记单槽变体的六处缺口
+
+## 核验结果
+
+- _check_callees2894.py：a 路 1/1、b 路 0/0、c 路 2/2——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7c8b3d（CRT delete）、0x45e580（多字段析构反注册器 batch 2493）
+- **b 路 3B 极简**：恒返 0 stubs（编译器内联化残余），零 call 零依赖
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x465E70**（221B，2 callees）/ **0x465F50**（39B）/ **0x466000**（128B，3 callees）——后续候选（0x466xxx 区）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
