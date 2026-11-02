@@ -1,0 +1,62 @@
+# frontier batch 2874
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x44EB10（76B）+ 0x44F5C0（119B）+ 0x4500F0（737B 大函数）
+三路：a=0x44EB10（0x4C=76B **回收判断器** callees=2 deps=0）/ b=0x44F5C0（0x77=119B **行动检查器** callees=1 deps=0）/ c=0x4500F0（0x2E1=737B **对象生命周期/入队处理大函数** callees=13 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2874{a,b,c}.txt（a 长度 0x90、b 长度 0xB0、c 长度 0x340），完整读取确认（a ret @0x44EB5B、b ret @0x44F636、c 终点由核验脚本全文件扫描）
+核验：.qwen/tmp/_check_callees2874.py 三路全 PASS（a 2/2、b 1/1、c 15/15 去重13），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7099 → 7102（待 _append_tsv_batch2874.py）
+
+## a 路：0x44EB10 回收判断器（0x4C=76B）
+
+- 范围 0x44EB10-0x44EB5B（ret @0x44EB5B）；下函数 0x44EB60（**锁定/释放器**：param1 门 + 0x4CA160 + [+0x81] 标志——观察项）
+- thiscall 0 栈参（ret；esi=this）——**回收判断器**：
+  - `al=[+0x6e3]; test; jne 0x44eb53`（**[+0x6e3] 标志 → 走默认**）
+  - `mov ecx,[0xa8b230]; lea ecx,[eax+0x218]; push 0x63; push 0; call 0x65c7e0`（**Randomizer::RandomRanged(0,99)——RNG 消耗点第八例**）→ `cmp eax,0x19; jge 0x44eb53`（**随机 ≥25 走默认——75% 默认/25% 特殊**）
+  - `[+0x520]+0xeb8 cmp 7; jne 0x44eb53`（**类型 !=7 走默认**）→ `mov edx,[0x8871e0]; mov eax,[edx+0xf70]; ret`（**[0x8871E0]+0xf70 值**）
+  - **默认路径**（0x44EB53）：`call 0x707d20`（**0x707D20**）→ ret
+- 直接 call 2 个/去重 2：0x65c7e0、0x707d20——picker callees=2 完全吻合
+- 判类：回收判断器（RNG 概率门 RandomRanged(0,99)<0x19（25%） + 类型 7 → [0x8871E0]+0xf70 / 否则 0x707D20）(partial)
+
+## b 路：0x44F5C0 行动检查器（0x77=119B）
+
+- 范围 0x44F5C0-0x44F636（ret @0x44F636）；下函数 0x44F640（**建筑状态机**：[+0x520]+0xec8/0xecc/0xed0——观察项）
+- thiscall 0 栈参（ret；esi=this；返 0/1）——**行动检查器（可行动条件）**：
+  - `[+0x504]>0 → 返 0`（**有冷却 → 不可行动**）
+  - `call [eax+0x284]`（**虚表槽 0x284**）→ `test al; jne → 返 1`（**直接可行动**）
+  - `[+0x520]+0x16b9` 标志 → je 0x44f622（**快路径**）→ `[+0x21c]; call 0x50b730`（**0x50B730**）→ `test al; je → 0` → `[0xa8b238]` → `[0xa8b320]` → `[+0x2c0]` 检查 → je 0x44f622（**深查失败 → 快路径**）
+  - 0x44f622 快路径：`[+0x520]+0x408` 集合 → `setne al; ret`（**集合非空 = 可行动**）
+- 直接 call 1 个/去重 1：0x50b730——picker callees=1 完全吻合（+ 虚表槽 0x284 间接 1）
+- 判类：行动检查器（[+0x504] 冷却门 + 虚表槽 0x284 快返 + 0x16b9 深查链（0x50B730/[0xA8B238]/[0xA8B320]/[+0x2c0]）+ [+0x520]+0x408 集合兜底）(partial)
+
+## c 路：0x4500F0 对象生命周期/入队处理大函数（0x2E1=737B）
+
+- 范围 0x4500F0-0x4503D0（737B；核验全扫描 254 行确认终点）
+- thiscall 0 栈参（ret；esi=this）——**对象生命周期/入队处理大函数**：
+  - `[+0x524]` 对象 → `cmp; je 0x450248`（**空 → 出口**）→ `call 0x4ca130`（**0x4CA130 检查**）→ `test al; je`
+  - `[+0x550]/[+0x558]` 时间检查：`cmp edx,-1; je → [0xa8ed84]-edx vs eax`（**帧计数差比较**）→ `cmp eax,ebx; jne`（**时间未到 → 出口**）
+  - `call 0x4ca160`（**0x4CA160 取队列**）→ edi=对象 → `[0x89c818]` 全局 → `call [eax+0x100]`（**虚表槽 0x100**）→ 返回值 switch（0/1/2）：
+    - **==2**（0x45016D）：`[+0x9c]` 三 dword + `[+0x520]+0xe74` + `call 0x750e20`（**0x750E20 三参**）→ `[+0x21c]; call 0x4fb6b0`（**0x4FB6B0**）→ `call 0x4ca1a0`（**0x4CA1A0**）→ [+0x524] 释放（虚表槽 0x20）
+    - **==1**（0x4501CB）：`[0x8871e0]+0x5f8; fmul [0x7e27f8]; call 0x7c5f00`（**帧数转换**）→ `[+0x550]=[0xa8ed84]; [+0x558]=eax`（**时间记录**）
+    - **==0**（0x4501FF）：`call [edx+0x2c]`（**虚表槽 0x2c**）→ `cmp 6` → `[+0x520]+0xcce` 检查 → ...
+  - 后续另有 0x4C98B0/0x4C9C70/0x4C9EA0/0x4C9FF0/0x4FBD80/0x4FF540/0x7C8E17（new）
+- 直接 call 15 个/去重 13——picker callees=13 **完全吻合**（0x4c98b0/0x4c9c70/0x4c9ea0/0x4c9ff0/0x4ca130/0x4ca160/0x4ca1a0/0x4fb6b0/0x4fbd80/0x4ff540/0x750e20/0x7c5f00/0x7c8e17 全已登记）
+- 判类：对象生命周期/入队处理大函数（[+0x524] 入队对象 + 虚表槽 0x100 三态 switch（0 类型查/1 帧记录/2 释放）+ [0xA8ED84] 帧计数差 + 0x7E27F8 帧转换 + 0x4CA130/0x4CA160/0x4CA1A0 队列族 + 0x750E20/0x4FB6B0 子处理）(partial)
+
+## 核验结果
+
+- _check_callees2874.py：a 路 2/2、b 路 1/1、c 路 15/15（去重 13）——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0（c 大函数 picker=13 完全吻合，零 MISSING）**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x65C7E0（Randomizer::RandomRanged）、0x707D20（默认处理）、0x50B730（[+0x21c] 检查）、0x4CA130/0x4CA160/0x4CA1A0（队列检查族）、0x750E20/0x4FB6B0/0x4FBD80（子处理）、0x4C98B0/0x4C9C70/0x4C9EA0/0x4C9FF0（队列族）、0x4FF540、0x7C8E17（new）、0x7C5F00（_ftol）
+- **a 路 RNG 消耗点**：RandomRanged(0,99)<0x19（25%概率特殊路径）——游戏逻辑 RNG 消耗点第八例（[0xA8B230]+0x218）；类型 7 + [0x8871E0]+0xf70 全局值读取
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **锁定/释放器**：a 路下函数 0x44EB60（param1 门 + 0x4CA160 + [+0x81]）
+- **建筑状态机**：b 路下函数 0x44F640（[+0x520]+0xec8/0xecc/0xed0）
+- **0x4503F0**（243B）/ **0x4504F0**（151B）/ **0x450590**（152B）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
