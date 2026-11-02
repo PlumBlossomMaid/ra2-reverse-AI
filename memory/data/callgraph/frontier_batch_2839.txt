@@ -1,0 +1,57 @@
+# frontier batch 2839
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段；未登记池 6978→6975）——0x422xxx/0x423xxx 域（标志清除器 + 偏移累加 + 巨型游戏逻辑函数）
+三路：a=0x422B80（0x31=49B **+0xCC 标志清除器** callees=0 deps=0）/ b=0x422BC0（0x12=18B **偏移累加器** callees=1 deps=0）/ c=0x423AC0（0x108A=4234B **巨型游戏逻辑函数（RandomRanged+26 callees）** callees=26 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2839{a,b}.txt（长度 0x100）+ _d2839c.txt（长度 0x1100），完整读取确认（a ret @0x422BB0、b ret @0x422BD1、c ret @0x424B49）
+核验：.qwen/tmp/_check_callees2839.py 三路全 PASS（a 0/0、b 1/1、c 56去重26），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6994 → 6997（待 _append_tsv_batch2839.py）
+
+## a 路：0x422B80 +0xCC 标志清除器（0x31=49B）
+
+- 范围 0x422B80-0x422BB0（ret @0x422BB0）；下函数 0x422BC0（**本批 b 路**）
+- 无参（ret；ecx=查询目标对象）——**+0xCC 标志清除器**——遍历 [0xA8E9AC] 数组查找 [+0xCC] 匹配的宿主并清零 [+0x195]：
+  - `test ecx,ecx; je 0x422bb0`（**查询对象非空门控**）
+  - `mov eax,[0xa8e9b8]; xor edx; test; jle`（**[0xA8E9B8] 数组计数门控**——batch 2838 c 路 [0xA8E9A8] 入队族同族）
+  - 循环：`mov eax,[0xa8e9ac]; mov eax,[eax+edx*4]; cmp [eax+0xcc],ecx; jne`（**[+0xCC] 匹配**）→ 命中：`mov byte[eax+0x195],0`（**清除 +0x195 启用标志**——batch 2838 c 路 [+0x195]=1 初始化的对应清除）
+  - 推进循环直到计数
+- 直接 call 0 个/去重 0——picker callees=0 完全吻合
+- 判类：+0xCC 标志清除器（推断名——[0xA8E9AC] 数组按 [+0xCC] 查找目标，清除 [+0x195] 启用标志；batch 2838 构造器 [+0x195]=1 的逆操作）(partial)
+
+## b 路：0x422BC0 偏移累加器（0x12=18B）
+
+- 范围 0x422BC0-0x422BD1（ret @0x422BD1）；0x422BD2-0x422BDF nop×14，下函数 0x422BE0（**坐标投影器**：0x5F65A0 + 虚表槽 0x48 + 三维坐标累加——观察项）观察项 + 0x422C70（**+0x184 门控转发**：0x5F4B10——观察项）+ 0x422CA0（**全图状态检查器**：[0x8a0df0] + [0x887644]——观察项）
+- thiscall 0 栈参（ret；esi=this）——**偏移累加器**：
+  - `call 0x5f6bd0`（**偏移基准查询**）→ `mov ecx,[esi+0x104]; add eax,ecx; ret`（**+0x104 偏移累加**）
+- 直接 call 1 个/去重 1：0x5f6bd0——picker callees=1 完全吻合
+- 判类：偏移累加器（推断名——0x5F6BD0 基准 + [+0x104] 偏移累加；薄返回 18B）(partial)
+
+## c 路：0x423AC0 巨型游戏逻辑函数（0x108A=4234B）
+
+- 范围 0x423AC0-0x424B49（ret @0x424B22/0x424B30/0x424B49 多分支）；0x424B4A-0x424B4F nop×6，下函数 0x424B50（**[+0xCC] 同族链遍历器**：[0xa8e9b8] + [+0xCC] 查找 + [0x87f7e8]/0x4a9770——观察项）观察项
+- 大栈帧（sub esp + push 寄存器族），esi=this ——**巨型游戏逻辑函数（26 callees 含 RandomRanged）**：
+  - 超大函数体——调用 0x65c7e0（Randomizer::RandomRanged）+ 0x7c5f00（_ftol）+ 0x7c8e17（new）+ 0x4cac40（浮点 exp）+ 0x565730/0x5657a0/0x578080（MapClass 域）+ 0x5f3e70/0x5fb2e0/0x5fc380（0x5Fxxxx 查询族）+ 0x4838e0/0x485020/0x489280/0x48a620（0x48xxxx 域）+ 0x47c520/0x47fb90（0x47xxxx）+ 0x4399a0/0x43b4c0（0x43xxxx）+ 0x421ea0/0x424ce0/0x424f00/0x425670/0x426630（0x42xxxx 本域）+ 0x6a46d0/0x6d2790/0x750d40（其他域）
+  - **★RandomRanged 0x65C7E0 第三例**——与 batch 2827 c 路 0x416D50（状态机调度器）、batch 2829 a 路 0x4197C0（FindFireLocation）同为带名 RNG 游戏逻辑消耗点
+  - 含 `[esi+0xCC]`/`[esi+0x195]`/`[esi+0x104]` 等字段（与 batch 2838 c 路构造器 0x422720 同族字段集）——**0x423AC0 可能是 0x422720 对应类的大型方法**
+  - 0x4cac40（浮点 exp）+ _ftol + 浮点运算——**含浮点计算的游戏逻辑**
+- 直接 call 56 个/去重 26——picker callees=26 完全吻合
+- 判类：巨型游戏逻辑函数（推断名——26 callees 跨 8 个地址段 + RandomRanged + _ftol + 浮点 + MapClass 域 + 0x48xxxx 域；同 batch 2838 构造器族的大型方法，含 RNG 消耗）(partial)
+- 语义证据级别：assembly_decompile_verified（partial——函数体过大需分段解读；RNG 0x65C7E0 为带名铁证）
+
+## 核验结果
+
+- _check_callees2839.py：a 路 0/0、b 路 1/1、c 路 56去重26——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x65C7E0（Randomizer::RandomRanged 带名）、0x7C5F00（_ftol）、0x7C8E17（new）、0x4CAC40（浮点）、0x565730/0x5657A0/0x578080（MapClass 域）
+- **RandomRanged 第三例**：0x423AC0（本批 c）+ 0x416D50（batch 2827 c）+ 0x4197C0（batch 2829 a）——游戏逻辑 RNG 消耗点累计三例，全部为带名 0x65C7E0
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **[+0xCC] 同族链遍历器**：c 路下函数 0x424B50（[0xa8e9b8] + [+0xCC] 查找 + [0x87f7e8]/0x4a9770——同族链）
+- **坐标投影器**：b 路下函数 0x422BE0（0x5F65A0 + 虚表槽 0x48 + 三维坐标累加）
+- **全图状态检查器**：0x422CA0（[0x8a0df0] + [0x887644]——全图标志门控）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
