@@ -1,0 +1,55 @@
+# frontier batch 2835
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段；未登记池 6966→6963）——0x41Fxxx 名字匹配域 + 0x420xxx 容器域
+三路：a=0x41FCA0（0x83=131B **名字匹配构造分发器** callees=3 deps=0）/ b=0x420120（0x03=3B **this 返回 stub** callees=0 deps=0）/ c=0x420370（0x2A=42B **成员释放清理器** callees=1 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2835{a,b,c}.txt（长度 0x100），完整读取确认（a ret @0x41FD22、b ret @0x420122、c ret @0x420399）
+核验：.qwen/tmp/_check_callees2835.py 三路全 PASS（a 3/3、b 0/0、c 1/1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6982 → 6985（待 _append_tsv_batch2835.py）
+
+## a 路：0x41FCA0 名字匹配构造分发器（0x83=131B）
+
+- 范围 0x41FCA0-0x41FD22（ret @0x41FD11/0x41FD1D/0x41FD22）；0x41FD23-0x41FD2F nop×13，下函数 0x41FD30（**+0xD8 setter**观察项）+ 0x41FD40（**+0xDC setter**观察项）+ 0x41FD50（**+0xE0 setter**观察项）+ 0x41FD60（**浮点换算器**：+0x108/+0x104 比例 + fild/fdiv/fsub [0x7e1738]——观察项）
+- stdcall 1 栈参（ret 4；edi=ecx 名字指针）——**名字匹配构造分发器（双常量串匹配 + 数组查名 + new 构造）**——与 batch 2821 b 路 0x40F510 同族：
+  - `push edi; push 0x817474; call 0x7c8d20`（**stricmp 常量串 1**）→ `test; je 0x41fd1e`（**匹配 → 返 0**）→ `push 0x817694; call 0x7c8d20`（**stricmp 常量串 2**）
+  - 数组扫描：`mov eax,[0xa8b210]; xor esi; test; jle 0x41fcf6`（**[0xA8B210] 计数**）→ `mov eax,[0xa8b204]; push edi; mov ecx,[eax+esi*4]; add ecx,0x24`（**[0xA8B204] 数组 + 0x24 名字字段**）→ `call 0x7c8d20`（**stricmp 逐项**）→ 命中 → 返 `[edx+esi*4]`（**已存在对象**）
+  - 未命中：`push 0x110; call 0x7c8e17`（**new 0x110**）→ `push edi; mov ecx,eax; call 0x41e350`（**名字参构造 0x41E350**）→ 返新对象；失败返 0
+- 直接 call 5 个/去重 3：0x7c8d20（stricmp ×3）、0x7c8e17（new）、0x41e350——picker callees=3 完全吻合
+- 判类：名字匹配构造分发器（推断名——常量串前缀匹配 + [0xA8B204] 数组逐项名查找 + 未命中 new 0x110 构造 0x41E350；与 batch 2821 0x40F510 同族不同注册表）
+- 语义证据级别：assembly_decompile_verified（partial——[0xA8B204]/[0xA8B210] 注册表目标类未确认）
+
+## b 路：0x420120 this 返回 stub（0x03=3B）
+
+- 范围 0x420120-0x420122（ret @0x420122）；下函数 0x420130（**空返回 stub**观察项）+ 0x420140（**0x20000 槽对象构造器**：new 0x20008 + [0x88A084] 数组 + 种子哈希 0x82061029——观察项）
+- thiscall 0 栈参（ret）——**this 返回 stub**：
+  - `mov eax,ecx; ret`（**原样返 this——3B 极简**）
+- 直接 call 0 个/去重 0——picker callees=0 完全吻合
+- 判类：this 返回 stub（推断名——极简恒等返回）(trivial)
+
+## c 路：0x420370 成员释放清理器（0x2A=42B）
+
+- 范围 0x420370-0x420399（ret @0x420399）；0x42039A-0x42039F nop×6，下函数 0x4203A0（**偏移换算器**观察项）+ 0x4203C0（**+4 索引读取**观察项）+ 0x4203D0（**容器相等比较器**观察项）+ 0x420410（**容器装载器**观察项）
+- thiscall 0 栈参（ret；esi=this）——**成员释放清理器**（与批 2809 a 路 0x40B6A0 同模板——容器族标准清理路径）：
+  - `mov eax,[esi+4]; mov [esi+0x10],0`（**+0x10 清零**）
+  - `test eax; je` + `cmp byte[esi+0xd],0; je`（**双条件门控**）→ `push eax; call 0x7c8b3d`（**delete 成员 [+4]**）→ `mov [esi+4],0`（**清零**）
+  - `mov [esi+0xd],0; mov [esi+8],0`（**清零 [+0xd]/[+8]**）
+- 直接 call 1 个/去重 1：0x7c8b3d（CRT delete）——picker callees=1 完全吻合
+- 判类：成员释放清理器（推断名——容器族标准清理路径，0x420xxx 区容器家族）(partial)
+
+## 核验结果
+
+- _check_callees2835.py：a 路 3/3、b 路 0/0、c 路 1/1——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8D20（CRT stricmp）、0x7C8E17（operator new）、0x7C8B3D（CRT delete）、0x41E350
+- **名字匹配域第二实例**：batch 2821 0x40F510（[0x8874C4] 表）+ 本批 0x41FCA0（[0xA8B204] 表）——同模板双注册表
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x20000 槽对象构造器**：b 路下函数 0x420140（new 0x20008 + [0x88A084] 数组 + 0x82061029 种子哈希 + 0x20000 标记——**大对象数组注册表**）
+- **浮点换算器**：a 路下函数 0x41FD60（+0x108/+0x104 比例 + fild/fdiv/fsub [0x7e1738]）
+- **setter 三连**：0x41FD30/0x41FD40/0x41FD50（+0xD8/+0xDC/+0xE0 字面 setter）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
