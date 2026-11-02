@@ -1,0 +1,57 @@
+# frontier batch 2854
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x432610（84B）+ 0x432A60（80B）+ 0x432BD0（31B）
+三路：a=0x432610（0x52=82B **scalar deleting 析构器** callees=2 deps=0）/ b=0x432A60（0x50=80B **释放清理器** callees=2 直接/4 含间接 deps=0）/ c=0x432BD0（0x1C=28B **关闭通知器** callees=0 直接/1 含间接 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2854{a,b,c}.txt（a/b 长度 0xA0、c 长度 0x48，含下函数族开头），完整读取确认（a ret 4 @0x432661、b ret @0x432AAF、c ret 4 @0x432BEB）
+核验：.qwen/tmp/_check_callees2854.py 三路全 PASS（a 3/3 去重2、b 2/2、c 0/0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7039 → 7042（待 _append_tsv_batch2854.py）
+
+## a 路：0x432610 scalar deleting 析构器（虚表 0x7E3A2C）（0x52=82B）
+
+- 范围 0x432610-0x432661（ret 4 @0x432661）；下函数 0x432670（**四全局清零器**：[0x89c498..0x89c4a4]——观察项）+ 0x432690（**构造器**：[+0]/[+4]/[+0xc]/[+0x20]=0、[+0x2d]=0、[+0x28]=-1——观察项）
+- thiscall 1 栈参（ret 4；esi=this；[esp+0xc]=flag）——**scalar deleting 析构器（虚表 0x7E3A2C 类——与批 2852 c 路 0x431BC0 同对象族的析构端）**：
+  - `mov [esi],0x7e3a2c`（**析构态虚表**）→ 成员释放（`[+0x30]` 非空 + `[+0x24]` 门控 → delete）→ `[+0x24]=0; [+0x30]=0`
+  - `[+0x34]=0; [+0x25]=0; [+0x27]=0; [+0x28]=0; [+0x29]=0`（**五字段清零**——与批 2853 a 路 0x431D90 清理器同清零集）
+  - `call 0x65ca00`（**基类析构 0x65CA00**）→ `test byte[esp+0xc],1; je → push esi; call 0x7c8b3d`（flag&1 → delete this）→ `mov eax,esi; ret 4`
+- 直接 call 3 个/去重 2：0x7c8b3d（×2）、0x65ca00——picker callees=2 完全吻合
+- 判类：scalar deleting 析构器（虚表 0x7E3A2C；成员 [+0x30] 释放 + 0x65CA00 基类析构 + flag&1 delete this；0x431BC0 对象族析构端）(partial)
+
+## b 路：0x432A60 释放清理器（0x50=80B）
+
+- 范围 0x432A60-0x432AAF（ret @0x432AAF）；下函数 0x432AB0（**大查询/取数器**：虚表槽 0x78 调用 + 多字段读——观察项）
+- thiscall 0 栈参（ret；esi=this）——**释放清理器（多资源）**：
+  - `edi=[+0x20]; test; je → mov ecx,edi; call 0x6c9ae0`（**0x6C9AE0 对象释放**）→ `push edi; call 0x7c8b3d`（delete）→ `[+0x20]=0`
+  - `eax=[+4]; test; je → push eax; call dword[0x7e15a4]`（**导入槽 [0x7E15A4]**）→ `[+4]=0`
+  - `eax=[+0x28]; cmp -1; je → push eax; call dword[0x7e11e0]`（**导入槽 [0x7E11E0]——句柄释放**）→ `[+0x28]=-1`
+- 直接 call 2 个/去重 2：0x6c9ae0、0x7c8b3d——picker callees=4，差 2 为 [0x7E15A4]/[0x7E11E0] 导入槽间接调用（Ghidra 含间接统计）
+- 判类：释放清理器（多资源：[+0x20] 对象 0x6C9AE0+delete、[+4] 经 [0x7E15A4]、[+0x28] 句柄经 [0x7E11E0]）(partial)
+
+## c 路：0x432BD0 关闭通知器（0x1C=28B）
+
+- 范围 0x432BD0-0x432BEB（ret 4 @0x432BEB）；下函数 0x432BF0（**毫秒换算器**：`div [+0x18]; div 0x3e8`——[+0x14]/[+0x18] 再 1000/，无符号 div——观察项）
+- stdcall 1 栈参（ret 4；esi=this；eax=[esp+4]=param1）——**关闭通知器**：
+  - `mov eax,[esp+4]; push 1; push eax; mov ecx,[esi+4]; push ecx; call dword[0x7e15ac]`（**导入槽 [0x7E15AC] 三参 (this[+4], param1, 1)**）→ `[+0x30]=0` → ret
+- 直接 call 0 个/去重 0——picker callees=1，差 1 为 [0x7E15AC] 导入槽间接调用（Ghidra 含间接统计）
+- 判类：关闭通知器（经导入槽 [0x7E15AC] 三参回调 + [+0x30] 清零；与 b 路 [0x7E15A4] 同族导入槽 A4/AC 相邻）(partial)
+
+## 核验结果
+
+- _check_callees2854.py：a 路 3/3（去重 2）、b 路 2/2、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：a 差 0；b 差 2（[0x7E15A4]/[0x7E11E0] 导入槽间接）；c 差 1（[0x7E15AC] 导入槽间接）——均属预期差（Ghidra 含间接统计）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x65CA00（基类析构）、0x7C8B3D（operator delete 族）、0x6C9AE0（对象释放）
+- **a 路对象族闭合**：0x431A30 构造（虚表 0x7E3A2C）→ 0x431BC0 激活（分配）→ 0x431D90 清理（释放）→ 0x432610 析构（成员释放 + 0x65CA00 基类 + delete this）——**对象族生命周期链完整闭合**
+- **b/c 路导入槽族**：[0x7E15A4]/[0x7E15AC]/[0x7E11E0]——文件 IO/句柄接口导入槽（A4/AC 相邻同族、E0 句柄释放），与批 2794 观察的 [0xB0BDD0] 无涉
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **四全局清零器**：a 路下函数 0x432670（[0x89c498..0x89c4a4]）
+- **构造器**：0x432690（[+0]/[+4]/[+0xc]/[+0x20]=0 + [+0x28]=-1 + [+0x2d]=0）
+- **大查询/取数器**：b 路下函数 0x432AB0（虚表槽 0x78 + 多字段）
+- **毫秒换算器**：c 路下函数 0x432BF0（无符号 div 双除）
+- **0x432BF0**（23B）/ **0x432C10**（20B）/ **0x432C30**（23B）——0x432Cxxx 区段后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
