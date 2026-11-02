@@ -1,0 +1,61 @@
+# frontier batch 2879
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4539E0（134B）+ 0x453BF0（362B）+ 0x454730（133B）
+三路：a=0x4539E0（0x86=134B **位置输出器** callees=2 deps=0）/ b=0x453BF0（0x16A=362B **炮塔/炮口位置变换器** callees=4 deps=0）/ c=0x454730（0x85=133B **全动画槽重播器** callees=3 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2879{a,b,c}.txt（a 长度 0x90、b 长度 0x180、c 长度 0x90），完整读取确认（a ret 0x14 @0x453A63、b ret 0xc @0x453D57、c ret @0x4547B4）
+核验：.qwen/tmp/_check_callees2879.py 三路全 PASS（a 2/2 去重2、b 6/6 去重4、c 3/3 去重3），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7114 → 7117（待 _append_tsv_batch2879.py）
+
+## a 路：0x4539E0 位置输出器（0x86=134B）
+
+- 范围 0x4539E0-0x453A63（ret 0x14 @0x453A63，5 栈参）
+- ★注意：函数开头**无 mov esi,ecx**，直接读 [esi+0x520]——this 由 **esi 寄存器传入**（非标准 thiscall 变体）；[esp+0x24]/[esp+0x38] 取用 5 栈参后的调用者栈区
+- thiscall 5 栈参（ret 0x14）——**位置输出器**：
+  - 局部三元组清零 [esp+0..8]→`call 0x6f3ad0`（**位置变换器·[0x6F3ADx] batch 1942**，本调用现场 2 栈参 + esi this）→ edi/ebx/ebp = 结果三元组
+  - `[+0x520]+0x16c5` Type 标志 → 真：`[Type+0x11e0/+0x11e4]` 两偏移 → `call 0x6d2070`（**TacticalClass::ApplyMatrix_Pixel batch 326**——0x887324 TacticalClass 区）→ edi+=dx; ebx+=cx（**偏移叠加**）
+  - 写回输出指针（[esp+0x28]=参4）：[ecx]=edi/[ecx+4]=ebx/[ecx+8]=ebp
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x6f3ad0/0x6d2070 全已登记）
+- 判类：位置输出器（5 栈参；0x6F3AD0 位置变换取坐标 + Type+0x16C5 标志时 0x6D2070 叠加偏移 + 写输出参）——esi 传 this 变体 (partial)
+
+## b 路：0x453BF0 炮塔/炮口位置变换器（0x16A=362B）
+
+- 范围 0x453BF0-0x453D57（ret 0xc @0x453D57，3 栈参；下函数 0x453D60）
+- thiscall 3 栈参（ret 0xc）——**炮塔/炮口位置变换器**：
+  - `call [eax+0x3f8]`（**虚表槽 0x3f8**，参1 传入）→ eax → mov eax,[eax]（取返回对象字段）
+  - 参3 标志 cl：真 → `[+0x3b8]` 非空 ? `[+0x3b8]-1` : `[eax+0x9c]-1`（**三态选择**）；假 → `[+0x3b8]`
+  - 分支：eax==0 → `[esp+0x78]=[Type+0x1758]`；==1 → `=-[Type+0x1758]`；else → `=0`（**±/0 符号选择**）
+  - `fild [Type+0x175c] / fild [Type+0x1754] / fild 参2` 三浮点 → `call 0x458810`（**BuildingClass::GetVoxelBarrelOffsetMatrix 带名 batch 2496**——炮管偏移矩阵）+2 栈参变体（登记 ret 4 弹 1，本调用现场 2 push，返回 eax 直接作下调用矩阵）
+  - `mov edx,eax; lea ecx,[esp+0x34]; call 0x5afb80`（**4×3 矩阵 × 3D 向量仿射 batch 103**——矩阵消费）→ 三元组 → `fld ×3; call 0x7c5f00 ×3`（**_ftol 向零截断**，中间一次 fchs 取负）
+  - `call [eax+0xac]`（**虚表槽 0xac**）→ 三元组 → 三向累加（+ _ftol 结果）+ `[Type+0x11e0/+0x11e4]` 偏移 → `call 0x6d2070`（ApplyMatrix_Pixel）→ 写回参1 ([esp+0x70])
+- 直接 call 6 个/去重 4——picker callees=4 **完全吻合**（0x458810/0x5afb80/0x6d2070/0x7c5f00 全已登记）
+- 判类：炮塔/炮口位置变换器（虚表槽 0x3f8 + 参3 三态 ±[Type+0x1758]/0 + fild [Type+0x1754/0x175c] + **GetVoxelBarrelOffsetMatrix 0x458810** + 0x5AFB80 仿射 + _ftol×3 + 虚表槽 0xac + 0x6D2070 叠加 → 输出参）——建筑炮塔武器坐标链 (partial)
+
+## c 路：0x454730 全动画槽重播器（0x85=133B）
+
+- 范围 0x454730-0x4547B4（ret @0x4547B4）
+- thiscall 0 栈参（ret）——**全动画槽重播器**：
+  - `push 0x13; call 0x451e40`（**BuildingClass::DestroyNthAnim(19) batch 143**——先销毁 19 号槽）
+  - 遍历 **21 槽**（edi=0→0x594 step 0x44）：`[Type+edi+0xf8f]` 字节标志（**动画槽标志数组，与 0xf4c 正常名/0xf5c 受损名并行**）→ 真：
+    - `call 0x5f5c60`（比例 helper）→ `fcomp [0x8871e0]+0x1700`（**帧时间门**）→ 命中：取 `[Type+edi+0xf5c]`（受损名）+ecx=1 / 未命中：取 `[Type+edi+0xf4c]`（正常名）+ecx=0
+    - 非空 → `push 0/0/ecx/ebx(Slot)/eax(名); call 0x451890`（**PlayAnim(名, Slot, Damaged) batch 120**）
+- 直接 call 3 个/去重 3——picker callees=3 **完全吻合**（0x451890/0x451e40/0x5f5c60 全已登记）
+- 判类：全动画槽重播器（DestroyNthAnim(19) 预清 + 按 [Type]+0xf8f+i*0x44 标志逐槽选受损/正常名 → 帧门 → PlayAnim）——与 batch 2877 ToggleDamagedAnims(0x451EE0) 同构但标志源不同（Type 数组 vs [+0x6e6]） (partial)
+
+## 核验结果
+
+- _check_callees2879.py：a 路 2/2（去重 2）、b 路 6/6（去重 4）、c 路 3/3（去重 3）——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x6f3ad0（位置变换器·[0x6F3ADx] batch 1942）、0x6d2070（TacticalClass::ApplyMatrix_Pixel batch 326）、0x458810（BuildingClass::GetVoxelBarrelOffsetMatrix batch 2496 带名）、0x5afb80（4×3 仿射 batch 103）、0x7c5f00（_ftol）、0x451890（BuildingClass::PlayAnim）、0x451e40（BuildingClass::DestroyNthAnim）、0x5f5c60（电力/比例 helper）
+- **b 路跨批次闭合**：GetVoxelBarrelOffsetMatrix(0x458810)+4×3 仿射(0x5AFB80)+ApplyMatrix_Pixel(0x6D2070) 三锚点同现场——炮塔武器坐标链完整
+- **c 路动画槽家族再添一员**：[Type]+0xf8f 标志数组（槽 i 标志位于 0xf8f+i*0x44，与 0xf4c/0xf5c 名数组平行）——batch 2877 三件套（PlayAnim/DestroyNthAnim/ToggleDamagedAnims）后本批为第四成员
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x453D60**（b 路下函数，mov eax,[ecx+4]/cdq/and 0xff 计算——观察项）
+- **0x454930**（128B）/ **0x4555D0**（244B）/ **0x455D50 PhobosHook_BuildingClass_AssignDestination_SyncLog**（带名 71B）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
