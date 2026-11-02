@@ -1,0 +1,62 @@
+# frontier batch 2830
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段；未登记池 6951→6948）——0x41xxxx AircraftClass 域收尾（Phobos 钩子带名 + COM 转发 + 进场类型判定）
+三路：a=0x41AA80（0x33D=829B **PhobosHook_AircraftClass_AssignDestination_SyncLog** callees=10 deps=0——**带名 Phobos 钩子**）/ b=0x41ADC0（0x25=37B **COM 槽转发器** callees=1 deps=0）/ c=0x41B6A0（0xB7=183B **进场类型判定器** callees=2 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2830a.txt（长度 0x400）+ _d2830b.txt（长度 0x100）+ _d2830c.txt（长度 0x200），完整读取确认（a ret 8 @0x41ADBC、b ret @0x41ADE4、c ret 4 @0x41B756）
+核验：.qwen/tmp/_check_callees2830.py 三路全 PASS（a 10/10、b 1/1、c 2/2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6967 → 6970（待 _append_tsv_batch2830.py）
+
+## a 路：0x41AA80 PhobosHook_AircraftClass_AssignDestination_SyncLog（0x33D=829B）
+
+- 范围 0x41AA80-0x41ADBC（ret 8 @0x41ADAC/0x41ADBC）；0x41ADBF nop，下函数 0x41ADC0（**本批 b 路**）观察项
+- stdcall 2 栈参（ret 8；esi=this/edi=[esp+0x10] 目标/[esp+0x14] 第二参）——**PhobosHook_AircraftClass_AssignDestination_SyncLog——带名 Phobos 钩子（目标指派 + 同步日志）**：
+  - `mov edi,[esp+0x10]; test; je 0x41adac`（**目标空门控**）→ `mov eax,[edi]; call [eax+0x54]`（**目标虚表槽 0x54**）→ test → `push [esp+0x14]/push 0; call 0x4d94b0`（**成功 → 指派目标**）→ 返
+  - 失败分支：`mov ecx,[edi+4]; lea eax,[edi+4]; push; call [ecx+0xc]`（**目标子对象虚表槽 0xc**）→ `cmp eax,6; jne 0x41acc0`（**类型 6 门控**）→ `mov edx,[esi]; call [edx+0x184]`（**虚表槽 0x184 类型**）→ `cmp eax,7; je`（**类型 7 判定**）→ `cmp [esi+0xb4],7; jne`（**+0xB4 类型备用判断**）
+  - 类型匹配：`mov ebx,edi; call 0x65ae30`（**进场校验**）→ test → 失败走 0x41ac4c；命中路径：`push esi; call 0x65adf0`（**目标可选判定**）→ `call 0x70c610`（**目标指派**）→ `mov eax,[edi+0x520]; mov cl,[eax+0x16cb]; test`（**+0x520 类型标志 0x16CB**）→ 置位时：`mov eax,[esi+0x6c4]; push 0/0/3e8; call [edx+0x528]`（**虚表槽 0x528 投递**）→ `call [edx+0x480]`（**虚表槽 0x480**）→ `mov edi,eax; call [eax+0x278]`（**虚表槽 0x278**）→ 结果 ==1 → `push edi; push 2; call [edx+0x278]`（**二级投递**）→ `mov ebx,7`（**类型 7 标记**）→ 失败分支 `call 0x41a160`（**回退辅助**）
+  - 后续：`push 0/push ebx; call [eax+0x1e8]`（**虚表槽 0x1e8**）→ `call [edx+0x200]`（**虚表槽 0x200**）→ `call [eax+0x1ec]`（**虚表槽 0x1ec**）
+  - 同步日志：`mov ecx,[ebp]; mov al,[ecx+0x16a9]; test`（**+0x16A9 标志**）→ `mov [esi+0x500],edx`（**+0x500 记录目标**）
+  - 类型 7 深路径（0x41ABCF）：`push edi; push 0xe; call [eax+0x278]`（**虚表槽 0x278**）→ ==1 → 走 0x41ac11；否则 `push 3; call [edx+0x274]`（**虚表槽 0x274**）→ `mov cl,[eax+0x16a9]` + `[0x16aa]` 判定 → `call 0x70c610`（**指派**）
+  - 目标检查（0x41AC4C）：`call 0x40dd70`（**按索引取目标**）→ `mov ebx,eax; test; je` → `push esi; call 0x65adf0`（**可选判定**）→ 失败 → `push edi; call 0x70c610`（**指派**）；成功 → `push esi; call 0x65ad50`（**目标锁定**）→ `push 0xe; call [eax+0x274]`（**虚表槽 0x274**）→ ==1 走 0x41adb9 → `push 3` 第二级 → `mov cl,[eax+0x16a9]/[0x16aa]` 判定 → `call 0x70c610`
+  - 收尾（0x41ACC0）：`call [eax+0x1bc]`（**虚表槽 0x1bc 取伴随**）→ `test ch,1`（**标志位**）→ `mov ebx,[eax+0xe4]; test; je`（**伴随对象**）→ 链表遍历 `cmp [ebx+0x30]` → 对象虚表槽 0x2c 类型 ==6 → `mov eax,[ebx+0x520]; mov cl,[eax+0x16a9]/[0x16aa]` 判定 → COM+0x674 检查（0x7DC720 错误抛投 + 虚表槽 0x60/0x58）→ `call 0x53a130`（**附带检查**）→ refcount 比对（0x65AD30 vs ebx）→ 最终 `push [esp+0x14]/push edi; call 0x4d94b0`（**指派完成**）
+- 直接 call 20 个/去重 10：0x40dd70、0x41a160、0x4d94b0、0x53a130、0x65ad30、0x65ad50、0x65adf0、0x65ae30、0x70c610、0x7dc720——picker callees=10 完全吻合
+- **★带名 Phobos 钩子**：`0x65xx` 高扇入族成批出现——65AD30/65AD50/65ADF0/65AE30 = AircraftClass 家族方法（入库/取出/锁定/进场判定），本批含 4 个
+- 判类：PhobosHook_AircraftClass_AssignDestination_SyncLog（带名——目标类型 6/7 双路判定 + 虚表槽 0x528/0x480/0x278/0x274/0x1e8/0x200/0x1ec/0x1bc 多级投递 + 16A9/16CB 类型标志 + COM 伴随检查 + 0x4D94B0 指派）
+- 语义证据级别：semantics_verified（函数名来自 ranking 带名 Phobos 钩子，字段语义部分推断标注）
+
+## b 路：0x41ADC0 COM 槽转发器（0x25=37B）
+
+- 范围 0x41ADC0-0x41ADE4（ret @0x41ADE4）；0x41ADE5-0x41ADEF nop×11，下函数 0x41ADF0（**双色坐标推进器**：0x65AE30 + 0x5678E0 两次 + [0xa8b230] 标志——观察项）观察项
+- thiscall 0 栈参（ret；esi=this）——**COM 槽转发器**：
+  - `mov eax,[esi+0x674]; test; jne`（**COM 对象非空门控**）→ `push 0x80004003; call 0x7dc720`（**错误抛投**）
+  - `push eax; mov ecx,[eax]; call [ecx+0x74]`（**COM 虚表槽 0x74 转发**）→ ret
+- 直接 call 1 个/去重 1：0x7dc720——picker callees=1 完全吻合
+- 判类：COM 槽转发器（推断名——[+0x674] COM 对象虚表槽 0x74 转发 + 空时抛 HRESULT 错误）(partial)
+
+## c 路：0x41B6A0 进场类型判定器（0xB7=183B）
+
+- 范围 0x41B6A0-0x41B756（ret 4 @0x41B746/0x41B756）；0x41B759-0x41B75F nop×7，下函数 0x41B760（**角度选择器**：0x65AE30 + 0x5657A0 + 坐标 0x4C93D0 + [0x8871E0]+0x44 回退——观察项）观察项 + 0x41B860（**+0x12 字节 getter**观察项）+ 0x41B870（**尾部跳转器**：cmp [ecx+0xac],0x1e → jmp 0x5b3570——观察项）
+- stdcall 1 栈参（ret 4；ebx=[esp+8] 主体指针）——**进场类型判定器**：
+  - `mov eax,[ebx+4]; mov cl,[eax+0xdfc]; test; je 0x41b713`（**+0xdfc 类型标志**）→ `mov eax,[ebx-0x5a8]; test; jne`（**关联主体空检查**）→ `lea esi,[ebx-0x6c0]; call 0x65ae30`（**进场校验**）→ 通过：`push 0; call 0x65ad40`（**进场部署**）→ `call [edx+0x184]`（**虚表槽 0x184 类型**）→ `cmp eax,7`（**类型 7 判定**）→ 通过：`mov eax,[edi]; call [eax+0x2c]`（**虚表槽 0x2c**）→ `cmp eax,6`（**类型 6**）→ `mov edi,[edi+0x520]; mov al,[edi+0x16a9]` + `[0x16cb]` 判定（**双类型标志**）→ 命中:返 0x64（**十六进制 100 常量**）
+  - 回退路径（0x41B713）：`lea ecx,[ebx-0x6c0]; call 0x65ae30`（**二次校验**）→ `mov al,[ecx+0xdfc]` + 关联主体检查 → 双真返 0x64 / 否则返 0
+- 直接 call 3 个/去重 2：0x65ad40、0x65ae30——picker callees=2 完全吻合
+- 判类：进场类型判定器（推断名——+0xdfc/0x16a9/0x16cb 类型链判定 + 0x65AE30 校验 + 0x65AD40 部署 + 0x64 常量返回；进场段状态判定）(partial)
+
+## 核验结果
+
+- _check_callees2830.py：a 路 10/10、b 路 1/1、c 路 2/2——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x65AE30/0x65ADF0/0x65AD50/0x65AD30/0x65AD40（AircraftClass 家族）、0x4D94B0、0x70C610、0x7DC720（错误抛投）、0x40DD70、0x53A130
+- **Phobos 带名钩子登记二连**：batch 2829 AircraftClass::FindFireLocation + 本批 PhobosHook 钩子——AircraftClass.cpp 域两块带名函数闭合
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **AircraftClass 家族四件**（65AD30/65AD50/65ADF0/65AE30 高扇入方法）——后续优先批量吸收
+- **角度选择器**：0x41B760（0x65ae30 + 0x5657a0 + 坐标 0x4c93d0 + [0x8871e0]+0x44 回退 + 0xc 位移折叠）——进场段角度计算
+- **双色坐标推进器**：0x41ADF0（0x65ae30 + 0x5678e0 两次 + [0xa8b230] 标志）——坐标放置
+- **尾部跳转器**：0x41B870（cmp [ecx+0xac],0x1e → jmp 0x5b3570）——0x5B3570 带名目标
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
