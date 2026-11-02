@@ -1,0 +1,65 @@
+# frontier batch 2863
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x438A00（**带名 BombClass::GetCurrentFlickerFrame** 99B）+ 0x439030（70B）+ 0x439690（324B）
+三路：a=0x438A00（0x63=99B **BombClass::GetCurrentFlickerFrame** callees=0 deps=0）/ b=0x439030（0x43=67B **向量追加器（扩容版）** callees=0 deps=0）/ c=0x439690（0x142=322B **位置随机生成器** callees=4 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2863{a,b,c}.txt（a/b 长度 0x80、c 长度 0x160），完整读取确认（a ret @0x438A62、b ret 4 @0x439072、c ret 0x24 @0x4397D1）
+核验：.qwen/tmp/_check_callees2863.py 三路全 PASS（a 0/0、b 0/0、c 9/9 去重4），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7066 → 7069（待 _append_tsv_batch2863.py）
+
+## a 路：0x438A00 BombClass::GetCurrentFlickerFrame（0x63=99B，带名）
+
+- 范围 0x438A00-0x438A62（ret @0x438A62）；下函数 0x438A70（**帧切换状态读取器**：`mov eax,[+0x30]; test; jne → ...`——观察项）
+- thiscall 0 栈参（ret；ecx=this）——**BombClass::GetCurrentFlickerFrame（YRpp 带名符号）**：
+  - `cmp [ecx+0x30],1; jne 0x438a0c`（**[+0x30]==1 → mov eax,0xc; ret**）——状态 1 直接返帧 12
+  - `mov eax,[0x8871e0]; edx=[ecx+0x34]`（**[+0x34] 开始帧**）→ `esi=[eax+0xfd8]; ecx=[eax+0xfd0]`（**[0x8871E0]+0xfd0/0xfd8 闪光参数——频率/间隔**）
+  - `mov edi,[0xa8ed84]`（**全局帧计数 [0xA8ED84]**）→ `ebx=edi-edx`（**当前帧-开始帧 = 经过帧数**）
+  - `imul 0x2aaaaaab`（**÷3 编译器技巧**）：eax=0x2AAAAAAB; imul ecx(0xfd0) → `shr 0x1f; add` → 得 0xfd0/3 → `idiv ecx`（**ebx/(0xfd0/3) → 商**）
+  - `lea ebx,[esi+esi]`（**2×0xfd8**）→ `eax=edi; cdq; idiv ebx`（**帧数/(2×0xfd8) → edx=余数**）
+  - `shl ecx,1`（**商×2**）→ `cmp edx,esi; jl → inc ecx`（**余数≥0xfd8 时 +1**）→ `cmp ecx,0xc; jl → mov ecx,0xb`（**钳制 ≤0xb**）
+  - `mov eax,ecx; ret`
+- 直接 call 0 个/去重 0——picker callees=0 完全吻合
+- 判类：**BombClass::GetCurrentFlickerFrame（带名，semantics_verified）**——YRpp 符号 + 逻辑逐条自证（[+0x30] 门 → 0x2AAAAAAB ÷3 技巧 + 相位商余 + [0,0xb] 钳制），无未确认点
+
+## b 路：0x439030 向量追加器（扩容版）（0x43=67B）
+
+- 范围 0x439030-0x439072（ret 4 @0x439072）；下函数 0x439080（**向量追加器（+0x18 偏移版）**：lea esi,[ecx+0x18] 子对象追加——观察项）
+- stdcall 1 栈参（ret 4；esi=this；[esp+8]=param1 值）——**向量追加器（带扩容）**：
+  - `ecx=[+8]（容量）; eax=[+0x10]（计数）; cmp eax,ecx; jl 0x43905f`（**容量足够直接追加**）
+  - 扩容检查：`mov al,[+0xd]; test; jne 0x439048`（**外部 buffer 标志门控**）→ `test ecx,ecx; jne 0x439072`（**容量 0 且外部 → 返**）
+  - `eax=[+0x14]（最大容量）; test; jle 0x439072`（**最大容量>0**）→ `edx=[esi]（虚表）; add eax,ecx; push 0; push eax; call [edx+8]`（**虚表槽 8 扩容（新容量 = 现容量+[+0x14]）**）→ `test al; je 0x439072`（**失败 → 返**）
+  - 追加：`eax=[+0x10]; edx=[+4]（数组）; lea ecx,[eax+1]; [+0x10]=ecx; ecx=[esp+8]; [edx+eax*4]=ecx`（**存值 + 计数++**）
+- 直接 call 0 个/去重 0（虚表槽 8 间接 1）——picker callees=0 完全吻合（Ghidra 未计入间接）
+- 判类：向量追加器（扩容版——[+0x10] 计数/[+8] 容量/[+4] 数组/[+0x14] 扩容步进/[+0xd] 外部标志 + 虚表槽 8；与批 2794 0x6C8B10 向量追加器同族异型）(partial)
+
+## c 路：0x439690 位置随机生成器（0x142=322B）
+
+- 范围 0x439690-0x4397D1（ret 0x24 @0x4397D1；0x4397E0 是 Status::Initialize——批 2718 已登记）
+- stdcall 8 栈参（ret 0x24；ebx=this；[ebp+8]/[ebp+0xc]/[ebp+0x10]=坐标三分量、[ebp+0x1c]/[ebp+0x24]=区间）——**位置随机生成器（炸弹/效果放置）**：
+  - `mov eax,[0xa8b230]; lea ecx,[eax+0x218]; push 0x7ffffffe; push 0; call 0x65c7e0`（**Randomizer::RandomRanged(0,0x7FFFFFFE)——全局帧计时对象 [0xA8B230]+0x218 的 RNG**）
+  - 浮点链：`fild 随机值; fmul [0x7e3570]; fld [ebp+0x24]; fsub [ebp+0x1c]; fmulp; fadd [ebp+0x1c]`（**区间内线性插值（随机×比例+下限）**）→ `fmul [0x7e3d90]`（**缩放**）→ 暂存
+  - 第二次 RandomRanged → 同样插值 → `fmul [0x7e3cc0]` → 暂存
+  - 第三次 RandomRanged → `fmul [0x7e3570]; fadd [0x7e1718]; fmul [0x7e3d88]`（**偏移生成**）→ 暂存
+  - 组合：`push 两值; call 0x4cad00 ×3; call 0x4cacb0 ×2`（**数学函数合成**——sin/cos 链形成 3D 球面坐标）
+  - `push 坐标三分量 + 0x40080000 标志 + 0; push ecx; mov ecx,ebx; call 0x4397e0`（**Status::Initialize 0x4397E0——10 栈参 ret 0x28 落位**）→ ret 0x24
+- 直接 call 9 个/去重 4：0x65c7e0（×3）、0x4cad00（×3）、0x4cacb0（×2）、0x4397e0——picker callees=4 完全吻合
+- 判类：位置随机生成器（三次 RandomRanged(0,0x7FFFFFFE) + 区间插值 + 0x4CAD00/0x4CACB0 数学合成 → 0x4397E0 Status::Initialize 落位；[0xA8B230]+0x218 RNG——炸弹/效果 3D 球面随机分布推断）(partial)
+
+## 核验结果
+
+- _check_callees2863.py：a 路 0/0、b 路 0/0、c 路 9/9（去重 4）——三路全 PASS
+- picker callees vs 核验差值：a 差 0；b 差 0；c 差 0——均属预期差
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x65C7E0（Randomizer::RandomRanged——游戏逻辑 RNG 消耗点第四例）、0x4CAD00/0x4CACB0（数学函数）、0x4397E0（Status::Initialize）
+- **a 路带名判三态**：BombClass::GetCurrentFlickerFrame 为 YRpp 可信符号，99B 逻辑零歧义（[+0x30] 门 + 0x2AAAAAAB ÷3 技巧 + 相位商余 + [0,0xb] 钳制）——semantics_verified
+- **c 路 RNG 消费点**：Randomizer::RandomRanged(0,0x7FFFFFFE) 经 [0xA8B230]+0x218——与 QWEN.md 记录的 [0xA8B230] 全局帧计时对象一致；游戏逻辑 RNG 消耗点累计第四例（前三例：AircraftClass::FindFireLocation 0x4197C0、Status::Initialize 0x4397E0、本批 0x439690）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **帧切换状态读取器**：a 路下函数 0x438A70（[+0x30]/[+0x38] + [0xA8ED84]——BombClass 族）
+- **向量追加器（+0x18 偏移版）**：b 路下函数 0x439080（lea esi,[ecx+0x18] 子对象）
+- **Status::GetDrawingMatrix**（0x4399E0，带名 40B）/ **Status::Update**（0x439B00，带名 1451B 大函数）/ **NeuronClass::WhatAmI**（0x43A350，带名 238B）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
