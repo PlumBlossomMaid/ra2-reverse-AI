@@ -1,0 +1,63 @@
+# frontier batch 2808
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段；未登记池 6885→6882）——0x40 段继续（查表加权步进器 + 析构器双实例）
+三路：a=0x40ACD0（0x8E=142B **双查表加权步进器** callees=0 deps=0）/ b=0x40B300（0x49=73B **虚表写入成员析构器** callees=1 deps=0）/ c=0x40B640（0x2A=42B **成员释放清理器** callees=1 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2808{a,b,c}.txt（长度 0x100），完整读取确认（a ret @0x40AD5D、b ret 4 @0x40B348、c ret @0x40B669）
+核验：.qwen/tmp/_check_callees2808.py 三路全 PASS（a 0/0、b 1/1、c 1/1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6901 → 6904（待 _append_tsv_batch2808.py）
+
+## a 路：0x40ACD0 双查表加权步进器（0x8E=142B）
+
+- 范围 0x40ACD0-0x40AD5D（ret @0x40AD5D）；0x40AD5E-0x40AD5F nop×2，下函数 0x40AD60（**[0x87e8a8] 构造器**：call 0x420120 + push 0x40ad80 + 0x7c978a——观察项）观察项
+- 非 thiscall（ecx=标志/cl、edx=输出指针、ret ax=16 位值）——**双查表加权步进器**：
+  - `mov eax,[edx+4]; mov esi,[eax*4+0x816558]`（**主查表 0x816558**——[edx+4] 作索引）
+  - 标志位加权：`test cl,1; je` → `sar esi,3`；`test cl,2; je` → `sar esi,2` 累加；`test cl,4; je` → 累加原值；`test cl,8; je` → `neg`（**cl 低 4 位组合加权**）
+  - `mov edi,[edx]; add edi,eax; cmp eax,0x7fff; jle` → `mov [edx],0x7fff`（**上限钳制**）→ `cmp eax,0xffff8000; jge` → `mov [edx],0xffff8000`（**下限钳制 -32768**）
+  - `mov eax,[edx+4]; and ecx,0xff; mov ecx,[ecx*4+0x816518]; add eax,ecx; mov [edx+4],eax`（**次查表 0x816518 + 索引进位**）→ `jns` → `mov [edx+4],0`（**下限钳 0**）→ `cmp eax,0x58; jle` → `mov [edx+4],0x58`（**上限钳 0x58**）
+  - `mov ax,word ptr [edx]; ret`（**返回 16 位值**）
+- 直接 call 0 个/去重 0——picker callees=0 完全吻合
+- 判类：双查表加权步进器（推断名——[edx+4] 索引查表 0x816558 按 cl 位加权，累加到 [edx] 并钳制到 [-32768, 0x7FFF]；[cl] 查表 0x816518 索引进位后钳 [0, 0x58]）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x40B300 虚表写入成员析构器（0x49=73B）
+
+- 范围 0x40B300-0x40B348（ret 4 @0x40B348）；0x40B349-0x40B34F nop×7，下函数 0x40B350（**浮点常量写入器**：fld [0x7e1710]/[0x7e1708] + 0x7c8fb0 + fadd + 0x4cac40 + fstp [0x87f5c0]——观察项）观察项
+- thiscall 1 栈参（ret 4；ecx=this/栈参=delete flags）——**虚表写入成员析构器（scalar deleting destructor）**：
+  - `mov eax,[esi+4]; mov [esi],0x7e177c`（**虚表写入 0x7E177C**——析构第一阶段）
+  - `test eax,eax; je 0x40b327` + `cmp byte[esi+0xd],0; je 0x40b327`（**双条件门控：成员非空且 [+0xd] 置位**）→ `push eax; call 0x7c8b3d`（**delete 成员 [+4]**）→ `mov [esi+4],0`（**清零**）
+  - `mov [esi+0xd],0; mov [esi+8],0`（**清零 [+0xd]/[+8]**）
+  - `test al,1; je` → `push esi; call 0x7c8b3d`（**delete this**——flags bit0）
+  - `mov eax,esi; ret 4`（**返 this**）
+- 直接 call 2 个/去重 1：0x7c8b3d（CRT delete）——picker callees=1 完全吻合
+- 判类：虚表写入成员析构器（推断名——写虚表 0x7E177C + [+4] 成员带 [+0xd] 门控 delete + flags bit0 时 delete this）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x40B640 成员释放清理器（0x2A=42B）
+
+- 范围 0x40B640-0x40B669（ret @0x40B669）；0x40B66A-0x40B66F nop×6，下函数 0x40B670（**+0xc 门控索引换算**：`(arg-[+4])>>2`——观察项）+ 0x40B690（**[+4] 数组索引读取**观察项）+ 0x40B6A0（**0x40B640 同模板第二实例**观察项）
+- thiscall 0 栈参（ret；esi=this）——**成员释放清理器**（与 b 路同族、无虚表写入无 this delete）：
+  - `mov eax,[esi+4]; mov [esi+0x10],0`（**+0x10 清零**）
+  - `test eax,eax; je` + `cmp byte[esi+0xd],0; je`（**双条件门控成员 delete**）→ `push eax; call 0x7c8b3d`（**delete 成员 [+4]**）→ `mov [esi+4],0`
+  - `mov [esi+0xd],0; mov [esi+8],0`（**清零 [+0xd]/[+8]**）
+- 直接 call 1 个/去重 1：0x7c8b3d（CRT delete）——picker callees=1 完全吻合
+- 判类：成员释放清理器（推断名——[+4] 成员带 [+0xd] 门控 delete + [+0x10]/[+0xd]/[+8] 三字段清零）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2808.py：a 路 0/0、b 路 1/1、c 路 1/1——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D（CRT delete）
+- 观察 0x816558/0x816518 双查找表（a 路）——0x816xxx 值表族
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **[0x87e8a8] 对象构造器**：a 路下函数 0x40AD60（call 0x420120 + push 0x40ad80 回调 + 0x7c978a）——0x87e8xx 全局对象族（batch 2807 观察延续）
+- **浮点常量写入器族**：b 路下函数 0x40B350（fld [0x7e1710]/[0x7e1708] → 0x7c8fb0 → fadd → 0x4cac40 → fstp [0x87f5c0]）+ 0x40B380/0x40B3A0/0x40B3C0/0x40B3E0（0x87fxxx 全局浮点链）——批量小函数，后续吸收
+- **门控索引换算/数组读取**：c 路下函数 0x40B670（+0xc 门控 `(arg-[+4])>>2`）+ 0x40B690（数组读）+ 0x40B6A0（同模板二实例）+ 0x40B700（**数组相等比较器**：`[+8] 长度比对 + 逐 dword 比`——观察项）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
