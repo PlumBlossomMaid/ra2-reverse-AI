@@ -1,0 +1,56 @@
+# frontier batch 2880
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x454930（128B）+ 0x4555D0（244B）+ 0x455D50（**带名 PhobosHook_BuildingClass_AssignDestination_SyncLog** 71B）
+三路：a=0x454930（0x80=128B **动画槽重播清理器** callees=3 deps=0）/ b=0x4555D0（0xF4=244B **建筑生产/部署检查器** callees=1 deps=0）/ c=0x455D50（0x47=71B **PhobosHook AssignDestination SyncLog** callees=2 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2880{a,b,c}.txt（a 长度 0x90、b 长度 0x100、c 长度 0x50 含下函数 0x455DA0），完整读取确认（a ret @0x4549AF、b ret @0x4556C3、c ret 8 @0x455D94；**另 dump 0x455D90-0x455DE0 确认 c 边界与下函数**）
+核验：.qwen/tmp/_check_callees2880.py 三路全 PASS（a 3/3 去重3、b 1/1 去重1、c 2/2 去重2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7117 → 7120（待 _append_tsv_batch2880.py）
+
+## a 路：0x454930 动画槽重播清理器（0x80=128B）
+
+- 范围 0x454930-0x4549AF（ret @0x4549AF；下函数 0x4549B0）
+- thiscall 0 栈参（ret）——**动画槽重播清理器**：
+  - `call 0x5f5c60`（比例 helper）→ `fcomp [0x8871e0]+0x1700`（**帧时间门**）→ 命中：取 `[Type+0x1468]`（受损名）+ecx=1 / 未中：取 `[Type+0x1458]`（正常名）+ecx=0
+  - 非空 → `push 0/0/ecx/0x13/eax; call 0x451890`（**PlayAnim(名, 0x13, Damaged) batch 120**）
+  - 遍历 **21 槽**（esi=0→0x594 step 0x44）：`[Type+esi+0xf8f]` 标志真 → `push Slot; call 0x451e40`（**DestroyNthAnim(Slot) batch 143**——按标志逐槽销毁）
+- 直接 call 3 个/去重 3——picker callees=3 **完全吻合**（0x451890/0x451e40/0x5f5c60 全已登记）
+- 判类：动画槽重播清理器（帧门选 0x1468/0x1458 名 → PlayAnim(0x13) + 按 [Type]+0xf8f 标志逐槽 DestroyNthAnim）——与 batch 2879 c 路 0x454730 同构（同 f8f 遍历 + PlayAnim/DestroyNthAnim 对），本批偏"先播 0x13 再清理" (partial)
+
+## b 路：0x4555D0 建筑生产/部署检查器（0xF4=244B）
+
+- 范围 0x4555D0-0x4556C3（ret @0x4556C3）
+- thiscall 0 栈参（ret；esi=this）——**建筑生产/部署检查器（bool 返回）**：
+  - 门链：`[+0x660]` 标志 OR `[+0x67c]>=2` → 继续；`[+0x504]<=0`（**生产序列 ≤0 门**）；`[+0x6c]!=0`（**计数门**）
+  - `[Type+0x1573]` 标志 → `[Type+0xee4]>0` → `call 0x4fce30`（**HouseClass 电力百分比 batch 186**）→ `fcomp [0x7e1718]`（**1.0，batch 166 实锤常量**）→ 电力 >1.0（超上限）时 `[+0x67c]>=2` 门
+  - `[Type+0x1574]` 标志 → `[+0x21c]+0x2a4`（**时间戳**）vs `[0xa8ed84]`（**全局帧计数**）差 ≥ `[+0x21c]+0x2ac` → `[+0x21c]+0x577b` 标志清
+  - `[Type+0x1552]` 标志 → `[+0x6cc]` 标志 → 虚表槽 0x184 ×2 → **类型 != 0x12 && != 0x13** → 返 1（可生产/部署）；否则返 0
+- 直接 call 1 个/去重 1——picker callees=1 **完全吻合**（0x4fce30 已登记）
+- 判类：建筑生产/部署检查器（[+0x660]/[+0x67c]/[+0x504]/[+0x6c] 门链 + Type+0x1573/0x1574/0x1552 标志 + **HouseClass 电力百分比 0x4FCE30** + [+0x21c] 时间戳 vs 全局帧计数 [0xA8ED84] + 虚表槽 0x184 类型 0x12/0x13 排除）——多重许可判定 (partial)
+
+## c 路：0x455D50 PhobosHook_BuildingClass_AssignDestination_SyncLog（0x47=71B，带名）
+
+- 范围 0x455D50-0x455D94（ret 8 @0x455D94，2 栈参；下函数 0x455DA0 [+0x520]+0xeb8 检查器独立小函数）
+- thiscall 2 栈参（ret 8）——**PhobosHook_BuildingClass_AssignDestination_SyncLog（Phobos 源码带名）**：
+  - `[+0xac] == 0x13` → 直接跳收尾（**类型 0x13 特例跳过**）
+  - `call [eax+0x284]`（**虚表槽 0x284**）→ 非零 OR `[Type+0x16b9]` 标志 → `call 0x70c610`（**TechnoClass::SetFocus batch 121**——同步焦点）
+  - 恒调 `call 0x709a30`（**空占位器·[0x709A3x] batch 1931——3B ret 8 直接返回**——SyncLog 本体为空壳桩）+2 栈参
+- 直接 call 2 个/去重 2——核验去重 2（0x70c610/0x709a30 全已登记）；**picker callees=20 为 Ghidra 统计口径（含虚表槽 0x284 间接与带名边界差异），核验字面量为权威**
+- 判类：**PhobosHook_BuildingClass_AssignDestination_SyncLog**（带名——[+0xac]==0x13 跳过 + 虚表槽 0x284/Type+0x16b9 条件 → SetFocus 0x70C610 + 恒调空占位器 0x709A30==SyncLog 桩）——Phobos 调试钩子，同步日志本体为空壳 (partial)
+
+## 核验结果
+
+- _check_callees2880.py：a 路 3/3（去重 3）、b 路 1/1（去重 1）、c 路 2/2（去重 2）——三路全 PASS
+- picker callees vs 核验差值：a/b 路差 0；**c 路 picker=20 vs 核验=2**——差值来源：Ghidra 对 PhobosHook 带名函数的光滑/间接调用统计（虚表槽 0x284、函数边界含周边数据引用），核验只抓 `call 0x...` 字面量——如实记录
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x451890（BuildingClass::PlayAnim）、0x451e40（BuildingClass::DestroyNthAnim）、0x5f5c60（电力/比例 helper）、0x4fce30（HouseClass 电力百分比 GetPowerPercentage 行为）、0x70c610（TechnoClass::SetFocus）、0x709a30（空占位器·[0x709A3x]）
+- **c 路带名 Phobos Hook**：AssignDestination SyncLog——游戏逻辑 SetFocus 同步 + SyncLog 本体空壳（0x709A30 3B 占位）——Phobos 钩子代码已编译进 exe 的证据链再添一员
+- **a 路动画槽家族第五员**：0x454930 与 0x454730（批 2879 c）同为 [Type]+0xf8f 标志遍历 → PlayAnim/DestroyNthAnim 对，动画槽系统多入口闭合
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x455DD0**（313B）/ **0x456580**（93B）/ **0x4571E0**（965B，9 callees 大函数）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
