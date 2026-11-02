@@ -1,0 +1,51 @@
+# frontier batch 2891
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x45E760（65B）+ 0x45E880（43B）+ 0x45ED50（127B）
+三路：a=0x45E760（0x41=65B **全局名字表查找器** callees=1 deps=0）/ b=0x45E880（0x2B=43B **分配构造工厂** callees=2 deps=0）/ c=0x45ED50（0x7F=127B **居中位置计算器** callees=1 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2891{a,b,c}.txt（a/b/c 长度 0x60/0x40/0x90），完整读取确认（a ret @0x45E7A0、b ret 4 @0x45E8A8、c ret @0x45EDCE）
+核验：.qwen/tmp/_check_callees2891.py 三路全 PASS（a 1/1 去重1、b 2/2 去重2、c 1/1 去重1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7150 → 7153（待 _append_tsv_batch2891.py）
+
+## a 路：0x45E760 全局名字表查找器（0x41=65B）
+
+- 范围 0x45E760-0x45E7A0（ret @0x45E7A0）
+- thiscall 1 栈参（ret 4；[esp+4]=目标名）——**全局名字表查找器**：
+  - `[0xa83c78]` 计数 >0 → 遍历 `[0xa83c6c]` 数组（esi*4）：`[eax+esi*4]+0x64`（**每项 +0x64 名字字段**）vs 入参 → `call 0x7c8d20`（**CRT strcmp batch 001**）→ 命中返 esi（索引）；未命中 or 计数≤0 返 -1
+- 直接 call 1 个/去重 1——picker callees=1 **完全吻合**（0x7c8d20 已登记）
+- 判类：全局名字表查找器（[0xA83C6C]/[0xA83C78] 全局表 + 每项 +0x64 名字 + strcmp 按名找索引）——与 batch 187 0x6A46D0（[0x8B4124] 表）同族不同宿主 (partial)
+
+## b 路：0x45E880 分配构造工厂（0x2B=43B）
+
+- 范围 0x45E880-0x45E8A8（ret 4 @0x45E8A8，1 栈参）
+- thiscall 1 栈参（ret 4）——**分配构造工厂**：
+  - `push 0x720; call 0x7c8e17`（**CRT new batch 001**——分配 0x720 B）→ 非空 → `push 参1/esi; call 0x43b740`（**BuildingClass::BuildingClass batch 189**——构造器）→ 返对象；new 失败返 0
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x7c8e17/0x43b740 已登记）
+- 判类：分配构造工厂（CRT new 0x720 + BuildingClass 构造器初始化——建筑对象工厂，0x43B740 调用现场兑现） (partial)
+
+## c 路：0x45ED50 居中位置计算器（0x7F=127B）
+
+- 范围 0x45ED50-0x45EDCE（ret @0x45EDCE）
+- thiscall 0 栈参（ret；ebx=this）——**居中位置计算器**：
+  - `call 0x711eb0`（**偏移字段读取器·[0x711EBx] batch 1921**——读 this+0x610）→ esi
+  - `[0x8871e0]+0xb5c` → [eax] → edi=[[edi+0x3ec]]（**表项**）→ 比较 `cmp ebx,[edx]` 不等则跳过；`[0x8871e0]+0x17e8` 标志清
+  - 虚表槽 0xac ×2（**两对象位置查询**）→ 相加 → `cdq/sub/sar`（向零 ÷2）→ `neg`（**取负居中偏移**）→ `esi += eax`
+  - `[+0xea0]` 子对象 → 虚表槽 0xac → `esi -= eax` → `setle/dec/and`（**钳制 ≥0**）→ 返 esi
+- 直接 call 1 个/去重 1——picker callees=1 **完全吻合**（0x711eb0 已登记）
+- 判类：居中位置计算器（0x711EB0 基准读取 + [0x8871E0]+0xb5c 表 + 虚表槽 0xac×3 + 向零÷2 居中 + [+0xea0] 子对象偏移 + 钳制 ≥0）——UI/相机定位居中 (partial)
+
+## 核验结果
+
+- _check_callees2891.py：a 路 1/1、b 路 2/2、c 路 1/1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7c8d20（CRT strcmp）、0x7c8e17（CRT new）、0x43b740（BuildingClass::BuildingClass）、0x711eb0（偏移字段读取器·[0x711EBx]）
+- **b 路跨批次闭合**：0x43B740 BuildingClass 构造器调用现场兑现（batch 189 登记），CRT new 0x720 对象工厂
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x45E8B0**（b 路下函数 [esp+4]×3）/ **0x45E7B0**（a 路下函数同构第二实例）/ **0x45EDD0**（c 路下函数 0x711F00）/ **0x465570**（913B）/ **0x465B30/0x465B70**（51B 孪生）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
