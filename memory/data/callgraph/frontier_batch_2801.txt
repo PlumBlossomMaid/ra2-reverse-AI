@@ -1,0 +1,66 @@
+# frontier batch 2801
+
+日期：2026-11-03
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序；未登记池 1904→1901）——0x40 段继续（64 位范围统计 + 状态标志 + 随机决策）
+三路：a=0x403920（0x95=149B **64 位矩形/范围统计更新器** callees=0 deps=0）/ b=0x405580（0x3F=63B **状态标志设置器（bit 0x60，条件处理 + 尾跳）** callees=2 deps=0）/ c=0x405AC0（0x84=132B **随机决策/重试处理器（含 Randomizer::RandomRanged 0x65c7e0）** callees=3 deps=0）——纯运算更新器 + 标志设置 + 随机拒绝采样
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2801{a,b,c}.txt（a/c 长度 0x120、b 长度 0x100），完整读取确认（a ret 8 @0x4039B2、b ret @0x4055BE + 尾跳 jmp 0x4026b0 @0x4055AF、c ret @0x405B43；下函数 a 0x4039C0（`push ecx/ebx/ebp/esi/edi; mov [esp+0x10],edx; 0x4093b0; [+0x48] vs [+0x50] 比较; inc [+0x54]; repne scasb [0x815e9c] 串长计算; 0x815e9c 全局; [+0x40..0x3c] 64位加法; [+0x30..0x34] 更新; 0x815e9c 查找`——**串表上下文更新器**（0x4093b0 + [0x815e9c] 串 + repne scasb 串长）观察项）、b 0x4055C0（`mov eax,[0x816108]; cmp eax,ebx; jne; mov [esi+0x1c],4; cmp [esi+0x1c],4; ja; jmp dword[eax*4+0x4059d0]（**跳转表**）; test byte[esi+0x18],0x40; 0x4093b0; [+0x140..0x144] 64位比较; 0x405b50; [+0xb0] store; ...`——**状态机大函数**（[+0x1c] 状态跳转表 0x4059d0 + 0x4093b0 + 0x405b50 大函数宿主）观察项）、c 0x405B50（`push ebx/esi/edi; mov edi,ecx; mov ecx,[0x87e29c]; test; 0x4035f0（批 2800 b 路下函数最佳候选选择器）；[+0xa4]&0x15 门控; cmp [esi+0xa0],edi; 0x4025b0 处理; [0x87e748]/[0x87e758] 全局 → [+0x94]/[+0x9c]; bl&1 → [+0xa8]=0xffffffff / 0; 返 esi`——**串表节点查找/配置器**（[0x87e29c] 表 + 0x4035f0 候选选择 + 0x4025b0 处理 + 全局赋值 + [+0xa8] 哨兵）观察项）））
+核验：.qwen/tmp/_check_callees2801.py 三路全 PASS（a 0/0、b 2/2、c 3/3），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6886 → 6889（待 _append_tsv_batch2801.py）
+
+## a 路：0x403920 64 位矩形/范围统计更新器（0x95=149B）
+
+- 范围 0x403920-0x4039B2（ret 8 @0x4039B2）；0x4039B5-0x4039BF nop×11，下函数 0x4039C0（**串表上下文更新器**——0x4093b0 + [0x815e9c] 串 + repne scasb）观察项）
+- thiscall 2 栈参（ret 8；ecx=this；[esp+0x14]=低、[esp+0x18]=高——**64 位参数对**）——**64 位矩形/范围统计更新器（纯运算，无 call）**：
+  - `mov eax,[ecx+0x28]; mov esi,[ecx+0x2c]`（源 64 位 [+0x28..0x2c]）→ `sub edx,eax; sbb eax,esi`（**64 位减法**——参数-源）→ 存 `[+0x10]/[+0x14]`
+  - `inc [+0x48]`（更新计数）
+  - 三组 64 位 min/max 维护：
+    - `[+0x18..0x1c]`（低界）vs `[+0x20..0x24]`（当前界）：`cmp [+0x1c],esi; jb/ja; cmp edi,ebx; jbe`——**64 位无符号比较**（sub/sbb 组合）→ 越界清 `[+0x18]/[+0x1c]=0`
+    - `[+0x08..0x0c]`（界外计数）：新值 > 界外 → `inc [+0x4c]`（界外计数 +1）
+    - `[+0x30..0x34]`（高界）：新值 > 高界 → 更新 `[+0x30]/[+0x34]`
+  - `mov [ecx+0x28],ebp; mov [ecx+0x2c],[esp+0x18]`（**更新源 [+0x28..0x2c]**）
+- 直接 call 0 个/去重 0——picker callees=0 完全吻合
+- 判类：64 位矩形/范围统计更新器（推断名——64 位减法 + 三组 min/max 维护 + 界外计数 + 源更新，纯整数运算）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x405580 状态标志设置器（0x3F=63B）
+
+- 范围 0x405580-0x4055BE（ret @0x4055BE + 尾跳 jmp 0x4026b0 @0x4055AF）；0x4055BF nop，下函数 0x4055C0（**状态机大函数**——[+0x1c] 跳转表 0x4059d0 + 0x4093b0 + 0x405b50）观察项）
+- thiscall 0 栈参（ret；esi=this）——**状态标志设置器（bit 0x60，条件处理 + 尾跳）**：
+  - `test byte[esi+0x18],0x20; jne`（**门控——[+0x18] bit5 已设 → 直接返**）
+  - `mov ecx,[esi+0xb0]`（[+0xb0] 成员）→ 非空且 `cmp esi,[ecx+0xc0]`（**this == [成员+0xc0]**）：
+    - **call 0x4026a0**（条件处理）→ `[+0x18] |= 0x60`（设 bit 0x60）→ **jmp 0x4026b0**（**尾跳**——配对处理）
+  - 否则 `[+0x18] |= 0x60`（仅设标志）→ 返
+- 直接 call/jmp 2 个/去重 2：0x4026a0（call）、0x4026b0（jmp 尾跳）——picker callees=2 完全吻合
+- 判类：状态标志设置器（推断名——bit5 门控 + 成员条件 + 处理/尾跳对 + 设 bit 0x60）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x405AC0 随机决策/重试处理器（0x84=132B）
+
+- 范围 0x405AC0-0x405B43（ret @0x405B43）；0x405B44 nop×12，下函数 0x405B50（**串表节点查找/配置器**——[0x87e29c] 表 + 0x4035f0 候选选择 + 0x4025b0 处理 + 全局赋值 + [+0xa8] 哨兵）观察项）
+- thiscall 0 栈参（ret；edi=this）——**随机决策/重试处理器（含 Randomizer::RandomRanged）**：
+  - `mov esi,[edi+0xc0]`（[+0xc0] 成员）→ **call 0x4047b0**（处理 1）→ `mov ebx,eax`
+  - `mov eax,[esi+0x24]; cmp dword[eax+0x5c],0x21; jae`（**门控——[+0x5c] >= 0x21**）：低于 → **call 0x402790**（处理 2，条件路径）+ 返 0
+  - 高于：**call 0x402790**（处理 2，无条件路径）→ `test byte[eax+0x10],0x88; je`（bit 门控）+ `test ebx; jne` + `[+0x268]`（三级条件跳过采样）
+  - 采样：`mov ecx,[eax+0x5c]; mov eax,[eax+0x58]; push ecx; push eax; mov ecx,0x886b88; call 0x65c7e0`（**Randomizer::RandomRanged**——带名，Randomizer 实例 0x886b88）→ `cmp eax,0x21; jae`（**拒绝采样 vs 0x21**）→ 低于重试 **call 0x402790** + 返 0；命中 → `[+0x13c]=eax`、`[+0x148]=ebx`（存结果）→ 返 0
+- 直接 call 5 个/去重 3：0x4047b0、0x402790（×3）、0x65c7e0——picker callees=3 完全吻合
+- 判类：随机决策/重试处理器（推断名——0x4047b0 处理 + 0x402790 处理/重试 + Randomizer::RandomRanged 0x65c7e0 拒绝采样 vs 0x21）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2801.py：a 路 0/0、b 路 2/2、c 路 3/3——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4026A0、0x4026B0、0x4047B0、0x402790、0x65C7E0（Randomizer::RandomRanged 带名——QWEN.md 已知）——全部命中早前登记
+- 观察 [0x815e9c]（a 路下函数串全局）、[0x816108]（b 路下函数门控）、[0x87e29c]/[0x87e748]/[0x87e758]（c 路下函数全局）、Randomizer 实例 [0x886b88]（c 路）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **状态机大函数**：b 路下函数 0x4055C0（[+0x1c] 跳转表 0x4059d0 + 0x4093b0 + 0x405b50）——0x40 段状态机域核心，后续吸收
+- **串表上下文更新器**：a 路下函数 0x4039C0（0x4093b0 + [0x815e9c] 串 + repne scasb 串长）
+- **串表节点查找/配置器**：c 路下函数 0x405B50（[0x87e29c] 表 + 0x4035f0 候选选择 + 0x4025b0 处理 + [+0xa8] 哨兵）——与批 2800 观察的子链表遍历族 0x4025b0 交叉
+- **Randomizer 采样点**：c 路（0x65c7e0 RandomRanged 实例 0x886b88）——新 Randomizer 实例，QMEN.md 全局 Randomizer 0xABE890 之外的另一个
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
