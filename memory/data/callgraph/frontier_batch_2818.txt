@@ -1,0 +1,58 @@
+# frontier batch 2818
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段；未登记池 6915→6912）——0x40 段继续（多链表节点摘除大析构器双实例 + 清理器第十二实例）
+三路：a=0x40E3E0（0xB3=179B **多链表节点摘除大析构器** callees=1 deps=0）/ b=0x40E4C0（0xB3=179B **多链表节点摘除大析构器（同模板）** callees=1 deps=0）/ c=0x40E7F0（0x2A=42B **成员释放清理器** callees=1 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2818{a,b}.txt（长度 0x200）+ _d2818c.txt（长度 0x100），完整读取确认（a ret 4 @0x40E490、b ret 4 @0x40E570、c ret @0x40E819）
+核验：.qwen/tmp/_check_callees2818.py 三路全 PASS（a 1/1、b 1/1、c 1/1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6931 → 6934（待 _append_tsv_batch2818.py）
+
+## a 路：0x40E3E0 多链表节点摘除大析构器（0xB3=179B）
+
+- 范围 0x40E3E0-0x40E490（ret 4 @0x40E490）；0x40E493-0x40E49F nop×13，下函数 0x40E4A0（**转发析构器**：call 0x5256f0 + flags bit0 delete this——观察项）观察项
+- thiscall 1 栈参（ret 4；edi=this/栈参=delete flags）——**多链表节点摘除大析构器**：
+  - `mov [edi],0x7e1b04`（**虚表写入 0x7E1B04**——头对象）
+  - 头链循环摘除（[+0x8] 头）：`mov eax,[edi+8]; cmp eax,esi; je 0x40e422; cmp [eax+4],esi; je; mov ecx,[eax+8]; cmp ecx,esi; je; cmp eax,esi; je 循环; mov edx,[eax+4]; cmp edx,esi; je; cmp ecx,esi; je; mov [ecx+4],edx; mov ecx,[eax+4]; mov edx,[eax+8]; mov [ecx+8],edx; mov [eax+8],esi; mov [eax+4],esi; jmp 循环`（**双向链表逐节点摘除：prev.next=this.next + this.next.prev=this.prev + 自清**）
+  - 节点二（[edi+0x10]）：`lea eax,[edi+0x10]; mov [eax],0x7e1b0c`（**虚表写入 0x7E1B0C**）+ 同款三指针回链摘除
+  - 节点三（[edi+4]）：`lea eax,[edi+4]; mov [eax],0x7e1b0c`（**虚表写入 0x7E1B0C**）+ 同款三指针回链摘除
+  - `test byte[esp+0xc],1; je` → `push edi; call 0x7c8b3d`（**flags bit0 delete this**）→ `mov eax,edi; ret 4`（**返 this**）
+- 直接 call 1 个/去重 1：0x7c8b3d（CRT delete）——picker callees=1 完全吻合
+- 判类：多链表节点摘除大析构器（推断名——宿主虚表 0x7E1B04 + 头链循环 [+0x8] + 两内嵌节点 [+0x10]/[+4] 虚表 0x7E1B0C + 全部三指针回链摘除）
+- 语义证据级别：assembly_decompile_verified（partial——链表容器布局 [+4]/[+8] 指针对推断）
+
+## b 路：0x40E4C0 多链表节点摘除大析构器（同模板）（0xB3=179B）
+
+- 范围 0x40E4C0-0x40E570（ret 4 @0x40E570）；0x40E573-0x40E57F nop×13，下函数 0x40E580（**浮点常量写入器**：fld [0x7e1710]/[0x7e1708] + 0x7c8fb0 + fadd + 0x4cac40 + fstp [0x887288]——观察项）观察项
+- thiscall 1 栈参（ret 4）——**多链表节点摘除大析构器（同模板）**——逐字节同 a 路（0x40E3E0 与 0x40E4C0 全指令一致）：
+  - 虚表 0x7E1B04 头 + 头链循环摘除 + [+0x10]/[+4] 双节点虚表 0x7E1B0C 摘除 + flags bit0 delete this
+- 直接 call 1 个/去重 1：0x7c8b3d（CRT delete）——picker callees=1 完全吻合
+- 判类：多链表节点摘除大析构器（推断名——与 a 路逐字节同构；容器族双实例）
+- 语义证据级别：assembly_decompile_verified（identical_to_0x40E3E0）
+
+## c 路：0x40E7F0 成员释放清理器（0x2A=42B）
+
+- 范围 0x40E7F0-0x40E819（ret @0x40E819）；0x40E81A-0x40E81F nop×6，下函数 0x40E820（**+0xc 门控索引换算**观察项）+ 0x40E840（**+4 数组索引读取**观察项）+ 0x40E850（**数组相等比较器**观察项）+ 0x40E890（**预分配装载器**观察项）
+- thiscall 0 栈参（ret；esi=this）——**成员释放清理器**（与批 2809 a 路 0x40B6A0 同模板——容器族第十二实例）：
+  - `mov eax,[esi+4]; mov [esi+0x10],0`（**+0x10 清零**）
+  - `test eax,eax; je` + `cmp byte[esi+0xd],0; je`（**双条件门控**）→ `push eax; call 0x7c8b3d`（**delete 成员 [+4]**）→ `mov [esi+4],0`（**清零**）
+  - `mov [esi+0xd],0; mov [esi+8],0`（**清零 [+0xd]/[+8]**）
+- 直接 call 1 个/去重 1：0x7c8b3d（CRT delete）——picker callees=1 完全吻合
+- 判类：成员释放清理器（推断名——容器族标准清理路径第十二实例，identical_to_0x40B6A0）
+- 语义证据级别：assembly_decompile_verified（identical_to_0x40B6A0）
+
+## 核验结果
+
+- _check_callees2818.py：a 路 1/1、b 路 1/1、c 路 1/1——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D（CRT delete）
+- **链表容器结构确认**：宿主 [+0x8] 头链 + 内嵌节点 [+0x10]/[+4]（虚表 0x7E1B0C）+ 双向指针 [+4]/[+8]——与批 2817 c 路 0x40E390 同布局多节点版
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **转发析构器**：a 路下函数 0x40E4A0（call 0x5256f0 + flags bit0 delete this——子析构转发）
+- **0x8872xx 全局浮点链**：b 路下函数 0x40E580（[0x887288]）+ 0x40E5B0（[0x8872f0]）+ 0x40E5D0 + 0x40E5F0 + 0x40E610 + 0x40E630 + 0x40E650（**fsub 差 + 0x4cad50 + ×[0x887288] + ×[0x7e1738] + _ftol 0x7c5f00 → [0x8872f8]**）+ 0x40E690（**fild [0x8872f8] + ×[0x7e1740] + 0x4cade0 → [0x887298]**）——0x40E650 含 _ftol 取整点（舍入方式留意，见 QWEN.md 硬性规范 4）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
