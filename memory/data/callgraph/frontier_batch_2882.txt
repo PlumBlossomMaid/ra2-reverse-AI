@@ -1,0 +1,60 @@
+# frontier batch 2882
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4575B0（112B）+ 0x458200（301B）+ 0x4587D0（49B）
+三路：a=0x4575B0（0x70=112B **逐槽给钱器** callees=2 deps=0）/ b=0x458200（0x12D=301B **占领转移处置器** callees=8 deps=0）/ c=0x4587D0（0x31=49B **持有检查器** callees=0 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2882{a,b,c}.txt（a 长度 0x80、b 长度 0x140、c 长度 0x40），完整读取确认（a ret @0x45761F、b ret @0x45832C、c ret 4 @0x4587FE）
+核验：.qwen/tmp/_check_callees2882.py 三路全 PASS（a 2/2 去重2、b 9/9 去重8、c 0/0 去重0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7123 → 7126（待 _append_tsv_batch2882.py）
+
+## a 路：0x4575B0 逐槽给钱器（0x70=112B）
+
+- 范围 0x4575B0-0x45761F（ret @0x45761F）
+- thiscall 0 栈参（ret；esi=this）——**逐槽给钱器**：
+  - `[+0x702]` 索引字节 >0（**动画槽计数**）→ 循环（movsx eax,al，从当前索引向下遍历 jg 0x4575c3）：
+    - `[+0x5e8+eax*4]` 槽对象表 → 槽对象虚表槽 0xb8（**取值**）→ `push eax; call 0x4f9950`（**HouseClass::GiveMoney batch 205**——[+0x21c] 家资金累加）
+    - `call 0x451690`（**动画槽清理器 batch 1593**——清理 [+0x702] 槽）
+    - `[+0x21c]+0x5778=1`、`[+0x21c]+0x5779=1`（**停电/雷达中断标志——CreatePowerOutage/RadarOutage 同字段族**）
+  - 虚表槽 0x1a0（push 1）收尾
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x4f9950/0x451690 已登记）
+- 判类：逐槽给钱器（[+0x702] 索引循环 [+0x5e8+eax*4] 槽对象逐个虚表槽 0xb8 取值 → GiveMoney + 动画槽清理器 0x451690 + 停电/雷达中断标志 + 虚表槽 0x1a0）——建筑产出结算/卸货 (partial)
+
+## b 路：0x458200 占领转移处置器（0x12D=301B）
+
+- 范围 0x458200-0x45832C（ret @0x45832C；下函数 0x458330 倍率槽位 UI 注册器）
+- thiscall 0 栈参（ret；esi=this）——**占领转移处置器**：
+  - `[Type+0x634] == -1` 分支：
+    - `call 0x5f5cd0`（**ObjectClass::IsRedHP batch 1496**）→ 真 → `push 0/0; call 0x457de0`（**驻军清除链 batch 1591**）
+    - `[0xa80238]` 计数 + `[0xa8022c]` 数组 → 遍历找 `[ebp+0x34]+0xbc == eax`（0x6a46d0 名字表查找返回值）→ ebx=命中家
+    - `call [eax+0x408]`（**虚表槽 0x408**）→ eax 状态
+    - `[+0x21c] == ebx` → 跳过；`call 0x50b6f0`（**IsControlledByCurrentPlayer batch 062**）→ 真 → `[0x8871e0]+0x1c0` → `push 0/0x2000/0x3f800000(1.0f); call 0x750920`（**句柄→对象查表 batch 068**）→ 虚表槽 0x1b8 → `call 0x65fa70`（**RadarEventClass::Add ecx=0xf**）→ `call 0x752700`（**VoxClass::Play 0x81926C**）
+    - `call 0x458330`（**倍率槽位 UI 注册器 batch 1764**）→ 虚表槽 0x3d4（push 0/ebx）
+  - 二段：虚表槽 0x408 >0 且 `[+0x21c]==ebx` → `call 0x458330` → `[+0x688]` 对象 → 其 [+0x21c] → 虚表槽 0x3d4（push 0/其家）
+- 直接 call 9 个/去重 8——picker callees=8 **完全吻合**（0x457de0/0x458330/0x50b6f0/0x5f5cd0/0x65fa70/0x6a46d0/0x750920/0x752700 全已登记）
+- 判类：占领转移处置器（[Type+0x634]==-1 分支 + IsRedHP + 驻军清除链 0x457DE0 + [0xA80238]/[0xA8022C] 全局数组找家 + 虚表槽 0x408 状态 + IsControlledByCurrentPlayer + 0x750920 句柄查表(1.0f) + RadarEventClass::Add(0xf) + VoxClass::Play + 倍率槽位 UI 注册器 0x458330 + 虚表槽 0x3d4 转移）——建筑占领权处置 (partial)
+
+## c 路：0x4587D0 持有检查器（0x31=49B）
+
+- 范围 0x4587D0-0x4587FE（ret 4 @0x4587FE，1 栈参）
+- thiscall 1 栈参（ret 4；[esp+8]=参对象）——**持有检查器**：
+  - `[+0x21c]`（家）→ push → `call [eax+0x8c]`（**参对象虚表槽 0x8c**——取某值）
+  - `push [0x89c818]`（**全局常值**）+ `push eax` → `call [edx+0x100]`（**虚表槽 0x100**）→ `setne al`（**非零判定**）
+- 直接 call 0 个/去重 0（虚表槽 0x8c/0x100 间接）——picker callees=0 **完全吻合**
+- 判类：持有检查器（[+0x21c] 家 → 参对象虚表槽 0x8c 取值 vs [0x89C818] 全局 → 虚表槽 0x100 比较 → setne）——49B 短函数，纯虚表槽调用 (partial)
+
+## 核验结果
+
+- _check_callees2882.py：a 路 2/2（去重 2）、b 路 9/9（去重 8）、c 路 0/0（去重 0）——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（c 路纯虚表槽 0 callees 完全吻合）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4f9950（HouseClass::GiveMoney）、0x451690（动画槽清理器）、0x5f5cd0（ObjectClass::IsRedHP）、0x457de0（驻军清除链）、0x6a46d0（全局名字表查找）、0x50b6f0（HouseClass::IsControlledByCurrentPlayer）、0x750920（句柄→对象查表）、0x65fa70（RadarEventClass::Add）、0x752700（VoxClass::Play）、0x458330（倍率槽位 UI 注册器）
+- **a 路跨批次闭合**：GiveMoney(0x4F9950)+动画槽清理器(0x451690)+停电/雷达中断标志(+0x5778/+0x5779 同 CreatePowerOutage/RadarOutage 字段)——建筑产出结算链
+- **b 路跨批次闭合**：驻军清除链(0x457DE0)+倍率槽位 UI 注册器(0x458330)+IsRedHP(0x5F5CD0) 三锚点同现场——占领处置多环节
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4589C0**（60B）/ **0x458A00**（121B）/ **0x458DB0**（28B）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
