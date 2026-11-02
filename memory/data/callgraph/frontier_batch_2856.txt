@@ -1,0 +1,58 @@
+# frontier batch 2856
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x433020（23B）+ 0x433060（274B）+ 0x433940（75B）
+三路：a=0x433020（0x17=23B **失败标志器** callees=0 直接/1 含间接 deps=0）/ b=0x433060（0x112=274B **绘制提交器** callees=2 直接/9 含间接 deps=0）/ c=0x433940（0x4A=74B **析构器** callees=2 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2856{a,b,c}.txt（a 长度 0x40、b 长度 0x180、c 长度 0x80，含下函数族开头），完整读取确认（a ret @0x433036、b ret @0x433171、c ret @0x433989）
+核验：.qwen/tmp/_check_callees2856.py 三路全 PASS（a 0/0、b 3/3 去重2、c 4/4 去重2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7045 → 7048（待 _append_tsv_batch2856.py）
+
+## a 路：0x433020 失败标志器（0x17=23B）
+
+- 范围 0x433020-0x433036（ret @0x433036）；下函数 0x433040（**三参转发器**：`call 0x432e40` with [+0xc]/[+0x10]/[+0x14]——观察项）
+- thiscall 0 栈参（ret；esi=this）——**失败标志器**：
+  - `mov eax,[esi+4]; push eax; call dword[0x7e15c0]`（**导入槽 [0x7E15C0]**——[0x7E15A4/AC/B0] 族下一个 C0）→ `test eax,eax; jne → mov byte[esi+0x2d],1`（**回调返 0 → [+0x2d]=1 失败标志**）
+- 直接 call 0 个/去重 0——picker callees=1，差 1 为 [0x7E15C0] 导入槽间接调用（Ghidra 含间接统计）
+- 判类：失败标志器（[0x7E15C0] 回调 → 0 时置 [+0x2d]=1）(partial)
+
+## b 路：0x433060 绘制提交器（0x112=274B）
+
+- 范围 0x433060-0x433171（ret @0x433171）；下函数 0x433180（**同款提交器**：0x433330 + 虚表槽 0x5c/0x74/0x80/0x60 + [0x7E15B8]——观察项）
+- thiscall 0 栈参（ret；esi=this）——**绘制提交器（DP 双分支）**：
+  - `mov eax,[0x887308]; cmp [esi+0xc],eax; jne 0x433100`（**类型匹配门：[+0xc] == [0x887308]**）
+  - **匹配分支**（0x433079）：`mov ecx,[0xb73550]; lea eax,[esp+0x18]; push eax; push ecx; call [0x7e14c4]`（**导入槽 [0x7E14C4] 两参读 [0xB73550] 对象**）→ `mov eax,[0xb73550]; lea edx,[esp+0x18]; push edx; push eax; call [0x7e14b8]`（**导入槽 [0x7E14B8] 两参**）→ `ebx=[+0x10]+读到的[esp+0x18]; ebp=[+0x14]+读到的[esp+0x1c]`（**坐标偏移累加**）
+  - **非匹配分支**（0x433100）：`[+0x10]/[+0x14] 直接用作坐标`（无偏移）
+  - 公共链（0x43310D/0x4330B3）：`push [+0xc]; call 0x433330`（**0x433330 对象取用**）→ `mov edx,[edi]; xor ecx,ecx; xor eax,eax; push 0; push 0; mov ecx,edi; call [edx+0x5c]`（**虚表槽 0x5c (0,0)**）→ `test eax; je 0x433162`（**空 → 直接收尾**）
+  - `call [eax+0x74]`（**虚表槽 0x74**）→ 暂存 → `call [edx+0x80]`（**虚表槽 0x80**）→ `mov ecx,[esi+8]; or ecx,0x80000000`（**标志位 |0x80000000**）→ **七参 push**（坐标+值+标志）→ `call [0x7e15b8]`（**导入槽 [0x7E15B8] 绘制提交**）→ `call [edx+0x60]`（**虚表槽 0x60 收尾**）
+  - 尾部 `call 0x433270`（**收尾/清理**）
+- 直接 call 3 个/去重 2：0x433330（×2）、0x433270——picker callees=5，差 3 为导入槽 [0x7E14C4]/[0x7E14B8]/[0x7E15B8] 间接（Ghidra 含间接统计）；虚表槽 0x5c/0x74/0x80/0x60 间接 4 处未计入
+- 判类：绘制提交器（推断名——DP 双分支坐标偏移 + 虚表槽 0x5c/0x74/0x80/0x60 + [0x7E15B8] 七参提交 + [0x887308] 类型门）(partial)
+
+## c 路：0x433940 析构器（虚表 0x7E3A78）（0x4A=74B）
+
+- 范围 0x433940-0x433989（ret @0x433989）；下函数 0x433990（**new 0x6c + 0x4739f0 构造链**：`push 0x6c; call 0x7c8e17; call 0x4739f0`——观察项）
+- thiscall 0 栈参（ret；esi=this）——**析构器（虚表 0x7E3A78）——双层释放**：
+  - `eax=[+8]; [esi]=0x7e3a78`（**析构态虚表**）→ `test; je → push eax; call 0x7c93e8`（**0x7C93E8 释放**）
+  - `esi=[+4]`（**子对象指针 [+4]**）→ `test; je 0x433989` → `[+0x18]` → delete；`[+0x1c]` → delete；`push esi; call 0x7c8b3d`（**delete 子对象本体**）
+- 直接 call 4 个/去重 2：0x7c93e8、0x7c8b3d（×3）——picker callees=2 完全吻合
+- 判类：析构器（虚表 0x7E3A78；[+8] 经 0x7C93E8 + [+4] 子对象两级释放）(partial)
+
+## 核验结果
+
+- _check_callees2856.py：a 路 0/0、b 路 3/3（去重 2）、c 路 4/4（去重 2）——三路全 PASS
+- picker callees vs 核验差值：a 差 1（[0x7E15C0] 导入槽间接）；b 差 3（[0x7E14C4]/[0x7E14B8]/[0x7E15B8] 导入槽间接）；c 差 0——均属预期差
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x433270/0x433330（同款提交器/对象取用——已在 TSV）、0x7C93E8（释放）、0x7C8B3D（operator delete 族）
+- **b 路大发现**：绘制提交器经 [0x7E15B8] 七参提交 + [0x887308] 类型门——[0x887308] 为全局类型签名（与批 2792 观察的 [0x887348] 计时器族区相邻）；[0xB73550] 全局坐标源对象（DP 偏移读）
+- **a 路导入槽族扩展**：[0x7E15C0]——[0x7E15A4/AC/B0/C0] 四相邻导入槽连续族（文件 IO/绘制接口）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **同款提交器**：b 路下函数 0x433180（0x433330 + 虚表槽链 + [0x7E15B8]——b 路 0x433060 的兄弟提交器）
+- **三参转发器**：a 路下函数 0x433040（call 0x432e40 with [+0xc]/[+0x10]/[+0x14]）
+- **new 0x6c + 0x4739f0 构造链**：c 路下函数 0x433990（+0x6c 分配 + 0x4739F0 子构造）
+- **0x433C00**（46B）/ **0x433C30**（50B）/ **0x433EF0**（88B）——0x433Cxxx 区段后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
