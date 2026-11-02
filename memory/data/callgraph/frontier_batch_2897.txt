@@ -1,0 +1,55 @@
+# frontier batch 2897
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x468090（923B）+ 0x468430（**带名 BulletClass::LoseTarget** 164B）+ 0x468670（1304B）
+三路：a=0x468090（0x39B=923B **弹道轨迹更新器** callees=14 deps=0）/ b=0x468430（0xA4=164B **BulletClass::LoseTarget** callees=1 deps=0）/ c=0x468670（0x518=1304B **弹道发射/初始化器** callees=12 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2897{a,b,c}.txt（a 长度 0x3A0、b 长度 0xB0、c 长度 0x530），完整读取确认（a ret 8 @0x468428、b ret @0x4684D3、c ret @0x468B7D 区）
+核验：.qwen/tmp/_check_callees2897.py 三路全 PASS（a 19/19 去重14、b 1/1 去重1、c 18/18 去重12），无 MISSING、无 UNKNOWN、无批内自引用——**BulletClass 族三函数全零 MISSING**
+注册：TSV 7168 → 7171（待 _append_tsv_batch2897.py）
+
+## a 路：0x468090 弹道轨迹更新器（0x39B=923B）
+
+- 范围 0x468090-0x468428（ret 8 @0x468428，2 栈参）
+- thiscall 2 栈参（ret 8；[ebp+8]/[ebp+0xc]）——**弹道轨迹更新器（BulletClass 飞行轨迹/命中计算）**：
+  - `[0xa8b230]` 类型门 → `ch & 0x10` 检查；`[+0x9c]` 坐标 → `call 0x5865e0`（**MapClass::IsLocationFogged batch 206** 恒返 0 桩）
+  - `[+0xac]` 类型 `+0x29e/+0x236/+0x29a/+0x2a8/+0x2a9` 标志族 → Matrix3D 链：`0x5ae860`（MakeIdentity batch 115）→ `0x4cae30`（安全浮点除法 batch 076）→ `fsub 0x7e2820 / fmul 0x7e2818`（常量）→ `0x7c5f00`（_ftol）→ `0x5af1a0`（**Matrix3D::RotateZ batch 137**）→ `0x5af080`（**Matrix3D::RotateY batch 286**）→ `0x4cac40`（sqrt）
+  - `0x754be0`（**模板拷贝器·[0xB44318] batch 1846**）→ `0x5af980`（浮点顶点变换 batch 248）→ `0x46b0c0`（**容器装载器 batch 2488**，7 参）
+  - **二段伤害/弹头段**：`call [eax+0x6c]`（虚表槽 0x6c）→ `[+0x1e8]/[+0x1c8]`（虚表槽）→ `0x565730/0x578080`（MapClass 查格）→ `0x565730` → `[+0x140]`（弹头）→ `[0x89de64]`（帧计数）→ `[+0x29a]` 标志 → `0x6d20e0`（**TacticalClass::AdjustForZ batch 096**）→ 多参 `0x4aed70`（**链表遍历 + 虚回调 batch 079**，[0x887314] 渲染器）→ `[0x87f6c4]/[0x87f6c0]`（分裂弹头表？）→ `[0xb054d4]`（单位表）+`[0xa83d4c]` → 虚表槽 `[+0x1d0]` → `0x6d20e0` → `0x4aed70`（[0x887314]）
+- 直接 call 19 个/去重 14——picker callees=14 **完全吻合**（全已登记）
+- 判类：弹道轨迹更新器（MapClass 迷雾桩 + Matrix3D MakeIdentity/RotateZ/RotateY + 安全除法/sqrt/_ftol + 模板拷贝 + 容器装载 + AdjustForZ + 链表遍历虚回调 + [0x887314] 渲染器）——弹道类飞行渲染/结算核心 (partial)
+
+## b 路：0x468430 BulletClass::LoseTarget（0xA4=164B，带名）
+
+- 范围 0x468430-0x4684D3（ret @0x4684D3）
+- thiscall 0 栈参（ret；esi=this）——**BulletClass::LoseTarget（YRpp 带名——丢失目标重定位）**：
+  - `[+0x10c]` 目标 → 虚表槽 0x48（取目标坐标）→ `cdq/and 0xff/sar 8`（**>>8 量化**）×2 轴 → 栈坐标
+  - `[0xa8e7ac]`（全局）非空 OR 目标虚表槽 0x54 真 → 置 `[+0x10c]=0`（**丢目标**）
+  - 否则坐标 vs `[0x89ddf0]`（**当前格坐标**）异 → `0x5657a0`（坐标→Cell 查表）→ `[+0x10c]=eax`（重定位）
+- 直接 call 1 个/去重 1——picker callees=1 **完全吻合**（0x5657a0 已登记）
+- 判类：**BulletClass::LoseTarget**（带名——目标坐标 >>8 量化 + [0xA8E7AC] 全局门 + 虚表槽 0x54 检查 + [0x89DDF0] 格比较 + MapClass 查格重定位 [+0x10c]） (partial)
+
+## c 路：0x468670 弹道发射/初始化器（0x518=1304B）
+
+- 范围 0x468670-0x468B7D（ret @0x468B7D 区；下函数 0x468B80 区）
+- thiscall 1 栈参（ret；[ebp+8]=发射目标）——**弹道发射/初始化器**：
+  - `0x5f4ec0`（**状态校验门禁 batch 156**）→ `[+0xe8]` rep movsd ×6（坐标拷贝）→ `[+0x134]` 坐标 >>8 量化 → `[+0x14c]` 写回 → `0x4a9770`（**DisplayClass::Remove batch 184**，[0x87F7E8] MapClass）→ 虚表槽 0x58（目标坐标）
+  - `0x65c7e0`（**Randomizer::RandomRanged**——**游戏逻辑 RNG 第九例**）`0x4a9720`（**DisplayClass::Submit batch 184**）`0x5808a0`/`0x578080` `0x4e1130`（时间戳三维状态初始化器 batch 2407）`0x4cac40/0x4cacb0/0x4cad00`（sqrt/sin/cos 表）`0x7c5f00`（_ftol）
+- 直接 call 18 个/去重 12——picker callees=12 **完全吻合**
+- 判类：弹道发射/初始化器（状态校验门禁 + 坐标量化 + DisplayClass Remove/Submit 对 + Randomizer RNG + 时间戳三维状态 + sqrt/sin/cos 表）——弹道发射初始化 (partial)
+
+## 核验结果
+
+- _check_callees2897.py：a 路 19/19（去重 14）、b 路 1/1、c 路 18/18（去重 12）——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名（关键）：0x5865e0（MapClass::IsLocationFogged 恒 0 桩）、0x5ae860（Matrix3D::MakeIdentity）、0x5af1a0（Matrix3D::RotateZ）、0x5af080（Matrix3D::RotateY）、0x4cae30（安全浮点除）、0x4cac40（sqrt）、0x754be0（模板拷贝器）、0x5af980（浮点顶点变换）、0x46b0c0（容器装载器）、0x6d20e0（AdjustForZ）、0x4aed70（链表遍历+虚回调）、0x4a9720/0x4a9770（DisplayClass Submit/Remove）、0x65c7e0（Randomizer::RandomRanged）
+- **RNG 第九例**：0x65c7e0 Randomizer 在 c 路出现——游戏逻辑 RNG 消耗点累计第九处
+- **BulletClass 族三连**：批 2896（构造/巨型状态）+ 本批（轨迹/丢目标/发射）——弹道类生命周期链继续推进
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x468B80**（c 路下函数 recipient）/ **0x46AFD0**（30B）/ **0x46AFF0**（55B）/ **0x46B280 BulletClass::InitScalable 带名**（137B）——后续候选（0x46xxx 区 BulletClass 邻域）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
