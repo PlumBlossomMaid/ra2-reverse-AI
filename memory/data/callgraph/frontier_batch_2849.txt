@@ -1,0 +1,60 @@
+# frontier batch 2849
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x42F180（批 2848 c 路下函数观察项）+ 0x42F260（212B）+ 0x42F380（**带名 BaseClass::FailedToPlaceNode**）
+三路：a=0x42F180（0x5D=93B **条目表注册器** callees=2 deps=0）/ b=0x42F260（0xD2=210B **条目查找标记器** callees=0 deps=0）/ c=0x42F380（0x14=20B **BaseClass::FailedToPlaceNode** callees=0 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2849{a,b,c}.txt（a 长度 0xC0 含 0x42F1E0 子构造器、b 长度 0x140 含 0x42F340 查找器、c 长度 0x60 含 0x42F3A0 清理器），完整读取确认（a ret 4 @0x42F1DD、b ret 4 @0x42F331、c ret 4 @0x42F394）
+核验：.qwen/tmp/_check_callees2849.py 三路全 PASS（a 4/4 去重2、b 0/0、c 0/0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7024 → 7027（待 _append_tsv_batch2849.py）
+
+## a 路：0x42F180 条目表注册器（0x5D=93B）
+
+- 范围 0x42F180-0x42F1DD（ret 4 @0x42F1DD）；下函数 0x42F1E0（**子对象构造器**：[+4] 经 0x42FC40 构造 + 虚表 0x7E38B0、[+0x20]/[+0x38] 经 0x42FCB0 构造 + 虚表 0x7E3890，各 [+0x14]=0xa 容量 [+0x10]=0——与批 2845 c 路 0x42A6D0 巨型构造器容器族子构造同款——观察项）
+- thiscall 1 栈参（ret 4；esi=this；ebx=[esp+8]=目标对象 param1）——**条目表注册器**：
+  - `mov ecx,ebx; push [esi+0x14]; call 0x4a1d50`（**0x4A1D50 双参预分配**：目标.预留(count)）
+  - 循环 `[esi+0x14]` 计数（eax>0）：每条 0x10B（edi stride 0x10）：
+    - `mov edx,[ecx+edi]`（[esi+8] base + edi 处 dword id）→ `push edx; mov ecx,ebx; call 0x4a1d50`（**dword 插入**）
+    - `mov cx,[eax+edi+4]`（+4 偏移 word）→ `push ecx; mov ecx,ebx; call 0x4a1d30`（**0x4A1D30 word 插入**）
+    - `mov ax,[edx+edi+6]`（+6 偏移 word）→ `push eax; mov ecx,ebx; call 0x4a1d30`（**word 插入**）
+  - 语义：把 [+8] 处 0x10-stride 条目表（dword id + word + word）逐条注册进 param1 对象，0x4A1D50 收 dword、0x4A1D30 收 word
+- 直接 call 4 个/去重 2：0x4a1d50（×2）、0x4a1d30（×2）——picker callees=2 完全吻合
+- 判类：条目表注册器（推断名——0x10-stride 条目表 → 目标双通道注册）(partial)
+
+## b 路：0x42F260 条目查找标记器（0xD2=210B）
+
+- 范围 0x42F260-0x42F331（ret 4 @0x42F331）；下函数 0x42F340（**条目查找器**：同族 [+0xdf8] 匹配 + [+8] 标志检查，命中返回指针——观察项）
+- thiscall 1 栈参（ret 4；esi=this；ebp=[esp+0x10]=param1 上下文对象）——**条目查找标记器**：
+  - `mov eax,[ebp+0x21c]; cmp [esi+0x74]; jne 0x42f2de`（**类型/签名匹配门——[esi+0x74] 与上下文 +0x21c 须相等**）
+  - 主循环 `[esi+0x14]` 计数（edi）：`edx=[ebp+0x520]; eax=[edx+0xdf8]; cmp [ebx]; jne`（**源对象 [ebp+0x520]+0xdf8 成员 vs 表项 dword**）→ 匹配后 `call [edx+0x1b8]`（**上下文虚表槽 0x1b8 GET 方法**）→ `cmp [eax]w,[ebx+4]; cmp [eax+2]w,[ebx+6]`（**返回值的双 word 全等**）→ 全匹配 → `mov byte[edi+8],1; [edi+0xc]=0`（**busy 置位 + 计数清零**）→ 返回
+  - 未匹配/类型门失败 → 0x42F2DE fallback：`e=[ebp+0x520]; eax=[e+0x408]; test; je 返回`（**fallback 集合存在检查**）→ 循环 `[esi+0x14]`：`cmp [esi],ebp(e+0xdf8); jne → mov dl,[esi+8]; test; je → 命中`（**找 [+8] 标志=0 的第一空闲项**）→ `[edi+8]=1; [edi+0xc]=0`（标记接管）
+- 直接 call 0 个/去重 0——picker callees=0 完全吻合（唯一跨函数调用为虚表槽 0x1b8 间接 `call [edx+0x1b8]`）
+- 判类：条目查找标记器（推断名——签名匹配 + busy 置位 [+8]=1/[+0xc]=0 + 空闲项 fallback）(partial)
+
+## c 路：0x42F380 BaseClass::FailedToPlaceNode（0x14=20B，带名）
+
+- 范围 0x42F380-0x42F394（ret 4 @0x42F394）；下函数 0x42F3A0（**成员释放清理器（含 +0x10 清零）**：`[+0x10]=0` + [+4] 门控 delete + 三清零——与批 2846 b 路 0x42D5A0/0x40B6A0 同模板，本族新实例——观察项）
+- stdcall 1 栈参（ret 4；eax=[esp+4]=param1 指针）——**BaseClass::FailedToPlaceNode（YRpp 带名符号）**：
+  - `test eax,eax; je ret`（**null → 直接返回 0**）
+  - `mov ecx,[eax+0xc]; inc; [eax+0xc]=ecx; mov eax,ecx; ret`（**++[+0xc] 放置失败计数并返回新值**）
+- 直接 call 0 个/去重 0——picker callees=0 完全吻合
+- 判类：**BaseClass::FailedToPlaceNode（带名，semantics_verified）**——YRpp 符号命名 + 机器码逐条自证（null 检查 + 自增 + 返回），无任何分支歧义/未确定点 → 三态按 semantics_verified 登记
+
+## 核验结果
+
+- _check_callees2849.py：a 路 4/4（去重 2）、b 路 0/0、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：a 差 0（4 直接 call 去重 2 = picker 2）；b/c 路 picker=0 且核验=0（b 的 1 处为虚表槽 0x1b8 间接调用，Ghidra 未计入 picker）——本批无"差值异常"
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4A1D50（dword 注册器）、0x4A1D30（word 注册器）——二者均已在 TSV
+- **c 路带名判三态**：BaseClass::FailedToPlaceNode 为 YRpp 可信符号，机器码 20B 逻辑零歧义（null 检查 + [+0xc] 自增返回）——登记 semantics_verified（依据：带名符号 + 完整逐条还原，无未确认点）
+- **a/b 路同族联动**：0x42F180 注册器（写侧）与 0x42F260 查找标记器（读侧）操作同一 0x10-stride 条目表（[+8] 表基址/[+0x14] 计数/dword id + word×2）——条目表管理区（注册/查找/标记），与批 2848 c 路 0x42F070 序列化读取器同源（同目标内存块布局：[+8] 计数/0x10-stride 数组）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **子对象构造器**：a 路下函数 0x42F1E0（0x42FC40/0x42FCB0 双容器构造 + 虚表 0x7E38B0/0x7E3890——批 2845 巨型构造器同款三子对象模式）
+- **条目查找器**：b 路下函数 0x42F340（同族 [+0xdf8] 匹配 + [+8] 标志检查）
+- **成员释放清理器（含 +0x10）**：c 路下函数 0x42F3A0（identical 0x40B6A0/0x42D5A0 模板，本族新实例）+ 0x42F3D0（+0xc 门控访问器）
+- **0x42F420**（42B）/ **0x42F970**（73B）——0x42Fxxx 区后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
