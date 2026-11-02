@@ -1,0 +1,48 @@
+# frontier batch 2900
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x46B8C0（73B）+ 0x46B910（73B）+ 0x46C440（143B）
+三路：a=0x46B8C0（0x49=73B **scalar deleting 析构器** callees=1 deps=0）/ b=0x46B910（0x49=73B **scalar deleting 析构器孪生** callees=1 deps=0）/ c=0x46C440（0x8F=143B **名字→对象工厂第二实例** callees=3 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2900{a,b,c}.txt（a/b 长度 0x60、c 长度 0x90），完整读取确认（a ret 4 @0x46B906、b ret 4 @0x46B956、c ret @0x46C4CE）
+核验：.qwen/tmp/_check_callees2900.py 三路全 PASS（a 2/2 去重1、b 2/2 去重1、c 4/4 去重3），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7177 → 7180（待 _append_tsv_batch2900.py）
+
+## a/b 路：scalar deleting 析构器 ×2（虚表 0x7E4698，逐字节孪生）
+
+- 范围 a 0x46B8C0-0x46B906 / b 0x46B910-0x46B956
+- thiscall 1 栈参（ret 4；[esp+8]=deleting 标志）——**scalar deleting 析构器（虚表 0x7E4698 新增）**：
+  - `mov [esi], 0x7E4698`（虚表复位）
+  - `[+4]` 指针非空 且 `[+0xd]` 标志非零 → `call 0x7c8b3d`（delete 内部缓冲）→ `[+4]=0`
+  - `[+0xd]=0`、`[+8]=0`（字段清零）
+  - `[esp+8] & 1` → `call 0x7c8b3d`（delete this）→ 返 this
+- 直接 call 各 2 个/去重 1——picker callees=1 **完全吻合**（0x7c8b3d 已登记）
+- 判类：Vector 族 scalar deleting 析构器（虚表 0x7E4698——双实例逐字节同构）——批 2888-2899 同模板新虚表 (partial)
+
+## c 路：0x46C440 名字→对象工厂第二实例（0x8F=143B）
+
+- 范围 0x46C440-0x46C4CE（ret @0x46C4CE）
+- thiscall 1 栈参（ret 4；edi=名字）——**名字→对象工厂（与批 2895 c 路 0x466000 同构）**：
+  - `push 0x817474; call 0x7c8d20`（strcmp 常量串豁免——**同 0x817474 A 串**）→ 匹配则继续
+  - `[0xa83c90]` 计数 >0 → 遍历 `[0xa83c84]` 数组：`[eax+esi*4]+0x24`（每项 +0x24 名字）vs 入参 → strcmp → **命中返 esi**（索引）
+  - 未命中 → `push 0x2f8; call 0x7c8e17`（CRT new 0x2F8）→ `push edi; call 0x46bbc0`（构造器）→ 返新对象
+  - **线性搜索 null 槽**：遍历 `[0xa83c84]` 找第一空位（`cmp [edx],eax; je`）→ 返空位索引
+  - 全程无空位/new 失败 → 返 -1
+- 直接 call 4 个/去重 3——picker callees=3 **完全吻合**（0x7c8d20/0x7c8e17/0x46bbc0 已登记）
+- 判类：名字→对象工厂第二实例（0x817474 常量串豁免 + [0xA83C84]/[0xA83C90] 表遍历 + new 0x2F8 + 0x46BBC0 构造 + 空位线性搜索）——与批 2895 0x466000 工厂同族（不同表 [0xA83C84] vs [edi+4]） (partial)
+
+## 核验结果
+
+- _check_callees2900.py：a 路 2/2（去重 1）、b 路 2/2（去重 1）、c 路 4/4（去重 3）——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7c8b3d（CRT delete）、0x7c8d20（CRT strcmp）、0x7c8e17（CRT new）、0x46bbc0（构造器）
+- **批量：2900 里程碑**：本批为第 2900 批次——frontier 推进过 2900 大关，TSV 7177 行（唯一 7161）
+- **c 路同族第二实例**：名字→对象工厂（[0xA83C84] 表 + 0x2F8 构造对象），与批 2895 0x466000（[edi+4] 表 + 0x1798 构造对象）同模板双表
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x46BBC0**（c 路构造器已登记）/ **0x46C4D0**（c 路下函数）/ **0x46CB60 CampaignClass::CampaignClass 带名**（172B）/ **0x46CC90**（61B）——后续候选（0x46Cxxx 区）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
