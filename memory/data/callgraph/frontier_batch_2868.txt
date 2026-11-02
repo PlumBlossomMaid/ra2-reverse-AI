@@ -1,0 +1,60 @@
+# frontier batch 2868
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x43E900（52B）+ 0x43E940（**1012B 大函数**）+ 0x441F60（**带名 BuildingClass::AfterDestruction** 718B）
+三路：a=0x43E900（0x34=52B **坐标读取器** callees=1 deps=0）/ b=0x43E940（0x3F4=1012B **建筑大状态机** callees=13 deps=0）/ c=0x441F60（0x2CE=718B **BuildingClass::AfterDestruction** callees=13 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2868{a,b,c}.txt（a 长度 0x70、b 长度 0x400 完整、c 长度 0x300 完整），完整读取确认（a ret @0x43E933、b/c 终点由核验脚本全文件扫描）
+核验：.qwen/tmp/_check_callees2868.py 三路全 PASS（a 1/1、b 21/21 去重13、c 16/16 去重13），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7081 → 7084（待 _append_tsv_batch2868.py）
+
+## a 路：0x43E900 坐标读取器（0x34=52B）
+
+- 范围 0x43E900-0x43E933（ret @0x43E933）；下函数 0x43E940（b 路）
+- thiscall 0 栈参（ret；esi=this）——**坐标读取器**：
+  - `mov eax,[esi]; call [eax+0x1d0]`（**虚表槽 0x1d0**）→ `mov ecx,eax; call 0x6d20e0`（**0x6D20E0 坐标转换**）
+  - `mov esi,[esi+0x520]`（**[+0x520] 挂载对象**）→ `neg ecx`（**取负**）→ `mov al,[esi+0x16c5]; test; je 0x43e930`
+  - **标志置位**：`mov eax,[esi+0x11e8]; add eax,ecx; ret`（**[+0x11e8]+负值**）
+  - **标志未置**：`mov eax,ecx; ret`（返负值）
+- 直接 call 1 个/去重 1：0x6d20e0——picker callees=1 完全吻合（+ 虚表槽 0x1d0 间接 1）
+- 判类：坐标读取器（虚表槽 0x1d0 + 0x6D20E0 转换 + [+0x520] 挂载 + [+0x16c5] 标志选 [+0x11e8]/负值）(partial)
+
+## b 路：0x43E940 建筑大状态机（0x3F4=1012B）
+
+- 范围 0x43E940-0x43ED33（1012B；核验全扫描确认终点）
+- thiscall 2 栈参（ret ?；esi=this；[ebp+8]/[ebp+0xc]=两参）——**建筑大状态机（坐标/阵营处理）**：
+  - `push 0; call [eax+0x3f8]`（**虚表槽 0x3f8**）→ `[eax]+0x149` 标志门（**早期退出**）→ `call [edx+0x84]`（**虚表槽 0x84**）
+  - param2 门控 → `call 0x70bcb0`（**0x70BCB0 读取**）→ `call [edx+0x3f8]` + `call [edx+0xac]`（**虚表槽 0xac**）→ `[esi+0x520]+0x11e0/0x11e4` + `call 0x6d2070`（**0x6D2070——a 路 0x6D20E0 同族坐标转换**）→ 坐标差 → `mov word[eax],0x4000`（**标志写**）
+  - 后续另有 0x4C93D0/0x4CAC40/0x4CAD80/0x4CAE30（坐标/数学）、0x578080（[0x87F7E8] 查询）、0x48A8D0/0x48AB90、0x5F6360、0x6FDA00、0x70D590、0x7C5F00
+- 直接 call 21 个/去重 13——picker callees=13 **完全吻合**（0x48a8d0/0x48ab90/0x4c93d0/0x4cac40/0x4cad80/0x4cae30/0x578080/0x5f6360/0x6d2070/0x6fda00/0x70bcb0/0x70d590/0x7c5f00 全已登记）
+- 判类：建筑大状态机（推断名——虚表槽 0x3f8/0x84/0xac + [+0x520]+0x11e0/0x11e4 + 0x6D2070 坐标转换 + 0x70BCB0/0x70D590 + 数学族；1012B 大函数细节待后续逐段核验——partial）(partial)
+
+## c 路：0x441F60 BuildingClass::AfterDestruction（0x2CE=718B，带名）
+
+- 范围 0x441F60-0x442225（718B）
+- thiscall 0 栈参（ret；ebx=this）——**BuildingClass::AfterDestruction（YRpp 带名——建筑摧毁后处理）**：
+  - `mov ecx,[ebx+0x520]; call 0x45f160`（**0x45F160——批 2718/2818 已登记（建筑类型懒加载组件检查器）**）→ `test al; je 0x4421a4`（**门控**）
+  - `call [edx+0x108]`（**虚表槽 0x108**）→ `call [eax+0xac]`（**虚表槽 0xac**）→ 坐标拆解（`cdq; and edx,0xff; add eax,edx; sar eax,8`——**8 位量化舍入**）
+  - `cmp word[ebp],0x7fff; cmp word[ebp+2],0x7fff; je 0x442064`（**0x7FFF 哨兵——路径点表终止符**）
+  - **循环**：`mov cx,word[eax]; mov dx,word[eax+2]; add cx,[esp+0x10]; add dx,[esp+0x12]`（**坐标累加**）→ `mov ecx,0x87f7e8; call 0x5657a0`（**[0x87F7E8] MapClass::Instance 取格**）→ esi=cell
+  - `call 0x486e70`（**CellClass::MarkForRedraw——批 2817 已登记**）→ `[esi+0x44]=0xef; [esi+0x40]=0`（**cell 标志写入**）→ `call 0x47d2b0`（**CellClass::RecalcAttributes**）→ `call 0x56d460`（**cell+0x24 挂载**）→ `call 0x584550` + `call 0x70d4a0` → 继续循环
+  - **循环终止**：坐标达 0x7FFF/0x7FFF（**路径点表终止**）
+- 直接 call 16 个/去重 13——picker callees=13 **完全吻合**（0x45a130/0x45f160/0x47d2b0/0x47fb90/0x47fde0/0x486e70/0x5657a0/0x56bec0/0x56d460/0x584550/0x6d2790/0x6da7d0/0x70d4a0 全已登记）
+- 判类：**BuildingClass::AfterDestruction（带名——建筑摧毁后处理：路径点表遍历（0x7FFF 哨兵）+ cell 清除/重绘链（MarkForRedraw/RecalcAttributes）+ [0x87F7E8] MapClass 取格 + 0x47FB90/0x47FDE0 矩形相交）**——QWEN.md 批 2817 预告兑现（MarkForRedraw 5 caller 含 AfterDestruction）(partial)
+
+## 核验结果
+
+- _check_callees2868.py：a 路 1/1、b 路 21/21（去重 13）、c 路 16/16（去重 13）——三路全 PASS
+- picker callees vs 核验差值：**b/c 两路 13 直接去重 13 = picker 13 全吻合（零 MISSING 大函数核验完整闭合）**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x6D20E0/0x6D2070（坐标转换族）、0x45F160（建筑类型懒加载检查器）、0x486E70（CellClass::MarkForRedraw）、0x47D2B0（CellClass::RecalcAttributes）、0x5657A0（[0x87F7E8] MapClass 取格）、0x70BCB0/0x70D590/0x70D4A0（渲染族）、0x47FB90/0x47FDE0（矩形相交）
+- **c 路带名兑现**：QWEN.md 批 2817 记录的 MarkForRedraw 5 调用点之一「BuildingClass::AfterDestruction」正式登记闭环——摧毁路径点遍历 + cell 重绘链完整还原
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x43ED4x 后续**：b 路下函数区段
+- **BuildingClass::SetRallypoint**（0x43860，带名 806B）/ **BuildingClass::AfterDestruction 后邻 0x442230**——后续候选
+- **0x43E940 建筑大状态机全量逐段**：虚表槽 0x3f8/0x84/0xac + 数学族——后续精细核验候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
