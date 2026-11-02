@@ -1,0 +1,58 @@
+# frontier batch 2844
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段；未登记池 6993→6990）——0x428xxx/0x429xxx 接口注册表域（名字匹配分发 + COM 接口表 + GUID 查询）
+三路：a=0x428F70（0x80=128B **名字匹配构造分发器（new 0x378）** callees=3 deps=0）/ b=0x429360（0x79=121B **接口表查找器** callees=0 deps=0）/ c=0x429420（0x23=35B **GUID 导入槽查询器** callees=0 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2844{a,b,c}.txt（长度 0x100），完整读取确认（a ret @0x428FEF、b ret 0xc @0x4293D8、c ret 8 @0x429442）
+核验：.qwen/tmp/_check_callees2844.py 三路全 PASS（a 3/3、b 0/0、c 0/0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7009 → 7012（待 _append_tsv_batch2844.py）
+
+## a 路：0x428F70 名字匹配构造分发器（new 0x378）（0x80=128B）
+
+- 范围 0x428F70-0x428FEF（ret @0x428FDF/0x428FE9/0x428FEF）；下函数 0x428FF0（**四全局清零器**：[0x89a260]/[0x89a264]/[0x89a268]/[0x89a26c]——观察项）+ 0x429010（**浮点常量写入器族**：fld [0x7e1710]/[0x7e1708] + 0x7c8fb0 + fadd + 0x4cac40 + fstp [0x89a278]——观察项）
+- stdcall 1 栈参（ret；edi=[esp+8] 注册表/ebx=ecx 名字指针）——**名字匹配构造分发器（双常量串 + 注册表查名 + new 0x378 构造）**——与 batch 2835 a 路 0x41FCA0 同族：
+  - `push ebx; push 0x817474; call 0x7c8d20`（**stricmp 常量串 1**）→ `je 0x428fea`（**匹配 → 返 0**）→ `push 0x817694; call 0x7c8d20`（**stricmp 常量串 2**）
+  - 注册表扫描：`mov eax,[edi+0x10]; xor esi; test; jle 0x428fc3`（**[+0x10] 计数**）→ `mov eax,[edi+4]; mov ecx,[eax+esi*4]; add ecx,0x24`（**[+4] 数组 + 0x24 名字字段**）→ `call 0x7c8d20`（**stricmp 逐项**）→ 命中 → 返 `[edx+esi*4]`（**已存在对象**）
+  - 未命中：`push 0x378; call 0x7c8e17`（**new 0x378=888B**）→ `push ebx; mov ecx,eax; call 0x427530`（**名字参构造 0x427530**——batch 2843 c 路 0x427B50 邻域构造器）→ 返新对象；失败返 0
+- 直接 call 5 个/去重 3：0x7c8d20（stricmp ×3）、0x7c8e17（new）、0x427530——picker callees=3 完全吻合
+- 判类：名字匹配构造分发器（推断名——常量串排除 + [edi+4] 注册表逐项名查找 + 未命中 new 0x378 构造 0x427530；名字注册表族第五实例）(partial)
+
+## b 路：0x429360 接口表查找器（0x79=121B）
+
+- 范围 0x429360-0x4293D8（ret 0xc @0x4293D8）；下函数 0x4293E0/0x4293F0（**返 1 stub 双实例**观察项）+ 0x429400（**接口方法转发器**：虚表槽 0 三参——观察项）
+- stdcall 3 栈参（ret 0xc；edx=[esp+0xc] 输出指针/[esp+0x10] 匹配值）——**接口表查找器（GUID 比较 + 接口指针输出）**：
+  - `test edx; jne`（**输出指针判空**）→ `mov eax,0x80004003; ret 0xc`（**E_POINTER**）
+  - `mov eax,[esp+0x14]; repe cmpsd ×4`（**四 dword GUID 比较**）→ 对 [0x7E36C0]：`je 0x4293c7` → 对 [0x7F7C90]：`je`（**双表**）→ 对 [0x7EA6E8]：`jne 0x4293bc`（**三表**）→ 命中第三表：`mov [edx],0x87f7e8`（**输出 MapClass::Instance**）→ 返 0
+  - 前两表命中（0x4293C7）：`mov eax,[esp+0x10]; mov [edx],eax`（**输出匹配接口**）→ `mov ecx,[eax]; call [ecx+4]`（**虚表槽 4**）→ 返 0
+  - 三表全不中（0x4293BC）：`mov eax,0x80004002; ret 0xc`（**E_NOINTERFACE**）
+- 直接 call 0 个/去重 0——picker callees=0 完全吻合（全 repe cmpsd + 虚表槽 4 间接）
+- 判类：接口表查找器（推断名——三张 4-dword 接口表 GUID 比较：[0x7E36C0]/[0x7F7C90]/[0x7EA6E8]；命中输出接口/MapClass 单例，失败 HRESULT E_NOINTERFACE）(partial)
+
+## c 路：0x429420 GUID 导入槽查询器（0x23=35B）
+
+- 范围 0x429420-0x429442（ret 8 @0x429442）；下函数 0x429450（**GUID 导入槽查询器第二实例**：仅常量串 0x818704 不同——观察项）+ 0x429480（**接口方法转发器**观察项）+ 0x4294A0（**返 0 stub**观察项）+ 0x4294B0（**RandomRanged GUID 查询器**：[0xa8b230]+0x125C + [0x7e11c4] 导入槽——观察项）
+- stdcall 2 栈参（ret 8；esi=[esp+0xc] 输出指针）——**GUID 导入槽查询器**：
+  - `test esi; jne`（**输出指针判空**）→ `mov eax,0x80004003; ret 8`（**E_POINTER**）
+  - `push 0x8186e8; call dword[0x7e1368]`（**导入槽 [0x7E1368]——GUID 常量 0x8186E8 查询**）→ `mov [esi],eax`（**输出接口**）→ 返 0
+- 直接 call 0 个/去重 0——picker callees=0 完全吻合（[0x7e1368] 导入槽间接）
+- 判类：GUID 导入槽查询器（推断名——导入槽 [0x7E1368] GUID 查询（0x8186E8 串）→ 输出接口指针；COM GUID 解析）(partial)
+
+## 核验结果
+
+- _check_callees2844.py：a 路 3/3、b 路 0/0、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8D20（CRT stricmp）、0x7C8E17（operator new）、0x427530
+- **接口表区开张**：三张 4-dword 接口表（[0x7E36C0]/[0x7F7C90]/[0x7EA6E8]）+ [0x7E1368] GUID 导入槽——0x429xxx COM 接口域
+- **名字注册表族第五实例**：batch 2821（[0x8874C4]）/2835（[0xA8B204]）/2844（[edi+4] 参数化注册表）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **GUID 导入槽查询器第二实例**：c 路下函数 0x429450（同模板仅串 0x818704）
+- **RandomRanged GUID 查询器**：0x4294B0（[0xa8b230]+0x125C + [0x7e11c4] 导入槽 + 0x20 长度——batch 2829 隣区构造器同源）
+- **四全局清零器**：0x428FF0（[0x89a260..0x89a26c]）+ 浮点链 0x429010（[0x89a278]）
+- **接口方法转发器**：0x429400/0x429480（虚表槽 0 三参）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
