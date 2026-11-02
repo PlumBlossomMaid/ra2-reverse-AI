@@ -1,0 +1,60 @@
+# frontier batch 2859
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4361D0（**1827B 大状态机**）+ 0x436A40（405B）+ 0x436E80（189B）
+三路：a=0x4361D0（0x723=1827B **BuildingLightClass::Update 状态机** callees=11 deps=0）/ b=0x436A40（0x193=403B **坐标位置更新器** callees=4 deps=0）/ c=0x436E80（0xBD=189B **距离归一化计算器** callees=2 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2859{a,b,c}.txt（a 长度 0x760 完整、b 长度 0x1D0、c 长度 0xF0），完整读取确认（a ret @0x4368F2 双出口、b ret 4 @0x436BD2、c ret @0x436F3C）
+核验：.qwen/tmp/_check_callees2859.py 三路全 PASS（a 24/24 去重11、b 10/10 去重4、c 2/2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7054 → 7057（待 _append_tsv_batch2859.py）
+
+## a 路：0x4361D0 BuildingLightClass::Update 状态机（0x723=1827B）
+
+- 范围 0x4361D0-0x4368F2（ret @0x4368F2；双出口：0x4368E0 主出口、0x4368E1 [edi+0xe4]==0 分支走虚表槽 0xf8 后 ret）；下函数 0x436900（**返回 0xE8 的 stub**）+ 0x436910（**GUID 读取双参**：[0x7e9730..0x7e9734]——观察项）
+- thiscall 0 栈参（ret；edi=this）——**BuildingLightClass::Update（推断名——建筑灯光更新状态机）**：
+  - `mov ecx,[edi+0xe4]; je 0x4368e1`（**[+0xe4] 目标对象门控**）→ `mov al,[ecx+0x90]; test; je 0x4368e1`（**目标 [+0x90] 标志**）
+  - `mov eax,[edi+0xdc]; dec; je 0x436439`（**[+0xdc]==1**）→ `dec; je 0x43632f`（**==2**）→ `dec; je 0x436222`（**==3**）→ 默认 `lea eax,[edi+0x9c]`
+  - **状态 3 分支**（0x436222）：`[+0xe0]` 第二对象 + `[+0x90]` 标志门 → `call [edx+0x48]`×2（**虚表槽 0x48 读坐标**两对象）→ 坐标差 → 浮点距离平方（fild×3 + fmul + fadd）→ `call 0x4cac40`（**开方**）→ `call 0x7c5f00`（_ftol）→ `cmp [0x8871e0]+0x788; jge 0x436321`（**距离阈**）→ 0x4362BE：`push 0x3e800000` + `call 0x75f540`（**三 dword 计算**）→ 0x436606 汇合
+  - **状态 2 分支**（0x43632F）：`[+0x9c]` 三 dword → `fld [0x8871e0]+0x790; fmul [0x7e3cc8]; fadd [edi+0xb0]`（**亮度累加**）→ `fcom [0x7e3cc0]` 边界钳制 → `[+0xb0]` 存储
+  - **状态 1 分支**（0x436439）：`fld [edi+0xd0]; fadd [edi+0xb0]` → `[+0xd8]` 标志门 → `fld [0x8871e0]+0x7a0; fmul [0x7e1738]/[0x7e3cb8]` → `fcompp` 比较 → `[+0xd0]` 增/减 `[0x8871e0]+0x798`/`0x790`（**亮度渐变 + 边界钳制**）→ `[+0xd0]/[+0xd4]=0` + `[+0xd8]` 标志重置
+  - **公共尾部**：0x5ae860/0x5af1a0/0x5afb80（**坐标转换链**）→ 0x7c5f00（_ftol）×3 → `call [eax+0x1b4]`（**虚表槽 0x1b4 通知**）→ `[+0xe4]` 对象 `call [edx+0x2c]`（**虚表槽 0x2c 类型检查 ==6**）→ `[+0xdc]==1` 分支：`[+0xe4]` 对象 `call [eax+0x350]`（**虚表槽 0x350**）+ `[+0x34]` 门控 → `call [edx+0x1b8]`（**虚表槽 0x1b8**）+ `call [edx+0x48]`×2（坐标）→ `call 0x41c230`（**距离**）→ 0x4cac40 + 0x7c5f00 → `[0x8871e0]+0x78c/0x788` 归一化（**0x66666667 imul /5 技巧**）→ `fmul [0x7e3a98]` → 0x7c5f00 → 双重循环（`[esp+0x14]`/`[esp+0x48]` ×2 网格）→ `mov ecx,0x87f7e8; call 0x5657a0`（**[0x87F7E8] MapClass::Instance 格子查询**）→ 结果对象 `call [eax+0x2c]`（==0xf 或 1）+ `call 0x4f9a90`（**house 检查**）→ `call [edx+0x48]` 距离比对 → `[+0xe4]+0x34` 对象 → `call 0x6e53a0`（**最终渲染触发**）
+  - **[+0xe4]==0**：`call [edx+0xf8]`（**虚表槽 0xf8**）→ ret
+- 直接 call 24 个/去重 11：0x4cac40（×3）、0x7c5f00（×6）、0x75f540、0x436be0、0x5ae860、0x5af1a0、0x5afb80、0x41c230、0x5657a0、0x4f9a90、0x6e53a0——picker callees=11 **完全吻合**
+- 判类：BuildingLightClass::Update（推断名——[+0xdc] 三态 + 坐标/距离/亮度浮点链 + [0x8871E0]+0x7a0/0x798/0x790/0x788/0x78c 常量 + [0x87F7E8] MapClass + 虚表槽 0x1b4/0x1b8/0x350/0x2c/0x48/0xf8 多态；批 2858 c 路构造器同对象族）(partial)
+
+## b 路：0x436A40 坐标位置更新器（0x193=403B）
+
+- 范围 0x436A40-0x436BD2（ret 4 @0x436BD2）；下函数 0x436BE0（**收尾器 — 批 2858 c 路构造器调用的 0x436BE0**：`[+0xdc]=param &3 检查 + 0x436F40 族——观察项）
+- thiscall 1 栈参（ret 4；esi=this；eax=[ebp+8]=param1）——**坐标位置更新器（与批 2858 c 路 0x435820 构造器浮点计算段逐段同构）**：
+  - `[param1+0x9c]` 三 dword + `[0x8871e0]+0x78c` 常量 + `[param1+0x388]`（lea）→ `call 0x4c93d0`（**坐标读取**）→ `movsx word; sub 0x3fff`（**半浮点解包**）→ `fild; fmul [0x7e2810]` → `call 0x4cacb0`（**数学函数**）→ `fsubr` → `call 0x7c5f00`（_ftol）→ `call 0x4cad00` → `fmul` → `fiadd` → `call 0x7c5f00` → **写 [+0xc4]（三 dword）**（X = 计算值 / [+0x18] 常量 / [+0x9c] 原值）
+  - 第二遍：`[param1+0x9c]` 再读 + `[0x8871e0]+0x788`（**neg**）→ 同链 → **写 [+0xb8]（三 dword）** → `call [edx+0x1b4]`（**虚表槽 0x1b4 通知**）→ ret 4
+- 直接 call 10 个/去重 4：0x4c93d0（×2）、0x4cacb0（×2）、0x7c5f00（×3）、0x4cad00（×2）——picker callees=4 **完全吻合**
+- 判类：坐标位置更新器（推断名——[+0xb8]/[+0xc4] 双位置计算 + 半浮点解包 0x3fff + 虚表槽 0x1b4 通知；BuildingLightClass 同对象族）(partial)
+
+## c 路：0x436E80 距离归一化计算器（0xBD=189B）
+
+- 范围 0x436E80-0x436F3C（ret @0x436F3C）；下函数 0x436F40（**0x5F6250 + 0x4A1D90 + 多字段读取器**——观察项）
+- thiscall 0 栈参（ret；esi=this）——**距离归一化计算器**：
+  - `[+0xe4]` 对象 `call [eax+0x48]`（**虚表槽 0x48 读坐标**）两对象（[+0xe4] 与 this）→ 坐标差 → 浮点距离平方（fild×3 + fmul + fadd）→ `call 0x4cac40`（**开方**）→ `call 0x7c5f00`（_ftol）→ `cmp edi,[0x8871e0]+0x78c; jge 0x436f15`（**< 阈值 → 返 0**）
+  - 归一化：`ecx=[0x8871e0]+0x788; sub ecx,esi(+0x78c)` → `imul 0x66666667`（**×0x66666667 >> 除 5 技巧**）→ `sar ecx,2; shr 0x1f; add` → `mov eax,edi; sub eax,esi; cdq; idiv ecx`（**有符号比例**）→ 返归一化值
+- 直接 call 2 个/去重 2：0x4cac40、0x7c5f00——picker callees=2 **完全吻合**
+- 判类：距离归一化计算器（0x4CAC40 开方 + _ftol + [0x8871E0]+0x78c/0x788 归一化 + 0x66666667 `div 5` 技巧；< 阈值返 0）(partial)
+
+## 核验结果
+
+- _check_callees2859.py：a 路 24/24（去重 11）、b 路 10/10（去重 4）、c 路 2/2——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0（全吻合）**——a 路 11 直接去重 11 = picker 11（Ghidra 未计入其 7 处虚表槽间接，恰好相等）；b 4/4、c 2/2
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4CAC40（开方）、0x7C5F00（_ftol）、0x75F540/0x5AE860/0x5AF1A0/0x5AFB80（坐标转换链）、0x41C230（距离）、0x5657A0（[0x87F7E8] MapClass 格子查询）、0x4F9A90（house 检查）、0x6E53A0（渲染触发）、0x436BE0（收尾器）、0x4C93D0/0x4CACB0/0x4CAD00（坐标/数学）
+- **a/b/c 路同源闭合**：0x4361D0（Update 状态机）+ 0x436A40（位置更新）+ 0x436E80（距离归一化）——BuildingLightClass 对象族的三件套（批 2858 c 路构造器 0x435820 的对应方法），共读 [0x8871E0]+0x788/0x78c/0x790/0x7a0 灯光常量区与 [0x87F7E8] MapClass
+- **0x66666667 除法技巧**：`imul 0x66666667 >> 32+1 >> 2` = 有符号除以 5 的编译器优化（a/c 路两处）——与 Phobos/YRpp 的 LeapIndex 计算形态吻合
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **收尾器**：b 路下函数 0x436BE0（`[+0xdc]=param &3`——批 2858 构造器与 a 路 Update 均调用）
+- **0x5F6250 + 0x4A1D90 调用器**：c 路下函数 0x436F40（多字段读）
+- **0x436900 stub / GUID 双参读取器**：0x436910（[0x7e9730..0x7e9734]）
+- **0x437030**（31B）/ **0x4371D0**（178B）/ **0x437290**（180B）——0x437xxx 区段后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
