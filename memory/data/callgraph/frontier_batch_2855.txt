@@ -1,0 +1,54 @@
+# frontier batch 2855
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x432BF0（批 2854 c 路下函数观察项）+ 0x432C10/0x432C30（0x432Cxxx 转发器区段）
+三路：a=0x432BF0（0x17=23B **毫秒换算器** callees=0 deps=0）/ b=0x432C10（0x12=18B **转发器** callees=1 deps=0）/ c=0x432C30（0x15=21B **字节参数转发器** callees=0 直接/1 含间接 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2855{a,b,c}.txt（长度各 0x40），完整读取确认（a ret @0x432C06、b ret 4 @0x432C21、c ret 4 @0x432C44）
+核验：.qwen/tmp/_check_callees2855.py 三路全 PASS（a 0/0、b 1/1、c 0/0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7042 → 7045（待 _append_tsv_batch2855.py）
+
+## a 路：0x432BF0 毫秒换算器（0x17=23B）
+
+- 范围 0x432BF0-0x432C06（ret @0x432C06）；下函数 0x432C10（b 路）
+- thiscall 0 栈参（ret）——**毫秒换算器（无符号双除）**：
+  - `mov ecx,[ecx+4]`（this→+4 指针）→ `mov eax,[ecx+0x14]; xor edx,edx; div dword[ecx+0x18]`（**eax = [+0x14]/[+0x18]，无符号 DIV**）→ `mov ecx,eax; mov eax,0x3e8; xor edx,edx; div ecx`（**eax = 1000/前述商**）
+  - 语义：`1000 / ([+0x14]/[+0x18])`——若 [+0x18]=周期、[+0x14]=计数值，则 = 频率×毫秒换算；**怪癖：无符号 div，[+0x18]=0 或商=0 时 #DE 除零陷阱（原版无检查）**
+- 直接 call 0 个/去重 0——picker callees=0 完全吻合
+- 判类：毫秒换算器（无符号双除：1000/([+0x14]/[+0x18])；除零无检查怪癖）(partial)
+
+## b 路：0x432C10 转发器（0x12=18B）
+
+- 范围 0x432C10-0x432C21（ret 4 @0x432C21）；下函数 0x432C30（c 路）
+- thiscall 1 栈参（ret 4；[esp+4]=param1）——**转发器（[+0x20] 门控）**：
+  - `mov ecx,[ecx+0x20]; test; je 0x432c21`（**[+0x20] 对象门控**）→ `mov eax,[esp+4]; push eax; call 0x6c9d30`（**0x6C9D30 转发**）
+  - 语义：[+0x20] 非空时把 param1 转给 0x6C9D30（与批 2854 b 路 0x432A60 的 [+0x20] 对象 0x6C9AE0 释放同族——0x6C9xxx 区对象方法族）
+- 直接 call 1 个/去重 1：0x6c9d30——picker callees=1 完全吻合
+- 判类：转发器（[+0x20] 门控 → 0x6C9D30）(partial)
+
+## c 路：0x432C30 字节参数转发器（0x15=21B）
+
+- 范围 0x432C30-0x432C44（ret 4 @0x432C44）；下函数 0x432C50（**边界检查器**：`[+0xc]>=+8 || [+0xc]<+0x30 → 0` 否则 1——观察项）
+- thiscall 1 栈参（ret 4；[esp+4]=param1）——**字节参数转发器**：
+  - `mov eax,[esp+4]; mov ecx,[ecx+4]; and eax,0xff; push eax; push ecx; call dword[0x7e15b0]`（**导入槽 [0x7E15B0] 两参 (this[+4], param1&0xff)**）
+  - 语义：param1 掩码 0xff（字节）后经 [0x7E15B0] 两参回调——与批 2854 [0x7E15A4]/[0x7E15AC] 同族导入槽 B0 相邻（文件 IO 接口族）
+- 直接 call 0 个/去重 0——picker callees=1，差 1 为 [0x7E15B0] 导入槽间接调用（Ghidra 含间接统计）
+- 判类：字节参数转发器（param1&0xff → [0x7E15B0] 两参回调）(partial)
+
+## 核验结果
+
+- _check_callees2855.py：a 路 0/0、b 路 1/1、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：a 差 0；b 差 0；c 差 1（[0x7E15B0] 导入槽间接）——均属预期差
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x6C9D30（对象方法族转发）
+- **a 路怪癖登记**：无符号 div 无除零检查（[+0x18]=0 或商=0 → #DE）——与 QWEN.md 怪癖纪律一致（如实记录，未"顺手修复"）
+- **c 路导入槽族扩展**：[0x7E15A4]/[0x7E15AC]/[0x7E15B0] 三相邻导入槽（A4/AC/B0）——同一文件 IO 接口族的三个方法入口
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **边界检查器**：c 路下函数 0x432C50（`[+0xc]>=+8 || [+0xc]<+0x30 → 0` 否则 1）
+- **0x432C50 之后区段**：0x432C70+（连续转发/检查器族候选）
+- **0x433020**（23B）/ **0x433060**（274B）/ **0x433940**（75B）——0x433xxx 区段后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
