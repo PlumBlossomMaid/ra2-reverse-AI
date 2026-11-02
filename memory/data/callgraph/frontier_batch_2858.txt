@@ -1,0 +1,66 @@
+# frontier batch 2858
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4340A0（86B）+ 0x435560（69B）+ 0x435820（**带名 BuildingLightClass::BuildingLightClass** 816B 构造器）
+三路：a=0x4340A0（0x54=84B **双模式调用器（3 参版）** callees=1 deps=0）/ b=0x435560（0x43=67B **scalar deleting 析构器** callees=1 deps=0）/ c=0x435820（0x32E=814B **BuildingLightClass 构造器** callees=9 直接/11 含间接 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2858{a,b,c}.txt（a/b 长度 0xA0、c 长度 0x340 完整），完整读取确认（a ret 0x10 @0x4340F3、b ret 4 @0x4355A2、c ret 4 @0x435B4D；0x435B50 是析构器起点）
+核验：.qwen/tmp/_check_callees2858.py 三路全 PASS（a 2/2 去重1、b 1/1、c 16/16 去重9），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7051 → 7054（待 _append_tsv_batch2858.py）
+
+## a 路：0x4340A0 双模式调用器（3 参版）（0x54=84B）
+
+- 范围 0x4340A0-0x4340F3（ret 0x10 @0x4340F3）；下函数 0x434100（**[+0x28] 存储器**：[+0x28]=param——观察项）+ 0x434110（**[+0x20] 存储器**）
+- stdcall 3 栈参（ret 0x10；esi=this；[esp+0xc]/[esp+0x10]/[esp+0x14]=三参）——**双模式调用器（3 参版——与批 2857 c 路 0x433EF0 同构，参数更多）**：
+  - `mov al,[+0x40]; test; je 0x4340d7`（**[+0x40] 模式门**）
+  - **置位分支**：`[+0x2c]=2` → 4 参 push → `call 0x433cf0` → `[+0x2c]=1` → ret 0x10
+  - **未置位分支**：`call 0x433cf0`（4 参）→ ret 0x10
+- 直接 call 2 个/去重 1：0x433cf0——picker callees=1 完全吻合
+- 判类：双模式调用器（3 参版——[+0x40] 门控 → [+0x2c]=2/1 → 0x433CF0 四参）(partial)
+
+## b 路：0x435560 scalar deleting 析构器（虚表 0x7E3A80）（0x43=67B）
+
+- 范围 0x435560-0x4355A2（ret 4 @0x4355A2）；下函数 0x4355B0（**三字节打包器**：[+0]/[+1]/[+2] 三 byte 写，ret 0xc——观察项）+ 0x4355D0（**位宽移位打包器**：sar/shl 用 [0x8a0dd4..0x8a0de4] 六个全局位移）
+- thiscall 1 栈参（ret 4；edi=this；[esp+0xc]=flag）——**scalar deleting 析构器（虚表 0x7E3A80 + 全局单例清理）**：
+  - `[edi]=0x7e3a80`（**析构态虚表**）
+  - `mov esi,[0x89c4d0]`（**全局单例 [0x89C4D0]**）→ `test; je 0x43557c` → `mov eax,[esi]; push 1; mov ecx,esi; call [eax]`（**虚表槽 0 释放调用**）
+  - `cmp esi,[0x89c4d0]; jne 0x43558e` → `mov [0x89c4d0],0`（**单例清空**）
+  - `test byte[esp+0xc],1; je → push edi; call 0x7c8b3d`（flag&1 → delete this）→ `mov eax,edi; ret 4`
+- 直接 call 1 个/去重 1：0x7c8b3d——picker callees=1 完全吻合（+ 虚表槽 0 间接 1）
+- 判类：scalar deleting 析构器（虚表 0x7E3A80 + 全局单例 [0x89C4D0] 虚表槽 0 释放 + 单例清空）(partial)
+
+## c 路：0x435820 BuildingLightClass::BuildingLightClass（0x32E=814B，带名）
+
+- 范围 0x435820-0x435B4D（ret 4 @0x435B4D；0x435B50 是析构器起点——观察项）
+- thiscall 1 栈参（ret 4；esi=this；[ebp+8]=param1）——**BuildingLightClass::BuildingLightClass（YRpp 带名构造器）**：
+  - `call 0x5f3900`（**基类构造**）→ `[+0xb0]=0; [+0xb4]=0`
+  - `[0x89c510..0x89c518]` 三 dword → 拷 [+0xb8]（三连）→ 再拷 [+0xc4]（三连）→ `[+0xd0]=0; [+0xd4]=0`（**两次全局常量拷贝**）
+  - `[+0xd8]=0; [+0xdc]=0; [+0xe0]=0; [+0xe4]=param1`（**param1 挂载**）
+  - **四虚表写**：`[esi]=0x7e3ad0; [+4]=0x7e3ab4; [+8]=0x7e3aac; [+0xc]=0x7e3aa4`（**多继承：主类 + 三基类子虚表**）
+  - **全局列表注册**（[0x8B4190] 动态数组）：`cmp [0x8b41a0],[0x8b4198]; jl 0x435907`（**容量充足直接注册**）→ 否则 `[0x8b419d]`/`[0x8b41a4]` 检查 → `call [0x8b4190]+8`（**扩容**）→ `[0x8b41a0]++` → `[0x8b4194+count*4]=esi`（**注册 this**）
+  - param1 非空（0x43592A+）→ **坐标浮点计算链**：`[param1+0x9c]` 三 dword 读 + `[0x8871e0]+0x78c`/`0x788` 常量（**neg**）+ `0x4c93d0`（读取 [param1+0x388] 坐标）→ `0x4cacb0`/`0x4cad00`（数学函数）+ `0x7c5f00`（_ftol）×3 + `0x437090`（向量构造）×2 → 写 `[+0xc4]`/`[+0xb8]`（三 dword 位置）
+  - `call [eax+0x1b4]`（**虚表槽 0x1b4——注册回调**）
+  - `push 0; lea [esp+0x4c]; push; call 0x5f4ec0`（**0x5F4EC0 检查**）→ `je 0x435b06` → `push 0; push esi; mov ecx,0x87f778; call 0x55baa0`（**全局 [0x87F778] 对象 + 0x55BAA0 两参**）
+  - `push 1; mov ecx,esi; call 0x436be0`（**0x436BE0 收尾**）
+  - **列表查找**：`[0x8b41a0]` 计数循环 `cmp [0x8b4194+..],esi` → `[+0xd8]=found`（**存在标志**）→ ret this
+- 直接 call 16 个/去重 9：0x5f3900、0x4c93d0（×2）、0x4cacb0（×2）、0x7c5f00（×3）、0x4cad00（×2）、0x437090（×2）、0x5f4ec0、0x55baa0、0x436be0——picker callees=10，差 1 为虚表槽 8/0x1b4 间接 2 处（Ghidra 部分计入）
+- 判类：BuildingLightClass::BuildingLightClass（带名构造器——多继承四虚表 + [0x8B4190] 全局动态数组注册 + 坐标浮点计算链 + [0x8871E0]+0x78c/0x788 常量 + [0x87F778] 全局对象回调；浮点细节待逐点核验）(partial)
+
+## 核验结果
+
+- _check_callees2858.py：a 路 2/2（去重 1）、b 路 1/1、c 路 16/16（去重 9）——三路全 PASS
+- picker callees vs 核验差值：a 差 0；b 差 0；c 差 1（虚表槽 8/0x1b4 间接 2 处，Ghidra 计入 1）——属预期差
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x5F3900（基类构造）、0x4C93D0/0x4CACB0/0x4CAD00（坐标/数学函数）、0x7C5F00（_ftol）、0x437090（向量构造）、0x5F4EC0（检查）、0x55BAA0（全局对象回调）、0x436BE0（收尾）、0x433CF0（四参调用器）
+- **c 路带名构造器**：BuildingLightClass 多继承四虚表（0x7E3AD0/0x7E3AB4/0x7E3AAC/0x7E3AA4）+ [0x8B4190] 全局动态数组（注册建筑灯实例）+ [0x8871E0]+0x78c/0x788 常量（建筑灯光参数）+ [0x87F778] 全局对象——**渲染/建筑灯光系统对象族**
+- **b 路全局单例**：[0x89C4D0] 单例指针 + 虚表槽 0 释放——与 [0x89C498..0x89C4A4]（批 2854 a 路下函数观察的四全局清零器）同区
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **析构器**：c 路下函数 0x435B50（虚表 0x7E3AD0 写侧——构造器析构端）
+- **[+0x28]/[+0x20] 存储器**：a 路下函数 0x434100/0x434110
+- **三字节打包器/位宽移位打包器**：b 路下函数 0x4355B0/0x4355D0（[0x8a0dd4..0x8a0de4] 六全局位移）
+- **0x4361D0**（1827B 大函数）/ **0x436A40**（405B）/ **0x436E80**（189B）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
