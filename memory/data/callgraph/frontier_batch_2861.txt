@@ -1,0 +1,60 @@
+# frontier batch 2861
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x438060（53B）+ 0x4380A0（291B）+ 0x4381D0（64B）
+三路：a=0x438060（0x35=53B **读取转发器** callees=2 deps=0）/ b=0x4380A0（0x121=289B **块缓冲写入器** callees=4 deps=0）/ c=0x4381D0（0x3E=62B **懒初始化转发器** callees=3 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2861{a,b,c}.txt（a/c 长度 0x80、b 长度 0x160），完整读取确认（a ret @0x438094、b ret 8 @0x4381C0、c ret 8 @0x43820D）
+核验：.qwen/tmp/_check_callees2861.py 三路全 PASS（a 2/2、b 9/9 去重4、c 3/3），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7060 → 7063（待 _append_tsv_batch2861.py）
+
+## a 路：0x438060 读取转发器（0x35=53B）
+
+- 范围 0x438060-0x438094（ret @0x438094）；下函数 0x4380A0（b 路）
+- thiscall 0 栈参（ret；esi=this）——**读取转发器**：
+  - `eax=[+0x18]; test; jle 0x438082`（**[+0x18] 计数>0 门控**）→ `ecx=[+0xc]; test; je 0x438082`（**[+0xc] 对象门控**）
+  - `push eax; lea eax,[esi+0x10]; push eax; mov ecx,esi; call 0x631d10`（**0x631D10 读取（[+0x10] 缓冲 + 计数）**）→ `mov edi,eax`
+  - `mov [+0x18],0`（**清零**）→ `call 0x631d30`（**0x631D30 二次读取**）→ `add eax,edi; ret`（**合计**）
+- 直接 call 2 个/去重 2：0x631d10、0x631d30——picker callees=2 完全吻合
+- 判类：读取转发器（[+0x18] 计数 + [+0xc] 对象门控 → 0x631D10/0x631D30 双段读取合计）(partial)
+
+## b 路：0x4380A0 块缓冲写入器（0x121=289B）
+
+- 范围 0x4380A0-0x4381C0（ret 8 @0x4381C0；0x4381B4 失败路径）；下函数 0x4381D0（c 路）
+- stdcall 2 栈参（ret 8；esi=this；ebx=[esp+8]=param1 数据、ebp=[esp+0x10]=param2 长度）——**块缓冲写入器（8 字节 block + 残留管理）**：
+  - `param1==0 || param2<1 || [+0xc]==0 → 0x4381B4`（**失败路径：call 0x631d10 后返回**）
+  - 残留处理：`eax=[+0x18]; test; je 0x438141`（无残留跳过）→ `edi=8-[+0x18]`（**补满 8B 块**）→ `min(edi,param2)` → `call 0x7ca090`（**0x7CA090 拷贝**）→ `[+0x18]+=edi; param1+=edi; param2-=edi`
+  - 满块：`[+0x18]==8` → `cmp [+0x1c],1 → call 0x438030 / else call 0x438000`（**[+0x1c] 标志选处理器**）→ `push 8; push [+0x10]; call 0x631d10`（**0x631D10 提交 8B**）→ `[+0x18]=0`
+  - 主循环：`param2>=8` → `shr ebp,3`（**块数**）→ 循环 `[+0x1c] 标志 → 0x438030/0x438000` → `0x631d10 提交 8B` → 累计 eax
+  - 尾部残留：`push 剩余; push param1; push [+0x10]; call 0x7ca090`（**拷贝内部缓冲 [+0x10]**）→ `[+0x18]=剩余`（**残留存档**）
+- 直接 call 9 个/去重 4：0x7ca090（×2）、0x438030（×2）、0x438000（×2）、0x631d10（×3）——picker callees=4 完全吻合
+- 判类：块缓冲写入器（8B block + 残留 [+0x18] + [+0x1c] 标志选 0x438030/0x438000 + 0x631D10 提交 + 0x7CA090 拷贝）(partial)
+
+## c 路：0x4381D0 懒初始化转发器（0x3E=62B）
+
+- 范围 0x4381D0-0x43820D（ret 8 @0x43820D）；下函数 0x438210（**0x6C98E0 族转发器**——观察项）
+- stdcall 2 栈参（ret 8；esi=this；[esp+4]/[esp+8]=两参）——**懒初始化转发器**：
+  - `eax=[+0xc]; test; jne 0x4381f6`（**已初始化跳过**）
+  - `push 4; call 0x7c8e17`（**new 4B**）→ `test; je → 0` → `mov ecx,eax; call 0x437f50`（**0x437F50 构造**）→ `[+0xc]=eax`
+  - `mov ecx,[+0xc]; test; je 0x43820d`（**仍空 → 返**）
+  - `push [esp+8]; push [esp+4]; call 0x437fd0`（**0x437FD0 两参转发**）→ ret 8
+- 直接 call 3 个/去重 3：0x7c8e17、0x437f50、0x437fd0——picker callees=3 完全吻合
+- 判类：懒初始化转发器（[+0xc] 懒建 new4+0x437F50 → 0x437FD0 两参转发）(partial)
+
+## 核验结果
+
+- _check_callees2861.py：a 路 2/2、b 路 9/9（去重 4）、c 路 3/3——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0（全吻合）**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x631D10/0x631D30（读取族）、0x7CA090（拷贝）、0x438030/0x438000（块处理族）、0x7C8E17（operator new）、0x437F50（构造）、0x437FD0（转发）
+- **a/b/c 路同对象族**：[+0xc]（工作对象）+ [+0x10]（内部缓冲）+ [+0x18]（残留计数）——0x438xxx 缓冲管理对象族：读（a）写（b）懒建转发（c）三件套；[+0x1c] 标志选 0x438030/0x438000 两处理路径
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x6C98E0 族转发器**：c 路下函数 0x438210（0x6C98E0 两参——观察项）
+- **块处理族**：0x438030/0x438000（[+0x1c] 标志两路径——b 路调用）
+- **0x4382EB 区段**：0x4382EB+ 连续转发器
+- **0x438300**（64B）/ **0x4385D0 BombClass::AbstractClass**（带名 158B）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
