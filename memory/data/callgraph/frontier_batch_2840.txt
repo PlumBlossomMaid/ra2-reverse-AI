@@ -1,0 +1,59 @@
+# frontier batch 2840
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段；未登记池 6981→6978）——0x425xxx/0x426xxx 域（颜色表查找 + 地形标记对）
+三路：a=0x4253B0（0x52=82B **ColorScheme 数组反向查找器** callees=1 deps=0）/ b=0x426270（0x8D=141B **地形标记 OR 设置器** callees=3 deps=0）/ c=0x426300（0x87=135B **地形标记 AND 清除器** callees=3 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2840{a,b,c}.txt（长度 0x100/0x200/0x100），完整读取确认（a ret 0xc @0x425401、b ret 4 @0x4262D7/0x4262FC、c ret 4 @0x42635D/0x426386）
+核验：.qwen/tmp/_check_callees2840.py 三路全 PASS（a 1/1、b 3/3、c 3/3），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6997 → 7000（待 _append_tsv_batch2840.py）
+
+## a 路：0x4253B0 ColorScheme 数组反向查找器（0x52=82B）
+
+- 范围 0x4253B0-0x425401（ret 0xc @0x425401）；下函数 0x425410（**多字段序列化器**：0x5F6250 + 虚表槽 0x10 + 0x4A1D50×7——观察项）
+- stdcall 3 栈参（ret 0xc；esi=[esp+8] 宿主/栈参 2 参数）——**ColorScheme 数组反向查找器**：
+  - `mov edx,[esi+0xd4]; test; je 0x4253e5`（**+0xD4 查询目标门控**）
+  - `mov eax,[0xb054e0]; dec eax; test; jl 0x4253e5`（**[0xB054E0] ColorScheme 数组计数**——ColorScheme 数组 terminal）
+  - 反向循环：`mov ecx,[0xb054d4]; lea ecx,[ecx+eax*4]; mov edi,[ecx]; cmp edx,[edi+0x30c]; je 0x425404`（**[0xB054D4] 数组逐项 [+0x30C] 匹配**——反向扫描）
+  - 未命中：`mov [esi+0xd8],0xffffffff`（**+0xD8 = -1**）→ `push 0x410320 三参`（**调用三参 0x410320**）→ 返 0xc
+  - 命中：`mov [esi+0xd8],eax`（**+0xD8 = 命中索引**）→ jmp 收集 → 0x410320
+- 直接 call 1 个/去重 1：0x410320——picker callees=1 完全吻合
+- 判类：ColorScheme 数组反向查找器（推断名——[0xB054D4] 数组反向查 [+0x30C]、命中写 [+0xD8] 索引/未命中 -1、三参 0x410320 调用）(partial)
+
+## b 路：0x426270 地形标记 OR 设置器（0x8D=141B）
+
+- 范围 0x426270-0x4262FC（ret 4 @0x4262D7/0x4262FC）；下函数 0x426300（**本批 c 路**）
+- stdcall 1 栈参（ret 4；ebx=this/栈参=坐标）——**地形标记 OR 设置器**：
+  - `mov edi,[esp+0x14]; call 0x4810a0`（**坐标转单元指针**）→ `push edi; mov ecx,0x87f7e8; call 0x565730`（**MapClass::Instance 坐标查询**）→ `push edi; call 0x578080`（**取格**）
+  - `mov edx,[0x89a1b4]; mov ecx,[edi+8]; add eax,edx; cmp eax,ecx; jg 0x4262da`（**[0x89A1B4] 偏移 + edi+8 距离比较**）→ 分支一：通过 → `test [esi+0x140],0x100; je 0x4262da`（**+0x140 bit8 检查**）→ `shl 1; or [esi+0x128]`（**置 +0x128 位**）→ `call [ebx+0x38]`（**虚表槽 0x38**）→ `mov [esi+0x58],eax`（**+0x58 保存**）→ 返
+  - 分支二（超距）：`shl 1; or [esi+0x124]`（**置 +0x124 位**）→ 虚表槽 0x38 → `mov [esi+0x54],eax`（**+0x54 保存**）→ 返
+- 直接 call 3 个/去重 3：0x4810a0、0x565730、0x578080——picker callees=3 完全吻合
+- 判类：地形标记 OR 设置器（推断名——坐标→格指针三连 + [0x89A1B4] 距离阈值分支 + [+0x128]/[+0x124] 距离标记置位 + 虚表槽 0x38 + [+0x58]/[+0x54] 保存）(partial)
+
+## c 路：0x426300 地形标记 AND 清除器（0x87=135B）
+
+- 范围 0x426300-0x426386（ret 4 @0x42635D/0x426386）；下函数 0x426390（**0 返回 stub**观察项）+ 0x4263C0（**0x8182E0 常量返回**观察项）+ 0x4263D0（**坐标读 + 0x32 偏移写**观察项）
+- stdcall 1 栈参（ret 4；ebx=this/栈参=坐标）——**地形标记 AND 清除器**——与 b 路同模板反向操作：
+  - `mov edi,[esp+0x10]; call 0x4810a0` → `push edi; mov ecx,0x87f7e8; call 0x565730` → `call 0x578080`（**三连同 b**）
+  - `mov ecx,[0x89a1b4]; add ecx,eax; mov eax,[edi+8]; cmp ecx,eax; jg 0x426360`（**距离阈值同 b**）
+  - 分支一：`shl 1; not dl; and [esi+0x128],dl`（**清 +0x128 位**）→ `test al,0x1c; jne 0x426383`（**+0x128 bit2-4 残留检查**）→ `mov [esi+0x58],0xffffffff`（**清光 → +0x58 = -1**）→ 返
+  - 分支二：`shl 1; not al; and [esi+0x124],al`（**清 +0x124 位**）→ `test al,0x1c; jne`（**残留检查**）→ `mov [esi+0x54],0xffffffff`（**清光 → +0x54 = -1**）→ 返
+- 直接 call 3 个/去重 3：0x4810a0、0x565730、0x578080——picker callees=3 完全吻合
+- 判类：地形标记 AND 清除器（推断名——与 b 路配对的清除端：同三连 + 距离阈值，not+and 清位 + 全清置 -1 哨兵）(partial)
+
+## 核验结果
+
+- _check_callees2840.py：a 路 1/1、b 路 3/3、c 路 3/3——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4810A0、0x565730/0x578080（MapClass 域）、0x410320
+- **b/c 为设置/清除对称对**：[+0x128]/[+0x124] 距离标记 & [+0x58]/[+0x54] 保存值——同一坐标系下的配对操作
+- **ColorScheme 数组实锤**：[0xB054D4]/[0xB054E0]——batch 729 已见 ColorScheme::~ColorScheme 的 Array [0xB054D0] 区，本批为写侧索引查找
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **多字段序列化器**：a 路下函数 0x425410（0x5F6250 + 虚表槽 0x10 + 0x4A1D50×7 + 0x4A1D90——大批次序列化）
+- **坐标读 + 0x32 偏移写**：0x4263D0（虚表槽 0x48 坐标读取 + 0x32 偏移写入——观察项）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
