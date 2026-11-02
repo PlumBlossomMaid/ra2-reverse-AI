@@ -1,0 +1,69 @@
+# frontier batch 2807
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段；未登记池 6882→6879）——0x40 段继续（回调触发族 + 查表映射器 + 全局调度器）
+三路：a=0x40A610（0x31=49B **标志门控双回调触发** callees=0 deps=0）/ b=0x40A6D0（0x99=153B **双解析索引查表映射器** callees=1 deps=0）/ c=0x40A9A0（0xC4=196B **8 全局对象双轮调度器** callees=3 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2807{a,b,c}.txt（长度 0x100），完整读取确认（a ret @0x40A640、b ret @0x40A768、c ret @0x40AA63）
+核验：.qwen/tmp/_check_callees2807.py 三路全 PASS（a 0/0、b 1/1、c 3/3），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6898 → 6901（待 _append_tsv_batch2807.py）
+
+## a 路：0x40A610 标志门控双回调触发（0x31=49B）
+
+- 范围 0x40A610-0x40A640（ret @0x40A640）；0x40A641-0x40A64F nop×15，下函数 0x40A650（**子对象虚表槽 0x48 直调**：不加标志门控的裸转发版本——观察项）观察项；0x40A670（**0x48→0x30 三零参调用**观察项）；0x40A6A0（**虚表槽 0x24 取位 0**观察项）
+- thiscall 0 栈参（ret；esi=this）——**标志门控双回调触发**：
+  - `test byte ptr [esi+0xa4], 5; je 0x40a63d`（**标志 [+0xa4] & 5 门控**）
+  - `mov eax,[esi+0x158]; mov eax,[eax+0x64]`（**子对象 [+0x158] 的 [+0x64] 成员**）→ test → `mov ecx,[eax]; push eax; call [ecx+0x48]`（**虚表槽 0x48 调用**）
+  - `mov eax,[esi+0x164]; test eax,eax; je`（**[+0x164] 函数指针非空**）→ `mov ecx,esi; call eax`（**函数指针调用**——batch 2796/2797 三函数指针族 [+0x15c]/[+0x160]/[+0x164] 第三只）
+  - `xor eax,eax; ret`（**返 0**）
+- 直接 call 0 个/去重 0（`call eax` 函数指针 + `call [ecx+0x48]` 虚表槽均间接）——picker callees=0 完全吻合
+- 判类：标志门控双回调触发（推断名——[+0xa4]&5 置位时触发子对象虚表槽 0x48 + [+0x164] 函数指针回调）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x40A6D0 双解析索引查表映射器（0x99=153B）
+
+- 范围 0x40A6D0-0x40A768（ret @0x40A768）；0x40A769-0x40A76F nop×7，下函数 0x40A770（**0x80040000 常量返回桩**观察项 + 0x40A780（**[0x87e880] 推参导入槽调用**观察项）+ 0x40A790 + 0x40A7A0（**[0x87e89c] getter**观察项）+ 0x40A7B0（**[0x87e8a0] getter**观察项））
+- thiscall 0 栈参（ret；esi=this）——**双解析索引查表映射器**：
+  - `mov eax,[esi+0xdc]; shr eax,0x10; mov edi,[esi+0x158]; mov ecx,[edi+0x64]`（**[+0xdc] 高 16 位 + 子对象 [+0x64]**）
+  - `lea eax,[eax+eax*4]×2; shl eax,2; shr eax,0xe`（**×25÷16384≈÷655.36**）→ `mov eax,[eax*4+0x816380]`（**查表 0x816380**）
+  - `push eax/push ecx; call [edx+0x3c]`（**虚表槽 0x3c 调用**）
+  - 第二段：`mov eax,[esi+0x12c]; shr eax,0x10; lea ×5×2; shl eax,3; shr eax,0xe; sub eax,0x64`（**×40÷16384−100**）→ `jns 0x40a72d`
+    - 负分支：`mov eax,[eax*4+0x816510]; push/push; call [edx+0x40]`（**表 0x816510 直接查 + 虚表槽 0x40**）
+    - 非负分支：`shl eax,2; mov ebx,0x816510; sub ebx,eax; mov eax,[ebx]; neg eax; push/push; call [edx+0x40]`（**0x816510 递减索引 + neg 后虚表槽 0x40**）
+  - 第三段：`mov ecx,[edi]; mov edx,[ecx+0x184]; lea ecx,[esi+0xd8]; call 0x401190`（**百分比换算器** batch 2569——[+0xd8] 区域经宿主虚表槽 0x184 换算）
+  - `mov edi,[edi+0x64]; push eax/push edi; call [edx+0x44]`（**虚表槽 0x44 调用**）
+  - `xor eax,eax; ret`（**返 0**）
+- 直接 call 1 个/去重 1：0x401190——picker callees=1 完全吻合
+- 判类：双解析索引查表映射器（推断名——[+0xdc]/[+0x12c] 高 16 位经 magic 比例换算查表 0x816380/0x816510，双虚表槽 0x3c/0x40 分发 + 百分比换算 0x401190 后 0x44）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x40A9A0 8 全局对象双轮调度器（0xC4=196B）
+
+- 范围 0x40A9A0-0x40AA63（ret @0x40AA63）；0x40AA64-0x40AA6F nop×12，下函数 0x40AA70（**双缓冲装载大函数**：sub esp,0x10 + [+0x90]/[+0x80]/[+0x84]/[+0x7c] 差运算——观察项）观察项
+- thiscall 1 栈参（ret；ecx=this）——**8 全局对象双轮调度器**：
+  - `test esi,esi; je 0x40aa62`（**this 非空门控**）
+  - 第一轮 8 次：`mov ecx,[0x87e744]/[0x87e748]/[0x87e740]/[0x87e73c]/[0x87e754]/[0x87e758]/[0x87e750]/[0x87e74c]` 逐个 `call 0x401080`（**三偏移初始化器** batch 1256——8 个全局对象各初始化三偏移）
+  - `mov ecx,esi; call 0x403810`（**虚表槽 0x10C 尾跳 thunk** batch 2561——this 主操作）
+  - 第二轮 8 次：同 8 全局对象逐个 `call 0x401170`（**三字段位清零** batch 1263——8 个全局对象各清 bit 1）
+  - `pop esi; ret`（**无返回**）
+- 直接 call 17 个/去重 3：0x401080×8、0x401170×8、0x403810×1——picker callees=3 完全吻合
+- 判类：8 全局对象双轮调度器（推断名——[0x87e73c]-[0x87e758] 八全局对象先初始化后清位，中间执行 this 主操作）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2807.py：a 路 0/0、b 路 1/1、c 路 3/3——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x401190（百分比换算器 batch 2569）、0x401080（三偏移初始化器 batch 1256）、0x401170（三字段位清零 batch 1263）、0x403810（虚表槽 0x10C 尾跳 thunk batch 2561）
+- **a 路 [+0x164] 函数指针与 batch 2796/2797 [+0x15c]/[+0x160]/[+0x164] 策略回调族闭合第三只**——回调族调用点再实证
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **回调触发族**：a 路下函数 0x40A650（子对象虚表槽 0x48 不加门控裸转发）+ 0x40A670（0x48→0x30 三零参）+ 0x40A6A0（虚表槽 0x24 取位 0 返）——同一 [+0x158]→[+0x64] 访问模式的变体族
+- **0x80040000 常量返回桩**：0x40A770——与 batch 2805 b 路同 HRESULT 风格
+- **[0x87e880] 对象族 getter/setter**：0x40A780/0x40A790（导入槽 0x7e11e8/0x7e11ec 推参）+ 0x40A7A0（[0x87e89c] getter）+ 0x40A7B0（[0x87e8a0] getter）——0x87e8xx 全局对象族
+- **查表常量**：0x816380/0x816510 两张表——b 路映射器的查找表
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
