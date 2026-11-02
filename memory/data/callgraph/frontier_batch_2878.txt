@@ -1,0 +1,61 @@
+# frontier batch 2878
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x452630（61B）+ 0x4528A0（158B）+ 0x453240（296B）
+三路：a=0x452630（0x3D=61B **值差异检查/评估器** callees=1 deps=0）/ b=0x4528A0（0x9E=158B **距离比较器** callees=2 deps=0）/ c=0x453240（0x128=296B **面向对齐检测/驱赶器** callees=4 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2878{a,b,c}.txt（a 长度 0x50、b 长度 0xA8、c 长度 0x140），完整读取确认（a ret @0x45266C、b ret 4 @0x45293B、c ret @0x453367）
+核验：.qwen/tmp/_check_callees2878.py 三路全 PASS（a 1/1 去重1、b 2/2 去重2、c 6/6 去重4），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7111 → 7114（待 _append_tsv_batch2878.py）
+
+## a 路：0x452630 值差异检查/评估器（0x3D=61B）
+
+- 范围 0x452630-0x45266C（ret @0x45266C；下函数 0x452670）
+- thiscall 0 栈参（ret）——**值差异检查/评估器**：
+  - `[+0x6c]` == 0 → 返 0（**计数门**）
+  - `[+0x520]+0x157a` 标志清 → 返 0（**Type+0x157A 门**）
+  - 虚表槽 0x80 → 非零 → 返 0
+  - `call 0x701140`（**值差异判定器·[0x70114x] batch 1936**——类型 6 + 标志 + [0x6C]vs[0xA0] 比较）→ 返其值
+- 直接 call 1 个/去重 1——picker callees=1 **完全吻合**
+- 判类：值差异检查/评估器（[+0x6c] 门 + Type+0x157A 标志 + 虚表槽 0x80 + 0x701140 值差异判定）——与 0x701140 同门族（[+0x6c]/[+0x520]+0xA0 计数对）(partial)
+
+## b 路：0x4528A0 距离比较器（0x9E=158B）
+
+- 范围 0x4528A0-0x45293E（ret 4 @0x45293B；下函数 0x452940）
+- thiscall 1 栈参（ret 4；esi=this；[esp+0x20]=比较对象）——**距离比较器**：
+  - 虚表槽 0x48（本对象）→ eax 三元组；虚表槽 0x48（参对象）→ [esp+0x10] 三元组
+  - 六值差分配对：`[esi+0x6C]` 族——edi/ebx/ebp = 坐标差（本 vs 参）
+  - `fild ×3` → `fmul/faddp` 链（**dx²+dy²+dz² 平方和**）→ `fstp qword [esp]` → `call 0x4cac40`（**MSVC6 sqrt batch——平方和开方**）→ `call 0x7c5f00`（**_ftol 截断**）
+  - `[+0x520]+0x170c << 8`（shl edx,8）vs eax → `setle cl` → 返 `dist <= Type+0x170C<<8`
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x4cac40/0x7c5f00 全已登记）
+- 判类：距离比较器（虚表槽 0x48 双坐标查询 → 三维差平方和 → MSVC6 sqrt → _ftol → vs [Type+0x170C]<<8 阈值）——虚表槽 0x48 坐标查询 + sqrt 精确配方 (partial)
+
+## c 路：0x453240 面向对齐检测/驱赶器（0x128=296B）
+
+- 范围 0x453240-0x453367（ret @0x453367；下函数 0x453370）
+- thiscall 0 栈参（ret；edi=this）——**面向对齐检测/驱赶器（★批 704 文档预告的第三个 caller）**：
+  - `mov ecx,0x87f7e8; call 0x5657a0`（**MapClass::Instance + 坐标→CellClass 查表 batch 241**）→ `call 0x47c520`（**CellClass::GetBuilding batch 066**）→ ebp=建筑
+  - `[ebp+0x520]+0x16bf` Type 标志门（**与扫描器 0x453060 同字段**）→ 清则出口
+  - `call 0x4c93d0`（**FacingStruct::GetFacing batch 083**）+0x388 → `shr 0xc; inc; shr 1; and 3`（**四主向**）→ esi=主向
+  - **8 方向遍历**（0x89F688 方向表 4B/项）：`0x5657a0` 查格 → `0x47c520` GetBuilding → 目标建筑 → `[ebx+0x520]+0x16be/0x16bf` 标志检查 → 匹配则 `or esi,4; push 0/esi; call 0x453060`（**面向对齐扫描器 batch 704——0x89F688 8 方向 + GetFacing 半定向和 3 与参1 低 2 位匹配**）
+  - 目标格 == 起点（cx==ax 且 dx==ax+...）→ 跳过
+  - ebx 空 → 虚表槽 0xf8（回退路径）
+- 直接 call 6 个/去重 4——picker callees=4 **完全吻合**（0x453060/0x47c520/0x4c93d0/0x5657a0 全已登记）
+- 判类：面向对齐检测/驱赶器（MapClass 查格 + GetBuilding + GetFacing 四主向 + 8 方向 0x89F688 扫描 + **调面向对齐扫描器 0x453060** + 虚表槽 0xf8 回退）——批 704 文档登记 0x453060 时明确列出本函数为三 caller 之一（FUN_00452a40/FUN_00452dc0/FUN_00453240），本批闭合其一 (partial)
+
+## 核验结果
+
+- _check_callees2878.py：a 路 1/1（去重 1）、b 路 2/2（去重 2）、c 路 6/6（去重 4）——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x701140（值差异判定器·[0x70114x] batch 1936）、0x4cac40（MSVC6 sqrt）、0x7c5f00（_ftol）、0x453060（面向对齐扫描器 batch 704）、0x47c520（CellClass::GetBuilding）、0x4c93d0（FacingStruct::GetFacing）、0x5657a0（坐标→CellClass 查表）
+- **跨批次闭合**：c 路是 batch 704 面向对齐扫描器 0x453060 的**第三个 caller**——批 704 文档预告 FUN_00452a40/FUN_00452dc0/FUN_00453240 三 caller，本批登记 0x453240，剩 0x452A40/0x452DC0 两候选仍挂池
+- **b 路配方**：虚表槽 0x48 坐标查询 ×2 → 三维差平方和 → MSVC6 sqrt（0x4CAC40）→ _ftol → 阈值 [Type+0x170C]<<8——距离阈值比较
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x452A40**（362B）/ **0x452DC0**（660B）——面向对齐扫描器 0x453060 剩余两 caller，同域建筑
+- **0x4539E0**（134B）/ **0x453BF0**（362B）/ **0x454730**（133B）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
