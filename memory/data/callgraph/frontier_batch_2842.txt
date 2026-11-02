@@ -1,0 +1,59 @@
+# frontier batch 2842
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段；未登记池 6987→6984）——0x426xxx 视图管理域继续（级联析构 + 索引换算 + 装载器）
+三路：a=0x426790（0x5D=93B **级联析构器** callees=1 deps=0）/ b=0x426DD0（0x27=39B **双数组索引换算器** callees=0 deps=0）/ c=0x426E00（0x7C=124B **视图装载器（+0x88 门控）** callees=0 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2842{a,b,c}.txt（长度 0x100），完整读取确认（a ret @0x4267EC、b ret 4 @0x426DF6、c ret 4 @0x426E74/0x426E7B）
+核验：.qwen/tmp/_check_callees2842.py 三路全 PASS（a 1/1、b 0/0、c 0/0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7003 → 7006（待 _append_tsv_batch2842.py）
+
+## a 路：0x426790 级联析构器（0x5D=93B）
+
+- 范围 0x426790-0x4267EC（ret @0x4267EC）；下函数 0x4267F0（**装载主体**：+0x88 门控 + 双区 rep stosd + 槽 0x24 双填 + 槽 0x28——batch 2841 观察项，本批 c 路配套）观察项
+- thiscall 0 栈参（ret；esi=this）——**级联析构器**——与 batch 2841 b 路 0x4266D0 同模板（槽 0x34 + 槽 0 + delete + 清标志）：
+  - `cmp byte[esi+0x89],0; je`（**+0x89 占用标志**）→ `mov ecx,[esi+0x84]; call [eax+0x34]`（**子对象虚表槽 0x34**）→ `mov byte[esi+0x89],0`
+  - `mov ecx,[esi+0xe0c]; mov [esi+0x84],0; test; je`（**+0xE0C 子对象**）→ `push 1; call [edx]`（**虚表槽 0 释放**）→ 清零
+  - `mov eax,[esi+0xe10]; test; je` → `push eax; call 0x7c8b3d`（**delete +0xE10 成员缓冲**）→ 清零
+  - `mov byte[esi+0x88],0`（**清 +0x88 装载标志**——与 c 路装载器配对）
+- 直接 call 1 个/去重 1：0x7c8b3d——picker callees=1 完全吻合（其余为虚表槽 0x34/0 间接）
+- 判类：级联析构器（推断名——与 batch 2841 b 路 0x4266D0 同模板级联释放；唯一差异：无虚表写入段）(partial)
+
+## b 路：0x426DD0 双数组索引换算器（0x27=39B）
+
+- 范围 0x426DD0-0x426DF6（ret 4 @0x426DF6）；下函数 0x426E00（**本批 c 路**）+ 0x426E80（**区间查找器**：[+0x92] 计数 + [+0x80C] 数组 6B 步进区间扫描——观察项）观察项 + 0x426ED0（**区间查找器同模板第二实例**观察项）
+- stdcall 1 栈参（ret 4；ecx=this/栈参=索引）——**双数组索引换算器**：
+  - `mov eax,[esp+4]; lea edx,[eax+eax*2]; lea eax,[eax+eax*2+0x408]`（**idx×3 双基址**）
+  - `mov si,[ecx+edx*2+0x80e]; mov dx,[ecx+eax*2]`（**双 16 位查表：[+0x80E] 数组 + [+0x408] 数组**）
+  - `lea eax,[edx+esi*2+8]; ret 4`（**两数组值×2 求和 + 8**——16 位尺寸偏移计算）
+- 直接 call 0 个/去重 0——picker callees=0 完全吻合
+- 判类：双数组索引换算器（推断名——[+0x80E]/[+0x408] 双 16 位表按 idx×3 索引求和 + 8；视图几何尺寸计算）(partial)
+
+## c 路：0x426E00 视图装载器（+0x88 门控）（0x7C=124B）
+
+- 范围 0x426E00-0x426E7B（ret 4 @0x426E74 成功/0x426E7B 失败）；下函数 0x426E80（**区间查找器**观察项）
+- stdcall 1 栈参（ret 4；esi=this/栈参=新 ID）——**视图装载器（+0x88 门控 + 槽 0x28 切换 + 槽 0x24 装载）**：
+  - `mov al,[esi+0x88]; test; je 0x426e77`（**+0x88 装载标志门控**——未装载失败）
+  - `mov edi,[esp+0xc]; mov eax,[esi+0xe18]; cmp eax,edi; je 0x426e70`（**当前 ID 相同 → 直接成功**——幂等）
+  - `mov ecx,[esi+0x84]; shl edx,0x10; mov [esi+0xe18],edi; add edx,0xb00; push 0; push edx; call [eax+0x28]`（**新 ID<<16 | 0xB00 → 虚表槽 0x28**——b 路换算的几何尺寸参）
+  - `lea eax,[edi+edi*2]; mov cx,[esi+eax*2+0x80e]; mov ax,[esi+edx*2]`（**同 b 路双数组查表**）→ `lea edi,[eax+ecx*2+8]`（**尺寸和 + 8**）
+  - `mov ecx,[esi+0x84]; mov eax,[esi+0xe10]; push edi; push eax; call [edx+0x24]`（**旧缓冲 + 新尺寸 → 虚表槽 0x24 装载**）→ `cmp eax,edi; jne 失败`（**尺寸校验**）→ 返 1/0
+- 直接 call 0 个/去重 0——picker callees=0 完全吻合（虚表槽 0x28/0x24 间接）
+- 判类：视图装载器（推断名——+0x88 门控 + ID→0xB00 几何参数槽 0x28 + 双表尺寸 + 槽 0x24 装载 + 尺寸校验；视图/面板切换）(partial)
+
+## 核验结果
+
+- _check_callees2842.py：a 路 1/1、b 路 0/0、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D（CRT delete）
+- **视图管理族闭合**：a 级联析构 + c 装载器 + 2841 b 析构器/2841 c 装载器——[+0x84] 子对象 + [+0x88]/[+0x89] 双标志 + [+0xE0C]/[+0xE10] 缓冲 + 槽 0x18/0x1c/0x24/0x28/0x34 全链路第二实例
+- **双数组表 [+0x80E]/[+0x408]**：b/c 共用的 16 位几何表（idx×3 索引）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **区间查找器双实例**：b/c 路下函数 0x426E80/0x426ED0（[+0x92] 计数 + [+0x80C] 数组 6B 步进区间扫描——命中返索引/未命中 -1）
+- **装载主体**：a 路下函数 0x4267F0（+0x88 门控 + 双区 rep stosd 0x20 dword + 槽 0x24×2 + 槽 0x28）——视图装载主逻辑
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
