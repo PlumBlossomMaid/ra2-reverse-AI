@@ -1,0 +1,63 @@
+# frontier batch 2877
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x451400（645B）+ 0x451B40（725B）+ 0x451EE0（**带名 BuildingClass::ToggleDamagedAnims** 120B）
+三路：a=0x451400（0x285=645B **动画轮换/刷新大函数** callees=3 deps=0）/ b=0x451B40（0x2D5=725B **动画槽停止分发器** callees=3 deps=0）/ c=0x451EE0（0x78=120B **BuildingClass::ToggleDamagedAnims** callees=1 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2877{a,b,c}.txt（a 长度 0x290、b 长度 0x2E0、c 长度 0x90），完整读取确认（a ret @0x451684、b ret 4 @0x451E12、c ret 4 @0x451F55；b 跳转表 0x451E18 8 项另行反汇编 0x28 字节解码）
+核验：.qwen/tmp/_check_callees2877.py 三路全 PASS（a 7/7 去重3、b 12/12 去重3、c 1/1 去重1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7108 → 7111（待 _append_tsv_batch2877.py）
+
+## a 路：0x451400 动画轮换/刷新大函数（0x285=645B）
+
+- 范围 0x451400-0x451684（ret @0x451684；下函数 0x451690 区）
+- thiscall 0 栈参（ret；ebp=this）——**动画轮换/刷新大函数**：
+  - `[+0x520]+0xa0` vs `[+0x6c]`（**计数同步**——同 0x5F5C60 的 [0x6C]/关联[0xA0] 对）→ 不等更新 `[+0x6c]=[+0x520]+0xa0`
+  - `[+0x6e6]` 标志（**PlayAnim 的 Slot 记录同字段**）→ 若真：清标志，遍历 **21 槽** `[+0x55C]`（4B/项），每槽取 `[+0x520]+esi+0xf4c`（**动画名数组 0x44B/项**）→ `push 0/0/0/edi; call 0x451890`（PlayAnim(名, Slot=edi, Damaged=0, Garrisoned=0, effectDelay=0)）
+  - `call 0x5f5c60`（**比例 helper**）→ `fcomp [0x8871e0]+0x1700` → `[+0x310]` 非空 → `call [eax+0xf8]`（**虚表槽 0xf8**）
+  - 第二段 4 槽（esi=0xcc→0x198 step 0x44）：同类 `push 0/0/0/edi; call 0x451890` → `[+0x80]=1`
+  - `[+0x520]` == `[0x8871e0]+0x87c`（**类型比较**）分支：`[+0x5fc]` Slot 轮换 `+1 且>2→0`（**0→1→2→0 环**）；`[+0x520]+0x16c5` 标志门；`call 0x451e40`（**DestroyNthAnim(9)**）→ 非 -1 → strlen 拼接 `[+0x520]+0x1f8` + 常量串 0x818D7C + `'B'+bl`（al=bl+0x42）→ `call 0x451890`（PlayAnim 重播）→ `[+0x5fc]=ebx`
+  - 不等分支：`[+0x702]` == `[+0x520]+0x14e0` → ret 0；否则 `[+0x702]++` → `call 0x5f5c60` → `fcomp 0x1700` → 取 `+0xf5c`（edx=1/受损）或 `+0xf4c`（edx=0）→ `eax*0x44` 定位 → `push 0/0/edx/eax; call 0x451890`（PlayAnim(名, Slot=eax, Damaged=edx)）
+- 直接 call 7 个/去重 3——picker callees=3 **完全吻合**（0x451890/0x451e40/0x5f5c60 全已登记）
+- 判类：动画轮换/刷新大函数（[+0x6c]↔[+0x520]+0xa0 计数同步 + [+0x6e6] 清后 21 槽重播 + [+0x5fc] Slot 0→1→2→0 环 + 字符串拼接动画名 + [+0x702] 计数 vs [+0x520]+0x14e0 阈值）(partial)
+
+## b 路：0x451B40 动画槽停止分发器（0x2D5=725B）
+
+- 范围 0x451B40-0x451E14（ret 4 @0x451E12；跳转表 0x451E18@8 项属本函数）
+- thiscall 1 栈参（ret 4；esi=this；[esp+0xc]=槽索引）——**动画槽停止分发器**：
+  - `[+0x90]` 标志门 → 假则直返；遍历 **21 槽** `[+0x55C]` 找参匹配 → 不匹配 ret 4；命中 → `[+0x55C+eax*4]=0`（**槽置空**）
+  - `eax-0xa` → 8 项跳转表 0x451E18：`case0=0x451B8E / case1=直返 / case2=0x451CD2 / case3=直返 / case4=直返 / case5=0x451D52 / case6=直返 / case7=0x451DB6`（**只处理槽 0xa-0x11**）
+  - case0（0x451B8E）：`[+0x520]+0x16a9` 标志 → `call 0x65ae30`（**RadioClass::HasAnyLink**）→ 真 → `call [eax+0x184]`（**虚表槽 0x184 类型 0x14 检查**）→ `call 0x5f5c60 + fcomp 0x1700` → 取 `+0x1248/0x1238`（受损/正常名）→ `push 0/0/ecx/0xb/eax; call 0x451890`（PlayAnim(名, Slot=0xb, Damaged)）→ ret 4；case0 尾巴 jmp 0x451D07（case2 公共尾）
+  - case2（0x451CD2）：`[+0x520]+0x16a9` → `[0x8871e0]+0x179` 标志 → `0x5f5c60 + fcomp 0x1700` → 取 `+0x1424/0x1414` → `PlayAnim(0x12)`
+  - case5（0x451D52）：`[0x8871e0]+0x179` → `0x5f5c60 + fcomp` → 取 `+0x139c/0x138c` → `PlayAnim(0x10)`
+  - case7（0x451DB6）：同上 → 取 `+0x1314/0x1304` → `PlayAnim(0xe)`
+  - case0 分支配（0x451C32）：`[+0x520]+0x16a7` 标志 → `[0x8871e0]+0x179` → `0x5f5c60 + fcomp` → `call [edx+0x408]`（**虚表槽 0x408**）→ setg → 取 `+0x1028`（ebx=1）/`+0x1038`（al 真）/`+0x1018` → `PlayAnim(0x3)`
+- 直接 call 12 个/去重 3——picker callees=3 **完全吻合**（0x451890/0x5f5c60/0x65ae30 全已登记）
+- 判类：动画槽停止分发器（栈参槽索引 → 清槽 → 槽≥0xa 走 8 项跳转表 → 按 [+0x520]+0x16a9/0x16a7 + [0x8871e0]+0x179 标志选受损/正常动画名 → 虚表槽 0x184 类型 0x14 + RadioClass::HasAnyLink → PlayAnim 重播）(partial)
+
+## c 路：0x451EE0 BuildingClass::ToggleDamagedAnims（0x78=120B，带名）
+
+- 范围 0x451EE0-0x451F55（ret 4 @0x451F55；下函数 0x451F60 动画码族）
+- thiscall 1 栈参（ret 4；edi=this；[esp+8]=cl Damaged）——**BuildingClass::ToggleDamagedAnims（YRpp 带名）**：
+  - `[+0x6e6]` == cl → 已同态直返
+  - `[+0x6e6]=cl`（**受损开关注入**——与 PlayAnim 0x451890 的 Slot 记录同字段）
+  - 遍历 **21 槽** `[+0x55C]`：槽有效 → 动画名 = cl 真 ? `[+0x520]+esi+0xf5c` : `[+0x520]+esi+0xf4c`（**受损/正常名数组双路**）→ `push 0/0/ecx(cl)/ebp(Slot=0..0x14); call 0x451890`（PlayAnim(名, Slot, Damaged=cl, Garrisoned=0, effectDelay=0)）
+- 直接 call 1 个/去重 1——picker callees=1 **完全吻合**（0x451890 已登记）
+- 判类：**BuildingClass::ToggleDamagedAnims**（带名——设 [+0x6e6]、遍历 21 槽按 damaged 选 +0xf5c/+0xf4c 动画名数组、逐槽 PlayAnim）——与 PlayAnim(0x451890)/DestroyNthAnim(0x451E40) 同 +0x55C/+0x6E6 动画槽系统。**semantics 判定**：YRpp 带名 + 机器码与 batch 120 PlayAnim 登记的 5 参签名（名/Slot/Damaged/Garrisoned/effectDelay）及 +0xf4c/+0xf5c 名数组逐条互证零歧义 → **semantics_verified**
+
+## 核验结果
+
+- _check_callees2877.py：a 路 7/7（去重 3）、b 路 12/12（去重 3）、c 路 1/1（去重 1）——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**——零 MISSING 建筑动画系统三连闭合
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x451890（BuildingClass::PlayAnim）、0x451E40（BuildingClass::DestroyNthAnim）、0x5F5C60（电力/比例 helper）、0x65AE30（RadioClass::HasAnyLink）
+- **c 路带名**：BuildingClass::ToggleDamagedAnims——本批第三个带名建筑动画系统成员（前：PlayAnim batch 120 / DestroyNthAnim batch 143），动画槽系统三件套闭合（播放/销毁/受损切换）
+- **a/b 路同族**：两函数与 PlayAnim 共享 +0x55C 21 槽数组 / +0x6E6 记录 / +0xf4c·+0xf5c 名数组——a 是周期轮换刷新、b 是槽停止后按类型重播
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- a 路下函数 0x451690 区 / b 路 case2 公共尾 0x451D07 复用（两个 fcomp-取名-Push 收尾）+0x1248/0x1238 名数组 BSS 布局——后续如遇同名数组多路可合并分析
+- **0x452630**（61B）/ **0x4528A0**（158B）/ **0x53240**（296B）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
