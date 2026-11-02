@@ -1,0 +1,73 @@
+# frontier batch 2824
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段；未登记池 6933→6930）——0x40 段尾声（虚表析构族 0x7E1EF4 第二实例）+ 0x411xxx 业务大函数区开张（[0x887778] 槽位表宿主的两个大函数）
+三路：a=0x40FEC0（0x47=71B **虚表写入成员析构器（虚表 0x7E1EF4）** callees=1 deps=0）/ b=0x411B20（0x1BF=447B **槽位初始化大函数** callees=3 直接/7 含间接 deps=0）/ c=0x411DF0（0x20F=527B **槽位清理大函数** callees=5 直接/7 含间接 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2824a.txt（长度 0x100）+ _d2824{b,c}.txt（长度 0x400），完整读取确认（a ret 4 @0x40FF06、b ret @0x411CD3/0x411CDE、c ret @0x411FFE）
+核验：.qwen/tmp/_check_callees2824.py 三路全 PASS（a 1/1、b 3/3、c 5/5），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6949 → 6952（待 _append_tsv_batch2824.py）
+
+## a 路：0x40FEC0 虚表写入成员析构器（虚表 0x7E1EF4）（0x47=71B）
+
+- 范围 0x40FEC0-0x40FF06（ret 4 @0x40FF06）；0x40FF09-0x40FF0F nop×7，下函数 0x40FF10（**全局初始化器**：[0x887598] + 0x776eb0 + 0x7c978a——观察项）观察项 + 0x40FF40（**四全局清零器**：[0x887630]/[0x887634]/[0x887638]/[0x88763c]——观察项）
+- thiscall 1 栈参（ret 4）——**虚表写入成员析构器（虚表 0x7E1EF4）**（与批 2823 c 路 0x40FE70 逐字节同构——第二实例）：
+  - `mov eax,[esi+4]; mov [esi],0x7e1ef4`（**虚表写入 0x7E1EF4**）+ 成员 delete（[+0xd] 门控）+ 清零 + flags bit0 delete this
+- 直接 call 2 个/去重 1：0x7c8b3d（CRT delete）——picker callees=1 完全吻合
+- 判类：虚表写入成员析构器（推断名——与 2823 c 路逐字节同构；虚表 0x7E1EF4 第二实例）
+- 语义证据级别：assembly_decompile_verified（identical_to_0x40FE70）
+
+## b 路：0x411B20 槽位初始化大函数（0x1BF=447B）
+
+- 范围 0x411B20-0x411CDE（ret @0x411CD3 主路径/0x411CDE 错误路径）；0x411CDF nop，0x411CE0 起**槽位清理同伴函数**（0x411CE0-0x411DEE 未登记观察项）观察项
+- 非 thiscall（栈 3 参 [esp+0x70]/[esp+0x78]/[esp+0x7c]）——**槽位初始化大函数（[0x887778] 槽位表 + 窗口注册）**：
+  - `call 0x40A7A0`（**全局状态查询器**——返回存 [esp+0xc]）+ `push 0x817a3c; call 0x4068E0`（**日志**）
+  - `call dword [0x7e11d0]`（**导入槽**）+ 日志
+  - `call 0x407000`（**链表注册原语**）→ test 失败返 0xfffffff3
+  - 槽位扫描：`mov ecx,0x887778; cmp byte[ecx],0; je; add ecx,0xbc; cmp ecx,0x887834; jl`（**0xBC stride 槽位表扫空槽**——[0x887778] 起 0xBC×N）
+  - 哨兵：`cmp eax,1; je 错误路径`（**槽位计数为 1 时拒绝**）+ `cmp [esp+0x78],0x10; jne 错误`（**模式必须 0x10**）
+  - 选槽寻址：`lea ecx,[eax+eax*2]; shl ecx,4; sub ecx,eax`（**idx×44**）→ `[ebx+0x34]=eax`（**宿主回写槽位号**）
+  - `lea esi,[ecx*4+0x887778]; mov ecx,0x2f; rep stosd`（**清 0x2F dword**）→ `mov byte[esi],1`（**槽位置 1**）
+  - 槽体填充：`[esi+4]=[ebx+0xa4]; lea eax,[esi+0xa0]; push eax; call dword[0x7e11f4]`（**+0xA0 子缓冲区 + 导入槽**）
+  - `mov ax,[ebx+0xa0]; mov word[esi+8],ax`（**+0xA0→槽 [+8] 16 位**）；-1 特判走 [ebx+0x70]×[ebp]/[ebx+0xe] 除法缩放（**16 位量化**）
+  - 虚表槽 0x10 调用：`lea edx,[esp+0x14]; mov [esp+0x14],0x60; push edx; push eax; mov ecx,[eax]; call [ecx+0x10]`（**0x60 结构化调用**）
+  - 标志分支：`test [esp+0x18],0x20; je` → `[ebx+0xc4]=0` 或日志+保留（**+0xC4 状态**）
+  - 槽体深拷贝：`[esi+0xa]=[ebp+2]; [esi+0xb]=[ebp+3]; [esi+0x24]=[ebp+4]; [0x88776c]=[ebp+8]; [0x887770]=[ebp+0xc]`（**槽体 10 字节展开 + 全局缓冲**）
+  - `push 0x10; call dword[0x7e1538]`（**导入槽**）→ `cmp eax,0x61; je 失败`（**0x61 冲突码**）
+  - `push 1/push ebx/push 0x4123a0/push 1/push 0x10; call dword[0x7e1534]`（**注册回调 0x4123A0**）→ `[esi+0x60]=eax`
+  - 返回：`neg eax; sbb eax,eax; and eax,0xc; add eax,-0xd`（**eax==0 → -1 / eax!=0 → -13 的差分**）
+- 直接 call 8 个/去重 3：0x4068E0（DebugLog ×6）、0x407000、0x40A7A0——picker callees=3 直接吻合；picker 的 7 = 直接 3 + 导入槽 4（[0x7e11d0]/[0x7e11f4]/[0x7e1538]/[0x7e1534]，Ghidra 含间接统计）
+- 判类：槽位初始化大函数（推断名——[0x887778] +0xBC stride 槽位表分配 + 窗口类注册 [0x7e1534] + 回调 0x4123A0 + 日志族；宿主 +0x34 槽位号回写）
+- 语义证据级别：assembly_decompile_verified（partial——槽位表语义推断，[0x887778] 表布局 0xBC×N 实锤）
+
+## c 路：0x411DF0 槽位清理大函数（0x20F=527B）
+
+- 范围 0x411DF0-0x411FFE（ret @0x411FFE 主路径/0x411E80 错误路径）；0x411FFF nop，下函数 0x412000（**槽位读函数**：sub esp,0x18 + [ebx+0x34] → [0x887778] 索引 + fild 浮点数组——观察项）观察项
+- 非 thiscall（栈 1 参 [esp+8]）——**槽位清理大函数（[0x887778] 槽位号 → 槽体清理）**：
+  - `mov eax,[ebx+0x34]; lea ecx,[eax+eax*2]; shl ecx,4; sub ecx,eax; mov al,[ecx*4+0x8877a0]`（**槽位号 → +0x28 标志位读**）→ `test al,1; je 0x411e94`（**bit0 分派**）
+  - 路径一（bit0 置位）：`cmp byte[esi],0; je; mov eax,[esi+0x8c]; test; je`（**槽占用 + 子对象非空门控**）→ `lea edi,esi+0xa0; push; call dword[0x7e11e8]`（**+0xA0 锁**）→ `push 1/0/0/eax; mov edx,[eax]; call [edx+0x30]`（**虚表槽 0x30 三参调用**）→ 失败 → `call 0x4E24A0; sub eax,[esi+0x18]; [esi+0x1c]=eax`（**时间差**）+ 日志 + `and [esi+0x28],0xfe`（**清 bit0**）→ `call dword[0x7e11ec]`（**+0xA0 解锁**）返 -1；成功返 0xfffffff3
+  - 路径二（bit0 清）：`lea eax,[esi+0xa0]; call dword[0x7e11e8]`（**锁**）→ `mov eax,[esi+0x8c]; test; je` → `call [ecx+0x48]; call [edx+8]; mov [edi],0`（**虚表槽 0x48 + 槽 8 释放子对象**）
+  - `mov eax,[ebx+0x9c]; shl eax,1`（**+0x9C 容量×2**）→ `[esi+0x90]=eax; [+0x64] 区五字段清零 + [ebp]=0x14 + [esi+0x68]=0x100e0 + [esi+0x74]=eax（+0x78 缓冲区地址）`（**槽体重置**）
+  - `mov word[eax],1; [edx+0x10..] 清零`（**槽 8 步进**）
+  - 尾部：`mov ecx,[edi]; push edi; call [ecx+0x30]`（**虚表槽 0x30**）→ `call dword[0x7e11ec]`（**解锁**）→ `neg eax; sbb eax,eax; and al,0xf4; dec eax`（**差分返回**）
+- 直接 call 5 个/去重 5：0x4068E0（DebugLog）、0x40A7A0、0x40A900、0x4E24A0、0x7C5F00（_ftol）——picker callees=5 直接吻合；picker 的 7 = 直接 5 + 导入槽 2（[0x7e11e8]/[0x7e11ec]，Ghidra 含间接统计）
+- 判类：槽位清理大函数（推断名——[0x887778] 槽位号 → bit0 分派清理（对象释放/槽体重置）+ 锁 [0x7e11e8]/解锁 [0x7e11ec] + 差分返回）
+- 语义证据级别：assembly_decompile_verified（partial——槽位表语义推断，[0x887778] 表布局 0xBC×N 实锤）
+
+## 核验结果
+
+- _check_callees2824.py：a 路 1/1、b 路 3/3、c 路 5/5——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 4（直接 3 + 导入槽 4 [0x7e11d0]/[0x7e11f4]/[0x7e1538]/[0x7e1534]）、c 差 2（直接 5 + 导入槽 2 [0x7e11e8]/[0x7e11ec]）——均为间接调用，Ghidra unique_callees 含间接，核验脚本只抓直接 call/jmp 字面量，属预期差
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D（CRT delete）、0x4068E0（DebugLog）、0x407000、0x40A7A0、0x40A900、0x4E24A0、0x7C5F00（_ftol）
+- **进入 0x411xxx 业务大函数区**：[0x887778] 槽位表（+0xBC stride）+ [0x7e11e8]/[0x7e11ec] 锁对 + [0x7e1534]/[0x7e1538] 注册/冲突码（0x61）——与 batch 2821 的 [0x8874c4] 数组族同区对象注册机制
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **槽位清理同伴函数**：b 路下函数 0x411CE0（[+0x34] → [0x887778] 槽号 → 槽 +0x8c 子对象 0x48/槽 8 释放 + 锁对 + 0xffffffff 返回）——与 c 路同族、更短路径
+- **槽位读函数**：c 路下函数 0x412000（sub esp,0x18 + [ebx+0x34] → [0x887778] 索引 + fild 浮点数组 + 0x40A900/0x7C5F00 _ftol）——槽位数据读取
+- **回调函数 0x4123A0**：b 路 [0x7e1534] 注册回调——后续登记
+- **四全局清零器**：0x40FF40（[0x887630]/[0x887634]/[0x887638]/[0x88763c]）——0x8876xx 全局族
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
