@@ -1,0 +1,69 @@
+# frontier batch 2852
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4308B0（**带名 BeaconClass::VisibleToPlayer**）+ 0x431A30（228B）+ 0x431BC0（457B）
+三路：a=0x4308B0（0x5E=94B **BeaconClass::VisibleToPlayer** callees=2 deps=0）/ b=0x431A30（0xE2=226B **初始化构造器** callees=2 直接/3 含间接 deps=0）/ c=0x431BC0（0x1C7=455B **缓冲初始化器** callees=2 直接/10 含间接 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2852{a,b,c}.txt（a 长度 0xC0、b 长度 0x160、c 长度 0x240，含下函数族开头），完整读取确认（a ret @0x43090D、b ret 4 @0x431B11、c ret 8 @0x431D86）
+核验：.qwen/tmp/_check_callees2852.py 三路全 PASS（a 2/2、b 2/2、c 3/3 去重2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7033 → 7036（待 _append_tsv_batch2852.py）
+
+## a 路：0x4308B0 BeaconClass::VisibleToPlayer（0x5E=94B，带名）
+
+- 范围 0x4308B0-0x43090D（ret @0x43090D；失败分支 0x43090A 同返 0）；下函数 0x430910（**0x18 dword 清零构造器**：rep stosd 0x18 + [+0x60]/[+0x7c]=0——观察项）+ 0x430930（**8×3 成员释放器**：8 组×3 指针 delete——观察项）
+- thiscall 0 栈参（ret；esi=this）——**BeaconClass::VisibleToPlayer（YRpp 带名符号）——三条件 AND 可见性判定**：
+  1. `test byte[esi+0xc],1; je 返 0`（**[+0xc] 标志位 1**）
+  2. `mov eax,[esi+0x110]; mov ecx,[0xa83d4c]; push eax; call 0x4f9a10`（**全局 house 数组 [0xA83D4C] 检查**）→ `test al; je 返 0`
+  3. `mov edx,[esi+0x110]; mov eax,[0xa8022c]; mov ecx,[eax+edx*4]; push ecx; mov ecx,[0xa83d4c]; call 0x4f9a50`（**全局表 [0xA8022C] idx→对象 第二 house 检查**）→ `test al; je 返 0` → `mov cl,[obj+0x1f5]; test; jne 返 0`（**目标对象 [+0x1f5]==0**）
+  - 全过 → `mov al,1; ret`（可见）
+- 直接 call 2 个/去重 2：0x4f9a10、0x4f9a50——picker callees=2 完全吻合
+- 判类：**BeaconClass::VisibleToPlayer（带名，semantics_verified）**——YRpp 符号 + 逻辑逐条自证（三条件 AND：flags & house 可见性 ×2 & 对象 [+0x1f5]），无任何未确认点
+
+## b 路：0x431A30 初始化构造器（0xE2=226B）
+
+- 范围 0x431A30-0x431B11（ret 4 @0x431B11）；下函数 0x431B20（**字段初始化零字节构造器**：identical 无字符串匹配逻辑——普通构造器，[+0x8]=1——观察项）+ 0x431B80（**析构器**：虚表 0x7E3A2C + [+0x30] 释放——观察项）
+- thiscall 1 栈参（ret 4；esi=this；[esp+0xc] 尾部 = 传入名字/句柄）——**初始化构造器（虚表 0x7E3A2C）**：
+  - **字段全初始化**：[+4]=0、[+8]=1、[+0xc]=0、[+0x10]=-1、[+0x14]=-1、[+0x18]=0、[+0x1c]=0w、[+0x1e]=0w、[+0x20]=0、[+0x24..0x29]=0（6 字节）、[+0x2c..0x3c]=0（4 个 dword）、[+0x40]=-1、[+0x44]=-1、[+0x48..0x50]=0（3 个 dword）、`[esi]=0x7e3a2c`（虚表）
+  - `call dword[0x7e3a30]`（**导入槽 [0x7E3A30] 函数指针——全局单例/静态**）→ `test eax; je 0x431afa` → `test byte[esi+0x29]; je 0x431afa`（**+0x29 标志门**）
+  - `mov eax,[esi]; call [eax+4]`（**虚表槽 4**）→ 字符串 → 循环逐字节比对 param（[esp+0x14]）→ 相等 → `call [eax+4]` → `mov eax,esi; ret 4`（**直接返回 this**）
+  - 不等 → `call 0x431dd0`（**当前对象备份/序列化**）→ `[+0x27]=0`
+  - 0x431AFA：`mov ecx,[esp+0xc]; push ecx; mov ecx,esi; call 0x65cac0`（**对象构造 0x65CAC0**）→ `call [edx+4]` → `mov eax,esi; ret 4`（返回 this）
+- 直接 call 2 个/去重 2：0x431dd0、0x65cac0——picker callees=3，差 1 为 [0x7E3A30] 导入槽间接调用（Ghidra 含间接统计）
+- 判类：初始化构造器（推断名——虚表 0x7E3A2C + 大量 -1/0 哨兵 + 字符串匹配重入语义：已匹配则返回、否则备份+重建）(partial)
+
+## c 路：0x431BC0 缓冲初始化器（0x1C7=455B）
+
+- 范围 0x431BC0-0x431D86（ret 8 @0x431D86；失败分支 0x431D80 同返 0）；下函数 0x431D90（**成员释放清理器小函数**：[+0x30] 释放 + [+0x24] 门控 + 多标志清零——与 c 路同对象族——观察项）+ 0x431DD0（**+0x29/+0x28 双标志判定器**——观察项）
+- stdcall 2 栈参（ret 8；esi=this；[esp+0x14]/[esp+0x18]=两参）——**缓冲初始化器（大对象激活/分配）**：
+  - `cmp [esi+0x30],0; je → 若非空且两参均 0 → mov al,1; ret 8`（**已就绪快路径**）
+  - `call [eax+0x14]`（**虚表槽 0x14**）→ 成功：`call [edx+0x2c]`（**虚表槽 0x2c**）→ `[+0x48]=eax`；失败：`[+0x48]=0`
+  - `edi=param1; ebp=param2`：param1!=0 且 <0x400 且 param2!=0 → `call [eax+0x40]`（**虚表槽 0x40 三参 (0,0,0x16)**）
+  - param2!=0 → `[+0x30]=param2`（**外部 buffer**）；否则 `push [+0x34]; call 0x7c8e17`（**new**）→ `[+0x30]=eax`
+  - `[+0x24]=1; [+0x26]=0; [+0x38]=0; [+0x3c]=0; [+0x40]=-1; [+0x44]=-1; [+0x4c]=0; [+0x50]=0`（**字段复位**）
+  - `[+0x48]!=0` 分支：比较 [+0x48] vs [+0x34] → 循环 `call [edx+0x18]`（**虚表槽 0x18**）→ `call [eax+0x28]`（**虚表槽 0x28 (0)**）→ edi=返回
+  - `cmp [esi+0x14],-1; je → [+0x50]=edi`；否则 `push 1; push 0; call 0x65cf00`（**序号发生器**）→ `[+0x50]=eax`
+  - 大小分流：`[+0x38]=edi/[+0x4c]=edi`（小）vs `[+0x3c]=edi/[+0x4c]=edi`（大）
+  - 失败分支 `call [eax+0x1c]`（**虚表槽 0x1c**）→ 非 0 → `call 0x65cf00` → `[+0x50]=eax`
+  - `push min([+0x14],...); push [+0x30]; call [edx+0x24]`（**虚表槽 0x24 两参**）→ 不等 → `call [edx+0x40]`（**3 参 (0,0,5)**）
+  - 成功置标志：`call [eax+0x34]`（**虚表槽 0x34**）→ `[+0x27]=1; [+0x29]=1; mov al,1` 或 `call [edx+0x28]` → `[+0x27]=1; mov al,1`
+  - 分配失败（[+0x30]==0）→ `call [eax+0x40]`（**3 参 (0,0,0xc)**）→ `xor al,al; ret 8`（失败）
+- 直接 call 3 个/去重 2：0x7c8e17、0x65cf00（×2）——picker callees=2 完全吻合（10 处间接为虚表槽 0x14/0x18/0x1c/0x24/0x28/0x2c/0x34/0x40 八槽，Ghidra 未计入 picker）
+- 判类：缓冲初始化器（推断名——外部 buffer/new 分配 + 虚表八槽激活链 + 0x65CF00 序号 + 成功/失败标志 [+0x27]/[+0x29]）(partial)
+
+## 核验结果
+
+- _check_callees2852.py：a 路 2/2、b 路 2/2、c 路 3/3（去重 2）——三路全 PASS
+- picker callees vs 核验差值：a 差 0；b 差 1（[0x7E3A30] 导入槽间接）；c 差 0（间接 10 处为虚表槽，picker 未计入）——均属预期差
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4F9A10/0x4F9A50（house 可见性检查）、0x431DD0（+0x29/+0x28 判定器——本批 b 路调用，观察项）、0x65CAC0（对象构造）、0x65CF00（序号发生器）、0x7C8E17（operator new）
+- **a 路带名判三态**：BeaconClass::VisibleToPlayer 为 YRpp 可信符号，94B 逻辑零歧义（三条件 AND：flags + house 可见性 ×2 + 目标 [+0x1f5]）——semantics_verified
+- **b/c 路同源观察**：0x431A30（构造）与 0x431BC0（激活）共用字段布局（[+0x14]/[+0x30]/[+0x34]/[+0x38..0x50]）与虚表 0x7E3A2C 家族——0x431B20 普通构造器/0x431B80 析构器/0x431D90 清理器同族
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x431B20 普通构造器** / **0x431B80 析构器**（虚表 0x7E3A2C 族）——b 路下函数
+- **0x431D90 成员释放清理器小函数** / **0x431DD0 双标志判定器**——c 路下函数（同对象族）
+- **0x431F30 BufferIOFileClass::HasHandle**（带名 29B）/ **0x431F50 BufferIOFileClass::OpenEx**（带名 31B）——下一批候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
