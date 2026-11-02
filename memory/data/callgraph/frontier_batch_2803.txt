@@ -1,0 +1,60 @@
+# frontier batch 2803
+
+日期：2026-11-03
+来源：picker 按 unique_callers 扇入度从未登记池取 top3（ranking.tsv 依据；top40 全 uc=0 孤立函数，落回 ranking 序；未登记池 1898→1895）——0x40 段继续（子对象查询 + 容器节点构造/析构）
+三路：a=0x4079C0（0x61=97B **子对象查询/钳位更新器** callees=2 deps=0）/ b=0x408460（0x5C=92B **容器节点构造器/分配器** callees=3 deps=0）/ c=0x4084C0（0x1D=29B **容器节点析构器/释放器** callees=1 deps=0）——子对象查询 + 容器节点生命周期对
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2803{a,b,c}.txt（长度 0x100），完整读取确认（a ret @0x407A20、b ret @0x4084BB、c ret @0x4084DC；下函数 a 0x407A30（`mov esi,[ecx+0xc0]; test byte[esi+0xc],3; je; call 0x4093b0; mov [esi+0x20],eax; mov [esi+0x24],edx; and byte[esi+0xc],0xf8; mov [esi+0x80],0`——**对象清理/标志清除器**（[+0xc]&3 门控 + 0x4093b0 + 清 bit0/1 + 清 [+0x80]）观察项 + 0x407A60（同模板第二实例）观察项 + 0x407A90（`mov ebx,[0x7e11ec]; mov edi,[0x7e11e8]（IAT 双向链表回调对）; cmp [esi+4],esi; je; push 0x87e7f8; call edi; 0x407450; push 0x87e7f8; call ebx`——**带 IAT 串处理的清理器**（[0x7e11ec]/[0x7e11e8] IAT + [0x87e7f8] 全局 + 0x407450）观察项）、b 0x4084E0（`xor eax; mov [ecx],eax; [ecx+4]; [ecx+0x14]; [ecx+0x18]; add ecx,8; jmp 0x4072c0`——**容器重置器**（清四字段 + 尾跳 0x4072c0 子对象初始化）观察项 + 0x408500（`lea ecx,[esi+8]; 0x407420 注册; [edi+0x10]; [esi+4] add; [edi+0x14]=esi`——**节点挂载器**观察项 + **0x408520**（`add ecx,8; jmp 0x407470`——**子对象取下一适配（this+8 → 0x407470）**观察项））、c 0x408540（`mov ecx,[ecx+0x14]; mov eax,0x10624dd3; imul ecx,[esp+4]; imul ecx; sar eax,6; shr ecx,0x1f; add eax,ecx; ret 8`——**整数定点除法**（0x10624dd3=1/100 魔数 + sar 6 + 舍入）观察项 + 0x408560（`mov esi,[ecx+0x14]; test; push 0/0x3e8/edx/eax; call 0x7c8ec0`——**64 位乘除混合**（push 0x3e8=1000 + 0x7c8ec0 CRT 64 位）观察项 + 0x4085A0（`mov edi,ecx; mov ecx,8; rep stosd; ret`——**32 字节清零器**观察项）））
+核验：.qwen/tmp/_check_callees2803.py 三路全 PASS（a 2/2、b 3/3、c 1/1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 6892 → 6895（待 _append_tsv_batch2803.py）
+
+## a 路：0x4079C0 子对象查询/钳位更新器（0x61=97B）
+
+- 范围 0x4079C0-0x407A20（ret @0x407A20）；0x407A21-0x407A2F nop×15，下函数 0x407A30（**对象清理/标志清除器**）观察项；0x407A60（**同模板第二实例**）观察项；0x407A90（**带 IAT 串处理的清理器**）观察项）
+- thiscall 0 栈参（ret；edi=this、esi=[+0xc0] 成员）——**子对象查询/钳位更新器**：
+  - `mov esi,[edi+0xc0]`（[+0xc0] 成员）→ `mov edx,[esi+0x90]` → **call 0x4091c0**（通过 [+0x38] 子对象处理）→ **call 0x409310**（第二次处理）
+  - `mov eax,[esi+0xa0]` vs `mov ecx,[ecx+8]`（[+0xa0] vs [子对象+8]）→ `cmp eax,ecx; jle`（**min/max 钳位**→ 存 `[+0x90]`）
+  - 存 `[edi+0x174]=[+0x90]`、`[edi+0x178]=[+0x90]`、`[edi+0x170]=[子对象+4]`（**三字段更新**）
+  - 返 eax=0
+- 直接 call 2 个/去重 2：0x4091c0、0x409310——picker callees=2 完全吻合
+- 判类：子对象查询/钳位更新器（推断名——[+0xc0] 成员双处理 + [+0xa0] vs [子对象+8] 钳位 + 三字段更新）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## b 路：0x408460 容器节点构造器/分配器（0x5C=92B）
+
+- 范围 0x408460-0x4084BB（ret @0x4084BB）；0x4084BC nop×4，下函数 0x4084E0（**容器重置器**——清四字段 + 尾跳 0x4072c0）观察项；0x408500（**节点挂载器**）观察项；0x408520（**子对象取下一适配**——this+8 → 0x407470）观察项）
+- thiscall 1 栈参（ret；ecx=父引用；esi=新节点）——**容器节点构造器/分配器**：
+  - `push 0x20` → **call 0x7c8e17**（new 0x20 字节容器节点）→ `rep stosd` 清零 8 dword
+  - 清 `[esi]`、`[esi+4]`、`[esi+0x14]`、`[esi+0x18]` → `lea ecx,[esi+8]` → **call 0x4072c0**（子对象 +8 初始化）
+  - `mov [esi+4],ebx`（**父引用存 [esi+4]**）→ `push ebx` → **call 0x7c8e17**（new 父副本 ebx 字节）→ 失败（eax==0）：**call 0x7c8b3d**（delete esi）返 0；成功：`[esi]=eax` 返 esi
+- 直接 call 4 个/去重 3：0x7c8e17（×2）、0x4072c0、0x7c8b3d——picker callees=3 完全吻合
+- 判类：容器节点构造器/分配器（推断名——new 0x20 + 清零 + 子对象初始化 + 父副本 new + 失败清理；**与 c 路析构器配对**）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## c 路：0x4084C0 容器节点析构器/释放器（0x1D=29B）
+
+- 范围 0x4084C0-0x4084DC（ret @0x4084DC）；0x4084DD nop×3，下函数 0x4084E0（**容器重置器**）观察项；0x408540（**整数定点除法**——0x10624dd3=1/100 魔数 + sar 6）观察项；0x408560（**64 位乘除混合**——0x7c8ec0）观察项；0x4085A0（**32 字节清零器**）观察项）
+- thiscall 0 栈参（ret；esi=this）——**容器节点析构器/释放器**：
+  - `mov eax,[esi]`（成员指针）→ 非空 → **call 0x7c8b3d**（delete 成员）
+  - `push esi` → **call 0x7c8b3d**（delete this）
+- 直接 call 2 个/去重 1：0x7c8b3d（两次同址）——picker callees=1 完全吻合
+- 判类：容器节点析构器/释放器（推断名——成员 delete + this delete；**与 b 路构造器配对**）
+- 语义证据级别：assembly_decompile_verified（partial，无对应已登记 C++ 重写）
+
+## 核验结果
+
+- _check_callees2803.py：a 路 2/2、b 路 3/3、c 路 1/1——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4091C0、0x409310、0x4072C0、0x7C8E17（CRT new）、0x7C8B3D（CRT delete）——全部命中早前登记
+- 观察 [0x7e11ec]/[0x7e11e8]（a 路下函数 IAT 对）、[0x87e7f8]（a 路下函数全局）；0x10624dd3（c 路下函数 1/100 魔数）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **容器节点生命周期**：b 路 0x408460（构造）+ c 路 0x4084C0（析构）配对——0x20 节点 {成员 [+0]、子对象 [+8]、父引用 [+4]、计数器 [+0x14]/[+0x18]}
+- **对象清理/标志清除器族**：a 路下函数 0x407A30 + 0x407A60（同模板双实例）——[+0xc]&3 门控 + 0x4093b0 + 清 bit0/1 + [0x80]——后续吸收
+- **整数定点除法**：c 路下函数 0x408540（0x10624dd3=1/100 + sar 6 + 舍入修正）——与批 2795 a 路 0x401190 族同魔数
+- **子对象原语适配**：0x408520（this+8 → 0x407470）——批 2799/2800 大量使用 0x4073c0/0x4073e0 的适配版，0x407470 语义为"子对象取下一"锚定中
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
