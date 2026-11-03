@@ -1,0 +1,59 @@
+# frontier batch 2908
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x472CC0（176B）+ 0x472E90（39B）+ 0x473000（73B）
+三路：a=0x472CC0（0xB0=176B **VectorClass 变体构造/初始化器·4B/项** callees=2 deps=0）/ b=0x472E90（0x27=39B **容器释放器 39B 变体** callees=1 deps=0）/ c=0x473000（0x49=73B **scalar deleting 析构器·虚表 0x7E4BC4** callees=1 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2908{a,b,c}.txt（a 长度 0xC0、b/c 长度 0x40/0x60），完整读取确认（a ret 8 @0x472D6D、b ret @0x472EB6、c ret 4 @0x473046）
+核验：.qwen/tmp/_check_callees2908.py 三路全 PASS（a 2/2 去重2、b 1/1 去重1、c 2/2 去重1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7201 → 7204（待 _append_tsv_batch2908.py）
+
+## a 路：0x472CC0 VectorClass 变体构造/初始化器·4B/项（0xB0=176B）
+
+- 范围 0x472CC0-0x472D6D（ret 8 @0x472D6D，2 栈参）
+- thiscall 2 栈参（ret 8；[esp+0xc]=计数、[esp+0x18]=外部 buffer）——**VectorClass 变体构造/初始化器·4B/项**：
+  - 参数3（外部 buffer）空 → `lea eax,[ebp*4]`（**4B/项**）→ `call 0x7c8e17`（CRT new）→ edi=新 buffer；`[+0xc]=1`（拥有标志）
+  - 参数3 非空 → edi=外部 buffer；`[+0xc]=1`
+  - edi 空 → 返 0
+  - 从 `[+4]` 旧 buffer 拷贝 `min(计数,[+8])` 项 ×4B（**memcpy 内联 4B 步长**）→ 若 `[+0xd]` 拥有标志 → `call 0x7c8b3d`（delete 旧 buffer）
+  - `[+4]=edi`、`[+8]=计数`、`[+0xd]=参3==0`（翻转拥有标志）
+  - `[+0x10]` 钳制（容量下限）：`[+0x8] vs [+0x10]` 比较，`[+0x8] < [+0x10]` → `[+0x10]=[+0x8]`
+  - 参1==0 → 虚表槽 0xc（清空）
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x7c8e17/0x7c8b3d 已登记）
+- 判类：VectorClass 变体构造/初始化器·4B/项（与批 2895 a 路 0x465E70 同模板但 4B 项 vs 12B 项——`lea [ebp*4]` vs `lea [ebx*12]`；含 [+0x10] 下限钳制）——VectorClass 写入端 4B 步长变体 (partial)
+
+## b 路：0x472E90 容器释放器 39B 变体（0x27=39B）
+
+- 范围 0x472E90-0x472EB6（ret @0x472EB6）
+- thiscall 0 栈参（ret）——**容器释放器（39B 变体，无 +0x10 清零）**：
+  - `[+4]` 指针非空 且 `[+0xd]` 标志非零 → `call 0x7c8b3d`（CRT delete）→ `[+4]=0`
+  - `[+0xd]=0`、`[+8]=0`（三字段清零，无 +0x10）
+- 直接 call 1 个/去重 1——picker callees=1 **完全吻合**
+- 判类：容器释放器（39B 变体——批 2887/2899/2907 同模板） (partial)
+
+## c 路：0x473000 scalar deleting 析构器·虚表 0x7E4BC4（0x49=73B）
+
+- 范围 0x473000-0x473046（ret 4 @0x473046）
+- thiscall 1 栈参（ret 4；[esp+8]=deleting 标志）——**scalar deleting 析构器（虚表 0x7E4BC4 新增）**：
+  - `mov [esi], 0x7E4BC4`（虚表复位）
+  - `[+4]` 指针非空 且 `[+0xd]` 标志非零 → `call 0x7c8b3d`（delete 内部缓冲）→ `[+4]=0`
+  - `[+0xd]=0`、`[+8]=0`（字段清零）
+  - `[esp+8] & 1` → `call 0x7c8b3d`（delete this）→ 返 this
+- 直接 call 2 个/去重 1——picker callees=1 **完全吻合**（0x7c8b3d 已登记）
+- 判类：Vector 族 scalar deleting 析构器（虚表 0x7E4BC4——批 2906 c 路 0x7E4AB8 邻域新增） (partial)
+
+## 核验结果
+
+- _check_callees2908.py：a 路 2/2（去重 2）、b 路 1/1、c 路 2/2（去重 1）——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7c8e17（CRT new）、0x7c8b3d（CRT delete）
+- **a 路族变体**：4B/项步长（lea [ebp*4]）——与批 2895 a 路（12B/项 lea [ebx*12]）同模板不同步长，VectorClass 多步长变体
+- **b/c 族谱**：39B 释放器 + scalar deleting 析构器（虚表 0x7E4BC4）——批 2886-2908 VectorClass 族多虚表多点覆盖
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x473050/0x4730A0/0x4730F0**（73B 三连 scalar deleting，虚表同 0x7E4BC4）——后续候选（同族）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
