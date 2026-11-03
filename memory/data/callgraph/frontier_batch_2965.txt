@@ -1,0 +1,51 @@
+# frontier batch 2965
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x49E9B0（42 扇入 deps=1）+ 0x49EC40（39 扇入 deps=1）+ 0x49EE10（73 扇入 deps=1）
+三路：a=0x49E9B0（0x29=41B **动态数组释放器** callees=1 deps=1）/ b=0x49EC40（0x26=38B **动态数组释放器变体** callees=1 deps=1）/ c=0x49EE10（0x46=70B **自包含复合析构器 虚表 0x7E5C24** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2965{a,b,c}.txt（各 0x200），完整读取确认（a ret @0x49E9D9、b ret @0x49EC66、c ret 4 @0x49EE56）
+核验：.qwen/tmp/_check_callees2965.py 三路全 PASS（a 1、b 1、c 去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7356 → 7359（待 _append_tsv_batch2965.py）
+
+## a 路：0x49E9B0 动态数组释放器（0x29=41B，42 扇入 deps=1）
+
+- 范围 0x49E9B0-0x49E9D9（裸 ret @0x49E9D9）
+- **同 2958 c/2963 模板**（[+4] 数组指针 + [+0xd] 持有标志门控）：
+  - `mov eax, [esi+4]`（+4 数组指针）→ `cmp eax, ebx; je 跳过` + `cmp byte ptr [esi+0xd], bl; je 跳过`（**+0xd 持有标志**）
+  - `push eax; call 0x7c8b3d`（operator delete）→ `mov [esi+4], 0`（清指针）→ `mov [esi+0xd], bl`（清标志）→ `mov [esi+8], 0`（**+8 计数清零**）→ ret
+- 直接 call 1 个/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：动态数组释放器（[+4] 指针 + [+0xd] 持有标志门控 + delete + 三清零） (partial)
+
+## b 路：0x49EC40 动态数组释放器变体（0x26=38B，39 扇入 deps=1）
+
+- 范围 0x49EC40-0x49EC66（裸 ret @0x49EC66）
+- **同 a 模板**（codegen 顺序微调——[+0xd] 检查提前）：
+  - `mov eax, [esi+4]` → **`cmp eax, ebx; je`（先查指针）** + `cmp byte ptr [esi+0xd], bl; je` → `call 0x7c8b3d`（delete）→ `mov [esi+4], 0`（清指针）→ `mov [esi+0xd], bl`（清标志）→ `mov [esi+8], 0`（**+8 计数清零**）→ ret
+- 直接 call 1 个/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：动态数组释放器变体（[+4] 指针 + [+0xd] 持有标志门控 + delete + 三清零） (partial)
+
+## c 路：0x49EE10 自包含复合析构器 虚表 0x7E5C24（0x46=70B，73 扇入 deps=1）
+
+- 范围 0x49EE10-0x49EE56（ret 4 @0x49EE56——thiscall + 1 param deleting 标志）
+- **同 2959 a/b 自包含析构器模板**（虚表变体 **0x7E5C24**）：
+  - `mov eax, [esi+4]`（+4 数组指针）→ `mov [esi], 0x7e5c24`（**虚表复位 0x7E5C24**——无外部成员释放器，内联数组释放）
+  - `test eax; je` + `cmp byte ptr [esi+0xd]; je`（**+0xd 持有标志门控**）→ `call 0x7c8b3d`（delete 数组）→ `mov [esi+4], 0`（清指针）
+  - `mov [esi+0xd], 0`（清标志）→ `test al, 1`（deleting 门）→ `mov [esi+8], 0`（清计数）→ `je` → `call 0x7c8b3d`（**delete this**）→ ret 4
+- 直接 call 2 次/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：自包含复合析构器（虚表 0x7E5C24 + 内联 [+4]/[+0xd] 数组释放 + delete this） (partial)
+
+## 核验结果
+
+- _check_callees2965.py：a 路 1、b 路 1、c 路 去重 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（a/b 单 0x7C8B3D；c 2 调用去重 1）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D（operator delete）——**已在 TSV 登记**
+- **★动态数组释放器三实例 + 自包含析构器新虚表**：2958 c（0x49AF70）+ 本批 a/b（0x49E9B0/0x49EC40）+ 本批 c（0x49EE10 虚表 0x7E5C24——自包含析构器族第三实例，前两为 2959 a/b 虚表 0x7E5338）
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x49EC80/0x49ED00**（b 路 dump 尾部：同族释放器/容器操作）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
