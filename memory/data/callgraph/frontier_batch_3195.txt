@@ -1,0 +1,54 @@
+frontier batch 3195
+===================
+日期: 2026-08-?? (心跳续跑)
+来源: memory/data/callgraph/ranking.tsv 按行序取未登记池
+选取: 0x556520 / 0x556550 / 0x556620（析构器 + LinkClass 构造/getter）
+
+三路判类（code/randmap/disasm.py 反汇编，.qwen/tmp/_d3195{a,b,c}.txt）
+------------------------------------------------------------------------
+0x556520  36B 析构器（stdcall ret 4，this ecx）：
+          写虚表 [+0]=0x7ed0a4
+          call 0x490400（子析构）
+          [esp+8]&1 门控 -> delete this（0x7c8b3d）-> ret 4
+0x556550  65B LinkClass::LinkClass（带名）链表节点构造器：
+          清 [+4]/[+8]（prev/next）
+          写虚表 [+0]=0x7e9344
+          IAT 调用 [0x7e9368]（初始化）
+          双向链表头插：[+4]=0 时头=[+4]；prev/next 互接
+            新节点 [+4]=旧头、[+8]=容器、旧头[+8]=新节点
+          槽 0x18（虚调用，完善）-> ret 4
+0x556620  4B LinkClass::GetNext（带名）内联 getter：
+          mov eax, dword ptr [ecx + 4]; ret
+
+核验（_check_callees3195.py，RANGES 字面量 + 批内自引用 BATCH_NORM）
+------------------------------------------------------------------------
+a_0x556520 [0x556520,0x556541] 跨函数直接 call 2 去重 2 =
+  0x490400 / 0x7c8b3d 已登记
+b_0x556550 [0x556550,0x55658E] 跨函数直接 call 0（IAT [0x7e9368] +
+  槽 0x18 间接调用）
+c_0x556620 [0x556620,0x556623] 跨函数直接 call 0（纯 getter）
+无 MISSING / 无 UNKNOWN / 无批内自引用
+
+三态判定
+------------------------------------------------------------------------
+0x556520  partial             （结构判明：36B 析构器，虚表 0x7ed0a4 +
+                                 子析构 0x490400 + 门控 delete；无 YRpp
+                                 符号）
+0x556550  semantics_verified  （LinkClass::LinkClass 带名：双向链表头插
+                                 闭合 + IAT 初始化 + 槽 0x18）
+0x556620  semantics_verified  （LinkClass::GetNext 带名：返 [+4] 内联
+                                 getter）
+
+说明
+------------------------------------------------------------------------
+★ b/c 为带名 LinkClass 链表族（YRpp 符号）：构造器（头插语义清晰）
+  + GetNext（4B 极简 getter）——55 段带名链表类首例。
+★ a 路 36B 析构器（0x7ed0a4 + 0x490400）与链表族兼容。
+下一批候选预期 0x556630（LinkClass::GetPrev 带名 4B）/ 0x556EB0
+（42B）/ 0x557000（39B，观察项，未登记前不作断言）。
+
+登记（frontier_status.tsv 追加，TSV 8062 -> 8065）
+------------------------------------------------------------------------
+0x00556520  callees=2  deps=2   batch=3195  partial
+0x00556550  callees=2  deps=2   batch=3195  semantics_verified (LinkClass::LinkClass)
+0x00556620  callees=0  deps=0   batch=3195  semantics_verified (LinkClass::GetNext)
