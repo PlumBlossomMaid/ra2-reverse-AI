@@ -1,0 +1,54 @@
+# frontier batch 2903
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x46DD70（165B）+ 0x46F600（205B）+ 0x46F6D0（317B）
+三路：a=0x46DD70（0xA5=165B **玩家属性串查询大函数** callees=4 字面+3 IAT 间接 / picker=7 deps=0）/ b=0x46F600（0xCD=205B **玩家消息分发器** callees=0 字面+4 IAT / picker=4 deps=0）/ c=0x46F6D0（0x13D=317B **玩家身份匹配同步器** callees=6 字面+3 IAT / picker=8 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2903{a,b,c}.txt（a 长度 0xB0、b 长度 0xD0、c 长度 0x140），完整读取确认（a ret @0x46DE14、b ret @0x46F6CC、c ret @0x46F80C）
+核验：.qwen/tmp/_check_callees2903.py 三路全 PASS（a 4/4 去重4、b 0/0、c 7/7 去重6），无 MISSING、无 UNKNOWN、无批内自引用——b 路纯 IAT 间接核验字面 0 属预期差
+注册：TSV 7186 → 7189（待 _append_tsv_batch2903.py）
+
+## a 路：0x46DD70 玩家属性串查询大函数（0xA5=165B）
+
+- 范围 0x46DD70-0x46DE14（ret @0x46DE14）
+- thiscall 2 栈参（edi=this、edx=byte参数）——**玩家属性串查询大函数**：
+  - `[0xa8da8c]` 全局 → 0x411/0x412 串码分支（**0xfffffbed 钳位**——[0xa8da8c]=0 →0x411，非 0 →0x412）
+  - IAT 槽 `[0x7e14a8]`（LoadString）+ `[0x7e14a0]`（Format）→ 调 ebx/ebp 两 IAT ×4 轮：
+    - `0x4e37d0`/`0x4e41d0`/`0x4e4e60`（**三玩家属性查询器·[0x4Exxx] 区**）+ 0x5e8760 门禁 → 0x732 串码 + IAT [0x7e149c] 收尾
+- 直接 call 4 个/去重 4（picker=7 含 3 IAT 间接 [0x7e14a0/a8/9c]——预期差）
+- 判类：玩家属性串查询大函数（[0xA8DA8C] 分支 + 0x411/0x412 串码 + IAT LoadString/Format 双链 + 三玩家属性查询器 0x4E37D0/0x4E41D0/0x4E4E60 + 0x5E8760 门禁）——UI 文本生成 (partial)
+
+## b 路：0x46F600 玩家消息分发器（0xCD=205B）
+
+- 范围 0x46F600-0x46F6CC（ret @0x46F6CC）
+- thiscall 0 栈参（ret）——**玩家消息分发器（8 玩家循环 + 四 IAT 链）**：
+  - 8 玩家循环（eax=0..7）→ `[0xa8da90+eax*4]` 表 → **IAT 槽 [0x7e14a8]/[0x7e14a4]/[0x7e1498]/[0x7e1490]** 四链（LoadString/Format/Check/Format）
+  - 双 0x4c2/0x151/0x14e 串码 + 0x14b + 0x5（退出码）
+- 直接 call 0 个（picker=4 全 IAT 间接——预期差，核验只抓字面量）
+- 判类：玩家消息分发器（8 玩家循环 + 四 IAT 链 LoadString/Format/Check/Format + 0x4C2/0x151/0x14E/0x14B 串码族）——UI 消息生成/分发 (partial)
+
+## c 路：0x46F6D0 玩家身份匹配同步器（0x13D=317B）
+
+- 范围 0x46F6D0-0x46F80C（ret @0x46F80C）
+- thiscall 0 栈参（ret）——**玩家身份匹配同步器**：
+  - `[0xa8da90..0xa8dab0]` 8 玩家循环 → `0x4e37d0`（玩家身份查询·[0x4Exxx]）→ IAT [0x7e14a8] 串查询 → [0x7e1498] 门
+  - `[0xa8b23c]` SessionClass::Instance（**已登记 batch 117**）→ 虚表槽 0x28 取本地玩家 → 虚表槽 0x1c 校验
+  - `0x5e9440`/`0x5e93f0`（**玩家身份检查器**）→ `[0xac119c/0xac11a0/0xac11b0/0xac11b4]` 四全局比对（**玩家身份枚举**——local/AI/neutral？）
+  - `0x696f10`（属性查询）→ `0x696f90`（**玩家属性写回**）→ `0x4e3f70` 收尾 → IAT [0x7e1498] 关闭
+- 直接 call 7 个/去重 6（picker=8 含 2 IAT 间接——预期差）
+- 判类：玩家身份匹配同步器（8 玩家循环 + 0x4E37D0 查询 + SessionClass 虚表槽 0x28/0x1c + 0x5E9440/0x5E93F0 检查 + [0xAC119C] 四全局身份比对 + 0x696F10/90 读写 + 0x4E3F70 收尾）——多人局玩家身份同步核心 (partial)
+
+## 核验结果
+
+- _check_callees2903.py：a 路 4/4（去重 4）、b 路 0/0、c 路 7/7（去重 6）——三路全 PASS
+- picker callees vs 核验差值：**a 路 picker=7 vs 核验=4**（3 IAT 间接 [0x7e14a0/a8/9c]）、**b 路 picker=4 vs 核验=0**（4 IAT 间接全间接）、**c 路 picker=8 vs 核验=6**（2 IAT 间接 [0x7e14a8/0x7e1498]）——IAT 间接调用预期差，如实记录
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4e37d0/0x4e41d0/0x4e4e60（玩家属性查询器三件）、0x4e3f70（收尾器）、0x5e8760/0x5e9440/0x5e93f0（玩家检查器三件）、0x696f10/0x696f90（玩家属性读写）
+- **三路共享域**：0x46DD70/0x46F600/0x46F6D0 共享 [0xA8DA90] 玩家表 + 0x4Exxx 属性查询区 + IAT [0x7e14xx] 串查询链——多人局 UI/同步域
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x46F810 / 0x46F880**（106B 孪生，2 callees）/ **0x46FA20**（152B，4 callees）——后续候选（0x46Fxxx 区）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
