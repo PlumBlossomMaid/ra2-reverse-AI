@@ -1,0 +1,52 @@
+# frontier batch 2976
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4A2AB0（167 扇入 deps=2）+ 0x4A2B60（360 扇入 deps=3）+ 0x4A2E00（78 扇入 deps=1）
+三路：a=0x4A2AB0（**容器项销毁器** callees=2 deps=2）/ b=0x4A2B60（**360 扇入 COM 大函数** callees=3 deps=3）/ c=0x4A2E00（**缓冲检查器** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2976{a,b,c}.txt（a 0x200、b 0x300、c 0x100），完整读取确认（a ret @0x4A2B54、b ret 0xc @0x4A2CC5、c ret @0x4A2E42）
+核验：.qwen/tmp/_check_callees2976.py 三路全 PASS（a 4 调用去重 2、b 4 调用去重 3、c 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7389 → 7392（待 _append_tsv_batch2976.py）
+
+## a 路：0x4A2AB0 容器项销毁器（167 扇入 deps=2）
+
+- 范围 0x4A2AB0-0x4A2B54（ret @0x4A2B54）
+- **容器项逐项销毁循环**：
+  - `mov esi, [esp+8]; mov al, [esi+0xd]`（+0xd 持有标志）→ `lea ecx, [esi-4]`（**this-4 容器头**）→ `test al; je` 跳过 → `mov eax, [ecx+0x14]; test eax; jle`（计数）+ `mov edx, [ecx+8]; test edx`（数组）
+  - 循环：`call 0x4a3020`（**段内析构辅助**——项析构）+ `call 0x7dc720`（**成员释放器**——项持有对象释放）→ 依 [+0xd]/[+0x10]/[+0x11] 标志推进
+- 直接 call 4 次/去重 2（0x4A3020 + 0x7DC720）——picker callees=2 **完全吻合**（扩大至第二 ret 后）
+- 判类：容器项销毁器（+0xd 持有标志门控 + 0x4A3020 项析构 + 0x7DC720 成员释放） (partial)
+
+## b 路：0x4A2B60 360 扇入 COM 大函数（360 扇入 deps=3）
+
+- 范围 0x4A2B60-0x4A2CC5（ret 0xc @0x4A2CC5）
+- **360 扇入高热度 COM 处理**：
+  - `mov eax, [esp+0xc]; test; jne` → 空返回 **0x80004003（E_POINTER）** → 非空处理：
+  - `call 0x55c0e0`（**段外辅助**）+ `call 0x7ca090`（**CRT 字符串函数**）+ `call 0x7dc720`（**成员释放器**）→ 字段处理
+- 直接 call 4 次/去重 3（0x55C0E0 + 0x7CA090 + 0x7DC720）——picker callees=3 **完全吻合**
+- 判类：360 扇入 COM 处理方法（E_POINTER 校验 + 0x55C0E0 辅助 + CRT 0x7CA090 + 成员释放 0x7DC720） (partial)
+
+## c 路：0x4A2E00 缓冲检查器（78 扇入 deps=1）
+
+- 范围 0x4A2E00-0x4A2E42（ret @0x4A2E42）
+- **缓冲有效性检查 + 释放**：
+  - `mov al, [esi+0x10]; test; jne 跳过` + `mov al, [esi+0x11]; test; jne 跳过`（**双标志检查**）→ `mov eax, [esi+8]; test; jne`（**+8 缓冲指针**）→ `call 0x7dc720`（**成员释放器**——缓冲释放）→ 清理
+- 直接 call 1 个/去重 1（0x7DC720）——picker callees=1 **完全吻合**
+- 判类：缓冲检查器（双标志 + [+8] 指针 + 0x7DC720 释放——与 2974 c 路同族） (partial)
+
+## 核验结果
+
+- _check_callees2976.py：a 路 去重 2、b 路 去重 3、c 路 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（a 扩范围后 2 全吻合；b 4 调用去重 3；c 单 0x7DC720）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4A3020 + 0x7DC720 + 0x55C0E0 + 0x7CA090——**均已在 TSV 登记**
+- **★0x7DC720 成员释放器成为本段核心依赖**：2974 c/本批 a/b/c 均调用——0x4A 段缓冲/容器对象的通用成员释放器
+- **★0x4A3020 段内析构族**：2974 c + 本批 a——0x4A30 段辅助析构器两实例
+- **★360/167/78 扇入 0x4A 段高热度域**：b 路 360 扇入 COM 处理——0x4A2x 段配置/COM 域
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4A2E50/0x4A2EA0**（picker 显示——68/60 扇入 deps=1 接着的 0x4A 段函数）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
