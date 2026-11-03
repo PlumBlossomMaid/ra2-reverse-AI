@@ -1,0 +1,53 @@
+# frontier batch 3051
+
+日期：2026-11-04
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4E2450（15B callees=1）+ 0x4E2460（23B callees=1）+ 0x4E2580（32B callees=0）
+三路：a=0x4E2450（0xF=15B **IAT wrapper 构造器** callees=1 deps=1）/ b=0x4E2460（0x17=23B **IAT 差值计算器** callees=1 deps=1）/ c=0x4E2580（0x1E=30B **设置器** callees=0 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3051{a,b,c}.txt（a 0x20、b 0x30、c 0x30），完整读取确认（a ret @0x4E245E、b ret @0x4E2473/0x4E2476、c ret 4 @0x4E2598/0x4E259D）
+核验：.qwen/tmp/_check_callees3051.py 三路全 PASS（a 0、b 0、c 0 字面量），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7614 → 7617（待 _append_tsv_batch3051.py）
+
+## a 路：0x4E2450 IAT wrapper 构造器（0xF=15B，callees=1）
+
+- 范围 0x4E2450-0x4E245E（ret @0x4E245E；后 nop 对齐 0x4E245F）
+- **IAT wrapper 构造器**（this=esi）：
+  - `mov esi, ecx; call [0x7e1530]`（**IAT 槽 [0x7E1530]**——取系统值）→ `mov [esi], eax`（**写 [+0]**）→ `mov eax, esi; ret`（返回 this）
+- 直接 call 0 个/去重 0——picker callees=1 **差值 1 = IAT 槽 [0x7E1530]**（预期差模式：picker 含 IAT 间接，核验只抓字面量）
+- 判类：IAT wrapper 构造器（[0x7E1530] 取数写 [+0]——构造后立即读全局系统值） (partial)
+
+## b 路：0x4E2460 IAT 差值计算器（0x17=23B，callees=1）
+
+- 范围 0x4E2460-0x4E2476（ret @0x4E2473 差值-1/0x4E2476 差值；后 nop 对齐 0x4E2477）
+- **IAT 差值计算器**（this=esi，返回 this 差值）：
+  - `mov esi, ecx; call [0x7e1530]`（**IAT 槽 [0x7E1530]**——取当前值）→ `mov ecx, [esi]`（读 [+0] 基线）→ `pop esi; cmp eax, ecx; ja 0x4e2474`（**无符号 `ja` 比较**——当前 > 基线）
+  - `sub eax, ecx; dec eax; ret`（**差值-1**——当前 ≤ 基线）
+  - 0x4e2474：`sub eax, ecx; ret`（**差值**——当前 > 基线）
+- 直接 call 0 个/去重 0——picker callees=1 **差值 1 = IAT 槽 [0x7E1530]**（预期差模式）
+- 判类：IAT 差值计算器（[0x7E1530] 当前值 - [+0] 基线，无符号 ja 决定是否 -1——计数器差值） (partial)
+
+## c 路：0x4E2580 设置器（0x1E=30B，callees=0）
+
+- 范围 0x4E2580-0x4E259D（ret 4 @0x4E2598 已改/0x4E259D 未改；后 nop 对齐 0x4E25A0 邻函数）
+- **设置器**（stdcall ret 4——参 [esp+4] 新值；this=ecx）：
+  - `mov eax, [esp+4]; mov edx, [ecx+0x30]; cmp eax, edx; je 0x4e259b`（**[+0x30] 比对**——相同跳过）
+  - `mov [ecx+0x30], eax; mov eax, [ecx]; call [eax+0x48]`（**虚表槽 0x48**——刷新）→ `mov eax, 1; ret 4`（**返 1 已改**）
+  - 0x4e259b：`xor eax, eax; ret 4`（**返 0 未改**）
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**（纯虚表槽 0x48 间接——叶子）
+- 判类：设置器（[+0x30] 比对 + 虚表槽 0x48 刷新 + 返 1/0 已改/未改——setter 防重） (partial)
+
+## 核验结果
+
+- _check_callees3051.py：a 路 0、b 路 0、c 路 0 字面量——三路全 PASS
+- picker callees vs 核验差值：a/b 路差 1（picker 1 = IAT 槽 [0x7E1530]，预期差模式）；c 路差 0
+- 无批内自引用（批内地址 0x4E2450/0x4E2460/0x4E2580 互不为被调）；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：无直接调用（a/b IAT [0x7E1530]、c 虚表槽 0x48）——IAT 槽与虚表槽均为间接，非 TSV 登记项
+- **★IAT 槽 [0x7E1530] 首见**：a/b 路共享（系统值读取——计数器/时间戳源）
+- **★无符号 `ja` 差值分支**：b 路当前>基线 ? 差值 : 差值-1——计数器差值惯用法（3050c 巨型 WndProc 邻域 0x4E 段）
+- **batch 3051 无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4E2690（416B callees=3）/ 0x4E30D0（30B callees=2）/ 0x4E30F0（30B callees=2）**：picker 显示 0x4E 段——下一批候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
