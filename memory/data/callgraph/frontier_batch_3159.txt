@@ -1,0 +1,62 @@
+frontier batch 3159
+===================
+日期: 2026-08-?? (心跳续跑)
+来源: memory/data/callgraph/ranking.tsv 按行序取未登记池
+选取: 0x523370 / 0x5233D0 / 0x523980（智能指针/COM 接口/四虚表构造器）
+
+三路判类（code/randmap/disasm.py 反汇编，.qwen/tmp/_d3159{a,b,c}.txt）
+------------------------------------------------------------------------
+0x523370  43B 智能指针赋值器（stdcall ret 4，this ecx + 1 栈参）：
+          [esi] != 参数 eax 时：
+            [esi]=eax（写入新值）
+            新值非空 -> 槽 4（AddRef）
+            旧值 edi 非空 -> 槽 8（Release）
+          mov eax,esi; ret 4
+0x5233D0  106B COM 接口获取/赋值器（stdcall ret 4，this ecx + 1 栈参）：
+          [esi]=0 清零
+          参数对象槽 0（QueryInterface 风格：push 0x818858 标识
+            + &[esp+0xc]）-> HRESULT ebx
+          ebx < 0（失败）-> 释放旧值槽 8 -> [esi]=0
+            -> ebx != 0x80004002（E_ABORT）-> 0x7dc720 抛错
+          成功 -> 释放旧值 -> [esi]=槽 0 返回的接口指针
+0x523980  73B 四虚表类构造器（stdcall ret 4，this ecx + 1 栈参）：
+          call 0x711840（委托）
+          写四虚表 [+0]=0x7eb610 [+4]=0x7eb5f4 [+8]=0x7eb5ec
+            [+0xc]=0x7eb5e4
+          模板表指针 [0x7eb6d4] -> [+0xe50]/[+0xe6c]、
+            [0x7e4dd8] -> [+0xe88]
+          mov eax,esi; ret 4
+
+核验（_check_callees3159.py，RANGES 字面量 + 批内自引用 BATCH_NORM）
+------------------------------------------------------------------------
+a_0x523370 [0x523370,0x523398] 跨函数直接 call 0（槽 4/8 虚调用）
+b_0x5233D0 [0x5233D0,0x523437] 跨函数直接 call 1 去重 1 = 0x7dc720 已登记
+c_0x523980 [0x523980,0x5239C6] 跨函数直接 call 1 去重 1 = 0x711840 已登记
+无 MISSING / 无 UNKNOWN / 无批内自引用
+
+三态判定
+------------------------------------------------------------------------
+0x523370  partial             （结构判明：智能指针赋值器，槽 4/8 引用计数
+                                 AddRef/Release 语义；无 YRpp 符号）
+0x5233D0  partial             （结构判明：COM 接口获取/赋值，槽 0
+                                 QueryInterface + E_ABORT 错误路径；无
+                                 YRpp 符号）
+0x523980  partial             （结构判明：四虚表类构造器，0x711840 委托 +
+                                 双模板表指针；无 YRpp 符号）
+
+说明
+------------------------------------------------------------------------
+★ a/b 为 COM 智能指针族：槽 4 = AddRef、槽 8 = Release、槽 0 =
+  QueryInterface（0x818858 为接口标识区）——本批首例明确 COM
+  引用计数语义（区别于 CRT/游戏对象虚表）。
+★ c 路四虚表 0x7eb610/0x7eb5f4/0x7eb5ec/0x7eb5e4 = 多重继承类构造
+  （此前多为单/双虚表模式），[+0xe50]/[+0xe6c]/[+0xe88] 为模板数据表
+  指针槽。
+下一批候选预期 0x523B10（43B）/ 0x523D00（919B）/ 0x524FC0（73B，
+观察项，未登记前不作断言）。
+
+登记（frontier_status.tsv 追加，TSV 7954 -> 7957）
+------------------------------------------------------------------------
+0x00523370  callees=0  deps=0   batch=3159  partial
+0x005233D0  callees=1  deps=1   batch=3159  partial
+0x00523980  callees=1  deps=1   batch=3159  partial
