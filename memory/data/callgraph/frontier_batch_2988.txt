@@ -1,0 +1,57 @@
+# frontier batch 2988
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4AA380（185B callees=0）+ 0x4AC2B0（84B callees=1）+ 0x4AE0B0（467B callees=5）
+三路：a=0x4AA380（0xB6=182B **逆序遍历对象表** callees=0 deps=0）/ b=0x4AC2B0（0x53=83B **虚表槽族判定** callees=1 deps=1）/ c=0x4AE0B0（0x1D0=464B **坐标遍历大函数** callees=5 deps=5）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2988{a,b,c}.txt（a 0xE0、b 0x80、c 0x200），完整读取确认（a ret 4 @0x4AA42A/0x4AA436、b ret @0x4AC303、c ret 8 @0x4AE280）
+核验：.qwen/tmp/_check_callees2988.py 三路全 PASS（a 去重 0、b 去重 1、c 去重 5），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7425 → 7428（待 _append_tsv_batch2988.py）
+
+## a 路：0x4AA380 逆序遍历对象表（0xB6=182B，callees=0）
+
+- 范围 0x4AA380-0x4AA436（ret 4 @0x4AA42A 主出口/0x4AA436 早出口；后 nop 对齐 0x4AA440 新函数）
+- **与 2987 c 路 0x4AA2B0 同族（逆序方向遍历 0x82003C 表）**：
+  - `mov ebx, 0x82003c`（**全局表指针数组**——注意从 0x82003C 起，非 0x820030）→ `mov eax, [ebx]; lea eax, [eax+eax*2]; mov ebp, [eax*8 + 0x8a0370]; dec ebp; js`（**倒序计数**）
+  - 内层：`mov esi, [edx + ebp*4]`（倒序遍历对象指针）→ `mov al, [esi+0x14]; and al, 1`（+0x14 位标志）→ `call [edx+0x64]`（虚表槽 0x64）→ `call [eax+0x13c]`（虚表槽 0x13c）
+  - 命中记录 → `add ebx, 4; cmp ebx, 0x820048; jl`（遍历到 0x820048——3 表，比 2987 c 路 0x82003C 多一表）
+- 直接 call 0 个（虚表槽 0x64/0x13c 间接）——picker callees=0 **完全吻合**
+- 判类：逆序遍历对象表（0x82003C 表指针数组 ×24 索引 + [0x8A0364]/[0x8A0370] 对象表 + 虚表槽 0x64/0x13c + 倒序） (partial)
+
+## b 路：0x4AC2B0 虚表槽族判定（0x53=83B，callees=1）
+
+- 范围 0x4AC2B0-0x4AC303（ret @0x4AC303；后 nop 对齐 0x4AC310 新函数）
+- **五虚表槽链式判定**：
+  - `call [eax+0x3c]`（**虚表槽 0x3c**——获取目标对象）→ `call 0x50b6f0`（**段外辅助**——判定目标有效）→ `call [edx+0x138]`（**虚表槽 0x138**）→ `call [eax+0x13c]`（**虚表槽 0x13c**）→ `cmp byte ptr [esi+0x81], 0`（**+0x81 标志检查**）→ `call [edx+0x14c]`（**虚表槽 0x14c**）→ `mov byte ptr [0x822cf2], 0`（**全局 [0x822CF2] 清零**）
+- 直接 call 1 个/去重 1（0x50B6F0）——picker callees=1 **完全吻合**（4 虚表槽 0x3c/0x138/0x13c/0x14c 间接）
+- 判类：虚表槽族判定（虚表槽 0x3c/0x138/0x13c/0x14c 链式 + 0x50B6F0 辅助 + +0x81 标志 + [0x822CF2] 清零） (partial)
+
+## c 路：0x4AE0B0 坐标遍历大函数（0x1D0=464B，callees=5）
+
+- 范围 0x4AE0B0-0x4AE280（ret 8 @0x4AE280；后 nop 对齐 0x4AE290 新函数）
+- **对象数组遍历 + 坐标距离判定**：
+  - `mov ecx, [0x8a03a0]`（**全局 [0x8A03A0] 计数**）→ `mov ecx, [0x8a0394]`（**全局 [0x8A0394] 对象数组**）→ `mov ecx, [ecx + eax*4]`（取对象）→ `call 0x40dd70`（**段外辅助**——取对象）
+  - `mov ecx, [esi+0x21c]` → `call 0x50b6f0`（判定）→ `cmp byte ptr [esi+0x41b], 0`（+0x41b 标志）→ `call [edx+0x48]`（**虚表槽 0x48**——取坐标三元组）
+  - **坐标距离浮点**：`fild` ×3（取 dx/dy/dz）→ `fmul`/`faddp`（点积）→ `call 0x4cac40`（**CRT 浮点求长/距离**）→ `call 0x7c5f00`（**CRT _ftol**）→ `call [edx+0x84]`（**虚表槽 0x84**——取结果 [+0x5e8]）→ `cmp ebx, [eax+0x5e8] 左移 8 加参`（**距离比较**）
+  - 类型 6 分支：`call [eax+0x2c]`（虚表槽 0x2c——类型判断 ==6）→ `mov ecx, [0x8871e0]` → `cmp byte ptr [ecx+0x17e7], 0`（全局标志）→ `mov edx, [0xa83d4c]` → `call 0x4f9a50`（判定）→ 重复距离计算
+  - 命中：`call [edx+0x120]`（**虚表槽 0x120**）→ 置零
+- 直接 call 7 次/去重 5（0x40DD70 + 0x4CAC40 + 0x4F9A50 + 0x50B6F0 + 0x7C5F00）——picker callees=5 **完全吻合**（虚表槽 0x48/0x84/0x2c/0x120/0x13c 间接）
+- 判类：坐标遍历大函数（[0x8A0394]/[0x8A03A0] 数组 + 0x40DD70 取对象 + 虚表槽 0x48 坐标 + 0x4CAC40 浮点距离 + 0x7C5F00 _ftol + 虚表槽 0x84 结果 [+0x5e8] 比较） (partial)
+
+## 核验结果
+
+- _check_callees2988.py：a 路 0、b 路 1、c 路 7 调用去重 5——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（a 纯间接；b 单辅助；c 五字面量全吻合）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x50B6F0 + 0x40DD70 + 0x4CAC40 + 0x4F9A50 + 0x7C5F00——**均已在 TSV 登记**
+- **★[0x8A0394]/[0x8A03A0] 对象数组首见**：c 路遍历的全局对象数组（[0x8A0394] 基址 + [0x8A03A0] 计数）
+- **★[0x822CF2] 全局标志首见**：b 路清零
+- **★[0xA83D4C] 全局首见**：c 路 0x4F9A50 的参数来源
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4AEB50（73B callees=1）/ 0x4AEBB0（30B callees=2）/ 0x4AEBF0（30B callees=2）**：picker 显示——c 路之后的 0x4AEB 族（三个小函数）
+- a 路尾邻函数 0x4AA440（`[0x8A03F8]/[0x8A03FA]` 全局字比较 + 大函数）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
