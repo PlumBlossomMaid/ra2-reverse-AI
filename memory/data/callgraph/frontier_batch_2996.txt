@@ -1,0 +1,49 @@
+# frontier batch 2996
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4B4D60（13B callees=0）+ 0x4B4EE0（62B callees=1）+ 0x4B4F20（31B callees=1）
+三路：a=0x4B4D60（0xC=12B **单指针释放器** callees=0 deps=0）/ b=0x4B4EE0（0x3D=61B **多虚表槽析构** callees=1 deps=1）/ c=0x4B4F20（0x1C=28B **转发器** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2996{a,b,c}.txt（各 0x40/0x60），完整读取确认（a ret @0x4B4D6C、b ret @0x4B4F1D、c ret 4 @0x4B4F3C）
+核验：.qwen/tmp/_check_callees2996.py 三路全 PASS（a 去重 0、b 去重 1、c 去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7449 → 7452（待 _append_tsv_batch2996.py）
+
+## a 路：0x4B4D60 单指针释放器（0xC=12B，callees=0）
+
+- 范围 0x4B4D60-0x4B4D6C（ret @0x4B4D6C；后 0x4B4D70 新函数）
+- **单指针释放**（同 2995 c 路尾邻 0x4B4D50 同族）：
+  - `mov eax, [ecx]; test; je` → `push eax; call [ecx+8]`（**虚表槽 8 释放**）→ ret
+- 直接 call 0 个（虚表槽 8 间接）——picker callees=0 **完全吻合**
+- 判类：单指针释放器（虚表槽 8 释放） (partial)
+
+## b 路：0x4B4EE0 多虚表槽析构（0x3D=61B，callees=1）
+
+- 范围 0x4B4EE0-0x4B4F1D（ret @0x4B4F1D；后 nop 对齐 0x4B4F20 新函数）
+- **多虚表槽析构**（+0x48 标志门控 + 双子对象）：
+  - `mov al, [esi+0x48]; test; je`（**+0x48 标志门控**）→ `mov eax, [esi+0xb0]; lea ecx, [esi+0xb0]; call [eax+0x24]`（**[+0xb0] 对象虚表槽 0x24**）→ `mov byte ptr [esi+0x48], 0`
+  - `mov edx, [esi+0xb0]; lea ecx, [esi+0xb0]; call [edx+0x20]`（**[+0xb0] 对象虚表槽 0x20**）→ `mov eax, [esi+0x50]; lea ecx, [esi+0x50]; call [eax+0x20]`（**[+0x50] 对象虚表槽 0x20**）→ `mov ecx, esi; call 0x5565f0`（**析构子例程**）
+- 直接 call 1 个/去重 1（0x5565F0）——picker callees=1 **完全吻合**（虚表槽 0x24/0x20 间接）
+- 判类：多虚表槽析构（+0x48 门控 + [+0xb0]/[+0x50] 虚表槽 0x24/0x20 + 0x5565F0 析构） (partial)
+
+## c 路：0x4B4F20 转发器（0x1C=28B，callees=1）
+
+- 范围 0x4B4F20-0x4B4F3C（ret 4 @0x4B4F3C；后 nop 对齐 0x4B4F40 新函数）
+- **转发器**（stdcall ret 4）：
+  - `mov edi, [esp+0xc]`（读参）→ `mov eax, [esi+0x50]; lea ecx, [esi+0x50]; push edi; call [eax+0xc]`（**[+0x50] 对象虚表槽 0xc**）→ `push edi; mov ecx, esi; call 0x5566a0`（**转发目标**）
+- 直接 call 1 个/去重 1（0x5566A0）——picker callees=1 **完全吻合**（虚表槽 0xc 间接）
+- 判类：转发器（[+0x50] 虚表槽 0xc + 0x5566A0） (partial)
+
+## 核验结果
+
+- _check_callees2996.py：a 路 0、b 路 1、c 路 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x5565F0 + 0x5566A0——**均已在 TSV 登记**
+- **★0x5565F0/0x5566A0 首见**：b/c 路两个新目标
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4B4F40（31B callees=1）/ 0x4B4F60（31B callees=1）/ 0x4B4F80（47B callees=1）**：picker 显示——后续候选（c 路 dump 已见 0x4B4F40 = 虚表槽 0x10 + 0x556700 同族转发器）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
