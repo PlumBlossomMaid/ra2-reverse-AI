@@ -1,0 +1,63 @@
+frontier batch 3116
+===================
+日期: 2026-08-?? (心跳续跑)
+来源: memory/data/callgraph/ranking.tsv 按行序取未登记池
+选取: 0x4F6E70 / 0x4F9700 / 0x4F9750（HouseClass 存储百分比两件 + 循环更新器）
+
+三路判类（code/randmap/disasm.py 反汇编，.qwen/tmp/_d3116{a,b,c}.txt）
+------------------------------------------------------------------------
+0x4F6E70  HouseClass::GetStoragePercentage（带名，51B）x87 百分比计算：
+          lea edi,[esi+0x2fc]; mov ecx,edi; call 0x6c9650; call 0x7c5f00(_ftol)
+          test eax,eax; jne 0x4f6e93
+          fld qword ptr [0x7e2800]                   ; 商为 0 -> 返常量[0x7e2800]
+          ret
+          0x4f6e93: mov ecx,edi; call 0x6c9650; fidiv dword ptr [esi+0x310]
+          ret                                        ; = 子对象[+0x2fc] / [+0x310]
+0x4F9700  80B 循环更新器（stdcall ret 8，2 栈参）：
+          mov esi,[esp+0xc](循环次数 n); jle 退出
+          mov ebx,[esp+0x14](值)
+          lea edi,[ecx+0x314]; mov eax,[0x8871e0](全局)
+          fild dword ptr [eax+0x17d0]; fstp dword ptr[esp+0x10]
+          loop: mov ecx,edi; call 0x6c9650
+                fcomp dword ptr [esp+0x10]; fnstsw; test ah,1; je 退出
+                push ebx; push 0x3f800000(1.0f)
+                mov ecx,edi; call 0x6c9690
+                dec esi; fstp st(0); jg loop
+          —— 条件 0x6c9650 与全局[+0x17d0]比较，循环装填 1.0f/值
+0x4F9750  HouseClass::GetWeedStoragePercentage（带名，55B）x87 百分比：
+          lea esi,[ecx+0x314]; mov ecx,esi; call 0x6c9650
+          fcomp dword ptr [0x7e1748]; fnstsw; test ah,0x40; je 0x4f9773
+          fld qword ptr [0x7e2800]                   ; 边界 -> 返常量
+          ret
+          0x4f9773: mov ecx,esi; call 0x6c9650
+                mov eax,[0x8871e0]; fidiv dword ptr [eax+0x17d0]
+          ret                                        ; = 子对象[+0x314]/全局[+0x17d0]
+
+核验（_check_callees3116.py，RANGES 字面量 + 批内自引用 BATCH_NORM）
+------------------------------------------------------------------------
+a_0x4F6E70 [0x4F6E70,0x4F6EA2] 跨函数直接 call 3 去重 2 = 0x6c9650/0x7c5f00 已登记
+b_0x4F9700 [0x4F9700,0x4F974F] 跨函数直接 call 2 去重 2 = 0x6c9650/0x6c9690 已登记
+c_0x4F9750 [0x4F9750,0x4F9786] 跨函数直接 call 2 去重 1 = 0x006c9650 已登记
+无 MISSING / 无 UNKNOWN / 无批内自引用
+
+三态判定
+------------------------------------------------------------------------
+0x4F6E70  semantics_verified  （HouseClass::GetStoragePercentage，带名 YRpp 符号）
+0x4F9700  partial             （结构判明：条件循环更新器；无 YRpp 符号，
+                                0x6c9690/全局 0x8871e0->[+0x17d0] 语义未确认）
+0x4F9750  semantics_verified  （HouseClass::GetWeedStoragePercentage，带名 YRpp 符号）
+
+说明
+------------------------------------------------------------------------
+★ 本批两件带名符号 HouseClass 方法（storage 百分比）判语义闭合；
+  两路共享子例程 0x6c9650（子对象[+0x2fc]/[+0x314]取值，x87 浮点返回）
+  与常量 [0x7e2800]（qword）/ [0x7e1748]（dword-float）。
+★ b 路使用全局 [0x8871e0]（[+0x17d0] 为 int 字段，fild 转 float 参与比较）。
+下一批候选预期 0x4FB840 / 0x4FC0B0（HouseClass::AcceptDefeat 1559B 扇入23）
+/ 0x4FD500（观察项，未登记前不作断言）。
+
+登记（frontier_status.tsv 追加，TSV 7809 -> 7812）
+------------------------------------------------------------------------
+0x004F6E70  callees=2  deps=2   batch=3116  semantics_verified (HouseClass::GetStoragePercentage)
+0x004F9700  callees=2  deps=2   batch=3116  partial
+0x004F9750  callees=1  deps=1   batch=3116  semantics_verified (HouseClass::GetWeedStoragePercentage)
