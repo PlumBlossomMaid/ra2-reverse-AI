@@ -1,0 +1,59 @@
+# frontier batch 2923
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x47EBF0（**带名 CellClass::GetAircraft** 67B）+ 0x484D60（426B）+ 0x484F10（3B）
+三路：a=0x47EBF0（0x43=67B **CellClass::GetAircraft 带名** callees=0 deps=0）/ b=0x484D60（0x1AA=426B **建筑放置 2×2 地块检查** callees=2 deps=0）/ c=0x484F10（0x3=3B **恒返 true** callees=0 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2923{a,b,c}.txt（a 0x80、b 0x200、c 0x40），完整读取确认（a ret 4 @0x47EC30、b ret c3 @0x484F0A、c ret 4 @0x484F12）
+核验：.qwen/tmp/_check_callees2923.py 三路全 PASS（a 0/0、b 7个/去重2、c 0/0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7246 → 7249（待 _append_tsv_batch2923.py）
+
+## a 路：0x47EBF0 CellClass::GetAircraft（0x43=67B，带名）
+
+- 范围 0x47EBF0-0x47EC30（ret 4 @0x47EC30，1 栈参）——**CellClass::GetAircraft（YRpp 带名——取格内飞机）**：
+  - `mov al, [0xA8E9A0]; test al, al; je`（**[0xA8E9A0] 门控**——=0 直接 `xor eax,eax` 返 NULL）
+  - `mov al, [esp+8]; test al, al; je`（参1 布尔选链表）→ **1 → `mov esi, [ecx+0xE8]`** / **0 → `mov esi, [ecx+0xE4]`**（双对象链表头，按参1 选）
+  - 遍历：`mov eax, [esi]; mov ecx, esi; call dword ptr [eax+0x2c]`（**虚表槽 0x2C 类型码**）→ `cmp eax, 2; je`（**类型 2 = Aircraft 命中 → 返该节点**）→ `mov esi, [esi+0x30]`（**+0x30 链表 next**）非空循环
+  - 未命中 → `xor eax, eax; ret 4`（NULL）
+  - 命中 → `mov eax, esi; ret 4`
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**（纯虚表槽 0x2C 间接）
+- **判类：CellClass::GetAircraft**（[0xA8E9A0] 门控 + 参1 选 [+0xE8]/[+0xE4] 链表 + 虚表槽 0x2C 类型码 2 命中返节点 / NULL）——**semantics 判定**：带名 + 机器码零歧义（纯链表遍历 + 虚表槽类型比对，无重解释）→ **semantics_verified**
+- **★孪生发现**：dump 尾部 0x47EC40 同构（`cmp eax, 0xf` 类型 15）——GetInfantry/GetUnit 族，后续候选
+
+## b 路：0x484D60 建筑放置 2×2 地块检查（0x1AA=426B）
+
+- 范围 0x484D60-0x484F0A（ret c3 @0x484F0A，无栈参）
+- thiscall 无栈参——**建筑放置四格合法性检查大函数**（2×2 地块）：
+  - 入口快检：`mov ax, [ecx+0x116]; test ax, ax; jl 0x484D95`（[+0x116] 索引 <0 跳过）→ `movsx eax, ax; cmp eax, [0x8B4148]; jge`（**>= 表大小 [0x8B4148]**）→ `cmp dword ptr [ecx+0xEC], ebx(0xA); jne`（**[+0xEC] == 0xA 类型标志**）→ 全过 `mov al, 1; ret`（快返）
+  - 主路径：`mov ecx, [ecx+0x24]`（源 cell 坐标结构）→ `push 0x89F694` → `call 0x42D510`（**坐标结构转换** CellStruct→线性索引）→ `mov eax, [eax]; mov ecx, 0x87F7E8; push eax; call 0x5657A0`（**MapClass::GetCellAt** this=0x87F7E8）
+  - esi=cell1 → [esi+0x24] 再 0x42D510 + 0x5657A0 → cell2
+  - 检查 cell1/cell2 `[+0x116]` 索引（表内 [0x8B4148]）+ `[+0xEC]==0xA` → 未过则第三格路径
+  - 第三格：`mov eax, [esi+0x24]; mov edx, [0x89F698]; add eax, edx; ...; mov ax, [0x89F69A]; add ax, [esp+0x16]`（**+偏移 [0x89F698]/[0x89F69A] 向偏移**——2×2 另一个方向）→ 0x5657A0 → edi=cell3
+  - 第四格：`push 0x89F690`（另一向偏移）→ 0x42D510 + 0x5657A0 → eax=cell4
+  - 检查 cell3/cell4 索引 + 类型 → 全通过 `mov al, 1; ret` / 任一失败 `xor al, al; ret`
+- 直接 call 7 个/去重 2——picker callees=2 **完全吻合**（0x42d510 ×3 + 0x5657a0 ×4）
+- 判类：建筑放置 2×2 地块检查（[+0x116] 索引表内 [0x8B4148] + [+0xEC]==0xA 类型标志 + 0x42D510/0x5657A0 四格取证 + [0x89F690]/[0x89F698] 向偏移）——放置合法性漏斗 (partial)
+
+## c 路：0x484F10 恒返 true（0x3=3B）
+
+- 范围 0x484F10-0x484F12（ret 4 @0x484F12，1 栈参）
+- `mov al, 1; ret 4`——**恒返 true 极简函数**（3B）
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**
+- 判类：恒返 true（3B 极简——占位/标志查询）——邻近 0x484F20 为 getter 族（[+0x116] 索引 → [0x8B413C] 表取指针） (partial)
+
+## 核验结果
+
+- _check_callees2923.py：a 路 0/0、b 路 7/2（去重 2）、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（a/c 纯间接零字面量、b 0x42d510×3+0x5657a0×4 去重 2）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x42d510（坐标结构转换）、0x5657a0（MapClass::GetCellAt）
+- **★a 路带名 semantics_verified**：CellClass::GetAircraft——[0xA8E9A0] 门控 + 双链表（+0xE4/+0xE8）虚表槽 0x2C 类型码 2（Aircraft）——本会话第二个带名 semantics_verified 判定（前为批 2910 b 路 PassengersClass::IndexOf）
+- **★[0xA8E9A0] 复现**：批 403 已实证（CellClass::CanTiberiumGerminate 门控）——同全局门控再次消费，A8 段共享
+- **本批三态分布**：a=**semantics_verified**（带名纯逻辑）/ b=partial（大函数多全局依赖未读）/ c=partial（占位语义未定）
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x47EC40**（孪生：同构 GetAircraft 但 `cmp eax, 0xf`——GetInfantry/Unit 族）——后续候选（0x47xxxx 区）
+- **0x484F20**（getter：`[+0x116]` 索引 → [0x8B413C] 表取指针）/ **0x484F50**（b 路 dump 尾部：0x28 缓冲 + [+0xE4] 链表遍历——同族检查器）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
