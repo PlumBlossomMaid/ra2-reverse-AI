@@ -1,0 +1,54 @@
+# frontier batch 2968
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x49FCE0（73 扇入 deps=1）+ 0x49FF80（102 扇入 deps=0）+ 0x49FFF0（30 扇入 deps=1）
+三路：a=0x49FCE0（0x46=70B **自包含复合析构器 虚表 0x7E4DB8** callees=1 deps=1）/ b=0x49FF80（0x63=99B **COM 接口转发器** callees=0 deps=0）/ c=0x49FFF0（0x1B=27B **COM 计数器包装器** callees=1 deps=1←IAT 间接）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2968{a,b,c}.txt（各 0x100），完整读取确认（a ret 4 @0x49FD26、b ret 0xc @0x49FFE3、c ret 4 @0x4A000B）
+核验：.qwen/tmp/_check_callees2968.py 三路全 PASS（a 2 调用去重 1、b 0、c 0 字面量），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7365 → 7368（待 _append_tsv_batch2968.py）
+
+## a 路：0x49FCE0 自包含复合析构器 虚表 0x7E4DB8（0x46=70B，73 扇入 deps=1）
+
+- 范围 0x49FCE0-0x49FD26（ret 4 @0x49FD26）
+- **自包含复合析构器模板**，虚表变体 **0x7E4DB8**（**此前批 2919/2920 闭合过的 0x7E4DB8 虚表族**——与 0x477990 等 70B 三实例同族，本处为同模板跨段实例）：
+  - `mov eax, [esi+4]; mov [esi], 0x7e4db8`（虚表复位 0x7E4DB8）→ `test eax; je` + `cmp byte ptr [esi+0xd]; je`（+0xd 持有标志门控）→ `call 0x7c8b3d`（delete 数组）→ `mov [esi+4], 0` → `mov [esi+0xd], 0` → `test al, 1`（deleting）→ `mov [esi+8], 0` → `je` → `call 0x7c8b3d`（delete this）→ ret 4
+- 直接 call 2 次/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：自包含复合析构器（虚表 0x7E4DB8——批 2919 族 0x47 段实例的 0x49 段延续） (partial)
+
+## b 路：0x49FF80 COM 接口转发器（0x63=99B，102 扇入 deps=0）
+
+- 范围 0x49FF80-0x49FFE3（ret 0xc @0x49FFE3——thiscall + 3 栈参）
+- **COM/接口查询 + 转发**（callees=0 纯逻辑 + 虚表槽）：
+  - `mov eax, [esp+0xc]; test eax; jne` → 空指针返回 **0x80004003（E_POINTER）**
+  - 非空：`mov [eax], 0`（先清出参）→ **GUID 比对**：`repe cmpsd`（4 dword=16B）比对 `0x7f7c90`（GUID1）→ 命中 `mov [eax], ebx` → 再比对 `0x7f7cb0`（GUID2）→ 命中同样
+  - 命中任一：`mov eax, [ebx]; call [eax+4]`（**虚表槽 4 转发**）→ `xor eax; ret 0xc`（S_OK）
+  - 未命中：**0x80004002（E_NOINTERFACE）**
+- 直接 call 0 个——picker callees=0 **完全吻合**（虚表槽 4 间接不入字面量）
+- 判类：COM 接口查询器（E_POINTER/E_NOINTERFACE + 双 GUID 比对 0x7F7C90/0x7F7CB0 + 虚表槽 4 转发） (partial)
+
+## c 路：0x49FFF0 COM 计数器包装器（0x1B=27B，30 扇入 deps=1）
+
+- 范围 0x49FFF0-0x4A000B（ret 4 @0x4A000B）
+- **AddRef 包装器**：
+  - `mov eax, [esp+4]`（this）→ `mov edx, [0xabcd3c]; inc edx`（**全局计数器 [0xABCD3C] ++**）→ `push [eax+0x20]`（+0x20 内部对象入参）→ `mov [0xabcd3c], edx`（计数回写）→ **`call dword ptr [0x7e11c8]`**（**IAT 间接调用——OLE 引用计数 AddRef 类**）→ ret 4
+- 直接 call 0 个（字面量）/ **IAT 间接 1 个**（`call [0x7E11C8]`——picker callees=1 来源）——**预期差模式：picker 计 IAT 间接，核验只抓字面量**，如实记录
+- 判类：COM AddRef 包装器（全局计数 [0xABCD3C]++ + IAT[0x7E11C8] 引用计数调用） (partial)
+
+## 核验结果
+
+- _check_callees2968.py：a 路 去重 1、b 路 0、c 路 0 字面量——三路全 PASS
+- picker callees vs 核验差值：**a/b 差 0**；**c 路 picker=1 vs 核验=0——IAT 间接 `call [0x7E11C8]` 预期差**（picker 计 IAT 间接，核验只抓字面量）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D（operator delete）——**已在 TSV 登记**（c 路 IAT[0x7E11C8] 非字面量不入核验）
+- **★0x7E4DB8 虚表族跨段首见**：a 路 0x49FCE0 与批 2919/2920 的 0x47 段 70B 三实例（0x477990 等）**同虚表同模板**——同一对象族的析构器跨段多处实例化
+- **★COM/OLE 域首现**：b/c 路为 COM 接口查询器 + AddRef 包装器——E_POINTER/E_NOINTERFACE 双 HRESULT + GUID 比对 + IAT[0x7E11C8]——0x49FF80-0x4A0010 为 COM 包装层
+- **★预期差实锤**：c 路 IAT 间接调用，picker callees=1 vs 核验 0 字面量，符合"纯 IAT 间接差"既有模式
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4A0010/0x4A00B0**（c 路 dump 尾部：0x49FFF0 后邻 Release 包装器 + 对象初始化器 0x7E5CA4）——后续候选
+- **0x4A0450**（picker 显示——93 扇入 deps=1 接着的 0x4A 段函数）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
