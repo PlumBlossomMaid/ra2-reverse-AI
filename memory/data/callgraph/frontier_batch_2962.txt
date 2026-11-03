@@ -1,0 +1,40 @@
+# frontier batch 2962
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x49C5A0（1359 扇入 deps=20）+ 0x49CC50（147 扇入 deps=0）+ 0x49CCF0（893 扇入 deps=5）
+三路：a=0x49C5A0（约 0x541≈1345B **1359 扇入 INI 配置解析大函数** callees=20 deps=20）/ b=0x49CC50（0x90=144B **索引边界检查字段更新器** callees=0 deps=0）/ c=0x49CCF0（0x17A=378B **893 扇入懒初始化 + 字段组构建器** callees=5 deps=5）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2962{a,b,c}.txt（a 0x700、b 0x100、c 0x500），完整读取确认（a ret @0x49CAE1、b ret 0xe8 @0x49CCDB、c ret 0x24 @0x49D06A）
+核验：.qwen/tmp/_check_callees2962.py 三路全 PASS（a 39 调用去重 20、b 0、c 9 调用去重 5），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7347 → 7350（待 _append_tsv_batch2962.py）
+
+## a 路：0x49C5A0 1359 扇入 INI 配置解析大函数（约 1345B，1359 扇入 deps=20）
+
+- 范围 0x49C5A0-0x49CAE1（ret @0x49CAE1）
+- **1359 扇入——本段最高扇入配置解析器**（+0x6c 标志 → 双串 [ebp]/[ebp+0x1c] 门控）：
+  - 门控：`mov al, [ebp+0x6c]; test al; je 0x49cae2` + `cmp byte ptr [ebp], 0; je` + `mov al, [ebp+0x1c]; lea ebx, [ebp+0x1c]; test al`（三条件）
+  - **INI 字段键值提取**：`push <常量串> + lea ecx + call 0x5276d0`（字段读取器，多次）→ `call 0x5257c0/0x5275c0/0x528660`（INI 段族辅助）
+  - `call 0x431b80/0x43ae50`（对象构造/析构）+ `call 0x4739f0/0x473a80/0x473ce0/0x4741f0/0x474430/0x475610`（0x47 段查找/转换族）
+  - `call 0x49b430/0x49db00/0x49e8e0/0x49ea10`（本段工厂/构造）+ `call 0x696f10/0x696f20`（全局对象对）
+  - `call 0x7c8ef4`（sprintf）+ `call 0x7c9a31`（字符分类）
+- 直接 call 39 次/去重 20——picker callees=20 **完全吻合**
+- 判类：INI 配置解析大函数（1359 扇入——全局配置加载热点，字段键值提取 + 对象工厂 + sprintf） (partial)
+
+## b 路：0x49CC50 索引边界检查字段更新器（0x90=144B，147 扇入 deps=0）
+
+- 范围 0x49CC50-0x49CCE0（ret 0xe8 @0x49CCDB——thiscall + 0xE8 栈参）
+- **纯逻辑字段更新**（callees=0）：
+  - `mov eax, [esp+4]; test eax; jl 0x49ccde`（索引 <0 拒绝）+ `cmp eax, [ecx+0x40]; jge 0x49ccde`（**索引 ≥ +0x40 上限拒绝**）
+  - `mov [ecx+0x38], eax`（**+0x38 索引字段**）→ `mov esi, [ecx+0x48]; add esi, [esp+0x4c]`（+0x48 累加器 + 参数）→ `mov [ecx+0x48], esi`（回写）→ 多字段加减更新（+0x48 系九字段）
+- 直接 call 0 个——picker callees=0 **完全吻合**
+- 判类：索引边界检查字段更新器（+0x40 上限门控 → +0x38 索引 + +0x48 系九字段加减） (partial)
+
+## c 路：0x49CCF0 893 扇入懒初始化 + 字段组构建器（0x17A=378B，893 扇入 deps=5）
+
+- 范围 0x49CCF0-0x49D06A（ret 0x24 @0x49D06A——thiscall + 0x24 栈参）
+- **高扇入懒初始化 + 对象构建**（893 扇入——全局调用热点）：
+  - `mov al, [0x89f578]; test al; jne` → `mov ecx, 0x89f518; call 0x49db00`（**懒初始化全局对象 [0x89F518]**）
+  - `mov eax, [esp+0x14]; test eax; jl 0x49d048`（索引 <0 跳走出错）→ 处理
+  - 对象清理/构建：`call 0x7c8b3d`（delete ×4）+ `call 0x7c8e17`（new ×2）+ `call 0x7c91d0`（构造辅助）+ `call 0x4068e0`（DebugLog）
+  - ret 0x24（提前分支 @0x49CD83 与主出口 @0x49D06A）
+- 直接 call 9 次/去重 5（0x4068E0 + 0x49DB00 + 0x7C8B3D + 0x7C8E17 + 0x7C91D0）——picker callees=5 **完全吻合**
+- 判类：懒初始化 + 字段组构建器（全局 [0x89F578] 标志 → [0x89F518] 单例构造 + new/delete 对象组装） (partial)
