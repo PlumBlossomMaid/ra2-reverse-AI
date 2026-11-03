@@ -1,0 +1,55 @@
+# frontier batch 2913
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x474FA0（70B）+ 0x474FF0（53B）+ 0x475030（30B）
+三路：a=0x474FA0（0x46=70B **字符串拼接条件转发** callees=2 deps=0）/ b=0x474FF0（0x35=53B **两级构造管线** callees=3 deps=0）/ c=0x475030（0x1E=30B **条件包装器 II** callees=2 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2913{a,b,c}.txt（各 0x80），完整读取确认（a ret 0xc @0x474FE6、b ret 0xc @0x475025、c ret 0xc @0x47504F）
+核验：.qwen/tmp/_check_callees2913.py 三路全 PASS（a 2/2 去重2、b 3/3 去重3、c 2/2 去重2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7216 → 7219（待 _append_tsv_batch2913.py）
+
+## a 路：0x474FA0 字符串拼接条件转发（0x46=70B）
+
+- 范围 0x474FA0-0x474FE6（ret 0xc @0x474FE6，3 栈参）
+  - `mov edx, [esp+8]`（参2）+ `mov eax, [esp+0x74]`（参1）→ `push 0x889F64`（**字符串常量**）→ 5 参 `call 0x528a10`（参1、参2、0x889F64、&局部缓冲 0x64、0x64——**格式化/拼接构造**）
+  - `lea edi, [esp+4]; or ecx,-1; xor eax,eax; repne scasb; not ecx; dec ecx`（**repne scasb + strlen** 判缓冲内容）
+  - 空（长度 0）→ `mov eax, [esp+0x70]`（**直接返参1**）
+  - 非空 → `lea ecx, [esp]; call 0x753250`（**thiscall &缓冲**）→ 返其值
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x528a10 + 0x753250 均已登记）
+- 判类：字符串拼接条件转发（0x528a10 三元素格式化 → strlen 判空 → 空返参1 / 非空经 0x753250 处理后返回）——0x889F64 常量字符串语义未确认 (partial)
+
+## b 路：0x474FF0 两级构造管线（0x35=53B）
+
+- 范围 0x474FF0-0x475025（ret 0xc @0x475025）
+- thiscall 3 栈参（this=esi；[esp+4]=参1、[esp+8]=参2、[esp+0xc]=参3）：
+  - `mov ecx, [esp+0x30]`（参3 作 this）→ `push 0x20; push &局部缓冲` → `call 0x40DCB0`（**thiscall 2 栈参** &buf/0x20，物化中间值）→ eax
+  - `mov ecx, [esp+0x34]`（参2）`mov edx, [esp+0x30]`（参1）→ `push eax`（中间值）`push ecx`（参2）`push edx`（参1）→ `mov ecx, esi` → 5 参 `call 0x528a10`（参1、参2、中间值、&buf'、0x20——合并构造）
+  - `lea ecx, [esp+4]; call 0x40DCE0`（**thiscall &buf'** 处理）→ 直通返回值
+- 直接 call 3 个/去重 3——picker callees=3 **完全吻合**（0x40dcb0 + 0x40dce0 + 0x528a10 均已登记）
+- 判类：两级构造管线（参3 经 0x40DCB0 物化 → 0x528a10 三元素合并 → 0x40DCE0 收尾直通）——0x40DCB0/0x40DCE0 邻配对（0x40xxxx 段前端，批 2880 区） (partial)
+
+## c 路：0x475030 条件包装器 II（0x1E=30B）
+
+- 范围 0x475030-0x47504F（ret 0xc @0x47504F）
+- **与批 2911 c 路 0x474A20 完全同构**（唯一差异：转换函数 0x473960 → 0x40DCB0）：
+  - `mov esi, ecx`（this）→ `mov ecx, [esp+0x10]`（参3 作 this）→ `call 0x40DCB0`（物化）→ eax
+  - `mov ecx, [esp+8]`（参2）→ `push eax`（中间值）`push [esp+0x10]`（参3）`push ecx`（参2）→ `mov ecx, esi` → 3 参 `call 0x528660`（thiscall 直通）
+  - 与 2911 c 差异：**无 `test ecx,ecx; je` 零特判**（直接调 0x40DCB0，零参3 语义交由 0x40DCB0 内部处理）
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x40dcb0 + 0x528660 均已登记）
+- 判类：条件包装器 II（同构 2911 c；转换函数 0x40DCB0 + 0x528660 三参 thiscall 直通，无零特判分支） (partial)
+
+## 核验结果
+
+- _check_callees2913.py：a 路 2/2（去重 2）、b 路 3/3（去重 3）、c 路 2/2（去重 2）——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x528a10（三元素格式化构造）、0x753250（thiscall 处理）、0x40dcb0/0x40dce0（邻配对）、0x528660（三参 thiscall）
+- **★c 路同构确认**：批 2911 c（0x473960 + 0x528660）与本批 c（0x40DCB0 + 0x528660）为同一模板两次实例化——0x528660 回调 + 不同物化函数
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x475060**（b/c dump 尾部：0x45DD20 + 0x528a10 + 0x45DD50——b 路同构、0x45DD50 配对）/ **0x4750A0**（c dump 尾部：0x45DD20 + … 与 c 同构）——后续候选（0x47xxxx 区）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
