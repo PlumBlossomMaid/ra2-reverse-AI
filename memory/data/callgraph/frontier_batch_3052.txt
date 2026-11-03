@@ -1,0 +1,57 @@
+# frontier batch 3052
+
+日期：2026-11-04
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4E2690（416B callees=3）+ 0x4E30D0（30B callees=2）+ 0x4E30F0（30B callees=2）
+三路：a=0x4E2690（0x19E=414B **绘制/滚动分发器** callees=3 deps=3）/ b=0x4E30D0（0x1C=28B **scalar deleting destructor** callees=2 deps=2）/ c=0x4E30F0（0x1C=28B **scalar deleting destructor（实例二）** callees=2 deps=2）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3052{a,b,c}.txt（a 0x1B0、b 0x30、c 0x30），完整读取确认（a ret 4 @0x4E2821/0x4E282D、b ret 4 @0x4E30EB、c ret 4 @0x4E310B）
+核验：.qwen/tmp/_check_callees3052.py 三路全 PASS（a 去重 3、b 去重 2、c 去重 2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7617 → 7620（待 _append_tsv_batch3052.py）
+
+## a 路：0x4E2690 绘制/滚动分发器（0x19E=414B，callees=3）
+
+- 范围 0x4E2690-0x4E282D（ret 4 @0x4E282D 主出口/0x4E2821 成功返 1；后 nop 对齐 0x4E2830 邻函数）
+- **绘制/滚动分发器**（stdcall ret 4——参 [esp+4]；this=esi）：
+  - `mov eax, [esp+4]; mov esi, ecx; push eax; call 0x48e620`（**直接调用前置**）→ `test eax, eax; je 0x4e2824`（失败返 0）
+  - `mov ecx, [0x887640]; mov ebp, [ecx]; ... 四坐标入栈`（**[0x887640] 全局对象**——[+0xC]/[+0x10]/[+0x14]/[+0x18]）→ `mov ecx, [0x887640]; call [ebp+0x20]`（**虚表槽 0x20**）
+  - 坐标计算（[+0xC]/[+0x10]/[+0x14]/[+0x18] 差值调整）→ `push ebx; xor edx, edx; lea ecx, [esp+0x14]; call 0x4a5a50`（**直接调用**）
+  - `mov al, [esi+0x2c]; test al, al; je 0x4e27f9`（**[+0x2C] 标志**）→ `mov ecx, [esi+0x34]; mov eax, [esi]; push ecx; mov ecx, esi; call [eax+0xa4]`（**虚表槽 0xA4**——[+0x34] 对象）→ `mov edi, eax` → `call 0x4e12d0`（**直接调用**）→ `mov edx, [0xb054d4]; lea eax, [edx+eax*4]; mov eax, [eax]; mov ecx, [eax+0x330]`（**[0xB054D4] 表 + [+0x330]**）
+  - `mov al, [esi+0x2e]; test al, al; je 0x4e279c`（**[+0x2E] 标志**）→ **X 方向分支**：`mov eax, [0x87f6c4]; cmp [eax+4], ebx; jne 0x4e2764`（**[0x87F6C4] 全局 [+4] 宽标志**）→ `mov eax, [eax+0x174]; mov bl, [eax+ecx]`（**字节表读**）或 `mov ax, [ebx+ecx*2]`（**字表读**——[+0x174] 表）→ 坐标更新 → `mov ecx, [0x887314]; mov edx, [ecx]; push eax; lea eax, [esp+0x14]; push eax; call [edx+0x14]`（**[0x887314] 全局 + 虚表槽 0x14**）
+  - **Y 方向分支**（[+0x2E]==0）同构
+  - `mov al, [esi+0x2d]; test al, al; je 0x4e280a`（**[+0x2D] 标志**）→ `call [edx+0x9c]`（**虚表槽 0x9C**）
+  - `mov ecx, [0x887640]; mov eax, [ecx]; call [eax+0x24]`（**[0x887640] + 虚表槽 0x24**）→ ret 4（返 1）
+  - 失败路径 ret 4（返 0）@0x4E282D
+- 直接 call 3 个/去重 3（0x48E620 + 0x4A5A50 + 0x4E12D0）——picker callees=3 **完全吻合**（虚表槽 0x20/0xA4/0x14/0x9C/0x24 间接不计）
+- 判类：绘制/滚动分发器（0x48E620 前置 + [0x887640]/[0x887314]/[0x87F6C4]/[0xB054D4] 全局 + 虚表槽 0x20/0xA4/0x14/0x9C/0x24 + [+0x2C]/[+0x2D]/[+0x2E] 标志 + 字节/字宽表读 [+0x174]——地图/文本滚动绘制） (partial)
+
+## b 路：0x4E30D0 scalar deleting destructor（0x1C=28B，callees=2）
+
+- 范围 0x4E30D0-0x4E30EB（ret 4 @0x4E30EB；后 nop 对齐 0x4E30EE）
+- **scalar deleting destructor**（stdcall ret 4，[esp+8]&1 门控 delete this；this=esi）：
+  - `mov esi, ecx; call 0x4e1390`（**析构子例程**）→ `test byte ptr [esp+8], 1; je 0x4e30e8`（**[esp+8]&1 门控**）→ `push esi; call 0x7c8b3d`（**delete this**）→ ret 4
+- 直接 call 2 个/去重 2（0x4E1390 + 0x7C8B3D）——picker callees=2 **完全吻合**
+- 判类：scalar deleting destructor（析构子例程 0x4E1390 + [esp+8]&1 门控 delete——3044c/3050b 同模板族） (partial)
+
+## c 路：0x4E30F0 scalar deleting destructor（实例二）（0x1C=28B，callees=2）
+
+- 范围 0x4E30F0-0x4E310B（ret 4 @0x4E310B；后 nop 对齐 0x4E310E；0x4E3110 邻函数不属于本函数）
+- **scalar deleting destructor（实例二）**——**与 b 路 0x4E30D0 完全一致**（call 0x4E1390 + [esp+8]&1 门控 delete）
+- 直接 call 2 个/去重 2（0x4E1390 + 0x7C8B3D）——picker callees=2 **完全吻合**
+- 判类：scalar deleting destructor（实例二——与 b 路同模板，析构子例程 0x4E1390） (partial)
+
+## 核验结果
+
+- _check_callees3052.py：a 路 3、b 路 2、c 路 2——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用（批内地址 0x4E2690/0x4E30D0/0x4E30F0 互不为被调）；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x48E620 + 0x4A5A50 + 0x4E12D0 + 0x4E1390 + 0x7C8B3D——**均已在 TSV 登记**
+- **★0x4E12D0/0x4E1390 首见**：a 路 0x4E12D0（索引计算）+ b/c 路 0x4E1390（析构子例程）——0x4E 段内依赖
+- **★[0x887640]/[0x887314] 全局对象**：a 路双全局（0x88 段渲染/界面族）——虚表槽 0x20/0x24/0x14 调用
+- **★[0x87F6C4]+[+4] 宽标志**：a 路决定字节/字表读（[+0x174] 表）——文本/字库渲染
+- **batch 3052 无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4E6070 CDDriveManagerClass::CDDriveManagerClass（133B callees=1，带名）/ 0x4E8290（42B callees=1）/ 0x4E82F0（42B callees=1）**：picker 显示 0x4E 段——下一批候选（CDDriveManagerClass 构造器带名）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
