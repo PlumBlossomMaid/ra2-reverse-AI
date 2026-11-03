@@ -1,0 +1,54 @@
+# frontier batch 3032
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4D9C10（73B callees=1）+ 0x4D9C60（519B callees=1）+ 0x4DA030（175B callees=0）
+三路：a=0x4D9C10（0x46=70B **门控转发** callees=1 deps=1）/ b=0x4D9C60（0x204=516B **cell 坐标判定大函数** callees=1 deps=1）/ c=0x4DA030（0xAE=174B **入队器** callees=0 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3032{a,b,c}.txt（a 0x60、b 0x210、c 0xC0），完整读取确认（a ret 0x14 @0x4D9C50/0x4D9C56、b ret 0x14 多出口 @0x4D9D0B..0x4D9E64、c ret @0x4DA0DE）
+核验：.qwen/tmp/_check_callees3032.py 三路全 PASS（a 去重 1、b 去重 1、c 去重 0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7557 → 7560（待 _append_tsv_batch3032.py）
+
+## a 路：0x4D9C10 门控转发（0x46=70B，callees=1）
+
+- 范围 0x4D9C10-0x4D9C56（ret 0x14 @0x4D9C50 生效/0x4D9C56 跳过；后 nop 对齐 0x4D9C60）
+- **门控转发**（stdcall ret 0x14）：
+  - `mov eax, [esi+0x674]; test; je`（**[+0x674] 对象检查**）→ `mov al, [esp+0x18]; test; je`（**参数位检查**——双门控）→ `mov edi, [eax+0x24]`（**[+0x24] 值读取**）→ `mov eax, [esi+0x674]; test; jne`（再次检查）→ `push 0x80004003; call 0x7dc720`（**E_POINTER 抛掷器**——30x 批多次见的 [+0x674] 模式）→ `push edi; push esi; call [ecx+0x1c]`（**虚表槽 0x1c**——对象转发）→ ret 0x14
+- 直接 call 1 个/去重 1（0x7DC720）——picker callees=1 **完全吻合**（虚表槽 0x1c 间接）
+- 判类：门控转发（[+0x674] 双检查 + E_POINTER + 虚表槽 0x1c——b 路同对象） (partial)
+
+## b 路：0x4D9C60 cell 坐标判定大函数（0x204=516B，callees=1）
+
+- 范围 0x4D9C60-0x4D9E64（ret 0x14 多出口 @0x4D9D0B/0x4D9D59/0x4D9D78/0x4D9D8C/0x4D9DB1/0x4D9DC5/0x4D9DD5/0x4D9DEF/0x4D9E05/0x4D9E3B/0x4D9E64——11 出口状态机）
+- **cell 坐标判定大函数**（stdcall ret 0x14——地图语义型）：
+  - **0x89F688 方向表**：`lea eax, [ebx-4]; and eax, 7; mov cx, [eax*4 + 0x89f688]; mov dx, [eax*4 + 0x89f68a]`（**8 邻域方向表 [0x89F688] 按索引取对**——seed 相关常量表）→ `add cx, [edi+0x24]; add dx, [edi+0x26]`（**+ 中心坐标**）→ `lea eax, [esp+0x24]; mov ecx, 0x87f7e8; call 0x5657a0`（**坐标转换 [0x87F7E8]**）→ `mov esi, eax`（目标 cell）
+  - **多分支判定**：`cmp ebx, -1; je`（-1 哨兵）→ `[+0x140] bit 检查`（`test ah, 1` + `test ah, 2` + `and eax, 0x100`）→ `movsx [esi+0x11b]`（**+0x11B 高度/等级读取**——与 hills 相关）→ `movsx [edi+0x11b]` → 差值计算 → 多阶段分支
+  - 结果常量：7 / 各阶段比较
+- 直接 call 1 个/去重 1（0x5657A0）——picker callees=1 **完全吻合**
+- 判类：cell 坐标判定大函数（0x89F688 方向表 + [+0x24]/[+0x26] 坐标 + 0x5657A0 [0x87F7E8] + +0x140 bit 链 + +0x11B 高度——11 出口状态机） (partial)
+
+## c 路：0x4DA030 入队器（0xAE=174B，callees=0）
+
+- 范围 0x4DA030-0x4DA0DE（ret @0x4DA0DE 统一出口；后 nop 对齐 0x4DA0E0）
+- **入队器**（队列维护——前移压缩 + 扩容入队）：
+  - `mov eax, [edi+0x5a4]; test; jne`（**[+0x5A4] 检查**）→ `mov eax, [edi+0x5bc]; test; je`（**[+0x5BC] 计数**）→ `mov ebx, [eax]; test; je`（**[+0x5B0] 数组首项**）→ `call [edx+0x480]`（**虚表槽 0x480**——同 30x 批）
+  - **前移压缩**：`mov eax, [edi+0x5bc]; lea esi, [edi+0x5ac]; jle` → `mov ecx, [esi+4]; mov edx, [ecx+eax*4]; mov [ecx+eax*4-4], edx`（**数组前移 1 位**）→ 递增
+  - **+0x6B1 标志检查**：`mov al, [edi+0x6b1]; test; je`（跳过）→ `mov ecx, [esi+8]; cmp eax, ecx; jl`（**容量判定**）→ **扩容入队**：`mov eax, [esi+0x14]; jle` → `add eax, ecx; push 0; push eax; call [edx+8]`（**虚表槽 8 扩容**）→ `mov eax, [esi+0x10]; mov [esi+0x10], eax+1; mov [edx+eax*4], ebx`（**入队 [+0x10] 索引**）
+- 直接 call 0 个（虚表槽 0x480/0x8 间接）——picker callees=0 **完全吻合**
+- 判类：入队器（[+0x5A4]/[+0x5BC] 检查 + 虚表槽 0x480 + 前移压缩 + [+0x6B1] 标志 + 虚表槽 8 扩容入队） (partial)
+
+## 核验结果
+
+- _check_callees3032.py：a 路 1、b 路 1、c 路 0——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7DC720 + 0x5657A0——**均已在 TSV 登记**
+- **★0x89F688 方向表出现在 b 路**：`[eax*4 + 0x89f688]`——8 邻域方向对表（与 RMG 阶段 0x89F688 相关——QWEN.md 记载 0x89A304 防重表同段）
+- **★+0x11B 高度读取**：b 路 cell 高度语义（与 RMG 造山阶段 +0x11B Level 字段同偏移——QWEN.md「阶段 9 抬升 §八 [+0x11B]（Level）」实锤交叉）
+- **★b 路为 11 出口大状态机**：与 3023 批巨型函数同为 cell 语义判定
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4DA0E0 FootClass::QueueNavigationList（210B callees=1，带名）/ 0x4DA1D0（89B callees=1）/ 0x4DA2B0 thunk_FUN_005b2ef0（5B callees=1）**：picker 显示——后续候选（FootClass::QueueNavigationList 是带名导航队列函数；thunk 尾跳）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
