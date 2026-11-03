@@ -1,0 +1,49 @@
+# frontier batch 3002
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4B5B00（45B callees=1）+ 0x4B6440（38B callees=0）+ 0x4B6470（93B callees=1）
+三路：a=0x4B5B00（0x2C=44B **三虚表析构器** callees=1 deps=1）/ b=0x4B6440（0x23=35B **双标志判定** callees=0 deps=0）/ c=0x4B6470（0x5A=90B **COM 层注册器** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3002{a,b,c}.txt（a 0x50、b 0x50、c 0x80），完整读取确认（a ret @0x4B5B2C、b ret 4 @0x4B645D/0x4B6463、c ret 0xc @0x4B64BC/0x4B64CA）
+核验：.qwen/tmp/_check_callees3002.py 三路全 PASS（a 去重 1、b 去重 0、c 去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7467 → 7470（待 _append_tsv_batch3002.py）
+
+## a 路：0x4B5B00 三虚表析构器（0x2C=44B，callees=1）
+
+- 范围 0x4B5B00-0x4B5B2C（ret @0x4B5B2C；后 nop 对齐 0x4B5B30 小函数）
+- **三虚表析构器**（同 3001 c 路 DropPod 构造器虚表配对）：
+  - `mov [esi], 0x7e8344; mov [esi+4], 0x7e8278; mov [esi+0x18], 0x7e8254`（**三虚表写入**——DropPod 族）→ `mov eax, [esi+0x2c]; test; je`（**[+0x2c] 检查**）→ `push eax; call [ecx+8]`（**[+0x2c] 对象虚表槽 8 释放**）→ `mov ecx, esi; call 0x55a6f0`（**基类析构子例程**——Drive/DropPod 共用）→ ret
+- 直接 call 1 个/去重 1（0x55A6F0）——picker callees=1 **完全吻合**（[+0x2c] 虚表槽 8 间接）
+- 判类：三虚表析构器（三虚表 0x7E8344/0x7E8278/0x7E8254 + [+0x2c] 虚表槽 8 释放 + 基类析构 0x55A6F0——DropPod 析构） (partial)
+
+## b 路：0x4B6440 双标志判定（0x23=35B，callees=0）
+
+- 范围 0x4B6440-0x4B6463（ret 4 @0x4B645D 主出口/0x4B6463 早出口；后 nop 对齐 0x4B6470 新函数）
+- **双标志链式判定**（stdcall ret 4）：
+  - `mov ecx, [esi-0x14]; lea eax, [esi-0x14]; push eax; call [ecx+0x10]`（**[esi-0x14] 对象虚表槽 0x10 判定**）→ `test al, al; jne`（命中直接返 0）→ `mov eax, [esi+0x14]; test; je`（**[+0x14] 检查**）→ `mov al, 1`
+- 直接 call 0 个（虚表槽 0x10 间接）——picker callees=0 **完全吻合**
+- 判类：双标志判定（[esi-0x14] 虚表槽 0x10 + [+0x14] 检查——同 2992 c 路 0x4AF970 同族） (partial)
+
+## c 路：0x4B6470 COM 层注册器（0x5A=90B，callees=1）
+
+- 范围 0x4B6470-0x4B64CA（ret 0xc @0x4B64BC 早出口/0x4B64CA 主出口；后 nop 对齐 0x4B64D0 小函数）
+- **与 2992 b 路 0x4AF720 逐字节同模板**（COM GUID 比对注册器）：
+  - `call 0x55a9b0`（**段外辅助**）→ `cmp eax, 0x80004002`（E_NOINTERFACE）→ `repe cmpsd`（**GUID 比对**——[0x7E9B10] 4 次 dword）→ `lea eax, [ebx+0x18]`（+0x18 偏移）→ 存 [ebp] → `mov eax, 0x80004002` 分支 → `call [ebx+4]`（**虚表槽 4**）→ `xor eax, eax`（S_OK）
+- 直接 call 1 个/去重 1（0x55A9B0）——picker callees=1 **完全吻合**
+- 判类：COM 层注册器（0x55A9B0 辅助 + E_NOINTERFACE + GUID 比对 0x7E9B10 + 虚表槽 4——2992b 同模板第二实例） (partial)
+
+## 核验结果
+
+- _check_callees3002.py：a 路 1、b 路 0、c 路 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x55A6F0 + 0x55A9B0——**均已在 TSV 登记**
+- **★DropPod 虚表族闭环**：构造 0x4B5AB0（三虚表写入）/析构 0x4B5B00（三虚表复位 + 0x55A6F0）——0x7E8344/0x7E8278/0x7E8254 配对完型
+- **★COM 注册器同模板第二实例**：c 路 0x4B6470 与 2992 b 路 0x4AF720 逐字节一致（仅地址差）
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4B64E0（267B callees=3）/ 0x4B66A0（13B callees=1）/ 0x4B66B0（13B callees=1）**：picker 显示——后续候选（c 路 dump 已见 0x4B64E0 = COM E_POINTER 0x80004003 前缀大函数）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
