@@ -1,0 +1,52 @@
+# frontier batch 2974
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4A2370（644 扇入 deps=5）+ 0x4A2820（86 扇入 deps=1）+ 0x4A2880（174 扇入 deps=3）
+三路：a=0x4A2370（约 0x281=641B **644 扇入大函数** callees=5 deps=5）/ b=0x4A2820（0x55=85B **大缓冲构造器** callees=1 deps=1）/ c=0x4A2880（0xAD=173B **双级析构器 虚表 0x7E5DAC/0x7E5D94** callees=3 deps=3）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2974{a,b,c}.txt（a 0x500、b/c 0x200），完整读取确认（a ret @0x4A25F1、b ret @0x4A2875、c ret @0x4A292D）
+核验：.qwen/tmp/_check_callees2974.py 三路全 PASS（a 7 调用去重 5、b 3 调用去重 1、c 6 调用去重 3），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7383 → 7386（待 _append_tsv_batch2974.py）
+
+## a 路：0x4A2370 644 扇入大函数（约 641B，644 扇入 deps=5）
+
+- 范围 0x4A2370-0x4A25F1（ret @0x4A25F1）
+- **644 扇入高热度函数**（双条件门控 + 全局对象 + 日志 + 转换）：
+  - 门控：`mov al, [esp+4]; test al; jne` + `mov al, [ebp+8]; test al; je 0x4a25ed`（参数 or +8 字段门控）
+  - `mov ecx, [0x887300]`（**全局对象 [0x887300]**——Session/场景相关）
+  - **DebugLog 族**：`call 0x734e60`（DebugLog）+ `call 0x750920`（第二日志/统计）——带常量串消息
+  - `call 0x6d0e60`（坐标/相机转换）+ `call 0x7ca564`（CRT 字符串函数）+ `call 0x4a60e0`（本段辅助）
+- 直接 call 7 次/去重 5（0x4A60E0 + 0x6D0E60 + 0x734E60 + 0x750920 + 0x7CA564）——picker callees=5 **完全吻合**
+- 判类：644 扇入大函数（参数/字段双门控 + [0x887300] 全局对象 + DebugLog 0x734E60/0x750920 + 坐标转换 0x6D0E60 + CRT 0x7CA564） (partial)
+
+## b 路：0x4A2820 大缓冲构造器（0x55=85B，86 扇入 deps=1）
+
+- 范围 0x4A2820-0x4A2875（ret @0x4A2875）
+- **大缓冲对象构造器**：
+  - `xor eax; mov [esi+8], eax; mov [esi+0xc], eax; mov byte [esi+0x10], al; mov byte [esi+0x11], al; mov [esi+0x14], eax`（六字段清零）→ `push 0x10000; call 0x7c8e17`（**new 0x10000=64KB 缓冲**）→ 存入 [+0x14] → 二次 `push 0x10000; call 0x7c8e17`（**new 第二个 64KB**）→ 存入 → ret
+- 直接 call 3 次/去重 1（0x7C8E17 ×3）——picker callees=1 **完全吻合**
+- 判类：大缓冲构造器（双 64KB new + 六字段清零——环形/双缓冲对象） (partial)
+
+## c 路：0x4A2880 双级析构器 虚表 0x7E5DAC/0x7E5D94（0xAD=173B，174 扇入 deps=3）
+
+- 范围 0x4A2880-0x4A292D（ret @0x4A292D）
+- **双虚表复合析构器**（0x7E5D 段新族）：
+  - `mov eax, [esi+8]; mov [esi], 0x7e5dac; mov [esi+4], 0x7e5d94`（**双虚表复位 0x7E5DAC + 子 0x7E5D94**）→ `cmp eax, ebx; je` + `cmp byte ptr [esi+0x11]; je`（+0x11 持有标志）→ `call 0x7dc720`（**成员释放器**——非 operator delete）/ `call 0x4a3020`（本段析构辅助）→ `call 0x7c8b3d`（delete 数组）→ 清零 → ret
+- 直接 call 6 次/去重 3（0x4A3020 + 0x7DC720 + 0x7C8B3D）——picker callees=3 **完全吻合**
+- 判类：双级复合析构器（虚表 0x7E5DAC+0x7E5D94 双复位 + 成员释放器 0x7DC720 + 0x4A3020 辅助 + delete） (partial)
+
+## 核验结果
+
+- _check_callees2974.py：a 路 去重 5、b 路 去重 1、c 路 去重 3——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（a 首范围 4 → 扩至 0x4A25F1 后 5 全吻合；b 3 调用去重 1；c 6 调用去重 3）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4A60E0 + 0x6D0E60 + 0x734E60 + 0x750920 + 0x7CA564 + 0x7C8E17 + 0x4A3020 + 0x7DC720 + 0x7C8B3D——**均已在 TSV 登记**
+- **★0x7E5DAC/0x7E5D94 双虚表析构器**：c 路 0x7E5D 段双级族首见（主 0x7E5DAC + 子 0x7E5D94）——0x7E5D 段连续族扩展
+- **★644 扇入大函数进入 0x4A2xxx 段**：a 路是 0x4A 段新高热度入口（门控 + DebugLog + 转换）
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4A2930/0x4A2950**（picker 显示——30/55 扇入 deps=1 接着的 0x4A 段函数）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
