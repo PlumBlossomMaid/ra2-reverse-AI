@@ -1,0 +1,52 @@
+# frontier batch 2905
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x46FAC0（143B）+ 0x46FB50（116B）+ 0x470C00（33B）
+三路：a=0x46FAC0（0x8F=143B **玩家属性回填循环器** callees=4 deps=0）/ b=0x46FB50（0x74=116B **玩家状态串格式化** callees=0(IAT)/picker 2 deps=0）/ c=0x470C00（0x21=33B **全局单例构造器 0x7E4AB8** callees=0 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2905{a,b,c}.txt（a 长度 0xA0、b 长度 0x80、c 长度 0x30），完整读取确认（a ret @0x46FB4E、b ret @0x46FBC3、c ret @0x470C20）
+核验：.qwen/tmp/_check_callees2905.py 三路全 PASS（a 4/4 去重4、b 0/0、c 0/0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7192 → 7195（待 _append_tsv_batch2905.py）
+
+## a 路：0x46FAC0 玩家属性回填循环器（0x8F=143B）
+
+- 范围 0x46FAC0-0x46FB4E（ret @0x46FB4E）
+- thiscall 0 栈参（ret；[esp+0x10]=输出目标）——**玩家属性回填循环器**：
+  - **8 玩家循环**（edi=0xa8b2dc 起 step 4 → 0xa8b2fc）：`0x4e4e60`（玩家身份查询器·[0x4E4Ex]）→ ebp=查询结果；`[edi+0x27b4]`（= [0xa8da90+idx] 玩家表）→ esi
+  - `0x5e9440`（玩家身份检查器·[0x5E944x]）→ 命中 → `[edi]` 字段直读；否则**四全局身份比对** `[0xac119c]/[0xac11a0]/[0xac11b0]/[0xac11b4]`（同批 2904）→ 任一命中返 -2
+  - 否则 `0x696f50`（**玩家属性5 查询器**）→ 结果 push + edx=ebp → `0x4e5480`（**属性回填器·[0x4E5480]**——目标 this 写入）
+- 直接 call 4 个/去重 4——picker callees=4 **完全吻合**（0x4e4e60/0x4e5480/0x5e9440/0x696f50 已登记）
+- 判类：玩家属性回填循环器（8 玩家循环 + 0x4E4E60 身份查询 + 0x5E9440 检查 + 四全局身份比对 + 0x696F50 属性 + 0x4E5480 回填）——批量玩家属性同步器 (partial)
+
+## b 路：0x46FB50 玩家状态串格式化（0x74=116B）
+
+- 范围 0x46FB50-0x46FBC3（ret @0x46FBC3）
+- thiscall 1 栈参（ret；edi=this）——**玩家状态串格式化**：
+  - IAT `[0x7e14a8]`（**LoadString**）串码 0x6d1 + 0x5c0 双查询 → esi/edi
+  - `[0xa8da84]` vs `[0xa8d580]`（**全局计数比较**）→ 未满 → IAT `[0x7e14a0]`（**Format**）两次（esi + edi）
+  - 满 → `[0xa8da8c]+0x89e000`（**标志字节**）→ 分支 → IAT Format 一次（push 0/1）
+- 直接 call 0 个（纯 IAT 间接 [0x7e14a8]/[0x7e14a0]——pick=2 全 IAT，核验预期差）
+- 判类：玩家状态串格式化（IAT LoadString 双串码 + [0xA8DA84]/[0xA8D580] 计数门 + [0x89E000] 标志 + IAT Format）——对战状态文本生成 (partial)
+
+## c 路：0x470C00 全局单例构造器 0x7E4AB8（0x21=33B）
+
+- 范围 0x470C00-0x470C20（ret @0x470C20）
+- thiscall 0 栈参（ret；ecx=this）——**全局单例构造器**：
+  - `mov [eax], 0x7E4AB8`（虚表写）→ `[0x89e008]=-1`（全局哨兵）→ `[0x89e020]=0`、`[0x89dfd4]=0`（双全局清零）
+- 直接 call 0 个——picker callees=0 **完全吻合**
+- 判类：全局单例构造器（虚表 0x7E4AB8 + [0x89E008] -1 哨兵 + [0x89E020]/[0x89DFD4] 清零）——与批 2901 c 路 0x46D330 同模板（0x7E4AAC vs 0x7E4AB8 虚拟表变体） (partial)
+
+## 核验结果
+
+- _check_callees2905.py：a 路 4/4（去重 4）、b 路 0/0、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：**a/c 路差 0；b 路 picker=2 vs 核验=0**（IAT 间接 [0x7e14a8]/[0x7e14a0]——预期差）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4e4e60（玩家身份查询器）、0x4e5480（属性回填器）、0x5e9440（玩家身份检查器）、0x696f50（玩家属性5 查询器）
+- **a 路家族续**：四全局身份比对 [0xAC119C]（批 2903 c/2904 a/b 同族）+ 0x696F50（批 2904 b 同属性）——玩家属性域跨批连续闭合
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x470C90**（152B，2 callees）/ **0x71890**（178B，1 callees）/ **0x4722C0 CaptureManagerClass::IsControllingSomething 带名**（11B，0 callees）——后续候选（0x47xxxx 区升至 CaptureManager 域）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
