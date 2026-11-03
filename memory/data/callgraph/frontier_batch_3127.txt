@@ -1,0 +1,53 @@
+frontier batch 3127
+===================
+日期: 2026-08-?? (心跳续跑)
+来源: memory/data/callgraph/ranking.tsv 按行序取未登记池
+选取: 0x50E350 / 0x50E380 / 0x50E500（常量桩 / 析构包装 / 模板释放器）
+
+三路判类（code/randmap/disasm.py 反汇编，.qwen/tmp/_d3127{a,b,c}.txt）
+------------------------------------------------------------------------
+0x50E350  8B 常量返回器：
+          mov eax,1; ret 4                             ; 恒返 1
+          （3126c 0x50E340 的第二实例）
+0x50E380  30B scalar deleting 析构器：
+          call 0x4f7140                                ; 转发真实析构器
+          test byte ptr [esp+8],1; je
+          push esi; call 0x7c8b3d                      ; [esp+8]&1 门控 delete this
+          mov eax,esi; ret 4
+          （3130 模板族同构：转发+delete this 包装）
+0x50E500  42B 成员持有指针释放器（含 [+0x10] 清零）：
+          xor ebx,ebx; mov eax,[esi+4]; mov [esi+0x10],ebx ; 清 [+0x10]
+          cmp eax,ebx; je
+          cmp byte ptr [esi+0xd],bl; je                ; [+0xD] 持有标志门控
+          push eax; call 0x7c8b3d; mov [esi+4],ebx     ; delete [+0x4]
+          汇合 mov byte ptr [esi+0xd],bl; mov [esi+8],ebx; ret
+          —— 3005 批模板族"42B 含 [+0x10] 清零"档同构
+
+核验（_check_callees3127.py，RANGES 字面量 + 批内自引用 BATCH_NORM）
+------------------------------------------------------------------------
+a_0x50E350 [0x50E350,0x50E357] 跨函数直接 call 0（常量返回）
+b_0x50E380 [0x50E380,0x50E39D] 跨函数直接 call 2 去重 2 = 0x4f7140/0x7c8b3d 已登记
+c_0x50E500 [0x50E500,0x50E529] 跨函数直接 call 1 去重 1 = 0x007c8b3d 已登记
+无 MISSING / 无 UNKNOWN / 无批内自引用
+
+三态判定
+------------------------------------------------------------------------
+0x50E350  partial             （结构判明：常量返回器；语义依赖所属类）
+0x50E380  partial             （结构判明：scalar deleting 包装；0x4f7140
+                                真实析构器身份未验证）
+0x50E500  semantics_verified  （42B 成员持有指针释放器，3005 批模板族
+                                "含 [+0x10] 清零"档同构先例 verified）
+
+说明
+------------------------------------------------------------------------
+★ 模板族（成员持有指针释放器）在 0x50 段的再现，42B 档同构确认。
+★ b 路为转发型析构包装（0x4f7140 + delete this 门控），与 73B 模板
+  带同构但转发目标不同，保持 partial。
+下一批候选预期 0x50E560 / 0x50E5D0 / 0x50E640（42B×3 系，观察项，
+未登记前不作断言）。
+
+登记（frontier_status.tsv 追加，TSV 7842 -> 7845）
+------------------------------------------------------------------------
+0x0050E350  callees=0  deps=0   batch=3127  partial
+0x0050E380  callees=2  deps=2   batch=3127  partial
+0x0050E500  callees=1  deps=1   batch=3127  semantics_verified
