@@ -1,0 +1,57 @@
+frontier batch 3115
+===================
+日期: 2026-08-?? (心跳续跑)
+来源: memory/data/callgraph/ranking.tsv 按行序取未登记池
+选取: 0x4F6950 / 0x4F69D0 / 0x4F6E60（读取器 / 差值计算 / 极简 getter）
+
+三路判类（code/randmap/disasm.py 反汇编，.qwen/tmp/_d3115{a,b,c}.txt）
+------------------------------------------------------------------------
+0x4F6950  50B 数据读取器（双 IAT 槽间接）：
+          mov ecx,[esp+4]                            ; stdcall 1 参
+          sub esp,0x40; lea eax,[esp]（缓冲）
+          mov edx,[ecx+0x10]; add edx,0x64
+          push 0x20; push eax(缓冲); push -1; push edx([+0x10]+0x64)
+          push 1; push 0
+          call dword ptr [0x7e11c4]                  ; 6 参 IAT 调用（读区）
+          lea eax,[esp]; push eax
+          call dword ptr [0x7e1368]                  ; 1 参 IAT 调用（处理缓冲）
+          add esp,0x40; ret 4
+0x4F69D0  35B 差值计算器：
+          push esi; mov esi,[esp+8]                  ; stdcall 1 参
+          lea ecx,[esi+0x2d8]; call 0x6c9650         ; 子对象[+0x2d8]方法(浮点?)
+          call 0x7c5f00                              ; _ftol（向零截断转 int）
+          mov ecx,[esi+0x2ec]; sub ecx,eax; mov eax,ecx
+          ret 4                                      ; = [+0x2ec] - ftol(...)
+0x4F6E60  10B 字段读取器：
+          mov eax,[esp+4]; mov eax,[eax+0xc]; ret 4  ; 返回参数 [+0xc]
+
+核验（_check_callees3115.py，RANGES 字面量 + 批内自引用 BATCH_NORM）
+------------------------------------------------------------------------
+a_0x4F6950 [0x4F6950,0x4F6981] 跨函数直接 call 0（IAT 槽 [0x7e11c4]/[0x7e1368] 间接）
+b_0x4F69D0 [0x4F69D0,0x4F69F2] 跨函数直接 call 2 去重 2 = 0x6c9650/0x7c5f00(_ftol) 已登记
+c_0x4F6E60 [0x4F6E60,0x4F6E69] 跨函数直接 call 0（纯字段读）
+无 MISSING / 无 UNKNOWN / 无批内自引用
+
+三态判定
+------------------------------------------------------------------------
+0x4F6950  partial   （结构判明：双 IAT 槽间接读取器；槽 0x7e11c4/0x7e1368
+                     语义未确认，无 YRpp 符号）
+0x4F69D0  partial   （结构判明：ftol 取整差值；0x6c9650 语义未确认——_ftol
+                     0x7c5f00 本身为 CRT 运行时已登记；无 YRpp 符号）
+0x4F6E60  partial   （结构判明：极简字段 getter 返回参 [+0xc]；无符号无依赖）
+（三路均无 YRpp 符号，按纪律保留 partial）
+
+说明
+------------------------------------------------------------------------
+★ b 路含 x87 到 int 的强制转换点 `_ftol`（0x7c5f00，向零截断）——
+  与本仓库"舍入方式逐点确认"纪律相关，已登记引用。
+★ a 路为纯 IAT 间接（无字面量 call），c 路为无调用叶函数。
+下一批候选预期 0x4F6E70（HouseClass::GetStoragePercentage，带名）/
+0x4F9700 / 0x4F9750（HouseClass::GetWeedStoragePercentage，带名）
+（观察项，未登记前不作断言）。
+
+登记（frontier_status.tsv 追加，TSV 7806 -> 7809）
+------------------------------------------------------------------------
+0x004F6950  callees=0  deps=0   batch=3115  partial
+0x004F69D0  callees=2  deps=2   batch=3115  partial
+0x004F6E60  callees=0  deps=0   batch=3115  partial
