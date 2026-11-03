@@ -1,0 +1,54 @@
+frontier batch 3112
+===================
+日期: 2026-08-?? (心跳续跑)
+来源: memory/data/callgraph/ranking.tsv 按行序取未登记池
+选取: 0x4F3B10 / 0x4F3B20 / 0x4F3E90（转发器 + 析构器族继续）
+
+三路判类（code/randmap/disasm.py 反汇编，.qwen/tmp/_d3112{a,b,c}.txt）
+------------------------------------------------------------------------
+0x4F3B10  15B 成员转发器：
+          mov ecx,[ecx+0xc]; test ecx,ecx; je
+          call 0x5d0590                            ; [+0xc] 非空 -> thiscall 子例程
+          ret 4
+0x4F3B20  56B scalar deleting 析构器：
+          写虚表 0x7ea690
+          成员[+0xc]: mov ecx,edi; call 0x5d0580; push edi; call 0x7c8b3d
+                        ; 子对象析构 + delete 指针
+          test byte ptr [esp+0xc],1; je              ; 多 push edi 移位
+          push esi; call 0x7c8b3d                     ; [esp+0xc]&1 门控 delete this
+          mov eax,esi; ret 4
+0x4F3E90  66B 析构器（成员持有释放 + 子虚表 + 子例程转发）：
+          写主虚表 0x7ea6ac
+          mov [esi+0x10],0x7e37ec                    ; 子虚表 [+0x10]（独特）
+          成员[+0x14]: test eax; je; cmp byte [esi+0x1d]; je
+            push eax; call 0x7c8b3d; mov [esi+0x14],0 ; [+0x1d] 门控 delete [+0x14]
+          mov ecx,esi; call 0x4f3a70                 ; 转发公共析构子例程
+          清 [+0x1d]/[+0x18]; ret                    ; cdecl 无 retN
+
+核验（_check_callees3112.py，RANGES 字面量 + 批内自引用 BATCH_NORM）
+------------------------------------------------------------------------
+a_0x4F3B10 [0x4F3B10,0x4F3B1C] 跨函数直接 call 1 去重 1 = 0x005d0590 已登记
+b_0x4F3B20 [0x4F3B20,0x4F3B57] 跨函数直接 call 3 去重 2 = 0x5d0580/0x7c8b3d 已登记
+c_0x4F3E90 [0x4F3E90,0x4F3ED1] 跨函数直接 call 2 去重 2 = 0x4f3a70/0x7c8b3d 已登记
+无 MISSING / 无 UNKNOWN / 无批内自引用
+
+三态判定
+------------------------------------------------------------------------
+0x4F3B10  partial   （结构判明：成员[+0xc]转发器；0x5d0590 子例程语义未确认）
+0x4F3B20  partial   （结构判明：scalar deleting 析构器，虚表 0x7ea690；
+                     子对象 0x5d0580 语义未确认）
+0x4F3E90  partial   （结构判明：析构器，子虚表[+0x10]=0x7e37ec + [+0x1d]门控
+                     delete [+0x14] + 转发 0x4f3a70；0x4f3a70 身份未验证）
+（三路均无 YRpp 符号，按纪律保留 partial）
+
+说明
+------------------------------------------------------------------------
+★ c 路 [esi+0x10]=0x7e37ec 是写子对象的虚表指针（非清零），形态在已登记
+  析构器中较独特；0x4f3a70 继续作为本区域公共析构子例程被多类复用。
+下一批候选预期 0x4F3F60 / 0x4F3FC0 / 0x4F3FF0（观察项，未登记前不作断言）。
+
+登记（frontier_status.tsv 追加，TSV 7797 -> 7800）
+------------------------------------------------------------------------
+0x004F3B10  callees=1  deps=1   batch=3112  partial
+0x004F3B20  callees=2  deps=2   batch=3112  partial
+0x004F3E90  callees=2  deps=2   batch=3112  partial
