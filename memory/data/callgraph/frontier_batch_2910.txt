@@ -1,0 +1,55 @@
+# frontier batch 2910
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x473140（74B）+ 0x4735A0（**带名 PassengersClass::IndexOf** 50B）+ 0x47E520（153B）
+三路：a=0x473140（0x4A=74B **VectorClass 变体构造器·4B 项** callees=1 deps=0）/ b=0x473500（0x3D=61B **PassengersClass::IndexOf 带名** callees=0 deps=0）/ c=0x473750（0x99=153B **对象快照构造器** callees=0 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2910{a,b,c}.txt（a 长度 0x60、b 长度 0x40、c 长度 0xA0），完整读取确认（a ret 8 @0x473187、b ret 4 @0x47352E、c ret 4 @0x4737E6）
+核验：.qwen/tmp/_check_callees2910.py 三路全 PASS（a 1/1 去重1、b 0/0 去重0、c 0/0 去重0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7207 → 7210（待 _append_tsv_batch2910.py）
+
+## a 路：0x473140 VectorClass 变体构造器·4B 项（0x4A=74B）
+
+- 范围 0x473140-0x473187（ret 8 @0x473187，2 栈参）
+- thiscall 2 栈参（ret 8；[esp+4]=外部 buffer、[esp+0xc]=计数）——**VectorClass 变体构造器·4B 项（与批 2908 a 0x472CC0 同族）**：
+  - `[+4]=0`、`[+8]=计数`、`[+0xc]=1`、虚表 0x7E4BC4
+  - 外部 buffer 非空 → 直接 `[+4]=外部`（**免分配**）；空 → `shl eax,2`（4B/项）→ `call 0x7c8e17`（CRT new）→ `[+0xd]=1`（拥有标志）
+- 直接 call 1 个/去重 1——picker callees=1 **完全吻合**（0x7c8e17 已登记）
+- 判类：VectorClass 变体构造器·4B 项（外部 buffer 注入或 new 4B×计数 + [+0xd] 拥有标志）——批 2908 a 路 0x472CC0 同族写端（构造 vs 初始化） (partial)
+
+## b 路：0x473500 PassengersClass::IndexOf（0x3D=61B，带名）
+
+- 范围 0x473500-0x47352E（ret 4 @0x47352E）
+- thiscall 1 栈参（ret 4；[esp+8]=目标指针）——**PassengersClass::IndexOf（YRpp 带名——乘客表索引查询）**：
+  - `[+4]` 链表头（const 指针链表）→ 空返 0
+  - 遍历：`inc eax`（索引）→ `cmp 链表项, 目标` 命中返索引
+  - 未命中：`[项+0x30]` → `test byte [edx+0x14],4`（**+0x14 bit2 标志过滤**）→ 满足则用 `[项+0x30]` 回代继续
+  - 致命：`cmp 前项+0x30 指向对象 vs 目标` 检查 + 空列表安全
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**（纯链表遍历零 call）
+- 判类：**PassengersClass::IndexOf**（带名——[+4] 乘客链表线性查找命中返索引 + [+0x14]bit2 标志过滤）——**semantics 判定**：带名 + 机器码零歧义（纯指针链表遍历 + 比较 + 标志过滤，无重解释）→ **semantics_verified** (semantics_verified)
+
+## c 路：0x473750 对象快照构造器（0x99=153B）
+
+- 范围 0x473750-0x4737E6（ret 4 @0x4737E6）
+- thiscall 1 栈参（ret 4；[esp+0xc]=源对象）——**对象快照构造器（照抄源对象字段族）**：
+  - `[+4/+8/+0xc/+0x14/+0x16/+0x18]=0`、`[+0x1c]=-1`（哨兵）、虚表 0x7E4C04
+  - 源对象虚表槽 0x2c（**类型码**）→ 分支：0x1/0x6/0xf 走 0x7E4C04 虚表槽 0x84 + 0x40（取子对象）
+  - `[源+0x21c]+0x34]+0xb8` → `[+0x1c]`；`[源+0x6c]` → `[+0x18]`；虚表槽 0x1b8 → `[+0x14]`
+- 直接 call 0 个（纯虚表槽间接——picker callees=0 **完全吻合**）
+- 判类：对象快照构造器（源对象类型码虚表槽 0x2c 分支 + 0x84/0x40 子对象 + 字段族复写 [0x21c]+0xb8/[0x6c]/槽 0x1b8，虚表 0x7E4C04）——快照/可视化对象包装 (partial)
+
+## 核验结果
+
+- _check_callees2910.py：a 路 1/1（去重 1）、b 路 0/0、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（b/c 纯指针/虚表槽零字面 call）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7c8e17（CRT new）
+- **★b 路带名 semantics_verified**：PassengersClass::IndexOf——乘客链表线性查找——本批首个纯逻辑 semantics_verified 判定
+- **c 路跨域**：0x7E4C04 虚表族 + [+0x21c] HouseClass 邻接——0x21c 字段（HouseClass::Instance 域）复写
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x473920**（30B）/ **0x4748A0**（106B）/ **0x474A20**（44B）——后续候选（0x47xxxx 区）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
