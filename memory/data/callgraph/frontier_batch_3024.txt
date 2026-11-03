@@ -1,0 +1,52 @@
+# frontier batch 3024
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4CFC40（50B callees=0）+ 0x4CFD20（100B callees=2）+ 0x4CFDD0（66B callees=1）
+三路：a=0x4CFC40（0x31=49B **双标志判定** callees=0 deps=0）/ b=0x4CFD20（0x61=97B **随机初始器** callees=2 deps=2）/ c=0x4CFDD0（0x41=65B **随机参数设定器** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3024{a,b,c}.txt（a 0x50、b 0x70、c 0x60），完整读取确认（a ret @0x4CFC6D/0x4CFC71、b ret 4 @0x4CFD81、c ret @0x4CFE11）
+核验：.qwen/tmp/_check_callees3024.py 三路全 PASS（a 去重 0、b 去重 2、c 去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7533 → 7536（待 _append_tsv_batch3024.py）
+
+## a 路：0x4CFC40 双标志判定（0x31=49B，callees=0）
+
+- 范围 0x4CFC40-0x4CFC71（ret @0x4CFC6D 命中/0x4CFC71 未命中；后 nop 对齐 0x4CFC80）
+- **双标志门控判定**：
+  - `mov al, [esi+0x51]; test; jne`（**[+0x51] 标志——置位则直接返 0**）→ `mov al, [esi+0x50]; test; je`（**[+0x50] 标志**——清则返 1）→ `mov ecx, [esi+0xc]; call [eax+0x1c8]`（**虚表槽 0x1c8**——[+0xc] 对象取数）→ `mov eax, [esi+0x38]; sar eax, 1; cmp ecx, eax; jl`（**[+0x38]>>1 比较**）→ `mov al, 1`（命中）→ ret
+- 直接 call 0 个（虚表槽 0x1c8 间接）——picker callees=0 **完全吻合**
+- 判类：双标志判定（+0x51/+0x50 门控 + 虚表槽 0x1c8 + [+0x38]>>1 半值比较——3021/3022 批 c 路同族） (partial)
+
+## b 路：0x4CFD20 随机初始器（0x61=97B，callees=2）
+
+- 范围 0x4CFD20-0x4CFD81（ret 4 @0x4CFD81；后 nop 对齐 0x4CFD84）
+- **随机初始器**（脱狱/重生随机，与 c 路配对）：
+  - `push esi; call [eax+0x10]`（**虚表槽 0x10**——[esi] 对象判定）→ `test al, al; je`（生效分支）
+  - 生效：`mov byte ptr [esi+0x4f], 1`（**置 +0x4F=1**）→ `mov ecx, [0xa8b230]; add ecx, 0x218; push 0x1e; push 0x14; call 0x65c7e0`（**Randomizer::RandomRanged [0xA8B230] [+0x218] 20..30**——R250 族）→ `mov [esi+0x50], eax`（**存 [+0x50]**）
+  - `lea ecx, [edx+0x218]; push 0x63; push 0; call 0x65c7e0`（**RandomRanged 0..0x63**）→ `cmp eax, 0x32; jge`（**>=50 判定**）→ `neg [esi+0x50]`（**取负**——50% 概率反转）→ `call [ecx+0x48]`（**虚表槽 0x48**）→ `mov [esi+0x54], 0`（清零 +0x54）→ `mov ecx, esi; call 0x55a910`（**段外辅助**）→ ret 4
+- 直接 call 3 次/去重 2（0x65C7E0 + 0x55A910）——picker callees=2 **完全吻合**（虚表槽 0x10/0x48 间接）
+- 判类：随机初始器（虚表槽 0x10 门控 + RandomRanged ×2 [0xA8B230] + 50% 反转 + 虚表槽 0x48 + 0x55A910） (partial)
+
+## c 路：0x4CFDD0 随机参数设定器（0x41=65B，callees=1）
+
+- 范围 0x4CFDD0-0x4CFE11（ret @0x4CFE11；后 nop 对齐 0x4CFE20）
+- **随机参数设定器**（b 路的精简版）：
+  - `mov byte ptr [esi+0x53], 1`（**置 +0x53=1**）→ `mov eax, [0xa8b230]; lea ecx, [eax+0x218]; push 0x1e; push 0x14; call 0x65c7e0`（**RandomRanged 20..30**）→ `mov [esi+0x54], eax`（**存 [+0x54]**）
+  - `mov ecx, [0xa8b230]; push 0x63; push 0; add ecx, 0x218; call 0x65c7e0`（**RandomRanged 0..0x63**）→ `cmp eax, 0x32; jge` → `neg [esi+0x54]`（**取负**）→ ret
+- 直接 call 2 次/去重 1（0x65C7E0 ×2）——picker callees=1 **完全吻合**
+- 判类：随机参数设定器（+0x53 置位 + RandomRanged ×2 [0xA8B230] + 50% 反转写 [+0x54]） (partial)
+
+## 核验结果
+
+- _check_callees3024.py：a 路 0、b 路 3 调用去重 2、c 路 2 调用去重 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x65C7E0 + 0x55A910——**均已在 TSV 登记**
+- **★Randomizer::RandomRanged 0x65C7E0 调用现场**：b/c 路都是 `mov ecx, [0xa8b230] + add ecx, 0x218 + push hi; push lo; call 0x65c7e0`——**[0xA8B230] 是 Randomizer 实例**（QWEN.md 记载：生成器全局 Randomizer @0xABE890 是另一份，此处 [0xA8B230] 是 AI/脱狱独立的 R250 实例）
+- **★+0x4F/+0x53 标志 + [+0x50]/[+0x54] 随机字段**：b/c 路与 3021/3022/3023 批同族（+0x50/+0x51/+0x53 标志链延续）
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4CFE20（34B callees=1）/ 0x4D03A0（43B callees=2）/ 0x4D0400（34B callees=1）**：picker 显示——后续候选（c 路 dump 尾邻 0x4CFE20 已见 = 虚表槽 0x84 调用）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
