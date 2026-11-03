@@ -1,0 +1,52 @@
+# frontier batch 2980
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4A3660（476 扇入 deps=0）+ 0x4A3BB0（55 扇入 deps=1）+ 0x4A4850（102 扇入 deps=1）
+三路：a=0x4A3660（约 0x1CF=463B **476 扇入大对象清理器** callees=0 deps=0）/ b=0x4A3BB0（0x32=50B **虚表槽 0x14/0x2c 转发 + new** callees=1 deps=1）/ c=0x4A4850（0x63=99B **结构体克隆器** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2980{a,b,c}.txt（a 0x400、b 0x100、c 0x200），完整读取确认（a ret @0x4A382F、b ret @0x4A3BE2、c ret @0x4A48B3）
+核验：.qwen/tmp/_check_callees2980.py 三路全 PASS（a 0、b 1、c 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7401 → 7404（待 _append_tsv_batch2980.py）
+
+## a 路：0x4A3660 大对象清理器（约 463B，476 扇入 deps=0）
+
+- 范围 0x4A3660-0x4A382F（ret @0x4A382F）
+- **476 扇入——大对象（+0x18000 字段）清理**（纯逻辑，无跨函数调用）：
+  - `mov eax, [edi+0x18000]; mov [edi+0x18000], 0`（**+0x18000 字段读取并清零**——巨型对象，+0x18000 偏移 = ~96KB 对象大小）
+  - `test esi, esi; je 0x4a3832`（参数检查）
+  - 主体：大量字段清零 + 条件分支 + 内部循环（无跨函数 call/jmp）
+- 直接 call 0 个——picker callees=0 **完全吻合**（纯内部逻辑）
+- 判类：大对象清理器（+0x18000 字段 + 多字段清零 + 内部循环——巨型对象管理） (partial)
+
+## b 路：0x4A3BB0 虚表槽 0x14/0x2c 转发 + new（0x32=50B，55 扇入 deps=1）
+
+- 范围 0x4A3BB0-0x4A3BE2（ret @0x4A3BE2）
+- **虚表槽 + new 混合**：
+  - `push 0; call [eax+0x14]`（**虚表槽 0x14 查询**）→ `test al; je` → `call [edx+0x2c]`（**虚表槽 0x2c 调用**）→ 条件分支含 `call 0x7c8e17`（new）
+- 直接 call 1 个/去重 1（0x7C8E17）——picker callees=1 **完全吻合**（虚表槽 0x14/0x2c 间接不入字面量）
+- 判类：虚表槽 0x14/0x2c 转发器 + 条件 new（双虚表槽门控 + 0x7C8E17 分配） (partial)
+
+## c 路：0x4A4850 结构体克隆器（0x63=99B，102 扇入 deps=1）
+
+- 范围 0x4A4850-0x4A48B3（ret @0x4A48B3）
+- **结构体克隆/拷贝构造**：
+  - `push 0x6c; call 0x7c8e17`（**new 0x6c=108B**）→ `mov esi, [esp+0x14]`（源指针）→ `rep movsd`（**27 dword=108B 拷贝**）→ 字段更新 → ret
+- 直接 call 1 个/去重 1（0x7C8E17）——picker callees=1 **完全吻合**
+- 判类：结构体克隆器（new 0x6c + rep movsd 27 dword 拷贝——108B 对象逐字节克隆） (partial)
+
+## 核验结果
+
+- _check_callees2980.py：a 路 0、b 路 1、c 路 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（a 纯逻辑 0 出度；b/c 单 0x7C8E17）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8E17（operator new）——**已在 TSV 登记**
+- **★+0x18000 巨型对象首见**：a 路 476 扇入大对象清理器——+0x18000 偏移意味着对象 ≥96KB（全游戏最大对象偏移之一）
+- **★虚表槽 0x14/0x2c 新槽位**：b 路双虚表槽门控（0x14 查询 + 0x2c 调用）
+- **★结构体克隆模板**：c 路 new 0x6c + rep movsd 27 dword——与 2971 a（new 0x24）同族但更大（108B vs 36B）
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4A4900/0x4A4AD0**（picker 显示——443/42 扇入 deps=4/1 接着的 0x4A 段函数）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
