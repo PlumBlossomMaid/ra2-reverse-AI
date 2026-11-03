@@ -1,0 +1,61 @@
+# frontier batch 2930
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x488F00（100B）+ 0x48A700（458B）+ 0x48AD10（41B）
+三路：a=0x488F00（0x64=100B **0x7E5054 析构器+deleting 门** callees=2 deps=0）/ b=0x48A700（0x1CA=458B **地图矩形遍历大函数** callees=4 deps=0）/ c=0x48AD10（0x29=41B **容器释放器 41B 变体** callees=1 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2930{a,b,c}.txt（a/c 0x60-0x100、b 0x200），完整读取确认（a ret 4 @0x488F64、b ret 0xc @0x48A8CA、c ret c3 @0x48AD39）
+核验：.qwen/tmp/_check_callees2930.py 三路全 PASS（a 3个/去重2、b 5个/去重4、c 1/1 去重1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7267 → 7270（待 _append_tsv_batch2930.py）
+
+## a 路：0x488F00 0x7E5054 析构器+deleting 门（0x64=100B）
+
+- 范围 0x488F00-0x488F64（ret 4 @0x488F64）
+- **与批 2928 c 路 0x4887F0 完全同构**（差异：末尾多 deleting 门 delete this——scalar deleting 复合版）：
+  - `mov edi, ecx; mov eax, [edi+0x174]; lea esi, [edi+0x174]; mov [edi], 0x7E5054`（虚表复位）→ `call dword ptr [eax+0xc]`（子对象 [+0x174] 虚表槽 0xC 析构）
+  - `mov [edi+0x190], 0` → `mov eax, [esi+4]; mov [esi], 0x7E4DB8`（内嵌 0x7E4DB8 复合析构）→ +0xd 门控 → `call 0x7c8b3d`（delete 子容器）→ 清 [+4]
+  - `mov ecx, edi; mov byte ptr [esi+0xd], 0; mov [esi+8], 0; call 0x557600`（收尾）→ `test byte ptr [esp+0x10], 1`（**deleting 门**）→ `push edi; call 0x7c8b3d`（delete this）→ ret 4
+- 直接 call 3 个/去重 2——picker callees=2 **完全吻合**（0x557600 + 0x7c8b3d 双调用点）+ 1 虚表槽 0xC 间接
+- 判类：0x7E5054 析构器+deleting 门（2928 c 增强版——批 2928 观察项兑现；内嵌 [+0x174] 子对象虚表槽 0xC + 0x7E4DB8 复合析构 + 0x557600 收尾 + deleting 门） (partial)
+
+## b 路：0x48A700 地图矩形遍历大函数（0x1CA=458B，461 扇入）
+
+- 范围 0x48A700-0x48A8CA（ret 0xc @0x48A8CA，3 栈参）
+- **地图矩形区域遍历 + 高度浮点插值 + per-cell 回调**（461 扇入——高扇入大函数）：
+  - `mov ebp, esp; and esp, 0xfffffff8; sub esp, 0x44`（栈帧对齐）→ `mov eax, [ebp+0x10]`（参3）→ 0 → 返
+  - 坐标量化：`lea eax, [edx+0xff]; cdq; and edx, 0xff; add eax, edx; sar esi, 8`（**+0xFF 向上取整 ÷256**）→ ×2 坐标同处理 → `neg edi`（负向）
+  - 边界检查：`cmp edx, esi; jg` / `cmp edi, esi; jg`（循环范围）→ `cmp ecx, 0x200; ja` / `cmp edi, 0x200; ja`（**0x200=512 地图边界**）
+  - `lea eax, [esp+0xc]; push eax; mov ecx, 0x87F7E8; call 0x568300`（**MapClass 函数** this=0x87F7E8）→ `test al, al; je`（失败跳）
+  - 浮点段：`fild [esp+0x44]; fild [esp+0x40]; fld st(0); fmul st(1); fld st(2); fmul st(3); faddp`（坐标组合）→ `call 0x4CAC40`（浮点处理）→ `call 0x7C5F00`（**_ftol**）→ `fld [0x7E1718]; test eax; jle`（[0x7E1718] 高度常量）→ `fidiv [esp+0x30]; fdivr [0x7E1718]`（除法）
+  - `movsx eax, word ptr [esp+0xc]; fild [ebp+8]`（参1）→ `fmul st(1)`（×参1 缩放）→ `shl eax, 8; add eax, 0x80; shl ecx, 8; add ecx, 0x80`（坐标×256+0x80）
+  - `push 0; push 1; push ecx(参3); ...; call 0x7C5F00`（_ftol）→ `mov edx, eax; lea ecx, [esp+0x54]; call 0x489280`（**thiscall per-cell 回调**）
+  - 嵌套循环：`inc edi; dec ebx; jne`（内层）→ `inc edx; inc ecx; cmp edx, esi; jle`（外层）→ ret 0xc
+- 直接 call 5 个/去重 4——picker callees=4 **完全吻合**（0x568300 + 0x4cac40 + 0x7c5f00 双调用点 + 0x489280）
+- 判类：地图矩形遍历大函数（+0xFF 量化 ÷256 + 0x200 边界 + 0x87F7E8 MapClass 0x568300 + 浮点高度插值 [0x7E1718] + _ftol 0x7C5F00 + per-cell 回调 0x489280）——地图生成/变形工具 (partial)
+
+## c 路：0x48AD10 容器释放器 41B 变体（0x29=41B）
+
+- 范围 0x48AD10-0x48AD39（ret c3 @0x48AD39）
+- **与批 2918 b/c 路逐字节 identical 的 41B 容器释放器**：
+  - `mov esi, ecx; xor ebx, ebx; mov eax, [esi+4]; mov [esi+0x10], ebx`（+0x10 清零）→ `cmp eax, ebx; je` → `cmp byte ptr [esi+0xd], bl; je`（+0xd 门控）→ `push eax; call 0x7c8b3d; add esp,4`（delete 容器指针）→ 清 [+4]
+  - `mov byte ptr [esi+0xd], bl; mov [esi+8], ebx; ret`
+- 直接 call 1 个/去重 1——picker callees=1 **完全吻合**（0x7c8b3d）
+- 判类：容器释放器 41B 变体（[+4] 容器指针 + [+0xd] 拥有标志门控 delete + [+0x10]/[+4]/[+8] 清零——2918 b/c 逐字节 identical 第三实例） (partial)
+
+## 核验结果
+
+- _check_callees2930.py：a 路 3/2（去重 2）、b 路 5/4（去重 4）、c 路 1/1（去重 1）——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（a 0x7c8b3d 双调用点、b 0x7c5f00 双调用点仅计一个 callee）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x557600（收尾）、0x7c8b3d（delete）、0x568300（MapClass）、0x4cac40（浮点处理）、0x7c5f00（_ftol）、0x489280（per-cell 回调）
+- **★b 路 461 扇入大函数**：地图矩形遍历器——+0xFF 量化 + 0x200 边界 + 0x87F7E8 MapClass + 高度插值 + per-cell 回调，为地图几何处理核心工具
+- **★容器释放器 41B 变体**：批 2918 b/c → 本批 c（0x48AD10）——同一 41B 模板第三实例散布 0x48 段
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x488F70**（a 路 dump 尾部：清 [0x89E800..0x89E80C] 四全局——初始化器带）/ **0x488F90/0x488FC0/0x488FE0**（浮点初始化链：双常量 [0x7E1710]/[0x7E1708] + 0x7C8FB0 + 0x4CAC40 + 除 [0x7E5128]/[0x89E868]——[0x89E818] 区浮点全局）——后续候选
+- **0x48A8D0**（b 路 dump 尾部：0x48A9D0 调用——b 路族便捷入口）/ **0x48A9D0**（b 路被调大函数）——后续候选
+- **0x48AD40 / 0x48AD60**（c 路 dump 尾部：+0xC 标志检查 + 索引换算——批 2918 观察 getter 同款）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
