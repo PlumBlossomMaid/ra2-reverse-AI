@@ -1,0 +1,70 @@
+frontier batch 3147
+===================
+日期: 2026-08-?? (心跳续跑)
+来源: memory/data/callgraph/ranking.tsv 按行序取未登记池
+选取: 0x5172F0 / 0x517590 / 0x51B1F0（析构器 + 比较器 + Phobos hook）
+
+三路判类（code/randmap/disasm.py 反汇编，.qwen/tmp/_d3147{a,b,c}.txt）
+------------------------------------------------------------------------
+0x5172F0  30B 析构器（stdcall ret 4，this ecx）：
+          call 0x55a6f0（基类构造——与 batch 3146c 0x5172C0 同一基类）
+          [esp+8]&1 门控 -> call 0x7c8b3d（CRT free）delete this
+          mov eax,esi; ret 4
+          ——不写虚表（区别于 0x5172C0：非多态/子对象类的析构）
+0x517590  64B 3 字节不等比较器（stdcall ret 4，this ecx + 1 栈参）：
+          逐字节比较 [ecx+0..2] 与 [esp+4][+0..2]
+          相等 -> 0，不等 -> 1
+          ——怪汇编 mov eax,1/test al,al/sete dl/mov al,dl 反写
+          （MSVC 复合条件优化残留：相等分支产出 0）
+0x51B1F0  347B PhobosHook_InfantryClass_AssignTarget_SyncLog（带名）：
+          入口 edi = 新目标；edi == [esi+0x2b4] 则直接收尾
+          [esi+0x6c] > 0 时：状态机 [esi+0x6c4] == 0x1b..0x1e
+            -> 虚调用槽 0x558(push 0x1c) / [esi+0x6db] 标志 -> 槽 0x558
+            (push 2) / 否则槽 0x558(push 0)（三个参数档）
+          目标链清理：[esi+0x2a8] 非空则双向清（其 0x2a8=0 / 自身=0）
+          [esi+0x6c4] 状态机 == 0x1b..0x1e 且 [+0x6c0]->[+0x6ac]==0
+            -> 直接收尾
+          否则 push edi; [esi+0x5e0]=0xffffffff; call 0x6fcdb0（同步）
+          [esi+0x5a4]==0 且 [+0x6c0]->[+0xebe]!=0：
+            edi 槽 0x2c 检查 ==6 -> eax=edi
+            [+0x6c0]->[+0xec4]==0 且 eax->[+0x520]->[+0x1572]!=0
+              -> 槽 0x480(push 1, edi)
+            [+0xec4]!=0 且 eax->[+0x520]->[+0x1576]!=0
+              -> 槽 0x480(push 1, edi)
+          [+0x68e]=0; ret 4
+
+核验（_check_callees3147.py，RANGES 字面量 + 批内自引用 BATCH_NORM）
+------------------------------------------------------------------------
+a_0x5172F0 [0x5172F0,0x51730B] 跨函数直接 call 2 去重 2 =
+  0x55a6f0 / 0x7c8b3d 已登记
+b_0x517590 [0x517590,0x5175CD] 跨函数直接 call 0（纯比较无调用）
+c_0x51B1F0 [0x51B1F0,0x51B348] 跨函数直接 call 1 去重 1 = 0x6fcdb0 已登记
+无 MISSING / 无 UNKNOWN / 无批内自引用
+
+三态判定
+------------------------------------------------------------------------
+0x5172F0  partial             （结构判明：非多态类析构器，基类 0x55a6f0 +
+                                 门控 delete、不写虚表；无 YRpp 符号）
+0x517590  partial             （结构判明：3 字节不等比较器，怪汇编反写
+                                 产出 0/1；无 YRpp 符号）
+0x51B1F0  semantics_verified  （PhobosHook_InfantryClass_AssignTarget_
+                                 SyncLog 带名：目标变更同步全链闭合——
+                                 edi!=当前目标触发槽 0x558 三参数档/双向链
+                                 清理/0x6fcdb0 同步/槽 0x480 双触发点）
+
+说明
+------------------------------------------------------------------------
+★ a 路与 0x5172C0（batch 3146c）相邻同构（地址差 0x30），同基类 0x55a6f0
+  但写不写虚表二分——分别对应 HoverLocomotionClass 及其非多态内部类
+  的析构器。
+★ c 路为 Phobos 注入符号（非 YRpp 符号），方括号内的槽 0x558（参数档
+  0x1c/2/0）、槽 0x480（push 1/edi）、槽 0x2c（==6 判定）语义依赖
+  InfantryClass 虚表布局，已验证整体行为链。
+下一批候选预期 0x51B350（1881B）/ 0x51D6F0（1013B）/ 0x51DBD0（824B，
+观察项，未登记前不作断言）。
+
+登记（frontier_status.tsv 追加，TSV 7918 -> 7921）
+------------------------------------------------------------------------
+0x005172F0  callees=2  deps=2   batch=3147  partial
+0x00517590  callees=0  deps=0   batch=3147  partial
+0x0051B1F0  callees=1  deps=1   batch=3147  semantics_verified (PhobosHook_InfantryClass_AssignTarget_SyncLog)
