@@ -1,0 +1,50 @@
+# frontier batch 2975
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4A2930（30 扇入 deps=1）+ 0x4A2950（55 扇入 deps=1）+ 0x4A2990（135 扇入 deps=0）
+三路：a=0x4A2930（0x1B=27B **COM AddRef 包装器 +0xc** callees=1←IAT deps=1）/ b=0x4A2950（0x34=52B **COM Release 包装器 +0xc** callees=1←IAT deps=1）/ c=0x4A2990（0x78=120B **COM GUID 比对转发器** callees=0 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2975{a,b,c}.txt（a 0x80、b 0x100、c 0x160），完整读取确认（a ret 4 @0x4A294B、b ret 4 @0x4A2984、c ret 0xc @0x4A2A08）
+核验：.qwen/tmp/_check_callees2975.py 三路全 PASS（a 0 字面量、b 0 字面量、c 0）——全 IAT 间接（预期差），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7386 → 7389（待 _append_tsv_batch2975.py）
+
+## a 路：0x4A2930 COM AddRef 包装器 +0xc（0x1B=27B，30 扇入 deps=1）
+
+- 范围 0x4A2930-0x4A294B（ret 4 @0x4A294B）
+- **AddRef 包装器 +0xc 变体**（同 2968 c/2970 b 族）：
+  - `mov eax, [esp+4]; mov edx, [0xabcd3c]; inc edx; add eax, 0xc; push eax; mov [0xabcd3c], edx; call dword ptr [0x7e11c8]`（**全局计数 [0xABCD3C]++ + IAT[0x7E11C8] 引用计数**，+0xc 成员偏移）→ ret 4
+- 直接 call 0 个（字面量）/ **IAT 间接 1 个**（[0x7E11C8]——picker callees=1 来源）——**预期差**，如实记录
+- 判类：COM AddRef 包装器（[0xABCD3C]++ + IAT[0x7E11C8]——+0xc 成员变体，AddRef 三偏移齐套） (partial)
+
+## b 路：0x4A2950 COM Release 包装器 +0xc（0x34=52B，55 扇入 deps=1）
+
+- 范围 0x4A2950-0x4A2984（ret 4 @0x4A2984）
+- **Release 包装器 +0xc 变体**（与 a 对称）：
+  - `mov edx, [0xabcd3c]; dec edx; lea eax, [edi+0xc]; mov [0xabcd3c], edx; push eax; call dword ptr [0x7e11cc]`（**全局计数 [0xABCD3C]-- + IAT[0x7E11CC] Release**，+0xc 成员）→ `mov esi, eax; test esi; jne`（返回码判断）→ 检查对象 `mov [edi], 0x7e5d28; mov al, 1; ret 4`
+- 直接 call 0 个（字面量）/ **IAT 间接 1 个**（[0x7E11CC]——picker callees=1 来源）——**预期差**，如实记录
+- 判类：COM Release 包装器（[0xABCD3C]-- + IAT[0x7E11CC] + 虚表 0x7E5D28 复位） (partial)
+
+## c 路：0x4A2990 COM GUID 比对转发器（0x78=120B，135 扇入 deps=0）
+
+- 范围 0x4A2990-0x4A2A08（ret 0xc @0x4A2A08）
+- **COM QueryInterface 变体**（同 2968 b/2969 c 族——0x7F7C90 GUID）：
+  - `mov eax, [esp+0xc]; test; jne` → 空返回 **0x80004003（E_POINTER）** → 非空：`mov edi, 0x7f7c90; repe cmpsd`（**GUID 比对**）→ 命中 `mov [ebx], eax`（出参写入）→ `call [ecx+4]`（**虚表槽 4 转发**）→ `xor eax; ret 0xc`（S_OK）/ 未命中 **0x80004002（E_NOINTERFACE）**
+- 直接 call 0 个——picker callees=0 **完全吻合**（全虚表槽调用）
+- 判类：COM GUID 比对转发器（0x7F7C90 + 槽 4 转发 + E_POINTER/E_NOINTERFACE——2968 b 族第三实例） (partial)
+
+## 核验结果
+
+- _check_callees2975.py：a 路 0 字面量、b 路 0 字面量、c 路 0——三路全 PASS
+- picker callees vs 核验差值：**a/b 预期差**（picker=1 ← IAT[0x7E11C8]/[0x7E11CC] 间接；核验只抓字面量=0）；**c 路差 0**（全虚表槽 4 调用）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：无字面量调用（a/b 为 IAT[0x7E11C8]/[0x7E11CC]，c 为虚表槽 4）
+- **★COM AddRef/Release 五偏移族齐套**：+0x20（2968 c）/ +0x8（2970 b）/ +0xc（本批 a/b）——[0xABCD3C] 计数器三偏移变体完整闭合
+- **★0x7E5D28 虚表接入**：b 路 Release 成功后复位虚表 0x7E5D28——与 2971 b 复合析构器同族
+- **★COM 转发器族三实例**：2968 b（0x49FF80）+ 2969 c（0x4A04B0）+ 本批 c（0x4A2990）——0x7F7C90 GUID 比对三变体
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4A2AB0/0x4A2B60**（picker 显示——167/360 扇入 deps=2/3 接着的 0x4A 段函数）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
