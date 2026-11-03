@@ -1,0 +1,52 @@
+# frontier batch 2999
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4B50C0（200B callees=1）+ 0x4B5190（91B callees=0）+ 0x4B51F0（31B callees=0）
+三路：a=0x4B50C0（0xC5=197B **双路径大函数** callees=1 deps=1）/ b=0x4B5190（0x5A=90B **五字段写入器** callees=0 deps=0）/ c=0x4B51F0（0x1E=30B **简单析构** callees=0 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2999{a,b,c}.txt（a 0xE0、b 0x80、c 0x40），完整读取确认（a ret 0xc @0x4B5185、b ret @0x4B51EA、c ret @0x4B520E）
+核验：.qwen/tmp/_check_callees2999.py 三路全 PASS（a 去重 1、b 去重 0、c 去重 0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7458 → 7461（待 _append_tsv_batch2999.py）
+
+## a 路：0x4B50C0 双路径大函数（0xC5=197B，callees=1）
+
+- 范围 0x4B50C0-0x4B5185（ret 0xc @0x4B5185；后 nop 对齐 0x4B5190 新函数）
+- **+0x48 门控双路径**（stdcall ret 0xc）：
+  - 前置：`cmp ecx, [esi+0x50]; jne` + `test byte ptr [esp+0xc], 4; je`（**+0x50 对象比对 + 参数位 2 检查**）
+  - 路径 1（+0x48 已置位）：`mov edx, [esi+0xb0]; call [edx+0x24]`（**[+0xb0] 虚表槽 0x24**）→ `mov eax, [esi+0x24]; or ah, 0x80; mov [ebx], eax`（**[+0x24] 写 [ebx] 带 0x80 位**）
+  - 路径 2（未置位）：写 `[+0xbc/0xc0/0xc4/0xc8]` 五字段（+0xc/0x10/0x14/0x4c）→ `call [edx+0x18]`（**虚表槽 0x18**——[esi] 对象）→ `call [ebp+0xc]`（**虚表槽 0xc**——[+0xb0]）→ `call [eax+0x48]`（**虚表槽 0x48**）→ `mov byte ptr [esi+0x48], 1`
+  - 尾部：`cmp eax, [esi+0xb0]`（对象比对）→ `mov edx, [esi+0x38]; push edx; call [eax+0x9c]`（**虚表槽 0x9c**）→ `call 0x7ca422`（**CRT 函数**）→ `call [edx+0x48]`（虚表槽 0x48）→ `or ah, 0x80; mov [ebx], eax`（写 [ebx]）
+- 直接 call 1 个/去重 1（0x7CA422）——picker callees=1 **完全吻合**（虚表槽 0x24/0x18/0xc/0x48/0x9c 间接）
+- 判类：双路径大函数（+0x50 比对 + 参数位 2 + [+0xb0] 虚表槽 0x24/0xc/0x9c + 0x7CA422 + [ebx] 写带 0x80 位） (partial)
+
+## b 路：0x4B5190 五字段写入器（0x5A=90B，callees=0）
+
+- 范围 0x4B5190-0x4B51EA（ret @0x4B51EA；后 nop 对齐 0x4B51F0 新函数）
+- **+0x48 门控五字段写入**（同 a 路路径 2 逻辑，无外参）：
+  - `mov al, [esi+0x48]; test; jne`（+0x48 已置位则跳过）→ 写 `[+0xbc/0xc0/0xc4/0xc8]` 五字段（+0xc/0x10/0x14/0x4c，注意 +0x10+0x12）→ `call [edx+0x18]`（**虚表槽 0x18**）→ `call [ebx+0xc]`（**虚表槽 0xc**——[+0xb0]）→ `call [eax+0x48]`（**虚表槽 0x48**）→ `mov byte ptr [esi+0x48], 1` → ret
+- 直接 call 0 个（虚表槽 0x18/0xc/0x48 间接）——picker callees=0 **完全吻合**
+- 判类：五字段写入器（+0x48 门控 + [+0xbc-0xc8] 写入 + 虚表槽 0x18/0xc/0x48 + 置 1） (partial)
+
+## c 路：0x4B51F0 简单析构（0x1E=30B，callees=0）
+
+- 范围 0x4B51F0-0x4B520E（ret @0x4B520E；后 nop 对齐 0x4B5210 新函数）
+- **与 2998 c 路 0x4B50A0 逐字节同模板**（+0x48 门控释放）：
+  - `mov al, [esi+0x48]; test; je`（+0x48 标志门控）→ `mov eax, [esi+0xb0]; lea ecx, [esi+0xb0]; call [eax+0x24]`（**[+0xb0] 虚表槽 0x24**）→ `mov byte ptr [esi+0x48], 0` → ret
+- 直接 call 0 个（虚表槽 0x24 间接）——picker callees=0 **完全吻合**
+- 判类：简单析构（+0x48 门控 + [+0xb0] 虚表槽 0x24——2998c 同模板第二实例） (partial)
+
+## 核验结果
+
+- _check_callees2999.py：a 路 1、b 路 0、c 路 0——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7CA422——**已在 TSV 登记**
+- **★+0x48 门控族三实例**：2998c（0x4B50A0）/2999c（0x4B51F0）同模板；a/b 路为 +0x48 门控写入/析构变体
+- **★[+0x24] 写 0x80 位**：a 路 `or ah, 0x80`（写 [ebx] 带 0x8000 位）——新字段位
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4B54E0（71B callees=1）/ 0x4B55F0（57B callees=4）/ 0x4B57D0（30B callees=2）**：picker 显示——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
