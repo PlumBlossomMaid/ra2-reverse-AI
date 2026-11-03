@@ -1,0 +1,49 @@
+# frontier batch 3037
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4DBDA0（79B callees=2）+ 0x4DBFD0（92B callees=0）+ 0x4DC030（44B callees=0）
+三路：a=0x4DBDA0（0x4E=78B **双条件判定** callees=2 deps=2）/ b=0x4DBFD0（0x5B=91B **四条件链判定** callees=0 deps=0）/ c=0x4DC030（0x2B=43B **类型门控触发** callees=0 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3037{a,b,c}.txt（a 0x70、b 0x70、c 0x50），完整读取确认（a ret @0x4DBDEA/0x4DBDEE、b ret @0x4DBFE4/0x4DBFFB/0x4DC013/0x4DC02B、c ret @0x4DC05B）
+核验：.qwen/tmp/_check_callees3037.py 三路全 PASS（a 去重 2、b 去重 0、c 去重 0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7572 → 7575（待 _append_tsv_batch3037.py）
+
+## a 路：0x4DBDA0 双条件判定（0x4E=78B，callees=2）
+
+- 范围 0x4DBDA0-0x4DBDEE（ret @0x4DBDEA 命中/0x4DBDEE 未命中；后 nop 对齐 0x4DBDF0）
+- **双条件判定**（bool 返回）：
+  - `call 0x70c5a0`（**段外辅助**——条件 1）→ `test al, al; je`（未过返 0）→ `call [eax+0x84]`（**虚表槽 0x84**——取对象）→ `mov cl, [eax+0xc93]; test; je`（**[+0xC93] 标志**——条件 2）→ `mov eax, [esi+0x674]; test; jne`（[+0x674] 检查）→ `push 0x80004003; call 0x7dc720`（**E_POINTER 抛掷器**）→ `call [ecx+0x80]`（**虚表槽 0x80**——[+0x674] 对象）→ `test al, al; jne`（命中返 0，否则返 1）
+- 直接 call 2 个/去重 2（0x70C5A0 + 0x7DC720）——picker callees=2 **完全吻合**（虚表槽 0x84/0x80 间接）
+- 判类：双条件判定（0x70C5A0 + [+0xC93] 标志 + [+0x674] E_POINTER + 虚表槽 0x80） (partial)
+
+## b 路：0x4DBFD0 四条件链判定（0x5B=91B，callees=0）
+
+- 范围 0x4DBFD0-0x4DC02B（ret @0x4DBFE4/0x4DBFFB/0x4DC013/0x4DC02B 四出口；后 nop 对齐 0x4DC02C）
+- **四条件链判定**（bool 返回，纯虚表槽间接）：
+  - `push 0; call [eax+0x3f8]`（**虚表槽 0x3f8**——条件 1）→ `test; jne` → `call [edx+0x84]`（虚表槽 0x84）→ `cmp [eax+0x634], -1; jne`（**[+0x634]==-1 检查**——条件 2）→ `call [eax+0x84]` → `mov ecx, [eax+0x404]; test; je`（**[+0x404] 检查**——条件 3）→ `call [edx+0x84]` → `cmp [eax+0x678], 0xd; setle al`（**[+0x678] <= 0xD**——条件 4，setle 返回）
+- 直接 call 0 个（虚表槽 0x3f8/0x84 间接 ×3）——picker callees=0 **完全吻合**
+- 判类：四条件链判定（虚表槽 0x3f8 + [+0x634]/[+0x404]/[+0x678<=0xD] 三字段链） (partial)
+
+## c 路：0x4DC030 类型门控触发（0x2B=43B，callees=0）
+
+- 范围 0x4DC030-0x4DC05B（ret @0x4DC05B；后 nop 对齐 0x4DC060）
+- **类型门控触发**：
+  - `call [eax+0x184]`（**虚表槽 0x184**——类型查询）→ `cmp eax, 0xf; jne`（**类型 != 0xF 跳过**）→ `push 0; call [edx+0x3c8]`（**虚表槽 0x3c8**——触发）→ `push 1; push 0; call [eax+0x480]`（**虚表槽 0x480**——状态设定——30x 批多次见的 0x480 槽）→ ret
+- 直接 call 0 个（虚表槽 0x184/0x3c8/0x480 间接）——picker callees=0 **完全吻合**
+- 判类：类型门控触发（虚表槽 0x184==0xF 门控 + 0x3c8 触发 + 0x480 状态设定） (partial)
+
+## 核验结果
+
+- _check_callees3037.py：a 路 2、b 路 0、c 路 0——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x70C5A0 + 0x7DC720——**均已在 TSV 登记**
+- **★虚表槽 0x80/0x3f8/0x3c8 首见**：a/c 路新槽位（0x480/0x184 已见多批）
+- **★[+0x634]/[+0x404]/[+0x678] 字段链**：b 路三字段检查（+0x678<=0xD 阈值）
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4DCFE0 FootClass::MoveToTiberium（182B callees=1，带名）/ 0x4DD2F0（1431B callees=9 大函数）/ 0x4DDB90 FootClass::MoveToWeed（174B callees=2，带名）**：picker 显示——后续候选（两个 FootClass 带名移动函数 + 1431B 大函数）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
