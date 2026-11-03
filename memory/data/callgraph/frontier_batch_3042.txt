@@ -1,0 +1,59 @@
+# frontier batch 3042
+
+日期：2026-11-04
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4DF320（118B callees=0）+ 0x4DF4B0（87B callees=0）+ 0x4DFA70（254B callees=2）
+三路：a=0x4DF320（0x76=118B **行动槽发射器（叶子）** callees=0 deps=0）/ b=0x4DF4B0（0x2B=43B **行动槽守卫（叶子）** callees=0 deps=0）/ c=0x4DFA70（0xFE=254B **最近距离选择器** callees=2 deps=2）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3042{a,b,c}.txt（a 0x80、b 0x60、c 0x100），完整读取确认（a ret @0x4DF395、b ret @0x4DF4DA、c ret @0x4DFB6D；c 提前 ret @0x4DFB48）
+核验：.qwen/tmp/_check_callees3042.py 三路全 PASS（a 去重 0、b 去重 0、c 去重 2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7587 → 7590（待 _append_tsv_batch3042.py）
+
+## a 路：0x4DF320 行动槽发射器（0x76=118B，callees=0，叶子）
+
+- 范围 0x4DF320-0x4DF395（ret @0x4DF395；后 nop 对齐 0x4DF396）
+- **行动槽发射器**（this=esi，纯虚表槽——零字面量依赖）：
+  - `mov eax, [esi+0x5c8]; mov [esi+0x5d1], 0`（**清 [+0x5D1]**）；`test eax, eax; je 0x4df35b`（**[+0x5C8] 槽**分支）
+  - `push 1; push 2; call [eax+0x1e8]`（**虚表槽 0x1E8**，参 2/1）→ `mov eax, [esi+0x5c8]; push 1; push eax; call [edx+0x480]`（**虚表槽 0x480**，[+0x5C8] 为参）→ ret（返 1）
+  - 0x4df35b：[+0x5CC] 槽分支：`push 1; push 1; call [edx+0x1e8]`（虚表槽 0x1E8 带参 1/1）→ `mov ecx, [esi+0x5cc]; push ecx; call [eax+0x3c8]`（**虚表槽 0x3C8**，[+0x5CC] 为参）→ ret（返 1）
+  - 0x4df389：两槽皆空：`mov ecx, esi; call [edx+0x4a8]`（**虚表槽 0x4A8**）→ ret（返 0）
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**（全虚表槽 0x1E8/0x480/0x3C8/0x4A8 间接——叶子函数）
+- 判类：行动槽发射器（[+0x5C8]/[+0x5CC] 槽分支发射 + 清 [+0x5D1] + 虚表槽 0x1E8/0x480/0x3C8/0x4A8——3041c 装载的槽在此消费） (partial)
+
+## b 路：0x4DF4B0 行动槽守卫（0x2B=43B，callees=0，叶子）
+
+- 范围 0x4DF4B0-0x4DF4DA（ret @0x4DF4DA；后 nop 对齐 0x4DF4DB 内跳转目标为 0x4DF4DB）
+- **行动槽守卫**（this=esi，纯虚表槽）：
+  - `cmp [esi+0x5c4], 0x1d; jne 0x4df4d9`（**[+0x5C4] 类型门控**==0x1D）→ `mov al, [esi+0x5d1]; test al, al; je 0x4df4db`（**[+0x5D1] 标志**）→ `mov [esi+0x5d1], 0`（清标志）→ `call [eax+0x4c8]`（**虚表槽 0x4C8**）→ ret（返 1）
+  - 0x4df4db：`call [edx+0x184]`（**虚表槽 0x184**）→ `cmp eax, 5; je 0x4df4cf`（==5 跳清除路径）→ `call [eax+0x184]`（虚表槽 0x184 二次）→ `cmp eax, 5; je 0x4df4cf` → `call [edx+0x4a8]`（虚表槽 0x4A8）→ ret（返 0）
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**（全虚表槽 0x4C8/0x184/0x4A8 间接——叶子函数）
+- 判类：行动槽守卫（[+0x5C4]==0x1D + [+0x5D1] 标志门控 + 虚表槽 0x4C8/0x184/0x4A8——3041c/3042a 同槽联动） (partial)
+
+## c 路：0x4DFA70 最近距离选择器（0xFE=254B，callees=2）
+
+- 范围 0x4DFA70-0x4DFB6D（ret @0x4DFB6D；提前 ret @0x4DFB48 空命中返 0；后 nop 对齐 0x4DFB6E）
+- **最近距离选择器**（this=esi，stdcall——从 [+0x21C] 容器选最近）：
+  - `mov eax, [esi+0x21c]; mov [esp+0x14], 0x7fffffff`（**最优距离初始化 INT_MAX**）→ `mov ebp, [eax+0xa8]; dec ebp; js 0x4dfb3f`（**容器计数 [+0xA8]**）
+  - 循环体：`mov edx, [ecx+0x9c]; mov ebx, [edx+ebp*4]; mov ecx, ebx; call [eax+0x48]`（**虚表槽 0x48** 取元素坐标——[+0x9C] 数组）
+  - `lea eax, [esp+0x34]; mov ecx, esi; push eax; call [edx+0x48]`（**虚表槽 0x48 二次**——自身坐标）
+  - **三分量差 + 浮点点积**：`sub` ×3 → `fild [esp+0x28]/[esp+0x2c]/[esp+0x24]`（x 差平方项先 fild）→ `fld st(0); fmul st(1); fld st(2); fmul st(3); faddp`（**平方和累加**）→ `fstp qword [esp]` → **call 0x4cac40**（**浮点函数**——批 3039b 同族，平方根/逆平方）→ **call 0x7c5f00**（**_ftol**——向零截断）→ `cmp eax, [esp+0x14]; jge 跳过` → 更新最优（[+0x14]=距离、[+0x18]=命中对象 ebx）
+  - 循环结束：`mov eax, [esp+0x18]` 命中对象；`test eax, eax; jne 0x4dfb49` → 空返 0（xor al,al）
+  - 0x4dfb49：`push 1; push eax; call [edx+0x480]`（**虚表槽 0x480**——命中对象为参）→ `push 0; push 9; call [eax+0x1e8]`（**虚表槽 0x1E8**，参 9/0）→ ret（返 1）
+- 直接 call 2 个/去重 2（0x4CAC40 + 0x7C5F00）——picker callees=2 **完全吻合**（虚表槽 0x48/0x480/0x1E8 间接不计）
+- 判类：最近距离选择器（[+0x21C] 容器 [+0x9C]/[+0xA8] 迭代 + 虚表槽 0x48 双坐标 + 三分量差浮点点积 + 0x4CAC40 浮点 + _ftol 0x7C5F00 最近邻 + 虚表槽 0x480/0x1E8 命中消费） (partial)
+
+## 核验结果
+
+- _check_callees3042.py：a 路 0、b 路 0、c 路 2——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用（批内地址 0x4DF320/0x4DF4B0/0x4DFA70 互不为被调）；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4CAC40 + 0x7C5F00——**均已在 TSV 登记**
+- **★连续两批 callees=0 叶子**（3041b + 3042a/b 三枚）：0x4D 段后段为纯虚表槽间接薄函数带——pick 与核验一致
+- **★3042a/3042b ↔ 3041c 槽联动**：3041c 装载 [+0x5C4]/[+0x5C8]/[+0x5CC]/[+0x5D1]，3042a 消费发射、3042b 守卫清除——同一行动槽族三件套（0x4DF0E0/0x4DF320/0x4DF4B0 相邻 0x10 内）
+- **★0x4CAC40 浮点函数复现**：批 3039b 同族（大行动判定器）——距离度量共享
+- **batch 3042 无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4DFB70（312B callees=3）/ 0x4DFCB0（329B callees=3）/ 0x4DFE00（319B callees=3）**：picker 显示 0x4D 段后续——下一批候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
