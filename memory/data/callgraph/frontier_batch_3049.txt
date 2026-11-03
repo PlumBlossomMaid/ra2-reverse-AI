@@ -1,0 +1,63 @@
+# frontier batch 3049
+
+日期：2026-11-04
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4E14C0 GadgetClass::DeleteList（74B callees=0）+ 0x4E1570 GadgetClass::DrawAll（44B callees=0）+ 0x4E15A0 GadgetClass::ExtractGadgetAt（148B callees=0）
+三路：a=0x4E14C0（0x4A=74B **GadgetClass::DeleteList** callees=0 deps=0 带名）/ b=0x4E1570（0x2A=42B **GadgetClass::DrawAll** callees=0 deps=0 带名）/ c=0x4E15A0（0x92=146B **GadgetClass::ExtractGadgetAt** callees=0 deps=0 带名）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3049{a,b,c}.txt（a 0x50、b 0x30、c 0xA0），完整读取确认（a ret @0x4E1509、b ret 4 @0x4E1599、c ret 8 @0x4E1631）
+核验：.qwen/tmp/_check_callees3049.py 三路全 PASS（a 0、b 0、c 0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7608 → 7611（待 _append_tsv_batch3049.py）
+
+## a 路：0x4E14C0 GadgetClass::DeleteList（0x4A=74B，callees=0，带名）
+
+- 范围 0x4E14C0-0x4E1509（ret @0x4E1509；后 nop 对齐 0x4E150A）
+- **GadgetClass::DeleteList**（带名——YRpp 符号对应，UI 控件链表删除）：
+  - `mov esi, ecx; mov eax, [esi]; call [eax+8]`（**虚表槽 8** 取 next）→ `test eax, eax; je 0x4e14e0`
+  - 定位尾节点循环：`call [edx+8]`（虚表槽 8）→ `mov esi, eax` → `jne`（遍历到尾部）
+  - 删除循环：`mov edx, [esi]; call [edx+0x54]`（**虚表槽 0x54**——清理）→ `mov eax, [esi]; call [eax+4]`（**虚表槽 4** 取 next）→ `mov edi, esi` → `test edi, edi; je 0x4e1503` → `mov edx, [edi]; push 1; mov ecx, edi; call [edx]`（**虚表槽 0** delete 带 1）→ `test esi, esi; jne`（遍历删除）
+  - ret
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**（纯虚表槽 8/0x54/4/0 间接——叶子）
+- 判类：GadgetClass::DeleteList 带名（虚表槽 8 遍历 + 虚表槽 0x54/4/0 删除——UI 控件链表删除语义） (semantics_verified)
+
+## b 路：0x4E1570 GadgetClass::DrawAll（0x2A=42B，callees=0，带名）
+
+- 范围 0x4E1570-0x4E1599（ret 4 @0x4E1599；后 nop 对齐 0x4E159C）
+- **GadgetClass::DrawAll**（带名——UI 控件全部绘制）：
+  - `mov esi, ecx; test esi, esi; je 0x4e1598`（this 空返回）
+  - `mov edi, [esp+0xc]; and edi, 0xff`（**参数 &0xff**——绘制标志取低 8 位）
+  - 绘制循环：`mov eax, [esi]; push edi; mov ecx, esi; call [eax+0x6c]`（**虚表槽 0x6C** Draw 带参）→ `mov edx, [esi]; mov ecx, esi; call [edx+4]`（**虚表槽 4** 取 next）→ `mov esi, eax; test esi, esi; jne`（遍历）
+  - ret 4
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**（纯虚表槽 0x6C/4 间接——叶子）
+- 判类：GadgetClass::DrawAll 带名（虚表槽 0x6C Draw + 虚表槽 4 遍历——绘制全部链语义） (semantics_verified)
+
+## c 路：0x4E15A0 GadgetClass::ExtractGadgetAt（0x92=146B，callees=0，带名）
+
+- 范围 0x4E15A0-0x4E1631（ret 8 @0x4E1631；后 nop 对齐 0x4E1634）
+- **GadgetClass::ExtractGadgetAt**（带名——stdcall ret 8：2 参 ebx=[esp+0x28] x、[esp+0x2c] y；UI 控件命中测试）：
+  - `mov eax, [0x7f5be8]; mov edx, [0x7f5bf4]; mov [esp+0xc], eax; xor eax, eax; test ecx, ecx; mov [esp+0x10], edx; mov [esp], eax; je 0x4e162e`（**[0x7F5BE8]/[0x7F5BF4] 全局**——屏幕边界；this 空返回 0）
+  - 遍历循环：`mov al, [ecx+0x1e]; mov ebx, [esp+0x28]; test al, al; jne 0x4e161b`（**[+0x1E] 标志**——跳过标记；x 参数）
+  - `mov eax, [ecx+0xc]; mov edi, [ecx+0x10]; mov edx, [ecx+0x14]; mov esi, [ecx+0x18]`（**[+0xC]/[+0x10]/[+0x14]/[+0x18] 四坐标**——Gadget 矩形）
+  - **矩形命中**：`cmp ebx, eax; jl 跳过`（x ≥ 左）→ `lea ebp, [edx+eax]; cmp ebx, ebp; jge 跳过`（x < 右=左+宽）→ `cmp ebx, edi; jl 跳过`（y ≥ 上）→ `lea ebp, [edi+esi]; cmp ebx, ebp; jge 跳过`（y < 下=上+高）
+  - **面积排序**：`imul ebx, [esp+0x1c]; imul ebp, edx; cmp ebp, ebx; jg 跳过`（宽*高 面积比较——取最小面积命中）
+  - 命中记录：`mov [esp+0x14], eax; mov [esp+0x18], edi; mov [esp+0x1c], edx; mov [esp+0x20], esi; mov [esp+0x10], ecx`（**存命中 Gadget 及四坐标**）
+  - 0x4e161b：`mov eax, [ecx]; call [eax+4]`（**虚表槽 4** 取 next）→ `mov ecx, eax; test ecx, ecx; jne`（遍历）
+  - `mov eax, [esp+0x10]`（命中指针）→ ret 8
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**（纯虚表槽 4 间接——叶子）
+- 判类：GadgetClass::ExtractGadgetAt 带名（[+0x1E] 标志 + [+0xC]/[+0x10]/[+0x14]/[+0x18] 四坐标矩形命中 + 面积排序 + 虚表槽 4 遍历——命中测试语义） (semantics_verified)
+
+## 核验结果
+
+- _check_callees3049.py：a 路 0、b 路 0、c 路 0——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用（批内地址 0x4E14C0/0x4E1570/0x4E15A0 互不为被调）；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：无直接调用——三路皆纯虚表槽（8/0x54/4/0、0x6C/4、4）间接
+- **★GadgetClass 族三件套带名**（本批首个全部 semantics_verified 的批次）：DeleteList/DrawAll/ExtractGadgetAt——UI 控件链表三操作（删除/绘制/命中），纯虚表槽遍历
+- **★[0x7F5BE8]/[0x7F5BF4] 全局**：c 路屏幕边界（7F 段全局族）
+- **★[+0x1E] 跳过标志 + 四坐标矩形 + 面积排序**：c 路命中测试核心
+- **batch 3049 三路全带名**——GadgetClass 族，全部 semantics_verified
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4E1A60（103B callees=2）/ 0x4E1AD0（30B callees=2）/ 0x4E1FE0（988B callees=8）**：picker 显示 0x4E 段——下一批候选（0x4E1FE0 988B 巨函数，callees=8）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
