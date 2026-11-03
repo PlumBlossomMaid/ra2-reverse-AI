@@ -1,0 +1,51 @@
+# frontier batch 3028
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4D2D60（73B callees=1）+ 0x4D3540（73B callees=1）+ 0x4D55C0（39B callees=1）
+三路：a=0x4D2D60（0x46=70B **scalar deleting 析构器** callees=1 deps=1）/ b=0x4D3540（0x46=70B **构造器** callees=1 deps=1）/ c=0x4D55C0（0x26=38B **COM 判定** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3028{a,b,c}.txt（a 0x60、b 0x60、c 0x50），完整读取确认（a ret 4 @0x4D2DA6、b ret 4 @0x4D3586、c ret @0x4D55E6）
+核验：.qwen/tmp/_check_callees3028.py 三路全 PASS（a 去重 1、b 去重 1、c 去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7545 → 7548（待 _append_tsv_batch3028.py）
+
+## a 路：0x4D2D60 scalar deleting 析构器（0x46=70B，callees=1）
+
+- 范围 0x4D2D60-0x4D2DA6（ret 4 @0x4D2DA6；后 nop 对齐 0x4D2DB0 新函数）
+- **与 3027 c 路 0x4D2D10 逐字节同模板**（scalar deleting 析构器）：
+  - `mov [esi], 0x7e8bc0`（**虚表指针复位 0x7E8BC0**）→ `[+4]` 持有标志门控 delete → `[+0xd]`/`[+8]` 清零 → deleting 门 → delete this → ret 4
+- 直接 call 2 次/去重 1（0x7C8B3D ×2）——picker callees=1 **完全吻合**
+- 判类：scalar deleting 析构器（虚表 0x7E8BC0 复位——3027c 同模板第二实例） (partial)
+
+## b 路：0x4D3540 构造器（0x46=70B，callees=1）
+
+- 范围 0x4D3540-0x4D3586（ret 4 @0x4D3586；后 nop 对齐 0x4D3590）
+- **构造器**（大对象——+0x674 字段）：
+  - `mov eax, [esp+4]; push eax; call 0x6f4300`（**段外辅助**——参数对象）→ `mov eax, 0x7e91ec; mov [esi+0x588], eax; mov [esi+0x5ac], eax`（**双字段虚表 0x7E91EC**——+0x588/+0x5AC）→ `mov [esi+0x674], 0`（清零 +0x674）
+  - **四虚表写入**：`mov [esi], 0x7e8c94; mov [esi+4], 0x7e8c78; mov [esi+8], 0x7e8c70; mov [esi+0xc], 0x7e8c68`（**0x7E8C94 族**）→ ret 4
+- 直接 call 1 个/去重 1（0x6F4300）——picker callees=1 **完全吻合**
+- 判类：构造器（0x6F4300 辅助 + 双虚表 0x7E91EC + 四虚表 0x7E8C94 族 + [+0x674] 清零） (partial)
+
+## c 路：0x4D55C0 COM 判定（0x26=38B，callees=1）
+
+- 范围 0x4D55C0-0x4D55E6（ret @0x4D55E6；后 nop 对齐 0x4D55F0）
+- **COM 门控转发**：
+  - `mov eax, [esi+0x674]; test; jne`（**[+0x674] 对象检查**——空则抛）→ `push 0x80004003; call 0x7dc720`（**E_POINTER 抛掷器**）→ `mov eax, [esi+0x674]; push eax; call [ecx+0x48]`（**虚表槽 0x48**——对象转发）→ `xor al, al` → ret
+- 直接 call 1 个/去重 1（0x7DC720）——picker callees=1 **完全吻合**（虚表槽 0x48 间接）
+- 判类：COM 判定（[+0x674] 检查 + E_POINTER 0x7DC720 + 虚表槽 0x48 转发——b 路构造器对象配套） (partial)
+
+## 核验结果
+
+- _check_callees3028.py：a 路 2 调用去重 1、b 路 1、c 路 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D + 0x6F4300 + 0x7DC720——**均已在 TSV 登记**
+- **★四虚表族 0x7E8C94/0x7E8C78/0x7E8C70/0x7E8C68 首见**：b 路构造器（新虚表族）
+- **★虚表 0x7E91EC 双字段首见**：b 路 +0x588/+0x5AC 双份写入（0x7E91 族）
+- **★0x6F4300 首见**：b 路辅助函数
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4D5660（44B callees=1）/ 0x4D7170（442B callees=5）/ 0x4D7330（425B callees=6）**：picker 显示——后续候选（0x4D7170/0x4D7330 是 4xxB 大函数对）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
