@@ -1,0 +1,55 @@
+# frontier batch 3021
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4CC680（73B callees=1）+ 0x4CC9A0（FlyLocomotionClass::In_Which_Layer 128B callees=1）+ 0x4CCA20（80B callees=1）
+三路：a=0x4CC680（0x46=70B **对象比较器** callees=1 deps=1）/ b=0x4CC9A0（0x7F=127B **构造器** callees=1 deps=1，picker 名 In_Which_Layer 实测为构造器）/ c=0x4CCA20（0x4D=77B **判定器** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3021{a,b,c}.txt（a 0x60、b 0x90、c 0x70），完整读取确认（a ret 4 @0x4CC6BE/0x4CC6C6、b ret @0x4CCA1F、c ret 8 @0x4CCA61/0x4CCA6D）
+核验：.qwen/tmp/_check_callees3021.py 三路全 PASS（a 去重 1、b 去重 1、c 去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7524 → 7527（待 _append_tsv_batch3021.py）
+
+## a 路：0x4CC680 对象比较器（0x46=70B，callees=1）
+
+- 范围 0x4CC680-0x4CC6C6（ret 4 @0x4CC6BE 命中/0x4CC6C6 未命中；后 nop 对齐 0x4CC6D0 新函数）
+- **双对象比较**（stdcall ret 4）：
+  - `mov ecx, edx; call 0x487d50`（**段外辅助**——对象 A 取值）→ `mov edi, [esp+0x10]; mov ecx, edi; call 0x487d50`（**对象 B 取值**）→ `sub eax, ebx; cmp eax, 4; jl`（**差值 < 4 提前排除**）
+  - `mov ecx, esi; call 0x487d50; mov ecx, edi; call 0x487d50; sub eax, esi; test; jle`（**第二轮比较——>0 命中**）→ `mov eax, 1`（命中）→ ret 4
+- 直接 call 4 次/去重 1（0x487D50 ×4）——picker callees=1 **完全吻合**
+- 判类：对象比较器（0x487D50 ×4 双轮取值比较——差值 <4 排除 + >0 命中） (partial)
+
+## b 路：0x4CC9A0 构造器（0x7F=127B，callees=1，picker 名 FlyLocomotionClass::In_Which_Layer）
+
+- 范围 0x4CC9A0-0x4CCA1F（ret @0x4CCA1F；后 nop 对齐 0x4CCA20）
+- **picker 名 In_Which_Layer 但反汇编实为构造器**（多字段清零 + 三元组 + 双虚表）：
+  - `call 0x55a6c0`（**基类构造**——Fly/Drive/DropPod 族共用）→ `mov [esi+0x18], 0` → `mov edx, [0x8b3c78]; mov [esi+0x1c], edx`（**全局三元组 [0x8B3C78/0x8B3C7C/0x8B3C80]**——存 +0x1c）→ `mov edx, [0x8b3c78]; mov [esi+0x28], edx`（**同三元组再存 +0x28**）→ 清零 [+0x40]/[+0x48]/[+0x34]/[+0x38]/[+0x44]/[+0x4c]/[+0x50-0x53]/[+0x54]/[+0x58]/[+0x5c]
+  - `mov [esi], 0x7e8ac0; mov [esi+4], 0x7e89f4`（**双虚表写入**——0x7E8AC0/0x7E89F4）→ ret
+- 直接 call 1 个/去重 1（0x55A6C0）——picker callees=1 **完全吻合**
+- 判类：构造器（0x55A6C0 基类 + [0x8B3C78-80] 三元组双份 + 大量清零 + 双虚表 0x7E8AC0/0x7E89F4） (partial)
+
+## c 路：0x4CCA20 判定器（0x4D=77B，callees=1）
+
+- 范围 0x4CCA20-0x4CCA6D（ret 8 @0x4CCA61 命中/0x4CCA6D 未命中；后 nop 对齐 0x4CCA70）
+- **条件判定器**（stdcall ret 8）：
+  - `push edi; push ebx; call 0x55a710`（**段外辅助**——构造/获取）→ `mov esi, eax; test; jne`（非空走返回）
+  - 空路径：`mov eax, [edi]; call [eax+0x2c]`（**虚表槽 0x2c**——[edi] 对象）→ `cmp eax, 2; jne`（**类型 != 2 排除**）→ `mov ecx, [edi+0x6c4]; mov al, [ecx+0xe0d]; test; je`（**[+0x6C4]+0xE0D 标志检查**）→ `mov byte ptr [ebx+0x14], 1`（**写 [+0x14]=1**）→ ret 8
+  - 未命中：`mov byte ptr [ebx+0x14], 0`（写 0）→ ret 8
+- 直接 call 1 个/去重 1（0x55A710）——picker callees=1 **完全吻合**（虚表槽 0x2c 间接）
+- 判类：判定器（0x55A710 + 虚表槽 0x2c 类型==2 + [+0x6C4]+0xE0D 标志 + [+0x14] 写） (partial)
+
+## 核验结果
+
+- _check_callees3021.py：a 路 4 调用去重 1、b 路 1、c 路 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x487D50 + 0x55A6C0 + 0x55A710——**均已在 TSV 登记**
+- **★全局三元组 [0x8B3C78/0x8B3C7C/0x8B3C80] 首见**：b 路双份存（+0x1c/+0x28）
+- **★双虚表 0x7E8AC0/0x7E89F4 首见**：b 路构造器虚表对
+- **★[+0x6C4]+0xE0D 间接标志首见**：c 路深度对象标志检查
+- **★picker 名差异**：b 路 picker 名 FlyLocomotionClass::In_Which_Layer，反汇编实为构造器（In_Which_Layer 应为返回层 id 的小函数——函数边界登记以实测为准）
+- **本批无确认带名**——b 路 picker 带名但实测为构造器，仍标 partial（语义名待 YRpp 头文件核对）
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4CCAE0（81B callees=0）/ 0x4CD2A0（609B callees=8 大函数）/ 0x4CD510（238B callees=3）**：picker 显示——后续候选（0x4CD2A0 是 8 callees 大函数）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
