@@ -1,0 +1,64 @@
+# frontier batch 3040
+
+日期：2026-11-04
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4DE5D0（66B callees=4）+ 0x4DE710 FootClass::RemoveFirstPassenger（62B callees=1 带名）+ 0x4DEBB0（434B callees=4）
+三路：a=0x4DE5D0（0x42=66B **三保险释放器** callees=4 deps=4）/ b=0x4DE710（0x3E=62B **FootClass::RemoveFirstPassenger** callees=1 deps=1 带名）/ c=0x4DEBB0（0x1B0=432B **大行动器** callees=4 deps=4）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3040{a,b,c}.txt（a 0x60、b 0x60、c 0x1C0），完整读取确认（a ret @0x4DE611、b ret @0x4DE74D、c ret 4 @0x4DED5F 主出口/提前 ret 4 @0x4DEC49/0x4DEC65/0x4DED58）
+核验：.qwen/tmp/_check_callees3040.py 三路全 PASS（a 去重 4、b 去重 1、c 8 调用去重 4），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7581 → 7584（待 _append_tsv_batch3040.py）
+
+## a 路：0x4DE5D0 三保险释放器（0x42=66B，callees=4）
+
+- 范围 0x4DE5D0-0x4DE611（ret @0x4DE611；后 nop 对齐，0x4DE620 jmp 0x5f6b90 为邻函数 thunk 不属于本函数）
+- **三保险释放器**（this=esi）：
+  - `mov ecx, [esi+0x2bc]; test ecx, ecx; je → call 0x472140`（**[+0x2BC] 对象**→释放/清理）
+  - `mov eax, [esi+0x2ac]; test eax, eax; je → push 1; mov ecx, esi; call 0x70fee0`（**[+0x2AC] 对象**，单参 1 调用）
+  - `mov ecx, [esi+0x5d4]; test ecx, ecx; je → push 0; push -1; push esi; call 0x6ea870`（**[+0x5D4] 对象**，三参调用）
+  - `mov ecx, esi; call 0x5f65f0` **收尾**
+- 直接 call 4 个/去重 4（0x472140 + 0x70FEE0 + 0x6EA870 + 0x5F65F0）——picker callees=4 **完全吻合**
+- 判类：三保险释放器（三成员逐一口令释放 + 0x5F65F0 收尾——对象族清理入口） (partial)
+
+## b 路：0x4DE710 FootClass::RemoveFirstPassenger（0x3E=62B，callees=1，带名）
+
+- 范围 0x4DE710-0x4DE74D（ret @0x4DE74D；后 nop 对齐，0x4DE750/0x4DE760 邻函数 ret 4 不属于本函数）
+- **FootClass::RemoveFirstPassenger**（带名——YRpp 符号对应）：
+  - `lea edi, [esi+0x114]; mov ecx, edi; call 0x473430`（**[+0x114] 乘客链**取首/迭代器）→ eax 存 ebx
+  - `mov eax, [esi]; mov ecx, esi; call [eax+0x84]`（**虚表槽 0x84** 取对象）→ `mov cl, [eax+0x805]; test cl, cl; je 0x4de748`（**[+0x805] 标志门控**）
+  - `cmp [edi], 0; jne 0x4de748`（**乘客链非空检查**）→ `mov edx, [esi]; push ebx; mov ecx, esi; call [edx+0x4d8]`（**虚表槽 0x4D8** 以对象为参移除）
+  - `mov eax, ebx` 返回乘客对象
+- 直接 call 1 个/去重 1（0x473430）——picker callees=1 **完全吻合**
+- 判类：FootClass::RemoveFirstPassenger 带名（[+0x114] 链取首 + 虚表槽 0x84 + [+0x805] 门控 + 虚表槽 0x4D8 移除——乘客移除语义） (semantics_verified)
+
+## c 路：0x4DEBB0 大行动器（0x1B0=432B，callees=4）
+
+- 范围 0x4DEBB0-0x4DED5F（ret 4 @0x4DED5F 主出口；提前 ret 4 @0x4DEC49/0x4DEC65/0x4DED58；后 nop 对齐 0x4DED62；实测 432B 与 picker 434B 差 2——以实测 ret 边界为准）
+- **大行动器**（stdcall ret 4，参 edi=[esp+0xc]）：
+  - `mov eax, [esi]; call [eax+0x1c8]`（**虚表槽 0x1C8** 计数；jle → 返 0）
+  - `mov eax, [esi+0x6c]; mov edi, [esp+0xc]`（计数值 + 行动参数）
+  - **三发 0x6E53A0**：[+0x34] 对象 + `mov edx, [0x8b3d88]`（**全局坐标 [0x8B3D88]**）：`push 0; push 0; push [0x8b3d88]; push esi; push 0x26; call 0x6e53a0`（edi 空 + [+0x34] 非空）/ `push 0; push 0; push [0x8b3d88]; push esi; push 0x29`（[+0x90] 标志）/ `push edi; push 0; push [0x8b3d88]; push esi; push 0x29`（edi 非空）——**常量 0x26/0x29 + 坐标参**
+  - `mov al, [esi+0x90]` 标志；[0x90]==0 → **返 1 提前出口**（@0x4DEC45）
+  - `mov eax, [esi]; push edi; mov ecx, esi; call [eax+0xe0]`（**虚表槽 0xE0**）→ [+0x90] 复查 → `mov al, [esi+0x6ad]`（**[+0x6AD] 标志**）；[0x6AD]==0 → `mov [esi+0x6c], 0`（**清零计数**）
+  - `mov [esi+0x425], 1`（设置）→ 虚表槽 0x274（push 3）+ 虚表槽 0x3A0 + `push edi; call 0x707cb0`（**段外辅助**）
+  - 虚表槽 0x2C → `cmp eax, 0xf; je` 跳绕 → `mov eax, [0xa8e7ac]`（**全局 [0xA8E7AC]**；非 0 跳绕）
+  - **Randomizer R250 现场**：[0xA8B230]+0x218：`push 0x7ffffffe; push 0; lea ecx, [eax+0x218]; call 0x65c7e0` ×3 → 浮点 `fild; fmul [0x7e3570]; fmul [0x7e9280]; fadd [0x7e3860]; fstp [esi+0x330]`（结果==0 → fchs 取反）+ `fmul [0x7e3860]; fstp [esi+0x334]`——**[+0x330]/[+0x334] 浮点方向分量**（批 3024/3034/3038/3039 同现场）
+  - `xor dl, dl; mov ecx, esi; call 0x7258d0`（**段外辅助**收尾）→ 返 1
+- 直接 call 8 次/去重 4（0x6E53A0 + 0x65C7E0 + 0x707CB0 + 0x7258D0）——picker callees=4 **完全吻合**（虚表槽 0x1C8/0xE0/0x274/0x3A0/0x2C 间接不计）
+- 判类：大行动器（[+0x34] 对象三发 0x6E53A0 + [0x8B3D88] 坐标 + [+0x90]/[+0x6AD] 标志 + RandomRanged 0x65C7E0 [0xA8B230]+0x218 浮点方向 + 0x707CB0/0x7258D0——行动状态机执行体） (partial)
+
+## 核验结果
+
+- _check_callees3040.py：a 路 4、b 路 1、c 路 8 调用去重 4——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用（批内地址 0x4DE5D0/0x4DE710/0x4DEBB0 互不为被调）；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x472140 + 0x70FEE0 + 0x6EA870 + 0x5F65F0 + 0x473430 + 0x6E53A0 + 0x65C7E0 + 0x707CB0 + 0x7258D0——**均已在 TSV 登记**
+- **★0x7258D0 首见**：c 路新被调（72 段域扩展）
+- **★[0xA8E7AC] 首见**：c 路全局门控（[0xA8B230] Randomizer 邻域）
+- **★[+0x330]/[+0x334] 浮点方向分量**：c 路三常量 [0x7E3570]/[0x7E9280]/[0x7E3860] 线性组合，结果==0 取反（fchs）——行动方向随机化
+- **batch 3040 仅 b 路带名**（FootClass::RemoveFirstPassenger）——semantics_verified；a/c 路 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4DED70（223B）/ 0x4DF040（129B）/ 0x4DF0E0（188B）**：picker 显示 0x4D 段后续——下一批候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
