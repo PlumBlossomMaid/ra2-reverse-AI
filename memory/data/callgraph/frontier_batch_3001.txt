@@ -1,0 +1,50 @@
+# frontier batch 3001
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4B57F0（30B callees=2）+ 0x4B5810（30B callees=2）+ 0x4B5AB0（DropPodLocomotionClass::DropPodLocomotionClass 69B callees=1）
+三路：a=0x4B57F0（0x1B=27B **scalar deleting 析构器** callees=2 deps=2）/ b=0x4B5810（0x1B=27B **scalar deleting 析构器** callees=2 deps=2）/ c=0x4B5AB0（0x44=68B **DropPodLocomotionClass 构造器 带名** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3001{a,b,c}.txt（各 0x40/0x60），完整读取确认（a ret 4 @0x4B580B、b ret 4 @0x4B582B、c ret @0x4B5AF4）
+核验：.qwen/tmp/_check_callees3001.py 三路全 PASS（a 去重 2、b 去重 2、c 去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7464 → 7467（待 _append_tsv_batch3001.py）
+
+## a 路：0x4B57F0 scalar deleting 析构器（0x1B=27B，callees=2）
+
+- 范围 0x4B57F0-0x4B580B（ret 4 @0x4B580B；后 nop 对齐 0x4B5810 新函数）
+- **scalar deleting 析构器模板**（标准短模板）：
+  - `call 0x69ddc0`（**析构子例程**——同 3000 b 路 [+0x50] 子对象析构）→ `test byte ptr [esp+8], 1`（deleting 标志）→ `je` → `push esi; call 0x7c8b3d`（**delete this**）→ `mov eax, esi` → ret 4
+- 直接 call 2 个/去重 2（0x69DDC0 + 0x7C8B3D）——picker callees=2 **完全吻合**
+- 判类：scalar deleting 析构器（0x69DDC0 析构子例程 + deleting 门 → delete this） (partial)
+
+## b 路：0x4B5810 scalar deleting 析构器（0x1B=27B，callees=2）
+
+- 范围 0x4B5810-0x4B582B（ret 4 @0x4B582B；后 nop 对齐 0x4B5830 新函数）
+- **scalar deleting 析构器模板**（同 a 路布局，子例程不同）：
+  - `call 0x4e1390`（**析构子例程**——多次出现的标准子例程）→ `test byte ptr [esp+8], 1`（deleting 标志）→ `je` → `push esi; call 0x7c8b3d`（**delete this**）→ `mov eax, esi` → ret 4
+- 直接 call 2 个/去重 2（0x4E1390 + 0x7C8B3D）——picker callees=2 **完全吻合**
+- 判类：scalar deleting 析构器（0x4E1390 析构子例程 + deleting 门 → delete this） (partial)
+
+## c 路：0x4B5AB0 DropPodLocomotionClass::DropPodLocomotionClass（0x44=68B，callees=1，带名）
+
+- 范围 0x4B5AB0-0x4B5AF4（ret @0x4B5AF4；后 nop 对齐 0x4B5B00 新函数）
+- **DropPodLocomotionClass 构造器**（带名 YRpp）：
+  - `call 0x55a6c0`（**基类构造**——同 2991 b 路 DriveLocomotionClass 基类）→ `mov byte ptr [esi+0x1c], 0`（清零 +0x1c）→ `mov edx, [0x8a0820]; mov [ecx], edx`（**[0x8A0820/0x8A0824/0x8A0828] 三元组**——存 +0x20）→ 清零 +0x2c
+  - `mov [esi], 0x7e8344; mov [esi+4], 0x7e8278; mov [esi+0x18], 0x7e8254`（**三虚表写入**——新虚表族）→ ret
+- 直接 call 1 个/去重 1（0x55A6C0）——picker callees=1 **完全吻合**
+- 判类：DropPodLocomotionClass 构造器（0x55A6C0 基类 + [0x8A0820-8] 三元组 + 三虚表 0x7E8344/0x7E8278/0x7E8254） (semantics_verified)
+
+## 核验结果
+
+- _check_callees3001.py：a 路 2、b 路 2、c 路 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x69DDC0 + 0x7C8B3D + 0x4E1390 + 0x55A6C0——**均已在 TSV 登记**
+- **★[0x8A0820/0x8A0824/0x8A0828] 三元组首见**：c 路读取（DropPodLocomotionClass 位置三元组）
+- **★虚表族 0x7E8344/0x7E8278/0x7E8254 首见**：c 路三虚表写入（DropPodLocomotionClass 构造/析构族）
+- **c 路带名**——DropPodLocomotionClass::DropPodLocomotionClass（YRpp 符号对应），标 semantics_verified；a/b 路 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4B5B00（45B callees=1）/ 0x4B6440（38B callees=0）/ 0x4B6470（93B callees=1）**：picker 显示——后续候选（c 路 dump 已见 0x4B5B00 = 三虚表析构 0x7E8344 族）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
