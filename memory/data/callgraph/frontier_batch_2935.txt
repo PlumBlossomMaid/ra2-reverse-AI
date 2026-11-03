@@ -1,0 +1,57 @@
+# frontier batch 2935
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x48C3B0（34B）+ 0x48C5A0（80B）+ 0x48C650（53B）
+三路：a=0x48C3B0（0x22=34B **虚表槽双检查** callees=0 deps=0）/ b=0x48C5A0（0x50=80B **节点遍历+条件回调** callees=2 deps=0）/ c=0x48C650（0x35=53B **析构器复合** callees=1 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2935{a,b,c}.txt（a/c 0x60、b 0x80），完整读取确认（a ret c3 @0x48C3D1、b ret c3 @0x48C5F0、c ret 4 @0x48C685）
+核验：.qwen/tmp/_check_callees2935.py 三路全 PASS（a 0/0、b 2/2 去重2、c 2/1 去重1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7282 → 7285（待 _append_tsv_batch2935.py）
+
+## a 路：0x48C3B0 虚表槽双检查（0x22=34B）
+
+- 范围 0x48C3B0-0x48C3D1（ret c3 @0x48C3D1）
+- **虚表槽 AND 双检查**（批 2934 c 路 dump 尾部观察项兑现）：
+  - `mov eax, [esi]; call dword ptr [eax+0x1c]`（**虚表槽 0x1C 检查 1**）→ `test eax; je 0x48C3CE`（零 → 返 0）
+  - `mov edx, [esi]; call dword ptr [edx+0x20]`（**虚表槽 0x20 检查 2**）→ `test eax; je 0x48C3CE`（零 → 返 0）
+  - 均非零 → `mov eax, 1; ret`（返 1）
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**（纯虚表槽 0x1C/0x20 间接）
+- 判类：虚表槽双检查（两个虚表槽 0x1C/0x20 调用均非零才返 1——AND 语义状态检查） (partial)
+
+## b 路：0x48C5A0 节点遍历+条件回调（0x50=80B）
+
+- 范围 0x48C5A0-0x48C5F0（ret c3 @0x48C5F0）
+- **节点遍历 + 命中条件回调**：
+  - `mov edi, ecx; mov ecx, [edi+4]; mov eax, [ecx+0x38]; test; jle 0x48C5E9`（[+4] 容器 + [+0x38] 计数）
+  - 循环：`push esi; call 0x48B9E0`（**取节点**）→ `test byte ptr [eax], 2; je 0x48C5E0`（标志位 2 检查）→ `mov eax, [eax+0xC]; cmp byte ptr [eax+2], 1; je 0x48C5CE`（**类型字节 == 1 直接命中**）→ `mov eax, [eax+4]; cmp eax, [edi+0x44]; jae 0x48C5E0`（值 vs [+0x44] 阈值）
+  - 命中：`push 0; push 0; push esi; push 0; push 0; call 0x48B890`（**回调 0x48B890**——五零参 + esi 索引）→ `dec esi`（**递减计数**——0x48B890 可能已移除节点）
+  - 未命中：`inc esi; cmp esi, [ecx+0x38]; jl` 循环 → `mov eax, 1; ret`
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x48b890 + 0x48b9e0）
+- 判类：节点遍历+条件回调（[+4] 容器 0x48B9E0 取节点 + 标志位 2 + 类型字节 1/阈值 [+0x44] 双命中 + 0x48B890 回调 + 递减计数）——0x48Bxxx 容器族遍历回调 (partial)
+
+## c 路：0x48C650 析构器复合（0x35=53B）
+
+- 范围 0x48C650-0x48C685（ret 4 @0x48C685）
+- **析构器复合**（虚表 **0x7E51B4**——0x7E51xx 新虚表段）：
+  - `mov esi, ecx; mov eax, [esi+0x20]; mov [esi], 0x7E51B4`（**虚表 0x7E51B4 复位**）→ `push eax; call 0x7c8b3d`（**delete [+0x20]** 成员指针）
+  - `mov ecx, [esi+4]; test; je 0x48C672` → `mov edx, [ecx]; push 1; call dword ptr [edx]`（**虚表槽 0（带参 1）**——[+4] 子对象析构）
+  - `test byte ptr [esp+8], 1`（deleting 门）→ `push esi; call 0x7c8b3d`（delete this）→ ret 4
+- 直接 call 2 个/去重 1——picker callees=1 **完全吻合**（0x7c8b3d 双调用点）+ 1 虚表槽 0 间接
+- 判类：析构器复合（虚表 0x7E51B4 复位 + delete [+0x20] + [+4] 子对象虚表槽 0 析构 + deleting 门 delete this）——0x7E51xx 新虚表段 (partial)
+
+## 核验结果
+
+- _check_callees2935.py：a 路 0/0、b 路 2/2（去重 2）、c 路 2/1（去重 1）——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x48b890（回调）、0x48b9e0（取节点）、0x7c8b3d（delete）
+- **★0x48Bxxx 容器族第五例**：0x48B890（回调=0x48B720 族清节点）/ 0x48B9E0（取节点）——批 2934 宿主函数被调族继续扩张
+- **★0x7E51B4 新虚表段**：0x7E51xx——新增虚表区（0x7E19xx/0x7E45xx/0x7E4Fxx/0x7E50xx 之后第六段）
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x48B890**（b 路回调——清节点）/ **0x48C600**（b 路 dump 尾部：0x6C8C40 + [0x887338]/[0x887340]——时间戳换算）——后续候选
+- **0x48C690**（c 路 dump 尾部：清 [0x89E930..0x89E93C]）/**0x48C6B0**（浮点初始化 [0x7E1710]/[0x7E1708]——同款）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
