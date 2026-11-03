@@ -1,0 +1,49 @@
+# frontier batch 3004
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4B66F0（65B callees=2）+ 0x4B6B80（38B callees=1）+ 0x4B6BB0（43B callees=1）
+三路：a=0x4B66F0（0x3E=62B **三虚表析构器** callees=2 deps=2）/ b=0x4B6B80（0x25=37B **循环驻留释放器** callees=1 deps=1）/ c=0x4B6BB0（0x2A=42B **数组清空器** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3004{a,b,c}.txt（a 0x60、b/c 0x40），完整读取确认（a ret 4 @0x4B672E、b ret @0x4B6BA5、c ret @0x4B6BDA）
+核验：.qwen/tmp/_check_callees3004.py 三路全 PASS（a 去重 2、b 去重 1、c 去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7473 → 7476（待 _append_tsv_batch3004.py）
+
+## a 路：0x4B66F0 三虚表析构器（0x3E=62B，callees=2）
+
+- 范围 0x4B66F0-0x4B672E（ret 4 @0x4B672E；后 nop 对齐 0x4B6740 小函数）
+- **三虚表析构器模板**（同 3002 a 路 0x4B5B00 布局，多 deleting 门）：
+  - `mov [esi], 0x7e8344; mov [esi+4], 0x7e8278; mov [esi+0x18], 0x7e8254`（**三虚表写入**——DropPod 族）→ `mov eax, [esi+0x2c]; test; je`（[+0x2c] 检查）→ `push eax; call [ecx+8]`（**[+0x2c] 对象虚表槽 8 释放**）→ `mov ecx, esi; call 0x55a6f0`（**基类析构子例程**）→ `test byte ptr [esp+8], 1`（deleting 标志）→ `je` → `push esi; call 0x7c8b3d`（**delete this**）→ ret 4
+- 直接 call 2 个/去重 2（0x55A6F0 + 0x7C8B3D）——picker callees=2 **完全吻合**（[+0x2c] 虚表槽 8 间接）
+- 判类：三虚表析构器（三虚表 0x7E8344/0x7E8278/0x7E8254 + [+0x2c] 虚表槽 8 释放 + 基类析构 0x55A6F0 + deleting 门——DropPod 析构完整版） (partial)
+
+## b 路：0x4B6B80 循环驻留释放器（0x25=37B，callees=1）
+
+- 范围 0x4B6B80-0x4B6BA5（ret @0x4B6BA5；后 nop 对齐 0x4B6BB0 新函数）
+- **循环驻留释放**（计数器循环 + 清零）：
+  - `mov edi, [esi+0x10]; mov byte ptr [esi+0xc], 0`（**清零 +0xc 标志**）→ `cmp edi, ebx; jle`（**[+0x10] 计数**）→ 循环：`push ebx; mov ecx, esi; call 0x4b6ab0`（**段内辅助**——循环体）→ `dec edi; jne` → `mov [esi+0x10], 0; mov [esi+0x28], 0`（**清零 [+0x10]/[+0x28]**）
+- 直接 call 1 个/去重 1（0x4B6AB0）——picker callees=1 **完全吻合**
+- 判类：循环驻留释放器（+0x10 计数循环 + 0x4B6AB0 循环体 + +0xc/+0x28 清零） (partial)
+
+## c 路：0x4B6BB0 数组清空器（0x2A=42B，callees=1）
+
+- 范围 0x4B6BB0-0x4B6BDA（ret @0x4B6BDA；后 nop 对齐 0x4B6BE0 新函数）
+- **数组循环清空**（+0x10 计数循环 + 0x6CF240 释放器）：
+  - `mov eax, [ebx+0x10]; test; jle`（**[+0x10] 计数**）→ 循环：`lea edi, [ebx+0x14]; push edi; push 0xb0c110; call 0x6cf240`（**0x6CF240_stack_operator**——多参释放器，[+0x14] 数组 + 0xB0C110 常量）→ `inc esi; add edi, 4`（步进 4）→ `jl` → ret
+- 直接 call 1 个/去重 1（0x6CF240）——picker callees=1 **完全吻合**
+- 判类：数组清空器（+0x10 计数循环 + [+0x14] 数组 + 0x6CF240 释放器 + 0xB0C110 常量） (partial)
+
+## 核验结果
+
+- _check_callees3004.py：a 路 2、b 路 1、c 路 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x55A6F0 + 0x7C8B3D + 0x4B6AB0 + 0x6CF240——**均已在 TSV 登记**
+- **★DropPod 虚表族第三实例**：a 路 0x4B66F0 与 3002 a 路 0x4B5B00 同族（多 deleting 门版本）
+- **★0xB0C110 常量首见**：c 路 0x6CF240 的参数
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4B9BE0（42B callees=1）/ 0x4B9C40（42B callees=1）/ 0x4B9D90（39B callees=1）**：picker 显示——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
