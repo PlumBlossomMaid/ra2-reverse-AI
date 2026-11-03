@@ -1,0 +1,53 @@
+# frontier batch 3036
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4DB7E0（37B callees=1）+ 0x4DB810（133B callees=2）+ 0x4DBAD0（706B callees=8）
+三路：a=0x4DB7E0（0x24=36B **转发器** callees=1 deps=1）/ b=0x4DB810（0x82=130B **坐标更新器** callees=2 deps=2）/ c=0x4DBAD0（0x2BF=703B **大浮点处理** callees=8 deps=8）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3036{a,b,c}.txt（a 0x50、b 0x90、c 0x2D0），完整读取确认（a ret @0x4DB804、b ret 4 @0x4DB892、c ret @0x4DBD8F）
+核验：.qwen/tmp/_check_callees3036.py 三路全 PASS（a 去重 1、b 去重 2、c 34 调用去重 8），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7569 → 7572（待 _append_tsv_batch3036.py）
+
+## a 路：0x4DB7E0 转发器（0x24=36B，callees=1）
+
+- 范围 0x4DB7E0-0x4DB804（ret @0x4DB804；后 nop 对齐 0x4DB810）
+- **E_POINTER 转发器**：
+  - `mov eax, [esi+0x674]; test; jne`（**[+0x674] 检查**）→ `push 0x80004003; call 0x7dc720`（**E_POINTER 抛掷器**）→ `mov eax, [esi+0x674]; push eax; call [ecx+0x74]`（**虚表槽 0x74**——[+0x674] 对象转发）→ ret
+- 直接 call 1 个/去重 1（0x7DC720）——picker callees=1 **完全吻合**（虚表槽 0x74 间接）
+- 判类：转发器（[+0x674] + E_POINTER + 虚表槽 0x74——3034/3035 批同对象族） (partial)
+
+## b 路：0x4DB810 坐标更新器（0x82=130B，callees=2）
+
+- 范围 0x4DB810-0x4DB892（ret 4 @0x4DB892；后 nop 对齐 0x4DB895）
+- **坐标三元组更新器**（stdcall ret 4）：
+  - `mov edi, [esp+0x10]; lea eax, [esi+0x9c]; mov ebx, [edi]`（**读入坐标三元组**）→ `cmp ebx, [edx]; cmp [edi+4], ecx; cmp [edi+8], edx`（**与 [+0x9C] 三元组比对**——同则 bl=0 差异标记）
+  - `mov al, [esi+0x74]; test; je`（**[+0x74] 标志**）→ `push 0; call [eax+0x124]`（**虚表槽 0x124**——前置）→ `push edi; mov ecx, esi; call 0x5f6940`（**段外辅助**——坐标更新核心）→ `push 1; call [edx+0x124]`（**虚表槽 0x124**——后置）
+  - `test bl, bl; je`（比对标记）→ `call [eax+0x84]`（**虚表槽 0x84**——取对象）→ `mov cl, [eax+0x5e4]; test; je`（**[+0x5E4] 标志**）→ `mov ecx, esi; call 0x7104f0`（**段外辅助**）→ ret 4
+- 直接 call 3 次/去重 2（0x5F6940 + 0x7104F0）——picker callees=2 **完全吻合**（虚表槽 0x124/0x84 间接）
+- 判类：坐标更新器（[+0x9C] 三元组比对 + [+0x74] 标志 + 虚表槽 0x124 前后置 + 0x5F6940 + [+0x5E4] 检查 + 0x7104F0） (partial)
+
+## c 路：0x4DBAD0 大浮点处理（0x2BF=703B，callees=8）
+
+- 范围 0x4DBAD0-0x4DBD8F（ret @0x4DBD8F；后 nop 对齐 0x4DBD92）
+- **大浮点处理**（8 callees——4A 段转发族集中）：
+  - **4A 段五连**：0x4A1C10 + 0x4A1CA0 + 0x4A1D30 + 0x4A1D50 + 0x4A1D90（**4A 段转发/计算族**——0x4A1D50 已在 3013 c 路三链转发出现过）
+  - **浮点**：0x4CAC40（浮点求长）+ 0x7C5F00（**CRT _ftol**——多次）
+  - **70 段**：0x70C270
+- 直接 call 34 次/去重 8——picker callees=8 **完全吻合**
+- 判类：大浮点处理（4A 段五连转发族 + 浮点 0x4CAC40/_ftol + 0x70C270——大规模浮点计算） (partial)
+
+## 核验结果
+
+- _check_callees3036.py：a 路 1、b 路 3 调用去重 2、c 路 34 调用去重 8——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7DC720 + 0x5F6940 + 0x7104F0 + 0x4A1C10 + 0x4A1CA0 + 0x4A1D30 + 0x4A1D50 + 0x4A1D90 + 0x4CAC40 + 0x70C270 + 0x7C5F00——**均已在 TSV 登记**
+- **★4A 段转发族五连**：c 路 0x4A1C10-0x4A1D90 连续五函数（0x4A1D50 已在 3013 批登记——本批补全族）
+- **★虚表槽 0x124 前后置**：b 路更新前后成对调用
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4DBDA0（79B callees=2）/ 0x4DBFD0（92B callees=0）/ 0x4DC030（44B callees=0）**：picker 显示——后续候选（c 路 dump 尾邻 0x4DBD92 起为新函数）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
