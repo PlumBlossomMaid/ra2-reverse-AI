@@ -1,0 +1,51 @@
+# frontier batch 3033
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4DA0E0（FootClass::QueueNavigationList 210B callees=1）+ 0x4DA1D0（89B callees=1）+ 0x4DA2B0（thunk_FUN_005b2ef0 5B callees=1）
+三路：a=0x4DA0E0（0xCF=207B **导航队列入队器 带名** callees=1 deps=1）/ b=0x4DA1D0（0x58=88B **多标志判定** callees=1 deps=1）/ c=0x4DA2B0（0x4=4B **尾跳 thunk** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3033{a,b,c}.txt（a 0xD8、b 0x70、c 0x40），完整读取确认（a ret @0x4DA1AF、b ret @0x4DA1E0/0x4DA224/0x4DA228、c jmp @0x4DA2B0）
+核验：.qwen/tmp/_check_callees3033.py 三路全 PASS（a 去重 1、b 去重 1、c 去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7560 → 7563（待 _append_tsv_batch3033.py）
+
+## a 路：0x4DA0E0 FootClass::QueueNavigationList（0xCF=207B，callees=1，带名）
+
+- 范围 0x4DA0E0-0x4DA1AF（ret @0x4DA1AF；后 nop 对齐 0x4DA1B0）
+- **FootClass::QueueNavigationList**（带名 YRpp——导航队列入队）：
+  - 前置：`mov ebx, [esp+8]; test; je`（**参数检查**——导航点空则跳过）→ `cmp ebx, edi; jne`（**自身入队判定**）→ `mov eax, [edi+0x5bc]; [e0] 判断`（**[+0x5BC] 计数**）→ `mov byte ptr [edi+0x6b1], 1/0`（**置 +0x6B1 标志**——同 3032 c 路队列入队器）
+  - **扩容入队**：`mov ecx, [edi+0x5b4]; mov eax, [edi+0x5bc]; lea esi, [edi+0x5ac]; cmp eax, ecx; jl`（容量判定）→ 空槽/扩容分支（`call [edx+8]` 虚表槽 8）→ `mov eax, [esi+0x10]; inc; mov [esi+0x10], eax+1; mov [edx+eax*4], ebx`（**入队 [+0x10] 索引**）
+  - **后续判定**：`mov eax, [edi+0x5a4]; test; jne`（[+0x5A4] 检查）→ `call [eax+0x184]`（**虚表槽 0x184**——类型查询）→ `cmp eax, 5; jne`（**类型 != 5**）→ `call 0x65ad30`（**段外辅助**——取值）→ `call [edx+0x2c]`（虚表槽 0x2c）→ `cmp eax, 6; jne`（类型 == 6）→ `mov eax, [esi+0x520]; mov cl, [eax+0x16bd]; test; jne`（**[+0x520]+0x16BD 标志**）→ `call [edx+0x484]`（**虚表槽 0x484**——push 1; push 0）→ ret
+- 直接 call 1 个/去重 1（0x65AD30）——picker callees=1 **完全吻合**（虚表槽 8/0x184/0x2c/0x484 间接）
+- 判类：FootClass::QueueNavigationList（导航点入队 + [+0x6B1] 标志 + 扩容 + 虚表槽 0x184/0x2c/0x484 + 0x65AD30 + [+0x520]+0x16BD） (semantics_verified)
+
+## b 路：0x4DA1D0 多标志判定（0x58=88B，callees=1）
+
+- 范围 0x4DA1D0-0x4DA228（ret @0x4DA1E0 早/0x4DA224/0x4DA228；后 nop 对齐 0x4DA230）
+- **多标志链式判定**（bool 返回）：
+  - `mov al, [esi+0x3d5]; test; jne`（**[+0x3D5] 标志**）→ `call [eax+0x84]`（**虚表槽 0x84**——取对象）→ `mov cl, [eax+0xc94]; test; jne`（**[+0xC94] 标志**——间接）→ `mov al, [esi+0x3d4]; test; jne`（**[+0x3D4] 标志**）→ `call [edx+0x184]`（虚表槽 0x184）→ `cmp eax, 4; je`（类型 == 4）→ `mov ecx, [esi+0x5d4]; test; je`（[+0x5D4] 检查）→ `call 0x6ec300`（**段外辅助**——判定）→ `test al, al; jne` → 命中返 1
+- 直接 call 1 个/去重 1（0x6EC300）——picker callees=1 **完全吻合**（虚表槽 0x84/0x184 间接）
+- 判类：多标志判定（+0x3D5/+0x3D4 标志 + 虚表槽 0x84/0x184 + [+0xC94] 间接 + 0x6EC300） (partial)
+
+## c 路：0x4DA2B0 尾跳 thunk（0x4=4B，callees=1）
+
+- 范围 0x4DA2B0-0x4DA2B4（jmp @0x4DA2B0；后 nop 对齐 0x4DA2C0）
+- **尾跳 thunk**（stdcall 无参转发）：
+  - `jmp 0x5b2ef0`（**无条件跳转 0x5B2EF0**——thunk_FUN_005b2ef0，5B 级跳）
+- 直接 jmp 1 个/去重 1（0x5B2EF0）——picker callees=1 **完全吻合**
+- 判类：尾跳 thunk（jmp 0x5B2EF0——参数环境透传） (partial)
+
+## 核验结果
+
+- _check_callees3033.py：a 路 1、b 路 1、c 路 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x65AD30 + 0x6EC300 + 0x5B2EF0——**均已在 TSV 登记**
+- **★a 路带名**——FootClass::QueueNavigationList（YRpp 符号对应），标 semantics_verified
+- **★[+0x520]+0x16BD 间接标志**：a 路深度对象标志（同 3021 c 路 [+0x6C4]+0xE0D 模式）
+- **★thunk 尾跳**：c 路 0x4DA2B0 `jmp 0x5b2ef0`——5B 级跳 thunk（参数透传）
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4DA4E0（67B callees=2）/ 0x4DA530（2520B callees=17 巨型）/ 0x4DB0A0（48B callees=1）**：picker 显示——后续候选（0x4DA530 是 17 callees 巨型函数；c 路 dump 尾邻 0x4DA2C0 已见 = [+0xBC] 状态机）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
