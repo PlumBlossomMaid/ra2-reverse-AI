@@ -1,0 +1,52 @@
+# frontier batch 2971
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4A0C20（184 扇入 deps=2）+ 0x4A0DB0（93 扇入 deps=1）+ 0x4A0E10（73 扇入 deps=1）
+三路：a=0x4A0C20（0x17F=383B **COM 容器克隆器** callees=2 deps=2←含 vtable 间接）/ b=0x4A0DB0（0x5C=92B **复合析构器 虚表 0x7E5D28** callees=1 deps=1）/ c=0x4A0E10（0x46=70B **自包含复合析构器 虚表 0x7E5C84** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2971{a,b,c}.txt（a 0x200、b/c 0x100），完整读取确认（a ret @0x4A0D9F、b ret @0x4A0E0C、c ret 4 @0x4A0E56）
+核验：.qwen/tmp/_check_callees2971.py 三路全 PASS（a 2 调用去重 1、b 1、c 去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7374 → 7377（待 _append_tsv_batch2971.py）
+
+## a 路：0x4A0C20 COM 容器克隆器（0x17F=383B，184 扇入 deps=2）
+
+- 范围 0x4A0C20-0x4A0D9F（ret @0x4A0D9F）
+- **容器克隆/拷贝构造**（184 扇入——高频）：
+  - `push ebx/ebp/esi/edi; mov ebp, [esp+0xc]`（源对象参数）→ `lea esi, [edi+0xc]`（this+0xc 子对象起点）→ `mov [edi+4], ebx; mov [edi+8], ebx`（清零）→ `cmp esi, ebp; je` → 循环：
+  - `push 0x24; call 0x7c8e17`（**new 0x24=36B 子对象**）→ 虚表复位（0x7E5C84 子对象）+ `call [edx+0xc]`（**虚表槽 0xc 析构子对象**）→ `rep movsd`（拷贝）→ 字段写入
+  - 尾：`mov [edi], 0x7e5c04`（**主虚表 0x7E5C04**）→ 清零/计数 → ret
+- 直接 call 2 次/去重 1（0x7C8E17——operator new ×2 去重）；picker callees=2——**差 1 为虚表槽 0xc 间接调用**（预期差模式）
+- 判类：COM 容器克隆器（new 0x24 子对象 + 虚表槽 0xc 析构 + rep movsd 拷贝 + 主虚表 0x7E5C04） (partial)
+
+## b 路：0x4A0DB0 复合析构器 虚表 0x7E5D28（0x5C=92B，93 扇入 deps=1）
+
+- 范围 0x4A0DB0-0x4A0E0C（ret @0x4A0E0C）
+- **复合析构器**（虚表 **0x7E5D28**——新虚表族）：
+  - `mov [esi], 0x7e5d28`（虚表复位 0x7E5D28）→ 循环：`mov eax, [esi+0x1c]; jle` → `mov eax, [esi+0x10]; mov eax, [eax+edi*8]; push eax; call [ecx+8]`（**虚表槽 8 析构 [+0x10] 数组项 [idx*8]**）→ 递增
+  - `mov edx, [esi+4]; lea esi, [esi+4]; call [edx+0xc]`（**虚表槽 0xc 析构 [+4] 容器**）→ 内联数组释放：`mov [esi], 0x7e5c84`（子虚表）→ `test eax; je` + `cmp byte ptr [esi+0xd]; je`（+0xd 持有标志）→ `call 0x7c8b3d`（delete）→ 三清零 → ret
+- 直接 call 1 个/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**（虚表槽 8/0xc 不入字面量）
+- 判类：复合析构器（虚表 0x7E5D28 + 槽 8/0xc 析构 + 内联 0x7E5C84 子对象释放——2969 b/2970 a 同族变体） (partial)
+
+## c 路：0x4A0E10 自包含复合析构器 虚表 0x7E5C84（0x46=70B，73 扇入 deps=1）
+
+- 范围 0x4A0E10-0x4A0E56（ret 4 @0x4A0E56）
+- **同 2966 c/2967 a 模板**（虚表 0x7E5C84——但此处是**裸虚表复位**而非 0x7E5C04/0x7E5C24 族）：
+  - `mov eax, [esi+4]; mov [esi], 0x7e5c84`（虚表复位 0x7E5C84）→ `test eax; je` + `cmp byte ptr [esi+0xd]; je`（+0xd 持有标志）→ `call 0x7c8b3d`（delete 数组）→ `mov [esi+4], 0` → `mov [esi+0xd], 0` → `test al, 1`（deleting）→ `mov [esi+8], 0` → `call 0x7c8b3d`（delete this）→ ret 4
+- 直接 call 2 次/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：自包含复合析构器（虚表 0x7E5C84——前批 0x7E5C04/0x7E5C24/0x7E5C84 连续族第七实例） (partial)
+
+## 核验结果
+
+- _check_callees2971.py：a 路 2 调用去重 1、b 路 1、c 路 去重 1——三路全 PASS
+- picker callees vs 核验差值：**b/c 差 0**；**a 路 picker=2 vs 核验去重 1——虚表槽 0xc 间接调用预期差**（picker 计 vtable 间接，核验只抓字面量）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8E17（operator new）+ 0x7C8B3D（operator delete）——**均已在 TSV 登记**
+- **★虚表族全覆盖**：0x7E5C04/0x7E5C24/0x7E5C54/0x7E5C84/0x7E5CA4/0x7E5CC4/0x7E5CE4/0x7E5D28——八级虚表族连续覆盖
+- **★COM 容器克隆器**：a 路 184 扇入——new 0x24 + 虚表槽 0xc 析构 + rep movsd 拷贝——COM 对象克隆模板
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4A0E60/0x4A0EB0**（picker 显示——73/42 扇入 deps=1 接着的析构器族）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
