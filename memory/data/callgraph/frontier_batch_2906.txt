@@ -1,0 +1,54 @@
+# frontier batch 2906
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x470C90（152B）+ 0x471890（178B）+ 0x4722C0（**带名 CaptureManagerClass::IsControllingSomething** 11B）
+三路：a=0x470C90（0x98=152B **时间格式化日志器(二版)** callees=2 deps=0）/ b=0x471890（0xB2=178B **多继承构造器** callees=1 deps=0）/ c=0x4722C0（0xB=11B **CaptureManagerClass::IsControllingSomething** callees=0 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2906{a,b,c}.txt（a 长度 0xA0、b 长度 0xC0、c 长度 0x20），完整读取确认（a ret @0x470D27、b ret @0x471941、c ret @0x4722CA）
+核验：.qwen/tmp/_check_callees2906.py 三路全 PASS（a 2/2 去重2、b 1/1 去重1、c 0/0 去重0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7195 → 7198（待 _append_tsv_batch2906.py）
+
+## a 路：0x470C90 时间格式化日志器·二版（0x98=152B）
+
+- 范围 0x470C90-0x470D27（ret @0x470D27）
+- thiscall 2 栈参（ret；edi=this、esi=时长值）——**时间格式化日志器（与批 2902 a 路 0x46D360 逐字节同构）**：
+  - **0x91A2B3C5 魔数除法**（÷3600）→ 钳制 ≤0x57E3F → **0x88888889 魔数除法×2**（÷60 分秒）→ 天/时/分/秒四段
+  - `push 四段; push 0x6ea(line); push 0x81b304(格式串); call 0x734e60`（DebugLog）→ `push eax; call 0x7ca564`（字符串追加）
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x734e60/0x7ca564 已登记）
+- 判类：时间格式化日志器·二版（0x91A2B3C5 + 0x88888889 双魔数除法 + DebugLog 0x734E60）——**与批 2902 a 路同构，仅调试行号不同（0x6EA vs 0xA9），第二副本** (partial)
+
+## b 路：0x471890 多继承构造器（0xB2=178B）
+
+- 范围 0x471890-0x471941（ret @0x471941）
+- thiscall 0 栈参（ret；esi=this）——**多继承构造器（CaptureManager 邻域）**：
+  - `call 0x410170`（**基类构造·[0x41017x] batch——ObjectClass 基类默认字段初始化**）
+  - 大段字段默认：`+0x28/+0x2c/+0x34/+0x44/+0x48=0`、`+0x30=1`、`+0x31/+0x40/+0x41=0`、`+0x24=0x7E4BA4`（子虚表）、`+0x38=0xA`、`+0x3c=1`、`+0x4c=0x1E`
+  - **四层虚表**：0x7E4B40/0x7E4B24/0x7E4B1C/0x7E4B14（多继承虚表族）
+  - `[0x89e0f8]/[0x89e100]` 全局容器注册：查重→满虚表槽 8 扩容→计数++ → `[0x89e0f4]` 数组写入 this（**与 BulletClass/CampaignClass 同模板第三表**）
+- 直接 call 1 个/去重 1——picker callees=1 **完全吻合**（0x410170 已登记）
+- 判类：多继承构造器（基类构造 + 字段默认族 + 四层虚表 0x7E4B40 族 + [0x89E0F8] 全局容器注册）——与 c 路 CaptureManagerClass 同域构造 (partial)
+
+## c 路：0x4722C0 CaptureManagerClass::IsControllingSomething（0xB=11B，带名）
+
+- 范围 0x4722C0-0x4722CA（ret @0x4722CA）
+- thiscall 0 栈参（ret）——**CaptureManagerClass::IsControllingSomething（YRpp 带名）**：
+  - `mov edx,[+0x34]` → `xor eax,eax; test edx,edx; setg al` → **返（[+0x34] > 0）**
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**（纯逻辑叶）
+- 判类：**CaptureManagerClass::IsControllingSomething**（带名——[+0x34] > 0 → bool）——11B 极简。**semantics 判定**：YRpp 带名 + 机器码零歧义（单字段 setg）→ **semantics_verified** (semantics_verified)
+
+## 核验结果
+
+- _check_callees2906.py：a 路 2/2、b 路 1/1、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x734e60（DebugLog）、0x7ca564（字符串追加器）、0x410170（基类构造）
+- **★c 路跨批次连接**：CaptureManagerClass 的 [+0x34] 字段——b 路 0x471890 构造器 [+0x34]=0 默认值正是 c 路读的字段！CaptureManager 域初次探测（[0x89E0F8] 注册表）
+- **a 路双副本**：批 2902 a（0x46D360）+ 本批 a（0x470C90）时间格式化日志器逐字节同构仅行号差——编译期第二实例
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x472A80/0x472AE0**（42B 孪生）/ **0x472C30**（39B）——后续候选（0x47xxxx 区 CaptureManager 邻域）
+- **0x4722D0**（c 路下函数 [+0x34] getter 纯读——同字段）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
