@@ -1,0 +1,56 @@
+# frontier batch 2941
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x495730（272 扇入）+ 0x495BC0（268 扇入）+ 0x495F00（268 扇入）
+三路：a=0x495730（0x10D=269B **双表二级查表 3/4 混合写入器**（2940 c 同款第二实例） callees=0 deps=0）/ b=0x495BC0（0x109=265B **同族变体 + 输入原位回写** callees=0 deps=0）/ c=0x495F00（0x109=265B **b 路同款寄存器变体** callees=0 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2941{a,b,c}.txt（各 0x200），完整读取确认（a ret 0x20 @0x49583D、b ret 0x20 @0x495CC9、c ret 0x20 @0x496009）
+核验：.qwen/tmp/_check_callees2941.py 三路全 PASS（a 0/0、b 0/0、c 0/0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7284 → 7287（待 _append_tsv_batch2941.py）
+
+## a 路：0x495730 双表二级查表 3/4 混合写入器（0x10D=269B，272 扇入）
+
+- 范围 0x495730-0x49583D（ret 0x20 @0x49583D，8 栈参）
+- **与批 2940 c 路 0x4953F0 几乎逐字节同构**（第二实例）：
+  - `setle al; dec eax; and eax, edi` 饱和缩放 → `shl edx,6; add edx,eax; lea eax,[eax+edx*4]; sar eax,0xb`（×260/2048）→ `cmp eax,0xfe; jle` clamp 0xFE → `shl eax,9; add eax,[ecx+8]`
+  - 阈值门控：`mov ax,[esi]; cmp [esp+0x20],eax; jge 跳过` → src 字节 0 跳过
+  - 双表二级查表：`mov bx,[ebp+eax*2]`（[0x87e8a4]）→ `or ebx,eax`（OR 合并）→ `mov ax,[ecx+4][ebx*2]`（二级表）
+  - 3/4 混合：`shr ax,2; and eax,edx` + `shr bx,2; lea eax,[eax+eax*2]; and ebx,edx; add eax,ebx`（表值 + 3×旧值）
+  - 双游标各自回绕：[0x887644]（esi）+ [0x87e8a4]（ebp，+0x1C/+0x20 边界）
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**
+- 判类：双表二级查表 3/4 混合写入器（2940 c 同款第二实例——0x49 段混合族 4 实例中的第 2） (partial)
+
+## b 路：0x495BC0 同族变体 + 输入原位回写（0x109=265B，268 扇入）
+
+- 范围 0x495BC0-0x495CC9（ret 0x20 @0x495CC9，8 栈参）
+- **同族 a/2940 c**，但两处差异：
+  - 阈值寄存器用 edx（`cmp edx, eax`——[esp+0x1c] 参数，非 esp+0x20）
+  - **输入原位回写**：`mov word ptr [esi], dx`（处理命中后把阈值回写 in word——同 2940 b 路的标记惯例）
+  - 3/4 混合：`shr ax,2; and eax,edx` + `shr bx,2; lea edx,[eax+eax*2]; and ebx,edx; add ebx,edx`（表值 + 3×旧值，`mov word ptr [edi], bx` 写目标）
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**
+- 判类：双表二级查表 3/4 混合写入器 + 输入原位回写（0x49 段混合族第 3 实例） (partial)
+
+## c 路：0x495F00 b 路同款寄存器变体（0x109=265B，268 扇入）
+
+- 范围 0x495F00-0x496009（ret 0x20 @0x496009，8 栈参）
+- **与 b 路几乎同构**（寄存器分配再变——`mov ax,[esi]` 查表用 `mov ax,[ecx+4][ebx*2]` + `mov bx,[edi]` 旧值，写 `mov word ptr [edi], ax` + `mov word ptr [esi], dx` 原位回写）
+- 阈值 edx 门控 + OR 合并二级查表 + 3/4 混合 + 双游标回绕——全同 b 路
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**
+- 判类：双表二级查表 3/4 混合写入器 + 输入原位回写（b 路同款寄存器变体——0x49 段混合族第 4 实例） (partial)
+
+## 核验结果
+
+- _check_callees2941.py：a 路 0/0、b 路 0/0、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（0 出度纯逻辑一致）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：无（三路零调用）
+- **★0x49 段「3/4 混合写入器」族四实例齐套**：2940 c（0x4953F0）+ 本批 a（0x495730）+ 本批 b（0x495BC0）+ 本批 c（0x495F00）——同一双表二级查表 + OR 合并 + 3/4 权重混合模板，[0x887644]+[0x87e8a4] 双环形缓冲共用；b/c 带输入原位回写变体
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4958D0**（a 路 dump 尾部：同族变体——`mov ebp, ecx` 保 this + setle 缩放 + [0x887644]——后续候选）
+- **0x495D60**（b 路 dump 尾部：同族——esi 作缩放变量 + [0x887644]——后续候选）
+- **0x4960A0**（c 路 dump 尾部：**双游标解包器变体 VIII**——0 转义 + `sub edi,edx` + word 回看，回到解包器族）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
