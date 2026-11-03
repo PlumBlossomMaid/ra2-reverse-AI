@@ -1,0 +1,58 @@
+frontier batch 3121
+===================
+日期: 2026-08-?? (心跳续跑)
+来源: memory/data/callgraph/ranking.tsv 按行序取未登记池
+选取: 0x500700 / 0x5013A0 / 0x502100（标志读回 / 批量调用 / 结果转发）
+
+三路判类（code/randmap/disasm.py 反汇编，.qwen/tmp/_d3121{a,b,c}.txt）
+------------------------------------------------------------------------
+0x500700  99B 跳转表标志读取器（stdcall ret 0xc，3 栈参）：
+          mov eax,[esp+4]; dec eax; cmp eax,0x27; ja 返 0
+          mov dl,[eax+0x500778]; jmp dword ptr [edx*4+0x500764]
+          分支: 读 [+0x53d1]
+                参2 非空 -> 读 [+0x53d3] 否则 [+0x53d2]
+                参3==5 -> 读 [+0x53d8] 否则 [+0x53d4]; 默认读 [+0x53d0]
+          —— 3120c(0x5005B0) 的读取镜像（同索引表 0x500778/跳转表 0x500764）
+0x5013A0  85B 批量虚调用循环器（stdcall ret 4，1 栈参）：
+          mov edi,[esp+8]; mov eax,[edi+0x2cc]; jle 返 1
+          mov ebx,[edi+0x54]; test ebx; jle 返 0
+          循环: eax=[edi+0x48]; ecx=[eax+esi*4]（槽）
+                test ecx; je 跳过
+                mov al,[ecx+0x81]; test al; jne 跳过    ; 未就绪过滤
+                mov eax,[ecx+0x6c]; jle 跳过             ; 库存过滤
+                mov edx,[ecx]; push 1
+                call dword ptr [edx+0x1a0]               ; 虚表槽 0x1a0(push 1)
+          返回 0
+0x502100  33B 虚调用+结果转发器（stdcall ret 8，2 栈参）：
+          mov ecx,[esp+8](参1 对象); test ecx; je 跳过
+          mov eax,[esp+0xc](参2); mov edx,[ecx]
+          push eax; call dword ptr [edx+0x3c]            ; 虚表槽 0x3c(参2)
+          push eax; mov ecx,esi; call 0x4f9b70           ; 结果转发处理
+          ret 8
+
+核验（_check_callees3121.py，RANGES 字面量 + 批内自引用 BATCH_NORM）
+------------------------------------------------------------------------
+a_0x500700 [0x500700,0x500762] 跨函数直接 call 0（索引表+跳转表驱动）
+b_0x5013A0 [0x5013A0,0x5013F4] 跨函数直接 call 0（虚调用槽 0x1a0 非字面量）
+c_0x502100 [0x502100,0x502120] 跨函数直接 call 1 去重 1 = 0x004f9b70 已登记
+无 MISSING / 无 UNKNOWN / 无批内自引用
+
+三态判定
+------------------------------------------------------------------------
+0x500700  partial   （结构判明：标志读取器，=3120c 精确镜像；无 YRpp 符号）
+0x5013A0  partial   （结构判明：批量虚调用循环器，槽 0x1a0 语义未确认）
+0x502100  partial   （结构判明：虚调用+结果转发；0x4f9b70 目标语义未确认）
+
+说明
+------------------------------------------------------------------------
+★ a 路与 3120c（0x5005B0）构成"置位/读回"配对：同一索引表
+  （0x50062c vs 0x500778——两表独立）与跳转表控制 HouseClass
+  [+0x53d0~0x53d8] 标志区。
+★ b 路为批量调度模式（数组过滤 + 虚调用），c 路为单次转发模式。
+下一批候选预期 0x502130 / 0x502290 / 0x506B90（观察项，未登记前不作断言）。
+
+登记（frontier_status.tsv 追加，TSV 7824 -> 7827）
+------------------------------------------------------------------------
+0x00500700  callees=0  deps=0   batch=3121  partial
+0x005013A0  callees=0  deps=0   batch=3121  partial
+0x00502100  callees=1  deps=1   batch=3121  partial
