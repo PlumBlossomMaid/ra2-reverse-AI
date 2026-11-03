@@ -1,0 +1,55 @@
+# frontier batch 3053
+
+日期：2026-11-04
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4E6070 CDDriveManagerClass::CDDriveManagerClass（133B callees=1）+ 0x4E8290（42B callees=1）+ 0x4E82F0（42B callees=1）
+三路：a=0x4E6070（0xC2=194B **CDDriveManagerClass 构造器** callees=1 deps=1 带名）/ b=0x4E8290（0x2A=42B **成员持有指针释放器** callees=1 deps=1）/ c=0x4E82F0（0x2A=42B **成员持有指针释放器（实例二）** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3053{a,b,c}.txt（a 0x150、b 0x30、c 0x30），完整读取确认（a ret @0x4E6131、b ret @0x4E82B9、c ret @0x4E8319）
+核验：.qwen/tmp/_check_callees3053.py 三路全 PASS（a 3 调用去重 1、b 去重 1、c 去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7620 → 7623（待 _append_tsv_batch3053.py）
+
+## a 路：0x4E6070 CDDriveManagerClass::CDDriveManagerClass（0xC2=194B，callees=1，带名）
+
+- 范围 0x4E6070-0x4E6131（ret @0x4E6131；后 nop 对齐 0x4E6132；0x4E6140 `c3 ret` 邻函数/0x4E6150 邻函数不属于本函数；实测边界 194B 与 picker 133B 差 61B——以实测 ret 为准）
+- **CDDriveManagerClass::CDDriveManagerClass**（带名——YRpp 符号对应，光驱管理器构造器）：
+  - `mov esi, ecx; mov eax, [0x822c50]; mov [esp+0xc], eax`（**读全局 [0x822C50]** 存栈）→ `xor eax, eax; push 0x822c38; mov [esi+0x68], eax; mov [esi+0x6c], eax; call 0x4068e0; add esp, 4`（**DebugLog 0x4068E0**——[0x822C38] 串）
+  - `mov ecx, 6; or eax, 0xffffffff; mov edi, esi; rep stosd; stosw`（**6 dword + word 填充 0xFFFFFFFF**——[+0..0x17] 初始 -1）
+  - `mov ebp, [0x7e125c]`（**IAT 槽 [0x7E125C]**——GetDriveType 类 API）→ `mov bl, 0x63; mov edi, 0x43`（'c'/'C'）
+  - **第一段循环**（0x4e60c0，'C'..'z'）：`mov eax, [esi+0x68]; lea edx, [edi-0x41]; push edi; push 0x822c20; mov [esi+eax*4], edx; ...; call 0x4068e0; add esp, 8`（**DebugLog**——[0x822C20] 串 + 行号 edi；盘符索引 [edi-0x41] 写 [+0x68] 计数数组）→ `inc bl; inc edi; cmp bl, 0x7a`
+  - **第二段循环**（0x4e60ed，'a'/'b' 双盘符）：`mov [esp+0x10], bl; lea ecx, [esp+0x10]; push ecx; call ebp`（**IAT [0x7E125C]**）→ `cmp eax, 5; jne 0x4e610e`（**==5 = DRIVE_CDROM**）→ `mov edx, [esi+0x68]; mov [esi+edx*4], edi; inc`（光驱盘符索引入数组）→ `inc bl; inc edi; cmp bl, 0x62; jle`
+  - **空检查**：`mov eax, [esi+0x68]; test eax, eax; jne 0x4e612a` → `push 0x822c0c; call 0x4068e0`（**DebugLog**——[0x822C0C] 串：无光驱提示）→ ret
+- 直接 call 3 次/去重 1（0x4068E0）——picker callees=1 **完全吻合**（IAT [0x7E125C] 间接不计）
+- 判类：CDDriveManagerClass::CDDriveManagerClass 带名（6 dword+word 0xFFFFFFFF 填充 + DebugLog 0x4068E0 ×3 + IAT [0x7E125C] ==5 DRIVE_CDROM 光驱收集——光驱管理器构造/盘符枚举语义） (semantics_verified)
+
+## b 路：0x4E8290 成员持有指针释放器（0x2A=42B，callees=1）
+
+- 范围 0x4E8290-0x4E82B9（ret @0x4E82B9；后 nop 对齐 0x4E82BA）
+- **成员持有指针释放器**（this=esi，3045a/3046b 同模板——**含 [+0x10] 清零变体**）：
+  - `mov esi, ecx; xor ebx, ebx; mov eax, [esi+4]; mov [esi+0x10], ebx`（**清 [+0x10]**；读 [+0x4]）→ `cmp eax, ebx; je 0x4e82b1`（[+0x4] 空跳过）
+  - `cmp byte ptr [esi+0xd], bl; je 0x4e82b1`（**[+0xD] 持有标志门控**）→ `push eax; call 0x7c8b3d; mov [esi+4], ebx`（**delete [+0x4]**）
+  - `mov [esi+0xd], bl; mov [esi+8], ebx`（清 [+0xD]/[+0x8]）→ ret
+- 直接 call 1 个/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：成员持有指针释放器（清 [+0x10] + [+0x4] 检查 + [+0xD] 持有标志门控 delete 0x7C8B3D + 清 [+0xD]/[+0x8]——3005 批模板族） (partial)
+
+## c 路：0x4E82F0 成员持有指针释放器（实例二）（0x2A=42B，callees=1）
+
+- 范围 0x4E82F0-0x4E8319（ret @0x4E8319；后 nop 对齐 0x4E831A）
+- **成员持有指针释放器（实例二）**——**与 b 路 0x4E8290 完全一致**（含 [+0x10] 清零 + [+0xD] 门控 delete [+0x4]）
+- 直接 call 1 个/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：成员持有指针释放器（实例二——与 b 路同模板） (partial)
+
+## 核验结果
+
+- _check_callees3053.py：a 路 3 调用去重 1、b 路 1、c 路 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用（批内地址 0x4E6070/0x4E8290/0x4E82F0 互不为被调）；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4068E0 + 0x7C8B3D——**均已在 TSV 登记**
+- **★CDDriveManagerClass 带名构造器**：本批首个 semantics_verified——IAT [0x7E125C] ==5（DRIVE_CDROM）光驱盘符收集 + DebugLog 三串（[0x822C38]/[0x822C20]/[0x822C0C]）
+- **★IAT 槽 [0x7E125C] 首见**：a 路 GetDriveType 类 API（CD 检测）
+- **★3005 批模板族再实例**：b/c 路双实例（含 [+0x10] 清零变体），与 3045a/3046b 同构
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4E8350（42B callees=1）/ 0x4E83B0（42B callees=1）/ 0x4E8410（42B callees=1）**：picker 显示 0x4E 段——下一批候选（成员持有指针释放器族连续实例）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
