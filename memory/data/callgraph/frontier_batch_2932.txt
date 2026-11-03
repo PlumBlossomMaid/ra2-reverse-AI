@@ -1,0 +1,62 @@
+# frontier batch 2932
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x48B570（421B）+ 0x48BA10（95B）+ 0x48BAD0（35B）
+三路：a=0x48B570（0x1A5=421B **cell 工作记录读取器** callees=0 deps=0）/ b=0x48BA10（0x5F=95B **均值跟踪器** callees=0 deps=0）/ c=0x48BAD0（0x23=35B **五字段 setter** callees=0 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2932a_full.txt（0x2C0）+ _d2932b.txt（0x100）+ _d2932c.txt（0x80），完整读取确认（a ret 0x18 @0x48B70E/快路径@0x48B715、b ret 4 @0x48BA6F、c ret 0x14 @0x48BAF3）
+核验：.qwen/tmp/_check_callees2932.py 三路全 PASS（a 0/0、b 0/0、c 0/0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7273 → 7276（待 _append_tsv_batch2932.py）
+
+## a 路：0x48B570 cell 工作记录读取器（0x1A5=421B，424 扇入，0 出度）
+
+- 范围 0x48B570-0x48B715（ret 0x18 @0x48B70E + 快路径 @0x48B715，6 栈参）
+- **cell 工作记录数据块复制 + 标志清理**（424 扇入——高扇入纯逻辑无调用）：
+  - `mov eax, ecx; xor ebx, ebx; cmp dword ptr [eax+0x28], ebx; je 0x48B711`（[+0x28] 门控——0 → 快返）
+  - `mov edx, [esp+0x14]`（参4=索引）→ `mov ecx, [eax+0x30]; mov esi, [eax+0x24]; mov ecx, [ecx+edx*4]; lea ecx, [ecx+ecx*8]; lea esi, [esi+ecx*4]`（**双表索引：[eax+0x30][idx] ×9 ×4B → [eax+0x24] + idx*36B 记录**）
+  - `test byte ptr [esi], 1; je 0x48B711`（**记录 bit0 标志**——未置 → 快返）
+  - `mov edi, [esp+0x14]`（参2=目标缓冲）→ 非空：`mov ecx, [esi+0x10]; rep movsd; rep movsb`（**复制 [esi+0x10] 长度字节从 [esi+0x14] → [edi]**——第一数据块）
+  - `mov ecx, [esi+0x18]; esi=[esi+0x1C]; rep movsd; rep movsb`（第二数据块）+ `mov cx, word ptr [edi+ecx*4+0x20]; mov word ptr [esi], cx`（**word 复制**）
+  - 标志清理：`and [ecx], 0xfffffffe`（清 bit0）→ `and [ecx], 0xfffffffd`（清 bit1）→ `and [ecx], 0xfffffffb`（清 bit2）→ `mov [esi+ecx*4+4], ebx`（清零 +4）
+  - 后续段继续其他字段读取（dump 0x2C0 内至 ret）
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**（纯内存 rep movs 操作零调用）
+- 判类：cell 工作记录读取器（[eax+0x30] 索引表 ×9 → [eax+0x24] 36B 记录 + 双块 rep movs 复制 + bit0/1/2 标志清理——**cell 工作记录 36B 布局 + 索引表间接**，与 RMG work 记录同构域但本函数 0 出度纯读） (partial)
+
+## b 路：0x48BA10 均值跟踪器（0x5F=95B）
+
+- 范围 0x48BA10-0x48BA6F（ret 4 @0x48BA6F，1 栈参）
+- **均值/平滑跟踪器**（[+0x14] 累加器、[+0x18] 除数、[+0x1C] 商、[+0x20] 最大值）：
+  - `mov eax, [ecx+0x18]; cmp eax, 0x100; jne 0x48BA4A`（**除数 == 0x100 特判**）
+    - ==0x100：`mov edi, [esp+0xc]`（参1=增量）→ `mov esi, [ecx+0x1C]; sub eax, esi; ...; add esi, eax; mov [ecx+0x14], esi`（累加器运算）→ `and esi, 0xff; cmp esi, 0x7f; jbe`（**低 8 位进位判断**）→ `shr eax, 8; add eax, edx`（**÷256 + 进位**）
+    - !=0x100：`lea esi, [eax+1]; mov eax, [ecx+0x14]; add eax, edi; mov [ecx+0x18], esi; mov [ecx+0x14], eax; div esi`（**累加 ÷ 新除数**）
+  - `mov [ecx+0x1C], eax`（商）→ `mov eax, [ecx+0x20]; cmp edi, eax; jbe` → `mov [ecx+0x20], edi`（**最大值跟踪**）→ ret 4
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**（纯算术 div/max 操作）
+- 判类：均值跟踪器（[+0x14] 累加/[+0x18] 除数/[+0x1C] 商/[+0x20] 峰值——0x100 特判 ÷256+进位 vs div 通用、最大值跟踪；后续 getter 0x48BA80/+0x1C、0x48BA90/+0x20、reset 0x48BAA0 邻接） (partial)
+
+## c 路：0x48BAD0 五字段 setter（0x23=35B）
+
+- 范围 0x48BAD0-0x48BAF3（ret 0x14 @0x48BAF3，5 栈参）
+- **5 字段连续写入 setter**：
+  - `mov eax, [esp+4]; mov edx, [esp+8]; mov [ecx+0x44], eax; mov [ecx+0x48], edx`（两字段）
+  - `mov eax, [esp+0xc]; mov [ecx+0x4C], eax; mov edx, [esp+0x10]; mov [ecx+0x50], edx; mov eax, [esp+0x14]; mov [ecx+0x54], eax`（三字段）
+  - `ret 0x14`（5 栈参）
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**
+- 判类：五字段 setter（[+0x44]/[+0x48]/[+0x4C]/[+0x50]/[+0x54] 连续写入——对象配置字段族） (partial)
+
+## 核验结果
+
+- _check_callees2932.py：a 路 0/0、b 路 0/0、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（0 出度纯逻辑一致）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：无（三路零调用）
+- **★a 路 424 扇入纯逻辑叶**：全 exe 高扇入叶子——cell 工作记录读取（[0x24] 数组 + [0x30] 索引表 36B 记录 + rep movs 双块 + bit 清理），0 出度零调用与 424 扇入形成对照
+- **★b 路纯算术**：均值跟踪器（0x100 特判 ÷256 + 进位 + div 通用 + 最大值跟踪）——无分支表纯算术叶
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x48B73F**（a 路后邻：ret 4 小函数）/ **0x48B7A7**（ret 0x10——a 路族维）——后续候选
+- **0x48BA80 / 0x48BA90**（b 路 getter：+0x1C/+0x20）/ **0x48BAA0**（b 路 reset：参1 字节 0/1 双路径）/ **0x48BB00**（c 路后邻：0x48B1F0 析构器 + deleting）——后续候选
+- **0x48BB20**（c 路 dump 尾部：清 [0x89E888..0x89E894] 四全局——初始化器带）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
