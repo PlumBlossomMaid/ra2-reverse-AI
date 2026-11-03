@@ -1,0 +1,51 @@
+# frontier batch 2924
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4852D0（190B）+ 0x487150（12B）+ 0x487160（12B）
+三路：a=0x4852D0（0xBE=190B **坐标量化矩形更新器** callees=2 deps=0）/ b=0x487150（0xC=12B **计数器递增** callees=0 deps=0）/ c=0x487160（0xC=12B **计数器递减** callees=0 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2924{a,b,c}.txt（a 0x100、b/c 0x40），完整读取确认（a ret c3 @0x48538E、b ret 4 @0x487159、c ret 4 @0x487169）
+核验：.qwen/tmp/_check_callees2924.py 三路全 PASS（a 2/2 去重2、b 0/0、c 0/0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7249 → 7252（待 _append_tsv_batch2924.py）
+
+## a 路：0x4852D0 坐标量化矩形更新器（0xBE=190B）
+
+- 范围 0x4852D0-0x48538E（ret c3 @0x48538E，无栈参）
+- thiscall 无栈参——**坐标量化 + 矩形写入 + 相机更新**：
+  - `movsx eax, word ptr [edi+0x24]; movsx ecx, word ptr [edi+0x26]`（+0x24/+0x26 **word 坐标符号扩展**）
+  - `shl eax,8; add eax,0x80; cdq; and edx,0xff; add eax,edx; ...`（**x×256+0x80+符号修正**）→ `sar esi,8; shl esi,8`（**向 0 量化到 256 对齐**——坐标取整）
+  - `mov ecx, [0x887324]; call 0x6D2140`（**0x6D2140 坐标转换 getter**——批 711 已登记 getter 邻接族）→ `call 0x6D2790`
+  - `movsx eax, byte ptr [edi+0x11B]`（+0x11B 字节符号扩展）→ `lea edx,[eax+eax*2]; lea edx,[eax+eax*4]`（**×15**）→ `mov [edi], ecx; mov [edi+4], eax; mov [edi+8], 0x3C; mov [edi+0xc], 0x1E`（**矩形 {x,y,60,30} 写入 [edi]**）→ `call 0x6D2790`（**相机更新**）
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x6d2140 + 0x6d2790 均已登记）
+- 判类：坐标量化矩形更新器（+0x24/+0x26 word 坐标 ×256+0x80 量化 + 0x6D2140 转换 + [edi] 写矩形 {60,30} + 0x6D2790 相机）——相机/取景域 (partial)
+
+## b 路：0x487150 计数器递增（0xC=12B）
+
+- 范围 0x487150-0x487159（ret 4 @0x487159，1 栈参）
+- `mov eax, [esp+4]; inc word ptr [ecx+eax*2+0x7C]; ret 4`——**索引数组 word 计数器 +1**（[+0x7C] 起 idx×2 偏移）
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**
+- 判类：计数器递增（[+0x7C + idx×2] word 递增——索引槽位计数）——**批 2908-2910 容器族计数域旁支** (partial)
+
+## c 路：0x487160 计数器递减（0xC=12B）
+
+- 范围 0x487160-0x487169（ret 4 @0x487169，1 栈参）
+- `mov eax, [esp+4]; dec word ptr [ecx+eax*2+0x7C]; ret 4`——**索引数组 word 计数器 -1**（b 路孪生）
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**
+- 判类：计数器递减（[+0x7C + idx×2] word 递减——b 路 inc 配对孪生） (partial)
+
+## 核验结果
+
+- _check_callees2924.py：a 路 2/2（去重 2）、b 路 0/0、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x6d2140（坐标转换 getter）、0x6d2790（相机更新）
+- **★0x6D2140 复现**：批 711 登记「后邻 0x6D2140 CoordsToClient 边界」——本批 a 为 0x6D2140 + 0x6D2790 相机链首次真实调用现场
+- **★b/c 孪生**：inc/dec 逐字节配对（仅操作码 FF4C/FF4C 与 +1/-1 差异）——Westwood 复制粘贴惯用第 N 次
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x487170 / 0x487180**（c 路 dump 尾部：[+0xAC] 计数 inc/dec 孪生——b/c 第二对）/ **0x485390**（a 路 dump 尾部：0xA83D84 + [+0x24] + 0x89F688 方向表——批 405 区同族）——后续候选
+- **0x47EC40**（GetAircraft 孪生，类型 0xF——批 2923 观察项）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
