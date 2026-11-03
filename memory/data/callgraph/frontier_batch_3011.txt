@@ -1,0 +1,49 @@
+# frontier batch 3011
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4C3570（38B callees=2）+ 0x4C3A20（161B callees=2）+ 0x4C49A0（42B callees=1）
+三路：a=0x4C3570（0x25=37B **字符串长度计算器** callees=2 deps=2）/ b=0x4C3A20（0x9E=158B **表格构建器** callees=2 deps=2）/ c=0x4C49A0（0x29=41B **析构器** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3011{a,b,c}.txt（a 0x50、b 0xB0、c 0x60），完整读取确认（a ret @0x4C3595、b ret 8 @0x4C3AB0/0x4C3ABE、c ret @0x4C49C9）
+核验：.qwen/tmp/_check_callees3011.py 三路全 PASS（a 去重 2、b 去重 2、c 去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7494 → 7497（待 _append_tsv_batch3011.py）
+
+## a 路：0x4C3570 字符串长度计算器（0x25=37B，callees=2）
+
+- 范围 0x4C3570-0x4C3595（ret @0x4C3595；后 nop 对齐 0x4C35A0 新函数）
+- **字符串长度计算**（字符输入控件辅助）：
+  - `mov eax, [esi+0x34]; mov [esi+0x3c], 0`（清零游标）→ `test eax, eax; je` → `push eax; call 0x7ca405`（**CRT 字符串长度函数**）→ `mov [esi+0x3c], eax`（存长度）→ `mov ecx, esi; call 0x4e19a0`（**段外辅助**）→ ret
+- 直接 call 2 个/去重 2（0x7CA405 + 0x4E19A0）——picker callees=2 **完全吻合**
+- 判类：字符串长度计算器（0x7CA405 字符串长 + 0x4E19A0 辅助 + [+0x34]/[+0x3c] 游标写入） (partial)
+
+## b 路：0x4C3A20 表格构建器（0x9E=158B，callees=2）
+
+- 范围 0x4C3A20-0x4C3ABE（ret 8 @0x4C3AB0 主出口/0x4C3ABE 早出口；后 nop 对齐 0x4C3AC1）
+- **表格/映射表构建器**（stdcall ret 8）：
+  - `mov esi, [esp+0x18]; test; je`（参数 1 检查）→ `test edx, edx; je`（参数 2 检查）→ `mov ebp, [esp+0x20]; test; jne` → `lea eax, [esi+1]; shl eax, 8; push eax; call 0x7c8e17`（**operator new (n+1)×0x100**）→ `mov ecx, 0x40; rep stosd`（**0x40 dword 填 -1**）→ `lea edi, [ebp+0x100]`（+0x100 步进）
+  - 循环：`mov dl, byte ptr [esi-1]`（逐字符）→ `mov byte ptr [edx+ebp], 0`（表项清零）→ `mov al, byte ptr [esi+1]; mov cl, byte ptr [esi]; push eax; push ecx; mov ecx, [esp+0x1c]; mov edx, edi; call 0x4c37d0`（**段内辅助**——表项处理）→ `add edi, 0x100; inc ebx`（步进）→ `jl` → ret 8
+- 直接 call 2 个/去重 2（0x7C8E17 + 0x4C37D0）——picker callees=2 **完全吻合**
+- 判类：表格构建器（0x7C8E17 new 表 + rep stosd 填 -1 + 0x4C37D0 表项处理 + 0x100 步进循环） (partial)
+
+## c 路：0x4C49A0 析构器（0x29=41B，callees=1）
+
+- 范围 0x4C49A0-0x4C49C9（ret @0x4C49C9；后 nop 对齐 0x4C49D0 新函数）
+- **与 3005 a 路 0x4B9BE0 逐字节同模板**（持有标志门控 delete——含 +0x10 清零）：
+  - `mov [esi+0x10], 0`（先清零 +0x10）→ `[+4]` 门控 delete → `[+0xd]`/`[+8]` 清零 → ret
+- 直接 call 1 个/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：析构器（[+0xd] 持有标志门控 delete [+4]——3005a 同模板延续） (partial)
+
+## 核验结果
+
+- _check_callees3011.py：a 路 2、b 路 2、c 路 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7CA405 + 0x4E19A0 + 0x7C8E17 + 0x4C37D0 + 0x7C8B3D——**均已在 TSV 登记**
+- **★CRT 字符串函数 0x7CA405 首见**：a 路字符串长度函数（0x7CA4 族延续）
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4C4AF0（39B callees=1）/ 0x4C4C60（73B callees=1）/ 0x4C4CB0（73B callees=1）**：picker 显示——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
