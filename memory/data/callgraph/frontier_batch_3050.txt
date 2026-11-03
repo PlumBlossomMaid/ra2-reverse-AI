@@ -1,0 +1,65 @@
+# frontier batch 3050
+
+日期：2026-11-04
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4E1A60（103B callees=2）+ 0x4E1AD0（30B callees=2）+ 0x4E1FE0（988B callees=8）
+三路：a=0x4E1A60（0x65=101B **单例析构器+scalar deleting** callees=2 deps=2）/ b=0x4E1AD0（0x1C=28B **scalar deleting destructor** callees=2 deps=2）/ c=0x4E1FE0（0x3DA=986B **巨型窗口消息分发器** callees=8 deps=8）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3050{a,b,c}.txt（a 0x80、b 0x30、c 0x400），完整读取确认（a ret 4 @0x4E1AC4、b ret 4 @0x4E1AEB、c ret 0x10 @0x4E23B9/提前 ret 0x10 多出口）
+核验：.qwen/tmp/_check_callees3050.py 三路全 PASS（a 去重 2、b 去重 2、c 3 个字面量去重 3），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7611 → 7614（待 _append_tsv_batch3050.py）
+
+## a 路：0x4E1A60 单例析构器+scalar deleting（0x65=101B，callees=2）
+
+- 范围 0x4E1A60-0x4E1AC4（ret 4 @0x4E1AC4；后 nop 对齐 0x4E1AC7）
+- **单例析构器+scalar deleting**（stdcall ret 4，[esp+8]&1 门控 delete this；this=esi）：
+  - `mov esi, ecx; xor ecx, ecx; mov [esi], 0x7e92bc`（**写虚表 0x7E92BC**）
+  - `mov eax, [0x8b3e90]; cmp esi, eax; jne 0x4e1a84`（**[0x8B3E90] 全局单例比对**）→ `mov eax, [esi+0x20]; and ah, 0xfe; mov [esi+0x20], eax`（**清 [+0x20] bit0**）→ `mov [0x8b3e90], eax; xor eax, eax; mov [0x8b3e90], 0`（清全局单例 [0x8B3E90]）
+  - `cmp esi, [0x8b3e88]; jne 0x4e1a92; mov [0x8b3e88], ecx`（**[0x8B3E88] 检查清**）→ `cmp esi, [0x8b3e8c]; jne; mov [0x8b3e8c], ecx`（**[0x8B3E8C] 检查清**）→ `cmp esi, eax; jne; mov [0x8b3e90], ecx`（[0x8B3E90] 二次检查清）
+  - `mov ecx, esi; call 0x5565a0`（**析构子例程**）→ `test byte ptr [esp+8], 1; je 0x4e1ac1`（**[esp+8]&1 门控**）→ `push esi; call 0x7c8b3d`（**delete this**）→ ret 4
+- 直接 call 2 个/去重 2（0x5565A0 + 0x7C8B3D）——picker callees=2 **完全吻合**
+- 判类：单例析构器+scalar deleting（写虚表 0x7E92BC + [0x8B3E88]/[0x8B3E8C]/[0x8B3E90] 三全局单例检查清 + 清 [+0x20] bit0 + 析构子例程 0x5565A0 + [esp+8]&1 门控 delete） (partial)
+
+## b 路：0x4E1AD0 scalar deleting destructor（0x1C=28B，callees=2）
+
+- 范围 0x4E1AD0-0x4E1AEB（ret 4 @0x4E1AEB；后 nop 对齐 0x4E1AEE；0x4E1AF0 邻函数不属于本函数）
+- **scalar deleting destructor**（stdcall ret 4，[esp+8]&1 门控 delete this；this=esi）：
+  - `mov esi, ecx; call 0x5565a0`（**析构子例程**）→ `test byte ptr [esp+8], 1; je 0x4e1ae8`（**[esp+8]&1 门控**）→ `push esi; call 0x7c8b3d`（**delete this**）→ ret 4
+  - （无虚表写/无单例清——与 a 路 0x4E1A60 同族不同类）
+- 直接 call 2 个/去重 2（0x5565A0 + 0x7C8B3D）——picker callees=2 **完全吻合**
+- 判类：scalar deleting destructor（析构子例程 0x5565A0 + [esp+8]&1 门控 delete——3044c 同模板族） (partial)
+
+## c 路：0x4E1FE0 巨型窗口消息分发器（0x3DA=986B，callees=8）
+
+- 范围 0x4E1FE0-0x4E23B9（ret 0x10 @0x4E23B9 主出口/提前 ret 0x10 @0x4E222F/0x4E2275/0x4E2337/0x4E236D/0x4E2393/0x4E23B5；后 nop 对齐 0x4E23BC；0x4E23C0 邻函数不属于本函数）
+- **巨型窗口消息分发器**（stdcall ret 0x10——4 参：ebx=[esp+0xc]、esi=[esp+0x10]、ebp=[esp+0x18]、edi=[esp+0x1c]——窗口过程 WndProc）：
+  - `push ebp; push edi; mov edx, ebx; mov ecx, esi; call 0x622b50`（**直接调用**——前置处理）→ `test eax, eax; jne 0x4e23b5`（非 0 返 0）
+  - **消息号分发**：`sub ebx, 0x111; je 0x4e233a` / `sub ebx, 3; je 0x4e2278` / `sub ebx, 0x383; jne 0x4e23b3`——三路 WM_ 分支
+  - **IAT 槽五连**：[0x7E14A8]（edi 变量）、[0x7E1498]（ebp 变量）、[0x7E14A4]（ebx 变量）、[0x7E14A0]（直接 call [0x7e14a0]）、[0x7E1474]（直接 call [0x7e1474]）——**5 个 IAT 槽构成全部间接调用**
+  - 0x383 分支（主消息群）：`push 0x529; push esi; call edi`（[0x7E14A8]）→ `mov ecx, [0xa8b238]; ... jne 0x4e207b`（**[0xA8B238] 检查**）→ `mov cl, [0xa8eddc]; ...`（[0xA8EDDC]）→ `push 0; push eax; call ebp`（[0x7E1498]）→ 0x714/0x671 序列 → `call ebx`（[0x7E14A4]）三连（0x4ac/0x406/0x405 + [0xA8EB60] 6-差值）
+  - [0xA8B538] 检查 → 重复 0x529/0x714/0x671 三组 → 0x52a/0x52b 各三连 ebx（[0xA8EB70]/[0xA8EB78] 6-差值）→ 0x601/0x604/0x602 各 `mov cl/dl, [0xa8eb7e/0x7f/0x80]; setne; push 0; push r; push 0xf1; call ebx`（**[0xA8EB7E]/[0xA8EB7F]/[0xA8EB80] 标志**）
+  - `cmp byte ptr [0xa8e9a0], 1; jne 0x4e2232`（**[0xA8E9A0]**）→ 0x52d 分支：`call edi` → `call 0x407000`（**直接调用**）→ `push eax; push esi; call [0x7e14a0]`（**IAT [0x7E14A0]**）→ ret 0x10；0x50f 分支：三连 ebx（[0xA8EB64]）→ ret 0x10
+  - 0x114 分支（0x4E2278）：`cmp di, 5; jne 0x4e23b3`（**edi 低 16 位 ==5**）→ `shr edi, 0x10` → `call ebx`（[0x7E14A8]）三连比对 ebp → **四表取对象**：`mov edi, [edi*4 + 0x822730/0x82274c/0x822768/0x822774]`（**[0x8227xx] 成员表**）+ 0x671/0x672/0x673/0x670 消息号 → `call ebx` → `push 0x1b2; push 0x822848; xor edx, edx; mov ecx, edi; call 0x734e60`（**DebugLog**）→ `push eax; push 0; push 0x4b2; push esi; call [0x7e14a4]`（IAT）→ ret 0x10
+  - 0x111 分支（0x4E233A）：`mov ebx, edi; push 8; push esi; shr ebx, 0x10; call [0x7e1474]`（**IAT [0x7E1474]**）→ `and edi, 0xffff; sub edi, 0x52c; je 0x4e2396` / `dec edi; je 0x4e2370` / `sub edi, 0x159; jne`——**细分消息 0x52C/0x52D/0x685**
+  - 0x4e2370：`test ebx, ebx; jne`（[edi>>16]）→ `cmp [0xa8e9a0], 1; jne` → **`mov [0xa8eda0], 6; mov [eax], 1`**（写 [0xA8EDA0]=6）→ ret 0x10
+  - 0x4e2396：同 → **`mov [0xa8eda0], 4; mov [eax], 1`**（写 [0xA8EDA0]=4）→ ret 0x10
+  - 0x4e23b3：`xor eax, eax; ret 0x10`（默认返 0）
+- 直接 call 3 个/去重 3（0x622B50 + 0x407000 + 0x734E60）——**picker callees=8 vs 核验 3，差值 5 = 5 个 IAT 槽**（[0x7E14A8]/[0x7E1498]/[0x7E14A4]/[0x7E14A0]/[0x7E1474]）——**预期差模式**（同 2987a/3035c：picker 含 IAT 间接，核验只抓字面量）
+- 判类：巨型窗口消息分发器（0x622B50 前置 + IAT 槽五连 [0x7E14A8]/[0x7E1498]/[0x7E14A4]/[0x7E14A0]/[0x7E1474] + [0xA8B238]/[0xA8EDDC]/[0xA8B538]/[0xA8E9A0] 全局门控 + [0x8227xx] 四成员表 + [0xA8EB60]/[0xA8EB64]/[0xA8EB70]/[0xA8EB78]/[0xA8EB7E]/[0xA8EB7F]/[0xA8EB80] 全局 + DebugLog 0x734E60 + 写 [0xA8EDA0]=6/4——WndProc 消息分发） (partial)
+
+## 核验结果
+
+- _check_callees3050.py：a 路 2、b 路 2、c 路 3 字面量去重 3——三路全 PASS
+- picker callees vs 核验差值：a/b 路差 0；**c 路差 5（picker 8 = 3 字面量 + 5 IAT 槽，预期差模式）**
+- 无批内自引用（批内地址 0x4E1A60/0x4E1AD0/0x4E1FE0 互不为被调）；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x5565A0 + 0x7C8B3D + 0x622B50 + 0x407000 + 0x734E60——**均已在 TSV 登记**
+- **★巨型函数 0x4E1FE0**：本批最大（986B），IAT 槽五连（[0x7E14A8]/[0x7E1498]/[0x7E14A4]/[0x7E14A0]/[0x7E1474]）——**WndProc 窗口过程**特征
+- **★[0x8227xx] 成员表**：c 路四表 0x822730/0x82274C/0x822768/0x822774（ediclass 段——成员对象表）
+- **★[0xA8EDA0]/[0xA8EB60]/[0xA8EB64]/[0xA8EB70]/[0xA8EB78]/[0xA8EB7E]/[0xA8EB7F]/[0xA8EB80] 全局族**：c 路大量 A8 段游戏全局读（消息参数打包）
+- **★0x5565A0 析构子例程**：a/b 路共享（同一类的析构主体）
+- **batch 3050 无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4E2450（15B callees=1）/ 0x4E2460（23B callees=1）/ 0x4E2580（32B callees=0）**：picker 显示 0x4E 段——下一批候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
