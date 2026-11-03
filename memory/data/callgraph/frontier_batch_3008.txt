@@ -1,0 +1,54 @@
+# frontier batch 3008
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4BA720（74B callees=1）+ 0x4BB620（526B callees=2）+ 0x4BDF00（2754B callees=7）
+三路：a=0x4BA720（0x49=73B **构造器** callees=1 deps=1）/ b=0x4BB620（0x20B=523B **多虚表槽判定大函数** callees=2 deps=2）/ c=0x4BDF00（0xABF=2751B **巨型调度器** callees=7 deps=7）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3008{a,b,c}.txt（a 0x60、b 0x220、c 0xB00），完整读取确认（a ret @0x4BA769、b ret 0xc @0x4BB7F9/0x4BB81D/0x4BB82B、c ret 0x1c @0x4BE9B3/0x4BE9BF）
+核验：.qwen/tmp/_check_callees3008.py 三路全 PASS（a 去重 1、b 去重 2、c 去重 7），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7485 → 7488（待 _append_tsv_batch3008.py）
+
+## a 路：0x4BA720 构造器（0x49=73B，callees=1）
+
+- 范围 0x4BA720-0x4BA769（ret @0x4BA769；后 nop 对齐 0x4BA770 新函数）
+- **构造器**（清零字段 + 虚表 + 分配 + rep 清零）：
+  - 清零 [+4]~[+0x19]（xor 填 eax）→ `mov [esi], 0x7e85d4`（**虚表指针 0x7E85D4**——新虚表）→ `push 0x6c; call 0x7c8e17`（**operator new 0x6C**）→ `mov [esi+0x20], edi`（**存 [+0x20]**）→ `mov ecx, 0x1b; rep stosd`（**rep stosd 0x1B dword 清零**）→ `mov eax, [esi+0x20]; mov [eax], 0x6c`（**[+0x20] 写 0x6C**）→ ret
+- 直接 call 1 个/去重 1（0x7C8E17）——picker callees=1 **完全吻合**
+- 判类：构造器（虚表 0x7E85D4 + 0x7C8E17 new 0x6C + [+0x20] rep stosd 清零 + 写 0x6C） (partial)
+
+## b 路：0x4BB620 多虚表槽判定大函数（0x20B=523B，callees=2）
+
+- 范围 0x4BB620-0x4BB82B（ret 0xc @0x4BB7F9/0x4BB81D/0x4BB82B；后 nop 对齐 0x4BB830 新函数）
+- **多虚表槽判定 + 全局标志**（stdcall ret 0xc）：
+  - 前置：`mov eax, [esi+0x1c]; test; je 0x4bb820`（**[+0x1c] 检查**）→ `mov eax, [edi+8]; jle`（[+8] 计数）→ `mov eax, [edi+0xc]; jle`（[+0xc] 计数）→ `mov al, [0x8205d4]; test; je`（**全局 [0x8205D4]**）→ `call [eax+0x6c]`（**虚表槽 0x6c**——[esi]）→ `call [ecx+0x34]`（**虚表槽 0x34**——[+0x1c]）
+  - `mov al, [0x89f978]; test`（**全局 [0x89F978]**）→ `mov al, [0xa8ed80]; test`（**全局 [0xA8ED80]**）→ `call [edx+0x60]`（**虚表槽 0x60**——[+0x1c]）→ `cmp eax, 0x887601c2`（**常量 0x887601C2 比较**）
+  - `call [ecx+0x6c]`（虚表槽 0x6c）→ `call [edx+0x60]`（虚表槽 0x60）→ `mov ebx, [esi+0xc]; jle`（[+0xc] 循环）→ 后续多判定
+  - `call 0x421b60`（**段外辅助**）+ `call 0x7bb050`（**CRT/辅助**）
+- 直接 call 3 次/去重 2（0x421B60 + 0x7BB050）——picker callees=2 **完全吻合**（虚表槽 0x6c/0x34/0x60 间接）
+- 判类：多虚表槽判定大函数（[+0x1c] 链 + [0x8205D4]/[0x89F978]/[0xA8ED80] 全局 + 0x887601C2 常量 + 虚表槽 0x6c/0x34/0x60） (partial)
+
+## c 路：0x4BDF00 巨型调度器（0xABF=2751B，callees=7）
+
+- 范围 0x4BDF00-0x4BE9BF（ret 0x1c @0x4BE9B3 主出口/0x4BE9BF 早出口；后 nop 对齐 0x4BE9C2）
+- **巨型循环调度器**（7 callees——本批最大）：
+  - **浮点族**：`call 0x4cac40`（浮点函数）+ `call 0x7c5f00`（**CRT _ftol**——多次）
+  - **CRT 族**：0x7BC2B0 + 0x7BD130（**7B 段 CRT**）
+  - **辅助族**：0x4114B0 + 0x421B60（段外辅助）+ 0x4BE9D0（**段内邻函数**——位于 0x4BE9C2 之后，跨函数调用）
+- 直接 call 20 次/去重 7（0x4114B0 + 0x421B60 + 0x4BE9D0 + 0x4CAC40 + 0x7BC2B0 + 0x7BD130 + 0x7C5F00）——picker callees=7 **完全吻合**
+- 判类：巨型调度器（浮点族 + CRT 7B 段族 + 0x421B60/0x4114B0 辅助 + 大循环调度） (partial)
+
+## 核验结果
+
+- _check_callees3008.py：a 路 1、b 路 3 调用去重 2、c 路 20 调用去重 7——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8E17 + 0x421B60 + 0x7BB050 + 0x4114B0 + 0x4BE9D0 + 0x4CAC40 + 0x7BC2B0 + 0x7BD130 + 0x7C5F00——**均已在 TSV 登记**
+- **★虚表 0x7E85D4 首见**：a 路构造器虚表（0x7E85 族延续）
+- **★全局 [0x8205D4]/[0x89F978]/[0xA8ED80] 首见**：b 路三全局标志读取
+- **★常量 0x887601C2 首见**：b 路虚表槽 0x60 返回值比较
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4C2C40（42B callees=1）/ 0x4C2D90（39B callees=1）/ 0x4C2F00（73B callees=1）**：picker 显示——后续候选（0x4C 段新段）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
