@@ -1,0 +1,54 @@
+# frontier batch 3044
+
+日期：2026-11-04
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4DFF40（311B callees=4）+ 0x4E0130（3B callees=0）+ 0x4E0170（30B callees=2）
+三路：a=0x4DFF40（0x137=311B **门控最近选择器** callees=4 deps=4）/ b=0x4E0130（0x3=3B **空返回 stub（叶子）** callees=0 deps=0）/ c=0x4E0170（0x1C=28B **scalar deleting destructor** callees=2 deps=2）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3044{a,b,c}.txt（a 0x140、b 0x10、c 0x30），完整读取确认（a ret @0x4E0076/提前 @0x4DFF5F、b ret @0x4E0132、c ret 4 @0x4E018B）
+核验：.qwen/tmp/_check_callees3044.py 三路全 PASS（a 去重 4、b 去重 0、c 去重 2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7593 → 7596（待 _append_tsv_batch3044.py）
+
+## a 路：0x4DFF40 门控最近选择器（0x137=311B，callees=4）
+
+- 范围 0x4DFF40-0x4E0076（ret @0x4E0076；提前 ret @0x4DFF5F 门控失败/0x4E0044 空命中返 0；后 nop 对齐 0x4E0077）
+- **门控最近选择器**（this=edi，3043 族第四变体——容器 [0xCC]/[0xD8]）：
+  - `mov edi, ecx; call 0x70fb50`（**直接调用门控**）→ `test al, al; jne 0x4dff60` → 失败提前 ret（0x4DFF5F）
+  - `mov eax, [edi+0x21c]; mov [esp+0x14], 0x7fffffff; mov ebp, [eax+0xd8]; dec ebp; js 0x4e003b`（**容器计数 [+0xD8]**）
+  - 循环体：`mov edx, [ecx+0xcc]; mov esi, [edx+ebp*4]; call [eax+0x48]` 双坐标（元素 + 自身）→ 三分量差 + 浮点点积 → `fstp qword [esp]` → **0x4cac40** → **0x7c5f00** → `cmp ebx, [esp+0x14]; jge 跳过`
+  - **命中判定**：`push 0; mov ecx, esi; call 0x65ad30`（**直接调用**——候选对象 0 参；**返 0 才计入**）→ `test eax, eax; jne 跳过` → `mov eax, [esi+0x2e4]; test eax, eax; jne 跳过`（**[+0x2E4] 标志**）→ 更新最优（[+0x14]=距离、[+0x18]=命中 esi）
+  - 空命中 → ret 0（@0x4E003B）
+  - 命中：`push 1; push esi; call [edx+0x480]`（虚表槽 0x480）+ `push esi; push 2; call [eax+0x278]`（**虚表槽 0x278**，参 esi/2）+ `push 1; push 7; call [edx+0x1e8]`（虚表槽 0x1E8，7/1）→ ret 1
+- 直接 call 4 个/去重 4（0x70FB50 + 0x4CAC40 + 0x7C5F00 + 0x65AD30）——picker callees=4 **完全吻合**（虚表槽 0x48/0x480/0x278/0x1E8 间接不计）
+- 判类：门控最近选择器（0x70FB50 门控 + [+0x21C] 容器 [0xCC]/[0xD8] + 距离点积 0x4CAC40/0x7C5F00 + 0x65AD30 命中判定 + [+0x2E4] 标志 + 虚表槽 0x480/0x278/0x1E8 消费） (partial)
+
+## b 路：0x4E0130 空返回 stub（0x3=3B，callees=0，叶子）
+
+- 范围 0x4E0130-0x4E0132（ret @0x4E0132；后 nop 对齐 0x4E0133）
+- **空返回 stub**（3B）：`xor eax, eax; ret`——**恒返 0**（占位/禁用开关）
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**（极小叶子）
+- 判类：空返回 stub（xor eax,eax; ret——恒返 0 占位函数） (partial)
+
+## c 路：0x4E0170 scalar deleting destructor（0x1C=28B，callees=2）
+
+- 范围 0x4E0170-0x4E018B（ret 4 @0x4E018B；后 nop 对齐，0x4E0190 为邻函数入口不属于本函数）
+- **scalar deleting destructor**（stdcall ret 4——标志位 1 门控 delete；this=esi）：
+  - `mov esi, ecx; call 0x4d3590`（**析构子例程**）→ `test byte ptr [esp+8], 1; je 0x4e0188`（**[esp+8]&1 标志门控**——调用者传的 deleting 标志）→ `push esi; call 0x7c8b3d`（**delete**——operator delete 转发）→ `add esp, 4` → `mov eax, esi; ret 4`（**返回 this**）
+- 直接 call 2 个/去重 2（0x4D3590 + 0x7C8B3D）——picker callees=2 **完全吻合**
+- 判类：scalar deleting destructor（0x4D3590 析构子例程 + [esp+8]&1 门控 delete 0x7C8B3D + 返回 this——经典模板，3005/3006/3007 批同型） (partial)
+
+## 核验结果
+
+- _check_callees3044.py：a 路 4、b 路 0、c 路 2——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用（批内地址 0x4DFF40/0x4E0130/0x4E0170 互不为被调）；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x70FB50 + 0x4CAC40 + 0x7C5F00 + 0x65AD30 + 0x4D3590 + 0x7C8B3D——**均已在 TSV 登记**
+- **★最近距离选择器族五连**（3042c/3043a/3043b/3043c/3044a）：本路为第四变体 [+0x21C] 容器 [0xCC]/[0xD8] + 0x70FB50 门控 + 0x65AD30 命中判定（返 0 才计入）——容器切片已现 [0x9C]/[0xA8]、[0xB4]/[0xC0]、[0xE4]/[0xF0]、[0xCC]/[0xD8] 四组
+- **★0x70FB50 首见**：a 路门控（3044 新被调）
+- **★0x4E0130 恒返 0 stub**：3B 极简叶子（禁用开关占位）
+- **batch 3044 无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4E0190（42B callees=1）/ 0x4E01F0（42B callees=1）/ 0x4E0270（73B callees=1）**：picker 显示 0x4E 段开头——下一批候选（c 路 dump 尾邻 0x4E0190 已见）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
