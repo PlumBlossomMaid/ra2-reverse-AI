@@ -1,0 +1,60 @@
+# frontier batch 3047
+
+日期：2026-11-04
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4E0B10（285B callees=3）+ 0x4E0CE0（73B callees=1）+ 0x4E0D30（73B callees=1）
+三路：a=0x4E0B10（0x11B=283B **数组容器重分配** callees=3 deps=3）/ b=0x4E0CE0（0x47=71B **析构器+成员释放（虚表0x7E8C48）** callees=1 deps=1）/ c=0x4E0D30（0x47=71B **析构器+成员释放（实例二）** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3047{a,b,c}.txt（a 0x130、b 0x50、c 0x50），完整读取确认（a ret 8 @0x4E0C21/0x4E0C2A、b ret 4 @0x4E0D26、c ret 4 @0x4E0D76）
+核验：.qwen/tmp/_check_callees3047.py 三路全 PASS（a 去重 3、b 2 调用去重 1、c 2 调用去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7602 → 7605（待 _append_tsv_batch3047.py）
+
+## a 路：0x4E0B10 数组容器重分配（0x11B=283B，callees=3）
+
+- 范围 0x4E0B10-0x4E0C2A（ret 8 @0x4E0C21/0x4E0C2A；0x4E0C30 为邻回调 `c3 ret` 不属于本函数；后 nop 对齐）
+- **数组容器重分配**（stdcall ret 8——2 参：ebx=[esp+8] 元素数、ebp=[esp+0x18] 外部缓冲区；this=esi）：
+  - `test ebx, ebx; je 0x4e0c07`（元素数 0 → **虚表槽 0xC** 路径）
+  - `mov [esi+0xc], 0; test ebp, ebp; jne 0x4e0b64`（清 [+0xC]；外部缓冲区检查）
+  - ebp==0：`lea eax, [ebx*8+4]; push eax; call 0x7c8e17`（**operator new**——size=ebx*8+4，**[+0x18]==0 时新分配**）→ `test eax, eax; je 0x4e0b60` → `lea ecx, [ebx-1]; mov [eax], ebx`（**存元素计数** [+0]）→ 循环填 0（**每 8 字节**）
+  - ebp!=0：`mov [ebp], ebx`（**复用调用者缓冲区**存计数）→ 循环填 0
+  - `test edi, edi; mov [esi+0xc], 1; je 0x4e0c24`（**[+0xC]=1 已初始化**；分配失败返 0）
+  - `mov eax, [esi+4]; test; je 0x4e0bf5`（旧 [+0x4] 检查）→ `mov ecx, [esi+8]; cmp ebx, ecx; jge; mov ecx, ebx`（**拷贝计数 = min(新,旧)**）→ 拷贝循环（**8 字节/元素**：`mov ebp, [edx+eax*8-8]; mov [edi+eax*8-8], ebp`）
+  - `mov al, [esi+0xd]; test al, al; je 0x4e0bf5`（**[+0xD] 持有标志**）→ `mov eax, [esi+4]; mov ecx, [eax-4]; lea ebp, [eax-4]; push 0x4e0c30; push ecx; push 8; push eax; call 0x40afd0`（**数组 delete 辅助**——[eax-4] 计数 + 元素大小 8 + 回调 0x4E0C30）→ `push ebp; call 0x7c8b3d`（**delete 基址**）→ `mov [esi+4], 0`
+  - `mov [esi+4], edi`（**新指针写 [+0x4]**）→ `test ebp, ebp; sete al` → `mov [esi+8], ebx; mov [esi+0xd], al`（**写 [+0x8]=新计数、[+0xD]=持有标志**）→ ret 8（返 1）
+  - 0x4e0c07 空分支：`mov edx, [esi]; mov ecx, esi; call [edx+0xc]`（**虚表槽 0xC**）→ 0x4e0c0e
+  - 0x4e0c0e：`mov eax, [esi+8]; mov ecx, [esi+0x10]; cmp eax, ecx; jge; mov [esi+0x10], eax`（**[+0x10] 更新取 min**）→ ret 8（返 1）
+- 直接 call 3 个/去重 3（0x7C8E17 + 0x40AFD0 + 0x7C8B3D）——picker callees=3 **完全吻合**（虚表槽 0xC 间接不计）
+- 判类：数组容器重分配（operator new/复用缓冲区 + 元素计数 [+0] + 逐元素清零 + 拷贝 min(新,旧) + 数组 delete 0x40AFD0/0x7C8B3D + [+0x4]/[+0x8]/[+0xC]/[+0xD]/[+0x10] 布局——数组容器类 SetSize/Realloc） (partial)
+
+## b 路：0x4E0CE0 析构器+成员释放（虚表 0x7E8C48）（0x47=71B，callees=1）
+
+- 范围 0x4E0CE0-0x4E0D26（ret 4 @0x4E0D26；后 nop 对齐 0x4E0D29）
+- **析构器+成员释放**（stdcall ret 4，[esp+8]&1 门控 delete this；this=esi）——**3045c/3046a 模板族，但虚表 0x7E8C48**（非 0x7E920C——不同类）：
+  - `mov eax, [esi+4]; mov [esi], 0x7e8c48`（**写虚表 0x7E8C48**）→ `test eax, eax; je 0x4e0d07`（[+0x4] 检查）
+  - `mov cl, [esi+0xd]; test cl, cl; je 0x4e0d07`（**[+0xD] 持有标志门控**）→ `push eax; call 0x7c8b3d; mov [esi+4], 0`（**delete [+0x4]**）
+  - `mov al, [esp+8]; mov [esi+0xd], 0; test al, 1; mov [esi+8], 0; je 0x4e0d23`（**[esp+8]&1 标志门控**）→ `push esi; call 0x7c8b3d`（**delete this**）→ ret 4
+- 直接 call 2 次/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：析构器+成员释放（虚表 0x7E8C48 + [+0xD] 门控 delete [+0x4] + [esp+8]&1 门控 delete this——3005 批析构模板族） (partial)
+
+## c 路：0x4E0D30 析构器+成员释放（实例二）（0x47=71B，callees=1）
+
+- 范围 0x4E0D30-0x4E0D76（ret 4 @0x4E0D76；后 nop 对齐 0x4E0D79）
+- **析构器+成员释放（实例二）**——**与 b 路 0x4E0CE0 完全一致**（写虚表 0x7E8C48 + [+0xD] 门控 delete [+0x4] + [esp+8]&1 门控 delete this）
+- 直接 call 2 次/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：析构器+成员释放（实例二——与 b 路同模板，虚表 0x7E8C48） (partial)
+
+## 核验结果
+
+- _check_callees3047.py：a 路 3、b 路 2 调用去重 1、c 路 2 调用去重 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用（批内地址 0x4E0B10/0x4E0CE0/0x4E0D30 互不为被调）；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8E17 + 0x40AFD0 + 0x7C8B3D——**均已在 TSV 登记**
+- **★0x40AFD0 数组 delete 辅助**：a 路首见（[eax-4] 计数 + 元素大小 8 + 回调 0x4E0C30 空删除器——数组容器析构路径）
+- **★数组容器重分配族**：a 路 0x4E0B10 为容器类核心（new/复用 + 拷贝 + 释放），b/c 路为同一族的析构器（虚表 0x7E8C48）——0x4E0B10/0x4E0CE0/0x4E0D30 三角色
+- **★析构器模板族虚表分叉**：已见 0x7E920C（3045c/3046a）+ 0x7E8C48（3047b/c）——同模板、不同虚表（不同类）
+- **batch 3047 无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4E0D80（84B callees=1）/ 0x4E0DE0（59B callees=1）/ 0x4E0E20（84B callees=1）**：picker 显示 0x4E 段——下一批候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
