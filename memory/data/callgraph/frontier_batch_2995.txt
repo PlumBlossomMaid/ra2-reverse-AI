@@ -1,0 +1,49 @@
+# frontier batch 2995
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4B4CB0（13B callees=1）+ 0x4B4CC0（13B callees=1）+ 0x4B4D00（65B callees=2）
+三路：a=0x4B4CB0（0xA=10B **单参转发** callees=1 deps=1）/ b=0x4B4CC0（0xA=10B **单参转发** callees=1 deps=1）/ c=0x4B4D00（0x3E=62B **三虚表析构器** callees=2 deps=2）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2995{a,b,c}.txt（各 0x40/0x60），完整读取确认（a ret 4 @0x4B4CBA、b ret 4 @0x4B4CCA、c ret 4 @0x4B4D3E）
+核验：.qwen/tmp/_check_callees2995.py 三路全 PASS（a 去重 1、b 去重 1、c 去重 2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7446 → 7449（待 _append_tsv_batch2995.py）
+
+## a 路：0x4B4CB0 单参转发（0xA=10B，callees=1）
+
+- 范围 0x4B4CB0-0x4B4CBA（ret 4 @0x4B4CBA；后 nop 对齐 0x4B4CC0 新函数）
+- **单参转发**（stdcall ret 4）：
+  - `mov eax, [esp+4]; push eax; call 0x55a950`（**转发到 0x55A950**）→ ret 4
+- 直接 call 1 个/去重 1（0x55A950）——picker callees=1 **完全吻合**
+- 判类：单参转发（0x55A950） (partial)
+
+## b 路：0x4B4CC0 单参转发（0xA=10B，callees=1）
+
+- 范围 0x4B4CC0-0x4B4CCA（ret 4 @0x4B4CCA；后 nop 对齐 0x4B4CD0 新函数）
+- **单参转发**（同 a 路布局，不同目标）：
+  - `mov eax, [esp+4]; push eax; call 0x55a970`（**转发到 0x55A970**）→ ret 4
+- 直接 call 1 个/去重 1（0x55A970）——picker callees=1 **完全吻合**
+- 判类：单参转发（0x55A970） (partial)
+
+## c 路：0x4B4D00 三虚表析构器（0x3E=62B，callees=2）
+
+- 范围 0x4B4D00-0x4B4D3E（ret 4 @0x4B4D3E；后 nop 对齐 0x4B4D50 新函数）
+- **三虚表析构器模板**（同 2991 c 路 0x4AF5E0 同族）：
+  - `mov [esi], 0x7e7f7c; mov [esi+4], 0x7e7eb0; mov [esi+0x18], 0x7e7e8c`（**三虚表写入**——0x7E7F7C 族）→ `mov eax, [esi+0x68]; test; je` → `push eax; call [ecx+8]`（**[+0x68] 对象虚表槽 8 释放**）→ `mov ecx, esi; call 0x55a6f0`（**基类析构子例程**）→ `test byte ptr [esp+8], 1`（deleting 标志）→ `je` → `push esi; call 0x7c8b3d`（**delete this**）→ ret 4
+- 直接 call 2 个/去重 2（0x55A6F0 + 0x7C8B3D）——picker callees=2 **完全吻合**（[+0x68] 虚表槽 8 间接）
+- 判类：三虚表析构器（三虚表 0x7E7F7C/0x7E7EB0/0x7E7E8C + [+0x68] 虚表槽 8 释放 + 基类析构 0x55A6F0 + deleting 门） (partial)
+
+## 核验结果
+
+- _check_callees2995.py：a 路 1、b 路 1、c 路 2——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x55A950 + 0x55A970 + 0x55A6F0 + 0x7C8B3D——**均已在 TSV 登记**
+- **★0x55A950/0x55A970 首见**：a/b 路两个新转发目标
+- **★0x7E7F7C 三虚表族延续**：c 路与 2991 c 路 0x4AF5E0 同族（0x7E7F7C/0x7E7EB0/0x7E7E8C）——DriveLocomotionClass 析构族第二实例
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4B4D60（13B callees=0）/ 0x4B4EE0（62B callees=1）/ 0x4B4F20（31B callees=1）**：picker 显示——后续候选（c 路 dump 已见 0x4B4D50 = 单指针释放器）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
