@@ -1,0 +1,55 @@
+# frontier batch 2912
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x474DA0（100B）+ 0x474EE0（95B）+ 0x474F50（70B）
+三路：a=0x474DA0（0x64=100B **全局表线性查找 II** callees=2 deps=0）/ b=0x474EE0（0x5F=95B **静态表线性查找** callees=2 deps=0）/ c=0x474F50（0x46=70B **索引指针表构造转发** callees=2 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2912{a,b,c}.txt（a 长度 0x80、b 长度 0x80、c 长度 0x80），完整读取确认（a ret 0xc @0x474E04、b ret 0xc @0x474F3F、c ret 0xc @0x474F96）
+核验：.qwen/tmp/_check_callees2912.py 三路全 PASS（a 2/2 去重2、b 2/2 去重2、c 2/2 去重2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7213 → 7216（待 _append_tsv_batch2912.py）
+
+## a 路：0x474DA0 全局表线性查找 II（0x64=100B）
+
+- 范围 0x474DA0-0x474E04（ret 0xc @0x474E04，3 栈参）——**批 2911 b 路 0x4748A0 同构查表变体**：
+  - `mov edx, [esp+0xc]`（参3 索引）→ `mov eax, [edx*8 + 0x81B9D8]`（取表项低 4 字节）
+  - `call 0x528a10`（5 参：参1、参2、表项值、&局部缓冲 0x20、0x20——物化临时对象）
+  - 遍历：`esi=0x81B9D8` 起、步长 8、止 `cmp esi, 0x81BA88`（**22 项 × 8B**）——每项低 4 字节 `call 0x7c8d20`（2 参比较）→ hit 返 1 → `mov eax, [edi*8 + 0x81B9DC]`（**返回命中项 +4 关联字段**）
+  - miss → `xor eax, eax` 返 **0（与 2911 b 路 miss 返 1 不同——同族不同值语义）**
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x528a10 + 0x7c8d20 均已登记）
+- 判类：全局表线性查找 II（0x81B9D8 表 22 项×8B，命中返 +4 字段 / 未中返 0）——工具函数族，0x81B9D8 表语义未确认 (partial)
+
+## b 路：0x474EE0 静态表线性查找（0x5F=95B）
+
+- 范围 0x474EE0-0x474F3F（ret 0xc @0x474F3F，3 栈参）——同族查表 III：
+  - `mov edx, [esp+0xc]`（参3 索引）→ `mov eax, [edx*4 + 0x7E4C50]`（**4B 项步长 + 0x7E4C50 只读段 .rdata 静态表**）
+  - `call 0x528a10`（5 参同 a 路——物化临时对象）
+  - 遍历：`esi=0x7E4C50` 起、`add esi,4`、止 `cmp esi, 0x7E4D74`（**73 项 × 4B**）——每项 `call 0x7c8d20` 比较 → hit 返 1 → `mov eax, edi`（**返回命中索引**，非关联字段）
+  - miss → `xor eax, eax` 返 0
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x528a10 + 0x7c8d20 均已登记）
+- 判类：静态表线性查找（0x7E4C50 只读 73 项×4B 字符串/句柄表，命中返索引 / 未中返 0）——0x7E4C50 与批 2910 c 路虚表 0x7E4C04 同段邻接（.rdata 静态数据族） (partial)
+
+## c 路：0x474F50 索引指针表构造转发（0x46=70B）
+
+- 范围 0x474F50-0x474F96（ret 0xc @0x474F96，3 栈参）
+  - `mov eax, [esp+0xc]`（参3 索引）→ `cmp eax, -1; je 0x474F6A`（**-1 特判**：`mov byte ptr [esp],0; lea eax,[esp]` → 本地零值指针）
+  - 非 -1：`mov edx, [0xA8E334]; mov eax, [edx+eax*4]; add eax, 0x24`（**指针表 [0xA8E334] 取第 idx 项 + 0x24 域**）
+  - `call 0x528a10`（5 参：参1、参2、源指针 eax、&[esp+0x1c] 目标 0x20、0x20——构造到局部缓冲）
+  - `lea ecx, [esp+0x1c]; call 0x6CEE60`（**thiscall 以构造结果为 this 收尾**——析构/验证用途）
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x528a10 + 0x6cee60 均已登记）
+- 判类：索引指针表构造转发（[0xA8E334] 指针表 +0x24 域取源；-1 特判 0 指针；0x528a10 构造 → 0x6CEE60 收尾）——[0xA8E334] 全局指针表语义未确认 (partial)
+
+## 核验结果
+
+- _check_callees2912.py：a 路 2/2（去重 2）、b 路 2/2（去重 2）、c 路 2/2（去重 2）——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x528a10（构造）、0x7c8d20（比较）、0x6cee60（thiscall 收尾）
+- **★查表工具族扩张**：批 2911 b（0x81B958 11 项 miss→1）→ 本批 a（0x81B9D8 22 项 miss→0）/ b（0x7E4C50 只读 73 项返索引）——三例同一 0x528a10+0x7c8d20 骨架，表基址/步长/项数/返回值各异，疑为同一工具模板实例化
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x474E10**（a 路 dump 尾部：`cmp eax,-1` 分支取 0x81B9D8 表——同族第四例）/ **0x474FA0**（c 路 dump 尾部：0x889F64 字符串常量 + 0x528a10 5 参）——后续候选（0x47xxxx 区）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
