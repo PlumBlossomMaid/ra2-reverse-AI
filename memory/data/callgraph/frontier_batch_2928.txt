@@ -1,0 +1,59 @@
+# frontier batch 2928
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4884A0（115B）+ 0x4886E0（80B）+ 0x4887F0（82B）
+三路：a=0x4884A0（0x73=115B **链表插入标记复合** callees=2 deps=0）/ b=0x4886E0（0x50=80B **多段释放析构器+deleting 门** callees=4 deps=0）/ c=0x4887F0（0x52=82B **0x7E5054 大对象析构器** callees=2 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2928{a,b,c}.txt（a/b 0x180、c 0x100），完整读取确认（a ret 0xc @0x488513+快路径@0x4884B0、b ret 4 @0x488730、c ret c3 @0x488842）
+核验：.qwen/tmp/_check_callees2928.py 三路全 PASS（a 3个/去重2、b 5个/去重4、c 2/2 去重2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7261 → 7264（待 _append_tsv_batch2928.py）
+
+## a 路：0x4884A0 链表插入标记复合（0x73=115B）
+
+- 范围 0x4884A0-0x488513（ret 0xc @0x488513 + 快路径 ret 0xc @0x4884B0，3 栈参）
+- **链表插入 + 二次标记 + 通知**：
+  - `mov al, [esi+0x174]; test al, al; je 0x4884B3`（**[+0x174] 标志**——非零直接 `mov edi, eax; ret 0xc` 返 0？看 `je 0x4884B3`，即 +0x174 非 0 → 落到 0x4884B0 的 `xor eax,eax; ret 0xc`（快返 0））
+  - `mov eax, [esp+0xc]`（参2 值）→ `push 0; push eax; push ebx`（参1）→ `mov ecx, esi; call 0x557830`（**thiscall 4 参入队**）→ edi = 返回值
+  - `test bl, 1`（参1 & 1）→ 0 → 0x48850E：非 0 → `mov eax, [esi+0x16C]; push eax; call 0x557AC0`（**取节点**）→ `mov al, [eax+4]; test al` → `sete bl` → 再 `call 0x557AC0`（取节点）→ `cmp byte ptr [eax+4], bl; je` → `mov byte ptr [eax+4], bl`（**标记写入**）→ `call dword ptr [edx+0x48]`（**虚表槽 0x48 通知**）
+  - `mov eax, edi; ret 0xc`（返入队结果）
+- 直接 call 3 个/去重 2——picker callees=2 **完全吻合**（0x557830 + 0x557ac0 双调用点）+ 1 虚表槽 0x48 间接
+- 判类：链表插入标记复合（[+0x174] 标志门 + 0x557830 四参入队 + [+0x16C] 域二次取节点 + sete 标记写入 + 虚表槽 0x48 通知）——容器插入+状态同步 (partial)
+
+## b 路：0x4886E0 多段释放析构器+deleting 门（0x50=80B）
+
+- 范围 0x4886E0-0x488730（ret 4 @0x488730）
+- **与批 2926 c 路 0x4882D0 同构**（差异：末尾多 deleting 门 delete this——scalar deleting 复合版）：
+  - `mov [esi], 0x7E4F84`（虚表复位）→ `mov eax, [esi+0x44]; test eax; je 0x488716`（[+0x44] 列表循环）：
+    - `push 0; call 0x557AC0`（取节点）→ edi → `push 0; call 0x557730`（**移除节点**）→ `push edi; call 0x7c8b3d`（delete）→ `mov eax,[esi+0x44]; test; jne` 循环
+  - `call 0x557600`（收尾）→ `test byte ptr [esp+8], 1`（**deleting 门**）→ `push esi; call 0x7c8b3d`（delete this）→ `mov eax, esi; ret 4`
+- 直接 call 5 个/去重 4——picker callees=4 **完全吻合**（0x557ac0 + 0x557730 + 0x7c8b3d 双调用点 + 0x557600）
+- 判类：多段释放析构器+deleting 门（同构 2926 c 虚表 0x7E4F84 + [+0x44] 列表循环 + 0x557600 收尾 + **deleting 标志 delete this**——scalar deleting 增强版） (partial)
+
+## c 路：0x4887F0 0x7E5054 大对象析构器（0x52=82B）
+
+- 范围 0x4887F0-0x488842（ret c3 @0x488842，无栈参）
+- **0x7E5054 对象族析构器**（内嵌子对象多段释放）：
+  - `mov edi, ecx; mov eax, [edi+0x174]; lea esi, [edi+0x174]; mov [edi], 0x7E5054`（虚表复位）→ `call dword ptr [eax+0xc]`（**子对象 [+0x174] 虚表槽 0xC 析构**）
+  - `mov [edi+0x190], 0`（清零）→ `mov eax, [esi+4]; mov [esi], 0x7E4DB8`（**子对象虚表 0x7E4DB8 复位**——批 2919/2920 复合析构器同虚表！）→ `test eax, eax; je 0x488832`（子容器判空）
+  - +0xd 门控 → `push eax; call 0x7c8b3d`（delete 子容器指针）→ 清 [+4]
+  - `mov ecx, edi; mov byte ptr [esi+0xd], 0; mov [esi+8], 0; call 0x557600`（**thiscall 收尾**）→ ret
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x557600 + 0x7c8b3d）+ 1 虚表槽 0xC 间接
+- 判类：0x7E5054 大对象析构器（虚表复位 + [+0x174] 子对象虚表槽 0xC 析构 + **内嵌 0x7E4DB8 复合析构器** + 0x557600 收尾）——0x7E4DB8 复合析构器虚表跨对象族复用 (partial)
+
+## 核验结果
+
+- _check_callees2928.py：a 路 3/2（去重 2）、b 路 5/4（去重 4）、c 路 2/2（去重 2）——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（a 0x557ac0 双调用点、b 0x7c8b3d 双调用点仅计一个 callee）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x557830（四参入队）、0x557ac0（取节点）、0x557730（移除）、0x557600（收尾）、0x7c8b3d（delete）
+- **★0x7E4DB8 复合析构器虚表跨对象族复用**：批 2919/2920（顶层对象）+ 本批 c（0x7E5054 对象内嵌子对象）——同一虚表复合析构模板嵌入多层对象
+- **★0x7E5054 新对象族**：+0x174 子对象 + [+0x178]/[+0x17C]/[+0x184]/[+0x188]/[+0x190] 字段群——后续构造器 0x488760（0x557230 七参 + 0x7E4E78 子表 + 0x7E5054 虚表）在 b 路 dump 尾部可见
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x488760**（0x7E5054 构造器：0x557230 七参 + [+0x174]=0x7E4E78 + [+0x188]=0xA + 虚表 0x7E5054——c 路构造端配对）/ **0x488740**（清 [0x89E7E8..0x89E7F4] 四全局——初始化器 0x4880D0 孪生）——后续候选
+- **0x488850**（c 路 dump 尾部：+0x174 子对象索引操作 0x5576A0 + [+0x184] 容量检查 + 虚表槽 8——大函数容器操作）——后续候选
+- **0x488520**（a 路 dump 尾部：虚表槽 0x94 计数 + 0x557AC0 + 0x7CA564 串操作 + 0x4E12D0 + [0xB054D4]/[0x87F6C4] + [+0x174] 查表——大函数）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
