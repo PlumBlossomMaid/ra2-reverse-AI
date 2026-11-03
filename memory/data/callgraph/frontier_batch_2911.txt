@@ -1,0 +1,56 @@
+# frontier batch 2911
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x473920（30B）+ 0x4748A0（106B）+ 0x474A20（44B）
+三路：a=0x473920（0x1C=30B **scalar deleting 析构器** callees=2 deps=0）/ b=0x4748A0（0x6A=106B **全局表线性查找** callees=2 deps=0）/ c=0x474A20（0x2A=44B **条件包装器** callees=2 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2911{a,b,c}.txt（a 长度 0x1E、b 长度 0x6C、c 长度 0x2E），完整读取确认（a ret 4 @0x47393B、b ret 0xc @0x474907、c ret 0xc @0x474A49）
+核验：.qwen/tmp/_check_callees2911.py 三路全 PASS（a 2/2 去重2、b 2/2 去重2、c 2/2 去重2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7210 → 7213（待 _append_tsv_batch2911.py）
+
+## a 路：0x473920 scalar deleting 析构器（0x1C=30B）
+
+- 范围 0x473920-0x47393B（ret 4 @0x47393B，1 栈参）
+- thiscall 1 栈参（ret 4；[esp+8]=deleting 标志）——**标准 scalar deleting 析构器模板**：
+  - `mov esi, ecx`（存 this）→ `call 0x5565a0`（**析构主体**，this 不变，批量惯例：析构器统一入口）
+  - `test byte ptr [esp+8], 1` → 零跳过；一 → `push esi; call 0x7c8b3d; add esp,4`（**operator delete / free 释放 this**）
+  - `mov eax, esi; ret 4`（返 this）
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x5565a0 + 0x7c8b3d 均已登记）
+- 判类：scalar deleting 析构器（析构主体 0x5565a0 + [+8]&1 deleting 标志门 + operator delete 0x7c8b3d）——容器族标准释放模板 (partial)
+
+## b 路：0x4748A0 全局表线性查找（0x6A=106B）
+
+- 范围 0x4748A0-0x474907（ret 0xc @0x474907，3 栈参）
+- 3 栈参（ret 0xc；[esp+4]=参1、[esp+8]=参2、[esp+0xc]=参3 索引）——**全局表 0x81B958 按索引构造临时对象后线性查找**：
+  - `mov edx, [esp+0xc]`（索引）→ `mov eax, [edx*8 + 0x81B958]`（取表项低 4 字节）
+  - `call 0x528a10`（**5 参**：参1、参2、表项值、&局部缓冲 0x20、0x20——按索引把表项物化成临时对象）
+  - 遍历：`esi=0x81B958` 起、步长 8、止 0x81B9B0（**11 项 × 8B**）——每项低 4 字节 `lea edx,[esp+8]; call 0x7c8d20`（**2 参比较**）→ hit 返 1 时 `mov eax, [edi*8 + 0x81B95C]`（**返回命中项 +4 关联字段**）；全表 miss → `mov eax, 1`（提前返 1）
+  - hit 路径继续：`cmp esi, 0x81B9B0; jl` 循环 / 后 `pop edi; mov eax, 1; ret 0xc`
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x528a10 + 0x7c8d20 均已登记）
+- 判类：全局表线性查找（按参3 索引取 0x81B958 表项 → 0x528a10 构造临时对象 → 8B 步长遍历 11 项 0x7c8d20 逐项比 → 命中返 +4 字段 / 未命中返 1）——ID→关联值查表惯用法，0x81B958 表语义未确认 (partial)
+
+## c 路：0x474A20 条件包装器（0x2A=44B）
+
+- 范围 0x474A20-0x474A49（ret 0xc @0x474A49，3 栈参）
+- thiscall 3 栈参（ret 0xc；[esp+4]=参1、[esp+8]=参2、[esp+0xc]=参3）——**条件转发器**：
+  - `mov ecx, [esp+0x10]`（参3）→ `test ecx, ecx; je 0x474A46`（**参3 为零 → `xor al,al` 返 false**）
+  - 非零：`call 0x473960`（**thiscall 以参3 为 this**，转换/规范化，返 eax）→ `push eax`（转换结果）+ `push [esp+0x10]`（参3）+ `push [esp+8]`（参2）+ `mov ecx, esi`（**this**）→ `call 0x528660`（**三参 thiscall**，返 eax 直通）
+  - 路径合并：`pop esi; ret 0xc`（返 0x528660 结果）
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x473960 + 0x528660 均已登记；0x473960 为批 2910 观察项同区查表函数 0x473940 邻接）
+- 判类：条件包装器（参3 非零 → 0x473960 转换 + 0x528660 三参调用直通其结果；参3 为零 → 返 false）——适配/参数规范化转发 (partial)
+
+## 核验结果
+
+- _check_callees2911.py：a 路 2/2（去重 2）、b 路 2/2（去重 2）、c 路 2/2（去重 2）——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x5565a0（析构主体）、0x7c8b3d（operator delete）、0x528a10、0x7c8d20（比较）、0x473960、0x528660
+- **本批无带名**——三路 estd_class 均无 YRpp 符号对应，全部 partial（与批 2910 b 路带名 semantics_verified 形成对照）
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x473940**（查表 0x81B7C8，0-10 索引，a 路 dump 尾部可见）——0x473960 邻接族，后续候选
+- **0x474A50**（c 路 dump 尾部三参压栈前段）——0x474A20 邻接，后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
