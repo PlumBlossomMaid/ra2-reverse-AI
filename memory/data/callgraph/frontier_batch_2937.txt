@@ -1,0 +1,60 @@
+# frontier batch 2937
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x491390（41B）+ 0x4913F0（54B）+ 0x491B40（204B）
+三路：a=0x491390（0x29=41B **容器释放器 41B 变体** callees=1 deps=0）/ b=0x4913F0（0x36=54B **字节查表转换** callees=0 deps=0）/ c=0x491B40（0xCC=204B **双游标数据解包器** callees=0 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2937{a,b,c}.txt（a 0x80、b 0x100、c 0x160），完整读取确认（a ret c3 @0x4913B9、b ret 0x20 @0x491426、c ret 0x28 @0x491C0C）
+核验：.qwen/tmp/_check_callees2937.py 三路全 PASS（a 1/1 去重1、b 0/0、c 0/0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7288 → 7291（待 _append_tsv_batch2937.py）
+
+## a 路：0x491390 容器释放器 41B 变体（0x29=41B）
+
+- 范围 0x491390-0x4913B9（ret c3 @0x4913B9）
+- **容器释放器 41B 变体**（与批 2918 b/c、2930 c 逐字节 identical——[+0x10] 清零版本第四实例）：
+  - `mov esi, ecx; xor ebx, ebx; mov eax, [esi+4]; mov [esi+0x10], ebx`（+0x10 清零）→ `cmp eax, ebx; je` → `cmp byte ptr [esi+0xd], bl; je`（+0xd 门控）→ `push eax; call 0x7c8b3d; add esp,4`（delete 容器指针）→ 清 [+4]
+  - `mov byte ptr [esi+0xd], bl; mov [esi+8], ebx; ret`
+- 直接 call 1 个/去重 1——picker callees=1 **完全吻合**（0x7c8b3d）
+- 判类：容器释放器 41B 变体（2918 b/c + 2930 c + 本批 a = 41B 模板第四实例——跨 0x48 段 + 0x49 段散布） (partial)
+
+## b 路：0x4913F0 字节查表转换（0x36=54B）
+
+- 范围 0x4913F0-0x491426（ret 0x20 @0x491426，8 栈参）
+- **字节→字节查表转换**：
+  - `mov esi, [esp+0x10]`（计数）→ `mov edi, ecx`（this）→ `test esi; jle 0x491424`（0 → ret）
+  - 循环：`mov eax, [esp+0x10]; mov edx, [esp+0xc]; mov cl, byte ptr [eax]; mov ebx, [edi+4]; inc eax`（读源字节）→ `mov ecx, [esp+0x18]; and ecx, 0xff; inc edx; dec esi; mov cl, byte ptr [ecx+ebx]; mov byte ptr [edx-1], cl; jne`（**表 [idx+ebx] 查表 → 写目标**）
+  - ret 0x20
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**（纯字节查表）
+- 判类：字节查表转换（[+4] 256 项字节表 + 源/目标/计数循环——byte→byte 翻译/编码转换）——与批 2936 c 字节→word 查表同族（翻译表对） (partial)
+
+## c 路：0x491B40 双游标数据解包器（0xCC=204B，207 扇入，0 出度）
+
+- 范围 0x491B40-0x491C0C（ret 0x28 @0x491C0C，10 栈参）——**双游标数据解包器**（207 扇入纯逻辑无调用）：
+  - 第一段（计数游标）：`mov eax, [esp+0x14]`（源计数）→ 循环 `test eax; jle` → `mov dl, byte ptr [ebx]; inc ebx; test dl; jne`（读源字节）→ **0 转义**：`mov dl, byte ptr [ebx]; sub eax, edx; inc ebx`（下一字节是长度）→ 非 0：`dec eax`
+  - 游标调整：`neg eax; add esi, eax; sub edi, eax; lea eax, [ebp+eax*2]; mov edx, [0x887644]; mov ebp, [edx+0x1C]; cmp eax, ebp; jb; sub eax, [edx+0x20]`（**[0x887644] 缓冲区边界回绕**）
+  - 第二段（输出游标）：循环 `test edi; jle` → `mov al, byte ptr [ebx]; inc ebx; test al; jne 0x491BC8`
+    - 0：`sub edi, eax; add esi, eax; lea edx, [edx+eax*2]; add ecx, eax`（**0 转义长度复制**）
+    - 非 0：`movsx eax, byte ptr [ecx]; add edx, 2; sub ebp, eax; mov ax, word ptr [edx-2]; inc ecx; cmp ebp, eax; jge`（**回看距离 + word 比较**）→ 小于：`mov ebp, [esp+0x10]; mov eax, [esp+0x20]; mov ebp, [ebp+4]; mov al, byte ptr [eax+ebp]; mov byte ptr [esi], al`（**表查回写**）
+  - 边界回绕：`mov eax, [0x887644]; cmp edx, [eax+0x1C]; jb; sub edx, [eax+0x20]` 循环 → ret 0x28
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**（0 出度纯逻辑——207 扇入高复用叶）
+- 判类：双游标数据解包器（0 转义 + 回看 word 比较 + [0x887644] 边界回绕 + [+4] 表查回写——**压缩数据解码/LZ 类解压**，10 栈参）——[0x887644] Session 类全局缓冲区 (partial)
+
+## 核验结果
+
+- _check_callees2937.py：a 路 1/1（去重 1）、b 路 0/0、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（b/c 0 出度一致）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7c8b3d（delete）
+- **★c 路 207 扇入纯逻辑解包器**：双游标 + 0 转义 + word 回看 + [0x887644] 边界回绕——**LZ 类解码/数据解压引擎**，10 栈参高参数密度
+- **★[0x887644] Session 类缓冲**：[+0x1C]/[+0x20] 边界回绕——环形缓冲区管理
+- **★容器释放器 41B 第四实例**：0x48（2918 b/c/2930 c）→ 0x49（本批 a）——跨段散布确认模板稳定性
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4913C0 / 0x4913E0**（a 路 dump 尾部：+0xC 标志 + 索引换算 getter——2931 观察同款）——后续候选
+- **0x491430 / 0x491460 / 0x491490**（b 路 dump 尾部：虚表槽 4 多参调用模板——不同栈参量 0x1C/0x24/0x20）——后续候选
+- **0x4914C0**（b 路 dump 尾部：字节查表转换器变体 + 计数循环——b 路同族带符号扩展）——后续候选
+- **0x491C50**（c 路 dump 尾部：大函数虚表槽 4 调用 + [0x887644] + 双游标同构——c 路带虚调度版）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
