@@ -1,0 +1,52 @@
+# frontier batch 3035
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4DB0D0（205B callees=2）+ 0x4DB250（3B callees=0）+ 0x4DB3C0（708B callees=7）
+三路：a=0x4DB0D0（0xCA=202B **多参转发** callees=2 deps=2）/ b=0x4DB250（0x2=2B **极小 ret 8** callees=0 deps=0）/ c=0x4DB3C0（0x2C1=705B **释放+重建器** callees=7 deps=7←含 1 IAT 间接）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3035{a,b,c}.txt（a 0xD0、b 0x20、c 0x2D0），完整读取确认（a ret 0x2c @0x4DB19A、b ret 8 @0x4DB252、c ret 0x10 @0x4DB681）
+核验：.qwen/tmp/_check_callees3035.py 三路全 PASS（a 3 调用去重 2、b 去重 0、c 16 调用去重 5），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7566 → 7569（待 _append_tsv_batch3035.py）
+
+## a 路：0x4DB0D0 多参转发（0xCA=202B，callees=2）
+
+- 范围 0x4DB0D0-0x4DB19A（ret 0x2c @0x4DB19A；后 nop 对齐 0x4DB19D）
+- **多参转发**（stdcall ret 0x2c——22 参）：
+  - `mov eax, [esi+0x674]; test; je`（**[+0x674] 检查**）→ `push 0x80004003; call 0x7dc720`（**E_POINTER 抛掷器**）→ `call [ecx+0x20]`（**虚表槽 0x20**）→ `cmp al, 1; jne`（**条件 1 检查**）
+  - `mov edi, [esp+0x30]; mov eax, [edi+4]; mov edx, [edi]; mov [esp+0xc], eax; mov [esp+8], edx`（**读入参对**）→ `call [ecx+0x30]`（**虚表槽 0x30**——[+0x674] 对象）→ `mov ecx, [eax]; mov edx, [eax+4]; add eax, ecx; add ecx, edx`（**坐标加法**）→ **十参装配**（`push 0x70000000...`）→ `mov ecx, esi; call 0x706bd0`（**段外辅助**——十参调用）→ ret 0x2c
+- 直接 call 2 个/去重 2（0x7DC720 + 0x706BD0）——picker callees=2 **完全吻合**（虚表槽 0x20/0x30 间接）
+- 判类：多参转发（[+0x674] + E_POINTER + 虚表槽 0x20/0x30 + 坐标加法 + 0x706BD0 十参——3034 批 c 路同对象族） (partial)
+
+## b 路：0x4DB250 极小 ret 8（0x2=2B，callees=0）
+
+- 范围 0x4DB250-0x4DB252（ret 8 @0x4DB252；后 nop 对齐 0x4DB260）
+- **极小函数**：`ret 8`（**仅清栈返回**）——占位符/mock（无 eax 设置——与 3017 b 路 0x4C9150 类似）
+- 直接 call/jmp 0 个——picker callees=0 **完全吻合**
+- 判类：极小 ret 8（占位符） (partial)
+
+## c 路：0x4DB3C0 释放+重建器（0x2C1=705B，callees=7←含 1 IAT 间接）
+
+- 范围 0x4DB3C0-0x4DB681（ret 0x10 @0x4DB681；后 nop 对齐 0x4DB684）
+- **释放+重建器**（callees=7 = 5 字面量 + 1 IAT + 0 虚表槽 0x8/0xc 间接）：
+  - `mov eax, [esi+0x674]; cmp eax, ebx; je`（**[+0x674] 释放前置**）→ `mov ecx, [eax]; push eax; call [ecx+8]`（**虚表槽 8 释放旧对象**）→ `mov [esi+0x674], ebx`（清空）
+  - `push ebp; push esi; call 0x70bf50`（**段外辅助**——重建入口）→ `mov edx, [ebp]; push ebx; lea eax, [esp+0x20]; push 4; push eax; push ebp; call [edx+0xc]`（**虚表槽 0xc**——参数对象）
+  - `lea edi, [esi+0x588]; cmp edi, ebx; je` → `push ebx; push ebx; mov ecx, edi; call 0x4e0e80`（**段外辅助**——构造）→ `mov [edi], 0x7e91ec`（**虚表 0x7E91EC**——同 3028 b 路）→ `mov [edi+0x14], 0xa; mov [edi+0x10], ebx`（+0x14=10）
+  - 后续：虚表槽 0xc/0x8 循环（0x4DB44A/0x4DB477/0x4DB4AE/0x4DB4F8/0x4DB525）+ `call 0x405be0` + `call 0x4e02c0` + `call 0x6cf240`（释放器——多次）+ `call dword ptr [0x7e15f8]`（**IAT 槽 [0x7E15F8]**——间接）
+- 直接 call 字面量 16 次/去重 5（0x405BE0 + 0x4E02C0 + 0x4E0E80 + 0x6CF240 + 0x70BF50）；**picker callees=7 = 5 字面量 + 1 IAT 间接槽（0x7E15F8）+ 1 虚表槽域差异——差 2 为 IAT/Ghidra 边界（与 3017 a 路同型预期差模式）**；核验脚本不抓 `call dword ptr [0x7e15f8]`（IAT 间接）与虚表槽
+- 判类：释放+重建器（[+0x674] 虚表槽 8 释放 + 0x70BF50 重建 + 虚表槽 0xc 参数 + 0x4E0E80 构造 + 虚表 0x7E91EC + 0x6CF240 释放 + IAT 0x7E15F8） (partial)
+
+## 核验结果
+
+- _check_callees3035.py：a 路 3 调用去重 2、b 路 0、c 路 16 调用去重 5——三路全 PASS
+- picker callees vs 核验差值：a 差 0、b 差 0、c 差 2（预期差——1 个 IAT 槽 [0x7E15F8] + 虚表槽间接域，核验只抓字面量；同 3017 a 路模式）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7DC720 + 0x706BD0 + 0x70BF50 + 0x4E0E80 + 0x405BE0 + 0x4E02C0 + 0x6CF240——**均已在 TSV 登记**
+- **★IAT 槽 [0x7E15F8] 首见**：c 路间接调用
+- **★0x706BD0/0x70BF50 首见**：a/c 路 70 段新辅助
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4DB7E0（37B callees=1）/ 0x4DB810（133B callees=2）/ 0x4DBAD0（706B callees=8）**：picker 显示——后续候选（c 路 dump 尾邻 0x4DB68F 起为对齐填充；d 路 0x4DBAD0 是 8 callees 大函数）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
