@@ -1,0 +1,48 @@
+# frontier batch 2973
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4A10A0（39 扇入 deps=1）+ 0x4A14A0（73 扇入 deps=1）+ 0x4A14F0（73 扇入 deps=1）
+三路：a=0x4A10A0（**动态数组释放器** callees=1 deps=1）/ b=0x4A14A0（**自包含复合析构器 虚表 0x7E5C84** callees=1 deps=1）/ c=0x4A14F0（**自包含复合析构器 虚表 0x7E5D08** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2973{a,b,c}.txt（各 0x100），完整读取确认（a ret @0x4A10C6、b ret 4 @0x4A14E6、c ret 4 @0x4A1536）
+核验：.qwen/tmp/_check_callees2973.py 三路全 PASS（a 1、b 2 调用去重 1、c 2 调用去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7380 → 7383（待 _append_tsv_batch2973.py）
+
+## a 路：0x4A10A0 动态数组释放器（39 扇入 deps=1）
+
+- 范围 0x4A10A0-0x4A10C6（裸 ret @0x4A10C6）
+- **同 2965/2972 模板**（[+4] 指针 + [+0xd] 持有标志门控）：
+  - `mov eax, [esi+4]; cmp eax, ebx; je` + `cmp byte ptr [esi+0xd], bl; je` → `call 0x7c8b3d`（delete）→ `mov [esi+4], 0`（清指针）→ `mov [esi+0xd], bl`（清标志）→ `mov [esi+8], 0`（+8 计数清零）→ ret
+- 直接 call 1 个/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：动态数组释放器（[+4] 指针 + [+0xd] 持有标志门控 + delete + 三清零） (partial)
+
+## b 路：0x4A14A0 自包含复合析构器 虚表 0x7E5C84（0x46=70B，73 扇入 deps=1）
+
+- 范围 0x4A14A0-0x4A14E6（ret 4 @0x4A14E6）
+- **同 2971 c 路 0x4A0E10 逐字节同构**（虚表 0x7E5C84）：
+  - `mov eax, [esi+4]; mov [esi], 0x7e5c84`（虚表复位 0x7E5C84）→ `test eax; je` + `cmp byte ptr [esi+0xd]; je`（+0xd 持有标志）→ `call 0x7c8b3d`（delete 数组）→ `mov [esi+4], 0` → `mov [esi+0xd], 0` → `test al, 1`（deleting）→ `mov [esi+8], 0` → `je` → `call 0x7c8b3d`（delete this）→ ret 4
+- 直接 call 2 次/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：自包含复合析构器（虚表 0x7E5C84——2971 c 第二实例） (partial)
+
+## c 路：0x4A14F0 自包含复合析构器 虚表 0x7E5D08（0x46=70B，73 扇入 deps=1）
+
+- 范围 0x4A14F0-0x4A1536（ret 4 @0x4A1536）
+- **同 b 模板**，虚表变体 **0x7E5D08**（0x7E5D 段——同 2972 a 路）：
+  - `mov [esi], 0x7e5d08`（虚表复位 0x7E5D08）→ [+4]/[+0xd] 门控 delete 0x7C8B3D → 三清零 → deleting delete this 0x7C8B3D → ret 4
+- 直接 call 2 次/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：自包含复合析构器（虚表 0x7E5D08——0x7E5D 族第二实例） (partial)
+
+## 核验结果
+
+- _check_callees2973.py：a 路 1、b 路 去重 1、c 路 去重 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（a 单 0x7C8B3D；b/c 2 调用去重 1）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D（operator delete）——**已在 TSV 登记**
+- **★自包含析构器族十实例齐套**：2959 a/b + 2965 c + 2966 b/c + 2967 a + 2970 a + 2971 c + 本批 b/c——虚表 0x7E5338/0x7E5C04/0x7E5C24/0x7E5C84/0x7E5D08 连续族十实例全覆盖
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4A2370/0x4A2820**（picker 显示——644/86 扇入 deps=5/1 接着的 0x4A 段大函数）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
