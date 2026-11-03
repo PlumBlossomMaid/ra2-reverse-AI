@@ -1,0 +1,61 @@
+# frontier batch 2936
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x48CFD0（166B）+ 0x48E660（27B）+ 0x4912B0（67B）
+三路：a=0x48CFD0（0xA6=166B **游戏模式消息队列轮询** callees=3 deps=0）/ b=0x48E660（0x1B=27B **scalar deleting 析构器** callees=2 deps=0）/ c=0x4912B0（0x43=67B **字节→word 查表转换器** callees=0 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2936{a,b,c}.txt（a 0x180、b/c 0x80），完整读取确认（a ret c3 @0x48D076、b ret 4 @0x48E67B、c ret 0x20 @0x4912F3）
+核验：.qwen/tmp/_check_callees2936.py 三路全 PASS（a 4个/去重3、b 2/2 去重2、c 0/0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7285 → 7288（待 _append_tsv_batch2936.py）
+
+## a 路：0x48CFD0 游戏模式消息队列轮询（0xA6=166B，167 扇入）
+
+- 范围 0x48CFD0-0x48D076（ret c3 @0x48D076）
+- **游戏模式消息队列轮询 + 处理**（0xA8EA70 数据结构 + 0x643C50 处理）：
+  - 栈帧对齐 + 0x100 局部缓冲
+  - `cmp dword ptr [0xA8B238], 2; je 0x48CFF2`（**[0xA8B238]==2 模式**）→ `test byte ptr [0xA8DAB8], 1; je 0x48D073`（[0xA8DAB8] 标志——0 直接返）
+  - `mov ecx, 0xA8EA70; call 0x5F1C60`（**thiscall 0xA8EA70 消息结构**）→ `mov eax, [0xA8B230]; mov cl, [eax+0x3598]; test; je`（[+0x3598] 标志）
+  - `lea ecx, [esp]; lea edx, [esp+4]; push ecx; push edx; mov ecx, 0xA8EA70; call 0x5F1C30`（**thiscall 取消息**——双指针出参）→ `test eax; jle 0x48D073`（队列空 → 返）
+  - 循环：`cmp dword ptr [esp+4], 0x6C; jne 0x48D05B`（**消息类型 == 0x6C**）→ `mov eax, [esp+0x1C]; mov ecx, [0xA8DB30]; and eax, 0xff; cmp eax, ecx; je`（**[0xA8DB30] 比较**——玩家 ID？）
+  - 不匹配（[0xA8DB30] != 玩家 ID）：`fild dword ptr [esp+0x1D]; or ecx, -1; or eax, -1; push ecx; push eax; sub esp, 8; mov ecx, 0xAC4F58; fstp [esp]; push 1; call 0x643C50`（**thiscall 0xAC4F58 发消息处理**——浮点参数 + 双 -1 哨兵）
+  - 循环直到队列空：`call 0x5F1C30` 再取 → `jg 0x48D023`
+- 直接 call 4 个/去重 3——picker callees=3 **完全吻合**（0x5f1c30 ×2 + 0x5f1c60 + 0x643c50）
+- 判类：游戏模式消息队列轮询（[0xA8B238] 模式特判 + 0xA8EA70 取消息 0x5F1C30 + 消息类型 0x6C 过滤 + [0xA8DB30] 玩家 ID 比较 + 0xAC4F58 浮点参数 + 0x643C50 处理）——**消息泵核心循环** (partial)
+
+## b 路：0x48E660 scalar deleting 析构器（0x1B=27B）
+
+- 范围 0x48E660-0x48E67B（ret 4 @0x48E67B）
+- **标准 scalar deleting 析构器模板**：
+  - `mov esi, ecx; call 0x4E1390`（**析构主体 0x4E1390——批 2793 已登记基类**）→ `test byte ptr [esp+8], 1`（deleting 门）→ `push esi; call 0x7c8b3d`（delete this）→ ret 4
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x4e1390 + 0x7c8b3d 均已登记）
+- 判类：scalar deleting 析构器（析构主体 0x4E1390——**跨批复用基类**（批 2793 链表遍历登记器基类）+ deleting 标志门 + operator delete 0x7c8b3d）——0x4E1390 对象族析构 (partial)
+
+## c 路：0x4912B0 字节→word 查表转换器（0x43=67B）
+
+- 范围 0x4912B0-0x4912F3（ret 0x20 @0x4912F3，8 栈参）
+- **字节→word 查表转换**（0 出度纯逻辑）：
+  - 栈帧 + 参存栈（[ebp-8]=this/[ebp-4]=[+4] 表基址）
+  - `mov ebx, [ebp-4]`（[+4] 表基址）→ `mov ecx, [ebp+0x10]; inc`（参3 计数）→ `mov edi, [ebp+8]; sub edi, 2`（参1 目标指针-2）→ `mov esi, [ebp+0xc]`（参2 源指针）
+  - 循环：`dec ecx; je 0x4912ED`（计数 0 → ret 0x20）→ `add edi, 2; mov al, byte ptr [esi]; inc esi; or al, al; je 0x4912D7`（**读源字节，0 跳过继续**）→ `mov dx, word ptr [ebx+eax*2]; mov word ptr [edi], dx`（**[+4][idx*2] 查表 → 写 word 到目标**）
+  - ret 0x20（8 栈参——大型参数表）
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**（0 出度纯逻辑）
+- 判类：字节→word 查表转换器（[+4] 表基址 word 数组 + 参2 源字节序列 + 0 跳过 + word 输出；**CSF 语言文件/字符串编码转换器候选**）——CSF 字符→Unicode 映射 (partial)
+
+## 核验结果
+
+- _check_callees2936.py：a 路 4/3（去重 3）、b 路 2/2（去重 2）、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（a 0x5F1C30 双调用点仅计一个 callee）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x5f1c30（取消息）、0x5f1c60（消息结构）、0x643c50（处理）、0x4e1390（基类析构主体——跨批复用）、0x7c8b3d（delete）
+- **★a 路消息泵核心**：[0xA8B238] 模式特判 + 0xA8EA70 取消息 + 消息类型 0x6C 过滤 + [0xA8DB30] 玩家 ID 比较——消息泵主循环，167 扇入高复用
+- **★b 路基类复用**：0x4E1390——批 2793 已登记基类析构主体，跨批复用确认
+- **★c 路 CSF 字符转换**：字节→word 查表（[+4] Unicode 表）+ 0 跳过——CSF 字符串编码转换候选（与批 623 已登记 CSF 加载器同域）
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x48D080**（a 路 dump 尾部：0x406F70 + [0xB45B68]/[0xB45B5C] + 虚表槽 8 + [0xA8B238]==3/4/1/2 四模式 switch + 0x48D1E0——**大型模式调度器**）——后续候选（高价值）
+- **0x48E6A0**（b 路 dump 尾部：atexit 注册 0x48E6E0 + 虚表 0x7E5318——构造器族）——后续候选
+- **0x491300**（c 路 dump 尾部：虚表槽 4 九参调用——虚调度模板）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
