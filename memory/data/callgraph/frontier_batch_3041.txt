@@ -1,0 +1,65 @@
+# frontier batch 3041
+
+日期：2026-11-04
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4DED70（223B callees=4）+ 0x4DF040（129B callees=0）+ 0x4DF0E0（188B callees=1）
+三路：a=0x4DED70（0xDF=223B **坐标判定器** callees=4 deps=4）/ b=0x4DF040（0x7E=126B **虚表循环选择器（叶子）** callees=0 deps=0）/ c=0x4DF0E0（0xBA=186B **行动参数装载器** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3041{a,b,c}.txt（a 0xE0、b 0x90、c 0xC0），完整读取确认（a ret @0x4DEE4E/提前 @0x4DEE14/0x4DEE41、b ret 0xc @0x4DF0BE、c ret 4 @0x4DF199/提前 ret 4 @0x4DF122/0x4DF155/0x4DF173/0x4DF186）
+核验：.qwen/tmp/_check_callees3041.py 三路全 PASS（a 去重 4、b 去重 0、c 2 调用去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7584 → 7587（待 _append_tsv_batch3041.py）
+
+## a 路：0x4DED70 坐标判定器（0xDF=223B，callees=4）
+
+- 范围 0x4DED70-0x4DEE4E（ret @0x4DEE4E；提前 ret @0x4DEE14/0x4DEE41；后 nop 对齐 0x4DEE4F）
+- **坐标判定器**（this=esi，多分支返回 [+0xA4] 或收尾）：
+  - `lea ecx, [esp+0xc]; push ecx; mov ecx, esi; call [eax+0x48]`（**虚表槽 0x48**——取坐标三元组入栈）
+  - **/256 带符号舍入**：`mov ecx, eax; mov eax, [ecx]; cdq; and edx, 0xff; add eax, edx; sar eax, 8`（X）→ `mov [esp+8], ax`；同 [ecx+4]（Y）→ `mov [esp+0xa], ax`——**负数向上取整（+0xFF 后 sar）**
+  - `mov ecx, 0x87f7e8; lea eax, [esp+0xc]; mov [esp+0xc], edx; push eax; call 0x5657a0`（**坐标转换**——[0x87F7E8] MapClass::Instance）
+  - `mov ecx, [0xa83d4c]; mov edi, eax; push ecx; mov ecx, [esi+0x21c]; call 0x4f9a50`（**[+0x21C] 对象 + 全局 [0xA83D4C]**）
+  - `test al, al; jne 0x4dee15` → `call [edx+0xc4]`（**虚表槽 0xC4**）→ `je 0x4dee15` → `mov ecx, [eax+0x30]; push ecx; mov ecx, edi; call 0x4870f0`（**[0xA83D4C]+0x30 + edi 坐标**）→ `jne 0x4dee15` → `push 0; call [edx+0xcc]`（**虚表槽 0xCC**）→ `mov eax, [eax+0xa4]` → ret（**[+0xA4] 取结果**）
+  - 0x4dee15 备用链：`push [0xa83d4c]; call [eax+0x440]`（**虚表槽 0x440**）→ `jne 0x4dee42` → `push 1; call [edx+0xcc]`（虚表槽 0xCC 带参 1）→ `mov eax,[eax+0xa4]` → ret
+  - 0x4dee42：`mov ecx, esi; call 0x5f3e30`（**段外辅助**收尾）→ ret
+- 直接 call 4 个/去重 4（0x5657A0 + 0x4F9A50 + 0x4870F0 + 0x5F3E30）——picker callees=4 **完全吻合**（虚表槽 0x48/0xC4/0xCC/0x440 间接不计）
+- 判类：坐标判定器（虚表槽 0x48 取坐标 + /256 舍入 + 0x5657A0 坐标转换 + 0x4F9A50/0x4870F0 [0xA83D4C] 双判定 + 虚表槽 0xC4/0xCC/0x440 + [+0xA4] 取结果） (partial)
+
+## b 路：0x4DF040 虚表循环选择器（0x7E=126B，callees=0，叶子）
+
+- 范围 0x4DF040-0x4DF0BE（ret 0xc @0x4DF0BE；后 nop 对齐 0x4DF0C1）
+- **虚表循环选择器**（stdcall ret 0xc——3 参；this=esi，迭代 [ebx] 容器）：
+  - `mov eax, [ebx+0x10]`（**容器计数** [+0x10]）；`xor ebp, ebp; xor edi, edi; mov [esp+0x10], 0xffffffff`（游标初始化 -1）→ `jle 0x4df0b7`（空容器返 0）
+  - 循环体：`mov edx, [esp+0x20]; lea ecx, [esp+0x18]; push ecx; push edx; mov edx, [ebx+4]; push ecx; mov ecx, [edx+edi*4]; push ecx; mov ecx, esi; call [eax+0x52c]`（**虚表槽 0x52C**——[+0x4] 数组元素 + 浮出参数三连）
+  - 选择逻辑：`mov ecx, [esp+0x18]; test ebp, ebp; je 取新` / `cmp ecx, [esp+0x10]; jl 取新` / `cmp [esp+0x10], -1; je 取新` / `mov dl, [eax+0x3d3]; test dl, dl; je 跳过`（**[+0x3D3] 标志检查**）→ 命中：`mov ebp, eax; mov [esp+0x10], ecx` 更新最优
+  - 返回 ebp（选中元素指针，缺省 0）
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**（纯虚表槽 0x52C 间接——叶子函数）
+- 判类：虚表循环选择器（容器 [+0x10]/[+0x4] 迭代 + 虚表槽 0x52C 逐元素判定 + [+0x3D3] 标志 + 最优游标——寻找型选择器，无直接依赖） (partial)
+
+## c 路：0x4DF0E0 行动参数装载器（0xBA=186B，callees=1）
+
+- 范围 0x4DF0E0-0x4DF199（ret 4 @0x4DF199；提前 ret 4 @0x4DF122/0x4DF155/0x4DF173/0x4DF186；后 nop 对齐 0x4DF19C）
+- **行动参数装载器**（stdcall ret 4——参 edi=[esp+0x14] 行动描述对象；this=esi）：
+  - `movsx ebp, byte ptr [edi+0xc]`（**参 [+0xC] 字节**类型）→ `cmp ebp, 0x1d; jne 0x4df189`（非 0x1D → 虚表槽 0x4A8 路径）
+  - `mov bl, [edi+0x17]; mov dl, [edi+0x12]; call [eax+0x4c0]`（**虚表槽 0x4C0**——[+0x12]/[+0x17] 标志 setne 组装参）→ `jne 0x4df125`
+  - `neg bl; sbb ebx, ebx; add ebx, 2` → ret 4（返回 2 或 1——标志位组合）
+  - 0x4df125：`mov [esi+0x5d1], 0; mov [esi+0x5c4], 0x1d`（**写 [+0x5C4]=0x1D/+[+0x5D1]=0**）→ `test al, al; je 0x4df158` → `lea ecx, [edi+0x13]; call 0x6e6e20`（**串装载** [+0x13]）→ `mov [esi+0x5c8], eax`（**写 [+0x5C8]**）→ ret 4（返 2）
+  - 0x4df158：`test bl, bl; je 0x4df176` → `lea ecx, [edi+0xe]; call 0x6e6e20`（**串装载** [+0xE]）→ `mov [esi+0x5cc], eax`（**写 [+0x5CC]**）→ ret 4（返 1）
+  - 0x4df176：`call [edx+0x4a8]`（**虚表槽 0x4A8**）→ `mov eax, ebp` → ret 4（返类型字节）
+  - 0x4df189：`call [eax+0x4a8]`（**虚表槽 0x4A8**）→ `mov eax, ebp` → ret 4
+- 直接 call 2 次/去重 1（0x6E6E20）——picker callees=1 **完全吻合**（虚表槽 0x4C0/0x4A8 间接不计）
+- 判类：行动参数装载器（参 [+0xC]=0x1D 分支装载 + 虚表槽 0x4C0/0x4A8 + 0x6E6E20 串装载 [edi+0x13]/[edi+0xE] → [+0x5C4]/[+0x5C8]/[+0x5CC]/[+0x5D1] 行动槽） (partial)
+
+## 核验结果
+
+- _check_callees3041.py：a 路 4、b 路 0、c 路 2 调用去重 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用（批内地址 0x4DED70/0x4DF040/0x4DF0E0 互不为被调）；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x5657A0 + 0x4F9A50 + 0x4870F0 + 0x5F3E30 + 0x6E6E20——**均已在 TSV 登记**
+- **★b 路 callees=0 叶子**：纯虚表槽 0x52C 循环、零字面量依赖（picker 0 吻合）
+- **★/256 带符号舍入惯用法**：a 路 `cdq; and edx,0xff; add; sar 8`（负数向上取整——非 _ftol，坐标降采样）
+- **★0x6E6E20 串装载**：c 路两处（[edi+0x13]/[edi+0xE] → [+0x5C8]/[+0x5CC]）——同一被调复用
+- **batch 3041 无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4DF320（118B callees=0）/ 0x4DF4B0（87B callees=0）/ 0x4DFA70（254B callees=2）**：picker 显示 0x4D 段后续——下一批候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
