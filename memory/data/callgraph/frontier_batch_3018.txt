@@ -1,0 +1,48 @@
+# frontier batch 3018
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4CA170（4B callees=0）+ 0x4CA180（31B callees=0）+ 0x4CA6B0（FactoryClass::IsQueued 41B callees=0）
+三路：a=0x4CA170（0x3=3B **极小 getter** callees=0 deps=0）/ b=0x4CA180（0x1F=31B **除法计算器** callees=0 deps=0）/ c=0x4CA6B0（0x26=38B **FactoryClass::IsQueued 带名** callees=0 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3018{a,b,c}.txt（a 0x40、b 0x20、c 0x60），完整读取确认（a ret @0x4CA173、b ret @0x4CA19B/0x4CA19F、c ret 4 @0x4CA6D0/0x4CA6D6）
+核验：.qwen/tmp/_check_callees3018.py 三路全 PASS（a/b/c 均去重 0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7515 → 7518（待 _append_tsv_batch3018.py）
+
+## a 路：0x4CA170 极小 getter（0x3=3B，callees=0）
+
+- 范围 0x4CA170-0x4CA173（ret @0x4CA173；后 nop 对齐 0x4CA180 新函数）
+- **极小 getter**：`mov eax, [ecx+0x68]; ret`（**返回 [+0x68]**）——FactoryClass 字段读取
+- 直接 call 0 个——picker callees=0 **完全吻合**
+- 判类：极小 getter（[+0x68] 字段读取） (partial)
+
+## b 路：0x4CA180 除法计算器（0x1F=31B，callees=0）
+
+- 范围 0x4CA180-0x4CA19F（ret @0x4CA19B 主出口/0x4CA19F 早出口；后 nop 对齐 0x4CA1A0）
+- **除法计算**（纯整数运算）：
+  - `mov eax, [ecx+0x58]; test; je`（**[+0x58] 检查**——0 则返 0）→ `mov eax, [ecx+0x24]; mov esi, 0x36; sub esi, eax`（**0x36-[+0x24]**——分母）→ `mov eax, [ecx+0x60]; cdq; idiv esi`（**[+0x60] ÷ 分母**——有符号除法）→ ret
+- 直接 call 0 个——picker callees=0 **完全吻合**（纯 idiv）
+- 判类：除法计算器（+0x58 检查 + 分母 0x36-[+0x24] + [+0x60] idiv） (partial)
+
+## c 路：0x4CA6B0 FactoryClass::IsQueued（0x26=38B，callees=0，带名）
+
+- 范围 0x4CA6B0-0x4CA6D6（ret 4 @0x4CA6D0 未命中/0x4CA6D6 命中；后 nop 对齐 0x4CA6E0）
+- **FactoryClass::IsQueued**（带名 YRpp——队列成员搜索）：
+  - `mov edx, [ecx+0x50]; test; jle`（**[+0x50] 队列计数**）→ 循环：`mov ecx, [ecx+0x44]; mov esi, [esp+8]; cmp esi, [ecx]`（**[+0x44] 队列数组逐项对比**）→ 命中 `mov al, 1`（**返回 1**）→ 未命中 `xor al, al`（**返回 0**）→ ret 4
+- 直接 call 0 个——picker callees=0 **完全吻合**（纯数组循环）
+- 判类：FactoryClass::IsQueued（[+0x50] 计数 + [+0x44] 数组逐项对比——线性搜索） (semantics_verified)
+
+## 核验结果
+
+- _check_callees3018.py：a/b/c 路均 0——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（a 纯 getter；b 纯 idiv；c 纯数组循环）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：**无（三路零调用）**
+- **注意**：0x4CA6E0 邻函数（IsQueued 之后）含 0x6F47A0 调用 + [0xA83E40]/[0xA83E34] 全局数组——下批候选（大小待核）
+- **c 路带名**——FactoryClass::IsQueued（YRpp 符号对应，生产系统函数），标 semantics_verified；a/b 路 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4CA6E0（大函数，含 0x6F47A0 + [0xA83E40]/[0xA83E34] 全局）**：c 路 dump 尾邻——下批候选
+- **0x4CA890（42B callees=1）/ 0x4CA9E0（39B callees=1）/ 0x4CAA70（176B callees=2）**：picker 显示——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
