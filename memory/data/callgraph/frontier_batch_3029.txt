@@ -1,0 +1,52 @@
+# frontier batch 3029
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4D5660（44B callees=1）+ 0x4D7170（442B callees=5）+ 0x4D7330（425B callees=6）
+三路：a=0x4D5660（0x2B=43B **状态复位器** callees=1 deps=1）/ b=0x4D7170（0x1B7=439B **分派器** callees=5 deps=5）/ c=0x4D7330（0x1A6=422B **多虚表槽处理** callees=6 deps=6）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3029{a,b,c}.txt（a 0x60、b 0x1C0、c 0x1B0），完整读取确认（a ret @0x4D568B、b ret 8 @0x4D7321/0x4D7327、c ret 0x20 @0x4D743F/0x4D7461/0x4D74D6）
+核验：.qwen/tmp/_check_callees3029.py 三路全 PASS（a 去重 1、b 去重 5、c 去重 6），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7548 → 7551（待 _append_tsv_batch3029.py）
+
+## a 路：0x4D5660 状态复位器（0x2B=43B，callees=1）
+
+- 范围 0x4D5660-0x4D568B（ret @0x4D568B；后 nop 对齐 0x4D5690）
+- **状态复位器**：
+  - `push 1; push 0; call [eax+0x480]`（**虚表槽 0x480**——[esi] 对象）→ `mov [esi+0x5e0], 0xffffffff`（**[+0x5E0]=-1 哨兵**）→ `call [edx+0x500]`（**虚表槽 0x500**）→ `mov ecx, esi; call 0x6fcd40`（**段外辅助**）→ ret
+- 直接 call 1 个/去重 1（0x6FCD40）——picker callees=1 **完全吻合**（虚表槽 0x480/0x500 间接）
+- 判类：状态复位器（虚表槽 0x480/0x500 + [+0x5E0]=-1 哨兵 + 0x6FCD40） (partial)
+
+## b 路：0x4D7170 分派器（0x1B7=439B，callees=5）
+
+- 范围 0x4D7170-0x4D7327（ret 8 @0x4D7321/0x4D7327；后恰接 0x4D7330 新函数）
+- **分派器**（5 callees）：
+  - `mov eax, [esp+8]; push eax; mov ecx, [esp+0xc]; push ecx; call 0x6f6ca0`（**段外辅助**——双参）→ `test al, al; je 0x4d7324`（返回 false 早出口）
+  - **E_POINTER 检查链**（4 次）：`mov eax, [esi+0x674]; test; jne`（**[+0x674] 对象检查**——空则 `push 0x80004003; call 0x7dc720` 抛掷）→ 虚表槽分派：`call [edx+0x50]`（虚表槽 0x50）→ `mov ecx, [esi+0x21c]; call 0x53a130`（**[+0x21C] 对象方法**）→ `call [ecx+0x64]`（虚表槽 0x64）→ `call [edx+0x5c]`（虚表槽 0x5c）/`call [ecx+0x58]`（虚表槽 0x58——分支）
+  - `mov eax, [esi+0x21c]; call 0x5657a0`（**坐标转换**）→ 后续多判定 → `call 0x4134a0`（**段外辅助**）
+- 直接 call 8 次/去重 5（0x4134A0 + 0x53A130 + 0x5657A0 + 0x6F6CA0 + 0x7DC720）——picker callees=5 **完全吻合**（虚表槽 0x50/0x64/0x5c/0x58 间接）
+- 判类：分派器（0x6F6CA0 双参 + [+0x674] E_POINTER 链 + 虚表槽 0x50/0x58/0x5c/0x64 + 0x53A130 [+0x21C] + 0x5657A0 坐标 + 0x4134A0） (partial)
+
+## c 路：0x4D7330 多虚表槽处理（0x1A6=422B，callees=6）
+
+- 范围 0x4D7330-0x4D74D6（ret 0x20 @0x4D743F/0x4D7461/0x4D74D6 三出口；后 nop 对齐 0x4D74D9）
+- **多虚表槽处理**（6 callees，stdcall ret 0x20）：
+  - **六个段外辅助**：0x50B730 + 0x5B3A00 + 0x62A4A0 + 0x6EB380 + 0x701900 + 0x708080（多段分布）
+  - 逻辑：多参数处理 + 分支判定 + 虚表槽间接调用（dword ptr [eax+...] 形式）
+- 直接 call 8 次/去重 6——picker callees=6 **完全吻合**
+- 判类：多虚表槽处理（6 段外辅助 0x50B730/0x5B3A00/0x62A4A0/0x6EB380/0x701900/0x708080 + 多分支） (partial)
+
+## 核验结果
+
+- _check_callees3029.py：a 路 1、b 路 8 调用去重 5、c 路 8 调用去重 6——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x6FCD40 + 0x4134A0 + 0x53A130 + 0x5657A0 + 0x6F6CA0 + 0x7DC720 + 0x50B730 + 0x5B3A00 + 0x62A4A0 + 0x6EB380 + 0x701900 + 0x708080——**均已在 TSV 登记**
+- **★E_POINTER 4 连检查**：b 路 [+0x674] 空检查 ×4（虚表槽 0x50/0x64/0x5c/0x58 每个前置）——COM 一贯模式
+- **★虚表槽 0x480/0x500 首见**：a 路新槽位
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4D82B0（679B callees=7）/ 0x4D85D0（2401B callees=23 巨型）/ 0x4D8F40 PhobosHook_FootClass_OverrideMission_SyncLog（56B callees=1，带名）**：picker 显示——后续候选（0x4D85D0 是 23 callees 巨型；PhobosHook 带名——Phobos 钩子）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
