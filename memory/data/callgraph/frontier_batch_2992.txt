@@ -1,0 +1,53 @@
+# frontier batch 2992
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4AF610（267B callees=3）+ 0x4AF720（93B callees=1）+ 0x4AF970（58B callees=0）
+三路：a=0x4AF610（0x108=264B **COM 层大函数** callees=3 deps=3）/ b=0x4AF720（0x5A=90B **COM 层注册器** callees=1 deps=1）/ c=0x4AF970（0x37=55B **多标志判定** callees=0 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2992{a,b,c}.txt（a 0x110、b 0x80、c 0x60），完整读取确认（a ret 8 @0x4AF718、b ret 0xc @0x4AF77A、c ret 4 @0x4AF9A1/0x4AF9A7）
+核验：.qwen/tmp/_check_callees2992.py 三路全 PASS（a 去重 3、b 去重 1、c 去重 0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7437 → 7440（待 _append_tsv_batch2992.py）
+
+## a 路：0x4AF610 COM 层大函数（0x108=264B，callees=3）
+
+- 范围 0x4AF610-0x4AF718（ret 8 @0x4AF718；后 nop 对齐 0x4AF720 新函数）
+- **COM QueryInterface 族**（E_POINTER 前缀 + 双分支）：
+  - `test ebp, ebp; jne`（**E_POINTER 前缀**——null 检查）→ `mov eax, 0x80004003`（E_POINTER）→ ret 8
+  - 主路径 1：`mov edx, [ecx+0x50]; test; je` → `call 0x45aea0`（**段外辅助**）→ `cmp eax, 0x80004002`（E_NOINTERFACE）→ `call 0x7dc720`（**HRESULT 抛掷器**）→ `call [ecx+0xc]`（虚表槽 0xc）→ `call [edx+8]`（虚表槽 8）→ `mov eax, 0x80004005`（E_FAIL）分支
+  - 主路径 2：`lea eax, [ecx-0x18]`（-0x18 对象）→ `call [ecx]`（虚表槽 0）→ `call 0x4b4d50`（**段外辅助**）→ `call 0x7dc720`（HRESULT 抛掷器）→ 同虚表槽 0xc/0x8 收尾
+- 直接 call 5 次/去重 3（0x45AEA0 + 0x4B4D50 + 0x7DC720）——picker callees=3 **完全吻合**（虚表槽 0xc/0x8/0 间接）
+- 判类：COM 层大函数（E_POINTER/E_FAIL/E_NOINTERFACE + 0x45AEA0/0x4B4D50 辅助 + 0x7DC720 抛掷器 + 虚表槽 0xc/0x8/0） (partial)
+
+## b 路：0x4AF720 COM 层注册器（0x5A=90B，callees=1）
+
+- 范围 0x4AF720-0x4AF77A（ret 0xc @0x4AF77A；后 nop 对齐 0x4AF780 新函数）
+- **COM GUID 比对注册器**（stdcall ret 0xc）：
+  - `call 0x55a9b0`（**段外辅助**）→ `cmp eax, 0x80004002`（E_NOINTERFACE）→ `jne`
+  - `repe cmpsd`（**GUID 比对**——[0x7E9B10] 4 次 dword）→ 命中 → `lea eax, [ebx+0x18]`（+0x18 偏移）→ 存 [ebp] → `mov eax, 0x80004002`（E_NOINTERFACE）分支 → `call [ebx+4]`（虚表槽 4）→ `xor eax, eax`（S_OK）
+- 直接 call 1 个/去重 1（0x55A9B0）——picker callees=1 **完全吻合**（GUID 比对 + 虚表槽 4 间接）
+- 判类：COM 层注册器（0x55A9B0 辅助 + E_NOINTERFACE + GUID 比对 0x7E9B10 + +0x18 偏移 + 虚表槽 4） (partial)
+
+## c 路：0x4AF970 多标志判定（0x37=55B，callees=0）
+
+- 范围 0x4AF970-0x4AF9A7（ret 4 @0x4AF9A1 主出口/0x4AF9A7 早出口；后 nop 对齐 0x4AF9B0 新函数）
+- **多标志链式判定**（stdcall ret 4）：
+  - `mov ecx, [esi-0x14]; lea eax, [esi-0x14]; push eax; call [ecx+0x10]`（**[esi-0x14] 对象虚表槽 0x10 判定**）→ `test al, al; jne 0x4af9a4`（命中直接返 1 分支）
+  - `mov eax, [esi+0x50]; test; je`（[+0x50] 检查）→ `mov al, [esi+0x4d]; test; je`（**[+0x4d] 标志**）→ `mov edx, [esi-0xc]; mov al, [edx+0x6ad]; test; je`（**[+0x6ad] 标志**——间接读）→ `mov al, 1`（全部通过）
+- 直接 call 0 个（虚表槽 0x10 间接）——picker callees=0 **完全吻合**
+- 判类：多标志判定（[esi-0x14] 虚表槽 0x10 + [+0x50]/[+0x4d]/[+0x6ad] 三标志链） (partial)
+
+## 核验结果
+
+- _check_callees2992.py：a 路 5 调用去重 3、b 路 1、c 路 0——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x45AEA0 + 0x4B4D50 + 0x7DC720 + 0x55A9B0——**均已在 TSV 登记**
+- **★GUID 比对表 [0x7E9B10] 首见**：b 路 `repe cmpsd`（4 次 dword，与 [0x7E9B10] 比对）
+- **★[+0x6ad] 间接标志首见**：c 路 `mov al, [edx+0x6ad]`（经 [esi-0xc] 间接对象）
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4AFC20（103B callees=1）/ 0x4AFD40（181B callees=1）/ 0x4AFF60（1189B callees=15）**：picker 显示——后续候选（0x4AFF60 是 15 callees 大函数）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
