@@ -1,0 +1,57 @@
+frontier batch 3109
+===================
+日期: 2026-08-?? (心跳续跑)
+来源: memory/data/callgraph/ranking.tsv 按行序取未登记池
+选取: 0x4F2830 / 0x4F2850 / 0x4F29D0（带外三函数：薄包装 + 模板族两档）
+
+三路判类（code/randmap/disasm.py 反汇编，.qwen/tmp/_d3109{a,b,c}.txt）
+------------------------------------------------------------------------
+0x4F2830  30B scalar deleting 析构器薄包装：
+          call 0x4f21a0                               ; 转发（已登记，身份未验证）
+          test byte ptr [esp+8],1; je
+          push esi; call 0x7c8b3d                     ; [esp+8]&1 门控 delete this
+          mov eax,esi; ret 4
+0x4F2850  42B 成员持有指针释放器（含 [+0x10] 清零）：
+          xor ebx,ebx; mov eax,[esi+4]; mov [esi+0x10],ebx ; 清 [+0x10]
+          cmp eax,ebx; je                            ; [+0x4] 为空跳过
+          cmp byte ptr [esi+0xd],bl; je              ; [+0xD] 持有标志门控
+          push eax; call 0x7c8b3d; mov [esi+4],ebx   ; delete [+0x4] + 清 [+0x4]
+          汇合 mov byte ptr [esi+0xd],bl; mov [esi+8],ebx ; 清 [+0xD]/[+0x8]
+          ret                                        ; cdecl 无 retN
+          —— 3005 批模板族"42B 含 [+0x10] 清零"档同构
+0x4F29D0  39B 成员持有指针释放器（无 [+0x10] 清零）：
+          xor ebx,ebx; mov eax,[esi+4]; cmp eax,ebx; je
+          cmp byte ptr [esi+0xd],bl; je
+          push eax; call 0x7c8b3d; mov [esi+4],ebx
+          汇合 mov byte ptr [esi+0xd],bl; mov [esi+8],ebx
+          ret
+          —— 同 3045b "39B 无 [+0x10] 清零"档同构
+
+核验（_check_callees3109.py，RANGES 字面量 + 批内自引用 BATCH_NORM）
+------------------------------------------------------------------------
+a_0x4F2830 [0x4F2830,0x4F284B] 跨函数直接 call 2 去重 2 = 0x4f21a0/0x7c8b3d 已登记
+b_0x4F2850 [0x4F2850,0x4F2879] 跨函数直接 call 1 去重 1 = 0x007c8b3d 已登记
+c_0x4F29D0 [0x4F29D0,0x4F29F6] 跨函数直接 call 1 去重 1 = 0x007c8b3d 已登记
+无 MISSING / 无 UNKNOWN / 无批内自引用
+
+三态判定
+------------------------------------------------------------------------
+0x4F2830  partial   （结构判明：scalar deleting 薄包装转发已登记 0x4f21a0 +
+                     [esp+8]&1 门控 delete this；0x4f21a0 身份（是否真实析构器）
+                     未在本批验证——保留 partial）
+0x4F2850  semantics_verified（42B 成员持有指针释放器，3005 批模板族"含 [+0x10] 清零"
+                      档同构先例全 verified；单调用 0x7c8b3d 已登记+结构完整）
+0x4F29D0  semantics_verified（39B 成员持有指针释放器，同 3045b 同构先例 verified；
+                      单调用 0x7c8b3d 已登记+结构完整）
+
+说明
+------------------------------------------------------------------------
+★ b/c 为 3005 批模板族（成员持有指针释放器）在 0x4F 段的再次出现，
+  两档（42B 含 [+0x10] 清零 / 39B 无）齐备。
+下一批候选预期 0x4F2B60 / 0x4F2BB0（73B 带再现）/ 0x4F3070（观察项，未登记前不作断言）。
+
+登记（frontier_status.tsv 追加，TSV 7788 -> 7791）
+------------------------------------------------------------------------
+0x004F2830  callees=2  deps=2   batch=3109  partial
+0x004F2850  callees=1  deps=1   batch=3109  semantics_verified
+0x004F29D0  callees=1  deps=1   batch=3109  semantics_verified
