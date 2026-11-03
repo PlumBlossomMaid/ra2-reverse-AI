@@ -1,0 +1,52 @@
+# frontier batch 2991
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4AECA0（40B callees=3）+ 0x4AF540（DriveLocomotionClass::DriveLocomotionClass 154B callees=1）+ 0x4AF5E0（45B callees=1）
+三路：a=0x4AECA0（0x25=37B **复合析构器** callees=3 deps=3）/ b=0x4AF540（0x99=153B **DriveLocomotionClass 构造器 带名** callees=1 deps=1）/ c=0x4AF5E0（0x2C=44B **三虚表析构器** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2991{a,b,c}.txt（a 0x60、b 0x120、c 0x80），完整读取确认（a ret 4 @0x4AECC5、b ret @0x4AF5D9、c ret @0x4AF60C）
+核验：.qwen/tmp/_check_callees2991.py 三路全 PASS（a 去重 3、b 去重 1、c 去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7434 → 7437（待 _append_tsv_batch2991.py）
+
+## a 路：0x4AECA0 复合析构器（0x25=37B，callees=3）
+
+- 范围 0x4AECA0-0x4AECC5（ret 4 @0x4AECC5；后 nop 对齐 0x4AECD0 新函数）
+- **复合析构器模板**（子对象 + 主析构 + deleting 门，同 2990 b 路布局，子例程不同）：
+  - `lea ecx, [esi+0xc]; call 0x43ae50`（**子对象 +0xC 释放器**）→ `mov ecx, esi; call 0x631c80`（**主析构子例程**）→ `test byte ptr [esp+8], 1`（deleting 标志）→ `je` → `push esi; call 0x7c8b3d`（**delete this**）→ ret 4
+- 直接 call 3 个/去重 3（0x43AE50 + 0x631C80 + 0x7C8B3D）——picker callees=3 **完全吻合**
+- 判类：复合析构器（子对象 +0xC 0x43AE50 + 主析构 0x631C80 + deleting 门 → delete this） (partial)
+
+## b 路：0x4AF540 DriveLocomotionClass::DriveLocomotionClass（0x99=153B，callees=1，带名）
+
+- 范围 0x4AF540-0x4AF5D9（ret @0x4AF5D9；后 nop 对齐 0x4AF5E0 新函数）
+- **DriveLocomotionClass 构造器**（带名 YRpp）：
+  - `call 0x55a6c0`（**基类构造**）→ 清零 +0x1c/0x20/0x2c/0x30 → `mov ecx, [0xa8ed84]`（**全局 [0xA8ED84]**）→ 存 +0x24
+  - `mov ecx, [0x8a0790]; mov [edx], ecx`（**[0x8A0790/0x8A0794/0x8A0798] 三元组**——存 +0x34/+0x40 双份）→ 清零 +0x4c/0x50/0x54 + 置 -1 +0x58/0x5c → 清零 +0x60-0x64 字节 + 置 1 +0x65 → 清零 +0x68
+  - `mov [esi], 0x7e7f7c; mov [esi+4], 0x7e7eb0; mov [esi+0x18], 0x7e7e8c`（**三虚表写入**）→ ret
+- 直接 call 1 个/去重 1（0x55A6C0）——picker callees=1 **完全吻合**
+- 判类：DriveLocomotionClass 构造器（0x55A6C0 基类 + [0xA8ED84]/[0x8A0790-8] 全局 + 三虚表 0x7E7F7C/0x7E7EB0/0x7E7E8C） (semantics_verified)
+
+## c 路：0x4AF5E0 三虚表析构器（0x2C=44B，callees=1）
+
+- 范围 0x4AF5E0-0x4AF60C（ret @0x4AF60C；后 0x4AF60D 对齐 0x4AF610 新函数）
+- **与 b 路同族三虚表析构器**（DriveLocomotionClass 析构）：
+  - `mov [esi], 0x7e7f7c; mov [esi+4], 0x7e7eb0; mov [esi+0x18], 0x7e7e8c`（**三虚表写入**——与构造器同虚表）→ `mov eax, [esi+0x68]; test; je` → `push eax; call [ecx+8]`（**[+0x68] 对象虚表槽 8 释放**）→ `mov ecx, esi; call 0x55a6f0`（**基类析构子例程**）→ ret
+- 直接 call 1 个/去重 1（0x55A6F0）——picker callees=1 **完全吻合**（[+0x68] 虚表槽 8 间接）
+- 判类：三虚表析构器（三虚表 0x7E7F7C/0x7E7EB0/0x7E7E8C + [+0x68] 虚表槽 8 释放 + 基类析构 0x55A6F0） (partial)
+
+## 核验结果
+
+- _check_callees2991.py：a 路 3、b 路 1、c 路 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x43AE50 + 0x631C80 + 0x7C8B3D + 0x55A6C0 + 0x55A6F0——**均已在 TSV 登记**
+- **★DriveLocomotionClass 三虚表族**：b/c 路共用 0x7E7F7C/0x7E7EB0/0x7E7E8C——构造器/析构器虚表对
+- **★[0x8A0790/0x8A0794/0x8A0798] 三元组首见**：b 路读取（存 +0x34/+0x40 双份）
+- **b 路带名**——DriveLocomotionClass::DriveLocomotionClass（YRpp 符号对应），标 semantics_verified；a/c 路 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4AF610（267B callees=3）**：picker 显示——c 路之后（0x45AEA0 + 0x7DC720 HRESULT 抛掷器 + IAT，COM 层）
+- **0x4AF720（93B callees=1）/ 0x4AF970（58B callees=0）**：picker 显示——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
