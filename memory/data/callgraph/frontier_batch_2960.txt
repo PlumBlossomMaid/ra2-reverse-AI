@@ -1,0 +1,40 @@
+# frontier batch 2960
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x49B660（180 扇入 deps=1）+ 0x49B930（26 扇入 deps=0）+ 0x49B94A（809 扇入 deps=5）
+三路：a=0x49B660（0xB1=177B **结构体构造器 双串成员 + 哨兵字段初始化** callees=1 deps=1）/ b=0x49B930（0x19=25B **门控检查入口** callees=0 deps=0）/ c=0x49B94A（0x328=808B **809 扇入统计大函数** callees=5 deps=5）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2960{a,b,c}.txt（a/b 0x100-0x300、c 0x400），完整读取确认（a ret 8 @0x49B711、b ret @0x49B949、c ret @0x49BC72）
+核验：.qwen/tmp/_check_callees2960.py 三路全 PASS（a 去重 1、b 0、c 去重 5），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7341 → 7344（待 _append_tsv_batch2960.py）
+
+## a 路：0x49B660 结构体构造器 双串成员 + 哨兵字段初始化（0xB1=177B，180 扇入 deps=1）
+
+- 范围 0x49B660-0x49B711（ret 8 @0x49B711——thiscall + 2 参）
+- **0x70 字节统计对象构造器**（与被调 0x49B94A 处理的统计对象配套）：
+  - 串1：[esp+0xc] 非空 → `call 0x7350c0`（字符串转换）+ `repne scasb; not ecx`（长度）+ `rep movsd/movsb` 拷贝到 [ebp+0]（this）
+  - 串2：[esp+0x18] 非空 → 同上拷贝到 [ebp+0x1c]（this+0x1c）
+  - 哨兵初始化：+0x14/+0x30/+0x18/+0x34 = **0xFFFFFFFE**、+0x44/+0x38 = **-1**、+0x3c/+0x40/+0x48..+0x64 = 0、+0x68 = 0、+0x6c = 0
+- 直接 call 2 次/去重 1（0x7350C0 ×2）——picker callees=1 **完全吻合**
+- 判类：结构体构造器（双串拷贝 + 哨兵字段 0xFFFFFFFE/-1 初始化——统计对象族） (partial)
+
+## b 路：0x49B930 门控检查入口（0x19=25B，26 扇入 deps=0）
+
+- 范围 0x49B930-0x49B949（裸 ret @0x49B949，无栈参）
+- **状态门控**：`sub esp, 0x2e0`（预留 c 路帧）→ `mov al, [ebp+0x6c]; test al; jne 0x49b94a`（**+0x6c 有效标志——失败 return 0，成功跳入 c 路主体**）
+- `xor al, al; ret`（0 返回）
+- 直接 call 0 个——picker callees=0 **完全吻合**（`jne 0x49b94a` 是条件跳转非跨函数 call/jmp，且目标为相邻函数体——编译器代码折叠）
+- 判类：门控检查入口（+0x6c 有效标志 → 跳入统计大函数 0x49B94A 主体） (partial)
+
+## c 路：0x49B94A 809 扇入统计大函数（0x328=808B，809 扇入 deps=5）
+
+- 范围 0x49B94A-0x49BC72（ret @0x49BC72，返回 al=1）
+- **高扇入状态统计/触发函数**（809 扇入——全局高频调用）：
+  - `push 0x81f0e8; call 0x4068e0`（DebugLog 入口日志）
+  - `lea ecx, [esp+0x10]; call 0x49b7e0`（栈对象构造器 ×2——0x70 字节统计对象 [esp+0x10] 和 [esp+0x80]）
+  - `call 0x7350c0`（字符串比较）→ `sbb/sbb` 比较结果 → 两分支：
+    - 相等：`call 0x7350c0 + push + DebugLog 0x4068e0` → **+0x48..+0x64 八字段累加**（[ebp+0x48]..[ebp+0x64] 各加 esp 栈字段——统计累加器）
+    - 不等：另一分支同样累加
+  - `mov ecx, [0xa8b230]; mov eax, [ecx+0x614]`（全局对象 [0xA8B230] 字段）→ `call 0x6c8c40`（容器成员计算）
+  - **statistics 格式化**：0x88888889 imul 魔数除法 + 0x91A2B3C5 魔数 + `push/push/push; lea ecx;[esp+0x1fc]; push 0x81f0a8; call 0x7c8ef4`（**sprintf 统计输出**）+ `call 0x6c8c40` 第二容器 → 又 sprintf → DebugLog 0x4068e0 → `inc [ebp+0x38]; mov al,1; ret`（+0x38 调用计数）
+- 直接 call 13 次/去重 5（0x4068E0 + 0x49B7E0 + 0x6C8C40 + 0x7350C0 + 0x7C8EF4）——picker callees=5 **完全吻合**
+- 判类：状态统计大函数（字符串比对 + 八字段累加 + 全局 [0xA8B230] 容器 + sprintf 格式化 + 调用计数） (partial)
