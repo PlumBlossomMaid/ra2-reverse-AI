@@ -1,0 +1,55 @@
+# frontier batch 2946
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x497760（278 扇入）+ 0x49A200（59 扇入 deps=2）+ 0x49A240（59 扇入 deps=2）
+三路：a=0x497760（0x113=275B **双游标解包器变体 XX + 3/4 混合** callees=0 deps=0）/ b=0x49A200（0x3B=59B **复合 scalar deleting 析构器** callees=2 deps=2）/ c=0x49A240（0x3B=59B **复合 scalar deleting 析构器变体** callees=2 deps=2）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2946{a,b,c}.txt（a 0x200、b/c 0x100），完整读取确认（a ret 0x28 @0x497873、b ret 4 @0x49A238、c ret 4 @0x49A278）
+核验：.qwen/tmp/_check_callees2946.py 三路全 PASS（a 0/0、b 2/2、c 2/2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7299 → 7302（待 _append_tsv_batch2946.py）
+
+## a 路：0x497760 双游标解包器变体 XX + 3/4 混合（0x113=275B，278 扇入）
+
+- 范围 0x497760-0x497873（ret 0x28 @0x497873，10 栈参）
+- **与批 2945 b 路 0x4974B0 逐字节同构**（第二十变体）：
+  - 0 转义 + [0x887644] 回绕 + 第三游标 [esp+0x34]（ebp）
+  - 命中：`mov di,[eax+8]`（[param+8] 掩码）+ `mov eax,[eax+4]`（[param+4] 表）→ `mov ax,[eax+ecx*2]`（表 [src*2]）
+  - `shr ax,2; lea ecx,[eax+eax*2]` + `shr ax,2; and eax,edi; add ecx,eax`（**3/4 混合**）→ 写回 out → `movsx cx,[ebp]; sub eax,ecx; mov [edx-2],ax`（**原位 in 回写**）
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**
+- 判类：双游标解包器变体 XX（[0x887644] + 0 转义 + 3/4 混合 + 原位 in 回写——2945 b 逐字节同构） (partial)
+
+## b 路：0x49A200 复合 scalar deleting 析构器（0x3B=59B，59 扇入 deps=2）
+
+- 范围 0x49A200-0x49A23B（ret 4 @0x49A238——thiscall + 1 param）
+- **此前多次闭合的复合 scalar deleting 析构器模板**：
+  - `mov ecx, 0x87e8a8`（**全局对象参数 [0x87e8a4] 邻域**——对象释放上下文）
+  - `mov eax, [esi+8]; mov [esi], 0x7e57f8`（**虚表复位 0x7E57F8**）+ `push eax; call 0x420270`（**成员释放器 0x420270**——释放 [+8] 成员）
+  - `mov [esi+8], 0`（清零）→ `mov [esi], 0x7e5b88`（**基类虚表 0x7E5B88**）
+  - `test al, 1; je` → `push esi; call 0x7c8b3d; add esp, 4`（**operator delete 0x7C8B3D**）
+  - `mov eax, esi; ret 4`（deleting 析构器返回 this）
+- 直接 call 2 个/去重 2（0x420270 + 0x7C8B3D）——picker callees=2 **完全吻合**
+- 判类：复合 scalar deleting 析构器（虚表复位 0x7E57F8 + 内联 [+8] 成员释放 0x420270 + 基类 0x7E5B88 + deleting 标志 → operator delete 0x7C8B3D） (partial——模板已多次幂，具体对象待定)
+
+## c 路：0x49A240 复合 scalar deleting 析构器变体（0x3B=59B，59 扇入 deps=2）
+
+- 范围 0x49A240-0x49A27B（ret 4 @0x49A278）
+- **与 b 逐字节同构**，唯一差异：初始虚表 **0x7E57E0**（b=0x7E57F8）——同一对象族另一虚表槽的析构器
+- 直接 call 2 个/去重 2（0x420270 + 0x7C8B3D）——picker callees=2 **完全吻合**
+- 判类：复合 scalar deleting 析构器变体（虚表 0x7E57E0 → 同 0x420270/0x7E5B88/0x7C8B3D 链） (partial)
+
+## 核验结果
+
+- _check_callees2946.py：a 路 0/0、b 路 2/2、c 路 2/2——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（a 纯逻辑 0 出度；b/c 2 调用逐一登记）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x420270（成员释放器）+ 0x7C8B3D（operator delete）——**均已在 TSV 登记**
+- **★双游标解包器族二十变体齐套**：2937 c 起连续十批，[0x887644] Session 缓冲模板二十实例
+- **★析构器链确认**：[0x87e8a4] 全局表邻域（0x87e8a8 全局对象）——2940 c 首现的表地址邻域出现配套对象；虚表族 0x7E57xx/0x7E5B88
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x49A280 / 0x49A2C0 / 0x49A300**（b/c 路 dump 尾部：同模板析构器链——0x7E57C8/0x7E57B0/0x7E5798 虚表变体，[+0xc] 成员变体）——后续候选
+- **0x4978C0**（a 路 dump 尾部：同构变体——`mov esi, ecx` + setle 缩放 + [0x87e8a4] 双缓冲）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
