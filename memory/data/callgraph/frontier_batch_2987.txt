@@ -1,0 +1,58 @@
+# frontier batch 2987
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4A80D6（400B callees=7）+ 0x4AA290（27B callees=2）+ 0x4AA2B0（MapClass::NextObject 203B callees=0）
+三路：a=0x4A80D6（0x181=385B **IAT 大函数** callees=7 deps=7←含 IAT 间接）/ b=0x4AA290（0x18=24B **转发器** callees=2 deps=2）/ c=0x4AA2B0（0xC8=200B **MapClass::NextObject 带名** callees=0 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2987{a,b,c}.txt（a 0x1A0、b 0x60、c 0x100），完整读取确认（a ret @0x4A8257、b ret 8 @0x4AA2A8、c ret 4 @0x4AA36C/0x4AA378）
+核验：.qwen/tmp/_check_callees2987.py 三路全 PASS（a 去重 2、b 去重 2、c 去重 0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7422 → 7425（待 _append_tsv_batch2987.py）
+
+## a 路：0x4A80D6 IAT 大函数（0x181=385B，callees=7←含 5 IAT 间接）
+
+- 范围 0x4A80D6-0x4A8257（ret @0x4A8257；后 0x4A8258 新函数）
+- **双容器构建 + IAT 间接调用**：
+  - `call 0x6c8c40`（**容器构造**——栈上双容器）→ `lea esi, [edi+0x41]`（对象 +0x41 字段）→ `mov edi, [0x7e14b0]`（**IAT 槽 [0x7E14B0]**）→ `call edi`（IAT 间接——3 次，带 0x81C4B4 常量）
+  - `mov ebp, [0x7e121c]`（**IAT 槽 [0x7E121C]**）→ `call ebp`（IAT 间接——2 次，多参数 0x7F 等）
+  - `call dword ptr [0x7e1200]`（**IAT 槽 [0x7E1200]** 直接间接——1 次，与 0x15 比较）
+  - `call 0x7c8d20`（**CRT 字符串函数**——1 次）
+  - `mov ebx, [0x7e11bc]`（**IAT 槽 [0x7E11BC]**）→ `call ebx`（IAT 间接——2 次，0x80000000/0x80 参数）
+  - `call dword ptr [0x7e11e0]`（**IAT 槽 [0x7E11E0]** 直接间接——1 次）→ `mov eax, 2` → ret
+- 直接 call 字面量 4 次/去重 2（0x6C8C40 + 0x7C8D20）；**picker callees=7 = 2 字面量 + 5 IAT 间接槽（0x7E14B0/0x7E121C/0x7E1200/0x7E11BC/0x7E11E0）——预期差模式**（IAT 间接不入字面量核验）
+- 判类：IAT 大函数（双容器 0x6C8C40 + 5 IAT 槽间接 + CRT 0x7C8D20 + 多参数调用约定） (partial)
+
+## b 路：0x4AA290 转发器（0x18=24B，callees=2）
+
+- 范围 0x4AA290-0x4AA2A8（ret 8 @0x4AA2A8；后 nop 对齐 0x4AA2B0 新函数）
+- **双参转发**：
+  - `mov eax, [esp+8]; mov edx, [esp+4]`（读两参）→ `push 0; push eax; push edx`（转发三参）→ `call 0x5657a0`（**目标函数**）→ `mov ecx, eax`（结果作 this）→ `call 0x47c5a0`（**链式调用**）→ ret 8
+- 直接 call 2 个/去重 2（0x5657A0 + 0x47C5A0）——picker callees=2 **完全吻合**
+- 判类：转发器（0x5657A0 返回作 this → 0x47C5A0 链式，ret 8） (partial)
+
+## c 路：0x4AA2B0 MapClass::NextObject（0xC8=200B，callees=0，带名）
+
+- 范围 0x4AA2B0-0x4AA378（ret 4 @0x4AA36C 主出口/0x4AA378 早出口）
+- **地图对象遍历（NextObject 语义）**：
+  - 外层：`mov ebx, 0x820030`（**全局表指针数组**）→ `mov eax, [ebx]; lea eax, [eax+eax*2]; shl eax, 3`（**×24 索引**）→ `mov ecx, [eax + 0x8a0370]`（**对象表 [0x8A0370] 计数**）→ `mov eax, [eax + 0x8a0364]`（**对象表 [0x8A0364] 基址**）
+  - 内层循环：`mov esi, [eax + ebp*4]`（遍历对象指针）→ `mov cl, [esi+0x14]; and cl, 1`（**+0x14 位 0 标志**）→ `call [edx+0x64]`（**虚表槽 0x64**）→ `call [eax+0x13c]`（**虚表槽 0x13c**——匹配判定）
+  - 命中：`mov [esp+0x14], esi`（记录）→ 提前出口返回 esi
+  - 外层循环：`add ebx, 4; cmp ebx, 0x82003c; jl`（**遍历到 0x82003C**——3 表）
+- 直接 call 0 个（虚表槽 0x64/0x13c 间接）——picker callees=0 **完全吻合**
+- 判类：MapClass::NextObject（[0x8A0364]/[0x8A0370] 对象表 + 0x820030 表指针数组 ×24 索引 + 虚表槽 0x64/0x13c + +0x14 位标志） (semantics_verified)
+
+## 核验结果
+
+- _check_callees2987.py：a 路 4 调用去重 2、b 路 2 调用去重 2、c 路 0——三路全 PASS
+- picker callees vs 核验差值：a 差 5（预期差——5 个 IAT 间接槽）、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x6C8C40 + 0x7C8D20 + 0x5657A0 + 0x47C5A0——**均已在 TSV 登记**
+- **★c 路带名 MapClass::NextObject**（YRpp 符号对应）——标 semantics_verified；a/b 路无符号对应，partial
+- **★IAT 槽族首见**：a 路 5 个 IAT 槽 [0x7E14B0]/[0x7E121C]/[0x7E1200]/[0x7E11BC]/[0x7E11E0]——间接调用族
+- **★[0x8A0364]/[0x8A0370] 对象表首见**：c 路地图对象表（×24 索引 + 0x820030 表指针数组）
+- **★虚表槽 0x64/0x13c 首见**：c 路 NextObject 的两处虚表间接
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4AA380（185B callees=0）**：picker 显示——c 路之后同族遍历函数（0x82003C 表，与 c 路同模板）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
