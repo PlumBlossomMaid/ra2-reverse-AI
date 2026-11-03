@@ -1,0 +1,59 @@
+# frontier batch 2993
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4AFC20（103B callees=1）+ 0x4AFD40（181B callees=1）+ 0x4AFF60（1189B callees=15）
+三路：a=0x4AFC20（0x64=100B **位置判定** callees=1 deps=1）/ b=0x4AFD40（0xB2=178B **坐标更新判定** callees=1 deps=1）/ c=0x4AFF60（0x4A2=1186B **大转换函数** callees=15 deps=15）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2993{a,b,c}.txt（a 0x80、b 0xC0、c 0x500），完整读取确认（a ret 4 @0x4AFC3A/0x4AFC84、b ret 0x10 @0x4AFDF2、c ret 0xc @0x4B0402）
+核验：.qwen/tmp/_check_callees2993.py 三路全 PASS（a 去重 1、b 去重 1、c 去重 15），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7440 → 7443（待 _append_tsv_batch2993.py）
+
+## a 路：0x4AFC20 位置判定（0x64=100B，callees=1）
+
+- 范围 0x4AFC20-0x4AFC84（ret 4 @0x4AFC3A 早出口/0x4AFC84 主出口；后 nop 对齐 0x4AFC90 新函数）
+- **位置三元组比对判定**：
+  - `mov ecx, [esi+8]; add ecx, 0x388; call 0x4c9480`（**段外辅助**——+0x388 对象检查）→ `test al, al; je`（命中返 1）
+  - `call [eax+0x10]`（**虚表槽 0x10**——[esi] 对象）→ `mov ecx, [esi+0x3c]; mov eax, [0x8a0790]; cmp ecx, eax`（**[+0x3c] vs [0x8A0790]**）→ `[+0x40] vs [0x8A0794]`→ `[+0x44] vs [0x8A0798]`（**三元组比对**——与 2991 b 路同族）
+  - 不等分支：`call [edx+0x538]`（**虚表槽 0x538**——[esi+8] 对象）→ `test eax, eax; jle`（>0 判定）
+- 直接 call 1 个/去重 1（0x4C9480）——picker callees=1 **完全吻合**（虚表槽 0x10/0x538 间接）
+- 判类：位置判定（0x4C9480 辅助 + [0x8A0790-8] 三元组比对 + 虚表槽 0x10/0x538） (partial)
+
+## b 路：0x4AFD40 坐标更新判定（0xB2=178B，callees=1）
+
+- 范围 0x4AFD40-0x4AFDF2（ret 0x10 @0x4AFDF2；后 nop 对齐 0x4AFF60 前多函数）
+- **四虚表槽判定 + 坐标写入**（stdcall ret 0x10）：
+  - `call [eax+0x37c]`（**虚表槽 0x37c**）→ `test al, al; jne`（命中跳过）→ `call [edx+0x380]`（**虚表槽 0x380**）→ `call [eax+0x1d4]`（**虚表槽 0x1d4**）→ `call [edx+0x1d8]`（**虚表槽 0x1d8**）——四槽链式
+  - 全跳过：`mov [esi+0x30], eax; mov [esi+0x34], ecx; mov [esi+0x38], edx`（**写入 +0x30-0x38 三元组**）→ `cmp [0x8a0790]`（三元组比对——同族）
+  - 不等：`mov ecx, 0x87f7e8; call 0x565730`（**MapClass::Instance [0x87F7E8] 方法**）→ `test byte ptr [eax+0x140], ch`（**[+0x140] bit 检查**）→ `mov ecx, [0x8a07c4]; add [esi+0x38], ecx`（**全局 [0x8A07C4] 累加**）
+- 直接 call 1 个/去重 1（0x565730）——picker callees=1 **完全吻合**（虚表槽 0x37c/0x380/0x1d4/0x1d8 间接）
+- 判类：坐标更新判定（四虚表槽链 + +0x30 三元组写入 + 0x565730 [0x87F7E8] 方法 + [0x8A07C4] 累加） (partial)
+
+## c 路：0x4AFF60 大转换函数（0x4A2=1186B，callees=15）
+
+- 范围 0x4AFF60-0x4B0402（ret 0xc @0x4B0402；后 nop 对齐 0x4B0405）
+- **大浮点转换/构建函数**（15 callees——本批最大）：
+  - **浮点常量**：`fld qword ptr [0x7e1718]`（FPU 常量——此前 2983 a 路见过）+ `fcomp [0x7e44e8]`（**新 FPU 常量**）+ `fcomp dword ptr [0x7e1748]`
+  - **虚表槽 0x84 坐标读取**：`call [eax+0x84]`（虚表槽 0x84——[esi+8] 对象）→ `fld qword ptr [eax+0x360]`（**[+0x360] 浮点**）→ `fld qword ptr [eax+0x368]`（**[+0x368] 浮点**）
+  - **浮点数学**：`call 0x4cad00` + `call 0x4cacb0`（**浮点函数族**——多次）→ `call 0x7c5f00`（**CRT _ftol**——6 次）
+  - **容器/构建**：`call 0x5ae860`（容器构造——多次）+ `call 0x5af980`（容器操作——多次）+ `call 0x5ae610` + `call 0x5ae980/0x5ae9b0/0x5ae9e0/0x5aef60/0x5af080`（**5A 段容器族**）
+  - **对象操作**：`call 0x755a40` + `call 0x7559b0`（**7 段对象操作**）+ `call 0x55a730` + `call 0x4b4d70`
+  - **rep movsd ×3**（复制 0xc dword 三元组）
+- 直接 call 30 次/去重 15（0x4B4D70 + 0x4CACB0 + 0x4CAD00 + 0x55A730 + 0x5AE610 + 0x5AE860 + 0x5AE980 + 0x5AE9B0 + 0x5AE9E0 + 0x5AEF60 + 0x5AF080 + 0x5AF980 + 0x7559B0 + 0x755A40 + 0x7C5F00）——picker callees=15 **完全吻合**
+- 判类：大转换函数（FPU 常量 + 虚表槽 0x84 坐标 + 浮点函数族 + 5A 段容器族 + 0x7C5F00 ×6 + rep movsd 三元组复制） (partial)
+
+## 核验结果
+
+- _check_callees2993.py：a 路 1、b 路 1、c 路 30 调用去重 15——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4C9480 + 0x565730 + 0x4B4D70 + 0x4CACB0 + 0x4CAD00 + 0x55A730 + 0x5AE610 + 0x5AE860 + 0x5AE980 + 0x5AE9B0 + 0x5AE9E0 + 0x5AEF60 + 0x5AF080 + 0x5AF980 + 0x7559B0 + 0x755A40 + 0x7C5F00——**均已在 TSV 登记**
+- **★FPU 常量 [0x7E44E8]/[0x7E1748] 首见**：c 路浮点比较常量（此前 [0x7E1718] 已见）
+- **★[+0x360]/[+0x368] 浮点字段首见**：c 路虚表槽 0x84 返回对象的浮点坐标
+- **★5A 段容器族首见**：c 路 0x5AE980/0x5AE9B0/0x5AE9E0/0x5AEF60/0x5AF080——5A 段容器操作族
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4B04D0（37B callees=0）/ 0x4B0F20（5864B callees=19 巨型）/ 0x4B4890（54B callees=1）**：picker 显示——后续候选（0x4B0F20 是 5864B 巨型函数，19 callees）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
