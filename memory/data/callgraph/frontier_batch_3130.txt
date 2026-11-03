@@ -1,0 +1,56 @@
+frontier batch 3130
+===================
+日期: 2026-08-?? (心跳续跑)
+来源: memory/data/callgraph/ranking.tsv 按行序取未登记池
+选取: 0x50E830 / 0x50E8C0 / 0x50ED10（双虚表复制构造 + 73B 再现 + 39B 档）
+
+三路判类（code/randmap/disasm.py 反汇编，.qwen/tmp/_d3130{a,b,c}.txt）
+------------------------------------------------------------------------
+0x50E830  136B(0x88) 复制构造器（双虚表，stdcall ret 4，1 栈参=源 this 外还存栈）：
+          mov edi,[esp+0x10](源); mov esi,ecx(目标)
+          [+4]=[+8]=0; [+0xc]=1; [+0xd]=0; 写虚表 [+0]=0x7ea9e4
+          cmp esi,edi; je 拷贝完成                    ; 自赋值检查
+          call dword ptr [0x7ea9f0]                   ; IAT 槽（取数量，间接）
+          mov eax,[edi+8](源容量); shl eax,2
+          push eax; call 0x7c8e17(operator new)       ; 分配容量*4
+          mov [esi+4],eax; [+0xd]=1
+          循环复制 [edi+4] -> [esi+4]（[+8] 个元素）
+          [+0x10]=[edi+0x10]; [+0x14]=[edi+0x14]      ; 复制尾部字段
+          改写虚表 [+0]=0x7eaae8                      ; 终态虚表（升级）
+          mov eax,esi; ret 4
+0x50E8C0  73B 析构器+成员释放模板 虚表 0x7EA9E4（第四十七种，= 3129c 同款）
+0x50ED10  39B 成员持有指针释放器（无 [+0x10] 清零）：
+          mov eax,[esi+4]; cmp eax,ebx; je
+          cmp byte ptr [esi+0xd],bl; je                ; [+0xD] 门控
+          push eax; call 0x7c8b3d; mov [esi+4],ebx     ; delete [+0x4]
+          汇合 mov byte ptr [esi+0xd],bl; mov [esi+8],ebx; ret
+          —— 同 3045b "39B 无清零"档
+
+核验（_check_callees3130.py，RANGES 字面量 + 批内自引用 BATCH_NORM）
+------------------------------------------------------------------------
+a_0x50E830 [0x50E830,0x50E8B7] 跨函数直接 call 1 去重 1 = 0x007c8e17 已登记
+  （另有 call dword ptr [0x7ea9f0] IAT 槽间接，非字面量如实记录）
+b_0x50E8C0 [0x50E8C0,0x50E906] 跨函数直接 call 2 去重 1 = 0x007c8b3d 已登记
+c_0x50ED10 [0x50ED10,0x50ED36] 跨函数直接 call 1 去重 1 = 0x007c8b3d 已登记
+无 MISSING / 无 UNKNOWN / 无批内自引用
+
+三态判定
+------------------------------------------------------------------------
+0x50E830  partial             （结构判明：双虚表复制构造器（0x7ea9e4→0x7eaae8）
+                                + operator new 深拷贝；IAT [0x7ea9f0] 取数语义
+                                未确认，无 YRpp 符号）
+0x50E8C0  semantics_verified  （73B 析构器模板，虚表 0x7EA9E4 第四十七种）
+0x50ED10  semantics_verified  （39B 成员持有指针释放器，3045b 无清零档同构）
+
+说明
+------------------------------------------------------------------------
+★ a 路为 Vector 类复制构造器：初始虚表 0x7ea9e4 → 分配后升级为
+  0x7eaae8（常见于"分配态让位给完整态"的双虚表对象）。
+★ b/c 为模板族持续实例化（73B 与 39B 档在 0x50E8-0x50ED 区）。
+下一批候选预期 0x50F000 / 0x50F020 / 0x50F100（观察项，未登记前不作断言）。
+
+登记（frontier_status.tsv 追加，TSV 7851 -> 7854）
+------------------------------------------------------------------------
+0x0050E830  callees=1  deps=1   batch=3130  partial
+0x0050E8C0  callees=1  deps=1   batch=3130  semantics_verified
+0x0050ED10  callees=1  deps=1   batch=3130  semantics_verified
