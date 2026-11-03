@@ -1,0 +1,57 @@
+# frontier batch 2918
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x477790（30B）+ 0x4778A0（41B）+ 0x477900（41B）
+三路：a=0x477790（0x1E=30B **scalar deleting 析构器** callees=2 deps=0）/ b=0x4778A0（0x29=41B **容器释放器 41B 变体** callees=1 deps=0）/ c=0x477900（0x29=41B **容器释放器 41B 变体** callees=1 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2918{a,b,c}.txt（各 0x80），完整读取确认（a ret 4 @0x4777AB、b ret c3 @0x4778C9、c ret c3 @0x477929）
+核验：.qwen/tmp/_check_callees2918.py 三路全 PASS（a 2/2 去重2、b 1/1 去重1、c 1/1 去重1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7231 → 7234（待 _append_tsv_batch2918.py）
+
+## a 路：0x477790 scalar deleting 析构器（0x1E=30B）
+
+- 范围 0x477790-0x4777AB（ret 4 @0x4777AB，1 栈参）
+- **与批 2917 b/c 完全同构模板**（唯一差异：析构主体 0x631C80/0x7BA590 → **0x7BA420**）：
+  - `mov esi, ecx`（存 this）→ `call 0x7BA420`（**析构主体**，0x7B 段）
+  - `test byte ptr [esp+8], 1`（deleting 标志）→ 零跳过；一 → `push esi; call 0x7c8b3d; add esp,4`（**operator delete**）
+  - `mov eax, esi; ret 4`（返 this）
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x7ba420 + 0x7c8b3d 均已登记）
+- 判类：scalar deleting 析构器（析构主体 0x7BA420 + deleting 标志门 + operator delete 0x7c8b3d）——0x7B 段运行时族析构第三例 (partial)
+
+## b 路：0x4778A0 容器释放器 41B 变体（0x29=41B）
+
+- 范围 0x4778A0-0x4778C9（ret c3 @0x4778C9，无栈参）
+- **VectorClass 容器释放器族新变体**（与批 2906-2908 族同源——**41B 含 +0x10 清零**）：
+  - `push ebx; push esi; mov esi, ecx; xor ebx, ebx`
+  - `mov eax, [esi+4]`（容器指针）→ `mov [esi+0x10], ebx`（**+0x10 清零**——与 42B 变体一致）→ `cmp eax, ebx; je 0x4778C1`（空容器快跳）
+  - `cmp byte ptr [esi+0xd], bl; je 0x4778C1`（**+0xd 拥有标志门控**）→ `push eax; call 0x7c8b3d; add esp,4`（delete 容器指针）
+  - `mov [esi+4], ebx; mov byte ptr [esi+0xd], bl; mov [esi+8], ebx; ret`（清 [+4]/[+0xd]/[+8]）
+- 直接 call 1 个/去重 1——picker callees=1 **完全吻合**（0x7c8b3d 已登记）
+- 判类：容器释放器 41B 变体（[+4] 容器指针 + [+0xd] 拥有标志门控 delete + [+0x10]/[+4]/[+8] 清零）——批 2906-2908 族（42B/39B）第三尺寸变体 (partial)
+
+## c 路：0x477900 容器释放器 41B 变体（0x29=41B）
+
+- 范围 0x477900-0x477929（ret c3 @0x477929，无栈参）
+- **与 b 路完全同构**（逐字节 identical 41B）：
+  - `push ebx; push esi; mov esi, ecx; xor ebx, ebx; mov eax,[esi+4]; mov [esi+0x10],ebx; cmp eax,ebx; je`
+  - `cmp byte ptr [esi+0xd],bl; je; push eax; call 0x7c8b3d; add esp,4; mov [esi+4],ebx; mov byte ptr [esi+0xd],bl; mov [esi+8],ebx; ret`
+- 直接 call 1 个/去重 1——picker callees=1 **完全吻合**（0x7c8b3d 已登记）
+- 判类：容器释放器 41B 变体（同构 b——双胞胎第二实例） (partial)
+
+## 核验结果
+
+- _check_callees2918.py：a 路 2/2（去重 2）、b 路 1/1（去重 1）、c 路 1/1（去重 1）——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7ba420（0x7B 段析构主体）、0x7c8b3d（operator delete）
+- **★容器释放器族第三尺寸变体**：批 2906-2908（42B 含 +0x10 / 39B 无 +0x10）→ 本批 b/c（41B 含 +0x10）——同一 [+4]+[+0xd] 门控 delete 骨架、+0x10 清零/不清零与对齐差异三分型
+- **★0x4778D0 / 0x477930 邻接观察**：dump 尾部 0x4778D0（getter：+0xc 标志检查 + (ptr-base)>>2 索引换算 4B/项）/ 0x477930（getter：+0xc 标志 + 0xaaaaaaab mul ÷3 索引换算 12B/项——编译器除法技巧）——同族 getter 配对，后续候选
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4778D0**（getter：+0xc 标志 + 4B/项索引换算）/ **0x477930**（getter：+0xc 标志 + 0xaaaaaaab ÷3 12B/项索引换算）——容器释放器/索引 getter 配对族，后续候选
+- **0x4777B0**（构造器：虚表 0x7E4DB8 + 虚调用 [0x7E4DC4] + new 0x7c8e17——批 2917 观察项）——后续候选（0x47xxxx 区）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
