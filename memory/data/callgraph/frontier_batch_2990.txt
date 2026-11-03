@@ -1,0 +1,50 @@
+# frontier batch 2990
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4AEC10（30B callees=2）+ 0x4AEC30（40B callees=3）+ 0x4AEC80（30B callees=2）
+三路：a=0x4AEC10（0x1B=27B **scalar deleting 析构器** callees=2 deps=2）/ b=0x4AEC30（0x25=37B **复合析构器** callees=3 deps=3）/ c=0x4AEC80（0x1B=27B **scalar deleting 析构器** callees=2 deps=2）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2990{a,b,c}.txt（各 0x60），完整读取确认（a ret 4 @0x4AEC2B、b ret 4 @0x4AEC55、c ret 4 @0x4AEC9B）
+核验：.qwen/tmp/_check_callees2990.py 三路全 PASS（a 去重 2、b 去重 3、c 去重 2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7431 → 7434（待 _append_tsv_batch2990.py）
+
+## a 路：0x4AEC10 scalar deleting 析构器（0x1B=27B，callees=2）
+
+- 范围 0x4AEC10-0x4AEC2B（ret 4 @0x4AEC2B；后 nop 对齐 0x4AEC30 新函数）
+- **scalar deleting 析构器模板**（标准短模板）：
+  - `call 0x6c9850`（**析构子例程**）→ `test byte ptr [esp+8], 1`（deleting 标志）→ `je` → `push esi; call 0x7c8b3d`（**delete this**）→ `mov eax, esi` → ret 4
+- 直接 call 2 个/去重 2（0x6C9850 + 0x7C8B3D）——picker callees=2 **完全吻合**
+- 判类：scalar deleting 析构器（0x6C9850 析构子例程 + deleting 门 → delete this） (partial)
+
+## b 路：0x4AEC30 复合析构器（0x25=37B，callees=3）
+
+- 范围 0x4AEC30-0x4AEC55（ret 4 @0x4AEC55；后 nop 对齐 0x4AEC60 新函数）
+- **复合析构器模板**（子对象 + 主析构 + deleting 门）：
+  - `lea ecx, [esi+0xc]; call 0x43ae50`（**子对象 +0xC 释放器 0x43AE50**）→ `mov ecx, esi; call 0x6c9850`（**主析构子例程**）→ `test byte ptr [esp+8], 1`（deleting 标志）→ `je` → `push esi; call 0x7c8b3d`（**delete this**）→ ret 4
+- 直接 call 3 个/去重 3（0x43AE50 + 0x6C9850 + 0x7C8B3D）——picker callees=3 **完全吻合**
+- 判类：复合析构器（子对象 +0xC 0x43AE50 + 主析构 0x6C9850 + deleting 门 → delete this） (partial)
+
+## c 路：0x4AEC80 scalar deleting 析构器（0x1B=27B，callees=2）
+
+- 范围 0x4AEC80-0x4AEC9B（ret 4 @0x4AEC9B；后 nop 对齐 0x4AECA0 新函数）
+- **scalar deleting 析构器模板**（同 a 路布局，不同子例程）：
+  - `call 0x631c80`（**析构子例程**——新地址）→ `test byte ptr [esp+8], 1`（deleting 标志）→ `je` → `push esi; call 0x7c8b3d`（**delete this**）→ `mov eax, esi` → ret 4
+- 直接 call 2 个/去重 2（0x631C80 + 0x7C8B3D）——picker callees=2 **完全吻合**
+- 判类：scalar deleting 析构器（0x631C80 析构子例程 + deleting 门 → delete this） (partial)
+
+## 核验结果
+
+- _check_callees2990.py：a 路 2、b 路 3、c 路 2——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x6C9850 + 0x7C8B3D + 0x43AE50 + 0x631C80——**均已在 TSV 登记**
+- **★析构子例程 0x631C80 首见**：c 路析构子例程（新地址；0x6C9850/0x4E1390/0x5652C0 已见）
+- **0x4AEC 族析构器网格已闭合**：0x4AEB50（虚表 0x7E192C）/ 0x4AEBB0（0x4E1390）/ 0x4AEBF0（0x5652C0）/ 0x4AEC10（0x6C9850）/ 0x4AEC30（0x43AE50+0x6C9850）/ 0x4AEC80（0x631C80）/ 0x4AECA0（0x43AE50+0x631C80，dump 已见，未登记）——**连续 7 实例**
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4AECA0（40B callees=3）**：picker 显示——c 路之后（0x43AE50 + 0x631C80 复合，dump 已见完整形态）
+- **0x4AF540 DriveLocomotionClass::DriveLocomotionClass（154B callees=1，带名）**：picker 显示——构造器（带名）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
