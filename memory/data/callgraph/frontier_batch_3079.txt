@@ -1,0 +1,51 @@
+# frontier batch 3079
+
+日期：2026-11-04
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4EF110（39B callees=1）+ 0x4EF370（39B callees=1）+ 0x4EF4E0（73B callees=1）
+三路：a=0x4EF110（0x27=39B **成员持有指针释放器（无[+0x10]变体）** callees=1 deps=1）/ b=0x4EF370（0x27=39B **成员持有指针释放器（实例二）** callees=1 deps=1）/ c=0x4EF4E0（0x47=71B **析构器+成员释放（虚表0x7EA5C4）** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3079{a,b,c}.txt（a/b 0x30、c 0x50），完整读取确认（a ret @0x4EF136、b ret @0x4EF396、c ret 4 @0x4EF526）
+核验：.qwen/tmp/_check_callees3079.py 三路全 PASS（a 1、b 1、c 2 调用去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7698 → 7701（待 _append_tsv_batch3079.py）
+
+## a 路：0x4EF110 成员持有指针释放器（无[+0x10]变体）（0x27=39B，callees=1）
+
+- 范围 0x4EF110-0x4EF136（ret @0x4EF136；后 nop 对齐 0x4EF137）
+- **成员持有指针释放器（无[+0x10]变体）**（this=esi，3066c-3078 同变体——39B）：
+  - `mov esi, ecx; xor ebx, ebx; mov eax, [esi+4]; cmp eax, ebx; je 0x4ef12e`（读 [+0x4]；空跳过）
+  - `cmp byte ptr [esi+0xd], bl; je 0x4ef12e`（**[+0xD] 持有标志门控**）→ `push eax; call 0x7c8b3d; mov [esi+4], ebx`（**delete [+0x4]**）
+  - `mov [esi+0xd], bl; mov [esi+8], ebx`（清 [+0xD]/[+0x8]）→ ret
+- 直接 call 1 个/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：成员持有指针释放器（无[+0x10]清零变体——[+0x4] + [+0xD] 门控 delete 0x7C8B3D，3045b 同构） (partial)
+
+## b 路：0x4EF370 成员持有指针释放器（实例二）（0x27=39B，callees=1）
+
+- 范围 0x4EF370-0x4EF396（ret @0x4EF396；后 nop 对齐 0x4EF397）
+- **成员持有指针释放器（实例二）**——**与 a 路 0x4EF110 完全一致**（无[+0x10]清零 + [+0xD] 门控 delete [+0x4]）
+- 直接 call 1 个/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：成员持有指针释放器（实例二——与 a 路同变体模板） (partial)
+
+## c 路：0x4EF4E0 析构器+成员释放（虚表 0x7EA5C4）（0x47=71B，callees=1）
+
+- 范围 0x4EF4E0-0x4EF526（ret 4 @0x4EF526；后 nop 对齐 0x4EF529）
+- **析构器+成员释放**（stdcall ret 4，[esp+8]&1 门控 delete this；this=esi）——**3045c/3046a/3047b/c 同模板，虚表 0x7EA5C4**（新虚表——第四种）：
+  - `mov eax, [esi+4]; mov [esi], 0x7ea5c4`（**写虚表 0x7EA5C4**）→ `test eax, eax; je 0x4ef507`（[+0x4] 检查）
+  - `mov cl, [esi+0xd]; test cl, cl; je 0x4ef507`（**[+0xD] 持有标志门控**）→ `push eax; call 0x7c8b3d; mov [esi+4], 0`（**delete [+0x4]**）
+  - `mov al, [esp+8]; mov [esi+0xd], 0; test al, 1; mov [esi+8], 0; je 0x4ef523`（**[esp+8]&1 标志门控**）→ `push esi; call 0x7c8b3d`（**delete this**）→ `mov eax, esi`（返回 this）→ ret 4
+- 直接 call 2 次/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：析构器+成员释放（虚表 0x7EA5C4 + [+0xD] 门控 delete [+0x4] + [esp+8]&1 门控 delete this——3005 批析构模板族，虚表第四种） (partial)
+
+## 核验结果
+
+- _check_callees3079.py：a 路 1、b 路 1、c 路 2 调用去重 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用（批内地址 0x4EF110/0x4EF370/0x4EF4E0 互不为被调）；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D——**均已在 TSV 登记**
+- **★3005 批模板族密集带八十连里程碑**（0x4E8290-0x4EF370 共 80 实例，39B 无[+0x10]变体主宰 + 0x4EF4E0 析构器模板实例）：0x4E82-0x4EF3 段成员持有指针释放器全覆盖——八十连
+- **★虚表 0x7EA5C4 首见**：c 路析构器虚表——析构器模板族虚表现第四种（0x7E920C/0x7E8C48/0x7E9264/0x7EA5C4）
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4EF530（73B callees=1）/ 0x4EF580（73B callees=1）/ 0x4EF5D0（73B callees=1）**：picker 显示 0x4E 段——下一批候选（73B 析构器模板实例连续出现）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
