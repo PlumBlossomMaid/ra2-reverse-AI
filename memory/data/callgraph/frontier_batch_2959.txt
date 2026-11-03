@@ -1,0 +1,55 @@
+# frontier batch 2959
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x49B0E0（73 扇入 deps=1）+ 0x49B130（73 扇入 deps=1）+ 0x49B490（165 扇入 deps=1）
+三路：a=0x49B0E0（0x46=70B **自包含复合析构器**[+0xd]持有标志门控 callees=1 deps=1）/ b=0x49B130（0x46=70B **a 逐字节同构第二实例** callees=1 deps=1）/ c=0x49B490（0xA4=164B **字节→hex 转义表编码器** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2959{a,b,c}.txt（各 0x200），完整读取确认（a ret 4 @0x49B126、b ret 4 @0x49B176、c ret @0x49B534）
+核验：.qwen/tmp/_check_callees2959.py 三路全 PASS（a 去重 1、b 去重 1、c 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7338 → 7341（待 _append_tsv_batch2959.py）
+
+## a 路：0x49B0E0 自包含复合析构器（0x46=70B，73 扇入 deps=1）
+
+- 范围 0x49B0E0-0x49B126（ret 4 @0x49B126）
+- **自包含数组析构器**（虚表 0x7E5338——**无外部成员释放器 0x420270**，数组释放内联）：
+  - `mov eax, [esi+4]`（+4 数组指针）→ `mov [esi], 0x7e5338`（虚表复位 0x7E5338）→ `test eax; je 跳过`（空指针）
+  - `cmp byte ptr [esi+0xd]; je 跳过`（**+0xd 持有标志门控**）→ `push eax; call 0x7c8b3d`（delete 数组）→ `mov [esi+4], 0`（清指针）
+  - `mov [esi+0xd], 0`（清标志）→ `test al, 1`（deleting 门）→ `mov [esi+8], 0`（清计数）→ `je` → `push esi; call 0x7c8b3d`（**delete this**）→ `ret 4`
+- 直接 call 2 次/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**（0x7C8B3D 两处去重）
+- 判类：自包含复合析构器（虚表 0x7E5338 + 内联 [+4]/[+0xd] 数组释放 + delete this） (partial)
+
+## b 路：0x49B130 自包含复合析构器第二实例（0x46=70B，73 扇入 deps=1）
+
+- 范围 0x49B130-0x49B176（ret 4 @0x49B176）
+- **与 a 逐字节同构**（唯一差异 call rel 因为地址位置）：
+  - 虚表 0x7E5338 → [+4]/[+0xd] 门控 delete 0x7C8B3D → 三清零 → deleting delete this 0x7C8B3D → ret 4
+- 直接 call 2 次/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：自包含复合析构器第二实例（虚表 0x7E5338） (partial)
+
+## c 路：0x49B490 字节→hex 转义表编码器（0xA4=164B，165 扇入 deps=1）
+
+- 范围 0x49B490-0x49B534（ret @0x49B534，返回 eax=0x89ED18）
+- **全局表编码器**（与 0x49B540 '=' 解码器成对——URL hex 编码对）：
+  - 循环：`cmp byte ptr [edi], 0; je 结束` → `cmp esi, 0x3fd; jge 结束`（**上限 0x3FD**）→ `movsx eax, byte ptr [edi]; push eax; call 0x7c9a31`（**CRT 字符分类**）→ `test eax; jne 直接拷贝`
+  - 非字母数字：`mov byte ptr [esi+0x89ed18], 0x3d`（**'=' 转义标志**）→ 高四位 `sar eax, 4` → `add al, 0x30`（≤0x9 '0'）/ `add al, 0x37`（≥0xA 'A'-10）→ 写表 → 低四位 `and eax, 0xf` → 同上 → 写表
+  - 字母数字：`mov cl, [edi]; mov [esi+0x89ed18], cl`（原样拷贝）
+  - 结尾 `mov byte ptr [esi+0x89ed18], 0`（NUL 终止）→ `mov eax, 0x89ed18; ret`
+- 直接 call 1 个/去重 1（0x7C9A31）——picker callees=1 **完全吻合**
+- 判类：字节→hex 转义表编码器（全局 [0x89ED18]，每字节 '='+hex2，字母数字原样——与 0x49B540 解码器成对） (partial)
+
+## 核验结果
+
+- _check_callees2959.py：a 路 去重 1、b 路 去重 1、c 路 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（a/b 0x7C8B3D 两处去重=1；c 单 0x7C9A31）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D（operator delete）+ 0x7C9A31（CRT 字符分类）——**均已在 TSV 登记**
+- **★自包含复合析构器新子类**：a/b 虚表 0x7E5338——与 0x49A2xx 族（0x420270 成员释放器）不同，本类**内联释放数组**（门控 [+0xd]），虚表直接复位无中间成员
+- **★URL hex 编码对闭合**：c（0x49B490 编码 → [0x89ED18]）+ 0x49B540 解码（→ [0x89F118]）——全局转义表对
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x49B540**（c 路 dump 尾部：**'=' 前缀 hex 解码器**——`cmp al, 0x3d; je` + 0x30/0x57/0x37 三档偏移 + `shl al, 4; or` → [0x89F118]——c 路编码器配对解码端）——后续候选
+- **0x49B610**（c 路 dump 尾部：**结构体初始化器**——+0x14/+0x30 等 0xFFFFFFFE 哨兵填充多字段，0x70 字节对象清零/初始）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
