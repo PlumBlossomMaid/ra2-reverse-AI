@@ -1,0 +1,61 @@
+# frontier batch 3043
+
+日期：2026-11-04
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4DFB70（312B callees=3）+ 0x4DFCB0（329B callees=3）+ 0x4DFE00（319B callees=3）
+三路：a=0x4DFB70（0x138=312B **过滤最近选择器** callees=3 deps=3）/ b=0x4DFCB0（0x149=329B **可选最近选择器** callees=3 deps=3）/ c=0x4DFE00（0x13F=319B **全局容器最近选择器** callees=3 deps=3）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3043{a,b,c}.txt（a 0x140、b 0x150、c 0x140），完整读取确认（a ret @0x4DFCA7、b ret @0x4DFDF8、c ret @0x4DFF3E）
+核验：.qwen/tmp/_check_callees3043.py 三路全 PASS（a 去重 3、b 去重 3、c 去重 3），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7590 → 7593（待 _append_tsv_batch3043.py）
+
+## a 路：0x4DFB70 过滤最近选择器（0x138=312B，callees=3）
+
+- 范围 0x4DFB70-0x4DFCA7（ret @0x4DFCA7；提前 ret @0x4DFC66 空命中返 0；后 nop 对齐 0x4DFCA8）
+- **过滤最近选择器**（this=esi，3042c 模板变体——**3042c 0x4DFA70 的 [0x9C]/[0xA8] 容器 → 本路 [0xB4]/[0xC0] 容器**）：
+  - `mov eax, [esi+0x21c]; mov ebp, 0x7fffffff; mov eax, [eax+0xc0]; dec eax; mov [esp+0x14], eax; js 0x4dfc56`（**容器计数 [+0xC0]**）
+  - 循环体：`mov edx, [ecx+0xb4]; mov edi, [edx+eax*4]; push edi; push 0xf; call [eax+0x278]`（**虚表槽 0x278** 过滤——[+0xB4] 数组元素 + 参 0xf）→ `cmp eax, 1; jne 0x4dfc3f`（==1 才计入）
+  - `call [edx+0x48]` 双坐标（元素 + 自身）→ **三分量差 + 浮点点积**（`sub` ×3 + `fild` ×3 + `fmul/faddp` 平方和）→ `fstp qword [esp]` → **call 0x4cac40**（浮点）→ **call 0x7c5f00**（_ftol）→ `cmp eax, ebp; jge` → 更新最优（ebp=距离、[+0x18]=命中 edi）
+  - 空命中：`mov [esi+0x68f], 0` → ret 0（**写 [+0x68F]**）
+  - 命中：`mov [esi+0x68f], 1; push 0; mov ecx, esi; call 0x65ad30`（**直接调用**——命中对象为参 0）→ `cmp eax, edi; je 0x4dfc9e` → `cmp [esi+0x500], edi; je`（**[+0x500] 比对**）→ `push 0; push 7; call [edx+0x1e8]`（虚表槽 0x1E8，7/0）→ `push 1; push edi; call [eax+0x480]`（虚表槽 0x480）→ ret 1
+- 直接 call 3 个/去重 3（0x4CAC40 + 0x7C5F00 + 0x65AD30）——picker callees=3 **完全吻合**（虚表槽 0x278/0x48/0x1E8/0x480 间接不计）
+- 判类：过滤最近选择器（[+0x21C] 容器 [0xB4]/[0xC0] + 虚表槽 0x278 过滤 0xf + 距离点积 + 0x4CAC40/0x7C5F00 + 0x65AD30 命中对象 + 虚表槽 0x1E8/0x480 消费——[+0x68F] 命中标志） (partial)
+
+## b 路：0x4DFCB0 可选最近选择器（0x149=329B，callees=3）
+
+- 范围 0x4DFCB0-0x4DFDF8（ret @0x4DFDF8；提前 ret @0x4DFDB9 空命中返 0；后 nop 对齐 0x4DFDF9）
+- **可选最近选择器**（this=esi，3042c 模板变体——容器 [0xE4]/[0xF0]）：
+  - `mov eax, [esi+0x21c]; mov [esp+0x14], 0x7fffffff; mov ebp, [eax+0xf0]; dec ebp; js 0x4dfda9`（**容器计数 [+0xF0]**）
+  - 循环体：`mov edx, [ecx+0xe4]; mov ebx, [edx+ebp*4]; call [eax+0x48]` 双坐标（元素 + 自身）→ 三分量差 + 浮点点积 → `fstp qword [esp]` → **0x4cac40** → **0x7c5f00** → `mov edi, eax`
+  - **三元 owner 判定**：`test esi, esi; jne → call [edx+0x2c]`（**虚表槽 0x2C**——行动类型）→ `sub eax, 0xf; neg; sbb eax, eax; not eax; and eax, esi`（**==0xf ? esi : 0**）→ `push eax; mov ecx, ebx; call 0x457ce0`（**直接调用**——候选对象 + 可选 owner）→ `test al, al; je 跳过` → 更新最优（[+0x14]=距离、[+0x18]=命中 ebx）
+  - 空命中：`mov [esi+0x690], 0` → ret 0（**写 [+0x690]**）
+  - 命中：`mov [esi+0x690], 1; mov ecx, [esi+0x5a4]; cmp ecx, eax; jne 0x4dfdd4` → `cmp [esi+0xac], 8; je 0x4dfdef`（**[+0xAC]==8 跳过**）→ `push 1; push eax; call [edx+0x480]` + `push 1; push 8; call [eax+0x1e8]`（虚表槽 0x1E8，8/1）→ ret 1
+- 直接 call 3 个/去重 3（0x4CAC40 + 0x7C5F00 + 0x457CE0）——picker callees=3 **完全吻合**（虚表槽 0x48/0x2C/0x480/0x1E8 间接不计）
+- 判类：可选最近选择器（[+0x21C] 容器 [0xE4]/[0xF0] + 虚表槽 0x2C==0xf 三元 owner + 0x457CE0 判定 + 距离点积 0x4CAC40/0x7C5F00 + 虚表槽 0x480/0x1E8——[+0x690] 命中标志） (partial)
+
+## c 路：0x4DFE00 全局容器最近选择器（0x13F=319B，callees=3）
+
+- 范围 0x4DFE00-0x4DFF3E（ret @0x4DFF3E；提前 ret @0x4DFEFF 空命中返 0；后 nop 对齐 0x4DFF3F）
+- **全局容器最近选择器**（this=esi，3042c 模板变体——**容器不在 [+0x21C]，而是全局 [0xA8EB44]/[0xA8EB50]**）：
+  - `mov eax, [0xa8eb50]; dec eax; mov [esp+0x14], eax; jl 0x4dfeef`（**全局计数 [0xA8EB50]**）
+  - 循环体：`mov ecx, [0xa8eb44]; mov ebx, [ecx+eax*4]`（**全局数组 [0xA8EB44]**）→ **三元 owner 判定**（同 b：虚表槽 0x2C ==0xf ? esi : 0）→ `push eax; mov ecx, ebx; call 0x457ce0`（**直接调用**）→ `test al, al; je 0x4dfed8` → `call [eax+0x48]` 双坐标 → 三分量差 + 浮点点积 → **0x4cac40** → **0x7c5f00** → `cmp eax, ebp; jge` → 更新最优（[+0x18]=命中 ebx）
+  - 空命中：`mov [esi+0x691], 0` → ret 0（**写 [+0x691]**）
+  - 命中：`mov [esi+0x691], 1; mov ecx, [esi+0x5a4]; cmp; jne 0x4dff1a` → `cmp [esi+0xac], 8; je` → `push 1; push eax; call [edx+0x480]` + `push 1; push 8; call [eax+0x1e8]` → ret 1
+- 直接 call 3 个/去重 3（0x4CAC40 + 0x7C5F00 + 0x457CE0）——picker callees=3 **完全吻合**（虚表槽 0x48/0x2C/0x480/0x1E8 间接不计）
+- 判类：全局容器最近选择器（全局 [0xA8EB44]/[0xA8EB50] 容器 + 虚表槽 0x2C==0xf 三元 owner + 0x457CE0 判定 + 距离点积 0x4CAC40/0x7C5F00 + 虚表槽 0x480/0x1E8——[+0x691] 命中标志） (partial)
+
+## 核验结果
+
+- _check_callees3043.py：a 路 3、b 路 3、c 路 3——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用（批内地址 0x4DFB70/0x4DFCB0/0x4DFE00 互不为被调）；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4CAC40 + 0x7C5F00 + 0x65AD30 + 0x457CE0——**均已在 TSV 登记**
+- **★最近距离选择器族四连**（3042c/3043a/3043b/3043c）：同模板三分量差浮点点积 + 0x4CAC40/0x7C5F00 最近邻，容器与过滤各异——[+0x21C] 容器三切片（[0x9C]/[0xA8]、[0xB4]/[0xC0]、[0xE4]/[0xF0]）+ **全局 [0xA8EB44]/[0xA8EB50]**
+- **★虚表槽 0x2C==0xf 三元 owner 惯用法**：`sub eax,0xf; neg; sbb; not; and eax, esi`——"行动类型==15 则取 esi 否则 0"（3040c 同模式；b/c 路共享）
+- **★0x65AD30 首见**：a 路新被调（命中对象为参）
+- **batch 3043 无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4DFF40（311B callees=4）/ 0x4E0130（3B callees=0）/ 0x4E0170（30B callees=2）**：picker 显示 0x4D-0x4E 段过渡——下一批候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
