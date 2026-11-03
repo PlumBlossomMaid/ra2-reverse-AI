@@ -1,0 +1,64 @@
+frontier batch 3125
+===================
+日期: 2026-08-?? (心跳续跑)
+来源: memory/data/callgraph/ranking.tsv 按行序取未登记池
+选取: 0x50BF60 / 0x50D560 / 0x50D5D0（成本乘数带名 + 入队器 + 容器析构）
+
+三路判类（code/randmap/disasm.py 反汇编，.qwen/tmp/_d3125{a,b,c}.txt）
+------------------------------------------------------------------------
+0x50BF60  HouseClass::CalculateCostMultipliers（带名，235B）成本乘数累计：
+          0x3f800000(1.0f) 写 5 槽 [+0x5390]/[+0x5394]/[+0x5398]/[+0x539c]/[+0x53a0]
+          循环 eax=1..[+0x150]: 遍历 [+0x144] 数组
+            edx=[edx+eax*4-4] -> [+0x520] 对象
+            fld/fmul/fstp 逐个乘系数:
+              [+0x16d0]->[+0x5390]  [+0x16d4]->[+0x5394]
+              [+0x16d8]->[+0x5398]  [+0x16dc]->[+0x539c]
+              [+0x16e0]->[+0x53a0]                     ; 5 类成本修正
+          ret                                        ; 纯浮点，无调用
+0x50D560  99B 节点分配+动态数组入队器（stdcall ret 8，2 栈参）：
+          push 8; call 0x7c8e17(operator new)          ; new 8B 节点
+          edi=节点; [edi]=参1; [edi+4]=参2
+          add esi,0x16c（容器）; eax=[esi+8]容量; ecx=[esi+0x10]计数
+          cmp ecx,eax; jl 直接存
+          扩容: [+0xd] 持有标志 && 容量!=0 -> [+0x14]>0
+                edx=[esi](虚表); push 0; push ecx+eax(新容量)
+                call dword ptr [edx+8]                  ; 虚表槽 8 扩容
+          存入: [esi+0x10]++; [esi+4+eax*4]=edi        ; 尾插
+          ret 8
+0x50D5D0  52B 容器析构器（cdecl ret）：
+          mov esi,[edi+0x17c]; dec esi; js 退出         ; 计数倒序
+          循环: eax=edi+0x170 槽数组; push ecx(槽)
+                call 0x7c8b3d                           ; free 每个节点
+          mov edx,[edi+0x16c]; lea ecx,[edi+0x16c]
+          call dword ptr [edx+0xc]                      ; 子容器[+0x16c]虚析构槽0xc
+          ret
+
+核验（_check_callees3125.py，RANGES 字面量 + 批内自引用 BATCH_NORM）
+------------------------------------------------------------------------
+a_0x50BF60 [0x50BF60,0x50C04A] 跨函数直接 call 0（纯浮点循环，无调用）
+b_0x50D560 [0x50D560,0x50D5C0] 跨函数直接 call 1 去重 1 = 0x007c8e17(operator new) 已登记
+c_0x50D5D0 [0x50D5D0,0x50D603] 跨函数直接 call 1 去重 1 = 0x007c8b3d(free) 已登记
+无 MISSING / 无 UNKNOWN / 无批内自引用
+
+三态判定
+------------------------------------------------------------------------
+0x50BF60  semantics_verified  （HouseClass::CalculateCostMultipliers，带名
+                                YRpp 符号，纯浮点无调用语义闭合）
+0x50D560  partial             （结构判明：节点分配+动态数组入队；虚表槽 8
+                                扩容目标语义未确认，无 YRpp 符号）
+0x50D5D0  partial             （结构判明：容器析构；槽 0xc 目标语义未确认）
+
+说明
+------------------------------------------------------------------------
+★ a 路为纯 x87 浮点累计（fld/fmul/fstp 五重），无任何调用——
+  成本乘数槽 [+0x5390~0x53a0] 与 UpdatePower 的功率槽同属 HouseClass
+  经济区（+0x53xx）。
+★ b/c 构成 [+0x16c] 容器对的普通入队/析构配对（b 用 operator new 8B
+  节点 + 入队，c 逆序 free + 子容器虚析构）。
+下一批候选预期 0x50DAA0 / 0x50DAC0 / 0x50E340（观察项，未登记前不作断言）。
+
+登记（frontier_status.tsv 追加，TSV 7836 -> 7839）
+------------------------------------------------------------------------
+0x0050BF60  callees=0  deps=0   batch=3125  semantics_verified (HouseClass::CalculateCostMultipliers)
+0x0050D560  callees=1  deps=1   batch=3125  partial
+0x0050D5D0  callees=1  deps=1   batch=3125  partial
