@@ -1,0 +1,60 @@
+# frontier batch 2922
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x47A920（158B）+ 0x47AA00（38B）+ 0x47AD50（69B）
+三路：a=0x47A920（0x9E=158B **窗口消息构造发送** callees=3-2=1字面量 deps=0）/ b=0x47AA00（0x26=38B **析构器复合** callees=3 deps=0）/ c=0x47AD50（0x45=69B **链表节点分配入队** callees=2 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2922a_full.txt（0x180）+ _d2922{b,c}.txt（各 0x80），完整读取确认（a ret 0xc @0x47A9BE、b ret 4 @0x47AA26、c ret c3 @0x47AD94）
+核验：.qwen/tmp/_check_callees2922.py 三路全 PASS（a 1/1 去重1、b 3/3 去重3、c 2/2 去重2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7243 → 7246（待 _append_tsv_batch2922.py）
+
+## a 路：0x47A920 窗口消息构造发送（0x9E=158B）
+
+- 范围 0x47A920-0x47A9BE（ret 0xc @0x47A9BE，3 栈参）——**窗口消息构造 + IAT 间接发送 + 失败 DebugLog**：
+  - `sub esp,0x1c; mov ecx,6; xor eax,eax; rep stosd`（6 dword 局部清零）
+  - `mov edi, [0x7E11B8]`（**IAT 函数指针槽**——消息发送 API）→ bl 构造 `xor bl,bl; neg bl; sbb bl,bl; and bl,0xc0; add bl,0x48`（**0x48**）→ eax 构造 `mov ah,bl; and eax,0xffff; or al,0x6a`（**0x486A word**）
+  - 参数序列：`push 0; push &buf38; push 0x1c; push &buf18; push 0x1c; push &buf20; push 1; push esi`（参3=esi=目标窗口？）→ `mov [esp+0x3c], 0x440D`（**消息常量 0x440D**）+ `mov [esp+0x30], ebp`（参4 符号扩展字节）
+  - `call edi`（**IAT 间接——`call dword ptr [edi]`**，edi=[0x7E11B8]）→ `test eax,eax; setne al`（成功标志）
+  - 失败路径：`call dword ptr [0x7E1200]`（**第二个 IAT 槽**）→ `push eax; push 0x81C51C`（**字符串常量**）→ `call 0x4068E0`（**DebugLog** 错误报告）
+- 直接 call 1 个/去重 1（字面量 0x4068e0）——**picker callees=3 差 2** = 两个 IAT 间接（`call edi` + `call dword ptr [0x7E1200]`），Ghidra 统计含间接、脚本只抓字面量——**属预期差**
+- 判类：窗口消息构造发送（0x440D 消息常量 + 0x486A word 构造 + IAT[0x7E11B8] 间接发送 + 失败 IAT[0x7E1200] + DebugLog 0x4068E0）——窗口消息子系统 (partial)
+
+## b 路：0x47AA00 析构器复合（0x26=38B）
+
+- 范围 0x47AA00-0x47AA26（ret 4 @0x47AA26）
+- thiscall 1 栈参（[esp+8]=参1）——**析构器复合链**：
+  - `mov esi, ecx`（this）→ `call 0x431B20`（**基类析构器** 0x43 段）
+  - `mov ecx, [esp+8]` → `mov byte ptr [esi+0x54], 0`（**清 [+0x54] 标志**）→ `mov [esi], 0x7E1668`（**虚表 0x7E1668 复位**——基类虚表）
+  - `call 0x7B5440`（**thiscall esi** 0x7B 段成员处理）→ `push eax`（0x7B5440 结果）→ `mov ecx, esi` → `call 0x47AE10`（**thiscall esi 栈参 eax**——后邻成员处理）→ `mov eax, esi; ret 4`
+- 直接 call 3 个/去重 3——picker callees=3 **完全吻合**（0x431b20 + 0x47ae10 + 0x7b5440 均已登记）
+- 判类：析构器复合（基类 0x431B20 + 清 [+0x54] + 虚表 0x7E1668 复位 + 0x7B5440 成员处理 + 0x47AE10 后处理）——0x47AE10 邻接配对 (partial)
+
+## c 路：0x47AD50 链表节点分配入队（0x45=69B）
+
+- 范围 0x47AD50-0x47AD94（ret c3 @0x47AD94，无栈参）
+- thiscall 无栈参——**链表节点分配 + 入队尾**：
+  - `push 8; call 0x7C8E17`（**new 8 字节节点**）→ `push edi`（this）→ `mov esi, eax`（节点指针）
+  - `call 0x7D5408`（**thiscall edi** 0x7D 段 CRT——取值函数）→ `mov [esi+4], eax`（[+4]=值）→ `mov [esi], 0`（[+0]=NULL 链表尾标记）
+  - `mov ecx, [0x89E410]`（**全局链表头**）→ `test ecx,ecx; jne`：
+    - 空 → `mov [0x89E410], esi`（设为头）→ ret
+    - 非空 → 遍历 `mov eax,[ecx]; test eax,eax; jne` 循环到末尾（`mov ecx,eax; mov eax,[ecx]` 逐项）→ `mov [ecx], esi`（链入尾）→ ret
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x7c8e17 + 0x7d5408 均已登记）
+- 判类：链表节点分配入队（new 8B 节点 0x7C8E17 + 0x7D5408 取值 → [+0]=NULL + [+4]=值 → 链入 [0x89E410] 全局链表尾）——0x89E410 链表头语义未确认 (partial)
+
+## 核验结果
+
+- _check_callees2922.py：a 路 1/1（去重 1）、b 路 3/3（去重 3）、c 路 2/2（去重 2）——三路全 PASS
+- picker callees vs 核验差值：**a 差 2** = 两个 IAT 间接（`call edi` edi=[0x7E11B8] + `call dword ptr [0x7E1200]`）——Ghidra 统计含间接、脚本只抓字面量，**属预期差**；b/c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4068e0（DebugLog）、0x431b20（基类析构器）、0x47ae10（成员处理）、0x7b5440（0x7B 段处理）、0x7c8e17（CRT new）、0x7d5408（0x7D 段取值）
+- **★a 路窗口消息**：0x440D 消息常量 + 0x486A word + IAT[0x7E11B8] 间接发送——0x7E11B8/0x7E1200 是 IAT 槽（非 Westwood 代码，系统 DLL 导入），窗口消息子系统首次实锤
+- **★c 路链表**：[0x89E410] 全局链表头 + 8B 节点 {next,+0; value,+4}——单链表入队尾惯用法，0x89E410 语义未确认（与 0xA8ED48/0xA8DA90 等其他全局链表头不同域）
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+- 数据卫生备注（batch 2399 登记，未处理）：frontier_status.tsv 现存 16 个地址重复登记（32 行，全在 0x7Dxxxx CRT 段）+ 6 个空行；注册脚本有 SKIP 已存在检查，本批未引入新重复
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x47AA30**（b 路 dump 尾部：基类 0x431B20 + 虚表 0x7E1668——b 路同族简化析构器）/ **0x47AA50**（0x148 缓冲大函数——0x81C8F0 常量区构造）——后续候选（0x47xxxx 区）
+- **0x47ADA0 / 0x47ADC0**（c 路 dump 尾部：[0x89E414]/[0x89E418] 链表头操作 + [0x89E410] 遍历——同链表族）——后续候选（0x47xxxx 区）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
