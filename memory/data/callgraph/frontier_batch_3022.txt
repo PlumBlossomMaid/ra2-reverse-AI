@@ -1,0 +1,56 @@
+# frontier batch 3022
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4CCAE0（81B callees=0）+ 0x4CD2A0（609B callees=8）+ 0x4CD510（238B callees=3）
+三路：a=0x4CCAE0（0x4E=78B **三值取出器** callees=0 deps=0）/ b=0x4CD2A0（0x260=608B **状态更新大函数** callees=8 deps=8）/ c=0x4CD510（0xED=237B **对象收集器** callees=3 deps=3）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3022{a,b,c}.txt（a 0x70、b 0x270、c 0xF0），完整读取确认（a ret 8 @0x4CCB09/0x4CCB2E、b ret @0x4CD2F5/0x4CD500、c ret @0x4CD5EF/0x4CD5FD）
+核验：.qwen/tmp/_check_callees3022.py 三路全 PASS（a 去重 0、b 去重 8、c 去重 3），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7527 → 7530（待 _append_tsv_batch3022.py）
+
+## a 路：0x4CCAE0 三值取出器（0x4E=78B，callees=0）
+
+- 范围 0x4CCAE0-0x4CCB2E（ret 8 @0x4CCB09 使用值/0x4CCB2E 回落值；后 nop 对齐 0x4CCB40）
+- **三值取出/回落**（stdcall ret 8）：
+  - `push esi; call [eax+0x10]`（**虚表槽 0x10**——[esi] 对象判定）→ `test al, al; je`（命中走回落）
+  - 命中：`mov ecx, [esi+0x18]; mov edx, [esi+0x1c]; mov esi, [esi+0x20]`（**[+0x18]/[+0x1c]/[+0x20] 三元组**）→ 写 [edi]/[edi+4]/[edi+8]（**输出三元组**）→ ret 8
+  - 回落：`mov ecx, [0x8b3c78]; mov edx, [0x8b3c7c]; mov esi, [0x8b3c80]`（**全局回落三元组 [0x8B3C78-80]**——同 3021 b 路）→ 写输出 → ret 8
+- 直接 call 0 个（虚表槽 0x10 间接）——picker callees=0 **完全吻合**
+- 判类：三值取出器（虚表槽 0x10 判定 + [+0x18-0x20] 三元组 + [0x8B3C78-80] 回落） (partial)
+
+## b 路：0x4CD2A0 状态更新大函数（0x260=608B，callees=8）
+
+- 范围 0x4CD2A0-0x4CD500（ret @0x4CD2F5 早出口/0x4CD500 主出口；后 nop 对齐 0x4CD510）
+- **状态更新大函数**（8 callees——本批最大）：
+  - `mov edi, [esi+0xc]; test; je`（**[+0xc] 对象检查**）→ `call [eax+0x2c]`（**虚表槽 0x2c**）→ `cmp eax, 2; jne`（**类型 != 2 排除**）→ `mov ecx, [edi+0x6c4]; mov al, [ecx+0xe0a]; test; jne`（**[+0x6C4]+0xE0A 标志**——同 3021 c 路族）
+  - `mov byte ptr [esi+0x5c], 1; mov byte ptr [esi+0x51], 0; mov byte ptr [esi+0x50], 0`（标志重写）→ `call [edx+0x84]; call [edx+0xbc]`（**虚表槽 0x84/0xbc 链**——取目标对象）→ `mov [esi+0x38], eax`（存 [+0x38]）→ 返 0
+  - 主路径：`mov eax, [ecx+0x6c]; jle`（**[+0x6C] 计数**）→ `mov al, [esi+0x51]; test`（+0x51 标志）→ `mov al, [esi+0x50]; test`（+0x50 标志）→ **多分支循环**
+  - 调用：`call 0x565730`（**段外辅助**）+ `call 0x567da0` + `call 0x65ad30` + `call 0x65ae30`（**65 段辅助**）+ `call 0x4a9720` + `call 0x4a9770`（**4A 段辅助**）+ `call 0x4ce680` + `call 0x4ce840`（**段内邻函数**）
+- 直接 call 8 个/去重 8（0x4A9720 + 0x4A9770 + 0x4CE680 + 0x4CE840 + 0x565730 + 0x567DA0 + 0x65AD30 + 0x65AE30）——picker callees=8 **完全吻合**（虚表槽 0x2c/0x84/0xbc 间接）
+- 判类：状态更新大函数（[+0xc] 对象 + 虚表槽 0x2c 类型 + [+0x6C4]+0xE0A 标志 + 虚表槽 0x84/0xbc 链 + 4A/65 段辅助 + 段内 0x4CE680/0x4CE840 邻函数） (partial)
+
+## c 路：0x4CD510 对象收集器（0xED=237B，callees=3）
+
+- 范围 0x4CD510-0x4CD5FD（ret @0x4CD5EF 无/0x4CD5FD 有；后 nop 对齐 0x4CD600）
+- **对象收集/计数**：
+  - 前置：`mov al, [esi+0x51]; test; je`（+0x51 标志）→ `mov al, [esi+0x50]; test; je`（+0x50 标志）→ **多分支**
+  - 调用：`call 0x413cd0`（**段外辅助**）+ `call 0x473430`（**段外辅助**）+ `call 0x5785f0`（**5F 段地图族**）
+  - 循环：计数递增 + 条件收集
+- 直接 call 3 个/去重 3（0x413CD0 + 0x473430 + 0x5785F0）——picker callees=3 **完全吻合**
+- 判类：对象收集器（+0x50/+0x51 双标志 + 0x413CD0/0x473430/0x5785F0 辅助 + 计数循环） (partial)
+
+## 核验结果
+
+- _check_callees3022.py：a 路 0、b 路 8、c 路 3——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4A9720 + 0x4A9770 + 0x4CE680 + 0x4CE840 + 0x565730 + 0x567DA0 + 0x65AD30 + 0x65AE30 + 0x413CD0 + 0x473430 + 0x5785F0——**均已在 TSV 登记**
+- **★[0x8B3C78-80] 回落三元组延续**：a 路与 3021 b 路同款全局三元组
+- **★[+0x6C4]+0xE0A 标志**：b 路与 3021 c 路 [+0xE0D] 同族（相邻偏移标志）
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4CD600（3754B callees=29 巨型）/ 0x4CE5A0（210B callees=4）/ 0x4CEFB0（1628B callees=20 大函数）**：picker 显示——后续候选（0x4CD600 是 29 callees 巨型函数）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
