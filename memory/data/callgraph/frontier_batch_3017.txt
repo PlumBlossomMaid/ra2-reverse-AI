@@ -1,0 +1,53 @@
+# frontier batch 3017
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4C8FE0（357B callees=10）+ 0x4C9150（3B callees=0）+ 0x4C9FB0（FactoryClass::GetBuildTimeFrames 59B callees=1）
+三路：a=0x4C8FE0（0x164=356B **初始化/状态检查大函数** callees=10 deps=10←含 5 IAT 间接）/ b=0x4C9150（0x2=2B **极小返回 0** callees=0 deps=0）/ c=0x4C9FB0（0x3A=58B **FactoryClass::GetBuildTimeFrames 带名** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3017{a,b,c}.txt（a 0x170、b 0x20、c 0x60），完整读取确认（a ret @0x4C90EE/0x4C910B/0x4C913B/0x4C9144、b ret @0x4C9152、c ret @0x4C9FDD/0x4C9FEA）
+核验：.qwen/tmp/_check_callees3017.py 三路全 PASS（a 去重 5、b 去重 0、c 去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7512 → 7515（待 _append_tsv_batch3017.py）
+
+## a 路：0x4C8FE0 初始化/状态检查大函数（0x164=356B，callees=10←含 5 IAT 间接）
+
+- 范围 0x4C8FE0-0x4C9144（ret @0x4C90EE/0x4C910B/0x4C913B 返 1/0x4C9144 返 0；后 nop 对齐 0x4C9145）
+- **初始化/状态检查大函数**（含 IAT 多槽）：
+  - `push 0x822204; call 0x4068e0`（**类型名 [0x822204] + 0x4068E0**——EventClass 构造核心）→ `call 0x53e6b0`（**段外辅助**）→ `mov eax, [0x820e5c]; inc; mov [0x820e5c], eax`（**全局状态 [0x820E5C] 递增**）→ `call 0x4c85e0`（**段内方法**）
+  - **IAT 文件操作**：`push 0x40000000; push 0x8221f8; call dword ptr [0x7e11bc]`（**IAT 槽 [0x7E11BC]**——打开）→ `call dword ptr [0x7e11ac]`（**IAT 槽 [0x7E11AC]**——读）→ `push 0x8a3a08; call dword ptr [0x7e11a0]`（**IAT 槽 [0x7E11A0]**——写）→ `call dword ptr [0x7e11e0]`（**IAT 槽 [0x7E11E0]**——关）
+  - **六全局对象链**：`mov ecx, [0x887308]; call [edx+0x6c]`→`[0x88730c]`→`[0x88731c]`→`[0x8872fc]`→`[0x887300]`→`[0x887310]`（**六个全局对象虚表槽 0x6c 链**——任一非空则查 [0x887624] 标志）
+  - `call dword ptr [0x7e11d0]`（**IAT 槽 [0x7E11D0]**——对比 [0xB730E8]）→ `push 0x8221b0/0x82219c; call 0x4068e0`（**类型名分支**）→ `call 0x4c84e0`（**段内方法**）→ `cmp eax, 0x481`（**常量 0x481 比较**）→ `push 0x82219c; call 0x4068e0`→ `mov [0x820e60], 0`（**全局 [0x820E60] 清零**）→ `mov [0x820e5c], 0xffffffff`（**状态置 -1**）→ `mov ecx, [0xb72f44]; test; je; call 0x622720`（**全局 [0xB72F44] 对象方法**）→ `mov eax, 1` → ret
+- 直接 call 字面量 7 次/去重 5（0x4068E0 + 0x4C84E0 + 0x4C85E0 + 0x53E6B0 + 0x622720）；**picker callees=10 = 5 字面量 + 5 IAT 间接槽（0x7E11BC/0x7E11AC/0x7E11A0/0x7E11E0/0x7E11D0）——预期差模式**
+- 判类：初始化/状态检查大函数（0x4068E0 类型名 + 5 IAT 文件槽 + 六全局对象 0x6c 链 + [0x820E5C]/[0x820E60] 状态 + 0x622720 + 常量 0x481） (partial)
+
+## b 路：0x4C9150 极小返回 0（0x2=2B，callees=0）
+
+- 范围 0x4C9150-0x4C9152（ret @0x4C9152；后 nop 对齐 0x4C9160 新函数）
+- **极小函数**：`xor eax, eax; ret`（**恒返回 0**）——占位符/mock
+- 直接 call 0 个——picker callees=0 **完全吻合**
+- 判类：极小返回 0（占位符） (partial)
+
+## c 路：0x4C9FB0 FactoryClass::GetBuildTimeFrames（0x3A=58B，callees=1，带名）
+
+- 范围 0x4C9FB0-0x4C9FEA（ret @0x4C9FDD 返回 1/0x4C9FEA 返回 clamp；后 nop 对齐 0x4C9FF0）
+- **FactoryClass::GetBuildTimeFrames**（带名 YRpp——生产时间帧数）：
+  - `mov ecx, [ecx+0x58]; test; je`（**[+0x58] 检查**）→ `call 0x6f47a0`（**段外辅助**——取 [+0x58] 对象计数值）
+  - `mov eax, 0x4bda12f7; imul edx; sar edx, 4; shr eax, 0x1f; add edx, eax`（**乘魔数 0x4BDA12F7 + SAR 4 = ÷60**——帧数转秒数，带符号修正）
+  - `cmp eax, 1; jge` → `mov eax, 1`（**下界钳制 1**）→ `cmp eax, 0xff; jle` → `mov eax, 0xff`（**上界钳制 0xFF**）→ ret
+- 直接 call 1 个/去重 1（0x6F47A0）——picker callees=1 **完全吻合**
+- 判类：FactoryClass::GetBuildTimeFrames（[+0x58] 检查 + 0x6F47A0 + 魔数 0x4BDA12F7 ÷60 + 钳制 [1,0xFF]） (semantics_verified)
+
+## 核验结果
+
+- _check_callees3017.py：a 路 7 调用去重 5、b 路 0、c 路 1——三路全 PASS
+- picker callees vs 核验差值：a 差 5（预期差——5 个 IAT 间接槽 0x7E11BC/0x7E11AC/0x7E11A0/0x7E11E0/0x7E11D0）、b 差 0、c 差 0
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4068E0 + 0x4C84E0 + 0x4C85E0 + 0x53E6B0 + 0x622720 + 0x6F47A0——**均已在 TSV 登记**
+- **★六全局对象族 [0x887308-0x887310] 首见**：a 路六对象虚表槽 0x6c 链（0x887308/0x88730C/0x88731C/0x8872FC/0x887300/0x887310）
+- **★魔数 0x4BDA12F7 ÷60 首见**：c 路 GetBuildTimeFrames 的帧→秒转换
+- **c 路带名**——FactoryClass::GetBuildTimeFrames（YRpp 符号对应，生产系统函数），标 semantics_verified；a/b 路 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4CA170（4B callees=0）/ 0x4CA180（1B callees=0）/ 0x4CA6B0 FactoryClass::IsQueued（41B callees=0，带名）**：picker 显示——后续候选（均为生产系统 FactoryClass 族小函数；0x4CA170 4B/0x4CA180 1B 极小）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
