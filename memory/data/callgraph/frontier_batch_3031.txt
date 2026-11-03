@@ -1,0 +1,52 @@
+# frontier batch 3031
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4D8F80（39B callees=1）+ 0x4D9720（120B callees=4）+ 0x4D9960（661B callees=5）
+三路：a=0x4D8F80（0x26=38B **状态同步器** callees=1 deps=1）/ b=0x4D9720（0x75=117B **双路径分派器** callees=4 deps=4）/ c=0x4D9960（0x292=658B **大型坐标处理器** callees=5 deps=5）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3031{a,b,c}.txt（a 0x60、b 0x90、c 0x2A0），完整读取确认（a ret @0x4D8FA2/0x4D8FA6、b ret 4 @0x4D975F/0x4D9795、c ret @0x4D9BF2）
+核验：.qwen/tmp/_check_callees3031.py 三路全 PASS（a 去重 1、b 去重 4、c 去重 5），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7554 → 7557（待 _append_tsv_batch3031.py）
+
+## a 路：0x4D8F80 状态同步器（0x26=38B，callees=1）
+
+- 范围 0x4D8F80-0x4D8FA6（ret @0x4D8FA2 命中/0x4D8FA6 未命中；后 nop 对齐 0x4D8FB0）
+- **状态同步器**（3030 c 路 PhobosHook 的配套检查器）：
+  - `call 0x7013e0`（**段外辅助**——检查）→ `test al, al; je`（未通过返 0）→ `mov ecx, [esi+0x5a8]; push 1; push ecx; call [eax+0x480]`（**虚表槽 0x480**——[+0x5A8] 对象）→ `mov al, 1`（通过）→ ret
+- 直接 call 1 个/去重 1（0x7013E0）——picker callees=1 **完全吻合**（虚表槽 0x480 间接）
+- 判类：状态同步器（0x7013E0 检查 + 虚表槽 0x480 + [+0x5A8]——3030c 配套） (partial)
+
+## b 路：0x4D9720 双路径分派器（0x75=117B，callees=4）
+
+- 范围 0x4D9720-0x4D9795（ret 4 @0x4D975F 路径 1/0x4D9795 路径 2；后 nop 对齐 0x4D97A0）
+- **双路径分派器**（stdcall ret 4）：
+  - 路径 1（bl 非 0）：`mov ecx, [esi+0x5d4]; test; je`（**[+0x5D4] 检查**）→ `mov eax, [0xa8e7ac]; test; jne`（**全局 [0xA8E7AC]**）→ `push 0; push -1; push esi; call 0x6ea870`（**段外辅助**——三参）→ `call [edx+0x274]`（**虚表槽 0x274**）→ `push ebx; call 0x5f5280`（**段外辅助**）→ ret 4
+  - 路径 2（bl 为 0）：`push 0; call 0x65ad30`（**段外辅助**）→ `test eax, eax; je` → `push eax; mov ecx, [esi+0x21c]; call 0x4f9a90`（**[+0x21C] 对象方法**）→ `test al, al; jne` → `call [eax+0x274]`（虚表槽 0x274）→ `push ebx; call 0x5f5280` → ret 4
+- 直接 call 5 次/去重 4（0x4F9A90 + 0x5F5280 + 0x65AD30 + 0x6EA870）——picker callees=4 **完全吻合**（虚表槽 0x274 间接）
+- 判类：双路径分派器（[+0x5D4] 对象 + [0xA8E7AC] 全局 + 0x6EA870/0x5F5280/0x65AD30/0x4F9A90 + 虚表槽 0x274） (partial)
+
+## c 路：0x4D9960 大型坐标处理器（0x292=658B，callees=5）
+
+- 范围 0x4D9960-0x4D9BF2（ret @0x4D9BF2；后 nop 对齐 0x4D9BF5）
+- **大型坐标处理器**（5 callees——0x70 段威胁邻域）：
+  - **坐标族**：0x565730 + 0x5657A0（**坐标转换**——[0x87F7E8]）
+  - **70 段**：0x7077C0 + 0x70C610（**威胁系统邻域**——batch 3030 同理 0x70C610）+ 0x4870D0（**48 段辅助**）
+  - 循环 + 坐标变换 + 威胁更新逻辑
+- 直接 call 5 次/去重 5——picker callees=5 **完全吻合**
+- 判类：大型坐标处理器（0x565730/0x5657A0 坐标 + 70 段威胁邻域 0x7077C0/0x70C610 + 0x4870D0） (partial)
+
+## 核验结果
+
+- _check_callees3031.py：a 路 1、b 路 5 调用去重 4、c 路 5——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7013E0 + 0x4F9A90 + 0x5F5280 + 0x65AD30 + 0x6EA870 + 0x565730 + 0x5657A0 + 0x7077C0 + 0x70C610 + 0x4870D0——**均已在 TSV 登记**
+- **★0x5F5280 首见**：b 路转发目标（0x5F 段）
+- **★[0xA8E7AC] 全局首见**：b 路读取
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4D9C10（73B callees=1）/ 0x4D9C60（519B callees=1）/ 0x4DA030（175B callees=0）**：picker 显示——后续候选（0x4D9C60 是 519B 单 callee 大函数）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
