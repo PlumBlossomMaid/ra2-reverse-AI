@@ -1,0 +1,50 @@
+# frontier batch 2925
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x487170（12B）+ 0x487180（12B）+ 0x487E80（27B）
+三路：a=0x487170（0xC=12B **计数器递增 II** callees=0 deps=0）/ b=0x487180（0xC=12B **计数器递减 II** callees=0 deps=0）/ c=0x487E80（0x1B=27B **scalar deleting 析构器** callees=2 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2925{a,b,c}.txt（a/b 0x40、c 0x80），完整读取确认（a ret 4 @0x48717C、b ret 4 @0x48718C、c ret 4 @0x487E9B）
+核验：.qwen/tmp/_check_callees2925.py 三路全 PASS（a 0/0、b 0/0、c 2/2 去重2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7252 → 7255（待 _append_tsv_batch2925.py）
+
+## a 路：0x487170 计数器递增 II（0xC=12B）
+
+- 范围 0x487170-0x48717C（ret 4 @0x48717C，1 栈参）
+- `mov eax, [esp+4]; inc word ptr [ecx+eax*2+0xAC]; ret 4`——**索引数组 word 计数器 +1**（**+0xAC 族**——批 2924 观察项兑现，b/c 的 [+0x7C] 配对第二对）
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**
+- 判类：计数器递增 II（[+0xAC + idx×2] word 递增——+0x7C/+0xAC 双计数器族） (partial)
+
+## b 路：0x487180 计数器递减 II（0xC=12B）
+
+- 范围 0x487180-0x48718C（ret 4 @0x48718C，1 栈参）
+- `mov eax, [esp+4]; dec word ptr [ecx+eax*2+0xAC]; ret 4`——**索引数组 word 计数器 -1**（a 路孪生）
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**
+- 判类：计数器递减 II（[+0xAC + idx×2] word 递减——a 路配对孪生，批 2924 第二对） (partial)
+
+## c 路：0x487E80 scalar deleting 析构器（0x1B=27B）
+
+- 范围 0x487E80-0x487E9B（ret 4 @0x487E9B，1 栈参）
+- **标准 scalar deleting 析构器模板**（同批 2911 a/2917 b,c/2918 a）：
+  - `mov esi, ecx`（this）→ `call 0x47BB60`（**析构主体** 0x47 段）
+  - `test byte ptr [esp+8], 1`（deleting 标志）→ 零跳过；一 → `push esi; call 0x7c8b3d; add esp,4`（delete this）
+  - `mov eax, esi; ret 4`
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x47bb60 + 0x7c8b3d 均已登记）
+- 判类：scalar deleting 析构器（析构主体 0x47BB60 + deleting 标志门 + operator delete 0x7c8b3d）——0x47BB60 对象族析构 (partial)
+
+## 核验结果
+
+- _check_callees2925.py：a 路 0/0、b 路 0/0、c 路 2/2（去重 2）——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x47bb60（析构主体）、0x7c8b3d（operator delete）
+- **★双计数器族闭合**：批 2924（[+0x7C] inc/dec）+ 本批（[+0xAC] inc/dec）——四个 12B 逐字节配对孪生，[+0x7C]/[+0xAC] 两套独立索引计数器
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x487190**（c 路 dump 尾部：0x84 缓冲大函数——[0xB0F4EC] 全局 + [+0xE4] 链表遍历——0x487E80 族邻接大宿主）——后续候选（0x48xxxx 区）
+- **0x487EA0**（dump 尾部：0x89F688 方向表计算——FacingClass 邻域）——后续候选
+- **0x47EC40**（GetAircraft 孪生，类型 0xF——批 2923 观察项）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
