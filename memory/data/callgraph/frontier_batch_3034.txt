@@ -1,0 +1,54 @@
+# frontier batch 3034
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4DA4E0（67B callees=2）+ 0x4DA530（2520B callees=17）+ 0x4DB0A0（48B callees=1）
+三路：a=0x4DA4E0（0x40=64B **E_POINTER 双路** callees=2 deps=2）/ b=0x4DA530（0x9D7=2519B **巨型随机状态机** callees=17 deps=17）/ c=0x4DB0A0（0x29=41B **E_POINTER 值返回** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3034{a,b,c}.txt（a 0x60、b 0x9E0、c 0x50），完整读取确认（a ret 8 @0x4DA520、b ret @0x4DAF07 单出口、c ret @0x4DB0C8/0x4DB0CF）
+核验：.qwen/tmp/_check_callees3034.py 三路全 PASS（a 去重 2、b 31 调用去重 17、c 去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7563 → 7566（待 _append_tsv_batch3034.py）
+
+## a 路：0x4DA4E0 E_POINTER 双路（0x40=64B，callees=2）
+
+- 范围 0x4DA4E0-0x4DA520（ret 8 @0x4DA520；后 nop 对齐 0x4DA530）
+- **E_POINTER 双路转发**（stdcall ret 8）：
+  - `mov eax, [esi+0x674]; test; je`（**[+0x674] 检查**）→ `push 0x80004003; call 0x7dc720`（**E_POINTER 抛掷器**）→ `mov eax, [esi+0x674]; push edi; push eax; call [ecx+0x34]`（**虚表槽 0x34**——成功路径）
+  - 失败/空：`mov edx, [esp+0x10]; push edx; push edi; mov ecx, esi; call 0x703860`（**0x703860 备用路径**——双参）→ ret 8
+- 直接 call 2 个/去重 2（0x7DC720 + 0x703860）——picker callees=2 **完全吻合**（虚表槽 0x34 间接）
+- 判类：E_POINTER 双路（[+0x674] + 0x7DC720 + 虚表槽 0x34 + 0x703860 备用） (partial)
+
+## b 路：0x4DA530 巨型随机状态机（0x9D7=2519B，callees=17）
+
+- 范围 0x4DA530-0x4DAF07（ret @0x4DAF07 单出口；后 nop 对齐 0x4DAF09）
+- **巨型随机状态机**（17 callees——全库级大函数，单出口）：
+  - **R250 RNG 族**：`call 0x65c780`（**Randomizer::Random——R250 取数**！QWEN.md 记载 0x65C780 滞后 103/250——本批首次在该对象族见到）+ `call 0x6f9e50`（**段外辅助**——入口）
+  - **判定族**：0x405D40 + 0x406060 + 0x487CB0 + 0x4F9A50 + 0x50B6F0 + 0x5657A0（坐标转换）+ 0x567DA0
+  - **75 段**：0x7509E0 + 0x750D40（**75 段对象族**）+ 0x746D80 + 0x70D7E0 + 0x578540 + 0x6E53A0
+  - **CRT**：0x7C5F00（**_ftol**）+ 0x7DC720（**HRESULT 抛掷器**）
+- 直接 call 31 次/去重 17——picker callees=17 **完全吻合**
+- 判类：巨型随机状态机（Randomizer::Random 0x65C780 + 0x6F9E50 + 判定族 + 75 段对象族 + _ftol + HRESULT——单出口大状态机） (partial)
+
+## c 路：0x4DB0A0 E_POINTER 值返回（0x29=41B，callees=1）
+
+- 范围 0x4DB0A0-0x4DB0C9（ret @0x4DB0C8 值路径/0x4DB0CF 空路径；后 nop 对齐 0x4DB0D0）
+- **E_POINTER 值返回**：
+  - `mov eax, [esi+0x674]; test; je`（**[+0x674] 检查**）→ `push 0x80004003; call 0x7dc720`（**E_POINTER 抛掷器**）→ `mov esi, [esi+0x674]; push esi; call [eax+0x3c]`（**虚表槽 0x3c**——取数）→ ret
+  - 空：`mov eax, 2`（**返回 2**）→ ret
+- 直接 call 1 个/去重 1（0x7DC720）——picker callees=1 **完全吻合**（虚表槽 0x3c 间接）
+- 判类：E_POINTER 值返回（[+0x674] + 0x7DC720 + 虚表槽 0x3c + 空返回 2） (partial)
+
+## 核验结果
+
+- _check_callees3034.py：a 路 2、b 路 31 调用去重 17、c 路 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7DC720 + 0x703860 + 0x405D40 + 0x406060 + 0x487CB0 + 0x4F9A50 + 0x50B6F0 + 0x5657A0 + 0x567DA0 + 0x578540 + 0x65C780 + 0x6E53A0 + 0x6F9E50 + 0x70D7E0 + 0x746D80 + 0x7509E0 + 0x750D40 + 0x7C5F00——**均已在 TSV 登记**
+- **★Randomizer::Random 0x65C780 在本对象族首次出现**：b 路巨型函数调用 R250 取数（QWEN.md：0x65C780 滞后 103/250）——随机地图域到 0x4D 段的交叉
+- **★0x703860 首见**：a 路备用路径
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4DB0D0（205B callees=2）/ 0x4DB250（3B callees=0）/ 0x4DB3C0（708B callees=7）**：picker 显示——后续候选（c 路 dump 尾邻 0x4DB0D0 已见 = E_POINTER + 虚表槽族）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
