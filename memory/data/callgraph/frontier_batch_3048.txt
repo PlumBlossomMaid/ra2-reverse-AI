@@ -1,0 +1,54 @@
+# frontier batch 3048
+
+日期：2026-11-04
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4E0D80（84B callees=1）+ 0x4E0DE0（59B callees=1）+ 0x4E0E20（84B callees=1）
+三路：a=0x4E0D80（0x52=82B **析构器+数组成员释放** callees=1 deps=1）/ b=0x4E0DE0（0x39=57B **vector deleting destructor** callees=1 deps=1）/ c=0x4E0E20（0x52=82B **析构器+数组成员释放（实例二）** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3048{a,b,c}.txt（a 0x60、b 0x40、c 0x60），完整读取确认（a ret 4 @0x4E0DD1、b ret 4 @0x4E0E04/0x4E0E18、c ret 4 @0x4E0E71）
+核验：.qwen/tmp/_check_callees3048.py 三路全 PASS（a 2 调用去重 1、b 2 调用去重 1、c 2 调用去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7605 → 7608（待 _append_tsv_batch3048.py）
+
+## a 路：0x4E0D80 析构器+数组成员释放（0x52=82B，callees=1）
+
+- 范围 0x4E0D80-0x4E0DD1（ret 4 @0x4E0DD1；后 nop 对齐 0x4E0DD4）
+- **析构器+数组成员释放**（stdcall ret 4，[esp+8]&1 门控 delete this；this=esi）——**3046c 数组持有模板 + scalar deleting 组合**：
+  - `mov eax, [esi+4]; mov [esi], 0x7e9264`（**写虚表 0x7E9264**）→ `test eax, eax; je 0x4e0db2`（[+0x4] 检查）
+  - `mov cl, [esi+0xd]; test cl, cl; je 0x4e0db2`（**[+0xD] 持有标志门控**）→ `test eax, eax; je 0x4e0dab` → `mov ecx, [eax-4]; add eax, -4; dec ecx; push eax; call 0x7c8b3d`（**数组释放**——[eax-4] 引用计数 + 基址-4 delete）→ `mov [esi+4], 0`
+  - `mov al, [esp+8]; mov [esi+0xd], 0; test al, 1; mov [esi+8], 0; je 0x4e0dce`（**[esp+8]&1 标志门控**）→ `push esi; call 0x7c8b3d`（**delete this**）→ ret 4
+- 直接 call 2 次/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：析构器+数组成员释放（虚表 0x7E9264 + [+0xD] 门控数组 delete [eax-4] + [esp+8]&1 门控 delete this——3046c 数组持有 + scalar deleting 组合） (partial)
+
+## b 路：0x4E0DE0 vector deleting destructor（0x39=57B，callees=1）
+
+- 范围 0x4E0DE0-0x4E0E18（ret 4 @0x4E0E04 数组路径/0x4E0E18 单对象路径；后 nop 对齐 0x4E0E1B）
+- **vector deleting destructor**（stdcall ret 4——MSVC 标准模板，[esp+8] 标志位 2/1 双路径；this=esi）：
+  - `mov cl, [esp+8]; test cl, 2; je 0x4e0e07`（**[esp+8]&2 数组标志**）
+  - &2 != 0：`mov eax, [esi-4]; add esi, -4; dec eax; test cl, 1; je 0x4e0e15`（**数组路径**——[esi-4] 引用计数 + 基址-4）→ `push esi; call 0x7c8b3d`（delete 数组基址）→ ret 4
+  - &2 == 0：`test cl, 1; je 0x4e0e15`（**[esp+8]&1 单对象标志**）→ `push esi; call 0x7c8b3d`（**delete this**）→ ret 4
+  - 0x4e0e15：`mov eax, esi; ret 4`（**返回 this**——无删除）
+- 直接 call 2 次/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：vector deleting destructor（[esp+8]&2 数组路径 [esi-4] 计数基址-4 / &1 单对象 delete this / 无标志返回 this——MSVC 标准 vector deleting destructor 模板） (partial)
+
+## c 路：0x4E0E20 析构器+数组成员释放（实例二）（0x52=82B，callees=1）
+
+- 范围 0x4E0E20-0x4E0E71（ret 4 @0x4E0E71；后 nop 对齐 0x4E0E74）
+- **析构器+数组成员释放（实例二）**——**与 a 路 0x4E0D80 完全一致**（写虚表 0x7E9264 + [+0xD] 门控数组 delete [eax-4] + [esp+8]&1 门控 delete this）
+- 直接 call 2 次/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：析构器+数组成员释放（实例二——与 a 路同模板，虚表 0x7E9264） (partial)
+
+## 核验结果
+
+- _check_callees3048.py：a 路 2 调用去重 1、b 路 2 调用去重 1、c 路 2 调用去重 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用（批内地址 0x4E0D80/0x4E0DE0/0x4E0E20 互不为被调）；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D——**均已在 TSV 登记**
+- **★vector deleting destructor 首现**：b 路 [esp+8]&2 数组路径 + &1 单对象路径——MSVC 标准模板（此前 3045c/3046a/3047b/c 见 [esp+8]&1 单对象版，本路补 &2 数组版）
+- **★析构器模板族虚表再分叉**：已见 0x7E920C（3045c/3046a）+ 0x7E8C48（3047b/c）+ **0x7E9264（3048a/c）**——三虚表三同类
+- **★数组 delete 语义贯穿**：3046c/3047a/3048a/c 四路 [eax-4] 引用计数 + 基址-4 delete（`operator new[]` 分配）
+- **batch 3048 无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4E14C0 GadgetClass::DeleteList（74B callees=0，带名）/ 0x4E1570 GadgetClass::DrawAll（44B callees=0，带名）/ 0x4E15A0 GadgetClass::ExtractGadgetAt（148B callees=0，带名）**：picker 显示 0x4E 段 GadgetClass 族——**下一批候选（三个带名——可判 semantics_verified）**
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
