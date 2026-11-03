@@ -1,0 +1,52 @@
+# frontier batch 2986
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4A7E70（39B callees=1）+ 0x4A8030（73B callees=1）+ 0x4A8080（73B callees=1）
+三路：a=0x4A7E70（0x26=38B **析构器** callees=1 deps=1）/ b=0x4A8030（0x46=70B **scalar deleting 析构器** callees=1 deps=1）/ c=0x4A8080（0x46=70B **scalar deleting 析构器（同模板双实例）** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2986{a,b,c}.txt（a 0x60、b/c 0x100），完整读取确认（a ret @0x4A7E96、b ret 4 @0x4A8076、c ret 4 @0x4A80C6）
+核验：.qwen/tmp/_check_callees2986.py 三路全 PASS（a 去重 1、b 去重 1、c 去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7419 → 7422（待 _append_tsv_batch2986.py）
+
+## a 路：0x4A7E70 析构器（0x26=38B，callees=1）
+
+- 范围 0x4A7E70-0x4A7E96（ret @0x4A7E96；后 nop 对齐 0x4A7EA0 新函数）
+- **持有标志门控 delete**（与 2985 c 路 0x4A7D20 同模板）：
+  - `mov eax, [esi+4]; test; je 0x4a7e8e` → `cmp byte ptr [esi+0xd], bl; je`（**+0xd 持有标志门控**）→ `call 0x7c8b3d`（**[+4] 字段 delete**）→ 清零 [+4]
+  - 收尾：`mov byte ptr [esi+0xd], 0` + `mov [esi+8], 0`（清零持有标志与 [+8] 计数）→ ret
+- 直接 call 1 个/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：析构器（[+0xd] 持有标志门控 delete [+4] + [+8] 清零） (partial)
+
+## b 路：0x4A8030 scalar deleting 析构器（0x46=70B，callees=1）
+
+- 范围 0x4A8030-0x4A8076（ret 4 @0x4A8076；后 nop 对齐 0x4A8080 新函数）
+- **scalar deleting 析构器模板**（虚表复位 + 成员释放 + deleting 门）：
+  - `mov [esi], 0x7e5efc`（**虚表指针复位 0x7E5EFC**——首见）→ `mov eax, [esi+4]; test; je` → `cmp byte ptr [esi+0xd], cl; je`（+0xd 持有标志门控）→ `call 0x7c8b3d`（**[+4] 字段 delete**）
+  - `test al, 1`（**deleting 标志**，从 [esp+8]）→ `je` → `push esi; call 0x7c8b3d`（**delete this**）→ `mov eax, esi` → ret 4
+- 直接 call 2 次/去重 1（0x7C8B3D ×2）——picker callees=1 **完全吻合**（两处 delete 同函数）
+- 判类：scalar deleting 析构器（虚表 0x7E5EFC 复位 + [+0xd] 门控 delete [+4] + deleting 门 → delete this） (partial)
+
+## c 路：0x4A8080 scalar deleting 析构器（同模板双实例，0x46=70B，callees=1）
+
+- 范围 0x4A8080-0x4A80C6（ret 4 @0x4A80C6；后 nop 对齐 0x4A80D0 小函数）
+- **与 b 路逐字节同模板**（仅地址差 0x50）：
+  - `mov [esi], 0x7e5efc`（虚表复位）→ `[+4]` 持有标志门控 delete → `test al, 1`（deleting 门）→ delete this → ret 4
+- 直接 call 2 次/去重 1（0x7C8B3D ×2）——picker callees=1 **完全吻合**
+- 判类：scalar deleting 析构器（同模板双实例，虚表 0x7E5EFC） (partial)
+
+## 核验结果
+
+- _check_callees2986.py：a 路 1、b 路 2 调用去重 1、c 路 2 调用去重 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（a 标准析构器；b/c scalar deleting 双实例同模板）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D——**已在 TSV 登记**（delete this / operator delete 转发）
+- **★虚表 0x7E5EFC 首见**：b/c 路 `mov [esi], 0x7e5efc`——scalar deleting 析构器的新虚表地址
+- **★同模板双实例确认**：b（0x4A8030）与 c（0x4A8080）字节完全一致——同一析构器模板的两个实例，相差 0x50
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4A80D6（400B callees=7）**：picker 显示——b/c 路之后的 0x4A80D6 是 400 字节大函数（callees=7），含 0x6C8C40 双调用 + IAT 间接 [0x7E14B0]/[0x7E121C]——后续候选
+- a 路尾邻函数 0x4A7EA0（`[+0xc]` 标志查询 + [+8] 计数扫描）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
