@@ -1,0 +1,52 @@
+# frontier batch 2944
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x496E60（260 扇入）+ 0x496FB0（267 扇入）+ 0x497100（232 扇入）
+三路：a=0x496E60（0x101=257B **双游标解包器变体 XIV + 50/50 混合 + 第三游标索引** callees=0 deps=0）/ b=0x496FB0（0x108=264B **变体 XV + 3/4 混合 + 第三游标索引** callees=0 deps=0）/ c=0x497100（0xE5=229B **变体 XVI 查表回写** callees=0 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2944{a,b,c}.txt（各 0x200），完整读取确认（a ret 0x28 @0x496F61、b ret 0x28 @0x4970B8、c ret 0x28 @0x4971E5）
+核验：.qwen/tmp/_check_callees2944.py 三路全 PASS（a 0/0、b 0/0、c 0/0），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7293 → 7296（待 _append_tsv_batch2944.py）
+
+## a 路：0x496E60 双游标解包器变体 XIV + 50/50 混合 + 第三游标索引（0x101=257B，260 扇入）
+
+- 范围 0x496E60-0x496F61（ret 0x28 @0x496F61，10 栈参）
+- **同构 2943 a 骨架**（0 转义 + [0x887644] 回绕 + 三级解引用 [param+4]表/[param+8]掩码），命中分支：
+  - `mov cx,[ecx+edi*2]`（表 [src*2]）→ `mov di,[edx+edi*2]`（**[esp+0x38] 第三游标作索引读旧值** `[edx+idx*2]`）
+  - `shr cx,1; shr di,1; and ecx,eax; and edi,eax; add ecx,edi`（**50/50 混合**）→ `mov [edx],cx` 回写
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**
+- 判类：双游标解包器变体 XIV（[0x887644] + 0 转义 + 三级解引用 + 50/50 混合 + 第三游标索引读旧值） (partial)
+
+## b 路：0x496FB0 双游标解包器变体 XV + 3/4 混合 + 第三游标索引（0x108=264B，267 扇入）
+
+- 范围 0x496FB0-0x4970B8（ret 0x28 @0x4970B8，10 栈参）
+- **同构 2943 c 骨架**（3/4 混合 + 第三游标索引读旧值 `mov ax,[edx+eax*2-2]`）：
+  - `mov di,[eax+8]`（[param+8] 掩码）+ `mov eax,[eax+4]`（[param+4] 表）→ `mov ax,[eax+ecx*2]`（表 [src*2]）
+  - `shr ax,2; and eax,edi; lea ecx,[eax+eax*2]`（表值×3）→ `mov ax,[edx+idx*2-2]; shr ax,2; and eax,edi; add ecx,eax`（+旧值/4 = 3/4）→ `mov [edx-2],cx` 写回
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**
+- 判类：双游标解包器变体 XV（[0x887644] + 0 转义 + 3/4 混合 + 第三游标索引） (partial)
+
+## c 路：0x497100 双游标解包器变体 XVI 查表回写（0xE5=229B，232 扇入）
+
+- 范围 0x497100-0x4971E5（ret 0x28 @0x4971E5，10 栈参）
+- **游标分配再变**——src 游标在 ecx（[esp+0x1c]），0 转义：`mov bl,[ecx]; inc ecx; test bl; jne` → `sub edx,ebx`：
+  - 0 转义推进：`add edi,edx; lea ebx,[edx+edx]; add esi,ebx; add eax,ebx`（三游标推进，src 在 ecx）
+  - 命中分支：`movsx edx,[edi]`（第三游标读字节）→ `mov dx,[eax]`（word 回看）→ 比较 → `mov dx,[ebx+edx*2]`（**[esp+0x10]→[param+4] 表查表**）→ `mov [esi-2],dx` 回写 out → `movsx dx,[edi]; sub ebx,edx; mov [eax],bx`（回写 in）
+  - 边界回绕 `cmp eax,[edx+0x1C]; jb; sub eax,[edx+0x20]`（[0x887644]）
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**
+- 判类：双游标解包器变体 XVI（[0x887644] + 0 转义 + 查表回写 + 原位 in 回写——2942 c 骨架的近亲） (partial)
+
+## 核验结果
+
+- _check_callees2944.py：a 路 0/0、b 路 0/0、c 路 0/0——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（0 出度纯逻辑一致）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：无（三路零调用）
+- **★双游标解包器族十六变体齐套**：2937 c + 2938 a/b/c + 2939 a/b + 2942 a/b/c + 2943 a/b/c + 本批 a/b/c——[0x887644] Session 缓冲模板十六实例，0 出度纯逻辑
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x497230**（c 路 dump 尾部：同构——`mov eax,[ecx+4]; mov ecx,[eax]` 两级解引用 + [0x887644]）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
