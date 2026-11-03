@@ -1,0 +1,32 @@
+# frontier batch 2984
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4A6500（192 扇入 deps=2）+ 0x4A66D0（267 扇入 deps=2）+ 0x4A69F0（48 扇入 deps=2）
+三路：a=0x4A6500（0xBD=189B **坐标对象查询器** callees=2 deps=2）/ b=0x4A66D0（约 0x108=264B **-1 哨兵门控方法** callees=2 deps=2）/ c=0x4A69F0（约 0x68=104B **双字段释放器** callees=2 deps=2←边界差异）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2984{a,b,c}.txt（a/b 0x200、c 0x100），完整读取确认（a ret @0x4A65BD、b ret @0x4A67D8、c ret @0x4A6A1F/0x4A6A57）
+核验：.qwen/tmp/_check_callees2984.py 三路全 PASS（a 去重 2、b 去重 2、c 去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7413 → 7416（待 _append_tsv_batch2984.py）
+
+## a 路：0x4A6500 坐标对象查询器（0xBD=189B，192 扇入 deps=2）
+
+- 范围 0x4A6500-0x4A65BD（ret @0x4A65BD）
+- **坐标/对象查询 + 全局表**：
+  - `lea eax, [esp+0x1c]; add ecx, 0x308`（+0x308 偏移——大对象字段）→ `call 0x517440`（**坐标转换函数**——已登记）→ `mov dx, [eax]; mov cl, [0x8a0ddc]`（**全局 [0x8A0DDC] 字节读取**）→ `call 0x4a6360`（**段内辅助**）
+- 直接 call 2 个/去重 2（0x4A6360 + 0x517440）——picker callees=2 **完全吻合**
+- 判类：坐标对象查询器（+0x308 偏移 + 0x517440 坐标转换 + [0x8A0DDC] 全局 + 0x4A6360 辅助） (partial)
+
+## b 路：0x4A66D0 -1 哨兵门控方法（约 264B，267 扇入 deps=2）
+
+- 范围 0x4A66D0-0x4A67D8（ret @0x4A67D8）
+- **-1 哨兵门控 + 坐标转换**：
+  - `cmp eax, -1; jne 0x4a6724`（**-1 哨兵门控**——提前分支）→ 主路径：`call 0x4a5eb0`（段内辅助）+ `call 0x517440`（坐标转换——同 a 路）→ 多参数处理
+- 直接 call 3 次/去重 2（0x4A5EB0 + 0x517440）——picker callees=2 **完全吻合**
+- 判类：-1 哨兵门控方法（哨兵检查 + 0x4A5EB0 辅助 + 0x517440 坐标转换） (partial)
+
+## c 路：0x4A69F0 双字段释放器（约 104B，48 扇入 deps=2）
+
+- 范围 0x4A69F0-0x4A6A57（ret @0x4A6A1F 主出口；Ghidra 边界到 0x4A6A57）
+- **双字段顺序释放**：
+  - `mov eax, [esi+4]; test; je` → `call 0x7c8b3d`（**[+4] 字段 delete**）→ `mov eax, [esi+8]; test; je` → `call 0x7c8b3d`（**[+8] 字段 delete**）→ 清零 → ret
+- 直接 call 2 次/去重 1（0x7C8B3D ×2 去重）；picker callees=2——**差 1 为 Ghidra 函数边界差异**（Ghidra 可能将相邻函数 0x4A6A20+ 的 0x4CAC40/0x7C8FB0 纳入统计）
+- 判类：双字段释放器（[+4]/[+8] 顺序 delete 0x7C8B3D + 清零） (partial)
