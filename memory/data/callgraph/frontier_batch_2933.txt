@@ -1,0 +1,60 @@
+# frontier batch 2933
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x48BB00（27B）+ 0x48BB40（26B）+ 0x48BB60（192 扇入大函数）
+三路：a=0x48BB00（0x1B=27B **scalar deleting 析构器** callees=2 deps=0）/ b=0x48BB40（0x1A=26B **标志位检查+虚回调** callees=0 deps=0）/ c=0x48BB60（0xBF=191B **全局有序表二分查找** callees=1 deps=0）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2933{a,b,c}.txt（a/b 0x80、c 0x120），完整读取确认（a ret 4 @0x48BB1B、b ret c3 @0x48BB59、c ret c3 @0x48BC00/0x48BC1F）
+核验：.qwen/tmp/_check_callees2933.py 三路全 PASS（a 2/2 去重2、b 0/0、c 1/1 去重1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7276 → 7279（待 _append_tsv_batch2933.py）
+
+## a 路：0x48BB00 scalar deleting 析构器（0x1B=27B）
+
+- 范围 0x48BB00-0x48BB1B（ret 4 @0x48BB1B）
+- **标准 scalar deleting 析构器模板**（批 2925 c 观察项兑现——析构主体 0x48B1F0）：
+  - `mov esi, ecx; call 0x48B1F0`（**析构主体** 0x48 段）→ `test byte ptr [esp+8], 1`（deleting 门）→ `push esi; call 0x7c8b3d`（delete this）→ ret 4
+- 直接 call 2 个/去重 2——picker callees=2 **完全吻合**（0x48b1f0 + 0x7c8b3d 均已登记）
+- 判类：scalar deleting 析构器（析构主体 0x48B1F0 + deleting 标志门 + operator delete 0x7c8b3d）——0x48B1F0 对象族析构 (partial)
+
+## b 路：0x48BB40 标志位检查+虚回调（0x1A=26B）
+
+- 范围 0x48BB40-0x48BB59（ret c3 @0x48BB59，2 栈参/寄存器参）
+- **参数标志位检查 + 虚表槽回调**：
+  - `and dh, 0xf7; mov eax, edx; and ah, 0xe8; cmp edx, eax; je 0x48BB58`（**dh 的 bit3 + ah 的 bit3/5/6 掩码比较**——参数标志位合并检查）
+  - 有差异（标志变化）：`mov eax, [ecx]; push edx; call dword ptr [eax+0x14]`（**虚表槽 0x14 回调**，参数 edx）→ `neg al; sbb eax, eax; inc eax`（**boolean 规范化**：al!=0 → 1）→ ret
+  - 无差异：`mov al, 1; ret`（直接返 1）
+- 直接 call 0 个/去重 0——picker callees=0 **完全吻合**（纯虚表槽 0x14 间接）
+- 判类：标志位检查+虚回调（dh/ah 双字节掩码 [0xF7/0xE8] 比较 + 虚表槽 0x14 回调 + boolean 规范化）——与批 2932 b 均值跟踪器同区标志族 (partial)
+
+## c 路：0x48BB60 全局有序表二分查找（0xBF=191B，192 扇入）
+
+- 范围 0x48BB60-0x48BC1F（ret c3 @0x48BC00/0x48BC1F，1 栈参）
+- **全局有序表二分查找 + 惰性排序 + 缓存**（192 扇入）：
+  - `mov esi, [0x87F684]; test esi; je 0x48BBEF`（**元素数 [0x87F684]**）→ `mov ecx, [0x87F690]; test; je` → `cmp [ecx], ebx; je 0x48BC0B`（**缓存 [0x87F690] 命中**）
+  - `mov al, [0x87F68C]; test; jne 0x48BBC0`（**已排序标志 [0x87F68C]**）
+  - 未排序：`mov eax, [0x87F680]; push 0x48BC20; push 8; push esi; push eax; call 0x7C8B48`（**排序注册**——base=表/nelem=元素数/size=8B/compar=0x48BC20 比较器）→ `mov [0x87F690], 0; mov byte ptr [0x87F68C], 1`（复位缓存 + 置已排序）
+  - 二分查找：`mov edi, [0x87F680]; test esi; jle 0x48BBEF` → `mov eax, esi; cdq; sub eax, edx; sar eax, 1`（**÷2 二分中点**）→ `cmp [edi+eax*8], ebx; jle`（**8B/项 比较**）→ 循环收敛
+  - 未找到：`mov eax, 0xB7883C; mov ecx, [eax]; test; jne 0x48BC10`（**[0xB7883C] 列表头**）→ 空 → `mov al, 1; ret`
+  - 找到：`mov [0x87F690], ecx; lea eax, [ecx+4]; jmp`（**缓存写回**）
+  - 0x48BC10：`mov edx, [ecx]; push ebp; call dword ptr [edx+0x14]`（**虚表槽 0x14 回调**）→ boolean 规范化 → ret
+  - 0x48BC20 比较器：`cmp eax, ecx; jne` → `xor eax, eax; ret`（相等返 0）/ `setge dl; dec edx; and edx, 0xfffffffe; inc edx`（**三态比较返回 -1/0/1**）
+- 直接 call 1 个/去重 1——picker callees=1 **完全吻合**（0x7c8b48 排序注册）+ 1 虚表槽 0x14 间接
+- 判类：全局有序表二分查找（[0x87F680] 表基址 + [0x87F684] 元素数 + [0x87F690] 缓存 + [0x87F68C] 排序标志 + 8B/项二分 + 惰性排序 + [0xB7883C] 列表回退 + 虚表槽 0x14 回调）+ 0x7C8B48 排序注册 + 0x48BC20 三态比较器——**0x87F680 区全局有序容器** (partial)
+
+## 核验结果
+
+- _check_callees2933.py：a 路 2/2（去重 2）、b 路 0/0、c 路 1/1（去重 1）——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（b/c 虚表槽间接脚本抓不到——预期内）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x48b1f0（析构主体）、0x7c8b3d（delete）、0x7c8b48（排序注册）
+- **★0x87F680 区全局有序容器**：表基址 [0x87F680]/元素数 [0x87F684]/排序标志 [0x87F68C]/缓存 [0x87F690]——惰性排序 + 二分 + 缓存 + [0xB7883C] 列表回退，8B/项（key/value 对），192 扇入高复用容器
+- **★0x48BC20 三态比较器**：`setge dl; dec edx; and edx, ~2; inc edx`——返回 -1/0/1 的 qsort 比较惯用法
+- **★b/c 同族**：dh/ah 掩码标志检查（b 26B）+ 虚表槽 0x14 回调 boolean 规范化——同一模式两种入口（直接调用 vs 查表命中）
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x48BC20**（c 路比较器：三态 -1/0/1——0x7C8B48 排序用）/ **0x48BC50**（c 路 dump 尾部：清 [0x89E8A0..0x89E8AC] 四全局——初始化器）/ **0x48BC70**（c 路 dump 尾部：浮点常量 [0x7E1710]/[0x7E1708]——0x488F90 同款浮点初始化）——后续候选
+- **0x48B1F0**（a 路析构主体）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
