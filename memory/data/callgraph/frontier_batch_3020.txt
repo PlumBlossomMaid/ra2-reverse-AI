@@ -1,0 +1,52 @@
+# frontier batch 3020
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4CAB50（73B callees=1）+ 0x4CABA0（73B callees=1）+ 0x4CB4C0（189B callees=6）
+三路：a=0x4CAB50（0x46=70B **scalar deleting 析构器** callees=1 deps=1）/ b=0x4CABA0（0x46=70B **scalar deleting 析构器** callees=1 deps=1）/ c=0x4CB4C0（0xBC=188B **IAT 初始化大函数** callees=6 deps=6←含 5 IAT 间接）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3020{a,b,c}.txt（a/b 0x60、c 0xD0），完整读取确认（a ret 4 @0x4CAB96、b ret 4 @0x4CABE6、c ret @0x4CB538/0x4CB57C）
+核验：.qwen/tmp/_check_callees3020.py 三路全 PASS（a 去重 1、b 去重 1、c 去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7521 → 7524（待 _append_tsv_batch3020.py）
+
+## a 路：0x4CAB50 scalar deleting 析构器（0x46=70B，callees=1）
+
+- 范围 0x4CAB50-0x4CAB96（ret 4 @0x4CAB96；后 nop 对齐 0x4CABA0 新函数）
+- **scalar deleting 析构器模板**（虚表复位 + 成员释放 + deleting 门）：
+  - `mov [esi], 0x7e8954`（**虚表指针复位 0x7E8954**——新虚表）→ `[+4]` 持有标志门控 delete → `[+0xd]`/`[+8]` 清零 → deleting 门 → delete this → ret 4
+- 直接 call 2 次/去重 1（0x7C8B3D ×2）——picker callees=1 **完全吻合**
+- 判类：scalar deleting 析构器（虚表 0x7E8954 复位 + [+0xd] 门控 delete [+4] + deleting 门） (partial)
+
+## b 路：0x4CABA0 scalar deleting 析构器（0x46=70B，callees=1）
+
+- 范围 0x4CABA0-0x4CABE6（ret 4 @0x4CABE6；后 nop 对齐 0x4CABF0 新函数）
+- **与 a 路逐字节同模板**（scalar deleting 析构器）：
+  - `mov [esi], 0x7e8954`（**虚表指针复位 0x7E8954**）→ `[+4]` 门控 delete → deleting 门 → delete this → ret 4
+- 直接 call 2 次/去重 1（0x7C8B3D ×2）——picker callees=1 **完全吻合**
+- 判类：scalar deleting 析构器（虚表 0x7E8954——与 a 路双实例） (partial)
+
+## c 路：0x4CB4C0 IAT 初始化大函数（0xBC=188B，callees=6←含 5 IAT 间接）
+
+- 范围 0x4CB4C0-0x4CB57C（ret @0x4CB538 错误出口/0x4CB57C 正常出口；后 nop 对齐 0x4CB57D）
+- **IAT 多槽初始化/退避**（callees=6 = 1 字面量 + 5 IAT）：
+  - `lea edi, [esp+0x14]; push 0x1c; rep stosd`（**0x1C dword 清零**）→ `mov ebp, 0x4cacb0; lea eax, [esp+0x18]; push eax; push 0x4cacb0; call dword ptr [0x7e1134]`（**IAT 槽 [0x7E1134]——回调注册（0x4CACB0 回调）**）
+  - `mov ebx, [0x7e10d0]`（**IAT 槽 [0x7E10D0]**）→ `call ebx`（IAT 间接——两次调用：8 参 + 0x10 参）→ 失败走错误分支
+  - 错误分支：`call dword ptr [0x7e1200]`（**IAT 槽 [0x7E1200]**）→ `push 0x8223b8; call 0x4068e0`（**错误类型名 [0x8223B8]**）
+  - 收尾：`push 0; push 0; call dword ptr [0x7e11a4]`（**IAT 槽 [0x7E11A4]**）→ `call dword ptr [0x7e119c]`（**IAT 槽 [0x7E119C]**）→ ret
+- 直接 call 字面量 2 次/去重 1（0x4068E0）；**picker callees=6 = 1 字面量 + 5 IAT 间接槽（0x7E1134/0x7E10D0/0x7E1200/0x7E11A4/0x7E119C）——预期差模式**
+- 判类：IAT 初始化大函数（0x7E1134 回调注册 + 0x7E10D0 双调用 + 0x7E1200/0x7E11A4/0x7E119C + 0x4CACB0 回调 + 0x4068E0 错误分支） (partial)
+
+## 核验结果
+
+- _check_callees3020.py：a 路 2 调用去重 1、b 路 2 调用去重 1、c 路 2 调用去重 1——三路全 PASS
+- picker callees vs 核验差值：a/b 差 0、c 差 5（预期差——5 个 IAT 间接槽 0x7E1134/0x7E10D0/0x7E1200/0x7E11A4/0x7E119C）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D + 0x4068E0——**均已在 TSV 登记**
+- **★虚表 0x7E8954 首见**：a/b 路 scalar deleting 析构器新虚表（0x7E89 族）
+- **★IAT 槽 [0x7E1134] 首见**：c 路回调注册槽（[0x7E10D0]/[0x7E1200]/[0x7E11A4]/[0x7E119C] 已见多批）
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4CC680（73B callees=1）/ 0x4CC9A0 FlyLocomotionClass::In_Which_Layer（128B callees=1，带名）/ 0x4CCA20（80B callees=1）**：picker 显示——后续候选（0x4CC9A0 带名 FlyLocomotionClass）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
