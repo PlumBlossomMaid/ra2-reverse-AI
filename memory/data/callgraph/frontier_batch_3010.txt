@@ -1,0 +1,53 @@
+# frontier batch 3010
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4C2F50（73B callees=1）+ 0x4C3190（262B callees=2）+ 0x4C3420（323B callees=8）
+三路：a=0x4C2F50（0x46=70B **scalar deleting 析构器** callees=1 deps=1）/ b=0x4C3190（0x103=259B **字符输入处理** callees=2 deps=2）/ c=0x4C3420（0x140=320B **字符输入过滤** callees=8 deps=8）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3010{a,b,c}.txt（a 0x60、b 0x110、c 0x150），完整读取确认（a ret 4 @0x4C2F96、b ret 0xc @0x4C319D/0x4C31F5/0x4C3293、c ret 4 @0x4C352E/0x4C353D/0x4C3560）
+核验：.qwen/tmp/_check_callees3010.py 三路全 PASS（a 去重 1、b 去重 2、c 去重 8），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7491 → 7494（待 _append_tsv_batch3010.py）
+
+## a 路：0x4C2F50 scalar deleting 析构器（0x46=70B，callees=1）
+
+- 范围 0x4C2F50-0x4C2F96（ret 4 @0x4C2F96；后 nop 对齐 0x4C2FA0 新函数）
+- **与 3009 c 路 0x4C2F00 逐字节同模板**（scalar deleting 析构器）：
+  - `mov [esi], 0x7e86ac`（**虚表指针复位 0x7E86AC**）→ `[+4]` 持有标志门控 delete → deleting 门 → delete this → ret 4
+- 直接 call 2 次/去重 1（0x7C8B3D ×2）——picker callees=1 **完全吻合**
+- 判类：scalar deleting 析构器（虚表 0x7E86AC 复位——3009c 同模板第二实例） (partial)
+
+## b 路：0x4C3190 字符输入处理（0x103=259B，callees=2）
+
+- 范围 0x4C3190-0x4C3293（ret 0xc @0x4C319D/0x4C31F5/0x4C3293；后 nop 对齐 0x4C32A0）
+- **输入处理大函数**（stdcall ret 0xc）：
+  - `mov eax, [esi+0x44]; test; je`（**[+0x44] 检查**——忙则直接返 0）→ `test bl, 1`（**标志位 1**）→ `call [eax+0x50]`（**虚表槽 0x50**）+ `call [edx+0x48]`（**虚表槽 0x48**）
+  - `test bh, 1`（标志位）→ `call [eax+0x58]`（**虚表槽 0x58**）→ `cmp [edi], 0x1b`（**ESC 0x1B 比较**）→ `call [edx+0x54]`（**虚表槽 0x54**）→ `call 0x48e5a0`（**段外辅助**）
+  - `mov ecx, [0x87f770]; call 0x54f450`（**全局 [0x87F770] + 0x54F450**——字符转换）→ `and eax, 0xff` → `and ecx, 0x1000`（**0x1000 位检查**）→ `cmp edx, 0x30; cmp edx, 0x39`（**数字 0x30-0x39 检查**）→ `call [eax+0x98]`（**虚表槽 0x98**）→ 回车/退格检查（0xd/0x8）→ `call 0x54f450`（再次转换）→ `call [ebp+0x98]`（虚表槽 0x98）→ `call 0x48e5a0`（收尾）
+- 直接 call 4 次/去重 2（0x48E5A0 + 0x54F450）——picker callees=2 **完全吻合**（虚表槽 0x50/0x48/0x58/0x54/0x98 间接）
+- 判类：字符输入处理（[+0x44] 检查 + 虚表槽 0x50/0x48/0x58/0x54/0x98 + 0x48E5A0 + 0x54F450 [0x87F770] + 数字/ESC/回车/退格分支） (partial)
+
+## c 路：0x4C3420 字符输入过滤（0x140=320B，callees=8）
+
+- 范围 0x4C3420-0x4C3560（ret 4 @0x4C352E/0x4C353D/0x4C3560；后 nop 对齐 0x4C3563）
+- **字符输入过滤+写入**（stdcall ret 4）：
+  - `mov ecx, [esi+0x2c]; call 0x4a60d0`（**段外辅助**——取 [+0x2c] 对象）→ `cmp edi, 8/0xd`（**退格/回车分支**——0xd 走虚表槽 0x54）→ `mov eax, [esi+0x34]; push 0; push eax; call 0x433ed0`（**CRT 字符函数**）→ `push edi; call 0x4349b0`（**CRT 字符函数**）→ `cmp ebp, [esi+0x14] 减 2`（**缓冲上限检查**）
+  - `cmp [esi+0x3c], [esi+0x38]; jae`（**游标边界**）→ `call 0x7c9a8d`（**CRT 字符分类**——isprint 类）→ **+0x30 标志位链**：`test byte ptr [esi+0x30], 8` → `call 0x7c990e` + `call 0x7c97d3`（**CRT 字符分类**）→ `test byte ptr [esi+0x30], 2` → `call 0x7c998c` → `test byte ptr [esi+0x30], 1` → `call 0x7c990e` → `test byte ptr [esi+0x30], 4` → `call 0x7c9a31`（**CRT 字符分类族**）
+  - 写入：`mov word ptr [ecx + eax*2], di`（**写字到 [+0x34] 缓冲**）→ `inc [esi+0x3c]`（游标递增）→ `mov word ptr [..], 0`（终止符）→ `call [eax+0x48]`（**虚表槽 0x48**）→ 退格分支写 0 清除
+- 直接 call 9 次/去重 8（0x4A60D0 + 0x433ED0 + 0x4349B0 + 0x7C9A8D + 0x7C990E + 0x7C97D3 + 0x7C998C + 0x7C9A31）——picker callees=8 **完全吻合**（虚表槽 0x48/0x54 间接）
+- 判类：字符输入过滤（0x4A60D0 + 0x433ED0/0x4349B0 + CRT 字符分类族 0x7C9A8D/0x7C990E/0x7C97D3/0x7C998C/0x7C9A31 + +0x30 标志位链 + 缓冲写入） (partial)
+
+## 核验结果
+
+- _check_callees3010.py：a 路 2 调用去重 1、b 路 4 调用去重 2、c 路 9 调用去重 8——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D + 0x48E5A0 + 0x54F450 + 0x4A60D0 + 0x433ED0 + 0x4349B0 + 0x7C9A8D + 0x7C990E + 0x7C97D3 + 0x7C998C + 0x7C9A31——**均已在 TSV 登记**
+- **★CRT 字符分类族首见**：c 路 5 个 0x7C9 段字符分类函数（0x7C9A8D/0x7C990E/0x7C97D3/0x7C998C/0x7C9A31）——输入过滤核心
+- **★0x54F450 首见**：b 路字符转换函数（[0x87F770] 全局参数）
+- **★虚表槽 0x98 首见**：b 路虚表槽 0x98（字符接受判定）
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4C3570（38B callees=2）/ 0x4C3A20（161B callees=2）/ 0x4C49A0（42B callees=1）**：picker 显示——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
