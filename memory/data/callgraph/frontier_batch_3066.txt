@@ -1,0 +1,50 @@
+# frontier batch 3066
+
+日期：2026-11-04
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4E9140（42B callees=1）+ 0x4E91A0（42B callees=1）+ 0x4E92F0（39B callees=1）
+三路：a=0x4E9140（0x2A=42B **成员持有指针释放器** callees=1 deps=1）/ b=0x4E91A0（0x2A=42B **成员持有指针释放器（实例二）** callees=1 deps=1）/ c=0x4E92F0（0x27=39B **成员持有指针释放器（无[+0x10]变体）** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3066{a,b,c}.txt（各 0x30），完整读取确认（a ret @0x4E9169、b ret @0x4E91C9、c ret @0x4E9316）
+核验：.qwen/tmp/_check_callees3066.py 三路全 PASS（各去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7659 → 7662（待 _append_tsv_batch3066.py）
+
+## a 路：0x4E9140 成员持有指针释放器（0x2A=42B，callees=1）
+
+- 范围 0x4E9140-0x4E9169（ret @0x4E9169；后 nop 对齐 0x4E916A）
+- **成员持有指针释放器**（this=esi，3053-3065 同模板——含 [+0x10] 清零）：
+  - `mov esi, ecx; xor ebx, ebx; mov eax, [esi+4]; mov [esi+0x10], ebx`（**清 [+0x10]**；读 [+0x4]）→ `cmp eax, ebx; je 0x4e9161`（[+0x4] 空跳过）
+  - `cmp byte ptr [esi+0xd], bl; je 0x4e9161`（**[+0xD] 持有标志门控**）→ `push eax; call 0x7c8b3d; mov [esi+4], ebx`（**delete [+0x4]**）
+  - `mov [esi+0xd], bl; mov [esi+8], ebx`（清 [+0xD]/[+0x8]）→ ret
+- 直接 call 1 个/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：成员持有指针释放器（清 [+0x10] + [+0x4] 检查 + [+0xD] 持有标志门控 delete 0x7C8B3D + 清 [+0xD]/[+0x8]——3005 批模板族） (partial)
+
+## b 路：0x4E91A0 成员持有指针释放器（实例二）（0x2A=42B，callees=1）
+
+- 范围 0x4E91A0-0x4E91C9（ret @0x4E91C9；后 nop 对齐 0x4E91CA）
+- **成员持有指针释放器（实例二）**——**与 a 路 0x4E9140 完全一致**（含 [+0x10] 清零 + [+0xD] 门控 delete [+0x4]）
+- 直接 call 1 个/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：成员持有指针释放器（实例二——与 a 路同模板） (partial)
+
+## c 路：0x4E92F0 成员持有指针释放器（无[+0x10]变体）（0x27=39B，callees=1）
+
+- 范围 0x4E92F0-0x4E9316（ret @0x4E9316；后 nop 对齐 0x4E9317）
+- **成员持有指针释放器（无[+0x10]变体）**——与 a/b 路同门控结构但**无 `mov [esi+0x10], ebx`**（39B=42-3，3045b 同变体）：
+  - `mov esi, ecx; xor ebx, ebx; mov eax, [esi+4]; cmp eax, ebx; je 0x4e930e`（读 [+0x4]；空跳过）
+  - `cmp byte ptr [esi+0xd], bl; je 0x4e930e`（**[+0xD] 持有标志门控**）→ `push eax; call 0x7c8b3d; mov [esi+4], ebx`（**delete [+0x4]**）
+  - `mov [esi+0xd], bl; mov [esi+8], ebx`（清 [+0xD]/[+0x8]）→ ret
+- 直接 call 1 个/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：成员持有指针释放器（无[+0x10]清零变体——[+0x4] + [+0xD] 门控 delete 0x7C8B3D，3045b 同构） (partial)
+
+## 核验结果
+
+- _check_callees3066.py：a 路 1、b 路 1、c 路 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用（批内地址 0x4E9140/0x4E91A0/0x4E92F0 互不为被调）；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7C8B3D——**均已在 TSV 登记**
+- **★3005 批模板族密集带四十一连**（0x4E8290-0x4E92F0 共 41 实例，含 39B 无[+0x10]变体——3045b 同型）：0x4E82-0x4E92 段成员持有指针释放器全覆盖
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4E9A10（39B callees=1）/ 0x4E9C70（39B callees=1）/ 0x4E9ED0（39B callees=1）**：picker 显示 0x4E 段——下一批候选（39B 无[+0x10]变体族）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
