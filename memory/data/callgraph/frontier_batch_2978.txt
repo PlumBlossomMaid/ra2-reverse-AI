@@ -1,0 +1,49 @@
+# frontier batch 2978
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4A2F10（35 扇入 deps=1）+ 0x4A2F40（60 扇入 deps=1）+ 0x4A2F80（60 扇入 deps=1）
+三路：a=0x4A2F10（0x20=32B **COM 虚表槽 0x24 转发** callees=1 deps=1）/ b=0x4A2F40（0x39=57B **COM 方法调用前缀** callees=1 deps=1）/ c=0x4A2F80（0x39=57B **COM 方法调用前缀变体** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2978{a,b,c}.txt（a 0x80、b/c 0x100），完整读取确认（a ret @0x4A2F30、b ret @0x4A2F79、c ret @0x4A2FB9）
+核验：.qwen/tmp/_check_callees2978.py 三路全 PASS（a 1、b 1、c 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7395 → 7398（待 _append_tsv_batch2978.py）
+
+## a 路：0x4A2F10 COM 虚表槽 0x24 转发（0x20=32B，35 扇入 deps=1）
+
+- 范围 0x4A2F10-0x4A2F30（ret @0x4A2F30）
+- **槽 0x24 转发**（同 2977 c 路槽 0x20 族相邻）：
+  - `mov eax, [esi+8]; test; jne` → `push 0x80004003; call 0x7dc720`（E_POINTER 抛掷）→ `mov eax, [esi+8]; push eax; mov ecx, [eax]; call [ecx+0x24]`（**虚表槽 0x24 转发**）→ ret
+- 直接 call 1 个/去重 1（0x7DC720）——picker callees=1 **完全吻合**（虚表槽 0x24 间接不入字面量）
+- 判类：COM 虚表槽 0x24 转发前缀（[+8] 检查 + E_POINTER 0x7DC720 + 槽 0x24 调用） (partial)
+
+## b 路：0x4A2F40 COM 方法调用前缀（0x39=57B，60 扇入 deps=1）
+
+- 范围 0x4A2F40-0x4A2F79（ret @0x4A2F79）
+- **同 2977 b 路由模板**（+8 检查 + 0x7DC720 + 参数栈准备）：
+  - `mov eax, [esi+8]; test; jne` → `push 0x80004003; call 0x7dc720`（E_POINTER）→ 多参数 push（[esp+0x1c] ×2 + ...）→ 虚表槽调用 → ret
+- 直接 call 1 个/去重 1（0x7DC720）——picker callees=1 **完全吻合**
+- 判类：COM 方法调用前缀（+8 检查 + E_POINTER 0x7DC720 + 多参栈准备） (partial)
+
+## c 路：0x4A2F80 COM 方法调用前缀变体（0x39=57B，60 扇入 deps=1）
+
+- 范围 0x4A2F80-0x4A2FB9（ret @0x4A2FB9）
+- **同 b 模板**（codegen 顺序微调）：
+  - `mov eax, [esi+8]; test; jne` → `push 0x80004003; call 0x7dc720` → 参数栈准备（[esp+0x1c] ×2）→ 虚表槽调用 → ret
+- 直接 call 1 个/去重 1（0x7DC720）——picker callees=1 **完全吻合**
+- 判类：COM 方法调用前缀变体（同 b——0x7DC720 统一错误前缀） (partial)
+
+## 核验结果
+
+- _check_callees2978.py：a 路 1、b 路 1、c 路 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（全部单 0x7DC720；a 虚表槽 0x24 间接不入字面量）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x7DC720（HRESULT 错误处理）——**已在 TSV 登记**
+- **★0x4A2F10-0x4A2FB9 COM 前缀族六实例齐套**：2977（0x4A2E50/0x4A2EA0/0x4A2EE0）+ 本批（0x4A2F10/0x4A2F40/0x4A2F80）——统一 `[+8]` 检查 + `push 0x80004003; call 0x7DC720` 前缀模板
+- **★虚表槽 0x24 新槽位**：a 路 `call [ecx+0x24]`——0x20/0x24 槽位连续（2977 c 路槽 0x20）
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4A2FC0/0x4A2FF0**（picker 显示——45/40 扇入 deps=1 接着的 0x4A 段函数）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
