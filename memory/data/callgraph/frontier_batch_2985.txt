@@ -1,0 +1,58 @@
+# frontier batch 2985
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4A7340（body_bytes=1466 callees=9）+ 0x4A79D0（95B callees=0）+ 0x4A7D20（42B callees=1）
+三路：a=0x4A7340（0x5B9=1465B **大对象状态机多 ret 方法** callees=9 deps=9）/ b=0x4A79D0（0x5E=94B **队列注册器** callees=0 deps=0）/ c=0x4A7D20（0x29=41B **析构器** callees=1 deps=1）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d2985{a,b,c}.txt（a 0x1000 覆盖、b/c 0x300），完整读取确认（a 末 ret @0x4A78F9、b ret @0x4A7A2E、c ret @0x4A7D49）
+核验：.qwen/tmp/_check_callees2985.py 三路全 PASS（a 去重 9、b 去重 0、c 去重 1），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7416 → 7419（待 _append_tsv_batch2985.py）
+
+## a 路：0x4A7340 大对象状态机多 ret 方法（0x5B9=1465B，callees=9）
+
+- 范围 0x4A7340-0x4A78F9（末 ret @0x4A78F9；函数内含 4 个提前 ret @0x4A7371/0x4A737F/0x4A745E/0x4A76FB——多出口状态机）
+- **入口 `[+0x30]` 状态机门控**：
+  - `mov eax, [esi+0x30]; test; jge 0x4a7372`（状态 < 0 → 走 0x4A7FE0 辅助后 ret）+ `dec eax`（状态 > 0 → 递减后 ret）
+  - 主路径：`call [edx+0x48]`（对象 A 虚表槽 0x48 取字段三元组）→ `call [edx+0x54]`（虚表槽 0x54 判断）→ `call 0x41c230`（向量数学）→ `call 0x41c380`（向量数学）→ `call [edx+0x2c]`（虚表槽 0x2c）
+- **`[+0x520]` 字段成对调用**：`call 0x45eca0` + `call 0x45ec90`（成对，[+0x520] 对象方法）→ neg + shl 6 + add（`edi` 修正）
+- **`[+0x2c]` 上限比较**：`cmp edi, [eax+0xb4]; jle`——超限则再次调 0x4A7FE0
+- **坐标表 [0x8A0180]/[0x8A0184]（索引*8）**：多次 `mov eax, [edi*8 + 0x8a0180]`——全局坐标对表，与 a 路的 `[+0x30]` 状态机联动
+- **分配路径**：`call 0x7509e0`（[0x8871e0]+0x28c == -1 检查后）→ `call 0x7c8e17`（operator new 0x5c）→ `call 0x54fe60`（创建对象）——**大对象构建**
+- 直接 call 16 次/去重 9（0x4A7FE0 + 0x41C230 + 0x41C380 + 0x45ECA0 + 0x45EC90 + 0x489280 + 0x54FE60 + 0x7509E0 + 0x7C8E17）——picker callees=9 **完全吻合**（虚表槽 0x48/0x54/0x2c 间接不入字面量）
+- 判类：大对象状态机多 ret 方法（[+0x30] 门控 + [+0x520] 成对辅助 + [0x8A0180] 坐标表 + 0x54FE60 创建 + 超限回退） (partial)
+
+## b 路：0x4A79D0 队列注册器（0x5E=94B，callees=0）
+
+- 范围 0x4A79D0-0x4A7A2E（ret @0x4A7A2E；后 nop 对齐 0x4A7A30 新函数）
+- **队列注册（自注册到全局管理队列）**：
+  - `mov [esi+0x30], -1`（状态复位 -1）→ `mov eax, [0xb0f6a0]`（**全局 [0xB0F6A0] 容量/水位读取**）→ `cmp [0xb0f6a8], eax`（[0xB0F6A8] 当前计数 vs 水位）
+  - 满则查 `[0xb0f6a5]` 标志 + `[0xb0f6ac]` 计数 → `call [eax+8]`（[0xB0F698] 管理对象虚表槽 8 间接——扩容/拒绝）
+  - 成功路径：`inc [0xb0f6a8]` + `mov [ecx + eax*4], esi`（**this 入队 [0xB0F69C] 数组**）
+- 直接 call 0 个（仅有虚表槽 8 间接 `call [eax+8]`）——picker callees=0 **完全吻合**
+- 判类：队列注册器（[0xB0F6A0/0xB0F6A8/0xB0F6AC/0xB0F69C] 全局队列域 + [0xB0F698] 管理对象虚表槽 8 + this 自注册） (partial)
+
+## c 路：0x4A7D20 析构器（0x29=41B，callees=1）
+
+- 范围 0x4A7D20-0x4A7D49（ret @0x4A7D49；后 nop 对齐 0x4A7D50 新函数）
+- **持有标志门控 delete**：
+  - `mov eax, [esi+4]; test; je 0x4a7d41` → `cmp byte ptr [esi+0xd], bl; je`（**+0xd 持有标志门控**——非持有则跳过）→ `call 0x7c8b3d`（**[+4] 字段 delete**）→ 清零 [+4]
+  - 收尾：`mov byte ptr [esi+0xd], 0` + `mov [esi+8], 0`（清零持有标志与 [+8] 计数）→ ret
+- 直接 call 1 个/去重 1（0x7C8B3D）——picker callees=1 **完全吻合**
+- 判类：析构器（[+0xd] 持有标志门控 delete [+4] + [+8] 清零） (partial)
+
+## 核验结果
+
+- _check_callees2985.py：a 路 16 调用去重 9、b 路 0、c 路 1——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**（a 大状态机 9 全吻合；b 纯间接调用；c 标准持有标志析构器）
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x4A7FE0 + 0x41C230 + 0x41C380 + 0x45ECA0 + 0x45EC90 + 0x489280 + 0x54FE60 + 0x7509E0 + 0x7C8E17 + 0x7C8B3D——**均已在 TSV 登记**
+- **★[0xB0F6A0/0xB0F6A8/0xB0F6AC/0xB0F69C] 全局队列域首见**：b 路 `[0xB0F6A0]` 水位 + `[0xB0F6A8]` 计数 + `[0xB0F69C]` 数组 + `[0xB0F6AC]` 上限——**与 a 路尾部 0x4A7FE0/[0xB0F698] 同族**（a 路函数 0x4A7340 也操作 0xB0F698 管理对象，0x4A7340/0x4A79D0 是同一对象族方法）
+- **★[0x8A0180]/[0x8A0184] 全局坐标对表（索引*8）首见**：a 路 `[edi*8 + 0x8a0180]`——坐标对表，与 b 路队列域的 [0x8A0180] 相同基址
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4A7E70/0x4A8030/0x4A8080**（picker 显示——39/73/73 扇入的 0x4A 段后续函数）——后续候选
+- a 路尾部邻函数 0x4A7900（双字段比较注册器，与 0x4A79D0 同族）——后续候选
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
