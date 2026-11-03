@@ -1,0 +1,55 @@
+# frontier batch 3026
+
+日期：2026-11-03
+来源：picker 按 ranking.tsv 行序从未登记池取 top3（非 RMG 5A 段）——0x4D08B0（201B callees=1）+ 0x4D28D0（55B callees=0）+ 0x4D2910（30B callees=2）
+三路：a=0x4D08B0（0xC8=200B **构造器** callees=1 deps=1）/ b=0x4D28D0（0x34=52B **坐标 >>8 量化器** callees=0 deps=0）/ c=0x4D2910（0x1B=27B **scalar deleting 析构器** callees=2 deps=2）
+取证：code/randmap/disasm.py 反汇编落盘 .qwen/tmp/_d3026{a,b,c}.txt（a 0xD0、b 0x60、c 0x50），完整读取确认（a ret @0x4D0978、b ret 4 @0x4D2904、c ret 4 @0x4D292B）
+核验：.qwen/tmp/_check_callees3026.py 三路全 PASS（a 去重 1、b 去重 0、c 去重 2），无 MISSING、无 UNKNOWN、无批内自引用
+注册：TSV 7539 → 7542（待 _append_tsv_batch3026.py）
+
+## a 路：0x4D08B0 构造器（0xC8=200B，callees=1）
+
+- 范围 0x4D08B0-0x4D0978（ret @0x4D0978；后 nop 对齐 0x4D0979）
+- **构造器 + 全局登记**（同 3014 a 路 EMPulseClass 构造器登记模式）：
+  - `call 0x410170`（**基类构造**——同 3014 b 路）→ `or ecx, -1; mov [esi+0x24], ecx`（**[+0x24]=-1 哨兵**）→ 清零 [+0x28]~[+0x6C] 大量字段 → `mov cl, 1; mov byte ptr [esi+0x68], 1`（**置 +0x68=1**）+ `+0x69=0`
+  - `mov [esi+0x5c], 0x7e8ba0`（**内嵌对象虚表 0x7E8BA0**）→ `mov [esi+0x70], 0xa`（+0x70=10）→ `mov byte ptr [esi+0x74], 1`
+  - **四虚表写入**：`mov [esi], 0x7e8b38; mov [esi+4], 0x7e8b1c; mov [esi+8], 0x7e8b14; mov [esi+0xc], 0x7e8b0c`（**0x7E8B38 族**）
+  - **全局登记**：`mov ecx, [0x8b3d18]; cmp [0x8b3d20], ecx; jl`（数组水位比较）→ `cmp byte ptr [0x8b3d1d], 0; jne`（标志）→ `mov edx, [0x8b3d24]; jle`（上限）→ `mov eax, [0x8b3d10]; push 0; push edx; mov ecx, 0x8b3d10; call [eax+8]`（**[0x8B3D10] 数组虚表槽 8 扩容**）→ `mov ecx, [0x8b3d20]; inc; mov [0x8b3d20], ecx; mov ecx, [0x8b3d14]; mov [ecx+eax*4], esi`（**this 入队 [0x8B3D14]+count×4**）→ ret
+- 直接 call 1 个/去重 1（0x410170）——picker callees=1 **完全吻合**（[0x8B3D10] 虚表槽 8 间接）
+- 判类：构造器（0x410170 基类 + [+0x24]=-1 哨兵 + 四虚表 0x7E8B38 族 + [0x8B3D10-24] 全局登记数组——3014a 同登记模式） (partial)
+
+## b 路：0x4D28D0 坐标 >>8 量化器（0x34=52B，callees=0）
+
+- 范围 0x4D28D0-0x4D2904（ret 4 @0x4D2904；后 nop 对齐 0x4D2910）
+- **坐标 >>8 量化写入**（stdcall ret 4，纯整数）：
+  - `mov eax, [ecx+0x34]; cdq; and edx, 0xff; add eax, edx; sar eax, 8`（**[+0x34] 带符号修正 >>8**——负数向上取整）→ `mov word ptr [esp], ax`（写 word）
+  - `mov eax, [ecx+0x38]; cdq; and edx, 0xff; add eax, edx; sar eax, 8`（**[+0x38] 同量化**）→ `mov word ptr [esp+2], ax`
+  - `mov eax, [esp+8]; mov ecx, [esp]; mov [eax], ecx`（**合并写 dword 到输出参**）→ ret 4
+- 直接 call 0 个——picker callees=0 **完全吻合**（纯 sar 量化）
+- 判类：坐标 >>8 量化器（[+0x34]/[+0x38] 带符号修正 >>8 + word 合并写） (partial)
+
+## c 路：0x4D2910 scalar deleting 析构器（0x1B=27B，callees=2）
+
+- 范围 0x4D2910-0x4D292B（ret 4 @0x4D292B；后 nop 对齐 0x4D2930）
+- **scalar deleting 析构器模板**（标准短模板）：
+  - `call 0x4d1650`（**析构子例程**）→ `test byte ptr [esp+8], 1`（deleting 标志）→ `je` → `push esi; call 0x7c8b3d`（**delete this**）→ `mov eax, esi` → ret 4
+- 直接 call 2 个/去重 2（0x4D1650 + 0x7C8B3D）——picker callees=2 **完全吻合**
+- 判类：scalar deleting 析构器（0x4D1650 析构子例程 + deleting 门 → delete this） (partial)
+
+## 核验结果
+
+- _check_callees3026.py：a 路 1、b 路 0、c 路 2——三路全 PASS
+- picker callees vs 核验差值：**三路均差 0**
+- 无批内自引用；无 MISSING（真 MISSING 队列 12 个不变）；无 UNKNOWN
+- 真 MISSING 排队 12 个：0x408B40 / 0x41caf0 / 0x4f6eb0 / 0x406B10 / 0x434AD0 / 0x42e6d0 / 0x47ec40 / 0x42ed60 / 0x42C900 / 0x4758C0 / 0x430F70 / 0x4545D0
+- UNKNOWN 观察 1 个不变：0x5077da
+- 被调已登记名：0x410170 + 0x4D1650 + 0x7C8B3D——**均已在 TSV 登记**
+- **★四虚表族 0x7E8B38/0x7E8B1C/0x7E8B14/0x7E8B0C 首见**：a 路构造器（新虚表族）+ 内嵌对象虚拟表 0x7E8BA0
+- **★[0x8B3D10-24] 全局登记数组首见**：a 路（六字段——与 3014 a 路 [0x8A3870-84] 同构，0x8B 段新域）
+- **★0x4D1650 析构子例程首见**：c 路（0x4D 段新子例程）
+- **本批无带名**——三路均无 YRpp 符号对应，全部 partial
+
+## 观察项 / 候选池（批后邻追加）
+
+- **0x4D28D0 后邻 0x4D2930（42B callees=1）/ 0x4D2B20（39B callees=1）/ 0x4D2D10（73B callees=1）**：picker 显示——后续候选（c 路 dump 尾邻 0x4D2930 已见 = 析构器模板 3005a 同族——含 +0x10 清零）
+- 既有池延续：同批 2766 结尾长列表（0x6E8220 / 0x6E7C20 / 0x6E87D0 / … 7F 段/虚表族），详见批 2766 文档「既有池延续」
