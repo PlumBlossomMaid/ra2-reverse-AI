@@ -1,0 +1,71 @@
+frontier batch 3209
+===================
+日期: 2026-08-?? (心跳续跑)
+来源: memory/data/callgraph/ranking.tsv 按行序取未登记池
+选取: 0x568140 / 0x5683C0 / 0x5687F0（格区域扫描 + MapClass 内容增删对）
+
+三路判类（code/randmap/disasm.py 反汇编，.qwen/tmp/_d3209{a,b,c}.txt）
+------------------------------------------------------------------------
+0x568140  446B 格区域扫描/填充函数（ret 8）：
+          0x6d20e0 ×2（除数函数 -> imul 0x77777777 ÷9 乘法逆元 +
+            sar 4 + 符号修正，结果 shl 8 做格幅值/范围参数）
+          32 位坐标 -> 16 位存储（cdq + and 0xff + sar 8 半像素
+            舍入补偿惯用法）
+          [0x87f924] cell 指针表 + [0xabdc50]/[0xabdc74] 哑元回退
+          0x40000（side²）边界 + 双层矩形循环
+          写 [eax+0x12c] 标志位（or 0x10 / or 8）
+0x5683C0  MapClass::AddContentAt（带名，1068B，ret 8）：
+          入口校验：对象非空 + 虚表槽 0x88 返回 [+0x235] 标志
+            + 槽 0x78 返回类型必须 == 2
+          槽 0x108 取坐标（(x,y) 字对）-> 0x48dee0（复制/初始化）
+          [+0x140] = 格计数 / [+0x13c] = cell 表
+          格索引 = x + y*0x200（shl 9）；0x40000 边界检查
+          0x47e8a0（格内容加入：cell + 对象 + [+0x8c] 标志）
+          0x47d2b0 CellClass::RecalcAttributes ×2（cell 与哑元）
+          8×8 邻域扫描（rep stosd 清 0x200 dword 工作位图，
+            [+0x100] 计数器 inc）
+          形状表 [+0x1624]/[+0x1628]/[+0x1664]/[+0x1668] 偏移
+            （结构 [+0x520]，附带 [+0xef8] 规模、[+0x1766] 开关）
+0x5687F0  MapClass::RemoveContentAt（带名，945B，ret 8）：
+          与 AddContentAt 同构（同为 0x8a0 栈帧）：
+            同入口校验链（槽 0x88/[+0x235]/槽 0x78==2/槽 0x108）
+            0x47ea90（格内容移除：cell + 对象 + 标志）——Add 用
+              0x47e8a0，Remove 用 0x47ea90，紧邻成对
+            0x47d2b0 RecalcAttributes ×2
+            8×8 邻域扫描 [+0x100] 计数器 dec（移除减计数，
+              与 Add 的 inc 对称）
+            同形状表 [+0x1624]~[+0x1668] 遍历
+          ——Add/Remove 完整内容对象配对
+
+核验（_check_callees3209.py，RANGES 字面量 + 批内自引用 BATCH_NORM）
+------------------------------------------------------------------------
+a_0x568140 [0x568140,0x5682FC] 跨函数直接 call 2 去重 1 = 0x6d20e0 已登记
+b_0x5683C0 [0x5683C0,0x5687EA] 跨函数直接 call 4 去重 3 = 0x47d2b0/0x47e8a0/0x48dee0 全已登记
+c_0x5687F0 [0x5687F0,0x568B9F] 跨函数直接 call 4 去重 3 = 0x47d2b0/0x47ea90/0x48dee0 全已登记
+无 MISSING / 无 UNKNOWN / 无批内自引用
+
+三态判定
+------------------------------------------------------------------------
+0x568140  partial             （结构判明：格区域扫描 + 标志写；无 YRpp
+                                 符号）
+0x5683C0  semantics_verified  （MapClass::AddContentAt 带名：内容加入 +
+                                 邻域计数 + RecalcAttributes 闭合）
+0x5687F0  semantics_verified  （MapClass::RemoveContentAt 带名：内容移除 +
+                                 邻域计数递减，与 Add 配对闭合）
+
+说明
+------------------------------------------------------------------------
+★ b/c 是 MapClass 内容对象层的增删核心对：入口校验链一致，
+  内容操作 0x47e8a0/0x47ea90 紧邻成对，计数增减对称。
+★ 0x47d2b0 CellClass::RecalcAttributes 回归到已登记依赖，
+  与 QWEN.md 记录的 RMG Recalc 用点一致（0x47D2B0）。
+★ a 路 ÷9 乘法逆元 + 半像素舍入惯用法延续 55 段之前的
+  算术模板，cell 表访问直连 [0x87f924]。
+下一批候选预期 0x580BC0（1221B）/ 0x582D30（62B）/ 0x583C60
+（974B，观察项，未登记前不作断言）。
+
+登记（frontier_status.tsv 追加，TSV 8104 -> 8107）
+------------------------------------------------------------------------
+0x00568140  callees=1  deps=1   batch=3209  partial
+0x005683C0  callees=3  deps=3   batch=3209  semantics_verified (MapClass::AddContentAt)
+0x005687F0  callees=3  deps=3   batch=3209  semantics_verified (MapClass::RemoveContentAt)
