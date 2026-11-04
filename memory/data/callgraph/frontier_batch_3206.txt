@@ -1,0 +1,65 @@
+frontier batch 3206
+===================
+日期: 2026-08-?? (心跳续跑)
+来源: memory/data/callgraph/ranking.tsv 按行序取未登记池
+选取: 0x55A460 / 0x55A7D0 / 0x55AA60（73B 析构器模板 + 240B 格打包 + 87B COM 转发）
+
+三路判类（code/randmap/disasm.py 反汇编，.qwen/tmp/_d3206{a,b,c}.txt）
+------------------------------------------------------------------------
+0x55A460  73B 析构器模板（虚表 0x7ed32c）：
+          写虚表 [+0]=0x7ed32c
+          [+4] 门控 free（0x7c8b3d）-> 清 [+4]
+          [esp+8]&1 门控 delete this（0x7c8b3d）-> ret 4
+          ——与 batch 3205c 的 0x55A410 完全同构（同虚表同模板）
+0x55A7D0  240B 坐标/格打包函数（ret 0xc，3 参数）：
+          参数1 对象 [ebx+8] -> +0x9c / +0x388 成员
+          MapClass::Instance [0x87f7e8] 方法 0x565730
+          读 [eax+0x11c]（cell 高度字节）-> 0x7559b0 分配/构造
+          rep movsd 0xc 拷 12 字节格记录
+          0x4c93d0（[+0x388] 坐标 -> 格索引）
+          shr 0xa / inc / shr 1 / and 0x1f（格坐标->tile 编码惯用法）
+          浮点 0x5af1a0（fmul [0x7e4408] 常量）
+          参数2 非 NULL 且 [param2]!=-1 时：
+            shl 6 / add ebp / shl 5 打包写入 [param2]
+            再 0x4c93d0 + or 组合高位
+          参数3 输出指针 <- rep movsd 0xc
+0x55AA60  87B COM 接口风格转发（ret 0xc）：
+          参数1 NULL -> 返回 0x80004003 (E_POINTER)
+          虚表槽 [eax+0x10] 间接调用（读 4 字节到 [esp+0x14]）
+          虚表槽 [edx+0x24] 间接调用 -> push eax -> 槽 0x10 再调
+          [esp+0x14] 非 0 时写 [edi+0x11]=0
+          ——全间接调用，无直接 call
+
+核验（_check_callees3206.py，RANGES 字面量 + 批内自引用 BATCH_NORM）
+------------------------------------------------------------------------
+a_0x55A460 [0x55A460,0x55A4A7] 跨函数直接 call 2 去重 1 = 0x7c8b3d 已登记
+b_0x55A7D0 [0x55A7D0,0x55A8BE] 跨函数直接 call 5 去重 4 = 0x4c93d0/0x565730/0x5af1a0/0x7559b0 全已登记
+c_0x55AA60 [0x55AA60,0x55AAB5] 跨函数直接 call 0 去重 0 已登记
+无 MISSING / 无 UNKNOWN / 无批内自引用
+
+三态判定
+------------------------------------------------------------------------
+0x55A460  partial             （结构判明：73B 析构器模板，虚表 0x7ed32c，
+                                 与 3205c 同构；无 YRpp 符号）
+0x55A7D0  partial             （结构判明：240B 坐标/格打包，涉及
+                                 MapClass 方法 + 格索引编码 + 浮点常量；
+                                 无 YRpp 符号）
+0x55AA60  partial             （结构判明：87B COM 接口转发，全间接调用；
+                                 无 YRpp 符号）
+
+说明
+------------------------------------------------------------------------
+★ a 路与 batch 3205c（0x55A410）同虚表 0x7ed32c 同 73B 模板 ——
+  0x7ed32c 虚表的第三份独立析构器副本，模板族一致性确认。
+★ b 路是"格坐标 -> 打包 tile 编码"的转换层：shr 0xa/inc/shr 1/and 0x1f
+  惯用法与 batch 3206 家族一致（格索引高 5 位段），浮点参与 tile 选择。
+★ c 路为 COM 风格接口（E_POINTER 哨兵 + 虚表槽 0x10/0x24 对调），
+  无直接 call 目标，登记 callees=0。
+下一批候选预期 0x55AAC0（122B）/ 0x55AB40（45B）/ 0x55ABA0（5B，
+观察项，未登记前不作断言）。
+
+登记（frontier_status.tsv 追加，TSV 8095 -> 8098）
+------------------------------------------------------------------------
+0x0055A460  callees=1  deps=1   batch=3206  partial
+0x0055A7D0  callees=4  deps=4   batch=3206  partial
+0x0055AA60  callees=0  deps=0   batch=3206  partial
