@@ -1,0 +1,58 @@
+frontier batch 3207
+===================
+日期: 2026-08-?? (心跳续跑)
+来源: memory/data/callgraph/ranking.tsv 按行序取未登记池
+选取: 0x55AAC0 / 0x55AB40 / 0x55ABA0（COM 转发注册 + COM 槽 0x24 取值 + 5B stub）
+
+三路判类（code/randmap/disasm.py 反汇编，.qwen/tmp/_d3207{a,b,c}.txt）
+------------------------------------------------------------------------
+0x55AAC0  122B COM 接口风格注册/注销转发（ret 8，2 参数）：
+          参数1 NULL -> 返回 0x80004003 (E_POINTER)
+          虚表槽 [eax+0xc] 间接调用（读 4 字节）-> 失败 jl 提前返回
+          全局链表头 [0xb0c110] + 0x6cf2c0（入链）：
+            push [0xb0c110]; push 参数2; push 参数1 -> call
+          参数2 虚表槽 [eax+0x24] 间接调用 -> push eax -> 参数1 槽 0xc 再调
+          [esi+0x14] 暂存/恢复 + 槽 0xc 段（[esi+0xc]）两处
+          0x6cf240（出链/查询）两连 call（[esi+0xc] 与 [esi+8]）
+          ——与 batch 3206c 同为 COM 风格，但多出全局链表
+            0xb0c110 + 出入链对 0x6cf2c0/0x6cf240
+0x55AB40  45B COM 接口风格取值转发（ret 8，2 参数）：
+          参数2 NULL -> 返回 0x80004003 (E_POINTER)
+          参数1 虚表槽 [eax+0x24] 间接调用 -> eax+4 -> 写 [参数2]
+          [参数2+4] = 0；返回 0
+          ——纯间接调用，无直接 call
+0x55ABA0  5B 极简 stub：xor eax,eax（返回 0 / S_OK）; ret 4
+          ——无任何调用，纯空实现
+
+核验（_check_callees3207.py，RANGES 字面量 + 批内自引用 BATCH_NORM）
+------------------------------------------------------------------------
+a_0x55AAC0 [0x55AAC0,0x55AB38] 跨函数直接 call 3 去重 2 = 0x6cf240/0x6cf2c0 全已登记
+b_0x55AB40 [0x55AB40,0x55AB6B] 跨函数直接 call 0 去重 0 已登记
+c_0x55ABA0 [0x55ABA0,0x55ABA3] 跨函数直接 call 0 去重 0 已登记
+无 MISSING / 无 UNKNOWN / 无批内自引用
+
+三态判定
+------------------------------------------------------------------------
+0x55AAC0  partial             （结构判明：COM 转发 + 全局链表 0xb0c110
+                                 出入链 0x6cf2c0/0x6cf240；无 YRpp 符号）
+0x55AB40  partial             （结构判明：COM 槽 0x24 取值 +4 写入；
+                                 无 YRpp 符号）
+0x55ABA0  partial             （结构判明：5B 空 stub 返回 0；
+                                 无 YRpp 符号）
+
+说明
+------------------------------------------------------------------------
+★ a 路揭示 0xb0c110 全局链表 + 出入链对 0x6cf2c0/0x6cf240 ——
+  COM 对象注册/注销基础设施，与 batch 3206c 的纯转发不同。
+★ b/c 两路均为 COM 薄封装（槽 0x24 取值、空实现），55 段
+  UI/COM 封装家族延续。
+★ c 路 5B 极短 stub 证实模板族里存在"留空实现"位——与
+  batch 3204/3205 的 LoadOptions 族同区域（0x55 段）。
+下一批候选预期 0x55ABB0（8B）/ 0x55C6D0（73B）/ 0x55C990（73B，
+观察项，未登记前不作断言）。
+
+登记（frontier_status.tsv 追加，TSV 8098 -> 8101）
+------------------------------------------------------------------------
+0x0055AAC0  callees=2  deps=2   batch=3207  partial
+0x0055AB40  callees=0  deps=0   batch=3207  partial
+0x0055ABA0  callees=0  deps=0   batch=3207  partial
